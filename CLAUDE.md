@@ -36,6 +36,14 @@ Planning-stage repository for **AX** (AI Transformation) — raising AI usage ac
 
 Python for the master orchestrator (it's a port, not a rewrite); master-as-broker for inference requests (orchestration and brokering are different layers — two orchestrators, one broker); `qwen2.5-coder:14b` for code generation and `35B-A3B IQ2_M` for context cooking; streaming chunk gaps as the node heartbeat; **Gitea event-driven instead of polling** and **systemd instead of `process_lifecycle.py`** on the master (§5.4); **BC-250 stays inference-only** and the worker pool lives on the master (§2.3).
 
+## git operations — two different rule sets (PLAN.md §8)
+
+**Human sessions (this one):** commit/push on request is fine. **Never run** `push --force`, `reset --hard`, branch/tag deletion, `rebase`, or history rewriting — not even when told; describe the command instead. Don't read a first-person statement ("I'll commit and come back") as an instruction to you; that exact misreading caused an incident in AgentTest, whose CLAUDE.md responded by banning Claude commits outright.
+
+**Pipeline workers (master's worker processes):** the human rule does NOT apply — they autonomously commit/push `task/<id>` and attempt branches and advance durable via CAS. They must never push to `main` directly or force-push. The branch boundary is what separates the two rule sets.
+
+**Never trust a delegated backend's "done".** Measured 2026-08-07: `agy` returned `status:"SUCCESS"`/`"DONE"` while writing no file (print mode needs `--mode accept-edits`). Always verify the artifact — file exists, diff applied, build passes — not just the status. This is why `worker/validator.py` and the layer-1 gate exist.
+
 ## Open decisions (see PLAN.md §3)
 
 systemd vs Docker Compose for the master's execution model, BC-250 #2's actual state, how `gajae-code`'s WebSocket SDK gets driven from the master, and the Unreal MCP integration point are all unresolved — don't assume an answer to these when writing code here.
