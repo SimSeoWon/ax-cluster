@@ -53,6 +53,7 @@ BC-250 #1(1호기)에서 이미 검증 완료:
 
 ┌──────────────┐
 │ 윈도우 UE5 PC  │  ← 엔진 실행 + 상태 추출로 역할 축소
+│ (작업자)       │     이 문서의 client/ 디렉토리 — 파일을 소유하는 유일한 계층
 └──────────────┘
 ```
 
@@ -89,6 +90,13 @@ BC-250 #1(1호기)에서 이미 검증 완료:
 - [ ] 원격 전원 재투입 수단(스마트 플러그/PDU) — GPU 크래시 시 소프트웨어로 복구 불가 (§6.5)
 - [ ] **마스터 GPU 증설(GTX 1070 Ti)** — RAG 임베딩/리랭킹/LoRA 용 CUDA 확보 목적. 선결: PSU 용량 확인 + 드라이버 설치 (아래 §7)
 - [ ] BC-250 #2 현재 상태 확인 (도착/설치/OS 여부)
+- [x] ~~마스터가 git 변경을 어떻게 감지하나~~ — **Gitea 이벤트 구동으로 확정 2026-08-07** (§5.4.2).
+      Gitea 를 마스터가 직접 호스팅하므로 폴링할 이유가 없다. `watch.py` 의 `while True` 폴링 루프는
+      이식 대상이 아니다. 상주 프로세스 자체는 여전히 필요(웹훅 수신·task_queue HTTP 서버·RAG).
+- [x] ~~`process_lifecycle.py`·`network_firewall.py` 처리~~ — **폐기 확정 2026-08-07** (§5.4.3).
+      리눅스 등가물로 고쳐 쓰지 않고 systemd 에 넘긴다.
+- [ ] **마스터 실행 모델 — systemd vs Docker Compose** (§5.4.4). 마스터 `~/CLAUDE.md` 규약은 Compose 선호,
+      워크로드 성격은 systemd 가 단순. 이식 착수 전 결정 필요
 - [ ] 작업자(윈도우) ↔ 마스터 경로 — AgentTest `task_queue` 를 리눅스 마스터로 이관
 - [ ] gajae-code를 이 오케스트레이션에 실제로 연결하는 방법 — WebSocket SDK로 마스터가 외부 컨트롤러 역할을 하는 구조가 유력, 상세 설계 필요
 - [ ] 온톨로지 기반 디지털 트윈 설계 — 어떤 데이터를 온톨로지화할지 구체화 필요
@@ -103,13 +111,17 @@ BC-250 #1(1호기)에서 이미 검증 완료:
 
 ### 4.1 용어 — 코드베이스와의 충돌 주의
 
-| 통칭 | 머신 | AgentTest 코드 용어 |
-|---|---|---|
-| 작업자 | 윈도우 UE5 PC | **`worker/`** (task_queue claim/write/verify 를 도는 쪽) |
-| 인프라 / 마스터 | 192.168.0.57 | master, `task_queue` 서버 |
-| 워커(구어) | BC-250 | **추론 노드** — 코드상 `worker` 가 *아님* |
+| 통칭 | 머신 | AgentTest 코드 용어 | **이 저장소 디렉터리** |
+|---|---|---|---|
+| 작업자 | 윈도우 UE5 PC | **`worker/`** (task_queue claim/write/verify 를 도는 쪽) | **`client/`** |
+| 인프라 / 마스터 | 192.168.0.57 | master, `task_queue` 서버 | `master/` |
+| 워커(구어) | BC-250 | **추론 노드** — 코드상 `worker` 가 *아님* | `worker/` |
 
 `worker/worker.py` 는 윈도우 PC 에서 도는 코드다. BC-250 을 "워커"라 부르면 코드 탐색 시 오도된다.
+
+**🔴 `worker` 라는 단어가 세 군데서 서로 다른 것을 가리킨다.** 이 저장소의 `worker/` 는 BC-250
+추론 노드이고, AgentTest 의 `worker/` 는 윈도우 작업자이며, 후자는 이 저장소에서 **`client/`** 다
+(2026-08-07 신설). 코드·문서를 오갈 때 반드시 디렉터리 기준으로 확인할 것.
 
 ### 4.2 루프
 
@@ -241,7 +253,7 @@ git `task/<task_id>` 브랜치에 커밋으로 누적 → 다음 라운드 워�
 
 | 컴포넌트 | 규모 | Windows 의존 | 비고 |
 |---|---|---|---|
-| `watcher/` 전체 | 21,171줄 | 19줄 | git watch · RAG · 온톨로지 · 클래스 그래프. 정리 대상: `review.py`(5) · `network_firewall.py`(4) · `skill_defs_distribute.py`(4) · `process_lifecycle.py`(3) · `watch.py`/`common.py`/`agent_defs.py`(각 1) |
+| `watcher/` 전체 | 21,171줄 | 19줄 | git watch · RAG · 온톨로지 · 클래스 그래프. 정리 대상: `review.py`(5) · `network_firewall.py`(4) · `skill_defs_distribute.py`(4) · `process_lifecycle.py`(3) · `watch.py`/`common.py`/`agent_defs.py`(각 1). **⚠️ `process_lifecycle.py` 는 이식이 아니라 폐기 — §5.4** |
 | `mcp/context_search/` | — | 6줄 | ChromaDB + BM25. `remote_client.py`(3) · `wiki_local_tools.py`/`search_tools.py`/`llm_chat.py`(각 1) |
 | `mcp/task_queue/` | — | 5줄 | 작업 분배·claim·fencing. `logic_cleanup.py`(3) · `reclaim.py`/`persistence.py`(각 1) |
 | `mcp/master_orchestrator/` 中 오케스트레이션 부분 | — | — | 골조 생성·분배·라우팅. **UE 빌드/테스트 부분은 제외**(아래 B) |
@@ -264,9 +276,11 @@ git `task/<task_id>` 브랜치에 커밋으로 누적 → 다음 라운드 워�
 ### 5.3 이식 순서 (제안)
 
 1. `mcp/task_queue/` — 루프의 중추이고 Windows 의존 5줄로 가장 가볍다. 먼저 옮겨 마스터에서 기동.
+   **선결: 수명주기 주인 교체** — 현재 `watch.py` 가 자식 프로세스로 띄우고 감시한다(§5.4.3).
+   떼어내 독립 서비스로 만드는 것이 이 단계의 실제 작업량이다.
 2. `mcp/context_search/` — ChromaDB 인덱스 이관(재색인 필요 여부 확인).
-3. `watcher/` — 가장 크지만 순수 데이터라 기계적. `network_firewall.py`·`process_lifecycle.py` 는
-   리눅스 등가물로 교체 또는 제거 검토.
+3. `watcher/` — 가장 크지만 순수 데이터라 기계적. 단 **`watch.py` 의 폴링 루프는 그대로 옮기지 않는다**
+   — Gitea 이벤트 구동으로 대체(§5.4.2). `process_lifecycle.py`·`network_firewall.py` 는 **폐기**(§5.4.3).
 4. `master_orchestrator/` 분할 — 오케스트레이션 부분만 이전, UE 부분은 §5.2-B 로 남기고
    §5.2-C 의 큐 잡 패턴으로 연결.
 
@@ -275,7 +289,82 @@ git `task/<task_id>` 브랜치에 커밋으로 누적 → 다음 라운드 워�
   config 로 덮어쓰는 것만으로도 동작하지만, 기본값 자체를 바꿔야 설정 누락 시 조용한 Gemma 폴백을 막는다.
 - 추론 엔드포인트 기본값 `http://localhost:11434` → BC-250 노드 주소로. 마스터에는 Ollama 가 없다.
 
-**주의:** 위 줄 수/의존 집계는 2026-08-02 클론 기준이다. 착수 전 최신 저장소에서 재확인할 것.
+**주의:** 위 줄 수/의존 집계는 2026-08-02 클론 기준이다.
+→ **2026-08-07 마스터에서 재확인 완료**: 199개 `.py` / 67,038줄 / Windows 의존 **93줄**. 수치 유효.
+마스터 클론 위치는 `/home/sim/AgentTest`(**참조용 — 수정하지 않는다**), 이 저장소는 `/home/sim/ax-cluster`.
+
+### 5.4 마스터 실행 모델 — 폴링 데몬이 아니다 (2026-08-07)
+
+AgentTest 를 그대로 옮기면 안 되는 이유가 여기 있다. **배포 형태와 실행 모델이 마스터에서는 성립하지 않는다.**
+
+#### 5.4.1 AgentTest 의 현재 형태 (실측)
+
+`build.bat` 이 PyInstaller `--onefile` 로 **exe 12종**을 빌드해 `AgentWatch.zip` 으로 배포하고,
+팀원이 **UE5 프로젝트 루트에 압축 해제**한다. `watch.exe`(데몬) · `worker.exe` · MCP 서버 10종
+(`context_search` `log_analyzer` `crash_analyzer` `commandlet_runner` `agy_query` `redmine_tracker`
+`code_recipes` `task_queue` `master_orchestrator` `local_llm_runner`).
+
+`watcher/watch.py main()` 이 `while True` 로 `poll_interval` 초마다 git fetch/pull → 새 커밋 감지 →
+처리. MCP 서버와 task_queue 는 **자식 프로세스로 띄우고 `.poll()` 로 생존 감시**한다
+(`common._server_proc`, `common._task_queue_proc`). `config.json` 은 PC 별 파일이라 재배포에도 보존된다.
+
+**마스터에는 UE5 프로젝트 루트도 팀원별 사본도 없다.** 배포 단위(zip+exe)와 수명주기 관리를
+그대로 옮길 수 없다.
+
+#### 5.4.2 폴링 → 이벤트 구동 (Gitea 가 같은 박스에 있다)
+
+`watch.exe` 가 폴링하는 건 **팀원 PC 가 git 서버 입장에서 외부인이라 알림받을 방법이 없기 때문**이다.
+마스터는 반대로 **Gitea 를 직접 호스팅**한다(`gitea.service`, :3000). 알림을 받을 수 있다.
+
+| | 폴링 (AgentTest) | 이벤트 (마스터) |
+|---|---|---|
+| 감지 지연 | `poll_interval` 초 | 즉시 |
+| 유휴 시 비용 | 계속 fetch | 0 |
+| 튜닝 | 간격 결정 필요 | 불필요 |
+
+- **Gitea 웹훅** — push 시 지정 URL 로 HTTP POST. 같은 박스라 `localhost` 로 쏘면 네트워크 신뢰성 문제 없음.
+- **`post-receive` 훅** — push 순간 서버에서 스크립트 직접 실행. 네트워크조차 안 탄다.
+  ⚠️ 단 **훅 안에서 무거운 작업(RAG 색인 등)을 하면 그동안 push 가 멈춘다.** 훅은 알림만 던지고 즉시 종료할 것.
+
+**⚠️ 데몬이 없어지는 게 아니다.** 사라지는 건 폴링 루프뿐이고 상주 프로세스는 여전히 필요하다:
+① 웹훅을 받을 쪽이 떠 있어야 하고 ② `task_queue` 는 작업자가 claim 하러 붙는 **HTTP 서버**라
+태생이 상주 서비스이며 ③ RAG 인덱스·추론 브로커도 계속 살아 있어야 한다.
+
+**작업자(윈도우) 쪽은 그대로다** — `worker.exe` 는 여전히 외부인이라 task_queue 에 폴링으로 붙는다.
+폴링이 없어지는 것은 마스터 한정.
+
+#### 5.4.3 수명주기는 systemd 가 가져간다 — `process_lifecycle.py` 는 폐기
+
+리눅스의 데몬 = **systemd 서비스**. 이 박스의 `gitea.service` 가 정확히 그 형태다.
+**PyInstaller 빌드는 불필요** — exe 로 묶는 건 "팀원 PC 에 Python/의존성이 없어서"인데
+마스터는 통제 가능한 한 대뿐이라 venv 로 충분하다.
+
+```ini
+# /etc/systemd/system/ax-task-queue.service (예시)
+[Service]
+ExecStart=/home/sim/ax-cluster/.venv/bin/python -m master.task_queue
+Restart=always
+User=sim
+[Install]
+WantedBy=multi-user.target
+```
+
+| `watch.py` 가 손수 하던 것 | systemd |
+|---|---|
+| 자식 프로세스 `.poll()` 생존 감시 | `Restart=always` |
+| Job Object 로 고아 프로세스 정리 (**Windows 전용**) | cgroup 자동 |
+| 로그 파일 관리 | journald (`journalctl -u`) |
+| 기동 순서 조율 | `After=` / `Requires=` |
+| 포트 점유 해제·방화벽 규칙 (`network_firewall.py`, **Windows 전용**) | firewalld/ufw 로 별도 관리 |
+
+**→ `process_lifecycle.py`·`network_firewall.py` 는 리눅스 등가물로 고쳐 쓸 게 아니라 폐기하고
+systemd 에 넘긴다.** 각 컴포넌트를 독립 유닛으로 두면 §5.3-1 의 "task_queue 수명주기 주인" 문제도 사라진다.
+
+#### 5.4.4 미결 — systemd vs Docker Compose
+
+`~/CLAUDE.md`(마스터) 규약은 **"새 서비스는 Docker Compose 선호"**다(n8n·Redmine 이 그 패턴).
+반면 오케스트레이션 코드는 BC-250 과 LAN 통신하고 로컬 git/Gitea 를 봐야 해 systemd 가 단순하다.
+**아직 정하지 않았다** — §3 미결 항목 참조.
 
 ---
 
