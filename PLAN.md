@@ -158,7 +158,10 @@ BC-250 에 UE5 가 없는 것은 문제가 아니다.
       전제도 명시: AgentTest=팀 인프라 / AX=1인이 집의 여러 컴퓨터를 묶는 것
 - [ ] **능력 기반 라우팅** (`requires: ue5`) — §5.2-C 의 CI 러너 패턴 선결.
       현재 task_queue 는 `job_kind`(write/verify) 분기뿐이라 **마스터 워커가 UE5 잡을 집어간다**
-- [ ] **마스터 선결 설치** — `agy`(Antigravity CLI) · `bun`/`node`(gajae-code). `claude` 는 있음(§5.3)
+- [~] **마스터 선결 설치** — `agy` ✅ **완료 2026-08-07**(v1.1.10, 인증·동작 검증. 리포트 04) ·
+      `claude` ✅ 있음 · **`bun`/`node` ⬜ 미설치**(gajae-code 선결)
+- [ ] **층2 검증 모델 선정** — `agy models` 목록(gemini-3.6-flash 계열 · claude-sonnet-4-6 ·
+      gpt-oss-120b 등) 중 UE5 환각 API 검출률로 결정. 리포트 02 의 `bench_quality2.py` 하네스 재활용 가능
 - [ ] **팀 전용 컴포넌트 선별** (§5.2-D) — 작성자별 분리·`/review-work`·AgentWiki·Redmine·zip 패키징 등.
       **일괄 폐기 금지, 개별 판단할 것**
 - [ ] **`mcp/local_llm_runner/` 처리** — §6.4 추론 래퍼와 역할 중복. 재사용/대체 결정 후 래퍼 착수
@@ -419,8 +422,32 @@ BC-250 에 UE5 가 없는 것은 문제가 아니다.
 | 도구 | 상태 | 필요한 이유 |
 |---|---|---|
 | `claude` | ✅ 있음 (`~/.local/bin/claude`, v2.1.223) | 층2 검증 폴백 · 마스터 오케스트레이션 |
-| `agy` (Antigravity CLI) | ❌ **없음** | 층2 검증 1순위(`syntax_check` 가 agy 우선) · `mcp/agy_query/` |
+| `agy` (Antigravity CLI) | ✅ **설치·인증·검증 완료 2026-08-07** (`~/.local/bin/agy`, **v1.1.10**) | 층2 검증 1순위(`syntax_check` 가 agy 우선) · `mcp/agy_query/` |
 | `bun` / `node` | ❌ **없음** | gajae-code 가 TypeScript/Bun (§1) |
+
+**🔴 `agy` 이식 부담이 크게 줄었다 — AgentTest 의 윈도우 대응책이 리눅스에선 불필요하다.**
+`history/2026-06-28_1619_gemini_to_agy_migration.md` 가 기록한 함정 4종이 v1.1.10 에서 **전부 해소**됐다
+(마스터 리포트 04 실측):
+
+| AgentTest 기록 (2026-06-28, 윈도우) | 2026-08-07 리눅스 실측 |
+|---|---|
+| `agy -p` 가 비-TTY 면 0바이트 + 20s hang → **가상 PTY(pywinpty) 전환** | ✅ 순수 파이프로 정상 |
+| 출력에 터미널 init ANSI 섞임 → **정규식 strip** | ✅ 깨끗한 텍스트 |
+| **argv 순서 버그**(`-p` 를 맨 끝에, 6곳 정정) | ✅ 순서 무관 |
+| `agy models` 스피너 TUI 미종료 | ✅ 즉시 반환 |
+
+**→ `_agy_pty_call` 헬퍼(5개 호출부 중복) · `--collect-all winpty` 번들 · ANSI strip · argv 정정이
+리눅스 이식 대상에서 빠진다.** `pywinpty` 는 윈도우 전용이라 어차피 등가물로 바꿔야 했는데 그 작업 자체가 사라졌다.
+⚠️ 윈도우(`client/`)에도 적용되는지는 **미확인** — 별도 실측 필요.
+
+**💡 신규 `--output-format json`** (AgentTest 시점엔 없던 옵션) — `status` · `response` ·
+`usage{input/output/thinking/cache_read/total_tokens}` 를 구조화해 반환한다.
+모토상 **상용 토큰 계측이 곧 비용 관리**인데 별도 계측 코드 없이 얻고,
+`**TASK_COMPLETE**` 센티넬 파싱보다 견고하다. `stream-json` 도 있다.
+
+**⚠️ agy 자율 에이전트에 저장소 작업을 위임하지 말 것** — AgentTest 가 사고를 기록했다
+(agy 자율 에이전트가 동의 없이 `watcher/common.py` 수정). `--dangerously-skip-permissions` 를 쓰므로
+작업 디렉터리를 가진 채 자율 실행시키면 파일을 건드린다. **층2 용도(텍스트 in/out)로만 쓸 것.**
 
 **주의:** 위 줄 수/의존 집계는 2026-08-02 클론 기준이다.
 → **2026-08-07 마스터에서 재확인 완료**: 199개 `.py` / 67,038줄 / Windows 의존 **93줄**. 수치 유효.
