@@ -14,15 +14,17 @@ Planning-stage repository for **AX** (AI Transformation) — raising AI usage ac
 
 🔴 **`worker` means three different things.** This repo's `worker/` is the BC-250 inference node. AgentTest's `worker/` is the operator harness that *used to* run on Windows PCs — as of 2026-08-07 it ports to `master/`, and `client/` keeps the name only as a pointer to where it lived. Always disambiguate by directory. See `PLAN.md` §4.1.
 
-**Premise (settled 2026-08-07):** AgentTest was **team** infrastructure — N Windows PCs as the distributed worker pool. This cluster is **one person pooling their own machines at home**, so the worker pool moves to Linux and much of AgentTest's complexity is *team* complexity that should be trimmed, not ported (`PLAN.md` §2.0, §5.2-D).
+**Premise (settled 2026-08-07):** AgentTest was **team** infrastructure — every teammate's Windows PC ran its own local LLM. This cluster is **one person pooling their own machines at home**: BC-250 inherits that *inference compute*, and much of AgentTest's complexity is *team* complexity that should be trimmed, not ported (`PLAN.md` §2.0, §5.2-D).
+
+🔴 **The master is infrastructure, not a workshop.** It assembles the right code chunk from RAG/ontology and hands it over; the Windows PC applies it, builds, tests, and registers the code — or asks again. Files never leave Windows. Don't put file I/O or tool-calling on the master (`PLAN.md` §2.1, §2.3).
 
 **There are two orchestrators**, not one: the Windows work PC's Claude Code (where the user gives instructions) and the master (which orchestrates with Claude, Antigravity `agy`, and BC-250). They share Gitea, task_queue, and the RAG index — so claim/lease/fencing must NOT be stripped just because it's a solo project.
 
-- `master/` — orchestrator ② **and** the worker pool inherited from AgentTest's `worker/`: job claim → code generation → layer-1 self-check → layer-2 syntax check → submit. Also RAG index, ontology/graph, task_queue, the BC-250 inference broker, and the `gajae-code` driver. File I/O happens here.
+- `master/` — infrastructure: RAG index, ontology/graph, task_queue, the BC-250 inference broker, layer-2 verification calls (agy → Claude), and the `gajae-code` driver. It orchestrates *model calls and routing*, never file work.
 - `worker/` — code/config for the BC-250 **inference nodes**. Pure text in/out, never touches files — not workers (`PLAN.md` §2.3: workers are I/O-bound, so hosting them on the boards adds no parallelism; the bottleneck is inference capacity). BC-250 #1 runs Ollama + Vulkan; #2's status is unconfirmed.
-- `client/` — the Windows UE5 PC: orchestrator ① (user-facing Claude Code) plus **engine-bound work only** (UE5 build + `RunTests` = layer 3). Everything else moved to the master.
+- `client/` — the Windows UE5 PC, the **workshop**: orchestrator ① (user-facing Claude Code), the only layer that owns files, applies code, runs UE5 build + `RunTests` (layer 3), and registers passing code. AgentTest's `worker/` harness stays here.
 - Master↔worker calls are meant to be **stateless**: master sends a context string per request, worker infers and responds, no state persists between calls (already validated against BC-250 #1's Ollama API by not reusing its `context` field).
-- **Inference nodes** don't read/write files — only text (context/code fragments/diffs) crosses the wire. File I/O happens on the master (code generation) and on Windows (UE5 builds).
+- Neither the master nor the inference nodes read/write project files — only text (context/code fragments/diffs) crosses the wire. All file I/O happens on Windows.
 - Deterministic gates (tests/linters/type-checkers) take priority over LLM judgment for verification — this is `gajae-code`'s `Ultragoal` stage's job once wired in.
 
 ## Related, external to this repo
