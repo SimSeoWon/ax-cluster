@@ -12,13 +12,17 @@ Planning-stage repository for **AX** (AI Transformation) — raising AI usage ac
 
 ## Architecture (from PLAN.md)
 
-🔴 **`worker` means three different things.** This repo's `worker/` is the BC-250 inference node; AgentTest's `worker/` is the Windows operator, which here is `client/`. Always disambiguate by directory. See `PLAN.md` §4.1.
+🔴 **`worker` means three different things.** This repo's `worker/` is the BC-250 inference node. AgentTest's `worker/` is the operator harness that *used to* run on Windows PCs — as of 2026-08-07 it ports to `master/`, and `client/` keeps the name only as a pointer to where it lived. Always disambiguate by directory. See `PLAN.md` §4.1.
 
-- `master/` — orchestration code that will run on the Linux infra machine (192.168.0.57): task distribution to workers, RAG index, ontology/relationship graph, digital twin, and the driver for the `gajae-code` harness (Deep-Interview → Ralplan → Ultragoal → Team) that calls Claude/Antigravity.
-- `worker/` — code/config for the BC-250 **inference nodes**. BC-250 #1 already has Ollama + Vulkan running with a verified local-LLM inference path (see `~/.claude/projects/-home-sim/memory/project_bc250_ollama_vulkan.md`); BC-250 #2's status is unconfirmed.
-- `client/` — the Windows UE5 PC (**operator**): the only layer that owns files. Job claim/write/verify, UE5 build + `RunTests`. PyInstaller exe distribution stays here; the master doesn't need it.
+**Premise (settled 2026-08-07):** AgentTest was **team** infrastructure — N Windows PCs as the distributed worker pool. This cluster is **one person pooling their own machines at home**, so the worker pool moves to Linux and much of AgentTest's complexity is *team* complexity that should be trimmed, not ported (`PLAN.md` §2.0, §5.2-D).
+
+**There are two orchestrators**, not one: the Windows work PC's Claude Code (where the user gives instructions) and the master (which orchestrates with Claude, Antigravity `agy`, and BC-250). They share Gitea, task_queue, and the RAG index — so claim/lease/fencing must NOT be stripped just because it's a solo project.
+
+- `master/` — orchestrator ② **and** the worker pool inherited from AgentTest's `worker/`: job claim → code generation → layer-1 self-check → layer-2 syntax check → submit. Also RAG index, ontology/graph, task_queue, the BC-250 inference broker, and the `gajae-code` driver. File I/O happens here.
+- `worker/` — code/config for the BC-250 **inference nodes**. Pure text in/out, never touches files — not workers (`PLAN.md` §2.3: workers are I/O-bound, so hosting them on the boards adds no parallelism; the bottleneck is inference capacity). BC-250 #1 runs Ollama + Vulkan; #2's status is unconfirmed.
+- `client/` — the Windows UE5 PC: orchestrator ① (user-facing Claude Code) plus **engine-bound work only** (UE5 build + `RunTests` = layer 3). Everything else moved to the master.
 - Master↔worker calls are meant to be **stateless**: master sends a context string per request, worker infers and responds, no state persists between calls (already validated against BC-250 #1's Ollama API by not reusing its `context` field).
-- Workers don't read/write files directly — only text (context/code fragments/diffs) crosses the wire; actual file I/O and builds happen on whichever machine holds the files.
+- **Inference nodes** don't read/write files — only text (context/code fragments/diffs) crosses the wire. File I/O happens on the master (code generation) and on Windows (UE5 builds).
 - Deterministic gates (tests/linters/type-checkers) take priority over LLM judgment for verification — this is `gajae-code`'s `Ultragoal` stage's job once wired in.
 
 ## Related, external to this repo
@@ -30,7 +34,7 @@ Planning-stage repository for **AX** (AI Transformation) — raising AI usage ac
 
 ## Settled — don't relitigate (PLAN.md §4–§6)
 
-Python for the master orchestrator (it's a port, not a rewrite); master-as-broker for inference requests; `qwen2.5-coder:14b` for code generation and `35B-A3B IQ2_M` for context cooking; streaming chunk gaps as the node heartbeat; **Gitea event-driven instead of polling** and **systemd instead of `process_lifecycle.py`** on the master (§5.4).
+Python for the master orchestrator (it's a port, not a rewrite); master-as-broker for inference requests (orchestration and brokering are different layers — two orchestrators, one broker); `qwen2.5-coder:14b` for code generation and `35B-A3B IQ2_M` for context cooking; streaming chunk gaps as the node heartbeat; **Gitea event-driven instead of polling** and **systemd instead of `process_lifecycle.py`** on the master (§5.4); **BC-250 stays inference-only** and the worker pool lives on the master (§2.3).
 
 ## Open decisions (see PLAN.md §3)
 

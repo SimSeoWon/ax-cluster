@@ -5,9 +5,22 @@
 **언어: Python 확정** (2026-08-06). 신규 작성이 아니라 **AgentTest 기존 자산 이식**이 주 작업이다.
 근거와 상세 배치는 `../PLAN.md` §5.
 
+> 🔴 **2026-08-07 — 워커 풀을 여기가 인계했다.** AgentTest 에서 팀원 윈도우 PC 들이 돌던
+> `claim → write → submit` 루프(`worker/` 전체, 3,657줄)가 마스터로 옮겨온다. 근거와 대안 비교는
+> `../PLAN.md` §2.1·§2.3. 요지: **워커는 I/O 바운드라 여러 기계에 흩어도 병렬성이 늘지 않는다** —
+> 병목은 추론 용량(보드 수)이다.
+>
+> 그리고 **마스터는 서비스 제공자에 그치지 않고 오케스트레이터 ②** 다 — 자기 모델 자원
+> (Claude · Antigravity `agy` · BC-250)으로 독립적으로 작업을 돌린다. 오케스트레이터 ①은
+> 윈도우 작업 PC 의 Claude Code(`../client/README.md`).
+
 ## 역할
 
-- 작업 분배 (task_queue) — 작업자(윈도우)에게 잡 분배, BC-250 추론 노드로 요청 브로커
+- **워커 프로세스 N개** — 잡 claim → 코드 생성(BC-250 추론) → 층1 자기검증 → 층2 문법검사 → 제출.
+  **파일 I/O 가 여기서 일어난다**(저장소 클론·코드 작성). BC-250 은 여전히 파일을 만지지 않는다
+- 작업 분배 (task_queue) — 잡 분배 + **능력 기반 라우팅**(`requires: ue5` 는 윈도우가 claim).
+  ⚠️ 라우팅은 아직 미구현 — `../PLAN.md` §3
+- 오케스트레이션 ② — Claude · Antigravity(`agy`) · BC-250 을 묶어 자체적으로 작업 진행
 - RAG 인덱스(ChromaDB + BM25), 온톨로지/관계그래프, 디지털 트윈
 - 컨텍스트 매니페스트 조립 — "소스=정답" 원칙에 따라 실제 소스 본문을 번들
 - gajae-code 드라이버 — Deep-Interview/Ralplan/Ultragoal 단계 호출·조율
@@ -36,15 +49,20 @@ Ollama 를 그대로 호출하지 않고 **얇은 Python 래퍼를 거친다.** 
 
 | 컴포넌트 | 규모 | Windows 의존 | 순서 |
 |---|---|---|---|
-| `mcp/task_queue/` | — | 5줄 | **1** — 루프 중추, 가장 가벼움 |
-| `mcp/context_search/` | — | 6줄 | 2 — ChromaDB 인덱스 이관 |
+| `mcp/task_queue/` | — | 5줄(둘 다 리눅스 분기 존재) | **1** — 루프 중추, 가장 가벼움 |
+| `mcp/context_search/` | — | 사실상 0 (`sys.platform` 분기 0건) | 2 — ChromaDB 인덱스 이관 |
 | `watcher/` | 21,171줄 | 19줄 | 3 — 가장 크나 순수 데이터라 기계적 |
-| `mcp/master_orchestrator/` 中 오케스트레이션 | — | — | 4 — UE 빌드 부분은 분리 |
+| **`worker/` 전체** | **3,657줄** | 14줄 | **4 — 2026-08-07 신규.** 워커 풀 인계 |
+| **`mcp/agy_query/`** | 194줄 | — | 4 와 동반 — 층2 검증(**`agy` 설치 선결**) |
+| **`mcp/local_llm_runner/`** | 144줄 | — | §6.4 래퍼와 중복 — **재사용/대체 먼저 결정** |
+| `mcp/master_orchestrator/` 中 오케스트레이션 | — | — | 5 — UE 빌드 부분은 분리 |
 
 **여기로 오지 않는 것** (Windows 잔류): `ue_builder.py` · `ue_test_runner.py` ·
-`executor_integration_build.py` · `tdd_dryrun.py` · `mcp/commandlet_runner/` · `worker/` 전체.
-통합 빌드 게이트는 인프라에 고정하지 않고 **task_queue 잡으로 큐잉 → UE5 보유 작업자가 claim**하는
+`executor_integration_build.py` · `tdd_dryrun.py` · `mcp/commandlet_runner/` — **전부 엔진 바운드**.
+통합 빌드 게이트는 인프라에 고정하지 않고 **task_queue 잡으로 큐잉 → UE5 보유 기계가 claim**하는
 CI 러너 패턴으로 분리한다.
+
+**선결 설치 (2026-08-07 실측)**: `claude` ✅ 있음(v2.1.223) / `agy` ❌ 없음 / `bun`·`node` ❌ 없음.
 
 ## 설계 제약
 
