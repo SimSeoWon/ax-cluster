@@ -103,8 +103,10 @@ BC-250 #1(1호기)에서 이미 검증 완료:
       `.claude/_regenerate_queue.jsonl` 이 원형. **`task_queue` 와 합치지 말 것**
 - [ ] **BM25 원자성 확인** (§5.4.6) — 더블 버퍼가 벡터/태그캐시만 덮고 BM25 는 제자리 갱신이다.
       실사용에서 문제인지 확인 후 판단(추측 금지)
-- [ ] **기존 "서버 모드"와의 중복도 판정** (§5.4.7) — `docs/rag-system.md`·`docs/runbook.md` §11 정독 후
-      "리눅스에서 서버 모드 구동"인지 재설계인지 결정. 이식 작업량이 크게 달라진다
+- [x] ~~기존 "서버 모드"와의 중복도 판정~~ — **완료 2026-08-07** (§5.4.7). 계층별로 갈린다:
+      `context_search --serve`·`task_queue` 는 **거의 그대로 이식 가능**(`sys.platform` 분기 0건 / 2건 모두
+      리눅스 분기 존재), `watcher/` git 감시는 **재설계**, BC-250 추론 브로커는 **신규**.
+      ⚠️ 서버 모드는 **RAG 전용**이지 중앙 오케스트레이션이 아니다 — git 감시는 여전히 `watch.exe` 폴링
 - [ ] 작업자(윈도우) ↔ 마스터 경로 — AgentTest `task_queue` 를 리눅스 마스터로 이관
 - [ ] gajae-code를 이 오케스트레이션에 실제로 연결하는 방법 — WebSocket SDK로 마스터가 외부 컨트롤러 역할을 하는 구조가 유력, 상세 설계 필요
 - [ ] 온톨로지 기반 디지털 트윈 설계 — 어떤 데이터를 온톨로지화할지 구체화 필요
@@ -238,6 +240,13 @@ git `task/<task_id>` 브랜치에 커밋으로 누적 → 다음 라운드 워�
 | `worker/` | 3,657 |
 
 **② Windows 의존이 92줄뿐이다 (0.14%)** — `win32`/`ctypes.windll`/`winreg`/`STARTUPINFO`/`.bat` 기준.
+
+> ⚠️ **이 수치는 과대평가다 (2026-08-07 실측 정정).** grep 이 **주석·문자열까지 세고 있다.**
+> `mcp/context_search/` 의 6건을 실제로 열어보니 3건은 "install.bat 을 다시 실행하세요" 안내 **문자열**,
+> 2건은 **주석**, 1건은 docstring 의 `C:\temp\...` **예시 경로**였고 **진짜 코드는 1줄**
+> (`llm_chat.py:196` — `agy_path.endswith(('.cmd','.bat'))`)뿐이다.
+> **실질 이식 장벽은 이 숫자보다 훨씬 작다.** 판정 기준으로는 `sys.platform`/`os.name` 분기가 더 정확하며,
+> 그 기준으로는 `context_search` 0건 · `task_queue` 2건(둘 다 리눅스 분기 존재) · `watcher/` 3건이다(§5.4.7).
 게다가 가장 밀집한 곳이 **어차피 Windows 에 남아야 할 컴포넌트**다:
 `ue_builder.py`(19) · `commandlet_runner`(5) · `ue_test_runner.py`(2).
 **리눅스로 옮길 컴포넌트의 Windows 의존은 약 30줄.** 이식이지 재작성이 아니다.
@@ -446,18 +455,47 @@ docstring 이 밝힌 이유 두 가지: ① feature 브랜치 작업 중 main �
 3. **서버 모드 전용 기능이다.** docstring 이 "서버 모드에서 무중단 벡터 인덱싱"이라 명시한다.
    마스터가 쓸 모드가 정확히 그 모드다 — 유리한 조건이다.
 
-#### 5.4.7 재확인할 것 — 마스터가 만들려는 게 기존 "서버 모드"와 얼마나 겹치나
+#### 5.4.7 ✅ 기존 "서버 모드"와의 중복도 판정 완료 (2026-08-07)
 
-AgentTest `CLAUDE.md` 는 배포 모드를 **두 가지**로 적고 있다:
+AgentTest 는 이미 **서버/클라이언트 모드**를 갖고 있다(`CLAUDE.md`):
+*"공용 서버 1대에서 Git 감시 + RAG 중앙 관리, 팀원 PC 의 Claude Code 는 HTTP 로 RAG 검색"*.
+`docs/rag-system.md`·`docs/runbook.md` §11 정독 + 코드 실측으로 판정했다.
 
-> 1. **로컬 모드**: 각 팀원 PC 에서 `watch.exe` 가 Git 감시 + 컨텍스트 생성 + 벡터 인덱싱을 로컬 수행
-> 2. **서버/클라이언트 모드**: 공용 서버 1대에서 Git 감시 + RAG 중앙 관리, 팀원 PC 의 Claude Code 는 HTTP 로 RAG 검색
+**결과가 계층별로 깨끗하게 갈린다:**
 
-**2번이 우리가 마스터에서 하려는 것과 상당히 겹친다.** 이식 착수 전
-`docs/rag-system.md`(context_search 3모드·HTTP API·더블 버퍼링)와
-`docs/runbook.md` §11(인프라 컴퓨터 하드웨어 교체 — 익스포트/임포트)을 읽고,
-**"리눅스에서 서버 모드를 돌리는 것"에 가까운지 재설계인지 판정할 것.**
-전자라면 §5.3 이식 순서의 작업량이 크게 줄어든다.
+| 계층 | 판정 | 근거 (실측) |
+|---|---|---|
+| **RAG/온톨로지 서비스** (`context_search --serve`) | **거의 "리눅스에서 서버 모드 구동"** | `mcp/context_search/` 에 `sys.platform` 분기 **0건**. FastAPI+uvicorn+ChromaDB 전부 크로스플랫폼 |
+| **`task_queue`** | **거의 그대로 이식** | 이미 독립 FastAPI/uvicorn 서비스. `sys.platform` 2건(`reclaim.py`·`persistence.py`)인데 **둘 다 `creationflags=... if win32 else 0` 으로 리눅스 분기가 이미 있음** |
+| **`watcher/` git 감시** | **재설계** | 폴링→Gitea 이벤트(§5.4.2), `process_lifecycle`·`network_firewall` 폐기(§5.4.3) |
+| **BC-250 추론 브로커** | **신규 작성** | 서버 모드에 존재하지 않음 (§6.4) |
+
+**⚠️ "서버 모드 = 중앙 오케스트레이션"이 아니다.** `--serve` 는 **RAG 전용**이고
+`http_server.py` 에 git 관련 코드가 한 줄도 없다. 실제 구조는:
+
+```
+watch.exe (서버 PC 에서 폴링) → 컨텍스트 MD 생성 → context_search --upsert → ChromaDB
+context_search --serve (FastAPI) ← 팀원 PC 들이 HTTP 로 검색
+```
+
+**이미 중앙화된 것은 RAG/온톨로지 조회뿐이고 git 감시는 여전히 서버 PC 의 `watch.exe` 폴링이다.**
+따라서 우리가 새로 만들 것(Gitea 이벤트 구동·추론 브로커)은 그대로 남는다.
+
+**그대로 쓸 수 있는 자산** — `--serve` 의 HTTP 엔드포인트 30여 종:
+검색(`combined`/`vector`/`tags`) · 인덱스(`upsert`/`rebuild`/`status`) · 도메인 CRUD ·
+온톨로지 조회 9종 · `health`. 모드 전환도 **config 키(`server_mode`/`context_server_url`)만으로**
+되도록 설계돼 있어 코드 변경이 필요 없다.
+
+**인프라 이전 절차도 이미 문서화돼 있다** (`docs/runbook.md` §11):
+`--export-state` / `--import-state` 로 **`.claude/context/`(컨텍스트 MD)와
+`.claude/ontology/domains/`(온톨로지 YAML) 두 개만** 옮기면 된다.
+`vector_db`·BM25·`class_graph.db`·`dependency_graph.db` 는 전부 파생 자산이라 재기동 시 자동 복구.
+단 그 절차는 **"새 컴퓨터에 `AgentWatch.zip` 설치"를 전제**하므로 리눅스에선
+`python -m context_search --serve` 로 대체하고, self-heal 트리거인 `watch.exe` 재기동은
+포팅된 watcher 또는 `POST /api/v1/index/rebuild` 직접 호출로 대체해야 한다.
+
+**→ §5.3 의 이식 순서 판단은 유효하고, 1·2단계 작업량은 예상보다 적다.
+진짜 작업은 3단계 `watcher/` 재설계와 신규 브로커에 몰려 있다.**
 
 ---
 
