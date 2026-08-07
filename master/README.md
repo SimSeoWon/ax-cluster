@@ -11,7 +11,7 @@
 | `test_verdict.py` | 계약·체이닝 테스트 19건. `python3 master/test_verdict.py` |
 | `task_queue/` | **잡 분배 큐** (AgentTest `mcp/task_queue/` 이식, 2,717줄). HTTP 서비스 + MCP stdio |
 | `requirements.txt` | 마스터 의존성. AgentTest 엔 없어 `build.bat:29` 기준으로 신규 작성 |
-| `systemd/ax-task-queue.service` | systemd 유닛 (§5.4.4 확정: systemd + venv) |
+| `systemd/ax-task-queue.service` | systemd 유닛 (§5.4.4 확정: systemd + venv). ✅ **설치·enable·가동 중** — `systemctl status ax-task-queue`, 로그는 `journalctl -u ax-task-queue` |
 
 ### task_queue 실행
 

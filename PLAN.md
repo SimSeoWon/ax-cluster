@@ -1326,9 +1326,43 @@ MCP stdio 를 `mcp_server.py` 로 떼고 **지연 import** 로 바꿨다.
 ### 9.5.4 실행 구성
 
 - venv: `ax-cluster/.venv` (`master/requirements.txt` — AgentTest 엔 없어 `build.bat:29` 기준 신규 작성)
-- 유닛: `master/systemd/ax-task-queue.service` (`Restart=always` · journald · `ProtectSystem=strict` +
-  `ReadWritePaths=/home/sim/ax-state`). **아직 설치·enable 하지 않았다** — 수동 기동으로만 검증했다
 - ⚠️ 선결이었던 `python3-venv`·`python3-pip` 가 이 박스에 없어 `pkexec` 로 설치했다
+
+### 9.5.5 ✅ systemd 등록 완료 (2026-08-08)
+
+`/etc/systemd/system/ax-task-queue.service` 설치 → `enable` → `start`. **is-enabled=enabled / is-active=active.**
+
+| 검증 | 결과 |
+|---|---|
+| 서비스 기동·응답 | ✅ `0.0.0.0:8101`, journald 로 로그 수집 |
+| `ExecStart` 가 `PYTHONPATH` 없이 도는가 | ✅ `WorkingDirectory` 만으로 `python -m master.task_queue` 성립 (등록 **전에** 확인) |
+| 샌드박스 실제 적용 | ✅ `ProtectSystem=strict` · `ProtectHome=read-only` · `NoNewPrivileges=yes` · `ReadWritePaths=/home/sim/ax-state` |
+| 샌드박스 하에서 상태 쓰기·git 감사 커밋 | ✅ 동작 (`ReadWritePaths` 구멍으로 통과) |
+| 🔴 **`Restart=always` 실동작** | ✅ `kill -9` 후 systemd 가 재기동(`NRestarts=1`), **상태는 디스크에서 복원** |
+
+**→ §5.4.3 의 "`process_lifecycle.py`(Job Object) 폐기하고 systemd 에 넘긴다"가 실증됐다.**
+자식 프로세스 `.poll()` 생존 감시를 손으로 하던 것이 `Restart=always` 한 줄로 대체된다.
+
+### 9.5.6 🔴 미결 — 포트 8101 은 지금 LAN 에서 닿지 않는다 (그리고 인증이 없다)
+
+실측으로 드러난 두 가지:
+
+1. **`ufw` 가 활성이고 기본 정책이 `deny (incoming)` 인데 8101 규칙이 없다.**
+   현재 허용 목록: 22/tcp · 80 · 3000/tcp(Gitea, 의도된 인터넷 노출) · 3389/tcp(xrdp).
+   즉 서비스는 `0.0.0.0:8101` 에 바인드돼 있지만 **윈도우 작업장에서 접근 불가**다.
+2. **`task_queue` HTTP 서버에 인증 계층이 0건이다**(`server.py` 에 auth/token/Depends 히트 0).
+   AgentTest 시절엔 팀 내부망 전제였다.
+
+**둘을 같이 봐야 한다** — 인증이 없으므로 여는 범위를 반드시 제한해야 한다:
+
+| 방식 | 평가 |
+|---|---|
+| `ufw allow 8101` (Anywhere) | ❌ **금지.** 인증이 없다. Gitea 처럼 라우터 포트포워딩까지 걸리면 큐를 누구나 조작한다 |
+| `ufw allow from 192.168.0.0/24 to any port 8101` | ✅ 현실적. BC-250 방화벽이 `192.168.0.57` 만 허용하는 것과 같은 결 |
+| 바인드를 `127.0.0.1` 로 낮추고 SSH 터널 | 더 안전하나 작업장 2대 연결이 번거롭다 |
+
+⚠️ **아직 열지 않았다.** `client/` 가 스텁이라 지금 여는 것은 이득 없이 노출만 늘린다.
+윈도우 작업장을 붙일 때 **LAN 한정 규칙**으로 열 것. 그때 **인증 추가 여부도 같이 판단**한다.
 
 ---
 
