@@ -117,10 +117,13 @@ BC-250 은 **절전모드 복귀가 불가**(SMU 한계)하지만, 원격 전원
   `qwen3-coder` 는 공식 최소 19GB 라 **적재 불가**
 - **마스터 GPU 증설**(GTX 1070 Ti) — 추론용이 아니라 **CUDA 확보**(RAG 임베딩 가속·리랭킹·LoRA).
   선결: PSU 용량 확인 + 드라이버 설치
-- 🔴 **에이전틱 executor 용 tool-calling 모델** — `qwen2.5-coder:14b` 는 **구조화된 `tool_calls` 를
-  못 낸다**(BC-250 실측 3/3, `temperature:0` — 호출 JSON 이 `content` 에 문자열로 나온다).
-  `/api/show` 는 `capabilities:['tools']` 를 광고하는데도 그렇다. `35B-A3B` 는 정상 방출하지만
-  **코드 생성 시 API 환각**이 있는 모델이다. 하네스를 에이전틱으로 바꾸려면 이 충돌부터 풀어야 한다
+- 🔴 **에이전틱 executor 를 누가 채우나** — tool-calling 관문 4종(단발·선택·멀티턴·억제)을
+  3모델에 실측한 결과, **통과는 `35B-A3B` 뿐(4/4)**이다. `qwen2.5-coder:14b` 는 **1/4**
+  (구조화된 `tool_calls` 를 못 내고 JSON 이 `content` 로 샌다 — `/api/show` 가 `capabilities:['tools']`
+  를 광고하는데도), `devstral:24b` 는 **3/4**(프롬프트에 형식 지시가 붙으면 호출을 빠뜨림 — 탈락).
+  그런데 35B 는 **코드 생성 시 API 환각**이 있는 모델이다.
+  → 가설: **35B=드라이버 / 14b=코드 생성기를 도구로 호출**. 단 `MAX_LOADED_MODELS=1` 이라
+  **BC-250 #2 가 선결**이다 ([`PLAN.md`](PLAN.md) §9.4)
 - **능력 기반 라우팅**(`requires: ue5`) — 빌드 게이트를 CI 러너 패턴으로 돌리기 위한 선결.
   현재 task_queue 는 `job_kind`(write/verify) 분기뿐
 - **이벤트 큐 설계** — Gitea 웹훅 전환의 전제(영속 + 단일 소비자 + 중복 합치기). 폴링이 공짜로 주던
