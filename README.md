@@ -78,6 +78,9 @@ AgentTest 복잡도의 상당 부분은 **팀 협업 복잡도**다. 그대로 �
 | **git 조작 권한** | **사람 세션 / 파이프라인 분리** — 사람은 되돌리기 어려운 것만 금지(force push·reset·브랜치 삭제), 파이프라인은 작업 브랜치 자율 + `main` 직접 push 금지 ([`PLAN.md`](PLAN.md) §8) |
 | **Unreal MCP 연동** | **윈도우 로컬 전용** — 에디터 내장 MCP 는 loopback 전용이고 인증 계층이 없어 마스터가 붙을 수 없다. `ue-editor-operator` 서브에이전트가 윈도우에서 몬다 |
 | **원격 전원 제어** | **확보 완료(2026-08-07)** — 끄기는 `sudo -n systemctl poweroff`(NOPASSWD 등록), 켜기는 스마트 콘센트 재공급 시 BIOS 자동 부팅. 전원만 넣으면 사람 개입 없이 추론 노드로 복귀 |
+| **마스터 실행 모델** | **systemd + venv 확정(2026-08-08)** — Compose 규약의 예외. 층2 검증이 호스트 CLI(`agy`·`claude`)와 홈 디렉터리 인증을, `task_queue` 가 git+SSH 키를 요구하고, Gitea 훅·BC-250 방화벽·미래 CUDA 가 전부 호스트 결합이다. 의존성은 순수 pip 뿐이라 venv 로 충분 ([`PLAN.md`](PLAN.md) §5.4.4) |
+| **gajae-code 배치** | **하네스는 윈도우, 마스터는 모델 백엔드(2026-08-08)** — gjc 의 SDK WebSocket 은 **loopback 전용**이고 `--mode rpc/bridge` 는 제거돼 마스터가 원격 컨트롤러가 될 수 없다. gjc 는 파일을 소유한 윈도우에서 돌고, 마스터는 **Ollama API 호환 브로커**(`/api/chat`·`/api/tags`·`/api/show` 3종)로 붙는다 ([`PLAN.md`](PLAN.md) §9) |
+| **검증 루프** | **`ultragoal`(내장) + `extragoal`(스킬 설치)** — 만들려던 재검증 루프가 이미 있다. verdict 마지막 줄이 `VERDICT: APPROVE`/`REQUEST_CHANGES`, **fail-closed**, 교차 계열 강제, 읽기 전용은 `--tools` 허용목록으로 강제 ([`PLAN.md`](PLAN.md) §9.3) |
 
 **3층 게이트가 필요한 이유:** UE5 태스크 6종 실측에서 **오류의 절반이 컴파일을 통과했다**
 (`Cast<IInteractable>` 직접 호출, `IsValid()` 로직 오류 등 — 빌드는 되는데 런타임에 잘못 동작).
@@ -114,8 +117,10 @@ BC-250 은 **절전모드 복귀가 불가**(SMU 한계)하지만, 원격 전원
   `qwen3-coder` 는 공식 최소 19GB 라 **적재 불가**
 - **마스터 GPU 증설**(GTX 1070 Ti) — 추론용이 아니라 **CUDA 확보**(RAG 임베딩 가속·리랭킹·LoRA).
   선결: PSU 용량 확인 + 드라이버 설치
-- **마스터 실행 모델 — systemd vs Docker Compose** — 마스터 `~/CLAUDE.md` 규약은 Compose 선호,
-  워크로드 성격은 systemd 가 단순. 이식 착수 전 결정 필요 ([`PLAN.md`](PLAN.md) §5.4.4)
+- 🔴 **에이전틱 executor 용 tool-calling 모델** — `qwen2.5-coder:14b` 는 **구조화된 `tool_calls` 를
+  못 낸다**(BC-250 실측 3/3, `temperature:0` — 호출 JSON 이 `content` 에 문자열로 나온다).
+  `/api/show` 는 `capabilities:['tools']` 를 광고하는데도 그렇다. `35B-A3B` 는 정상 방출하지만
+  **코드 생성 시 API 환각**이 있는 모델이다. 하네스를 에이전틱으로 바꾸려면 이 충돌부터 풀어야 한다
 - **능력 기반 라우팅**(`requires: ue5`) — 빌드 게이트를 CI 러너 패턴으로 돌리기 위한 선결.
   현재 task_queue 는 `job_kind`(write/verify) 분기뿐
 - **이벤트 큐 설계** — Gitea 웹훅 전환의 전제(영속 + 단일 소비자 + 중복 합치기). 폴링이 공짜로 주던

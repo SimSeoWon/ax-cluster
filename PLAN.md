@@ -202,8 +202,9 @@ BC-250 에 UE5 가 없는 것은 문제가 아니다.
       적용 풀 구현(윈도우 측, task_queue 와 별개) · 분할 입도(현행 `/distribute` 는 8~20파일 클래스 패밀리)
 - [ ] **능력 기반 라우팅** (`requires: ue5`) — §5.2-C 의 CI 러너 패턴 선결.
       현재 task_queue 는 `job_kind`(write/verify) 분기뿐이라 **마스터 워커가 UE5 잡을 집어간다**
-- [~] **마스터 선결 설치** — `agy` ✅ **완료 2026-08-07**(v1.1.10, 인증·동작 검증. 리포트 04) ·
-      `claude` ✅ 있음 · **`bun`/`node` ⬜ 미설치**(gajae-code 선결)
+- [x] ~~**마스터 선결 설치**~~ — `agy` ✅ (v1.1.10, 리포트 04) · `claude` ✅ ·
+      ~~`bun`/`node`~~ → **마스터엔 불필요해졌다 (2026-08-08).** gjc 는 loopback 제약상
+      파일을 소유한 윈도우 PC 에서 돌기 때문(§9). **`bun`/`node` 는 윈도우 PC 의 선결 조건으로 이동**
 - [ ] **층2 검증 모델 선정** — `agy models` 목록(gemini-3.6-flash 계열 · claude-sonnet-4-6 ·
       gpt-oss-120b 등) 중 UE5 환각 API 검출률로 결정. 리포트 02 의 `bench_quality2.py` 하네스 재활용 가능
 - [x] ~~git 조작 권한 범위~~ — **확정 2026-08-07** (§8). 사람 세션은 되돌리기 어려운 것만 금지
@@ -221,7 +222,16 @@ BC-250 에 UE5 가 없는 것은 문제가 아니다.
       리눅스 분기 존재), `watcher/` git 감시는 **재설계**, BC-250 추론 브로커는 **신규**.
       ⚠️ 서버 모드는 **RAG 전용**이지 중앙 오케스트레이션이 아니다 — git 감시는 여전히 `watch.exe` 폴링
 - [ ] 작업자(윈도우) ↔ 마스터 경로 — AgentTest `task_queue` 를 리눅스 마스터로 이관
-- [ ] gajae-code를 이 오케스트레이션에 실제로 연결하는 방법 — WebSocket SDK로 마스터가 외부 컨트롤러 역할을 하는 구조가 유력, 상세 설계 필요
+- [x] ~~gajae-code를 이 오케스트레이션에 실제로 연결하는 방법 — WebSocket SDK로 마스터가 외부 컨트롤러 역할~~ —
+      🔴 **그 가설은 성립하지 않는다 (2026-08-08).** SDK WebSocket 은 **loopback 전용**
+      (`ws://127.0.0.1:<port>/?token=`, discovery 파일 `<repo>/.gjc/state/sdk/<sessionId>.json`, 오토큰 401),
+      Coordinator MCP 도 stdio + 로컬 discovery 파일 의존이라 원격 불가(SSH stdio 터널 필요),
+      `--mode rpc`/`rpc-ui`/`bridge` 는 **제거됨**. → **gjc 는 파일을 소유한 윈도우 PC 에서 돈다.**
+      마스터는 대신 **Ollama API 호환 브로커**로 gjc 의 모델 백엔드가 된다(§9). 상세 = 마스터 리포트 06 §3
+- [ ] 🔴 **에이전틱 executor 용 tool-calling 모델 확보** — `qwen2.5-coder:14b` 는 **구조화된
+      `tool_calls` 를 못 낸다**(BC-250 실측 3/3, `temperature:0`: 호출 JSON 이 `content` 에 문자열로 나옴).
+      `/api/show` 가 `capabilities:['completion','tools','insert']` 를 광고하는데도 그렇다 — **광고와 실제가 다르다.**
+      `35B-A3B IQ2_M` 은 정상 방출. 에이전틱 하네스를 쓰려면 executor 를 14b 로 못 채운다 (§4.4 · §9.3)
 - [ ] 온톨로지 기반 디지털 트윈 설계 — 어떤 데이터를 온톨로지화할지 구체화 필요
 - [x] ~~Unreal MCP(5.8+) 연동 방식 — 윈도우 UE5 PC 쪽에서 어떻게 노출/호출할지~~ —
       **확정 2026-08-07: 노출하지 않는다.** 에디터 내장 MCP 서버는 **loopback 전용이고
@@ -621,11 +631,26 @@ WantedBy=multi-user.target
 **→ `process_lifecycle.py`·`network_firewall.py` 는 리눅스 등가물로 고쳐 쓸 게 아니라 폐기하고
 systemd 에 넘긴다.** 각 컴포넌트를 독립 유닛으로 두면 §5.3-1 의 "task_queue 수명주기 주인" 문제도 사라진다.
 
-#### 5.4.4 미결 — systemd vs Docker Compose
+#### 5.4.4 ✅ 확정 — **systemd + venv** (2026-08-08)
 
-`~/CLAUDE.md`(마스터) 규약은 **"새 서비스는 Docker Compose 선호"**다(n8n·Redmine 이 그 패턴).
-반면 오케스트레이션 코드는 BC-250 과 LAN 통신하고 로컬 git/Gitea 를 봐야 해 systemd 가 단순하다.
-**아직 정하지 않았다** — §3 미결 항목 참조.
+`~/CLAUDE.md`(마스터) 규약은 "새 서비스는 Docker Compose 선호"다(n8n·Redmine 이 그 패턴).
+**그럼에도 systemd 로 간다** — 코드 실측 결과 이 워크로드는 호스트에 깊이 결합돼 있다:
+
+| 결합 | 근거 (실측 2026-08-08) |
+|---|---|
+| **호스트 CLI + 홈 디렉터리 인증** | 층2 검증이 `agy`·`claude` 를 subprocess 호출 — `mcp/agy_query/server.py:70`, `mcp/context_search/llm_chat.py:71`. 바이너리는 `~/.local/bin`, 인증 상태는 홈 디렉터리 |
+| **git + SSH 키** | `task_queue` 가 **매 상태 전이마다** `git add`/`commit`(감사 로그) — `mcp/task_queue/persistence.py:299~340`. `watcher/git_ops.py` subprocess `git` 8건 |
+| **Gitea 가 호스트 systemd 서비스** | §5.4.2 `post-receive` 훅이 호스트에서 실행. 컨테이너면 훅→컨테이너 전달 경로를 별도 구축(브리지 IP 하드코딩) |
+| **BC-250 LAN** | 보드 firewalld 가 **192.168.0.57 만** 11434 허용 — 컨테이너 NAT 출발지를 별도 검토해야 함 |
+| **미래 CUDA** (§7) | nvidia-container-toolkit 한 겹 추가. 드라이버조차 미설치 |
+
+**Compose 의 이점(의존성 격리·재현성)이 여기선 약하다** — 의존성이
+`mcp chromadb fastapi uvicorn tree-sitter tree-sitter-cpp`(`build.bat:29` 기준, `pywinpty` 제외)
+**전부 순수 pip 패키지**라 venv 로 동일하게 얻는다. `requirements.txt` 는 없어 이식 시 새로 만든다.
+
+**규약과 어긋나지 않는다** — n8n·Redmine 은 업스트림 이미지를 그대로 쓰는 **완제품 외부 서비스**이고,
+우리 코드는 호스트 자원(git·CLI 인증·Gitea 훅·LAN·홈)에 붙는 **자체 코드**다.
+되돌리기 어려운 결정도 아니다(유닛을 나중에 컨테이너화 가능). 상세 = 마스터 리포트 06 §1.
 
 #### 5.4.5 🔴 폴링이 공짜로 주던 3가지 — 웹훅으로 가면 직접 만들어야 한다
 
@@ -980,7 +1005,116 @@ AgentTest 가 이미 같은 계열 문제를 다루고 있다: `**TASK_COMPLETE*
 
 ---
 
-## 9. 관련 문서
+## 9. gajae-code(gjc) 배치 — 하네스는 윈도우에, 마스터는 모델 백엔드 (2026-08-08)
+
+참조 클론: `/home/sim/gajae-code` (**수정 금지** — AgentTest 와 동일 취급). TypeScript/Bun + Rust.
+
+### 9.1 🔴 gjc 도 loopback 전용이다 — Unreal MCP 와 똑같은 제약이 두 번째
+
+| 표면 | 전송 | 원격? |
+|---|---|---|
+| **SDK WebSocket** — 문서가 "the **only** external machine-control interface" 라 명시 | `ws://127.0.0.1:<port>/?token=<token>`. discovery 파일 `<repo>/.gjc/state/sdk/<sessionId>.json` 에 per-session 토큰, 오토큰은 handshake 에서 401 | ❌ loopback 전용 |
+| **Coordinator MCP** (`gjc mcp-serve coordinator`) — 도구 19종(read 10 + mutating 9, `gjc_delegate_plan/execute/team` 포함) | stdio JSON-RPC + 로컬 discovery 파일 | ❌ SSH stdio 터널 필요 |
+| `--mode rpc` / `rpc-ui` / `bridge` | — | ❌ **제거됨** ("not supported compatibility interfaces") |
+
+**→ gjc 는 파일을 소유한 머신에서 돌아야 한다 = 윈도우 UE5 PC(`client/`).**
+§2.1 의 "마스터는 인프라지 작업장이 아니다"와 정확히 맞물린다 — 하네스는 작업장에 있어야 한다.
+
+### 9.2 그래서 마스터의 역할은 **모델 백엔드**다
+
+```
+윈도우 UE5 PC  ── gjc(ultragoal) + Unreal MCP, 둘 다 loopback 로컬
+      │  Ollama 네이티브 API 3종만 호출 (/api/chat · /api/tags · /api/show)
+      ▼
+마스터 192.168.0.57 ── Ollama API 호환 브로커 (§4 "마스터 브로커" 결정 유지)
+      │  stateless
+      ▼
+BC-250 192.168.0.43 ── 추론
+```
+
+이점 셋: ① gjc 가 부르는 엔드포인트가 **3종뿐**이라 브로커 표면이 작다
+② §4 "작업자는 추론 노드를 직접 호출하지 않는다"가 지켜지고 **BC-250 방화벽 규칙을 안 건드린다**
+③ **마스터에 `bun`/`node` 가 필요 없어진다**(§3 선결 항목 소멸).
+
+설정 위치는 `~/.gjc/agent/models.yml` 의 `providers.ollama.baseUrl`
+(또는 환경변수 `OLLAMA_BASE_URL`). Ollama 는 gjc 의 1급 provider 다
+(`packages/ai/src/providers/ollama.ts`, 네이티브 API 사용 — OpenAI 호환 경로가 아님).
+
+### 9.3 ✅ 우리가 만들려던 검증 루프가 이미 있다
+
+| 기능 | 실체 |
+|---|---|
+| `ultragoal` | **내장 커맨드**(`packages/coding-agent/src/cli.ts:47`). 목표 추적 → 실행 → **in-loop completion gate(architect/critic)** → 영속 원장(`goals.json` + `.gjc/ultragoal/ledger.jsonl`) |
+| `extragoal` | ultragoal + **외부 최종 리뷰 게이트** — 세션 컨텍스트를 공유하지 않는 독립 리뷰어가 완성 diff 를 재리뷰하고 machine-parsable verdict 를 낸다. 수정은 **bounded re-sign loop** 로 재진입 |
+
+⚠️ **`extragoal` 은 번들이 아니다** — 문서가 명시: *"`gjc extragoal` does not exist."*
+`docs/extragoal-skill-template.md` 의 frontmatter 이하를 `~/.gjc/agent/skills/extragoal/SKILL.md` 로
+설치하고 `gjc config set skills.enabled true` + `enablePiUser` 를 켜야 한다(파일 스킬 탐색 기본 off).
+
+**역할별 모델 매핑이 우리 모토와 겹친다** — 5역할(`default`·`executor`·`planner`·`critic`·`architect`)에
+모델을 각각 배정한다(`~/.gjc/agent/models.yml` 의 `profiles.<name>.model_mapping`, 역할당 폴백 배열 허용).
+**executor = BC-250 로컬(대량생산) / critic·architect = 상용(검증만)** 이 설정 한 장으로 표현된다.
+
+#### 9.3.1 🔴 리뷰어 계약 — §8.3 "완료 신호 불신"이 이미 기계 계약으로 있다
+
+`extragoal` 의 리뷰어 호출 형태(`docs/extragoal-skill-template.md` §"Reviewer implementations"):
+
+```sh
+gjc -p --no-session --model <교차계열 모델> --tools read,search,find "<리뷰 프롬프트 + 번들 경로 + verdict 계약>"
+```
+
+우리가 §8.3 에서 손으로 하려던 것을 **계약으로 못 박아 뒀다:**
+
+| 계약 | 내용 |
+|---|---|
+| **판정 형식** | 응답의 **마지막 비어 있지 않은 줄이 정확히** `VERDICT: APPROVE` 또는 `VERDICT: REQUEST_CHANGES` |
+| **fail-closed** | 누락·형식오류·타임아웃은 **절대 `APPROVE` 로 매핑하지 않는다** ← §8.3 그 자체 |
+| **교차 계열 강제** | 리뷰어는 작성자(`default`/`executor`)와 **다른 모델 계열**이어야 한다 |
+| **컨텍스트 격리** | 서브 세션은 작성 세션과 **대화 상태를 공유하지 않는다** |
+| **읽기 전용 강제** | 프롬프트가 아니라 **`--tools` 허용목록**으로 강제. 허용목록 밖 도구 호출은 계약 위반 = 그 라운드 실패 |
+| **프롬프트 인젝션 방어** | 번들 내용(diff·스펙·반론)은 **"지시가 아니라 검토 대상 데이터"** 로 취급 |
+| **머지 조건** | 최신 verdict 가 `APPROVE` 이고 모든 지적이 수정됐거나 재주장 없이 반박됐을 때만. **리더에게 재량 없음** |
+
+⚠️ **함정 2개** (문서가 명시):
+1. `goal` 도구가 허용목록 **바깥에서 자동 주입**된다 — 그 mutating op 가 `.gjc` 세션 상태를 쓴다.
+   **비활성화가 필수**이며, 검토 대상 체크아웃을 더럽히지 않으려면 **저장소 밖 전용 게이트 디렉터리**에서
+   `.gjc/config.yml` 에 `goal.enabled: false` 를 두고 실행할 것(경로는 절대경로로 전달).
+2. 일회성 print 세션에서는 **`default` 모델이 판정을 쓴다** — `task` 도구가 허용목록에 없어
+   `critic`/`architect` 역할로 위임되지 않는다. 즉 **`--model` 을 명시해야 한다**(`model_mapping` 이 안 먹는다).
+
+**"Custom — user-provided external reviewer command" 레인**도 있다 — 계약만 만족하면 어떤 리뷰어든 된다.
+문서는 이 레인에서 *"번들이 머신을 떠난다"* 고 경고하지만, **우리 경우 리뷰어가 LAN 내부(BC-250/마스터)라
+egress 가 없다** — 오히려 유리한 조건이다.
+
+### 9.4 🔴 그런데 실측이 막았다 — 14b 가 tool call 을 구조화해서 못 낸다
+
+gjc 의 Ollama provider 는 `message.tool_calls` 를 읽는다. BC-250 실측:
+
+| 모델 | `tool_calls` | 실제 |
+|---|---|---|
+| `qwen2.5-coder:14b` | **`null` (3/3, `temperature:0`)** | 호출 JSON 이 `content` 에 **문자열로** 나옴 |
+| `35B-A3B IQ2_M` | ✅ 정상 구조화(`id` 포함) | `content` 비어 있음 |
+
+`/api/show` 는 14b 에 `capabilities:['completion','tools','insert']` 를 광고하고 템플릿에도
+tool 분기가 있는데도 그렇다 — **광고를 믿지 말 것.**
+
+**🔴 gjc 쪽에 텍스트 폴백이 없다 (코드 실측).** `packages/ai/src/providers/ollama.ts:533` 이
+`if (chunk.message?.tool_calls?.length)` 로 **구조화된 배열이 있을 때만** 도구 호출을 방출한다.
+`content` 에 실린 JSON 을 건져 올리는 경로가 없다 — 즉 14b 의 출력은 **그냥 평문으로 취급되고
+도구는 호출되지 않는다.** (스트리밍 인자 파싱 `parseStreamingJson()` 은
+`provider-streaming-internals.md:108-119` 대로 **이미 tool_call 로 인식된 뒤**의 부분 JSON 복구용이라
+이 문제를 덮지 못한다.)
+
+**충돌:** tool 호출 되는 모델(35B)은 **코드 생성 시 API 환각**이 확인됐고(리포트 25/02),
+코드가 되는 모델(14b)은 tool 호출이 안 된다.
+
+> ⚠️ 현행 설계(마스터가 컨텍스트를 밀어넣는 **제약 생성** — `[PSEUDO]` 본문만 채우기)는
+> tool 호출을 요구하지 않아 14b 로 성립한다. **하네스를 에이전틱으로 바꾸는 순간 이 전제가 깨진다.**
+> 모델 후보 재평가(§3)의 **첫 관문을 `tool_calls` 방출 여부로** 둘 것.
+
+---
+
+## 10. 관련 문서
 - 이 보드(BC-250 #1)의 하드웨어 작업 이력: `~/bc250-backup-staging/reports/`, `~/.claude/projects/-home-sim/memory/`
 - AgentTest 2026-07-07 원 설계: `~/bc250-backup-staging/memory/project_agenttest_architecture.md`
 - gajae-code: https://github.com/Yeachan-Heo/gajae-code
