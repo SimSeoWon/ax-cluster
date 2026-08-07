@@ -54,9 +54,9 @@ if v.blocked:
 > BC-250 이 인계한 것은 **추론 연산**이다 — AgentTest 에선 팀원 PC 마다 로컬 LLM 을 각자 돌렸는데
 > 그 부하를 보드가 넘겨받았을 뿐, 파일을 다루던 역할이 옮겨온 게 아니다.
 >
-> 마스터도 **오케스트레이터 ②** 로서 자기 모델 자원(Claude · Antigravity `agy` · BC-250)을 쓰지만,
+> 마스터도 **오케스트레이터의 하나**로서 자기 모델 자원(Claude · Antigravity `agy` · BC-250)을 쓰지만,
 > 그 오케스트레이션은 **모델 호출·라우팅·컨텍스트 조립**이지 파일 작업이 아니다(`../PLAN.md` §2.3).
-> 오케스트레이터 ①은 윈도우 작업 PC 의 Claude Code(`../client/README.md`).
+> 나머지 둘은 **윈도우 UE5 PC 2대** 각각의 Claude Code(`../client/README.md`) — 총 3곳이다.
 
 ## 역할
 
