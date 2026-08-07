@@ -1,0 +1,17 @@
+# 마스터 오케스트레이션 의존성.
+# AgentTest 에는 requirements.txt 가 없어 `build.bat:29` 의 pip 목록을 기준으로 새로 만들었다.
+# `pywinpty` 는 윈도우 전용이라 제외한다 — 리눅스에서는 순수 파이프로 충분하다(리포트 04).
+
+# task_queue HTTP 서비스 (--serve). systemd 주 모드가 요구하는 최소 집합.
+fastapi
+uvicorn
+pydantic
+
+# MCP stdio 모드에서만 필요 (task_queue/mcp_server.py 가 지연 import).
+# HTTP 서비스만 돌릴 거면 빼도 기동된다.
+mcp
+
+# RAG (context_search 이식 시 — 아직 이식 전)
+# chromadb
+# tree-sitter
+# tree-sitter-cpp

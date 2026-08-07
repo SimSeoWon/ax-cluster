@@ -9,6 +9,28 @@
 | `verdict.py` | **층2 판정 계약 (fail-closed).** `contract_text()` 로 프롬프트에 계약을 붙이고 `parse_verdict()` 로 읽는다. **모든 실패 경로가 차단으로 떨어진다** |
 | `layer2_verify.py` | 층2 검증기 — UE5/C++ 문법 프롬프트 + 백엔드 체인(`agy` → `claude`). `verify_files([(경로, 내용)])` |
 | `test_verdict.py` | 계약·체이닝 테스트 19건. `python3 master/test_verdict.py` |
+| `task_queue/` | **잡 분배 큐** (AgentTest `mcp/task_queue/` 이식, 2,717줄). HTTP 서비스 + MCP stdio |
+| `requirements.txt` | 마스터 의존성. AgentTest 엔 없어 `build.bat:29` 기준으로 신규 작성 |
+| `systemd/ax-task-queue.service` | systemd 유닛 (§5.4.4 확정: systemd + venv) |
+
+### task_queue 실행
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r master/requirements.txt
+AX_TASK_QUEUE_ROOT=/home/sim/ax-state PYTHONPATH=. \
+  .venv/bin/python -m master.task_queue --serve /home/sim/ax-state 8101 0.0.0.0
+```
+
+**이식 시 바꾼 것 3가지** (원본과의 차이 — `../PLAN.md` §9.5):
+
+| | AgentTest | 여기 |
+|---|---|---|
+| import | 플랫 (`from models import ...`, PyInstaller 전제) | 패키지 상대 import |
+| 상태 루트 | `Path(__file__).parent.parent.parent` **역산** | `AX_TASK_QUEUE_ROOT` **명시 설정, 없으면 즉시 실패** |
+| `--cleanup-branches` | root(=UE5 저장소)의 `worker/*` 브랜치 삭제 | 🔴 **거부** — 마스터 root 는 큐 상태 저장소라 조용한 no-op 이 된다 |
+
+상태 저장소는 `/home/sim/ax-state`(로컬 git). 상태 전이마다 감사 커밋이 쌓인다 —
+**UE5 저장소가 아니라 큐 자체의 상태**다(`../PLAN.md` §2.1).
 
 ```python
 from layer2_verify import verify_files

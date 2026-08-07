@@ -1279,6 +1279,59 @@ tool 분기가 있는데도 그렇다 — **광고를 믿지 말 것.**
 
 ---
 
+## 9.5 ✅ `task_queue` 이식 완료 — 이식 1단계 (2026-08-08)
+
+`ax-cluster/master/task_queue/` (AgentTest `mcp/task_queue/` 9파일 2,717줄).
+**실제로 기동해 claim→submit 흐름까지 확인했다.** AgentTest 원본은 미변경(참조 전용).
+
+### 9.5.1 §5.4.7 판정("거의 그대로 이식")은 맞았지만, 진짜 작업은 3곳이었다
+
+`sys.platform` 분기는 예상대로 무해했다(3건 전부 `creationflags = ... if win32 else 0`).
+바꿔야 했던 것은 **플랫폼이 아니라 전제**다:
+
+| # | 원본 | 왜 마스터에서 깨지나 | 조치 |
+|---|---|---|---|
+| 1 | 플랫 import (`from models import ...`) | PyInstaller 가 한 디렉터리로 묶는 전제. `python -m` 으로는 안 돈다 | 패키지 상대 import 전환(7파일 24건) |
+| 2 | `_project_root()` = `Path(__file__).parent.parent.parent` | exe 가 UE5 프로젝트 루트 안에 있다는 전제. 마스터엔 그 루트가 없어 **`ax-cluster/` 에 상태를 쓴다** | `AX_TASK_QUEUE_ROOT` 명시 설정. **폴백 없이 즉시 실패** — 루트를 잘못 잡으면 재기동 후에야 "작업이 사라졌다"로 발견된다 |
+| 3 | `--cleanup-branches` 가 `_git_repo(root)` 의 `worker/*` 삭제 | 원본은 root == UE5 저장소였다. 마스터 root 는 **큐 상태 저장소**라 지울 브랜치를 못 찾고 **조용히 성공한 척**한다 | **거부**. 브랜치 정리는 저장소를 소유한 윈도우의 일이다(§2.1) |
+
+**추가로 하나 더 분리했다** — `server.py` 가 모듈 최상단에서 `from mcp.server.fastmcp import FastMCP`
+를 해서, MCP SDK 가 없으면 **HTTP 서비스조차 기동 실패**한다. systemd 주 모드는 `--serve`(HTTP)이므로
+MCP stdio 를 `mcp_server.py` 로 떼고 **지연 import** 로 바꿨다.
+
+> ⚠️ **거부(3번)를 처음엔 함수 중간에 넣었다가 옮겼다.** 그 위치면 archive/purge 를 **이미 수행한 뒤**
+> 실패를 반환한다 — 파괴적 작업을 해놓고 "실패"라고 보고하는 꼴이다. 진입부로 옮겨
+> **아무것도 건드리기 전에** 거부하도록 고쳤다(실측으로 데이터 보존 확인).
+
+### 9.5.2 상태 저장소 — `/home/sim/ax-state` (로컬 git)
+
+감사 커밋은 전부 `idx.root` 로 간다(`target_repo` 가 아니다). 마스터는 UE5 저장소를 소유하지 않으므로
+**큐 상태 전용 저장소**를 새로 뒀다. 리모트 없음 — 필요해지면 Gitea 리모트를 붙일 수 있다.
+
+### 9.5.3 실측 — 두 작업장 경쟁 방어가 실제로 동작한다
+
+§4.2 에서 "작업장 2대가 같은 프로젝트를 보므로 claim/lease/fencing 은 정확성 요건"이라 적었는데,
+그게 실제로 도는지 확인했다:
+
+| 검증 | 결과 |
+|---|---|
+| work 등록 → task 등록 → claim | ✅ `epoch=1`, `assignee=win-pc-1` |
+| **다른 워커가 같은 task claim 시도** | ✅ **빈 응답 — 이중 claim 없음** |
+| 올바른 epoch 로 submit | ✅ 수락 |
+| 🔴 **stale epoch(좀비 워커) 로 submit** | ✅ **거부** — `stale epoch 0 < current 1 (reassigned)` |
+| 재기동 후 상태 복원 | ✅ 디스크 MD 에서 인덱스 재구축 |
+| `--cleanup-branches` | ✅ 거부 + **데이터 보존** |
+| 감사 커밋 | ✅ `[work-register]`·`[task-register]`·`[claim]`·`[submit]`·`[admin-reset]` 누적 |
+
+### 9.5.4 실행 구성
+
+- venv: `ax-cluster/.venv` (`master/requirements.txt` — AgentTest 엔 없어 `build.bat:29` 기준 신규 작성)
+- 유닛: `master/systemd/ax-task-queue.service` (`Restart=always` · journald · `ProtectSystem=strict` +
+  `ReadWritePaths=/home/sim/ax-state`). **아직 설치·enable 하지 않았다** — 수동 기동으로만 검증했다
+- ⚠️ 선결이었던 `python3-venv`·`python3-pip` 가 이 박스에 없어 `pkexec` 로 설치했다
+
+---
+
 ## 10. 관련 문서
 - 이 보드(BC-250 #1)의 하드웨어 작업 이력: `~/bc250-backup-staging/reports/`, `~/.claude/projects/-home-sim/memory/`
 - AgentTest 2026-07-07 원 설계: `~/bc250-backup-staging/memory/project_agenttest_architecture.md`

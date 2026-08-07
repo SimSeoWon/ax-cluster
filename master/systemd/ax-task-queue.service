@@ -1,0 +1,44 @@
+[Unit]
+Description=AX cluster task_queue (job distribution + claim/lease/fencing)
+Documentation=https://github.com/SimSeoWon/ax-cluster
+# 감사 커밋이 로컬 git 저장소를 쓰므로 파일시스템이 준비된 뒤에 뜬다.
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sim
+Group=sim
+WorkingDirectory=/home/sim/ax-cluster
+
+# 큐 상태 루트. MCP stdio 모드가 이 값으로 루트를 잡는다(미설정이면 즉시 실패 —
+# 원본의 "파일 위치 역산" 폴백을 의도적으로 없앴다. PLAN.md §9.5).
+Environment=AX_TASK_QUEUE_ROOT=/home/sim/ax-state
+Environment=PYTHONUNBUFFERED=1
+
+# --serve <state_root> [port] [host]
+ExecStart=/home/sim/ax-cluster/.venv/bin/python -m master.task_queue --serve /home/sim/ax-state 8101 0.0.0.0
+
+Restart=always
+RestartSec=5
+
+# 원본이 손으로 하던 수명주기 관리를 systemd 가 가져간다 (PLAN.md §5.4.3):
+#   자식 프로세스 .poll() 생존 감시 → Restart=always
+#   Job Object 고아 정리(Windows 전용) → cgroup (KillMode=control-group 기본)
+#   로그 파일 관리 → journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ax-task-queue
+
+# 최소 권한. 이 서비스가 쓰는 곳은 상태 저장소 하나뿐이다.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/sim/ax-state
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
