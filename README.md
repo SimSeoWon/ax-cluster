@@ -172,8 +172,9 @@ BC-250 은 **절전모드 복귀가 불가**(SMU 한계)하지만, 원격 전원
 | [`PLAN.md`](PLAN.md) | **SSOT** — 배경·아키텍처·미정 항목·작업 루프·언어 결정·이식 대상 |
 | [`master/`](master/README.md) | **인프라** — RAG·온톨로지·큐·추론 브로커 코드가 들어갈 자리 + 이식 대상 |
 | [`worker/`](worker/README.md) | BC-250 **추론 노드** 설정/래퍼 |
-| [`client/`](client/README.md) | 윈도우 UE5 PC — **오케스트레이션 ① + 엔진 바운드(층3)** |
-| `CLAUDE.md` | Claude Code 용 저장소 가이드 |
+| [`client/`](client/README.md) | 윈도우 UE5 PC ×2 — **오케스트레이션 + 엔진 바운드(층3)** |
+| [`machines/`](machines/README.md) | **머신별 `~/CLAUDE.md` 의 정본** — 각 머신 홈에서 심볼릭 링크로 참조 |
+| `CLAUDE.md` | Claude Code 용 **저장소** 가이드(머신 가이드와 다르다) |
 
 > ⚠️ `worker` 라는 단어가 세 군데서 다른 것을 가리킨다 — 이 저장소의 `worker/` 는 BC-250 추론 노드,
 > AgentTest 의 `worker/` 는 윈도우 작업자이고 후자는 여기서 **`client/`** 다. [`PLAN.md`](PLAN.md) §4.1
