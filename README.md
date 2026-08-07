@@ -122,8 +122,13 @@ BC-250 은 **절전모드 복귀가 불가**(SMU 한계)하지만, 원격 전원
   (구조화된 `tool_calls` 를 못 내고 JSON 이 `content` 로 샌다 — `/api/show` 가 `capabilities:['tools']`
   를 광고하는데도), `devstral:24b` 는 **3/4**(프롬프트에 형식 지시가 붙으면 호출을 빠뜨림 — 탈락).
   그런데 35B 는 **코드 생성 시 API 환각**이 있는 모델이다.
-  → 가설: **35B=드라이버 / 14b=코드 생성기를 도구로 호출**. 단 `MAX_LOADED_MODELS=1` 이라
-  **BC-250 #2 가 선결**이다 ([`PLAN.md`](PLAN.md) §9.4)
+  → 가설(35B=드라이버 / 14b=코드 생성기)은 **보드 1대에서 보류**. 전환 비용 실측 결과
+  **35B↔14b 왕복 1회 ≈ 100초**(35B 전환 66.9s + 14b 전환 37.5s, 상주 시엔 각 2.7s/1.4s)라
+  적재에 잡아먹힌다. **보드 2대 전까지 착수하지 않는다** ([`PLAN.md`](PLAN.md) §9.4.2)
+- ✅ **대신 보드 1대에서 되는 길** — `extragoal` 의 "custom external reviewer" 레인은
+  **도구 호출이 필요 없고** 계약이 *"마지막 줄 = `VERDICT: APPROVE`/`REQUEST_CHANGES`, fail-closed"*
+  하나뿐이다. tool-calling 이 안 되는 **14b 도 리뷰어는 통과**했다(장난감 케이스 2/2 — 신호이지 증명 아님).
+  → **gjc 런타임은 도입하지 않고 verdict 계약만 층2 에 이식**한다 ([`PLAN.md`](PLAN.md) §9.4.3)
 - **능력 기반 라우팅**(`requires: ue5`) — 빌드 게이트를 CI 러너 패턴으로 돌리기 위한 선결.
   현재 task_queue 는 `job_kind`(write/verify) 분기뿐
 - **이벤트 큐 설계** — Gitea 웹훅 전환의 전제(영속 + 단일 소비자 + 중복 합치기). 폴링이 공짜로 주던
