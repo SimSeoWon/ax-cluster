@@ -9,10 +9,12 @@ Each machine's `~/CLAUDE.md` (the file Claude Code auto-loads at session start) 
 | [`bc250-1.md`](bc250-1.md) | BC-250 #1 (192.168.0.43) | **symlink** → `sim@192.168.0.43:/home/sim/CLAUDE.md` |
 | [`win-worker-2.md`](win-worker-2.md) | Windows worker (192.168.0.2, account `janus`) | 🔴 **copy** → `C:\Users\janus\CLAUDE.md` (no repo clone there — see below) |
 
-**192.168.0.33** (the user's main work PC) has **no file yet, on purpose.** We know only that it's
-Windows, RDP-only, and that the ontology export came from there — not enough to write a guide, and
-we can't deliver one anyway (no SSH). It stays a row in `sim-desktop.md` § Machine inventory until
-there's something machine-specific worth recording.
+**192.168.0.33** (the user's main work PC) still has **no file of its own**, but the reason
+changed on 2026-08-08: SSH (account **`user`**) and Ollama are now up, so we *could* deliver one.
+What we know so far — the `user` account, the Store-stub Python trap, and 🔴 **why it must not
+host a resident model** (7.6 GiB free VRAM < 9.0 GB for the coder model) — is recorded in
+`sim-desktop.md` § `.33`. Split it out when there is enough machine-specific operating detail
+to justify a second file; a guide that only repeats the inventory row is worse than the row.
 
 ## 🔴 `.2` is a copy, not a symlink — refresh it deliberately
 

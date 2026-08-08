@@ -32,9 +32,38 @@ The board has `main` checked out so pushing there is rejected — **`git pull` o
 |---|---|---|---|---|
 | **.57** | **sim-desktop** — this box | `sim` | **Master**: orchestration, RAG index, ontology/graph, task queue, broker, project registry | — |
 | **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) | 🔧 **Worker-capable workshop** *and* inference endpoint #2 (14b pinned) | **`ssh janus@192.168.0.2`** ✅ passwordless · RDP 3389 · Ollama 11434 |
-| **.33** | Windows, **the user's main work PC** | — | Workshop — UE5 work happens here | RDP 3389 only. **No SSH, no Ollama** — the master cannot drive it remotely |
+| **.33** | Windows 10.0.26200, **the user's main work PC**<br>host `DESKTOP-FU2GNGL` | **`user`** | Workshop — UE5 work happens here. 🔴 **Not an inference endpoint** — see below | **`ssh user@192.168.0.33`** ✅ passwordless (2026-08-08) · RDP 3389 · Ollama 11434 |
 | **.43** | **BC-250 #1** — Fedora, headless | `sim` | Inference endpoint #1 (35B pinned), stateless | `ssh sim@192.168.0.43` ✅ passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
 | — | BC-250 #2 | — | 🎮 **Bazzite gaming machine — NOT an inference node.** Converting it means giving up that machine. **Never assume a 2nd board exists.** | n/a |
+
+### `.33` — reachable now, but 🔴 **not an inference endpoint**
+
+SSH and Ollama went up on 2026-08-08. **The account is `user`** (not `janus`, not `sim`).
+That changes what the master can do there — but **it does not make `.33` a node.**
+
+Measured the same day, with only the Windows desktop running (no UE5 open):
+
+| | |
+|---|---|
+| GPU | RTX 3080, **10240 MiB** |
+| In use / free | 2401 MiB / **7651 MiB** |
+| Its only model | `gemma4:e4b` = **8.9 GiB** — 🔴 **does not fit its own free VRAM** |
+| `qwen2.5-coder:14b` | 9.0 GB — does not fit either |
+| `/api/ps` | empty — nothing resident |
+
+Opening the UE5 editor takes more. Pinning a model here would spill Ollama onto CPU **and**
+fight the user for VRAM on the machine they actually work on. The §4.4 model-switch cost is
+~100 s round trip, so "load when they step away, unload when they return" thrashes.
+
+**→ Use it for checks and remote installs only** (user's call, 2026-08-08):
+`master/provision.py` marks it `resident=False` and flags it if a model *is* loaded.
+Model pulls go over plain HTTP (`POST /api/pull`) — no SSH, no file access, so the
+"only text crosses the wire" rule holds.
+
+🔴 **Python is installed but shadowed.** `python` resolves to the Microsoft Store stub
+(`WindowsApps\python.exe`) and prints no version; the real one is
+`C:\Users\USER\AppData\Local\Programs\Python\Python312\python.exe`.
+**Use `py`, or the full path** — same trap as `.2`. (git 2.53.0 is fine.)
 
 ### `.2` — the Windows worker has its own guide
 
