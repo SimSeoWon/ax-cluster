@@ -977,20 +977,48 @@ StructUtils 제거 / 5.8 API 대응 — Target.cs 버전업, include 경로, Sav
 StaticEnum, TObjectPtr Sort, UButton getter"*. **엔진은 UE 5.8.1 로 올라갔다**
 → §3 의 Unreal MCP 전제조건(5.8+)이 **충족됐다.**
 
-⚠️ **1GB 중 대부분은 `Content/*.uasset` 바이너리다.** 색인 대상은 소스
-(`Source/**/*.{cpp,h,cs}` · `Config/` · 문서)로 한정하고 바이너리는 제외해야 한다.
-제외 패턴은 `project.yaml` 에 둔다.
+🔴 **색인 대상은 소스뿐이다 — 실측 비율이 93:7 이다** (워킹트리 실측 2026-08-08):
 
-🔴 **미결 — 마스터의 읽기 경로.** bare 저장소는 `gitea:gitea` 소유이고
-`/var/lib/gitea` 를 `sim` 이 traverse 하지 못한다(2026-08-08 확인: `sim` 으로 `ls` 실패,
-`pkexec` 로만 읽힘). **마스터 서비스는 `sim` 으로 도니 지금 상태로는 저장소를 못 읽는다.**
-선택지 ⓐ `sim` 을 `gitea` 그룹에 추가 — 최소 변경이지만 Gitea DB 까지 열린다
-ⓑ **프로젝트 디렉토리 안에 마스터 전용 클론을 둔다** (`~/ax-data/projects/sim/modularstage/repo/`,
-훅 이벤트 때 `fetch`) ⓒ Gitea HTTP API/토큰.
-→ **ⓑ 권장**: 색인기는 어차피 파일 트리를 원하고, 방금 드러난 것처럼 Gitea 내부 배치가
-비표준이라 거기 의존하지 않는 편이 안전하다. 디스크 1GB 는 감당된다.
-**이것은 §2.1 "마스터는 파일을 소유하지 않는다"와 충돌하지 않는다** — 그 원칙이 금지하는 것은
-편집·빌드이고, 읽기 전용 색인 사본은 §2.1 이 마스터 몫으로 지정한 RAG/온톨로지 그 자체다.
+| | 크기/개수 |
+|---|---|
+| 워킹트리 전체 | 1.1 GB |
+| `Content/` (uasset 바이너리) | **1,021 MB — 93%** |
+| `Source/**/*.{cpp,h,cs}` | **1,662 개 파일** ← 색인 대상은 사실상 이것뿐 |
+
+제외 패턴은 `project.yaml` 에 둔다. 바이너리를 걸러내지 않으면 색인 비용의 대부분이
+버려지는 데이터에 쓰인다.
+
+⚠️ **엔진 버전은 `.uproject` 에서 읽을 수 없다.** `EngineAssociation` 이
+`{9A68EB04-4D04-82B4-E2C3-6BB594AC0D6E}` — 로컬 엔진 빌드 등록 GUID 다.
+온톨로지에 엔진 버전을 1급 속성으로 넣으려면 `Target.cs`/빌드 설정에서 뽑거나
+`project.yaml` 에 명시해야 한다.
+
+#### 5.5.3-a ✅ 마스터의 읽기 경로 — 초기 사본 확보 완료, 갱신 경로는 미결
+
+**문제**: bare 저장소는 `gitea:gitea` 소유이고 `/var/lib/gitea` 가 `drwxr-x---` 라
+`sim` 이 traverse 하지 못한다. HTTP 는 하드닝 때문에 익명 접근이 **401** 이다.
+**마스터 서비스는 `sim` 으로 돌기 때문에 두 문 모두 닫혀 있다.**
+
+✅ **초기 사본은 확보했다 (2026-08-08)** — `~/ax-data/projects/sim/modularstage/`
+아래 `repo.git`(bare 사본 1,006MB) + `repo`(워킹트리 1.1GB, `main`). 이제 root 없이 읽힌다.
+이것은 §5.5 규약 ⓑ 의 첫 실물이고, §2.1 "마스터는 파일을 소유하지 않는다"와 충돌하지 않는다 —
+그 원칙이 금지하는 것은 편집·빌드이고, 읽기 전용 색인 사본은 §2.1 이 마스터 몫으로 지정한
+RAG/온톨로지 그 자체다.
+
+⚠️ **git 2.34.1 함정 (2026-08-08 실측)**: `safe.directory` 는 **system/global config 에서만**
+읽힌다. `-c safe.directory=...` 도 `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0` 환경변수도 **무시된다**
+(둘 다 `fatal: detected dubious ownership` 로 실패). root 로 남의 저장소를 다루는 스크립트는
+`git clone` 대신 `cp -a` 를 쓰거나 global config 를 건드려야 한다.
+
+🔴 **미결 — 영구 갱신 경로.** 훅 이벤트마다 fetch 하는 것은 **무인 서비스**라 `pkexec` 를
+쓸 수 없다(인증 창을 볼 사람이 없다). 초기 사본만으로는 끝나지 않는다:
+- **ⓐ `sim` 을 `gitea` 그룹에 추가** (+ `/var/lib/gitea` 에 `g+rx`) — 명령 한 번, 비밀정보 없음
+- **ⓒ Gitea 액세스 토큰/배포키** → `http://localhost:3000` 으로 fetch — 파일시스템 배치와
+  무관해지지만 토큰 관리가 생기고, 그 토큰이 `~/ax-data` 안에 놓이면 취급에 주의가 필요하다
+
+→ 앞서 ⓐ 를 "Gitea DB 까지 열린다"는 이유로 낮게 봤으나 **그 판단은 정정한다**: 이 박스는
+1인 사용이고 `sim` 은 이미 `pkexec` 로 root 가 된다. 그룹 추가로 새로 열리는 실질적 경계가 없다.
+인터넷 노출은 Gitea 의 HTTP 계층 문제라 이것과 무관하다.
 
 `bare_path` 가 필요한 이유는 `post-receive` 훅이 **거기 살기 때문**이다(§5.4.2).
 훅 설치 대상과 색인 대상이 같은 config 한 곳에서 읽혀야 둘이 어긋나지 않는다.
