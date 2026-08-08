@@ -14,13 +14,15 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   → [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md)
   **Read only the open milestone** — closed ones are reference; don't load them. Progress
   lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
-  🔴 **The twin cannot grow yet — 10 of 32 sub-tasks done.** Almost nothing *produces* the twin: the
-  relation graphs (중 1.1) and the context-MD synthesiser (중 1.2) both landed, but 🔴 **the
-  synthesiser is not wired into the indexer yet.** Our 35B described commented-out code as live
-  functionality, so a **deterministic gate** now rejects that (design rule: deterministic gates
-  outrank LLM judgment) — the gate is reused by 중 1.3. Use it to *fill new/changed* files, never
-  to regenerate the 1,055 snapshot docs. No ontology, no thesaurus. The data is a snapshot
-  received 2026-08-08 12:56, so code the pipeline writes never enters the twin. The breakdown is
+  🔴 **The twin grows now, but only on changed files — 14 of 33 sub-tasks done.**
+  중 1.1 relation graphs ✅ · 중 1.2 context-MD synthesis ✅ **wired into the indexer** (verified on
+  a real commit diff: graphs → synthesis → reindex) · 중 1.3 ontology **7/10** — everything
+  deterministic is done, the **LLM synthesis itself** is what remains · 중 1.4 thesaurus has a
+  window but **zero alias data**.
+  🔴 **Never bulk-regenerate the 1,055 snapshot docs** — our local model measured *worse* than the
+  received snapshot (it described commented-out code as live). A **deterministic fact gate** now
+  rejects that, and 중 1.3 reuses it for call relations. The synthesiser is for *new/changed* files.
+  The breakdown is
   대 2 / 중 8 / 소 32 — **소분류가 작업 단위다.** Never size a task by line count: `class_graph`'s
   1,341 lines turn out to be *"delete the file → full rescan on restart"*.
   **This milestone's main is 대 1 (making the data).** `/distribute` and `/review-work` are the
@@ -77,6 +79,7 @@ There is no linter or CI config — **don't invent tooling commands.**
 | Context search — **multilingual** vector + BM25 (+trigram KR table), RRF, `[대괄호]` focus | `master/context_search/` — context MDs only (961 docs). 🔴 **ontology 247 yaml = 0 indexed** (소 2.1.1) |
 | Workflow — 2-tier branches, manifest, registration, generate → layer2 → hand over | `master/work/` — the loop runs (20.1s, APPROVE) but **on a half-built twin** — that run had 0 domain norms. Map: `docs/4-work-loop.md` §4.7 |
 | **Relation graphs** — inheritance (tree-sitter C++) + `#include` (중 1.1, **done 5/5**) | `master/graph/` — **1,806 classes · 6,380 methods · 10,817 include edges** on ModularStage, 2.9s full scan. `python -m master.graph build\|status`. ⚠️ reverse include lookup is basename-approximate (9 ambiguous headers) |
+| **Ontology** — YAML io (no PyYAML) · stale watermarks · L1/L2/L3 layers · member proposals · concept hierarchy · **fact gate on call relations** · package writer (중 1.3, **7/10**) | `master/ontology/` — all LLM-0. 🔴 Decision rules that must not be re-derived live in that package's `__init__.py`. What remains is the **LLM synthesis itself** |
 | **Context-MD synthesis** — prompt+grounding, σ.7 fence strip + σ.7-B save gate, stamping, batch circuit breaker (중 1.2) | `master/context_synth/` — `python -m master.context_synth one\|fill\|all\|status`. 909 source groups, all already documented from the snapshot. **Wired into the indexer** (changed files only). A **deterministic factuality gate** (`verify.py`) rejects docs describing commented-out code as live — **75% pass rate measured on the 35B (3/4)**, and the one rejection was a real catch. `sample N` dry-runs without touching snapshot docs. 🔴 **BC-250 reclaims ~170 MB per request and never gives it back until the model unloads** — `UNLOAD_EVERY=5` handles that; set 0 for dedicated-VRAM nodes |
 | Ollama node check + remote install (no residency) | `master/provision.py` — `python -m master.provision check` |
 | venv + deps | `.venv/`, `master/requirements.txt` |
@@ -85,7 +88,7 @@ There is no linter or CI config — **don't invent tooling commands.**
 
 🔴 **Say "done" only for a whole area.** The work loop runs, but the digital twin it stands on is
 partial — ontology unindexed, and the MD synthesiser is built but not wired in. When reporting status,
-give the denominator (*"loop runs; twin sub-tasks 10 of 32"*), never a scope narrowed to what got built.
+give the denominator (*"loop runs; twin sub-tasks 14 of 33"*), never a scope narrowed to what got built.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
 **Tests — 968, all passing. No pytest**; each file runs standalone.
