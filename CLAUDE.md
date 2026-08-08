@@ -55,11 +55,12 @@ There is no linter or CI config — **don't invent tooling commands.**
 | Capability routing (`requires`/`capabilities`) | `master/task_queue/logic_claim.py` |
 | Shared bearer auth (all 3 services, fail-closed) | `master/auth.py` |
 | Event spool (Gitea hook → indexer, single consumer) | `master/events/` — queue only; **consumer not built** |
+| Context search — vector + BM25, RRF fusion, mount-scoped | `master/context_search/` — **built, not yet served over HTTP** |
 | venv + deps | `.venv/`, `master/requirements.txt` |
 
 `worker/` and `client/` are still README-only stubs.
 
-**Tests — 337, all passing. No pytest**; each file runs standalone.
+**Tests — 412, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
@@ -72,6 +73,10 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_layer3_verify.py       # 63 — layer-3 gate: automation + build logs, fail-closed
 .venv/bin/python master/test_auth.py                 # 46 — bearer auth, fail-closed
 .venv/bin/python master/test_events.py               # 38 — event spool: no-loss, at-least-once, coalescing
+.venv/bin/python master/test_context_search.py       # 75 — search core: mount routing, RRF, generation pointer
+
+# Full reindex of the mounted project (vector + BM25, one generation flip)
+.venv/bin/python -m master.context_search.rebuild
 
 curl -s localhost:8102/health | python3 -m json.tool   # which node holds which model
 systemctl status ax-task-queue ax-broker ax-projects
