@@ -133,6 +133,35 @@ def main() -> int:
     check("cpp 펜스", "```cpp" in ms.body)
     check("골조 없으면 섹션도 없다", "## 골조" not in m.body)
 
+    print("\n[5-1] 🔴 소켓 타임아웃도 GenerateError 로 (배치를 크래시시키지 않는다)")
+    import urllib.error as _ue
+
+    def _timeout(*a, **kw):
+        raise TimeoutError("timed out")
+
+    def _urlerr(*a, **kw):
+        raise _ue.URLError("refused")
+
+    def _badjson(*a, **kw):
+        raise ValueError("Expecting value: line 1 column 1")
+
+    import importlib
+    genmod = importlib.import_module("master.work.generate")
+    for label, fn in (("소켓 타임아웃", _timeout), ("연결 실패", _urlerr),
+                      ("JSON 파싱 실패", _badjson)):
+        real = genmod.urllib.request.urlopen
+        genmod.urllib.request.urlopen = fn
+        try:
+            genmod.call_broker("x")
+            check(f"{label} → GenerateError", False, "예외 없음")
+        except GenerateError as e:
+            check(f"{label} → GenerateError", True)
+            check(f"  사유가 남는다 ({label})", len(str(e)) > 8, str(e))
+        except Exception as e:
+            check(f"{label} → GenerateError", False, f"{type(e).__name__}: {e}")
+        finally:
+            genmod.urllib.request.urlopen = real
+
     print("\n[6] 🔴 온톨로지가 없다는 사실을 숨기지 않는다")
     check("규범 섹션이 있다", "도메인 규범" in m.body)
     check("미구현이라 적혀 있고 소분류를 가리킨다",

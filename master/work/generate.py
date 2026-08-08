@@ -157,6 +157,14 @@ def call_broker(prompt: str, *, model: str = CODER, broker: str = DEFAULT_BROKER
                             f"{e.read().decode('utf-8', 'replace')[:200]}") from e
     except urllib.error.URLError as e:
         raise GenerateError(f"브로커에 닿지 않는다: {getattr(e, 'reason', e)}") from e
+    except OSError as e:
+        # 🔴 소켓 읽기 타임아웃은 `URLError` 가 아니라 `TimeoutError`(OSError 계열)로 올라온다.
+        # 실측 2026-08-08: 컨텍스트 합성 배치가 이 예외로 **통째 크래시**했다 — 한 그룹이
+        # 느렸을 뿐인데 남은 전부를 잃었다. 가장 흔한 실패 모드가 여기다(느린 모델).
+        raise GenerateError(f"브로커 응답 대기 실패({type(e).__name__}): {e}") from e
+    except (ValueError, TypeError) as e:
+        # 응답이 JSON 이 아니거나 잘렸다 — 스트림이 중간에 끊긴 경우.
+        raise GenerateError(f"브로커 응답을 해석할 수 없다: {e}") from e
     if res.get("error"):
         raise GenerateError(f"브로커 오류: {res['error']}")
     return res.get("response") or ""
