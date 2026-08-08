@@ -65,4 +65,5 @@ only `/livez` is open. **Still never widen the ufw rules to `Anywhere`** — the
 second layer, not a replacement for the first.
 
 Per-machine operating guides: [`machines/`](machines/README.md). Session work reports:
-`~/claude-workspace/reports/` and `sim@192.168.0.43:~/bc250-backup-staging/reports/`.
+**저장소 작업분은 [`reports/`](reports/) — 동기 대상이다.** 하드웨어·인프라 로그는
+`~/claude-workspace/reports/` 와 `sim@192.168.0.43:~/bc250-backup-staging/reports/`.

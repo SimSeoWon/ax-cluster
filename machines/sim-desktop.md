@@ -18,6 +18,24 @@ software repository.** There is no build, lint, or test tooling. **Don't assume 
   (These guidance files are English on purpose: only Claude reads them, and Korean costs ~2.7×
   the tokens for the same content.)
 
+## 🔴 Where the project stands — read this before planning
+
+**Milestone 1 (infrastructure) is closed. Milestone 2 (digital twin restoration) is open.**
+
+| | |
+|---|---|
+| Current milestone | `~/ax-cluster/docs/milestone-2-twin-restoration.md` |
+| Previous (kept, still valid) | `~/ax-cluster/docs/milestone-1-infrastructure.md` |
+| **Measured done vs not-done** | `~/ax-cluster/docs/11-agenttest-crossmap.md` |
+
+🔴 **The twin is a snapshot and cannot grow.** Search over it works (partly), but nothing
+*produces* it: ontology synthesis **0 / 7,173**, context-MD synthesis **0 / 1,036**, class graph
+**0 / 1,341**. Ontology data exists (247 yaml) but is **unindexed — 0 search hits**.
+So code the pipeline writes never enters the twin, and the RAG drifts from reality silently.
+
+🔴 **Say "done" only for a whole area**; otherwise give the denominator. And **don't pick the
+next task yourself** — milestone 1 failed exactly that way.
+
 ## Role in the AX cluster — this box is the **master**
 
 The project repo is cloned **here** at `~/ax-cluster` (`PLAN.md` is the index, content in `docs/`),

@@ -10,4 +10,6 @@
   `~/bc250-backup-staging/reports/24-ttm-gtt-tuning-headless-cluster-link.md`
 - 2026-08-06 모델 품질 비교(UE5 태스크 6종): 
   `~/bc250-backup-staging/reports/25-model-quality-comparison-14b-vs-35b.md`
-- 마스터(57)측 사본: `sim@192.168.0.57:~/claude-workspace/reports/`
+- 🔴 **저장소 작업 리포트는 저장소 안으로 옮겼다** (2026-08-08): [`../reports/`](../reports/) — 06~09.
+  밖에 두면 3자 동기에서 빠지고, 실제로 안 읽혔다.
+- 하드웨어·인프라 로그(01·03·04·05): `sim@192.168.0.57:~/claude-workspace/reports/`

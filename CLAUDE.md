@@ -9,6 +9,15 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
 
 ## Hard rules — inline on purpose
 
+- 🔴 **Read which milestone you are in before planning anything.**
+  **M1 (infrastructure) is closed; M2 (digital twin restoration) is open.**
+  → [`docs/milestone-2-twin-restoration.md`](docs/milestone-2-twin-restoration.md)
+  🔴 **The twin cannot grow yet** — ontology synthesis (7,173 lines), context-MD synthesis (1,036)
+  and class graph (1,341) are all at **0**. The data is a snapshot received 2026-08-08 12:56, so
+  code the pipeline writes never enters the twin. Measured done/not-done, file by file:
+  [`docs/11-agenttest-crossmap.md`](docs/11-agenttest-crossmap.md).
+  🔴 **Do not pick the next task yourself** — M1 failed that way (I chose an order, dug into one
+  piece, declared it "complete", repeated). The order is the user's call.
 - 🔴 **The GitHub remote is private. Keep it that way** — it contains LAN addresses and firewall rules.
 - 🔴 **The master is infrastructure, not a workshop.** It assembles context and hands it over;
   the Windows PC applies, builds, tests, registers. **Files never leave Windows.** No file I/O or
@@ -36,7 +45,6 @@ There is no linter or CI config — **don't invent tooling commands.**
 
 | Need | Go to |
 |---|---|
-| **Which milestone we're in, and what's actually done** | [`PLAN.md`](PLAN.md) → milestones · [`docs/11-agenttest-crossmap.md`](docs/11-agenttest-crossmap.md) |
 | What's decided vs open | [`PLAN.md`](PLAN.md) — index of `docs/` |
 | Closed decisions, don't relitigate | [`docs/settled-decisions.md`](docs/settled-decisions.md) |
 | Still open | [`docs/3-open-items.md`](docs/3-open-items.md) |
