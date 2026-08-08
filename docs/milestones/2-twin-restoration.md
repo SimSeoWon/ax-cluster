@@ -51,12 +51,9 @@
 
 ### 대 1. 트윈 데이터 생성 (목표 ①) — 10 / 22 · 🔴 **이번 마일스톤 메인**
 
-**중 1.1 관계 그래프** — ✅ **완료 5/5**. 실측 클래스 1,806 · 메서드 6,380 · include 간선
-10,817 · 2.9초. `master/graph/`, 테스트 69. 상세는 `../../CLAUDE.md` 코드 표.
-
-⚠️ **한계 하나** — 의존 그래프의 **역방향은 basename 근사**다(UBT 없이 include 경로를 해석할 수
-없다). ModularStage 에 이름 겹치는 헤더 9종 → 그만큼 틀린 간선. `ambiguous_basenames` 로 보고하니
-영향도 질의(소 2.x)는 그 숫자로 결과를 의심할 수 있게 할 것. 근거: `graph/dependency.py`.
+**중 1.1 관계 그래프** — ✅ **5/5**. 클래스 1,806 · 메서드 6,380 · include 간선 10,817 · 2.9초.
+`master/graph/`, 테스트 69. ⚠️ 역방향 include 는 basename 근사(겹치는 헤더 9종) — 영향도
+질의는 `ambiguous_basenames` 로 결과를 의심할 수 있게 할 것.
 
 **중 1.2 컨텍스트 문서** — ✅ **5/5 + 사실 게이트 + 색인기 배선** (`master/context_synth/`, 테스트 102)
 
@@ -151,9 +148,7 @@ grounding 3채널 = **관련 컨텍스트 3개 + 도메인 1개(중 1.3 대기) 
 |---|---|---|
 | 🕓 `/distribute` — 계층 플랜 · **골조 생성** · 템플릿 매칭 · 코드베이스 분석 | 12단계 | `distributed-workers.md` 425줄 |
 | 🕓 `/review-work` — 시뮬레이션 머지+빌드 · 통합 빌드 · finalize · reject · TDD 드라이런 | 7단계 | ↑ 같은 문서 |
-| 🕓 작업 유형 템플릿 (`list`/`get_task_template`) | — | `ontology.md` Phase ζ |
-| 🕓 `/cluster-selftest` — 이게 통과해야 "돈다" 고 말할 수 있다 | — | — |
-| 🕓 `/tdd-dryrun` · `/debate` | — | — |
+| 🕓 작업 유형 템플릿 · `/cluster-selftest`(통과해야 "돈다") · `/tdd-dryrun` · `/debate` | — | `ontology.md` Phase ζ |
 | 🕓 팀 기능 — 감사 · redmine · log/crash analyzer · code_recipes · commandlet_runner · 위키 | — | §5.2-D 판단 대상 |
 
 🔴 **골조 생성 부재만은 기억할 것** — `register_work` 는 골조를 **인자로 받는다**(사람이 써 주는
