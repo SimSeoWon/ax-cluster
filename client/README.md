@@ -36,7 +36,8 @@
 
 | 도구 | 상태 | 왜 |
 |---|---|---|
-| `bun` / `node` | ⬜ **미설치** | `gjc` 가 TypeScript/Bun. **마스터가 아니라 여기 필요하다**(2026-08-08 정정) |
+| `node` | ✅ **v24.11.1** (`.2`, 실측 2026-08-08) | `C:\Program Files\nodejs\node.exe`. ⚠️ SSH 세션 PATH 에 없어 `where` 로는 안 보인다 — 절대경로로 확인할 것 |
+| `bun` | ⬜ 미설치 (`.2`) | `gjc` 가 Bun 런타임을 요구하면 선결. **마스터가 아니라 여기 필요하다**(2026-08-08 정정) |
 | `gjc` | ⬜ 미설치 | 위 4·5번 |
 | `extragoal` 스킬 | ⬜ 미설치 | **번들이 아니다** — `gjc extragoal` 명령은 존재하지 않는다. `docs/extragoal-skill-template.md` 의 frontmatter 이하를 `~/.gjc/agent/skills/extragoal/SKILL.md` 로 설치하고 `gjc config set skills.enabled true` + `enablePiUser` 를 켜야 한다 |
 
