@@ -1,208 +1,177 @@
 # AX Cluster
 
-**AX(AI Transformation)** — 언리얼 엔진 5 게임 제작 공정 전반의 AI 활용도를 끌어올리는 프로젝트.
-단순 코딩 보조를 넘어 온톨로지 기반 디지털 트윈, Unreal MCP(UE 5.8.1+), 코드 작성 에이전트를
-하나의 파이프라인으로 통합하고, 이를 집 안의 여러 컴퓨터에 나눠 돌린다 — 리눅스 마스터 1대 + **추론 엔드포인트 2개**
-(BC-250 보드 · RTX 3060 윈도우 PC) + **윈도우 UE5 작업장 2대**.
+집의 여러 컴퓨터를 묶어 **UE5 프로젝트의 디지털 트윈을 만들고, 그 트윈으로 코드 작성을
+돕는** 오케스트레이션 저장소.
 
-> **현재 상태: 마스터 인프라 가동 중.** systemd 서비스 **3개**가 떠 있고 전부 인증을 요구한다 —
-> `ax-task-queue`(8101) · `ax-broker`(8102) · `ax-projects`(8103).
-> 여기에 층2/층3 판정 계약, 워크숍 레지스트리, 이벤트 큐, 검색 코어가 코드로 들어갔다. ⚠️ **디지털 트윈은 아직 부분이다** — 온톨로지 247 yaml 이 미색인이고 클래스 그래프가 없다(§5.3 진행 현황). **테스트 628건.**
-> `worker/`·`client/` 는 아직 스텁이다 — 그쪽은 각 머신에서 도는 코드 자리다.
-> **하드웨어·추론 엔드포인트 2개·원격 전원 제어·층3 원격 구동이 실제로 동작한다.**
->
-> 무엇이 결정됐고 무엇이 미정인지는 [`PLAN.md`](PLAN.md)(색인) → [`docs/`](docs/) 가 SSOT.
+**플랫폼**: 리눅스 마스터(Ubuntu 22.04) + 윈도우 작업장 2대 + BC-250 추론 보드 1대
 
-## 구성
+> 이 README 는 **구조 + 기능 + 사용법**만 다룬다. 설계 결정·진화 로그는
+> [`PLAN.md`](PLAN.md) → [`docs/`](docs/) 가 SSOT 이고, **지금 어디까지 왔는지**는
+> [`docs/milestones/`](docs/milestones/) 의 **열린 마일스톤 하나**만 읽으면 된다.
+> 세션 기록은 [`reports/`](reports/), 머신별 운영 규칙은 [`machines/`](machines/).
 
-| 역할 | 머신 | 상태 |
-|---|---|---|
-| **마스터 / 인프라** | `sim-desktop` (192.168.0.57, Ubuntu 22.04) | **인프라 — 작업장이 아니다.** ✅ **서비스 3개 가동**: 큐(8101)·추론 브로커(8102)·프로젝트 레지스트리(8103), 전부 베어러 토큰 필요. RAG/온톨로지 색인기는 **미구현**(이식 범위 미결). GPU 증설 검토 중(1070 Ti) |
-| **추론 엔드포인트 #1** | BC-250 #1 (192.168.0.43, Fedora 43) | ✅ 가동 중 — Ollama + Vulkan, 헤드리스. `35B-A3B` 상주. 단기 안정성 검증 통과 |
-| **추론 엔드포인트 #2** | **RTX 3060 윈도우 PC** (192.168.0.2) | ✅ 가동 중 — `qwen2.5-coder:14b` 상주. **보드가 아니다** — 작업장을 겸한다(아래) |
-| ~~추론 노드~~ | BC-250 #2 | 🎮 **현재 추론 노드가 아니다** — Bazzite 를 깔아 **게임 머신**으로 쓰는 중. **#1 완성 후 추론 #2 로 전환 의향**(확정 아님) |
-| **작업장 #1** | 윈도우 UE5 PC **192.168.0.2** (`janus`) | **작업장 + 추론 엔드포인트 #2 겸용.** 🔧 마스터가 **SSH 로 몰 수 있는 유일한 윈도우** — 층3 빌드·`RunTests` 원격 구동 실증 완료 |
-| **작업장 #2** | 윈도우 UE5 PC **192.168.0.33** (`user`, RTX 3080) | 사용자의 **메인 작업 PC**. ✅ SSH·Ollama 개통(2026-08-08). 🔴 **추론 엔드포인트는 아니다** — 여유 VRAM 7.6GiB 가 14b(9.0GB)보다 작고 UE5 를 열면 더 줄어든다. **점검·원격 설치 대상**(`master/provision.py`) |
+---
 
-> ⚠️ **용어 주의** — 구어로 BC-250 을 "워커"라 부르지만, AgentTest 코드의 `worker/` 는
-> **윈도우 PC 에서 도는 작업자**다. BC-250 은 코드상 worker 가 아니라 **추론 노드**다. [`PLAN.md`](PLAN.md) §4.1
+## 개요
 
-## 전제 — AgentTest 와 무엇이 다른가
+목표는 둘이다.
 
-| | AgentTest (전신) | **AX 클러스터** |
-|---|---|---|
-| 대상 | **팀 단위 인프라** | **1인**, 집의 **여러 컴퓨터 파워를 묶는 것** |
-| 로컬 LLM 추론 | 팀원 윈도우 PC 마다 각자 | **BC-250 이 인계** |
-| 파일 소유·빌드 | 팀원 윈도우 PC | **윈도우 UE5 PC 2대** (2026-08-08 정정 — 1대가 아니다) |
-| 방향 | — | 기존 프로젝트에서 **클러스터링을 더욱 강화** |
-
-AgentTest 복잡도의 상당 부분은 **팀 협업 복잡도**다. 그대로 이식하면 1인 시스템에 불필요한 무게가
-따라온다 — 이식 판단 시 "이 컴포넌트가 팀 때문에 존재하나?"를 먼저 묻는다([`PLAN.md`](PLAN.md) §5.2-D).
-
-## 작업 루프
+1. **온톨로지 문서를 자동으로 작성한다** — 커밋마다 컨텍스트 문서를 쓰고, 연관 클래스 간
+   관계를 그래프로 쓰고, 검색을 위해 BM25 를 얹고, 최종적으로 사용자의 수동 명령과
+   대화형으로 휴리스틱이 포함된 온톨로지 문서를 만든다
+2. **그 트윈 데이터를 코드 작성 에이전트에게** 관련된 것만 추출해 전달한다
 
 ```
-윈도우 UE5 PC ×2 〈작업장 · 파일 소유〉
-   │ ① 태스크 + 대상 코드 컨텍스트를 텍스트로
-   ▼
-마스터 〈인프라〉 ── RAG·온톨로지로 컨텍스트 매니페스트 조립
-   │ ② stateless 추론 요청 ─▶ BC-250 (텍스트 in/out) ─▶ ③ 결과 반환
-   │ ④ 층2 상용 모델 문법검사(agy→Claude) 후 적합한 코드 뭉치 전달
-   ▼
-윈도우 UE5 PC ── ⑤ 파일 적용 · 층1 자기검증 · 층3 UE5 빌드+RunTests
-                  ⑥ 통과 → 코드 등록(커밋) / 실패 → ①로 재요청
+[트윈이 자라는 길 — 커밋 이벤트 구동]
+Gitea push → post-receive 훅 → 스풀 → inotify → 색인기
+                              → 관계 그래프 증분 (tree-sitter, LLM 0)
+                              → 변경분 컨텍스트 MD 합성 (로컬 LLM)
+                                 · σ.7 펜스 제거 + 저장 전 형식 게이트
+                                 · 🔴 사실 게이트 — 주석에만 있는 식별자 주장은 거부
+                              → 벡터(다국어) + BM25 재색인, A/B 세대 무중단 교체
+
+[트윈을 쓰는 길 — 작업 요청]
+작업장 Claude → search_context (대괄호 해석 → 시소러스 확장 → 융합 검색)
+             → register_work → 매니페스트 수집(1회) → 생성 → 층2 검증 → 코드 인계
+             → 작업장이 적용·빌드·층3(UE5 RunTests) → 판정
 ```
 
-**설계 원칙**
-- 🔴 **마스터는 인프라지 작업장이 아니다** — 적합한 코드 뭉치를 조립해 건네는 데서 끝난다.
-  파일 적용·빌드·테스트·코드 등록은 윈도우 몫이고, 실패하면 **재요청 루프**가 돈다
-- **파일은 윈도우를 떠나지 않는다** — 마스터도 BC-250 도 파일을 소유하지 않는다
-- **BC-250 이 인계한 것은 "연산"이다** — AgentTest 에선 팀원 PC 마다 로컬 LLM 을 각자 돌렸는데,
-  그 추론 부하를 보드가 넘겨받는다. 파일을 다루던 역할이 옮겨온 게 아니다
-- **오케스트레이터는 셋**(2026-08-08 정정) — 윈도우 UE5 PC **2대** 각각의 Claude Code(사용자 접점)와
-  마스터(Claude·agy·BC-250).
-  단 마스터의 오케스트레이션은 **모델 호출·라우팅·컨텍스트 조립**이지 파일 작업이 아니다
-- **도구는 서브에이전트가 몬다** — Unreal MCP 도 `ue-editor-operator` 가 윈도우에서 로컬로 몬다
-  (에디터 MCP 는 loopback 전용이라 마스터가 붙을 수도 없다)
-- 추론 요청은 **stateless**, 피드백 누적은 **git** (토큰 비용 때문에 두 경로를 분리)
-- 컨텍스트는 마스터가 **미리 밀어 넣는다**(pull 아님) — 로컬 LLM 은 도구 호출을 못 하므로
-- 보드 간 모델 샤딩 금지 — 각 보드는 독립 엔드포인트, 마스터가 **요청**을 분배
-- ⚠️ 오케스트레이터가 셋이고 **파일을 소유하는 작업장이 2대**라 공유 자원(git·task_queue·RAG)
-  조율이 필수 — **claim/lease/fencing 은 팀 기능이 아니라 실제 요구사항**이다
+추론은 **마스터 브로커(8102)** 를 거쳐 노드로 간다 — 컨텍스트 합성은 `gemma4:e4b`,
+코드 생성은 `qwen2.5-coder:14b`. 모델별 적합도·환각 실측은
+[`machines/llm-fitness.md`](machines/llm-fitness.md).
 
-## 확정 사항 (2026-08-06 ~ 08)
+🔴 **마스터는 인프라지 작업장이 아니다.** 파일 I/O·빌드·테스트는 파일을 소유한 윈도우에서
+하고, 마스터는 컨텍스트를 조립해 건넨다. 노드는 **텍스트만** 주고받는다.
 
-| 항목 | 결정 |
+---
+
+## 저장소 구조
+
+```
+ax-cluster/
+├── master/                     ← 마스터가 돌리는 것 전부 (Python, systemd + venv)
+│   ├── context_search/         ← 검색 코어 — 벡터(다국어)·BM25(+trigram)·RRF 융합
+│   │   ├── index.py            벡터. A/B 더블버퍼, 임베딩 모델 교체 시 컬렉션 재생성
+│   │   ├── bm25.py             FTS5. 단어 테이블 + 한글 trigram 테이블
+│   │   ├── embedding.py        다국어 384차원(fastembed/ONNX, PyTorch 불필요)
+│   │   ├── search.py           RRF 융합 + `[대괄호]` 포커스
+│   │   ├── thesaurus.py        별칭표 — 조회·후보 제시·대화형 등록
+│   │   ├── documents.py        컨텍스트 MD 파싱. 벡터는 「## 요약」 절만 임베딩
+│   │   ├── generation.py       A/B 세대 포인터(영속) — 프로세스가 갈려 있어 필요
+│   │   └── paths.py            🔴 경로는 상수가 아니라 함수 — 마운트 전환에 재기동 불필요
+│   ├── context_synth/          ← 컨텍스트 MD 합성 (중 1.2)
+│   │   ├── prompt.py           프롬프트 + grounding 3채널(관련문서 3·도메인 1·관계그래프)
+│   │   ├── md.py               σ.7 펜스 제거 · 저장 전 게이트 · content_hash/source_commit
+│   │   ├── verify.py           🔴 사실 게이트 — 주석에만 있는 식별자를 결정적으로 적발
+│   │   └── synth.py            배치·서킷브레이커·모델 회수
+│   ├── graph/                  ← 관계 그래프 (중 1.1, LLM 0)
+│   │   ├── parse.py            tree-sitter C++ · UE 매크로 전처리
+│   │   ├── class_graph.py      상속 그래프 + methods 소유권
+│   │   └── dependency.py       `#include` 의존 그래프
+│   ├── events/                 ← Gitea 훅 → 스풀 → 색인기 (트윈이 자라는 지점)
+│   ├── work/                   ← 작업 루프 — 2단 브랜치·매니페스트·생성·인계
+│   ├── broker/                 ← 추론 브로커 (Ollama 호환, 노드 라우팅·핀 유지)
+│   ├── task_queue/             ← 작업 큐 (claim·lease·epoch fencing·능력 라우팅)
+│   ├── projects/               ← 프로젝트 레지스트리 + **작업장의 MCP 단일 창구**
+│   ├── source_text.py          🔴 CP949 대응 — 소스의 44%가 CP949 다
+│   ├── auth.py                 3서비스 공용 베어러 인증 (fail-closed)
+│   ├── verdict.py              층2 판정 계약 (fail-closed)
+│   └── layer3_verify.py        층3 게이트 — UE5 빌드·RunTests 로그
+├── <프로젝트명>/               ← 디지털 트윈 데이터 (gitignore)
+│   ├── context/  ontology/     원본 — 합성 산출물
+│   ├── repo/                   소스 클론. 🔴 색인 대상은 `Source/` 뿐
+│   └── vector_db/ bm25.db …    파생 — 재색인으로 복구된다
+├── docs/                       ← 설계 결정 (§ 번호가 커밋에 박혀 있다)
+│   └── milestones/             ← 진행 상태. **열린 것 하나만 읽는다**
+├── machines/                   ← 머신별 운영 규칙 + LLM 적합도 실측
+├── reports/                    ← 세션별 결정·실측·함정 기록
+├── worker/  client/            ← 아직 README 스텁
+└── PLAN.md                     ← docs/ 색인
+```
+
+---
+
+## 가동 중인 서비스
+
+| 서비스 | 포트 | 유닛 |
+|---|---|---|
+| 작업 큐 | 8101 | `ax-task-queue.service` |
+| 추론 브로커 | 8102 | `ax-broker.service` |
+| 프로젝트 레지스트리 (MCP) | 8103 | `ax-projects.service` |
+| 색인기 | — | `ax-indexer.path`(inotify) → `ax-indexer.service` |
+
+🔴 셋 다 **베어러 토큰 필수**(`~/.config/ax-cluster/token`, 0600) — 토큰이 없으면 **서비스가
+뜨지 않는다**(fail-closed). 방화벽 LAN 한정은 **별개의 두 번째 층**이다. `Anywhere` 로 넓히지 말 것.
+
+---
+
+## 사용법
+
+```bash
+# 트윈 만들기 — 관계 그래프 (LLM 0, 1,654 파일 ≈ 2.9초)
+.venv/bin/python -m master.graph build            # 상속 + #include
+.venv/bin/python -m master.graph status
+
+# 트윈 만들기 — 컨텍스트 MD 합성
+.venv/bin/python -m master.context_synth status   # 소스 그룹 vs 문서 대비
+.venv/bin/python -m master.context_synth sample 4 # 🔴 dry-run — 스냅샷을 안 건드리고 통과율만
+.venv/bin/python -m master.context_synth fill     # 문서 없는 그룹만 보충
+
+# 색인
+.venv/bin/python -m master.context_search.rebuild # 전체 재색인 (A/B 한 번 교체)
+
+# 운영
+curl -s localhost:8102/health | python3 -m json.tool     # 노드별 상주 모델
+systemctl status ax-task-queue ax-broker ax-projects ax-indexer.path
+journalctl -u ax-indexer -n 30 --no-pager                # push → 트윈 성장 이력
+.venv/bin/python -m master.events.install_hook           # Gitea 훅 설치 점검
+```
+
+---
+
+## MCP 도구 (작업장 Claude 가 쓰는 창구)
+
+`ax-projects`(8103) 하나가 작업장의 단일 창구다.
+
+| 도구 | 하는 일 |
 |---|---|
-| 마스터 오케스트레이션 언어 | **Python** — 기존 자산 67,038줄, Windows 의존 93줄(0.14%)뿐이라 이식이지 재작성 아님 |
-| **마스터 git 변경 감지** | **Gitea 이벤트 구동** — Gitea 를 마스터가 직접 호스팅하므로 폴링할 이유가 없다. `watch.py` 의 `while True` 폴링 루프는 이식하지 않는다 |
-| **마스터 프로세스 수명주기** | **systemd** — `process_lifecycle.py`(Job Object)·`network_firewall.py` 는 이식이 아니라 **폐기**. PyInstaller exe 빌드도 마스터에선 불필요 |
-| 추론 요청 주체 | **마스터 브로커** — 작업자가 추론 노드를 직접 호출하지 않음 |
-| 코드 생성 모델 | **`qwen2.5-coder:14b`** (Q4_K_M) — UE5 관용구 정확, 환각 없음 |
-| 컨텍스트 쿠킹 모델 | **`35B-A3B IQ2_M`** — prefill 6.5×·생성 3~4× 우위. 단 코드 생성엔 부적합(API 환각) |
-| 환각 검증 | **3층** — 워커 자기검증 → 상용 모델 문법검사 → 실제 UE5 빌드 |
-| 추론 노드 장애 감지 | **스트리밍이 곧 하트비트** — `stream:true` 청크 간격 감시(생성 중 2s / 첫 청크 120s+). 별도 통신 인프라 0 |
-| **마스터의 역할** | 🔴 **인프라지 작업장이 아니다** — 적합한 코드 뭉치를 조립해 건네는 데서 끝. 파일 적용·빌드·코드 등록은 윈도우. 파일은 윈도우를 떠나지 않는다 |
-| **BC-250 이 인계한 것** | **추론 연산** — 팀원 PC 마다 각자 돌리던 로컬 LLM 부하. 파일을 다루던 역할이 아니다 |
-| **git 조작 권한** | **사람 세션 / 파이프라인 분리** — 사람은 되돌리기 어려운 것만 금지(force push·reset·브랜치 삭제), 파이프라인은 작업 브랜치 자율 + `main` 직접 push 금지 ([`PLAN.md`](PLAN.md) §8) |
-| **Unreal MCP 연동** | **윈도우 로컬 전용** — 에디터 내장 MCP 는 loopback 전용이라 마스터가 붙을 수 없고, **윈도우 세션 0 격리 때문에 SSH 로 띄울 수도 없다**(2026-08-08 실측). `ue-editor-operator` 가 데스크톱 세션에서 몬다 |
-| **원격 전원 제어** | **확보 완료(2026-08-07)** — 끄기는 `sudo -n systemctl poweroff`(NOPASSWD 등록), 켜기는 스마트 콘센트 재공급 시 BIOS 자동 부팅. 전원만 넣으면 사람 개입 없이 추론 노드로 복귀 |
-| **마스터 실행 모델** | **systemd + venv 확정(2026-08-08)** — Compose 규약의 예외. 층2 검증이 호스트 CLI(`agy`·`claude`)와 홈 디렉터리 인증을, `task_queue` 가 git+SSH 키를 요구하고, Gitea 훅·BC-250 방화벽·미래 CUDA 가 전부 호스트 결합이다. 의존성은 순수 pip 뿐이라 venv 로 충분 ([`PLAN.md`](PLAN.md) §5.4.4) |
-| **gajae-code 배치** | **하네스는 윈도우, 마스터는 모델 백엔드(2026-08-08)** — gjc 의 SDK WebSocket 은 **loopback 전용**이고 `--mode rpc/bridge` 는 제거돼 마스터가 원격 컨트롤러가 될 수 없다. gjc 는 파일을 소유한 윈도우에서 돌고, 마스터는 **Ollama API 호환 브로커**(`/api/chat`·`/api/tags`·`/api/show` 3종)로 붙는다 ([`PLAN.md`](PLAN.md) §9) |
-| **서비스 인증** | **공유 베어러 토큰(2026-08-08)** — 세 서비스 전부. `~/.config/ax-cluster/token`(0600), **fail-closed**(토큰 없으면 기동 실패). `/livez` 만 열림. ufw LAN 한정은 **2중 방어로 유지** ([`docs/9_5-task-queue.md`](docs/9_5-task-queue.md) §9.5.6) |
-| **워크숍 체크아웃** | **기존 관례 채택 · 데몬 없음(2026-08-08)** — `E:\trunk\<Project>\`. SSH 가 있으니 폴링 데몬을 두지 않는다. 머신별 구동 방식(`ssh`/`interactive`)을 레지스트리 필드로 기록 ([`docs/5_5-project-isolation.md`](docs/5_5-project-isolation.md) §5.5.4) |
-| **층3 판정 계약** | **로그 파싱, fail-closed(2026-08-08)** — 🔴 **`ssh` 종료 코드도 `Error` 문자열도 쓰지 않는다.** 실측에서 에디터 성공에 ssh=1(거짓 실패), **빌드 실패에 ssh=0(거짓 성공)** 이 나왔다. 신호는 `Result={Success\|Fail}` / `TEST COMPLETE. EXIT CODE:` 뿐 (`master/layer3_verify.py`) |
-| **이벤트 큐** | **디렉토리 스풀(2026-08-08)** — 파일 1개 = 이벤트 1개, 임시→rename. 영속 · `flock` 단일 소비자 · `project_id` 합치기 · at-least-once. 원형의 append 방식은 **소비 시점 경합으로 유실**이라 채택하지 않았다 ([`docs/5-master-orchestration.md`](docs/5-master-orchestration.md) §5.4.5-a) |
-| **검증 루프** | **`ultragoal`(내장) + `extragoal`(스킬 설치)** — 만들려던 재검증 루프가 이미 있다. verdict 마지막 줄이 `VERDICT: APPROVE`/`REQUEST_CHANGES`, **fail-closed**, 교차 계열 강제, 읽기 전용은 `--tools` 허용목록으로 강제 ([`PLAN.md`](PLAN.md) §9.3) |
+| `search_context` | 🔴 **검색 입구는 이것 하나** — 대괄호 해석 → 시소러스 확장 → 융합 검색 |
+| `resolve_terms` · `add_alias` · `mark_not_a_class` | 별칭 조회·등록. 마스터는 묻지 않고 **물을 재료**를 준다 |
+| `register_work` · `get_manifest` · `get_code` | 작업 등록 → 매니페스트 수령 → 생성+층2 거친 코드 수령 |
+| `register_project` · `set_active` · `list_projects` | 트윈 프로젝트 등록·전환 |
+| `set_workshop` · `check_workshops_clean` 외 | 작업장 등록·더티 체크 |
 
-**3층 게이트가 필요한 이유:** UE5 태스크 6종 실측에서 **오류의 절반이 컴파일을 통과했다**
-(`Cast<IInteractable>` 직접 호출, `IsValid()` 로직 오류 등 — 빌드는 되는데 런타임에 잘못 동작).
-컴파일만으로는 부족하고, 반대로 문자열 매칭 게이트만으로는 환각 API 를 못 잡는다.
+**규약**: `[대괄호]`는 **클래스에만** 쓴다. 미등록이면 마스터가 후보를 돌려주고, 작업장
+Claude 가 사용자에게 물어 등록한다 — 다음 검색부터 자동 확장된다.
 
-## BC-250 추론 노드 실측 (2026-08-06)
+---
 
-메모리 튜닝 후 **GTT 15.10 GiB** 확보 — 14B/35B 모두 100% GPU 적재 가능.
+## 테스트
 
-| 모델 | 크기 | prefill | 생성 |
-|---|---|---|---|
-| `qwen2.5-coder:14b` | 8.9GB | 38.1s (동일 텍스트) | 22~28 t/s |
-| `35B-A3B IQ2_M` | 13GB | **5.9s** | **62~68 t/s** |
+**841건, 전부 통과. pytest 없음** — 각 파일이 단독 실행된다.
 
-두 모델 동시 상주 불가(`MAX_LOADED_MODELS=1`). **전환 비용 재측정(2026-08-08)** — 기존의
-"36초"는 14b 방향만 본 값이었다: **35B 전환 66.9s / 14b 전환 37.5s**(상주 시 각 2.7s / 1.4s)로
-**왕복 1회 ≈ 100초**다.
+```bash
+python3 master/test_verdict.py                       #  19
+.venv/bin/python master/test_work.py                 # 145
+.venv/bin/python master/test_context_synth.py        # 102   σ.7 게이트·사실 게이트·서킷브레이커
+.venv/bin/python master/test_context_search.py       #  82   마운트 라우팅·RRF·대괄호
+.venv/bin/python master/test_graph.py                #  80   Source 한정·fail-closed·유령 행 방지
+.venv/bin/python master/test_layer3_verify.py        #  63
+.venv/bin/python master/test_projects.py             #  63
+.venv/bin/python master/test_indexer.py              #  49   ff-only 미러·다이제스트·트윈 성장
+# 그 외: mcp_servers 31 · workshop_check 47 · auth 46 · events 38 · provision 43
+#        capability_routing 16 · broker_routing 9 · broker_health 8
+```
 
-✅ **이 비용은 해소됐다 — 2번째 엔드포인트가 보드가 아니라 RTX 3060 이었다(2026-08-08).**
-BC-250 에 35B, 3060 에 14b 를 각각 상주시켜 **왕복 100초 → 3.6초**가 됐다. 단
-**35B 는 3060 에 안 들어가므로 여전히 단일 장애점**이다.
+---
 
-**안정성 (30분 / 65사이클, `qwen2.5-coder:14b`)** — 성공률 **100%**, tok/s 26.57±0.27
-(1분기↔4분기 변화 0.00%), 커널 오류 0, GTT 7.89GB 전 구간 고정(GPU 누수 없음).
-⚠️ 단 시스템 `MemAvailable` 이 -620MB 단조 감소해 **장시간은 미검증**이다 — 무인 24시간 운용
-판단 전 수 시간 이상 재실행 필요.
+## 세 클론을 동기 상태로 유지할 것
 
-**전력 (콘센트 실측, 2026-08-07 갱신)** — 유휴 **74.3W** / GPU+CPU 최대 부하 174W
-(PSU+팬 오버헤드 20~27W 포함). 거버너 하한이 페도라 이전 후 1000MHz 로 잘못 남아 있던 것을
-**350MHz 로 복원해 91.1W → 74.3W(−16.8W)** 개선. 설정 한 줄이며 데몬 불필요.
-BC-250 은 **절전모드 복귀가 불가**(SMU 한계)하지만, 원격 전원 제어가 확보돼 미사용 시간대
-차단이 가능하다.
-
-## 열려 있는 것
-
-- **장시간 안정성 재검증** — 위 메모리 감소 추세 확인. 무인 운용의 전제
-- ~~**코드 생성 모델 재평가 — `devstral:24b`**~~ → **탈락 확정(2026-08-08).** 보드에 적재해
-  실측했으나 tool-calling 관문 3/4 로 걸렸다(아래 항목). 코드 품질은 재보지도 못했다.
-  `qwen3-coder` 는 공식 최소 19GB 라 여전히 **적재 불가**
-- **마스터 GPU 증설**(GTX 1070 Ti) — 추론용이 아니라 **CUDA 확보**(RAG 임베딩 가속·리랭킹·LoRA).
-  선결: PSU 용량 확인 + 드라이버 설치
-- 🔴 **에이전틱 executor 를 누가 채우나** — tool-calling 관문 4종(단발·선택·멀티턴·억제)을
-  3모델에 실측한 결과, **통과는 `35B-A3B` 뿐(4/4)**이다. `qwen2.5-coder:14b` 는 **1/4**
-  (구조화된 `tool_calls` 를 못 내고 JSON 이 `content` 로 샌다 — `/api/show` 가 `capabilities:['tools']`
-  를 광고하는데도), `devstral:24b` 는 **3/4**(프롬프트에 형식 지시가 붙으면 호출을 빠뜨림 — 탈락).
-  그런데 35B 는 **코드 생성 시 API 환각**이 있는 모델이다.
-  → 가설(35B=드라이버 / 14b=코드 생성기)은 **보드 1대에서 보류**. 전환 비용 실측 결과
-  **35B↔14b 왕복 1회 ≈ 100초**(35B 전환 66.9s + 14b 전환 37.5s, 상주 시엔 각 2.7s/1.4s)라
-  적재에 잡아먹힌다. **보드 2대 전까지 착수하지 않는다** ([`PLAN.md`](PLAN.md) §9.4.2)
-- ✅ **대신 보드 1대에서 되는 길 — 구현 완료(2026-08-08)** — `extragoal` 의 "custom external
-  reviewer" 레인은 **도구 호출이 필요 없고** 계약이 *"마지막 줄 = `VERDICT: APPROVE`/`REQUEST_CHANGES`,
-  fail-closed"* 하나뿐이다. gjc 런타임은 도입하지 않고 **계약만** `master/verdict.py`·
-  `master/layer2_verify.py` 로 이식했다. 🔴 원본 `syntax_check` 는 **fail-open**(검증기가 죽으면
-  조용히 통과)이었는데 **fail-closed 로 뒤집었다.** agy 실측: 문법 오류 3건 전부 잡고 `REQUEST_CHANGES`,
-  정상 코드는 `APPROVE` ([`PLAN.md`](PLAN.md) §9.4.3~9.4.4)
-- [x] ~~**능력 기반 라우팅**(`requires: ue5`)~~ — **구현·실측 완료(2026-08-08).**
-  `requires ⊆ capabilities` 부분집합 매칭, **fail-closed**(미신고 = 능력 없음).
-  미지 태그는 등록 시점에 거부해 오타로 인한 영구 기아를 막는다
-- [x] ~~🔴 서비스에 인증 계층이 0건~~ — **해소 2026-08-08.** 세 서비스 전부 공유 베어러 토큰
-  (`master/auth.py`, `~/.config/ax-cluster/token`, **fail-closed** — 토큰이 없으면 기동하지 않는다).
-  `/livez` 만 열려 있다. ufw LAN 한정(`from 192.168.0.0/24`)은 **그대로 유지** — 토큰은 2중 방어지
-  대체가 아니고, **규칙을 `Anywhere` 로 넓히는 것은 여전히 금지**다
-  ([`docs/9_5-task-queue.md`](docs/9_5-task-queue.md) §9.5.6)
-- [x] ~~**이벤트 큐 설계**~~ — **완료 2026-08-08** (`master/events/`, 테스트 38건).
-  ✅ **막고 있던 범위 결정이 풀렸다(2026-08-08)** — 트윈은 **소스 한정**([`docs/5-master-orchestration.md`](docs/5-master-orchestration.md) §5.2-E).
-  남은 것은 **검색 코어 이식(3,552줄) → 소비자(색인기)** 순서다
-- **Gitea `post-receive.d/` 훅 설치** — 스크립트 형태는 확정. 설치에 root + 저장소별
-  `AX_PROJECT_ID` 주입이 필요하다
-- **`gjc` 설치 — 마스터가 아니라 윈도우 PC 쪽 선결**(2026-08-08 정정). gjc 가 loopback
-  제약상 파일을 소유한 윈도우에서 돌기 때문. ✅ `.2` 에 **`node` v24.11.1 은 이미 있다**(실측) —
-  `gjc` 와 (필요하면) `bun` 만 남았다. 마스터엔 `claude`·`agy` 설치 완료
-- 🔴 **BC-250 #2 — 게임 머신을 내줄지 결정** — 지금은 Bazzite 게임 머신이고, **#1 완성 후
-  추론 노드로 전환할 의향**이나 확정은 아니다. 그때까지 **병렬 추론(§4.5)·추론 노드
-  페일오버(§6.5)·보드별 모델 고정 배정(§4.4)·§9.4.2 역할 분리가 전부 성립하지 않는다.**
-  **기본 전제는 "보드 1대, 모델 1개 상주"**. ⚠️ 전환 시 **Bazzite 는 rpm-ostree 이미지형**이라
-  #1 에서 필수였던 TTM/GTT 캡·커널 파라미터·헤드리스 전환이 같은 절차로 되는지 미확인
-  ([`PLAN.md`](PLAN.md) §3)
-- ✅ ~~윈도우 작업장 2대의 관계~~ → **같은 UE5 프로젝트를 본다(2026-08-08 확정).**
-  따라서 두 작업장이 같은 저장소·같은 `task/<id>` 브랜치·같은 task_queue 를 동시에 만진다 —
-  **claim/lease/fencing 은 성능 최적화가 아니라 정확성 요건**이다 ([`PLAN.md`](PLAN.md) §4.2)
-- **작업자↔마스터 경로 이관**
-
-**이식 작업량 (2026-08-07 판정, [`PLAN.md`](PLAN.md) §5.4.7)** — AgentTest 의 기존
-**서버/클라이언트 모드**와 겹치는 부분이 커서 1·2단계는 예상보다 가볍다:
-`context_search --serve` 는 `sys.platform` 분기 **0건**, `task_queue` 는 2건인데 **둘 다 리눅스 분기 존재**.
-진짜 작업은 `watcher/` 재설계(폴링→이벤트)와 신규 추론 브로커에 몰려 있다.
-
-> ⚠️ **이식 시 함정** — AgentTest 의 로컬 LLM 기본값이 아직 `gemma4:e4b` 로 하드코딩돼 있다
-> (`config_init.py:65`·`common.py:92`·`watch.py:141`). config 를 안 넣으면 위에서 확정한 코더 모델이
-> 아니라 **조용히 Gemma 로 폴백**한다. [`PLAN.md`](PLAN.md) §4.4
-
-## 디렉터리
-
-| 경로 | 내용 |
-|---|---|
-| [`PLAN.md`](PLAN.md) | **SSOT 색인** — 1,839줄 단일 파일이었으나 절 단위로 [`docs/`](docs/) 13개로 분리했다(§ 번호는 그대로) |
-| [`docs/`](docs/) | 계획 본문 — 아키텍처·작업 루프·오케스트레이션·프로젝트 격리·미결 항목 |
-| [`master/`](master/README.md) | **인프라** — RAG·온톨로지·큐·추론 브로커 코드가 들어갈 자리 + 이식 대상 |
-| [`worker/`](worker/README.md) | BC-250 **추론 노드** 설정/래퍼 |
-| [`client/`](client/README.md) | 윈도우 UE5 PC ×2 — **오케스트레이션 + 엔진 바운드(층3)** |
-| [`machines/`](machines/README.md) | **머신별 `~/CLAUDE.md` 의 정본** — 리눅스 2대는 심볼릭 링크, 윈도우 `.2` 는 사본(클론이 없어서 — 해시 대조로 드리프트를 잡는다) |
-| `CLAUDE.md` | Claude Code 용 **저장소** 가이드(머신 가이드와 다르다) |
-
-> ⚠️ `worker` 라는 단어가 세 군데서 다른 것을 가리킨다 — 이 저장소의 `worker/` 는 BC-250 추론 노드,
-> AgentTest 의 `worker/` 는 윈도우 작업자이고 후자는 여기서 **`client/`** 다. [`PLAN.md`](PLAN.md) §4.1
+마스터(`sim@192.168.0.57:~/ax-cluster`) · BC-250 #1(`sim@192.168.0.43:~/ax-cluster`) ·
+GitHub(**private — 유지할 것.** LAN 주소와 방화벽 규칙이 들어 있다).
+보드는 `main` 이 체크아웃돼 있어 **push 가 거부된다 — 그쪽에서는 `git pull`** 을 쓴다.
 
 ## 관련
 
-- [AgentTest](https://github.com/SimSeoWon/AgentTest) — 이 클러스터가 RAG/온톨로지 워크로드를 넘겨받을 윈도우 기반 전신 프로젝트
-- [gajae-code](https://github.com/Yeachan-Heo/gajae-code) — 마스터가 구동할 코딩 에이전트 하네스
-- 하드웨어/인프라 작업 이력: `sim@192.168.0.43:~/bc250-backup-staging/reports/` (리포트 24·25),
-  마스터 측 사본 `sim@192.168.0.57:~/claude-workspace/reports/`
+- 전신 프로젝트 — `~/AgentTest` (🔴 **참조 전용. 수정·push 금지**)
+- 저장소에서 일할 때의 규칙 — [`CLAUDE.md`](CLAUDE.md)
