@@ -114,7 +114,7 @@ class ContextIndex:
     def count(self) -> int:
         return self._live.count()
 
-    def search(self, query: str, limit: int = 8) -> list[dict]:
+    def search(self, query: str, limit: int = 8, *, excerpt: int = 400) -> list[dict]:
         """Live 컬렉션에서 검색한다. **갱신 중에도 막히지 않는다.**"""
         if not query.strip():
             return []
@@ -134,7 +134,11 @@ class ContextIndex:
                 "file_id": fid,
                 "score": 1.0 - float(dists[i]) if i < len(dists) else None,  # cosine → 유사도
                 "meta": metas[i] if i < len(metas) else {},
-                "excerpt": (docs[i] or "")[:400] if i < len(docs) else "",
+                # 🔴 발췌 상한은 **호출자가 정한다.** 400 은 원본이 상용 API 토큰 비용을
+                # 전제로 잡은 값인데, 우리는 로컬 LLM 이라 그 전제가 없다. 여기서 잘라
+                # 버리면 호출자가 늘리려 해도 **이미 없는 내용**이라 늘어나지 않는다
+                # (실측 2026-08-08: RELATED_EXCERPT 를 1500 으로 올렸는데 400 그대로였다).
+                "excerpt": (docs[i] or "")[:excerpt] if i < len(docs) else "",
             })
         return out
 

@@ -38,6 +38,21 @@ CONTENT_LIMIT = 4000
 # LLM 이 목록만 베끼게 된다.
 GROUNDING_LIMIT = 10
 
+# 🔴 **원본 값 그대로.** `context.py:_build_related_context` 가 `n_results=3` 으로 관련 문서를
+# 모으고 발췌를 400자로 자른다. 이 채널이 협력 클래스를 정확히 짚게 하는 근거다 —
+# 우리는 그래프(dependents·상속)는 넣으면서 **RAG 채널을 빠뜨리고 있었다**(2026-08-08 발견).
+RELATED_LIMIT = 3                 # 문서 수는 원본 그대로 — 이건 토큰 문제가 아니라 신호 문제다
+RELATED_QUERY_BODY = 200          # 질의 = 파일 stem + 기존 문서 본문 앞 200자 (원본과 동일)
+
+# 🔴 **발췌 길이는 원본 400자에서 올렸다** (사용자 지시 2026-08-08).
+# 원본의 400은 **상용 API 토큰 비용** 전제의 값이다. 우리는 로컬 LLM 을 브로커로 부르므로
+# 토큰당 비용이 없다 — 관련 문서를 더 보여줄수록 협력 클래스를 정확히 짚는다.
+#
+# 다만 **무한정은 아니다.** 프롬프트 크기가 BC-250 을 넘어뜨린 전례가 있다(리포트 10 §8).
+# 상한을 지키는 축은 두 개다: 이 값과 `synth.SYNTH_NUM_CTX`. **둘을 함께 올릴 것** —
+# 발췌만 늘리면 컨텍스트 창을 넘어 뒤가 잘린다(모델이 조용히 앞부분만 본다).
+RELATED_EXCERPT = 1500
+
 FORMAT = """\
 아래 코드 파일을 분석해서 RAG 컨텍스트 MD 파일을 생성해줘.
 반드시 아래 형식을 그대로 지켜줘. **다른 설명 없이 MD 내용만 출력해** — 코드 펜스로
@@ -96,11 +111,12 @@ class Grounding:
     siblings: dict[str, list[str]] = field(default_factory=dict)
     dependents: list[str] = field(default_factory=list)         # 이 파일을 #include 하는 쪽
     includes: list[str] = field(default_factory=list)           # 이 파일이 #include 하는 쪽
+    related: list = field(default_factory=list)                 # (문서, 발췌) — RAG 채널
     domain_norms: str = ""                                      # 중 1.3 — 아직 없다
 
     @property
     def empty(self) -> bool:
-        return not (self.declared_classes or self.dependents or self.includes)
+        return not (self.declared_classes or self.dependents or self.includes or self.related)
 
     def render(self) -> str:
         out: list[str] = []
@@ -123,6 +139,10 @@ class Grounding:
                        + "\n".join(f"  - {d}" for d in self.dependents[:GROUNDING_LIMIT])
                        + "\n  ⚠️ 역방향은 파일명 기준 근사다 — 같은 이름 헤더가 여러 모듈에 "
                          "있으면 무관한 항목이 섞일 수 있다.")
+        if self.related:
+            body = "\n\n".join(f"  [{f}]\n{ex}" for f, ex in self.related[:RELATED_LIMIT])
+            out.append("[관련 파일 컨텍스트 — 의존 관계와 연동 로직 참고. "
+                       "`related_classes` 를 채울 때 여기 나온 클래스를 우선 고려한다]\n" + body)
         if self.domain_norms:
             out.append("[도메인 규범 — 시스템 전체 구조 파악에만. 정합성 판단은 실제 코드 기준]\n"
                        + self.domain_norms)

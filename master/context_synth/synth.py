@@ -58,8 +58,14 @@ SYNTH_TIMEOUT = 600
 # 🔴 KV 컨텍스트 상한. **이것이 BC-250 정지 사고의 진짜 원인이었다** — 모델 기본
 # `context_length` 가 **262144(256K)** 라, 안 주면 그 전제로 KV 와 컨텍스트 체크포인트를
 # 잡는다(실측 `checkpoint 1 of 32 ... 62.813 MiB` → 32개면 ~2.0GB, 보드 여유는 2.2GB).
-# 프롬프트 4,000자 + 근거 ≈ 1,500토큰, 출력 ≈ 800토큰이므로 4096 이면 넉넉하다.
-SYNTH_NUM_CTX = 4096
+# 🔴 **8192 로 올렸다** (2026-08-08) — 관련 문서 발췌를 400 → 1,500자로 키웠기 때문이다.
+# 두 값은 **함께 움직여야 한다**: 발췌만 늘리면 컨텍스트 창을 넘어 뒤가 잘리고, 모델은
+# 그 사실을 말하지 않는다(조용히 앞부분만 본다).
+#
+# 안전한 이유: 합성 모델이 `gemma4:e4b`(4B급)로 바뀌어 KV 가 35B 때보다 훨씬 작다.
+# 🔴 그래도 **35B(`HEAVY_MODEL`)로 되돌린다면 이 값을 다시 재라** — 그 조합이 보드를
+# 넘어뜨렸다(리포트 10 §8).
+SYNTH_NUM_CTX = 8192
 
 # 🔴 몇 그룹마다 모델을 내렸다 올릴지. **`num_ctx` 만으로는 부족하다** — 실측 2026-08-08:
 # 요청마다 여유가 935 → 880 → 680 → 447 → 259 MB 로 **단조 감소**한다(요청당 ~170MB).
@@ -169,6 +175,44 @@ def doc_path(paths: ProjectPaths, key: str) -> Path:
     return paths.context / f"{key}.md"
 
 
+def collect_related(paths: ProjectPaths, key: str, files: list[str], existing: str,
+                    *, searcher=None) -> list:
+    """관련 컨텍스트 문서 3개 (RAG 채널). **원본 `_build_related_context` 그대로.**
+
+    질의는 `파일 stem + 기존 문서 본문 앞 200자` — 기존 문서가 없으면 stem 만으로 돈다.
+    **자기 문서는 제외**한다(원본과 같다).
+    """
+    if searcher is None:
+        try:
+            from ..context_search.search import open_search
+            searcher = open_search(paths.name)
+        except Exception:                               # noqa: BLE001
+            return []
+    stem = Path(files[0]).stem if files else key.rsplit("/", 1)[-1]
+    query = stem
+    if existing:
+        query += " " + md_mod.strip_comments(existing).strip()[:prompt_mod.RELATED_QUERY_BODY]
+    self_doc = f"{key}.md"
+    out: list = []
+    try:
+        for hit in searcher.search(query, limit=prompt_mod.RELATED_LIMIT + 1,
+                                   excerpt=prompt_mod.RELATED_EXCERPT):
+            if hit.file_id == self_doc:
+                continue
+            # 🔴 **요약 절로 한정한다** (사용자 확정 2026-08-08).
+            # `hit.excerpt` 는 임베딩 텍스트, 곧 「## 요약」 절이다. 본문 전체를 넣어 봤고
+            # (951·762·1500자) 통과했지만 **요약으로 한정하기로 했다** — 원본이 그 절을
+            # *"이 섹션만 벡터 임베딩 대상 — 짧고 검색 친화적으로"* 로 설계한 이유가
+            # 그대로 여기에도 적용된다: 관련 문서는 **네비게이션 신호**지 읽을 자료가 아니다.
+            # 「개선 필요 사항」의 기술 부채 서술까지 넣으면 협력 관계 신호가 희석된다.
+            out.append((hit.file_id, (hit.excerpt or "")[:prompt_mod.RELATED_EXCERPT]))
+            if len(out) >= prompt_mod.RELATED_LIMIT:
+                break
+    except Exception:                                   # noqa: BLE001
+        return out
+    return out
+
+
 def collect_grounding(paths: ProjectPaths, files: list[str]) -> prompt_mod.Grounding:
     """관계 그래프에서 실측 근거를 모은다. **베스트에포트** — 그래프가 없으면 빈 근거다.
 
@@ -236,6 +280,7 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
         existing = e.text if e else ""
 
     grounding = collect_grounding(paths, files)
+    grounding.related = collect_related(paths, key, files, existing)
     p = prompt_mod.build(files=files, bodies=bodies, grounding=grounding, existing=existing,
                          limit=content_limit)
     res.prompt_chars = len(p)

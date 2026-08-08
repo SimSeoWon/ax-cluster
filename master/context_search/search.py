@@ -153,7 +153,8 @@ class ContextSearch:
     def generation(self) -> str:
         return self.vector.live_name
 
-    def search(self, query: str, limit: int = 8, *, pool: int | None = None) -> list[Hit]:
+    def search(self, query: str, limit: int = 8, *, pool: int | None = None,
+               excerpt: int = 400) -> list[Hit]:
         """융합 검색.
 
         `pool` 은 융합 **전** 각 채널에서 가져올 후보 수다. `limit` 과 같게 두면 한 채널에만
@@ -163,7 +164,7 @@ class ContextSearch:
             return []
         q = focus(query)
         n = pool or max(limit * 3, 10)
-        vec = self.vector.search(q, limit=n)
+        vec = self.vector.search(q, limit=n, excerpt=excerpt)
         kw = self.bm25.search(q, limit=n)
         return fuse(vec, kw)[:limit]
 
