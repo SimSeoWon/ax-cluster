@@ -26,12 +26,21 @@ software repository.** There is no build, lint, or test tooling. **Don't assume 
 |---|---|
 | Current milestone — **read only this one** | `~/ax-cluster/docs/milestones/2-twin-restoration.md` |
 | Previous (kept, still valid) | `~/ax-cluster/docs/milestones/1-infrastructure.md` |
-| **Measured done vs not-done** | `~/ax-cluster/docs/milestones/2-twin-restoration.md` |
 
-🔴 **The twin is a snapshot and cannot grow.** Search over it works (partly), but nothing
-*produces* it: ontology synthesis **0 / 7,173**, context-MD synthesis **0 / 1,036**, class graph
-**0 / 1,341**. Ontology data exists (247 yaml) but is **unindexed — 0 search hits**.
-So code the pipeline writes never enters the twin, and the RAG drifts from reality silently.
+**Goals** (user, 2026-08-08): ① **author the ontology documents automatically** — context doc per
+commit → relation graph → BM25 → then the ontology doc itself, which is **manual + conversational
+with heuristics, not fully automatic** (auto-promotion was permanently disabled 2026-06-01)
+② **feed the relevant slice of that twin to the code-writing agent.**
+
+🔴 **The twin is a snapshot and cannot grow — 1 of 32 sub-tasks done.** Nothing *produces* it: no
+context-MD synthesis, no class/dependency graph, no ontology synthesis, no thesaurus. The 247 yaml
+are **unindexed — 0 search hits**. So code the pipeline writes never enters the twin, and the RAG
+drifts from reality silently. Breakdown 대 2 / 중 8 / 소 32; **main = 대 1 (making the data)**;
+`/distribute`·`/review-work` stay 🕓 예정 (they *consume* the twin).
+
+🔴 **Never size a task by line count** — `class_graph`'s 1,341 lines are *"delete the file → full
+rescan on restart"*, while one 829-line file holds the domain index, norm search and the thesaurus
+builder together.
 
 🔴 **Say "done" only for a whole area**; otherwise give the denominator. And **don't pick the
 next task yourself** — milestone 1 failed exactly that way.

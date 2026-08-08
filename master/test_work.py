@@ -135,7 +135,8 @@ def main() -> int:
 
     print("\n[6] 🔴 온톨로지가 없다는 사실을 숨기지 않는다")
     check("규범 섹션이 있다", "도메인 규범" in m.body)
-    check("미구현이라 적혀 있다", "미구현" in m.body and "2단계" in m.body)
+    check("미구현이라 적혀 있고 소분류를 가리킨다",
+          "미구현" in m.body and "2.3.1" in m.body)
 
     print("\n[7] 🔴 수집 결손을 숨기지 않는다 (베스트에포트지만 조용하지 않다)")
     m2 = mf.build(paths, "t", classes=["UFoo"], searcher=FakeSearch(exc=RuntimeError("죽음")),

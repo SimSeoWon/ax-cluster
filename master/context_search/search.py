@@ -6,13 +6,13 @@
 - source 조합별 tie-break 우선순위 (`_SOURCE_PRIORITY`)
 - 정렬 키: RRF 내림차순 → source 우선순위 → similarity 내림차순
 
-**1단계에서 뺀 것** (전부 온톨로지·부가 계층이라 §5.2-E ③ 의 분할선과 일치한다):
+**아직 없는 것** (전부 온톨로지·부가 계층이라 §5.2-E ③ 의 분할선과 일치한다):
 
-| 뺀 것 | 어디로 |
+| 없는 것 | 어디 |
 |---|---|
-| 도메인 자동 추론 (`infer_domain_from_query`) | 2단계 — `class_ontology` 테이블이 있어야 한다 |
-| 시소러스 쿼리 확장 (`_expand_query_with_thesaurus`) | 2단계 — 온톨로지 objects yaml 이 원천 |
-| 규범 첨부 (`attach_norms`) | 2단계 |
+| 도메인 자동 추론 (`infer_domain_from_query`) | **소 2.2.2** — `class_ontology` 테이블(중 1.1) 선행 |
+| 시소러스 쿼리 확장 (`_expand_query_with_thesaurus`) | **소 2.2.1** — 원천은 objects yaml 의 `aliases` |
+| 규범 첨부 (`attach_norms`) | **소 2.3.1** — 목표 ②의 종점 |
 | 검색 로그 (`_log_search`, caller/session_id/work_id) | §5.2-D 로 별도 판단 (감사 계층) |
 | 원격 모드 (`_is_remote_mode`) | 불필요 — 여기가 서버다 |
 

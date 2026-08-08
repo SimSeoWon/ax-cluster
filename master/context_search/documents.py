@@ -66,8 +66,8 @@ def is_excluded(file_id: str) -> bool:
     """`_domains/*.md` 는 메인 색인에서 제외한다.
 
     도메인 yaml 이 그 MD 의 완전한 상위 집합이라 중복이고, 도메인 검색은 별도 진입점을
-    쓴다(2단계 온톨로지). MD 자체는 합성기 입력으로 보존되므로 **지우면 안 된다** —
-    색인에서만 뺀다.
+    쓴다(소 2.1.1 `sync_domain_index`). MD 자체는 **사람 SSOT 이자 합성기 입력**이라
+    보존한다 — **지우면 안 된다.** 색인에서만 뺀다.
     """
     if not file_id:
         return False
