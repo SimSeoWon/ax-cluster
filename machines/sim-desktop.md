@@ -36,42 +36,15 @@ The board has `main` checked out so pushing there is rejected — **`git pull` o
 | **.43** | **BC-250 #1** — Fedora, headless | `sim` | Inference endpoint #1 (35B pinned), stateless | `ssh sim@192.168.0.43` ✅ passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
 | — | BC-250 #2 | — | 🎮 **Bazzite gaming machine — NOT an inference node.** Converting it means giving up that machine. **Never assume a 2nd board exists.** | n/a |
 
-### `.2` — SSH access notes (verified 2026-08-08)
+### `.2` — the Windows worker has its own guide
 
-🔴 **The account is `janus`, not `sim`.** `ssh sim@192.168.0.2` fails with
-`Permission denied (publickey,...)` — an easy 10 minutes to lose. The master's public key is in
-`C:\ProgramData\ssh\administrators_authorized_keys` (the admin-account path, not `~/.ssh/`).
+🔴 **The account is `janus`, not `sim`** — `ssh sim@192.168.0.2` fails with
+`Permission denied (publickey,...)`. Everything else about that box — OS, session-0 boundary
+(what the master can and cannot drive there), UE5 project path, local + commercial LLMs, the
+SSH PATH trap — lives in **[`win-worker-2.md`](win-worker-2.md)**, which is also copied to
+`C:\Users\janus\CLAUDE.md` so sessions on that machine load it.
 
-🔴 **The SSH session's PATH is minimal — installed tools are invisible to `where`.**
-`claude`, `node`, and `npm` are all installed but resolve only by absolute path over SSH:
-
-```bash
-ssh janus@192.168.0.2 'C:\Users\janus\.local\bin\claude.exe --version'   # Claude Code 2.1.225
-```
-
-`git` *is* on PATH (`C:\Program Files\Git\cmd\git.exe`). Same trap as this box's `~/.local/bin`
-needing an explicit `.bashrc` entry — a tool missing from `where` output is not absent.
-
-✅ **The master's services are reachable from `.2`** — 8101, 8102, and 8103 all test open
-(`Test-NetConnection`, 2026-08-08). A Claude Code session there can talk to the task queue,
-broker, and project registry directly.
-
-**The two Windows PCs work on the SAME UE5 project** — they own files, run the engine, do
-build/RunTests, and register code. That is why claim/lease/fencing is a correctness requirement,
-not team bloat.
-
-🔴 **`.2` is the asymmetric one — it is both a workshop and an inference endpoint.** It is also
-the only Windows box the master can reach non-interactively (SSH). `.33` is RDP-only, so anything
-needing automation on the main work PC has to be driven from that PC, not from here.
-
-🔴 **Two inference endpoints, and only one is a board:** BC-250 #1 (35B pinned) and the RTX 3060
-PC (14b pinned). Each runs `MAX_LOADED_MODELS=1`, so a model swap costs ~64s (35B) / ~36s (14b) —
-a round trip is ~100s. **Any design premised on parallel inference or multiple resident models
-*within one endpoint* does not hold.**
-
-🔴 **Claude Code is installed on `.2`.** It is an *orchestrator* there (§2.3 — the workshop owns
-files and drives tools), **not** a model backend. Ollama cannot serve Claude, and the Claude Code
-CLI is not an inference server — don't try to put it behind the broker as a model.
+✅ The master's services are reachable from `.2` — 8101, 8102, 8103 all verified (2026-08-08).
 
 ### Design rules (inherited from the AgentTest 2026-07-07 architecture)
 

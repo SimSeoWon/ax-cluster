@@ -3,10 +3,34 @@
 Each machine's `~/CLAUDE.md` (the file Claude Code auto-loads at session start) is
 **version-controlled here**.
 
-| File | Machine | Link in its home |
+| File | Machine | How it reaches that machine |
 |---|---|---|
-| [`sim-desktop.md`](sim-desktop.md) + [`sim-desktop.d/`](sim-desktop.d/) | master `sim-desktop` (192.168.0.57) | `/home/sim/CLAUDE.md` |
-| [`bc250-1.md`](bc250-1.md) | BC-250 #1 (192.168.0.43) | `sim@192.168.0.43:/home/sim/CLAUDE.md` |
+| [`sim-desktop.md`](sim-desktop.md) + [`sim-desktop.d/`](sim-desktop.d/) | master `sim-desktop` (192.168.0.57) | **symlink** → `/home/sim/CLAUDE.md` |
+| [`bc250-1.md`](bc250-1.md) | BC-250 #1 (192.168.0.43) | **symlink** → `sim@192.168.0.43:/home/sim/CLAUDE.md` |
+| [`win-worker-2.md`](win-worker-2.md) | Windows worker (192.168.0.2, account `janus`) | 🔴 **copy** → `C:\Users\janus\CLAUDE.md` (no repo clone there — see below) |
+
+**192.168.0.33** (the user's main work PC) has **no file yet, on purpose.** We know only that it's
+Windows, RDP-only, and that the ontology export came from there — not enough to write a guide, and
+we can't deliver one anyway (no SSH). It stays a row in `sim-desktop.md` § Machine inventory until
+there's something machine-specific worth recording.
+
+## 🔴 `.2` is a copy, not a symlink — refresh it deliberately
+
+`ax-cluster` is **not cloned** on the Windows worker, so there is nothing for a symlink to point
+at. Cloning the whole repo there just to carry one guide file costs more than the problem, so that
+machine gets a copy:
+
+```bash
+scp ~/ax-cluster/machines/win-worker-2.md janus@192.168.0.2:C:/Users/janus/CLAUDE.md
+
+# drift check — should print identical hashes
+sha256sum ~/ax-cluster/machines/win-worker-2.md | cut -d' ' -f1
+ssh janus@192.168.0.2 'powershell -NoProfile -Command "(Get-FileHash C:\Users\janus\CLAUDE.md -Algorithm SHA256).Hash.ToLower()"'
+```
+
+**Copies drift — that is exactly what this directory exists to prevent**, so treat this as a
+known exception with a compensating check, not as the pattern to copy. When `gjc` lands and that
+box needs more of the repo anyway, clone it and switch to a symlink like the other two.
 
 ## 🔴 `~/CLAUDE.md` is a symlink — never turn it back into a regular file
 
