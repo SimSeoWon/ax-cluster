@@ -6,6 +6,8 @@
     python -m master.context_synth sample [N]                   # 🔴 dry-run N개 — 통과율 측정
     python -m master.context_synth status                       # 문서/소스 대비
 
+공통 플래그: --model <이름> · --fallback(.2 의 14b) · --content-limit N · --limit N
+
 🔴 **`--limit` 없이 `all` 을 돌리기 전에 한 그룹으로 품질을 확인할 것.** 1,600 그룹이고
 그룹당 수십 초라 전체는 시간 단위 작업이다. 그리고 나쁜 문서 1,600개는 좋은 문서 0개보다
 나쁘다 — RAG 가 그걸 근거로 코드를 짜게 된다.
@@ -40,10 +42,24 @@ def main(argv: list[str]) -> int:
     cmd = (argv[0] if argv else "status").lower()
     rest = argv[1:]
     limit = 0
-    if "--limit" in rest:
-        i = rest.index("--limit")
-        limit = int(rest[i + 1])
-        rest = rest[:i] + rest[i + 2:]
+    model = synth.SYNTH_MODEL
+    climit = synth.prompt_mod.CONTENT_LIMIT
+
+    def _flag(name, cast, cur):
+        nonlocal rest
+        if name in rest:
+            i = rest.index(name)
+            val = cast(rest[i + 1])
+            rest = rest[:i] + rest[i + 2:]
+            return val
+        return cur
+
+    limit = _flag("--limit", int, limit)
+    climit = _flag("--content-limit", int, climit)
+    model = _flag("--model", str, model)
+    if "--fallback" in rest:            # 35B 노드가 죽었을 때 .2 의 14b 로
+        rest = [r for r in rest if r != "--fallback"]
+        model = synth.FALLBACK_MODEL
     try:
         paths = resolve("")
     except Exception as e:
@@ -60,7 +76,7 @@ def main(argv: list[str]) -> int:
         key = str(__import__("pathlib").Path(rest[0]).parent
                   / __import__("pathlib").Path(rest[0]).stem)
         files = sorted(synth.group([rest[0]])[key])
-        r = synth.synthesize_group(paths, key, files)
+        r = synth.synthesize_group(paths, key, files, model=model, content_limit=climit)
         if not r.written:
             print(f"❌ {key} — {r.reason}")
             return 1
@@ -73,7 +89,7 @@ def main(argv: list[str]) -> int:
     if cmd == "sample":
         n = int(rest[0]) if rest else 8
         # 🔴 쓰지 않는다 — 받아온 스냅샷을 지키면서 모델 적합도만 잰다.
-        st = synth.run(paths, limit=n, dry_run=True,
+        st = synth.run(paths, limit=n, dry_run=True, model=model, content_limit=climit,
                        progress=lambda m: print(m, flush=True))
         print(f"\n사실 게이트 통과율: {st.pass_rate}  ({st.summary})")
         for r in st.results:
@@ -83,8 +99,8 @@ def main(argv: list[str]) -> int:
 
     if cmd in ("fill", "all"):
         try:
-            st = synth.run(paths, skip_existing=(cmd == "fill"), limit=limit,
-                           progress=lambda m: print(m, flush=True))
+            st = synth.run(paths, skip_existing=(cmd == "fill"), limit=limit, model=model,
+                           content_limit=climit, progress=lambda m: print(m, flush=True))
         except (synth.SynthError, Exception) as e:
             if isinstance(e, synth.SynthError):
                 print(f"❌ {e}")

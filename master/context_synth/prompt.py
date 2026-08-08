@@ -25,8 +25,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-# 그룹당 본문 상한. 원본과 같은 값(8,000자) — 여러 클래스를 한 번에 분석하는 전제다.
-CONTENT_LIMIT = 8000
+# 그룹당 본문 상한.
+#
+# 🔴 **원본은 8,000자였다. 우리는 4,000이다** — 원본은 상용 API(Claude/agy)를 불렀지만 우리는
+# 16GB UMA 보드의 35B IQ2_M 을 부른다. 실측 2026-08-08: 8,000자 본문(총 프롬프트 10.5KB)으로
+# 8그룹 배치를 돌렸더니 **BC-250 이 먹통이 됐다** — ping 은 되는데 SSH banner exchange 가
+# 끊기고 Ollama 가 무응답(메모리 압박 신호). 프롬프트가 길면 KV 캐시가 보드 한계를 넘는다.
+# 상한은 CLI `--content-limit` 로 올릴 수 있지만, **올리기 전에 노드 여유를 확인할 것.**
+CONTENT_LIMIT = 4000
 
 # 근거 항목 상한. 원본이 dependents 를 10개로 끊었다 — 그 이상은 프롬프트를 밀어내고
 # LLM 이 목록만 베끼게 된다.

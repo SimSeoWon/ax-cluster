@@ -39,7 +39,13 @@ from . import md as md_mod, prompt as prompt_mod, verify as verify_mod
 
 # 컨텍스트 합성용 모델. 코드 생성용 14b coder 와 **일부러 다르다** — 산문·분류 작업이고,
 # 다른 기계에 핀돼 있어 코드 생성과 경합하지 않는다.
+#
+# 🔴 **다만 35B 는 16GB UMA 보드(BC-250)에 있고 긴 프롬프트에 취약하다** — 실측 2026-08-08 에
+# 8그룹 배치가 그 보드를 먹통으로 만들었다(ping O, SSH·Ollama X). 그래서 ⑴ 프롬프트 상한을
+# 절반으로 낮췄고 ⑵ 대안 모델을 상수로 둔다. 품질은 35B 가 낫지만 **사실 게이트가 걸러 주므로**
+# 나쁜 문서가 통과하지는 않는다 — 통과율이 떨어질 뿐이다.
 SYNTH_MODEL = "hf.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M"
+FALLBACK_MODEL = "qwen2.5-coder:14b"     # rtx3060(.2) 핀. 35B 노드가 죽었을 때
 SYNTH_TIMEOUT = 600
 
 # 연속 실패 임계값. 이보다 이어지면 배치를 중단한다 (위 ⑵).
@@ -172,6 +178,7 @@ def collect_grounding(paths: ProjectPaths, files: list[str]) -> prompt_mod.Groun
 def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                      commit: str = "", broker: str = DEFAULT_BROKER,
                      model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
+                     content_limit: int = prompt_mod.CONTENT_LIMIT,
                      tally: source_text.EncodingTally | None = None) -> GroupResult:
     """한 그룹 → 컨텍스트 MD 한 개.
 
@@ -203,7 +210,8 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
         existing = e.text if e else ""
 
     grounding = collect_grounding(paths, files)
-    p = prompt_mod.build(files=files, bodies=bodies, grounding=grounding, existing=existing)
+    p = prompt_mod.build(files=files, bodies=bodies, grounding=grounding, existing=existing,
+                         limit=content_limit)
     res.prompt_chars = len(p)
 
     try:
@@ -242,8 +250,8 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
 
 def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = "",
         skip_existing: bool = False, limit: int = 0, broker: str = DEFAULT_BROKER,
-        model: str = SYNTH_MODEL, caller=None, dry_run: bool = False, git=None,
-        progress=None) -> Stats:
+        model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
+        content_limit: int = prompt_mod.CONTENT_LIMIT, git=None, progress=None) -> Stats:
     """배치 합성. `changed` 를 주면 그 파일들만, 없으면 `Source/` 전체.
 
     `skip_existing` — 이미 문서가 있는 그룹을 건너뛴다(최초 전체 빌드에서 누락분만 보충).
@@ -269,7 +277,8 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
             stats.results.append(GroupResult(key=key, files=fs, reason="변화 없음"))
             continue
         r = synthesize_group(paths, key, fs, commit=commit, broker=broker, model=model,
-                             caller=caller, dry_run=dry_run, tally=stats.encodings)
+                             caller=caller, dry_run=dry_run, content_limit=content_limit,
+                             tally=stats.encodings)
         stats.results.append(r)
         if r.passed:
             stats.written += 1
