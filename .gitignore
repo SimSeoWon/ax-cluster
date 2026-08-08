@@ -8,3 +8,6 @@ venv/
 # 🔴 새 프로젝트를 추가하면 여기에 한 줄 추가할 것. 각 디렉토리는 자체 .git 을 가지므로
 #    빠뜨리면 git status 에 gitlink 로 나타난다(조용히 커밋되지는 않는다).
 /ModularStage/
+
+# 마운트 설정도 이 박스의 인프라 상태다 — 배포 대상이 아니다
+/projects.yaml
