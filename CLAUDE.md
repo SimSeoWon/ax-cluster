@@ -55,7 +55,7 @@ There is no linter or CI config — **don't invent tooling commands.**
 
 `worker/` and `client/` are still README-only stubs.
 
-**Tests — 234, all passing. No pytest**; each file runs standalone.
+**Tests — 253, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
@@ -65,7 +65,7 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_projects.py            # 63 — needs venv (pyyaml)
 .venv/bin/python master/test_mcp_servers.py         # 28 — both MCP servers import + register
 .venv/bin/python master/test_workshop_check.py      # 47 — dirty-check rules (no SSH; runner injected)
-.venv/bin/python master/test_layer3_verify.py       # 44 — layer-3 gate: parse automation logs, fail-closed
+.venv/bin/python master/test_layer3_verify.py       # 63 — layer-3 gate: automation + build logs, fail-closed
 
 curl -s localhost:8102/health | python3 -m json.tool   # which node holds which model
 systemctl status ax-task-queue ax-broker ax-projects

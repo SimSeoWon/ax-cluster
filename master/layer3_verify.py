@@ -10,9 +10,17 @@
 
 🔴 **틀린 신호 두 개 — 실측으로 걸렀다:**
 
-1. **SSH 종료 코드를 쓰지 마라.** 에디터가 `EXIT CODE: 0` 인 실행에서도 `ssh` 는 **1** 을
-   반환했다(두 번 다). 감싼 배치의 `%ERRORLEVEL%` 도 기록되지 않았다 — 래퍼 문제가 아니라
-   원격 프로세스 종료와 SSH 채널 종료가 어긋나는 것이다.
+1. **SSH 종료 코드를 쓰지 마라. 양방향으로 틀린다** (실측 2026-08-08):
+
+   | 실행 | 실제 결과 | `ssh` 종료 코드 |
+   |---|---|---|
+   | `UnrealEditor-Cmd` (테스트 통과) | 성공 (`EXIT CODE: 0`) | **1** ← 거짓 실패 |
+   | `Build.bat` (성공) | `Result: Succeeded` | 0 |
+   | `Build.bat` (**실패**) | `Result: Failed (RulesError)` | **0** ← **거짓 성공** |
+
+   마지막 줄이 위험한 쪽이다 — **실패한 빌드를 통과시킨다.** 감싼 배치의 `%ERRORLEVEL%` 는
+   빌드에서는 맞았지만(0 vs 8) 에디터 실행에서는 **기록조차 되지 않았다.**
+   래퍼로도 메울 수 없으니 **로그를 파싱하는 것 외에 방법이 없다.**
 2. **`Error` 문자열을 쓰지 마라.** **전부 통과한 실행에 `LogAutomationTest: Error` 가
    15줄** 있었다. 실패를 일부러 유발하는 부정 경로 검사들이 그렇게 남긴다.
    `grep -i error` 게이트는 **통과한 빌드를 실패로 판정한다.**
@@ -182,6 +190,119 @@ def parse_automation_log(text: str, *, tail_lines: int = 15) -> Layer3Result:
     return Layer3Result(
         passed=True, failure=None, exit_code=exit_code, tests=tests, raw_tail=tail
     )
+
+
+# ─────────────────────────────────────────
+# 빌드 (UnrealBuildTool / Build.bat)
+# ─────────────────────────────────────────
+
+# `Result: Succeeded` / `Result: Failed (RulesError)`
+_BUILD_RESULT = re.compile(r"^\s*Result:\s*(?P<result>Succeeded|Failed)(?:\s*\((?P<why>[^)]*)\))?",
+                           re.MULTILINE)
+_BUILD_TIME = re.compile(r"Total execution time:\s*(?P<sec>[\d.]+)\s*seconds")
+
+
+@dataclass
+class BuildResult:
+    """빌드 판정. 테스트와 같은 계약 — 정확한 신호만 믿고, 없으면 막는다."""
+
+    passed: bool
+    failure: str | None          # None = UBT 가 실제로 판정을 냈다
+    result: str = ""             # "Succeeded" | "Failed" | ""
+    detail: str = ""             # 실패 사유 태그 (예: RulesError)
+    seconds: float | None = None
+    raw_tail: str = ""
+
+    def summary(self) -> str:
+        if self.passed:
+            s = "BUILD OK"
+            return f"{s}({self.seconds:.1f}s)" if self.seconds is not None else s
+        if self.failure:
+            return f"BLOCKED(계약 위반: {self.failure})"
+        return f"BUILD FAILED({self.detail})" if self.detail else "BUILD FAILED"
+
+    def to_dict(self) -> dict:
+        return {
+            "passed": self.passed,
+            "failure": self.failure,
+            "result": self.result,
+            "detail": self.detail,
+            "seconds": self.seconds,
+            "summary": self.summary(),
+            "raw_tail": self.raw_tail,
+        }
+
+
+def parse_build_log(text: str, *, tail_lines: int = 15) -> BuildResult:
+    """UBT 로그에서 빌드 판정을 뽑는다. **순수 함수.**
+
+    🔴 프로세스 반환 코드를 보지 않는다 — `Build.bat` 이 실패해도 `ssh` 는 0 을 낸다(실측).
+    """
+    text = text or ""
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    tail = "\n".join(lines[-tail_lines:])
+
+    t = _BUILD_TIME.search(text)
+    seconds = float(t.group("sec")) if t else None
+
+    matches = list(_BUILD_RESULT.finditer(text))
+    if not matches:
+        return BuildResult(
+            passed=False,
+            failure=(
+                "판정 줄('Result: Succeeded|Failed')이 없다. "
+                "UBT 가 시작조차 못 했거나 로그가 잘렸다 — 통과로 취급하지 않는다."
+            ),
+            seconds=seconds,
+            raw_tail=tail,
+        )
+    m = matches[-1]  # 여러 번이면 마지막
+    result = m.group("result")
+    why = (m.group("why") or "").strip()
+
+    if result == "Succeeded":
+        return BuildResult(passed=True, failure=None, result=result, seconds=seconds, raw_tail=tail)
+    # 빌드가 실제로 실패한 것은 계약 위반이 아니다 → failure=None
+    return BuildResult(
+        passed=False, failure=None, result=result, detail=why, seconds=seconds, raw_tail=tail
+    )
+
+
+def build_build_command(build_bat: str, target: str, uproject: str,
+                        *, platform: str = "Win64", config: str = "Development") -> str:
+    """Jenkins 등 외부 구동이 쓰는 표준 UBT 호출 형태."""
+    return (
+        f'call "{build_bat}" {target} {platform} {config} '
+        f'-Project="{uproject}" -WaitMutex'
+    )
+
+
+def run_build_on_workshop(
+    host: str,
+    user: str,
+    build_bat: str,
+    target: str,
+    uproject: str,
+    *,
+    platform: str = "Win64",
+    config: str = "Development",
+    runner: Runner = _run,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> BuildResult:
+    """워크숍에서 빌드를 돌리고 판정한다. **반환 코드를 보지 않는다.**"""
+    cmd = [
+        "ssh", "-o", "BatchMode=yes", f"{user}@{host}",
+        build_build_command(build_bat, target, uproject, platform=platform, config=config),
+    ]
+    try:
+        proc = runner(cmd, timeout)
+    except subprocess.TimeoutExpired:
+        return BuildResult(
+            passed=False, failure=f"{timeout}초 안에 끝나지 않았다 — 확인 실패이므로 막는다."
+        )
+    except OSError as e:
+        return BuildResult(passed=False, failure=f"SSH 실행 실패: {e} — 막는다.")
+    return parse_build_log((proc.stdout or "") + "\n" + (proc.stderr or ""))
 
 
 def build_command(editor_cmd: str, uproject: str, test_filter: str) -> str:

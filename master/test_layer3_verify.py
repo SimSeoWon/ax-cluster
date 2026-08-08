@@ -182,6 +182,66 @@ def main() -> int:
     for verb in ("clean", "reset", "checkout", "push", "commit"):
         check(f"  `{verb}` 없음", verb not in cmd)
 
+    print("\n[11] 빌드 판정 — 실측 로그 픽스처")
+    from master.layer3_verify import (  # noqa: E402
+        build_build_command,
+        parse_build_log,
+        run_build_on_workshop,
+    )
+
+    # 실측(.2, 2026-08-08) 성공 로그
+    BUILD_OK = """Using 'git status' to determine working set for adaptive non-unity build.
+UbaServer - Listening on 0.0.0.0:1345
+Target is up to date
+Output binary: C:\\Program Files\\UE_5.8\\Engine\\Binaries\\Win64\\UnrealEditor.exe
+
+Result: Succeeded
+Total execution time: 1.86 seconds
+"""
+    # 실측 실패 로그 (없는 타깃)
+    BUILD_FAIL = """Location: C:\\Program Files\\UE_5.8\\Engine\\Intermediate\\Build\\BuildRules\\UE5Rules.dll
+
+Result: Failed (RulesError)
+Total execution time: 1.04 seconds
+"""
+    b = parse_build_log(BUILD_OK)
+    check("성공 로그 → passed", b.passed, b.summary())
+    check("  소요 시간 파싱", b.seconds == 1.86, str(b.seconds))
+    check("  summary", b.summary().startswith("BUILD OK"), b.summary())
+
+    b = parse_build_log(BUILD_FAIL)
+    check("실패 로그 → 차단", not b.passed, b.summary())
+    check("  failure=None (계약은 지켜졌다)", b.failure is None, str(b.failure))
+    check("  사유 태그 보존", b.detail == "RulesError", b.detail)
+
+    b = parse_build_log("아무 판정 줄 없음\n")
+    check("판정 줄 없음 → 계약 위반", not b.passed and b.failure, b.summary())
+    check("빈 입력 → 계약 위반", not parse_build_log("").passed)
+
+    print("\n[12] 🔴 빌드도 반환 코드로 판정하지 않는다")
+    # 실측: Build.bat 이 실패해도 ssh 는 0 을 낸다 — 이게 가장 위험한 방향이다.
+    b = run_build_on_workshop("h", "u", "bb", "T", "p", runner=fake(BUILD_FAIL, rc=0))
+    check("🔴 rc=0 이어도 로그가 Failed 면 차단", not b.passed, b.summary())
+    b = run_build_on_workshop("h", "u", "bb", "T", "p", runner=fake(BUILD_OK, rc=9))
+    check("rc=9 여도 로그가 Succeeded 면 통과", b.passed, b.summary())
+    b = run_build_on_workshop(
+        "h", "u", "bb", "T", "p", runner=fake(raises=subprocess.TimeoutExpired("ssh", 5))
+    )
+    check("타임아웃 → 차단", not b.passed and b.failure, b.summary())
+
+    print("\n[13] 빌드 명령 형태 — Jenkins 등 외부 구동 표준")
+    bc = build_build_command(
+        r"C:\Program Files\UE_5.8\Engine\Build\BatchFiles\Build.bat",
+        "ModularStageEditor",
+        r"E:\trunk\ModularStage\ModularStage.uproject",
+    )
+    check("타깃·플랫폼·구성", "ModularStageEditor Win64 Development" in bc, bc)
+    check("-Project 지정", '-Project="E:\\trunk\\ModularStage\\ModularStage.uproject"' in bc, bc)
+    check("-WaitMutex (동시 실행 충돌 방지)", "-WaitMutex" in bc, bc)
+    check("call 로 호출 (배치가 조기 종료되지 않게)", bc.startswith("call "), bc)
+    for verb in ("clean", "reset", "checkout", "push"):
+        check(f"  `{verb}` 없음", verb not in bc.lower())
+
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 

@@ -537,11 +537,18 @@ UnrealEditor-Cmd.exe <uproject> -ExecCmds="Automation RunTests <필터>; Quit" ^
 
 실검증에서 **함정 두 개**가 나왔다. 둘 다 "그럴듯한 신호"가 틀린 경우다.
 
-**1. SSH 의 종료 코드를 믿으면 안 된다.**
-두 번의 실행 모두 에디터는 `EXIT CODE: 0` 인데 **`ssh` 는 1 을 반환했다.** 감싼 배치의
-`echo [wrapper-exit] %ERRORLEVEL%` 도 **찍히지 않았다**(같은 배치를 에디터 없이 돌리면 정상
-기록된다 — 래퍼 문제가 아니다). 원격 프로세스가 끝나는 방식과 SSH 채널 종료가 어긋난다.
-→ **종료 코드로 게이트하지 말고 로그를 파싱하라.**
+**1. SSH 의 종료 코드를 믿으면 안 된다 — 양방향으로 틀린다.**
+
+| 실행 | 실제 결과 | `ssh` 종료 코드 |
+|---|---|---|
+| `UnrealEditor-Cmd` (테스트 통과) | 성공 (`EXIT CODE: 0`) | **1** ← 거짓 실패 |
+| `Build.bat` (성공) | `Result: Succeeded` | 0 |
+| `Build.bat` (**실패**) | `Result: Failed (RulesError)` | **0** ← **거짓 성공** |
+
+🔴 **마지막 줄이 위험한 쪽이다 — 실패한 빌드를 통과시킨다.**
+감싼 배치의 `%ERRORLEVEL%` 는 빌드에서는 맞았지만(0 vs 8) **에디터 실행에서는 기록조차
+되지 않았다.** 래퍼로도 메울 수 없다.
+→ **종료 코드로 게이트하지 말고 로그를 파싱하라. 예외 없다.**
 
 **2. `Error` 문자열로 판정하면 안 된다.**
 **전부 통과한 실행에 `LogAutomationTest: Error` 가 15줄 있었다.** 실패를 일부러 유발해
@@ -560,9 +567,34 @@ LogAutomationCommandLine: Display: **** TEST COMPLETE. EXIT CODE: N ****
 §9.4.4 의 층2 VERDICT 계약이 "마지막 비어 있지 않은 줄" 을 못박은 것과 같은 종류의 규약이고,
 같은 이유로 필요하다.
 
-⚠️ **아직 안 해본 것: 실제 C++ 빌드.** 위 검증은 `RunTests` 경로다. 사용자가 5.8.1 로
-전환해 빌드를 성공시킨 상태라 **엔진·바이너리는 준비돼 있지만**, `Build.bat` 을 SSH 로
-돌리는 것은 별도로 확인해야 한다(수십 분 소요 예상).
+##### ③-2 ✅ `Build.bat` 원격 구동 — 실검증 완료 (2026-08-08)
+
+Jenkins 등이 쓰는 표준 UBT 호출을 그대로 SSH 로 돌렸다. **환경은 이미 갖춰져 있었다** —
+`Build.bat` · `UnrealBuildTool.exe` · **Visual Studio Community 2022 (C++ 도구)**.
+프로젝트 타깃은 `ModularStageEditor`(같은 `Source/` 에 `Project_AlphaEditor` 도 있다).
+
+```bat
+call "<Engine>\Engine\Build\BatchFiles\Build.bat" ModularStageEditor Win64 Development ^
+     -Project="E:\trunk\ModularStage\ModularStage.uproject" -WaitMutex
+```
+
+| 실행 | 로그 판정 | 소요 |
+|---|---|---|
+| `ModularStageEditor` (증분) | **`Result: Succeeded`** · `Target is up to date` | **1.9초** |
+| `NoSuchTargetXYZ` | **`Result: Failed (RulesError)`** | 1.0초 |
+
+증분이라 빠르다 — 사용자가 이미 빌드를 성공시켜 둔 상태였다. **콜드 빌드는 여전히 수십 분
+예상**이며 측정하지 않았다.
+
+🔴 **빌드의 판정 신호는 테스트와 다르다:**
+
+```
+Result: Succeeded | Failed (<사유태그>)
+Total execution time: N seconds
+```
+
+`TEST COMPLETE. EXIT CODE:` 는 여기 나오지 않는다 — 도구가 다르면 계약도 다르다.
+게이트는 둘을 각각 파싱해야 한다(`master/layer3_verify.py` 가 그렇게 돼 있다).
 
 ##### ⑥-1 자동화가 쓸 체크아웃 — 기존 것을 쓰고, 더러우면 멈춘다
 
@@ -637,8 +669,9 @@ git -C <path> status --porcelain | grep -v '^??' | head -1
 - [x] ~~**층3 원격 구동 실검증**~~ — **완료 2026-08-08** (⑥-③). `Automation List`(8,726개 열거) ·
       `RunTests System.Core.Algo`(5건 전부 Success) 둘 다 SSH·세션 0 에서 성공.
       판정 신호 함정 2건(SSH 종료 코드 · `Error` 문자열)을 ⑥-③-1 에 기록
-- [ ] **`Build.bat` 원격 구동 확인** — `RunTests` 는 됐지만 C++ 빌드는 따로 확인해야 한다.
-      수십 분 소요 예상 (⑥-③)
+- [x] ~~**`Build.bat` 원격 구동 확인**~~ — **완료 2026-08-08** (⑥-③-2). 증분 1.9초 성공 ·
+      없는 타깃 `Failed (RulesError)`. 🔴 실패해도 `ssh` 는 0 을 낸다는 것이 여기서 드러났다
+- [ ] **콜드 빌드 실측** — 증분만 쟀다. 전체 빌드 소요는 여전히 미측정(수십 분 예상)
 - [x] ~~**층3 게이트 구현**~~ — **완료 2026-08-08.** `master/layer3_verify.py` +
       테스트 44건. 통과 조건 4가지(완료 마커 · `EXIT CODE 0` · `Fail` 0건 · `Success` ≥1),
       나머지는 전부 fail-closed. **판정에 프로세스 반환 코드도 `Error` 문자열도 쓰지 않는다.**
