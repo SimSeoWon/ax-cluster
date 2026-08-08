@@ -10,14 +10,14 @@ Unreal MCP (UE 5.8.1+), and code-writing agents into one pipeline.
 
 | | Document | State |
 |---|---|---|
-| **1 — Infrastructure** | [`docs/milestone-1-infrastructure.md`](docs/milestone-1-infrastructure.md) | ✅ **closed** 2026-08-08. Its section documents (`docs/1`–`docs/10`) **stay valid** — kept, not discarded |
-| **2 — Digital twin restoration** | [`docs/milestone-2-twin-restoration.md`](docs/milestone-2-twin-restoration.md) | 🔵 **started** 2026-08-08. Entry state = the crossmap below |
+| **1 — Infrastructure** | [`docs/milestones/1-infrastructure.md`](docs/milestones/1-infrastructure.md) | ✅ **closed** 2026-08-08. Its section documents (`docs/1`–`docs/10`) **stay valid** — kept, not discarded |
+| **2 — Digital twin restoration** | [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md) | 🔵 **started** 2026-08-08. Entry state = the crossmap below |
 
 🔴 **Milestone 1 wired the pipe; nothing yet *produces* what flows through it.**
 The twin is a snapshot received on 2026-08-08 12:56 and **cannot grow** — ontology synthesis
 (7,173), context-MD synthesis (1,036) and class graph (1,341) are all at **0 lines**.
 Full done/not-done cross-validation against AgentTest:
-[`docs/11-agenttest-crossmap.md`](docs/11-agenttest-crossmap.md).
+[`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md).
 
 > 🔴 **This file is an index. The content lives in `docs/`.**
 > **Section numbers are unchanged by the split** — cross-references like `§5.5.3-④` in other
@@ -47,7 +47,6 @@ Full done/not-done cross-validation against AgentTest:
 | 9.5 | [task_queue port](docs/9_5-task-queue.md) | Port stage 1 and service registration | Ported, `ax-task-queue` live, 8101 LAN-only |
 | — | [Settled decisions](docs/settled-decisions.md) | Closed calls, gathered in one place | Don't relitigate without new measurements |
 | 10 | [References](docs/10-references.md) | Original design, reports, external repos | — |
-| **11** | [**AgentTest crossmap**](docs/11-agenttest-crossmap.md) | **Done vs not-done, measured file by file** | Twin *consumption* is partial; twin *production* is zero |
 
 ---
 

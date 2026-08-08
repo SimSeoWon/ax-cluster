@@ -1,4 +1,4 @@
-> Part of the AX Cluster plan. Index: [`../PLAN.md`](../PLAN.md).
+> Part of the AX Cluster plan. Index: [`../PLAN.md`](../../PLAN.md).
 
 # 마일스톤 1 — 인프라 구축 (2026-08-05 ~ 2026-08-08) · **닫힘**
 
@@ -42,7 +42,7 @@ AgentTest(팀 환경, 팀원 PC 마다 데몬)를 **1인 클러스터**로 옮�
 - **화면이 없다** — 웹 UI 892줄 미이식
 - e2e 자기검증(416줄) 미이식 — 그래서 "돈다" 를 끝까지 증명하지 못했다
 
-전수 대조는 [`11-agenttest-crossmap.md`](11-agenttest-crossmap.md).
+전수 대조는 [`2-twin-restoration.md`](2-twin-restoration.md).
 
 ## ⚠️ 이 마일스톤에서 배운 것 — 진행 방식에 대한 것
 

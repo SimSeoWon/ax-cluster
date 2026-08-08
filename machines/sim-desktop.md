@@ -24,9 +24,9 @@ software repository.** There is no build, lint, or test tooling. **Don't assume 
 
 | | |
 |---|---|
-| Current milestone | `~/ax-cluster/docs/milestone-2-twin-restoration.md` |
-| Previous (kept, still valid) | `~/ax-cluster/docs/milestone-1-infrastructure.md` |
-| **Measured done vs not-done** | `~/ax-cluster/docs/11-agenttest-crossmap.md` |
+| Current milestone — **read only this one** | `~/ax-cluster/docs/milestones/2-twin-restoration.md` |
+| Previous (kept, still valid) | `~/ax-cluster/docs/milestones/1-infrastructure.md` |
+| **Measured done vs not-done** | `~/ax-cluster/docs/milestones/2-twin-restoration.md` |
 
 🔴 **The twin is a snapshot and cannot grow.** Search over it works (partly), but nothing
 *produces* it: ontology synthesis **0 / 7,173**, context-MD synthesis **0 / 1,036**, class graph

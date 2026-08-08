@@ -11,11 +11,13 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
 
 - 🔴 **Read which milestone you are in before planning anything.**
   **M1 (infrastructure) is closed; M2 (digital twin restoration) is open.**
-  → [`docs/milestone-2-twin-restoration.md`](docs/milestone-2-twin-restoration.md)
+  → [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md)
+  **Read only the open milestone** — closed ones are reference; don't load them. Progress
+  lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
   🔴 **The twin cannot grow yet** — ontology synthesis (7,173 lines), context-MD synthesis (1,036)
   and class graph (1,341) are all at **0**. The data is a snapshot received 2026-08-08 12:56, so
   code the pipeline writes never enters the twin. Measured done/not-done, file by file:
-  [`docs/11-agenttest-crossmap.md`](docs/11-agenttest-crossmap.md).
+  [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md).
   🔴 **Do not pick the next task yourself** — M1 failed that way (I chose an order, dug into one
   piece, declared it "complete", repeated). The order is the user's call.
 - 🔴 **The GitHub remote is private. Keep it that way** — it contains LAN addresses and firewall rules.

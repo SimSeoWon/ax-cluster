@@ -18,8 +18,8 @@
 
 | 알고 싶은 것 | 보는 곳 |
 |---|---|
-| 지금 어느 마일스톤인가 | `docs/milestone-2-twin-restoration.md` |
-| 무엇이 되고 무엇이 안 됐나 | `docs/11-agenttest-crossmap.md` |
+| 지금 어느 마일스톤인가 | `docs/milestones/2-twin-restoration.md` |
+| 무엇이 되고 무엇이 안 됐나 | `docs/milestones/2-crossmap.md` |
 | 닫힌 결정 | `docs/settled-decisions.md` |
 
 리포트는 **"왜 그렇게 결정했나" 를 되짚을 때** 펼친다. 목차(`## ` 헤더)로 해당 절만 읽으면 된다.
