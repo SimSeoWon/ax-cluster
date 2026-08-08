@@ -158,17 +158,15 @@
 ## 🕓 예정 — 상위 레이어 (이 마일스톤 밖, 폐기 아님)
 
 트윈을 **먹는 쪽**이다(`cluster_context.py` = *"매니페스트 수집 RAG+온톨로지"*). 생성부가
-스냅샷 고정인 채 세우면 **고정된 8월 8일치 근거로 코드를 짜게 된다.** 이름·규모만 남긴다.
+스냅샷 고정인 채 세우면 **고정된 근거로 코드를 짜게 된다.** 이름·규모만 남긴다.
 
-| | 규모 | 착수 전 필독 |
-|---|---|---|
-| 🕓 `/distribute` — 계층 플랜 · **골조 생성** · 템플릿 매칭 · 코드베이스 분석 | 12단계 | `distributed-workers.md` 425줄 |
-| 🕓 `/review-work` — 시뮬레이션 머지+빌드 · 통합 빌드 · finalize · reject · TDD 드라이런 | 7단계 | ↑ 같은 문서 |
-| 🕓 작업 유형 템플릿 · `/cluster-selftest`(통과해야 "돈다") · `/tdd-dryrun` · `/debate` | — | `ontology.md` Phase ζ |
-| 🕓 팀 기능 — 감사 · redmine · log/crash analyzer · code_recipes · commandlet_runner · 위키 | — | §5.2-D 판단 대상 |
+🕓 `/distribute`(12단계) · `/review-work`(7단계) · 작업유형 템플릿 · `/cluster-selftest` ·
+`/tdd-dryrun`·`/debate` · 팀 기능(감사·redmine·log/crash analyzer·code_recipes·위키).
+착수 전 `distributed-workers.md`(425줄) 필독.
 
-🔴 **골조 생성 부재만은 기억할 것** — `register_work` 는 골조를 **인자로 받는다**(사람이 써 주는
-전제). 원본은 `generate_skeletons` 가 만든다. §4.5 의 "골조 → 동결 → 병렬 본문" 첫 단계가 비었다.
+🔴 **골조 생성 부재만은 기억할 것** — `register_work` 는 골조를 **인자로 받는다**(사람이 써
+주는 전제). 원본은 `generate_skeletons` 가 만든다. §4.5 "골조 → 동결 → 병렬 본문" 의 첫
+단계가 비었다.
 
 ## 진행 규칙 (마일스톤 1 의 실패에서)
 
