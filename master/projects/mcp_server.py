@@ -369,9 +369,11 @@ def add_alias_tool(class_name: str, term: str) -> str:
             "class": class_name,
             "term": term,
             "note": {
-                "added": "등록했다. 다음 검색부터 이 표현이 자동 확장된다",
+                "added": "등록했다(온톨로지 yaml). 다음 검색부터 자동 확장된다",
+                "added_side": "등록했다(폴백 저장소 — 그 클래스의 온톨로지 yaml 이 아직 없다). "
+                              "다음 검색부터 자동 확장된다",
                 "noop": "이미 등록돼 있다",
-                "not_found": f"`{class_name}` 의 object yaml 을 찾지 못했다 — 클래스명을 확인하라",
+                "not_found": f"`{class_name}` 은 클래스 그래프에 없다 — 클래스명을 확인하라",
             }[status],
         }, ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
@@ -397,6 +399,61 @@ def mark_not_a_class_tool(term: str) -> str:
             "status": status,
             "term": term,
             "note": "다음부터 이 표현은 묻지 않는다" if status == "added" else "이미 기록돼 있다",
+        }, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def search_context_tool(query: str, limit: int = 8) -> str:
+    """🔴 **검색 입구는 이것 하나다.** 대괄호 해석 → 시소러스 확장 → 검색을 한 번에 한다.
+
+    작업장의 Claude 는 이 도구만 부르면 된다. 순서를 스스로 조립할 필요가 없다 —
+    따로 두면 순서를 틀리거나 시소러스를 건너뛴다.
+
+        query: "[미션시스템]에서 [완료]시 [연출] 부분이 어디야?"
+          ① 대괄호 토큰 추출        → ["미션시스템","완료","연출"]
+          ② 시소러스 조회           → known / unresolved(+후보)
+          ③ 아는 별칭을 질의에 덧붙임 → "미션시스템 완료 연출 UAlphaManager_Mission"
+          ④ 벡터+BM25 융합 검색
+
+    반환에 `ask` 가 있으면 **그 문장을 사용자에게 그대로 물어라.** 답을 받으면
+    `add_alias_tool(클래스, 표현)` 으로 등록한다 — 다음 검색부터 자동 확장된다.
+    클래스가 아니라고 하면 `mark_not_a_class_tool(표현)`.
+    🔴 **대괄호는 클래스에만 쓴다** — 상태·개념(`[완료]`)에 쓰면 매번 되묻게 된다.
+
+    등록은 **검색을 막지 않는다.** 모르는 별칭이 있어도 결과는 그대로 돌려준다 —
+    사람을 기다리는 인프라를 만들지 않는다(§2).
+    """
+    try:
+        from ..context_search import thesaurus as th
+        from ..context_search.paths import resolve as resolve_paths
+        from ..context_search.search import focus, open_search
+
+        paths = resolve_paths("")
+        searcher = open_search("")
+        terms = [t for t in focus(query).split() if t] if query else []
+        bracketed = focus(query) != (query or "")
+
+        res = th.resolve(paths, terms, searcher=searcher) if bracketed else th.Resolution()
+        # ③ 아는 별칭을 덧붙인다 — 대괄호를 안 썼으면 원문 그대로 간다.
+        q = " ".join([focus(query)] + res.expansion) if bracketed else query
+        hits = searcher.search(q, limit=limit)
+
+        return json.dumps({
+            "ok": True,
+            "project": paths.name,
+            "query_used": q,
+            "bracket_terms": terms if bracketed else [],
+            "thesaurus": {
+                "known": res.known,
+                "expansion": res.expansion,
+                "summary": res.summary,
+            },
+            # 🔴 사용자에게 물을 문장. 비어 있으면 물을 것이 없다.
+            "ask": [u.question for u in res.unresolved],
+            "unresolved_terms": [u.term for u in res.unresolved],
+            "hits": [h.to_dict() for h in hits],
         }, ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)

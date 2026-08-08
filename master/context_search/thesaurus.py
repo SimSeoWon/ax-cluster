@@ -59,6 +59,16 @@ _NAME_RE = re.compile(r"^name:\s*(\S+)\s*$", re.MULTILINE)
 # 파일에 두는 이유는 클래스의 속성이 아니라 **어휘 판단**이라서다.
 IGNORE_FILE = "_thesaurus_ignore.txt"
 
+# 🔴 **온톨로지 밖 클래스의 별칭을 담는 곳.** 실측(2026-08-08): 클래스는 1,806개인데
+# 온톨로지 object yaml 은 **7 도메인 112개뿐**이다. 원본은 별칭을 object yaml 에 넣지만
+# 그건 온톨로지가 코드베이스를 덮은 환경의 전제다 — 우리는 아직 6% 만 덮었고, 그래서
+# `add_alias` 가 `not_found` 로 실패해 **루프가 닫히지 않았다.**
+#
+# 그래서 폴백 저장소를 둔다. 우선순위는 **object yaml 이 먼저** — 그게 원본과 호환되는
+# 정본이고, `--export-state` 로 오갈 때 함께 실린다. 이 파일은 온톨로지가 자랄 때까지의
+# 임시 거처이며, 해당 클래스의 yaml 이 생기면 그때 옮기면 된다.
+SIDE_FILE = "_thesaurus.tsv"          # <클래스><탭><별칭> 한 줄에 하나. 사람이 읽고 고칠 수 있게
+
 
 def _ignore_path(paths: ProjectPaths) -> Path:
     return paths.ontology / IGNORE_FILE
@@ -169,9 +179,32 @@ def object_files(paths: ProjectPaths):
         yield f
 
 
+def _side_path(paths: ProjectPaths) -> Path:
+    return paths.ontology / SIDE_FILE
+
+
+def load_side(paths: ProjectPaths) -> dict[str, Alias]:
+    """폴백 저장소. `<클래스>\t<별칭>` 한 줄에 하나."""
+    f = _side_path(paths)
+    out: dict[str, Alias] = {}
+    if not f.is_file():
+        return out
+    for ln in f.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not ln.strip() or ln.startswith("#") or "\t" not in ln:
+            continue
+        cls, term = ln.split("\t", 1)
+        cls, term = cls.strip(), term.strip()
+        if cls and term:
+            out[term.casefold()] = Alias(term, cls, "", f)
+    return out
+
+
 def load(paths: ProjectPaths) -> dict[str, Alias]:
-    """별칭표. **casefold 로 찾는다** — 사용자가 대소문자를 맞춰 줄 이유가 없다."""
-    table: dict[str, Alias] = {}
+    """별칭표. **casefold 로 찾는다** — 사용자가 대소문자를 맞춰 줄 이유가 없다.
+
+    폴백 저장소를 먼저 깔고 object yaml 로 덮는다 — **yaml 이 정본**이다.
+    """
+    table: dict[str, Alias] = dict(load_side(paths))
     for f in object_files(paths):
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
@@ -245,6 +278,22 @@ def resolve(paths: ProjectPaths, terms: list[str], *, searcher=None) -> Resoluti
     return res
 
 
+def _class_exists(paths: ProjectPaths, class_name: str) -> bool:
+    """클래스 그래프에 실재하는가. **오타를 영구 저장하지 않기 위한 게이트.**"""
+    try:
+        from ..graph import db as gdb
+        if not gdb.exists(paths):
+            return True          # 그래프가 없으면 판정할 수 없다 — 막지 않는다
+        conn = gdb.connect(paths)
+        try:
+            return conn.execute("SELECT 1 FROM classes WHERE name = ? LIMIT 1",
+                                (class_name,)).fetchone() is not None
+        finally:
+            conn.close()
+    except Exception:                                   # noqa: BLE001
+        return True
+
+
 def register(paths: ProjectPaths, class_name: str, term: str) -> str:
     """별칭 하나를 등록한다. **읽어서 합친다 — 덮어쓰지 않는다.**
 
@@ -263,7 +312,17 @@ def register(paths: ProjectPaths, class_name: str, term: str) -> str:
             target = f
             break
     if target is None:
-        return "not_found"
+        # 🔴 온톨로지에 그 클래스의 yaml 이 없다. **거부하지 않고 폴백에 적는다** —
+        # 여기서 막으면 클래스의 94% 에 대해 별칭을 못 만들고 루프가 닫히지 않는다.
+        # 다만 그 클래스가 **실재하는지**는 확인한다. 오타를 영구 저장하지 않기 위해서다.
+        if not _class_exists(paths, class_name):
+            return "not_found"
+        f = _side_path(paths)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        header = "" if f.is_file() else "# <클래스>\t<별칭> — 온톨로지 yaml 이 없는 클래스용\n"
+        with f.open("a", encoding="utf-8") as fh:
+            fh.write(header + f"{class_name}\t{term}\n")
+        return "added_side"
 
     text = target.read_text(encoding="utf-8", errors="replace")
     existing = _parse_aliases(text)
