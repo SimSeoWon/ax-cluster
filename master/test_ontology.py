@@ -17,7 +17,8 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
 from master.context_search.paths import ProjectPaths   # noqa: E402
-from master.ontology import collect as col, hierarchy as hx, layers as ly, stale as st_mod, yaml_io as y  # noqa: E402
+from master.ontology import (collect as col, hierarchy as hx, layers as ly,  # noqa: E402
+                             stale as st_mod, verify_facts as vf, yaml_io as y)
 
 PASS = FAIL = 0
 
@@ -290,6 +291,64 @@ def main() -> int:
           st_mod._members(H, "Top") == {}, str(st_mod._members(H, "Top")))
     check("트리를 낸다", hx.tree(H)["Top"] == ["Mid"], str(hx.tree(H)))
     check("루트를 찾는다", hx.roots(H) == ["Top"], str(hx.roots(H)))
+
+    print("\n[11] 🔴 온톨로지 사실 게이트 — 호출 관계를 실측과 대조 (1.3.3 선행)")
+    V = ProjectPaths(name="V", root=tmp / "V")
+    (V.source / "G").mkdir(parents=True, exist_ok=True)
+    (V.source / "G" / "M.h").write_text(
+        "class UManager : public UObject { void RunTask(); };\n"
+        "class UWorker : public UObject { void Step(); };\n", encoding="utf-8")
+    from master.graph import class_graph as cg3
+
+    def gl2(repo, *a):
+        return (0, "Source/G/M.h") if a[0] == "ls-files" else (0, "")
+
+    cg3.build_full(V, git=gl2)
+
+    r = vf.verify_object(V, {"name": "UManager", "file": "Source/G/M.h"})
+    check("실재하는 클래스는 통과", r.ok, r.reason)
+    r = vf.verify_object(V, {"name": "UGhost", "file": "x.h"})
+    check("🔴 없는 클래스를 잡는다", not r.ok and r.findings[0].kind == "ghost_class", r.reason)
+    r = vf.verify_object(V, {"name": "UManager", "file": "Source/틀린/M.h"})
+    check("🔴 파일 경로가 다르면 잡는다", not r.ok and r.findings[0].kind == "wrong_file", r.reason)
+    check("하위 문서 참조는 검사하지 않는다",
+          vf.verify_object(V, {"name": "Mid", "kind": "domain"}).ok)
+
+    print("\n[11-1] 🔴 호출 관계")
+    ok_a = {"name": "RunMission", "objects_affected": ["UManager"],
+            "implementation": {"primary": "UManager::RunTask()"}}
+    check("실재하는 호출은 통과", vf.verify_action(V, ok_a).ok, vf.verify_action(V, ok_a).reason)
+    bad = {"name": "X", "implementation": {"primary": "UManager::NoSuchMethod()"}}
+    r = vf.verify_action(V, bad)
+    check("🔴 없는 메서드 호출을 잡는다",
+          not r.ok and r.findings[0].kind == "ghost_method", r.reason)
+    r = vf.verify_action(V, {"name": "X", "objects_affected": ["UGhost"]})
+    check("🔴 없는 클래스를 objects_affected 에서 잡는다",
+          not r.ok and r.findings[0].kind == "ghost_class", r.reason)
+    eng = {"name": "X", "implementation": {"primary": "AActor::Tick()"}}
+    check("🔴 엔진 클래스는 봐준다 (모르는 것을 틀렸다고 하지 않는다)",
+          vf.verify_action(V, eng).ok, vf.verify_action(V, eng).reason)
+    r = vf.verify_action(V, {"name": "X", "flow": [{"step": 1, "target": "UWorker::Step()"}]})
+    check("flow 의 target 도 본다", r.ok, r.reason)
+    amb = {"name": "X", "implementation": {"primary": "UManager::SomeMember"}}
+    check("🔴 괄호 없는 표기는 봐준다 (enum 값·UPROPERTY 오탐 방지 — 실측)",
+          vf.verify_action(V, amb).ok, vf.verify_action(V, amb).reason)
+    r = vf.verify_action(V, {"name": "X", "flow": [{"step": 1, "target": "UWorker::Nope()"}]})
+    check("  거기서도 잡는다", not r.ok, r.reason)
+
+    print("\n[11-2] 🔴 게이트가 닫혀 있으면 검사하지 않는다")
+    E = ProjectPaths(name="E2", root=tmp / "E2")
+    r = vf.verify_action(E, ok_a)
+    check("그래프가 없으면 검사 안 함", r.ok and "비었다" in r.skipped_reason, r.reason)
+    check("  사유를 말한다", "검사 못 함" in r.reason, r.reason)
+    real = cg3.methods_ready
+    cg3.methods_ready = lambda p: False
+    try:
+        r = vf.verify_action(V, bad)
+        check("🔴 methods 가 비면 검사 안 함 (전수 거짓양성 방지)",
+              r.ok and "전수 거짓양성" in r.skipped_reason, r.reason)
+    finally:
+        cg3.methods_ready = real
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")

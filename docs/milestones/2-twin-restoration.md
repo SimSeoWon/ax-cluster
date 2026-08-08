@@ -71,10 +71,10 @@
 **중 1.1 관계 그래프** ✅ 5/5 · **중 1.2 컨텍스트 문서** ✅ 5/5 — 완료. 상세는
 [`1-infrastructure.md`](1-infrastructure.md) 와 `../../CLAUDE.md` 코드 표.
 
-**중 1.3 온톨로지 문서** — **5/10** (`master/ontology/`, 테스트 99)
+**중 1.3 온톨로지 문서** — **6/10** (`master/ontology/`, 테스트 113)
 
 ✅ `yaml_io`(PyYAML 0, 왕복 보존) · `stale`(워터마크 2개 비교) · `layers`(L1/L2/L3, 구조 우선
-git 은 강등만) · `collect`(멤버 후보 **제안**) · `hierarchy`(하위 문서를 object 로, 순환 방지)
+git 은 강등만) · `collect`(멤버 후보 **제안**) · `hierarchy`(하위 문서를 object 로, 순환 방지) · **`verify_facts`**(호출 관계 사실 게이트)
 
 ❌ 남은 5개: `1.3.1` 도메인 생성(상위 지정 포함) · `1.3.2` 대화형 편집 · **`1.3.3` 재합성(🔴 LLM)**
 · `1.3.6` 미배정 노출 · `1.3.7` 검수 락 · `1.3.9` path_sync·declared
@@ -85,9 +85,13 @@ git 은 강등만) · `collect`(멤버 후보 **제안**) · `hierarchy`(하위 
 **나머지 결정 규칙은 [`master/ontology/__init__.py`](../../master/ontology/__init__.py)** 로
 옮겼다 — 코드를 만질 때 읽히는 자리가 낫다.
 
+✅ **사실 게이트 확장 완료** — actions 의 `Class::Method(...)` 호출 표기를 `methods`(6,380건,
+조상 포함)와 대조한다. 받아온 온톨로지에 돌린 실측: **228건 대조 · 6건 지적**.
+🔴 **모호하면 봐준다** — 엔진 클래스, 그리고 **괄호 없는 `Class::Member`**(enum 값·UPROPERTY
+멤버가 그 형태다, 실측 오탐 확인). *정상 문서를 막는 게이트가 통과시키는 게이트보다 나쁘다.*
+
 🔴 **1.3.3 착수 전 읽을 것**: `ontology_synthesizer`(+`md_parse`·`yaml_dump`·`pkg_audit`) ·
-`ontology_actions` · `ontology_invariants`. 그리고 **사실 게이트를 호출 관계까지 확장**해야
-한다 — actions 가 *"누가 누구를 호출한다"* 를 주장하므로 `methods`·의존 그래프와 대조한다.
+`ontology_actions` · `ontology_invariants`.
 
 ⚠️ **후보 폭발**: 멤버 후보가 도메인당 184~190개였다. 이미 다른 도메인/하위 문서에 속한
 것을 빼서 MissionEditor 18 · MissionRuntime 36 이 됐지만 **`GlobalEventSystem` 은 178** —
