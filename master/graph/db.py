@@ -99,7 +99,8 @@ def connect(paths: ProjectPaths) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")      # methods/class_ontology 의 CASCADE 를 위해
     conn.execute("PRAGMA journal_mode = WAL")     # 🔴 읽기와 쓰기가 서로 막지 않게
-    conn.execute("PRAGMA busy_timeout = 5000")    # 🔴 다른 프로세스가 쓰는 중이면 기다린다
+    conn.execute("PRAGMA busy_timeout = 10000")   # 🔴 다른 프로세스가 쓰는 중이면 기다린다
+                                                  #    (원본 실측값 SQLITE_BUSY_TIMEOUT_MS=10000)
     conn.execute("PRAGMA synchronous = NORMAL")
     try:
         conn.executescript(SCHEMA)

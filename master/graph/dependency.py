@@ -34,6 +34,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import source_text
 from ..context_search.paths import ProjectPaths, SOURCE_SUBDIR
 from .class_graph import GraphError, _git
 
@@ -89,7 +90,7 @@ def connect(paths: ProjectPaths) -> sqlite3.Connection:
                            isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")     # 색인기와 검색기가 별개 프로세스다
-    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA busy_timeout = 10000")
     conn.execute("PRAGMA synchronous = NORMAL")
     try:
         conn.executescript(SCHEMA)
@@ -115,13 +116,15 @@ def counts(paths: ProjectPaths) -> dict[str, int]:
 
 
 def parse_includes(file_path: Path) -> list[str]:
-    """`#include "..."` 만 뽑는다. `<...>` 는 엔진/표준 헤더라 트윈 밖이다."""
-    try:
-        return [inc.replace("\\", "/")
-                for inc in _INCLUDE_RE.findall(
-                    file_path.read_text(encoding="utf-8", errors="replace"))]
-    except OSError:
+    """`#include "..."` 만 뽑는다. `<...>` 는 엔진/표준 헤더라 트윈 밖이다.
+
+    include 경로는 ASCII 라 인코딩에 무관하지만, 읽기는 공용 경로를 쓴다 —
+    CP949 파일에서 `UnicodeDecodeError` 로 파일 전체를 놓치는 일이 없게 한다.
+    """
+    d = source_text.read(file_path)
+    if d is None:
         return []
+    return [inc.replace("\\", "/") for inc in _INCLUDE_RE.findall(d.text)]
 
 
 def list_source_files(paths: ProjectPaths, *, git=None) -> list[str]:

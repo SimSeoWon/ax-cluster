@@ -248,10 +248,10 @@ def main() -> int:
     before = db.counts(p2)["classes"]
     real_entries = cg._entries_for
 
-    def boom(rel, paths_):
+    def boom(rel, paths_, tally=None):
         if rel.endswith(".cpp"):
             raise RuntimeError("파싱 중 죽음")
-        return real_entries(rel, paths_)
+        return real_entries(rel, paths_, tally)
 
     cg._entries_for = boom
     try:
@@ -264,6 +264,31 @@ def main() -> int:
         cg._entries_for = real_entries
     check("🔴 이전 그래프가 보존됐다 (ROLLBACK)",
           db.counts(p2)["classes"] == before, f"{db.counts(p2)['classes']} vs {before}")
+
+    print("\n[11-1] 🔴 CP949 소스 — 실측 723/1,654 가 UTF-8 이 아니다")
+    from master import source_text as st
+    kr = "// 캐릭터 선택창에서만 보여주는 간단한 정보\nclass UUserAccount : public UObject { void Load(); };\n"
+    check("UTF-8 은 그대로", st.decode(kr.encode("utf-8")).encoding == st.UTF8)
+    d = st.decode(kr.encode("cp949"))
+    check("🔴 CP949 를 알아본다", d.encoding == st.CP949, d.encoding)
+    check("  한글이 살아난다", "캐릭터 선택창" in d.text, d.text[:40])
+    check("  유실 표시 없음", not d.degraded)
+    check("  폴백 표시 있음 (인코딩 혼용 신호)", d.fallback)
+    bad = st.decode(b"\xff\xfe\x00abc")
+    check("둘 다 실패하면 replace + 유실 표시", bad.degraded, bad.encoding)
+    check("읽을 수 없으면 None (빈 문자열로 위장 안 함)",
+          st.read(tmp / "없는파일.h") is None)
+    p5 = make_project(tmp / "cp949")
+    (p5.source / "Game" / "Kr.h").write_bytes(kr.encode("cp949"))
+    st5 = cg.build_full(p5, git=git_ls(LISTED + ["Source/Game/Kr.h"]))
+    check("🔴 통계가 인코딩 분포를 보고한다", st5.encodings.cp949 == 1,
+          st5.encodings.summary)
+    check("  요약에 나타난다", "cp949" in st5.summary, st5.summary)
+    check("  그래프는 영향 없다 (식별자가 ASCII)",
+          "UUserAccount" in cg.find_subclasses(p5, "UObject"),
+          str(cg.find_subclasses(p5, "UObject")))
+    check("  CP949 파일의 메서드도 잡힌다",
+          cg.method_belongs_to_class(p5, "UUserAccount", "Load"))
 
     print("\n[12] 의존 그래프 — 소 1.1.5")
     p4 = make_project(tmp / "dep")

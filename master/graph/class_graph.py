@@ -26,6 +26,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .. import source_text
 from ..context_search.paths import ProjectPaths, SOURCE_SUBDIR
 from . import db, parse
 
@@ -53,6 +54,7 @@ class BuildStats:
     methods: int = 0
     dropped_rows: int = 0
     elapsed_ms: int = 0
+    encodings: source_text.EncodingTally = field(default_factory=source_text.EncodingTally)
 
     @property
     def duplicate_names(self) -> int:
@@ -67,7 +69,7 @@ class BuildStats:
             s += f" · 🔴 이름 중복 {self.duplicate_names}"
         if self.dropped_rows:
             s += f" (지운 행 {self.dropped_rows})"
-        return s
+        return f"{s} · {self.encodings.summary}"
 
 
 def _git(repo: Path, *args: str) -> tuple[int, str]:
@@ -98,10 +100,14 @@ def list_source_files(paths: ProjectPaths, *, git=None) -> list[str]:
     ]
 
 
-def _entries_for(rel: str, paths: ProjectPaths) -> dict[str, dict]:
+def _entries_for(rel: str, paths: ProjectPaths,
+                 tally: source_text.EncodingTally | None = None) -> dict[str, dict]:
     """한 파일 → `{클래스명: 정보}`. `file` 은 `repo/` 기준 상대 경로로 저장한다."""
     entries: dict[str, dict] = {}
-    for c in parse.parse_file(paths.repo / rel):
+    classes, decoded = parse.parse_file(paths.repo / rel)
+    if tally is not None:
+        tally.add(decoded)
+    for c in classes:
         entries[c["name"]] = {
             "parent": c["parents"][0] if c["parents"] else "",
             "parents": c["parents"],
@@ -153,7 +159,7 @@ def build_full(paths: ProjectPaths, *, git=None, progress=None) -> BuildStats:
             try:
                 conn.execute("DELETE FROM classes")       # methods 는 CASCADE 로 함께 지워진다
                 for i, rel in enumerate(files, 1):
-                    entries = _entries_for(rel, paths)
+                    entries = _entries_for(rel, paths, stats.encodings)
                     for name, info in entries.items():
                         stats.methods += _upsert(conn, name, info)
                         stats.parsed += 1
@@ -198,7 +204,7 @@ def update_incremental(paths: ProjectPaths, changed: list[str]) -> BuildStats:
                                    tuple(f.replace("\\", "/") for f in relevant))
                 stats.dropped_rows = cur.rowcount or 0
                 for rel in alive:
-                    for name, info in _entries_for(rel, paths).items():
+                    for name, info in _entries_for(rel, paths, stats.encodings).items():
                         stats.methods += _upsert(conn, name, info)
                         stats.parsed += 1
                 stats.classes = stats.parsed   # 증분은 전체 건수가 아니라 넣은 건수를 센다

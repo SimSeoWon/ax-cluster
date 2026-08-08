@@ -19,6 +19,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .. import source_text
+
 try:
     import tree_sitter_cpp
     from tree_sitter import Language, Parser
@@ -202,17 +204,21 @@ def parse_source(text: str) -> list[dict]:
     return raw
 
 
-def parse_file(file_path: Path) -> list[dict]:
-    """단일 파일에서 클래스 선언 추출. 확장자가 다르면 빈 리스트(정상 경로).
+def parse_file(file_path: Path) -> tuple[list[dict], "source_text.Decoded | None"]:
+    """단일 파일에서 클래스 선언 추출 + **어떤 인코딩으로 읽었는지**.
 
-    읽기 실패는 빈 리스트로 넘긴다 — 한 파일이 깨졌다고 전체 스캔을 멈추지 않는다.
-    호출자가 파일 수와 클래스 수를 함께 보고하므로 결손은 그 숫자에서 드러난다.
+    확장자가 다르거나 읽기가 실패하면 빈 리스트다 — 한 파일이 깨졌다고 전체 스캔을
+    멈추지 않는다. 호출자가 파일 수·클래스 수·인코딩 분포를 함께 보고하므로 결손이
+    숫자에서 드러난다.
+
+    🔴 **인코딩을 왜 돌려주나.** 저장소의 44%(실측 723/1,654)가 CP949 다. 상속 그래프는
+    식별자가 ASCII 라 영향이 없지만(실측 확인), **같은 파일을 읽는 컨텍스트 MD 합성은
+    한글 주석이 핵심 신호**라 치명적이다. 여기서 분포를 세어 두면 그 위험이 보인다.
     """
     require()
     if file_path.suffix.lower() not in PARSE_EXTS:
-        return []
-    try:
-        content = file_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-    return parse_source(content)
+        return [], None
+    d = source_text.read(file_path)
+    if d is None:
+        return [], None
+    return parse_source(d.text), d
