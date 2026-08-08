@@ -1,15 +1,20 @@
 """프로젝트 등록·전환 MCP 서버 — 대화형으로 처리하기 위해 외부로 노출한다 (PLAN §5.5).
 
-노출 도구 2종:
+노출 도구:
   · register_project — 디지털 트윈을 생성할 프로젝트를 등록한다(설정 파일 생성부터)
   · set_active       — 가리키는 프로젝트를 바꾼다
+  · register_work    — 작업장이 일감을 등록한다 (§4.7 복구 ①)
+  · get_manifest     — 작업장이 컨텍스트 매니페스트를 받아 간다 (§4.2)
 
-읽기용 2종(부수):
-  · list_projects · check_registry
+읽기용(부수): list_projects · check_registry
 
-🔴 `task_queue`(8101)·브로커(8102) 와 마찬가지로 **인증 계층이 없다.**
-LAN 한정 개방으로만 방어한다 — `ufw allow from 192.168.0.0/24 to any port 8103`.
-`Anywhere` 로 넓히지 말 것.
+🔴 **인증 필수** — `task_queue`(8101)·브로커(8102) 와 같은 베어러 토큰을 쓴다
+(`master/auth.py`, 2026-08-08). 토큰이 없으면 **서비스가 뜨지 않는다**(fail-closed).
+방화벽(LAN 한정)은 그와 **별개의 두 번째 층**이다 —
+`ufw allow from 192.168.0.0/24 to any port 8103` 을 `Anywhere` 로 넓히지 말 것.
+
+🔴 **작업 등록은 저장소를 만지지 않는다.** 브랜치 생성·골조 커밋은 작업장 몫이다(§4.7).
+여기서 하는 것은 큐 등록과 매니페스트 수집뿐이다.
 
 ⚠️ 설치된 SDK 는 `mcp` 2.0.0 이라 `mcp.server.fastmcp` 가 **없다**
 (`task_queue/mcp_server.py` 는 아직 그 경로를 쓰고 있어 stdio 모드가 깨져 있다).
@@ -32,6 +37,9 @@ from .logic import (
 )
 from .config import Registry
 from .workshop_check import check_project_workshops
+from ..context_search.paths import resolve
+from ..work import manifest as _mf
+from ..work.register import RegisterError, TaskSpec, register_work
 
 mcp = MCPServer(
     name="ax-projects",
@@ -177,3 +185,73 @@ def check_registry_tool() -> str:
         )
     except (ConfigError, OSError) as e:
         return _fail(e)
+
+
+@mcp.tool()
+def register_work_tool(
+    title: str,
+    target_repo: str,
+    specs_json: str,
+    original_request: str = "",
+    target_branch: str = "",
+    project: str = "",
+) -> str:
+    """일감을 큐에 등록하고 태스크마다 컨텍스트 매니페스트를 1회 수집한다.
+
+    🔴 **저장소를 만지지 않는다.** 브랜치 생성·골조 커밋은 작업장(파일 소유자) 몫이다.
+    골조는 텍스트로 실려 가고, 작업장이 그것을 파일로 쓴다 (§4.7).
+
+    Args:
+        title: 일감 제목
+        target_repo: 대상 저장소 (작업장이 체크아웃해 쓸 것)
+        specs_json: 태스크 명세 JSON 배열. **이미 클래스 단위로 쪼개진 것**을 넣는다(§4.5).
+            각 항목: `{"stem": 필수, "classes": [...], "contracts": "동결 인터페이스",
+            "skeleton": "골조 텍스트", "target_file": "", "header_file": "",
+            "depends_on": [], "requires": ["ue5"], "priority": 0}`
+        original_request: 사용자 원문 (비우면 title)
+        target_branch: 통합 대상 브랜치
+        project: 비우면 지금 마운트된 프로젝트
+    """
+    try:
+        raw = json.loads(specs_json)
+        if not isinstance(raw, list):
+            raise RegisterError("specs_json 은 배열이어야 한다")
+        specs = [TaskSpec(**s) for s in raw]
+        paths = resolve(project)
+        got = register_work(title, specs, paths=paths, target_repo=target_repo,
+                            original_request=original_request, target_branch=target_branch)
+    except (RegisterError, ConfigError, ValueError, TypeError) as e:
+        return _fail(e)
+    return json.dumps({
+        "ok": got.ok,
+        "work_id": got.work_id,
+        "summary": got.summary(),
+        "tasks": [
+            {"stem": t.stem, "task_id": t.task_id, "manifest": t.manifest_path,
+             "hits": t.manifest_hits, "degraded": t.manifest_degraded, "error": t.error}
+            for t in got.tasks
+        ],
+    }, ensure_ascii=False)
+
+
+@mcp.tool()
+def get_manifest(task_id: str, project: str = "") -> str:
+    """태스크의 컨텍스트 매니페스트를 반환한다.
+
+    🔴 **작업장은 이것을 읽고 작업한다 — 재검색할 필요가 없다.** 마스터가 등록 시 1회
+    수집해 둔 것이고, 로컬 LLM(도구 호출 불가)도 이 텍스트로 grounding 을 받는다 (§4.2).
+
+    없으면 `ok:false` 다 — 빈 매니페스트와 구분된다.
+    """
+    try:
+        paths = resolve(project)
+        body = _mf.read(paths, task_id)
+    except ConfigError as e:
+        return _fail(e)
+    if body is None:
+        return json.dumps({
+            "ok": False, "task_id": task_id,
+            "error": f"매니페스트가 없다: {_mf.manifest_path(paths, task_id)}",
+        }, ensure_ascii=False)
+    return json.dumps({"ok": True, "task_id": task_id, "project": paths.name,
+                       "manifest": body}, ensure_ascii=False)

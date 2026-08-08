@@ -226,8 +226,8 @@ AgentTest 에 이미 구현돼 있다: `master_orchestrator` 의 골조 생성 +
 |---|---|---|
 | 2-tier 브랜치 규약 | `worker/branch_names.py` 65줄 | ✅ **완료** — `master/work/branch_names.py` |
 | 컨텍스트 매니페스트 | `cluster_context.py` 148줄 | ✅ **완료** — `master/work/manifest.py` |
-| 태스크 등록(`/distribute`) + 골조 | `executor_work_register.py` 598줄 | ⬜ 다음 |
-| 작업장 러너 (claim → 생성 → 적용 → 층1) | `worker/worker.py` 887 + `validator.py` 706 | ⬜ |
+| 태스크 등록(`/distribute`) | `executor_work_register.py` 598줄 | ✅ **완료** — `master/work/register.py`. 저장소 조작부는 작업장으로 넘겼다 |
+| 작업장 러너 (claim → 생성 → 적용 → 층1) | `worker/worker.py` 887 + `validator.py` 706 | ⬜ **다음** |
 | 층2 선제 필터 (agy → Claude) | `claude_spawn.syntax_check` | ⬜ |
 | durable/attempt git 조작 | `git_ops.py` 160 + `verify_worker.py` 314 | ⬜ **①에 따라 재설계** |
 | e2e 자기검증 | `cluster_selftest.py` 416줄 | ⬜ 마지막 — 이게 있어야 "돈다" 고 말할 수 있다 |
@@ -241,6 +241,17 @@ AgentTest 에 이미 구현돼 있다: `master_orchestrator` 의 골조 생성 +
 **잃는 것은 없다.** git-carried 였던 이유는 서버가 어차피 push 하고 있었기 때문이지 git 자체가
 필요해서가 아니다. **"1회 수집 → 다회 소비"** 라는 성질은 그대로다 —
 로컬 LLM 이 검색 없이 grounding 을 받는다는 목적도 그대로다.
+
+🔴 **그래서 골조도 매니페스트로 간다** (2026-08-08 실측으로 확정). `task_data` 에 실어 보내려
+했으나 **큐가 그것을 태스크 마크다운 본문으로만 저장하고 JSON API 로 노출하지 않는다**
+(`task_queue/logic.py:202`) — 감사 기록이지 전송 수단이 아니다. 매니페스트가 마스터→작업장
+텍스트 채널이므로 골조·계약·RAG 히트가 **한 문서에 모인다**. 작업장은 한 번 받아 읽으면 된다.
+
+⚠️ **한글 제목이 전부 같은 slug 가 되던 잠복 버그를 여기서 발견했다** (2026-08-08).
+`_slugify` 가 비-ASCII 를 버려 `'워크플로우 복구'` · `'골조 전달'` 이 모두 `'work'` 가 됐고,
+slug 가 **중복 검출 키**라 **두 번째 한글 일감이 항상 거부**됐다. 팀이 영문 제목을 쓰던
+환경에서는 드러나지 않았던 것이다. 버려진 내용이 있으면 정규화 원문의 해시를 붙이도록 고쳤다 —
+같은 제목은 여전히 충돌하고(중복 검출 유지), 순수 ASCII 제목은 그대로다(기존 work id 호환).
 
 ⚠️ **지금 매니페스트는 RAG 채널뿐이다.** 원본은 `attach_norms=True` 로 온톨로지 도메인 규범을
 함께 번들했는데 온톨로지는 2단계(§5.2-E ②)다. 매니페스트가 **"규범 미구현" 을 본문에 명시**한다 —

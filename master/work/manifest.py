@@ -91,6 +91,7 @@ def build(
     classes: list[str] | None = None,
     stem: str = "",
     contracts: str = "",
+    skeleton: str = "",
     extra_query: str = "",
     hits: int = DEFAULT_HITS,
     searcher=None,
@@ -117,6 +118,16 @@ def build(
     if contracts.strip():
         lines.append("## 계약 (동결 — 바꾸지 말 것)\n")
         lines.append(contracts.strip())
+        lines.append("")
+    if skeleton.strip():
+        # 🔴 골조가 여기 실리는 이유: 원본은 서버가 골조를 **git 에 커밋해** 보냈지만
+        # 우리 마스터는 push 를 못 한다(§4.7 ④). `task_data` 는 태스크 마크다운 본문으로만
+        # 저장되고 JSON API 로 안 나온다(`task_queue/logic.py:202`) — 전송 수단이 아니다.
+        # 매니페스트가 마스터→작업장 텍스트 채널이므로 골조도 여기로 간다.
+        lines.append("## 골조 (이 파일을 만들 것 — `[PSEUDO]` 본문만 채운다)\n")
+        lines.append("```cpp")
+        lines.append(skeleton.strip())
+        lines.append("```")
         lines.append("")
 
     found = []

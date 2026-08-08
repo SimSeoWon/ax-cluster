@@ -61,7 +61,7 @@ There is no linter or CI config — **don't invent tooling commands.**
 
 `worker/` and `client/` are still README-only stubs.
 
-**Tests — 474, all passing. No pytest**; each file runs standalone.
+**Tests — 519, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
@@ -75,7 +75,7 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_auth.py                 # 46 — bearer auth, fail-closed
 .venv/bin/python master/test_events.py               # 38 — event spool: no-loss, at-least-once, coalescing
 .venv/bin/python master/test_context_search.py       # 75 — search core: mount routing, RRF, generation pointer
-.venv/bin/python master/test_work.py                 # 62 — 2-tier branches (zombie race), context manifest
+.venv/bin/python master/test_work.py                 # 105 — 2-tier branches, manifest, work registration
 
 # Full reindex of the mounted project (vector + BM25, one generation flip)
 .venv/bin/python -m master.context_search.rebuild

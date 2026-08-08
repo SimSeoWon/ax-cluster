@@ -23,6 +23,9 @@ sys.path.insert(0, str(_ROOT))
 from master.context_search.paths import ProjectPaths  # noqa: E402
 from master.work import branch_names as bn  # noqa: E402
 from master.work import manifest as mf  # noqa: E402
+from master.work.register import (  # noqa: E402
+    RegisterError, TaskSpec, register_work,
+)
 
 PASS = FAIL = 0
 
@@ -118,6 +121,14 @@ def main() -> int:
     check("발췌 없는 히트도 실린다", "B.md" in m.body)
     check("재검색 불필요를 명시", "재검색 불필요" in m.body)
 
+    print("\n[5b] 🔴 골조는 매니페스트로 간다 (task_data 는 전송 수단이 아니다)")
+    ms = mf.build(paths, "t", classes=["UFoo"], skeleton="class UFoo { void Init(); };",
+                  searcher=FakeSearch([FakeHit("A.md")]), now=NOW)
+    check("골조 섹션", "## 골조" in ms.body)
+    check("본문이 실린다", "class UFoo { void Init(); };" in ms.body)
+    check("cpp 펜스", "```cpp" in ms.body)
+    check("골조 없으면 섹션도 없다", "## 골조" not in m.body)
+
     print("\n[6] 🔴 온톨로지가 없다는 사실을 숨기지 않는다")
     check("규범 섹션이 있다", "도메인 규범" in m.body)
     check("미구현이라 적혀 있다", "미구현" in m.body and "2단계" in m.body)
@@ -167,6 +178,107 @@ def main() -> int:
     m7 = mf.build(paths, "t9", classes=["UFoo"], searcher=broken, now=NOW)
     check("예외가 새어 나오지 않는다", not m7.ok)
     check("원인이 기록된다", "OSError" in m7.body and "DB 없음" in m7.body)
+
+    # ── 큐 slug (워크플로우가 드러낸 잠복 버그) ──────
+    print("\n[11b] 🔴 한글 제목이 전부 같은 slug 가 되던 문제")
+    from master.task_queue.logic import _slugify  # noqa: E402
+    ko = ["워크플로우 복구", "골조 전달", "매니저 초기화"]
+    slugs = [_slugify(k) for k in ko]
+    check("한글 제목이 갈린다", len(set(slugs)) == 3, str(slugs))
+    check("  전부 'work' 가 아니다", all(s != "work" for s in slugs))
+    check("순수 ASCII 는 그대로 (기존 work id 호환)",
+          _slugify("Add UManagerBase") == "add_umanagerbase")
+    check("ASCII+한글 섞임도 갈린다",
+          _slugify("Add U 매니저") != _slugify("Add U 테이블"))
+    check("🔴 같은 제목은 여전히 충돌한다 (중복 검출이 요점)",
+          _slugify("워크플로우 복구") == _slugify("  워크플로우   복구  "))
+    check("빈 제목", _slugify("") == "work")
+    check("기호뿐", _slugify("!!!") == "work")
+
+    # ── 등록 ────────────────────────────────────────
+    print("\n[12] 명세 검증 — 🔴 절반 등록하고 실패하지 않는다")
+    calls = []
+
+    def poster(url, payload):
+        calls.append((url, payload))
+        if url.endswith("/works"):
+            return {"work_id": "w1"}
+        return {"task_id": f"task_{len(calls) - 1}"}
+
+    def reg(specs, **kw):
+        return register_work("제목", specs, paths=paths, target_repo="r",
+                             poster=poster, searcher=FakeSearch([FakeHit("A.md")]), **kw)
+
+    for bad, why in [
+        ([], "태스크 0개"),
+        ([TaskSpec(stem="")], "stem 비었음"),
+        ([TaskSpec(stem="A")], "classes·target_file 둘 다 없음"),
+        ([TaskSpec(stem="A", classes=["U"]), TaskSpec(stem="A", classes=["V"])], "stem 중복"),
+    ]:
+        n = len(calls)
+        check(f"  거부: {why}", _raises(lambda: reg(bad), RegisterError))
+        check(f"    HTTP 호출 0건 (반쪽 work 를 안 남긴다)", len(calls) == n, str(len(calls) - n))
+    check("빈 title 거부",
+          _raises(lambda: register_work("", [TaskSpec(stem="A", classes=["U"])],
+                                        paths=paths, target_repo="r", poster=poster),
+                  RegisterError))
+
+    print("\n[13] 정상 등록")
+    calls.clear()
+    got = reg([TaskSpec(stem="ManagerBase", classes=["UManagerBase"], contracts="Init() 동결",
+                        skeleton="class UManagerBase {};", requires=["ue5"]),
+               TaskSpec(stem="TableData", classes=["UManager_TableData"])])
+    check("ok", got.ok, got.summary())
+    check("work 1회 + task 2회", len(calls) == 3, str(len(calls)))
+    check("work_id", got.work_id == "w1")
+    check("태스크 2건", len(got.tasks) == 2)
+    check("매니페스트가 붙는다", all(t.manifest_path for t in got.tasks))
+    check("  디스크에 실재", all(Path(t.manifest_path).is_file() for t in got.tasks))
+    check("  task_id 로 읽힌다", mf.read(paths, got.tasks[0].task_id) is not None)
+
+    wp = calls[0][1]
+    check("🔴 2-tier 를 쓴다", wp["distribution_mode"] == "push", str(wp))
+    tp = calls[1][1]
+    check("task_data 에도 남는다 (감사 기록)", tp["task_data"]["skeleton"] == "class UManagerBase {};")
+    check("🔴 골조가 매니페스트에 도달한다",
+          "class UManagerBase {};" in (mf.read(paths, got.tasks[0].task_id) or ""))
+    check("동결 계약이 실린다", tp["task_data"]["contracts"] == "Init() 동결")
+    check("능력 라우팅", tp["requires"] == ["ue5"])
+    check("🔴 저장소를 만지는 필드가 없다",
+          not any(k in tp for k in ("branch", "commit", "repo_path")), str(sorted(tp)))
+    check("등록 요약", "2/2" in got.summary(), got.summary())
+
+    print("\n[14] 부분 실패를 숨기지 않는다")
+    def flaky(url, payload):
+        if url.endswith("/works"):
+            return {"work_id": "w2"}
+        if payload["stem"] == "Bad":
+            raise RegisterError("HTTP 500")
+        return {"task_id": "task_ok"}
+
+    got2 = register_work("t", [TaskSpec(stem="Good", classes=["U"]),
+                               TaskSpec(stem="Bad", classes=["V"])],
+                         paths=paths, target_repo="r", poster=flaky,
+                         searcher=FakeSearch([FakeHit("A.md")]))
+    check("ok=False", not got2.ok)
+    check("실패 1건", len(got2.failed) == 1 and got2.failed[0].stem == "Bad")
+    check("성공분은 살아 있다", got2.tasks[0].ok)
+    check("요약에 실패 표시", "실패 1건" in got2.summary(), got2.summary())
+
+    print("\n[15] task_id 를 못 받으면 실패로 잡는다")
+    got3 = register_work("t", [TaskSpec(stem="A", classes=["U"])], paths=paths,
+                         target_repo="r", searcher=FakeSearch([]),
+                         poster=lambda u, p: {"work_id": "w3"} if u.endswith("/works") else {})
+    check("ok=False", not got3.ok and "task_id" in got3.tasks[0].error)
+    check("매니페스트도 안 만든다", not got3.tasks[0].manifest_path)
+
+    print("\n[16] 매니페스트 결손이 등록을 막지 않는다 (베스트에포트)")
+    got4 = register_work("t", [TaskSpec(stem="A", classes=["U"])], paths=paths,
+                         target_repo="r", poster=poster,
+                         searcher=FakeSearch(exc=RuntimeError("검색 죽음")))
+    check("등록은 성공", got4.ok, got4.summary())
+    check("결손이 기록된다", bool(got4.tasks[0].manifest_degraded))
+    check("요약에 드러난다", "결손" in got4.summary(), got4.summary())
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")

@@ -7,6 +7,7 @@ import secrets
 import threading
 import subprocess
 from pathlib import Path
+import hashlib
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Any
 
@@ -109,7 +110,23 @@ def _gen_task_id() -> str:
 
 
 def _slugify(s: str) -> str:
-    """ASCII-only slug — 한글·기호는 _ 로 치환, branch/디렉토리명 안전성 확보."""
+    """ASCII-only slug — branch/디렉토리명 안전성 확보.
+
+    🔴 **비-ASCII 가 버려지면 해시를 붙인다 (2026-08-08 수정).**
+
+    원본은 비-ASCII 를 그냥 버리고 결과가 비면 `"work"` 로 폴백했다. 팀이 영문 제목을
+    쓰던 환경에서는 드러나지 않았지만, **한국어 제목은 전부 `"work"` 로 떨어진다** —
+    실측: `'워크플로우 복구'` · `'골조 전달'` · `'매니저 초기화'` → 전부 `'work'`.
+
+    slug 는 **중복 검출 키**다(`find_active_duplicates`). 그래서 이 저장소에서는
+    **두 번째 한글 일감이 항상 첫 번째의 중복으로 거부된다.** 워크플로우가 시작부터 막힌다.
+
+    고친 방식: 버려진 내용이 있으면 정규화한 원문의 해시를 덧붙인다.
+
+    - **같은 제목 → 같은 slug** — 중복 검출은 그대로 동작한다 (이게 요점이다)
+    - **다른 제목 → 다른 slug** — 한글끼리도 갈린다
+    - **순수 ASCII 제목은 그대로** — 기존 work id 와 호환된다
+    """
     out = []
     for c in s.lower():
         if c.isascii() and c.isalnum():
@@ -119,7 +136,14 @@ def _slugify(s: str) -> str:
     slug = "".join(out).strip("_")
     while "__" in slug:
         slug = slug.replace("__", "_")
-    return slug or "work"
+
+    # 버려진 알파벳/숫자가 있었는가 (기호·공백은 원래 구분자라 셈하지 않는다).
+    dropped = any(c.isalnum() and not c.isascii() for c in s)
+    if not dropped:
+        return slug or "work"
+    norm = " ".join(s.split()).casefold()
+    h = hashlib.md5(norm.encode("utf-8")).hexdigest()[:8]
+    return f"{slug}_{h}" if slug else f"work_{h}"
 
 
 def _gen_work_id(slug: str = "") -> str:

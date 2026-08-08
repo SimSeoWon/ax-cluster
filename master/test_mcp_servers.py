@@ -82,12 +82,14 @@ from master.projects import mcp_server as pj  # noqa: E402
 check("모듈 import", True)
 check("MCPServer 인스턴스", type(pj.mcp).__name__ == "MCPServer", type(pj.mcp).__name__)
 _pj = tool_names(pj.mcp)
-check("도구 8종 등록", len(_pj) == 8, f"실제 {len(_pj)}종: {_pj}")
+check("도구 10종 등록", len(_pj) == 10, f"실제 {len(_pj)}종: {_pj}")
 for name in ("register_project_tool", "set_active_tool",
              "list_projects_tool", "check_registry_tool",
              # 워크숍 (§5.5.4)
              "set_workshop_tool", "remove_workshop_tool", "list_workshops_tool",
-             "check_workshops_clean_tool"):
+             "check_workshops_clean_tool",
+             # 워크플로우 (§4.7) — 작업장이 부르는 두 창구
+             "register_work_tool", "get_manifest"):
     check(f"  {name}", name in _pj)
 
 
