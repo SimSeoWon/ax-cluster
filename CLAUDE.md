@@ -36,6 +36,7 @@ There is no linter or CI config — **don't invent tooling commands.**
 
 | Need | Go to |
 |---|---|
+| **Which milestone we're in, and what's actually done** | [`PLAN.md`](PLAN.md) → milestones · [`docs/11-agenttest-crossmap.md`](docs/11-agenttest-crossmap.md) |
 | What's decided vs open | [`PLAN.md`](PLAN.md) — index of `docs/` |
 | Closed decisions, don't relitigate | [`docs/settled-decisions.md`](docs/settled-decisions.md) |
 | Still open | [`docs/3-open-items.md`](docs/3-open-items.md) |
