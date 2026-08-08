@@ -62,10 +62,34 @@ class ProjectResult:
     docs: int = 0
     skipped: str = ""          # 재색인을 건너뛴 사유. 비어 있으면 안 건너뛴 것
     error: str = ""
+    # ── 트윈 성장 (중 1.1 · 중 1.2) ──
+    graph_notes: list[str] = field(default_factory=list)
+    synth_written: int = 0
+    synth_lost: int = 0         # 🔴 문서가 안 생긴 그룹 수 = 그 커밋의 영구 유실
+    synth_note: str = ""
+    lost_groups: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         return not self.error
+
+    @property
+    def summary(self) -> str:
+        parts = [f"{self.project or self.project_id}"]
+        if self.source_changed:
+            parts.append(f"소스 {self.source_changed}")
+        if self.graph_notes:
+            parts.append("그래프 " + "·".join(self.graph_notes))
+        if self.synth_note:
+            parts.append(f"합성 {self.synth_written}" +
+                         (f" 🔴유실 {self.synth_lost}" if self.synth_lost else ""))
+        if self.reindexed:
+            parts.append(f"색인 {self.docs}")
+        if self.skipped:
+            parts.append(f"건너뜀({self.skipped[:40]})")
+        if self.error:
+            parts.append(f"🔴 {self.error[:60]}")
+        return " · ".join(parts)
 
     def line(self) -> str:
         if self.error:
@@ -73,6 +97,11 @@ class ProjectResult:
         bits = [f"{self.from_commit[:8] or '?'}→{self.to_commit[:8] or '?'}"]
         if self.source_changed:
             bits.append(f"소스 {self.source_changed}건")
+        if self.graph_notes:
+            bits.append("그래프 " + "·".join(self.graph_notes))
+        if self.synth_note:
+            bits.append(f"합성 {self.synth_written}건"
+                        + (f" 🔴유실 {self.synth_lost}" if self.synth_lost else ""))
         if self.reindexed:
             bits.append(f"재색인 {self.docs}건")
         elif self.skipped:
@@ -190,9 +219,57 @@ def _update_watermark(paths: ProjectPaths, commit: str) -> None:
     tmp.replace(cfg)
 
 
+def _update_graphs(paths: ProjectPaths, changed: list[str], r: "ProjectResult") -> None:
+    """관계 그래프 증분 (중 1.1). **LLM 0 이라 커밋 즉시 돈다.**
+
+    실패해도 배치를 세우지 않는다 — 그래프는 `python -m master.graph build` 로 언제든
+    풀 스캔 복구되는 파생 자산이다(`data-schema.md`). 다만 **사유는 남긴다.**
+    """
+    from ..graph import class_graph as cg, dependency as dep
+    for label, fn in (("상속", cg.update_incremental), ("의존", dep.update_incremental)):
+        try:
+            st = fn(paths, changed)
+            r.graph_notes.append(f"{label} {st.classes if label == '상속' else st.edges}")
+        except Exception as e:                          # noqa: BLE001
+            r.graph_notes.append(f"🔴 {label} 실패: {type(e).__name__}: {e}")
+
+
+def _synthesize(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
+                *, synth_run=None) -> None:
+    """컨텍스트 MD 합성 (중 1.2). **여기가 트윈을 자라게 한다.**
+
+    🔴 실패·거부를 **삼키지 않는다.** 원본이 판별 기준을 적어 뒀다 — *"skip 후 워터마크가
+    전진하느냐"*. 이 함수 뒤에서 워터마크가 전진하므로, 여기서 문서를 못 만들면 그 커밋의
+    변경은 **영구 유실**이다. 그래서 사유를 `ProjectResult` 에 실어 로그로 내보낸다.
+    """
+    from ..context_synth import synth as cs
+    fn = synth_run or cs.run
+    try:
+        st = fn(paths, changed=changed, commit=r.to_commit)
+    except cs.SynthError as e:
+        r.synth_note = f"합성 건너뜀: {e}"
+        return
+    except Exception as e:                              # noqa: BLE001
+        r.synth_note = f"🔴 합성 실패: {type(e).__name__}: {e}"
+        return
+    r.synth_written = st.written
+    r.synth_lost = st.lost
+    r.synth_note = st.summary
+    if st.lost:
+        # 🔴 어느 그룹이 유실됐는지 남긴다 — 숫자만으로는 다시 찾을 수 없다.
+        for g in st.results:
+            if g.lost:
+                r.lost_groups.append(f"{g.key}: {g.reason[:120]}")
+
+
 def process_event(ev: Event, *, registry: Registry | None = None,
-                  reindex=None, git=None) -> ProjectResult:
-    """이벤트 하나(=프로젝트 하나)를 처리한다."""
+                  reindex=None, git=None, synthesize: bool = True,
+                  synth_run=None) -> ProjectResult:
+    """이벤트 하나(=프로젝트 하나)를 처리한다.
+
+    `synthesize=False` 로 합성을 끌 수 있다 — 노드가 죽었거나 품질을 재보는 중일 때.
+    끄면 관계 그래프만 갱신되고 색인은 컨텍스트가 안 바뀌므로 돌지 않는다.
+    """
     r = ProjectResult(project_id=ev.project_id)
     reg = registry or Registry.load()
     run = git or _git
@@ -230,20 +307,36 @@ def process_event(ev: Event, *, registry: Registry | None = None,
     rc, out = run(paths.repo, "rev-parse", "HEAD")
     r.to_commit = out.strip() if rc == 0 else ""
 
+    changed: list[str] = []
     if r.from_commit and r.to_commit and r.from_commit != r.to_commit:
         rc, out = run(paths.repo, "diff", "--name-only",
                       r.from_commit, r.to_commit, "--", "Source")
         if rc == 0:
-            r.source_changed = len([x for x in out.splitlines() if x.strip()])
+            changed = [x.strip() for x in out.splitlines() if x.strip()]
+            r.source_changed = len(changed)
+
+    # ── 🔴 여기가 트윈이 자라는 지점이다 (중 1.1 · 중 1.2) ──────────
+    #
+    # 원본 `watch.py` 의 커밋 처리 순서를 그대로 따른다:
+    #   ① 컨텍스트 MD 합성 (LLM) — `source_commit` 을 스탬프한다
+    #   ② 관계 그래프 증분 (LLM 0) — 커밋 즉시
+    #   ③ 색인 (아래) — ①이 문서를 바꿨을 때만 돈다
+    #
+    # 순서가 뒤집히면 안 된다: ①이 그래프를 **근거로** 읽으므로 그래프가 먼저면 좋지만,
+    # 원본은 MD 를 먼저 만든다(그래야 `source_commit` 워터마크가 stale 판정의 기준이 된다).
+    # 우리는 **그래프를 먼저** 돌린다 — LLM 0 이라 싸고, 합성이 최신 그래프를 근거로 쓴다.
+    if changed:
+        _update_graphs(paths, changed, r)
+        if synthesize:
+            _synthesize(paths, changed, r, synth_run=synth_run)
 
     # ── 재색인은 컨텍스트가 실제로 바뀐 경우에만 ──────────────
     now_digest = context_digest(paths)
     if not now_digest:
         r.skipped = "context/ 가 없다"
     elif now_digest == read_digest(paths):
-        # 🔴 여기가 §문서에 적은 그 지점이다 — 소스는 바뀌었는데 MD 는 안 바뀐다.
         r.skipped = ("컨텍스트 MD 변화 없음"
-                     + (" — MD 합성기 미이식이라 소스 변경이 색인에 반영되지 않는다"
+                     + (" — 합성이 문서를 바꾸지 않았다 (게이트 거부/실패는 위 사유 참조)"
                         if r.source_changed else ""))
     else:
         do = reindex or _default_reindex
@@ -307,6 +400,9 @@ def main(argv: list[str] | None = None) -> int:
     print(r.summary())
     for x in r.results:
         print(x.line())
+        # 🔴 유실은 목록으로 남긴다 — 워터마크가 이미 전진했으므로 다시 찾을 수 없다.
+        for g in x.lost_groups:
+            print(f"      🔴 {g}")
     if r.blocked_recursion:
         print(f"  (색인기 자신의 커밋 {r.blocked_recursion}건 차단 — 재귀 방지)")
     return 0 if r.ok else 1

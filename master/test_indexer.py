@@ -131,7 +131,7 @@ def main() -> int:
     check("🔴 재색인을 부르지 않는다", calls == [], str(calls))
     check("건너뛴 사유를 남긴다", "변화 없음" in r2.skipped, r2.skipped)
     check("  소스는 바뀐 상황이므로 이유를 덧붙인다",
-          "합성기 미이식" in r2.skipped, r2.skipped)
+          "합성이 문서를 바꾸지 않았다" in r2.skipped, r2.skipped)
     check("그래도 실패는 아니다", r2.ok)
 
     print("\n[4] 컨텍스트가 바뀌면 다시 색인한다")
@@ -207,6 +207,71 @@ def main() -> int:
     shutil.rmtree(paths.repo)
     r8 = process_event(ev(), registry=reg, git=git_ok([]), reindex=lambda p: 1)
     check("거부", not r8.ok and "소스 클론이 없다" in r8.error, r8.error)
+
+    print("\n[10-1] 🔴 트윈이 자란다 — 합성기가 색인기에 물려 있다 (중 1.2)")
+    p3 = make_project(tmp / "grow")
+    seen = {}
+
+    def fake_synth(paths_, *, changed=None, commit="", **kw):
+        seen["changed"], seen["commit"] = list(changed or []), commit
+        # 실제로 문서를 바꿔야 재색인이 돈다
+        (paths_.context / "New.md").write_text("---\ntags: [n]\n---\n새 문서",
+                                               encoding="utf-8")
+
+        class S:
+            written, lost, aborted = 1, 0, ""
+            summary = "그룹 1 → 통과 1"
+            results: list = []
+        return S()
+
+    calls = []
+    r9 = process_event(ev(), registry=FakeReg(tmp / "grow"), git=git_ok([]),
+                       reindex=lambda p: calls.append(1) or 5, synth_run=fake_synth)
+    check("합성을 부른다", "changed" in seen, str(seen))
+    check("  변경 파일 목록을 넘긴다",
+          seen.get("changed") == ["Source/A.cpp", "Source/B.cpp"], str(seen.get("changed")))
+    check("🔴 커밋 해시를 넘긴다 (source_commit 스탬프의 원천)",
+          seen.get("commit") == "b" * 40, seen.get("commit"))
+    check("합성 결과가 보고된다", r9.synth_written == 1, r9.summary)
+    check("🔴 합성이 문서를 바꿨으니 재색인이 돈다", r9.reindexed and calls == [1], r9.summary)
+    check("그래프도 갱신 시도한다", bool(r9.graph_notes), str(r9.graph_notes))
+    check("요약에 다 들어간다", "합성" in r9.summary and "색인" in r9.summary, r9.summary)
+
+    print("\n[10-2] 🔴 유실을 삼키지 않는다 (워터마크가 전진하므로 영구 유실이다)")
+
+    class LostS:
+        written, lost, aborted = 0, 2, ""
+        summary = "그룹 2 → 통과 0 · 🔴 사실 거부 2"
+
+        class G:
+            def __init__(self, k, why):
+                self.key, self.reason, self.lost = k, why, True
+        results = [G("Source/A", "사실 게이트 거부 — 유령 식별자"),
+                   G("Source/B", "LLM 실패: 타임아웃")]
+
+    r10 = process_event(ev(), registry=FakeReg(tmp / "grow"), git=git_ok([]),
+                        reindex=lambda p: 1, synth_run=lambda *a, **k: LostS())
+    check("유실 수를 센다", r10.synth_lost == 2, str(r10.synth_lost))
+    check("🔴 어느 그룹인지 남긴다", len(r10.lost_groups) == 2, str(r10.lost_groups))
+    check("  사유도 남긴다", "유령 식별자" in r10.lost_groups[0], r10.lost_groups[0])
+    check("요약이 유실을 드러낸다", "유실 2" in r10.summary, r10.summary)
+
+    print("\n[10-3] 합성을 끌 수 있다 (노드가 죽었을 때)")
+    off = []
+    r11 = process_event(ev(), registry=FakeReg(tmp / "grow"), git=git_ok([]),
+                        reindex=lambda p: 1, synthesize=False,
+                        synth_run=lambda *a, **k: off.append(1))
+    check("🔴 합성을 부르지 않는다", off == [], str(off))
+    check("  그래도 그래프는 갱신한다", bool(r11.graph_notes), str(r11.graph_notes))
+
+    print("\n[10-4] 🔴 합성이 터져도 색인기가 죽지 않는다")
+
+    def boom_synth(*a, **k):
+        raise RuntimeError("브로커 죽음")
+
+    r12 = process_event(ev(), registry=FakeReg(tmp / "grow"), git=git_ok([]),
+                        reindex=lambda p: 1, synth_run=boom_synth)
+    check("오류로 잡고 계속한다", r12.ok and "합성 실패" in r12.synth_note, r12.synth_note)
 
     print("\n[11] 다이제스트 — 변화를 잡아낸다")
     p2 = make_project(tmp / "second")
