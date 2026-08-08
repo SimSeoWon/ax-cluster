@@ -14,10 +14,14 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   → [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md)
   **Read only the open milestone** — closed ones are reference; don't load them. Progress
   lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
-  🔴 **The twin cannot grow yet** — ontology synthesis (7,173 lines), context-MD synthesis (1,036)
-  and class graph (1,341) are all at **0**. The data is a snapshot received 2026-08-08 12:56, so
-  code the pipeline writes never enters the twin. Measured done/not-done, file by file:
-  [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md).
+  🔴 **The twin cannot grow yet — 1 of 32 sub-tasks done.** Nothing *produces* the twin: no context-MD
+  synthesis, no class/dependency graph, no ontology synthesis, no thesaurus. The data is a snapshot
+  received 2026-08-08 12:56, so code the pipeline writes never enters the twin. The breakdown is
+  대 2 / 중 8 / 소 32 — **소분류가 작업 단위다.** Never size a task by line count: `class_graph`'s
+  1,341 lines turn out to be *"delete the file → full rescan on restart"*.
+  **This milestone's main is 대 1 (making the data).** `/distribute` and `/review-work` are the
+  upper layer and stay 🕓 예정 — they *consume* the twin, so building them on a frozen snapshot
+  means generating code against 2026-08-08 evidence.
   🔴 **Do not pick the next task yourself** — M1 failed that way (I chose an order, dug into one
   piece, declared it "complete", repeated). The order is the user's call.
 - 🔴 **The GitHub remote is private. Keep it that way** — it contains LAN addresses and firewall rules.
@@ -75,7 +79,7 @@ There is no linter or CI config — **don't invent tooling commands.**
 
 🔴 **Say "done" only for a whole area.** The work loop runs, but the digital twin it stands on is
 partial — ontology unindexed, class graph absent, MD synthesiser unported. When reporting status,
-give the denominator (*"loop runs; twin indexing 1 of 3"*), never a scope narrowed to what got built.
+give the denominator (*"loop runs; twin sub-tasks 1 of 32"*), never a scope narrowed to what got built.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
 **Tests — 628, all passing. No pytest**; each file runs standalone.
