@@ -94,6 +94,12 @@
 - [ ] **이벤트 큐 설계** (§5.4.5) — 웹훅 전환의 전제조건. 영속 + 단일 소비자 + 중복 합치기.
       `.claude/_regenerate_queue.jsonl` 이 원형. **`task_queue` 와 합치지 말 것**.
       ⚠️ 페이로드에 `project_id` 필수 + 합치기 키·직렬화 단위도 `project_id` 기준 (§5.5.3-⑤)
+      🔴 **선결: `project_id` 대소문자 확정** (§5.5.4-④). 실측으로 불일치가 있다 —
+      워크숍 remote 는 `Sim/ModularStage`, 레지스트리는 `sim/modularstage`.
+      훅이 정규 표시 이름으로 오면 규약 ③ 의 **409 fail-closed 에 전부 걸려 색인이 조용히 안 돈다**
+- [ ] **워크숍 측 체크아웃 등록** (§5.5.4) — `master/projects/config.py` 에 `workshops` 스키마
+      (`path`·`driven: ssh|interactive`) 추가 + `ax-projects` 도구로 등록·조회.
+      `.2` 는 `E:\trunk\ModularStage` 실물 확인됨, `.33` 은 SSH 가 없어 대화형
 - [ ] **BM25 원자성 확인** (§5.4.6) — 더블 버퍼가 벡터/태그캐시만 덮고 BM25 는 제자리 갱신이다.
       실사용에서 문제인지 확인 후 판단(추측 금지)
 - [x] ~~기존 "서버 모드"와의 중복도 판정~~ — **완료 2026-08-07** (§5.4.7). 계층별로 갈린다:
