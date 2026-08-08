@@ -38,6 +38,7 @@ There is no linter or CI config — **don't invent tooling commands.**
 | Closed decisions, don't relitigate | [`docs/settled-decisions.md`](docs/settled-decisions.md) |
 | Still open | [`docs/3-open-items.md`](docs/3-open-items.md) |
 | Per-machine operating guide | [`machines/`](machines/README.md) |
+| **Machine inventory** — IPs, roles, what's reachable from where | [`machines/sim-desktop.md`](machines/sim-desktop.md) § Machine inventory |
 | External projects, reports | [`docs/10-references.md`](docs/10-references.md) |
 
 ## What exists in code

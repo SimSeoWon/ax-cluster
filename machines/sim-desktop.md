@@ -26,25 +26,32 @@ with copies on BC-250 #1 (`sim@192.168.0.43:~/ax-cluster`) and GitHub (`SimSeoWo
 The board has `main` checked out so pushing there is rejected — **`git pull` on that side instead.**
 🔴 `~/AgentTest` is the predecessor clone — **reference only. Never modify or push to it.**
 
-```
-sim-desktop (this box, 192.168.0.57)  = master: orchestration, RAG index,
-                                         ontology/graph, task distribution
-        │  internal LAN only
-        ▼
-BC-250 #1 (192.168.0.43)               = inference node: Ollama + Vulkan, stateless
-BC-250 #2                               = 🎮 Bazzite gaming machine — NOT an inference
-                                          node. Converting it means giving up that
-                                          machine; never assume a 2nd board exists.
-Windows UE5 PC ×2                       = the workshops: file ownership, engine
-                                          execution, build/RunTests, code registration.
-                                          Both work on the SAME UE5 project.
-```
+### Machine inventory (probed 2026-08-08)
 
-🔴 **There are two inference endpoints, and only one is a board** (updated 2026-08-08):
-**BC-250 #1 (35B pinned)** and the **RTX 3060 Windows PC (14b pinned)**.
-Each endpoint runs `MAX_LOADED_MODELS=1`, so a model swap costs ~64s (35B) / ~36s (14b) —
+| IP | Machine | Role | Reachable from here |
+|---|---|---|---|
+| **.57** | **sim-desktop** — this box | **Master**: orchestration, RAG index, ontology/graph, task queue, broker, project registry | — |
+| **.2** | Windows + **RTX 3060**, UE5 installed | 🔧 **Worker-capable workshop** *and* inference endpoint #2 (14b pinned) | SSH 22 ✅ · RDP 3389 ✅ · Ollama 11434 ✅ |
+| **.33** | Windows, **the user's main work PC** | Workshop — UE5 work happens here | RDP 3389 only. **No SSH, no Ollama** — the master cannot drive it remotely |
+| **.43** | **BC-250 #1** — Fedora, headless | Inference endpoint #1 (35B pinned), stateless | SSH 22 ✅ · Ollama 11434 ✅ · no RDP (headless since 2026-08-05) |
+| — | BC-250 #2 | 🎮 **Bazzite gaming machine — NOT an inference node.** Converting it means giving up that machine. **Never assume a 2nd board exists.** | n/a |
+
+**The two Windows PCs work on the SAME UE5 project** — they own files, run the engine, do
+build/RunTests, and register code. That is why claim/lease/fencing is a correctness requirement,
+not team bloat.
+
+🔴 **`.2` is the asymmetric one — it is both a workshop and an inference endpoint.** It is also
+the only Windows box the master can reach non-interactively (SSH). `.33` is RDP-only, so anything
+needing automation on the main work PC has to be driven from that PC, not from here.
+
+🔴 **Two inference endpoints, and only one is a board:** BC-250 #1 (35B pinned) and the RTX 3060
+PC (14b pinned). Each runs `MAX_LOADED_MODELS=1`, so a model swap costs ~64s (35B) / ~36s (14b) —
 a round trip is ~100s. **Any design premised on parallel inference or multiple resident models
 *within one endpoint* does not hold.**
+
+🔴 **Claude Code is installed on `.2`.** It is an *orchestrator* there (§2.3 — the workshop owns
+files and drives tools), **not** a model backend. Ollama cannot serve Claude, and the Claude Code
+CLI is not an inference server — don't try to put it behind the broker as a model.
 
 ### Design rules (inherited from the AgentTest 2026-07-07 architecture)
 
