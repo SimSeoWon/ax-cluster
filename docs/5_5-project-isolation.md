@@ -512,12 +512,57 @@ query session → console  janus  9  활성     ← 데스크톱은 세션 9
 마스터에서 `process_lifecycle.py` 를 폐기하고 systemd 에 넘긴 것(§5.4.3)과 같은 판단이다.
 **필요해지기 전에는 하지 않는다.**
 
-**③ 이것이 층3 검증의 경로를 연다.**
-`UnrealEditor-Cmd` 가 세션 0 에서 돈다는 것은 **빌드와 `RunTests` 를 마스터가 SSH 로
-몰 수 있다**는 뜻이다(§4.3 층3). 지금까지 계획은 층3 을 "윈도우가 알아서 하는 것"으로만
-뒀는데, `.2` 에 한해서는 마스터 주도가 가능하다. `.33` 은 SSH 가 없어 해당 없다.
-⚠️ 다만 **실행해 보지는 않았다** — 세션 배치만 확인했다. 층3 을 실제로 원격 구동하기 전에
-한 번은 손으로 돌려 봐야 한다.
+**③ ✅ 층3 원격 구동 — 실검증 완료 (2026-08-08).**
+`UnrealEditor-Cmd` 가 세션 0 에서 돈다는 것은 **`RunTests` 를 마스터가 SSH 로 몰 수 있다**는
+뜻이다(§4.3 층3). 추측이 아니라 **실제로 돌려서 확인했다.**
+
+엔진: `C:\Program Files\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe`
+(`.uproject` 의 `EngineAssociation` 이 GUID → **`5.8`** 로 전환됨, 사용자 작업 2026-08-08.
+런처 기록 `C:\ProgramData\Epic\UnrealEngineLauncher\LauncherInstalled.dat` 가 권위 있는 출처다 —
+HKLM 레지스트리에는 5.4/5.5 만 있어 5.8 을 못 찾는다).
+
+```bat
+UnrealEditor-Cmd.exe <uproject> -ExecCmds="Automation RunTests <필터>; Quit" ^
+    -unattended -nopause -nosplash -nullrhi -stdout -NoLogTimes
+```
+
+`-nullrhi` 가 핵심이다 — RHI 를 띄우지 않으므로 데스크톱 없는 세션 0 에서 성립한다.
+
+| 실행 | 결과 |
+|---|---|
+| `Automation List` | 45초. 엔진 초기화(ZenServer·DDC·셰이더 워커 5) → 테스트 **8,726개** 열거 → `EXIT CODE: 0` |
+| `Automation RunTests System.Core.Algo` | 25초. **5건 전부 `Result={Success}`**, 실패 0 → `EXIT CODE: 0` |
+
+##### ③-1 🔴 판정 신호를 잘못 고르면 층3 게이트가 통째로 틀린다
+
+실검증에서 **함정 두 개**가 나왔다. 둘 다 "그럴듯한 신호"가 틀린 경우다.
+
+**1. SSH 의 종료 코드를 믿으면 안 된다.**
+두 번의 실행 모두 에디터는 `EXIT CODE: 0` 인데 **`ssh` 는 1 을 반환했다.** 감싼 배치의
+`echo [wrapper-exit] %ERRORLEVEL%` 도 **찍히지 않았다**(같은 배치를 에디터 없이 돌리면 정상
+기록된다 — 래퍼 문제가 아니다). 원격 프로세스가 끝나는 방식과 SSH 채널 종료가 어긋난다.
+→ **종료 코드로 게이트하지 말고 로그를 파싱하라.**
+
+**2. `Error` 문자열로 판정하면 안 된다.**
+**전부 통과한 실행에 `LogAutomationTest: Error` 가 15줄 있었다.** 실패를 일부러 유발해
+보는 부정 경로 검사들이 그렇게 로그를 남긴다. `grep -i error` 로 게이트를 짜면
+**통과한 빌드를 실패로 판정한다.**
+
+**→ 올바른 신호는 이 둘뿐이다:**
+
+```
+LogAutomationController: Display: Test Completed. Result={Success|Fail} Name={..} Path={..}
+LogAutomationCommandLine: Display: **** TEST COMPLETE. EXIT CODE: N ****
+```
+
+`Result={Fail}` 개수 == 0 **그리고** `EXIT CODE: 0` 일 때만 통과다.
+둘 중 하나라도 없으면(로그가 잘렸거나 프로세스가 죽었거나) **fail-closed 로 실패 처리**한다 —
+§9.4.4 의 층2 VERDICT 계약이 "마지막 비어 있지 않은 줄" 을 못박은 것과 같은 종류의 규약이고,
+같은 이유로 필요하다.
+
+⚠️ **아직 안 해본 것: 실제 C++ 빌드.** 위 검증은 `RunTests` 경로다. 사용자가 5.8.1 로
+전환해 빌드를 성공시킨 상태라 **엔진·바이너리는 준비돼 있지만**, `Build.bat` 을 SSH 로
+돌리는 것은 별도로 확인해야 한다(수십 분 소요 예상).
 
 ##### ⑥-1 자동화가 쓸 체크아웃 — 기존 것을 쓰고, 더러우면 멈춘다
 
@@ -589,8 +634,13 @@ git -C <path> status --porcelain | grep -v '^??' | head -1
 - [x] ~~loopback 프로세스 수명주기 — 누가 주인인가~~ — **완료 2026-08-08** (⑥).
       세션 0/9 경계가 갈랐다: Unreal MCP 는 마스터가 **띄울 수도 없고**(설계에서 제외),
       `gjc`·`UnrealEditor-Cmd` 는 **SSH 연결이 곧 수명**이다(감독자 불필요)
-- [ ] **층3 원격 구동 실검증** — `UnrealEditor-Cmd` 가 세션 0 에서 도는 것은 확인했으나
-      빌드·`RunTests` 를 실제로 SSH 로 돌려 보지는 않았다 (⑥-③)
+- [x] ~~**층3 원격 구동 실검증**~~ — **완료 2026-08-08** (⑥-③). `Automation List`(8,726개 열거) ·
+      `RunTests System.Core.Algo`(5건 전부 Success) 둘 다 SSH·세션 0 에서 성공.
+      판정 신호 함정 2건(SSH 종료 코드 · `Error` 문자열)을 ⑥-③-1 에 기록
+- [ ] **`Build.bat` 원격 구동 확인** — `RunTests` 는 됐지만 C++ 빌드는 따로 확인해야 한다.
+      수십 분 소요 예상 (⑥-③)
+- [ ] **층3 게이트 구현** — `Result={Fail}` 카운트 + `EXIT CODE` 파싱, fail-closed.
+      🔴 `grep error` 로 짜지 말 것 (⑥-③-1)
 - [ ] **`gjc`(+필요시 `bun`) 설치** — `.2` 에 미설치. node v24.11.1 은 있다 (⑥-2)
 - [x] ~~**자동화 진입 전 더티 체크 구현**~~ — **완료 2026-08-08.**
       `master/projects/workshop_check.py` + MCP 도구 `check_workshops_clean_tool`(8종째).
