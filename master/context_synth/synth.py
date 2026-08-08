@@ -48,6 +48,12 @@ SYNTH_MODEL = "hf.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M"
 FALLBACK_MODEL = "qwen2.5-coder:14b"     # rtx3060(.2) 핀. 35B 노드가 죽었을 때
 SYNTH_TIMEOUT = 600
 
+# 🔴 KV 컨텍스트 상한. **이것이 BC-250 정지 사고의 진짜 원인이었다** — 모델 기본
+# `context_length` 가 **262144(256K)** 라, 안 주면 그 전제로 KV 와 컨텍스트 체크포인트를
+# 잡는다(실측 `checkpoint 1 of 32 ... 62.813 MiB` → 32개면 ~2.0GB, 보드 여유는 2.2GB).
+# 프롬프트 4,000자 + 근거 ≈ 1,500토큰, 출력 ≈ 800토큰이므로 4096 이면 넉넉하다.
+SYNTH_NUM_CTX = 4096
+
 # 연속 실패 임계값. 이보다 이어지면 배치를 중단한다 (위 ⑵).
 CIRCUIT_THRESHOLD = 3
 
@@ -215,7 +221,8 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
     res.prompt_chars = len(p)
 
     try:
-        raw = call_broker(p, model=model, broker=broker, timeout=SYNTH_TIMEOUT, caller=caller)
+        raw = call_broker(p, model=model, broker=broker, timeout=SYNTH_TIMEOUT,
+                          num_ctx=SYNTH_NUM_CTX, caller=caller)
     except GenerateError as e:
         res.reason = f"LLM 실패: {e}"
         return res

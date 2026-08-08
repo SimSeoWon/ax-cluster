@@ -162,6 +162,21 @@ def main() -> int:
         finally:
             genmod.urllib.request.urlopen = real
 
+    print("\n[5-2] 🔴 num_ctx — 주지 않으면 노드가 죽는다 (BC-250 실측)")
+    seen = {}
+
+    def _cap(url, payload):
+        seen.update(payload)
+        return "ok"
+
+    genmod2 = __import__("importlib").import_module("master.work.generate")
+    genmod2.call_broker("p", caller=_cap)
+    check("기본은 안 넣는다 (코드 생성 경로 불변)", "num_ctx" not in seen["options"])
+    genmod2.call_broker("p", num_ctx=4096, caller=_cap)
+    check("주면 options 에 실린다", seen["options"]["num_ctx"] == 4096, str(seen["options"]))
+    check("  temperature 는 유지", seen["options"]["temperature"] == 0)
+    check("  stateless 유지 (context 없음)", "context" not in seen)
+
     print("\n[6] 🔴 온톨로지가 없다는 사실을 숨기지 않는다")
     check("규범 섹션이 있다", "도메인 규범" in m.body)
     check("미구현이라 적혀 있고 소분류를 가리킨다",

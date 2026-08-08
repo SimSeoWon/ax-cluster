@@ -133,13 +133,29 @@ def build_prompt(*, manifest_body: str, instruction: str, target_file: str = "")
 
 def call_broker(prompt: str, *, model: str = CODER, broker: str = DEFAULT_BROKER,
                 token: str | None = None, timeout: int = GEN_TIMEOUT,
-                caller=None) -> str:
-    """브로커에 생성을 요청한다. **stateless** — `context` 를 주지도 받지도 않는다."""
+                num_ctx: int | None = None, caller=None) -> str:
+    """브로커에 생성을 요청한다. **stateless** — `context` 를 주지도 받지도 않는다.
+
+    🔴 **`num_ctx` 를 주라 — 안 주면 노드가 죽는다.** 실측 2026-08-08: BC-250 이 컨텍스트
+    합성 배치 중 커널까지 멈췄다. 원인은 프롬프트 길이 자체가 아니라 **KV 할당 규모**였다:
+
+    - 모델 `context_length = 262144`(256K). `num_ctx` 를 안 주면 그 전제로 잡는다
+    - Ollama 가 요청마다 **컨텍스트 체크포인트**를 남긴다 —
+      로그 실측 `created context checkpoint 1 of 32 ... size = 62.813 MiB`
+    - **32 × 62.8 MiB ≈ 2.0 GB.** 그 보드의 여유가 **2.2 GB**(15.2GB 중 12.9GB 가 모델·UMA)
+    - swap 은 **zram 8GB**(압축 RAM)라 물러설 곳이 없다 → 스래싱 → 커널 정지
+
+    그래서 상한을 **요청에서** 건다. 노드 설정(`OLLAMA_KV_CACHE_TYPE=q4_0` 등)은 이미
+    켜져 있었고 그것만으로는 부족했다.
+    """
+    options = {"temperature": 0}         # 재현성. §4.4 실측도 temperature=0 이었다
+    if num_ctx:
+        options["num_ctx"] = int(num_ctx)
     payload = {
         "model": model,
         "prompt": prompt,
         "stream": False,
-        "options": {"temperature": 0},   # 재현성. §4.4 실측도 temperature=0 이었다
+        "options": options,
         # 35B 계열은 이게 없으면 사고 과정을 뱉어 토큰을 태운다 (§4.4).
         "think": False,
     }
