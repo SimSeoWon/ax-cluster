@@ -73,14 +73,13 @@ grounding 3채널 = **관련 컨텍스트 3개 + 도메인 1개(중 1.3 대기) 
 - 🔴 **전체 클래스를 분류하지 않는다.** η.1 원안은 1,799 클래스 전체였으나 **active 도메인
   멤버십 합집합만**으로 좁혔다(24 클래스로 confidence ≥0.7 100% 달성, **36배 절감**).
   사용자 발화: *"도메인에 잡혀있는 것만 온톨로지 대상으로 처리"*. 우리 기준 = 7 도메인 112 객체
-- 🔴 **폐지된 것을 이식하지 말 것** — Obsidian `.md` 병행 출력 · 검수 큐(`invariants_pending.md`)
-  · sidecar JSON · `ontology_artifacts` 모듈. 전부 *"사용자 표면 1개(YAML)로 통일"* 로 정리됐다.
-  특히 `_sync_artifacts_if_missing` 는 **사용자의 청소를 60초 만에 되돌리는 사고**를 냈다
-- ✅ **우리가 맞게 한 것**: 분류를 `classes` 컬럼이 아니라 `class_ontology` 별도 테이블 +
-  FK CASCADE 로 둔 것(원본도 `save_graph()` DELETE+INSERT 가 분류를 덮는 사고로 그렇게 갔다)
-- **자동 실행 4가드**: class_graph≥100 · dep_graph≥100 · active_members≥1 · 미분류≥1
-- **매 폴링 무비용 3가드**: 자원 가드 · dirty check(입력 fingerprint) · skip_unchanged
-- **PyYAML 의존성 0** — 수동 직렬화. 우리 산출물 형식만 지원한다
+- 🔴 **폐지된 것을 이식하지 말 것** — Obsidian `.md` · 검수 큐 · sidecar JSON ·
+  `ontology_artifacts`. *"사용자 표면 1개(YAML)로 통일"*. `_sync_artifacts_if_missing` 는
+  **사용자의 청소를 60초 만에 되돌리는 사고**를 냈다
+- ✅ **맞게 한 것**: 분류를 `class_ontology` 별도 테이블 + FK CASCADE 로 둔 것
+  (원본도 `save_graph()` 의 DELETE+INSERT 가 분류를 덮는 사고로 그렇게 갔다)
+- **자동 실행 4가드**(class_graph≥100·dep≥100·active≥1·미분류≥1) · **매 폴링 무비용 3가드**
+  (자원·dirty fingerprint·skip_unchanged) · **PyYAML 의존성 0**(수동 직렬화)
 - **디렉토리 패키지**: `domains/<D>/{domain.yaml, objects/<C>.yaml, actions/<A>.yaml}`.
   **DB 색인 대상은 `domain.yaml` manifest 뿐**
 - **액션은 함수 1:1 매핑이 아니다** — 누가/누구에게/무엇을/어떤 플로우의 **의미 단위 종합 기술**
@@ -97,8 +96,8 @@ grounding 3채널 = **관련 컨텍스트 3개 + 도메인 1개(중 1.3 대기) 
 | 1.3.8 | stale 판정 — 리비전 워터마크·MD 해시 비교 | LLM 0 |
 | 1.3.9 | `path_sync` · `@ms-contract` declared invariant | LLM 0 |
 
-🔴 **재사용할 것**: 사실 게이트(`context_synth/verify.py`) — 원본이 `methods` 테이블을
-*"온톨로지 추출의 오탐 교차검증"* 용이라고 적어 뒀다. 같은 환각 위험이다.
+🔴 **재사용**: 사실 게이트(`verify.py`) — 원본이 `methods` 를 *"온톨로지 추출 오탐 교차검증"* 용
+이라고 적어 뒀다. 같은 위험이다.
 
 **중 1.4 시소러스** — 0/3
 
