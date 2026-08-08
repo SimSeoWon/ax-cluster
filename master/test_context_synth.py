@@ -132,6 +132,23 @@ def main() -> int:
           not md.check("---\ntags: [a]\ncategory: x/y/z\n" + "본문 " * 20).ok)
     check("정상은 통과", md.check(GOOD).ok)
 
+    print("\n[3-1] 🔴 닫는 `---` 누락은 결정적으로 복구한다 (14b 실측 실패)")
+    UNCLOSED = GOOD.replace("---\n\n## 요약", "\n## 요약", 1)
+    check("  재현: 닫는 줄이 없으면 게이트가 거부", not md.check(UNCLOSED).ok)
+    fixed = md.repair_frontmatter(UNCLOSED)
+    check("복구된다", md.check(fixed).ok, md.check(fixed).reason)
+    check("  필드가 보존된다", "tags: [mission, runtime]" in fixed and "AMonster" in fixed)
+    check("  본문이 보존된다", "## 요약" in fixed and "스폰 트리거" in fixed)
+    check("이미 닫힌 문서는 건드리지 않는다", md.repair_frontmatter(GOOD) == GOOD.strip())
+    check("🔴 `##` 제목이 없으면 손대지 않는다 (경계를 모른다)",
+          md.repair_frontmatter("---\ntags: [a]\n본문뿐") == "---\ntags: [a]\n본문뿐")
+    check("🔴 `---` 로 시작 안 하면 손대지 않는다",
+          md.repair_frontmatter("본문\n## 요약\nx") == "본문\n## 요약\nx")
+    check("strip_wrapper 가 복구까지 한다", md.check(md.strip_wrapper(UNCLOSED)).ok)
+    doc_u, v_u = md.finalize(UNCLOSED, commit="zz99")
+    check("finalize 도 통과시키고 스탬프한다",
+          v_u.ok and "source_commit: zz99" in doc_u, v_u.reason)
+
     print("\n[4] 🔴 게이트가 스탬프보다 앞 (원본 사고의 핵심)")
     doc, v = md.finalize("```markdown\n" + GOOD.strip() + "\n```", commit="abc123")
     check("펜스 벗기고 통과", v.ok and doc.startswith("---"))

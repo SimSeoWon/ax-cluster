@@ -88,7 +88,7 @@ partial — ontology unindexed, and the MD synthesiser is built but not wired in
 give the denominator (*"loop runs; twin sub-tasks 10 of 32"*), never a scope narrowed to what got built.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
-**Tests — 800, all passing. No pytest**; each file runs standalone.
+**Tests — 809, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
@@ -106,7 +106,7 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_provision.py            #  43 — Ollama node check/install; .33 must stay non-resident
 .venv/bin/python master/test_indexer.py              #  35 — spool consumer: ff-only mirror, digest guard, watermark
 .venv/bin/python master/test_graph.py                #  69 — relation graphs: Source-only, fail-closed, no ghost rows
-.venv/bin/python master/test_context_synth.py        #  86 — σ.7/σ.7-B gates, comment preservation, circuit breaker + factuality gate
+.venv/bin/python master/test_context_synth.py        #  95 — σ.7/σ.7-B gates, comment preservation, circuit breaker + factuality gate
 
 # Relation graphs (deterministic, no LLM) — full rebuild ~2.9s for 1,654 files
 .venv/bin/python -m master.graph build               # inheritance + #include

@@ -53,6 +53,7 @@ def strip_wrapper(md: str) -> str:
     ⑴ 전체를 감싼 ```` ```markdown … ``` ```` 제거
     ⑵ 그래도 `---` 로 시작하지 않으면 **첫 `---` 줄부터** 잘라낸다 ("아래에 MD 를
       작성했습니다" 같은 도입부가 붙는 경우)
+    ⑶ frontmatter 를 닫는 `---` 가 빠졌으면 넣는다 (`repair_frontmatter`)
     """
     s = (md or "").strip()
     fence = _FENCE_RE.match(s)
@@ -62,7 +63,32 @@ def strip_wrapper(md: str) -> str:
         m = re.search(r"^---\s*$", s, re.MULTILINE)
         if m:
             s = s[m.start():]
-    return s
+    return repair_frontmatter(s)
+
+
+def repair_frontmatter(md: str) -> str:
+    """frontmatter 를 닫는 두 번째 `---` 가 빠진 경우만 **결정적으로** 복구한다.
+
+    🔴 실측(2026-08-08): `qwen2.5-coder:14b` 가 여는 `---` 와 필드는 쓰고 닫는 `---` 없이
+    바로 `## 요약` 으로 넘어간다. 사실 오류가 아니라 형식 슬립인데, 닫히지 않으면 스탬프
+    (`content_hash`·`source_commit`)가 안 붙고 게이트가 문서를 통째로 버린다.
+
+    **좁게 고친다** — ⑴ `---` 로 시작하고 ⑵ 닫는 `---` 가 **없고** ⑶ 뒤에 `## ` 제목이
+    있을 때만, 그 제목 **직전에** 닫는 줄을 넣는다. 이 셋이 다 맞으면 경계가 모호하지 않다.
+    조건을 넓히면 진짜 손상을 정상으로 위장하게 되므로 넓히지 않는다.
+    """
+    s = (md or "").strip()
+    if not s.startswith("---"):
+        return s
+    if _FRONTMATTER_RE.match(s):
+        return s                      # 이미 닫혀 있다
+    m = re.search(r"^##\s", s, re.MULTILINE)
+    if not m:
+        return s                      # 경계를 알 수 없다 — 손대지 않는다
+    head, rest = s[:m.start()].rstrip(), s[m.start():]
+    if head.count("\n---") > 0:       # 닫는 표시가 있는데 정규식이 안 맞았다 = 이상하다
+        return s
+    return f"{head}\n---\n\n{rest}"
 
 
 @dataclass(frozen=True)
