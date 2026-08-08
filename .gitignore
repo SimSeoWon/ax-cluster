@@ -3,3 +3,8 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+
+# 프로젝트별 데이터 디렉토리 — 마스터 로컬 전용, ax-cluster 에 커밋하지 않는다 (PLAN.md §5.5)
+# 🔴 새 프로젝트를 추가하면 여기에 한 줄 추가할 것. 각 디렉토리는 자체 .git 을 가지므로
+#    빠뜨리면 git status 에 gitlink 로 나타난다(조용히 커밋되지는 않는다).
+/ModularStage/

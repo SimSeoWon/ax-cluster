@@ -297,8 +297,7 @@ BC-250 에 UE5 가 없는 것은 문제가 아니다.
       `/api/show` 가 `capabilities:['completion','tools','insert']` 를 광고하는데도 그렇다 — **광고와 실제가 다르다.**
       `35B-A3B IQ2_M` 은 정상 방출. 에이전틱 하네스를 쓰려면 executor 를 14b 로 못 채운다 (§4.4 · §9.3)
 - [ ] 온톨로지 기반 디지털 트윈 설계 — 어떤 데이터를 온톨로지화할지 구체화 필요.
-      **격리 규약은 확정됐다 (§5.5, 2026-08-08)**: `~/ax-data/` 2단 config(루트=추적 목록+`active`,
-      프로젝트별=Gitea 정보) · 프로젝트당 하위 디렉토리 · **한 번에 하나만 마운트** ·
+      **격리 규약은 확정됐다 (§5.5, 2026-08-08)**: `ax-cluster/projects.yaml`(추적 목록+`active`) + 프로젝트명 디렉토리(gitignore) · 프로젝트당 하위 디렉토리 · **한 번에 하나만 마운트** ·
       다른 프로젝트 요청은 409 로 거부. 지금 UE5 프로젝트는 1개이고 **동시에 1개만 운영한다**
 - [x] ~~Unreal MCP(5.8+) 연동 방식 — 윈도우 UE5 PC 쪽에서 어떻게 노출/호출할지~~ —
       **확정 2026-08-07: 노출하지 않는다.** 에디터 내장 MCP 서버는 **loopback 전용이고
@@ -930,39 +929,50 @@ AgentTest 에서 프로젝트별 분리는 설계의 산물이 아니라 **DB �
 
 #### 5.5.3 규약 (5개)
 
-**① 경로 · 2단 config** — 루트 config 가 *무엇이 있고 무엇이 켜져 있나*를, 프로젝트별
-config 가 *그 프로젝트가 무엇인가*를 갖는다. 프로젝트마다 하위 디렉토리가 추가된다.
+**① 경로 — `ax-cluster` 하위에 프로젝트명 디렉토리, 커밋하지 않는다** (사용자 지시 2026-08-08).
+프로젝트마다 디렉토리가 나란히 추가되고, 그중 **하나만 마운트**된다.
 
 ```
-~/ax-data/
-    config.yaml                        ← 루트: 추적 목록 + 마운트된 프로젝트
-    projects/<owner>/<repo>/           ← Gitea 배치를 그대로 미러링
-        project.yaml                   ← 이 프로젝트의 Gitea 정보
-        context/                       원본 · 텍스트 · 백업 대상
-        ontology/domains/              원본 · 텍스트 · 백업 대상
-        vector_db/                     파생 · 바이너리 · 커밋 금지
-                                         (ChromaDB · bm25.db · class_graph.db)
+~/ax-cluster/                          ← 인프라 코드 저장소 (GitHub·BC-250 동기화)
+    projects.yaml                      ← 루트 config: 추적 목록 + active. 커밋한다
+    .gitignore                         ← /ModularStage/ … 프로젝트 디렉토리를 제외
+    ModularStage/                      ← 🔴 gitignore. 마스터 로컬 전용 데이터
+        .git/                            자체 저장소(원격 없음·훅 없음) — 원본을 잠근다
+        context/                         원본 · 텍스트 · 추적
+        ontology/domains/                원본 · 텍스트 · 추적
+        repo/                            소스 클론 · 파생 · 자체 .gitignore 로 제외
+        vector_db/                       파생 · 바이너리 · 제외
+    <다음프로젝트>/                     ← 같은 모양으로 나란히 추가
 ```
 
-```yaml
-# ~/ax-data/config.yaml
-version: 1
-active: sim/modularstage          # 🔴 마운트 대상. 비어 있거나 projects 에 없으면 기동 실패
-projects:                       # 추적 중인 프로젝트 목록 (디렉토리와 1:1)
-  - sim/modularstage
-```
+**전환은 `projects.yaml` 의 `active` 한 줄 + 서비스 재기동이다.** 디렉토리는 전부 그대로
+남아 있고 마운트 대상만 바뀐다. 마운트되지 않은 프로젝트 요청은 ③ 에 따라 409 로 거부된다.
 
 ```yaml
-# ~/ax-data/projects/sim/modularstage/project.yaml
+# ~/ax-cluster/projects.yaml  (실제 파일, 2026-08-08 작성)
 version: 1
-project_id: sim/modularstage      # 디렉토리 경로와 반드시 일치
-gitea:
-  owner: sim
-  repo: modularstage
-  bare_path: /var/lib/gitea/gitea-repositories/sim/modularstage.git
-  clone_url: http://192.168.0.57:3000/sim/modularstage.git
-  branch: main
+active: ModularStage                   # 🔴 없거나 목록에 없으면 기동 실패
+projects:
+  ModularStage:
+    dir: ModularStage                  # ax-cluster 하위 디렉토리명
+    project_id: sim/modularstage       # Gitea 저장소 식별자 (훅 이벤트가 이걸로 온다)
+    bare_path: /var/lib/gitea/gitea-repositories/sim/modularstage.git
+    clone_url: http://192.168.0.57:3000/sim/modularstage.git
+    branch: main
+    engine: "5.8.1"                    # .uproject 에서 못 읽는다(EngineAssociation 이 GUID)
+    index:
+      include: ["Source/**/*.cpp", "Source/**/*.h", "Source/**/*.cs", "Config/**"]
+      exclude: ["Content/**"]          # 1,021MB / 전체의 93%
 ```
+
+**디렉토리명(`ModularStage`)과 `project_id`(`sim/modularstage`)를 분리했다.** 전자는 사람이
+보는 이름, 후자는 훅 이벤트가 실어 오는 Gitea 식별자다. 규약 ② 의 "별칭 금지"는 여전히
+유효하다 — `project_id` 는 **여기서 지어내지 않고 Gitea 값을 그대로 적는다.**
+
+🔴 **유지보수 함정**: 프로젝트를 추가할 때마다 `.gitignore` 에 한 줄을 넣어야 한다.
+빠뜨리면 그 디렉토리가 자체 `.git` 을 갖고 있어 **gitlink(서브모듈)로 `git status` 에
+나타난다** — 조용히 커밋되지는 않으니 치명적이진 않지만, 반드시 눈으로 확인할 것.
+(공통 상위 디렉토리 하나로 묶으면 `.gitignore` 한 줄로 끝나지만, 배치는 위 지시를 따른다.)
 
 🔴 **Gitea 저장소 ROOT 는 `/var/lib/gitea/gitea-repositories` 다 (실측 2026-08-08).**
 표준 배치의 `data/` 세그먼트가 **없다** — `app.ini` `[repository] ROOT` 실측값이고,
@@ -999,7 +1009,7 @@ StaticEnum, TObjectPtr Sort, UButton getter"*. **엔진은 UE 5.8.1 로 올라�
 `sim` 이 traverse 하지 못한다. HTTP 는 하드닝 때문에 익명 접근이 **401** 이다.
 **마스터 서비스는 `sim` 으로 돌기 때문에 두 문 모두 닫혀 있다.**
 
-✅ **초기 사본은 확보했다 (2026-08-08)** — `~/ax-data/projects/sim/modularstage/`
+✅ **초기 사본은 확보했다 (2026-08-08)** — `~/ax-cluster/ModularStage/`
 아래 `repo.git`(bare 사본 1,006MB) + `repo`(워킹트리 1.1GB, `main`). 이제 root 없이 읽힌다.
 이것은 §5.5 규약 ⓑ 의 첫 실물이고, §2.1 "마스터는 파일을 소유하지 않는다"와 충돌하지 않는다 —
 그 원칙이 금지하는 것은 편집·빌드이고, 읽기 전용 색인 사본은 §2.1 이 마스터 몫으로 지정한
@@ -1017,7 +1027,7 @@ RAG/온톨로지 그 자체다.
 (다른 윈도우 PC는 **192.168.0.2** — UE5 설치됨, SSH 22 열림, 무인증 키는 미교환.)
 
 ```
-~/ax-data/projects/sim/modularstage/
+~/ax-cluster/ModularStage/
     context/           1,056개 · 5.0MB   원본  (Source 927 · _domains 19 · _archive 101)
     ontology/domains/    254개 · 1.3MB   원본  (도메인 7개)
     ontology/_export_manifest.json       source_version 1.1.355
@@ -1046,7 +1056,7 @@ RAG/온톨로지 그 자체다.
 
 ✅ **원본 버전 관리 완료 (2026-08-08).** 이 자산은 이관 전까지 **윈도우 1대에만 있었고
 git 에도 없었다**(§5.4.7 기준 원본이라 재색인으로 복구되지 않는다). 프로젝트 디렉토리를
-**로컬 git 저장소로 만들어 잠갔다** — `~/ax-data/projects/sim/modularstage/`, 최초 커밋
+**로컬 git 저장소로 만들어 잠갔다** — `~/ax-cluster/ModularStage/`, 최초 커밋
 `0cd8140`, 추적 1,312개. `.gitignore` 로 `vector_db/`·`bm25.db`·`class_graph.db`·
 `dependency_graph.db`(파생)와 `repo/`·`repo.git/`(원본이 Gitea 에 있음)을 제외한다.
 저장소를 **프로젝트당 하나**로 둔 것은 §5.5 의 프로젝트 격리와 경계를 일치시키기 위해서다.
@@ -1062,7 +1072,7 @@ git 에도 없었다**(§5.4.7 기준 원본이라 재색인으로 복구되지 
 | 층위 | 위치 | 성격 |
 |---|---|---|
 | **파일 단위** | 컨텍스트 MD frontmatter 의 `source_commit` | **진실.** 부분 실패해도 파일별로 정확 |
-| **프로젝트 워터마크** | `~/ax-data/projects/<id>/index_state.json` | 파생. 빠른 판단용 캐시 |
+| **프로젝트 워터마크** | `~/ax-cluster/<프로젝트>/index_state.json` | 파생. 빠른 판단용 캐시 |
 | **이벤트** | 스풀 줄의 `oldrev`/`newrev` | 훅이 **이미 받는다** |
 
 세 번째가 공짜다 — `post-receive` 의 stdin 형식이 `<oldrev> <newrev> <refname>` 이라
@@ -1088,11 +1098,42 @@ git diff <last_indexed_commit>..<newrev> --name-only -- Source/
 **온톨로지 저장소의 커밋 메시지에도 대응 소스 커밋을 적는다.** 최초 커밋 `0cd8140` 이 이미
 `bc4b38f` 를 명시했다 — 두 저장소의 대응 관계가 히스토리로 남는다.
 
+#### 5.5.3-d 🔴 자기 유발 재귀 금지 — 색인 산출물은 이벤트를 만들면 안 된다
+
+색인기가 컨텍스트 MD 를 갱신하고 커밋하는데, 그 커밋이 다시 훅 이벤트를 만들면
+**무한 재귀**가 된다. 현재 구조에서는 고리가 끊겨 있다 (확인 2026-08-08):
+
+```
+Gitea  sim/modularstage.git      ← 훅이 걸릴 곳 (소스 저장소)
+         │ push
+         ▼
+      스풀 → 색인기 → 컨텍스트 MD 갱신
+                          │ commit
+                          ▼
+~/ax-cluster/ModularStage/   원격 없음 · 활성 훅 없음 ⇒ 이벤트 안 남
+```
+
+⚠️ **폴링에서는 안 터지던 것이 이벤트 구동에서는 터진다.** 폴링은 산출물이 안정되면
+수렴한다(내용이 같으면 다음 사이클에 할 일이 없다). 이벤트는 **커밋 행위 자체가 이벤트를
+만들기 때문에 내용이 같아도 무한히 돈다.** §5.4.5 가 꼽은 "폴링이 공짜로 주던 3가지"에
+이어지는 네 번째다.
+
+**불변식 3개 — 어기면 즉시 재귀한다:**
+
+1. **온톨로지/컨텍스트 저장소에 훅을 걸지 않는다.** Gitea 리모트를 붙이더라도
+   훅 없는 백업 전용으로만 쓴다(§9.5.2 의 `ax-state` 와 같은 취급).
+2. **색인 산출물을 소스 저장소에 커밋하지 않는다.** AgentTest 는 `.claude/` 가 UE5 프로젝트
+   디렉토리 안에 있어서 이 구조로 회귀하기 쉽다 — §5.5 가 "데이터를 프로젝트 밖으로"
+   결정한 이유와 같은 방향이고, **이벤트 구동에서는 그 회귀가 곧바로 재귀가 된다.**
+3. **소비자가 이중으로 막는다.** ⓐ 이벤트의 저장소가 추적 대상 소스 저장소가 아니면 무시
+   (§5.5.3-③ 의 409 와 같은 fail-closed), ⓑ 색인기가 만든 커밋에는 트레일러
+   `[ax-index]` 를 달고 소비자가 그것을 스킵한다.
+
 🔴 **미결 — 영구 갱신 경로.** 훅 이벤트마다 fetch 하는 것은 **무인 서비스**라 `pkexec` 를
 쓸 수 없다(인증 창을 볼 사람이 없다). 초기 사본만으로는 끝나지 않는다:
 - **ⓐ `sim` 을 `gitea` 그룹에 추가** (+ `/var/lib/gitea` 에 `g+rx`) — 명령 한 번, 비밀정보 없음
 - **ⓒ Gitea 액세스 토큰/배포키** → `http://localhost:3000` 으로 fetch — 파일시스템 배치와
-  무관해지지만 토큰 관리가 생기고, 그 토큰이 `~/ax-data` 안에 놓이면 취급에 주의가 필요하다
+  무관해지지만 토큰 관리가 생기고, 그 토큰이 `ModularStage/` 안에 놓이면 취급에 주의가 필요하다
 
 → 앞서 ⓐ 를 "Gitea DB 까지 열린다"는 이유로 낮게 봤으나 **그 판단은 정정한다**: 이 박스는
 1인 사용이고 `sim` 은 이미 `pkexec` 로 root 가 된다. 그룹 추가로 새로 열리는 실질적 경계가 없다.

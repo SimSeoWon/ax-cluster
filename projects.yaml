@@ -1,0 +1,19 @@
+# AX 클러스터 — 추적 중인 프로젝트 목록과 현재 마운트된 프로젝트 (PLAN.md §5.5)
+#
+# 전환 방법:  active 를 아래 목록의 다른 이름으로 바꾸고 서비스를 재기동한다.
+#             런타임 전환 API 는 두지 않는다 — 전환은 명시적 행위로 남긴다.
+version: 1
+
+active: ModularStage      # 🔴 마운트 대상. 비어 있거나 projects 에 없으면 기동 실패
+
+projects:
+  ModularStage:
+    dir: ModularStage                    # ax-cluster 하위 디렉토리명 (gitignore 대상)
+    project_id: sim/modularstage         # Gitea 저장소 식별자 (훅 이벤트가 이걸로 온다)
+    bare_path: /var/lib/gitea/gitea-repositories/sim/modularstage.git
+    clone_url: http://192.168.0.57:3000/sim/modularstage.git
+    branch: main
+    engine: "5.8.1"                      # .uproject 에서 못 읽는다(EngineAssociation 이 GUID)
+    index:
+      include: ["Source/**/*.cpp", "Source/**/*.h", "Source/**/*.cs", "Config/**"]
+      exclude: ["Content/**"]            # 1,021MB / 전체의 93%
