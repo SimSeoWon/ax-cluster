@@ -1,0 +1,33 @@
+[Unit]
+Description=AX cluster indexer (이벤트 스풀 소비 — 푸시 → 미러 갱신 · 재색인)
+Documentation=https://github.com/SimSeoWon/ax-cluster
+# 🔴 폴링 데몬이 아니다 (PLAN §5.4). ax-indexer.path 가 inotify 로 깨운다.
+After=network-online.target local-fs.target gitea.service
+Wants=network-online.target
+
+[Service]
+# 한 번 돌고 끝난다. 스풀이 비면 즉시 종료 — 상주 프로세스를 두지 않는다.
+Type=oneshot
+User=sim
+Group=sim
+
+# 🔴 bare 저장소(/var/lib/gitea/...)를 읽어야 git fetch 가 된다.
+#    이게 없으면 git 이 "does not appear to be a git repository" 라고 하는데
+#    실제 원인은 권한이다 — 메시지가 원인을 감춘다 (실측 2026-08-08).
+SupplementaryGroups=gitea
+
+WorkingDirectory=/home/sim/ax-cluster
+Environment=AX_PROJECTS_ROOT=/home/sim/ax-cluster
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/home/sim/ax-cluster/.venv/bin/python -m master.events.consumer
+
+# 재색인이 40초 정도라 여유를 두되 무한정 매달리지는 않게 한다.
+TimeoutStartSec=1800
+
+# 소비자는 flock 으로 단독 실행을 보장한다. 겹쳐 기동돼도 뒤엣것이 즉시 물러난다.
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

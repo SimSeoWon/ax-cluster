@@ -54,7 +54,7 @@ There is no linter or CI config — **don't invent tooling commands.**
 | Project registry (MCP) | `master/projects/` — **live**, `ax-projects.service` `:8103` |
 | Capability routing (`requires`/`capabilities`) | `master/task_queue/logic_claim.py` |
 | Shared bearer auth (all 3 services, fail-closed) | `master/auth.py` |
-| Event spool (Gitea hook → indexer, single consumer) | `master/events/` — queue only; **consumer not built** |
+| Event spool + **indexer** (Gitea hook → reindex) | `master/events/` — **live**: `ax-indexer.path` (inotify) → `ax-indexer.service` |
 | Context search — vector + BM25, RRF fusion, mount-scoped | `master/context_search/` — **built, not yet served over HTTP** |
 | Workflow — 2-tier branches, manifest, registration, **generate → layer2 → hand over** | `master/work/` — server side **works end to end** (measured 20.1s, APPROVE). Map: `docs/4-work-loop.md` §4.7 |
 | Ollama node check + remote install (no residency) | `master/provision.py` — `python -m master.provision check` |
@@ -62,7 +62,7 @@ There is no linter or CI config — **don't invent tooling commands.**
 
 `worker/` and `client/` are still README-only stubs.
 
-**Tests — 593, all passing. No pytest**; each file runs standalone.
+**Tests — 628, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
@@ -78,12 +78,15 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_context_search.py       # 75 — search core: mount routing, RRF, generation pointer
 .venv/bin/python master/test_work.py                 # 135 — 2-tier branches, manifest, registration, generate+layer2
 .venv/bin/python master/test_provision.py            #  43 — Ollama node check/install; .33 must stay non-resident
+.venv/bin/python master/test_indexer.py              #  35 — spool consumer: ff-only mirror, digest guard, watermark
 
 # Full reindex of the mounted project (vector + BM25, one generation flip)
 .venv/bin/python -m master.context_search.rebuild
 
 curl -s localhost:8102/health | python3 -m json.tool   # which node holds which model
-systemctl status ax-task-queue ax-broker ax-projects
+systemctl status ax-task-queue ax-broker ax-projects ax-indexer.path
+journalctl -u ax-indexer -n 30 --no-pager      # push → reindex 이력
+.venv/bin/python -m master.events.install_hook  # Gitea 훅 설치 상태 점검
 journalctl -u ax-projects -f
 ```
 

@@ -1,0 +1,13 @@
+[Unit]
+Description=AX cluster indexer trigger (스풀에 이벤트가 들어오면 색인기를 깨운다)
+Documentation=https://github.com/SimSeoWon/ax-cluster
+
+[Path]
+# 🔴 inotify 다 — 폴링이 아니다. 파일이 생기는 순간 ax-indexer.service 가 뜬다.
+PathExistsGlob=/home/sim/ax-spool/incoming/*.json
+# 이미 파일이 있는 상태로 부팅해도 놓치지 않는다.
+MakeDirectory=false
+Unit=ax-indexer.service
+
+[Install]
+WantedBy=multi-user.target
