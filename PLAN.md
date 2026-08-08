@@ -1010,6 +1010,45 @@ RAG/온톨로지 그 자체다.
 (둘 다 `fatal: detected dubious ownership` 로 실패). root 로 남의 저장소를 다루는 스크립트는
 `git clone` 대신 `cp -a` 를 쓰거나 global config 를 건드려야 한다.
 
+#### 5.5.3-b ✅ 온톨로지 자산 이관 완료 (2026-08-08)
+
+윈도우 메인 작업용 PC(**192.168.0.33**)에서 `--export-state` 산출물
+(`infra_state_20260808.zip`, 1.5MB)을 받아 규약 경로에 배치했다.
+(다른 윈도우 PC는 **192.168.0.2** — UE5 설치됨, SSH 22 열림, 무인증 키는 미교환.)
+
+```
+~/ax-data/projects/sim/modularstage/
+    context/           1,056개 · 5.0MB   원본  (Source 927 · _domains 19 · _archive 101)
+    ontology/domains/    254개 · 1.3MB   원본  (도메인 7개)
+    ontology/_export_manifest.json       source_version 1.1.355
+    repo/ · repo.git/                    사본/파생
+```
+
+**도메인 7개**: `AlphaCoreGameFramework` · `GlobalEventSystem` · `MissionEditor` ·
+`MissionRuntime` · `MissionSystemTools` · `ProjectAlpha_UiViewManagement` · `UiManagement`.
+구조는 `<도메인>/L1|L3/{objects,actions}/<이름>.yaml` — **계층(L1/L3)이 이미 들어가 있다.**
+
+✅ **신선도 검증 통과 — 재추출 불필요** (실측):
+
+| | 시각 |
+|---|---|
+| 5.8 API 대응 커밋 `9efbfc1` | 2026-08-02 16:29:43 |
+| `MCP 추가` `bc4b38f` | 2026-08-02 16:45:39 |
+| **컨텍스트 MD 최종 갱신** | **2026-08-02 17:35:40** ← 두 커밋보다 나중 |
+
+즉 모듈 구조 정리·5.8 API 대응이 **반영된 뒤** 추출된 자산이다.
+컨텍스트 MD 927개 : 소스 1,662개는 커버리지 부족이 아니라 `.h`/`.cpp` 쌍이 MD 하나를
+공유하기 때문이다(표본 확인: `FHexGridSceneProxy.{h,cpp}` → MD 1개).
+
+⚠️ **`StructUtils` 는 잔재가 아니다.** 현재 소스에 10건 남아 있으나 전부
+`#include "StructUtils/InstancedStruct.h"` — 커밋 메시지의 "include 경로" 항목에 해당하는
+5.8 경로 변경이다. 커밋 요약만 보고 "제거하다 만 흔적"으로 판단하면 틀린다.
+
+🔴 **새 미결 — 원본의 버전 관리.** 이 자산은 이관 전까지 **윈도우 1대에만 있었고 git 에도
+없었다**(§5.4.7 기준 원본이라 재색인으로 복구되지 않는다). 마스터로 옮겨 단일 장애점은
+해소됐지만 `~/ax-data` 는 아직 버전 관리 대상이 아니다. `context/`·`ontology/domains/` 는
+텍스트 원본이므로 별도 git 저장소로 묶을지 결정이 필요하다(`vector_db` 는 계속 제외).
+
 🔴 **미결 — 영구 갱신 경로.** 훅 이벤트마다 fetch 하는 것은 **무인 서비스**라 `pkexec` 를
 쓸 수 없다(인증 창을 볼 사람이 없다). 초기 사본만으로는 끝나지 않는다:
 - **ⓐ `sim` 을 `gitea` 그룹에 추가** (+ `/var/lib/gitea` 에 `g+rx`) — 명령 한 번, 비밀정보 없음
