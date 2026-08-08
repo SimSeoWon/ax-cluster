@@ -71,6 +71,11 @@ class ProjectPaths:
         return self.repo / SOURCE_SUBDIR
 
     @property
+    def manifests(self) -> Path:
+        """태스크별 컨텍스트 매니페스트. 파생물이다 — 재수집으로 복구된다 (§4.2)."""
+        return self.root / "manifests"
+
+    @property
     def vector_db(self) -> Path: return self.root / VECTOR_DB
     @property
     def bm25_db(self) -> Path: return self.root / BM25_DB

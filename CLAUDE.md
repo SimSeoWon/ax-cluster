@@ -56,11 +56,12 @@ There is no linter or CI config — **don't invent tooling commands.**
 | Shared bearer auth (all 3 services, fail-closed) | `master/auth.py` |
 | Event spool (Gitea hook → indexer, single consumer) | `master/events/` — queue only; **consumer not built** |
 | Context search — vector + BM25, RRF fusion, mount-scoped | `master/context_search/` — **built, not yet served over HTTP** |
+| Workflow — 2-tier branches, context manifest | `master/work/` — **restoration in progress**, map in `docs/4-work-loop.md` §4.7 |
 | venv + deps | `.venv/`, `master/requirements.txt` |
 
 `worker/` and `client/` are still README-only stubs.
 
-**Tests — 412, all passing. No pytest**; each file runs standalone.
+**Tests — 474, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
@@ -74,6 +75,7 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_auth.py                 # 46 — bearer auth, fail-closed
 .venv/bin/python master/test_events.py               # 38 — event spool: no-loss, at-least-once, coalescing
 .venv/bin/python master/test_context_search.py       # 75 — search core: mount routing, RRF, generation pointer
+.venv/bin/python master/test_work.py                 # 62 — 2-tier branches (zombie race), context manifest
 
 # Full reindex of the mounted project (vector + BM25, one generation flip)
 .venv/bin/python -m master.context_search.rebuild
