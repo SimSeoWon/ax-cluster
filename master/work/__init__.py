@@ -9,9 +9,13 @@ from .branch_names import (
     is_attempt, is_durable, parse_attempt, parse_durable,
 )
 from .manifest import Manifest, ManifestError, build, collect, manifest_path, read, write
+from .generate import (
+    CODER, Dispatch, GenerateError, Generated, dispatch, generate, strip_fence,
+)
 
 __all__ = [
     "BranchNameError", "attempt_branch", "attempt_glob", "durable_branch",
     "is_attempt", "is_durable", "parse_attempt", "parse_durable",
     "Manifest", "ManifestError", "build", "collect", "manifest_path", "read", "write",
+    "CODER", "Dispatch", "GenerateError", "Generated", "dispatch", "generate", "strip_fence",
 ]

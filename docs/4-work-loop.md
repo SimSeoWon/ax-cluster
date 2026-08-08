@@ -227,8 +227,9 @@ AgentTest 에 이미 구현돼 있다: `master_orchestrator` 의 골조 생성 +
 | 2-tier 브랜치 규약 | `worker/branch_names.py` 65줄 | ✅ **완료** — `master/work/branch_names.py` |
 | 컨텍스트 매니페스트 | `cluster_context.py` 148줄 | ✅ **완료** — `master/work/manifest.py` |
 | 태스크 등록(`/distribute`) | `executor_work_register.py` 598줄 | ✅ **완료** — `master/work/register.py`. 저장소 조작부는 작업장으로 넘겼다 |
-| 작업장 러너 (claim → 생성 → 적용 → 층1) | `worker/worker.py` 887 + `validator.py` 706 | ⬜ **다음** |
-| 층2 선제 필터 (agy → Claude) | `claude_spawn.syntax_check` | ⬜ |
+| **생성 → 층2 → 인계** (마스터 몫) | — | ✅ **완료** — `master/work/generate.py`. 실측 e2e 20.1s · APPROVE |
+| 작업장 러너 (claim → 적용 → 층1 → 층3) | `worker/worker.py` 887 + `validator.py` 706 | ⬜ **서버측 완료 후** |
+| 층2 선제 필터 (agy → Claude) | `claude_spawn.syntax_check` | ✅ **이미 있었다** — `master/layer2_verify.py` |
 | durable/attempt git 조작 | `git_ops.py` 160 + `verify_worker.py` 314 | ⬜ **①에 따라 재설계** |
 | e2e 자기검증 | `cluster_selftest.py` 416줄 | ⬜ 마지막 — 이게 있어야 "돈다" 고 말할 수 있다 |
 

@@ -56,13 +56,13 @@ There is no linter or CI config — **don't invent tooling commands.**
 | Shared bearer auth (all 3 services, fail-closed) | `master/auth.py` |
 | Event spool (Gitea hook → indexer, single consumer) | `master/events/` — queue only; **consumer not built** |
 | Context search — vector + BM25, RRF fusion, mount-scoped | `master/context_search/` — **built, not yet served over HTTP** |
-| Workflow — 2-tier branches, context manifest | `master/work/` — **restoration in progress**, map in `docs/4-work-loop.md` §4.7 |
+| Workflow — 2-tier branches, manifest, registration, **generate → layer2 → hand over** | `master/work/` — server side **works end to end** (measured 20.1s, APPROVE). Map: `docs/4-work-loop.md` §4.7 |
 | Ollama node check + remote install (no residency) | `master/provision.py` — `python -m master.provision check` |
 | venv + deps | `.venv/`, `master/requirements.txt` |
 
 `worker/` and `client/` are still README-only stubs.
 
-**Tests — 562, all passing. No pytest**; each file runs standalone.
+**Tests — 593, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
@@ -70,13 +70,13 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_capability_routing.py  # 16 — needs venv (pydantic)
 .venv/bin/python master/test_broker_health.py       #  8 — needs venv
 .venv/bin/python master/test_projects.py            # 63 — needs venv (pyyaml)
-.venv/bin/python master/test_mcp_servers.py         # 30 — both MCP servers import + register
+.venv/bin/python master/test_mcp_servers.py         # 31 — both MCP servers import + register
 .venv/bin/python master/test_workshop_check.py      # 47 — dirty-check rules (no SSH; runner injected)
 .venv/bin/python master/test_layer3_verify.py       # 63 — layer-3 gate: automation + build logs, fail-closed
 .venv/bin/python master/test_auth.py                 # 46 — bearer auth, fail-closed
 .venv/bin/python master/test_events.py               # 38 — event spool: no-loss, at-least-once, coalescing
 .venv/bin/python master/test_context_search.py       # 75 — search core: mount routing, RRF, generation pointer
-.venv/bin/python master/test_work.py                 # 105 — 2-tier branches, manifest, work registration
+.venv/bin/python master/test_work.py                 # 135 — 2-tier branches, manifest, registration, generate+layer2
 .venv/bin/python master/test_provision.py            #  43 — Ollama node check/install; .33 must stay non-resident
 
 # Full reindex of the mounted project (vector + BM25, one generation flip)

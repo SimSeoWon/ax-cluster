@@ -26,6 +26,10 @@ from master.work import manifest as mf  # noqa: E402
 from master.work.register import (  # noqa: E402
     RegisterError, TaskSpec, register_work,
 )
+from master.work.generate import (  # noqa: E402
+    GenerateError, build_prompt, dispatch, generate, strip_fence,
+)
+from master.verdict import Verdict  # noqa: E402
 
 PASS = FAIL = 0
 
@@ -279,6 +283,92 @@ def main() -> int:
     check("등록은 성공", got4.ok, got4.summary())
     check("결손이 기록된다", bool(got4.tasks[0].manifest_degraded))
     check("요약에 드러난다", "결손" in got4.summary(), got4.summary())
+
+    # ── 생성 → 층2 → 인계 ───────────────────────────
+    F = chr(96) * 3
+    print("\n[17] 마크다운 펜스 — §4.4 가 실측한 coder 모델의 유일한 결함")
+    for label, src, want_code, want_stripped in [
+        ("언어 표시 있음", f"{F}cpp\nvoid A(){{}}\n{F}", "void A(){}", True),
+        ("언어 표시 없음", f"{F}\nvoid A(){{}}\n{F}", "void A(){}", True),
+        ("앞뒤 공백까지", f"\n  {F}cpp\nvoid A(){{}}\n{F}  \n", "void A(){}", True),
+        ("펜스 없음", "void A(){}", "void A(){}", False),
+    ]:
+        code, st = strip_fence(src)
+        check(f"  {label}", code == want_code and st == want_stripped, f"{code!r} st={st}")
+    mid = f"void A(){{}}\n{F}cpp\nvoid B(){{}}"
+    code, st = strip_fence(mid)
+    check("🔴 중간 펜스는 남긴다 (층2 가 잡아야 한다)", F in code and not st, code)
+    check("빈 입력", strip_fence("") == ("", False))
+
+    print("\n[18] 프롬프트 — 매니페스트를 싣고 동결을 명시한다")
+    pr = build_prompt(manifest_body="## 골조\nclass UFoo;", instruction="Init 구현",
+                      target_file="Foo.cpp")
+    check("매니페스트가 통째로 실린다", "class UFoo;" in pr)
+    check("🔴 동결을 명시", "FROZEN" in pr)
+    check("재검색 금지를 명시", "do not search" in pr)
+    check("펜스 금지를 명시", "No markdown fences" in pr)
+    check("대상 파일", "Foo.cpp" in pr)
+    check("지시가 실린다", "Init 구현" in pr)
+
+    print("\n[19] 🔴 매니페스트가 없으면 생성하지 않는다 (grounding 0 = 환각 조건)")
+    gp = ProjectPaths(name="G", root=tmp / "G")
+    try:
+        generate(gp, "없는태스크", instruction="x")
+        check("거부", False, "생성해 버렸다")
+    except GenerateError as e:
+        check("거부", "매니페스트가 없다" in str(e), str(e))
+        check("  이유를 말한다", "grounding" in str(e))
+
+    print("\n[20] 생성 → 층2 → 인계")
+    mf.write(gp, mf.build(gp, "t1", classes=["UFoo"], skeleton="class UFoo{};",
+                          searcher=FakeSearch([FakeHit("A.md")]), now=NOW))
+    seen = {}
+
+    def caller(url, payload):
+        seen.update(payload)
+        return f"{F}cpp\nvoid UFoo::Init(){{}}\n{F}"
+
+    ok_v = Verdict(approved=True, failure=None)
+    d = dispatch(gp, "t1", instruction="Init 구현", target_file="Foo.cpp",
+                 caller=caller, verifier=lambda files: ok_v)
+    check("ok", d.ok, d.summary())
+    check("펜스가 벗겨진 코드", d.code == "void UFoo::Init(){}", repr(d.code))
+    check("  벗겼다고 알린다", any("펜스" in n for n in d.notes), str(d.notes))
+    check("🔴 stateless — context 를 안 보낸다", "context" not in seen, str(sorted(seen)))
+    check("temperature=0", seen["options"]["temperature"] == 0)
+    check("think=False (35B 토큰 낭비 방지)", seen["think"] is False)
+    check("stream=False", seen["stream"] is False)
+
+    print("\n[21] 🔴 fail-closed — 층2 를 못 넘으면 인계하지 않는다")
+    bad = Verdict(approved=False, failure=None, findings=["세미콜론 누락"])
+    d = dispatch(gp, "t1", instruction="x", caller=caller, verifier=lambda f: bad)
+    check("차단", not d.ok and d.verdict.blocked)
+    check("  코드는 들고 있다 (진단용)", bool(d.code))
+    check("  요약에 드러난다", "차단" in d.summary(), d.summary())
+
+    d = dispatch(gp, "t1", instruction="x", caller=lambda u, p: "",
+                 verifier=lambda f: ok_v)
+    check("빈 생성 = 차단", not d.ok and "비었다" in d.error, d.error)
+
+    d = dispatch(gp, "t1", instruction="x", caller=caller, verifier=lambda f: None)
+    check("🔴 verdict 가 없으면 통과가 아니다", not d.ok)
+
+    def dead(url, payload):
+        raise GenerateError("브로커에 닿지 않는다")
+
+    d = dispatch(gp, "t1", instruction="x", caller=dead)
+    check("브로커 장애 = 차단", not d.ok and "닿지 않는다" in d.error)
+    check("  층2 를 부르지 않는다", d.verdict is None)
+
+    print("\n[22] 층2 에 넘기는 파일명")
+    names = []
+    dispatch(gp, "t1", instruction="x", target_file="Bar.cpp", caller=caller,
+             verifier=lambda f: (names.append(f[0][0]), ok_v)[1])
+    check("target_file 을 쓴다", names == ["Bar.cpp"], str(names))
+    names.clear()
+    dispatch(gp, "t1", instruction="x", caller=caller,
+             verifier=lambda f: (names.append(f[0][0]), ok_v)[1])
+    check("없으면 task_id 로", names == ["t1.cpp"], str(names))
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")

@@ -5,6 +5,10 @@
   · set_active       — 가리키는 프로젝트를 바꾼다
   · register_work    — 작업장이 일감을 등록한다 (§4.7 복구 ①)
   · get_manifest     — 작업장이 컨텍스트 매니페스트를 받아 간다 (§4.2)
+  · get_code         — 🔴 생성 + 층2 를 거친 **코드 뭉치**를 받아 간다 (§4.2 ②③④)
+
+⚠️ 이 서버가 프로젝트 레지스트리를 넘어 **작업장의 단일 창구**가 되고 있다. 의도된 통합이다 —
+작업장이 엔드포인트를 여러 개 물게 하는 것보다 낫다. 다만 더 커지면 쪼갤 것.
 
 읽기용(부수): list_projects · check_registry
 
@@ -39,6 +43,7 @@ from .config import Registry
 from .workshop_check import check_project_workshops
 from ..context_search.paths import resolve
 from ..work import manifest as _mf
+from ..work.generate import GenerateError, dispatch
 from ..work.register import RegisterError, TaskSpec, register_work
 
 mcp = MCPServer(
@@ -255,3 +260,42 @@ def get_manifest(task_id: str, project: str = "") -> str:
         }, ensure_ascii=False)
     return json.dumps({"ok": True, "task_id": task_id, "project": paths.name,
                        "manifest": body}, ensure_ascii=False)
+
+
+@mcp.tool()
+def get_code(task_id: str, instruction: str, target_file: str = "",
+             project: str = "") -> str:
+    """태스크의 코드를 생성해 **층2 검사를 통과시킨 뒤** 돌려준다 (§4.2 ②③④).
+
+    🔴 **`ok` 가 false 면 코드를 적용하지 말 것.** 층2(상용 모델 문법·API 검사)를 못 넘었거나
+    생성이 실패한 상태다. 코드를 함께 돌려주는 것은 진단용이지 쓰라는 뜻이 아니다.
+
+    마스터의 역할은 여기서 끝난다 — **파일 적용·빌드·테스트·커밋은 작업장 몫이다.**
+    층3(UE5 빌드 + RunTests)이 최종 권위이고, 층2 는 그 호출 횟수를 줄이는 선제 필터다.
+
+    Args:
+        task_id: `register_work` 가 돌려준 태스크 id (매니페스트가 있어야 한다)
+        instruction: 무엇을 구현할지. 골조·계약·RAG 는 매니페스트가 이미 싣고 있다
+        target_file: 대상 파일 경로 (층2 프롬프트와 진단에 쓰인다)
+        project: 비우면 지금 마운트된 프로젝트
+    """
+    try:
+        paths = resolve(project)
+        d = dispatch(paths, task_id, instruction=instruction, target_file=target_file)
+    except (ConfigError, GenerateError) as e:
+        return _fail(e)
+    v = d.verdict
+    return json.dumps({
+        "ok": d.ok,
+        "task_id": task_id,
+        "summary": d.summary(),
+        "code": d.code,
+        "notes": d.notes,
+        "error": d.error,
+        "verdict": None if v is None else {
+            "approved": v.approved,
+            "failure": v.failure,      # None 이면 모델이 실제 판정을 냈다는 뜻
+            "findings": v.findings,
+            "backend": next((w for w in v.warnings if w.startswith("backend=")), ""),
+        },
+    }, ensure_ascii=False)
