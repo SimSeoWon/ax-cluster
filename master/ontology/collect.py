@@ -39,6 +39,17 @@ from ..graph import class_graph as cg, db as gdb, dependency as dep
 ANCESTOR_DEPTH = 4          # 원본 값. 더 올리면 엔진 계층이 모두의 조상이 된다
 PROPOSAL_LIMIT = 20         # 한 번에 물어볼 수 있는 양. 넘으면 사람이 안 읽는다
 
+# 🔴 **`#include` 1홉이 후보 폭발의 원인이다** — 실측 2026-08-09: 받아온 도메인에 돌리니
+# 후보가 **184~190개**로 나왔고 대부분이 이 채널이었다. 물어볼 수 있는 양이 아니다.
+#
+# 헤더 하나가 수십 파일에 얽히므로 1홉만으로도 도메인 전체 규모를 넘는다. 그래서:
+#   ⑴ 멤버당 이웃 파일 수를 자른다 (아래)
+#   ⑵ 🔴 **이미 어느 도메인에든 속한 클래스는 후보에서 뺀다** — 그게 가장 크게 줄인다.
+#      상위 문서가 하위 문서를 object 로 갖는 구조(소 1.3.10)에서 특히 그렇다:
+#      하위에 있는 클래스를 상위가 다시 물어볼 이유가 없다
+INCLUDE_FANOUT = 4          # 멤버 파일당 볼 이웃 파일 수
+INCLUDE_CANDIDATES = 25     # 이 채널이 낼 수 있는 후보 총량
+
 
 @dataclass
 class Candidate:
@@ -109,8 +120,8 @@ def include_neighbours(paths: ProjectPaths, files: list) -> dict:
     for f in files:
         if not f:
             continue
-        for g in list(dep.dependencies(paths, f, depth=1))[:10] + \
-                 list(dep.dependents(paths, f, depth=1))[:10]:
+        for g in list(dep.dependencies(paths, f, depth=1))[:INCLUDE_FANOUT] + \
+                 list(dep.dependents(paths, f, depth=1))[:INCLUDE_FANOUT]:
             if g not in seen_files and g not in files:
                 seen_files.add(g)
     if not seen_files:
@@ -119,12 +130,47 @@ def include_neighbours(paths: ProjectPaths, files: list) -> dict:
     try:
         marks = ",".join("?" * len(seen_files))
         for r in conn.execute(
-                f"SELECT name, file FROM classes WHERE file IN ({marks})",
-                tuple(seen_files)):
+                f"SELECT name, file FROM classes WHERE file IN ({marks}) "
+                f"ORDER BY name LIMIT ?", (*seen_files, INCLUDE_CANDIDATES)):
             neigh.setdefault(r["name"], r["file"])
     finally:
         conn.close()
     return neigh
+
+
+def classified_elsewhere(paths: ProjectPaths, exclude: str = "") -> set:
+    """**이미 어느 도메인에든 속한 클래스.** 후보에서 뺀다.
+
+    두 곳을 본다 — `class_ontology` 분류행과 **모든 도메인의 object yaml**. 후자가
+    중요하다: 하위 온톨로지 문서(소 1.3.10)에 이미 들어간 클래스를 상위가 다시 물어보면
+    같은 결정을 두 번 시키는 셈이다.
+    """
+    out: set = set()
+    root = paths.ontology / "domains"
+    if root.is_dir():
+        from . import yaml_io
+        for d in root.iterdir():
+            if not d.is_dir() or d.name == exclude:
+                continue
+            man = yaml_io.read(d / "domain.yaml") or {}
+            for rel in man.get("objects") or []:
+                o = yaml_io.read(d / str(rel)) or {}
+                if o.get("name"):
+                    out.add(o["name"])
+    try:
+        if gdb.exists(paths):
+            conn = gdb.connect(paths)
+            try:
+                for r in conn.execute(
+                        "SELECT class_name FROM class_ontology "
+                        "WHERE ontology_domain IS NOT NULL AND ontology_domain != ?",
+                        (exclude,)):
+                    out.add(r["class_name"])
+            finally:
+                conn.close()
+    except Exception:                                   # noqa: BLE001
+        pass
+    return out
 
 
 def propose(paths: ProjectPaths, domain: str, members: dict) -> Proposal:
@@ -134,7 +180,8 @@ def propose(paths: ProjectPaths, domain: str, members: dict) -> Proposal:
     후보는 사용자가 판단할 수 없고, 그러면 "다 넣어" 나 "다 빼" 로 끝난다.
     """
     p = Proposal(domain=domain, members=sorted(members))
-    known = set(members)
+    # 🔴 이미 다른 도메인(=하위 문서 포함)에 속한 것은 묻지 않는다 — 후보 폭발의 실질 대책.
+    known = set(members) | classified_elsewhere(paths, exclude=domain)
     seen: dict = {}
 
     for name in sorted(members):
