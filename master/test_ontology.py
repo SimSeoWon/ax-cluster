@@ -18,7 +18,8 @@ sys.path.insert(0, str(_ROOT))
 
 from master.context_search.paths import ProjectPaths   # noqa: E402
 from master.ontology import (collect as col, hierarchy as hx, layers as ly,  # noqa: E402
-                             stale as st_mod, verify_facts as vf, yaml_io as y)
+                             package as pkg, stale as st_mod,
+                             verify_facts as vf, yaml_io as y)
 
 PASS = FAIL = 0
 
@@ -349,6 +350,54 @@ def main() -> int:
               r.ok and "전수 거짓양성" in r.skipped_reason, r.reason)
     finally:
         cg3.methods_ready = real
+
+    print("\n[12] 🔴 패키지 쓰기 — 검수 잠금은 덮지 않는다 (소 1.3.3 의 LLM 0 부분)")
+    W = ProjectPaths(name="W", root=tmp / "W")
+    objs = [{"name": "AAlpha", "layer": 1, "file": "a.h"},
+            {"name": "ABeta", "layer": 3, "file": "b.h"}]
+    s1 = pkg.write(W, "D", objects=objs, actions=[], invariants=[])
+    root = W.ontology / "domains" / "D"
+    check("레이어 디렉토리로 나눈다", (root / "L1/objects/AAlpha.yaml").is_file()
+          and (root / "L3/objects/ABeta.yaml").is_file(), s1.summary)
+    man = y.read(root / "domain.yaml") or {}
+    check("manifest 가 경로를 갖는다",
+          "L1/objects/AAlpha.yaml" in (man.get("objects") or []), str(man.get("objects")))
+    check("레이어가 없으면 L3 (보수적)",
+          pkg._layer_of({}) == "L3" and pkg._layer_of({"layer": 2}) == "L2")
+    s2 = pkg.write(W, "D", objects=objs, actions=[], invariants=[])
+    check("🔴 안 바뀌면 안 쓴다", s2.written == 0 and s2.unchanged >= 3, s2.summary)
+
+    print("\n[12-1] 🔴 verified_by_user 는 재합성이 덮지 않는다")
+    lockf = root / "L1" / "objects" / "AAlpha.yaml"
+    y.write(lockf, {"name": "AAlpha", "layer": 1, "file": "a.h",
+                    "verified_by_user": True, "note": "사람이 손봤다"})
+    s3 = pkg.write(W, "D", objects=[{"name": "AAlpha", "layer": 1, "file": "덮어쓰기.h"}],
+                   actions=[], invariants=[])
+    got = y.read(lockf) or {}
+    check("🔴 잠긴 항목이 그대로다",
+          got.get("note") == "사람이 손봤다" and got.get("file") == "a.h", str(got))
+    check("  통계가 잠금 보존을 센다", s3.locked_kept == 1, s3.summary)
+    m = pkg.merge_preserve_locked([{"name": "A", "v": 1}], {"A": {"name": "A", "v": 9}})
+    check("merge — 잠긴 이름은 하나만 남고", [i["name"] for i in m] == ["A"], str(m))
+    check("  값은 잠긴 쪽", m[0]["v"] == 9)
+
+    print("\n[12-2] prune — 사라진 항목은 지우되 잠긴 것은 남긴다")
+    pkg.write(W, "D", objects=[{"name": "ABeta", "layer": 3, "file": "b.h"}],
+              actions=[], invariants=[])
+    check("🔴 잠긴 파일은 안 지운다", lockf.is_file(), "지워졌다")
+    pkg.write(W, "D", objects=[], actions=[], invariants=[])
+    check("전부 비워도 잠긴 것은 남는다", lockf.is_file())
+
+    print("\n[12-3] 안 준 종류는 건드리지 않는다")
+    before = list((y.read(root / "domain.yaml") or {}).get("objects") or [])
+    pkg.write(W, "D", actions=[{"name": "DoIt", "layer": 2}])
+    after = y.read(root / "domain.yaml") or {}
+    check("🔴 objects 를 안 주면 기존 목록이 남는다",
+          list(after.get("objects") or []) == before, f"{before} → {after.get('objects')}")
+    check("actions 는 새로 들어간다",
+          "L2/actions/DoIt.yaml" in (after.get("actions") or []), str(after.get("actions")))
+    check("invariants 키는 스냅샷 이름", pkg._manifest_key("invariants") == "invariants_files")
+    check("파일명 금지문자를 바꾼다", pkg._safe("A/B:C") == "A_B_C")
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
