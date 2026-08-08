@@ -69,7 +69,7 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_capability_routing.py  # 16 — needs venv (pydantic)
 .venv/bin/python master/test_broker_health.py       #  8 — needs venv
 .venv/bin/python master/test_projects.py            # 63 — needs venv (pyyaml)
-.venv/bin/python master/test_mcp_servers.py         # 28 — both MCP servers import + register
+.venv/bin/python master/test_mcp_servers.py         # 30 — both MCP servers import + register
 .venv/bin/python master/test_workshop_check.py      # 47 — dirty-check rules (no SSH; runner injected)
 .venv/bin/python master/test_layer3_verify.py       # 63 — layer-3 gate: automation + build logs, fail-closed
 .venv/bin/python master/test_auth.py                 # 46 — bearer auth, fail-closed
