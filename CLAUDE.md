@@ -62,7 +62,7 @@ There is no linter or CI config — **don't invent tooling commands.**
 
 `worker/` and `client/` are still README-only stubs.
 
-**Tests — 557, all passing. No pytest**; each file runs standalone.
+**Tests — 562, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
@@ -77,7 +77,7 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_events.py               # 38 — event spool: no-loss, at-least-once, coalescing
 .venv/bin/python master/test_context_search.py       # 75 — search core: mount routing, RRF, generation pointer
 .venv/bin/python master/test_work.py                 # 105 — 2-tier branches, manifest, work registration
-.venv/bin/python master/test_provision.py            #  38 — Ollama node check/install; .33 must stay non-resident
+.venv/bin/python master/test_provision.py            #  43 — Ollama node check/install; .33 must stay non-resident
 
 # Full reindex of the mounted project (vector + BM25, one generation flip)
 .venv/bin/python -m master.context_search.rebuild

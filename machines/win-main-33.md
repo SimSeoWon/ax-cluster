@@ -113,12 +113,16 @@ in-progress work — and correctly refused to dispatch. That is the behaviour we
 
 ### Local — Ollama `:11434`
 
-| Model | Size | Quant | Params |
+| Model | Size | Quant | |
 |---|---|---|---|
-| `gemma4:e4b` | 8.95 GiB | Q4_K_M | 8.0B |
+| `gemma4:e4b` | 8.95 GiB | Q4_K_M | |
+| `qwen2.5-coder:14b` | 9.0 GB | Q4_K_M | ← installed remotely by the master, 2026-08-08 |
 
-**One model, and it does not fit the free VRAM** (see above). Nothing is pinned and nothing
-should be. Reachable from the master; used for **checks and installs only**.
+🔴 **Both are on disk; neither fits the free VRAM, and neither is pinned.** That combination is
+deliberate, not an oversight — `master/provision.py` declares this host `want=[CODER]` *and*
+`resident=False`: **keep it on disk, never load it.** `/api/tags` answers "do we have it",
+`/api/ps` answers "is it loaded" — different questions, and the check flags the second one
+turning true. `/api/ps` was empty right after the install, as intended.
 
 ### Commercial CLIs
 

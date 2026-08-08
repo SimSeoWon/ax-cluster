@@ -82,6 +82,17 @@ def main() -> int:
     st2 = check_node(N_INF, getter=fake_get(tags=[CODER], ps=[CODER]))
     check_("추론 노드는 상주해도 정상", not st2.violating)
 
+    print("\n[3b] 🔴 '받아는 두되 상주 금지' 를 표현할 수 있다 (.33 의 실제 상태)")
+    n_disk = Node("disk", "10.0.0.3:11434", want=[CODER], resident=False)
+    st = check_node(n_disk, getter=fake_get(tags=[CODER], ps=[]))
+    check_("보유하면 ok", st.ok, str(st.missing))
+    check_("  올라와 있지 않으니 위반 아님", not st.violating)
+    st = check_node(n_disk, getter=fake_get(tags=[CODER], ps=[CODER]))
+    check_("🔴 보유는 만족해도 상주하면 위반", st.ok and st.violating)
+    check_("  출력이 ⚠️ 다", st.line().strip().startswith("⚠️"), st.line())
+    st = check_node(n_disk, getter=fake_get(tags=[], ps=[]))
+    check_("아예 없으면 missing", st.missing == [CODER] and not st.ok)
+
     print("\n[4] want 중 없는 것을 보고한다")
     st = check_node(N_INF, getter=fake_get(tags=["gemma4:e4b"], ps=[]))
     check_("missing", st.missing == [CODER], str(st.missing))
