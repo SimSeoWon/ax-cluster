@@ -11,6 +11,9 @@ pydantic
 # HTTP 서비스만 돌릴 거면 빼도 기동된다.
 mcp
 
+# 추론 브로커 (master/broker) — 노드로 프록시. 스트리밍 통과가 필요해 stdlib 로는 부족하다.
+httpx2
+
 # RAG (context_search 이식 시 — 아직 이식 전)
 # chromadb
 # tree-sitter

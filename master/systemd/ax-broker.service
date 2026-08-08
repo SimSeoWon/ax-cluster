@@ -1,0 +1,43 @@
+[Unit]
+Description=AX cluster inference broker (Ollama-compatible surface, model routing)
+Documentation=https://github.com/SimSeoWon/ax-cluster
+# 추론 노드는 LAN 너머에 있다. 상태 파일이 없으므로 local-fs 는 필요 없다.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sim
+Group=sim
+WorkingDirectory=/home/sim/ax-cluster
+
+Environment=AX_BROKER_HOST=0.0.0.0
+Environment=AX_BROKER_PORT=8102
+# 헬스체크 주기(초). 이 루프가 상주 모델 재확립도 한다 — PLAN §9.4.2.
+Environment=AX_BROKER_HEALTH_SEC=30
+# 🔴 num_ctx 가 요청마다 다르면 Ollama 가 모델을 통째로 다시 올린다(61.6s 실측).
+# 호출자가 지정하지 않으면 이 값을 주입한다. 35B 는 32768 에서 터지고 8192 는 정상(리포트 06 §5.3).
+Environment=AX_BROKER_NUM_CTX=8192
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/home/sim/ax-cluster/.venv/bin/python -m master.broker
+
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ax-broker
+
+# 최소 권한. 브로커는 **아무 파일도 쓰지 않는다** — 상태를 갖지 않기 때문이다.
+# task_queue 와 달리 ReadWritePaths 가 아예 없다.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

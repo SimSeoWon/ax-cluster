@@ -11,14 +11,18 @@ Planning-stage repository for **AX** (AI Transformation) — raising AI usage ac
 | What exists | Where |
 |---|---|
 | Layer-2 verdict contract (fail-closed) | `master/verdict.py`, `master/layer2_verify.py` |
-| Tests — 35, all passing | `master/test_verdict.py` (19) + `master/test_capability_routing.py` (16). No pytest needed |
+| Inference broker (Ollama-compatible) | `master/broker/` — **live** as `ax-broker.service` on `:8102` |
+| Tests — 52, all passing | `test_verdict.py` (19) + `test_capability_routing.py` (16) + `test_broker_routing.py` (9) + `test_broker_health.py` (8). No pytest needed |
 | `task_queue` (ported, 2,717 lines) | `master/task_queue/` — **live** as `ax-task-queue.service` on `:8101` |
 | Capability routing (`requires`/`capabilities`) | `master/task_queue/logic_claim.py`, tests in `master/test_capability_routing.py` |
 | venv + deps | `.venv/`, `master/requirements.txt` |
 
 ```bash
-python3 master/test_verdict.py                    # 19 tests, no pytest needed
+python3 master/test_verdict.py                      # 19 tests, no pytest needed
+python3 master/test_broker_routing.py               # 9 tests, pure logic
 .venv/bin/python master/test_capability_routing.py  # 16 tests — needs the venv (pydantic)
+.venv/bin/python master/test_broker_health.py       # 8 tests — needs the venv
+curl -s localhost:8102/health | python3 -m json.tool  # which node holds which model
 systemctl status ax-task-queue                    # the running service
 journalctl -u ax-task-queue -f                    # its logs
 AX_TASK_QUEUE_ROOT=/home/sim/ax-state \
@@ -79,6 +83,6 @@ Settled 2026-08-08:
 
 Resolved during 2026-08-08 (see "Settled" above): the execution model, BC-250 #2's state, how `gjc` is driven, and the Unreal MCP integration point. Still open:
 
-- **`task_queue` has no auth layer at all** (0 hits for auth/token/Depends). Port 8101 is open **LAN-only** via `ufw allow from 192.168.0.0/24`; the firewall is the *only* defence. Never widen that rule to `Anywhere`, and add auth before trusting the LAN less (§9.5.6).
+- **Neither `task_queue` (8101) nor the broker (8102) has an auth layer.** Both are open **LAN-only** via `ufw allow from 192.168.0.0/24`; the firewall is the *only* defence. Never widen either rule to `Anywhere`, and add auth before trusting the LAN less (§9.5.6).
 - **Event queue design** — prerequisite for the Gitea webhook switch: durable + single-consumer + coalescing (§5.4.5). Do not merge it into `task_queue`; the two have different consumer models.
 - **RAG/ontology port** (`mcp/context_search/`) and the **BC-250 inference broker** — neither has been started.
