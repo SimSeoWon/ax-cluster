@@ -37,15 +37,22 @@ from ..graph import class_graph as cg, dependency as dep, parse as gparse
 from ..work.generate import DEFAULT_BROKER, GenerateError, call_broker, unload_model
 from . import md as md_mod, prompt as prompt_mod, verify as verify_mod
 
-# 컨텍스트 합성용 모델. 코드 생성용 14b coder 와 **일부러 다르다** — 산문·분류 작업이고,
-# 다른 기계에 핀돼 있어 코드 생성과 경합하지 않는다.
+# 컨텍스트 합성용 모델 — 🔴 **Gemma 로 바꿨다** (실측 2026-08-08).
 #
-# 🔴 **다만 35B 는 16GB UMA 보드(BC-250)에 있고 긴 프롬프트에 취약하다** — 실측 2026-08-08 에
-# 8그룹 배치가 그 보드를 먹통으로 만들었다(ping O, SSH·Ollama X). 그래서 ⑴ 프롬프트 상한을
-# 절반으로 낮췄고 ⑵ 대안 모델을 상수로 둔다. 품질은 35B 가 낫지만 **사실 게이트가 걸러 주므로**
-# 나쁜 문서가 통과하지는 않는다 — 통과율이 떨어질 뿐이다.
-SYNTH_MODEL = "hf.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M"
-FALLBACK_MODEL = "qwen2.5-coder:14b"     # rtx3060(.2) 핀. 35B 노드가 죽었을 때
+# 같은 3그룹에 네 모델을 돌려 **사실 게이트 통과율**로 비교했다:
+#
+#   Gemma4 E4B   3/3 · 12~32초   ← 채택. 4B급이라 UMA 보드 메모리 압박이 없다
+#   Gemma3 12B   3/3 · 16~46초   ← 대안(.2, 전용 VRAM)
+#   Qwen 35B     3/3 · ~11초     ← 빠르지만 요청당 ~170MB 누적 (BC-250 정지 사고)
+#   Qwen 14b     형식 실패        ← frontmatter 닫는 줄을 빼먹는다(복구 로직으로 구제)
+#
+# **4B 가 35B 와 같은 통과율**인 것이 요점이다 — 지금 실패 유형은 문장력이 아니라 **지시
+# 준수**다. 원본도 로컬 LLM 기본값으로 Gemma 4 E4B 를 골랐고, `context_review` 만 화이트
+# 리스트에서 뺐다(*"4B 가 컨텍스트+리뷰 **통합** 프롬프트를 일관되게 처리할지 미검증"*).
+# 🔴 **우리는 리뷰를 붙이지 않으므로 그 제외 사유가 없다.**
+SYNTH_MODEL = "gemma4:e4b"
+FALLBACK_MODEL = "gemma3:12b"            # .2 전용 VRAM. E4B 가 얕을 때
+HEAVY_MODEL = "hf.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M"   # 되돌릴 때만
 SYNTH_TIMEOUT = 600
 
 # 🔴 KV 컨텍스트 상한. **이것이 BC-250 정지 사고의 진짜 원인이었다** — 모델 기본
@@ -59,9 +66,10 @@ SYNTH_NUM_CTX = 4096
 # 누적 주체는 Ollama 의 프롬프트 캐시·컨텍스트 체크포인트이고, **모델을 내리면 전부
 # 회수된다**(실측 266 → 14,445 MB). 그래서 주기적으로 내린다.
 #
-# 5 인 이유: 모델 적재 후 보드 여유가 ~1,200MB 이고 요청당 ~170MB 이므로 5회면 ~350MB 가
-# 남는다. 0 이면 내리지 않는다(전용 VRAM 노드에는 불필요 — `.2` 의 14b 등).
-UNLOAD_EVERY = 5
+# 🔴 **Gemma4 E4B 로 바꾼 뒤에는 0 이 기본이다** — 4B급이라 누적이 문제되는 규모가 아니고,
+# 주기적 내리기는 재적재 비용만 낸다. 35B(`HEAVY_MODEL`)로 되돌린다면 5 로 올릴 것:
+# 그때는 적재 후 여유 ~1,200MB / 요청당 ~170MB 라 5회면 ~350MB 가 남는다.
+UNLOAD_EVERY = 0
 
 # 연속 실패 임계값. 이보다 이어지면 배치를 중단한다 (위 ⑵).
 CIRCUIT_THRESHOLD = 3

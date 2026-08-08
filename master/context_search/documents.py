@@ -79,6 +79,10 @@ def content_hash(text: str) -> str:
     return hashlib.md5(text.encode("utf-8")).hexdigest()[:16]
 
 
+# 「## 요약」 절만 뽑는다 — 다음 `##` 제목 또는 문서 끝까지.
+_SUMMARY_RE = re.compile(r"^##\s*요약\s*$(.*?)(?=^##\s|\Z)", re.MULTILINE | re.DOTALL)
+
+
 @dataclass
 class Document:
     """색인 한 건."""
@@ -91,6 +95,28 @@ class Document:
     @property
     def has_body(self) -> bool:
         return bool(self.body.strip())
+
+    @property
+    def embed_text(self) -> str:
+        """🔴 **벡터 임베딩 대상 — 「## 요약」 절만.**
+
+        원본 프롬프트가 그 절에 *"이 섹션만 벡터 임베딩 대상 — 짧고 검색 친화적으로"* 라고
+        박아 뒀는데, **우리는 본문 전체를 임베딩하고 있었다**(이식 오류, 2026-08-08 발견).
+        그러면 「개선 필요 사항」의 기술 부채 서술까지 벡터에 섞여 **"무엇에 대한 문서인가"
+        라는 신호가 희석된다** — 임베딩은 문서 하나를 벡터 하나로 뭉개므로 긴 본문일수록
+        주제가 흐려진다.
+
+        BM25 는 **본문 전체**를 계속 쓴다(원본도 그렇다). 키워드 매칭은 길수록 회수가 늘고
+        희석되지 않기 때문이다 — 두 채널의 성격이 다르다.
+
+        요약 절이 없으면 `search_text` 로 떨어진다(스텁·형식 이탈 문서).
+        """
+        m = _SUMMARY_RE.search(self.body or "")
+        if m:
+            s = m.group(1).strip()
+            if s:
+                return s
+        return self.search_text
 
     @property
     def search_text(self) -> str:

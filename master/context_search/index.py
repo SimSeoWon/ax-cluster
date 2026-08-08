@@ -19,7 +19,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import generation
+from . import embedding, generation
 from .documents import Document, iter_documents
 from .paths import ProjectPaths
 
@@ -50,13 +50,15 @@ class ContextIndex:
 
     def __init__(self, paths: ProjectPaths, *, gen: str | None = None):
         import chromadb  # 무거우므로 지연 import — 경로 해석만 하는 호출자를 막지 않는다
-        from chromadb.utils import embedding_functions
 
         self.paths = paths
+        self.model_mismatch = ""
         paths.ensure_derived()
         self._client = chromadb.PersistentClient(path=str(paths.vector_db))
-        # chromadb 내장 ONNX MiniLM — 별도 모델 서버가 필요 없다. CPU 로 돈다(§5.2-E ⑤).
-        self._embed = embedding_functions.ONNXMiniLM_L6_V2()
+        # 🔴 **다국어 임베딩.** 영어 전용 모델에서는 한글 질의가 두 채널 모두 실패했다 —
+        # 근거와 실측은 `embedding.py` 독스트링. 별도 모델 서버는 여전히 필요 없다(ONNX).
+        self._embed_model = embedding.model_name()
+        self._embed = embedding.build(self._embed_model)
         self._a = self._collection(LIVE_A)
         self._b = self._collection(LIVE_B)
         self._swap = threading.Lock()
@@ -69,9 +71,40 @@ class ContextIndex:
                                   if self._live_name == generation.A else (self._b, self._a))
 
     def _collection(self, name: str):
-        return self._client.get_or_create_collection(
-            name=name, metadata=_METADATA, embedding_function=self._embed
-        )
+        """컬렉션을 얻는다. **임베딩 모델이 바뀌었으면 비우고 다시 만든다.**
+
+        🔴 chromadb 는 기존 컬렉션의 임베딩 함수 교체를 **거부한다** — 옳은 동작이다.
+        차원이 같아도(둘 다 384) 벡터 공간이 다르면 비교가 무의미하다.
+
+        그래서 우리가 처리한다:
+
+        - 벡터는 **파생 자산**이다(`data-schema.md`) — 재색인으로 복구된다
+        - 낡은 모델의 벡터를 남겨 두는 쪽이 **더 나쁘다**: 색인은 정상으로 보이고 결과만
+          틀린다. 우리가 반복해 온 실패 모양이다
+
+        비운 뒤 **무엇을 왜 비웠는지** `model_mismatch` 에 남긴다. 비운 직후엔 0건이므로
+        호출자는 반드시 재색인해야 한다 — 그 사실도 같이 적는다.
+        """
+        meta = {**_METADATA, "embed_model": self._embed_model}
+        try:
+            return self._client.get_or_create_collection(
+                name=name, metadata=meta, embedding_function=self._embed
+            )
+        except ValueError as e:
+            if "mbedding function" not in str(e):
+                raise
+            try:
+                had = self._client.get_collection(name=name).count()
+            except Exception:                       # noqa: BLE001
+                had = 0
+            self._client.delete_collection(name=name)
+            self.model_mismatch = (
+                f"🔴 임베딩 모델이 바뀌어 `{name}` 을 비웠다 ({had}건) → {self._embed_model}. "
+                f"벡터는 파생 자산이라 재구축된다 — 재색인해야 검색이 정상화된다"
+            )
+            return self._client.create_collection(
+                name=name, metadata=meta, embedding_function=self._embed
+            )
 
     # ── 조회 ──────────────────────────────────────────
     @property
@@ -130,7 +163,7 @@ class ContextIndex:
                 return
             work.upsert(
                 ids=[d.file_id for d in batch],
-                documents=[d.search_text for d in batch],
+                documents=[d.embed_text for d in batch],
                 metadatas=[d.meta for d in batch],
             )
             total += len(batch)
@@ -173,7 +206,7 @@ class ContextIndex:
         with self._swap:
             coll = self._live
         coll.upsert(ids=[d.file_id for d in docs],
-                    documents=[d.search_text for d in docs],
+                    documents=[d.embed_text for d in docs],
                     metadatas=[d.meta for d in docs])
         return len(docs)
 

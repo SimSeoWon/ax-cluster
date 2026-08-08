@@ -22,6 +22,8 @@
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 
 from .bm25 import Bm25Index
@@ -59,6 +61,38 @@ class Hit:
             "meta": self.meta,
             "excerpt": self.excerpt,
         }
+
+
+# 🔴 **대괄호 = "이게 중요한 토큰이다" 는 사용자와의 규약** (사용자 제안 2026-08-08).
+#
+# 원본에도 있다 — 다만 `_BRACKET_ID_RE = r"\[([A-Za-z][A-Za-z0-9_]*)\]"` 로 **영문 식별자만**
+# 잡고, 용도도 도메인 추론 한 곳이었다. 배포 CLAUDE.md 규약이 세 가지를 정의한다:
+#   ⑴ `미션 에디터 창[MissionEditor]` → 대괄호가 정규 이름. 한글 추론으로 바꾸지 말 것
+#   ⑵ `<구절>[ClassName]` → 시소러스 별칭 등록 신호
+#   ⑶ 레시피 신호에서 식별자를 `[]` 로 감싸 한국어→영문 번역 시 mangling 방지
+#
+# **여기서는 언어를 가리지 않는다.** `[미션시스템]`·`[완료]`·`[연출]` 처럼 한글도 받는다.
+#
+# 왜 효과가 있나 — 실측(질의 `[미션시스템]에서 [완료]시 [연출] 부분이 어디야?`):
+#
+#   문장 그대로   : WNDSkyMeshActor · NewMarkTask · AlphaActor_Marker · …   ← 대부분 무관
+#   대괄호 토큰만 : **MissionTask_Annihilation** · AlphaUIPage_Dialog ·
+#                   **AlphaManager_Mission** · …                           ← 미션 문서가 올라온다
+#
+# 「에서」·「부분이」·「어디야」 같은 불용어가 **임베딩을 끌어내리고** 있었다. 대괄호가 그걸
+# 걷어낸다. 🔴 이 개선은 **추측이 아니라 사용자가 준 신호**라 정답 집합 없이도 안전하다 —
+# 우리가 무엇이 중요한지 고르는 게 아니라, 사용자가 말해 준 것을 그대로 쓴다.
+_BRACKET_RE = re.compile(r"\[([^\[\]]+)\]")
+
+
+def focus(query: str) -> str:
+    """대괄호가 있으면 **그 안만** 질의로 쓴다. 없으면 원문 그대로.
+
+    대괄호 밖을 버리는 이유: 사용자가 중요한 것을 명시했는데 나머지를 함께 넣으면 그 신호가
+    희석된다. 대괄호를 안 쓰면 아무것도 바뀌지 않으므로 **기존 질의는 영향받지 않는다.**
+    """
+    marked = [m.strip() for m in _BRACKET_RE.findall(query or "") if m.strip()]
+    return " ".join(marked) if marked else query
 
 
 def fuse(vector_hits: list[dict], bm25_hits: list[tuple[str, float]]) -> list[Hit]:
@@ -122,9 +156,10 @@ class ContextSearch:
         """
         if not query.strip():
             return []
+        q = focus(query)
         n = pool or max(limit * 3, 10)
-        vec = self.vector.search(query, limit=n)
-        kw = self.bm25.search(query, limit=n)
+        vec = self.vector.search(q, limit=n)
+        kw = self.bm25.search(q, limit=n)
         return fuse(vec, kw)[:limit]
 
     def close(self) -> None:

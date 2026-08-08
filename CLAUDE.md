@@ -74,7 +74,7 @@ There is no linter or CI config — **don't invent tooling commands.**
 | Capability routing (`requires`/`capabilities`) | `master/task_queue/logic_claim.py` |
 | Shared bearer auth (all 3 services, fail-closed) | `master/auth.py` |
 | Event spool + **indexer** (Gitea hook → graphs → **synthesis** → reindex) | `master/events/` — **live**: `ax-indexer.path` (inotify) → `ax-indexer.service`. 🔴 **This is where the twin grows**: changed files → relation graphs (LLM 0) → context-MD synthesis (35B) → reindex. Lost groups are logged by name — the watermark has already advanced, so they can't be found again |
-| Context search — vector + BM25, RRF fusion, mount-scoped | `master/context_search/` — context MDs only (961 docs). 🔴 **ontology 247 yaml = 0 indexed** (소 2.1.1) |
+| Context search — **multilingual** vector + BM25 (+trigram KR table), RRF, `[대괄호]` focus | `master/context_search/` — context MDs only (961 docs). 🔴 **ontology 247 yaml = 0 indexed** (소 2.1.1) |
 | Workflow — 2-tier branches, manifest, registration, generate → layer2 → hand over | `master/work/` — the loop runs (20.1s, APPROVE) but **on a half-built twin** — that run had 0 domain norms. Map: `docs/4-work-loop.md` §4.7 |
 | **Relation graphs** — inheritance (tree-sitter C++) + `#include` (중 1.1, **done 5/5**) | `master/graph/` — **1,806 classes · 6,380 methods · 10,817 include edges** on ModularStage, 2.9s full scan. `python -m master.graph build\|status`. ⚠️ reverse include lookup is basename-approximate (9 ambiguous headers) |
 | **Context-MD synthesis** — prompt+grounding, σ.7 fence strip + σ.7-B save gate, stamping, batch circuit breaker (중 1.2) | `master/context_synth/` — `python -m master.context_synth one\|fill\|all\|status`. 909 source groups, all already documented from the snapshot. **Wired into the indexer** (changed files only). A **deterministic factuality gate** (`verify.py`) rejects docs describing commented-out code as live — **75% pass rate measured on the 35B (3/4)**, and the one rejection was a real catch. `sample N` dry-runs without touching snapshot docs. 🔴 **BC-250 reclaims ~170 MB per request and never gives it back until the model unloads** — `UNLOAD_EVERY=5` handles that; set 0 for dedicated-VRAM nodes |
@@ -101,7 +101,7 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_layer3_verify.py       # 63 — layer-3 gate: automation + build logs, fail-closed
 .venv/bin/python master/test_auth.py                 # 46 — bearer auth, fail-closed
 .venv/bin/python master/test_events.py               # 38 — event spool: no-loss, at-least-once, coalescing
-.venv/bin/python master/test_context_search.py       # 75 — search core: mount routing, RRF, generation pointer
+.venv/bin/python master/test_context_search.py       # 82 — search core: mount routing, RRF, generation pointer
 .venv/bin/python master/test_work.py                 # 145 — 2-tier branches, manifest, registration, generate+layer2
 .venv/bin/python master/test_provision.py            #  43 — Ollama node check/install; .33 must stay non-resident
 .venv/bin/python master/test_indexer.py              #  49 — spool consumer: ff-only mirror, digest guard, watermark

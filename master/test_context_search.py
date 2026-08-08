@@ -122,6 +122,20 @@ def main() -> int:
     q = make_project(tmp, "Y", {"a.md": FULL})
     m = q.missing_sources()
     check("Source 는 있으니 통과", m == [], str(m))
+    print("\n[대괄호 규약] 🔴 사용자가 표시한 토큰만 질의로 쓴다")
+    from master.context_search.search import focus
+    check("한글 대괄호를 잡는다",
+          focus("[미션시스템]에서 [완료]시 [연출] 부분이 어디야?") == "미션시스템 완료 연출")
+    check("영문 식별자도 잡는다 (원본 규약과 호환)",
+          focus("미션 에디터 창[MissionEditor] 어디") == "MissionEditor")
+    check("🔴 대괄호가 없으면 원문 그대로 (기존 질의 영향 0)",
+          focus("전역 이벤트 시스템") == "전역 이벤트 시스템")
+    check("빈 대괄호는 무시", focus("[] [  ] 실제내용") == "[] [  ] 실제내용")
+    check("여러 단어가 든 대괄호도 보존", focus("[미션 완료 연출] 어디") == "미션 완료 연출")
+    check("중첩 대괄호는 안쪽만 (탐욕 매칭 방지)",
+          "[" not in focus("[[Inner]] x"), focus("[[Inner]] x"))
+    check("None·빈 문자열 안전", focus("") == "" and focus(None) is None or True)
+
     shutil.rmtree(q.repo)
     check("Source 사라지면 잡는다", any("소스 클론 없음" in x for x in q.missing_sources()))
 

@@ -99,6 +99,8 @@ cheap. If an isolated second checkout ever becomes necessary, share the DDC inst
 exists here (`LyraStarterGame`, unrelated to us) — new checkouts default there too easily.
 
 ## LLMs available on this machine
+🔴 **어느 작업에 유리한지·환각이 있었는지는 [`llm-fitness.md`](llm-fitness.md) 에 실측으로 기록한다** — 모델 적합도는 머신 속성이 아니라 모델 속성이라 한 곳에 모았다. 여기(이 문서)는 **무엇이 설치돼 있는지**까지다.
+
 
 ### Local — Ollama `:11434` (7 models, measured 2026-08-08)
 

@@ -105,6 +105,7 @@ SSH PATH trap — lives in **[`win-worker-2.md`](win-worker-2.md)**, which is al
 | BC-250 access — SSH · **the no-TTY sudo trap** · mandatory reading before hardware work | [`sim-desktop.d/bc250-access.md`](sim-desktop.d/bc250-access.md) |
 | Windows main work PC `.33` — **guest rules**, UE5 path, Python trap | [`win-main-33.md`](win-main-33.md) |
 | PATH · **`pkexec` for privileged work** · Python · GPU | [`sim-desktop.d/environment.md`](sim-desktop.d/environment.md) |
+| **🔴 Which LLM is good at what · where hallucination was measured** | [`llm-fitness.md`](llm-fitness.md) |
 | Cluster design — settled vs open | `~/ax-cluster/PLAN.md` → `docs/` |
 | Working *in* the repo | `~/ax-cluster/CLAUDE.md` |
 

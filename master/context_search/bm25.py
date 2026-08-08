@@ -40,6 +40,40 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[가-힣]+")
 # 사전 토큰화된 공백 구분 스트림을 받는다. tokenchars '_' 로 `class_name` 식별자 보존.
 _FTS5_TOKENIZE = "unicode61 remove_diacritics 0 tokenchars '_'"
 
+# 🔴 **한글 전용 보조 테이블의 토크나이저.** SQLite 내장 `trigram` — 3자 창으로 쪼개므로
+# 조사·어미가 붙어도 부분 문자열이 걸린다. 실측(SQLite 3.37.2):
+#
+#   trigram    MATCH '시스템' → 1건   ← 「시스템을 관리하는」 안에서 잡힌다
+#   unicode61  MATCH '시스템' → 0건   ← 형태소 분석이 없어 못 잡는다
+#
+# **전체를 trigram 으로 바꾸지 않는 이유**: 식별자(`GlobalEventSystem`)도 3자 창으로
+# 쪼개지면 정확 매칭의 이점이 사라지고 IDF 통계가 흔들려 **지금 잘 되는 영문이 나빠진다.**
+# 그래서 테이블을 나누고 질의 언어로 고른다.
+_FTS5_TOKENIZE_KR = "trigram"
+
+# trigram 은 3자 미만을 매칭할 수 없다 — 그런 토큰은 이 채널에서 버린다(단어 테이블이 받는다).
+KR_MIN_LEN = 3
+_HANGUL_RE = re.compile(r"[가-힣]")
+
+# 🔴 **한글 질의 라우팅은 기본 꺼져 있다** (`AX_BM25_KR=1` 로 켠다).
+#
+# 표(색인)는 만든다 — trigram 이 **단독으로는 확실히 맞다**(실측: 질의 「전역 이벤트 시스템」에
+# 대해 `GlobalEventSystem.md` 를 1위로. 단어 테이블은 3위).
+#
+# 그런데 **끝단 검색 품질은 나아지지 않았다.** 세 가지를 시도했다 — ⑴ 부족할 때만 채우기
+# (효과 0: 단어 테이블이 limit 을 채워 trigram 이 조회조차 안 됨) ⑵ 순위 교차(더 나빠짐)
+# ⑶ 한글 질의는 trigram 단독(그래도 안 나아짐).
+#
+# **원인은 BM25 가 아니라 RRF 융합에 있다.** RRF 는 두 채널이 **동의**하면 순위를 올리는데,
+# 한글 질의에서 벡터 채널이 UI 문서 쪽으로 쏠려 있어 **상관된 오답이 서로를 밀어 올린다.**
+# 정답은 BM25 단독이라 단일 채널로 남아 밀려난다.
+#
+# 🔴 **그래서 더 손대지 않는다.** 질의 3개를 눈으로 보며 고르는 것은 측정이 아니다 —
+# 세 번 고쳤고 한 번은 오히려 나빠졌다. **정답 집합(ground truth)을 만든 뒤에** 켤 것.
+# 그때 검증할 가설: *"한글 질의에서는 벡터 채널을 낮추거나 끈다"*(원본도 `search_domain_norms`
+# 에서 채널을 언어·신뢰도로 게이팅한다).
+KR_ROUTING = __import__("os").environ.get("AX_BM25_KR", "") == "1"
+
 
 def tokenize(text: str) -> list[str]:
     """코드 식별자(영문/숫자/언더스코어)와 한국어 어절을 토큰으로 분리. **원본 그대로.**"""
@@ -99,6 +133,15 @@ def _table(gen: str) -> str:
     return f"bm25_{gen}"
 
 
+def _kr_table(gen: str) -> str:
+    """한글 보조 테이블 (trigram)."""
+    return f"bm25kr_{gen}"
+
+
+def has_hangul(text: str) -> bool:
+    return bool(_HANGUL_RE.search(text or ""))
+
+
 class Bm25Index:
     """한 프로젝트의 BM25 색인. 세대 포인터는 벡터 색인과 **공유한다**."""
 
@@ -123,16 +166,17 @@ class Bm25Index:
         self._gen = gen or generation.read(paths.root) or self._probe()
 
     def _create(self, gen: str) -> None:
-        self._conn.execute(
-            f"""CREATE VIRTUAL TABLE IF NOT EXISTS {_table(gen)} USING fts5(
-                file_id UNINDEXED,
-                tags,
-                category,
-                related_classes,
-                body,
-                tokenize = "{_FTS5_TOKENIZE}"
-            )"""
-        )
+        for table, tk in ((_table(gen), _FTS5_TOKENIZE), (_kr_table(gen), _FTS5_TOKENIZE_KR)):
+            self._conn.execute(
+                f"""CREATE VIRTUAL TABLE IF NOT EXISTS {table} USING fts5(
+                    file_id UNINDEXED,
+                    tags,
+                    category,
+                    related_classes,
+                    body,
+                    tokenize = "{tk}"
+                )"""
+            )
 
     def _probe(self) -> str:
         """마커 유실 — 실제로 문서가 많은 세대를 고른다. 둘 다 비었으면 `a`."""
@@ -164,16 +208,59 @@ class Bm25Index:
         tokens = tokenize(query)
         if not tokens:
             return []
-        # 토큰을 따옴표로 감싼다 — FTS5 예약어(AND/OR/NOT/NEAR) 충돌 방지.
+
+        word = self._match(_table(self._gen), tokens, limit)
+        if not KR_ROUTING:
+            return word
+        kr_tokens = [t for t in tokens if len(t) >= KR_MIN_LEN] if has_hangul(query) else []
+        if not kr_tokens:
+            return word
+
+        # 🔴 한글 질의는 **두 테이블을 교차로 섞는다** (2026-08-08 실측으로 고친 지점).
+        #
+        # 처음엔 "단어 테이블이 부족할 때만 trigram 으로 채운다" 로 만들었는데 **효과가 0
+        # 이었다** — 단어 테이블이 `limit` 을 채워 버려 trigram 이 조회조차 안 됐다.
+        # 문제는 결과가 *부족한* 게 아니라 *틀린* 것이었다.
+        #
+        # 실측(질의 「전역 이벤트 시스템」):
+        #   단어 테이블   : WNDUITopMenuBase · ModularStage · **GlobalEventSystem(3위)**
+        #   trigram 테이블: **GlobalEventSystem(1위)** · WidgetEventTags · WNDUIHUD
+        #
+        # trigram 이 정답을 1위로 올린다. 그래서 **경쟁시킨다.**
+        #
+        # 점수로 섞지 않는 이유는 그대로다 — 토크나이저가 달라 `bm25()` 값이 **비교 불가**다.
+        # 대신 **순위를 번갈아 놓는다.** RRF 는 순위만 쓰므로(`search.py`) 이것이 그대로
+        # 반영되고, **RRF 는 여전히 2채널**이라 융합 로직·`RRF_K` 를 건드리지 않는다.
+        kr = self._match(_kr_table(self._gen), kr_tokens, limit)
+        if not kr:
+            return word
+
+        # **한글 어절이 절반을 넘으면 trigram 테이블을 쓴다.** 섞지 않는다.
+        #
+        # 섞어 봤고(순위 교차) **더 나빠졌다** — 실측 2026-08-08. 이유는 RRF 쪽에 있다:
+        # 두 채널이 **동의**하면 순위가 오르는데, 한글 질의에서 벡터 채널이 UI 문서 쪽으로
+        # 쏠려 있어 **상관된 오답이 서로를 밀어 올린다.** BM25 를 반쯤 섞으면 정답이
+        # 단일 채널로 남아 오히려 밀려난다.
+        #
+        # 그래서 한글 질의에서는 **BM25 채널의 의견을 하나로** 준다 — trigram 쪽이 그 질의에
+        # 더 맞는 도구다(실측: 「전역 이벤트 시스템」에 대해 `GlobalEventSystem.md` 를 1위로).
+        # 영문·혼합 질의는 단어 테이블 그대로다.
+        #
+        # ⚠️ **이 규칙은 질의 3개로 정했다.** 표본이 얇다 — `search_log.jsonl` 이 쌓이면
+        # 실제 질의 분포로 다시 재야 한다(원본의 `language_gap_report` 가 그 용도다).
+        return kr if len(kr_tokens) * 2 > len(tokens) else word
+
+    def _match(self, table: str, tokens: list[str], limit: int) -> list[tuple[str, float]]:
+        """한 테이블에 MATCH. 토큰을 따옴표로 감싼다 — FTS5 예약어(AND/OR/NOT/NEAR) 충돌 방지."""
         match = " OR ".join(f'"{t}"' for t in tokens)
         try:
             with self._lock:
                 rows = self._conn.execute(
                     f"""SELECT file_id,
-                               -bm25({_table(self._gen)}, 0.0, {TAGS_BOOST}, {CATEGORY_BOOST},
+                               -bm25({table}, 0.0, {TAGS_BOOST}, {CATEGORY_BOOST},
                                      {RELATED_CLASSES_BOOST}, {BODY_BOOST}) AS score
-                        FROM {_table(self._gen)}
-                        WHERE {_table(self._gen)} MATCH ?
+                        FROM {table}
+                        WHERE {table} MATCH ?
                         ORDER BY score DESC
                         LIMIT ?""",
                     (match, limit),
@@ -190,6 +277,7 @@ class Bm25Index:
         total = 0
         with self._lock:
             self._conn.execute(f"DELETE FROM {_table(gen)}")
+            self._conn.execute(f"DELETE FROM {_kr_table(gen)}")
             rows = []
             for doc in iter_documents(self.paths.context):
                 rows.append((doc.file_id, *_fields(doc)))
@@ -208,20 +296,26 @@ class Bm25Index:
         return total
 
     def _insert(self, gen: str, rows: list[tuple]) -> None:
-        self._conn.executemany(
-            f"INSERT INTO {_table(gen)} (file_id, tags, category, related_classes, body) "
-            f"VALUES (?, ?, ?, ?, ?)",
-            rows,
-        )
+        """두 테이블에 **같은 내용**을 넣는다 — 토크나이저만 다르다.
+
+        저장 텍스트는 사전 토큰화된 공백 구분 스트림 그대로다. trigram 쪽에도 그게 좋다 —
+        공백이 토큰 경계를 유지하므로 **인접한 다른 토큰에 걸친 가짜 trigram** 이 생기지 않는다.
+        """
+        for table in (_table(gen), _kr_table(gen)):
+            self._conn.executemany(
+                f"INSERT INTO {table} (file_id, tags, category, related_classes, body) "
+                f"VALUES (?, ?, ?, ?, ?)",
+                rows,
+            )
 
     def upsert(self, docs: list[Document]) -> int:
         """증분 갱신 — Live 세대에 직접 쓴다(벡터 쪽 `upsert()` 와 같은 판단)."""
         if self._conn is None or not docs:
             return 0
-        t = _table(self._gen)
         with self._lock:
             for d in docs:
-                self._conn.execute(f"DELETE FROM {t} WHERE file_id = ?", (d.file_id,))
+                for t in (_table(self._gen), _kr_table(self._gen)):
+                    self._conn.execute(f"DELETE FROM {t} WHERE file_id = ?", (d.file_id,))
             self._insert(self._gen, [(d.file_id, *_fields(d)) for d in docs])
             self._conn.commit()
         return len(docs)
@@ -229,10 +323,12 @@ class Bm25Index:
     def remove(self, file_ids: list[str]) -> int:
         if self._conn is None or not file_ids:
             return 0
-        t = _table(self._gen)
         with self._lock:
             cur = self._conn.executemany(
-                f"DELETE FROM {t} WHERE file_id = ?", [(f,) for f in file_ids]
+                f"DELETE FROM {_table(self._gen)} WHERE file_id = ?", [(f,) for f in file_ids]
+            )
+            self._conn.executemany(
+                f"DELETE FROM {_kr_table(self._gen)} WHERE file_id = ?", [(f,) for f in file_ids]
             )
             self._conn.commit()
         return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
