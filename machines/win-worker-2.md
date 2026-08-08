@@ -157,7 +157,9 @@ ssh janus@192.168.0.2 'powershell -NoProfile -Command "Invoke-Expression ([Conso
 | project registry (MCP) | `http://192.168.0.57:8103/mcp` |
 | Gitea | `http://192.168.0.57:3000` |
 
-**None has an auth layer** — LAN-only by firewall. Don't expose them further.
+🔴 **All of them require `Authorization: Bearer <token>`** (since 2026-08-08). The token lives on
+the master at `~/.config/ax-cluster/token`; ask for it rather than inventing one. Only `/livez` is
+open. They are *also* LAN-only by firewall — don't expose them further.
 
 ## Hard rules
 

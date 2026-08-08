@@ -39,6 +39,7 @@ from .logic import (
     rebase_pending_tasks_in_work, recover_stuck_works, reverify_task,
     find_active_duplicates,
 )
+from ..auth import BearerAuthMiddleware, auth_headers, load_token
 from .reclaim import _verify_loop, _reclaim_loop
 
 
@@ -55,6 +56,16 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
     _bootstrap_log_rotation(root)
 
     app = FastAPI(title="task_queue")
+
+    # 🔴 인증 (PLAN §9.5.6). 토큰이 없으면 여기서 예외가 나고 데몬이 뜨지 않는다.
+    #    `/api/v1/health` 는 work/task 개수를 드러내므로 **인증 뒤에** 둔다.
+    _auth_token = load_token()
+
+    @app.get("/livez")
+    def livez():
+        """인증 없이 열린 유일한 경로. 살아 있다는 것 외에는 아무것도 알려주지 않는다."""
+        return {"ok": True}
+
     idx = TaskIndex(root)
     idx.rebuild()
     _tq_log(f"[serve] starting on {host}:{port}, root={root}, indexed works={len(idx.works)} tasks={len(idx.tasks)}", root)
@@ -315,7 +326,9 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
 
     print(f"task_queue serving at http://{host}:{port} (root={root})")
     try:
-        uvicorn.run(app, host=host, port=port, log_level="info")
+        # 🔴 라우트를 전부 등록한 **뒤** 감싼다.
+        uvicorn.run(BearerAuthMiddleware(app, _auth_token),
+                    host=host, port=port, log_level="info")
     finally:
         stop_event.set()
 
@@ -345,7 +358,7 @@ def _cli_reset(root: Path, purge: bool = False, port: int = 8101, cleanup_branch
         import urllib.request as _ur
         body = json.dumps(payload).encode("utf-8")
         req = _ur.Request(f"http://localhost:{port}/api/v1/admin/reset",
-                          data=body, headers={"Content-Type": "application/json"},
+                          data=body, headers={"Content-Type": "application/json", **auth_headers()},
                           method="POST")
         with _ur.urlopen(req, timeout=30) as resp:
             result = json.loads(resp.read().decode("utf-8"))
@@ -366,7 +379,7 @@ def _cli_reverify(root: Path, task_id: str, port: int = 8101):
         import urllib.request as _ur
         body = json.dumps({}).encode("utf-8")
         req = _ur.Request(f"http://localhost:{port}/api/v1/tasks/{task_id}/reverify",
-                          data=body, headers={"Content-Type": "application/json"},
+                          data=body, headers={"Content-Type": "application/json", **auth_headers()},
                           method="POST")
         with _ur.urlopen(req, timeout=10) as resp:
             result = json.loads(resp.read().decode("utf-8"))
@@ -390,7 +403,7 @@ def _cli_send_directive(worker_id: str, directive: str, port: int = 8101):
         import urllib.request as _ur
         body = json.dumps({"directive": directive}).encode("utf-8")
         req = _ur.Request(f"http://localhost:{port}/api/v1/admin/workers/{worker_id}/directive",
-                          data=body, headers={"Content-Type": "application/json"},
+                          data=body, headers={"Content-Type": "application/json", **auth_headers()},
                           method="POST")
         with _ur.urlopen(req, timeout=10) as resp:
             result = json.loads(resp.read().decode("utf-8"))
@@ -404,7 +417,9 @@ def _cli_send_directive(worker_id: str, directive: str, port: int = 8101):
 def _cli_list_workers(port: int = 8101):
     try:
         import urllib.request as _ur
-        with _ur.urlopen(f"http://localhost:{port}/api/v1/admin/workers", timeout=10) as resp:
+        _req = _ur.Request(f"http://localhost:{port}/api/v1/admin/workers",
+                           headers=auth_headers())
+        with _ur.urlopen(_req, timeout=10) as resp:
             result = json.loads(resp.read().decode("utf-8"))
         rows = result.get("workers") or []
         if not rows:

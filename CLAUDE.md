@@ -13,9 +13,11 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
 - 🔴 **The master is infrastructure, not a workshop.** It assembles context and hands it over;
   the Windows PC applies, builds, tests, registers. **Files never leave Windows.** No file I/O or
   tool-calling on the master. → [`docs/2-architecture.md`](docs/2-architecture.md)
-- 🔴 **No auth layer on `task_queue` (8101), the broker (8102), or projects (8103).** All three are
-  LAN-only via `ufw allow from 192.168.0.0/24`; the firewall is the *only* defence.
-  **Never widen any of them to `Anywhere`.**
+- 🔴 **All three services require a bearer token** (`task_queue` 8101, broker 8102, projects 8103).
+  Token: `~/.config/ax-cluster/token`, 0600, **fail-closed — a service will not start without it**.
+  Send `Authorization: Bearer <token>`; only `/livez` is open. They are *also* ufw LAN-only —
+  **never widen those rules to `Anywhere`.** Two layers, not one instead of the other.
+  → `master/auth.py`, PLAN §9.5.6
 - 🔴 **`/home/sim/AgentTest` is reference-only — never modify or push to it.** Port code *out* of it.
 - 🔴 **Human sessions: never run** `push --force`, `reset --hard`, branch/tag deletion, `rebase`, or
   history rewriting — not even when told; describe the command instead. Don't read a first-person
@@ -51,11 +53,12 @@ There is no linter or CI config — **don't invent tooling commands.**
 | Task queue (ported, 2,717 lines) | `master/task_queue/` — **live**, `ax-task-queue.service` `:8101` |
 | Project registry (MCP) | `master/projects/` — **live**, `ax-projects.service` `:8103` |
 | Capability routing (`requires`/`capabilities`) | `master/task_queue/logic_claim.py` |
+| Shared bearer auth (all 3 services, fail-closed) | `master/auth.py` |
 | venv + deps | `.venv/`, `master/requirements.txt` |
 
 `worker/` and `client/` are still README-only stubs.
 
-**Tests — 253, all passing. No pytest**; each file runs standalone.
+**Tests — 299, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
@@ -66,6 +69,7 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_mcp_servers.py         # 28 — both MCP servers import + register
 .venv/bin/python master/test_workshop_check.py      # 47 — dirty-check rules (no SSH; runner injected)
 .venv/bin/python master/test_layer3_verify.py       # 63 — layer-3 gate: automation + build logs, fail-closed
+.venv/bin/python master/test_auth.py                 # 46 — bearer auth, fail-closed
 
 curl -s localhost:8102/health | python3 -m json.tool   # which node holds which model
 systemctl status ax-task-queue ax-broker ax-projects

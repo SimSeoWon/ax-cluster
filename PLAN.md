@@ -41,12 +41,14 @@ Unreal MCP (UE 5.8.1+), and code-writing agents into one pipeline.
 
 | Service | Port | Unit | Defence |
 |---|---|---|---|
-| task_queue | 8101 | `ax-task-queue.service` | 🔴 no auth — ufw LAN-only is all there is |
-| Inference broker | 8102 | `ax-broker.service` | 🔴 no auth — ufw LAN-only is all there is |
-| Project registry (MCP) | 8103 | `ax-projects.service` | 🔴 no auth — ufw LAN-only is all there is |
+| task_queue | 8101 | `ax-task-queue.service` | ✅ Bearer token + ufw LAN-only |
+| Inference broker | 8102 | `ax-broker.service` | ✅ Bearer token + ufw LAN-only |
+| Project registry (MCP) | 8103 | `ax-projects.service` | ✅ Bearer token + ufw LAN-only |
 
 **Two inference endpoints:** BC-250 #1 (35B pinned) and the RTX 3060 Windows PC (14b pinned).
-**Never widen any of these to `Anywhere`** — none of the three services has an auth layer.
+All three now require `Authorization: Bearer <token>` (`~/.config/ax-cluster/token`, 0600);
+only `/livez` is open. **Still never widen the ufw rules to `Anywhere`** — the token is a
+second layer, not a replacement for the first.
 
 Per-machine operating guides: [`machines/`](machines/README.md). Session work reports:
 `~/claude-workspace/reports/` and `sim@192.168.0.43:~/bc250-backup-staging/reports/`.

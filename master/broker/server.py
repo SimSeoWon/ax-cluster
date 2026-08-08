@@ -23,6 +23,7 @@ import httpx2 as httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from ..auth import BearerAuthMiddleware, load_token
 from .config import DEFAULT_NUM_CTX, load_endpoints
 from .health import ensure_pinned, refresh
 from .routing import choose, union_tags
@@ -42,10 +43,20 @@ HEALTH_INTERVAL_SEC = int(os.environ.get("AX_BROKER_HEALTH_SEC", "30"))
 _TIMEOUT = httpx.Timeout(connect=5.0, read=900.0, write=60.0, pool=10.0)
 
 
-def create_app() -> FastAPI:
+def create_app():
+    """ASGI 앱. 반환형이 `FastAPI` 가 아니라 **인증 미들웨어로 감싼 ASGI 콜러블**이다."""
     endpoints, pins = load_endpoints()
     state: dict = {"inflight": {e.name: 0 for e in endpoints}, "repin_at": {}}
     app = FastAPI(title="AX cluster inference broker")
+
+    # 🔴 인증 (PLAN §9.5.6). 토큰이 없으면 여기서 예외가 나고 서비스가 뜨지 않는다.
+    #    `/health` 는 노드 주소와 적재 모델을 드러내므로 **인증 뒤에** 둔다.
+    _auth_token = load_token()
+
+    @app.get("/livez")
+    def livez():
+        """인증 없이 열린 유일한 경로. 살아 있다는 것 외에는 아무것도 알려주지 않는다."""
+        return {"ok": True}
     app.state.endpoints = endpoints
     app.state.pins = pins
     app.state.broker = state
@@ -174,4 +185,5 @@ def create_app() -> FastAPI:
     async def show_ep(request: Request):
         return await _proxy(request, "/api/show", inject=False)
 
-    return app
+    # 🔴 라우트를 전부 등록한 **뒤** 감싼다. 미들웨어는 바깥이므로 순서가 중요하다.
+    return BearerAuthMiddleware(app, _auth_token)

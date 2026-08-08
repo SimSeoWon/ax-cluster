@@ -19,10 +19,18 @@ Via router port-forwarding, so friends can collaborate. It has been hardened (re
 disabled, OpenID disabled, sign-in required to view) but still serves **plain HTTP** — TLS
 migration was deferred; the options discussed were Tailscale (preferred) or DuckDNS + Caddy.
 
-## 🔴 The three AX services have no auth layer at all
+## 🔴 The three AX services require a bearer token (since 2026-08-08)
 
-`ax-task-queue` (8101), `ax-broker` (8102), and `ax-projects` (8103) all lack authentication.
-They are opened **LAN-only**, and **the firewall is the only defence**.
+`ax-task-queue` (8101), `ax-broker` (8102), and `ax-projects` (8103) all authenticate with a
+**shared bearer token**: `~/.config/ax-cluster/token` (0600). Send
+`Authorization: Bearer <token>`. Only `/livez` is open — it returns `{"ok":true}` and nothing else,
+so liveness checks work without a credential while `/health` (which reveals node addresses and
+resident models) stays behind auth.
+
+**Fail-closed: a service will not start if the token is missing, empty, under 32 chars, or if the
+file's permissions are open.** "Run without auth" is not a fallback — that was the state being fixed.
+
+They remain **LAN-only** by firewall as well:
 
 ```
 ufw allow from 192.168.0.0/24 to any port 8101 proto tcp

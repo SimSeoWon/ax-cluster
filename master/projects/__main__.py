@@ -16,6 +16,7 @@ import os
 import uvicorn
 from mcp.server.transport_security import TransportSecuritySettings
 
+from ..auth import BearerAuthMiddleware, load_token
 from .mcp_server import mcp
 
 # LAN IP 는 CLAUDE.md 기준. 추가가 필요하면 AX_PROJECTS_ALLOWED_HOSTS 에 콤마로 나열한다.
@@ -38,6 +39,7 @@ def main() -> None:
     host = os.environ.get("AX_PROJECTS_HOST", "0.0.0.0")
     port = int(os.environ.get("AX_PROJECTS_PORT", "8103"))
     hosts = allowed_hosts()
+    auth_token = load_token()   # 🔴 없으면 여기서 예외 — 인증 없이 뜨지 않는다
     app = mcp.streamable_http_app(
         host=host,
         transport_security=TransportSecuritySettings(
@@ -48,7 +50,10 @@ def main() -> None:
             + [f"https://{h}" for h in hosts],
         ),
     )
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    # 🔴 DNS 리바인딩 보호와 **별개**다. 그쪽은 브라우저가 속아서 찌르는 경로를 막고,
+    #    이쪽은 아무나 찌르는 것을 막는다 — 서로 다른 위협이라 둘 다 필요하다.
+    uvicorn.run(BearerAuthMiddleware(app, auth_token),
+                host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":
