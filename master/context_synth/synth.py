@@ -35,7 +35,7 @@ from .. import source_text
 from ..context_search.paths import ProjectPaths
 from ..graph import class_graph as cg, dependency as dep, parse as gparse
 from ..work.generate import DEFAULT_BROKER, GenerateError, call_broker
-from . import md as md_mod, prompt as prompt_mod
+from . import md as md_mod, prompt as prompt_mod, verify as verify_mod
 
 # 컨텍스트 합성용 모델. 코드 생성용 14b coder 와 **일부러 다르다** — 산문·분류 작업이고,
 # 다른 기계에 핀돼 있어 코드 생성과 경합하지 않는다.
@@ -61,18 +61,26 @@ class GroupResult:
     chars: int = 0
     prompt_chars: int = 0
     elapsed_ms: int = 0
+    verify: "verify_mod.Report | None" = None
+    dry_ok: bool = False      # dry-run 에서 검증까지 통과했나
+
+    @property
+    def passed(self) -> bool:
+        """문서를 쓸 수 있는 상태였나 (dry-run 포함)."""
+        return self.written or self.dry_ok
 
     @property
     def lost(self) -> bool:
         """🔴 영구 유실인가 — LLM 실패/게이트 거부로 문서가 안 생겼는가."""
-        return not self.written and self.reason != "변화 없음"
+        return not self.passed and self.reason != "변화 없음"
 
 
 @dataclass
 class Stats:
     groups: int = 0
     written: int = 0
-    refused: int = 0            # 게이트가 거부 (σ.7-B) — 기존 파일 유지
+    refused: int = 0            # 형식 게이트 거부 (σ.7-B) — 기존 파일 유지
+    unfactual: int = 0          # 🔴 사실 게이트 거부 — 소스 실측과 어긋난다
     failed: int = 0             # LLM 실패
     skipped: int = 0            # 이미 있고 안 바뀜
     aborted: str = ""           # 서킷브레이커가 끊었으면 사유
@@ -83,14 +91,22 @@ class Stats:
     @property
     def lost(self) -> int:
         """🔴 문서가 생기지 않은 그룹 수. 이 숫자가 곧 영구 유실이다."""
-        return self.refused + self.failed
+        return self.refused + self.unfactual + self.failed
+
+    @property
+    def pass_rate(self) -> str:
+        """사실 게이트 통과율. 모델 적합도의 지표다."""
+        tried = self.written + self.refused + self.unfactual + self.failed
+        return f"{self.written}/{tried}" if tried else "0/0"
 
     @property
     def summary(self) -> str:
-        s = (f"그룹 {self.groups} → 작성 {self.written}"
+        s = (f"그룹 {self.groups} → 통과 {self.written}"
              f" · 건너뜀 {self.skipped} · {self.elapsed_ms}ms")
         if self.refused:
-            s += f" · 🔴 게이트 거부 {self.refused}"
+            s += f" · 🔴 형식 거부 {self.refused}"
+        if self.unfactual:
+            s += f" · 🔴 사실 거부 {self.unfactual}"
         if self.failed:
             s += f" · 🔴 LLM 실패 {self.failed}"
         if self.aborted:
@@ -155,12 +171,16 @@ def collect_grounding(paths: ProjectPaths, files: list[str]) -> prompt_mod.Groun
 
 def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                      commit: str = "", broker: str = DEFAULT_BROKER,
-                     model: str = SYNTH_MODEL, caller=None,
+                     model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
                      tally: source_text.EncodingTally | None = None) -> GroupResult:
     """한 그룹 → 컨텍스트 MD 한 개.
 
     실패는 **예외가 아니라 결과**다 — 한 그룹이 죽었다고 배치를 멈추지 않는다. 대신
     `GroupResult.reason` 에 사유가 남고 `lost` 가 True 가 된다.
+
+    🔴 `dry_run` — 생성·검증만 하고 **디스크에 쓰지 않는다.** 받아온 스냅샷을 건드리지 않고
+    모델 적합도(사실 게이트 통과율)를 재려면 이게 필요하다. 통과율을 모른 채 전체를 돌리면
+    나쁜 문서 909개가 되고, 그건 좋은 문서 0개보다 나쁘다.
     """
     res = GroupResult(key=key, files=list(files))
     t0 = time.monotonic()
@@ -182,8 +202,8 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
         e = source_text.read(out)
         existing = e.text if e else ""
 
-    p = prompt_mod.build(files=files, bodies=bodies,
-                         grounding=collect_grounding(paths, files), existing=existing)
+    grounding = collect_grounding(paths, files)
+    p = prompt_mod.build(files=files, bodies=bodies, grounding=grounding, existing=existing)
     res.prompt_chars = len(p)
 
     try:
@@ -195,19 +215,35 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
     doc, verdict = md_mod.finalize(raw, existing=existing, commit=commit)
     if not verdict.ok:
         # σ.7-B — 🔴 기존 파일을 남긴다. 다음 사이클에 다시 시도된다.
-        res.reason = f"게이트 {verdict.summary} · preview={verdict.preview!r}"
+        res.reason = f"형식 게이트 {verdict.summary} · preview={verdict.preview!r}"
         return res
 
+    # 🔴 **사실 게이트** — 소스 실측과 대조한다. LLM 에게 자기 검증을 맡기지 않는다
+    # (설계 규칙: 결정적 게이트가 LLM 판단보다 우선). 형식 게이트와 같은 처리 —
+    # 거부하면 기존 파일이 남고 다음 사이클에 재시도된다.
+    report = verify_mod.verify(doc, sources=bodies, declared=grounding.declared_classes)
+    res.verify = report
+    if not report.ok:
+        res.reason = f"사실 게이트 거부 — {report.reason}"
+        return res
+
+    res.chars = len(doc)
+    if dry_run:
+        res.reason = "dry-run — 검증 통과 (쓰지 않았다)"
+        res.dry_ok = True
+        res.elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return res
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(doc, encoding="utf-8")
-    res.written, res.chars = True, len(doc)
+    res.written = True
     res.elapsed_ms = int((time.monotonic() - t0) * 1000)
     return res
 
 
 def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = "",
         skip_existing: bool = False, limit: int = 0, broker: str = DEFAULT_BROKER,
-        model: str = SYNTH_MODEL, caller=None, git=None, progress=None) -> Stats:
+        model: str = SYNTH_MODEL, caller=None, dry_run: bool = False, git=None,
+        progress=None) -> Stats:
     """배치 합성. `changed` 를 주면 그 파일들만, 없으면 `Source/` 전체.
 
     `skip_existing` — 이미 문서가 있는 그룹을 건너뛴다(최초 전체 빌드에서 누락분만 보충).
@@ -225,17 +261,17 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
     t0 = time.monotonic()
     consecutive = 0
     for i, (key, fs) in enumerate(sorted(groups.items()), 1):
-        if limit and stats.written + stats.refused + stats.failed >= limit:
+        if limit and stats.written + stats.refused + stats.unfactual + stats.failed >= limit:
             stats.aborted = f"상한 {limit} 도달 — 남은 {len(groups) - i + 1} 그룹 미처리"
             break
         if skip_existing and doc_path(paths, key).is_file():
             stats.skipped += 1
             stats.results.append(GroupResult(key=key, files=fs, reason="변화 없음"))
             continue
-        r = synthesize_group(paths, key, fs, commit=commit, broker=broker,
-                             model=model, caller=caller, tally=stats.encodings)
+        r = synthesize_group(paths, key, fs, commit=commit, broker=broker, model=model,
+                             caller=caller, dry_run=dry_run, tally=stats.encodings)
         stats.results.append(r)
-        if r.written:
+        if r.passed:
             stats.written += 1
             consecutive = 0
         else:
@@ -243,8 +279,12 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
                 stats.failed += 1
                 consecutive += 1
             else:
-                stats.refused += 1
-                consecutive = 0      # 게이트 거부는 모델 응답이 온 것이라 차단 사유가 아니다
+                # 게이트 거부는 모델 응답이 온 것이라 서킷 차단 사유가 아니다.
+                if r.reason.startswith("사실 게이트"):
+                    stats.unfactual += 1
+                else:
+                    stats.refused += 1
+                consecutive = 0
             if consecutive >= CIRCUIT_THRESHOLD:
                 stats.aborted = (f"LLM 연속 실패 {consecutive}회 — 남은 "
                                  f"{len(groups) - i} 그룹을 태우지 않는다. 마지막 사유: "

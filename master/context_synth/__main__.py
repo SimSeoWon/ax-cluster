@@ -3,6 +3,7 @@
     python -m master.context_synth one   <Source/경로/파일.h>   # 한 그룹만 (검증용)
     python -m master.context_synth fill  [--limit N]            # 문서 없는 그룹만 보충
     python -m master.context_synth all   [--limit N]            # 전체 재생성
+    python -m master.context_synth sample [N]                   # 🔴 dry-run N개 — 통과율 측정
     python -m master.context_synth status                       # 문서/소스 대비
 
 🔴 **`--limit` 없이 `all` 을 돌리기 전에 한 그룹으로 품질을 확인할 것.** 1,600 그룹이고
@@ -67,6 +68,17 @@ def main(argv: list[str]) -> int:
         print(f"✅ {out} · {r.chars}자 · 프롬프트 {r.prompt_chars}자 · {r.elapsed_ms}ms")
         print("─" * 60)
         print(out.read_text(encoding="utf-8"))
+        return 0
+
+    if cmd == "sample":
+        n = int(rest[0]) if rest else 8
+        # 🔴 쓰지 않는다 — 받아온 스냅샷을 지키면서 모델 적합도만 잰다.
+        st = synth.run(paths, limit=n, dry_run=True,
+                       progress=lambda m: print(m, flush=True))
+        print(f"\n사실 게이트 통과율: {st.pass_rate}  ({st.summary})")
+        for r in st.results:
+            if r.lost:
+                print(f"   🔴 {r.key} — {r.reason[:150]}")
         return 0
 
     if cmd in ("fill", "all"):

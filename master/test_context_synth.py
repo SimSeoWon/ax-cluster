@@ -26,7 +26,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
 from master.context_search.paths import ProjectPaths            # noqa: E402
-from master.context_synth import md, prompt, synth              # noqa: E402
+from master.context_synth import md, prompt, synth, verify      # noqa: E402
 from master.graph import class_graph as cg, dependency as dep   # noqa: E402
 
 PASS = FAIL = 0
@@ -76,6 +76,24 @@ def llm(*responses):
     def caller(url, payload):
         return box.pop(0) if len(box) > 1 else box[0]
     return caller
+
+
+def honest_llm(url, payload):
+    """프롬프트의 [실측] 클래스를 그대로 쓰는 정직한 모델.
+
+    🔴 이 픽스처가 필요한 이유: 앞선 판은 모든 파일에 같은 `AMonster` 문서를 돌려줬는데
+    **사실 게이트가 그것을 "다른 파일을 서술한 문서" 로 정확히 거부했다.** 게이트가 맞다.
+    """
+    import re as _re
+    m = _re.search(r"\[실측 — 이 파일이 정의하는 클래스[^\]]*\]\n((?:  - \w+\n?)+)",
+                   payload["prompt"])
+    names = _re.findall(r"- (\w+)", m.group(1)) if m else ["AMonster"]
+    first = names[0]
+    return (f"---\ntags: [x]\ncategory: a/b/c\nrelated_classes:\n"
+            f"  - {first}: Source/Game/X.h\n---\n\n## 요약\n"
+            f"{first} 은 게임 런타임에서 해당 기능을 담당한다. "
+            f"{'다른 클래스로는 ' + ', '.join(names[1:4]) + ' 가 있다. ' if len(names) > 1 else ''}"
+            f"검색 친화적으로 짧게 서술한다.\n\n## 개선 필요 사항\n없음\n")
 
 
 def boom(url, payload):
@@ -196,11 +214,12 @@ def main() -> int:
     for i in range(4):
         (p2.source / "Game" / f"F{i}.h").write_text(f"class AF{i} {{}};\n", encoding="utf-8")
     allf = FILES + [f"Source/Game/F{i}.h" for i in range(4)]
-    st = synth.run(p2, changed=allf, commit="c9", caller=llm(GOOD))
+    st = synth.run(p2, changed=allf, commit="c9", caller=honest_llm)
     check("그룹 수", st.groups == 5, str(st.groups))
     check("전부 작성", st.written == 5, st.summary)
     check("유실 0", st.lost == 0, st.summary)
-    check("요약에 분모가 있다", "그룹 5 → 작성 5" in st.summary, st.summary)
+    check("요약에 분모가 있다", "그룹 5 → 통과 5" in st.summary, st.summary)
+    check("통과율을 낼 수 있다", st.pass_rate == "5/5", st.pass_rate)
 
     print("\n[12] 🔴 서킷브레이커 — 연속 실패 시 중단한다")
     p3 = make_project(tmp / "circuit")
@@ -220,9 +239,9 @@ def main() -> int:
     check("중단하지 않는다", not st3.aborted, st3.aborted)
 
     print("\n[14] skip_existing · limit — 감추지 않고 적는다")
-    st4 = synth.run(p2, changed=allf, skip_existing=True, caller=llm(GOOD))
+    st4 = synth.run(p2, changed=allf, skip_existing=True, caller=honest_llm)
     check("이미 있으면 건너뛴다", st4.skipped == 5 and st4.written == 0, st4.summary)
-    st5 = synth.run(p2, changed=allf, limit=2, caller=llm(GOOD))
+    st5 = synth.run(p2, changed=allf, limit=2, caller=honest_llm)
     check("상한이 먹는다", st5.written == 2, st5.summary)
     check("🔴 남긴 것을 적는다", "상한" in st5.aborted and "미처리" in st5.aborted, st5.aborted)
 
@@ -230,7 +249,7 @@ def main() -> int:
     for label, kwargs in (("빈 변경 목록", {"changed": []}),
                           ("전부 삭제됨", {"changed": ["Source/없는파일.h"]})):
         try:
-            synth.run(p2, caller=llm(GOOD), **kwargs)
+            synth.run(p2, caller=honest_llm, **kwargs)
             check(f"{label} → 예외", False, "예외 없음")
         except synth.SynthError:
             check(f"{label} → 예외", True)
@@ -243,13 +262,77 @@ def main() -> int:
 
     def capture(url, payload):
         seen["prompt"] = payload["prompt"]
-        return GOOD
+        return honest_llm(url, payload)
 
     st6 = synth.run(p4, changed=["Source/Game/Kr.h"], caller=capture)
     check("합성이 된다", st6.written == 1, st6.summary)
     check("🔴 한글 주석이 프롬프트에 살아서 들어간다",
           "몬스터 스폰을 관리한다" in seen["prompt"], seen["prompt"][:120])
     check("인코딩 분포를 보고한다", st6.encodings.cp949 == 1, st6.encodings.summary)
+
+    print("\n[16-1] 🔴 사실 게이트 — 주석에만 있는 것을 특정한다 (결정적, LLM 0)")
+    SRC = """
+// class ULegacyLoader : public UObject {};    <- 주석 처리됨
+/* struct FOldPayload { int32 Count; }; */
+class UActiveThing : public UObject {
+    void DoWork();
+    const char* note = "// not a comment /* nor this */";
+};
+"""
+    live, dead = verify.strip_comments(SRC)
+    check("주석을 걷어낸다", "ULegacyLoader" not in live and "FOldPayload" not in live)
+    check("살아 있는 코드는 남는다", "UActiveThing" in live and "DoWork" in live)
+    check("🔴 문자열 안의 `//` 를 주석으로 보지 않는다",
+          "not a comment" in live, live[-90:])
+    only = verify.comment_only(SRC)
+    check("주석 전용 식별자를 특정한다", {"ULegacyLoader", "FOldPayload"} <= only, str(sorted(only)))
+    check("🔴 살아 있는 것은 포함하지 않는다", "UActiveThing" not in only and "DoWork" not in only)
+    check("언어 키워드·UE 매크로는 노이즈로 제외", "class" not in only and "struct" not in only)
+
+    GHOST = """---
+tags: [x]
+category: a/b/c
+related_classes:
+  - UActiveThing: Source/Game/T.h
+---
+
+## 요약
+UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한다.
+
+## 개선 필요 사항
+없음
+"""
+    rep = verify.verify(GHOST, sources={"T.h": SRC}, declared=["UActiveThing"])
+    check("🔴 유령 식별자를 잡는다", not rep.ok and "ULegacyLoader" in rep.ghosts, str(rep.ghosts))
+    check("  사유에 이름이 들어간다", "ULegacyLoader" in rep.reason, rep.reason)
+    HONEST = GHOST.replace(
+        "UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한다.",
+        "UActiveThing 은 DoWork 로 작업을 수행한다. 파일 상단에는 주석 처리된 흔적이 있다.")
+    check("정직한 문서는 통과", verify.verify(HONEST, sources={"T.h": SRC},
+                                        declared=["UActiveThing"]).ok)
+    check("🔴 「개선 필요 사항」에서 주석을 언급하는 것은 위반이 아니다",
+          verify.verify(HONEST.replace("없음", "ULegacyLoader 는 주석 처리되어 있다"),
+                        sources={"T.h": SRC}, declared=["UActiveThing"]).ok)
+    check("엔진 클래스는 오탐이 아니다 (소스에 없다)",
+          verify.verify(HONEST.replace("DoWork 로", "UObject·AActor 기반으로 DoWork 로"),
+                        sources={"T.h": SRC}, declared=["UActiveThing"]).ok)
+    other = verify.verify(HONEST.replace("UActiveThing", "USomethingElse"),
+                          sources={"T.h": SRC}, declared=["UActiveThing"])
+    check("실측 클래스를 하나도 안 쓰면 거부", not other.ok and not other.mentioned_declared)
+    check("declared 가 비면 그 검사는 건너뛴다",
+          verify.verify(HONEST, sources={"T.h": SRC}, declared=[]).ok)
+
+    print("\n[16-2] 사실 게이트가 합성에 물려 있다")
+    p6 = make_project(tmp / "factual")
+    (p6.source / "Game" / "T.h").write_text(SRC, encoding="utf-8")
+    r6 = synth.synthesize_group(p6, "Source/Game/T", ["Source/Game/T.h"], caller=llm(GHOST))
+    check("🔴 유령 문서를 저장하지 않는다", not r6.written, r6.reason)
+    check("  사유가 사실 게이트라고 말한다", "사실 게이트" in r6.reason, r6.reason)
+    check("  영구 유실로 센다", r6.lost)
+    st7 = synth.run(p6, changed=["Source/Game/T.h"], caller=llm(GHOST))
+    check("통계가 사실 거부를 따로 센다", st7.unfactual == 1 and st7.refused == 0, st7.summary)
+    check("  요약에 나타난다", "사실 거부" in st7.summary, st7.summary)
+    check("🔴 사실 거부는 서킷을 열지 않는다 (모델은 살아 있다)", not st7.aborted)
 
     print("\n[17] 근거 수집 — 그래프가 있으면 실측값이 들어간다")
     p5 = make_project(tmp / "grounded")
