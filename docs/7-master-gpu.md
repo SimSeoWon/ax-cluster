@@ -1,5 +1,5 @@
-> AX Cluster 계획 문서의 일부다. 색인은 [`../PLAN.md`](../PLAN.md).
-> § 번호는 분리 전과 같다 — 다른 문서의 상호참조가 그대로 유효하다.
+> Part of the AX Cluster plan. Index: [`../PLAN.md`](../PLAN.md).
+> Section numbers are unchanged by the split — cross-references from other documents still resolve.
 
 ## 7. 마스터 GPU 증설 검토 — GTX 1070 Ti (2026-08-06, 🔍 검토 단계)
 

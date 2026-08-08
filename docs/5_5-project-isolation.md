@@ -1,5 +1,5 @@
-> AX Cluster 계획 문서의 일부다. 색인은 [`../PLAN.md`](../PLAN.md).
-> § 번호는 분리 전과 같다 — 다른 문서의 상호참조가 그대로 유효하다.
+> Part of the AX Cluster plan. Index: [`../PLAN.md`](../PLAN.md).
+> Section numbers are unchanged by the split — cross-references from other documents still resolve.
 
 ### 5.5 프로젝트 격리 — **다중 디렉토리 · 단일 마운트** (2026-08-08 확정)
 

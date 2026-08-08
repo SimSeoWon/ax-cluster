@@ -1,5 +1,5 @@
-> AX Cluster 계획 문서의 일부다. 색인은 [`../PLAN.md`](../PLAN.md).
-> § 번호는 분리 전과 같다 — 다른 문서의 상호참조가 그대로 유효하다.
+> Part of the AX Cluster plan. Index: [`../PLAN.md`](../PLAN.md).
+> Section numbers are unchanged by the split — cross-references from other documents still resolve.
 
 ## 10. 관련 문서
 - 이 보드(BC-250 #1)의 하드웨어 작업 이력: `~/bc250-backup-staging/reports/`, `~/.claude/projects/-home-sim/memory/`
