@@ -396,25 +396,64 @@ ModularStage:
 **마스터가 경로를 아는 것은 파일을 소유하는 것이 아니다** — §2.1 위반이 아니라 라우팅
 메타데이터다. 마스터는 여전히 그 디렉토리를 읽지도 쓰지도 않는다.
 
-##### ④ 🔴 대소문자 불일치 — 훅을 붙이기 전에 정규값을 확정할 것
+##### ④ ✅ 대소문자 — 확정 (2026-08-08, Gitea DB 실측)
 
-| 출처 | 값 |
+**Gitea 는 이름을 두 벌로 들고 있다.** DB(`repository` 테이블)를 직접 읽어 확정했다:
+
+| 컬럼 | 값 | 쓰임 |
+|---|---|---|
+| `owner_name` / `name` | **`Sim/ModularStage`** | 표시용. **훅 페이로드가 싣는 `full_name` 이 이것** |
+| `lower_name` | **`modularstage`** | **디스크 경로 · 동일성 판정** |
+
+소유자 `Sim` 아래 5개 저장소가 전부 CamelCase 다
+(`GeminiScripter`·`ModularStage`·`Project_Alpha`·`ScenarioWriter`·`ServerTest`).
+§5.5.3 에 적힌 소문자 목록은 `lower_name` 을 본 것이었다 — **둘 다 실재하는 값이고,
+어느 한쪽이 틀린 게 아니다.**
+
+**결정 — Gitea 자신의 모델을 그대로 따른다:**
+
+> **저장은 표시용 정규값으로, 비교는 casefold 로, 디스크 경로는 소문자로.**
+> 표시 이름은 라벨이고 **동일성은 소문자다.** Gitea 가 `lower_name` 컬럼을 따로 두는
+> 이유가 그것이다.
+
+§5.5.4 초안은 "둘 중 하나를 고르라"고 했지만, 실측해 보니 **고를 문제가 아니었다** —
+두 값은 용도가 다르고 둘 다 필요하다. 하나로 통일하려 했다면 어느 쪽을 골라도 깨진다:
+
+| 잘못된 통일 | 무엇이 깨지나 |
 |---|---|
-| `.2` 의 remote (실측) | `http://192.168.0.57:3000/`**`Sim/ModularStage`**`.git` |
-| `ModularStage/config.yaml` | `project_id: `**`sim/modularstage`** |
-| 마스터 클론의 bare 경로 (실측, 동작함) | `/var/lib/gitea/gitea-repositories/`**`sim/modularstage`**`.git` |
+| 전부 `Sim/ModularStage` 로 | `resolve_bare_path` 가 `gitea-repositories/`**`Sim/ModularStage`**`.git` 를 찾다 실패한다 — **그런 디렉토리는 없다** |
+| 전부 `sim/modularstage` 로 | 훅이 `Sim/ModularStage` 로 오는데 config 는 소문자 → 규약 ③ 의 **409 fail-closed 에 전부 걸려 색인이 조용히 안 돈다** |
 
-Gitea 는 **URL 라우팅이 대소문자를 무시하고 디스크는 소문자로 저장**하므로 클론은 양쪽 다 된다.
-문제는 **훅 이벤트가 Gitea 의 정규 표시 이름을 실어 온다**는 것이다 — 규약 ② 가
-"별칭을 지어내지 말 것, 훅이 이 값으로 온다"고 못박은 그 값이다.
+**구현 (`master/projects/`, 2026-08-08):**
 
-🔴 **규약 ③ 의 409 fail-closed 와 정면으로 걸린다.** 훅이 `Sim/ModularStage` 로 오는데
-레지스트리가 `sim/modularstage` 면 **모든 이벤트가 409 로 거부되고 색인이 조용히 안 돈다.**
-지금은 훅이 배선 전(§5.4.5 이벤트 큐 미결)이라 터지지 않았을 뿐이다.
+| 함수 | 역할 |
+|---|---|
+| `normalize_project_id()` | 동일성 키 — casefold + strip |
+| `project_id_disk_path()` | 디스크 경로용 소문자 접기 |
+| `Registry.find_by_project_id()` | 훅 페이로드 → 프로젝트명. **대소문자 무시**, 못 찾으면 빈 문자열(호출자가 409) |
 
-**훅 배선 전에 할 일:** Gitea 의 정규 `full_name` 을 확인해 `project_id` 를 그 값으로 맞추거나,
-비교를 casefold 로 정규화한다. **둘 중 하나를 고르고 그 결정을 여기 적을 것** — 양쪽에
-서로 다른 규칙이 생기는 것이 이 함정의 본체다.
+`resolve_bare_path()` 는 이제 `Sim/ModularStage` 를 받아도 소문자 경로를 찾는다.
+`ModularStage/config.yaml` 의 `project_id` 는 **`Sim/ModularStage`** 로 갱신했고,
+`bare_path`/`clone_url` 은 소문자 그대로 뒀다 — 디스크와 URL 은 그게 맞다.
+
+🔴 **casefold 비교를 넣은 이유는 관용이 아니라 rename 방어다.** Gitea 에서 대소문자만
+바꾸는 rename 은 `lower_name` 을 바꾸지 않는다. 표시값만 비교하면 그 rename 한 번에
+훅이 전부 409 로 거부되고, **아무 에러 없이 색인만 멈춘다.**
+
+##### ④-1 ⚠️ 실측 중 나온 운영 사실 두 가지
+
+**1. Gitea DB 경로가 `/usr/local/bin/data/gitea.db` 다.**
+`app.ini` 의 `[database] PATH` 가 **상대 경로**(`data/gitea.db`)로 적혀 있어 Gitea 의
+작업 디렉토리(`/usr/local/bin`) 기준으로 풀린 결과다. 표준 배치(`/var/lib/gitea/data/`)를
+가정하면 엉뚱한 곳을 본다. `DB_TYPE = sqlite3` 인데 `HOST = 127.0.0.1:3306` 이 남아 있는
+것도 혼동을 부른다 — **sqlite3 에서 `HOST` 는 쓰이지 않는다.**
+
+**2. `sim` 은 `gitea` 그룹에 등록돼 있지만 현재 세션에는 반영돼 있지 않다.**
+`id sim` 에는 `142(gitea)` 가 보이는데 실행 중인 셸의 `id` 에는 없다 — 그룹 추가 후
+**재로그인하지 않았다.** 그래서 `/var/lib/gitea` 가 `drwxr-x---`(그룹 r-x)인데도
+`sim` 프로세스는 traverse 하지 못한다. §5.5.3-a 가 "읽기에는 sim 이 gitea 그룹에
+있어야 한다"고 적어둔 조건이 **파일상으로는 충족, 런타임으로는 미충족**인 상태다.
+DB 조회는 `pkexec` 로 했다. 재로그인하면 root 없이 읽힌다.
 
 ##### ⑤ UE5 특유의 제약 세 가지
 
@@ -431,8 +470,10 @@ Gitea 는 **URL 라우팅이 대소문자를 무시하고 디스크는 소문자
 
 ##### 미결
 
-- [ ] `master/projects/config.py` 에 `workshops` 스키마 추가 + `ax-projects` 도구로 등록·조회
-- [ ] ④ 의 대소문자 정규값 확정 (훅 배선의 선결 조건)
+- [x] ~~`workshops` 스키마 + `ax-projects` 도구~~ — **완료 2026-08-08.** 도구 7종,
+      `.2`(ssh·janus·`E:\trunk\ModularStage`) · `.33`(interactive) 실등록
+- [x] ~~④ 의 대소문자 정규값 확정~~ — **완료 2026-08-08.** `Sim/ModularStage`(표시) /
+      `modularstage`(동일성). 구현·테스트 완료, `config.yaml` 갱신됨
 - [ ] loopback 프로세스(Unreal MCP · `gjc`)를 SSH 로 띄우고 내리는 절차 — 누가 주인인가
 
 ---

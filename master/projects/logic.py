@@ -28,6 +28,7 @@ from .config import (
     ProjectConfig,
     Registry,
     Workshop,
+    project_id_disk_path,
     validate_name,
     write_project_config,
 )
@@ -48,7 +49,8 @@ def resolve_bare_path(project_id: str, bare_path: str = "") -> str:
             raise ConfigError(
                 f"project_id 는 '<owner>/<repo>' 형태여야 한다: {project_id!r}"
             )
-        p = GITEA_REPO_ROOT / f"{project_id}.git"
+        # 🔴 디스크는 소문자다 (§5.5.4-④). `Sim/ModularStage` 를 그대로 쓰면 없는 경로가 된다.
+        p = GITEA_REPO_ROOT / f"{project_id_disk_path(project_id)}.git"
     if not (p / "HEAD").is_file():
         raise ConfigError(
             f"bare 저장소가 아니다(또는 읽을 수 없다): {p}\n"

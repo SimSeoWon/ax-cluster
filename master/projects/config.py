@@ -33,6 +33,32 @@ GITEA_REPO_ROOT = Path(
 )
 
 
+def normalize_project_id(project_id: str) -> str:
+    """`project_id` 의 **동일성 키**. 대소문자를 접는다 (§5.5.4-④).
+
+    🔴 Gitea 는 이름을 두 벌로 들고 있다 — DB 실측 (2026-08-08):
+
+        owner_name / name  = `Sim/ModularStage`   ← 표시용. **훅 페이로드가 싣는 값**
+        lower_name         = `modularstage`       ← 디스크 경로 · 동일성 판정
+
+    저장은 표시용 정규값으로 하고(사람과 로그가 읽는 이름), **비교는 여기를 통과시킨다.**
+    Gitea 가 `lower_name` 컬럼을 따로 두는 이유가 그것이다 — 표시 이름은 라벨이고
+    동일성은 소문자다. 이 구분을 지키지 않으면 Gitea 에서 대소문자만 바꾸는 rename
+    한 번에 훅이 조용히 409 로 전부 거부된다.
+    """
+    return (project_id or "").strip().casefold()
+
+
+def project_id_disk_path(project_id: str) -> str:
+    """`project_id` → 디스크상의 상대 경로. **소문자로 접는다.**
+
+    `Sim/ModularStage` 를 그대로 경로에 쓰면
+    `/var/lib/gitea/gitea-repositories/Sim/ModularStage.git` 가 되는데 **그런 디렉토리는
+    없다** — Gitea 는 `lower_name` 으로 저장한다.
+    """
+    return normalize_project_id(project_id)
+
+
 # 워크숍 구동 방식 (§5.5.4-②). 머신마다 다른 것이 우연이 아니라 기록할 사실이다.
 DRIVEN_SSH = "ssh"                  # 마스터가 SSH 로 밀어넣는다
 DRIVEN_INTERACTIVE = "interactive"  # 사람이 앉아서 작업한다 — 마스터가 몰지 않는다
@@ -244,6 +270,24 @@ class Registry:
 
     def config_of(self, name: str) -> ProjectConfig:
         return ProjectConfig.load(self.dir_of(name) / PROJECT_CONFIG)
+
+    def find_by_project_id(self, project_id: str) -> str:
+        """훅 페이로드의 `project_id` 로 프로젝트명을 찾는다. **대소문자 무시** (§5.5.4-④).
+
+        훅은 `Sim/ModularStage` 를 싣고 config 에도 그 값이 있지만, Gitea 에서 대소문자만
+        바꾸는 rename 이 일어나면 두 값이 갈린다. 동일성은 casefold 로 판정한다.
+        찾지 못하면 빈 문자열 — 호출자가 fail-closed(409) 로 처리한다.
+        """
+        want = normalize_project_id(project_id)
+        if not want:
+            return ""
+        for name in self.names:
+            try:
+                if normalize_project_id(self.config_of(name).project_id) == want:
+                    return name
+            except ConfigError:
+                continue  # 깨진 항목은 check() 가 따로 보고한다
+        return ""
 
     def check(self) -> list[str]:
         """3자 일치 검사 — 목록 ↔ 디렉토리 ↔ 각 config.yaml 의 name (§5.5.3-①).

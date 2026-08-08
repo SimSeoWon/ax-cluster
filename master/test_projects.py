@@ -21,7 +21,13 @@ os.environ["AX_GITEA_REPO_ROOT"] = str(_TMP / "gitea")
 os.environ["AX_PROJECTS_ROOT"] = str(_TMP / "root")
 
 from master.projects import config as cfgmod  # noqa: E402
-from master.projects.config import ConfigError, ProjectConfig, Registry  # noqa: E402
+from master.projects.config import (  # noqa: E402
+    ConfigError,
+    ProjectConfig,
+    Registry,
+    normalize_project_id,
+    project_id_disk_path,
+)
 from master.projects.logic import (  # noqa: E402
     list_projects,
     list_workshops,
@@ -220,6 +226,46 @@ def main() -> int:
     check("해제됨", out["ok"], str(out))
     check("목록에서 빠짐", len(list_workshops()["workshops"]) == 1)
     raises("없는 워크숍 해제 거부", remove_workshop, "ModularStage", "192.168.0.33")
+
+    print("\n[15] 🔴 project_id 대소문자 — 표시 이름 vs 동일성 (§5.5.4-④)")
+    # Gitea DB 실측: owner_name/name = 'Sim/ModularStage' (훅이 싣는 값),
+    #                lower_name      = 'modularstage'     (디스크 · 동일성).
+    check("normalize 는 casefold", normalize_project_id("Sim/ModularStage") == "sim/modularstage")
+    check("공백도 제거", normalize_project_id("  Sim/ModularStage  ") == "sim/modularstage")
+    check("빈 값은 빈 값", normalize_project_id("") == "")
+    check(
+        "디스크 경로는 소문자로 접힌다",
+        project_id_disk_path("Sim/ModularStage") == "sim/modularstage",
+    )
+
+    # 정규 표시값으로 저장해도 bare 경로는 소문자로 찾아야 한다 —
+    # 이걸 안 접으면 gitea-repositories/Sim/ModularStage.git 을 찾다 실패한다.
+    got = resolve_bare_path("Sim/ModularStage")
+    check(
+        "resolve_bare_path 가 대문자 project_id 로도 찾는다",
+        got.endswith("sim/modularstage.git"),
+        got,
+    )
+
+    print("\n[16] 훅 페이로드 → 프로젝트 조회는 대소문자를 무시한다")
+    root3 = _TMP / "root3"
+    root3.mkdir(parents=True, exist_ok=True)
+    (root3 / "projects.yaml").write_text(
+        "version: 1\nactive: ''\nprojects: []\n", encoding="utf-8"
+    )
+    os.environ["AX_PROJECTS_ROOT"] = str(root3)
+    register_project("ModularStage", "Sim/ModularStage")   # 정규 표시값으로 등록
+    reg3 = Registry.load(root3)
+    check(
+        "config 에는 정규 표시값이 그대로 남는다",
+        reg3.config_of("ModularStage").project_id == "Sim/ModularStage",
+        reg3.config_of("ModularStage").project_id,
+    )
+    check("훅이 정규값으로 와도 찾는다", reg3.find_by_project_id("Sim/ModularStage") == "ModularStage")
+    check("소문자로 와도 찾는다", reg3.find_by_project_id("sim/modularstage") == "ModularStage")
+    check("대소문자 rename 후에도 찾는다", reg3.find_by_project_id("SIM/MODULARSTAGE") == "ModularStage")
+    check("없는 저장소는 빈 문자열", reg3.find_by_project_id("Sim/Other") == "")
+    check("빈 입력은 빈 문자열", reg3.find_by_project_id("") == "")
 
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
