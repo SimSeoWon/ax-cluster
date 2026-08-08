@@ -77,7 +77,7 @@ There is no linter or CI config — **don't invent tooling commands.**
 | Context search — vector + BM25, RRF fusion, mount-scoped | `master/context_search/` — context MDs only (961 docs). 🔴 **ontology 247 yaml = 0 indexed** (소 2.1.1) |
 | Workflow — 2-tier branches, manifest, registration, generate → layer2 → hand over | `master/work/` — the loop runs (20.1s, APPROVE) but **on a half-built twin** — that run had 0 domain norms. Map: `docs/4-work-loop.md` §4.7 |
 | **Relation graphs** — inheritance (tree-sitter C++) + `#include` (중 1.1, **done 5/5**) | `master/graph/` — **1,806 classes · 6,380 methods · 10,817 include edges** on ModularStage, 2.9s full scan. `python -m master.graph build\|status`. ⚠️ reverse include lookup is basename-approximate (9 ambiguous headers) |
-| **Context-MD synthesis** — prompt+grounding, σ.7 fence strip + σ.7-B save gate, stamping, batch circuit breaker (중 1.2) | `master/context_synth/` — `python -m master.context_synth one\|fill\|all\|status`. 909 source groups, all already documented from the snapshot. 🔴 **not wired into the indexer.** A **deterministic factuality gate** (`verify.py`) rejects docs that describe commented-out code as live — validated on real data. `sample N` dry-runs to measure the pass rate without touching snapshot docs |
+| **Context-MD synthesis** — prompt+grounding, σ.7 fence strip + σ.7-B save gate, stamping, batch circuit breaker (중 1.2) | `master/context_synth/` — `python -m master.context_synth one\|fill\|all\|status`. 909 source groups, all already documented from the snapshot. 🔴 **not wired into the indexer.** A **deterministic factuality gate** (`verify.py`) rejects docs describing commented-out code as live — **75% pass rate measured on the 35B (3/4)**, and the one rejection was a real catch. `sample N` dry-runs without touching snapshot docs. 🔴 **BC-250 reclaims ~170 MB per request and never gives it back until the model unloads** — `UNLOAD_EVERY=5` handles that; set 0 for dedicated-VRAM nodes |
 | Ollama node check + remote install (no residency) | `master/provision.py` — `python -m master.provision check` |
 | venv + deps | `.venv/`, `master/requirements.txt` |
 
@@ -88,7 +88,7 @@ partial — ontology unindexed, and the MD synthesiser is built but not wired in
 give the denominator (*"loop runs; twin sub-tasks 10 of 32"*), never a scope narrowed to what got built.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
-**Tests — 809, all passing. No pytest**; each file runs standalone.
+**Tests — 820, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
@@ -102,11 +102,11 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_auth.py                 # 46 — bearer auth, fail-closed
 .venv/bin/python master/test_events.py               # 38 — event spool: no-loss, at-least-once, coalescing
 .venv/bin/python master/test_context_search.py       # 75 — search core: mount routing, RRF, generation pointer
-.venv/bin/python master/test_work.py                 # 141 — 2-tier branches, manifest, registration, generate+layer2
+.venv/bin/python master/test_work.py                 # 145 — 2-tier branches, manifest, registration, generate+layer2
 .venv/bin/python master/test_provision.py            #  43 — Ollama node check/install; .33 must stay non-resident
 .venv/bin/python master/test_indexer.py              #  35 — spool consumer: ff-only mirror, digest guard, watermark
 .venv/bin/python master/test_graph.py                #  69 — relation graphs: Source-only, fail-closed, no ghost rows
-.venv/bin/python master/test_context_synth.py        #  95 — σ.7/σ.7-B gates, comment preservation, circuit breaker + factuality gate
+.venv/bin/python master/test_context_synth.py        #  102 — σ.7/σ.7-B gates, comment preservation, circuit breaker + factuality gate
 
 # Relation graphs (deterministic, no LLM) — full rebuild ~2.9s for 1,654 files
 .venv/bin/python -m master.graph build               # inheritance + #include

@@ -262,6 +262,36 @@ def main() -> int:
     check("상한이 먹는다", st5.written == 2, st5.summary)
     check("🔴 남긴 것을 적는다", "상한" in st5.aborted and "미처리" in st5.aborted, st5.aborted)
 
+    print("\n[14-1] 🔴 주기적 모델 회수 — num_ctx 만으로는 부족하다 (실측)")
+    st_u = synth.run(p2, changed=allf, caller=honest_llm, unload_every=2)
+    check("주입 caller 일 때는 회수하지 않는다 (실제 노드가 아니다)",
+          st_u.unloads == 0, str(st_u.unloads))
+    check("  그래도 전부 처리된다", st_u.written == 5, st_u.summary)
+    calls = []
+    real_unload = synth.unload_model
+    real_call = synth.call_broker
+    synth.unload_model = lambda m, **kw: calls.append(m)
+    synth.call_broker = lambda pr, **kw: honest_llm("", {"prompt": pr})
+    try:
+        st_u2 = synth.run(p2, changed=allf, unload_every=2)
+        check("🔴 노드 경로에서는 주기마다 회수한다", len(calls) == 2, str(len(calls)))
+        check("  통계에 회수 횟수가 남는다", st_u2.unloads == 2, st_u2.summary)
+        check("  요약에 나타난다", "모델 회수 2회" in st_u2.summary, st_u2.summary)
+        calls.clear()
+        st_u3 = synth.run(p2, changed=allf, unload_every=0)
+        check("unload_every=0 이면 회수하지 않는다 (전용 VRAM 노드)",
+              not calls and st_u3.unloads == 0)
+
+        def _boom_unload(m, **kw):
+            raise synth.GenerateError("회수 실패")
+
+        synth.unload_model = _boom_unload
+        st_u4 = synth.run(p2, changed=allf, unload_every=2)
+        check("🔴 회수 실패가 배치를 죽이지 않는다", st_u4.written == 5, st_u4.summary)
+    finally:
+        synth.unload_model = real_unload
+        synth.call_broker = real_call
+
     print("\n[15] 🔴 소스 0건은 예외 (빈 배치를 성공으로 보고하지 않는다)")
     for label, kwargs in (("빈 변경 목록", {"changed": []}),
                           ("전부 삭제됨", {"changed": ["Source/없는파일.h"]})):

@@ -186,6 +186,27 @@ def call_broker(prompt: str, *, model: str = CODER, broker: str = DEFAULT_BROKER
     return res.get("response") or ""
 
 
+def unload_model(model: str, *, broker: str = DEFAULT_BROKER,
+                 token: str | None = None, timeout: int = 120) -> None:
+    """모델을 내려 노드 메모리를 회수한다 (`keep_alive: 0`).
+
+    🔴 **BC-250 처럼 UMA 로 메모리를 나눠 쓰는 노드에서 필요하다.** 실측 2026-08-08:
+    합성 요청마다 여유가 ~170MB 씩 **단조 감소**한다(Ollama 프롬프트 캐시·컨텍스트
+    체크포인트 누적). 모델을 내리면 **전부 회수된다**(266 → 14,445 MB).
+    다음 요청이 자동으로 다시 적재하므로 올리는 쪽은 신경 쓸 필요가 없다.
+    """
+    payload = {"model": model, "prompt": "", "stream": False, "keep_alive": 0}
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"{broker}/api/generate", data=body, method="POST",
+        headers={"Content-Type": "application/json", **auth_headers(token)})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout):
+            pass
+    except (urllib.error.URLError, OSError) as e:
+        raise GenerateError(f"모델 회수 실패: {e}") from e
+
+
 def generate(paths: ProjectPaths, task_id: str, *, instruction: str,
              target_file: str = "", model: str = CODER, **kw) -> Generated:
     """매니페스트를 읽어 코드를 생성한다. 매니페스트가 없으면 **거부한다.**

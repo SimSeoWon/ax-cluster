@@ -34,7 +34,7 @@ from pathlib import Path
 from .. import source_text
 from ..context_search.paths import ProjectPaths
 from ..graph import class_graph as cg, dependency as dep, parse as gparse
-from ..work.generate import DEFAULT_BROKER, GenerateError, call_broker
+from ..work.generate import DEFAULT_BROKER, GenerateError, call_broker, unload_model
 from . import md as md_mod, prompt as prompt_mod, verify as verify_mod
 
 # 컨텍스트 합성용 모델. 코드 생성용 14b coder 와 **일부러 다르다** — 산문·분류 작업이고,
@@ -53,6 +53,15 @@ SYNTH_TIMEOUT = 600
 # 잡는다(실측 `checkpoint 1 of 32 ... 62.813 MiB` → 32개면 ~2.0GB, 보드 여유는 2.2GB).
 # 프롬프트 4,000자 + 근거 ≈ 1,500토큰, 출력 ≈ 800토큰이므로 4096 이면 넉넉하다.
 SYNTH_NUM_CTX = 4096
+
+# 🔴 몇 그룹마다 모델을 내렸다 올릴지. **`num_ctx` 만으로는 부족하다** — 실측 2026-08-08:
+# 요청마다 여유가 935 → 880 → 680 → 447 → 259 MB 로 **단조 감소**한다(요청당 ~170MB).
+# 누적 주체는 Ollama 의 프롬프트 캐시·컨텍스트 체크포인트이고, **모델을 내리면 전부
+# 회수된다**(실측 266 → 14,445 MB). 그래서 주기적으로 내린다.
+#
+# 5 인 이유: 모델 적재 후 보드 여유가 ~1,200MB 이고 요청당 ~170MB 이므로 5회면 ~350MB 가
+# 남는다. 0 이면 내리지 않는다(전용 VRAM 노드에는 불필요 — `.2` 의 14b 등).
+UNLOAD_EVERY = 5
 
 # 연속 실패 임계값. 이보다 이어지면 배치를 중단한다 (위 ⑵).
 CIRCUIT_THRESHOLD = 3
@@ -96,6 +105,7 @@ class Stats:
     failed: int = 0             # LLM 실패
     skipped: int = 0            # 이미 있고 안 바뀜
     aborted: str = ""           # 서킷브레이커가 끊었으면 사유
+    unloads: int = 0            # 캐시 회수를 위해 모델을 내린 횟수
     elapsed_ms: int = 0
     encodings: source_text.EncodingTally = field(default_factory=source_text.EncodingTally)
     results: list[GroupResult] = field(default_factory=list)
@@ -121,6 +131,8 @@ class Stats:
             s += f" · 🔴 사실 거부 {self.unfactual}"
         if self.failed:
             s += f" · 🔴 LLM 실패 {self.failed}"
+        if self.unloads:
+            s += f" · 모델 회수 {self.unloads}회"
         if self.aborted:
             s += f" · ⛔ 중단({self.aborted})"
         return f"{s} · {self.encodings.summary}"
@@ -258,7 +270,8 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
 def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = "",
         skip_existing: bool = False, limit: int = 0, broker: str = DEFAULT_BROKER,
         model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
-        content_limit: int = prompt_mod.CONTENT_LIMIT, git=None, progress=None) -> Stats:
+        content_limit: int = prompt_mod.CONTENT_LIMIT, unload_every: int = UNLOAD_EVERY,
+        git=None, progress=None) -> Stats:
     """배치 합성. `changed` 를 주면 그 파일들만, 없으면 `Source/` 전체.
 
     `skip_existing` — 이미 문서가 있는 그룹을 건너뛴다(최초 전체 빌드에서 누락분만 보충).
@@ -307,6 +320,15 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
                                  f"{r.reason[:120]}")
                 break
         if progress:
-            progress(f"  {i}/{len(groups)} {key} — {'작성' if r.written else r.reason[:60]}")
+            progress(f"  {i}/{len(groups)} {key} — {'통과' if r.passed else r.reason[:60]}")
+        # 🔴 주기적으로 모델을 내려 누적된 캐시를 회수한다 (위 UNLOAD_EVERY 참조).
+        # 다음 요청이 자동으로 다시 적재한다 — 우리가 올릴 필요는 없다.
+        done = stats.written + stats.refused + stats.unfactual + stats.failed
+        if unload_every and done and done % unload_every == 0 and caller is None:
+            try:
+                unload_model(model, broker=broker)
+                stats.unloads += 1
+            except GenerateError:
+                pass       # 회수 실패는 치명적이지 않다 — 다음 주기에 다시 시도된다
     stats.elapsed_ms = int((time.monotonic() - t0) * 1000)
     return stats
