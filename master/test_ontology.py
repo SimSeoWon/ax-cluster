@@ -16,7 +16,8 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from master.ontology import yaml_io as y   # noqa: E402
+from master.context_search.paths import ProjectPaths   # noqa: E402
+from master.ontology import stale as st_mod, yaml_io as y   # noqa: E402
 
 PASS = FAIL = 0
 
@@ -115,6 +116,41 @@ def main() -> int:
         got = [y.read(p) for p in objs[:40]]
         named = sum(1 for d in got if isinstance(d, dict) and d.get("name"))
         check(f"object yaml 40개 중 name 을 얻는다", named >= 38, f"{named}/40")
+
+    print("\n[7] 🔴 stale 판정 — 워터마크 두 개 비교 (소 1.3.8)")
+    P = ProjectPaths(name="S", root=tmp / "S")
+    (P.ontology / "domains" / "D" / "L1" / "objects").mkdir(parents=True, exist_ok=True)
+    y.write(P.ontology / "domains" / "D" / "domain.yaml",
+            {"domain": "D", "objects": ["L1/objects/AMonster.yaml"]})
+    y.write(P.ontology / "domains" / "D" / "L1" / "objects" / "AMonster.yaml",
+            {"name": "AMonster", "file": "Source/Game/Monster.h"})
+
+    def put_doc(commit):
+        d = P.context / "Source" / "Game"
+        d.mkdir(parents=True, exist_ok=True)
+        body = "---\ntags: [x]\n---\n\n## 요약\n본문"
+        if commit:
+            body = body.replace("tags: [x]", f"tags: [x]\nsource_commit: {commit}")
+        (d / "Monster.md").write_text(body, encoding="utf-8")
+
+    check("활성 도메인을 찾는다 (status 키가 없으면 active)",
+          st_mod.active_domains(P) == ["D"], str(st_mod.active_domains(P)))
+    put_doc(None)
+    check("🔴 둘 다 -1 이면 stale 아니다 (첫 배포 폭주 방지)",
+          st_mod.compute(P) == [], st_mod.summary(st_mod.compute(P)))
+    put_doc("bc4b38f4")
+    r = st_mod.compute(P)
+    check("문서에 커밋이 찍히면 stale", len(r) == 1 and r[0].stale, st_mod.summary(r))
+    check("  사유에 분모가 있다", r and r[0].reason == "stale=1/1", r[0].reason if r else "")
+    check("  어느 클래스가 왜인지 남긴다",
+          r and r[0].members == [("AMonster", "-1", "bc4b38f4")], str(r[0].members if r else ""))
+    check("요약이 사람이 읽을 수 있다", "D(stale=1/1)" in st_mod.summary(r), st_mod.summary(r))
+    check("stale 이 없으면 그렇게 말한다", "없다" in st_mod.summary([]))
+    check("컨텍스트 문서 경로가 합성기 그룹 규칙과 같다",
+          st_mod.context_doc_for(P, "Source/Game/Monster.cpp").name == "Monster.md")
+    check("문서가 없으면 -1", st_mod.latest_commit(P, "Source/없는/X.h") == "-1")
+    check("빈 소스 경로도 -1", st_mod.latest_commit(P, "") == "-1")
+    check("멤버 없는 도메인은 건너뛴다", st_mod.compute(P, ["없는도메인"]) == [])
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
