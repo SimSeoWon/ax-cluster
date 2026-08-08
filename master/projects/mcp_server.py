@@ -299,3 +299,104 @@ def get_code(task_id: str, instruction: str, target_file: str = "",
             "backend": next((w for w in v.warnings if w.startswith("backend=")), ""),
         },
     }, ensure_ascii=False)
+
+
+# ── 시소러스 (중 1.4) — 🔴 **마스터는 사람에게 묻지 않는다. 물을 재료를 준다.** ─────────
+#
+# 작업 PC 의 Claude 가 이 도구로 대괄호 토큰을 먼저 조회하고, **미등록이면 사용자에게
+# 묻는다.** 마스터가 입력을 기다리면 서비스가 멈춘다(§2 — 인프라지 작업장이 아니다).
+#
+#   Claude: resolve_terms(["몬스터", "미션시스템"])
+#     → known: {"미션시스템": "AlphaManager_Mission"}
+#     → unresolved: [{term:"몬스터", question:"…혹시 `AMonster`·`MonsterCharacter` 인가?"}]
+#   Claude → 사용자에게 그 질문을 던진다
+#   사용자 → "AMonster 맞아"
+#   Claude: add_alias("AMonster", "몬스터")   → 다음 검색부터 자동 확장, 영구히 남는다
+
+@mcp.tool()
+def resolve_terms_tool(terms: list[str]) -> str:
+    """`[대괄호]` 토큰이 시소러스에 있는지 조회하고, **없으면 후보를 붙여 돌려준다.**
+
+    사용자에게 묻는 것은 **호출자(Claude)의 몫**이다 — `unresolved[].question` 을 그대로
+    쓰면 된다. 후보는 클래스 그래프 실측과 검색 결과에서만 만든다(지어내지 않는다).
+    """
+    try:
+        from ..context_search import thesaurus as th
+        from ..context_search.paths import resolve as resolve_paths
+        from ..context_search.search import open_search
+
+        paths = resolve_paths("")
+        try:
+            searcher = open_search("")
+        except Exception:                                # noqa: BLE001
+            searcher = None                              # 색인이 없어도 별칭 조회는 된다
+        r = th.resolve(paths, list(terms or []), searcher=searcher)
+        return json.dumps({
+            "ok": True,
+            "project": paths.name,
+            "known": r.known,
+            "expansion": r.expansion,
+            "needs_user": r.needs_user,
+            "unresolved": [
+                {"term": u.term,
+                 "question": u.question,
+                 "candidates": [{"class": c.class_name, "why": c.why, "file": c.file}
+                                for c in u.candidates]}
+                for u in r.unresolved
+            ],
+            "summary": r.summary,
+        }, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def add_alias_tool(class_name: str, term: str) -> str:
+    """사용자가 확인해 준 별칭을 등록한다. **기존 별칭에 합친다 — 덮어쓰지 않는다.**
+
+    🔴 사용자가 **명시로 확인한 것만** 부를 것. 추측으로 등록하면 검색이 조용히 오염된다
+    (원본 규약: silently auto-add 금지).
+    """
+    try:
+        from ..context_search import thesaurus as th
+        from ..context_search.paths import resolve as resolve_paths
+
+        paths = resolve_paths("")
+        status = th.register(paths, class_name, term)
+        return json.dumps({
+            "ok": status != "not_found",
+            "status": status,
+            "class": class_name,
+            "term": term,
+            "note": {
+                "added": "등록했다. 다음 검색부터 이 표현이 자동 확장된다",
+                "noop": "이미 등록돼 있다",
+                "not_found": f"`{class_name}` 의 object yaml 을 찾지 못했다 — 클래스명을 확인하라",
+            }[status],
+        }, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def mark_not_a_class_tool(term: str) -> str:
+    """사용자가 "그건 클래스가 아니다" 라고 답했을 때 기억한다. **다음부터 묻지 않는다.**
+
+    🔴 실측으로 필요해진 도구다 — `[완료]`·`[연출]` 같은 **상태·개념**은 대응 클래스가
+    없는데 후보 생성기가 어휘상 가까운 무관한 클래스를 내민다. 기록하지 않으면 같은 말을
+    매번 다시 묻게 되고, 그러면 사용자가 이 기능을 꺼 버린다.
+    """
+    try:
+        from ..context_search import thesaurus as th
+        from ..context_search.paths import resolve as resolve_paths
+
+        paths = resolve_paths("")
+        status = th.ignore(paths, term)
+        return json.dumps({
+            "ok": status != "not_found",
+            "status": status,
+            "term": term,
+            "note": "다음부터 이 표현은 묻지 않는다" if status == "added" else "이미 기록돼 있다",
+        }, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
