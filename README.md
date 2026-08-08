@@ -68,7 +68,8 @@ ax-cluster/
 │   │   ├── yaml_io.py          우리가 쓴 것만 우리가 읽는다. 안 바뀌면 안 쓴다
 │   │   ├── stale.py            워터마크 2개 비교 — 어느 도메인을 재합성할지
 │   │   ├── layers.py           L1/L2/L3 추정 — 구조 우선, git 은 강등만
-│   │   └── collect.py          멤버 후보 **제안** — 조상·자식·include 이웃
+│   │   ├── collect.py          멤버 후보 **제안** — 조상·자식·include 이웃
+│   │   └── hierarchy.py        개념 계층 — 하위 문서를 object 로, 순환 방지
 │   ├── graph/                  ← 관계 그래프 (중 1.1, LLM 0)
 │   │   ├── parse.py            tree-sitter C++ · UE 매크로 전처리
 │   │   ├── class_graph.py      상속 그래프 + methods 소유권
@@ -153,7 +154,7 @@ Claude 가 사용자에게 물어 등록한다 — 다음 검색부터 자동 �
 
 ## 테스트
 
-**924건, 전부 통과. pytest 없음** — 각 파일이 단독 실행된다.
+**940건, 전부 통과. pytest 없음** — 각 파일이 단독 실행된다.
 
 ```bash
 python3 master/test_verdict.py                       #  19
@@ -161,7 +162,7 @@ python3 master/test_verdict.py                       #  19
 .venv/bin/python master/test_context_synth.py        # 102   σ.7 게이트·사실 게이트·서킷브레이커
 .venv/bin/python master/test_context_search.py       #  82   마운트 라우팅·RRF·대괄호
 .venv/bin/python master/test_graph.py                #  80   Source 한정·fail-closed·유령 행 방지
-.venv/bin/python master/test_ontology.py             #  83   YAML 왕복 보존 (PyYAML 의존 0)
+.venv/bin/python master/test_ontology.py             #  99   YAML 왕복 보존 (PyYAML 의존 0)
 .venv/bin/python master/test_layer3_verify.py        #  63
 .venv/bin/python master/test_projects.py             #  63
 .venv/bin/python master/test_indexer.py              #  49   ff-only 미러·다이제스트·트윈 성장

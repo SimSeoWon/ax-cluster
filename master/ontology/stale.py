@@ -81,10 +81,12 @@ def _members(paths: ProjectPaths, domain: str) -> dict:
     out: dict = {}
     root = paths.ontology / "domains" / domain
     manifest = yaml_io.read(root / "domain.yaml") or {}
+    from . import hierarchy
     for rel in manifest.get("objects") or []:
         obj = yaml_io.read(root / str(rel)) or {}
         name = obj.get("name")
-        if name:
+        # 🔴 하위 문서 참조는 클래스가 아니다 — 워터마크(소스 커밋)가 없다.
+        if name and not hierarchy.is_domain_ref(obj):
             out[name] = obj.get("file") or ""
     try:
         from ..graph import db as gdb

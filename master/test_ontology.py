@@ -17,7 +17,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
 from master.context_search.paths import ProjectPaths   # noqa: E402
-from master.ontology import collect as col, layers as ly, stale as st_mod, yaml_io as y  # noqa: E402
+from master.ontology import collect as col, hierarchy as hx, layers as ly, stale as st_mod, yaml_io as y  # noqa: E402
 
 PASS = FAIL = 0
 
@@ -251,6 +251,45 @@ def main() -> int:
     p2 = col.propose(NG, "D", {"X": "Source/X.h"})
     check("빈 제안을 돌려준다", p2.empty and p2.members == ["X"], p2.summary)
     check("  물어볼 것도 없다고 말한다", "찾지 못했다" in p2.question)
+
+    print("\n[10] 🔴 개념 계층 — 하위 문서를 object 로 (소 1.3.10)")
+    H = ProjectPaths(name="H", root=tmp / "H")
+    for d in ("Top", "Mid", "Leaf"):
+        y.write(H.ontology / "domains" / d / "domain.yaml", {"domain": d, "objects": []})
+    y.write(H.ontology / "domains" / "Leaf" / "L1" / "objects" / "AThing.yaml",
+            {"name": "AThing", "file": "Source/T.h"})
+    y.write(H.ontology / "domains" / "Leaf" / "domain.yaml",
+            {"domain": "Leaf", "objects": ["L1/objects/AThing.yaml"]})
+
+    r = hx.add_child(H, "Top", "Mid")
+    check("하위 문서를 건다", r.ok and r.status == "added", r.note)
+    check("  직계 하위로 보인다", hx.children(H, "Top") == ["Mid"], str(hx.children(H, "Top")))
+    check("  하위에도 부모가 적힌다",
+          (y.read(H.ontology / "domains" / "Mid" / "domain.yaml") or {}).get("parent_domain") == "Top")
+    check("같은 것을 또 걸면 noop", hx.add_child(H, "Top", "Mid").status == "noop")
+    hx.add_child(H, "Mid", "Leaf")
+    check("전이적 하위를 찾는다", set(hx.descendants(H, "Top")) == {"Mid", "Leaf"},
+          str(hx.descendants(H, "Top")))
+
+    print("\n[10-1] 🔴 순환을 막는다 (문서 참조는 새 축이다)")
+    c = hx.add_child(H, "Leaf", "Top")
+    check("순환이 되는 연결을 거부한다", c.status == "cycle", c.note)
+    check("  사유를 말한다", "순환" in c.note, c.note)
+    check("자기 자신도 거부", hx.add_child(H, "Top", "Top").status == "cycle")
+    check("없는 도메인은 not_found", hx.add_child(H, "Top", "없음").status == "not_found")
+
+    print("\n[10-2] 🔴 하위 문서 참조는 클래스가 아니다")
+    check("kind 로 구분한다", hx.is_domain_ref({"name": "Mid", "kind": "domain"}))
+    check("  kind 가 없으면 클래스 (기존 파일 호환)", not hx.is_domain_ref({"name": "AThing"}))
+    check("class_members 는 문서 참조를 뺀다", hx.class_members(H, "Top") == {},
+          str(hx.class_members(H, "Top")))
+    check("  recursive 면 하위의 클래스를 합친다",
+          "AThing" in hx.class_members(H, "Top", recursive=True),
+          str(hx.class_members(H, "Top", recursive=True)))
+    check("🔴 stale 도 문서 참조를 클래스로 세지 않는다",
+          st_mod._members(H, "Top") == {}, str(st_mod._members(H, "Top")))
+    check("트리를 낸다", hx.tree(H)["Top"] == ["Mid"], str(hx.tree(H)))
+    check("루트를 찾는다", hx.roots(H) == ["Top"], str(hx.roots(H)))
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")

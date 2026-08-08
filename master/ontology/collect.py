@@ -148,14 +148,15 @@ def classified_elsewhere(paths: ProjectPaths, exclude: str = "") -> set:
     out: set = set()
     root = paths.ontology / "domains"
     if root.is_dir():
-        from . import yaml_io
+        from . import hierarchy, yaml_io
         for d in root.iterdir():
             if not d.is_dir() or d.name == exclude:
                 continue
             man = yaml_io.read(d / "domain.yaml") or {}
             for rel in man.get("objects") or []:
                 o = yaml_io.read(d / str(rel)) or {}
-                if o.get("name"):
+                # 하위 문서 참조는 클래스가 아니라 후보 제외 대상도 아니다.
+                if o.get("name") and not hierarchy.is_domain_ref(o):
                     out.add(o["name"])
     try:
         if gdb.exists(paths):
@@ -180,8 +181,12 @@ def propose(paths: ProjectPaths, domain: str, members: dict) -> Proposal:
     후보는 사용자가 판단할 수 없고, 그러면 "다 넣어" 나 "다 빼" 로 끝난다.
     """
     p = Proposal(domain=domain, members=sorted(members))
-    # 🔴 이미 다른 도메인(=하위 문서 포함)에 속한 것은 묻지 않는다 — 후보 폭발의 실질 대책.
-    known = set(members) | classified_elsewhere(paths, exclude=domain)
+    # 🔴 이미 다른 도메인에 속한 것은 묻지 않는다 — 후보 폭발의 실질 대책.
+    #    **자기 하위 문서의 클래스도 뺀다** — 하위가 이미 관할하는 것을 상위가 다시 물으면
+    #    같은 결정을 두 번 시키는 셈이고, 허브 도메인에서 후보가 폭발하는 원인이다.
+    from . import hierarchy
+    known = (set(members) | classified_elsewhere(paths, exclude=domain)
+             | set(hierarchy.class_members(paths, domain, recursive=True)))
     seen: dict = {}
 
     for name in sorted(members):
