@@ -36,34 +36,17 @@ The board has `main` checked out so pushing there is rejected — **`git pull` o
 | **.43** | **BC-250 #1** — Fedora, headless | `sim` | Inference endpoint #1 (35B pinned), stateless | `ssh sim@192.168.0.43` ✅ passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
 | — | BC-250 #2 | — | 🎮 **Bazzite gaming machine — NOT an inference node.** Converting it means giving up that machine. **Never assume a 2nd board exists.** | n/a |
 
-### `.33` — reachable now, but 🔴 **not an inference endpoint**
+### `.33` — the main work PC has its own guide
 
-SSH and Ollama went up on 2026-08-08. **The account is `user`** (not `janus`, not `sim`).
-That changes what the master can do there — but **it does not make `.33` a node.**
+SSH and Ollama came up 2026-08-08; **the account is `user`**. But 🔴 **it is not an inference
+endpoint** — measured free VRAM **7651 MiB** is smaller than its own only model (8.95 GiB) and
+than the coder model (9.0 GB), and opening UE5 takes more. Use it for **checks and remote
+installs only** (`master/provision.py`, `resident=False`).
 
-Measured the same day, with only the Windows desktop running (no UE5 open):
-
-| | |
-|---|---|
-| GPU | RTX 3080, **10240 MiB** |
-| In use / free | 2401 MiB / **7651 MiB** |
-| Its only model | `gemma4:e4b` = **8.9 GiB** — 🔴 **does not fit its own free VRAM** |
-| `qwen2.5-coder:14b` | 9.0 GB — does not fit either |
-| `/api/ps` | empty — nothing resident |
-
-Opening the UE5 editor takes more. Pinning a model here would spill Ollama onto CPU **and**
-fight the user for VRAM on the machine they actually work on. The §4.4 model-switch cost is
-~100 s round trip, so "load when they step away, unload when they return" thrashes.
-
-**→ Use it for checks and remote installs only** (user's call, 2026-08-08):
-`master/provision.py` marks it `resident=False` and flags it if a model *is* loaded.
-Model pulls go over plain HTTP (`POST /api/pull`) — no SSH, no file access, so the
-"only text crosses the wire" rule holds.
-
-🔴 **Python is installed but shadowed.** `python` resolves to the Microsoft Store stub
-(`WindowsApps\python.exe`) and prints no version; the real one is
-`C:\Users\USER\AppData\Local\Programs\Python\Python312\python.exe`.
-**Use `py`, or the full path** — same trap as `.2`. (git 2.53.0 is fine.)
+🔴 **This is the human's machine** — the master is a guest here: read-only by preference, dirty
+check before anything that writes. Everything else — session-0 boundary, UE5 checkout path,
+the Store-stub Python trap, local + commercial LLMs — lives in
+**[`win-main-33.md`](win-main-33.md)**.
 
 ### `.2` — the Windows worker has its own guide
 
@@ -92,6 +75,7 @@ SSH PATH trap — lives in **[`win-worker-2.md`](win-worker-2.md)**, which is al
 |---|---|
 | Self-hosted services · ports · **🔴 firewall rules for the 3 auth-less AX services** | [`sim-desktop.d/services.md`](sim-desktop.d/services.md) |
 | BC-250 access — SSH · **the no-TTY sudo trap** · mandatory reading before hardware work | [`sim-desktop.d/bc250-access.md`](sim-desktop.d/bc250-access.md) |
+| Windows main work PC `.33` — **guest rules**, UE5 path, Python trap | [`win-main-33.md`](win-main-33.md) |
 | PATH · **`pkexec` for privileged work** · Python · GPU | [`sim-desktop.d/environment.md`](sim-desktop.d/environment.md) |
 | Cluster design — settled vs open | `~/ax-cluster/PLAN.md` → `docs/` |
 | Working *in* the repo | `~/ax-cluster/CLAUDE.md` |
