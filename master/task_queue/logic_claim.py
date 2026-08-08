@@ -3,7 +3,7 @@
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from .models import (
-    _VALID_DIRECTIVES, _VERIFY_BACKPRESSURE_SEC
+    _VALID_DIRECTIVES, _VERIFY_BACKPRESSURE_SEC, normalize_capabilities
 )
 from .persistence import (
     TaskIndex, _tq_log, _now_iso, _git_commit_tasks
@@ -64,7 +64,18 @@ def _is_verify_lease_active(t: dict) -> bool:
         return False
 
 
-def _claim_verify_job(idx: TaskIndex, worker_id: str) -> Optional[dict]:
+def _worker_meets_requires(t: dict, caps: set) -> bool:
+    """PLAN §5.2-C — task 의 `requires` 를 워커의 `capabilities` 가 전부 덮는가.
+
+    **fail-closed**: 워커가 신고하지 않은 능력은 없는 것으로 본다. 능력을 아예 안 신고한
+    구 워커(빈 집합)는 `requires` 가 빈 task 만 집는다 — 즉 오늘 동작 그대로다.
+    마스터 워커가 `requires: ue5` 잡을 집어가는 것을 막는 것이 이 함수의 존재 이유다.
+    """
+    need = t.get("requires") or []
+    return set(need) <= caps
+
+
+def _claim_verify_job(idx: TaskIndex, worker_id: str, caps: Optional[set] = None) -> Optional[dict]:
     """Plan v5 C.3 — 검증 워커가 집을 verify job 선택 (lock 보유 가정).
 
     후보 = submitted && distribution_mode==push && active 검증 lease 없음. **write job 보다
@@ -73,7 +84,14 @@ def _claim_verify_job(idx: TaskIndex, worker_id: str) -> Optional[dict]:
     다른 워커의 attempt 를 **우선**하되, 없으면(워커 1대 등) **자기 것도 검증**. 작성=무료 로컬
     LLM·검증=상용 모델(`verifier_model`)이라 같은 워커가 자기 것을 검증해도 모델 수준 독립
     검증이 유지된다(모토 불변). 선택 시 verifier lease 부여 + verifier_epoch 단조 증가(fencing).
+
+    PLAN §5.2-C — **verify 도 `requires` 로 거른다.** 검증 워커는 판정을 내리려면 그 task 의
+    브랜치·diff 를 손에 쥐어야 하고, 그건 파일을 소유한 작업장뿐이다(§2.1 — 파일은 윈도우를
+    떠나지 않는다). 걸러내지 않으면 마스터가 UE5 task 의 verify lease 를 점유한 채 아무것도
+    못 하고 lease 만 태운다. 걸러서 검증자가 없으면 backlog 카나리가 **시끄럽게** 알린다 —
+    조용한 오배정보다 낫다.
     """
+    caps = caps or set()
     cands = []
     for t in idx.tasks.values():
         if t.get("status") != "submitted":
@@ -82,6 +100,8 @@ def _claim_verify_job(idx: TaskIndex, worker_id: str) -> Optional[dict]:
             continue  # pull 모드 submitted 는 서버 verify-loop 가 처리(공존)
         if _is_verify_lease_active(t):
             continue  # 다른 검증 워커가 이미 점유
+        if not _worker_meets_requires(t, caps):
+            continue  # 능력 미달 — 이 워커는 이 task 의 파일을 못 만진다
         cands.append(t)
     if not cands:
         return None
@@ -108,12 +128,16 @@ def _claim_verify_job(idx: TaskIndex, worker_id: str) -> Optional[dict]:
     return out
 
 
-def claim_task(idx: TaskIndex, worker_id: str, verify_capable: bool = False) -> Optional[dict]:
+def claim_task(idx: TaskIndex, worker_id: str, verify_capable: bool = False,
+               capabilities: Optional[list] = None) -> Optional[dict]:
+    caps = set(normalize_capabilities(capabilities))
     with idx.lock:
         # Plan v5 C.3 — verify-capable 워커 접촉 기록 (backlog 카나리 liveness 입력).
         if verify_capable:
             idx.verify_capable_seen[worker_id] = _now_iso()
         idx.worker_last_seen[worker_id] = _now_iso()
+        # PLAN §5.2-C — 최근 신고 능력 기록 (관측용. /admin/workers 가 노출).
+        idx.worker_capabilities[worker_id] = sorted(caps)
         # Plan v5 C.3 — **write(코드 생성) 우선순위 1, verify 우선순위 2** (사용자 2026-07-05,
         # 옛 verify-우선 supersede). 워커는 작성 태스크를 먼저 소진하고, 더 없으면 검증을 집는다
         # ("일단 모두 작업 처리 → 그다음 모두 검증"). 워커 1대여도 작성 소진 후 자기 것 검증 가능
@@ -130,9 +154,15 @@ def claim_task(idx: TaskIndex, worker_id: str, verify_capable: bool = False) -> 
         ))
         chosen = None
         skipped_quota_block = 0
+        skipped_capability = 0
         for t in candidates:
             deps = t.get("depends_on") or []
             if not all(d in completed for d in deps):
+                continue
+            # PLAN §5.2-C — 능력 미달이면 이 워커의 후보가 아니다(다른 워커용으로 남겨둔다).
+            # quota 차단과 달리 시간이 지나도 풀리지 않는다 — 능력은 기계의 속성이다.
+            if not _worker_meets_requires(t, caps):
+                skipped_capability += 1
                 continue
             # Phase 3 lite — anti-affinity: 이 워커가 quota 신고한 task 는 5h 동안 skip
             if _is_worker_quota_blocked(t, worker_id):
@@ -143,9 +173,12 @@ def claim_task(idx: TaskIndex, worker_id: str, verify_capable: bool = False) -> 
         if chosen is None:
             # write 없음 → verify 우선순위 2 (verify_capable 워커만; 빈 verifier_model = write 전용)
             if verify_capable:
-                vjob = _claim_verify_job(idx, worker_id)
+                vjob = _claim_verify_job(idx, worker_id, caps)
                 if vjob is not None:
                     return vjob
+            if skipped_capability > 0:
+                _tq_log(f"[claim] {worker_id} 능력 미달로 {skipped_capability}건 skip "
+                        f"(보유={','.join(sorted(caps)) or '-'}) — 능력 보유 워커 대기", idx.root)
             if skipped_quota_block > 0:
                 _tq_log(f"[claim] {worker_id} quota-blocked task {skipped_quota_block}건 skip — 다른 워커 대기", idx.root)
             return None

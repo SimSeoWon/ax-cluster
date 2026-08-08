@@ -56,20 +56,26 @@ def register_task_tool(work_id: str, type: str, task_data: dict,
                         header_file: str = "", depends_on: Optional[list] = None,
                         hierarchy_level: int = 0, priority: int = 0,
                         stem: str = "", origin: str = "master",
-                        parent_attempt: Optional[str] = None) -> str:
-    """task 등재. master_orchestrator 또는 검증 에이전트 호출용."""
+                        parent_attempt: Optional[str] = None,
+                        requires: Optional[list] = None) -> str:
+    """task 등재. master_orchestrator 또는 검증 에이전트 호출용.
+
+    requires: 실행에 필요한 능력 태그(예 ["ue5"]). 빈값이면 아무 워커나 집는다 (PLAN §5.2-C)."""
     return json.dumps(register_task(_ensure_mcp_idx(),
         work_id=work_id, type=type, task_data=task_data,
         base_commit=base_commit, target_file=target_file, header_file=header_file,
         depends_on=depends_on, hierarchy_level=hierarchy_level,
         priority=priority, stem=stem, origin=origin,
-        parent_attempt=parent_attempt), ensure_ascii=False)
+        parent_attempt=parent_attempt, requires=requires), ensure_ascii=False)
 
 
 @mcp.tool()
-def claim_task_tool(worker_id: str) -> str:
-    """다음 가능 task atomic claim. 없으면 null."""
-    t = claim_task(_ensure_mcp_idx(), worker_id)
+def claim_task_tool(worker_id: str, capabilities: Optional[list] = None) -> str:
+    """다음 가능 task atomic claim. 없으면 null.
+
+    capabilities: 이 워커의 보유 능력(예 ["ue5"]). **미신고 = 능력 없음** — `requires` 가
+    붙은 task 는 집지 못한다 (PLAN §5.2-C)."""
+    t = claim_task(_ensure_mcp_idx(), worker_id, capabilities=capabilities)
     return json.dumps(t, ensure_ascii=False) if t else "null"
 
 

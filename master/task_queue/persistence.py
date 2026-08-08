@@ -429,6 +429,10 @@ class TaskIndex:
         # Plan v5 C.3 — claim 시 verify_capable=True 로 신고한 워커의 최근 접촉 ts.
         # backlog 카나리("verify-capable 0대인데 push submitted>0")의 liveness 판정 입력.
         self.verify_capable_seen: dict[str, str] = {}   # worker_id → ISO ts
+        # PLAN §5.2-C — claim 시 워커가 마지막으로 신고한 능력 목록 (관측 전용).
+        # 라우팅 판정은 claim 요청에 실려온 값으로 하지 이 캐시로 하지 않는다 — 워커가
+        # UE5 를 지운 뒤에도 옛 신고가 남아 잘못 배정되는 일을 막기 위해서다.
+        self.worker_capabilities: dict[str, list[str]] = {}   # worker_id → [cap]
         self.lock = threading.RLock()
 
     def rebuild(self):

@@ -12,6 +12,25 @@ _VERIFY_BACKPRESSURE_SEC = 180
 # 허용되는 directive (관리자가 push 가능한 명령어 화이트리스트)
 _VALID_DIRECTIVES = ("abort", "pause", "resume", "drain")
 
+# PLAN §5.2-C — 능력 기반 라우팅. task 의 `requires` 와 워커가 claim 시 신고하는
+# `capabilities` 를 **부분집합 매칭**한다 (requires ⊆ capabilities 여야 claim 가능).
+#
+# 🔴 화이트리스트인 이유: `requires` 는 등록 시점에 검증하지 않으면 오타 하나로
+# **아무 워커도 만족시킬 수 없는 task** 가 되어 영구 pending 으로 굶는다. 조용한 기아보다
+# 등록 실패가 낫다. 새 능력이 필요하면 여기 한 줄 추가하는 것이 정상 경로다.
+_KNOWN_CAPABILITIES = (
+    "ue5",       # UE5 에디터 + 빌드 툴체인 보유 (윈도우 작업장 2대). 층3 빌드 게이트·커맨드릿
+    "windows",   # 윈도우 전용 실행물(.bat/.ps1 등)이 필요한 잡
+)
+
+
+def normalize_capabilities(values) -> list[str]:
+    """능력 태그 정규화 — 소문자·공백제거·빈값제거·중복제거(정렬)."""
+    if not values:
+        return []
+    out = {str(v).strip().lower() for v in values}
+    return sorted(v for v in out if v)
+
 _VERIFY_RESULT_TO_STATUS = {
     "pass": "verified",
     "revise": "needs_revision",
@@ -51,6 +70,9 @@ class TaskRegisterReq(BaseModel):
     stem: str = ""
     origin: str = "master"
     parent_attempt: Optional[str] = None
+    # PLAN §5.2-C — 이 task 를 실행하려면 워커가 갖춰야 하는 능력. 빈 리스트 = 아무나.
+    # `_KNOWN_CAPABILITIES` 밖의 값은 등록 자체를 거부한다(오타 → 영구 기아 방지).
+    requires: list = []
 
 
 class ClaimReq(BaseModel):
@@ -58,6 +80,9 @@ class ClaimReq(BaseModel):
     # Plan v5 C.3 — 워커가 상용 모델 검증 자격(verifier_model 설정됨)을 신고. True 면 claim 이
     # verify job(submitted && author≠me && push)도 후보에 넣음. 빈값 워커는 write 전용.
     verify_capable: bool = False
+    # PLAN §5.2-C — 워커가 신고하는 보유 능력. **미신고(기본 빈값) = 능력 없음**이므로
+    # `requires` 가 붙은 task 는 집지 못한다. 구 워커는 지금과 똑같이 동작한다(하위호환).
+    capabilities: list = []
 
 
 class HeartbeatReq(BaseModel):

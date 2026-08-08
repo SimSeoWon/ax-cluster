@@ -7,7 +7,8 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Any
 from .models import (
-    _VALID_DIRECTIVES, _VERIFY_BACKPRESSURE_SEC, _VERIFY_RESULT_TO_STATUS
+    _VALID_DIRECTIVES, _VERIFY_BACKPRESSURE_SEC, _VERIFY_RESULT_TO_STATUS,
+    _KNOWN_CAPABILITIES, normalize_capabilities
 )
 from .persistence import (
     TaskIndex, _tasks_dir, _archive_dir, _tq_log, _now_iso, _gen_task_id,
@@ -24,6 +25,7 @@ from .logic_persist import (  # noqa: F401  (re-export)
 from .logic_claim import (  # noqa: F401  (re-export)
     _VERIFY_LEASE_SEC, _QUOTA_BLOCK_WINDOW_SEC,
     _stalled_submitted_in_work, _is_verify_lease_active, _claim_verify_job,
+    _worker_meets_requires,
     claim_task, _take_worker_directives, push_worker_directive,
     heartbeat, poll_worker, _is_worker_quota_blocked, _mark_worker_quota_blocked,
 )
@@ -147,9 +149,18 @@ def register_task(idx: TaskIndex, *, work_id: str, type: str, task_data: dict,
                   header_file: str = "", depends_on: Optional[list] = None,
                   hierarchy_level: int = 0, priority: int = 0,
                   stem: str = "", origin: str = "master",
-                  parent_attempt: Optional[str] = None) -> dict:
+                  parent_attempt: Optional[str] = None,
+                  requires: Optional[list] = None) -> dict:
     if work_id not in idx.works:
         return {"ok": False, "error": f"unknown work_id: {work_id}"}
+    # PLAN §5.2-C — 능력 태그는 **등록 시점에** 검증한다. 미지의 태그를 통과시키면 어떤 워커도
+    # 만족시킬 수 없는 task 가 조용히 pending 에 쌓인다(claim 쪽은 fail-closed 라 영원히 skip).
+    req_caps = normalize_capabilities(requires)
+    unknown = [c for c in req_caps if c not in _KNOWN_CAPABILITIES]
+    if unknown:
+        return {"ok": False,
+                "error": f"unknown requires: {','.join(unknown)} "
+                         f"(allowed: {','.join(_KNOWN_CAPABILITIES)})"}
     with idx.lock:
         task_id = _gen_task_id()
         meta = {
@@ -161,6 +172,8 @@ def register_task(idx: TaskIndex, *, work_id: str, type: str, task_data: dict,
             "target_file": target_file,
             "header_file": header_file,
             "depends_on": depends_on or [],
+            # PLAN §5.2-C — 능력 요구. 빈 리스트면 아무 워커나 집을 수 있다(기존 동작).
+            "requires": req_caps,
             "hierarchy_level": hierarchy_level,
             "priority": priority,
             "worker_id": None,
@@ -195,7 +208,8 @@ def register_task(idx: TaskIndex, *, work_id: str, type: str, task_data: dict,
         wmeta = idx.works[work_id]
         wmeta["total"] = int(wmeta.get("total", 0)) + 1
         _save_work(idx, work_id)
-        _tq_log(f"[register] {task_id} work={work_id} type={type} target={target_file} level={hierarchy_level}", idx.root)
+        _tq_log(f"[register] {task_id} work={work_id} type={type} target={target_file} "
+                f"level={hierarchy_level} requires={','.join(req_caps) or '-'}", idx.root)
         _git_commit_tasks(idx.root,
                           f"[task-register] {task_id} → {work_id}: {stem or 'task'}",
                           [path, idx.work_paths[work_id]])

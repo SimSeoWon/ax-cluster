@@ -148,14 +148,16 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
             base_commit=req.base_commit, target_file=req.target_file,
             header_file=req.header_file, depends_on=req.depends_on,
             hierarchy_level=req.hierarchy_level, priority=req.priority,
-            stem=req.stem, origin=req.origin, parent_attempt=req.parent_attempt)
+            stem=req.stem, origin=req.origin, parent_attempt=req.parent_attempt,
+            requires=req.requires)
         if not result.get("ok"):
             raise HTTPException(400, result.get("error", "register failed"))
         return result
 
     @app.post("/api/v1/tasks/claim")
     def claim_ep(req: ClaimReq):
-        t = claim_task(idx, req.worker_id, verify_capable=req.verify_capable)
+        t = claim_task(idx, req.worker_id, verify_capable=req.verify_capable,
+                       capabilities=req.capabilities)
         if t is None:
             raise HTTPException(204, "no available task")
         return t
@@ -305,6 +307,9 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
                     "last_seen": idx.worker_last_seen.get(wid),
                     "directives_pending": list(idx.worker_directives.get(wid) or []),
                     "active_tasks": active_tasks,
+                    # PLAN §5.2-C — 마지막 claim 때 신고한 능력. "왜 이 잡을 아무도 안 집나"
+                    # 를 진단하는 첫 단서다 (능력 미달 skip 은 로그에만 남는다).
+                    "capabilities": idx.worker_capabilities.get(wid, []),
                 })
             return {"workers": rows, "count": len(rows)}
 

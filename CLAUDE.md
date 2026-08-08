@@ -11,12 +11,14 @@ Planning-stage repository for **AX** (AI Transformation) — raising AI usage ac
 | What exists | Where |
 |---|---|
 | Layer-2 verdict contract (fail-closed) | `master/verdict.py`, `master/layer2_verify.py` |
-| Tests — 19, all passing | `python3 master/test_verdict.py` (no pytest needed) |
+| Tests — 35, all passing | `master/test_verdict.py` (19) + `master/test_capability_routing.py` (16). No pytest needed |
 | `task_queue` (ported, 2,717 lines) | `master/task_queue/` — **live** as `ax-task-queue.service` on `:8101` |
+| Capability routing (`requires`/`capabilities`) | `master/task_queue/logic_claim.py`, tests in `master/test_capability_routing.py` |
 | venv + deps | `.venv/`, `master/requirements.txt` |
 
 ```bash
-python3 master/test_verdict.py                    # the only test suite
+python3 master/test_verdict.py                    # 19 tests, no pytest needed
+.venv/bin/python master/test_capability_routing.py  # 16 tests — needs the venv (pydantic)
 systemctl status ax-task-queue                    # the running service
 journalctl -u ax-task-queue -f                    # its logs
 AX_TASK_QUEUE_ROOT=/home/sim/ax-state \
@@ -77,7 +79,6 @@ Settled 2026-08-08:
 
 Resolved during 2026-08-08 (see "Settled" above): the execution model, BC-250 #2's state, how `gjc` is driven, and the Unreal MCP integration point. Still open:
 
-- **Capability routing (`requires: ue5`)** — the queue still branches only on `job_kind` (write/verify), so a master-side worker could pick up a job that needs UE5. Prerequisite for running the build gate as a CI-runner pattern (§5.2-C).
 - **`task_queue` has no auth layer at all** (0 hits for auth/token/Depends). Port 8101 is open **LAN-only** via `ufw allow from 192.168.0.0/24`; the firewall is the *only* defence. Never widen that rule to `Anywhere`, and add auth before trusting the LAN less (§9.5.6).
 - **Event queue design** — prerequisite for the Gitea webhook switch: durable + single-consumer + coalescing (§5.4.5). Do not merge it into `task_queue`; the two have different consumer models.
 - **RAG/ontology port** (`mcp/context_search/`) and the **BC-250 inference broker** — neither has been started.
