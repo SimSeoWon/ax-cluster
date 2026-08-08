@@ -7,9 +7,13 @@ fastapi
 uvicorn
 pydantic
 
-# MCP stdio 모드에서만 필요 (task_queue/mcp_server.py 가 지연 import).
-# HTTP 서비스만 돌릴 거면 빼도 기동된다.
+# MCP. `master/projects`(8103) 는 이걸 필수로 쓴다 — streamable-http 로 노출한다.
+# ⚠️ 설치본은 mcp 2.0.0 이라 `mcp.server.fastmcp` 가 없다. 고수준 API 는
+#    `mcp.server.MCPServer` — task_queue/mcp_server.py 는 아직 옛 경로라 stdio 가 깨져 있다.
 mcp
+
+# 프로젝트 레지스트리 설정 파일(projects.yaml · <Name>/config.yaml).
+pyyaml
 
 # 추론 브로커 (master/broker) — 노드로 프록시. 스트리밍 통과가 필요해 stdlib 로는 부족하다.
 httpx2

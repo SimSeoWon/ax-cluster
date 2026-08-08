@@ -1,0 +1,40 @@
+[Unit]
+Description=AX cluster project registry (MCP — 프로젝트 등록·마운트 전환)
+Documentation=https://github.com/SimSeoWon/ax-cluster
+# 설정과 디지털 트윈 디렉토리가 로컬 디스크에 있다.
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sim
+Group=sim
+WorkingDirectory=/home/sim/ax-cluster
+
+# 🔴 폴백 없음 — 루트를 역산하지 않는다 (PLAN §5.5.3-④).
+Environment=AX_PROJECTS_ROOT=/home/sim/ax-cluster
+Environment=AX_PROJECTS_HOST=0.0.0.0
+Environment=AX_PROJECTS_PORT=8103
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/home/sim/ax-cluster/.venv/bin/python -m master.projects
+
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ax-projects
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# projects.yaml 과 각 프로젝트 디렉토리를 쓴다. bare 저장소는 읽기만 한다.
+ProtectHome=false
+ReadWritePaths=/home/sim/ax-cluster
+
+[Install]
+WantedBy=multi-user.target
