@@ -49,6 +49,20 @@ MD 의 `source_commit` 갱신 → `compute_stale_domains` 가 "오브젝트 저�
 🔴 **LLM 을 쓰는 것만 시간 게이트 뒤에 있다.** *"옛 매 폴링 인프라 폐기 — event-based race
 본질 해소"*. 결정적 작업은 커밋 즉시.
 
+## 🔴 이 마일스톤의 범위 = **데이터 생성** (사용자 확정 2026-08-08)
+
+`/distribute`(12단계)·`/review-work`(7단계)도 큰 작업 하나지만 **이 마일스톤이 아니다.**
+둘은 트윈을 **먹는 소비자**다 — `/distribute` 백엔드 `cluster_context.py` 가 하는 일이
+*"매니페스트 수집 RAG+온톨로지"* 다. 생성부가 스냅샷 고정인 채로 세우면 **고정된 8월 8일치
+근거로 코드를 짜게 된다.** 그래서 다음 마일스톤 후보로 이름만 남기고, 상세는 여기 쓰지 않는다
+(읽는 비용이 매 세션 붙는다). 착수 전에 `distributed-workers.md`(425줄)를 읽는다.
+
+## 선행 조건 (태스크가 아니다 — 없으면 A1 이 아예 안 돈다)
+
+- 🔴 **tree-sitter 미설치** — 마스터에 `tree_sitter`·`tree_sitter_cpp` 둘 다 없다(실측
+  2026-08-08). 원본은 `class_graph_parse.py` 에서 지연 import 하고 실패 시 조용히 죽는다.
+  A1 착수 시 **먼저 설치하고 UE 매크로 전처리가 리눅스에서 같은 결과를 내는지 확인**할 것
+
 ## 서브 태스크 16개 — 1 / 16
 
 **A. 결정적 (LLM 0) · 커밋 즉시**
@@ -121,11 +135,15 @@ MD 의 `source_commit` 갱신 → `compute_stale_domains` 가 "오브젝트 저�
 3. **소스보다 문서를 먼저 읽는다** — 인수인계 문서·독스트링에 답이 있었다
 4. **줄 수를 작업량으로 쓰지 않는다**
 5. 🔴 **순서는 사용자가 정한다** — 사슬은 적되 임의로 하나 골라 파고들지 않는다
-6. **이 문서를 150줄 안에 유지한다**
+6. **이 문서를 150줄 안에 유지한다** — 완료된 줄은 즉시 지워
+   [`1-infrastructure.md`](1-infrastructure.md) 로 보낸다. 여기 쌓지 않는다
+7. **이 문서의 머리(목표·산출물)는 바꾸지 않는다** — 바뀌면 마일스톤 자체가 바뀐 것이다
 
 ## 미독 인수인계 문서
 
-`data-schema.md`(206) ✅ · `ontology.md`(94)·`rag-system.md`(187) 부분 읽음.
-**미독: `README.md` 842 · `watcher-internals.md` 543 · `distributed-workers.md` 425 ·
-`runbook.md` 280 · `extending.md` 251.** 위 16개는 파이프라인 실측으로 세웠으므로 유효하지만,
-`/distribute`·`/review-work` 계열 태스크는 `distributed-workers.md` 를 읽고 정정해야 한다.
+`data-schema.md`(206) ✅ · `ontology.md`(94)·`rag-system.md`(187) 부분.
+**미독: `README.md` 842 · `watcher-internals.md` 543 · `runbook.md` 280 · `extending.md` 251
+(+ 범위 밖 `distributed-workers.md` 425).**
+위 16개는 `watch.py` 파이프라인 실측으로 세웠으므로 유효하다. 다만 **B1·B2 착수 전
+`watcher-internals.md`(컨텍스트 MD 생성·LLM 폴백·서킷브레이커) 를 읽는다** — 생성부의
+내부 동작이 그 문서에 있다.
