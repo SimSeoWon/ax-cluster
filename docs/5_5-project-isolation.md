@@ -147,7 +147,9 @@ RAG/온톨로지 그 자체다.
 
 윈도우 메인 작업용 PC(**192.168.0.33**)에서 `--export-state` 산출물
 (`infra_state_20260808.zip`, 1.5MB)을 받아 규약 경로에 배치했다.
-(다른 윈도우 PC는 **192.168.0.2** — UE5 설치됨, SSH 22 열림, 무인증 키는 미교환.)
+(다른 윈도우 PC는 **192.168.0.2** — UE5 설치됨, SSH 22 열림.
+ ~~무인증 키는 미교환~~ → **2026-08-08 교환 완료: `ssh janus@192.168.0.2` 무비밀번호 접속됨.**
+ 계정은 `sim` 이 아니라 `janus` 다. 상세는 `machines/sim-desktop.md` § Machine inventory.)
 
 ```
 ~/ax-cluster/ModularStage/

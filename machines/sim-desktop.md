@@ -28,13 +28,33 @@ The board has `main` checked out so pushing there is rejected — **`git pull` o
 
 ### Machine inventory (probed 2026-08-08)
 
-| IP | Machine | Role | Reachable from here |
-|---|---|---|---|
-| **.57** | **sim-desktop** — this box | **Master**: orchestration, RAG index, ontology/graph, task queue, broker, project registry | — |
-| **.2** | Windows + **RTX 3060**, UE5 installed | 🔧 **Worker-capable workshop** *and* inference endpoint #2 (14b pinned) | SSH 22 ✅ · RDP 3389 ✅ · Ollama 11434 ✅ |
-| **.33** | Windows, **the user's main work PC** | Workshop — UE5 work happens here | RDP 3389 only. **No SSH, no Ollama** — the master cannot drive it remotely |
-| **.43** | **BC-250 #1** — Fedora, headless | Inference endpoint #1 (35B pinned), stateless | SSH 22 ✅ · Ollama 11434 ✅ · no RDP (headless since 2026-08-05) |
-| — | BC-250 #2 | 🎮 **Bazzite gaming machine — NOT an inference node.** Converting it means giving up that machine. **Never assume a 2nd board exists.** | n/a |
+| IP | Machine | Login | Role | Reachable from here |
+|---|---|---|---|---|
+| **.57** | **sim-desktop** — this box | `sim` | **Master**: orchestration, RAG index, ontology/graph, task queue, broker, project registry | — |
+| **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) | 🔧 **Worker-capable workshop** *and* inference endpoint #2 (14b pinned) | **`ssh janus@192.168.0.2`** ✅ passwordless · RDP 3389 · Ollama 11434 |
+| **.33** | Windows, **the user's main work PC** | — | Workshop — UE5 work happens here | RDP 3389 only. **No SSH, no Ollama** — the master cannot drive it remotely |
+| **.43** | **BC-250 #1** — Fedora, headless | `sim` | Inference endpoint #1 (35B pinned), stateless | `ssh sim@192.168.0.43` ✅ passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
+| — | BC-250 #2 | — | 🎮 **Bazzite gaming machine — NOT an inference node.** Converting it means giving up that machine. **Never assume a 2nd board exists.** | n/a |
+
+### `.2` — SSH access notes (verified 2026-08-08)
+
+🔴 **The account is `janus`, not `sim`.** `ssh sim@192.168.0.2` fails with
+`Permission denied (publickey,...)` — an easy 10 minutes to lose. The master's public key is in
+`C:\ProgramData\ssh\administrators_authorized_keys` (the admin-account path, not `~/.ssh/`).
+
+🔴 **The SSH session's PATH is minimal — installed tools are invisible to `where`.**
+`claude`, `node`, and `npm` are all installed but resolve only by absolute path over SSH:
+
+```bash
+ssh janus@192.168.0.2 'C:\Users\janus\.local\bin\claude.exe --version'   # Claude Code 2.1.225
+```
+
+`git` *is* on PATH (`C:\Program Files\Git\cmd\git.exe`). Same trap as this box's `~/.local/bin`
+needing an explicit `.bashrc` entry — a tool missing from `where` output is not absent.
+
+✅ **The master's services are reachable from `.2`** — 8101, 8102, and 8103 all test open
+(`Test-NetConnection`, 2026-08-08). A Claude Code session there can talk to the task queue,
+broker, and project registry directly.
 
 **The two Windows PCs work on the SAME UE5 project** — they own files, run the engine, do
 build/RunTests, and register code. That is why claim/lease/fencing is a correctness requirement,
