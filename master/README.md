@@ -2,16 +2,21 @@
 
 192.168.0.57(리눅스 인프라 컴퓨터)에서 돌아갈 오케스트레이션 코드가 여기 들어간다.
 
-## 지금 있는 것 (2026-08-08 — 이 디렉터리의 첫 코드)
+## 지금 있는 것 (2026-08-08 기준)
 
 | 파일 | 내용 |
 |---|---|
 | `verdict.py` | **층2 판정 계약 (fail-closed).** `contract_text()` 로 프롬프트에 계약을 붙이고 `parse_verdict()` 로 읽는다. **모든 실패 경로가 차단으로 떨어진다** |
 | `layer2_verify.py` | 층2 검증기 — UE5/C++ 문법 프롬프트 + 백엔드 체인(`agy` → `claude`). `verify_files([(경로, 내용)])` |
-| `test_verdict.py` | 계약·체이닝 테스트 19건. `python3 master/test_verdict.py` |
+| `test_*.py` | **테스트 337건, 전부 통과.** pytest 불필요 — 각 파일을 그대로 실행한다. 목록은 저장소 루트 `CLAUDE.md` 참조 |
 | `task_queue/` | **잡 분배 큐** (AgentTest `mcp/task_queue/` 이식, 2,717줄). HTTP 서비스 + MCP stdio |
+| `auth.py` | 🔴 **공용 인증 — 공유 베어러 토큰, fail-closed.** 세 서비스가 같은 ASGI 미들웨어를 쓴다. 토큰이 없거나 약하거나 파일 권한이 열려 있으면 **서비스가 뜨지 않는다**. 열린 경로는 `/livez` 하나 |
+| `layer3_verify.py` | **층3 판정 계약 (fail-closed).** UE5 자동화 로그(`Result={Success\|Fail}` + `TEST COMPLETE. EXIT CODE:`)와 UBT 빌드 로그(`Result: Succeeded\|Failed`)를 각각 파싱한다. 🔴 **프로세스 반환 코드를 읽지 않는다** — 실측에서 거짓 실패·거짓 성공이 둘 다 나왔다 |
+| `broker/` | **추론 브로커** (Ollama API 호환). ✅ **가동 중** — `ax-broker.service` `:8102` |
+| `projects/` | **프로젝트 레지스트리 MCP** — 등록·마운트 전환 + **워크숍 체크아웃**(경로·`driven`) + 더티 체크. ✅ **가동 중** — `ax-projects.service` `:8103`, 도구 8종 |
+| `events/` | **이벤트 큐** — Gitea 훅 → 색인기 사이의 디렉토리 스풀. 영속·`flock` 단일 소비자·`project_id` 합치기. 🔴 **소비자는 아직 없다**(RAG 이식 범위 미결) |
 | `requirements.txt` | 마스터 의존성. AgentTest 엔 없어 `build.bat:29` 기준으로 신규 작성 |
-| `systemd/ax-task-queue.service` | systemd 유닛 (§5.4.4 확정: systemd + venv). ✅ **설치·enable·가동 중** — `systemctl status ax-task-queue`, 로그는 `journalctl -u ax-task-queue` |
+| `systemd/` | 유닛 **3개** (§5.4.4 확정: systemd + venv). ✅ 전부 설치·enable·가동 중 — `systemctl status ax-task-queue ax-broker ax-projects` |
 
 ### task_queue 실행
 
@@ -62,9 +67,10 @@ if v.blocked:
 
 - **컨텍스트 매니페스트 조립** — RAG·온톨로지·클래스그래프로 "적합한 코드 뭉치"를 만들어 건넨다.
   대규모 모듈은 **골조 생성 → 인터페이스 동결 → 클래스 단위 분할**까지 여기서(`../PLAN.md` §4.5)
-- **추론 브로커** — BC-250 노드 라우팅·헬스체크·페일오버. BC-250 을 호출하는 것은 마스터뿐이다
+- **추론 브로커** — 엔드포인트 라우팅·헬스체크·페일오버. ✅ **구현됨**(`broker/`, `:8102`).
+  ⚠️ 엔드포인트는 **BC-250 만이 아니다** — RTX 3060 윈도우 PC 가 #2 다. 추론 노드를 호출하는 것은 마스터뿐이라는 원칙은 그대로
 - **task_queue** — 잡 분배 + **능력 기반 라우팅**(`requires: ue5` 는 윈도우가 claim).
-  ⚠️ 라우팅은 아직 미구현 — `../PLAN.md` §3
+  ✅ **구현·실측 완료(2026-08-08)** — `requires ⊆ capabilities` 부분집합 매칭, fail-closed
 - **층2 검증 호출** — 상용 모델 문법·API 검사(`agy` → Claude 폴백). ✅ **구현됨** — 위 `layer2_verify.py`
 - **RAG 인덱스**(ChromaDB + BM25) · 온톨로지/관계그래프 · 디지털 트윈.
   "소스=정답" 원칙에 따라 **실제 소스 본문을 번들**한다

@@ -32,6 +32,26 @@
    (`ws://127.0.0.1:<port>/?token=`) `--mode rpc/bridge` 는 제거돼 **마스터가 원격 컨트롤러가 될 수 없다**
    (`../PLAN.md` §9.1). 마스터는 대신 **모델 백엔드**로 붙는다.
 
+## 🔴 층3 는 마스터가 원격으로 몰 수 있다 — `.2` 한정 (2026-08-08 실증)
+
+`UnrealEditor-Cmd` 와 `Build.bat` 은 **윈도우 세션 0**(SSH)에서 정상 동작한다.
+`-nullrhi` 로 RHI 를 안 띄우면 데스크톱이 없어도 된다.
+
+| 실행 (SSH, 세션 0) | 결과 |
+|---|---|
+| `Automation List` | 45초, 테스트 8,726개 열거 |
+| `Automation RunTests System.Core.Algo` | 25초, 5건 전부 `Result={Success}` |
+| `Build.bat ModularStageEditor` (증분) | 1.9초, `Result: Succeeded` |
+
+🔴 **판정은 로그로만 한다.** `ssh` 종료 코드는 **양방향으로 틀린다** —
+에디터 성공에 1(거짓 실패), **빌드 실패에 0(거짓 성공)**. `grep error` 도 안 된다:
+통과한 실행에도 `LogAutomationTest: Error` 가 나온다. 게이트는 `master/layer3_verify.py`.
+
+❌ **반대로 UE5 GUI 에디터와 Unreal MCP 는 마스터가 띄울 수 없다** — 세션 0 에는 데스크톱이
+없다. 그 둘의 주인은 데스크톱 세션의 사람이다(`../docs/5_5-project-isolation.md` §5.5.4-⑥).
+
+`.33` 은 SSH 가 없어 위 전부 해당 없음 — 대화형으로만 쓴다.
+
 ## 여기 필요한 선결 설치
 
 | 도구 | 상태 | 왜 |
