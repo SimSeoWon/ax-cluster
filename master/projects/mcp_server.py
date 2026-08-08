@@ -31,6 +31,7 @@ from .logic import (
     set_workshop,
 )
 from .config import Registry
+from .workshop_check import check_project_workshops
 
 mcp = MCPServer(
     name="ax-projects",
@@ -140,6 +141,26 @@ def list_workshops_tool(name: str = "") -> str:
     """
     try:
         return json.dumps(list_workshops(name), ensure_ascii=False)
+    except (ConfigError, OSError) as e:
+        return _fail(e)
+
+
+@mcp.tool()
+def check_workshops_clean_tool(name: str = "") -> str:
+    """작업을 보내기 전에 워크숍 체크아웃이 안전한지 확인한다 (PLAN §5.5.4-⑥-1).
+
+    자동화는 브랜치를 바꾸고 리셋한다 — 사람이 커밋하지 않은 작업이 있으면 날아간다.
+    **추적 파일에 변경이 있으면 차단**하고, **미추적(`??`)은 통과**시킨다
+    (checkout/reset 이 지우지 않기 때문).
+
+    🔴 검사하지 못하면(SSH 실패·타임아웃·저장소 아님) **통과가 아니라 차단**이다.
+    🔴 이 도구는 판정만 한다. 정리하지 않으며, `git clean` 은 절대 부르면 안 된다.
+
+    `dispatchable` 이 지금 작업을 보내도 되는 호스트 목록이다.
+    name 을 비우면 지금 가리키는 프로젝트를 본다.
+    """
+    try:
+        return json.dumps(check_project_workshops(name), ensure_ascii=False)
     except (ConfigError, OSError) as e:
         return _fail(e)
 

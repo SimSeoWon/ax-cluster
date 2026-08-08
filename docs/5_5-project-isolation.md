@@ -592,8 +592,10 @@ git -C <path> status --porcelain | grep -v '^??' | head -1
 - [ ] **층3 원격 구동 실검증** — `UnrealEditor-Cmd` 가 세션 0 에서 도는 것은 확인했으나
       빌드·`RunTests` 를 실제로 SSH 로 돌려 보지는 않았다 (⑥-③)
 - [ ] **`gjc`(+필요시 `bun`) 설치** — `.2` 에 미설치. node v24.11.1 은 있다 (⑥-2)
-- [ ] **자동화 진입 전 더티 체크 구현** — **추적 파일만** 판정, 미추적은 통과.
-      `git clean` 금지 (⑥-1)
+- [x] ~~**자동화 진입 전 더티 체크 구현**~~ — **완료 2026-08-08.**
+      `master/projects/workshop_check.py` + MCP 도구 `check_workshops_clean_tool`(8종째).
+      추적 파일만 차단 · 미추적 통과 · **확인 실패는 차단**(fail-closed) · `git clean` 없음.
+      테스트 47건(`test_workshop_check.py`) — SSH 없이 runner 주입으로 판정 규칙만 검사
 
 ---
 
