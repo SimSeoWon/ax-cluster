@@ -17,7 +17,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
 from master.context_search.paths import ProjectPaths   # noqa: E402
-from master.ontology import stale as st_mod, yaml_io as y   # noqa: E402
+from master.ontology import layers as ly, stale as st_mod, yaml_io as y  # noqa: E402
 
 PASS = FAIL = 0
 
@@ -151,6 +151,53 @@ def main() -> int:
     check("문서가 없으면 -1", st_mod.latest_commit(P, "Source/없는/X.h") == "-1")
     check("빈 소스 경로도 -1", st_mod.latest_commit(P, "") == "-1")
     check("멤버 없는 도메인은 건너뛴다", st_mod.compute(P, ["없는도메인"]) == [])
+
+    print("\n[8] 🔴 레이어 추정 — 구조 우선, git 은 강등만 (소 1.3.5, LLM 0)")
+    #  ABase ← AMid ← ALeaf1/ALeaf2   ·  AOrphan(고립)
+    members = {"ABase": "", "AMid": "ABase", "ALeaf1": "AMid", "ALeaf2": "AMid",
+               "AOrphan": ""}
+    es = {e.name: e for e in ly.estimate_domain(members)}
+    check("루트(자손 있음, 깊이 0) → L1", es["ABase"].layer == 1, es["ABase"].summary)
+    check("  자손 3 이상이면 확신이 높다", es["ABase"].confidence == 0.8, str(es["ABase"].confidence))
+    check("중간 기반(부모도 자식도) → L2", es["AMid"].layer == 2, es["AMid"].summary)
+    check("리프 → L3", es["ALeaf1"].layer == 3 and es["ALeaf2"].layer == 3)
+    check("🔴 고립 클래스도 L3 (리프다)", es["AOrphan"].layer == 3, es["AOrphan"].summary)
+    d = ly.distribution(list(es.values()))
+    check("🔴 L3 가 0 이 아니다 (동등 투표 평균의 실패 재발 감지)", d[3] >= 2, str(d))
+    check("분포가 합계와 맞는다", d[1] + d[2] + d[3] + d["locked"] == len(members), str(d))
+
+    check("도메인 밖 부모는 잇지 않는다 (엔진 클래스 오염 방지)",
+          ly.build_member_graph({"A": "AActor"})[0] == {}, "")
+    check("자손 수를 센다", ly.descendant_count("ABase", ly.build_member_graph(members)[1]) == 3)
+    check("깊이를 센다", ly.internal_depth("ALeaf1", ly.build_member_graph(members)[0]) == 2)
+
+    cyc = {"A": "B", "B": "A"}
+    pm, cm = ly.build_member_graph(cyc)
+    check("🔴 순환에서 멈춘다 (상속 그래프를 DAG 로 믿지 않는다)",
+          ly.internal_depth("A", pm) >= 0 and ly.descendant_count("A", cm) >= 0)
+
+    print("\n[8-1] git 보정 — 하향만, 상향 없음")
+    calls = []
+    real = ly.count_commits
+    ly.count_commits = lambda repo, file, **kw: calls.append(file) or 99
+    try:
+        e2 = {e.name: e for e in ly.estimate_domain(
+            members, files={n: f"Source/{n}.h" for n in members}, repo=Path("."))}
+        check("🔴 고churn L2 는 L3 로 강등", e2["AMid"].layer == 3, e2["AMid"].summary)
+        check("  강등 표시가 남는다", e2["AMid"].signals["git_demoted"] is True)
+        check("🔴 리프를 L2 로 올리지 않는다 (git=0 과 '진짜 안정' 을 구분 못 한다)",
+              e2["ALeaf1"].layer == 3)
+        check("  루트는 강등 대상이 아니다", e2["ABase"].layer == 1)
+    finally:
+        ly.count_commits = real
+    check("repo 가 없으면 git 을 안 부른다",
+          ly.estimate("X", parent_map={}, children_map={}).signals["commits_90d"] == 0)
+
+    print("\n[8-2] 🔴 검수 잠금은 추정하지 않는다")
+    lk = {e.name: e for e in ly.estimate_domain(members, locked={"AMid"})}
+    check("잠긴 멤버는 건너뛴다", lk["AMid"].locked and lk["AMid"].layer == 0, lk["AMid"].summary)
+    check("  나머지는 그대로 추정", lk["ABase"].layer == 1)
+    check("  분포가 잠금을 따로 센다", ly.distribution(list(lk.values()))["locked"] == 1)
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
