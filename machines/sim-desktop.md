@@ -32,7 +32,7 @@ commit → relation graph → BM25 → then the ontology doc itself, which is **
 with heuristics, not fully automatic** (auto-promotion was permanently disabled 2026-06-01)
 ② **feed the relevant slice of that twin to the code-writing agent.**
 
-🔴 **The twin is a snapshot and barely grows — 6 of 32 sub-tasks done.** The relation graphs landed
+🔴 **The twin is a snapshot and barely grows — 10 of 32 sub-tasks done.** The relation graphs landed
 (1,806 classes / 6,380 methods / 10,817 include edges); still missing: context-MD synthesis,
 ontology synthesis, thesaurus. The 247 yaml
 are **unindexed — 0 search hits**. So code the pipeline writes never enters the twin, and the RAG
