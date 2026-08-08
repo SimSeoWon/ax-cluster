@@ -54,15 +54,15 @@ There is no linter or CI config — **don't invent tooling commands.**
 
 `worker/` and `client/` are still README-only stubs.
 
-**Tests — 106, all passing. No pytest**; each file runs standalone.
+**Tests — 131, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
 python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_capability_routing.py  # 16 — needs venv (pydantic)
 .venv/bin/python master/test_broker_health.py       #  8 — needs venv
-.venv/bin/python master/test_projects.py            # 30 — needs venv (pyyaml)
-.venv/bin/python master/test_mcp_servers.py         # 24 — both MCP servers import + register
+.venv/bin/python master/test_projects.py            # 52 — needs venv (pyyaml)
+.venv/bin/python master/test_mcp_servers.py         # 27 — both MCP servers import + register
 
 curl -s localhost:8102/health | python3 -m json.tool   # which node holds which model
 systemctl status ax-task-queue ax-broker ax-projects
