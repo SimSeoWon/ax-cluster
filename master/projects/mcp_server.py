@@ -22,7 +22,14 @@ import json
 from mcp.server import MCPServer
 
 from .config import ConfigError
-from .logic import list_projects, register_project, set_active
+from .logic import (
+    list_projects,
+    list_workshops,
+    register_project,
+    remove_workshop,
+    set_active,
+    set_workshop,
+)
 from .config import Registry
 
 mcp = MCPServer(
@@ -83,6 +90,56 @@ def list_projects_tool() -> str:
     """등록된 프로젝트와 각각의 갱신 워터마크, 지금 가리키는 것을 돌려준다."""
     try:
         return json.dumps(list_projects(), ensure_ascii=False)
+    except (ConfigError, OSError) as e:
+        return _fail(e)
+
+
+@mcp.tool()
+def set_workshop_tool(
+    name: str,
+    host: str,
+    driven: str = "interactive",
+    path: str = "",
+    user: str = "",
+    note: str = "",
+) -> str:
+    """작업장 한 대의 UE5 체크아웃 위치를 등록·갱신한다 (PLAN §5.5.4).
+
+    마스터는 이 경로를 **읽지도 쓰지도 않는다** — 어디로 작업을 보낼지 정하는
+    라우팅 정보다.
+
+    host:   작업장 IP 또는 호스트명 (예: 192.168.0.2).
+    driven: 'ssh' = 마스터가 밀어넣을 수 있다 / 'interactive' = 사람이 앉아서 한다.
+            'ssh' 를 고르면 path 와 user 가 반드시 있어야 한다.
+    path:   그 머신의 프로젝트 경로. 윈도우는 역슬래시 그대로 (예: E:\\trunk\\ModularStage).
+    """
+    try:
+        return json.dumps(
+            set_workshop(name, host, driven=driven, path=path, user=user, note=note),
+            ensure_ascii=False,
+        )
+    except (ConfigError, OSError) as e:
+        return _fail(e)
+
+
+@mcp.tool()
+def remove_workshop_tool(name: str, host: str) -> str:
+    """워크숍 등록을 해제한다. 원격 디렉토리는 건드리지 않는다."""
+    try:
+        return json.dumps(remove_workshop(name, host), ensure_ascii=False)
+    except (ConfigError, OSError) as e:
+        return _fail(e)
+
+
+@mcp.tool()
+def list_workshops_tool(name: str = "") -> str:
+    """이 프로젝트를 체크아웃해 둔 작업장들을 돌려준다.
+
+    name 을 비우면 지금 가리키는 프로젝트를 본다. `drivable_hosts` 는 마스터가
+    SSH 로 작업을 밀어넣을 수 있는 머신 목록이다.
+    """
+    try:
+        return json.dumps(list_workshops(name), ensure_ascii=False)
     except (ConfigError, OSError) as e:
         return _fail(e)
 

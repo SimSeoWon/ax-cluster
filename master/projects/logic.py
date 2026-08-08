@@ -21,11 +21,13 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import (
+    DRIVEN_INTERACTIVE,
     GITEA_REPO_ROOT,
     PROJECT_CONFIG,
     ConfigError,
     ProjectConfig,
     Registry,
+    Workshop,
     validate_name,
     write_project_config,
 )
@@ -172,11 +174,116 @@ def list_projects(*, registry: Registry | None = None) -> dict:
                 branch=cfg.branch,
                 last_indexed_commit=cfg.last_indexed_commit,
                 last_indexed_at=cfg.last_indexed_at,
+                workshops={h: w.to_dict() for h, w in cfg.workshops.items()},
             )
         except ConfigError as e:
             entry["error"] = str(e)
         items.append(entry)
     return {"active": reg.active, "projects": items, "problems": reg.check()}
+
+
+# ─────────────────────────────────────────
+# 워크숍 (§5.5.4)
+# ─────────────────────────────────────────
+
+def set_workshop(
+    name: str,
+    host: str,
+    *,
+    driven: str = DRIVEN_INTERACTIVE,
+    path: str = "",
+    user: str = "",
+    note: str = "",
+    registry: Registry | None = None,
+) -> dict:
+    """작업장 한 대의 체크아웃을 등록하거나 갱신한다 (§5.5.4).
+
+    같은 host 로 다시 부르면 **통째로 교체**한다 — 부분 병합하지 않는다.
+    병합하면 "driven 을 interactive 로 바꿨는데 예전 path 가 남아 있는" 상태가 생기고,
+    그 상태는 파일만 봐서는 의도인지 사고인지 구분되지 않는다.
+    """
+    reg = registry or Registry.load()
+    validate_name(name)
+    if name not in reg.names:
+        raise ConfigError(
+            f"등록되지 않은 프로젝트다: {name}. 등록된 것: {', '.join(reg.names) or '(없음)'}"
+        )
+    cfg_path = reg.dir_of(name) / PROJECT_CONFIG
+    cfg = ProjectConfig.load(cfg_path)
+
+    shop = Workshop(
+        host=str(host).strip(),
+        driven=str(driven).strip(),
+        path=str(path).strip(),
+        user=str(user).strip(),
+        note=str(note).strip(),
+    )
+    shop.validate()  # fail-closed — 검증 전에 파일을 건드리지 않는다
+
+    previous = cfg.workshops.get(shop.host)
+    cfg.workshops[shop.host] = shop
+    write_project_config(cfg_path, cfg)
+
+    return {
+        "ok": True,
+        "project": name,
+        "host": shop.host,
+        "workshop": shop.to_dict(),
+        "replaced": previous.to_dict() if previous else None,
+        "drivable": shop.drivable,
+        "note": (
+            f"마스터가 {shop.user}@{shop.host}:{shop.path} 로 밀어넣을 수 있다."
+            if shop.drivable
+            else "대화형 워크숍이다 — 마스터는 이 머신을 원격으로 몰지 않는다 (§5.5.4-②)."
+        ),
+    }
+
+
+def remove_workshop(
+    name: str, host: str, *, registry: Registry | None = None
+) -> dict:
+    """워크숍 등록을 해제한다. 원격 디렉토리는 건드리지 않는다 — 레지스트리에서만 뺀다."""
+    reg = registry or Registry.load()
+    validate_name(name)
+    if name not in reg.names:
+        raise ConfigError(f"등록되지 않은 프로젝트다: {name}")
+    cfg_path = reg.dir_of(name) / PROJECT_CONFIG
+    cfg = ProjectConfig.load(cfg_path)
+
+    host = str(host).strip()
+    if host not in cfg.workshops:
+        raise ConfigError(
+            f"{name} 에 등록된 워크숍이 아니다: {host}. "
+            f"등록된 것: {', '.join(cfg.workshops) or '(없음)'}"
+        )
+    removed = cfg.workshops.pop(host)
+    write_project_config(cfg_path, cfg)
+    return {
+        "ok": True,
+        "project": name,
+        "host": host,
+        "removed": removed.to_dict(),
+        "note": "레지스트리에서만 뺐다. 원격 디렉토리는 그대로 있다.",
+    }
+
+
+def list_workshops(name: str = "", *, registry: Registry | None = None) -> dict:
+    """워크숍 목록. `name` 을 비우면 지금 마운트된 프로젝트를 본다."""
+    reg = registry or Registry.load()
+    target = name or reg.active
+    if not target:
+        raise ConfigError("active 가 비어 있고 name 도 주지 않았다.")
+    validate_name(target)
+    if target not in reg.names:
+        raise ConfigError(f"등록되지 않은 프로젝트다: {target}")
+    cfg = reg.config_of(target)
+    shops = [dict(host=h, **w.to_dict()) for h, w in cfg.workshops.items()]
+    return {
+        "project": target,
+        "active": target == reg.active,
+        "workshops": shops,
+        "drivable_hosts": [w.host for w in cfg.workshops.values() if w.drivable],
+    }
 
 
 # ─────────────────────────────────────────

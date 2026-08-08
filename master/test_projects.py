@@ -24,9 +24,12 @@ from master.projects import config as cfgmod  # noqa: E402
 from master.projects.config import ConfigError, ProjectConfig, Registry  # noqa: E402
 from master.projects.logic import (  # noqa: E402
     list_projects,
+    list_workshops,
     register_project,
+    remove_workshop,
     resolve_bare_path,
     set_active,
+    set_workshop,
 )
 
 cfgmod.GITEA_REPO_ROOT = _TMP / "gitea"
@@ -143,6 +146,80 @@ def main() -> int:
     out = list_projects()
     check("목록 2건", len(out["projects"]) == 2, str(out))
     check("문제 보고", bool(out["problems"]))
+
+    print("\n[10] 워크숍 등록 (§5.5.4)")
+    # [8] 이 ModularStage 를 지웠으므로 깨끗한 레지스트리를 새로 만든다.
+    root2 = _TMP / "root2"
+    root2.mkdir(parents=True, exist_ok=True)
+    (root2 / "projects.yaml").write_text(
+        "version: 1\nactive: ''\nprojects: []\n", encoding="utf-8"
+    )
+    os.environ["AX_PROJECTS_ROOT"] = str(root2)
+    make_bare("sim/modularstage")
+    register_project("ModularStage", "sim/modularstage")
+    set_active("ModularStage")
+
+    WIN_PATH = r"E:\trunk\ModularStage"
+
+    out = set_workshop(
+        "ModularStage", "192.168.0.2", driven="ssh", user="janus", path=WIN_PATH
+    )
+    check("ssh 워크숍 등록", out["ok"] and out["drivable"], str(out))
+    out = set_workshop("ModularStage", "192.168.0.33", driven="interactive")
+    check("interactive 는 path 없이 등록됨", out["ok"] and not out["drivable"], str(out))
+
+    print("\n[11] 🔴 윈도우 경로 백슬래시 round-trip")
+    # YAML 이 `E:\trunk` 를 double-quote 로 감싸면 \t 가 **탭**으로 해석된다.
+    # 경로가 조용히 깨지는 종류의 사고라 반드시 원문 대조한다.
+    cfg = Registry.load(root2).config_of("ModularStage")
+    got = cfg.workshops["192.168.0.2"].path
+    check("경로가 원문 그대로", got == WIN_PATH, f"기대 {WIN_PATH!r} / 실제 {got!r}")
+    check("탭으로 깨지지 않음", "\t" not in got, repr(got))
+    raw = (root2 / "ModularStage" / "config.yaml").read_text(encoding="utf-8")
+    check("파일에도 역슬래시가 남아 있음", r"E:\trunk" in raw)
+
+    print("\n[12] 워크숍 검증 — fail-closed")
+    raises(
+        "ssh 인데 path 없으면 거부",
+        set_workshop, "ModularStage", "10.0.0.9", driven="ssh", user="x",
+    )
+    raises(
+        "ssh 인데 user 없으면 거부",
+        set_workshop, "ModularStage", "10.0.0.9", driven="ssh", path="C:\\x",
+    )
+    raises(
+        "driven 값이 이상하면 거부",
+        set_workshop, "ModularStage", "10.0.0.9", driven="rdp",
+    )
+    raises("host 가 비면 거부", set_workshop, "ModularStage", "   ")
+    raises("등록되지 않은 프로젝트 거부", set_workshop, "NoSuch", "10.0.0.9")
+    cfg = Registry.load(root2).config_of("ModularStage")
+    check("거부된 항목이 파일에 남지 않음", "10.0.0.9" not in cfg.workshops, str(cfg.workshops))
+
+    print("\n[13] 같은 host 재등록은 병합이 아니라 교체")
+    out = set_workshop("ModularStage", "192.168.0.2", driven="interactive")
+    check("교체됨 — driven 변경", out["workshop"]["driven"] == "interactive", str(out))
+    check("이전 값 보고", out["replaced"] and out["replaced"]["driven"] == "ssh", str(out))
+    cfg = Registry.load(root2).config_of("ModularStage")
+    shop = cfg.workshops["192.168.0.2"]
+    check("예전 path 가 남지 않음", shop.path == "", repr(shop.path))
+    check("예전 user 가 남지 않음", shop.user == "", repr(shop.user))
+
+    print("\n[14] 목록 · 해제")
+    set_workshop("ModularStage", "192.168.0.2", driven="ssh", user="janus", path=WIN_PATH)
+    out = list_workshops()
+    check("active 프로젝트를 기본으로 본다", out["project"] == "ModularStage", str(out))
+    check("워크숍 2건", len(out["workshops"]) == 2, str(out))
+    check("drivable 은 .2 뿐", out["drivable_hosts"] == ["192.168.0.2"], str(out))
+    check(
+        "list_projects 에도 실린다",
+        "192.168.0.2" in list_projects()["projects"][0]["workshops"],
+        str(list_projects()),
+    )
+    out = remove_workshop("ModularStage", "192.168.0.33")
+    check("해제됨", out["ok"], str(out))
+    check("목록에서 빠짐", len(list_workshops()["workshops"]) == 1)
+    raises("없는 워크숍 해제 거부", remove_workshop, "ModularStage", "192.168.0.33")
 
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0

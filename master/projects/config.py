@@ -33,6 +33,12 @@ GITEA_REPO_ROOT = Path(
 )
 
 
+# 워크숍 구동 방식 (§5.5.4-②). 머신마다 다른 것이 우연이 아니라 기록할 사실이다.
+DRIVEN_SSH = "ssh"                  # 마스터가 SSH 로 밀어넣는다
+DRIVEN_INTERACTIVE = "interactive"  # 사람이 앉아서 작업한다 — 마스터가 몰지 않는다
+DRIVEN_MODES = (DRIVEN_SSH, DRIVEN_INTERACTIVE)
+
+
 class ConfigError(RuntimeError):
     """설정이 없거나 어긋났다. 전부 fail-closed — 추측해서 진행하지 않는다."""
 
@@ -60,6 +66,67 @@ def validate_name(name: str) -> str:
 
 
 @dataclass
+class Workshop:
+    """작업장 한 대의 체크아웃 (§5.5.4).
+
+    🔴 **마스터가 경로를 아는 것은 파일을 소유하는 것이 아니다** — §2.1 위반이 아니라
+    라우팅 메타데이터다. 마스터는 이 디렉토리를 읽지도 쓰지도 않는다.
+
+    `driven` 이 이 스키마의 핵심이다. `.2` 는 SSH 가 열려 있어 마스터가 밀어넣을 수 있고,
+    `.33` 은 RDP 뿐이라 몰 수 없다 — 그 차이를 주석이 아니라 필드로 남긴다.
+    """
+
+    host: str
+    driven: str = DRIVEN_INTERACTIVE
+    path: str = ""
+    user: str = ""
+    note: str = ""
+
+    @property
+    def drivable(self) -> bool:
+        """마스터가 원격으로 작업을 밀어넣을 수 있는가."""
+        return self.driven == DRIVEN_SSH
+
+    def validate(self) -> None:
+        if not self.host.strip():
+            raise ConfigError("워크숍 host 가 비어 있다.")
+        if self.driven not in DRIVEN_MODES:
+            raise ConfigError(
+                f"driven 은 {' | '.join(DRIVEN_MODES)} 중 하나여야 한다: {self.driven!r}"
+            )
+        if self.driven == DRIVEN_SSH:
+            # 밀어넣겠다고 선언했는데 어디로·누구로 넣을지가 없으면 선언이 거짓이 된다.
+            missing = [k for k, v in (("path", self.path), ("user", self.user)) if not v]
+            if missing:
+                raise ConfigError(
+                    f"driven={DRIVEN_SSH} 인 워크숍({self.host})에는 "
+                    f"{'·'.join(missing)} 가 필요하다. 마스터가 밀어넣을 대상을 특정할 수 없다."
+                )
+
+    @classmethod
+    def from_dict(cls, host: str, data: Any) -> "Workshop":
+        d = data or {}
+        if not isinstance(d, dict):
+            raise ConfigError(f"워크숍 {host} 항목이 매핑이 아니다: {type(d).__name__}")
+        return cls(
+            host=str(host),
+            driven=str(d.get("driven") or DRIVEN_INTERACTIVE),
+            path=str(d.get("path") or ""),
+            user=str(d.get("user") or ""),
+            note=str(d.get("note") or ""),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"driven": self.driven}
+        # 빈 값을 쓰지 않는다 — interactive 워크숍에 빈 path 가 남으면 "미설정"과
+        # "설정했는데 비었다"가 구분되지 않는다.
+        for key, val in (("user", self.user), ("path", self.path), ("note", self.note)):
+            if val:
+                out[key] = val
+        return out
+
+
+@dataclass
 class ProjectConfig:
     """`<Name>/config.yaml` — 이 디렉토리가 무엇을 추적하고 어디까지 반영했는지."""
 
@@ -74,6 +141,7 @@ class ProjectConfig:
     last_indexed_at: str = ""
     include: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
+    workshops: dict[str, Workshop] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -83,7 +151,11 @@ class ProjectConfig:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         track = data.get("track") or {}
         index = data.get("index") or {}
+        shops = data.get("workshops") or {}
+        if not isinstance(shops, dict):
+            raise ConfigError(f"workshops 는 매핑이어야 한다: {type(shops).__name__}")
         return cls(
+            workshops={h: Workshop.from_dict(h, v) for h, v in shops.items()},
             name=str(data.get("name") or ""),
             project_id=str(track.get("project_id") or ""),
             bare_path=str(track.get("bare_path") or ""),
@@ -120,7 +192,16 @@ class ProjectConfig:
         )
         data["index"] = index
         data["engine"] = self.engine
-        return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+        if self.workshops:
+            data["workshops"] = {h: w.to_dict() for h, w in self.workshops.items()}
+        else:
+            data.pop("workshops", None)
+        # 🔴 default_flow_style=False 를 유지할 것. 윈도우 경로(`E:\trunk\...`)가
+        #    플로우 스타일에서 따옴표에 갇히면 `\t` 가 탭으로 해석될 위험이 있다.
+        #    round-trip 은 test_projects.py 가 검사한다.
+        return yaml.safe_dump(
+            data, allow_unicode=True, sort_keys=False, default_flow_style=False
+        )
 
 
 @dataclass
