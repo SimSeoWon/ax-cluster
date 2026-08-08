@@ -54,11 +54,12 @@ There is no linter or CI config — **don't invent tooling commands.**
 | Project registry (MCP) | `master/projects/` — **live**, `ax-projects.service` `:8103` |
 | Capability routing (`requires`/`capabilities`) | `master/task_queue/logic_claim.py` |
 | Shared bearer auth (all 3 services, fail-closed) | `master/auth.py` |
+| Event spool (Gitea hook → indexer, single consumer) | `master/events/` — queue only; **consumer not built** |
 | venv + deps | `.venv/`, `master/requirements.txt` |
 
 `worker/` and `client/` are still README-only stubs.
 
-**Tests — 299, all passing. No pytest**; each file runs standalone.
+**Tests — 337, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
@@ -70,6 +71,7 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_workshop_check.py      # 47 — dirty-check rules (no SSH; runner injected)
 .venv/bin/python master/test_layer3_verify.py       # 63 — layer-3 gate: automation + build logs, fail-closed
 .venv/bin/python master/test_auth.py                 # 46 — bearer auth, fail-closed
+.venv/bin/python master/test_events.py               # 38 — event spool: no-loss, at-least-once, coalescing
 
 curl -s localhost:8102/health | python3 -m json.tool   # which node holds which model
 systemctl status ax-task-queue ax-broker ax-projects

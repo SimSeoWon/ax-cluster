@@ -91,8 +91,16 @@
 - [ ] **팀 전용 컴포넌트 선별** (§5.2-D) — 작성자별 분리·`/review-work`·AgentWiki·Redmine·zip 패키징 등.
       **일괄 폐기 금지, 개별 판단할 것**
 - [ ] **`mcp/local_llm_runner/` 처리** — §6.4 추론 래퍼와 역할 중복. 재사용/대체 결정 후 래퍼 착수
-- [ ] **이벤트 큐 설계** (§5.4.5) — 웹훅 전환의 전제조건. 영속 + 단일 소비자 + 중복 합치기.
-      `.claude/_regenerate_queue.jsonl` 이 원형. **`task_queue` 와 합치지 말 것**.
+- [x] ~~**이벤트 큐 설계**~~ — **완료 2026-08-08** (§5.4.5-a). 디렉토리 스풀
+      (파일 1개 = 이벤트 1개, 임시→rename). 영속 · `flock` 단일 소비자 ·
+      `project_id` 합치기 · at-least-once · 거부는 `rejected/` 에 보존.
+      `master/events/`, 테스트 38건. **`task_queue` 와 분리 유지**.
+      ⚠️ 원형(`_regenerate_queue.jsonl`)의 append 방식은 **채택하지 않았다** —
+      소비 시점 경합으로 이벤트가 유실된다
+- [ ] **이벤트 큐 소비자(색인기)** — 큐는 만들었으나 소비자는 **의도적으로 안 만들었다.**
+      무엇을 색인할지가 미결이다(위 "RAG 이식 범위 결정"). `claim_batch()` 를 부르면 된다
+- [ ] **Gitea `post-receive.d/` 훅 설치** (§5.4.5-a-⑦) — 스크립트 형태는 확정했다.
+      설치는 root 필요 + 저장소별 `AX_PROJECT_ID` 주입
       ⚠️ 페이로드에 `project_id` 필수 + 합치기 키·직렬화 단위도 `project_id` 기준 (§5.5.3-⑤)
       ✅ **선결이던 `project_id` 대소문자는 확정됐다** (§5.5.4-④, 2026-08-08 Gitea DB 실측):
       훅은 `Sim/ModularStage`(표시값)를 싣고 동일성은 `modularstage`(casefold)로 판정한다.
