@@ -11,10 +11,10 @@ Unreal MCP (UE 5.8.1+), and code-writing agents into one pipeline.
 | | Document | State |
 |---|---|---|
 | **1 — Infrastructure** | [`docs/milestones/1-infrastructure.md`](docs/milestones/1-infrastructure.md) | ✅ **closed** 2026-08-08. Its section documents (`docs/1`–`docs/10`) **stay valid** — kept, not discarded |
-| **2 — Digital twin restoration** | [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md) | 🔵 **started** 2026-08-08 · **5 / 32** sub-tasks |
+| **2 — Digital twin restoration** | [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md) | 🔵 **started** 2026-08-08 · **6 / 32** sub-tasks |
 
 🔴 **Milestone 1 wired the pipe; nothing yet *produces* what flows through it.**
-The twin is a snapshot received on 2026-08-08 12:56 and **barely grows** — **5 of 32 sub-tasks done.**
+The twin is a snapshot received on 2026-08-08 12:56 and **barely grows** — **6 of 32 sub-tasks done.**
 Goals (user, 2026-08-08): ① author the ontology documents automatically ② feed the relevant slice to
 the code-writing agent. Breakdown 대 2 / 중 8 / 소 32, main = 대 1 (making the data);
 `/distribute`·`/review-work` are 🕓 예정:

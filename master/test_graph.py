@@ -22,7 +22,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
 from master.context_search.paths import ProjectPaths           # noqa: E402
-from master.graph import class_graph as cg, db, parse          # noqa: E402
+from master.graph import class_graph as cg, db, dependency as dep, parse  # noqa: E402
 
 PASS = FAIL = 0
 
@@ -81,6 +81,9 @@ def make_project(root: Path) -> ProjectPaths:
     (p.repo / "Content").mkdir(parents=True, exist_ok=True)
     (p.repo / "Content" / "Outside.h").write_text(
         "class AShouldNotAppear : public AActor {};\n", encoding="utf-8")
+    # 의존 그래프용 — Boss.h → Monster.h → (엔진) 사슬
+    (p.source / "Game" / "Boss.h").write_text(
+        '#include "Monster.h"\n#include <CoreMinimal.h>\nclass ABoss {};\n', encoding="utf-8")
     return p
 
 
@@ -261,6 +264,59 @@ def main() -> int:
         cg._entries_for = real_entries
     check("🔴 이전 그래프가 보존됐다 (ROLLBACK)",
           db.counts(p2)["classes"] == before, f"{db.counts(p2)['classes']} vs {before}")
+
+    print("\n[12] 의존 그래프 — 소 1.1.5")
+    p4 = make_project(tmp / "dep")
+    DEPS = ["Source/Game/Monster.h", "Source/Game/Monster.cpp", "Source/Game/Boss.h"]
+    try:
+        dep.build_full(p4, git=git_ls([]))
+        check("소스 0건 → 예외", False, "예외 없음")
+    except dep.GraphError:
+        check("소스 0건 → 예외", True)
+    dst = dep.build_full(p4, git=git_ls(DEPS + ["Content/Outside.h", "Source/a.uasset"]))
+    check("🔴 Source 밖·대상 외 확장자 제외", dst.files == 3, str(dst.files))
+    check("간선이 들어갔다", dst.edges >= 2, str(dst.edges))
+    check("`<...>` 는 세지 않는다 (엔진 헤더는 트윈 밖)",
+          dep.counts(p4)["includes"] == dst.edges, str(dep.counts(p4)))
+    check("정방향 — Boss.h 가 Monster.h 를 참조",
+          "Source/Game/Monster.h" in dep.dependencies(p4, "Source/Game/Boss.h"),
+          str(dep.dependencies(p4, "Source/Game/Boss.h")))
+    check("역방향 — Monster.h 를 Boss.h 와 Monster.cpp 가 참조",
+          {"Source/Game/Boss.h", "Source/Game/Monster.cpp"}
+          <= set(dep.dependents(p4, "Source/Game/Monster.h")),
+          str(dep.dependents(p4, "Source/Game/Monster.h")))
+    check("depth=1 은 직접 관계만",
+          dep.dependents(p4, "Source/Game/Monster.h", depth=1)
+          == dep.dependents(p4, "Source/Game/Monster.h", depth=1))
+    check("DB 없으면 빈 결과",
+          dep.dependents(ProjectPaths(name="Z", root=tmp / "없음3"), "x") == [])
+
+    print("\n[12-1] ⚠️ 역방향은 basename 근사 — 감추지 않고 센다")
+    (p4.source / "Other").mkdir(parents=True, exist_ok=True)
+    (p4.source / "Other" / "Monster.h").write_text("class BMonster {};\n", encoding="utf-8")
+    amb = dep.build_full(p4, git=git_ls(DEPS + ["Source/Other/Monster.h"]))
+    check("이름 겹치는 헤더를 센다", amb.ambiguous_basenames == 1,
+          str(amb.ambiguous_basenames))
+    check("요약이 그 사실을 말한다", "역방향 근사" in amb.summary, amb.summary)
+    check("🔴 근사 때문에 두 Monster.h 가 같은 참조자를 갖는다 (알려진 한계)",
+          set(dep.dependents(p4, "Source/Other/Monster.h"))
+          == set(dep.dependents(p4, "Source/Game/Monster.h")))
+
+    print("\n[13] 의존 그래프 증분")
+    (p4.source / "Game" / "Boss.h").write_text('class ABoss {};\n', encoding="utf-8")
+    ds2 = dep.update_incremental(p4, ["Source/Game/Boss.h"])
+    check("간선을 지웠다", ds2.dropped_edges > 0, str(ds2.dropped_edges))
+    check("🔴 사라진 참조가 남지 않는다",
+          "Source/Game/Boss.h" not in dep.dependents(p4, "Source/Game/Monster.h"),
+          str(dep.dependents(p4, "Source/Game/Monster.h")))
+    (p4.source / "Game" / "Boss.h").unlink()
+    dep.update_incremental(p4, ["Source/Game/Boss.h"])
+    check("파일이 사라지면 files 에서도 빠진다",
+          "Source/Game/Boss.h" not in
+          [r for r in dep.dependencies(p4, "Source/Game/Monster.cpp")], "")
+    ds3 = dep.update_incremental(p4, ["README.md", "Source/x.uasset"])
+    check("대상 외 확장자는 아무것도 안 한다",
+          ds3.files == 0 and ds3.edges == 0 and ds3.dropped_edges == 0, ds3.summary)
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
