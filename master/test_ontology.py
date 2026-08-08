@@ -17,7 +17,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
 from master.context_search.paths import ProjectPaths   # noqa: E402
-from master.ontology import layers as ly, stale as st_mod, yaml_io as y  # noqa: E402
+from master.ontology import collect as col, layers as ly, stale as st_mod, yaml_io as y  # noqa: E402
 
 PASS = FAIL = 0
 
@@ -198,6 +198,59 @@ def main() -> int:
     check("잠긴 멤버는 건너뛴다", lk["AMid"].locked and lk["AMid"].layer == 0, lk["AMid"].summary)
     check("  나머지는 그대로 추정", lk["ABase"].layer == 1)
     check("  분포가 잠금을 따로 센다", ly.distribution(list(lk.values()))["locked"] == 1)
+
+    print("\n[9] 🔴 관계 수집 — 자동 확장이 아니라 제안 (중 1.3 입력)")
+    from master.graph import class_graph as cg2
+
+    G = ProjectPaths(name="G2", root=tmp / "G2")
+    (G.source / "Game").mkdir(parents=True, exist_ok=True)
+    (G.source / "Game" / "Base.h").write_text(
+        "class ABase {};\nclass AMid : public ABase {};\n", encoding="utf-8")
+    (G.source / "Game" / "Leaf.h").write_text(
+        '#include "Base.h"\nclass ALeaf : public AMid {};\n', encoding="utf-8")
+    (G.source / "Game" / "Helper.h").write_text(
+        '#include "Leaf.h"\nclass AHelper {};\n', encoding="utf-8")
+    FILES = ["Source/Game/Base.h", "Source/Game/Leaf.h", "Source/Game/Helper.h"]
+
+    def gl(repo, *a):
+        return (0, "\n".join(FILES)) if a[0] == "ls-files" else (0, "")
+
+    cg2.build_full(G, git=gl)
+    from master.graph import dependency as dep2
+    dep2.build_full(G, git=gl)
+
+    # 🔴 멤버 파일 기준 **1홉** 이웃만 본다 — AHelper 는 Leaf.h 를 include 하므로
+    # 멤버에 ALeaf(Leaf.h)가 있어야 이웃으로 잡힌다. 첫 판 테스트가 2홉을 기대해 틀렸다.
+    pr = col.propose(G, "D", {"AMid": "Source/Game/Base.h", "ALeaf": "Source/Game/Leaf.h"})
+    names = {c.name: c for c in pr.candidates}
+    check("조상을 후보로 낸다", "ABase" in names, str(sorted(names)))
+    check("  근거를 붙인다", "조상" in names["ABase"].why, names["ABase"].why)
+    check("  어느 멤버를 통해 왔는지 남긴다", names["ABase"].via in ("AMid", "ALeaf"),
+          names["ABase"].via)
+    check("🔴 이미 멤버인 것은 후보에 없다", "AMid" not in names and "ALeaf" not in names)
+    pr2 = col.propose(G, "D", {"AMid": "Source/Game/Base.h"})
+    n2 = {c.name: c for c in pr2.candidates}
+    check("자식을 후보로 낸다", "ALeaf" in n2 and "자식" in n2["ALeaf"].why,
+          n2["ALeaf"].why if "ALeaf" in n2 else "없음")
+    check("#include 이웃도 본다", "AHelper" in names, str(sorted(names)))
+
+    print("\n[9-1] 🔴 제안이지 자동 추가가 아니다")
+    check("멤버를 바꾸지 않는다", pr.members == ["ALeaf", "AMid"], str(pr.members))
+    q = pr.question
+    check("물어볼 문장을 만든다", "포함할까" in q, q[:80])
+    check("  근거별로 묶는다", "조상" in q or "이웃" in q, q[:120])
+    check("  넣지 않을 자유를 명시한다", "그대로 두면" in q)
+    empty = col.Proposal(domain="E", members=["A"])
+    check("후보가 없으면 없다고 말한다 (채우지 않는다)",
+          "찾지 못했다" in empty.question, empty.question[:60])
+    check("  empty 판정", empty.empty)
+    check("요약에 분모가 있다", "멤버 2" in pr.summary and "후보" in pr.summary, pr.summary)
+
+    print("\n[9-2] 그래프가 없어도 죽지 않는다")
+    NG = ProjectPaths(name="NG", root=tmp / "NG")
+    p2 = col.propose(NG, "D", {"X": "Source/X.h"})
+    check("빈 제안을 돌려준다", p2.empty and p2.members == ["X"], p2.summary)
+    check("  물어볼 것도 없다고 말한다", "찾지 못했다" in p2.question)
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
