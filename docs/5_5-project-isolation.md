@@ -639,8 +639,12 @@ git -C <path> status --porcelain | grep -v '^??' | head -1
       판정 신호 함정 2건(SSH 종료 코드 · `Error` 문자열)을 ⑥-③-1 에 기록
 - [ ] **`Build.bat` 원격 구동 확인** — `RunTests` 는 됐지만 C++ 빌드는 따로 확인해야 한다.
       수십 분 소요 예상 (⑥-③)
-- [ ] **층3 게이트 구현** — `Result={Fail}` 카운트 + `EXIT CODE` 파싱, fail-closed.
-      🔴 `grep error` 로 짜지 말 것 (⑥-③-1)
+- [x] ~~**층3 게이트 구현**~~ — **완료 2026-08-08.** `master/layer3_verify.py` +
+      테스트 44건. 통과 조건 4가지(완료 마커 · `EXIT CODE 0` · `Fail` 0건 · `Success` ≥1),
+      나머지는 전부 fail-closed. **판정에 프로세스 반환 코드도 `Error` 문자열도 쓰지 않는다.**
+      실제 `.2` 로 end-to-end 검증(`PASS(5건)`).
+      ⚠️ 실측 정정: 매치 없는 필터는 UE 5.8 에서 **`EXIT CODE: -1`** 이다 —
+      "매치 없어도 exit 0" 이라던 초안 근거는 틀렸다. 규칙은 이중 방어로 남긴다
 - [ ] **`gjc`(+필요시 `bun`) 설치** — `.2` 에 미설치. node v24.11.1 은 있다 (⑥-2)
 - [x] ~~**자동화 진입 전 더티 체크 구현**~~ — **완료 2026-08-08.**
       `master/projects/workshop_check.py` + MCP 도구 `check_workshops_clean_tool`(8종째).
