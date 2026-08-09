@@ -76,8 +76,8 @@
 
 **중 1.3 온톨로지 문서** — **8/13** (`master/ontology/`, 테스트 169)
 
-✅ `yaml_io`(PyYAML 0, 왕복 보존) · `stale`(워터마크 2개 비교) · `layers`(L1/L2/L3, 구조 우선
-git 은 강등만) · `collect`(멤버 후보 **제안**) · `hierarchy`(하위 문서를 object 로, 순환 방지) · **`verify_facts`**(호출 관계 사실 게이트) · `package`(패키지 쓰기, 🔴 검수 잠금 보존)
+✅ `yaml_io` · `stale`(워터마크 2개) · `layers`(구조 우선, git 은 강등만) · `collect`(후보 **제안**)
+· `hierarchy` · **`verify_facts`**(호출 관계 사실 게이트) · `package`(🔴 검수 잠금 보존)
 · ✅ **`1.3.3` 재합성(LLM)** — `domain_md`·`contexts`·`prompt`·`parse`·`synth`·`__main__`
 
 ❌ 남은 5개: `1.3.1` 도메인 생성(상위 지정 포함) · `1.3.2` 대화형 편집 · `1.3.6` 미배정 노출
