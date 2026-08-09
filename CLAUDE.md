@@ -14,7 +14,7 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   → [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md)
   **Read only the open milestone** — closed ones are reference; don't load them. Progress
   lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
-  🔴 **The twin grows now, but only on changed files — 23 of 43 sub-tasks done.**
+  🔴 **The twin grows now, but only on changed files — 27 of 43 sub-tasks done (Redmine computes it).**
   중 1.1 relation graphs ✅ · 중 1.2 context-MD synthesis ✅ **wired into the indexer** (verified on
   a real commit diff: graphs → synthesis → reindex) · 중 1.3 ontology **8/13** — the LLM
   re-synthesis now runs (measured: local 2-node and `claude` both passed the fact gate 100%) · 중 1.4 thesaurus has a
@@ -60,8 +60,8 @@ milestone doc grew stale numbers before.
 
 | | Answers | Rule |
 |---|---|---|
-| **Milestone doc** `docs/milestones/2-*.md` | *Where are we?* — 대/중/소 breakdown, denominators, chains | Progress lives **only** here. Delete finished 소분류 to hold the line cap |
-| **Redmine** `http://192.168.0.57:8080` | *What is being worked, by whom, now?* — individual items, priority, assignment | Open an issue for work that spans sessions; move it 신규 → 진행 → 해결 and put the commit hash in the note |
+| **Milestone doc** `docs/milestones/2-*.md` | *Why this order?* — chains, traps, measured evidence | 🔴 **No numerators here.** They drifted twice (중 1.3 counted 7/10 against a 13-item list; 대 1 stayed at 15 after 중 1.3 went 5→8). Keep the reasoning an issue cannot hold |
+| **Redmine** `http://192.168.0.57:8080` | *Where are we, and what is open?* — **the milestone itself** | 🔴 **Version = 마일스톤 · parent issue = 중분류 · subtask = 소분류** (user-confirmed 2026-08-09). Progress is **computed**, never typed. 🔴 Only **완료(4)** is a closing status — 해결(3) still counts as open. Put the commit hash in the note |
 | **`reports/`** | *Why did we decide that?* — decisions, measurements, traps | One report per session, Korean. Not a task list |
 
 **At session start**: read the open milestone, then `GET /issues.json?status_id=open` for `[AX]`
