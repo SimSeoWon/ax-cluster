@@ -8,19 +8,23 @@
 |---|---|
 | `verdict.py` | **층2 판정 계약 (fail-closed).** `contract_text()` 로 프롬프트에 계약을 붙이고 `parse_verdict()` 로 읽는다. **모든 실패 경로가 차단으로 떨어진다** |
 | `layer2_verify.py` | 층2 검증기 — UE5/C++ 문법 프롬프트 + 백엔드 체인(`agy` → `claude`). `verify_files([(경로, 내용)])` |
-| `test_*.py` | **테스트 628건, 전부 통과.** pytest 불필요 — 각 파일을 그대로 실행한다. 목록은 저장소 루트 `CLAUDE.md` 참조 |
+| `test_*.py` | **테스트 1,126건, 전부 통과.** pytest 불필요 — 각 파일을 그대로 실행한다. 목록은 저장소 루트 `CLAUDE.md` 참조 |
 | `task_queue/` | **잡 분배 큐** (AgentTest `mcp/task_queue/` 이식, 2,717줄). HTTP 서비스 + MCP stdio |
 | `auth.py` | 🔴 **공용 인증 — 공유 베어러 토큰, fail-closed.** 세 서비스가 같은 ASGI 미들웨어를 쓴다. 토큰이 없거나 약하거나 파일 권한이 열려 있으면 **서비스가 뜨지 않는다**. 열린 경로는 `/livez` 하나 |
 | `layer3_verify.py` | **층3 판정 계약 (fail-closed).** UE5 자동화 로그(`Result={Success\|Fail}` + `TEST COMPLETE. EXIT CODE:`)와 UBT 빌드 로그(`Result: Succeeded\|Failed`)를 각각 파싱한다. 🔴 **프로세스 반환 코드를 읽지 않는다** — 실측에서 거짓 실패·거짓 성공이 둘 다 나왔다 |
 | `broker/` | **추론 브로커** (Ollama API 호환). ✅ **가동 중** — `ax-broker.service` `:8102` |
-| `projects/` | **프로젝트 레지스트리 MCP** — 등록·마운트 전환 + **워크숍 체크아웃**(경로·`driven`) + 더티 체크. ✅ **가동 중** — `ax-projects.service` `:8103`, 도구 8종 |
+| `projects/` | **프로젝트 레지스트리 MCP** — 등록·마운트 전환 + **워크숍 체크아웃**(경로·`driven`) + 더티 체크. ✅ **가동 중** — `ax-projects.service` `:8103`, 도구 **15종** + `role`(worker/requester) |
 | `events/` | 이벤트 스풀 + **색인기**. Gitea `post-receive` → 스풀 → `ax-indexer.path`(inotify) → 재색인. 🔴 폴링 아님 |
 | `provision.py` | Ollama 노드 **점검·원격 설치**. 🔴 `.33`(메인 작업 PC)은 `resident=False` — 상주시키지 않는다. `python -m master.provision check` |
-| `work/` | 워크플로우 — 2-tier 브랜치 규약 · 컨텍스트 매니페스트. **복구 진행 중**, 지도는 `docs/4-work-loop.md` §4.7 |
+| `work/` | 워크플로우 — 2-tier 브랜치 · 매니페스트 · 생성→층2→인계 · **도메인 규범 번들**(`norms.py`, 소 2.3.1). 루프는 돈다(실측 20.1s APPROVE). 지도는 `docs/4-work-loop.md` §4.7, 브랜치 수명주기는 `docs/8-git-authority.md` §8.4 |
+| `graph/` | **관계 그래프** — 상속(tree-sitter C++) + `#include`. 1,806 클래스 · 6,380 메서드 · 10,817 간선, 전체 스캔 2.9초. `python -m master.graph build\|status` |
+| `ontology/` | **온톨로지** — YAML io(PyYAML 0) · stale · L1/L2/L3 · 멤버 제안 · 개념 계층 · **사실 게이트** · 패키지 쓰기 · **LLM 재합성**. `python -m master.ontology plan\|dry\|refresh`. 🔴 결정 규칙은 그 패키지 `__init__.py` 에 있다 |
+| `context_synth/` | **컨텍스트 MD 합성** — 프롬프트·grounding·σ.7 게이트·**사실 게이트**·서킷브레이커. 색인기에 배선됨 |
+| `client/` | **워커 번들** — 머신 프로브(실측) → config·스킬·CLAUDE.md 배달 → 🔴 **되읽어 해시 대조**. `python -m master.client probe\|plan\|deliver\|check` |
+| `source_text.py` | 🔴 **CP949 44%** (실측 723/1,654). 소스는 전부 이걸 거쳐 읽는다 — 한글 주석이 최고 신호원이다 |
 | `context_search/` | 검색 코어 — 벡터(ChromaDB) + BM25(FTS5) 를 RRF 로 융합. **마운트된 프로젝트의 디렉토리를 매 호출 해석**한다 (§5.5.2). 재색인: `python -m master.context_search.rebuild` |
-| `events/` | **이벤트 큐** — Gitea 훅 → 색인기 사이의 디렉토리 스풀. 영속·`flock` 단일 소비자·`project_id` 합치기. 🔴 **소비자는 아직 없다**(RAG 이식 범위 미결) |
 | `requirements.txt` | 마스터 의존성. AgentTest 엔 없어 `build.bat:29` 기준으로 신규 작성 |
-| `systemd/` | 유닛 **3개** (§5.4.4 확정: systemd + venv). ✅ 전부 설치·enable·가동 중 — `systemctl status ax-task-queue ax-broker ax-projects` |
+| `systemd/` | 유닛 **4개**(+`ax-indexer.path`) (§5.4.4 확정: systemd + venv). ✅ 전부 설치·enable·가동 중 — `systemctl status ax-task-queue ax-broker ax-projects` |
 
 ### task_queue 실행
 

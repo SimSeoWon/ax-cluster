@@ -32,13 +32,14 @@ commit → relation graph → BM25 → then the ontology doc itself, which is **
 with heuristics, not fully automatic** (auto-promotion was permanently disabled 2026-06-01)
 ② **feed the relevant slice of that twin to the code-writing agent.**
 
-🔴 **The twin grows on changed files — 14 of 33 sub-tasks done.** Relation graphs (1,806 classes /
-6,380 methods / 10,817 include edges) and context-MD synthesis are **wired into the indexer**.
-Still missing: the ontology **LLM synthesis** (중 1.3 is 7/10 — everything deterministic is done)
-and thesaurus alias data (0 registered). The 247 yaml
-are **unindexed — 0 search hits**. So code the pipeline writes never enters the twin, and the RAG
-drifts from reality silently. Breakdown 대 2 / 중 8 / 소 32; **main = 대 1 (making the data)**;
-`/distribute`·`/review-work` stay 🕓 예정 (they *consume* the twin).
+🔴 **20 of 38 sub-tasks done (2026-08-09).** The twin now **grows, is indexed, and reaches code
+generation** — goal ② ran end to end for the first time. Relation graphs, context-MD synthesis and
+**ontology LLM re-synthesis** are wired; the 247 domain yaml are **indexed** (separate DB +
+collection, triple noise gate); manifests carry **domain norms**.
+Still missing: **decomposition + skeleton generation** (§4.5's empty first step), **work-branch
+wiring** (#21), and **thesaurus alias data (0 registered)** — measured cause: the tags channel
+(weight 3.0) has **zero Korean**, so Korean queries miss the highest-weight channel entirely.
+Breakdown 대 2 / 중 8 / 소 38; **main = 대 1**.
 
 🔴 **Never size a task by line count** — `class_graph`'s 1,341 lines are *"delete the file → full
 rescan on restart"*, while one 829-line file holds the domain index, norm search and the thesaurus
@@ -60,17 +61,21 @@ The board has `main` checked out so pushing there is rejected — **`git pull` o
 | IP | Machine | Login | Role | Reachable from here |
 |---|---|---|---|---|
 | **.57** | **sim-desktop** — this box | `sim` | **Master**: orchestration, RAG index, ontology/graph, task queue, broker, project registry | — |
-| **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) | 🔧 **Worker-capable workshop** *and* inference endpoint #2 (14b pinned) | **`ssh janus@192.168.0.2`** ✅ passwordless · RDP 3389 · Ollama 11434 |
-| **.33** | Windows 10.0.26200, **the user's main work PC**<br>host `DESKTOP-FU2GNGL` | **`user`** | Workshop — UE5 work happens here. 🔴 **Not an inference endpoint** — see below | **`ssh user@192.168.0.33`** ✅ passwordless (2026-08-08) · RDP 3389 · Ollama 11434 |
-| **.43** | **BC-250 #1** — Fedora, headless | `sim` | Inference endpoint #1 (35B pinned), stateless | `ssh sim@192.168.0.43` ✅ passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
+| **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) | 🔧 **Worker** *and* inference endpoint #2 (14b pinned). 🔴 **The only machine that can run the layer-3 verdict unattended** (UE5 5.8) | **`ssh janus@192.168.0.2`** ✅ passwordless · RDP 3389 · Ollama 11434 |
+| **.33** | Windows 10.0.26200, **the user's main work PC**<br>host `DESKTOP-FU2GNGL` | **`user`** | 🔴 **`requester`, not a worker** — registers work, verifies (it has UE5), gives feedback. **Never dispatched to** (`drivable_hosts` excludes it). Not an inference endpoint | **`ssh user@192.168.0.33`** ✅ passwordless (2026-08-08) · RDP 3389 · Ollama 11434 |
+| **.43** | **BC-250 #1** — Fedora, headless | `sim` | 🔧 **Worker** *and* inference endpoint #1 (35B pinned). Has the project clone at `~/trunk/ModularStage` since 2026-08-09 — **no longer stateless** | `ssh sim@192.168.0.43` ✅ passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
 | — | BC-250 #2 | — | 🎮 **Bazzite gaming machine — NOT an inference node.** Converting it means giving up that machine. **Never assume a 2nd board exists.** | n/a |
 
 ### `.33` — the main work PC has its own guide
 
 SSH and Ollama came up 2026-08-08; **the account is `user`**. But 🔴 **it is not an inference
 endpoint** — measured free VRAM **7651 MiB** is smaller than its own only model (8.95 GiB) and
-than the coder model (9.0 GB), and opening UE5 takes more. Use it for **checks and remote
-installs only** (`master/provision.py`, `resident=False`).
+than the coder model (9.0 GB), and opening UE5 takes more (`resident=False`).
+
+🔴 **Its role is `requester`** (2026-08-09): it registers work, verifies (UE5 is here, so compile
+errors surface fastest), and writes `[FEEDBACK]` blocks. It is **excluded from `drivable_hosts`** —
+never dispatched to. ⚠️ When it verifies, use **`git worktree`**, never a branch switch in the
+human's main tree: uncommitted `.uasset` work cannot be recovered.
 
 🔴 **This is the human's machine** — the master is a guest here: read-only by preference, dirty
 check before anything that writes. Everything else — session-0 boundary, UE5 checkout path,
@@ -87,10 +92,23 @@ SSH PATH trap — lives in **[`win-worker-2.md`](win-worker-2.md)**, which is al
 
 ✅ The master's services are reachable from `.2` — 8101, 8102, 8103 all verified (2026-08-08).
 
+### Roles — `driven` (can we reach it) ≠ `role` (may we dispatch to it)
+
+    worker      claims from the queue and implements   .2 · .43
+    requester   registers, verifies, gives feedback    .33  🔴 never dispatched to
+
+**Every worker holds the project clone and judges from source** — that is the point, and all
+workers are equal in it. UE5 only decides *who can run the layer-3 verdict*. The per-machine
+`<checkout>/.ax/config.json` is the single source of truth for paths/capabilities; it is
+**generated by the master** (`python -m master.client deliver`), never hand-copied — a worker's
+config was once found pointing at *another machine's* path.
+→ [`../docs/8-git-authority.md`](../docs/8-git-authority.md) §8.4
+
 ### Design rules (inherited from the AgentTest 2026-07-07 architecture)
 
-- Inference nodes **never touch files** — only text (context / code fragments / diffs) crosses the
-  wire. File I/O and builds happen on whichever machine owns the files.
+- **Ollama inference calls** are text-only — context/code fragments/diffs cross the wire, never
+  files. ⚠️ That is about the **model**, not the machine: `.43` now also runs a worker agent that
+  *does* read its own clone. The two roles coexist on one box.
 - Master→node calls are **stateless** (Ollama `/api/generate`, with the `context` field
   deliberately not reused).
 - **Deterministic gates (tests / type checkers / linters) outrank LLM judgment** for verification.

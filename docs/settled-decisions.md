@@ -78,6 +78,39 @@ in other domains' classes. Do **not** compensate with prompt wording alone — t
 guards do it: `allowed_classes` filtering plus the fact gate (`ontology/verify_facts.py`, call
 relations checked against the 6,380-row `methods` table).
 
+## Cluster shape — 🔴 one operator, N workers (user-confirmed 2026-08-09)
+
+This is **not** AgentTest's team topology, and that difference removes machinery rather than
+adding it.
+
+| | Decided |
+|---|---|
+| **Roles** | `driven` (can we reach it) and `role` (may we dispatch to it) are **different axes**. `.33` has SSH yet is a `requester` and is excluded from `drivable_hosts` — never dispatch into the human's working tree |
+| **Every worker holds the clone** | Source-based judgment is the worker's *primary* capability and **all workers are equal in it**. UE5 only decides who can run the layer-3 verdict |
+| **durable `task/<id>`** | A **long-lived working space**, not something to merge fast. The requester creates it (the master cannot push — §2.1); `main` is merged **once, by the human, at the end** |
+| **Always push the attempt** | Success *or* failure. Discarding failures destroys the evidence and the basis for feedback — and the model is **accumulative**: a rejected attempt is fixed, not reimplemented |
+| **Feedback is code-located** | A `[FEEDBACK]` block goes into the file at the failing spot, exactly like `[PSEUDO]` skeletons. A queue text field cannot say *where*. `layer2_verify.py` already rejects leftover markers |
+| **Layer-3 location** | The requester is fastest (UE5 is on `.33`) — but ⚠️ **never switch branches in the human's main tree**; use `git worktree`. `.2` is the unattended path |
+| **Dropped by this shape** | per-author split, durable-merge CAS, and "the model holds merge authority" (`verify_worker.py`) — **not a redesign, simply unnecessary** |
+
+🔴 **What is *not* dropped**: attempt-branch isolation, lease, and epoch fencing. Two worker
+machines contend for real — the criterion is *"are there actually multiple concurrent actors?"*,
+not *"is this a team feature?"*
+→ [`8-git-authority.md`](8-git-authority.md) §8.4
+
+## Worker configuration — 🔴 generated, never copied (2026-08-09)
+
+A worker's `.mcp.json` was found pointing at `C:\Users\USER\Documents\ModularStage` — **another
+machine's path**, character-for-character identical to `.33`'s registry entry. One worker's config
+had been copied to another; every path in it was missing there, and it **failed silently**.
+
+So: **the master generates per-machine config from the registry** (`python -m master.client
+deliver`) into `<checkout>/.ax/config.json`, and **capabilities are probed, not declared**.
+Delivery **re-reads and compares sha256** — that check caught four separate corruptions in one
+session (a silent no-op `move`, PowerShell adding BOM/CRLF, an 18 KB stdin hang, and a duplicated
+managed block). Transfers use `scp`; `CLAUDE.md` is merged **marker-delimited** so human text
+survives.
+
 ## Terminology — 🔴 `worker` means three different things
 
 | Whose `worker` | What it actually is |
