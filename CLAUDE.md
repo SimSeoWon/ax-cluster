@@ -102,7 +102,7 @@ from the master's own container DB. 🔴 **Never write the key value into a doc 
 | **Relation graphs** — inheritance (tree-sitter C++) + `#include` (중 1.1, **done 5/5**) | `master/graph/` — **1,806 classes · 6,380 methods · 10,817 include edges** on ModularStage, 2.9s full scan. `python -m master.graph build\|status`. ⚠️ reverse include lookup is basename-approximate (9 ambiguous headers) |
 | **Ontology** — YAML io (no PyYAML) · stale · L1/L2/L3 layers · member proposals · concept hierarchy · **fact gate** · package writer · **LLM re-synthesis** (중 1.3, **8/13**) | `master/ontology/` — `python -m master.ontology status\|plan\|verify\|dry\|refresh`. 🔴 **`plan` → `dry` first**: `plan` sizes prompts with **no LLM**, `dry` synthesises without writing. Domain MD (intent) + source excerpts + graphs → actions/invariants → deterministic gates → package. 🔴 **Payload is chunked by `#include` cohesion and split across both nodes** — model name selects the node; the defaults are each node's **resident** model (any other evicts the pin). `claude`/`agy` are also valid lanes. Prompt budget is **measured** (2.79–2.85 chars/token, `num_ctx` 8192 both nodes). 🔴 Decision rules live in that package's `__init__.py` |
 | **Context-MD synthesis** — prompt+grounding, σ.7 fence strip + σ.7-B save gate, stamping, batch circuit breaker (중 1.2) | `master/context_synth/` — `python -m master.context_synth one\|fill\|all\|status`. 909 source groups, all already documented from the snapshot. **Wired into the indexer** (changed files only). A **deterministic factuality gate** (`verify.py`) rejects docs describing commented-out code as live — **75% pass rate measured on the 35B (3/4)**, and the one rejection was a real catch. `sample N` dry-runs without touching snapshot docs. 🔴 **BC-250 reclaims ~170 MB per request and never gives it back until the model unloads** — `UNLOAD_EVERY=5` handles that; set 0 for dedicated-VRAM nodes |
-| **Worker bundle** — per-machine config · skill · CLAUDE.md merge, delivered over SSH (#21) | `master/client/` — `python -m master.client probe\|plan\|deliver\|check`. 🔴 **Paths are never hardcoded**: the master generates `<checkout>/.ax/config.json` from the registry, because a worker's config was found pointing at *another machine's* path. Capabilities are **probed, not declared**, and the block states the *consequence* ("no UE5 ⇒ layer-3 cannot be verified here"). CLAUDE.md is merged **marker-delimited** — human text is never overwritten. 🔴 Delivery verifies by re-reading sha256; that caught PowerShell adding BOM/CRLF and an 18KB stdin hang, so transfers use `scp` |
+| **Worker bundle** — per-machine config · skill · CLAUDE.md merge, delivered over SSH (#21) | `master/client/` — `python -m master.client probe\|plan\|deliver\|check`. **Role-aware**: `worker` gets `ax-work`; `requester` (the human's PC) gets `ax-request`/`ax-ontology` and is **excluded from `drivable_hosts`** — `driven` (can we reach it) and `role` (may we dispatch to it) are different axes. 🔴 **Paths are never hardcoded**: the master generates `<checkout>/.ax/config.json` from the registry, because a worker's config was found pointing at *another machine's* path. Capabilities are **probed, not declared**, and the block states the *consequence* ("no UE5 ⇒ layer-3 cannot be verified here"). CLAUDE.md is merged **marker-delimited** — human text is never overwritten. 🔴 Delivery verifies by re-reading sha256; that caught PowerShell adding BOM/CRLF and an 18KB stdin hang, so transfers use `scp` |
 | Ollama node check + remote install (no residency) | `master/provision.py` — `python -m master.provision check` |
 | venv + deps | `.venv/`, `master/requirements.txt` |
 
@@ -116,7 +116,7 @@ reporting status, give the denominator (*"twin sub-tasks 18 of 36"*), never a sc
 what got built.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
-**Tests — 1,098, all passing. No pytest**; each file runs standalone.
+**Tests — 1,126, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
@@ -137,7 +137,7 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_ontology.py             #  127 — YAML io: 왕복 보존, 안 바뀌면 안 씀 — relation graphs: Source-only, fail-closed, no ghost rows
 .venv/bin/python master/test_context_synth.py        #  102 — σ.7/σ.7-B gates, comment preservation, circuit breaker + factuality gate
 .venv/bin/python master/test_ontology_synth.py       #  42 — 도메인 MD 두 스키마 · 조각 고지 · 응답 파서의 도메인 밖 차단
-.venv/bin/python master/test_client_bundle.py        #  35 — role(파견 가능 ≠ 닿음) · CLAUDE.md 블록 병합 · config 에 비밀 없음
+.venv/bin/python master/test_client_bundle.py        #  63 — role(파견 가능 ≠ 닿음) · CLAUDE.md 블록 병합 · config 에 비밀 없음
 .venv/bin/python master/test_norms.py                #  20 — 도메인 규범: 관련성 필터 · 예산 · 🔴 결손 명시
 .venv/bin/python master/test_domain_index.py         #  30 — 도메인 색인: 페이로드에 항목 본문 녹이기 · 지문 · 🔴 노이즈 3중 차단
 
