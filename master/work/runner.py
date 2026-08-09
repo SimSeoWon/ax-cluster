@@ -95,6 +95,20 @@ class Outcome:
     head: str = ""
     reason: str = ""
     tail: str = ""
+    # 🔴 실측 계측 — `--output-format json` 이 주는 것. 비어 있으면 **모른다**는 뜻이다.
+    usage: dict = field(default_factory=dict)
+
+    @property
+    def cost_usd(self) -> float:
+        return float(self.usage.get("total_cost_usd") or 0.0)
+
+    @property
+    def tokens(self) -> tuple:
+        """`(입력, 출력, 캐시생성, 캐시읽기)`. 🔴 캐시가 비용을 지배한다 — 나눠서 본다."""
+        u = self.usage.get("usage") or {}
+        return (int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0),
+                int(u.get("cache_creation_input_tokens") or 0),
+                int(u.get("cache_read_input_tokens") or 0))
 
     @property
     def ok(self) -> bool:
@@ -115,15 +129,34 @@ class Outcome:
         return s + (f" — {self.reason}" if self.reason else "")
 
 
+def _unwrap(stdout: str) -> tuple:
+    """`(본문, 계측)`. `--output-format json` 이면 `result` 를 꺼내고 나머지를 계측으로 쥔다.
+
+    🔴 **JSON 이 아니어도 실패로 보지 않는다.** 계측이 없는 것과 작업이 실패한 것은 다르다 —
+    판정은 어느 쪽이든 **마커**로 읽는다.
+    """
+    t = (stdout or "").strip()
+    if not t.startswith("{"):
+        return stdout, {}
+    try:
+        d = json.loads(t)
+    except ValueError:
+        return stdout, {}
+    if not isinstance(d, dict) or "result" not in d:
+        return stdout, {}
+    return str(d.get("result") or ""), {k: v for k, v in d.items() if k != "result"}
+
+
 def parse_result(stdout: str) -> Outcome:
     """워커 출력에서 판정을 읽는다. 🔴 **마커가 없으면 BLOCKED.**
 
     산문에서 "성공했습니다" 를 찾아내지 않는다 — 그 관대함이 층2 의 `syntax_check` 를
     fail-open 으로 만들었고, 이 포팅은 그걸 뒤집기로 이미 정했다(settled).
     """
-    lines = [ln.strip() for ln in (stdout or "").replace("\r", "").split("\n")]
+    body, meta = _unwrap(stdout)
+    lines = [ln.strip() for ln in (body or "").replace("\r", "").split("\n")]
     ne = [ln for ln in lines if ln]
-    out = Outcome(tail="\n".join(ne[-12:]))
+    out = Outcome(tail="\n".join(ne[-12:]), usage=meta)
     if not ne:
         out.reason = "출력이 비었다"
         return out
@@ -237,7 +270,10 @@ def worker_command(facts, task_id: str) -> str:
     """워커에서 실제로 도는 한 줄. 🔴 **경로는 레지스트리에서 온 값**(`facts.path`)이다."""
     instr = INSTRUCTION.format(work=bundle.WORK_REL, task=task_id)
     cd = f'cd /d "{facts.path}"' if facts.windows else f'cd "{facts.path}"'
-    return f'{cd} && claude -p --dangerously-skip-permissions "{instr}"'
+    # 🔴 `--output-format json` — 판정 마커는 `result` 안에 들어오고, 그 대신
+    # **토큰·비용·턴 수**를 함께 받는다. 계측 없이 "분산이 이득인가" 를 논할 수 없다.
+    return (f'{cd} && claude -p --output-format json '
+            f'--dangerously-skip-permissions "{instr}"')
 
 
 def run_worker(facts, task_id: str, *, runner=None, timeout: int = DEFAULT_TIMEOUT) -> tuple:

@@ -401,11 +401,40 @@ def test_pick_skips_dirty() -> None:
     check("clean 을 안 주면 예전대로 (하위호환)", p3.chosen is cleanw)
 
 
+
+def test_json_usage() -> None:
+    """🔴 계측이 없는 것과 작업이 실패한 것은 다르다 (--output-format json)."""
+    import json as _j
+    blob = _j.dumps({
+        "result": f"ATTEMPT: a/b\nHEAD: {SHA}\nRESULT: DONE",
+        "total_cost_usd": 0.42, "num_turns": 7, "duration_api_ms": 1234,
+        "usage": {"input_tokens": 11, "output_tokens": 22,
+                  "cache_creation_input_tokens": 3000, "cache_read_input_tokens": 4000}})
+    r = R.parse_result(blob)
+    check("json 안의 마커를 읽는다", r.submittable, r.summary)
+    check("비용을 잡는다", abs(r.cost_usd - 0.42) < 1e-9, str(r.cost_usd))
+    # 🔴 캐시가 비용을 지배한다 — 뭉치지 않고 넷으로 본다
+    check("토큰을 넷으로 나눠 준다", r.tokens == (11, 22, 3000, 4000), str(r.tokens))
+    check("턴 수도 남는다", r.usage.get("num_turns") == 7, str(r.usage)[:60])
+
+    # 🔴 텍스트로 떨어져도 판정은 그대로 — 계측만 비는 것이다
+    txt = R.parse_result(f"ATTEMPT: a/b\nHEAD: {SHA}\nRESULT: DONE\n")
+    check("🔴 json 이 아니어도 실패가 아니다", txt.submittable, txt.summary)
+    check("계측만 빈다", txt.usage == {} and txt.cost_usd == 0.0, str(txt.usage))
+
+    bad = R.parse_result('{"result": 이건깨진json')
+    check("깨진 json 은 텍스트로 다룬다", not bad.ok and bad.usage == {}, bad.summary)
+
+    cmd = R.worker_command(_facts(), "t1")
+    check("🔴 명령에 --output-format json 이 있다", "--output-format json" in cmd, cmd[:90])
+
+
 def main() -> int:
     for fn in (test_parse, test_pick, test_command, test_deliver, test_beater, test_run_task,
                test_queue_calls, test_run_once_happy, test_run_once_returns_the_task,
                test_run_once_guards, test_refresh_base,
-               test_result_asymmetry, test_pick_skips_dirty):
+               test_result_asymmetry, test_pick_skips_dirty,
+               test_json_usage):
         fn()
     total = PASS + FAIL
     print(f"{'✅' if not FAIL else '🔴'} test_runner: {PASS}/{total} 통과")
