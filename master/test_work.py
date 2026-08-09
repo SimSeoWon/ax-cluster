@@ -435,6 +435,21 @@ def main() -> int:
     check("없으면 task_id 로", names == ["t1.cpp"], str(names))
 
     shutil.rmtree(tmp, ignore_errors=True)
+
+    # ── 대상 파일 (#65) ─────────────────────────────
+    print("\n[대상 파일] 🔴 매니페스트가 어느 파일인지 싣는가")
+    mt = mf.build(paths, "tf1", classes=["UFoo"],
+                  target_files=["Source/A/Foo.h", "Source/A/Foo.cpp"],
+                  searcher=None, base=None)
+    check("대상 파일 절이 있다", "## 대상 파일" in mt.body, mt.body[:200])
+    check("파일이 다 실린다",
+          "Source/A/Foo.h" in mt.body and "Source/A/Foo.cpp" in mt.body)
+    # 🔴 사용자: "클래스 별로 분리하는건 분산 작업시 충돌을 방지하기 위해서"
+    check("🔴 목록 밖 금지를 못박는다", "이 목록 밖은 건드리지 않는다" in mt.body)
+    check("🔴 파일이 갈라지면 안 되는 이유를 적는다", "두 워커가 같은 곳을 고친다" in mt.body)
+    empty = mf.build(paths, "tf2", classes=["UFoo"], searcher=None, base=None)
+    check("파일이 없으면 절을 안 만든다", "## 대상 파일" not in empty.body)
+
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 

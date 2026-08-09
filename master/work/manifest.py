@@ -95,6 +95,7 @@ def build(
     task_id: str,
     *,
     classes: list[str] | None = None,
+    target_files: list[str] | None = None,
     stem: str = "",
     contracts: str = "",
     skeleton: str = "",
@@ -110,6 +111,7 @@ def build(
     `searcher` 를 주입받는 이유는 테스트다. 실제로는 `ContextSearch` 가 들어온다.
     """
     classes = [c for c in (classes or []) if c and c.strip()]
+    target_files = [f for f in (target_files or []) if f and f.strip()]
     query = _query(classes, stem, extra_query)
     degraded: list[str] = []
     lines: list[str] = []
@@ -141,6 +143,16 @@ def build(
     if classes:
         lines.append("## 대상 클래스\n")
         lines.extend(f"- `{c}`" for c in classes)
+        lines.append("")
+    if target_files:
+        # 🔴 실측 2026-08-09: `target_file` 은 **큐 레코드에만** 있고 매니페스트엔 없었다.
+        # 워커는 어느 파일을 고칠지를 `contracts` 산문에서 우연히 읽고 있었다 — 산문이
+        # 파일명을 빠뜨리면 조용히 엉뚱한 곳을 고친다. 구조화해서 싣는다.
+        lines.append("## 대상 파일 — 🔴 **이 목록 밖은 건드리지 않는다**\n")
+        lines.extend(f"- `{f}`" for f in target_files)
+        lines.append("")
+        lines.append("🔴 **한 태스크의 파일은 한 워커가 통째로 맡는다.** 같은 파일이 두 "
+                     "태스크에 나뉘면 두 워커가 같은 곳을 고친다 — 묶기가 그것을 막는다.")
         lines.append("")
     if contracts.strip():
         lines.append("## 계약 (동결 — 바꾸지 말 것)\n")

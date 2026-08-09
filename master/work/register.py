@@ -47,7 +47,9 @@ class TaskSpec:
     classes: list[str] = field(default_factory=list)
     contracts: str = ""                        # 🔴 동결 인터페이스 — 병렬 생성의 전제 (§4.5)
     skeleton: str = ""                         # 골조 텍스트. 파일로 쓰는 것은 작업장 몫
-    target_file: str = ""
+    target_file: str = ""            # 큐 레코드용(단수) — 여러 개면 `target_files` 의 첫 번째
+    # 🔴 한 태스크가 맡는 파일 전부. **매니페스트에 실린다** — 예전엔 큐에만 있었다(#65).
+    target_files: list = field(default_factory=list)
     header_file: str = ""
     depends_on: list = field(default_factory=list)
     requires: list = field(default_factory=list)   # 예: ["ue5"] — 능력 라우팅 (§5.2-C)
@@ -56,6 +58,10 @@ class TaskSpec:
     def validate(self) -> None:
         if not (self.stem or "").strip():
             raise RegisterError("stem 이 비었다 — 태스크를 식별할 수 없다")
+        if self.target_files and not self.target_file:
+            self.target_file = self.target_files[0]
+        if self.target_file and self.target_file not in self.target_files:
+            self.target_files = [self.target_file] + list(self.target_files)
         if not self.classes and not self.target_file:
             raise RegisterError(
                 f"{self.stem}: classes 도 target_file 도 없다 — "
@@ -202,7 +208,8 @@ def register_work(
             # 매니페스트는 베스트에포트다 — 실패해도 등록을 되돌리지 않는다.
             # 다만 결손을 결과에 실어 호출자가 알 수 있게 한다.
             # 🔴 골조를 매니페스트에 싣는다 — `task_data` 는 전송 수단이 아니다(§4.7 ④).
-            m = mf.build(paths, r.task_id, classes=spec.classes, stem=spec.stem,
+            m = mf.build(paths, r.task_id, classes=spec.classes,
+                         target_files=spec.target_files, stem=spec.stem,
                          contracts=spec.contracts, skeleton=spec.skeleton,
                          searcher=searcher)
             r.manifest_path = str(mf.write(paths, m))

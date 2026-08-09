@@ -120,7 +120,7 @@ reporting status, give the denominator (*"twin sub-tasks 23 of 43"*), never a sc
 what got built.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
-**Tests — 1,373, all passing. No pytest**; each file runs standalone.
+**Tests — 1,393, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
@@ -145,6 +145,7 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_client_bundle.py        #  63 — role(파견 가능 ≠ 닿음) · CLAUDE.md 블록 병합 · config 에 비밀 없음
 .venv/bin/python master/test_norms.py                #  20 — 도메인 규범: 관련성 필터 · 예산 · 🔴 결손 명시
 .venv/bin/python master/test_cleanup.py              #  40 — 찌꺼기 정리: 병합된 것만 삭제 · 계획 밖 금지 · 경로 조작 차단
+.venv/bin/python master/test_batching.py           #  15 — 🔴 파일 불가분: 같은 파일이 두 태스크로 갈라지지 않는가
 .venv/bin/python master/test_runner.py               #  78 — 워커 파견: fail-closed 마커 · 집었으면 반드시 놓는다 · 더러운 워커 제외
 .venv/bin/python master/test_domain_index.py         #  30 — 도메인 색인: 페이로드에 항목 본문 녹이기 · 지문 · 🔴 노이즈 3중 차단
 
