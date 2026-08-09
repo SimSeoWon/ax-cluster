@@ -113,12 +113,16 @@ invariant 도 지켰지만, `CurrentStep`(실제는 `Step`) · `EMissionTaskExec
            git checkout -b attempt/<task_id>/<workshop>/<timestamp>
 
     끝:    git push -u origin <attempt 브랜치>
-           git checkout <기준 브랜치>            ← 🔴 반드시 돌아온다
+           git checkout main                     ← 🔴 **main 으로 돌아온다** (기준 브랜치가 아니라)
 
 🔴 **attempt 브랜치 위에 체크아웃을 두고 나오지 말 것.** 실측 2026-08-09: 시험 파견 후
 `.43` 이 attempt 브랜치에 남았고, 그대로 두면 **다음 작업이 무관한 이전 시도 위에서 가지를
 친다** — 두 작업이 한 줄에 쌓여 검증도 되돌리기도 어려워진다. 커밋은 push 로 이미 남았으니
 돌아와도 잃는 것은 없다.
+
+🔴 **돌아갈 곳은 `main` 이다** (사용자 결정 2026-08-09). `task/<id>` 에 앉아 있으면 마스터의
+정리기가 **그 브랜치를 영영 못 지운다**(체크아웃된 브랜치는 삭제 대상에서 빠진다). `main` 에
+서 있어야 병합이 끝난 `attempt/*`·`task/*` 가 정리된다. 작업물은 이미 원격에 있다.
 
 ## 6. 제출 — 🔴 마지막 세 줄이 계약이다
 

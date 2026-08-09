@@ -32,13 +32,13 @@ commit → relation graph → BM25 → then the ontology doc itself, which is **
 with heuristics, not fully automatic** (auto-promotion was permanently disabled 2026-06-01)
 ② **feed the relevant slice of that twin to the code-writing agent.**
 
-🔴 **23 of 43 sub-tasks done (2026-08-09).** The twin now **grows, is indexed, and reaches code
+🔴 **24 of 43 sub-tasks done (2026-08-09).** The twin now **grows, is indexed, and reaches code
 generation** — goal ② ran end to end for the first time. Relation graphs, context-MD synthesis and
 **ontology LLM re-synthesis** are wired; the 247 domain yaml are **indexed** (separate DB +
 collection, triple noise gate); manifests carry **domain norms**.
 The **worker runner** now dispatches from the queue into a worker's Claude and submits the
 result (중 2.5, 3/5 — e2e measured 71s). Still missing: **decomposition + skeleton generation**
-(§4.5's empty first step), **worker branch cleanup** (#27), and **thesaurus alias data (0 registered)** — measured cause: the tags channel
+(§4.5's empty first step), **requester `.33` wiring**, and **thesaurus alias data (0 registered)** — measured cause: the tags channel
 (weight 3.0) has **zero Korean**, so Korean queries miss the highest-weight channel entirely.
 Breakdown 대 2 / 중 9 / 소 43; **main = 대 1**.
 
