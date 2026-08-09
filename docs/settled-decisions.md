@@ -50,6 +50,34 @@ and a stale-epoch submit is rejected (§9.5.3).
   hallucinates APIs when generating code. **Don't design an agentic executor around the local
   models yet** (§9.4).
 
+## Ontology — 🔴 domain auto-promotion is discarded, in both producers (2026-08-09)
+
+AgentTest has **two** producers of domain MDs (`context/_domains/<D>.md`), and they write
+**different section schemas**. Measured on the received snapshot:
+
+| Producer | Sections written | frontmatter | Our 7 domains |
+|---|---|---|---|
+| **Auto-promotion** — `watcher/domain.py:577` | `## 시스템 개요` **only** | `status: draft`, no `created_by` | **6** |
+| **`ontology-register` skill** — `mcp/context_search/domain_seed.py:299` | 개요 + 핵심 책임 · 도메인 경계 · 핵심 invariants · 협력 도메인 · 사용자 의도 메모 | `status: active`, `created_by: ontology-register` | 1 (`MissionEditor`) |
+
+**Auto-promotion is discarded — do not port it.** Two independent reasons: the user reports it
+**misbehaved badly** in practice (2026-08-09), and the original itself disabled it permanently on
+2026-06-01. Nothing needs deleting on our side — **it was never ported** (0 lines in `master/`);
+this entry exists so a later session doesn't "restore" it as a missing feature.
+
+**Consequence — domain MDs are created only by interactive registration** (소 1.3.1 / 1.3.2).
+The 6 auto-promoted domains were hand-enriched into a *third* de-facto schema
+(`시스템 개요` + `핵심 구현 패턴` + `확장 포인트`) which `agent_defs.py:132` tells agents to read.
+🔴 **The MD parser must accept all of these.** Porting the original's fixed 6-section regex makes
+**6 of 7 domains parse to empty with no error** — measured: `GlobalEventSystem` yields 322 chars
+under the original patterns vs **1,225** when unknown sections are kept (`master/ontology/domain_md.py`).
+Same failure family as the `is_empty` filter that silently dropped 149 documents.
+
+🔴 **6 of 7 domains have no `## 도메인 경계`.** That section is what keeps synthesis from pulling
+in other domains' classes. Do **not** compensate with prompt wording alone — the deterministic
+guards do it: `allowed_classes` filtering plus the fact gate (`ontology/verify_facts.py`, call
+relations checked against the 6,380-row `methods` table).
+
 ## Terminology — 🔴 `worker` means three different things
 
 | Whose `worker` | What it actually is |
