@@ -265,3 +265,40 @@ passwd 홈인 `/home/gitea`** 를 본다. 두 경로가 어긋나 **키는 등�
 ⚠️ **Gitea API 토큰은 해시로만 저장되어 DB 에서 복구할 수 없다.** 새로 발급한다:
 `gitea admin user generate-access-token --username Sim --scopes write:user,write:repository`.
 발급본은 `~/.config/ax-cluster/gitea-token`(0600) — 🔴 **저장소에 넣지 않는다.**
+
+#### 마스터가 bare 를 읽는 법 — `sg gitea` (2026-08-09 확인)
+
+리포트 08 §7.4-2 가 *"`sim` 이 `gitea` 그룹에 파일상으론 있는데 세션 자격증명엔 없다 —
+재로그인을 안 했다"* 로 남겨 둔 것의 답이다. **재로그인 없이 `sg` 로 우회된다:**
+
+    sg gitea -c 'git -C <미러> ls-remote --heads origin'
+    → bc4b38f…  refs/heads/main
+      bc4b38f…  refs/heads/upgrade/ue5.8
+
+서비스는 이미 갖고 있다(`ax-indexer.service` 의 `SupplementaryGroups=gitea`). **대화형
+세션만** 그룹이 빠져 있고, 그래서 사람이 손으로 확인할 때만 걸린다.
+
+→ **마스터는 인증 없이 bare 를 읽을 수 있다.** durable 브랜치가 실제로 만들어졌는지
+**검증**하는 데 이걸 쓴다(읽기 전용이므로 §2.1 위반이 아니다).
+
+#### ① `twin_commit` 과 ② durable 브랜치는 **같은 커밋을 쓴다**
+
+`<프로젝트>/config.yaml` 의 `index.last_indexed_commit` 이 곧 **트윈이 지어진 커밋**이다
+(지금 `bc4b38f`). 그러므로:
+
+    durable task/<id> 를 만드는 기준 커밋  ==  매니페스트의 twin_commit
+                                          ==  index.last_indexed_commit
+
+**따로 만들 필요가 없다.** 브랜치를 그 커밋에서 따면 워커가 받는 소스와 매니페스트의 근거가
+**정의상 일치**한다 — 그게 ①이 풀려는 문제 전부다.
+
+### 8.6 ⬜ 아직 안 한 것 (2026-08-09 시점)
+
+| | 막힌 이유 |
+|---|---|
+| `register_work(target_branch=…)` 이 durable 브랜치를 **실제로 만들게** 하기 | 🔴 마스터는 push 를 못 한다 — **요청자가 만든다.** 그 `.33` 이 꺼져 있어 실행·검증 불가 |
+| 매니페스트에 `twin_commit` 싣기 | 위와 한 몸이라 같이 한다 |
+| 워커 ff-only 따라잡기 | 위 둘이 있어야 대상이 생긴다 |
+| `.33` 의 git 인증 | 대화형이면 GCM 이 처리하므로 **지금은 불필요**. 자동화가 필요해지면 §8.5 와 같은 방식으로 키 등록 |
+
+✅ **선결이던 워커 git 인증은 끝났다**(§8.5) — `.2`·`.43` 둘 다 fetch·push 가 된다.
