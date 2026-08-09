@@ -32,9 +32,39 @@ def test_header_and_impl_stay_together() -> None:
     us = B.units([("UFoo", "Source/A/Foo.h"), ("UFoo", "Source/A/Foo.cpp"),
                   ("UBar", "Source/B/Bar.h")])
     check("stem 으로 한 몸이 된다", len(us) == 2, [u.key for u in us])
-    foo = next(u for u in us if u.key == "Foo")
+    foo = next(u for u in us if u.key.endswith("Foo"))
     check("헤더와 구현이 같은 단위", sorted(foo.files) == ["Source/A/Foo.cpp", "Source/A/Foo.h"],
           str(foo.files))
+
+
+def test_ue_public_private_pair() -> None:
+    """🔴 UE 모듈은 선언·구현을 `Public/`↔`Private/` 로 가른다 — 그래도 한 몸이다.
+
+    실측 2026-08-10: 이 프로젝트에 50건. 원전(AgentTest)은 같은 폴더만 봐서 *"헤더 전용"*
+    으로 오판하고 **워커 태스크를 통째로 누락**했다(2026-06-07 prod 발견).
+    """
+    us = B.units([("UBeacon", "ModularStageEditor/Public/BeaconDetails.h"),
+                  ("UBeacon", "ModularStageEditor/Private/BeaconDetails.cpp")])
+    check("Public/Private 짝은 한 단위", len(us) == 1, [u.key for u in us])
+    check("열쇠에서 Public/Private 가 빠진다", us[0].key == "ModularStageEditor/BeaconDetails",
+          us[0].key)
+
+
+def test_same_name_in_other_module_splits() -> None:
+    """🔴 다른 모듈의 동명 파일은 **갈라야 한다** — 실측 9건이 포팅 원본↔대상이다.
+
+    묶으면 워커에게 *"이 둘은 한 몸이니 같이 고쳐라"* 가 되는데, 포팅 원본은 읽기 전용이다.
+    """
+    us = B.units([("UHex", "ModularStage/UI/HexGrid/Alpha_HexagonTileItem.h"),
+                  ("UHex", "ModularStage/UI/HexGrid/Alpha_HexagonTileItem.cpp"),
+                  ("UHex", "Project_Alpha/UI/Components/Hexagon/Alpha_HexagonTileItem.h"),
+                  ("UHex", "Project_Alpha/UI/Components/Hexagon/Alpha_HexagonTileItem.cpp")])
+    check("모듈이 다르면 갈라진다", len(us) == 2, [u.key for u in us])
+    check("각 단위는 자기 모듈의 짝만 갖는다",
+          all(len(u.files) == 2 and len({f.split("/")[0] for f in u.files}) == 1 for u in us),
+          str([u.files for u in us]))
+    check("두 단위가 파일을 공유하지 않는다",
+          not (set(us[0].files) & set(us[1].files)))
 
 
 def test_same_file_classes_never_split() -> None:
@@ -84,7 +114,8 @@ def test_no_file_no_problem() -> None:
 
 
 def main() -> int:
-    for fn in (test_header_and_impl_stay_together, test_same_file_classes_never_split,
+    for fn in (test_header_and_impl_stay_together, test_ue_public_private_pair,
+               test_same_name_in_other_module_splits, test_same_file_classes_never_split,
                test_disjoint_is_the_invariant, test_pack_size, test_no_file_no_problem):
         fn()
     total = PASS + FAIL
