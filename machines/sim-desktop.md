@@ -32,12 +32,12 @@ commit → relation graph → BM25 → then the ontology doc itself, which is **
 with heuristics, not fully automatic** (auto-promotion was permanently disabled 2026-06-01)
 ② **feed the relevant slice of that twin to the code-writing agent.**
 
-🔴 **27 of 43 sub-tasks done (2026-08-09)** — 🔴 the count now lives in Redmine (version *마일스톤 2*), not in a hand-edited doc; it drifted twice. The twin now **grows, is indexed, and reaches code
+🔴 **28 of 43 sub-tasks done (2026-08-09)** — 🔴 the count now lives in Redmine (version *마일스톤 2*), not in a hand-edited doc; it drifted twice. The twin now **grows, is indexed, and reaches code
 generation** — goal ② ran end to end for the first time. Relation graphs, context-MD synthesis and
 **ontology LLM re-synthesis** are wired; the 247 domain yaml are **indexed** (separate DB +
 collection, triple noise gate); manifests carry **domain norms**.
 The **worker runner** dispatches from the queue into a worker's Claude and submits the result
-(중 2.5, **4/5** — e2e measured 71s), and the master **cleans up worker debris**
+(중 2.5 ✅ **5/5** — requester→worker loop measured 1m29s), and the master **cleans up worker debris**
 (`master.work.cleanup`) — 🔴 workers may not delete branches, and a branch is removed only when
 its tip is reachable from `origin/main`. Workers return to **`main`** when done, otherwise the
 branch they sit on can never be cleaned. Still missing: **decomposition + skeleton generation**

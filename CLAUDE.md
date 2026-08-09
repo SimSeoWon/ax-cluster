@@ -14,7 +14,7 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   → [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md)
   **Read only the open milestone** — closed ones are reference; don't load them. Progress
   lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
-  🔴 **The twin grows now, but only on changed files — 27 of 43 sub-tasks done (Redmine computes it).**
+  🔴 **The twin grows now, but only on changed files — 28 of 43 sub-tasks done (Redmine computes it).**
   중 1.1 relation graphs ✅ · 중 1.2 context-MD synthesis ✅ **wired into the indexer** (verified on
   a real commit diff: graphs → synthesis → reindex) · 중 1.3 ontology **8/13** — the LLM
   re-synthesis now runs (measured: local 2-node and `claude` both passed the fact gate 100%) · 중 1.4 thesaurus **4/5** — aliases now
