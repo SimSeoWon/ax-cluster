@@ -121,3 +121,6 @@ Numbered work reports accumulate in `~/claude-workspace/reports/` (mirroring the
   report file *before* running them and update it *during* the work** — if the connection drops,
   the file is the only surviving record of what was attempted.
 - Afterwards, also update the preceding report's "remaining" list with what got done.
+- 🔴 **Reports are not the task list.** Work items live in **Redmine** (`:8080`, project
+  `ModularStage` — the AX cluster is *the same project*, never make a new one) and progress lives
+  in the open milestone doc. Three places, three jobs — see `~/ax-cluster/CLAUDE.md` § Work flow.

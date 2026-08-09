@@ -53,6 +53,27 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
 
 There is no linter or CI config — **don't invent tooling commands.**
 
+## Work flow — three places, three jobs (user-confirmed 2026-08-09)
+
+🔴 **Don't collapse these.** Each answers a different question, and mixing them is how the
+milestone doc grew stale numbers before.
+
+| | Answers | Rule |
+|---|---|---|
+| **Milestone doc** `docs/milestones/2-*.md` | *Where are we?* — 대/중/소 breakdown, denominators, chains | Progress lives **only** here. Delete finished 소분류 to hold the line cap |
+| **Redmine** `http://192.168.0.57:8080` | *What is being worked, by whom, now?* — individual items, priority, assignment | Open an issue for work that spans sessions; move it 신규 → 진행 → 해결 and put the commit hash in the note |
+| **`reports/`** | *Why did we decide that?* — decisions, measurements, traps | One report per session, Korean. Not a task list |
+
+**At session start**: read the open milestone, then `GET /issues.json?status_id=open` for `[AX]`
+items. **At session end**: update the issues you moved, then write the report.
+
+🔴 **Redmine is the *same* project as the game — `ModularStage` (id 1), tracker `코드리뷰`
+(user-confirmed: *"동일한 프로젝트네"*).** The AX cluster is tooling **for** that R&D, not a
+separate deliverable. **Never create a new project or tracker**; distinguish with an `[AX]` subject
+prefix only. Read is public; writing needs the admin API key, which is **not on disk** — pull it
+from the master's own container DB. 🔴 **Never write the key value into a doc or commit.**
+→ [`docs/10-references.md`](docs/10-references.md) §10.1
+
 ## Where things are
 
 | Need | Go to |
