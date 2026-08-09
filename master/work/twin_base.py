@@ -147,7 +147,11 @@ def manifest_section(base: Base) -> list:
            f"- 작업 브랜치: `{base.branch}`"]
     if not base.checked:
         out.append(f"- ⚠️ 브랜치 존재를 확인하지 못했다 — {base.error}")
-    elif not base.exists:
+    elif base.exists:
+        # 🔴 있으면 있다고 적는다. 침묵하면 낡은 "아직 없다" 와 구분이 안 된다 — 실측
+        # 2026-08-09: 등록 시점 매니페스트가 그대로 남아 워커가 있는 브랜치를 없다고 믿었다.
+        out.append("- ✅ 그 브랜치가 원격에 있다 — **여기서 시작한다**")
+    else:
         out.append("- 🔴 **그 브랜치가 원격에 아직 없다.** 요청자가 먼저 만들어야 워커가 "
                    "작업할 곳이 생긴다:")
         out.append(f"      {base.instruction}")
