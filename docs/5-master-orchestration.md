@@ -144,7 +144,7 @@
 
 **남는 결정 = 갈라야 한다는 것.** 그리고 갈래는 **줄 수가 아니라 계산 성격**이다 —
 LLM 0(커밋 즉시) / LLM 자동(게이트) / 사람·대화형 / 소비. 소분류와 진행 상태는
-[`milestones/2-twin-restoration.md`](milestones/2-twin-restoration.md) (대 2 · 중 8 · 소 32).
+[`milestones/2-twin-restoration.md`](milestones/2-twin-restoration.md) (대 2 · 중 9 · 소 43).
 
 🔴 **줄 수를 작업량으로 쓰지 않는다.** `class_graph` 1,341줄은 `data-schema.md` 기준
 *"파일 삭제 → 재기동 시 풀 스캔"* 이고, 반대로 829줄짜리 `domain_index.py` 하나에 도메인

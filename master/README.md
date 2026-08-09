@@ -2,7 +2,7 @@
 
 192.168.0.57(리눅스 인프라 컴퓨터)에서 돌아갈 오케스트레이션 코드가 여기 들어간다.
 
-## 지금 있는 것 (2026-08-08 기준)
+## 지금 있는 것 (2026-08-09 기준)
 
 | 파일 | 내용 |
 |---|---|
@@ -17,6 +17,8 @@
 | `events/` | 이벤트 스풀 + **색인기**. Gitea `post-receive` → 스풀 → `ax-indexer.path`(inotify) → 재색인. 🔴 폴링 아님 |
 | `provision.py` | Ollama 노드 **점검·원격 설치**. 🔴 `.33`(메인 작업 PC)은 `resident=False` — 상주시키지 않는다. `python -m master.provision check` |
 | `work/` | 워크플로우 — 2-tier 브랜치 · 매니페스트 · 생성→층2→인계 · **도메인 규범 번들**(`norms.py`, 소 2.3.1). 루프는 돈다(실측 20.1s APPROVE). 지도는 `docs/4-work-loop.md` §4.7, 브랜치 수명주기는 `docs/8-git-authority.md` §8.4 |
+| `work/runner.py` | **워커 러너** — 큐에서 집어 워커의 Claude 에 파견하고 결과를 제출한다. `python -m master.work.runner probe\|once\|loop`. 🔴 **워커에 큐 토큰을 주지 않는다 — 마스터가 중개한다**(실측: 두 워커 다 8101 이 401, AX MCP 0건). 하트비트도 마스터가 친다. 판정은 **fail-closed 마커** `ATTEMPT`/`HEAD`/`RESULT` 마지막 세 줄, 관대함은 **BLOCKED 쪽으로만**. 🔴 기준 절은 **파견 시점에 다시 푼다**. 실측 e2e 71초 |
+| `work/cleanup.py` | **찌꺼기 정리** — 워커의 로컬 브랜치·부산물. `python -m master.work.cleanup plan\|apply`. 🔴 **워커는 스스로 못 지운다**(스킬이 브랜치 삭제 금지 — 의도). 삭제는 **팁이 `origin/<base>` 에서 도달 가능할 때만**, 나머지는 **보존**(fail-closed 의 방향이 보존이다). 원격은 안 건드린다. `failed` 부산물은 증거로 남긴다. ⚠️ `--format` 은 셸별로 감싼다 — `%(...)` 의 괄호가 POSIX 문법이라 안 감싸면 리눅스 워커만 조용히 실패한다 |
 | `graph/` | **관계 그래프** — 상속(tree-sitter C++) + `#include`. 1,806 클래스 · 6,380 메서드 · 10,817 간선, 전체 스캔 2.9초. `python -m master.graph build\|status` |
 | `ontology/` | **온톨로지** — YAML io(PyYAML 0) · stale · L1/L2/L3 · 멤버 제안 · 개념 계층 · **사실 게이트** · 패키지 쓰기 · **LLM 재합성**. `python -m master.ontology plan\|dry\|refresh`. 🔴 결정 규칙은 그 패키지 `__init__.py` 에 있다 |
 | `context_synth/` | **컨텍스트 MD 합성** — 프롬프트·grounding·σ.7 게이트·**사실 게이트**·서킷브레이커. 색인기에 배선됨 |

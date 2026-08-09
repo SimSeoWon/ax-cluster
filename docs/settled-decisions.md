@@ -115,6 +115,27 @@ session (a silent no-op `move`, PowerShell adding BOM/CRLF, an 18 KB stdin hang,
 managed block). Transfers use `scp`; `CLAUDE.md` is merged **marker-delimited** so human text
 survives.
 
+## Worker dispatch — 🔴 the master mediates; workers get no queue token (2026-08-09)
+
+Measured before writing any code: **both workers get 401 from `:8101`** and have **zero AX MCP
+servers registered**. The `ax-work` skill's premise — *"MCP 는 등록에 헤더가 박혀 있다"* — was
+simply **false**. Two ways out: hand the token to the workers, or have the master mediate.
+**Mediation won**, on four grounds — reopen this file if any of them stops holding:
+
+1. §5.5.4 already rejected a daemon on the same logic: SSH is open, so **the master pushes work in**.
+2. The token never leaves the master. Copying it to two more machines widens exposure for nothing.
+3. 🔴 **Lease heartbeats need a long-lived caller.** The lease is 1200s with a 30s reclaim loop; the
+   master is already alive waiting on the SSH call. Telling the worker's Claude *"don't forget to
+   heartbeat mid-task"* is exactly the kind of thing an LLM forgets — and forgetting frees the lease
+   so **another worker claims the same task**.
+4. The only credential a worker actually needs is **git**, which Gitea SSH keys already provide.
+
+Consequences that are also settled: the verdict is a **fail-closed marker contract** (last three
+lines `ATTEMPT`/`HEAD`/`RESULT`), and leniency opens **only toward `BLOCKED`** — `RESULT: BLOCKED —
+reason` is accepted, `RESULT: DONE — …` is not. The base section of a manifest is **re-resolved at
+dispatch time**, because the durable `task/<id>` is created by the requester *after* registration,
+so a registration-time value is **guaranteed to go stale in the normal flow** (measured).
+
 ## Scope — 🔴 everything the master judges is `Source/` (user-confirmed 2026-08-09)
 
 Indexing and graphs were **already** limited to `repo/Source/**` (§5.2-E) — measured: the

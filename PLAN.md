@@ -17,7 +17,7 @@ Unreal MCP (UE 5.8.1+), and code-writing agents into one pipeline.
 **The twin grows now** — the indexer runs graphs → context-MD synthesis → reindex on every push
 (verified on a real commit). **14 of 33 sub-tasks done.**
 Goals (user, 2026-08-08): ① author the ontology documents automatically ② feed the relevant slice to
-the code-writing agent. Breakdown 대 2 / 중 8 / 소 32, main = 대 1 (making the data);
+the code-writing agent. Breakdown 대 2 / 중 9 / 소 43, main = 대 1 (making the data);
 `/distribute`·`/review-work` are 🕓 예정:
 [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md).
 
@@ -44,7 +44,7 @@ the code-writing agent. Breakdown 대 2 / 중 8 / 소 32, main = 대 1 (making t
 | 5.5 | [Project isolation](docs/5_5-project-isolation.md) | Multi-project directory layout and the mount contract | Many directories, **one mount** — mismatched requests get 409, fail-closed |
 | 6 | [Node failover](docs/6-node-failover.md) | Liveness detection and remote power recovery | Streaming chunk gap *is* the heartbeat (no separate comms infra) |
 | 7 | [Master GPU](docs/7-master-gpu.md) | Whether to add a GTX 1070 Ti for RAG/CUDA | **Open** — confirming the PSU's PCIe aux connector comes first |
-| 8 | [git authority](docs/8-git-authority.md) | The permission boundary between human sessions and the pipeline | Humans: no destructive git. Pipeline: autonomous on `task/` branches only |
+| 8 | [git authority](docs/8-git-authority.md) | The permission boundary between human sessions and the pipeline | Humans: no destructive git. Pipeline: autonomous on `task/` branches only. Also the **branch lifecycle** (durable `task/<id>` → attempt → `main` return) and 🔴 **who may delete branches** — workers may not; the master cleans, and only when the tip is reachable from `origin/<base>` |
 | 9 | [gajae-code (gjc)](docs/9-gajae-code.md) | Where `gjc` runs, and why 14b blocked it | `gjc` runs on Windows; L2 gets a fail-closed VERDICT contract |
 | 9.5 | [task_queue port](docs/9_5-task-queue.md) | Port stage 1 and service registration | Ported, `ax-task-queue` live, 8101 LAN-only |
 | — | [Settled decisions](docs/settled-decisions.md) | Closed calls, gathered in one place | Don't relitigate without new measurements |

@@ -5,7 +5,7 @@
 
 **플랫폼**: 리눅스 마스터(Ubuntu 22.04) + 윈도우 2대(작업장 1 · 요청자 1) + BC-250 1대
 
-> **지금 어디까지 왔나: 소 38개 중 20개** (2026-08-09). 트윈이 **자라고, 색인되고,
+> **지금 어디까지 왔나: 소 43개 중 24개** (2026-08-09). 트윈이 **자라고, 색인되고,
 > 코드 작성에 전달된다** — 목표 ②가 처음으로 끝까지 관통했다. 남은 큰 것은
 > **분해·골조 생성**(§4.5 의 빈 첫 단계) · **작업 브랜치 배선**(#21) ·
 > **시소러스 별칭 데이터**(0건)다.
@@ -139,6 +139,14 @@ ax-cluster/
 # 색인
 .venv/bin/python -m master.context_search.rebuild # 전체 재색인 (A/B 한 번 교체)
 
+# 워커에 일 시키기 (중 2.5)
+.venv/bin/python -m master.client probe            # 머신 실측 — 경로·능력·체크아웃
+.venv/bin/python -m master.client deliver          # config·스킬·CLAUDE.md 배달 (해시 대조)
+.venv/bin/python -m master.work.runner probe       # 누가 파견 가능한가 (큐를 안 건드린다)
+.venv/bin/python -m master.work.runner once        # 🔴 한 건: claim → 워커 → submit
+.venv/bin/python -m master.work.cleanup plan       # 🔴 먼저 본다 — 아무것도 안 지운다
+.venv/bin/python -m master.work.cleanup apply      # 병합된 브랜치·끝난 부산물만 삭제
+
 # 운영
 curl -s localhost:8102/health | python3 -m json.tool     # 노드별 상주 모델
 systemctl status ax-task-queue ax-broker ax-projects ax-indexer.path
@@ -167,7 +175,7 @@ Claude 가 사용자에게 물어 등록한다 — 다음 검색부터 자동 �
 
 ## 테스트
 
-**968건, 전부 통과. pytest 없음** — 각 파일이 단독 실행된다.
+**1,273건, 전부 통과. pytest 없음** — 각 파일이 단독 실행된다.
 
 ```bash
 python3 master/test_verdict.py                       #  19

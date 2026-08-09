@@ -36,8 +36,11 @@ with heuristics, not fully automatic** (auto-promotion was permanently disabled 
 generation** — goal ② ran end to end for the first time. Relation graphs, context-MD synthesis and
 **ontology LLM re-synthesis** are wired; the 247 domain yaml are **indexed** (separate DB +
 collection, triple noise gate); manifests carry **domain norms**.
-The **worker runner** now dispatches from the queue into a worker's Claude and submits the
-result (중 2.5, 3/5 — e2e measured 71s). Still missing: **decomposition + skeleton generation**
+The **worker runner** dispatches from the queue into a worker's Claude and submits the result
+(중 2.5, **4/5** — e2e measured 71s), and the master **cleans up worker debris**
+(`master.work.cleanup`) — 🔴 workers may not delete branches, and a branch is removed only when
+its tip is reachable from `origin/main`. Workers return to **`main`** when done, otherwise the
+branch they sit on can never be cleaned. Still missing: **decomposition + skeleton generation**
 (§4.5's empty first step), **requester `.33` wiring**, and **thesaurus alias data (0 registered)** — measured cause: the tags channel
 (weight 3.0) has **zero Korean**, so Korean queries miss the highest-weight channel entirely.
 Breakdown 대 2 / 중 9 / 소 43; **main = 대 1**.
