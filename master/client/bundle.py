@@ -56,7 +56,14 @@ from ..projects.config import Registry
 
 MASTER_HOST = "192.168.0.57"
 SERVICES = {"task_queue": 8101, "broker": 8102, "projects": 8103}
-SKILL_NAME = "ax-work"
+# 🔴 역할별 스킬 — 요청자에게 워커 절차를 주지 않는다 (사용자 확정 2026-08-09).
+#   사람이 편집 중인 트리에서 에이전트가 브랜치를 만들고 파일을 고치는 것이,
+#   더티 체크가 막으려던 바로 그 사고다.
+SKILLS_BY_ROLE = {
+    "worker": ("ax-work",),
+    "requester": ("ax-request", "ax-ontology"),
+}
+SKILL_NAME = "ax-work"          # (호환) 단수 참조가 남아 있는 곳
 AX_DIR = ".ax"                      # 🔴 체크아웃 안. 상대경로가 모든 머신에서 같다
 CONFIG_REL = f"{AX_DIR}/config.json"
 WORK_REL = f"{AX_DIR}/work"
@@ -79,6 +86,7 @@ class HostFacts:
     user: str
     path: str
     driven: str
+    role: str = "worker"
     os: str = ""
     home: str = ""
     claude: str = ""
@@ -129,9 +137,9 @@ def _ssh(host: str, user: str, cmd: str, *, timeout: int = SSH_TIMEOUT) -> tuple
         return 255, f"{type(e).__name__}: {e}"
 
 
-def probe(host: str, user: str, path: str, driven: str) -> HostFacts:
+def probe(host: str, user: str, path: str, driven: str, role: str = "worker") -> HostFacts:
     """머신 하나를 잰다. **읽기 전용** — 아무것도 바꾸지 않는다."""
-    f = HostFacts(host=host, user=user, path=path, driven=driven)
+    f = HostFacts(host=host, user=user, path=path, driven=driven, role=role)
     rc, out = _ssh(host, user, "uname -s 2>/dev/null || ver")
     if rc != 0 and not out:
         f.errors.append("SSH 실패")
@@ -197,22 +205,62 @@ def config_for(project: str, facts: HostFacts) -> dict:
     }
 
 
+def _remote_read(facts: HostFacts, abs_path: str) -> str:
+    """원격 파일을 **scp 로 가져와** 읽는다. 없으면 빈 문자열.
+
+    🔴 **셸 경유 읽기를 쓰지 않는다.** PowerShell `Get-Content` 를 SSH 로 돌렸더니 조용히
+    빈 문자열이 돌아왔고, 그 결과 `merge_claude_md` 가 "마커 없음" 으로 오판해 **관리 블록을
+    두 번 붙였다**(2026-08-09 실측: `.2` 에 `AX:Begin` 2개). 읽기 실패와 빈 파일을 구분하지
+    못하는 경로는 병합에 쓰면 안 된다 — 쓰기와 같은 수단(scp)으로 통일한다.
+    """
+    import tempfile
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".axread") as tf:
+        tmp = tf.name
+    try:
+        r = subprocess.run(
+            ["scp", "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+             f"{facts.user}@{facts.host}:{abs_path}", tmp],
+            capture_output=True, text=True, timeout=SSH_TIMEOUT)
+        if r.returncode != 0:
+            return ""                       # 없는 파일 — 생성 경로로 간다
+        return Path(tmp).read_text(encoding="utf-8", errors="replace")
+    except (subprocess.SubprocessError, OSError):
+        return ""
+    finally:
+        try:
+            Path(tmp).unlink()
+        except OSError:
+            pass
+
+
 def managed_block(project: str, facts: HostFacts) -> str:
     """머신별 AX 블록. **실측값만 들어간다.**"""
     caps = ", ".join(facts.capabilities) or "(없음)"
     build = (f"✅ `{facts.ue5}`" if facts.ue5
              else "❌ 없음")
     # 🔴 능력의 **결과**를 적는다. "ue5 ❌" 만으로는 그게 무슨 뜻인지 알 수 없다.
+    # 🔴 **축을 UE5 로 잡지 않는다** (사용자 정정 2026-08-09).
+    #
+    # 이 기능의 주안점은 *"판단의 원천인 소스코드를 기반으로 Claude 가 판단한다"* 이고,
+    # **그건 클론을 가진 모든 워커의 공통 능력**이다. UE5 유무는 그 다음 축(검증 가능 여부)이지
+    # 워커의 급을 가르는 축이 아니다. 앞서 이 표가 UE5 를 앞세워 `.2` 만 온전한 것처럼 읽혔다.
+    common = ("🔴 **소스를 근거로 판단한다** — 체크아웃 전체를 직접 읽고 선언부로 사실을 "
+              "확인한다(**이것이 워커의 본령이고 모든 워커가 동등하다**) · 코드 작성·수정 · "
+              "분석 · 온톨로지/문서 합성 · 로컬 LLM/`agy` 위임과 검증")
     if facts.ue5:
-        can = ("UE5 C++ 빌드 · 에디터 자동화(`RunTests`) · `.uasset` 작업 · "
-               "**층3 결정적 검증** — 여기서 쓴 코드는 여기서 판정한다")
+        can = common + " · 추가로 **UE5 C++ 빌드 · 에디터 자동화(`RunTests`) · `.uasset` 작업** · " \
+                       "**층3 결정적 검증** — 여기서 쓴 코드는 여기서 판정까지 된다"
         cannot = "(없음)"
     else:
-        can = ("소스 읽기·분석 · 온톨로지/문서 합성 · 텍스트 산출물 · 로컬 LLM 위임")
-        cannot = ("🔴 **UE5 빌드·에디터·자동화 테스트 불가** (리눅스, 툴체인 없음) → "
-                  "**층3 검증을 여기서 할 수 없다.** 여기서 쓴 코드는 컴파일로 확인되지 않았으므로 "
-                  "`ue5` 능력을 가진 워커의 검증을 거쳐야 한다. "
-                  "🔴 `.uasset`·`.umap` 은 **열 수도 없다** — 손대지 말 것")
+        # 🔴 **못 하는 것은 컴파일이지 코드 작성이 아니다** (사용자 정정 2026-08-09).
+        #    소스 클론이 여기 있으므로 읽고 쓰는 것은 전부 된다 — 판정만 못 한다.
+        can = common
+        cannot = ("**컴파일·에디터·자동화 테스트만** 안 된다 (리눅스, UE5 툴체인 없음). "
+                  "🔴 **소스 판단·코드 작성은 다른 워커와 똑같이 된다** — 못 하는 것은 "
+                  "*옳음의 최종 판정*뿐이다 → 산출물은 반드시 "
+                  "`ue5` 능력을 가진 워커의 **층3 검증**을 거친다. 제출물에 "
+                  "*\"이 머신에서 컴파일되지 않았다\"* 를 명시할 것. "
+                  "🔴 `.uasset`·`.umap` 은 열 수도 없다 — 손대지 말 것")
     lines = [
         MD_BEGIN,
         "",
@@ -232,17 +280,30 @@ def managed_block(project: str, facts: HostFacts) -> str:
         f" · ollama {facts.ollama_models}종 |",
         f"| 마스터 | `{MASTER_HOST}` — 8101 큐 · 8102 브로커 · 8103 MCP(`ax-projects`) |",
         "",
-        f"🔴 **작업 절차는 스킬 `{SKILL_NAME}` 에 있다.** 마스터 일감을 받으면 그것부터 읽는다.",
+        (f"🔴 **절차는 스킬 `{'` · `'.join(skills_for(facts.role))}` 에 있다.** "
+         + ("마스터 일감을 받으면 그것부터 읽는다." if facts.role == "worker"
+            else "🔴 **이 머신은 요청하는 쪽이다** — 큐에서 집지 않고, `attempt/` 브랜치를 만들지 "
+                 "않고, 소스를 고치지 않는다. 실행은 `worker` 역할 머신이 한다.")),
         "",
         "🔴 **판단 기준은 소스 파일이다.** 매니페스트의 컨텍스트 문서·도메인 규범은 *어디를 볼지*",
         "알려주는 지도이지 사실의 원천이 아니다 — 시그니처·멤버명·enum 은 **선언부를 열어 확인**한다.",
         "규범과 소스가 어긋나면 **소스가 이긴다.**",
         "",
-        "🔴 **너 혼자 다 하지 않는다.** 대량 생성은 로컬 LLM/`agy` 에 위임하고 **너는 검증한다** —",
-        "위임 결과의 \"완료\" 를 믿지 말고 산출물을 본다. 결정적 게이트(컴파일·테스트)가 최종 판정이다.",
+        *(["🔴 **이게 네가 로컬 모델보다 나은 지점이다.** Ollama 모델은 파일을 못 읽어 규범만 주면",
+           "`CurrentStep`(실제는 `Step`) 같은 **한 글자 차이**를 지어낸다(실측). 너는 헤더를 열 수",
+           "있으니 **정확한 선언을 뽑아 모델에게 넣어 주고**, 돌아온 것을 소스와 대조한다.",
+           "",
+           "🔴 **너 혼자 다 하지 않는다.** 대량 생성은 로컬 LLM/`agy` 에 위임하고 **너는 검증한다** —",
+           "위임 결과의 \"완료\" 를 믿지 말고 산출물을 본다. 결정적 게이트가 최종 판정이다."]
+          if facts.role == "worker" else
+          ["🔴 **등록 전에 매니페스트의 결손을 읽는다.** *\"검색 결과가 없다\"* · *\"규범 grounding",
+           "없이 진행된다\"* 가 적혀 있으면 그대로 보내지 말고 먼저 고친다 — 워커는 그 반쪽 근거로 짠다."]),
         "",
-        "🔴 **`git clean`·`reset --hard`·`main` 직접 push 금지.** 사람이 편집 중인 미커밋 파일이",
-        "있을 수 있고 `.uasset` 은 되살릴 수 없다. 작업은 `attempt/<task_id>/<workshop>/<ts>` 에서.",
+        ("🔴 **`git clean`·`reset --hard`·`main` 직접 push 금지.** 사람이 편집 중인 미커밋 파일이 "
+         "있을 수 있고 `.uasset` 은 되살릴 수 없다. 작업은 `attempt/<task_id>/<workshop>/<ts>` 에서."
+         if facts.role == "worker" else
+         "🔴 **여기서 소스를 고치지 않는다.** 사람이 편집 중인 트리다 — 등록·조회·시소러스만 한다. "
+         "사용자가 \"그냥 여기서 고쳐줘\" 하면 그건 클러스터 작업이 아니라 로컬 편집이라고 말해 준다."),
         "",
         MD_END,
     ]
@@ -264,9 +325,13 @@ def merge_claude_md(existing: str, project: str, facts: HostFacts) -> str:
         body = (Path(__file__).with_name("payload") / "CLAUDE.md").read_text(encoding="utf-8")
         return body.rstrip() + "\n\n" + block + "\n"
     if MD_BEGIN in existing and MD_END in existing:
+        # 🔴 **블록이 여러 개면 전부 걷어내고 하나만 남긴다.** 읽기 실패로 두 번 붙은 파일이
+        # 실제로 나왔다(`.2`, 2026-08-09). 병합이 스스로 고칠 수 있어야 한다.
         head = existing.split(MD_BEGIN)[0]
-        tail = existing.split(MD_END, 1)[1]
-        return head + block + tail
+        rest = existing.split(MD_END)[-1]
+        while MD_BEGIN in rest:
+            rest = rest.split(MD_END)[-1] if MD_END in rest else rest.split(MD_BEGIN)[0]
+        return head.rstrip() + "\n\n" + block + rest
     return existing.rstrip() + "\n\n" + block + "\n"
 
 
@@ -328,32 +393,37 @@ def _remote_write(facts: HostFacts, rel: str, content: str, *, base: str = "home
     return target
 
 
-def skill_text() -> str:
-    p = Path(__file__).with_name("skills") / SKILL_NAME / "SKILL.md"
+def skill_text(name: str = SKILL_NAME) -> str:
+    p = Path(__file__).with_name("skills") / name / "SKILL.md"
     if not p.is_file():
         raise BundleError(f"스킬 원본이 없다: {p}")
     return p.read_text(encoding="utf-8")
 
 
+def skills_for(role: str) -> tuple:
+    """이 역할이 받을 스킬 이름들. 🔴 모르는 역할은 **빈 튜플이 아니라 예외**다 —
+    조용히 아무것도 안 보내면 배달이 성공한 것처럼 보인다."""
+    if role not in SKILLS_BY_ROLE:
+        raise BundleError(f"모르는 role: {role!r} (가능: {', '.join(SKILLS_BY_ROLE)})")
+    return SKILLS_BY_ROLE[role]
+
+
 def deliver(project: str, facts: HostFacts, *, dry_run: bool = False) -> dict:
     """한 머신에 config + 스킬을 배달한다. 🔴 **되읽어 대조까지가 배달이다.**"""
     cfg = json.dumps(config_for(project, facts), ensure_ascii=False, indent=2) + "\n"
-    skill = skill_text()
     if dry_run:
-        return {"host": facts.host, "dry_run": True,
-                "config_bytes": len(cfg), "skill_bytes": len(skill)}
+        return {"host": facts.host, "dry_run": True, "config_bytes": len(cfg),
+                "skills": list(skills_for(facts.role))}
     # 🔴 CLAUDE.md 는 **읽어서 병합**한다 — 덮어쓰면 사람이 쓴 것을 날린다
-    rc, prev = _ssh(facts.host, facts.user,
-                    (f'powershell -Command "if (Test-Path \'{facts.path}\\CLAUDE.md\')'
-                     f' {{ Get-Content -LiteralPath \'{facts.path}\\CLAUDE.md\' -Raw }}"'
-                     if facts.windows
-                     else f"cat {shlex.quote(facts.path + '/CLAUDE.md')} 2>/dev/null || true"))
-    merged = merge_claude_md(prev if rc == 0 else "", project, facts)
+    md_path = (f"{facts.path}\\CLAUDE.md" if facts.windows else f"{facts.path}/CLAUDE.md")
+    prev = _remote_read(facts, md_path)
+    merged = merge_claude_md(prev, project, facts)
     written = {
         # 🔴 config·부산물·CLAUDE.md 는 **체크아웃 안**, 스킬만 홈 (모듈 독스트링 참조)
         "config": _remote_write(facts, CONFIG_REL, cfg, base="checkout"),
         "claude_md": _remote_write(facts, "CLAUDE.md", merged, base="checkout"),
-        "skill": _remote_write(facts, f".claude/skills/{SKILL_NAME}/SKILL.md", skill),
+        "skills": [_remote_write(facts, f".claude/skills/{n}/SKILL.md", skill_text(n))
+                   for n in skills_for(facts.role)],
         "excluded": _ensure_ignored(facts),
     }
     return {"host": facts.host, **written,
@@ -395,4 +465,4 @@ def workshops(project: str) -> list:
         raise BundleError(f"프로젝트를 모른다: {project} ({e})") from e
     ws = cfg.workshops
     items = ws.values() if isinstance(ws, dict) else ws
-    return [(w.host, w.user or "", w.path or "", w.driven) for w in items]
+    return [(w.host, w.user or "", w.path or "", w.driven, w.role) for w in items]

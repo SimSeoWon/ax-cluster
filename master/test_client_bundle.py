@@ -85,7 +85,14 @@ def test_managed_block() -> None:
     linux = bundle.managed_block("ModularStage", _facts())
     check("마커가 있다", bundle.MD_BEGIN in linux and bundle.MD_END in linux)
     # 🔴 능력의 **결과**를 적는다 — "ue5 ❌" 만으로는 무슨 뜻인지 알 수 없다
-    check("🔴 UE5 없으면 '층3 검증 불가' 를 명시", "층3 검증을 여기서 할 수 없다" in linux)
+    # 🔴 문구가 아니라 **계약**을 본다 — ⑴ 여기서 판정 못 한다 ⑵ 다른 워커의 층3 을 거친다
+    check("🔴 UE5 없으면 '최종 판정 못 함' 을 명시", "옳음의 최종 판정" in linux, linux[:200])
+    check("🔴 ue5 워커의 층3 검증을 거치라고 적는다",
+          "층3 검증" in linux and "`ue5` 능력을 가진 워커" in linux)
+    check("🔴 제출물에 '컴파일되지 않았다' 를 적으라고 한다", "컴파일되지 않았다" in linux)
+    # 🔴 축이 UE5 가 아니라 **소스 판단**이다 — 두 역할이 같은 첫 문장을 갖는다
+    check("🔴 소스 판단이 본령이라고 적는다", "소스를 근거로 판단한다" in linux)
+    check("🔴 코드 작성은 다른 워커와 같다고 적는다", "다른 워커와 똑같이 된다" in linux)
     check("🔴 uasset 손대지 말라고 적는다", "uasset" in linux and "손대지 말 것" in linux)
     check("판단 기준이 소스임을 적는다", "소스가 이긴다" in linux)
     check("경로를 박지 않고 실측값을 넣는다", "/home/sim/trunk/ModularStage" in linux)
@@ -122,6 +129,13 @@ def test_merge() -> None:
     check("블록 내용은 갱신된다", "층3 결정적 검증" in changed)
     check("갱신해도 사람 내용은 유지", "사람이 쓴 내용이다." in changed)
 
+    # 🔴 실제로 난 사고 — 읽기 실패로 블록이 두 번 붙었다. 병합이 스스로 고쳐야 한다.
+    doubled = once.rstrip() + "\n\n" + bundle.managed_block("ModularStage", f) + "\n"
+    fixed = bundle.merge_claude_md(doubled, "ModularStage", f)
+    check("🔴 블록이 2개인 파일도 1개로 복구한다",
+          fixed.count(bundle.MD_BEGIN) == 1, str(fixed.count(bundle.MD_BEGIN)))
+    check("복구해도 사람 내용은 유지", "사람이 쓴 내용이다." in fixed)
+
     tail = once.split(bundle.MD_END, 1)[1]
     check("블록 뒤 내용도 보존된다",
           bundle.merge_claude_md(once + "\n## 뒤에 쓴 절\n", "ModularStage", f)
@@ -129,16 +143,44 @@ def test_merge() -> None:
 
 
 def test_skill_is_readable() -> None:
-    t = bundle.skill_text()
-    check("스킬 원본이 읽힌다", len(t) > 1000, str(len(t)))
-    check("frontmatter 가 있다", t.startswith("---") and "name: ax-work" in t)
-    # 🔴 스킬에 머신별 경로가 박히면 안 된다 — 그게 오늘 잡은 사고의 원인이었다
-    for bad in ("E:\\trunk", "/home/sim/trunk", "C:\\Users\\janus", "C:\\Users\\USER"):
-        check(f"🔴 스킬에 절대경로 `{bad}` 가 없다", bad not in t)
+    for name in ("ax-work", "ax-request", "ax-ontology"):
+        t = bundle.skill_text(name)
+        check(f"{name}: 읽힌다", len(t) > 1000, str(len(t)))
+        check(f"{name}: frontmatter", t.startswith("---") and f"name: {name}" in t)
+        # 🔴 스킬에 머신별 경로가 박히면 안 된다 — 그게 오늘 잡은 사고의 원인이었다
+        for bad in ("E:\\trunk", "/home/sim/trunk", "C:\\Users\\janus", "C:\\Users\\USER"):
+            check(f"🔴 {name} 에 절대경로 `{bad}` 가 없다", bad not in t)
+
+
+def test_role_skills() -> None:
+    check("워커는 ax-work", bundle.skills_for("worker") == ("ax-work",))
+    # 🔴 요청자에게 워커 절차를 주지 않는다
+    check("🔴 요청자는 ax-request·ax-ontology (ax-work 아님)",
+          set(bundle.skills_for("requester")) == {"ax-request", "ax-ontology"},
+          str(bundle.skills_for("requester")))
+    check("🔴 요청자 스킬에 ax-work 가 섞이지 않는다",
+          "ax-work" not in bundle.skills_for("requester"))
+    try:
+        bundle.skills_for("사장님")
+        check("🔴 모르는 역할은 예외 (조용히 빈 배달 금지)", False, "통과해버렸다")
+    except bundle.BundleError:
+        check("모르는 역할은 예외", True)
+
+
+def test_role_block() -> None:
+    w = bundle.managed_block("P", _facts(role="worker"))
+    r = bundle.managed_block("P", _facts(role="requester"))
+    check("워커 블록은 ax-work 를 가리킨다", "`ax-work`" in w)
+    check("🔴 요청자 블록은 ax-work 를 가리키지 않는다", "ax-work" not in r, r[:200])
+    check("요청자 블록은 ax-request 를 가리킨다", "ax-request" in r)
+    check("🔴 요청자에게 '소스를 고치지 않는다' 를 말한다", "소스를 고치지 않는다" in r)
+    check("🔴 워커에게만 attempt 브랜치 규약", "attempt/<task_id>" in w and "attempt/" not in r.split("실행은")[1])
+    check("두 역할 모두 '소스가 이긴다'", "소스가 이긴다" in w and "소스가 이긴다" in r)
 
 
 def main() -> int:
-    for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable):
+    for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
+               test_role_skills, test_role_block):
         fn()
     total = PASS + FAIL
     print(f"{'✅' if not FAIL else '🔴'} test_client_bundle: {PASS}/{total} 통과")

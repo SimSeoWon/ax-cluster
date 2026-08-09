@@ -21,11 +21,11 @@ DEFAULT_PROJECT = "ModularStage"
 
 def _facts(project: str) -> list:
     out = []
-    for host, user, path, driven in bundle.workshops(project):
+    for host, user, path, driven, role in bundle.workshops(project):
         if not user or not path:
             print(f"  ⚠️ {host}: user/path 미등록 — 건너뜀 (레지스트리를 고칠 것)")
             continue
-        out.append(bundle.probe(host, user, path, driven))
+        out.append(bundle.probe(host, user, path, driven, role))
     return out
 
 
@@ -47,8 +47,9 @@ def cmd_plan(project: str) -> int:
         print("     " + json.dumps(cfg["checkout"], ensure_ascii=False)
               + f" caps={cfg['capabilities']}")
         print(f"     backends={json.dumps(cfg['backends'], ensure_ascii=False)}")
-        print(f"   → {f.home}/.claude/skills/{bundle.SKILL_NAME}/SKILL.md "
-              f"({len(bundle.skill_text())}자)")
+        for n in bundle.skills_for(f.role):
+            print(f"   → {f.home}/.claude/skills/{n}/SKILL.md "
+                  f"({len(bundle.skill_text(n))}자)  [role={f.role}]")
         print(f"   → {f.path}/.git/info/exclude 에 `/{bundle.AX_DIR}/` (커밋 안 됨)")
     return 0
 
@@ -66,35 +67,40 @@ def cmd_deliver(project: str) -> int:
             print(f"  🔴 {f.host}: {e}")
             bad += 1
             continue
-        print(f"  ✅ {f.host}: config={r['config']}")
-        print(f"     skill={r['skill']} · .git/info/exclude ✅ · 해시 대조 통과")
+        print(f"  ✅ {f.host} [{f.role}]: config={r['config']} · CLAUDE.md {r['claude_md_mode']}")
+        for sp in r["skills"]:
+            print(f"     skill={sp}")
+        print("     .git/info/exclude ✅ · 해시 대조 통과")
     return 1 if bad else 0
 
 
 def cmd_check(project: str) -> int:
     """배달본이 정본과 같은가. 🔴 사본은 갈라진다 — 그래서 잰다."""
-    want = hashlib.sha256(bundle.skill_text().encode("utf-8")).hexdigest()
     bad = 0
     for f in _facts(project):
         if not f.checkout_ok:
             print(f"  ⚠️ {f.host}: 체크아웃 없음")
             bad += 1
             continue
-        target = (f"{f.home}\\.claude\\skills\\{bundle.SKILL_NAME}\\SKILL.md" if f.windows
-                  else f"{f.home}/.claude/skills/{bundle.SKILL_NAME}/SKILL.md")
-        cmd = (f'powershell -Command "(Get-FileHash -LiteralPath \'{target}\' -Algorithm SHA256).Hash"'
-               if f.windows else f"sha256sum '{target}' 2>/dev/null | cut -d' ' -f1")
-        rc, got = bundle._ssh(f.host, f.user, cmd)
-        got = (got or "").strip().lower()
+        ok_skill = True
+        names = bundle.skills_for(f.role)
+        for n in names:
+            want = hashlib.sha256(bundle.skill_text(n).encode("utf-8")).hexdigest()
+            target = (f"{f.home}\\.claude\\skills\\{n}\\SKILL.md" if f.windows
+                      else f"{f.home}/.claude/skills/{n}/SKILL.md")
+            cmd = (f'powershell -Command "(Get-FileHash -LiteralPath \'{target}\' -Algorithm SHA256).Hash"'
+                   if f.windows else f"sha256sum '{target}' 2>/dev/null | cut -d' ' -f1")
+            rc, got = bundle._ssh(f.host, f.user, cmd)
+            ok_skill = ok_skill and (got or "").strip().lower() == want
         cfg_path = (f"{f.path}\\{bundle.CONFIG_REL.replace('/', chr(92))}" if f.windows
                     else f"{f.path}/{bundle.CONFIG_REL}")
         rc2, _ = bundle._ssh(f.host, f.user,
                              (f'if exist "{cfg_path}" (echo OK)' if f.windows
                               else f"test -f '{cfg_path}' && echo OK"))
-        ok_skill, ok_cfg = got == want, rc2 == 0
+        ok_cfg = rc2 == 0
         mark = "✅" if (ok_skill and ok_cfg) else "🔴"
-        print(f"  {mark} {f.host}: 스킬 {'일치' if ok_skill else '불일치/없음'} · "
-              f"config {'있음' if ok_cfg else '없음'}")
+        print(f"  {mark} {f.host} [{f.role}]: 스킬 {len(names)}종 "
+              f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}")
         bad += 0 if (ok_skill and ok_cfg) else 1
     return 1 if bad else 0
 
