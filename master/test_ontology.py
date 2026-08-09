@@ -429,6 +429,16 @@ def main() -> int:
           (y.read(moved) or {}).get("aliases") == ["새것"], str(y.read(moved)))
 
     shutil.rmtree(tmp, ignore_errors=True)
+    print("\n[11-3] 🔴 `이름 (주석)` 은 호출이 아니다 (실측 2026-08-10)")
+    # 실측: target: "FGlobalEventSystem::PrivateHandler (ListenerMap)" 를 호출로 읽어
+    #   정상 문서 9건을 유령으로 신고했다. PrivateHandler 는 소스에서 static TSharedPtr 멤버다.
+    #   🔴 저장소 원칙 — 정상 문서를 막는 게이트가 통과시키는 게이트보다 나쁘다.
+    calls = lambda t: vf._CALL.findall(t)
+    check("🔴 공백 뒤 괄호는 호출이 아니다", calls("FGlobalEventSystem::PrivateHandler (ListenerMap)") == [])
+    check("붙은 괄호는 호출이다", calls("FGlobalEventSystem::Init()") == [("FGlobalEventSystem", "Init")])
+    check("인자가 있어도 호출", calls("UManager_Mission::RunTask(task)") == [("UManager_Mission", "RunTask")])
+    check("괄호 없는 멤버는 여전히 무시", calls("EMissionType::Wait") == [])
+
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 

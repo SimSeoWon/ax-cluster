@@ -57,7 +57,13 @@ from ..graph import class_graph as cg, db as gdb
 #
 # 이 프로젝트에서 **정상 문서를 막는 게이트가 통과시키는 게이트보다 나쁘다** — 문서는
 # 지도이고, 지도를 못 만들면 작업이 멈춘다. 그래서 **모호하면 봐준다.**
-_CALL = re.compile(r"\b([A-Z][A-Za-z0-9_]*)\s*(?:::|\.)\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+# 🔴 **식별자와 `(` 사이 공백을 허용하지 않는다** (실측 2026-08-10).
+# C++ 문법으로는 `f (x)` 도 호출이지만, 여기 들어오는 것은 **한국어 산문**이다:
+#     target: "FGlobalEventSystem::PrivateHandler (ListenerMap)"
+# 이건 호출이 아니라 **주석**인데 `\s*\(` 가 호출로 읽어 `GlobalEventSystem` 의 정상
+# 문서 9건을 유령으로 신고했다(`PrivateHandler` 는 소스에서 static TSharedPtr **멤버**다).
+# 저장소 원칙 그대로 — *정상 문서를 막는 게이트가 통과시키는 게이트보다 나쁘다.*
+_CALL = re.compile(r"\b([A-Z][A-Za-z0-9_]*)\s*(?:::|\.)\s*([A-Za-z_][A-Za-z0-9_]*)\(")
 
 
 @dataclass

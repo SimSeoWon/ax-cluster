@@ -940,3 +940,28 @@ PostEditChangeProperty 외부변경). 개수가 늘어도 **잃는 것은 잃는
 함수맵으로 라우팅된다"* 같은 **설계 규칙 서술**은 호출 표기가 없어 리팩터로 거짓이 돼도
 통과한다. 그래서 보호 표식에 **기준 커밋**(`protected_at`)을 함께 적는다 — 중 2.4.1 drift
 감사가 *"이 항목은 `b1ba6af` 기준인데 지금은 다르다"* 를 말할 수 있는 유일한 단서다.
+
+### 20.7 전체 보호 — 그리고 그 자리에서 게이트 오탐이 드러났다
+
+7개 도메인 **240건 전부** 보호(`기준 b1ba6af9`). 🔴 **검수 잠금은 0건 그대로** — 신호를
+오염시키지 않았다는 뜻이고, 그게 표식을 나눈 이유다.
+
+    AlphaCoreGameFramework 12 · GlobalEventSystem 25 · MissionEditor 35 · MissionRuntime 33
+    MissionSystemTools 19 · ProjectAlpha_UiViewManagement 85 · UiManagement 31
+
+보호 직후 `verify` 를 돌렸더니 **`GlobalEventSystem` 이 유령 메서드로 실패**했다 —
+`FGlobalEventSystem::PrivateHandler`. 소스를 열어 보니 그 이름은 **주석에만** 있고 실체는
+*static TSharedPtr* **멤버**다. 온톨로지가 이렇게 썼기 때문이다:
+
+    target: "FGlobalEventSystem::PrivateHandler (ListenerMap)"
+
+`_CALL` 이 `\s*\(` 라 **식별자와 괄호 사이 공백을 허용**해서, 이 **주석 괄호**를 호출로 읽었다.
+C++ 문법으로는 `f (x)` 도 호출이지만 이 필드에 들어오는 것은 **한국어 산문**이다.
+
+🔴 **정상 문서 9건을 유령으로 신고하고 있었다.** 저장소 원칙 그대로 고쳤다 —
+*"모호하면 봐준다 · 정상 문서를 막는 게이트가 통과시키는 게이트보다 나쁘다."*
+공백을 허용하지 않게 좁히니 **7/7 통과**(GlobalEventSystem 20건 대조)이고 다른 도메인의
+대조 건수는 그대로다(6·31·39·12·79·35) — 검증 범위를 잃지 않았다.
+
+⚠️ 이건 보호 작업의 부산물이 아니라 **원래 있던 결함**이다. 보호 뒤 처음으로 전 도메인
+`verify` 를 돌렸기 때문에 드러났을 뿐이다.
