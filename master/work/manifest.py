@@ -15,9 +15,10 @@
 **잃는 것은 없다.** git-carried 였던 이유는 서버가 어차피 push 하고 있었기 때문이지
 git 자체가 필요해서가 아니었다. "1회 수집 → 다회 소비" 라는 성질은 그대로다.
 
-⚠️ **지금은 RAG 채널만이다.** 원본은 `attach_norms=True` 로 **온톨로지 도메인 규범**을 함께
-번들했다. 그것이 마일스톤 2 의 **소 2.3.1 — 목표 ②의 종점**이고 아직 없다. 매니페스트에
-**없다고 명시**한다 — 빈 섹션을 감추면 다음 세션이 "규범이 비었다" 를 버그로 오해한다.
+**채널이 둘이다 (소 2.3.1 완료, 2026-08-09).** RAG(컨텍스트 문서) + **도메인 규범**(온톨로지).
+후자가 목표 ②의 종점이고, `work/norms.py` 가 `domain_index.search_norms` 를 소비해 만든다.
+🔴 **규범이 비면 비었다고 본문에 쓴다** — 빈 섹션을 감추면 작업장은 규칙이 없는 줄 알고,
+다음 세션은 그것을 버그로 오해한다.
 
 **베스트에포트다.** 검색이 실패하거나 결과가 비어도 태스크 등록을 막지 않는다. 다만
 **조용히 넘어가지 않고** 매니페스트에 그 사실을 적는다 — 작업장이 grounding 없이 일하고
@@ -30,6 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..context_search.paths import ProjectPaths
+from . import norms as norms_mod
 
 MANIFEST_DIR = "manifests"
 
@@ -49,6 +51,8 @@ class Manifest:
     project: str
     body: str
     hits: int = 0
+    norm_domains: int = 0        # 실린 도메인 수 (소 2.3.1)
+    norm_items: int = 0          # invariant + action 수
     degraded: list[str] = field(default_factory=list)   # 비어 있으면 온전히 수집된 것
 
     @property
@@ -95,6 +99,7 @@ def build(
     extra_query: str = "",
     hits: int = DEFAULT_HITS,
     searcher=None,
+    norms=None,
     now: datetime | None = None,
 ) -> Manifest:
     """매니페스트를 조립한다. **디스크에 쓰지는 않는다** — `write()` 가 따로 한다.
@@ -152,10 +157,17 @@ def build(
 
     # 🔴 빈 채로 숨기지 않는다 — 없다는 사실 자체가 정보다.
     lines.append("## 도메인 규범 (온톨로지)\n")
-    lines.append(
-        "_미구현 — 마일스톤 2 의 소 2.3.1 이다. 이 태스크는 규범 grounding 없이 진행된다._"
-    )
+    if norms is None:
+        try:
+            norms = norms_mod.attach(paths, classes=classes, stem=stem,
+                                     extra_query=extra_query)
+        except Exception as e:                       # noqa: BLE001 — 등록을 막지 않는다
+            norms = norms_mod.NormBundle(
+                degraded=[f"규범 수집 실패: {type(e).__name__}: {e}"])
+    lines.extend(norms.render())
     lines.append("")
+    if not norms.ok:
+        degraded.extend(norms.degraded)
 
     if degraded:
         lines.append("## ⚠️ 수집이 온전하지 않다\n")
@@ -164,8 +176,10 @@ def build(
         lines.append("작업장은 이 매니페스트만 믿지 말고 필요하면 직접 확인할 것.")
         lines.append("")
 
+    nd, ni, na = norms.counts
     return Manifest(task_id=task_id, project=paths.name, body="\n".join(lines),
-                    hits=len(found), degraded=degraded)
+                    hits=len(found), norm_domains=nd, norm_items=ni + na,
+                    degraded=degraded)
 
 
 def write(paths: ProjectPaths, m: Manifest) -> Path:

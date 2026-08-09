@@ -1,0 +1,147 @@
+"""소 2.3.1 도메인 규범 번들 — 관련성 필터 · 예산 · 🔴 결손 명시.
+
+**LLM 도 임베딩도 부르지 않는다.** 검색은 주입한다 — 여기서 지켜야 하는 계약은 검색 품질이
+아니라 *"관련된 것만, 예산 안에서, 빈 것은 비었다고 말한다"* 이다.
+
+`python3 master/test_norms.py`
+"""
+from __future__ import annotations
+
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from master.context_search.paths import ProjectPaths        # noqa: E402
+from master.ontology import yaml_io                          # noqa: E402
+from master.work import manifest, norms                      # noqa: E402
+
+PASS = FAIL = 0
+
+
+def check(name: str, cond: bool, detail: str = "") -> None:
+    global PASS, FAIL
+    if cond:
+        PASS += 1
+    else:
+        FAIL += 1
+        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+
+
+def _project(tmp: Path) -> ProjectPaths:
+    paths = ProjectPaths(name="T", root=tmp)
+    d = paths.ontology / "domains" / "MissionRuntime"
+    yaml_io.write(d / "domain.yaml", {
+        "domain": "MissionRuntime", "tier": 3,
+        "summary": "미션 실행을 관리한다. " + "가" * 400,     # 🔴 상한 확인용으로 길게
+        "actions": ["L3/actions/RunTask.yaml", "L3/actions/UnrelatedUi.yaml"],
+        "invariants_files": [f"L3/invariants/Inv{i}.yaml" for i in range(9)],
+    })
+    yaml_io.write(d / "L3/actions/RunTask.yaml", {
+        "name": "RunTask", "description": "태스크를 실행한다",
+        "implementation": {"primary": "UMissionTaskExecutor::Run"},
+        "objects_affected": ["UMissionTaskExecutor"],
+    })
+    yaml_io.write(d / "L3/actions/UnrelatedUi.yaml", {
+        "name": "UnrelatedUi", "description": "UI 만 만진다",
+        "implementation": {"primary": "UWidgetThing::Show"},
+        "objects_affected": ["UWidgetThing"],
+    })
+    for i in range(9):
+        yaml_io.write(d / f"L3/invariants/Inv{i}.yaml", {
+            "name": f"Inv{i}", "text": f"규칙 {i} 는 항상 참이다. " + "나" * 300,
+            "evidence": f"X.cpp:{i}",
+        })
+    return paths
+
+
+def _hit(domain="MissionRuntime"):
+    return [{"domain": domain, "source": "bm25", "rrf_score": 0.03}]
+
+
+def test_relevance() -> None:
+    with tempfile.TemporaryDirectory() as t:
+        paths = _project(Path(t))
+        b = norms.attach(paths, classes=["UMissionTaskExecutor"],
+                         search=lambda *a, **k: _hit())
+        check("도메인이 실린다", len(b.domains) == 1, str(b.degraded))
+        acts = [a["name"] for a in b.domains[0].actions]
+        # 🔴 목표 ②는 "관련된 것만" 이다
+        check("🔴 대상 클래스와 얽힌 액션만", acts == ["RunTask"], str(acts))
+
+        b2 = norms.attach(paths, classes=[], stem="미션",
+                          search=lambda *a, **k: _hit())
+        acts2 = [a["name"] for a in b2.domains[0].actions]
+        check("대상이 없으면 전부 관련으로 본다", set(acts2) == {"RunTask", "UnrelatedUi"}, str(acts2))
+
+
+def test_budget() -> None:
+    with tempfile.TemporaryDirectory() as t:
+        paths = _project(Path(t))
+        b = norms.attach(paths, classes=["UMissionTaskExecutor"],
+                         search=lambda *a, **k: _hit())
+        d = b.domains[0]
+        check("summary 를 자른다", len(d.summary) <= norms.SUMMARY_CHARS + 1, str(len(d.summary)))
+        check("invariant 본문을 자른다",
+              all(len(i["text"]) <= norms.INVARIANT_CHARS + 1 for i in d.invariants))
+        check("invariant 개수 상한", len(d.invariants) == norms.MAX_INVARIANTS,
+              str(len(d.invariants)))
+        # 🔴 잘랐으면 잘랐다고 말한다
+        check("🔴 뺀 개수를 센다", d.dropped_invariants == 3, str(d.dropped_invariants))
+        text = "\n".join(b.render())
+        check("🔴 뺀 사실이 본문에 보인다", "예산으로 제외" in text and "직접 읽을 것" in text)
+
+
+def test_degraded_is_visible() -> None:
+    with tempfile.TemporaryDirectory() as t:
+        paths = _project(Path(t))
+
+        b = norms.attach(paths, classes=[], stem="")
+        check("질의를 못 만들면 사유가 남는다",
+              not b.ok and "질의를 만들 수 없" in " ".join(b.degraded), str(b.degraded))
+
+        b = norms.attach(paths, classes=["UFoo"], search=lambda *a, **k: [])
+        check("0건이어도 실패가 아니다 (노이즈 차단일 수 있다)",
+              not b.ok and "노이즈 차단" in " ".join(b.degraded), str(b.degraded))
+        text = "\n".join(b.render())
+        check("🔴 비면 '규범 grounding 없이 진행된다' 를 본문에 쓴다",
+              "규범 grounding 없이" in text, text[:80])
+
+        def boom(*a, **k):
+            raise RuntimeError("색인 없음")
+        b = norms.attach(paths, classes=["UFoo"], search=boom)
+        check("검색이 터져도 예외를 올리지 않는다", not b.ok)
+        check("터진 사유를 적는다", "규범 검색 실패" in " ".join(b.degraded), str(b.degraded))
+
+
+def test_manifest_wiring() -> None:
+    with tempfile.TemporaryDirectory() as t:
+        paths = _project(Path(t))
+        bundle = norms.attach(paths, classes=["UMissionTaskExecutor"],
+                              search=lambda *a, **k: _hit())
+        m = manifest.build(paths, "task-1", classes=["UMissionTaskExecutor"],
+                           searcher=None, norms=bundle)
+        check("매니페스트에 규범 절이 있다", "## 도메인 규범 (온톨로지)" in m.body)
+        check("규범 본문이 들어간다", "지켜야 할 규칙" in m.body)
+        check("도메인 수를 센다", m.norm_domains == 1, str(m.norm_domains))
+        check("항목 수를 센다", m.norm_items == norms.MAX_INVARIANTS + 1, str(m.norm_items))
+        # 🔴 '_미구현_' 은 이제 나오면 안 된다 (소 2.3.1 완료)
+        check("🔴 '_미구현_' 자리표시자가 사라졌다", "_미구현" not in m.body)
+
+        empty = norms.NormBundle(degraded=["없음"])
+        m2 = manifest.build(paths, "task-2", classes=["UFoo"], searcher=None, norms=empty)
+        check("규범이 비면 매니페스트도 degraded 로 표시", not m2.ok, str(m2.degraded))
+        check("규범 0건도 본문에 명시", "규범 grounding 없이" in m2.body)
+
+
+def main() -> int:
+    for fn in (test_relevance, test_budget, test_degraded_is_visible, test_manifest_wiring):
+        fn()
+    total = PASS + FAIL
+    print(f"{'✅' if not FAIL else '🔴'} test_norms: {PASS}/{total} 통과")
+    return 1 if FAIL else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

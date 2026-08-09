@@ -115,8 +115,13 @@ def main() -> int:
     # ── 매니페스트 ──────────────────────────────────
     print("\n[5] 매니페스트 조립")
     s = FakeSearch([FakeHit("A.md"), FakeHit("B.md", 0.02, "vector", "")])
+    # 🔴 규범 번들을 주입한다 — 안 주면 실제 도메인 색인을 찾아가고, 테스트 프로젝트에는
+    #    색인이 없어 degraded 가 붙는다. 여기서 재는 것은 **RAG 채널**이다.
+    from master.work import norms as nm
+    ok_norms = nm.NormBundle(domains=[nm.DomainNorms(
+        domain="D", summary="요약", invariants=[{"name": "R", "text": "규칙", "evidence": "X:1"}])])
     m = mf.build(paths, "task_1", classes=["UManagerBase"], stem="초기화",
-                 contracts="Init() 동결", searcher=s, now=NOW)
+                 contracts="Init() 동결", searcher=s, norms=ok_norms, now=NOW)
     check("온전히 수집", m.ok and m.hits == 2, f"ok={m.ok} hits={m.hits}")
     check("클래스명이 질의 앞에 온다", s.calls[0][0].startswith("UManagerBase"), s.calls[0][0])
     check("stem 도 질의에 들어간다", "초기화" in s.calls[0][0])
@@ -177,10 +182,17 @@ def main() -> int:
     check("  temperature 는 유지", seen["options"]["temperature"] == 0)
     check("  stateless 유지 (context 없음)", "context" not in seen)
 
-    print("\n[6] 🔴 온톨로지가 없다는 사실을 숨기지 않는다")
+    print("\n[6] 🔴 도메인 규범 채널 (소 2.3.1)")
     check("규범 섹션이 있다", "도메인 규범" in m.body)
-    check("미구현이라 적혀 있고 소분류를 가리킨다",
-          "미구현" in m.body and "2.3.1" in m.body)
+    check("규범 본문이 실린다", "지켜야 할 규칙" in m.body and "규칙" in m.body)
+    check("도메인·항목 수를 센다", m.norm_domains == 1 and m.norm_items == 1,
+          f"{m.norm_domains}/{m.norm_items}")
+    # 🔴 자리표시자는 사라졌다 — 이 단언이 깨지면 규범 채널이 되돌아간 것이다
+    check("🔴 '_미구현_' 자리표시자가 없다", "_미구현" not in m.body)
+    m_empty = mf.build(paths, "t0", classes=["UManagerBase"], searcher=s,
+                       norms=nm.NormBundle(degraded=["색인 없음"]), now=NOW)
+    check("🔴 규범이 비면 비었다고 본문에 쓴다",
+          "규범 grounding 없이" in m_empty.body and not m_empty.ok)
 
     print("\n[7] 🔴 수집 결손을 숨기지 않는다 (베스트에포트지만 조용하지 않다)")
     m2 = mf.build(paths, "t", classes=["UFoo"], searcher=FakeSearch(exc=RuntimeError("죽음")),
