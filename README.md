@@ -99,7 +99,7 @@ ax-cluster/
 │   ├── events/                 ← Gitea 훅 → 스풀 → 색인기 (트윈이 자라는 지점)
 │   ├── work/                   ← 작업 루프 — 2단 브랜치·매니페스트·생성·인계
 │   │   ├── runner.py           🔴 큐 → 워커 파견 (마스터가 중개·하트비트 대행)
-│   │   ├── batching.py         🔴 파일 불가분 묶음 — `.h`/`.cpp` 는 한 덩어리
+│   │   ├── batching.py         🔴 파일 불가분 묶음 — 열쇠는 **모듈+경로+stem**(basename 아님)
 │   │   ├── declarations.py     헤더 선언 주입 — 실측 환각 2 → 0
 │   │   ├── norms.py            도메인 규범(invariants 중심) 부착
 │   │   └── cleanup.py          찌꺼기 정리 — 🔴 병합된 것만, 원격은 안 건드린다
@@ -218,7 +218,7 @@ for f in master/test_*.py; do .venv/bin/python "$f" 2>&1 | tail -1; done
 |---|---|
 | `test_verdict.py` | 층2 판정 계약 — 🔴 venv 없이 도는 **순수 로직** |
 | `test_work.py` · `test_runner.py` | 작업 루프 · 워커 파견(fail-closed 마커·계측) |
-| `test_batching.py` | 🔴 **파일 불가분** — 분산 시 충돌 방지 |
+| `test_batching.py` | 🔴 **파일 불가분** — `.h`/`.cpp` 는 붙이고 **다른 모듈의 동명 파일은 가른다** |
 | `test_ontology.py` | YAML 왕복 보존(PyYAML 의존 0) · 잠금 보존 · 사실 게이트 |
 | `test_transfer.py` | 익스포트 두 벌 · 🔴 임포트는 **병합**(보호 필드 이월) |
 | `test_context_synth.py` | σ.7 게이트 · 사실 게이트 · 서킷브레이커 |

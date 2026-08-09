@@ -21,9 +21,10 @@ indexed, and feeds code generation — both of M2's goals run end to end.
 (skeleton + **frozen interface** first — §4.5's empty first step), generate in parallel across two
 workers, **apply sequentially**, and judge with the **3-layer deterministic gate** (L1 self-check /
 L2 commercial model / L3 UE5 build + RunTests). Plus the operator surface: upper-layer commands and
-a cluster status web UI. Breakdown 대 3 / 중 9 / 소 32, main = 대 1.
-🔴 **Progress numbers live in Redmine** (version *마일스톤 3*), never in a document — hand-kept
-numerators drifted twice in M2.
+a cluster status web UI. Structure is 대 3 / 중 9, main = 대 1.
+🔴 **Neither the numerator nor the denominator is written in any document** — read both from Redmine
+(version *마일스톤 3*). Hand-kept numerators drifted twice in M2, and on 2026-08-10 the *denominator*
+moved too (32 → 36) when reading the predecessor's design doc uncovered four missing sub-tasks.
 
 > 🔴 **This file is an index. The content lives in `docs/`.**
 > **Section numbers are unchanged by the split** — cross-references like `§5.5.3-④` in other

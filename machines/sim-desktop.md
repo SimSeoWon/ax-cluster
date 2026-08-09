@@ -38,12 +38,17 @@ when its tip is reachable from `origin/main`, and workers return to **`main`**.
 first (§4.5's empty first step), generate in parallel across the two workers, **apply sequentially**
 ② **judge with the 3-layer deterministic gate** (L1 self-check / L2 commercial model / L3 UE5 build
 + RunTests) ③ **build the operator surface** — upper-layer commands and a cluster status web UI.
-Breakdown 대 3 / 중 9 / 소 32; **main is 대 1**. 🔴 The count lives in Redmine (version
-*마일스톤 3*), never in a hand-edited doc — it drifted twice in M2.
+Structure 대 3 / 중 9; **main is 대 1**. 🔴 **Both numbers live in Redmine** (version *마일스톤 3*),
+never in a hand-edited doc — the numerator drifted twice in M2, and the *denominator* moved on
+2026-08-10 (32 → 36) when reading the predecessor's design doc uncovered four missing sub-tasks.
 
-🔴 **Nothing in M3 is built yet.** The skeleton generator, the 3-layer gate and the status UI are
-all 🕓. 🔴 **`distributed-workers.md` (425 lines) must be read before starting 대 1** — it is §4.5's
-original, and it stayed unread through all of M2.
+🔴 **Almost nothing in M3 is built yet** — the skeleton generator, the 3-layer gate and the status
+UI are all 🕓. The one closed sub-task is **reading `distributed-workers.md`** (§4.5's original,
+unread through all of M2), and it paid: four missing sub-tasks and one live bug in `batching.py`
+(the unit key was a bare basename, so **same-named files in different modules merged into one
+unit** — measured 9 cases, all of them the porting source paired with its target, which a worker
+would then have been told to edit). 🔴 Its trap list is in the milestone doc — the biggest is that
+**reject means advance-and-amend, never discard-and-regenerate**.
 
 🔴 **Deliberately outside M3**: asset/blueprint twins (the twin's scope is **source-only**),
 BC-250 #2 conversion (that is giving up a gaming machine, not a setup task), master GPU expansion,

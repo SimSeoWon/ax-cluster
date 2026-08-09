@@ -14,9 +14,10 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   → [`docs/milestones/3-work-pipeline.md`](docs/milestones/3-work-pipeline.md)
   **Read only the open milestone** — closed ones are reference; don't load them. Progress
   lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
-  🔴 **Progress numbers are not written in any document** — read them from Redmine (version
-  *마일스톤 3*), which computes them. Hand-kept numerators drifted twice in M2.
-  M3 breakdown: 대 3 / 중 9 / 소 32 — **소분류가 작업 단위다**, main is 대 1 (decompose →
+  🔴 **Neither the numerator nor the denominator is written in any document** — read both from
+  Redmine (version *마일스톤 3*). Hand-kept numerators drifted twice in M2, and the *denominator*
+  moved on 2026-08-10 (32 → 36) when reading the predecessor's design doc uncovered missing work.
+  M3 structure: 대 3 / 중 9 — **소분류가 작업 단위다**, main is 대 1 (decompose →
   skeleton + **frozen interface** → parallel generate → **sequential apply**). 대 2 is the
   3-layer verdict; 대 3 is the operator surface. Never size a task by line count:
   `class_graph`'s 1,341 lines turn out to be *"delete the file → full rescan on restart"*.
