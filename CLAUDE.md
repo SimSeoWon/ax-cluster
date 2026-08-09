@@ -116,7 +116,7 @@ reporting status, give the denominator (*"twin sub-tasks 18 of 36"*), never a sc
 what got built.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
-**Tests — 1,126, all passing. No pytest**; each file runs standalone.
+**Tests — 1,145, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
@@ -130,13 +130,14 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_auth.py                 # 46 — bearer auth, fail-closed
 .venv/bin/python master/test_events.py               # 38 — event spool: no-loss, at-least-once, coalescing
 .venv/bin/python master/test_context_search.py       # 82 — search core: mount routing, RRF, generation pointer
-.venv/bin/python master/test_work.py                 # 148 — 2-tier branches, manifest, registration, generate+layer2
+.venv/bin/python master/test_work.py                 # 149 — 2-tier branches, manifest, registration, generate+layer2
 .venv/bin/python master/test_provision.py            #  43 — Ollama node check/install; .33 must stay non-resident
 .venv/bin/python master/test_indexer.py              #  49 — spool consumer: ff-only mirror, digest guard, watermark
 .venv/bin/python master/test_graph.py                #  80
 .venv/bin/python master/test_ontology.py             #  127 — YAML io: 왕복 보존, 안 바뀌면 안 씀 — relation graphs: Source-only, fail-closed, no ghost rows
 .venv/bin/python master/test_context_synth.py        #  102 — σ.7/σ.7-B gates, comment preservation, circuit breaker + factuality gate
 .venv/bin/python master/test_ontology_synth.py       #  42 — 도메인 MD 두 스키마 · 조각 고지 · 응답 파서의 도메인 밖 차단
+.venv/bin/python master/test_twin_base.py           #  18 — 기준 커밋: 모른다·없다·못 봤다를 뭉치지 않는가
 .venv/bin/python master/test_client_bundle.py        #  63 — role(파견 가능 ≠ 닿음) · CLAUDE.md 블록 병합 · config 에 비밀 없음
 .venv/bin/python master/test_norms.py                #  20 — 도메인 규범: 관련성 필터 · 예산 · 🔴 결손 명시
 .venv/bin/python master/test_domain_index.py         #  30 — 도메인 색인: 페이로드에 항목 본문 녹이기 · 지문 · 🔴 노이즈 3중 차단

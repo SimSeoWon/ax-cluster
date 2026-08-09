@@ -120,8 +120,11 @@ def main() -> int:
     from master.work import norms as nm
     ok_norms = nm.NormBundle(domains=[nm.DomainNorms(
         domain="D", summary="요약", invariants=[{"name": "R", "text": "규칙", "evidence": "X:1"}])])
+    # 기준 커밋도 주입한다 — 테스트 프로젝트엔 config.yaml 이 없다. 여기서 재는 것은 RAG 채널이다.
+    from master.work import twin_base as tb
+    ok_base = tb.Base(commit="a" * 40, branch="task/task_1", exists=True)
     m = mf.build(paths, "task_1", classes=["UManagerBase"], stem="초기화",
-                 contracts="Init() 동결", searcher=s, norms=ok_norms, now=NOW)
+                 contracts="Init() 동결", searcher=s, norms=ok_norms, base=ok_base, now=NOW)
     check("온전히 수집", m.ok and m.hits == 2, f"ok={m.ok} hits={m.hits}")
     check("클래스명이 질의 앞에 온다", s.calls[0][0].startswith("UManagerBase"), s.calls[0][0])
     check("stem 도 질의에 들어간다", "초기화" in s.calls[0][0])
@@ -201,8 +204,12 @@ def main() -> int:
     check("  ok=False", not m2.ok)
     check("  본문에 경고", "수집이 온전하지 않다" in m2.body and "RuntimeError" in m2.body)
 
-    m3 = mf.build(paths, "t", classes=["UFoo"], searcher=FakeSearch([]), now=NOW)
+    m3 = mf.build(paths, "t", classes=["UFoo"], searcher=FakeSearch([]), base=ok_base, now=NOW)
+    # 🔴 다른 채널이 결손을 남겨도 이 메시지가 사라지면 안 된다 (2026-08-09 회귀)
     check("결과 0건도 결손으로 표시", not m3.ok and "결과가 없다" in m3.body)
+    m3b = mf.build(paths, "t", classes=["UFoo"], searcher=FakeSearch([]), now=NOW)
+    check("🔴 기준 커밋이 없어도 '검색 결과가 없다' 는 남는다",
+          "결과가 없다" in m3b.body and "기준 커밋을 정할 수 없다" in m3b.body, m3b.degraded)
 
     m4 = mf.build(paths, "t", searcher=FakeSearch([FakeHit("X.md")]), now=NOW)
     check("질의를 못 만들면 검색하지 않는다", not m4.ok and "질의를 만들 수 없" in m4.body)

@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..context_search.paths import ProjectPaths
-from . import norms as norms_mod
+from . import norms as norms_mod, twin_base
 
 MANIFEST_DIR = "manifests"
 
@@ -51,6 +51,8 @@ class Manifest:
     project: str
     body: str
     hits: int = 0
+    base_commit: str = ""        # 🔴 이 매니페스트의 근거 시점 (#21)
+    base_branch: str = ""
     norm_domains: int = 0        # 실린 도메인 수 (소 2.3.1)
     norm_items: int = 0          # invariant + action 수
     degraded: list[str] = field(default_factory=list)   # 비어 있으면 온전히 수집된 것
@@ -100,6 +102,7 @@ def build(
     hits: int = DEFAULT_HITS,
     searcher=None,
     norms=None,
+    base=None,
     now: datetime | None = None,
 ) -> Manifest:
     """매니페스트를 조립한다. **디스크에 쓰지는 않는다** — `write()` 가 따로 한다.
@@ -115,6 +118,25 @@ def build(
     lines.append(f"# 컨텍스트 매니페스트 — `{task_id}`\n")
     lines.append(f"> 프로젝트 `{paths.name}` · 수집 {stamp}")
     lines.append("> **마스터가 등록 시 1회 수집했다. 이 문서를 읽고 작업할 것 — 재검색 불필요.**\n")
+
+    # 🔴 기준 커밋 — 이게 없으면 워커가 낡은 소스에서 짜도 아무도 모른다 (레드마인 #21)
+    lines.append("## 기준 (커밋·브랜치)\n")
+    if base is None:
+        try:
+            base = twin_base.resolve(paths, task_id)
+        except twin_base.TwinBaseError as e:
+            base = None
+            degraded.append(f"기준 커밋을 정할 수 없다: {e}")
+    if base is None:
+        lines.append("_🔴 **기준 커밋 미상** — 이 매니페스트의 근거가 어느 시점인지 알 수 없다. "
+                     "워커는 작업하지 말고 보고할 것._")
+    else:
+        lines.extend(twin_base.manifest_section(base))
+        if not base.checked:
+            degraded.append(f"작업 브랜치 확인 실패: {base.error}")
+        elif not base.exists:
+            degraded.append(f"작업 브랜치 `{base.branch}` 가 원격에 없다 — 요청자가 만들어야 한다")
+    lines.append("")
 
     if classes:
         lines.append("## 대상 클래스\n")
@@ -136,16 +158,23 @@ def build(
         lines.append("")
 
     found = []
+    # 🔴 **이 채널의 결손만 본다.** 전에는 `if not found and not degraded:` 로 **전역** 결손
+    # 목록을 봤는데, 다른 채널(기준 커밋·규범)이 먼저 결손을 남기면 *"검색 결과가 없다"* 가
+    # 조용히 사라졌다 — 2026-08-09 에 기준 커밋 절을 넣다가 드러났다. 채널마다 자기 상태를 센다.
+    search_failed = False
     if not query:
         degraded.append("검색 질의를 만들 수 없었다 (classes·stem 이 모두 비었다)")
+        search_failed = True
     elif searcher is None:
         degraded.append("검색기가 없다")
+        search_failed = True
     else:
         try:
             found = searcher.search(query, limit=hits)
         except Exception as e:                       # noqa: BLE001 — 등록을 막지 않는다
             degraded.append(f"검색 실패: {type(e).__name__}: {e}")
-        if not found and not degraded:
+            search_failed = True
+        if not found and not search_failed:
             degraded.append("검색 결과가 없다")
 
     lines.append("## 관련 코드 (RAG)\n")
@@ -179,6 +208,8 @@ def build(
     nd, ni, na = norms.counts
     return Manifest(task_id=task_id, project=paths.name, body="\n".join(lines),
                     hits=len(found), norm_domains=nd, norm_items=ni + na,
+                    base_commit=(base.commit if base else ""),
+                    base_branch=(base.branch if base else ""),
                     degraded=degraded)
 
 
