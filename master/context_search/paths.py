@@ -43,6 +43,7 @@ from ..projects.config import ConfigError, ProjectConfig, Registry
 # 파생 자산 이름 — `<Name>/.gitignore` 와 짝을 맞춘다. 바꾸면 양쪽을 같이 바꿀 것.
 VECTOR_DB = "vector_db"
 BM25_DB = "bm25.db"
+BM25_DOMAINS_DB = "bm25_domains.db"      # 🔴 도메인 색인은 **별도 DB** — 소 2.1.1
 CLASS_GRAPH_DB = "class_graph.db"
 DEPENDENCY_GRAPH_DB = "dependency_graph.db"
 
@@ -79,6 +80,12 @@ class ProjectPaths:
     def vector_db(self) -> Path: return self.root / VECTOR_DB
     @property
     def bm25_db(self) -> Path: return self.root / BM25_DB
+    @property
+    def bm25_domains_db(self) -> Path:
+        """도메인(온톨로지) BM25. 🔴 컨텍스트 MD 색인과 **파일이 다르다** — 도메인은 광범위
+        신호라 같은 표에 넣으면 일반 검색 결과를 밀어낸다(원본이 같은 이유로 분리했다)."""
+        return self.root / BM25_DOMAINS_DB
+
     @property
     def class_graph_db(self) -> Path: return self.root / CLASS_GRAPH_DB
     @property
