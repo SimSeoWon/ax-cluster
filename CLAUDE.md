@@ -14,7 +14,7 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   → [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md)
   **Read only the open milestone** — closed ones are reference; don't load them. Progress
   lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
-  🔴 **The twin grows now, but only on changed files — 15 of 36 sub-tasks done.**
+  🔴 **The twin grows now, but only on changed files — 18 of 36 sub-tasks done.**
   중 1.1 relation graphs ✅ · 중 1.2 context-MD synthesis ✅ **wired into the indexer** (verified on
   a real commit diff: graphs → synthesis → reindex) · 중 1.3 ontology **8/13** — the LLM
   re-synthesis now runs (measured: local 2-node and `claude` both passed the fact gate 100%) · 중 1.4 thesaurus has a
@@ -97,7 +97,7 @@ from the master's own container DB. 🔴 **Never write the key value into a doc 
 | Capability routing (`requires`/`capabilities`) | `master/task_queue/logic_claim.py` |
 | Shared bearer auth (all 3 services, fail-closed) | `master/auth.py` |
 | Event spool + **indexer** (Gitea hook → graphs → **synthesis** → reindex) | `master/events/` — **live**: `ax-indexer.path` (inotify) → `ax-indexer.service`. 🔴 **This is where the twin grows**: changed files → relation graphs (LLM 0) → context-MD synthesis (35B) → reindex. Lost groups are logged by name — the watermark has already advanced, so they can't be found again |
-| Context search — **multilingual** vector + BM25 (+trigram KR table), RRF, `[대괄호]` focus | `master/context_search/` — context MDs only (961 docs). 🔴 **ontology 247 yaml = 0 indexed** (소 2.1.1) |
+| Context search — **multilingual** vector + BM25 (+trigram KR table), RRF, `[대괄호]` focus | `master/context_search/` — context MDs (961 docs) **and now domain packages** (7, 소 2.1 ✅ 3/3). Domains live in a **separate DB + collection** (`bm25_domains.db` / `ontology_domains`) so they can't crowd out file-level hits; `search_norms` applies a 🔴 **triple noise gate** (BM25-zero ⇒ empty · vector-only needs threshold · hard cap). Wired into `rebuild_all`, skipped by fingerprint when unchanged |
 | Workflow — 2-tier branches, manifest, registration, generate → layer2 → hand over | `master/work/` — the loop runs (20.1s, APPROVE) but **on a half-built twin** — that run had 0 domain norms. Map: `docs/4-work-loop.md` §4.7 |
 | **Relation graphs** — inheritance (tree-sitter C++) + `#include` (중 1.1, **done 5/5**) | `master/graph/` — **1,806 classes · 6,380 methods · 10,817 include edges** on ModularStage, 2.9s full scan. `python -m master.graph build\|status`. ⚠️ reverse include lookup is basename-approximate (9 ambiguous headers) |
 | **Ontology** — YAML io (no PyYAML) · stale · L1/L2/L3 layers · member proposals · concept hierarchy · **fact gate** · package writer · **LLM re-synthesis** (중 1.3, **8/13**) | `master/ontology/` — `python -m master.ontology status\|plan\|verify\|dry\|refresh`. 🔴 **`plan` → `dry` first**: `plan` sizes prompts with **no LLM**, `dry` synthesises without writing. Domain MD (intent) + source excerpts + graphs → actions/invariants → deterministic gates → package. 🔴 **Payload is chunked by `#include` cohesion and split across both nodes** — model name selects the node; the defaults are each node's **resident** model (any other evicts the pin). `claude`/`agy` are also valid lanes. Prompt budget is **measured** (2.79–2.85 chars/token, `num_ctx` 8192 both nodes). 🔴 Decision rules live in that package's `__init__.py` |
@@ -107,13 +107,14 @@ from the master's own container DB. 🔴 **Never write the key value into a doc 
 
 `worker/` and `client/` are still README-only stubs.
 
-🔴 **Say "done" only for a whole area.** The work loop runs, but the digital twin it stands on is
-partial — **the ontology synthesiser now runs, but its 247 yaml are still 0-indexed** (소 2.1.1), so
-search and manifests still can't see them. When reporting status, give the denominator
-(*"loop runs; twin sub-tasks 15 of 36"*), never a scope narrowed to what got built.
+🔴 **Say "done" only for a whole area.** The twin now grows *and* is searchable end to end, but the
+**consumer side is still open** — `attach_norms` (소 2.3.1, the goal-② endpoint) is unbuilt, so
+`manifest.py` still ships `"_미구현_"` for domain norms and generated code sees none of it. When
+reporting status, give the denominator (*"twin sub-tasks 18 of 36"*), never a scope narrowed to
+what got built.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
-**Tests — 1,010, all passing. No pytest**; each file runs standalone.
+**Tests — 1,040, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
