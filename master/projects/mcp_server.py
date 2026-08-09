@@ -457,3 +457,147 @@ def search_context_tool(query: str, limit: int = 8) -> str:
         }, ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
+
+
+# ── 온톨로지 큐레이션 (소 1.3.1 · 1.3.2 · 1.3.6 · 1.3.7 · 1.3.9) ─────────────
+#
+# 🔴 **전부 사람이 시켜야 부른다.** 자동 승급은 폐기됐다(2026-06-01 영구 비활성) — 도구가
+# 스스로 개념을 만들거나 지우면 그 사고가 그대로 재현된다. 요청자의 Claude 는 사용자의
+# 말을 받아 부르는 창구지 판단 주체가 아니다.
+
+def _onto_paths():
+    from ..context_search.paths import resolve as resolve_paths
+    return resolve_paths("")
+
+
+@mcp.tool()
+def create_domain_tool(name: str, tags: list = [], parent: str = "",
+                       summary: str = "") -> str:
+    """새 도메인의 **씨앗 MD** 를 만든다 (패키지가 아니다 — 합성이 나중에 만든다).
+
+    🔴 **덮지 않는다.** 이미 있으면 실패한다 — 고치려면 그 파일을 편집한다.
+    🔴 이름은 **영문 PascalCase** 다. 한글은 `tags` 와 별칭으로 넣는다(그쪽이 검색에 쓰인다).
+    `status: draft` 로 시작하고, 활성화는 사람이 명시한다.
+    """
+    try:
+        from ..ontology import create as oc
+        r = oc.create(_onto_paths(), name, tags=list(tags or []), parent=parent,
+                      summary=summary)
+        return json.dumps({"ok": True, "domain": r.domain, "path": r.path,
+                           "parent": r.parent, "linked": r.linked, "notes": r.notes,
+                           "next": "그 MD 의 절(특히 `## 도메인 경계`)을 채운 뒤 "
+                                   "`python -m master.ontology refresh` 로 합성한다"},
+                          ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def edit_ontology_item_tool(domain: str, kind: str, name: str, patch: dict) -> str:
+    """온톨로지 항목 하나를 고친다. 🔴 **고치면 곧 검수 잠금이 걸린다.**
+
+    `kind` 는 `objects`·`actions`·`invariants`. `patch` 는 **top-level 얕은 병합**이라
+    중첩 값은 키 전체를 다시 넘겨야 한다. `name`·`layer` 는 파일 경로의 근거라 바꿀 수 없다.
+    없는 항목은 **만들지 않고 실패**한다.
+    """
+    try:
+        from ..ontology import edit as oe
+        r = oe.edit(_onto_paths(), domain, kind, name, dict(patch or {}))
+        return json.dumps({"ok": True, "summary": r.summary, "changed": r.changed,
+                           "ignored": r.ignored, "locked": r.locked,
+                           "note": "🔒 이 항목은 이제 재합성이 덮지 않는다"},
+                          ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def remove_ontology_item_tool(domain: str, kind: str, name: str,
+                              force: bool = False) -> str:
+    """온톨로지 항목 하나를 지운다. 🔴 **검수 잠금이 걸린 것은 `force` 없이는 안 지운다.**
+
+    잠금은 *"사람이 검수했다"* 는 뜻이다 — 재합성이 못 덮는 것을 삭제가 덮으면 안 된다.
+    `force` 를 쓰기 전에 **사용자에게 한 번 더 확인**할 것.
+    """
+    try:
+        from ..ontology import edit as oe
+        r = oe.remove(_onto_paths(), domain, kind, name, force=bool(force))
+        return json.dumps({"ok": r.removed, "summary": r.summary,
+                           "was_locked": r.was_locked, "reason": r.reason},
+                          ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def lock_ontology_item_tool(domain: str, kind: str, name: str,
+                            locked: bool = True) -> str:
+    """검수 잠금을 걸거나 푼다. 🔴 **풀면 다음 재합성이 그 항목을 덮는다.**"""
+    try:
+        from ..ontology import edit as oe
+        r = oe.set_lock(_onto_paths(), domain, kind, name, bool(locked))
+        return json.dumps({"ok": True, "summary": r.summary, "locked": r.locked,
+                           "note": r.note}, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def list_locked_tool(domain: str = "") -> str:
+    """지금 검수 잠금이 걸린 항목들. **무엇을 잠갔는지 못 보면 사람이 잊는다.**"""
+    try:
+        from ..ontology import edit as oe
+        rows = oe.locked_items(_onto_paths(), domain)
+        return json.dumps({"ok": True, "count": len(rows), "items": rows},
+                          ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def unassigned_classes_tool(sample: int = 20) -> str:
+    """어느 도메인에도 없는 클래스를 **보여준다. 🔴 자동 편입은 하지 않는다.**
+
+    실측: 1,806개 중 배정된 것은 111(6%)뿐이라 평평한 목록은 쓸모가 없다. 그래서
+    **인접**(배정된 클래스의 조상·자식·#include 이웃 — 어느 도메인에 왜 붙을지까지)과
+    **고립**(어디에도 안 닿는 것, 규모 순 표본)으로 갈라 준다.
+    고립이 대부분이면 그건 클래스가 하찮은 게 아니라 **도메인이 모자라다는 신호**다.
+    """
+    try:
+        from ..ontology import unassigned as ou
+        rep = ou.scan(_onto_paths(), sample=int(sample))
+        return json.dumps({
+            "ok": True, "summary": rep.summary,
+            "total_classes": rep.total_classes, "assigned": rep.assigned,
+            "adjacent": [{"name": a.name, "domain": a.domain, "why": a.why, "via": a.via}
+                         for a in rep.adjacent[:int(sample)]],
+            "adjacent_total": len(rep.adjacent),
+            "isolated_sample": [{"name": n, "methods": m} for n, m in rep.isolated],
+            "isolated_total": rep.isolated_total,
+            "notes": rep.notes,
+        }, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def sync_ontology_tool(domain: str = "", apply: bool = False) -> str:
+    """소스와 맞춘다 — 옮겨진 파일 경로, 선언 메서드. 🔴 **기본은 계획만.**
+
+    경로·선언은 *기계의 사실*이라 잠긴 항목에도 넣지만 **그 두 필드 말고는 안 건드린다.**
+    그래프에 없는 클래스는 **지우지 않고 보고**한다(삭제됐는지 그래프가 낡았는지 모른다).
+    """
+    try:
+        from ..ontology import sync as osync
+        paths = _onto_paths()
+        stats = ([osync.sync_domain(paths, domain, apply=bool(apply))] if domain
+                 else osync.sync_all(paths, apply=bool(apply)))
+        return json.dumps({
+            "ok": True, "applied": bool(apply),
+            "domains": [{"domain": s.domain, "summary": s.summary,
+                         "path_fixed": s.path_fixed[:10], "missing": s.missing[:10],
+                         "declared": len(s.declared_set)} for s in stats],
+            "note": "" if apply else "🔴 아무것도 쓰지 않았다. 반영하려면 apply=true",
+        }, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)

@@ -153,3 +153,65 @@ def locked_items(paths: ProjectPaths, domain: str = "") -> list:
                                     "name": str(item.get("name") or f.stem),
                                     "path": str(f)})
     return out
+
+
+# ── 제거 (소 1.3.2 의 나머지 절반) ────────────────────────────────────────────
+
+@dataclass
+class RemoveResult:
+    domain: str
+    kind: str
+    name: str
+    removed: bool = False
+    was_locked: bool = False
+    path: str = ""
+    manifest_updated: bool = False
+    reason: str = ""
+
+    @property
+    def summary(self) -> str:
+        if self.removed:
+            s = f"🗑️ {self.domain}/{self.kind}/{self.name} 제거"
+            if self.was_locked:
+                s += " (🔴 잠긴 것을 force 로 지웠다)"
+            return s + ("" if self.manifest_updated else " · ⚠️ manifest 갱신 실패")
+        return f"보존 {self.domain}/{self.kind}/{self.name} — {self.reason}"
+
+
+def remove(paths: ProjectPaths, domain: str, kind: str, name: str,
+           *, force: bool = False) -> RemoveResult:
+    """항목 하나를 지운다. 🔴 **잠긴 것은 `force` 없이는 안 지운다.**
+
+    잠금은 *"사람이 검수했다"* 는 뜻이다. 에이전트의 호출 한 번으로 사라지면 검수가
+    의미를 잃는다 — 재합성이 못 덮는 것을 삭제가 덮어서는 안 된다. 지우려면 사람이
+    **한 번 더** 말해야 한다(`force=True`).
+
+    🔴 **manifest 목록에서도 뺀다.** 파일만 지우면 manifest 가 없는 파일을 가리키고,
+    색인 페이로드가 그 항목을 읽으려다 조용히 건너뛴다(에러가 아니라 결손이 된다).
+    """
+    p, item = _load(paths, domain, kind, name)
+    real = str(item.get("name") or name)
+    res = RemoveResult(domain=domain, kind=kind, name=real, path=str(p),
+                       was_locked=item.get(LOCK_FIELD) is True)
+    if res.was_locked and not force:
+        res.reason = ("🔒 검수 잠금이 걸려 있다 — 사람이 손본 것이다. 정말 지우려면 "
+                      "force 를 명시하라 (잠금을 먼저 풀어도 된다)")
+        return res
+
+    from .package import MANIFEST, _manifest_key
+    root = paths.ontology / "domains" / domain
+    try:
+        rel = str(p.relative_to(root)).replace("\\", "/")
+    except ValueError:
+        rel = ""
+    p.unlink()
+    res.removed = True
+
+    man = yaml_io.read(root / MANIFEST)
+    if isinstance(man, dict):
+        key = _manifest_key(kind)
+        before = list(man.get(key) or [])
+        man[key] = [r for r in before if str(r).replace("\\", "/") != rel]
+        yaml_io.write(root / MANIFEST, man)
+        res.manifest_updated = len(man[key]) != len(before) or rel == ""
+    return res

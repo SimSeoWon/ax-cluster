@@ -94,7 +94,7 @@ from the master's own container DB. 🔴 **Never write the key value into a doc 
 | Layer-3 gate (UE5 automation logs, fail-closed) | `master/layer3_verify.py` |
 | Inference broker (Ollama-compatible) | `master/broker/` — **live**, `ax-broker.service` `:8102` |
 | Task queue (ported, 2,717 lines) | `master/task_queue/` — **live**, `ax-task-queue.service` `:8101` |
-| Project registry (MCP) | `master/projects/` — **live**, `ax-projects.service` `:8103` |
+| Project registry (MCP) | `master/projects/` — **live**, `ax-projects.service` `:8103`. 🔴 **요청자의 온톨로지 창구**도 여기다(2026-08-09): `create_domain`·`edit_ontology_item`(편집=잠금)·`remove_ontology_item`(🔴 잠긴 것은 force 필요)·`lock`/`list_locked`·`unassigned_classes`(노출만)·`sync_ontology`(기본 계획만). 그 전에는 어휘(별칭)만 다룰 수 있고 **개념은 마스터 CLI 에만** 있었다 |
 | Capability routing (`requires`/`capabilities`) | `master/task_queue/logic_claim.py` |
 | Shared bearer auth (all 3 services, fail-closed) | `master/auth.py` |
 | Event spool + **indexer** (Gitea hook → graphs → **synthesis** → reindex) | `master/events/` — **live**: `ax-indexer.path` (inotify) → `ax-indexer.service`. 🔴 **This is where the twin grows**: changed files → relation graphs (LLM 0) → context-MD synthesis (35B) → reindex. Lost groups are logged by name — the watermark has already advanced, so they can't be found again |
@@ -120,7 +120,7 @@ reporting status, give the denominator (*"twin sub-tasks 23 of 43"*), never a sc
 what got built.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
-**Tests — 1,401, all passing. No pytest**; each file runs standalone.
+**Tests — 1,417, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic

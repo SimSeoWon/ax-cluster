@@ -137,9 +137,41 @@ def test_visibility() -> None:
               str(got))
 
 
+
+def test_remove() -> None:
+    """🔴 잠금이 삭제도 막는다 — 재합성이 못 덮는 것을 삭제가 덮으면 안 된다."""
+    with tempfile.TemporaryDirectory() as t:
+        p = _seed(Path(t))
+        r = E.remove(p, "D", "actions", "Spawn")
+        check("잠기지 않은 것은 지운다", r.removed, r.summary)
+        check("파일이 사라진다", E.find_item(p, "D", "actions", "Spawn") is None)
+        # 🔴 manifest 도 갱신돼야 한다 — 안 하면 없는 파일을 가리킨다
+        man = yaml_io.read(p.ontology / "domains" / "D" / "domain.yaml") or {}
+        check("🔴 manifest 목록에서도 뺀다",
+              not any("Spawn" in str(x) for x in (man.get("actions") or [])), str(man.get("actions")))
+
+        # 잠긴 것은 force 없이 안 지워진다
+        E.edit(p, "D", "objects", "AMonster", {"description": "검수함"})
+        r2 = E.remove(p, "D", "objects", "AMonster")
+        check("🔴 잠긴 것은 force 없이 안 지운다", not r2.removed, r2.summary)
+        check("이유를 말한다", "force" in r2.reason, r2.reason)
+        check("파일이 남아 있다", E.find_item(p, "D", "objects", "AMonster") is not None)
+
+        r3 = E.remove(p, "D", "objects", "AMonster", force=True)
+        check("force 면 지운다", r3.removed and r3.was_locked, r3.summary)
+        check("🔴 잠긴 것을 지웠다고 티를 낸다", "force 로 지웠다" in r3.summary, r3.summary)
+
+        try:
+            E.remove(p, "D", "actions", "없는것")
+            check("없는 것 제거는 예외", False)
+        except E.EditError:
+            check("없는 것 제거는 예외", True)
+
+
 def main() -> int:
     for fn in (test_edit_locks, test_immutable_fields, test_never_creates,
-               test_lock_survives_resynthesis, test_unlock, test_visibility):
+               test_lock_survives_resynthesis, test_unlock, test_visibility,
+               test_remove):
         fn()
     total = PASS + FAIL
     print(f"{'✅' if not FAIL else '🔴'} test_ontology_edit: {PASS}/{total} 통과")
