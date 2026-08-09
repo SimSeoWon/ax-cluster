@@ -102,9 +102,33 @@ def payload(manifest: Path) -> dict | None:
     if not domain:
         return None
 
+    pkg = manifest.parent
     tags = [str(t) for t in (data.get("tags") or []) if t]
     if domain not in tags:
         tags.append(domain)     # 도메인명 자체도 태그 채널에 — 이름으로 부를 때 매칭된다
+
+    # 🔴 **오브젝트에 등록된 별칭을 tags 채널(가중치 3.0)로 올린다** (중 1.4.5).
+    #
+    # 실측 2026-08-09: 도메인 태그는 전체 118토큰 중 **한글이 4개(3%)** 뿐인데, 같은 도메인의
+    # 본문에는 한글이 887~1,740자씩 있다. 즉 **한글 질의는 최고 가중치 채널을 통째로 놓치고**
+    # `body`(1.0)에만 걸리는데, 길이 정규화가 내용 많은 도메인을 오히려 깎는다
+    # (「미션 태스크 실행」에서 MissionEditor 0.4883 vs MissionRuntime 0.4778).
+    #
+    # 별칭은 사람이 등록한 한글 표현이다(`thesaurus.register`). 그것을 이 채널에 얹는 것이
+    # **가중치를 만지지 않고 한글 질의를 살리는 유일하게 안전한 수단**이다 — 순위 튜닝은
+    # 정답 집합이 생기기 전에는 하지 않기로 이미 정했다(리포트 10 §9.2).
+    seen = {t.casefold() for t in tags}
+    for o in data.get("objects") or []:
+        if not isinstance(o, str):
+            continue
+        item = yaml_io.read(pkg / o)
+        if not isinstance(item, dict):
+            continue
+        for a in item.get("aliases") or []:
+            a = str(a).strip()
+            if a and a.casefold() not in seen:
+                seen.add(a.casefold())
+                tags.append(a)
 
     # objects 는 경로 리스트다(패키지 구조) — stem 이 클래스명이다.
     related: list = []
@@ -124,7 +148,6 @@ def payload(manifest: Path) -> dict | None:
         body += [str(x) for x in (data.get(key) or []) if x]
 
     # 🔴 항목 본문을 녹인다 — 이게 없으면 액션·invariant 로는 도메인이 검색되지 않는다.
-    pkg = manifest.parent
     for key in ("actions", "invariants_files"):
         for rel in data.get(key) or []:
             item = yaml_io.read(pkg / str(rel))

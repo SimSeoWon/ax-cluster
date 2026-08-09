@@ -399,6 +399,35 @@ def main() -> int:
     check("invariants 키는 스냅샷 이름", pkg._manifest_key("invariants") == "invariants_files")
     check("파일명 금지문자를 바꾼다", pkg._safe("A/B:C") == "A_B_C")
 
+    print("\n[12-4] 🔴 사람이 넣은 별칭은 재합성이 지우지 않는다 (중 1.4.2)")
+    # 🔴 실측 2026-08-09로 재현한 결함이다: register() 가 aliases 를 쓴 뒤 재합성하면
+    #    합성기가 오브젝트를 {name,file,layer} 로만 다시 만들어 별칭이 사라졌다.
+    A = ProjectPaths(name="A", root=tmp / "A")
+    aroot = A.ontology / "domains" / "D"
+    pkg.write(A, "D", objects=[{"name": "AMonster", "layer": 1, "file": "m.h"}])
+    mf = aroot / "L1/objects/AMonster.yaml"
+    item = y.read(mf); item["aliases"] = ["몬스터", "몹"]; y.write(mf, item)
+
+    pkg.write(A, "D", objects=[{"name": "AMonster", "layer": 1, "file": "m.h"}])
+    check("🔴 재합성해도 별칭이 남는다",
+          (y.read(mf) or {}).get("aliases") == ["몬스터", "몹"], str(y.read(mf)))
+    # 🔴 항목 잠금(verified_by_user)으로 막지 않는다 — 그러면 내용이 영영 개선되지 않는다
+    check("🔴 잠금을 걸지 않는다 (필드 단위 이월이다)",
+          (y.read(mf) or {}).get("verified_by_user") is not True, str(y.read(mf)))
+    check("합성이 준 값은 그대로 반영된다", (y.read(mf) or {}).get("file") == "m.h")
+
+    # 계층이 바뀌어 파일 경로가 달라져도 따라가야 한다
+    pkg.write(A, "D", objects=[{"name": "AMonster", "layer": 2, "file": "m.h"}])
+    moved = aroot / "L2/objects/AMonster.yaml"
+    check("🔴 계층이 바뀌어도 별칭을 따라간다",
+          (y.read(moved) or {}).get("aliases") == ["몬스터", "몹"], str(y.read(moved)))
+
+    # 새 값이 있으면 덮지 않는다
+    pkg.write(A, "D", objects=[{"name": "AMonster", "layer": 2, "file": "m.h",
+                                "aliases": ["새것"]}])
+    check("새 값이 있으면 이월하지 않는다",
+          (y.read(moved) or {}).get("aliases") == ["새것"], str(y.read(moved)))
+
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0

@@ -101,6 +101,43 @@ def merge_preserve_locked(new_items: list, locked: dict) -> list:
     return keep + list(locked.values())
 
 
+# 🔴 **사람이 넣은 필드는 합성이 항목을 다시 써도 이월한다** (중 1.4.2).
+#
+# 실측 2026-08-09로 재현했다: `thesaurus.register()` 가 `AMonster.yaml` 에 `aliases: [몬스터]`
+# 를 쓴 뒤 같은 도메인을 재합성하면 **별칭이 사라진다.** 합성기는 오브젝트를
+# `{name, file, layer}` 로만 만들기 때문이다.
+#
+# 항목 단위 잠금(`verified_by_user`)으로 막지 **않는다** — 별칭은 *기계 소유 항목에 붙은
+# 사람의 데이터*지, "이 항목 내용을 사람이 검수했다" 가 아니다. 잠가 버리면 그 항목의
+# 나머지 내용이 영원히 개선되지 못한다. 그래서 **필드 단위**로 이월한다.
+HUMAN_FIELDS = ("aliases",)
+
+
+def _previous_item(root, subdir: str, name: str) -> dict:
+    """같은 이름의 이전 항목. 🔴 **계층이 바뀌었을 수도 있어 전 계층을 훑는다** —
+    `L2/objects/X.yaml` 이 `L1/objects/X.yaml` 로 승급하면 경로가 달라진다."""
+    fn = f"{_safe(name)}.yaml"
+    for layer in LAYER_DIRS:
+        p = root / layer / subdir / fn
+        if p.is_file():
+            prev = yaml_io.read(p)
+            if isinstance(prev, dict):
+                return prev
+    return {}
+
+
+def carry_human_fields(root, subdir: str, item: dict) -> dict:
+    """이전 항목의 사람 필드를 새 항목에 옮긴다. **새 값이 있으면 건드리지 않는다.**"""
+    name = (item or {}).get("name")
+    if not name:
+        return item
+    prev = _previous_item(root, subdir, str(name))
+    for f in HUMAN_FIELDS:
+        if prev.get(f) and not item.get(f):
+            item[f] = prev[f]
+    return item
+
+
 def write(paths: ProjectPaths, domain: str, *, objects: list | None = None,
           actions: list | None = None, invariants: list | None = None,
           manifest_extra: dict | None = None, prune: bool = True) -> WriteStats:
@@ -128,6 +165,7 @@ def write(paths: ProjectPaths, domain: str, *, objects: list | None = None,
             name = (item or {}).get("name")
             if not name:
                 continue
+            item = carry_human_fields(root, subdir, item)   # 🔴 별칭을 잃지 않는다
             rel = f"{_layer_of(item)}/{subdir}/{_safe(name)}.yaml"
             rels[subdir].append(rel)
             kept_paths.add(rel)

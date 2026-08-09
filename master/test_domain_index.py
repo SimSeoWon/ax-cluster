@@ -157,8 +157,61 @@ def test_noise_gate() -> None:
               str(di.search_norms(paths, "RunTask")))
 
 
+
+def test_alias_lifts_to_tags() -> None:
+    """🔴 중 1.4.5 — 사람이 등록한 별칭이 **가중치 3.0 채널**에 올라가는가.
+
+    실측 근거: 도메인 태그 118토큰 중 한글 4개(3%)뿐인데 본문엔 도메인마다 한글 887~1,740자.
+    한글 질의가 최고 가중치 채널을 통째로 놓친다.
+    """
+    with tempfile.TemporaryDirectory() as t:
+        paths = ProjectPaths(name="T", root=Path(t))
+        d = paths.ontology / "domains" / "D"
+        (d / "L1" / "objects").mkdir(parents=True)
+        yaml_io.write(d / "L1/objects/AMonster.yaml",
+                      {"name": "AMonster", "aliases": ["몬스터", "몹"]})
+        yaml_io.write(d / "L1/objects/ABoss.yaml",
+                      {"name": "ABoss", "aliases": ["보스", "몬스터"]})   # 중복 별칭
+        yaml_io.write(d / "domain.yaml", {
+            "domain": "D", "tags": ["UI"],
+            "objects": ["L1/objects/AMonster.yaml", "L1/objects/ABoss.yaml"]})
+
+        p = di.payload(d / "domain.yaml")
+        tags = p["tags"]
+        check("🔴 별칭이 tags 채널에 올라간다", "몬스터" in tags and "보스" in tags, str(tags))
+        check("기존 태그를 밀어내지 않는다", "UI" in tags and "D" in tags, str(tags))
+        check("🔴 중복은 한 번만", tags.count("몬스터") == 1, str(tags))
+        # 🔴 별칭은 related_classes 가 아니라 tags 여야 한다 — 가중치가 다르다(2.5 vs 3.0)
+        check("🔴 related 로 새지 않는다", "몬스터" not in p["related_classes"],
+              str(p["related_classes"]))
+
+        # 별칭이 없으면 예전과 똑같아야 한다 (하위호환)
+        yaml_io.write(d / "L1/objects/AMonster.yaml", {"name": "AMonster"})
+        yaml_io.write(d / "L1/objects/ABoss.yaml", {"name": "ABoss"})
+        check("별칭이 없으면 태그가 늘지 않는다",
+              di.payload(d / "domain.yaml")["tags"] == ["UI", "D"],
+              str(di.payload(d / "domain.yaml")["tags"]))
+
+
+def test_fingerprint_sees_aliases() -> None:
+    """🔴 중 1.4.3 — 별칭을 등록하면 지문이 바뀌어야 재색인이 걸린다."""
+    with tempfile.TemporaryDirectory() as t:
+        paths = ProjectPaths(name="T", root=Path(t))
+        d = paths.ontology / "domains" / "D"
+        (d / "L1" / "objects").mkdir(parents=True)
+        obj = d / "L1/objects/AMonster.yaml"
+        yaml_io.write(obj, {"name": "AMonster"})
+        yaml_io.write(d / "domain.yaml",
+                      {"domain": "D", "objects": ["L1/objects/AMonster.yaml"]})
+        before = di.fingerprint(paths)
+        yaml_io.write(obj, {"name": "AMonster", "aliases": ["몬스터"]})
+        check("🔴 항목에 별칭이 붙으면 지문이 바뀐다", di.fingerprint(paths) != before,
+              f"{before} → {di.fingerprint(paths)}")
+
+
 def main() -> int:
-    for fn in (test_payload, test_fingerprint_and_sync, test_empty_is_an_error, test_noise_gate):
+    for fn in (test_payload, test_fingerprint_and_sync, test_empty_is_an_error, test_noise_gate,
+               test_alias_lifts_to_tags, test_fingerprint_sees_aliases):
         fn()
     total = PASS + FAIL
     print(f"{'✅' if not FAIL else '🔴'} test_domain_index: {PASS}/{total} 통과")
