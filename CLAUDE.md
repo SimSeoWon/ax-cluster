@@ -117,7 +117,7 @@ reporting status, give the denominator (*"twin sub-tasks 23 of 43"*), never a sc
 what got built.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
-**Tests — 1,223, all passing. No pytest**; each file runs standalone.
+**Tests — 1,233, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic

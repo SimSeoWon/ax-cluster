@@ -16,6 +16,27 @@
 
 🔴 **검사하지 못하면 통과가 아니라 차단이다.** SSH 실패·타임아웃·저장소 아님·경로 없음은
 전부 "안전을 확인하지 못했다"이지 "안전하다"가 아니다.
+
+## 🔴 범위는 `Source/` 하위다 (사용자 결정 2026-08-09)
+
+색인·그래프는 이미 `repo/Source/**` 한정인데(§5.2-E) **더티 체크만 저장소 전체를 보고
+있었다.** 그 어긋남이 실제로 `.2` 를 막았다 — 실측:
+
+    M Automation_ModularStage.slnx · M ModularStage.slnx · M ModularStage.uproject
+    (`.uproject` 의 diff 는 `EngineAssociation` GUID → "5.8")
+
+셋 다 **UE5/VS 가 프로젝트를 열 때 다시 쓰는 머신 지역 파일**이다. 사용자 판단:
+*"그쪽은 리소스나 엔진, 에디터용 메타데이터 등 바뀔 여지가 커"* — 에디터를 열기만 해도
+바뀌는 영역을 감시하면 게이트가 **항상 빨간불**이 되고, 항상 빨간 게이트는 게이트가 아니다.
+
+⚠️ **맞바꾼 것**: 범위 밖(`Content/` 의 `.uasset` 등)의 미커밋 변경은 이제 **차단하지 않는다.**
+받아들일 수 있는 근거는 셋이다 — ⑴ 워커는 `Source/` 밖에 쓰지 않는다(스킬 §5)
+⑵ 스킬이 `git clean`·`reset --hard` 를 금지하므로 남은 위험은 브랜치 전환뿐인데, git 은
+로컬 수정을 덮어써야 하면 **체크아웃을 거부한다** ⑶ 사람이 실제로 작업하는 기계(`.33`)는
+`requester` 라 애초에 파견 대상이 아니다.
+
+🔴 **그래서 범위 밖도 세어서 보고한다.** 차단하지 않는 것과 못 본 것은 다르다 — 판정문에
+"범위 밖 N건" 이 남지 않으면 다음 세션이 "깨끗하다" 를 저장소 전체로 오해한다.
 """
 from __future__ import annotations
 
@@ -27,6 +48,26 @@ from .config import DRIVEN_SSH, ConfigError, ProjectConfig, Registry, Workshop
 
 # SSH 가 응답하지 않는 경우를 위한 상한. 여기 걸리면 fail-closed 다.
 DEFAULT_TIMEOUT = 20
+
+# 🔴 차단 판정의 범위. 색인·그래프와 **같은 경계**여야 한다 (§5.2-E). 위 § 참조.
+SOURCE_SCOPE: tuple = ("Source/",)
+
+
+def _porcelain_path(line: str) -> str:
+    """포세린 한 줄에서 경로. 이름변경(`R  old -> new`)은 **새 경로**를 본다."""
+    p = line[3:].strip() if len(line) > 3 else ""
+    if " -> " in p:
+        p = p.split(" -> ", 1)[1]
+    return p.strip('"').replace("\\", "/").lstrip("./")
+
+
+def split_scope(paths: list, scope: tuple = SOURCE_SCOPE) -> tuple:
+    """포세린 줄들을 (범위 안, 범위 밖) 으로 가른다. 🔴 **밖도 버리지 않고 돌려준다.**"""
+    inside, outside = [], []
+    for line in paths:
+        (inside if any(_porcelain_path(line).startswith(s) for s in scope)
+         else outside).append(line)
+    return inside, outside
 
 Runner = Callable[[Sequence[str], int], subprocess.CompletedProcess]
 
@@ -46,8 +87,12 @@ class Cleanliness:
     ok: bool                                  # 자동화를 시작해도 되는가
     checked: bool                             # 실제로 검사에 성공했는가
     reason: str = ""
-    blocking: list[str] = field(default_factory=list)   # 차단 사유(추적 파일 변경)
+    blocking: list[str] = field(default_factory=list)   # 차단 사유(범위 안 추적 파일 변경)
     untracked: list[str] = field(default_factory=list)  # 통과시킨 미추적
+    # 🔴 범위 밖의 추적 파일 변경. **차단하지 않지만 세어서 보고한다** — 차단하지 않는 것과
+    # 못 본 것은 다르다(툴체인 재생성물이 여기 들어온다).
+    out_of_scope: list[str] = field(default_factory=list)
+    scope: tuple = SOURCE_SCOPE
 
     def to_dict(self) -> dict:
         return {
@@ -58,6 +103,8 @@ class Cleanliness:
             "reason": self.reason,
             "blocking": self.blocking,
             "untracked": self.untracked,
+            "out_of_scope": self.out_of_scope,
+            "scope": list(self.scope),
         }
 
 
@@ -84,9 +131,10 @@ def check_workshop(
     *,
     runner: Runner = _run,
     timeout: int = DEFAULT_TIMEOUT,
+    scope: tuple = SOURCE_SCOPE,
 ) -> Cleanliness:
     """워크숍 한 대를 판정한다. **판정만 하고 아무것도 고치지 않는다.**"""
-    res = Cleanliness(host=shop.host, path=shop.path, ok=False, checked=False)
+    res = Cleanliness(host=shop.host, path=shop.path, ok=False, checked=False, scope=scope)
 
     if not shop.drivable:
         # 대화형 워크숍은 마스터가 몰지 않으므로 검사 대상이 아니다.
@@ -122,19 +170,31 @@ def check_workshop(
         )
         return res
 
-    blocking, untracked = parse_porcelain(proc.stdout or "")
+    tracked, untracked = parse_porcelain(proc.stdout or "")
+    # 🔴 한 번의 SSH 로 둘 다 얻는다 — 범위를 pathspec 으로 좁히면 밖을 **세지도 못한다.**
+    blocking, outside = split_scope(tracked, scope)
     res.checked = True
     res.untracked = untracked
     res.blocking = blocking
+    res.out_of_scope = outside
+    where = "|".join(scope)
     if blocking:
         res.ok = False
         res.reason = (
-            f"추적 파일에 커밋되지 않은 변경이 {len(blocking)}건 있다. "
+            f"{where} 안의 추적 파일에 커밋되지 않은 변경이 {len(blocking)}건 있다. "
             "브랜치 전환·리셋이 이것을 날린다 — 사람이 정리할 때까지 시작하지 않는다."
         )
     else:
         res.ok = True
-        res.reason = "추적 파일은 깨끗하다."
+        # 🔴 좁혔다는 사실을 판정문에 남긴다. "깨끗하다" 를 저장소 전체로 오해하면 안 된다.
+        res.reason = f"{where} 안의 추적 파일은 깨끗하다."
+        if outside:
+            res.reason += (
+                f" ⚠️ 범위 밖 추적 변경 {len(outside)}건은 **차단하지 않는다**"
+                f"(리소스·엔진·에디터 메타데이터는 열기만 해도 바뀐다): "
+                + ", ".join(_porcelain_path(x) for x in outside[:3])
+                + (" 외" if len(outside) > 3 else "")
+            )
         if untracked:
             res.reason += (
                 f" 미추적 {len(untracked)}건은 통과시킨다"

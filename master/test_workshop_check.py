@@ -65,6 +65,39 @@ SSH_SHOP = Workshop(
 )
 
 
+
+def test_scope() -> None:
+    """🔴 범위는 `Source/` 하위 — 색인·그래프와 같은 경계다 (사용자 결정 2026-08-09)."""
+    print("\n[9] 🔴 더티 판정 범위는 Source/ 하위다")
+
+    # 실측 재현: .2 를 막고 있던 그 3건 (전부 저장소 루트의 툴체인 재생성물)
+    real = (" M Automation_ModularStage.slnx\n M ModularStage.slnx\n"
+            " M ModularStage.uproject\n?? AgentWiki.zip\n")
+    r = check_workshop(SSH_SHOP, runner=fake(real))
+    check("🔴 툴체인 재생성물은 차단하지 않는다", r.ok, r.reason)
+    check("차단 목록은 비어 있다", r.blocking == [], str(r.blocking))
+    # 🔴 차단하지 않는 것과 못 본 것은 다르다
+    check("🔴 범위 밖 3건을 세어서 들고 있다", len(r.out_of_scope) == 3, str(r.out_of_scope))
+    check("🔴 판정문에 범위 밖을 남긴다", "범위 밖 추적 변경 3건" in r.reason, r.reason)
+    check("🔴 판정문에 범위를 밝힌다 (전체로 오해 금지)", "Source/" in r.reason, r.reason)
+
+    # 범위 안이면 여전히 막는다 — 게이트를 없앤 게 아니다
+    mix = " M Source/Foo.cpp\n M ModularStage.uproject\n"
+    r2 = check_workshop(SSH_SHOP, runner=fake(mix))
+    check("🔴 Source/ 안은 그대로 차단한다", not r2.ok, r2.reason)
+    check("차단 목록엔 범위 안만", r2.blocking == [" M Source/Foo.cpp"], str(r2.blocking))
+    check("범위 밖은 따로 센다", len(r2.out_of_scope) == 1, str(r2.out_of_scope))
+
+    # 이름변경은 **새 경로**로 판정한다
+    ren = check_workshop(SSH_SHOP, runner=fake("R  old.cpp -> Source/new.cpp\n"))
+    check("🔴 rename 은 새 경로로 본다", not ren.ok, str(ren.blocking))
+
+    # 범위는 주입 가능하다
+    wide = check_workshop(SSH_SHOP, runner=fake(" M Content/A.uasset\n"),
+                          scope=("Source/", "Content/"))
+    check("범위를 넓히면 다시 막는다", not wide.ok, wide.reason)
+
+
 def main() -> int:
     print("[1] porcelain 파싱 — 추적 vs 미추적")
     blocking, untracked = parse_porcelain(
@@ -95,7 +128,7 @@ def main() -> int:
     check("차단 목록에 추적 변경", r.blocking == [" M Source/Foo.cpp"], str(r.blocking))
     check("미추적은 따로 보고", r.untracked == ["scratch.txt"], str(r.untracked))
     for code in (" M", "M ", "A ", "MM", " D", "R "):
-        rr = check_workshop(SSH_SHOP, runner=fake(f"{code} x\n"))
+        rr = check_workshop(SSH_SHOP, runner=fake(f"{code} Source/x\n"))
         check(f"  {code!r} 는 차단", not rr.ok)
 
     print("\n[4] 깨끗하면 통과")
@@ -173,6 +206,8 @@ def main() -> int:
             and not any(v in joined_all for v in ("clean", "reset", "checkout", "restore"))
         )
         check(f"  '{label}' → 읽기 전용 1회만", ok, f"{len(calls)}회: {joined_all}")
+
+    test_scope()
 
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0

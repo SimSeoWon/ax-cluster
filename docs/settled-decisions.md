@@ -115,6 +115,30 @@ session (a silent no-op `move`, PowerShell adding BOM/CRLF, an 18 KB stdin hang,
 managed block). Transfers use `scp`; `CLAUDE.md` is merged **marker-delimited** so human text
 survives.
 
+## Scope — 🔴 everything the master judges is `Source/` (user-confirmed 2026-08-09)
+
+Indexing and graphs were **already** limited to `repo/Source/**` (§5.2-E) — measured: the
+dependency and class graphs contain **1,662 files / 1,806 classes, 100% under `Source/`**.
+The **dirty check was the one thing still looking at the whole repo**, and that mismatch is what
+blocked `.2` from ever being dispatched to:
+
+    M Automation_ModularStage.slnx · M ModularStage.slnx · M ModularStage.uproject
+    (the `.uproject` diff is `EngineAssociation` GUID → "5.8")
+
+All three are **rewritten by UE5/VS just from opening the project**. The user's call:
+*"리소스나 엔진, 에디터용 메타데이터 등 바뀔 여지가 커"* — a gate watching an area that changes
+on every editor launch is **permanently red**, and a permanently red gate is not a gate.
+
+⚠️ **The trade**: uncommitted changes outside `Source/` (e.g. `Content/*.uasset`) no longer block.
+Acceptable because ⑴ workers never write outside `Source/` (skill §5) ⑵ `git clean`/`reset --hard`
+are forbidden, so the residual risk is branch switching — and git **refuses** a checkout that would
+overwrite local modifications ⑶ the machine a human actually works on (`.33`) is a `requester` and
+is never dispatched to.
+
+🔴 **Out-of-scope dirt is still counted and reported** (`Cleanliness.out_of_scope`, named in
+`reason`). *Not blocking* and *not looking* are different things — if the verdict just said
+"깨끗하다", the next session would read it as repo-wide.
+
 ## Terminology — 🔴 `worker` means three different things
 
 | Whose `worker` | What it actually is |
