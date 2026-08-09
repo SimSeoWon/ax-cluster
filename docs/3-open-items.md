@@ -205,6 +205,59 @@
       **부하로 커널이 멈춘 전례**가 있다(리포트 10 §8). 소 2.4.2(도메인 뷰어 웹 UI)와 **같은
       웹 표면을 공유**하는 것이 자연스럽다 — 둘 다 마스터에 화면을 하나 세우는 일이다.
 
+- [ ] 🆕 🔴🔴 **워커 통제 배선 — 반드시 해야 한다. 지금은 "미구현" 이 아니라 "잘못 배선됨" 이다**
+      (사용자 지시 2026-08-09: *"이건 작업 꼭 해야 한다고 명기해두고"*)
+
+      **실측** (`janus@192.168.0.2`, `E:\trunk\ModularStage`, 2026-08-09):
+
+      | 확인 | 결과 |
+      |---|---|
+      | `.claude/skills/` | **전임(AgentTest) 스킬 12종이 그대로 있다** — `distribute`·`review-work`·`cluster-selftest`·`refresh-ontology`·`manage-domain`·`audit-context` … |
+      | `.claude/agents/` | 전임 에이전트 12종 (`code-writer`·`code-validator`·`build-integration` …) |
+      | `.mcp.json` 의 `C:\Users\USER\Documents\ModularStage` | 🔴 **MISSING** — 계정이 `USER` 다. 이 머신은 `janus` |
+      | `.claude/mcp/*.exe` | 🔴 **하나도 없다** (`context-search`·`log-analyzer`·`crash-analyzer`) |
+      | `~/.claude.json` 의 `mcpServers` | 🔴 **비어 있다** — 마스터 8101·8102·8103 이 **등록돼 있지 않다** |
+
+      → 그 폴더에서 Claude Code 세션을 시작하면 **전임 프로젝트의 스킬 12종을 로드하고, 죽은
+      MCP 6종을 물고, 우리 마스터는 모르는 상태**로 시작한다. **에러 없이 조용히 틀리는**
+      이 저장소의 반복 실패 유형이다.
+
+      **제어 표면 두 개** — 원본에 이미 있다(재발명 금지): `watcher/setup.py` 의
+      `_merge_skills()`·`_merge_managed_mcp()`·`_deploy_hook_scripts()`,
+      `skill_templates.py` 독스트링 *"watch.exe 가 init 시 `.claude/skills/<name>/SKILL.md` 로 배포"*.
+      **행동 통일 = 스킬 · 능력 = MCP.**
+
+      🔴 **우리 환경에서 다른 것 둘:**
+      ① **데몬을 두지 않는다** — 원본이 `watch.exe` 폴링을 쓴 이유는 팀원 PC 에 접근 경로가
+      없어서였다. `.2`·`.33` 둘 다 SSH 가 열려 있으니 **마스터가 밀어넣는다** (§5.5.4 가 같은
+      논리로 이미 데몬을 기각했다).
+      ② **배달은 fail-closed + 드리프트 검사** — 지금 `C:\Users\janus\CLAUDE.md` 가 손복사
+      사본 + sha256 수동 대조인데 그게 이 메커니즘의 원시 버전이다(§7.7 이 "사본은 갈라진다" 를
+      **알려진 예외**로 적어 뒀다). 배달 후 **되읽어 대조**하는 것까지가 한 세트다(§8.3).
+
+      **소스 최신화도 같은 항목이다 (사용자 지적 2026-08-09).** 트윈은 미러의 **특정 커밋**
+      기준으로 지어진다(워터마크가 커밋 해시). 워커 사본이 그 커밋이 아니면 매니페스트가 준
+      참조 클래스·파일 경로·동결 시그니처가 안 맞는데 **에러가 안 난다.**
+
+      | | 커밋 (2026-08-09 실측) |
+      |---|---|
+      | Gitea bare (정본) · 마스터 미러 · `last_indexed_commit` · `.2` 체크아웃 | 넷 다 `bc4b38f` — **지금은 우연히 맞아 있다** |
+      | `master/work/manifest.py` 의 커밋 필드 | 🔴 **0건** — 어긋나도 감지할 수단이 없다 |
+
+      고칠 방향: ⑴ 매니페스트에 **`twin_commit`** 을 싣는다(컨텍스트 MD 의 `source_commit`
+      스탬프와 같은 개념의 한 층 위) ⑵ 워커는 시작 전 그 커밋까지 **`fetch` + ff-only 로만**
+      따라잡는다 — 🔴 `reset --hard`·`checkout`·`git clean` 금지, **추적 파일이 더러우면 차단**
+      (`workshop_check.py` 재사용), 못 따라잡으면 진행이 아니라 **fail-closed 차단**.
+      🔴 **`.33` 은 예외 — 사람의 메인 작업 PC 다. 자동 갱신 대상이 아니라 드리프트 보고만 한다**
+      (`machines/win-main-33.md` 게스트 규칙).
+
+      **선결:** 전임 `.claude/` 일습을 **먼저 아카이브**해야 한다. 안 하면 우리 번들이 죽은
+      스킬 12종 위에 병합된다.
+
+      **자리:** 지금 README 스텁뿐인 **`client/`** 가 정본이 놓일 곳이다.
+      상위 레이어(대 2 / `/distribute`)와 같은 차선이라 **중 1.3 이후**에 착수한다 —
+      사용자 지시(*"지금은 마스터 서버의 작업을 하니까 1.3 을 진행하자"*).
+
 - [x] ~~마스터 쪽 오케스트레이션 언어(Python vs Go) 최종 결정~~ — **Python 확정 2026-08-06** (아래 §5)
 
 ---
