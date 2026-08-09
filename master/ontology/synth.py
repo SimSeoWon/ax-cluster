@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 
 from ..context_search.paths import ProjectPaths
 from ..work.generate import DEFAULT_BROKER, GenerateError, call_broker, unload_model
-from . import collect, contexts as ctx_mod, domain_md, layers, package, parse, verify_facts
+from . import collect, contexts as ctx_mod, domain_md, layers, package, parse, verify_facts, yaml_io
 
 # 🔴 **모델 이름이 곧 노드 선택이다.** 브로커(8102)가 모델 보유·상주로 라우팅하므로,
 # 서로 다른 모델을 지정하면 서로 다른 기계로 간다 — 그게 2노드 병렬의 수단이다.
@@ -269,6 +269,38 @@ def _lane(chunks: list, model: str, doc, kind: str, *, broker: str, num_ctx: int
     return out
 
 
+def _manifest_extra(paths: ProjectPaths, domain: str, doc):
+    """재합성 때 manifest 에 실을 것. 🔴 **MD 의 태그를 `domain.yaml` 로 옮긴다.**
+
+    ⚠️ **정정 (2026-08-10)**: 앞서 *"7개 중 6개 MD 에 `tags` 가 없다"* 고 적었던 것은
+    **awk 로 프론트매터를 잘못 잘라 생긴 오독**이었다. 파서로 재보니 **전부 있고 yaml 과도
+    일치**한다(받아온 스냅샷이 양쪽을 맞춰 보냈다).
+
+    🔴 **그래도 이 함수는 필요하다.** 합성기는 `summary` 만 넘기고 있었으므로, 사람이 MD 에
+    한글 태그를 넣고 `refresh` 를 돌리면 **그때 사라진다.** 지금까지 어긋나지 않은 것은
+    아무도 MD 태그를 손대지 않았기 때문이지 안전해서가 아니다.
+
+    🔴 **합치되 덮지 않는다.** 사람이 `domain.yaml` 에 직접 넣은 태그가 있을 수 있는데
+    `package.write` 는 `manifest_extra` 를 **얕게 덮는다**(`man.update`). 그래서 여기서 미리
+    union 을 만든다. 순서는 기존 것 먼저 — 사람이 정한 우선순위를 흔들지 않는다.
+    """
+    extra = {}
+    if getattr(doc, "summary", ""):
+        extra["summary"] = doc.summary[:2000]
+    md_tags = [str(t).strip() for t in (getattr(doc, "tags", None) or []) if str(t).strip()]
+    if md_tags:
+        cur = yaml_io.read(paths.ontology / "domains" / domain / package.MANIFEST) or {}
+        merged = [str(t) for t in (cur.get("tags") or []) if str(t).strip()]
+        seen = {t.casefold() for t in merged}
+        for t in md_tags:
+            if t.casefold() not in seen:
+                seen.add(t.casefold())
+                merged.append(t)
+        extra["tags"] = merged
+    return extra or None
+
+
+
 def refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT_MODELS,
                    broker: str = DEFAULT_BROKER, num_ctx: int = NUM_CTX,
                    timeout: int = TIMEOUT, dry_run: bool = False,
@@ -341,7 +373,7 @@ def refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT_
             objects=objects,
             actions=res.actions or None,
             invariants=res.invariants or None,
-            manifest_extra={"summary": doc.summary[:2000]} if doc.summary else None,
+            manifest_extra=_manifest_extra(paths, domain, doc),
         )
     res.elapsed_ms = int((time.monotonic() - t0) * 1000)
     return res
@@ -355,6 +387,7 @@ def prompt_actions(doc, ctx):
 def prompt_invariants(doc, ctx):
     from . import prompt
     return prompt.invariants(doc, ctx)
+
 
 
 def run(paths: ProjectPaths, *, domains: list | None = None,

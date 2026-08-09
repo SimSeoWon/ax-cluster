@@ -439,6 +439,25 @@ def main() -> int:
     check("인자가 있어도 호출", calls("UManager_Mission::RunTask(task)") == [("UManager_Mission", "RunTask")])
     check("괄호 없는 멤버는 여전히 무시", calls("EMissionType::Wait") == [])
 
+    print("\n[12-5] 🔴 MD 태그가 domain.yaml 로 전파된다 — 합치되 덮지 않는다 (#53)")
+    import types
+    M = ProjectPaths(name="M", root=tmp / "M")
+    pkg.write(M, "D", objects=[{"name": "UFoo", "layer": 1, "file": "f.h"}])
+    mroot = M.ontology / "domains" / "D"
+    man = y.read(mroot / "domain.yaml"); man["tags"] = ["기존", "Shared"]; y.write(mroot / "domain.yaml", man)
+    doc = types.SimpleNamespace(summary="개요", tags=["한글태그", "shared", "새것"])
+    from master.ontology import synth as sy
+    extra = sy._manifest_extra(M, "D", doc)
+    check("MD 태그를 싣는다", "한글태그" in (extra.get("tags") or []), str(extra))
+    # 🔴 사람이 yaml 에 직접 넣은 것을 잃으면 안 된다 — package.write 는 얕게 덮는다
+    check("🔴 기존 태그를 지우지 않는다", "기존" in extra["tags"], str(extra["tags"]))
+    check("기존 것이 앞선다", extra["tags"][0] == "기존", str(extra["tags"]))
+    check("대소문자 중복은 한 번만", sum(1 for t in extra["tags"] if t.lower() == "shared") == 1,
+          str(extra["tags"]))
+    check("요약도 함께", extra.get("summary") == "개요")
+    check("MD 태그가 없으면 tags 키를 안 만든다",
+          "tags" not in (sy._manifest_extra(M, "D", types.SimpleNamespace(summary="s", tags=[])) or {}))
+
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 
