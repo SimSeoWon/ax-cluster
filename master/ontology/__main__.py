@@ -217,6 +217,26 @@ def cmd_unlock(argv: list) -> int:
     return 0
 
 
+def cmd_view(argv: list) -> int:
+    """view [출력경로] — 자립형 HTML 한 장을 만든다. 🔴 **서비스를 띄우지 않는다.**
+
+    ⚠️ 이 문서는 비공개 게임 구조를 담는다 — 내부망에 올릴지는 **사람이 정한다**
+    (2026-08-10 결정: 파일로만 두고 공유는 나중에).
+    """
+    from pathlib import Path
+    from . import view as vw
+    paths = _paths()
+    out = Path(argv[0]) if argv and not argv[0].startswith("-") else None
+    try:
+        p, n = vw.write(paths, out=out)
+    except Exception as e:                                # noqa: BLE001
+        print(f"  🔴 {e}")
+        return 1
+    print(f"  ✅ {p}  ({n:,} 바이트, 자립형)")
+    print("  브라우저로 그 파일을 열면 된다. 외부 자원을 쓰지 않는다.")
+    return 0
+
+
 def cmd_drift(argv: list) -> int:
     """drift [도메인] — 트윈과 소스가 어긋난 곳. 🔴 **보고만 한다.**"""
     from . import drift as dr
@@ -292,7 +312,7 @@ _COMMANDS = {"status": cmd_status, "plan": cmd_plan, "verify": cmd_verify,
              "dry": cmd_dry, "refresh": cmd_refresh,
              "new": cmd_new, "unassigned": cmd_unassigned,
              "lock": cmd_lock, "unlock": cmd_unlock, "sync": cmd_sync,
-             "protect": cmd_protect, "protected": cmd_protected, "drift": cmd_drift}
+             "protect": cmd_protect, "protected": cmd_protected, "drift": cmd_drift, "view": cmd_view}
 
 
 def main(argv: list) -> int:
