@@ -137,6 +137,52 @@ def _ssh(host: str, user: str, cmd: str, *, timeout: int = SSH_TIMEOUT) -> tuple
         return 255, f"{type(e).__name__}: {e}"
 
 
+# 🔴 UE5 는 **한 곳에 있지 않다** — 실측 2026-08-09.
+#
+#     .2   C:\Program Files\UE_5.8\...              (소스 빌드/직접 설치)
+#     .33  C:\Program Files\Epic Games\UE_5.8\...   (런처 설치)
+#
+# 한 경로만 보던 탓에 `.33` 이 **ue5 없음**으로 잘못 측정됐고, 능력은 층3 라우팅을 정하므로
+# 그대로 뒀으면 *"UE5 를 가진 기계가 검증 못 하는 기계로 분류되는"* 상태가 된다. 표에 손으로
+# 적지 않으려고 프로브를 만들었는데 **프로브 안에 경로를 박아 두면 같은 병이다.**
+UE5_ROOTS = (r"C:\Program Files\Epic Games", r"C:\Program Files", r"D:\Epic Games", r"D:")
+UE5_VERSIONS = ("5.8", "5.7", "5.6", "5.5", "5.4")      # 새 것 우선
+UE5_REL = r"Engine\Binaries\Win64\UnrealEditor-Cmd.exe"
+
+
+def ue5_globs(roots=UE5_ROOTS) -> list:
+    """엔진이 설치될 만한 **디렉토리 글롭**. 버전을 나열하지 않는다 — 새 버전이 나오면
+    목록이 낡는다. `UE_*` 로 훑고 **고르는 것은 파이썬에서** 한다."""
+    return [f"{r}\\UE_*" for r in roots]
+
+
+def _pick_ue5(paths: list, versions=UE5_VERSIONS) -> str:
+    """찾은 것 중 하나. **선호 버전 우선**, 없으면 문자열 역순(대개 최신)."""
+    for v in versions:
+        for p in paths:
+            if f"UE_{v}\\" in p or p.endswith(f"UE_{v}"):
+                return p
+    return sorted(paths, reverse=True)[0] if paths else ""
+
+
+def _find_ue5(host: str, user: str, *, runner=None) -> str:
+    """UnrealEditor-Cmd 경로. 없으면 빈 문자열. **읽기 전용, SSH 한 번.**
+
+    🔴 **`if exist A (…) & if exist B (…)` 로 잇지 않는다.** cmd 는 괄호를 써도 `&` 뒤를
+    **첫 조건의 참 분기 안**으로 넣는다 — 실측 2026-08-09: 첫 후보가 있는 `.33` 은 통과하고
+    첫 후보가 없는 `.2` 는 **UE5 를 가졌는데 0줄**이었다(rc 는 양쪽 다 0이라 종료 코드로도
+    구분되지 않는다). `for /d` 는 한 번에 정확히 돈다.
+    """
+    globs = " ".join(f'"{g}"' for g in ue5_globs())
+    cmd = (f'for /d %i in ({globs}) do @if exist "%i\\{UE5_REL}" '
+           f'echo %i\\{UE5_REL}')
+    run = runner or (lambda c: _ssh(host, user, c))
+    _rc, out = run(cmd)          # 🔴 rc 로 판정하지 않는다 — 출력이 근거다
+    found = [ln.strip() for ln in (out or "").splitlines()
+             if ln.strip().lower().endswith("unrealeditor-cmd.exe")]
+    return _pick_ue5(found)
+
+
 def probe(host: str, user: str, path: str, driven: str, role: str = "worker") -> HostFacts:
     """머신 하나를 잰다. **읽기 전용** — 아무것도 바꾸지 않는다."""
     f = HostFacts(host=host, user=user, path=path, driven=driven, role=role)
@@ -153,10 +199,7 @@ def probe(host: str, user: str, path: str, driven: str, role: str = "worker") ->
         f.claude = v.splitlines()[0].strip() if rc == 0 and v else ""
         rc, a = _ssh(host, user, r'if exist "%LOCALAPPDATA%\agy\bin\agy.exe" (echo YES) else (echo NO)')
         f.agy = "YES" in a
-        rc, ue = _ssh(host, user,
-                      r'if exist "C:\Program Files\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe"'
-                      r' (echo C:\Program Files\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe)')
-        f.ue5 = ue.strip() if rc == 0 and "UnrealEditor-Cmd" in ue else ""
+        f.ue5 = _find_ue5(host, user)
         rc, g = _ssh(host, user, f'cd /d {path} && git rev-parse --short HEAD')
     else:
         rc, home = _ssh(host, user, "echo $HOME")

@@ -178,9 +178,38 @@ def test_role_block() -> None:
     check("두 역할 모두 '소스가 이긴다'", "소스가 이긴다" in w and "소스가 이긴다" in r)
 
 
+
+def test_ue5_detection() -> None:
+    """🔴 UE5 는 한 곳에 있지 않다 (실측 2026-08-09) — 프로브에 경로를 박으면 프로브의 의미가 없다."""
+    globs = " ".join(bundle.ue5_globs())
+    check("런처 설치 위치를 본다", "Epic Games\\UE_*" in globs, globs)
+    check("직접 설치 위치도 본다", "C:\\Program Files\\UE_*" in globs, globs)
+    # 🔴 버전을 글롭에 나열하면 새 버전이 나올 때 목록이 낡는다
+    check("🔴 글롭에 버전을 박지 않는다", "5.8" not in globs, globs)
+
+    seen = {}
+    def runner(cmd):
+        seen["cmd"] = cmd
+        return 0, ("C:\\Program Files\\Epic Games\\UE_5.4\\Engine\\Binaries\\Win64\\UnrealEditor-Cmd.exe\n"
+                   "C:\\Program Files\\Epic Games\\UE_5.8\\Engine\\Binaries\\Win64\\UnrealEditor-Cmd.exe\n")
+    got = bundle._find_ue5("h", "u", runner=runner)
+    check("🔴 선호 버전(5.8)을 고른다", "UE_5.8" in got, got)
+    # 🔴 cmd 는 괄호를 써도 `if exist A (…) & …` 의 뒷부분을 첫 조건의 참 분기로 삼킨다
+    check("🔴 if/& 로 잇지 않는다 (한쪽만 조용히 깨진다)",
+          "for /d" in seen["cmd"] and " & if exist" not in seen["cmd"], seen["cmd"][:80])
+
+    # 🔴 종료 코드로 판정하지 않는다 — ssh rc 는 양방향으로 못 믿는다
+    ok = bundle._find_ue5("h", "u", runner=lambda c: (1,
+        "C:\\Program Files\\UE_5.8\\Engine\\Binaries\\Win64\\UnrealEditor-Cmd.exe\n"))
+    check("🔴 rc≠0 이라도 출력이 있으면 인정한다", "UE_5.8" in ok, ok)
+    check("아무것도 없으면 빈 문자열", bundle._find_ue5("h", "u", runner=lambda c: (0, "")) == "")
+    check("엉뚱한 출력은 무시한다",
+          bundle._find_ue5("h", "u", runner=lambda c: (0, "File Not Found\n")) == "")
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
-               test_role_skills, test_role_block):
+               test_role_skills, test_role_block, test_ue5_detection):
         fn()
     total = PASS + FAIL
     print(f"{'✅' if not FAIL else '🔴'} test_client_bundle: {PASS}/{total} 통과")
