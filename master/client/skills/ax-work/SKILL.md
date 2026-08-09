@@ -112,8 +112,13 @@ invariant 도 지켰지만, `CurrentStep`(실제는 `Step`) · `EMissionTaskExec
            git merge --ff-only origin/<기준>     ← 🔴 ff 가 안 되면 BLOCKED. reset --hard 금지
            git checkout -b attempt/<task_id>/<workshop>/<timestamp>
 
-    끝:    git push -u origin <attempt 브랜치>
+    끝:    git push -u origin <attempt 브랜치>   ← 성공이든 실패든 **먼저 밀어 둔다**
            git checkout main                     ← 🔴 **main 으로 돌아온다** (기준 브랜치가 아니라)
+           그 다음에야 ATTEMPT/HEAD/RESULT 세 줄을 낸다
+
+🔴 **복귀를 마커보다 먼저 한다.** 마커는 **출력의 마지막 세 줄**이어야 하는데(§6), 복귀를
+나중에 하면 그 뒤에 무언가 붙을 여지가 생긴다. push 로 커밋은 이미 안전하므로 순서를
+바꿔도 잃는 것이 없다.
 
 🔴 **attempt 브랜치 위에 체크아웃을 두고 나오지 말 것.** 실측 2026-08-09: 시험 파견 후
 `.43` 이 attempt 브랜치에 남았고, 그대로 두면 **다음 작업이 무관한 이전 시도 위에서 가지를
