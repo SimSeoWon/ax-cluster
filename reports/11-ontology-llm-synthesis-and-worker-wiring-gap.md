@@ -1194,3 +1194,55 @@ awk 로 프론트매터를 잘라 세었는데 그게 틀렸다. **파서로 재
 
 전 도메인 불일치 **0건**. 남은 경고 하나는 *경계 절 없는 도메인 6개* 인데, 그건 사람이
 문서를 채워야 하는 일이다.
+
+## §28. 상태 익스포트/임포트 (소 2.4.3) — 마일스톤 2 의 마지막 칸
+
+**받은 zip 이 있어서 형식을 추측하지 않았다** (사용자 지적). `~/다운로드/infra_state_20260808.zip`
+(1,311 파일)을 열어 형식을 그대로 받았고, 원본 구현
+(`AgentTest/mcp/context_search/state_transfer.py`, 304줄)도 읽어 규칙을 이식했다.
+
+    _export_manifest.json   exported_at · source_version · items · context_file_count · domain_count
+    context/                컨텍스트 MD  1,050
+    ontology_domains/<D>/   온톨로지 YAML 247 + description.md 7
+
+🔴 원본에서 그대로 가져온 판단 둘: **벡터·BM25·class_graph 는 넣지 않는다**(로컬 연산으로
+재생성 가능한 파생 자산) · **윈도우 절대경로 스캔은 경고만 하고 차단하지 않는다.**
+
+### 28.1 🔴 사용자가 짚은 문제 — "이제 서로 나뉜 게 많아졌는데"
+
+측정했더니 실재했다:
+
+    zip 에만 있는 필드   없음
+    🔴 우리에만          protected · protected_at · protected_reason   (240건)
+    형식 밖 자산         `_thesaurus.tsv`
+
+새 zip 을 그대로 풀면 **보호 표식 240건과 별칭이 사라진다.** 그리고 `_thesaurus.tsv` 는 그
+형식에 없어서 온톨로지 디렉토리를 통째로 갈면 같이 날아간다.
+
+⚠️ **정정 하나**: `aliases` 는 **원본의 필드다**(시소러스의 원천이 *"objects yaml 의 aliases"*
+라고 원본이 적어 뒀다). 받은 zip 에 없던 것은 그때 등록분이 0이었기 때문이다 — 호환본에서
+빼면 안 된다.
+
+### 28.2 두 벌 + README (사용자 결정)
+
+    compat  받은 zip 과 같은 모양 · 우리 필드 720개(240×3) 제거 · aliases 는 유지
+    full    보호 표식 240 · `_thesaurus.tsv` 포함 → **우리를 복원할 수 있는 유일한 것**
+
+    받은 zip 최상위   [_export_manifest.json, context, ontology_domains]
+    우리 compat      [README.md, _export_manifest.json, context, ontology_domains]
+
+수치가 받은 zip 과 일치한다(context 1,056 · 도메인 7 · yaml 247). README 에 *어느 것이
+무엇이고 임포트가 무엇을 지켜야 하는지*를 적었다 — compat 쪽엔 **"이걸로는 AX 를 복원할 수
+없다"** 를 명시한다.
+
+### 28.3 🔴 임포트는 덮어쓰기가 아니라 병합이다
+
+원본의 `force` 는 *백업 후 통째 교체* 다. 그대로 하면 위 240건이 사라지므로, **재합성 경계에서
+이미 푼 방식**(`package.carry_human_fields`)을 수령 경계에도 쓴다 — 들어온 파일을 쓰되 우리
+필드를 **이월**한다. 받은 zip 으로 계획을 돌려 확인했다:
+
+    계획: zip(compat) context 1056 · yaml 247 · 교체 247 · 🔒 필드 이월 240
+
+세 가지를 못박았다: **기본은 계획만** · **`--apply` 는 먼저 백업**(ModularStage 는 git 밖) ·
+**zip 에 없는 우리 항목은 지우지 않는다**(안 보낸 건지 지운 건지 모른다 — `sync` 와 같은 규칙).
+들어온 쪽에 값이 있으면 **그쪽을 존중**한다 — 이월은 빈 자리만 채운다.
