@@ -70,6 +70,7 @@ class NormBundle:
     query: str = ""
     domains: list = field(default_factory=list)
     degraded: list = field(default_factory=list)      # 🔴 왜 비었는지
+    notes: list = field(default_factory=list)         # 결정적 추론 근거 (소 2.2.2)
     truncated: bool = False
 
     @property
@@ -89,6 +90,10 @@ class NormBundle:
             return [f"_규범 없음 — {why}. "
                     f"**이 태스크는 도메인 규범 grounding 없이 진행된다.**_"]
         out: list = []
+        if self.notes:
+            # 🔴 통계로 닮은 게 아니라 **소속으로 짚은 것**이면 그렇게 말한다 — 워커가
+            #    이 도메인을 왜 믿어야 하는지 알아야 한다 (소 2.2.2).
+            out += [f"_{n}_" for n in self.notes] + [""]
         for d in self.domains:
             head = f"### `{d.domain}`"
             if d.score:
@@ -184,12 +189,30 @@ def attach(paths: ProjectPaths, *, classes: list | None = None, stem: str = "",
         b.degraded.append("질의를 만들 수 없었다 (대상 클래스·제목이 비었다)")
         return b
 
+    # 🔴 **결정적 추론을 먼저 본다** (소 2.2.2). 통계 검색은 *"닮은 도메인"* 을 주지만,
+    #    질의에 나온 클래스의 **소속**은 표에서 그냥 읽을 수 있다 — 그쪽이 근거를 댈 수 있다.
+    #    ⚠️ 대체하지 않고 **순서만** 바꾼다: 추론이 좁게 틀렸을 때 통계 히트를 잃으면 안 된다.
+    inferred: list = []
+    try:
+        from ..context_search import infer as infer_mod
+        inf = infer_mod.infer_for(paths, query)
+        inferred = list(inf.domains)
+        if inferred:
+            b.notes.append("추론: " + "; ".join(e.line for e in inf.evidence[:3]))
+    except Exception:                                   # noqa: BLE001 — 규범을 막지 않는다
+        inferred = []
+
     finder = search or domain_index.search_norms
     try:
         hits = finder(paths, query, top_k=top_k)
     except Exception as e:                              # noqa: BLE001 — 등록을 막지 않는다
         b.degraded.append(f"규범 검색 실패: {type(e).__name__}: {e}")
         return b
+    # 🔴 **추론된 도메인을 앞으로 당긴다** — 대체가 아니라 순서만이다. 예산이 도메인 수를
+    #    자르므로(MAX_DOMAINS), 근거 있는 것이 먼저 실려야 한다.
+    if inferred and hits:
+        rank = {d: i for i, d in enumerate(inferred)}
+        hits = sorted(hits, key=lambda h: (rank.get(h.get("domain", ""), len(rank)),))
     if not hits:
         # 🔴 노이즈 3중 차단이 의도적으로 0건을 낸 것일 수 있다 — 실패가 아니다.
         b.degraded.append("질의와 정확히 매칭되는 도메인이 없다 (노이즈 차단이 정상 동작한 결과일 수 있다)")

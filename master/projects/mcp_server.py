@@ -668,3 +668,26 @@ def drift_audit_tool(domain: str = "") -> str:
         }, ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
+
+
+@mcp.tool()
+def infer_domain_tool(query: str) -> str:
+    """질의가 **어느 도메인 얘기인지** 결정적으로 짚는다 (LLM 0).
+
+    🔴 `search_context_tool` 과 다르다 — 그쪽은 *닮은 것*을 통계로 찾고 언제나 뭔가 낸다.
+    이 도구는 **질의에 나온 클래스의 소속을 표에서 읽고**, 근거를 댄다
+    (*"`UMissionTaskExecutor` 가 MissionRuntime 소속"*). 한글 질의는 시소러스 별칭을 타고 간다.
+
+    🔴 **모르면 빈 결과다.** 산문에서 도메인 이름을 닮은 말을 찾아 추측하지 않는다 —
+    추측하면 "결정적" 이라는 이 도구의 유일한 값어치가 사라진다.
+    """
+    try:
+        from ..context_search import infer as inf_mod
+        r = inf_mod.infer_for(_onto_paths(), query)
+        return json.dumps({
+            "ok": r.ok, "domains": r.domains, "summary": r.summary,
+            "evidence": [{"class": e.cls, "domain": e.domain, "via": e.via} for e in r.evidence],
+            "unassigned_candidates": r.unknown, "notes": r.notes,
+        }, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
