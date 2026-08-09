@@ -82,6 +82,29 @@ in other domains' classes. Do **not** compensate with prompt wording alone — t
 guards do it: `allowed_classes` filtering plus the fact gate (`ontology/verify_facts.py`, call
 relations checked against the 6,380-row `methods` table).
 
+## Ontology refresh — 🔴 for new/changed domains, **not** over the received snapshot (2026-08-09)
+
+Ran it for real once (레드마인 #24). **Mechanically healthy**: chunking, two-node split, fact gate
+**100%** (4/4·5/5·5/5·6/6), 63s for `MissionEditor`. **But the content got shallower**:
+
+    actions     14 → 9   · kept **1**  · lost 13 · new 8
+    invariants   8 → 11  · kept **0**  · lost 8  · new 11
+
+What was lost encoded *this system's design decisions* — *"`UTaskListEditorWidget` uses the
+`AMissionPrefab` CDO as the source of truth and must resync via `ReloadFromCDO()`"*. What replaced
+it was *framework mechanics any UE developer reads off the header* — *"abstract class, derived must
+override `ApplyData()`"*. 🔴 **Both are true, so the fact gate passes** — it blocks *false*, not
+*shallow*. Restored from backup.
+
+This is the **same rule already settled for context MDs** (*"never bulk-regenerate the 1,055
+snapshot docs — our local model measured worse"*), now measured for the ontology too.
+
+🔴 **The mitigation already exists: verification locks (소 1.3.7).** Zero items were locked, so
+nothing was protected. Locking the snapshot's good invariants makes `refresh` **add without
+destroying** — that is what locks are for, and this run proved the need.
+
+⚠️ `ModularStage/` is gitignored, so **back up before any refresh** (`~/ax-backups/`).
+
 ## Cluster shape — 🔴 one operator, N workers (user-confirmed 2026-08-09)
 
 This is **not** AgentTest's team topology, and that difference removes machinery rather than
