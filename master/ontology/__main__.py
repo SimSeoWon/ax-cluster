@@ -1,0 +1,135 @@
+"""온톨로지 CLI — 재합성·검증·측정 (소 1.3.3).
+
+    python -m master.ontology status                 도메인 상태 + stale 판정
+    python -m master.ontology plan <도메인>           🔴 LLM 0 — 조각·프롬프트 크기만 본다
+    python -m master.ontology verify [<도메인>]       사실 게이트만 (LLM 0)
+    python -m master.ontology dry <도메인>            합성해 보고 **쓰지 않는다**
+    python -m master.ontology refresh [<도메인>…]     합성해서 쓴다 (stale 만이 기본)
+
+🔴 **`plan` 부터 쓴다.** 노드 시간을 태우기 전에 프롬프트가 예산 안에 드는지, 몇 조각이
+나오는지를 LLM 없이 본다 — 리포트 10 §8 의 사고가 "재보지 않고 보낸" 데서 났다.
+🔴 **그 다음이 `dry`.** 받아온 온톨로지 247 yaml 을 통과율도 모른 채 덮지 않는다.
+"""
+from __future__ import annotations
+
+import sys
+
+from ..context_search.paths import resolve
+from . import contexts as ctx_mod, collect, domain_md, stale, synth, verify_facts
+
+# 🔴 출력에 남겨야 하는 토큰. JSON 5~15건(description·flow 포함) 기준 실측 여유값.
+OUTPUT_RESERVE = 2500
+
+
+def _paths(name: str = ""):
+    return resolve(name)
+
+
+def cmd_status(argv: list) -> int:
+    paths = _paths()
+    docs = domain_md.read_all(paths)
+    if not docs:
+        print("active 도메인이 없다 — `context/_domains/*.md` 를 확인하라")
+        return 1
+    print(f"프로젝트 {paths.name} · active 도메인 {len(docs)}")
+    for d in docs:
+        m = collect.members_of(paths, d.domain)
+        print(f"  {d.domain:32s} 멤버 {len(m):3d} · {d.summary_note}")
+    print()
+    results = stale.compute(paths)
+    print(stale.summary(results))
+    return 0
+
+
+def cmd_plan(argv: list) -> int:
+    """🔴 LLM 0. 조각 수·프롬프트 크기·응집 순서를 눈으로 본다."""
+    from . import prompt as prompt_mod
+    paths = _paths()
+    targets = argv or [d.domain for d in domain_md.read_all(paths)]
+    total = requests = 0
+    for name in targets:
+        doc = domain_md.read(paths, name)
+        if doc is None:
+            print(f"  {name}: 도메인 MD 없음")
+            continue
+        members = collect.members_of(paths, name)
+        chunks = ctx_mod.chunk_domain(paths, name, members=members)
+        print(f"\n{name} — 멤버 {len(members)} → {len(chunks)}조각")
+        for c in chunks:
+            pa = len(prompt_mod.actions(doc, c))
+            pi = len(prompt_mod.invariants(doc, c))
+            total += pa + pi
+            requests += 2
+            # 🔴 실측 환산비 (2026-08-09, `prompt_eval_count`): 35B 2.85자/tok · 14b 2.79자/tok.
+            #    보수적으로 작은 쪽을 쓴다 — 토큰을 과소평가하면 출력이 잘린다.
+            tok = int(max(pa, pi) / 2.79)
+            head = synth.NUM_CTX - tok
+            flag = "" if head >= OUTPUT_RESERVE else f" 🔴출력여유 {head}tok"
+            print(f"    [{c.part[0]}/{c.part[1]}] 클래스 {len(c.items):2d} · 발췌 {c.chars:6d}자"
+                  f" · 프롬프트 {max(pa, pi):6d}자 ≈ {tok:5d}tok · 출력여유 {head:5d}tok{flag}")
+            print(f"        {', '.join(sorted(c.names))}")
+    print(f"\n전체 프롬프트 {total:,}자 · 요청 {requests}건 "
+          f"(출력 여유 기준 {OUTPUT_RESERVE}tok, num_ctx {synth.NUM_CTX})")
+    return 0
+
+
+def cmd_verify(argv: list) -> int:
+    """사실 게이트만 돌린다 (LLM 0) — 지금 있는 온톨로지가 소스와 맞는가."""
+    paths = _paths()
+    targets = argv or [d.domain for d in domain_md.read_all(paths)]
+    bad = 0
+    for name in targets:
+        r = verify_facts.verify_domain(paths, name)
+        mark = "✅" if r.ok else "🔴"
+        print(f"  {mark} {name}: {r.reason}")
+        bad += 0 if r.ok else 1
+    return 1 if bad else 0
+
+
+def _report(r: synth.DomainResult) -> None:
+    print(f"  {r.summary}")
+    for n in r.parse_notes:
+        print(f"      {n}")
+    for d in r.dropped_facts:
+        print(f"      🔴 버림 {d}")
+    if r.written:
+        print(f"      {r.written.summary}")
+
+
+def cmd_dry(argv: list) -> int:
+    paths = _paths()
+    if not argv:
+        print("도메인 이름이 필요하다 — `dry <도메인>`")
+        return 2
+    for name in argv:
+        r = synth.refresh_domain(paths, name, dry_run=True)
+        _report(r)
+    return 0
+
+
+def cmd_refresh(argv: list) -> int:
+    paths = _paths()
+    try:
+        st = synth.run(paths, domains=argv or None, progress=print)
+    except synth.SynthError as e:
+        print(f"🔴 {e}")
+        return 1
+    print(st.summary)
+    for r in st.results:
+        _report(r)
+    return 0 if st.failed == 0 else 1
+
+
+_COMMANDS = {"status": cmd_status, "plan": cmd_plan, "verify": cmd_verify,
+             "dry": cmd_dry, "refresh": cmd_refresh}
+
+
+def main(argv: list) -> int:
+    if not argv or argv[0] not in _COMMANDS:
+        print(__doc__)
+        return 2
+    return _COMMANDS[argv[0]](argv[1:])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
