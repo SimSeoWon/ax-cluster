@@ -134,6 +134,12 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_graph.py                #  80
 .venv/bin/python master/test_ontology.py             #  127 — YAML io: 왕복 보존, 안 바뀌면 안 씀 — relation graphs: Source-only, fail-closed, no ghost rows
 .venv/bin/python master/test_context_synth.py        #  102 — σ.7/σ.7-B gates, comment preservation, circuit breaker + factuality gate
+.venv/bin/python master/test_ontology_synth.py       #  42 — 도메인 MD 두 스키마 · 조각 고지 · 응답 파서의 도메인 밖 차단
+.venv/bin/python master/test_domain_index.py         #  30 — 도메인 색인: 페이로드에 항목 본문 녹이기 · 지문 · 🔴 노이즈 3중 차단
+
+# Ontology — 🔴 plan(LLM 0) → dry(안 씀) → refresh 순서
+.venv/bin/python -m master.ontology status
+.venv/bin/python -m master.ontology plan <도메인>     # 조각 수·프롬프트 토큰·출력 여유
 
 # Relation graphs (deterministic, no LLM) — full rebuild ~2.9s for 1,654 files
 .venv/bin/python -m master.graph build               # inheritance + #include
