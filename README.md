@@ -5,10 +5,11 @@
 
 **플랫폼**: 리눅스 마스터(Ubuntu 22.04) + 윈도우 2대(작업장 1 · 요청자 1) + BC-250 1대
 
-> **지금 어디까지 왔나: 소 43개 중 27개** (2026-08-09). 트윈이 **자라고, 색인되고,
-> 코드 작성에 전달된다** — 목표 ②가 처음으로 끝까지 관통했다. 남은 큰 것은
-> **분해·골조 생성**(§4.5 의 빈 첫 단계) · **작업 브랜치 배선**(#21) ·
-> **시소러스 별칭 데이터**(0건)다.
+> **지금 어디까지 왔나** (2026-08-10): **마일스톤 2 닫힘 — 트윈이 자라고, 색인되고, 코드
+> 작성에 전달된다.** 두 목표 모두 끝까지 관통했다. **마일스톤 3(실작업 파이프라인) 착수** —
+> 큰 작업을 **분해·골조 생성**(§4.5 의 빈 첫 칸)으로 쪼개 워커 2대가 동시에 짜고, 순차 적용한
+> 뒤 **3층 결정적 게이트**로 판정한다.
+> 🔴 **분자는 여기 적지 않는다** — 레드마인(version *마일스톤 3*)이 계산한다.
 >
 > 이 README 는 **구조 + 기능 + 사용법**만 다룬다. 설계 결정·진화 로그는
 > [`PLAN.md`](PLAN.md) → [`docs/`](docs/) 가 SSOT 이고, **지금 어디까지 왔는지**는
@@ -36,10 +37,14 @@ Gitea push → post-receive 훅 → 스풀 → inotify → 색인기
                               → 벡터(다국어) + BM25 재색인, A/B 세대 무중단 교체
 
 [트윈을 쓰는 길 — 작업 요청]
-작업장 Claude → search_context (대괄호 해석 → 시소러스 확장 → 융합 검색)
-             → register_work → 매니페스트 수집(1회) → 생성 → 층2 검증 → 코드 인계
-             → 작업장이 적용·빌드·층3(UE5 RunTests) → 판정
+요청자(.33) → search_context (대괄호 해석 → 시소러스 확장 → 융합 검색)
+           → register_work + durable `task/<id>` 브랜치
+마스터      → claim → 기준 커밋 재해석 → 매니페스트 배달(규범 + 헤더 선언)
+           → 워커의 Claude 를 원격 구동 → fail-closed 마커 판정 → submit → 찌꺼기 정리
 ```
+
+🔴 **워커에 큐 토큰을 주지 않는다 — 마스터가 중개한다**(실측: 워커는 8101 에 401). 하트비트도
+마스터가 대신 친다. 요청자→워커 한 바퀴 **1분 29초** 실측.
 
 추론은 **마스터 브로커(8102)** 를 거쳐 노드로 간다 — 컨텍스트 합성은 `gemma4:e4b`,
 코드 생성은 `qwen2.5-coder:14b`. 모델별 적합도·환각 실측은
@@ -66,6 +71,8 @@ ax-cluster/
 │   │   ├── embedding.py        다국어 384차원(fastembed/ONNX, PyTorch 불필요)
 │   │   ├── search.py           RRF 융합 + `[대괄호]` 포커스
 │   │   ├── thesaurus.py        별칭표 — 조회·후보 제시·대화형 등록
+│   │   ├── expand.py           질의 확장 — 🔴 부분 문자열(한국어 조사) · 짧은 별칭 차단
+│   │   ├── infer.py            질의 → 도메인 **결정적** 추론 — 🔴 모르면 비운다
 │   │   ├── documents.py        컨텍스트 MD 파싱. 벡터는 「## 요약」 절만 임베딩
 │   │   ├── generation.py       A/B 세대 포인터(영속) — 프로세스가 갈려 있어 필요
 │   │   └── paths.py            🔴 경로는 상수가 아니라 함수 — 마운트 전환에 재기동 불필요
@@ -81,13 +88,22 @@ ax-cluster/
 │   │   ├── collect.py          멤버 후보 **제안** — 조상·자식·include 이웃
 │   │   ├── hierarchy.py        개념 계층 — 하위 문서를 object 로, 순환 방지
 │   │   ├── verify_facts.py     🔴 온톨로지 사실 게이트 — 호출 관계를 실측과 대조
-│   │   └── package.py          패키지 쓰기 — 🔴 검수 잠금은 덮지 않는다
+│   │   ├── package.py          패키지 쓰기 — 🔴 검수 잠금은 덮지 않는다
+│   │   ├── edit.py             편집이 곧 잠금 · 일괄 보호(`protected`) — 재생성이 못 덮는다
+│   │   ├── drift.py            드리프트 감사 — 커밋 차이가 아니라 **근거 파일 변경**으로 좁힌다
+│   │   └── view.py             🔴 자립형 HTML 뷰어 한 장 — 서비스를 또 띄우지 않는다
 │   ├── graph/                  ← 관계 그래프 (중 1.1, LLM 0)
 │   │   ├── parse.py            tree-sitter C++ · UE 매크로 전처리
 │   │   ├── class_graph.py      상속 그래프 + methods 소유권
 │   │   └── dependency.py       `#include` 의존 그래프
 │   ├── events/                 ← Gitea 훅 → 스풀 → 색인기 (트윈이 자라는 지점)
 │   ├── work/                   ← 작업 루프 — 2단 브랜치·매니페스트·생성·인계
+│   │   ├── runner.py           🔴 큐 → 워커 파견 (마스터가 중개·하트비트 대행)
+│   │   ├── batching.py         🔴 파일 불가분 묶음 — `.h`/`.cpp` 는 한 덩어리
+│   │   ├── declarations.py     헤더 선언 주입 — 실측 환각 2 → 0
+│   │   ├── norms.py            도메인 규범(invariants 중심) 부착
+│   │   └── cleanup.py          찌꺼기 정리 — 🔴 병합된 것만, 원격은 안 건드린다
+│   ├── transfer.py             상태 익스포트/임포트 — 🔴 두 벌(compat·full) · 임포트는 **병합**
 │   ├── broker/                 ← 추론 브로커 (Ollama 호환, 노드 라우팅·핀 유지)
 │   ├── task_queue/             ← 작업 큐 (claim·lease·epoch fencing·능력 라우팅)
 │   ├── projects/               ← 프로젝트 레지스트리 + **작업장의 MCP 단일 창구**
@@ -139,6 +155,15 @@ ax-cluster/
 # 색인
 .venv/bin/python -m master.context_search.rebuild # 전체 재색인 (A/B 한 번 교체)
 
+# 온톨로지 — 🔴 이 순서로 (plan 은 아무것도 안 바꾼다)
+.venv/bin/python -m master.ontology plan|dry|refresh
+.venv/bin/python -m master.ontology drift          # 트윈과 소스가 어긋난 곳
+.venv/bin/python -m master.ontology view           # 자립형 HTML 한 장
+
+# 상태 주고받기
+.venv/bin/python -m master.transfer export         # 두 벌(full·compat) + README
+.venv/bin/python -m master.transfer import <zip>   # 🔴 기본은 계획만 · --apply 는 먼저 백업
+
 # 워커에 일 시키기 (중 2.5)
 .venv/bin/python -m master.client probe            # 머신 실측 — 경로·능력·체크아웃
 .venv/bin/python -m master.client deliver          # config·스킬·CLAUDE.md 배달 (해시 대조)
@@ -158,13 +183,17 @@ journalctl -u ax-indexer -n 30 --no-pager                # push → 트윈 성�
 
 ## MCP 도구 (작업장 Claude 가 쓰는 창구)
 
-`ax-projects`(8103) 하나가 작업장의 단일 창구다.
+`ax-projects`(8103) 하나가 작업장의 단일 창구다. **26종.**
 
 | 도구 | 하는 일 |
 |---|---|
 | `search_context` | 🔴 **검색 입구는 이것 하나** — 대괄호 해석 → 시소러스 확장 → 융합 검색 |
+| `infer_domain` | 질의가 말하는 도메인을 **결정적으로** 판단 — 🔴 모르면 비운다(추측 안 함) |
 | `resolve_terms` · `add_alias` · `mark_not_a_class` | 별칭 조회·등록. 마스터는 묻지 않고 **물을 재료**를 준다 |
 | `register_work` · `get_manifest` · `get_code` | 작업 등록 → 매니페스트 수령 → 생성+층2 거친 코드 수령 |
+| `create_domain` · `edit_ontology_item` · `remove_ontology_item` | 온톨로지 편집 — 🔴 **편집이 곧 잠금** |
+| `lock`·`list_locked` · `protect`·`list_protected` | 사람 검수 잠금 / 🔴 **일괄 보호**(재생성이 못 덮는다) |
+| `sync_ontology` · `drift_audit` · `unassigned_classes` | 경로·선언 동기화 · 어긋남 감사 · 미배정 노출 |
 | `register_project` · `set_active` · `list_projects` | 트윈 프로젝트 등록·전환 |
 | `set_workshop` · `check_workshops_clean` 외 | 작업장 등록·더티 체크 |
 
@@ -175,21 +204,31 @@ Claude 가 사용자에게 물어 등록한다 — 다음 검색부터 자동 �
 
 ## 테스트
 
-**1,273건, 전부 통과. pytest 없음** — 각 파일이 단독 실행된다.
+**전부 통과. pytest 없음** — 각 파일이 단독 실행된다.
+
+🔴 **여기에 개수를 적지 않는다.** 하루에 여섯 번 고쳤고, 마일스톤 분자를 레드마인으로 옮긴
+것과 **같은 이유**다 — 수치가 아니라 **세는 법**을 적는다.
 
 ```bash
-python3 master/test_verdict.py                       #  19
-.venv/bin/python master/test_work.py                 # 145
-.venv/bin/python master/test_context_synth.py        # 102   σ.7 게이트·사실 게이트·서킷브레이커
-.venv/bin/python master/test_context_search.py       #  82   마운트 라우팅·RRF·대괄호
-.venv/bin/python master/test_graph.py                #  80   Source 한정·fail-closed·유령 행 방지
-.venv/bin/python master/test_ontology.py             #  127   YAML 왕복 보존 (PyYAML 의존 0)
-.venv/bin/python master/test_layer3_verify.py        #  63
-.venv/bin/python master/test_projects.py             #  63
-.venv/bin/python master/test_indexer.py              #  49   ff-only 미러·다이제스트·트윈 성장
-# 그 외: mcp_servers 31 · workshop_check 47 · auth 46 · events 38 · provision 43
-#        capability_routing 16 · broker_routing 9 · broker_health 8
+# 전부 돌리고 합계를 센다 (실패가 있으면 파일명이 뜬다)
+for f in master/test_*.py; do .venv/bin/python "$f" 2>&1 | tail -1; done
 ```
+
+| 파일 | 무엇을 지키나 |
+|---|---|
+| `test_verdict.py` | 층2 판정 계약 — 🔴 venv 없이 도는 **순수 로직** |
+| `test_work.py` · `test_runner.py` | 작업 루프 · 워커 파견(fail-closed 마커·계측) |
+| `test_batching.py` | 🔴 **파일 불가분** — 분산 시 충돌 방지 |
+| `test_ontology.py` | YAML 왕복 보존(PyYAML 의존 0) · 잠금 보존 · 사실 게이트 |
+| `test_transfer.py` | 익스포트 두 벌 · 🔴 임포트는 **병합**(보호 필드 이월) |
+| `test_context_synth.py` | σ.7 게이트 · 사실 게이트 · 서킷브레이커 |
+| `test_context_search.py` | 마운트 라우팅 · RRF · 대괄호 · 시소러스 확장 |
+| `test_graph.py` | `Source/` 한정 · fail-closed · 유령 행 방지 |
+| `test_indexer.py` | ff-only 미러 · 다이제스트 · 트윈 성장 |
+| 그 외 | `mcp_servers` · `workshop_check` · `auth` · `events` · `provision` · `layer3_verify` · 라우팅 3종 |
+
+🔴 **venv 가 필요한 것과 아닌 것이 섞여 있다** — `python3` 로 도는 것은 순수 로직뿐이고,
+나머지는 `.venv/bin/python` 이다(pydantic·pyyaml·fastembed).
 
 ---
 

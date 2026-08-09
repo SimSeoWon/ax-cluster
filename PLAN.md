@@ -11,15 +11,19 @@ Unreal MCP (UE 5.8.1+), and code-writing agents into one pipeline.
 | | Document | State |
 |---|---|---|
 | **1 — Infrastructure** | [`docs/milestones/1-infrastructure.md`](docs/milestones/1-infrastructure.md) | ✅ **closed** 2026-08-08. Its section documents (`docs/1`–`docs/10`) **stay valid** — kept, not discarded |
-| **2 — Digital twin restoration** | [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md) | 🔵 **started** 2026-08-08 · **14 / 33** sub-tasks |
+| **2 — Digital twin restoration** | [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md) | ✅ **closed** 2026-08-10 · 소 43/43. 🔴 Read its **「여기서 배운 것」** section before repeating its mistakes |
+| **3 — Work pipeline** | [`docs/milestones/3-work-pipeline.md`](docs/milestones/3-work-pipeline.md) | 🔵 **started** 2026-08-10 — **read only this one** |
 
-🔴 **Milestone 1 wired the pipe; nothing yet *produces* what flows through it.**
-**The twin grows now** — the indexer runs graphs → context-MD synthesis → reindex on every push
-(verified on a real commit). **14 of 33 sub-tasks done.**
-Goals (user, 2026-08-08): ① author the ontology documents automatically ② feed the relevant slice to
-the code-writing agent. Breakdown 대 2 / 중 9 / 소 43, main = 대 1 (making the data);
-`/distribute`·`/review-work` are 🕓 예정:
-[`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md).
+🔴 **Milestone 1 wired the pipe. Milestone 2 made what flows through it.** The twin grows, is
+indexed, and feeds code generation — both of M2's goals run end to end.
+
+**Milestone 3 turns that into production**: decompose one big request into class-family pieces
+(skeleton + **frozen interface** first — §4.5's empty first step), generate in parallel across two
+workers, **apply sequentially**, and judge with the **3-layer deterministic gate** (L1 self-check /
+L2 commercial model / L3 UE5 build + RunTests). Plus the operator surface: upper-layer commands and
+a cluster status web UI. Breakdown 대 3 / 중 9 / 소 32, main = 대 1.
+🔴 **Progress numbers live in Redmine** (version *마일스톤 3*), never in a document — hand-kept
+numerators drifted twice in M2.
 
 > 🔴 **This file is an index. The content lives in `docs/`.**
 > **Section numbers are unchanged by the split** — cross-references like `§5.5.3-④` in other

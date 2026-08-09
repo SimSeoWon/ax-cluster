@@ -20,37 +20,34 @@ software repository.** There is no build, lint, or test tooling. **Don't assume 
 
 ## 🔴 Where the project stands — read this before planning
 
-**Milestone 1 (infrastructure) is closed. Milestone 2 (digital twin restoration) is open.**
+**Milestones 1 and 2 are closed. Milestone 3 (work pipeline) is open — started 2026-08-10.**
 
 | | |
 |---|---|
-| Current milestone — **read only this one** | `~/ax-cluster/docs/milestones/2-twin-restoration.md` |
-| Previous (kept, still valid) | `~/ax-cluster/docs/milestones/1-infrastructure.md` |
+| Current milestone — **read only this one** | `~/ax-cluster/docs/milestones/3-work-pipeline.md` |
+| Closed, kept as reference | `2-twin-restoration.md` (🔴 its 「여기서 배운 것」 is the trap list) · `1-infrastructure.md` |
 
-**Goals** (user, 2026-08-08): ① **author the ontology documents automatically** — context doc per
-commit → relation graph → BM25 → then the ontology doc itself, which is **manual + conversational
-with heuristics, not fully automatic** (auto-promotion was permanently disabled 2026-06-01)
-② **feed the relevant slice of that twin to the code-writing agent.**
+**What M2 delivered** (closed 소 43/43): the twin **grows, is indexed, and reaches code
+generation** — both of its goals run end to end. Manifests carry **domain norms** *and* **header
+declarations** (measured: real hallucinations 2 → 0). The **worker runner** dispatches from the
+queue into a worker's Claude and submits the result (requester→worker loop measured 1m29s), and the
+master **cleans up worker debris** — 🔴 workers may not delete branches, a branch is removed only
+when its tip is reachable from `origin/main`, and workers return to **`main`**.
 
-🔴 **All 43 sub-tasks are closed (2026-08-10) — the milestone is complete but not yet formally
-closed; that call is the user's.** 🔴 The count lives in Redmine (version *마일스톤 2*), never in a
-hand-edited doc — it drifted twice. Both goals run end to end: the twin **grows, is indexed, and
-reaches code generation**; relation graphs, context-MD synthesis and **ontology LLM re-synthesis**
-are wired; the 247 domain yaml are **indexed** (separate DB + collection, triple noise gate);
-manifests carry **domain norms** *and* **header declarations** (measured: real hallucinations 2 → 0).
-The **worker runner** dispatches from the queue into a worker's Claude and submits the result
-(requester→worker loop measured 1m29s), and the master **cleans up worker debris** — 🔴 workers may
-not delete branches, and a branch is removed only when its tip is reachable from `origin/main`;
-workers return to **`main`**, otherwise the branch they sit on can never be cleaned.
-Health/visibility landed too: **drift audit**, a **self-contained HTML domain viewer** (no extra
-service), and **state export/import** — 🔴 export writes **two variants** (`compat` = the shape the
-received zip has, `full` = the only one that can restore *us*) and **import merges, never
-overwrites** (240 `protected` marks would otherwise vanish).
-Breakdown 대 2 / 중 9 / 소 43; **main was 대 1**.
+**M3 goals** (user, 2026-08-10): ① **decompose one big request** — skeleton + **frozen interface**
+first (§4.5's empty first step), generate in parallel across the two workers, **apply sequentially**
+② **judge with the 3-layer deterministic gate** (L1 self-check / L2 commercial model / L3 UE5 build
++ RunTests) ③ **build the operator surface** — upper-layer commands and a cluster status web UI.
+Breakdown 대 3 / 중 9 / 소 32; **main is 대 1**. 🔴 The count lives in Redmine (version
+*마일스톤 3*), never in a hand-edited doc — it drifted twice in M2.
 
-🔴 **What is deliberately *not* in this milestone**: **decomposition + skeleton generation**
-(§4.5's empty first step) and the upper layer (`/distribute`, `/review-work`) — they *consume* the
-twin, so they stay 🕓 예정. Not-yet-done ≠ forgotten.
+🔴 **Nothing in M3 is built yet.** The skeleton generator, the 3-layer gate and the status UI are
+all 🕓. 🔴 **`distributed-workers.md` (425 lines) must be read before starting 대 1** — it is §4.5's
+original, and it stayed unread through all of M2.
+
+🔴 **Deliberately outside M3**: asset/blueprint twins (the twin's scope is **source-only**),
+BC-250 #2 conversion (that is giving up a gaming machine, not a setup task), master GPU expansion,
+and team-distribution packaging. Not-yet-done ≠ forgotten.
 
 🔴 **Never size a task by line count** — `class_graph`'s 1,341 lines are *"delete the file → full
 rescan on restart"*, while one 829-line file holds the domain index, norm search and the thesaurus

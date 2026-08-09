@@ -10,22 +10,20 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
 ## Hard rules — inline on purpose
 
 - 🔴 **Read which milestone you are in before planning anything.**
-  **M1 (infrastructure) is closed; M2 (digital twin restoration) is open.**
-  → [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md)
+  **M1 and M2 are closed; M3 (work pipeline) is open.**
+  → [`docs/milestones/3-work-pipeline.md`](docs/milestones/3-work-pipeline.md)
   **Read only the open milestone** — closed ones are reference; don't load them. Progress
   lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
-  🔴 **The twin grows, but only on changed files.** 🔴 **Progress numbers are not written here** —
-  read them from Redmine (version *마일스톤 2*), which computes them. Hand-kept numerators drifted
-  twice before we moved them.
-  🔴 **Never bulk-regenerate the 1,055 snapshot docs** — our local model measured *worse* than the
-  received snapshot (it described commented-out code as live). A **deterministic fact gate** now
-  rejects that, and 중 1.3 reuses it for call relations. The synthesiser is for *new/changed* files.
-  The breakdown is
-  대 2 / 중 9 / 소 43 — **소분류가 작업 단위다.** Never size a task by line count: `class_graph`'s
-  1,341 lines turn out to be *"delete the file → full rescan on restart"*.
-  **This milestone's main is 대 1 (making the data).** `/distribute` and `/review-work` are the
-  upper layer and stay 🕓 예정 — they *consume* the twin, so building them on a frozen snapshot
-  means generating code against 2026-08-08 evidence.
+  🔴 **Progress numbers are not written in any document** — read them from Redmine (version
+  *마일스톤 3*), which computes them. Hand-kept numerators drifted twice in M2.
+  M3 breakdown: 대 3 / 중 9 / 소 32 — **소분류가 작업 단위다**, main is 대 1 (decompose →
+  skeleton + **frozen interface** → parallel generate → **sequential apply**). 대 2 is the
+  3-layer verdict; 대 3 is the operator surface. Never size a task by line count:
+  `class_graph`'s 1,341 lines turn out to be *"delete the file → full rescan on restart"*.
+  🔴 **Two M2 rules that still bind here**: never bulk-regenerate the 1,055 snapshot docs (our
+  local model measured *worse* than the received snapshot), and never hand-tune search weights
+  before there is an answer set. M2's **「여기서 배운 것」** section is the short list of traps
+  not to re-enter — read it once before starting a new area.
   🔴 **Do not pick the next task yourself** — M1 failed that way (I chose an order, dug into one
   piece, declared it "complete", repeated). The order is the user's call.
 - 🔴 **The GitHub remote is private. Keep it that way** — it contains LAN addresses and firewall rules.
@@ -89,10 +87,10 @@ from the master's own container DB. 🔴 **Never write the key value into a doc 
 모듈별 설명·함정·실측은 [`master/README.md`](master/README.md) 에 있다. 여기엔 **놓치면 안 되는 것만** 남긴다.
 
 `worker/` is still a README-only stub. **`client/` is live** — see the table row above.
-🔴 **Say "done" only for a whole area.** Milestone 2 *is* a whole area and it is closed out
-(43/43 소, all Redmine issues 완료) — the twin grows, is searchable, and feeds code generation, and
-shipping header declarations in the manifest took measured hallucinations 2 → 0. When reporting
-status, give the denominator (read it from Redmine), never a scope narrowed to what got built.
+🔴 **Say "done" only for a whole area.** Milestone 2 *is* a whole area and it closed 2026-08-10 —
+the twin grows, is searchable, and feeds code generation. **M3 has not started building yet**: the
+skeleton generator, the 3-layer gate, and the status UI are all 🕓. When reporting status, give the
+denominator (read it from Redmine), never a scope narrowed to what got built.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
 ## Tests — 🔴 **수를 여기 적지 않는다**
