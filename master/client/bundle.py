@@ -483,7 +483,16 @@ INIT_TIMEOUT = 900
 def run_init(facts: HostFacts, *, runner=None) -> dict:
     """체크아웃에서 `/init` 을 돌려 **프로젝트 유래 CLAUDE.md** 를 만든다 (레드마인 #64).
 
-    🔴 **CLAUDE.md 가 없을 때만 부른다.** 매번 돌리면 사람이 쓴 것을 흔들고 돈만 든다.
+    🔴 **기본은 꺼져 있다** (`deliver(init=False)`). 실측 2026-08-09로 값을 재봤더니 값을 못 했다:
+
+        /init 산출물   15,829자 · 클래스 언급 65 · 그래프 실재 39 · 🔴 22턴 $1.68
+        payload 기본   13,325자 · 클래스 언급 55 · 그래프 실재 31 · 비용 0
+
+    미상 목록이 **두 문서에서 글자까지 같았다** — `payload/CLAUDE.md` 자체가 예전 `/init`
+    계열 산출물이기 때문이다. 새로 돌려 얻는 것은 클래스 언급 8개뿐이고 대가가 $1.68 이다.
+
+    그러므로 값이 있는 경우는 하나다 — **payload 가 저장소 대비 낡았을 때**. 그때만
+    `--init` 로 명시해 부른다. 그리고 **CLAUDE.md 가 없을 때만** 돈다(있으면 흔들지 않는다).
 
     왜 필요한가 — 사용자 지시였고(*"클론을 생성한 위치에서 클로드 `/init` 이 되어야 하고,
     거기 클로드 파일에 새로 추가되는 스킬이나 MCP 를 추가해줘야"*), **대가가 실측됐다**:
@@ -511,7 +520,7 @@ def run_init(facts: HostFacts, *, runner=None) -> dict:
 
 
 def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
-            init: bool = True) -> dict:
+            init: bool = False) -> dict:
     """한 머신에 config + 스킬을 배달한다. 🔴 **되읽어 대조까지가 배달이다.**"""
     cfg = json.dumps(config_for(project, facts), ensure_ascii=False, indent=2) + "\n"
     if dry_run:

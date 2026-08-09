@@ -54,7 +54,7 @@ def cmd_plan(project: str) -> int:
     return 0
 
 
-def cmd_deliver(project: str) -> int:
+def cmd_deliver(project: str, *, init: bool = False) -> int:
     bad = 0
     for f in _facts(project):
         if not f.checkout_ok:
@@ -62,7 +62,7 @@ def cmd_deliver(project: str) -> int:
             bad += 1
             continue
         try:
-            r = bundle.deliver(project, f)
+            r = bundle.deliver(project, f, init=init)
         except bundle.BundleError as e:
             print(f"  🔴 {f.host}: {e}")
             bad += 1
@@ -122,7 +122,13 @@ def main(argv: list) -> int:
     if not argv or argv[0] not in _CMDS:
         print(__doc__)
         return 2
-    return _CMDS[argv[0]](argv[1] if len(argv) > 1 else DEFAULT_PROJECT)
+    rest = [a for a in argv[1:] if not a.startswith("-")]
+    project = rest[0] if rest else DEFAULT_PROJECT
+    # 🔴 `--init` 은 **명시할 때만**. 실측으로 값을 못 했다(22턴 $1.68 대 payload 0원,
+    #    미상 목록이 글자까지 같았다) — payload 가 저장소 대비 낡았을 때만 쓴다.
+    if argv[0] == "deliver":
+        return cmd_deliver(project, init="--init" in argv)
+    return _CMDS[argv[0]](project)
 
 
 if __name__ == "__main__":
