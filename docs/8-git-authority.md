@@ -221,3 +221,47 @@ durable 브랜치를 빌드하려면 그 브랜치를 체크아웃해야 하는�
 ⚠️ 미측정: UE5 프로젝트에서 worktree 를 쓸 때 DDC/Binaries 재생성이 실제로 얼마나 드는지.
 `.2` 에서 기존 체크아웃 재사용을 택한 이유가 그 비용이었다(§5.5.4-⑥, 콜드 빌드 수십 분 예상).
 **요청자에게 이 방식을 강제하기 전에 한 번 재 볼 것.**
+
+### 8.5 워커 git 인증 — Gitea SSH 키 (2026-08-09 확보)
+
+🔴 **이것이 §8.4 루프 전체의 선결이었다.** 워커가 durable 브랜치를 fetch 하고 attempt 를
+push 해야 하는데, **두 대 모두 Gitea 에 접근하지 못했다**(실측):
+
+    .2  (janus)  Git Credential Manager 가 대화형 프롬프트 → SSH 세션에서 실패
+    .43 (BC-250) ksshaskpass 사망 — 자격증명 없음
+
+Gitea 가 `REQUIRE_SIGNIN_VIEW = true` 라 **public 저장소인데도** 익명 클론이 안 된다.
+
+**선택: HTTP 토큰이 아니라 Gitea SSH 키.** 셸을 주지 않고 **git 만** 주며, 워커에 새 비밀
+파일을 심지 않는다(이미 있는 SSH 키를 쓴다). `docs/2-architecture.md` §2.2-a 가 걱정한
+*"노드에 자격증명을 심으면 재구축이 어려워진다"* 도 덜하다.
+
+    gitea@192.168.0.57:Sim/ModularStage.git
+
+#### 🔴 함정 — Gitea 의 `HOME` 과 sshd 가 보는 홈이 다르다
+
+키를 API 로 등록하면(`POST /api/v1/user/keys`, 201) Gitea 가 `authorized_keys` 를 쓰는데,
+**systemd 유닛이 `HOME=/var/lib/gitea`** 라 거기에 쓴다. 반면 **sshd 는 `gitea` 계정의
+passwd 홈인 `/home/gitea`** 를 본다. 두 경로가 어긋나 **키는 등록됐는데 인증은 계속 거부**된다.
+
+    Environment=USER=gitea HOME=/var/lib/gitea     ← 유닛
+    getent passwd gitea → /home/gitea              ← sshd 가 보는 곳
+
+**조치(가장 덜 침습적):** 심볼릭 링크. `usermod` 도 `sshd` 재시작도 하지 않는다.
+
+    ln -sfn /var/lib/gitea/.ssh /home/gitea/.ssh && chown -h gitea:gitea /home/gitea/.ssh
+
+`StrictModes`(기본 yes)를 통과한다 — 경로상 디렉토리가 전부 `drwxr-x--- gitea:gitea` 이고
+키 파일은 `-rw-------` 다. 되돌리기: `rm /home/gitea/.ssh`.
+
+**검증(실측):**
+
+| | |
+|---|---|
+| `ssh -T gitea@192.168.0.57` (양쪽) | *"successfully authenticated with the key named ax-worker-N, but Gitea does not provide shell access"* — 원하던 상태 그대로 |
+| `git ls-remote origin HEAD` | `.2`·`.43` 둘 다 `bc4b38f` |
+| `git push --dry-run origin HEAD:refs/heads/…` | `.2` **`[new branch]`** ✅ |
+
+⚠️ **Gitea API 토큰은 해시로만 저장되어 DB 에서 복구할 수 없다.** 새로 발급한다:
+`gitea admin user generate-access-token --username Sim --scopes write:user,write:repository`.
+발급본은 `~/.config/ax-cluster/gitea-token`(0600) — 🔴 **저장소에 넣지 않는다.**
