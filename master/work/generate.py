@@ -102,7 +102,8 @@ def strip_fence(text: str) -> tuple[str, bool]:
     return (m.group(1), True) if m else ((text or "").strip(), False)
 
 
-def build_prompt(*, manifest_body: str, instruction: str, target_file: str = "") -> str:
+def build_prompt(*, manifest_body: str, instruction: str, target_file: str = "",
+                 declarations: str = "") -> str:
     """생성 프롬프트. **매니페스트를 그대로 싣는다** — 워커가 재검색하지 않게 (§4.2).
 
     🔴 인터페이스 동결을 명시한다. 클래스 단위 병렬 생성이 성립하려면 선언이 안 바뀌어야
@@ -125,6 +126,10 @@ def build_prompt(*, manifest_body: str, instruction: str, target_file: str = "")
         "=== END CONTEXT ===",
         "",
     ]
+    # 🔴 **선언부는 TASK 바로 앞에 둔다** (레드마인 #26). 베껴야 할 텍스트가 지시에서 멀수록
+    #    모델은 기억에서 꺼낸다 — 실측된 실패가 정확히 그것이었다(`CurrentStep` vs 실제 `Step`).
+    if declarations.strip():
+        parts += [declarations.strip(), ""]
     if target_file:
         parts.append(f"Write the complete contents of: {target_file}")
     parts += ["", "TASK:", instruction.strip(), ""]
@@ -208,7 +213,8 @@ def unload_model(model: str, *, broker: str = DEFAULT_BROKER,
 
 
 def generate(paths: ProjectPaths, task_id: str, *, instruction: str,
-             target_file: str = "", model: str = CODER, **kw) -> Generated:
+             target_file: str = "", classes: list | None = None,
+             model: str = CODER, **kw) -> Generated:
     """매니페스트를 읽어 코드를 생성한다. 매니페스트가 없으면 **거부한다.**
 
     없는 채로 진행하면 로컬 LLM 이 grounding 0 으로 짜게 되고, 그건 §4.3 이 실측한
@@ -219,7 +225,14 @@ def generate(paths: ProjectPaths, task_id: str, *, instruction: str,
         raise GenerateError(
             f"컨텍스트 매니페스트가 없다: {mf.manifest_path(paths, task_id)} — "
             "grounding 없이 생성하지 않는다 (§4.3)")
-    prompt = build_prompt(manifest_body=body, instruction=instruction,
+    # 🔴 대상 클래스를 주면 **헤더 선언을 프롬프트에 싣는다** (#26) — 규범만으로는
+    #    한 글자 차이 철자 환각이 남는다는 것이 실측됐다.
+    decls = ""
+    if classes:
+        from . import declarations as decl_mod
+        d = decl_mod.collect(paths, list(classes))
+        decls = d.render()
+    prompt = build_prompt(manifest_body=body, instruction=instruction, declarations=decls,
                           target_file=target_file)
     raw = call_broker(prompt, model=model, **kw)
     code, stripped = strip_fence(raw)
