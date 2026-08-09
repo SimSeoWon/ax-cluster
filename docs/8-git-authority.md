@@ -113,3 +113,39 @@ AgentTest 가 이미 같은 계열 문제를 다루고 있다: `**TASK_COMPLETE*
 - 요청자 측 브랜치 생성·push (스킬 `ax-request` 에 절차는 적었으나 **자동 실행은 없다**)
 - `register_work_tool(target_branch=…)` 이 값을 **저장만 하고 쓰지 않는다**
 - durable ← attempt 승격 경로 (사람 승인 + 층3 통과 후)
+
+### 🔴 피드백은 텍스트가 아니라 **코드 위치에 박는다** (사용자 확정 2026-08-09)
+
+> 사용자: *"피드백을 골조처럼 코드 위치에 추가하고, 작업 워커를 할당해 해당 원격 브랜치
+> 최신화 시도"*
+
+골조가 `[PSEUDO]` 로 *"여기를 채워라"* 를 말하듯, 피드백은 `[FEEDBACK]` 으로 *"여기가
+틀렸다"* 를 **같은 자리에** 말한다. 큐의 텍스트 필드만으로는 워커가 **어디를** 고칠지 모른다.
+
+    ① 검증이 반려          → 대상 파일에 [FEEDBACK] 블록을 박아 commit + push
+    ② 큐에 new_base_commit → 그 커밋을 다음 base 로 기록
+    ③ 다음 claim           → 워커가 그 커밋에서 체크아웃 → 피드백이 **코드 안에 보인다**
+    ④ 워커는 **수정**한다    → 재구현이 아니다
+
+**원본이 검증한 형태 그대로다** — `mcp/master_orchestrator/verifier.py:85`
+(*"worker 브랜치에 feedback 주석을 target_file 상단에 박아 commit + push"*),
+`worker/verify_worker.py:9~11` (*"reject → durable 을 attempt 로 fast-forward(구현 누적)한 뒤
+[FEEDBACK] 블록 commit … [FEEDBACK] 기준으로 **수정**(재구현 아님 — 누적 모델,
+사용자 2026-06-21)"*).
+
+🔴 **누적 모델이라는 점이 핵심이다.** 반려돼도 그때까지의 구현을 버리지 않고, 그 위에서
+고친다. 그래서 실패한 attempt 도 push 되어야 한다 — 버리면 누적할 것이 없다.
+
+**이식 상태:**
+
+| | |
+|---|---|
+| ✅ **게이트** | `layer2_verify.py:46` 이 *"leftover `[PSEUDO]/[FEEDBACK]` placeholders"* 를 이미 검사한다 — 마커가 남은 코드는 통과하지 못한다 |
+| ✅ **큐** | `submit(feedback=…, new_base_commit=…)` · `base_commit` 필드 |
+| ❌ **박는 쪽** | `_embed_feedback_in_worker_branch` 상당이 없다 — 반려 시 `[FEEDBACK]` 을 파일에 써서 commit·push 하는 주체 |
+| ❌ **durable ff** | 반려 시 durable 을 attempt 로 전진시켜 구현을 누적하는 경로 |
+
+⚠️ **누가 박나는 아직 미정이다.** 마스터는 push 를 못 하므로(§2.1) 후보는 둘 —
+**요청자(사람의 PC)** 또는 **검증을 수행한 `ue5` 워커**. 층3 을 돌린 쪽이 결과를 아는
+주체이므로 후자가 자연스럽지만, 사람의 승인 전에 워커가 durable 을 움직이게 할지는
+별도 결정이다.
