@@ -28,7 +28,11 @@ and a stale-epoch submit is rejected (§9.5.3).
 - **Model assignment** — `qwen2.5-coder:14b` for code generation, `35B-A3B IQ2_M` for context cooking
 - **Streaming chunk gaps as the heartbeat** — don't build separate communication infrastructure
 - **Gitea event-driven, not polling**, on the master (§5.4)
-- **BC-250 stays inference-only** — the file-owning harness stays on Windows (§2.1, §2.3)
+- ⚠️ ~~**BC-250 stays inference-only**~~ — **superseded 2026-08-09** (see *Cluster shape* below).
+  It now also holds the project clone and runs a worker agent. What still holds is the narrower
+  rule: **the Ollama model never touches files** — inference is text-in/text-out. The *machine*
+  hosting that model may also host an agent that reads its own checkout; the two roles coexist.
+  🔴 Patching only one of these two statements is how they drifted — both are now consistent.
 
 ## Closed on 2026-08-08
 
