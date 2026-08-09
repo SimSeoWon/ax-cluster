@@ -367,7 +367,18 @@ def import_(paths: ProjectPaths, zip_path, *, apply: bool = False,
 def main(argv) -> int:
     from .context_search.paths import resolve
     cmd = (argv[0] if argv else "").strip()
-    paths = resolve("")
+    if cmd not in ("export", "import"):
+        # 🔴 사용법은 프로젝트 해석보다 **먼저** 답한다 — 인자 없이 부른 사람에게
+        #    `AX_PROJECTS_ROOT` 역추적을 던지면 CLI 가 고장 난 줄 안다.
+        print(__doc__.split("## ")[0])
+        print("  export [출력디렉토리]        두 벌(full·compat) + README")
+        print("  import <zip> [--apply]      🔴 기본은 계획만")
+        return 2
+    try:
+        paths = resolve("")
+    except Exception as e:                                # noqa: BLE001
+        print(f"  🔴 프로젝트를 못 잡았다 — {e}")
+        return 1
     if cmd == "export":
         rest = [a for a in argv[1:] if not a.startswith("-")]
         for r in export_both(paths, rest[0] if rest else None):
@@ -397,8 +408,6 @@ def main(argv) -> int:
         if not plan.applied:
             print("\n  🔴 아무것도 쓰지 않았다. 반영하려면 `--apply`.")
         return 0
-    print(__doc__.split("## ")[0])
-    print("  export | import")
     return 2
 
 
