@@ -217,6 +217,13 @@ def cmd_unlock(argv: list) -> int:
     return 0
 
 
+def cmd_drift(argv: list) -> int:
+    """drift [도메인] — 트윈과 소스가 어긋난 곳. 🔴 **보고만 한다.**"""
+    from . import drift as dr
+    print(dr.audit(_paths(), domain=argv[0] if argv and not argv[0].startswith("-") else "").render())
+    return 0
+
+
 def cmd_protect(argv: list) -> int:
     """protect [--off] [--apply] [도메인] --why <사유> — 재생성으로 대체하지 않을 것을 표시.
 
@@ -285,7 +292,7 @@ _COMMANDS = {"status": cmd_status, "plan": cmd_plan, "verify": cmd_verify,
              "dry": cmd_dry, "refresh": cmd_refresh,
              "new": cmd_new, "unassigned": cmd_unassigned,
              "lock": cmd_lock, "unlock": cmd_unlock, "sync": cmd_sync,
-             "protect": cmd_protect, "protected": cmd_protected}
+             "protect": cmd_protect, "protected": cmd_protected, "drift": cmd_drift}
 
 
 def main(argv: list) -> int:

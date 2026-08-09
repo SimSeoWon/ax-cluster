@@ -640,3 +640,31 @@ def list_protected_tool(domain: str = "") -> str:
                           ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
+
+
+@mcp.tool()
+def drift_audit_tool(domain: str = "") -> str:
+    """트윈과 소스가 **어긋난 곳**을 훑는다. 🔴 **보고만 한다 — 아무것도 지우지 않는다.**
+
+    🔴 판정을 *"기준 커밋이 다르다"* 로 하지 않는다 — 커밋 하나만 지나도 전부 다르므로
+    240건이 한꺼번에 떠서 아무도 안 본다. **그 사이 그 도메인의 근거 파일이 실제로 바뀌었나**
+    로 좁힌다(bare 저장소 `git diff --name-only`, 읽기 전용).
+
+    함께 모으는 것: 사실 게이트(유령 호출) · 그래프에서 사라진 클래스 · 경로 어긋남.
+    ⚠️ **설계 규칙 서술**(호출 표기 없는 문장)은 자동으로 못 잡는다 — 그 경우 '소스 변경'이
+    유일한 단서다. 무엇을 할지는 사람이 정한다: `edit` · `remove(force=true)` · 보호 해제 후 재합성.
+    """
+    try:
+        from ..ontology import drift as dr
+        rep = dr.audit(_onto_paths(), domain=domain)
+        return json.dumps({
+            "ok": True, "head": rep.head, "domains": len(rep.domains),
+            "suspects": [{"domain": d.domain, "protected": d.protected,
+                          "since": d.stale_since, "changed_files": d.changed_files[:10],
+                          "ghosts": d.ghosts[:5], "missing": d.missing[:10],
+                          "path_fixes": d.path_fixes} for d in rep.suspects],
+            "notes": rep.notes,
+            "report": rep.render(),
+        }, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
