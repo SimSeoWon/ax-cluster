@@ -215,3 +215,118 @@ def remove(paths: ProjectPaths, domain: str, kind: str, name: str,
         yaml_io.write(root / MANIFEST, man)
         res.manifest_updated = len(man[key]) != len(before) or rel == ""
     return res
+
+
+# ── 보호 표식 (일괄) ─────────────────────────────────────────────────────────
+#
+# 🔴 **`verified_by_user` 와 다른 것이다.** 섞으면 둘 다 못 쓰게 된다:
+#
+#     verified_by_user   "사람이 이 항목을 **검수했다**"          — 한 건씩, 사람이 판단
+#     protected          "이 내용을 **재생성으로 대체하지 않는다**" — 출처가 근거, 일괄 가능
+#
+# 받아온 247 yaml 스냅샷은 사람이 항목마다 검수한 것이 **아니다.** 그런데 실측(리포트 11 §20)
+# 으로 **우리 합성이 그보다 얕다**는 것이 드러났다 — `TaskListCDOAsSourceOfTruth`(설계 결정)가
+# `AbstractBaseContract`(프레임워크 기계적 사실)로 바뀌었다. 둘 다 사실이라 사실 게이트는
+# 통과한다. 게이트는 *거짓*을 막지 *얕음*을 막지 못한다.
+#
+# 그러므로 필요한 것은 "검수했다" 가 아니라 **"이건 우리가 못 만든다"** 는 표식이다.
+# 247건에 `verified_by_user` 를 찍으면 그 신호가 오염되고, 나중에 *사람이 실제로 검수한 것*을
+# 구분할 수 없게 된다.
+
+PROTECT_FIELD = "protected"
+PROTECT_WHY = "protected_reason"
+# 🔴 **언제 기준으로 보호했나.** 없으면 drift 감사(중 2.4.1)가 *"이 항목은 커밋 X 기준인데
+# 지금은 Y 다"* 를 말할 수 없다 — 설계 규칙을 서술한 invariant 는 호출 표기가 없어 사실
+# 게이트가 통과시키므로, **언제 것인지**가 유일한 단서가 된다.
+PROTECT_AT = "protected_at"
+
+
+@dataclass
+class BulkResult:
+    changed: list = field(default_factory=list)     # [(도메인, kind, 이름)]
+    already: int = 0
+    scanned: int = 0
+    applied: bool = False
+    reason: str = ""
+    at: str = ""                                   # 보호 시점의 트윈 커밋
+
+    @property
+    def summary(self) -> str:
+        head = "적용" if self.applied else "계획"
+        s = (f"{head}: 검사 {self.scanned} · 표시 {len(self.changed)} · 이미 {self.already}")
+        if self.at:
+            s += f" · 기준 {self.at[:8]}"
+        elif self.applied and self.changed:
+            s += " · ⚠️ 기준 커밋 미상"
+        return s + (f" · 사유 «{self.reason}»" if self.reason else "")
+
+
+def _items(paths: ProjectPaths, domain: str = "", kinds=()):
+    """(경로, 항목, 도메인, kind) 를 훑는다. **읽기만 한다.**"""
+    root = paths.ontology / "domains"
+    if not root.is_dir():
+        return
+    want = set(kinds) or set(SUBDIRS)
+    dirs = [root / domain] if domain else sorted(d for d in root.iterdir() if d.is_dir())
+    for d in dirs:
+        if not d.is_dir():
+            continue
+        for layer in LAYER_DIRS:
+            for kind in sorted(want):
+                sub = d / layer / kind
+                if not sub.is_dir():
+                    continue
+                for f in sorted(sub.glob("*.yaml")):
+                    item = yaml_io.read(f)
+                    if isinstance(item, dict):
+                        yield f, item, d.name, kind
+
+
+def protect_all(paths: ProjectPaths, *, domain: str = "", kinds=(), reason: str = "",
+                on: bool = True, apply: bool = False) -> BulkResult:
+    """항목들에 보호 표식을 일괄로 건다/푼다. 🔴 **기본은 계획만**(`apply=False`).
+
+    247건을 손으로 부를 수는 없다. 다만 일괄이라서 더 위험하므로 **먼저 무엇이 바뀌는지
+    보여주고**, 실행은 명시할 때만 한다 — `sync`·`cleanup` 과 같은 규칙이다.
+
+    🔴 `reason` 을 요구한다. *왜* 보호하는지 없으면 다음 사람이 풀어도 되는지 판단할 수 없다.
+    """
+    if on and not (reason or "").strip():
+        raise EditError("보호 사유가 비었다 — 왜 재생성으로 대체하면 안 되는지 적어라 "
+                        "(예: '받아온 스냅샷. 우리 합성이 더 얕다 — 리포트 11 §20')")
+    at = ""
+    if on:
+        try:
+            from ..work import twin_base
+            at = twin_base.twin_commit(paths)
+        except Exception:                                 # noqa: BLE001
+            at = ""                                       # 모르면 안 적는다 (지어내지 않는다)
+    res = BulkResult(applied=apply, reason=reason.strip(), at=at)
+    for f, item, dom, kind in _items(paths, domain, kinds):
+        res.scanned += 1
+        if bool(item.get(PROTECT_FIELD)) == bool(on):
+            res.already += 1
+            continue
+        res.changed.append((dom, kind, str(item.get("name") or f.stem)))
+        if apply:
+            if on:
+                item[PROTECT_FIELD] = True
+                if reason:
+                    item[PROTECT_WHY] = reason.strip()
+                if at:
+                    item[PROTECT_AT] = at
+            else:
+                item.pop(PROTECT_FIELD, None)
+                item.pop(PROTECT_WHY, None)
+                item.pop(PROTECT_AT, None)
+            yaml_io.write(f, item)
+    return res
+
+
+def protected_items(paths: ProjectPaths, domain: str = "") -> list:
+    """보호 표식이 걸린 것들. **검수 잠금과 따로 센다** — 뜻이 다르다."""
+    return [{"domain": dom, "kind": kind, "name": str(item.get("name") or f.stem),
+             "reason": str(item.get(PROTECT_WHY) or ""),
+             "at": str(item.get(PROTECT_AT) or ""), "path": str(f)}
+            for f, item, dom, kind in _items(paths, domain)
+            if item.get(PROTECT_FIELD) is True]

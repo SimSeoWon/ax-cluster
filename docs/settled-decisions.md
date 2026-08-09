@@ -96,12 +96,26 @@ it was *framework mechanics any UE developer reads off the header* — *"abstrac
 override `ApplyData()`"*. 🔴 **Both are true, so the fact gate passes** — it blocks *false*, not
 *shallow*. Restored from backup.
 
-This is the **same rule already settled for context MDs** (*"never bulk-regenerate the 1,055
-snapshot docs — our local model measured worse"*), now measured for the ontology too.
+🔴 **Corrected the same day (user caught it): that was the *local lane*, not "our synthesis".**
+`synth.CLI_MODELS` has `claude`/`agy` lanes that the CLI could not select. With `--model claude`:
+**27 actions / 24 invariants, gate 100%, snapshot-grade depth** (*"`SetSCSNodeVariableName`
+returns bool, so callers must not assume success"*) — but **still lost 3 of 5 snapshot concepts**.
+More items does not mean nothing is lost.
 
-🔴 **The mitigation already exists: verification locks (소 1.3.7).** Zero items were locked, so
-nothing was protected. Locking the snapshot's good invariants makes `refresh` **add without
-destroying** — that is what locks are for, and this run proved the need.
+🔴 **The mitigation is a *separate* mark, not the verification lock.** `protected` means *"do not
+replace this with a regeneration"* (provenance-based, bulk-applicable); `verified_by_user` means
+*"a human checked this item"* (one at a time). Stamping 247 machine-produced snapshot items as
+human-verified would destroy the signal that lets us find what a human actually reviewed.
+`package.locked_items` honours **both**, so the effect is identical.
+
+**Measured end state** (MissionEditor): protect 35 → `refresh --model claude` →
+actions 14→37, invariants 8→32, **snapshot kept 14/14 and 8/8, all 5 concepts alive, +47 net**.
+⚠️ **Do not protect what the synthesiser produced** — that must stay improvable.
+
+🔴 **Protection never exempts verification.** `verify` still checks protected items (62 measured),
+`sync` still fixes their paths and *reports* classes gone from the graph without deleting. The
+open gap is design-rule prose with no call notation — which is why protection records
+`protected_at` (the twin commit), the only handle 중 2.4.1 drift audit will have.
 
 ⚠️ `ModularStage/` is gitignored, so **back up before any refresh** (`~/ax-backups/`).
 

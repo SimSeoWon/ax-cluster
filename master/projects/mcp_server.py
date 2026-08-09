@@ -601,3 +601,42 @@ def sync_ontology_tool(domain: str = "", apply: bool = False) -> str:
         }, ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
+
+
+@mcp.tool()
+def protect_ontology_tool(domain: str = "", reason: str = "", kinds: list = [],
+                          on: bool = True, apply: bool = False) -> str:
+    """받아온 스냅샷처럼 **재생성으로 대체하면 안 되는** 항목을 일괄 표시한다. 🔴 기본은 계획만.
+
+    🔴 **검수 잠금(`lock_ontology_item_tool`)과 다른 표식이다.** 뜻이 다르다 —
+    잠금은 *"사람이 이 항목을 검수했다"*, 보호는 *"이 내용을 재생성으로 대체하지 않는다"*.
+    247건에 잠금을 찍으면 나중에 **진짜로 검수한 것**을 구분할 수 없다.
+
+    🔴 `reason` 이 필요하다(켤 때). 실측 근거: 로컬 레인 합성은 스냅샷보다 얕았고, `claude`
+    레인도 깊이는 맞췄지만 **스냅샷 개념 5개 중 3개를 잃었다**(리포트 11 §20).
+    ⚠️ **합성이 만든 것은 보호하지 말 것** — 개선돼야 한다. 보호는 *재생산 못 하는 것*에만.
+    """
+    try:
+        from ..ontology import edit as oe
+        r = oe.protect_all(_onto_paths(), domain=domain, kinds=tuple(kinds or ()),
+                           reason=reason, on=bool(on), apply=bool(apply))
+        return json.dumps({"ok": True, "summary": r.summary, "applied": r.applied,
+                           "changed": len(r.changed), "already": r.already,
+                           "base_commit": r.at,
+                           "sample": [f"{d}/{k}/{n}" for d, k, n in r.changed[:10]],
+                           "note": "" if apply else "🔴 아무것도 쓰지 않았다. 반영하려면 apply=true"},
+                          ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def list_protected_tool(domain: str = "") -> str:
+    """무엇이 **왜, 어느 커밋 기준으로** 보호돼 있나. drift 를 볼 때 기준이 된다."""
+    try:
+        from ..ontology import edit as oe
+        rows = oe.protected_items(_onto_paths(), domain)
+        return json.dumps({"ok": True, "count": len(rows), "items": rows[:50]},
+                          ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)

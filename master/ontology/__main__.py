@@ -96,21 +96,57 @@ def _report(r: synth.DomainResult) -> None:
         print(f"      {r.written.summary}")
 
 
+
+def _models(argv: list) -> tuple:
+    """`--model claude` / `--model agy` / `--model local`. 🔴 기본은 로컬 2노드.
+
+    실측(리포트 11 §20)으로 **로컬 레인의 합성이 받아온 스냅샷보다 얕다**는 것이 드러났다.
+    레인이 코드에는 있는데(`synth.CLI_MODELS`) **CLI 로 고를 수 없어** 그 비교를 못 하고 있었다.
+    """
+    if "--model" not in argv:
+        return synth.DEFAULT_MODELS
+    v = argv[argv.index("--model") + 1] if argv.index("--model") + 1 < len(argv) else ""
+    if v in synth.CLI_MODELS:
+        return (v,)
+    if v == "local":
+        return synth.DEFAULT_MODELS
+    raise SystemExit(f"  🔴 모르는 레인: {v!r} — {('local',) + synth.CLI_MODELS} 중 하나")
+
+
+def _rest(argv: list) -> list:
+    """플래그와 그 값을 걷어낸 나머지(도메인 이름들)."""
+    out, skip = [], False
+    for a in argv:
+        if skip:
+            skip = False
+            continue
+        if a == "--model":
+            skip = True
+            continue
+        if a.startswith("-"):
+            continue
+        out.append(a)
+    return out
+
+
 def cmd_dry(argv: list) -> int:
     paths = _paths()
-    if not argv:
-        print("도메인 이름이 필요하다 — `dry <도메인>`")
+    models, names = _models(argv), _rest(argv)
+    if not names:
+        print("도메인 이름이 필요하다 — `dry <도메인> [--model claude|agy|local]`")
         return 2
-    for name in argv:
-        r = synth.refresh_domain(paths, name, dry_run=True)
+    print(f"  레인: {', '.join(m.split('/')[-1] for m in models)}")
+    for name in names:
+        r = synth.refresh_domain(paths, name, dry_run=True, models=models)
         _report(r)
     return 0
 
 
 def cmd_refresh(argv: list) -> int:
     paths = _paths()
+    models, argv = _models(argv), _rest(argv)
     try:
-        st = synth.run(paths, domains=argv or None, progress=print)
+        st = synth.run(paths, domains=argv or None, models=models, progress=print)
     except synth.SynthError as e:
         print(f"🔴 {e}")
         return 1
@@ -181,6 +217,52 @@ def cmd_unlock(argv: list) -> int:
     return 0
 
 
+def cmd_protect(argv: list) -> int:
+    """protect [--off] [--apply] [도메인] --why <사유> — 재생성으로 대체하지 않을 것을 표시.
+
+    🔴 `verified_by_user`(검수 잠금)와 **다른 표식**이다 — 247건에 "사람이 검수했다" 를 찍으면
+    나중에 *진짜로 검수한 것*을 구분할 수 없다. 기본은 계획만.
+    """
+    from . import edit as oe
+    why = ""
+    if "--why" in argv:
+        i = argv.index("--why")
+        why = argv[i + 1] if i + 1 < len(argv) else ""
+        argv = argv[:i] + argv[i + 2:]
+    on = "--off" not in argv
+    apply = "--apply" in argv
+    rest = [a for a in argv if not a.startswith("-")]
+    paths = _paths()
+    if on and not why:
+        print('  protect <도메인> --why "왜 재생성으로 대체하면 안 되는지" [--apply]')
+        return 2
+    try:
+        r = oe.protect_all(paths, domain=rest[0] if rest else "", reason=why, on=on, apply=apply)
+    except oe.EditError as e:
+        print(f"  🔴 {e}")
+        return 1
+    print("  " + r.summary)
+    for dom, kind, name in r.changed[:10]:
+        print(f"      {dom}/{kind}/{name}")
+    if len(r.changed) > 10:
+        print(f"      … 외 {len(r.changed) - 10}건")
+    if not apply:
+        print("\n  🔴 아무것도 쓰지 않았다. 반영하려면 `--apply`.")
+    return 0
+
+
+def cmd_protected(argv: list) -> int:
+    """protected [도메인] — 무엇이 왜 언제 기준으로 보호돼 있나."""
+    from . import edit as oe
+    rows = oe.protected_items(_paths(), argv[0] if argv else "")
+    print(f"  보호 {len(rows)}건")
+    for r in rows[:20]:
+        print(f"    {r['domain']}/{r['kind']}/{r['name']}  기준 {r['at'][:8] or '미상'}")
+    if rows:
+        print(f"    사유: {rows[0]['reason'][:100]}")
+    return 0
+
+
 def cmd_sync(argv: list) -> int:
     """sync [--apply] [도메인] — 경로·선언 메서드를 소스에 맞춘다. 🔴 기본은 계획만."""
     from . import sync as sync_mod
@@ -202,7 +284,8 @@ def cmd_sync(argv: list) -> int:
 _COMMANDS = {"status": cmd_status, "plan": cmd_plan, "verify": cmd_verify,
              "dry": cmd_dry, "refresh": cmd_refresh,
              "new": cmd_new, "unassigned": cmd_unassigned,
-             "lock": cmd_lock, "unlock": cmd_unlock, "sync": cmd_sync}
+             "lock": cmd_lock, "unlock": cmd_unlock, "sync": cmd_sync,
+             "protect": cmd_protect, "protected": cmd_protected}
 
 
 def main(argv: list) -> int:

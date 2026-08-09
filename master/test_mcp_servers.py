@@ -82,13 +82,13 @@ from master.projects import mcp_server as pj  # noqa: E402
 check("모듈 import", True)
 check("MCPServer 인스턴스", type(pj.mcp).__name__ == "MCPServer", type(pj.mcp).__name__)
 _pj = tool_names(pj.mcp)
-check("도구 22종 등록", len(_pj) == 22, f"실제 {len(_pj)}종: {_pj}")
+check("도구 24종 등록", len(_pj) == 24, f"실제 {len(_pj)}종: {_pj}")
 # 🔴 개수만 세면 다음에 또 깨진다 — **요청자가 실제로 부를 것**이 있는지 이름으로 본다.
 #   `.33` 은 이것들이 없으면 개념을 추가·수정·제거할 수단이 아예 없다(2026-08-09 실측:
 #   어휘(별칭)만 다룰 수 있고 개념은 마스터 CLI 에만 있었다).
 for _t in ("create_domain_tool", "edit_ontology_item_tool", "remove_ontology_item_tool",
            "lock_ontology_item_tool", "list_locked_tool", "unassigned_classes_tool",
-           "sync_ontology_tool"):
+           "sync_ontology_tool", "protect_ontology_tool", "list_protected_tool"):
     check(f"  🔴 요청자 창구: {_t}", _t in _pj, str(_pj))
 for name in ("register_project_tool", "set_active_tool",
              "list_projects_tool", "check_registry_tool",

@@ -76,7 +76,17 @@ def _safe(name: str) -> str:
 
 
 def locked_items(paths: ProjectPaths, domain: str, subdir: str) -> dict:
-    """`verified_by_user: true` 인 항목들 `{이름: dict}`. **사람이 손본 것.**"""
+    """재합성이 **덮지 않을** 항목들 `{이름: dict}`.
+
+    두 표식을 함께 본다 — 뜻이 다르지만 **효과는 같다**:
+
+        verified_by_user   사람이 검수했다        (한 건씩)
+        protected          재생성으로 대체하지 않는다 (출처가 근거 · 일괄 가능)
+
+    후자는 받아온 스냅샷용이다. 실측(리포트 11 §20): 우리 합성이 스냅샷보다 **얕았고**
+    둘 다 사실이라 사실 게이트로는 걸러지지 않았다. 🔴 그래서 247건에 `verified_by_user`
+    를 찍는 대신 **다른 표식**을 둔다 — 안 그러면 *사람이 실제로 검수한 것*을 구분할 수 없다.
+    """
     root = paths.ontology / "domains" / domain
     out = {}
     for layer in LAYER_DIRS:
@@ -85,7 +95,9 @@ def locked_items(paths: ProjectPaths, domain: str, subdir: str) -> dict:
             continue
         for f in sorted(d.glob("*.yaml")):
             item = yaml_io.read(f)
-            if isinstance(item, dict) and item.get("verified_by_user") is True and item.get("name"):
+            if not isinstance(item, dict) or not item.get("name"):
+                continue
+            if item.get("verified_by_user") is True or item.get("protected") is True:
                 out[item["name"]] = item
     return out
 
@@ -206,7 +218,8 @@ def _prune(root, subdir: str, keep: set, locked: dict) -> int:
             if rel in keep:
                 continue
             item = yaml_io.read(f) or {}
-            if item.get("name") in locked or item.get("verified_by_user") is True:
+            if (item.get("name") in locked or item.get("verified_by_user") is True
+                    or item.get("protected") is True):
                 continue          # 사람이 손본 것 — 합성이 지우지 않는다
             f.unlink()
             n += 1
