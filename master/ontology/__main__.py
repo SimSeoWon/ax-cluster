@@ -120,8 +120,89 @@ def cmd_refresh(argv: list) -> int:
     return 0 if st.failed == 0 else 1
 
 
+
+# ── 사람이 온톨로지를 손보는 자리 (소 1.3.1 · 1.3.2 · 1.3.6 · 1.3.7 · 1.3.9) ──────────
+#
+# 🔴 **전부 사람이 부른다.** 자동 승급은 폐기됐다(2026-06-01 영구 비활성) — 여기 있는
+# 어떤 명령도 스스로 도메인을 만들거나 클래스를 편입하지 않는다.
+
+def cmd_new(argv: list) -> int:
+    """new <도메인> [상위] — 씨앗 MD 를 만든다. 🔴 덮지 않는다."""
+    from . import create
+    if not argv:
+        print("  new <도메인> [상위]"); return 2
+    paths = _paths()
+    try:
+        r = create.create(paths, argv[0], parent=argv[1] if len(argv) > 1 else "")
+    except create.CreateError as e:
+        print(f"  🔴 {e}"); return 1
+    print("  " + r.summary)
+    print(f"  → {r.path}  (열어서 절을 채운 뒤 `refresh` 로 합성한다)")
+    return 0
+
+
+def cmd_unassigned(argv: list) -> int:
+    """unassigned [표본수] — 어느 도메인에도 없는 클래스. **노출만 한다.**"""
+    from . import unassigned
+    paths = _paths()
+    n = int(argv[0]) if argv and argv[0].isdigit() else unassigned.DEFAULT_LIMIT
+    print(unassigned.scan(paths, sample=n).render(limit=n))
+    return 0
+
+
+def cmd_lock(argv: list) -> int:
+    """lock <도메인> <kind> <이름> | lock --list [도메인] — 검수 잠금."""
+    from . import edit
+    paths = _paths()
+    if argv and argv[0] in ("--list", "-l"):
+        rows = edit.locked_items(paths, argv[1] if len(argv) > 1 else "")
+        print(f"  잠긴 항목 {len(rows)}건")
+        for r in rows:
+            print(f"    {r['domain']}/{r['layer']}/{r['kind']}/{r['name']}")
+        return 0
+    if len(argv) < 3:
+        print("  lock <도메인> <objects|actions|invariants> <이름>  또는  lock --list"); return 2
+    try:
+        print("  " + edit.set_lock(paths, argv[0], argv[1], argv[2], True).summary)
+    except edit.EditError as e:
+        print(f"  🔴 {e}"); return 1
+    return 0
+
+
+def cmd_unlock(argv: list) -> int:
+    """unlock <도메인> <kind> <이름> — 🔴 풀면 다음 재합성이 덮는다."""
+    from . import edit
+    if len(argv) < 3:
+        print("  unlock <도메인> <objects|actions|invariants> <이름>"); return 2
+    try:
+        print("  " + edit.set_lock(_paths(), argv[0], argv[1], argv[2], False).summary)
+    except edit.EditError as e:
+        print(f"  🔴 {e}"); return 1
+    return 0
+
+
+def cmd_sync(argv: list) -> int:
+    """sync [--apply] [도메인] — 경로·선언 메서드를 소스에 맞춘다. 🔴 기본은 계획만."""
+    from . import sync as sync_mod
+    apply = "--apply" in argv
+    rest = [a for a in argv if not a.startswith("-")]
+    paths = _paths()
+    stats = ([sync_mod.sync_domain(paths, rest[0], apply=apply)] if rest
+             else sync_mod.sync_all(paths, apply=apply))
+    for st in stats:
+        print("  " + st.summary)
+        for name, old, new in st.path_fixed[:5]:
+            print(f"      경로 {name}: {old or '(없음)'} → {new}")
+        for name in st.missing[:5]:
+            print(f"      ⚠️ 그래프에 없다: {name} (남겨 둠)")
+    if not apply:
+        print("\n  🔴 아무것도 쓰지 않았다. 반영하려면 `sync --apply`.")
+    return 0
+
 _COMMANDS = {"status": cmd_status, "plan": cmd_plan, "verify": cmd_verify,
-             "dry": cmd_dry, "refresh": cmd_refresh}
+             "dry": cmd_dry, "refresh": cmd_refresh,
+             "new": cmd_new, "unassigned": cmd_unassigned,
+             "lock": cmd_lock, "unlock": cmd_unlock, "sync": cmd_sync}
 
 
 def main(argv: list) -> int:
