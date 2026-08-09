@@ -89,12 +89,10 @@ from the master's own container DB. 🔴 **Never write the key value into a doc 
 모듈별 설명·함정·실측은 [`master/README.md`](master/README.md) 에 있다. 여기엔 **놓치면 안 되는 것만** 남긴다.
 
 `worker/` is still a README-only stub. **`client/` is live** — see the table row above.
-🔴 **Say "done" only for a whole area.** The twin now grows *and* is searchable end to end, but the
-**goal ② now runs end to end** — but the measured output shows the node still guesses exact
-identifiers, so `docs/3-open-items.md`'s "ship source declarations in the manifest" is the next
-real gap, not a nicety. When
-reporting status, give the denominator (read it from Redmine), never a scope narrowed to
-what got built.
+🔴 **Say "done" only for a whole area.** Milestone 2 *is* a whole area and it is closed out
+(43/43 소, all Redmine issues 완료) — the twin grows, is searchable, and feeds code generation, and
+shipping header declarations in the manifest took measured hallucinations 2 → 0. When reporting
+status, give the denominator (read it from Redmine), never a scope narrowed to what got built.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
 ## Tests — 🔴 **수를 여기 적지 않는다**

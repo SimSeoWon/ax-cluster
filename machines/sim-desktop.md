@@ -32,18 +32,25 @@ commit → relation graph → BM25 → then the ontology doc itself, which is **
 with heuristics, not fully automatic** (auto-promotion was permanently disabled 2026-06-01)
 ② **feed the relevant slice of that twin to the code-writing agent.**
 
-🔴 **28 of 43 sub-tasks done (2026-08-09)** — 🔴 the count now lives in Redmine (version *마일스톤 2*), not in a hand-edited doc; it drifted twice. The twin now **grows, is indexed, and reaches code
-generation** — goal ② ran end to end for the first time. Relation graphs, context-MD synthesis and
-**ontology LLM re-synthesis** are wired; the 247 domain yaml are **indexed** (separate DB +
-collection, triple noise gate); manifests carry **domain norms**.
+🔴 **All 43 sub-tasks are closed (2026-08-10) — the milestone is complete but not yet formally
+closed; that call is the user's.** 🔴 The count lives in Redmine (version *마일스톤 2*), never in a
+hand-edited doc — it drifted twice. Both goals run end to end: the twin **grows, is indexed, and
+reaches code generation**; relation graphs, context-MD synthesis and **ontology LLM re-synthesis**
+are wired; the 247 domain yaml are **indexed** (separate DB + collection, triple noise gate);
+manifests carry **domain norms** *and* **header declarations** (measured: real hallucinations 2 → 0).
 The **worker runner** dispatches from the queue into a worker's Claude and submits the result
-(중 2.5 ✅ **5/5** — requester→worker loop measured 1m29s), and the master **cleans up worker debris**
-(`master.work.cleanup`) — 🔴 workers may not delete branches, and a branch is removed only when
-its tip is reachable from `origin/main`. Workers return to **`main`** when done, otherwise the
-branch they sit on can never be cleaned. Still missing: **decomposition + skeleton generation**
-(§4.5's empty first step), **requester `.33` wiring**, and **thesaurus alias data (0 registered)** — measured cause: the tags channel
-(weight 3.0) has **zero Korean**, so Korean queries miss the highest-weight channel entirely.
-Breakdown 대 2 / 중 9 / 소 43; **main = 대 1**.
+(requester→worker loop measured 1m29s), and the master **cleans up worker debris** — 🔴 workers may
+not delete branches, and a branch is removed only when its tip is reachable from `origin/main`;
+workers return to **`main`**, otherwise the branch they sit on can never be cleaned.
+Health/visibility landed too: **drift audit**, a **self-contained HTML domain viewer** (no extra
+service), and **state export/import** — 🔴 export writes **two variants** (`compat` = the shape the
+received zip has, `full` = the only one that can restore *us*) and **import merges, never
+overwrites** (240 `protected` marks would otherwise vanish).
+Breakdown 대 2 / 중 9 / 소 43; **main was 대 1**.
+
+🔴 **What is deliberately *not* in this milestone**: **decomposition + skeleton generation**
+(§4.5's empty first step) and the upper layer (`/distribute`, `/review-work`) — they *consume* the
+twin, so they stay 🕓 예정. Not-yet-done ≠ forgotten.
 
 🔴 **Never size a task by line count** — `class_graph`'s 1,341 lines are *"delete the file → full
 rescan on restart"*, while one 829-line file holds the domain index, norm search and the thesaurus
