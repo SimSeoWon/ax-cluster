@@ -130,7 +130,7 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_auth.py                 # 46 — bearer auth, fail-closed
 .venv/bin/python master/test_events.py               # 38 — event spool: no-loss, at-least-once, coalescing
 .venv/bin/python master/test_context_search.py       # 82 — search core: mount routing, RRF, generation pointer
-.venv/bin/python master/test_work.py                 # 145 — 2-tier branches, manifest, registration, generate+layer2
+.venv/bin/python master/test_work.py                 # 148 — 2-tier branches, manifest, registration, generate+layer2
 .venv/bin/python master/test_provision.py            #  43 — Ollama node check/install; .33 must stay non-resident
 .venv/bin/python master/test_indexer.py              #  49 — spool consumer: ff-only mirror, digest guard, watermark
 .venv/bin/python master/test_graph.py                #  80
