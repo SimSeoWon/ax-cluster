@@ -248,27 +248,53 @@ def config_for(project: str, facts: HostFacts) -> dict:
     }
 
 
+def scp_source(facts: HostFacts, abs_path: str) -> str:
+    """scp 의 원본 지정자. 🔴 **윈도우 경로는 슬래시로 바꾼다.**
+
+    실측 2026-08-09: 역슬래시를 그대로 주면 scp 가 자기 경로 검사에서
+    `protocol error: filename does not match request` 로 거부한다 — **그런데 종료 코드는
+    0 이다.** 즉 rc 로는 실패를 알 수 없다.
+    """
+    p = abs_path.replace("\\", "/") if facts.windows else abs_path
+    return f"{facts.user}@{facts.host}:{p}"
+
+
 def _remote_read(facts: HostFacts, abs_path: str) -> str:
-    """원격 파일을 **scp 로 가져와** 읽는다. 없으면 빈 문자열.
+    """원격 파일을 **scp 로 가져와** 읽는다. **없으면 빈 문자열, 못 읽으면 예외.**
 
     🔴 **셸 경유 읽기를 쓰지 않는다.** PowerShell `Get-Content` 를 SSH 로 돌렸더니 조용히
-    빈 문자열이 돌아왔고, 그 결과 `merge_claude_md` 가 "마커 없음" 으로 오판해 **관리 블록을
-    두 번 붙였다**(2026-08-09 실측: `.2` 에 `AX:Begin` 2개). 읽기 실패와 빈 파일을 구분하지
-    못하는 경로는 병합에 쓰면 안 된다 — 쓰기와 같은 수단(scp)으로 통일한다.
+    빈 문자열이 돌아왔고, `merge_claude_md` 가 "마커 없음" 으로 오판해 **관리 블록을 두 번
+    붙였다**(실측: `.2` 에 `AX:Begin` 2개).
+
+    🔴 **그리고 그 뒤에도 같은 병이 남아 있었다** (실측 2026-08-09): 윈도우 경로를 역슬래시로
+    주면 scp 가 거부하는데 **rc 가 0**이라, 이 함수가 조용히 `""` 를 돌려줬다. 그 결과
+    `deliver` 는 *"기존 CLAUDE.md 가 없다"* 로 오판하고 **블록만 써서 덮었다** — 윈도우 두
+    대에서 매번. 리눅스만 정상이라 **한쪽만 조용히 깨지는** 그 모양이었다.
+
+    그래서 판정을 **rc 가 아니라 결과물**로 한다: 임시 파일을 **먼저 지우고** scp 한 뒤,
+    ⑴ 생겼으면 그 내용이 진실이고(빈 파일도 정상) ⑵ 안 생겼는데 *No such file* 이면 없는
+    것이며 ⑶ 그 밖은 **모르는 것이므로 예외**다. 모르는 것을 "없음" 으로 접으면 파일이 날아간다.
     """
+    import os
     import tempfile
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".axread") as tf:
-        tmp = tf.name
+    fd, tmp = tempfile.mkstemp(suffix=".axread")
+    os.close(fd)
+    os.unlink(tmp)                          # 🔴 존재 자체가 성공의 증거가 되게 한다
     try:
         r = subprocess.run(
             ["scp", "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
-             f"{facts.user}@{facts.host}:{abs_path}", tmp],
+             scp_source(facts, abs_path), tmp],
             capture_output=True, text=True, timeout=SSH_TIMEOUT)
-        if r.returncode != 0:
-            return ""                       # 없는 파일 — 생성 경로로 간다
-        return Path(tmp).read_text(encoding="utf-8", errors="replace")
-    except (subprocess.SubprocessError, OSError):
-        return ""
+        if Path(tmp).exists():
+            return Path(tmp).read_text(encoding="utf-8", errors="replace")
+        err = ((r.stderr or "") + (r.stdout or "")).strip()
+        if "No such file" in err or "not found" in err.lower():
+            return ""                       # 진짜 없는 파일 — 생성 경로로 간다
+        raise BundleError(
+            f"{facts.host}: {abs_path} 를 읽지 못했다 (rc={r.returncode}) — {err[:160]}. "
+            f"🔴 '없음' 으로 접지 않는다 — 그러면 병합이 기존 내용을 덮는다")
+    except (subprocess.SubprocessError, OSError) as e:
+        raise BundleError(f"{facts.host}: {abs_path} 읽기 실패 — {type(e).__name__}: {e}") from e
     finally:
         try:
             Path(tmp).unlink()
@@ -451,7 +477,41 @@ def skills_for(role: str) -> tuple:
     return SKILLS_BY_ROLE[role]
 
 
-def deliver(project: str, facts: HostFacts, *, dry_run: bool = False) -> dict:
+INIT_TIMEOUT = 900
+
+
+def run_init(facts: HostFacts, *, runner=None) -> dict:
+    """체크아웃에서 `/init` 을 돌려 **프로젝트 유래 CLAUDE.md** 를 만든다 (레드마인 #64).
+
+    🔴 **CLAUDE.md 가 없을 때만 부른다.** 매번 돌리면 사람이 쓴 것을 흔들고 돈만 든다.
+
+    왜 필요한가 — 사용자 지시였고(*"클론을 생성한 위치에서 클로드 `/init` 이 되어야 하고,
+    거기 클로드 파일에 새로 추가되는 스킬이나 MCP 를 추가해줘야"*), **대가가 실측됐다**:
+    프로젝트 컨텍스트가 없는 트리에서 에이전트가 방향을 잡느라 턴을 더 쓴다
+    (8→5 · 12→10, 시간 26~35% 감소 · 리포트 11 §19).
+
+    ⚠️ **일회성 비용이라 따로 보고한다.** 작업 비용에 섞으면 파견이 비싸 보인다.
+    실패해도 배달을 막지 않는다 — AX 블록만으로도 동작은 한다(그 사실을 반환값에 적는다).
+    """
+    cd = f'cd /d "{facts.path}"' if facts.windows else f'cd "{facts.path}"'
+    cmd = (f'{cd} && claude -p --output-format json --dangerously-skip-permissions '
+           f'"/init"')
+    run = runner or (lambda c: _ssh(facts.host, facts.user, c, timeout=INIT_TIMEOUT))
+    rc, out = run(cmd)
+    info = {"ran": True, "rc": rc, "cost_usd": 0.0, "turns": 0}
+    t = (out or "").strip()
+    if t.startswith("{"):
+        try:
+            d = json.loads(t)
+            info["cost_usd"] = float(d.get("total_cost_usd") or 0.0)
+            info["turns"] = int(d.get("num_turns") or 0)
+        except (ValueError, TypeError):
+            pass
+    return info
+
+
+def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
+            init: bool = True) -> dict:
     """한 머신에 config + 스킬을 배달한다. 🔴 **되읽어 대조까지가 배달이다.**"""
     cfg = json.dumps(config_for(project, facts), ensure_ascii=False, indent=2) + "\n"
     if dry_run:
@@ -460,6 +520,19 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False) -> dict:
     # 🔴 CLAUDE.md 는 **읽어서 병합**한다 — 덮어쓰면 사람이 쓴 것을 날린다
     md_path = (f"{facts.path}\\CLAUDE.md" if facts.windows else f"{facts.path}/CLAUDE.md")
     prev = _remote_read(facts, md_path)
+
+    # 🔴 비어 있으면 **먼저 `/init`**, 그 위에 우리 블록을 얹는다 (#64).
+    #    순서가 반대면 `/init` 이 우리 블록을 지우거나 감쌀 수 있다.
+    init_info = {"ran": False}
+    if init and not (prev or "").strip() and facts.claude:
+        try:
+            init_info = run_init(facts)
+            prev = _remote_read(facts, md_path)          # /init 이 쓴 것을 다시 읽는다
+        except Exception as e:                            # noqa: BLE001 — 배달을 막지 않는다
+            init_info = {"ran": True, "error": f"{type(e).__name__}: {e}"}
+    if init and not (prev or "").strip() and not facts.claude:
+        init_info = {"ran": False, "error": "claude 가 없어 /init 을 돌릴 수 없다"}
+
     merged = merge_claude_md(prev, project, facts)
     written = {
         # 🔴 config·부산물·CLAUDE.md 는 **체크아웃 안**, 스킬만 홈 (모듈 독스트링 참조)
@@ -472,6 +545,8 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False) -> dict:
     return {"host": facts.host, **written,
             "claude_md_mode": ("생성" if not (prev or "").strip()
                                else "블록 교체" if MD_BEGIN in (prev or "") else "블록 추가"),
+            # ⚠️ 일회성 프로비저닝 비용 — **작업 비용과 섞지 않는다** (#64)
+            "init": init_info,
             "verified": True}
 
 

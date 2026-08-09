@@ -207,9 +207,71 @@ def test_ue5_detection() -> None:
           bundle._find_ue5("h", "u", runner=lambda c: (0, "File Not Found\n")) == "")
 
 
+
+def test_init_wiring() -> None:
+    """🔴 #64 — CLAUDE.md 가 없으면 /init 을 **먼저** 돌린다. 있으면 안 돌린다."""
+    calls = {}
+    def runner(cmd):
+        calls["cmd"] = cmd
+        return 0, '{"result":"ok","total_cost_usd":0.21,"num_turns":9}'
+    f = bundle.HostFacts(host="h", user="u", path="/repo", driven="ssh", role="worker")
+    f.os, f.claude = "linux", "2.1"
+    info = bundle.run_init(f, runner=runner)
+    check("체크아웃에서 돈다", '"/repo"' in calls["cmd"], calls["cmd"][:60])
+    check("/init 을 부른다", '"/init"' in calls["cmd"], calls["cmd"][:80])
+    check("json 으로 받는다", "--output-format json" in calls["cmd"])
+    # ⚠️ 일회성 비용은 따로 보고돼야 한다 — 작업 비용에 섞으면 파견이 비싸 보인다
+    check("🔴 비용을 들고 나온다", abs(info["cost_usd"] - 0.21) < 1e-9, str(info))
+    check("턴도 들고 나온다", info["turns"] == 9, str(info))
+
+    win = bundle.HostFacts(host="h", user="u", path=r"E:\repo", driven="ssh")
+    win.os, win.claude = "windows", "2.1"
+    bundle.run_init(win, runner=runner)
+    check("윈도우는 cd /d", "cd /d" in calls["cmd"], calls["cmd"][:40])
+
+    # 🔴 claude 가 없으면 돌릴 수 없다 — 조용히 성공으로 보고하면 안 된다
+    noc = bundle.HostFacts(host="h", user="u", path="/repo", driven="ssh")
+    noc.os, noc.claude = "linux", ""
+    check("claude 가 없으면 안 돌린다", not noc.claude)
+
+
+
+def test_scp_source_windows() -> None:
+    """🔴 윈도우 경로를 역슬래시로 주면 scp 가 거부한다 — **그런데 rc 는 0** (실측 2026-08-09).
+
+    이 함수가 조용히 `""` 를 돌려주던 탓에 `deliver` 가 *"기존 CLAUDE.md 가 없다"* 로 오판하고
+    **내장 기본 문서로 통째로 덮었다.** 윈도우 두 대에서 매번, 리눅스만 정상 — 한쪽만 조용히
+    깨지는 그 모양이다.
+    """
+    win = bundle.HostFacts(host="h", user="u", path=r"E:\repo", driven="ssh")
+    win.os = "windows"
+    src = bundle.scp_source(win, r"E:\repo\CLAUDE.md")
+    check("🔴 윈도우는 슬래시로 바꾼다", "\\" not in src, src)
+    check("경로가 온전하다", src.endswith(":E:/repo/CLAUDE.md"), src)
+
+    lin = bundle.HostFacts(host="h", user="u", path="/repo", driven="ssh")
+    lin.os = "linux"
+    check("리눅스는 그대로", bundle.scp_source(lin, "/repo/CLAUDE.md").endswith(":/repo/CLAUDE.md"))
+
+
+def test_merge_never_replaces_existing() -> None:
+    """🔴 기존 내용이 있으면 **블록만** 얹는다 — 기본 문서로 덮지 않는다."""
+    f = bundle.HostFacts(host="h", user="u", path="/repo", driven="ssh", role="worker")
+    f.os = "linux"
+    human = "# 사람이 쓴 문서\n\n지우면 안 되는 내용\n"
+    merged = bundle.merge_claude_md(human, "ModularStage", f)
+    check("사람 글이 남는다", "지우면 안 되는 내용" in merged, merged[:120])
+    check("블록이 붙는다", bundle.MD_BEGIN in merged and bundle.MD_END in merged)
+    # 🔴 기존이 있는데 기본 문서를 끼워 넣으면 그게 덮어쓰기다
+    empty_doc = bundle.merge_claude_md("", "ModularStage", f)
+    check("🔴 기존이 있으면 기본 문서를 안 넣는다", len(merged) < len(empty_doc) / 2,
+          f"{len(merged)} vs {len(empty_doc)}")
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
-               test_role_skills, test_role_block, test_ue5_detection):
+               test_role_skills, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
+               test_merge_never_replaces_existing):
         fn()
     total = PASS + FAIL
     print(f"{'✅' if not FAIL else '🔴'} test_client_bundle: {PASS}/{total} 통과")

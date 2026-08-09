@@ -68,6 +68,16 @@ def cmd_deliver(project: str) -> int:
             bad += 1
             continue
         print(f"  ✅ {f.host} [{f.role}]: config={r['config']} · CLAUDE.md {r['claude_md_mode']}")
+        ini = r.get("init") or {}
+        if ini.get("ran"):
+            # ⚠️ 일회성 프로비저닝 비용 — 작업 비용과 섞지 않는다 (#64)
+            if ini.get("error"):
+                print(f"     ⚠️ /init 실패 — {ini['error']} (AX 블록만으로 진행)")
+            else:
+                print(f"     /init 실행 · 턴 {ini.get('turns', 0)} · "
+                      f"${ini.get('cost_usd', 0):.3f} (일회성)")
+        elif ini.get("error"):
+            print(f"     ⚠️ {ini['error']}")
         for sp in r["skills"]:
             print(f"     skill={sp}")
         print("     .git/info/exclude ✅ · 해시 대조 통과")
