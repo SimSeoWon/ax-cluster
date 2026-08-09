@@ -1170,3 +1170,27 @@ awk 로 프론트매터를 잘라 세었는데 그게 틀렸다. **파서로 재
 
 한글 태그가 전체 86개 중 **4개**다. 그래서 한글 검색의 실효 수단은 여전히 **별칭**이고,
 소 1.4.4 에서 10개를 등록해 그 길을 냈다(§23). 전파는 *앞으로 넣을 것*을 지키는 장치다.
+
+## §27. 고아 파일 정리 — 뷰어가 찾은 것을 실제로 고쳤다
+
+§25 에서 뷰어가 잡은 불일치를 처리했다. **넣을지 뺄지는 "그 클래스가 실재하는가" 로 갈렸다.**
+
+    클래스 그래프  UEditorView_MissionTaskEditor_Renewal
+                  Source/ModularStageEditor/Public/Widget/EditorView_MissionTaskEditor_Renewal.h
+                  부모 UEditorUtilityWidget · 메서드 5 (NativeConstruct·SetData·OnRegisterFunctionMap…)
+    소스           .h/.cpp 둘 다 실재
+
+**실재한다.** 즉 yaml 이 잘못된 게 아니라 **manifest 가 빠뜨린 것**이다 → 목록에 넣었다
+(`package.write` 와 같은 정렬 규칙으로, 백업 후).
+
+### 효과 — 이 수정의 목적은 "정리"가 아니라 **보이게 하는 것**이었다
+
+    소속표       → MissionEditor 로 들어옴
+    추론         → 「…Renewal 를 고쳐줘」가 MissionEditor 를 근거와 함께 짚는다
+    규범 검색     → MissionEditor(2.636) · **전에는 아예 안 잡혔다**
+    sync 검사     12 → 13건 (경로·declared 동기화 대상에 편입)
+    사실 게이트    31 → 32건 대조, 통과
+    뷰어 경고     2건 → 1건
+
+전 도메인 불일치 **0건**. 남은 경고 하나는 *경계 절 없는 도메인 6개* 인데, 그건 사람이
+문서를 채워야 하는 일이다.
