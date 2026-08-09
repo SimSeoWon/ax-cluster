@@ -375,6 +375,13 @@ def search_norms(paths: ProjectPaths, query: str, *, top_k: int = DEFAULT_TOP_K,
     반환 항목에는 `path` 가 있다 — 호출자가 필요할 때 본문을 직접 읽으라는 뜻이고,
     그게 *문서는 지도지 정답이 아니다* 원칙에 맞는 형태다.
     """
+    # 🔴 **규범 검색도 시소러스 확장을 쓴다** (소 2.2.1). 실측 2026-08-10: 확장을
+    # `ContextSearch.search()` 에만 붙였더니 「다이얼로그 매니저」가 엉뚱한 도메인을 1위로
+    # 냈다(AlphaCoreGameFramework 1.500 → 확장하면 MissionSystemTools 5.233). 매니페스트의
+    # 규범 채널이 이 함수를 쓰므로, 여기서 빠지면 **코드 생성이 틀린 규범을 받는다.**
+    from .expand import expand_for
+    ex = expand_for(paths, query)
+    query = ex.query
     pool = max(top_k * 3, 5)
     hits = _bm25_hits(paths, query, pool)
     # ① 🔴 BM25 0건이면 끝. 도메인은 광범위 신호라 정확 매칭이 있어야 의미가 있다.

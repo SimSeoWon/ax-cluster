@@ -209,9 +209,25 @@ def test_fingerprint_sees_aliases() -> None:
               f"{before} → {di.fingerprint(paths)}")
 
 
+
+def test_norm_search_uses_expansion() -> None:
+    """🔴 규범 검색도 시소러스 확장을 써야 한다 (실측 2026-08-10).
+
+    확장을 `ContextSearch.search()` 에만 붙였더니 「다이얼로그 매니저」가 엉뚱한 도메인을
+    1위로 냈다(AlphaCoreGameFramework 1.500 → 확장하면 MissionSystemTools 5.233).
+    **매니페스트의 규범 채널이 이 함수를 쓰므로, 빠지면 코드 생성이 틀린 규범을 받는다.**
+    """
+    src = (Path(__file__).resolve().parent / "context_search" / "domain_index.py").read_text("utf-8")
+    i_expand = src.find("expand_for")
+    i_bm25 = src.find("_bm25_hits(paths, query")
+    check("🔴 search_norms 가 확장을 부른다", i_expand > 0, "expand_for 호출 없음")
+    check("🔴 BM25 **전에** 확장한다", 0 < i_expand < i_bm25, f"{i_expand} vs {i_bm25}")
+
+
 def main() -> int:
     for fn in (test_payload, test_fingerprint_and_sync, test_empty_is_an_error, test_noise_gate,
-               test_alias_lifts_to_tags, test_fingerprint_sees_aliases):
+               test_alias_lifts_to_tags, test_fingerprint_sees_aliases,
+               test_norm_search_uses_expansion):
         fn()
     total = PASS + FAIL
     print(f"{'✅' if not FAIL else '🔴'} test_domain_index: {PASS}/{total} 통과")

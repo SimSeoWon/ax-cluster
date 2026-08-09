@@ -162,7 +162,13 @@ class ContextSearch:
         """
         if not query.strip():
             return []
-        q = focus(query)
+        # 🔴 시소러스 확장 (소 2.2.1) — 한글 말을 실제 식별자로 잇는다. 원본은 지우지 않고
+        #    **덧붙이기만** 한다. 무엇을 붙였는지는 `last_expansion` 에 남는다 — 조용히
+        #    질의를 바꾸면 결과가 이상할 때 사람이 색인이나 가중치를 의심한다.
+        from .expand import expand_for
+        ex = expand_for(self.paths, query)
+        self.last_expansion = ex
+        q = focus(ex.query)
         n = pool or max(limit * 3, 10)
         vec = self.vector.search(q, limit=n, excerpt=excerpt)
         kw = self.bm25.search(q, limit=n)
