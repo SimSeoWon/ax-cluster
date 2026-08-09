@@ -20,7 +20,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from .config import (
+from .config import (ROLE_WORKER, 
     DRIVEN_INTERACTIVE,
     GITEA_REPO_ROOT,
     PROJECT_CONFIG,
@@ -195,6 +195,7 @@ def set_workshop(
     driven: str = DRIVEN_INTERACTIVE,
     path: str = "",
     user: str = "",
+    role: str = ROLE_WORKER,
     note: str = "",
     registry: Registry | None = None,
 ) -> dict:
@@ -218,6 +219,7 @@ def set_workshop(
         driven=str(driven).strip(),
         path=str(path).strip(),
         user=str(user).strip(),
+        role=str(role).strip(),
         note=str(note).strip(),
     )
     shop.validate()  # fail-closed — 검증 전에 파일을 건드리지 않는다

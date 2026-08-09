@@ -91,6 +91,11 @@ def validate_name(name: str) -> str:
     return name
 
 
+ROLE_WORKER = "worker"          # 큐에서 claim 해 처리한다
+ROLE_REQUESTER = "requester"    # 요청만 한다 — 사람의 기계. 🔴 파견 대상이 아니다
+ROLES = (ROLE_WORKER, ROLE_REQUESTER)
+
+
 @dataclass
 class Workshop:
     """작업장 한 대의 체크아웃 (§5.5.4).
@@ -100,22 +105,42 @@ class Workshop:
 
     `driven` 이 이 스키마의 핵심이다. `.2` 는 SSH 가 열려 있어 마스터가 밀어넣을 수 있고,
     `.33` 은 RDP 뿐이라 몰 수 없다 — 그 차이를 주석이 아니라 필드로 남긴다.
+
+    🔴 **`role` 은 `driven` 과 다른 축이다** (사용자 확정 2026-08-09). `driven` 은 *닿을 수
+    있나*, `role` 은 *무엇을 시켜도 되나* 다. `.33` 은 SSH 가 열려 **닿을 수는 있지만**
+    사람의 메인 작업 PC라 **일감을 파견하면 안 된다** — 사람이 편집 중인 트리에서 에이전트가
+    브랜치를 만들고 파일을 고치는 것이 더티 체크가 막으려던 바로 그 사고다.
+
+        requester  일감을 **요청**하고 온톨로지를 등록한다. 큐에서 집지 않는다
+        worker     큐에서 claim 해 처리하고 제출한다
     """
 
     host: str
     driven: str = DRIVEN_INTERACTIVE
     path: str = ""
     user: str = ""
+    role: str = ROLE_WORKER
     note: str = ""
 
     @property
     def drivable(self) -> bool:
-        """마스터가 원격으로 작업을 밀어넣을 수 있는가."""
+        """마스터가 원격으로 **일감을 파견**할 수 있는가.
+
+        🔴 닿을 수 있는 것과 시켜도 되는 것은 다르다 — `requester` 는 SSH 가 열려 있어도
+        파견 대상이 아니다.
+        """
+        return self.driven == DRIVEN_SSH and self.role == ROLE_WORKER
+
+    @property
+    def reachable(self) -> bool:
+        """마스터가 SSH 로 닿을 수 있는가 (번들 배달 등 읽기·설정 작업)."""
         return self.driven == DRIVEN_SSH
 
     def validate(self) -> None:
         if not self.host.strip():
             raise ConfigError("워크숍 host 가 비어 있다.")
+        if self.role not in ROLES:
+            raise ConfigError(f"role 은 {' | '.join(ROLES)} 중 하나여야 한다: {self.role!r}")
         if self.driven not in DRIVEN_MODES:
             raise ConfigError(
                 f"driven 은 {' | '.join(DRIVEN_MODES)} 중 하나여야 한다: {self.driven!r}"
@@ -139,11 +164,12 @@ class Workshop:
             driven=str(d.get("driven") or DRIVEN_INTERACTIVE),
             path=str(d.get("path") or ""),
             user=str(d.get("user") or ""),
+            role=str(d.get("role") or ROLE_WORKER),
             note=str(d.get("note") or ""),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"driven": self.driven}
+        out: dict[str, Any] = {"driven": self.driven, "role": self.role}
         # 빈 값을 쓰지 않는다 — interactive 워크숍에 빈 path 가 남으면 "미설정"과
         # "설정했는데 비었다"가 구분되지 않는다.
         for key, val in (("user", self.user), ("path", self.path), ("note", self.note)):
