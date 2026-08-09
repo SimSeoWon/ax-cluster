@@ -14,7 +14,7 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   → [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md)
   **Read only the open milestone** — closed ones are reference; don't load them. Progress
   lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
-  🔴 **The twin grows now, but only on changed files — 18 of 36 sub-tasks done.**
+  🔴 **The twin grows now, but only on changed files — 20 of 38 sub-tasks done.**
   중 1.1 relation graphs ✅ · 중 1.2 context-MD synthesis ✅ **wired into the indexer** (verified on
   a real commit diff: graphs → synthesis → reindex) · 중 1.3 ontology **8/13** — the LLM
   re-synthesis now runs (measured: local 2-node and `claude` both passed the fact gate 100%) · 중 1.4 thesaurus has a
@@ -98,7 +98,7 @@ from the master's own container DB. 🔴 **Never write the key value into a doc 
 | Shared bearer auth (all 3 services, fail-closed) | `master/auth.py` |
 | Event spool + **indexer** (Gitea hook → graphs → **synthesis** → reindex) | `master/events/` — **live**: `ax-indexer.path` (inotify) → `ax-indexer.service`. 🔴 **This is where the twin grows**: changed files → relation graphs (LLM 0) → context-MD synthesis (35B) → reindex. Lost groups are logged by name — the watermark has already advanced, so they can't be found again |
 | Context search — **multilingual** vector + BM25 (+trigram KR table), RRF, `[대괄호]` focus | `master/context_search/` — context MDs (961 docs) **and now domain packages** (7, 소 2.1 ✅ 3/3). Domains live in a **separate DB + collection** (`bm25_domains.db` / `ontology_domains`) so they can't crowd out file-level hits; `search_norms` applies a 🔴 **triple noise gate** (BM25-zero ⇒ empty · vector-only needs threshold · hard cap). Wired into `rebuild_all`, skipped by fingerprint when unchanged |
-| Workflow — 2-tier branches, manifest, registration, generate → layer2 → hand over | `master/work/` — the loop runs (20.1s, APPROVE) but **on a half-built twin** — that run had 0 domain norms. Map: `docs/4-work-loop.md` §4.7 |
+| Workflow — 2-tier branches, manifest, registration, generate → layer2 → hand over, **domain norms** | `master/work/` — 소 2.3.1 ✅: `norms.py` turns `search_norms` hits into an invariants-first bundle in the manifest (≤2 domains × actions touching the target classes). **Measured**: same prompt/model, norms flipped the generated code from an invented member to 4/4 real ones and it honoured a real invariant — but **near-miss spellings survived** (`CurrentStep` vs real `Step`), which is why "ship source declarations to the node" is still open. 🔴 `master.work.generate` the *function* shadows the same-named submodule in `__init__` — import the module path directly. Map: `docs/4-work-loop.md` §4.7 |
 | **Relation graphs** — inheritance (tree-sitter C++) + `#include` (중 1.1, **done 5/5**) | `master/graph/` — **1,806 classes · 6,380 methods · 10,817 include edges** on ModularStage, 2.9s full scan. `python -m master.graph build\|status`. ⚠️ reverse include lookup is basename-approximate (9 ambiguous headers) |
 | **Ontology** — YAML io (no PyYAML) · stale · L1/L2/L3 layers · member proposals · concept hierarchy · **fact gate** · package writer · **LLM re-synthesis** (중 1.3, **8/13**) | `master/ontology/` — `python -m master.ontology status\|plan\|verify\|dry\|refresh`. 🔴 **`plan` → `dry` first**: `plan` sizes prompts with **no LLM**, `dry` synthesises without writing. Domain MD (intent) + source excerpts + graphs → actions/invariants → deterministic gates → package. 🔴 **Payload is chunked by `#include` cohesion and split across both nodes** — model name selects the node; the defaults are each node's **resident** model (any other evicts the pin). `claude`/`agy` are also valid lanes. Prompt budget is **measured** (2.79–2.85 chars/token, `num_ctx` 8192 both nodes). 🔴 Decision rules live in that package's `__init__.py` |
 | **Context-MD synthesis** — prompt+grounding, σ.7 fence strip + σ.7-B save gate, stamping, batch circuit breaker (중 1.2) | `master/context_synth/` — `python -m master.context_synth one\|fill\|all\|status`. 909 source groups, all already documented from the snapshot. **Wired into the indexer** (changed files only). A **deterministic factuality gate** (`verify.py`) rejects docs describing commented-out code as live — **75% pass rate measured on the 35B (3/4)**, and the one rejection was a real catch. `sample N` dry-runs without touching snapshot docs. 🔴 **BC-250 reclaims ~170 MB per request and never gives it back until the model unloads** — `UNLOAD_EVERY=5` handles that; set 0 for dedicated-VRAM nodes |
@@ -108,13 +108,14 @@ from the master's own container DB. 🔴 **Never write the key value into a doc 
 `worker/` and `client/` are still README-only stubs.
 
 🔴 **Say "done" only for a whole area.** The twin now grows *and* is searchable end to end, but the
-**consumer side is still open** — `attach_norms` (소 2.3.1, the goal-② endpoint) is unbuilt, so
-`manifest.py` still ships `"_미구현_"` for domain norms and generated code sees none of it. When
+**goal ② now runs end to end** — but the measured output shows the node still guesses exact
+identifiers, so `docs/3-open-items.md`'s "ship source declarations in the manifest" is the next
+real gap, not a nicety. When
 reporting status, give the denominator (*"twin sub-tasks 18 of 36"*), never a scope narrowed to
 what got built.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
-**Tests — 1,040, all passing. No pytest**; each file runs standalone.
+**Tests — 1,063, all passing. No pytest**; each file runs standalone.
 
 ```bash
 python3 master/test_verdict.py                      # 19 — pure logic
@@ -135,6 +136,7 @@ python3 master/test_broker_routing.py               #  9 — pure logic
 .venv/bin/python master/test_ontology.py             #  127 — YAML io: 왕복 보존, 안 바뀌면 안 씀 — relation graphs: Source-only, fail-closed, no ghost rows
 .venv/bin/python master/test_context_synth.py        #  102 — σ.7/σ.7-B gates, comment preservation, circuit breaker + factuality gate
 .venv/bin/python master/test_ontology_synth.py       #  42 — 도메인 MD 두 스키마 · 조각 고지 · 응답 파서의 도메인 밖 차단
+.venv/bin/python master/test_norms.py                #  20 — 도메인 규범: 관련성 필터 · 예산 · 🔴 결손 명시
 .venv/bin/python master/test_domain_index.py         #  30 — 도메인 색인: 페이로드에 항목 본문 녹이기 · 지문 · 🔴 노이즈 3중 차단
 
 # Ontology — 🔴 plan(LLM 0) → dry(안 씀) → refresh 순서
