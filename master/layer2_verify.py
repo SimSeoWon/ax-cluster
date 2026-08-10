@@ -79,11 +79,19 @@ def call_agy(prompt: str, *, timeout: int = TIMEOUT_SEC) -> str | None:
     return _run([exe, "--dangerously-skip-permissions", "-p", prompt], timeout=timeout)
 
 
-def call_claude(prompt: str, *, timeout: int = TIMEOUT_SEC) -> str | None:
+def call_claude(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "") -> str | None:
+    """`claude -p` 호출. `model` 을 주면 `--model` 로 넘긴다(별칭 `opus`·`sonnet` 실측 통과).
+
+    🔴 **층2 는 model 을 주지 않는다** — 검증기 모델을 여기서 고정하면 소 2.2.1(모델 선정)이
+    코드에 박히는 셈이다. 지정은 호출자 몫이다.
+    """
     exe = shutil.which("claude")
     if not exe:
         return None
-    return _run([exe, "-p", prompt], timeout=timeout)
+    cmd = [exe, "-p"]
+    if (model or "").strip():
+        cmd += ["--model", model.strip()]
+    return _run(cmd + [prompt], timeout=timeout)
 
 
 BACKENDS = [("agy", call_agy), ("claude", call_claude)]

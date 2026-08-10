@@ -54,6 +54,10 @@ class TaskSpec:
     depends_on: list = field(default_factory=list)
     requires: list = field(default_factory=list)   # 예: ["ue5"] — 능력 라우팅 (§5.2-C)
     priority: int = 0
+    # 🔴 골조가 비어 있으면 등록 전에 **생성한다** (소 1.1.4). 그때 쓰는 재료가 아래 둘이다.
+    instruction: str = ""                      # 무엇을 만들라는 것인지 (사람의 말)
+    source_files: list = field(default_factory=list)   # 포팅 원본 — **읽기 전용** (소 1.3.5)
+    depth_set: list = field(default_factory=list)      # `[PSEUDO:N]` — 소 1.2.4 가 소비
 
     def validate(self) -> None:
         if not (self.stem or "").strip():
@@ -87,6 +91,7 @@ class TaskResult:
 class Registered:
     work_id: str
     tasks: list[TaskResult]
+    generated: list = field(default_factory=list)   # 골조를 마스터가 만든 stem (소 1.1.4)
 
     @property
     def ok(self) -> bool:
@@ -102,6 +107,8 @@ class Registered:
         s = f"work={self.work_id} 태스크 {n_ok}/{len(self.tasks)} 등록"
         if degraded:
             s += f" · 매니페스트 결손 {degraded}건"
+        if self.generated:
+            s += f" · 골조 생성 {len(self.generated)}건"
         if self.failed:
             s += f" · 🔴 실패 {len(self.failed)}건"
         return s
@@ -123,6 +130,43 @@ def _post(url: str, payload: dict, *, token: str | None = None) -> dict:
         raise RegisterError(f"{url} → 연결 실패: {e.reason}") from e
 
 
+def _fill_skeletons(specs: list, *, paths: ProjectPaths, make_skeleton=None) -> list:
+    """골조가 빈 명세를 채운다 (소 1.1.4). **제자리에서 고치고** 생성한 stem 을 돌려준다.
+
+    🔴 **생성 조건은 하나다 — `instruction` 이 있고 `skeleton` 이 없을 때.** 둘 다 없는 명세는
+    **손대지 않는다**: 골조 없는 등록은 원래부터 정상 경로다(작업장이 골조를 쓰는 흐름).
+    골조를 필수로 만들면 기존 호출자가 전부 깨지는데, 그건 이 칸이 할 일이 아니다.
+
+    🔴 **동결 계약도 같이 채운다.** 골조만 있고 계약이 없으면 워커는 무엇이 동결됐는지 모르고
+    층1 은 대조할 원본이 없다 — 병렬이 성립하지 않는다(§4.5).
+
+    🔴 **생성한 골조가 골조가 아니면 등록하지 않는다.** `[PSEUDO]` 0개(=완성 파일)나 동결
+    선언 0개는 원전이 값을 치르고 배운 실패다 — 글루 파일이 워커 태스크로 등재되던 버그.
+    """
+    need = [s for s in specs
+            if not (s.skeleton or "").strip() and (s.instruction or "").strip()]
+    if not need:
+        return []
+    from . import skeleton as sk
+    fn = make_skeleton or sk.build
+    made: list = []
+    for s in need:
+        spec = sk.SkeletonSpec(stem=s.stem, files=list(s.target_files),
+                               classes=list(s.classes), instruction=s.instruction,
+                               source_files=list(s.source_files))
+        built = fn(paths, spec)
+        if not built.ok:
+            raise RegisterError(f"{s.stem}: 골조 생성 실패 — " + "; ".join(built.notes))
+        # 🔴 파일로 쓰지 않는다. 텍스트로 실어 보낸다 (§2.1).
+        s.skeleton = "\n\n".join(f"=== FILE: {p} ===\n{t}"
+                                 for p, t in sorted(built.files.items()))
+        if not (s.contracts or "").strip():
+            s.contracts = built.contracts()
+        s.depth_set = built.depth_set
+        made.append(s.stem)
+    return made
+
+
 def register_work(
     title: str,
     specs: list[TaskSpec],
@@ -135,6 +179,7 @@ def register_work(
     token: str | None = None,
     poster=None,
     searcher=None,
+    make_skeleton=None,
 ) -> Registered:
     """work 를 만들고 태스크를 등록한다. 태스크마다 매니페스트를 1회 수집한다.
 
@@ -142,6 +187,10 @@ def register_work(
 
     🔴 **명세 검증을 먼저 전부 돌린다.** 절반 등록하고 실패하면 큐에 반쪽 work 가 남는데,
     그건 사람이 치워야 한다. 막을 수 있는 것은 미리 막는다.
+
+    `make_skeleton` 은 골조가 없는 명세를 위해 **등록 전에** 불린다 (소 1.1.4). 기본은
+    `skeleton.build` 이고, 골조를 이미 넘겨준 명세는 **건드리지 않는다**(하위 호환 — 사람이
+    직접 쓴 골조가 LLM 출력보다 낫다면 그쪽이 이긴다).
     """
     if not (title or "").strip():
         raise RegisterError("title 이 비었다")
@@ -150,6 +199,10 @@ def register_work(
     seen: set[str] = set()
     for s in specs:
         s.validate()
+    # 🔴 **골조 생성은 큐를 만지기 전에 끝낸다.** 등록 도중 생성이 실패하면 반쪽 work 가
+    #    남고, 그건 사람이 치운다 — 위 검증 선행과 같은 이유다.
+    generated = _fill_skeletons(specs, paths=paths, make_skeleton=make_skeleton)
+    for s in specs:
         if s.stem in seen:
             raise RegisterError(f"stem 이 중복이다: {s.stem} — 매니페스트가 서로를 덮어쓴다")
         seen.add(s.stem)
@@ -217,4 +270,4 @@ def register_work(
             r.manifest_degraded = m.degraded
         results.append(r)
 
-    return Registered(work_id=work_id, tasks=results)
+    return Registered(work_id=work_id, tasks=results, generated=generated)

@@ -219,10 +219,17 @@ def generate(prompt: str, model: str, *, broker: str, num_ctx: int, timeout: int
 
     🔴 실패는 `GenerateError` 로 통일한다 — 호출자가 백엔드별 예외를 알 필요가 없다.
     """
-    if model in CLI_MODELS:
+    # 🔴 `claude:opus` 처럼 **레인 뒤에 모델을 붙일 수 있다.** 골조 생성이 이걸 쓴다 —
+    #    골조는 1회 생성이고 모든 병렬 작업의 계약이 되므로 값을 쓸 자리다(소 1.1.1).
+    lane, _, sub = model.partition(":")
+    if lane in CLI_MODELS:
         from .. import layer2_verify
-        fn = layer2_verify.call_claude if model == "claude" else layer2_verify.call_agy
-        out = fn(prompt, timeout=timeout)
+        if lane == "claude":
+            out = layer2_verify.call_claude(prompt, timeout=timeout, model=sub)
+        else:
+            if sub:
+                raise GenerateError(f"agy 는 모델 지정을 받지 않는다: {model}")
+            out = layer2_verify.call_agy(prompt, timeout=timeout)
         if out is None:
             raise GenerateError(f"{model} CLI 가 응답하지 않았다 (미설치·타임아웃·비정상 종료)")
         return out

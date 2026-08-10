@@ -1,0 +1,493 @@
+"""골조 생성 + **인터페이스 동결** (중 1.1 — §4.5 의 빈 첫 칸).
+
+## 왜 이것이 병렬의 전제인가
+
+클래스 단위 분할은 ***파일*** 충돌만 막는다. ***인터페이스*** 충돌은 못 막는다 — A 를 짠
+모델과 B 를 짠 모델이 서로의 시그니처를 다르게 가정하면 **컴파일에서야 드러난다.** 그래서
+원전은 이것을 *"강제"* 로 못박았다(사용자 2026-06-21): **클래스 관계·인터페이스는 골조에서
+1회 확정, 워커는 본문만 채우고 변경 불가.**
+
+그 동결이 drift 의 원천을 없애기 때문에, 원전이 검토했던 크로스-task 해시 박제나
+`interface_revision.jsonl` 카나리가 **불필요해졌다.** 값싼 결정적 검사 하나가 그것들을 대체한다.
+
+## 🔴 마스터는 골조를 파일로 쓰지 않는다
+
+원전 `generate_skeletons_impl` 은 `repo_path` 에 **직접 write** 한다. 우리 경계는 다르다 —
+*"파일은 윈도우를 떠나지 않는다 · 마스터는 인프라지 작업장이 아니다"*(§2.1). 그래서 이 모듈은
+**텍스트만 돌려준다.** 파일로 쓰는 것은 작업장이고, 운반은 매니페스트다(`manifest.py`,
+§4.7 ④ — `task_data` 는 전송 수단이 아니다).
+
+## 🔴 동결은 결정적이다 — LLM 0
+
+골조를 만드는 것은 LLM 이지만, **무엇이 동결됐는지 읽어내는 것은 정규식**이다. 여기에 LLM 을
+쓰면 *"결정적 게이트가 LLM 판단보다 위"* 라는 규칙이 첫 칸에서부터 깨진다. 추출기는 원전
+`worker/validator._frozen_decls` 를 그대로 이식했다 — 이미 prod 에서 굴러 본 것이다.
+
+키는 본문 `{` 나 `;` **앞까지** + 공백 정규화다. 그래서 인라인 `[PSEUDO]` 본문을 채우면서
+`;` 가 `{…}` 로 바뀌어도 **같은 키**로 남는다(선언과 정의가 한 키). 반대로 시그니처를 고치면
+키가 달라져 즉시 잡힌다.
+
+## 태그 계약 — 지우는 것과 남기는 것 (원전 §스켈레톤 주석 태그)
+
+    [PSEUDO] · [PSEUDO:N] · [IMPL]              워커가 **구현 후 그 줄을 지운다**
+    [DOC] · [STATE] · [BIND] · [REPLICATED]     🔴 **절대 보존** — 삭제·수정 금지
+    태그 없는 주석                                보존 (임의 판단으로 제거 금지)
+
+⚠️ **getter/setter 에는 주석을 달지 않는다** — 시그니처로 충분하고, 불필요한 주석은 워커
+프롬프트의 노이즈가 된다.
+
+## 🔴 골조가 아니면 골조라고 하지 않는다 (fail-closed)
+
+`[PSEUDO]` 가 하나도 없으면 그것은 **완성된 파일**이지 골조가 아니다. 원전은 그 경우 워커
+태스크 등재를 **skip** 한다(글루 파일이 워커에게 배정되던 버그를 그렇게 고쳤다). 동결할 선언이
+0개인 것도 같다 — 계약을 만들 수 없으면 병렬로 나눠도 안전하지 않다. **둘 다 거부한다.**
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+from ..context_search.paths import ProjectPaths
+
+# 뎁스 없는 `[PSEUDO]` 는 단일 태스크(하위 호환), `[PSEUDO:N]` 은 파일 내 순차 분할(소 1.2.4)
+_PSEUDO = re.compile(r"\[PSEUDO(?::(\d+))?\]")
+VOLATILE_TAGS = ("[PSEUDO]", "[IMPL]")
+PERMANENT_TAGS = ("[DOC]", "[STATE]", "[BIND]", "[REPLICATED]")
+
+# ── 동결 선언 추출 (원전 worker/validator.py 이식 + 실측으로 메운 구멍) ───────────
+#
+# 🔴 **원전 목록에 구멍이 있었다** (실측 2026-08-11, 이 프로젝트 헤더 857개):
+#
+#     GENERATED_USTRUCT_BODY          97회   ← 원전 목록에 없다
+#     DECLARE_LOG_CATEGORY_EXTERN     25회   ← 없다
+#     DECLARE_DYNAMIC_MULTICAST_…     19회   ← 없다
+#     UE_DECLARE_GAMEPLAY_TAG_EXTERN         ← 없다 (그래서 태그 헤더의 동결이 0개였다)
+#
+# 그래서 `GENERATED_*BODY` 와 `DECLARE_`/`UE_DECLARE_` 계열을 접두어로 받는다.
+#
+# ⚠️ **대문자 매크로를 통째로 받지는 않는다.** 같은 실측에서 `UE_LOG` 가 헤더의 **인라인 본문에
+# 23회** 나왔다 — 그것까지 동결하면 워커가 로그 문구만 고쳐도 위반이 뜬다. *정상 작업을 막는
+# 게이트가 통과시키는 게이트보다 나쁘다*(사실 게이트에서 이미 내린 판단). 프로젝트 고유
+# 매크로(`PODS_SAFE_CALL` 130회 등)도 선언인지 문장인지 모르므로 넣지 않는다.
+_DECL_MACRO = re.compile(
+    r"^(GENERATED_\w*BODY|(UE_)?DECLARE_\w+|UPROPERTY|UFUNCTION|UCLASS|USTRUCT"
+    r"|UENUM|UINTERFACE|UDELEGATE)\b")
+_CLASS_DECL = re.compile(r"^(class|struct)\s+\w")
+# `<반환타입…> <이름>(` — 타입 토큰 + 공백 + 이름 + `(`. 베어 호출 `Foo();` 는 안 걸린다.
+_FUNC_SIG = re.compile(r"^[A-Za-z_][\w:<>,\*&\s~]*\s[~\w:]+\s*\(")
+# 본문 문장 키워드 — `return Foo();` 가 선언으로 오인되지 않게
+_STMT_KW = re.compile(r"^(return|if|else|for|while|switch|do|case|throw|delete|new"
+                      r"|co_return|co_await|using|typedef)\b")
+
+_FENCE_WRAP = re.compile(r"\A\s*```[a-zA-Z+]*\s*\n(.*?)\n?\s*```\s*\Z", re.DOTALL)
+_FENCE_ANY = re.compile(r"^\s*```", re.MULTILINE)
+
+HEADER_SUFFIXES = (".h", ".hpp")
+
+# 🔴 **골조는 상용 모델로 만든다** (사용자 2026-08-11: 원전이 *"클로드 오푸스 모델을 이용해
+# 처리"* 했다). 모토(*작성은 무료 로컬*)와 충돌하지 않는다 — 그 모토는 **본문 대량 생산**
+# 이야기이고, 골조는 **작업 하나당 1회**이면서 **모든 병렬 조각의 계약**이 된다. 틀린 골조는
+# N개 조각을 전부 오염시키므로, 배칭 실측이 말한 것과 같은 논리로 여기가 값을 쓸 자리다.
+# 레인 문법은 `synth.generate` 와 같다 — `claude:opus` · `claude` · `agy` · 그 밖은 브로커.
+DEFAULT_MODEL = "claude:opus"
+
+
+class SkeletonError(RuntimeError):
+    """골조를 만들 수 없다. 🔴 삼키면 빈 골조가 계약처럼 보인다."""
+
+
+def strip_comments(text: str) -> str:
+    """`//` 줄과 `/* */` 블록을 지운다 — 태그가 선언 키에 섞이지 않게."""
+    text = re.sub(r"/\*.*?\*/", " ", text or "", flags=re.DOTALL)
+    return re.sub(r"//[^\n]*", "", text)
+
+
+def frozen_decls(header: str) -> set:
+    """헤더의 **동결 대상 선언 키 집합.** 🔴 결정적 — LLM 0.
+
+    포함: UE 매크로 · `class`/`struct` 선언 · 함수 시그니처(선언이든 인라인 정의든).
+    ⚠️ 생성자·단독 멤버변수 rename 은 커버하지 않는다(원전과 같은 한계) — 백스톱은
+    층2 재점검과 통합 빌드다.
+    """
+    out: set = set()
+    for raw in strip_comments(header).splitlines():
+        line = re.sub(r"\s+", " ", raw).strip()
+        if not line:
+            continue
+        if _DECL_MACRO.match(line) or _CLASS_DECL.match(line):
+            out.add(re.split(r"[{;]", line, 1)[0].strip())
+        elif "(" in line and not _STMT_KW.match(line) and _FUNC_SIG.match(line):
+            # 🔴 `;`(선언)와 `{`(정의)가 같은 키가 된다 — 본문을 채워도 동결이 안 깨진다
+            out.add(re.split(r"[{;]", line, 1)[0].strip())
+    return out
+
+
+def violation(original: str, new: str) -> str:
+    """동결 위반 사유, 없으면 `""`. **추가는 허용** — `original ⊆ new` 만 본다 (소 2.1.1).
+
+    🔴 방향이 중요하다. 워커가 멤버를 *더하는* 것은 정상이고(구현하다 보면 헬퍼가 생긴다),
+    **기존 선언을 바꾸거나 지우는 것**만 병렬을 깨뜨린다.
+    """
+    missing = frozen_decls(original) - frozen_decls(new)
+    if not missing:
+        return ""
+    shown = sorted(missing)[:3]
+    more = f" (외 {len(missing) - 3}개)" if len(missing) > 3 else ""
+    return "동결 인터페이스 변경/삭제: " + " | ".join(shown) + more
+
+
+def depths(text: str) -> list:
+    """`[PSEUDO:N]` 의 N 들. 뎁스 없는 `[PSEUDO]` 만 있으면 빈 리스트(단일 태스크)."""
+    return sorted({int(m.group(1)) for m in _PSEUDO.finditer(text or "") if m.group(1)})
+
+
+def pseudo_count(text: str) -> int:
+    return len(_PSEUDO.findall(text or ""))
+
+
+def is_header(path: str) -> bool:
+    return str(path or "").lower().endswith(HEADER_SUFFIXES)
+
+
+def relations(paths: ProjectPaths, classes: list, *, max_each: int = 8) -> str:
+    """대상 클래스의 **관계**를 프롬프트 블록으로. 🔴 LLM 0 — 그래프에서 읽는다.
+
+    사용자가 원전 흐름을 이렇게 기억했다(2026-08-11): *"각 클래스별 관계(부모/자식, 포함관계
+    등)와 호출하는 인터페이스등 기본 골조를 만들고"*. 관계가 **골조의 재료**라는 뜻이다 —
+    부모가 무엇인지 모르면 `: public X` 를 지어내고, include 를 모르면 헤더를 잘못 문다.
+
+    🔴 우리는 이 그래프를 중 1.1 에서 이미 만들어 뒀는데(상속 + `#include`, LLM 0) **골조
+    프롬프트가 그것을 안 쓰고 있었다.** 규범·선언부만 싣고 관계를 뺀 것이 실제 누락이었다.
+    """
+    from ..graph import class_graph as cg, dependency as dep
+
+    names = [c for c in (classes or []) if c and c.strip()]
+    if not names:
+        return ""
+    lines: list = []
+    for cls in names:
+        bits: list = []
+        try:
+            anc = cg.find_ancestors(paths, cls)
+            if anc:
+                # 가까운 조상이 먼저다 — `: public <직계부모>` 가 골조에 그대로 쓰인다
+                bits.append(f"parents: {' <- '.join(anc[:max_each])}")
+        except Exception:                                   # noqa: BLE001
+            pass
+        try:
+            subs = cg.find_subclasses(paths, cls, max_depth=1)
+            if subs:
+                # 🔴 자식이 있으면 virtual 계약이 있다는 뜻이다 — 시그니처를 함부로 못 바꾼다
+                bits.append(f"children ({len(subs)}): {', '.join(subs[:max_each])}")
+        except Exception:                                   # noqa: BLE001
+            pass
+        if bits:
+            lines.append(f"- {cls}: " + " · ".join(bits))
+    inc: list = []
+    for f in _class_files(paths, names):
+        try:
+            deps = dep.dependencies(paths, f, depth=1)
+        except Exception:                                   # noqa: BLE001
+            continue
+        if deps:
+            inc.append(f"- {f} includes: {', '.join(deps[:max_each])}")
+    if not lines and not inc:
+        return ""
+    out = ["=== RELATIONS (measured from the source graph, not guessed) ==="]
+    if lines:
+        out += ["Inheritance:", *lines]
+    if inc:
+        out += ["Includes:", *inc]
+    out += ["🔴 Derive the skeleton's base class, virtual overrides and #include list from "
+            "these facts. Do not invent a parent that is not listed.",
+            "=== END RELATIONS ==="]
+    return "\n".join(out)
+
+
+def _class_files(paths: ProjectPaths, classes: list) -> list:
+    from ..graph import db as gdb
+    if not gdb.exists(paths):
+        return []
+    conn = gdb.connect(paths)
+    try:
+        want = set(classes)
+        return sorted({r["file"] for r in conn.execute("SELECT name, file FROM classes")
+                       if r["name"] in want and r["file"]})
+    finally:
+        conn.close()
+
+
+@dataclass
+class SkeletonSpec:
+    """무엇의 골조를 만들 것인가. **이미 분해된 조각 하나**가 들어온다 (§4.5)."""
+
+    stem: str
+    files: list = field(default_factory=list)      # 이 조각이 맡는 경로 (`.h` 먼저)
+    classes: list = field(default_factory=list)
+    instruction: str = ""                          # 무엇을 만들라는 것인지 (사람의 말)
+    source_files: list = field(default_factory=list)  # 포팅 원본 (소 1.3.5) — **읽기 전용**
+
+    def validate(self) -> None:
+        if not (self.stem or "").strip():
+            raise SkeletonError("stem 이 비었다 — 조각을 식별할 수 없다")
+        if not self.files:
+            raise SkeletonError(f"{self.stem}: 만들 파일 경로가 없다")
+        if not (self.instruction or "").strip():
+            raise SkeletonError(f"{self.stem}: 무엇을 만들지가 비었다")
+
+    @property
+    def headers(self) -> list:
+        return [f for f in self.files if is_header(f)]
+
+
+@dataclass
+class Skeleton:
+    """골조 한 벌. 🔴 **텍스트다** — 파일로 쓰는 것은 작업장 몫이다."""
+
+    stem: str
+    files: dict = field(default_factory=dict)      # 경로 → 본문
+    frozen: set = field(default_factory=set)       # 동결 선언 키 (헤더에서 뽑은 것)
+    depth_set: list = field(default_factory=list)  # `[PSEUDO:N]` → 소 1.2.4 가 소비
+    pseudo: int = 0
+    model: str = ""
+    grounding: list = field(default_factory=list)  # 무엇으로 grounding 했나 (근거 기록)
+    notes: list = field(default_factory=list)
+    prompt_chars: int = 0
+
+    @property
+    def ok(self) -> bool:
+        # 🔴 fail-closed — 채울 자리가 없거나 동결할 것이 없으면 골조가 아니다
+        return bool(self.files) and self.pseudo > 0 and bool(self.frozen)
+
+    @property
+    def header_text(self) -> str:
+        return "\n".join(t for p, t in sorted(self.files.items()) if is_header(p))
+
+    def contracts(self) -> str:
+        """`TaskSpec.contracts` 로 실릴 계약 텍스트. 워커가 읽는 것은 이것이다."""
+        if not self.frozen:
+            return ""
+        out = ["=== FROZEN INTERFACE — DO NOT CHANGE OR REMOVE ===",
+               "These declarations were fixed once when the skeleton was made. Adding new "
+               "members is allowed; changing or deleting any line below is not.",
+               "🔴 A worker that alters these is rejected deterministically before review.",
+               ""]
+        out += sorted(self.frozen)
+        out += ["", "Tags: [PSEUDO]/[PSEUDO:N]/[IMPL] — delete the marker line once "
+                "implemented. [DOC]/[STATE]/[BIND]/[REPLICATED] and untagged comments — "
+                "🔴 keep verbatim.",
+                "=== END FROZEN INTERFACE ==="]
+        return "\n".join(out)
+
+    @property
+    def summary(self) -> str:
+        bits = [f"파일 {len(self.files)}", f"[PSEUDO] {self.pseudo}",
+                f"동결 {len(self.frozen)}"]
+        if self.depth_set:
+            bits.append(f"뎁스 {self.depth_set}")
+        if self.model:
+            bits.append(self.model)
+        s = f"{self.stem}: " + " · ".join(bits)
+        if not self.ok:
+            s = "🔴 " + s + " — 골조가 아니다"
+        return s
+
+
+# ── 프롬프트 (소 1.1.2 grounding) ────────────────────────────────────────────────
+
+def build_prompt(spec: SkeletonSpec, *, declarations: str = "", norms: str = "",
+                 relations_text: str = "", conventions: str = "") -> str:
+    """골조 생성 프롬프트.
+
+    🔴 **grounding 은 이미 있는 것을 쓴다** — 헤더 선언(`declarations.py`, #26)과 도메인
+    규범(`norms.py`, 소 2.3.1). 원전은 이 둘이 없어 골조가 **LLM 자유 생성**이었고, 그래서
+    *동결의 원천이 LLM 출력*이었다. 우리는 실측된 이름과 규범 위에 세운다.
+
+    🔴 **선언부를 지시 바로 앞에 둔다** — 베껴야 할 텍스트가 지시에서 멀수록 모델은 기억에서
+    꺼낸다(#26 실측: `CurrentStep` vs 실제 `Step`).
+    """
+    spec.validate()
+    parts = [
+        "You are writing the SKELETON of Unreal Engine 5 C++ files for an existing project.",
+        "A skeleton fixes the interface and leaves the bodies unwritten, so that several "
+        "workers can fill different files in parallel without colliding.",
+        "",
+        "RULES — violating any of these makes the output unusable:",
+        "1. Write COMPLETE, COMPILABLE declarations: includes, UCLASS/USTRUCT/UENUM macros, "
+        "GENERATED_BODY(), member declarations, method signatures.",
+        "2. Do NOT write real logic. Every function body is a single line "
+        "`// [PSEUDO] <what this must do>` and nothing else.",
+        "3. Use `// [PSEUDO:1]`, `// [PSEUDO:2]` … instead of `[PSEUDO]` ONLY when this file "
+        "is large enough that one pass cannot implement it: depth 1 = foundational logic, "
+        "depth 2 = builds on depth 1, depth 3+ = integration. Otherwise use plain [PSEUDO].",
+        "4. Mark durable comments so they survive implementation: `[DOC]` design notes, "
+        "`[STATE]` what a member is for, `[BIND]` Blueprint/event wiring, `[REPLICATED]` "
+        "network replication. 🔴 Do NOT put any comment on getters/setters.",
+        "5. Output ONLY file contents, each preceded by a line `=== FILE: <path> ===`. "
+        "No markdown fences, no commentary before or after.",
+        "6. Follow the conventions of the existing codebase shown below — this is not "
+        "greenfield code.",
+        "",
+    ]
+    if norms.strip():
+        parts += [norms.strip(), ""]
+    # 🔴 관계는 규범 뒤·선언부 앞이다. 규범은 *무엇을 지킬지*, 관계는 *어디에 붙을지*,
+    #    선언부는 *정확한 철자*다 — 뒤로 갈수록 베껴야 하는 것이라 지시에 가깝게 둔다.
+    if relations_text.strip():
+        parts += [relations_text.strip(), ""]
+    if conventions.strip():
+        parts += ["=== CONVENTIONS ===", conventions.strip(), "=== END CONVENTIONS ===", ""]
+    if spec.source_files:
+        # 🔴 포팅 참조의 원칙 — 원전이 못박은 그대로 (소 1.3.5)
+        parts += [
+            "=== PREVIOUS IMPLEMENTATION (reference only) ===",
+            "🔴 This code is NOT the answer — it ran in a different engine version and "
+            "project. Read it to understand INTENT only. Do not copy it, and never edit it.",
+            *spec.source_files,
+            "=== END PREVIOUS IMPLEMENTATION ===",
+            "",
+        ]
+    if declarations.strip():
+        parts += [declarations.strip(), ""]
+    parts += [
+        "FILES TO WRITE (exactly these, in this order):",
+        *[f"  {f}" for f in spec.files],
+        "",
+        "TASK:",
+        spec.instruction.strip(),
+        "",
+    ]
+    return "\n".join(parts)
+
+
+# ── 응답 읽기 ────────────────────────────────────────────────────────────────────
+
+_FILE_MARK = re.compile(r"^===\s*FILE:\s*(.+?)\s*===\s*$", re.MULTILINE)
+
+
+def parse_files(raw: str, *, want: list) -> tuple:
+    """`=== FILE: path ===` 로 갈라 `{경로: 본문}`. `(파일들, 메모)`.
+
+    🔴 **요청하지 않은 경로는 버린다.** 모델이 없던 파일을 끼워 넣으면 그것을 워커가 쓰게
+    되는데, 분해 계획에 없던 파일은 **다른 조각과 충돌할 수 있다**(`check_disjoint` 의 전제가
+    깨진다).
+    """
+    text, _ = _strip_wrap(raw)
+    notes: list = []
+    marks = list(_FILE_MARK.finditer(text))
+    files: dict = {}
+    if not marks:
+        # 파일이 하나뿐이면 마커 없이 본문만 줄 수 있다 — 그때만 관대하게 받는다
+        if len(want) == 1 and text.strip():
+            files[want[0]] = text.strip()
+            notes.append("FILE 마커 없음 — 대상이 하나라 본문 전체로 받았다")
+            return files, notes
+        raise SkeletonError("응답에 `=== FILE: path ===` 마커가 없다 — 어느 파일인지 모른다")
+
+    norm = {_norm(w): w for w in want}
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        got = m.group(1).strip()
+        body = text[m.end():end].strip()
+        key = norm.get(_norm(got))
+        if key is None:
+            notes.append(f"🔴 요청하지 않은 경로를 버렸다: {got}")
+            continue
+        if not body:
+            notes.append(f"🔴 본문이 비었다: {key}")
+            continue
+        if _FENCE_ANY.search(body):
+            # 🔴 중간 펜스는 모델이 설명을 섞었다는 뜻이다 — 조용히 지우지 않는다
+            notes.append(f"🔴 본문에 마크다운 펜스가 남았다: {key}")
+        files[key] = body
+    for w in want:
+        if w not in files:
+            notes.append(f"🔴 빠진 파일: {w}")
+    return files, notes
+
+
+def _norm(p: str) -> str:
+    return str(p or "").replace("\\", "/").strip().lstrip("./").lower()
+
+
+def _strip_wrap(text: str) -> tuple:
+    m = _FENCE_WRAP.match(text or "")
+    return (m.group(1), True) if m else ((text or "").strip(), False)
+
+
+# ── 생성 (소 1.1.1) ──────────────────────────────────────────────────────────────
+
+def build(paths: ProjectPaths, spec: SkeletonSpec, *, model: str = DEFAULT_MODEL,
+          broker: str = "", num_ctx: int = 8192, timeout: int = 900,
+          ground: bool = True) -> Skeleton:
+    """골조를 **텍스트로** 만든다. 🔴 파일을 쓰지 않는다.
+
+    레인은 `synth.generate` 와 같은 규약이다 — `claude[:모델]`/`agy` 는 마스터의 상용 CLI,
+    그 밖은 브로커(8102)를 통해 모델을 상주한 노드로 간다. **기본값은 `claude:opus`** — 왜
+    그런지는 `DEFAULT_MODEL` 주석에 있다.
+    """
+    from . import generate as gen
+    from ..ontology import synth
+
+    spec.validate()
+    model = model or DEFAULT_MODEL
+    sk = Skeleton(stem=spec.stem, model=model)
+
+    decl = norms_text = ""
+    if ground:
+        # 🔴 이미 있는 것을 쓴다 — 새로 만들지 않는다
+        try:
+            from . import declarations as dcl
+            d = dcl.collect(paths, spec.classes)
+            decl = d.render()
+            if decl:
+                sk.grounding.append(f"선언부 {d.summary}")
+        except Exception as e:                              # noqa: BLE001
+            sk.notes.append(f"⚠️ 선언부 수집 실패 — 없이 진행한다: {e}")
+        try:
+            from . import norms as nm
+            n = nm.attach(paths, classes=spec.classes, stem=spec.stem)
+            # 🔴 `render()` 는 매니페스트용 마크다운 **줄 목록**이다. 비어도 *왜 비었는지*를
+            #    돌려주므로(`degraded`) 그대로 싣는다 — 규범이 없다는 사실도 grounding 이다.
+            lines = n.render()
+            norms_text = ("=== DOMAIN NORMS ===\n" + "\n".join(lines)
+                          + "\n=== END DOMAIN NORMS ===") if lines else ""
+            d, inv, act = n.counts
+            sk.grounding.append(f"규범 도메인 {d} · invariant {inv} · action {act}"
+                                + (" 🔴 " + "; ".join(n.degraded) if n.degraded else ""))
+        except Exception as e:                              # noqa: BLE001
+            sk.notes.append(f"⚠️ 규범 수집 실패 — 없이 진행한다: {e}")
+
+    rel = ""
+    if ground:
+        try:
+            rel = relations(paths, spec.classes)
+            if rel:
+                sk.grounding.append("관계 그래프(상속·include)")
+            else:
+                sk.notes.append("⚠️ 관계를 못 찾았다 — 신규 클래스이거나 그래프가 비었다")
+        except Exception as e:                              # noqa: BLE001
+            sk.notes.append(f"⚠️ 관계 수집 실패 — 없이 진행한다: {e}")
+
+    prompt = build_prompt(spec, declarations=decl, norms=norms_text, relations_text=rel)
+    sk.prompt_chars = len(prompt)
+
+    raw = synth.generate(prompt, model, broker=broker or gen.DEFAULT_BROKER,
+                         num_ctx=num_ctx, timeout=timeout)
+    sk.files, notes = parse_files(raw, want=spec.files)
+    sk.notes += notes
+
+    body = "\n".join(sk.files.values())
+    sk.pseudo = pseudo_count(body)
+    sk.depth_set = depths(body)
+    # 🔴 동결의 원천은 **헤더**다. `.cpp` 의 인라인 정의는 계약이 아니다.
+    head = sk.header_text or body
+    sk.frozen = frozen_decls(head)
+    if not sk.header_text and spec.headers:
+        sk.notes.append("🔴 헤더가 안 나왔다 — 동결을 `.cpp` 에서 뽑았다(약한 계약)")
+    if sk.pseudo == 0:
+        sk.notes.append("🔴 `[PSEUDO]` 가 0개 — 골조가 아니라 완성 파일이다. 태스크로 "
+                        "등재하면 워커가 할 일이 없다(원전은 이 경우 등재를 skip 한다)")
+    if not sk.frozen:
+        sk.notes.append("🔴 동결할 선언이 0개 — 계약을 만들 수 없어 병렬로 나눌 수 없다")
+    return sk
