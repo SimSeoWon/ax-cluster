@@ -86,6 +86,7 @@ def test_only_human_answers_are_stored() -> None:
         check("결정을 읽는다", got[0].decision == "컴포넌트", got[0].decision)
         check("이유를 읽는다", "액터 수명" in got[0].why, got[0].why)
         check("기준 커밋을 읽는다", got[0].at.startswith("b1ba6af"), got[0].at)
+        check("범위를 왕복 보존한다", got[0].scope == H.SCOPE_PROJECT, got[0].scope)
         check("사람이 답한 것만이라고 파일에 적는다",
               "사람이 답한 것만" in H.path_for(paths).read_text(encoding="utf-8"))
 
@@ -99,6 +100,45 @@ def test_second_answer_appends_not_overwrites() -> None:
         got = H.load(paths)
         check("둘 다 남는다", len(got) == 2, str([(g.topic, g.decision) for g in got]))
         check("나중 것이 뒤에", got[-1].decision == "안 쓴다", got[-1].decision)
+
+
+def test_scope_keeps_one_work_from_polluting_another() -> None:
+    """🔴 사용자 지적: *"저 질문들은 답변하면 모든 분산 작업에 적용되는거야?"* — 안 된다."""
+    items = [
+        H.Heuristic(topic="상태 보관", decision="컴포넌트", scope=H.SCOPE_PROJECT),
+        H.Heuristic(topic="미션 틱", decision="이벤트로", scope="domain:MissionRuntime"),
+        H.Heuristic(topic="UI 레이어", decision="스택", scope="domain:MissionEditor"),
+    ]
+    check("project 는 늘 적용", items[0].applies_to([]) and items[0].applies_to(["X"]))
+    check("domain 은 그 도메인만", items[1].applies_to(["MissionRuntime"]))
+    check("🔴 다른 도메인엔 안 실린다", not items[1].applies_to(["MissionEditor"]))
+    check("도메인 미상이면 domain 것은 빠진다", not items[1].applies_to([]))
+
+    t = H.render(items, domains=["MissionRuntime"])
+    check("project 가 실린다", "상태 보관" in t)
+    check("맞는 도메인이 실린다", "미션 틱" in t)
+    check("🔴 남의 도메인은 안 실린다", "UI 레이어" not in t, t)
+
+    t2 = H.render(items, domains=[])
+    check("도메인 미상이면 project 만", "상태 보관" in t2 and "미션 틱" not in t2, t2)
+
+
+def test_once_is_used_but_never_stored() -> None:
+    """🔴 *이번만* 은 적립하지 않는다 — 적립하면 남의 작업을 오염시킨다."""
+    import tempfile as _tf
+    once = H.Heuristic(topic="이 스냅샷", decision="컴포넌트로", scope=H.SCOPE_ONCE)
+    check("적립 대상이 아니다", not once.storable)
+    with _tf.TemporaryDirectory() as d:
+        paths = P(root=Path(d))
+        try:
+            H.add(paths, once)
+            check("🔴 적립을 거부한다", False)
+        except ValueError as e:
+            check("🔴 적립을 거부한다", "once" in str(e), str(e))
+        check("파일이 안 생긴다", not H.path_for(paths).is_file())
+    # 그래도 이번 프롬프트에는 실린다
+    t = H.render([], domains=[], extra=[once])
+    check("이번 골조에는 실린다", "이 스냅샷" in t, t)
 
 
 def test_render_prefers_recent_and_says_what_it_cut() -> None:
@@ -130,6 +170,8 @@ def main() -> int:
     for fn in (test_questions_are_parsed_loosely, test_no_block_means_no_questions,
                test_questions_never_leak_into_files, test_only_human_answers_are_stored,
                test_second_answer_appends_not_overwrites,
+               test_scope_keeps_one_work_from_polluting_another,
+               test_once_is_used_but_never_stored,
                test_render_prefers_recent_and_says_what_it_cut,
                test_prompt_puts_heuristics_first):
         fn()

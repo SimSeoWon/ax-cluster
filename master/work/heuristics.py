@@ -28,6 +28,24 @@
 원전은 앞쪽만 있었다(`.claude/recipes/_distribute_failures.md`). 뒤쪽이 없으면 *"컴파일은
 되지만 구조가 나쁜"* 선택은 영원히 교정되지 않는다 — 빌드가 통과하니 카탈로그에 안 남는다.
 
+## 🔴 범위가 없으면 오염이다 (사용자 지적 2026-08-11)
+
+> *"저 질문들은 답변하면 모든 분산 작업에 적용되는거야?"*
+
+처음 구현이 그랬다 — **답을 전부 한 파일에 쌓고 모든 골조 프롬프트에 실었다.** 그러면
+*"이 스냅샷은 컴포넌트로 한다"* 가 **관계없는 다음 작업에도** 실린다. 명백히 틀렸다.
+
+    project      "액터 수명에 묶이는 상태는 컴포넌트로 둔다"   → 앞으로 계속 적용
+    domain:<D>   "MissionRuntime 에서는 …"                   → 그 도메인 작업에만
+    once         "이번 스냅샷은 컴포넌트로"                    → 🔴 **적립하지 않는다**
+
+우리 온톨로지가 이미 **도메인별 규범**과 전역을 갈라 뒀고, 원전도 작업유형 템플릿(`task.yaml`)과
+전역 실패 카탈로그를 갈라 뒀다. 그 구분을 여기서 뭉개면 프롬프트가 **남의 작업의 결정**으로
+채워진다 — grounding 이 아니라 노이즈다.
+
+🔴 **범위도 사람이 정한다.** 모델이 *"이건 전역 규약입니다"* 라고 판단하게 두면, 적립 자체를
+사람에게 맡긴 이유가 사라진다.
+
 ## 저장 형태 — 사람이 읽는 마크다운
 
 YAML 도 JSON 도 아니다. 이건 **사람이 답한 문장**이고, 사람이 다시 읽고 고칠 것이다.
@@ -76,17 +94,42 @@ class Question:
         return s
 
 
+SCOPE_PROJECT = "project"
+SCOPE_ONCE = "once"          # 🔴 적립하지 않는다 — 이번 골조에만 쓰고 버린다
+DOMAIN_PREFIX = "domain:"
+
+
 @dataclass
 class Heuristic:
-    """사람이 답한 것. **이것만 적립된다.**"""
+    """사람이 답한 것. **이것만 적립된다.**
+
+    🔴 `scope` 가 핵심이다 — 없으면 이번 작업의 결정이 다음 작업을 오염시킨다(사용자 지적).
+    """
 
     topic: str
     decision: str
     why: str = ""
-    at: str = ""            # 트윈 기준 커밋 (언제의 판단인지)
+    at: str = ""                        # 트윈 기준 커밋 (언제의 판단인지)
+    scope: str = SCOPE_PROJECT          # project · domain:<D> · once
+
+    @property
+    def domain(self) -> str:
+        return self.scope[len(DOMAIN_PREFIX):] if self.scope.startswith(DOMAIN_PREFIX) else ""
+
+    @property
+    def storable(self) -> bool:
+        """🔴 `once` 는 적립하지 않는다 — 이번 골조에만 쓰고 버린다."""
+        return self.scope != SCOPE_ONCE
+
+    def applies_to(self, domains) -> bool:
+        """이 작업에 실어야 하나."""
+        if self.scope == SCOPE_PROJECT:
+            return True
+        d = self.domain
+        return bool(d) and d in set(domains or ())
 
     def render(self) -> str:
-        out = [f"## {self.topic}", "", f"**결정**: {self.decision}"]
+        out = [f"## {self.topic}", "", f"**범위**: {self.scope}", f"**결정**: {self.decision}"]
         if self.why:
             out.append(f"**이유**: {self.why}")
         if self.at:
@@ -139,7 +182,7 @@ def load(paths: ProjectPaths) -> list:
     for i, m in enumerate(marks):
         end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
         body = text[m.end():end]
-        dec = why = at = ""
+        dec = why = at = scope = ""
         for line in body.splitlines():
             t = line.strip()
             if t.startswith("**결정**:"):
@@ -148,8 +191,11 @@ def load(paths: ProjectPaths) -> list:
                 why = t.split(":", 1)[1].strip()
             elif t.startswith("_기준 "):
                 at = t.strip("_ ").replace("기준 ", "")
+            elif t.startswith("**범위**:"):
+                scope = t.split(":", 1)[1].strip()
         if dec:
-            out.append(Heuristic(topic=m.group(1).strip(), decision=dec, why=why, at=at))
+            out.append(Heuristic(topic=m.group(1).strip(), decision=dec, why=why, at=at,
+                                 scope=scope or SCOPE_PROJECT))
     return out
 
 
@@ -161,6 +207,9 @@ def add(paths: ProjectPaths, h: Heuristic) -> str:
     """
     if not (h.topic or "").strip() or not (h.decision or "").strip():
         raise ValueError("주제와 결정이 있어야 적립한다 — 빈 휴리스틱은 다음 골조를 흐린다")
+    if not h.storable:
+        # 🔴 `once` 는 이번 골조에만 쓰고 버린다 — 적립하면 남의 작업을 오염시킨다
+        raise ValueError("scope=once 는 적립하지 않는다 — 이번 골조에만 쓰고 버린다")
     p = path_for(paths)
     head = ("# 골조 휴리스틱\n\n"
             "🔴 **사람이 답한 것만 여기 쌓인다** — 모델이 제안한 것은 적립되지 않는다"
@@ -174,8 +223,14 @@ def add(paths: ProjectPaths, h: Heuristic) -> str:
     return str(p)
 
 
-def render(items: list, *, budget: int = BUDGET) -> str:
-    """프롬프트에 실을 블록. **최근 것이 우선**이고 예산에서 잘린다."""
+def render(items: list, *, budget: int = BUDGET, domains=None, extra=None) -> str:
+    """프롬프트에 실을 블록. **최근 것이 우선**이고 예산에서 잘린다.
+
+    🔴 `domains` 로 **거른다** — `project` 범위는 늘 싣고, `domain:<D>` 는 이 작업이 그
+    도메인일 때만 싣는다. 안 거르면 남의 작업의 결정이 프롬프트를 채운다(사용자 지적).
+    `extra` 는 이번 작업 한정(`once`) 답변 — 적립되지 않지만 이번 골조에는 실린다.
+    """
+    items = [h for h in (items or []) if h.applies_to(domains)] + list(extra or [])
     if not items:
         return ""
     out = ["=== HEURISTICS — decisions this project's owner already made ===",

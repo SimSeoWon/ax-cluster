@@ -283,6 +283,9 @@ class SkeletonSpec:
     classes: list = field(default_factory=list)
     instruction: str = ""                          # 무엇을 만들라는 것인지 (사람의 말)
     source_files: list = field(default_factory=list)  # 포팅 원본 (소 1.3.5) — **읽기 전용**
+    # 🔴 이번 작업에만 적용되는 사람의 답(`scope=once`). 적립되지 않고 이 골조에만 실린다 —
+    #    재생성 때 앞 라운드의 질문에 답한 것을 넣는 자리다.
+    answers: list = field(default_factory=list)
 
     def validate(self) -> None:
         if not (self.stem or "").strip():
@@ -565,10 +568,23 @@ def build(paths: ProjectPaths, spec: SkeletonSpec, *, model: str = DEFAULT_MODEL
     if ground:
         try:
             from . import heuristics as H
+            # 🔴 **이 작업의 도메인으로 거른다** — 안 거르면 남의 작업의 결정이 실린다
+            #    (사용자 지적 2026-08-11). 도메인은 결정적 추론으로 뽑는다(소 2.2.2).
+            doms: list = []
+            try:
+                from ..context_search import infer as _infer
+                doms = list(_infer.infer_for(
+                    paths, " ".join(spec.classes) + " " + spec.instruction).domains)
+            except Exception:                               # noqa: BLE001
+                pass
             items = H.load(paths)
-            heur = H.render(items)
-            if items:
-                sk.grounding.append(f"휴리스틱 {len(items)}건")
+            heur = H.render(items, domains=doms, extra=spec.answers)
+            kept = [h for h in items if h.applies_to(doms)]
+            if items or spec.answers:
+                sk.grounding.append(
+                    f"휴리스틱 {len(kept)}/{len(items)}건"
+                    + (f" (도메인 {', '.join(doms)})" if doms else " (도메인 미상 — project 만)")
+                    + (f" + 이번만 {len(spec.answers)}" if spec.answers else ""))
         except Exception as e:                              # noqa: BLE001
             sk.notes.append(f"⚠️ 휴리스틱 로드 실패 — 없이 진행한다: {e}")
 
