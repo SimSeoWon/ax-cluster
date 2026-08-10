@@ -364,3 +364,30 @@ non-void 함수는 컴파일되지 않는다 — **모델의 실패가 아니라
 
 🔴 우리 온톨로지가 이미 도메인별 규범과 전역을 갈라 뒀고 원전도 작업유형 템플릿과 전역 실패
 카탈로그를 갈라 뒀는데, 내가 그 구분을 뭉갰다. 테스트 40건(범위 필터·`once` 미적립 포함).
+
+## §11. 세션 마감 — 문서 최신화
+
+`README.md` 와 `master/README.md` 가 **오늘 만든 것을 통째로 모르고 있었다**(`skeleton` ·
+`skeleton_gate` · `decompose` · `heuristics` 0건 언급). 채웠다:
+
+    README.md              저장소 구조에 work/ 신규 4종 · 흐름도에 골조/게이트/통합자 ·
+                           테스트 표 4행. 🔴 흐름도가 "워커가 커밋한다" 로 낡아 있었다
+    master/README.md       모듈 4행 + work/ 요약을 새 토폴로지로
+    CLAUDE.md              "M3 has not started building yet" → 중 1.1·1.2 닫힘.
+                           🔴 **2026-08-11 에 바뀐 두 틀**을 못박았다(옛 근거로 논증하지 말 것):
+                           쓰는 주체는 하나 · 분산의 값은 증분
+    machines/sim-desktop.md  같음 + 게이트가 잡은 결함 셋
+
+검사: 깨진 링크 **0** · 테스트 **실패 0** · `~/CLAUDE.md` 심볼릭 링크 정상 ·
+레드마인 마일스톤 3 **13/51**(중분류 10, 제목에 분자 0, 버전 미지정 0).
+
+### 오늘 남긴 상태
+
+    .2   측정용 worktree `E:\trunk\ms-wt-probe` (detached, 빌드 캐시 따뜻함 — 다음 게이트 60초대)
+         🔴 지우는 것은 사람이 판단한다:
+         ssh janus@192.168.0.2 'cd /d E:\trunk\ModularStage && git worktree remove --force E:\trunk\ms-wt-probe'
+    프로젝트  `skeleton-heuristics.md` 는 **아직 없다** — 실제 요청이 들어와야 첫 항목이 쌓인다
+
+**다음**: 대 1 의 남은 둘 — 중 1.3(추론 파견) · 중 1.4(통합자). 🔴 **소 1.4.1 의 선결이던
+worktree 비용은 오늘 재서 풀렸다**(콜드 144초·증분 35~65초·1.8GB) — 다만 `RunTests`(DDC)는
+여전히 미측정이다.

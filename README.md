@@ -37,11 +37,17 @@ Gitea push → post-receive 훅 → 스풀 → inotify → 색인기
                               → 벡터(다국어) + BM25 재색인, A/B 세대 무중단 교체
 
 [트윈을 쓰는 길 — 작업 요청]
-요청자(.33) → search_context (대괄호 해석 → 시소러스 확장 → 융합 검색)
-           → register_work + durable `task/<id>` 브랜치
-마스터      → claim → 기준 커밋 재해석 → 매니페스트 배달(규범 + 헤더 선언)
-           → 워커의 Claude 를 원격 구동 → fail-closed 마커 판정 → submit → 찌꺼기 정리
+요청자(.33) → search_context → "이런 기능이 필요하다" → register_work + durable `task/<id>`
+마스터      → 🔴 골조 생성(claude:opus) — 관계 그래프·헤더 선언·규범·휴리스틱으로 grounding
+           → 골조가 되묻는다 → 🔴 **사람이 답한다** → 인터페이스 동결(결정적)
+           → 🔴 골조 빌드 게이트: 통합자 `.2` 에서 세워 보고 **통과해야 등재**
+           → 분해(의존 순서·파일 불가분) → 매니페스트 배달 → 워커는 **추론만**
+통합자(.2)  → 적용(순차) → UE5 빌드 판정 → 🔴 **통과분만** durable 에 커밋
 ```
+
+🔴 **쓰는 주체는 하나다**(2026-08-11). 빌드해 본 주체가 커밋하므로 **깨진 것이 원격에 못
+박힌다.** 그리고 분산이 주는 것은 처리량이 아니라 **증분**이다 — 실측상 워커 2대는 12% 빠르고
+90% 비쌌고, 값은 *"작업이 항상 컴파일되는 상태로 쌓인다"* 는 데 있다(§4.5).
 
 🔴 **워커에 큐 토큰을 주지 않는다 — 마스터가 중개한다**(실측: 워커는 8101 에 401). 하트비트도
 마스터가 대신 친다. 요청자→워커 한 바퀴 **1분 29초** 실측.
@@ -97,7 +103,11 @@ ax-cluster/
 │   │   ├── class_graph.py      상속 그래프 + methods 소유권
 │   │   └── dependency.py       `#include` 의존 그래프
 │   ├── events/                 ← Gitea 훅 → 스풀 → 색인기 (트윈이 자라는 지점)
-│   ├── work/                   ← 작업 루프 — 2단 브랜치·매니페스트·생성·인계
+│   ├── work/                   ← 작업 루프 — 골조·분해·파견·검증
+│   │   ├── skeleton.py         🔴 골조 생성 + **인터페이스 동결**(결정적, LLM 0). 텍스트만 낸다
+│   │   ├── skeleton_gate.py    🔴 **등재 전에 세워 본다** — 빌드 통과해야 등재
+│   │   ├── decompose.py        분해 — 의존 순서·파일 불가분·`[PSEUDO:N]` 뎁스
+│   │   ├── heuristics.py       🔴 대화형 휴리스틱 — **사람이 답한 것만**, 범위(project/domain/once)
 │   │   ├── runner.py           🔴 큐 → 워커 파견 (마스터가 중개·하트비트 대행)
 │   │   ├── batching.py         🔴 파일 불가분 묶음 — 열쇠는 **모듈+경로+stem**(basename 아님)
 │   │   ├── declarations.py     헤더 선언 주입 — 실측 환각 2 → 0
@@ -164,6 +174,10 @@ ax-cluster/
 .venv/bin/python -m master.transfer export         # 두 벌(full·compat) + README
 .venv/bin/python -m master.transfer import <zip>   # 🔴 기본은 계획만 · --apply 는 먼저 백업
 
+# 골조 · 분해 (마일스톤 3 대 1)
+#   골조는 claude:opus 로 만들고(계약이라 값을 쓴다), 등재 전에 통합자 `.2` 에서 세워 본다.
+#   분해는 include 그래프로 적용 순서를 정하고, 계획은 🔴 사람이 preview() 를 보고 자른다.
+
 # 워커에 일 시키기 (중 2.5)
 .venv/bin/python -m master.client probe            # 머신 실측 — 경로·능력·체크아웃
 .venv/bin/python -m master.client deliver          # config·스킬·CLAUDE.md 배달 (해시 대조)
@@ -218,6 +232,10 @@ for f in master/test_*.py; do .venv/bin/python "$f" 2>&1 | tail -1; done
 |---|---|
 | `test_verdict.py` | 층2 판정 계약 — 🔴 venv 없이 도는 **순수 로직** |
 | `test_work.py` · `test_runner.py` | 작업 루프 · 워커 파견(fail-closed 마커·계측) |
+| `test_skeleton.py` | 골조 · 🔴 **동결**(추가는 허용, 변경·삭제는 위반) · 태그 계약 |
+| `test_skeleton_gate.py` | 🔴 **fail-closed** — 미확인은 통과가 아니다 |
+| `test_decompose.py` | 의존 순서 · 🔴 **묶음(동시) vs 뎁스(순차)** 구분 |
+| `test_heuristics.py` | 🔴 사람이 답한 것만 · **범위**(project/domain/once) |
 | `test_batching.py` | 🔴 **파일 불가분** — `.h`/`.cpp` 는 붙이고 **다른 모듈의 동명 파일은 가른다** |
 | `test_ontology.py` | YAML 왕복 보존(PyYAML 의존 0) · 잠금 보존 · 사실 게이트 |
 | `test_transfer.py` | 익스포트 두 벌 · 🔴 임포트는 **병합**(보호 필드 이월) |

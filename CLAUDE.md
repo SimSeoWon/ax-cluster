@@ -17,7 +17,7 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   🔴 **Neither the numerator nor the denominator is written in any document** — read both from
   Redmine (version *마일스톤 3*). Hand-kept numerators drifted twice in M2, and the *denominator*
   moved on 2026-08-10 (32 → 36) when reading the predecessor's design doc uncovered missing work.
-  M3 structure: 대 3 / 중 9 — **소분류가 작업 단위다**, main is 대 1 (decompose →
+  M3 structure: 대 3 / 중 10 — **소분류가 작업 단위다**, main is 대 1 (decompose →
   skeleton + **frozen interface** → parallel generate → **sequential apply**). 대 2 is the
   3-layer verdict; 대 3 is the operator surface. Never size a task by line count:
   `class_graph`'s 1,341 lines turn out to be *"delete the file → full rescan on restart"*.
@@ -88,10 +88,14 @@ from the master's own container DB. 🔴 **Never write the key value into a doc 
 모듈별 설명·함정·실측은 [`master/README.md`](master/README.md) 에 있다. 여기엔 **놓치면 안 되는 것만** 남긴다.
 
 `worker/` is still a README-only stub. **`client/` is live** — see the table row above.
-🔴 **Say "done" only for a whole area.** Milestone 2 *is* a whole area and it closed 2026-08-10 —
-the twin grows, is searchable, and feeds code generation. **M3 has not started building yet**: the
-skeleton generator, the 3-layer gate, and the status UI are all 🕓. When reporting status, give the
-denominator (read it from Redmine), never a scope narrowed to what got built.
+🔴 **Say "done" only for a whole area.** M2 closed 2026-08-10. In M3, **중 1.1 (skeleton + freeze)
+and 중 1.2 (decompose) are closed** — the skeleton is generated, grounded, frozen deterministically,
+and **built on `.2` before registration**. 🕓 Still untouched: 중 1.3 dispatch, 중 1.4 integrator,
+all of 대 2 (3-layer gate) and 대 3. When reporting status, give the denominator (read it from
+Redmine), never a scope narrowed to what got built.
+🔴 **Two framings that changed on 2026-08-11 — don't argue from the old ones**: the pipeline has
+**one writer** (the integrator `.2` builds, then commits), and distribution buys **incremental
+progress, not throughput** (measured: 2 workers = 12% faster, 90% dearer).
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
 ## Tests — 🔴 **수를 여기 적지 않는다**
