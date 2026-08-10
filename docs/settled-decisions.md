@@ -210,3 +210,42 @@ Always disambiguate by directory (§4.1).
 > ⚠️ An earlier version of this text said AgentTest's `worker/` "ports to `master/`".
 > **That was wrong**, and §2.1 corrected it on 2026-08-07: what BC-250 took over is *inference
 > compute*, not file work. The harness never leaves Windows.
+
+## Write authority — 🔴 **one writer: the integrator builds, then commits** (user-confirmed 2026-08-11)
+
+The pipeline used to have **N writers**: each worker edited its own clone, committed, and pushed an
+`attempt/` branch; the master judged from a `RESULT:` marker. That is now replaced.
+
+    requester   `.33`        registers · reviews · writes `[FEEDBACK]`   🔴 the pipeline never commits here
+    worker      `.2` `.43`   **infers only** — reads the branch, answers 🔴 does not commit
+    integrator  `.2`         **applies → UE5 build verdict → commits**   🔴 the only writer
+    master      —            queue · manifest · routing · skeleton generation
+
+**Why the change.** The old shape judged a task by the worker's own report, and **nobody asked
+whether it compiles.** The predecessor hit exactly that: with build *after* registration, a broken
+skeleton landed in `origin` and every worker built on top of it. Making the builder the committer
+turns that from a rule into a structure — broken code cannot reach the remote.
+
+It also removes a class of problems wholesale: worker git credentials, `attempt/` branch debris,
+"workers may not delete branches", dirty-tree dispatch blocking, and half of the CAS/fencing —
+all of it existed because several machines wrote. It is the same direction §5.2-D already took
+(*"durable merge CAS · a model holding merge authority — unnecessary for one operator"*).
+
+🔴 **The parallelism being given up was already suspect**: measured 2026-08-09, two workers were
+**12% faster and 90% more expensive** (cache creation is a per-worker fixed cost). And layer 3 was
+*already* serial on `.2` — the only machine that can run a UE5 verdict unattended. So the serial
+bottleneck is **relocated, not introduced**.
+
+🔴 **Why `.2` and not the requester.** The user's first sketch put applying on the main work PC.
+`.2` is chosen instead because `.33` is **the human's machine** — guest rules apply (read-only by
+preference, `git worktree` never a branch switch, uncommitted `.uasset` is unrecoverable) and its
+availability is low (measured off during this very session). `.2` has UE5 5.8, is dedicated, and
+already holds the layer-3 role.
+
+**Known costs, accepted:**
+- `.2` becomes a single point of failure for apply+build. Layer 3 already made it one; more work now
+  rides on it.
+- On `.2` the inference checkout and the apply checkout must not be the same tree → **worktree
+  isolation**, the same trick §8.4 prescribes for the requester.
+- The N-writer machinery (worker Gitea keys, `attempt/` branches, `work/cleanup.py`) becomes
+  dormant. 🔴 **It is kept, not deleted** — this is reversible until measured otherwise.
