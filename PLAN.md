@@ -18,10 +18,14 @@ Unreal MCP (UE 5.8.1+), and code-writing agents into one pipeline.
 indexed, and feeds code generation — both of M2's goals run end to end.
 
 **Milestone 3 turns that into production**: decompose one big request into class-family pieces
-(skeleton + **frozen interface** first — §4.5's empty first step), generate in parallel across two
-workers, **apply sequentially**, and judge with the **3-layer deterministic gate** (L1 self-check /
-L2 commercial model / L3 UE5 build + RunTests). Plus the operator surface: upper-layer commands and
-a cluster status web UI. Structure is 대 3 / 중 9, main = 대 1.
+(skeleton + **frozen interface** first — §4.5's empty first step), generate across workers, **apply
+sequentially**, and judge with the **3-layer deterministic gate** (L1 self-check / L2 commercial
+model / L3 UE5 build + RunTests). Plus the operator surface: upper-layer commands and a cluster
+status web UI. Structure is 대 3 / 중 10, main = 대 1.
+🔴 **What distribution buys is incremental progress, not throughput** (user-reframed 2026-08-11):
+measured, two workers were 12% faster and **90% more expensive**, and the 3.2× saving came from
+batching, not parallelism. The value is that work accumulates **in a state that always compiles**
+— which makes verification a premise rather than an option. See `docs/4-work-loop.md` §4.5.
 🔴 **Neither the numerator nor the denominator is written in any document** — read both from Redmine
 (version *마일스톤 3*). Hand-kept numerators drifted twice in M2, and on 2026-08-10 the *denominator*
 moved too (32 → 36) when reading the predecessor's design doc uncovered four missing sub-tasks.

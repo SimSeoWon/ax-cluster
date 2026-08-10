@@ -249,3 +249,26 @@ already holds the layer-3 role.
   isolation**, the same trick §8.4 prescribes for the requester.
 - The N-writer machinery (worker Gitea keys, `attempt/` branches, `work/cleanup.py`) becomes
   dormant. 🔴 **It is kept, not deleted** — this is reversible until measured otherwise.
+
+## Distribution's value — 🔴 **incremental progress, not throughput** (user-reframed 2026-08-11)
+
+> *"분산 작업의 장점은 비용이나 시간이라고 생각했는데, 어찌보면 증분이 아닐까해"*
+
+Measured numbers refuse the throughput story: two workers ran **12% faster and 90% more
+expensive** (cache creation is a per-worker fixed cost), the **3.2× saving came from batching**
+(fewer calls), not from parallelism, and layer 3 was serial on `.2` all along.
+
+What the machinery in §4.5 actually buys is that **work accumulates in a state that always
+compiles**: the frozen interface stops pieces from breaking each other, the skeleton build gate
+makes sure the base stands, dependency order decides what stacks on what, and the integrator
+commits **only what built**. Under the 2026-08-11 write-authority decision every commit on a
+durable branch is build-verified, so the branch is monotonically green.
+
+🔴 **Verification is therefore a premise, not an option.** Piling up unverified output is debt,
+not increment. Free local generation works because **wrong things do not accumulate** — not
+because it is cheap. The predecessor's own correction (*reject = advance-and-amend, never
+discard-and-regenerate*, 2026-06-21) is the same statement from the other side.
+
+⚠️ This does not move the free/paid boundary. Measured (report 12 §7), a locally generated
+skeleton froze **6 declarations where Opus froze 30** — that argues the *skeleton* is a contract
+worth paying for, not that bodies should be. Bodies stay free-local plus verification.

@@ -308,6 +308,9 @@ class Skeleton:
     pseudo: int = 0
     model: str = ""
     grounding: list = field(default_factory=list)  # 무엇으로 grounding 했나 (근거 기록)
+    # 🔴 모델이 "여기서 추측했다" 고 말한 것 (소 1.1.6). **이것 자체는 휴리스틱이 아니다** —
+    #    사람이 답해야 적립된다. 자동 승급을 껐던 것과 같은 이유.
+    questions: list = field(default_factory=list)
     notes: list = field(default_factory=list)
     prompt_chars: int = 0
 
@@ -340,6 +343,8 @@ class Skeleton:
     def summary(self) -> str:
         bits = [f"파일 {len(self.files)}", f"[PSEUDO] {self.pseudo}",
                 f"동결 {len(self.frozen)}"]
+        if self.questions:
+            bits.append(f"🔴 물음 {len(self.questions)}")
         if self.depth_set:
             bits.append(f"뎁스 {self.depth_set}")
         if self.model:
@@ -353,7 +358,8 @@ class Skeleton:
 # ── 프롬프트 (소 1.1.2 grounding) ────────────────────────────────────────────────
 
 def build_prompt(spec: SkeletonSpec, *, declarations: str = "", norms: str = "",
-                 relations_text: str = "", conventions: str = "") -> str:
+                 relations_text: str = "", conventions: str = "",
+                 heuristics_text: str = "") -> str:
     """골조 생성 프롬프트.
 
     🔴 **grounding 은 이미 있는 것을 쓴다** — 헤더 선언(`declarations.py`, #26)과 도메인
@@ -383,12 +389,21 @@ def build_prompt(spec: SkeletonSpec, *, declarations: str = "", norms: str = "",
         "4. Mark durable comments so they survive implementation: `[DOC]` design notes, "
         "`[STATE]` what a member is for, `[BIND]` Blueprint/event wiring, `[REPLICATED]` "
         "network replication. 🔴 Do NOT put any comment on getters/setters.",
-        "5. Output ONLY file contents, each preceded by a line `=== FILE: <path> ===`. "
-        "No markdown fences, no commentary before or after.",
-        "6. Follow the conventions of the existing codebase shown below — this is not "
+        "5. Output the file contents, each preceded by a line `=== FILE: <path> ===`. "
+        "No markdown fences.",
+        "6. 🔴 AFTER the files, output a `=== QUESTIONS ===` block: every place where you "
+        "had to GUESS, and every structure you think would be better than what the task "
+        "asked for. One per line, phrased as a question with the alternatives "
+        "(`Should X be a component or a subsystem?`). Write `(none)` only if you truly had "
+        "no choice to make. 🔴 Do NOT change the files because of these — the owner decides, "
+        "not you.",
+        "7. Follow the conventions of the existing codebase shown below — this is not "
         "greenfield code.",
         "",
     ]
+    # 🔴 휴리스틱이 맨 앞이다 — *이미 내려진 사람의 결정*이라 나머지 재료보다 위다
+    if heuristics_text.strip():
+        parts += [heuristics_text.strip(), ""]
     if norms.strip():
         parts += [norms.strip(), ""]
     # 🔴 관계는 규범 뒤·선언부 앞이다. 규범은 *무엇을 지킬지*, 관계는 *어디에 붙을지*,
@@ -432,6 +447,13 @@ def parse_files(raw: str, *, want: list) -> tuple:
     되는데, 분해 계획에 없던 파일은 **다른 조각과 충돌할 수 있다**(`check_disjoint` 의 전제가
     깨진다).
     """
+    # 🔴 `=== QUESTIONS ===` 블록은 파일이 아니다 — 파일 파싱 전에 떼어낸다(소 1.1.6).
+    #    안 떼면 마지막 파일의 본문에 질문이 섞여 그대로 워커에게 배달된다.
+    #    ⚠️ **마지막 것 기준으로 자른다** — 실측 2026-08-11: 첫 것 기준으로 잘랐더니 모델이
+    #    본문 중간에 흘린 낱말에 걸려 **`.cpp` 를 통째로 잃었다**(파일 1개만 남았다).
+    from .heuristics import _last_q_start
+    _i = _last_q_start(raw or "")
+    raw = (raw or "")[:_i] if _i >= 0 else (raw or "")
     text, _ = _strip_wrap(raw)
     notes: list = []
     marks = list(_FILE_MARK.finditer(text))
@@ -539,14 +561,35 @@ def build(paths: ProjectPaths, spec: SkeletonSpec, *, model: str = DEFAULT_MODEL
             sk.notes.append(f"⚠️ 관계 수집 실패 — 없이 진행한다: {e}")
 
     # 🔴 include 타입은 **선언부와 한 덩어리**로 붙인다 — 둘 다 "정확한 철자" 채널이다
+    heur = ""
+    if ground:
+        try:
+            from . import heuristics as H
+            items = H.load(paths)
+            heur = H.render(items)
+            if items:
+                sk.grounding.append(f"휴리스틱 {len(items)}건")
+        except Exception as e:                              # noqa: BLE001
+            sk.notes.append(f"⚠️ 휴리스틱 로드 실패 — 없이 진행한다: {e}")
+
     prompt = build_prompt(spec, declarations="\n\n".join(x for x in (inc, decl) if x),
-                          norms=norms_text, relations_text=rel)
+                          norms=norms_text, relations_text=rel, heuristics_text=heur)
     sk.prompt_chars = len(prompt)
 
     raw = synth.generate(prompt, model, broker=broker or DEFAULT_BROKER,
                          num_ctx=num_ctx, timeout=timeout)
     sk.files, notes = parse_files(raw, want=spec.files)
     sk.notes += notes
+    try:
+        from . import heuristics as H
+        sk.questions = H.parse_questions(raw)
+        if not sk.questions:
+            # ⚠️ 물음이 0개인 것은 *애매함이 없었다* 는 뜻일 수도, 모델이 규칙을 어긴 것일
+            #    수도 있다. 구분이 안 되므로 **말은 해 둔다.**
+            sk.notes.append("⚠️ 골조가 물음을 하나도 내지 않았다 — 애매함이 없었거나 "
+                            "지시를 어겼거나다. 큰 작업이면 의심할 것")
+    except Exception as e:                                  # noqa: BLE001
+        sk.notes.append(f"⚠️ 물음 파싱 실패: {e}")
 
     body = "\n".join(sk.files.values())
     sk.pseudo = pseudo_count(body)
