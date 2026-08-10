@@ -62,8 +62,22 @@ Runner = Callable[[Sequence[str], int], subprocess.CompletedProcess]
 
 
 def _run(cmd: Sequence[str], timeout: int) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        list(cmd), capture_output=True, text=True, timeout=timeout, check=False
+    """원격 명령 실행. 🔴 **바이트로 받아 우리 디코더로 푼다.**
+
+    ⚠️ 실측 2026-08-11(골조 게이트 첫 실전 구동에서 터졌다): `text=True` 는 strict UTF-8 이라
+    **한국어 윈도우의 UBT 출력에서 `UnicodeDecodeError` 로 죽는다** — 링커가 CP949 로
+    *"라이브러리 … 만들고 있습니다"* 를 뱉는다. 판정 문자열(`Result:`)은 ASCII 라 살아 있는데
+    **디코딩이 먼저 죽어서 판정 자체에 도달하지 못했다.**
+
+    🔴 `errors="replace"` 로 때우지 않는다 — 그러면 빌드 실패 사유의 한국어가 깨져 **사람이
+    로그를 못 읽는다.** 소스 44%가 CP949 라 이미 만들어 둔 `source_text.decode`(UTF-8 → CP949
+    → replace)를 그대로 쓴다.
+    """
+    p = subprocess.run(list(cmd), capture_output=True, timeout=timeout, check=False)
+    from .source_text import decode
+    return subprocess.CompletedProcess(
+        p.args, p.returncode,
+        decode(p.stdout or b"").text, decode(p.stderr or b"").text,
     )
 
 

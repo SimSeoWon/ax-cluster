@@ -92,6 +92,12 @@ class Registered:
     work_id: str
     tasks: list[TaskResult]
     generated: list = field(default_factory=list)   # 골조를 마스터가 만든 stem (소 1.1.4)
+    gates: list = field(default_factory=list)       # 골조 빌드 게이트 판정 (소 1.1.5)
+
+    @property
+    def gate_checked(self) -> bool:
+        """🔴 **미확인과 통과를 구분한다.** 게이트를 안 돌렸으면 빌드를 확인한 게 아니다."""
+        return bool(self.gates) and all(getattr(g, "ok", False) for g in self.gates)
 
     @property
     def ok(self) -> bool:
@@ -109,6 +115,9 @@ class Registered:
             s += f" · 매니페스트 결손 {degraded}건"
         if self.generated:
             s += f" · 골조 생성 {len(self.generated)}건"
+        # ⚠️ 빌드를 확인했는지 **말로 적는다** — 안 적으면 미확인이 통과처럼 읽힌다
+        s += (f" · 골조 빌드 ✅ {len(self.gates)}건" if self.gates
+              else " · ⚠️ 골조 빌드 미확인")
         if self.failed:
             s += f" · 🔴 실패 {len(self.failed)}건"
         return s
@@ -130,7 +139,8 @@ def _post(url: str, payload: dict, *, token: str | None = None) -> dict:
         raise RegisterError(f"{url} → 연결 실패: {e.reason}") from e
 
 
-def _fill_skeletons(specs: list, *, paths: ProjectPaths, make_skeleton=None) -> list:
+def _fill_skeletons(specs: list, *, paths: ProjectPaths, make_skeleton=None,
+                    gate=None, gate_results: list | None = None) -> list:
     """골조가 빈 명세를 채운다 (소 1.1.4). **제자리에서 고치고** 생성한 stem 을 돌려준다.
 
     🔴 **생성 조건은 하나다 — `instruction` 이 있고 `skeleton` 이 없을 때.** 둘 다 없는 명세는
@@ -157,6 +167,16 @@ def _fill_skeletons(specs: list, *, paths: ProjectPaths, make_skeleton=None) -> 
         built = fn(paths, spec)
         if not built.ok:
             raise RegisterError(f"{s.stem}: 골조 생성 실패 — " + "; ".join(built.notes))
+        # 🔴 **골조 빌드 게이트** (소 1.1.5) — 통과해야만 등재한다. 골조는 모든 조각의
+        #    base 라, 조각 하나가 깨지는 것과 값이 다르다: 깨진 골조는 **N개를 헛일로 만든다.**
+        #    원전이 빌드를 등재 *뒤*에 두었다가 정확히 그 사고를 냈다.
+        if gate is not None:
+            g = gate(built)
+            if gate_results is not None:
+                gate_results.append(g)
+            if not getattr(g, "ok", False):
+                raise RegisterError(f"{s.stem}: 🔴 골조 빌드 게이트 차단 — "
+                                    f"{getattr(g, 'summary', g)}")
         # 🔴 파일로 쓰지 않는다. 텍스트로 실어 보낸다 (§2.1).
         s.skeleton = "\n\n".join(f"=== FILE: {p} ===\n{t}"
                                  for p, t in sorted(built.files.items()))
@@ -180,6 +200,7 @@ def register_work(
     poster=None,
     searcher=None,
     make_skeleton=None,
+    gate=None,
 ) -> Registered:
     """work 를 만들고 태스크를 등록한다. 태스크마다 매니페스트를 1회 수집한다.
 
@@ -191,6 +212,10 @@ def register_work(
     `make_skeleton` 은 골조가 없는 명세를 위해 **등록 전에** 불린다 (소 1.1.4). 기본은
     `skeleton.build` 이고, 골조를 이미 넘겨준 명세는 **건드리지 않는다**(하위 호환 — 사람이
     직접 쓴 골조가 LLM 출력보다 낫다면 그쪽이 이긴다).
+
+    `gate(skeleton) -> GateResult` 를 주면 **골조를 세워 보고 통과해야만 등재한다**
+    (소 1.1.5, `skeleton_gate.run`). ⚠️ **게이트를 안 주는 것은 통과가 아니라 미확인이다** —
+    결과의 `gate_checked` 로 구분한다.
     """
     if not (title or "").strip():
         raise RegisterError("title 이 비었다")
@@ -201,7 +226,9 @@ def register_work(
         s.validate()
     # 🔴 **골조 생성은 큐를 만지기 전에 끝낸다.** 등록 도중 생성이 실패하면 반쪽 work 가
     #    남고, 그건 사람이 치운다 — 위 검증 선행과 같은 이유다.
-    generated = _fill_skeletons(specs, paths=paths, make_skeleton=make_skeleton)
+    gates: list = []
+    generated = _fill_skeletons(specs, paths=paths, make_skeleton=make_skeleton,
+                                gate=gate, gate_results=gates)
     for s in specs:
         if s.stem in seen:
             raise RegisterError(f"stem 이 중복이다: {s.stem} — 매니페스트가 서로를 덮어쓴다")
@@ -270,4 +297,5 @@ def register_work(
             r.manifest_degraded = m.degraded
         results.append(r)
 
-    return Registered(work_id=work_id, tasks=results, generated=generated)
+    return Registered(work_id=work_id, tasks=results, generated=generated,
+                      gates=gates)

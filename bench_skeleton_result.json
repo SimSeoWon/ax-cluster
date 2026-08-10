@@ -1,0 +1,54 @@
+{
+  "qwen2.5-coder:14b": {
+    "frozen": 6,
+    "pseudo": 9,
+    "depths": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "files_ok": true,
+    "missing_files": [],
+    "extra_files": [],
+    "tags_kept": 1,
+    "fence_left": true,
+    "invented_parent": "",
+    "chars": 2009,
+    "elapsed": 28.3,
+    "ok": true,
+    "notes": [
+      "🔴 본문에 마크다운 펜스가 남았다: Source/ModularStage/Mission/TaskSystem/MissionTaskSnapshot.h",
+      "🔴 본문에 마크다운 펜스가 남았다: Source/ModularStage/Mission/TaskSystem/MissionTaskSnapshot.cpp"
+    ],
+    "grounding": [
+      "선언부 선언부 1개 · 🔴 헤더 없음 1",
+      "규범 도메인 2 · invariant 12 · action 3",
+      "관계 그래프(상속·include)"
+    ]
+  },
+  "hf.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M": {
+    "frozen": 10,
+    "pseudo": 12,
+    "depths": [
+      1,
+      2,
+      3
+    ],
+    "files_ok": true,
+    "missing_files": [],
+    "extra_files": [],
+    "tags_kept": 3,
+    "fence_left": false,
+    "invented_parent": "",
+    "chars": 2455,
+    "elapsed": 83.0,
+    "ok": true,
+    "notes": [],
+    "grounding": [
+      "선언부 선언부 1개 · 🔴 헤더 없음 1",
+      "규범 도메인 2 · invariant 12 · action 3",
+      "관계 그래프(상속·include)"
+    ]
+  }
+}

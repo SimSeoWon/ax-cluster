@@ -36,6 +36,19 @@
 ⚠️ **getter/setter 에는 주석을 달지 않는다** — 시그니처로 충분하고, 불필요한 주석은 워커
 프롬프트의 노이즈가 된다.
 
+## 🔴 골조는 "본문 없음" 이 아니라 **"컴파일되는 최소 본문"** 이다 (실측 2026-08-11)
+
+소 1.1.5 게이트를 처음 실전 구동했을 때 **골조가 빌드에서 떨어졌다**:
+
+    error C4716: 'UMissionTaskSnapshot::IsSnapshotValid': 값을 반환해야 합니다
+
+본문을 `// [PSEUDO] …` 주석 하나로만 두면 **반환값 있는 함수는 컴파일되지 않는다.** 이건
+모델의 실패가 아니라 **계약의 구멍**이었다 — 원전도 골조를 빌드해 통과시켰으니(Step 6) 같은
+전제를 암묵적으로 갖고 있었다. 그래서 프롬프트가 못박는다: **non-void 는 `[PSEUDO]` 주석
+바로 뒤에 최소 반환**(`return false;` · `return {};` · `return nullptr;`)을 둔다.
+
+🔴 **게이트가 없었으면 이 구멍은 첫 분산 작업에서 N개 조각을 헛일로 만들고서야 드러났을 것이다.**
+
 ## 🔴 골조가 아니면 골조라고 하지 않는다 (fail-closed)
 
 `[PSEUDO]` 가 하나도 없으면 그것은 **완성된 파일**이지 골조가 아니다. 원전은 그 경우 워커
@@ -204,6 +217,50 @@ def relations(paths: ProjectPaths, classes: list, *, max_each: int = 8) -> str:
     return "\n".join(out)
 
 
+def include_decls(paths: ProjectPaths, classes: list, *, budget: int = 4000) -> str:
+    """🔴 **관계가 이름만 댄 헤더의 내용을 싣는다** (실측 2026-08-11).
+
+    골조 게이트 첫 실전에서 잡힌 것:
+
+        error C2065: 'None': 선언되지 않은 식별자입니다
+        EMissionType MissionType = EMissionType::None;
+
+    `EMissionType` 은 실재하고(`Main`/`Sub`) `None` 은 **다른 열거형**(`EMissionExecutorState`)의
+    멤버다 — 모델이 둘을 섞었다. `declarations.py` 가 고치려던 *"한 글자 차이"* 와 같은 부류다.
+
+    🔴 **왜 안 잡혔나**: 선언부는 `spec.classes` 만 싣는데, 그 열거형은 **관계 블록이 include
+    로 이름만 댄 헤더**(`Table/TableEnum.h`)에 있었다. *"이 헤더를 문다"* 고만 말하고 **내용은
+    안 준** 것이다. 이름을 댔으면 내용도 줘야 한다 — 안 주면 모델은 기억에서 꺼낸다.
+    """
+    from ..ontology import contexts
+    from ..graph import dependency as dep
+
+    seen: set = set()
+    blocks: list = []
+    used = 0
+    for f in _class_files(paths, [c for c in (classes or []) if c]):
+        try:
+            deps = dep.dependencies(paths, f, depth=1)
+        except Exception:                                   # noqa: BLE001
+            continue
+        for d in deps:
+            if d in seen or used >= budget:
+                continue
+            seen.add(d)
+            text = contexts.excerpt_header(paths, d, limit=min(1200, budget - used))
+            if not (text or "").strip():
+                continue
+            blocks.append(f"--- {d} ---\n{text.strip()}")
+            used += len(text)
+    if not blocks:
+        return ""
+    return ("=== TYPES FROM INCLUDED HEADERS — COPY ENUM/STRUCT MEMBERS EXACTLY ===\n"
+            "🔴 The relations block above says these headers are included. Their real "
+            "contents are below. Do NOT invent enum values or members that are not here.\n\n"
+            + "\n\n".join(blocks)
+            + "\n=== END TYPES ===")
+
+
 def _class_files(paths: ProjectPaths, classes: list) -> list:
     from ..graph import db as gdb
     if not gdb.exists(paths):
@@ -315,8 +372,11 @@ def build_prompt(spec: SkeletonSpec, *, declarations: str = "", norms: str = "",
         "RULES — violating any of these makes the output unusable:",
         "1. Write COMPLETE, COMPILABLE declarations: includes, UCLASS/USTRUCT/UENUM macros, "
         "GENERATED_BODY(), member declarations, method signatures.",
-        "2. Do NOT write real logic. Every function body is a single line "
-        "`// [PSEUDO] <what this must do>` and nothing else.",
+        "2. Do NOT write real logic. Every function body is `// [PSEUDO] <what this must "
+        "do>` — but 🔴 THE SKELETON MUST STILL COMPILE. A non-void function therefore ends "
+        "with a minimal placeholder return on its own line (`return false;`, `return {};`, "
+        "`return nullptr;`) directly after the [PSEUDO] comment. A void function has the "
+        "comment alone.",
         "3. Use `// [PSEUDO:1]`, `// [PSEUDO:2]` … instead of `[PSEUDO]` ONLY when this file "
         "is large enough that one pass cannot implement it: depth 1 = foundational logic, "
         "depth 2 = builds on depth 1, depth 3+ = integration. Otherwise use plain [PSEUDO].",
@@ -426,7 +486,10 @@ def build(paths: ProjectPaths, spec: SkeletonSpec, *, model: str = DEFAULT_MODEL
     그 밖은 브로커(8102)를 통해 모델을 상주한 노드로 간다. **기본값은 `claude:opus`** — 왜
     그런지는 `DEFAULT_MODEL` 주석에 있다.
     """
-    from . import generate as gen
+    # 🔴 `from . import generate` 는 **함수가 서브모듈을 가린다** — `__init__` 이 같은 이름의
+    #    함수를 내보내기 때문이다(master/README.md 에 적힌 함정, 여기서 실제로 밟았다).
+    #    서브모듈을 **직접** 임포트한다.
+    from .generate import DEFAULT_BROKER
     from ..ontology import synth
 
     spec.validate()
@@ -458,8 +521,14 @@ def build(paths: ProjectPaths, spec: SkeletonSpec, *, model: str = DEFAULT_MODEL
         except Exception as e:                              # noqa: BLE001
             sk.notes.append(f"⚠️ 규범 수집 실패 — 없이 진행한다: {e}")
 
-    rel = ""
+    rel = inc = ""
     if ground:
+        try:
+            inc = include_decls(paths, spec.classes)
+            if inc:
+                sk.grounding.append("include 헤더 타입")
+        except Exception as e:                              # noqa: BLE001
+            sk.notes.append(f"⚠️ include 타입 수집 실패 — 없이 진행한다: {e}")
         try:
             rel = relations(paths, spec.classes)
             if rel:
@@ -469,10 +538,12 @@ def build(paths: ProjectPaths, spec: SkeletonSpec, *, model: str = DEFAULT_MODEL
         except Exception as e:                              # noqa: BLE001
             sk.notes.append(f"⚠️ 관계 수집 실패 — 없이 진행한다: {e}")
 
-    prompt = build_prompt(spec, declarations=decl, norms=norms_text, relations_text=rel)
+    # 🔴 include 타입은 **선언부와 한 덩어리**로 붙인다 — 둘 다 "정확한 철자" 채널이다
+    prompt = build_prompt(spec, declarations="\n\n".join(x for x in (inc, decl) if x),
+                          norms=norms_text, relations_text=rel)
     sk.prompt_chars = len(prompt)
 
-    raw = synth.generate(prompt, model, broker=broker or gen.DEFAULT_BROKER,
+    raw = synth.generate(prompt, model, broker=broker or DEFAULT_BROKER,
                          num_ctx=num_ctx, timeout=timeout)
     sk.files, notes = parse_files(raw, want=spec.files)
     sk.notes += notes

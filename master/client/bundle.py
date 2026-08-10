@@ -407,17 +407,24 @@ def merge_claude_md(existing: str, project: str, facts: HostFacts) -> str:
 def _remote_write(facts: HostFacts, rel: str, content: str, *, base: str = "home") -> str:
     """원격 파일 쓰기 + **되읽어 sha256 대조.** 불일치면 예외.
 
-    `base` — `"home"`(스킬) 또는 `"checkout"`(config·부산물). 체크아웃 경로는 머신마다
-    다르므로 **레지스트리에서 온 값**(`facts.path`)을 쓴다. 코드에 박지 않는다.
+    `base` — `"home"`(스킬) · `"checkout"`(config·부산물) · **`"abs"`**(`rel` 이 이미 절대경로).
+    체크아웃 경로는 머신마다 다르므로 **레지스트리에서 온 값**(`facts.path`)을 쓴다. 코드에
+    박지 않는다. `"abs"` 는 골조 게이트가 **격리된 worktree** 에 쓸 때 쓴다(소 1.1.5) —
+    home 도 checkout 도 아닌 자리라서다.
     """
     want = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    root = facts.home if base == "home" else facts.path
+    if base == "abs":
+        # 🔴 절대경로는 그대로 쓴다. 해시 대조 전송은 그대로 재사용한다 — 그 검증이 실제로
+        #    두 번(BOM/CRLF · stdin 미종료) 조용한 배달 사고를 잡았다.
+        target = rel.replace("/", chr(92)) if facts.windows else rel
+    else:
+        root = facts.home if base == "home" else facts.path
+        target = (f"{root}\\{rel.replace('/', chr(92))}" if facts.windows
+                  else f"{root}/{rel}")
     if facts.windows:
-        target = f"{root}\\{rel.replace('/', chr(92))}"
         parent = target.rsplit("\\", 1)[0]
         mk = f'if not exist "{parent}" mkdir "{parent}"'
     else:
-        target = f"{root}/{rel}"
         parent = target.rsplit("/", 1)[0]
         mk = f"mkdir -p {shlex.quote(parent)}"
     rc, out = _ssh(facts.host, facts.user, mk)
@@ -460,6 +467,11 @@ def _remote_write(facts: HostFacts, rel: str, content: str, *, base: str = "home
     if rc != 0 or got != want:
         raise BundleError(f"{facts.host}: 해시 불일치 — 기대 {want[:12]} 실측 {got[:12] or '없음'}")
     return target
+
+
+def write_file(facts: HostFacts, path: str, content: str, *, base: str = "abs") -> str:
+    """공개 이름 — 원격에 파일 하나를 쓰고 **해시로 대조**한다. 골조 게이트가 쓴다."""
+    return _remote_write(facts, path, content, base=base)
 
 
 def skill_text(name: str = SKILL_NAME) -> str:
