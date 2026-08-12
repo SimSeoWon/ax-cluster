@@ -16,7 +16,9 @@ import os
 import uvicorn
 from mcp.server.transport_security import TransportSecuritySettings
 
-from ..auth import BearerAuthMiddleware, load_token
+from ..auth import BearerAuthMiddleware, load_token, load_view_token
+from ..viewer import PREFIX as VIEW_PREFIX
+from ..viewer import Router, ViewApp, project_root
 from .mcp_server import mcp
 
 # LAN IP 는 CLAUDE.md 기준. 추가가 필요하면 AX_PROJECTS_ALLOWED_HOSTS 에 콤마로 나열한다.
@@ -50,9 +52,23 @@ def main() -> None:
             + [f"https://{h}" for h in hosts],
         ),
     )
+    # 🔴 **읽기 전용 화면을 같은 포트에 붙인다** (중 3.2 후속, 사용자 지적 2026-08-13).
+    #    웹 UI 의 목적이 *다른 머신에서 보는 것*이라 서빙하지 않으면 요구를 못 지킨다.
+    #    새 포트·유닛·ufw 규칙 0 — 이미 열려 있고 이미 인증된 이 포트를 쓴다.
+    #    🔴 자격증명은 **분리**한다: 뷰 토큰으로는 MCP 도구를 부를 수 없다(`auth.py` § 참조).
+    #    ⚠️ 뷰 토큰이 없으면 화면만 안 열린다 — 큐·MCP 는 그대로 뜬다(fail-closed 의 방향).
+    view_token = load_view_token()
+    served = Router(app, ViewApp(project_root), prefix=VIEW_PREFIX)
+    if view_token:
+        print(f"[view] {VIEW_PREFIX}/ 열림 — Basic 인증(비밀번호 = 뷰 토큰)")
+    else:
+        print(f"[view] {VIEW_PREFIX}/ 🔴 닫힘 — 뷰 토큰이 없다: "
+              f"python -m master.auth init-view")
+
     # 🔴 DNS 리바인딩 보호와 **별개**다. 그쪽은 브라우저가 속아서 찌르는 경로를 막고,
     #    이쪽은 아무나 찌르는 것을 막는다 — 서로 다른 위협이라 둘 다 필요하다.
-    uvicorn.run(BearerAuthMiddleware(app, auth_token),
+    uvicorn.run(BearerAuthMiddleware(served, auth_token,
+                                     view_prefix=VIEW_PREFIX, view_token=view_token),
                 host=host, port=port, log_level="info")
 
 

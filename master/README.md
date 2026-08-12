@@ -10,7 +10,7 @@
 | `layer2_verify.py` | 층2 검증기 — UE5/C++ 문법 프롬프트 + 백엔드 체인(`agy` → `claude`). `verify_files([(경로, 내용)])` |
 | `test_*.py` | **테스트는 저장소 루트 `CLAUDE.md` 의 세는 법을 따른다.** pytest 불필요 — 각 파일을 그대로 실행한다. 목록은 저장소 루트 `CLAUDE.md` 참조 |
 | `task_queue/` | **잡 분배 큐** (AgentTest `mcp/task_queue/` 이식, 2,717줄). HTTP 서비스 + MCP stdio |
-| `auth.py` | 🔴 **공용 인증 — 공유 베어러 토큰, fail-closed.** 세 서비스가 같은 ASGI 미들웨어를 쓴다. 토큰이 없거나 약하거나 파일 권한이 열려 있으면 **서비스가 뜨지 않는다**. 열린 경로는 `/livez` 하나 |
+| `auth.py` | 🔴 **공용 인증 — 공유 베어러 토큰, fail-closed.** 🔴 **뷰 토큰은 별개다**(`init-view`) — 브라우저에 API 토큰을 주면 MCP 를 부를 자격을 쥐게 되므로, 화면 전용 비밀을 따로 두고 **Basic** 으로만 받는다. 세 서비스가 같은 ASGI 미들웨어를 쓴다. 토큰이 없거나 약하거나 파일 권한이 열려 있으면 **서비스가 뜨지 않는다**. 열린 경로는 `/livez` 하나 |
 | `layer3_verify.py` | **층3 판정 계약 (fail-closed).** UE5 자동화 로그(`Result={Success\|Fail}` + `TEST COMPLETE. EXIT CODE:`)와 UBT 빌드 로그(`Result: Succeeded\|Failed`)를 각각 파싱한다. 🔴 **프로세스 반환 코드를 읽지 않는다** — 실측에서 거짓 실패·거짓 성공이 둘 다 나왔다 |
 | `broker/` | **추론 브로커** (Ollama API 호환). ✅ **가동 중** — `ax-broker.service` `:8102` |
 | `projects/` | **프로젝트 레지스트리 MCP** — 등록·마운트 전환 + **워크숍 체크아웃**(경로·`driven`) + 더티 체크. ✅ **가동 중** — `ax-projects.service` `:8103`, 도구 **15종** + `role`(worker/requester) |
@@ -35,6 +35,7 @@
 | `context_synth/` | **컨텍스트 MD 합성** — 프롬프트·grounding·σ.7 게이트·**사실 게이트**·서킷브레이커. 색인기에 배선됨 |
 | `client/` | **워커 번들** — 머신 프로브(실측) → config·스킬·CLAUDE.md 배달 → 🔴 **되읽어 해시 대조**. `python -m master.client probe\|plan\|deliver\|check` |
 | `status.py` | **클러스터 상태 화면** (중 3.2) — `python -m master.status show\|html`. 🔴 **새 서비스 0**: 도메인 뷰어와 같은 표면(자립형 HTML 한 장, 외부 자원 0). 🔴 수집은 **전부 읽기 전용**이고 **주기 가드 120초**(BC-250 은 부하로 커널이 멈춘 전례). 🔴 닿지 않는 것을 값 없음으로 접지 않고, **역할로 판정이 갈린다**(요청자가 꺼진 것은 정상일 수 있다). 상태는 **아이콘+라벨+색**, 히어로는 하나. ⚠️ 추세 그래프 없음(이력이 희박하면 없는 추세를 보인다) · 온도 구간은 **관례**라고 화면에 적는다 |
+| `viewer.py` | **읽기 전용 화면 서빙** (중 3.2 후속) — 8103 의 `/view/` 에 `cluster.html`·`domains.html` 을 낸다. 🔴 **새 포트·유닛·ufw 0**: 이미 열려 있고 인증된 포트에 라우터로 붙였다. 🔴 **자격증명 분리** — 뷰 토큰(Basic)으로는 MCP·큐·브로커를 부를 수 없다(양방향 401 실측). 🔴 **요청이 수집을 유발하지 않는다**(파일만 읽어 준다) · 낡으면 **배너로 박는다** · 경로는 **화이트리스트** |
 | `source_text.py` | 🔴 **CP949 44%** (실측 723/1,654). 소스는 전부 이걸 거쳐 읽는다 — 한글 주석이 최고 신호원이다 |
 | `context_search/` | 검색 코어 — 벡터(ChromaDB) + BM25(FTS5) 를 RRF 로 융합. **마운트된 프로젝트의 디렉토리를 매 호출 해석**한다 (§5.5.2). 재색인: `python -m master.context_search.rebuild` |
 | `requirements.txt` | 마스터 의존성. AgentTest 엔 없어 `build.bat:29` 기준으로 신규 작성 |

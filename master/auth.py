@@ -34,6 +34,18 @@ MIN_TOKEN_LEN = 32
 
 HEADER = "authorization"
 SCHEME = "Bearer"
+BASIC = "Basic"
+
+# 🔴 **뷰 토큰은 API 토큰과 다르다** (2026-08-13).
+#
+# 브라우저에서 화면을 보려면 브라우저가 자격증명을 들고 있어야 하는데, 그것이 **API 토큰이면
+# 그 브라우저는 MCP 도구를 호출할 수 있는 자격**을 들고 있는 셈이다. LAN 안의 악성 페이지가
+# 그 자격을 노리는 경로(CSRF)가 열린다 — DNS 리바인딩 보호와 Origin 검사가 완화하지만,
+# **애초에 다른 비밀이면 그 걱정 자체가 없다.**
+#
+# 그래서 읽기 전용 화면에는 **별도 토큰**을 쓴다. 이 토큰으로는 큐도 브로커도 MCP 도구도
+# 호출할 수 없다 — 정적 파일 두 장만 읽힌다. 🔴 없으면 뷰 경로는 **열리지 않는다**(fail-closed).
+VIEW_TOKEN_FILE = Path.home() / ".config" / "ax-cluster" / "view-token"
 
 # 인증 없이 열어 두는 경로. **정보를 노출하지 않는 것만** 여기 들어갈 수 있다.
 OPEN_PATHS = frozenset({"/livez"})
@@ -111,6 +123,46 @@ def parse_bearer(header_value: str | None) -> str | None:
     return parts[1].strip() or None
 
 
+def view_token_file() -> Path:
+    raw = os.environ.get("AX_VIEW_TOKEN_FILE", "").strip()
+    return Path(raw).expanduser() if raw else VIEW_TOKEN_FILE
+
+
+def load_view_token(path: Path | None = None) -> str | None:
+    """뷰 토큰. **없으면 `None`** — 뷰 경로를 열지 않는다는 뜻이다(예외가 아니다).
+
+    ⚠️ API 토큰과 달리 *없어도 서비스는 뜬다* — 화면이 안 열릴 뿐이다. 화면 하나 때문에
+    큐와 MCP 가 못 뜨는 것은 과하다.
+    """
+    p = path or view_token_file()
+    if not p.is_file():
+        return None
+    # 🔴 권한·길이 검사는 API 토큰과 **같은 기준**이다. 읽기 전용이라고 느슨하게 두지 않는다.
+    return load_token(p)
+
+
+def parse_basic(header_value: str | None) -> str | None:
+    """`Basic base64(user:token)` → 토큰. 🔴 **브라우저를 위해서만** 받는다.
+
+    브라우저는 `Authorization: Bearer` 를 스스로 붙일 수 없다(자바스크립트 없이는). Basic 은
+    URL·프롬프트로 붙는다 — 그래서 **사람이 보는 경로에만** 열어 준다. 사용자명은 무시한다:
+    비밀은 토큰 하나이고, 사용자 계정 개념이 없다.
+    """
+    if not header_value:
+        return None
+    parts = header_value.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != BASIC.lower():
+        return None
+    import base64
+    import binascii
+    try:
+        raw = base64.b64decode(parts[1].strip(), validate=True).decode("utf-8", "replace")
+    except (binascii.Error, ValueError):
+        return None
+    _user, _, tok = raw.partition(":")
+    return tok.strip() or None
+
+
 def auth_headers(token: str | None = None) -> dict[str, str]:
     """내부 클라이언트가 붙일 헤더. 토큰을 못 읽으면 예외 — 조용히 빠뜨리지 않는다."""
     return {"Authorization": f"{SCHEME} {token or load_token()}"}
@@ -124,10 +176,14 @@ class BearerAuthMiddleware:
        열어 둘 이유가 없다.
     """
 
-    def __init__(self, app, token: str, open_paths=OPEN_PATHS):
+    def __init__(self, app, token: str, open_paths=OPEN_PATHS, *,
+                 view_prefix: str = "", view_token: str | None = None):
         self.app = app
         self._token = token
         self.open_paths = frozenset(open_paths)
+        # 🔴 뷰 경로는 **다른 비밀**로 열린다 (위 § 참조). 접두어가 없으면 기능 자체가 없다.
+        self._view_prefix = view_prefix or ""
+        self._view_token = view_token
 
     async def __call__(self, scope, receive, send):
         typ = scope.get("type")
@@ -144,25 +200,43 @@ class BearerAuthMiddleware:
 
         headers = {k.decode("latin-1").lower(): v.decode("latin-1")
                    for k, v in scope.get("headers", [])}
+        path = scope.get("path", "")
+        is_view = bool(self._view_prefix) and path.startswith(self._view_prefix)
+
+        if is_view:
+            # 🔴 뷰 경로는 **뷰 토큰만** 받는다. API 토큰으로 여기에 들어올 수 없고, 그 반대도
+            #    안 된다 — 두 자격이 섞이면 분리한 이유가 없어진다.
+            if self._view_token and (
+                    verify(parse_basic(headers.get(HEADER)), self._view_token)
+                    or verify(parse_bearer(headers.get(HEADER)), self._view_token)):
+                return await self.app(scope, receive, send)
+            # 브라우저가 로그인 창을 띄우도록 **Basic** 으로 도전한다
+            return await self._deny(send, challenge=b'Basic realm="ax-cluster view"',
+                                   why=(b"view token not configured" if not self._view_token
+                                        else b"unauthorized"))
+
         if verify(parse_bearer(headers.get(HEADER)), self._token):
             return await self.app(scope, receive, send)
-
         # 왜 실패했는지(헤더 없음 vs 토큰 틀림)는 알려주지 않는다.
-        body = b'{"error":"unauthorized"}'
+        return await self._deny(send, challenge=b'Bearer realm="ax-cluster"')
+
+    @staticmethod
+    async def _deny(send, *, challenge: bytes, why: bytes = b"unauthorized") -> None:
+        body = b'{"error":"' + why + b'"}'
         await send({
             "type": "http.response.start",
             "status": 401,
             "headers": [
                 (b"content-type", b"application/json"),
                 (b"content-length", str(len(body)).encode()),
-                (b"www-authenticate", b'Bearer realm="ax-cluster"'),
+                (b"www-authenticate", challenge),
             ],
         })
         await send({"type": "http.response.body", "body": body})
 
 
 def _main(argv: list[str]) -> int:
-    """`python -m master.auth init|show|check`"""
+    """`python -m master.auth init|init-view|show|check`"""
     cmd = argv[0] if argv else "check"
     p = token_file()
     if cmd == "init":
@@ -175,6 +249,19 @@ def _main(argv: list[str]) -> int:
         print(f"토큰: {tok}")
         print("\n클라이언트에 붙일 헤더:")
         print(f'  Authorization: Bearer {tok}')
+        return 0
+    if cmd == "init-view":
+        vp = view_token_file()
+        try:
+            path, tok = write_token(vp)
+        except AuthError as e:
+            print(f"실패: {e}")
+            return 1
+        print(f"뷰 토큰 생성: {path} (0600)")
+        print(f"토큰: {tok}")
+        print("\n브라우저에서 열 때 — 사용자명은 아무거나, 비밀번호에 이 토큰:")
+        print(f"  http://192.168.0.57:8103/view/")
+        print("🔴 이 토큰으로는 큐·브로커·MCP 도구를 호출할 수 없다 (화면 전용).")
         return 0
     if cmd == "show":
         try:
