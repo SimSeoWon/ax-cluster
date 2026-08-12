@@ -118,7 +118,9 @@ def index_html(root: Path) -> str:
                         f'마스터에서 <code>{html.escape(cmd)}</code></li>')
             continue
         mark = "⚠️ " if sec > STALE_SEC else ""
-        rows.append(f'<li><a href="{name}">{html.escape(title)}</a> — '
+        # 🔴 **절대경로로 쓴다** — 상대경로는 `/view`(슬래시 없음)에서 루트로 풀려 401 이 됐다.
+        #    리다이렉트로도 막지만, 링크 자체가 맞으면 그 의존이 사라진다(이중 방어).
+        rows.append(f'<li><a href="{PREFIX}/{name}">{html.escape(title)}</a> — '
                     f'{mark}{html.escape(when)} 수집 · {p.stat().st_size:,} bytes</li>')
     return (
         "<!doctype html><html lang=ko><head><meta charset=utf-8>"
@@ -243,7 +245,17 @@ class Router:
             await send({"type": "http.response.start", "status": 204,
                         "headers": [(b"content-length", b"0")]})
             return await send({"type": "http.response.body", "body": b""})
-        if path.startswith(self.prefix):
+        if path == self.prefix:
+            # 🔴 **슬래시 없는 `/view` 를 `/view/` 로 보낸다** (실측 2026-08-13).
+            #    안 그러면 브라우저가 인덱스의 상대 링크(`cluster.html`)를 **루트 기준**으로
+            #    풀어 `/cluster.html` 을 요청하고, 그건 API 경로라 **401** 이 뜬다.
+            #    사용자가 받은 `{"error":"unauthorized"}` 가 정확히 이것이었다.
+            where = (self.prefix + "/").encode()
+            await send({"type": "http.response.start", "status": 302,
+                        "headers": [(b"location", where), (b"content-length", b"0"),
+                                    (b"cache-control", NO_STORE)]})
+            return await send({"type": "http.response.body", "body": b""})
+        if path.startswith(self.prefix + "/"):
             return await self.view_app(scope, receive, send)
         return await self.default_app(scope, receive, send)
 
