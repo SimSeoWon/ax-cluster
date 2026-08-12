@@ -11,7 +11,9 @@ Index: [`../sim-desktop.md`](../sim-desktop.md) (= the master's `~/CLAUDE.md`)
 | MySQL | 3306 | systemd | |
 | **ax-task-queue** | **8101** | systemd `ax-task-queue.service` | `~/ax-cluster/master/systemd/`, state in `~/ax-state` |
 | **ax-broker** | **8102** | systemd `ax-broker.service` | `~/ax-cluster/master/broker/` |
-| **ax-projects** | **8103** | systemd `ax-projects.service` | `~/ax-cluster/master/projects/`, registry in `~/ax-cluster/projects.yaml` |
+| **ax-projects** | **8103** | systemd `ax-projects.service` | `~/ax-cluster/master/projects/`, registry in `~/ax-cluster/projects.yaml`. Also serves the ported web UI (`master/webui/`) |
+| ax-indexer | — | systemd `ax-indexer.path` + `.service` | path-triggered; grows the twin on push |
+| **ax-status** | — | systemd **`ax-status.timer`** (5 min) + `.service` | 🔴 the only thing that refreshes `/cluster`; **read-only SSH probes**, exit code 3 = throttle guard, not a failure |
 
 ## Gitea is intentionally exposed to the internet
 
@@ -29,6 +31,14 @@ resident models) stays behind auth.
 
 **Fail-closed: a service will not start if the token is missing, empty, under 32 chars, or if the
 file's permissions are open.** "Run without auth" is not a fallback — that was the state being fixed.
+
+🔴 **One documented exception on 8103: the web pages are open, the APIs are not** (user decision,
+2026-08-13). `/`, `/ontology`, `/cluster` and the read-only endpoints they call are served with **no
+login**; `/mcp` and every mutating path still demand the bearer token (measured: `/mcp` → 401 at the
+same moment the pages returned 200). The reasoning is that the token rule exists to protect what can
+*change* things, and putting an intruder model on a read-only viewer for a one-person four-machine
+LAN produces a screen nobody uses. The remaining defence is the ufw LAN restriction above — so
+**that rule is now load-bearing for the viewer, not just defence in depth.**
 
 They remain **LAN-only** by firewall as well:
 

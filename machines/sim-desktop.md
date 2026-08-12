@@ -52,8 +52,12 @@ unattended RunTests 74s. ✅ **중 3.2 status screen** is up (`python -m master.
 stay token-locked). 🔴 **The predecessor's web UI was ported back verbatim** (`master/webui/`,
 2026-08-13): `/` Context Server (status cards + Search/Documents/Tags/Domains + the domain board
 with LLM create/chat/activate), `/ontology` the domain viewer (tree nav + **Cytoscape object
-graph** + layer-sized nodes), `/cluster` the cluster status snapshot. ⚠️ It serves the **last generated** snapshot — a refresh never triggers
-SSH polling (that would defeat the 120s guard), so a stale page gets a red age banner.
+graph** + layer-sized nodes), `/cluster` the cluster status snapshot. ⚠️ `/cluster` serves the **last
+generated** snapshot — a browser refresh never triggers SSH polling (that would defeat the 120s
+guard). 🔴 **`ax-status.timer` refreshes it every 5 min**; a stale page still gets a red age banner,
+and because 5 min < the 15-min staleness threshold, **that banner appearing means the timer is
+actually broken.** 🔴 Its palette is copied from the ported pages and is **dark-only on purpose** —
+one screen flipping to light on its own reads as a different app.
 🕓 Remaining in 대 3: upper-layer commands (중 3.1) and operational robustness (중 3.3).
 
 🔴 **The gates paid for themselves — and the live runs, not the unit tests, found the defects.**
