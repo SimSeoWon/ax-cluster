@@ -152,10 +152,13 @@ def cluster_page(paths) -> tuple:
     sec, _ = _age(p)
     if sec is not None and sec > STALE_SEC:
         body = inject(body, stale_banner(sec, "python -m master.status html"))
-    # 🔴 원전 화면으로 돌아가는 링크 — 고아 페이지로 두지 않는다
+    # 🔴 원전 화면으로 돌아가는 링크 — 고아 페이지로 두지 않는다.
+    #    색은 **원전 헤더와 같은 `#4ec9b0`**, 경계선은 `status.py` 의 `--line`(#30363d) 이다.
+    #    ⚠️ 전에는 경계선을 `#2f2f2c` 로 박아 뒀는데, 그건 내가 만든 옛 팔레트의 값이었다 —
+    #    화면 색을 원전에 맞추면서 **여기 하드코딩도 같이 옮겨야** 한다(사용자 지적 2026-08-13).
     body = inject(body, (
         '<div style="margin:-1.5rem -1.5rem 1rem;padding:.5rem .9rem;'
-        'border-bottom:1px solid #2f2f2c;font:13px/1.6 -apple-system,sans-serif">'
+        'border-bottom:1px solid #30363d;font:13px/1.6 -apple-system,sans-serif">'
         '<a href="/" style="color:#4ec9b0;text-decoration:none">← Context Search</a>'
         '<span style="opacity:.4"> · </span>'
         '<a href="/ontology" style="color:#4ec9b0;text-decoration:none">Ontology Viewer</a>'

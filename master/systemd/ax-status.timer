@@ -1,0 +1,18 @@
+[Unit]
+Description=AX 클러스터 상태 스냅샷 주기 갱신 (5분)
+
+[Timer]
+# 🔴 5분. 고른 근거는 둘이다:
+#   ① `viewer.STALE_SEC` 가 900초(15분)다 — 주기가 그보다 짧아야 **배너가 뜨면 그건 진짜 고장**이다.
+#      주기 > 임계값이면 배너가 늘 떠 있고, 늘 떠 있는 경고는 읽히지 않는다.
+#   ② `status.MIN_INTERVAL` 이 120초다 — 5분은 그 가드를 여유 있게 넘으므로 타이머가
+#      "너무 자주 부른다" 로 거부당하지 않는다(거부당하면 조용히 낡는다).
+OnBootSec=90s
+OnUnitActiveSec=5min
+# 여러 타이머가 같은 초에 몰리지 않게
+RandomizedDelaySec=20s
+AccuracySec=15s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

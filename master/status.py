@@ -53,6 +53,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 MIN_INTERVAL = 120                # 🔴 초. BC-250 을 두드리지 않는다
+
+# 🔴 **누가 갱신하는지를 화면에 적는다.** 이 값은 `systemd/ax-status.timer` 의
+# `OnUnitActiveSec` 과 **같이 움직여야 한다** — 한쪽만 바꾸면 화면이 거짓말을 한다.
+# 왜 화면에 적나: 사용자가 *"각 머신 정보 갱신 언제 일어나는거야? 지금 70분째 갱신 안되는데?"*
+# 라고 물었다(2026-08-13). 답이 화면에 없으면 매번 물어야 한다.
+REFRESH_SEC = 300
 SSH_TIMEOUT = 12
 HTTP_TIMEOUT = 6
 OUT_NAME = "cluster.html"
@@ -259,6 +265,19 @@ def read_machine(host, user, path, role, os_hint="") -> Machine:
     return m
 
 
+class TooSoon(RuntimeError):
+    """🔴 가드에 걸려 수집을 **하지 않았다** — 고장이 아니다.
+
+    타이머가 사람의 수동 실행 직후에 뜨면 반드시 이 자리에 걸린다. 그때 유닛이 `failed` 로
+    남으면 **진짜 고장과 구별할 수 없다** — 그래서 CLI 는 이 경우에만 `EXIT_TOO_SOON` 을 쓰고
+    `ax-status.service` 가 그 코드를 `SuccessExitStatus` 로 받는다. 실측으로 물린 자리다
+    (2026-08-13: 타이머 첫 실행이 46초 전 수동 실행 때문에 `failed` 로 남았다).
+    """
+
+
+EXIT_TOO_SOON = 3
+
+
 def collect(*, project: str = "", token: str = "", force: bool = False,
             state_dir=None) -> Snapshot:
     """스냅샷 한 번. 🔴 **`MIN_INTERVAL` 보다 자주 부르면 거부한다.**"""
@@ -273,7 +292,7 @@ def collect(*, project: str = "", token: str = "", force: bool = False,
         gap = time.time() - last
         if gap < MIN_INTERVAL:
             # 🔴 BC-250 은 부하로 커널이 멈춘 전례가 있다 — 자주 두드리지 않는다
-            raise RuntimeError(
+            raise TooSoon(
                 f"{gap:.0f}초 전에 이미 수집했다 — 최소 간격 {MIN_INTERVAL}초. "
                 f"BC-250 을 자주 두드리지 않는다(부하로 커널이 멈춘 전례). "
                 f"정말 필요하면 --force")
@@ -375,21 +394,21 @@ def collect(*, project: str = "", token: str = "", force: bool = False,
 # ⚠️ 추세 스파크라인을 넣지 않았다. 수집 주기가 길어(최소 120초) 이력이 희박하고,
 #    희박한 이력으로 그린 선은 **없는 추세를 있는 것처럼** 보이게 한다.
 
+# 🔴 **팔레트는 원전과 같다 — 이 화면만 다른 색이면 다른 앱으로 읽힌다** (사용자 지적 2026-08-13:
+#    *"클러스터 환경만 색테마가 달라"*). 여기 값은 `webui/web_ui_original.py` 의 `:root` 를 그대로
+#    가져온 것이다 — `--bg:#0d1117 --surface:#161b22 --border:#30363d --text:#e6edf3
+#    --dim:#8b949e --accent:#58a6ff --green:#3fb950 --orange:#d29922 --red:#f85149`.
+#    ⚠️ 그래서 **라이트 모드를 두지 않는다.** 원전 페이지들(`/`·`/ontology`)에 라이트 모드가
+#    없으므로, 이 화면만 시스템 설정에 따라 흰 배경으로 뒤집히면 **그 지적이 그대로 재발한다.**
+#    한쪽만 테마를 따르는 것이 양쪽이 안 따르는 것보다 나쁘다.
+# 🔴 상태색은 **명암비를 계산해서** 골랐다(눈대중 금지 — dataviz 규약). `#161b22` 카드 위에서
+#    good 6.81 · warning 6.85 · serious 5.13 · critical 5.16 · unknown 5.62 — 전부 4.5 이상.
+#    `serious` 만 원전에 없어서 같은 램프의 GitHub dark `severe`(#db6d28)를 끼웠다.
 _CSS = """
 :root{
- --bg:#fcfcfb;--fg:#0b0b0b;--dim:#52514e;--line:#e2e2e0;--card:#fff;
- --good:#0ca30c;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;--unknown:#8a8a86;
- --track:#ececea;
-}
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){
- --bg:#1a1a19;--fg:#fff;--dim:#c3c2b7;--line:#2f2f2c;--card:#212120;
- --good:#0ca30c;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;--unknown:#9a9a94;
- --track:#2b2b28;
-}}
-:root[data-theme="dark"]{
- --bg:#1a1a19;--fg:#fff;--dim:#c3c2b7;--line:#2f2f2c;--card:#212120;
- --good:#0ca30c;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;--unknown:#9a9a94;
- --track:#2b2b28;
+ --bg:#0d1117;--fg:#e6edf3;--dim:#8b949e;--line:#30363d;--card:#161b22;--accent:#58a6ff;
+ --good:#3fb950;--warning:#d29922;--serious:#db6d28;--critical:#f85149;--unknown:#8b949e;
+ --track:#21262d;
 }
 *{box-sizing:border-box}
 body{margin:0;padding:1.5rem;background:var(--bg);color:var(--fg);
@@ -486,7 +505,8 @@ def render(snap: Snapshot, *, viewer_link: str = "") -> str:
     e = html.escape
     p = [f'<h1>AX 클러스터 상태</h1>',
          f'<div class="sub">{e(snap.at)} 수집 · {snap.seconds:.0f}초 소요 · '
-         f'🔴 최소 간격 {MIN_INTERVAL}초(BC-250 을 자주 두드리지 않는다)</div>']
+         f'<code>ax-status.timer</code> 가 {REFRESH_SEC // 60}분마다 갱신 · '
+         f'브라우저 새로고침은 수집을 유발하지 않는다(최소 간격 {MIN_INTERVAL}초)</div>']
 
     # 🔴 히어로는 하나 — 지금 큐에 무엇이 있나
     p += [f'<div class="hero"><b>{snap.open_tasks}</b>'
@@ -595,7 +615,8 @@ def render(snap: Snapshot, *, viewer_link: str = "") -> str:
             "⚠️ 추세 그래프를 넣지 않았다 — 수집 주기가 길어 이력이 희박하고, 희박한 이력으로 "
             "그린 선은 <b>없는 추세를 있는 것처럼</b> 보이게 한다.")
     if viewer_link:
-        foot += f'<br>같은 표면의 다른 화면: <a href="{e(viewer_link)}">도메인 뷰어</a>'
+        foot += (f'<br>같은 표면의 다른 화면: '
+                 f'<a href="{e(viewer_link)}">온톨로지 뷰어</a>')
     p.append(f'<div class="foot">{foot}</div>')
 
     return ("<!doctype html><html lang=ko><head><meta charset=utf-8>"
@@ -674,6 +695,10 @@ def main(argv) -> int:
         return 2
     try:
         snap = collect(project=project, force=force)
+    except TooSoon as e:
+        # 🔴 가드는 정상 동작이다 — 타이머가 이걸 고장으로 보고하면 경고가 무의미해진다
+        print(f"⏳ {e}")
+        return EXIT_TOO_SOON
     except RuntimeError as e:
         print(f"🔴 {e}")
         return 1
@@ -702,7 +727,9 @@ def main(argv) -> int:
 
     from .context_search.paths import resolve
     paths = resolve(project)
-    out = write(snap, paths.root / OUT_NAME, viewer_link="domains.html")
+    # 🔴 링크는 **원전 뷰어**로 간다. 전에는 `domains.html`(내가 새로 쓴 229줄 스냅샷)을 가리켰는데
+    #    `/view` 를 없앤 뒤로는 죽은 링크다 — `/cluster` 에서 상대경로로 풀리면 `/domains.html` 이다.
+    out = write(snap, paths.root / OUT_NAME, viewer_link="/ontology")
     print(f"{out}  ({out.stat().st_size:,} bytes)")
     print(f"문제 {len(snap.problems)}건 · 머신 {len(snap.machines)}대 · "
           f"열린 태스크 {snap.open_tasks}")

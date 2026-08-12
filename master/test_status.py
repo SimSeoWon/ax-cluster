@@ -180,12 +180,32 @@ def test_no_problems_says_so_positively() -> None:
     check("초록 배너", 'class="band ok"' in h)
 
 
-def test_dark_mode_is_declared_under_both_scopes() -> None:
-    """다크는 **선택**이다 — OS 설정과 토글 양쪽에서 이긴다."""
+def test_palette_matches_the_original_pages() -> None:
+    """🔴 **이 화면만 다른 색이면 다른 앱으로 읽힌다** (사용자 지적 2026-08-13).
+
+    전에 이 자리에는 *"다크는 OS 설정과 토글 양쪽에서 이긴다"* 를 검사하는 테스트가 있었다.
+    그 규약 자체는 맞지만 **여기서는 틀린 규약이었다** — 이웃 화면(`/`·`/ontology`)에 라이트
+    모드가 없으므로, 이 화면만 시스템 설정에 따라 흰 배경으로 뒤집히면 클러스터 화면 하나가
+    혼자 다른 앱처럼 보인다. 그래서 검사를 **팔레트 일치**로 바꿨다: 값을 원전에서 읽어와
+    대조하므로, 원전이 바뀌면 이 테스트가 알려 준다(내가 손으로 베낀 값을 믿지 않는다).
+    """
     h = S.render(_sample())
-    check("prefers-color-scheme 블록", "prefers-color-scheme:dark" in h)
-    check("data-theme 블록", ':root[data-theme="dark"]' in h)
-    check("라이트 스탬프가 OS 다크를 이긴다", ':not([data-theme="light"])' in h)
+    from master.webui.web_ui_original import WEB_UI_HTML
+    m = re.search(r":root\s*\{([^}]*)\}", WEB_UI_HTML)
+    check("원전에서 :root 를 읽었다", m is not None)
+    if m:
+        orig = dict(re.findall(r"(--[\w-]+)\s*:\s*(#[0-9a-fA-F]{3,8})", m.group(1)))
+        # 원전 토큰 이름 → 우리 토큰 이름
+        for theirs, ours in (("--bg", "--bg"), ("--surface", "--card"), ("--border", "--line"),
+                             ("--text", "--fg"), ("--dim", "--dim"), ("--accent", "--accent"),
+                             ("--green", "--good"), ("--orange", "--warning"),
+                             ("--red", "--critical")):
+            want = (orig.get(theirs) or "").lower()
+            check(f"{ours} = 원전 {theirs} ({want})",
+                  bool(want) and f"{ours}:{want}" in h.lower(), f"원전값 {want!r}")
+    check("🔴 라이트 모드 분기를 두지 않는다 — 이웃 화면에 없다",
+          "prefers-color-scheme" not in h)
+    check("배경을 명시한다 — 투명한 body 는 호스트 색을 빌린다", "background:var(--bg)" in h)
 
 
 def test_meter_track_is_same_ramp_and_scale_is_labeled() -> None:
@@ -217,6 +237,42 @@ def test_in_flight_tasks_are_shown() -> None:
     check("없으면 없다고 적는다", "큐가 비어 있다" in S.render(snap))
 
 
+def test_refresh_is_wired_to_a_timer_and_the_numbers_agree() -> None:
+    """🔴 *"지금 70분째 갱신 안되는데?"* (사용자 2026-08-13) — 갱신은 **타이머**의 일이다.
+
+    브라우저 새로고침으로 수집을 유발할 수는 없다(그게 `MIN_INTERVAL` 가드의 목적이다). 그러면
+    갱신 주체는 유닛뿐인데, 그 주기가 코드와 유닛 파일 **두 곳**에 적히므로 어긋날 수 있다.
+    어긋나면 화면이 "5분마다 갱신" 이라 적어 놓고 실제로는 안 하는, **거짓말하는 화면**이 된다.
+    """
+    from master import viewer as V
+    unit_dir = Path(__file__).resolve().parent / "systemd"
+    timer = (unit_dir / "ax-status.timer").read_text(encoding="utf-8")
+    svc = (unit_dir / "ax-status.service").read_text(encoding="utf-8")
+
+    m = re.search(r"OnUnitActiveSec=(\d+)(min|s)", timer)
+    check("타이머에 주기가 있다", m is not None)
+    if m:
+        sec = int(m.group(1)) * (60 if m.group(2) == "min" else 1)
+        check(f"REFRESH_SEC({S.REFRESH_SEC}) = 타이머 주기({sec})", S.REFRESH_SEC == sec)
+    check(f"🔴 주기({S.REFRESH_SEC}) < 낡음 임계값({V.STALE_SEC}) — 늘 뜨는 경고는 안 읽힌다",
+          S.REFRESH_SEC < V.STALE_SEC)
+    check(f"주기({S.REFRESH_SEC}) > 최소 간격({S.MIN_INTERVAL}) — 가드에 상습적으로 걸리지 않는다",
+          S.REFRESH_SEC > S.MIN_INTERVAL)
+    check("화면이 갱신 주체를 밝힌다", "ax-status.timer" in S.render(_sample()))
+
+    # 🔴 가드에 걸린 것은 고장이 아니다 — 유닛이 그 코드를 성공으로 받아야 한다
+    check(f"유닛이 SuccessExitStatus={S.EXIT_TOO_SOON}",
+          f"SuccessExitStatus={S.EXIT_TOO_SOON}" in svc)
+    check("⚠️ 1 은 성공으로 받지 않는다 — 진짜 실패는 실패여야 한다",
+          "SuccessExitStatus=1" not in svc)
+    check("TooSoon 은 RuntimeError 의 하위형이다(기존 처리와 호환)",
+          issubclass(S.TooSoon, RuntimeError))
+    # 유닛이 fail-closed 환경변수를 넘겨야 한다 — 첫 실행이 이것 때문에 죽었다(실측)
+    check("유닛이 AX_PROJECTS_ROOT 를 준다", "AX_PROJECTS_ROOT=" in svc)
+    check("유닛 PATH 에 ~/.local/bin", "/home/sim/.local/bin" in svc)
+    check("⚠️ 쓰기 명령이 유닛에 없다", "--force" not in svc and "push" not in svc)
+
+
 def main() -> int:
     for fn in (test_temp_bands, test_short_model_keeps_the_quant_suffix,
                test_open_tasks_reads_the_real_queue_shape,
@@ -229,9 +285,10 @@ def main() -> int:
                test_status_is_never_color_alone,
                test_problems_come_first_and_exactly_one_hero,
                test_no_problems_says_so_positively,
-               test_dark_mode_is_declared_under_both_scopes,
+               test_palette_matches_the_original_pages,
                test_meter_track_is_same_ramp_and_scale_is_labeled,
                test_measured_caveats_are_on_screen,
+               test_refresh_is_wired_to_a_timer_and_the_numbers_agree,
                test_in_flight_tasks_are_shown):
         fn()
     total = PASS + FAIL

@@ -108,7 +108,7 @@ def test_summary_distinguishes_violation_from_rejection():
 # 규칙: "응답 없음"은 다음 백엔드로 넘어가고, "응답은 왔는데 계약 위반"은 거기서 차단한다.
 # 후자를 다음 백엔드로 덮어주면 fail-open 이 되살아난다.
 
-from layer2_verify import verify_files  # noqa: E402
+from layer2_verify import clear_cooldown, cooldown_state, verify_files  # noqa: E402
 
 _FILES = [("Foo.cpp", "void f() {}")]
 
@@ -117,34 +117,71 @@ def _backend(name, result):
     return (name, lambda prompt, timeout=0: result)
 
 
+def _chain(*backends):
+    """🔴 **쿨다운은 프로세스 전역이다 — 테스트마다 지운다.**
+
+    실측 2026-08-13: `test_chain_approve_passes_through` 와 `test_chain_skips_unavailable_backend`
+    가 **번갈아 실패**했다(17/19). 원인은 계약이 아니라 **테스트 간 상태 누출**이었다 —
+    앞선 테스트에서 `None` 을 돌려준 백엔드 `a` 가 600초 쿨다운에 들어가고, 다음 테스트가 같은
+    이름 `a` 를 쓰면 호출조차 되지 않아 `no_backend` 가 된다.
+
+    ⚠️ **`layer2_verify` 쪽을 고칠 문제가 아니다.** 전역 쿨다운은 의도한 동작이다(죽은 백엔드를
+    조각마다 다시 두드리지 않는다 — 소 2.2.3). 순서 의존이 숨어 있던 쪽은 테스트다. 그래서
+    여기서 지운다. 🔴 이름이 겹치는 스텁을 쓰는 새 테스트도 반드시 이 함수를 거칠 것.
+    """
+    clear_cooldown()
+    return verify_files(_FILES, backends=list(backends))
+
+
 def test_chain_skips_unavailable_backend():
-    v = verify_files(_FILES, backends=[_backend("a", None),
-                                       _backend("b", f"- x\n{REQUEST_CHANGES}")])
+    v = _chain(_backend("a", None), _backend("b", f"- x\n{REQUEST_CHANGES}"))
     assert not v.approved and v.failure is None
     assert "backend=b" in v.warnings
 
 
 def test_chain_stops_on_contract_violation_does_not_fall_through():
     """계약을 어긴 백엔드를 다음 백엔드가 구제하면 안 된다."""
-    v = verify_files(_FILES, backends=[_backend("bad", "looks fine to me"),
-                                       _backend("good", APPROVE)])
+    v = _chain(_backend("bad", "looks fine to me"), _backend("good", APPROVE))
     assert not v.approved, "계약 위반이 다음 백엔드로 덮여 통과했다"
     assert v.failure == "malformed" and "backend=bad" in v.warnings
 
 
 def test_chain_all_unavailable_is_blocked():
-    v = verify_files(_FILES, backends=[_backend("a", None), _backend("b", None)])
+    v = _chain(_backend("a", None), _backend("b", None))
     assert not v.approved and v.failure == "no_backend"
 
 
 def test_chain_empty_backend_list_is_blocked():
-    v = verify_files(_FILES, backends=[])
+    v = _chain()
     assert not v.approved and v.failure == "no_backend"
 
 
 def test_chain_approve_passes_through():
-    v = verify_files(_FILES, backends=[_backend("a", f"No issues.\n{APPROVE}")])
+    v = _chain(_backend("a", f"No issues.\n{APPROVE}"))
     assert v.approved and v.failure is None
+
+
+def test_cooldown_is_process_wide_and_never_approves():
+    """🔴 쿨다운은 **통과 사유가 아니다** — 전부 쿨다운이면 차단이다.
+
+    위 `_chain` 이 감춘 동작을 여기서 **드러내 놓고** 검사한다. 순서 의존을 지우는 것과
+    그 동작이 없는 척하는 것은 다르다.
+    """
+    clear_cooldown()
+    dead = _backend("only", None)
+    assert verify_files(_FILES, backends=[dead]).failure == "no_backend"
+    assert "only" in cooldown_state(), "죽은 백엔드가 쿨다운에 들어가지 않았다"
+    # 두 번째 호출은 백엔드를 **부르지도 않는다** — 그래도 승인되지 않는다
+    called = []
+
+    def watch(prompt, timeout=0):
+        called.append(1)
+        return APPROVE
+
+    v = verify_files(_FILES, backends=[("only", watch)])
+    assert not v.approved and v.failure == "no_backend"
+    assert not called, "쿨다운 중인데 백엔드를 불렀다"
+    clear_cooldown()
 
 
 if __name__ == "__main__":
