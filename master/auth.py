@@ -178,7 +178,7 @@ class BearerAuthMiddleware:
 
     def __init__(self, app, token: str, open_paths=OPEN_PATHS, *,
                  view_prefix: str = "", view_token: str | None = None,
-                 view_public: bool = False):
+                 view_public: bool = False, public_prefixes: tuple = ()):
         self.app = app
         self._token = token
         self.open_paths = frozenset(open_paths)
@@ -196,6 +196,8 @@ class BearerAuthMiddleware:
         # ⚠️ **남는 방어는 ufw LAN 한정 한 층이다.** 그것이 이 경로의 의도된 상태다.
         #    🔴 `AX_VIEW_REQUIRE_TOKEN=1` 로 되돌릴 수 있다(그때는 뷰 토큰이 필요하다).
         self._view_public = view_public
+        # 🔴 읽기 전용 화면 접두어들 — 원전 웹 UI 복각(2026-08-13). 조작 경로가 아니다.
+        self._public = tuple(public_prefixes or ())
 
     async def __call__(self, scope, receive, send):
         typ = scope.get("type")
@@ -213,6 +215,8 @@ class BearerAuthMiddleware:
         headers = {k.decode("latin-1").lower(): v.decode("latin-1")
                    for k, v in scope.get("headers", [])}
         path = scope.get("path", "")
+        if self._public and any(path.startswith(p) for p in self._public):
+            return await self.app(scope, receive, send)
         is_view = bool(self._view_prefix) and path.startswith(self._view_prefix)
 
         if is_view:

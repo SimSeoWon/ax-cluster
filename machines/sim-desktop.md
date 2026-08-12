@@ -47,7 +47,11 @@ to end and **four deterministic gates** sit in it:
          → 통합자 `.2`: 층1 → 층2 → 적용 → **조각별 UE5 빌드** → 통과분만 커밋 → work 단위 RunTests
 
 Live: dispatch 45s/$0.27 · two workers in parallel 36s/$0.47 · integrator build 142s + commit ·
-unattended RunTests 74s. ✅ **중 3.2 status screen** is up too (`python -m master.status html`).
+unattended RunTests 74s. ✅ **중 3.2 status screen** is up (`python -m master.status html`) and
+**served on the LAN at `http://192.168.0.57:8103`** — 🔴 **no login** (the root redirects to
+`/view/`; the API paths on that port stay token-locked). Two screens live there: cluster status
+and the domain viewer. ⚠️ It serves the **last generated** snapshot — a refresh never triggers
+SSH polling (that would defeat the 120s guard), so a stale page gets a red age banner.
 🕓 Remaining in 대 3: upper-layer commands (중 3.1) and operational robustness (중 3.3).
 
 🔴 **The gates paid for themselves — and the live runs, not the unit tests, found the defects.**
@@ -85,6 +89,14 @@ builder together.
 
 🔴 **Say "done" only for a whole area**; otherwise give the denominator. And **don't pick the
 next task yourself** — milestone 1 failed exactly that way.
+
+🔴 **애매하면 묻는다 — 임의 판단으로 좁히지 않는다** (사용자 지시 2026-08-13). 설계에 갈림길이
+있으면 **멈추고 묻는다.** 그리고 **만들기 전에 원전(`~/AgentTest`)과 기존 자산을 읽는다** —
+대부분의 요구에는 이미 만들어진 것이 있다. 2026-08-12~13 에 이 규칙이 없어서 셋을 잃었다:
+**웹 UI 를 로컬 파일로**(다른 머신에서 못 봄 — 목적이 그것인데) · **읽기 전용 화면에 로그인**
+(1인 4대 인프라에 침입자 모델 → 안 쓰게 된다) · **온톨로지 뷰어를 229줄로 새로 씀**(원전에
+3,700줄이 있었다: 트리·Cytoscape 그래프·태그·검색). 🔴 **제약 하나를 지키려고 요구를 희생하면
+결과물은 못 쓴다. 묻는 쪽이 늘 싸다.**
 
 ## Role in the AX cluster — this box is the **master**
 

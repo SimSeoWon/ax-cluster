@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>Ontology Viewer — 도메인 게시판</title>
+  <link rel="stylesheet" href="/ontology-static/app.css">
+  <script src="/ontology-static/tree_nav.js"></script>
+</head>
+<body>
+  <div class="board-shell">
+    <!-- Phase η.9.1 — 좌측 도메인 트리 (목록 페이지에도 상세 페이지와 동일 네비게이션 제공) -->
+    <nav class="tree-nav" id="treeNav"></nav>
+    <div class="resizer" id="resizerTreeBoard" title="드래그해서 폭 조절"></div>
+
+    <div class="board">
+      <div class="board-header" style="display:flex;align-items:flex-start;gap:16px;">
+        <div style="flex:1;">
+          <h1>Ontology Viewer</h1>
+          <p>도메인을 선택하면 오브젝트(노드)와 액션(연결) 그래프를 볼 수 있습니다.</p>
+        </div>
+        <a href="/" style="font-size:13px;color:#4ec9b0;background:#252526;border:1px solid #4ec9b0;border-radius:6px;padding:6px 14px;text-decoration:none;white-space:nowrap;">← Context Search</a>
+      </div>
+
+      <div id="domains" class="domain-grid">
+        <div class="loading">도메인 로딩 중…</div>
+      </div>
+
+      <div class="section-head">
+        <h2>태스크 템플릿</h2>
+        <p>재사용 작업 유형 플레이북 (Phase ζ). 카드를 선택하면 구조·예제·규약·계약을 볼 수 있습니다.</p>
+      </div>
+      <div id="tasks" class="domain-grid">
+        <div class="loading">태스크 템플릿 로딩 중…</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const tierLabels = { 1: "Tier 1 · 핵심", 2: "Tier 2 · 인프라", 3: "Tier 3 · 도구", 4: "Tier 4 · 어댑터" };
+
+    function goDomain(name) { window.location.href = "/ontology/domain/" + encodeURIComponent(name); }
+
+    function domainChip(name) {
+      // stopPropagation: 칩 클릭이 카드 클릭으로 전파되지 않게
+      return `<span class="dchip" onclick="event.stopPropagation(); goDomain('${encodeURIComponent(name).replace(/'/g, "%27")}')">${escapeHtml(name)}</span>`;
+    }
+
+    function renderCard(d, childrenMap, knownSet, depth) {
+      const card = document.createElement("div");
+      card.className = "domain-card" + (depth > 0 ? " is-subdomain" : "");
+      card.onclick = () => goDomain(d.name);
+
+      const tierLabel = d.tier ? (tierLabels[d.tier] || "Tier " + d.tier) : "Tier 미분류";
+      const tagsHtml = (d.tags || []).slice(0, 6).map(t => `<span class="tag">${escapeHtml(t)}</span>`).join("");
+      const parent = d.parent_domain && knownSet.has(d.parent_domain) ? d.parent_domain : "";
+      const kids = childrenMap[d.name] || [];
+
+      card.innerHTML = `
+        ${parent ? `<div class="rel-line rel-up">↑ 상위: ${domainChip(parent)}</div>` : ""}
+        <h2>${depth > 0 ? '<span class="rel-mark">↳ </span>' : ""}${escapeHtml(d.name)}</h2>
+        <div>
+          <span class="tier">${escapeHtml(tierLabel)}</span>
+        </div>
+        <div class="counts">
+          <span>오브젝트 ${d.objects_count}개</span>
+          <span>액션 ${d.actions_count}개</span>
+        </div>
+        <div class="summary">${escapeHtml(d.summary_head || "요약 없음")}</div>
+        ${tagsHtml ? `<div class="tags">${tagsHtml}</div>` : ""}
+        ${kids.length ? `<div class="rel-line rel-down">↓ 하위 도메인 (${kids.length}): ${kids.map(k => domainChip(k.name)).join(" ")}</div>` : ""}
+      `;
+      return card;
+    }
+
+    async function loadDomains() {
+      const container = document.getElementById("domains");
+      try {
+        const res = await fetch("/api/v1/ontology/domains");
+        const data = await res.json();
+        const domains = data.domains || [];
+        if (domains.length === 0) {
+          container.innerHTML = '<div class="empty">등록된 도메인이 없습니다. <br>watch.exe 가 합성 사이클을 완료하면 자동으로 표시됩니다.</div>';
+          return;
+        }
+
+        // 계층 구성 — parent_domain 으로 부모→자식 매핑 (상속관계 표현)
+        const byName = {};
+        for (const d of domains) byName[d.name] = d;
+        const knownSet = new Set(domains.map(d => d.name));
+        const childrenMap = {};
+        for (const d of domains) {
+          const p = d.parent_domain || "";
+          if (p && knownSet.has(p)) (childrenMap[p] = childrenMap[p] || []).push(d);
+        }
+        for (const k in childrenMap) childrenMap[k].sort((a, b) => a.name.localeCompare(b.name));
+
+        // 최상위 = parent 없거나 parent 가 목록에 없는(orphan) 도메인
+        const topLevel = domains
+          .filter(d => !d.parent_domain || !knownSet.has(d.parent_domain))
+          .sort((a, b) => a.name.localeCompare(b.name));
+
+        // DFS — 자식을 부모 바로 뒤에 배치 (그리드 흐름상 인접 + 칩으로 관계 명시)
+        container.innerHTML = "";
+        const seen = new Set();
+        const emit = (d, depth) => {
+          if (seen.has(d.name)) return;  // 순환 방지
+          seen.add(d.name);
+          container.appendChild(renderCard(d, childrenMap, knownSet, depth));
+          for (const child of (childrenMap[d.name] || [])) emit(child, depth + 1);
+        };
+        for (const d of topLevel) emit(d, 0);
+        // 순환 등으로 누락된 도메인 폴백
+        for (const d of domains) if (!seen.has(d.name)) emit(d, 0);
+      } catch (err) {
+        container.innerHTML = `<div class="empty">로딩 실패: ${escapeHtml(String(err))}</div>`;
+      }
+    }
+
+    function goTask(name) { window.location.href = "/ontology/task/" + encodeURIComponent(name); }
+
+    function renderTaskCard(t) {
+      const card = document.createElement("div");
+      card.className = "domain-card";
+      card.onclick = () => goTask(t.task_type);
+      const domChips = (t.related_domains || [])
+        .map(n => `<span class="dchip" onclick="event.stopPropagation(); goDomain('${encodeURIComponent(n).replace(/'/g, "%27")}')">${escapeHtml(n)}</span>`)
+        .join(" ");
+      card.innerHTML = `
+        <h2>${escapeHtml(t.title || t.task_type)}</h2>
+        <div><span class="tier task-badge">${escapeHtml(t.task_type)}</span></div>
+        <div class="counts"><span>구조 역할 ${t.structure_roles || 0}개</span></div>
+        ${domChips ? `<div class="rel-line rel-down">연관 도메인: ${domChips}</div>` : ""}
+      `;
+      return card;
+    }
+
+    async function loadTasks() {
+      const container = document.getElementById("tasks");
+      try {
+        const res = await fetch("/api/v1/ontology/tasks");
+        const data = await res.json();
+        const tasks = data.templates || [];
+        if (tasks.length === 0) {
+          container.innerHTML = '<div class="empty">등록된 태스크 템플릿이 없습니다. <br>/manage-task 로 등록하면 자동으로 표시됩니다.</div>';
+          return;
+        }
+        container.innerHTML = "";
+        for (const t of tasks.sort((a, b) => a.task_type.localeCompare(b.task_type))) {
+          container.appendChild(renderTaskCard(t));
+        }
+      } catch (err) {
+        container.innerHTML = `<div class="empty">로딩 실패: ${escapeHtml(String(err))}</div>`;
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    }
+
+    loadDomains();
+    loadTasks();
+
+    // Phase η.9.1 — 좌측 트리 네비게이션 + 리사이저 (목록 페이지는 강조할 "현재 도메인" 없음)
+    OntologyTreeNav.renderDomainTree(document.getElementById("treeNav"), null);
+    OntologyTreeNav.setupResizer(
+      document.getElementById("resizerTreeBoard"), "--tree-w",
+      { min: 160, max: 460, storageKey: "ontologyViewer.treeW" }
+    );
+  </script>
+</body>
+</html>

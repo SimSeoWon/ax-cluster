@@ -27,6 +27,18 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   not to re-enter — read it once before starting a new area.
   🔴 **Do not pick the next task yourself** — M1 failed that way (I chose an order, dug into one
   piece, declared it "complete", repeated). The order is the user's call.
+- 🔴 **애매하면 묻는다 — 임의 판단으로 좁히지 않는다** (사용자 지시 2026-08-13, 세 번 반복된 실패).
+  설계에 갈림길이 있으면 **멈추고 사용자에게 묻는다.** "내 판단으로는 이게 맞다" 로 진행하지 않는다.
+  🔴 **그리고 만들기 전에 기존 자산을 읽는다** — 이 저장소에는 원전(`~/AgentTest`)이 있고
+  대부분의 요구에는 **이미 만들어진 것**이 있다. 안 읽고 만들면 요구를 좁혀 버린다.
+  **실제로 그렇게 잃은 것 셋** (2026-08-12~13, 전부 사용자가 지적해서 알았다):
+
+    웹 UI 를 로컬 파일로 만들었다        → 다른 머신에서 못 본다. **웹 UI 의 목적이 그것인데**
+    읽기 전용 화면에 로그인을 붙였다      → 1인 4대 개인 인프라에 침입자 모델. 쓰이지 않는 화면이 된다
+    온톨로지 뷰어를 229줄로 새로 썼다     → 원전에 3,700줄(트리·Cytoscape 그래프·태그·검색)이 **있었다**
+
+  🔴 **제약 하나를 지키려고 요구 자체를 희생하면 결과물은 못 쓴다.** 판단이 갈리면 **묻는 쪽이
+  싸다** — 되돌리는 비용이 묻는 비용보다 늘 크다.
 - 🔴 **The GitHub remote is private. Keep it that way** — it contains LAN addresses and firewall rules.
 - 🔴 **The master is infrastructure, not a workshop.** It assembles context and hands it over;
   the Windows PC applies, builds, tests, registers. **Files never leave Windows.** No file I/O or

@@ -289,6 +289,44 @@ def test_view_token_uses_the_same_strength_rules() -> None:
 
 # ── ⑤ 한 포트 ───────────────────────────────────────────────────────────────────
 
+def test_root_redirects_so_the_port_alone_works() -> None:
+    """🔴 실측 2026-08-13: 사용자가 `…:8103/` 를 열자 `{"error":"unauthorized"}` 를 받았다.
+
+    주소에 `/view/` 를 붙여야 하는 것은 사람이 외워야 하는 마찰이고, 마찰은 화면을 안 보게 만든다.
+    """
+    async def mcp(scope, receive, send):
+        raise AssertionError("루트를 MCP 로 넘기면 안 된다")
+
+    r = V.Router(mcp, lambda *a: None, prefix="/view")
+    st, h, _ = call(r, "/")
+    check("루트는 302", st == 302, str(st))
+    check("화면으로 보낸다", h.get("location") == "/view/", h.get("location", ""))
+    st, _, _ = call(r, "/favicon.ico")
+    check("파비콘은 204 (401 로 콘솔을 더럽히지 않는다)", st == 204, str(st))
+
+
+def test_opening_root_does_not_open_the_api() -> None:
+    """🔴 라우터가 직접 처리하고 **뒤로 넘기지 않으므로** MCP 가 인증 없이 노출되지 않는다."""
+    from master.auth import OPEN_PATHS
+    reached: list = []
+
+    async def mcp(scope, receive, send):
+        reached.append(scope.get("path"))
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"SECRET"})
+
+    router = V.Router(mcp, lambda *a: None, prefix="/view")
+    app = A.BearerAuthMiddleware(router, "A" * 40,
+                                open_paths=OPEN_PATHS | {"/", V.FAVICON},
+                                view_prefix="/view", view_public=True)
+    st, _, body = call(app, "/")
+    check("루트는 302", st == 302, str(st))
+    check("🔴 MCP 에 닿지 않았다", not reached, str(reached))
+    check("본문이 새지 않았다", "SECRET" not in body)
+    st, _, _ = call(app, "/mcp")
+    check("🔴 MCP 는 여전히 401", st == 401, str(st))
+
+
 def test_router_splits_by_prefix_without_a_second_service() -> None:
     hits: list = []
 
@@ -319,6 +357,8 @@ def main() -> int:
                test_browser_gets_a_basic_challenge_api_gets_bearer,
                test_no_view_token_closes_the_view_but_not_the_service,
                test_view_token_uses_the_same_strength_rules,
+               test_root_redirects_so_the_port_alone_works,
+               test_opening_root_does_not_open_the_api,
                test_router_splits_by_prefix_without_a_second_service):
         fn()
     total = PASS + FAIL

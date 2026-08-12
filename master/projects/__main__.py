@@ -16,8 +16,8 @@ import os
 import uvicorn
 from mcp.server.transport_security import TransportSecuritySettings
 
-from ..auth import BearerAuthMiddleware, load_token, load_view_token
-from ..viewer import PREFIX as VIEW_PREFIX
+from ..auth import OPEN_PATHS, BearerAuthMiddleware, load_token, load_view_token
+from ..viewer import FAVICON, PREFIX as VIEW_PREFIX
 from ..viewer import Router, ViewApp, project_root
 from .mcp_server import mcp
 
@@ -62,7 +62,12 @@ def main() -> None:
     #    쓰이지 않는 화면을 만드는 것이 더 나쁘다. 남는 방어는 **ufw LAN 한정** 한 층이다.
     require = os.environ.get("AX_VIEW_REQUIRE_TOKEN", "").strip() in ("1", "true", "yes")
     view_token = load_view_token() if require else None
-    served = Router(app, ViewApp(project_root), prefix=VIEW_PREFIX)
+    # 🔴 **원전 웹 UI 복각** (사용자 지시 2026-08-13) — `/` `/ontology*` `/api/v1/*`.
+    #    `/view/` 는 스냅샷 화면(중 3.2)이라 그대로 둔다: 둘은 다른 것이다.
+    from ..webui.app import WebUI
+    from ..context_search.paths import resolve as _resolve
+    web = WebUI(lambda: _resolve(""))
+    served = Router(app, ViewApp(project_root), prefix=VIEW_PREFIX, webui=web)
     if not require:
         print(f"[view] {VIEW_PREFIX}/ 공개 — 인증 없음 (LAN 한정 · 읽기 전용)")
     elif view_token:
@@ -73,7 +78,13 @@ def main() -> None:
 
     # 🔴 DNS 리바인딩 보호와 **별개**다. 그쪽은 브라우저가 속아서 찌르는 경로를 막고,
     #    이쪽은 아무나 찌르는 것을 막는다 — 서로 다른 위협이라 둘 다 필요하다.
+    # 🔴 루트와 파비콘을 인증에서 연다 — 라우터가 **직접 처리하고 뒤로 넘기지 않으므로**
+    #    MCP 앱에 인증 없이 도달하는 경로가 생기지 않는다(리다이렉트와 빈 응답뿐이다).
     uvicorn.run(BearerAuthMiddleware(served, auth_token,
+                                     # 🔴 원전 UI 경로는 공개(읽기 전용) — `/mcp` 는 잠김
+                                     open_paths=OPEN_PATHS | {"/", FAVICON},
+                                     public_prefixes=("/ontology", "/ontology-static",
+                                                      "/api/v1"),
                                      view_prefix=VIEW_PREFIX, view_token=view_token,
                                      view_public=not require),
                 host=host, port=port, log_level="info")

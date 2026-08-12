@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>Ontology Viewer — 태스크 템플릿</title>
+  <link rel="stylesheet" href="/ontology-static/app.css">
+</head>
+<body>
+  <div class="board task-detail">
+    <a href="/ontology" class="back-link">← 게시판</a>
+    <div id="content">
+      <div class="loading">태스크 템플릿 로딩 중…</div>
+    </div>
+  </div>
+
+  <script>
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    }
+
+    // /ontology/task/<TaskType> 에서 마지막 세그먼트 추출
+    function taskTypeFromPath() {
+      const parts = window.location.pathname.split("/").filter(Boolean);
+      return decodeURIComponent(parts[parts.length - 1] || "");
+    }
+
+    function domainChip(name) {
+      const safe = encodeURIComponent(name).replace(/'/g, "%27");
+      return `<a class="dchip" href="/ontology/domain/${safe}">${escapeHtml(name)}</a>`;
+    }
+
+    function listBlock(title, items) {
+      if (!items || !items.length) return "";
+      const lis = items.map(x => `<li>${escapeHtml(x)}</li>`).join("");
+      return `<h3>${escapeHtml(title)}</h3><ul class="plain-list">${lis}</ul>`;
+    }
+
+    function structureTable(rows) {
+      if (!rows || !rows.length) return "";
+      const body = rows.map(r => `
+        <tr>
+          <td>${escapeHtml(r.role || "")}</td>
+          <td><code>${escapeHtml(r.class_pattern || "")}</code></td>
+          <td><code>${escapeHtml(r.base || "")}</code></td>
+          <td>${escapeHtml(r.note || "")}</td>
+        </tr>`).join("");
+      return `
+        <h3>구조 (역할)</h3>
+        <table class="task-table">
+          <thead><tr><th>역할</th><th>클래스 패턴</th><th>베이스</th><th>비고</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>`;
+    }
+
+    function exampleBlock(ex) {
+      if (!ex || (!ex.instance && !(ex.refs && ex.refs.length))) return "";
+      const refs = (ex.refs || []).map(r => `<li><code>${escapeHtml(r)}</code></li>`).join("");
+      return `
+        <h3>예제</h3>
+        ${ex.instance ? `<div class="example-instance">${escapeHtml(ex.instance)}</div>` : ""}
+        ${refs ? `<h4>참조</h4><ul class="plain-list">${refs}</ul>` : ""}`;
+    }
+
+    function contractsBlock(c) {
+      if (!c) return "";
+      const out = [
+        listBlock("전제조건 (preconditions)", c.preconditions),
+        listBlock("사후조건 (postconditions)", c.postconditions),
+        listBlock("수용기준 (acceptance)", c.acceptance),
+      ].join("");
+      return out ? `<div class="contracts">${out}</div>` : "";
+    }
+
+    function tddBlock(d) {
+      const on = d.tdd === true;
+      const spec = d.test_spec || {};
+      const filter = spec.filter || "";
+      const covers = (spec.covers || []).map(x => `<code>${escapeHtml(x)}</code>`).join(", ");
+      // tdd off + 필터 없음 = 기본 상태라 박스 자체 생략 (노이즈 방지).
+      if (!on && !filter) return "";
+      const status = on
+        ? `<span class="task-badge" style="background:#2e7d32">TDD ON</span>`
+        : `<span class="task-badge" style="background:#777">TDD OFF</span>`;
+      const filterLine = filter
+        ? `<div>automation 필터: <code>${escapeHtml(filter)}</code></div>`
+        : `<div style="color:#b71c1c">⚠ tdd:true 인데 test_spec.filter 미선언 — 통합 빌드 게이트 미가동</div>`;
+      const coversLine = covers ? `<div>커버 계약: ${covers}</div>` : "";
+      return `<h3>계약 테스트 (TDD)</h3><div class="contracts">${status}${filterLine}${coversLine}</div>`;
+    }
+
+    async function load() {
+      const container = document.getElementById("content");
+      const taskType = taskTypeFromPath();
+      try {
+        const res = await fetch("/api/v1/ontology/task/" + encodeURIComponent(taskType));
+        if (!res.ok) {
+          container.innerHTML = `<div class="empty">태스크 템플릿을 찾을 수 없습니다: ${escapeHtml(taskType)}</div>`;
+          return;
+        }
+        const result = await res.json();
+        const d = result.data || {};
+        document.title = `Ontology Viewer — ${d.title || d.task_type || taskType}`;
+
+        const domains = (d.related_domains || []).map(domainChip).join(" ");
+        container.innerHTML = `
+          <h1>${escapeHtml(d.title || d.task_type || taskType)}</h1>
+          <div><span class="tier task-badge">${escapeHtml(d.task_type || taskType)}</span>
+               ${d.created ? `<span class="created">등록 ${escapeHtml(d.created)}</span>` : ""}</div>
+          ${d.summary ? `<div class="summary">${escapeHtml(d.summary)}</div>` : ""}
+          ${domains ? `<div class="rel-line rel-down">연관 도메인: ${domains}</div>` : ""}
+          ${structureTable(d.structure)}
+          ${exampleBlock(d.example)}
+          ${listBlock("규약 (conventions)", d.conventions)}
+          ${contractsBlock(d.contracts)}
+          ${tddBlock(d)}
+          <details class="raw-yaml">
+            <summary>원본 task.yaml</summary>
+            <pre>${escapeHtml(result.raw || "")}</pre>
+          </details>
+        `;
+      } catch (err) {
+        container.innerHTML = `<div class="empty">로딩 실패: ${escapeHtml(String(err))}</div>`;
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>

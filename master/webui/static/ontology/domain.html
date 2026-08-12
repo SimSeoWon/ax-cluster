@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>Ontology Viewer — 도메인 상세</title>
+  <link rel="stylesheet" href="/ontology-static/app.css">
+  <script src="/ontology-static/vendor/cytoscape.min.js"></script>
+  <script src="/ontology-static/tree_nav.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <!-- Phase η.9.1 — 좌측 도메인 트리 (목록 페이지 왕복 없이 이동) -->
+    <nav class="tree-nav" id="treeNav"></nav>
+    <div class="resizer" id="resizerTreeDoc" title="드래그해서 폭 조절"></div>
+
+    <aside class="sidebar" id="sidebar">
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <a href="/ontology" class="back" style="margin:0;">← 도메인 목록</a>
+        <a href="/" class="back" style="margin:0;color:#858585;">/ Context Search</a>
+      </div>
+      <div class="loading">로딩 중…</div>
+    </aside>
+
+    <div class="resizer" id="resizerDocGraph" title="드래그해서 폭 조절"></div>
+
+    <main class="graph-area" id="graphArea">
+      <div class="graph-toolbar">
+        <button onclick="cyInstance && cyInstance.fit()">맞춤</button>
+        <button onclick="relayoutCose()">자유 배치</button>
+        <button id="toggleGraphBtn" class="toggle-on" onclick="toggleGraphVisible()">👁 그래프 숨기기</button>
+      </div>
+      <div id="cy"></div>
+    </main>
+
+    <!-- 그래프 숨김 중 재노출 (Phase η.9.1) -->
+    <div class="reopen-strip" id="reopenStrip" title="그래프 다시 보기">
+      <button onclick="toggleGraphVisible()">◂</button>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalBackdrop" onclick="closeModal(event)">
+    <div class="modal" id="modal" onclick="event.stopPropagation()">
+      <button class="close" onclick="closeModal()">×</button>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+
+  <script>
+    let cyInstance = null;
+    let currentDomain = null;
+
+    function getDomainName() {
+      const path = window.location.pathname;
+      const m = path.match(/^\/ontology\/domain\/(.+)$/);
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    }
+
+    async function loadDomain() {
+      const domain = getDomainName();
+      if (!domain) {
+        document.getElementById("sidebar").innerHTML = '<div class="empty">URL 형식 오류</div>';
+        return;
+      }
+      currentDomain = domain;
+      document.title = `${domain} — Ontology Viewer`;
+
+      try {
+        const res = await fetch("/api/v1/ontology/domain/" + encodeURIComponent(domain));
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        renderSidebar(data);
+        renderGraph(data);
+      } catch (err) {
+        document.getElementById("sidebar").innerHTML = `<div style="display:flex;gap:8px;margin-bottom:10px;"><a href="/ontology" class="back" style="margin:0;">← 도메인 목록</a><a href="/" class="back" style="margin:0;color:#858585;">/ Context Search</a></div><div class="empty">로딩 실패: ${escapeHtml(String(err))}</div>`;
+      }
+    }
+
+    function renderSidebar(data) {
+      const sb = document.getElementById("sidebar");
+      const m = data.manifest || {};
+      const tier = m.tier ? `Tier ${m.tier}` : "Tier 미분류";
+      const summary = m.summary || "";
+      const responsibilities = m.core_responsibilities || [];
+      const invariants = m.invariants || [];   // 사용자 검증 string list (manifest)
+      // Phase η.7.5 — 후보 invariants 는 L{n}/invariants/*.yaml 파일 단위 (data.invariants).
+      // 옛 manifest 배열 (m.invariants_candidates) 은 마이그레이션 중 폴백.
+      const candidates = (data.invariants && data.invariants.length)
+        ? data.invariants
+        : (m.invariants_candidates || []);
+      const collab = m.collaborates_with || [];
+      const tags = m.tags || [];
+      const sources = m.source_documents || [];
+      // 2026-06-03 — 도메인 간 링크 (계층 하위 + 연관 협력). 응답 최상위 필드.
+      const subDomains = data.sub_domains || [];
+      const parentDomain = data.parent_domain || "";
+      const knownDomains = new Set(data.known_domains || []);
+      const domainLink = (n) =>
+        `<a href="/ontology/domain/${encodeURIComponent(n)}" class="domain-link">${escapeHtml(n)}</a>`;
+
+      let html = `<div style="display:flex;gap:8px;margin-bottom:10px;">
+        <a href="/ontology" class="back" style="margin:0;">← 도메인 목록</a>
+        <a href="/" class="back" style="margin:0;color:#858585;">/ Context Search</a>
+      </div>`;
+      html += `<h1>${escapeHtml(data.name)}</h1>`;
+      // 상위 도메인 역링크 (서브도메인일 때)
+      if (parentDomain) {
+        html += `<div class="parent-link">↑ 상위: ${domainLink(parentDomain)}</div>`;
+      }
+      html += `<div class="tier-badge">${escapeHtml(tier)}</div>`;
+      html += `<div class="summary">${escapeHtml(summary)}</div>`;
+
+      // 하위 도메인 — 계층 링크 목록 (병합 X, 클릭 시 해당 도메인 페이지로 이동)
+      if (subDomains.length > 0) {
+        html += `<h3>하위 도메인</h3><ul class="subdomain-list">`;
+        for (const sd of subDomains) {
+          html += `<li>${domainLink(sd)}</li>`;
+        }
+        html += `</ul>`;
+      }
+
+      if (responsibilities.length > 0) {
+        html += `<h3>핵심 책임</h3><ul>`;
+        for (const r of responsibilities) {
+          html += `<li>${escapeHtml(r)}</li>`;
+        }
+        html += `</ul>`;
+      }
+
+      // Phase η.7.4 — layer별 책임 서술 (L1/L2/L3). verified_by_user 면 ✓ 잠금 배지.
+      const layerDescs = data.layer_descriptions || {};
+      const LD_LABEL = {L1: "L1 트렁크/계약", L2: "L2 기반 패턴", L3: "L3 구현 리프"};
+      const ldOrder = ["L1", "L2", "L3"].filter(L => layerDescs[L] && layerDescs[L].body);
+      if (ldOrder.length > 0) {
+        html += `<h3>Layer별 책임</h3>`;
+        for (const L of ldOrder) {
+          const d = layerDescs[L];
+          const ln = L.charAt(1);
+          const badge = d.verified_by_user
+            ? `<span style="color:#4ec94e;font-size:11px;">✓ 검증</span>`
+            : `<span style="color:#858585;font-size:11px;">초안</span>`;
+          html += `<div style="margin-bottom:8px;">
+            <div style="font-weight:600;font-size:12px;margin-bottom:2px;">
+              <span class="layer-dot l${ln}"></span>${escapeHtml(LD_LABEL[L] || L)} ${badge}
+            </div>
+            <div class="summary" style="margin:0;">${escapeHtml(d.body)}</div>
+          </div>`;
+        }
+      }
+
+      if (invariants.length > 0) {
+        html += `<h3>핵심 invariants</h3><ul>`;
+        for (const inv of invariants) {
+          html += `<li>${escapeHtml(inv)}</li>`;
+        }
+        html += `</ul>`;
+      }
+
+      if (candidates.length > 0) {
+        html += `<h3>invariant 후보 (${candidates.length}건)</h3><ul>`;
+        for (const c of candidates) {
+          const text = typeof c === "string" ? c : (c.text || "");
+          const L = (typeof c === "object" && c.layer >= 1 && c.layer <= 3)
+            ? `<span class="layer-dot l${c.layer}"></span>` : "";
+          const sig = (typeof c === "object" && c.source_signal)
+            ? ` <span style="color:#858585;font-size:11px;">(${escapeHtml(c.source_signal)})</span>` : "";
+          html += `<li>${L}${escapeHtml(text)}${sig}</li>`;
+        }
+        html += `</ul>`;
+      }
+
+      if (collab.length > 0) {
+        // 연관(협력) 도메인 — 항목의 선행 도메인 토큰이 실재 도메인이면 그 부분만 링크,
+        // 나머지(서술)는 텍스트. collaborates_with 는 "DomainName — 설명" prose 형태라
+        // 정확 일치(전체 == 도메인명)는 드묾 → 선행 식별자 매칭 (2026-06-03 보정).
+        html += `<h3>협력 도메인</h3><ul class="collab-list">`;
+        for (const c of collab) {
+          const s = String(c);
+          const m = s.match(/^([A-Za-z0-9_]+)/);
+          const head = m ? m[1] : "";
+          const rendered = (head && knownDomains.has(head))
+            ? domainLink(head) + escapeHtml(s.slice(head.length))
+            : escapeHtml(s);
+          html += `<li>${rendered}</li>`;
+        }
+        html += `</ul>`;
+      }
+
+      // 역참조 — 이 도메인을 협력 도메인으로 지정한 다른 도메인 (단방향 선언이라도 양쪽 탐색)
+      const collaboratedBy = data.collaborated_by || [];
+      if (collaboratedBy.length > 0) {
+        html += `<h3>연관됨 (다른 도메인이 지정)</h3><div class="collab-list" style="padding-left:0;">`;
+        html += collaboratedBy.map(n => domainLink(n)).join(", ");
+        html += `</div>`;
+      }
+
+      if (tags.length > 0) {
+        html += `<h3>태그</h3><div class="tag-list">`;
+        for (const t of tags) {
+          html += `<span class="tag">${escapeHtml(t)}</span>`;
+        }
+        html += `</div>`;
+      }
+
+      if (sources.length > 0) {
+        html += `<h3>원본 문서</h3><ul>`;
+        for (const s of sources) {
+          html += `<li><code>${escapeHtml(s)}</code></li>`;
+        }
+        html += `</ul>`;
+      }
+
+      const objCount = (data.objects || []).length;
+      const actCount = (data.actions || []).length;
+      const invCount = candidates.length;
+      html += `<h3>통계</h3><div class="summary">오브젝트 ${objCount}개 · 액션 ${actCount}개 · invariants ${invCount}개</div>`;
+
+      // Phase η.6.3 — layer 토글 + 카운트. manifest.layer_counts 우선, 없으면 objects 에서 직접 카운트.
+      // Phase η.7.5 — invariants 도 layer 별 카운트 부기 (파일 단위 L{n}/invariants/).
+      const lc = m.layer_counts || {};
+      const objs = data.objects || [];
+      const counts = {
+        L1: lc.L1 !== undefined ? lc.L1 : objs.filter(o => o.layer === 1).length,
+        L2: lc.L2 !== undefined ? lc.L2 : objs.filter(o => o.layer === 2).length,
+        L3: lc.L3 !== undefined ? lc.L3 : objs.filter(o => o.layer === 3).length,
+      };
+      const invL = {L1: 0, L2: 0, L3: 0};
+      for (const c of candidates) {
+        if (typeof c === "object" && c.layer >= 1 && c.layer <= 3) invL["L" + c.layer]++;
+      }
+      const invTag = L => invL[L] > 0 ? ` <span class="layer-cnt" style="opacity:.7">inv ${invL[L]}</span>` : "";
+      const unclassified = objs.filter(o => o.layer !== 1 && o.layer !== 2 && o.layer !== 3).length;
+      html += `<h3>Layer 토글</h3>`;
+      html += `<div class="layer-toggle">`;
+      html += `<label><input type="checkbox" id="toggle-L1" checked onchange="toggleLayer(1, this.checked)"> <span class="layer-dot l1"></span>L1 (트렁크/계약) <span class="layer-cnt">${counts.L1}</span>${invTag("L1")}</label>`;
+      html += `<label><input type="checkbox" id="toggle-L2" checked onchange="toggleLayer(2, this.checked)"> <span class="layer-dot l2"></span>L2 (기반 패턴) <span class="layer-cnt">${counts.L2}</span>${invTag("L2")}</label>`;
+      html += `<label><input type="checkbox" id="toggle-L3" checked onchange="toggleLayer(3, this.checked)"> <span class="layer-dot l3"></span>L3 (구현 리프) <span class="layer-cnt">${counts.L3}</span>${invTag("L3")}</label>`;
+      if (unclassified > 0) {
+        html += `<label><input type="checkbox" id="toggle-Lnull" checked onchange="toggleLayer(0, this.checked)"> <span class="layer-dot lnull"></span>미분류 <span class="layer-cnt">${unclassified}</span></label>`;
+      }
+      html += `</div>`;
+
+      sb.innerHTML = html;
+    }
+
+    function toggleLayer(layerNum, visible) {
+      if (!cyInstance) return;
+      // layerNum=0 = 미분류 (layer 가 1/2/3 외)
+      const sel = layerNum > 0 ? `node[layer = ${layerNum}]` : `node[!layer]`;
+      const nodes = cyInstance.nodes(sel);
+      if (visible) {
+        nodes.removeClass("layer-hidden");
+        nodes.connectedEdges().removeClass("layer-hidden");
+      } else {
+        nodes.addClass("layer-hidden");
+        nodes.connectedEdges().addClass("layer-hidden");
+      }
+    }
+
+    function renderGraph(data) {
+      const objects = data.objects || [];
+      const actions = data.actions || [];
+      const DOMAIN_WRAPPER_ID = "__domain__";
+
+      // ── 클러스터 발견 — parent 기반 그룹화 ──
+      // 도메인 내부 클래스 set
+      const internalClasses = new Set(objects.map(o => o.name));
+      // 내부 클러스터: 부모가 도메인 내부 클래스 — 부모도 노드로 표시
+      const clusters = {};        // internal parent → children[]
+      const childOf = {};          // child → internal parent (역인덱스)
+      // 외부 클러스터: 부모가 도메인 외부 (엔진 클래스 등) — 부모 노드 X, wrapper 만
+      // 같은 외부 부모를 공유하는 자식 2개+ 일 때만 wrapper 형성 (단일 자식은 시각 노이즈)
+      const externClustersRaw = {};  // extern parent → children[]
+      for (const obj of objects) {
+        const parent = obj.parent;
+        if (!parent || parent === obj.name) continue;
+        if (internalClasses.has(parent)) {
+          clusters[parent] = clusters[parent] || [];
+          clusters[parent].push(obj.name);
+          childOf[obj.name] = parent;
+        } else {
+          externClustersRaw[parent] = externClustersRaw[parent] || [];
+          externClustersRaw[parent].push(obj.name);
+        }
+      }
+      // 외부 클러스터: 자식 2개+ 만 wrapper. 1개는 wrapper 형성 X (단독 노드로 처리)
+      const externClusters = {};
+      const externChildOf = {};  // child → extern parent
+      for (const [p, children] of Object.entries(externClustersRaw)) {
+        if (children.length >= 2) {
+          externClusters[p] = children;
+          for (const c of children) externChildOf[c] = p;
+        }
+      }
+      const parentClasses = new Set(Object.keys(clusters));
+
+      // ── 노드 — 도메인 wrapper + 클러스터 wrapper + leaf 노드 ──
+      const nodes = [];
+
+      // 1. 도메인 wrapper (가장 바깥)
+      nodes.push({
+        data: {
+          id: DOMAIN_WRAPPER_ID,
+          label: data.name,
+          wrapper_type: "domain",
+        }
+      });
+
+      // 2. 내부 클러스터 wrapper (부모 + 자식들을 같은 wrapper 안에)
+      const clusterWrapperId = (parent) => `__cluster_${parent}__`;
+      for (const parent of parentClasses) {
+        nodes.push({
+          data: {
+            id: clusterWrapperId(parent),
+            label: "",  // 클러스터 wrapper 자체는 라벨 없음 — 부모 노드가 라벨 역할
+            wrapper_type: "cluster",
+            parent: DOMAIN_WRAPPER_ID,
+          }
+        });
+      }
+
+      // 2-b. 외부 클러스터 wrapper (extern 부모는 노드 X, wrapper 만 + extern 라벨)
+      const externWrapperId = (extern) => `__extern_${extern}__`;
+      for (const extern of Object.keys(externClusters)) {
+        nodes.push({
+          data: {
+            id: externWrapperId(extern),
+            label: `extern: ${extern}`,
+            wrapper_type: "extern_cluster",
+            extern_parent: extern,
+            parent: DOMAIN_WRAPPER_ID,
+          }
+        });
+      }
+
+      // 3. leaf 노드 — wrapper 소속에 따라 parent 결정
+      const objLayerMap = {};
+      for (const obj of objects) {
+        let parentWrapper;
+        if (parentClasses.has(obj.name)) {
+          // 자식 보유 도메인 내부 부모 — 자기 클러스터 wrapper 안 center
+          parentWrapper = clusterWrapperId(obj.name);
+        } else if (childOf[obj.name]) {
+          // 도메인 내부 부모의 자식
+          parentWrapper = clusterWrapperId(childOf[obj.name]);
+        } else if (externChildOf[obj.name]) {
+          // 외부 부모의 자식 (자식 2개+ 클러스터)
+          parentWrapper = externWrapperId(externChildOf[obj.name]);
+        } else {
+          // 단독 (또는 외부 부모 자식 1개) — 도메인 wrapper 직속
+          parentWrapper = DOMAIN_WRAPPER_ID;
+        }
+        // Phase η.6.3 — layer 1/2/3 정수 (또는 null). 외곽선·후광 시각화 + cross-layer 엣지 판별용
+        const layerVal = (obj.layer === 1 || obj.layer === 2 || obj.layer === 3) ? obj.layer : null;
+        objLayerMap[obj.name] = layerVal;
+        nodes.push({
+          data: {
+            id: obj.name,
+            label: obj.name,
+            parent: parentWrapper,
+            tier: obj.tier,
+            layer: layerVal,
+            kind: obj.kind || "Object",
+            confidence: obj.confidence || 0,
+            verified: obj.verified || false,
+            is_cluster_center: parentClasses.has(obj.name),
+            extern_parent: obj.parent && !internalClasses.has(obj.parent) ? obj.parent : null,
+            file: obj.file || "",
+          }
+        });
+      }
+      const nodeIds = new Set(objects.map(o => o.name));
+
+      // ── 엣지 — 같은 actor↔target 쌍은 1개 엣지로 통합 (다중 액션을 list 보유) ──
+      // key = "<source>->><target>" (방향성 유지)
+      const edgeMap = new Map();
+      function addEdge(source, target, action) {
+        if (!nodeIds.has(source) || !nodeIds.has(target)) return;
+        if (source === target) return;
+        const key = `${source}->>${target}`;
+        if (!edgeMap.has(key)) {
+          edgeMap.set(key, {
+            source, target,
+            actions: [],
+          });
+        }
+        const e = edgeMap.get(key);
+        if (!e.actions.find(a => a.name === action.name)) {
+          e.actions.push({ name: action.name, kind: action.kind || "Action" });
+        }
+      }
+      for (const act of actions) {
+        const flow = act.flow || [];
+        if (flow.length > 0) {
+          for (const step of flow) {
+            const a = step.actor;
+            const t = step.target;
+            if (a && t) addEdge(a, t, act);
+          }
+        }
+        // fallback — flow 없거나 추출 안 됨 → primary class → objects_affected
+        const primary = (act.implementation || {}).primary || "";
+        const primaryClass = primary.includes("::") ? primary.split("::")[0] : "";
+        const affected = act.objects_affected || [];
+        if (primaryClass) {
+          for (const obj of affected) {
+            if (obj === primaryClass) continue;
+            addEdge(primaryClass, obj, act);
+          }
+        }
+      }
+      const edges = [];
+      let edgeIdCounter = 0;
+      for (const [key, e] of edgeMap.entries()) {
+        // 팔란티어 패턴 — 엣지 중간 '...' 말풍선. 다중 액션이면 count 표시
+        const marker_label = e.actions.length === 1 ? "···" : `··· ${e.actions.length}`;
+        // Phase η.6.3 — cross-layer 엣지 판별 (source/target layer 다르면 그라데이션)
+        const srcL = objLayerMap[e.source];
+        const tgtL = objLayerMap[e.target];
+        const cross_layer = (srcL && tgtL && srcL !== tgtL) ? `L${srcL}_L${tgtL}` : "";
+        edges.push({
+          data: {
+            id: `e${edgeIdCounter++}`,
+            source: e.source,
+            target: e.target,
+            actions: e.actions,
+            marker_label: marker_label,
+            // kind 우선순위: 어느 하나라도 Action 이면 Action, 모두 Function 이면 Function
+            kind_summary: e.actions.some(a => a.kind === "Action") ? "Action" : "Function",
+            source_layer: srcL || 0,
+            target_layer: tgtL || 0,
+            cross_layer,
+          }
+        });
+      }
+
+      // ── 좌표 계산 (manual position) ──
+      // 도메인 중심 (0,0) 주위에 (내부) cluster + (외부) extern cluster + 단독 엔티티를 동심원 배치.
+      // 내부 cluster 안: 부모=center + 자식들=주변 원형
+      // 외부 cluster 안: 부모 노드 없음 + 자식들만 원형 (center 좌표는 cluster 위치)
+      const positions = computePositions(objects, clusters, parentClasses, childOf, externClusters, externChildOf);
+
+      // ── Cytoscape 인스턴스 ──
+      const cy = cytoscape({
+        container: document.getElementById("cy"),
+        elements: {
+          nodes: nodes.map(n => {
+            const pos = positions[n.data.id];
+            return pos ? { data: n.data, position: pos } : n;
+          }),
+          edges,
+        },
+        style: [
+          // ── 기본 leaf 노드 = 작은 점 + 라벨 top (Obsidian) ──
+          {
+            selector: "node",
+            style: {
+              "shape": "ellipse",
+              "width": 14,
+              "height": 14,
+              "background-color": "#7b9eb8",
+              "border-width": 0,
+              "label": "data(label)",
+              "color": "#d4d4d4",
+              "font-size": 10,
+              "font-family": "Consolas, monospace",
+              "text-valign": "top",
+              "text-halign": "center",
+              "text-margin-y": -4,
+              "text-wrap": "wrap",
+              "text-max-width": 140,
+              "text-outline-color": "#1e1e1e",
+              "text-outline-width": 2,
+            }
+          },
+          // tier 별 색상 (밝기 그라데이션)
+          { selector: "node[tier = 1]", style: { "background-color": "#4ec9b0", "width": 18, "height": 18 } },
+          { selector: "node[tier = 2]", style: { "background-color": "#569cd6", "width": 16, "height": 16 } },
+          { selector: "node[tier = 3]", style: { "background-color": "#ce9178", "width": 14, "height": 14 } },
+          { selector: "node[tier = 4]", style: { "background-color": "#9cdcfe", "width": 12, "height": 12 } },
+          { selector: "node[!tier]",    style: { "background-color": "#858585", "width": 12, "height": 12 } },
+          // Phase η.6.3 — layer (DDD 안정도) 별 크기 보정 + 외곽선 무게. tier 색상은 유지.
+          // L1 = 트렁크 (가장 안정) → 가장 크고 진한 외곽선 / L3 = 리프 (가변) → 외곽선 없음
+          { selector: "node[layer = 1]", style: { "width": 22, "height": 22, "border-width": 2.5, "border-color": "#ffffff", "border-opacity": 0.9 } },
+          { selector: "node[layer = 2]", style: { "width": 16, "height": 16, "border-width": 1.5, "border-color": "#bdbdbd", "border-opacity": 0.7 } },
+          { selector: "node[layer = 3]", style: { "width": 11, "height": 11, "border-width": 0 } },
+          // 인터페이스는 다이아몬드 + 약간 큰 사이즈
+          { selector: "node[kind = 'Interface']", style: { "shape": "diamond", "width": 18, "height": 18 } },
+          // 검수된 노드는 흰 외곽선
+          { selector: "node[?verified]", style: { "border-width": 1.5, "border-color": "#ffffff" } },
+          // 클러스터 중심 (부모) 노드는 좀 더 강조
+          { selector: "node[?is_cluster_center]", style: { "border-width": 2, "border-color": "#ffffff" } },
+          // layer 토글로 숨김 — Cytoscape 'display: none' 은 layout 영향. visibility 만 hidden.
+          { selector: "node.layer-hidden", style: { "visibility": "hidden" } },
+          { selector: "edge.layer-hidden", style: { "visibility": "hidden" } },
+
+          // ── compound wrapper 스타일 ──
+          // 도메인 wrapper — 큰 박스, teal 점선 테두리, 도메인 이름 라벨 top
+          {
+            selector: `node[wrapper_type = 'domain']`,
+            style: {
+              "background-color": "#1e1e1e",
+              "background-opacity": 0.3,
+              "border-color": "#4ec9b0",
+              "border-width": 2,
+              "border-style": "dashed",
+              "border-opacity": 0.7,
+              "shape": "round-rectangle",
+              "label": "data(label)",
+              "color": "#4ec9b0",
+              "font-size": 16,
+              "font-weight": "bold",
+              "text-valign": "top",
+              "text-halign": "center",
+              "text-margin-y": -10,
+              "text-outline-color": "#1e1e1e",
+              "text-outline-width": 0,
+              "padding": "30px",
+              "events": "no",  // wrapper 자체 클릭 X (leaf 노드만)
+            }
+          },
+          // 내부 클러스터 wrapper — 회색 점선, 라벨 없음 (부모 노드가 라벨 역할)
+          {
+            selector: `node[wrapper_type = 'cluster']`,
+            style: {
+              "background-color": "#252526",
+              "background-opacity": 0.5,
+              "border-color": "#858585",
+              "border-width": 1,
+              "border-style": "dashed",
+              "border-opacity": 0.5,
+              "shape": "round-rectangle",
+              "label": "",
+              "padding": "15px",
+              "events": "no",
+            }
+          },
+          // 외부 클러스터 wrapper — 더 흐린 회색 점선, "extern: <parent>" 라벨 (top)
+          {
+            selector: `node[wrapper_type = 'extern_cluster']`,
+            style: {
+              "background-color": "#1e1e1e",
+              "background-opacity": 0.4,
+              "border-color": "#666666",
+              "border-width": 1,
+              "border-style": "dashed",
+              "border-opacity": 0.4,
+              "shape": "round-rectangle",
+              "label": "data(label)",
+              "color": "#858585",
+              "font-size": 10,
+              "font-style": "italic",
+              "text-valign": "top",
+              "text-halign": "center",
+              "text-margin-y": -8,
+              "text-outline-color": "#1e1e1e",
+              "text-outline-width": 0,
+              "padding": "18px",
+              "events": "no",
+            }
+          },
+          // ── 엣지 = 가는 선 + '...' 말풍선 마커 (팔란티어 패턴) ──
+          {
+            selector: "edge",
+            style: {
+              "width": 1,
+              "line-color": "#4ec9b0",
+              "line-opacity": 0.5,
+              "target-arrow-color": "#4ec9b0",
+              "target-arrow-shape": "triangle",
+              "arrow-scale": 0.7,
+              "curve-style": "bezier",
+              // 엣지 중앙에 '...' 말풍선 — 액션 이름 대신 시각 마커 (클릭 시 모달 펼침)
+              "label": "data(marker_label)",
+              "font-size": 11,
+              "font-weight": "bold",
+              "color": "#4ec9b0",
+              "text-rotation": "0",  // autorotate X — 가독성 우선
+              "text-background-color": "#1e1e1e",
+              "text-background-opacity": 1,
+              "text-background-padding": 3,
+              "text-background-shape": "roundrectangle",
+              "text-border-color": "#4ec9b0",
+              "text-border-width": 1,
+              "text-border-opacity": 0.6,
+              "text-events": "yes",   // 라벨도 클릭 이벤트 받음
+            }
+          },
+          { selector: "edge[kind_summary = 'Function']", style: { "line-color": "#ce9178", "target-arrow-color": "#ce9178", "color": "#ce9178", "text-border-color": "#ce9178" } },
+          // Phase η.6.3 — cross-layer 엣지 그라데이션 (안정 → 가변 의존성 시각화).
+          // L1=teal #4ec9b0 / L2=blue #569cd6 / L3=orange #ce9178. line-gradient-stop-colors 로 그라데이션.
+          { selector: "edge[cross_layer = 'L1_L2']", style: { "line-fill": "linear-gradient", "line-gradient-stop-colors": "#4ec9b0 #569cd6", "line-gradient-stop-positions": "0 100", "target-arrow-color": "#569cd6" } },
+          { selector: "edge[cross_layer = 'L1_L3']", style: { "line-fill": "linear-gradient", "line-gradient-stop-colors": "#4ec9b0 #ce9178", "line-gradient-stop-positions": "0 100", "target-arrow-color": "#ce9178" } },
+          { selector: "edge[cross_layer = 'L2_L1']", style: { "line-fill": "linear-gradient", "line-gradient-stop-colors": "#569cd6 #4ec9b0", "line-gradient-stop-positions": "0 100", "target-arrow-color": "#4ec9b0" } },
+          { selector: "edge[cross_layer = 'L2_L3']", style: { "line-fill": "linear-gradient", "line-gradient-stop-colors": "#569cd6 #ce9178", "line-gradient-stop-positions": "0 100", "target-arrow-color": "#ce9178" } },
+          { selector: "edge[cross_layer = 'L3_L1']", style: { "line-fill": "linear-gradient", "line-gradient-stop-colors": "#ce9178 #4ec9b0", "line-gradient-stop-positions": "0 100", "target-arrow-color": "#4ec9b0" } },
+          { selector: "edge[cross_layer = 'L3_L2']", style: { "line-fill": "linear-gradient", "line-gradient-stop-colors": "#ce9178 #569cd6", "line-gradient-stop-positions": "0 100", "target-arrow-color": "#569cd6" } },
+          // 선택 강조
+          { selector: "node:selected", style: { "border-color": "#ffffff", "border-width": 2 } },
+          { selector: "edge:selected", style: { "line-color": "#ffffff", "target-arrow-color": "#ffffff", "width": 2, "line-opacity": 1 } },
+          // hover 효과 — 라벨 강조
+          { selector: "node:active", style: { "color": "#ffffff", "font-weight": "bold" } },
+        ],
+        layout: {
+          name: "preset",
+          fit: true,
+          padding: 40,
+          animate: false,
+        },
+      });
+
+      cyInstance = cy;
+
+      cy.on("tap", "node", evt => {
+        const node = evt.target.data();
+        // wrapper 노드는 클릭 무시 (events: 'no' 로 차단됐지만 안전망)
+        if (node.wrapper_type) return;
+        showObjectModal(node.id);
+      });
+      cy.on("tap", "edge", evt => {
+        const edge = evt.target.data();
+        // 다중 액션 — 첫 번째 액션 모달 (또는 사용자가 list 에서 선택)
+        if (edge.actions && edge.actions.length === 1) {
+          showActionModal(edge.actions[0].name);
+        } else if (edge.actions && edge.actions.length > 1) {
+          showActionPickerModal(edge.actions, edge.source, edge.target);
+        }
+      });
+    }
+
+    // 같은 엣지에 다중 액션이 있을 때 선택 모달
+    function showActionPickerModal(actions, source, target) {
+      const content = document.getElementById("modalContent");
+      let html = `<h2>${escapeHtml(source)} → ${escapeHtml(target)}</h2>`;
+      html += `<div style="color:#858585; font-size:13px; margin-bottom:12px;">이 연결을 만드는 액션 ${actions.length}개</div>`;
+      html += `<ul class="chip-list" style="flex-direction:column; gap:6px;">`;
+      for (const a of actions) {
+        const kindClass = a.kind === "Function" ? "function" : "action";
+        const safe = escapeHtml(a.name);
+        html += `<li style="cursor:pointer; padding:8px 12px; background:#2d2d30; border-left:3px solid #4ec9b0;" onclick="showActionModal('${safe.replace(/'/g, "\\'")}')">`;
+        html += `<span class="badge ${kindClass}">${escapeHtml(a.kind)}</span> <code>${safe}</code>`;
+        html += `</li>`;
+      }
+      html += `</ul>`;
+      content.innerHTML = html;
+      openModal();
+    }
+
+    async function showObjectModal(className) {
+      const content = document.getElementById("modalContent");
+      content.innerHTML = '<div class="loading">로딩 중…</div>';
+      openModal();
+      try {
+        const res = await fetch(`/api/v1/ontology/object/${encodeURIComponent(currentDomain)}/${encodeURIComponent(className)}`);
+        if (!res.ok) throw new Error("오브젝트 부재");
+        const obj = await res.json();
+        renderObjectModal(obj);
+        // Phase η.8.4 — history narrative 박스 비동기 첨부 (오브젝트 본문 먼저 렌더 후)
+        appendHistorySection(className);
+      } catch (err) {
+        content.innerHTML = `<div class="empty">오브젝트 부재: ${escapeHtml(className)}<br><br>외부 도메인 클래스이거나 분류되지 않은 클래스일 수 있습니다.</div>`;
+      }
+    }
+
+    function renderObjectModal(obj) {
+      const content = document.getElementById("modalContent");
+      const kindBadge = `<span class="badge object">${escapeHtml(obj.kind || "Object")}</span>`;
+      const verified = obj.verified ? '<span class="badge action">검수됨</span>' : "";
+      const layerBadge = obj.layer ? `<span class="badge action" style="background:#264f78">L${obj.layer}</span>` : "";
+      const confidence = (obj.confidence !== undefined && obj.confidence !== null) ? `${(obj.confidence * 100).toFixed(0)}%` : "—";
+
+      let html = `<h2>${escapeHtml(obj.name)}</h2>`;
+      html += `<div style="margin-bottom: 8px;">${kindBadge}${layerBadge}${verified}</div>`;
+      // Phase η.6.3 — file 경로 1차 표시 + IDE 점프 + 클립보드 복사 (사용자 표면 navi)
+      if (obj.file) {
+        html += renderFileBar(obj.file);
+      }
+      html += `<div class="meta-grid">`;
+      html += `<div class="key">Tier</div><div class="value">${obj.tier !== undefined && obj.tier !== null ? `Tier ${obj.tier}` : "미분류"}</div>`;
+      html += `<div class="key">Layer</div><div class="value">${obj.layer ? `L${obj.layer}` : "미분류"}</div>`;
+      html += `<div class="key">Kind</div><div class="value">${escapeHtml(obj.kind || "Object")}</div>`;
+      html += `<div class="key">Confidence</div><div class="value">${confidence}</div>`;
+      if (obj.parent) {
+        html += `<div class="key">Parent</div><div class="value"><code>${escapeHtml(obj.parent)}</code></div>`;
+      }
+      html += `</div>`;
+      // Phase η.8.4 — history 박스 placeholder. 비동기 fetch 가 채움.
+      html += `<div id="objectHistoryBox"></div>`;
+      content.innerHTML = html;
+    }
+
+    // Phase η.8.4 — class → history narrative (최신 3건). 비동기 — 오브젝트 본문은 즉시 렌더.
+    async function appendHistorySection(className) {
+      const box = document.getElementById("objectHistoryBox");
+      if (!box) return;
+      try {
+        const res = await fetch(`/api/v1/ontology/history/${encodeURIComponent(className)}?limit=3`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const records = data.records || [];
+        if (records.length === 0) return;
+        let html = `<div class="history-box">`;
+        html += `<div class="history-title">최근 작업 narrative <span class="history-count">${records.length}건</span></div>`;
+        for (const rec of records) {
+          const sourceCls = rec.source === "claude" ? "src-claude" : "src-gemini";
+          const date = escapeHtml(rec.date || "?");
+          const dt = escapeHtml(rec.decision_type || "");
+          const head = escapeHtml(rec.summary_head || "");
+          const path = rec.path || "";
+          const pathSafe = path.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+          html += `<div class="history-record">`;
+          html += `<div class="history-meta">`;
+          html += `<span class="history-source ${sourceCls}">${escapeHtml(rec.source)}</span>`;
+          html += `<span class="history-date">${date}</span>`;
+          if (dt) html += `<span class="history-dt">${dt}</span>`;
+          html += `</div>`;
+          if (head) html += `<div class="history-head">${head}</div>`;
+          if (path) {
+            const fileName = escapeHtml(path.replace(/\\/g, '/').split('/').pop());
+            html += `<div class="history-path">`;
+            html += `<code class="history-file">${fileName}</code>`;
+            html += `<button class="file-btn" onclick="openInVSCode('${pathSafe}')" title="VS Code 로 열기">VS Code</button>`;
+            html += `<button class="file-btn" onclick="copyToClipboard('${pathSafe}', this)" title="경로 복사">복사</button>`;
+            html += `</div>`;
+          }
+          html += `</div>`;
+        }
+        html += `</div>`;
+        box.innerHTML = html;
+      } catch (err) {
+        // silent — history 없거나 API 실패 시 박스 미표시
+      }
+    }
+
+    function renderFileBar(file) {
+      // vscode://file/<abs_or_rel> — repo 루트 상대 경로 그대로 전달.
+      // 실 IDE 가 절대 경로 요구 시 사용자 클립보드 복사 대안.
+      const safe = escapeHtml(file);
+      const safeAttr = file.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+      return `<div class="file-bar">
+        <code>${safe}</code>
+        <button class="file-btn" onclick="openInVSCode('${safeAttr}')" title="VS Code 로 열기">VS Code</button>
+        <button class="file-btn" onclick="copyToClipboard('${safeAttr}', this)" title="클립보드 복사">복사</button>
+      </div>`;
+    }
+
+    function openInVSCode(file) {
+      // 상대 경로 — VS Code 가 workspace 기준으로 해석. 실패하면 사용자가 복사 버튼 사용.
+      window.location.href = `vscode://file/${file}`;
+    }
+
+    function copyToClipboard(text, btn) {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(() => {
+          const orig = btn.textContent;
+          btn.textContent = "✓";
+          setTimeout(() => { btn.textContent = orig; }, 1200);
+        });
+      } else {
+        // 폴백 — textarea 임시
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); } catch (e) {}
+        document.body.removeChild(ta);
+      }
+    }
+
+    async function showActionModal(actionName) {
+      const content = document.getElementById("modalContent");
+      content.innerHTML = '<div class="loading">로딩 중…</div>';
+      openModal();
+      try {
+        const res = await fetch(`/api/v1/ontology/action/${encodeURIComponent(currentDomain)}/${encodeURIComponent(actionName)}`);
+        if (!res.ok) throw new Error("액션 부재");
+        const act = await res.json();
+        renderActionModal(act);
+      } catch (err) {
+        content.innerHTML = `<div class="empty">액션 부재: ${escapeHtml(actionName)}</div>`;
+      }
+    }
+
+    function renderActionModal(act) {
+      const content = document.getElementById("modalContent");
+      const kind = act.kind || "Action";
+      const kindClass = kind === "Function" ? "function" : "action";
+      const confidence = (act.confidence !== undefined && act.confidence !== null) ? `${(act.confidence * 100).toFixed(0)}%` : "—";
+      const trigger = act.trigger || {};
+
+      let html = `<h2>${escapeHtml(act.name)}</h2>`;
+      html += `<div style="margin-bottom: 8px;"><span class="badge ${kindClass}">${escapeHtml(kind)}</span></div>`;
+
+      if (act.description) {
+        html += `<div class="description">${escapeHtml(act.description)}</div>`;
+      }
+
+      // trigger
+      if (trigger.type || trigger.source) {
+        html += `<h3>Trigger</h3>`;
+        html += `<div class="meta-grid">`;
+        if (trigger.type) html += `<div class="key">Type</div><div class="value">${escapeHtml(trigger.type)}</div>`;
+        if (trigger.source) html += `<div class="key">Source</div><div class="value">${escapeHtml(trigger.source)}</div>`;
+        if (trigger.description) html += `<div class="key">설명</div><div class="value">${escapeHtml(trigger.description)}</div>`;
+        html += `</div>`;
+      }
+
+      // flow
+      const flow = act.flow || [];
+      if (flow.length > 0) {
+        html += `<h3>Flow</h3>`;
+        html += `<table class="flow-table">`;
+        html += `<thead><tr><th class="step-col">#</th><th>Actor</th><th>Operation</th><th>Target</th></tr></thead><tbody>`;
+        for (const step of flow) {
+          html += `<tr>`;
+          html += `<td class="step-col">${escapeHtml(step.step || "")}</td>`;
+          html += `<td><code>${escapeHtml(step.actor || "")}</code></td>`;
+          html += `<td>${escapeHtml(step.operation || "")}${step.note ? `<br><small style="color:#858585">${escapeHtml(step.note)}</small>` : ""}</td>`;
+          html += `<td>${escapeHtml(step.target || "")}</td>`;
+          html += `</tr>`;
+        }
+        html += `</tbody></table>`;
+      }
+
+      // objects_affected
+      const affected = act.objects_affected || [];
+      if (affected.length > 0) {
+        html += `<h3>영향받는 오브젝트</h3>`;
+        html += `<ul class="chip-list">`;
+        for (const o of affected) html += `<li>${escapeHtml(o)}</li>`;
+        html += `</ul>`;
+      }
+
+      // triggers_events / subscribed_to
+      const emits = act.triggers_events || [];
+      const subs = act.subscribed_to || [];
+      if (emits.length > 0 || subs.length > 0) {
+        html += `<h3>이벤트 채널</h3>`;
+        if (emits.length > 0) {
+          html += `<h4>발행 (triggers_events)</h4><ul class="chip-list">`;
+          for (const e of emits) html += `<li>${escapeHtml(e)}</li>`;
+          html += `</ul>`;
+        }
+        if (subs.length > 0) {
+          html += `<h4>구독 (subscribed_to)</h4><ul class="chip-list">`;
+          for (const s of subs) html += `<li>${escapeHtml(s)}</li>`;
+          html += `</ul>`;
+        }
+      }
+
+      // implementation
+      const impl = act.implementation || {};
+      if (impl.primary || (impl.related && impl.related.length > 0)) {
+        html += `<h3>구현</h3>`;
+        html += `<div class="meta-grid">`;
+        if (impl.primary) html += `<div class="key">Primary</div><div class="value"><code>${escapeHtml(impl.primary)}</code></div>`;
+        if (impl.related && impl.related.length > 0) {
+          html += `<div class="key">Related</div><div class="value">`;
+          html += impl.related.map(r => `<code>${escapeHtml(r)}</code>`).join("<br>");
+          html += `</div>`;
+        }
+        html += `</div>`;
+      }
+
+      // evidence + confidence
+      html += `<h3>Evidence</h3>`;
+      html += `<div class="evidence">${escapeHtml(act.evidence || "—")}</div>`;
+      html += `<div style="margin-top:10px; color:#858585; font-size:12px;">Confidence: ${confidence}</div>`;
+
+      content.innerHTML = html;
+    }
+
+    function openModal() {
+      document.getElementById("modalBackdrop").classList.add("open");
+    }
+
+    function closeModal(evt) {
+      if (evt && evt.target !== evt.currentTarget) return;
+      document.getElementById("modalBackdrop").classList.remove("open");
+    }
+
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape") closeModal();
+    });
+
+    // ── 좌표 계산 — 도메인 동심원에 cluster (내부/외부) + 단독 entity 배치 ──
+    function computePositions(objects, clusters, parentClasses, childOf, externClusters, externChildOf) {
+      const positions = {};
+
+      // entity = 내부 cluster / 외부 cluster / single (단독 노드)
+      const entities = [];
+      const usedInCluster = new Set();
+
+      // 내부 cluster
+      for (const parent of parentClasses) {
+        const children = clusters[parent] || [];
+        const radius = Math.max(70, 50 + children.length * 12);
+        entities.push({
+          type: "cluster", parent, children, radius,
+          dimension: radius * 2 + 50,
+        });
+        usedInCluster.add(parent);
+        for (const c of children) usedInCluster.add(c);
+      }
+
+      // 외부 cluster — 부모 노드 없음, 자식들만 wrapper 안 원형
+      for (const [extern, children] of Object.entries(externClusters)) {
+        const radius = Math.max(60, 45 + children.length * 12);
+        entities.push({
+          type: "extern_cluster", extern, children, radius,
+          dimension: radius * 2 + 60,  // 라벨 공간 +
+        });
+        for (const c of children) usedInCluster.add(c);
+      }
+
+      // 단독
+      for (const obj of objects) {
+        if (!usedInCluster.has(obj.name)) {
+          entities.push({
+            type: "single", name: obj.name,
+            dimension: 50,
+          });
+        }
+      }
+
+      const N = entities.length;
+      if (N === 0) return positions;
+
+      // ── balanced interleave — 큰 entity 를 원주 위 멀리 분산 ──
+      // dimension 내림차순 정렬 후 큰 half / 작은 half 를 교차로 배치 →
+      // 큰 entity 두 개가 같은 영역에 몰려 박스 겹치는 사고 회피
+      entities.sort((a, b) => b.dimension - a.dimension);
+      const half = Math.ceil(N / 2);
+      const topHalf = entities.slice(0, half);
+      const botHalf = entities.slice(half);
+      const arranged = [];
+      for (let i = 0; i < half; i++) {
+        arranged.push(topHalf[i]);
+        if (i < botHalf.length) arranged.push(botHalf[i]);
+      }
+
+      // ── globalRadius 충돌 공식 — chord 거리 ≥ 인접 두 entity dimension 평균 ──
+      // chord = 2R·sin(π/N), 둘이 안 겹치려면 chord ≥ (dim_i + dim_{i+1}) / 2
+      // 가장 큰 인접 쌍 기준으로 R 하한 결정
+      const PADDING_FACTOR = 1.2;  // entity 사이 여백 비율
+      let maxAdjacent = 0;
+      for (let i = 0; i < N; i++) {
+        const a = arranged[i].dimension;
+        const b = arranged[(i + 1) % N].dimension;
+        maxAdjacent = Math.max(maxAdjacent, (a + b) / 2 * PADDING_FACTOR);
+      }
+      const chordRadius = N >= 2 ? maxAdjacent / (2 * Math.sin(Math.PI / N)) : 0;
+      // 기존 평균 둘레 식도 병행 — entity 수 많고 dimension 비슷할 때 보호
+      const totalCirc = arranged.reduce((sum, e) => sum + e.dimension * 1.4, 0);
+      const arcRadius = totalCirc / (2 * Math.PI);
+      const globalRadius = Math.max(250, chordRadius, arcRadius);
+
+      // 각도 균등 분산 (12시 시작) — interleave 적용된 arranged 사용
+      for (let i = 0; i < N; i++) {
+        const angle = (i / N) * 2 * Math.PI - Math.PI / 2;
+        const cx = globalRadius * Math.cos(angle);
+        const cy = globalRadius * Math.sin(angle);
+        const e = arranged[i];
+        if (e.type === "single") {
+          positions[e.name] = { x: cx, y: cy };
+        } else if (e.type === "cluster") {
+          // 내부 cluster: 부모 = center, 자식들 = 주위 원형
+          positions[e.parent] = { x: cx, y: cy };
+          const childCount = e.children.length;
+          if (childCount === 0) continue;
+          for (let j = 0; j < childCount; j++) {
+            const childAngle = (j / childCount) * 2 * Math.PI - Math.PI / 2;
+            const localRadius = Math.max(50, e.radius * 0.6);
+            positions[e.children[j]] = {
+              x: cx + localRadius * Math.cos(childAngle),
+              y: cy + localRadius * Math.sin(childAngle),
+            };
+          }
+        } else if (e.type === "extern_cluster") {
+          // 외부 cluster: 부모 노드 X, 자식들이 wrapper 중심에서 원형 배치
+          const childCount = e.children.length;
+          for (let j = 0; j < childCount; j++) {
+            const childAngle = (j / childCount) * 2 * Math.PI - Math.PI / 2;
+            const localRadius = Math.max(45, e.radius * 0.55);
+            positions[e.children[j]] = {
+              x: cx + localRadius * Math.cos(childAngle),
+              y: cy + localRadius * Math.sin(childAngle),
+            };
+          }
+        }
+      }
+
+      return positions;
+    }
+
+    function relayoutConcentric() {
+      if (!cyInstance) return;
+      // 본 디자인은 compound + manual position 기반 — concentric 재배치는 그래프 모델과
+      // 안 맞아 단순히 fit 호출
+      cyInstance.fit();
+    }
+
+    function relayoutCose() {
+      if (!cyInstance) return;
+      cyInstance.layout({
+        name: "cose",
+        animate: false,
+        padding: 40,
+        nodeRepulsion: 8000,
+        idealEdgeLength: 100,
+        gravity: 0.2,
+      }).run();
+    }
+
+    // Phase η.9.1 — 좌측 트리(현재 도메인 강조) + 리사이저 2개(트리↔문서, 문서↔그래프)
+    OntologyTreeNav.renderDomainTree(document.getElementById("treeNav"), getDomainName());
+    OntologyTreeNav.setupResizer(
+      document.getElementById("resizerTreeDoc"), "--tree-w",
+      { min: 160, max: 460, storageKey: "ontologyViewer.treeW" }
+    );
+    OntologyTreeNav.setupResizer(
+      document.getElementById("resizerDocGraph"), "--doc-w",
+      { min: 260, max: 900, storageKey: "ontologyViewer.docW" }
+    );
+
+    // Phase η.9.1 — 그래프 On/Off. 워크스페이스 공통 선호로 localStorage 에 기억(도메인 무관 1개 키).
+    const GRAPH_VISIBLE_KEY = "ontologyViewer.graphVisible";
+    function setGraphVisible(visible) {
+      const graphArea = document.getElementById("graphArea");
+      const sidebar = document.getElementById("sidebar");
+      const reopenStrip = document.getElementById("reopenStrip");
+      const docGraphResizer = document.getElementById("resizerDocGraph");
+      const btn = document.getElementById("toggleGraphBtn");
+      graphArea.classList.toggle("collapsed", !visible);
+      sidebar.classList.toggle("expanded", !visible);   // 문서 패널이 남는 폭을 흡수
+      reopenStrip.classList.toggle("show", !visible);
+      docGraphResizer.style.display = visible ? "" : "none";  // 그래프 0폭일 땐 리사이저 드래그 무의미
+      btn.classList.toggle("toggle-on", visible);
+      btn.textContent = visible ? "👁 그래프 숨기기" : "👁 그래프 보이기";
+      localStorage.setItem(GRAPH_VISIBLE_KEY, visible ? "1" : "0");
+      // 그래프가 0폭이던 동안 생성됐을 수 있어 resize+fit 재계산 필요 (cytoscape 는 container 크기를
+      // 생성 시점 기준으로 preset fit 을 계산하므로, 0폭에서 만들어졌다면 재보정 없이는 어긋남)
+      if (visible && cyInstance) setTimeout(() => { cyInstance.resize(); cyInstance.fit(); }, 0);
+    }
+    function toggleGraphVisible() {
+      setGraphVisible(document.getElementById("graphArea").classList.contains("collapsed"));
+    }
+    setGraphVisible(localStorage.getItem(GRAPH_VISIBLE_KEY) !== "0");
+
+    loadDomain();
+  </script>
+</body>
+</html>

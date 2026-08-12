@@ -208,7 +208,7 @@ ax-cluster/
 # 운영
 .venv/bin/python -m master.status show                   # 머신·서비스·큐 요약 (읽기 전용)
 .venv/bin/python -m master.status html                   # → <프로젝트>/cluster.html 한 장
-#   🔴 다른 머신에서 보기: http://192.168.0.57:8103/view/  ← **인증 없음** (LAN 한정·읽기 전용)
+#   🔴 다른 머신에서 보기: http://192.168.0.57:8103  ← 인증 없음 (루트가 /view/ 로 보낸다)
 #   🔴 최소 간격 120초 — BC-250 을 자주 두드리지 않는다 (넘기려면 --force)
 curl -s localhost:8102/health | python3 -m json.tool     # 노드별 상주 모델
 systemctl status ax-task-queue ax-broker ax-projects ax-indexer.path

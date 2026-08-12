@@ -14,13 +14,19 @@
     🔴 **새 포트·새 유닛·새 ufw 규칙 = 0.** 이미 열려 있고 이미 인증된 8103 에 붙인다.
        두 화면(`cluster.html`·`domains.html`)이 **같은 표면**에서 나온다.
 
-## 🔴 자격증명을 분리했다 — 브라우저에 API 토큰을 주지 않는다
+## 🔴 인증이 없다 (사용자 결정 2026-08-13)
 
-브라우저가 화면을 보려면 자격증명을 들고 있어야 하는데, 그것이 API 토큰이면 **그 브라우저는
-MCP 도구를 호출할 자격**을 들고 있는 셈이다. 그래서 `auth.load_view_token()` — **다른 비밀**이고
-이 경로에서만 통한다. 이 토큰으로는 큐도 브로커도 MCP 도구도 부를 수 없다.
+> *"왜 로그인해야해?"* / *"내가 내한테 뭘 해킹한다는거야 머신 4대 운용하기 위해서 인프라를
+> 만드는데"* / *"그냥 있는거 보여주는 뷰어를 원하는거라니까."*
 
-브라우저는 `Bearer` 를 스스로 못 붙이므로 **Basic** 을 받는다(사용자명은 무시, 비밀번호가 토큰).
+토큰 규칙은 **조작 가능한 API** 를 위해 쓰였다 — 큐 조작·추론 소모·프로젝트 전환. 🔴 이 경로는
+**아무것도 못 한다**: GET/HEAD 만, 화이트리스트된 파일만, 요청이 수집을 유발하지도 않는다.
+규칙의 글자를 지키려고 **쓰이지 않는 화면**을 만드는 것이 더 나쁘다 — 마찰을 만들면 안 본다.
+
+⚠️ 남는 방어는 **ufw LAN 한정** 한 층이고 그것이 의도된 상태다. 같은 포트의 **API 경로는 그대로
+토큰으로 잠겨 있다**(공개는 이 접두어에만 적용된다). 🔴 `AX_VIEW_REQUIRE_TOKEN=1` 로 잠글 수
+있고, 그때는 **뷰 전용 토큰**을 Basic 으로 받는다(브라우저는 `Bearer` 를 스스로 못 붙인다) —
+API 토큰과 섞이지 않게 별도 비밀이다.
 
 ## 🔴 요청이 수집을 유발하지 않는다
 
@@ -130,7 +136,8 @@ def index_html(root: Path) -> str:
         "</ul><div class=\"sub\">🔴 <b>읽기 전용이다.</b> 이 화면을 여는 것이 수집을 유발하지 "
         "않는다 — 새로고침이 BC-250 에 SSH 폴링을 걸면 주기 가드(120초)를 만든 이유가 사라진다. "
         "생성은 마스터에서 사람이 부를 때만 돈다.<br>"
-        "🔴 이 자격증명은 <b>화면 전용</b>이다 — 큐·브로커·MCP 도구를 호출할 수 없다."
+        "🔴 <b>인증이 없다</b>(LAN 한정) — 이 경로는 조작이 불가능하고, 같은 포트의 API 경로는 "
+        "그대로 토큰으로 잠겨 있다."
         "</div></body></html>")
 
 
@@ -191,16 +198,52 @@ class ViewApp:
         return await _respond(send, 200, body.encode("utf-8"))
 
 
+# 🔴 **루트는 화면으로 보낸다** (실측 2026-08-13: 사용자가 `http://…:8103/` 를 열자
+#    `{"error":"unauthorized"}` 를 받았다 — 그 경로는 API 라 인증을 요구한다).
+#
+#    주소에 `/view/` 를 붙여야 하는 것은 **사람이 외워야 하는 마찰**이고, 마찰은 화면을 안 보게
+#    만든다. 포트만 치면 화면이 나와야 한다.
+#
+#    ⚠️ 라우터가 이 두 경로를 **직접 처리하고 절대 뒤로 넘기지 않는다.** 그래서 인증에서 열어
+#    줘도 MCP 앱에 인증 없이 도달하지 않는다 — 열린 것은 *리다이렉트와 빈 응답*뿐이다.
+ROOT_PATHS = ("/", "")
+FAVICON = "/favicon.ico"
+
+
 class Router:
     """경로로 갈라 준다 — 🔴 **한 포트, 한 유닛**. 서비스를 늘리지 않는다."""
 
-    def __init__(self, default_app, view_app, *, prefix: str = PREFIX):
+    # 🔴 원전 웹 UI 가 쓰는 접두어들 — MCP 로 넘기지 않고 `webui` 로 보낸다.
+    #    `/mcp` 만 MCP 앱이 가져간다(원전엔 없던 경로라 충돌하지 않는다).
+    WEBUI_PREFIXES = ("/ontology", "/ontology-static", "/api/v1")
+
+    def __init__(self, default_app, view_app, *, prefix: str = PREFIX, webui=None):
         self.default_app = default_app
         self.view_app = view_app
         self.prefix = prefix
+        self.webui = webui
 
     async def __call__(self, scope, receive, send):
-        if scope.get("type") == "http" and scope.get("path", "").startswith(self.prefix):
+        if scope.get("type") != "http":
+            return await self.default_app(scope, receive, send)
+        path = scope.get("path", "")
+        if path in ROOT_PATHS:
+            # 🔴 루트는 **원전 Context Server** 다 (복각). 원전이 그 자리를 쓰고 있었다.
+            if self.webui is not None:
+                return await self.webui(scope, receive, send)
+            where = (self.prefix + "/").encode()
+            await send({"type": "http.response.start", "status": 302,
+                        "headers": [(b"location", where), (b"content-length", b"0"),
+                                    (b"cache-control", NO_STORE)]})
+            return await send({"type": "http.response.body", "body": b""})
+        if self.webui is not None and any(path.startswith(p) for p in self.WEBUI_PREFIXES):
+            return await self.webui(scope, receive, send)
+        if path == FAVICON:
+            # ⚠️ 401 을 주면 브라우저 콘솔이 매 요청 빨개진다 — 없다고만 말한다
+            await send({"type": "http.response.start", "status": 204,
+                        "headers": [(b"content-length", b"0")]})
+            return await send({"type": "http.response.body", "body": b""})
+        if path.startswith(self.prefix):
             return await self.view_app(scope, receive, send)
         return await self.default_app(scope, receive, send)
 
