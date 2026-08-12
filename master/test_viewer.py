@@ -174,7 +174,10 @@ def test_index_shows_age_and_marks_stale() -> None:
         check("나이를 보인다", "시간 전" in idx or "분 전" in idx, idx[:200])
         check("낡은 것에 표시", "⚠️" in idx)
         check("읽기 전용임을 적는다", "읽기 전용" in idx)
-        check("자격이 화면 전용임을 적는다", "화면 전용" in idx)
+        # ⚠️ 로그인을 뺀 뒤(사용자 결정 2026-08-13) 문구가 바뀌었다 — **인증이 없다는 사실**과
+        #    같은 포트의 API 는 잠겨 있다는 것을 화면이 말해야 한다
+        check("인증이 없다고 적는다", "인증이 없다" in idx, idx[-300:])
+        check("API 는 잠겨 있다고 적는다", "잠겨" in idx, idx[-300:])
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
