@@ -39,6 +39,9 @@ _API_HISTORY = re.compile(r"^/api/v1/ontology/history/(.+)$")
 _API_TASK = re.compile(r"^/api/v1/ontology/task/(.+)$")
 _API_BOARD_ONE = re.compile(r"^/api/v1/domains/(.+)$")
 
+# 🔴 POST 지만 **읽기**인 경로 — 원전 프론트엔드가 이렇게 부른다. 이 목록에 없는 POST 는 거부다.
+READ_POST = frozenset({"/api/v1/search/combined", "/api/v1/search/vector"})
+
 
 async def _send(send, status: int, body: bytes, ctype: bytes = JSON) -> None:
     await send({"type": "http.response.start", "status": status,
@@ -50,6 +53,19 @@ async def _send(send, status: int, body: bytes, ctype: bytes = JSON) -> None:
 
 def _j(obj) -> bytes:
     return json.dumps(obj, ensure_ascii=False).encode("utf-8")
+
+
+async def _read_body(receive) -> bytes:
+    """요청 본문. ⚠️ `more_body` 를 끝까지 읽는다 — 한 번만 받으면 큰 본문이 잘린다."""
+    buf = b""
+    while True:
+        msg = await receive()
+        if msg.get("type") != "http.request":
+            break
+        buf += msg.get("body", b"") or b""
+        if not msg.get("more_body"):
+            break
+    return buf
 
 
 class WebUI:
@@ -64,8 +80,11 @@ class WebUI:
         method = scope.get("method", "GET").upper()
         path = scope.get("path", "")
 
-        # 🔴 쓰기는 전부 거부 — 사유를 돌려준다(화면이 그것을 보여준다)
-        if method not in ("GET", "HEAD"):
+        # 🔴 **읽기 POST 와 쓰기 POST 를 가른다** (실측 2026-08-13).
+        #    원전은 검색을 `POST /api/v1/search/*` 로 부른다 — HTTP 메서드만 보고 막으면
+        #    **검색 탭이 통째로 죽는다**(내가 그렇게 만들어 놓고 확인해서 잡았다).
+        #    기준은 메서드가 아니라 **무엇을 하는 경로인가** 다: 검색은 읽기다.
+        if method not in ("GET", "HEAD") and path not in READ_POST:
             return await _send(send, 200, _j(routes.api_refuse_mutation()))
 
         try:
@@ -127,13 +146,20 @@ class WebUI:
             return await _send(send, 200, _j(routes.api_index_status(paths)))
         if path == "/api/v1/tags":
             return await _send(send, 200, _j(routes.api_tags(root, paths)))
-        if path in ("/api/v1/search/combined", "/api/v1/search/vector"):
-            # ⚠️ 원전은 POST 였다. GET 도 받는다 — 쓰기가 아니므로(§ 위 GET 만 통과 규칙과 충돌 X)
+        if path in READ_POST:
+            # 원전은 **본문 JSON** 으로 보낸다(`{query, n, category, tags}`). 편의로 쿼리스트링도 받는다.
+            body = await _read_body(receive)
+            data = {}
+            if body:
+                try:
+                    data = json.loads(body.decode("utf-8", "replace")) or {}
+                except ValueError:
+                    data = {}
             q = parse_qs(scope.get("query_string", b"").decode("utf-8", "replace"))
-            query = (q.get("query") or q.get("q") or [""])[0]
+            query = str(data.get("query") or (q.get("query") or q.get("q") or [""])[0])
             try:
-                n = int((q.get("n") or ["5"])[0])
-            except ValueError:
+                n = int(data.get("n") or (q.get("n") or ["5"])[0])
+            except (ValueError, TypeError):
                 n = 5
             if not query.strip():
                 return await _send(send, 200, _j({"results": [], "count": 0,
