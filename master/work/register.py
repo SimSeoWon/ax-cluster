@@ -291,6 +291,9 @@ def register_work(
             m = mf.build(paths, r.task_id, classes=spec.classes,
                          target_files=spec.target_files, stem=spec.stem,
                          contracts=spec.contracts, skeleton=spec.skeleton,
+                         # 🔴 포팅 원본 (소 1.3.5) — 사람이 준 `source_files` 가 이기고,
+                         #    없으면 대상 파일로 자동 조회한다. **경로만** 실린다.
+                         source_files=spec.source_files,
                          searcher=searcher)
             r.manifest_path = str(mf.write(paths, m))
             r.manifest_hits = m.hits

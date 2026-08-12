@@ -88,14 +88,25 @@ from the master's own container DB. 🔴 **Never write the key value into a doc 
 모듈별 설명·함정·실측은 [`master/README.md`](master/README.md) 에 있다. 여기엔 **놓치면 안 되는 것만** 남긴다.
 
 `worker/` is still a README-only stub. **`client/` is live** — see the table row above.
-🔴 **Say "done" only for a whole area.** M2 closed 2026-08-10. In M3, **중 1.1 (skeleton + freeze)
-and 중 1.2 (decompose) are closed** — the skeleton is generated, grounded, frozen deterministically,
-and **built on `.2` before registration**. 🕓 Still untouched: 중 1.3 dispatch, 중 1.4 integrator,
-all of 대 2 (3-layer gate) and 대 3. When reporting status, give the denominator (read it from
-Redmine), never a scope narrowed to what got built.
+🔴 **Say "done" only for a whole area.** M2 closed 2026-08-10. In M3, **중 1.1 (skeleton + freeze),
+중 1.2 (decompose) and 중 1.3 (inference dispatch) are closed** — the skeleton is generated,
+grounded, frozen deterministically, **built on `.2` before registration**, and work is now
+dispatched to workers that **infer only** (`work/infer.py`, skill `ax-infer`), with responses
+spooled in apply order. 🔴 **중 1.4 (integrator) is the current end of the chain: responses
+accumulate and nothing applies them.** Its input is already fixed — `infer.Handoff.ordered()` and
+`<project>/responses/<work_id>/<task>.json` (which carries `base_commit`, so stale responses can be
+refused). 🕓 Also untouched: all of 대 2 (3-layer gate) and 대 3. When reporting status, give the
+denominator (read it from Redmine), never a scope narrowed to what got built.
 🔴 **Two framings that changed on 2026-08-11 — don't argue from the old ones**: the pipeline has
 **one writer** (the integrator `.2` builds, then commits), and distribution buys **incremental
 progress, not throughput** (measured: 2 workers = 12% faster, 90% dearer).
+🔴 **Two skills go to a worker and the dispatch names which one applies**: `ax-infer` (current —
+infer only, never commit) and `ax-work` (old N-writer topology). `runner.py` and `ax-work` are
+**deliberately not deleted** — settled: keep the N-writer machinery reversible until measurement
+overturns it (§8.4). Do not "clean up" either one.
+🔴 **Content travels as files in both directions, never on the command line or stdout.** `.2`'s
+console is CP949: the master→worker rule ("instructions ASCII, content by file") applies to
+worker→master too — responses land in `.ax/work/<task>/response.txt` and come back by `scp`.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
 ## Tests — 🔴 **수를 여기 적지 않는다**

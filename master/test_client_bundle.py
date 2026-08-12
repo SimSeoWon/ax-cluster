@@ -143,7 +143,7 @@ def test_merge() -> None:
 
 
 def test_skill_is_readable() -> None:
-    for name in ("ax-work", "ax-request", "ax-ontology"):
+    for name in ("ax-work", "ax-infer", "ax-request", "ax-ontology"):
         t = bundle.skill_text(name)
         check(f"{name}: 읽힌다", len(t) > 1000, str(len(t)))
         check(f"{name}: frontmatter", t.startswith("---") and f"name: {name}" in t)
@@ -153,7 +153,12 @@ def test_skill_is_readable() -> None:
 
 
 def test_role_skills() -> None:
-    check("워커는 ax-work", bundle.skills_for("worker") == ("ax-work",))
+    # 🔴 워커에는 **둘** 간다 — `ax-infer`(현 토폴로지: 추론만) + `ax-work`(구 토폴로지).
+    #    구 것을 지우지 않는 이유는 settled 결정이다: N-writer 기계장치는 측정으로 뒤집힐
+    #    여지가 있는 동안 되돌릴 수 있게 둔다(§8.4). 파견 지시가 이름으로 고른다.
+    check("워커는 ax-work + ax-infer",
+          set(bundle.skills_for("worker")) == {"ax-work", "ax-infer"},
+          str(bundle.skills_for("worker")))
     # 🔴 요청자에게 워커 절차를 주지 않는다
     check("🔴 요청자는 ax-request·ax-ontology (ax-work 아님)",
           set(bundle.skills_for("requester")) == {"ax-request", "ax-ontology"},

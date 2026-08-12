@@ -77,6 +77,16 @@ class ProjectPaths:
         return self.root / "manifests"
 
     @property
+    def responses(self) -> Path:
+        """워커 추론 응답의 스풀 (소 1.3.2). 🔴 **파생물이 아니다.**
+
+        매니페스트는 지우면 재수집되지만 이것은 **돈을 낸 LLM 출력**이다 — 지우면 같은 추론을
+        다시 산다. 그리고 통합자가 적용할 때까지 **유일한 사본**이라, 이것이 곧 *"어디까지
+        진행됐나"* 의 답이다(소 1.3.3). 청소 대상에 넣지 말 것.
+        """
+        return self.root / "responses"
+
+    @property
     def vector_db(self) -> Path: return self.root / VECTOR_DB
     @property
     def bm25_db(self) -> Path: return self.root / BM25_DB

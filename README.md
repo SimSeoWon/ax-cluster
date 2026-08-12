@@ -41,8 +41,10 @@ Gitea push → post-receive 훅 → 스풀 → inotify → 색인기
 마스터      → 🔴 골조 생성(claude:opus) — 관계 그래프·헤더 선언·규범·휴리스틱으로 grounding
            → 골조가 되묻는다 → 🔴 **사람이 답한다** → 인터페이스 동결(결정적)
            → 🔴 골조 빌드 게이트: 통합자 `.2` 에서 세워 보고 **통과해야 등재**
-           → 분해(의존 순서·파일 불가분) → 매니페스트 배달 → 워커는 **추론만**
-통합자(.2)  → 적용(순차) → UE5 빌드 판정 → 🔴 **통과분만** durable 에 커밋
+           → 분해(의존 순서·파일 불가분) → 매니페스트 배달(포팅이면 원본 경로도)
+워커        → durable 을 읽고 **추론만** (`ax-infer`) → `response.txt` 로 답한다 (커밋 없음)
+마스터      → 응답을 되읽어 fail-closed 판정 → **스풀**(적용 순서대로 · 기준 커밋과 함께)
+통합자(.2)  → 🕓 적용(순차) → UE5 빌드 판정 → 🔴 **통과분만** durable 에 커밋 ← **아직 없다**
 ```
 
 🔴 **쓰는 주체는 하나다**(2026-08-11). 빌드해 본 주체가 커밋하므로 **깨진 것이 원격에 못
@@ -103,12 +105,15 @@ ax-cluster/
 │   │   ├── class_graph.py      상속 그래프 + methods 소유권
 │   │   └── dependency.py       `#include` 의존 그래프
 │   ├── events/                 ← Gitea 훅 → 스풀 → 색인기 (트윈이 자라는 지점)
-│   ├── work/                   ← 작업 루프 — 골조·분해·파견·검증
+│   ├── work/                   ← 작업 루프 — 골조·분해·**추론 파견**·검증
 │   │   ├── skeleton.py         🔴 골조 생성 + **인터페이스 동결**(결정적, LLM 0). 텍스트만 낸다
 │   │   ├── skeleton_gate.py    🔴 **등재 전에 세워 본다** — 빌드 통과해야 등재
 │   │   ├── decompose.py        분해 — 의존 순서·파일 불가분·`[PSEUDO:N]` 뎁스
 │   │   ├── heuristics.py       🔴 대화형 휴리스틱 — **사람이 답한 것만**, 범위(project/domain/once)
-│   │   ├── runner.py           🔴 큐 → 워커 파견 (마스터가 중개·하트비트 대행)
+│   │   ├── infer.py            🔴 **추론 파견** — 워커는 커밋 안 한다. 응답은 **파일로** 온다
+│   │   ├── porting.py          포팅 원본 대응 — 🔴 경로만·읽기 전용. 실측 동명 9 → 정규화 21쌍
+│   │   ├── distribute.py       `/distribute` 입구 — 🔴 plan→register→dispatch, 단계마다 사람이 끊는다
+│   │   ├── runner.py           ⚠️ **구 토폴로지**(워커가 커밋) — 되돌릴 수 있게 남겨 둔다
 │   │   ├── batching.py         🔴 파일 불가분 묶음 — 열쇠는 **모듈+경로+stem**(basename 아님)
 │   │   ├── declarations.py     헤더 선언 주입 — 실측 환각 2 → 0
 │   │   ├── norms.py            도메인 규범(invariants 중심) 부착
@@ -174,15 +179,21 @@ ax-cluster/
 .venv/bin/python -m master.transfer export         # 두 벌(full·compat) + README
 .venv/bin/python -m master.transfer import <zip>   # 🔴 기본은 계획만 · --apply 는 먼저 백업
 
-# 골조 · 분해 (마일스톤 3 대 1)
-#   골조는 claude:opus 로 만들고(계약이라 값을 쓴다), 등재 전에 통합자 `.2` 에서 세워 본다.
-#   분해는 include 그래프로 적용 순서를 정하고, 계획은 🔴 사람이 preview() 를 보고 자른다.
+# 분산 작업 (마일스톤 3 대 1) — 🔴 단계마다 사람이 끊는다. 스킬: /distribute
+.venv/bin/python -m master.work.distribute plan     <프로젝트> <슬러그> <클래스:파일…>
+#   → 계획 JSON 이 나온다. 🔴 **사람이 그 파일에서 조각을 지운다** (눈으로는 자를 수 없다)
+.venv/bin/python -m master.work.distribute register <프로젝트> <슬러그> "<제목>" <저장소>
+#   → 골조는 claude:opus 로 만들고(계약이라 값을 쓴다), 통합자 `.2` 에서 세워 본 뒤 등재한다
+.venv/bin/python -m master.work.distribute dispatch <프로젝트> <work_id> 4
+.venv/bin/python -m master.work.porting  pairs      # 포팅 원본↔대상 대응 (실측 9 → 정규화 21쌍)
 
-# 워커에 일 시키기 (중 2.5)
+# 워커에 일 시키기
 .venv/bin/python -m master.client probe            # 머신 실측 — 경로·능력·체크아웃
 .venv/bin/python -m master.client deliver          # config·스킬·CLAUDE.md 배달 (해시 대조)
-.venv/bin/python -m master.work.runner probe       # 누가 파견 가능한가 (큐를 안 건드린다)
-.venv/bin/python -m master.work.runner once        # 🔴 한 건: claim → 워커 → submit
+.venv/bin/python -m master.work.infer probe        # 누가 추론을 받을 수 있나 (큐 무접촉)
+.venv/bin/python -m master.work.infer run          # 🔴 추론 파견 (직렬 기본) — 커밋하지 않는다
+.venv/bin/python -m master.work.infer spool <work> # 응답 스풀 — 어디까지 진행됐나
+.venv/bin/python -m master.work.runner once        # ⚠️ 구 토폴로지: 워커가 커밋한다
 .venv/bin/python -m master.work.cleanup plan       # 🔴 먼저 본다 — 아무것도 안 지운다
 .venv/bin/python -m master.work.cleanup apply      # 병합된 브랜치·끝난 부산물만 삭제
 
@@ -236,6 +247,8 @@ for f in master/test_*.py; do .venv/bin/python "$f" 2>&1 | tail -1; done
 | `test_skeleton_gate.py` | 🔴 **fail-closed** — 미확인은 통과가 아니다 |
 | `test_decompose.py` | 의존 순서 · 🔴 **묶음(동시) vs 뎁스(순차)** 구분 |
 | `test_heuristics.py` | 🔴 사람이 답한 것만 · **범위**(project/domain/once) |
+| `test_infer.py` | 🔴 **fail-closed 파견 판정** — 마커+응답파일 둘 다 · 스풀 재사용 · 선행 실패 차단 |
+| `test_porting.py` | 🔴 못 찾으면 **붙이지 않는다** · 원본이 대상 목록으로 **새지 않는다** |
 | `test_batching.py` | 🔴 **파일 불가분** — `.h`/`.cpp` 는 붙이고 **다른 모듈의 동명 파일은 가른다** |
 | `test_ontology.py` | YAML 왕복 보존(PyYAML 의존 0) · 잠금 보존 · 사실 게이트 |
 | `test_transfer.py` | 익스포트 두 벌 · 🔴 임포트는 **병합**(보호 필드 이월) |

@@ -59,8 +59,12 @@ SERVICES = {"task_queue": 8101, "broker": 8102, "projects": 8103}
 # 🔴 역할별 스킬 — 요청자에게 워커 절차를 주지 않는다 (사용자 확정 2026-08-09).
 #   사람이 편집 중인 트리에서 에이전트가 브랜치를 만들고 파일을 고치는 것이,
 #   더티 체크가 막으려던 바로 그 사고다.
+# 🔴 워커에 스킬이 **둘** 배달된다 — 파견 지시가 어느 쪽인지 이름으로 고른다.
+#   `ax-infer` 가 현 토폴로지(워커는 추론만)이고, `ax-work` 는 구 토폴로지(워커가 커밋)다.
+#   구 것을 **지우지 않는 이유**는 settled 결정이다: N-writer 기계장치는 측정으로 뒤집힐
+#   여지가 있는 동안 되돌릴 수 있게 둔다(§8.4 ⚠️).
 SKILLS_BY_ROLE = {
-    "worker": ("ax-work",),
+    "worker": ("ax-work", "ax-infer"),
     "requester": ("ax-request", "ax-ontology"),
 }
 SKILL_NAME = "ax-work"          # (호환) 단수 참조가 남아 있는 곳

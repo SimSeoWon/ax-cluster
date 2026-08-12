@@ -104,6 +104,8 @@ def build(
     searcher=None,
     norms=None,
     base=None,
+    source_files: list[str] | None = None,
+    porting=None,
     now: datetime | None = None,
 ) -> Manifest:
     """매니페스트를 조립한다. **디스크에 쓰지는 않는다** — `write()` 가 따로 한다.
@@ -154,6 +156,22 @@ def build(
         lines.append("🔴 **한 태스크의 파일은 한 워커가 통째로 맡는다.** 같은 파일이 두 "
                      "태스크에 나뉘면 두 워커가 같은 곳을 고친다 — 묶기가 그것을 막는다.")
         lines.append("")
+    # 🔴 포팅 원본 (소 1.3.5) — **대상 파일 절 바로 뒤**다. 원본을 대상으로 착각하면 워커가
+    #    읽기 전용 모듈을 고치므로, 두 목록을 붙여 두고 금지 문구를 그 사이에 둔다.
+    # 사람이 `source_files` 를 준 것이 **이긴다**. 안 줬으면 대상 파일로 자동 조회한다 —
+    # 이 프로젝트가 포팅 프로젝트이므로 기본이 조회다(포팅이 아니면 결과가 비고, 절이 안 실린다).
+    if porting is None and (source_files or target_files):
+        try:
+            from . import porting as porting_mod
+            porting = porting_mod.counterparts(paths, list(source_files or target_files or []))
+        except Exception as e:                       # noqa: BLE001 — 등록을 막지 않는다
+            porting = None
+            degraded.append(f"포팅 원본 조회 실패: {type(e).__name__}: {e}")
+    if porting is not None and getattr(porting, "matches", None):
+        from . import porting as porting_mod
+        lines.extend(porting_mod.manifest_section(porting))
+        lines.append("")
+
     if contracts.strip():
         lines.append("## 계약 (동결 — 바꾸지 말 것)\n")
         lines.append(contracts.strip())
