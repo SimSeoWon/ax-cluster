@@ -612,16 +612,62 @@ def write(snap: Snapshot, out: Path, *, viewer_link: str = "") -> Path:
     return out
 
 
+DELIVER_NAME = "ax-cluster-status.html"
+
+
+def deliver(html_text: str, host: str, *, project: str = "") -> str:
+    """다른 머신에 **파일로** 보낸다. 🔴 서비스를 띄우지 않고 보는 방법이다.
+
+    ## 🔴 왜 웹으로 서비스하지 않나
+
+    이 화면은 LAN 주소와 클러스터 내부를 담는다. 인증 없는 자리에 두면 저장소를 private 으로
+    두는 이유가 무너진다. 그리고 **이 박스의 80 포트에는 이미 인증 없는 phpMyAdmin 이 올라와
+    있다**(실측 2026-08-13) — 거기에 얹는 것은 4번째 포트를 여는 것보다 나쁘다.
+
+    ## 🔴 어떻게 보내나
+
+    `bundle.write_file` 을 쓴다 — **이미 검증된 경로**다: scp 로 바이트를 그대로 옮기고
+    **되읽어 sha256 으로 대조**한다(그 검증이 실제로 두 번 배달 사고를 잡았다). 새 전송 코드를
+    쓰지 않는다.
+
+    ⚠️ **홈 디렉토리에 놓는다** — 체크아웃 안이 아니다. `.33` 은 사람의 기계이므로 작업 트리에
+    파일을 얹지 않는다(게스트 규칙). 스냅샷이므로 덮어써도 잃을 것이 없다.
+    """
+    from .client import bundle
+    for h, user, path, driven, role in bundle.workshops(project or ""):
+        if h != host:
+            continue
+        facts = bundle.probe(h, user, path, driven, role)
+        if not facts.home:
+            raise RuntimeError(f"{host}: 홈 디렉토리를 못 읽었다 — 보낼 자리를 모른다")
+        sep = "\\" if facts.windows else "/"
+        target = f"{facts.home.rstrip(sep)}{sep}{DELIVER_NAME}"
+        return bundle.write_file(facts, target, html_text, base="abs")
+    raise RuntimeError(f"레지스트리에 없는 머신이다: {host} — "
+                       f"`python -m master.client probe` 로 목록을 본다")
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────────
 #
-#   python -m master.status show [프로젝트]        터미널에 요약 (수집만)
-#   python -m master.status html [프로젝트]        HTML 한 장을 쓴다
+#   python -m master.status show [프로젝트]              터미널에 요약 (수집만)
+#   python -m master.status html [프로젝트]              HTML 한 장을 쓴다
+#   python -m master.status html [프로젝트] --to <호스트>  그 머신 홈으로 **보낸다**
 #   🔴 `--force` 없이는 최소 간격 안에 두 번 수집하지 않는다.
 
 def main(argv) -> int:
     cmd = (argv[0] if argv else "show").strip()
     force = "--force" in argv
-    rest = [a for a in argv[1:] if not a.startswith("--")]
+    to: list = []
+    rest: list = []
+    it = iter(argv[1:])
+    for a in it:
+        if a == "--to":
+            to.append(next(it, ""))
+        elif a.startswith("--to="):
+            to.append(a.split("=", 1)[1])
+        elif not a.startswith("--"):
+            rest.append(a)
+    to = [h for h in to if h]
     project = rest[0] if rest else ""
     if cmd not in ("show", "html"):
         print("  show [프로젝트] [--force] | html [프로젝트] [--force]")
@@ -660,6 +706,14 @@ def main(argv) -> int:
     print(f"{out}  ({out.stat().st_size:,} bytes)")
     print(f"문제 {len(snap.problems)}건 · 머신 {len(snap.machines)}대 · "
           f"열린 태스크 {snap.open_tasks}")
+
+    # 🔴 다른 머신에서 보려면 **파일을 보낸다** — 서비스를 띄우지 않는다
+    for host in to:
+        try:
+            # ⚠️ 링크는 뺀다 — 받는 쪽에는 `domains.html` 이 없다. 죽은 링크를 보내지 않는다.
+            print(f"  → {host}: {deliver(render(snap), host, project=paths.name)}")
+        except Exception as e:                            # noqa: BLE001
+            print(f"  🔴 {host}: 보내지 못했다 — {type(e).__name__}: {e}")
     return 0
 
 
