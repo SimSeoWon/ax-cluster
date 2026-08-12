@@ -177,13 +177,25 @@ class BearerAuthMiddleware:
     """
 
     def __init__(self, app, token: str, open_paths=OPEN_PATHS, *,
-                 view_prefix: str = "", view_token: str | None = None):
+                 view_prefix: str = "", view_token: str | None = None,
+                 view_public: bool = False):
         self.app = app
         self._token = token
         self.open_paths = frozenset(open_paths)
-        # 🔴 뷰 경로는 **다른 비밀**로 열린다 (위 § 참조). 접두어가 없으면 기능 자체가 없다.
         self._view_prefix = view_prefix or ""
         self._view_token = view_token
+        # 🔴 **뷰는 기본적으로 인증 없이 열린다** (사용자 결정 2026-08-13).
+        #
+        #   > *"그냥 있는거 보여주는 뷰어를 원하는거라니까."*
+        #
+        # 세 서비스에 토큰을 요구하는 규칙은 **조작 가능한 API** 를 위해 쓰인 것이다 — 큐를
+        # 조작하고 추론을 태우고 프로젝트를 전환하는 경로들. 🔴 `/view/` 는 **아무것도 못 한다**:
+        # GET/HEAD 만, 화이트리스트된 파일만, 요청이 수집을 유발하지도 않는다. 규칙의 글자를
+        # 지키려고 **쓰이지 않는 화면**을 만드는 것이 더 나쁘다 — 매번 64자를 치게 하면 안 본다.
+        #
+        # ⚠️ **남는 방어는 ufw LAN 한정 한 층이다.** 그것이 이 경로의 의도된 상태다.
+        #    🔴 `AX_VIEW_REQUIRE_TOKEN=1` 로 되돌릴 수 있다(그때는 뷰 토큰이 필요하다).
+        self._view_public = view_public
 
     async def __call__(self, scope, receive, send):
         typ = scope.get("type")
@@ -204,8 +216,11 @@ class BearerAuthMiddleware:
         is_view = bool(self._view_prefix) and path.startswith(self._view_prefix)
 
         if is_view:
-            # 🔴 뷰 경로는 **뷰 토큰만** 받는다. API 토큰으로 여기에 들어올 수 없고, 그 반대도
-            #    안 된다 — 두 자격이 섞이면 분리한 이유가 없어진다.
+            # 🔴 기본은 **공개**다 (위 `view_public` § 참조)
+            if self._view_public:
+                return await self.app(scope, receive, send)
+            # 잠갔을 때는 **뷰 토큰만** 받는다. API 토큰으로 여기에 들어올 수 없고, 그 반대도
+            # 안 된다 — 두 자격이 섞이면 분리한 이유가 없어진다.
             if self._view_token and (
                     verify(parse_basic(headers.get(HEADER)), self._view_token)
                     or verify(parse_bearer(headers.get(HEADER)), self._view_token)):

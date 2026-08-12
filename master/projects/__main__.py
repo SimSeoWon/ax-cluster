@@ -57,18 +57,25 @@ def main() -> None:
     #    새 포트·유닛·ufw 규칙 0 — 이미 열려 있고 이미 인증된 이 포트를 쓴다.
     #    🔴 자격증명은 **분리**한다: 뷰 토큰으로는 MCP 도구를 부를 수 없다(`auth.py` § 참조).
     #    ⚠️ 뷰 토큰이 없으면 화면만 안 열린다 — 큐·MCP 는 그대로 뜬다(fail-closed 의 방향).
-    view_token = load_view_token()
+    # 🔴 **뷰는 인증 없이 열린다** (사용자 결정 2026-08-13: *"그냥 있는거 보여주는 뷰어"*).
+    #    근거는 `auth.BearerAuthMiddleware.__init__` 의 § 에 있다 — 이 경로는 조작이 불가능하고,
+    #    쓰이지 않는 화면을 만드는 것이 더 나쁘다. 남는 방어는 **ufw LAN 한정** 한 층이다.
+    require = os.environ.get("AX_VIEW_REQUIRE_TOKEN", "").strip() in ("1", "true", "yes")
+    view_token = load_view_token() if require else None
     served = Router(app, ViewApp(project_root), prefix=VIEW_PREFIX)
-    if view_token:
-        print(f"[view] {VIEW_PREFIX}/ 열림 — Basic 인증(비밀번호 = 뷰 토큰)")
+    if not require:
+        print(f"[view] {VIEW_PREFIX}/ 공개 — 인증 없음 (LAN 한정 · 읽기 전용)")
+    elif view_token:
+        print(f"[view] {VIEW_PREFIX}/ 잠김 — Basic 인증(비밀번호 = 뷰 토큰)")
     else:
-        print(f"[view] {VIEW_PREFIX}/ 🔴 닫힘 — 뷰 토큰이 없다: "
+        print(f"[view] {VIEW_PREFIX}/ 🔴 닫힘 — AX_VIEW_REQUIRE_TOKEN 인데 뷰 토큰이 없다: "
               f"python -m master.auth init-view")
 
     # 🔴 DNS 리바인딩 보호와 **별개**다. 그쪽은 브라우저가 속아서 찌르는 경로를 막고,
     #    이쪽은 아무나 찌르는 것을 막는다 — 서로 다른 위협이라 둘 다 필요하다.
     uvicorn.run(BearerAuthMiddleware(served, auth_token,
-                                     view_prefix=VIEW_PREFIX, view_token=view_token),
+                                     view_prefix=VIEW_PREFIX, view_token=view_token,
+                                     view_public=not require),
                 host=host, port=port, log_level="info")
 
 

@@ -3,7 +3,8 @@
 🔴 지키는 계약은 다섯이다:
 
     ① **경로는 화이트리스트다** — 클라이언트가 준 문자열로 파일을 열지 않는다
-    ② 🔴 **자격증명 분리** — 뷰 토큰으로 MCP 를 못 부르고, API 토큰으로 화면을 못 본다
+    ② 🔴 **뷰는 공개, API 는 잠김** — 공개는 뷰 경로에만 적용된다.
+       잠근 모드(`AX_VIEW_REQUIRE_TOKEN=1`)에서는 자격증명이 **양방향으로** 갈린다
     ③ **읽기 전용** — GET/HEAD 만. 요청이 수집을 유발하지 않는다
     ④ **낡은 것을 최신처럼 보이게 두지 않는다** — 나이를 배너로 박는다
     ⑤ **한 포트·한 유닛** — 라우터가 갈라 주고 서비스를 늘리지 않는다
@@ -214,6 +215,28 @@ def test_view_token_and_api_token_do_not_cross() -> None:
     check("API 토큰은 MCP 통과", st == 200, str(st))
 
 
+def test_view_is_public_by_default() -> None:
+    """🔴 사용자 결정 2026-08-13: *"그냥 있는거 보여주는 뷰어를 원하는거라니까."*
+
+    이 경로는 조작이 불가능하다(GET/HEAD · 화이트리스트 · 수집 유발 없음). 규칙의 글자를
+    지키려고 **쓰이지 않는 화면**을 만드는 것이 더 나쁘다. 남는 방어는 ufw LAN 한정이다.
+    """
+    async def inner(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    app = A.BearerAuthMiddleware(inner, "A" * 40, view_prefix="/view", view_public=True)
+    st, _, _ = call(app, "/view/")
+    check("🔴 인증 없이 화면이 열린다", st == 200, str(st))
+    st, _, _ = call(app, "/view/cluster.html")
+    check("페이지도 열린다", st == 200, str(st))
+    # 🔴 그래도 **API 는 잠겨 있다** — 공개는 뷰 경로에만 적용된다
+    st, _, _ = call(app, "/mcp")
+    check("🔴 MCP 는 여전히 401", st == 401, str(st))
+    st, _, _ = call(app, "/mcp", headers={"Authorization": "Bearer " + "A" * 40})
+    check("API 토큰으로만 MCP", st == 200, str(st))
+
+
 def test_browser_gets_a_basic_challenge_api_gets_bearer() -> None:
     """브라우저가 로그인 창을 띄우려면 **Basic** 도전이 와야 한다."""
     app = A.BearerAuthMiddleware(lambda *a: None, "A" * 40,
@@ -291,6 +314,7 @@ def main() -> int:
                test_stale_snapshot_gets_a_banner, test_fresh_snapshot_has_no_banner,
                test_missing_page_says_how_to_make_it,
                test_index_shows_age_and_marks_stale,
+               test_view_is_public_by_default,
                test_view_token_and_api_token_do_not_cross,
                test_browser_gets_a_basic_challenge_api_gets_bearer,
                test_no_view_token_closes_the_view_but_not_the_service,

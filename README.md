@@ -127,7 +127,7 @@ ax-cluster/
 │   ├── task_queue/             ← 작업 큐 (claim·lease·epoch fencing·능력 라우팅)
 │   ├── projects/               ← 프로젝트 레지스트리 + **작업장의 MCP 단일 창구**
 │   ├── status.py               클러스터 상태 수집·렌더 — 🔴 읽기 전용·주기 가드 120초
-│   ├── viewer.py               🔴 그 화면을 **8103 /view/ 로 서빙** (뷰 토큰 = 별도 비밀)
+│   ├── viewer.py               🔴 그 화면을 **8103 /view/ 로 서빙** — 인증 없음·읽기 전용
 │   ├── source_text.py          🔴 CP949 대응 — 소스의 44%가 CP949 다
 │   ├── auth.py                 3서비스 공용 베어러 인증 (fail-closed)
 │   ├── verdict.py              층2 판정 계약 (fail-closed)
@@ -208,8 +208,7 @@ ax-cluster/
 # 운영
 .venv/bin/python -m master.status show                   # 머신·서비스·큐 요약 (읽기 전용)
 .venv/bin/python -m master.status html                   # → <프로젝트>/cluster.html 한 장
-#   🔴 다른 머신에서 보기: http://192.168.0.57:8103/view/  (Basic 인증 · 비밀번호 = 뷰 토큰)
-.venv/bin/python -m master.auth init-view                # 뷰 토큰 최초 발급 (화면 전용 비밀)
+#   🔴 다른 머신에서 보기: http://192.168.0.57:8103/view/  ← **인증 없음** (LAN 한정·읽기 전용)
 #   🔴 최소 간격 120초 — BC-250 을 자주 두드리지 않는다 (넘기려면 --force)
 curl -s localhost:8102/health | python3 -m json.tool     # 노드별 상주 모델
 systemctl status ax-task-queue ax-broker ax-projects ax-indexer.path
