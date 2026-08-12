@@ -34,6 +34,7 @@
 | `ontology/` | **온톨로지** — YAML io(PyYAML 0) · stale · L1/L2/L3 · 멤버 제안 · 개념 계층 · **사실 게이트** · 패키지 쓰기 · **LLM 재합성**. `python -m master.ontology plan\|dry\|refresh`. 🔴 결정 규칙은 그 패키지 `__init__.py` 에 있다 |
 | `context_synth/` | **컨텍스트 MD 합성** — 프롬프트·grounding·σ.7 게이트·**사실 게이트**·서킷브레이커. 색인기에 배선됨 |
 | `client/` | **워커 번들** — 머신 프로브(실측) → config·스킬·CLAUDE.md 배달 → 🔴 **되읽어 해시 대조**. `python -m master.client probe\|plan\|deliver\|check` |
+| `status.py` | **클러스터 상태 화면** (중 3.2) — `python -m master.status show\|html`. 🔴 **새 서비스 0**: 도메인 뷰어와 같은 표면(자립형 HTML 한 장, 외부 자원 0). 🔴 수집은 **전부 읽기 전용**이고 **주기 가드 120초**(BC-250 은 부하로 커널이 멈춘 전례). 🔴 닿지 않는 것을 값 없음으로 접지 않고, **역할로 판정이 갈린다**(요청자가 꺼진 것은 정상일 수 있다). 상태는 **아이콘+라벨+색**, 히어로는 하나. ⚠️ 추세 그래프 없음(이력이 희박하면 없는 추세를 보인다) · 온도 구간은 **관례**라고 화면에 적는다 |
 | `source_text.py` | 🔴 **CP949 44%** (실측 723/1,654). 소스는 전부 이걸 거쳐 읽는다 — 한글 주석이 최고 신호원이다 |
 | `context_search/` | 검색 코어 — 벡터(ChromaDB) + BM25(FTS5) 를 RRF 로 융합. **마운트된 프로젝트의 디렉토리를 매 호출 해석**한다 (§5.5.2). 재색인: `python -m master.context_search.rebuild` |
 | `requirements.txt` | 마스터 의존성. AgentTest 엔 없어 `build.bat:29` 기준으로 신규 작성 |

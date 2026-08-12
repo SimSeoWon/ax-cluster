@@ -126,6 +126,7 @@ ax-cluster/
 │   ├── broker/                 ← 추론 브로커 (Ollama 호환, 노드 라우팅·핀 유지)
 │   ├── task_queue/             ← 작업 큐 (claim·lease·epoch fencing·능력 라우팅)
 │   ├── projects/               ← 프로젝트 레지스트리 + **작업장의 MCP 단일 창구**
+│   ├── status.py               클러스터 상태 — 자립형 HTML 한 장 · 🔴 읽기 전용·주기 가드
 │   ├── source_text.py          🔴 CP949 대응 — 소스의 44%가 CP949 다
 │   ├── auth.py                 3서비스 공용 베어러 인증 (fail-closed)
 │   ├── verdict.py              층2 판정 계약 (fail-closed)
@@ -204,6 +205,9 @@ ax-cluster/
 .venv/bin/python -m master.work.cleanup apply      # 병합된 브랜치·끝난 부산물만 삭제
 
 # 운영
+.venv/bin/python -m master.status show                   # 머신·서비스·큐 요약 (읽기 전용)
+.venv/bin/python -m master.status html                   # → <프로젝트>/cluster.html 한 장
+#   🔴 최소 간격 120초 — BC-250 을 자주 두드리지 않는다 (넘기려면 --force)
 curl -s localhost:8102/health | python3 -m json.tool     # 노드별 상주 모델
 systemctl status ax-task-queue ax-broker ax-projects ax-indexer.path
 journalctl -u ax-indexer -n 30 --no-pager                # push → 트윈 성장 이력
@@ -255,6 +259,7 @@ for f in master/test_*.py; do .venv/bin/python "$f" 2>&1 | tail -1; done
 | `test_heuristics.py` | 🔴 사람이 답한 것만 · **범위**(project/domain/once) |
 | `test_infer.py` | 🔴 **fail-closed 파견 판정** — 마커+응답파일 둘 다 · 스풀 재사용 · 선행 실패 차단 |
 | `test_integrate.py` | 🔴 **실패는 커밋하지 않는다** · 격리는 형제 트리 · push 는 ff-only(force 금지) |
+| `test_status.py` | 🔴 읽기 전용 명령만 · 주기 가드 · 상태는 색만으로 전달하지 않는다 |
 | `test_layer1.py` | 🔴 휘발 태그·`[FEEDBACK]` 잔재 · 동결 의미(추가 허용/변경 위반) · fail-closed |
 | `test_porting.py` | 🔴 못 찾으면 **붙이지 않는다** · 원본이 대상 목록으로 **새지 않는다** |
 | `test_batching.py` | 🔴 **파일 불가분** — `.h`/`.cpp` 는 붙이고 **다른 모듈의 동명 파일은 가른다** |

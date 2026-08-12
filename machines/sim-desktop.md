@@ -34,24 +34,37 @@ queue into a worker's Claude and submits the result (requester→worker loop mea
 master **cleans up worker debris** — 🔴 workers may not delete branches, a branch is removed only
 when its tip is reachable from `origin/main`, and workers return to **`main`**.
 
-**M3 goals** (user, 2026-08-10): ① **decompose one big request** — skeleton + **frozen interface**
-first (§4.5's empty first step), generate in parallel across the two workers, **apply sequentially**
-② **judge with the 3-layer deterministic gate** (L1 self-check / L2 commercial model / L3 UE5 build
-+ RunTests) ③ **build the operator surface** — upper-layer commands and a cluster status web UI.
-Structure 대 3 / 중 9; **main is 대 1**. 🔴 **Both numbers live in Redmine** (version *마일스톤 3*),
+**M3 goals** (user, 2026-08-10): ① ✅ **decompose one big request** ② ✅ **judge with the 3-layer
+deterministic gate** ③ 🔵 **build the operator surface** — status screen ✅, upper-layer commands and
+robustness remain. Structure 대 3 / 중 10. 🔴 **Both numbers live in Redmine** (version *마일스톤 3*),
 never in a hand-edited doc — the numerator drifted twice in M2, and the *denominator* moved on
 2026-08-10 (32 → 36) when reading the predecessor's design doc uncovered four missing sub-tasks.
 
-🔴 **대 1 is half up (2026-08-11).** 중 1.1 골조+동결 ✅ 6/6 and 중 1.2 분해 ✅ 4/4 — the
-skeleton is generated with `claude:opus`, grounded on the relation graph + included-header types +
-declarations + norms + heuristics, its interface is frozen **deterministically (LLM 0)**, and it is
-**built on `.2` before anything is registered** (live `BUILD OK`). What remains in 대 1 is 중 1.3
-(dispatch inference) and 중 1.4 (integrator). 대 2 and 대 3 have not started.
+🔴 **대 1 and 대 2 are closed (2026-08-12). 대 3 is the only one open.** The pipeline runs end
+to end and **four deterministic gates** sit in it:
 
-🔴 **The gate paid for itself immediately** — it caught three real defects on its first live runs:
-layer 3's own decoder dying on this box's Korean UBT output, a hole in the skeleton contract
-(`[PSEUDO]` comments alone don't compile for non-void), and an invented enum value. **None of them
-show up in unit tests** — 63 layer-3 tests were passing throughout.
+    요청 → 골조(claude:opus, 등재 전 빌드) → 분해 → 워커는 **추론만**(ax-infer) → 스풀
+         → 통합자 `.2`: 층1 → 층2 → 적용 → **조각별 UE5 빌드** → 통과분만 커밋 → work 단위 RunTests
+
+Live: dispatch 45s/$0.27 · two workers in parallel 36s/$0.47 · integrator build 142s + commit ·
+unattended RunTests 74s. ✅ **중 3.2 status screen** is up too (`python -m master.status html`).
+🕓 Remaining in 대 3: upper-layer commands (중 3.1) and operational robustness (중 3.3).
+
+🔴 **The gates paid for themselves — and the live runs, not the unit tests, found the defects.**
+Five real ones this session-and-the-last, each behind an injected seam while 63–96 unit checks
+passed: layer 3's decoder on Korean UBT output · the skeleton contract hole (`[PSEUDO]` alone
+doesn't compile for non-void) · an invented enum value · `decode()` returning `Decoded` not `str` ·
+the integrator dying where the graph was absent. **Put one live run behind every gate.**
+
+🔴 **Grounding, not the model, is what makes 층2 work** (measured 2026-08-12): 4 of 5 candidates
+missed an invented enum member with no declarations in the prompt; all caught it with them. And
+**local models are unusable for 층2** — 35B blocked two *correct* files. `agy`→`claude` is the
+chain, and that default is now measured rather than assumed.
+
+🔴 **This project has ZERO automation tests** (measured: no `AUTOMATION_TEST`/`FunctionalTest`
+anywhere in `Source/`). §4.3's *"hallucinations that compile"* are catchable **only by tests**, so
+층3's `RunTests` is deliberately **fail-open with a loud warning**. That hole cannot be closed by
+code — writing tests is a project decision, parked in the milestone's 「예정」.
 
 🔴 **What distribution buys is incremental progress, not throughput** (user-reframed 2026-08-11).
 Measured: two workers were 12% faster and **90% more expensive**; the 3.2× saving came from
