@@ -39,8 +39,18 @@ _API_HISTORY = re.compile(r"^/api/v1/ontology/history/(.+)$")
 _API_TASK = re.compile(r"^/api/v1/ontology/task/(.+)$")
 _API_BOARD_ONE = re.compile(r"^/api/v1/domains/(.+)$")
 
-# 🔴 POST 지만 **읽기**인 경로 — 원전 프론트엔드가 이렇게 부른다. 이 목록에 없는 POST 는 거부다.
+# 🔴 POST 지만 **읽기**인 경로 — 원전 프론트엔드가 이렇게 부른다.
 READ_POST = frozenset({"/api/v1/search/combined", "/api/v1/search/vector"})
+
+# 🔴 **쓰기 경로** (사용자 결정 2026-08-13: *"생성·삭제·채팅까지 원전대로 살려"*).
+#    대상은 `context/_domains/*.md` — **사람이 읽고 쓰는 도메인 문서**다.
+#    ⚠️ 온톨로지 YAML(`ontology/domains/…`)은 여기서 절대 건드리지 않는다 — 그쪽은 편집이 곧
+#    잠금이고 대화형으로만 바뀐다. 두 층을 헷갈리지 말 것(`board.py` 머리말 참조).
+_W_CREATE = "/api/v1/domains"
+_W_CHAT = re.compile(r"^/api/v1/domains/([^/]+)/chat$")
+_W_UPDATE = re.compile(r"^/api/v1/domains/([^/]+)/update$")
+_W_ACTIVATE = re.compile(r"^/api/v1/domains/([^/]+)/activate$")
+_W_DELETE_DOMAIN = "/api/v1/ontology/delete_domain"
 
 
 async def _send(send, status: int, body: bytes, ctype: bytes = JSON) -> None:
@@ -74,6 +84,51 @@ class WebUI:
     def __init__(self, paths_fn):
         self._paths_fn = paths_fn
 
+    async def _write(self, scope, receive, method: str, path: str):
+        """🔴 쓰기 — `(status, dict)` 또는 라우트 없으면 `None`. 원전 mutation 복각."""
+        from . import board
+        try:
+            paths = self._paths_fn()
+        except Exception as e:                               # noqa: BLE001
+            return 503, {"error": f"프로젝트 해석 실패: {e}"}
+
+        raw = await _read_body(receive)
+        data: dict = {}
+        if raw:
+            try:
+                data = json.loads(raw.decode("utf-8", "replace")) or {}
+            except ValueError:
+                data = {}
+
+        try:
+            if method == "POST" and path == _W_CREATE:
+                return 200, board.create_domain(paths, str(data.get("topic") or ""))
+            m = _W_CHAT.match(path)
+            if m and method == "POST":
+                return 200, board.chat(paths, unquote(m.group(1)),
+                                       str(data.get("message") or ""))
+            m = _W_UPDATE.match(path)
+            if m and method == "POST":
+                return 200, board.update_domain(paths, unquote(m.group(1)),
+                                                str(data.get("content") or ""))
+            m = _W_ACTIVATE.match(path)
+            if m and method == "POST":
+                return 200, board.activate_domain(paths, unquote(m.group(1)),
+                                                  str(data.get("content") or ""))
+            if method == "POST" and path == _W_DELETE_DOMAIN:
+                # 원전은 이 경로로 도메인을 지웠다. 🔴 우리는 `_archive/` 로 옮긴다(되돌리기 가능)
+                return 200, board.delete_domain(paths,
+                                                str(data.get("domain_name")
+                                                    or data.get("name") or ""))
+            m = _W_CHAT.match(path)
+            if m and method == "DELETE":
+                return 200, board.clear_chat(paths, unquote(m.group(1)))
+        except board.BoardError as e:
+            return 400, {"error": str(e)}
+        except Exception as e:                               # noqa: BLE001
+            return 500, {"error": f"{type(e).__name__}: {e}"}
+        return None
+
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http":
             return await _send(send, 400, b'{"error":"http only"}')
@@ -84,8 +139,17 @@ class WebUI:
         #    원전은 검색을 `POST /api/v1/search/*` 로 부른다 — HTTP 메서드만 보고 막으면
         #    **검색 탭이 통째로 죽는다**(내가 그렇게 만들어 놓고 확인해서 잡았다).
         #    기준은 메서드가 아니라 **무엇을 하는 경로인가** 다: 검색은 읽기다.
-        if method not in ("GET", "HEAD") and path not in READ_POST:
-            return await _send(send, 200, _j(routes.api_refuse_mutation()))
+        if method not in ("GET", "HEAD"):
+            if path in READ_POST:
+                pass                                  # 읽기 POST — 아래에서 처리
+            elif method in ("POST", "DELETE"):
+                got = await self._write(scope, receive, method, path)
+                if got is not None:
+                    return await _send(send, got[0], _j(got[1]))
+                return await _send(send, 405, _j({"error": "no such write route",
+                                                  "path": path}))
+            else:
+                return await _send(send, 405, _j({"error": "read-only method"}))
 
         try:
             paths = self._paths_fn()
@@ -165,13 +229,19 @@ class WebUI:
                 return await _send(send, 200, _j({"results": [], "count": 0,
                                                   "note": "query 가 비었다"}))
             return await _send(send, 200, _j(routes.api_search(paths, query, n)))
+        # 🔴 게시판은 `_domains/*.md` 다 — 온톨로지 YAML 이 아니다(`board.py` 머리말)
+        from . import board
         if path == "/api/v1/domains":
-            return await _send(send, 200, _j(routes.api_board_domains(root)))
+            return await _send(send, 200, _j(board.list_board(paths)))
         m = _API_BOARD_ONE.match(path)
         if m:
-            got = routes.api_domain(root, unquote(m.group(1)).split("/")[0])
+            name = unquote(m.group(1)).split("/")[0]
+            try:
+                got = board.get_board_domain(paths, name)
+            except board.BoardError as e:
+                return await _send(send, 400, _j({"error": str(e)}))
             if got is None:
-                return await _send(send, 404, _j({"detail": "도메인 부재"}))
+                return await _send(send, 404, _j({"error": "도메인 없음"}))
             return await _send(send, 200, _j(got))
 
         return await _send(send, 404, _j({"error": "no such route", "path": path}))

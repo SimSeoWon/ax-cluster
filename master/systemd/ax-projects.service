@@ -12,6 +12,10 @@ Group=sim
 WorkingDirectory=/home/sim/ax-cluster
 
 # 🔴 폴백 없음 — 루트를 역산하지 않는다 (PLAN §5.5.3-④).
+# 🔴 상용 CLI(`agy`·`claude`)는 `~/.local/bin` 에 있고 systemd 기본 PATH 에는 그 경로가 없다.
+# 실측 2026-08-13: 웹 게시판의 도메인 생성이 *"LLM 을 못 불러"* 로 떨어졌다 — 코드가 아니라
+# **유닛 환경** 문제였다(`shutil.which` 가 못 찾는다). SSH 세션의 PATH 함정과 같은 부류다.
+Environment=PATH=/home/sim/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=AX_PROJECTS_ROOT=/home/sim/ax-cluster
 Environment=AX_PROJECTS_HOST=0.0.0.0
 Environment=AX_PROJECTS_PORT=8103
