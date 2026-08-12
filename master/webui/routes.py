@@ -134,24 +134,25 @@ def api_tasks() -> dict:
 
 def api_health(root: Path, paths) -> dict:
     from ..graph import db as gdb
-    docs = 0
-    try:
-        docs = len(list((paths.context).glob("**/*.md"))) if paths.context.is_dir() else 0
-    except OSError:
-        docs = 0
+    docs = _doc_count(paths)
     return {"status": "ok", "project_root": str(root), "updating": False,
-            "indexed_documents": docs,
-            "graph": gdb.exists(paths)}
+            "indexed_documents": docs, "graph": gdb.exists(paths)}
+
+
+def _doc_count(paths) -> int:
+    try:
+        return len(list(paths.context.glob("**/*.md"))) if paths.context.is_dir() else 0
+    except OSError:
+        return 0
 
 
 def api_index_status(paths) -> dict:
-    """색인 상태. 🔴 우리 세대 포인터(A/B 더블버퍼)를 그대로 노출한다."""
-    out = {"documents": 0, "generation": "", "updating": False, "tags": 0}
-    try:
-        docs = list(paths.context.glob("**/*.md")) if paths.context.is_dir() else []
-        out["documents"] = len(docs)
-    except OSError:
-        pass
+    """색인 상태. 🔴 **필드명은 원전 프론트엔드가 읽는 그대로다** — `indexed_documents`.
+
+    ⚠️ 실측 2026-08-13: 내가 `documents` 로 냈더니 화면이 **DOCUMENTS 0** 을 보였다(문서는
+    1,055개 있었다). 프론트엔드를 그대로 쓰는 복각이므로 **모양을 맞추는 쪽이 우리다.**
+    """
+    out = {"indexed_documents": _doc_count(paths), "generation": "", "updating": False}
     try:
         from ..context_search.generation import current
         out["generation"] = current(paths)
@@ -160,19 +161,29 @@ def api_index_status(paths) -> dict:
     return out
 
 
-def api_tags(root: Path) -> dict:
+def api_tags(root: Path, paths=None) -> dict:
     """🔴 태그 — 물으신 "태그 확인" 이 이것이다.
 
-    도메인 manifest 의 `tags` 와 오브젝트의 `aliases` 를 합쳐 빈도로 낸다. 원전은 컨텍스트 MD
-    frontmatter 태그를 셌는데, 우리 태그의 본체는 **온톨로지**다(시소러스 별칭 포함).
+    ⚠️ **모양이 계약이다**: 원전 `renderTagCloud` 는 `tags.tags` 를 **`{태그: 개수}` 객체**로
+    받고 `Object.entries(...)` 로 돈다. 배열로 주면 화면이 빈 채로 뜬다(실측).
+    카운터 배지는 `tags.total_tags` 를 읽는다.
+
+    태그의 출처는 둘이다 — 도메인 manifest 의 `tags`(온톨로지) + 오브젝트 `aliases`(시소러스가
+    이어 주는 한국어 말). 우리 태그의 본체는 온톨로지라 원전(컨텍스트 MD frontmatter)과 다르지만,
+    **화면이 하는 일(태그로 거르기)은 같다.**
     """
     counts: dict = {}
     for d in loaders.list_domains(root):
         for t in d.get("tags") or []:
             counts[str(t)] = counts.get(str(t), 0) + 1
-    return {"tags": [{"tag": k, "count": v}
-                     for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))],
-            "count": len(counts)}
+    for pkg in sorted((root / "ontology" / "domains").glob("*")):
+        if not pkg.is_dir():
+            continue
+        for y in loaders._glob_object_yamls(pkg):
+            data = loaders.parse_domain_yaml(y) or {}
+            for a in (data.get("aliases") or []):
+                counts[str(a)] = counts.get(str(a), 0) + 1
+    return {"tags": counts, "total_tags": len(counts)}
 
 
 def api_search(paths, query: str, limit: int = 5) -> dict:

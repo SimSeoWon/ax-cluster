@@ -126,7 +126,7 @@ class WebUI:
         if path == "/api/v1/index/status":
             return await _send(send, 200, _j(routes.api_index_status(paths)))
         if path == "/api/v1/tags":
-            return await _send(send, 200, _j(routes.api_tags(root)))
+            return await _send(send, 200, _j(routes.api_tags(root, paths)))
         if path in ("/api/v1/search/combined", "/api/v1/search/vector"):
             # ⚠️ 원전은 POST 였다. GET 도 받는다 — 쓰기가 아니므로(§ 위 GET 만 통과 규칙과 충돌 X)
             q = parse_qs(scope.get("query_string", b"").decode("utf-8", "replace"))
