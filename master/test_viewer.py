@@ -330,7 +330,8 @@ def test_opening_root_does_not_open_the_api() -> None:
     check("🔴 MCP 는 여전히 401", st == 401, str(st))
 
 
-def test_router_splits_by_prefix_without_a_second_service() -> None:
+def test_old_view_paths_redirect_to_cluster() -> None:
+    """⚠️ `/view` 는 없앴다 (사용자 지시 2026-08-13) — 북마크를 404 로 만들지 않고 **보낸다.**"""
     hits: list = []
 
     def mk(tag):
@@ -340,11 +341,29 @@ def test_router_splits_by_prefix_without_a_second_service() -> None:
             await send({"type": "http.response.body", "body": b""})
         return app
 
-    r = V.Router(mk("mcp"), mk("view"), prefix="/view")
-    call(r, "/view/cluster.html")
+    r = V.Router(mk("mcp"), mk("view"), prefix="/view", webui=mk("webui"))
+    for p in ("/view", "/view/", "/view/cluster.html", "/view/domains.html"):
+        st, h, _ = call(r, p)
+        check(f"{p} → 302", st == 302, str(st))
+        check(f"{p} → /cluster", h.get("location") == "/cluster", h.get("location", ""))
+    check("🔴 뷰 앱을 부르지 않는다", "view" not in hits, str(hits))
+
+    # 🔴 새 주소는 webui 가 가져간다 — 목록은 `webui.app` 이 소유한다(단일 지점)
+    hits.clear()
+    call(r, "/cluster")
+    call(r, "/ontology")
+    call(r, "/api/v1/tags")
     call(r, "/mcp")
-    call(r, "/livez")
-    check("뷰 경로만 뷰로", hits == ["view", "mcp", "mcp"], str(hits))
+    check("웹UI 경로는 webui 로", hits[:3] == ["webui"] * 3, str(hits))
+    check("MCP 는 그대로", hits[-1] == "mcp", str(hits))
+
+
+def test_route_list_has_a_single_owner() -> None:
+    """🔴 라우트를 추가할 때 세 곳을 맞춰야 해서 두 번 틀렸다 — 목록은 한 곳이 소유한다."""
+    from master.webui.app import PREFIXES
+    check("Router 가 그 상수를 쓴다", V.Router.WEBUI_PREFIXES is PREFIXES,
+          str(V.Router.WEBUI_PREFIXES))
+    check("/cluster 가 목록에 있다", "/cluster" in PREFIXES, str(PREFIXES))
 
 
 def main() -> int:
@@ -362,7 +381,8 @@ def main() -> int:
                test_view_token_uses_the_same_strength_rules,
                test_root_redirects_so_the_port_alone_works,
                test_opening_root_does_not_open_the_api,
-               test_router_splits_by_prefix_without_a_second_service):
+               test_old_view_paths_redirect_to_cluster,
+               test_route_list_has_a_single_owner):
         fn()
     total = PASS + FAIL
     print(f"{'✅' if not FAIL else '🔴'} test_viewer: {PASS}/{total} 통과")

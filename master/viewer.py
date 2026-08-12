@@ -14,6 +14,19 @@
     🔴 **새 포트·새 유닛·새 ufw 규칙 = 0.** 이미 열려 있고 이미 인증된 8103 에 붙인다.
        두 화면(`cluster.html`·`domains.html`)이 **같은 표면**에서 나온다.
 
+## ⚠️ `/view` 는 없앴다 (사용자 지시 2026-08-13)
+
+> *"복각한 페이지에서 연결하고 View를 제거해"*
+
+같은 이름의 화면이 둘이면 헷갈린다 — 도메인 뷰어는 **원전 `/ontology`** 하나, 클러스터 상태는
+**`/cluster`** 하나로 모았다. 원전 화면의 헤더(상호 링크 자리)에서 이어진다.
+
+    옛 `/view`, `/view/*`  →  302 `/cluster`      북마크를 404 로 만들지 않는다
+    `ViewApp`              →  남겨 둔다(테스트가 계약을 지킨다). 라우터가 더 이상 안 쓴다
+
+🔴 `cluster.html` 을 만드는 것은 `master.status html` 이고, 서빙은 `webui.routes.cluster_page`
+가 한다 — 낡음 배너·"요청이 수집을 유발하지 않는다" 원칙은 그대로다.
+
 ## 🔴 인증이 없다 (사용자 결정 2026-08-13)
 
 > *"왜 로그인해야해?"* / *"내가 내한테 뭘 해킹한다는거야 머신 4대 운용하기 위해서 인프라를
@@ -215,9 +228,9 @@ FAVICON = "/favicon.ico"
 class Router:
     """경로로 갈라 준다 — 🔴 **한 포트, 한 유닛**. 서비스를 늘리지 않는다."""
 
-    # 🔴 원전 웹 UI 가 쓰는 접두어들 — MCP 로 넘기지 않고 `webui` 로 보낸다.
-    #    `/mcp` 만 MCP 앱이 가져간다(원전엔 없던 경로라 충돌하지 않는다).
-    WEBUI_PREFIXES = ("/ontology", "/ontology-static", "/api/v1")
+    # 🔴 목록은 `webui.app` 이 소유한다 — 여기서 다시 적으면 또 어긋난다(실측 2026-08-13).
+    from .webui.app import EXACT as WEBUI_EXACT
+    from .webui.app import PREFIXES as WEBUI_PREFIXES
 
     def __init__(self, default_app, view_app, *, prefix: str = PREFIX, webui=None):
         self.default_app = default_app
@@ -229,7 +242,7 @@ class Router:
         if scope.get("type") != "http":
             return await self.default_app(scope, receive, send)
         path = scope.get("path", "")
-        if path in ROOT_PATHS:
+        if path in ROOT_PATHS or path in self.WEBUI_EXACT:
             # 🔴 루트는 **원전 Context Server** 다 (복각). 원전이 그 자리를 쓰고 있었다.
             if self.webui is not None:
                 return await self.webui(scope, receive, send)
@@ -245,7 +258,17 @@ class Router:
             await send({"type": "http.response.start", "status": 204,
                         "headers": [(b"content-length", b"0")]})
             return await send({"type": "http.response.body", "body": b""})
-        if path == self.prefix:
+        # 🔴 **`/view` 는 없앴다** (사용자 지시 2026-08-13: *"복각한 페이지에서 연결하고 View를
+        #    제거해"*). 같은 이름의 화면이 둘이면 헷갈린다 — 클러스터 상태는 `/cluster`,
+        #    도메인 뷰어는 원전 `/ontology` 하나로 모았다.
+        #    ⚠️ 옛 주소를 404 로 두지 않는다 — 북마크가 있을 수 있으니 **보내 준다.**
+        if path == self.prefix or path.startswith(self.prefix + "/"):
+            await send({"type": "http.response.start", "status": 302,
+                        "headers": [(b"location", b"/cluster"),
+                                    (b"content-length", b"0"),
+                                    (b"cache-control", NO_STORE)]})
+            return await send({"type": "http.response.body", "body": b""})
+        if False:
             # 🔴 **슬래시 없는 `/view` 를 `/view/` 로 보낸다** (실측 2026-08-13).
             #    안 그러면 브라우저가 인덱스의 상대 링크(`cluster.html`)를 **루트 기준**으로
             #    풀어 `/cluster.html` 을 요청하고, 그건 API 경로라 **401** 이 뜬다.

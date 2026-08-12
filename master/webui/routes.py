@@ -92,13 +92,81 @@ def page(name: str) -> bytes:
     return body or b"<p>page missing</p>"
 
 
+# 🔴 원전 헤더의 상호 링크 자리에 **클러스터 상태**를 끼운다 (사용자 지시 2026-08-13:
+#    *"복각한 페이지에서 연결하고 View를 제거해"*).
+#
+#    원전은 `/` 에 `Ontology Viewer →`, `/ontology` 에 `← Context Search` 를 두는 방식으로
+#    화면을 서로 잇는다. **그 자리를 그대로 쓴다** — 새 내비게이션을 발명하지 않는다.
+#
+#    ⚠️ 원전 파일(`web_ui_original.py`·`*.html`)은 **바이트 그대로 둔다.** 링크는 **서빙 시점에
+#    주입**한다 — 그래야 원전과의 diff 가 이 함수 하나에만 남고, 다음 사람이 "원전이 이랬나?"
+#    를 헷갈리지 않는다.
+_CLUSTER_LINK = (
+    '<a href="/cluster" style="font-size:0.7em;font-weight:500;color:#d7ba7d;'
+    'background:#252526;border:1px solid #d7ba7d;border-radius:6px;padding:6px 14px;'
+    'text-decoration:none;margin-right:8px;">클러스터 상태 →</a>')
+_CLUSTER_LINK_SMALL = (
+    '<a href="/cluster" class="back" style="margin:0;color:#d7ba7d;">/ 클러스터 상태</a>')
+
+
 def context_server_html() -> bytes:
-    """원전 `web_ui.py` 의 HTML 을 그대로. 🔴 손대지 않는다."""
+    """원전 `web_ui.py` 의 HTML. 🔴 파일은 손대지 않고 **링크만 주입**한다."""
     from .web_ui_original import WEB_UI_HTML
-    return WEB_UI_HTML.encode("utf-8")
+    anchor = '<a href="/ontology"'
+    html_text = WEB_UI_HTML
+    if anchor in html_text:
+        html_text = html_text.replace(anchor, _CLUSTER_LINK + anchor, 1)
+    return html_text.encode("utf-8")
+
+
+def inject_cluster_link(body: bytes) -> bytes:
+    """`/ontology` 페이지들의 `Context Search` 링크 옆에 클러스터 상태를 끼운다."""
+    text = body.decode("utf-8", "replace")
+    anchor = '<a href="/" class="back"'
+    if anchor in text:
+        text = text.replace(anchor, _CLUSTER_LINK_SMALL + anchor)
+    else:
+        anchor2 = '<a href="/" style="font-size:13px'
+        if anchor2 in text:
+            text = text.replace(
+                anchor2,
+                '<a href="/cluster" style="font-size:13px;color:#d7ba7d;background:#252526;'
+                'border:1px solid #d7ba7d;border-radius:6px;padding:6px 14px;'
+                'text-decoration:none;white-space:nowrap;margin-right:8px;">클러스터 상태</a>'
+                + anchor2, 1)
+    return text.encode("utf-8")
+
+
+def cluster_page(paths) -> tuple:
+    """클러스터 상태 화면. 🔴 **`/cluster` 한 자리**로 옮겼다 — `/view` 는 없앴다.
+
+    ⚠️ 스냅샷이라 낡을 수 있다 — 나이를 배너로 박는 판단은 그대로 유지한다.
+    """
+    from ..viewer import STALE_SEC, _age, inject, stale_banner
+    p = paths.root / "cluster.html"
+    if not p.is_file():
+        return 503, ("<p>🔴 클러스터 상태 화면이 아직 만들어지지 않았다.</p>"
+                     "<p>마스터에서: <code>python -m master.status html</code></p>"
+                     '<p><a href="/">← Context Search</a></p>').encode("utf-8")
+    body = p.read_text(encoding="utf-8", errors="replace")
+    sec, _ = _age(p)
+    if sec is not None and sec > STALE_SEC:
+        body = inject(body, stale_banner(sec, "python -m master.status html"))
+    # 🔴 원전 화면으로 돌아가는 링크 — 고아 페이지로 두지 않는다
+    body = inject(body, (
+        '<div style="margin:-1.5rem -1.5rem 1rem;padding:.5rem .9rem;'
+        'border-bottom:1px solid #2f2f2c;font:13px/1.6 -apple-system,sans-serif">'
+        '<a href="/" style="color:#4ec9b0;text-decoration:none">← Context Search</a>'
+        '<span style="opacity:.4"> · </span>'
+        '<a href="/ontology" style="color:#4ec9b0;text-decoration:none">Ontology Viewer</a>'
+        '</div>'))
+    return 200, body.encode("utf-8")
 
 
 # ── API — 온톨로지 (읽기 전용) ───────────────────────────────────────────────────
+#
+# ⚠️ 2026-08-13: `cluster_page` 를 다시 쓰다가 이 아래를 **잘라먹어** `/api/v1/tags` 가 500 이
+#    됐다. 파일 꼬리를 교체할 때는 남는 부분을 먼저 확인할 것 — 실측으로 물린 자리다.
 
 def api_domains(root: Path) -> dict:
     return {"domains": loaders.list_domains(root)}
@@ -132,18 +200,17 @@ def api_tasks() -> dict:
 
 # ── API — Context Server 탭 ──────────────────────────────────────────────────────
 
-def api_health(root: Path, paths) -> dict:
-    from ..graph import db as gdb
-    docs = _doc_count(paths)
-    return {"status": "ok", "project_root": str(root), "updating": False,
-            "indexed_documents": docs, "graph": gdb.exists(paths)}
-
-
 def _doc_count(paths) -> int:
     try:
         return len(list(paths.context.glob("**/*.md"))) if paths.context.is_dir() else 0
     except OSError:
         return 0
+
+
+def api_health(root: Path, paths) -> dict:
+    from ..graph import db as gdb
+    return {"status": "ok", "project_root": str(root), "updating": False,
+            "indexed_documents": _doc_count(paths), "graph": gdb.exists(paths)}
 
 
 def api_index_status(paths) -> dict:
@@ -162,15 +229,12 @@ def api_index_status(paths) -> dict:
 
 
 def api_tags(root: Path, paths=None) -> dict:
-    """🔴 태그 — 물으신 "태그 확인" 이 이것이다.
+    """🔴 태그 클라우드.
 
     ⚠️ **모양이 계약이다**: 원전 `renderTagCloud` 는 `tags.tags` 를 **`{태그: 개수}` 객체**로
-    받고 `Object.entries(...)` 로 돈다. 배열로 주면 화면이 빈 채로 뜬다(실측).
-    카운터 배지는 `tags.total_tags` 를 읽는다.
+    받고 `Object.entries(...)` 로 돈다. 배열로 주면 화면이 빈 채로 뜬다(실측). 배지는 `total_tags`.
 
-    태그의 출처는 둘이다 — 도메인 manifest 의 `tags`(온톨로지) + 오브젝트 `aliases`(시소러스가
-    이어 주는 한국어 말). 우리 태그의 본체는 온톨로지라 원전(컨텍스트 MD frontmatter)과 다르지만,
-    **화면이 하는 일(태그로 거르기)은 같다.**
+    출처는 둘 — 도메인 manifest 의 `tags`(온톨로지) + 오브젝트 `aliases`(시소러스의 한국어 말).
     """
     counts: dict = {}
     for d in loaders.list_domains(root):
@@ -201,16 +265,8 @@ def api_search(paths, query: str, limit: int = 5) -> dict:
 
 
 def api_rebuild() -> dict:
-    # 🔴 웹이 재색인을 트리거하지 않는다 (위 § ④)
+    # 🔴 웹이 재색인을 트리거하지 않는다 (머리말 § ④)
     return {"status": "refused", "note": NOTES["rebuild"]}
-
-
-def api_board_domains(root: Path) -> dict:
-    """게시판 탭. 🔴 우리는 **읽기 전용**이라 draft/active 구분이 없다 — 있는 것만 낸다."""
-    ds = loaders.list_domains(root)
-    return {"domains": [dict(d, status="active") for d in ds],
-            "counts": {"all": len(ds), "draft": 0, "active": len(ds)},
-            "readonly": True, "note": NOTES["mutation"]}
 
 
 def api_refuse_mutation() -> dict:

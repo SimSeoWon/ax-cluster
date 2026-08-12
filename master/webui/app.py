@@ -26,6 +26,14 @@ from urllib.parse import parse_qs, unquote
 
 from . import routes
 
+# 🔴 **이 앱이 처리하는 경로를 여기 한 번만 적는다** (실측 2026-08-13: 같은 실수를 두 번 했다).
+#    라우트를 추가할 때 손대야 하는 곳이 셋(핸들러 · 라우터 분기 · 인증 공개 목록)이었고,
+#    매번 하나를 빠뜨려 401/404 가 났다. **목록을 하나로 모으면 그 부류가 사라진다** —
+#    `viewer.Router` 와 `projects/__main__` 이 이 상수를 import 해서 쓴다.
+PREFIXES = ("/ontology", "/ontology-static", "/api/v1", "/cluster")
+# 정확히 이 경로만(접두어가 아니라 완전 일치) 이 앱이 가져간다
+EXACT = ("/", "", "/cluster.html")
+
 JSON = b"application/json; charset=utf-8"
 HTML = b"text/html; charset=utf-8"
 NO_STORE = b"no-store, must-revalidate"
@@ -168,11 +176,18 @@ class WebUI:
         if path in ("/", ""):
             return await _send(send, 200, routes.context_server_html(), HTML)
         if path in ("/ontology", "/ontology/"):
-            return await _send(send, 200, routes.page("index.html"), HTML)
+            return await _send(send, 200,
+                               routes.inject_cluster_link(routes.page("index.html")), HTML)
         if _DOMAIN_PAGE.match(path):
-            return await _send(send, 200, routes.page("domain.html"), HTML)
+            return await _send(send, 200,
+                               routes.inject_cluster_link(routes.page("domain.html")), HTML)
         if _TASK_PAGE.match(path):
-            return await _send(send, 200, routes.page("task.html"), HTML)
+            return await _send(send, 200,
+                               routes.inject_cluster_link(routes.page("task.html")), HTML)
+        # 🔴 클러스터 상태 — `/view` 를 없애고 여기로 모았다 (사용자 지시)
+        if path in ("/cluster", "/cluster/", "/cluster.html"):
+            st, body = routes.cluster_page(paths)
+            return await _send(send, st, body, HTML)
 
         # ── API: 온톨로지 ──
         if path == "/api/v1/ontology/domains":

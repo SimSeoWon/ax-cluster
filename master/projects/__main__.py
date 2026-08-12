@@ -64,6 +64,7 @@ def main() -> None:
     view_token = load_view_token() if require else None
     # 🔴 **원전 웹 UI 복각** (사용자 지시 2026-08-13) — `/` `/ontology*` `/api/v1/*`.
     #    `/view/` 는 스냅샷 화면(중 3.2)이라 그대로 둔다: 둘은 다른 것이다.
+    from ..webui.app import PREFIXES as WEB_PREFIXES
     from ..webui.app import WebUI
     from ..context_search.paths import resolve as _resolve
     web = WebUI(lambda: _resolve(""))
@@ -83,8 +84,11 @@ def main() -> None:
     uvicorn.run(BearerAuthMiddleware(served, auth_token,
                                      # 🔴 원전 UI 경로는 공개(읽기 전용) — `/mcp` 는 잠김
                                      open_paths=OPEN_PATHS | {"/", FAVICON},
-                                     public_prefixes=("/ontology", "/ontology-static",
-                                                      "/api/v1"),
+                                     # 🔴 목록을 여기 다시 적지 않는다 — `webui.app` 이 소유한다.
+                                     #    `/cluster` 를 빼먹어 401, 그 다음 라우터에서 또 빠져
+                                     #    404 가 났다(실측). 단일 지점이 그 부류를 없앤다.
+                                     #    `/view` 는 옛 주소(→ `/cluster` 302)라 함께 열어 둔다.
+                                     public_prefixes=WEB_PREFIXES + ("/view",),
                                      view_prefix=VIEW_PREFIX, view_token=view_token,
                                      view_public=not require),
                 host=host, port=port, log_level="info")

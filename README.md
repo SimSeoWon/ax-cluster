@@ -127,7 +127,8 @@ ax-cluster/
 │   ├── task_queue/             ← 작업 큐 (claim·lease·epoch fencing·능력 라우팅)
 │   ├── projects/               ← 프로젝트 레지스트리 + **작업장의 MCP 단일 창구**
 │   ├── status.py               클러스터 상태 수집·렌더 — 🔴 읽기 전용·주기 가드 120초
-│   ├── viewer.py               🔴 그 화면을 **8103 /view/ 로 서빙** — 인증 없음·읽기 전용
+│   ├── viewer.py               ⚠️ 옛 `/view` (→ `/cluster` 302). 서빙은 `webui/` 가 한다
+│   ├── webui/                  🔴 **원전 웹 UI 복각** — Context Server·온톨로지 뷰어·게시판
 │   ├── source_text.py          🔴 CP949 대응 — 소스의 44%가 CP949 다
 │   ├── auth.py                 3서비스 공용 베어러 인증 (fail-closed)
 │   ├── verdict.py              층2 판정 계약 (fail-closed)
@@ -153,7 +154,7 @@ ax-cluster/
 |---|---|---|
 | 작업 큐 | 8101 | `ax-task-queue.service` |
 | 추론 브로커 | 8102 | `ax-broker.service` |
-| 프로젝트 레지스트리 (MCP) + **읽기 전용 화면** | 8103 | `ax-projects.service` (`/view/`) |
+| 프로젝트 레지스트리 (MCP) + **웹 UI** | 8103 | `ax-projects.service` (`/`·`/ontology`·`/cluster`) |
 | 색인기 | — | `ax-indexer.path`(inotify) → `ax-indexer.service` |
 
 🔴 셋 다 **베어러 토큰 필수**(`~/.config/ax-cluster/token`, 0600) — 토큰이 없으면 **서비스가
@@ -208,7 +209,8 @@ ax-cluster/
 # 운영
 .venv/bin/python -m master.status show                   # 머신·서비스·큐 요약 (읽기 전용)
 .venv/bin/python -m master.status html                   # → <프로젝트>/cluster.html 한 장
-#   🔴 다른 머신에서 보기: http://192.168.0.57:8103  ← 인증 없음 (루트가 /view/ 로 보낸다)
+#   🔴 다른 머신에서 보기: http://192.168.0.57:8103  ← 인증 없음 (원전 웹 UI)
+#      / = Context Server · /ontology = 도메인 뷰어+그래프 · /cluster = 클러스터 상태
 #   🔴 최소 간격 120초 — BC-250 을 자주 두드리지 않는다 (넘기려면 --force)
 curl -s localhost:8102/health | python3 -m json.tool     # 노드별 상주 모델
 systemctl status ax-task-queue ax-broker ax-projects ax-indexer.path

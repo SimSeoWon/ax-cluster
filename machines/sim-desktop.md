@@ -48,9 +48,11 @@ to end and **four deterministic gates** sit in it:
 
 Live: dispatch 45s/$0.27 · two workers in parallel 36s/$0.47 · integrator build 142s + commit ·
 unattended RunTests 74s. ✅ **중 3.2 status screen** is up (`python -m master.status html`) and
-**served on the LAN at `http://192.168.0.57:8103`** — 🔴 **no login** (the root redirects to
-`/view/`; the API paths on that port stay token-locked). Two screens live there: cluster status
-and the domain viewer. ⚠️ It serves the **last generated** snapshot — a refresh never triggers
+**served on the LAN at `http://192.168.0.57:8103`** — 🔴 **no login** (API paths on that port
+stay token-locked). 🔴 **The predecessor's web UI was ported back verbatim** (`master/webui/`,
+2026-08-13): `/` Context Server (status cards + Search/Documents/Tags/Domains + the domain board
+with LLM create/chat/activate), `/ontology` the domain viewer (tree nav + **Cytoscape object
+graph** + layer-sized nodes), `/cluster` the cluster status snapshot. ⚠️ It serves the **last generated** snapshot — a refresh never triggers
 SSH polling (that would defeat the 120s guard), so a stale page gets a red age banner.
 🕓 Remaining in 대 3: upper-layer commands (중 3.1) and operational robustness (중 3.3).
 
