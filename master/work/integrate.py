@@ -46,7 +46,8 @@ import posixpath
 from dataclasses import dataclass, field
 
 from ..client import bundle
-from . import runner, skeleton, skeleton_gate
+from . import layer1 as layer1_mod
+from . import runner, skeleton_gate
 from .infer import Response, spool_dir, unspool
 
 WORKTREE_PREFIX = "ax-wt"
@@ -164,70 +165,18 @@ def ensure_worktree(facts, work_id: str, *, at_commit: str, runner_=None) -> Wor
     return wt
 
 
-# ── 소 1.4.2 층1 — 🔴 적용 **직전**에, 무료·결정적으로 ──────────────────────────
+# ── 소 1.4.2 층1 — 🔴 적용 **직전**에 (구현은 `layer1.py`) ────────────────────────
 #
-# 🔴 여기서 쓰는 것은 전부 중 1.1 이 만든 **결정적 함수**다(LLM 0):
-#     `skeleton.frozen_decls` · `skeleton.violation` · `skeleton.pseudo_count`
-#   ⚠️ **중 2.1 이 닫혔다는 뜻은 아니다** — 그쪽은 *제출 경로에* 층1 을 fail-closed 로 박는
-#      일이고(소 2.1.3), 이건 **적용 경계**에서 같은 검사를 부르는 것이다. 사슬이
-#      `1.1 → 2.1 → 1.4.2` 인 이유가 이 재사용이다.
+# 🔴 층1 은 **두 곳에** 박혀 있다(중 2.1): 응답 수락(`infer.judge`)과 여기. 검사가 무료라서
+#    두 번 돌려도 잃는 것이 없고, 어느 한쪽이 우회되는 경로(스풀 손질·재사용)가 실재한다.
+#    구현과 근거는 `layer1.py` 의 머리말에 있다.
 
-@dataclass
-class Layer1:
-    """적용 직전 자기검증. 🔴 `ok` 가 아니면 **적용하지 않는다.**"""
-    checked: bool = False
-    problems: list = field(default_factory=list)
-    skipped: list = field(default_factory=list)     # 기준 원본이 없어 못 본 파일
-
-    @property
-    def ok(self) -> bool:
-        # 🔴 fail-closed — 검사를 못 돌렸으면 통과가 아니다
-        return bool(self.checked and not self.problems)
-
-    @property
-    def summary(self) -> str:
-        if not self.checked:
-            return "⚠️ 층1 미확인"
-        if self.problems:
-            return "🔴 층1 위반 " + str(len(self.problems)) + ": " + "; ".join(self.problems[:3])
-        s = "✅ 층1 통과"
-        if self.skipped:
-            s += f" (기준 원본 없어 동결 미검사 {len(self.skipped)})"
-        return s
+Layer1 = layer1_mod.Layer1
 
 
-def layer1(files: dict, *, baseline=None) -> Layer1:
-    """동결 위반 · `[PSEUDO]`/펜스 잔재를 본다. **무료·즉시·LLM 0.**
-
-    `baseline(path) -> str|None` — 그 파일의 **적용 전** 내용. `None` 이면 신규 파일이므로
-    동결 대조 대상이 없다(정상). 🔴 함수 자체가 없으면 **검사를 안 한 것**이다.
-    """
-    L = Layer1()
-    if not files:
-        L.problems.append("적용할 파일이 없다")
-        return L
-    L.checked = True
-    for path in sorted(files):
-        text = files[path] or ""
-        if skeleton.pseudo_count(text):
-            # 🔴 `[PSEUDO]` 는 *"여기를 채워라"* 는 표시다 — 남아 있으면 본문이 안 채워졌다
-            L.problems.append(f"{path}: `[PSEUDO]` 가 남아 있다")
-        if skeleton._FENCE_ANY.search(text):
-            # 🔴 마크다운 펜스가 소스에 들어가면 컴파일이 깨진다 (14b 의 알려진 결함)
-            L.problems.append(f"{path}: 마크다운 펜스가 남아 있다")
-        if baseline is None:
-            continue
-        old = baseline(path)
-        if old is None:
-            continue                        # 신규 파일 — 동결할 원본이 없다
-        if not skeleton.is_header(path):
-            continue                        # 동결은 **선언**의 문제다 (`.cpp` 는 대상 아님)
-        why = skeleton.violation(old, text)
-        if why:
-            L.problems.append(f"{path}: 동결 위반 — {why}")
-    if baseline is None:
-        L.skipped = sorted(files)
-    return L
+def layer1(files: dict, *, baseline=None):
+    """`layer1.check` 로 위임한다. (호환 이름 — 이 모듈의 호출자가 쓰던 형태다)"""
+    return layer1_mod.check(files, baseline=baseline)
 
 
 def local_baseline(paths, base_commit: str):
@@ -269,6 +218,48 @@ def local_baseline(paths, base_commit: str):
     return read
 
 
+def classes_in(paths, files) -> list:
+    """대상 파일들이 선언하는 클래스 이름. **그래프에서 읽는다 (LLM 0).**
+
+    층2 에 실을 선언부를 모으려면 클래스 이름이 필요한데, 스풀에는 파일만 있다(그것이
+    파견 단위이므로 맞다). 그래프의 `classes` 표가 `name → file` 이라 **역조회**하면 된다.
+    """
+    # 🔴 **여기서 죽지 않는다.** grounding 이 없는 것은 층2 의 검출력이 낮아지는 것이지
+    #    통합을 멈출 이유가 아니다 — 그리고 그 사실은 `l2_grounded=False` 로 보고된다.
+    #    (실측 2026-08-12: 그래프 없는 경로에서 `AttributeError` 로 통합자가 통째로 죽었다)
+    try:
+        from ..graph import db as gdb
+        if not gdb.exists(paths):
+            return []
+        want = {str(f).replace("\\", "/") for f in (files or [])}
+        conn = gdb.connect(paths)
+        try:
+            return sorted({r["name"] for r in conn.execute("SELECT name, file FROM classes")
+                           if r["file"] and str(r["file"]).replace("\\", "/") in want})
+        finally:
+            conn.close()
+    except Exception:                                    # noqa: BLE001
+        return []
+
+
+def layer2_grounding(paths, files) -> str:
+    """층2 프롬프트에 실을 **선언부**. 🔴 이것이 검출력을 갈랐다 (실측 소 2.2.1).
+
+    같은 표본을 후보 5개에 돌렸더니 **넷이 "없는 열거값" 을 놓쳤고**, 선언부를 함께 준
+    변형에서는 잡았다. 층2 를 grounding 없이 돌리면 **문법만 보는 검사기**가 된다.
+
+    ⚠️ 실패하면 빈 문자열이다 — 호출자가 *"grounding 없이 돌렸다"* 를 **말해야** 한다.
+    """
+    names = classes_in(paths, files)
+    if not names:
+        return ""
+    try:
+        from .skeleton import include_decls
+        return include_decls(paths, names)
+    except Exception:                                    # noqa: BLE001
+        return ""
+
+
 def remote_baseline(facts, tree: str, *, reader=None):
     """격리 트리에서 적용 전 내용을 읽는다. 왕복이 있지만 **근거가 정확하다.**"""
     r = reader or bundle._remote_read
@@ -293,6 +284,8 @@ class Applied:
     task_id: str = ""
     files: list = field(default_factory=list)
     l1: Layer1 | None = None
+    l2 = None                                      # verdict.Verdict (층2) · None = 안 돌렸다
+    l2_grounded: bool = False                      # 🔴 선언부를 실었나 (검출력을 가른다)
     build = None                                   # layer3_verify.BuildResult
     commit: str = ""
     reverted: bool = False
@@ -314,6 +307,9 @@ class Applied:
         bits = [f"{self.task_id}: 🔴"]
         if self.l1 is not None and not self.l1.ok:
             bits.append(self.l1.summary)
+        elif self.l2 is not None and not self.l2.approved:
+            bits.append("층2 " + self.l2.summary()
+                        + ("" if self.l2_grounded else " ⚠️(선언부 없이 돌렸다)"))
         elif self.build is not None and not self.build.passed:
             bits.append(self.build.summary())
         if self.error:
@@ -330,6 +326,12 @@ def feedback_block(a: Applied) -> str:
     if a.l1 is not None and not a.l1.ok:
         lines.append("층1 (적용 직전 자기검증) 위반:")
         lines += [f"  - {p}" for p in a.l1.problems]
+        lines.append("")
+    if a.l2 is not None and not a.l2.approved:
+        lines.append("층2 (상용 모델 문법·API 검사) 판정:")
+        lines.append(f"  {a.l2.summary()}"
+                     + ("" if a.l2_grounded else "  ⚠️ 선언부 없이 돌렸다"))
+        lines += [f"  - {f}" for f in a.l2.findings[:10]]
         lines.append("")
     if a.build is not None and not a.build.passed:
         lines.append("UE5 빌드 판정:")
@@ -365,9 +367,14 @@ def _revert(facts, tree: str, files: list, *, runner_=None) -> bool:
 
 
 def apply_one(facts, res: Response, *, tree: str, project: str, baseline=None,
+              layer2=None, declarations: str = "",
               builder=None, writer=None, runner_=None,
               timeout: int = skeleton_gate.BUILD_TIMEOUT) -> Applied:
-    """조각 하나: 층1 → 적용 → 빌드 → 🔴 통과하면 커밋, 실패하면 되돌린다."""
+    """조각 하나: 층1 → 층2 → 적용 → 빌드 → 🔴 통과하면 커밋, 실패하면 되돌린다.
+
+    `layer2(files, declarations=...) -> Verdict` — 주지 않으면 **층2 를 돌리지 않는다**(그것은
+    통과가 아니라 미확인이고, `Applied.l2 is None` 으로 구분된다).
+    """
     a = Applied(task_id=res.task_id, files=sorted(res.files))
 
     # ① 층1 — 무료다. 🔴 비싼 빌드 앞에 싼 검사를 둔다
@@ -376,7 +383,20 @@ def apply_one(facts, res: Response, *, tree: str, project: str, baseline=None,
         a.error = "층1 에서 막혔다 — 적용하지 않았다"
         return a
 
-    # ② 적용 — `skeleton_gate.place` 가 해시 대조까지 한다
+    # ② 층2 — 🔴 **비싼 빌드 앞에 싼 검사를 둔다** (소 2.2.2). 존재 이유가 그것이다:
+    #    환각 API 를 컴파일 전에 걸러 142초 빌드의 실패율을 낮춘다(§4.3).
+    #    🔴 fail-closed — 판정을 못 받으면 막는다. ⚠️ 그 차단이 값싼 이유는 스풀이 응답을
+    #    들고 있어서다(재시도에 추론을 다시 사지 않는다).
+    if layer2 is not None:
+        a.l2_grounded = bool((declarations or "").strip())
+        a.l2 = layer2([(f, res.files[f]) for f in a.files], declarations=declarations or "")
+        if not a.l2.approved:
+            a.error = ("층2 에서 막혔다 — 적용하지 않았다"
+                       + ("" if a.l2_grounded else
+                          " ⚠️ 선언부 없이 돌렸다 (검출력이 낮은 조건이다)"))
+            return a
+
+    # ③ 적용 — `skeleton_gate.place` 가 해시 대조까지 한다
     try:
         skeleton_gate.place(facts, tree, res.files, writer=writer)
     except Exception as e:                                   # noqa: BLE001
@@ -385,7 +405,7 @@ def apply_one(facts, res: Response, *, tree: str, project: str, baseline=None,
         a.reverted = True
         return a
 
-    # ③ 빌드 판정 — 🔴 fail-closed. 판정을 못 받으면 막는다
+    # ④ 빌드 판정 — 🔴 fail-closed. 판정을 못 받으면 막는다
     bb = skeleton_gate._build_bat_from(facts)
     if not bb:
         a.error = "UE5 Build.bat 을 찾지 못했다 — 확인 불가이므로 막는다"
@@ -402,7 +422,7 @@ def apply_one(facts, res: Response, *, tree: str, project: str, baseline=None,
             a.error = "🔴 되돌리지 못했다 — 트리가 더러운 채 남았다. 사람이 확인할 것"
         return a
 
-    # ④ 커밋 — **빌드해 본 주체가 커밋한다**
+    # ⑤ 커밋 — **빌드해 본 주체가 커밋한다**
     quoted = " ".join(f'"{f}"' for f in a.files)
     rc, out = _git(facts, f"add -- {quoted}", cwd=tree, runner_=runner_)
     if rc != 0:
@@ -426,6 +446,88 @@ def apply_one(facts, res: Response, *, tree: str, project: str, baseline=None,
     return a
 
 
+# ── 소 2.3.1·2.3.2·2.3.5 층3 RunTests — 🔴 **work 단위로 한 번** ────────────────
+#
+# 조각별 빌드가 이미 **누적된 트리**를 세우므로(조각 2의 빌드는 base+1+2 를 짓는다) 소 2.3.5 가
+# 걱정한 *"모듈 의존·include 누락·private 접근"* 은 **빌드 쪽에서는 이미 잡힌다.** 남은 것은
+# `RunTests` 이고, 그것은 에디터를 띄우므로 **끝에 한 번만** 돈다.
+#
+# 🔴 **실측 2026-08-12: 이 프로젝트에 자동화 테스트가 0개다.**
+#   `Source/` 전체에 `AUTOMATION_TEST`·`FunctionalTest`·spec 이 하나도 없다(모듈 4·타깃 4).
+#   그래서 지금 `RunTests` 는 **판정할 것이 없다** — 돌리면 `parse_automation_log` 가
+#   *"성공한 테스트가 0건"* 으로 **차단**한다(라이브러리로서는 맞는 계약이다).
+#
+# ⚠️ 그러므로 여기서는 마일스톤이 못박은 대로 **갈라서** 다룬다(소 2.3.5):
+#
+#     테스트가 **불합격**했다 (`failure is None` · fail>0)   → 🔴 **막는다** (실재하는 결함)
+#     테스트가 **돌 게 없다/못 돌았다** (`failure` 있음)      → ⚠️ **fail-open**, 대신 **말한다**
+#
+# 🔴 fail-open 이 위험한 선택인 것은 맞다. 그래서 **기본값을 조용히 두지 않는다** — 결과에
+#   *"테스트로 검증하지 않았다"* 가 반드시 실린다. 그리고 §4.3 이 실측한 두 부류
+#   (`Cast<IInteractable>` · `IsValid()` 로직 오류)는 **테스트만 잡을 수 있으므로**, 테스트가
+#   0개인 동안 그 구멍은 **닫히지 않는다.** 그것은 배선으로 메울 수 있는 문제가 아니다.
+
+def run_tests(facts, *, tree: str, project: str, test_filter: str = "",
+              tester=None, timeout: int = 3600) -> tuple:
+    """`(Layer3Result|None, 막아야 하나, 사람에게 할 말)`.
+
+    `tester` 를 주입할 수 있는 이유는 테스트다 — 에디터 없이 계약을 검증한다.
+    """
+    if not getattr(facts, "ue5", ""):
+        return None, False, "⚠️ 층3 RunTests 미확인 — 이 기계에 UE5 가 없다 (fail-open)"
+    fn = tester or __import__("master.layer3_verify",
+                             fromlist=["x"]).run_tests_on_workshop
+    up = skeleton_gate._win_join(tree, f"{project}.uproject")
+    r = fn(facts.host, facts.user, facts.ue5, up, test_filter or project, timeout=timeout)
+    if getattr(r, "passed", False):
+        return r, False, f"✅ 층3 RunTests {r.summary()}"
+    if getattr(r, "failure", None):
+        # ⚠️ **돌 게 없거나 못 돌았다** — 막지 않는다. 다만 통과라고 적지 않는다.
+        return r, False, ("⚠️ 층3 RunTests 로 **검증하지 못했다** (fail-open): "
+                          f"{r.failure} 🔴 이 프로젝트는 자동화 테스트가 0개다 — "
+                          "빌드가 통과해도 런타임 결함은 아무도 안 본다")
+    # 🔴 진짜 불합격이다
+    names = ", ".join(t.name or t.path for t in r.failures()[:3])
+    return r, True, f"🔴 층3 RunTests 불합격 — {r.summary()}: {names}"
+
+
+def report_to_redmine(subject: str, body: str, *, api_key: str = "", url: str = "",
+                      project_id: int = 1, poster=None) -> str:
+    """실패를 레드마인에 등재한다 (소 2.3.3). 🔴 **실패해도 파이프라인을 막지 않는다.**
+
+    전임 시스템의 `[빌드 실패] 통합 빌드 게이트 차단` 이슈가 정확히 이 형태다(#13~#20).
+
+    ⚠️ **API 키는 저장소에도 `~/.config` 에도 없다** — 마스터의 컨테이너 DB 에서 꺼낸다
+    (§10.1). 그래서 키가 없으면 **조용히 건너뛰지 않고** 사유를 돌려준다: 이슈 추적이 안 되는
+    것과 게이트가 통과한 것은 다르다.
+    """
+    import json as _json
+    import os as _os
+    import urllib.request
+    key = api_key or _os.environ.get("AX_REDMINE_API_KEY", "")
+    base = (url or _os.environ.get("AX_REDMINE_URL", "http://192.168.0.57:8080")).rstrip("/")
+    payload = {"issue": {"project_id": project_id, "subject": subject[:250],
+                         "description": body[:8000]}}
+    # 🔴 키 검사는 **기본 전송 수단**에 대한 것이다. `poster` 를 주입했다면 전송의 책임은
+    #    주입자에게 있다 — `writer`·`runner`·`builder` 와 같은 규약이다.
+    if poster is None and not key:
+        return ("⚠️ 레드마인 등재 건너뜀 — API 키가 없다 "
+                "(`AX_REDMINE_API_KEY` 또는 컨테이너 DB, §10.1)")
+    try:
+        if poster is not None:
+            return poster(base, payload, key)
+        req = urllib.request.Request(f"{base}/issues.json",
+                                     data=_json.dumps(payload).encode("utf-8"),
+                                     method="POST")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("X-Redmine-API-Key", key)
+        with urllib.request.urlopen(req, timeout=20) as r:
+            got = _json.loads(r.read().decode("utf-8", "replace"))
+        return f"레드마인 #{(got.get('issue') or {}).get('id', '?')} 등재"
+    except Exception as e:                                   # noqa: BLE001
+        return f"⚠️ 레드마인 등재 실패 — {type(e).__name__}: {e}"
+
+
 @dataclass
 class Integration:
     work_id: str = ""
@@ -435,6 +537,10 @@ class Integration:
     pushed: str = ""
     branch: str = ""
     note: str = ""
+    l3 = None                                        # layer3_verify.Layer3Result | None
+    l3_note: str = ""                                # 🔴 사람이 읽을 층3 상태 (미확인 포함)
+    catalog: int = 0                                 # 실패 카탈로그 총 항목 수 (소 2.3.4)
+    reported: list = field(default_factory=list)     # 레드마인 등재 결과 (소 2.3.3)
 
     @property
     def passed(self) -> list:
@@ -455,6 +561,12 @@ class Integration:
             out.append(f"  격리 트리 {self.tree} @ {self.base[:8]}")
         for a in self.applied:
             out.append("  " + a.summary)
+        if self.l3_note:
+            out.append("  " + self.l3_note)
+        if self.catalog:
+            out.append(f"  실패 카탈로그 {self.catalog}건 — 다음 골조 프롬프트에 실린다")
+        for r in self.reported:
+            out.append("  " + r)
         if self.pushed:
             out.append(f"  🔴 push ✅ {self.branch} ← {self.pushed[:8]}")
         elif self.passed:
@@ -497,9 +609,21 @@ def one_base(responses: list) -> str:
     return base
 
 
+AUTO = "auto"        # 🔴 기본은 **돌리는 것**이다. 끄려면 호출자가 명시적으로 None 을 준다
+
+
+def _default_layer2():
+    from .. import layer2_verify as L2
+
+    def call(files, *, declarations=""):
+        return L2.verify_files(files, declarations=declarations)
+    return call
+
+
 def run(paths, facts, work_id: str, *, project: str = "", durable: str = "",
-        stop_on_fail: bool = True, baseline=None, builder=None, writer=None,
-        runner_=None, push: bool = True, api=runner._api,
+        stop_on_fail: bool = True, baseline=None, layer2=AUTO, builder=None, writer=None,
+        runner_=None, push: bool = True, api=runner._api, tester=None,
+        catalog: bool = True, redmine: bool = True, poster=None,
         timeout: int = skeleton_gate.BUILD_TIMEOUT) -> Integration:
     """work 하나를 통합한다 — 🔴 **적용은 순차, 통과분만 커밋.**
 
@@ -520,6 +644,11 @@ def run(paths, facts, work_id: str, *, project: str = "", durable: str = "",
     #    읽는다. 둘 다 안 되면 `baseline=None` 이라 **동결 미검사**로 기록된다(통과가 아니다).
     base_fn = baseline or local_baseline(paths, base) or remote_baseline(facts, wt.path)
 
+    l2_call = _default_layer2() if layer2 == AUTO else layer2
+    if l2_call is None:
+        # ⚠️ 미확인을 통과처럼 읽히게 두지 않는다
+        itg.note = "⚠️ 층2 를 돌리지 않았다 (호출자가 껐다) — 문법·API 검사는 미확인이다"
+
     stopped = ""
     for r in responses:
         if stopped:
@@ -528,15 +657,49 @@ def run(paths, facts, work_id: str, *, project: str = "", durable: str = "",
             itg.applied.append(a)
             continue
         a = apply_one(facts, r, tree=wt.path, project=proj, baseline=base_fn,
+                      layer2=l2_call, declarations=layer2_grounding(paths, sorted(r.files)),
                       builder=builder, writer=writer, runner_=runner_, timeout=timeout)
         itg.applied.append(a)
         if not a.ok:
             _submit_fail(r, a, api=api)
+            if catalog:
+                # 🔴 되먹임 (소 2.3.4) — **결정적 판정 원문에서만** 뽑는다
+                try:
+                    from . import failures as F
+                    itg.catalog = F.add(paths, F.from_applied(a))
+                except Exception as e:                   # noqa: BLE001
+                    itg.note = (itg.note + " · " if itg.note else "") + \
+                        f"⚠️ 실패 카탈로그 적립 실패: {e}"
+            if redmine:
+                # 🔴 이슈 추적이 안 되는 것과 게이트가 통과한 것은 다르다 — 사유를 남긴다
+                itg.reported.append(report_to_redmine(
+                    f"[통합 실패] {a.task_id} — work {work_id}",
+                    feedback_block(a), poster=poster))
             if stop_on_fail:
                 stopped = a.task_id
 
     if not itg.passed:
         itg.note = "🔴 커밋된 것이 없다 — push 할 것도 없다"
+        return itg
+
+    # 🔴 층3 RunTests — **work 단위로 한 번**, push 앞에 (소 2.3.5). 에디터를 띄우므로 비싸다.
+    itg.l3, block, itg.l3_note = run_tests(facts, tree=wt.path, project=proj, tester=tester)
+    if block:
+        # 🔴 테스트가 실제로 불합격했다 — push 하지 않는다. 커밋은 격리 트리에 남는다.
+        if catalog:
+            try:
+                from . import failures as F
+                itg.catalog = F.add(paths, [F.Failure(
+                    key=f"층3 RunTests 불합격: {itg.l3.summary()}"[:200], layer="층3")])
+            except Exception:                            # noqa: BLE001
+                pass
+        if redmine:
+            itg.reported.append(report_to_redmine(
+                f"[층3 실패] work {work_id} — RunTests 불합격",
+                itg.l3_note + "\n\n" + (getattr(itg.l3, "raw_tail", "") or ""),
+                poster=poster))
+        itg.note = ("🔴 층3 불합격으로 push 하지 않았다 — 커밋은 격리 트리에 남아 있다"
+                    + (f" ({itg.note})" if itg.note else ""))
         return itg
 
     if not durable:
@@ -555,17 +718,21 @@ def run(paths, facts, work_id: str, *, project: str = "", durable: str = "",
         itg.pushed = itg.passed[-1].commit
         for a, r in zip(itg.applied, responses):
             if a.ok:
-                _submit_ok(r, a, durable, api=api)
+                _submit_ok(r, a, durable, api=api, l3_note=itg.l3_note)
     return itg
 
 
-def _submit_ok(r: Response, a: Applied, durable: str, *, api=runner._api) -> None:
+def _submit_ok(r: Response, a: Applied, durable: str, *, api=runner._api,
+               l3_note: str = "") -> None:
     """🔴 **여기가 큐에 제출하는 유일한 자리다** (소 1.4.3) — 빌드를 통과한 커밋이 근거다."""
     try:
         api("POST", f"/api/v1/tasks/{r.task_id}/submit", {
             "branch": durable, "head_commit": a.commit,
             "self_check": {"layer1": a.l1.summary if a.l1 else "",
+                           "layer2": (a.l2.summary() if a.l2 else "미확인"),
+                           "layer2_grounded": a.l2_grounded,
                            "build": a.build.summary() if a.build else "",
+                           "layer3": l3_note or "미확인",
                            "by": "integrator"},
             "epoch": r.epoch,
         })

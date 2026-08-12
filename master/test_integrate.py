@@ -75,6 +75,59 @@ class Build:
         return "BUILD OK(42s)" if self.passed else "BUILD FAILED"
 
 
+class L2:
+    """`verdict.Verdict` 대역 — 층2 판정."""
+
+    def __init__(self, approved=True, findings=None, failure=None):
+        self.approved, self.findings, self.failure = approved, list(findings or []), failure
+        self.warnings = []
+
+    def summary(self):
+        if self.failure:
+            return f"BLOCKED(계약 위반: {self.failure})"
+        return "APPROVE" if self.approved else f"REQUEST_CHANGES({len(self.findings)}건)"
+
+
+class L3:
+    """`Layer3Result` 대역."""
+
+    def __init__(self, passed=False, failure=None, fails=0):
+        self.passed, self.failure = passed, failure
+        self._fails = fails
+        self.raw_tail = "TEST COMPLETE. EXIT CODE: 0"
+
+    def summary(self):
+        if self.passed:
+            return "PASS(3건)"
+        if self.failure:
+            return f"BLOCKED(계약 위반: {self.failure})"
+        return f"FAIL({self._fails}/3건)"
+
+    def failures(self):
+        class T:
+            name, path = "MS.Mission.Snapshot", "MS.Mission"
+        return [T()] * self._fails
+
+
+def fake_tester(result):
+    """🔴 테스트는 에디터를 띄우지 않는다."""
+    def call(host, user, editor, uproject, filt, *, timeout=0):
+        return result
+    return call
+
+
+NO_TESTS = L3(failure="성공한 테스트가 0건이다(전체 0건).")
+
+
+def fake_layer2(verdict=None, *, seen=None):
+    """🔴 테스트는 상용 CLI 를 부르지 않는다 — 돈이 들고 네트워크에 의존한다."""
+    def call(files, *, declarations=""):
+        if seen is not None:
+            seen.append((sorted(f for f, _ in files), bool(declarations)))
+        return verdict if verdict is not None else L2()
+    return call
+
+
 class Git:
     """원격 git 대역. 부른 명령을 순서대로 기록하고, 규칙대로 답한다."""
 
@@ -115,8 +168,11 @@ class Git:
 def tmp_paths():
     root = Path(tempfile.mkdtemp(prefix="axitg"))
 
+    _root = root
+
     class P:
         name = "ModularStage"
+        root = _root
 
         @property
         def responses(self):
@@ -297,6 +353,102 @@ def test_feedback_block_is_not_source_and_carries_the_raw_verdict() -> None:
     check("되돌렸다고 말한다", "커밋하지 않았다" in fb)
 
 
+# ── 층2 (중 2.2 · 소 2.2.2) ─────────────────────────────────────────────────────
+
+def test_layer2_blocks_before_apply_and_build() -> None:
+    """🔴 층2 의 존재 이유가 이것이다 — 비싼 빌드(142초) 앞에서 걸러낸다."""
+    g = Git()
+    built, wrote = [], []
+    a = I.apply_one(FakeFacts(), resp("t1", {H: HDR}), tree="T", project="ModularStage",
+                    baseline=lambda p: HDR,
+                    layer2=fake_layer2(L2(approved=False, findings=["없는 열거값 None"])),
+                    declarations="enum class EMissionType { Main, Sub };",
+                    builder=lambda *args, **kw: built.append(1) or Build(),
+                    writer=lambda f, pth, tx: wrote.append(pth), runner_=g)
+    check("층2 에서 막혔다", not a.ok, a.summary)
+    check("🔴 파일을 쓰지 않았다", not wrote, str(wrote))
+    check("🔴 빌드를 부르지 않았다", not built)
+    check("커밋도 없다", not g.ran(" commit "))
+    check("grounding 을 실었다고 기록", a.l2_grounded)
+
+
+def test_layer2_ungrounded_is_reported() -> None:
+    """🔴 실측(소 2.2.1): 선언부가 없으면 후보 넷이 "없는 열거값" 을 놓쳤다."""
+    a = I.apply_one(FakeFacts(), resp("t1", {H: HDR}), tree="T", project="ModularStage",
+                    baseline=lambda p: HDR,
+                    layer2=fake_layer2(L2(approved=False, findings=["x"])),
+                    declarations="",                      # 🔴 grounding 없음
+                    builder=lambda *args, **kw: Build(), writer=lambda *x: None,
+                    runner_=Git())
+    check("grounding 없음을 기록", not a.l2_grounded)
+    check("사유에 그 사실을 적는다", "선언부 없이" in a.error, a.error)
+
+
+def test_layer2_contract_failure_blocks() -> None:
+    """🔴 fail-closed — 판정을 못 받은 것은 통과가 아니다 (백엔드 전멸 = `no_backend`)."""
+    a = I.apply_one(FakeFacts(), resp("t1", {H: HDR}), tree="T", project="ModularStage",
+                    baseline=lambda p: HDR,
+                    layer2=fake_layer2(L2(approved=False, failure="no_backend")),
+                    builder=lambda *args, **kw: Build(), writer=lambda *x: None,
+                    runner_=Git())
+    check("백엔드 없으면 막는다", not a.ok, a.summary)
+    check("계약 위반을 보인다", "no_backend" in a.summary, a.summary)
+
+
+def test_layer2_off_is_unverified_not_pass() -> None:
+    paths, root = tmp_paths()
+    try:
+        spool_two(paths)
+        itg, g = _run(paths, layer2=None)
+        check("층2 없이도 진행은 된다", len(itg.passed) == 2, itg.summary())
+        check("⚠️ 미확인이라고 말한다", "층2 를 돌리지 않았다" in itg.note, itg.note)
+        check("판정이 None 이다", itg.applied[0].l2 is None)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_layer2_sees_only_this_piece_files() -> None:
+    paths, root = tmp_paths()
+    try:
+        spool_two(paths)
+        seen = []
+        _run(paths, l2_seen=seen)
+        check("조각마다 한 번", len(seen) == 2, str(seen))
+        check("자기 파일만 본다", seen[0][0] == sorted([H, C]), str(seen[0][0]))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_feedback_and_submit_carry_layer2() -> None:
+    a = I.Applied(task_id="t1", files=[H])
+    a.l1 = I.layer1({H: HDR}, baseline=lambda p: HDR)
+    a.l2 = L2(approved=False, findings=["EMissionType::None 은 없다"])
+    a.l2_grounded = True
+    fb = I.feedback_block(a)
+    check("[FEEDBACK] 에 층2 판정", "층2" in fb, fb[:200])
+    check("지적 내용을 담는다", "EMissionType::None" in fb, fb[:400])
+
+    paths, root = tmp_paths()
+    try:
+        spool_two(paths)
+        subs = []
+        _run(paths, submits=subs)
+        ok = [p for k, _, p in subs if k == "submit"]
+        check("제출에 층2 를 싣는다", ok and ok[0]["self_check"]["layer2"] == "APPROVE",
+              str(ok[:1]))
+        check("grounding 여부도 싣는다", "layer2_grounded" in ok[0]["self_check"])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_grounding_lookup_is_fail_soft() -> None:
+    """🔴 그래프가 없어도 통합자가 죽지 않는다 (실측: AttributeError 로 통째로 죽었다)."""
+    class NoGraph:
+        name = "T"
+    check("클래스 역조회가 빈 목록", I.classes_in(NoGraph(), [H]) == [])
+    check("grounding 이 빈 문자열", I.layer2_grounding(NoGraph(), [H]) == "")
+
+
 def test_build_pass_commits() -> None:
     g = Git()
     r = resp("t1", {H: HDR})
@@ -327,9 +479,19 @@ def test_missing_engine_blocks_instead_of_passing() -> None:
 
 # ── ⑤ 순차 · 중단 · push ────────────────────────────────────────────────────────
 
-def _run(paths, *, git=None, builds=None, durable="task/w1", push=True, stop=True, submits=None):
+def _run(paths, *, git=None, builds=None, durable="task/w1", push=True, stop=True,
+         submits=None, layer2="approve", l2_seen=None, tester="none", reports=None):
     g = git or Git()
     seq = list(builds or [Build(), Build()])
+    if layer2 == "approve":
+        layer2 = fake_layer2(seen=l2_seen)
+    if tester == "none":
+        tester = fake_tester(NO_TESTS)
+
+    def poster(base, payload, key):
+        if reports is not None:
+            reports.append(payload["issue"]["subject"])
+        return "레드마인 #999 등재"
 
     def builder(*args, **kw):
         return seq.pop(0) if seq else Build()
@@ -340,8 +502,9 @@ def _run(paths, *, git=None, builds=None, durable="task/w1", push=True, stop=Tru
         return {"ok": True}
 
     itg = I.run(paths, FakeFacts(), "W1", durable=durable, stop_on_fail=stop,
-                baseline=lambda p: HDR, builder=builder, writer=lambda *x: None,
-                runner_=g, push=push, api=api)
+                baseline=lambda p: HDR, layer2=layer2, builder=builder,
+                writer=lambda *x: None, runner_=g, push=push, api=api,
+                tester=tester, poster=poster)
     return itg, g
 
 
@@ -427,6 +590,92 @@ def test_submit_carries_epoch_and_build_evidence() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+# ── 층3 · 실패 카탈로그 · 레드마인 (중 2.3) ────────────────────────────────────
+
+def test_layer3_no_tests_is_fail_open_but_said_loudly() -> None:
+    """🔴 실측: 이 프로젝트에 자동화 테스트가 **0개**다. 막으면 전부 막힌다 — 대신 **말한다.**"""
+    paths, root = tmp_paths()
+    try:
+        spool_two(paths)
+        itg, g = _run(paths)
+        check("통과분은 push 된다 (fail-open)", itg.pushed, itg.summary())
+        check("🔴 검증하지 못했다고 말한다", "검증하지 못했다" in itg.l3_note, itg.l3_note)
+        check("테스트 0개라는 사실을 적는다", "0개" in itg.l3_note, itg.l3_note)
+        check("통과라고 적지 않는다", "✅" not in itg.l3_note, itg.l3_note)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_layer3_real_failure_blocks_push() -> None:
+    """🔴 **불합격**은 다르다 — 실재하는 결함이므로 막는다."""
+    paths, root = tmp_paths()
+    try:
+        spool_two(paths)
+        reports = []
+        itg, g = _run(paths, tester=fake_tester(L3(fails=2)), reports=reports)
+        check("커밋은 됐다", len(itg.passed) == 2, itg.summary())
+        check("🔴 push 하지 않았다", not itg.pushed and not g.ran(" push "), str(g.calls))
+        check("사유를 말한다", "층3 불합격" in itg.note, itg.note)
+        check("커밋이 남아 있다고 말한다", "격리 트리에 남아" in itg.note, itg.note)
+        check("레드마인에 등재", any("층3 실패" in s for s in reports), str(reports))
+        check("카탈로그에 적립", itg.catalog >= 1, str(itg.catalog))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_layer3_pass_is_reported_as_pass() -> None:
+    paths, root = tmp_paths()
+    try:
+        spool_two(paths)
+        itg, g = _run(paths, tester=fake_tester(L3(passed=True)))
+        check("통과를 통과로 적는다", itg.l3_note.startswith("✅"), itg.l3_note)
+        check("push 한다", itg.pushed, itg.summary())
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_failure_catalog_accumulates_from_build_errors() -> None:
+    """🔴 되먹임 (소 2.3.4) — 판정 원문에서 뽑아 **다음 골조 프롬프트**로 간다."""
+    paths, root = tmp_paths()
+    try:
+        spool_two(paths)
+        reports = []
+        bad = Build(passed=False)
+        bad.tail = ("x.cpp(12): error C2065: 'None': 선언되지 않은 식별자입니다\n"
+                    "Result: Failed")
+        itg, g = _run(paths, builds=[bad, Build()], reports=reports)
+        check("카탈로그에 쌓였다", itg.catalog >= 1, str(itg.catalog))
+        from master.work import failures as F
+        items = F.load(paths)
+        check("오류 문자열이 키다", any("C2065" in i.key for i in items),
+              str([i.key[:40] for i in items]))
+        check("층3 로 분류", any(i.layer == "층3" for i in items))
+        block = F.render(items)
+        check("프롬프트 블록이 만들어진다", "PAST FAILURES" in block, block[:80])
+        check("레드마인에 등재", any("통합 실패" in s for s in reports), str(reports))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_redmine_without_key_says_so_instead_of_silently_skipping() -> None:
+    """⚠️ 이슈 추적이 안 되는 것과 게이트가 통과한 것은 다르다."""
+    import os
+    saved = os.environ.pop("AX_REDMINE_API_KEY", None)
+    try:
+        msg = I.report_to_redmine("제목", "본문")
+        check("건너뛴다고 말한다", "건너뜀" in msg, msg)
+        check("어디서 키를 찾는지 알려준다", "AX_REDMINE_API_KEY" in msg, msg)
+    finally:
+        if saved is not None:
+            os.environ["AX_REDMINE_API_KEY"] = saved
+
+
+def test_no_ue5_means_layer3_unverified_not_failed() -> None:
+    r, block, note = I.run_tests(FakeFacts(ue5=""), tree="T", project="P")
+    check("막지 않는다", not block)
+    check("미확인이라고 적는다", "미확인" in note, note)
+
+
 def test_no_spool_is_an_error_not_an_empty_run() -> None:
     paths, root = tmp_paths()
     try:
@@ -449,6 +698,11 @@ def main() -> int:
                test_layer1_without_baseline_is_not_a_pass, test_freeze_semantics,
                test_build_failure_reverts_and_does_not_commit,
                test_feedback_block_is_not_source_and_carries_the_raw_verdict,
+               test_layer2_blocks_before_apply_and_build,
+               test_layer2_ungrounded_is_reported, test_layer2_contract_failure_blocks,
+               test_layer2_off_is_unverified_not_pass,
+               test_layer2_sees_only_this_piece_files,
+               test_feedback_and_submit_carry_layer2, test_grounding_lookup_is_fail_soft,
                test_build_pass_commits, test_no_change_is_not_a_silent_pass,
                test_missing_engine_blocks_instead_of_passing,
                test_sequential_and_stops_at_first_failure,
@@ -456,6 +710,11 @@ def main() -> int:
                test_push_is_ff_only_and_refusal_is_not_forced,
                test_no_durable_means_local_only_and_says_so,
                test_submit_carries_epoch_and_build_evidence,
+               test_layer3_no_tests_is_fail_open_but_said_loudly,
+               test_layer3_real_failure_blocks_push, test_layer3_pass_is_reported_as_pass,
+               test_failure_catalog_accumulates_from_build_errors,
+               test_redmine_without_key_says_so_instead_of_silently_skipping,
+               test_no_ue5_means_layer3_unverified_not_failed,
                test_no_spool_is_an_error_not_an_empty_run):
         fn()
     total = PASS + FAIL

@@ -367,7 +367,7 @@ class Skeleton:
 
 def build_prompt(spec: SkeletonSpec, *, declarations: str = "", norms: str = "",
                  relations_text: str = "", conventions: str = "",
-                 heuristics_text: str = "") -> str:
+                 heuristics_text: str = "", failures_text: str = "") -> str:
     """골조 생성 프롬프트.
 
     🔴 **grounding 은 이미 있는 것을 쓴다** — 헤더 선언(`declarations.py`, #26)과 도메인
@@ -412,6 +412,10 @@ def build_prompt(spec: SkeletonSpec, *, declarations: str = "", norms: str = "",
     # 🔴 휴리스틱이 맨 앞이다 — *이미 내려진 사람의 결정*이라 나머지 재료보다 위다
     if heuristics_text.strip():
         parts += [heuristics_text.strip(), ""]
+    # 🔴 실패 카탈로그가 그 다음이다 (소 2.3.4) — **기계가 결정적 게이트에서 모은 것**이라
+    #    사람의 결정 아래, 나머지 재료 위다. 이 고리가 없으면 같은 컴파일 오류를 매번 다시 낸다.
+    if failures_text.strip():
+        parts += [failures_text.strip(), ""]
     if norms.strip():
         parts += [norms.strip(), ""]
     # 🔴 관계는 규범 뒤·선언부 앞이다. 규범은 *무엇을 지킬지*, 관계는 *어디에 붙을지*,
@@ -593,8 +597,20 @@ def build(paths: ProjectPaths, spec: SkeletonSpec, *, model: str = DEFAULT_MODEL
         except Exception as e:                              # noqa: BLE001
             sk.notes.append(f"⚠️ 휴리스틱 로드 실패 — 없이 진행한다: {e}")
 
+    fails = ""
+    if ground:
+        try:
+            from . import failures as F
+            fails = F.attach(paths)
+            n = len(F.load(paths))
+            if n:
+                sk.grounding.append(f"실패 카탈로그 {n}건")
+        except Exception as e:                              # noqa: BLE001
+            sk.notes.append(f"⚠️ 실패 카탈로그 로드 실패 — 없이 진행한다: {e}")
+
     prompt = build_prompt(spec, declarations="\n\n".join(x for x in (inc, decl) if x),
-                          norms=norms_text, relations_text=rel, heuristics_text=heur)
+                          norms=norms_text, relations_text=rel, heuristics_text=heur,
+                          failures_text=fails)
     sk.prompt_chars = len(prompt)
 
     raw = synth.generate(prompt, model, broker=broker or DEFAULT_BROKER,

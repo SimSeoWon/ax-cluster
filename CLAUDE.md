@@ -96,10 +96,21 @@ spooled in apply order → **integrator applies, builds with UE5, and commits on
 (`work/integrate.py`, live: build 142s, commit). 🔴 **The pipeline builds per piece, not once at
 the end** — §4.5's "apply everything then build once" was overturned by the measured 35–65s
 incremental build, because a single build can't say *which* piece broke it.
-🕓 Untouched: all of 대 2 (3-layer gate) and 대 3 (operator surface). 🔴 **대 2 still matters even
-though builds now gate** — measured, **half the hallucinations compile** (§4.3), and 층1 currently
-runs at the *apply* boundary only, not in the submit path (소 2.1.3). When reporting status, give
-the denominator (read it from Redmine), never a scope narrowed to what got built.
+**대 2 (3-layer gate) closed the same day** — the pipeline now has **four gates**: skeleton build,
+층1 (deterministic, run at *both* response-acceptance and apply time), 층2 (commercial model with
+**declaration grounding**), 층3 (per-piece UE5 build + one work-level RunTests).
+🔴 **One hole remains and code cannot close it: this project has ZERO automation tests** (measured
+2026-08-12 — no `AUTOMATION_TEST`/`FunctionalTest`/spec anywhere in `Source/`). §4.3's measured
+*"hallucinations that compile"* (`Cast<IInteractable>`, `IsValid()` logic errors) are catchable
+**only by tests**, so `RunTests` is deliberately **fail-open + loud warning** until tests exist.
+🕓 Untouched: 대 3 (operator surface). When reporting status, give the denominator (read it from
+Redmine), never a scope narrowed to what got built.
+🔴 **Grounding, not the model, is what makes 층2 work** (measured: 4 of 5 candidates missed an
+invented enum member without declarations, all caught it with them). Never call 층2 without
+declarations and then read a pass as meaningful — the code reports `l2_grounded=False` for exactly
+that reason. Local models are **not usable** for 층2: 35B blocked two correct files (false alarms).
+🔴 **Injection tests contracts, not reality.** Four separate real defects this session lived behind
+an injected seam while 63–96 unit checks passed. Put one live run behind every gate.
 🔴 **Two framings that changed on 2026-08-11 — don't argue from the old ones**: the pipeline has
 **one writer** (the integrator `.2` builds, then commits), and distribution buys **incremental
 progress, not throughput** (measured: 2 workers = 12% faster, 90% dearer).

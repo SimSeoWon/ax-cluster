@@ -301,6 +301,16 @@ def judge(stdout: str, raw_response: str, *, want: list) -> Response:
             if said != len(files):
                 res.notes.append(f"⚠️ 워커는 {said}개라 했는데 읽힌 것은 {len(files)}개다")
             break
+    # 🔴 **층1 을 여기서 돌린다** (중 2.1 · 소 2.1.3). 가장 이른 자리다 — 잔재가 있는 응답이
+    #    *"통과"* 로 스풀에 쌓이면 통합자가 적용 단계에서야 막고, 같은 결론에 왕복이 더 든다.
+    #    ⚠️ 여기서는 **동결을 대조하지 않는다** — 기준 원본을 아는 것은 통합자 쪽 관심사이고
+    #    (`integrate.local_baseline`), 이 함수는 파견 결과만 본다. 잔재 검사는 원본이 필요 없다.
+    if res.files:
+        from . import layer1 as layer1_mod
+        L = layer1_mod.check(res.files)
+        if not L.ok:
+            res.notes += [f"🔴 {p}" for p in L.problems]
+
     if not res.ok:
         res.status = runner.BLOCKED
         if not res.reason:
