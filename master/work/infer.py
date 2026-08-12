@@ -124,6 +124,9 @@ class Response:
     usage: dict = field(default_factory=dict)
     base_commit: str = ""                          # 🔴 이 응답이 어느 소스를 근거로 하나
     reused: bool = False                           # 스풀에서 되살렸나 (소 1.3.3)
+    # 🔴 claim 때 받은 리스 epoch. **통합자가 제출할 때 필요하다**(소 1.4.3) — 없으면 큐의
+    #    fencing 이 꺼져 좀비 제출을 못 막는다. 파견과 제출이 다른 프로세스라 스풀에 실어 둔다.
+    epoch: object = None
 
     @property
     def missing(self) -> list:
@@ -367,7 +370,8 @@ def spool(paths, res: Response, *, work_id: str = "", order: int = 0) -> str:
     rec = {
         "task_id": res.task_id, "work_id": work_id, "order": order,
         "worker": res.worker, "status": res.status, "reason": res.reason,
-        "base_commit": res.base_commit, "want": res.want, "files": res.files,
+        "base_commit": res.base_commit, "epoch": res.epoch,
+        "want": res.want, "files": res.files,
         "notes": res.notes, "usage": res.usage, "tail": res.tail[-4000:],
         "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
@@ -389,7 +393,7 @@ def unspool(paths, task_id: str, work_id: str = "") -> Response | None:
         want=list(rec.get("want") or []), notes=list(rec.get("notes") or []),
         reason=rec.get("reason", ""), tail=rec.get("tail", ""),
         usage=dict(rec.get("usage") or {}), base_commit=rec.get("base_commit", ""),
-        reused=True)
+        epoch=rec.get("epoch"), reused=True)
 
 
 def reusable(paths, task_id: str, *, base_commit: str, work_id: str = "") -> Response | None:
@@ -509,12 +513,17 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
         old = reusable(paths, task_id, base_commit=base, work_id=work_id)
         if old is not None:
             old.worker = old.worker or "(스풀)"
+            # 🔴 epoch 은 **이번 claim 의 것으로 갱신한다.** 재확보되면 epoch 가 올라가고,
+            #    낡은 epoch 로 제출하면 큐가 stale 로 거부한다(fencing 은 그러라고 있다).
+            old.epoch = task.get("epoch")
+            spool(paths, old, work_id=work_id, order=order)
             return old
 
     res = infer_task(facts, task_id, body, want=want,
                 beat=lambda: runner.heartbeat(task_id, facts.host, api=api),
                 runner_=runner_, writer=writer, reader=reader, timeout=timeout)
     res.base_commit = base
+    res.epoch = task.get("epoch")
     spool(paths, res, work_id=work_id, order=order)
     return res
 

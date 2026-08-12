@@ -44,7 +44,7 @@ Gitea push → post-receive 훅 → 스풀 → inotify → 색인기
            → 분해(의존 순서·파일 불가분) → 매니페스트 배달(포팅이면 원본 경로도)
 워커        → durable 을 읽고 **추론만** (`ax-infer`) → `response.txt` 로 답한다 (커밋 없음)
 마스터      → 응답을 되읽어 fail-closed 판정 → **스풀**(적용 순서대로 · 기준 커밋과 함께)
-통합자(.2)  → 🕓 적용(순차) → UE5 빌드 판정 → 🔴 **통과분만** durable 에 커밋 ← **아직 없다**
+통합자(.2)  → 적용(순차) → **조각마다 UE5 빌드** → 🔴 **통과분만** 커밋·push (ff-only)
 ```
 
 🔴 **쓰는 주체는 하나다**(2026-08-11). 빌드해 본 주체가 커밋하므로 **깨진 것이 원격에 못
@@ -111,6 +111,7 @@ ax-cluster/
 │   │   ├── decompose.py        분해 — 의존 순서·파일 불가분·`[PSEUDO:N]` 뎁스
 │   │   ├── heuristics.py       🔴 대화형 휴리스틱 — **사람이 답한 것만**, 범위(project/domain/once)
 │   │   ├── infer.py            🔴 **추론 파견** — 워커는 커밋 안 한다. 응답은 **파일로** 온다
+│   │   ├── integrate.py        🔴 **통합자** — 적용→빌드→커밋. 실패는 되돌리고 커밋 안 한다
 │   │   ├── porting.py          포팅 원본 대응 — 🔴 경로만·읽기 전용. 실측 동명 9 → 정규화 21쌍
 │   │   ├── distribute.py       `/distribute` 입구 — 🔴 plan→register→dispatch, 단계마다 사람이 끊는다
 │   │   ├── runner.py           ⚠️ **구 토폴로지**(워커가 커밋) — 되돌릴 수 있게 남겨 둔다
@@ -193,6 +194,8 @@ ax-cluster/
 .venv/bin/python -m master.work.infer probe        # 누가 추론을 받을 수 있나 (큐 무접촉)
 .venv/bin/python -m master.work.infer run          # 🔴 추론 파견 (직렬 기본) — 커밋하지 않는다
 .venv/bin/python -m master.work.infer spool <work> # 응답 스풀 — 어디까지 진행됐나
+.venv/bin/python -m master.work.integrate plan <프로젝트> <work>   # 🔴 먼저 본다 (안 쓴다)
+.venv/bin/python -m master.work.integrate run  <프로젝트> <work> [durable]
 .venv/bin/python -m master.work.runner once        # ⚠️ 구 토폴로지: 워커가 커밋한다
 .venv/bin/python -m master.work.cleanup plan       # 🔴 먼저 본다 — 아무것도 안 지운다
 .venv/bin/python -m master.work.cleanup apply      # 병합된 브랜치·끝난 부산물만 삭제
@@ -248,6 +251,7 @@ for f in master/test_*.py; do .venv/bin/python "$f" 2>&1 | tail -1; done
 | `test_decompose.py` | 의존 순서 · 🔴 **묶음(동시) vs 뎁스(순차)** 구분 |
 | `test_heuristics.py` | 🔴 사람이 답한 것만 · **범위**(project/domain/once) |
 | `test_infer.py` | 🔴 **fail-closed 파견 판정** — 마커+응답파일 둘 다 · 스풀 재사용 · 선행 실패 차단 |
+| `test_integrate.py` | 🔴 **실패는 커밋하지 않는다** · 격리는 형제 트리 · push 는 ff-only(force 금지) |
 | `test_porting.py` | 🔴 못 찾으면 **붙이지 않는다** · 원본이 대상 목록으로 **새지 않는다** |
 | `test_batching.py` | 🔴 **파일 불가분** — `.h`/`.cpp` 는 붙이고 **다른 모듈의 동명 파일은 가른다** |
 | `test_ontology.py` | YAML 왕복 보존(PyYAML 의존 0) · 잠금 보존 · 사실 게이트 |

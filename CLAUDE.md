@@ -88,15 +88,18 @@ from the master's own container DB. 🔴 **Never write the key value into a doc 
 모듈별 설명·함정·실측은 [`master/README.md`](master/README.md) 에 있다. 여기엔 **놓치면 안 되는 것만** 남긴다.
 
 `worker/` is still a README-only stub. **`client/` is live** — see the table row above.
-🔴 **Say "done" only for a whole area.** M2 closed 2026-08-10. In M3, **중 1.1 (skeleton + freeze),
-중 1.2 (decompose) and 중 1.3 (inference dispatch) are closed** — the skeleton is generated,
-grounded, frozen deterministically, **built on `.2` before registration**, and work is now
-dispatched to workers that **infer only** (`work/infer.py`, skill `ax-infer`), with responses
-spooled in apply order. 🔴 **중 1.4 (integrator) is the current end of the chain: responses
-accumulate and nothing applies them.** Its input is already fixed — `infer.Handoff.ordered()` and
-`<project>/responses/<work_id>/<task>.json` (which carries `base_commit`, so stale responses can be
-refused). 🕓 Also untouched: all of 대 2 (3-layer gate) and 대 3. When reporting status, give the
-denominator (read it from Redmine), never a scope narrowed to what got built.
+🔴 **Say "done" only for a whole area.** M2 closed 2026-08-10. **대 1 of M3 is closed
+(2026-08-12)** — 중 1.1 skeleton+freeze, 중 1.2 decompose, 중 1.3 inference dispatch, 중 1.4
+integrator. The pipeline runs end to end: request → skeleton (`claude:opus`, built on `.2` before
+registration) → decompose → workers **infer only** (`work/infer.py`, skill `ax-infer`) → responses
+spooled in apply order → **integrator applies, builds with UE5, and commits only what passes**
+(`work/integrate.py`, live: build 142s, commit). 🔴 **The pipeline builds per piece, not once at
+the end** — §4.5's "apply everything then build once" was overturned by the measured 35–65s
+incremental build, because a single build can't say *which* piece broke it.
+🕓 Untouched: all of 대 2 (3-layer gate) and 대 3 (operator surface). 🔴 **대 2 still matters even
+though builds now gate** — measured, **half the hallucinations compile** (§4.3), and 층1 currently
+runs at the *apply* boundary only, not in the submit path (소 2.1.3). When reporting status, give
+the denominator (read it from Redmine), never a scope narrowed to what got built.
 🔴 **Two framings that changed on 2026-08-11 — don't argue from the old ones**: the pipeline has
 **one writer** (the integrator `.2` builds, then commits), and distribution buys **incremental
 progress, not throughput** (measured: 2 workers = 12% faster, 90% dearer).
@@ -107,6 +110,12 @@ overturns it (§8.4). Do not "clean up" either one.
 🔴 **Content travels as files in both directions, never on the command line or stdout.** `.2`'s
 console is CP949: the master→worker rule ("instructions ASCII, content by file") applies to
 worker→master too — responses land in `.ax/work/<task>/response.txt` and come back by `scp`.
+🔴 **The integrator's worktree is pipeline-owned; a human's tree never is.** `ax-wt-<work_id>` sits
+**beside** the checkout (never inside it) and `ensure_worktree` resets it to the base commit on
+reuse. That reset is safe *only* because nobody edits that tree by hand — never apply the same
+reasoning to `.33`'s or a worker's main checkout.
+🔴 **Never `push --force` from the integrator.** If a push is rejected, the commits stay in the
+isolated tree (nothing is lost) and a human decides — the pipeline does not rewrite history.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
 ## Tests — 🔴 **수를 여기 적지 않는다**
