@@ -340,6 +340,58 @@ class Bm25Index:
             self._conn.commit()
         return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
 
+    # ── 🔴 0건 진단 (소 3.5.8 — 원전 `[BM25 0건 진단]` 카나리 이식) ──────
+    #
+    # ⚠️ **원전처럼 로그를 찍지 않는다.** 이 저장소의 모듈은 **사실을 반환하고 호출자가
+    # 찍는다**(테스트 가능하고 전역 상태가 없다). 원전의 카나리는 `watch.exe` 의 상주 콘솔에
+    # 묶인 방식이었다 — 기제를 옮기고 형태는 우리 것으로 둔다.
+    #
+    # 🔴 **왜 이것이 필요한가.** *"검색이 비었다"* 는 사용자가 보고하는 **증상**이고 원인은
+    # 여럿이다(색인이 빔 · 토큰이 하나도 안 맞음 · 한국어 어절 분해 실패 · 세대가 어긋남).
+    # 리포트 13 §19.1 에서 *"도메인이 비어있어"* 라는 보고를 받고 처음부터 재야 했던 자리다 —
+    # 그때 이 함수가 있었으면 한 번에 답했다.
+
+    def stats(self) -> dict:
+        """색인의 현재 상태. 기동 시 한 줄 찍기(원전 `[BM25 startup]`)의 재료."""
+        return {"generation": self.gen, "documents": self.count()}
+
+    def diagnose(self, query: str, limit: int = 10) -> dict:
+        """검색이 0건일 때 **왜**를 돌려준다. 결과가 있어도 부를 수 있다(진단 전용).
+
+        `unmatched` 가 곧 원인이다 — 어느 토큰도 안 맞으면 질의가 색인 어휘와 겹치지 않는다.
+        """
+        terms = tokenize(query)
+        hits = self.search(query, limit=limit)
+        per: dict = {}
+        with self._lock:
+            for t in terms:
+                try:
+                    row = self._conn.execute(
+                        f"SELECT COUNT(*) FROM {_table(self._gen)} WHERE {_table(self._gen)} MATCH ?",
+                        (f'"{t}"',)).fetchone()
+                    per[t] = int(row[0]) if row else 0
+                except Exception:                       # noqa: BLE001 — 진단이 죽으면 안 된다
+                    per[t] = -1                         # -1 = 세어 보지 못했다
+        unmatched = [t for t, n in per.items() if n == 0]
+        return {
+            "query": query,
+            "results": len(hits),
+            "documents": self.count(),
+            "generation": self.gen,
+            "terms": terms,
+            "term_hits": per,
+            "unmatched": unmatched,
+            "has_hangul": has_hangul(query),
+            # 🔴 사유를 문장으로 — 사람이 읽는 자리다.
+            "reason": (
+                "색인이 비어 있다" if self.count() == 0 else
+                "토큰이 하나도 색인 어휘와 맞지 않는다" if terms and len(unmatched) == len(terms) else
+                "질의에서 토큰이 나오지 않았다" if not terms else
+                "일부 토큰만 맞는다 (질의를 좁히거나 클래스명을 함께 넣어 볼 것)"
+                if unmatched and hits == [] else
+                "결과가 있다"),
+        }
+
     def use_generation(self, gen: str) -> None:
         """세대 전환 — **마커는 쓰지 않는다.** 두 채널을 함께 뒤집는 쪽(`rebuild.py`)의 몫이다."""
         with self._lock:
