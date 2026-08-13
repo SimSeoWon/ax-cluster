@@ -25,6 +25,12 @@ ExecStart=/home/sim/ax-cluster/.venv/bin/python -m master.events.consumer
 # 재색인이 40초 정도라 여유를 두되 무한정 매달리지는 않게 한다.
 TimeoutStartSec=1800
 
+# 🔴 종료코드 4 = **일시 중지 게이트에 걸림**(소 3.5.1). 고장이 아니다 —
+#    진행 중 분산 작업이 있어 fetch·색인을 넘긴 것이다. 성공으로 받는다.
+#    (상태 화면의 종료코드 3 과 같은 패턴: *"늘 빨간 유닛은 유닛이 아니다"*.)
+#    ⚠️ 1 은 넣지 않는다 — 진짜 실패는 실패여야 한다.
+SuccessExitStatus=4
+
 # 소비자는 flock 으로 단독 실행을 보장한다. 겹쳐 기동돼도 뒤엣것이 즉시 물러난다.
 Nice=10
 IOSchedulingClass=idle

@@ -117,6 +117,10 @@ class RunResult:
     rejected: int = 0
     blocked_recursion: int = 0
     note: str = ""
+    paused: str = ""          # 🔴 게이트가 멈췄으면 그 사유 (소 3.5.1)
+    polled: int = 0           # 이벤트 0건일 때 상태 대조만 돌린 프로젝트 수
+    poll_skipped: int = 0     # project_id 를 못 읽어 폴하지 못한 프로젝트 수
+    deferred: int = 0         # 멈춰서 넘긴 이벤트 수 (유실 아님 — state-based 라 누적분이 다음에 잡힌다)
 
     @property
     def ok(self) -> bool:
@@ -372,9 +376,61 @@ def consume_once(spool: Spool | None = None, *, registry: Registry | None = None
     def known(pid: str) -> bool:
         return bool(reg.find_by_project_id(pid))
 
+    # ── 🔴 색인 일시 중지 게이트 (소 3.5.1 — 원전 watch_state 이식) ──────
+    #
+    # 진행 중 분산 작업이 있으면 **fetch·색인을 하지 않는다.** 원전 근거: *"feature 브랜치
+    # 작업 중 main 인덱싱 무의미 + 워커들과 git lock 경쟁 방지"*.
+    #
+    # ⚠️ 스풀은 **비운다**(claim 하고 처리를 건너뛴다). 남기면 `ax-indexer.path` 가 조건이 계속
+    # 참이라 재트리거를 반복할 수 있다. 🔴 **비워도 유실이 아니다** — 이 소비자는 state-based 라
+    # 이벤트는 깨우는 신호일 뿐이고, 미러가 뒤에 남으면 **다음 번에 누적분이 한꺼번에** 잡힌다.
+    # 그 *"다음 번"* 을 만드는 것이 `ax-indexer.timer` 다(게이트만 두고 타이머를 안 두면 깨울
+    # 주체가 없다 — 리포트 13 §19.3 이 상태 화면에서 똑같이 물린 자리).
+    from .gate import check as _gate_check
+    g = _gate_check(spool_root=sp.root if hasattr(sp, "root") else None)
+    if g.paused:
+        batch = sp.claim_batch(is_registered=known)
+        res.paused = g.line()
+        res.deferred = len(batch.events)
+        res.claimed = res.deferred + batch.coalesced_away + batch.rejected + batch.skipped_index_output
+        sp.done(batch)
+        return res
+    if g.degraded:
+        res.note = (res.note + " · " if res.note else "") + g.degraded
+
     batch: Batch = sp.claim_batch(is_registered=known)
     res.coalesced = batch.coalesced_away
     res.rejected = batch.rejected
+    # 🔴 **이벤트가 없어도 한 바퀴 돈다** (소 3.5.1 과 짝).
+    #
+    # 이 소비자는 state-based 다 — 무엇을 색인할지는 이벤트 내용이 아니라 **미러 HEAD 대조**가
+    # 정한다. 그런데 원래 구현은 `for ev in batch.events` 안에서만 일해서, 이벤트가 0건이면
+    # fetch 조차 하지 않았다. 그러면 게이트가 멈춘 동안 넘긴 분을 **따라잡을 방법이 없다**
+    # (실측 2026-08-14: 게이트가 이벤트를 넘긴 뒤 재실행이 `이벤트 0건 → 프로젝트 0개` 였다 —
+    # 내 *"유실 아님"* 주장이 그 자리에서 틀렸다).
+    #
+    # → 스풀이 비었으면 **등록된 프로젝트마다 합성 이벤트 한 건**으로 상태 대조를 돌린다.
+    #   미러 fetch 는 로컬 bare 라 ms 단위이므로 매 기동에 돌려도 싸다. 이렇게 두면
+    #   `ax-indexer.timer` 가 별도 모드 없이 그대로 따라잡기 역할을 한다.
+    if not batch.events:
+        # project_id 는 각 프로젝트의 `config.yaml` 이 SSOT 다(`track.project_id`).
+        # ⚠️ 못 읽는 프로젝트는 조용히 건너뛰지 않고 **세어서** 결과에 남긴다.
+        ids = []
+        for _name in reg.names:
+            try:
+                pid = (reg.config_of(_name).project_id or "").strip()
+            except Exception:                               # noqa: BLE001
+                pid = ""
+            if pid:
+                ids.append(pid)
+            else:
+                res.poll_skipped += 1
+        synth = [Event(project_id=pid) for pid in ids]
+        res.polled = len(synth)
+        for ev in synth:
+            res.results.append(process_event(ev, registry=reg, reindex=reindex, git=git))
+        sp.done(batch)
+        return res
     # 재귀 차단은 **스풀이 claim 단계에서** 이미 한다 — 여기서 다시 세지 않고 그 수를 받는다.
     res.blocked_recursion = batch.skipped_index_output
     res.claimed = (len(batch.events) + res.coalesced + res.rejected
@@ -397,6 +453,11 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     r = consume_once(progress=None if args.quiet else (lambda m: print(f"  · {m}")))
+    if r.paused:
+        # 🔴 종료코드 4 = 게이트에 걸림. **고장이 아니다** — 유닛이 `SuccessExitStatus=4` 로 받는다
+        #    (상태 화면의 종료코드 3 과 같은 패턴: *"늘 빨간 유닛은 유닛이 아니다"*).
+        print(f"{r.paused} · 이벤트 {r.deferred}건 넘김 (유실 아님 — 다음 회차에 누적분으로 잡힌다)")
+        return 4
     print(r.summary())
     for x in r.results:
         print(x.line())
