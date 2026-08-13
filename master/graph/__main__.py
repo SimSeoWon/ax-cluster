@@ -37,8 +37,17 @@ def main(argv: list[str]) -> int:
         print(f"  파일 있음   : {db.exists(paths)}")
         print(f"  classes     : {c['classes']}")
         print(f"  methods     : {c['methods']}  (게이트 {'열림' if cg.methods_ready(paths) else '닫힘'})")
-        print(f"  domains     : {c['domains']}        ← 중 1.3 이 채운다")
-        print(f"  class_ontology: {c['class_ontology']}      ← 중 1.3 이 채운다")
+        # 🔴 **이 두 표는 일부러 비어 있다** (정정 2026-08-14, 소 3.1.2).
+        #
+        # 옛 출력은 *"← 중 1.3 이 채운다"* 였는데 **거짓 약속**이었다 — 중 1.3 은 추론 파견이고
+        # 이 표를 채우지 않았다. 그리고 **채우지 않는 것이 결정**이다: 소속의 SSOT 는 각 도메인의
+        # `objects/*.yaml` 이다(`context_search/infer.py` 머리말 — *"죽은 표를 근거로 삼지 않는다"*).
+        #
+        # ⚠️ 원전은 DB 표와 MD/YAML **둘**을 갖고 있었고, 그 둘이 어긋나는 것을 잡으려고 η.4
+        # drift 감사(*"inactive 도메인 · archive 잔재 · NULL 도메인 분류"*)를 따로 만들어야 했다.
+        # 출처를 하나로 두면 **그 문제군이 원천 제거된다** — 되돌리지 말 것.
+        print(f"  domains     : {c['domains']}        ← 🔴 일부러 비움 (SSOT 는 ontology/*.yaml)")
+        print(f"  class_ontology: {c['class_ontology']}      ← 🔴 일부러 비움 (같음)")
         print(f"  tree-sitter : {'있음' if parse.TREE_SITTER_AVAILABLE else '🔴 없음'}")
         d = dep.counts(paths)
         print(f"[의존] {paths.dependency_graph_db}")

@@ -1171,6 +1171,120 @@ pause 이유(원전): *"feature 브랜치 작업 중 main 인덱싱 무의미 + 
 **결론**: `#180` 은 «완료»가 아니라 «재범위»다 — 이식할 것이 없고, **이식하지 않는 이유를 테스트로
 남겼다.** `#181` 과 같은 처리다(자리가 다르다 / 이식이 퇴행이다).
 
+## §22. 소 3.5.8 — BM25 0건 진단 (`#184`) · §23. 소 3.5.2 — 자리가 없다 (`#165`)
+
+**§22.** `bm25.diagnose(query)` + `stats()`. ⚠️ **원전처럼 로그를 찍지 않았다** — 이 저장소의
+모듈은 **사실을 반환하고 호출자가 찍는다**(테스트 가능·전역 상태 없음). 원전 카나리는 `watch.exe`
+의 **상주 콘솔**에 묶인 방식이었다. **기제를 옮기고 형태는 우리 것으로** 뒀다.
+
+    "미션 태스크 실행"      → results=10 · "결과가 있다"
+    "존재하지않는단어xyzq"  → results=0  · 🔴 "토큰이 하나도 색인 어휘와 맞지 않는다"
+    빈 색인                → results=0  · 🔴 "색인이 비어 있다"
+
+🔴 필요 근거는 실제 사건이다 — 리포트 13 §19.1 에서 *"도메인이 비어있어"* 라는 보고를 받고
+처음부터 재야 했다. ⚠️ **만드는 중 낸 버그 둘을 실측이 잡았다**: `self._table`(모듈 함수를 메서드로)
+· 🔴 **`count` 를 property 로 착각** — 메서드라 `self.count == 0` 이 항상 False 였고 *"색인이 비어
+있다"* 분기가 **죽어 있었다**(`stats()` 가 바운드 메서드를 반환하는 것을 보고 잡았다).
+
+**§23.** `worker/safety.py`(QuickEdit freeze 가드·절전 차단·크래시 핸들러)는 **윈도우 콘솔 데몬**
+전제다. 우리 `worker/` 는 **README 뿐**이고 파견은 **SSH `claude -p`** — 상주 데몬이 없다.
+`QuickEdit`/`SetThreadExecutionState`/`faulthandler` 우리 코드에 **0건**. `#181` 과 같은 판정:
+**「해당 없음」이 아니라 「자리가 없다」.**
+
+🔴 **재범위 셋(`#180` `#181` `#165`)의 공통 구조**: 원전의 수정은 옳았고 그 수정이 겨눈 **조건이
+우리에게 없다.** 그대로 옮기면 카고 컬트(181·165)이거나 **퇴행**(180)이다. κ.8 이
+`ue_builder.py`/`ue_test_runner.py` 에 *"리눅스로 옮기는 대상 아님, 혼동 주의"* 를 달아 둔 것과
+같은 부류 — 🔴 **포팅에서 「안 옮기는 판단」도 근거가 필요하다.** 셋 다 **닫지 않았다.**
+
+## §24. 중 3.1 — ①추정 이식분 **실물 대조** 3/3 (`#147`)
+
+🔴 **이름 대조를 쓰지 않았다.** §7.1 에서 그것이 **양방향으로** 틀리는 것이 이미 드러났다 —
+동명 이식을 「인용 0」으로 잡고, 이름이 달라진 이식을 「미이식」으로 잡는다. 그래서 **공개 함수 ·
+능력 이름** 단위로 봤다.
+
+### 24.1 온톨로지 11파일 (`#148`) — 이식 8 · 미이식 2
+
+| 원전 | 우리 | |
+|---|---|---|
+| `ontology_synthesizer` | `synth.py` + `package.py` | ✅ `merge_preserve_locked` 는 **동명** |
+| `ontology_refresh` | `stale.py` | ✅ `compute_stale_domains`→`compute` |
+| `ontology_drift` | `drift.py` | ✅ `audit_drift`→`audit` |
+| `ontology_path_sync` | `sync.py` | ✅ |
+| `ontology_index_sync` | `context_search/domain_index.py` | ✅ `fingerprint`/`stored_fingerprint` — 같은 기제 |
+| `ontology_loaders` | `domain_md.py` + `contexts.excerpt_body` | ✅ |
+| `ontology_types` | 각 모듈의 dataclass | ✅ 구조 차이 |
+| `ontology_prompt` | `prompt.py` | ✅ 단 `build_classification_prompt` 는 **의도적 미이식**(자동승급 폐기) |
+| 🔴 `ontology_descriptions` **270** | — | **미이식** → `#187` |
+| 🔴 `ontology_pkg_audit` **235** | — | **미이식** → `#188` |
+| `ontology_rename` | — | 이미 `#167` |
+
+🔴 **`ontology_descriptions` 를 놓칠 뻔한 이유가 중요하다** — 우리 `layers.py` 가 이름이 비슷해서
+대응처럼 보이지만, 그것은 **다른 원전 파일**(`ontology_layers.py`, Phase η.6.1)의 이식본이고
+**레이어 *추정*(LLM 0)** 이다. *"레이어가 무엇인가"* 와 *"그 레이어가 무슨 책임을 지는가"* 는
+다른 산출물이다. **정황 둘이 일치**했다 — §7.5 라우트 대조에서
+`/api/v1/ontology/description/{domain}/{layer}` 가 「원전에만」에 있었고, 원전 소비 도구에
+`get_layer_description`(산출물이 `verified_by_user` 로 잠긴다)이 있었다.
+
+⚠️ `pkg_audit` 도 같은 함정 — 우리 `drift.audit` 은 *"트윈과 소스가 어긋났나"* 이고 원전
+`pkg_audit` 은 *"도메인 MD ↔ 패키지 yaml **구조 정합**"* 이다. **원전은 둘을 다 갖고 있었다.**
+
+### 24.2 graph 2파일 (`#149`) — 🔴 **미이식이 더 나은 사례**
+
+`class_graph_query`(7): `find_ancestors`/`find_siblings`/`find_subclasses` **동명 이식** ·
+`infer_domain_from_query`→`context_search/infer.py` · `domain_class_files`→`work/skeleton.py`.
+
+**`class_graph_ontology`(16함수)는 일부러 안 옮겼다.** 실측:
+
+    class_graph.db   classes **1806** · methods **6380** · 🔴 domains **0** · class_ontology **0**
+    ontology/domains/  도메인 **7개** (채워져 있다)
+
+`infer.py` 머리말이 근거다 — *"출처는 패키지 yaml 이다 — DB 표가 아니다. … **죽은 표를 근거로
+삼지 않는다.**"*
+
+🔴 **그 선택이 원전의 문제군 하나를 원천 제거한다.** 원전은 DB 표와 MD/YAML **둘**을 갖고 있었고,
+어긋남을 잡으려고 **η.4 drift 감사**(*"inactive 도메인 · archive 잔재 · **NULL 도메인 분류**"*)를
+따로 만들어야 했다. 출처가 하나면 그 감사가 **필요하지 않다.** → **되돌리지 말 것.**
+
+⚠️ **정정 하나**: `graph/__main__.py` 가 두 표에 *"← 중 1.3 이 채운다"* 를 출력했는데 **거짓
+약속**이었다(중 1.3 은 추론 파견이고, 채우지 않는 것이 **결정**이다). → *"🔴 일부러 비움 (SSOT 는
+`ontology/*.yaml`)"* 로 바꾸고 근거를 주석에 남겼다. **우리 출력이 우리 설계를 잘못 말하고 있었다.**
+
+### 24.3 MCP/HTTP 표면 (`#150`) — 능력 이름으로 재야 했다
+
+🔴 **함수 수로는 못 잰다** — 원전은 능력 하나당 **(MCP 도구 + HTTP 라우트 + impl) 3벌**이라
+12파일에 공개함수 **132개**다. 능력 이름: 원전 MCP 도구 **40개** vs 우리 **24개**.
+
+    ✅ 대응        add_object_alias→add_alias_tool · create_domain→create_domain_tool ·
+                  audit_ontology_drift→drift_audit_tool · edit_ontology_item **동명** ·
+                  delete_ontology_item→remove_ontology_item_tool · refresh_ontology→sync_ontology_tool ·
+                  export/import_infra_state→transfer.py · delete_domain→webui 라우트
+    ② 자리 없음    cleanup_inactive_domain · cleanup_null_classifications
+                  (🔴 자동승급 폐기 + DB 표 미사용이라 **정리할 대상 자체가 없다**) ·
+                  위키 계열 6종 (비개발직군 확장 = 마일스톤 밖)
+    🔴 기존 칸     태스크 템플릿 5종(#138/#140) · 컨텍스트 MD 감사 4종(#160) ·
+                  analyze_search_log(#161) · rename 2종(#167) · log 태깅 2종(#169)
+    🔴 신규 3건    멤버 제거·필드 편집(#189) · 스테이징 편집 세션(#190) · 버전 핸드셰이크(#191)
+
+**`#190` 스테이징 세션이 특히 아프다** — 원전 근거가 사용자 발견이었다: *"오탐 하나 고치려면
+도메인 전체 `refresh-ontology` 가 필요하다."* 그 해법을 원전은 *"`DoubleBufferedIndex` 철학
+이식"* 이라 적었고 🔴 **우리는 그 더블버퍼를 이미 갖고 있다**(`bm25_a`/`bm25_b`). 같은 철학을
+온톨로지 편집에 적용하는 칸이다. ⚠️ 우리는 **항목 단위 편집은 되고** 「여러 항목을 모아 한 번에
+확정/취소」가 없다 — 편집 도중 실패하면 **반쪽 상태가 남는다.**
+
+**`#191` 버전 핸드셰이크는 원전이 우리에게 남긴 지시였다** — κ.9 계약 표면 6개 중 하나로
+*"**기존 자산 재사용** — `get_server_version` 이 이미 있다. 신규 repo 는 독립 버저닝으로 가되
+**이 조회 경로 유지**"* 라고 적혀 있는데 이행하지 않았다.
+
+### 24.4 🔴 분모가 세 번째로 움직였다 (70 → 75)
+
+    62 → 67   소 1.1.2 정독이 σ 가드 결함 5건을 찾아서
+    67 → 68   소 1.1.3 색인이 BM25 카나리 부재를 찾아서
+    70 → 75   중 3.1 대조가 미이식 5건을 찾아서
+    (68 → 70 은 큐 잔재 정리 · 매니페스트 배달 경로)
+
+🔴 **전부 「읽거나 재서」 나왔다.** 마일스톤 3 에서 원전 독파가 칸 넷을 찾아 32→36 이 된 것과
+같은 형태다 — 그래서 `CLAUDE.md` 에 *"그 움직임은 정상이고 기록한다"* 를 적었다.
+
 ### 🔴 이 세션이 남기는 한 줄
 
 **제약을 지키려고 요구를 희생하지 않는 것만으로는 부족했다 — 만들기 전에 그 자리에 무엇이
