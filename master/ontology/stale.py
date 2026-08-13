@@ -102,6 +102,16 @@ def _members(paths: ProjectPaths, domain: str) -> dict:
             for r in rows:
                 out.setdefault(r["class_name"], r["file"] or "")
     except Exception:                                   # noqa: BLE001
+        # 🔴 **DB 접근이 실패하면 빈 dict 다** — 그것이 맞다. 여기 근거가 둘 있다:
+        #
+        #   ① 이 질의의 대상 `class_ontology` 는 **일부러 비어 있다**(소속의 SSOT 는
+        #      `ontology/*.yaml` — `context_search/infer.py` 머리말, 소 3.1.2 실측 0행).
+        #      즉 정상 경로에서도 이 함수는 사실상 `{}` 를 돌려준다.
+        #   ② stale 판정은 **못 읽으면 stale 로 기울어야** 안전하다 — 빈 dict 는 "비교할 근거가
+        #      없다" 가 되어 재합성 쪽으로 간다. 반대로 기울면 낡은 트윈이 조용히 남는다.
+        #
+        # ⚠️ σ.2 감사(2026-08-14)가 이 자리를 *"의도가 안 적힌 silent fallback"* 으로 잡았고,
+        # 판정은 **「유지 + 의도 명시」**다(원전이 6건 중 4건을 그렇게 처리했다).
         pass
     return out
 
