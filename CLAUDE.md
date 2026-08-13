@@ -61,10 +61,18 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   **never widen those rules to `Anywhere`.** Two layers, not one instead of the other.
   → `master/auth.py`, PLAN §9.5.6
 - 🔴 **`/home/sim/AgentTest` is reference-only — never modify or push to it.** Port code *out* of it.
+- 🔴 **Never commit or push without asking first** (user, 2026-08-14: *"커밋은 나에게 허락을
+  요구해줄래?"*). Prepare the message, **ask**, and run it only after approval. The origin's rule is
+  stricter — `AgentTest/CLAUDE.md` and `.agents/AGENTS.md` rule 5 forbid Claude from committing
+  *even when told*, and forbid asking too. 🔴 **Ours is deliberately looser and the user chose it**:
+  the origin's Windows box has SourceTree, sim-desktop (Linux) has none, so "never" would force the
+  user into a terminal every time. Keep that label straight — the *user* relaxed it, not me.
 - 🔴 **Human sessions: never run** `push --force`, `reset --hard`, branch/tag deletion, `rebase`, or
-  history rewriting — not even when told; describe the command instead. Don't read a first-person
-  statement ("I'll commit and come back") as an instruction to you — that exact misreading caused an
-  incident in AgentTest. Pipeline workers follow *different* rules.
+  history rewriting — **not even with approval**; describe the command instead. Don't read a
+  first-person statement ("I'll commit and come back") as an instruction to you — that exact
+  misreading caused an incident in AgentTest (*"다 지워진 줄 알고 깜짝 놀랐다"*).
+  ⚠️ **Pipeline code committing is a different thing** — the integrator/worker writing to
+  `attempt`/`durable` branches is designed behavior; these rules bind the *interactive session*.
   → [`docs/8-git-authority.md`](docs/8-git-authority.md)
 - 🔴 **Never trust a delegated backend's "done".** Measured 2026-08-07: `agy` returned
   `status:"SUCCESS"` while writing no file. Verify the artifact, not the status.

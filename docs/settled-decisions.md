@@ -211,7 +211,45 @@ Always disambiguate by directory (§4.1).
 > **That was wrong**, and §2.1 corrected it on 2026-08-07: what BC-250 took over is *inference
 > compute*, not file work. The harness never leaves Windows.
 
-## Write authority — 🔴 **one writer: the integrator builds, then commits** (user-confirmed 2026-08-11)
+## Write authority — 🔴 **the master is the broker and the writer; workers build and report** (Flow Y, user-confirmed 2026-08-14)
+
+🔴 **This supersedes the section below.** The origin's `local_llm_distributed_workers_plan_v5.0.md`
+left this exact fork **explicitly undecided** (κ, *"추론 요청 주체 (κ.2 핵심 갈림) … 확정 필요"*),
+noted that its own 2-layer split *"points to Flow Y"*, and the user chose **Flow Y** on 2026-08-14.
+
+    ① master  (Linux, .57)   reads source from the canonical git · asks the inference nodes ·
+                             🔴 **commits the returned diff to `task/<id>` / `attempt/<id>/<w>/<ts>`**
+                             · all orchestration state lives here (κ.0)
+    ② worker  (Windows)      **pull → UE compile / RunTests → report (pass/fail + log).**
+                             🔴 **makes no judgment · stateless · may go dark at any time**
+    node      (BC-250)       inference only — text in, text out, no files
+    requester (.33)          registers · reviews · writes `[FEEDBACK]`
+
+**What stays from v5 C.1–C.3** (Flow X and Flow Y share these — the fork is only *who pushes*):
+2-tier branches (durable `task/<id>` + ephemeral `attempt/…`) · **epoch fencing** on the notify gate
+(`submit_epoch < current_epoch` → zombie assignee rejected) · `cleanup_attempts` (ephemeral removed,
+durable preserved) · `fake_worker` injection for a no-hardware dry run · accumulate-don't-rebuild on
+reject (fast-forward durable to attempt, then add one `[FEEDBACK]` commit).
+
+🔴 **The UE5 build gate is a queued job, not an SSH call.** κ.0: *"통합 빌드게이트는 인프라에
+고정하지 않고 **task_queue 잡으로 큐잉 → UE5 있는 윈도우 워커가 claim** 하는 CI 러너 패턴"*, and
+κ.8's port table marks `ue_builder.py`/`ue_test_runner.py` *"리눅스로 옮기는 대상 아님, 혼동 주의"*.
+Linux forces **only** that relocation — nothing else in the shape.
+
+⚠️ **Two labels to keep straight.** ① The section below is titled *"user-confirmed 2026-08-11"* but
+was **not** — it was *"그래 해"* after I pushed it (user, 2026-08-13). ② *"One writer"* was never
+ours to invent: `cluster_coordinator.verify_and_merge` already said *"durable 단일 writer 보존"* —
+and **that writer was the server**, which is what Flow Y restores. → reports/14 §2 · §11.3.
+
+⚠️ **`.2`-as-integrator may be the same mistake the origin already made and reverted** — a session
+there invented a *"검증 전용 노드"* and the work was **reverted in full** because *"워커는
+homogeneous"*. Check our special-cased `.2` role against that before hardening it.
+
+## ~~Write authority — one writer: the integrator builds, then commits~~ (🔴 **superseded 2026-08-14**, mislabeled "user-confirmed 2026-08-11")
+
+🔴 **Kept for the record, not for arguing from.** Its reasoning about *who* should not commit is
+still useful; its conclusion (workers never write, `.2` is the sole writer) is replaced by Flow Y
+above. Do not cite this section as a settled decision.
 
 The pipeline used to have **N writers**: each worker edited its own clone, committed, and pushed an
 `attempt/` branch; the master judged from a `RESULT:` marker. That is now replaced.
