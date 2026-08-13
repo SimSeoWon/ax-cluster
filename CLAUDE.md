@@ -10,8 +10,20 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
 ## Hard rules — inline on purpose
 
 - 🔴 **Read which milestone you are in before planning anything.**
-  **M1 and M2 are closed; M3 (work pipeline) is open.**
-  → [`docs/milestones/3-work-pipeline.md`](docs/milestones/3-work-pipeline.md)
+  **M1·M2 closed; 🔴 M3 is `locked` (halted 2026-08-13); M4 (origin reconciliation) is open.**
+  → [`docs/milestones/4-origin-reconciliation.md`](docs/milestones/4-origin-reconciliation.md)
+  🔴 **M4 is not a feature milestone — it is consistency.** An origin-citation census (report 14)
+  measured **74 files / 23,710 lines of `~/AgentTest` never once mentioned in this repo**, and the
+  worst hit is the topology: `cluster_coordinator.py`'s `verify_and_merge` already said
+  *"durable 단일 writer 보존"* — **that writer is the server, and workers push ephemeral
+  `attempt/` branches.** Linux forces exactly **one** change: the UE5 build step inside
+  `verify_and_merge` moves to `.2`. Everything I redesigned beyond that was redesign, not a port.
+  🔴 **Do not argue the topology from M3's docs** — its label *"사용자 확정 2026-08-11"* is wrong
+  (it was *"그래 해"* after I pushed it), and `settled-decisions.md` §214 carries the same bad label.
+  🔴 **Before building anything, read the origin and leave a citation.** Never-cited must-reads:
+  `local_llm_distributed_workers_plan_v5.0.md` (463, user-confirmed C.1–C.7/κ.0),
+  `.agents/AGENTS.md` (21 — its rule 3 *is* 애매하면 묻는다), `.claude/reviews/_silent_failure/
+  audit_matrix.md` (99 — the σ audit method), `plan_completed_v4.5.md` (2397 — what already exists).
   **Read only the open milestone** — closed ones are reference; don't load them. Progress
   lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
   🔴 **Neither the numerator nor the denominator is written in any document** — read both from

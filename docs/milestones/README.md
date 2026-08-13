@@ -5,7 +5,8 @@
 
 | | 상태 |
 |---|---|
-| [`3-work-pipeline.md`](3-work-pipeline.md) | 🔵 **진행 중 — 여기만 읽으면 된다** |
+| [`4-origin-reconciliation.md`](4-origin-reconciliation.md) | 🔵 **진행 중 — 여기만 읽으면 된다** (2026-08-13 착수). 원전 대조·재이식 = 정합성 |
+| [`3-work-pipeline.md`](3-work-pipeline.md) | 🔴 **`locked` — 진행 정지** 2026-08-13. 열린 9건은 M3 에 남아 있고 노트가 붙었다. **거기서 진행하지 않는다** |
 | [`2-twin-restoration.md`](2-twin-restoration.md) | ✅ 닫힘 2026-08-10. 참조용 — 🔴 「여기서 배운 것」 절은 다시 밟지 않기 위한 것이다 |
 | [`1-infrastructure.md`](1-infrastructure.md) | ✅ 닫힘 2026-08-08. 참조용 |
 

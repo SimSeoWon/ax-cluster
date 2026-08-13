@@ -20,12 +20,25 @@ software repository.** There is no build, lint, or test tooling. **Don't assume 
 
 ## 🔴 Where the project stands — read this before planning
 
-**Milestones 1 and 2 are closed. Milestone 3 (work pipeline) is open — started 2026-08-10.**
+**M1·M2 closed. 🔴 M3 is `locked` — halted 2026-08-13. M4 (원전 대조·재이식) is open.**
 
 | | |
 |---|---|
-| Current milestone — **read only this one** | `~/ax-cluster/docs/milestones/3-work-pipeline.md` |
+| Current milestone — **read only this one** | `~/ax-cluster/docs/milestones/4-origin-reconciliation.md` |
+| 🔴 Halted, do **not** work there | `3-work-pipeline.md` — its 9 open issues carry a *"M4 재검토 대기"* note |
 | Closed, kept as reference | `2-twin-restoration.md` (🔴 its 「여기서 배운 것」 is the trap list) · `1-infrastructure.md` |
+
+🔴 **Why M3 was halted (report 14, an origin-citation census).** Measured: **74 files / 23,710
+lines of `~/AgentTest` are never once mentioned in our repo.** The three losses in report 13 §18
+were not three mistakes but **a pattern** — they only surfaced because the user *saw* those screens.
+The worst hit is the topology: `cluster_coordinator.py` (200 lines, **cited 0 times**) already had
+`assign_attempt` / `push_attempt` / `verify_and_merge` / `cleanup_attempts` / `fake_worker`, and its
+comment reads *"durable 단일 writer 보존"* — 🔴 **"one writer" was never my invention; that writer
+is the server, and workers push ephemeral `attempt/` branches.** This project is an **OS/environment
+port** (Windows+UE5 daemon → Linux+Gitea), and Linux forces exactly **one** change: the UE5 build
+step *inside* `verify_and_merge` moves to `.2`. ⚠️ Even Gitea wasn't forced — the origin's doc listed
+GitHub/Gitea/bare as a choice. M4 = 대 4 / 중 17 / 소 45; **the numbers live in Redmine** (version
+*마일스톤 4*), and 🔴 **소 1.1 (read the origin's design docs) is upstream of everything.**
 
 **What M2 delivered** (closed 소 43/43): the twin **grows, is indexed, and reaches code
 generation** — both of its goals run end to end. Manifests carry **domain norms** *and* **header
