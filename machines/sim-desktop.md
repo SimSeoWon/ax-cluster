@@ -37,7 +37,7 @@ comment reads *"durable 단일 writer 보존"* — 🔴 **"one writer" was never
 is the server, and workers push ephemeral `attempt/` branches.** This project is an **OS/environment
 port** (Windows+UE5 daemon → Linux+Gitea), and Linux forces exactly **one** change: the UE5 build
 step *inside* `verify_and_merge` moves to `.2`. ⚠️ Even Gitea wasn't forced — the origin's doc listed
-GitHub/Gitea/bare as a choice. M4 = 대 4 / 중 17 / 소 45; **the numbers live in Redmine** (version
+GitHub/Gitea/bare as a choice. M4 = 대 4 / 중 17 (🔴 소 count moved 62 → 75 in one session — **the numbers live in Redmine**, version
 *마일스톤 4*), and 🔴 **소 1.1 (read the origin's design docs) is upstream of everything.**
 
 **What M2 delivered** (closed 소 43/43): the twin **grows, is indexed, and reaches code
@@ -47,11 +47,17 @@ queue into a worker's Claude and submits the result (requester→worker loop mea
 master **cleans up worker debris** — 🔴 workers may not delete branches, a branch is removed only
 when its tip is reachable from `origin/main`, and workers return to **`main`**.
 
+> ⚠️ **The block from here to 「Deliberately outside M3」 is M3's record, not a current
+> instruction.** M3 is `locked`. It stays because its **traps** are still live (the gates, the
+> grounding measurement, the zero-automation-test hole) — read them as *"what we learned"*, and read
+> **current** scope from M4's milestone doc and Redmine (version *마일스톤 4*).
+
 **M3 goals** (user, 2026-08-10): ① ✅ **decompose one big request** ② ✅ **judge with the 3-layer
 deterministic gate** ③ 🔵 **build the operator surface** — status screen ✅, upper-layer commands and
-robustness remain. Structure 대 3 / 중 10. 🔴 **Both numbers live in Redmine** (version *마일스톤 3*),
-never in a hand-edited doc — the numerator drifted twice in M2, and the *denominator* moved on
-2026-08-10 (32 → 36) when reading the predecessor's design doc uncovered four missing sub-tasks.
+robustness remained when it was halted. Structure was 대 3 / 중 10. 🔴 **Numbers never live in a
+hand-edited doc** — the numerator drifted twice in M2, and the *denominator* moved on 2026-08-10
+(32 → 36) when reading the predecessor's design doc uncovered four missing sub-tasks. M4 moved
+**62 → 75 in one session** for the same reason.
 
 🔴 **대 1 and 대 2 are closed (2026-08-12). 대 3 is the only one open.** The pipeline runs end
 to end and **four deterministic gates** sit in it:

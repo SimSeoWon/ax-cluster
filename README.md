@@ -36,7 +36,7 @@ Gitea push → post-receive 훅 → 스풀 → inotify → 색인기
                                  · 🔴 사실 게이트 — 주석에만 있는 식별자 주장은 거부
                               → 벡터(다국어) + BM25 재색인, A/B 세대 무중단 교체
 
-[트윈을 쓰는 길 — 작업 요청]
+[트윈을 쓰는 길 — 작업 요청]  ⚠️ 아래는 **지금 도는 것**(M3 가 만든 모양). 원전의 모양은 그 밑에
 요청자(.33) → search_context → "이런 기능이 필요하다" → register_work + durable `task/<id>`
 마스터      → 🔴 골조 생성(claude:opus) — 관계 그래프·헤더 선언·규범·휴리스틱으로 grounding
            → 골조가 되묻는다 → 🔴 **사람이 답한다** → 인터페이스 동결(결정적)
@@ -48,9 +48,25 @@ Gitea push → post-receive 훅 → 스풀 → inotify → 색인기
            → **work 단위 RunTests** → push (ff-only). ⚠️ 테스트 0개라 RunTests 는 fail-open
 ```
 
-🔴 **쓰는 주체는 하나다**(2026-08-11). 빌드해 본 주체가 커밋하므로 **깨진 것이 원격에 못
-박힌다.** 그리고 분산이 주는 것은 처리량이 아니라 **증분**이다 — 실측상 워커 2대는 12% 빠르고
-90% 비쌌고, 값은 *"작업이 항상 컴파일되는 상태로 쌓인다"* 는 데 있다(§4.5).
+🔴 **위 그림의 「통합자만 커밋한다」는 절반만 맞다 — 원전에 이미 답이 있었다**(2026-08-13 발견).
+`~/AgentTest/mcp/task_queue/cluster_coordinator.py`(200줄, 우리 저장소에서 **인용 0회**)의
+`verify_and_merge` 주석이 *"durable 단일 writer 보존"* 이다. 즉 **「쓰는 주체 하나」는 내 발명이
+아니고, 그 하나는 통합자가 아니라 서버다.** 원전의 모양은 **2단 브랜치**다:
+
+```
+durable  task/<id>                                    ← 🔴 **서버만** 쓴다 (verify_and_merge)
+ephemeral attempt/<id>/<workshop>/<ts>                ← 작업장이 자유롭게 push (force 허용)
+                                                        epoch 이 낡으면 병합 거부(좀비 차단)
+```
+
+🔴 **리눅스가 강제하는 변경은 정확히 하나다** — `verify_and_merge` 안의 **UE5 빌드 단계가 `.2` 로
+간다.** 그 밖에 M3 에서 바꾼 것은 포팅이 아니라 재설계였다. 복구 상태: `work/coordinator.py`
+이식 완료 + 실 Gitea·실 작업장·실 `claude` 로 실증(리포트 14 §14~§15), ⚠️ **아직 라이브
+파이프라인에 배선되지 않았다** — 그래서 위 그림이 지금은 여전히 맞다. 남은 것 = 마일스톤 4.
+
+분산이 주는 것은 처리량이 아니라 **증분**이다 — 실측상 워커 2대는 12% 빠르고 90% 비쌌고,
+값은 *"작업이 항상 컴파일되는 상태로 쌓인다"* 는 데 있다(§4.5). 🔴 그 값은 위 두 모양 **어느
+쪽에서도 같다** — 증분을 지키는 것은 브랜치 토폴로지가 아니라 **게이트**이기 때문이다.
 
 🔴 **워커에 큐 토큰을 주지 않는다 — 마스터가 중개한다**(실측: 워커는 8101 에 401). 하트비트도
 마스터가 대신 친다. 요청자→워커 한 바퀴 **1분 29초** 실측.
@@ -106,7 +122,19 @@ ax-cluster/
 │   │   ├── class_graph.py      상속 그래프 + methods 소유권
 │   │   └── dependency.py       `#include` 의존 그래프
 │   ├── events/                 ← Gitea 훅 → 스풀 → 색인기 (트윈이 자라는 지점)
+│   │   └── gate.py             🔴 **색인 일시정지 게이트** — 작업 중이면 색인을 미룬다(실측: 셀프
+│   │                              테스트의 push 가 색인기를 15번 깨웠고 14번은 할 일이 없었다).
+│   │                              ⚠️ 조건은 `in_progress` **하나뿐**(원전 Phase 2) · 모르면 진행
 │   ├── work/                   ← 작업 루프 — 골조·분해·**추론 파견**·검증
+│   │   ├── coordinator.py      🔴 **2단 브랜치 조율 (원전 이식)** — durable 은 **서버만** 쓴다.
+│   │   │                          `assign_attempt`(git 접촉 0) · `push_attempt`(ephemeral, force 허용)
+│   │   │                          · `verify_and_merge`(**epoch 펜싱** — 낡은 좀비는 병합 거부)
+│   │   │                          · `cleanup_attempts`(🔴 **기본은 세기만** — 잔재는 증거다)
+│   │   ├── selftest.py         🔴 **실증 하네스** — `dry`(임시 저장소) / `live`(실 Gitea·실 작업장).
+│   │   │                          매니페스트에만 심은 NONCE 가 durable 산출물에 나타나면
+│   │   │                          **git 으로 실린 컨텍스트가 실제로 읽혔다**는 증명이 된다
+│   │   ├── conventions.py      🔴 UE 금지사항(개명·상속변경·모듈이동 — 블루프린트 에셋이 깨진다) +
+│   │   │                          `repo/CLAUDE.md § Code conventions` 를 **읽어** 매니페스트에 싣는다
 │   │   ├── skeleton.py         🔴 골조 생성 + **인터페이스 동결**(결정적, LLM 0). 텍스트만 낸다
 │   │   ├── skeleton_gate.py    🔴 **등재 전에 세워 본다** — 빌드 통과해야 등재
 │   │   ├── decompose.py        분해 — 의존 순서·파일 불가분·`[PSEUDO:N]` 뎁스
@@ -130,6 +158,10 @@ ax-cluster/
 │   ├── viewer.py               ⚠️ 옛 `/view` (→ `/cluster` 302). 서빙은 `webui/` 가 한다
 │   ├── webui/                  🔴 **원전 웹 UI 복각** — Context Server·온톨로지 뷰어·게시판
 │   ├── source_text.py          🔴 CP949 대응 — 소스의 44%가 CP949 다
+│   ├── sqlite_util.py          🔴 **동시 접근 공통 설정** — `busy_timeout` 10초·WAL. 색인기와
+│   │                              검색이 같은 DB 를 만지므로 이걸 안 걸면 `database is locked`
+│   ├── sigma_audit.py          🔴 **조용한 실패 스캐너 (원전 σ 감사 이식)** — 넓은 핸들러 +
+│   │                              의도가 안 적힌 것을 찾는다. ⚠️ **판정은 사람이 한다**
 │   ├── auth.py                 3서비스 공용 베어러 인증 (fail-closed)
 │   ├── verdict.py              층2 판정 계약 (fail-closed)
 │   └── layer3_verify.py        층3 게이트 — UE5 빌드·RunTests 로그
@@ -249,9 +281,14 @@ Claude 가 사용자에게 물어 등록한다 — 다음 검색부터 자동 �
 것과 **같은 이유**다 — 수치가 아니라 **세는 법**을 적는다.
 
 ```bash
-# 전부 돌리고 합계를 센다 (실패가 있으면 파일명이 뜬다)
-for f in master/test_*.py; do .venv/bin/python "$f" 2>&1 | tail -1; done
+# 실패만 본다 — 🔴 **판정은 종료코드로** 한다
+for f in master/test_*.py; do .venv/bin/python "$f" >/dev/null 2>&1 || echo "🔴 실패 $f"; done
 ```
+
+🔴 **합계를 세는 명령은 [`CLAUDE.md`](CLAUDE.md) 에 한 벌만 둔다** — 두 곳에 적으면 어긋난다.
+그리고 그 명령은 **2026-08-14 에 고쳐졌다**: 옛 `| tail -1` 은 ① 마지막 줄이 구분선인 파일
+13개를 못 셌고 ② **크래시한 파일은 수치를 안 찍어 합계가 그대로 보였다** — import 실수로 테스트
+파일 3개가 죽었는데 합계가 안 변해서 못 봤다. **세는 도구가 조용히 틀리면 세션 내내 틀린다.**
 
 | 파일 | 무엇을 지키나 |
 |---|---|
@@ -274,7 +311,13 @@ for f in master/test_*.py; do .venv/bin/python "$f" 2>&1 | tail -1; done
 | `test_context_search.py` | 마운트 라우팅 · RRF · 대괄호 · 시소러스 확장 |
 | `test_graph.py` | `Source/` 한정 · fail-closed · 유령 행 방지 |
 | `test_indexer.py` | ff-only 미러 · 다이제스트 · 트윈 성장 |
-| 그 외 | `mcp_servers` · `workshop_check` · `auth` · `events` · `provision` · `layer3_verify` · 라우팅 3종 |
+| `test_coordinator.py` | 🔴 **2단 브랜치** — 낡은 epoch 은 **부작용 없이** 거부(durable 안 움직임·좀비 attempt 는 증거로 보존). 🔴 **주입이 아니라 실제 git**(임시 bare + 클론)으로 잰다 |
+| `test_selftest.py` | 🔴 매니페스트가 **git 으로만** 도착하는지 · NONCE 왕복 · 잔재 0(로컬 ref 까지) |
+| `test_gate.py` | 🔴 일시정지 조건은 `in_progress` **하나뿐** · HTTP 실패 시 디스크 대체 · **모르면 진행** |
+| `test_conventions.py` | UE 금지사항 · `repo/CLAUDE.md` 절 추출. ⚠️ **파일 없음은 degraded 가 아니다**(그 파일은 gitignore 대상이라 부재가 정상 — 늘 빨간 게이트는 게이트가 아니다) |
+| `test_sigma_audit.py` | 🔴 **좁히는 조건 셋** — 넓은 핸들러만 · 예외를 값으로 돌려주면 조용하지 않다 · 의도는 **주석에서도** 찾는다. 🔴 이 파일이 스캐너의 `bare except` 누락을 **먼저 잡았다** |
+| `test_sqlite_util.py` · `test_bm25_diagnose.py` | 동시 접근 설정 적용 · 🔴 검색이 **왜** 0건인지(용어 미일치 vs 색인 비어 있음) |
+| 그 외 | 🔴 **위 표는 전부가 아니다** — 목록은 `ls master/test_*.py` 가 답이고, 이 표는 **놓치면 안 되는 계약**만 적는다 |
 
 🔴 **venv 가 필요한 것과 아닌 것이 섞여 있다** — `python3` 로 도는 것은 순수 로직뿐이고,
 나머지는 `.venv/bin/python` 이다(pydantic·pyyaml·fastembed).

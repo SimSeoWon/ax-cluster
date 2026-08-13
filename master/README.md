@@ -2,7 +2,12 @@
 
 192.168.0.57(리눅스 인프라 컴퓨터)에서 돌아갈 오케스트레이션 코드가 여기 들어간다.
 
-## 지금 있는 것 (2026-08-09 기준)
+## 지금 있는 것
+
+🔴 **이 표가 모듈 설명의 SSOT 다** — 저장소 루트 `CLAUDE.md` 가 *"표는 여기 두지 않는다"* 며
+이리로 보낸다. 새 모듈을 만들면 **여기에 행을 추가한다.** 🔴 **기준일을 적지 않는다** —
+「2026-08-09 기준」이라 적어 뒀더니 닷새 뒤에도 그 상태로 남아 신규 6종을 통째로 몰랐다
+(리포트 12 §11 에 같은 사고가 이미 있었다: *"README 가 오늘 만든 것을 통째로 모르고 있었다"*).
 
 | 파일 | 내용 |
 |---|---|
@@ -16,13 +21,13 @@
 | `projects/` | **프로젝트 레지스트리 MCP** — 등록·마운트 전환 + **워크숍 체크아웃**(경로·`driven`) + 더티 체크. ✅ **가동 중** — `ax-projects.service` `:8103`, 도구 **15종** + `role`(worker/requester) |
 | `events/` | 이벤트 스풀 + **색인기**. Gitea `post-receive` → 스풀 → `ax-indexer.path`(inotify) → 재색인. 🔴 폴링 아님 |
 | `provision.py` | Ollama 노드 **점검·원격 설치**. 🔴 `.33`(메인 작업 PC)은 `resident=False` — 상주시키지 않는다. `python -m master.provision check` |
-| `work/` | 워크플로우 — **골조·동결 → 분해 → 파견 → 검증**. 2-tier 브랜치 · 매니페스트 · 도메인 규범(`norms.py`) · 헤더 선언(`declarations.py`). 🔴 **쓰는 주체는 하나**(통합자 `.2`, 2026-08-11) — 빌드해 본 주체가 커밋하므로 깨진 것이 원격에 못 박힌다. 지도는 `docs/4-work-loop.md` §4.5·§4.7, 권한은 `docs/8-git-authority.md` §8.4 |
+| `work/` | 워크플로우 — **골조·동결 → 분해 → 파견 → 검증**. 2-tier 브랜치 · 매니페스트 · 도메인 규범(`norms.py`) · 헤더 선언(`declarations.py`). 🔴 **「쓰는 주체는 하나」는 맞지만 그 하나는 통합자가 아니라 서버다** — 원전 `cluster_coordinator.py`(인용 0회)의 `verify_and_merge` 주석이 *"durable 단일 writer 보존"* 이고, 작업장은 **ephemeral `attempt/` 를 push** 한다. 리눅스가 강제하는 변경은 **UE5 빌드가 `.2` 로 가는 것 하나뿐**. 복구는 `coordinator.py`(이식·실증 완료, ⚠️ **미배선**) → 마일스톤 4. 지도는 `docs/4-work-loop.md` §4.5·§4.7, 권한은 `docs/8-git-authority.md` §8.4 |
 | `work/skeleton.py` | 🔴 **골조 생성 + 인터페이스 동결** (중 1.1). 골조는 **텍스트로만** 낸다(마스터는 파일을 안 쓴다, §2.1). grounding = 관계 그래프(부모/자식·include) + **include 헤더의 타입** + 헤더 선언(#26) + 도메인 규범 + **휴리스틱**. 기본 레인 `claude:opus` — 🔴 A/B 실측: 동결 선언 opus **30** / agy 20 / 35B 10 / 14b **6**(+펜스 잔재). 골조는 **모든 조각의 계약**이라 값을 쓸 자리다. 동결 추출은 **결정적(LLM 0)** — 실제 헤더 857개로 회귀: 동결 12,719 · 본문 채움 시뮬 714건 **오탐 0** |
 | `work/skeleton_gate.py` | 🔴 **골조 빌드 게이트** (소 1.1.5) — 통합자 `.2` 의 격리 트리에 놓고 UE5 를 세운 뒤 **통과해야 등재**. 원전은 빌드를 등재 *뒤*에 두었다가 **깨진 골조가 origin 에 박혀 워커 전원이 그 위에서 작업**했다. ⚠️ **게이트를 안 붙인 것은 통과가 아니라 미확인**(`Registered.gate_checked`). 실측: 콜드 144초 · 증분 35~65초 |
 | `work/decompose.py` | **분해** (중 1.2) — §3 의 미결을 닫았다: 적용 순서 = 🔴 **의존이 먼저**(include 위상 정렬) · 입도 = **파일 불가분** · 파일 내 = `[PSEUDO:N]` 뎁스. 🔴 **묶음(동시)과 뎁스(순차)를 구분한다** — 안 그러면 겹침 검사가 뎁스를 위반으로 잡는다. ⚠️ 순환은 **보고만**(역추적이 basename 근사라 가짜일 수 있다). 계획은 `preview()` 를 **사람이 보고 자른다** |
 | `work/heuristics.py` | 🔴 **대화형 휴리스틱** (소 1.1.6) — 골조가 *"여기서 추측했다"* 를 내놓고 **사람이 답한 것만** 적립된다(모델 제안을 적립하면 다음 골조가 자기 말을 근거로 반복한다). 🔴 **범위**: `project` / `domain:<D>` / `once`(적립 안 함) — 없으면 이번 작업의 결정이 남의 작업을 오염시킨다. 소 2.3.4 실패 카탈로그와 **짝** |
 | `work/infer.py` | 🔴 **추론 파견** (중 1.3) — 워커는 **읽고 추론하고 텍스트로 답한다.** `python -m master.work.infer probe\|run\|run-p\|spool`. 🔴 **큐에 제출하지 않는다** — 태스크는 `claimed` 로 남고 제출은 통합자(소 1.4.3)가 한다. 응답은 **파일로** 온다(`.ax/work/<task>/response.txt` → `scp`): `.2` 콘솔이 CP949 라 stdout 은 한국어에서 깨진다(층3 이 같은 자리에서 죽었다). 판정은 **마커 + 응답 파일 둘 다** — 마커만 보면 *"DONE 이라 말하고 파일 안 씀"* 을, 파일만 보면 *"반쯤 쓰이다 죽음"* 을 통과시킨다. 🔴 스풀(`<프로젝트>/responses/`)이 **복구 단위**다 — 같은 기준 커밋의 통과분은 **다시 사지 않는다**. 🔴 실패한 선행의 후속은 **파견 않고 반납**(큐는 `failed` 를 의존 해소로 센다). 기본은 **직렬**(실측: 2대 = 12% 빠르고 90% 비쌈). ✅ 실전: 단건 45초·$0.27 · **워커 2대 동시 36초·$0.4725·통과 2/2**(윈도우+BC-250, 채널 동일). 🔴 실측 **캐시 생성 고정비 워커당 24~26K 토큰** — N대면 N번 낸다 |
-| `work/integrate.py` | 🔴 **통합자 — 유일한 쓰기 주체** (중 1.4). `python -m master.work.integrate plan\|run`. **조각마다** 층1(무료·결정적) → 적용 → **UE5 빌드** → 🔴 통과하면 커밋, 실패하면 **되돌리고 커밋하지 않는다**(소 1.4.4). 🔴 §4.5 의 *"전부 적용 후 빌드 한 번"* 을 뒤집었다 — 증분 빌드 35~65초라 조각마다 세워도 싸고, **어느 조각이 깨졌는지 알 수 있다**. 🔴 **첫 실패에서 멈춘다**(적용 순서 = 의존 순서). 격리 트리는 체크아웃의 **형제**(`ax-wt-<work>`), detached HEAD, 재사용 시 기준으로 자동 복원. push 는 **ff-only · force 금지** — 거부되면 커밋은 트리에 남고 사람이 판단한다. 실측: 격리+빌드+커밋 **159초**(콜드 빌드 142초). 🔴 **층2 를 빌드 앞에** 두고(비싼 것 앞에 싼 것) 선언부 grounding 을 싣는다 — 못 실으면 `l2_grounded=False` 로 보고. 🔴 층3 `RunTests` 는 **work 단위 한 번**(실측 74초 — 문서의 미측정 DDC 비용이 이 값) · ⚠️ **테스트 0개라 fail-open + 경고**. 실패는 큐 되돌리기 + `[FEEDBACK]` + **레드마인 등재** + **실패 카탈로그 적립** |
+| `work/integrate.py` | 🔴 **통합자** (중 1.4). ⚠️ *"유일한 쓰기 주체"* 라고 적어 뒀던 것은 정정됐다 — 원전에서 durable 을 쓰는 것은 **서버**이고(위 `work/` 행), 이 파일은 그 자리에서 **빌드 단계**를 맡는다. `python -m master.work.integrate plan\|run`. **조각마다** 층1(무료·결정적) → 적용 → **UE5 빌드** → 🔴 통과하면 커밋, 실패하면 **되돌리고 커밋하지 않는다**(소 1.4.4). 🔴 §4.5 의 *"전부 적용 후 빌드 한 번"* 을 뒤집었다 — 증분 빌드 35~65초라 조각마다 세워도 싸고, **어느 조각이 깨졌는지 알 수 있다**. 🔴 **첫 실패에서 멈춘다**(적용 순서 = 의존 순서). 격리 트리는 체크아웃의 **형제**(`ax-wt-<work>`), detached HEAD, 재사용 시 기준으로 자동 복원. push 는 **ff-only · force 금지** — 거부되면 커밋은 트리에 남고 사람이 판단한다. 실측: 격리+빌드+커밋 **159초**(콜드 빌드 142초). 🔴 **층2 를 빌드 앞에** 두고(비싼 것 앞에 싼 것) 선언부 grounding 을 싣는다 — 못 실으면 `l2_grounded=False` 로 보고. 🔴 층3 `RunTests` 는 **work 단위 한 번**(실측 74초 — 문서의 미측정 DDC 비용이 이 값) · ⚠️ **테스트 0개라 fail-open + 경고**. 실패는 큐 되돌리기 + `[FEEDBACK]` + **레드마인 등재** + **실패 카탈로그 적립** |
 | `work/layer1.py` | 🔴 **층1 — 결정적 자기검증** (중 2.1). 무료·즉시·LLM 0. 동결 위반 + 휘발 태그(`[PSEUDO:N]`·`[IMPL]`) + 🔴 **`[FEEDBACK]` 잔재** + 펜스. 🔴 **두 곳에 박혀 있다** — 응답 수락(`infer.judge`)과 적용 직전(`integrate.apply_one`). ①이 없으면 잔재가 스풀에 쌓이고 ②가 없으면 스풀 손질·재사용이 검사를 우회한다. ⚠️ 인코딩 유실 사본으로는 동결을 판정하지 않는다(없는 위반을 만든다) → **동결 미검사**로 기록 |
 | `work/failures.py` | **실패 카탈로그** (소 2.3.4) — 판정 실패를 다음 골조 프롬프트로 되먹인다. 🔴 휴리스틱(사람이 답한 것만)과 **짝**이고, 이쪽은 **기계가 모아도 된다** — 근거가 컴파일러의 오류 문자열이지 모델의 의견이 아니다. ⚠️ 산문 요약은 적립하지 않는다. 파일·줄을 키에서 빼 **한 줄 + 횟수**로 접는다 |
 | `bench_layer2.py` | **층2 모델 선정 벤치** (소 2.2.1) — 표본 7개(전부 실제로 났던 실패), 채점은 `verdict` 계약만. 🔴 실측: agy·sonnet·opus **동점**(4/5·오탐 0) → 싼 쪽 먼저 · 14b 는 선언부를 줘도 못 잡음 · **35B 는 오탐 2 로 탈락**. 🔴 **차이는 모델이 아니라 grounding** — 넷이 선언부 없이는 열거값 환각을 놓쳤다 |
@@ -30,6 +35,12 @@
 | `work/distribute.py` | **`/distribute` 입구** (소 1.3.4) — `plan` → `register` → `dispatch`, 🔴 **단계마다 사람이 끊는다.** 계획은 **JSON 파일로** 낸다 — `preview()` 를 눈으로 보는 것만으로는 **자를 수 없다**. 사람이 그 파일에서 조각을 지우고, `register` 가 그것을 읽는다. 스킬 = `master/skills/distribute/`(`~/.claude/skills/distribute` 는 심볼릭 링크) |
 | `work/runner.py` | **워커 러너** — 🔴 **구 토폴로지(워커가 커밋)다.** 지우지 않는다 — 되돌릴 수 있어야 한다(§8.4 ⚠️). 큐에서 집어 워커의 Claude 에 파견하고 결과를 제출한다. `python -m master.work.runner probe\|once\|loop`. 🔴 **워커에 큐 토큰을 주지 않는다 — 마스터가 중개한다**(실측: 두 워커 다 8101 이 401, AX MCP 0건). 하트비트도 마스터가 친다. 판정은 **fail-closed 마커** `ATTEMPT`/`HEAD`/`RESULT` 마지막 세 줄, 관대함은 **BLOCKED 쪽으로만**. 🔴 기준 절은 **파견 시점에 다시 푼다**. 실측 e2e 71초 |
 | `work/cleanup.py` | **찌꺼기 정리** — 워커의 로컬 브랜치·부산물. `python -m master.work.cleanup plan\|apply`. 🔴 **워커는 스스로 못 지운다**(스킬이 브랜치 삭제 금지 — 의도). 삭제는 **팁이 `origin/<base>` 에서 도달 가능할 때만**, 나머지는 **보존**(fail-closed 의 방향이 보존이다). 원격은 안 건드린다. `failed` 부산물은 증거로 남긴다. ⚠️ `--format` 은 셸별로 감싼다 — `%(...)` 의 괄호가 POSIX 문법이라 안 감싸면 리눅스 워커만 조용히 실패한다 |
+| `work/coordinator.py` | 🔴 **2단 브랜치 조율 — 원전 `cluster_coordinator.py`(200줄) 이식** (2026-08-14, 대 1). `assign_attempt`(서버가 브랜치명을 배정, **git 접촉 0**) · `push_attempt`(ephemeral `attempt/<id>/<workshop>/<ts>`, **force 허용** — durable 엔 절대 금지) · `verify_and_merge`(🔴 **epoch 펜싱** — `submit_epoch < current_epoch` 면 좀비로 보고 병합 거부, **게이트는 notify 쪽이지 push 쪽이 아니다**) · `cleanup_attempts`(🔴 **기본 `delete=False` — 세기만 한다**, 우리 08-09 결정인 증거 보존과 일치). **일부러 다르게 한 것**: 원전의 `worker` → 우리는 `workshop`(이 저장소에서 `worker` 는 BC-250 추론 노드라 세 뜻이 겹친다) |
+| `work/selftest.py` | 🔴 **실증 하네스** — 게이트마다 라이브 1회를 붙이라는 규칙(리포트 13 §14)을 코드로 만든 것. `run_dry()` 임시 저장소 · `run_live()` **실 Gitea + 실 작업장 + 실 `claude -p`**. 핵심은 **NONCE 왕복**: 서버가 토큰을 **매니페스트에만** 심고, 그것이 durable 산출물에 나타나면 **git 으로 실린 컨텍스트가 실제로 읽혔다**는 증명이다(작업장 함수는 NONCE 를 인자로 받지 않고 **디스크에서 읽는다** — 안 그러면 아무것도 증명하지 않는다). 워크트리 둘(서버 역할·작업장 역할)을 만들어 매니페스트가 **git 외의 경로로 새지 않음**을 강제한다. 실측: 스크립트 15/15 · 실 `claude` 15/15 · 큐 경유 e2e 26/26, **잔재 0**. ⚠️ 처음엔 **운으로 통과**했다(`work_id` 를 양쪽에서 따로 계산했는데 초가 우연히 같았다) — 계약에 넣어 고쳤다 |
+| `work/conventions.py` | **코드 규약 부착** — `UE_PROHIBITIONS`(개명·상속 변경·모듈 이동 금지: 🔴 **블루프린트 에셋이 조용히 깨진다**) + `repo/CLAUDE.md § Code conventions` 를 **읽어서** 싣는다(SSOT 는 그 파일이고, 우리는 **명명된 절만** 잘라 온다). `manifest.build` 에서 도메인 규범 **앞**에 붙는다. 🔴 **그 파일의 부재는 `degraded` 가 아니라 본문 주석**이다 — 프로젝트에서 gitignore 대상이라 부재가 정상이고, **늘 빨간 게이트는 게이트가 아니다** |
+| `events/gate.py` | 🔴 **색인 일시정지 게이트** (원전 이식, #164). 작업이 돌고 있으면 색인을 미룬다 — 실측 근거: 셀프테스트의 push 가 색인기를 **15번 깨웠고 14번은 할 일이 없었다**. 🔴 조건은 **`in_progress` 하나뿐**(원전 독스트링: *"Phase 2 변경 — `in_progress` 만 pause 조건"*. `ready_for_review` 도 센다고 적었던 내 메모가 틀렸다). HTTP 우선·실패 시 디스크 대체·🔴 **모르면 진행**(`degraded` 이유를 실어서). 미룬 것은 유닛 종료코드 **4**(`SuccessExitStatus=4`)로 알리고 `ax-indexer.timer` 가 따라잡는다. ⚠️ **스풀이 비어도 폴링해야 한다** — 안 그러면 미뤄 둔 일이 영원히 안 잡힌다. 🔴 **순서 함정**: 이 게이트를 붙이기 전에 큐를 청소해야 한다 — `in_progress` 로 굳은 4건이 색인을 **조용히 영구 정지**시킬 상태였다(#186 을 먼저 처리한 이유) |
+| `sqlite_util.py` | **동시 접근 공통 설정** — `busy_timeout` 10초 + WAL. 색인기와 검색이 같은 DB 를 만지므로 없으면 `database is locked` 로 조용히 실패한다. `graph/db.py`·`graph/dependency.py`·🔴 **`context_search/bm25.py`**(빠져 있던 곳)에 적용 |
+| `sigma_audit.py` | 🔴 **조용한 실패 감사 — 원전 `.claude/reviews/_silent_failure/audit_matrix.md`(99줄, 인용 0회) 이식**. **σ.2 스캐너**: 함수 전체를 감싼 `try` + 넓은 핸들러 + 조용한 `return`/`pass` + 로그 없음. `python -m master.sigma_audit`. 🔴 **좁히는 조건 셋이 이식의 본체였다** — 첫 이식은 **114건**, 원전은 **6건**이었고 그 격차가 곧 덜 이식된 증거였다: ① 넓은 핸들러만(`sqlite3.OperationalError` 처럼 좁게 잡은 것은 **의도**) ② 예외를 값으로 돌려주면 조용하지 않다(우리 MCP 도구 24개가 그 형태) ③ 의도는 **핸들러 주석에서도** 찾는다. 🔴 ②③은 **원전 문서에 글자로 없다**(사람 검토자의 암묵 판단) — **글자만 옮기면 우리 관례를 결함으로 센다**. ⚠️ **판정은 사람이 한다**: 스캐너는 *"의도가 적혀 있지 않다"* 까지고, 적혀 있으면 그것은 설계다. **σ.1 발동 매트릭스는 일부러 코드로 만들지 않았다**(절차는 이 모듈 주석에 있다 — 코드로 만들면 「주장된 경로를 파싱」하는 취약한 것이 되고 그게 또 하나의 조용히 틀리는 자리가 된다). 재검증 주기 = **마일스톤 갱신 시점** |
 | `graph/` | **관계 그래프** — 상속(tree-sitter C++) + `#include`. 1,806 클래스 · 6,380 메서드 · 10,817 간선, 전체 스캔 2.9초. `python -m master.graph build\|status` |
 | `ontology/` | **온톨로지** — YAML io(PyYAML 0) · stale · L1/L2/L3 · 멤버 제안 · 개념 계층 · **사실 게이트** · 패키지 쓰기 · **LLM 재합성**. `python -m master.ontology plan\|dry\|refresh`. 🔴 결정 규칙은 그 패키지 `__init__.py` 에 있다 |
 | `context_synth/` | **컨텍스트 MD 합성** — 프롬프트·grounding·σ.7 게이트·**사실 게이트**·서킷브레이커. 색인기에 배선됨 |
@@ -128,7 +139,19 @@ Ollama 를 그대로 호출하지 않고 **얇은 Python 래퍼를 거친다.** 
 | **`mcp/agy_query/`** | 194줄 | — | **4** — 층2 검증. 리눅스에선 PTY 코드 불필요(리포트 04) |
 | **`mcp/local_llm_runner/`** | 144줄 | — | §6.4 래퍼와 중복 — **재사용/대체 먼저 결정** |
 | `mcp/master_orchestrator/` 中 오케스트레이션 | — | — | 5 — UE 빌드 부분은 분리 |
+
+⚠️ **위 표는 2026-08-06 의 착수 순서다 — 1·2·4 는 끝났다.** 무엇이 실제로 있는지는 이 문서
+맨 위 표가 답이다. 🔴 **그리고 이 표가 「끝」을 뜻하지 않는다** — 원전 인용 census(리포트 14)가
+**우리 저장소에서 한 번도 언급되지 않은 원전 파일 74개 / 23,710줄**을 셌다. 컴포넌트 단위로
+옮겼다고 그 안의 설계까지 옮겨진 것은 아니다.
+
+### 어디에 놓였나 (컴포넌트 → 경로)
+
+🔴 **아래 표는 구분선이 빠져 있어서 위 4열 표의 행으로 렌더링되고 있었다**(2026-08-14 발견) —
+GitHub 에서 20행이 열 어긋난 채 보였다. 표를 나눌 때 `|---|` 를 빼먹지 말 것.
+
 | Component | Where |
+|---|---|
 | Layer-2 verdict contract (fail-closed) | `master/verdict.py`, `master/layer2_verify.py` |
 | Layer-3 gate (UE5 automation logs, fail-closed) | `master/layer3_verify.py` |
 | Inference broker (Ollama-compatible) | `master/broker/` — **live**, `ax-broker.service` `:8102` |
@@ -147,11 +170,15 @@ Ollama 를 그대로 호출하지 않고 **얇은 Python 래퍼를 거친다.** 
 | **워커 러너** — claim → 기준 재해석 → scp → `claude -p` → 마커 → submit (중 2.5.3) | `master/work/runner.py` — `python -m master.work.runner probe\|once\|loop`. 🔴 **워커에 큐 토큰을 주지 않는다 — 마스터가 중개한다**(두 워커 모두 8101 이 401, AX MCP 0건이라 스킬의 전제가 틀려 있었다). 하트비트(리스 1200초)도 마스터가 대신 친다. 🔴 판정은 **fail-closed 마커** `ATTEMPT`/`HEAD`/`RESULT` 마지막 세 줄이고, 관대함은 **BLOCKED 쪽으로만** 연다. 🔴 기준 절은 **파견 시점에 다시 푼다** — durable 브랜치는 설계상 등록 이후 요청자가 만들므로 등록 시점 값은 반드시 낡는다. 선택 단계에서 **워킹트리까지 본다**(워커의 거부는 마지막 방어선이지 선택 기준이 아니다). 실측 e2e 71초 |
 | **Worker bundle** — per-machine config · skill · CLAUDE.md merge, delivered over SSH (#21) | `master/client/` — `python -m master.client probe\|plan\|deliver\|check`. **Role-aware**: `worker` gets `ax-work`; `requester` (the human's PC) gets `ax-request`/`ax-ontology` and is **excluded from `drivable_hosts`** — `driven` (can we reach it) and `role` (may we dispatch to it) are different axes. 🔴 **Paths are never hardcoded**: the master generates `<checkout>/.ax/config.json` from the registry, because a worker's config was found pointing at *another machine's* path. Capabilities are **probed, not declared**, and the block states the *consequence* ("no UE5 ⇒ layer-3 cannot be verified here"). CLAUDE.md is merged **marker-delimited** — human text is never overwritten. 🔴 Delivery verifies by re-reading sha256; that caught PowerShell adding BOM/CRLF and an 18KB stdin hang, so transfers use `scp` |
 | Ollama node check + remote install (no residency) | `master/provision.py` — `python -m master.provision check` |
+| **2-tier branch topology + σ audit + indexing gate** (M4, 2026-08-14) | `master/work/coordinator.py` · `master/work/selftest.py` · `master/events/gate.py` · `master/sigma_audit.py` — see the top table for the detail. 🔴 **This row exists because the two tables overlap**: the Korean table above is the SSOT, this one is a path lookup. When they disagree, the top one wins |
 | venv + deps | `.venv/`, `master/requirements.txt` |
 
 **여기로 오지 않는 것** (Windows 잔류): **`worker/` 전체**(작업자 하네스 — 파일 소유 계층) ·
 `ue_builder.py` · `ue_test_runner.py` · `executor_integration_build.py` · `tdd_dryrun.py` ·
 `mcp/commandlet_runner/`.
+✅ **이 판단은 원전이 이미 내려 뒀다** — κ.8 의 윈도우 의존 포팅 표가 `ue_builder.py`·
+`ue_test_runner.py` 를 *"리눅스로 옮기는 대상 아님, **혼동 주의**"* 로 표시한다. 🔴 **「안 옮긴다」는
+판단에도 근거가 필요하다**(M4 규칙) — 안 옮긴 것과 빠뜨린 것은 문서상 구별되지 않기 때문이다.
 통합 빌드 게이트는 인프라에 고정하지 않고 **task_queue 잡으로 큐잉 → UE5 보유 기계가 claim**하는
 CI 러너 패턴으로 분리한다.
 

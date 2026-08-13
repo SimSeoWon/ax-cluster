@@ -12,23 +12,40 @@ Unreal MCP (UE 5.8.1+), and code-writing agents into one pipeline.
 |---|---|---|
 | **1 — Infrastructure** | [`docs/milestones/1-infrastructure.md`](docs/milestones/1-infrastructure.md) | ✅ **closed** 2026-08-08. Its section documents (`docs/1`–`docs/10`) **stay valid** — kept, not discarded |
 | **2 — Digital twin restoration** | [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md) | ✅ **closed** 2026-08-10 · 소 43/43. 🔴 Read its **「여기서 배운 것」** section before repeating its mistakes |
-| **3 — Work pipeline** | [`docs/milestones/3-work-pipeline.md`](docs/milestones/3-work-pipeline.md) | 🔵 **started** 2026-08-10 — **read only this one** |
+| **3 — Work pipeline** | [`docs/milestones/3-work-pipeline.md`](docs/milestones/3-work-pipeline.md) | 🔴 **`locked` — halted** 2026-08-13. 42/51 closed; its 9 open issues carry a *"M4 재검토 대기"* note. **Do not work there** |
+| **4 — 원전 대조·재이식** | [`docs/milestones/4-origin-reconciliation.md`](docs/milestones/4-origin-reconciliation.md) | 🔵 **open** 2026-08-13 — **read only this one.** Not a feature milestone: **consistency** |
 
 🔴 **Milestone 1 wired the pipe. Milestone 2 made what flows through it.** The twin grows, is
 indexed, and feeds code generation — both of M2's goals run end to end.
 
-**Milestone 3 turns that into production**: decompose one big request into class-family pieces
-(skeleton + **frozen interface** first — §4.5's empty first step), generate across workers, **apply
-sequentially**, and judge with the **3-layer deterministic gate** (L1 self-check / L2 commercial
-model / L3 UE5 build + RunTests). Plus the operator surface: upper-layer commands and a cluster
-status web UI. Structure is 대 3 / 중 10, main = 대 1.
+**Milestone 3 built the production pipeline** — decompose → skeleton + **frozen interface** →
+generate across workers → apply sequentially → **3-layer deterministic gate** (L1 self-check /
+L2 commercial model / L3 UE5 build + RunTests) — and then **it was halted.**
+
+🔴 **Milestone 4 is why.** An origin-citation census (report 14) measured **74 files / 23,710 lines
+of `~/AgentTest` never once mentioned in this repo**, and what was lost was not three mistakes but
+a **pattern** — the three losses in report 13 §18 only surfaced because the user *saw* those screens.
+The worst hit: `cluster_coordinator.verify_and_merge` already said *"durable 단일 writer 보존"* and
+**that writer is the server** — workers push ephemeral `attempt/` branches. This project is an
+**OS/environment port** (Windows+UE5 daemon → Linux+Gitea) and Linux forces exactly **one** change:
+the UE5 build step inside `verify_and_merge`. Everything redesigned beyond that was redesign.
+→ M4 restores the origin's shape, turns M3's four open items into **ports**, recovers un-ported
+assets, and reclaims the origin's **method and norms**.
+
+🔴 **「안 옮기는 판단」에도 근거가 필요하다** — 4 items were re-scoped, not ported, because the
+**condition the origin's fix targeted does not exist here**: console-UTF8 (our master is already
+utf-8), lone-surrogate replacement (**porting it would be a regression** — we already fail loudly),
+`worker/safety` (no resident daemon), and the DB ontology tables (**not porting them removed the
+origin's whole DB↔YAML drift problem**). κ.8 marks the same kind with *"리눅스로 옮기는 대상 아님,
+혼동 주의"*. Re-scoped items stay **open**, not closed — the premise can change.
+
 🔴 **What distribution buys is incremental progress, not throughput** (user-reframed 2026-08-11):
 measured, two workers were 12% faster and **90% more expensive**, and the 3.2× saving came from
-batching, not parallelism. The value is that work accumulates **in a state that always compiles**
-— which makes verification a premise rather than an option. See `docs/4-work-loop.md` §4.5.
+batching, not parallelism. See `docs/4-work-loop.md` §4.5.
 🔴 **Neither the numerator nor the denominator is written in any document** — read both from Redmine
-(version *마일스톤 3*). Hand-kept numerators drifted twice in M2, and on 2026-08-10 the *denominator*
-moved too (32 → 36) when reading the predecessor's design doc uncovered four missing sub-tasks.
+(version *마일스톤 4*). Hand-kept numerators drifted twice in M2, and the **denominator moves whenever
+reading the origin uncovers work**: M3 went 32 → 36, and **M4 went 62 → 75 in one session** (three
+separate reads each found real gaps). That movement is normal — record it, don't hide it.
 
 > 🔴 **This file is an index. The content lives in `docs/`.**
 > **Section numbers are unchanged by the split** — cross-references like `§5.5.3-④` in other
