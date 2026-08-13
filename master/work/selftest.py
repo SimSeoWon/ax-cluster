@@ -155,6 +155,15 @@ class DryRun:
             self.fails.append(name)
 
 
+def _ssh(host: str, user: str, cmd: str, *, timeout: int = 180) -> tuple:
+    """작업장에서 셸 한 번. `(rc, out)`. **예외를 던지지 않는다 — 실패도 사실이다.**"""
+    r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                        f"{user}@{host}", cmd],
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=timeout)
+    return r.returncode, ((r.stdout or "") + (r.stderr or "")).strip()
+
+
 def _sh(cwd: Path, *args: str) -> None:
     r = subprocess.run(["git", "-c", "user.email=cluster@local", "-c", "user.name=ax-cluster",
                         "-C", str(cwd), *args],
@@ -301,3 +310,176 @@ def run_dry(*, tasks: int = 3, keep: bool = False, base_nonce: str = "",
     finally:
         if not keep:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ─────────────────────────────────────────────────────────────
+# 2단계 — 🔴 실 작업장 · 실 Gitea
+#
+# ⚠️ **마스터는 push 하지 못한다**(정본 push 봉인). 그래서 git 쓰기는 전부 작업장에서 돌고
+# 마스터는 **조율하고 독립적으로 검증**한다(읽기는 허용). 즉 이 하니스가 증명하는 것은
+# *"2-tier·매니페스트·NONCE 라운드트립이 실 Gitea 에서 돈다"* 이고, *"마스터가 쓰기 주체"*
+# 는 **증명하지 않는다** — 그건 봉인이 풀려야 재는 것이다(#123).
+#
+# 격리: 작업장의 **메인 체크아웃을 건드리지 않는다** — 옆에 worktree 둘을 만든다.
+#   wtA = 서버 역할 (골조·매니페스트 작성 → push, 그리고 verify_and_merge)
+#   wtB = 작업장 역할 — 🔴 `worktree add <base2>` 로 **git 으로만** 매니페스트를 받는다
+# ─────────────────────────────────────────────────────────────
+
+def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
+             work_fn_cmd=None, keep: bool = False, base_nonce: str = "",
+             logf=None) -> DryRun:
+    """실 작업장·실 Gitea 로 한 바퀴.
+
+    `work_fn_cmd(gidx, probe_rel, nonce_key, work_id)` 는 wtB 에서 돌 셸 명령을 돌려준다
+    (없으면 스크립트 편집 = 2a). 🔴 **`work_id` 를 인자로 넘기는 이유**: 호출자가 매니페스트
+    경로를 만들려면 그 값이 필요한데, 밖에서 따로 계산하면 초 단위로 어긋나 프롬프트가 없는
+    파일을 가리킨다. 첫 실 구동(2026-08-14)에서 우연히 초가 맞아 **통과가 운이었을 수 있는**
+    상태였다 — 계약으로 막는다.
+
+    🔴 정리는 `finally` 다 — 원격 브랜치(selftest/attempt/durable)와 worktree 를 지운다.
+    probe 는 증거가 아니라 시험 산출물이다. `keep=True` 면 남긴다.
+    """
+    log = logf or (lambda stage, msg: None)
+    n = max(1, int(tasks))
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    base_nonce = base_nonce or f"CSTNONCE{ts}_{os.getpid() % 100000}"
+    work_id = f"selftest_{ts}"
+    slug = f"cluster_selftest_{ts}"
+    st_branch = f"selftest/{slug}"
+    nonces = {i: f"{base_nonce}_{i}" for i in range(n)}
+    probe_rels = {i: f"cluster_selftest/probe_{ts}_{i}.py" for i in range(n)}
+    man_rel = MANIFEST_REL_FMT.format(work_id=work_id)
+    wtA, wtB = f"{checkout}/../_ax_st_A_{ts}", f"{checkout}/../_ax_st_B_{ts}"
+    r = DryRun(work_id=work_id, tasks=n, nonces=nonces)
+    made_remote: list = []
+
+    def sh(cmd: str, *, cwd: str = checkout, timeout: int = 180) -> tuple:
+        return _ssh(host, user, f'cd "{cwd}" && {cmd}', timeout=timeout)
+
+    try:
+        rc, out = sh("git rev-parse --abbrev-ref HEAD && git status --porcelain | wc -l")
+        r.chk("작업장 트리가 깨끗하다 (메인 체크아웃 미접촉 전제)",
+              rc == 0 and out.strip().endswith("0"), out[:200])
+        if r.fails:
+            return r
+
+        # ── 1. wtA: 서버 역할 worktree ──────────────────────────
+        sh("git fetch -q origin")
+        rc, out = sh(f'git worktree add -q -b {st_branch} "{wtA}" origin/main')
+        r.chk("wtA(서버 역할) worktree 생성", rc == 0, out[:200])
+        if r.fails:
+            return r
+        log("isolate", f"wtA={wtA} branch={st_branch}")
+
+        # ── 2. probe 골조 + 매니페스트를 base 에 커밋·push ───────
+        for i in range(n):
+            body = probe_source(i).replace("'", "'\\''")
+            sh(f'mkdir -p "$(dirname {probe_rels[i]})" && '
+               f"printf '%s' '{body}' > {probe_rels[i]}", cwd=wtA)
+        man_body = (
+            "# 컨텍스트 매니페스트 (서버 1회 수집 — 작업장은 검색 말고 읽기)\n\n"
+            "## 계약 (contracts)\n"
+            "post: 각 selftest_probe_<i>() 는 매니페스트의 NONCE_<i> 문자열을 반환\n\n"
+            + nonce_section(nonces)).replace("'", "'\\''")
+        sh(f'mkdir -p "$(dirname {man_rel})" && printf \'%s\' \'{man_body}\' > {man_rel}', cwd=wtA)
+        # 🔴 add -f — `.ax/` 가 gitignore 여도 추적한다 (원전 실측 함정)
+        rc, out = sh(f"git add -A && git add -f {man_rel} && "
+                     f'git commit -q -m "[skeleton] {n} selftest probes + manifest {ts}"', cwd=wtA)
+        r.chk("골조+매니페스트 커밋", rc == 0, out[:200])
+        rc, base2 = sh("git rev-parse HEAD", cwd=wtA)
+        base2 = base2.strip()
+        rc, out = sh(f"git push -q -u origin {st_branch}", cwd=wtA)
+        r.chk("🔴 실 Gitea 에 selftest 브랜치 push", rc == 0, out[:200])
+        if rc == 0:
+            made_remote.append(st_branch)
+        log("push", f"base2={base2[:8]} → {st_branch}")
+
+        # ── 3. wtB: 작업장 역할 — git 으로만 매니페스트를 받는다 ──
+        rc, out = sh(f'git worktree add -q --detach "{wtB}" {base2}')
+        r.chk("wtB(작업장 역할) worktree 생성", rc == 0, out[:200])
+        rc, out = sh(f"test -f {man_rel} && git ls-files {man_rel} && git status --porcelain", cwd=wtB)
+        r.chk("🔴 매니페스트가 **git 으로** 작업장 트리에 도착했다 (직접 쓴 것 0)",
+              rc == 0 and man_rel in out and out.strip().endswith(man_rel), out[:200])
+
+        # ── 4. 각 probe: 작업장이 매니페스트를 읽고 편집 → attempt push ──
+        for i in range(n):
+            tid = f"{work_id}.{i}"
+            att, dur = attempt_branch(tid, host.replace(".", "-"), f"t{i}"), durable_branch(tid)
+            sh(f"git checkout -q -B {att} {base2}", cwd=wtB)
+            if work_fn_cmd is None:
+                # 2a — 스크립트 편집. 🔴 NONCE 를 인자로 주지 않는다: 매니페스트에서 grep 한다.
+                cmd = (f'N=$(grep -oP "^NONCE_{i}=\\\\K\\\\S+" {man_rel} || true); '
+                       f'printf \'"""[SELFTEST] probe {i} — 구현됨."""\\n\\n\\n'
+                       f'def selftest_probe_{i}() -> str:\\n    return "%s"\\n\' "$N" > {probe_rels[i]}')
+            else:
+                cmd = work_fn_cmd(i, probe_rels[i], f"NONCE_{i}", work_id)
+            rc, out = sh(cmd, cwd=wtB, timeout=600)
+            r.chk(f"probe[{i}] 작업장 편집", rc == 0, out[:300])
+            rc, out = sh(f"git add -A && git commit -q -m '[selftest] probe {i}' && "
+                         f"git push -q --force origin {att}", cwd=wtB)
+            r.chk(f"probe[{i}] attempt push", rc == 0, out[:200])
+            if rc == 0:
+                made_remote.append(att)
+            # 서버 역할(wtA)이 검증·머지
+            rc, out = sh(f"git fetch -q origin {att} && git checkout -q -B {dur} origin/{att} && "
+                         f"git push -q origin {dur}", cwd=wtA)
+            r.chk(f"probe[{i}] durable 생성·push", rc == 0, out[:200])
+            if rc == 0:
+                made_remote.append(dur)
+
+        # ── 5. 🔴 마스터가 **독립적으로** 검증한다 (읽기만) ──────
+        #
+        # ⚠️ **bare 저장소 읽기에는 `gitea` 그룹이 필요하다.** 대화형 세션은 그룹 추가 이전에
+        # 시작됐으면 그것이 없고, 그때 git 은 *"저장소가 아니다"* 라고 해서 **원인을 감춘다**
+        # (`consumer.py` 머리말이 2026-08-08 에 실측해 적어 둔 함정 — 2026-08-14 이 하니스의
+        # 첫 실 구동에서 그대로 밟았다: `fetch rc=128`).
+        # 🔴 그룹 판정을 다시 쓰지 않고 색인기의 헬퍼를 **재사용**한다 — 복제하면 어긋난다.
+        from ..events.consumer import _git as _mirror_git
+        mirror = Path(__file__).resolve().parents[2] / "ModularStage" / "repo"
+        ok_n = 0
+        for i in range(n):
+            dur = durable_branch(f"{work_id}.{i}")
+            rc_f, out_f = _mirror_git(mirror, "fetch", "-q", "origin", dur)
+            rc_s, body = _mirror_git(mirror, "show", f"FETCH_HEAD:{probe_rels[i]}")
+            if rc_f == 0 and rc_s == 0 and nonces[i] in body and "[PSEUDO]" not in body:
+                ok_n += 1
+            else:
+                log("verify", f"probe[{i}] 실패 — fetch rc={rc_f} ({out_f[:80]}) "
+                              f"show rc={rc_s} body={body[:100]!r}")
+        r.chk(f"🔴 마스터 독립 검증 — NONCE 라운드트립 ({ok_n}/{n})", ok_n == n, f"{ok_n}개")
+
+        r.ok = not r.fails
+        return r
+    except Exception as e:                                  # noqa: BLE001
+        r.error = f"{type(e).__name__}: {e}"
+        r.chk("예외 없이 완주", False, r.error)
+        return r
+    finally:
+        if keep:
+            r.kept_at = f"{host}:{wtA},{wtB} · 원격: {', '.join(made_remote)}"
+            log("cleanup", f"keep — 보존: {r.kept_at}")
+        else:
+            for br in made_remote:
+                sh(f"git push -q origin --delete {br} 2>&1 | tail -1")
+            sh(f'git worktree remove --force "{wtA}" 2>&1 | tail -1')
+            sh(f'git worktree remove --force "{wtB}" 2>&1 | tail -1')
+            sh("git worktree prune")
+            sh(f"git branch -D {st_branch} 2>&1 | tail -1")
+            for i in range(n):
+                sh(f"git branch -D {durable_branch(f'{work_id}.{i}')} 2>&1 | tail -1")
+            # 🔴 **로컬 attempt 도 지운다.** wtB 가 `checkout -B <attempt>` 로 만든 브랜치는
+            #    공유 저장소의 ref 라, worktree 를 지워도 **ref 는 남는다.** 2026-08-14 첫 실
+            #    구동 3회에서 로컬 attempt 7개가 쌓인 것을 사후 점검이 잡았다 — 원격만 보고
+            #    "흔적 0" 이라 단정했으면 놓쳤을 자리다.
+            # ⚠️ `for-each-ref 'refs/heads/attempt/{id}.*'` 는 **안 맞는다** — 그 `*` 는 `/` 를
+            #    넘지 못하고 브랜치명이 `attempt/<id>.<i>/<host>/<ts>` 로 슬래시가 셋이다.
+            #    (2026-08-14 실측: for-each-ref 0건 / `branch --list` 6건.) 검증된 쪽을 쓴다.
+            sh(f'git branch --list "attempt/{work_id}.*" | tr -d " *" '
+               f"| xargs -r -n1 git branch -D 2>&1 | tail -2")
+            rc_l, left_local = sh(
+                f'git branch --list "*{work_id}*" | wc -l')
+            r.chk("🔴 정리 후 작업장 로컬에도 흔적 0", left_local.strip() in ("0", ""),
+                  f"남음={left_local.strip()}")
+            rc, left = sh(f"git ls-remote --heads origin | grep -c '{work_id}\\|{slug}' || true")
+            r.chk("🔴 정리 후 원격에 흔적 0", left.strip() in ("0", ""), f"남음={left.strip()}")
+            log("cleanup", f"원격 {len(made_remote)}건·worktree 2개 제거 (남음={left.strip()})")
