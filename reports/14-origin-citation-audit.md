@@ -1131,6 +1131,46 @@ pause 이유(원전): *"feature 브랜치 작업 중 main 인덱싱 무의미 + 
 🔴 인코딩 문제군의 **읽기**(`source_text.decode`)는 이미 이식됐고 **직렬화**(surrogate, `#180`)는
 아직 남았다 — 세 다리 중 둘째만 남은 셈이다.
 
+## §21. 소 3.5.4 — 🔴 **치환을 이식하지 않았다** (`#180` 재범위)
+
+원전이 겪은 것: lone UTF-16 surrogate 가 MCP 결과에 섞이면 `json.dumps(**ensure_ascii=True**)` 가
+**에러 없이** `\udXXX` 를 내보내고 → Claude Code(Node) 파싱 → Anthropic 요청 직렬화에서 **400 으로
+요청 전체 거부 = 세션 사망**. 그래서 `server.py` 의 `json.dumps` **64곳**을 `safe_dumps`
+(surrogate → U+FFFD)로 일괄 교체했다.
+
+### 21.1 실측 — 우리에게 그 실패 모드가 없다
+
+    원전 방식 `ensure_ascii=True`    dumps OK · encode OK      → 🔴 **조용히 나간다** (세션 사망 경로)
+                                     `'{"a": "\\ud800"}'` 이 그대로 와이어에 오른다
+    우리 방식 `ensure_ascii=False`   dumps OK · encode **실패** → ✅ 그 호출만 loud 하게 죽는다
+                                     `UnicodeEncodeError: 'utf-8' codec can't encode '\ud800'`
+
+라이브러리가 도구 호출마다 `except Exception` 으로 격리해 `is_error=True` 를 돌려준다(`server.py:421`).
+
+### 21.2 🔴 그래서 치환을 이식하면 **퇴행이다**
+
+원전이 U+FFFD 치환을 택한 이유는 **대안이 세션 사망**이었기 때문이다. 우리는 이미 loud 하다 —
+치환을 넣으면 **loud 실패를 조용한 U+FFFD 로 바꾸는 것**이고, 이 저장소가 가장 경계하는
+*"조용히 틀리는 것"* 을 스스로 만드는 셈이다.
+
+⚠️ **별도 카나리도 필요 없다.** 원전이 카나리를 둔 이유는 *"원천을 특정 못해 다음 발생 시 증거를
+모으겠다"* 였는데, 우리에게는 `UnicodeEncodeError` 의 트레이스백이 **그 자체로 카나리**다.
+
+### 21.3 🔴 그러나 그 보호는 **우연이다** — 그것만 규약으로 못박았다
+
+`ensure_ascii=False` 는 한국어를 그대로 내보내려고 쓴 것이고, surrogate 보호는 **부수 효과**다.
+누가 원전 코드를 베끼거나 *"ASCII 가 안전하다"* 고 생각해 바꾸면 **보호가 조용히 사라진다.**
+
+`test_mcp_boundary.py` **7/7** 이 그 자리를 지킨다:
+
+    ① 우리 방식은 encode 에서 실패한다(loud) · 원전 방식은 조용히 나간다   ← 전제 자체를 단정
+    ② 경계에 `ensure_ascii=True` 가 없다
+    ③ 🔴 `json.dumps(` 개수 == `ensure_ascii=False` 개수  ← **생략하면 기본이 True** 라 그것도 잡는다
+    ④ 경계에서 조용한 치환(`errors=replace/ignore`)을 쓰지 않는다
+
+**결론**: `#180` 은 «완료»가 아니라 «재범위»다 — 이식할 것이 없고, **이식하지 않는 이유를 테스트로
+남겼다.** `#181` 과 같은 처리다(자리가 다르다 / 이식이 퇴행이다).
+
 ### 🔴 이 세션이 남기는 한 줄
 
 **제약을 지키려고 요구를 희생하지 않는 것만으로는 부족했다 — 만들기 전에 그 자리에 무엇이
