@@ -68,6 +68,7 @@ class ProjectResult:
     synth_lost: int = 0         # 🔴 문서가 안 생긴 그룹 수 = 그 커밋의 영구 유실
     synth_note: str = ""
     lost_groups: list[str] = field(default_factory=list)
+    canary_write_failed: int = 0   # ⚠️ 카나리 기록 자체가 실패한 횟수 (조용히 넘기지 않는다)
 
     @property
     def ok(self) -> bool:
@@ -161,6 +162,33 @@ def _git(repo: Path, *args: str, group: bool | None = None) -> tuple[int, str]:
 
 def _shquote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
+
+
+def append_canary(paths, *, kind: str, detail: str, commit: str = "") -> bool:
+    """🔴 **영구 유실을 누적 기록한다** (소 3.5.6 — 원전 `permanent_loss_canary.jsonl` 이식).
+
+    저널에 한 줄 찍는 것만으로는 원전이 남긴 지침 *"카나리가 **반복**되면 근본 원인(LLM 쿼터·
+    타임아웃 등)을 먼저 해결할 것 — 재touch/rebuild 는 증상 복구일 뿐"* 을 따를 수 없다.
+    **반복은 누적된 것을 봐야 보인다.**
+
+    ⚠️ **기록에 실패해도 예외를 올리지 않는다** — 카나리를 쓰다 색인을 죽이면 본말전도다.
+    대신 `False` 를 돌려주므로 호출자가 그 사실을 셀 수 있다.
+
+    🔴 **판별 기준은 원전 그대로**: *"skip 후 워터마크가 전진하느냐."* 전진하지 않는 실패는
+    다음 회차에 self-heal 되므로 **카나리로 만들지 않는다**(원전은 except ~33개 중 딱 2개만
+    승격했다 — *"self-heal 되는 걸 카나리로 만들면 노이즈"*).
+    """
+    from datetime import datetime, timezone
+    try:
+        p = paths.canary
+        p.parent.mkdir(parents=True, exist_ok=True)
+        rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+               "kind": kind, "detail": detail[:500], "commit": commit}
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        return True
+    except OSError:
+        return False
 
 
 def context_digest(paths: ProjectPaths) -> str:
@@ -264,6 +292,10 @@ def _synthesize(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
         for g in st.results:
             if g.lost:
                 r.lost_groups.append(f"{g.key}: {g.reason[:120]}")
+                # 🔴 저널만으로는 반복을 못 본다 — 누적한다 (소 3.5.6).
+                if not append_canary(paths, kind="context-md-lost",
+                                     detail=f"{g.key}: {g.reason}", commit=r.to_commit):
+                    r.canary_write_failed += 1
 
 
 def process_event(ev: Event, *, registry: Registry | None = None,

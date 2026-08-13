@@ -87,6 +87,16 @@ class ProjectPaths:
         return self.root / "responses"
 
     @property
+    def canary(self) -> Path:
+        """🔴 **영구 유실 카나리 누적** (소 3.5.6). 원전 `permanent_loss_canary.jsonl` 이식.
+
+        저널만으로는 *"카나리가 **반복**되면 근본 원인을 먼저 해결하라"* 를 할 수 없다 —
+        저널은 돌고, 반복은 **누적된 것을 봐야** 보인다. 파생물이 아니라 **관측 기록**이라
+        지우면 복구되지 않는다.
+        """
+        return self.root / "canary" / "permanent_loss.jsonl"
+
+    @property
     def vector_db(self) -> Path: return self.root / VECTOR_DB
     @property
     def bm25_db(self) -> Path: return self.root / BM25_DB
