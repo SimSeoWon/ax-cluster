@@ -503,6 +503,143 @@ PTY 라 *"오히려 더 단순해짐"*) · `CREATE_NEW_CONSOLE` · `CREATE_NO_WI
 κ.9 가 *"신규 repo 는 자기 정책을 세운다"* 고 했으니 의도적 차이일 수도 있지만, 커밋 권한은
 플랫폼 문제가 아니라 **권한 문제**라 대칭 논리가 그대로 적용되지 않는다. 소 4.1.1 로 넘긴다.
 
+## §12. 소 1.1.2 — 미독 4종 1,919줄 정독 (`#119`)
+
+`README.md` 842 · `watcher-internals.md` 544 · `runbook.md` 281 · `extending.md` 252.
+🔴 **가장 값진 것은 `watcher-internals.md` 의 「Silent Failure 가드(σ 계열)」 결정 로그다** —
+이 저장소가 *"조용히 틀리는 것"* 을 경계하는 문화의 **원천**이고, 거기 실측이 붙어 있다.
+
+### 12.1 🔴 우리 코드에 살아 있는 결함 셋 (실측)
+
+원전 σ 가드 4종을 우리 코드와 대조했다. **둘은 이식돼 있고, 둘은 없고, 하나는 불일치다.**
+
+| 원전 가드 | 우리 |
+|---|---|
+| CP949 폴백 (`read_text_resilient`: UTF-8 strict → CP949 → replace) | ✅ **이식됨** — `master/source_text.py` 가 원전 사고를 직접 인용까지 해 뒀다 |
+| SQLite WAL + `busy_timeout=10000` | ⚠️ **절반** — `graph/db.py`·`graph/dependency.py` 는 있고 🔴 **`context_search/bm25.py` 는 없다** |
+| lone surrogate 가드 (`strip_lone_surrogates`+`safe_dumps`) | 🔴 **없다** — 우리 MCP 서버에 `json.dumps` **34곳**(projects 28 · task_queue 6) |
+| 콘솔 출력 UTF-8 강제 (`sys.stdout.reconfigure`) | 🔴 **없다** (`reconfigure` 0건) |
+
+**① 🔴 `#104`(BM25 원자성)의 답이 나왔다 — 재기 전에 이식이 먼저다.**
+`bm25.py:158-162` 는 `mmap_size`/`cache_size`/`temp_store` 만 걸고 **WAL·busy_timeout 을 안 건다.**
+그런데 `bm25.db` 는 **두 프로세스**가 연다 — `ax-indexer`(`master.events.consumer`, 쓰기)와
+`ax-projects`(`master.projects`, 읽기). `RLock` 은 프로세스 **안**만 막는다. 우리 `graph/db.py:84`
+스스로 *"같은 프로세스 안의 쓰기 직렬화. **프로세스 간에는 아래 WAL + busy_timeout 이 담당한다**"*
+라고 적어 두고 bm25 에는 빠뜨렸다. 🔴 **형제 모듈과의 불일치라 추측이 아니다.**
+원전이 실측한 실패 모드가 정확히 이것이다(2026-06-05): *"기본 `busy_timeout=0` 이라 동시 쓰기 시
+즉시 `database is locked` → 상위 `log(skip)` 으로 삼켜져 **해당 사이클 변경이 영구 유실**"*.
+⚠️ 원전은 bm25 를 *"단일 프로세스 영속 연결(RLock)뿐이라 교차 경합 없음"* 으로 판정했는데
+**우리 구조는 다르다** — 그래서 같은 결론을 물려받을 수 없다.
+⚠️ 원전이 **명시적으로 기각한 것**도 같이 옮긴다: *"`locked` 명시 재시도 루프는 미채택 —
+busy_timeout 이 SQLite 네이티브 블록-후-재시도이고 WAL 이 읽기↔쓰기 경합을 제거"*.
+
+**② 🔴 lone surrogate 는 세션을 통째로 죽인다.** 원전 실측(2026-06-06): lone UTF-16 surrogate 가
+MCP 결과 str 에 섞이면 FastMCP 의 `json.dumps(ensure_ascii=True)` 가 **에러 없이** `\udXXX` 로
+내보내고 → Claude Code(Node)가 JS lone surrogate 로 파싱 → Anthropic 요청 직렬화에서 **400 으로
+요청 전체 거부 = 세션 사망**. 원전은 `server.py` 의 `json.dumps` **64곳**을 `safe_dumps` 로 일괄
+교체했다. ⚠️ **우리에게 직접 생산자는 없다**(`surrogateescape` 0건) 그리고 **원전도 원천을 특정
+못했다**(*"raw request body 없이 단정 불가 → 카나리가 다음 발생 시 증거 수집"*). 그래서 이건
+「버그 수정」이 아니라 **싼 가드 + 카나리** 이식이다.
+🔴 그리고 진단 분리를 기억할 것: *"한글은 BMP 단일 코드유닛이라 **mojibake 와 surrogate 400 은
+별개 현상**"* — 한글 절단으로는 surrogate 가 절대 안 깨진다.
+
+**③ 콘솔 UTF-8** — 원전은 한국어 Windows 콘솔(CP949)에서 em-dash·박스드로잉을 print 하면
+`UnicodeEncodeError` 로 **로그 한 줄 없이 프로세스 즉사**하는 것을 겪고 `common.py` 최상단에
+`reconfigure(encoding='utf-8', errors='replace')` 를 넣었다. 원전 스스로 *"동일 인코딩 문제군의
+**세 번째 다리**"* 라고 적었다(읽기·직렬화·출력). 🔴 **우리는 리포트 13 에서 `.2` 의 CP949 로
+층3 이 죽은 것을 이미 겪었다** — 같은 문제군의 그 다리다.
+
+### 12.2 🔴 메타 교훈 하나가 우리 층1 이중 배치를 겨눈다
+
+> σ.10 cleanup 책임 축소(2026-05-26): production 에서 `MissionRuntime` 도메인 **수동 등록 직후
+> 다음 사이클에 자동 삭제**되는 사고. 원인 = 같은 기준(`_has_meaningful_body`)을 **승급과 정리
+> 두 단계에 중복 적용**해 「신규 등록 직후 본문이 얇은 살아있는 파일」을 좀비로 오탐.
+> **메타 교훈: "silent failure 가드를 두 단계에 같은 기준으로 중복 적용하면 false positive 를
+> 양산한다. 단계별 책임 분리 — 승급(자격 검사) vs 정리(실재 검사)."**
+
+⚠️ 우리는 층1 을 *"무료라 두 번 돌린다"* 며 **응답 수락과 적용 직전 두 곳**에 박았다(소 2.1.3).
+🔴 **같은 함정인지 확인해야 한다.** 다만 우리 층1 은 결정적 문법 검사라 *"얇은 신규 파일"* 같은
+상태 의존 판정이 아니어서 성격이 다를 가능성이 크다 — **그래도 검증 없이 다르다고 하지 않는다.**
+
+### 12.3 카나리 승격의 판별 기준 (그대로 쓸 수 있다)
+
+원전은 `watch.py` 의 except **~33개 중 딱 2개만** 카나리로 승격했다. 기준이 한 줄이다:
+
+    🔴 **"skip 후 `.watch_state` 워터마크가 전진하느냐"**
+       예외를 던지는 경로  → 전파 → 워터마크 미전진 → 다음 사이클 self-heal (안전)
+       예외를 삼켜 정상 리턴 → 워터마크 전진 → **영구 유실**            ← 이것만 카나리
+
+    kind=context-md-lost   모듈 MD 미생성인데 워터마크 전진
+    kind=vector-index-gap  MD 는 있으나 벡터 인덱스 미반영
+    → `.claude/reviews/_silent_failure/permanent_loss_canary.jsonl` (새 측정 인프라 0)
+
+⚠️ 나머지 31개는 **일부러 안 건드렸다** — *"self-heal 되는 걸 카나리로 만들면 노이즈"*.
+🔴 우리 색인기·파이프라인에 이 판별을 한 번 돌려야 한다.
+
+### 12.4 🔴 `#96`(작업유형 템플릿)이 층3 `RunTests` 의 **전제**였다
+
+README 후처리 절: *"모든 task verified 직후 feature 브랜치에서 UE Build.bat → 빌드 통과 시,
+작업의 **태스크 템플릿 중 `tdd:true` 인 것의 `test_spec.filter`** automation 테스트를
+`UnrealEditor-Cmd RunTests` 로 실행"*.
+
+즉 **무엇을 돌릴지는 태스크 템플릿이 정한다.** 우리는 `#96` 을 미이식으로 뒀고 층3 은
+*"돌릴 테스트가 없다"* 며 fail-open 이다 — 🔴 **그 두 사실이 같은 원인이다.** 마일스톤 3 이
+*"테스트 0개는 코드로 메울 수 없다"* 고 적은 것은 절반만 맞다: 테스트를 **쓰는 것**은 프로젝트
+결정이지만, **돌릴 것을 지정하는 배선**은 `#96` 이식이다. ⚠️ 원전 fail-open 조건도 다르다 —
+*"엔진 미가용 등 **인프라** 이슈"* 이지 *"테스트가 없음"* 이 아니다.
+그리고 `/manage-task` 스킬이 `tdd`/`test_spec` 을 켜는 표면이고, `/tdd-dryrun` 은 **분산
+파이프라인 밖에서** 그 계약 테스트를 서버 단독으로 검증·튜닝한다(흔적 0).
+
+### 12.5 🔴 `.2` 통합자 특수 역할 — 원전이 정면으로 부정한다
+
+    README.md:383   "리더 PC = 워커 PC = 동일 dist 배포. **별도 검증 PC 불필요.**"
+    README.md:381   클라-워커 PC = 모든 직원(리더 포함) — 평소엔 worker, 리더 권한 시 /review-work
+
+리포트 13·§11.4 가 남긴 우려(*"검증 전용 노드를 발명했다가 전량 revert"*)가 **문서로도 확증**됐다.
+🔴 역할은 **PC 가 아니라 권한**이다. Flow Y 에서 마스터가 쓰기 주체가 됐으므로 `.2` 는
+*"UE5 를 가진 워커"* 로 되돌아가야 하고, 「통합자」라는 **머신 고정 역할은 지워야 한다.**
+κ.0 의 CI 러너 패턴(빌드 잡을 큐에 올리고 UE5 워커가 claim)이 정확히 그 형태다.
+
+### 12.6 코드 생성 프롬프트에 들어가야 하는 금지 3종
+
+원전 리뷰 프롬프트의 금지 규칙 — 🔴 **이유가 UE 특유라 우리 파이프라인에도 그대로 걸린다**:
+
+    클래스/컴포넌트/함수/UPROPERTY 멤버 리네이밍 금지   Blueprint 에셋이 C++ 상속 +
+    클래스 상속 구조 변경 금지                          UPROPERTY 직렬화 → 이름 변경 시 **에셋 깨짐**
+    모듈 간 코드 이동 금지                              빌드 의존성 + 에셋 참조 파괴
+
+*"LLM 은 코드만 분석 가능 — **UE5 에셋 의존 관계(Blueprint 상속·데이터테이블 참조)는 파악 불가**"*
+이고 `UCLASS(Blueprintable)`/`(BlueprintType)` 은 특히 주의. ⚠️ 우리 `frozen_decls` 는 **선언
+동결**이라 리네이밍의 일부를 막지만 **모듈 간 이동은 못 막는다.**
+
+### 12.7 그 밖에 건진 것 (이식·확인 목록)
+
+- 🔴 **`/manage-contract` 스킬이 `@ms-contract` 의 사용자 표면**이다 — 계약을 대화형 수집 →
+  `.h` 주석 태그 작성 → 커밋 시 declared invariant 자동 등재. **소 3.2.1 은 스킬까지 한 벌이다**
+- 🔴 **판정은 출력 문자열이 아니라 exit code 로** (2026-06-04 실측): headless 호출에서 CLI 가
+  *"256-color support not detected"* 경고와 함께 **자체 non-zero 종료** → 매번 폴백이 돌던 사고.
+  *"경고 텍스트는 실패 **결과** 화면이지 판정 입력이 아니다."* 해법도 우리에게 필요한 형태다 —
+  PC 마다 환경변수 수동 등록이 아니라 **호출 시점 `env=` 주입**(`COLORTERM`/`TERM`)으로 배포
+  산출물이 자동으로 들고 간다. 우리도 SSH 로 `claude -p`·`agy` 를 부른다
+- **도메인명은 영문 PascalCase 강제** — 이름이 **디렉토리 = DB 키 = URL 경로 = MCP 도구 인자**로
+  그대로 쓰여 비ASCII 는 `URL can't contain control characters` 로 도구를 깨뜨린다.
+  *"transport 인코딩으로 우회하지 말고 **생성 시점에** 영문으로 명명"*
+- **`redmine_tracker.update_issue(notify_children=True)`** — `parent_issue_id` 하위 이슈 전원에
+  변경 알림 노트 자동(2026-07-25). 🔴 우리 M4 가 중(부모)–소(자식) 구조라 그대로 쓸 만하다
+- **정보 3분할**: 도메인 문서(시스템 큰 그림·팀 공유·RAG) / 레시피(작업 step-by-step·로컬) /
+  안티패턴(함정 카탈로그·로컬 단일 파일 ~500–1500 토큰이라 매 작업 주입 가능)
+- **`.mcp.json`/`settings.json` 머지 정책**: 관리 대상은 **항상 덮어쓰기**, 사용자 항목은 보존,
+  `CLAUDE.md` 는 `<!-- AgentWatch:Start/End -->` **마커 구역만** 갱신
+- **co-commit 분석 제거(2026-05-18)**: 운영 측정 결과 **호출 0건** → 삭제. 측정으로 기능을 **빼는**
+  선례다 — *"영향 범위는 dependency + related_classes + 증분 + 통합 빌드 게이트로 커버"*
+- **`force_all` 재합성 금지** — 토큰 과소모 + **비결정성으로 inv/act 개수 변동(버그 아님)**
+- **합성 산출물 vs 인덱스** — `ontology/domains/`·`context/*.md` 는 **원본**(지우면 LLM 재합성 비용),
+  `vector_db/` 는 파생. 이관은 **앞의 둘만** 옮긴다
+- ⚠️ **헬스체크 prefix 매칭 함정**: 모델 태그를 prefix 로 매칭하면 `gemma4:e4b` 로 통과하고
+  실제 호출은 없는 모델명으로 실패한다. 우리 브로커의 상주 모델 판정도 같은 모양인지 볼 것
+- **`_ensure_port_free`**: **부모가 죽은 orphan 만** taskkill, 부모 생존 점유자는 경고만
+  (*"동명 exe 일괄 학살 금지"* — 다른 세션의 MCP child 보호)
+
 ### 🔴 이 세션이 남기는 한 줄
 
 **제약을 지키려고 요구를 희생하지 않는 것만으로는 부족했다 — 만들기 전에 그 자리에 무엇이
