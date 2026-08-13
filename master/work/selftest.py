@@ -164,6 +164,34 @@ def _ssh(host: str, user: str, cmd: str, *, timeout: int = 180) -> tuple:
     return r.returncode, ((r.stdout or "") + (r.stderr or "")).strip()
 
 
+def _q(method: str, url: str, payload=None, *, timeout: int = 30) -> tuple:
+    """큐 HTTP 한 번. `(rc, json|텍스트)`. **예외 대신 사실을 돌려준다.**
+
+    🔴 세 서비스 전부 bearer 토큰이 필수다(fail-closed). 토큰 파일 위치는 `auth` 가 SSOT 이므로
+    경로를 여기 다시 쓰지 않는다.
+    """
+    import json as _json
+    import urllib.error
+    import urllib.request
+    from ..auth import token_file
+    try:
+        tok = token_file().read_text(encoding="utf-8").strip()
+    except OSError as e:
+        return 0, f"토큰을 읽지 못했다: {e}"
+    data = _json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers={"Authorization": f"Bearer {tok}",
+                                          "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = r.read().decode("utf-8", "replace")
+            return r.status, (_json.loads(body) if body.strip() else {})
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", "replace")[:300]
+    except Exception as e:                                  # noqa: BLE001
+        return 0, f"{type(e).__name__}: {e}"
+
+
 def _sh(cwd: Path, *args: str) -> None:
     r = subprocess.run(["git", "-c", "user.email=cluster@local", "-c", "user.name=ax-cluster",
                         "-C", str(cwd), *args],
@@ -327,6 +355,7 @@ def run_dry(*, tasks: int = 3, keep: bool = False, base_nonce: str = "",
 
 def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
              work_fn_cmd=None, keep: bool = False, base_nonce: str = "",
+             via_queue: bool = False, queue_url: str = "http://127.0.0.1:8101",
              logf=None) -> DryRun:
     """실 작업장·실 Gitea 로 한 바퀴.
 
@@ -352,6 +381,8 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
     wtA, wtB = f"{checkout}/../_ax_st_A_{ts}", f"{checkout}/../_ax_st_B_{ts}"
     r = DryRun(work_id=work_id, tasks=n, nonces=nonces)
     made_remote: list = []
+    qwork = ""
+    qtasks: dict = {}
 
     def sh(cmd: str, *, cwd: str = checkout, timeout: int = 180) -> tuple:
         return _ssh(host, user, f'cd "{cwd}" && {cmd}', timeout=timeout)
@@ -394,6 +425,34 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
             made_remote.append(st_branch)
         log("push", f"base2={base2[:8]} → {st_branch}")
 
+        # ── 2b. 🔴 큐에 work + task 등재 (via_queue) ──────────────
+        # 원전 순서를 지킨다: **매니페스트를 base 에 넣은 뒤** task 를 등재한다.
+        # (task_id 는 등록 후 발급이라 매니페스트 경로를 task_id 로 잡으면 rebase race 가 난다.)
+        qtasks: dict = {}
+        if via_queue:
+            st, wr = _q("POST", f"{queue_url}/api/v1/works", {
+                "title": f"[cluster-selftest] {ts} ({n} tasks)",
+                "target_repo": checkout, "target_branch": st_branch,
+                "branch_isolation": True, "created_branch_at": base2, "slug": slug,
+                "decomposition": "".join(f"- L0 selftest_probe_{i}\n" for i in range(n)),
+                "distribution_mode": "push", "force_duplicate": True})
+            qwork = (wr or {}).get("work_id", "") if isinstance(wr, dict) else ""
+            r.chk("🔴 큐에 work 등재", bool(qwork), f"{st} {str(wr)[:200]}")
+            for i in range(n):
+                st, tr = _q("POST", f"{queue_url}/api/v1/tasks", {
+                    "work_id": qwork, "type": "implement_module",
+                    "task_data": {"stem": f"probe_{ts}_{i}",
+                                  "classes": [f"selftest_probe_{i}"]},
+                    "base_commit": base2, "target_file": probe_rels[i], "header_file": "",
+                    "depends_on": [], "hierarchy_level": 0, "priority": 0,
+                    "stem": f"probe_{ts}_{i}", "origin": "selftest"})
+                tid_q = (tr or {}).get("task_id", "") if isinstance(tr, dict) else ""
+                r.chk(f"큐에 task[{i}] 등재", bool(tid_q), f"{st} {str(tr)[:200]}")
+                qtasks[i] = tid_q
+            r.chk("전 task 가 depends_on 없이 동시 claimable",
+                  len(qtasks) == n and all(qtasks.values()))
+            log("queue", f"work={qwork} tasks={list(qtasks.values())}")
+
         # ── 3. wtB: 작업장 역할 — git 으로만 매니페스트를 받는다 ──
         rc, out = sh(f'git worktree add -q --detach "{wtB}" {base2}')
         r.chk("wtB(작업장 역할) worktree 생성", rc == 0, out[:200])
@@ -401,8 +460,32 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
         r.chk("🔴 매니페스트가 **git 으로** 작업장 트리에 도착했다 (직접 쓴 것 0)",
               rc == 0 and man_rel in out and out.strip().endswith(man_rel), out[:200])
 
-        # ── 4. 각 probe: 작업장이 매니페스트를 읽고 편집 → attempt push ──
-        for i in range(n):
+        # ── 4. 각 probe: (큐 claim →) 작업장 편집 → attempt push (→ submit/verify) ──
+        #
+        # 🔴 `via_queue` 면 **어느 probe 를 받을지 큐가 정한다.** 우리가 순서를 고르면 claim
+        # 로직(우선순위·의존·epoch 발급)을 재는 게 아니라 우회하는 것이 된다.
+        by_qtid = {v: k for k, v in qtasks.items() if v}
+        order = list(range(n))
+        claimed: dict = {}
+        if via_queue:
+            order = []
+            for _ in range(n):
+                stc, tc = _q("POST", f"{queue_url}/api/v1/tasks/claim",
+                             {"worker_id": f"selftest-{host}", "verify_capable": False})
+                qtid = (tc or {}).get("task_id", "") if isinstance(tc, dict) else ""
+                idx = by_qtid.get(qtid)
+                r.chk(f"큐 claim {len(order)+1}/{n} — 우리 task 를 받았다",
+                      idx is not None, f"{stc} task_id={qtid!r}")
+                if idx is None:
+                    break
+                claimed[idx] = tc
+                order.append(idx)
+            r.chk("🔴 claim 이 epoch 를 발급했다 (fencing 전제)",
+                  bool(claimed) and all(int(t.get("epoch", 0)) >= 1 for t in claimed.values()),
+                  str({k: v.get("epoch") for k, v in claimed.items()}))
+            r.chk(f"전 task 가 claim 됐다 ({len(order)}/{n})", len(order) == n)
+
+        for i in order:
             tid = f"{work_id}.{i}"
             att, dur = attempt_branch(tid, host.replace(".", "-"), f"t{i}"), durable_branch(tid)
             sh(f"git checkout -q -B {att} {base2}", cwd=wtB)
@@ -426,6 +509,22 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
             r.chk(f"probe[{i}] durable 생성·push", rc == 0, out[:200])
             if rc == 0:
                 made_remote.append(dur)
+            if via_queue and qtasks.get(i):
+                qtid = qtasks[i]
+                rc_h, head = sh(f"git rev-parse HEAD", cwd=wtB)
+                sts, sres = _q("POST", f"{queue_url}/api/v1/tasks/{qtid}/submit", {
+                    "branch": att, "head_commit": head.strip(),
+                    "self_check": {"selftest": True},
+                    "epoch": int(claimed.get(i, {}).get("epoch", 1))})
+                r.chk(f"probe[{i}] 큐 submit", sts == 200 and isinstance(sres, dict)
+                      and sres.get("ok", True) is not False, f"{sts} {str(sres)[:200]}")
+                stv, vres = _q("POST", f"{queue_url}/api/v1/tasks/{qtid}/verify",
+                               {"result": "pass", "passed": True})
+                r.chk(f"probe[{i}] 큐 verify(pass)", stv == 200, f"{stv} {str(vres)[:200]}")
+                stg, tst = _q("GET", f"{queue_url}/api/v1/tasks/{qtid}")
+                status = (tst or {}).get("status", "") if isinstance(tst, dict) else ""
+                r.chk(f"🔴 probe[{i}] 큐 상태가 verified", status == "verified",
+                      f"status={status!r}")
 
         # ── 5. 🔴 마스터가 **독립적으로** 검증한다 (읽기만) ──────
         #
@@ -459,6 +558,17 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
             r.kept_at = f"{host}:{wtA},{wtB} · 원격: {', '.join(made_remote)}"
             log("cleanup", f"keep — 보존: {r.kept_at}")
         else:
+            if via_queue and qtasks:
+                for tid_q in qtasks.values():
+                    if tid_q:
+                        _q("POST", f"{queue_url}/api/v1/tasks/{tid_q}/cancel", {})
+                # 🔴 **work 도 종결한다.** 원전 실측(2026-06-21, 배포에서 5건 발견):
+                #    task cancel·브랜치 삭제만으론 work 메타가 `in_progress` 로 잔존해
+                #    watcher 가 paused 되고 큐에 잔재가 쌓인다.
+                if qwork:
+                    stp, _ = _q("PATCH", f"{queue_url}/api/v1/works/{qwork}",
+                                {"merge_status": "cancelled"})
+                    r.chk("🔴 큐의 work 도 종결됐다 (in_progress 잔존 방지)", stp == 200, str(stp))
             for br in made_remote:
                 sh(f"git push -q origin --delete {br} 2>&1 | tail -1")
             sh(f'git worktree remove --force "{wtA}" 2>&1 | tail -1')
