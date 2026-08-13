@@ -38,6 +38,8 @@ from .. import source_text
 from ..context_search.paths import ProjectPaths, SOURCE_SUBDIR
 from .class_graph import GraphError, _git
 
+from .. import sqlite_util
+
 _INCLUDE_RE = re.compile(r'#include\s+"([^"]+)"')
 
 # 원본과 같은 집합을 유지한다. `.cs`(UBT Build.cs)·`.py` 는 `#include` 가 없어 간선 0 으로
@@ -89,8 +91,8 @@ def connect(paths: ProjectPaths) -> sqlite3.Connection:
     conn = sqlite3.connect(str(paths.dependency_graph_db), check_same_thread=False,
                            isolation_level=None)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")     # 색인기와 검색기가 별개 프로세스다
-    conn.execute("PRAGMA busy_timeout = 10000")
+    # 🔴 값은 `master/sqlite_util.py` 가 단일 소유 (소 3.5.3).
+    sqlite_util.apply(conn)
     conn.execute("PRAGMA synchronous = NORMAL")
     try:
         conn.executescript(SCHEMA)

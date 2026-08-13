@@ -29,6 +29,8 @@ from . import generation
 from .documents import Document, iter_documents
 from .paths import ProjectPaths
 
+from .. import sqlite_util
+
 # 원본과 동일. 바꾸면 기존 색인과 순위가 어긋난다.
 TAGS_BOOST = 3.0
 CATEGORY_BOOST = 1.5
@@ -156,6 +158,11 @@ class Bm25Index:
         paths.bm25_db.parent.mkdir(parents=True, exist_ok=True)
         # check_same_thread=False — FastAPI 워커 스레드에서 검색을 부른다.
         self._conn = sqlite3.connect(str(paths.bm25_db), check_same_thread=False)
+        # 🔴 프로세스 간 안전 (소 3.5.3). `bm25.db` 는 **두 프로세스**가 연다 —
+        #    색인기(master.events.consumer, 쓰기)와 서비스(master.projects, 읽기).
+        #    아래 `self._lock` 은 프로세스 **안**만 막는다. 2026-08-14 에 형제 모듈
+        #    (`graph/db.py`·`graph/dependency.py`)에는 있고 여기만 빠져 있던 것이 발견됐다.
+        sqlite_util.apply(self._conn)
         # 첫 검색 콜드미스(~200ms) 회피. 원본과 같은 값.
         self._conn.execute("PRAGMA mmap_size = 67108864")   # 64MB OS-level mmap
         self._conn.execute("PRAGMA cache_size = -8000")     # 8MB SQLite 캐시

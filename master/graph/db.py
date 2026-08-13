@@ -26,6 +26,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
+from .. import sqlite_util
 from ..context_search.paths import ProjectPaths
 
 # 스키마는 완성형이다 — 위 ⑵ 참조. `IF NOT EXISTS` 라 멱등이다.
@@ -98,10 +99,9 @@ def connect(paths: ProjectPaths) -> sqlite3.Connection:
                            isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")      # methods/class_ontology 의 CASCADE 를 위해
-    conn.execute("PRAGMA journal_mode = WAL")     # 🔴 읽기와 쓰기가 서로 막지 않게
-    conn.execute("PRAGMA busy_timeout = 10000")   # 🔴 다른 프로세스가 쓰는 중이면 기다린다
-                                                  #    (원본 실측값 SQLITE_BUSY_TIMEOUT_MS=10000)
-    conn.execute("PRAGMA synchronous = NORMAL")
+    # 🔴 값은 `master/sqlite_util.py` 가 단일 소유 — 세 곳에 흩어져 있다가
+    #    bm25 에서만 빠진 것이 2026-08-14 에 발견됐다.
+    sqlite_util.apply(conn, synchronous="NORMAL")
     try:
         conn.executescript(SCHEMA)
     except sqlite3.Error:

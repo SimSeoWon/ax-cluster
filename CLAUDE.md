@@ -27,12 +27,13 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   **Read only the open milestone** — closed ones are reference; don't load them. Progress
   lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
   🔴 **Neither the numerator nor the denominator is written in any document** — read both from
-  Redmine (version *마일스톤 3*). Hand-kept numerators drifted twice in M2, and the *denominator*
-  moved on 2026-08-10 (32 → 36) when reading the predecessor's design doc uncovered missing work.
-  M3 structure: 대 3 / 중 10 — **소분류가 작업 단위다**, main is 대 1 (decompose →
-  skeleton + **frozen interface** → parallel generate → **sequential apply**). 대 2 is the
-  3-layer verdict; 대 3 is the operator surface. Never size a task by line count:
-  `class_graph`'s 1,341 lines turn out to be *"delete the file → full rescan on restart"*.
+  Redmine (version *마일스톤 4*). Hand-kept numerators drifted twice in M2, and the denominator
+  moves whenever reading the origin uncovers work: M3 went 32 → 36, and **M4 went 62 → 70 in one
+  session** (three separate reads each found real gaps). That movement is normal — record it.
+  M4 structure: 대 4 / 중 17 — **소분류가 작업 단위다**. 대 1 topology restore · 대 2 turn the
+  four open M3 items into ports · 대 3 un-ported assets · 대 4 recover the method/norms.
+  Never size a task by line count: `class_graph`'s 1,341 lines turn out to be
+  *"delete the file → full rescan on restart"*.
   🔴 **Two M2 rules that still bind here**: never bulk-regenerate the 1,055 snapshot docs (our
   local model measured *worse* than the received snapshot), and never hand-tune search weights
   before there is an answer set. M2's **「여기서 배운 것」** section is the short list of traps
@@ -167,8 +168,23 @@ isolated tree (nothing is lost) and a human decides — the pipeline does not re
 **세는 법**을 적는다. pytest 는 없다 — 각 파일이 그대로 실행된다.
 
 ```bash
-# 전부 돌리고 합계를 센다 (실패가 있으면 파일명이 뜬다)
-for f in master/test_*.py; do .venv/bin/python "$f" 2>&1 | tail -1; done
+# 전부 돌리고 합계를 센다 — 🔴 **판정은 종료코드로, 수치는 두 형식 모두 읽는다**
+# (옛 `| tail -1` 은 틀렸다: ① 마지막 줄이 구분선인 파일 13개를 못 셌고 ② 크래시한 파일은
+#  수치를 안 찍어 **합계가 그대로 보였다** — 2026-08-14 에 import 실수로 3개가 죽었는데
+#  합계가 안 변해서 못 봤다. 실패는 rc 로, 수치는 두 형식으로.)
+fail=0; pass=0; total=0
+for f in master/test_*.py; do
+  out=$(.venv/bin/python "$f" 2>&1); rc=$?
+  n=$(echo "$out" | grep -oE '[0-9]+/[0-9]+ 통과' | tail -1 | grep -oE '[0-9]+/[0-9]+')   # 형식 A
+  if [ -n "$n" ]; then pass=$((pass+${n%%/*})); total=$((total+${n##*/}))
+  else                                                                                    # 형식 B
+    a=$(echo "$out" | grep -oE '통과 [0-9]+' | tail -1 | grep -oE '[0-9]+')
+    b=$(echo "$out" | grep -oE '실패 [0-9]+' | tail -1 | grep -oE '[0-9]+')
+    [ -n "$a" ] && { pass=$((pass+a)); total=$((total+a+${b:-0})); } || echo "수치 못 읽음: $f"
+  fi
+  [ $rc -ne 0 ] && { echo "🔴 rc=$rc $f"; fail=$((fail+1)); }
+done
+echo "$pass/$total 통과 · 실패 파일 $fail개"
 
 # 한 건만
 .venv/bin/python master/test_runner.py       # 워커 파견 — fail-closed 마커·계측
