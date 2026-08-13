@@ -32,6 +32,7 @@ from pathlib import Path
 
 from ..context_search.paths import ProjectPaths
 from . import norms as norms_mod, twin_base
+from . import conventions
 
 MANIFEST_DIR = "manifests"
 
@@ -212,6 +213,30 @@ def build(
         lines.extend(_format_hits(found))
     else:
         lines.append("_(없음)_")
+    lines.append("")
+
+    # 🔴 **프로젝트 코드 규약** (소 3.5.7) — 도메인 규범 **앞**에 둔다.
+    #
+    # 순서 근거는 리포트 12 §2 의 실측과 같다: *"뒤로 갈수록 베껴야 하는 것"* 이라 지시에
+    # 가깝게 둔다. 규약은 *무엇을 지킬지*(전역), 도메인 규범은 *이 도메인에서 무엇을
+    # 지킬지*(국소), 골조·선언부는 *정확한 철자*다.
+    #
+    # 🔴 프로젝트의 `CLAUDE.md` 가 SSOT 다 — 베끼면 어긋난다(§14.5-④).
+    lines.append("## 프로젝트 코드 규약\n")
+    try:
+        conv_body, conv_note = conventions.bundle(paths.repo)
+        lines.append(conv_body)
+        if conv_note:
+            # ⚠️ **`degraded` 로 올리지 않는다.** 프로젝트 `CLAUDE.md` 는 그 프로젝트에서
+            # **gitignore 대상**이라(AgentWatch 가 관리하는 로컬 문서) 미러에 **없는 것이
+            # 정상**일 수 있다. 없다고 `ok=False` 로 만들면 그것이 상시가 되어
+            # 🔴 *"항상 빨간 게이트는 게이트가 아니다"* 가 된다.
+            # 대신 **본문에 적어** 작업장과 사람이 그 사실을 보게 한다.
+            lines.append(f"\n⚠️ 프로젝트 규약을 싣지 못했다 — {conv_note}\n")
+    except Exception as e:                           # noqa: BLE001 — 등록을 막지 않는다
+        # 🔴 예외는 다르다 — 있어야 할 것을 읽다 터진 것이므로 수집 결손으로 센다.
+        lines.append("_(수집 실패)_")
+        degraded.append(f"코드 규약 수집 실패: {type(e).__name__}: {e}")
     lines.append("")
 
     # 🔴 빈 채로 숨기지 않는다 — 없다는 사실 자체가 정보다.
