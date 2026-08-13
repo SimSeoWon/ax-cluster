@@ -696,6 +696,154 @@ README 후처리 절: *"모든 task verified 직후 feature 브랜치에서 UE B
 서사**(κ 미결정 Flow X/Y · σ 결정 로그)에 있었고 그건 항목명에 안 나온다.
 **문서의 성격이 읽는 법을 정한다 — 완료 기록은 색인, 설계·결정 로그는 정독.**
 
+## §14. 소 1.2.1 — `cluster_coordinator.py` 200줄 대조 · Flow Y 이식 설계 (`#122`)
+
+### 14.1 ⚠️ 내가 틀린 것 먼저 — 마스터에 소스 정본이 **있다**
+
+`ModularStage/Source` 를 보고 *"마스터에 프로젝트 클론이 없다"* 고 했는데 **틀렸다.**
+사용자 지적으로 다시 찾았다 — 정본은 `ax-cluster/ModularStage/**repo/**` 다:
+
+    추적 파일 2,228 · branch main · HEAD b1ba6af   (리포트 13 의 워커 체크아웃과 같은 커밋)
+    fetch  /var/lib/gitea/gitea-repositories/sim/modularstage.git   ← 로컬 bare, 네트워크 0
+    push   🔴 DISABLED://마스터는-소스저장소에-push하지-않는다-PLAN.md-2.1
+
+🔴 **push URL 이 사유를 담은 문자열로 봉인돼 있다.** 규칙을 문서에만 적지 않고 **기계가 거부하게**
+만든 것이라, 이 저장소에서 가장 잘 만든 가드 중 하나다. `ModularStage/.gitignore` 가 `repo/` 를
+제외해 트윈 저장소와 섞이지도 않는다.
+
+### 14.2 🔴 그래서 Flow Y 가 **기존 원칙과 정면으로 충돌한다**
+
+    Flow Y (원전 κ, 미확정 → 사용자 확정 2026-08-14)
+        마스터가 소스를 읽어 노드에 추론 요청 → **받은 diff 를 attempt 브랜치에 commit·push**
+
+    우리 §2.1 (settled) · CLAUDE.md 하드룰 · work/twin_base.py · push URL 봉인
+        🔴 "마스터는 인프라지 작업장이 아니다 · **파일을 소유하지 않는다** · 마스터는 소스
+           저장소에 push 할 수 없다 · 브랜치를 **만드는 것은 요청자**다"
+
+**넷이 같은 말을 하고 있고 그중 하나는 기계 장치다.** 라벨만 고쳐서 넘길 수 없다.
+
+⚠️ 다만 원전 κ.1 은 그 경계를 우리보다 **가늘게** 그었다: *"BC-250 노드는 파일을 갖지 않고,
+**마스터는 정본 git 저장소를 보유** — RAG·온톨로지·소스 조립은 소스를 **읽는** 작업이라 원칙 위반
+아님. 파일을 **수정·컴파일** 하는 것만 파일 소유 워커에 남는다."* 즉 원전 기준으로 금지된 것은
+**수정·컴파일**이고 우리는 그것을 *"파일 I/O 자체"* 로 넓게 읽었다.
+
+### 14.3 이식 대조표 — 5칸 중 **셋은 이미 돼 있었다**
+
+| 원전 | 우리 | 상태 |
+|---|---|---|
+| `branch_names.py` (durable `task/<id>` · attempt 4토큰 · glob · parse) | `work/branch_names.py` | ✅ **이식 + 개선** — `BranchNameError` 검증 추가(*"조용히 정규화하지 않는다"*) · `parse_durable` 추가 · `worker_id`→`workshop` 개명 · `select_work_branch`(pull 레거시 플래그) **의도적 제거** |
+| epoch fencing (`submit_epoch < current_epoch` → zombie 거부) | `task_queue/logic_claim.py:200` 배정마다 단조 증가 · `:118` verifier_epoch · `logic_lifecycle._is_stale_epoch` · `models.py:98` · server 배선 | ✅ **완전 이식** → 🔴 **`#124` 는 이미 완료다** |
+| 매니페스트 4함수 (`manifest_rel`/`build`/`write`/`read`) | `work/manifest.py` (`manifest_path`/`build`/`write`/`read`/`collect`) | ✅ 이식 |
+| `cleanup_attempts` — `push --delete` 로 원격 ephemeral 제거 | `work/cleanup.py` — `_OURS=^(attempt|task)/`, 원격은 **세기만 하고 건드리지 않음** | ⚠️ **의도적으로 다르다**(§14.4) |
+| `assign_attempt` · `push_attempt` · `fake_worker` · `run_round` | — | 🔴 **없다** |
+
+### 14.4 ⚠️ `cleanup_attempts` 는 「복원」이 아니라 **판단**이다
+
+우리 `cleanup.py` 는 원격 attempt 를 일부러 안 지운다 — 주석 원문: *"`push --delete` 는 하지
+않는다. 원격 attempt/task 를 없애는 것은 **요청자와 사람의 판단**이고, *'항상 attempt 를 push
+한다'* 는 **증거 보존**이 목적이므로."* 그리고 08-09 결정(*"attempt 를 성공·실패 무관 push"*)이
+그 근거다.
+
+원전은 반대로 **리더의 terminal 결정(finalize/reject) 시 `_cleanup_all_work_branches` 로 일괄
+정리**한다(v5 C.7). 🔴 **둘 다 일관성이 있고 시점이 다르다** — 원전은 *"work 가 끝났으면 지운다"*,
+우리는 *"사람이 지운다"*. `#125` 를 그냥 「복원」하면 증거 보존 결정을 말없이 뒤집는다.
+
+### 14.5 🔴 프로젝트 `CLAUDE.md` 가 이식 설계의 절반을 갖고 있었다
+
+`ModularStage/repo/CLAUDE.md` — 마스터 미러의 로컬 문서(gitignore 대상). 우리 저장소에서 **인용 0회**.
+
+**① 커밋 규약이 이미 우리 파이프라인을 전제한다:**
+
+    "This repo is also written to by the AX cluster's distributed pipeline,
+     so history mixes human and machine commits."
+    [skeleton] <feature>: N files for distributed implementation
+    [verify-merge] <hash> <path> by <workshop-host>          ← 🔴 workshop 이 verify-merge 한다
+    [review fix] <what> (work=<work-id>)
+    Merge work <work-id>: <Title>   + Reviewed-by: / Refs-work: 트레일러
+    Work branches: work/<YYYYMMDD_HHMM>_<slug>
+
+⚠️ `[verify-merge] … by <workshop-host>` 는 **Flow X 형태**다. Flow Y 로 가면 이 규약도 바뀐다.
+
+**② 🔴 빌드가 여기서 깨질 수 있다 (층3 에 직결):**
+
+    빌드 대상은 `ModularStageEditor` 뿐 — `ModularStage`(Game) 은 Build.cs 가 UnrealEd 를
+      bBuildEditor 밖에 둬서 **clean build 자체가 불가**
+    편집기 모듈은 `ShadowVariableWarningLevel = Error` → 🔴 **변수 하나만 가려도 하드 빌드 실패**
+    `Project_Alpha` (~1,400파일) = **legacy reference only, 빌드·리팩터 금지** — 코드는 여기서
+      *포팅해 나온다*. 우리 `porting.py` 의 「원본」이 이것이다
+    `Source/MissionTools/` 는 gitignored (별도 `MissionEditorMCP` 저장소)
+
+**③ 🔴 우리 「파일 전체 반환」 프로토콜이 노이즈 diff 를 만든다 — 새 위험:**
+
+> *"Some older `Build.cs` / source comments are **mojibake** (cp949 read as UTF-8). **Leave them;
+> don't "fix" the encoding as a drive-by, it produces noisy diffs.**"*
+
+우리 `source_text.decode` 는 CP949 폴백이라 **읽으면 제대로 읽힌다.** 그런데 워커 프로토콜이
+*"파일 전체 내용을 쓴다"* 이므로, 그 파일을 건드리면 **mojibake 주석이 정상 한글로 정규화되어**
+프로젝트가 명시적으로 금지한 노이즈 diff 가 된다. ⚠️ **층1 이 이걸 못 잡는다** — 문법은 맞고
+동결 선언도 안 깨지니까. 마일스톤 3 이 남긴 *"인코딩이 유실된 사본으로 동결을 판정하지 않는다"* 와
+같은 자리인데 **방향이 반대**다(그쪽은 못 읽는 문제, 이쪽은 **너무 잘 읽는** 문제).
+
+**④ 코드 규약 — 생성 프롬프트에 실려야 한다** (우리 매니페스트가 나르는지 확인 필요):
+주석은 **한국어** · 헤더 `UPROPERTY` 객체 참조는 전부 `TObjectPtr<T>` · `IsValid(X)` (`!= nullptr`
+금지) · `Cast<T>` 결과 직접 검사(`IsA()` 후 `Cast` 금지) · IWYU(`.h` 전방선언 / `.cpp` include,
+**되돌리면 안 되는 구체 사례 2건 명시**) · `FTimerHandle` 은 항상 멤버 · 복제 컴포넌트는 생성자
+`CreateDefaultSubobject`(`BeginPlay` 의 `NewObject` 금지) · 매직넘버 금지 → `UPROPERTY(EditDefaultsOnly)`
+· 🔴 **서브시스템은 절대 복제되지 않는다** · 이벤트는 **local-scope only**.
+
+### 14.6 Flow Y 이식 설계 — 남은 것은 «누가 어떻게 쓰나» 하나
+
+셋이 이미 됐으니 설계의 실질은 **`assign_attempt` + `push_attempt` 의 자리**다.
+
+    Flow Y 흐름 (κ.0 + κ.3 + CI 러너 패턴)
+      ① 마스터: 큐에서 배정(epoch↑) → 정본에서 소스 읽기 → 매니페스트(이미 있음) →
+                노드/상용에 추론 요청 → **파일 전체 텍스트** 수신
+      ② 마스터: 층1 → attempt 브랜치에 commit·push          ← 🔴 여기가 §2.1 충돌 지점
+      ③ 큐: 빌드 잡 등재 → UE5 워커가 claim → pull → 빌드/RunTests → 보고 (판단 안 함)
+      ④ 마스터: 보고를 받아 durable merge (epoch fencing 은 이미 있다)
+
+②의 구현 후보 셋. 🔴 **우리 응답이 이미 「파일 전체 텍스트」라 (B)가 성립한다:**
+
+| | 방식 | §2.1 | 비용 |
+|---|---|---|---|
+| A | 마스터에 격리 worktree 를 만들어 파일을 쓰고 commit·push | 🔴 **위반** — 원칙·하드룰·push 봉인 셋을 고쳐야 한다 | 낮음(기존 `integrate.py` 재사용) |
+| **B** | 🔴 **bare 저장소에 git plumbing** — `hash-object -w` → `update-index`/`mktree` → `commit-tree` → `update-ref`. **워킹트리 0 · 파일 I/O 0** | ✅ **문자 그대로 지킨다** (git 객체만 쓴다) | 중간(plumbing 코드 + 테스트) |
+| C | 마스터가 「쓰기 주체」이나 실제 git 연산은 요청자/워커에 지시 | ✅ 유지 | 사실상 **Flow X 회귀** |
+
+⚠️ (B)는 부수 효과도 하나 해결한다 — **mojibake 파일을 건드리지 않은 채로 두는 것이 쉬워진다**
+(변경된 blob 만 새로 쓰고 나머지는 base tree 그대로 재사용하므로 §14.5-③ 의 노이즈 diff 위험이
+구조적으로 줄어든다).
+
+### 14.7 🔴 구조가 바뀐 이유 — **에이전트는 한 곳, 저장소는 여럿** (사용자 2026-08-14)
+
+> *"기존 윈도우에서 처리할 때와 달리 **에이전트가 배치된 곳이 하나고 다른 레포들을 관리할 수
+> 있어야 해서** 구조가 조금 바뀌었어."*
+
+이것이 §14.1 의 디렉토리 모양을 설명한다. 원전은 **PC 마다 배포**되고 각 PC 에 프로젝트가
+**하나**라 경로가 프로젝트 루트 기준이었다(`paths.py:5-6` 이 그 차이를 적어 뒀다 —
+*"AgentTest 는 루트를 기동 시 인자로 고정했다"*). 우리는 마스터 한 대가 **N개 저장소**를 관리한다:
+
+    projects.yaml            active: ModularStage   🔴 가리키는 프로젝트는 한 번에 하나
+    <프로젝트>/
+      config.yaml
+      context/      원본 · 컨텍스트 MD
+      ontology/     원본 · 도메인 yaml
+      repo/         🔴 **소스 클론** — 색인 대상은 `repo/Source` 뿐 (push 봉인)
+      manifests/  responses/
+      bm25.db · bm25_domains.db · class_graph.db     파생
+
+🔴 **그래서 §2.1 의 *"파일을 소유하지 않는다"* 는 *"미러를 갖지 않는다"* 가 아니라 *"작업장이
+아니다 = 수정·빌드하지 않는다"* 로 읽어야 한다.** 미러 N개는 트윈을 짓기 위한 **읽기 자산**이고,
+push 봉인이 그 읽기 전용성을 기계로 강제한다. 원전 κ.1 이 그은 경계(*"읽기는 위반 아님, 수정·컴파일만
+워커"*)와 **정확히 같다** — 우리가 문장을 더 넓게 읽고 있었을 뿐이다.
+
+⚠️ **그리고 이 사실이 §14.6 의 선택에 무게를 준다**: (A)는 마스터에 작업 worktree 를 두는데
+그것을 **N개 프로젝트마다** 둬야 하므로 *"작업장이 아니다"* 를 깨는 표면이 N배가 된다.
+(B)는 프로젝트마다 **bare 에 객체만** 쓰므로 N개에 균일하게 확장되고 미러의 읽기 전용성이 유지된다.
+
+🔴 **A / B / C 는 사용자 결정 사항이다** — §2.1 은 settled 이고 push 봉인은 기계 장치다.
+내 판단으로 고르지 않는다.
+
 ### 🔴 이 세션이 남기는 한 줄
 
 **제약을 지키려고 요구를 희생하지 않는 것만으로는 부족했다 — 만들기 전에 그 자리에 무엇이
