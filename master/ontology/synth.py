@@ -16,9 +16,15 @@
 (`collect.members_of` + `layers.estimate_domain`). LLM 에게 물으면 있는 답을 지어내게 하는
 것이고, 그건 **틀릴 여지만 늘린다.** 기본값은 `objects=None` — 기존 목록을 건드리지 않는다.
 
-**⑵ 노드를 넘어뜨리지 않는다.** `num_ctx` 를 요청에 **반드시** 싣는다. 안 실으면 모델 기본
-`context_length`(256K) 전제로 KV 를 잡아 보드가 멈춘다 — 실측 사고 이력이 있다(리포트 10 §8).
-프롬프트 예산은 `contexts.TOTAL_CHARS` 가 지킨다. **두 값은 함께 움직인다.**
+**⑵ 노드를 넘어뜨리지 않는다.** `num_ctx` 를 요청에 **반드시** 싣는다. 프롬프트 예산은
+`contexts.TOTAL_CHARS` 가 지킨다 — **두 값은 함께 움직인다.**
+
+⚠️ **정정 2026-08-15.** 여기 있던 *"안 실으면 모델 기본 `context_length`(256K) 전제로 KV 를
+잡아 보드가 멈춘다"* 는 **지금 조건에서 사실이 아니다.** 실측: `num_ctx` 없는 요청을 그 보드
+Ollama 가 **`n_ctx = 4096`** 으로 올린다(`n_ctx_train = 262144` 는 모델 메타일 뿐이다).
+🔴 **그래도 값을 싣는 이유는 남는다 — 어긋나면 통째로 재적재한다**(실측 **59.6초**:
+4096 상주에 8192 요청). 브로커의 상주 복구 경로에 이 값이 빠져 있어서 매번 그 비용이 붙고
+있었다(2026-08-15 에 고쳤다).
 
 **⑶ 실패는 예외가 아니라 결과다.** 한 도메인이 죽었다고 배치를 멈추지 않는다. 다만 연속
 실패가 임계에 닿으면 **중단한다** — 노드가 죽은 채로 7개를 태울 이유가 없다.
@@ -57,9 +63,15 @@ NUM_CTX = 8192
 TIMEOUT = 600
 CIRCUIT_THRESHOLD = 3
 
-# 🔴 BC-250 은 요청마다 ~170MB 를 쥐고 안 놓는다(리포트 10 §8 실측). 조각으로 나누면
-# 요청 수가 늘어 그 누적이 곧 문제가 된다 — 그 레인만 주기적으로 모델을 내려 회수한다.
-# 전용 VRAM 노드(`.2`)는 해당 없으므로 0.
+# 🔴 BC-250 은 요청마다 메모리를 쥐고 **안 놓는다.** 재실측 2026-08-15: 8192 상주 상태에서
+# 작은 요청 하나에 `available` 이 1211 → 1048 → 989MB 로 **약 60MB씩** 줄었다(옛 기록의
+# ~170MB 는 더 큰 프롬프트 기준이다). 그 보드는 모델이 12.3GB 를 먹어 **여유가 138~300MB**
+# 뿐이라, 요청 몇 개면 zram 스래싱 → 정지다(실측: 03:04 OOM · 03:11 정지 · 03:22 자체 재부팅).
+#
+# 🔴 **그런데 이 가드는 지금 한 번도 안 돈다** — `n` 이 `_lane` 호출마다 리셋되는데 우리
+# 도메인은 레인당 조각이 1~3개다(2026-08-15 실측: 이 세션 35B 요청 ~14회 · 회수 0회).
+# ⚠️ 고치려면 `keep_alive:-1` 상주와의 충돌을 먼저 정해야 한다 — 내리면 다음 요청이 60초
+# 재적재다. **재고 나서 정할 일이라 지금은 기록만 한다.**
 UNLOAD_EVERY = {HEAVY_MODEL: 5}
 
 # 🔴 **상용 CLI 도 레인이 될 수 있다** (사용자 지시 2026-08-09: *"노드 둘 다 클로드도 로그인
@@ -102,6 +114,7 @@ class DomainResult:
     invalidation: object = None           # `invalidate.Invalidation` — partial 일 때만
     invalidated: int = 0                  # 실제로 지운 yaml 수 (쓰기 직전)
     settled: int = 0                      # 🔴 워터마크를 올린 오브젝트 수 (stale 이 가라앉는다)
+    unreflected: set = field(default_factory=set)   # 🔴 조각이 실패해 **재추출 못 한** 클래스
     descriptions: str = ""                # 레이어 책임 서술 결과 한 줄 (full 일 때만 · 소 3.1.4)
 
     @property
@@ -128,6 +141,10 @@ class DomainResult:
             s += f" · 조각간 중복 {self.collisions_actions + self.collisions_invariants}"
         if self.settled:
             s += f" · 워터마크 {self.settled}건 갱신"
+        if self.unreflected:
+            s += (f" · 🔴 미반영 {len(self.unreflected)}클래스"
+                  f"({', '.join(sorted(self.unreflected)[:3])}"
+                  f"{'…' if len(self.unreflected) > 3 else ''})")
         if self.descriptions:
             s += f" · {self.descriptions}"
         if self.dropped_facts:
@@ -282,12 +299,17 @@ def _lane(chunks: list, model: str, doc, kind: str, *, broker: str, num_ctx: int
         except GenerateError as e:
             res.reasons.append(f"{kind}[{ctx.summary}] LLM 실패: {e}")
             res.llm_failed = True
+            # 🔴 **이 조각의 클래스는 반영되지 않았다.** 기록하지 않으면 settle 이
+            # 도메인 전체를 「반영했다」로 찍어 낡은 문서가 정합으로 위장한다
+            # (2026-08-15 실측: 노드가 죽어 12개 클래스가 그렇게 위장됐다).
+            res.unreflected |= ctx.names
             continue
         try:
             got = (read_back(raw, allowed=res.allowed) if kind == "actions"
                    else read_back(raw))
         except parse.ResponseError as e:
             res.reasons.append(f"{kind}[{ctx.summary}] 응답 거부: {e}")
+            res.unreflected |= ctx.names      # 받긴 했지만 쓸 수 없었다 = 미반영
             continue
         res.parse_notes.append(f"{kind} {ctx.summary} → {got.summary}")
         out.append(got.items)
@@ -433,7 +455,10 @@ def refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT_
         # η.7.2 제안 2 의 self-settling). 🔴 **성공했을 때만** 찍는다: 실패한 재합성이
         # "반영했다" 고 말하면 낡은 문서가 조용히 정합으로 위장한다.
         from . import stale as stale_mod
-        res.settled = stale_mod.settle(paths, domain, scope_members if res.partial else None)
+        # 🔴 **미반영 클래스는 settle 하지 않는다** — 그 클래스는 이번 합성이 못 봤다.
+        # 찍으면 다음 사이클이 「정합」으로 읽어 **영영 다시 안 본다.**
+        covered = set(scope_members if res.partial else members) - res.unreflected
+        res.settled = stale_mod.settle(paths, domain, covered)
         # 레이어 책임 서술 (원본 η.7.4) — 🔴 **full 전용.** 서술은 클래스 한둘 변경에 둔감해서
         # 부분 갱신마다 다시 뽑는 것은 과호출이다(원본 게이트 그대로). 쓰기 **직후**라
         # `collect_layer_members` 가 방금 쓴 L{n} 멤버를 읽을 수 있다 — 순서가 계약이다.

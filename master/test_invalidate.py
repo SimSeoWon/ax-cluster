@@ -309,7 +309,31 @@ def _run(tmp: Path) -> int:
           not rb.get("source_commit"), str(rb.get("source_commit")))
     check("그래서 그 도메인은 여전히 stale", bool(stm.compute(P13, ["D"])))
 
-    print("\n[16] 🔴 재합성 끝에 검색 색인을 깨운다 (원전 ontology_refresh:527)")
+    print("\n[16] 🔴 실패한 조각의 클래스는 settle 하지 않는다 (2026-08-15 실사고)")
+    # 실사고: 재합성 중 BC-250 이 죽어 조각 절반이 실패했는데 "성공 2 · 실패 0" 으로 보고되고
+    # stale 이 0 이 됐다 — **12개 클래스가 한 번도 재추출되지 않은 채** 정합으로 위장했다.
+    P15 = _paths(tmp, "MF")
+    _domain_md(P15, "D")
+    ctx15 = P15.context / "Src"
+    ctx15.mkdir(parents=True, exist_ok=True)
+    for nm in ("A", "B"):
+        (ctx15 / f"{nm}.md").write_text(f"---\nsource_commit: rev{nm}\n---\n\n본문\n", encoding="utf-8")
+    pkg.write(P15, "D", objects=[{"name": "UA", "layer": 3, "file": "Src/A.h"},
+                                 {"name": "UB", "layer": 3, "file": "Src/B.h"}])
+    r15 = sy.DomainResult(domain="D")
+    r15.unreflected = {"UA"}
+    covered = {"UA", "UB"} - r15.unreflected
+    n15 = stm.settle(P15, "D", covered)
+    ra = y.read(P15.ontology / "domains" / "D" / "L3" / "objects" / "UA.yaml") or {}
+    rb = y.read(P15.ontology / "domains" / "D" / "L3" / "objects" / "UB.yaml") or {}
+    check("반영된 클래스만 올린다", n15 == 1 and rb.get("source_commit") == "revB", str(n15))
+    check("🔴 미반영 클래스는 안 올린다", not ra.get("source_commit"), str(ra.get("source_commit")))
+    check("🔴 그래서 그 도메인은 stale 로 남는다 — 다음 사이클이 다시 본다",
+          bool(stm.compute(P15, ["D"])))
+    r15.actions = [{"name": "X"}]
+    check("요약이 미반영을 드러낸다", "미반영 1클래스" in r15.summary, r15.summary)
+
+    print("\n[17] 🔴 재합성 끝에 검색 색인을 깨운다 (원전 ontology_refresh:527)")
     calls = []
     import master.context_search.domain_index as di
 

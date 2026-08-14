@@ -89,11 +89,15 @@ async def ensure_pinned(ep: Endpoint, pin: str, client, state: dict) -> bool:
     try:
         r = await client.post(
             f"http://{ep.host}/api/generate",
-            # 🔴 **`num_ctx` 를 반드시 싣는다.** 안 실으면 Ollama 가 모델 기본
-            # `context_length`(35B 는 262144) 전제로 KV 를 잡는다 — BC-250 여유가 2.2GB 인데
-            # 그 할당이 ~2.0GB 다(리포트 10 §8). 프록시 경로(`server.py`)에는 이 가드가
-            # 있었고 **이 경로에만 없었다**(2026-08-15 실측: repin 직후 보드 정지).
-            # 값이 프록시와 **같아야** 한다 — 다르면 다음 요청이 통째로 재적재된다(61.6s 실측).
+            # 🔴 **`num_ctx` 를 반드시 싣는다 — 프록시(`server.py`)와 같은 값으로.**
+            # 이 경로에만 그 가드가 없어서, repin 이 **4096**(그 보드 Ollama 기본값)으로
+            # 올려놓고 우리 요청은 8192 를 달라 하는 상태였다 → **매 요청이 통째로 재적재**.
+            # 실측 2026-08-15: `load_duration` **59.6초**(옛 기록 61.6초와 일치).
+            #
+            # ⚠️ **정정** — 처음엔 이 누락이 *"256K KV 할당 → 보드 정지"* 의 원인이라고 적었다.
+            # **틀렸다.** 그 보드는 `num_ctx` 없는 요청을 4096 으로 올린다(로그 실측).
+            # 정지의 원인은 **요청마다 안 돌려주는 누적 메모리**였다(03:04 OOM). 이 가드의
+            # 값은 「재적재 방지」이지 「크래시 방지」가 아니다 — 근거를 정확히 남긴다.
             json={"model": pin, "prompt": "ok", "stream": False, "keep_alive": -1,
                   "options": {"num_predict": 1, "temperature": 0,
                               "num_ctx": DEFAULT_NUM_CTX}},
