@@ -9,6 +9,7 @@
     ⑤ 회전 — 최대 건수를 넘으면 **최신**을 남긴다
     ⑥ 깨진 줄이 있어도 나머지를 읽는다
     ⑦ 위치가 프로젝트 **밖**이다 (§5.5)
+    ⑧ 🔴 표면 census — MCP·웹UI **양쪽**이 기록하고, 기계 생성 질의는 기록하지 않는다
 
 `.venv/bin/python master/test_search_log.py`
 """
@@ -175,11 +176,36 @@ def test_broken_line_does_not_kill_the_read():
               [r["i"] for r in recs] == [1, 2], str(recs))
 
 
+def test_both_surfaces_are_instrumented():
+    """🔴 표면 census 를 고정한다 — 원전은 MCP·HTTP **양쪽**에서 기록한다.
+
+    처음엔 MCP 한 곳만 심었고 재기동 검증 중에 `api_search` 를 발견했다. 배선이 조용히
+    빠지면 로그가 표면에 따라 **편향**되고, 그건 값이 없는 것보다 나쁘다(틀린 근거가 된다).
+    ⚠️ 소스 검사다 — 실행 경로가 아니라 **배선의 존재**를 잰다.
+    """
+    root = Path(__file__).resolve().parent
+    want = {
+        "projects/mcp_server.py": "mcp_direct",
+        "webui/routes.py": "web_ui",
+    }
+    for rel, caller in want.items():
+        src = (root / rel).read_text(encoding="utf-8")
+        check(f"⑧ {rel} 이 기록한다", "search_log.log_search(" in src, "호출이 없다")
+        check(f"⑧ {rel} 의 caller={caller}", f'caller="{caller}"' in src, "caller 가 다르다")
+
+    # 🔴 기계 생성 질의는 기록하지 않는다 — 섞이면 분포가 오염된다
+    for rel in ("context_synth/synth.py", "webui/board.py", "work/manifest.py"):
+        src = (root / rel).read_text(encoding="utf-8")
+        check(f"⑧ {rel} 은 기록하지 않는다", "search_log.log_search(" not in src,
+              "기계 생성 질의가 로그에 섞인다")
+
+
 def main() -> int:
     for fn in (test_detect_lang, test_result_details_keeps_channel_fields,
                test_log_writes_schema, test_zero_hit_only_below_two,
                test_nothing_to_log_is_a_fact, test_write_failure_is_not_silent,
-               test_rotation_keeps_newest, test_broken_line_does_not_kill_the_read):
+               test_rotation_keeps_newest, test_broken_line_does_not_kill_the_read,
+               test_both_surfaces_are_instrumented):
         fn()
     total = PASS + FAIL
     print(f"{'✅' if not FAIL else '🔴'} test_search_log: {PASS}/{total} 통과")

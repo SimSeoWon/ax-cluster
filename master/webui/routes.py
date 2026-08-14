@@ -254,12 +254,25 @@ def api_tags(root: Path, paths=None) -> dict:
 
 
 def api_search(paths, query: str, limit: int = 5) -> dict:
-    """융합 검색(벡터+BM25). 🔴 우리 `ContextSearch` 를 그대로 쓴다."""
+    """융합 검색(벡터+BM25). 🔴 우리 `ContextSearch` 를 그대로 쓴다.
+
+    🔴 **여기도 기록한다** (소 3.4.5). 원전은 MCP(`search_tools.py`)와 **HTTP
+    (`search_routes.py`) 양쪽**에서 `_log_search` 를 부른다 — 한쪽만 심으면 로그가 표면에
+    따라 편향되고, 채널 튜닝의 근거가 조용히 반쪽이 된다. ⚠️ 실제로 처음엔 MCP 만 심었고
+    재기동을 검증하려다 이 자리를 발견했다.
+
+    ⚠️ `caller="web_ui"` 는 **원전 vocabulary 에 없는 값**이다. 원전 HTTP 라우트는 caller 를
+    **클라이언트가 신고**하는데(`req.caller`, 기본 None) 우리 webui 는 in-process 호출이라
+    신고할 주체가 없다. 표면을 못 가르면 이 필드의 존재 의미가 없으므로 값을 준다.
+    """
     try:
         from ..context_search import ContextSearch
         hits = ContextSearch(paths).search(query, limit=max(1, min(50, limit)))
     except Exception as e:                                   # noqa: BLE001
         return {"error": f"{type(e).__name__}: {e}", "results": []}
+    # 🔴 검색 뒤에 기록한다 — 실패하면 기록할 것이 없고, 기록은 검색을 막지 않는다.
+    from ..context_search import search_log
+    search_log.log_search(paths, query=query, hits=hits, caller="web_ui")
     return {"query": query, "count": len(hits),
             "results": [{"file": h.file_id, "score": round(h.rrf_score, 4),
                          "source": h.source, "category": (h.meta or {}).get("category", ""),
