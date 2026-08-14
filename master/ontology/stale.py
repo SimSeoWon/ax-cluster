@@ -117,8 +117,34 @@ def _members(paths: ProjectPaths, domain: str) -> dict:
 
 
 def _stored(paths: ProjectPaths, domain: str, names: list) -> dict:
-    """클래스별 `class_ontology.source_commit`. 없으면 `-1`."""
+    """클래스별 **저장된** 워터마크. 없으면 `-1`.
+
+    🔴 **신호원이 원본과 다르다 — 우리 SSOT 는 오브젝트 yaml 이다.** 원본은
+    `class_ontology.source_commit` 을 정본으로 쓰지만, 우리 그 표는 **0행이고 쓰는 코드가
+    0건**이다(의도 — 소속의 SSOT 는 yaml, `#189`). 원본 `upsert_class_source_commit` 은
+    *"행이 없으면 no-op"* 이라 그 경로를 그대로 옮겨도 **아무것도 안 찍힌다.**
+
+    실측 2026-08-15: 오브젝트 yaml 112개 중 **16개가 실 리비전을 갖고 있는데**(원본이
+    스냅샷을 내보내기 전에 찍은 것) DB 만 보던 이 함수는 그것을 **한 번도 안 읽었다** —
+    즉 이미 정합인 클래스도 전부 stale 로 셌다. 마일스톤 4 함정 *"기제는 옮기고 신호원은
+    다시 고른다"* 가 여기에도 걸린다(σ.9.0 의 `mtime`→git 과 같은 자리).
+
+    DB 는 **폴백으로 남긴다** — 언젠가 그 표를 쓰게 되면 그때도 맞아야 한다.
+    """
     out = {n: MISSING for n in names}
+    # ① 오브젝트 yaml — 우리 정본
+    root = paths.ontology / "domains" / domain
+    manifest = yaml_io.read(root / "domain.yaml") or {}
+    for rel in manifest.get("objects") or []:
+        obj = yaml_io.read(root / str(rel))
+        if not isinstance(obj, dict):
+            continue
+        name, mark = obj.get("name"), obj.get("source_commit")
+        if name in out and mark:
+            out[name] = str(mark)
+    if all(v != MISSING for v in out.values()):
+        return out
+    # ② DB — 원본 경로. yaml 이 말하지 않은 것만 채운다
     try:
         from ..graph import db as gdb
         if not gdb.exists(paths) or not names:
@@ -129,7 +155,8 @@ def _stored(paths: ProjectPaths, domain: str, names: list) -> dict:
             for r in conn.execute(
                     f"SELECT class_name, source_commit FROM class_ontology "
                     f"WHERE class_name IN ({marks})", tuple(names)):
-                out[r["class_name"]] = r["source_commit"] or MISSING
+                if out.get(r["class_name"], MISSING) == MISSING:
+                    out[r["class_name"]] = r["source_commit"] or MISSING
         finally:
             conn.close()
     except Exception:                                   # noqa: BLE001
@@ -169,6 +196,69 @@ def compute(paths: ProjectPaths, domains: list | None = None) -> list:
         if st.stale:
             out.append(st)
     return out
+
+
+def settle(paths: ProjectPaths, domain: str, classes=None) -> int:
+    """재합성을 마친 클래스의 워터마크를 **현재 값으로 올린다.** 반환 = 갱신한 오브젝트 수.
+
+    원본: `ontology_synthesizer.synthesize_domain` 의 스탬프 절(Phase η.7.2 제안 2) —
+    *"합성이 `source_commit` 을 재스탬프 → self-settling, 재시작 idempotent"*.
+
+    ## 🔴 이 절반이 없으면 stale 은 영원히 안 가라앉는다
+
+    비교의 한쪽(`stored`)을 아무도 안 올리면 같은 클래스가 **재합성을 몇 번 돌려도 계속
+    stale** 이고, 매 사이클 LLM 을 같은 대상에 태운다. 실측 2026-08-15: 우리 저장소에
+    `class_ontology` 를 쓰는 코드가 0건이라 그 상태였다.
+
+    ## 🔴 원본과 다르게 둔 것 — **필드 하나만** 갱신한다
+
+    원본은 objects 를 통째로 다시 쓰면서 스탬프를 얹는다. 그래도 되는 이유는 **원본의
+    잠금이 `actions`/`invariants` 전용**이기 때문이다(`load_locked_items(subdir)`).
+    우리는 받아온 스냅샷 오브젝트 112개가 **전부 `protected`** 라, 통째로 쓰면
+    `merge_preserve_locked` 가 새 값을 버려 **스탬프가 영영 안 들어간다.**
+
+    그래서 워터마크 필드만 제자리에서 올린다. 잠금의 목적은 **본문**(설명·근거·별칭)이
+    재생성으로 얕아지지 않게 하는 것이지, 기계가 찍는 리비전 표식을 얼리는 것이 아니다 —
+    얼리면 그 도메인은 영원히 재합성 대상으로 남아 **보호가 의도하지 않은 비용**을 만든다.
+    (`package.HUMAN_FIELDS` 의 정확한 거울이다: 사람 필드는 이월하고, 기계 표식은 갱신한다.)
+
+    ## 안 옮긴 것 — DB 쪽 절반
+
+    원본은 `class_graph.upsert_class_source_commit` 으로 DB 에도 찍는다. 우리 그 표는
+    **행이 0** 이고 원본 함수 자신이 *"행이 없으면 no-op"* 이라 **옮겨도 아무 일도 일어나지
+    않는다.** 게다가 `#189` 가 그 표에 쓰는 경로를 *"우리가 없앤 이중 소스 드리프트를
+    되살린다"* 로 판정했다. 🔴 **재범위는 닫지 않는다** — 그 표를 쓰게 되는 날 같이 본다.
+    """
+    root = paths.ontology / "domains" / domain
+    manifest = yaml_io.read(root / "domain.yaml") or {}
+    from . import hierarchy
+    n = 0
+    for rel in manifest.get("objects") or []:
+        p = root / str(rel)
+        obj = yaml_io.read(p)
+        if not isinstance(obj, dict) or hierarchy.is_domain_ref(obj):
+            continue
+        name = obj.get("name")
+        if not name or (classes is not None and name not in set(classes)):
+            continue
+        latest = latest_commit(paths, obj.get("file") or "")
+        # 🔴 **`-1` 도 찍는다** (원본 그대로 — `o["source_commit"] = rev` 는 무조건이고
+        # `rev != "-1"` 은 카나리 집계용일 뿐이다). 처음엔 *"모르는 값으로 아는 값을 덮는
+        # 퇴행"* 이라 보고 건너뛰게 짰는데, **그러면 수렴하지 않는다** — 실측 2026-08-15:
+        # `GlobalEventSystem` 의 5개는 오브젝트에 실 리비전이 있고 그 **컨텍스트 문서가
+        # 리비전을 잃은** 상태(리포트 16 §12.7 의 물려받은 σ.7 손상)라, 건너뛰면 그 도메인이
+        # **매 사이클 재합성 대상**으로 영원히 남는다.
+        #
+        # 이 필드의 뜻이 *"우리가 아는 가장 좋은 리비전"* 이 아니라 **"이 합성이 반영한
+        # 문서가 그때 말한 값"** 이기 때문이다. 문서가 모른다고 말하면 `-1` 이 사실이다.
+        # ⚠️ 문서 손상 자체는 여기서 알릴 일이 아니다 — `context_audit` 의
+        # `recent_but_empty` 가 그 자리다(이미 이식돼 있다).
+        if str(obj.get("source_commit") or "") == latest:
+            continue
+        obj["source_commit"] = latest
+        if yaml_io.write(p, obj):
+            n += 1
+    return n
 
 
 def summary(results: list) -> str:

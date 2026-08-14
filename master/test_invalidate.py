@@ -214,6 +214,85 @@ def _run(tmp: Path) -> int:
     check("🔴 scope 가 멤버와 안 겹치면 partial 을 포기하고 full 로 간다",
           not res2.partial and any("full" in x for x in res2.reasons), str(res2.reasons))
 
+    print("\n[11] 🔴 워터마크 settle — 이것이 없으면 stale 이 영원히 안 가라앉는다")
+    from master.ontology import stale as stm
+    P10 = _paths(tmp, "MA")
+    _domain_md(P10, "D")
+    # 컨텍스트 MD 가 리비전 carrier 다 (`stale.latest_commit` 이 읽는 자리)
+    ctx = P10.context / "Src"
+    ctx.mkdir(parents=True, exist_ok=True)
+    (ctx / "Foo.md").write_text("---\nsource_commit: abc1234\n---\n\n본문\n", encoding="utf-8")
+    pkg.write(P10, "D", objects=[{"name": "UFoo", "layer": 3, "file": "Src/Foo.h"}])
+    objp = P10.ontology / "domains" / "D" / "L3" / "objects" / "UFoo.yaml"
+    check("합성 직후엔 워터마크가 없다", not (y.read(objp) or {}).get("source_commit"))
+    res_st = stm.compute(P10, ["D"])
+    check("그래서 stale 로 잡힌다", res_st and res_st[0].changed == 1, str(res_st))
+    n = stm.settle(P10, "D")
+    check("settle 이 오브젝트 하나를 올린다", n == 1, str(n))
+    check("🔴 값은 컨텍스트 MD 의 리비전", (y.read(objp) or {}).get("source_commit") == "abc1234",
+          str(y.read(objp)))
+    check("🔴 그리고 stale 이 가라앉는다", stm.compute(P10, ["D"]) == [], str(stm.compute(P10, ["D"])))
+    check("다시 불러도 바뀔 것이 없다 (idempotent)", stm.settle(P10, "D") == 0)
+
+    print("\n[12] 🔴 settle 이 잠금·보호를 뚫되 본문은 안 건드린다 (원전은 objects 를 안 잠근다)")
+    P11 = _paths(tmp, "MB")
+    _domain_md(P11, "D")
+    ctx2 = P11.context / "Src"
+    ctx2.mkdir(parents=True, exist_ok=True)
+    (ctx2 / "Bar.md").write_text("---\nsource_commit: def5678\n---\n\n본문\n", encoding="utf-8")
+    pkg.write(P11, "D", objects=[{"name": "UBar", "layer": 3, "file": "Src/Bar.h"}])
+    objp2 = P11.ontology / "domains" / "D" / "L3" / "objects" / "UBar.yaml"
+    snap = y.read(objp2) or {}
+    snap.update({"protected": True, "aliases": ["바 매니저"], "confidence": 0.85,
+                 "source_commit": "-1"})
+    y.write(objp2, snap)
+    check("settle 이 보호 항목도 올린다", stm.settle(P11, "D") == 1)
+    after = y.read(objp2) or {}
+    check("🔴 워터마크만 바뀐다", after.get("source_commit") == "def5678", str(after.get("source_commit")))
+    check("🔴 별칭(사람 데이터)은 그대로", after.get("aliases") == ["바 매니저"], str(after.get("aliases")))
+    check("보호 표식도 그대로", after.get("protected") is True)
+    check("스냅샷의 다른 필드도 그대로", after.get("confidence") == 0.85)
+
+    print("\n[13] 🔴 문서가 모른다고 하면 `-1` 도 찍는다 — 안 그러면 수렴하지 않는다")
+    P12 = _paths(tmp, "MC")
+    _domain_md(P12, "D")
+    pkg.write(P12, "D", objects=[{"name": "UBaz", "layer": 3, "file": "Src/Baz.h"}])
+    objp3 = P12.ontology / "domains" / "D" / "L3" / "objects" / "UBaz.yaml"
+    o3 = y.read(objp3) or {}
+    o3["source_commit"] = "실제리비전"          # 오브젝트엔 값이 있고 문서는 리비전이 없다
+    y.write(objp3, o3)
+    check("그 상태는 stale 로 잡힌다", bool(stm.compute(P12, ["D"])))
+    check("settle 이 문서 값(-1)으로 내린다", stm.settle(P12, "D") == 1)
+    check("🔴 실제로 -1 이 찍혔다", (y.read(objp3) or {}).get("source_commit") == stm.MISSING,
+          str((y.read(objp3) or {}).get("source_commit")))
+    check("🔴 그래서 수렴한다 — 매 사이클 재합성하지 않는다", stm.compute(P12, ["D"]) == [])
+
+    print("\n[14] 🔴 `_stored` 가 오브젝트 yaml 을 본다 (DB 는 0행이라 폴백)")
+    o3b = y.read(objp3) or {}
+    o3b["source_commit"] = "실제리비전"
+    y.write(objp3, o3b)
+    check("yaml 의 워터마크를 stored 로 읽는다",
+          stm._stored(P12, "D", ["UBaz"]) == {"UBaz": "실제리비전"},
+          str(stm._stored(P12, "D", ["UBaz"])))
+    check("없는 클래스는 -1", stm._stored(P12, "D", ["UNone"]) == {"UNone": stm.MISSING})
+
+    print("\n[15] 부분 재합성은 **scope 만** settle 한다")
+    P13 = _paths(tmp, "MD")
+    _domain_md(P13, "D")
+    ctx3 = P13.context / "Src"
+    ctx3.mkdir(parents=True, exist_ok=True)
+    for nm in ("A", "B"):
+        (ctx3 / f"{nm}.md").write_text(f"---\nsource_commit: rev{nm}\n---\n\n본문\n", encoding="utf-8")
+    pkg.write(P13, "D", objects=[{"name": "UA", "layer": 3, "file": "Src/A.h"},
+                                 {"name": "UB", "layer": 3, "file": "Src/B.h"}])
+    check("scope 를 주면 그것만 올린다", stm.settle(P13, "D", {"UA"}) == 1)
+    ra = y.read(P13.ontology / "domains" / "D" / "L3" / "objects" / "UA.yaml") or {}
+    rb = y.read(P13.ontology / "domains" / "D" / "L3" / "objects" / "UB.yaml") or {}
+    check("UA 는 올랐다", ra.get("source_commit") == "revA", str(ra.get("source_commit")))
+    check("🔴 UB 는 안 올랐다 — 다시 안 뽑았으니 정합이라 말하면 거짓말이다",
+          not rb.get("source_commit"), str(rb.get("source_commit")))
+    check("그래서 그 도메인은 여전히 stale", bool(stm.compute(P13, ["D"])))
+
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 

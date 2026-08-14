@@ -101,6 +101,7 @@ class DomainResult:
     partial: bool = False                 # 🔴 변경분만 다시 만들었나 (소 3.2.2)
     invalidation: object = None           # `invalidate.Invalidation` — partial 일 때만
     invalidated: int = 0                  # 실제로 지운 yaml 수 (쓰기 직전)
+    settled: int = 0                      # 🔴 워터마크를 올린 오브젝트 수 (stale 이 가라앉는다)
 
     @property
     def ok(self) -> bool:
@@ -124,6 +125,8 @@ class DomainResult:
                                       for m, n in self.lanes.items()) + ")"
         if self.collisions_actions or self.collisions_invariants:
             s += f" · 조각간 중복 {self.collisions_actions + self.collisions_invariants}"
+        if self.settled:
+            s += f" · 워터마크 {self.settled}건 갱신"
         if self.dropped_facts:
             s += f" · 🔴 사실 게이트 {len(self.dropped_facts)}건 버림"
         if self.unloads:
@@ -420,6 +423,11 @@ def refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT_
             manifest_extra=_manifest_extra(paths, domain, doc),
             prune=not res.partial,      # 🔴 부분 갱신은 안 들어온 항목을 지우지 않는다
         )
+        # 🔴 **워터마크를 올린다 — 이것이 없으면 이 도메인은 영원히 stale 이다** (원본
+        # η.7.2 제안 2 의 self-settling). 🔴 **성공했을 때만** 찍는다: 실패한 재합성이
+        # "반영했다" 고 말하면 낡은 문서가 조용히 정합으로 위장한다.
+        from . import stale as stale_mod
+        res.settled = stale_mod.settle(paths, domain, scope_members if res.partial else None)
     res.elapsed_ms = int((time.monotonic() - t0) * 1000)
     return res
 
