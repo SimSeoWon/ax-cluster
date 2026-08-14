@@ -146,10 +146,13 @@ class Stats:
     aborted: str = ""
     elapsed_ms: int = 0
     results: list = field(default_factory=list)
+    index_sync: str = ""        # 🔴 재합성이 바꾼 트윈을 검색 색인에 실었나 (소 3.2.4)
 
     @property
     def summary(self) -> str:
         s = f"도메인 {self.domains} → 성공 {self.ok} · 실패 {self.failed} · {self.elapsed_ms}ms"
+        if self.index_sync:
+            s += f" · 색인 {self.index_sync}"
         if self.partial:
             s += f" · 🔵 부분 갱신 {self.partial}"
         if self.skipped:
@@ -516,5 +519,37 @@ def run(paths: ProjectPaths, *, domains: list | None = None,
             st.aborted = (f"LLM 연속 실패 {consecutive}회 — 남은 {len(domains) - i} 도메인을 "
                           f"태우지 않는다")
             break
+    st.index_sync = sync_index(paths, dry_run=dry_run, wrote=st.ok > 0)
     st.elapsed_ms = int((time.monotonic() - t0) * 1000)
     return st
+
+
+def sync_index(paths: ProjectPaths, *, dry_run: bool = False, wrote: bool = True) -> str:
+    """재합성이 바꾼 트윈을 **검색 색인에 싣는다.** 반환은 사람이 읽을 한 줄.
+
+    원본: `ontology_refresh.run()` 끝의 `ontology_index_sync.try_sync_domain_index`
+    (η.2.5 sync 트리거). 🔴 **도메인마다가 아니라 배치 끝에 한 번** — 원본 그대로다.
+
+    ## 🔴 이것이 없으면 자란 트윈을 검색이 못 본다
+
+    실측 2026-08-15: `MissionRuntime` 이 actions 12→27 · invariants 10→30 으로 자랐는데
+    `domain_index.json`·`bm25_domains.db` 는 **닷새 전(8/10) 것**이었다. 우리 색인을 깨우는
+    경로는 둘뿐이었고 **둘 다 이 자리에 없다** — `rebuild_all` 은 **컨텍스트 MD** 변화로만
+    깨어나고(색인기 로그: *"재색인 건너뜀(컨텍스트 MD 변화 없음)"*), `staging.commit` 은
+    스테이징 세션을 쓸 때만이다. 온톨로지 재합성은 어느 쪽도 아니었다.
+
+    ## 다르게 둔 것 — 지문은 우리 것, 실패는 값으로
+
+    원본 가드는 **프로세스 안의 전역**(`_LAST_FINGERPRINT`)이라 재시작하면 잊는다. 우리
+    `domain_index.sync` 는 **디스크에 지문을 남기므로** 그냥 부르면 된다(변화 없으면 스스로
+    건너뛴다). 그리고 원본은 예외를 로그로 흘리지만 우리는 **값으로 돌려준다**(σ 감사 기준:
+    *"예외를 값으로 돌려주면 조용하지 않다"*) — 색인이 실패해도 **재합성 결과는 이미 디스크에
+    있으므로 배치를 죽이지 않는다.**
+    """
+    if dry_run or not wrote:
+        return ""          # 🔴 쓴 것이 없으면 색인할 것도 없다 (빈 호출을 성공으로 세지 않는다)
+    from ..context_search import domain_index
+    try:
+        return domain_index.sync(paths).summary
+    except Exception as e:                              # noqa: BLE001
+        return f"🔴 실패 — {type(e).__name__}: {e}"

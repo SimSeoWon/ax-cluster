@@ -309,6 +309,28 @@ def _run(tmp: Path) -> int:
           not rb.get("source_commit"), str(rb.get("source_commit")))
     check("그래서 그 도메인은 여전히 stale", bool(stm.compute(P13, ["D"])))
 
+    print("\n[16] 🔴 재합성 끝에 검색 색인을 깨운다 (원전 ontology_refresh:527)")
+    calls = []
+    import master.context_search.domain_index as di
+
+    class _FakeStats:
+        summary = "도메인 3 · BM25 12 · 벡터 12"
+    orig_sync = di.sync
+    di.sync = lambda p, **k: (calls.append(p) or _FakeStats())
+    try:
+        P14 = _paths(tmp, "ME")
+        note = sy.sync_index(P14)
+        check("성공하면 요약을 값으로 돌려준다", note == _FakeStats.summary, note)
+        check("실제로 한 번 불렀다", len(calls) == 1, str(len(calls)))
+        check("🔴 dry-run 이면 부르지 않는다", sy.sync_index(P14, dry_run=True) == "" and len(calls) == 1)
+        check("🔴 쓴 것이 없으면 부르지 않는다", sy.sync_index(P14, wrote=False) == "" and len(calls) == 1)
+        di.sync = lambda p, **k: (_ for _ in ()).throw(RuntimeError("색인 깨짐"))
+        bad = sy.sync_index(P14)
+        check("🔴 색인이 실패해도 예외를 던지지 않는다", isinstance(bad, str) and bad.startswith("🔴"), bad)
+        check("그리고 조용하지 않다 — 사유가 값에 실린다", "색인 깨짐" in bad, bad)
+    finally:
+        di.sync = orig_sync
+
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 
