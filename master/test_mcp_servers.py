@@ -82,7 +82,10 @@ from master.projects import mcp_server as pj  # noqa: E402
 check("모듈 import", True)
 check("MCPServer 인스턴스", type(pj.mcp).__name__ == "MCPServer", type(pj.mcp).__name__)
 _pj = tool_names(pj.mcp)
-check("도구 29종 등록", len(_pj) == 29, f"실제 {len(_pj)}종: {_pj}")
+check("도구 30종 등록", len(_pj) == 30, f"실제 {len(_pj)}종: {_pj}")
+# 🔴 **서술 조회 창구** (소 3.1.4, 원전 η.7.4) — 서술을 만들어 두고 읽는 곳이 없으면
+#   그 산출물은 없는 것과 같다. 원전은 라우트·도구 둘 다 갖고 있었다(리포트 14 §7.5).
+check("  🔴 서술 조회: get_layer_description_tool", "get_layer_description_tool" in _pj, str(_pj))
 # 🔴 **감사 창구 둘** (소 3.4.1·3.4.2, 2026-08-14) — 원전은 감사를 **요청 시** 부르는 도구로
 #   뒀다(`audit_context_md` · `analyze_search_log`). 유휴 배치가 아니다.
 for _t in ("audit_context_tool", "analyze_search_log_tool"):

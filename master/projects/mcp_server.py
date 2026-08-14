@@ -601,6 +601,40 @@ def create_domain_tool(name: str, tags: list = [], parent: str = "",
 
 
 @mcp.tool()
+def get_layer_description_tool(domain: str, layer: int = 0) -> str:
+    """도메인의 **레이어별 책임 서술** — *"이 레이어가 여기서 무엇을 책임지나"* (소 3.1.4).
+
+    `layer` 를 0 으로 두면 있는 레이어를 전부 준다. 원전 대응:
+    `GET /api/v1/ontology/description/<domain>/<layer>` + `get_layer_description`.
+
+    🔴 **읽기 전용이고 생성하지 않는다.** 초안 생성은 재합성(full)이 하거나 사람이
+    `python -m master.ontology describe` 로 부른다 — 조회가 LLM 을 태우면 안 된다.
+    `verified`/`protected` 를 함께 주므로 소비자가 **사람이 손본 것인지** 알 수 있다.
+    """
+    try:
+        from ..ontology import descriptions as dm
+        paths = _onto_paths()
+        root = paths.ontology / "domains" / domain
+        if not root.is_dir():
+            return json.dumps({"ok": False, "error": f"도메인이 없다: {domain}"},
+                              ensure_ascii=False)
+        layers = [int(layer)] if layer else [1, 2, 3]
+        out = []
+        for n in layers:
+            got = dm.read(root / f"L{n}" / dm.FILENAME)
+            if got:
+                out.append({"layer": n, "body": got["body"],
+                            "verified_by_user": got["verified_by_user"],
+                            "protected": got["protected"], "created": got["created"]})
+        return json.dumps({"ok": True, "domain": domain, "descriptions": out,
+                           "note": ("서술이 없다 — 재합성(full) 또는 "
+                                    "`python -m master.ontology describe` 가 만든다")
+                                   if not out else ""}, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
 def edit_ontology_item_tool(domain: str, kind: str, name: str, patch: dict) -> str:
     """온톨로지 항목 하나를 고친다. 🔴 **고치면 곧 검수 잠금이 걸린다.**
 

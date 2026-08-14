@@ -5,6 +5,8 @@
     python -m master.ontology verify [<도메인>]       사실 게이트만 (LLM 0)
     python -m master.ontology dry <도메인>            합성해 보고 **쓰지 않는다**
     python -m master.ontology refresh [<도메인>…]     합성해서 쓴다 (stale 만이 기본)
+    python -m master.ontology describe --show         레이어 책임 서술 — **읽기만** (LLM 0)
+    python -m master.ontology describe [<도메인>…]    그 서술을 뽑아 쓴다 (🔴 도메인당 1콜)
 
 🔴 **`plan` 부터 쓴다.** 노드 시간을 태우기 전에 프롬프트가 예산 안에 드는지, 몇 조각이
 나오는지를 LLM 없이 본다 — 리포트 10 §8 의 사고가 "재보지 않고 보낸" 데서 났다.
@@ -169,6 +171,32 @@ def cmd_refresh(argv: list) -> int:
 # 🔴 **전부 사람이 부른다.** 자동 승급은 폐기됐다(2026-06-01 영구 비활성) — 여기 있는
 # 어떤 명령도 스스로 도메인을 만들거나 클래스를 편입하지 않는다.
 
+def cmd_describe(argv: list) -> int:
+    """describe [--show] [도메인…] — 레이어별 책임 서술 (소 3.1.4). 🔴 도메인당 LLM 1콜.
+
+    `--show` 는 **읽기만** 한다 (LLM 0) — 지금 무엇이 있고 무엇이 잠겨 있는지.
+    """
+    from . import descriptions as dm
+    paths = _paths()
+    show = "--show" in argv
+    models, argv = _models([a for a in argv if a != "--show"]), _rest(
+        [a for a in argv if a != "--show"])
+    targets = argv or [d.domain for d in domain_md.read_all(paths)]
+    for domain in targets:
+        if show:
+            rows = []
+            for n in (1, 2, 3):
+                got = dm.read(paths.ontology / "domains" / domain / f"L{n}" / dm.FILENAME)
+                if got:
+                    rows.append(f"L{n}{'🔒' if got['verified_by_user'] else ''} "
+                                f"{len(got['body'])}자")
+            print(f"  {domain:32s} {' · '.join(rows) or '없음'}")
+            continue
+        print(f"  {domain} … ", end="", flush=True)
+        print(synth.describe_domain(paths, domain, model=models[0]))
+    return 0
+
+
 def cmd_new(argv: list) -> int:
     """new <도메인> [상위] — 씨앗 MD 를 만든다. 🔴 덮지 않는다."""
     from . import create
@@ -318,7 +346,7 @@ def cmd_sync(argv: list) -> int:
 _COMMANDS = {"status": cmd_status, "plan": cmd_plan, "verify": cmd_verify,
              "dry": cmd_dry, "refresh": cmd_refresh,
              "new": cmd_new, "unassigned": cmd_unassigned,
-             "lock": cmd_lock, "unlock": cmd_unlock, "sync": cmd_sync,
+             "lock": cmd_lock, "unlock": cmd_unlock, "sync": cmd_sync, "describe": cmd_describe,
              "protect": cmd_protect, "protected": cmd_protected, "drift": cmd_drift, "view": cmd_view}
 
 

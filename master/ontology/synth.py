@@ -102,6 +102,7 @@ class DomainResult:
     invalidation: object = None           # `invalidate.Invalidation` — partial 일 때만
     invalidated: int = 0                  # 실제로 지운 yaml 수 (쓰기 직전)
     settled: int = 0                      # 🔴 워터마크를 올린 오브젝트 수 (stale 이 가라앉는다)
+    descriptions: str = ""                # 레이어 책임 서술 결과 한 줄 (full 일 때만 · 소 3.1.4)
 
     @property
     def ok(self) -> bool:
@@ -127,6 +128,8 @@ class DomainResult:
             s += f" · 조각간 중복 {self.collisions_actions + self.collisions_invariants}"
         if self.settled:
             s += f" · 워터마크 {self.settled}건 갱신"
+        if self.descriptions:
+            s += f" · {self.descriptions}"
         if self.dropped_facts:
             s += f" · 🔴 사실 게이트 {len(self.dropped_facts)}건 버림"
         if self.unloads:
@@ -431,8 +434,38 @@ def refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT_
         # "반영했다" 고 말하면 낡은 문서가 조용히 정합으로 위장한다.
         from . import stale as stale_mod
         res.settled = stale_mod.settle(paths, domain, scope_members if res.partial else None)
+        # 레이어 책임 서술 (원본 η.7.4) — 🔴 **full 전용.** 서술은 클래스 한둘 변경에 둔감해서
+        # 부분 갱신마다 다시 뽑는 것은 과호출이다(원본 게이트 그대로). 쓰기 **직후**라
+        # `collect_layer_members` 가 방금 쓴 L{n} 멤버를 읽을 수 있다 — 순서가 계약이다.
+        if not res.partial:
+            res.descriptions = describe_domain(
+                paths, domain, model=models[0], broker=broker, num_ctx=num_ctx,
+                timeout=timeout, caller=caller)
     res.elapsed_ms = int((time.monotonic() - t0) * 1000)
     return res
+
+
+def describe_domain(paths: ProjectPaths, domain: str, *, model: str = DEFAULT_MODELS[0],
+                    broker: str = DEFAULT_BROKER, num_ctx: int = NUM_CTX,
+                    timeout: int = TIMEOUT, caller=None) -> str:
+    """레이어 책임 서술을 뽑아 쓴다 (소 3.1.4). 반환은 사람이 읽을 한 줄.
+
+    원본: `ontology_refresh` 의 5번 절 — 추출(`ontology_descriptions`) + 저장
+    (`write_layer_descriptions`)이 한 쌍이다.
+
+    🔴 **여기서 실패해도 재합성은 이미 성공했다.** 서술은 그 위에 얹는 요약이므로 예외를
+    올려 배치를 죽이지 않고 **값으로 돌려준다**(원본도 try/except 로 감싼다 — 다만 로그로
+    흘린다). ⚠️ 조용해지지 않도록 사유를 문자열에 싣는다.
+    """
+    from . import descriptions as desc_mod
+    try:
+        res = desc_mod.extract(paths, domain, call=lambda p: generate(
+            p, model, broker=broker, num_ctx=num_ctx, timeout=timeout, caller=caller))
+        if not res.ok:
+            return res.summary
+        return f"{res.summary} · {desc_mod.write(paths, domain, res.descriptions).summary}"
+    except Exception as e:                              # noqa: BLE001
+        return f"🔴 서술 실패 — {type(e).__name__}: {e}"
 
 
 def _delete_invalidated(inval) -> int:
