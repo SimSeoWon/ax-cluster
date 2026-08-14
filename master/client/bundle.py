@@ -228,6 +228,19 @@ def probe(host: str, user: str, path: str, driven: str, role: str = "worker") ->
     return f
 
 
+def _delivery_stamp() -> dict:
+    """배달 시점의 마스터 정체. 🔴 **배달을 막지 않는다** — 못 읽으면 사유만 싣는다."""
+    try:
+        from ..version import CONTRACT, identity
+
+        idy = identity()
+        return {"commit": idy.get("commit", ""), "commit_short": idy.get("commit_short", ""),
+                "dirty": idy.get("dirty"), "contract": CONTRACT,
+                **({"error": idy["error"]} if idy.get("error") else {})}
+    except Exception as e:                                   # noqa: BLE001
+        return {"commit": "", "error": f"{type(e).__name__}: {e}"}
+
+
 def config_for(project: str, facts: HostFacts) -> dict:
     """머신 하나의 `.ax/config.json`. 🔴 **비밀은 넣지 않는다.**"""
     return {
@@ -236,6 +249,10 @@ def config_for(project: str, facts: HostFacts) -> dict:
         "_layout": {"config": f"./{CONFIG_REL}", "work": f"./{WORK_REL}/<task_id>",
                     "ignored_by": ".git/info/exclude (커밋되지 않는다)"},
         "generated_by": "master/client/bundle.py",
+        # 🔴 **누가 언제 배달했는지** (소 3.1.8 · `#191`). 이것이 없어서 작업장 번들이 어느
+        #    마스터에서 왔는지 확인할 방법이 **전혀 없었다** — 원전이 `get_server_version` 을
+        #    만든 계기와 같은 상태였다. `get_master_version_tool` 과 맞춰 드리프트를 본다.
+        "delivered_by": _delivery_stamp(),
         "master": {"host": MASTER_HOST, "services": SERVICES,
                    "mcp": f"http://{MASTER_HOST}:{SERVICES['projects']}/mcp"},
         "this_host": {"host": facts.host, "user": facts.user, "os": facts.os},

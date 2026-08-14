@@ -540,6 +540,33 @@ def analyze_search_log_tool(since: str = "", until: str = "", compare_at: str = 
         return _fail(e)
 
 
+@mcp.tool()
+def get_master_version_tool() -> str:
+    """마스터의 정체 — 🔴 **버전 핸드셰이크** (소 3.1.8, κ.9 계약 표면).
+
+    원전 `get_server_version` 이식. 원전은 exe 빌드 번호를 냈지만 우리는 exe 를 안 만들므로
+    **git 커밋**이 그 자리에 온다(같은 기제, 우리 신호원).
+
+    무엇을 막나: ① 세 클론 드리프트 ② 배달 드리프트(작업장 번들이 어느 마스터에서 왔나)
+    ③ 클라이언트 계약(`.33` 의 폴백 캐시가 호환되는 마스터와 말하나).
+
+    🔴 **`contract` 는 커밋과 다르다** — 도구 표면이 바뀔 때만 올린다. 커밋마다 바뀌면
+    소비자가 매 커밋에 불호환을 의심한다.
+    ⚠️ 모르는 값은 빈 문자열 + 사유다 — `"unknown"` 을 넣으면 두 「모름」이 같다고 판정된다.
+    """
+    try:
+        from ..context_search.paths import resolve as resolve_paths
+        from ..version import identity
+
+        try:
+            paths = resolve_paths("")
+        except Exception:                                # noqa: BLE001 — 마운트 없이도 답한다
+            paths = None
+        return json.dumps({"ok": True, **identity(paths=paths)}, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
 # ── 온톨로지 큐레이션 (소 1.3.1 · 1.3.2 · 1.3.6 · 1.3.7 · 1.3.9) ─────────────
 #
 # 🔴 **전부 사람이 시켜야 부른다.** 자동 승급은 폐기됐다(2026-06-01 영구 비활성) — 도구가
