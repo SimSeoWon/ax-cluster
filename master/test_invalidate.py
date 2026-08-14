@@ -57,6 +57,18 @@ def _item(paths: ProjectPaths, domain: str, kind: str, name: str, text: str, lay
     return p
 
 
+def _wiring_probe(tmp: Path, sy):
+    """partial 배선만 태운다 (추출 레인은 호출자가 막아 둔다 → 네트워크 0)."""
+    P = _paths(tmp, "M9")
+    _domain_md(P, "D")
+    pkg.write(P, "D", objects=[{"name": "UFoo", "layer": 3, "file": "Foo.h"}])
+    src = P.root / "repo" / "Foo.h"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("class UFoo {};\n", encoding="utf-8")   # 조각이 비지 않게 실물 하나
+    return (sy.refresh_domain(P, "D", changed_classes={"UFoo"}, dry_run=True),
+            sy.refresh_domain(P, "D", changed_classes={"없는클래스"}, dry_run=True))
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="ax-inval-"))
     try:
@@ -201,16 +213,20 @@ def _run(tmp: Path) -> int:
     check("이미 없는 것을 또 지워도 죽지 않는다", sy._delete_invalidated(r9) == 0)
 
     print("\n[10] 🔴 LLM 없이 partial 분기가 도는지 (합성기 배선)")
-    # LLM 을 부르지 않게 조각을 0개로 만드는 경로 — 소스 발췌가 없는 프로젝트다.
-    P9 = _paths(tmp, "M9")
-    _domain_md(P9, "D")
-    pkg.write(P9, "D", objects=[{"name": "UFoo", "layer": 3, "file": "Foo.h"}])
-    res = sy.refresh_domain(P9, "D", changed_classes={"UFoo"}, dry_run=True)
-    check("scope 를 못 만들어도 예외를 던지지 않는다", isinstance(res, sy.DomainResult))
+    # 🔴 **`dry_run` 은 쓰기만 막고 LLM 은 막지 않는다.** 처음엔 그런 줄 알고 이 테스트가
+    # 실제 노드를 두드렸고(파일 하나가 **360초**), 헤더에는 *"LLM 없이"* 라고 적혀 있었다 —
+    # 마일스톤 4 의 *"측정 도구 자신이 조용히 틀린다"* 가 테스트에서 재발한 것이다.
+    # 추출 레인을 막아 **네트워크 0** 으로 만든다. 분기 판정은 추출 **전에** 끝난다.
+    lane_orig = sy._lane
+    sy._lane = lambda *a, **k: []
+    try:
+        res, res2 = _wiring_probe(tmp, sy)
+    finally:
+        sy._lane = lane_orig
+    check("건진 것이 0 이어도 예외를 던지지 않는다", isinstance(res, sy.DomainResult))
     check("사유가 남는다", bool(res.reasons), str(res.reasons))
     check("🔴 멤버와 겹치면 partial 로 붙는다", res.partial and res.invalidation is not None,
           f"partial={res.partial} reasons={res.reasons}")
-    res2 = sy.refresh_domain(P9, "D", changed_classes={"없는클래스"}, dry_run=True)
     check("🔴 scope 가 멤버와 안 겹치면 partial 을 포기하고 full 로 간다",
           not res2.partial and any("full" in x for x in res2.reasons), str(res2.reasons))
 
