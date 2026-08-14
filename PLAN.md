@@ -45,7 +45,8 @@ batching, not parallelism. See `docs/4-work-loop.md` §4.5.
 🔴 **Neither the numerator nor the denominator is written in any document** — read both from Redmine
 (version *마일스톤 4*). Hand-kept numerators drifted twice in M2, and the **denominator moves whenever
 reading the origin uncovers work**: M3 went 32 → 36, and **M4 went 62 → 75 in one session** (three
-separate reads each found real gaps). That movement is normal — record it, don't hide it.
+separate reads each found real gaps), then **75 → 80** as later ports kept surfacing their own
+missing halves. That movement is normal — record it, don't hide it.
 
 > 🔴 **This file is an index. The content lives in `docs/`.**
 > **Section numbers are unchanged by the split** — cross-references like `§5.5.3-④` in other

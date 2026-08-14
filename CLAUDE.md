@@ -28,8 +28,9 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
   🔴 **Neither the numerator nor the denominator is written in any document** — read both from
   Redmine (version *마일스톤 4*). Hand-kept numerators drifted twice in M2, and the denominator
-  moves whenever reading the origin uncovers work: M3 went 32 → 36, and **M4 went 62 → 70 in one
-  session** (three separate reads each found real gaps). That movement is normal — record it.
+  moves whenever reading the origin uncovers work: M3 went 32 → 36, and **M4 went 62 → 75 in one
+  session, then 75 → 80** as later ports kept surfacing their own missing halves. That movement is
+  normal — record it.
   M4 structure: 대 4 / 중 17 — **소분류가 작업 단위다**. 대 1 topology restore · 대 2 turn the
   four open M3 items into ports · 대 3 un-ported assets · 대 4 recover the method/norms.
   Never size a task by line count: `class_graph`'s 1,341 lines turn out to be
@@ -49,6 +50,12 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   것이 있다. 안 읽고 만들면 요구를 좁힌다(그렇게 잃은 것 셋: 로컬 파일 웹 UI · 읽기 전용 화면의
   로그인 · 원전 3,700줄을 안 읽고 새로 쓴 229줄 뷰어). 🔴 **제약 하나를 지키려고 요구를 희생하면
   결과물은 못 쓴다.**
+- 🔴 **이식이 우리 자산을 덮지 않는지 먼저 본다 — `verified_by_user` *와* `protected` 는 함께
+  본다.** 원전에 없는 **우리 개념**(받아온 스냅샷 보호)이 이식의 **안전 조건**이다. 실측
+  2026-08-15 에 같은 부류가 두 번 — 원전 무효화를 그대로 옮겼으면 스냅샷 **37건**이 선삭제됐고,
+  레이어 서술 이식은 트윈에 이미 있던 **원전 산출물 7건**(미잠금)을 덮을 뻔했다. 🔴 **둘 다
+  착수 전 실측이 잡았다 — 코드를 돌리기 전에 그 자리에 무엇이 있는지 보라.**
+  → `reports/17-*.md` §4·§14
 - 🔴 **자동 로드 문서(`CLAUDE.md` 전부)와 게임 소스는 고치기 전에 계획을 말하고 동의를 받는다**
   (원전 1조, **범위는 사용자 결정 2026-08-14**). 도구 코드는 커밋 승인 게이트가 그 역할을 한다.
 - 🔴 **승인을 구할 때 검토 비용을 사용자에게 넘기지 않는다** (원전 4조) — **무엇을·어디를·왜**와

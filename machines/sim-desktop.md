@@ -37,8 +37,8 @@ comment reads *"durable 단일 writer 보존"* — 🔴 **"one writer" was never
 is the server, and workers push ephemeral `attempt/` branches.** This project is an **OS/environment
 port** (Windows+UE5 daemon → Linux+Gitea), and Linux forces exactly **one** change: the UE5 build
 step *inside* `verify_and_merge` moves to `.2`. ⚠️ Even Gitea wasn't forced — the origin's doc listed
-GitHub/Gitea/bare as a choice. M4 = 대 4 / 중 17 (🔴 소 count moved 62 → 75 in one session — **the numbers live in Redmine**, version
-*마일스톤 4*), and 🔴 **소 1.1 (read the origin's design docs) is upstream of everything.**
+GitHub/Gitea/bare as a choice. M4 = 대 4 / 중 17 (🔴 소 count moved 62 → 75 in one session and later 75 → 80 — **the numbers live
+in Redmine**, version *마일스톤 4*), and 🔴 **소 1.1 (read the origin's design docs) is upstream of everything.**
 
 **What M2 delivered** (closed 소 43/43): the twin **grows, is indexed, and reaches code
 generation** — both of its goals run end to end. Manifests carry **domain norms** *and* **header
@@ -57,7 +57,7 @@ deterministic gate** ③ 🔵 **build the operator surface** — status screen �
 robustness remained when it was halted. Structure was 대 3 / 중 10. 🔴 **Numbers never live in a
 hand-edited doc** — the numerator drifted twice in M2, and the *denominator* moved on 2026-08-10
 (32 → 36) when reading the predecessor's design doc uncovered four missing sub-tasks. M4 moved
-**62 → 75 in one session** for the same reason.
+**62 → 75 in one session, then 75 → 80** for the same reason.
 
 🔴 **대 1 and 대 2 are closed (2026-08-12). 대 3 is the only one open.** The pipeline runs end
 to end and **four deterministic gates** sit in it:
@@ -144,7 +144,7 @@ The board has `main` checked out so pushing there is rejected — **`git pull` o
 | **.57** | **sim-desktop** — this box | `sim` | **Master**: orchestration, RAG index, ontology/graph, task queue, broker, project registry | — |
 | **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) | 🔧 **Worker** *and* inference endpoint #2 (14b pinned). 🔴 **The only machine that can run the layer-3 verdict unattended** (UE5 5.8) | **`ssh janus@192.168.0.2`** ✅ passwordless · RDP 3389 · Ollama 11434 |
 | **.33** | Windows 10.0.26200, **the user's main work PC**<br>host `DESKTOP-FU2GNGL` | **`user`** | 🔴 **`requester`, not a worker** — registers work, verifies (it has UE5), gives feedback. **Never dispatched to** (`drivable_hosts` excludes it). Not an inference endpoint | **`ssh user@192.168.0.33`** ✅ passwordless (2026-08-08) · RDP 3389 · Ollama 11434 |
-| **.43** | **BC-250 #1** — Fedora, headless | `sim` | 🔧 **Worker** *and* inference endpoint #1 (35B pinned). Has the project clone at `~/trunk/ModularStage` since 2026-08-09 — **no longer stateless** | `ssh sim@192.168.0.43` ✅ passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
+| **.43** | **BC-250 #1** — Fedora, headless | `sim` | 🔧 **Worker** *and* inference endpoint #1 (35B pinned). Has the project clone at `~/trunk/ModularStage` since 2026-08-09 — **no longer stateless**. 🔴 **With the 35B resident it runs on 138–300 MB of headroom and ordinary batch load is at the edge** — it died mid-batch on 2026-08-15 (OOM → self-reboot). Whether it should keep hosting the 35B is **open, and it is the user's call**; check `machines/bc250-1.md` before pointing new batch work at it | `ssh sim@192.168.0.43` ✅ passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
 | — | BC-250 #2 | — | 🎮 **Bazzite gaming machine — NOT an inference node.** Converting it means giving up that machine. **Never assume a 2nd board exists.** | n/a |
 
 ### `.33` — the main work PC has its own guide
