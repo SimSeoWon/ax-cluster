@@ -11,6 +11,7 @@
     ⑥ 🔴 `apply_repair` 는 **계획이 고른 것 밖을 건드리지 않는다**
     ⑦ 🔴 `dir_named`·`orphan_stem` 은 **옮기지 않는다** (복구 후보에 아예 안 들어간다)
     ⑧ 읽기 실패를 **세어서 돌려준다** (원전은 로그 한 줄만 남겼다)
+    ⑨ 아카이브 — 🔴 목적지가 `context/` **밖**이고, 계획이 기본이고, **덮어쓰지 않는다**
 
 `.venv/bin/python master/test_context_audit.py`
 """
@@ -212,13 +213,102 @@ def test_missing_context_dir_is_a_fact():
         check("리포트도 그것을 말한다", "진단 불가" in CA.format_report(r), CA.format_report(r)[:60])
 
 
+# ── ⑨ 아카이브 이동 (`#160` 2단계) ───────────────────────────────────────────
+
+class ArchFx(Fx):
+    """`paths` 흉내 — `root`/`context`/`repo` 만 있으면 된다."""
+
+    def __init__(self, tmp: Path):
+        self.root = tmp
+        super().__init__(tmp)
+
+
+def test_archive_destination_is_outside_context():
+    """🔴 이 기능의 핵심 — 목적지가 `context/` **안**이면 색인 범위를 벗어나지 못한다.
+
+    우리 코퍼스가 실제로 그 상태였다(`context/_archive/project_alpha_md/`), 그래서 이 세션에
+    같은 신호가 셋 나왔다(검색 1위 · 도메인 빈도 · orphan 101건).
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = ArchFx(Path(tmp))
+        root = CA.archive_root(fx, "orphan_stem", "2026-08-14")
+        check("⑨ 🔴 목적지가 context 밖이다",
+              not str(root).startswith(str(fx.context)), str(root))
+        check("⑨ 종류·날짜로 갈린다",
+              root.parent.name == "orphan_md" and root.name == "2026-08-14", str(root))
+
+
+def test_archive_plan_then_apply():
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = ArchFx(Path(tmp))
+        fx.md("Source/Zombie.md", VALID)                 # 소스 없음 → orphan_stem
+        fx.md("Source/Live.md", VALID)
+        fx.src("Source/Live.h")
+        r = fx.run()
+
+        plan = CA.plan_archive(fx, r, kinds=("orphan_stem",), day="2026-08-14")
+        check("⑨ 좀비만 계획에 든다", [m[0] for m in plan["moves"]] == ["Source/Zombie.md"],
+              str(plan["moves"]))
+        check("⑨ 🔴 계획 단계에선 원본이 그대로 있다", (fx.context / "Source/Zombie.md").exists())
+
+        applied = CA.apply_archive(fx, plan)
+        check("⑨ 옮겼다", len(applied["moved"]) == 1 and not applied["failed"], str(applied))
+        check("⑨ 원본이 사라졌다", not (fx.context / "Source/Zombie.md").exists())
+        check("⑨ 목적지에 있다", Path(plan["moves"][0][1]).exists(), plan["moves"][0][1])
+        check("⑨ 🔴 경로가 이름에 보존된다 (되돌릴 수 있다)",
+              Path(plan["moves"][0][1]).name == "Source__Zombie.md",
+              Path(plan["moves"][0][1]).name)
+        check("⑨ 살아 있는 문서는 안 건드렸다", (fx.context / "Source/Live.md").exists())
+
+        # 옮긴 뒤 다시 감사하면 사라져 있다
+        r2 = fx.run()
+        check("⑨ 재감사에서 orphan 이 0 이다", r2["categories"]["orphan_stem"] == [],
+              str(r2["categories"]))
+
+
+def test_archive_never_overwrites():
+    """🔴 아카이브는 증거다 — 덮어쓰면 증거가 사라진다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = ArchFx(Path(tmp))
+        fx.md("Source/Zombie.md", VALID)
+        r = fx.run()
+        plan = CA.plan_archive(fx, r, day="2026-08-14")
+        CA.apply_archive(fx, plan)
+
+        # 같은 이름이 다시 생긴 상황
+        fx.md("Source/Zombie.md", VALID)
+        r2 = fx.run()
+        plan2 = CA.plan_archive(fx, r2, day="2026-08-14")
+        check("⑨ 🔴 목적지가 있으면 거부한다", plan2["moves"] == [], str(plan2["moves"]))
+        check("⑨ 사유를 남긴다", any("이미 있다" in why for _, why in plan2["refused"]),
+              str(plan2["refused"]))
+
+
+def test_archive_kinds_are_opt_in():
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = ArchFx(Path(tmp))
+        fx.md("Source/Mission.md", VALID)
+        (fx.context / "Source" / "Mission").mkdir()
+        fx.src("Source/Mission.h")
+        r = fx.run()
+        plan = CA.plan_archive(fx, r, kinds=("orphan_stem",), day="d")
+        check("⑨ 🔴 dir_named 는 고르지 않으면 안 옮긴다", plan["moves"] == [], str(plan["moves"]))
+        plan2 = CA.plan_archive(fx, r, kinds=("dir_named",), day="d")
+        check("⑨ 명시하면 계획에 든다", len(plan2["moves"]) == 1, str(plan2["moves"]))
+        plan3 = CA.plan_archive(fx, r, kinds=("valid",), day="d")
+        check("⑨ 아카이브 대상이 아닌 종류는 거부", plan3["moves"] == [] and plan3["refused"],
+              str(plan3))
+
+
 def main() -> int:
     for fn in (test_classify_each_category, test_comment_section_is_excluded,
                test_orphan_beats_content_classification, test_dir_named_beats_everything,
                test_domains_dir_is_out_of_scope, test_prefix_form_is_not_a_match,
                test_repair_only_when_it_improves,
                test_human_call_categories_are_never_repair_candidates,
-               test_unreadable_is_counted, test_missing_context_dir_is_a_fact):
+               test_unreadable_is_counted, test_missing_context_dir_is_a_fact,
+               test_archive_destination_is_outside_context, test_archive_plan_then_apply,
+               test_archive_never_overwrites, test_archive_kinds_are_opt_in):
         fn()
     total = PASS + FAIL
     print(f"{'✅' if not FAIL else '🔴'} test_context_audit: {PASS}/{total} 통과")

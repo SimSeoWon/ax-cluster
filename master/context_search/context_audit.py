@@ -336,3 +336,97 @@ def main(argv: list | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# ── 아카이브 이동 (`#160` 2단계) — 🔴 **계획이 기본, 목적지는 `context/` 밖** ────
+#
+# 원전 `repair_context_md` 의 `archive_dir_named`·`archive_orphan` 이식.
+#
+# 🔴 **목적지가 `context/` 밖인 것이 이 기능의 핵심이다.** 원전은
+# `context_dir.parent / '_archive' / <종류> / <날짜>` 로 옮긴다 — 즉 **색인 범위를 벗어난다.**
+#
+# ⚠️ **우리 코퍼스는 그 반대로 놓여 있다** (실측 2026-08-14): `context/_archive/project_alpha_md/`
+# 가 **`context/` 안**에 있어서 색인·검색에 그대로 잡힌다. 이 세션에 같은 신호가 세 번 나왔다:
+#
+#     검색 로그 1위        _archive/project_alpha_md/…/AlphaUIHUD_Mission.md  (소 3.4.5)
+#     도메인 빈도          _archive 1 / 8 (소 3.4.2)
+#     orphan_stem 112건    그중 101건이 _archive/ (소 3.4.1)
+#
+# 🔴 **세 신호의 원인이 하나다 — 아카이브가 색인 안에 있다.** 원전 규약대로 밖으로 옮기면
+# 셋이 함께 사라진다. 그것이 이 이식이 값을 내는 자리다.
+#
+# 🔴 **그러나 파일을 움직이는 것은 사람의 승인 사항이다** — `plan_archive` 가 기본이고
+# `apply_archive` 는 호출자가 명시해야 한다(`work/cleanup.py` 와 같은 규약).
+
+ARCHIVE_SUBDIR = {"dir_named": "dir_named_md", "orphan_stem": "orphan_md"}
+
+
+def archive_root(paths, kind: str, day: str) -> Path:
+    """🔴 `context/` **밖**이다 — 안에 두면 색인 범위를 벗어나지 못한다 (실측 근거는 위 주석)."""
+    return Path(paths.root) / "_archive" / ARCHIVE_SUBDIR[kind] / day
+
+
+def plan_archive(paths, result: dict, *, kinds=("orphan_stem",), day: str = "") -> dict:
+    """무엇을 어디로 옮길지 **계획만** 낸다. 🔴 아무것도 움직이지 않는다.
+
+    `kinds` 는 `dir_named` · `orphan_stem` 중에서 **호출자가 고른다** — 기본은 orphan 뿐이고,
+    `dir_named` 는 구조 흔적이라 따로 판단할 자리다.
+    """
+    from datetime import date
+    day = day or date.today().isoformat()
+    context_dir = Path(paths.context)
+    moves, refused = [], []
+    for kind in kinds:
+        if kind not in ARCHIVE_SUBDIR:
+            refused.append((kind, "아카이브 대상 종류가 아니다"))
+            continue
+        dest_root = archive_root(paths, kind, day)
+        for rel in result.get("categories", {}).get(kind, []):
+            src = context_dir / rel
+            # 원전과 같은 평탄화 — 경로 구분자를 `__` 로 접어 이름 충돌을 막는다
+            dst = dest_root / rel.replace("/", "__")
+            if not src.exists():
+                refused.append((rel, "원본이 없다 (이미 옮겨졌나)"))
+                continue
+            if dst.exists():
+                # 🔴 덮어쓰지 않는다 — 아카이브는 증거이고, 덮으면 증거가 사라진다
+                refused.append((rel, f"목적지가 이미 있다: {dst.name}"))
+                continue
+            moves.append((rel, str(dst), kind))
+    return {"moves": moves, "refused": refused, "day": day, "kinds": list(kinds)}
+
+
+def apply_archive(paths, plan: dict) -> dict:
+    """계획의 이동만 수행한다. 🔴 **계획이 고른 것 밖은 건드리지 않는다.**
+
+    ⚠️ 이 함수는 **트윈 문서를 움직인다.** 호출 전에 사람의 승인을 받는 것이 규약이다
+    (`CLAUDE.md` — 자동 로드 문서와 게임 소스 밖이지만, 트윈은 M2 의 산출물이다).
+    """
+    import shutil
+    context_dir = Path(paths.context)
+    moved, failed = [], []
+    for rel, dst_str, kind in plan.get("moves", []):
+        src = context_dir / rel
+        dst = Path(dst_str)
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dst))
+        except OSError as e:
+            failed.append((rel, str(e)))
+            continue
+        moved.append((rel, dst_str, kind))
+    return {"moved": moved, "failed": failed}
+
+
+def format_archive_plan(plan: dict, sample: int = 10) -> str:
+    moves = plan.get("moves", [])
+    out = [f"# 아카이브 계획 ({', '.join(plan.get('kinds', []))} · {plan.get('day','')})", "",
+           f"- 옮길 것: **{len(moves)}건** · 거부: {len(plan.get('refused', []))}건",
+           "- 🔴 목적지는 `context/` **밖**이다 — 색인 범위를 벗어난다", ""]
+    for rel, dst, kind in moves[:sample]:
+        out.append(f"  - `{rel}` → `{Path(dst).parent.name}/{Path(dst).name}`  [{kind}]")
+    if len(moves) > sample:
+        out.append(f"  - … 외 {len(moves) - sample}건")
+    if plan.get("refused"):
+        out += ["", "거부:"] + [f"  - `{r}` — {why}" for r, why in plan["refused"][:sample]]
+    return "\n".join(out)
