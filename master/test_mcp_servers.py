@@ -82,7 +82,11 @@ from master.projects import mcp_server as pj  # noqa: E402
 check("모듈 import", True)
 check("MCPServer 인스턴스", type(pj.mcp).__name__ == "MCPServer", type(pj.mcp).__name__)
 _pj = tool_names(pj.mcp)
-check("도구 26종 등록", len(_pj) == 26, f"실제 {len(_pj)}종: {_pj}")
+check("도구 28종 등록", len(_pj) == 28, f"실제 {len(_pj)}종: {_pj}")
+# 🔴 **감사 창구 둘** (소 3.4.1·3.4.2, 2026-08-14) — 원전은 감사를 **요청 시** 부르는 도구로
+#   뒀다(`audit_context_md` · `analyze_search_log`). 유휴 배치가 아니다.
+for _t in ("audit_context_tool", "analyze_search_log_tool"):
+    check(f"  🔴 감사 창구: {_t}", _t in _pj, str(_pj))
 # 🔴 개수만 세면 다음에 또 깨진다 — **요청자가 실제로 부를 것**이 있는지 이름으로 본다.
 #   `.33` 은 이것들이 없으면 개념을 추가·수정·제거할 수단이 아예 없다(2026-08-09 실측:
 #   어휘(별칭)만 다룰 수 있고 개념은 마스터 CLI 에만 있었다).

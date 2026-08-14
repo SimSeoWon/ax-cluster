@@ -468,6 +468,78 @@ def search_context_tool(query: str, limit: int = 8) -> str:
         return _fail(e)
 
 
+@mcp.tool()
+def audit_context_tool(sample: int = 5, repair: bool = False) -> str:
+    """트윈 문서(컨텍스트 MD) 건강 진단 — 🔴 **읽기 전용이 기본, LLM 0** (소 3.4.1).
+
+    원전 `audit_context_md` 이식. 8분류로 나눈다:
+
+        valid · pence_wrapped · natural_prefix · shell_only · empty_summary
+        no_frontmatter · dir_named · 🔴 orphan_stem (대응 소스가 없는 좀비 문서)
+
+    `repair=True` 를 주면 **LLM 0 으로 고칠 수 있는 것만**(펜스·자연어 도입부) 고친다.
+    🔴 `dir_named`·`orphan_stem` 은 **절대 옮기지 않는다** — 트윈 문서를 이동하는 것은
+    사람의 판단이다(`work/cleanup.py` 와 같은 결).
+
+    ⚠️ 걷어낸 뒤 **다시 분류해서 나아지는 것만** 고친다 — 고쳐서 더 나빠지는 것을 막는다.
+    """
+    try:
+        from ..context_search import context_audit as ca
+        from ..context_search.paths import resolve as resolve_paths
+
+        paths = resolve_paths("")
+        result = ca.audit(paths.context, paths.repo)
+        if result.get("error"):
+            return json.dumps({"ok": False, "error": result["error"]}, ensure_ascii=False)
+
+        payload = {
+            "ok": True,
+            "project": paths.name,
+            "total": result["total"],
+            "counts": {k: len(v) for k, v in result["categories"].items()},
+            "unreadable": result["unreadable"][:sample],
+            "samples": {k: v[:sample] for k, v in result["categories"].items()
+                        if v and k != "valid"},
+            "report": ca.format_report(result, sample_per_cat=sample),
+        }
+        plan = ca.plan_repair(paths.context, result)
+        payload["repair_plan"] = {"fixable": len(plan["fixable"]),
+                                  "refused": plan["refused"][:sample]}
+        if repair:
+            applied = ca.apply_repair(paths.context, plan)
+            payload["repaired"] = {"fixed": len(applied["fixed"]),
+                                   "failed": applied["failed"][:sample]}
+        return json.dumps(payload, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def analyze_search_log_tool(since: str = "", until: str = "", compare_at: str = "") -> str:
+    """검색 로그 분석 리포트 — 채널 기여도·언어 갭·RRF k 튜닝 (소 3.4.2, **stdlib·LLM 0**).
+
+    원전 `audit_tools.analyze_search_log` 이식. 🔴 **표본이 30건 미만이면 판단을 보류**하고
+    수치만 낸다 — 얇은 데이터로 채널 결론을 내리지 않는다.
+
+    `compare_at` 에 날짜를 주면 그 시점 기준 **Pre/Post 두 창**으로 비교한다(색인·가중치를
+    바꾼 뒤 효과를 보는 자리).
+    """
+    try:
+        from ..context_search import search_log_analyzer as sla
+        from ..context_search.paths import resolve as resolve_paths
+
+        paths = resolve_paths("")
+        return json.dumps({
+            "ok": True,
+            "project": paths.name,
+            "log": str(paths.search_log),
+            "report": sla.analyze(paths.search_log, since=since, until=until,
+                                  compare_at=compare_at),
+        }, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
 # ── 온톨로지 큐레이션 (소 1.3.1 · 1.3.2 · 1.3.6 · 1.3.7 · 1.3.9) ─────────────
 #
 # 🔴 **전부 사람이 시켜야 부른다.** 자동 승급은 폐기됐다(2026-06-01 영구 비활성) — 도구가

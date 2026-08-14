@@ -443,7 +443,70 @@ attempt push 는 `from == to`. 리포트 14 §17 이 이미 잰 경로와 같다
 
 ⚠️ 유닛이 이제 **7종**이다(HTTP 3 + path 1 + timer 3). `PLAN.md` 표를 그에 맞게 정정했다.
 
-### §12.5 남은 것 — 복각 3번 이후
+### §12.5 복각 3번 — 컨텍스트 MD 진단 (`#160`) · 🔴 **첫 감사가 곧 실측을 냈다**
+
+**추천을 측정으로 골랐다.** 후보 다섯의 **입력이 실재하는지** 먼저 쟀다:
+
+    #155 planner · #156 review_collector    `.claude/reviews/`   🔴 0건
+    #157 recipes_synthesizer                `_signals.jsonl`     🔴 0건
+    #158 history_harvest                    `.claude/history/`   🔴 0건
+    #160 context_audit                      컨텍스트 MD          ✅ **1,057건**
+
+🔴 **중 3.3(되먹임 기계 7종)이 그룹째로 막혀 있다** — 넷이 0건인 이유가 같다. **우리는 그 입력을
+만드는 쪽(코드 리뷰 생성 · code-writer 신호 · frontmatter 있는 history)을 안 옮겼다.** 지금
+이식하면 §12.3 에서 피한 *"입력 없는 배치"* 를 **네 번 반복**한다. 이 의존은 마일스톤 문서에
+없었다 — 읽어서 나온 것이라 적어 둔다.
+
+#### 🔴 이식 형태를 정정했다 — 배치가 아니라 **요청 시** 도는 것이다
+
+처음엔 `master/batch/` 에 얹으려 했는데, `watch.py` 는 `context_audit` 을 유휴 사이클에서
+**부르지 않는다**(`import` 목록에 없다). 원전 통로는 셋이었다: MCP `audit_context_md` ·
+HTTP · 스킬 `/audit-context`. **배치화는 원전에 없는 내 발명**이므로 하지 않고 **개선 후보로만
+기록**했다(사용자 지시: 개선은 기록만).
+
+→ 이식: `context_search/context_audit.py` + MCP 도구 **둘**. 두 번째는 `audit_tools.py` 에 있던
+`analyze_search_log` 로, **§12.4 에서 이식한 분석기의 사람 입구**다(리포트를 손으로 뽑는 자리).
+
+#### 🔴 분류 순서가 판정을 바꾼다 — 실측으로 증명됐다
+
+원전 순서는 `dir_named` → `orphan_stem` → 내용 분류다. 이식 전 사전 스캔은 *"본문 50자 미만
+147건"* 이었는데, 감사 결과 `shell_only` 는 **39건**이다. 차이 108건은 `orphan_stem` 으로
+**먼저** 잡혔다 — 즉 순서를 바꿨으면 **재생성할 소스가 없는 108건이 「재생성 대상」**이 됐다.
+원전이 그 순서를 고른 이유가 값으로 나왔다.
+
+#### 실 구동 (트윈 1,037건 전수)
+
+    valid          886  (85.4%)  ✅
+    shell_only      39  ( 3.8%)  ⚠️ **현행 소스**의 문서가 껍데기다 — 재생성 대상
+    orphan_stem    112  (10.8%)  ⚠️ 대응 소스가 없다
+    나머지 5분류      0           (펜스 손상 0 — 그 유형은 우리에게 없다)
+
+#### 🔴 감사가 찾은 것 — 좀비 11건, 그중 8건이 **미전파된 개명**
+
+`orphan_stem` 112건 중 101건은 `_archive/` 다(예상대로). 🔴 **나머지 11건은 현행 경로**였고,
+**거짓 발견을 피하려고 전수 확인**했다 — 동명·prefix 형태 둘 다 저장소 전체에 없었다:
+
+    .claude/mcp/uelog_analyzer.md
+    Source/ModularStage/UI/Base/UIWidgetBase.md · UI/Subsystems/UISubsystem.md
+    Source/ModularStageEditor/{Private,Public}/Widget/EditorView_MissionTask{Editor,_Annihilation,_Destination,_Wait}.md   ← 8건
+
+**그 8건의 정체를 확인했다**: 저장소에는 `EditorView_MissionTask_Wait_**Renewal**.h` 가 있다.
+개명이 일어났고 **트윈에 전파되지 않았다.** 그 문서의 `related_classes` 는 아직 죽은 경로를
+가리킨다. 🔴 **이것이 `#167`(소 3.6.1 개명 cascade)의 실증**이다 — 그 칸에 실제 작업이 기다리고
+있다는 증거가 처음 나왔다.
+
+⚠️ **`_archive` 신호가 이 세션에서 세 번째다** — 검색 로그 1위(§12.3) · 도메인 빈도(§12.4) ·
+그리고 orphan 101건. 세 신호가 같은 곳을 가리킨다. 🔴 **그러나 옮기지 않았다** — 트윈 문서를
+이동하는 것은 사람의 판단이고(`work/cleanup.py` 와 같은 결), `_archive` 를 어떻게 할지는 **열린
+질문**이다. 복구 경로는 `dir_named`·`orphan_stem` 을 **후보에 아예 넣지 않는다**(테스트로 고정).
+
+#### 회귀 하나를 냈고 그 테스트가 잡았다
+
+`test_mcp_servers.py` 가 **도구 수를 못박아 둔 계약 테스트**라 26 → 28 로 깨졌다. 우연한 등록·
+삭제를 잡는 자리이므로 숫자를 올리고 **새 도구 둘을 이름으로도 검사**하게 했다(그 파일이 이미
+*"개수만 세면 다음에 또 깨진다"* 고 적어 둔 규약을 따랐다).
+
+### §12.6 남은 것 — 복각 4번 이후
 
     #192  유휴 배치 구동 주체 (ax-batch.timer + 시간 게이트 이식)  ← 자리
     #161  search_log_analyzer 696 + rag_report 56                 ← 그 자리에서 돌 첫 배치
