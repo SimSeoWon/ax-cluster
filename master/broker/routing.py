@@ -25,6 +25,11 @@ class Endpoint:
     resident: Optional[str] = None  # /api/ps 실측 — 지금 VRAM 에 올라와 있는 모델
     healthy: bool = False
     last_error: str = ""
+    # 🔴 **「상주 없음」과 「상주를 못 읽었다」는 다르다.** `/api/ps` 가 실패해도 `resident` 는
+    # `None` 이 되는데, 그 값을 *"모델이 안 올라와 있다"* 로 읽으면 재적재를 부른다 —
+    # 힘들어하는 노드에 **가장 비싼 일**(35B 적재)을 시키는 경로다(2026-08-15 실측: 그 직후
+    # 보드가 멈췄다). 규약은 이미 있다 — *"판정 불가는 언제나 보존"*(리포트 16 §10).
+    resident_known: bool = True
 
 
 def _has_model(ep: Endpoint, model: str) -> bool:

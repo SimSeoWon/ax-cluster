@@ -91,6 +91,52 @@ def test_repins_when_pin_fell_off():
     assert ep.resident == PIN
 
 
+def test_repin_carries_num_ctx():
+    """🔴 **워밍업에 `num_ctx` 가 없으면 노드가 죽는다** (2026-08-15 실측).
+
+    안 실으면 Ollama 가 모델 기본 `context_length`(35B 는 262144) 전제로 KV 를 잡는다.
+    BC-250 여유가 2.2GB 인데 그 할당이 ~2.0GB 다(리포트 10 §8). 프록시 경로에는 이 가드가
+    있었고 **이 경로에만 없어서** repin 직후 보드가 멈췄다.
+    """
+    from master.broker.config import DEFAULT_NUM_CTX
+    c = FakeClient()
+    assert asyncio.run(ensure_pinned(_ep(resident=None), PIN, c, _state())) is True
+    opts = c.posts[0].get("options") or {}
+    assert opts.get("num_ctx") == DEFAULT_NUM_CTX, opts
+    # 🔴 프록시와 **같은 값**이어야 한다 — 다르면 다음 요청이 통째로 재적재된다(61.6s 실측)
+    from master.broker import server as srv
+    assert srv.DEFAULT_NUM_CTX == DEFAULT_NUM_CTX
+
+
+def test_no_repin_when_resident_unknown():
+    """🔴 **「상주 없음」과 「못 읽었다」는 다르다.** `/api/ps` 가 실패한 노드에 재적재를 걸면
+    힘들어하는 보드에 **가장 비싼 일**을 시킨다. 판정 불가는 보존이다(리포트 16 §10)."""
+    ep = _ep(models=["driver:big"], resident="driver:big")
+
+    class PsFails(FakeClient):
+        async def get(self, url, timeout=None):
+            if url.endswith("/api/ps"):
+                raise ConnectionError("ps 실패")
+            return await FakeClient.get(self, url, timeout)
+
+    c = PsFails()
+    asyncio.run(refresh(ep, c))
+    assert ep.healthy and ep.resident is None and ep.resident_known is False
+    assert "ps:" in ep.last_error
+    assert asyncio.run(ensure_pinned(ep, PIN, c, _state())) is False
+    assert c.posts == [], c.posts          # 🔴 적재 요청을 보내지 않았다
+
+
+def test_repin_still_runs_when_ps_says_empty():
+    """반대쪽도 고정한다 — `/api/ps` 가 **정상적으로** 「없음」을 말하면 재적재는 해야 한다."""
+    ep = _ep()
+    c = FakeClient(ps=None)
+    asyncio.run(refresh(ep, c))
+    assert ep.resident is None and ep.resident_known is True
+    assert asyncio.run(ensure_pinned(ep, PIN, c, _state())) is True
+    assert c.posts and c.posts[0]["model"] == PIN
+
+
 def test_no_repin_when_already_resident():
     ep = _ep(resident=PIN)
     c = FakeClient()

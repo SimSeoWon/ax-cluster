@@ -351,6 +351,21 @@ scope 밖 클래스를 안 올린다).
 
 테스트 `test_descriptions.py` 47/47 신규 + MCP 계약 29→30종 · 전체 **2743/2743 · 실패 0**.
 
+## §15 남은 두 도메인 재합성 (사용자 승인) — 🔴 **이 절도 실행 전에 썼다**
+
+    대상       GlobalEventSystem(stale 5/9) · MissionEditor(3/13) — 둘 다 full
+               (도메인 MD 가 바뀌어 md_hash 불일치)
+    백업       ontology-before-refresh2.tgz (60KB)
+    노드       bc250 = 35B 상주 ✅ · rtx3060 = 14b 상주 ✅ · inflight 0
+    규모       멤버 9→2조각 · 13→3조각 · 프롬프트 101,108자 · **요청 10건**
+    기대       ① 항목 재합성(잠금 44건 보존) ② md_hash 스탬프 ③ settle → stale 0
+               ④ 🔴 **서술은 LLM 0** — 두 도메인 다 `protected` 다 ⑤ 끝에 색인 동기 1회
+    되돌리기   tar xzf …/ontology-before-refresh2.tgz -C ~/ax-cluster/ModularStage
+
+### §15.1 실행 기록
+
+    (아래에 실측을 적는다)
+
 ---
 
 ## §13 세션 마감 (2026-08-15)
