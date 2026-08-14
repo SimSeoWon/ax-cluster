@@ -426,7 +426,7 @@ def search_context_tool(query: str, limit: int = 8) -> str:
     사람을 기다리는 인프라를 만들지 않는다(§2).
     """
     try:
-        from ..context_search import thesaurus as th
+        from ..context_search import search_log, thesaurus as th
         from ..context_search.paths import resolve as resolve_paths
         from ..context_search.search import focus, open_search
 
@@ -439,6 +439,12 @@ def search_context_tool(query: str, limit: int = 8) -> str:
         # ③ 아는 별칭을 덧붙인다 — 대괄호를 안 썼으면 원문 그대로 간다.
         q = " ".join([focus(query)] + res.expansion) if bracketed else query
         hits = searcher.search(q, limit=limit)
+
+        # ⑤ 🔴 **실증 로그** (소 3.4.5 · `#193`) — 원전도 MCP/HTTP **표면**에서 기록한다.
+        #    기록하는 질의는 **받은 그대로**(`query`)다 — 원전 `combined_search` 가 확장 전
+        #    파라미터를 넘기는 것과 같다. 기록 실패는 **검색을 막지 않는다**(fail-open)지만
+        #    조용하지도 않다 — 응답의 `logged` 로 나간다.
+        logged = search_log.log_search(paths, query=query, hits=hits, caller="mcp_direct")
 
         return json.dumps({
             "ok": True,
@@ -454,6 +460,9 @@ def search_context_tool(query: str, limit: int = 8) -> str:
             "ask": [u.question for u in res.unresolved],
             "unresolved_terms": [u.term for u in res.unresolved],
             "hits": [h.to_dict() for h in hits],
+            # ⚠️ 기록이 실패하면 사유를 그대로 실어 보낸다 — 조용히 사라지지 않게.
+            "logged": logged.get("ok", False),
+            **({"log_error": logged.get("reason", "")} if not logged.get("ok") else {}),
         }, ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)

@@ -87,6 +87,14 @@ class ProjectPaths:
         return self.root / "responses"
 
     @property
+    def search_log(self) -> Path:
+        """검색 로그 (소 3.4.5). 🔴 **파생물이 아니다** — canary 와 같은 결의 **관측 기록**이라
+        지우면 복구되지 않는다. 원전은 `<프로젝트>/.claude/search_log.jsonl` 이지만 §5.5 가
+        *"데이터를 프로젝트 밖으로"* 로 확정했다. 청소 대상에 넣지 말 것.
+        """
+        return self.root / "search_log.jsonl"
+
+    @property
     def canary(self) -> Path:
         """🔴 **영구 유실 카나리 누적** (소 3.5.6). 원전 `permanent_loss_canary.jsonl` 이식.
 

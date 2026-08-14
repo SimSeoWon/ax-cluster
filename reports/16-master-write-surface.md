@@ -273,7 +273,107 @@ attempt push 는 `from == to`. 리포트 14 §17 이 이미 잰 경로와 같다
 줄일 수 없다). `PLAN.md` 의 `docs/` 색인에 11번 행을 추가했다 — 🔴 **색인에 안 올리면 다음 사람이
 그 문서를 못 찾는다**(원전 훅 규약과 같은 결).
 
-## §12 테스트
+## §12 와처 서버 기능 복각 — 착수 (사용자 지시 2026-08-14)
+
+> *"개선보단 일단 복각이 먼저야. 개선할 내용은 기록만 해두고, 리눅스 환경에서 기존 와처가 하던
+> 서버 기능을 복각 먼저해! 작동하는 상태를 만들어야 실증 로그를 심어서 문제가 될 것이 있는지
+> 보고 개선할 게 있는지 찾지."*
+
+### §12.1 무엇이 미복각인가 (실측)
+
+`watch.py` 가 실제로 `import` 해서 구동하는 것이 **서버 기능의 정의**다. 능력 단위로 맞춰 봤다:
+
+    planner · plan_generator · plan_dedup · review_collector · issue_classifier
+    recipes_synthesizer · history_harvest · rag_report · search_log_analyzer
+    context_audit · client_index · domain_health · ontology_declared
+    ontology_invalidation · ontology_descriptions · ontology_pkg_audit
+    → 🔴 **16개 전부 미복각** (`recipes` 히트는 실패 카탈로그·웹UI 문구로 무관)
+
+🔴 **그리고 얹힐 자리가 없다.** 원전은 한 루프 안의 **유휴 사이클** + **시간 게이트**
+(`watch_state._should_run_*` / `_mark_*_done`)로 배치를 돌렸다. 우리는 `watch_state` 이식 때
+**`in_progress` 일시정지만**(`#164`) 가져왔다. 주기 구동 주체는 지금 **둘뿐**(색인 따라잡기 ·
+상태 스냅샷). **이식해도 아무것도 돌지 않는다** → `#192` 신설(분모 75 → 76).
+
+### §12.2 🔴 `PLAN.md`·`3-open-items.md` 를 안 읽고 만들려 했다 (사용자 지적)
+
+사용자가 *"레드마인과 플랜은 읽었어?"* 로 물어 드러났다. **레드마인은 읽었고(이슈 75건 목록 +
+손댄 것 본문), `PLAN.md` 와 `docs/3-open-items.md` 는 안 읽었다.** 후자는 `CLAUDE.md`·`PLAN.md`
+둘 다 *"start here before working"* 로 가리키는 문서다. 읽었더니 **내가 만들려던 것에 직접 걸리는
+확정 사항 둘**이 있었다:
+
+    §5.4.2 (확정 2026-08-07)  🔴 watch.py 의 `while True` 폴링 루프는 **이식 대상이 아니다**
+                              (Gitea 이벤트 구동). 단 "상주 프로세스 자체는 여전히 필요"
+    §5.4.3 (확정 2026-08-07)  process_lifecycle.py · network_firewall.py 는 **폐기 확정** —
+                              리눅스 등가물로 고쳐 쓰지 않고 **systemd 에 넘긴다**
+
+→ 배치의 자리는 **반드시 systemd timer** 다. 원전처럼 루프 안 유휴 사이클로 복각하면 **이미
+기각된 폴링 루프를 되살리는 것**이 된다. 🔴 **방향은 맞았지만 근거 없이 맞았을 뿐이었다** —
+이것이 *"만들기 전에 읽는다"* 가 규칙인 이유다.
+
+⚠️ **그 김에 낡은 것 둘을 발견했다 (기록만 — 사용자 지시대로 개선은 진행하지 않는다)**:
+`PLAN.md` 「Currently running」 표에 서비스 **3종만**(유닛 6종 누락) · `docs/3-open-items.md` 의
+🔵 표시들이 **`locked` 된 마일스톤 3** 을 가리킨다.
+
+### §12.3 복각 1번은 **기록기**였다 — 분석기의 상류 (`#193`)
+
+`#161`(원전 `search_log_analyzer` 696줄)을 첫 배치로 잡았다가, 이식 전에 **입력이 실재하는지**
+쟀다. 🔴 **우리는 검색 로그를 아예 쓰지 않는다** — 파일 0건, 코드 히트 0건. 유일한 히트가
+우리 `bm25.py:256` 의 주석이었다:
+
+> *"이 규칙은 질의 3개로 정했다. 표본이 얇다 — `search_log.jsonl` 이 쌓이면…"*
+
+⚠️ **누락이 아니라 의도적 보류였다** — `search.py:16` 이 이식 당시 *"검색 로그(`_log_search`)
+→ §5.2-D 로 별도 판단 (감사 계층)"* 로 적어 뒀다. 그 보류를 푸는 근거가 셋 생겼다: ① 우리
+코드가 이미 요청 ② `#161` 의 입력 ③ 사용자가 말한 *"실증 로그를 심어서"* 가 정확히 이것이다.
+→ `#193` 신설(분모 76 → 77).
+
+**이식분** (`master/context_search/search_log.py`, 원전 `cs_common` 179~245·314~323·150~173):
+
+    detect_lang            5배 규칙까지 원전 그대로 (바꾸면 과거 리포트와 비교 불가)
+    build_result_details   🔴 `Hit` **필드를 직접** 읽는다 (아래 함정)
+    log_search             원전 스키마 그대로 · 🔴 검색을 절대 막지 않는다
+    rotate                 상한 2000건, **최신**을 남긴다
+    read_entries           `#161` 의 입력 · 깨진 줄은 건너뛴다
+
+**자리**: `search_context_tool`(*"검색 입구는 이것 하나다"*) — 원전도 MCP/HTTP **표면**에서
+기록한다. ⚠️ 내부 소비자(`context_synth`)는 기록하지 않는다 — 원전 `context.py` 도 안 한다.
+합성이 스스로 만든 질의를 섞으면 분포가 오염된다.
+
+#### ⚠️ 함정 — `Hit.to_dict()` 로 적으면 채널 분해가 조용히 전부 빈다
+
+`to_dict()` 는 응답 축소용이라 `bm25_score`·`vector_rank`·`bm25_rank` 를 **버린다.** 그런데
+원전 `result_details` 는 **그 셋이 본체**다(채널 기여도 비교가 목적). 필드를 직접 읽었고,
+테스트로 고정했다(`rank 0` 이 사라지지 않는 것까지 — 0 은 1위다).
+
+#### 🔴 원전과 다르게 둔 것 — 조용히 실패하지 않는다
+
+원전은 `_log_search`·`_rotate_search_log` 둘 다 `except Exception: pass` 다. **fail-open 자체는
+옮겼다**(로그가 검색을 막으면 더 나쁘다). 다만 **소리 없이는 안 된다** — 중 4.2 에서 이식한
+σ 감사의 기준이 *"조용한 실패는 결함"* 이고 *"예외를 값으로 돌려주면 조용하지 않다"* 다.
+그래서 `{"ok": False, "reason": …}` 를 돌리고 응답에 `logged`/`log_error` 로 실어 보낸다.
+
+#### 실 구동 (실제 색인·실제 검색)
+
+    질의        [미션시스템]에서 [완료]시 [연출] 부분이 어디야?
+    확장 후     미션시스템 완료 연출 UAlphaManager_Mission
+    hits 5 · logged True · 파일 1,421B 생성
+    기록 확인   query(받은 그대로) · lang=ko · caller=mcp_direct · zero_hit 없음(2건 이상)
+    🔴 채널 필드 살아 있음 — vec_rank 1 · bm25_rank 1 · similarity 0.6001 · bm25_score 10.6428
+
+⚠️ **관측 하나 (기록만)**: 1위가 `_archive/project_alpha_md/…/AlphaUIHUD_Mission.md` 였다 —
+**아카이브된 Project_Alpha 문서가 현행 소스보다 앞선다.** 분석기(`#161`)가 잡아낼 부류이고,
+지금 고치지 않는다(개선은 기록만).
+
+⚠️ **돌고 있는 `ax-projects` 서비스는 아직 옛 코드를 물고 있다** — 실운영 수집은 재기동 후에
+시작된다. 🔴 재기동은 방금 이식한 원전 5조에 걸리므로 **승인을 받고 한다.**
+
+### §12.4 남은 것 — 복각 2번
+
+    #192  유휴 배치 구동 주체 (ax-batch.timer + 시간 게이트 이식)  ← 자리
+    #161  search_log_analyzer 696 + rag_report 56                 ← 그 자리에서 돌 첫 배치
+    🔴 둘을 **같은 커밋에** 넣는다 — 자리만 만들면 「깨울 주체 없는 가드」의 역방향이 된다
+
+## §13 테스트
 
     신규   master/test_attempt.py                 40/40   (실제 git · 실제 worktree)
     전체   2379/2379 통과 · 실패 파일 0개
