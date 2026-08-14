@@ -1,0 +1,33 @@
+[Unit]
+Description=AX 클러스터 유휴 배치 (원전 watch.py 유휴 사이클 — RAG 채널 분석 등)
+Documentation=https://github.com/SimSeoWon/ax-cluster
+# 🔴 폴링 데몬이 아니다 (PLAN §5.4.2·§5.4.3). 타이머가 깨우고 한 번 돌고 끝난다.
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+# 한 번 돌고 끝난다 — 상주 프로세스를 두지 않는다 (색인기와 같은 형태).
+Type=oneshot
+User=sim
+Group=sim
+
+WorkingDirectory=/home/sim/ax-cluster
+Environment=AX_PROJECTS_ROOT=/home/sim/ax-cluster
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/home/sim/ax-cluster/.venv/bin/python -m master.batch.run run
+
+# 지금 배치는 stdlib·LLM 0 이라 초 단위다. LLM 배치(#155·#157)가 붙으면 늘린다.
+TimeoutStartSec=900
+
+# 🔴 종료코드 4 = **일시 중지 게이트에 걸림**(진행 중 분산 작업). 고장이 아니다 —
+#    색인기 유닛과 **같은 규약**이다(*"늘 빨간 유닛은 유닛이 아니다"*).
+#    ⚠️ 1 은 넣지 않는다 — 진짜 실패는 실패여야 한다.
+SuccessExitStatus=4
+
+# 유휴 배치다. 사람 작업·파이프라인보다 뒤로 물러난다.
+Nice=15
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

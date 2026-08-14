@@ -79,13 +79,28 @@ separate reads each found real gaps). That movement is normal — record it, don
 
 ---
 
-## Currently running (2026-08-08)
+## Currently running (updated 2026-08-14)
+
+⚠️ **This table was stale for six days** — it listed only the three HTTP services while five more
+units had been added. Same recurrence as report 14 §26.4 (*"README 둘이 또 낡아 있었다"*).
 
 | Service | Port | Unit | Defence |
 |---|---|---|---|
 | task_queue | 8101 | `ax-task-queue.service` | ✅ Bearer token + ufw LAN-only |
 | Inference broker | 8102 | `ax-broker.service` | ✅ Bearer token + ufw LAN-only |
-| Project registry (MCP) | 8103 | `ax-projects.service` | ✅ Bearer token + ufw LAN-only |
+| Project registry (MCP) + web UI | 8103 | `ax-projects.service` | ✅ Bearer token on API paths + ufw LAN-only. 🔴 The **status/ontology screens are login-free on purpose** (one person, four machines) |
+
+**Event-driven and periodic units** (no polling daemons — PLAN §5.4.2·§5.4.3):
+
+| Unit | Wakes on | What it does |
+|---|---|---|
+| `ax-indexer.path` | inotify on the event spool | push → mirror fetch → context synthesis → reindex |
+| `ax-indexer.timer` | every 10 min | 🔴 catch-up for what the pause gate deferred — **a guard without a waker never runs** |
+| `ax-status.timer` | every 5 min | cluster status snapshot for `/cluster` (a browser refresh never triggers SSH polling) |
+| `ax-batch.timer` | every 1 h | 🔴 **checks** whether an idle batch is due; the ported **time gates** decide (원전 `watch_state`). Currently one batch: RAG channel analysis (stdlib, LLM 0) |
+
+🔴 **Exit code 4 means "paused by the in-progress gate", not a failure** — both `ax-indexer` and
+`ax-batch` use it with `SuccessExitStatus=4`. *"늘 빨간 유닛은 유닛이 아니다."*
 
 **Two inference endpoints:** BC-250 #1 (35B pinned) and the RTX 3060 Windows PC (14b pinned).
 All three now require `Authorization: Bearer <token>` (`~/.config/ax-cluster/token`, 0600);
