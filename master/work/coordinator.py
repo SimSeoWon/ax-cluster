@@ -12,7 +12,7 @@
 원전 주석이 *"durable 단일 writer 보존"* 이고 **그 writer 는 서버**다 — 워커는 쓴다, 다만
 **ephemeral 에만** 쓴다. 없앤 것은 원칙이 아니라 그 원칙을 지키던 **장치**였다.
 
-## 🔴 원전과 다르게 둔 것 셋 — 이유가 있다
+## 🔴 원전과 다르게 둔 것 넷 — 이유가 있다
 
 **① `worker` 가 아니라 `workshop`.** 이 저장소에서 `worker/` 는 BC-250 추론 노드다.
 브랜치의 그 자리에 오는 것은 파일을 소유한 윈도우 PC = **작업장**이다.
@@ -25,6 +25,16 @@ push"* 하고 그 목적이 **증거 보존**이라, `work/cleanup.py` 가 이�
 명시해야 한다. 두 정책 다 일관성이 있고 **시점이 다를 뿐**이다(원전=work 종료 시, 우리=사람).
 
 **③ 드라이런 진입점 이름이 `fake_workshop`.** 원전 `fake_worker` 와 같은 것이다.
+
+**④ `remote` 가 인자다** (기본값은 원전과 같은 `"origin"`). 원전의 인프라 PC 는 `origin` 에
+push 할 수 있었지만 **우리 마스터의 정본은 `origin` push 가 봉인돼 있다**
+(`DISABLED://마스터는-소스저장소에-push하지-않는다-PLAN.md-2.1`, §2.1). Flow Y(사용자 확정
+2026-08-14)가 *"마스터가 diff 를 attempt 에 commit"* 을 요구하므로 별도 쓰기 표면
+(`gitea-write`)을 열었고, **이 인자 하나가 그 환경 차이를 전부 흡수한다** — 호출자가 어느
+표면으로 쏠지 고르고, 기본값은 원전 동작 그대로다(`selftest` 의 임시 저장소가 그 경로다).
+🔴 **봉인을 여는 대신 대체 가드를 뒀다**: 마스터 클론의 `pre-push` 훅이 `attempt/*`·`task/*`
+밖의 ref 와 **삭제 전부**를 거부한다(리포트 16 §5 — 네 대가 같은 Gitea 계정이라 서버측
+브랜치 보호로는 기계를 구분할 수 없다).
 
 ## ⚠️ `push --force` 가 여기 있는 이유 (지우지 말 것)
 
@@ -97,7 +107,7 @@ def assign_attempt(task_id: str, workshop: str, ts: str) -> dict:
 
 
 def push_attempt(repo: Path, attempt: str, base_ref: str, work_fn, target_rel: str,
-                 *, message: str, logf=_noop_log) -> str:
+                 *, message: str, remote: str = "origin", logf=_noop_log) -> str:
     """ephemeral attempt 생성 → `work_fn` 이 작업 → commit·push. head SHA 반환.
 
     `work_fn(repo, target_rel)` 은 **디스크 워킹트리만 수정한다** — git 은 건드리지 않는다.
@@ -111,14 +121,15 @@ def push_attempt(repo: Path, attempt: str, base_ref: str, work_fn, target_rel: s
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", message)
     # ephemeral 은 (workshop, ts) 전용 namespace — 위 「push --force 가 여기 있는 이유」 참조.
-    _git(repo, "push", "-q", "--force", "origin", attempt)
+    _git(repo, "push", "-q", "--force", remote, attempt)
     head = _git(repo, "rev-parse", "HEAD")
     logf("work", f"{attempt} push (head={head[:8]})")
     return head
 
 
 def verify_and_merge(repo: Path, attempt: str, durable: str, *,
-                     submit_epoch: int, current_epoch: int, logf=_noop_log) -> dict:
+                     submit_epoch: int, current_epoch: int,
+                     remote: str = "origin", logf=_noop_log) -> dict:
     """🔴 epoch 게이트 → 통과분만 durable 에 merge·push. `{ok, merged, reason}`.
 
     **fencing 이 먼저다** — git 을 건드리기 전에 판정한다. 재배정으로 epoch 이 올라간 뒤
@@ -136,40 +147,40 @@ def verify_and_merge(repo: Path, attempt: str, durable: str, *,
         return {"ok": False, "merged": False,
                 "reason": f"stale_epoch:{submit_epoch}<{current_epoch}"}
 
-    _git(repo, "fetch", "-q", "origin", attempt)
+    _git(repo, "fetch", "-q", remote, attempt)
     logf("verify", f"{attempt} 검증 (epoch={submit_epoch} OK)")
 
-    remote_durable = _git(repo, "ls-remote", "--heads", "origin", durable, check=False)
+    remote_durable = _git(repo, "ls-remote", "--heads", remote, durable, check=False)
     if not remote_durable:
-        _git(repo, "checkout", "-q", "-B", durable, f"origin/{attempt}")
-        _git(repo, "push", "-q", "origin", durable)
+        _git(repo, "checkout", "-q", "-B", durable, f"{remote}/{attempt}")
+        _git(repo, "push", "-q", remote, durable)
         logf("merge", f"durable {durable} 신규 생성 (첫 검증 통과분)")
         return {"ok": True, "merged": True, "reason": "created_from_first_attempt"}
 
-    _git(repo, "fetch", "-q", "origin", durable)
-    _git(repo, "checkout", "-q", "-B", durable, f"origin/{durable}")
-    _git(repo, "merge", "-q", "--no-edit", f"origin/{attempt}")
-    _git(repo, "push", "-q", "origin", durable)
+    _git(repo, "fetch", "-q", remote, durable)
+    _git(repo, "checkout", "-q", "-B", durable, f"{remote}/{durable}")
+    _git(repo, "merge", "-q", "--no-edit", f"{remote}/{attempt}")
+    _git(repo, "push", "-q", remote, durable)
     logf("merge", f"검증 통과 → durable {durable} merge·push")
     return {"ok": True, "merged": True, "reason": "merged"}
 
 
 def cleanup_attempts(repo: Path, task_id: str, *, delete: bool = False,
-                     logf=_noop_log) -> dict:
+                     remote: str = "origin", logf=_noop_log) -> dict:
     """그 task 의 ephemeral 목록. 🔴 **기본은 세기만 한다** — durable 은 언제나 보존.
 
     `delete=True` 를 **호출자가 명시**해야 원격에서 지운다. 위 「원전과 다르게 둔 것 ②」 참조 —
     *"attempt 를 성공·실패 무관 push"* 의 목적이 증거 보존이라, 지우는 시점은 사람이 정한다.
     """
     glob = attempt_glob(task_id)
-    out = _git(repo, "ls-remote", "--heads", "origin", glob, check=False)
+    out = _git(repo, "ls-remote", "--heads", remote, glob, check=False)
     refs = [ln.split("refs/heads/")[-1] for ln in out.splitlines() if "refs/heads/" in ln]
     if not delete:
         logf("cleanup", f"ephemeral {len(refs)}건 (glob={glob}) — 🔴 건드리지 않음")
         return {"found": refs, "deleted": []}
     deleted = []
     for ref in refs:
-        _git(repo, "push", "-q", "origin", "--delete", ref, check=False)
+        _git(repo, "push", "-q", remote, "--delete", ref, check=False)
         deleted.append(ref)
     logf("cleanup", f"ephemeral {len(deleted)}건 제거 (glob={glob}), durable 보존")
     return {"found": refs, "deleted": deleted}

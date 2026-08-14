@@ -268,6 +268,24 @@ origin  DISABLED://…                                            (push)  ← �
 URL 을 지우지 않고 `DISABLED://` 로 둔 것은 실수로 push 했을 때 **조용히 성공하는 대신
 눈에 띄게 실패**시키기 위해서다.
 
+> 🔴 **보강 2026-08-14 — 봉인은 남고, 쓰기는 옆문으로 간다** (Flow Y, 사용자 확정).
+> 같은 클론에 push 전용 두 번째 remote 가 붙었다:
+>
+> ```
+> gitea-write  gitea@192.168.0.57:Sim/ModularStage.git   (fetch·push)   ← attempt/* · task/* 만
+> origin       DISABLED://…                             (push)         ← 봉인 유지
+> ```
+>
+> ⚠️ **왜 bare 에 직접 안 쓰나** — 실측: bare 는 `drwxr-xr-x gitea:gitea` 라 `gitea` 그룹에
+> **쓰기가 없다.** `g+w` 를 주면 Gitea 의 receive 훅·브랜치 보호·DB 갱신을 **우회**하게 되므로,
+> 쓰기는 Gitea 정규 경로(SSH)로만 간다. 읽기는 지금처럼 파일시스템 + `sg gitea` 다.
+>
+> 🔴 **§5.5 의 불변식은 안 깨진다** — 정본 트리는 계속 `main` 에 앉아 있고 마스터는 정본에
+> 커밋하지 않는다. 작업은 `<프로젝트>/ax-wt-<work_id>` 워크트리에서 일어난다(정본 **옆**).
+> 그리고 attempt push 는 색인기를 깨우지만 `merge --ff-only FETCH_HEAD` 의 for-merge 항목이
+> `main` 의 업스트림뿐이라 **`from == to` 로 재색인을 건너뛴다**(실측: `b1ba6af9→b1ba6af9`).
+> → `reports/16-master-write-surface.md`
+
 ⚠️ **운영 주의 2가지**
 1. **`safe.directory` 를 global config 에 넣어야 한다** — `sim` 소유가 아닌 저장소라
    git 2.34.1 의 dubious ownership 검사에 걸린다. `-c`·환경변수는 무시되므로

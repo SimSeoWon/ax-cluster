@@ -84,8 +84,8 @@ AgentTest 가 이미 같은 계열 문제를 다루고 있다: `**TASK_COMPLETE*
 
 | 주체 | 하는 일 | 왜 그 주체인가 |
 |---|---|---|
-| **요청자** (`.33`, 사람의 PC) | ① `main` 최신화 ② **durable `task/<id>` 를 만들어 원격에 push** ③ 등록 ④ 최종 리뷰·`[FEEDBACK]` | 🔴 **마스터는 소스 저장소에 push 할 수 없다**(§2.1). 그리고 여기는 **사람이 보는 자리**다 — 파이프라인이 커밋을 밀어넣지 않는다 |
-| **마스터** | 큐·매니페스트·라우팅·**골조 생성** | 파일을 소유하지 않는다 |
+| **요청자** (`.33`, 사람의 PC) | ① `main` 최신화 ② **durable `task/<id>` 를 만들어 원격에 push** ③ 등록 ④ 최종 리뷰·`[FEEDBACK]` | ⚠️ 여기 있던 *"마스터는 소스 저장소에 push 할 수 없다(§2.1)"* 는 **2026-08-14 에 좁혀졌다** — 마스터는 `attempt/*`·`task/*` 에 쓴다. 남는 근거는 **`main` 은 사람이 보는 자리**라는 것이고, 그것은 그대로다 — 파이프라인이 `main` 에 커밋을 밀어넣지 않는다 |
+| **마스터** | 큐·매니페스트·라우팅·**골조 생성** · 🔴 **attempt/durable 커밋** (정정 2026-08-14) | ⚠️ *"파일을 소유하지 않는다"* 는 **Flow Y 로 좁혀졌다** — `attempt/*`·`task/*` 에만 쓰고 **`main` 과 빌드는 못 한다**(§2.2-1 2차 정정) |
 | **작업장** (`.2`·`.43`) | durable/base 를 fetch → 작업 → 🔴 **ephemeral `attempt/<id>/<workshop>/<ts>` 에 push** | 🔴 **쓴다 — 다만 ephemeral 에만.** 공유 write 타깃이 없어 zombie push 충돌이 **구조적으로** 소멸한다 |
 | **검증·머지 주체** | attempt 를 검증하고 🔴 **통과분만 durable 에 merge·push** | 🔴 **durable 단일 writer.** epoch 게이트가 stale assignee(zombie)를 거부한다 |
 
@@ -343,6 +343,21 @@ passwd 홈인 `/home/gitea`** 를 본다. 두 경로가 어긋나 **키는 등�
 ⚠️ **Gitea API 토큰은 해시로만 저장되어 DB 에서 복구할 수 없다.** 새로 발급한다:
 `gitea admin user generate-access-token --username Sim --scopes write:user,write:repository`.
 발급본은 `~/.config/ax-cluster/gitea-token`(0600) — 🔴 **저장소에 넣지 않는다.**
+
+#### 🔴 마스터도 키를 갖는다 — `ax-master-write` (2026-08-14, Flow Y)
+
+같은 절차로 **네 번째 키**를 등록했다(`POST /api/v1/user/keys`, id=4). 검증 실측:
+
+    ssh -T gitea@192.168.0.57  →  "authenticated with the key named ax-master-write"
+    push --dry-run gitea-write HEAD:refs/heads/attempt/…  →  [new branch] ✅
+    push --dry-run gitea-write HEAD:refs/heads/probe-…    →  🔴 pre-push 훅이 거부
+
+🔴 **네 대가 전부 계정 `Sim` 이다** — 등록된 것은 저장소별 배포키가 아니라 계정 키다. Gitea 의
+브랜치 보호 화이트리스트는 **사용자 단위**라 같은 계정을 쓰는 기계를 구분하지 못한다. 즉
+*"마스터는 `main` 에 못 쓴다"* 를 **서버에 넣을 방법이 지금 구조에는 없고**, 그래서 가드가
+클라이언트(`pre-push` 훅)에 있다. ⚠️ **기계별 신원 분리는 미결**이다 — 그것이 되면 서버측으로
+옮길 수 있다. 그리고 실측 확인: `branch_protections` 는 지금 **`[]`**(main 보호 없음)이다.
+→ `reports/16-master-write-surface.md` §5
 
 #### 마스터가 bare 를 읽는 법 — `sg gitea` (2026-08-09 확인)
 

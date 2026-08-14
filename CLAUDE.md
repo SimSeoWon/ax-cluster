@@ -53,9 +53,16 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   🔴 **제약 하나를 지키려고 요구 자체를 희생하면 결과물은 못 쓴다.** 판단이 갈리면 **묻는 쪽이
   싸다** — 되돌리는 비용이 묻는 비용보다 늘 크다.
 - 🔴 **The GitHub remote is private. Keep it that way** — it contains LAN addresses and firewall rules.
-- 🔴 **The master is infrastructure, not a workshop.** It assembles context and hands it over;
-  the Windows PC applies, builds, tests, registers. **Files never leave Windows.** No file I/O or
-  tool-calling on the master. → [`docs/2-architecture.md`](docs/2-architecture.md)
+- 🔴 **The master is infrastructure, not a workshop** — ⚠️ **narrowed 2026-08-14, don't read the
+  old absolute.** It assembles context and hands it over; the Windows PC builds and tests.
+  🔴 **Flow Y (user-confirmed 2026-08-14) gives the master exactly one write capability**: it
+  commits inferred diffs to `attempt/<task>/<workshop>/<ts>` and merges verified ones into
+  `task/<id>` — nothing else. So *"files never leave Windows"* and *"no file I/O on the master"*
+  are **no longer true as written**; what holds is **the master never touches `main`** and never
+  builds. Mechanism: `master/work/attempt.py`, a push-only second remote `gitea-write`, and a
+  `pre-push` hook that rejects every ref outside `attempt/*`·`task/*` (deletions only when the tip
+  is reachable from `<remote>/main`). The 정본 clone's `origin` push stays sealed as a loud guard.
+  → [`docs/2-architecture.md`](docs/2-architecture.md) §2.2-1 · `reports/16-master-write-surface.md`
 - 🔴 **All three services require a bearer token** (`task_queue` 8101, broker 8102, projects 8103).
   Token: `~/.config/ax-cluster/token`, 0600, **fail-closed — a service will not start without it**.
   Send `Authorization: Bearer <token>`; only `/livez` is open. They are *also* ufw LAN-only —
