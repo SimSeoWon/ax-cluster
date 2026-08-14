@@ -75,6 +75,7 @@ separate reads each found real gaps). That movement is normal — record it, don
 | 9.5 | [task_queue port](docs/9_5-task-queue.md) | Port stage 1 and service registration | Ported, `ax-task-queue` live, 8101 LAN-only |
 | — | [Settled decisions](docs/settled-decisions.md) | Closed calls, gathered in one place | Don't relitigate without new measurements |
 | 10 | [References](docs/10-references.md) | Original design, reports, external repos | — |
+| 11 | [Agent conduct](docs/11-agent-conduct.md) | 🔴 **행동 수칙** — 묻기(설계 갈림길 *및* 「지시인지 질문인지」) · 만들기 전에 읽기 · 수정 권한 · 승인과 검토 비용 · 실행 권한. 원전 `.agents/AGENTS.md` 5조 이식분이 여기 모여 있다 | 1조는 **범위 좁혀** 이식(자동 로드 문서 + 게임 소스) · 3·4조 이식 · 5조는 빌드 조항만 · 🔴 **2조는 안 옮긴다**(Claude Code 는 툴 호출을 전부 띄운다 — 「몰래 호출」이 구조적으로 불가능) |
 
 ---
 
