@@ -42,6 +42,30 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   piece, declared it "complete", repeated). The order is the user's call.
 - 🔴 **애매하면 묻는다 — 임의 판단으로 좁히지 않는다** (사용자 지시 2026-08-13, 세 번 반복된 실패).
   설계에 갈림길이 있으면 **멈추고 사용자에게 묻는다.** "내 판단으로는 이게 맞다" 로 진행하지 않는다.
+  🔴 **그리고 갈림길만이 아니다 — 「작업 지시인지 단순 질문인지」도 애매하면 묻는다**
+  (원전 `.agents/AGENTS.md` 3조 이식, 소 4.1.1: *"사용자 입력이 작업 지시인지 단순 질문인지
+  모호한 경우, 임의로 해석하여 행동에 나서지 말고 반드시 질문을 던져 의도를 재확인하십시오."*)
+  ⚠️ **짧은 수긍(`응`·`그래`·`ok`)이 가장 위험하다** — 앞에 물음이 없었으면 그것은 **승인이 아니라
+  수긍**일 수 있다. 실측 2026-08-14: 같은 세션에서 `응` 이 두 번 왔고 첫 번은 커밋 승인, 두 번은
+  단순 수긍이었다. 두 번째를 승인으로 읽었으면 다음 마일스톤 작업을 **임의로 시작**했을 것이다.
+  🔴 이것은 *"1인칭 서술을 지시로 오독"* 한 원전 사고(아래 git 규칙)와 **같은 계열**이다.
+- 🔴 **자동 로드 문서와 게임 소스는 고치기 전에 계획을 말하고 동의를 받는다** (원전
+  `.agents/AGENTS.md` 1조 이식, **범위는 사용자 결정 2026-08-14**). 대상은 둘:
+
+      ① 자동 로드 문서   `CLAUDE.md` 전부(이 파일 · `machines/sim-desktop.md`(= `~/CLAUDE.md`
+                         심볼릭 링크) · 기계에 복사되는 `machines/win-*.md` · 프로젝트 `repo/CLAUDE.md`)
+      ② 게임 소스        `ModularStage` 의 소스·에셋 — 미러든 워크트리든 원격 체크아웃이든
+
+  🔴 **왜 이 둘만이냐.** 원전 1조는 *모든* 파일을 덮지만 그 조항이 겨눈 조건은 **사람의 UE5
+  프로젝트를 에이전트가 직접 만지는 상황**이었다. 우리에게 그 조건이 실재하는 자리가 정확히 이
+  둘이다 — ①은 **모든 다음 세션의 행동을 조용히 바꾸므로** 되돌리는 비용이 가장 크고, ②는
+  사람의 작업물이다(미커밋 `.uasset` 은 복구 불가). 도구 코드(`master/`·`docs/`·`reports/`)는
+  **커밋 승인 게이트**가 이미 그 역할을 한다 — 커밋 전에는 아무것도 영구화되지 않는다.
+  ⚠️ 이것은 *"안 옮기는 판단에도 근거가 필요하다"* 의 적용이지 규칙을 깎은 것이 아니다.
+- 🔴 **승인을 요청할 때는 검토 비용을 사용자에게 넘기지 않는다** (원전 `.agents/AGENTS.md` 4조
+  이식): *"개발자가 코드리뷰 스트레스를 겪지 않도록 변경 대상을 명확히 밝히고 상세한 전후 사정을
+  투명하게 설명"*. 커밋 승인을 구할 때 **무엇을·어디를·왜**와 **측정 결과**를 함께 낸다 —
+  "커밋할까요?" 만 던지면 사용자가 diff 를 직접 감사해야 하고, 그건 승인이 아니라 전가다.
   🔴 **그리고 만들기 전에 기존 자산을 읽는다** — 이 저장소에는 원전(`~/AgentTest`)이 있고
   대부분의 요구에는 **이미 만들어진 것**이 있다. 안 읽고 만들면 요구를 좁혀 버린다.
   **실제로 그렇게 잃은 것 셋** (2026-08-12~13, 전부 사용자가 지적해서 알았다):
@@ -75,6 +99,14 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   *even when told*, and forbid asking too. 🔴 **Ours is deliberately looser and the user chose it**:
   the origin's Windows box has SourceTree, sim-desktop (Linux) has none, so "never" would force the
   user into a terminal every time. Keep that label straight — the *user* relaxed it, not me.
+- 🔴 **빌드·배포·데몬 재기동도 자율 실행하지 않는다** (원전 `.agents/AGENTS.md` 5조 · `AgentTest/
+  CLAUDE.md` 이식, 소 4.1.1). 대화형 세션이 **다른 기계의 UE5 빌드**(`.2`)나 서비스 종료·재기동을
+  임의로 돌리지 않는다 — 비싸고, 공유 상태를 건드리고, 사람이 그 기계를 쓰고 있을 수 있다.
+  원전이 이 규칙을 만든 계기가 *"운영 인프라 PC 의 데몬을 승인 없이 교체·재기동해 강한 항의"* 였고,
+  목적은 **위험 분리**다. ⚠️ **원전은 더 강하다** — *"빌드할까요?" 같은 질문 형태조차 금지*(자율
+  실행 의사를 시사하므로). 🔴 **우리는 커밋과 같은 결로 「묻고 나서 실행」이다** — 그 완화는 커밋에
+  대해 사용자가 직접 정한 것이고(아래), 같은 근거가 여기에도 걸린다. 판단이 갈리면 묻는다.
+  ⚠️ **파이프라인이 빌드하는 것은 이 규칙과 무관하다**(골조 게이트·층3 은 설계된 동작).
 - 🔴 **Human sessions: never run** `push --force`, `reset --hard`, branch/tag deletion, `rebase`, or
   history rewriting — **not even with approval**; describe the command instead. Don't read a
   first-person statement ("I'll commit and come back") as an instruction to you — that exact
