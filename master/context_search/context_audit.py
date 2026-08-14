@@ -430,3 +430,204 @@ def format_archive_plan(plan: dict, sample: int = 10) -> str:
     if plan.get("refused"):
         out += ["", "거부:"] + [f"  - `{r}` — {why}" for r, why in plan["refused"][:sample]]
     return "\n".join(out)
+
+
+# ── σ.9.0 빈 컨텍스트 4분기 (`#160` 3단계) ──────────────────────────────────────
+#
+# 원전 `post_unwrap_diagnosis` 이식. `shell_only` + `empty_summary` 를 **소스 활동 기준**으로
+# 다시 가른다. 🔴 **「빈 문서 N건」을 「고쳐야 할 N건」으로 읽으면 틀린다** — 소스가 오래 안
+# 바뀐 문서가 비어 있는 것은 **트리거 정책의 정상 산물**이고, 소스가 최근 바뀌었는데 비어
+# 있는 것이 **진짜 결함**이다(원전이 Level 5 라 부른 것).
+#
+#     recent_but_empty  🔴 소스가 최근 변경됐는데 문서가 비었다 — **진짜 결함**
+#     old_inactive      소스가 오래 조용하다 — 정상 산물
+#     orphan_md         frontmatter 에 소스 링크는 있는데 그 파일이 없다 — 좀비
+#     no_source_link    링크 자체가 없다 — 무엇을 근거로 만든 문서인지 모른다
+#
+# ⚠️ 우리에게 `shell_only` 가 **39건**이다(실측). 이 4분기가 그 39건 중 **몇 건이 실제
+# 문제인지**를 가른다 — 그것이 이 이식의 값이다.
+#
+# ## 🔴 원전의 신호원(`mtime`)은 우리 환경에서 의미가 없다 — 실측으로 잡았다
+#
+# 원전은 소스 파일의 **`mtime`** 으로 「최근 변경」을 판정한다. 원전 환경은 팀원 PC 의 **오래
+# 살아 있는 작업 복사본**이라 mtime 이 실제 편집을 따라간다. 🔴 **우리는 갓 클론한 미러다.**
+#
+#     실측 2026-08-15: 소스 400개의 mtime 이 **전부 2026-08-08 한 날짜**(전개 시각)
+#     같은 파일의 git 마지막 변경: 2025-10-12 · 2026-05-16
+#     → 첫 판은 39건 **전부** `recent_but_empty` 로 나왔다. 결함이 아니라 **계측 오류**다
+#
+# 그래서 **기제는 옮기고 신호원만 우리 것으로 바꿨다** — `git log -1 --format=%ct <파일>`.
+# ⚠️ 이것은 개선이 아니라 **이식이 성립하기 위한 조건**이다(마일스톤 4: *"그 수정이 겨눈
+# 조건이 우리에게 없으면 옮기면 카고 컬트이거나 퇴행"*). mtime 경로는 폴백으로 남긴다 —
+# git 을 못 읽는 트리(테스트 픽스처)에서도 분류가 돌아야 한다.
+
+POST_UNWRAP_ORDER = ("recent_but_empty", "old_inactive", "orphan_md", "no_source_link")
+
+BRANCH_EXPLAIN = {
+    "D-a": "잔존 빈 문서가 전부 트리거 정책의 정상 산물이다 — 추가 조치 불필요",
+    "D-b": "🔴 소스가 최근 바뀌었는데 빈 문서가 있다 (Level 5) — 원인 추적 후 재생성",
+    "D-c": "🔴 좀비 문서가 있다 — 소스 링크가 가리키는 파일이 없다",
+    "D-b+D-c": "🔴 둘 다 있다 — Level 5 와 좀비를 함께 다뤄야 한다",
+}
+
+
+def extract_source_candidates(content: str, md_path: Path, context_dir: Path) -> list:
+    """`related_classes` + `source_documents` + 위치 기반 stem 폴백. **원전 그대로.**
+
+    ⚠️ 폴백을 **뒤에** 두는 것이 중요하다 — frontmatter 가 준 링크가 먼저다. 순서를 바꾸면
+    문서가 스스로 밝힌 근거보다 우리 추측이 앞선다.
+    """
+    candidates: list = []
+    fm_match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
+    if fm_match:
+        fm = fm_match.group(1)
+        for _cls, path in re.findall(r"-\s+(\w+):\s+(.+)", fm):
+            p = path.strip()
+            if p and p not in candidates:
+                candidates.append(p)
+        sd = re.search(r"source_documents:\s*\n((?:\s+-\s+.+\n?)*)", fm)
+        if sd:
+            for p in re.findall(r"-\s+(\S+)", sd.group(1)):
+                if p and p not in candidates:
+                    candidates.append(p)
+    try:
+        rel = md_path.relative_to(context_dir)
+    except ValueError:
+        return candidates
+    parent = str(rel.parent).replace("\\", "/")
+    for ext in _SRC_EXTENSIONS:
+        guess = f"{parent}/{md_path.stem}{ext}" if parent and parent != "." else f"{md_path.stem}{ext}"
+        if guess not in candidates:
+            candidates.append(guess)
+    return candidates
+
+
+def source_changed_at(repo_dir, rel: str):
+    """소스가 **실제로** 마지막에 바뀐 시각(epoch). 🔴 `mtime` 이 아니라 **git 커밋 시각**이다.
+
+    ⚠️ 왜 mtime 이 아닌가 — 위 머리말의 실측: 우리 미러는 파일 400개의 mtime 이 전부 전개
+    시각 한 날짜다. mtime 으로 재면 **모든 파일이 「최근 변경」** 이 되어 판정이 무의미해진다.
+
+    git 을 못 읽으면 `mtime` 으로 폴백한다(테스트 픽스처처럼 git 이 없는 트리도 있다).
+    폴백했다는 사실을 숨기지 않으려고 값만 돌려주고, 판정 쪽에서 균일함이 보이게 둔다.
+    """
+    import subprocess
+    p = Path(repo_dir) / rel
+    try:
+        r = subprocess.run(["git", "-C", str(repo_dir), "log", "-1", "--format=%ct", "--", rel],
+                           capture_output=True, text=True, timeout=15)
+        out = (r.stdout or "").strip()
+        if r.returncode == 0 and out.isdigit():
+            return float(out)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _classify_post_unwrap(md_path: Path, context_dir: Path, repo_dir: Path,
+                          recent_threshold_ts: float, now_ts: float) -> tuple:
+    """빈 문서 하나를 소스 활동 기준으로 분류. `(분류, 정보)`."""
+    try:
+        content = md_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return "no_source_link", {"error": f"읽기 실패: {e}"}
+
+    candidates = extract_source_candidates(content, md_path, context_dir)
+    if not candidates:
+        return "no_source_link", {}
+
+    existing = []
+    for cand in candidates:
+        src = Path(repo_dir) / cand
+        if src.is_file():
+            ts = source_changed_at(repo_dir, cand)
+            if ts is not None:
+                existing.append((cand, ts))
+
+    if not existing:
+        # 🔴 **폴백만 있었는지**를 가른다 — frontmatter 가 링크를 줬는데 그 파일이 없으면
+        #    좀비(orphan_md)고, 링크 자체가 없었으면 근거 미상(no_source_link)이다.
+        fm_match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
+        fm_has_link = False
+        if fm_match:
+            fm = fm_match.group(1)
+            fm_has_link = bool(re.search(r"-\s+\w+:\s+\S", fm)
+                               or re.search(r"source_documents:", fm))
+        if not fm_has_link:
+            return "no_source_link", {"checked": len(candidates)}
+        return "orphan_md", {"checked": len(candidates), "candidates_sample": candidates[:3]}
+
+    existing.sort(key=lambda x: x[1], reverse=True)
+    newest_src, newest_mtime = existing[0]
+    info = {"source_path": newest_src, "source_mtime": newest_mtime,
+            "age_days": round((now_ts - newest_mtime) / 86400.0, 1)}
+    if newest_mtime >= recent_threshold_ts:
+        return "recent_but_empty", info
+    return "old_inactive", info
+
+
+def post_unwrap_diagnosis(context_dir, repo_dir, *, recent_days: int = 30,
+                          audit_result: dict | None = None, now=None) -> dict:
+    """빈 문서를 4분기한다. `{total_empty, recent_days, categories, branch_decision}`.
+
+    🔴 **`now` 를 주입할 수 있다** — 원전은 `datetime.now()` 를 직접 부른다. 소스 mtime 과
+    비교하는 판정이라 시간을 고정하지 않으면 테스트가 날짜에 따라 흔들린다(`gates.py` 와
+    같은 판단이고, 원전이 `attempt_branch(ts=…)` 를 인자로 둔 것과 같은 이유).
+    """
+    from datetime import datetime as _dt, timedelta as _td
+
+    context_dir = Path(context_dir)
+    repo_dir = Path(repo_dir)
+    if audit_result is None:
+        audit_result = audit(context_dir, repo_dir)
+
+    cats = audit_result.get("categories", {})
+    targets = list(cats.get("shell_only", [])) + list(cats.get("empty_summary", []))
+
+    now = now or _dt.now()
+    now_ts = now.timestamp()
+    threshold = (now - _td(days=recent_days)).timestamp()
+
+    out = {c: [] for c in POST_UNWRAP_ORDER}
+    for rel in targets:
+        cat, info = _classify_post_unwrap(context_dir / rel, context_dir, repo_dir,
+                                         threshold, now_ts)
+        out[cat].append({"md": rel, "info": info})
+
+    has_recent = bool(out["recent_but_empty"])
+    has_orphan = bool(out["orphan_md"])
+    decision = ("D-b+D-c" if has_recent and has_orphan else
+                "D-b" if has_recent else "D-c" if has_orphan else "D-a")
+    return {"total_empty": len(targets), "recent_days": recent_days,
+            "categories": out, "branch_decision": decision}
+
+
+def format_post_unwrap_report(result: dict, sample_per_cat: int = 5) -> str:
+    cats = result["categories"]
+    total = result["total_empty"]
+    decision = result["branch_decision"]
+    out = ["# 빈 컨텍스트 4분기 진단 (σ.9.0)", "",
+           f"- 대상(빈 문서): **{total}건** · 최근 기준 {result['recent_days']}일", "",
+           f"**분기 판정: `{decision}`** — {BRANCH_EXPLAIN.get(decision, '?')}", "",
+           "| 분류 | 건수 | |", "|---|---|---|"]
+    for c in POST_UNWRAP_ORDER:
+        n = len(cats.get(c, []))
+        mark = "🔴" if c in ("recent_but_empty", "orphan_md") and n else ("·" if not n else "⚠️")
+        out.append(f"| `{c}` | {n} | {mark} |")
+    out.append("")
+    for c in POST_UNWRAP_ORDER:
+        items = cats.get(c, [])
+        if not items:
+            continue
+        out += [f"### `{c}` ({min(sample_per_cat, len(items))}/{len(items)})", ""]
+        for it in items[:sample_per_cat]:
+            age = it["info"].get("age_days")
+            extra = f" — 소스 {age}일 전 변경" if age is not None else ""
+            out.append(f"- `{it['md']}`{extra}")
+        if len(items) > sample_per_cat:
+            out.append(f"- … 외 {len(items) - sample_per_cat}건")
+        out.append("")
+    return "\n".join(out)

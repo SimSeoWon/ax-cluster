@@ -12,6 +12,7 @@
     ⑦ 🔴 `dir_named`·`orphan_stem` 은 **옮기지 않는다** (복구 후보에 아예 안 들어간다)
     ⑧ 읽기 실패를 **세어서 돌려준다** (원전은 로그 한 줄만 남겼다)
     ⑨ 아카이브 — 🔴 목적지가 `context/` **밖**이고, 계획이 기본이고, **덮어쓰지 않는다**
+    ⑩ σ.9.0 4분기 — 🔴 신호원이 **git 커밋 시각**이다(`mtime` 이면 갓 클론한 미러에서 전부 오판)
 
 `.venv/bin/python master/test_context_audit.py`
 """
@@ -300,6 +301,102 @@ def test_archive_kinds_are_opt_in():
               str(plan3))
 
 
+# ── ⑩ σ.9.0 빈 문서 4분기 ────────────────────────────────────────────────────
+
+SHELL = "---\ntags: []\nrelated_classes:\n  - UThing: Source/Thing.h\n---\n"
+
+
+def _git(cwd: Path, *args, env_extra=None):
+    import os
+    import subprocess
+    env = dict(os.environ)
+    env.update({"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+    if env_extra:
+        env.update(env_extra)
+    return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, env=env)
+
+
+def test_signal_is_git_time_not_mtime():
+    """🔴 원전은 `mtime` 을 쓰는데 우리 미러는 mtime 이 전부 전개 시각이다 (실측).
+
+    실측 2026-08-15: 소스 400개 mtime 이 **전부 한 날짜**였고, 그래서 첫 판이 39건 **전부**
+    `recent_but_empty` 로 나왔다 — 결함이 아니라 계측 오류였다. git 커밋 시각으로 바꾸니
+    14 / 25 로 갈렸다. 이 테스트가 그 신호원을 고정한다.
+    """
+    from datetime import datetime, timedelta
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = Fx(Path(tmp))
+        _git(fx.repo, "init", "-q")
+        fx.src("Source/Thing.h")
+        _git(fx.repo, "add", "-A")
+        # 🔴 커밋은 **오래 전**으로 박고, 파일 mtime 은 **지금**이다 (클론 상황의 재현)
+        old = (datetime.now() - timedelta(days=400)).strftime("%Y-%m-%dT%H:%M:%S")
+        _git(fx.repo, "commit", "-q", "-m", "old", "--date", old,
+             env_extra={"GIT_COMMITTER_DATE": old})
+
+        ts = CA.source_changed_at(fx.repo, "Source/Thing.h")
+        mtime = (fx.repo / "Source/Thing.h").stat().st_mtime
+        check("⑩ 🔴 git 시각을 쓴다 (mtime 이 아니다)", ts is not None and ts < mtime - 86400,
+              f"git={ts} mtime={mtime}")
+
+        fx.md("Source/Thing.md", SHELL)
+        r = fx.run()
+        check("⑩ shell_only 로 잡혔다", r["categories"]["shell_only"] == ["Source/Thing.md"],
+              str(r["categories"]))
+        d = CA.post_unwrap_diagnosis(fx.context, fx.repo, recent_days=30, audit_result=r)
+        check("⑩ 🔴 오래된 소스는 old_inactive 다 (mtime 이면 recent 로 오판)",
+              len(d["categories"]["old_inactive"]) == 1
+              and not d["categories"]["recent_but_empty"], str(d["categories"]))
+        check("⑩ 분기 판정이 D-a", d["branch_decision"] == "D-a", d["branch_decision"])
+
+
+def test_recent_source_empty_doc_is_a_defect():
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = Fx(Path(tmp))
+        _git(fx.repo, "init", "-q")
+        fx.src("Source/Thing.h")
+        _git(fx.repo, "add", "-A")
+        _git(fx.repo, "commit", "-q", "-m", "now")        # 지금 커밋
+        fx.md("Source/Thing.md", SHELL)
+        d = CA.post_unwrap_diagnosis(fx.context, fx.repo, recent_days=30)
+        check("⑩ 🔴 최근 소스 + 빈 문서 = 결함(recent_but_empty)",
+              len(d["categories"]["recent_but_empty"]) == 1, str(d["categories"]))
+        check("⑩ 분기 판정이 D-b", d["branch_decision"] == "D-b", d["branch_decision"])
+        check("⑩ 며칠 전인지 싣는다",
+              d["categories"]["recent_but_empty"][0]["info"].get("age_days") is not None,
+              str(d["categories"]["recent_but_empty"][0]))
+
+
+def test_link_present_but_file_missing_is_orphan_md():
+    """🔴 링크가 있는데 파일이 없으면 좀비 — 링크 자체가 없는 것과 **다르다**."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = Fx(Path(tmp))
+        fx.md("Source/Thing.md", SHELL)                   # related_classes 는 있고 소스는 없다
+        r = CA.audit(fx.context, fx.repo)
+        # 소스가 없으니 감사에선 orphan_stem 이다 — 4분기는 shell_only 대상이므로 직접 넣는다
+        d = CA.post_unwrap_diagnosis(fx.context, fx.repo,
+                                     audit_result={"categories": {"shell_only": ["Source/Thing.md"]}})
+        check("⑩ 링크 있음 + 파일 없음 → orphan_md",
+              len(d["categories"]["orphan_md"]) == 1, str(d["categories"]))
+        check("⑩ 분기 판정이 D-c", d["branch_decision"] == "D-c", d["branch_decision"])
+
+        fx.md("Source/NoLink.md", "---\ntags: []\n---\n")
+        d2 = CA.post_unwrap_diagnosis(fx.context, fx.repo,
+                                      audit_result={"categories": {"shell_only": ["Source/NoLink.md"]}})
+        check("⑩ 링크 없음 → no_source_link",
+              len(d2["categories"]["no_source_link"]) == 1, str(d2["categories"]))
+
+
+def test_frontmatter_link_beats_stem_fallback():
+    """⚠️ 폴백이 앞서면 **문서가 스스로 밝힌 근거**보다 우리 추측이 앞선다 (원전 순서)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = Fx(Path(tmp))
+        cands = CA.extract_source_candidates(SHELL, fx.context / "Source/Thing.md", fx.context)
+        check("⑩ frontmatter 링크가 먼저다", cands[0] == "Source/Thing.h", str(cands[:3]))
+        check("⑩ 폴백도 뒤에 붙는다", any(c.endswith(".cpp") for c in cands), str(cands[:6]))
+
+
 def main() -> int:
     for fn in (test_classify_each_category, test_comment_section_is_excluded,
                test_orphan_beats_content_classification, test_dir_named_beats_everything,
@@ -308,7 +405,10 @@ def main() -> int:
                test_human_call_categories_are_never_repair_candidates,
                test_unreadable_is_counted, test_missing_context_dir_is_a_fact,
                test_archive_destination_is_outside_context, test_archive_plan_then_apply,
-               test_archive_never_overwrites, test_archive_kinds_are_opt_in):
+               test_archive_never_overwrites, test_archive_kinds_are_opt_in,
+               test_signal_is_git_time_not_mtime, test_recent_source_empty_doc_is_a_defect,
+               test_link_present_but_file_missing_is_orphan_md,
+               test_frontmatter_link_beats_stem_fallback):
         fn()
     total = PASS + FAIL
     print(f"{'✅' if not FAIL else '🔴'} test_context_audit: {PASS}/{total} 통과")
