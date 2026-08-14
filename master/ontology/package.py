@@ -187,11 +187,25 @@ def write(paths: ProjectPaths, domain: str, *, objects: list | None = None,
                 st.unchanged += 1
         if prune:
             st.removed += _prune(root, subdir, kept_paths, locked)
+        else:
+            # 🔴 **부분 갱신에서 manifest 를 잃지 않는다.** `prune=False` 는 이번에 안
+            # 들어온 파일을 디스크에 남기는데, manifest 를 이번 목록으로만 다시 쓰면
+            # 그 파일들이 **색인에서만 사라진다** — 파일은 있고 아무도 못 찾는 상태가
+            # 제일 나쁘다(manifest 가 DB 색인의 단일 SSOT 다). 디스크를 훑어 합친다.
+            # 원본도 `cleanup_stale=False` 모드에서 디렉토리를 walk 해 경로를 채운다.
+            rels[subdir] = sorted(set(rels[subdir]) | _on_disk(root, subdir))
 
     man = yaml_io.read(root / MANIFEST) or {}
     man["domain"] = domain
     for subdir in SUBDIRS:
         man[_manifest_key(subdir)] = sorted(set(rels[subdir]))
+    # 🔴 도메인 MD 의 content-hash 스냅샷 (원본 η.7.3 `write_domain_yaml` 미러).
+    # 이 값이 없으면 다음 재합성이 **무조건 full 로 폴백**한다 — 부분 갱신 판정의 신호원이
+    # 여기서만 찍힌다. 값이 없을 때 빈 키를 넣지 않는 것도 원본 그대로다(`if data.md_hash`).
+    from . import domain_md
+    md_hash = domain_md.content_hash(paths, domain)
+    if md_hash:
+        man["md_hash"] = md_hash
     if manifest_extra:
         man.update(manifest_extra)
     if yaml_io.write(root / MANIFEST, man):
@@ -204,6 +218,16 @@ def write(paths: ProjectPaths, domain: str, *, objects: list | None = None,
 def _manifest_key(subdir: str) -> str:
     """manifest 의 키 이름. 받아온 스냅샷이 `invariants_files` 를 쓴다(실측) — 맞춘다."""
     return "invariants_files" if subdir == "invariants" else subdir
+
+
+def _on_disk(root, subdir: str) -> set:
+    """지금 디스크에 있는 그 종류의 항목 경로들 (`L*/서브디렉토리/*.yaml`)."""
+    out = set()
+    for layer in LAYER_DIRS:
+        d = root / layer / subdir
+        if d.is_dir():
+            out |= {f"{layer}/{subdir}/{f.name}" for f in d.glob("*.yaml")}
+    return out
 
 
 def _prune(root, subdir: str, keep: set, locked: dict) -> int:

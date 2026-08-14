@@ -98,6 +98,9 @@ class DomainResult:
     collisions_actions: int = 0           # 조각 간 이름 충돌 (병합에서 하나로)
     collisions_invariants: int = 0
     unloads: int = 0
+    partial: bool = False                 # 🔴 변경분만 다시 만들었나 (소 3.2.2)
+    invalidation: object = None           # `invalidate.Invalidation` — partial 일 때만
+    invalidated: int = 0                  # 실제로 지운 yaml 수 (쓰기 직전)
 
     @property
     def ok(self) -> bool:
@@ -107,6 +110,13 @@ class DomainResult:
     @property
     def summary(self) -> str:
         s = f"{self.domain}: actions {len(self.actions)} · invariants {len(self.invariants)}"
+        if self.partial:
+            # 원전 카나리와 같은 항목을 낸다 (`partial=true … invalidated={a,i} preserved={a,i}`)
+            iv = self.invalidation
+            s += (f" · 🔵 partial(변경 {len(getattr(iv, 'objects', ()) or ())} · "
+                  f"scope {len(getattr(iv, 'scope_classes', ()) or ())} · "
+                  f"무효화 {self.invalidated} · 보존 "
+                  f"{getattr(iv, 'preserved_actions', 0) + getattr(iv, 'preserved_invariants', 0)})")
         if self.chunks > 1:
             s += f" · {self.chunks}조각"
             if self.lanes:
@@ -128,6 +138,8 @@ class Stats:
     domains: int = 0
     ok: int = 0
     failed: int = 0
+    skipped: int = 0            # 판정이 "다시 만들 것 없음" — 실패가 아니다
+    partial: int = 0            # 그중 부분 갱신으로 돈 것 (소 3.2.2)
     aborted: str = ""
     elapsed_ms: int = 0
     results: list = field(default_factory=list)
@@ -135,6 +147,10 @@ class Stats:
     @property
     def summary(self) -> str:
         s = f"도메인 {self.domains} → 성공 {self.ok} · 실패 {self.failed} · {self.elapsed_ms}ms"
+        if self.partial:
+            s += f" · 🔵 부분 갱신 {self.partial}"
+        if self.skipped:
+            s += f" · 건너뜀 {self.skipped}"
         if self.aborted:
             s += f" · ⛔ 중단({self.aborted})"
         return s
@@ -311,11 +327,16 @@ def _manifest_extra(paths: ProjectPaths, domain: str, doc):
 def refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT_MODELS,
                    broker: str = DEFAULT_BROKER, num_ctx: int = NUM_CTX,
                    timeout: int = TIMEOUT, dry_run: bool = False,
-                   caller=None, with_objects: bool = False) -> DomainResult:
+                   caller=None, with_objects: bool = False,
+                   changed_classes: set | None = None) -> DomainResult:
     """도메인 하나를 재합성한다. **실패는 결과로 돌려준다 — 예외를 던지지 않는다.**
 
     도메인을 응집 순서로 **조각내어 여러 노드에 나눠 던지고**(사용자 지시 2026-08-09)
     결과를 합친다. `models` 하나면 단일 노드 순차와 같다.
+
+    `changed_classes` 를 주면 **부분 재합성**이다 (소 3.2.2, 원전 η.7.3
+    `_refresh_one_domain(changed_classes=set)`): 그 클래스가 언급된 yaml 만 무효화하고
+    `scope`(변경 ∪ 응집) 만 다시 뽑아 **나머지는 보존**한다. `None` 이면 통짜(full).
     """
     res = DomainResult(domain=domain)
     t0 = time.monotonic()
@@ -330,7 +351,21 @@ def refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT_
         res.reasons.append("멤버가 0 — 재합성할 대상이 없다")
         return res
 
-    chunks = ctx_mod.chunk_domain(paths, domain, members=members)
+    scope_members = members
+    if changed_classes is not None:
+        from . import invalidate
+        inval = invalidate.determine_invalidation(paths, domain, set(changed_classes))
+        scope = {n: members[n] for n in inval.scope_classes if n in members}
+        if not scope:
+            # 🔴 **판정이 아무것도 못 고르면 full 로 간다.** 부분 갱신이 빈 scope 로 도는
+            # 것은 "아무것도 안 하고 성공" 이고, 그것이 낡은 문서를 조용히 남기는 경로다.
+            res.reasons.append("partial 불가: scope 가 도메인 멤버와 겹치지 않는다 → full")
+        else:
+            res.partial = True
+            res.invalidation = inval
+            scope_members = scope
+
+    chunks = ctx_mod.chunk_domain(paths, domain, members=scope_members)
     chunks = [c for c in chunks if not c.empty]
     if not chunks:
         res.reasons.append("소스 발췌를 하나도 못 만들었다")
@@ -375,15 +410,36 @@ def refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT_
         if with_objects:
             objects = [{"name": n, "file": members[n], "layer": layer_of.get(n, 3)}
                        for n in sorted(members)]
+        if res.partial:
+            res.invalidated = _delete_invalidated(res.invalidation)
         res.written = package.write(
             paths, domain,
             objects=objects,
             actions=res.actions or None,
             invariants=res.invariants or None,
             manifest_extra=_manifest_extra(paths, domain, doc),
+            prune=not res.partial,      # 🔴 부분 갱신은 안 들어온 항목을 지우지 않는다
         )
     res.elapsed_ms = int((time.monotonic() - t0) * 1000)
     return res
+
+
+def _delete_invalidated(inval) -> int:
+    """무효화된 yaml 을 지운다. **쓰기 직전에만 부른다.**
+
+    🔴 **원전과 다르게 둔 것 — 원전은 추출 *전에* 지운다.** 그러면 LLM 이 통째로 실패했을
+    때 대체물 없이 사라진다. 우리 규약은 *"실패는 결과로 돌려준다"* 이고, 받아온 스냅샷은
+    **재생산이 안 되는 데이터**다(리포트 11 §20). 성공했을 때의 최종 상태는 원전과 같고,
+    실패했을 때만 다르다 — 그쪽이 안전한 방향이다.
+    """
+    n = 0
+    for p in list(getattr(inval, "actions", ()) or ()) + list(getattr(inval, "invariants", ()) or ()):
+        try:
+            p.unlink()
+            n += 1
+        except OSError:
+            pass          # 이미 없다 = 목표 상태. 지우기 실패로 재합성을 죽이지 않는다
+    return n
 
 
 def prompt_actions(doc, ctx):
@@ -406,7 +462,8 @@ def run(paths: ProjectPaths, *, domains: list | None = None,
     🔴 전체를 무조건 다시 만들지 않는다 — 받아온 스냅샷을 이유 없이 덮는 것이 되고,
     `~/CLAUDE.md` 가 컨텍스트 문서에 대해 같은 금지를 못박아 뒀다.
     """
-    from . import stale
+    from . import invalidate, stale
+    plans: dict = {}
     if domains is None:
         results = stale.compute(paths)
         domains = [r.domain for r in results if r.stale]
@@ -414,13 +471,31 @@ def run(paths: ProjectPaths, *, domains: list | None = None,
             raise SynthError(
                 "stale 한 도메인이 없다 — 재합성할 이유가 없다. 특정 도메인을 강제하려면 "
                 "이름을 명시하라. 빈 배치를 성공으로 보고하지 않는다")
+        # 🔴 **stale walk 만 부분 갱신 대상이다** (원전 배선 그대로). 사람이 도메인을
+        # 명시한 것은 *"이 도메인을 다시 만들어라"* 라는 뜻이므로 언제나 full 이다 —
+        # 원전도 `force_all`/`force_domains` 를 None(full) 으로 넘긴다.
+        plans = {d: invalidate.plan_domain_refresh(paths, d) for d in domains}
     st = Stats(domains=len(domains))
     t0 = time.monotonic()
     consecutive = 0
     for i, d in enumerate(domains, 1):
+        plan = plans.get(d)
+        if plan is not None and not plan.full and not plan.changed:
+            # 판정은 partial 인데 변경이 0 — 태울 이유가 없다. **건너뛴 것을 결과로 남긴다.**
+            r = DomainResult(domain=d, reasons=[plan.reason])
+            st.results.append(r)
+            st.skipped += 1
+            if progress:
+                progress(f"  {i}/{len(domains)} ⏭ {plan.summary}")
+            continue
+        if progress and plan is not None:
+            progress(f"  {i}/{len(domains)} {plan.summary}")
         r = refresh_domain(paths, d, models=models, broker=broker, num_ctx=num_ctx,
-                           dry_run=dry_run, caller=caller)
+                           dry_run=dry_run, caller=caller,
+                           changed_classes=(plan.changed if plan and not plan.full else None))
         st.results.append(r)
+        if r.partial:
+            st.partial += 1
         if r.ok:
             st.ok += 1
             consecutive = 0

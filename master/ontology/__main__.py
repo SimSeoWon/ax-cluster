@@ -38,6 +38,13 @@ def cmd_status(argv: list) -> int:
     print()
     results = stale.compute(paths)
     print(stale.summary(results))
+    # 🔴 stale 옆에 **어떻게 다시 만들 것인지**를 같이 낸다 (소 3.2.2). LLM 0·부작용 0 이고,
+    # *"왜 통짜로 돌았나"* 를 사람이 사후가 아니라 사전에 본다.
+    if results:
+        from . import invalidate
+        print()
+        for r in results:
+            print("  " + invalidate.plan_domain_refresh(paths, r.domain).summary)
     return 0
 
 

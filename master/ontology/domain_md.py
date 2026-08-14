@@ -31,6 +31,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -235,6 +236,23 @@ def _boundary(section: str) -> tuple:
     if not inc and not exc:
         inc = _items(section)
     return inc, exc
+
+
+def content_hash(paths: ProjectPaths, domain: str) -> str:
+    """`_domains/<도메인>.md` 원문의 md5 앞 16자. **없으면 `''`.**
+
+    원본: `watcher/ontology_invalidation.domain_md_hash` (Phase η.7.3). 부분 재합성의
+    full 폴백 판정에 쓰고, `package.write` 가 manifest 에 `md_hash` 로 찍는다.
+
+    🔴 **파서가 아니라 원문을 잰다.** 파싱 결과를 재면 파서가 모르는 절(`## 핵심 구현 패턴`
+    부류)의 변경이 해시에 안 잡혀 *"도메인 뜻이 그대로"* 로 오판한다 — 이 모듈 머리말이
+    적어 둔 그 스키마 편차가 정확히 그 자리다. 원본도 원문 기준이다.
+    """
+    p = domains_dir(paths) / f"{domain}.md"
+    try:
+        return hashlib.md5(p.read_bytes()).hexdigest()[:16]
+    except OSError:
+        return ""
 
 
 def read(paths: ProjectPaths, domain: str) -> DomainDoc | None:
