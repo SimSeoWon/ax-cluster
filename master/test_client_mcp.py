@@ -202,6 +202,26 @@ def test_no_decision_tools():
     check("왜 없는지 스스로 적어 둔다", "로직이 두 벌" in src)
 
 
+def test_nonascii_work_id_is_encoded():
+    """.33 첫 실 왕복이 잡은 결함 — 비ASCII id 가 내부 오류로 죽었다."""
+    calls = []
+    def api(m, p, pl=None):
+        calls.append(p)
+        return {"work": {}, "tasks": []}
+    M.tool_get_work(api, "없는것")
+    check("[중요] 비ASCII id 가 URL 인코딩된다", "%EC%97%86" in calls[0], calls[0])
+    M.tool_get_work(api, "w 1")
+    check("공백도 인코딩된다", "w%201" in calls[1], calls[1])
+    # 프로토콜 층에서도 isError 콘텐츠로 나와야 한다 (내부 오류 아님)
+    def api404(m, p, pl=None):
+        raise M.ClientError("[서버] 404")
+    r = M.handle_message({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                          "params": {"name": "get_work", "arguments": {"work_id": "없는것"}}},
+                         api=api404)
+    check("없는 work 도 isError 콘텐츠다 (세션이 산다)", "result" in r and r["result"]["isError"],
+          str(r)[:80])
+
+
 def test_queue_api_matches_review_contract():
     """`review.reject_work(api=…)` 가 기대하는 시그니처: api(method, path, payload)."""
     with tempfile.TemporaryDirectory() as d:
@@ -226,6 +246,7 @@ def test_queue_api_matches_review_contract():
 
 def main() -> int:
     for fn in (test_single_file_stdlib_only, test_protocol_roundtrip,
+               test_nonascii_work_id_is_encoded,
                test_tools_call_through_protocol, test_serve_loop_survives,
                test_failure_sentences_differ, test_tool_error_is_iserror_content,
                test_no_decision_tools, test_queue_api_matches_review_contract):

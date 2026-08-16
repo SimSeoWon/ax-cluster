@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -156,7 +157,9 @@ def tool_list_works(api, status: str = "") -> dict:
 def tool_get_work(api, work_id: str) -> dict:
     if not (work_id or "").strip():
         raise ClientError("work_id 가 비었다")
-    got = api("GET", f"/api/v1/works/{work_id.strip()}")
+    # [중요] URL 인코딩 — 비ASCII·공백이 든 id 가 그대로 URL 에 들어가면 urllib 이
+    # 조치 문장 없는 내부 오류로 죽는다 (.33 첫 실 왕복이 잡은 실결함, 2026-08-16).
+    got = api("GET", f"/api/v1/works/{urllib.parse.quote(work_id.strip(), safe='')}")
     # 검수에 필요한 그대로 — review.review_work(work=…, tasks=…) 에 바로 넣는 모양
     return {"work": got.get("work") or {}, "tasks": got.get("tasks") or []}
 
