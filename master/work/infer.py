@@ -319,6 +319,7 @@ def judge(stdout: str, raw_response: str, *, want: list) -> Response:
 
 
 def infer_task(facts, task_id: str, manifest_text: str, *, want=None, beat=None, runner_=None,
+               deliver=None,
           writer=None, reader=None, timeout: int = runner.DEFAULT_TIMEOUT) -> Response:
     """파견 한 건: 배달 → 추론(하트비트 유지) → 응답 되읽기 → 판정.
 
@@ -326,7 +327,13 @@ def infer_task(facts, task_id: str, manifest_text: str, *, want=None, beat=None,
     돌려준다 — 적용·빌드·커밋은 통합자(중 1.4)의 일이다.
     """
     files_wanted = list(want) if want is not None else target_files_from(manifest_text)
-    runner.deliver_manifest(facts, task_id, manifest_text, writer=writer)
+    # [중요] 배달 주입 자리 — 실전은 git-carried(carry.deliverer, #185 판정 2026-08-17),
+    #    writer 주입(테스트·레거시)은 scp 그대로. 조용한 폴백은 없다 — 어느 경로로 돌았는지
+    #    모르게 되는 것이 최악이다.
+    if deliver is not None:
+        deliver(facts, task_id, manifest_text)
+    else:
+        runner.deliver_manifest(facts, task_id, manifest_text, writer=writer)
     with runner._Beater(beat) as b:
         rc, out = (runner_ or _default_runner)(facts, task_id, timeout)
     try:
@@ -497,7 +504,7 @@ def _free_workers(facts, *, clean=None) -> tuple:
 
 
 def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", order: int = 0,
-                 runner_=None, writer=None, reader=None,
+                 runner_=None, writer=None, reader=None, deliver=None,
                  timeout: int = runner.DEFAULT_TIMEOUT) -> Response:
     """집어 둔 태스크 하나를 워커에서 추론시키고 **스풀에 남긴다.**
 
@@ -529,9 +536,17 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
             spool(paths, old, work_id=work_id, order=order)
             return old
 
+    # [중요] 실전 배달 = git-carried (#185 판정). writer/deliver 주입이 없을 때만 켠다 —
+    #    테스트는 writer 로 scp 자리를 그대로 잰다.
+    if deliver is None and writer is None:
+        from . import carry
+        _d = carry.deliverer(paths)
+        deliver = lambda f_, t_, txt: _d(f_, t_, txt)     # noqa: E731
+
     res = infer_task(facts, task_id, body, want=want,
                 beat=lambda: runner.heartbeat(task_id, facts.host, api=api),
-                runner_=runner_, writer=writer, reader=reader, timeout=timeout)
+                runner_=runner_, writer=writer, reader=reader, deliver=deliver,
+                timeout=timeout)
     res.base_commit = base
     res.epoch = task.get("epoch")
     spool(paths, res, work_id=work_id, order=order)

@@ -79,6 +79,8 @@ class TaskResult:
     task_id: str = ""
     manifest_path: str = ""
     manifest_hits: int = 0
+    carried_head: str = ""       # git-carried (#185) — durable 에 실린 커밋. 빈 값 = 못 실었다
+    carried_error: str = ""
     error: str = ""
     manifest_degraded: list[str] = field(default_factory=list)
 
@@ -201,6 +203,7 @@ def register_work(
     searcher=None,
     make_skeleton=None,
     gate=None,
+    carrier="AUTO",
 ) -> Registered:
     """work 를 만들고 태스크를 등록한다. 태스크마다 매니페스트를 1회 수집한다.
 
@@ -235,6 +238,14 @@ def register_work(
         seen.add(s.stem)
 
     post = poster or (lambda u, p: _post(u, p, token=token))
+
+    # [중요] carrier 기본 AUTO — 실전은 carry.publish, poster 주입(테스트)은 큐가 가짜이므로
+    #    git 도 만지지 않는다 (None). 명시 주입이 둘 다 이긴다.
+    if carrier == "AUTO":
+        if poster is None:
+            from .carry import publish as carrier      # noqa: F811
+        else:
+            carrier = None
 
     work = post(f"{queue_url}/api/v1/works", {
         "title": title,
@@ -298,6 +309,14 @@ def register_work(
             r.manifest_path = str(mf.write(paths, m))
             r.manifest_hits = m.hits
             r.manifest_degraded = m.degraded
+            # [중요] git-carried (#185 판정 2026-08-17) — 매니페스트를 durable `task/<id>` 에
+            #    commit·push 한다. 원전 C.2 의 성질 복원: 재배정은 fetch 만, 이력은 git 에.
+            #    실패해도 등록은 성립하되(트윈 사본은 있다) **결과에 크게 남긴다** — 파견은
+            #    fail-closed 라 이대로면 그 태스크는 배달에서 막힌다.
+            if carrier is not None:
+                c = carrier(paths, r.task_id, m.body, base_commit=m.base_commit)
+                r.carried_head = c.head if c.ok else ""
+                r.carried_error = c.error
         results.append(r)
 
     return Registered(work_id=work_id, tasks=results, generated=generated,

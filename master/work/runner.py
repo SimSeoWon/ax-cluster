@@ -317,13 +317,17 @@ class _Beater:
 
 
 def run_task(facts, task_id: str, manifest_text: str, *, beat=None, runner=None,
-             writer=None, timeout: int = DEFAULT_TIMEOUT) -> Outcome:
+             writer=None, deliver=None, timeout: int = DEFAULT_TIMEOUT) -> Outcome:
     """파견 한 건: 배달 → 실행(하트비트 유지) → 판정.
 
     [중요] **큐에 제출하지 않는다.** 제출은 호출자(마스터)의 일이다 — 이 함수는 *워커가 무엇을
     했는가* 만 돌려준다. 판정과 제출을 한 곳에 섞으면 실패 경로에서 리스를 반납하지 못한다.
     """
-    deliver_manifest(facts, task_id, manifest_text, writer=writer)
+    if deliver is not None:
+        # git-carried (#185 판정 2026-08-17) — scp 자리의 대체. 주입이 없으면 기존 scp.
+        deliver(facts, task_id, manifest_text)
+    else:
+        deliver_manifest(facts, task_id, manifest_text, writer=writer)
     with _Beater(beat) as b:
         rc, out = run_worker(facts, task_id, runner=runner, timeout=timeout)
     res = parse_result(out)
@@ -482,9 +486,16 @@ def run_once(paths, *, facts=None, project: str = "", api=_api, runner=None, wri
     res = {"picked": pick.summary, "task": task_id, "worker": f.host, "epoch": epoch}
     try:
         body = refresh_base(_manifest_for(paths, task_id), paths, task_id)
+        deliver = None
+        if writer is None:
+            # [중요] 실전 배달 = git-carried (#185 판정 2026-08-17). writer 주입(테스트)은
+            #    scp 자리를 그대로 잰다.
+            from . import carry
+            _d = carry.deliverer(paths)
+            deliver = lambda f_, t_, txt: _d(f_, t_, txt)  # noqa: E731
         out = run_task(f, task_id, body,
                        beat=lambda: heartbeat(task_id, worker_id, api=api),
-                       runner=runner, writer=writer, timeout=timeout)
+                       runner=runner, writer=writer, deliver=deliver, timeout=timeout)
         res["outcome"] = out.summary
         res["tail"] = out.tail
         if out.submittable:
