@@ -348,6 +348,14 @@ def test_old_view_paths_redirect_to_cluster() -> None:
         check(f"{p} → /cluster", h.get("location") == "/cluster", h.get("location", ""))
     check("[중요] 뷰 앱을 부르지 않는다", "view" not in hits, str(hits))
 
+    # [중요] /livez — 세 서비스 공통 규약인데 이 포트만 404 였다 (발견 2026-08-17).
+    #    라우터가 직접 답한다: 뒤의 앱 어느 것도 부르지 않고, 큐·브로커와 같은 본문.
+    hits.clear()
+    st, h, body = call(r, "/livez")
+    check("[중요] /livez → 200 (큐·브로커와 같은 규약)", st == 200 and body == '{"ok":true}',
+          f"{st} {body}")
+    check("/livez 는 어느 앱도 부르지 않는다 (프로세스 자체의 liveness)", hits == [], str(hits))
+
     # [중요] 새 주소는 webui 가 가져간다 — 목록은 `webui.app` 이 소유한다(단일 지점)
     hits.clear()
     call(r, "/cluster")

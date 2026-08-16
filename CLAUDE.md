@@ -10,8 +10,16 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
 ## Hard rules — inline on purpose
 
 - [중요] **Read which milestone you are in before planning anything.**
-  **M1·M2 closed; [중요] M3 is `locked` (halted 2026-08-13); M4 (origin reconciliation) is open.**
-  → [`docs/milestones/4-origin-reconciliation.md`](docs/milestones/4-origin-reconciliation.md)
+  **M1·M2·M4 closed ([중요] M4 closed 2026-08-17, user decision); M3 is `locked` (halted
+  2026-08-13); [중요] M5 (두 버전 대조·머지) is open.**
+  → [`docs/milestones/5-version-reconcile.md`](docs/milestones/5-version-reconcile.md) —
+  numbers live in Redmine (version *마일스톤 5*; 3 items at open). M5 = 판정: M4 이식 중
+  「우리 방식 vs 원전 방식」으로 갈린 자리들을 **둘 다 읽고 실측해서** 고른다. 진 쪽은
+  부활 조건과 함께 닫는다 (「미정」 금지 — 사용자 2026-08-16).
+  [주의] **The M4 paragraph below is a closed milestone's record, not a current instruction** —
+  its traps (citation-first, census limits, topology) still bind; its scope/counts do not.
+  M4's own 「여기서 배운 것」 (왕복이 계약 · 원전 기본값 확인 · 확정 결정 > 원전 코드) is in
+  its milestone doc.
   [중요] **M4 is not a feature milestone — it is consistency.** An origin-citation census (report 14)
   measured **74 files / 23,710 lines of `~/AgentTest` never once mentioned in this repo**, and the
   worst hit is the topology: `cluster_coordinator.py`'s `verify_and_merge` already said

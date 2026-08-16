@@ -242,6 +242,17 @@ class Router:
         if scope.get("type") != "http":
             return await self.default_app(scope, receive, send)
         path = scope.get("path", "")
+        if path == "/livez":
+            # [중요] 세 서비스 공통 규약(auth.OPEN_PATHS)인데 이 포트만 404 였다 — auth 는
+            #    열어 두는데 뒤의 MCP 앱에 그 라우트가 없다 (발견 2026-08-17, 리포트 18 §47).
+            #    liveness 는 라우터가 직접 답한다: 프로세스가 살아 있음을 재는 것이니
+            #    여기가 정확한 자리다. 큐·브로커와 같은 본문을 준다.
+            body = b'{"ok":true}'
+            await send({"type": "http.response.start", "status": 200,
+                        "headers": [(b"content-type", b"application/json"),
+                                    (b"content-length", str(len(body)).encode()),
+                                    (b"cache-control", NO_STORE)]})
+            return await send({"type": "http.response.body", "body": body})
         if path in ROOT_PATHS or path in self.WEBUI_EXACT:
             # [중요] 루트는 **원전 Context Server** 다 (복각). 원전이 그 자리를 쓰고 있었다.
             if self.webui is not None:

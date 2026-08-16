@@ -20,13 +20,19 @@ software repository.** There is no build, lint, or test tooling. **Don't assume 
 
 ## [중요] Where the project stands — read this before planning
 
-**M1·M2 closed. [중요] M3 is `locked` — halted 2026-08-13. M4 (원전 대조·재이식) is open.**
+**M1·M2·M4 closed ([중요] M4 closed 2026-08-17, user decision). M3 is `locked` — halted
+2026-08-13. [중요] M5 (두 버전 대조·머지) is open — 3 items at open, numbers live in Redmine
+(version *마일스톤 5*).**
 
 | | |
 |---|---|
-| Current milestone — **read only this one** | `~/ax-cluster/docs/milestones/4-origin-reconciliation.md` |
+| Current milestone — **read only this one** | `~/ax-cluster/docs/milestones/5-version-reconcile.md` |
 | [중요] Halted, do **not** work there | `3-work-pipeline.md` — its 9 open issues carry a *"M4 재검토 대기"* note |
-| Closed, kept as reference | `2-twin-restoration.md` ([중요] its 「여기서 배운 것」 is the trap list) · `1-infrastructure.md` |
+| Closed, kept as reference | `4-origin-reconciliation.md` ([중요] its 「여기서 배운 것」 carries M4's traps — 왕복이 계약 · 원전 기본값 · census 한계) · `2-twin-restoration.md` (its 「여기서 배운 것」 is the older trap list) · `1-infrastructure.md` |
+
+> [주의] **The next two blocks (Why M3 was halted · M4 counts) are M4's record, not a current
+> instruction** — M4 closed 2026-08-17 with 0 open issues (되먹임 7종 completed the last area,
+> report 18 §40–§48). The topology/census lessons stay because they still bind.
 
 [중요] **Why M3 was halted (report 14, an origin-citation census).** Measured: **74 files / 23,710
 lines of `~/AgentTest` are never once mentioned in our repo.** The three losses in report 13 §18
