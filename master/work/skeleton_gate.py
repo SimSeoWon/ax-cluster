@@ -103,8 +103,17 @@ def place(facts, tree: str, files: dict, *, writer=None) -> list:
     """
     if not tree:
         raise ValueError("격리 트리 경로가 비었다 — 어디에 쓸지 모른다")
-    from ..client import bundle as B
-    put = writer or (lambda f, p, t: B.write_file(f, p, t))
+    if writer is None:
+        # [중요] 마스터 전용 경로 — 클라이언트 배달본에는 client 패키지가 없다.
+        #    맨 ImportError 로 죽으면 "배달이 빠졌나" 로 오진한다 (#197 실 구동에서
+        #    layer3 의 지연 임포트가 같은 모양으로 죽었다). 무엇을 해야 하는지 말한다.
+        try:
+            from ..client import bundle as B
+        except ImportError as e:
+            raise RuntimeError("place() 는 마스터 전용이다 — 클라이언트에서는 writer= 를 "
+                               "주입할 것 (배달본에 client 패키지는 실리지 않는다)") from e
+        writer = (lambda f, p, t: B.write_file(f, p, t))
+    put = writer
     out: list = []
     for rel, text in sorted(files.items()):
         abs_path = _win_join(tree, rel) if getattr(facts, "windows", True) \

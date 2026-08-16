@@ -87,7 +87,7 @@ SKILL_NAME = "ax-work"          # (호환) 단수 참조가 남아 있는 곳
 #   [중요] **토큰은 여전히 안 보낸다** — 큐·Redmine 호출은 MCP 가 한다(`review.api=` 주입).
 PAYLOAD_PKG = "axmaster"
 PAYLOAD_BY_ROLE = {
-    "requester": ("clientside/client_mcp.py", "layer3_verify.py", "utf8.py",
+    "requester": ("clientside/client_mcp.py", "layer3_verify.py", "source_text.py", "utf8.py",
                   "work/branch_names.py", "work/coordinator.py", "work/review.py",
                   "work/skeleton_gate.py", "work/build_local.py"),
     "worker": (),

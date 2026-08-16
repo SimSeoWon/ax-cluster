@@ -159,6 +159,15 @@ def test_build_specs():
     check("per 는 최소 1", len(S.build_specs(None, 0, "TS", "NB")) == 1)
 
 
+def test_live_task_id_uses_queue_id():
+    """#197 첫 실 검수가 잡은 결함 — 브랜치 이름은 큐가 발급한 id 가 SSOT 다."""
+    check("[중요] 큐 id 가 있으면 그것", S.live_task_id({0: "3316ad64"}, "selftest_x", 0) == "3316ad64")
+    check("큐 밖(run_live via_queue=False)이면 로컬 id",
+          S.live_task_id({}, "selftest_x", 1) == "selftest_x.1")
+    check("빈 큐 id 는 로컬로 폴백", S.live_task_id({0: ""}, "w", 0) == "w.0")
+    check("None 안전", S.live_task_id(None, "w", 2) == "w.2")
+
+
 def test_call_work_fn():
     """[중요] 인자 수를 **세서** 부른다 — `TypeError` 를 삼키면 콜러 내부 결함이 숨는다."""
     seen = {}
@@ -198,6 +207,7 @@ def main() -> int:
     for fn in (test_extract_nonce, test_probe_and_impl_source, test_happy_path,
                test_gate_actually_blocks, test_keep_preserves,
                test_count_polling, test_overlapping_pair, test_build_specs,
+               test_live_task_id_uses_queue_id,
                test_call_work_fn):
         fn()
     total = PASS + FAIL

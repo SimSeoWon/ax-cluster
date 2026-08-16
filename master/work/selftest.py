@@ -522,6 +522,21 @@ def run_dry(*, tasks: int = 3, keep: bool = False, base_nonce: str = "",
 #   wtB = 작업장 역할 — [중요] `worktree add <base2>` 로 **git 으로만** 매니페스트를 받는다
 # ─────────────────────────────────────────────────────────────
 
+def live_task_id(qtasks: dict, work_id: str, i: int) -> str:
+    """브랜치 이름의 SSOT — **큐가 발급한 task_id**. via_queue 가 아니면 로컬 id.
+
+    [중요] `.33` 실 검수(#197 첫 실행, 2026-08-16)가 잡은 결함: 하니스가 durable 을 자기
+    내부 id(`task/<work>.<i>`)로 밀고 큐는 자기 id 로 task 를 기록해서, **큐 기록으로 통합하는
+    실 소비자**(`review.integrate_durables`)가 durable 을 못 찾았다("`task/3316ad64` 가
+    origin 에 없다 — 통째 중단"). 원전 하니스는 큐 task_id 로 브랜치를 만들었다.
+
+    [중요] 내 C.7 단정이 이것을 못 잡은 이유가 교훈이다 — c7_tasks 를 **하니스 자신의 id** 로
+    만들어 자기 일관성만 쟀다. *주입은 계약을 재고 실물을 재지 않는다*의 재발이고, 큐의 실물
+    기록을 쓴 `.33` 검수가 처음으로 두 체계를 맞댔다.
+    """
+    return (qtasks or {}).get(i) or f"{work_id}.{i}"
+
+
 def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
              work_fn_cmd=None, keep: bool = False, base_nonce: str = "",
              via_queue: bool = False, queue_url: str = "http://127.0.0.1:8101",
@@ -566,6 +581,7 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
     qwork = ""
     qtasks: dict = {}
     qstate: dict = {}      # gidx → 큐가 마지막으로 말한 task json (병렬 판정 입력)
+    local_atts: list = []  # wtB 가 만든 attempt 브랜치 — cleanup 이 이름으로 지운다
 
     def sh(cmd: str, *, cwd: str = checkout, timeout: int = 180) -> tuple:
         return _ssh(host, user, f'cd "{cwd}" && {cmd}', timeout=timeout)
@@ -703,8 +719,9 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
             r.chk(f"전 task 가 claim 됐다 ({len(order)}/{n})", len(order) == n)
 
         for i in order:
-            tid = f"{work_id}.{i}"
+            tid = live_task_id(qtasks, work_id, i)     # [중요] 큐 id 가 브랜치의 SSOT
             att, dur = attempt_branch(tid, host.replace(".", "-"), f"t{i}"), durable_branch(tid)
+            local_atts.append(att)
             sh(f"git checkout -q -B {att} {base2}", cwd=wtB)
             if work_fn_cmd is None:
                 # 2a — 스크립트 편집. [중요] NONCE 를 인자로 주지 않는다: 매니페스트에서 grep 한다.
@@ -803,7 +820,7 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
         mirror = Path(__file__).resolve().parents[2] / "ModularStage" / "repo"
         ok_n = 0
         for i in range(n):
-            dur = durable_branch(f"{work_id}.{i}")
+            dur = durable_branch(live_task_id(qtasks, work_id, i))
             rc_f, out_f = _mirror_git(mirror, "fetch", "-q", "origin", dur)
             rc_s, body = _mirror_git(mirror, "show", f"FETCH_HEAD:{probe_rels[i]}")
             if rc_f == 0 and rc_s == 0 and nonces[i] in body and "[PSEUDO]" not in body:
@@ -829,7 +846,9 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
             from . import review as R
             from .branch_names import durable_branch as _dur
             integ_tree = mirror.parent / f"ax-c7-{ts}"
-            c7_tasks = [{"task_id": f"{work_id}.{i}", "distribution_mode": "push",
+            # [중요] 큐 id 로 만든다 — 하니스 자신의 id 로 만들면 자기 일관성만 재고
+            #    실 소비자(review)가 보는 세계와 어긋난 채 통과한다 (#197 첫 실행이 잡음)
+            c7_tasks = [{"task_id": live_task_id(qtasks, work_id, i), "distribution_mode": "push",
                          "status": "verified", "hierarchy_level": 0, "priority": 0,
                          "created": f"{i:03d}"} for i in range(n)]
             rc_f, out_f = C._git_rc(mirror, "fetch", "-q", "gitea-write", st_branch)
@@ -894,7 +913,7 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
             sh("git worktree prune")
             sh(f"git branch -D {st_branch} 2>&1 | tail -1")
             for i in range(n):
-                sh(f"git branch -D {durable_branch(f'{work_id}.{i}')} 2>&1 | tail -1")
+                sh(f"git branch -D {durable_branch(live_task_id(qtasks, work_id, i))} 2>&1 | tail -1")
             # [중요] **로컬 attempt 도 지운다.** wtB 가 `checkout -B <attempt>` 로 만든 브랜치는
             #    공유 저장소의 ref 라, worktree 를 지워도 **ref 는 남는다.** 2026-08-14 첫 실
             #    구동 3회에서 로컬 attempt 7개가 쌓인 것을 사후 점검이 잡았다 — 원격만 보고
@@ -902,12 +921,17 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
             # [주의] `for-each-ref 'refs/heads/attempt/{id}.*'` 는 **안 맞는다** — 그 `*` 는 `/` 를
             #    넘지 못하고 브랜치명이 `attempt/<id>.<i>/<host>/<ts>` 로 슬래시가 셋이다.
             #    (2026-08-14 실측: for-each-ref 0건 / `branch --list` 6건.) 검증된 쪽을 쓴다.
+            # [중요] glob 이 아니라 **기록해 둔 이름**으로 지운다 — 큐 id 브랜치는
+            #    attempt/<qtid>/... 라 "attempt/{work_id}.*" glob 에 안 걸린다
+            for br in local_atts:
+                sh(f"git branch -D {br} 2>&1 | tail -1")
             sh(f'git branch --list "attempt/{work_id}.*" | tr -d " *" '
                f"| xargs -r -n1 git branch -D 2>&1 | tail -2")
             rc_l, left_local = sh(
                 f'git branch --list "*{work_id}*" | wc -l')
             r.chk("[중요] 정리 후 작업장 로컬에도 흔적 0", left_local.strip() in ("0", ""),
                   f"남음={left_local.strip()}")
-            rc, left = sh(f"git ls-remote --heads origin | grep -c '{work_id}\\|{slug}' || true")
+            ids = "\\|".join([work_id, slug] + [q for q in (qtasks or {}).values() if q])
+            rc, left = sh(f"git ls-remote --heads origin | grep -c '{ids}' || true")
             r.chk("[중요] 정리 후 원격에 흔적 0", left.strip() in ("0", ""), f"남음={left.strip()}")
             log("cleanup", f"원격 {len(made_remote)}건·worktree 2개 제거 (남음={left.strip()})")

@@ -61,7 +61,7 @@ DEFAULT_TIMEOUT = 3600  # 층3 은 길다. 셰이더/DDC 가 차가우면 수십
 Runner = Callable[[Sequence[str], int], subprocess.CompletedProcess]
 
 
-def _run(cmd: Sequence[str], timeout: int) -> subprocess.CompletedProcess:
+def _run(cmd, timeout: int) -> subprocess.CompletedProcess:
     """원격 명령 실행. [중요] **바이트로 받아 우리 디코더로 푼다.**
 
     [주의] 실측 2026-08-11(골조 게이트 첫 실전 구동에서 터졌다): `text=True` 는 strict UTF-8 이라
@@ -73,7 +73,14 @@ def _run(cmd: Sequence[str], timeout: int) -> subprocess.CompletedProcess:
     로그를 못 읽는다.** 소스 44%가 CP949 라 이미 만들어 둔 `source_text.decode`(UTF-8 → CP949
     → replace)를 그대로 쓴다.
     """
-    p = subprocess.run(list(cmd), capture_output=True, timeout=timeout, check=False)
+    # [중요] 문자열 명령은 **셸이 그대로 파싱**하게 한다. 첫 로컬 실 구동(.33, #197)에서
+    #    리스트로 감싼 `cmd /c "call \"...\""` 가 list2cmdline 의 `\"` 이스케이프로 뭉개져
+    #    Build.bat 이 실행조차 안 됐다 — cmd 는 백슬래시 이스케이프를 모른다. SSH 경로가
+    #    멀쩡했던 이유도 같다: 원격 셸이 문자열을 그대로 파싱한다. 로컬도 같게 맞춘다.
+    if isinstance(cmd, str):
+        p = subprocess.run(cmd, shell=True, capture_output=True, timeout=timeout, check=False)
+    else:
+        p = subprocess.run(list(cmd), capture_output=True, timeout=timeout, check=False)
     from .source_text import decode
     return subprocess.CompletedProcess(
         p.args, p.returncode,
@@ -341,8 +348,9 @@ def run_build_local(
 
     [중요] **반환 코드를 보지 않는 것도 같다** — `Build.bat` 은 실패해도 0 을 낸 실측이 있다.
     """
-    cmd = ["cmd", "/c", build_build_command(build_bat, target, uproject,
-                                            platform=platform, config=config)]
+    # [중요] 리스트로 감싸지 않는다 — #197 첫 실 구동이 잡은 결함(따옴표 뭉개짐, `_run` 참조)
+    cmd = build_build_command(build_bat, target, uproject,
+                              platform=platform, config=config)
     try:
         proc = runner(cmd, timeout)
     except subprocess.TimeoutExpired:

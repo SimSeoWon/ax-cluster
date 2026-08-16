@@ -83,10 +83,12 @@ def test_command_is_shared_with_workshop_path():
     local_cmd = seen["cmd"]
     expected = L3.build_build_command(r"C:\E\Build.bat", "XEditor", r"C:\p\X.uproject")
     check("[중요] 명령을 build_build_command 로 만든다 (재조립하지 않는다)",
-          expected in local_cmd, str(local_cmd))
-    check("로컬은 cmd /c 로 돈다 (ssh 가 아니다)",
-          local_cmd[:2] == ["cmd", "/c"] and not any("ssh" in str(c) for c in local_cmd),
-          str(local_cmd[:2]))
+          local_cmd == expected, str(local_cmd))
+    # [중요] #197 첫 실 구동이 잡은 결함 — 리스트로 감싸면 list2cmdline 이 따옴표를 `\"` 로
+    #    이스케이프하고 cmd 는 그것을 몰라 Build.bat 이 실행조차 안 된다. **문자열이어야 한다.**
+    check("[중요] 문자열로 넘긴다 (리스트 감싸기 금지 — 따옴표 뭉개짐)",
+          isinstance(local_cmd, str) and not any("ssh" in str(c) for c in [local_cmd]),
+          type(local_cmd).__name__)
     check("표준 UBT 인자가 그대로다",
           "-WaitMutex" in expected and "Win64 Development" in expected, expected)
 

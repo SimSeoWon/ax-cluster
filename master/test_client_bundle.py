@@ -208,9 +208,9 @@ def test_role_payload() -> None:
     check("[중요] 클라 MCP 가 요청자 페이로드에 있다 (#201)",
           "clientside/client_mcp.py" in pay, str(pay))
     check("요청자에게 review·build 의 의존 폐포가 간다",
-          set(pay) == {"clientside/client_mcp.py", "layer3_verify.py", "utf8.py",
-                       "work/branch_names.py", "work/coordinator.py", "work/review.py",
-                       "work/skeleton_gate.py", "work/build_local.py"},
+          set(pay) == {"clientside/client_mcp.py", "layer3_verify.py", "source_text.py",
+                       "utf8.py", "work/branch_names.py", "work/coordinator.py",
+                       "work/review.py", "work/skeleton_gate.py", "work/build_local.py"},
           str(pay))
     check("[중요] 워커에는 안 간다 (역할 밖이다)", bundle.payloads_for("worker") == ())
     for n in pay:
@@ -221,13 +221,38 @@ def test_role_payload() -> None:
     check("패키지 디렉토리를 빠짐없이 센다",
           set(bundle.payload_dirs("requester")) == {"", "clientside", "work"},
           str(bundle.payload_dirs("requester")))
-    # [중요] 폐포 검사 — 배달분이 배달 안 된 형제 모듈을 상대 임포트하면 쓸 때 죽는다
-    delivered = {n.rsplit("/", 1)[-1][:-3] for n in pay}
-    import re as _re
+    # [중요] 폐포 검사 — AST 전수. 첫 판은 `^from \.` 정규식이라 **들여쓰인 지연 임포트**를
+    #    못 봤고, #197 실 구동이 그 구멍(layer3 → source_text)에서 죽었다. 어느 깊이든
+    #    상대 임포트는 전부 잡고, 배달 안 되는 것은 **가드(try/except ImportError) 안**이어야 한다.
+    import ast as _ast
+    delivered = {n[:-3].replace("/", ".") for n in pay}          # 예: work.review
+    delivered |= {d.rsplit(".", 1)[-1] for d in delivered}       # 단축명도 (from . import x)
+    GUARDED_OK = {"runner", "client.bundle", "client"}           # 명시적 가드 화이트리스트
     for n in pay:
-        for m in _re.findall(r"^from \.+(\w+) import", bundle.payload_text(n), _re.M):
-            check(f"[중요] {n} 의 의존 `{m}` 도 배달된다", m in delivered or m == "runner",
-                  f"폐포 누락: {m}")
+        tree_ = _ast.parse(bundle.payload_text(n))
+        guarded_nodes = set()
+        for t_ in _ast.walk(tree_):
+            if isinstance(t_, _ast.Try) and any(
+                    isinstance(h.type, _ast.Name) and h.type.id == "ImportError"
+                    for h in t_.handlers if h.type is not None):
+                for inner in _ast.walk(t_):
+                    guarded_nodes.add(id(inner))
+        for node in _ast.walk(tree_):
+            if not (isinstance(node, _ast.ImportFrom) and node.level):
+                continue
+            base = ".".join(filter(None, [str(node.module or "")]))
+            targets = ([base] if base else []) or [a.name for a in node.names]
+            pkg_dir = n.rsplit("/", 1)[0] if "/" in n else ""
+            for tgt in targets:
+                # 상대 경로를 페이로드 기준으로 해석 (level=1 → 같은 디렉토리, 2 → 상위)
+                if node.level == 1 and pkg_dir:
+                    resolved = f"{pkg_dir}.{tgt}"
+                else:
+                    resolved = tgt
+                ok = (resolved in delivered or tgt in delivered
+                      or tgt in GUARDED_OK and id(node) in guarded_nodes)
+                check(f"[중요] {n} L{node.lineno} 상대 임포트 `{tgt}` — 배달되거나 가드됨",
+                      ok, f"해석={resolved} · 가드={'예' if id(node) in guarded_nodes else '아니오'}")
     check("패키지 초기화 파일이 「손대지 말 것」을 말한다",
           "손으로 고치지 말 것" in bundle.PAYLOAD_INIT, bundle.PAYLOAD_INIT[:60])
     try:
