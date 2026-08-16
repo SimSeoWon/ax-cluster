@@ -233,8 +233,15 @@ def test_format_validation_and_retry():
 
     check("검증기가 소비자와 같은 눈으로 센다",
           RG.parseable_rows(CANNED) == 2 and RG.parseable_rows("산문") == 0)
-    check("(없음) 행도 형식으로 인정한다",
-          RG.format_ok("### M\n| (없음) | - | - | - | - |\n"))
+    empty_tables = ("### M\n\n## 1. 변경분 코딩 컨벤션\n"
+                    "| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n|---|---|---|---|---|\n\n"
+                    "## 2. 변경분 버그·안전성\n"
+                    "| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n|---|---|---|---|---|\n")
+    check("[중요] 위반 0건(헤더만 있는 표)도 형식 준수다 — 깨끗한 커밋은 정상이다",
+          RG.format_ok(empty_tables) and RG.parseable_rows(empty_tables) == 0)
+    check("[중요] (없음) 자리표시 행은 만들지 않는다 — 소비자에서 쓰레기 이슈가 된다 (실측)",
+          "(없음)" not in RG._FORMAT_EXAMPLE and "비워 둔다" in RG._FORMAT_EXAMPLE)
+    check("표 헤더가 없으면 형식 위반", not RG.format_ok("### M\n산문뿐"))
 
 
 def test_consumer_canaries_format_invalid():

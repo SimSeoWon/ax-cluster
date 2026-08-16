@@ -77,23 +77,34 @@ def parseable_rows(body: str) -> int:
     return n
 
 
+_CONV_HEADER = "| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |"
+_SAFETY_HEADER = "| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |"
+
+
 def format_ok(body: str) -> bool:
-    """`### 모듈` 절 + 파싱 가능한 행 1개 이상 (「(없음)」 행 포함)."""
-    return bool(re.search(r'^###\s+', body, flags=re.M)) and parseable_rows(body) >= 1
+    """`### 모듈` 절 + 두 표 헤더가 있으면 형식 준수 — **데이터 행 0개도 정상이다**
+    (위반 없는 커밋의 표는 헤더만 남는다, 원전 규약).
+
+    [중요] 「(없음)」 자리표시 행은 내 발명이었고 소비자(#156)에서 `file="(없음)"` 쓰레기
+    이슈가 되는 것이 확인됐다(2026-08-17) — 원전 프롬프트에 그런 규약은 없다. 빈 표는
+    비워 둔다."""
+    return (bool(re.search(r'^###\s+', body, flags=re.M))
+            and _CONV_HEADER in body and _SAFETY_HEADER in body)
 
 
 _FORMAT_EXAMPLE = (
     "### Source/ModularStage/Mission\n\n"
     "## 1. 변경분 코딩 컨벤션\n"
-    "| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n"
+    f"{_CONV_HEADER}\n"
     "|---|---|---|---|---|\n"
     "| Source/ModularStage/Mission/X.cpp | 네이밍 | bFlag 접두 누락 | 12 | 낮음 |\n\n"
     "## 2. 변경분 버그·안전성\n"
-    "| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n"
-    "|---|---|---|---|---|\n"
-    "| (없음) | - | - | - | - |\n\n"
+    f"{_SAFETY_HEADER}\n"
+    "|---|---|---|---|---|\n\n"
     "## 3. 영향 분석\n"
-    "호출부 영향 없음.\n")
+    "호출부 영향 없음.\n\n"
+    "(위반·위험이 없으면 위 안전성 표처럼 **헤더만 두고 행을 비워 둔다** — "
+    "「없음」 같은 자리표시 행을 만들지 않는다)\n")
 
 
 def _git(repo: Path, *args: str) -> tuple:
