@@ -159,15 +159,17 @@ def load_view_token(path: Path | None = None) -> str | None:
 # 클라이언트 배선이 조용히 깨졌을 때 "토큰이 틀렸나" 로 오진한다(우리가 겪는 오진의 부류).
 # 403 본문은 사유를 상세히 적지 않는다 — 무엇이 열려 있는지는 서버 쪽 정의가 SSOT 다.
 
-# 요청자 역할이 여는 경로 — 검수 흐름의 전부이자 그것뿐이다.
+# 요청자 역할이 여는 경로 — 검수 흐름 + 되먹임 생산, 그것뿐이다.
 #   읽기       works·tasks 조회 (검수 대상 파악)
 #   PATCH      검수 결정 반영 (merge_status · review_decision — 사람의 자리)
 #   redmine    마스터 경유 코멘트 (키는 마스터에만 있다)
+#   signals    code-writer 신호 적재 (#206 — 신호 파일은 마스터의 트윈 디렉토리에 있다)
 REQUESTER_SCOPE: tuple = (
     ("GET", "/api/v1/works"),
     ("GET", "/api/v1/tasks"),
     ("PATCH", "/api/v1/works/"),
     ("POST", "/api/v1/redmine/note"),
+    ("POST", "/api/v1/signals"),
 )
 
 

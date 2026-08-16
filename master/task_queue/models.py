@@ -142,6 +142,26 @@ class RedmineNoteReq(BaseModel):
     work_id: str = ""          # 감사 로그용 (선택)
 
 
+class WriterSignalReq(BaseModel):
+    """code-writer 신호 (#206) — 원전 `log_writer_signal` 인자 그대로.
+
+    신호 파일(`recipes/_signals.jsonl`)은 마스터의 트윈 디렉토리에 있으므로 요청자(`.33`)는
+    본문만 만들고 이 자리를 부른다 — `redmine/note` 와 같은 마스터 대행 구조다.
+    [중요] 저장하는 것은 코드가 아니라 **작업 과정**이다 (intent·검색·읽은/고친 파일·피드백·
+    거절·에러 복구). 서술 속 코드 식별자는 [대괄호]로 감싼다 (원전 규약).
+    """
+    intent: str
+    queries: list = []
+    files_read: list = []
+    files_modified: list = []          # [{"path": ..., "summary": ...}]
+    iterations: int = 1
+    feedback_notes: str = ""
+    rejected_approaches: list = []     # [{"approach": ..., "reason": ...}]
+    error_recoveries: list = []        # [{"error": 증상, "fix": 해결}]
+    session_id: str = ""
+    work_id: str = ""
+
+
 class AntiPatternNotifyReq(BaseModel):
     """리더가 머지한 새 안티패턴 엔트리 알림.
 

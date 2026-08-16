@@ -252,6 +252,28 @@ def tool_redmine_note(api, issue_id: int, notes: str, status_name: str = "",
     return api("POST", "/api/v1/redmine/note", payload)
 
 
+def tool_log_writer_signal(api, args: dict) -> dict:
+    """code-writer 신호 적재 (#206) — 원전 `log_writer_signal` 의 클라 자리.
+
+    신호 파일은 마스터의 트윈 디렉토리에 있으므로 본문만 만들어 마스터에 보낸다
+    (redmine_note 와 같은 대행 구조). [중요] 저장 대상은 코드가 아니라 **작업 과정**이다.
+    """
+    intent = str(args.get("intent") or "").strip()
+    if not intent:
+        raise ClientError("intent 가 비었다 — 작업 의도 한 줄이 신호의 축이다")
+    payload = {"intent": intent}
+    for k in ("queries", "files_read", "files_modified",
+              "rejected_approaches", "error_recoveries"):
+        if args.get(k):
+            payload[k] = list(args[k])
+    if args.get("iterations"):
+        payload["iterations"] = int(args["iterations"])
+    for k in ("feedback_notes", "session_id", "work_id"):
+        if str(args.get(k) or "").strip():
+            payload[k] = str(args[k]).strip()
+    return api("POST", "/api/v1/signals", payload)
+
+
 def tool_search_context(papi, query: str, tags=None, n: int = 5, *, cache=None) -> dict:
     """통합 검색 — 8103 의 원전 라우트(`/api/v1/search/combined`) 프록시. 참조 지식이라
     [미연결] 시 마지막 정상 응답으로 폴백한다(`_stale` 표기)."""
@@ -314,6 +336,32 @@ TOOLS = [
                                     "notes": {"type": "string"},
                                     "status_name": {"type": "string"},
                                     "done_ratio": {"type": "integer"}}}},
+    {"name": "log_writer_signal",
+     "description": "코드 작성 작업 1건의 **과정**을 마스터에 적재한다 (되먹임 원료 — 코드가 "
+                    "아니라 과정이다). 작업 종료 직전, 사용자 최종 승인 후에 호출한다 — "
+                    "누락되면 이 작업의 패턴은 학습되지 않는다. 한국어 서술 속 코드 식별자는 "
+                    "[대괄호]로 감싼다: 예) \"미션 매니저[Manager_Mission]에 태스크 추가\".",
+     "inputSchema": {"type": "object", "required": ["intent"],
+                     "properties": {
+                         "intent": {"type": "string",
+                                    "description": "작업 의도 한 줄 요약"},
+                         "queries": {"type": "array", "items": {"type": "string"},
+                                     "description": "이 작업에서 쓴 RAG 검색 쿼리"},
+                         "files_read": {"type": "array", "items": {"type": "string"},
+                                        "description": "직접 읽은 소스 경로 (프로젝트 상대)"},
+                         "files_modified": {"type": "array",
+                                            "description": "[{path, summary}] — 고친/만든 파일과 한 줄 요약"},
+                         "iterations": {"type": "integer",
+                                        "description": "계획→피드백 라운드 수 (1=원샷)"},
+                         "feedback_notes": {"type": "string",
+                                            "description": "사용자 피드백이 결과를 어떻게 바꿨나 2-3줄. 단순 승인이면 빈 값"},
+                         "rejected_approaches": {"type": "array",
+                                                 "description": "[{approach, reason}] — 사용자가 거절한 접근"},
+                         "error_recoveries": {"type": "array",
+                                              "description": "[{error: 증상, fix: 해결}] — 빌드 실패·크래시 복구"},
+                         "session_id": {"type": "string"},
+                         "work_id": {"type": "string",
+                                     "description": "분산 작업이면 work_id"}}}},
 ]
 
 
@@ -321,12 +369,14 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                   root: Path | None = None) -> dict:
     """도구 실행. `api`/`papi`/`cache` 주입은 테스트 자리 — 실전은 config·token 에서 만든다."""
     args = args or {}
-    if name in ("list_works", "get_work", "redmine_note"):
+    if name in ("list_works", "get_work", "redmine_note", "log_writer_signal"):
         a = api or queue_api(root)
         if name == "list_works":
             return tool_list_works(a, status=str(args.get("status") or ""))
         if name == "get_work":
             return tool_get_work(a, str(args.get("work_id") or ""))
+        if name == "log_writer_signal":
+            return tool_log_writer_signal(a, args)
         return tool_redmine_note(a, args.get("issue_id"), str(args.get("notes") or ""),
                                  status_name=str(args.get("status_name") or ""),
                                  done_ratio=args.get("done_ratio"))

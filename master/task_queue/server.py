@@ -26,7 +26,8 @@ from typing import Optional
 from .models import (
     _VALID_DIRECTIVES, _VERIFY_RESULT_TO_STATUS, WorkRegisterReq, TaskRegisterReq,
     ClaimReq, HeartbeatReq, SubmitReq, SubmitFailReq, VerifyReq, AdminResetReq,
-    WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq
+    WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq,
+    WriterSignalReq
 )
 from .persistence import (
     TaskIndex, _project_root, _tasks_dir, _archive_dir, _log_dir, _tq_log,
@@ -283,6 +284,36 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         #    (조용한 실패 금지). 호출자가 사람에게 그대로 보여 준다.
         return {"ok": not result.startswith("[주의]"), "result": result,
                 "issue_id": req.issue_id}
+
+    @app.post("/api/v1/signals")
+    def writer_signal_ep(req: WriterSignalReq):
+        """code-writer 신호 적재 (#206) — 요청자(`.33`) 직접 작업의 과정 휴리스틱을 받는다.
+
+        신호 파일은 마스터의 트윈 디렉토리(`recipes/_signals.jsonl`)에 있으므로 마스터가
+        대행한다 (`redmine/note` 와 같은 구조·같은 requester 스코프). 파이프라인 쪽 신호는
+        통합자가 직접 적재하므로 이 자리를 지나지 않는다.
+        """
+        from ..context_search.paths import resolve
+        from ..context_synth import signals as SG
+        try:
+            record = SG.make_record(
+                intent=req.intent, queries=req.queries, files_read=req.files_read,
+                files_modified=req.files_modified, iterations=req.iterations,
+                feedback_notes=req.feedback_notes,
+                rejected_approaches=req.rejected_approaches,
+                error_recoveries=req.error_recoveries,
+                session_id=req.session_id, work_id=req.work_id, source="requester")
+            stored = SG.append_signal(resolve(""), record)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        except Exception as e:                               # noqa: BLE001
+            # [중요] 조용한 실패 금지 — 신호는 한 번 놓치면 그 작업의 패턴은 다시 안 온다
+            _tq_log(f"[signal] 저장 실패: {e}", root)
+            return {"ok": False, "error": f"신호 저장 실패: {e}"}
+        _tq_log(f"[signal] intent='{record['intent'][:60]}' work={req.work_id or '-'} "
+                f"read={len(record['files_read'])} modified={len(record['files_modified'])} "
+                f"errors={len(record['error_recoveries'])}", root)
+        return {"ok": True, "stored_at": stored, "intent": record["intent"]}
 
     @app.post("/api/v1/anti_patterns/notify")
     def anti_patterns_notify_ep(req: AntiPatternNotifyReq):

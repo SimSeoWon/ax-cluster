@@ -727,7 +727,34 @@ def run(paths, facts, work_id: str, *, project: str = "", durable: str = "",
         for a, r in zip(itg.applied, responses):
             if a.ok:
                 _submit_ok(r, a, durable, api=api, l3_note=itg.l3_note)
+    _lay_signals(paths, itg, api=api)
     return itg
+
+
+def _lay_signals(paths, itg: Integration, *, api=runner._api) -> None:
+    """생산자② (#206) — 게이트 **통과분**의 작업 과정을 신호로 적재한다.
+
+    원전에서 code-writer 가 작업 종료 직전에 남기던 자리의 파이프라인 대응물. intent 는
+    큐의 task 제목(사람이 쓴 요청)이고, 없으면 task_id 로라도 남긴다 — 신호 유실이
+    제목 조회 실패보다 비싸다. [중요] 불합격은 여기 안 온다 — 실패 카탈로그(소 2.3.4)의
+    소관이다. 적재 실패는 통합을 막지 않되 note 로 말한다 (원전도 로그만 남긴다).
+    """
+    from ..context_synth import signals as SG
+    for a in itg.passed:
+        intent = a.task_id
+        try:
+            t = api("GET", f"/api/v1/tasks/{a.task_id}") or {}
+            intent = (t.get("title") or "").strip() or a.task_id
+        except Exception:                                    # noqa: BLE001
+            pass
+        try:
+            SG.append_signal(paths, SG.make_record(
+                intent=intent,
+                files_modified=[{"path": p, "summary": ""} for p in a.files],
+                work_id=itg.work_id, source="pipeline"))
+        except Exception as e:                               # noqa: BLE001
+            itg.note = (itg.note + " · " if itg.note else "") + \
+                f"[주의] 신호 적재 실패({a.task_id}): {e}"
 
 
 def _submit_ok(r: Response, a: Applied, durable: str, *, api=runner._api,
