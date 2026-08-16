@@ -28,17 +28,31 @@ description: 워커들이 올린 분산 작업 결과를 검수해서 main 에 �
     한다        시뮬레이션 통합 · UE5 빌드 · 승인/반려 판단 · main 반영 · Redmine 통지
     [중요] 안 한다   사람의 워킹트리에서 브랜치 전환 · 브랜치 삭제 · force push
 
-## 2. 도구는 배달돼 있다
+## 2. 도구는 배달돼 있다 — 두 층이다
+
+**MCP 도구 (ax-client — `.mcp.json` 에 등록돼 있다):**
+
+    list_works(status?)      큐의 work 목록 — 검수 대상은 보통 ready_for_review
+    get_work(work_id)        work 메타 + tasks 전체. 반환 그대로 review 인자에 넣는 모양
+    redmine_note(...)        레드마인 코멘트 (마스터 경유 — 키는 이 PC 에 없다)
+
+[중요] **결정(반려·승인) 도구는 MCP 에 없다 — 일부러 없다.** 결정은 아래 review 모듈이
+검증된 절차(통째 중단·confirm 게이트)로만 한다. 절차는 한 벌뿐이어야 한다.
+
+**파이썬 모듈 (git·빌드가 필요한 작업):**
 
     py -c "import sys; sys.path.insert(0,'.ax/lib'); from axmaster.work import review, build_local"
 
 [중요] **`python` 이 아니라 `py` 다** — 이 PC 의 `python` 은 스토어 스텁이라 버전도 안 찍는다.
+배달본은 저장소 배치의 미러다(`master/` → `axmaster/`). **손으로 고치지 말 것** — 다음 배달에 덮인다.
 
-배달본은 저장소 배치를 그대로 미러링한 사본이다(`master/` → `axmaster/`). **손으로 고치지
-말 것** — 다음 배달에 덮인다.
+review 의 큐 호출자는 클라 MCP 모듈이 준다:
 
-큐·Redmine 호출은 **MCP 도구**가 한다(토큰은 이 기계에 두지 않는다). 그래서 `review` 함수에
-`api=` 로 주입하거나, work/tasks 를 MCP 로 읽어 인자로 넘긴다.
+    from axmaster.clientside.client_mcp import queue_api
+    review.reject_work(..., api=queue_api())
+
+자격은 `.ax/token`(requester 역할 토큰 — 검수 경로만 열린다, 스코프 밖은 403)이고 마스터가
+배달한다. [미구성]/[미연결]/[자격]/[스코프] 오류가 나오면 그 문장의 조치를 따른다.
 
 ## 3. 검수 — [중요] 사람의 트리를 건드리지 않는다
 
@@ -101,11 +115,10 @@ pop 실패 시 **로그 한 줄**로 끝난다. 바이너리는 되살릴 수 �
 
 ## 7. Redmine 은 마스터를 거친다
 
-    POST http://192.168.0.57:8101/api/v1/redmine/note
-    {"issue_id": <번호>, "notes": "<본문>", "status_name": "", "done_ratio": null}
+MCP 도구 `redmine_note(issue_id, notes, status_name?, done_ratio?)` 를 쓴다.
 
-[중요] **API 키는 이 기계에 없다** — 마스터의 컨테이너 DB 에만 있다. 그래서 도구는 본문만
-만들고 마스터가 대신 쓴다(사용자 결정 2026-08-16). 토큰은 MCP 설정에 있다.
+[중요] **API 키는 이 기계에 없다** — 마스터의 컨테이너 DB 에만 있다. 도구는 본문만 만들고
+마스터가 대신 쓴다(사용자 결정 2026-08-16). 역할 토큰이 이 경로를 연다.
 
 [주의] 상태 이름은 **이 Redmine 에 실재하는 것**만 듣는다 — 신규·진행·해결·검토·완료.
 반려에 해당하는 상태는 **없으므로** 기본은 상태를 안 바꾸고 코멘트만 남긴다.

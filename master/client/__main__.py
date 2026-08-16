@@ -95,6 +95,11 @@ def cmd_deliver(project: str, *, init: bool = False) -> int:
         #    다음 세션에 **없는 것으로 읽힌다.**
         for pp in r.get("payload") or []:
             print(f"     payload={pp}")
+        if "mcp_json" in r:
+            print(f"     mcp_json={r['mcp_json']}")
+        if "role_token" in r:
+            # [중요] 값이 아니라 경로(또는 부재 안내)만 찍힌다
+            print(f"     role_token={r['role_token']}")
         print("     .git/info/exclude [완료] · 해시 대조 통과")
     return 1 if bad else 0
 
@@ -139,14 +144,43 @@ def cmd_check(project: str) -> int:
             if (got or "").strip().lower() != want:
                 stale.append(rel)
         ok_pay = not stale
-        mark = "OK" if (ok_skill and ok_cfg and ok_pay) else "FAIL"
+        # 요청자 전용 (소 3.8.4): .mcp.json 항목 + 역할 토큰
+        ok_client = True
+        client_note = ""
+        if f.role == "requester":
+            raw = bundle._remote_read(f, (f"{f.path}\\.mcp.json" if f.windows
+                                          else f"{f.path}/.mcp.json"))
+            try:
+                entry = (json.loads(raw or "{}").get("mcpServers") or {}).get(
+                    bundle.MCP_SERVER_NAME)
+            except ValueError:
+                entry = None
+            if entry != bundle.mcp_entry_for(f):
+                ok_client = False
+                client_note = " · [실패] .mcp.json 의 ax-client 항목이 없거나 다르다"
+            from .. import auth as _auth
+            _rt = _auth.load_role_token("requester")
+            if _rt:
+                want_t = hashlib.sha256((_rt + "\n").encode("utf-8")).hexdigest()
+                tp = (f"{f.path}\\{bundle.AX_DIR}\\token" if f.windows
+                      else f"{f.path}/{bundle.AX_DIR}/token")
+                cmd = (f'powershell -Command "(Get-FileHash -LiteralPath \'{tp}\' -Algorithm SHA256).Hash"'
+                       if f.windows else f"sha256sum '{tp}' 2>/dev/null | cut -d' ' -f1")
+                _rc, got_t = bundle._ssh(f.host, f.user, cmd)
+                if (got_t or "").strip().lower() != want_t:
+                    ok_client = False
+                    client_note += " · [실패] 역할 토큰 불일치/없음 (재배달 필요)"
+            else:
+                client_note += " · [주의] 마스터에 requester 토큰이 없다 (init-role)"
+        
+        mark = "OK" if (ok_skill and ok_cfg and ok_pay and ok_client) else "FAIL"
         pay_note = (f" · payload {len(pay)}개 일치" if pay and ok_pay
                     else f" · [중요] payload 불일치/없음 {len(stale)}개: {', '.join(stale[:3])}"
                     if pay else "")
         print(f"  {mark} {f.host} [{f.role}]: 스킬 {len(names)}종 "
               f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}"
-              f"{pay_note}")
-        bad += 0 if (ok_skill and ok_cfg and ok_pay) else 1
+              f"{pay_note}{client_note}")
+        bad += 0 if (ok_skill and ok_cfg and ok_pay and ok_client) else 1
     return 1 if bad else 0
 
 

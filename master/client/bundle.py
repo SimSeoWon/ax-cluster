@@ -87,7 +87,7 @@ SKILL_NAME = "ax-work"          # (호환) 단수 참조가 남아 있는 곳
 #   [중요] **토큰은 여전히 안 보낸다** — 큐·Redmine 호출은 MCP 가 한다(`review.api=` 주입).
 PAYLOAD_PKG = "axmaster"
 PAYLOAD_BY_ROLE = {
-    "requester": ("layer3_verify.py", "utf8.py",
+    "requester": ("clientside/client_mcp.py", "layer3_verify.py", "utf8.py",
                   "work/branch_names.py", "work/coordinator.py", "work/review.py",
                   "work/skeleton_gate.py", "work/build_local.py"),
     "worker": (),
@@ -520,6 +520,42 @@ def write_file(facts: HostFacts, path: str, content: str, *, base: str = "abs") 
     return _remote_write(facts, path, content, base=base)
 
 
+MCP_SERVER_NAME = "ax-client"
+
+
+def mcp_entry_for(facts: HostFacts) -> dict:
+    """`.mcp.json` 의 ax-client 항목. [중요] 경로는 상대·슬래시 — cwd 가 체크아웃 루트다.
+
+    윈도우는 `py` 다 — 맨 `python` 은 스토어 스텁이라 버전도 안 찍는다(실측된 함정).
+    """
+    return {"command": "py" if facts.windows else "python3",
+            "args": [f"{AX_DIR}/lib/{PAYLOAD_PKG}/clientside/client_mcp.py"]}
+
+
+def merge_mcp_json(prev_text: str, facts: HostFacts) -> str:
+    """기존 `.mcp.json` 에 ax-client 항목만 넣는다 — **사람이 쓴 다른 항목은 보존**한다
+    (CLAUDE.md 관리 블록과 같은 규약, 원전 install_config.ps1 도 같은 방식이었다).
+
+    [중요] 기존 파일이 깨진 JSON 이면 **덮지 않고 멈춘다** — 덮으면 사람 내용이 사라지고,
+    그게 배달이 저지를 수 있는 최악이다.
+    """
+    txt = (prev_text or "").strip()
+    if txt:
+        try:
+            data = json.loads(txt)
+        except ValueError as e:
+            raise BundleError(
+                f"{facts.host}: 기존 .mcp.json 이 깨진 JSON 이다 — 덮지 않는다. "
+                f"사람이 확인할 것 ({e})") from e
+        if not isinstance(data, dict):
+            raise BundleError(f"{facts.host}: 기존 .mcp.json 최상위가 객체가 아니다 — 덮지 않는다")
+    else:
+        data = {}
+    servers = data.setdefault("mcpServers", {})
+    servers[MCP_SERVER_NAME] = mcp_entry_for(facts)
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
 def skill_text(name: str = SKILL_NAME) -> str:
     p = Path(__file__).with_name("skills") / name / "SKILL.md"
     if not p.is_file():
@@ -658,6 +694,21 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
                        for n in payloads_for(facts.role)]) if payloads_for(facts.role) else [],
         "excluded": _ensure_ignored(facts),
     }
+    # ── 요청자 전용 (소 3.8.4): .mcp.json + 역할 토큰 ─────────────
+    if facts.role == "requester":
+        prev_mcp = _remote_read(facts, (f"{facts.path}\\.mcp.json" if facts.windows
+                                        else f"{facts.path}/.mcp.json"))
+        written["mcp_json"] = _remote_write(facts, ".mcp.json",
+                                            merge_mcp_json(prev_mcp, facts), base="checkout")
+        from .. import auth as _auth
+        _rt = _auth.load_role_token("requester")
+        if _rt:
+            # [중요] 값은 출력에 싣지 않는다 — 경로만. _remote_write 가 해시로 대조한다.
+            written["role_token"] = _remote_write(facts, f"{AX_DIR}/token", _rt + "\n",
+                                                  base="checkout")
+        else:
+            written["role_token"] = ("없음 — 마스터에서 `python -m master.auth init-role "
+                                     "requester` 후 재배달할 것 (그전까지 클라 MCP 는 [미구성])")
     return {"host": facts.host, **written,
             "claude_md_mode": ("생성" if not (prev or "").strip()
                                else "블록 교체" if MD_BEGIN in (prev or "") else "블록 추가"),
@@ -675,19 +726,22 @@ def _ensure_ignored(facts: HostFacts) -> bool:
 
     이미 들어 있으면 다시 넣지 않는다(멱등).
     """
-    line = f"/{AX_DIR}/"
-    if facts.windows:
-        cmd = (f'powershell -Command "$p=\'{facts.path}\\.git\\info\\exclude\'; '
-               f'if (-not (Test-Path $p) -or -not (Select-String -Path $p -SimpleMatch \'{line}\' -Quiet)) '
-               f'{{ Add-Content -LiteralPath $p -Value \'{line}\' }}; '
-               f'if (Select-String -Path $p -SimpleMatch \'{line}\' -Quiet) {{ echo OK }}"')
-    else:
-        q = shlex.quote(f"{facts.path}/.git/info/exclude")
-        cmd = (f"grep -qxF {shlex.quote(line)} {q} 2>/dev/null || echo {shlex.quote(line)} >> {q}; "
-               f"grep -qxF {shlex.quote(line)} {q} && echo OK")
-    rc, out = _ssh(facts.host, facts.user, cmd)
-    if rc != 0 or "OK" not in out:
-        raise BundleError(f"{facts.host}: .git/info/exclude 에 {line} 를 넣지 못했다 — {out[:120]}")
+    # [중요] `.mcp.json` 도 여기 들어간다 (소 3.8.4) — 체크아웃 루트에 놓여야 Claude Code 가
+    # 읽는데, 추적되지 않은 채 남으면 **더티 체크가 파견을 막는다** (`.ax/` 와 같은 이유).
+    lines = (f"/{AX_DIR}/", "/.mcp.json")
+    for line in lines:
+        if facts.windows:
+            cmd = (f'powershell -Command "$p=\'{facts.path}\\.git\\info\\exclude\'; '
+                   f'if (-not (Test-Path $p) -or -not (Select-String -Path $p -SimpleMatch \'{line}\' -Quiet)) '
+                   f'{{ Add-Content -LiteralPath $p -Value \'{line}\' }}; '
+                   f'if (Select-String -Path $p -SimpleMatch \'{line}\' -Quiet) {{ echo OK }}"')
+        else:
+            q = shlex.quote(f"{facts.path}/.git/info/exclude")
+            cmd = (f"grep -qxF {shlex.quote(line)} {q} 2>/dev/null || echo {shlex.quote(line)} >> {q}; "
+                   f"grep -qxF {shlex.quote(line)} {q} && echo OK")
+        rc, out = _ssh(facts.host, facts.user, cmd)
+        if rc != 0 or "OK" not in out:
+            raise BundleError(f"{facts.host}: .git/info/exclude 에 {line} 를 넣지 못했다 — {out[:120]}")
     return True
 
 

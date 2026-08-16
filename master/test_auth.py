@@ -57,7 +57,7 @@ def raises(label, fn, *a, **kw):
     check(label, False, "예외가 나지 않았다")
 
 
-async def call(app, path="/x", headers=None, scope_type="http"):
+async def call(app, path="/x", headers=None, scope_type="http", method="GET"):
     """미들웨어를 직접 호출해 (status, body) 를 받는다."""
     sent = []
 
@@ -70,6 +70,7 @@ async def call(app, path="/x", headers=None, scope_type="http"):
     scope = {
         "type": scope_type,
         "path": path,
+        "method": method,
         "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
     }
     await app(scope, receive, send)
@@ -172,6 +173,49 @@ def main() -> int:
           asyncio.run(call(app, headers=h))[0] == 200)
 
     print("\n[8] 토큰은 매번 다르다")
+    print("\n[8] 역할 스코프 토큰 (소 3.8.2) — 최소권한이 실제로 최소인가")
+    from master.auth import REQUESTER_SCOPE
+    req_tok = generate_token()
+    reached8: list = []
+
+    async def inner8(scope, receive, send):
+        reached8.append(scope["path"])
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    sapp = BearerAuthMiddleware(inner8, tok, scoped=((req_tok, REQUESTER_SCOPE),))
+    H = {"authorization": f"Bearer {req_tok}"}
+
+    st, _b, _ = asyncio.run(call(sapp, "/api/v1/works/w1", headers=H, method="GET"))
+    check("스코프 안 GET works → 통과", st == 200, str(st))
+    st, _b, _ = asyncio.run(call(sapp, "/api/v1/tasks/t1", headers=H, method="GET"))
+    check("스코프 안 GET tasks → 통과", st == 200, str(st))
+    st, _b, _ = asyncio.run(call(sapp, "/api/v1/works/w1", headers=H, method="PATCH"))
+    check("스코프 안 PATCH works (검수 결정) → 통과", st == 200, str(st))
+    st, _b, _ = asyncio.run(call(sapp, "/api/v1/redmine/note", headers=H, method="POST"))
+    check("스코프 안 redmine/note → 통과", st == 200, str(st))
+
+    st, body8, _ = asyncio.run(call(sapp, "/api/v1/tasks/claim", headers=H, method="POST"))
+    check("[중요] 스코프 밖 POST claim → 403 (401 아님 — 신원은 맞다)", st == 403,
+          f"{st} {body8}")
+    st, _b, _ = asyncio.run(call(sapp, "/api/v1/works", headers=H, method="POST"))
+    check("[중요] work 등록(POST) 은 못 한다 — 읽기와 결정만", st == 403, str(st))
+    st, _b, _ = asyncio.run(call(sapp, "/api/v1/admin/reset", headers=H, method="POST"))
+    check("[중요] admin 경로는 못 연다", st == 403, str(st))
+    st, _b, _ = asyncio.run(call(sapp, "/api/v1/tasks/t1", headers=H, method="DELETE"))
+    check("허용 경로라도 다른 메서드는 403", st == 403, str(st))
+
+    st, _b, _ = asyncio.run(call(sapp, "/api/v1/works", headers={"authorization": "Bearer 틀린것"},
+                                 method="GET"))
+    check("모르는 토큰은 여전히 401", st == 401, str(st))
+    st, _b, _ = asyncio.run(call(sapp, "/api/v1/tasks/claim",
+                                 headers={"authorization": f"Bearer {tok}"}, method="POST"))
+    check("전권 토큰은 스코프와 무관하게 통과", st == 200, str(st))
+
+    napp = BearerAuthMiddleware(inner8, tok, scoped=(((None, REQUESTER_SCOPE),)))
+    st, _b, _ = asyncio.run(call(napp, "/api/v1/works", headers=H, method="GET"))
+    check("[중요] 토큰 파일이 없으면(None) 그 역할은 닫힌다 — 401", st == 401, str(st))
+
     check("난수성", len({generate_token() for _ in range(20)}) == 20)
 
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")

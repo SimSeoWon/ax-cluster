@@ -344,7 +344,13 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
     print(f"task_queue serving at http://{host}:{port} (root={root})")
     try:
         # [중요] 라우트를 전부 등록한 **뒤** 감싼다.
-        uvicorn.run(BearerAuthMiddleware(app, _auth_token),
+        # 역할 스코프 토큰 (소 3.8.2) — requester 토큰 파일이 있으면 그 스코프의 경로가
+        # 열린다. 없으면 닫힌 것이다(fail-closed) — 서비스는 그대로 뜬다(뷰 토큰과 같은 결).
+        from ..auth import REQUESTER_SCOPE, load_role_token
+        _req_tok = load_role_token("requester")
+        uvicorn.run(BearerAuthMiddleware(app, _auth_token,
+                                         scoped=(((_req_tok, REQUESTER_SCOPE),)
+                                                 if _req_tok else ())),
                     host=host, port=port, log_level="info")
     finally:
         stop_event.set()

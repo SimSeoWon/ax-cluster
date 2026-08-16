@@ -172,13 +172,45 @@ def test_role_skills() -> None:
         check(f"스킬 원문이 있다: {n}", bundle.skill_text(n).startswith("---"))
 
 
+def test_mcp_json_merge() -> None:
+    """소 3.8.4 — .mcp.json 은 사람 항목을 보존하고, 깨진 파일은 덮지 않는다."""
+    import json as _json
+    f = _facts(os="windows")
+    e = bundle.mcp_entry_for(f)
+    check("[중요] 윈도우는 py 다 (스토어 스텁 함정)", e["command"] == "py", str(e))
+    check("경로는 상대·슬래시 (cwd=체크아웃)", e["args"][0].startswith(".ax/lib/"), str(e))
+    check("리눅스는 python3", bundle.mcp_entry_for(_facts())["command"] == "python3")
+
+    merged = _json.loads(bundle.merge_mcp_json(
+        '{"mcpServers": {"내것": {"command": "x"}}, "다른키": 1}', f))
+    check("[중요] 사람이 쓴 항목을 보존한다", merged["mcpServers"]["내것"]["command"] == "x")
+    check("다른 최상위 키도 보존", merged.get("다른키") == 1)
+    check("ax-client 가 들어간다", merged["mcpServers"]["ax-client"] == e)
+    fresh = _json.loads(bundle.merge_mcp_json("", f))
+    check("없으면 새로 만든다", fresh["mcpServers"]["ax-client"] == e)
+    again = _json.loads(bundle.merge_mcp_json(bundle.merge_mcp_json("", f), f))
+    check("두 번 돌려도 항목 하나 (멱등)", list(again["mcpServers"]) == ["ax-client"])
+    try:
+        bundle.merge_mcp_json("{깨진", f)
+        check("[중요] 깨진 JSON 은 덮지 않고 멈춘다", False, "통과해 버렸다")
+    except bundle.BundleError:
+        check("[중요] 깨진 JSON 은 덮지 않고 멈춘다", True)
+    try:
+        bundle.merge_mcp_json("[1,2]", f)
+        check("최상위가 객체가 아니면 멈춘다", False)
+    except bundle.BundleError:
+        check("최상위가 객체가 아니면 멈춘다", True)
+
+
 def test_role_payload() -> None:
     """[중요] 요청자에게는 **파이썬 모듈**도 간다 — 절차를 문서에만 쓰면 로직이 두 벌이 된다."""
     pay = bundle.payloads_for("requester")
+    check("[중요] 클라 MCP 가 요청자 페이로드에 있다 (#201)",
+          "clientside/client_mcp.py" in pay, str(pay))
     check("요청자에게 review·build 의 의존 폐포가 간다",
-          set(pay) == {"layer3_verify.py", "utf8.py", "work/branch_names.py",
-                       "work/coordinator.py", "work/review.py", "work/skeleton_gate.py",
-                       "work/build_local.py"},
+          set(pay) == {"clientside/client_mcp.py", "layer3_verify.py", "utf8.py",
+                       "work/branch_names.py", "work/coordinator.py", "work/review.py",
+                       "work/skeleton_gate.py", "work/build_local.py"},
           str(pay))
     check("[중요] 워커에는 안 간다 (역할 밖이다)", bundle.payloads_for("worker") == ())
     for n in pay:
@@ -187,7 +219,7 @@ def test_role_payload() -> None:
     check("[중요] 저장소 배치를 미러링한다 (평면이 아니다)",
           any("/" in n for n in pay) and "layer3_verify.py" in pay, str(pay))
     check("패키지 디렉토리를 빠짐없이 센다",
-          set(bundle.payload_dirs("requester")) == {"", "work"},
+          set(bundle.payload_dirs("requester")) == {"", "clientside", "work"},
           str(bundle.payload_dirs("requester")))
     # [중요] 폐포 검사 — 배달분이 배달 안 된 형제 모듈을 상대 임포트하면 쓸 때 죽는다
     delivered = {n.rsplit("/", 1)[-1][:-3] for n in pay}
@@ -313,6 +345,7 @@ def test_merge_never_replaces_existing() -> None:
 
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
+               test_mcp_json_merge,
                test_role_skills, test_role_payload, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
                test_merge_never_replaces_existing):
         fn()

@@ -107,10 +107,15 @@ def load_token(path: Path | None = None) -> str:
 
 
 def verify(provided: str | None, expected: str) -> bool:
-    """상수 시간 비교. 앞자리부터 맞춰 가는 공격을 막는다."""
-    if not provided:
+    """상수 시간 비교. 앞자리부터 맞춰 가는 공격을 막는다.
+
+    [중요] **바이트로 비교한다.** `compare_digest` 는 비ASCII `str` 에 `TypeError` 를 던진다 —
+    잘못된 클라이언트가 비ASCII 헤더를 보내면 깨끗한 401 대신 500 이 됐다(테스트가 잡은
+    실결함, 2026-08-16). 우리 토큰은 항상 ASCII 지만 **입력은 우리가 정하지 않는다.**
+    """
+    if not provided or not expected:
         return False
-    return hmac.compare_digest(provided, expected)
+    return hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))
 
 
 def parse_bearer(header_value: str | None) -> str | None:
@@ -138,6 +143,48 @@ def load_view_token(path: Path | None = None) -> str | None:
     if not p.is_file():
         return None
     # [중요] 권한·길이 검사는 API 토큰과 **같은 기준**이다. 읽기 전용이라고 느슨하게 두지 않는다.
+    return load_token(p)
+
+
+# ─────────────────────────────────────────────────────────────
+# 역할 스코프 토큰 (소 3.8.2 · `#200`) — 최소권한 클라이언트 자격
+# ─────────────────────────────────────────────────────────────
+#
+# 왜 세 번째 토큰 종류인가. 요청자(`.33`)가 검수를 하려면 큐를 읽고 결정을 반영해야 하는데,
+# 선택지가 둘뿐이었다 — 전권 API 토큰을 사람 PC 에 두거나(탈취 시 큐·브로커·온톨로지 전부),
+# 아무것도 못 하거나. 뷰 토큰이 화면 하나를 위해 분리된 것과 같은 이유로, 역할 토큰은
+# **그 역할이 하는 일의 경로만** 연다.
+#
+# [중요] 스코프 밖은 401 이 아니라 **403** 이다 — 신원은 맞고 권한이 없다. 이 구분이 없으면
+# 클라이언트 배선이 조용히 깨졌을 때 "토큰이 틀렸나" 로 오진한다(우리가 겪는 오진의 부류).
+# 403 본문은 사유를 상세히 적지 않는다 — 무엇이 열려 있는지는 서버 쪽 정의가 SSOT 다.
+
+# 요청자 역할이 여는 경로 — 검수 흐름의 전부이자 그것뿐이다.
+#   읽기       works·tasks 조회 (검수 대상 파악)
+#   PATCH      검수 결정 반영 (merge_status · review_decision — 사람의 자리)
+#   redmine    마스터 경유 코멘트 (키는 마스터에만 있다)
+REQUESTER_SCOPE: tuple = (
+    ("GET", "/api/v1/works"),
+    ("GET", "/api/v1/tasks"),
+    ("PATCH", "/api/v1/works/"),
+    ("POST", "/api/v1/redmine/note"),
+)
+
+
+def role_token_file(role: str) -> Path:
+    raw = os.environ.get(f"AX_{role.upper()}_TOKEN_FILE", "").strip()
+    return Path(raw).expanduser() if raw else (DEFAULT_TOKEN_FILE.parent / f"{role}-token")
+
+
+def load_role_token(role: str) -> str | None:
+    """역할 토큰. **없으면 `None`** — 그 역할의 경로가 열리지 않을 뿐이다(뷰 토큰과 같은 결).
+
+    [중요] 권한·길이 검사는 API 토큰과 같은 기준이다(`load_token` 재사용). 스코프가 좁다고
+    느슨하게 두면, 좁힌 이유가 없어진다.
+    """
+    p = role_token_file(role)
+    if not p.is_file():
+        return None
     return load_token(p)
 
 
@@ -178,7 +225,8 @@ class BearerAuthMiddleware:
 
     def __init__(self, app, token: str, open_paths=OPEN_PATHS, *,
                  view_prefix: str = "", view_token: str | None = None,
-                 view_public: bool = False, public_prefixes: tuple = ()):
+                 view_public: bool = False, public_prefixes: tuple = (),
+                 scoped: tuple = ()):
         self.app = app
         self._token = token
         self.open_paths = frozenset(open_paths)
@@ -198,6 +246,9 @@ class BearerAuthMiddleware:
         self._view_public = view_public
         # [중요] 읽기 전용 화면 접두어들 — 원전 웹 UI 복각(2026-08-13). 조작 경로가 아니다.
         self._public = tuple(public_prefixes or ())
+        # 역할 스코프 토큰 (소 3.8.2) — ((토큰, ((METHOD, 경로접두어), …)), …).
+        # [중요] 토큰이 None 인 항목은 버린다 — 파일이 없으면 그 역할은 닫힌 것이다(fail-closed).
+        self._scoped = tuple((t, tuple(rules)) for t, rules in (scoped or ()) if t)
 
     async def __call__(self, scope, receive, send):
         typ = scope.get("type")
@@ -234,17 +285,30 @@ class BearerAuthMiddleware:
                                    why=(b"view token not configured" if not self._view_token
                                         else b"unauthorized"))
 
-        if verify(parse_bearer(headers.get(HEADER)), self._token):
+        provided = parse_bearer(headers.get(HEADER))
+        if verify(provided, self._token):
             return await self.app(scope, receive, send)
+        # 역할 스코프 토큰 — 신원이 맞으면 경로·메서드를 스코프에 대조한다.
+        method = (scope.get("method") or "").upper()
+        for stok, rules in self._scoped:
+            if not verify(provided, stok):
+                continue
+            if any(method == m and path.startswith(pfx) for m, pfx in rules):
+                return await self.app(scope, receive, send)
+            # [중요] 401 이 아니라 403 — 신원은 맞고 권한이 없다. 이 구분이 없으면
+            # 배선이 깨졌을 때 "토큰이 틀렸나" 로 오진한다.
+            return await self._deny(send, status=403, why=b"forbidden (scope)",
+                                    challenge=b'Bearer realm="ax-cluster"')
         # 왜 실패했는지(헤더 없음 vs 토큰 틀림)는 알려주지 않는다.
         return await self._deny(send, challenge=b'Bearer realm="ax-cluster"')
 
     @staticmethod
-    async def _deny(send, *, challenge: bytes, why: bytes = b"unauthorized") -> None:
+    async def _deny(send, *, challenge: bytes, why: bytes = b"unauthorized",
+                    status: int = 401) -> None:
         body = b'{"error":"' + why + b'"}'
         await send({
             "type": "http.response.start",
-            "status": 401,
+            "status": status,
             "headers": [
                 (b"content-type", b"application/json"),
                 (b"content-length", str(len(body)).encode()),
@@ -255,7 +319,7 @@ class BearerAuthMiddleware:
 
 
 def _main(argv: list[str]) -> int:
-    """`python -m master.auth init|init-view|show|check`"""
+    """`python -m master.auth init|init-view|init-role <역할>|show|check`"""
     cmd = argv[0] if argv else "check"
     p = token_file()
     if cmd == "init":
@@ -281,6 +345,21 @@ def _main(argv: list[str]) -> int:
         print("\n브라우저에서 열 때 — 사용자명은 아무거나, 비밀번호에 이 토큰:")
         print(f"  http://192.168.0.57:8103/view/")
         print("[중요] 이 토큰으로는 큐·브로커·MCP 도구를 호출할 수 없다 (화면 전용).")
+        return 0
+    if cmd == "init-role":
+        role = (argv[1] if len(argv) > 1 else "").strip()
+        if not role or not role.isalpha():
+            print("사용법: python -m master.auth init-role <역할>   (예: requester)")
+            return 1
+        rp = role_token_file(role)
+        try:
+            path, tok = write_token(rp)
+        except AuthError as e:
+            print(f"실패: {e}")
+            return 1
+        print(f"{role} 토큰 생성: {path} (0600)")
+        print(f"토큰: {tok}")
+        print(f"[중요] 이 토큰은 {role} 스코프의 경로만 연다 — 스코프 밖은 403.")
         return 0
     if cmd == "show":
         try:
