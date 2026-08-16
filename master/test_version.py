@@ -3,13 +3,13 @@
 검증하는 것:
 
     ① 정체에 커밋·계약·트윈이 실린다 (코드 버전만으로는 「같은 코드가 다른 트윈」을 못 본다)
-    ② 🔴 판정이 **3분기**다 — `same` / `drifted` / **`unknown`**
-       ⚠️ `unknown` 을 한쪽으로 접으면 없는 드리프트를 보고하거나 **있는 것을 놓친다**
-    ③ 🔴 모르는 값은 **빈 문자열 + 사유**다 — `"unknown"` 문자열을 넣지 않는다
+    ② [중요] 판정이 **3분기**다 — `same` / `drifted` / **`unknown`**
+       [주의] `unknown` 을 한쪽으로 접으면 없는 드리프트를 보고하거나 **있는 것을 놓친다**
+    ③ [중요] 모르는 값은 **빈 문자열 + 사유**다 — `"unknown"` 문자열을 넣지 않는다
        (넣으면 두 「모름」이 서로 같다고 판정된다)
     ④ 계약 버전이 다르면 사유에 그것이 나온다 (도구 표면 변경 신호)
     ⑤ 작업트리가 더러우면 그 사실을 싣는다 (커밋이 정체를 다 말하지 못한다)
-    ⑥ 🔴 배달된 config 에 **누가 언제 배달했는지**가 새겨진다 (배달 드리프트를 잡는 자리)
+    ⑥ [중요] 배달된 config 에 **누가 언제 배달했는지**가 새겨진다 (배달 드리프트를 잡는 자리)
 
 `.venv/bin/python master/test_version.py`
 """
@@ -32,7 +32,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 @dataclass
@@ -60,7 +60,7 @@ def test_identity_carries_commit_and_contract():
 
 
 def test_twin_identity_is_separate():
-    """🔴 코드 버전만 말하면 「같은 코드가 다른 트윈을 본다」를 못 본다 (§8.4 세 값 동일)."""
+    """[중요] 코드 버전만 말하면 「같은 코드가 다른 트윈을 본다」를 못 본다 (§8.4 세 값 동일)."""
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         p = Paths(root=Path(tmp))
@@ -87,18 +87,18 @@ def test_verdict_is_three_way():
     check("② 다르면 drifted",
           V.compare({"commit": "b" * 40}, ours)["verdict"] == "drifted")
 
-    # 🔴 한쪽이 모르면 같다고도 다르다고도 하지 않는다
+    # [중요] 한쪽이 모르면 같다고도 다르다고도 하지 않는다
     for theirs in ({"commit": ""}, {}, {"commit": "   "}):
         r = V.compare(theirs, ours)
-        check(f"② 🔴 모르면 unknown ({theirs})", r["verdict"] == "unknown", str(r))
+        check(f"② [중요] 모르면 unknown ({theirs})", r["verdict"] == "unknown", str(r))
     r = V.compare({"commit": "b" * 40}, {"commit": ""})
-    check("② 🔴 우리가 몰라도 unknown", r["verdict"] == "unknown", str(r))
+    check("② [중요] 우리가 몰라도 unknown", r["verdict"] == "unknown", str(r))
 
 
 def test_unknown_is_not_a_version_string():
     """③ `"unknown"` 을 값으로 쓰면 두 「모름」이 같다고 판정된다."""
     r = V.compare({"commit": "unknown"}, {"commit": "unknown"})
-    check("③ 🔴 'unknown' 문자열은 같음으로 판정된다 — 그래서 쓰지 않는다",
+    check("③ [중요] 'unknown' 문자열은 같음으로 판정된다 — 그래서 쓰지 않는다",
           r["verdict"] == "same", str(r))
     idy = V.identity()
     check("③ 우리 정체는 'unknown' 을 넣지 않는다",
@@ -122,7 +122,7 @@ def test_delivered_config_is_stamped():
     f = bundle.HostFacts(host="h", user="u", path="/repo", driven="ssh", role="worker")
     cfg = bundle.config_for("T", f)
     d = cfg.get("delivered_by") or {}
-    check("⑥ 🔴 배달 정체가 config 에 새겨진다", bool(d), str(cfg.keys()))
+    check("⑥ [중요] 배달 정체가 config 에 새겨진다", bool(d), str(cfg.keys()))
     check("⑥ 커밋이 실린다", len(d.get("commit", "")) == 40, str(d)[:80])
     check("⑥ 계약도 실린다", d.get("contract") == V.CONTRACT, str(d))
     check("⑥ 비밀은 없다", "token" not in str(cfg).lower(), "토큰이 실렸다")
@@ -134,7 +134,7 @@ def main() -> int:
                test_contract_mismatch_is_named, test_delivered_config_is_stamped):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_version: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_version: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

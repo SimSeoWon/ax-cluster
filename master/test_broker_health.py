@@ -79,7 +79,7 @@ def test_refresh_marks_dead_node_and_clears_state():
     assert "ConnectionError" in ep.last_error
 
 
-# ── 🔴 상주 재확립 ───────────────────────────────────────────
+# ── [중요] 상주 재확립 ───────────────────────────────────────────
 
 def test_repins_when_pin_fell_off():
     ep = _ep(resident=None)
@@ -92,7 +92,7 @@ def test_repins_when_pin_fell_off():
 
 
 def test_repin_carries_num_ctx():
-    """🔴 **워밍업에 `num_ctx` 가 없으면 노드가 죽는다** (2026-08-15 실측).
+    """[중요] **워밍업에 `num_ctx` 가 없으면 노드가 죽는다** (2026-08-15 실측).
 
     안 실으면 Ollama 가 모델 기본 `context_length`(35B 는 262144) 전제로 KV 를 잡는다.
     BC-250 여유가 2.2GB 인데 그 할당이 ~2.0GB 다(리포트 10 §8). 프록시 경로에는 이 가드가
@@ -103,13 +103,13 @@ def test_repin_carries_num_ctx():
     assert asyncio.run(ensure_pinned(_ep(resident=None), PIN, c, _state())) is True
     opts = c.posts[0].get("options") or {}
     assert opts.get("num_ctx") == DEFAULT_NUM_CTX, opts
-    # 🔴 프록시와 **같은 값**이어야 한다 — 다르면 다음 요청이 통째로 재적재된다(61.6s 실측)
+    # [중요] 프록시와 **같은 값**이어야 한다 — 다르면 다음 요청이 통째로 재적재된다(61.6s 실측)
     from master.broker import server as srv
     assert srv.DEFAULT_NUM_CTX == DEFAULT_NUM_CTX
 
 
 def test_no_repin_when_resident_unknown():
-    """🔴 **「상주 없음」과 「못 읽었다」는 다르다.** `/api/ps` 가 실패한 노드에 재적재를 걸면
+    """[중요] **「상주 없음」과 「못 읽었다」는 다르다.** `/api/ps` 가 실패한 노드에 재적재를 걸면
     힘들어하는 보드에 **가장 비싼 일**을 시킨다. 판정 불가는 보존이다(리포트 16 §10)."""
     ep = _ep(models=["driver:big"], resident="driver:big")
 
@@ -124,7 +124,7 @@ def test_no_repin_when_resident_unknown():
     assert ep.healthy and ep.resident is None and ep.resident_known is False
     assert "ps:" in ep.last_error
     assert asyncio.run(ensure_pinned(ep, PIN, c, _state())) is False
-    assert c.posts == [], c.posts          # 🔴 적재 요청을 보내지 않았다
+    assert c.posts == [], c.posts          # [중요] 적재 요청을 보내지 않았다
 
 
 def test_repin_still_runs_when_ps_says_empty():
@@ -152,7 +152,7 @@ def test_latest_alias_counts_as_resident():
 
 
 def test_never_evicts_a_model_in_use():
-    """🔴 이 테스트가 이 모듈의 존재 이유다 — 처리 중인 요청을 죽이면 안 된다."""
+    """[중요] 이 테스트가 이 모듈의 존재 이유다 — 처리 중인 요청을 죽이면 안 된다."""
     ep = _ep(resident="coder:small")     # 폴백으로 다른 모델을 쓰는 중
     c = FakeClient()
     assert asyncio.run(ensure_pinned(ep, PIN, c, _state(inflight=1))) is False

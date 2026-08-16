@@ -11,7 +11,7 @@
 2 번이 실패하면 1 번에서 만든 빈 디렉토리를 되돌린다 — 목록에 없는 유령 디렉토리가
 남으면 3자 일치 검사가 계속 걸린다.
 
-🔴 5 번의 "원격 없음·훅 없음"은 취향이 아니라 **불변식**이다(§5.5.3-d). 색인 산출물이
+[중요] 5 번의 "원격 없음·훅 없음"은 취향이 아니라 **불변식**이다(§5.5.3-d). 색인 산출물이
 훅 이벤트를 만들면 무한 재귀가 된다.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from .config import (ROLE_WORKER, 
+from .config import (ROLE_WORKER,
     DRIVEN_INTERACTIVE,
     GITEA_REPO_ROOT,
     PROJECT_CONFIG,
@@ -49,7 +49,7 @@ def resolve_bare_path(project_id: str, bare_path: str = "") -> str:
             raise ConfigError(
                 f"project_id 는 '<owner>/<repo>' 형태여야 한다: {project_id!r}"
             )
-        # 🔴 디스크는 소문자다 (§5.5.4-④). `Sim/ModularStage` 를 그대로 쓰면 없는 경로가 된다.
+        # [중요] 디스크는 소문자다 (§5.5.4-④). `Sim/ModularStage` 를 그대로 쓰면 없는 경로가 된다.
         p = GITEA_REPO_ROOT / f"{project_id_disk_path(project_id)}.git"
     if not (p / "HEAD").is_file():
         raise ConfigError(

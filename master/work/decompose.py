@@ -6,29 +6,29 @@
 답은 셋이다:
 
     분할 입도   **파일 불가분 단위** — `batching.units()` 가 이미 정했다(모듈+경로+stem)
-    적용 순서   🔴 **의존이 먼저** — `#include` 그래프로 정한다. 추측하지 않는다
+    적용 순서   [중요] **의존이 먼저** — `#include` 그래프로 정한다. 추측하지 않는다
     파일 내     `[PSEUDO:N]` 뎁스 — 한 파일이 1회 출력 한계를 넘을 때만
 
-## 🔴 두 종류의 "쪼갬" 을 구분한다
+## [중요] 두 종류의 "쪼갬" 을 구분한다
 
     묶음 (동시)   서로 **다른 파일**을 맡는다 → 병렬 파견 가능 → `check_disjoint` 가 지킨다
     뎁스 (순차)   **같은 파일**을 단계로 나눈다 → `depends_on` 으로 줄을 선다
 
-⚠️ 이 구분을 놓치면 `check_disjoint` 가 뎁스를 위반으로 잡는다 — 같은 파일이 여러 조각에
+[주의] 이 구분을 놓치면 `check_disjoint` 가 뎁스를 위반으로 잡는다 — 같은 파일이 여러 조각에
 나오니까. 하지만 **뎁스는 동시에 돌지 않으므로 충돌이 아니다.** 그래서 검사는
 *"동시에 파견될 수 있는 것들"* 끼리만 본다.
 
-## 🔴 적용 순서는 의존 방향 그대로다
+## [중요] 적용 순서는 의존 방향 그대로다
 
 A 가 B 를 `#include` 하면 **B 가 먼저** 적용돼야 한다 — A 를 먼저 넣으면 B 의 선언이 없어
 컴파일이 깨진다. 즉 위상 정렬에서 **의존 대상이 앞**이다.
 
-⚠️ **순환은 실재한다.** C++ 헤더는 서로 물 수 있고(전방 선언으로 푸는 것이 정석이지만 늘
+[주의] **순환은 실재한다.** C++ 헤더는 서로 물 수 있고(전방 선언으로 푸는 것이 정석이지만 늘
 그렇지는 않다), `dependency.py` 의 역방향 매칭은 **basename 근사**라 없는 간선을 만들 수도
 있다. 그래서 순환을 만나면 **막지 않고 보고**한다 — 근사가 만든 가짜 순환 때문에 정상 작업을
 차단하는 것이 더 나쁘다(사실 게이트에서 이미 내린 판단). 순환 안에서는 안정 정렬로 둔다.
 
-## 🔴 사람이 보고 자른다
+## [중요] 사람이 보고 자른다
 
 `preview()` 가 있는 이유다. 원전도 Step 2 에서 플랜을 **사용자 승인**에 걸었다. 자동으로
 파견하지 않는다 — 분해가 틀리면 N개 조각이 전부 헛일이 되고, 그건 골조가 틀린 것 다음으로 비싸다.
@@ -47,7 +47,7 @@ MAX_DEPTH_LOOKUP = 1        # include 는 직접 의존만 본다 — 깊이를 
 class Piece:
     """파견 단위 하나 = 태스크 하나.
 
-    🔴 `depth` 가 0 이면 파일 전체를 한 번에, 1 이상이면 **그 파일의 N번째 단계**다.
+    [중요] `depth` 가 0 이면 파일 전체를 한 번에, 1 이상이면 **그 파일의 N번째 단계**다.
     """
 
     stem: str
@@ -59,7 +59,7 @@ class Piece:
 
     @property
     def concurrent_key(self) -> str:
-        """동시성 판정의 열쇠. 🔴 **뎁스는 같은 파일이라도 동시에 돌지 않는다.**"""
+        """동시성 판정의 열쇠. [중요] **뎁스는 같은 파일이라도 동시에 돌지 않는다.**"""
         return self.stem if self.depth == 0 else f"{self.stem}#depth"
 
     @property
@@ -70,13 +70,13 @@ class Piece:
 @dataclass
 class Plan:
     pieces: list = field(default_factory=list)
-    cycles: list = field(default_factory=list)      # ⚠️ 순환 — 보고만 한다
+    cycles: list = field(default_factory=list)      # [주의] 순환 — 보고만 한다
     notes: list = field(default_factory=list)
     ungraphed: list = field(default_factory=list)   # 그래프에 없는 파일 (신규 파일이면 정상)
 
     @property
     def ok(self) -> bool:
-        # 🔴 순환은 막지 않는다(근사가 만든 가짜일 수 있다). **파일 겹침만** 막는다.
+        # [중요] 순환은 막지 않는다(근사가 만든 가짜일 수 있다). **파일 겹침만** 막는다.
         return not self.violations()
 
     def ordered(self) -> list:
@@ -84,7 +84,7 @@ class Plan:
         return sorted(self.pieces, key=lambda p: (p.order, p.stem, p.depth))
 
     def waves(self) -> list:
-        """동시에 파견 가능한 묶음들 — 🔴 **뎁스는 절대 같은 물결에 없다.**"""
+        """동시에 파견 가능한 묶음들 — [중요] **뎁스는 절대 같은 물결에 없다.**"""
         out: list = []
         for p in self.ordered():
             if p.depth > 1:
@@ -99,7 +99,7 @@ class Plan:
         return out
 
     def violations(self) -> list:
-        """🔴 **동시에 돌 수 있는 것들끼리** 파일이 겹치나. 뎁스는 제외한다."""
+        """[중요] **동시에 돌 수 있는 것들끼리** 파일이 겹치나. 뎁스는 제외한다."""
         bad: list = []
         for wave in self.waves():
             seen: dict = {}
@@ -111,7 +111,7 @@ class Plan:
         return bad
 
     def preview(self) -> str:
-        """🔴 **사람이 보고 자른다.** 무엇이 어떤 순서로 나가는지, 위험이 무엇인지."""
+        """[중요] **사람이 보고 자른다.** 무엇이 어떤 순서로 나가는지, 위험이 무엇인지."""
         out = [f"분해 계획 — 조각 {len(self.pieces)} · 물결 {len(self.waves())}"]
         for i, wave in enumerate(self.waves(), 1):
             tag = "동시" if len(wave) > 1 else "단독"
@@ -123,17 +123,17 @@ class Plan:
                     out.append(f"        {f}")
         v = self.violations()
         if v:
-            out += ["", "🔴 **파견하면 안 된다 — 같은 파일을 두 조각이 동시에 고친다:**"]
+            out += ["", "[중요] **파견하면 안 된다 — 같은 파일을 두 조각이 동시에 고친다:**"]
             out += [f"    {x}" for x in v]
         else:
-            out.append("  ✅ 같은 물결 안에 파일 겹침 없음")
+            out.append("  [완료] 같은 물결 안에 파일 겹침 없음")
         if self.cycles:
-            # ⚠️ 막지는 않는다 — basename 근사가 만든 가짜 순환일 수 있다
-            out += ["", f"⚠️ 순환 의존 {len(self.cycles)}건 — 그 안은 순서를 보장하지 못한다 "
+            # [주의] 막지는 않는다 — basename 근사가 만든 가짜 순환일 수 있다
+            out += ["", f"[주의] 순환 의존 {len(self.cycles)}건 — 그 안은 순서를 보장하지 못한다 "
                         "(막지 않는다: include 역추적이 근사라 가짜일 수 있다):"]
             out += [f"    {' → '.join(c)}" for c in self.cycles[:5]]
         if self.ungraphed:
-            out.append(f"  ⚠️ 그래프에 없는 파일 {len(self.ungraphed)} — 신규 파일이면 정상 "
+            out.append(f"  [주의] 그래프에 없는 파일 {len(self.ungraphed)} — 신규 파일이면 정상 "
                        f"(예: {', '.join(self.ungraphed[:3])})")
         for n in self.notes:
             out.append(f"  {n}")
@@ -141,7 +141,7 @@ class Plan:
 
 
 def pieces_from(items: list) -> list:
-    """`[(클래스, 파일)]` → 조각들. 🔴 **파일 불가분**은 `batching` 이 이미 보장한다."""
+    """`[(클래스, 파일)]` → 조각들. [중요] **파일 불가분**은 `batching` 이 이미 보장한다."""
     return [Piece(stem=u.key, classes=list(u.classes), files=list(u.files))
             for u in batching.units(items)]
 
@@ -149,7 +149,7 @@ def pieces_from(items: list) -> list:
 def split_by_depth(piece: Piece, skeleton_text: str) -> list:
     """`[PSEUDO:N]` 이 있으면 뎁스별 조각으로 가른다 (소 1.2.4).
 
-    🔴 **파일 불가분과 충돌하지 않는다** — 뎁스는 `depends_on` 으로 줄을 서므로 같은 파일을
+    [중요] **파일 불가분과 충돌하지 않는다** — 뎁스는 `depends_on` 으로 줄을 서므로 같은 파일을
     두 워커가 *동시에* 만지는 일이 없다. 원전이 이걸 쓴 이유는 하나다: **한 파일이 LLM 1회
     출력 한계를 넘을 때.**
     """
@@ -171,9 +171,9 @@ def split_by_depth(piece: Piece, skeleton_text: str) -> list:
 def _order_by_includes(paths: ProjectPaths, pieces: list) -> tuple:
     """의존이 먼저 오도록 순서를 매긴다. `(순환들, 그래프에 없는 파일들, 조회 실패 수)`.
 
-    🔴 **A 가 B 를 include 하면 B 가 먼저다.** A 를 먼저 넣으면 B 의 선언이 없다.
+    [중요] **A 가 B 를 include 하면 B 가 먼저다.** A 를 먼저 넣으면 B 의 선언이 없다.
 
-    🔴 **조회 실패를 "의존 없음" 으로 뭉개지 않는다.** 처음엔 예외를 잡아 `[]` 로 두었는데,
+    [중요] **조회 실패를 "의존 없음" 으로 뭉개지 않는다.** 처음엔 예외를 잡아 `[]` 로 두었는데,
     그러면 그래프가 통째로 죽어도 **순서가 임의로 정해지고 아무도 모른다** — 이 저장소가
     반복해 물린 *조용히 틀리는* 유형이다. 실패는 세어서 호출자가 말하게 한다.
     """
@@ -191,7 +191,7 @@ def _order_by_includes(paths: ProjectPaths, pieces: list) -> tuple:
             try:
                 deps = dep.dependencies(paths, f, depth=MAX_DEPTH_LOOKUP)
             except Exception:                        # noqa: BLE001
-                # 🔴 실패는 "의존이 없다" 가 아니다 — 세어 둔다
+                # [중요] 실패는 "의존이 없다" 가 아니다 — 세어 둔다
                 failures += 1
                 continue
             if not deps and f not in ungraphed:
@@ -209,7 +209,7 @@ def _order_by_includes(paths: ProjectPaths, pieces: list) -> tuple:
     while remaining:
         ready = sorted(k for k, v in remaining.items() if not (v & set(remaining)))
         if not ready:
-            break                                    # 🔴 순환 — 아래에서 보고한다
+            break                                    # [중요] 순환 — 아래에서 보고한다
         for k in ready:
             order[k] = wave
             del remaining[k]
@@ -231,25 +231,25 @@ def plan(paths: ProjectPaths, items: list, *, skeletons: dict | None = None,
 
     `items` — `[(클래스, 파일)]`. `skeletons` — `{stem: 골조텍스트}`(뎁스 분할용, 선택).
 
-    🔴 **파견하지 않는다.** 계획을 돌려줄 뿐이고, `preview()` 를 사람이 본 뒤에 나간다.
+    [중요] **파견하지 않는다.** 계획을 돌려줄 뿐이고, `preview()` 를 사람이 본 뒤에 나간다.
     """
     p = Plan(pieces=pieces_from(items))
     if not p.pieces:
-        p.notes.append("🔴 조각이 없다 — 분해할 대상이 비었다")
+        p.notes.append("[중요] 조각이 없다 — 분해할 대상이 비었다")
         return p
     if order:
         try:
             from ..graph import dependency as dep
             if not dep.exists(paths):
-                # 🔴 그래프가 아예 없으면 **순서를 정한 것이 아니다** — 그렇게 말한다
-                p.notes.append("⚠️ include 그래프가 없다 — 순서를 못 정했다(이름순). "
+                # [중요] 그래프가 아예 없으면 **순서를 정한 것이 아니다** — 그렇게 말한다
+                p.notes.append("[주의] include 그래프가 없다 — 순서를 못 정했다(이름순). "
                                "`python -m master.graph build` 가 선행이다")
             p.cycles, p.ungraphed, fails = _order_by_includes(paths, p.pieces)
             if fails:
-                # ⚠️ 순서를 못 정한 것과 순서가 없는 것은 다르다 — 말로 적는다
-                p.notes.append(f"⚠️ include 조회 실패 {fails}건 — 그만큼은 순서 근거가 없다")
+                # [주의] 순서를 못 정한 것과 순서가 없는 것은 다르다 — 말로 적는다
+                p.notes.append(f"[주의] include 조회 실패 {fails}건 — 그만큼은 순서 근거가 없다")
         except Exception as e:                       # noqa: BLE001
-            p.notes.append(f"⚠️ include 그래프로 순서를 못 정했다 — 이름순으로 둔다: {e}")
+            p.notes.append(f"[주의] include 그래프로 순서를 못 정했다 — 이름순으로 둔다: {e}")
     if skeletons:
         out: list = []
         for piece in p.pieces:
@@ -257,12 +257,12 @@ def plan(paths: ProjectPaths, items: list, *, skeletons: dict | None = None,
         n_split = len(out) - len(p.pieces)
         p.pieces = out
         if n_split:
-            p.notes.append(f"뎁스 분할로 조각이 {n_split}개 늘었다 — 🔴 순차로만 돈다")
+            p.notes.append(f"뎁스 분할로 조각이 {n_split}개 늘었다 — [중요] 순차로만 돈다")
     return p
 
 
 def to_specs(p: Plan, *, instruction: str = "", requires: list | None = None) -> list:
-    """계획 → `register.TaskSpec` 들. 🔴 **위반이 있으면 만들지 않는다.**"""
+    """계획 → `register.TaskSpec` 들. [중요] **위반이 있으면 만들지 않는다.**"""
     from .register import RegisterError, TaskSpec
     v = p.violations()
     if v:
@@ -273,7 +273,7 @@ def to_specs(p: Plan, *, instruction: str = "", requires: list | None = None) ->
             stem=piece.stem, classes=list(piece.classes),
             target_files=list(piece.files), instruction=instruction,
             requires=list(requires or []),
-            # 🔴 순서가 곧 우선순위다 — 먼저 적용될 것이 먼저 나간다
+            # [중요] 순서가 곧 우선순위다 — 먼저 적용될 것이 먼저 나간다
             priority=max(0, 100 - piece.order),
             depends_on=list(piece.depends_on),
         ))

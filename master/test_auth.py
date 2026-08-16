@@ -2,7 +2,7 @@
 
     .venv/bin/python master/test_auth.py
 
-🔴 이 테스트가 지키는 불변식 (PLAN §9.5.6):
+[중요] 이 테스트가 지키는 불변식 (PLAN §9.5.6):
    1. **토큰을 못 읽으면 예외** — 어떤 실패도 "인증 없음" 으로 강등되지 않는다
    2. 약한 토큰·열린 권한도 거부한다
    3. 열린 경로는 `/livez` 하나뿐이고, 정보를 노출하지 않는다
@@ -42,10 +42,10 @@ def check(label: str, cond: bool, detail: str = "") -> None:
     global PASS, FAIL
     if cond:
         PASS += 1
-        print(f"  ✅ {label}")
+        print(f"  [완료] {label}")
     else:
         FAIL += 1
-        print(f"  ❌ {label}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {label}" + (f" — {detail}" if detail else ""))
 
 
 def raises(label, fn, *a, **kw):
@@ -97,7 +97,7 @@ def main() -> int:
     check("읽기 일치", load_token(p) == tok)
     raises("이미 있으면 덮지 않는다", write_token, p)
 
-    print("\n[2] 🔴 fail-closed — 어떤 실패도 '인증 없음' 이 되지 않는다")
+    print("\n[2] [중요] fail-closed — 어떤 실패도 '인증 없음' 이 되지 않는다")
     raises("파일 없음", load_token, _TMP / "nope")
     empty = _TMP / "empty"
     empty.write_text("  \n", encoding="utf-8")

@@ -4,23 +4,23 @@
 (`review_work_impl` · `reject_work_impl` · `finalize_work_impl` +
 `_integrate_push_durables`(C.7) + `_cleanup_all_work_branches`).
 
-## 🔴 리더가 없다 — 요청자 `.33` 이 그 자리다 (사용자 2026-08-16)
+## [중요] 리더가 없다 — 요청자 `.33` 이 그 자리다 (사용자 2026-08-16)
 
 > *"이제 리더[TD, 팀장등]이 없으니 작업 요청자 [.33] 가 진행하면 될 거 같아."*
 
-⚠️ 이것은 **새 판단이 아니라 이미 우리 코드에 적혀 있던 것의 확인**이다 —
+[주의] 이것은 **새 판단이 아니라 이미 우리 코드에 적혀 있던 것의 확인**이다 —
 `pre_push_hook.sh` 의 거부 메시지가 *"main 을 옮기는 것은 사람의 자리다 — 요청자(.33)에서
 한다"* 라고 못박아 뒀다. `.33` 은 UE5 를 갖고 있어 검증 빌드가 가장 빠르고(스킬 `ax-request`
 §7), 사람이 거기 앉아 있다. 원전의 「리더(TD·팀장)」 자리가 그대로 옮겨온다.
 
-## 🔴 원전의 `stash` + `checkout main` 을 **옮기지 않는다** — 사람의 트리이기 때문이다
+## [중요] 원전의 `stash` + `checkout main` 을 **옮기지 않는다** — 사람의 트리이기 때문이다
 
 원전 `review_work_impl` 은 서버 저장소에서 이렇게 한다:
 
     git stash push -u -m server-pre-review-<id>  →  checkout main  →  …  →  stash pop
     (pop 이 실패하면 **로그만 남긴다** — `executor_review_finalize.py:191`)
 
-원전에서는 그 트리가 **서버의 것**이라 잃을 것이 없었다. 🔴 우리에게 그 자리는 **사람이
+원전에서는 그 트리가 **서버의 것**이라 잃을 것이 없었다. [중요] 우리에게 그 자리는 **사람이
 편집 중인 트리**다. 반사실 실측(2026-08-16): 그 순간 `.33` 에는
 
     M Content/Blueprints/BP_MissionPrefab_C_0/BP_MissionPrefab_C_0.uasset
@@ -36,8 +36,8 @@
 ## 자동화 경계 (사용자 2026-08-16)
 
     시뮬레이션 머지 · 빌드 · 요약 · 큐 상태 flip     자동
-    main 머지 · push                                 🔴 승인 후 실행 (커밋·푸시 규칙)
-    브랜치 삭제                                      🔴 **하지 않는다 — 명령만 적어 준다**
+    main 머지 · push                                 [중요] 승인 후 실행 (커밋·푸시 규칙)
+    브랜치 삭제                                      [중요] **하지 않는다 — 명령만 적어 준다**
 
 마지막 줄이 원전과 다른 자리다. 원전 `_cleanup_all_work_branches` 는 finalize/reject 때
 work 관련 **모든** 원격 브랜치를 지운다. 우리는 둘 때문에 그러지 않는다:
@@ -50,12 +50,12 @@ work 관련 **모든** 원격 브랜치를 지운다. 우리는 둘 때문에 �
 그래서 `plan_branch_cleanup()` 은 **계획만** 낸다 — 무엇이 도달 가능하고(지워도 안전),
 무엇이 증거인지 갈라서 보여 준다.
 
-## ⚠️ 빌드는 주입한다 — 이 모듈은 UE5 를 모른다
+## [주의] 빌드는 주입한다 — 이 모듈은 UE5 를 모른다
 
 `review_work(build_fn=…)` 의 `build_fn(worktree_path) -> dict` 자리에 `.33` 로컬 빌드가
 꽂힌다(사용자 결정 2026-08-16: *".33 로컬 (원전 그대로)"* — 마스터에 UE5 가 없어 `.2` 로
 위임하던 것은 **리눅스가 강제한 것**이고 `.33` 에는 해당이 없다). 판정 계약은 이미
-`layer3_verify` 가 갖고 있다 — 🔴 **SSH 종료 코드는 양방향으로 틀리므로 로그를 파싱한다.**
+`layer3_verify` 가 갖고 있다 — [중요] **SSH 종료 코드는 양방향으로 틀리므로 로그를 파싱한다.**
 """
 from __future__ import annotations
 
@@ -72,11 +72,11 @@ BASE_BRANCH = "main"
 
 
 class ReviewError(RuntimeError):
-    """검수를 진행할 수 없다. 🔴 **모르는 채로 머지하지 않는다.**"""
+    """검수를 진행할 수 없다. [중요] **모르는 채로 머지하지 않는다.**"""
 
 
 # ─────────────────────────────────────────────────────────────
-# C.7 리더 통합 머지 — 🔴 머지만 한다. push 없음
+# C.7 리더 통합 머지 — [중요] 머지만 한다. push 없음
 # ─────────────────────────────────────────────────────────────
 
 @dataclass
@@ -92,7 +92,7 @@ class Integration:
 
 
 def order_verified(tasks) -> list:
-    """통합 순서 — 🔴 **claim 과 같은 순서**여야 의존이 지켜진다 (원전 그대로).
+    """통합 순서 — [중요] **claim 과 같은 순서**여야 의존이 지켜진다 (원전 그대로).
 
     `hierarchy_level` 오름 → `priority` **내림** → `created` 오름.
     """
@@ -104,7 +104,7 @@ def order_verified(tasks) -> list:
 def split_push_tasks(tasks) -> tuple:
     """push 모드 task 를 `(verified, skipped)` 로 가른다.
 
-    ⚠️ **verified 만 통합한다** — 원전 C.7 의 핵심이다. 실패·미완료를 섞으면 「검증된 것만
+    [주의] **verified 만 통합한다** — 원전 C.7 의 핵심이다. 실패·미완료를 섞으면 「검증된 것만
     durable 에 올린다」는 2-tier 의 전제가 무너진다.
     """
     push = [t for t in tasks or [] if t.get("distribution_mode") == "push"]
@@ -118,8 +118,8 @@ def integrate_durables(repo: Path, *, target_branch: str, tasks, merge_label: st
                        remote: str = DEFAULT_REMOTE, logf=C._noop_log) -> Integration:
     """Plan v5 C.7 — feature(골조·글루) + **verified** task durable 을 현재 브랜치에 머지한다.
 
-    🔴 **호출 전제**: 호출자가 통합 대상 브랜치를 **이미 체크아웃**해 뒀다 (원전과 같다).
-    🔴 **push 하지 않는다** — 머지 정합성만 본다. 어디에 올릴지는 호출자(review=시뮬레이션
+    [중요] **호출 전제**: 호출자가 통합 대상 브랜치를 **이미 체크아웃**해 뒀다 (원전과 같다).
+    [중요] **push 하지 않는다** — 머지 정합성만 본다. 어디에 올릴지는 호출자(review=시뮬레이션
     브랜치 폐기 / finalize=main)가 정한다.
 
     충돌·이상 시 **진행 중 머지를 abort 하고 통째 중단**한다(사용자 2026-06-16, 원전).
@@ -144,8 +144,8 @@ def integrate_durables(repo: Path, *, target_branch: str, tasks, merge_label: st
     for t in verified:
         tid = t.get("task_id")
         dur = durable_branch(tid)
-        # 🔴 verified 인데 durable 이 없다 = 이상(검증 워커의 merge 누락) → 통째 중단.
-        #    ⚠️ 여기서 넘어가면 **검증됐다고 기록된 것이 빠진 채** 통합이 성공으로 보인다.
+        # [중요] verified 인데 durable 이 없다 = 이상(검증 워커의 merge 누락) → 통째 중단.
+        #    [주의] 여기서 넘어가면 **검증됐다고 기록된 것이 빠진 채** 통합이 성공으로 보인다.
         rc, ls = _git_rc(repo, "ls-remote", "--heads", remote, dur)
         if rc != 0 or not ls.strip():
             return Integration(merged=merged, skipped=skipped, missing_durable=dur,
@@ -165,36 +165,36 @@ def integrate_durables(repo: Path, *, target_branch: str, tasks, merge_label: st
 
 
 # ─────────────────────────────────────────────────────────────
-# 정리 — 🔴 **계획만 낸다.** 지우는 것은 사람의 자리다
+# 정리 — [중요] **계획만 낸다.** 지우는 것은 사람의 자리다
 # ─────────────────────────────────────────────────────────────
 
 @dataclass
 class CleanupPlan:
     """`delete` 는 *"지워도 잃는 것이 없다"* 로 판정된 것뿐이다."""
     delete: list = field(default_factory=list)      # (ref, tip) — base 에서 도달 가능
-    keep: list = field(default_factory=list)        # (ref, 이유) — 🔴 증거
+    keep: list = field(default_factory=list)        # (ref, 이유) — [중요] 증거
     errors: list = field(default_factory=list)
 
     def commands(self, remote: str = DEFAULT_REMOTE) -> list:
-        """사람이 그대로 붙여 넣을 명령. 🔴 **우리가 실행하지 않는다.**"""
+        """사람이 그대로 붙여 넣을 명령. [중요] **우리가 실행하지 않는다.**"""
         return [f"git push {remote} --delete {ref}" for ref, _ in self.delete]
 
     def summary(self) -> str:
         return (f"정리 계획 — 지워도 되는 것 {len(self.delete)}건 · "
-                f"🔴 보존(증거) {len(self.keep)}건" +
+                f"[중요] 보존(증거) {len(self.keep)}건" +
                 (f" · 오류 {len(self.errors)}건" if self.errors else ""))
 
 
 def plan_branch_cleanup(repo: Path, *, tasks, target_branch: str = "",
                         remote: str = DEFAULT_REMOTE, base_branch: str = BASE_BRANCH,
                         logf=C._noop_log) -> CleanupPlan:
-    """원전 `_cleanup_all_work_branches` 이식 — 🔴 **지우지 않고 가른다.**
+    """원전 `_cleanup_all_work_branches` 이식 — [중요] **지우지 않고 가른다.**
 
     원전은 리더가 적용·폐기할 때 work 관련 **모든** 원격 브랜치를 지운다(브랜치 증식 차단).
     우리는 기준이 다르다 — **`<remote>/<base>` 에서 도달 가능한 것만** 지울 수 있다
     (`#125` 사용자 결정 2026-08-14). 도달 불가면 그 커밋이 **거기에만 있을 수 있다.**
 
-    ⚠️ 판정을 못 하면(tracking ref 없음·git 실패) **보존 쪽으로 기운다** — `pre_push_hook.sh`
+    [주의] 판정을 못 하면(tracking ref 없음·git 실패) **보존 쪽으로 기운다** — `pre_push_hook.sh`
     와 같은 방향의 fail-closed 다. 실행 자체를 안 하므로 여기서는 더 안전하다.
     """
     plan = CleanupPlan()
@@ -235,13 +235,13 @@ def plan_branch_cleanup(repo: Path, *, tasks, target_branch: str = "",
         if rc == 0:
             plan.delete.append((ref, tip))
         else:
-            plan.keep.append((ref, f"🔴 {remote}/{base_branch} 에 병합되지 않았다 — 증거일 수 있다"))
+            plan.keep.append((ref, f"[중요] {remote}/{base_branch} 에 병합되지 않았다 — 증거일 수 있다"))
     logf("cleanup", plan.summary())
     return plan
 
 
 # ─────────────────────────────────────────────────────────────
-# 검수 — 🔴 사람의 트리를 건드리지 않는다
+# 검수 — [중요] 사람의 트리를 건드리지 않는다
 # ─────────────────────────────────────────────────────────────
 
 def review_tree_path(repo: Path, work_id: str) -> Path:
@@ -268,7 +268,7 @@ class ReviewResult:
     recent_commits: str = ""
     files_changed: list = field(default_factory=list)
     status_flipped: bool = False
-    redmine_note: str = ""      # 🔴 마스터 경유로 보낼 본문. 여기서 직접 쓰지 않는다
+    redmine_note: str = ""      # [중요] 마스터 경유로 보낼 본문. 여기서 직접 쓰지 않는다
     error: str = ""
 
 
@@ -276,12 +276,12 @@ def review_work(repo: Path, *, work_id: str, work: dict, tasks,
                 build_fn=None, remote: str = DEFAULT_REMOTE,
                 base_branch: str = BASE_BRANCH, keep_tree: bool = False,
                 logf=C._noop_log) -> ReviewResult:
-    """시뮬레이션 통합 + (주입된) 빌드 + 요약. 🔴 **어디에도 push 하지 않는다.**
+    """시뮬레이션 통합 + (주입된) 빌드 + 요약. [중요] **어디에도 push 하지 않는다.**
 
     `work` / `tasks` 는 호출자가 큐(`GET /api/v1/works/<id>`)에서 읽어 넘긴다 — 이 모듈이
     HTTP 를 알면 테스트가 큐를 띄워야 한다.
 
-    🔴 **사람의 트리 미접촉**: 통합은 `<정본 옆>/ax-review-<work_id>` worktree 에서 돈다.
+    [중요] **사람의 트리 미접촉**: 통합은 `<정본 옆>/ax-review-<work_id>` worktree 에서 돈다.
     원전처럼 `stash` + `checkout main` 을 하지 않는다 (모듈 머리말의 반사실 실측).
     """
     r = ReviewResult(work_id=work_id)
@@ -301,7 +301,7 @@ def review_work(repo: Path, *, work_id: str, work: dict, tasks,
         if rc != 0:
             r.error = f"{remote}/{base_branch} fetch 실패: {out[:200]}"
             return r
-        # 🔴 기준은 **원격 main** 이다. 로컬 main 은 사람이 어디에 두었는지 모른다.
+        # [중요] 기준은 **원격 main** 이다. 로컬 main 은 사람이 어디에 두었는지 모른다.
         if tree.exists():
             _git_rc(repo, "worktree", "remove", "--force", str(tree))
         rc, out = _git_rc(repo, "worktree", "add", "--detach", "--force",
@@ -334,7 +334,7 @@ def review_work(repo: Path, *, work_id: str, work: dict, tasks,
             r.error = integ.error
             return r
 
-        # 요약 — 🔴 비교 대상은 **원격** base 다
+        # 요약 — [중요] 비교 대상은 **원격** base 다
         r.diff_summary = _git(tree, "diff", f"{remote}/{base_branch}", "HEAD", "--stat",
                               check=False)[-3000:]
         r.recent_commits = _git(tree, "log", f"{remote}/{base_branch}..HEAD", "--oneline", "-20",
@@ -353,7 +353,7 @@ def review_work(repo: Path, *, work_id: str, work: dict, tasks,
         r.ok = True
 
         if not r.build_skipped and not r.gate_passed:
-            # 원전 7) — 빌드 실패면 Redmine 코멘트. 🔴 **키가 여기 없다**(우리 키는 디스크에
+            # 원전 7) — 빌드 실패면 Redmine 코멘트. [중요] **키가 여기 없다**(우리 키는 디스크에
             # 없고 컨테이너 DB 에 있다) → 본문만 만들어 돌려주고 **마스터 경유**로 보낸다
             # (사용자 결정 2026-08-16).
             r.redmine_note = (
@@ -373,16 +373,16 @@ def review_work(repo: Path, *, work_id: str, work: dict, tasks,
 
 
 # ─────────────────────────────────────────────────────────────
-# 반려 · 승인 — 🔴 큐 호출은 **주입 가능한 한 자리**로 모은다
+# 반려 · 승인 — [중요] 큐 호출은 **주입 가능한 한 자리**로 모은다
 # ─────────────────────────────────────────────────────────────
 
 def _default_api(method: str, path: str, payload=None):
-    """큐 호출. 🔴 `runner._api` 를 **재사용한다** — 토큰·타임아웃·오류 형태를 따로 만들면
+    """큐 호출. [중요] `runner._api` 를 **재사용한다** — 토큰·타임아웃·오류 형태를 따로 만들면
     조용히 갈라진다(`coordinator._git_cmd` 를 공유하는 것과 같은 이유).
 
-    ⚠️ **요청자(`.33`)에는 이 경로가 없다** — 배달되는 것은 이 모듈의 의존 폐포뿐이고
+    [주의] **요청자(`.33`)에는 이 경로가 없다** — 배달되는 것은 이 모듈의 의존 폐포뿐이고
     큐 토큰은 그 기계에 두지 않는다(`client/bundle.py`: *"토큰은 이 번들에 넣지 않는다"*).
-    거기서는 호출자가 `api=` 를 주입한다(MCP 도구가 토큰을 갖고 있다). 🔴 그래서 여기서
+    거기서는 호출자가 `api=` 를 주입한다(MCP 도구가 토큰을 갖고 있다). [중요] 그래서 여기서
     맨 `ImportError` 를 내지 않고 **무엇을 해야 하는지** 말한다.
     """
     try:
@@ -395,7 +395,7 @@ def _default_api(method: str, path: str, payload=None):
 
 
 def fetch_work(work_id: str, *, api=None) -> tuple:
-    """큐에서 `(work, tasks)`. 🔴 이 모듈에서 HTTP 를 아는 유일한 자리다."""
+    """큐에서 `(work, tasks)`. [중요] 이 모듈에서 HTTP 를 아는 유일한 자리다."""
     resp = (api or _default_api)("GET", f"/api/v1/works/{work_id}") or {}
     return (resp.get("work") or {}), (resp.get("tasks") or [])
 
@@ -415,7 +415,7 @@ class Decision:
     pushed: bool = False
     merged_durables: list = field(default_factory=list)
     tree: str = ""
-    cleanup: object = None          # CleanupPlan — 🔴 계획일 뿐이다
+    cleanup: object = None          # CleanupPlan — [중요] 계획일 뿐이다
     commands: list = field(default_factory=list)
     redmine_note: str = ""
     redmine_issue_id: str = ""
@@ -426,10 +426,10 @@ class Decision:
 def reject_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str = "",
                 reason: str = "", api=None, remote: str = DEFAULT_REMOTE,
                 base_branch: str = BASE_BRANCH, logf=C._noop_log) -> Decision:
-    """원전 `reject_work_impl` 이식 — 상태·통지 마무리. 🔴 **브랜치를 지우지 않는다.**
+    """원전 `reject_work_impl` 이식 — 상태·통지 마무리. [중요] **브랜치를 지우지 않는다.**
 
     원전은 push work 반려 시 관련 원격 브랜치를 **전부** 지운다(증식 차단). 우리는 계획만
-    낸다 — 하드룰 + `#125`. ⚠️ 반려된 work 의 durable 은 `main` 에 도달할 리 없으므로
+    낸다 — 하드룰 + `#125`. [주의] 반려된 work 의 durable 은 `main` 에 도달할 리 없으므로
     실질적으로 **전부 보존**된다. 그것이 의도다: 실패한 시도도 조사 자산이다(§8.4 누적 모델).
     """
     d = Decision(work_id=work_id)
@@ -448,7 +448,7 @@ def reject_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str = 
                                "review_decision": _decision("rejected", reviewer, reason)})
         d.queue_patched = True
     except Exception as e:                                  # noqa: BLE001
-        # 🔴 조용히 넘기지 않는다 — 큐 상태가 안 바뀌면 이 work 는 계속 열려 있다
+        # [중요] 조용히 넘기지 않는다 — 큐 상태가 안 바뀌면 이 work 는 계속 열려 있다
         d.error = f"큐 상태 갱신 실패 (수동 갱신 필요): {type(e).__name__}: {e}"
         logf("reject", d.error)
 
@@ -460,7 +460,7 @@ def reject_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str = 
     d.redmine_note = (
         f"[반려] 검토자={reviewer or '(미지정)'}\n\n"
         f"사유: {reason or '(미입력)'}\n\n"
-        f"- 🔴 브랜치는 **보존**된다 — 실패한 시도도 조사 자산이다(누적 모델). "
+        f"- [중요] 브랜치는 **보존**된다 — 실패한 시도도 조사 자산이다(누적 모델). "
         f"재작업은 같은 durable 위에 `[FEEDBACK]` 을 얹어 이어 간다\n"
         f"- 영구 종결은 사람이 판단한다")
     d.ok = not d.error
@@ -472,14 +472,14 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
                   base_branch: str = BASE_BRANCH, logf=C._noop_log) -> Decision:
     """원전 `finalize_work_impl` 이식 — 승인 → 통합 → `main` 반영.
 
-    🔴 **`confirm=False` 가 기본이다** (fail-closed). 그때는 검수 트리에서 통합만 하고
+    [중요] **`confirm=False` 가 기본이다** (fail-closed). 그때는 검수 트리에서 통합만 하고
     **push 하지 않으며**, 사람이 그대로 실행할 명령을 돌려준다. 사용자 결정(2026-08-16):
     *"머지·push 는 승인 후 자동, 브랜치 삭제는 사람"*. 승인은 대화에서 일어나므로 코드의
     기본값은 **안 하는 쪽**이어야 한다.
 
-    🔴 **사람의 트리에서 `checkout main` 을 하지 않는다** — 원전은 그렇게 하지만 그 자리는
+    [중요] **사람의 트리에서 `checkout main` 을 하지 않는다** — 원전은 그렇게 하지만 그 자리는
     우리에겐 사람의 워킹트리다(모듈 머리말). 대신 `<정본 옆>` worktree 를 `<remote>/<base>`
-    에 세워 통합하고 **`HEAD:<base>` 로 push** 한다. ⚠️ 그래서 사람의 로컬 `main` 은 그대로다 —
+    에 세워 통합하고 **`HEAD:<base>` 로 push** 한다. [주의] 그래서 사람의 로컬 `main` 은 그대로다 —
     끝난 뒤 `git pull` 하면 된다. 그 편이 안전하다.
     """
     d = Decision(work_id=work_id)
@@ -542,7 +542,7 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
         if confirm:
             rc, out = _git_rc(tree, "push", remote, f"HEAD:{base_branch}")
             if rc != 0:
-                # 🔴 되돌리지 않는다 — 커밋은 이 트리에 그대로 있고 잃은 것이 없다.
+                # [중요] 되돌리지 않는다 — 커밋은 이 트리에 그대로 있고 잃은 것이 없다.
                 #    `--force` 로 밀지 않는다(하드룰). 사람이 판단한다.
                 d.error = (f"{base_branch} push 거부됨 — 통합은 `{tree}` 에 그대로 있다. "
                            f"밀어내지 않는다: {out[:200]}")
@@ -573,7 +573,7 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
                 f"- work_id: {work_id}\n"
                 f"- 통합: feature `{target}` + durable {len(d.merged_durables)}건 (no-ff)\n"
                 f"- 검토자: {reviewer or '(미지정)'}\n"
-                f"- 🔴 브랜치 정리는 사람이 실행한다 (도달 가능한 것만): "
+                f"- [중요] 브랜치 정리는 사람이 실행한다 (도달 가능한 것만): "
                 f"{len(d.cleanup.delete)}건 대상 · {len(d.cleanup.keep)}건 보존")
         d.ok = not d.error
         return d
@@ -581,7 +581,7 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
         d.error = f"git 오류: {e}"
         return d
     finally:
-        # 🔴 push 했으면 트리를 지운다. **안 했으면 남긴다** — 그 안에 통합 결과가 있고,
+        # [중요] push 했으면 트리를 지운다. **안 했으면 남긴다** — 그 안에 통합 결과가 있고,
         #    사람이 `commands` 를 그대로 실행할 대상이 그 트리다.
         if d.pushed and tree.exists():
             _git_rc(repo, "worktree", "remove", "--force", str(tree))

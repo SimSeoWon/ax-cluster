@@ -1,6 +1,6 @@
 # CLAUDE.md — Windows worker `.2`
 
-> 🔴 **This file is a COPY, not a symlink.** Canonical:
+> [중요] **This file is a COPY, not a symlink.** Canonical:
 > `sim@192.168.0.57:~/ax-cluster/machines/win-worker-2.md`. Edit there, then refresh here:
 >
 > ```bash
@@ -16,7 +16,7 @@
 |---|---|
 | **OS** | **Microsoft Windows 10 Pro 22H2** (version 2009, build 10.0.19045) |
 | **Host / IP** | `DESKTOP-HV0I6DL` / **192.168.0.2** |
-| **Account** | **`janus`** — a local **Administrator**. 🔴 *Not* `sim`; `ssh sim@…` fails |
+| **Account** | **`janus`** — a local **Administrator**. [중요] *Not* `sim`; `ssh sim@…` fails |
 | **SSH** | `ssh janus@192.168.0.2` — passwordless. Master's key is in `C:\ProgramData\ssh\administrators_authorized_keys` (admin path, not `~/.ssh/`) |
 | **GPU** | **NVIDIA GeForce RTX 3060 (12GB)** |
 | **UE5 project** | **`E:\trunk\ModularStage`** — see § Unreal projects |
@@ -30,7 +30,7 @@ This box is **two things at once**, which is the thing to keep straight:
 It is also **the only Windows machine the master can reach non-interactively** (SSH). The user's
 main work PC (`.33`) is RDP-only. Full cluster inventory: `machines/sim-desktop.md`.
 
-## 🔴 Can / cannot — the session-0 boundary
+## [중요] Can / cannot — the session-0 boundary
 
 ```
 SSH login     → SessionId 0   (services session — NO desktop access)
@@ -39,17 +39,17 @@ console janus → SessionId 9   (the interactive desktop)
 
 Windows session-0 isolation is an OS boundary, not a setting. Everything below follows from it.
 
-### ✅ The master CAN do these over SSH
+### [완료] The master CAN do these over SSH
 
 | | Notes |
 |---|---|
-| `UnrealEditor-Cmd` — commandlets, **build, `RunTests`** | Headless, session 0 is fine. This opens layer-3 verification to master control. ⚠️ Session placement confirmed; **an actual remote build has not been run yet** |
+| `UnrealEditor-Cmd` — commandlets, **build, `RunTests`** | Headless, session 0 is fine. This opens layer-3 verification to master control. [주의] Session placement confirmed; **an actual remote build has not been run yet** |
 | `git` operations in the checkout | On PATH |
 | `gjc`, `node`, any CLI | Once `gjc` is installed |
 | Read/write files, inspect state | |
 | Reach the master's services | 8101 / 8102 / 8103 all verified reachable |
 
-### ❌ The master CANNOT do these
+### [실패] The master CANNOT do these
 
 | | Why |
 |---|---|
@@ -80,26 +80,26 @@ E:\trunk\  ├─ ModularStage\    ← the AX project. origin = Gitea Sim/Modula
 `E:` has ~499GB free. Registered as this project's workshop path in the master's `ax-projects`
 registry (`:8103`).
 
-🔴 **Automation reuses this checkout — so it must not destroy work in it.**
+[중요] **Automation reuses this checkout — so it must not destroy work in it.**
 
 - **Block on modified/staged *tracked* files.** Those are what `checkout` / `reset --hard` destroy.
 - **Untracked (`??`) files pass.** They survive both. As of 2026-08-08 the tree carries
   `?? AgentWiki/` and `?? AgentWiki.zip` — blocking on those would stop automation on day one.
-- 🔴 **Never run `git clean` here.** That is the assumption that makes untracked files safe.
+- [중요] **Never run `git clean` here.** That is the assumption that makes untracked files safe.
 
 ```bash
 git -C 'E:\trunk\ModularStage' status --porcelain | grep -v '^??' | head -1   # non-empty ⇒ do not start
 ```
 
-⚠️ **`DerivedDataCache` / `Intermediate` / `Binaries` / `Saved` exist and are expensive.** Outside
+[주의] **`DerivedDataCache` / `Intermediate` / `Binaries` / `Saved` exist and are expensive.** Outside
 git, but regenerating them is a multi-tens-of-minutes build. Don't treat "delete and re-clone" as
 cheap. If an isolated second checkout ever becomes necessary, share the DDC instead of rebuilding.
 
-⚠️ **Don't put a UE5 project under OneDrive.** `C:\Users\janus\OneDrive\문서\Unreal Projects\`
+[주의] **Don't put a UE5 project under OneDrive.** `C:\Users\janus\OneDrive\문서\Unreal Projects\`
 exists here (`LyraStarterGame`, unrelated to us) — new checkouts default there too easily.
 
 ## LLMs available on this machine
-🔴 **어느 작업에 유리한지·환각이 있었는지는 [`llm-fitness.md`](llm-fitness.md) 에 실측으로 기록한다** — 모델 적합도는 머신 속성이 아니라 모델 속성이라 한 곳에 모았다. 여기(이 문서)는 **무엇이 설치돼 있는지**까지다.
+[중요] **어느 작업에 유리한지·환각이 있었는지는 [`llm-fitness.md`](llm-fitness.md) 에 실측으로 기록한다** — 모델 적합도는 머신 속성이 아니라 모델 속성이라 한 곳에 모았다. 여기(이 문서)는 **무엇이 설치돼 있는지**까지다.
 
 
 ### Local — Ollama `:11434` (7 models, measured 2026-08-08)
@@ -114,25 +114,25 @@ exists here (`LyraStarterGame`, unrelated to us) — new checkouts default there
 | `llama3:latest` | 4.34 GiB | Q4_0 |
 | `gemma2:2b` | 1.52 GiB | Q4_0 |
 
-🔴 **`MAX_LOADED_MODELS=1`** — one resident model at a time. Swapping costs ~36s for 14b.
+[중요] **`MAX_LOADED_MODELS=1`** — one resident model at a time. Swapping costs ~36s for 14b.
 Anything premised on several models resident here at once does not hold.
-🔴 **Don't repin the endpoint casually** — the master's broker assumes 14b is resident
+[중요] **Don't repin the endpoint casually** — the master's broker assumes 14b is resident
 (`master/broker/config.py`).
 
 ### Commercial CLIs
 
 | | Status | Notes |
 |---|---|---|
-| **Claude Code** | ✅ **2.1.225** | `C:\Users\janus\.local\bin\claude.exe`. `.claude.json` + a credential file present → looks authenticated (not verified by running it) |
-| **Gemini CLI** | ✅ installed | `%APPDATA%\npm\gemini.cmd`, `~/.gemini` present |
-| **`agy` (Antigravity)** | ❌ **not installed** | Only on the master. If research delegation is wanted here, install it first |
+| **Claude Code** | [완료] **2.1.225** | `C:\Users\janus\.local\bin\claude.exe`. `.claude.json` + a credential file present → looks authenticated (not verified by running it) |
+| **Gemini CLI** | [완료] installed | `%APPDATA%\npm\gemini.cmd`, `~/.gemini` present |
+| **`agy` (Antigravity)** | [실패] **not installed** | Only on the master. If research delegation is wanted here, install it first |
 | `gjc` (gajae-code) | ⬜ **not installed** | Prerequisite for PLAN §9. `node` is present, so nothing blocks it |
 
-🔴 **Claude Code here is an *orchestrator*, not a model backend.** Ollama cannot serve Claude, and
+[중요] **Claude Code here is an *orchestrator*, not a model backend.** Ollama cannot serve Claude, and
 the Claude Code CLI is not an inference server — don't try to put it behind the master's broker.
 This machine owns files; that is what makes a Claude session here valuable.
 
-## 🔴 The SSH PATH trap
+## [중요] The SSH PATH trap
 
 The SSH session gets a minimal PATH. **`where` / `Get-Command` report installed tools as missing.**
 This produced two wrong "not installed" calls while writing this file — verify by absolute path
@@ -159,16 +159,16 @@ ssh janus@192.168.0.2 'powershell -NoProfile -Command "Invoke-Expression ([Conso
 | project registry (MCP) | `http://192.168.0.57:8103/mcp` |
 | Gitea | `http://192.168.0.57:3000` |
 
-🔴 **All of them require `Authorization: Bearer <token>`** (since 2026-08-08). The token lives on
+[중요] **All of them require `Authorization: Bearer <token>`** (since 2026-08-08). The token lives on
 the master at `~/.config/ax-cluster/token`; ask for it rather than inventing one. Only `/livez` is
 open. They are *also* LAN-only by firewall — don't expose them further.
 
 ## Hard rules
 
-- 🔴 **This machine owns files; the master does not.** The master assembles context and hands it
+- [중요] **This machine owns files; the master does not.** The master assembles context and hands it
   over — applying code, building, testing, and committing happen *here*.
-- 🔴 **Two workshops share this UE5 project** (`.2` and `.33`, same repo, same `task/<id>`
+- [중요] **Two workshops share this UE5 project** (`.2` and `.33`, same repo, same `task/<id>`
   branches). Claim/lease/fencing in the master's task queue is a **correctness requirement**, not
   overhead — don't work around it.
-- 🔴 **Never `push --force`, `reset --hard`, delete branches, or rewrite history** in a human
+- [중요] **Never `push --force`, `reset --hard`, delete branches, or rewrite history** in a human
   session — describe the command instead.

@@ -3,7 +3,7 @@
 원본: `AgentTest/watcher/context.py` 의 `_group_files` · `_process_directory_group` ·
 `process_commit` · `initial_context_build`.
 
-🔴 **원본과 갈라지는 지점 넷.**
+[중요] **원본과 갈라지는 지점 넷.**
 
 ⑴ **LLM 은 브로커를 거친다.** 원본은 `claude`/`agy` CLI 를 subprocess 로 부른다. 마스터는
    도구 호출을 하지 않는 인프라라(§2) CLI 가 없고, 대신 브로커(8102)가 Ollama 노드를 앞에
@@ -37,7 +37,7 @@ from ..graph import class_graph as cg, dependency as dep, parse as gparse
 from ..work.generate import DEFAULT_BROKER, GenerateError, call_broker, unload_model
 from . import md as md_mod, prompt as prompt_mod, verify as verify_mod
 
-# 컨텍스트 합성용 모델 — 🔴 **Gemma 로 바꿨다** (실측 2026-08-08).
+# 컨텍스트 합성용 모델 — [중요] **Gemma 로 바꿨다** (실측 2026-08-08).
 #
 # 같은 3그룹에 네 모델을 돌려 **사실 게이트 통과율**로 비교했다:
 #
@@ -49,30 +49,30 @@ from . import md as md_mod, prompt as prompt_mod, verify as verify_mod
 # **4B 가 35B 와 같은 통과율**인 것이 요점이다 — 지금 실패 유형은 문장력이 아니라 **지시
 # 준수**다. 원본도 로컬 LLM 기본값으로 Gemma 4 E4B 를 골랐고, `context_review` 만 화이트
 # 리스트에서 뺐다(*"4B 가 컨텍스트+리뷰 **통합** 프롬프트를 일관되게 처리할지 미검증"*).
-# 🔴 **우리는 리뷰를 붙이지 않으므로 그 제외 사유가 없다.**
+# [중요] **우리는 리뷰를 붙이지 않으므로 그 제외 사유가 없다.**
 SYNTH_MODEL = "gemma4:e4b"
 FALLBACK_MODEL = "gemma3:12b"            # .2 전용 VRAM. E4B 가 얕을 때
 HEAVY_MODEL = "hf.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M"   # 되돌릴 때만
 SYNTH_TIMEOUT = 600
 
-# 🔴 KV 컨텍스트 상한. **이것이 BC-250 정지 사고의 진짜 원인이었다** — 모델 기본
+# [중요] KV 컨텍스트 상한. **이것이 BC-250 정지 사고의 진짜 원인이었다** — 모델 기본
 # `context_length` 가 **262144(256K)** 라, 안 주면 그 전제로 KV 와 컨텍스트 체크포인트를
 # 잡는다(실측 `checkpoint 1 of 32 ... 62.813 MiB` → 32개면 ~2.0GB, 보드 여유는 2.2GB).
-# 🔴 **8192 로 올렸다** (2026-08-08) — 관련 문서 발췌를 400 → 1,500자로 키웠기 때문이다.
+# [중요] **8192 로 올렸다** (2026-08-08) — 관련 문서 발췌를 400 → 1,500자로 키웠기 때문이다.
 # 두 값은 **함께 움직여야 한다**: 발췌만 늘리면 컨텍스트 창을 넘어 뒤가 잘리고, 모델은
 # 그 사실을 말하지 않는다(조용히 앞부분만 본다).
 #
 # 안전한 이유: 합성 모델이 `gemma4:e4b`(4B급)로 바뀌어 KV 가 35B 때보다 훨씬 작다.
-# 🔴 그래도 **35B(`HEAVY_MODEL`)로 되돌린다면 이 값을 다시 재라** — 그 조합이 보드를
+# [중요] 그래도 **35B(`HEAVY_MODEL`)로 되돌린다면 이 값을 다시 재라** — 그 조합이 보드를
 # 넘어뜨렸다(리포트 10 §8).
 SYNTH_NUM_CTX = 8192
 
-# 🔴 몇 그룹마다 모델을 내렸다 올릴지. **`num_ctx` 만으로는 부족하다** — 실측 2026-08-08:
+# [중요] 몇 그룹마다 모델을 내렸다 올릴지. **`num_ctx` 만으로는 부족하다** — 실측 2026-08-08:
 # 요청마다 여유가 935 → 880 → 680 → 447 → 259 MB 로 **단조 감소**한다(요청당 ~170MB).
 # 누적 주체는 Ollama 의 프롬프트 캐시·컨텍스트 체크포인트이고, **모델을 내리면 전부
 # 회수된다**(실측 266 → 14,445 MB). 그래서 주기적으로 내린다.
 #
-# 🔴 **Gemma4 E4B 로 바꾼 뒤에는 0 이 기본이다** — 4B급이라 누적이 문제되는 규모가 아니고,
+# [중요] **Gemma4 E4B 로 바꾼 뒤에는 0 이 기본이다** — 4B급이라 누적이 문제되는 규모가 아니고,
 # 주기적 내리기는 재적재 비용만 낸다. 35B(`HEAVY_MODEL`)로 되돌린다면 5 로 올릴 것:
 # 그때는 적재 후 여유 ~1,200MB / 요청당 ~170MB 라 5회면 ~350MB 가 남는다.
 UNLOAD_EVERY = 0
@@ -84,7 +84,7 @@ HEADER_EXTS = {".h", ".hpp", ".inl"}
 
 
 class SynthError(RuntimeError):
-    """합성을 시작할 수 없다. 🔴 삼키면 빈 결과가 정상처럼 보인다."""
+    """합성을 시작할 수 없다. [중요] 삼키면 빈 결과가 정상처럼 보인다."""
 
 
 @dataclass
@@ -106,7 +106,7 @@ class GroupResult:
 
     @property
     def lost(self) -> bool:
-        """🔴 영구 유실인가 — LLM 실패/게이트 거부로 문서가 안 생겼는가."""
+        """[중요] 영구 유실인가 — LLM 실패/게이트 거부로 문서가 안 생겼는가."""
         return not self.passed and self.reason != "변화 없음"
 
 
@@ -115,7 +115,7 @@ class Stats:
     groups: int = 0
     written: int = 0
     refused: int = 0            # 형식 게이트 거부 (σ.7-B) — 기존 파일 유지
-    unfactual: int = 0          # 🔴 사실 게이트 거부 — 소스 실측과 어긋난다
+    unfactual: int = 0          # [중요] 사실 게이트 거부 — 소스 실측과 어긋난다
     failed: int = 0             # LLM 실패
     skipped: int = 0            # 이미 있고 안 바뀜
     aborted: str = ""           # 서킷브레이커가 끊었으면 사유
@@ -126,7 +126,7 @@ class Stats:
 
     @property
     def lost(self) -> int:
-        """🔴 문서가 생기지 않은 그룹 수. 이 숫자가 곧 영구 유실이다."""
+        """[중요] 문서가 생기지 않은 그룹 수. 이 숫자가 곧 영구 유실이다."""
         return self.refused + self.unfactual + self.failed
 
     @property
@@ -140,15 +140,15 @@ class Stats:
         s = (f"그룹 {self.groups} → 통과 {self.written}"
              f" · 건너뜀 {self.skipped} · {self.elapsed_ms}ms")
         if self.refused:
-            s += f" · 🔴 형식 거부 {self.refused}"
+            s += f" · [중요] 형식 거부 {self.refused}"
         if self.unfactual:
-            s += f" · 🔴 사실 거부 {self.unfactual}"
+            s += f" · [중요] 사실 거부 {self.unfactual}"
         if self.failed:
-            s += f" · 🔴 LLM 실패 {self.failed}"
+            s += f" · [중요] LLM 실패 {self.failed}"
         if self.unloads:
             s += f" · 모델 회수 {self.unloads}회"
         if self.aborted:
-            s += f" · ⛔ 중단({self.aborted})"
+            s += f" ·  중단({self.aborted})"
         return f"{s} · {self.encodings.summary}"
 
 
@@ -199,7 +199,7 @@ def collect_related(paths: ProjectPaths, key: str, files: list[str], existing: s
                                    excerpt=prompt_mod.RELATED_EXCERPT):
             if hit.file_id == self_doc:
                 continue
-            # 🔴 **요약 절로 한정한다** (사용자 확정 2026-08-08).
+            # [중요] **요약 절로 한정한다** (사용자 확정 2026-08-08).
             # `hit.excerpt` 는 임베딩 텍스트, 곧 「## 요약」 절이다. 본문 전체를 넣어 봤고
             # (951·762·1500자) 통과했지만 **요약으로 한정하기로 했다** — 원본이 그 절을
             # *"이 섹션만 벡터 임베딩 대상 — 짧고 검색 친화적으로"* 로 설계한 이유가
@@ -216,7 +216,7 @@ def collect_related(paths: ProjectPaths, key: str, files: list[str], existing: s
 def collect_grounding(paths: ProjectPaths, files: list[str]) -> prompt_mod.Grounding:
     """관계 그래프에서 실측 근거를 모은다. **베스트에포트** — 그래프가 없으면 빈 근거다.
 
-    🔴 그래프가 없다고 합성을 막지는 않는다. 다만 `Grounding.empty` 가 True 면 호출자가
+    [중요] 그래프가 없다고 합성을 막지는 않는다. 다만 `Grounding.empty` 가 True 면 호출자가
     그 사실을 통계에 남길 수 있다 — 근거 없이 만든 문서와 있는 문서를 나중에 구분해야 한다.
     """
     g = prompt_mod.Grounding()
@@ -255,7 +255,7 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
     실패는 **예외가 아니라 결과**다 — 한 그룹이 죽었다고 배치를 멈추지 않는다. 대신
     `GroupResult.reason` 에 사유가 남고 `lost` 가 True 가 된다.
 
-    🔴 `dry_run` — 생성·검증만 하고 **디스크에 쓰지 않는다.** 받아온 스냅샷을 건드리지 않고
+    [중요] `dry_run` — 생성·검증만 하고 **디스크에 쓰지 않는다.** 받아온 스냅샷을 건드리지 않고
     모델 적합도(사실 게이트 통과율)를 재려면 이게 필요하다. 통과율을 모른 채 전체를 돌리면
     나쁜 문서 909개가 되고, 그건 좋은 문서 0개보다 나쁘다.
     """
@@ -294,11 +294,11 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
 
     doc, verdict = md_mod.finalize(raw, existing=existing, commit=commit)
     if not verdict.ok:
-        # σ.7-B — 🔴 기존 파일을 남긴다. 다음 사이클에 다시 시도된다.
+        # σ.7-B — [중요] 기존 파일을 남긴다. 다음 사이클에 다시 시도된다.
         res.reason = f"형식 게이트 {verdict.summary} · preview={verdict.preview!r}"
         return res
 
-    # 🔴 **사실 게이트** — 소스 실측과 대조한다. LLM 에게 자기 검증을 맡기지 않는다
+    # [중요] **사실 게이트** — 소스 실측과 대조한다. LLM 에게 자기 검증을 맡기지 않는다
     # (설계 규칙: 결정적 게이트가 LLM 판단보다 우선). 형식 게이트와 같은 처리 —
     # 거부하면 기존 파일이 남고 다음 사이클에 재시도된다.
     report = verify_mod.verify(doc, sources=bodies, declared=grounding.declared_classes)
@@ -328,7 +328,7 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
     """배치 합성. `changed` 를 주면 그 파일들만, 없으면 `Source/` 전체.
 
     `skip_existing` — 이미 문서가 있는 그룹을 건너뛴다(최초 전체 빌드에서 누락분만 보충).
-    `limit` — 그룹 수 상한. 0 이면 무제한. 🔴 상한에 걸려 남긴 것은 `Stats.aborted` 에 적는다.
+    `limit` — 그룹 수 상한. 0 이면 무제한. [중요] 상한에 걸려 남긴 것은 `Stats.aborted` 에 적는다.
     """
     files = changed if changed is not None else cg.list_source_files(paths, git=git)
     if not files:
@@ -374,7 +374,7 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
                 break
         if progress:
             progress(f"  {i}/{len(groups)} {key} — {'통과' if r.passed else r.reason[:60]}")
-        # 🔴 주기적으로 모델을 내려 누적된 캐시를 회수한다 (위 UNLOAD_EVERY 참조).
+        # [중요] 주기적으로 모델을 내려 누적된 캐시를 회수한다 (위 UNLOAD_EVERY 참조).
         # 다음 요청이 자동으로 다시 적재한다 — 우리가 올릴 필요는 없다.
         done = stats.written + stats.refused + stats.unfactual + stats.failed
         if unload_every and done and done % unload_every == 0 and caller is None:

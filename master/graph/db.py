@@ -2,7 +2,7 @@
 
 원본: `AgentTest/watcher/class_graph_db.py`.
 
-🔴 **바꾼 것 세 개.**
+[중요] **바꾼 것 세 개.**
 
 ⑴ **위치** — 원본은 `<UE프로젝트>/.claude/vector_db/class_graph.db` 였다. 여기는
    `<Name>/class_graph.db` 다(`paths.class_graph_db`). 이유는 §5.5.2 — 경로가 상수가 아니라
@@ -16,7 +16,7 @@
    빈 `class_ontology` 는 원본의 구 DB 호환 경로와 같은 결과(빈 추론)를 낸다.
 
 ⑶ **동시성 PRAGMA 를 명시한다** — 원본은 `common.apply_sqlite_concurrency_pragmas` 에
-   위임했다. 🔴 여기서 이게 더 중요하다: 색인기(`ax-indexer.service`)와 검색기가 **별개
+   위임했다. [중요] 여기서 이게 더 중요하다: 색인기(`ax-indexer.service`)와 검색기가 **별개
    프로세스**라 같은 파일을 동시에 연다. 세대 포인터를 메모리에만 두어 새 프로세스가
    `count()==0` 을 본 사고(→ `context_search/generation.py`)와 같은 계열의 함정이다.
 """
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS class_ontology (
     classified_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     ontology_layer    INTEGER,                            -- L1/L2/L3 (소 1.3.5 가 추정)
     verified_by_layer INTEGER NOT NULL DEFAULT 0,         -- layer 잠금 (tier 검수와 직교)
-    source_commit     TEXT,                               -- 🔴 stale 판정의 한쪽 (소 1.3.8)
+    source_commit     TEXT,                               -- [중요] stale 판정의 한쪽 (소 1.3.8)
     FOREIGN KEY (class_name)      REFERENCES classes(name) ON DELETE CASCADE,
     FOREIGN KEY (ontology_domain) REFERENCES domains(name) ON DELETE SET NULL
 );
@@ -99,7 +99,7 @@ def connect(paths: ProjectPaths) -> sqlite3.Connection:
                            isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")      # methods/class_ontology 의 CASCADE 를 위해
-    # 🔴 값은 `master/sqlite_util.py` 가 단일 소유 — 세 곳에 흩어져 있다가
+    # [중요] 값은 `master/sqlite_util.py` 가 단일 소유 — 세 곳에 흩어져 있다가
     #    bm25 에서만 빠진 것이 2026-08-14 에 발견됐다.
     sqlite_util.apply(conn, synchronous="NORMAL")
     try:

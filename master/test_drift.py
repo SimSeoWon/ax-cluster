@@ -1,6 +1,6 @@
 """드리프트 감사 (소 2.4.1).
 
-🔴 지키는 계약은 **좁히기**다. "기준 커밋이 다르다" 로 깃발을 꽂으면 커밋 하나에 240건이
+[중요] 지키는 계약은 **좁히기**다. "기준 커밋이 다르다" 로 깃발을 꽂으면 커밋 하나에 240건이
 한꺼번에 뜨고 아무도 안 본다 — 경보가 많으면 경보가 아니다.
 
 `.venv/bin/python master/test_drift.py`
@@ -26,7 +26,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 def _seed(root: Path) -> ProjectPaths:
@@ -68,14 +68,14 @@ def test_narrowing_is_the_contract() -> None:
         same = _audit(p, head=OLD, at=OLD)
         check("기준이 같으면 조용하다", not same.suspects, same.render()[:120])
 
-        # 🔴 커밋은 달라졌지만 **이 도메인 파일은 안 바뀌었다** → 깃발을 꽂지 않는다
+        # [중요] 커밋은 달라졌지만 **이 도메인 파일은 안 바뀌었다** → 깃발을 꽂지 않는다
         other = _audit(p, changed=["Docs/README.md", "ModularStage.uproject"])
-        check("🔴 무관한 파일 변경은 무시한다", not other.suspects,
+        check("[중요] 무관한 파일 변경은 무시한다", not other.suspects,
               str([d.line for d in other.domains]))
 
-        # 🔴 이 도메인이 근거로 삼은 파일이 바뀌었다 → 의심
+        # [중요] 이 도메인이 근거로 삼은 파일이 바뀌었다 → 의심
         mine = _audit(p, changed=["Source/M.h"])
-        check("🔴 근거 파일이 바뀌면 잡는다", len(mine.suspects) == 1, str(mine.suspects))
+        check("[중요] 근거 파일이 바뀌면 잡는다", len(mine.suspects) == 1, str(mine.suspects))
         check("무엇이 바뀌었는지 말한다", "M.h" in mine.suspects[0].line, mine.suspects[0].line)
         check("기준 커밋을 밝힌다", OLD[:8] in mine.suspects[0].line, mine.suspects[0].line)
 
@@ -95,18 +95,18 @@ def test_other_checks_flag_regardless() -> None:
 def test_report_says_what_it_cannot_do() -> None:
     with tempfile.TemporaryDirectory() as t:
         r = _audit(_seed(Path(t)), changed=["Source/M.h"]).render()
-        # 🔴 감사가 지운다고 오해하면 사람이 확인을 안 한다
-        check("🔴 지우지 않는다고 못박는다", "감사는 지우지 않는다" in r, r[-300:])
+        # [중요] 감사가 지운다고 오해하면 사람이 확인을 안 한다
+        check("[중요] 지우지 않는다고 못박는다", "감사는 지우지 않는다" in r, r[-300:])
         check("무엇으로 고치는지 알려준다", "remove(force)" in r and "refresh" in r)
-        # 🔴 못 잡는 것을 밝힌다 — 설계 규칙 서술은 자동 검증이 안 된다
-        check("🔴 한계를 밝힌다", "자동으로 못 잡는다" in r, r[-300:])
+        # [중요] 못 잡는 것을 밝힌다 — 설계 규칙 서술은 자동 검증이 안 된다
+        check("[중요] 한계를 밝힌다", "자동으로 못 잡는다" in r, r[-300:])
         check("의심 수를 머리에 적는다", "의심 1" in r, r[:120])
 
 
 def test_read_only() -> None:
     src = (Path(__file__).resolve().parent / "ontology" / "drift.py").read_text("utf-8")
     for banned in ("yaml_io.write", ".write_text(", ".unlink(", "apply=True"):
-        check(f"🔴 {banned} 없음", banned not in src)
+        check(f"[중요] {banned} 없음", banned not in src)
 
 
 def main() -> int:
@@ -114,7 +114,7 @@ def main() -> int:
                test_report_says_what_it_cannot_do, test_read_only):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_drift: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_drift: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

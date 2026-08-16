@@ -3,7 +3,7 @@
 원본: `watcher/ontology_invariants.py` 의 `collect_domain_class_contexts` ·
 `extract_cpp_excerpt`.
 
-## 🔴 원본 상수를 그대로 옮기면 노드가 죽는다
+## [중요] 원본 상수를 그대로 옮기면 노드가 죽는다
 
 원본은 도메인당 클래스 10개 × (`.h` 3,000자 + `.cpp` 2,500자) = **최대 55KB** 를 한
 프롬프트에 싣는다. 원본의 소비자는 **상용 API** 였다. 우리 노드는 BC-250(통합 메모리
@@ -20,7 +20,7 @@
 **자른 사실을 결과에 적는다**(`Budget.truncated`). 조용히 앞부분만 보내면 모델은
 그 사실을 말하지 않는다 — 뒤를 못 본 채 "다 봤다" 는 톤으로 답한다.
 
-🔴 **`num_ctx` 와 이 예산은 함께 움직인다.** `context_synth/synth.py` 가 같은 규칙을
+[중요] **`num_ctx` 와 이 예산은 함께 움직인다.** `context_synth/synth.py` 가 같은 규칙을
 주석으로 못박아 뒀다: *발췌만 늘리면 컨텍스트 창을 넘어 뒤가 잘린다.*
 
 ## 무엇을 싣나 — 지도가 아니라 소스다
@@ -43,13 +43,13 @@ from ..context_search.paths import ProjectPaths
 from ..graph import class_graph as cg, dependency as dep
 from . import collect
 
-# 🔴 예산 — **실측으로 정한다. 원본 값이 아니다.**
+# [중요] 예산 — **실측으로 정한다. 원본 값이 아니다.**
 # 원본: 클래스 10 × (.h 3000 + .cpp 2500). 상용 API 전제라 우리보다 한 자리 크다.
 MAX_CLASSES = 6               # 조각당 프롬프트에 싣는 클래스 수
 HEADER_CHARS = 1200           # 클래스당 .h 발췌
 BODY_CHARS = 900              # 클래스당 .cpp 발췌
 
-# 🔴 **실측으로 정한 값이다** (2026-08-09, `/api/generate` 의 `prompt_eval_count`):
+# [중요] **실측으로 정한 값이다** (2026-08-09, `/api/generate` 의 `prompt_eval_count`):
 #
 #   프롬프트 17,315자 → 35B 6,070 tok (2.85자/tok) · 14b 6,200 tok (2.79자/tok)
 #
@@ -58,7 +58,7 @@ BODY_CHARS = 900              # 클래스당 .cpp 발췌
 # 상한이다. 규칙 블록(~4,500자) + 도메인 서술(~1,800자) + 클래스 목록이 먼저 먹으므로
 # **발췌에 쓸 수 있는 것은 ~7,000자**다.
 #
-# 🔴 넘치면 **조용히 뒤가 잘린다** — 모델은 그 사실을 말하지 않고 앞부분만 보고 답한다.
+# [중요] 넘치면 **조용히 뒤가 잘린다** — 모델은 그 사실을 말하지 않고 앞부분만 보고 답한다.
 # 올리려면 `num_ctx` 와 **양쪽 노드의 여유를 함께** 재라 (`synth.NUM_CTX` 주석 참조).
 TOTAL_CHARS = 7000
 ANCESTORS_SHOWN = 4
@@ -114,7 +114,7 @@ class DomainContexts:
     domain: str
     items: list = field(default_factory=list)
     members_total: int = 0
-    truncated: list = field(default_factory=list)   # 🔴 예산 때문에 뺀 클래스 이름
+    truncated: list = field(default_factory=list)   # [중요] 예산 때문에 뺀 클래스 이름
     chars: int = 0
     part: tuple = (1, 1)                            # (조각 번호, 전체 조각 수)
 
@@ -133,12 +133,12 @@ class DomainContexts:
         head = f"{self.domain}" + (f" [{i}/{n}]" if n > 1 else "")
         s = f"{head}: 클래스 {len(self.items)}/{self.members_total} · {self.chars}자"
         if self.truncated:
-            s += f" · 🔴 예산으로 제외 {len(self.truncated)}"
+            s += f" · [중요] 예산으로 제외 {len(self.truncated)}"
         return s
 
     @property
     def note(self) -> str:
-        """🔴 프롬프트 본문에 넣을 결손 고지. **안 보이는 것을 숨기지 않는다.**
+        """[중요] 프롬프트 본문에 넣을 결손 고지. **안 보이는 것을 숨기지 않는다.**
 
         조각으로 나뉜 경우가 특히 중요하다 — 모델은 자기가 받은 것이 전부라고 가정하고,
         빈칸을 지어내 채운다. **"이건 일부다" 를 말해 주면 그 압력이 줄어든다.**
@@ -147,13 +147,13 @@ class DomainContexts:
         lines: list = []
         if n > 1:
             lines.append(
-                f"⚠️ 이것은 `{self.domain}` 도메인의 **{n}조각 중 {i}번째**다 "
+                f"[주의] 이것은 `{self.domain}` 도메인의 **{n}조각 중 {i}번째**다 "
                 f"(도메인 전체 클래스 {self.members_total}개). 여기 실린 클래스만 다루고, "
                 f"다른 조각에 있을 클래스는 추측하지 말 것 — 나머지는 따로 처리된다.")
         if self.truncated:
             shown = ", ".join(self.truncated[:10])
             more = "" if len(self.truncated) <= 10 else f" 외 {len(self.truncated) - 10}개"
-            lines.append(f"⚠️ 예산으로 실리지 않은 클래스: {shown}{more}. "
+            lines.append(f"[주의] 예산으로 실리지 않은 클래스: {shown}{more}. "
                          f"보이지 않는 클래스에 대해서는 추측하지 말 것.")
         return "\n".join(lines)
 
@@ -204,7 +204,7 @@ def excerpt_body(paths: ProjectPaths, file: str, limit: int = BODY_CHARS) -> str
 def _neighbours(paths: ProjectPaths, file: str, inside: set) -> list:
     """`#include` 로 얽힌 **도메인 밖** 클래스. 협력 신호이자 cross-domain 경고다.
 
-    ⚠️ 역방향은 basename 근사다(중 1.1 의 알려진 한계) — 그래서 **참고로만** 싣고
+    [주의] 역방향은 basename 근사다(중 1.1 의 알려진 한계) — 그래서 **참고로만** 싣고
     액션 본문 추출의 근거로는 쓰지 않는다.
     """
     if not file or not dep.exists(paths):
@@ -243,7 +243,7 @@ def collect_domain(paths: ProjectPaths, domain: str, *, members: dict | None = N
                    total_chars: int = TOTAL_CHARS) -> DomainContexts:
     """도메인 하나를 **한 프롬프트 분량으로** 자른 컨텍스트.
 
-    🔴 이건 단일 요청용이다. 도메인 전체를 다루려면 `chunk_domain` 을 쓴다 — 그쪽이
+    [중요] 이건 단일 요청용이다. 도메인 전체를 다루려면 `chunk_domain` 을 쓴다 — 그쪽이
     기본 경로이고, 이 함수는 첫 조각만 필요한 곳(미리보기·비교 측정)에서 쓴다.
 
     멤버 순서는 이름순이다 — `confidence` 로 정렬하던 원본과 다르다. 우리
@@ -269,7 +269,7 @@ def collect_domain(paths: ProjectPaths, domain: str, *, members: dict | None = N
 def cohesion_order(paths: ProjectPaths, members: dict) -> list:
     """멤버를 **응집 순서**로 늘어놓는다 — `#include` 로 얽힌 것끼리 이웃하게.
 
-    🔴 **쪼갤 때 이 순서가 품질을 좌우한다.** 액션은 클래스 *사이*의 관계이므로, 이름순으로
+    [중요] **쪼갤 때 이 순서가 품질을 좌우한다.** 액션은 클래스 *사이*의 관계이므로, 이름순으로
     자르면 한 액션의 참여자가 서로 다른 조각으로 흩어져 **어느 조각에서도 안 보인다.**
     같은 기능을 함께 담아야 그 액션이 한 요청 안에서 보인다.
 
@@ -322,7 +322,7 @@ def chunk_domain(paths: ProjectPaths, domain: str, *, members: dict | None = Non
     사용자 지시(2026-08-09): *"컨텍스트 용량을 줄이진 않지만 페이로드를 분리해서 보내고
     그걸 재합성할 수 있는 물리 성능이 있잖아."*
 
-    🔴 **이게 기본 경로다.** 한 요청만 쓰면 `ProjectAlpha_UiViewManagement` 는 67개 중
+    [중요] **이게 기본 경로다.** 한 요청만 쓰면 `ProjectAlpha_UiViewManagement` 는 67개 중
     8개만 보이고 59개가 영영 안 보인다 — 창을 못 늘리는 것과 **데이터를 못 보는 것은
     다른 문제**이고, 후자는 요청을 나누면 풀린다.
 

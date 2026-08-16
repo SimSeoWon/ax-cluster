@@ -11,10 +11,10 @@
 규범은 *무엇을 지킬지*를 준다. **정확한 철자는 헤더에만 있다.** 그래서 헤더 선언을 프롬프트에
 직접 싣는다 — 모델이 기억에서 꺼내지 않고 **눈앞의 텍스트를 베끼게** 한다.
 
-🔴 **워커의 Claude 에게는 이 문제가 없다** — 소스를 직접 읽기 때문이다(실측: 첫 파견에서
+[중요] **워커의 Claude 에게는 이 문제가 없다** — 소스를 직접 읽기 때문이다(실측: 첫 파견에서
 실재 멤버만 썼다). 이 모듈이 필요한 자리는 **로컬 LLM 에 본문 생성을 위임할 때**다.
 
-## 🔴 못 찾은 것을 조용히 빼지 않는다
+## [중요] 못 찾은 것을 조용히 빼지 않는다
 
 헤더를 못 찾은 클래스를 말없이 생략하면 모델은 *"선언부에 없으니 내가 지어내도 되겠다"* 로
 읽는다 — 고치려던 실패가 그대로 돌아온다. 그래서 **없으면 없다고 프롬프트에 쓴다.**
@@ -51,26 +51,26 @@ class Declarations:
         for label, xs in (("헤더 없음", self.missing), ("잘림", self.truncated),
                           ("예산 초과", self.dropped)):
             if xs:
-                s += f" · 🔴 {label} {len(xs)}"
+                s += f" · [중요] {label} {len(xs)}"
         return s
 
     def render(self) -> str:
-        """프롬프트에 넣을 블록. 🔴 **결손을 본문에 적는다.**"""
+        """프롬프트에 넣을 블록. [중요] **결손을 본문에 적는다.**"""
         if not self.blocks and not (self.missing or self.dropped):
             return ""
         out = ["=== DECLARATIONS — COPY THESE NAMES EXACTLY ===",
                "These are the real headers from this codebase. Member, method and enum "
                "names below are the ONLY spellings that compile.",
-               "🔴 If a name you need is not here, do NOT invent it — say so in a comment "
+               "[중요] If a name you need is not here, do NOT invent it — say so in a comment "
                "instead of guessing.", ""]
         for cls, file, text in self.blocks:
             out += [f"--- {cls}  ({file}) ---", text.strip(), ""]
-        # 🔴 빠진 것을 숨기지 않는다 — 숨기면 모델이 "없으니 지어내도 된다" 로 읽는다
+        # [중요] 빠진 것을 숨기지 않는다 — 숨기면 모델이 "없으니 지어내도 된다" 로 읽는다
         for label, xs in (("NOT AVAILABLE (header not found)", self.missing),
                           ("TRUNCATED (excerpt cut by budget)", self.truncated),
                           ("OMITTED (budget exhausted)", self.dropped)):
             if xs:
-                out.append(f"🔴 {label}: {', '.join(xs)}")
+                out.append(f"[중요] {label}: {', '.join(xs)}")
         out.append("=== END DECLARATIONS ===")
         return "\n".join(out)
 
@@ -106,7 +106,7 @@ def collect(paths: ProjectPaths, classes: list, *, per_class: int = PER_CLASS,
             d.missing.append(cls)
             continue
         if used >= total:
-            d.dropped.append(cls)                   # 🔴 조용히 빼지 않는다
+            d.dropped.append(cls)                   # [중요] 조용히 빼지 않는다
             continue
         room = min(per_class, total - used)
         text = contexts.excerpt_header(paths, f, limit=room)

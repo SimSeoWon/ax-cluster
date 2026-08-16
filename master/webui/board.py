@@ -1,11 +1,11 @@
-"""도메인 게시판 — 생성·채팅·갱신·활성화 (🔴 **원전 그대로 복각**, 사용자 지시 2026-08-13).
+"""도메인 게시판 — 생성·채팅·갱신·활성화 ([중요] **원전 그대로 복각**, 사용자 지시 2026-08-13).
 
 > *"생성·삭제·채팅까지 원전대로 살려"*
 
 원전 `domain_viewer_routes.py`(555줄)의 mutation 경로다. 처음엔 내가 *"우리 온톨로지 편집 규칙과
 충돌한다"* 며 읽기 전용으로 뺐는데, **사용자가 감안하고 살리라고 결정했다.**
 
-## 🔴 게시판은 온톨로지 패키지가 **아니다** — 이걸 헷갈리면 안 된다
+## [중요] 게시판은 온톨로지 패키지가 **아니다** — 이걸 헷갈리면 안 된다
 
     /api/v1/domains          → `context/_domains/*.md`      사람이 읽고 쓰는 **도메인 문서**
                                 (frontmatter `status: draft|active` · source_documents · tags)
@@ -14,25 +14,25 @@
 우리 `domain.yaml` 이 주석에 *"사람 편집 위치 = `_domains/<D>.md`"* 라고 적어 둔 그 관계다.
 즉 게시판이 쓰는 것은 **MD 초안**이고, 온톨로지 YAML 은 건드리지 않는다.
 
-🔴 **그래서 편집 잠금 규칙과 부딪히지 않는다.** `protected`/`verified` 는 온톨로지 항목의
+[중요] **그래서 편집 잠금 규칙과 부딪히지 않는다.** `protected`/`verified` 는 온톨로지 항목의
 속성이고, 게시판은 그 위층의 사람 문서를 만진다. (내가 처음에 이 구분을 못 하고 통째로 막았다.)
 
-## ⚠️ 원전과 다른 것 — 우리 인프라라서
+## [주의] 원전과 다른 것 — 우리 인프라라서
 
     LLM 호출     원전 `_call_llm_for_chat` → 우리 레인(`agy` → `claude` 폴백, `layer2_verify`)
     관련 문서 검색 원전은 Chroma 직접 query → 우리 `ContextSearch`(벡터+BM25 융합)
-    활성화 색인   원전은 서버가 색인을 들고 upsert → 🔴 우리 색인기는 **별도 프로세스**다.
+    활성화 색인   원전은 서버가 색인을 들고 upsert → [중요] 우리 색인기는 **별도 프로세스**다.
                  파일을 쓰면 `ax-indexer.path`(inotify)가 알아서 집어간다 — 웹이 색인을
                  직접 만지지 않는다. 응답의 `indexed` 는 *"색인기에 맡겼다"* 는 뜻이다
 
-## 🔴 쓰기 안전장치 (원전에 없던 것 — 우리 규칙)
+## [중요] 쓰기 안전장치 (원전에 없던 것 — 우리 규칙)
 
 - **이름 검사 + 경로 이중 확인**: 구분자·`..`·제어문자를 막고, 만든 경로가 디렉토리 안인지
-  `resolve().relative_to()` 로 다시 본다. ⚠️ **한글 이름은 허용한다** — 원전이 그랬고, 막아야
+  `resolve().relative_to()` 로 다시 본다. [주의] **한글 이름은 허용한다** — 원전이 그랬고, 막아야
   하는 것은 경로 이탈이지 문자 종류가 아니다
 - `_` 로 시작하는 파일은 **손대지 않는다** — `_overview.md`·`_unassigned.md` 같은 관리 문서다
-- 🔴 **원자적 쓰기**(tmp → replace). 반쯤 쓰인 문서를 색인기가 집어가면 안 된다
-- 🔴 **온톨로지 디렉토리는 절대 쓰지 않는다** — 이 모듈은 `context/_domains/` 밖으로 나가지 않는다
+- [중요] **원자적 쓰기**(tmp → replace). 반쯤 쓰인 문서를 색인기가 집어가면 안 된다
+- [중요] **온톨로지 디렉토리는 절대 쓰지 않는다** — 이 모듈은 `context/_domains/` 밖으로 나가지 않는다
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-# 🔴 **한글 이름을 허용한다** — 원전은 경로 위험문자(`\/:*?"<>|`)만 걸렀고 한글 파일명을 그대로
+# [중요] **한글 이름을 허용한다** — 원전은 경로 위험문자(`\/:*?"<>|`)만 걸렀고 한글 파일명을 그대로
 #    썼다. 내가 `[A-Za-z0-9_-]` 로 좁혔더니 **한글 도메인명이 통째로 날아가** 파일명이 `domain`
 #    이 됐다(실측 2026-08-13). 리눅스에서 한글 파일명은 문제가 아니다.
 #    막아야 하는 것은 **경로 이탈**이므로 그것만 막는다(구분자·`..`·제어문자·앞뒤 공백/점).
@@ -64,7 +64,7 @@ FRONT = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
 
 class BoardError(RuntimeError):
-    """게시판 요청을 처리할 수 없다. 🔴 사유를 화면에 그대로 보인다."""
+    """게시판 요청을 처리할 수 없다. [중요] 사유를 화면에 그대로 보인다."""
 
 
 # ── 경로 ────────────────────────────────────────────────────────────────────────
@@ -80,13 +80,13 @@ def chat_dir(paths) -> Path:
 
 
 def md_path(paths, name: str) -> Path:
-    """🔴 이름을 검사하고 나서만 경로를 만든다. `_` 시작은 관리 문서라 거부."""
+    """[중요] 이름을 검사하고 나서만 경로를 만든다. `_` 시작은 관리 문서라 거부."""
     if not _name_ok(name):
         raise BoardError(f"쓸 수 없는 도메인 이름이다: {name!r} "
                          f"(경로 구분자·`..`·제어문자 금지, `_`/`.` 로 시작 금지 — 관리 문서 보호)")
     d = domains_dir(paths)
     p = (d / f"{name}.md")
-    # 🔴 이중 방어 — 이름 검사를 통과해도 실제 경로가 디렉토리 밖이면 거부한다
+    # [중요] 이중 방어 — 이름 검사를 통과해도 실제 경로가 디렉토리 밖이면 거부한다
     try:
         p.resolve().relative_to(d.resolve())
     except ValueError:
@@ -95,7 +95,7 @@ def md_path(paths, name: str) -> Path:
 
 
 def _atomic_write(p: Path, text: str) -> None:
-    """🔴 원자적. 색인기(inotify)가 반쯤 쓰인 문서를 집어가면 안 된다."""
+    """[중요] 원자적. 색인기(inotify)가 반쯤 쓰인 문서를 집어가면 안 된다."""
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".md.tmp")
     tmp.write_text(text, encoding="utf-8")
@@ -105,7 +105,7 @@ def _atomic_write(p: Path, text: str) -> None:
 # ── frontmatter (원전 `_parse_frontmatter` 등가 — 우리 문서 형식 그대로) ──────────
 
 def parse_front(content: str) -> dict:
-    """`---` 블록 → dict. 🔴 우리 문서의 실제 형식만 읽는다(리스트 두 표기 모두)."""
+    """`---` 블록 → dict. [중요] 우리 문서의 실제 형식만 읽는다(리스트 두 표기 모두)."""
     m = FRONT.match(content or "")
     if not m:
         return {}
@@ -225,7 +225,7 @@ def clear_chat(paths, name: str) -> dict:
 # ── LLM (우리 레인) ─────────────────────────────────────────────────────────────
 
 def call_llm(prompt: str, *, timeout: int = 300) -> str | None:
-    """🔴 우리 레인을 쓴다 — `agy` → `claude` 폴백(`layer2_verify` 의 호출부 재사용).
+    """[중요] 우리 레인을 쓴다 — `agy` → `claude` 폴백(`layer2_verify` 의 호출부 재사용).
 
     원전 `_call_llm_for_chat` 등가. 실패는 `None` — 호출자가 사유를 화면에 보인다.
     """
@@ -292,8 +292,8 @@ def create_domain(paths, topic: str) -> dict:
             if m2:
                 summary = m2.group(1)
 
-    # 🔴 파일명은 우리 화이트리스트를 통과해야 한다 — 한글 도메인명은 파일명으로 못 쓴다.
-    # 🔴 원전처럼 **표시명을 그대로 파일명에** 쓴다(한글 유지). 경로 위험문자만 치환한다.
+    # [중요] 파일명은 우리 화이트리스트를 통과해야 한다 — 한글 도메인명은 파일명으로 못 쓴다.
+    # [중요] 원전처럼 **표시명을 그대로 파일명에** 쓴다(한글 유지). 경로 위험문자만 치환한다.
     safe = _BAD_CHARS.sub("_", display).strip(" ._") or "domain"
     name, n = safe, 2
     while (domains_dir(paths) / f"{name}.md").exists():
@@ -327,10 +327,10 @@ def create_domain(paths, topic: str) -> dict:
         {"role": "user", "content": topic, "timestamp": ts},
         {"role": "assistant", "content": guide, "timestamp": ts}])
     if not raw:
-        # ⚠️ LLM 없이 만들어졌다는 사실을 숨기지 않는다
+        # [주의] LLM 없이 만들어졌다는 사실을 숨기지 않는다
         return {"status": "created", "domain_name": name, "display_name": display,
                 "source_documents": sources, "summary": summary,
-                "note": "⚠️ LLM 을 못 불러 이름·요약이 비었다 (초안은 만들어졌다)"}
+                "note": "[주의] LLM 을 못 불러 이름·요약이 비었다 (초안은 만들어졌다)"}
     return {"status": "created", "domain_name": name, "display_name": display,
             "source_documents": sources, "summary": summary}
 
@@ -365,7 +365,7 @@ def chat(paths, name: str, message: str) -> dict:
     convo = "\n\n".join(f"{h.get('role')}: {h.get('content')}" for h in history[-8:])
     prompt = ("너는 UE5 프로젝트의 도메인 문서를 사람과 함께 다듬는 조수다.\n"
               "아래 도메인 문서와 관련 컨텍스트 문서를 근거로 사용자의 요청에 답한다.\n"
-              "🔴 근거가 없는 것은 지어내지 말고 모른다고 말한다.\n\n"
+              "[중요] 근거가 없는 것은 지어내지 말고 모른다고 말한다.\n\n"
               f"=== 도메인 문서 ({name}) ===\n{content}\n\n")
     if src_blocks:
         prompt += "=== 관련 컨텍스트 문서 ===\n\n" + "\n\n---\n\n".join(src_blocks) + "\n\n"
@@ -396,7 +396,7 @@ def update_domain(paths, name: str, content: str) -> dict:
 
 
 def activate_domain(paths, name: str, content: str) -> dict:
-    """draft → active. 🔴 태그를 소스 문서에서 상속하고, **색인은 색인기에 맡긴다.**"""
+    """draft → active. [중요] 태그를 소스 문서에서 상속하고, **색인은 색인기에 맡긴다.**"""
     p = md_path(paths, name)
     if not p.is_file():
         raise BoardError("도메인 없음")
@@ -424,14 +424,14 @@ def activate_domain(paths, name: str, content: str) -> dict:
             content = content.replace("tags: []", "tags: [" + ", ".join(top) + "]", 1)
 
     _atomic_write(p, content)
-    # 🔴 원전은 서버가 벡터 컬렉션에 직접 upsert 했다. 우리 색인기는 **별도 프로세스**이고
+    # [중요] 원전은 서버가 벡터 컬렉션에 직접 upsert 했다. 우리 색인기는 **별도 프로세스**이고
     #    `ax-indexer.path`(inotify)가 파일 변경을 잡는다 — 웹이 색인을 직접 만지지 않는다.
     return {"status": "activated", "domain_name": name, "indexed": False,
             "note": "색인은 `ax-indexer`(inotify)가 이 파일 변경을 잡아 처리한다"}
 
 
 def delete_domain(paths, name: str) -> dict:
-    """🔴 지우지 않고 `_archive/` 로 옮긴다.
+    """[중요] 지우지 않고 `_archive/` 로 옮긴다.
 
     원전은 파일을 지웠다. 우리 규칙은 *"되돌릴 수 있게 둔다"* 이고 `_domains/_archive/` 가
     이미 그 자리로 쓰이고 있다 — 웹 버튼 한 번으로 사람이 쓴 문서를 잃지 않는다.
@@ -446,4 +446,4 @@ def delete_domain(paths, name: str) -> dict:
     p.replace(dest)
     clear_chat(paths, name)
     return {"status": "archived", "domain_name": name, "moved_to": str(dest),
-            "note": "🔴 지우지 않고 `_domains/_archive/` 로 옮겼다 — 되돌릴 수 있다"}
+            "note": "[중요] 지우지 않고 `_domains/_archive/` 로 옮겼다 — 되돌릴 수 있다"}

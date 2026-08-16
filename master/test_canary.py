@@ -1,13 +1,13 @@
-"""영구 유실 카나리 누적 (소 3.5.6) — 🔴 **반복은 누적된 것을 봐야 보인다.**
+"""영구 유실 카나리 누적 (소 3.5.6) — [중요] **반복은 누적된 것을 봐야 보인다.**
 
 원전 지침: *"카나리가 **반복**되면 근본 원인(LLM 쿼터·타임아웃 등)을 먼저 해결할 것 —
 재touch/rebuild 는 증상 복구일 뿐."* 저널에 한 줄 찍는 것만으로는 그 지침을 따를 수 없다.
 
-⚠️ **판별 기준은 원전 그대로**: *"skip 후 워터마크가 전진하느냐."* 전진하지 않는 실패는 다음
+[주의] **판별 기준은 원전 그대로**: *"skip 후 워터마크가 전진하느냐."* 전진하지 않는 실패는 다음
 회차에 self-heal 되므로 카나리로 만들지 않는다 — 원전은 except ~33개 중 **딱 2개만** 승격했다
 (*"self-heal 되는 걸 카나리로 만들면 노이즈"*).
 
-🔴 **우리는 원전의 두 번째 kind(`vector-index-gap`)를 이식하지 않았다** — 재색인 실패 시
+[중요] **우리는 원전의 두 번째 kind(`vector-index-gap`)를 이식하지 않았다** — 재색인 실패 시
 `return r` 로 워터마크를 전진시키지 않고, 우리는 커밋 워터마크만이 아니라 **컨텍스트 digest** 로도
 판정하므로 다음 회차에 재시도된다. 즉 우리에겐 그 자리가 **영구 유실이 아니다.**
 
@@ -33,7 +33,7 @@ def check(name, cond, detail=""):
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 class FakePaths:
@@ -48,7 +48,7 @@ def test_appends_and_accumulates():
         check("디렉토리를 만든다", p.canary.parent.is_dir())
         check("두 번째도 성공", append_canary(p, kind="context-md-lost", detail="B", commit="bbb"))
         lines = [l for l in p.canary.read_text(encoding="utf-8").splitlines() if l.strip()]
-        check("🔴 누적된다 (덮어쓰지 않는다)", len(lines) == 2, str(len(lines)))
+        check("[중요] 누적된다 (덮어쓰지 않는다)", len(lines) == 2, str(len(lines)))
         recs = [json.loads(l) for l in lines]
         check("kind 가 실린다", all(r["kind"] == "context-md-lost" for r in recs))
         check("detail 이 실린다", [r["detail"] for r in recs] == ["A", "B"])
@@ -73,7 +73,7 @@ def test_detail_is_bounded():
 
 
 def test_write_failure_does_not_raise():
-    """🔴 카나리를 쓰다 색인을 죽이면 본말전도다 — 예외 대신 False."""
+    """[중요] 카나리를 쓰다 색인을 죽이면 본말전도다 — 예외 대신 False."""
     class Bad:
         canary = Path("/proc/nonexistent-ax/permanent_loss.jsonl")
     try:
@@ -86,7 +86,7 @@ def test_write_failure_does_not_raise():
 # ── 소 3.5.6 두 번째 승격 자리 (`#182`) — 도메인 색인 갭 ─────────
 
 def test_domain_index_failure_is_promoted():
-    """🔴 **삼킨 실패가 조용하지 않은가.**
+    """[중요] **삼킨 실패가 조용하지 않은가.**
 
     `rebuild_all` 은 도메인 색인 실패를 `note` 로 바꾸고 정상 반환한다(fail-soft — 도메인
     색인이 죽어도 컨텍스트 검색은 멀쩡하므로 그건 옳다). 문제는 그 성공 반환 때문에 호출자가
@@ -140,11 +140,11 @@ def test_domain_index_failure_is_promoted():
         finally:
             R.ContextIndex, R.Bm25Index, R.generation, R.domain_index = old
 
-        # 🔴 fail-soft 는 그대로 — 바꾸는 것은 "조용히" 뿐이다
+        # [중요] fail-soft 는 그대로 — 바꾸는 것은 "조용히" 뿐이다
         check("도메인 색인이 죽어도 재구축은 성공으로 끝난다 (fail-soft 유지)",
               st.vector_docs == 3 and st.bm25_docs == 5, str(st))
         check("사유를 note 로 들고 나온다", "도메인 색인" in (st.domain_note or ""), st.domain_note)
-        check("🔴 그리고 **조용하지 않다** — 카나리가 찍힌다", paths.canary.exists(),
+        check("[중요] 그리고 **조용하지 않다** — 카나리가 찍힌다", paths.canary.exists(),
               "카나리 파일이 없다 — 삼킨 실패가 아무 흔적도 안 남겼다")
         if paths.canary.exists():
             rec = _json.loads(paths.canary.read_text(encoding="utf-8").splitlines()[-1])
@@ -153,13 +153,13 @@ def test_domain_index_failure_is_promoted():
 
 
 def test_kinds_are_named_constants():
-    """⚠️ 문자열을 호출부마다 손으로 적으면 오타가 조용히 새 kind 를 만든다."""
+    """[주의] 문자열을 호출부마다 손으로 적으면 오타가 조용히 새 kind 를 만든다."""
     from master import canary as C
     check("두 kind 가 상수로 있다",
           C.KIND_CONTEXT_MD_LOST == "context-md-lost"
           and C.KIND_DOMAIN_INDEX_GAP == "domain-index-gap")
     from master.events import consumer as CO
-    check("🔴 옛 이름으로도 그대로 부를 수 있다 (재수출)",
+    check("[중요] 옛 이름으로도 그대로 부를 수 있다 (재수출)",
           CO.append_canary is C.append_canary)
 
 
@@ -169,7 +169,7 @@ def main() -> int:
                test_domain_index_failure_is_promoted, test_kinds_are_named_constants):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_canary: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_canary: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

@@ -3,7 +3,7 @@
 원본: `AgentTest/watcher/dependency.py`. LLM 을 쓰지 않는다 — 정규식 하나와 `git ls-files`
 뿐이라 커밋 즉시 돌 수 있다.
 
-🔴 **알고 써야 하는 근사 — `included_by` 는 경로가 아니라 파일명으로 역산한다.**
+[중요] **알고 써야 하는 근사 — `included_by` 는 경로가 아니라 파일명으로 역산한다.**
 
 `#include "Foo.h"` 의 경로는 UBT 가 모듈별 include 디렉토리로 해석한다. 그 정보 없이는
 정확히 어느 `Foo.h` 인지 알 수 없어서, 원본은 **basename 이 같으면 전부 연결**한다.
@@ -13,7 +13,7 @@
 작지만 0 이 아니다 — 그래서 버리지 않고 `BuildStats.ambiguous_basenames` 로 **보고한다.**
 소비자(영향도 질의)는 이 숫자를 보고 결과를 의심할 수 있어야 한다.
 
-🔴 **바꾼 것 넷.**
+[중요] **바꾼 것 넷.**
 
 ⑴ **위치** `<Name>/dependency_graph.db` · **`Source/` 한정** (§5.2-E) — 원본은 저장소 전체를
    훑었다. 경계는 pathspec + 접두 **두 겹**이다(`class_graph` 와 같은 이유).
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE TABLE IF NOT EXISTS includes (
     src_file TEXT NOT NULL,             -- 포함하는 쪽 (경로)
     dst_file TEXT NOT NULL,             -- `#include "..."` 원문 그대로
-    dst_base TEXT NOT NULL,             -- dst_file 의 basename. 🔴 역방향 질의의 실제 키다
+    dst_base TEXT NOT NULL,             -- dst_file 의 basename. [중요] 역방향 질의의 실제 키다
     PRIMARY KEY (src_file, dst_file)
 );
 CREATE INDEX IF NOT EXISTS idx_includes_src  ON includes(src_file);
@@ -70,13 +70,13 @@ class BuildStats:
     edges: int = 0
     dropped_edges: int = 0
     elapsed_ms: int = 0
-    ambiguous_basenames: int = 0     # 🔴 위 docstring — 근사가 틀릴 수 있는 범위
+    ambiguous_basenames: int = 0     # [중요] 위 docstring — 근사가 틀릴 수 있는 범위
 
     @property
     def summary(self) -> str:
         s = f"파일 {self.files} · 간선 {self.edges} · {self.elapsed_ms}ms"
         if self.ambiguous_basenames:
-            s += f" · ⚠️ 이름 겹치는 헤더 {self.ambiguous_basenames}종 (역방향 근사)"
+            s += f" · [주의] 이름 겹치는 헤더 {self.ambiguous_basenames}종 (역방향 근사)"
         if self.dropped_edges:
             s += f" (지운 간선 {self.dropped_edges})"
         return s
@@ -91,7 +91,7 @@ def connect(paths: ProjectPaths) -> sqlite3.Connection:
     conn = sqlite3.connect(str(paths.dependency_graph_db), check_same_thread=False,
                            isolation_level=None)
     conn.row_factory = sqlite3.Row
-    # 🔴 값은 `master/sqlite_util.py` 가 단일 소유 (소 3.5.3).
+    # [중요] 값은 `master/sqlite_util.py` 가 단일 소유 (소 3.5.3).
     sqlite_util.apply(conn)
     conn.execute("PRAGMA synchronous = NORMAL")
     try:
@@ -227,7 +227,7 @@ def update_incremental(paths: ProjectPaths, changed: list[str]) -> BuildStats:
 # `depth=1` 이면 직접 관계만, `depth=2` 면 한 다리 건너까지.
 
 def dependents(paths: ProjectPaths, file_path: str, depth: int = 2) -> list[str]:
-    """이 파일을 `#include` 하는 쪽 (역방향). 🔴 basename 매칭 근사다 — 위 docstring."""
+    """이 파일을 `#include` 하는 쪽 (역방향). [중요] basename 매칭 근사다 — 위 docstring."""
     if not exists(paths):
         return []
     conn = connect(paths)

@@ -3,24 +3,24 @@
 > *"머신들 구성 모습과 SSH로 상태 받아올 수 있으니까 상세 정보 표기하면 좋겠네.
 > [뭘 시작했고, 온도, 전력량, cpu, gpu 상태 등]"*
 
-## 🔴 서비스를 또 띄우지 않는다
+## [중요] 서비스를 또 띄우지 않는다
 
 포트를 하나 더 열면 **베어러 토큰과 ufw 규칙이 따라붙는다**(§9.5.6). 읽기 전용 화면에 그
 공격면을 늘릴 이유가 없다 — 도메인 뷰어(소 2.4.2)가 이미 그 판단을 내렸고 **같은 표면을 쓴다**:
 파일 한 장, 인라인 CSS·JS, 외부 자원 0. 두 화면은 서로 링크로 잇는다.
 
-## 🔴 폴링 주기를 짧게 잡지 않는다
+## [중요] 폴링 주기를 짧게 잡지 않는다
 
 BC-250 은 이 프로젝트에서 **부하로 커널이 멈춘 전례**가 있다(리포트 10 §8). 그리고 `.33` 은
 **사람의 기계**라 게스트 규칙이 적용된다. 그래서:
 
 - `MIN_INTERVAL` **120초** — 그보다 자주 부르면 **거부한다**(`--force` 로만 넘긴다)
-- 명령마다 짧은 타임아웃. 🔴 **닿지 않는 것을 "값 없음" 으로 접지 않는다** — *"닿지 않았다"* 로
+- 명령마다 짧은 타임아웃. [중요] **닿지 않는 것을 "값 없음" 으로 접지 않는다** — *"닿지 않았다"* 로
   표시한다. 조용히 빈칸이 되면 사람이 *"괜찮은가 보다"* 로 읽는다
-- 🔴 **전부 읽기 전용이다.** `systemctl is-active` · `cat /sys/...` · `nvidia-smi --query-gpu`
+- [중요] **전부 읽기 전용이다.** `systemctl is-active` · `cat /sys/...` · `nvidia-smi --query-gpu`
   · `git rev-parse`. 쓰는 명령은 하나도 없다
 
-## ⚠️ 윈도우 SSH 에는 파이프가 없다 (실측)
+## [주의] 윈도우 SSH 에는 파이프가 없다 (실측)
 
 `cmd.exe` 라 `| head` 가 `'head' is not recognized` 로 죽는다. **파이프 없이 부르고 파이썬에서
 자른다.** 이 세션(2026-08-12)에도 같은 함정을 한 번 밟았다 — 문서에 적혀 있는데도.
@@ -34,7 +34,7 @@ BC-250 은 이 프로젝트에서 **부하로 커널이 멈춘 전례**가 있�
 
 그래서 여기서는 **추측한 명령을 넣지 않는다** — 위 목록이 전부다.
 
-## 🔴 첫 화면에 문제가 온다
+## [중요] 첫 화면에 문제가 온다
 
 도메인 뷰어가 *"경계 절 없는 도메인"* 을 맨 위에 올린 것과 같은 이유다. 예쁜 숫자보다
 **무엇이 막혔는지**가 먼저다. 상태 색은 **아이콘+라벨과 함께** 쓴다 — 색만으로 의미를 전달하면
@@ -52,9 +52,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-MIN_INTERVAL = 120                # 🔴 초. BC-250 을 두드리지 않는다
+MIN_INTERVAL = 120                # [중요] 초. BC-250 을 두드리지 않는다
 
-# 🔴 **누가 갱신하는지를 화면에 적는다.** 이 값은 `systemd/ax-status.timer` 의
+# [중요] **누가 갱신하는지를 화면에 적는다.** 이 값은 `systemd/ax-status.timer` 의
 # `OnUnitActiveSec` 과 **같이 움직여야 한다** — 한쪽만 바꾸면 화면이 거짓말을 한다.
 # 왜 화면에 적나: 사용자가 *"각 머신 정보 갱신 언제 일어나는거야? 지금 70분째 갱신 안되는데?"*
 # 라고 물었다(2026-08-13). 답이 화면에 없으면 매번 물어야 한다.
@@ -66,12 +66,14 @@ STAMP_NAME = ".cluster-status-stamp"
 
 UNITS = ("ax-task-queue", "ax-broker", "ax-projects", "ax-indexer.path")
 
-# 🔴 임계값은 **관례**이지 이 하드웨어의 실측 한계가 아니다 — 그렇게 표시한다.
+# [중요] 임계값은 **관례**이지 이 하드웨어의 실측 한계가 아니다 — 그렇게 표시한다.
 #    (BC-250 은 팬리스이고 idle 55°C 가 실측이다. 스로틀 지점은 우리가 재지 않았다.)
 TEMP_BANDS = ((60, "good"), (80, "warning"), (90, "serious"))
 
 GOOD, WARN, SERIOUS, CRIT, UNKNOWN = "good", "warning", "serious", "critical", "unknown"
-_ICON = {GOOD: "●", WARN: "▲", SERIOUS: "▲", CRIT: "✕", UNKNOWN: "?"}
+# 상태 아이콘 — 접근성 규약(색만으로 의미를 전달하지 않는다)을 지키되
+# 이모지를 쓰지 않는다: 로그·콘솔·CP949 환경에서 그대로 깨지는 문자군이다.
+_ICON = {GOOD: "●", WARN: "▲", SERIOUS: "■", CRIT: "✖", UNKNOWN: "?"}
 _WORD = {GOOD: "정상", WARN: "주의", SERIOUS: "경고", CRIT: "위험", UNKNOWN: "모름"}
 
 
@@ -84,7 +86,7 @@ def band(temp) -> str:
     return CRIT
 
 
-# ── 수집 (소 3.2.1) — 🔴 전부 읽기 전용 ─────────────────────────────────────────
+# ── 수집 (소 3.2.1) — [중요] 전부 읽기 전용 ─────────────────────────────────────────
 
 def _sh(args, timeout=SSH_TIMEOUT):
     """로컬 명령. `(rc, out)`. **예외를 던지지 않는다** — 실패도 사실이다."""
@@ -92,7 +94,7 @@ def _sh(args, timeout=SSH_TIMEOUT):
         p = subprocess.run(args, capture_output=True, timeout=timeout, check=False)
     except (subprocess.SubprocessError, OSError) as e:
         return 1, f"{type(e).__name__}: {e}"
-    from .source_text import decode          # 🔴 CP949 (윈도우 출력이 섞여 온다)
+    from .source_text import decode          # [중요] CP949 (윈도우 출력이 섞여 온다)
     return p.returncode, (decode(p.stdout or b"").text
                           + decode(p.stderr or b"").text).strip()
 
@@ -143,7 +145,7 @@ class Machine:
     @property
     def status(self) -> str:
         if not self.reachable:
-            # 🔴 요청자가 꺼져 있는 것은 **정상**이다 — 사람의 기계다
+            # [중요] 요청자가 꺼져 있는 것은 **정상**이다 — 사람의 기계다
             return WARN if self.role == "requester" else CRIT
         return band(self.gpu.temp)
 
@@ -163,14 +165,14 @@ class Snapshot:
     machines: list = field(default_factory=list)
     queue: dict = field(default_factory=dict)
     endpoints: list = field(default_factory=list)
-    tasks: list = field(default_factory=list)          # 🔴 "뭘 시작했고" 의 답 (소 3.2.3)
+    tasks: list = field(default_factory=list)          # [중요] "뭘 시작했고" 의 답 (소 3.2.3)
     problems: list = field(default_factory=list)
     notes: list = field(default_factory=list)
 
-    # 🔴 큐의 실제 응답 모양을 **재서** 맞췄다 (추측하지 않는다):
+    # [중요] 큐의 실제 응답 모양을 **재서** 맞췄다 (추측하지 않는다):
     #      {"tasks_by_status": {"cancelled":4,"failed":2,"submitted":2}, "works":7, "tasks":8}
     #    즉 `tasks` 는 **총계**이고 상태별은 `tasks_by_status` 다. 열린 것 = 종료 상태가 아닌 것.
-    #    ⚠️ 종료 상태 목록은 큐가 정한다(`verified`·`cancelled`·`failed`) — 여기 박아 두면
+    #    [주의] 종료 상태 목록은 큐가 정한다(`verified`·`cancelled`·`failed`) — 여기 박아 두면
     #    큐가 상태를 늘릴 때 조용히 틀린다. 그래서 **총계에서 종료분을 뺀다.**
     CLOSED = ("verified", "cancelled", "failed")
 
@@ -206,7 +208,7 @@ class Snapshot:
 
 _NVIDIA = ("nvidia-smi --query-gpu=name,temperature.gpu,power.draw,utilization.gpu,"
            "memory.used,memory.total --format=csv,noheader,nounits")
-# 🔴 리눅스(BC-250)는 hwmon 을 직접 읽는다 — `gpu_busy_percent` 는 **이 보드에서 안 읽힌다**(실측)
+# [중요] 리눅스(BC-250)는 hwmon 을 직접 읽는다 — `gpu_busy_percent` 는 **이 보드에서 안 읽힌다**(실측)
 _HWMON = ("cat /sys/class/drm/card*/device/hwmon/hwmon*/temp1_input "
           "/sys/class/drm/card*/device/hwmon/hwmon*/power1_average 2>/dev/null; "
           "echo ---; cat /proc/loadavg; echo ---; uptime -p")
@@ -220,7 +222,7 @@ def _num(s):
 
 
 def read_machine(host, user, path, role, os_hint="") -> Machine:
-    """머신 하나를 **읽기만** 한다. ⚠️ 윈도우엔 파이프를 쓰지 않는다."""
+    """머신 하나를 **읽기만** 한다. [주의] 윈도우엔 파이프를 쓰지 않는다."""
     m = Machine(host=host, user=user, role=role, os=os_hint)
     rc, out = _ssh(host, user, "echo ax-ok")
     if rc != 0 or "ax-ok" not in out:
@@ -230,7 +232,7 @@ def read_machine(host, user, path, role, os_hint="") -> Machine:
 
     windows = os_hint == "windows" or "\\" in str(path)
     if windows:
-        # ⚠️ 파이프 금지 — `| head` 가 `'head' is not recognized` 로 죽는다(실측)
+        # [주의] 파이프 금지 — `| head` 가 `'head' is not recognized` 로 죽는다(실측)
         rc, out = _ssh(host, user, _NVIDIA)
         if rc == 0 and "," in out:
             first = [ln for ln in out.splitlines() if "," in ln][:1]
@@ -266,7 +268,7 @@ def read_machine(host, user, path, role, os_hint="") -> Machine:
 
 
 class TooSoon(RuntimeError):
-    """🔴 가드에 걸려 수집을 **하지 않았다** — 고장이 아니다.
+    """[중요] 가드에 걸려 수집을 **하지 않았다** — 고장이 아니다.
 
     타이머가 사람의 수동 실행 직후에 뜨면 반드시 이 자리에 걸린다. 그때 유닛이 `failed` 로
     남으면 **진짜 고장과 구별할 수 없다** — 그래서 CLI 는 이 경우에만 `EXIT_TOO_SOON` 을 쓰고
@@ -280,7 +282,7 @@ EXIT_TOO_SOON = 3
 
 def collect(*, project: str = "", token: str = "", force: bool = False,
             state_dir=None) -> Snapshot:
-    """스냅샷 한 번. 🔴 **`MIN_INTERVAL` 보다 자주 부르면 거부한다.**"""
+    """스냅샷 한 번. [중요] **`MIN_INTERVAL` 보다 자주 부르면 거부한다.**"""
     t0 = time.time()
     snap = Snapshot(at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ"))
     stamp = Path(state_dir or Path.home() / ".config" / "ax-cluster") / STAMP_NAME
@@ -291,7 +293,7 @@ def collect(*, project: str = "", token: str = "", force: bool = False,
             last = 0.0
         gap = time.time() - last
         if gap < MIN_INTERVAL:
-            # 🔴 BC-250 은 부하로 커널이 멈춘 전례가 있다 — 자주 두드리지 않는다
+            # [중요] BC-250 은 부하로 커널이 멈춘 전례가 있다 — 자주 두드리지 않는다
             raise TooSoon(
                 f"{gap:.0f}초 전에 이미 수집했다 — 최소 간격 {MIN_INTERVAL}초. "
                 f"BC-250 을 자주 두드리지 않는다(부하로 커널이 멈춘 전례). "
@@ -309,17 +311,17 @@ def collect(*, project: str = "", token: str = "", force: bool = False,
             token = (Path.home() / ".config" / "ax-cluster" / "token").read_text(
                 encoding="utf-8").strip()
         except OSError:
-            snap.notes.append("⚠️ 토큰을 못 읽어 큐·브로커 상태를 비웠다")
+            snap.notes.append("[주의] 토큰을 못 읽어 큐·브로커 상태를 비웠다")
 
-    # ② 큐 · 브로커 — 🔴 "뭘 시작했고" 의 본체 (소 3.2.3)
+    # ② 큐 · 브로커 — [중요] "뭘 시작했고" 의 본체 (소 3.2.3)
     if token:
         q = _api("http://127.0.0.1:8101/api/v1/status", token=token)
         if isinstance(q, dict):
             snap.queue = q
         else:
             snap.problems.append("큐(8101) 가 상태를 주지 않는다")
-        # 🔴 **"뭘 시작했고" 는 이것이다** (소 3.2.3) — 종료되지 않은 태스크와 누가 잡았나.
-        #    ⚠️ 종료 상태를 코드에 박지 않는다: `Snapshot.CLOSED` 한 곳에서만 정한다.
+        # [중요] **"뭘 시작했고" 는 이것이다** (소 3.2.3) — 종료되지 않은 태스크와 누가 잡았나.
+        #    [주의] 종료 상태를 코드에 박지 않는다: `Snapshot.CLOSED` 한 곳에서만 정한다.
         tl = _api("http://127.0.0.1:8101/api/v1/tasks", token=token)
         if isinstance(tl, list):
             for x in tl:
@@ -334,7 +336,7 @@ def collect(*, project: str = "", token: str = "", force: bool = False,
                     "beat": str(x.get("last_heartbeat") or "")[:19],
                     "attempts": x.get("attempt_count") or 0,
                     "requires": x.get("requires") or []})
-            # 🔴 오래 잡혀 있는 것은 문제다 — 리스가 1200초인데 하트비트가 멈췄으면 좀비다
+            # [중요] 오래 잡혀 있는 것은 문제다 — 리스가 1200초인데 하트비트가 멈췄으면 좀비다
             stale = [x for x in snap.tasks
                      if x["status"] == "claimed" and not x["beat"]]
             for x in stale:
@@ -353,7 +355,7 @@ def collect(*, project: str = "", token: str = "", force: bool = False,
         else:
             snap.problems.append("브로커(8102) 가 상태를 주지 않는다")
 
-    # ③ 머신 — 레지스트리가 아는 것만. 🔴 목록을 코드에 박지 않는다
+    # ③ 머신 — 레지스트리가 아는 것만. [중요] 목록을 코드에 박지 않는다
     try:
         from .client import bundle
         shops = bundle.workshops(project) if project else []
@@ -364,7 +366,7 @@ def collect(*, project: str = "", token: str = "", force: bool = False,
             shops = bundle.workshops(name) if name else []
     except Exception as e:                                   # noqa: BLE001
         shops = []
-        snap.notes.append(f"⚠️ 레지스트리에서 머신 목록을 못 읽었다: {e}")
+        snap.notes.append(f"[주의] 레지스트리에서 머신 목록을 못 읽었다: {e}")
 
     by_host = {str(e.get("host", "")).split(":")[0]: e for e in snap.endpoints}
     for host, user, path, _driven, role in shops:
@@ -387,21 +389,21 @@ def collect(*, project: str = "", token: str = "", force: bool = False,
     return snap
 
 
-# ── 표시 (소 3.2.2) — 🔴 도메인 뷰어와 같은 표면 ────────────────────────────────
+# ── 표시 (소 3.2.2) — [중요] 도메인 뷰어와 같은 표면 ────────────────────────────────
 #
-# 🔴 상태는 **아이콘 + 라벨 + 색** 셋이다. 색만으로 의미를 전달하지 않는다.
-# 🔴 히어로 숫자는 **하나뿐**이다 (열린 태스크) — 대시보드가 이끄는 숫자.
-# ⚠️ 추세 스파크라인을 넣지 않았다. 수집 주기가 길어(최소 120초) 이력이 희박하고,
+# [중요] 상태는 **아이콘 + 라벨 + 색** 셋이다. 색만으로 의미를 전달하지 않는다.
+# [중요] 히어로 숫자는 **하나뿐**이다 (열린 태스크) — 대시보드가 이끄는 숫자.
+# [주의] 추세 스파크라인을 넣지 않았다. 수집 주기가 길어(최소 120초) 이력이 희박하고,
 #    희박한 이력으로 그린 선은 **없는 추세를 있는 것처럼** 보이게 한다.
 
-# 🔴 **팔레트는 원전과 같다 — 이 화면만 다른 색이면 다른 앱으로 읽힌다** (사용자 지적 2026-08-13:
+# [중요] **팔레트는 원전과 같다 — 이 화면만 다른 색이면 다른 앱으로 읽힌다** (사용자 지적 2026-08-13:
 #    *"클러스터 환경만 색테마가 달라"*). 여기 값은 `webui/web_ui_original.py` 의 `:root` 를 그대로
 #    가져온 것이다 — `--bg:#0d1117 --surface:#161b22 --border:#30363d --text:#e6edf3
 #    --dim:#8b949e --accent:#58a6ff --green:#3fb950 --orange:#d29922 --red:#f85149`.
-#    ⚠️ 그래서 **라이트 모드를 두지 않는다.** 원전 페이지들(`/`·`/ontology`)에 라이트 모드가
+#    [주의] 그래서 **라이트 모드를 두지 않는다.** 원전 페이지들(`/`·`/ontology`)에 라이트 모드가
 #    없으므로, 이 화면만 시스템 설정에 따라 흰 배경으로 뒤집히면 **그 지적이 그대로 재발한다.**
 #    한쪽만 테마를 따르는 것이 양쪽이 안 따르는 것보다 나쁘다.
-# 🔴 상태색은 **명암비를 계산해서** 골랐다(눈대중 금지 — dataviz 규약). `#161b22` 카드 위에서
+# [중요] 상태색은 **명암비를 계산해서** 골랐다(눈대중 금지 — dataviz 규약). `#161b22` 카드 위에서
 #    good 6.81 · warning 6.85 · serious 5.13 · critical 5.16 · unknown 5.62 — 전부 4.5 이상.
 #    `serious` 만 원전에 없어서 같은 램프의 GitHub dark `severe`(#db6d28)를 끼웠다.
 _CSS = """
@@ -457,7 +459,7 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:.85em}
 
 
 def short_model(name: str, *, limit: int = 30) -> str:
-    """모델 이름을 사람이 읽을 만큼만. 🔴 **토큰 중간에서 자르지 않는다.**
+    """모델 이름을 사람이 읽을 만큼만. [중요] **토큰 중간에서 자르지 않는다.**
 
     실측(2026-08-12 화면 확인): `Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M` 를 28자로 자르니
     `…GGUF:IQ` 가 되어 **양자화 접미사가 반쪽**이 됐다 — `IQ2_M` 인지 `IQ4` 인지 알 수 없으면
@@ -478,11 +480,11 @@ def _st(kind: str, text: str = "") -> str:
             f'{html.escape(text or _WORD[kind])}</span>')
 
 
-TEMP_MAX = 100          # 미터의 오른쪽 끝. 🔴 눈금 의미를 화면에 적는다(안 적으면 장식이다)
+TEMP_MAX = 100          # 미터의 오른쪽 끝. [중요] 눈금 의미를 화면에 적는다(안 적으면 장식이다)
 
 
 def _meter(temp) -> str:
-    """온도 미터. 🔴 트랙은 **채움과 같은 색의 밝은 단계**다 — dataviz 규약(같은 램프).
+    """온도 미터. [중요] 트랙은 **채움과 같은 색의 밝은 단계**다 — dataviz 규약(같은 램프).
 
     회색 트랙을 쓰면 상태가 채워진 부분에서만 읽히는데, 같은 램프면 **바 전체에서** 읽힌다.
     `color-mix` 미지원 브라우저를 위해 중립 트랙을 먼저 선언해 둔다(선언 순서가 폴백이다).
@@ -501,20 +503,20 @@ def _meter(temp) -> str:
 
 
 def render(snap: Snapshot, *, viewer_link: str = "") -> str:
-    """자립형 HTML. 🔴 외부 자원 0 · 상태는 아이콘+라벨+색."""
+    """자립형 HTML. [중요] 외부 자원 0 · 상태는 아이콘+라벨+색."""
     e = html.escape
     p = [f'<h1>AX 클러스터 상태</h1>',
          f'<div class="sub">{e(snap.at)} 수집 · {snap.seconds:.0f}초 소요 · '
          f'<code>ax-status.timer</code> 가 {REFRESH_SEC // 60}분마다 갱신 · '
          f'브라우저 새로고침은 수집을 유발하지 않는다(최소 간격 {MIN_INTERVAL}초)</div>']
 
-    # 🔴 히어로는 하나 — 지금 큐에 무엇이 있나
+    # [중요] 히어로는 하나 — 지금 큐에 무엇이 있나
     p += [f'<div class="hero"><b>{snap.open_tasks}</b>'
           f'<span>큐에 열린 태스크</span></div>']
 
-    # 🔴 첫 화면에 문제가 온다 (도메인 뷰어와 같은 판단)
+    # [중요] 첫 화면에 문제가 온다 (도메인 뷰어와 같은 판단)
     if snap.problems:
-        p.append('<div class="band"><b>🔴 문제 %d건</b><ul>%s</ul></div>'
+        p.append('<div class="band"><b>[중요] 문제 %d건</b><ul>%s</ul></div>'
                  % (len(snap.problems),
                     "".join(f"<li>{e(x)}</li>" for x in snap.problems)))
     else:
@@ -556,7 +558,7 @@ def render(snap: Snapshot, *, viewer_link: str = "") -> str:
                f'<div class="sub">{e(g.note)}</div>' if g.note else ""))
     p.append("</div>")
 
-    # 🔴 "뭘 시작했고" — 사용자가 요청한 그 항목이다. 없으면 없다고 적는다.
+    # [중요] "뭘 시작했고" — 사용자가 요청한 그 항목이다. 없으면 없다고 적는다.
     p.append("<h2>진행 중인 작업</h2>")
     if snap.tasks:
         p.append('<table><tr><th>태스크</th><th>상태</th><th>맡은 워커</th>'
@@ -607,12 +609,12 @@ def render(snap: Snapshot, *, viewer_link: str = "") -> str:
         p.append("<h2>수집 결손</h2><ul>%s</ul>"
                  % "".join(f"<li>{e(n)}</li>" for n in snap.notes))
 
-    foot = ("🔴 이 화면은 <b>읽기 전용 수집</b>이다 — <code>systemctl is-active</code> · "
+    foot = ("[중요] 이 화면은 <b>읽기 전용 수집</b>이다 — <code>systemctl is-active</code> · "
             "<code>cat /sys/…</code> · <code>nvidia-smi --query-gpu</code> · "
             "<code>git rev-parse</code>. 쓰는 명령은 없다.<br>"
-            "⚠️ 온도 구간(60/80/90°C)은 <b>관례</b>이고 이 하드웨어의 실측 스로틀 지점이 "
+            "[주의] 온도 구간(60/80/90°C)은 <b>관례</b>이고 이 하드웨어의 실측 스로틀 지점이 "
             "아니다. BC-250 은 팬리스이고 idle 55°C 가 실측값이다.<br>"
-            "⚠️ 추세 그래프를 넣지 않았다 — 수집 주기가 길어 이력이 희박하고, 희박한 이력으로 "
+            "[주의] 추세 그래프를 넣지 않았다 — 수집 주기가 길어 이력이 희박하고, 희박한 이력으로 "
             "그린 선은 <b>없는 추세를 있는 것처럼</b> 보이게 한다.")
     if viewer_link:
         foot += (f'<br>같은 표면의 다른 화면: '
@@ -637,21 +639,21 @@ DELIVER_NAME = "ax-cluster-status.html"
 
 
 def deliver(html_text: str, host: str, *, project: str = "") -> str:
-    """다른 머신에 **파일로** 보낸다. 🔴 서비스를 띄우지 않고 보는 방법이다.
+    """다른 머신에 **파일로** 보낸다. [중요] 서비스를 띄우지 않고 보는 방법이다.
 
-    ## 🔴 왜 웹으로 서비스하지 않나
+    ## [중요] 왜 웹으로 서비스하지 않나
 
     이 화면은 LAN 주소와 클러스터 내부를 담는다. 인증 없는 자리에 두면 저장소를 private 으로
     두는 이유가 무너진다. 그리고 **이 박스의 80 포트에는 이미 인증 없는 phpMyAdmin 이 올라와
     있다**(실측 2026-08-13) — 거기에 얹는 것은 4번째 포트를 여는 것보다 나쁘다.
 
-    ## 🔴 어떻게 보내나
+    ## [중요] 어떻게 보내나
 
     `bundle.write_file` 을 쓴다 — **이미 검증된 경로**다: scp 로 바이트를 그대로 옮기고
     **되읽어 sha256 으로 대조**한다(그 검증이 실제로 두 번 배달 사고를 잡았다). 새 전송 코드를
     쓰지 않는다.
 
-    ⚠️ **홈 디렉토리에 놓는다** — 체크아웃 안이 아니다. `.33` 은 사람의 기계이므로 작업 트리에
+    [주의] **홈 디렉토리에 놓는다** — 체크아웃 안이 아니다. `.33` 은 사람의 기계이므로 작업 트리에
     파일을 얹지 않는다(게스트 규칙). 스냅샷이므로 덮어써도 잃을 것이 없다.
     """
     from .client import bundle
@@ -673,7 +675,7 @@ def deliver(html_text: str, host: str, *, project: str = "") -> str:
 #   python -m master.status show [프로젝트]              터미널에 요약 (수집만)
 #   python -m master.status html [프로젝트]              HTML 한 장을 쓴다
 #   python -m master.status html [프로젝트] --to <호스트>  그 머신 홈으로 **보낸다**
-#   🔴 `--force` 없이는 최소 간격 안에 두 번 수집하지 않는다.
+#   [중요] `--force` 없이는 최소 간격 안에 두 번 수집하지 않는다.
 
 def main(argv) -> int:
     cmd = (argv[0] if argv else "show").strip()
@@ -696,17 +698,17 @@ def main(argv) -> int:
     try:
         snap = collect(project=project, force=force)
     except TooSoon as e:
-        # 🔴 가드는 정상 동작이다 — 타이머가 이걸 고장으로 보고하면 경고가 무의미해진다
+        # [중요] 가드는 정상 동작이다 — 타이머가 이걸 고장으로 보고하면 경고가 무의미해진다
         print(f"⏳ {e}")
         return EXIT_TOO_SOON
     except RuntimeError as e:
-        print(f"🔴 {e}")
+        print(f"[중요] {e}")
         return 1
 
     if cmd == "show":
         print(f"{snap.at} · {snap.seconds:.0f}초 · 열린 태스크 {snap.open_tasks}")
         for u, v in snap.units.items():
-            print(f"  {'✅' if v == 'active' else '🔴'} {u}: {v}")
+            print(f"  {'[완료]' if v == 'active' else '[중요]'} {u}: {v}")
         for m in snap.machines:
             g = m.gpu
             bits = [f"{m.host} [{m.role}]", m.label]
@@ -720,27 +722,27 @@ def main(argv) -> int:
                 bits.append(m.commit)
             print("  " + " · ".join(bits) + (f" — {m.error}" if m.error else ""))
         for x in snap.problems:
-            print(f"  🔴 {x}")
+            print(f"  [중요] {x}")
         for n in snap.notes:
             print(f"  {n}")
         return 0
 
     from .context_search.paths import resolve
     paths = resolve(project)
-    # 🔴 링크는 **원전 뷰어**로 간다. 전에는 `domains.html`(내가 새로 쓴 229줄 스냅샷)을 가리켰는데
+    # [중요] 링크는 **원전 뷰어**로 간다. 전에는 `domains.html`(내가 새로 쓴 229줄 스냅샷)을 가리켰는데
     #    `/view` 를 없앤 뒤로는 죽은 링크다 — `/cluster` 에서 상대경로로 풀리면 `/domains.html` 이다.
     out = write(snap, paths.root / OUT_NAME, viewer_link="/ontology")
     print(f"{out}  ({out.stat().st_size:,} bytes)")
     print(f"문제 {len(snap.problems)}건 · 머신 {len(snap.machines)}대 · "
           f"열린 태스크 {snap.open_tasks}")
 
-    # 🔴 다른 머신에서 보려면 **파일을 보낸다** — 서비스를 띄우지 않는다
+    # [중요] 다른 머신에서 보려면 **파일을 보낸다** — 서비스를 띄우지 않는다
     for host in to:
         try:
-            # ⚠️ 링크는 뺀다 — 받는 쪽에는 `domains.html` 이 없다. 죽은 링크를 보내지 않는다.
+            # [주의] 링크는 뺀다 — 받는 쪽에는 `domains.html` 이 없다. 죽은 링크를 보내지 않는다.
             print(f"  → {host}: {deliver(render(snap), host, project=paths.name)}")
         except Exception as e:                            # noqa: BLE001
-            print(f"  🔴 {host}: 보내지 못했다 — {type(e).__name__}: {e}")
+            print(f"  [중요] {host}: 보내지 못했다 — {type(e).__name__}: {e}")
     return 0
 
 

@@ -1,6 +1,6 @@
 """추론 파견 (중 1.3).
 
-🔴 지키는 계약은 넷이다:
+[중요] 지키는 계약은 넷이다:
 
     ① 판정은 **fail-closed** — 마커·응답파일 둘 다 맞아야 통과다
     ② 대상 파일은 **매니페스트에서** 읽는다 (워커가 본 것과 같은 문서)
@@ -32,7 +32,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 WANT = ["Source/A/Foo.h", "Source/A/Foo.cpp"]
@@ -48,12 +48,12 @@ MANIFEST = """# 컨텍스트 매니페스트 — `t1`
 
 - `UFoo`
 
-## 대상 파일 — 🔴 **이 목록 밖은 건드리지 않는다**
+## 대상 파일 — [중요] **이 목록 밖은 건드리지 않는다**
 
 - `Source/A/Foo.h`
 - `Source/A/Foo.cpp`
 
-🔴 **한 태스크의 파일은 한 워커가 통째로 맡는다.**
+[중요] **한 태스크의 파일은 한 워커가 통째로 맡는다.**
 
 ## 계약 (동결 — 바꾸지 말 것)
 
@@ -102,13 +102,13 @@ def tmp_paths():
 def test_target_files_come_from_the_manifest() -> None:
     got = I.target_files_from(MANIFEST)
     check("대상 파일 2개", got == WANT, str(got))
-    # 🔴 다른 절의 백틱 낱말을 파일로 오인하면 판정 기준이 오염된다
+    # [중요] 다른 절의 백틱 낱말을 파일로 오인하면 판정 기준이 오염된다
     check("다른 절을 안 먹는다", "NotAFile.h" not in got, str(got))
     check("빈 매니페스트는 빈 목록", I.target_files_from("") == [])
 
 
 def test_no_target_list_is_blocked_not_passed() -> None:
-    """🔴 무엇을 받아야 하는지 모르면 무엇을 받아도 통과시킬 수 없다."""
+    """[중요] 무엇을 받아야 하는지 모르면 무엇을 받아도 통과시킬 수 없다."""
     r = I.judge("RESULT: DONE", GOOD_RESPONSE, want=[])
     check("목록 없으면 BLOCKED", not r.ok and r.status == R.BLOCKED, r.summary)
     check("사유가 목록 부재를 말한다", "대상 파일 목록" in r.reason, r.reason)
@@ -137,7 +137,7 @@ def test_missing_file_is_not_partial_success() -> None:
 
 
 def test_out_of_scope_path_blocks() -> None:
-    """🔴 목록 밖 파일을 낸 것은 **분해 계획 밖을 고치려 한 것**이다 — 조용히 버리지 않는다."""
+    """[중요] 목록 밖 파일을 낸 것은 **분해 계획 밖을 고치려 한 것**이다 — 조용히 버리지 않는다."""
     r = I.judge("RESULT: DONE", GOOD_RESPONSE + "=== FILE: Source/Evil.h ===\nx\n", want=WANT)
     check("목록 밖이면 BLOCKED", not r.ok, r.summary)
     check("버린 사실이 치명 메모로 남는다",
@@ -152,7 +152,7 @@ def test_fence_residue_blocks() -> None:
 
 
 def test_blocked_reason_survives() -> None:
-    """🔴 비대칭은 의도다 — 안전한 판정 쪽(BLOCKED)에만 관대하다."""
+    """[중요] 비대칭은 의도다 — 안전한 판정 쪽(BLOCKED)에만 관대하다."""
     r = I.judge("RESULT: BLOCKED — Source/ 가 더럽다", "", want=WANT)
     check("사유를 살린다", "더럽다" in r.reason, r.reason)
     loose_done = I.judge("RESULT: DONE — 다 했어요", GOOD_RESPONSE, want=WANT)
@@ -160,33 +160,33 @@ def test_blocked_reason_survives() -> None:
 
 
 def test_marker_does_not_demand_branch_or_commit() -> None:
-    """🔴 추론 파견에는 ATTEMPT/HEAD 가 **없는 것이 정상**이다 — 사유가 거짓이면 안 된다."""
+    """[중요] 추론 파견에는 ATTEMPT/HEAD 가 **없는 것이 정상**이다 — 사유가 거짓이면 안 된다."""
     r = I.judge("RESPONSE: 2\nRESULT: DONE", GOOD_RESPONSE, want=WANT)
     check("ATTEMPT 를 요구하지 않는다", r.ok, r.summary)
     check("사유에 ATTEMPT 가 안 나온다", "ATTEMPT" not in r.reason, r.reason)
 
 
 def test_markers_inside_the_response_file_are_stripped_and_reported() -> None:
-    """🔴 실전 첫 구동에서 나온 결함 (2026-08-12) — 안 떼면 `.cpp` 끝에 `RESULT: DONE` 이 박힌다."""
+    """[중요] 실전 첫 구동에서 나온 결함 (2026-08-12) — 안 떼면 `.cpp` 끝에 `RESULT: DONE` 이 박힌다."""
     polluted = GOOD_RESPONSE + "RESPONSE: 2\nRESULT: DONE\n"
     r = I.judge("RESPONSE: 2\nRESULT: DONE", polluted, want=WANT)
     check("그래도 통과시킨다 (본문은 옳다)", r.ok, r.summary)
     check("마커가 본문에 안 남았다",
           not any("RESULT: DONE" in v for v in r.files.values()),
           str([v[-30:] for v in r.files.values()]))
-    check("뗀 사실을 ⚠️ 로 말한다",
+    check("뗀 사실을 [주의] 로 말한다",
           any("판정 마커" in n for n in r.notes), str(r.notes))
 
     clean, n = I.strip_trailing_markers(polluted)
     check("두 줄을 뗐다", n == 2, str(n))
-    # ⚠️ 중간의 같은 글자는 건드리지 않는다
+    # [주의] 중간의 같은 글자는 건드리지 않는다
     mid = "=== FILE: Source/A/Foo.h ===\n// RESULT: DONE 은 주석이다\nx\n"
     _, n2 = I.strip_trailing_markers(mid)
     check("중간은 안 건드린다", n2 == 0, str(n2))
 
 
 def test_eof_newline_is_normalized_to_one() -> None:
-    """🔴 실측 2026-08-12 — `parse_files` 의 strip 이 끝 개행을 지워 EOF 잡음 diff 를 만들었다.
+    """[중요] 실측 2026-08-12 — `parse_files` 의 strip 이 끝 개행을 지워 EOF 잡음 diff 를 만들었다.
 
     `Source/ModularStage` 160개 실측: 개행 하나 110 · 없음 36 · 빈 줄 14 → 하나로 맞춘다.
     """
@@ -198,7 +198,7 @@ def test_eof_newline_is_normalized_to_one() -> None:
 def test_count_mismatch_is_warned_not_failed() -> None:
     r = I.judge("RESPONSE: 5\nRESULT: DONE", GOOD_RESPONSE, want=WANT)
     check("신고 수가 틀려도 통과", r.ok, r.summary)
-    check("어긋남을 ⚠️ 로 남긴다", any(n.startswith("⚠️") for n in r.notes), str(r.notes))
+    check("어긋남을 [주의] 로 남긴다", any(n.startswith("[주의]") for n in r.notes), str(r.notes))
 
 
 # ── 파견 한 건 — 배달·되읽기·계측 ──────────────────────────────────────────────
@@ -240,7 +240,7 @@ def test_ssh_failure_does_not_pass_a_done() -> None:
 
 
 def test_unreadable_response_is_not_absent() -> None:
-    """🔴 '못 읽었다' 를 '없다' 로 접으면 조용히 틀린다 (`_remote_read` 가 배운 것)."""
+    """[중요] '못 읽었다' 를 '없다' 로 접으면 조용히 틀린다 (`_remote_read` 가 배운 것)."""
     from master.client import bundle
     f = FakeFacts()
 
@@ -262,7 +262,7 @@ def test_windows_response_path_uses_backslash() -> None:
 
 
 def test_instruction_is_ascii_and_names_the_skill() -> None:
-    """🔴 명령줄에 한글을 실으면 워커 콘솔에서 깨진다 (두 번 물린 함정)."""
+    """[중요] 명령줄에 한글을 실으면 워커 콘솔에서 깨진다 (두 번 물린 함정)."""
     cmd = I.infer_command(FakeFacts(), "t1")
     check("ASCII 만", all(ord(c) < 128 for c in cmd), repr([c for c in cmd if ord(c) >= 128]))
     check("ax-infer 를 지목한다", "ax-infer" in cmd, cmd[:80])
@@ -289,7 +289,7 @@ def test_spool_round_trip() -> None:
 
 
 def test_failure_is_spooled_too() -> None:
-    """🔴 실패도 남긴다 — 무엇을 시도했는지가 사라지면 피드백의 근거가 없다."""
+    """[중요] 실패도 남긴다 — 무엇을 시도했는지가 사라지면 피드백의 근거가 없다."""
     paths, root = tmp_paths()
     try:
         r = I.judge("RESULT: BLOCKED — 계약 모순", "", want=WANT)
@@ -313,7 +313,7 @@ def test_same_base_commit_is_reused_other_is_not() -> None:
         same = I.reusable(paths, "t1", base_commit="abc1234", work_id="W1")
         check("같은 기준이면 재사용", same is not None and same.ok)
         moved = I.reusable(paths, "t1", base_commit="deadbee", work_id="W1")
-        # ⚠️ 트윈이 움직였으면 근거가 달라졌다 — 낡은 응답은 남의 실패로 빌드를 깬다
+        # [주의] 트윈이 움직였으면 근거가 달라졌다 — 낡은 응답은 남의 실패로 빌드를 깬다
         check("기준이 다르면 재사용 안 함", moved is None)
         check("기준 미상이면 재사용 안 함",
               I.reusable(paths, "t1", base_commit="", work_id="W1") is None)
@@ -380,7 +380,7 @@ def test_run_many_takes_several_and_orders_them() -> None:
 
 
 def test_dependents_of_a_failure_are_not_dispatched() -> None:
-    """🔴 큐는 `failed` 를 의존 해소로 센다(*영원 block 방지*) — 마스터가 막는다."""
+    """[중요] 큐는 `failed` 를 의존 해소로 센다(*영원 block 방지*) — 마스터가 막는다."""
     paths, root = tmp_paths()
     try:
         q = FakeQueue([{"task_id": "X.d1", "epoch": 1},
@@ -397,7 +397,7 @@ def test_dependents_of_a_failure_are_not_dispatched() -> None:
 
 
 def test_no_worker_means_no_claim() -> None:
-    """🔴 집어놓고 못 돌리는 것이 가장 나쁘다 — claim 조차 하지 않는다."""
+    """[중요] 집어놓고 못 돌리는 것이 가장 나쁘다 — claim 조차 하지 않는다."""
     paths, root = tmp_paths()
     try:
         q = FakeQueue([{"task_id": "t1"}])
@@ -414,7 +414,7 @@ def test_no_worker_means_no_claim() -> None:
 
 
 def test_serial_is_the_default_and_says_so() -> None:
-    """🔴 병렬은 기본값이 아니다 (실측: 12% 빠르고 90% 비쌌다)."""
+    """[중요] 병렬은 기본값이 아니다 (실측: 12% 빠르고 90% 비쌌다)."""
     paths, root = tmp_paths()
     try:
         q = FakeQueue([{"task_id": "t1"}, {"task_id": "t2"}])
@@ -449,7 +449,7 @@ def test_limit_is_respected() -> None:
 
 
 def test_handoff_states_that_nobody_applies_yet() -> None:
-    """⚠️ 없는 것을 있는 척하지 않는다 — 통합자(중 1.4)는 아직 비어 있다."""
+    """[주의] 없는 것을 있는 척하지 않는다 — 통합자(중 1.4)는 아직 비어 있다."""
     paths, root = tmp_paths()
     try:
         q = FakeQueue([{"task_id": "t1"}])
@@ -461,7 +461,7 @@ def test_handoff_states_that_nobody_applies_yet() -> None:
 
 
 def test_reuse_avoids_paying_twice() -> None:
-    """🔴 재확보는 정상 흐름이다(제출은 통합자가 한다) — 그때 추론을 다시 사지 않는다."""
+    """[중요] 재확보는 정상 흐름이다(제출은 통합자가 한다) — 그때 추론을 다시 사지 않는다."""
     paths, root = tmp_paths()
     try:
         pre = I.judge("RESULT: DONE", GOOD_RESPONSE, want=WANT)
@@ -525,7 +525,7 @@ def main() -> int:
                test_reuse_avoids_paying_twice):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_infer: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_infer: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

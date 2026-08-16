@@ -1,4 +1,4 @@
-"""층2 모델 선정 벤치 — 🔴 **실측으로 고른다** (소 2.2.1).
+"""층2 모델 선정 벤치 — [중요] **실측으로 고른다** (소 2.2.1).
 
 ## 왜 하네스를 새로 쓰나
 
@@ -6,7 +6,7 @@
 쪽이고 이 저장소에 없다. 그리고 재는 것이 다르다 — 그쪽은 **작성 품질**을 재고, 여기는
 **검출력**을 잰다. 같은 하네스로 될 일이 아니다.
 
-## 🔴 표본은 지어내지 않는다 — 이 프로젝트에서 **실제로 났던 실패**다
+## [중요] 표본은 지어내지 않는다 — 이 프로젝트에서 **실제로 났던 실패**다
 
     P1 없는 반환값      error C4716 값을 반환해야 합니다        리포트 12 §6.3 ②
     P2 괄호/세미콜론     layer2_verify 의 자체 표본
@@ -15,15 +15,15 @@
     N1 정상 `.cpp`      실제 소스 그대로 (통과해야 한다)
     N2 정상 헤더        한국어 주석 포함 (통과해야 한다)
 
-🔴 **음성 표본이 있어야 의미가 있다.** 전부 막는 검증기는 검출력 100% 인데 쓸 수 없다 —
+[중요] **음성 표본이 있어야 의미가 있다.** 전부 막는 검증기는 검출력 100% 인데 쓸 수 없다 —
 *정상 작업을 막는 게이트가 통과시키는 게이트보다 나쁘다.*
 
-## 🔴 채점은 결정적이다
+## [중요] 채점은 결정적이다
 
 `verdict.parse_verdict` 의 판정(APPROVE / REQUEST_CHANGES / 계약 위반)만 본다. **LLM 에게
 우열을 묻지 않는다** — 골조 A/B 에서 쓴 것과 같은 규율이다.
 
-## 🔴 P3 은 grounding 없이는 잡을 수 없다 (설계상)
+## [중요] P3 은 grounding 없이는 잡을 수 없다 (설계상)
 
 `EMissionType::None` 이 틀렸다는 것은 **그 열거형의 정의를 봐야** 안다. 파일만 주면 어떤 모델도
 추측할 뿐이다. 그래서 P3 은 **선언부를 함께 주는 변형**(`P3g`)을 따로 둔다 — 층2 프롬프트에
@@ -81,7 +81,7 @@ void UMSMissionTask::Reset()
 """
 P3 = ("Source/ModularStage/Mission/MSMissionTask.cpp", _P3_BODY)
 
-# 🔴 같은 파일에 **선언부를 함께** 준 변형 — grounding 의 효과를 재려는 것이다
+# [중요] 같은 파일에 **선언부를 함께** 준 변형 — grounding 의 효과를 재려는 것이다
 P3G_DECLS = """
 === DECLARATIONS FROM INCLUDED HEADERS (authoritative) ===
 --- ModularStage/Table/TableEnum.h ---
@@ -186,22 +186,22 @@ SAMPLES = [
     Sample("P1", [P1], True, "없는 반환값 (C4716) — 실측"),
     Sample("P2", [P2], True, "괄호/세미콜론"),
     Sample("P3", [P3], True, "없는 열거값 (C2065) — grounding 없음"),
-    Sample("P3g", [P3], True, "없는 열거값 — 🔴 선언부 제공", extra=P3G_DECLS),
+    Sample("P3g", [P3], True, "없는 열거값 — [중요] 선언부 제공", extra=P3G_DECLS),
     Sample("P4", [P4], True, "UE 매크로 오용"),
-    Sample("N1", [N1], False, "🔴 정상 `.cpp` (막으면 안 된다)"),
-    Sample("N2", [N2], False, "🔴 정상 헤더 · 한국어 주석 (막으면 안 된다)"),
+    Sample("N1", [N1], False, "[중요] 정상 `.cpp` (막으면 안 된다)"),
+    Sample("N2", [N2], False, "[중요] 정상 헤더 · 한국어 주석 (막으면 안 된다)"),
 ]
 
 
 # ── 후보 백엔드 ─────────────────────────────────────────────────────────────────
 #
-# 🔴 로컬도 후보다. 모토는 *"검증에만 상용 토큰"* 이지만 **로컬이 잡으면 그게 더 낫다** —
+# [중요] 로컬도 후보다. 모토는 *"검증에만 상용 토큰"* 이지만 **로컬이 잡으면 그게 더 낫다** —
 #    재 보고 정한다. 브로커 레인은 `synth.generate` 규약을 그대로 쓴다.
 
 def _broker(model: str, num_ctx: int = 16384):
     """브로커 레인. `ontology.synth.generate` 가 모델 이름으로 백엔드를 고른다(같은 규약).
 
-    ⚠️ `num_ctx` 를 넉넉히 준다 — 표본 + 계약 + grounding 이 8K 를 넘으면 **앞이 잘려**
+    [주의] `num_ctx` 를 넉넉히 준다 — 표본 + 계약 + grounding 이 8K 를 넘으면 **앞이 잘려**
     판정이 아니라 절단을 재게 된다.
     """
     def call(prompt: str, *, timeout: int = L2.TIMEOUT_SEC):
@@ -230,8 +230,8 @@ CANDIDATES = {
 class Row:
     backend: str
     hits: int = 0            # 양성을 맞게 막았다
-    misses: int = 0          # 🔴 양성을 통과시켰다 (가장 나쁘다)
-    false_alarms: int = 0    # 🔴 음성을 막았다 (정상 작업 차단 — 이것도 나쁘다)
+    misses: int = 0          # [중요] 양성을 통과시켰다 (가장 나쁘다)
+    false_alarms: int = 0    # [중요] 음성을 막았다 (정상 작업 차단 — 이것도 나쁘다)
     correct_pass: int = 0
     broken: int = 0          # 계약 위반 (판정을 못 냈다) → fail-closed 로 차단됨
     seconds: float = 0.0
@@ -243,7 +243,7 @@ class Row:
 
 
 def run_one(name: str, call, sample: Sample, *, timeout: int) -> tuple:
-    """`(막았나, 계약위반, 초)`. 🔴 판정은 `verdict` 계약으로만 읽는다."""
+    """`(막았나, 계약위반, 초)`. [중요] 판정은 `verdict` 계약으로만 읽는다."""
     prompt = L2.build_prompt(sample.files)
     if sample.extra:
         prompt += "\n" + sample.extra
@@ -266,7 +266,7 @@ def bench(names: list, *, timeout: int = 300) -> list:
             r.seconds += el
             if blocked is None:
                 r.broken += 1
-                r.detail.append(f"{s.key}: 🔴 응답 없음")
+                r.detail.append(f"{s.key}: [중요] 응답 없음")
                 continue
             if broken:
                 r.broken += 1
@@ -274,17 +274,17 @@ def bench(names: list, *, timeout: int = 300) -> list:
             if s.should_block:
                 if blocked:
                     r.hits += 1
-                    mark = "✅ 막음"
+                    mark = "[완료] 막음"
                 else:
                     r.misses += 1
-                    mark = "🔴 놓침"
+                    mark = "[중요] 놓침"
             else:
                 if blocked:
                     r.false_alarms += 1
-                    mark = "🔴 오탐"
+                    mark = "[중요] 오탐"
                 else:
                     r.correct_pass += 1
-                    mark = "✅ 통과"
+                    mark = "[완료] 통과"
             r.detail.append(f"{s.key}: {mark} ({el:.0f}초)")
             print(f"  {name:18} {s.key:4} {mark:8} {el:5.0f}초  {s.what}")
         rows.append(r)
@@ -295,7 +295,7 @@ def main(argv) -> int:
     names = [a for a in argv if a in CANDIDATES] or list(CANDIDATES)
     bad = [a for a in argv if a not in CANDIDATES]
     if bad:
-        print(f"🔴 모르는 후보: {bad} — 가능한 것: {list(CANDIDATES)}")
+        print(f"[중요] 모르는 후보: {bad} — 가능한 것: {list(CANDIDATES)}")
         return 2
     print(f"층2 후보 {len(names)} × 표본 {len(SAMPLES)} "
           f"(양성 {sum(1 for s in SAMPLES if s.should_block)} · "
@@ -307,7 +307,7 @@ def main(argv) -> int:
     for r in rows:
         print(f"{r.backend:20} {r.hits:>8} {r.misses:>6} {r.false_alarms:>6} "
               f"{r.correct_pass:>8} {r.broken:>8} {r.seconds:>7.0f}")
-    print("\n🔴 고르는 기준: **놓침 0 을 먼저** 보고(층2 의 존재 이유), 그 다음 **오탐 0**"
+    print("\n[중요] 고르는 기준: **놓침 0 을 먼저** 보고(층2 의 존재 이유), 그 다음 **오탐 0**"
           "(정상 작업을 막으면 게이트가 못 쓰이게 된다), 마지막에 속도·비용.")
     return 0
 

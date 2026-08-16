@@ -24,7 +24,7 @@ EOF
 printf '%s\n' "$PW" | ssh sim@192.168.0.43 'chmod +x /tmp/x.sh && sudo -S -p "" /tmp/x.sh'
 ```
 
-⚠️ That board's own `~/CLAUDE.md` still documents a `pkexec` + graphical-polkit pattern —
+[주의] That board's own `~/CLAUDE.md` still documents a `pkexec` + graphical-polkit pattern —
 **that is stale.** It went headless (`multi-user.target`) on 2026-08-05, so there is no desktop
 session to show a polkit dialog.
 
@@ -33,7 +33,7 @@ session to show a polkit dialog.
 The firewall there allows this machine and nothing else. Adding another client means adding a
 firewalld rich rule on that board.
 
-## 🔴 Before touching that board's hardware config
+## [중요] Before touching that board's hardware config
 
 Read `sim@192.168.0.43:~/bc250-backup-staging/reports/*.md` before changing CU unlock, SMU OC,
 governor, or boot params. It carries hard-won constraints, and that board's `CLAUDE.md` mandates

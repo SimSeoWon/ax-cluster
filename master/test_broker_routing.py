@@ -51,7 +51,7 @@ def test_resident_latest_alias_matches():
     assert ep is not None and "상주" in why
 
 
-# ── 🔴 폴백·실패 ─────────────────────────────────────────────
+# ── [중요] 폴백·실패 ─────────────────────────────────────────────
 
 def test_falls_back_when_prefer_node_is_down():
     """3060 이 죽으면 14b 는 BC-250 으로 — 재적재를 물지만 응답은 된다."""

@@ -1,10 +1,10 @@
 """포팅 모드 (소 1.3.5).
 
-🔴 지키는 계약은 셋이다:
+[중요] 지키는 계약은 셋이다:
 
     ① **못 찾으면 붙이지 않는다** — 관계없는 원본은 원본이 없는 것보다 나쁘다
     ② **어떻게 맞췄는지 말한다** (`exact` / `prefix`) — 사람이 가늠할 근거
-    ③ 🔴 **원본이 대상 목록으로 새지 않는다** — 새면 워커가 읽기 전용 모듈을 고친다
+    ③ [중요] **원본이 대상 목록으로 새지 않는다** — 새면 워커가 읽기 전용 모듈을 고친다
 
 `.venv/bin/python master/test_porting.py`
 """
@@ -29,11 +29,11 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 def tree(files: list):
-    """`Source/` 아래에 빈 파일들을 만든 임시 트리. 🔴 내용은 안 본다 — 이름만 본다."""
+    """`Source/` 아래에 빈 파일들을 만든 임시 트리. [중요] 내용은 안 본다 — 이름만 본다."""
     root = Path(tempfile.mkdtemp(prefix="axport"))
     src = root / "Source"
     for f in files:
@@ -58,7 +58,7 @@ REAL_SHAPE = [
     "ModularStage/UI/HexGrid/Alpha_HexagonTileItem.h",
     "ModularStage/Manager/Manager_Mission.h",
     "ModularStage/ModularStageCharacter.h",
-    "ModularStage/Mission/MSMissionTask.h",                      # 🔴 원본이 없는 신규 코드
+    "ModularStage/Mission/MSMissionTask.h",                      # [중요] 원본이 없는 신규 코드
 ]
 
 
@@ -67,7 +67,7 @@ def test_normalize_strips_measured_prefixes_once() -> None:
     check("Alpha_ 접두사", P.normalize_stem("Alpha_HexagonTileItem") == "hexagontileitem")
     check("ModularStage 접두사", P.normalize_stem("ModularStageCharacter") == "character")
     check("MS 접두사", P.normalize_stem("MSMissionTask") == "missiontask")
-    # 🔴 한 번만 뗀다 — 두 번 떼면 없는 대응을 만든다
+    # [중요] 한 번만 뗀다 — 두 번 떼면 없는 대응을 만든다
     check("두 번 떼지 않는다", P.normalize_stem("AlphaAlphaFoo") == "alphafoo",
           P.normalize_stem("AlphaAlphaFoo"))
     check("접두사가 전부인 이름은 안 건드린다", P.normalize_stem("MS") == "ms")
@@ -89,7 +89,7 @@ def test_exact_match_is_preferred() -> None:
 
 
 def test_prefix_match_is_found_but_flagged() -> None:
-    """🔴 실측: 접두사 정규화가 대응을 9 → 21쌍으로 늘렸다. 다만 확신은 낮다고 말한다."""
+    """[중요] 실측: 접두사 정규화가 대응을 9 → 21쌍으로 늘렸다. 다만 확신은 낮다고 말한다."""
     paths, root = tree(REAL_SHAPE)
     try:
         p = P.counterparts(paths, ["Source/ModularStage/Table/TableEnum.h",
@@ -106,7 +106,7 @@ def test_prefix_match_is_found_but_flagged() -> None:
 
 
 def test_no_counterpart_invents_nothing() -> None:
-    """🔴 관계없는 원본을 붙이면 모델이 자신 있게 엉뚱한 것을 만든다."""
+    """[중요] 관계없는 원본을 붙이면 모델이 자신 있게 엉뚱한 것을 만든다."""
     paths, root = tree(REAL_SHAPE)
     try:
         p = P.counterparts(paths, ["Source/ModularStage/Mission/MSMissionTask.h"])
@@ -140,7 +140,7 @@ def test_missing_source_module_is_stated() -> None:
 
 
 def test_truncation_is_announced() -> None:
-    """⚠️ 조용한 절단은 '다 봤다' 로 읽힌다."""
+    """[주의] 조용한 절단은 '다 봤다' 로 읽힌다."""
     many = [f"Project_Alpha/A{i}/AlphaFoo.h" for i in range(6)] + ["ModularStage/B/Foo.h"]
     paths, root = tree(many)
     try:
@@ -151,17 +151,17 @@ def test_truncation_is_announced() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
-# ── ③ 🔴 원본이 대상 목록으로 새지 않는다 ──────────────────────────────────────
+# ── ③ [중요] 원본이 대상 목록으로 새지 않는다 ──────────────────────────────────────
 
 def test_porting_paths_never_leak_into_target_list() -> None:
-    """🔴 새면 워커가 **읽기 전용 모듈을 고친다.** 두 목록이 한 문서에 있으니 실재하는 위험이다."""
+    """[중요] 새면 워커가 **읽기 전용 모듈을 고친다.** 두 목록이 한 문서에 있으니 실재하는 위험이다."""
     paths, root = tree(REAL_SHAPE)
     try:
         p = P.counterparts(paths, ["Source/ModularStage/Table/TableEnum.h"])
         manifest = "\n".join([
             "# 컨텍스트 매니페스트",
             "",
-            "## 대상 파일 — 🔴 **이 목록 밖은 건드리지 않는다**",
+            "## 대상 파일 — [중요] **이 목록 밖은 건드리지 않는다**",
             "",
             "- `Source/ModularStage/Table/TableEnum.h`",
             "",
@@ -190,7 +190,7 @@ def main() -> int:
                test_porting_paths_never_leak_into_target_list):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_porting: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_porting: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

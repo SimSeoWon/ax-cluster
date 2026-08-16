@@ -8,7 +8,7 @@ Index: [`../sim-desktop.md`](../sim-desktop.md) (= the master's `~/CLAUDE.md`)
 `~/.profile`, but `.profile` only runs for login shells, so a plain new terminal wouldn't have
 found the `claude` binary without the `.bashrc` entry.
 
-## 🔴 `sudo` and `pkexec` are not the same thing here — don't conflate them
+## [중요] `sudo` and `pkexec` are not the same thing here — don't conflate them
 
 `sudo` on **this** machine requires a password (no NOPASSWD). **But `pkexec <cmd>` works** — an
 authentication dialog appears on the user's screen, and root is granted once they accept.

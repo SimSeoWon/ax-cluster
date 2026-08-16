@@ -1,6 +1,6 @@
 """소 1.3.3 재합성 — 도메인 MD 파싱 · 조각화 · 응답 파서 (LLM 0 로 검증한다).
 
-🔴 **LLM 을 부르지 않는다.** 여기서 지키는 것은 모델의 품질이 아니라 **그 주변의 계약**이다:
+[중요] **LLM 을 부르지 않는다.** 여기서 지키는 것은 모델의 품질이 아니라 **그 주변의 계약**이다:
 스키마가 달라도 안 비는가 · 조각이 클래스를 잃지 않는가 · 파서가 도메인 밖을 막는가.
 
 각 파일 독립 실행 규약을 따른다 — `python3 master/test_ontology_synth.py`.
@@ -24,11 +24,11 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 # ── 도메인 MD 파싱 ──────────────────────────────────────────────
-# 🔴 실물 스키마가 두 가지다 (settled-decisions: 자동승급 출신 6 / ontology-register 1).
+# [중요] 실물 스키마가 두 가지다 (settled-decisions: 자동승급 출신 6 / ontology-register 1).
 
 _REGISTER_SCHEMA = """---
 tags: [a, b]
@@ -103,13 +103,13 @@ def test_domain_md() -> None:
     check("tags", a.tags == ["a", "b"], str(a.tags))
 
     b = domain_md.parse_text(_PROMOTED_SCHEMA, domain="B")
-    # 🔴 이 테스트가 이 모듈의 존재 이유다 — 원본 파서라면 여기서 전부 빈다.
+    # [중요] 이 테스트가 이 모듈의 존재 이유다 — 원본 파서라면 여기서 전부 빈다.
     check("승급 스키마: 개요만으로 죽지 않는다", b.summary.strip() == "짧은 개요.")
     check("승급 스키마: 핵심 구현 패턴을 살린다", "패턴 서술" in b.patterns, b.patterns[:40])
     check("승급 스키마: 확장 포인트를 살린다", "확장 서술" in b.extension_points)
-    check("🔴 승급 스키마에서도 서술이 비지 않는다",
+    check("[중요] 승급 스키마에서도 서술이 비지 않는다",
           len(b.summary_text) > len(b.summary), f"{len(b.summary_text)} vs {len(b.summary)}")
-    check("🔴 없는 정규 섹션을 결손으로 보고한다",
+    check("[중요] 없는 정규 섹션을 결손으로 보고한다",
           set(b.missing) == {"responsibilities", "boundary", "invariants",
                              "collaborators", "intent_notes"}, str(b.missing))
 
@@ -118,7 +118,7 @@ def test_domain_md() -> None:
 
     d = domain_md.parse_text(_PROMOTED_SCHEMA.replace("## 확장 포인트", "## 듣도보도 못한 절"),
                              domain="D")
-    check("🔴 모르는 섹션을 버리지 않는다", "듣도보도 못한 절" in d.extra, str(list(d.extra)))
+    check("[중요] 모르는 섹션을 버리지 않는다", "듣도보도 못한 절" in d.extra, str(list(d.extra)))
 
 
 # ── 조각 고지 ───────────────────────────────────────────────────
@@ -128,7 +128,7 @@ def test_chunk_note() -> None:
                        items=[ClassContext(name="UA"), ClassContext(name="UB")])
     check("한 조각이면 고지 없음", c.note == "")
     c.part = (2, 5)
-    check("🔴 조각이면 '일부다' 를 프롬프트에 적는다",
+    check("[중요] 조각이면 '일부다' 를 프롬프트에 적는다",
           "5조각 중 2번째" in c.note and "추측하지 말 것" in c.note, c.note)
     c.truncated = ["UC", "UD"]
     check("예산 제외도 함께 고지", "UC" in c.note and "UD" in c.note)
@@ -155,20 +155,20 @@ def test_actions_parse() -> None:
     check("layer 는 아직 안 붙는다(합성기가 붙인다)", "layer" not in p.items[0])
 
     p = parse.actions(_actions_payload(evidence=""), allowed=allowed)
-    check("🔴 근거 없으면 버린다", not p.items and p.dropped.get("근거 없음") == 1, p.summary)
+    check("[중요] 근거 없으면 버린다", not p.items and p.dropped.get("근거 없음") == 1, p.summary)
 
     p = parse.actions(_actions_payload(confidence=0.3), allowed=allowed)
     check("신뢰도 미달 버림", not p.items and p.dropped.get("신뢰도 미달") == 1)
 
     p = parse.actions(_actions_payload(implementation={"primary": "UOutside::Run"}),
                       allowed=allowed)
-    check("🔴 도메인 밖 구현이면 액션째 버린다",
+    check("[중요] 도메인 밖 구현이면 액션째 버린다",
           not p.items and p.dropped.get("구현이 도메인 밖이거나 없음") == 1, p.summary)
 
     p = parse.actions(_actions_payload(
         flow=[{"step": 1, "actor": "UOutside", "operation": "x"},
               {"step": 2, "actor": "UA", "operation": "y"}]), allowed=allowed)
-    check("🔴 도메인 밖 actor 는 단계만 버린다",
+    check("[중요] 도메인 밖 actor 는 단계만 버린다",
           len(p.items) == 1 and len(p.items[0]["flow"]) == 1, str(p.items))
 
     p = parse.actions(_actions_payload(objects_affected=["UA", "UOutside"]), allowed=allowed)
@@ -185,13 +185,13 @@ def test_actions_parse() -> None:
 
     p = parse.actions("여기 있습니다:\n```json\n" + _actions_payload() + "\n```\n끝.",
                       allowed=allowed)
-    check("🔴 펜스·군말이 붙어도 JSON 을 건진다", len(p.items) == 1, p.summary)
+    check("[중요] 펜스·군말이 붙어도 JSON 을 건진다", len(p.items) == 1, p.summary)
 
     for bad, why in (("", "빈 응답"), ("설명만 하고 끝", "JSON 없음"),
                      ("{망가진 json", "파싱 실패"), ('{"other": []}', "키 없음")):
         try:
             parse.actions(bad, allowed=allowed)
-            check(f"🔴 {why} 은 예외여야 한다", False, bad[:20])
+            check(f"[중요] {why} 은 예외여야 한다", False, bad[:20])
         except parse.ResponseError:
             check(f"{why} → ResponseError", True)
 
@@ -211,7 +211,7 @@ def test_invariants_parse() -> None:
     check("정상 invariant 통과", len(p.items) == 1, p.summary)
 
     p = parse.invariants(_inv_payload(source_signal="made-up"))
-    check("🔴 신호 종류가 6종 밖이면 버린다",
+    check("[중요] 신호 종류가 6종 밖이면 버린다",
           not p.items and p.dropped.get("신호 종류 불명") == 1, p.summary)
 
     p = parse.invariants(_inv_payload(evidence=""))
@@ -219,7 +219,7 @@ def test_invariants_parse() -> None:
 
     a = parse.invariants(_inv_payload(name="")).items[0]["name"]
     b = parse.invariants(_inv_payload(name="")).items[0]["name"]
-    check("🔴 이름 없으면 결정적 해시명 (같은 입력 → 같은 파일명)", a == b and a.startswith("Invariant_"), a)
+    check("[중요] 이름 없으면 결정적 해시명 (같은 입력 → 같은 파일명)", a == b and a.startswith("Invariant_"), a)
 
     c = parse.invariants(_inv_payload(name="", text="다른 내용")).items[0]["name"]
     check("내용이 다르면 다른 이름", c != a)
@@ -233,7 +233,7 @@ def test_merge() -> None:
                                [{"name": "A", "confidence": 0.9}, {"name": "B"}]])
     by = {i["name"]: i for i in items}
     check("조각 간 같은 이름은 하나로", len(items) == 2, str(items))
-    check("🔴 신뢰도 높은 쪽을 남긴다", by["A"]["confidence"] == 0.9, str(by["A"]))
+    check("[중요] 신뢰도 높은 쪽을 남긴다", by["A"]["confidence"] == 0.9, str(by["A"]))
     check("충돌을 센다", coll == 1, str(coll))
     items, coll = merge_items([[{"name": ""}, {"name": "A"}]])
     check("이름 없는 항목은 안 남는다", len(items) == 1 and coll == 0)
@@ -244,7 +244,7 @@ def main() -> int:
                test_invariants_parse, test_merge):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_ontology_synth: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_ontology_synth: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

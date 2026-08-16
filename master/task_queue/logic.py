@@ -205,7 +205,7 @@ def register_task(idx: TaskIndex, *, work_id: str, type: str, task_data: dict,
         _atomic_write(path, _build_md(meta, body))
         idx.tasks[task_id] = meta
         idx.task_paths[task_id] = path
-        # 🔴 claim 응답으로 워커에 전달하려면 **메모리에도** 들고 있어야 한다. 본문에만 쓰면
+        # [중요] claim 응답으로 워커에 전달하려면 **메모리에도** 들고 있어야 한다. 본문에만 쓰면
         #    재기동 전까지 아무도 못 읽는다(`rebuild()` 가 본문에서 되읽는 것과 짝이다).
         idx.task_data[task_id] = dict(task_data or {})
         wmeta = idx.works[work_id]
@@ -224,7 +224,7 @@ def admin_reset(idx: TaskIndex, purge: bool = False, cleanup_branches: bool = Fa
 
     purge=False (기본): work 폴더들을 `_archive/_purge_<timestamp>/` 로 이동, 인덱스 파일 삭제.
     purge=True: work 폴더들을 완전 삭제, 인덱스 파일 삭제.
-    🔴 cleanup_branches 는 **마스터에서 지원하지 않는다** (2026-08-08 이식 시 결정).
+    [중요] cleanup_branches 는 **마스터에서 지원하지 않는다** (2026-08-08 이식 시 결정).
     AgentTest 에서는 root == UE5 프로젝트 루트라 상태와 코드가 같은 저장소였고 거기서
     `worker/*` 브랜치를 지우는 게 맞았다. 마스터의 root 는 **큐 상태 저장소**(ax-state)이고
     UE5 저장소가 아니라, 그대로 두면 지울 브랜치를 못 찾고 **조용히 성공한 척**한다.

@@ -1,6 +1,6 @@
 """도메인 뷰어 (소 2.4.2).
 
-🔴 지키는 계약: **자립형** · **매니페스트를 믿지 않고 파일을 훑는다** · **결손을 첫 화면에.**
+[중요] 지키는 계약: **자립형** · **매니페스트를 믿지 않고 파일을 훑는다** · **결손을 첫 화면에.**
 숫자를 예쁘게 보여주는 것보다 *판단에 필요한 것*을 보이게 하는 게 이 뷰어의 값이다.
 
 `.venv/bin/python master/test_view.py`
@@ -25,7 +25,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 def _seed(root: Path) -> ProjectPaths:
@@ -36,30 +36,30 @@ def _seed(root: Path) -> ProjectPaths:
 
 
 def test_self_contained() -> None:
-    """🔴 CDN 을 물면 인터넷 없는 자리에서 빈 화면이 된다 — 이 클러스터는 LAN 이 전제다."""
+    """[중요] CDN 을 물면 인터넷 없는 자리에서 빈 화면이 된다 — 이 클러스터는 LAN 이 전제다."""
     with tempfile.TemporaryDirectory() as t:
         p = _seed(Path(t))
         h = V.render(p, V.collect(p))
         for bad in ("http://", "https://", "<script src", "<link "):
-            check(f"🔴 외부 자원 없음: {bad!r}", bad not in h)
+            check(f"[중요] 외부 자원 없음: {bad!r}", bad not in h)
         check("CSS 가 인라인", "<style>" in h)
         check("JS 가 인라인", "<script>" in h and "src=" not in h.split("<script>")[1][:80])
         check("한국어 문서로 선언", 'lang=ko' in h and "charset=utf-8" in h)
 
 
 def test_reads_files_not_manifest() -> None:
-    """🔴 이게 실제로 결함을 잡았다 — 스냅샷에 manifest 에 없는 object yaml 이 있었다."""
+    """[중요] 이게 실제로 결함을 잡았다 — 스냅샷에 manifest 에 없는 object yaml 이 있었다."""
     with tempfile.TemporaryDirectory() as t:
         p = _seed(Path(t))
         d = p.ontology / "domains" / "D"
         yaml_io.write(d / "L3/objects/UOrphan.yaml", {"name": "UOrphan", "layer": 3})
         doms = V.collect(p)
         names = {i.name for i in doms[0].items}
-        check("🔴 목록에 없어도 읽는다", "UOrphan" in names, str(names))
-        check("🔴 고아라고 표시한다", any("UOrphan" in o for o in doms[0].orphans),
+        check("[중요] 목록에 없어도 읽는다", "UOrphan" in names, str(names))
+        check("[중요] 고아라고 표시한다", any("UOrphan" in o for o in doms[0].orphans),
               str(doms[0].orphans))
         h = V.render(p, doms)
-        # 🔴 색인·sync 는 manifest 를 근거로 삼으므로 이건 검색에서 빠져 있다
+        # [중요] 색인·sync 는 manifest 를 근거로 삼으므로 이건 검색에서 빠져 있다
         check("첫 화면에 경고한다", "manifest 에 없는 항목 파일" in h, h[:600])
         check("무엇이 문제인지 말한다", "검색에도 동기화에도 빠져" in h)
 
@@ -69,7 +69,7 @@ def test_boundary_warning() -> None:
     with tempfile.TemporaryDirectory() as t:
         p = _seed(Path(t))
         h = V.render(p, V.collect(p))
-        check("🔴 경계 없음을 첫 화면에", "도메인 경계 절이 없는 도메인" in h, h[:500])
+        check("[중요] 경계 없음을 첫 화면에", "도메인 경계 절이 없는 도메인" in h, h[:500])
         check("왜 문제인지 적는다", "다른 도메인의 클래스를 끌어올" in h)
 
         d = p.ontology / "domains" / "D"
@@ -89,9 +89,9 @@ def test_shows_provenance() -> None:
                    "protected_reason": "스냅샷"})
         yaml_io.write(f, it)
         h = V.render(p, V.collect(p))
-        check("🔒 보호를 보여준다", "🔒 보호" in h, h[-400:])
-        # 🔴 드리프트를 보려면 **언제 기준인지**가 있어야 한다
-        check("🔴 기준 커밋을 보여준다", "abc12345" in h)
+        check(" 보호를 보여준다", " 보호" in h, h[-400:])
+        # [중요] 드리프트를 보려면 **언제 기준인지**가 있어야 한다
+        check("[중요] 기준 커밋을 보여준다", "abc12345" in h)
         check("본문도 보여준다", "규칙 본문" in h)
 
 
@@ -102,7 +102,7 @@ def test_write_is_read_only_for_ontology() -> None:
         out, n = V.write(p)
         check("파일을 쓴다", out.is_file() and n > 0, str(out))
         after = {f: f.stat().st_mtime_ns for f in (p.ontology).rglob("*.yaml")}
-        check("🔴 온톨로지는 안 건드린다", before == after)
+        check("[중요] 온톨로지는 안 건드린다", before == after)
         try:
             V.write(ProjectPaths(name="X", root=Path(t) / "none"))
             check("도메인이 없으면 예외", False, "조용히 빈 파일을 만들었다")
@@ -115,7 +115,7 @@ def main() -> int:
                test_shows_provenance, test_write_is_read_only_for_ontology):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_view: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_view: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

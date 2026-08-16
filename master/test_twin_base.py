@@ -26,7 +26,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 def _project(tmp: Path, *, commit: str = COMMIT, bare: str = "/var/lib/gitea/x.git") -> ProjectPaths:
@@ -58,10 +58,10 @@ def test_twin_commit() -> None:
         empty = _project(Path(t) / "b", commit="")
         try:
             twin_base.twin_commit(empty)
-            check("🔴 커밋이 없으면 예외", False, "빈 문자열을 돌려줬다")
+            check("[중요] 커밋이 없으면 예외", False, "빈 문자열을 돌려줬다")
         except twin_base.TwinBaseError as e:
-            # 🔴 빈 문자열로 얼버무리면 "모른다" 가 "괜찮다" 로 둔갑한다
-            check("🔴 커밋이 없으면 예외 (빈 문자열 금지)", "색인" in str(e), str(e)[:60])
+            # [중요] 빈 문자열로 얼버무리면 "모른다" 가 "괜찮다" 로 둔갑한다
+            check("[중요] 커밋이 없으면 예외 (빈 문자열 금지)", "색인" in str(e), str(e)[:60])
 
 
 def test_resolve() -> None:
@@ -80,14 +80,14 @@ def test_resolve() -> None:
 
         b2 = twin_base.resolve(paths, "w1", runner=_runner(f"{COMMIT}\trefs/heads/main\n"))
         check("없으면 exists=False 지만 확인은 했다", (not b2.exists) and b2.checked, b2.summary)
-        # 🔴 "무엇을 해야 하는지" 까지 말해야 요청자가 움직인다
-        check("🔴 만들 명령을 알려준다",
+        # [중요] "무엇을 해야 하는지" 까지 말해야 요청자가 움직인다
+        check("[중요] 만들 명령을 알려준다",
               b2.branch in b2.instruction and COMMIT in b2.instruction and "push" in b2.instruction,
               b2.instruction)
 
-        # 🔴 못 본 것과 없는 것은 다르다
+        # [중요] 못 본 것과 없는 것은 다르다
         b3 = twin_base.resolve(paths, "w1", runner=_runner("permission denied", rc=128))
-        check("🔴 확인 실패는 '없음' 이 아니다", (not b3.checked) and b3.error, b3.summary)
+        check("[중요] 확인 실패는 '없음' 이 아니다", (not b3.checked) and b3.error, b3.summary)
         check("실패 사유를 들고 나온다", "읽지 못했다" in b3.error, b3.error[:60])
 
         nobare = _project(Path(t) / "c", bare="")
@@ -103,17 +103,17 @@ def test_manifest_section() -> None:
                                  runner=_runner(f"{COMMIT}\trefs/heads/task/w1\n"))
         txt = "\n".join(twin_base.manifest_section(have))
         check("기준 커밋이 본문에 있다", COMMIT in txt)
-        check("🔴 ff-only 를 못박는다", "fast-forward" in txt and "reset --hard" in txt)
+        check("[중요] ff-only 를 못박는다", "fast-forward" in txt and "reset --hard" in txt)
         check("있으면 '만들어야 한다' 를 안 쓴다", "아직 없다" not in txt)
 
         miss = twin_base.resolve(paths, "w1", runner=_runner(""))
         txt2 = "\n".join(twin_base.manifest_section(miss))
-        check("🔴 없으면 본문에 그렇게 쓴다", "원격에 아직 없다" in txt2)
+        check("[중요] 없으면 본문에 그렇게 쓴다", "원격에 아직 없다" in txt2)
         check("만들 명령이 본문에 실린다", "git push -u origin task/w1" in txt2)
 
         bad = twin_base.resolve(paths, "w1", runner=_runner("boom", rc=1))
         txt3 = "\n".join(twin_base.manifest_section(bad))
-        check("🔴 확인 못 했으면 그렇게 쓴다 (없다고 하지 않는다)",
+        check("[중요] 확인 못 했으면 그렇게 쓴다 (없다고 하지 않는다)",
               "확인하지 못했다" in txt3 and "원격에 아직 없다" not in txt3, txt3[:120])
 
 
@@ -121,7 +121,7 @@ def main() -> int:
     for fn in (test_twin_commit, test_resolve, test_manifest_section):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_twin_base: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_twin_base: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

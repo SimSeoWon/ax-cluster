@@ -3,13 +3,13 @@
 검증하는 것:
 
     ① 언어 휴리스틱 — 원전 5배 규칙까지 같다 (바꾸면 과거 리포트와 비교 불가)
-    ② 🔴 `result_details` 가 **채널 필드를 잃지 않는다** (`to_dict()` 로 적으면 전부 빈다)
-    ③ 🔴 `zero_hit` 은 **2건 미만일 때만** 나온다 (원전 η.12.5 의 입력 신호)
-    ④ 🔴 기록 실패가 **조용하지 않다** — 값으로 돌아온다 (원전은 `except: pass`)
+    ② [중요] `result_details` 가 **채널 필드를 잃지 않는다** (`to_dict()` 로 적으면 전부 빈다)
+    ③ [중요] `zero_hit` 은 **2건 미만일 때만** 나온다 (원전 η.12.5 의 입력 신호)
+    ④ [중요] 기록 실패가 **조용하지 않다** — 값으로 돌아온다 (원전은 `except: pass`)
     ⑤ 회전 — 최대 건수를 넘으면 **최신**을 남긴다
     ⑥ 깨진 줄이 있어도 나머지를 읽는다
     ⑦ 위치가 프로젝트 **밖**이다 (§5.5)
-    ⑧ 🔴 표면 census — MCP·웹UI **양쪽**이 기록하고, 기계 생성 질의는 기록하지 않는다
+    ⑧ [중요] 표면 census — MCP·웹UI **양쪽**이 기록하고, 기계 생성 질의는 기록하지 않는다
 
 `.venv/bin/python master/test_search_log.py`
 """
@@ -34,7 +34,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 @dataclass
@@ -87,9 +87,9 @@ def test_result_details_keeps_channel_fields():
     check("② similarity 가 남는다", d.get("similarity") == 0.87, str(d))
     check("② rrf_score 가 남는다", d.get("rrf_score") == 0.03, str(d))
 
-    # 🔴 0 은 의미 있는 값(1위)이다 — truthy 검사로 바꾸면 사라진다
+    # [중요] 0 은 의미 있는 값(1위)이다 — truthy 검사로 바꾸면 사라진다
     d0 = SL.build_result_details([Hit(vector_rank=0, bm25_rank=0)])[0]
-    check("② 🔴 rank 0 이 사라지지 않는다",
+    check("② [중요] rank 0 이 사라지지 않는다",
           d0.get("vec_rank") == 0 and d0.get("bm25_rank") == 0, str(d0))
 
     # 채널 하나만 잡힌 경우
@@ -113,7 +113,7 @@ def test_log_writes_schema():
         check("③ results 가 파일 목록이다", rec["results"] == ["a.md", "b.md"], str(rec))
         check("③ lang 이 붙는다", rec["lang"] == "ko", str(rec))
         check("③ caller 가 붙는다", rec["caller"] == "mcp_direct", str(rec))
-        check("③ 🔴 2건이면 zero_hit 이 없다", "zero_hit" not in rec, str(rec))
+        check("③ [중요] 2건이면 zero_hit 이 없다", "zero_hit" not in rec, str(rec))
         check("③ result_details 가 실렸다", len(rec["result_details"]) == 2, str(rec))
 
 
@@ -135,7 +135,7 @@ def test_nothing_to_log_is_a_fact():
 
 
 def test_write_failure_is_not_silent():
-    """🔴 원전은 `except Exception: pass` 다 — 우리는 값으로 돌린다."""
+    """[중요] 원전은 `except Exception: pass` 다 — 우리는 값으로 돌린다."""
     with tempfile.TemporaryDirectory() as tmp:
         p = _paths(tmp)
         # 로그 경로 자리에 **디렉토리**를 놓아 쓰기를 실패시킨다
@@ -143,7 +143,7 @@ def test_write_failure_is_not_silent():
         lp.parent.mkdir(parents=True, exist_ok=True)
         lp.mkdir()
         r = SL.log_search(p, query="x", hits=[Hit()])
-        check("④ 🔴 실패가 조용하지 않다", not r["ok"] and bool(r.get("reason")), str(r))
+        check("④ [중요] 실패가 조용하지 않다", not r["ok"] and bool(r.get("reason")), str(r))
         check("④ 예외를 올리지 않았다 (fail-open)", r.get("written") is False, str(r))
 
 
@@ -161,7 +161,7 @@ def test_rotation_keeps_newest():
         check("⑤ 회전이 일어났다", r["ok"] and r["removed"] == 5, str(r))
         recs = SL.read_entries(p)
         check("⑤ 건수가 상한이다", len(recs) == SL.SEARCH_LOG_MAX_ENTRIES, str(len(recs)))
-        check("⑤ 🔴 최신을 남겼다", recs[-1]["i"] == n - 1 and recs[0]["i"] == 5,
+        check("⑤ [중요] 최신을 남겼다", recs[-1]["i"] == n - 1 and recs[0]["i"] == 5,
               f"{recs[0]}…{recs[-1]}")
 
 
@@ -177,11 +177,11 @@ def test_broken_line_does_not_kill_the_read():
 
 
 def test_both_surfaces_are_instrumented():
-    """🔴 표면 census 를 고정한다 — 원전은 MCP·HTTP **양쪽**에서 기록한다.
+    """[중요] 표면 census 를 고정한다 — 원전은 MCP·HTTP **양쪽**에서 기록한다.
 
     처음엔 MCP 한 곳만 심었고 재기동 검증 중에 `api_search` 를 발견했다. 배선이 조용히
     빠지면 로그가 표면에 따라 **편향**되고, 그건 값이 없는 것보다 나쁘다(틀린 근거가 된다).
-    ⚠️ 소스 검사다 — 실행 경로가 아니라 **배선의 존재**를 잰다.
+    [주의] 소스 검사다 — 실행 경로가 아니라 **배선의 존재**를 잰다.
     """
     root = Path(__file__).resolve().parent
     want = {
@@ -193,7 +193,7 @@ def test_both_surfaces_are_instrumented():
         check(f"⑧ {rel} 이 기록한다", "search_log.log_search(" in src, "호출이 없다")
         check(f"⑧ {rel} 의 caller={caller}", f'caller="{caller}"' in src, "caller 가 다르다")
 
-    # 🔴 기계 생성 질의는 기록하지 않는다 — 섞이면 분포가 오염된다
+    # [중요] 기계 생성 질의는 기록하지 않는다 — 섞이면 분포가 오염된다
     for rel in ("context_synth/synth.py", "webui/board.py", "work/manifest.py"):
         src = (root / rel).read_text(encoding="utf-8")
         check(f"⑧ {rel} 은 기록하지 않는다", "search_log.log_search(" not in src,
@@ -208,7 +208,7 @@ def main() -> int:
                test_both_surfaces_are_instrumented):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_search_log: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_search_log: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

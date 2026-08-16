@@ -1,6 +1,6 @@
-"""미배정 클래스 노출 — 🔴 **노출만 한다. 자동 편입 0** (소 1.3.6).
+"""미배정 클래스 노출 — [중요] **노출만 한다. 자동 편입 0** (소 1.3.6).
 
-## 🔴 규모가 곧 설계다
+## [중요] 규모가 곧 설계다
 
 실측 2026-08-09: 그래프의 클래스 **1,806** 중 도메인에 배정된 것은 **111(6%)** 뿐이다.
 즉 미배정은 **1,695건** — 평평한 목록으로 "노출" 하면 프로젝트 전체를 쏟아내는 것이고,
@@ -14,7 +14,7 @@
 실제로 미배정의 대부분이 ②라면 그건 **도메인이 모자라다는 신호**지 클래스가 하찮다는 뜻이
 아니다.
 
-## 🔴 자동 편입은 하지 않는다 (원본 하드룰)
+## [중요] 자동 편입은 하지 않는다 (원본 하드룰)
 
 원본이 자동 승급으로 크게 데었고(2026-06-01 영구 비활성), 사용자도 *"자동승급 오동작이
 심했다"* 고 확인했다. 이 모듈은 **읽기 전용**이다 — 반환값에 `add` 도 `write` 도 없다.
@@ -76,14 +76,14 @@ class Report:
         else:
             out.append("## 붙을 자리가 보이는 것 — 없다")
         out.append("")
-        # 🔴 고립분을 숨기지 않는다 — 대부분이 여기라면 도메인이 모자라다는 신호다
+        # [중요] 고립분을 숨기지 않는다 — 대부분이 여기라면 도메인이 모자라다는 신호다
         out.append(f"## 어디에도 안 닿는 것 — {self.isolated_total}건 (규모 순 상위)")
         for name, n in self.isolated[:limit]:
             out.append(f"  {name}  (메서드 {n})")
         if self.isolated_total > len(self.isolated):
             out.append(f"  … 외 {self.isolated_total - len(self.isolated)}건")
         out.append("")
-        out.append("🔴 **자동 편입은 하지 않는다.** 넣을 것을 골라 `edit`/패키지로 사람이 넣는다.")
+        out.append("[중요] **자동 편입은 하지 않는다.** 넣을 것을 골라 `edit`/패키지로 사람이 넣는다.")
         return "\n".join(out)
 
 
@@ -112,7 +112,7 @@ def scan(paths: ProjectPaths, *, sample: int = DEFAULT_LIMIT) -> Report:
     classes = _graph_classes(paths)
     rep.total_classes = len(classes)
     if not classes:
-        rep.notes.append("🔴 클래스 그래프가 없다 — `python -m master.graph build` 먼저")
+        rep.notes.append("[중요] 클래스 그래프가 없다 — `python -m master.graph build` 먼저")
         return rep
 
     assigned = collect.classified_elsewhere(paths, exclude="")
@@ -137,7 +137,7 @@ def scan(paths: ProjectPaths, *, sample: int = DEFAULT_LIMIT) -> Report:
                                         via=getattr(c, "via", "") or "")
     rep.adjacent = sorted(seen.values(), key=lambda a: (a.domain, a.name))
 
-    # ② 고립 — 나머지. 🔴 세어서 보고하고, 표본은 규모 순으로.
+    # ② 고립 — 나머지. [중요] 세어서 보고하고, 표본은 규모 순으로.
     isolated = [(n, m) for n, m in classes.items()
                 if n not in assigned and n not in seen]
     rep.isolated_total = len(isolated)

@@ -39,14 +39,14 @@ def build_prompt(files: list[tuple[str, str]], *, declarations: str = "") -> str
     AgentTest 와 같은 범위를 본다 — **컴파일을 깨뜨리는 것만**. 로직·스타일·설계는 보지 않는다
     (그건 층3 빌드/RunTests 와 사람의 몫이다).
 
-    🔴 **`declarations` 가 검출력을 갈랐다** (실측 2026-08-12, 소 2.2.1). 같은 표본을 후보 5개에
+    [중요] **`declarations` 가 검출력을 갈랐다** (실측 2026-08-12, 소 2.2.1). 같은 표본을 후보 5개에
     돌렸더니 **넷이 "없는 열거값"(`EMissionType::None`, 실제 멤버는 `Main`/`Sub`)을 놓쳤다** —
     파일만 주면 그 열거형의 정의를 모르니 추측할 수밖에 없다. 선언부를 함께 준 변형에서는
     `agy`·`sonnet`·`opus`·35B 가 **전부 잡았다.**
 
     즉 **차이를 만드는 것은 모델이 아니라 grounding 이다** — 골조 게이트에서 배운 것과 같다
     (*"이름만 대고 내용을 안 줬더니 열거값을 지어냈다"*, 리포트 12 §6.3 ③). 층2 도 같은 재료를
-    받아야 같은 부류를 잡는다. ⚠️ 안 주면 문법만 보는 검사기가 된다.
+    받아야 같은 부류를 잡는다. [주의] 안 주면 문법만 보는 검사기가 된다.
     """
     parts = [
         "You are a strict C++/Unreal Engine 5 SYNTAX checker.",
@@ -60,7 +60,7 @@ def build_prompt(files: list[tuple[str, str]], *, declarations: str = "") -> str
         "",
     ]
     if (declarations or "").strip():
-        # 🔴 **선언부를 파일보다 앞에** 둔다 — 뒤에 둘 이유가 없다. 판정 대상(파일)이 지시에
+        # [중요] **선언부를 파일보다 앞에** 둔다 — 뒤에 둘 이유가 없다. 판정 대상(파일)이 지시에
         #    가까워야 하고, 선언부는 *대조표*라서 먼저 읽혀야 한다.
         parts += ["=== DECLARATIONS FROM INCLUDED HEADERS (authoritative) ===",
                   "These are the REAL definitions. Any member/enum value not listed here "
@@ -89,7 +89,7 @@ def _run(cmd: list[str], *, timeout: int) -> str | None:
 
 
 def call_agy(prompt: str, *, timeout: int = TIMEOUT_SEC) -> str | None:
-    """`agy` 호출. ⚠️ `-p` 는 **반드시 프롬프트 직전**에 둔다 — 앞에 두면 다음 토큰을
+    """`agy` 호출. [주의] `-p` 는 **반드시 프롬프트 직전**에 둔다 — 앞에 두면 다음 토큰을
     프롬프트 값으로 먹는다(2026-08-08 실측)."""
     exe = shutil.which("agy")
     if not exe:
@@ -100,7 +100,7 @@ def call_agy(prompt: str, *, timeout: int = TIMEOUT_SEC) -> str | None:
 def call_claude(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "") -> str | None:
     """`claude -p` 호출. `model` 을 주면 `--model` 로 넘긴다(별칭 `opus`·`sonnet` 실측 통과).
 
-    🔴 **층2 는 model 을 주지 않는다** — 검증기 모델을 여기서 고정하면 소 2.2.1(모델 선정)이
+    [중요] **층2 는 model 을 주지 않는다** — 검증기 모델을 여기서 고정하면 소 2.2.1(모델 선정)이
     코드에 박히는 셈이다. 지정은 호출자 몫이다.
     """
     exe = shutil.which("claude")
@@ -112,30 +112,30 @@ def call_claude(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "") -> 
     return _run(cmd + [prompt], timeout=timeout)
 
 
-# 🔴 **순서를 실측으로 확인했다** (2026-08-12, 소 2.2.1 · `bench_layer2.py`).
+# [중요] **순서를 실측으로 확인했다** (2026-08-12, 소 2.2.1 · `bench_layer2.py`).
 #   표본 7개(양성 5 · 음성 2, 전부 이 프로젝트에서 실제로 났던 실패)로 후보 5개를 재 봤다:
 #
 #     agy            검출 4/5 · 오탐 0 · 78초     ← 같은 점수에 가장 싸다 → **1순위**
 #     claude:sonnet  검출 4/5 · 오탐 0 · 91초     ← 동점 → 폴백
 #     claude:opus    검출 4/5 · 오탐 0 · 76초     ← 동점. 비싼 값을 할 이유가 없다
-#     qwen 14b       검출 3/5 · 오탐 0 · 50초     🔴 선언부를 줘도 열거값을 못 잡았다
-#     35B            검출 4/5 · 🔴 **오탐 2** · 380초  🔴 **정상 코드를 둘 다 막았다** → 탈락
+#     qwen 14b       검출 3/5 · 오탐 0 · 50초     [중요] 선언부를 줘도 열거값을 못 잡았다
+#     35B            검출 4/5 · [중요] **오탐 2** · 380초  [중요] **정상 코드를 둘 다 막았다** → 탈락
 #
-# 🔴 상용 셋이 **동점**이라 검출력으로 고를 이유가 없다 → 싸고 빠른 쪽을 먼저 쓴다. 그리고
+# [중요] 상용 셋이 **동점**이라 검출력으로 고를 이유가 없다 → 싸고 빠른 쪽을 먼저 쓴다. 그리고
 #   로컬은 층2 에 못 쓴다는 것이 실측으로 확인됐다 — *"검증에만 상용 토큰"* 모토가 추측이
-#   아니라 근거를 갖게 됐다. ⚠️ 35B 처럼 **정상 작업을 막는 게이트는 통과시키는 게이트보다
+#   아니라 근거를 갖게 됐다. [주의] 35B 처럼 **정상 작업을 막는 게이트는 통과시키는 게이트보다
 #   나쁘다** — 그 판단은 사실 게이트에서 이미 내렸다.
 BACKENDS = [("agy", call_agy), ("claude", call_claude)]
 
 
-# ── 소 2.2.3 쿨다운 — 🔴 죽은 백엔드를 조각마다 다시 두드리지 않는다 ────────────
+# ── 소 2.2.3 쿨다운 — [중요] 죽은 백엔드를 조각마다 다시 두드리지 않는다 ────────────
 #
 # 층2 는 **조각마다** 돈다. 상용 CLI 가 쿼터로 죽었으면 조각 N개 × 타임아웃(기본 300초)을
 # 그대로 버린다 — 실패가 확실한 호출에 시간을 쓰는 것이다. 한 번 실패한 백엔드는 잠시 건너뛴다.
 #
-# 🔴 **쿨다운은 통과 사유가 아니다.** 전부 쿨다운이면 `no_backend` 로 **차단**된다 —
+# [중요] **쿨다운은 통과 사유가 아니다.** 전부 쿨다운이면 `no_backend` 로 **차단**된다 —
 #   "확인하지 못했다" 를 "괜찮다" 로 바꾸는 순간 이 게이트는 없는 것과 같다(§9.4.4).
-#   ⚠️ 그 차단이 값싼 이유는 **스풀이 응답을 들고 있어서**다(소 1.3.3) — 나중에 다시 돌리면
+#   [주의] 그 차단이 값싼 이유는 **스풀이 응답을 들고 있어서**다(소 1.3.3) — 나중에 다시 돌리면
 #   추론을 다시 사지 않는다. fail-closed 의 비용이 재시도 한 번인 구조라 막아도 된다.
 
 COOLDOWN_SEC = int(os.environ.get("AX_LAYER2_COOLDOWN", "600"))
@@ -175,7 +175,7 @@ def verify_files(files: list[tuple[str, str]], *, timeout: int = TIMEOUT_SEC,
         raw = fn(prompt, timeout=timeout)
         attempted.append(name)
         if raw is None:
-            # 🔴 미가용을 기억한다 — 다음 조각에서 같은 타임아웃을 또 쓰지 않는다
+            # [중요] 미가용을 기억한다 — 다음 조각에서 같은 타임아웃을 또 쓰지 않는다
             if cooldown_sec > 0:
                 _cooldown[name] = time.time() + cooldown_sec
             continue

@@ -2,16 +2,16 @@
 
     작업장 push → Gitea 훅 → ~/ax-spool/incoming → **여기** → 미러 갱신 · 재색인
 
-🔴 **폴링 데몬이 아니다** (§5.4). 한 번 돌고 끝나는 명령이고, `systemd` **path 유닛**(inotify)이
+[중요] **폴링 데몬이 아니다** (§5.4). 한 번 돌고 끝나는 명령이고, `systemd` **path 유닛**(inotify)이
 스풀에 파일이 생길 때 깨운다. 30초마다 깨어나 아무것도 안 하는 프로세스를 두지 않는다.
 
-🔴 **`gitea` 그룹이 필요하다.** bare 저장소(`/var/lib/gitea/...`)를 읽어야 `git fetch` 가 된다.
+[중요] **`gitea` 그룹이 필요하다.** bare 저장소(`/var/lib/gitea/...`)를 읽어야 `git fetch` 가 된다.
 실측(2026-08-08): 그룹이 없으면 git 이 *"does not appear to be a git repository"* 라고 하는데
 **실제 원인은 권한**이다 — 메시지가 원인을 감춘다. 유닛에 `SupplementaryGroups=gitea` 를 둔다.
 
 ---
 
-## ⚠️ 지금 이 소비자가 **하지 못하는 것** — 감추지 않고 적는다
+## [주의] 지금 이 소비자가 **하지 못하는 것** — 감추지 않고 적는다
 
 색인 대상은 **컨텍스트 MD**(`<Project>/context/`)이지 소스가 아니다(§5.2-E).
 그리고 그 MD 는 **소스 저장소에 없다** — 마스터 로컬이고, AgentTest 의 합성기가 만든
@@ -23,8 +23,8 @@
 
 | 푸시가 바꾸는 것 | 소비자가 하는 일 |
 |---|---|
-| `repo/` 의 소스 | ✅ 미러를 fast-forward · 변경 파일 목록 산출 · 워터마크 전진 |
-| `context/` 의 MD | ❌ **아무것도 안 바뀐다** — 합성기가 없다 |
+| `repo/` 의 소스 | [완료] 미러를 fast-forward · 변경 파일 목록 산출 · 워터마크 전진 |
+| `context/` 의 MD | [실패] **아무것도 안 바뀐다** — 합성기가 없다 |
 
 그래서 **소스만 바뀐 푸시는 재색인을 건너뛴다.** 40초를 태워 같은 961건을 다시 넣을 이유가
 없기 때문이다. 대신 `skipped` 사유를 결과에 남긴다 — "색인이 최신" 과 "색인기가 반쪽" 은
@@ -65,10 +65,10 @@ class ProjectResult:
     # ── 트윈 성장 (중 1.1 · 중 1.2) ──
     graph_notes: list[str] = field(default_factory=list)
     synth_written: int = 0
-    synth_lost: int = 0         # 🔴 문서가 안 생긴 그룹 수 = 그 커밋의 영구 유실
+    synth_lost: int = 0         # [중요] 문서가 안 생긴 그룹 수 = 그 커밋의 영구 유실
     synth_note: str = ""
     lost_groups: list[str] = field(default_factory=list)
-    canary_write_failed: int = 0   # ⚠️ 카나리 기록 자체가 실패한 횟수 (조용히 넘기지 않는다)
+    canary_write_failed: int = 0   # [주의] 카나리 기록 자체가 실패한 횟수 (조용히 넘기지 않는다)
 
     @property
     def ok(self) -> bool:
@@ -83,18 +83,18 @@ class ProjectResult:
             parts.append("그래프 " + "·".join(self.graph_notes))
         if self.synth_note:
             parts.append(f"합성 {self.synth_written}" +
-                         (f" 🔴유실 {self.synth_lost}" if self.synth_lost else ""))
+                         (f" [중요]유실 {self.synth_lost}" if self.synth_lost else ""))
         if self.reindexed:
             parts.append(f"색인 {self.docs}")
         if self.skipped:
             parts.append(f"건너뜀({self.skipped[:40]})")
         if self.error:
-            parts.append(f"🔴 {self.error[:60]}")
+            parts.append(f"[중요] {self.error[:60]}")
         return " · ".join(parts)
 
     def line(self) -> str:
         if self.error:
-            return f"  ❌ {self.project_id}: {self.error}"
+            return f"  [실패] {self.project_id}: {self.error}"
         bits = [f"{self.from_commit[:8] or '?'}→{self.to_commit[:8] or '?'}"]
         if self.source_changed:
             bits.append(f"소스 {self.source_changed}건")
@@ -102,12 +102,12 @@ class ProjectResult:
             bits.append("그래프 " + "·".join(self.graph_notes))
         if self.synth_note:
             bits.append(f"합성 {self.synth_written}건"
-                        + (f" 🔴유실 {self.synth_lost}" if self.synth_lost else ""))
+                        + (f" [중요]유실 {self.synth_lost}" if self.synth_lost else ""))
         if self.reindexed:
             bits.append(f"재색인 {self.docs}건")
         elif self.skipped:
             bits.append(f"재색인 건너뜀 ({self.skipped})")
-        return f"  ✅ {self.project_id}: " + " · ".join(bits)
+        return f"  [완료] {self.project_id}: " + " · ".join(bits)
 
 
 @dataclass
@@ -118,7 +118,7 @@ class RunResult:
     rejected: int = 0
     blocked_recursion: int = 0
     note: str = ""
-    paused: str = ""          # 🔴 게이트가 멈췄으면 그 사유 (소 3.5.1)
+    paused: str = ""          # [중요] 게이트가 멈췄으면 그 사유 (소 3.5.1)
     polled: int = 0           # 이벤트 0건일 때 상태 대조만 돌린 프로젝트 수
     poll_skipped: int = 0     # project_id 를 못 읽어 폴하지 못한 프로젝트 수
     deferred: int = 0         # 멈춰서 넘긴 이벤트 수 (유실 아님 — state-based 라 누적분이 다음에 잡힌다)
@@ -164,9 +164,9 @@ def _shquote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-# 🔴 카나리 기록기는 `master/canary.py` 로 옮겼다 (소 3.5.6 · `#182`).
+# [중요] 카나리 기록기는 `master/canary.py` 로 옮겼다 (소 3.5.6 · `#182`).
 #    이유는 층이다 — `context_search/rebuild` 도 찍어야 하는데 그쪽이 `events` 를 부르면
-#    **층 역전**이다. ⚠️ 이 이름으로 부르던 곳(테스트 포함)이 그대로 돌도록 재수출한다.
+#    **층 역전**이다. [주의] 이 이름으로 부르던 곳(테스트 포함)이 그대로 돌도록 재수출한다.
 from ..canary import (  # noqa: E402,F401
     KIND_CONTEXT_MD_LOST, KIND_DOMAIN_INDEX_GAP, append_canary,
 )
@@ -244,14 +244,14 @@ def _update_graphs(paths: ProjectPaths, changed: list[str], r: "ProjectResult") 
             st = fn(paths, changed)
             r.graph_notes.append(f"{label} {st.classes if label == '상속' else st.edges}")
         except Exception as e:                          # noqa: BLE001
-            r.graph_notes.append(f"🔴 {label} 실패: {type(e).__name__}: {e}")
+            r.graph_notes.append(f"[중요] {label} 실패: {type(e).__name__}: {e}")
 
 
 def _synthesize(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
                 *, synth_run=None) -> None:
     """컨텍스트 MD 합성 (중 1.2). **여기가 트윈을 자라게 한다.**
 
-    🔴 실패·거부를 **삼키지 않는다.** 원본이 판별 기준을 적어 뒀다 — *"skip 후 워터마크가
+    [중요] 실패·거부를 **삼키지 않는다.** 원본이 판별 기준을 적어 뒀다 — *"skip 후 워터마크가
     전진하느냐"*. 이 함수 뒤에서 워터마크가 전진하므로, 여기서 문서를 못 만들면 그 커밋의
     변경은 **영구 유실**이다. 그래서 사유를 `ProjectResult` 에 실어 로그로 내보낸다.
     """
@@ -263,17 +263,17 @@ def _synthesize(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
         r.synth_note = f"합성 건너뜀: {e}"
         return
     except Exception as e:                              # noqa: BLE001
-        r.synth_note = f"🔴 합성 실패: {type(e).__name__}: {e}"
+        r.synth_note = f"[중요] 합성 실패: {type(e).__name__}: {e}"
         return
     r.synth_written = st.written
     r.synth_lost = st.lost
     r.synth_note = st.summary
     if st.lost:
-        # 🔴 어느 그룹이 유실됐는지 남긴다 — 숫자만으로는 다시 찾을 수 없다.
+        # [중요] 어느 그룹이 유실됐는지 남긴다 — 숫자만으로는 다시 찾을 수 없다.
         for g in st.results:
             if g.lost:
                 r.lost_groups.append(f"{g.key}: {g.reason[:120]}")
-                # 🔴 저널만으로는 반복을 못 본다 — 누적한다 (소 3.5.6).
+                # [중요] 저널만으로는 반복을 못 본다 — 누적한다 (소 3.5.6).
                 if not append_canary(paths, kind="context-md-lost",
                                      detail=f"{g.key}: {g.reason}", commit=r.to_commit):
                     r.canary_write_failed += 1
@@ -314,7 +314,7 @@ def process_event(ev: Event, *, registry: Registry | None = None,
         r.error = f"fetch 실패: {out[:200]}"
         return r
 
-    # 🔴 `reset --hard` 가 아니라 `merge --ff-only` 다. 마스터는 이 클론에 커밋하지 않으므로
+    # [중요] `reset --hard` 가 아니라 `merge --ff-only` 다. 마스터는 이 클론에 커밋하지 않으므로
     #    항상 fast-forward 여야 하고, **아니라면 그건 알아야 할 사고**다. 조용히 덮어쓰지 않는다.
     rc, out = run(paths.repo, "merge", "--ff-only", "FETCH_HEAD")
     if rc != 0 and "Already up to date" not in out:
@@ -332,7 +332,7 @@ def process_event(ev: Event, *, registry: Registry | None = None,
             changed = [x.strip() for x in out.splitlines() if x.strip()]
             r.source_changed = len(changed)
 
-    # ── 🔴 여기가 트윈이 자라는 지점이다 (중 1.1 · 중 1.2) ──────────
+    # ── [중요] 여기가 트윈이 자라는 지점이다 (중 1.1 · 중 1.2) ──────────
     #
     # 원본 `watch.py` 의 커밋 처리 순서를 그대로 따른다:
     #   ① 컨텍스트 MD 합성 (LLM) — `source_commit` 을 스탬프한다
@@ -389,13 +389,13 @@ def consume_once(spool: Spool | None = None, *, registry: Registry | None = None
     def known(pid: str) -> bool:
         return bool(reg.find_by_project_id(pid))
 
-    # ── 🔴 색인 일시 중지 게이트 (소 3.5.1 — 원전 watch_state 이식) ──────
+    # ── [중요] 색인 일시 중지 게이트 (소 3.5.1 — 원전 watch_state 이식) ──────
     #
     # 진행 중 분산 작업이 있으면 **fetch·색인을 하지 않는다.** 원전 근거: *"feature 브랜치
     # 작업 중 main 인덱싱 무의미 + 워커들과 git lock 경쟁 방지"*.
     #
-    # ⚠️ 스풀은 **비운다**(claim 하고 처리를 건너뛴다). 남기면 `ax-indexer.path` 가 조건이 계속
-    # 참이라 재트리거를 반복할 수 있다. 🔴 **비워도 유실이 아니다** — 이 소비자는 state-based 라
+    # [주의] 스풀은 **비운다**(claim 하고 처리를 건너뛴다). 남기면 `ax-indexer.path` 가 조건이 계속
+    # 참이라 재트리거를 반복할 수 있다. [중요] **비워도 유실이 아니다** — 이 소비자는 state-based 라
     # 이벤트는 깨우는 신호일 뿐이고, 미러가 뒤에 남으면 **다음 번에 누적분이 한꺼번에** 잡힌다.
     # 그 *"다음 번"* 을 만드는 것이 `ax-indexer.timer` 다(게이트만 두고 타이머를 안 두면 깨울
     # 주체가 없다 — 리포트 13 §19.3 이 상태 화면에서 똑같이 물린 자리).
@@ -414,7 +414,7 @@ def consume_once(spool: Spool | None = None, *, registry: Registry | None = None
     batch: Batch = sp.claim_batch(is_registered=known)
     res.coalesced = batch.coalesced_away
     res.rejected = batch.rejected
-    # 🔴 **이벤트가 없어도 한 바퀴 돈다** (소 3.5.1 과 짝).
+    # [중요] **이벤트가 없어도 한 바퀴 돈다** (소 3.5.1 과 짝).
     #
     # 이 소비자는 state-based 다 — 무엇을 색인할지는 이벤트 내용이 아니라 **미러 HEAD 대조**가
     # 정한다. 그런데 원래 구현은 `for ev in batch.events` 안에서만 일해서, 이벤트가 0건이면
@@ -427,7 +427,7 @@ def consume_once(spool: Spool | None = None, *, registry: Registry | None = None
     #   `ax-indexer.timer` 가 별도 모드 없이 그대로 따라잡기 역할을 한다.
     if not batch.events:
         # project_id 는 각 프로젝트의 `config.yaml` 이 SSOT 다(`track.project_id`).
-        # ⚠️ 못 읽는 프로젝트는 조용히 건너뛰지 않고 **세어서** 결과에 남긴다.
+        # [주의] 못 읽는 프로젝트는 조용히 건너뛰지 않고 **세어서** 결과에 남긴다.
         ids = []
         for _name in reg.names:
             try:
@@ -467,16 +467,16 @@ def main(argv: list[str] | None = None) -> int:
 
     r = consume_once(progress=None if args.quiet else (lambda m: print(f"  · {m}")))
     if r.paused:
-        # 🔴 종료코드 4 = 게이트에 걸림. **고장이 아니다** — 유닛이 `SuccessExitStatus=4` 로 받는다
+        # [중요] 종료코드 4 = 게이트에 걸림. **고장이 아니다** — 유닛이 `SuccessExitStatus=4` 로 받는다
         #    (상태 화면의 종료코드 3 과 같은 패턴: *"늘 빨간 유닛은 유닛이 아니다"*).
         print(f"{r.paused} · 이벤트 {r.deferred}건 넘김 (유실 아님 — 다음 회차에 누적분으로 잡힌다)")
         return 4
     print(r.summary())
     for x in r.results:
         print(x.line())
-        # 🔴 유실은 목록으로 남긴다 — 워터마크가 이미 전진했으므로 다시 찾을 수 없다.
+        # [중요] 유실은 목록으로 남긴다 — 워터마크가 이미 전진했으므로 다시 찾을 수 없다.
         for g in x.lost_groups:
-            print(f"      🔴 {g}")
+            print(f"      [중요] {g}")
     if r.blocked_recursion:
         print(f"  (색인기 자신의 커밋 {r.blocked_recursion}건 차단 — 재귀 방지)")
     return 0 if r.ok else 1

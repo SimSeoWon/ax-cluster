@@ -6,11 +6,11 @@
        LLM (브로커 → 노드)
           │
           ▼  parse — 도메인 밖·근거 없음·신뢰도 미달을 버린다
-          ▼  🔴 사실 게이트 — 호출 관계를 `methods` 6,380건과 대조
+          ▼  [중요] 사실 게이트 — 호출 관계를 `methods` 6,380건과 대조
           ▼  레이어 배정 (LLM 0)
-       package.write — 🔴 검수 잠금 보존
+       package.write — [중요] 검수 잠금 보존
 
-## 🔴 여기서 결정한 것들
+## [중요] 여기서 결정한 것들
 
 **⑴ objects 는 LLM 이 만들지 않는다.** 멤버 목록·파일·레이어는 전부 결정적으로 나온다
 (`collect.members_of` + `layers.estimate_domain`). LLM 에게 물으면 있는 답을 지어내게 하는
@@ -19,10 +19,10 @@
 **⑵ 노드를 넘어뜨리지 않는다.** `num_ctx` 를 요청에 **반드시** 싣는다. 프롬프트 예산은
 `contexts.TOTAL_CHARS` 가 지킨다 — **두 값은 함께 움직인다.**
 
-⚠️ **정정 2026-08-15.** 여기 있던 *"안 실으면 모델 기본 `context_length`(256K) 전제로 KV 를
+[주의] **정정 2026-08-15.** 여기 있던 *"안 실으면 모델 기본 `context_length`(256K) 전제로 KV 를
 잡아 보드가 멈춘다"* 는 **지금 조건에서 사실이 아니다.** 실측: `num_ctx` 없는 요청을 그 보드
 Ollama 가 **`n_ctx = 4096`** 으로 올린다(`n_ctx_train = 262144` 는 모델 메타일 뿐이다).
-🔴 **그래도 값을 싣는 이유는 남는다 — 어긋나면 통째로 재적재한다**(실측 **59.6초**:
+[중요] **그래도 값을 싣는 이유는 남는다 — 어긋나면 통째로 재적재한다**(실측 **59.6초**:
 4096 상주에 8192 요청). 브로커의 상주 복구 경로에 이 값이 빠져 있어서 매번 그 비용이 붙고
 있었다(2026-08-15 에 고쳤다).
 
@@ -43,13 +43,13 @@ from ..context_search.paths import ProjectPaths
 from ..work.generate import DEFAULT_BROKER, GenerateError, call_broker, unload_model
 from . import collect, contexts as ctx_mod, domain_md, layers, package, parse, verify_facts, yaml_io
 
-# 🔴 **모델 이름이 곧 노드 선택이다.** 브로커(8102)가 모델 보유·상주로 라우팅하므로,
+# [중요] **모델 이름이 곧 노드 선택이다.** 브로커(8102)가 모델 보유·상주로 라우팅하므로,
 # 서로 다른 모델을 지정하면 서로 다른 기계로 간다 — 그게 2노드 병렬의 수단이다.
 HEAVY_MODEL = "hf.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M"   # BC-250 상주(pinned)
 CODER_MODEL = "qwen2.5-coder:14b"                                  # `.2` 상주(pinned)
-ALT_MODEL = "gemma3:12b"          # `.2` 보유. 🔴 상주가 아니다 — 아래 함정 참조
+ALT_MODEL = "gemma3:12b"          # `.2` 보유. [중요] 상주가 아니다 — 아래 함정 참조
 
-# 🔴 **기본은 두 노드의 「상주 모델」이다. 다른 모델을 고르면 핀이 깨진다.**
+# [중요] **기본은 두 노드의 「상주 모델」이다. 다른 모델을 고르면 핀이 깨진다.**
 #
 # 두 노드 다 `OLLAMA_MAX_LOADED_MODELS=1` 이라, `.2` 에 `gemma3:12b` 를 요청하면 상주하던
 # `qwen2.5-coder:14b` 를 **쫓아낸다.** 그러면 브로커의 상주 재확립이 돌아 다시 14b 를
@@ -57,31 +57,31 @@ ALT_MODEL = "gemma3:12b"          # `.2` 보유. 🔴 상주가 아니다 — �
 # 다른 모델로 재려면 그 노드의 핀을 **바꿔서** 재라 — 섞어 쓰지 말 것.
 DEFAULT_MODELS = (HEAVY_MODEL, CODER_MODEL)
 
-# 🔴 두 노드 모두 실측 상한이 8192 다 (BC-250 여유 ~2.0GB / 3060 여유 2569 MiB).
+# [중요] 두 노드 모두 실측 상한이 8192 다 (BC-250 여유 ~2.0GB / 3060 여유 2569 MiB).
 # 이 값을 올리려면 **양쪽 노드의 여유를 먼저 재라.**
 NUM_CTX = 8192
 TIMEOUT = 600
 CIRCUIT_THRESHOLD = 3
 
-# 🔴 BC-250 은 요청마다 메모리를 쥐고 **안 놓는다.** 재실측 2026-08-15: 8192 상주 상태에서
+# [중요] BC-250 은 요청마다 메모리를 쥐고 **안 놓는다.** 재실측 2026-08-15: 8192 상주 상태에서
 # 작은 요청 하나에 `available` 이 1211 → 1048 → 989MB 로 **약 60MB씩** 줄었다(옛 기록의
 # ~170MB 는 더 큰 프롬프트 기준이다). 그 보드는 모델이 12.3GB 를 먹어 **여유가 138~300MB**
 # 뿐이라, 요청 몇 개면 zram 스래싱 → 정지다(실측: 03:04 OOM · 03:11 정지 · 03:22 자체 재부팅).
 #
-# 🔴 **그런데 이 가드는 지금 한 번도 안 돈다** — `n` 이 `_lane` 호출마다 리셋되는데 우리
+# [중요] **그런데 이 가드는 지금 한 번도 안 돈다** — `n` 이 `_lane` 호출마다 리셋되는데 우리
 # 도메인은 레인당 조각이 1~3개다(2026-08-15 실측: 이 세션 35B 요청 ~14회 · 회수 0회).
-# ⚠️ 고치려면 `keep_alive:-1` 상주와의 충돌을 먼저 정해야 한다 — 내리면 다음 요청이 60초
+# [주의] 고치려면 `keep_alive:-1` 상주와의 충돌을 먼저 정해야 한다 — 내리면 다음 요청이 60초
 # 재적재다. **재고 나서 정할 일이라 지금은 기록만 한다.**
 UNLOAD_EVERY = {HEAVY_MODEL: 5}
 
-# 🔴 **상용 CLI 도 레인이 될 수 있다** (사용자 지시 2026-08-09: *"노드 둘 다 클로드도 로그인
+# [중요] **상용 CLI 도 레인이 될 수 있다** (사용자 지시 2026-08-09: *"노드 둘 다 클로드도 로그인
 # 되어있으니 클로드를 통한 오케스트레이션도 시도해보고"*). 세 대 모두 설치돼 있다 —
 # 마스터 2.1.226 · `.2` 2.1.225 · BC-250 2.1.222 (+ 마스터 `agy` 1.1.11).
 #
 # 층2 가 이미 같은 방식으로 부른다(`layer2_verify.call_agy`/`call_claude`) — **텍스트 in/out
 # 이라 §2 의 "마스터는 파일을 만지지 않는다" 와 충돌하지 않는다.** 그래서 그 함수를 그대로 쓴다.
 #
-# ⚠️ **모토와의 긴장을 알고 쓴다** — *무료 로컬=대량 생산, 상용=검증만*. 온톨로지 재합성은
+# [주의] **모토와의 긴장을 알고 쓴다** — *무료 로컬=대량 생산, 상용=검증만*. 온톨로지 재합성은
 # 도메인 7개 × 드물게(stale 일 때만)라 "대량" 이 아니고, 마일스톤이 목표 ①에서 온톨로지를
 # *"전자동이 아니라 사용자의 수동 명령과 대화형"* 이라고 못박아 뒀다. 그래도 **기본값은
 # 로컬**로 두고, 상용은 명시할 때만 쓴다.
@@ -89,7 +89,7 @@ CLI_MODELS = ("claude", "agy")
 
 
 class SynthError(RuntimeError):
-    """재합성을 시작할 수 없다. 🔴 삼키면 빈 결과가 정상처럼 보인다."""
+    """재합성을 시작할 수 없다. [중요] 삼키면 빈 결과가 정상처럼 보인다."""
 
 
 @dataclass
@@ -98,7 +98,7 @@ class DomainResult:
     actions: list = field(default_factory=list)
     invariants: list = field(default_factory=list)
     reasons: list = field(default_factory=list)      # 실패·거부 사유
-    dropped_facts: list = field(default_factory=list)  # 🔴 사실 게이트가 버린 것
+    dropped_facts: list = field(default_factory=list)  # [중요] 사실 게이트가 버린 것
     parse_notes: list = field(default_factory=list)
     written: "package.WriteStats | None" = None
     elapsed_ms: int = 0
@@ -110,16 +110,16 @@ class DomainResult:
     collisions_actions: int = 0           # 조각 간 이름 충돌 (병합에서 하나로)
     collisions_invariants: int = 0
     unloads: int = 0
-    partial: bool = False                 # 🔴 변경분만 다시 만들었나 (소 3.2.2)
+    partial: bool = False                 # [중요] 변경분만 다시 만들었나 (소 3.2.2)
     invalidation: object = None           # `invalidate.Invalidation` — partial 일 때만
     invalidated: int = 0                  # 실제로 지운 yaml 수 (쓰기 직전)
-    settled: int = 0                      # 🔴 워터마크를 올린 오브젝트 수 (stale 이 가라앉는다)
-    unreflected: set = field(default_factory=set)   # 🔴 조각이 실패해 **재추출 못 한** 클래스
+    settled: int = 0                      # [중요] 워터마크를 올린 오브젝트 수 (stale 이 가라앉는다)
+    unreflected: set = field(default_factory=set)   # [중요] 조각이 실패해 **재추출 못 한** 클래스
     descriptions: str = ""                # 레이어 책임 서술 결과 한 줄 (full 일 때만 · 소 3.1.4)
 
     @property
     def ok(self) -> bool:
-        """한 종류라도 건졌나. 🔴 **둘 다 0 이면 실패다** — 빈 결과를 성공으로 세지 않는다."""
+        """한 종류라도 건졌나. [중요] **둘 다 0 이면 실패다** — 빈 결과를 성공으로 세지 않는다."""
         return bool(self.actions or self.invariants)
 
     @property
@@ -128,7 +128,7 @@ class DomainResult:
         if self.partial:
             # 원전 카나리와 같은 항목을 낸다 (`partial=true … invalidated={a,i} preserved={a,i}`)
             iv = self.invalidation
-            s += (f" · 🔵 partial(변경 {len(getattr(iv, 'objects', ()) or ())} · "
+            s += (f" · [진행] partial(변경 {len(getattr(iv, 'objects', ()) or ())} · "
                   f"scope {len(getattr(iv, 'scope_classes', ()) or ())} · "
                   f"무효화 {self.invalidated} · 보존 "
                   f"{getattr(iv, 'preserved_actions', 0) + getattr(iv, 'preserved_invariants', 0)})")
@@ -142,13 +142,13 @@ class DomainResult:
         if self.settled:
             s += f" · 워터마크 {self.settled}건 갱신"
         if self.unreflected:
-            s += (f" · 🔴 미반영 {len(self.unreflected)}클래스"
+            s += (f" · [중요] 미반영 {len(self.unreflected)}클래스"
                   f"({', '.join(sorted(self.unreflected)[:3])}"
                   f"{'…' if len(self.unreflected) > 3 else ''})")
         if self.descriptions:
             s += f" · {self.descriptions}"
         if self.dropped_facts:
-            s += f" · 🔴 사실 게이트 {len(self.dropped_facts)}건 버림"
+            s += f" · [중요] 사실 게이트 {len(self.dropped_facts)}건 버림"
         if self.unloads:
             s += f" · 회수 {self.unloads}회"
         if self.reasons:
@@ -166,7 +166,7 @@ class Stats:
     aborted: str = ""
     elapsed_ms: int = 0
     results: list = field(default_factory=list)
-    index_sync: str = ""        # 🔴 재합성이 바꾼 트윈을 검색 색인에 실었나 (소 3.2.4)
+    index_sync: str = ""        # [중요] 재합성이 바꾼 트윈을 검색 색인에 실었나 (소 3.2.4)
 
     @property
     def summary(self) -> str:
@@ -174,11 +174,11 @@ class Stats:
         if self.index_sync:
             s += f" · 색인 {self.index_sync}"
         if self.partial:
-            s += f" · 🔵 부분 갱신 {self.partial}"
+            s += f" · [진행] 부분 갱신 {self.partial}"
         if self.skipped:
             s += f" · 건너뜀 {self.skipped}"
         if self.aborted:
-            s += f" · ⛔ 중단({self.aborted})"
+            s += f" ·  중단({self.aborted})"
         return s
 
 
@@ -209,7 +209,7 @@ def _assign_layer(item: dict, layer_of: dict) -> None:
 
 
 def _fact_gate(paths: ProjectPaths, actions: list) -> tuple:
-    """🔴 **결정적 사실 게이트.** 호출 관계가 실측과 어긋난 액션을 버린다.
+    """[중요] **결정적 사실 게이트.** 호출 관계가 실측과 어긋난 액션을 버린다.
 
     `verify_facts` 가 `methods` 테이블(중 1.1 이 채운 6,380건)과 대조한다. 게이트가 닫혀
     있으면(테이블이 비었으면) **검사하지 않고 통과시킨다** — 물으면 전수 거짓양성이 된다.
@@ -231,7 +231,7 @@ def _fact_gate(paths: ProjectPaths, actions: list) -> tuple:
 def merge_items(batches: list) -> tuple:
     """조각별 결과를 **이름 기준으로** 합친다. 같은 이름이면 신뢰도 높은 쪽을 남긴다.
 
-    🔴 **이건 기계적 병합이지 의미 종합이 아니다.** 두 조각이 같은 흐름의 앞뒤를 각각
+    [중요] **이건 기계적 병합이지 의미 종합이 아니다.** 두 조각이 같은 흐름의 앞뒤를 각각
     보고 서로 다른 이름을 붙이면 여기서는 **둘 다 남는다.** 사람(또는 대화형 에이전트)이
     합칠 자리이고, 그 한계를 아는 채로 두는 것이 조용히 하나를 버리는 것보다 낫다.
     """
@@ -259,9 +259,9 @@ def generate(prompt: str, model: str, *, broker: str, num_ctx: int, timeout: int
     `claude` / `agy` → 마스터의 상용 CLI (층2 와 같은 호출부 재사용).
     그 밖 → 브로커(8102) → 모델을 보유·상주한 노드.
 
-    🔴 실패는 `GenerateError` 로 통일한다 — 호출자가 백엔드별 예외를 알 필요가 없다.
+    [중요] 실패는 `GenerateError` 로 통일한다 — 호출자가 백엔드별 예외를 알 필요가 없다.
     """
-    # 🔴 `claude:opus` 처럼 **레인 뒤에 모델을 붙일 수 있다.** 골조 생성이 이걸 쓴다 —
+    # [중요] `claude:opus` 처럼 **레인 뒤에 모델을 붙일 수 있다.** 골조 생성이 이걸 쓴다 —
     #    골조는 1회 생성이고 모든 병렬 작업의 계약이 되므로 값을 쓸 자리다(소 1.1.1).
     lane, _, sub = model.partition(":")
     if lane in CLI_MODELS:
@@ -299,7 +299,7 @@ def _lane(chunks: list, model: str, doc, kind: str, *, broker: str, num_ctx: int
         except GenerateError as e:
             res.reasons.append(f"{kind}[{ctx.summary}] LLM 실패: {e}")
             res.llm_failed = True
-            # 🔴 **이 조각의 클래스는 반영되지 않았다.** 기록하지 않으면 settle 이
+            # [중요] **이 조각의 클래스는 반영되지 않았다.** 기록하지 않으면 settle 이
             # 도메인 전체를 「반영했다」로 찍어 낡은 문서가 정합으로 위장한다
             # (2026-08-15 실측: 노드가 죽어 12개 클래스가 그렇게 위장됐다).
             res.unreflected |= ctx.names
@@ -313,7 +313,7 @@ def _lane(chunks: list, model: str, doc, kind: str, *, broker: str, num_ctx: int
             continue
         res.parse_notes.append(f"{kind} {ctx.summary} → {got.summary}")
         out.append(got.items)
-        # 🔴 누적 회수 (위 UNLOAD_EVERY). 실패해도 치명적이지 않다 — 다음 주기에 다시 한다.
+        # [중요] 누적 회수 (위 UNLOAD_EVERY). 실패해도 치명적이지 않다 — 다음 주기에 다시 한다.
         if every and n % every == 0 and caller is None:
             try:
                 unload_model(model, broker=broker)
@@ -324,17 +324,17 @@ def _lane(chunks: list, model: str, doc, kind: str, *, broker: str, num_ctx: int
 
 
 def _manifest_extra(paths: ProjectPaths, domain: str, doc):
-    """재합성 때 manifest 에 실을 것. 🔴 **MD 의 태그를 `domain.yaml` 로 옮긴다.**
+    """재합성 때 manifest 에 실을 것. [중요] **MD 의 태그를 `domain.yaml` 로 옮긴다.**
 
-    ⚠️ **정정 (2026-08-10)**: 앞서 *"7개 중 6개 MD 에 `tags` 가 없다"* 고 적었던 것은
+    [주의] **정정 (2026-08-10)**: 앞서 *"7개 중 6개 MD 에 `tags` 가 없다"* 고 적었던 것은
     **awk 로 프론트매터를 잘못 잘라 생긴 오독**이었다. 파서로 재보니 **전부 있고 yaml 과도
     일치**한다(받아온 스냅샷이 양쪽을 맞춰 보냈다).
 
-    🔴 **그래도 이 함수는 필요하다.** 합성기는 `summary` 만 넘기고 있었으므로, 사람이 MD 에
+    [중요] **그래도 이 함수는 필요하다.** 합성기는 `summary` 만 넘기고 있었으므로, 사람이 MD 에
     한글 태그를 넣고 `refresh` 를 돌리면 **그때 사라진다.** 지금까지 어긋나지 않은 것은
     아무도 MD 태그를 손대지 않았기 때문이지 안전해서가 아니다.
 
-    🔴 **합치되 덮지 않는다.** 사람이 `domain.yaml` 에 직접 넣은 태그가 있을 수 있는데
+    [중요] **합치되 덮지 않는다.** 사람이 `domain.yaml` 에 직접 넣은 태그가 있을 수 있는데
     `package.write` 는 `manifest_extra` 를 **얕게 덮는다**(`man.update`). 그래서 여기서 미리
     union 을 만든다. 순서는 기존 것 먼저 — 사람이 정한 우선순위를 흔들지 않는다.
     """
@@ -388,7 +388,7 @@ def refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT_
         inval = invalidate.determine_invalidation(paths, domain, set(changed_classes))
         scope = {n: members[n] for n in inval.scope_classes if n in members}
         if not scope:
-            # 🔴 **판정이 아무것도 못 고르면 full 로 간다.** 부분 갱신이 빈 scope 로 도는
+            # [중요] **판정이 아무것도 못 고르면 full 로 간다.** 부분 갱신이 빈 scope 로 도는
             # 것은 "아무것도 안 하고 성공" 이고, 그것이 낡은 문서를 조용히 남기는 경로다.
             res.reasons.append("partial 불가: scope 가 도메인 멤버와 겹치지 않는다 → full")
         else:
@@ -402,7 +402,7 @@ def refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT_
         res.reasons.append("소스 발췌를 하나도 못 만들었다")
         return res
     res.chunks = len(chunks)
-    # 🔴 `allowed` 는 **도메인 전체 멤버**다. 조각 단위로 좁히면 조각을 가로지르는 액션이
+    # [중요] `allowed` 는 **도메인 전체 멤버**다. 조각 단위로 좁히면 조각을 가로지르는 액션이
     # 통째로 버려진다 — 우리가 조각낸 것이 원인인데 그 대가를 데이터가 치르게 된다.
     # cross-domain 차단이라는 원래 목적은 도메인 전체 집합으로도 그대로 지켜진다.
     res.allowed = set(members)
@@ -449,17 +449,17 @@ def refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT_
             actions=res.actions or None,
             invariants=res.invariants or None,
             manifest_extra=_manifest_extra(paths, domain, doc),
-            prune=not res.partial,      # 🔴 부분 갱신은 안 들어온 항목을 지우지 않는다
+            prune=not res.partial,      # [중요] 부분 갱신은 안 들어온 항목을 지우지 않는다
         )
-        # 🔴 **워터마크를 올린다 — 이것이 없으면 이 도메인은 영원히 stale 이다** (원본
-        # η.7.2 제안 2 의 self-settling). 🔴 **성공했을 때만** 찍는다: 실패한 재합성이
+        # [중요] **워터마크를 올린다 — 이것이 없으면 이 도메인은 영원히 stale 이다** (원본
+        # η.7.2 제안 2 의 self-settling). [중요] **성공했을 때만** 찍는다: 실패한 재합성이
         # "반영했다" 고 말하면 낡은 문서가 조용히 정합으로 위장한다.
         from . import stale as stale_mod
-        # 🔴 **미반영 클래스는 settle 하지 않는다** — 그 클래스는 이번 합성이 못 봤다.
+        # [중요] **미반영 클래스는 settle 하지 않는다** — 그 클래스는 이번 합성이 못 봤다.
         # 찍으면 다음 사이클이 「정합」으로 읽어 **영영 다시 안 본다.**
         covered = set(scope_members if res.partial else members) - res.unreflected
         res.settled = stale_mod.settle(paths, domain, covered)
-        # 레이어 책임 서술 (원본 η.7.4) — 🔴 **full 전용.** 서술은 클래스 한둘 변경에 둔감해서
+        # 레이어 책임 서술 (원본 η.7.4) — [중요] **full 전용.** 서술은 클래스 한둘 변경에 둔감해서
         # 부분 갱신마다 다시 뽑는 것은 과호출이다(원본 게이트 그대로). 쓰기 **직후**라
         # `collect_layer_members` 가 방금 쓴 L{n} 멤버를 읽을 수 있다 — 순서가 계약이다.
         if not res.partial:
@@ -478,9 +478,9 @@ def describe_domain(paths: ProjectPaths, domain: str, *, model: str = DEFAULT_MO
     원본: `ontology_refresh` 의 5번 절 — 추출(`ontology_descriptions`) + 저장
     (`write_layer_descriptions`)이 한 쌍이다.
 
-    🔴 **여기서 실패해도 재합성은 이미 성공했다.** 서술은 그 위에 얹는 요약이므로 예외를
+    [중요] **여기서 실패해도 재합성은 이미 성공했다.** 서술은 그 위에 얹는 요약이므로 예외를
     올려 배치를 죽이지 않고 **값으로 돌려준다**(원본도 try/except 로 감싼다 — 다만 로그로
-    흘린다). ⚠️ 조용해지지 않도록 사유를 문자열에 싣는다.
+    흘린다). [주의] 조용해지지 않도록 사유를 문자열에 싣는다.
     """
     from . import descriptions as desc_mod
     try:
@@ -490,13 +490,13 @@ def describe_domain(paths: ProjectPaths, domain: str, *, model: str = DEFAULT_MO
             return res.summary
         return f"{res.summary} · {desc_mod.write(paths, domain, res.descriptions).summary}"
     except Exception as e:                              # noqa: BLE001
-        return f"🔴 서술 실패 — {type(e).__name__}: {e}"
+        return f"[중요] 서술 실패 — {type(e).__name__}: {e}"
 
 
 def _delete_invalidated(inval) -> int:
     """무효화된 yaml 을 지운다. **쓰기 직전에만 부른다.**
 
-    🔴 **원전과 다르게 둔 것 — 원전은 추출 *전에* 지운다.** 그러면 LLM 이 통째로 실패했을
+    [중요] **원전과 다르게 둔 것 — 원전은 추출 *전에* 지운다.** 그러면 LLM 이 통째로 실패했을
     때 대체물 없이 사라진다. 우리 규약은 *"실패는 결과로 돌려준다"* 이고, 받아온 스냅샷은
     **재생산이 안 되는 데이터**다(리포트 11 §20). 성공했을 때의 최종 상태는 원전과 같고,
     실패했을 때만 다르다 — 그쪽이 안전한 방향이다.
@@ -528,7 +528,7 @@ def run(paths: ProjectPaths, *, domains: list | None = None,
         caller=None, progress=None) -> Stats:
     """여러 도메인 재합성. `domains` 를 안 주면 **stale 한 active 도메인만.**
 
-    🔴 전체를 무조건 다시 만들지 않는다 — 받아온 스냅샷을 이유 없이 덮는 것이 되고,
+    [중요] 전체를 무조건 다시 만들지 않는다 — 받아온 스냅샷을 이유 없이 덮는 것이 되고,
     `~/CLAUDE.md` 가 컨텍스트 문서에 대해 같은 금지를 못박아 뒀다.
     """
     from . import invalidate, stale
@@ -540,7 +540,7 @@ def run(paths: ProjectPaths, *, domains: list | None = None,
             raise SynthError(
                 "stale 한 도메인이 없다 — 재합성할 이유가 없다. 특정 도메인을 강제하려면 "
                 "이름을 명시하라. 빈 배치를 성공으로 보고하지 않는다")
-        # 🔴 **stale walk 만 부분 갱신 대상이다** (원전 배선 그대로). 사람이 도메인을
+        # [중요] **stale walk 만 부분 갱신 대상이다** (원전 배선 그대로). 사람이 도메인을
         # 명시한 것은 *"이 도메인을 다시 만들어라"* 라는 뜻이므로 언제나 full 이다 —
         # 원전도 `force_all`/`force_domains` 를 None(full) 으로 넘긴다.
         plans = {d: invalidate.plan_domain_refresh(paths, d) for d in domains}
@@ -586,9 +586,9 @@ def sync_index(paths: ProjectPaths, *, dry_run: bool = False, wrote: bool = True
     """재합성이 바꾼 트윈을 **검색 색인에 싣는다.** 반환은 사람이 읽을 한 줄.
 
     원본: `ontology_refresh.run()` 끝의 `ontology_index_sync.try_sync_domain_index`
-    (η.2.5 sync 트리거). 🔴 **도메인마다가 아니라 배치 끝에 한 번** — 원본 그대로다.
+    (η.2.5 sync 트리거). [중요] **도메인마다가 아니라 배치 끝에 한 번** — 원본 그대로다.
 
-    ## 🔴 이것이 없으면 자란 트윈을 검색이 못 본다
+    ## [중요] 이것이 없으면 자란 트윈을 검색이 못 본다
 
     실측 2026-08-15: `MissionRuntime` 이 actions 12→27 · invariants 10→30 으로 자랐는데
     `domain_index.json`·`bm25_domains.db` 는 **닷새 전(8/10) 것**이었다. 우리 색인을 깨우는
@@ -605,9 +605,9 @@ def sync_index(paths: ProjectPaths, *, dry_run: bool = False, wrote: bool = True
     있으므로 배치를 죽이지 않는다.**
     """
     if dry_run or not wrote:
-        return ""          # 🔴 쓴 것이 없으면 색인할 것도 없다 (빈 호출을 성공으로 세지 않는다)
+        return ""          # [중요] 쓴 것이 없으면 색인할 것도 없다 (빈 호출을 성공으로 세지 않는다)
     from ..context_search import domain_index
     try:
         return domain_index.sync(paths).summary
     except Exception as e:                              # noqa: BLE001
-        return f"🔴 실패 — {type(e).__name__}: {e}"
+        return f"[중요] 실패 — {type(e).__name__}: {e}"

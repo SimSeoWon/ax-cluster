@@ -9,13 +9,13 @@
 밀어낸다. 원본이 같은 이유로 분리했고(*"별도 DB / 별도 컬렉션 — 일반 인덱스는 영향 받지 않음"*),
 그래서 이 모듈이 실패해도 **기존 검색은 멀쩡하다.**
 
-## 🔴 증분이 아니라 전체 재빌드다
+## [중요] 증분이 아니라 전체 재빌드다
 
 도메인은 수십 개 규모다. 증분 갱신 기계를 만드는 비용이 전체 재빌드보다 비싸고, 부분 갱신은
 **낡은 행이 조용히 남는** 실패 모드를 만든다. FTS5 는 DELETE 로 공간을 회수하지 않으므로
 **파일째 지우고 새로 만든다**(원본과 같다).
 
-## 🔴 노이즈 3중 차단 (소 2.1.2) — 빼면 조용히 나빠진다
+## [중요] 노이즈 3중 차단 (소 2.1.2) — 빼면 조용히 나빠진다
 
 원본이 회사 환경에서 검증한 것: **벡터 단독은 무관한 질의에도 약한 hit 를 낸다.** 그대로 두면
 *"모든 검색에 도메인이 끼어드는"* 상태가 된다. 그래서 `search_norms` 는:
@@ -49,12 +49,12 @@ DEFAULT_TOP_K = 2
 SIMILARITY_THRESHOLD = 0.2
 PREVIEW = 500
 
-# 필드 가중치 — 원본 값 그대로. 🔴 **바꾸면 순위가 드리프트한다** (보고서 08 §14.4).
+# 필드 가중치 — 원본 값 그대로. [중요] **바꾸면 순위가 드리프트한다** (보고서 08 §14.4).
 WEIGHTS = (3.0, 1.5, 2.5, 1.0)          # tags · category · related_classes · body
 
 
 class DomainIndexError(RuntimeError):
-    """색인을 만들 수 없다. 🔴 빈 색인을 성공으로 보고하지 않는다."""
+    """색인을 만들 수 없다. [중요] 빈 색인을 성공으로 보고하지 않는다."""
 
 
 @dataclass
@@ -72,7 +72,7 @@ class SyncStats:
         head = "도메인" if not self.skipped_unchanged else "도메인(유지)"
         s = f"{head} {self.synced} · BM25 {self.bm25_count} · 벡터 {self.vector_count}"
         if self.skipped:
-            s += f" · 🔴 건너뜀 {self.skipped}"
+            s += f" · [중요] 건너뜀 {self.skipped}"
         if self.notes:
             s += " · " + " / ".join(self.notes[:2])
         return s
@@ -83,7 +83,7 @@ class SyncStats:
 def manifests(paths: ProjectPaths) -> list:
     """색인 대상 — 패키지의 `domain.yaml` **만**.
 
-    🔴 항목 yaml(objects/actions/invariants)은 **직접 색인하지 않는다.** 검색 진입점은
+    [중요] 항목 yaml(objects/actions/invariants)은 **직접 색인하지 않는다.** 검색 진입점은
     도메인 하나당 하나여야 한다(원본 결정). 항목 본문은 아래에서 manifest 페이로드에 **녹인다.**
     """
     root = paths.ontology / "domains"
@@ -107,7 +107,7 @@ def payload(manifest: Path) -> dict | None:
     if domain not in tags:
         tags.append(domain)     # 도메인명 자체도 태그 채널에 — 이름으로 부를 때 매칭된다
 
-    # 🔴 **오브젝트에 등록된 별칭을 tags 채널(가중치 3.0)로 올린다** (중 1.4.5).
+    # [중요] **오브젝트에 등록된 별칭을 tags 채널(가중치 3.0)로 올린다** (중 1.4.5).
     #
     # 실측 2026-08-09: 도메인 태그는 전체 118토큰 중 **한글이 4개(3%)** 뿐인데, 같은 도메인의
     # 본문에는 한글이 887~1,740자씩 있다. 즉 **한글 질의는 최고 가중치 채널을 통째로 놓치고**
@@ -147,7 +147,7 @@ def payload(manifest: Path) -> dict | None:
     for key in ("core_responsibilities", "invariants"):
         body += [str(x) for x in (data.get(key) or []) if x]
 
-    # 🔴 항목 본문을 녹인다 — 이게 없으면 액션·invariant 로는 도메인이 검색되지 않는다.
+    # [중요] 항목 본문을 녹인다 — 이게 없으면 액션·invariant 로는 도메인이 검색되지 않는다.
     for key in ("actions", "invariants_files"):
         for rel in data.get(key) or []:
             item = yaml_io.read(pkg / str(rel))
@@ -181,7 +181,7 @@ def payload(manifest: Path) -> dict | None:
 def fingerprint(paths: ProjectPaths) -> str:
     """색인 입력의 지문 — `(경로, mtime, 크기)` 의 해시.
 
-    🔴 **manifest 만이 아니라 항목 파일도 센다.** 액션 본문이 페이로드에 녹아 들어가므로
+    [중요] **manifest 만이 아니라 항목 파일도 센다.** 액션 본문이 페이로드에 녹아 들어가므로
     manifest 가 그대로여도 항목이 바뀌면 색인은 낡는다.
     """
     import hashlib
@@ -281,7 +281,7 @@ def _build_vector(paths: ProjectPaths, payloads: list, stats: SyncStats) -> int:
 def sync(paths: ProjectPaths, *, force: bool = False, progress=None) -> SyncStats:
     """도메인 색인 전체 재빌드. `force=False` 면 지문이 같을 때 건너뛴다.
 
-    🔴 **대상이 0이면 예외다.** 빈 색인을 조용히 만들면 "검색이 안 되는" 상태가 정상처럼
+    [중요] **대상이 0이면 예외다.** 빈 색인을 조용히 만들면 "검색이 안 되는" 상태가 정상처럼
     보인다 — 우리가 반복해 온 실패 모양이다.
     """
     files = manifests(paths)
@@ -293,7 +293,7 @@ def sync(paths: ProjectPaths, *, force: bool = False, progress=None) -> SyncStat
     fp = fingerprint(paths)
     stats = SyncStats()
     if not force and fp and fp == stored_fingerprint(paths):
-        # 🔴 건너뛸 때 **0 을 보고하지 않는다.** 살아 있는 색인 건수를 그대로 들고 나온다 —
+        # [중요] 건너뛸 때 **0 을 보고하지 않는다.** 살아 있는 색인 건수를 그대로 들고 나온다 —
         # "0건" 은 "색인이 비었다" 로 읽히고, 그건 우리가 고치려던 바로 그 오해다.
         prev = _read_stamp(paths)
         stats.notes.append(f"변화 없음 (지문 {fp}) — 건너뜀")
@@ -370,12 +370,12 @@ def _vector_hits(paths: ProjectPaths, query: str, limit: int) -> list:
 
 def search_norms(paths: ProjectPaths, query: str, *, top_k: int = DEFAULT_TOP_K,
                  threshold: float = SIMILARITY_THRESHOLD) -> list:
-    """질의 → 관련 도메인 규범. 🔴 **노이즈 3중 차단**(모듈 독스트링 참조).
+    """질의 → 관련 도메인 규범. [중요] **노이즈 3중 차단**(모듈 독스트링 참조).
 
     반환 항목에는 `path` 가 있다 — 호출자가 필요할 때 본문을 직접 읽으라는 뜻이고,
     그게 *문서는 지도지 정답이 아니다* 원칙에 맞는 형태다.
     """
-    # 🔴 **규범 검색도 시소러스 확장을 쓴다** (소 2.2.1). 실측 2026-08-10: 확장을
+    # [중요] **규범 검색도 시소러스 확장을 쓴다** (소 2.2.1). 실측 2026-08-10: 확장을
     # `ContextSearch.search()` 에만 붙였더니 「다이얼로그 매니저」가 엉뚱한 도메인을 1위로
     # 냈다(AlphaCoreGameFramework 1.500 → 확장하면 MissionSystemTools 5.233). 매니페스트의
     # 규범 채널이 이 함수를 쓰므로, 여기서 빠지면 **코드 생성이 틀린 규범을 받는다.**
@@ -384,7 +384,7 @@ def search_norms(paths: ProjectPaths, query: str, *, top_k: int = DEFAULT_TOP_K,
     query = ex.query
     pool = max(top_k * 3, 5)
     hits = _bm25_hits(paths, query, pool)
-    # ① 🔴 BM25 0건이면 끝. 도메인은 광범위 신호라 정확 매칭이 있어야 의미가 있다.
+    # ① [중요] BM25 0건이면 끝. 도메인은 광범위 신호라 정확 매칭이 있어야 의미가 있다.
     if not hits:
         return []
 

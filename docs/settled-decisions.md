@@ -14,7 +14,7 @@ cluster is **one person pooling their own machines at home**: BC-250 inherits th
 compute*, and much of AgentTest's complexity is *team* complexity that should be **trimmed, not
 ported** (§2.0, §5.2-D).
 
-🔴 **But "is this here because of a team?" is the wrong question.** The right one is
+[중요] **But "is this here because of a team?" is the wrong question.** The right one is
 ***"do multiple actors touch this concurrently?"*** The **two Windows UE5 PCs work on the same
 project** — same repo, same `task/<id>` branches, same queue. So **claim/lease/fencing is a
 correctness requirement, not team bloat.** Verified live: a second worker cannot claim a held task,
@@ -28,11 +28,11 @@ and a stale-epoch submit is rejected (§9.5.3).
 - **Model assignment** — `qwen2.5-coder:14b` for code generation, `35B-A3B IQ2_M` for context cooking
 - **Streaming chunk gaps as the heartbeat** — don't build separate communication infrastructure
 - **Gitea event-driven, not polling**, on the master (§5.4)
-- ⚠️ ~~**BC-250 stays inference-only**~~ — **superseded 2026-08-09** (see *Cluster shape* below).
+- [주의] ~~**BC-250 stays inference-only**~~ — **superseded 2026-08-09** (see *Cluster shape* below).
   It now also holds the project clone and runs a worker agent. What still holds is the narrower
   rule: **the Ollama model never touches files** — inference is text-in/text-out. The *machine*
   hosting that model may also host an agent that reads its own checkout; the two roles coexist.
-  🔴 Patching only one of these two statements is how they drifted — both are now consistent.
+  [중요] Patching only one of these two statements is how they drifted — both are now consistent.
 
 ## Closed on 2026-08-08
 
@@ -54,7 +54,7 @@ and a stale-epoch submit is rejected (§9.5.3).
   hallucinates APIs when generating code. **Don't design an agentic executor around the local
   models yet** (§9.4).
 
-## Ontology — 🔴 domain auto-promotion is discarded, in both producers (2026-08-09)
+## Ontology — [중요] domain auto-promotion is discarded, in both producers (2026-08-09)
 
 AgentTest has **two** producers of domain MDs (`context/_domains/<D>.md`), and they write
 **different section schemas**. Measured on the received snapshot:
@@ -72,17 +72,17 @@ this entry exists so a later session doesn't "restore" it as a missing feature.
 **Consequence — domain MDs are created only by interactive registration** (소 1.3.1 / 1.3.2).
 The 6 auto-promoted domains were hand-enriched into a *third* de-facto schema
 (`시스템 개요` + `핵심 구현 패턴` + `확장 포인트`) which `agent_defs.py:132` tells agents to read.
-🔴 **The MD parser must accept all of these.** Porting the original's fixed 6-section regex makes
+[중요] **The MD parser must accept all of these.** Porting the original's fixed 6-section regex makes
 **6 of 7 domains parse to empty with no error** — measured: `GlobalEventSystem` yields 322 chars
 under the original patterns vs **1,225** when unknown sections are kept (`master/ontology/domain_md.py`).
 Same failure family as the `is_empty` filter that silently dropped 149 documents.
 
-🔴 **6 of 7 domains have no `## 도메인 경계`.** That section is what keeps synthesis from pulling
+[중요] **6 of 7 domains have no `## 도메인 경계`.** That section is what keeps synthesis from pulling
 in other domains' classes. Do **not** compensate with prompt wording alone — the deterministic
 guards do it: `allowed_classes` filtering plus the fact gate (`ontology/verify_facts.py`, call
 relations checked against the 6,380-row `methods` table).
 
-## Ontology refresh — 🔴 for new/changed domains, **not** over the received snapshot (2026-08-09)
+## Ontology refresh — [중요] for new/changed domains, **not** over the received snapshot (2026-08-09)
 
 Ran it for real once (레드마인 #24). **Mechanically healthy**: chunking, two-node split, fact gate
 **100%** (4/4·5/5·5/5·6/6), 63s for `MissionEditor`. **But the content got shallower**:
@@ -93,16 +93,16 @@ Ran it for real once (레드마인 #24). **Mechanically healthy**: chunking, two
 What was lost encoded *this system's design decisions* — *"`UTaskListEditorWidget` uses the
 `AMissionPrefab` CDO as the source of truth and must resync via `ReloadFromCDO()`"*. What replaced
 it was *framework mechanics any UE developer reads off the header* — *"abstract class, derived must
-override `ApplyData()`"*. 🔴 **Both are true, so the fact gate passes** — it blocks *false*, not
+override `ApplyData()`"*. [중요] **Both are true, so the fact gate passes** — it blocks *false*, not
 *shallow*. Restored from backup.
 
-🔴 **Corrected the same day (user caught it): that was the *local lane*, not "our synthesis".**
+[중요] **Corrected the same day (user caught it): that was the *local lane*, not "our synthesis".**
 `synth.CLI_MODELS` has `claude`/`agy` lanes that the CLI could not select. With `--model claude`:
 **27 actions / 24 invariants, gate 100%, snapshot-grade depth** (*"`SetSCSNodeVariableName`
 returns bool, so callers must not assume success"*) — but **still lost 3 of 5 snapshot concepts**.
 More items does not mean nothing is lost.
 
-🔴 **The mitigation is a *separate* mark, not the verification lock.** `protected` means *"do not
+[중요] **The mitigation is a *separate* mark, not the verification lock.** `protected` means *"do not
 replace this with a regeneration"* (provenance-based, bulk-applicable); `verified_by_user` means
 *"a human checked this item"* (one at a time). Stamping 247 machine-produced snapshot items as
 human-verified would destroy the signal that lets us find what a human actually reviewed.
@@ -110,16 +110,16 @@ human-verified would destroy the signal that lets us find what a human actually 
 
 **Measured end state** (MissionEditor): protect 35 → `refresh --model claude` →
 actions 14→37, invariants 8→32, **snapshot kept 14/14 and 8/8, all 5 concepts alive, +47 net**.
-⚠️ **Do not protect what the synthesiser produced** — that must stay improvable.
+[주의] **Do not protect what the synthesiser produced** — that must stay improvable.
 
-🔴 **Protection never exempts verification.** `verify` still checks protected items (62 measured),
+[중요] **Protection never exempts verification.** `verify` still checks protected items (62 measured),
 `sync` still fixes their paths and *reports* classes gone from the graph without deleting. The
 open gap is design-rule prose with no call notation — which is why protection records
 `protected_at` (the twin commit), the only handle 중 2.4.1 drift audit will have.
 
-⚠️ `ModularStage/` is gitignored, so **back up before any refresh** (`~/ax-backups/`).
+[주의] `ModularStage/` is gitignored, so **back up before any refresh** (`~/ax-backups/`).
 
-## Cluster shape — 🔴 one operator, N workers (user-confirmed 2026-08-09)
+## Cluster shape — [중요] one operator, N workers (user-confirmed 2026-08-09)
 
 This is **not** AgentTest's team topology, and that difference removes machinery rather than
 adding it.
@@ -131,15 +131,15 @@ adding it.
 | **durable `task/<id>`** | A **long-lived working space**, not something to merge fast. The requester creates it (the master cannot push — §2.1); `main` is merged **once, by the human, at the end** |
 | **Always push the attempt** | Success *or* failure. Discarding failures destroys the evidence and the basis for feedback — and the model is **accumulative**: a rejected attempt is fixed, not reimplemented |
 | **Feedback is code-located** | A `[FEEDBACK]` block goes into the file at the failing spot, exactly like `[PSEUDO]` skeletons. A queue text field cannot say *where*. `layer2_verify.py` already rejects leftover markers |
-| **Layer-3 location** | The requester is fastest (UE5 is on `.33`) — but ⚠️ **never switch branches in the human's main tree**; use `git worktree`. `.2` is the unattended path |
+| **Layer-3 location** | The requester is fastest (UE5 is on `.33`) — but [주의] **never switch branches in the human's main tree**; use `git worktree`. `.2` is the unattended path |
 | **Dropped by this shape** | per-author split, durable-merge CAS, and "the model holds merge authority" (`verify_worker.py`) — **not a redesign, simply unnecessary** |
 
-🔴 **What is *not* dropped**: attempt-branch isolation, lease, and epoch fencing. Two worker
+[중요] **What is *not* dropped**: attempt-branch isolation, lease, and epoch fencing. Two worker
 machines contend for real — the criterion is *"are there actually multiple concurrent actors?"*,
 not *"is this a team feature?"*
 → [`8-git-authority.md`](8-git-authority.md) §8.4
 
-## Worker configuration — 🔴 generated, never copied (2026-08-09)
+## Worker configuration — [중요] generated, never copied (2026-08-09)
 
 A worker's `.mcp.json` was found pointing at `C:\Users\USER\Documents\ModularStage` — **another
 machine's path**, character-for-character identical to `.33`'s registry entry. One worker's config
@@ -152,7 +152,7 @@ session (a silent no-op `move`, PowerShell adding BOM/CRLF, an 18 KB stdin hang,
 managed block). Transfers use `scp`; `CLAUDE.md` is merged **marker-delimited** so human text
 survives.
 
-## Worker dispatch — 🔴 the master mediates; workers get no queue token (2026-08-09)
+## Worker dispatch — [중요] the master mediates; workers get no queue token (2026-08-09)
 
 Measured before writing any code: **both workers get 401 from `:8101`** and have **zero AX MCP
 servers registered**. The `ax-work` skill's premise — *"MCP 는 등록에 헤더가 박혀 있다"* — was
@@ -161,7 +161,7 @@ simply **false**. Two ways out: hand the token to the workers, or have the maste
 
 1. §5.5.4 already rejected a daemon on the same logic: SSH is open, so **the master pushes work in**.
 2. The token never leaves the master. Copying it to two more machines widens exposure for nothing.
-3. 🔴 **Lease heartbeats need a long-lived caller.** The lease is 1200s with a 30s reclaim loop; the
+3. [중요] **Lease heartbeats need a long-lived caller.** The lease is 1200s with a 30s reclaim loop; the
    master is already alive waiting on the SSH call. Telling the worker's Claude *"don't forget to
    heartbeat mid-task"* is exactly the kind of thing an LLM forgets — and forgetting frees the lease
    so **another worker claims the same task**.
@@ -173,7 +173,7 @@ reason` is accepted, `RESULT: DONE — …` is not. The base section of a manife
 dispatch time**, because the durable `task/<id>` is created by the requester *after* registration,
 so a registration-time value is **guaranteed to go stale in the normal flow** (measured).
 
-## Scope — 🔴 everything the master judges is `Source/` (user-confirmed 2026-08-09)
+## Scope — [중요] everything the master judges is `Source/` (user-confirmed 2026-08-09)
 
 Indexing and graphs were **already** limited to `repo/Source/**` (§5.2-E) — measured: the
 dependency and class graphs contain **1,662 files / 1,806 classes, 100% under `Source/`**.
@@ -187,17 +187,17 @@ All three are **rewritten by UE5/VS just from opening the project**. The user's 
 *"리소스나 엔진, 에디터용 메타데이터 등 바뀔 여지가 커"* — a gate watching an area that changes
 on every editor launch is **permanently red**, and a permanently red gate is not a gate.
 
-⚠️ **The trade**: uncommitted changes outside `Source/` (e.g. `Content/*.uasset`) no longer block.
+[주의] **The trade**: uncommitted changes outside `Source/` (e.g. `Content/*.uasset`) no longer block.
 Acceptable because ⑴ workers never write outside `Source/` (skill §5) ⑵ `git clean`/`reset --hard`
 are forbidden, so the residual risk is branch switching — and git **refuses** a checkout that would
 overwrite local modifications ⑶ the machine a human actually works on (`.33`) is a `requester` and
 is never dispatched to.
 
-🔴 **Out-of-scope dirt is still counted and reported** (`Cleanliness.out_of_scope`, named in
+[중요] **Out-of-scope dirt is still counted and reported** (`Cleanliness.out_of_scope`, named in
 `reason`). *Not blocking* and *not looking* are different things — if the verdict just said
 "깨끗하다", the next session would read it as repo-wide.
 
-## Terminology — 🔴 `worker` means three different things
+## Terminology — [중요] `worker` means three different things
 
 | Whose `worker` | What it actually is |
 |---|---|
@@ -207,21 +207,21 @@ is never dispatched to.
 
 Always disambiguate by directory (§4.1).
 
-> ⚠️ An earlier version of this text said AgentTest's `worker/` "ports to `master/`".
+> [주의] An earlier version of this text said AgentTest's `worker/` "ports to `master/`".
 > **That was wrong**, and §2.1 corrected it on 2026-08-07: what BC-250 took over is *inference
 > compute*, not file work. The harness never leaves Windows.
 
-## Write authority — 🔴 **the master is the broker and the writer; workers build and report** (Flow Y, user-confirmed 2026-08-14)
+## Write authority — [중요] **the master is the broker and the writer; workers build and report** (Flow Y, user-confirmed 2026-08-14)
 
-🔴 **This supersedes the section below.** The origin's `local_llm_distributed_workers_plan_v5.0.md`
+[중요] **This supersedes the section below.** The origin's `local_llm_distributed_workers_plan_v5.0.md`
 left this exact fork **explicitly undecided** (κ, *"추론 요청 주체 (κ.2 핵심 갈림) … 확정 필요"*),
 noted that its own 2-layer split *"points to Flow Y"*, and the user chose **Flow Y** on 2026-08-14.
 
     ① master  (Linux, .57)   reads source from the canonical git · asks the inference nodes ·
-                             🔴 **commits the returned diff to `task/<id>` / `attempt/<id>/<w>/<ts>`**
+                             [중요] **commits the returned diff to `task/<id>` / `attempt/<id>/<w>/<ts>`**
                              · all orchestration state lives here (κ.0)
     ② worker  (Windows)      **pull → UE compile / RunTests → report (pass/fail + log).**
-                             🔴 **makes no judgment · stateless · may go dark at any time**
+                             [중요] **makes no judgment · stateless · may go dark at any time**
     node      (BC-250)       inference only — text in, text out, no files
     requester (.33)          registers · reviews · writes `[FEEDBACK]`
 
@@ -231,32 +231,32 @@ noted that its own 2-layer split *"points to Flow Y"*, and the user chose **Flow
 durable preserved) · `fake_worker` injection for a no-hardware dry run · accumulate-don't-rebuild on
 reject (fast-forward durable to attempt, then add one `[FEEDBACK]` commit).
 
-🔴 **The UE5 build gate is a queued job, not an SSH call.** κ.0: *"통합 빌드게이트는 인프라에
+[중요] **The UE5 build gate is a queued job, not an SSH call.** κ.0: *"통합 빌드게이트는 인프라에
 고정하지 않고 **task_queue 잡으로 큐잉 → UE5 있는 윈도우 워커가 claim** 하는 CI 러너 패턴"*, and
 κ.8's port table marks `ue_builder.py`/`ue_test_runner.py` *"리눅스로 옮기는 대상 아님, 혼동 주의"*.
 Linux forces **only** that relocation — nothing else in the shape.
 
-⚠️ **Two labels to keep straight.** ① The section below is titled *"user-confirmed 2026-08-11"* but
+[주의] **Two labels to keep straight.** ① The section below is titled *"user-confirmed 2026-08-11"* but
 was **not** — it was *"그래 해"* after I pushed it (user, 2026-08-13). ② *"One writer"* was never
 ours to invent: `cluster_coordinator.verify_and_merge` already said *"durable 단일 writer 보존"* —
 and **that writer was the server**, which is what Flow Y restores. → reports/14 §2 · §11.3.
 
-⚠️ **`.2`-as-integrator may be the same mistake the origin already made and reverted** — a session
+[주의] **`.2`-as-integrator may be the same mistake the origin already made and reverted** — a session
 there invented a *"검증 전용 노드"* and the work was **reverted in full** because *"워커는
 homogeneous"*. Check our special-cased `.2` role against that before hardening it.
 
-## ~~Write authority — one writer: the integrator builds, then commits~~ (🔴 **superseded 2026-08-14**, mislabeled "user-confirmed 2026-08-11")
+## ~~Write authority — one writer: the integrator builds, then commits~~ ([중요] **superseded 2026-08-14**, mislabeled "user-confirmed 2026-08-11")
 
-🔴 **Kept for the record, not for arguing from.** Its reasoning about *who* should not commit is
+[중요] **Kept for the record, not for arguing from.** Its reasoning about *who* should not commit is
 still useful; its conclusion (workers never write, `.2` is the sole writer) is replaced by Flow Y
 above. Do not cite this section as a settled decision.
 
 The pipeline used to have **N writers**: each worker edited its own clone, committed, and pushed an
 `attempt/` branch; the master judged from a `RESULT:` marker. That is now replaced.
 
-    requester   `.33`        registers · reviews · writes `[FEEDBACK]`   🔴 the pipeline never commits here
-    worker      `.2` `.43`   **infers only** — reads the branch, answers 🔴 does not commit
-    integrator  `.2`         **applies → UE5 build verdict → commits**   🔴 the only writer
+    requester   `.33`        registers · reviews · writes `[FEEDBACK]`   [중요] the pipeline never commits here
+    worker      `.2` `.43`   **infers only** — reads the branch, answers [중요] does not commit
+    integrator  `.2`         **applies → UE5 build verdict → commits**   [중요] the only writer
     master      —            queue · manifest · routing · skeleton generation
 
 **Why the change.** The old shape judged a task by the worker's own report, and **nobody asked
@@ -269,12 +269,12 @@ It also removes a class of problems wholesale: worker git credentials, `attempt/
 all of it existed because several machines wrote. It is the same direction §5.2-D already took
 (*"durable merge CAS · a model holding merge authority — unnecessary for one operator"*).
 
-🔴 **The parallelism being given up was already suspect**: measured 2026-08-09, two workers were
+[중요] **The parallelism being given up was already suspect**: measured 2026-08-09, two workers were
 **12% faster and 90% more expensive** (cache creation is a per-worker fixed cost). And layer 3 was
 *already* serial on `.2` — the only machine that can run a UE5 verdict unattended. So the serial
 bottleneck is **relocated, not introduced**.
 
-🔴 **Why `.2` and not the requester.** The user's first sketch put applying on the main work PC.
+[중요] **Why `.2` and not the requester.** The user's first sketch put applying on the main work PC.
 `.2` is chosen instead because `.33` is **the human's machine** — guest rules apply (read-only by
 preference, `git worktree` never a branch switch, uncommitted `.uasset` is unrecoverable) and its
 availability is low (measured off during this very session). `.2` has UE5 5.8, is dedicated, and
@@ -286,9 +286,9 @@ already holds the layer-3 role.
 - On `.2` the inference checkout and the apply checkout must not be the same tree → **worktree
   isolation**, the same trick §8.4 prescribes for the requester.
 - The N-writer machinery (worker Gitea keys, `attempt/` branches, `work/cleanup.py`) becomes
-  dormant. 🔴 **It is kept, not deleted** — this is reversible until measured otherwise.
+  dormant. [중요] **It is kept, not deleted** — this is reversible until measured otherwise.
 
-## Distribution's value — 🔴 **incremental progress, not throughput** (user-reframed 2026-08-11)
+## Distribution's value — [중요] **incremental progress, not throughput** (user-reframed 2026-08-11)
 
 > *"분산 작업의 장점은 비용이나 시간이라고 생각했는데, 어찌보면 증분이 아닐까해"*
 
@@ -302,11 +302,11 @@ makes sure the base stands, dependency order decides what stacks on what, and th
 commits **only what built**. Under the 2026-08-11 write-authority decision every commit on a
 durable branch is build-verified, so the branch is monotonically green.
 
-🔴 **Verification is therefore a premise, not an option.** Piling up unverified output is debt,
+[중요] **Verification is therefore a premise, not an option.** Piling up unverified output is debt,
 not increment. Free local generation works because **wrong things do not accumulate** — not
 because it is cheap. The predecessor's own correction (*reject = advance-and-amend, never
 discard-and-regenerate*, 2026-06-21) is the same statement from the other side.
 
-⚠️ This does not move the free/paid boundary. Measured (report 12 §7), a locally generated
+[주의] This does not move the free/paid boundary. Measured (report 12 §7), a locally generated
 skeleton froze **6 declarations where Opus froze 30** — that argues the *skeleton* is a contract
 worth paying for, not that bodies should be. Bodies stay free-local plus verification.

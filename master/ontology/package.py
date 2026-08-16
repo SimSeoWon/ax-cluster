@@ -6,7 +6,7 @@
 ## 구조 (원본 3차 보정판)
 
     domains/<도메인>/
-      domain.yaml              ← manifest. 🔴 **DB 색인 대상은 이것뿐**
+      domain.yaml              ← manifest. [중요] **DB 색인 대상은 이것뿐**
       L{1,2,3}/objects/<Class>.yaml
       L{1,2,3}/actions/<Action>.yaml
       L{1,2,3}/invariants/<Name>.yaml
@@ -14,7 +14,7 @@
 레이어 디렉토리로 나누는 이유는 원본이 그렇게 했기 때문만이 아니다 — **한 파일에 다 넣으면
 재합성이 사용자 검수분까지 통째로 덮는다.** 항목 하나가 파일 하나면 잠긴 것만 남길 수 있다.
 
-## 🔴 검수 잠금은 덮지 않는다 — 이것이 이 모듈의 존재 이유다
+## [중요] 검수 잠금은 덮지 않는다 — 이것이 이 모듈의 존재 이유다
 
 `verified_by_user: true` 인 항목은 **사람이 손본 것**이다. 재합성이 그것을 덮으면 검수가
 의미를 잃고, 사용자는 다시는 검수하지 않는다.
@@ -43,7 +43,7 @@ class WriteStats:
     domain: str
     written: int = 0
     unchanged: int = 0          # 내용이 같아 안 쓴 것 (mtime 보존)
-    locked_kept: int = 0        # 🔴 검수 잠금이라 지킨 것
+    locked_kept: int = 0        # [중요] 검수 잠금이라 지킨 것
     removed: int = 0            # 더 이상 없는 항목
     notes: list = field(default_factory=list)
 
@@ -51,7 +51,7 @@ class WriteStats:
     def summary(self) -> str:
         s = f"{self.domain}: 작성 {self.written} · 그대로 {self.unchanged}"
         if self.locked_kept:
-            s += f" · 🔒 잠금 보존 {self.locked_kept}"
+            s += f" ·  잠금 보존 {self.locked_kept}"
         if self.removed:
             s += f" · 제거 {self.removed}"
         return s
@@ -84,7 +84,7 @@ def locked_items(paths: ProjectPaths, domain: str, subdir: str) -> dict:
         protected          재생성으로 대체하지 않는다 (출처가 근거 · 일괄 가능)
 
     후자는 받아온 스냅샷용이다. 실측(리포트 11 §20): 우리 합성이 스냅샷보다 **얕았고**
-    둘 다 사실이라 사실 게이트로는 걸러지지 않았다. 🔴 그래서 247건에 `verified_by_user`
+    둘 다 사실이라 사실 게이트로는 걸러지지 않았다. [중요] 그래서 247건에 `verified_by_user`
     를 찍는 대신 **다른 표식**을 둔다 — 안 그러면 *사람이 실제로 검수한 것*을 구분할 수 없다.
     """
     root = paths.ontology / "domains" / domain
@@ -103,7 +103,7 @@ def locked_items(paths: ProjectPaths, domain: str, subdir: str) -> dict:
 
 
 def merge_preserve_locked(new_items: list, locked: dict) -> list:
-    """🔴 **잠긴 항목이 이긴다.** 새 것 중 이름이 겹치는 것을 버리고 잠긴 것을 얹는다.
+    """[중요] **잠긴 항목이 이긴다.** 새 것 중 이름이 겹치는 것을 버리고 잠긴 것을 얹는다.
 
     새 내용이 더 좋아 보여도 덮지 않는다 — 좋고 나쁨을 판단하는 것은 우리가 아니다.
     """
@@ -113,7 +113,7 @@ def merge_preserve_locked(new_items: list, locked: dict) -> list:
     return keep + list(locked.values())
 
 
-# 🔴 **사람이 넣은 필드는 합성이 항목을 다시 써도 이월한다** (중 1.4.2).
+# [중요] **사람이 넣은 필드는 합성이 항목을 다시 써도 이월한다** (중 1.4.2).
 #
 # 실측 2026-08-09로 재현했다: `thesaurus.register()` 가 `AMonster.yaml` 에 `aliases: [몬스터]`
 # 를 쓴 뒤 같은 도메인을 재합성하면 **별칭이 사라진다.** 합성기는 오브젝트를
@@ -126,7 +126,7 @@ HUMAN_FIELDS = ("aliases",)
 
 
 def _previous_item(root, subdir: str, name: str) -> dict:
-    """같은 이름의 이전 항목. 🔴 **계층이 바뀌었을 수도 있어 전 계층을 훑는다** —
+    """같은 이름의 이전 항목. [중요] **계층이 바뀌었을 수도 있어 전 계층을 훑는다** —
     `L2/objects/X.yaml` 이 `L1/objects/X.yaml` 로 승급하면 경로가 달라진다."""
     fn = f"{_safe(name)}.yaml"
     for layer in LAYER_DIRS:
@@ -155,7 +155,7 @@ def write(paths: ProjectPaths, domain: str, *, objects: list | None = None,
           manifest_extra: dict | None = None, prune: bool = True) -> WriteStats:
     """도메인 패키지를 쓴다. **잠긴 항목은 지킨다.**
 
-    `prune` — 이번에 안 들어온 항목 파일을 지운다. 🔴 **잠긴 것은 지우지 않는다.**
+    `prune` — 이번에 안 들어온 항목 파일을 지운다. [중요] **잠긴 것은 지우지 않는다.**
     사람이 손본 것을 합성이 사라지게 하면 안 된다.
     """
     root = paths.ontology / "domains" / domain
@@ -177,7 +177,7 @@ def write(paths: ProjectPaths, domain: str, *, objects: list | None = None,
             name = (item or {}).get("name")
             if not name:
                 continue
-            item = carry_human_fields(root, subdir, item)   # 🔴 별칭을 잃지 않는다
+            item = carry_human_fields(root, subdir, item)   # [중요] 별칭을 잃지 않는다
             rel = f"{_layer_of(item)}/{subdir}/{_safe(name)}.yaml"
             rels[subdir].append(rel)
             kept_paths.add(rel)
@@ -188,7 +188,7 @@ def write(paths: ProjectPaths, domain: str, *, objects: list | None = None,
         if prune:
             st.removed += _prune(root, subdir, kept_paths, locked)
         else:
-            # 🔴 **부분 갱신에서 manifest 를 잃지 않는다.** `prune=False` 는 이번에 안
+            # [중요] **부분 갱신에서 manifest 를 잃지 않는다.** `prune=False` 는 이번에 안
             # 들어온 파일을 디스크에 남기는데, manifest 를 이번 목록으로만 다시 쓰면
             # 그 파일들이 **색인에서만 사라진다** — 파일은 있고 아무도 못 찾는 상태가
             # 제일 나쁘다(manifest 가 DB 색인의 단일 SSOT 다). 디스크를 훑어 합친다.
@@ -199,7 +199,7 @@ def write(paths: ProjectPaths, domain: str, *, objects: list | None = None,
     man["domain"] = domain
     for subdir in SUBDIRS:
         man[_manifest_key(subdir)] = sorted(set(rels[subdir]))
-    # 🔴 도메인 MD 의 content-hash 스냅샷 (원본 η.7.3 `write_domain_yaml` 미러).
+    # [중요] 도메인 MD 의 content-hash 스냅샷 (원본 η.7.3 `write_domain_yaml` 미러).
     # 이 값이 없으면 다음 재합성이 **무조건 full 로 폴백**한다 — 부분 갱신 판정의 신호원이
     # 여기서만 찍힌다. 값이 없을 때 빈 키를 넣지 않는 것도 원본 그대로다(`if data.md_hash`).
     from . import domain_md
@@ -231,7 +231,7 @@ def _on_disk(root, subdir: str) -> set:
 
 
 def _prune(root, subdir: str, keep: set, locked: dict) -> int:
-    """이번에 안 들어온 항목 파일을 지운다. 🔴 **잠긴 것은 남긴다.**"""
+    """이번에 안 들어온 항목 파일을 지운다. [중요] **잠긴 것은 남긴다.**"""
     n = 0
     for layer in LAYER_DIRS:
         d = root / layer / subdir

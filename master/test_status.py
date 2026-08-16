@@ -1,12 +1,12 @@
 """클러스터 상태 화면 (중 3.2).
 
-🔴 지키는 계약은 다섯이다:
+[중요] 지키는 계약은 다섯이다:
 
     ① **닿지 않는 것을 "값 없음" 으로 접지 않는다** — 빈칸은 사람이 "괜찮은가 보다" 로 읽는다
     ② **주기를 짧게 잡지 못하게 막는다** — BC-250 은 부하로 커널이 멈춘 전례가 있다
     ③ **상태는 아이콘 + 라벨 + 색** — 색만으로 의미를 전달하지 않는다
     ④ **외부 자원 0 · 새 서비스 0** — 포트를 늘리면 토큰·ufw 가 따라온다
-    ⑤ 🔴 **요청자가 꺼진 것은 위험이 아니다** — 사람의 기계다 (역할로 판정이 갈린다)
+    ⑤ [중요] **요청자가 꺼진 것은 위험이 아니다** — 사람의 기계다 (역할로 판정이 갈린다)
 
 `.venv/bin/python master/test_status.py`
 """
@@ -31,7 +31,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 # ── 파싱·판정 ───────────────────────────────────────────────────────────────────
@@ -41,12 +41,12 @@ def test_temp_bands() -> None:
     check("65도는 주의", S.band(65.0) == S.WARN)
     check("85도는 경고", S.band(85.0) == S.SERIOUS)
     check("95도는 위험", S.band(95.0) == S.CRIT)
-    # 🔴 모르는 것을 정상으로 접지 않는다
+    # [중요] 모르는 것을 정상으로 접지 않는다
     check("None 은 모름", S.band(None) == S.UNKNOWN)
 
 
 def test_short_model_keeps_the_quant_suffix() -> None:
-    """🔴 실측(화면 확인): 28자로 자르니 `…GGUF:IQ` 가 되어 양자화 접미사가 반쪽이 됐다."""
+    """[중요] 실측(화면 확인): 28자로 자르니 `…GGUF:IQ` 가 되어 양자화 접미사가 반쪽이 됐다."""
     long = "hf.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M"
     got = S.short_model(long)
     check("레지스트리 경로를 버린다", "hf.co" not in got, got)
@@ -56,7 +56,7 @@ def test_short_model_keeps_the_quant_suffix() -> None:
 
 
 def test_open_tasks_reads_the_real_queue_shape() -> None:
-    """🔴 큐의 실제 응답으로 맞췄다 — `tasks` 는 총계, 상태별은 `tasks_by_status`."""
+    """[중요] 큐의 실제 응답으로 맞췄다 — `tasks` 는 총계, 상태별은 `tasks_by_status`."""
     snap = S.Snapshot(queue={"tasks_by_status": {"cancelled": 4, "failed": 2, "submitted": 2},
                              "works": 7, "tasks": 8})
     check("총계 - 종료분", snap.open_tasks == 2, str(snap.open_tasks))
@@ -64,7 +64,7 @@ def test_open_tasks_reads_the_real_queue_shape() -> None:
     snap2 = S.Snapshot(queue={"tasks_by_status": {"claimed": 3, "verified": 9}})
     check("총계 없으면 상태별로", snap2.open_tasks == 3, str(snap2.open_tasks))
     check("큐 응답이 없으면 0", S.Snapshot().open_tasks == 0)
-    # ⚠️ 종료 상태는 한 곳에서만 정한다
+    # [주의] 종료 상태는 한 곳에서만 정한다
     check("종료 상태 목록이 한 군데", set(S.Snapshot.CLOSED) ==
           {"verified", "cancelled", "failed"}, str(S.Snapshot.CLOSED))
 
@@ -72,7 +72,7 @@ def test_open_tasks_reads_the_real_queue_shape() -> None:
 # ── ① 닿지 않는 것 · ⑤ 역할 ────────────────────────────────────────────────────
 
 def test_unreachable_worker_is_critical_but_requester_is_not() -> None:
-    """🔴 `.33` 은 사람의 기계다 — 꺼져 있는 것이 정상 상태일 수 있다."""
+    """[중요] `.33` 은 사람의 기계다 — 꺼져 있는 것이 정상 상태일 수 있다."""
     w = S.Machine(host="h", role="worker", error="No route to host")
     r = S.Machine(host="h", role="requester", error="timeout")
     check("워커가 닿지 않으면 위험", w.status == S.CRIT, w.status)
@@ -90,14 +90,14 @@ def test_missing_gpu_reading_is_unknown_not_zero() -> None:
 # ── ② 주기 가드 ─────────────────────────────────────────────────────────────────
 
 def test_min_interval_refuses_frequent_collection() -> None:
-    """🔴 BC-250 은 부하로 커널이 멈춘 전례가 있다."""
+    """[중요] BC-250 은 부하로 커널이 멈춘 전례가 있다."""
     d = Path(tempfile.mkdtemp(prefix="axst"))
     try:
         import time
         (d / S.STAMP_NAME).write_text(str(time.time()), encoding="utf-8")
         try:
             S.collect(state_dir=d)
-            check("🔴 최소 간격을 막는다", False, "통과해버렸다")
+            check("[중요] 최소 간격을 막는다", False, "통과해버렸다")
         except RuntimeError as e:
             check("최소 간격을 막는다", "최소 간격" in str(e), str(e))
             check("이유를 말한다", "커널이 멈춘" in str(e), str(e))
@@ -108,15 +108,15 @@ def test_min_interval_refuses_frequent_collection() -> None:
 
 
 def test_collection_commands_are_read_only() -> None:
-    """🔴 쓰는 명령이 하나도 없어야 한다."""
+    """[중요] 쓰는 명령이 하나도 없어야 한다."""
     src = Path(S.__file__).read_text(encoding="utf-8")
     # 수집 명령 문자열 안에 쓰기 동작이 섞여 있지 않은지
     for bad in ("rm ", "git checkout", "git commit", "git push", "systemctl start",
                 "systemctl restart", "> /", "tee "):
-        check(f"🔴 `{bad.strip()}` 를 쓰지 않는다", bad not in src, bad)
+        check(f"[중요] `{bad.strip()}` 를 쓰지 않는다", bad not in src, bad)
     check("nvidia-smi 는 조회 전용", "--query-gpu" in S._NVIDIA)
-    # ⚠️ 윈도우 cmd 에는 파이프가 없다 (실측으로 물린 함정)
-    check("🔴 윈도우 명령에 파이프가 없다", "|" not in S._NVIDIA, S._NVIDIA)
+    # [주의] 윈도우 cmd 에는 파이프가 없다 (실측으로 물린 함정)
+    check("[중요] 윈도우 명령에 파이프가 없다", "|" not in S._NVIDIA, S._NVIDIA)
 
 
 # ── ③④ 렌더 불변식 ─────────────────────────────────────────────────────────────
@@ -144,7 +144,7 @@ def test_render_has_no_external_resources() -> None:
     h = S.render(_sample())
     refs = re.findall(r'(?:src|href)=["\']([^"\']+)', h)
     outside = [r for r in refs if not r.startswith("#")]
-    check("🔴 외부 자원 0", not outside, str(outside))
+    check("[중요] 외부 자원 0", not outside, str(outside))
     for bad in ("http://", "https://", "cdn", "//fonts"):
         check(f"`{bad}` 참조 없음", bad not in h.replace("192.168", ""), bad)
 
@@ -152,11 +152,11 @@ def test_render_has_no_external_resources() -> None:
 def test_render_links_the_other_screen_not_a_new_service() -> None:
     h = S.render(_sample(), viewer_link="domains.html")
     check("도메인 뷰어로 링크", 'href="domains.html"' in h)
-    check("🔴 새 포트를 언급하지 않는다", ":8104" not in h and ":8105" not in h)
+    check("[중요] 새 포트를 언급하지 않는다", ":8104" not in h and ":8105" not in h)
 
 
 def test_status_is_never_color_alone() -> None:
-    """🔴 색만으로 의미를 전달하면 색을 못 보는 사람에게는 아무 정보가 아니다."""
+    """[중요] 색만으로 의미를 전달하면 색을 못 보는 사람에게는 아무 정보가 아니다."""
     h = S.render(_sample())
     badges = re.findall(r'<span class="st (\w+)"><i>([^<]*)</i>([^<]*)', h)
     check("배지가 있다", len(badges) >= 3, str(len(badges)))
@@ -166,7 +166,7 @@ def test_status_is_never_color_alone() -> None:
 
 def test_problems_come_first_and_exactly_one_hero() -> None:
     h = S.render(_sample())
-    check("🔴 히어로는 하나", h.count('class="hero"') == 1, str(h.count('class="hero"')))
+    check("[중요] 히어로는 하나", h.count('class="hero"') == 1, str(h.count('class="hero"')))
     # 문제 배너가 머신 섹션보다 앞에 온다 (도메인 뷰어와 같은 판단)
     check("문제가 머신보다 먼저", h.index('class="band"') < h.index("<h2>머신</h2>"))
     check("문제 개수를 적는다", "문제 1건" in h, h[h.index('class="band"'):][:120])
@@ -181,7 +181,7 @@ def test_no_problems_says_so_positively() -> None:
 
 
 def test_palette_matches_the_original_pages() -> None:
-    """🔴 **이 화면만 다른 색이면 다른 앱으로 읽힌다** (사용자 지적 2026-08-13).
+    """[중요] **이 화면만 다른 색이면 다른 앱으로 읽힌다** (사용자 지적 2026-08-13).
 
     전에 이 자리에는 *"다크는 OS 설정과 토글 양쪽에서 이긴다"* 를 검사하는 테스트가 있었다.
     그 규약 자체는 맞지만 **여기서는 틀린 규약이었다** — 이웃 화면(`/`·`/ontology`)에 라이트
@@ -203,7 +203,7 @@ def test_palette_matches_the_original_pages() -> None:
             want = (orig.get(theirs) or "").lower()
             check(f"{ours} = 원전 {theirs} ({want})",
                   bool(want) and f"{ours}:{want}" in h.lower(), f"원전값 {want!r}")
-    check("🔴 라이트 모드 분기를 두지 않는다 — 이웃 화면에 없다",
+    check("[중요] 라이트 모드 분기를 두지 않는다 — 이웃 화면에 없다",
           "prefers-color-scheme" not in h)
     check("배경을 명시한다 — 투명한 body 는 호스트 색을 빌린다", "background:var(--bg)" in h)
 
@@ -219,7 +219,7 @@ def test_meter_track_is_same_ramp_and_scale_is_labeled() -> None:
 
 
 def test_measured_caveats_are_on_screen() -> None:
-    """🔴 관례를 실측처럼 보이게 두지 않는다."""
+    """[중요] 관례를 실측처럼 보이게 두지 않는다."""
     h = S.render(_sample())
     check("임계값이 관례라고 적는다", "관례" in h)
     check("읽기 전용임을 적는다", "읽기 전용" in h)
@@ -228,7 +228,7 @@ def test_measured_caveats_are_on_screen() -> None:
 
 
 def test_in_flight_tasks_are_shown() -> None:
-    """🔴 사용자가 요청한 항목: *"뭘 시작했고"* (소 3.2.3)."""
+    """[중요] 사용자가 요청한 항목: *"뭘 시작했고"* (소 3.2.3)."""
     h = S.render(_sample())
     check("진행 중 절이 있다", "진행 중인 작업" in h)
     check("태스크·워커를 보인다", "abc12345" in h and "192.168.0.2" in h)
@@ -238,7 +238,7 @@ def test_in_flight_tasks_are_shown() -> None:
 
 
 def test_refresh_is_wired_to_a_timer_and_the_numbers_agree() -> None:
-    """🔴 *"지금 70분째 갱신 안되는데?"* (사용자 2026-08-13) — 갱신은 **타이머**의 일이다.
+    """[중요] *"지금 70분째 갱신 안되는데?"* (사용자 2026-08-13) — 갱신은 **타이머**의 일이다.
 
     브라우저 새로고침으로 수집을 유발할 수는 없다(그게 `MIN_INTERVAL` 가드의 목적이다). 그러면
     갱신 주체는 유닛뿐인데, 그 주기가 코드와 유닛 파일 **두 곳**에 적히므로 어긋날 수 있다.
@@ -254,23 +254,23 @@ def test_refresh_is_wired_to_a_timer_and_the_numbers_agree() -> None:
     if m:
         sec = int(m.group(1)) * (60 if m.group(2) == "min" else 1)
         check(f"REFRESH_SEC({S.REFRESH_SEC}) = 타이머 주기({sec})", S.REFRESH_SEC == sec)
-    check(f"🔴 주기({S.REFRESH_SEC}) < 낡음 임계값({V.STALE_SEC}) — 늘 뜨는 경고는 안 읽힌다",
+    check(f"[중요] 주기({S.REFRESH_SEC}) < 낡음 임계값({V.STALE_SEC}) — 늘 뜨는 경고는 안 읽힌다",
           S.REFRESH_SEC < V.STALE_SEC)
     check(f"주기({S.REFRESH_SEC}) > 최소 간격({S.MIN_INTERVAL}) — 가드에 상습적으로 걸리지 않는다",
           S.REFRESH_SEC > S.MIN_INTERVAL)
     check("화면이 갱신 주체를 밝힌다", "ax-status.timer" in S.render(_sample()))
 
-    # 🔴 가드에 걸린 것은 고장이 아니다 — 유닛이 그 코드를 성공으로 받아야 한다
+    # [중요] 가드에 걸린 것은 고장이 아니다 — 유닛이 그 코드를 성공으로 받아야 한다
     check(f"유닛이 SuccessExitStatus={S.EXIT_TOO_SOON}",
           f"SuccessExitStatus={S.EXIT_TOO_SOON}" in svc)
-    check("⚠️ 1 은 성공으로 받지 않는다 — 진짜 실패는 실패여야 한다",
+    check("[주의] 1 은 성공으로 받지 않는다 — 진짜 실패는 실패여야 한다",
           "SuccessExitStatus=1" not in svc)
     check("TooSoon 은 RuntimeError 의 하위형이다(기존 처리와 호환)",
           issubclass(S.TooSoon, RuntimeError))
     # 유닛이 fail-closed 환경변수를 넘겨야 한다 — 첫 실행이 이것 때문에 죽었다(실측)
     check("유닛이 AX_PROJECTS_ROOT 를 준다", "AX_PROJECTS_ROOT=" in svc)
     check("유닛 PATH 에 ~/.local/bin", "/home/sim/.local/bin" in svc)
-    check("⚠️ 쓰기 명령이 유닛에 없다", "--force" not in svc and "push" not in svc)
+    check("[주의] 쓰기 명령이 유닛에 없다", "--force" not in svc and "push" not in svc)
 
 
 def main() -> int:
@@ -292,7 +292,7 @@ def main() -> int:
                test_in_flight_tasks_are_shown):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_status: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_status: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

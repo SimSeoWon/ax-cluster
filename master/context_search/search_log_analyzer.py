@@ -6,21 +6,21 @@
     1. 채널 기여도      vector / bm25 / vector+bm25 별 source 분포
     2. 언어별 갭        ko / en / mixed / other 별 채널 hit 비율
     3. BM25 0건 진단    0건 쿼리의 형태 (single-CamelCase · korean-only …)
-    4. 시소러스 후보    🔴 **반복되는 0건 한국어 검색어** (원전 η.12.5)
+    4. 시소러스 후보    [중요] **반복되는 0건 한국어 검색어** (원전 η.12.5)
     5. 도메인 빈도      결과 경로 첫 디렉토리 기준
     6. RRF k 튜닝       k=40/60/80 시뮬레이션 — 우리 `RRF_K=60` 이 맞는지
 
-🔴 **stdlib 만 쓴다 — 외부 의존 0, LLM 0.** 원전이 이 자리에 값을 매긴 이유가 그것이다:
+[중요] **stdlib 만 쓴다 — 외부 의존 0, LLM 0.** 원전이 이 자리에 값을 매긴 이유가 그것이다:
 *"분석기는 stdlib 전용·LLM 0 이라 토큰 비용이 없다 — 배치 비용은 로그 1패스뿐."*
 
-## 🔴 왜 이것이 「자동 판정」을 스스로 내리나
+## [중요] 왜 이것이 「자동 판정」을 스스로 내리나
 
 원전 주석 그대로: *"자동 배치는 사람이 실시간으로 「해석 가이드」를 읽지 않으므로, 각 섹션이
 스스로 결론(verdict)을 내려야 한다."* 그래서 사람용 해석 가이드와 **별개로** 임계값 대비
-결론을 붙인다. 🔴 그리고 **표본이 얇으면 결론 대신 「판단 보류」** 를 낸다 — 희소한 초기
+결론을 붙인다. [중요] 그리고 **표본이 얇으면 결론 대신 「판단 보류」** 를 낸다 — 희소한 초기
 데이터에서 오판하지 않기 위해서다(`MIN_TOTAL_SAMPLE`).
 
-⚠️ 우리에게 이 가드가 특히 중요하다: 로그를 **오늘 심었으므로**(소 3.4.5) 당장은 표본이
+[주의] 우리에게 이 가드가 특히 중요하다: 로그를 **오늘 심었으므로**(소 3.4.5) 당장은 표본이
 한 자릿수다. 첫 리포트는 *"판단 보류"* 로 나오는 것이 **정상이고 옳다.**
 
 ## 원전과 다르게 둔 것 셋
@@ -36,7 +36,7 @@
 **③ 함수 정의 순서.** 원전은 `fmt_thesaurus_candidates` 를 쓰는 곳보다 **뒤에** 정의해 뒀다
 (파이썬은 호출 시점에 해석하므로 동작한다). 여기서는 쓰는 순서대로 놓았다 — 동작은 같다.
 
-🔴 **임계값·판정 문구는 바꾸지 않았다.** 바꾸면 과거 리포트와 비교가 안 된다
+[중요] **임계값·판정 문구는 바꾸지 않았다.** 바꾸면 과거 리포트와 비교가 안 된다
 (`detect_lang` 의 5배 규칙을 그대로 둔 것과 같은 이유).
 """
 from __future__ import annotations
@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 # ─────────────────────────────────────────────────────────────
-# 자동 판정 임계값 — 🔴 **원전 값 그대로.** 운영 데이터로 보정될 수 있게 모듈 상수로 둔다
+# 자동 판정 임계값 — [중요] **원전 값 그대로.** 운영 데이터로 보정될 수 있게 모듈 상수로 둔다
 # (원전 주석: *"config 표면화는 과설계라 보류"*).
 # ─────────────────────────────────────────────────────────────
 
@@ -84,7 +84,7 @@ def parse_ts(ts: Optional[str]) -> Optional[datetime]:
 
 def load_entries(log_path: Path, since: Optional[datetime] = None,
                  until: Optional[datetime] = None) -> Iterator[dict]:
-    """JSONL 한 줄씩 — `since <= ts < until`. 🔴 깨진 줄은 건너뛴다(분석을 포기하지 않는다)."""
+    """JSONL 한 줄씩 — `since <= ts < until`. [중요] 깨진 줄은 건너뛴다(분석을 포기하지 않는다)."""
     log_path = Path(log_path)
     if not log_path.exists():
         return
@@ -108,7 +108,7 @@ def load_entries(log_path: Path, since: Optional[datetime] = None,
 
 
 # ─────────────────────────────────────────────────────────────
-# 분석 — 🔴 전부 순수 함수다. 입력이 같으면 출력이 같다
+# 분석 — [중요] 전부 순수 함수다. 입력이 같으면 출력이 같다
 # ─────────────────────────────────────────────────────────────
 
 def channel_breakdown(entries: list) -> dict:
@@ -125,7 +125,7 @@ def channel_breakdown(entries: list) -> dict:
 
 
 def language_gap(entries: list) -> dict:
-    """언어별 채널 hit. ⚠️ `has_tag` 는 우리에게 늘 0 이다 (2채널) — 남겨 둔 이유는 머리말 ②."""
+    """언어별 채널 hit. [주의] `has_tag` 는 우리에게 늘 0 이다 (2채널) — 남겨 둔 이유는 머리말 ②."""
     table: dict = defaultdict(
         lambda: {"total": 0, "has_vec": 0, "has_bm25": 0, "has_both": 0,
                  "has_tag": 0, "bm25_zero": 0}
@@ -209,13 +209,13 @@ def bm25_zero_patterns(entries: list) -> dict:
 
 
 def thesaurus_alias_candidates(entries: list, min_count: int = 2, top_n: int = 20) -> dict:
-    """🔴 **반복되는 0건 한국어 검색어** → 시소러스 별칭 후보 (원전 η.12.5).
+    """[중요] **반복되는 0건 한국어 검색어** → 시소러스 별칭 후보 (원전 η.12.5).
 
     전 채널이 0건인 한국어 쿼리는 *"그 개념을 가리키는 영문 클래스명 별칭이 시소러스에
     없다"* 는 신호일 확률이 높다. 영문 쿼리는 보통 클래스명 그대로라 신호가 약해 **제외**한다.
     같은 검색어가 반복되면(`min_count`) 우연이 아니라 **검색 습관**으로 본다.
 
-    🔴 **후보 나열까지만 — 자동 반영은 없다.** 원전의 *"제안형 원칙"* 이고 우리 온톨로지
+    [중요] **후보 나열까지만 — 자동 반영은 없다.** 원전의 *"제안형 원칙"* 이고 우리 온톨로지
     규약(*"자동 승급 폐기 · 사람이 시켜야 부른다"*)과 같은 결이다.
     """
     counter: Counter = Counter()
@@ -250,7 +250,7 @@ def domain_frequency(entries: list, top_n: int = 15) -> dict:
 def rrf_simulate(entries: list, k_values=(40, 60, 80), top_n: int = 5) -> dict:
     """`vec_rank`/`bm25_rank` 로 RRF 를 재계산해 k 별 top-N 안정성을 비교한다.
 
-    🔴 **이것이 `result_details` 의 채널 필드를 요구하는 자리다.** `Hit.to_dict()` 로 로그를
+    [중요] **이것이 `result_details` 의 채널 필드를 요구하는 자리다.** `Hit.to_dict()` 로 로그를
     적었다면 여기가 통째로 빈다(소 3.4.5 머리말의 함정).
     """
     base_k = 60
@@ -297,7 +297,7 @@ def rrf_simulate(entries: list, k_values=(40, 60, 80), top_n: int = 5) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
-# 자동 판정 — 🔴 문구·임계값 원전 그대로 (바꾸면 과거 리포트와 비교 불가)
+# 자동 판정 — [중요] 문구·임계값 원전 그대로 (바꾸면 과거 리포트와 비교 불가)
 # ─────────────────────────────────────────────────────────────
 
 def verdict_channel(channel: dict, language: dict) -> str:
@@ -368,7 +368,7 @@ def verdict_thesaurus_candidates(result: dict) -> str:
 
 
 def _verdict_line(text: str, sample_ok: bool) -> list:
-    """🔴 표본이 얇으면 **결론을 내지 않는다.** 오판이 무판정보다 비싸다."""
+    """[중요] 표본이 얇으면 **결론을 내지 않는다.** 오판이 무판정보다 비싸다."""
     if not sample_ok:
         return ["**자동 판정**: 표본 부족 — 판단 보류", ""]
     return [f"**자동 판정**: {text}", ""]
@@ -419,7 +419,7 @@ def fmt_language(result: dict) -> list:
             "- `bm25_zero_%` 가 ko 에서 en 대비 현저히 높으면 → 한국어 토큰화/인덱싱 갭",
             "- `has_both` 가 낮으면 → 두 채널이 서로 다른 결과를 찾고 있다 (RRF 효과 큼)",
             "- `has_vec` ≈ `has_both` 면 → BM25 가 거의 항상 벡터에 동의 → 단독 가치 낮음",
-            "- ⚠️ `tag` 는 우리에게 **늘 0** 이다 — 융합이 2채널이다 (원전은 3채널)", ""]
+            "- [주의] `tag` 는 우리에게 **늘 0** 이다 — 융합이 2채널이다 (원전은 3채널)", ""]
     return out
 
 
@@ -458,7 +458,7 @@ def fmt_thesaurus_candidates(result: dict) -> list:
         out.append(f"| `{q.replace('|', chr(92) + '|')}` | {n} |")
     out += ["", "**해석 가이드**: 반복되는 0건 한국어 검색어는 클래스 별칭 등록 후보다. "
             "대상 클래스가 확인되면 사람이 `add_alias_tool(클래스, 표현)` 로 등록한다 — "
-            "🔴 여기 나열은 **후보 제안일 뿐 자동 반영되지 않는다.**", ""]
+            "[중요] 여기 나열은 **후보 제안일 뿐 자동 반영되지 않는다.**", ""]
     return out
 
 
@@ -501,7 +501,7 @@ def _analyze_window(entries: list, label: str = "") -> list:
 
     out = fmt_summary(entries, label=label)
     if not sample_ok:
-        out += [f"> ⚠️ 표본 {len(entries)}건 < 최소 {MIN_TOTAL_SAMPLE}건 — "
+        out += [f"> [주의] 표본 {len(entries)}건 < 최소 {MIN_TOTAL_SAMPLE}건 — "
                 "자동 판정은 보류 처리됐다 (수치는 참고용)", ""]
     out += fmt_channel(channel)
     out += _verdict_line(verdict_channel(channel, language), sample_ok)
@@ -550,19 +550,19 @@ def _report_header(title: str, log_path, entries: list) -> list:
            "- 생성: 자동 배치 (Phase α — RAG 채널 분석·튜닝)",
            f"- 엔트리: {len(entries)}건"]
     if len(entries) < MIN_TOTAL_SAMPLE:
-        out.append(f"> ⚠️ 표본 {len(entries)}건 < 최소 {MIN_TOTAL_SAMPLE}건 — "
+        out.append(f"> [주의] 표본 {len(entries)}건 < 최소 {MIN_TOTAL_SAMPLE}건 — "
                    "자동 판정 보류 (수치는 참고용)")
     out.append("")
     return out
 
 
 def generate_reports(log_path, out_dir, since: str = "", until: str = "") -> dict:
-    """🔴 **배치 진입점** — 두 리포트 파일을 `out_dir` 에 쓴다 (원전 부록 B 구조).
+    """[중요] **배치 진입점** — 두 리포트 파일을 `out_dir` 에 쓴다 (원전 부록 B 구조).
 
         rag_channel_report.md    요약 + 채널 기여도 + RRF k 튜닝 + 도메인 빈도
         language_gap_report.md   요약 + 언어별 갭 + BM25 0건 진단 + 시소러스 별칭 후보
 
-    반환 `{ok, entries, files, reason}` — 🔴 **예외를 올리지 않고 값으로 말한다**(배치 안전).
+    반환 `{ok, entries, files, reason}` — [중요] **예외를 올리지 않고 값으로 말한다**(배치 안전).
     """
     log_path = Path(log_path)
     out_dir = Path(out_dir)

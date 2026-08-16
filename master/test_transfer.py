@@ -1,6 +1,6 @@
 """상태 익스포트/임포트 (소 2.4.3).
 
-🔴 지키는 계약: **임포트는 덮어쓰기가 아니라 병합이다.** 우리 트리는 받은 스냅샷과 갈라져
+[중요] 지키는 계약: **임포트는 덮어쓰기가 아니라 병합이다.** 우리 트리는 받은 스냅샷과 갈라져
 있고(보호 표식 240건·별칭), 통째로 덮으면 그게 사라진다 — 재합성 경계에서 이미 겪은 문제다.
 
 `.venv/bin/python master/test_transfer.py`
@@ -27,7 +27,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 def _seed(root: Path, *, protect=True) -> ProjectPaths:
@@ -59,15 +59,15 @@ def test_two_variants() -> None:
                           else "ontology_domains/D/L1/objects/UFoo.yaml").decode()
         check("둘 다 README 를 동봉한다", "README.md" in nf and "README.md" in nc)
         check("둘 다 매니페스트가 있다", T.MANIFEST_NAME in nf and T.MANIFEST_NAME in nc)
-        # 🔴 호환본은 우리 필드를 뺀다 — 원본이 모르는 키다
-        check("🔴 compat 에 protected 가 없다", "protected" not in body, body[:120])
-        # ⚠️ aliases 는 원본의 필드다 — 빼면 안 된다
-        check("⚠️ compat 도 aliases 는 남긴다", "aliases" in body, body[:160])
+        # [중요] 호환본은 우리 필드를 뺀다 — 원본이 모르는 키다
+        check("[중요] compat 에 protected 가 없다", "protected" not in body, body[:120])
+        # [주의] aliases 는 원본의 필드다 — 빼면 안 된다
+        check("[주의] compat 도 aliases 는 남긴다", "aliases" in body, body[:160])
         check("제거 수를 센다", compat.stripped == 3, str(compat.stripped))
 
 
 def test_import_is_a_merge() -> None:
-    """🔴 이것이 이 모듈의 존재 이유다."""
+    """[중요] 이것이 이 모듈의 존재 이유다."""
     with tempfile.TemporaryDirectory() as t:
         src = _seed(Path(t) / "src", protect=False)          # 상대가 보낸 것 (표식 없음)
         z = T.export(src, Path(t) / "out", variant="compat").path
@@ -75,13 +75,13 @@ def test_import_is_a_merge() -> None:
         dst = _seed(Path(t) / "dst", protect=True)           # 우리 (표식 있음)
         plan = T.import_(dst, z)
         check("계획이 이월 대상을 센다", len(plan.carried) == 1, str(plan.carried))
-        check("🔴 계획은 아무것도 안 쓴다", not plan.applied)
+        check("[중요] 계획은 아무것도 안 쓴다", not plan.applied)
 
         done = T.import_(dst, z, apply=True, backup_dir=Path(t) / "bk")
         it = yaml_io.read(next((dst.ontology / "domains" / "D").rglob("UFoo.yaml")))
-        check("🔴 보호 표식이 살아남는다", it.get("protected") is True, str(it))
-        check("🔴 기준 커밋도 살아남는다", it.get("protected_at") == "c0ffee", str(it))
-        check("🔴 별칭도 살아남는다", it.get("aliases") == ["푸"], str(it))
+        check("[중요] 보호 표식이 살아남는다", it.get("protected") is True, str(it))
+        check("[중요] 기준 커밋도 살아남는다", it.get("protected_at") == "c0ffee", str(it))
+        check("[중요] 별칭도 살아남는다", it.get("aliases") == ["푸"], str(it))
         check("들어온 내용은 반영된다", it.get("file") == "Source/Foo.h", str(it))
         check("백업을 남긴다", done.backup and Path(done.backup).is_dir(), done.backup)
         check("재색인이 필요하다고 말한다", any("rebuild" in n for n in done.notes), str(done.notes))
@@ -101,7 +101,7 @@ def test_incoming_wins_when_present() -> None:
 
 
 def test_never_deletes_ours() -> None:
-    """🔴 zip 에 없는 우리 항목을 지우지 않는다 — 안 보낸 건지 지운 건지 모른다."""
+    """[중요] zip 에 없는 우리 항목을 지우지 않는다 — 안 보낸 건지 지운 건지 모른다."""
     with tempfile.TemporaryDirectory() as t:
         src = _seed(Path(t) / "src", protect=False)
         z = T.export(src, Path(t) / "out", variant="compat").path
@@ -109,7 +109,7 @@ def test_never_deletes_ours() -> None:
         extra = dst.ontology / "domains" / "D" / "L1" / "objects" / "UOnlyHere.yaml"
         yaml_io.write(extra, {"name": "UOnlyHere", "layer": 1})
         plan = T.import_(dst, z, apply=True, backup_dir=Path(t) / "bk")
-        check("🔴 우리 것을 지우지 않는다", extra.is_file())
+        check("[중요] 우리 것을 지우지 않는다", extra.is_file())
         check("세어서 보고한다", any("UOnlyHere" in x for x in plan.removed_here),
               str(plan.removed_here))
         check("요약에 남긴다", "남겨 둔다" in plan.summary, plan.summary)
@@ -135,7 +135,7 @@ def main() -> int:
                test_never_deletes_ours, test_guards):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_transfer: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_transfer: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

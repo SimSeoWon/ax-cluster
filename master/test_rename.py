@@ -1,4 +1,4 @@
-"""개명 cascade(`#167`) 계약 테스트 — 🔴 **한 곳만 고치고 끝나지 않는가.**
+"""개명 cascade(`#167`) 계약 테스트 — [중요] **한 곳만 고치고 끝나지 않는가.**
 
 개명의 위험은 실패가 **조용한** 것이다: 디렉토리는 새 이름인데 다른 도메인이 옛 이름을
 가리키면 링크가 죽고 검색이 빗나가는데 아무도 오류를 보지 않는다. 그래서 재는 것 넷:
@@ -30,7 +30,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 class P:
@@ -73,13 +73,13 @@ def test_domain_rename_follows_references():
           any(s.endswith("_domains/MissionRuntime.md") for s, _ in plan.moves), str(plan.moves))
     check("manifest 의 domain 값을 고친다",
           any("manifest" in w for _, w in plan.edits), str(plan.edits))
-    check("🔴 **다른 도메인의 참조**를 따라간다",
+    check("[중요] **다른 도메인의 참조**를 따라간다",
           any("MissionEditor/domain.yaml" in s for s, _ in plan.edits), str(plan.edits))
-    check("🔴 다른 도메인의 MD(parent_domain·협력)도 잡는다",
+    check("[중요] 다른 도메인의 MD(parent_domain·협력)도 잡는다",
           any(s.endswith("_domains/MissionEditor.md") for s, _ in plan.edits), str(plan.edits))
     check("무관한 도메인은 안 건드린다",
           not any("Other" in s for s, _ in plan.edits), str(plan.edits))
-    check("🔴 계획 단계에서는 아무것도 안 바뀐다",
+    check("[중요] 계획 단계에서는 아무것도 안 바뀐다",
           (p.ontology / "domains" / "MissionRuntime").is_dir() and not plan.applied)
 
     R.apply_domain(p, plan)
@@ -88,17 +88,17 @@ def test_domain_rename_follows_references():
     man = yaml_io.read(p.ontology / "domains" / "MissionCore" / "domain.yaml")
     check("manifest 의 domain 값이 바뀐다", man["domain"] == "MissionCore", str(man)[:80])
     other = yaml_io.read(p.ontology / "domains" / "MissionEditor" / "domain.yaml")
-    check("🔴 다른 도메인의 참조가 새 이름을 가리킨다",
+    check("[중요] 다른 도메인의 참조가 새 이름을 가리킨다",
           other["related"] == ["MissionCore"], str(other))
     md = (p.context / "_domains" / "MissionEditor.md").read_text(encoding="utf-8")
-    check("🔴 parent_domain 도 따라간다", "parent_domain: MissionCore" in md, md[:80])
+    check("[중요] parent_domain 도 따라간다", "parent_domain: MissionCore" in md, md[:80])
     check("사람 편집 MD 가 새 이름으로", (p.context / "_domains" / "MissionCore.md").is_file())
 
 
 # ── ② 경계 — 부분 일치로 다른 이름을 삼키지 않는다 ────────────
 
 def test_boundary_does_not_swallow_longer_names():
-    """🔴 실측된 오보고가 근거다 — 부분 일치가 현존 클래스를 「옛이름」으로 잡았다."""
+    """[중요] 실측된 오보고가 근거다 — 부분 일치가 현존 클래스를 「옛이름」으로 잡았다."""
     root, p = fixture()
     plan = R.plan_class(p, "MissionRuntime", "MissionTask", "Quest")
     check("계획이 성립한다", plan.ok, plan.error)
@@ -107,18 +107,18 @@ def test_boundary_does_not_swallow_longer_names():
     check("파일명이 바뀐다", (obj / "Quest.yaml").is_file() and not (obj / "MissionTask.yaml").exists())
     data = yaml_io.read(obj / "Quest.yaml")
     check("이름 필드가 바뀐다", data["name"] == "Quest", str(data))
-    check("🔴 **더 긴 이름은 안 삼킨다** — MissionTaskDetailBase 는 그대로",
+    check("[중요] **더 긴 이름은 안 삼킨다** — MissionTaskDetailBase 는 그대로",
           "MissionTaskDetailBase" in data["note"], data["note"])
     man = yaml_io.read(p.ontology / "domains" / "MissionRuntime" / "domain.yaml")
     check("멤버 목록에서 정확히 그 항목만 바뀐다",
           man["members"] == ["Quest", "MissionTaskDetailBase"], str(man["members"]))
-    check("🔴 잠금이 따라온다 (이동이지 재생성이 아니다)", data.get("verified_by_user") is True)
+    check("[중요] 잠금이 따라온다 (이동이지 재생성이 아니다)", data.get("verified_by_user") is True)
 
 
 # ── ③ 안 하는 것 — DB ─────────────────────────────────────────
 
 def test_db_is_not_touched():
-    """🔴 우리 SSOT 는 YAML 이다. 원전의 DB 쓰기를 옮기면 드리프트가 되살아난다."""
+    """[중요] 우리 SSOT 는 YAML 이다. 원전의 DB 쓰기를 옮기면 드리프트가 되살아난다."""
     import ast
     src = Path(R.__file__).read_text(encoding="utf-8")
     tree = ast.parse(src)
@@ -130,7 +130,7 @@ def test_db_is_not_touched():
             imported |= {a.name for a in n.names}
             if n.module:
                 imported.add(n.module.split(".")[-1])
-    check("🔴 sqlite 를 import 하지 않는다", "sqlite3" not in imported, str(sorted(imported)))
+    check("[중요] sqlite 를 import 하지 않는다", "sqlite3" not in imported, str(sorted(imported)))
     check("안 옮긴 이유를 모듈이 적어 둔다", "DB↔YAML" in src or "드리프트" in src)
     root, p = fixture()
     check("계획이 그 사실을 사람에게도 말한다",
@@ -146,7 +146,7 @@ def test_guards():
     check("old == new 거부", not R.plan_domain(p, "MissionRuntime", "MissionRuntime").ok)
     check("없는 도메인 거부", not R.plan_domain(p, "없음", "X").ok)
     conflict = R.plan_domain(p, "MissionRuntime", "MissionEditor")
-    check("🔴 새 이름이 이미 있으면 **미리** 막는다", not conflict.ok and "충돌" in conflict.error,
+    check("[중요] 새 이름이 이미 있으면 **미리** 막는다", not conflict.ok and "충돌" in conflict.error,
           conflict.error)
     check("적용 안 된 계획은 실행해도 아무것도 안 한다",
           R.apply_domain(p, conflict).applied is False)
@@ -163,7 +163,7 @@ def main() -> int:
                test_db_is_not_touched, test_guards):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_rename: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_rename: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

@@ -1,14 +1,14 @@
 """도메인 뷰어 — **자립형 HTML 한 장** (소 2.4.2).
 
-## 🔴 서비스를 하나 더 띄우지 않는다
+## [중요] 서비스를 하나 더 띄우지 않는다
 
 마일스톤이 *"읽기 전용이면 yaml 파싱만으로 가능"* 이라 적어 뒀고, 실제로 그렇다. 서비스를
 늘리면 포트·베어러 토큰·ufw 규칙이 따라붙는데(§9.5.6) **읽기 전용 뷰어에 그 공격면을 늘릴
 이유가 없다.** 파일 한 장이면 어디서든 열리고, 잃어도 다시 만들면 된다.
 
-⚠️ 이 문서는 **비공개 게임 구조**를 담는다 — 외부에 올리지 않는다. 산출물은 로컬 파일이다.
+[주의] 이 문서는 **비공개 게임 구조**를 담는다 — 외부에 올리지 않는다. 산출물은 로컬 파일이다.
 
-## 🔴 외부 자원을 쓰지 않는다
+## [중요] 외부 자원을 쓰지 않는다
 
 CSS·JS 를 인라인한다. CDN 을 물면 **인터넷 없는 자리에서 빈 화면**이 되고, 이 클러스터는
 LAN 안에서 도는 것이 전제다.
@@ -17,8 +17,8 @@ LAN 안에서 도는 것이 전제다.
 
     도메인      요약 · 협력 도메인 · tier
     항목        objects / actions / invariants (본문까지)
-    🔒 보호      무엇이 왜 언제 기준으로 (드리프트를 볼 근거)
-    ⚠️ 결손      `## 도메인 경계` 가 없는 도메인은 그렇게 표시한다
+     보호      무엇이 왜 언제 기준으로 (드리프트를 볼 근거)
+    [주의] 결손      `## 도메인 경계` 가 없는 도메인은 그렇게 표시한다
 
 경계 절이 없으면 합성이 다른 도메인의 클래스를 끌어온다(실측: 7개 중 6개에 없다). 뷰어가
 그걸 **눈에 보이게** 하는 것이 숫자를 예쁘게 보여주는 것보다 값이 크다.
@@ -52,7 +52,7 @@ class Item:
 @dataclass
 class Domain:
     name: str
-    orphans: list = field(default_factory=list)   # 🔴 파일은 있는데 manifest 목록에 없다
+    orphans: list = field(default_factory=list)   # [중요] 파일은 있는데 manifest 목록에 없다
     summary: str = ""
     tier: str = ""
     collaborators: list = field(default_factory=list)
@@ -76,10 +76,10 @@ def collect(paths: ProjectPaths) -> list:
         dom = Domain(name=d.name, summary=str(man.get("summary") or ""),
                      tier=str(man.get("tier") or ""),
                      collaborators=[str(c) for c in (man.get("collaborates_with") or [])])
-        # 🔴 경계 절 유무는 합성 품질을 좌우한다 — 눈에 보이게 한다
+        # [중요] 경계 절 유무는 합성 품질을 좌우한다 — 눈에 보이게 한다
         dom.has_boundary = bool(man.get("boundary") or man.get("domain_boundary"))
         for kind in ("objects", "actions", "invariants"):
-            # 🔴 **매니페스트를 믿지 않고 파일을 훑는다.** 실측 2026-08-10: 받아온 스냅샷의
+            # [중요] **매니페스트를 믿지 않고 파일을 훑는다.** 실측 2026-08-10: 받아온 스냅샷의
             #    MissionEditor 에 목록에 없는 object yaml 이 하나 있었다. 색인 페이로드와
             #    `sync` 는 매니페스트를 근거로 삼으므로 그 클래스는 **검색에도 동기화에도
             #    빠져 있었다** — 매니페스트만 읽는 뷰어였다면 영영 안 보였을 것이다.
@@ -149,7 +149,7 @@ q.addEventListener('input',()=>{
 
 
 def render(paths: ProjectPaths, domains: list, *, head: str = "") -> str:
-    """자립형 HTML. 🔴 **외부 자원을 쓰지 않는다.**"""
+    """자립형 HTML. [중요] **외부 자원을 쓰지 않는다.**"""
     e = html.escape
     tot = {k: sum(len(d.of(k)) for d in domains) for k in ("objects", "actions", "invariants")}
     prot = sum(1 for d in domains for i in d.items if i.protected)
@@ -158,16 +158,16 @@ def render(paths: ProjectPaths, domains: list, *, head: str = "") -> str:
 
     parts = [f"<h1>{e(paths.name)} · 도메인 뷰어</h1>",
              f'<div class="sub">도메인 {len(domains)} · objects {tot["objects"]} · '
-             f'actions {tot["actions"]} · invariants {tot["invariants"]} · 🔒 보호 {prot}'
+             f'actions {tot["actions"]} · invariants {tot["invariants"]} ·  보호 {prot}'
              + (f' · 트윈 기준 <code>{e(head[:8])}</code>' if head else '') + '</div>']
     if no_boundary:
-        # 🔴 이게 뷰어의 첫 화면에 있어야 하는 이유: 경계가 없으면 합성이 남의 클래스를 끌어온다
-        parts.append(f'<div class="sub warn">⚠️ <b>도메인 경계 절이 없는 도메인 '
+        # [중요] 이게 뷰어의 첫 화면에 있어야 하는 이유: 경계가 없으면 합성이 남의 클래스를 끌어온다
+        parts.append(f'<div class="sub warn">[주의] <b>도메인 경계 절이 없는 도메인 '
                      f'{len(no_boundary)}개</b> — 합성이 다른 도메인의 클래스를 끌어올 수 '
                      f'있다: {e(", ".join(no_boundary))}</div>')
     if orphans:
-        # 🔴 매니페스트에 없는 파일 = 검색·동기화에서 빠진 항목이다
-        parts.append(f'<div class="sub warn">🔴 <b>manifest 에 없는 항목 파일 '
+        # [중요] 매니페스트에 없는 파일 = 검색·동기화에서 빠진 항목이다
+        parts.append(f'<div class="sub warn">[중요] <b>manifest 에 없는 항목 파일 '
                      f'{len(orphans)}개</b> — 색인·sync 는 manifest 를 근거로 삼으므로 '
                      f'이것들은 <b>검색에도 동기화에도 빠져 있다</b>: '
                      + e("; ".join(f"{d}/{o}" for d, o in orphans[:3])) + '</div>')
@@ -195,9 +195,9 @@ def render(paths: ProjectPaths, domains: list, *, head: str = "") -> str:
                 tags = f'<span class="tag">{e(i.layer)}</span>'
                 if i.protected:
                     at = f' {i.protected_at[:8]}' if i.protected_at else ''
-                    tags += f'<span class="tag" title="{e(i.protected_why[:200])}">🔒 보호{e(at)}</span>'
+                    tags += f'<span class="tag" title="{e(i.protected_why[:200])}"> 보호{e(at)}</span>'
                 if i.verified:
-                    tags += '<span class="tag ok">✔ 검수</span>'
+                    tags += '<span class="tag ok"> 검수</span>'
                 if i.aliases:
                     tags += f'<span class="tag">별칭 {e(", ".join(i.aliases[:3]))}</span>'
                 body = f'<div class="txt">{e(i.text[:700])}</div>' if i.text else ''
@@ -213,7 +213,7 @@ def render(paths: ProjectPaths, domains: list, *, head: str = "") -> str:
 
 
 def write(paths: ProjectPaths, *, out=None) -> tuple:
-    """HTML 을 쓴다. `(경로, 바이트)`. 🔴 **온톨로지는 건드리지 않는다.**"""
+    """HTML 을 쓴다. `(경로, 바이트)`. [중요] **온톨로지는 건드리지 않는다.**"""
     head = ""
     try:
         from ..work import twin_base

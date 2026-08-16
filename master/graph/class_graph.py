@@ -3,7 +3,7 @@
 원본: `AgentTest/watcher/class_graph.py`. 저장 형태(`classes` + `methods`)와 질의
 (recursive CTE) 는 그대로다.
 
-🔴 **바꾼 것 세 개.**
+[중요] **바꾼 것 세 개.**
 
 ⑴ **색인 대상은 `repo/Source/**` 뿐이다** (§5.2-E). 원본은 `git ls-files` 로 저장소 전체를
    훑었다. 우리는 `-- Source` 로 한정한다 — `Content/`(uasset, 워킹트리의 93%)를 파싱할
@@ -34,14 +34,14 @@ GIT_TIMEOUT = 60
 
 
 class GraphError(RuntimeError):
-    """그래프를 만들 수 없다. 🔴 삼키면 빈 그래프가 정상처럼 보인다."""
+    """그래프를 만들 수 없다. [중요] 삼키면 빈 그래프가 정상처럼 보인다."""
 
 
 @dataclass
 class BuildStats:
     """무엇을 얼마나 넣었는지. **분모를 같이 들고 다닌다.**
 
-    🔴 `parsed` 와 `classes` 를 구분한다. `name` 이 PK 라 같은 클래스명이 여러 파일에
+    [중요] `parsed` 와 `classes` 를 구분한다. `name` 이 PK 라 같은 클래스명이 여러 파일에
     나오면 `INSERT OR REPLACE` 로 **덮인다** — 파싱 건수를 그대로 "클래스 수" 라고 부르면
     DB 실제 건수보다 크게 보고된다(ModularStage 실측: 파싱 1,847 vs DB 1,806).
     그 차이 자체가 신호다 — 이름이 겹치는 클래스는 온톨로지에서 어느 쪽에 귀속할지
@@ -66,7 +66,7 @@ class BuildStats:
         s = (f"파일 {self.files} · 클래스 {self.classes} · 메서드 {self.methods} "
              f"· {self.elapsed_ms}ms")
         if self.duplicate_names:
-            s += f" · 🔴 이름 중복 {self.duplicate_names}"
+            s += f" · [중요] 이름 중복 {self.duplicate_names}"
         if self.dropped_rows:
             s += f" (지운 행 {self.dropped_rows})"
         return f"{s} · {self.encodings.summary}"
@@ -81,7 +81,7 @@ def _git(repo: Path, *args: str) -> tuple[int, str]:
 def list_source_files(paths: ProjectPaths, *, git=None) -> list[str]:
     """색인 대상 C++ 파일 — `repo/` 기준 상대 경로. **`Source/` 하위만** (§5.2-E).
 
-    🔴 `git ls-files` 가 실패하면 예외다. 빈 리스트를 돌려주면 "소스가 없는 저장소" 와
+    [중요] `git ls-files` 가 실패하면 예외다. 빈 리스트를 돌려주면 "소스가 없는 저장소" 와
     구분이 안 되고, 그 상태로 `build_full` 이 그래프를 0건으로 덮어쓴다.
     """
     run = git or _git
@@ -90,7 +90,7 @@ def list_source_files(paths: ProjectPaths, *, git=None) -> list[str]:
     rc, out = run(paths.repo, "ls-files", "--", SOURCE_SUBDIR)
     if rc != 0:
         raise GraphError(f"git ls-files 실패 (rc={rc}): {out[:200]}")
-    # 🔴 경계를 **두 겹**으로 둔다. pathspec 하나에만 의존하면 §5.2-E 가 호출 방식에
+    # [중요] 경계를 **두 겹**으로 둔다. pathspec 하나에만 의존하면 §5.2-E 가 호출 방식에
     # 딸려 다니게 된다 — 인자를 한 번 잘못 넘기면 `Content/`(워킹트리의 93%)가 조용히
     # 들어온다. 접두 검사는 공짜다. (토큰 인증도 같은 이유로 ufw 와 두 겹이다)
     prefix = f"{SOURCE_SUBDIR}/"
@@ -307,7 +307,7 @@ def find_siblings(paths: ProjectPaths, class_name: str) -> list[str]:
 def methods_ready(paths: ProjectPaths) -> bool:
     """`methods` 에 한 건이라도 있는지.
 
-    🔴 **`method_belongs_to_class` 를 부르기 전에 반드시 이걸 통과시켜야 한다.** 테이블이
+    [중요] **`method_belongs_to_class` 를 부르기 전에 반드시 이걸 통과시켜야 한다.** 테이블이
     비었을 때 곧이곧대로 물으면 **전부 "없다"** 가 나와, 오탐 교차검증이 오히려 전수
     거짓양성을 만든다. 원본이 같은 이유로 이 게이트를 두었다.
     """

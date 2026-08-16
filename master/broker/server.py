@@ -4,7 +4,7 @@
 부르는 엔드포인트는 `/api/chat`·`/api/tags`·`/api/show` 3종뿐이라(리포트 06 §3.5) 표면이 작다.
 `/api/generate` 는 마스터 자신이 쓴다.
 
-🔴 **브로커는 상태를 갖지 않는다.** 요청을 그대로 흘려보낼 뿐 `context` 를 붙이거나
+[중요] **브로커는 상태를 갖지 않는다.** 요청을 그대로 흘려보낼 뿐 `context` 를 붙이거나
 재사용하지 않는다 (PLAN §2.4 stateless 원칙). 브로커가 아는 상태는 **어느 노드가 살아 있고
 무엇을 상주 중인가** 뿐이고, 그건 라우팅에만 쓴다.
 
@@ -49,7 +49,7 @@ def create_app():
     state: dict = {"inflight": {e.name: 0 for e in endpoints}, "repin_at": {}}
     app = FastAPI(title="AX cluster inference broker")
 
-    # 🔴 인증 (PLAN §9.5.6). 토큰이 없으면 여기서 예외가 나고 서비스가 뜨지 않는다.
+    # [중요] 인증 (PLAN §9.5.6). 토큰이 없으면 여기서 예외가 나고 서비스가 뜨지 않는다.
     #    `/health` 는 노드 주소와 적재 모델을 드러내므로 **인증 뒤에** 둔다.
     _auth_token = load_token()
 
@@ -122,12 +122,12 @@ def create_app():
             return JSONResponse({"error": "model 필드가 필요하다"}, status_code=400)
         ep, why = choose(endpoints, model)
         if ep is None:
-            # 🔴 fail-closed — 아무 노드에나 보내면 그쪽에서 pull 이 터진다.
+            # [중요] fail-closed — 아무 노드에나 보내면 그쪽에서 pull 이 터진다.
             log.warning("[route] 거부 model=%s — %s", model, why)
             return JSONResponse({"error": why, "model": model}, status_code=503)
         log.info("[route] %s → %s (%s)", model, ep.name, why)
 
-        # 🔴 상주 보호 (2026-08-08 실측 버그). 프록시한 요청에 `keep_alive` 가 없으면 Ollama 가
+        # [중요] 상주 보호 (2026-08-08 실측 버그). 프록시한 요청에 `keep_alive` 가 없으면 Ollama 가
         # **노드 기본값으로 덮어쓴다** — BC-250 유닛은 `KEEP_ALIVE=30m` 이라, 브로커가 요청 하나
         # 흘려보낸 것만으로 영구 상주가 시한부로 풀렸다. 이 노드가 상주시켜야 할 모델이면
         # `-1` 을 넣어 지킨다. **호출자가 명시했으면 존중한다** — 일시 사용은 그쪽 의도다.
@@ -136,7 +136,7 @@ def create_app():
             if ("keep_alive" not in body and pins.get(ep.name)
                     and _same_model(model, pins[ep.name])):
                 body["keep_alive"] = -1
-            # 🔴 재적재 방지. `num_ctx` 가 요청마다 다르면 모델을 통째로 다시 올린다(61.6s 실측).
+            # [중요] 재적재 방지. `num_ctx` 가 요청마다 다르면 모델을 통째로 다시 올린다(61.6s 실측).
             opts = body.setdefault("options", {})
             if isinstance(opts, dict) and "num_ctx" not in opts:
                 opts["num_ctx"] = DEFAULT_NUM_CTX
@@ -185,5 +185,5 @@ def create_app():
     async def show_ep(request: Request):
         return await _proxy(request, "/api/show", inject=False)
 
-    # 🔴 라우트를 전부 등록한 **뒤** 감싼다. 미들웨어는 바깥이므로 순서가 중요하다.
+    # [중요] 라우트를 전부 등록한 **뒤** 감싼다. 미들웨어는 바깥이므로 순서가 중요하다.
     return BearerAuthMiddleware(app, _auth_token)

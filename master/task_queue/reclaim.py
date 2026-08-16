@@ -175,8 +175,8 @@ def _reclaim_loop(idx: TaskIndex, lease_seconds: int, interval: int, stop_event:
                                 if datetime.fromisoformat(vhb) < cutoff:
                                     verify_to_reclaim.append(tid)
                             except ValueError:
-                                # 🔴 타임스탬프가 깨졌다 — 이번 회차에 회수하지 않는다(다음에 재시도).
-                                # ⚠️ **영구히 깨져 있으면 그 task 는 영원히 회수되지 않는다.** 우리가
+                                # [중요] 타임스탬프가 깨졌다 — 이번 회차에 회수하지 않는다(다음에 재시도).
+                                # [주의] **영구히 깨져 있으면 그 task 는 영원히 회수되지 않는다.** 우리가
                                 # ISO 로만 쓰므로 확률은 낮지만, 넓은 `except Exception` 이었을 때는
                                 # 그 사실이 보이지도 않았다(σ.2 감사 2026-08-14). 좁혀서 의도를 구조로 만든다.
                                 pass

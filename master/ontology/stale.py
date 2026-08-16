@@ -10,13 +10,13 @@
 하나라도 다르면 그 도메인은 stale 이다. 우리 `context_synth` 가 문서를 만들 때 `latest` 를
 찍고(실측 확인), 재합성이 `stored` 를 `latest` 로 다시 찍으면 **자동으로 settle** 된다.
 
-## 🔴 이 설계가 대체한 것 — dirty 플래그
+## [중요] 이 설계가 대체한 것 — dirty 플래그
 
 Phase η.8 이 `domain_dirty` 테이블을 **없앴다.** 플래그는 누가 세우고 누가 지우는지가
 갈려 있어 *"세워졌는데 안 지워짐"*·*"count=0 오인 폭주"* 가 났다. 워터마크는 **상태가
 아니라 사실의 비교**라 그 실패 모드가 구조적으로 없다 — 재시작해도 같은 답이 나온다.
 
-## 🔴 `-1` 규약이 첫 배포 폭주를 막는다
+## [중요] `-1` 규약이 첫 배포 폭주를 막는다
 
 값을 못 가져오면 양쪽 다 `-1` 이다. `-1 == -1` 이므로 **not stale** — 레거시 문서나
 커밋이 아직 없는 상태에서 전체 재합성이 터지지 않는다. 실제 커밋이 올라와 문서가
@@ -85,7 +85,7 @@ def _members(paths: ProjectPaths, domain: str) -> dict:
     for rel in manifest.get("objects") or []:
         obj = yaml_io.read(root / str(rel)) or {}
         name = obj.get("name")
-        # 🔴 하위 문서 참조는 클래스가 아니다 — 워터마크(소스 커밋)가 없다.
+        # [중요] 하위 문서 참조는 클래스가 아니다 — 워터마크(소스 커밋)가 없다.
         if name and not hierarchy.is_domain_ref(obj):
             out[name] = obj.get("file") or ""
     try:
@@ -102,7 +102,7 @@ def _members(paths: ProjectPaths, domain: str) -> dict:
             for r in rows:
                 out.setdefault(r["class_name"], r["file"] or "")
     except Exception:                                   # noqa: BLE001
-        # 🔴 **DB 접근이 실패하면 빈 dict 다** — 그것이 맞다. 여기 근거가 둘 있다:
+        # [중요] **DB 접근이 실패하면 빈 dict 다** — 그것이 맞다. 여기 근거가 둘 있다:
         #
         #   ① 이 질의의 대상 `class_ontology` 는 **일부러 비어 있다**(소속의 SSOT 는
         #      `ontology/*.yaml` — `context_search/infer.py` 머리말, 소 3.1.2 실측 0행).
@@ -110,7 +110,7 @@ def _members(paths: ProjectPaths, domain: str) -> dict:
         #   ② stale 판정은 **못 읽으면 stale 로 기울어야** 안전하다 — 빈 dict 는 "비교할 근거가
         #      없다" 가 되어 재합성 쪽으로 간다. 반대로 기울면 낡은 트윈이 조용히 남는다.
         #
-        # ⚠️ σ.2 감사(2026-08-14)가 이 자리를 *"의도가 안 적힌 silent fallback"* 으로 잡았고,
+        # [주의] σ.2 감사(2026-08-14)가 이 자리를 *"의도가 안 적힌 silent fallback"* 으로 잡았고,
         # 판정은 **「유지 + 의도 명시」**다(원전이 6건 중 4건을 그렇게 처리했다).
         pass
     return out
@@ -119,7 +119,7 @@ def _members(paths: ProjectPaths, domain: str) -> dict:
 def _stored(paths: ProjectPaths, domain: str, names: list) -> dict:
     """클래스별 **저장된** 워터마크. 없으면 `-1`.
 
-    🔴 **신호원이 원본과 다르다 — 우리 SSOT 는 오브젝트 yaml 이다.** 원본은
+    [중요] **신호원이 원본과 다르다 — 우리 SSOT 는 오브젝트 yaml 이다.** 원본은
     `class_ontology.source_commit` 을 정본으로 쓰지만, 우리 그 표는 **0행이고 쓰는 코드가
     0건**이다(의도 — 소속의 SSOT 는 yaml, `#189`). 원본 `upsert_class_source_commit` 은
     *"행이 없으면 no-op"* 이라 그 경로를 그대로 옮겨도 **아무것도 안 찍힌다.**
@@ -204,13 +204,13 @@ def settle(paths: ProjectPaths, domain: str, classes=None) -> int:
     원본: `ontology_synthesizer.synthesize_domain` 의 스탬프 절(Phase η.7.2 제안 2) —
     *"합성이 `source_commit` 을 재스탬프 → self-settling, 재시작 idempotent"*.
 
-    ## 🔴 이 절반이 없으면 stale 은 영원히 안 가라앉는다
+    ## [중요] 이 절반이 없으면 stale 은 영원히 안 가라앉는다
 
     비교의 한쪽(`stored`)을 아무도 안 올리면 같은 클래스가 **재합성을 몇 번 돌려도 계속
     stale** 이고, 매 사이클 LLM 을 같은 대상에 태운다. 실측 2026-08-15: 우리 저장소에
     `class_ontology` 를 쓰는 코드가 0건이라 그 상태였다.
 
-    ## 🔴 원본과 다르게 둔 것 — **필드 하나만** 갱신한다
+    ## [중요] 원본과 다르게 둔 것 — **필드 하나만** 갱신한다
 
     원본은 objects 를 통째로 다시 쓰면서 스탬프를 얹는다. 그래도 되는 이유는 **원본의
     잠금이 `actions`/`invariants` 전용**이기 때문이다(`load_locked_items(subdir)`).
@@ -227,7 +227,7 @@ def settle(paths: ProjectPaths, domain: str, classes=None) -> int:
     원본은 `class_graph.upsert_class_source_commit` 으로 DB 에도 찍는다. 우리 그 표는
     **행이 0** 이고 원본 함수 자신이 *"행이 없으면 no-op"* 이라 **옮겨도 아무 일도 일어나지
     않는다.** 게다가 `#189` 가 그 표에 쓰는 경로를 *"우리가 없앤 이중 소스 드리프트를
-    되살린다"* 로 판정했다. 🔴 **재범위는 닫지 않는다** — 그 표를 쓰게 되는 날 같이 본다.
+    되살린다"* 로 판정했다. [중요] **재범위는 닫지 않는다** — 그 표를 쓰게 되는 날 같이 본다.
     """
     root = paths.ontology / "domains" / domain
     manifest = yaml_io.read(root / "domain.yaml") or {}
@@ -242,7 +242,7 @@ def settle(paths: ProjectPaths, domain: str, classes=None) -> int:
         if not name or (classes is not None and name not in set(classes)):
             continue
         latest = latest_commit(paths, obj.get("file") or "")
-        # 🔴 **`-1` 도 찍는다** (원본 그대로 — `o["source_commit"] = rev` 는 무조건이고
+        # [중요] **`-1` 도 찍는다** (원본 그대로 — `o["source_commit"] = rev` 는 무조건이고
         # `rev != "-1"` 은 카나리 집계용일 뿐이다). 처음엔 *"모르는 값으로 아는 값을 덮는
         # 퇴행"* 이라 보고 건너뛰게 짰는데, **그러면 수렴하지 않는다** — 실측 2026-08-15:
         # `GlobalEventSystem` 의 5개는 오브젝트에 실 리비전이 있고 그 **컨텍스트 문서가
@@ -251,7 +251,7 @@ def settle(paths: ProjectPaths, domain: str, classes=None) -> int:
         #
         # 이 필드의 뜻이 *"우리가 아는 가장 좋은 리비전"* 이 아니라 **"이 합성이 반영한
         # 문서가 그때 말한 값"** 이기 때문이다. 문서가 모른다고 말하면 `-1` 이 사실이다.
-        # ⚠️ 문서 손상 자체는 여기서 알릴 일이 아니다 — `context_audit` 의
+        # [주의] 문서 손상 자체는 여기서 알릴 일이 아니다 — `context_audit` 의
         # `recent_but_empty` 가 그 자리다(이미 이식돼 있다).
         if str(obj.get("source_commit") or "") == latest:
             continue

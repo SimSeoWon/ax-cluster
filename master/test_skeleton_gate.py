@@ -1,6 +1,6 @@
 """골조 빌드 게이트 (소 1.1.5).
 
-🔴 지키는 계약은 **fail-closed** 다 — *"확인하지 못했다"* 를 *"괜찮다"* 로 바꾸면 이 게이트는
+[중요] 지키는 계약은 **fail-closed** 다 — *"확인하지 못했다"* 를 *"괜찮다"* 로 바꾸면 이 게이트는
 없는 것과 같다. 원전은 빌드를 등재 *뒤*에 두었다가 깨진 골조가 `origin` 에 박혔다.
 
 `.venv/bin/python master/test_skeleton_gate.py`
@@ -26,7 +26,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 @dataclass
@@ -49,7 +49,7 @@ def good_skeleton() -> S.Skeleton:
 
 
 def test_build_bat_is_derived_not_guessed() -> None:
-    """🔴 실측: 이 기계의 엔진은 `C:\\Program Files\\UE_5.8` — `Epic Games` 하위가 아니다.
+    """[중요] 실측: 이 기계의 엔진은 `C:\\Program Files\\UE_5.8` — `Epic Games` 하위가 아니다.
 
     경로를 짐작했다가 실제로 틀렸다(1차 측정이 `NO_BUILD_BAT` 으로 끝났다). `probe` 가
     찾아 둔 값에서 되짚는다.
@@ -66,13 +66,13 @@ def test_target_name() -> None:
     check("이미 붙어 있으면 그대로", G.target_name("ModularStageEditor") == "ModularStageEditor")
     try:
         G.target_name("")
-        check("🔴 빈 프로젝트는 거부", False)
+        check("[중요] 빈 프로젝트는 거부", False)
     except ValueError:
-        check("🔴 빈 프로젝트는 거부", True)
+        check("[중요] 빈 프로젝트는 거부", True)
 
 
 def test_place_writes_into_the_isolated_tree() -> None:
-    """🔴 사람·워커의 트리가 아니라 **격리 트리**에 쓴다."""
+    """[중요] 사람·워커의 트리가 아니라 **격리 트리**에 쓴다."""
     wrote: list = []
     got = G.place(Facts(), r"E:\trunk\ms-wt-1",
                   {"Source/A/Foo.h": "h", "Source/A/Foo.cpp": "c"},
@@ -84,29 +84,29 @@ def test_place_writes_into_the_isolated_tree() -> None:
     check("내용을 그대로 넘긴다", sorted(t for _, t in wrote) == ["c", "h"])
     try:
         G.place(Facts(), "", {"a.h": "x"}, writer=lambda *a: None)
-        check("🔴 트리 경로가 비면 거부", False)
+        check("[중요] 트리 경로가 비면 거부", False)
     except ValueError:
-        check("🔴 트리 경로가 비면 거부", True)
+        check("[중요] 트리 경로가 비면 거부", True)
 
 
 def test_gate_blocks_before_building_when_not_a_skeleton() -> None:
-    """🔴 골조가 아니면 빌드할 이유도 없다 — 싼 검사를 먼저."""
+    """[중요] 골조가 아니면 빌드할 이유도 없다 — 싼 검사를 먼저."""
     built: list = []
     bad = S.Skeleton(stem="Bad", files={"a.h": "완성된 파일"}, frozen=set(), pseudo=0)
     g = G.run(Facts(), bad, tree=r"E:\wt", project="ModularStage",
               writer=lambda *a: None, builder=lambda *a, **k: built.append(1))
-    check("🔴 통과가 아니다", not g.ok, g.summary)
+    check("[중요] 통과가 아니다", not g.ok, g.summary)
     check("빌드를 부르지 않았다", built == [], str(built))
     check("사유를 말한다", "골조가 아니다" in g.error, g.error)
 
     empty = S.Skeleton(stem="Empty")
     g2 = G.run(Facts(), empty, tree=r"E:\wt", project="ModularStage",
                writer=lambda *a: None, builder=lambda *a, **k: built.append(1))
-    check("🔴 파일이 없으면 막는다", not g2.ok and "세울 것이 없다" in g2.error, g2.error)
+    check("[중요] 파일이 없으면 막는다", not g2.ok and "세울 것이 없다" in g2.error, g2.error)
 
 
 def test_gate_is_fail_closed_on_every_uncertainty() -> None:
-    """🔴 *"확인하지 못했다"* 는 통과가 아니다."""
+    """[중요] *"확인하지 못했다"* 는 통과가 아니다."""
     sk = good_skeleton()
 
     # ① 배치 실패
@@ -114,26 +114,26 @@ def test_gate_is_fail_closed_on_every_uncertainty() -> None:
         raise RuntimeError("scp 해시 불일치")
     g = G.run(Facts(), sk, tree=r"E:\wt", project="ModularStage", writer=boom,
               builder=lambda *a, **k: BuildResult(passed=True, failure=None, result="Succeeded"))
-    check("🔴 배치 실패는 막는다", not g.ok and "배치 실패" in g.error, g.error)
+    check("[중요] 배치 실패는 막는다", not g.ok and "배치 실패" in g.error, g.error)
     check("배치 실패면 빌드 안 함", not g.checked)
 
     # ② 엔진을 못 찾음
     g2 = G.run(Facts(ue5=""), sk, tree=r"E:\wt", project="ModularStage",
                writer=lambda *a: None,
                builder=lambda *a, **k: BuildResult(passed=True, failure=None))
-    check("🔴 엔진 미발견은 막는다", not g2.ok and "Build.bat" in g2.error, g2.error)
+    check("[중요] 엔진 미발견은 막는다", not g2.ok and "Build.bat" in g2.error, g2.error)
 
     # ③ UBT 가 판정을 못 냈다 (SSH 실패·타임아웃) — layer3 계약이 failure 로 준다
     g3 = G.run(Facts(), sk, tree=r"E:\wt", project="ModularStage", writer=lambda *a: None,
                builder=lambda *a, **k: BuildResult(passed=False, failure="3600초 안에 안 끝났다"))
-    check("🔴 판정 없음은 막는다", not g3.ok, g3.summary)
+    check("[중요] 판정 없음은 막는다", not g3.ok, g3.summary)
     check("돌리긴 했다고 기록", g3.checked)
 
     # ④ 빌드 실패
     g4 = G.run(Facts(), sk, tree=r"E:\wt", project="ModularStage", writer=lambda *a: None,
                builder=lambda *a, **k: BuildResult(passed=False, failure=None,
                                                    result="Failed", detail="CompileError"))
-    check("🔴 빌드 실패는 막는다", not g4.ok, g4.summary)
+    check("[중요] 빌드 실패는 막는다", not g4.ok, g4.summary)
     check("요약이 사유를 보인다", "FAILED" in g4.summary or "CompileError" in g4.summary,
           g4.summary)
 
@@ -147,9 +147,9 @@ def test_gate_passes_only_on_a_real_verdict() -> None:
 
     g = G.run(Facts(), good_skeleton(), tree=r"E:\trunk\ms-wt-7", project="ModularStage",
               writer=lambda *a: None, builder=builder)
-    check("✅ 통과", g.ok, g.summary)
+    check("[완료] 통과", g.ok, g.summary)
     check("에디터 타깃을 짓는다", seen["target"] == "ModularStageEditor", str(seen))
-    check("🔴 uproject 도 격리 트리 것", seen["uproject"] == r"E:\trunk\ms-wt-7\ModularStage.uproject",
+    check("[중요] uproject 도 격리 트리 것", seen["uproject"] == r"E:\trunk\ms-wt-7\ModularStage.uproject",
           seen["uproject"])
     check("유도한 Build.bat 을 쓴다", seen["build_bat"].endswith(r"\Build.bat"), seen["build_bat"])
     check("소요를 기록한다", g.seconds == 812.4, str(g.seconds))
@@ -157,9 +157,9 @@ def test_gate_passes_only_on_a_real_verdict() -> None:
 
 
 def test_not_run_is_not_a_pass() -> None:
-    """⚠️ **게이트를 안 붙인 것**과 **게이트가 통과한 것**은 다르다."""
+    """[주의] **게이트를 안 붙인 것**과 **게이트가 통과한 것**은 다르다."""
     g = G.GateResult(stem="Foo")
-    check("🔴 안 돌렸으면 통과 아님", not g.ok)
+    check("[중요] 안 돌렸으면 통과 아님", not g.ok)
     check("요약이 '미확인' 이라고 말한다", "미확인" in g.summary, g.summary)
 
 
@@ -171,7 +171,7 @@ def main() -> int:
                test_gate_passes_only_on_a_real_verdict, test_not_run_is_not_a_pass):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_skeleton_gate: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_skeleton_gate: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

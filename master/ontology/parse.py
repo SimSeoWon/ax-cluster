@@ -3,7 +3,7 @@
 원본: `watcher/ontology_actions.parse_action_response` ·
 `watcher/ontology_invariants` 의 응답 파서.
 
-## 🔴 여기가 진짜 방어선이다
+## [중요] 여기가 진짜 방어선이다
 
 프롬프트의 "cross-domain 을 쓰지 말 것" 은 부탁이다. **실제 차단은 여기서 한다** —
 `allowed` 밖의 이름은 버리고, 근거(`evidence`) 없는 항목은 버리고, 신뢰도 미달은 버린다.
@@ -15,7 +15,7 @@
 (실측: 14b 가 frontmatter 닫는 줄을 빼먹는 것과 같은 계열의 형식 실패). 형식 관용은
 **읽는 단계**에만 적용하고, 내용 판정은 봐주지 않는다.
 
-🔴 **버린 것을 센다.** `Parsed.dropped` 가 이유별 집계다. 조용히 버리면 "모델이 5건만
+[중요] **버린 것을 센다.** `Parsed.dropped` 가 이유별 집계다. 조용히 버리면 "모델이 5건만
 냈다" 와 "20건 냈는데 15건이 걸렸다" 를 구분할 수 없고, 그러면 프롬프트를 고칠 근거가 없다.
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ _FENCE = re.compile(r"^\s*```[a-zA-Z]*\s*|\s*```\s*$")
 
 
 class ResponseError(ValueError):
-    """응답을 읽을 수 없다. 🔴 빈 결과로 위장하지 않는다 — 호출자가 유실로 센다."""
+    """응답을 읽을 수 없다. [중요] 빈 결과로 위장하지 않는다 — 호출자가 유실로 센다."""
 
 
 @dataclass
@@ -96,7 +96,7 @@ def _class_of(qualified: str) -> str:
 def actions(text: str, *, allowed: set, min_confidence: float = MIN_CONFIDENCE) -> Parsed:
     """actions 응답 → `package.write(actions=…)` 에 그대로 넣을 dict 리스트.
 
-    `allowed` 는 프롬프트에 실린 클래스 집합이다. 🔴 **`implementation.primary` 의 클래스가
+    `allowed` 는 프롬프트에 실린 클래스 집합이다. [중요] **`implementation.primary` 의 클래스가
     그 안에 없으면 액션 자체를 버린다** — 원본과 같은 강한 필터다. 도메인 밖 구현을 가리키는
     액션은 이 도메인의 액션이 아니다.
     """
@@ -165,7 +165,7 @@ def actions(text: str, *, allowed: set, min_confidence: float = MIN_CONFIDENCE) 
             actor = str(step.get("actor") or "").strip()
             op = str(step.get("operation") or "").strip()
             if not actor or not op or actor not in allowed:
-                continue          # 🔴 도메인 밖 actor 는 단계째 버린다
+                continue          # [중요] 도메인 밖 actor 는 단계째 버린다
             s: dict = {"step": step.get("step") or (i + 1), "actor": actor, "operation": op}
             for k in ("target", "note"):
                 v = str(step.get(k) or "").strip()

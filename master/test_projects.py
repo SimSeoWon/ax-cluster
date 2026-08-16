@@ -47,10 +47,10 @@ def check(label: str, cond: bool, detail: str = "") -> None:
     global PASS, FAIL
     if cond:
         PASS += 1
-        print(f"  ✅ {label}")
+        print(f"  [완료] {label}")
     else:
         FAIL += 1
-        print(f"  ❌ {label}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {label}" + (f" — {detail}" if detail else ""))
 
 
 def raises(label: str, fn, *a, **kw) -> None:
@@ -174,7 +174,7 @@ def main() -> int:
     out = set_workshop("ModularStage", "192.168.0.33", driven="interactive")
     check("interactive 는 path 없이 등록됨", out["ok"] and not out["drivable"], str(out))
 
-    print("\n[11] 🔴 윈도우 경로 백슬래시 round-trip")
+    print("\n[11] [중요] 윈도우 경로 백슬래시 round-trip")
     # YAML 이 `E:\trunk` 를 double-quote 로 감싸면 \t 가 **탭**으로 해석된다.
     # 경로가 조용히 깨지는 종류의 사고라 반드시 원문 대조한다.
     cfg = Registry.load(root2).config_of("ModularStage")
@@ -227,7 +227,7 @@ def main() -> int:
     check("목록에서 빠짐", len(list_workshops()["workshops"]) == 1)
     raises("없는 워크숍 해제 거부", remove_workshop, "ModularStage", "192.168.0.33")
 
-    print("\n[15] 🔴 project_id 대소문자 — 표시 이름 vs 동일성 (§5.5.4-④)")
+    print("\n[15] [중요] project_id 대소문자 — 표시 이름 vs 동일성 (§5.5.4-④)")
     # Gitea DB 실측: owner_name/name = 'Sim/ModularStage' (훅이 싣는 값),
     #                lower_name      = 'modularstage'     (디스크 · 동일성).
     check("normalize 는 casefold", normalize_project_id("Sim/ModularStage") == "sim/modularstage")

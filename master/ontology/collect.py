@@ -3,7 +3,7 @@
 원본: `watcher/ontology_dep_graph.py` (`expand_seeds_with_one_hop_children` ·
 `_ancestors_of` · `_includes_for`).
 
-## 🔴 원본과 갈리는 지점 — 자동 확장이 아니라 제안이다
+## [중요] 원본과 갈리는 지점 — 자동 확장이 아니라 제안이다
 
 원본은 자식 1홉을 **자동으로** 시드에 넣는다(`expand_seeds_with_one_hop_children`).
 여기서는 **후보로 내밀고 묻는다**:
@@ -39,12 +39,12 @@ from ..graph import class_graph as cg, db as gdb, dependency as dep
 ANCESTOR_DEPTH = 4          # 원본 값. 더 올리면 엔진 계층이 모두의 조상이 된다
 PROPOSAL_LIMIT = 20         # 한 번에 물어볼 수 있는 양. 넘으면 사람이 안 읽는다
 
-# 🔴 **`#include` 1홉이 후보 폭발의 원인이다** — 실측 2026-08-09: 받아온 도메인에 돌리니
+# [중요] **`#include` 1홉이 후보 폭발의 원인이다** — 실측 2026-08-09: 받아온 도메인에 돌리니
 # 후보가 **184~190개**로 나왔고 대부분이 이 채널이었다. 물어볼 수 있는 양이 아니다.
 #
 # 헤더 하나가 수십 파일에 얽히므로 1홉만으로도 도메인 전체 규모를 넘는다. 그래서:
 #   ⑴ 멤버당 이웃 파일 수를 자른다 (아래)
-#   ⑵ 🔴 **이미 어느 도메인에든 속한 클래스는 후보에서 뺀다** — 그게 가장 크게 줄인다.
+#   ⑵ [중요] **이미 어느 도메인에든 속한 클래스는 후보에서 뺀다** — 그게 가장 크게 줄인다.
 #      상위 문서가 하위 문서를 object 로 갖는 구조(소 1.3.10)에서 특히 그렇다:
 #      하위에 있는 클래스를 상위가 다시 물어볼 이유가 없다
 INCLUDE_FANOUT = 4          # 멤버 파일당 볼 이웃 파일 수
@@ -73,7 +73,7 @@ class Proposal:
     def question(self) -> str:
         """작업 PC 의 Claude 가 사용자에게 던질 문장.
 
-        🔴 **후보가 없으면 없다고 말한다.** 채우려고 무관한 클래스를 넣지 않는다.
+        [중요] **후보가 없으면 없다고 말한다.** 채우려고 무관한 클래스를 넣지 않는다.
         """
         if not self.candidates:
             return (f"`{self.domain}` 에 추가할 만한 관련 클래스를 찾지 못했다 "
@@ -110,7 +110,7 @@ def children(paths: ProjectPaths, names: list) -> dict:
 def include_neighbours(paths: ProjectPaths, files: list) -> dict:
     """`#include` 이웃 파일 → 그 파일이 정의하는 클래스. `{클래스: 통해서 온 파일}`.
 
-    ⚠️ 역방향(`dependents`)은 basename 근사라 무관한 항목이 섞일 수 있다 — 그래서
+    [주의] 역방향(`dependents`)은 basename 근사라 무관한 항목이 섞일 수 있다 — 그래서
     **후보로만** 쓴다. 자동으로 넣지 않는 이유가 여기에도 있다.
     """
     if not gdb.exists(paths) or not dep.exists(paths):
@@ -181,7 +181,7 @@ def propose(paths: ProjectPaths, domain: str, members: dict) -> Proposal:
     후보는 사용자가 판단할 수 없고, 그러면 "다 넣어" 나 "다 빼" 로 끝난다.
     """
     p = Proposal(domain=domain, members=sorted(members))
-    # 🔴 이미 다른 도메인에 속한 것은 묻지 않는다 — 후보 폭발의 실질 대책.
+    # [중요] 이미 다른 도메인에 속한 것은 묻지 않는다 — 후보 폭발의 실질 대책.
     #    **자기 하위 문서의 클래스도 뺀다** — 하위가 이미 관할하는 것을 상위가 다시 물으면
     #    같은 결정을 두 번 시키는 셈이고, 허브 도메인에서 후보가 폭발하는 원인이다.
     from . import hierarchy

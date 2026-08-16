@@ -8,13 +8,13 @@
         tmp/        rename 전 임시 파일 (같은 FS 여야 원자적)
         incoming/   생산자가 넣은 것
         claimed/    소비자가 처리 중인 배치
-        rejected/   검증 실패 — 🔴 지우지 않는다(감사)
+        rejected/   검증 실패 — [중요] 지우지 않는다(감사)
 
-🔴 **at-least-once 다.** 크래시하면 `claimed/` 가 남고 재기동 시 다시 처리한다.
+[중요] **at-least-once 다.** 크래시하면 `claimed/` 가 남고 재기동 시 다시 처리한다.
 exactly-once 를 만들지 않는 이유는 필요가 없기 때문이다 — 색인은 워터마크(커밋 해시)
 기준 따라잡기라 **멱등**이다(§5.5.3-c).
 
-🔴 **합치기가 안전한 근거도 같다.** 같은 `project_id` 의 이벤트 N 개에서 최신 하나만 남기고
+[중요] **합치기가 안전한 근거도 같다.** 같은 `project_id` 의 이벤트 N 개에서 최신 하나만 남기고
 버려도 되는 것은, 소비자가 개별 이벤트가 아니라 **`last_indexed_commit` → HEAD** 를
 따라잡기 때문이다. 워터마크가 타임스탬프였다면 이 합치기는 안전하지 않다.
 """
@@ -234,7 +234,7 @@ class Spool:
                      skipped_index_output=skipped, rejected=rejected)
 
     def _reject(self, f: Path, reason: str) -> None:
-        """🔴 지우지 않는다. 조용히 사라지면 '훅이 안 옴' 과 '거부됨' 을 구분할 수 없다."""
+        """[중요] 지우지 않는다. 조용히 사라지면 '훅이 안 옴' 과 '거부됨' 을 구분할 수 없다."""
         target = self.rejected / f.name
         try:
             os.replace(f, target)

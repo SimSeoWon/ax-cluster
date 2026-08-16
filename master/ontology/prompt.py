@@ -3,7 +3,7 @@
 원본: `watcher/ontology_actions._PROMPT_HEADER` · `build_action_prompt` /
 `watcher/ontology_invariants` 의 프롬프트.
 
-## 🔴 두 번 부른다 — 합치지 않는다
+## [중요] 두 번 부른다 — 합치지 않는다
 
 actions 와 invariants 를 한 번에 뽑으면 프리필을 절반으로 줄일 수 있다. **안 한다.**
 두 프롬프트는 금지 규칙이 서로 다르고(actions 는 통신 인프라 금지, invariants 는 신호
@@ -11,7 +11,7 @@ actions 와 invariants 를 한 번에 뽑으면 프리필을 절반으로 줄일
 (리포트 10 §9.2 — 14b 가 frontmatter 닫는 줄을 빼먹었다). 규칙을 섞으면 그 축이 나빠진다.
 원본도 같은 이유로 모듈을 갈라 뒀다.
 
-## 🔴 프롬프트 문구를 안전장치로 믿지 않는다
+## [중요] 프롬프트 문구를 안전장치로 믿지 않는다
 
 "cross-domain 을 추출하지 말 것" 은 **부탁**이다. 실제 차단은 `parse.py` 의
 `allowed_classes` 필터와 `verify_facts` 의 사실 게이트가 한다 — *결정적 게이트가 LLM
@@ -42,24 +42,24 @@ OAF 분류:
   - Function : 순수 계산 (상태 변경 없음, 입력 → 출력)
 
 == 추출 대상 — 반드시 같은 도메인 안에서만 ==
-  ✅ 아래 「대상 클래스」 목록 안의 클래스끼리의 호출·상태 변경
-  ✅ 같은 도메인 멤버 변수 변경
-  ✅ 이벤트 **발행** → `triggers_events` (3패턴 모두):
+  [완료] 아래 「대상 클래스」 목록 안의 클래스끼리의 호출·상태 변경
+  [완료] 같은 도메인 멤버 변수 변경
+  [완료] 이벤트 **발행** → `triggers_events` (3패턴 모두):
      (1) `OnXxx.Broadcast(...)` / `ExecuteIfBound(...)` 같은 표준 델리게이트
      (2) 자체 디스패처 — `FGlobalEventSystem::ExecuteEvent<IEventXxx>(...)` 등
      (3) 람다 콜백 등록 트리거 — `Service->Bind([this](){...})` 의 **호출자 쪽**
-  ✅ 이벤트 **구독** → `subscribed_to` (3패턴 모두):
+  [완료] 이벤트 **구독** → `subscribed_to` (3패턴 모두):
      (1) `AddDynamic` / `AddUObject` / `BindUObject` / `AddLambda` / `AddRaw`
      (2) 인터페이스 상속 — `class UWidget : public IEventXxx` + 메서드 override
      (3) 람다 핸들러 — 람다 본문이 사실상 핸들러
 
 == 절대 추출 금지 ==
-  ❌ 통신 인프라 — 형태 불문: FSocket / FHttpModule / IOnlineSubsystem / Connect / Send /
+  [실패] 통신 인프라 — 형태 불문: FSocket / FHttpModule / IOnlineSubsystem / Connect / Send /
      Receive / Packet / WebSocket / TCP / UDP / IPC / RPC 매크로(Server_*/Client_*/Multicast_*)
      / 외부 REST SDK. 통신은 별도 도메인의 책임이다
-  ❌ 도메인 밖 클래스 호출 — 「대상 클래스」에 없는 이름은 flow·objects_affected 에 쓰지 말 것
-  ❌ 자명한 getter/setter 한 줄 함수, 컴파일러가 검증하는 시그니처 정합성
-  ❌ 별도 events 항목 — 이벤트는 위 두 채널에 흡수한다
+  [실패] 도메인 밖 클래스 호출 — 「대상 클래스」에 없는 이름은 flow·objects_affected 에 쓰지 말 것
+  [실패] 자명한 getter/setter 한 줄 함수, 컴파일러가 검증하는 시그니처 정합성
+  [실패] 별도 events 항목 — 이벤트는 위 두 채널에 흡수한다
 
 == 출력 정신 ==
   - 의미 있는 것만 5~15건. 억지로 채우지 말 것
@@ -69,7 +69,7 @@ OAF 분류:
   - `evidence` 는 `"<파일>:<줄 또는 메서드>"`. 못 대면 그 항목을 내지 말 것
   - confidence 0.5 미만이면 출력하지 말 것
 
-🔴 **발췌에 없는 것은 지어내지 말 것.** 없는 호출을 쓰면 결정적 게이트가 그 항목을 버린다.
+[중요] **발췌에 없는 것은 지어내지 말 것.** 없는 호출을 쓰면 결정적 게이트가 그 항목을 버린다.
 
 == 응답 포맷 (JSON 만. 다른 텍스트·설명·코드펜스 금지) ==
 {
@@ -103,9 +103,9 @@ invariant 는 "이 도메인에서 항상 참이어야 하는 규칙" 이다. �
   lock-pattern       : FScopeLock / CriticalSection / RAII 로 지켜지는 것
 
 == 절대 추출 금지 ==
-  ❌ 컴파일러가 이미 강제하는 것 (타입 일치, 시그니처 정합성) — 가치 없다
-  ❌ 도메인 밖 클래스에 대한 규칙
-  ❌ 발췌에 근거가 없는 일반론 ("메모리 누수를 피해야 한다" 류)
+  [실패] 컴파일러가 이미 강제하는 것 (타입 일치, 시그니처 정합성) — 가치 없다
+  [실패] 도메인 밖 클래스에 대한 규칙
+  [실패] 발췌에 근거가 없는 일반론 ("메모리 누수를 피해야 한다" 류)
 
 == 출력 정신 ==
   - 의미 있는 것만 5~12건
@@ -115,7 +115,7 @@ invariant 는 "이 도메인에서 항상 참이어야 하는 규칙" 이다. �
   - `source_signal` 은 위 6가지 중 하나를 그대로
   - confidence 0.5 미만이면 출력하지 말 것
 
-🔴 **발췌에 없는 것은 지어내지 말 것.**
+[중요] **발췌에 없는 것은 지어내지 말 것.**
 
 == 응답 포맷 (JSON 만. 다른 텍스트·설명·코드펜스 금지) ==
 {
@@ -138,14 +138,14 @@ def _body(doc: DomainDoc | None, ctx: DomainContexts, rules: str, tail: str) -> 
         text = doc.summary_text[:DOMAIN_TEXT_CHARS]
         if text:
             parts += ["", "[도메인 서술 — 사람이 쓴 의도]", text]
-        # 🔴 경계가 없으면 없다고 말한다. "경계를 지켜라" 만 쓰고 경계를 안 주면
+        # [중요] 경계가 없으면 없다고 말한다. "경계를 지켜라" 만 쓰고 경계를 안 주면
         #    모델은 자기가 상상한 경계를 지킨다.
         if not (doc.boundary_in or doc.boundary_out):
             parts.append("(이 도메인 문서에는 명시된 경계 절이 없다 — "
                          "아래 「대상 클래스」 목록이 유일한 경계다.)")
 
     names = sorted(ctx.names)
-    parts += ["", f"[대상 클래스 {len(names)}개 — 🔴 이 목록 밖의 이름을 쓰지 말 것]",
+    parts += ["", f"[대상 클래스 {len(names)}개 — [중요] 이 목록 밖의 이름을 쓰지 말 것]",
               ", ".join(names)]
     if ctx.note:
         parts += ["", ctx.note]

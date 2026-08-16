@@ -2,7 +2,7 @@
 
     .venv/bin/python master/test_events.py
 
-🔴 지키는 불변식 (PLAN §5.4.5, §5.4.5-a):
+[중요] 지키는 불변식 (PLAN §5.4.5, §5.4.5-a):
    1. **유실 없음** — 소비 중 들어온 이벤트가 사라지지 않는다 (jsonl 을 버린 이유)
    2. **at-least-once** — 크래시하면 다시 처리된다. 절대 조용히 사라지지 않는다
    3. **합치기 키는 `project_id`, casefold** — 프로젝트가 섞이지 않는다
@@ -31,10 +31,10 @@ def check(label: str, cond: bool, detail: str = "") -> None:
     global PASS, FAIL
     if cond:
         PASS += 1
-        print(f"  ✅ {label}")
+        print(f"  [완료] {label}")
     else:
         FAIL += 1
-        print(f"  ❌ {label}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {label}" + (f" — {detail}" if detail else ""))
 
 
 def ev(pid="Sim/ModularStage", new="abc", **kw):
@@ -63,7 +63,7 @@ def main() -> int:
     s.done(b)
     check("done 후 배치 디렉토리 제거", not b.dir.exists())
 
-    print("\n[2] 🔴 합치기 — project_id 별 최신 하나")
+    print("\n[2] [중요] 합치기 — project_id 별 최신 하나")
     for i in range(5):
         s.enqueue(ev(new=f"c{i}"))
     s.enqueue(ev(pid="Sim/Other", new="x1"))
@@ -71,10 +71,10 @@ def main() -> int:
     check("2개 프로젝트로 축약", len(b) == 2, b.summary())
     check("4건 절약", b.coalesced_away == 4, str(b.coalesced_away))
     ms = [e for e in b.events if e.project_id == "Sim/ModularStage"][0]
-    check("🔴 남은 것이 **최신**", ms.new == "c4", ms.new)
+    check("[중요] 남은 것이 **최신**", ms.new == "c4", ms.new)
     s.done(b)
 
-    print("\n[3] 🔴 합치기 키는 casefold (§5.5.4-④)")
+    print("\n[3] [중요] 합치기 키는 casefold (§5.5.4-④)")
     merged, dropped = coalesce([ev(pid="Sim/ModularStage", new="a"),
                                 ev(pid="sim/modularstage", new="b"),
                                 ev(pid="SIM/MODULARSTAGE", new="c")])
@@ -84,7 +84,7 @@ def main() -> int:
     merged, _ = coalesce([ev(pid="Sim/A"), ev(pid="Sim/B")])
     check("다른 프로젝트는 안 뭉친다", len(merged) == 2)
 
-    print("\n[4] 🔴 유실 없음 — 소비 중 들어온 이벤트")
+    print("\n[4] [중요] 유실 없음 — 소비 중 들어온 이벤트")
     # jsonl 을 버린 이유가 이것이다. claim 이후에 들어온 것은 **다음 배치**에 온전히 있어야 한다.
     s.enqueue(ev(new="before"))
     b1 = s.claim_batch()
@@ -92,11 +92,11 @@ def main() -> int:
     s.done(b1)
     b2 = s.claim_batch()
     check("이전 배치는 before", b1.events[0].new == "before", b1.events[0].new)
-    check("🔴 사이에 들어온 during 이 다음 배치에 있다",
+    check("[중요] 사이에 들어온 during 이 다음 배치에 있다",
           len(b2) == 1 and b2.events[0].new == "during", b2.summary())
     s.done(b2)
 
-    print("\n[5] 🔴 at-least-once — done 을 안 부르면 다시 온다")
+    print("\n[5] [중요] at-least-once — done 을 안 부르면 다시 온다")
     s.enqueue(ev(new="crashme"))
     b = s.claim_batch()
     check("배치를 받았다", len(b) == 1)
@@ -111,7 +111,7 @@ def main() -> int:
         s2.done(b_)
     check("정리 후 고아 없음", s2.orphan_batches() == [])
 
-    print("\n[6] 🔴 검증 실패는 rejected/ 로 — 지우지 않는다")
+    print("\n[6] [중요] 검증 실패는 rejected/ 로 — 지우지 않는다")
     (s.incoming / "bad.json").write_text("{ this is not json", encoding="utf-8")
     (s.incoming / "nopid.json").write_text(json.dumps({"ref": "refs/heads/main"}),
                                            encoding="utf-8")
@@ -136,7 +136,7 @@ def main() -> int:
     check("나머지는 거부", b.rejected == 1, str(b.rejected))
     s.done(b)
 
-    print("\n[8] 🔴 재귀 차단 — [ax-index] 커밋은 소비하지 않는다 (§5.5.3-d)")
+    print("\n[8] [중요] 재귀 차단 — [ax-index] 커밋은 소비하지 않는다 (§5.5.3-d)")
     s.enqueue(ev(new="human", subject="모듈 정리"))
     s.enqueue(ev(pid="Sim/Other", new="idx",
                  subject=f"컨텍스트 갱신 {INDEX_TRAILER}"))
@@ -149,17 +149,17 @@ def main() -> int:
     s.enqueue(ev(new="human2", subject="수정"))
     s.enqueue(ev(new="idx2", subject=f"재색인 {INDEX_TRAILER}"))
     b = s.claim_batch()
-    check("🔴 색인 커밋이 더 최신이어도 사람 커밋이 남는다",
+    check("[중요] 색인 커밋이 더 최신이어도 사람 커밋이 남는다",
           len(b) == 1 and b.events[0].new == "human2", b.summary())
     s.done(b)
 
-    print("\n[9] 🔴 단일 소비자 — flock")
+    print("\n[9] [중요] 단일 소비자 — flock")
     ready, release = mp.Queue(), mp.Queue()
     proc = mp.Process(target=_hold_lock, args=(str(tmp), ready, release))
     proc.start()
     check("다른 프로세스가 락을 잡았다", ready.get(timeout=10))
     s3 = Spool(tmp)
-    check("🔴 두 번째 소비자는 획득 실패", not s3.acquire())
+    check("[중요] 두 번째 소비자는 획득 실패", not s3.acquire())
     try:
         with Spool(tmp):
             check("with 문은 예외를 낸다", False, "예외가 안 났다")

@@ -1,4 +1,4 @@
-"""2-tier 코디네이터 — 🔴 **실제 git 저장소로** 돌린다.
+"""2-tier 코디네이터 — [중요] **실제 git 저장소로** 돌린다.
 
 리포트 13 §14 가 같은 교훈을 네 번 적었다: **주입은 계약을 재고 실물을 재지 않는다.**
 그래서 여기서는 git 을 흉내내지 않는다 — `tmp` 에 bare origin + 작업 클론을 실제로 만들고
@@ -7,7 +7,7 @@
     ① attempt 가 원격에 생기고 작업분이 실려 있다
     ② 첫 통과분이 durable 을 **만든다**
     ③ 두 번째 라운드가 durable 에 **누적**된다 (폐기·재구현이 아니다 — 2026-06-21 정정)
-    ④ 🔴 stale epoch 은 **부작용 없이** 거부된다 (durable 이 안 움직인다)
+    ④ [중요] stale epoch 은 **부작용 없이** 거부된다 (durable 이 안 움직인다)
     ⑤ cleanup 기본값은 **지우지 않는다** (증거 보존, 08-09 결정)
     ⑥ `delete=True` 면 ephemeral 만 지우고 **durable 은 산다**
 
@@ -37,7 +37,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 def _run(cwd: Path, *args: str) -> str:
@@ -95,7 +95,7 @@ def test_full_round_creates_durable():
 
 
 def test_second_round_accumulates():
-    """🔴 reject 는 폐기·재구현이 아니라 전진·수정이다 (2026-06-21 정정)."""
+    """[중요] reject 는 폐기·재구현이 아니라 전진·수정이다 (2026-06-21 정정)."""
     with tempfile.TemporaryDirectory() as td:
         r = Repo(Path(td))
         C.run_round(r.work, task_id=TASK, workshop=SHOP, ts="t1", base_ref=r.base,
@@ -163,7 +163,7 @@ def test_cleanup_delete_spares_durable():
 
 
 def test_no_change_is_a_fact():
-    """⚠️ 아무것도 안 고치면 commit 이 실패한다 — 그건 사실이므로 삼키지 않는다."""
+    """[주의] 아무것도 안 고치면 commit 이 실패한다 — 그건 사실이므로 삼키지 않는다."""
     with tempfile.TemporaryDirectory() as td:
         r = Repo(Path(td))
         try:
@@ -181,7 +181,7 @@ def main() -> int:
                test_no_change_is_a_fact):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_coordinator: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_coordinator: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

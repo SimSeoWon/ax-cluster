@@ -42,7 +42,7 @@ def _add(idx: TaskIndex, requires=None, priority: int = 0, stem: str = "s") -> d
 # ── 등록 시점 검증 ────────────────────────────────────────────
 
 def test_unknown_requires_is_rejected_at_register():
-    """🔴 오타를 통과시키면 아무도 못 집는 task 가 조용히 굶는다."""
+    """[중요] 오타를 통과시키면 아무도 못 집는 task 가 조용히 굶는다."""
     r = _add(_idx(), requires=["ue-5"])
     assert not r.get("ok")
     assert "unknown requires" in r.get("error", "")
@@ -61,7 +61,7 @@ def test_no_requires_defaults_to_empty():
     assert idx.tasks[r["task_id"]]["requires"] == []
 
 
-# ── 🔴 fail-closed 라우팅 ─────────────────────────────────────
+# ── [중요] fail-closed 라우팅 ─────────────────────────────────────
 
 def test_capability_less_worker_cannot_claim_ue5_task():
     """이 테스트가 이 기능의 존재 이유다 — 마스터 워커의 UE5 잡 탈취 차단."""

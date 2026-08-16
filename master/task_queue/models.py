@@ -15,7 +15,7 @@ _VALID_DIRECTIVES = ("abort", "pause", "resume", "drain")
 # PLAN §5.2-C — 능력 기반 라우팅. task 의 `requires` 와 워커가 claim 시 신고하는
 # `capabilities` 를 **부분집합 매칭**한다 (requires ⊆ capabilities 여야 claim 가능).
 #
-# 🔴 화이트리스트인 이유: `requires` 는 등록 시점에 검증하지 않으면 오타 하나로
+# [중요] 화이트리스트인 이유: `requires` 는 등록 시점에 검증하지 않으면 오타 하나로
 # **아무 워커도 만족시킬 수 없는 task** 가 되어 영구 pending 으로 굶는다. 조용한 기아보다
 # 등록 실패가 낫다. 새 능력이 필요하면 여기 한 줄 추가하는 것이 정상 경로다.
 _KNOWN_CAPABILITIES = (
@@ -128,11 +128,11 @@ class DirectiveReq(BaseModel):
 
 
 class RedmineNoteReq(BaseModel):
-    """🔴 **마스터 경유 Redmine 갱신** (중 2.1 `#135`, 사용자 결정 2026-08-16).
+    """[중요] **마스터 경유 Redmine 갱신** (중 2.1 `#135`, 사용자 결정 2026-08-16).
 
     요청자 `.33` 의 `/review-work` 는 코멘트 **본문만** 만든다 — 우리 Redmine API 키는
     저장소에도 `~/.config` 에도 없고 마스터의 컨테이너 DB 에만 있기 때문이다(§10.1).
-    ⚠️ 키를 `.33` 에 복사하는 대신 이 자리를 뒀다. 이 엔드포인트는 다른 것들과 같이
+    [주의] 키를 `.33` 에 복사하는 대신 이 자리를 뒀다. 이 엔드포인트는 다른 것들과 같이
     **bearer 토큰이 필수**다(fail-closed).
     """
     issue_id: int

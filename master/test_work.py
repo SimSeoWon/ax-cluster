@@ -2,7 +2,7 @@
 
     .venv/bin/python master/test_work.py
 
-🔴 지키는 불변식 (PLAN §4.2, plan v5 C.1/C.2):
+[중요] 지키는 불변식 (PLAN §4.2, plan v5 C.1/C.2):
    1. **두 작업장이 같은 ref 에 push 하지 않는다** — zombie race 가 구조적으로 성립 불가
    2. **식별자를 조용히 정규화하지 않는다** — 이름이 곧 정체성이다
    3. **매니페스트는 1회 수집** — 작업장은 읽기만 한다
@@ -38,10 +38,10 @@ def check(label: str, cond: bool, detail: str = "") -> None:
     global PASS, FAIL
     if cond:
         PASS += 1
-        print(f"  ✅ {label}")
+        print(f"  [완료] {label}")
     else:
         FAIL += 1
-        print(f"  ❌ {label}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {label}" + (f" — {detail}" if detail else ""))
 
 
 class FakeSearch:
@@ -78,7 +78,7 @@ def main() -> int:
     check("attempt 판별", bn.is_attempt("attempt/x/y/z") and not bn.is_attempt("task/task_5"))
     check("glob", bn.attempt_glob("task_5") == "attempt/task_5/*")
 
-    print("\n[2] 🔴 zombie race 가 구조적으로 성립하지 않는다")
+    print("\n[2] [중요] zombie race 가 구조적으로 성립하지 않는다")
     a = bn.attempt_branch("task_5", "HV0I6DL", "t1")     # 작업장 A
     b = bn.attempt_branch("task_5", "JFVS693", "t2")     # 재배정된 B
     check("서로 다른 ref", a != b, f"{a} vs {b}")
@@ -97,7 +97,7 @@ def main() -> int:
     for bad in ("attempt/a/b/c", "task/a/b", "", None):
         check(f"  durable 아님: {bad!r}", bn.parse_durable(bad) is None)
 
-    print("\n[4] 🔴 잘못된 식별자를 조용히 고치지 않는다")
+    print("\n[4] [중요] 잘못된 식별자를 조용히 고치지 않는다")
     for bad, why in [("", "빈 값"), ("   ", "공백뿐"), ("a/b", "슬래시"),
                      ("a b", "공백"), ("a:b", "콜론"), ("한글", "비ASCII")]:
         try:
@@ -115,7 +115,7 @@ def main() -> int:
     # ── 매니페스트 ──────────────────────────────────
     print("\n[5] 매니페스트 조립")
     s = FakeSearch([FakeHit("A.md"), FakeHit("B.md", 0.02, "vector", "")])
-    # 🔴 규범 번들을 주입한다 — 안 주면 실제 도메인 색인을 찾아가고, 테스트 프로젝트에는
+    # [중요] 규범 번들을 주입한다 — 안 주면 실제 도메인 색인을 찾아가고, 테스트 프로젝트에는
     #    색인이 없어 degraded 가 붙는다. 여기서 재는 것은 **RAG 채널**이다.
     from master.work import norms as nm
     ok_norms = nm.NormBundle(domains=[nm.DomainNorms(
@@ -133,7 +133,7 @@ def main() -> int:
     check("발췌 없는 히트도 실린다", "B.md" in m.body)
     check("재검색 불필요를 명시", "재검색 불필요" in m.body)
 
-    print("\n[5b] 🔴 골조는 매니페스트로 간다 (task_data 는 전송 수단이 아니다)")
+    print("\n[5b] [중요] 골조는 매니페스트로 간다 (task_data 는 전송 수단이 아니다)")
     ms = mf.build(paths, "t", classes=["UFoo"], skeleton="class UFoo { void Init(); };",
                   searcher=FakeSearch([FakeHit("A.md")]), now=NOW)
     check("골조 섹션", "## 골조" in ms.body)
@@ -141,7 +141,7 @@ def main() -> int:
     check("cpp 펜스", "```cpp" in ms.body)
     check("골조 없으면 섹션도 없다", "## 골조" not in m.body)
 
-    print("\n[5-1] 🔴 소켓 타임아웃도 GenerateError 로 (배치를 크래시시키지 않는다)")
+    print("\n[5-1] [중요] 소켓 타임아웃도 GenerateError 로 (배치를 크래시시키지 않는다)")
     import urllib.error as _ue
 
     def _timeout(*a, **kw):
@@ -170,7 +170,7 @@ def main() -> int:
         finally:
             genmod.urllib.request.urlopen = real
 
-    print("\n[5-2] 🔴 num_ctx — 주지 않으면 노드가 죽는다 (BC-250 실측)")
+    print("\n[5-2] [중요] num_ctx — 주지 않으면 노드가 죽는다 (BC-250 실측)")
     seen = {}
 
     def _cap(url, payload):
@@ -185,19 +185,19 @@ def main() -> int:
     check("  temperature 는 유지", seen["options"]["temperature"] == 0)
     check("  stateless 유지 (context 없음)", "context" not in seen)
 
-    print("\n[6] 🔴 도메인 규범 채널 (소 2.3.1)")
+    print("\n[6] [중요] 도메인 규범 채널 (소 2.3.1)")
     check("규범 섹션이 있다", "도메인 규범" in m.body)
     check("규범 본문이 실린다", "지켜야 할 규칙" in m.body and "규칙" in m.body)
     check("도메인·항목 수를 센다", m.norm_domains == 1 and m.norm_items == 1,
           f"{m.norm_domains}/{m.norm_items}")
-    # 🔴 자리표시자는 사라졌다 — 이 단언이 깨지면 규범 채널이 되돌아간 것이다
-    check("🔴 '_미구현_' 자리표시자가 없다", "_미구현" not in m.body)
+    # [중요] 자리표시자는 사라졌다 — 이 단언이 깨지면 규범 채널이 되돌아간 것이다
+    check("[중요] '_미구현_' 자리표시자가 없다", "_미구현" not in m.body)
     m_empty = mf.build(paths, "t0", classes=["UManagerBase"], searcher=s,
                        norms=nm.NormBundle(degraded=["색인 없음"]), now=NOW)
-    check("🔴 규범이 비면 비었다고 본문에 쓴다",
+    check("[중요] 규범이 비면 비었다고 본문에 쓴다",
           "규범 grounding 없이" in m_empty.body and not m_empty.ok)
 
-    print("\n[7] 🔴 수집 결손을 숨기지 않는다 (베스트에포트지만 조용하지 않다)")
+    print("\n[7] [중요] 수집 결손을 숨기지 않는다 (베스트에포트지만 조용하지 않다)")
     m2 = mf.build(paths, "t", classes=["UFoo"], searcher=FakeSearch(exc=RuntimeError("죽음")),
                   now=NOW)
     check("검색 실패해도 매니페스트는 나온다", bool(m2.body))
@@ -205,10 +205,10 @@ def main() -> int:
     check("  본문에 경고", "수집이 온전하지 않다" in m2.body and "RuntimeError" in m2.body)
 
     m3 = mf.build(paths, "t", classes=["UFoo"], searcher=FakeSearch([]), base=ok_base, now=NOW)
-    # 🔴 다른 채널이 결손을 남겨도 이 메시지가 사라지면 안 된다 (2026-08-09 회귀)
+    # [중요] 다른 채널이 결손을 남겨도 이 메시지가 사라지면 안 된다 (2026-08-09 회귀)
     check("결과 0건도 결손으로 표시", not m3.ok and "결과가 없다" in m3.body)
     m3b = mf.build(paths, "t", classes=["UFoo"], searcher=FakeSearch([]), now=NOW)
-    check("🔴 기준 커밋이 없어도 '검색 결과가 없다' 는 남는다",
+    check("[중요] 기준 커밋이 없어도 '검색 결과가 없다' 는 남는다",
           "결과가 없다" in m3b.body and "기준 커밋을 정할 수 없다" in m3b.body, m3b.degraded)
 
     m4 = mf.build(paths, "t", searcher=FakeSearch([FakeHit("X.md")]), now=NOW)
@@ -248,7 +248,7 @@ def main() -> int:
     check("원인이 기록된다", "OSError" in m7.body and "DB 없음" in m7.body)
 
     # ── 큐 slug (워크플로우가 드러낸 잠복 버그) ──────
-    print("\n[11b] 🔴 한글 제목이 전부 같은 slug 가 되던 문제")
+    print("\n[11b] [중요] 한글 제목이 전부 같은 slug 가 되던 문제")
     from master.task_queue.logic import _slugify  # noqa: E402
     ko = ["워크플로우 복구", "골조 전달", "매니저 초기화"]
     slugs = [_slugify(k) for k in ko]
@@ -258,13 +258,13 @@ def main() -> int:
           _slugify("Add UManagerBase") == "add_umanagerbase")
     check("ASCII+한글 섞임도 갈린다",
           _slugify("Add U 매니저") != _slugify("Add U 테이블"))
-    check("🔴 같은 제목은 여전히 충돌한다 (중복 검출이 요점)",
+    check("[중요] 같은 제목은 여전히 충돌한다 (중복 검출이 요점)",
           _slugify("워크플로우 복구") == _slugify("  워크플로우   복구  "))
     check("빈 제목", _slugify("") == "work")
     check("기호뿐", _slugify("!!!") == "work")
 
     # ── 등록 ────────────────────────────────────────
-    print("\n[12] 명세 검증 — 🔴 절반 등록하고 실패하지 않는다")
+    print("\n[12] 명세 검증 — [중요] 절반 등록하고 실패하지 않는다")
     calls = []
 
     def poster(url, payload):
@@ -305,14 +305,14 @@ def main() -> int:
     check("  task_id 로 읽힌다", mf.read(paths, got.tasks[0].task_id) is not None)
 
     wp = calls[0][1]
-    check("🔴 2-tier 를 쓴다", wp["distribution_mode"] == "push", str(wp))
+    check("[중요] 2-tier 를 쓴다", wp["distribution_mode"] == "push", str(wp))
     tp = calls[1][1]
     check("task_data 에도 남는다 (감사 기록)", tp["task_data"]["skeleton"] == "class UManagerBase {};")
-    check("🔴 골조가 매니페스트에 도달한다",
+    check("[중요] 골조가 매니페스트에 도달한다",
           "class UManagerBase {};" in (mf.read(paths, got.tasks[0].task_id) or ""))
     check("동결 계약이 실린다", tp["task_data"]["contracts"] == "Init() 동결")
     check("능력 라우팅", tp["requires"] == ["ue5"])
-    check("🔴 저장소를 만지는 필드가 없다",
+    check("[중요] 저장소를 만지는 필드가 없다",
           not any(k in tp for k in ("branch", "commit", "repo_path")), str(sorted(tp)))
     check("등록 요약", "2/2" in got.summary(), got.summary())
 
@@ -361,30 +361,30 @@ def main() -> int:
         check(f"  {label}", code == want_code and st == want_stripped, f"{code!r} st={st}")
     mid = f"void A(){{}}\n{F}cpp\nvoid B(){{}}"
     code, st = strip_fence(mid)
-    check("🔴 중간 펜스는 남긴다 (층2 가 잡아야 한다)", F in code and not st, code)
+    check("[중요] 중간 펜스는 남긴다 (층2 가 잡아야 한다)", F in code and not st, code)
     check("빈 입력", strip_fence("") == ("", False))
 
     print("\n[18] 프롬프트 — 매니페스트를 싣고 동결을 명시한다")
     pr = build_prompt(manifest_body="## 골조\nclass UFoo;", instruction="Init 구현",
                       target_file="Foo.cpp")
     check("매니페스트가 통째로 실린다", "class UFoo;" in pr)
-    check("🔴 동결을 명시", "FROZEN" in pr)
+    check("[중요] 동결을 명시", "FROZEN" in pr)
     check("재검색 금지를 명시", "do not search" in pr)
     check("펜스 금지를 명시", "No markdown fences" in pr)
     check("대상 파일", "Foo.cpp" in pr)
     check("지시가 실린다", "Init 구현" in pr)
-    # 🔴 소 3.5.7 (`#183`) — 원전 금지 3종. 이유가 **UE 특유**라 리뷰뿐 아니라 생성에도 걸린다:
+    # [중요] 소 3.5.7 (`#183`) — 원전 금지 3종. 이유가 **UE 특유**라 리뷰뿐 아니라 생성에도 걸린다:
     #    Blueprint 에셋이 C++ 상속과 UPROPERTY **이름**을 직렬화해 들고 있고, 그 의존은
     #    코드에 없다(*"LLM 은 코드만 분석 가능"*). 룰 1(동결)이 리네이밍을 **일부**만 막는다.
-    check("🔴 리네이밍 금지 + **이유**(Blueprint 에셋)",
+    check("[중요] 리네이밍 금지 + **이유**(Blueprint 에셋)",
           "rename" in pr.lower() and "Blueprint" in pr, pr[:0])
-    check("🔴 상속 구조 변경 금지", "inheritance" in pr.lower())
-    check("🔴 모듈 간 이동 금지 (동결로는 못 막는 자리)",
+    check("[중요] 상속 구조 변경 금지", "inheritance" in pr.lower())
+    check("[중요] 모듈 간 이동 금지 (동결로는 못 막는 자리)",
           "move code between modules" in pr.lower())
     check("에셋을 코드에서 볼 수 없다는 사실을 알린다",
           "cannot see those assets" in pr.lower() or "asset references" in pr.lower())
 
-    print("\n[19] 🔴 매니페스트가 없으면 생성하지 않는다 (grounding 0 = 환각 조건)")
+    print("\n[19] [중요] 매니페스트가 없으면 생성하지 않는다 (grounding 0 = 환각 조건)")
     gp = ProjectPaths(name="G", root=tmp / "G")
     try:
         generate(gp, "없는태스크", instruction="x")
@@ -408,12 +408,12 @@ def main() -> int:
     check("ok", d.ok, d.summary())
     check("펜스가 벗겨진 코드", d.code == "void UFoo::Init(){}", repr(d.code))
     check("  벗겼다고 알린다", any("펜스" in n for n in d.notes), str(d.notes))
-    check("🔴 stateless — context 를 안 보낸다", "context" not in seen, str(sorted(seen)))
+    check("[중요] stateless — context 를 안 보낸다", "context" not in seen, str(sorted(seen)))
     check("temperature=0", seen["options"]["temperature"] == 0)
     check("think=False (35B 토큰 낭비 방지)", seen["think"] is False)
     check("stream=False", seen["stream"] is False)
 
-    print("\n[21] 🔴 fail-closed — 층2 를 못 넘으면 인계하지 않는다")
+    print("\n[21] [중요] fail-closed — 층2 를 못 넘으면 인계하지 않는다")
     bad = Verdict(approved=False, failure=None, findings=["세미콜론 누락"])
     d = dispatch(gp, "t1", instruction="x", caller=caller, verifier=lambda f: bad)
     check("차단", not d.ok and d.verdict.blocked)
@@ -425,7 +425,7 @@ def main() -> int:
     check("빈 생성 = 차단", not d.ok and "비었다" in d.error, d.error)
 
     d = dispatch(gp, "t1", instruction="x", caller=caller, verifier=lambda f: None)
-    check("🔴 verdict 가 없으면 통과가 아니다", not d.ok)
+    check("[중요] verdict 가 없으면 통과가 아니다", not d.ok)
 
     def dead(url, payload):
         raise GenerateError("브로커에 닿지 않는다")
@@ -447,16 +447,16 @@ def main() -> int:
     shutil.rmtree(tmp, ignore_errors=True)
 
     # ── 대상 파일 (#65) ─────────────────────────────
-    print("\n[대상 파일] 🔴 매니페스트가 어느 파일인지 싣는가")
+    print("\n[대상 파일] [중요] 매니페스트가 어느 파일인지 싣는가")
     mt = mf.build(paths, "tf1", classes=["UFoo"],
                   target_files=["Source/A/Foo.h", "Source/A/Foo.cpp"],
                   searcher=None, base=None)
     check("대상 파일 절이 있다", "## 대상 파일" in mt.body, mt.body[:200])
     check("파일이 다 실린다",
           "Source/A/Foo.h" in mt.body and "Source/A/Foo.cpp" in mt.body)
-    # 🔴 사용자: "클래스 별로 분리하는건 분산 작업시 충돌을 방지하기 위해서"
-    check("🔴 목록 밖 금지를 못박는다", "이 목록 밖은 건드리지 않는다" in mt.body)
-    check("🔴 파일이 갈라지면 안 되는 이유를 적는다", "두 워커가 같은 곳을 고친다" in mt.body)
+    # [중요] 사용자: "클래스 별로 분리하는건 분산 작업시 충돌을 방지하기 위해서"
+    check("[중요] 목록 밖 금지를 못박는다", "이 목록 밖은 건드리지 않는다" in mt.body)
+    check("[중요] 파일이 갈라지면 안 되는 이유를 적는다", "두 워커가 같은 곳을 고친다" in mt.body)
     empty = mf.build(paths, "tf2", classes=["UFoo"], searcher=None, base=None)
     check("파일이 없으면 절을 안 만든다", "## 대상 파일" not in empty.body)
 

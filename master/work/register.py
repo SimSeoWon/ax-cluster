@@ -1,6 +1,6 @@
 """작업 등록 — `/distribute` 의 마스터 몫 (AgentTest `executor_work_register.py` 이식).
 
-🔴 **원본에서 가장 크게 잘라낸 지점이다. 경계가 다르기 때문이다.**
+[중요] **원본에서 가장 크게 잘라낸 지점이다. 경계가 다르기 때문이다.**
 
 AgentTest 의 `master_orchestrator` 는 **윈도우 UE5 프로젝트 루트에 함께 배포**됐다(zip 12종).
 그래서 등록부가 저장소를 직접 만졌다 — `create_branch_if_needed` · `commit_skeletons` ·
@@ -9,10 +9,10 @@ AgentTest 의 `master_orchestrator` 는 **윈도우 UE5 프로젝트 루트에 �
 
 | 원본 등록부가 하던 일 | 여기 |
 |---|---|
-| 작업 브랜치 생성 | ❌ **작업장이 한다** |
-| 골조 파일 쓰기 · 커밋 | ❌ **작업장이 한다** — 마스터는 골조 *텍스트*만 실어 보낸다 |
-| 중복 검사 · work/task 큐 등록 | ✅ 마스터 |
-| 컨텍스트 매니페스트 수집 | ✅ 마스터 (`manifest.py`) |
+| 작업 브랜치 생성 | [실패] **작업장이 한다** |
+| 골조 파일 쓰기 · 커밋 | [실패] **작업장이 한다** — 마스터는 골조 *텍스트*만 실어 보낸다 |
+| 중복 검사 · work/task 큐 등록 | [완료] 마스터 |
+| 컨텍스트 매니페스트 수집 | [완료] 마스터 (`manifest.py`) |
 
 **이 경계가 §2.1 그대로다** — 마스터는 코드 뭉치를 조립해 건네는 데서 끝난다.
 
@@ -45,16 +45,16 @@ class TaskSpec:
 
     stem: str                                  # 조각 이름 (보통 클래스명)
     classes: list[str] = field(default_factory=list)
-    contracts: str = ""                        # 🔴 동결 인터페이스 — 병렬 생성의 전제 (§4.5)
+    contracts: str = ""                        # [중요] 동결 인터페이스 — 병렬 생성의 전제 (§4.5)
     skeleton: str = ""                         # 골조 텍스트. 파일로 쓰는 것은 작업장 몫
     target_file: str = ""            # 큐 레코드용(단수) — 여러 개면 `target_files` 의 첫 번째
-    # 🔴 한 태스크가 맡는 파일 전부. **매니페스트에 실린다** — 예전엔 큐에만 있었다(#65).
+    # [중요] 한 태스크가 맡는 파일 전부. **매니페스트에 실린다** — 예전엔 큐에만 있었다(#65).
     target_files: list = field(default_factory=list)
     header_file: str = ""
     depends_on: list = field(default_factory=list)
     requires: list = field(default_factory=list)   # 예: ["ue5"] — 능력 라우팅 (§5.2-C)
     priority: int = 0
-    # 🔴 골조가 비어 있으면 등록 전에 **생성한다** (소 1.1.4). 그때 쓰는 재료가 아래 둘이다.
+    # [중요] 골조가 비어 있으면 등록 전에 **생성한다** (소 1.1.4). 그때 쓰는 재료가 아래 둘이다.
     instruction: str = ""                      # 무엇을 만들라는 것인지 (사람의 말)
     source_files: list = field(default_factory=list)   # 포팅 원본 — **읽기 전용** (소 1.3.5)
     depth_set: list = field(default_factory=list)      # `[PSEUDO:N]` — 소 1.2.4 가 소비
@@ -96,7 +96,7 @@ class Registered:
 
     @property
     def gate_checked(self) -> bool:
-        """🔴 **미확인과 통과를 구분한다.** 게이트를 안 돌렸으면 빌드를 확인한 게 아니다."""
+        """[중요] **미확인과 통과를 구분한다.** 게이트를 안 돌렸으면 빌드를 확인한 게 아니다."""
         return bool(self.gates) and all(getattr(g, "ok", False) for g in self.gates)
 
     @property
@@ -115,11 +115,11 @@ class Registered:
             s += f" · 매니페스트 결손 {degraded}건"
         if self.generated:
             s += f" · 골조 생성 {len(self.generated)}건"
-        # ⚠️ 빌드를 확인했는지 **말로 적는다** — 안 적으면 미확인이 통과처럼 읽힌다
-        s += (f" · 골조 빌드 ✅ {len(self.gates)}건" if self.gates
-              else " · ⚠️ 골조 빌드 미확인")
+        # [주의] 빌드를 확인했는지 **말로 적는다** — 안 적으면 미확인이 통과처럼 읽힌다
+        s += (f" · 골조 빌드 [완료] {len(self.gates)}건" if self.gates
+              else " · [주의] 골조 빌드 미확인")
         if self.failed:
-            s += f" · 🔴 실패 {len(self.failed)}건"
+            s += f" · [중요] 실패 {len(self.failed)}건"
         return s
 
 
@@ -143,14 +143,14 @@ def _fill_skeletons(specs: list, *, paths: ProjectPaths, make_skeleton=None,
                     gate=None, gate_results: list | None = None) -> list:
     """골조가 빈 명세를 채운다 (소 1.1.4). **제자리에서 고치고** 생성한 stem 을 돌려준다.
 
-    🔴 **생성 조건은 하나다 — `instruction` 이 있고 `skeleton` 이 없을 때.** 둘 다 없는 명세는
+    [중요] **생성 조건은 하나다 — `instruction` 이 있고 `skeleton` 이 없을 때.** 둘 다 없는 명세는
     **손대지 않는다**: 골조 없는 등록은 원래부터 정상 경로다(작업장이 골조를 쓰는 흐름).
     골조를 필수로 만들면 기존 호출자가 전부 깨지는데, 그건 이 칸이 할 일이 아니다.
 
-    🔴 **동결 계약도 같이 채운다.** 골조만 있고 계약이 없으면 워커는 무엇이 동결됐는지 모르고
+    [중요] **동결 계약도 같이 채운다.** 골조만 있고 계약이 없으면 워커는 무엇이 동결됐는지 모르고
     층1 은 대조할 원본이 없다 — 병렬이 성립하지 않는다(§4.5).
 
-    🔴 **생성한 골조가 골조가 아니면 등록하지 않는다.** `[PSEUDO]` 0개(=완성 파일)나 동결
+    [중요] **생성한 골조가 골조가 아니면 등록하지 않는다.** `[PSEUDO]` 0개(=완성 파일)나 동결
     선언 0개는 원전이 값을 치르고 배운 실패다 — 글루 파일이 워커 태스크로 등재되던 버그.
     """
     need = [s for s in specs
@@ -167,7 +167,7 @@ def _fill_skeletons(specs: list, *, paths: ProjectPaths, make_skeleton=None,
         built = fn(paths, spec)
         if not built.ok:
             raise RegisterError(f"{s.stem}: 골조 생성 실패 — " + "; ".join(built.notes))
-        # 🔴 **골조 빌드 게이트** (소 1.1.5) — 통과해야만 등재한다. 골조는 모든 조각의
+        # [중요] **골조 빌드 게이트** (소 1.1.5) — 통과해야만 등재한다. 골조는 모든 조각의
         #    base 라, 조각 하나가 깨지는 것과 값이 다르다: 깨진 골조는 **N개를 헛일로 만든다.**
         #    원전이 빌드를 등재 *뒤*에 두었다가 정확히 그 사고를 냈다.
         if gate is not None:
@@ -175,9 +175,9 @@ def _fill_skeletons(specs: list, *, paths: ProjectPaths, make_skeleton=None,
             if gate_results is not None:
                 gate_results.append(g)
             if not getattr(g, "ok", False):
-                raise RegisterError(f"{s.stem}: 🔴 골조 빌드 게이트 차단 — "
+                raise RegisterError(f"{s.stem}: [중요] 골조 빌드 게이트 차단 — "
                                     f"{getattr(g, 'summary', g)}")
-        # 🔴 파일로 쓰지 않는다. 텍스트로 실어 보낸다 (§2.1).
+        # [중요] 파일로 쓰지 않는다. 텍스트로 실어 보낸다 (§2.1).
         s.skeleton = "\n\n".join(f"=== FILE: {p} ===\n{t}"
                                  for p, t in sorted(built.files.items()))
         if not (s.contracts or "").strip():
@@ -206,7 +206,7 @@ def register_work(
 
     `poster` 를 주입할 수 있는 이유는 테스트다 — 큐를 띄우지 않고 등록 규칙을 검증한다.
 
-    🔴 **명세 검증을 먼저 전부 돌린다.** 절반 등록하고 실패하면 큐에 반쪽 work 가 남는데,
+    [중요] **명세 검증을 먼저 전부 돌린다.** 절반 등록하고 실패하면 큐에 반쪽 work 가 남는데,
     그건 사람이 치워야 한다. 막을 수 있는 것은 미리 막는다.
 
     `make_skeleton` 은 골조가 없는 명세를 위해 **등록 전에** 불린다 (소 1.1.4). 기본은
@@ -214,7 +214,7 @@ def register_work(
     직접 쓴 골조가 LLM 출력보다 낫다면 그쪽이 이긴다).
 
     `gate(skeleton) -> GateResult` 를 주면 **골조를 세워 보고 통과해야만 등재한다**
-    (소 1.1.5, `skeleton_gate.run`). ⚠️ **게이트를 안 주는 것은 통과가 아니라 미확인이다** —
+    (소 1.1.5, `skeleton_gate.run`). [주의] **게이트를 안 주는 것은 통과가 아니라 미확인이다** —
     결과의 `gate_checked` 로 구분한다.
     """
     if not (title or "").strip():
@@ -224,7 +224,7 @@ def register_work(
     seen: set[str] = set()
     for s in specs:
         s.validate()
-    # 🔴 **골조 생성은 큐를 만지기 전에 끝낸다.** 등록 도중 생성이 실패하면 반쪽 work 가
+    # [중요] **골조 생성은 큐를 만지기 전에 끝낸다.** 등록 도중 생성이 실패하면 반쪽 work 가
     #    남고, 그건 사람이 치운다 — 위 검증 선행과 같은 이유다.
     gates: list = []
     generated = _fill_skeletons(specs, paths=paths, make_skeleton=make_skeleton,
@@ -241,7 +241,7 @@ def register_work(
         "target_repo": target_repo,
         "target_branch": target_branch,
         "original_request": original_request or title,
-        # 🔴 2-tier 브랜치를 쓴다. 원본의 pull 레거시 경로는 우리에게 없다 (`branch_names.py`).
+        # [중요] 2-tier 브랜치를 쓴다. 원본의 pull 레거시 경로는 우리에게 없다 (`branch_names.py`).
         "distribution_mode": "push",
     })
     work_id = str(work.get("work_id") or work.get("id") or "")
@@ -287,11 +287,11 @@ def register_work(
         if r.task_id:
             # 매니페스트는 베스트에포트다 — 실패해도 등록을 되돌리지 않는다.
             # 다만 결손을 결과에 실어 호출자가 알 수 있게 한다.
-            # 🔴 골조를 매니페스트에 싣는다 — `task_data` 는 전송 수단이 아니다(§4.7 ④).
+            # [중요] 골조를 매니페스트에 싣는다 — `task_data` 는 전송 수단이 아니다(§4.7 ④).
             m = mf.build(paths, r.task_id, classes=spec.classes,
                          target_files=spec.target_files, stem=spec.stem,
                          contracts=spec.contracts, skeleton=spec.skeleton,
-                         # 🔴 포팅 원본 (소 1.3.5) — 사람이 준 `source_files` 가 이기고,
+                         # [중요] 포팅 원본 (소 1.3.5) — 사람이 준 `source_files` 가 이기고,
                          #    없으면 대상 파일로 자동 조회한다. **경로만** 실린다.
                          source_files=spec.source_files,
                          searcher=searcher)

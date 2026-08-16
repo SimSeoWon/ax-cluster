@@ -1,10 +1,10 @@
-"""SQLite 동시성 PRAGMA (소 3.5.3) — 🔴 **세 DB 전부** 걸려 있는지 잰다.
+"""SQLite 동시성 PRAGMA (소 3.5.3) — [중요] **세 DB 전부** 걸려 있는지 잰다.
 
 이 테스트가 존재하는 이유: 2026-08-14 에 `graph/db.py`·`graph/dependency.py` 에는 걸려 있고
 **`context_search/bm25.py` 만 빠져 있는 것**이 발견됐다. `graph/db.py` 스스로 *"프로세스 간에는
 WAL + busy_timeout 이 담당한다"* 고 적어 두고도 형제 모듈에서 빠뜨렸다 — **값이 흩어지면 어긋난다.**
 
-⚠️ 실측 정정(2026-08-14): 원전은 *"기본 `busy_timeout=0`"* 이라 적었는데 그건 **raw SQLite** 기준이고
+[주의] 실측 정정(2026-08-14): 원전은 *"기본 `busy_timeout=0`"* 이라 적었는데 그건 **raw SQLite** 기준이고
 Python `sqlite3.connect` 는 `timeout=5.0` 기본값이라 **5000** 이 걸린다. 실제 갭은 **WAL 부재**였다 —
 WAL 이 없으면 읽기↔쓰기가 서로 막아 타임아웃에 닿을 확률이 크게 오른다.
 
@@ -30,7 +30,7 @@ def check(name, cond, detail=""):
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 def test_apply_sets_both():
@@ -57,7 +57,7 @@ def test_synchronous_optional():
 
 
 def test_value_is_single_owner():
-    """🔴 값이 코드에 다시 박혀 있지 않은지 — 흩어지면 어긋난다."""
+    """[중요] 값이 코드에 다시 박혀 있지 않은지 — 흩어지면 어긋난다."""
     root = Path(__file__).resolve().parent
     offenders = []
     for f in list((root / "graph").glob("*.py")) + list((root / "context_search").glob("*.py")):
@@ -87,7 +87,7 @@ def main() -> int:
                test_value_is_single_owner, test_three_dbs_wired):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_sqlite_util: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_sqlite_util: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

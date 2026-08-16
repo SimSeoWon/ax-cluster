@@ -1,4 +1,4 @@
-"""클러스터 셀프테스트 드라이런 — 🔴 **게이트가 실제로 막는지**까지 잰다.
+"""클러스터 셀프테스트 드라이런 — [중요] **게이트가 실제로 막는지**까지 잰다.
 
 정상 경로가 통과하는 것만 재면 *항상 통과하는 게이트*와 구별이 안 된다. 그래서 음성 경로를
 같이 태운다 — **매니페스트에서 NONCE 를 빼면 라운드트립 단정이 실패해야 한다.**
@@ -23,7 +23,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 def _named(r, frag: str):
@@ -38,7 +38,7 @@ def test_happy_path():
     check("라운드트립 단정이 존재한다", len(rt) == 1)
     check("라운드트립 통과", bool(rt) and rt[0].passed, rt[0].detail if rt else "")
     git = _named(r, "git 으로")
-    check("🔴 매니페스트가 git 으로 도착했다는 단정이 있고 통과한다",
+    check("[중요] 매니페스트가 git 으로 도착했다는 단정이 있고 통과한다",
           bool(git) and git[0].passed)
     check("작업장 트리가 깨끗하다는 단정이 통과한다",
           bool(_named(r, "깨끗하다")) and _named(r, "깨끗하다")[0].passed)
@@ -47,7 +47,7 @@ def test_happy_path():
 
 
 def test_gate_actually_blocks():
-    """🔴 매니페스트에서 NONCE 를 빼면 라운드트립이 **실패해야** 한다."""
+    """[중요] 매니페스트에서 NONCE 를 빼면 라운드트립이 **실패해야** 한다."""
     orig = S.nonce_section
     S.nonce_section = lambda nonces: f"{S.NONCE_HEADING}\n(토큰 없음 — 음성 테스트)\n"
     try:
@@ -78,7 +78,7 @@ def test_probe_and_impl_source():
         check(f"probe[{i}] 에 [SELFTEST] 배너가 있다", "[SELFTEST]" in ps)
         check(f"probe[{i}] 에 [PSEUDO] 가 있다", "[PSEUDO]" in ps)
         check(f"probe[{i}] 가 '실제로 편집' 을 지시한다", "실제로 편집" in ps)
-        # 🔴 재는 것은 **실제 NONCE 값**의 부재다. 원전 probe 본문에는 `CSTNONCE...` 가
+        # [중요] 재는 것은 **실제 NONCE 값**의 부재다. 원전 probe 본문에는 `CSTNONCE...` 가
         # **형식 예시**로 들어 있고 그건 누출이 아니다 — 완전한 값이 다르므로 라운드트립
         # 단정이 여전히 진짜와 환각을 가른다.
         real = f"CSTNONCE20260814_12345_{i}"
@@ -103,7 +103,7 @@ def test_keep_preserves():
 # ─────────────────────────────────────────────────────────────
 
 def test_count_polling():
-    """🔴 **존재가 아니라 신선도로 센다** — 원전 판정식을 그대로 옮기면 우리 큐에서 거짓말을 한다."""
+    """[중요] **존재가 아니라 신선도로 센다** — 원전 판정식을 그대로 옮기면 우리 큐에서 거짓말을 한다."""
     from datetime import datetime, timedelta, timezone
     now = datetime(2026, 8, 16, 20, 0, 0, tzinfo=timezone(timedelta(hours=9)))
     iso = lambda **kw: (now - timedelta(**kw)).isoformat()   # noqa: E731
@@ -118,19 +118,19 @@ def test_count_polling():
     check("신선한 워커만 센다 (2명)", n == 2, f"n={n}")
     check("경과 초를 같이 돌려준다", len(ages) == 5 and ages[0][1] is not None)
     check("파싱 못 한 stamp 는 폴링 아님", ages[4][1] is None)
-    # 🔴 같은 입력에서 두 판정식이 갈린다 — 이 갈림이 이식의 근거다(리포트 16 §12.7 부류).
+    # [중요] 같은 입력에서 두 판정식이 갈린다 — 이 갈림이 이식의 근거다(리포트 16 §12.7 부류).
     origin_style = sum(1 for w in ws if w.get("last_seen"))
-    check("🔴 원전식(존재)이면 4, 신선도면 2 — 같은 입력에서 판정이 갈린다",
+    check("[중요] 원전식(존재)이면 4, 신선도면 2 — 같은 입력에서 판정이 갈린다",
           origin_style == 4 and n == 2, f"원전식={origin_style} 우리={n}")
     check("빈 목록은 0", S.count_polling([], now=now)[0] == 0)
     check("None 도 0", S.count_polling(None, now=now)[0] == 0)
-    # 🔴 미래 stamp(시계 어긋남)를 "신선" 으로 세지 않는다 — 판정 불가는 단정하지 않는 쪽으로.
+    # [중요] 미래 stamp(시계 어긋남)를 "신선" 으로 세지 않는다 — 판정 불가는 단정하지 않는 쪽으로.
     future = [{"worker_id": "clock-skew", "last_seen": (now + timedelta(hours=1)).isoformat()}]
     check("미래 stamp 는 폴링으로 세지 않는다", S.count_polling(future, now=now)[0] == 0)
 
 
 def test_overlapping_pair():
-    """🔴 *"서로 다른 워커가 처리했다"* 는 병렬이 아니다 — 구간이 겹쳐야 병렬이다."""
+    """[중요] *"서로 다른 워커가 처리했다"* 는 병렬이 아니다 — 구간이 겹쳐야 병렬이다."""
     from datetime import datetime
     t = lambda h, m: datetime(2026, 8, 16, h, m)      # noqa: E731
     overlap = [("w1", t(10, 0), t(10, 30), 0), ("w2", t(10, 15), t(10, 45), 1)]
@@ -139,7 +139,7 @@ def test_overlapping_pair():
     p = S.overlapping_pair(overlap)
     check("겹치면 쌍을 돌려준다", p is not None and p[0] == 0 and p[2] == 1, str(p))
     check("직렬이면 None", S.overlapping_pair(serial) is None)
-    check("🔴 같은 워커의 겹침은 병렬이 아니다", S.overlapping_pair(same) is None)
+    check("[중요] 같은 워커의 겹침은 병렬이 아니다", S.overlapping_pair(same) is None)
     check("빈 입력은 None", S.overlapping_pair([]) is None and S.overlapping_pair(None) is None)
     check("한 건은 None", S.overlapping_pair(overlap[:1]) is None)
 
@@ -147,7 +147,7 @@ def test_overlapping_pair():
 def test_build_specs():
     specs = S.build_specs(["local", "claude"], 2, "TS", "NB")
     check("backends × per (2×2=4)", len(specs) == 4, str(len(specs)))
-    check("🔴 gidx 가 전역 유일", sorted(s["gidx"] for s in specs) == [0, 1, 2, 3])
+    check("[중요] gidx 가 전역 유일", sorted(s["gidx"] for s in specs) == [0, 1, 2, 3])
     check("레인이 고르게 나뉜다",
           [s["backend"] for s in specs] == ["local", "local", "claude", "claude"])
     check("NONCE 가 전부 다르다", len({s["nonce"] for s in specs}) == 4)
@@ -160,7 +160,7 @@ def test_build_specs():
 
 
 def test_call_work_fn():
-    """🔴 인자 수를 **세서** 부른다 — `TypeError` 를 삼키면 콜러 내부 결함이 숨는다."""
+    """[중요] 인자 수를 **세서** 부른다 — `TypeError` 를 삼키면 콜러 내부 결함이 숨는다."""
     seen = {}
 
     def four(gidx, probe_rel, nonce_key, work_id):
@@ -189,9 +189,9 @@ def test_call_work_fn():
 
     try:
         S._call_work_fn(boom, 1, "p.py", "NONCE_1", "w", "local")
-        check("🔴 콜러 내부 TypeError 는 삼켜지지 않는다", False, "예외가 안 났다")
+        check("[중요] 콜러 내부 TypeError 는 삼켜지지 않는다", False, "예외가 안 났다")
     except TypeError as e:
-        check("🔴 콜러 내부 TypeError 는 삼켜지지 않는다", "콜러 안에서" in str(e), str(e))
+        check("[중요] 콜러 내부 TypeError 는 삼켜지지 않는다", "콜러 안에서" in str(e), str(e))
 
 
 def main() -> int:
@@ -201,7 +201,7 @@ def main() -> int:
                test_call_work_fn):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_selftest: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_selftest: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

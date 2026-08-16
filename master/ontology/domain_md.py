@@ -3,7 +3,7 @@
 원본: `watcher/ontology_md_parse.py` 의 `parse_domain_md` · `_extract_list_items` ·
 `_parse_boundary`.
 
-## 🔴 원본 파서를 그대로 옮기면 6/7 도메인이 조용히 빈 결과가 된다
+## [중요] 원본 파서를 그대로 옮기면 6/7 도메인이 조용히 빈 결과가 된다
 
 원본은 섹션 이름 6개를 **고정 정규식**으로 찾는다 — `## 시스템 개요` · `## 핵심 책임` ·
 `## 도메인 경계` · `## 핵심 invariants` · `## 협력 도메인` · `## 사용자 의도 메모`.
@@ -26,7 +26,7 @@
 `extra` 에 남긴다 — `## 핵심 구현 패턴` 은 액션 추출의 **가장 강한 신호**다.
 고정 스키마를 강요하는 대신 있는 것을 쓴다.
 
-🔴 그리고 **무엇이 없었는지 결과에 적는다**(`missing`). 결손을 숨기면 다음 세션이
+[중요] 그리고 **무엇이 없었는지 결과에 적는다**(`missing`). 결손을 숨기면 다음 세션이
 "원래 이 도메인은 책임이 없나 보다" 로 읽는다 — 매니페스트 결손 명시와 같은 규칙이다.
 """
 from __future__ import annotations
@@ -43,7 +43,7 @@ _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _SECTION = re.compile(r"^##\s+(.+?)\s*$", re.M)
 _LIST_ITEM = re.compile(r"^\s*-\s+(.+?)\s*$", re.M)
 
-# 아는 섹션 이름 → 필드. 🔴 **둘 다 실물에 존재하는 스키마다** (위 독스트링 실측).
+# 아는 섹션 이름 → 필드. [중요] **둘 다 실물에 존재하는 스키마다** (위 독스트링 실측).
 # 공백 차이를 흡수하려고 정규화 후 비교한다(`핵심 invariants` ↔ `핵심invariants`).
 _CANON = {
     "시스템개요": "summary",
@@ -54,7 +54,7 @@ _CANON = {
     "사용자의도메모": "intent_notes",
 }
 
-# 🔴 원본에 없는 매핑 — 우리 실물 6/7 이 쓰는 스키마. 버리면 근거가 사라진다.
+# [중요] 원본에 없는 매핑 — 우리 실물 6/7 이 쓰는 스키마. 버리면 근거가 사라진다.
 #   `핵심 구현 패턴` → 액션 추출의 최강 신호 (누가 무엇을 어떤 순서로)
 #   `확장 포인트`    → 경계 신호 (어디까지가 이 도메인인가)
 _CANON_EXTRA = {
@@ -86,7 +86,7 @@ class DomainDoc:
     patterns: str = ""              # `## 핵심 구현 패턴` — 6/7 도메인의 주력 신호
     extension_points: str = ""      # `## 확장 포인트`
     extra: dict = field(default_factory=dict)     # 그 밖의 `## ` 섹션 원문
-    missing: list = field(default_factory=list)   # 🔴 없었던 정규 섹션
+    missing: list = field(default_factory=list)   # [중요] 없었던 정규 섹션
 
     @property
     def status(self) -> str:
@@ -158,7 +158,7 @@ class DomainDoc:
 
     @property
     def summary_note(self) -> str:
-        """결손 보고 한 줄. 🔴 **빈 것을 숨기지 않는다.**"""
+        """결손 보고 한 줄. [중요] **빈 것을 숨기지 않는다.**"""
         s = (f"{self.domain}: 멤버 {len(self.related_classes)}"
              f" · 서술 {len(self.summary_text)}자")
         if self.extra:
@@ -244,7 +244,7 @@ def content_hash(paths: ProjectPaths, domain: str) -> str:
     원본: `watcher/ontology_invalidation.domain_md_hash` (Phase η.7.3). 부분 재합성의
     full 폴백 판정에 쓰고, `package.write` 가 manifest 에 `md_hash` 로 찍는다.
 
-    🔴 **파서가 아니라 원문을 잰다.** 파싱 결과를 재면 파서가 모르는 절(`## 핵심 구현 패턴`
+    [중요] **파서가 아니라 원문을 잰다.** 파싱 결과를 재면 파서가 모르는 절(`## 핵심 구현 패턴`
     부류)의 변경이 해시에 안 잡혀 *"도메인 뜻이 그대로"* 로 오판한다 — 이 모듈 머리말이
     적어 둔 그 스키마 편차가 정확히 그 자리다. 원본도 원문 기준이다.
     """

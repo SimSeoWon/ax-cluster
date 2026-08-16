@@ -2,7 +2,7 @@
 
     .venv/bin/python master/test_mcp_servers.py
 
-🔴 **이 테스트가 존재하는 이유.** 2026-08-08 까지 `task_queue/mcp_server.py` 가
+[중요] **이 테스트가 존재하는 이유.** 2026-08-08 까지 `task_queue/mcp_server.py` 가
 `mcp.server.fastmcp` 를 import 하고 있었는데 설치본은 `mcp` 2.0.0 이라 그 경로가 없다.
 stdio 모드가 **import 단계에서 죽어 있었는데도 아무도 몰랐다** — HTTP `--serve` 는 이 모듈을
 지연 import 하고, 어떤 테스트도 이 모듈을 건드리지 않았기 때문이다.
@@ -35,10 +35,10 @@ def check(label: str, cond: bool, detail: str = "") -> None:
     global _passed, _failed
     if cond:
         _passed += 1
-        print(f"  ✅ {label}")
+        print(f"  [완료] {label}")
     else:
         _failed += 1
-        print(f"  ❌ {label}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {label}" + (f" — {detail}" if detail else ""))
 
 
 def tool_names(server) -> list[str]:
@@ -83,23 +83,23 @@ check("모듈 import", True)
 check("MCPServer 인스턴스", type(pj.mcp).__name__ == "MCPServer", type(pj.mcp).__name__)
 _pj = tool_names(pj.mcp)
 check("도구 30종 등록", len(_pj) == 30, f"실제 {len(_pj)}종: {_pj}")
-# 🔴 **서술 조회 창구** (소 3.1.4, 원전 η.7.4) — 서술을 만들어 두고 읽는 곳이 없으면
+# [중요] **서술 조회 창구** (소 3.1.4, 원전 η.7.4) — 서술을 만들어 두고 읽는 곳이 없으면
 #   그 산출물은 없는 것과 같다. 원전은 라우트·도구 둘 다 갖고 있었다(리포트 14 §7.5).
-check("  🔴 서술 조회: get_layer_description_tool", "get_layer_description_tool" in _pj, str(_pj))
-# 🔴 **감사 창구 둘** (소 3.4.1·3.4.2, 2026-08-14) — 원전은 감사를 **요청 시** 부르는 도구로
+check("  [중요] 서술 조회: get_layer_description_tool", "get_layer_description_tool" in _pj, str(_pj))
+# [중요] **감사 창구 둘** (소 3.4.1·3.4.2, 2026-08-14) — 원전은 감사를 **요청 시** 부르는 도구로
 #   뒀다(`audit_context_md` · `analyze_search_log`). 유휴 배치가 아니다.
 for _t in ("audit_context_tool", "analyze_search_log_tool"):
-    check(f"  🔴 감사 창구: {_t}", _t in _pj, str(_pj))
-# 🔴 **버전 핸드셰이크** (소 3.1.8, κ.9 계약 표면) — 이것이 없으면 소비자가 어느 마스터와
+    check(f"  [중요] 감사 창구: {_t}", _t in _pj, str(_pj))
+# [중요] **버전 핸드셰이크** (소 3.1.8, κ.9 계약 표면) — 이것이 없으면 소비자가 어느 마스터와
 #   말하는지 확인할 방법이 없다(원전이 get_server_version 을 만든 계기와 같은 상태).
-check("  🔴 버전 핸드셰이크: get_master_version_tool", "get_master_version_tool" in _pj, str(_pj))
-# 🔴 개수만 세면 다음에 또 깨진다 — **요청자가 실제로 부를 것**이 있는지 이름으로 본다.
+check("  [중요] 버전 핸드셰이크: get_master_version_tool", "get_master_version_tool" in _pj, str(_pj))
+# [중요] 개수만 세면 다음에 또 깨진다 — **요청자가 실제로 부를 것**이 있는지 이름으로 본다.
 #   `.33` 은 이것들이 없으면 개념을 추가·수정·제거할 수단이 아예 없다(2026-08-09 실측:
 #   어휘(별칭)만 다룰 수 있고 개념은 마스터 CLI 에만 있었다).
 for _t in ("create_domain_tool", "edit_ontology_item_tool", "remove_ontology_item_tool",
            "lock_ontology_item_tool", "list_locked_tool", "unassigned_classes_tool",
            "sync_ontology_tool", "protect_ontology_tool", "list_protected_tool", "drift_audit_tool", "infer_domain_tool"):
-    check(f"  🔴 요청자 창구: {_t}", _t in _pj, str(_pj))
+    check(f"  [중요] 요청자 창구: {_t}", _t in _pj, str(_pj))
 for name in ("register_project_tool", "set_active_tool",
              "list_projects_tool", "check_registry_tool",
              # 워크숍 (§5.5.4)

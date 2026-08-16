@@ -7,7 +7,7 @@
     <root>/<Name>/context/          컨텍스트 문서
     <root>/<Name>/ontology/domains/ 온톨로지
 
-🔴 루트는 `AX_PROJECTS_ROOT` 로 **명시 주입**하며 폴백이 없다. `task_queue` 이식 때
+[중요] 루트는 `AX_PROJECTS_ROOT` 로 **명시 주입**하며 폴백이 없다. `task_queue` 이식 때
 배운 대로다(§9.5.1) — 경로를 역산하면 잘못 잡아도 조용히 돌다가 재기동 후에야
 "데이터가 사라졌다"로 발견된다.
 """
@@ -36,7 +36,7 @@ GITEA_REPO_ROOT = Path(
 def normalize_project_id(project_id: str) -> str:
     """`project_id` 의 **동일성 키**. 대소문자를 접는다 (§5.5.4-④).
 
-    🔴 Gitea 는 이름을 두 벌로 들고 있다 — DB 실측 (2026-08-08):
+    [중요] Gitea 는 이름을 두 벌로 들고 있다 — DB 실측 (2026-08-08):
 
         owner_name / name  = `Sim/ModularStage`   ← 표시용. **훅 페이로드가 싣는 값**
         lower_name         = `modularstage`       ← 디스크 경로 · 동일성 판정
@@ -92,7 +92,7 @@ def validate_name(name: str) -> str:
 
 
 ROLE_WORKER = "worker"          # 큐에서 claim 해 처리한다
-ROLE_REQUESTER = "requester"    # 요청만 한다 — 사람의 기계. 🔴 파견 대상이 아니다
+ROLE_REQUESTER = "requester"    # 요청만 한다 — 사람의 기계. [중요] 파견 대상이 아니다
 ROLES = (ROLE_WORKER, ROLE_REQUESTER)
 
 
@@ -100,13 +100,13 @@ ROLES = (ROLE_WORKER, ROLE_REQUESTER)
 class Workshop:
     """작업장 한 대의 체크아웃 (§5.5.4).
 
-    🔴 **마스터가 경로를 아는 것은 파일을 소유하는 것이 아니다** — §2.1 위반이 아니라
+    [중요] **마스터가 경로를 아는 것은 파일을 소유하는 것이 아니다** — §2.1 위반이 아니라
     라우팅 메타데이터다. 마스터는 이 디렉토리를 읽지도 쓰지도 않는다.
 
     `driven` 이 이 스키마의 핵심이다. `.2` 는 SSH 가 열려 있어 마스터가 밀어넣을 수 있고,
     `.33` 은 RDP 뿐이라 몰 수 없다 — 그 차이를 주석이 아니라 필드로 남긴다.
 
-    🔴 **`role` 은 `driven` 과 다른 축이다** (사용자 확정 2026-08-09). `driven` 은 *닿을 수
+    [중요] **`role` 은 `driven` 과 다른 축이다** (사용자 확정 2026-08-09). `driven` 은 *닿을 수
     있나*, `role` 은 *무엇을 시켜도 되나* 다. `.33` 은 SSH 가 열려 **닿을 수는 있지만**
     사람의 메인 작업 PC라 **일감을 파견하면 안 된다** — 사람이 편집 중인 트리에서 에이전트가
     브랜치를 만들고 파일을 고치는 것이 더티 체크가 막으려던 바로 그 사고다.
@@ -126,7 +126,7 @@ class Workshop:
     def drivable(self) -> bool:
         """마스터가 원격으로 **일감을 파견**할 수 있는가.
 
-        🔴 닿을 수 있는 것과 시켜도 되는 것은 다르다 — `requester` 는 SSH 가 열려 있어도
+        [중요] 닿을 수 있는 것과 시켜도 되는 것은 다르다 — `requester` 는 SSH 가 열려 있어도
         파견 대상이 아니다.
         """
         return self.driven == DRIVEN_SSH and self.role == ROLE_WORKER
@@ -248,7 +248,7 @@ class ProjectConfig:
             data["workshops"] = {h: w.to_dict() for h, w in self.workshops.items()}
         else:
             data.pop("workshops", None)
-        # 🔴 default_flow_style=False 를 유지할 것. 윈도우 경로(`E:\trunk\...`)가
+        # [중요] default_flow_style=False 를 유지할 것. 윈도우 경로(`E:\trunk\...`)가
         #    플로우 스타일에서 따옴표에 갇히면 `\t` 가 탭으로 해석될 위험이 있다.
         #    round-trip 은 test_projects.py 가 검사한다.
         return yaml.safe_dump(

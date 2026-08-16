@@ -6,7 +6,7 @@
     L2 = 부모/기반 구현 — 공통 패턴 가지 (월 단위)
     L3 = 실제 구현 리프 — 휘발성 구현체 (주·일 단위)
 
-## 🔴 동등 투표 평균을 쓰지 않는다 — 원본이 한 번 실패하고 고친 지점
+## [중요] 동등 투표 평균을 쓰지 않는다 — 원본이 한 번 실패하고 고친 지점
 
 원안은 4 시그널 동등 투표 평균이었는데 **모든 클래스를 중앙(L2)으로 끌어당겨 L3 에
 도달하지 못했다** — 회사 실측 `MissionEditor L1=1 / L2=12 / L3=0`. "L3 = 구현 리프 다수"
@@ -19,7 +19,7 @@
     리프(자손 0 · 자식 0)                → L3        (구현체)
     + L2 이면서 고churn(90일 ≥ 임계)     → L3 강등    (휘발성 구현)
 
-🔴 **상향(리프→L2)은 하지 않는다.** git 커밋 0 은 *"진짜 안정"* 과 *"git 시그널이 죽음"*
+[중요] **상향(리프→L2)은 하지 않는다.** git 커밋 0 은 *"진짜 안정"* 과 *"git 시그널이 죽음"*
 (얕은 클론·신규 파일)을 **구분하지 못한다.** 하향만 하면 시그널이 죽어도 리프→L3 기본
 분포가 보장된다.
 
@@ -53,7 +53,7 @@ class Estimate:
         s = self.signals
         return (f"{self.name}: L{self.layer} ({self.confidence}) "
                 f"자손={s.get('descendants')} 자식={s.get('fan_in')} 깊이={s.get('depth')}"
-                + (" 🔒" if self.locked else "")
+                + (" " if self.locked else "")
                 + (" ↓git" if s.get("git_demoted") else ""))
 
 
@@ -140,7 +140,7 @@ def estimate_domain(members: dict, *, files: dict | None = None,
                     locked: set | None = None, repo: Path | None = None) -> list:
     """도메인 멤버 전체. `members` 는 `{클래스: 부모}`.
 
-    🔴 `locked`(= `verified_by_layer=1`)는 **추정하지 않는다.** 사용자가 검수해 잠근 값을
+    [중요] `locked`(= `verified_by_layer=1`)는 **추정하지 않는다.** 사용자가 검수해 잠근 값을
     자동 추정이 덮으면 검수의 의미가 사라진다 — 원본이 같은 규칙을 둔다.
     """
     parent_map, children_map = build_member_graph(members)
@@ -156,7 +156,7 @@ def estimate_domain(members: dict, *, files: dict | None = None,
 
 
 def distribution(estimates: list) -> dict:
-    """L1/L2/L3 분포. 🔴 **L3 가 0 이면 추정이 중앙으로 쏠린 것**이다 — 원본이 그 증상으로
+    """L1/L2/L3 분포. [중요] **L3 가 0 이면 추정이 중앙으로 쏠린 것**이다 — 원본이 그 증상으로
     동등 투표 평균을 폐기했다. 분포를 보고할 수 있어야 그 재발을 안다."""
     d = {1: 0, 2: 0, 3: 0, "locked": 0}
     for e in estimates:

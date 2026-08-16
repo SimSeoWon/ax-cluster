@@ -118,7 +118,7 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 f"- 검증 통과 task: {len(tasks_v)}건"
                 + (f" / 실패: {len(tasks_f)}건" if tasks_f else "")
                 + (f" / 취소: {len(tasks_c)}건" if tasks_c else ""),
-                f"- 통합 빌드: {'❌ 실패' if build_failed else '✅ 통과'}",
+                f"- 통합 빌드: {'[실패] 실패' if build_failed else '[완료] 통과'}",
                 "",
                 "## 구현 파일 (검증 통과)",
             ]
@@ -128,7 +128,7 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 lines.append(f"- … 외 {len(files_v) - 50}건")
 
             if tasks_f:
-                lines += ["", "## ⚠ 미완성 파일 (failed) — 수동 보완 필요"]
+                lines += ["", "##  미완성 파일 (failed) — 수동 보완 필요"]
                 for rf, fb in fail_details[:30]:
                     if fb:
                         lines.append(f"- `{rf}` — {fb}")
@@ -143,7 +143,7 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                     lines.append(f"- `{f}`")
 
             if build_failed:
-                lines += ["", "## ❌ 통합 빌드 실패 로그 (마지막 부분)"]
+                lines += ["", "## [실패] 통합 빌드 실패 로그 (마지막 부분)"]
                 if build_error:
                     lines.append(f"- 요약: {build_error}")
                 if build_log_tail:
@@ -162,7 +162,7 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 lines.append("3. fix 후 통합 빌드 재시도: 서버에서 `master_orchestrator --integration-build " + work_id + " --repo <repo>`")
                 lines.append("4. 빌드 통과되면 finalize 가능: `master_orchestrator --finalize " + work_id + "`")
             elif partial:
-                lines.append("2. ⚠ 미완성 파일 수동 작성 / 또는 수동 task 재등재 후 워커 재실행")
+                lines.append("2.  미완성 파일 수동 작성 / 또는 수동 task 재등재 후 워커 재실행")
                 lines.append("3. 승인: 서버에서 `master_orchestrator --finalize " + work_id + "` 실행")
             else:
                 lines.append("2. 승인: 서버에서 `master_orchestrator --finalize " + work_id + "` 실행")

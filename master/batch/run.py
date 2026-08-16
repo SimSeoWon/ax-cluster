@@ -1,20 +1,20 @@
 """유휴 배치 구동 주체 — 원전 `watch.py` 유휴 사이클의 리눅스 대응
 (소 3.4.4 · `#192`, 2026-08-14).
 
-    python -m master.batch.run plan        🔴 무엇이 돌지/왜 안 도는지만 보고 (기본)
+    python -m master.batch.run plan        [중요] 무엇이 돌지/왜 안 도는지만 보고 (기본)
     python -m master.batch.run run         실제로 돈다 (ax-batch.timer 가 부르는 것)
     python -m master.batch.run status      게이트·마커 현황
 
-## 순서 — 🔴 **작업 중이면 아무것도 안 돈다**
+## 순서 — [중요] **작업 중이면 아무것도 안 돈다**
 
     ① events.gate.check()   진행 중 분산 작업이 있으면 **전부 미룬다** (원전: git lock 경쟁)
     ② 배치별 시간 게이트     때가 됐나 (gates.should_run)
-    ③ 실행 → 마커 기록       🔴 성공했을 때만 마커를 쓴다 (실패하면 다음 회차에 다시 온다)
+    ③ 실행 → 마커 기록       [중요] 성공했을 때만 마커를 쓴다 (실패하면 다음 회차에 다시 온다)
 
-⚠️ **①을 배치별 게이트보다 앞에 둔다.** 원전 유휴 사이클도 *"작업 중이 아닐 때"* 를 밖에
+[주의] **①을 배치별 게이트보다 앞에 둔다.** 원전 유휴 사이클도 *"작업 중이 아닐 때"* 를 밖에
 두고 안에서 시각을 봤다. 순서를 뒤집으면 작업 중에도 시각 조건만 맞으면 도는 창이 생긴다.
 
-## 종료코드 — 🔴 색인기와 **같은 규약**
+## 종료코드 — [중요] 색인기와 **같은 규약**
 
     0   돌 것을 돌았다 (또는 돌 것이 없었다)
     4   일시 중지 게이트에 걸림 — **고장이 아니다.** `SuccessExitStatus=4` 로 받는다
@@ -23,9 +23,9 @@
 색인기 유닛이 이미 이 규약을 쓴다(*"늘 빨간 유닛은 유닛이 아니다"*). 같은 뜻에 다른 숫자를
 쓰면 운영자가 매번 되짚어야 한다.
 
-## ⚠️ 배치는 하나뿐이다 (지금)
+## [주의] 배치는 하나뿐이다 (지금)
 
-`rag_analysis`(소 3.4.2 `#161`) 하나다. 🔴 **자리만 만들지 않기 위해 그 배치와 같은 커밋에
+`rag_analysis`(소 3.4.2 `#161`) 하나다. [중요] **자리만 만들지 않기 위해 그 배치와 같은 커밋에
 넣었다** — 리포트 13 §19.3 의 *"가드를 두고 타이머를 안 두면 갱신 주체가 아무도 없다"* 의
 역방향(구동 주체를 두고 돌 것을 안 두면 그것도 빈 유닛이다). `planner`(`#155`)·
 `recipes_synthesizer`(`#157`)·`history_harvest`(`#158`)가 오면 `BATCHES` 에 한 줄씩 늘어난다.
@@ -39,12 +39,12 @@ from pathlib import Path
 
 from . import gates
 
-PAUSED_EXIT = 4          # 🔴 색인기와 같은 규약
+PAUSED_EXIT = 4          # [중요] 색인기와 같은 규약
 
 
 @dataclass
 class BatchDef:
-    """배치 하나 — 게이트 · 입력 크기 · 실행. 🔴 **입력 크기를 세는 법이 정의의 일부**다.
+    """배치 하나 — 게이트 · 입력 크기 · 실행. [중요] **입력 크기를 세는 법이 정의의 일부**다.
 
     입력을 못 세면 게이트의 `min_entries` 가 의미를 잃는다(원전도 각 게이트가 자기 입력을
     직접 셌다 — 신호 수·로그 엔트리 수).
@@ -71,7 +71,7 @@ class Outcome:
 
     def line(self) -> str:
         if self.error:
-            return f"  🔴 {self.key}: {self.error}"
+            return f"  [중요] {self.key}: {self.error}"
         if not self.ran:
             return f"  · {self.key}: {self.verdict}"
         r = self.result or {}
@@ -127,12 +127,12 @@ def plan(paths, cfg: dict, *, now: datetime | None = None) -> list:
 def run(paths, cfg: dict, *, now: datetime | None = None, force: bool = False) -> list:
     """게이트를 통과한 배치를 돌리고 마커를 쓴다.
 
-    🔴 **`force` 가 넘는 것과 못 넘는 것을 정확히 적는다** (첫 판은 문서와 코드가 어긋났다):
+    [중요] **`force` 가 넘는 것과 못 넘는 것을 정확히 적는다** (첫 판은 문서와 코드가 어긋났다):
 
         넘는다     시각 · 요일 · 최소 간격 · 입력 최소치
                    (입력이 얇아도 안전하다 — 분석기가 스스로 「판단 보류」를 낸다)
-        못 넘는다  🔴 **`batch.<key>=false`** — 운영자가 **명시적으로 끈 것**이다
-                   🔴 **일시 중지 게이트**(작업 중) — 넘게 만들면 원전이 피하려던
+        못 넘는다  [중요] **`batch.<key>=false`** — 운영자가 **명시적으로 끈 것**이다
+                   [중요] **일시 중지 게이트**(작업 중) — 넘게 만들면 원전이 피하려던
                       git lock 경쟁이 그대로 돌아온다. 그것은 `main()` 밖에 있다
     """
     out = []
@@ -147,7 +147,7 @@ def run(paths, cfg: dict, *, now: datetime | None = None, force: bool = False) -
 
         v = gates.should_run(b.schedule, cfg, paths.root, input_count=n, now=now)
         o.verdict = v.reason
-        # 🔴 `force` 도 **활성 플래그는 못 넘는다** — 운영자가 끈 것을 도구가 되살리지 않는다.
+        # [중요] `force` 도 **활성 플래그는 못 넘는다** — 운영자가 끈 것을 도구가 되살리지 않는다.
         may_force = force and gates.enabled(cfg, b.schedule.key)
         if not (v.run or may_force):
             if force and not may_force:
@@ -160,7 +160,7 @@ def run(paths, cfg: dict, *, now: datetime | None = None, force: bool = False) -
         try:
             o.result = b.execute(paths) or {}
         except Exception as e:                              # noqa: BLE001
-            # 🔴 배치 하나가 죽어도 나머지는 돈다. 다만 **조용히 넘기지 않는다.**
+            # [중요] 배치 하나가 죽어도 나머지는 돈다. 다만 **조용히 넘기지 않는다.**
             o.error = f"{type(e).__name__}: {e}"
             out.append(o)
             continue
@@ -196,10 +196,10 @@ def main(argv: list | None = None) -> int:
     cmd = args[0] if args else "plan"
     if cmd in ("-h", "--help", "help"):
         print("사용법: python -m master.batch.run plan|run|status [--force]")
-        print("  plan    🔴 무엇이 돌지/왜 안 도는지만 보고 (기본, 부작용 0)")
+        print("  plan    [중요] 무엇이 돌지/왜 안 도는지만 보고 (기본, 부작용 0)")
         print("  run     실제로 돈다 (ax-batch.timer 가 부르는 것)")
         print("  status  게이트·마커 현황")
-        print("  --force 시각·요일·간격·입력최소치를 무시 — 🔴 활성 플래그와")
+        print("  --force 시각·요일·간격·입력최소치를 무시 — [중요] 활성 플래그와")
         print("          일시 중지 게이트는 넘지 않는다")
         return 0
 
@@ -207,7 +207,7 @@ def main(argv: list | None = None) -> int:
     paths = resolve("")
     cfg = load_config(paths)
 
-    # ① 🔴 작업 중이면 아무것도 안 돈다
+    # ① [중요] 작업 중이면 아무것도 안 돈다
     v = pause_gate.check()
     if v.paused:
         print(f"⏸  배치 일시 중지 — {v.reason}")
@@ -225,7 +225,7 @@ def main(argv: list | None = None) -> int:
 
     outcomes = plan(paths, cfg) if cmd == "plan" else run(paths, cfg, force=force)
     if cmd == "plan":
-        print(f"배치 계획 ({paths.name}) — 🔴 아무것도 실행하지 않았다")
+        print(f"배치 계획 ({paths.name}) — [중요] 아무것도 실행하지 않았다")
         for o in outcomes:
             mark = "▶ 돌 것" if o.result.get("would_run") else "· 안 돈다"
             print(f"  {mark} {o.key} (입력 {o.result.get('input', '?')}건) — {o.verdict or o.error}")

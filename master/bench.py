@@ -7,17 +7,17 @@
     C  분산 2대         두 워커에 나눠 파견 (병렬)
     × S1 단일 파일 / S2 다중 파일
 
-🔴 **A 와 B/C 는 같은 모델이다**(셋 다 Claude Code). 그러므로 이 표가 답하는 것은
+[중요] **A 와 B/C 는 같은 모델이다**(셋 다 Claude Code). 그러므로 이 표가 답하는 것은
 *"분산이 더 똑똑한가"* 가 **아니라** *"오케스트레이션 비용이 병렬 이득을 넘는가"* 다.
 모델 품질 비교는 로컬 LLM 위임을 팔로 넣어야 성립한다.
 
-## 🔴 `.33` 은 worktree 로만 건드린다
+## [중요] `.33` 은 worktree 로만 건드린다
 
 사람의 메인 작업 PC 이고 미커밋 `.uasset` 이 있다. 브랜치를 바꾸면 **복구할 수 없다.**
 그래서 A 는 별도 worktree 에서 돈다 — 게스트 규칙 그대로다. 그 준비 비용은 A 에 포함해
 기록한다(숨기면 비교가 거짓이 된다).
 
-## 🔴 아무것도 push 하지 않는다
+## [중요] 아무것도 push 하지 않는다
 
 비교 대상은 *작업*이지 배관이 아니다. 각 팔은 자기 트리에서 파일을 고치고, 우리는
 `git diff` 를 떠서 지표를 낸 뒤 **되돌린다.** 큐도 쓰지 않는다.
@@ -26,7 +26,7 @@
 
 생성된 diff 의 **클래스형 식별자**를 클래스 그래프(1,806개 실측)와 대조한다. 그래프에 없는
 이름은 지어낸 것이다 — `verify_facts` 가 호출 관계에 대해 하는 일의 식별자 판이다.
-⚠️ **근사다**: 엔진 클래스(`UObject` 등)와 지역 타입은 그래프에 없을 수 있어 오탐이 난다.
+[주의] **근사다**: 엔진 클래스(`UObject` 등)와 지역 타입은 그래프에 없을 수 있어 오탐이 난다.
 그래서 **엔진 접두사 화이트리스트**를 두고, 남은 것을 *의심*으로만 보고한다.
 """
 from __future__ import annotations
@@ -78,7 +78,7 @@ class Cell:
         i, o, cc, cr = self.tok
         halluc = f"{len(self.unknown)}" if self.ok else "—"
         return (f"| {self.arm} | {self.size} | {self.host or '—'} | "
-                f"{'✅' if self.ok else '🔴'} | {self.seconds:.0f}s | "
+                f"{'OK' if self.ok else 'FAIL'} | {self.seconds:.0f}s | "
                 f"${self.cost:.3f} | {o:,} | {cc:,} | {cr:,} | "
                 f"{self.files}/{self.added} | {self.known} | {halluc} |")
 
@@ -101,7 +101,7 @@ def graph_classes(paths: ProjectPaths) -> set:
 
 
 def judge(diff: str, known: set) -> tuple:
-    """`(실재 식별자 수, 의심 목록)`. 🔴 **추가된 줄만** 본다 — 원본 코드를 세면 무의미하다."""
+    """`(실재 식별자 수, 의심 목록)`. [중요] **추가된 줄만** 본다 — 원본 코드를 세면 무의미하다."""
     if not known:
         return 0, []
     hits, unknown = 0, []
@@ -126,7 +126,7 @@ def _q(facts, path: str) -> str:
 
 def run_one(facts, *, workdir: str, task_id: str, manifest: str, timeout: int = 1800) -> tuple:
     """한 호스트에서 한 번 돌린다. `(Cell 조각, diff)`. **push 하지 않는다.**"""
-    # 🔴 **매니페스트는 `workdir` 안에 놓는다** — `facts.path` 가 아니다.
+    # [중요] **매니페스트는 `workdir` 안에 놓는다** — `facts.path` 가 아니다.
     #
     # 실측 2026-08-09에 이걸 틀려서 한 팔 전체를 버렸다: `.33` 은 worktree 에서 돌았는데
     # 매니페스트는 메인 체크아웃으로 갔다. 에이전트는 없는 파일을 찾아 헤맸고, 그 탐색이
@@ -137,7 +137,7 @@ def run_one(facts, *, workdir: str, task_id: str, manifest: str, timeout: int = 
     rel = f"{bundle.WORK_REL}/{task_id}/{MANIFEST_NAME}"
     bundle._remote_write(here, rel, manifest, base="checkout")
 
-    # 🔴 놓았다고 믿지 않는다 — 읽히는지 확인하고, 안 되면 **재지 않는다.**
+    # [중요] 놓았다고 믿지 않는다 — 읽히는지 확인하고, 안 되면 **재지 않는다.**
     sep = "\\" if facts.windows else "/"
     probe = f"{workdir}{sep}{bundle.WORK_REL.replace('/', sep)}{sep}{task_id}{sep}{MANIFEST_NAME}"
     rc, _ = _sh(facts, (f'if exist "{probe}" (exit 0) else (exit 1)') if facts.windows
@@ -167,7 +167,7 @@ def run_one(facts, *, workdir: str, task_id: str, manifest: str, timeout: int = 
 
 
 MANIFEST_NAME = "manifest.md"
-# 🔴 ASCII — 워커 콘솔 cp949 에서 한글 명령줄은 깨진다(실측).
+# [중요] ASCII — 워커 콘솔 cp949 에서 한글 명령줄은 깨진다(실측).
 INSTRUCTION = (
     "Read ./{work}/{task}/manifest.md and do exactly what it says, editing files in place "
     "in this working tree. Judge from the source files here, not from memory. "
@@ -177,5 +177,5 @@ INSTRUCTION = (
 
 
 def revert(facts, workdir: str) -> None:
-    """트리를 되돌린다. 🔴 `Source/` 만 — 범위 밖은 우리 것이 아니다."""
+    """트리를 되돌린다. [중요] `Source/` 만 — 범위 밖은 우리 것이 아니다."""
     _sh(facts, f'git -C {_q(facts, workdir)} checkout -- Source/')

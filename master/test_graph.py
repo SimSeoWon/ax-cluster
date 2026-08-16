@@ -2,7 +2,7 @@
 
     .venv/bin/python master/test_graph.py
 
-🔴 지키는 불변식:
+[중요] 지키는 불변식:
    1. **조용히 죽지 않는다** — 파서 부재·git 실패·소스 0건은 전부 예외다.
       "돌았는데 결과 0" 이 우리가 반복해 온 실패 모양이다
    2. **색인 대상은 `Source/` 뿐** (§5.2-E)
@@ -31,10 +31,10 @@ def check(label: str, cond: bool, detail: str = "") -> None:
     global PASS, FAIL
     if cond:
         PASS += 1
-        print(f"  ✅ {label}")
+        print(f"  [완료] {label}")
     else:
         FAIL += 1
-        print(f"  ❌ {label}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {label}" + (f" — {detail}" if detail else ""))
 
 
 HEADER = """
@@ -77,7 +77,7 @@ def make_project(root: Path) -> ProjectPaths:
     (p.source / "Game" / "Monster.h").write_text(HEADER, encoding="utf-8")
     (p.source / "Game" / "Monster.cpp").write_text(
         "#include \"Monster.h\"\nvoid AMonster::Tick(float d) {}\n", encoding="utf-8")
-    # 🔴 Source 밖 — 절대 들어오면 안 된다 (§5.2-E)
+    # [중요] Source 밖 — 절대 들어오면 안 된다 (§5.2-E)
     (p.repo / "Content").mkdir(parents=True, exist_ok=True)
     (p.repo / "Content" / "Outside.h").write_text(
         "class AShouldNotAppear : public AActor {};\n", encoding="utf-8")
@@ -120,17 +120,17 @@ def main() -> int:
     print("\n[2] 메서드 소유권 — 온톨로지 오탐 교차검증의 근거")
     names = [m["name"] for m in got["AMonster"]["methods"]]
     check("헤더 선언을 잡는다", {"Tick", "TakeHit"} <= set(names), str(names))
-    check("🔴 멤버 변수는 제외 (`Health`)", "Health" not in names, str(names))
-    check("🔴 오버로드는 이름 레벨 dedupe", names.count("TakeHit") == 1, str(names))
+    check("[중요] 멤버 변수는 제외 (`Health`)", "Health" not in names, str(names))
+    check("[중요] 오버로드는 이름 레벨 dedupe", names.count("TakeHit") == 1, str(names))
     check("소멸자도 하나로", sum(1 for n in names if "AMonster" in n) <= 1, str(names))
-    check("🔴 중첩 클래스 메서드를 부모에 이중 집계하지 않는다",
+    check("[중요] 중첩 클래스 메서드를 부모에 이중 집계하지 않는다",
           "InnerOnly" not in names, str(names))
     check("  중첩 클래스는 자기 항목으로 잡힌다",
           "InnerOnly" in [m["name"] for m in got.get("FInner", {}).get("methods", [])],
           str(got.get("FInner")))
     check("줄 번호가 붙는다", all(m["line"] > 0 for m in got["AMonster"]["methods"]))
 
-    print("\n[3] 🔴 파서가 없으면 예외 — 빈 그래프로 위장하지 않는다")
+    print("\n[3] [중요] 파서가 없으면 예외 — 빈 그래프로 위장하지 않는다")
     real = parse.TREE_SITTER_AVAILABLE
     try:
         parse.TREE_SITTER_AVAILABLE = False
@@ -148,7 +148,7 @@ def main() -> int:
     finally:
         parse.TREE_SITTER_AVAILABLE = real
 
-    print("\n[4] 🔴 색인 대상은 `Source/` 뿐 (§5.2-E)")
+    print("\n[4] [중요] 색인 대상은 `Source/` 뿐 (§5.2-E)")
     listed = cg.list_source_files(paths, git=git_ls(LISTED + ["Content/Outside.h"]))
     check("Source 밖은 걸러진다 — 나열돼도 안 들어온다",
           all(f.startswith("Source/") for f in listed), str(listed))
@@ -157,7 +157,7 @@ def main() -> int:
           cg.list_source_files(paths, git=git_ls(LISTED + ["Source/a.uasset"])) == LISTED,
           str(cg.list_source_files(paths, git=git_ls(LISTED + ["Source/a.uasset"]))))
 
-    print("\n[5] 🔴 git 실패·소스 0건은 예외 (빈 그래프로 덮지 않는다)")
+    print("\n[5] [중요] git 실패·소스 0건은 예외 (빈 그래프로 덮지 않는다)")
 
     def git_fail(repo, *args):
         return 128, "fatal: not a git repository"
@@ -177,13 +177,13 @@ def main() -> int:
     check("메서드도 들어갔다", st.methods > 0, str(st.methods))
     c = db.counts(paths)
     check("DB 건수가 통계와 맞는다", c["classes"] == st.classes, f"{c} vs {st.classes}")
-    check("🔴 Source 밖 클래스는 없다",
+    check("[중요] Source 밖 클래스는 없다",
           cg.find_subclasses(paths, "AActor").count("AShouldNotAppear") == 0)
     check("온톨로지 테이블이 미리 있다 (나중에 스키마를 고치지 않는다)",
           c["domains"] == 0 and c["class_ontology"] == 0, str(c))
     check("요약에 분모가 들어있다", "클래스" in st.summary and "ms" in st.summary, st.summary)
 
-    print("\n[6-1] 🔴 파싱 건수 ≠ DB 건수 — 이름 중복을 감추지 않는다")
+    print("\n[6-1] [중요] 파싱 건수 ≠ DB 건수 — 이름 중복을 감추지 않는다")
     p3 = make_project(tmp / "dup")
     (p3.source / "Game" / "Dup.h").write_text(
         "class AMonster : public AActor { void Other(); };\n", encoding="utf-8")
@@ -192,7 +192,7 @@ def main() -> int:
           std.parsed > std.classes, f"parsed={std.parsed} classes={std.classes}")
     check("  중복 건수를 센다", std.duplicate_names == std.parsed - std.classes)
     check("  요약이 그 사실을 말한다", "이름 중복" in std.summary, std.summary)
-    check("🔴 보고한 클래스 수가 DB 실제 건수다",
+    check("[중요] 보고한 클래스 수가 DB 실제 건수다",
           std.classes == db.counts(p3)["classes"], f"{std.classes} vs {db.counts(p3)}")
     check("  메서드도 실제 건수다", std.methods == db.counts(p3)["methods"])
 
@@ -200,14 +200,14 @@ def main() -> int:
     check("자손 (recursive CTE)", "UBossSpawner" in cg.find_subclasses(paths, "AMonster"),
           str(cg.find_subclasses(paths, "AMonster")))
     anc = cg.find_ancestors(paths, "AMonster")
-    check("🔴 조상은 다중 상속을 전부 펼친다", {"AActor", "IDamageable"} <= set(anc), str(anc))
+    check("[중요] 조상은 다중 상속을 전부 펼친다", {"AActor", "IDamageable"} <= set(anc), str(anc))
     check("깊이 제한이 먹는다",
           cg.find_ancestors(paths, "UBossSpawner", max_depth=1) == ["AMonster"],
           str(cg.find_ancestors(paths, "UBossSpawner", max_depth=1)))
     check("DB 가 없으면 빈 결과 (예외 아님)",
           cg.find_subclasses(ProjectPaths(name="X", root=tmp / "없음"), "AActor") == [])
 
-    print("\n[8] 🔴 `methods` 게이트 — 비었을 때 묻지 않는다")
+    print("\n[8] [중요] `methods` 게이트 — 비었을 때 묻지 않는다")
     check("게이트가 열려 있다", cg.methods_ready(paths))
     check("헤더 선언은 참", cg.method_belongs_to_class(paths, "AMonster", "Tick"))
     check("없는 메서드는 거짓", not cg.method_belongs_to_class(paths, "AMonster", "NoSuch"))
@@ -225,11 +225,11 @@ def main() -> int:
     st2 = cg.update_incremental(paths, ["Source/Game/Monster.h"])
     check("변경 파일만 센다", st2.files == 1, str(st2.files))
     check("기존 행을 지웠다", st2.dropped_rows > 0, str(st2.dropped_rows))
-    check("🔴 사라진 클래스가 남지 않는다 (`FStats`)",
+    check("[중요] 사라진 클래스가 남지 않는다 (`FStats`)",
           "TSharedBase" not in cg.find_ancestors(paths, "FStats"),
           str(cg.find_ancestors(paths, "FStats")))
     check("남은 클래스는 유지", cg.method_belongs_to_class(paths, "AMonster", "Tick"))
-    check("🔴 메서드도 CASCADE 로 정리됐다",
+    check("[중요] 메서드도 CASCADE 로 정리됐다",
           not cg.method_belongs_to_class(paths, "AMonster", "TakeHit",
                                          include_ancestors=False))
 
@@ -242,7 +242,7 @@ def main() -> int:
     check("파싱 대상이 아니면 아무것도 안 한다",
           st4.files == 0 and st4.classes == 0 and st4.dropped_rows == 0, st4.summary)
 
-    print("\n[11] 🔴 풀 스캔이 실패하면 이전 그래프가 남는다")
+    print("\n[11] [중요] 풀 스캔이 실패하면 이전 그래프가 남는다")
     p2 = make_project(tmp / "keep")
     cg.build_full(p2, git=git_ls(LISTED))
     before = db.counts(p2)["classes"]
@@ -262,15 +262,15 @@ def main() -> int:
             check("예외가 올라온다", "죽음" in str(e))
     finally:
         cg._entries_for = real_entries
-    check("🔴 이전 그래프가 보존됐다 (ROLLBACK)",
+    check("[중요] 이전 그래프가 보존됐다 (ROLLBACK)",
           db.counts(p2)["classes"] == before, f"{db.counts(p2)['classes']} vs {before}")
 
-    print("\n[11-1] 🔴 CP949 소스 — 실측 723/1,654 가 UTF-8 이 아니다")
+    print("\n[11-1] [중요] CP949 소스 — 실측 723/1,654 가 UTF-8 이 아니다")
     from master import source_text as st
     kr = "// 캐릭터 선택창에서만 보여주는 간단한 정보\nclass UUserAccount : public UObject { void Load(); };\n"
     check("UTF-8 은 그대로", st.decode(kr.encode("utf-8")).encoding == st.UTF8)
     d = st.decode(kr.encode("cp949"))
-    check("🔴 CP949 를 알아본다", d.encoding == st.CP949, d.encoding)
+    check("[중요] CP949 를 알아본다", d.encoding == st.CP949, d.encoding)
     check("  한글이 살아난다", "캐릭터 선택창" in d.text, d.text[:40])
     check("  유실 표시 없음", not d.degraded)
     check("  폴백 표시 있음 (인코딩 혼용 신호)", d.fallback)
@@ -281,7 +281,7 @@ def main() -> int:
     p5 = make_project(tmp / "cp949")
     (p5.source / "Game" / "Kr.h").write_bytes(kr.encode("cp949"))
     st5 = cg.build_full(p5, git=git_ls(LISTED + ["Source/Game/Kr.h"]))
-    check("🔴 통계가 인코딩 분포를 보고한다", st5.encodings.cp949 == 1,
+    check("[중요] 통계가 인코딩 분포를 보고한다", st5.encodings.cp949 == 1,
           st5.encodings.summary)
     check("  요약에 나타난다", "cp949" in st5.summary, st5.summary)
     check("  그래프는 영향 없다 (식별자가 ASCII)",
@@ -299,7 +299,7 @@ def main() -> int:
     except dep.GraphError:
         check("소스 0건 → 예외", True)
     dst = dep.build_full(p4, git=git_ls(DEPS + ["Content/Outside.h", "Source/a.uasset"]))
-    check("🔴 Source 밖·대상 외 확장자 제외", dst.files == 3, str(dst.files))
+    check("[중요] Source 밖·대상 외 확장자 제외", dst.files == 3, str(dst.files))
     check("간선이 들어갔다", dst.edges >= 2, str(dst.edges))
     check("`<...>` 는 세지 않는다 (엔진 헤더는 트윈 밖)",
           dep.counts(p4)["includes"] == dst.edges, str(dep.counts(p4)))
@@ -316,14 +316,14 @@ def main() -> int:
     check("DB 없으면 빈 결과",
           dep.dependents(ProjectPaths(name="Z", root=tmp / "없음3"), "x") == [])
 
-    print("\n[12-1] ⚠️ 역방향은 basename 근사 — 감추지 않고 센다")
+    print("\n[12-1] [주의] 역방향은 basename 근사 — 감추지 않고 센다")
     (p4.source / "Other").mkdir(parents=True, exist_ok=True)
     (p4.source / "Other" / "Monster.h").write_text("class BMonster {};\n", encoding="utf-8")
     amb = dep.build_full(p4, git=git_ls(DEPS + ["Source/Other/Monster.h"]))
     check("이름 겹치는 헤더를 센다", amb.ambiguous_basenames == 1,
           str(amb.ambiguous_basenames))
     check("요약이 그 사실을 말한다", "역방향 근사" in amb.summary, amb.summary)
-    check("🔴 근사 때문에 두 Monster.h 가 같은 참조자를 갖는다 (알려진 한계)",
+    check("[중요] 근사 때문에 두 Monster.h 가 같은 참조자를 갖는다 (알려진 한계)",
           set(dep.dependents(p4, "Source/Other/Monster.h"))
           == set(dep.dependents(p4, "Source/Game/Monster.h")))
 
@@ -331,7 +331,7 @@ def main() -> int:
     (p4.source / "Game" / "Boss.h").write_text('class ABoss {};\n', encoding="utf-8")
     ds2 = dep.update_incremental(p4, ["Source/Game/Boss.h"])
     check("간선을 지웠다", ds2.dropped_edges > 0, str(ds2.dropped_edges))
-    check("🔴 사라진 참조가 남지 않는다",
+    check("[중요] 사라진 참조가 남지 않는다",
           "Source/Game/Boss.h" not in dep.dependents(p4, "Source/Game/Monster.h"),
           str(dep.dependents(p4, "Source/Game/Monster.h")))
     (p4.source / "Game" / "Boss.h").unlink()

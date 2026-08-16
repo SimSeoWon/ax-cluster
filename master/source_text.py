@@ -1,6 +1,6 @@
 """소스 파일을 인코딩에 상관없이 읽는다.
 
-🔴 **이 모듈이 있는 이유 — 실측 근거가 있다.**
+[중요] **이 모듈이 있는 이유 — 실측 근거가 있다.**
 
 `watcher-internals.md` 의 σ 계열 결정 로그가 기록해 둔 사고:
 
@@ -19,7 +19,7 @@ cp949                 : '// 캐릭터 선택창에서만 보여주는 간단한 
 
 - **클래스 그래프는 영향 없다** — 식별자가 ASCII 라 tree-sitter 파싱 결과가 동일하다
   (같은 파일을 두 방식으로 파싱해 클래스·부모·메서드 수가 일치함을 확인)
-- 🔴 **컨텍스트 MD 합성은 치명적이다** — 한글 주석이 그 코드의 *의도*를 담은 가장 밀도 높은
+- [중요] **컨텍스트 MD 합성은 치명적이다** — 한글 주석이 그 코드의 *의도*를 담은 가장 밀도 높은
   신호인데, mojibake 를 LLM 에 넣으면 문서가 조용히 쓰레기가 된다. 에러는 안 난다
 
 **폴백 순서**: UTF-8 strict → CP949 → UTF-8 `errors="replace"`.
@@ -45,7 +45,7 @@ class Decoded:
 
     @property
     def degraded(self) -> bool:
-        """문자가 유실됐는가. 🔴 True 면 LLM 에 넣기 전에 한 번 의심할 것."""
+        """문자가 유실됐는가. [중요] True 면 LLM 에 넣기 전에 한 번 의심할 것."""
         return self.encoding == REPLACE
 
     @property
@@ -102,7 +102,7 @@ class EncodingTally:
         if self.cp949:
             parts.append(f"cp949 {self.cp949}")
         if self.degraded:
-            parts.append(f"🔴 유실 {self.degraded}")
+            parts.append(f"[중요] 유실 {self.degraded}")
         if self.unreadable:
-            parts.append(f"🔴 못 읽음 {self.unreadable}")
+            parts.append(f"[중요] 못 읽음 {self.unreadable}")
         return " · ".join(parts)

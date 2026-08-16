@@ -1,9 +1,9 @@
 """읽기 전용 화면 서빙 + 자격증명 분리 (중 3.2 후속).
 
-🔴 지키는 계약은 다섯이다:
+[중요] 지키는 계약은 다섯이다:
 
     ① **경로는 화이트리스트다** — 클라이언트가 준 문자열로 파일을 열지 않는다
-    ② 🔴 **뷰는 공개, API 는 잠김** — 공개는 뷰 경로에만 적용된다.
+    ② [중요] **뷰는 공개, API 는 잠김** — 공개는 뷰 경로에만 적용된다.
        잠근 모드(`AX_VIEW_REQUIRE_TOKEN=1`)에서는 자격증명이 **양방향으로** 갈린다
     ③ **읽기 전용** — GET/HEAD 만. 요청이 수집을 유발하지 않는다
     ④ **낡은 것을 최신처럼 보이게 두지 않는다** — 나이를 배너로 박는다
@@ -35,7 +35,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 def call(app, path="/view/", method="GET", headers=None) -> tuple:
@@ -76,7 +76,7 @@ def tmp_root(*, cluster_age=0.0, with_domains=True):
 # ── ① 경로 화이트리스트 ─────────────────────────────────────────────────────────
 
 def test_path_is_whitelisted_not_joined() -> None:
-    """🔴 순회를 막는 가장 확실한 방법은 **경로를 받지 않는 것**이다."""
+    """[중요] 순회를 막는 가장 확실한 방법은 **경로를 받지 않는 것**이다."""
     root = Path("/tmp")
     for bad in ("../../etc/passwd", "..%2fetc", "cluster.html/../../x", "secret.html",
                 "", "cluster.HTML"):
@@ -114,10 +114,10 @@ def test_read_only_methods() -> None:
 
 
 def test_serving_never_regenerates() -> None:
-    """🔴 새로고침이 BC-250 에 SSH 폴링을 걸면 주기 가드를 만든 이유가 사라진다."""
+    """[중요] 새로고침이 BC-250 에 SSH 폴링을 걸면 주기 가드를 만든 이유가 사라진다."""
     src = Path(V.__file__).read_text(encoding="utf-8")
     for bad in ("status.collect", "subprocess", "_ssh(", "os.system"):
-        check(f"🔴 `{bad}` 를 부르지 않는다", bad not in src, bad)
+        check(f"[중요] `{bad}` 를 부르지 않는다", bad not in src, bad)
 
 
 def test_no_store_so_refresh_shows_latest() -> None:
@@ -139,7 +139,7 @@ def test_stale_snapshot_gets_a_banner() -> None:
         check("여전히 200", st == 200, str(st))
         check("배너가 박힌다", "지금 상태가 아니다" in body, body[:200])
         check("만드는 명령을 알려준다", "master.status html" in body)
-        # 🔴 `<body>` 바로 뒤여야 한다 — 앞에 붙으면 문서가 깨진다
+        # [중요] `<body>` 바로 뒤여야 한다 — 앞에 붙으면 문서가 깨진다
         check("body 안쪽에 넣는다", body.index("<body>") < body.index("지금 상태가"))
         check("원래 내용이 남아 있다", "<h1>상태</h1>" in body)
     finally:
@@ -172,9 +172,9 @@ def test_index_shows_age_and_marks_stale() -> None:
     try:
         _, _, idx = call(V.ViewApp(lambda: d), "/view/")
         check("나이를 보인다", "시간 전" in idx or "분 전" in idx, idx[:200])
-        check("낡은 것에 표시", "⚠️" in idx)
+        check("낡은 것에 표시", "[주의]" in idx)
         check("읽기 전용임을 적는다", "읽기 전용" in idx)
-        # ⚠️ 로그인을 뺀 뒤(사용자 결정 2026-08-13) 문구가 바뀌었다 — **인증이 없다는 사실**과
+        # [주의] 로그인을 뺀 뒤(사용자 결정 2026-08-13) 문구가 바뀌었다 — **인증이 없다는 사실**과
         #    같은 포트의 API 는 잠겨 있다는 것을 화면이 말해야 한다
         check("인증이 없다고 적는다", "인증이 없다" in idx, idx[-300:])
         check("API 는 잠겨 있다고 적는다", "잠겨" in idx, idx[-300:])
@@ -182,14 +182,14 @@ def test_index_shows_age_and_marks_stale() -> None:
         shutil.rmtree(d, ignore_errors=True)
 
 
-# ── ② 🔴 자격증명 분리 ──────────────────────────────────────────────────────────
+# ── ② [중요] 자격증명 분리 ──────────────────────────────────────────────────────────
 
 def _basic(tok: str) -> str:
     return "Basic " + base64.b64encode(f"ax:{tok}".encode()).decode()
 
 
 def test_view_token_and_api_token_do_not_cross() -> None:
-    """🔴 브라우저가 쥔 자격으로 MCP 를 부를 수 없어야 한다 — 분리한 이유가 그것이다."""
+    """[중요] 브라우저가 쥔 자격으로 MCP 를 부를 수 없어야 한다 — 분리한 이유가 그것이다."""
     api, view = "A" * 40, "V" * 40
     seen: list = []
 
@@ -206,20 +206,20 @@ def test_view_token_and_api_token_do_not_cross() -> None:
     check("뷰토큰+Bearer 도 허용", st == 200, str(st))
 
     st, _, _ = call(app, "/view/", headers={"Authorization": f"Bearer {api}"})
-    check("🔴 API 토큰으로 화면 못 본다", st == 401, str(st))
+    check("[중요] API 토큰으로 화면 못 본다", st == 401, str(st))
     st, _, _ = call(app, "/view/", headers={"Authorization": _basic(api)})
-    check("🔴 API 토큰 Basic 도 막힌다", st == 401, str(st))
+    check("[중요] API 토큰 Basic 도 막힌다", st == 401, str(st))
 
     st, _, _ = call(app, "/mcp", headers={"Authorization": f"Bearer {view}"})
-    check("🔴 뷰 토큰으로 MCP 못 부른다", st == 401, str(st))
+    check("[중요] 뷰 토큰으로 MCP 못 부른다", st == 401, str(st))
     st, _, _ = call(app, "/mcp", headers={"Authorization": _basic(view)})
-    check("🔴 뷰 토큰 Basic 으로도 못 부른다", st == 401, str(st))
+    check("[중요] 뷰 토큰 Basic 으로도 못 부른다", st == 401, str(st))
     st, _, _ = call(app, "/mcp", headers={"Authorization": f"Bearer {api}"})
     check("API 토큰은 MCP 통과", st == 200, str(st))
 
 
 def test_view_is_public_by_default() -> None:
-    """🔴 사용자 결정 2026-08-13: *"그냥 있는거 보여주는 뷰어를 원하는거라니까."*
+    """[중요] 사용자 결정 2026-08-13: *"그냥 있는거 보여주는 뷰어를 원하는거라니까."*
 
     이 경로는 조작이 불가능하다(GET/HEAD · 화이트리스트 · 수집 유발 없음). 규칙의 글자를
     지키려고 **쓰이지 않는 화면**을 만드는 것이 더 나쁘다. 남는 방어는 ufw LAN 한정이다.
@@ -230,12 +230,12 @@ def test_view_is_public_by_default() -> None:
 
     app = A.BearerAuthMiddleware(inner, "A" * 40, view_prefix="/view", view_public=True)
     st, _, _ = call(app, "/view/")
-    check("🔴 인증 없이 화면이 열린다", st == 200, str(st))
+    check("[중요] 인증 없이 화면이 열린다", st == 200, str(st))
     st, _, _ = call(app, "/view/cluster.html")
     check("페이지도 열린다", st == 200, str(st))
-    # 🔴 그래도 **API 는 잠겨 있다** — 공개는 뷰 경로에만 적용된다
+    # [중요] 그래도 **API 는 잠겨 있다** — 공개는 뷰 경로에만 적용된다
     st, _, _ = call(app, "/mcp")
-    check("🔴 MCP 는 여전히 401", st == 401, str(st))
+    check("[중요] MCP 는 여전히 401", st == 401, str(st))
     st, _, _ = call(app, "/mcp", headers={"Authorization": "Bearer " + "A" * 40})
     check("API 토큰으로만 MCP", st == 200, str(st))
 
@@ -253,14 +253,14 @@ def test_browser_gets_a_basic_challenge_api_gets_bearer() -> None:
 
 
 def test_no_view_token_closes_the_view_but_not_the_service() -> None:
-    """⚠️ 화면 하나 때문에 큐·MCP 가 못 뜨는 것은 과하다 — fail-closed 의 방향을 고른다."""
+    """[주의] 화면 하나 때문에 큐·MCP 가 못 뜨는 것은 과하다 — fail-closed 의 방향을 고른다."""
     async def inner(scope, receive, send):
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b"ok"})
 
     app = A.BearerAuthMiddleware(inner, "A" * 40, view_prefix="/view", view_token=None)
     st, _, body = call(app, "/view/", headers={"Authorization": _basic("V" * 40)})
-    check("🔴 뷰 토큰이 없으면 화면은 닫힌다", st == 401, str(st))
+    check("[중요] 뷰 토큰이 없으면 화면은 닫힌다", st == 401, str(st))
     check("사유를 말한다", "not configured" in body, body)
     st, _, _ = call(app, "/mcp", headers={"Authorization": "Bearer " + "A" * 40})
     check("그래도 MCP 는 뜬다", st == 200, str(st))
@@ -275,14 +275,14 @@ def test_view_token_uses_the_same_strength_rules() -> None:
         p.chmod(0o600)
         try:
             A.load_view_token(p)
-            check("🔴 짧은 토큰 거부", False, "통과해버렸다")
+            check("[중요] 짧은 토큰 거부", False, "통과해버렸다")
         except A.AuthError as e:
             check("짧은 토큰 거부", "너무 짧다" in str(e), str(e))
         p.write_text("V" * 40, encoding="utf-8")
         p.chmod(0o644)
         try:
             A.load_view_token(p)
-            check("🔴 열린 권한 거부", False, "통과해버렸다")
+            check("[중요] 열린 권한 거부", False, "통과해버렸다")
         except A.AuthError as e:
             check("열린 권한 거부", "권한" in str(e), str(e))
         check("없으면 None (예외 아님)", A.load_view_token(d / "nope") is None)
@@ -293,7 +293,7 @@ def test_view_token_uses_the_same_strength_rules() -> None:
 # ── ⑤ 한 포트 ───────────────────────────────────────────────────────────────────
 
 def test_root_redirects_so_the_port_alone_works() -> None:
-    """🔴 실측 2026-08-13: 사용자가 `…:8103/` 를 열자 `{"error":"unauthorized"}` 를 받았다.
+    """[중요] 실측 2026-08-13: 사용자가 `…:8103/` 를 열자 `{"error":"unauthorized"}` 를 받았다.
 
     주소에 `/view/` 를 붙여야 하는 것은 사람이 외워야 하는 마찰이고, 마찰은 화면을 안 보게 만든다.
     """
@@ -309,7 +309,7 @@ def test_root_redirects_so_the_port_alone_works() -> None:
 
 
 def test_opening_root_does_not_open_the_api() -> None:
-    """🔴 라우터가 직접 처리하고 **뒤로 넘기지 않으므로** MCP 가 인증 없이 노출되지 않는다."""
+    """[중요] 라우터가 직접 처리하고 **뒤로 넘기지 않으므로** MCP 가 인증 없이 노출되지 않는다."""
     from master.auth import OPEN_PATHS
     reached: list = []
 
@@ -324,14 +324,14 @@ def test_opening_root_does_not_open_the_api() -> None:
                                 view_prefix="/view", view_public=True)
     st, _, body = call(app, "/")
     check("루트는 302", st == 302, str(st))
-    check("🔴 MCP 에 닿지 않았다", not reached, str(reached))
+    check("[중요] MCP 에 닿지 않았다", not reached, str(reached))
     check("본문이 새지 않았다", "SECRET" not in body)
     st, _, _ = call(app, "/mcp")
-    check("🔴 MCP 는 여전히 401", st == 401, str(st))
+    check("[중요] MCP 는 여전히 401", st == 401, str(st))
 
 
 def test_old_view_paths_redirect_to_cluster() -> None:
-    """⚠️ `/view` 는 없앴다 (사용자 지시 2026-08-13) — 북마크를 404 로 만들지 않고 **보낸다.**"""
+    """[주의] `/view` 는 없앴다 (사용자 지시 2026-08-13) — 북마크를 404 로 만들지 않고 **보낸다.**"""
     hits: list = []
 
     def mk(tag):
@@ -346,9 +346,9 @@ def test_old_view_paths_redirect_to_cluster() -> None:
         st, h, _ = call(r, p)
         check(f"{p} → 302", st == 302, str(st))
         check(f"{p} → /cluster", h.get("location") == "/cluster", h.get("location", ""))
-    check("🔴 뷰 앱을 부르지 않는다", "view" not in hits, str(hits))
+    check("[중요] 뷰 앱을 부르지 않는다", "view" not in hits, str(hits))
 
-    # 🔴 새 주소는 webui 가 가져간다 — 목록은 `webui.app` 이 소유한다(단일 지점)
+    # [중요] 새 주소는 webui 가 가져간다 — 목록은 `webui.app` 이 소유한다(단일 지점)
     hits.clear()
     call(r, "/cluster")
     call(r, "/ontology")
@@ -359,7 +359,7 @@ def test_old_view_paths_redirect_to_cluster() -> None:
 
 
 def test_route_list_has_a_single_owner() -> None:
-    """🔴 라우트를 추가할 때 세 곳을 맞춰야 해서 두 번 틀렸다 — 목록은 한 곳이 소유한다."""
+    """[중요] 라우트를 추가할 때 세 곳을 맞춰야 해서 두 번 틀렸다 — 목록은 한 곳이 소유한다."""
     from master.webui.app import PREFIXES
     check("Router 가 그 상수를 쓴다", V.Router.WEBUI_PREFIXES is PREFIXES,
           str(V.Router.WEBUI_PREFIXES))
@@ -385,7 +385,7 @@ def main() -> int:
                test_route_list_has_a_single_owner):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_viewer: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_viewer: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

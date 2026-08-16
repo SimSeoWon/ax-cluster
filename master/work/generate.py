@@ -10,15 +10,15 @@
        ↓
     작업장 ⑤ 적용 · 빌드 · 테스트 (마스터는 파일을 만지지 않는다)
 
-🔴 **모토** (§4.3): 작성은 **무료 로컬 LLM**, 검증은 **상용 모델**. 값은 검증이라는
+[중요] **모토** (§4.3): 작성은 **무료 로컬 LLM**, 검증은 **상용 모델**. 값은 검증이라는
 고레버리지 지점에만 쓴다. 이 모듈이 그 경계를 코드로 굳힌 것이다 —
 생성은 브로커(무료), 검사는 `layer2_verify`(상용), **그리고 통과 못 하면 안 넘긴다.**
 
-🔴 **추론은 stateless 다** (§4.2). Ollama 의 `context` 필드를 **의도적으로 재사용하지 않는다.**
+[중요] **추론은 stateless 다** (§4.2). Ollama 의 `context` 필드를 **의도적으로 재사용하지 않는다.**
 라운드 간 누적은 git 이 운반한다(git-as-feedback-bus) — 프롬프트로 다시 넣으면 인바운드
 토큰이 라운드마다 폭증한다. 두 경로를 섞지 말 것.
 
-⚠️ **마크다운 펜스는 파이프라인이 지운다.** §4.4 실측에서 `qwen2.5-coder:14b` 의 유일한
+[주의] **마크다운 펜스는 파이프라인이 지운다.** §4.4 실측에서 `qwen2.5-coder:14b` 의 유일한
 결함이 이것이었다 — 코드 품질은 좋은데 ```cpp 로 감싸서 준다. 모델을 탓하지 말고 여기서 벗긴다.
 """
 from __future__ import annotations
@@ -74,7 +74,7 @@ class Dispatch:
 
     @property
     def ok(self) -> bool:
-        # 🔴 fail-closed. verdict 가 없으면(검증을 못 돌렸으면) 통과가 아니다.
+        # [중요] fail-closed. verdict 가 없으면(검증을 못 돌렸으면) 통과가 아니다.
         return (not self.error and self.generated is not None
                 and not self.generated.empty
                 and self.verdict is not None and not self.verdict.blocked)
@@ -85,14 +85,14 @@ class Dispatch:
 
     def summary(self) -> str:
         if self.error:
-            return f"{self.task_id}: 🔴 {self.error}"
+            return f"{self.task_id}: [중요] {self.error}"
         g, v = self.generated, self.verdict
         bits = [f"{len(g.code)}자 생성" if g else "생성 실패"]
         if g and g.stripped_fence:
             bits.append("펜스 제거")
         if v:
             bits.append(v.summary())
-        mark = "✅" if self.ok else "🔴 차단"
+        mark = "[완료]" if self.ok else "[중요] 차단"
         return f"{self.task_id}: {mark} — " + " · ".join(bits)
 
 
@@ -106,7 +106,7 @@ def build_prompt(*, manifest_body: str, instruction: str, target_file: str = "",
                  declarations: str = "") -> str:
     """생성 프롬프트. **매니페스트를 그대로 싣는다** — 워커가 재검색하지 않게 (§4.2).
 
-    🔴 인터페이스 동결을 명시한다. 클래스 단위 병렬 생성이 성립하려면 선언이 안 바뀌어야
+    [중요] 인터페이스 동결을 명시한다. 클래스 단위 병렬 생성이 성립하려면 선언이 안 바뀌어야
     한다(§4.5) — 조각끼리 시그니처를 다르게 가정하면 컴파일에서야 드러난다.
     """
     parts = [
@@ -120,12 +120,12 @@ def build_prompt(*, manifest_body: str, instruction: str, target_file: str = "",
         "no explanation before or after.",
         "4. Follow the conventions visible in the context below — this is an existing "
         "codebase, not a greenfield.",
-        # 🔴 원전 리뷰 프롬프트의 금지 3종 (소 3.5.7 · `#183`). 이유가 **UE 특유**라 리뷰뿐
+        # [중요] 원전 리뷰 프롬프트의 금지 3종 (소 3.5.7 · `#183`). 이유가 **UE 특유**라 리뷰뿐
         #    아니라 생성에도 그대로 걸린다: Blueprint 에셋이 C++ 상속과 UPROPERTY **이름**을
         #    직렬화해 들고 있어서, 이름·상속이 바뀌면 **에셋이 깨진다.** 그리고 그 의존은
         #    코드에 없다 — 원전 원문: *"LLM 은 코드만 분석 가능 — UE5 에셋 의존 관계
         #    (Blueprint 상속·데이터테이블 참조)는 파악 불가."*
-        # ⚠️ 룰 1(선언 동결)이 리네이밍을 **일부** 막지만 상속 변경·모듈 간 이동은 못 막는다.
+        # [주의] 룰 1(선언 동결)이 리네이밍을 **일부** 막지만 상속 변경·모듈 간 이동은 못 막는다.
         "5. NEVER rename classes, components, functions, or UPROPERTY members — "
         "Blueprint assets serialize these names and renaming BREAKS the assets. "
         "You cannot see those assets from the code.",
@@ -139,7 +139,7 @@ def build_prompt(*, manifest_body: str, instruction: str, target_file: str = "",
         "=== END CONTEXT ===",
         "",
     ]
-    # 🔴 **선언부는 TASK 바로 앞에 둔다** (레드마인 #26). 베껴야 할 텍스트가 지시에서 멀수록
+    # [중요] **선언부는 TASK 바로 앞에 둔다** (레드마인 #26). 베껴야 할 텍스트가 지시에서 멀수록
     #    모델은 기억에서 꺼낸다 — 실측된 실패가 정확히 그것이었다(`CurrentStep` vs 실제 `Step`).
     if declarations.strip():
         parts += [declarations.strip(), ""]
@@ -154,7 +154,7 @@ def call_broker(prompt: str, *, model: str = CODER, broker: str = DEFAULT_BROKER
                 num_ctx: int | None = None, caller=None) -> str:
     """브로커에 생성을 요청한다. **stateless** — `context` 를 주지도 받지도 않는다.
 
-    🔴 **`num_ctx` 를 주라 — 안 주면 노드가 죽는다.** 실측 2026-08-08: BC-250 이 컨텍스트
+    [중요] **`num_ctx` 를 주라 — 안 주면 노드가 죽는다.** 실측 2026-08-08: BC-250 이 컨텍스트
     합성 배치 중 커널까지 멈췄다. 원인은 프롬프트 길이 자체가 아니라 **KV 할당 규모**였다:
 
     - 모델 `context_length = 262144`(256K). `num_ctx` 를 안 주면 그 전제로 잡는다
@@ -192,7 +192,7 @@ def call_broker(prompt: str, *, model: str = CODER, broker: str = DEFAULT_BROKER
     except urllib.error.URLError as e:
         raise GenerateError(f"브로커에 닿지 않는다: {getattr(e, 'reason', e)}") from e
     except OSError as e:
-        # 🔴 소켓 읽기 타임아웃은 `URLError` 가 아니라 `TimeoutError`(OSError 계열)로 올라온다.
+        # [중요] 소켓 읽기 타임아웃은 `URLError` 가 아니라 `TimeoutError`(OSError 계열)로 올라온다.
         # 실측 2026-08-08: 컨텍스트 합성 배치가 이 예외로 **통째 크래시**했다 — 한 그룹이
         # 느렸을 뿐인데 남은 전부를 잃었다. 가장 흔한 실패 모드가 여기다(느린 모델).
         raise GenerateError(f"브로커 응답 대기 실패({type(e).__name__}): {e}") from e
@@ -208,7 +208,7 @@ def unload_model(model: str, *, broker: str = DEFAULT_BROKER,
                  token: str | None = None, timeout: int = 120) -> None:
     """모델을 내려 노드 메모리를 회수한다 (`keep_alive: 0`).
 
-    🔴 **BC-250 처럼 UMA 로 메모리를 나눠 쓰는 노드에서 필요하다.** 실측 2026-08-08:
+    [중요] **BC-250 처럼 UMA 로 메모리를 나눠 쓰는 노드에서 필요하다.** 실측 2026-08-08:
     합성 요청마다 여유가 ~170MB 씩 **단조 감소**한다(Ollama 프롬프트 캐시·컨텍스트
     체크포인트 누적). 모델을 내리면 **전부 회수된다**(266 → 14,445 MB).
     다음 요청이 자동으로 다시 적재하므로 올리는 쪽은 신경 쓸 필요가 없다.
@@ -238,7 +238,7 @@ def generate(paths: ProjectPaths, task_id: str, *, instruction: str,
         raise GenerateError(
             f"컨텍스트 매니페스트가 없다: {mf.manifest_path(paths, task_id)} — "
             "grounding 없이 생성하지 않는다 (§4.3)")
-    # 🔴 대상 클래스를 주면 **헤더 선언을 프롬프트에 싣는다** (#26) — 규범만으로는
+    # [중요] 대상 클래스를 주면 **헤더 선언을 프롬프트에 싣는다** (#26) — 규범만으로는
     #    한 글자 차이 철자 환각이 남는다는 것이 실측됐다.
     decls = ""
     if classes:
@@ -258,7 +258,7 @@ def dispatch(paths: ProjectPaths, task_id: str, *, instruction: str,
              verifier=None, **kw) -> Dispatch:
     """생성 → 층2 → 인계 준비. **마스터가 하는 일의 끝이다.**
 
-    🔴 층2 를 통과하지 못하면 `ok=False` 다. 작업장은 `ok` 만 보고 판단하면 된다 —
+    [중요] 층2 를 통과하지 못하면 `ok=False` 다. 작업장은 `ok` 만 보고 판단하면 된다 —
     "코드가 왔으니 일단 적용" 이 되지 않게 하는 것이 이 반환값의 목적이다.
     """
     d = Dispatch(task_id=task_id)

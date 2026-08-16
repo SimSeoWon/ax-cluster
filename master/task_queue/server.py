@@ -57,7 +57,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
 
     app = FastAPI(title="task_queue")
 
-    # 🔴 인증 (PLAN §9.5.6). 토큰이 없으면 여기서 예외가 나고 데몬이 뜨지 않는다.
+    # [중요] 인증 (PLAN §9.5.6). 토큰이 없으면 여기서 예외가 나고 데몬이 뜨지 않는다.
     #    `/api/v1/health` 는 work/task 개수를 드러내므로 **인증 뒤에** 둔다.
     _auth_token = load_token()
 
@@ -269,19 +269,19 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
 
     @app.post("/api/v1/redmine/note")
     def redmine_note_ep(req: RedmineNoteReq):
-        """🔴 검수 흐름의 Redmine 갱신을 **마스터가 대신** 한다.
+        """[중요] 검수 흐름의 Redmine 갱신을 **마스터가 대신** 한다.
 
         원전은 리더 PC 의 `config.json` 에 API 키를 두고 직접 쓴다. 우리 키는 마스터의
         컨테이너 DB 에만 있으므로(§10.1) 요청자는 본문만 만들고 이 자리를 부른다.
-        🔴 **키 값은 응답·로그 어디에도 나가지 않는다** — 결과 문장만 돌려준다.
+        [중요] **키 값은 응답·로그 어디에도 나가지 않는다** — 결과 문장만 돌려준다.
         """
         from ..redmine import update_issue
         result = update_issue(req.issue_id, notes=req.notes,
                               status_name=req.status_name, done_ratio=req.done_ratio)
         _tq_log(f"[redmine] #{req.issue_id} work={req.work_id or '-'} → {result}", root)
-        # ⚠️ 실패해도 200 이다 — 검수 흐름을 막지 않는다. 🔴 다만 `ok` 로 **말은 한다**
+        # [주의] 실패해도 200 이다 — 검수 흐름을 막지 않는다. [중요] 다만 `ok` 로 **말은 한다**
         #    (조용한 실패 금지). 호출자가 사람에게 그대로 보여 준다.
-        return {"ok": not result.startswith("⚠️"), "result": result,
+        return {"ok": not result.startswith("[주의]"), "result": result,
                 "issue_id": req.issue_id}
 
     @app.post("/api/v1/anti_patterns/notify")
@@ -343,7 +343,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
 
     print(f"task_queue serving at http://{host}:{port} (root={root})")
     try:
-        # 🔴 라우트를 전부 등록한 **뒤** 감싼다.
+        # [중요] 라우트를 전부 등록한 **뒤** 감싼다.
         uvicorn.run(BearerAuthMiddleware(app, _auth_token),
                     host=host, port=port, log_level="info")
     finally:

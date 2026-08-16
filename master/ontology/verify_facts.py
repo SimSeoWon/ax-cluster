@@ -12,11 +12,11 @@
 **없는 호출을 지어내면 트윈이 조용히 거짓이 된다.** 그리고 그건 이 프로젝트의 성격상
 가장 나쁜 실패다 — 문서는 지도인데 **틀린 자리로 보내는 지도**가 된다.
 
-🔴 **원본이 이 자리를 위해 `methods` 테이블을 만들었다** — 데이터 스키마 문서가 그 존재
+[중요] **원본이 이 자리를 위해 `methods` 테이블을 만들었다** — 데이터 스키마 문서가 그 존재
 이유를 *"온톨로지 추출의 오탐 교차검증(다른 상속 라인의 동명 메서드 오귀속 방지)"* 이라고
 적어 뒀다. 우리는 중 1.1 에서 그 테이블을 6,380건 채웠다. 여기가 그것을 쓰는 자리다.
 
-## 🔴 게이트가 먼저 열려 있어야 한다
+## [중요] 게이트가 먼저 열려 있어야 한다
 
 `methods` 가 비었을 때 소유권을 물으면 **전부 "없다"** 가 나와, 오탐 교차검증이 오히려
 **전수 거짓양성**을 만든다. `class_graph.methods_ready()` 로 먼저 막는다 — 원본이 같은
@@ -31,7 +31,7 @@
 | action 의 호출 표기 `Class::Method(...)` | `methods`(+조상)에 있는가 |
 | action 의 `objects_affected` | 실재하는 클래스인가 |
 
-🔴 **모호하면 봐준다.** 두 가지를 의도적으로 놓친다:
+[중요] **모호하면 봐준다.** 두 가지를 의도적으로 놓친다:
 
 - **엔진 클래스·외부 심볼** — `AActor::Tick` 은 우리 `classes` 에 없지만 실재한다.
   우리 소스에 있는 클래스에 대한 주장만 검사한다
@@ -49,7 +49,7 @@ from dataclasses import dataclass, field
 from ..context_search.paths import ProjectPaths
 from ..graph import class_graph as cg, db as gdb
 
-# 🔴 **호출 형태만 잡는다** — `Class::Method(` 처럼 괄호가 붙은 것.
+# [중요] **호출 형태만 잡는다** — `Class::Method(` 처럼 괄호가 붙은 것.
 #
 # 실측 2026-08-09: 괄호 없이 `Class::Member` 를 전부 잡았더니 **enum 값과 UPROPERTY 멤버가
 # 오탐**으로 걸렸다(`ETopMenuVisibleUIFlag::Flags` · `UMSWidgetEventHUDWidget::SubscribedEventTags`).
@@ -57,7 +57,7 @@ from ..graph import class_graph as cg, db as gdb
 #
 # 이 프로젝트에서 **정상 문서를 막는 게이트가 통과시키는 게이트보다 나쁘다** — 문서는
 # 지도이고, 지도를 못 만들면 작업이 멈춘다. 그래서 **모호하면 봐준다.**
-# 🔴 **식별자와 `(` 사이 공백을 허용하지 않는다** (실측 2026-08-10).
+# [중요] **식별자와 `(` 사이 공백을 허용하지 않는다** (실측 2026-08-10).
 # C++ 문법으로는 `f (x)` 도 호출이지만, 여기 들어오는 것은 **한국어 산문**이다:
 #     target: "FGlobalEventSystem::PrivateHandler (ListenerMap)"
 # 이건 호출이 아니라 **주석**인데 `\s*\(` 가 호출로 읽어 `GlobalEventSystem` 의 정상
@@ -132,7 +132,7 @@ def verify_object(paths: ProjectPaths, obj: dict, known: dict | None = None) -> 
 def verify_action(paths: ProjectPaths, action: dict, known: dict | None = None) -> Report:
     """action yaml 하나. **호출 관계를 실측과 대조한다.**
 
-    🔴 `methods` 게이트가 닫혀 있으면 **검사하지 않는다** — 물으면 전부 "없다" 가 나와
+    [중요] `methods` 게이트가 닫혀 있으면 **검사하지 않는다** — 물으면 전부 "없다" 가 나와
     전수 거짓양성이 된다.
     """
     r = Report()
@@ -156,7 +156,7 @@ def verify_action(paths: ProjectPaths, action: dict, known: dict | None = None) 
     texts += [str(s.get("target") or "") for s in (a.get("flow") or []) if isinstance(s, dict)]
     for text in texts:
         for cls, method in _CALL.findall(text):
-            # 🔴 우리 소스에 있는 클래스에 대한 주장만 검사한다 — 엔진 클래스는 봐준다.
+            # [중요] 우리 소스에 있는 클래스에 대한 주장만 검사한다 — 엔진 클래스는 봐준다.
             if cls not in known:
                 continue
             r.checked += 1

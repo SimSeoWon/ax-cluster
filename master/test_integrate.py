@@ -1,11 +1,11 @@
 """통합자 (중 1.4).
 
-🔴 지키는 계약은 다섯이다:
+[중요] 지키는 계약은 다섯이다:
 
     ① **격리** — 적용 트리는 체크아웃의 형제다(안에 두면 git 이 자기 트리를 삼킨다)
     ② **기준이 섞이거나 없으면 적용하지 않는다** — 낡은 응답은 남의 실패로 빌드를 깬다
     ③ **싼 검사가 먼저** — 층1 이 막으면 적용도 빌드도 하지 않는다
-    ④ 🔴 **실패는 커밋하지 않는다** — 되돌리고 `[FEEDBACK]` 을 남긴다 (소 1.4.4)
+    ④ [중요] **실패는 커밋하지 않는다** — 되돌리고 `[FEEDBACK]` 을 남긴다 (소 1.4.4)
     ⑤ **push 는 ff-only** — 거부되면 force 하지 않고 사람에게 넘긴다
 
 `.venv/bin/python master/test_integrate.py`
@@ -33,7 +33,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 HDR = """#pragma once
@@ -110,7 +110,7 @@ class L3:
 
 
 def fake_tester(result):
-    """🔴 테스트는 에디터를 띄우지 않는다."""
+    """[중요] 테스트는 에디터를 띄우지 않는다."""
     def call(host, user, editor, uproject, filt, *, timeout=0):
         return result
     return call
@@ -120,7 +120,7 @@ NO_TESTS = L3(failure="성공한 테스트가 0건이다(전체 0건).")
 
 
 def fake_layer2(verdict=None, *, seen=None):
-    """🔴 테스트는 상용 CLI 를 부르지 않는다 — 돈이 들고 네트워크에 의존한다."""
+    """[중요] 테스트는 상용 CLI 를 부르지 않는다 — 돈이 들고 네트워크에 의존한다."""
     def call(files, *, declarations=""):
         if seen is not None:
             seen.append((sorted(f for f, _ in files), bool(declarations)))
@@ -202,7 +202,7 @@ def spool_two(paths, *, bases=("aaaa111", "aaaa111")):
 # ── ① 격리 ──────────────────────────────────────────────────────────────────────
 
 def test_worktree_is_a_sibling_not_a_child() -> None:
-    """🔴 체크아웃 *안*에 두면 git 이 자기 트리를 삼킨다."""
+    """[중요] 체크아웃 *안*에 두면 git 이 자기 트리를 삼킨다."""
     w = I.worktree_path(FakeFacts(), "W1")
     check("형제 디렉토리", w == r"E:\trunk\ax-wt-W1", w)
     check("체크아웃 안이 아니다", not w.startswith(r"E:\trunk\ModularStage"), w)
@@ -213,7 +213,7 @@ def test_worktree_is_a_sibling_not_a_child() -> None:
     check("이름을 안전하게 만든다", "/" not in I.worktree_path(lin, "a/b").rsplit("/", 1)[-1])
     try:
         I.worktree_path(FakeFacts(), "")
-        check("🔴 빈 work_id 는 예외", False, "통과해버렸다")
+        check("[중요] 빈 work_id 는 예외", False, "통과해버렸다")
     except I.IntegrateError:
         check("빈 work_id 는 예외", True)
 
@@ -223,10 +223,10 @@ def test_worktree_is_detached_and_verified() -> None:
     wt = I.ensure_worktree(FakeFacts(), "W1", at_commit="aaaa111", runner_=g)
     check("세웠다", wt.ok, wt.error)
     check("fetch 를 먼저 한다", g.ran("fetch --prune origin"))
-    check("🔴 detached 로 만든다", g.ran("worktree add --detach"), str(g.calls))
+    check("[중요] detached 로 만든다", g.ran("worktree add --detach"), str(g.calls))
     check("만들었다고 표시", wt.created)
 
-    # 🔴 "맞췄다" 는 보고를 믿지 않는다 — HEAD 를 되읽어 대조한다
+    # [중요] "맞췄다" 는 보고를 믿지 않는다 — HEAD 를 되읽어 대조한다
     bad = I.ensure_worktree(FakeFacts(), "W1", at_commit="deadbee", runner_=Git(head="aaaa111"))
     check("HEAD 가 다르면 막는다", not bad.ok, bad.error)
     check("사유가 대조 실패를 말한다", "기대" in bad.error, bad.error)
@@ -249,7 +249,7 @@ def test_no_fetch_no_worktree() -> None:
             return super().__call__(facts, cmd)
 
     wt = I.ensure_worktree(FakeFacts(), "W1", at_commit="aaaa111", runner_=NoFetch())
-    check("🔴 fetch 실패면 만들지 않는다", not wt.ok, wt.error)
+    check("[중요] fetch 실패면 만들지 않는다", not wt.ok, wt.error)
 
 
 # ── ② 기준 커밋 ─────────────────────────────────────────────────────────────────
@@ -258,12 +258,12 @@ def test_mixed_or_missing_base_refuses() -> None:
     check("한 기준이면 통과", I.one_base([resp("a", {H: HDR}), resp("b", {H: HDR})]) == "aaaa111")
     try:
         I.one_base([resp("a", {H: HDR}, base="aaaa111"), resp("b", {H: HDR}, base="ffff999")])
-        check("🔴 기준이 섞이면 예외", False, "통과해버렸다")
+        check("[중요] 기준이 섞이면 예외", False, "통과해버렸다")
     except I.IntegrateError as e:
         check("기준이 섞이면 예외", "섞여" in str(e), str(e))
     try:
         I.one_base([resp("a", {H: HDR}, base="")])
-        check("🔴 기준이 없으면 예외", False, "통과해버렸다")
+        check("[중요] 기준이 없으면 예외", False, "통과해버렸다")
     except I.IntegrateError as e:
         check("기준이 없으면 예외", "비었다" in str(e), str(e))
 
@@ -284,7 +284,7 @@ def test_handoff_takes_only_passing_responses_in_order() -> None:
 # ── ③ 층1 이 먼저 ───────────────────────────────────────────────────────────────
 
 def test_layer1_blocks_before_any_write_or_build() -> None:
-    """🔴 무료 검사가 비싼 빌드 앞에 있다 — 막히면 **적용도 빌드도 하지 않는다.**"""
+    """[중요] 무료 검사가 비싼 빌드 앞에 있다 — 막히면 **적용도 빌드도 하지 않는다.**"""
     g = Git()
     built = []
     wrote = []
@@ -294,13 +294,13 @@ def test_layer1_blocks_before_any_write_or_build() -> None:
                     builder=lambda *args, **kw: built.append(1) or Build(),
                     writer=lambda f, p, t: wrote.append(p), runner_=g)
     check("층1 에서 막혔다", not a.ok, a.summary)
-    check("🔴 파일을 쓰지 않았다", not wrote, str(wrote))
-    check("🔴 빌드를 부르지 않았다", not built)
+    check("[중요] 파일을 쓰지 않았다", not wrote, str(wrote))
+    check("[중요] 빌드를 부르지 않았다", not built)
     check("커밋도 없다", not g.ran(" commit "))
 
 
 def test_layer1_without_baseline_is_not_a_pass() -> None:
-    """🔴 fail-closed — 기준 원본이 없으면 동결을 **확인하지 못한 것**이고, 그렇게 적는다."""
+    """[중요] fail-closed — 기준 원본이 없으면 동결을 **확인하지 못한 것**이고, 그렇게 적는다."""
     L = I.layer1({H: HDR})
     check("검사는 돌았다", L.checked)
     check("미검사를 말한다", "미검사" in L.summary, L.summary)
@@ -316,12 +316,12 @@ def test_freeze_semantics() -> None:
                                ("선언 삭제는 위반", dele, False), ("본문 채움은 허용", fill, True)]:
         L = I.layer1({H: new}, baseline=lambda p: HDR)
         check(name, L.ok is want_ok, L.summary)
-    # 🔴 `.cpp` 는 동결 대상이 아니다 — 동결은 **선언**의 문제다
+    # [중요] `.cpp` 는 동결 대상이 아니다 — 동결은 **선언**의 문제다
     L = I.layer1({C: "void UFoo::Other() {}\n"}, baseline=lambda p: CPP)
     check(".cpp 는 동결 대상이 아니다", L.ok, L.summary)
 
 
-# ── ④ 🔴 실패는 커밋하지 않는다 ────────────────────────────────────────────────
+# ── ④ [중요] 실패는 커밋하지 않는다 ────────────────────────────────────────────────
 
 def test_build_failure_reverts_and_does_not_commit() -> None:
     g = Git()
@@ -331,10 +331,10 @@ def test_build_failure_reverts_and_does_not_commit() -> None:
                     builder=lambda *args, **kw: Build(passed=False),
                     writer=lambda *x: None, runner_=g)
     check("실패", not a.ok, a.summary)
-    check("🔴 커밋하지 않았다", not g.ran(" commit "), str(g.calls))
+    check("[중요] 커밋하지 않았다", not g.ran(" commit "), str(g.calls))
     check("되돌렸다", a.reverted and g.ran("checkout -- "), str(g.calls))
-    check("🔴 reset --hard 를 쓰지 않았다", not g.ran("reset --hard"))
-    check("🔴 git clean 을 쓰지 않았다", not g.ran("clean"))
+    check("[중요] reset --hard 를 쓰지 않았다", not g.ran("reset --hard"))
+    check("[중요] git clean 을 쓰지 않았다", not g.ran("clean"))
     # 되돌리기 범위는 **이번 조각의 파일**뿐이다
     rev = [c for c in g.calls if "checkout -- " in c][0]
     check("범위가 이번 파일뿐", H in rev and C in rev and "." not in rev.split("checkout -- ")[1][:2],
@@ -356,7 +356,7 @@ def test_feedback_block_is_not_source_and_carries_the_raw_verdict() -> None:
 # ── 층2 (중 2.2 · 소 2.2.2) ─────────────────────────────────────────────────────
 
 def test_layer2_blocks_before_apply_and_build() -> None:
-    """🔴 층2 의 존재 이유가 이것이다 — 비싼 빌드(142초) 앞에서 걸러낸다."""
+    """[중요] 층2 의 존재 이유가 이것이다 — 비싼 빌드(142초) 앞에서 걸러낸다."""
     g = Git()
     built, wrote = [], []
     a = I.apply_one(FakeFacts(), resp("t1", {H: HDR}), tree="T", project="ModularStage",
@@ -366,18 +366,18 @@ def test_layer2_blocks_before_apply_and_build() -> None:
                     builder=lambda *args, **kw: built.append(1) or Build(),
                     writer=lambda f, pth, tx: wrote.append(pth), runner_=g)
     check("층2 에서 막혔다", not a.ok, a.summary)
-    check("🔴 파일을 쓰지 않았다", not wrote, str(wrote))
-    check("🔴 빌드를 부르지 않았다", not built)
+    check("[중요] 파일을 쓰지 않았다", not wrote, str(wrote))
+    check("[중요] 빌드를 부르지 않았다", not built)
     check("커밋도 없다", not g.ran(" commit "))
     check("grounding 을 실었다고 기록", a.l2_grounded)
 
 
 def test_layer2_ungrounded_is_reported() -> None:
-    """🔴 실측(소 2.2.1): 선언부가 없으면 후보 넷이 "없는 열거값" 을 놓쳤다."""
+    """[중요] 실측(소 2.2.1): 선언부가 없으면 후보 넷이 "없는 열거값" 을 놓쳤다."""
     a = I.apply_one(FakeFacts(), resp("t1", {H: HDR}), tree="T", project="ModularStage",
                     baseline=lambda p: HDR,
                     layer2=fake_layer2(L2(approved=False, findings=["x"])),
-                    declarations="",                      # 🔴 grounding 없음
+                    declarations="",                      # [중요] grounding 없음
                     builder=lambda *args, **kw: Build(), writer=lambda *x: None,
                     runner_=Git())
     check("grounding 없음을 기록", not a.l2_grounded)
@@ -385,7 +385,7 @@ def test_layer2_ungrounded_is_reported() -> None:
 
 
 def test_layer2_contract_failure_blocks() -> None:
-    """🔴 fail-closed — 판정을 못 받은 것은 통과가 아니다 (백엔드 전멸 = `no_backend`)."""
+    """[중요] fail-closed — 판정을 못 받은 것은 통과가 아니다 (백엔드 전멸 = `no_backend`)."""
     a = I.apply_one(FakeFacts(), resp("t1", {H: HDR}), tree="T", project="ModularStage",
                     baseline=lambda p: HDR,
                     layer2=fake_layer2(L2(approved=False, failure="no_backend")),
@@ -401,7 +401,7 @@ def test_layer2_off_is_unverified_not_pass() -> None:
         spool_two(paths)
         itg, g = _run(paths, layer2=None)
         check("층2 없이도 진행은 된다", len(itg.passed) == 2, itg.summary())
-        check("⚠️ 미확인이라고 말한다", "층2 를 돌리지 않았다" in itg.note, itg.note)
+        check("[주의] 미확인이라고 말한다", "층2 를 돌리지 않았다" in itg.note, itg.note)
         check("판정이 None 이다", itg.applied[0].l2 is None)
     finally:
         shutil.rmtree(root, ignore_errors=True)
@@ -442,7 +442,7 @@ def test_feedback_and_submit_carry_layer2() -> None:
 
 
 def test_grounding_lookup_is_fail_soft() -> None:
-    """🔴 그래프가 없어도 통합자가 죽지 않는다 (실측: AttributeError 로 통째로 죽었다)."""
+    """[중요] 그래프가 없어도 통합자가 죽지 않는다 (실측: AttributeError 로 통째로 죽었다)."""
     class NoGraph:
         name = "T"
     check("클래스 역조회가 빈 목록", I.classes_in(NoGraph(), [H]) == [])
@@ -470,7 +470,7 @@ def test_no_change_is_not_a_silent_pass() -> None:
 
 
 def test_missing_engine_blocks_instead_of_passing() -> None:
-    """⚠️ 확인 불가는 통과가 아니다."""
+    """[주의] 확인 불가는 통과가 아니다."""
     a = I.apply_one(FakeFacts(ue5=""), resp("t1", {H: HDR}), tree="T", project="ModularStage",
                     baseline=lambda p: HDR, builder=lambda *args, **kw: Build(),
                     writer=lambda *x: None, runner_=Git())
@@ -516,19 +516,19 @@ def test_sequential_and_stops_at_first_failure() -> None:
         itg, g = _run(paths, builds=[Build(passed=False), Build()], submits=subs)
         check("조각 2개를 다뤘다", len(itg.applied) == 2, itg.summary())
         check("첫 조각 실패", not itg.applied[0].ok)
-        check("🔴 둘째는 적용조차 안 했다", itg.applied[1].skipped, itg.applied[1].summary)
+        check("[중요] 둘째는 적용조차 안 했다", itg.applied[1].skipped, itg.applied[1].summary)
         check("사유가 선행 실패", "선행" in itg.applied[1].skipped, itg.applied[1].skipped)
         check("push 하지 않았다", not itg.pushed)
         check("실패는 큐에 되돌린다",
               any(k == "submit-fail" for k, _, _ in subs), str(subs))
-        check("🔴 통과한 게 없으니 submit 도 없다",
+        check("[중요] 통과한 게 없으니 submit 도 없다",
               not any(k == "submit" for k, _, _ in subs), str(subs))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
 
 def test_partial_pass_keeps_the_increment() -> None:
-    """🔴 이 마일스톤의 값 — 조각 2가 깨져도 **조각 1은 컴파일되는 상태로 남는다.**"""
+    """[중요] 이 마일스톤의 값 — 조각 2가 깨져도 **조각 1은 컴파일되는 상태로 남는다.**"""
     paths, root = tmp_paths()
     try:
         spool_two(paths)
@@ -536,9 +536,9 @@ def test_partial_pass_keeps_the_increment() -> None:
         check("첫 조각은 커밋됐다", itg.applied[0].ok, itg.applied[0].summary)
         check("둘째는 실패", not itg.applied[1].ok)
         check("통과분이 있다", len(itg.passed) == 1, itg.summary())
-        # ⚠️ 실패가 하나라도 있으면 `ok` 는 아니다 — 그래도 증분은 남는다
+        # [주의] 실패가 하나라도 있으면 `ok` 는 아니다 — 그래도 증분은 남는다
         check("전체는 ok 가 아니다", not itg.ok)
-        check("🔴 통과분은 push 한다", itg.pushed, itg.summary())
+        check("[중요] 통과분은 push 한다", itg.pushed, itg.summary())
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -550,7 +550,7 @@ def test_push_is_ff_only_and_refusal_is_not_forced() -> None:
         itg, g = _run(paths, git=Git(push_rc=1))
         push = [c for c in g.calls if " push " in c][0]
         check("ff-only 형태", "HEAD:refs/heads/task/w1" in push, push)
-        check("🔴 force 를 쓰지 않는다", "--force" not in push and "-f " not in push, push)
+        check("[중요] force 를 쓰지 않는다", "--force" not in push and "-f " not in push, push)
         check("거부를 말한다", "push 거부" in itg.note, itg.note)
         check("커밋이 남아 있다고 말한다", "잃지 않았다" in itg.note, itg.note)
     finally:
@@ -571,7 +571,7 @@ def test_no_durable_means_local_only_and_says_so() -> None:
 
 
 def test_submit_carries_epoch_and_build_evidence() -> None:
-    """🔴 제출은 통합자만 한다 (소 1.4.3) — 근거는 빌드를 통과한 커밋이다."""
+    """[중요] 제출은 통합자만 한다 (소 1.4.3) — 근거는 빌드를 통과한 커밋이다."""
     paths, root = tmp_paths()
     try:
         spool_two(paths)
@@ -582,7 +582,7 @@ def test_submit_carries_epoch_and_build_evidence() -> None:
         _, payload = ok[0]
         check("durable 브랜치를 싣는다", payload["branch"] == "task/w1", str(payload))
         check("커밋을 싣는다", payload["head_commit"].startswith("bbbb"), str(payload))
-        check("🔴 epoch 을 싣는다 (fencing)", payload["epoch"] == 7, str(payload))
+        check("[중요] epoch 을 싣는다 (fencing)", payload["epoch"] == 7, str(payload))
         check("빌드 판정을 근거로 싣는다", "BUILD OK" in payload["self_check"]["build"],
               str(payload["self_check"]))
         check("통합자가 했다고 적는다", payload["self_check"]["by"] == "integrator")
@@ -593,28 +593,28 @@ def test_submit_carries_epoch_and_build_evidence() -> None:
 # ── 층3 · 실패 카탈로그 · 레드마인 (중 2.3) ────────────────────────────────────
 
 def test_layer3_no_tests_is_fail_open_but_said_loudly() -> None:
-    """🔴 실측: 이 프로젝트에 자동화 테스트가 **0개**다. 막으면 전부 막힌다 — 대신 **말한다.**"""
+    """[중요] 실측: 이 프로젝트에 자동화 테스트가 **0개**다. 막으면 전부 막힌다 — 대신 **말한다.**"""
     paths, root = tmp_paths()
     try:
         spool_two(paths)
         itg, g = _run(paths)
         check("통과분은 push 된다 (fail-open)", itg.pushed, itg.summary())
-        check("🔴 검증하지 못했다고 말한다", "검증하지 못했다" in itg.l3_note, itg.l3_note)
+        check("[중요] 검증하지 못했다고 말한다", "검증하지 못했다" in itg.l3_note, itg.l3_note)
         check("테스트 0개라는 사실을 적는다", "0개" in itg.l3_note, itg.l3_note)
-        check("통과라고 적지 않는다", "✅" not in itg.l3_note, itg.l3_note)
+        check("통과라고 적지 않는다", "[완료]" not in itg.l3_note, itg.l3_note)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
 
 def test_layer3_real_failure_blocks_push() -> None:
-    """🔴 **불합격**은 다르다 — 실재하는 결함이므로 막는다."""
+    """[중요] **불합격**은 다르다 — 실재하는 결함이므로 막는다."""
     paths, root = tmp_paths()
     try:
         spool_two(paths)
         reports = []
         itg, g = _run(paths, tester=fake_tester(L3(fails=2)), reports=reports)
         check("커밋은 됐다", len(itg.passed) == 2, itg.summary())
-        check("🔴 push 하지 않았다", not itg.pushed and not g.ran(" push "), str(g.calls))
+        check("[중요] push 하지 않았다", not itg.pushed and not g.ran(" push "), str(g.calls))
         check("사유를 말한다", "층3 불합격" in itg.note, itg.note)
         check("커밋이 남아 있다고 말한다", "격리 트리에 남아" in itg.note, itg.note)
         check("레드마인에 등재", any("층3 실패" in s for s in reports), str(reports))
@@ -628,14 +628,14 @@ def test_layer3_pass_is_reported_as_pass() -> None:
     try:
         spool_two(paths)
         itg, g = _run(paths, tester=fake_tester(L3(passed=True)))
-        check("통과를 통과로 적는다", itg.l3_note.startswith("✅"), itg.l3_note)
+        check("통과를 통과로 적는다", itg.l3_note.startswith("[완료]"), itg.l3_note)
         check("push 한다", itg.pushed, itg.summary())
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
 
 def test_failure_catalog_accumulates_from_build_errors() -> None:
-    """🔴 되먹임 (소 2.3.4) — 판정 원문에서 뽑아 **다음 골조 프롬프트**로 간다."""
+    """[중요] 되먹임 (소 2.3.4) — 판정 원문에서 뽑아 **다음 골조 프롬프트**로 간다."""
     paths, root = tmp_paths()
     try:
         spool_two(paths)
@@ -658,7 +658,7 @@ def test_failure_catalog_accumulates_from_build_errors() -> None:
 
 
 def test_redmine_without_key_says_so_instead_of_silently_skipping() -> None:
-    """⚠️ 이슈 추적이 안 되는 것과 게이트가 통과한 것은 다르다."""
+    """[주의] 이슈 추적이 안 되는 것과 게이트가 통과한 것은 다르다."""
     import os
     saved = os.environ.pop("AX_REDMINE_API_KEY", None)
     try:
@@ -681,7 +681,7 @@ def test_no_spool_is_an_error_not_an_empty_run() -> None:
     try:
         try:
             I.load_handoff(paths, "nope")
-            check("🔴 스풀 없으면 예외", False, "통과해버렸다")
+            check("[중요] 스풀 없으면 예외", False, "통과해버렸다")
         except I.IntegrateError as e:
             check("스풀 없으면 예외", "스풀이 없다" in str(e), str(e))
     finally:
@@ -718,7 +718,7 @@ def main() -> int:
                test_no_spool_is_an_error_not_an_empty_run):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_integrate: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_integrate: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

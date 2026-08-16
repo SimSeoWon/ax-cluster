@@ -1,6 +1,6 @@
 """컨텍스트 MD 파싱·선별 (AgentTest `cs_common.py` 에서 필요분만 이식).
 
-🔴 **색인 문서는 원본 소스가 아니라 컨텍스트 MD 다** (실측 2026-08-08).
+[중요] **색인 문서는 원본 소스가 아니라 컨텍스트 MD 다** (실측 2026-08-08).
 `watcher/context_index.py:41,45` 가 소스 파일 → MD 로 매핑한다:
 
     Source/Foo/Bar.cpp  →  context/Foo/Bar.md   (파일 단위)
@@ -23,7 +23,7 @@ from pathlib import Path
 def parse_frontmatter(content: str) -> dict:
     """MD 의 YAML 프론트매터에서 tags·category·status·type 등을 뽑는다.
 
-    ⚠️ 원본 그대로다 — 정규식 기반이라 완전한 YAML 파서가 아니다. 프론트매터를 생성하는
+    [주의] 원본 그대로다 — 정규식 기반이라 완전한 YAML 파서가 아니다. 프론트매터를 생성하는
     쪽(AgentTest 합성기)과 짝이 맞춰져 있으므로 **여기서 '개선' 하면 오히려 어긋난다.**
     """
     match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
@@ -98,7 +98,7 @@ class Document:
 
     @property
     def embed_text(self) -> str:
-        """🔴 **벡터 임베딩 대상 — 「## 요약」 절만.**
+        """[중요] **벡터 임베딩 대상 — 「## 요약」 절만.**
 
         원본 프롬프트가 그 절에 *"이 섹션만 벡터 임베딩 대상 — 짧고 검색 친화적으로"* 라고
         박아 뒀는데, **우리는 본문 전체를 임베딩하고 있었다**(이식 오류, 2026-08-08 발견).
@@ -122,7 +122,7 @@ class Document:
     def search_text(self) -> str:
         """임베딩할 텍스트.
 
-        🔴 **본문이 없어도 버리지 않는다.** 실측(2026-08-08) 컨텍스트 MD 1,055개 중
+        [중요] **본문이 없어도 버리지 않는다.** 실측(2026-08-08) 컨텍스트 MD 1,055개 중
         **149개(14%)가 프론트매터만 있는 스텁**이다(예: `Manager/ManagerBase.md` 373B).
         본문이 없다고 버리면 `UManagerBase` 같은 **클래스명으로 못 찾게 된다** —
         그게 그 스텁의 존재 이유인데.

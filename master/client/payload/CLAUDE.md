@@ -9,7 +9,7 @@ widgets, Python/MCP bridge) exists to author or observe that system.
 
 ## Where you are, and what you can do here
 
-🔴 **This body is machine-neutral on purpose.** What *this* machine can do — the checkout path,
+[중요] **This body is machine-neutral on purpose.** What *this* machine can do — the checkout path,
 whether UE5 is installed, which backends exist — is in the **AX managed block at the end of this
 file**, generated per machine by the master. Read that before assuming you can build.
 
@@ -111,7 +111,7 @@ No custom singletons. Managers are `UGameInstanceSubsystem`s under `UManagerBase
   `nullptr` before the GameInstance exists — **always null-check**.
 - `ShouldCreateSubsystem` is overridden to instantiate **only the most-derived class**, so a
   Blueprint/C++ subclass of `UManager_UI` replaces the base rather than doubling it.
-- 🔴 **Subsystems never replicate** — no `UPROPERTY(Replicated)`, no RPCs. Authority gating belongs at
+- [중요] **Subsystems never replicate** — no `UPROPERTY(Replicated)`, no RPCs. Authority gating belongs at
   the call sites (`HasAuthority()`), UI gating at `IsLocalController()`.
 
 `UManager_Mission` owns `MainMissionExecutors` (sequential) and `SubMissionExecutors` (parallel),
@@ -188,7 +188,7 @@ Three layers under `Content/Python/` (design doc: `MCP_Implementation_Report.md`
 - `layer3_entry_points/mcp_bridge.py` — TCP server on `127.0.0.1:12345`, started automatically by
   `Content/Python/init_unreal.py` when the editor launches.
 
-Protocol is 4-byte big-endian length prefix + JSON. 🔴 **Socket threads must never call `unreal.*`.**
+Protocol is 4-byte big-endian length prefix + JSON. [중요] **Socket threads must never call `unreal.*`.**
 `_handle_client` pushes the request onto `_command_queue`; `_game_thread_tick` (registered via
 `register_slate_pre_tick_callback`) drains it and is the only place `_process_command` runs. Client
 waits 10 s then returns a timeout error, because the tick stalls while the editor is busy. Any new

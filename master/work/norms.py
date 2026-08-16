@@ -8,7 +8,7 @@
                                         ▼
                              매니페스트 「도메인 규범」 절 → 작업장 → 코드 작성
 
-## 🔴 규범의 본체는 invariants 다
+## [중요] 규범의 본체는 invariants 다
 
 액션은 *"무엇을 하는가"* 이고 invariant 는 *"무엇을 지켜야 하는가"* 다. 코드를 쓰는 쪽에
 필요한 것은 후자다 — `ServerOnlyExecutorRegistration`(서버 권한에서만 등록된다) 같은 것을
@@ -17,7 +17,7 @@
 
 액션은 **대상 클래스와 얽힌 것만** 곁들인다 — 흐름(누가→무엇을)이 invariant 의 맥락이 된다.
 
-## 🔴 "관련된 것만" 이 목표의 절반이다
+## [중요] "관련된 것만" 이 목표의 절반이다
 
 목표 ②는 *"관련된 것만 추출해 전달"* 이다. 도메인 전체를 실으면 매니페스트가 부풀고, 그건
 **프롬프트 예산을 먹어 정작 소스를 못 싣게 만든다**(실측 2.79~2.85자/토큰 · `num_ctx` 8192).
@@ -26,7 +26,7 @@
 1. **도메인** — `search_norms` 가 최대 2개 (노이즈 3중 차단이 걸린 채로)
 2. **항목** — 대상 클래스와 교집합이 있는 액션. invariant 는 도메인 전체 규칙이라 안 거른다
 
-## 🔴 잘랐으면 잘랐다고 적는다
+## [중요] 잘랐으면 잘랐다고 적는다
 
 예산을 넘으면 자르되 **몇 개를 뺐는지 본문에 쓴다.** 조용히 자르면 작업장은 그것이 전부인
 줄 알고, 없는 규칙을 안 지킨다 — 매니페스트 결손 명시와 같은 규칙이다.
@@ -39,7 +39,7 @@ from ..context_search import domain_index
 from ..context_search.paths import ProjectPaths
 from ..ontology import yaml_io
 
-# 🔴 예산 — 매니페스트는 이미 골조·계약·RAG 를 싣는다. 규범이 그것을 밀어내면 안 된다.
+# [중요] 예산 — 매니페스트는 이미 골조·계약·RAG 를 싣는다. 규범이 그것을 밀어내면 안 된다.
 # 실측 환산(2.79자/토큰) 기준 3,000자 ≈ 1,075토큰.
 TOTAL_CHARS = 3000
 SUMMARY_CHARS = 240
@@ -69,7 +69,7 @@ class DomainNorms:
 class NormBundle:
     query: str = ""
     domains: list = field(default_factory=list)
-    degraded: list = field(default_factory=list)      # 🔴 왜 비었는지
+    degraded: list = field(default_factory=list)      # [중요] 왜 비었는지
     notes: list = field(default_factory=list)         # 결정적 추론 근거 (소 2.2.2)
     truncated: bool = False
 
@@ -91,7 +91,7 @@ class NormBundle:
                     f"**이 태스크는 도메인 규범 grounding 없이 진행된다.**_"]
         out: list = []
         if self.notes:
-            # 🔴 통계로 닮은 게 아니라 **소속으로 짚은 것**이면 그렇게 말한다 — 워커가
+            # [중요] 통계로 닮은 게 아니라 **소속으로 짚은 것**이면 그렇게 말한다 — 워커가
             #    이 도메인을 왜 믿어야 하는지 알아야 한다 (소 2.2.2).
             out += [f"_{n}_" for n in self.notes] + [""]
         for d in self.domains:
@@ -114,7 +114,7 @@ class NormBundle:
                     impl = f" (`{a['primary']}`)" if a.get("primary") else ""
                     out.append(f"- **{a['name']}**{impl}: {a['description']}")
             if d.dropped_invariants or d.dropped_actions:
-                # 🔴 잘랐으면 잘랐다고 적는다
+                # [중요] 잘랐으면 잘랐다고 적는다
                 out.append("")
                 out.append(f"_(예산으로 제외: invariant {d.dropped_invariants}건 · "
                            f"액션 {d.dropped_actions}건 — 필요하면 "
@@ -180,7 +180,7 @@ def attach(paths: ProjectPaths, *, classes: list | None = None, stem: str = "",
            budget: int = TOTAL_CHARS, search=None) -> NormBundle:
     """작업 명세 → 도메인 규범 번들. **베스트에포트** — 실패해도 등록을 막지 않는다.
 
-    🔴 다만 **조용히 비우지 않는다.** 왜 비었는지가 `degraded` 에 남고 매니페스트 본문에 찍힌다.
+    [중요] 다만 **조용히 비우지 않는다.** 왜 비었는지가 `degraded` 에 남고 매니페스트 본문에 찍힌다.
     """
     targets = {c for c in (classes or []) if c}
     query = " ".join(x for x in [" ".join(sorted(targets)), stem, extra_query] if x and x.strip())
@@ -189,9 +189,9 @@ def attach(paths: ProjectPaths, *, classes: list | None = None, stem: str = "",
         b.degraded.append("질의를 만들 수 없었다 (대상 클래스·제목이 비었다)")
         return b
 
-    # 🔴 **결정적 추론을 먼저 본다** (소 2.2.2). 통계 검색은 *"닮은 도메인"* 을 주지만,
+    # [중요] **결정적 추론을 먼저 본다** (소 2.2.2). 통계 검색은 *"닮은 도메인"* 을 주지만,
     #    질의에 나온 클래스의 **소속**은 표에서 그냥 읽을 수 있다 — 그쪽이 근거를 댈 수 있다.
-    #    ⚠️ 대체하지 않고 **순서만** 바꾼다: 추론이 좁게 틀렸을 때 통계 히트를 잃으면 안 된다.
+    #    [주의] 대체하지 않고 **순서만** 바꾼다: 추론이 좁게 틀렸을 때 통계 히트를 잃으면 안 된다.
     inferred: list = []
     try:
         from ..context_search import infer as infer_mod
@@ -208,13 +208,13 @@ def attach(paths: ProjectPaths, *, classes: list | None = None, stem: str = "",
     except Exception as e:                              # noqa: BLE001 — 등록을 막지 않는다
         b.degraded.append(f"규범 검색 실패: {type(e).__name__}: {e}")
         return b
-    # 🔴 **추론된 도메인을 앞으로 당긴다** — 대체가 아니라 순서만이다. 예산이 도메인 수를
+    # [중요] **추론된 도메인을 앞으로 당긴다** — 대체가 아니라 순서만이다. 예산이 도메인 수를
     #    자르므로(MAX_DOMAINS), 근거 있는 것이 먼저 실려야 한다.
     if inferred and hits:
         rank = {d: i for i, d in enumerate(inferred)}
         hits = sorted(hits, key=lambda h: (rank.get(h.get("domain", ""), len(rank)),))
     if not hits:
-        # 🔴 노이즈 3중 차단이 의도적으로 0건을 낸 것일 수 있다 — 실패가 아니다.
+        # [중요] 노이즈 3중 차단이 의도적으로 0건을 낸 것일 수 있다 — 실패가 아니다.
         b.degraded.append("질의와 정확히 매칭되는 도메인이 없다 (노이즈 차단이 정상 동작한 결과일 수 있다)")
         return b
 

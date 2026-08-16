@@ -3,7 +3,7 @@
     durable    task/<task_id>                       canonical — 검증 통과분 + 피드백 누적
     ephemeral  attempt/<task_id>/<workshop>/<ts>    1회용 시도 — 머지 후 폐기
 
-🔴 **이 규약이 zombie race 를 구조적으로 없앤다.** 작업장 A 가 타임아웃되어 B 에 재배정돼도
+[중요] **이 규약이 zombie race 를 구조적으로 없앤다.** 작업장 A 가 타임아웃되어 B 에 재배정돼도
 A=`attempt/t5/HV0I6DL/t1`, B=`attempt/t5/JFVS693/t2` 로 **서로 다른 ref** 다. A 가 되살아나
 push 해도 자기 죽은 브랜치로 갈 뿐 durable 과 B 를 건드리지 못한다. **공유 write 타깃이 없어
 force-with-lease race 자체가 성립하지 않는다.**
@@ -16,7 +16,7 @@ force-with-lease race 자체가 성립하지 않는다.**
 없다.** 배포한 적 없는 모드를 위한 플래그는 검증할 수도 없으므로 넣지 않는다
 (BM25 의 구 스키마 마이그레이션을 뺀 것과 같은 판단).
 
-⚠️ **`worker` 라는 단어를 쓰지 않는다.** 이 저장소에서 `worker/` 는 BC-250 추론 노드다(§4.1).
+[주의] **`worker` 라는 단어를 쓰지 않는다.** 이 저장소에서 `worker/` 는 BC-250 추론 노드다(§4.1).
 브랜치의 그 자리에 오는 것은 **작업장(workshop)** — 파일을 소유한 윈도우 PC 다.
 """
 from __future__ import annotations

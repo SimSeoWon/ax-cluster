@@ -1,6 +1,6 @@
-"""웹 UI ASGI 앱 — 🔴 원전 프론트엔드를 그대로 태우는 라우터 (사용자 지시 2026-08-13).
+"""웹 UI ASGI 앱 — [중요] 원전 프론트엔드를 그대로 태우는 라우터 (사용자 지시 2026-08-13).
 
-## 🔴 왜 순수 ASGI 인가
+## [중요] 왜 순수 ASGI 인가
 
 원전은 FastAPI 였다. 우리는 8103 에 **MCP 앱과 한 프로세스로** 얹으므로(포트를 늘리지 않는다)
 프레임워크를 하나 더 들이지 않고 `viewer.py` 와 같은 방식(순수 ASGI)으로 쓴다 — 그쪽 미들웨어·
@@ -15,7 +15,7 @@
     /ontology-static/*      app.css · tree_nav.js · vendor/cytoscape.min.js
     /api/v1/...             원전 프론트엔드가 부르는 21개 (`routes.py`)
 
-🔴 **쓰기 메서드는 전부 거부한다** — 사유를 JSON 으로 돌려주고 화면이 그것을 보여준다.
+[중요] **쓰기 메서드는 전부 거부한다** — 사유를 JSON 으로 돌려주고 화면이 그것을 보여준다.
 우리 온톨로지 편집 규칙(대화형 + 편집이 곧 잠금)과 충돌하지 않게.
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ from urllib.parse import parse_qs, unquote
 
 from . import routes
 
-# 🔴 **이 앱이 처리하는 경로를 여기 한 번만 적는다** (실측 2026-08-13: 같은 실수를 두 번 했다).
+# [중요] **이 앱이 처리하는 경로를 여기 한 번만 적는다** (실측 2026-08-13: 같은 실수를 두 번 했다).
 #    라우트를 추가할 때 손대야 하는 곳이 셋(핸들러 · 라우터 분기 · 인증 공개 목록)이었고,
 #    매번 하나를 빠뜨려 401/404 가 났다. **목록을 하나로 모으면 그 부류가 사라진다** —
 #    `viewer.Router` 와 `projects/__main__` 이 이 상수를 import 해서 쓴다.
@@ -47,12 +47,12 @@ _API_HISTORY = re.compile(r"^/api/v1/ontology/history/(.+)$")
 _API_TASK = re.compile(r"^/api/v1/ontology/task/(.+)$")
 _API_BOARD_ONE = re.compile(r"^/api/v1/domains/(.+)$")
 
-# 🔴 POST 지만 **읽기**인 경로 — 원전 프론트엔드가 이렇게 부른다.
+# [중요] POST 지만 **읽기**인 경로 — 원전 프론트엔드가 이렇게 부른다.
 READ_POST = frozenset({"/api/v1/search/combined", "/api/v1/search/vector"})
 
-# 🔴 **쓰기 경로** (사용자 결정 2026-08-13: *"생성·삭제·채팅까지 원전대로 살려"*).
+# [중요] **쓰기 경로** (사용자 결정 2026-08-13: *"생성·삭제·채팅까지 원전대로 살려"*).
 #    대상은 `context/_domains/*.md` — **사람이 읽고 쓰는 도메인 문서**다.
-#    ⚠️ 온톨로지 YAML(`ontology/domains/…`)은 여기서 절대 건드리지 않는다 — 그쪽은 편집이 곧
+#    [주의] 온톨로지 YAML(`ontology/domains/…`)은 여기서 절대 건드리지 않는다 — 그쪽은 편집이 곧
 #    잠금이고 대화형으로만 바뀐다. 두 층을 헷갈리지 말 것(`board.py` 머리말 참조).
 _W_CREATE = "/api/v1/domains"
 _W_CHAT = re.compile(r"^/api/v1/domains/([^/]+)/chat$")
@@ -74,7 +74,7 @@ def _j(obj) -> bytes:
 
 
 async def _read_body(receive) -> bytes:
-    """요청 본문. ⚠️ `more_body` 를 끝까지 읽는다 — 한 번만 받으면 큰 본문이 잘린다."""
+    """요청 본문. [주의] `more_body` 를 끝까지 읽는다 — 한 번만 받으면 큰 본문이 잘린다."""
     buf = b""
     while True:
         msg = await receive()
@@ -93,7 +93,7 @@ class WebUI:
         self._paths_fn = paths_fn
 
     async def _write(self, scope, receive, method: str, path: str):
-        """🔴 쓰기 — `(status, dict)` 또는 라우트 없으면 `None`. 원전 mutation 복각."""
+        """[중요] 쓰기 — `(status, dict)` 또는 라우트 없으면 `None`. 원전 mutation 복각."""
         from . import board
         try:
             paths = self._paths_fn()
@@ -124,7 +124,7 @@ class WebUI:
                 return 200, board.activate_domain(paths, unquote(m.group(1)),
                                                   str(data.get("content") or ""))
             if method == "POST" and path == _W_DELETE_DOMAIN:
-                # 원전은 이 경로로 도메인을 지웠다. 🔴 우리는 `_archive/` 로 옮긴다(되돌리기 가능)
+                # 원전은 이 경로로 도메인을 지웠다. [중요] 우리는 `_archive/` 로 옮긴다(되돌리기 가능)
                 return 200, board.delete_domain(paths,
                                                 str(data.get("domain_name")
                                                     or data.get("name") or ""))
@@ -143,7 +143,7 @@ class WebUI:
         method = scope.get("method", "GET").upper()
         path = scope.get("path", "")
 
-        # 🔴 **읽기 POST 와 쓰기 POST 를 가른다** (실측 2026-08-13).
+        # [중요] **읽기 POST 와 쓰기 POST 를 가른다** (실측 2026-08-13).
         #    원전은 검색을 `POST /api/v1/search/*` 로 부른다 — HTTP 메서드만 보고 막으면
         #    **검색 탭이 통째로 죽는다**(내가 그렇게 만들어 놓고 확인해서 잡았다).
         #    기준은 메서드가 아니라 **무엇을 하는 경로인가** 다: 검색은 읽기다.
@@ -184,7 +184,7 @@ class WebUI:
         if _TASK_PAGE.match(path):
             return await _send(send, 200,
                                routes.inject_cluster_link(routes.page("task.html")), HTML)
-        # 🔴 클러스터 상태 — `/view` 를 없애고 여기로 모았다 (사용자 지시)
+        # [중요] 클러스터 상태 — `/view` 를 없애고 여기로 모았다 (사용자 지시)
         if path in ("/cluster", "/cluster/", "/cluster.html"):
             st, body = routes.cluster_page(paths)
             return await _send(send, st, body, HTML)
@@ -219,7 +219,7 @@ class WebUI:
         if m:
             got = routes.api_task(paths, unquote(m.group(1)))
             if got is None:
-                # ⚠️ 자원 부재이지 라우트 부재가 아니다 — 본문이 그것을 말한다
+                # [주의] 자원 부재이지 라우트 부재가 아니다 — 본문이 그것을 말한다
                 return await _send(send, 404, _j({"detail": "그 이름의 태스크 템플릿이 없다",
                                                   "task_type": unquote(m.group(1))}))
             return await _send(send, 200, _j(got))
@@ -250,7 +250,7 @@ class WebUI:
                 return await _send(send, 200, _j({"results": [], "count": 0,
                                                   "note": "query 가 비었다"}))
             return await _send(send, 200, _j(routes.api_search(paths, query, n)))
-        # 🔴 게시판은 `_domains/*.md` 다 — 온톨로지 YAML 이 아니다(`board.py` 머리말)
+        # [중요] 게시판은 `_domains/*.md` 다 — 온톨로지 YAML 이 아니다(`board.py` 머리말)
         from . import board
         if path == "/api/v1/domains":
             return await _send(send, 200, _j(board.list_board(paths)))

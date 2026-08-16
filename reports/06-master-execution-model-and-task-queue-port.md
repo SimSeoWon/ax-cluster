@@ -6,7 +6,7 @@
 
 > 노드 사본: `sim@192.168.0.43:~/bc250-backup-staging/reports/26-master-execution-model-and-gjc-toolcall-bench.md`
 
-**상태:** ✅ 완료 — 결론 4건 확정 + 🔴 신규 제약 3건 발견. 커밋 `a6e1b69`·`0cbdaf6` (origin·node 동기)
+**상태:** [완료] 완료 — 결론 4건 확정 + [중요] 신규 제약 3건 발견. 커밋 `a6e1b69`·`0cbdaf6` (origin·node 동기)
 
 ## 0. 세션 시작 시점의 live 상태 (실측)
 
@@ -15,7 +15,7 @@
 | `~/ax-cluster` | `main` 클린, `origin`·`node`(BC-250) 3자 동기 (`5d3470e`) |
 | BC-250 #1 (192.168.0.43) | 가동 중 — `qwen2.5-coder:14b` + `35B-A3B IQ2_M` 상주 |
 | 마스터 서비스 | `gitea.service` active · n8n/redmine 컨테이너 up |
-| 선결 도구 | `claude` ✅ · `agy` v1.1.10 ✅ · `node`/`bun` ❌ |
+| 선결 도구 | `claude` [완료] · `agy` v1.1.10 [완료] · `node`/`bun` [실패] |
 | 코드 | 0줄 — `master/`·`worker/`·`client/` 는 README 스텁 |
 | 포트 8101 (task_queue 기본) | 비어 있음 (`ss -tln`) |
 
@@ -57,19 +57,19 @@
 |---|---|---|---|
 | 1 | **플랫 import** — `from models import ...` (패키지 상대 import 아님) | `logic.py:9,12,21,24,30,33` 외. PyInstaller 가 한 디렉터리로 묶는 전제 | `python -m` 실행하려면 상대 import 전환 |
 | 2 | **`_project_root()` 가 파일 위치에서 역산** | `persistence.py:22-25` — `Path(__file__).parent.parent.parent`. exe 가 UE5 프로젝트 루트 안에 있다는 전제 | 마스터엔 UE5 루트가 없다. `--serve <project_root>` 인자는 이미 받으므로 **역산 폴백을 명시적 설정으로 교체** |
-| 3 | 🔴 **감사 커밋이 어느 저장소로 가나** | `persistence.py:_git_repo()` 가 `root/.git` → `root/Source/.git` 순으로 탐색 | **설계 결정 필요.** UE5 소스가 아니라 **큐 자체의 상태**이므로 §2.1 과 충돌하지 않는다 — 마스터 소유 저장소를 따로 둘 것 |
+| 3 | [중요] **감사 커밋이 어느 저장소로 가나** | `persistence.py:_git_repo()` 가 `root/.git` → `root/Source/.git` 순으로 탐색 | **설계 결정 필요.** UE5 소스가 아니라 **큐 자체의 상태**이므로 §2.1 과 충돌하지 않는다 — 마스터 소유 저장소를 따로 둘 것 |
 
 규모 9파일 / 2,717줄. 실행 모드: `--serve <root> [port] [host]`(HTTP, 기본 8101) · `--status` · `--list` · `--reset` · `--reverify` · `--send-directive` · `--list-workers` · 무인자 = MCP stdio.
 
 ---
 
-# 3. 🔴 gajae-code(gjc) 조사 — 사용자 아이디어 검토
+# 3. [중요] gajae-code(gjc) 조사 — 사용자 아이디어 검토
 
 > 사용자 제안(2026-08-08): *"로컬 LLM은 가재코드 하네스를 활용해 서브에이전트가 재검증하고 다시 코드 작업을 요청하게 해볼까?"*
 
 `~/gajae-code` 에 참조 클론(`Yeachan-Heo/gajae-code`, **수정 금지 — AgentTest 와 동일 취급**). TypeScript/Bun + Rust.
 
-## 3.1 ✅ 제안한 루프는 **이미 gjc 안에 있다**
+## 3.1 [완료] 제안한 루프는 **이미 gjc 안에 있다**
 
 | 기능 | 실체 | 근거 |
 |---|---|---|
@@ -79,11 +79,11 @@
 
 **즉 "서브에이전트가 재검증하고 다시 코드 작업을 요청"이 `extragoal` 의 정의 그 자체다.**
 
-⚠️ **단 `extragoal` 은 번들이 아니다** — 문서가 명시한다: *"Extragoal is **not** a bundled workflow skill; `gjc extragoal` does not exist."*
+[주의] **단 `extragoal` 은 번들이 아니다** — 문서가 명시한다: *"Extragoal is **not** a bundled workflow skill; `gjc extragoal` does not exist."*
 `docs/extragoal-skill-template.md` 의 frontmatter 이하를 잘라 `~/.gjc/agent/skills/extragoal/SKILL.md` 로 설치하고
 `gjc config set skills.enabled true` + 해당 스캔(`enablePiUser`)을 켜야 한다. 파일 스킬 탐색은 기본 off.
 
-## 3.2 ✅ 역할별 모델 매핑이 우리 모토와 정확히 겹친다
+## 3.2 [완료] 역할별 모델 매핑이 우리 모토와 정확히 겹친다
 
 gjc 는 **5역할**(`default` · `executor` · `planner` · `critic` · `architect`)에 모델을 각각 배정한다
 (`~/.gjc/agent/models.yml` 의 `profiles.<name>.model_mapping`, `docs/models.md:193-205`).
@@ -101,14 +101,14 @@ profiles:
 **모토("무료 로컬 LLM=대량생산, 상용 모델=검증만")가 설정 파일 한 장으로 표현된다.**
 `ollama` 는 1급 provider 다 — `packages/ai/src/providers/ollama.ts`, 네이티브 API 사용.
 
-## 3.3 🔴 **그런데 실측에서 막혔다 — 14b 가 tool call 을 구조화해서 못 낸다**
+## 3.3 [중요] **그런데 실측에서 막혔다 — 14b 가 tool call 을 구조화해서 못 낸다**
 
 gjc 의 Ollama provider 는 `message.tool_calls` 를 읽는다. BC-250 에 직접 찔러본 결과:
 
 | 모델 | `message.tool_calls` | 실제 출력 |
 |---|---|---|
 | `qwen2.5-coder:14b` | **`null` (3/3 실패, `temperature:0`)** | 호출 JSON 이 `content` 에 **문자열로** 나옴 — `{"name":"get_weather","arguments":{"city":"Seoul"}}` |
-| `35B-A3B IQ2_M` | ✅ **정상 구조화** (`id` 포함) | `content` 비어 있음 |
+| `35B-A3B IQ2_M` | [완료] **정상 구조화** (`id` 포함) | `content` 비어 있음 |
 
 `/api/show` 는 14b 에 대해 `capabilities: ['completion','tools','insert']` 를 광고하고
 템플릿에도 tool 분기가 있다(1,615자, `tool_call` 포함). **광고와 실제가 다르다.**
@@ -119,17 +119,17 @@ gjc 의 Ollama provider 는 `message.tool_calls` 를 읽는다. BC-250 에 직�
 - 반대로 35B 는 리포트 02 에서 **코드 생성 시 API 환각**이 확인된 모델이다
 - → **"tool 호출 되는 모델은 코드가 약하고, 코드 되는 모델은 tool 호출이 안 된다"** 는 충돌
 
-> ⚠️ 이건 gjc 를 쓰든 안 쓰든 남는 문제다. 지금 구조(마스터가 컨텍스트를 밀어넣는 **제약 생성**,
+> [주의] 이건 gjc 를 쓰든 안 쓰든 남는 문제다. 지금 구조(마스터가 컨텍스트를 밀어넣는 **제약 생성**,
 > `[PSEUDO]` 본문만 채우기)는 tool 호출을 요구하지 않아 14b 로 성립한다.
 > **하네스를 에이전틱으로 바꾸는 순간 전제가 깨진다.**
 
-## 3.4 🔴 gjc 도 loopback 전용 — **Unreal MCP 와 똑같은 제약이 두 번째**
+## 3.4 [중요] gjc 도 loopback 전용 — **Unreal MCP 와 똑같은 제약이 두 번째**
 
 | 표면 | 전송 | 원격 가능? |
 |---|---|---|
-| **SDK WebSocket** (유일한 공식 기계 제어 인터페이스) | `ws://127.0.0.1:<port>/?token=<token>` | ❌ **loopback 전용.** discovery 파일 `<repo>/.gjc/state/sdk/<sessionId>.json` 에 토큰, 잘못된 토큰은 handshake 에서 401 |
-| **Coordinator MCP** (`gjc mcp-serve coordinator`) | stdio JSON-RPC. 도구 19종(read 10 + mutating 9, `gjc_delegate_plan/execute/team` 포함) | ❌ 로컬 stdio + 로컬 discovery 파일 의존 — SSH stdio 터널 필요 |
-| `--mode rpc` / `rpc-ui` / `bridge` | — | ❌ **제거됨.** "not supported compatibility interfaces" |
+| **SDK WebSocket** (유일한 공식 기계 제어 인터페이스) | `ws://127.0.0.1:<port>/?token=<token>` | [실패] **loopback 전용.** discovery 파일 `<repo>/.gjc/state/sdk/<sessionId>.json` 에 토큰, 잘못된 토큰은 handshake 에서 401 |
+| **Coordinator MCP** (`gjc mcp-serve coordinator`) | stdio JSON-RPC. 도구 19종(read 10 + mutating 9, `gjc_delegate_plan/execute/team` 포함) | [실패] 로컬 stdio + 로컬 discovery 파일 의존 — SSH stdio 터널 필요 |
+| `--mode rpc` / `rpc-ui` / `bridge` | — | [실패] **제거됨.** "not supported compatibility interfaces" |
 
 **→ PLAN §3 의 "WebSocket SDK 로 마스터가 외부 컨트롤러 역할" 가설은 그대로는 성립하지 않는다.**
 `gjc` 는 **파일을 소유한 머신에서 돌아야 한다** = 윈도우 PC(`client/`).
@@ -153,7 +153,7 @@ BC-250 192.168.0.43 ── 추론 (방화벽 0.57 만 허용 → 규칙 변경 �
 
 ---
 
-# 4. 🟢 §8.3 보강 — agy 를 제대로 쓰는 법을 찾았다
+# 4.  §8.3 보강 — agy 를 제대로 쓰는 법을 찾았다
 
 리포트 05 에서 agy 는 **출처를 지어냈다**(도메인 루트만 인용, 핵심 절이 틀림).
 이번엔 같은 도구로 **인용이 전부 맞았다.** 차이는 하나다.
@@ -162,19 +162,19 @@ BC-250 192.168.0.43 ── 추론 (방화벽 0.57 만 허용 → 규칙 변경 �
 |---|---|---|
 | 입력 | 웹에서 찾으라고 지시 | **`--add-dir` 로 실제 파일을 쥐여줌** |
 | 인용 | `unrealengine.com/` 같은 도메인 루트 | `docs/sdk.md:111-145` 같은 파일:줄번호 |
-| 검증 결과 | 🔴 핵심 절 2건 오류 + 출처 위조 | ✅ spot-check 2건 **정확히 일치** |
+| 검증 결과 | [중요] 핵심 절 2건 오류 + 출처 위조 | [완료] spot-check 2건 **정확히 일치** |
 | 소요 | 50s / 49,513 tok | 99.8s / 269,523 tok |
 
 **→ 규칙: agy 에 "찾아라"라고 시키지 말고 "이 파일들을 읽어라"라고 시킨다.**
 웹 리서치는 여전히 신뢰할 수 없다.
 
-## 4.1 ⚠️ 이번에 내가 낸 버그 (agy 탓 아님)
+## 4.1 [주의] 이번에 내가 낸 버그 (agy 탓 아님)
 
 1차 호출이 엉뚱한 답(`--dangerously-skip-permissions` 설명)을 냈다. 원인은 **내 argv 실수**다:
 
 ```bash
-agy -p --dangerously-skip-permissions ... "프롬프트"   # ❌ -p 가 다음 토큰을 프롬프트로 먹음
-agy --dangerously-skip-permissions ... -p "프롬프트"   # ✅ 프롬프트를 -p 바로 뒤에
+agy -p --dangerously-skip-permissions ... "프롬프트"   # [실패] -p 가 다음 토큰을 프롬프트로 먹음
+agy --dangerously-skip-permissions ... -p "프롬프트"   # [완료] 프롬프트를 -p 바로 뒤에
 ```
 
 리포트 04 의 "argv 순서 무관"은 **플래그끼리의 순서**를 뜻하지, `-p` 가 값을 안 먹는다는 뜻이 아니다.
@@ -187,7 +187,7 @@ agy --dangerously-skip-permissions ... -p "프롬프트"   # ✅ 프롬프트를
 
 ---
 
-# 4.5 🔬 tool-calling 관문 벤치 — 3모델 실측 (2026-08-08)
+# 4.5  tool-calling 관문 벤치 — 3모델 실측 (2026-08-08)
 
 하네스: `~/claude-workspace/bin/bench_toolcall.py`. `/api/chat` + `tools`, `temperature:0`, `num_ctx:8192`.
 **관문 4종** — 에이전트 루프가 실제로 요구하는 것들:
@@ -199,20 +199,20 @@ agy --dangerously-skip-permissions ... -p "프롬프트"   # ✅ 프롬프트를
 
 | 모델 | 1.단발 | 2.선택 | 3.멀티턴 | 4.억제 | 판정 |
 |---|---|---|---|---|---|
-| **`35B-A3B IQ2_M`** | ✅ 5.0s | ✅ 4.9s | ✅ 6.8s | ✅ 3.7s | **4/4 — executor 가능** |
-| `devstral:24b` (신규, 14GB) | ✅ 75.7s | ✅ 2.9s | ❌ | ✅ 2.2s | **3/4 — 부분** |
-| `qwen2.5-coder:14b` | ❌ | ❌ | ❌ | ✅(호출 자체를 못 하니 자동 통과) | **1/4 — 불가** |
+| **`35B-A3B IQ2_M`** | [완료] 5.0s | [완료] 4.9s | [완료] 6.8s | [완료] 3.7s | **4/4 — executor 가능** |
+| `devstral:24b` (신규, 14GB) | [완료] 75.7s | [완료] 2.9s | [실패] | [완료] 2.2s | **3/4 — 부분** |
+| `qwen2.5-coder:14b` | [실패] | [실패] | [실패] | [완료](호출 자체를 못 하니 자동 통과) | **1/4 — 불가** |
 
-## 4.5.1 🔴 `devstral:24b` 의 실패 형태 — 재현 확인
+## 4.5.1 [중요] `devstral:24b` 의 실패 형태 — 재현 확인
 
 3번만 실패한 게 이상해 격리 실험했다(`temperature:0`, **완전 재현**):
 
 | 프롬프트 | `tool_calls` | `content` |
 |---|---|---|
-| `What is the weather in Seoul?` | ✅ | (비어 있음) |
-| `... ? **Answer in one sentence.**` | ❌ | `"I'll check the weather for you."` |
-| `... ? Answer in one sentence.` (재시도) | ❌ | 위와 **동일** |
-| `... ? **Use the tool**, then answer in one sentence.` | ✅ | (비어 있음) |
+| `What is the weather in Seoul?` | [완료] | (비어 있음) |
+| `... ? **Answer in one sentence.**` | [실패] | `"I'll check the weather for you."` |
+| `... ? Answer in one sentence.` (재시도) | [실패] | 위와 **동일** |
+| `... ? **Use the tool**, then answer in one sentence.` | [완료] | (비어 있음) |
 
 **→ 프롬프트에 형식/답변스타일 지시가 붙으면 도구 호출을 빠뜨리고 "하겠다"고 말만 하고 멈춘다.**
 에이전틱 하네스의 시스템 프롬프트는 형식 지시로 가득하므로 **실전에서 계속 터진다.**
@@ -230,7 +230,7 @@ agy --dangerously-skip-permissions ... -p "프롬프트"   # ✅ 프롬프트를
 14b 의 tool-calling 결함은 **호출당하는 쪽이라 무관**해진다.
 gjc 의 역할 매핑(`executor`/`critic`/…)과도 층이 맞는다 — 다만 이 배치는 **미검증 가설**이다.
 
-🔴 **보류 — 전환 비용을 제대로 재보니 성립하지 않는다.** 기존 문서의 "36초"는 **14b 방향만** 본 값이었다:
+[중요] **보류 — 전환 비용을 제대로 재보니 성립하지 않는다.** 기존 문서의 "36초"는 **14b 방향만** 본 값이었다:
 
 | 호출 | 시간 | 전환 페널티 |
 |---|---|---|
@@ -242,7 +242,7 @@ gjc 의 역할 매핑(`executor`/`critic`/…)과도 층이 맞는다 — 다만
 **왕복 1회 ≈ 100초.** 드라이버가 코드 생성기를 태스크당 2번만 불러도 200초가 순수 적재로 나간다.
 **보드 2대 전까지 착수하지 않는다.**
 
-## 4.5.3 ✅ 보드 1대에서 되는 길 — gjc 의 **런타임이 아니라 계약**을 가져온다
+## 4.5.3 [완료] 보드 1대에서 되는 길 — gjc 의 **런타임이 아니라 계약**을 가져온다
 
 `extragoal` 의 **"Custom — user-provided external reviewer command"** 레인은 **도구 호출을 요구하지 않는다.**
 계약이 하나뿐이다 — *마지막 비어 있지 않은 줄이 정확히 `VERDICT: APPROVE`/`REQUEST_CHANGES`, fail-closed.*
@@ -251,18 +251,18 @@ gjc 의 역할 매핑(`executor`/`critic`/…)과도 층이 맞는다 — 다만
 
 | 케이스 | 결과 |
 |---|---|
-| 버그 있는 diff (음수 클램프 누락) | ✅ `VERDICT: REQUEST_CHANGES` — 형식·판정 정확 (47.5s, 적재 포함) |
-| 정상 diff (`FMath::Clamp`) | ✅ `VERDICT: APPROVE` (1.1s, 상주) |
+| 버그 있는 diff (음수 클램프 누락) | [완료] `VERDICT: REQUEST_CHANGES` — 형식·판정 정확 (47.5s, 적재 포함) |
+| 정상 diff (`FMath::Clamp`) | [완료] `VERDICT: APPROVE` (1.1s, 상주) |
 
-⚠️ **표본 2개짜리 장난감 케이스 — 신호이지 증명이 아니다.** UE5 실제 diff 로 재측정할 것.
-⚠️ **교차 계열 제약**상 14b 가 작성·리뷰를 겸하면 계약 위반이다. 성립 조합은
+[주의] **표본 2개짜리 장난감 케이스 — 신호이지 증명이 아니다.** UE5 실제 diff 로 재측정할 것.
+[주의] **교차 계열 제약**상 14b 가 작성·리뷰를 겸하면 계약 위반이다. 성립 조합은
 **작성=BC-250 14b(기존 제약 생성 경로, gjc 아님) / 리뷰=상용**이고, **이는 §4.3 3층 게이트와 이미 같은 모양**이다.
 
 **→ 결론: 보드 1대 동안은 gjc 런타임을 도입하지 않고, 층2 검증을 `VERDICT:` fail-closed 계약으로 바꾼다.**
 
 ---
 
-# 4.6 🔴 장비 구성 정정 (2026-08-08, 세션 말미)
+# 4.6 [중요] 장비 구성 정정 (2026-08-08, 세션 말미)
 
 계획 문서가 **두 군데 틀려 있었다.** 사용자 확정 실제 보유:
 **윈도우 UE5 PC 2대 + BC-250 2대(#1 추론 / #2 Bazzite 게임 머신) + 리눅스 마스터.**
@@ -281,7 +281,7 @@ gjc 의 역할 매핑(`executor`/`critic`/…)과도 층이 맞는다 — 다만
 
 **파급 (나) — 노드 증설은 셋업이 아니라 자원 배분 결정이다.**
 #2 를 추론으로 돌리려면 **게임 머신을 내줘야 한다.** 계획은 #2 를 **조건부로만** 다룬다.
-⚠️ **Bazzite 는 rpm-ostree 이미지형**이라 #1 에서 필수였던 TTM/GTT 캡 상향·커널 부팅 파라미터·
+[주의] **Bazzite 는 rpm-ostree 이미지형**이라 #1 에서 필수였던 TTM/GTT 캡 상향·커널 부팅 파라미터·
 헤드리스(`multi-user.target`) 전환이 같은 절차로 되는지 **미확인**. 일반 Fedora 재설치가 더 쌀 수 있다.
 
 > **교훈:** 이 항목은 한 세션에서 **세 번 고쳐 썼다**(미구성 → 도착 대기 → 게임 머신).
@@ -289,7 +289,7 @@ gjc 의 역할 매핑(`executor`/`critic`/…)과도 층이 맞는다 — 다만
 
 ---
 
-# 5. 🧪 로컬 LLM 을 내 작업 보조로 써봤다 (사용자 제안, 2026-08-08)
+# 5.  로컬 LLM 을 내 작업 보조로 써봤다 (사용자 제안, 2026-08-08)
 
 > *"네가 작업할 때도 로컬 LLM을 보조로 쓰는 건 어때?"*
 
@@ -311,19 +311,19 @@ gjc 의 역할 매핑(`executor`/`critic`/…)과도 층이 맞는다 — 다만
 
 | 항목 | 결과 |
 |---|---|
-| **파일명 환각** | ✅ **0건** — 댄 8개 파일 전부 실존 |
-| (A) 헤드리스 실행 | ✅ 1순위 `environment-variables.md` **적중** — 실제로 여기 548줄에 `gjc -p --no-session` 이 있다 |
-| (B) tool_calls 폴백 | 🔴 **1순위 `ai-schema-normalize.md` 오답**(관련 키워드 0건 — 스키마를 *보내는* 쪽 문서다). 4순위 `provider-streaming-internals.md` 가 정답이었다 |
+| **파일명 환각** | [완료] **0건** — 댄 8개 파일 전부 실존 |
+| (A) 헤드리스 실행 | [완료] 1순위 `environment-variables.md` **적중** — 실제로 여기 548줄에 `gjc -p --no-session` 이 있다 |
+| (B) tool_calls 폴백 | [중요] **1순위 `ai-schema-normalize.md` 오답**(관련 키워드 0건 — 스키마를 *보내는* 쪽 문서다). 4순위 `provider-streaming-internals.md` 가 정답이었다 |
 
 **→ 목록은 쓸 만한데 순위를 믿으면 안 된다.** 8개 중 2개가 실제로 유용했다.
 
 ## 5.2 대가
 
-- 🔴 **생성 3,737 토큰 중 ~95%가 "Thinking Process"** — "사고 과정은 쓰지 마라"는 지시를 무시했다.
+- [중요] **생성 3,737 토큰 중 ~95%가 "Thinking Process"** — "사고 과정은 쓰지 마라"는 지시를 무시했다.
   실제 답은 15줄. **저양자화 35B 는 지시 준수가 약하다.**
 - 모델 전환 비용이 실재한다 — 14b 테스트와 번갈아 쓰다 매번 ~30s 재적재를 물었다(`MAX_LOADED_MODELS=1`).
 
-## 5.3 🔴 새 하드웨어 제약 발견 — `num_ctx=32768` 은 못 쓴다
+## 5.3 [중요] 새 하드웨어 제약 발견 — `num_ctx=32768` 은 못 쓴다
 
 첫 시도에서 `num_ctx: 32768` 로 주자 **9분 59초 만에 HTTP 500** 이 났다
 (보드 로그: `[GIN] ... | 500 | 9m59s | 192.168.0.57 | POST "/api/generate"`).
@@ -333,7 +333,7 @@ gjc 의 역할 매핑(`executor`/`critic`/…)과도 층이 맞는다 — 다만
 
 **→ 35B-A3B IQ2_M 의 실용 컨텍스트 상한을 확정해야 한다.** 8192 는 되고 32768 은 안 된다.
 
-## 5.4 ⚠️ 내가 낸 버그 (기록용)
+## 5.4 [주의] 내가 낸 버그 (기록용)
 
 1. **`python3 -` + heredoc** — 인터프리터가 stdin 을 **프로그램 소스로** 소비해
    `sys.stdin.read()` 에 컨텍스트가 안 들어갔다. 보드 로그의 `task.n_tokens = 152` 로 발각됐다
@@ -372,7 +372,7 @@ gjc 의 역할 매핑(`executor`/`critic`/…)과도 층이 맞는다 — 다만
 추가로 `server.py` 최상단의 `FastMCP` import 때문에 MCP SDK 없이는 HTTP 서비스조차 못 떴다 —
 stdio 를 `mcp_server.py` 로 떼고 지연 import 로 바꿨다.
 
-> ⚠️ **3번 거부를 처음엔 함수 중간에 넣었다** — 그 위치면 archive/purge 를 **이미 수행한 뒤**
+> [주의] **3번 거부를 처음엔 함수 중간에 넣었다** — 그 위치면 archive/purge 를 **이미 수행한 뒤**
 > 실패를 반환한다. 진입부로 옮겨 아무것도 건드리기 전에 거부하도록 고쳤다.
 
 **실측 — §4.2 의 "두 작업장 경쟁 방어"가 실제로 도는가:**
@@ -387,15 +387,15 @@ claim 시 `epoch=1`·`assignee` 부여 → **다른 워커의 같은 task claim 
 
 - 샌드박스 실적용: `ProtectSystem=strict` · `ProtectHome=read-only` · `NoNewPrivileges=yes` ·
   `ReadWritePaths=/home/sim/ax-state`. 그 상태에서 상태 쓰기·git 감사 커밋 정상.
-- 🔴 **`Restart=always` 실동작 확인** — `kill -9` 후 재기동(`NRestarts=1`), 상태는 디스크에서 복원.
+- [중요] **`Restart=always` 실동작 확인** — `kill -9` 후 재기동(`NRestarts=1`), 상태는 디스크에서 복원.
   **§5.4.3 의 "`process_lifecycle.py` 폐기하고 systemd 에 넘긴다"가 실증됐다.**
-- ⚠️ 선결이던 `python3-venv`·`python3-pip` 가 이 박스에 없어 `pkexec` 로 설치했다.
+- [주의] 선결이던 `python3-venv`·`python3-pip` 가 이 박스에 없어 `pkexec` 로 설치했다.
 
 **노출 실측 → LAN 한정 개방** (사용자 지시): `ufw` 기본 정책이 `deny (incoming)` 이라 8101 이
 **LAN 에서 닿지 않았고**, `task_queue` 에는 **인증 계층이 0건**이다. 둘을 같이 보고
 `ufw allow from 192.168.0.0/24 to any port 8101` 로 **출발지 한정** 개방했다.
 BC-250 에서 실제로 호출해 도달·쓰기 확인. 출발지 한정이라 **라우터 포트포워딩 사고까지 막는다.**
-🔴 **방어선이 방화벽 하나뿐** — `Anywhere` 로 넓히지 말 것, LAN 신뢰가 깨지면 인증 먼저.
+[중요] **방어선이 방화벽 하나뿐** — `Anywhere` 로 넓히지 말 것, LAN 신뢰가 깨지면 인증 먼저.
 
 ## 6.7 문서 정합성 복구
 
@@ -420,7 +420,7 @@ BC-250 가이드는 `pkexec` 불가 사실이 **틀린 지시 뒤에** 있어 �
 | `a6e1b69` | §5.4.4 systemd 확정 · §9 신설(gjc 배치) |
 | `0cbdaf6` | §9.4.1 tool-calling 벤치 · devstral 탈락 |
 | `aa9cd70` | 전환 비용 정정(왕복 ~100초) · §9.4.3 보드 1대 경로 |
-| `5ff80c6`·`5bde344` | 🔴 장비 구성 정정 — 윈도우 2대 · BC-250 #2 는 게임 머신 |
+| `5ff80c6`·`5bde344` | [중요] 장비 구성 정정 — 윈도우 2대 · BC-250 #2 는 게임 머신 |
 | `5e6c00d`·`6a4c874` | 층2 검증 fail-closed 계약 + `.gitignore` |
 | `614abf0` | `task_queue` 이식 |
 | `4a3afb9` | systemd 등록·enable + 노출 실측 |
@@ -446,7 +446,7 @@ BC-250 가이드는 `pkexec` 불가 사실이 **틀린 지시 뒤에** 있어 �
 
 **다음 세션에서 바로 집을 것 (우선순위 순):**
 
-- [ ] 🔴 **능력 기반 라우팅 (`requires: ue5`)** — 큐가 아직 `job_kind`(write/verify) 분기뿐이라
+- [ ] [중요] **능력 기반 라우팅 (`requires: ue5`)** — 큐가 아직 `job_kind`(write/verify) 분기뿐이라
       **마스터 워커가 UE5 잡을 집어갈 수 있다.** 빌드 게이트를 CI 러너 패턴으로 돌리기 위한 선결
 - [ ] **이식 2단계 `mcp/context_search/`(RAG)** — `sys.platform` 분기 **0건**이라 1단계보다 가볍다.
       ChromaDB 인덱스 이관(재색인 필요 여부 확인)이 실제 작업

@@ -42,7 +42,7 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[가-힣]+")
 # 사전 토큰화된 공백 구분 스트림을 받는다. tokenchars '_' 로 `class_name` 식별자 보존.
 _FTS5_TOKENIZE = "unicode61 remove_diacritics 0 tokenchars '_'"
 
-# 🔴 **한글 전용 보조 테이블의 토크나이저.** SQLite 내장 `trigram` — 3자 창으로 쪼개므로
+# [중요] **한글 전용 보조 테이블의 토크나이저.** SQLite 내장 `trigram` — 3자 창으로 쪼개므로
 # 조사·어미가 붙어도 부분 문자열이 걸린다. 실측(SQLite 3.37.2):
 #
 #   trigram    MATCH '시스템' → 1건   ← 「시스템을 관리하는」 안에서 잡힌다
@@ -57,7 +57,7 @@ _FTS5_TOKENIZE_KR = "trigram"
 KR_MIN_LEN = 3
 _HANGUL_RE = re.compile(r"[가-힣]")
 
-# 🔴 **한글 질의 라우팅은 기본 꺼져 있다** (`AX_BM25_KR=1` 로 켠다).
+# [중요] **한글 질의 라우팅은 기본 꺼져 있다** (`AX_BM25_KR=1` 로 켠다).
 #
 # 표(색인)는 만든다 — trigram 이 **단독으로는 확실히 맞다**(실측: 질의 「전역 이벤트 시스템」에
 # 대해 `GlobalEventSystem.md` 를 1위로. 단어 테이블은 3위).
@@ -70,7 +70,7 @@ _HANGUL_RE = re.compile(r"[가-힣]")
 # 한글 질의에서 벡터 채널이 UI 문서 쪽으로 쏠려 있어 **상관된 오답이 서로를 밀어 올린다.**
 # 정답은 BM25 단독이라 단일 채널로 남아 밀려난다.
 #
-# 🔴 **그래서 더 손대지 않는다.** 질의 3개를 눈으로 보며 고르는 것은 측정이 아니다 —
+# [중요] **그래서 더 손대지 않는다.** 질의 3개를 눈으로 보며 고르는 것은 측정이 아니다 —
 # 세 번 고쳤고 한 번은 오히려 나빠졌다. **정답 집합(ground truth)을 만든 뒤에** 켤 것.
 # 그때 검증할 가설: *"한글 질의에서는 벡터 채널을 낮추거나 끈다"*(원본도 `search_domain_norms`
 # 에서 채널을 언어·신뢰도로 게이팅한다).
@@ -126,7 +126,7 @@ def _fields(doc: Document) -> tuple[str, str, str, str]:
     tags = " ".join(tokenize(" ".join(fm.get("tags") or [])))
     cat = " ".join(tokenize(str(fm.get("category") or "")))
     rc = " ".join(tokenize(" ".join(class_names(fm.get("related_classes")))))
-    # 🔴 `search_text` 를 쓴다 — 본문 없는 스텁도 색인한다 (`documents.py` 참조).
+    # [중요] `search_text` 를 쓴다 — 본문 없는 스텁도 색인한다 (`documents.py` 참조).
     body = " ".join(tokenize(doc.search_text))
     return tags, cat, rc, body
 
@@ -158,7 +158,7 @@ class Bm25Index:
         paths.bm25_db.parent.mkdir(parents=True, exist_ok=True)
         # check_same_thread=False — FastAPI 워커 스레드에서 검색을 부른다.
         self._conn = sqlite3.connect(str(paths.bm25_db), check_same_thread=False)
-        # 🔴 프로세스 간 안전 (소 3.5.3). `bm25.db` 는 **두 프로세스**가 연다 —
+        # [중요] 프로세스 간 안전 (소 3.5.3). `bm25.db` 는 **두 프로세스**가 연다 —
         #    색인기(master.events.consumer, 쓰기)와 서비스(master.projects, 읽기).
         #    아래 `self._lock` 은 프로세스 **안**만 막는다. 2026-08-14 에 형제 모듈
         #    (`graph/db.py`·`graph/dependency.py`)에는 있고 여기만 빠져 있던 것이 발견됐다.
@@ -223,7 +223,7 @@ class Bm25Index:
         if not kr_tokens:
             return word
 
-        # 🔴 한글 질의는 **두 테이블을 교차로 섞는다** (2026-08-08 실측으로 고친 지점).
+        # [중요] 한글 질의는 **두 테이블을 교차로 섞는다** (2026-08-08 실측으로 고친 지점).
         #
         # 처음엔 "단어 테이블이 부족할 때만 trigram 으로 채운다" 로 만들었는데 **효과가 0
         # 이었다** — 단어 테이블이 `limit` 을 채워 버려 trigram 이 조회조차 안 됐다.
@@ -253,7 +253,7 @@ class Bm25Index:
         # 더 맞는 도구다(실측: 「전역 이벤트 시스템」에 대해 `GlobalEventSystem.md` 를 1위로).
         # 영문·혼합 질의는 단어 테이블 그대로다.
         #
-        # ⚠️ **이 규칙은 질의 3개로 정했다.** 표본이 얇다 — `search_log.jsonl` 이 쌓이면
+        # [주의] **이 규칙은 질의 3개로 정했다.** 표본이 얇다 — `search_log.jsonl` 이 쌓이면
         # 실제 질의 분포로 다시 재야 한다(원본의 `language_gap_report` 가 그 용도다).
         return kr if len(kr_tokens) * 2 > len(tokens) else word
 
@@ -340,13 +340,13 @@ class Bm25Index:
             self._conn.commit()
         return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
 
-    # ── 🔴 0건 진단 (소 3.5.8 — 원전 `[BM25 0건 진단]` 카나리 이식) ──────
+    # ── [중요] 0건 진단 (소 3.5.8 — 원전 `[BM25 0건 진단]` 카나리 이식) ──────
     #
-    # ⚠️ **원전처럼 로그를 찍지 않는다.** 이 저장소의 모듈은 **사실을 반환하고 호출자가
+    # [주의] **원전처럼 로그를 찍지 않는다.** 이 저장소의 모듈은 **사실을 반환하고 호출자가
     # 찍는다**(테스트 가능하고 전역 상태가 없다). 원전의 카나리는 `watch.exe` 의 상주 콘솔에
     # 묶인 방식이었다 — 기제를 옮기고 형태는 우리 것으로 둔다.
     #
-    # 🔴 **왜 이것이 필요한가.** *"검색이 비었다"* 는 사용자가 보고하는 **증상**이고 원인은
+    # [중요] **왜 이것이 필요한가.** *"검색이 비었다"* 는 사용자가 보고하는 **증상**이고 원인은
     # 여럿이다(색인이 빔 · 토큰이 하나도 안 맞음 · 한국어 어절 분해 실패 · 세대가 어긋남).
     # 리포트 13 §19.1 에서 *"도메인이 비어있어"* 라는 보고를 받고 처음부터 재야 했던 자리다 —
     # 그때 이 함수가 있었으면 한 번에 답했다.
@@ -382,7 +382,7 @@ class Bm25Index:
             "term_hits": per,
             "unmatched": unmatched,
             "has_hangul": has_hangul(query),
-            # 🔴 사유를 문장으로 — 사람이 읽는 자리다.
+            # [중요] 사유를 문장으로 — 사람이 읽는 자리다.
             "reason": (
                 "색인이 비어 있다" if self.count() == 0 else
                 "토큰이 하나도 색인 어휘와 맞지 않는다" if terms and len(unmatched) == len(terms) else

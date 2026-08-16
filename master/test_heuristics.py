@@ -1,6 +1,6 @@
 """골조 휴리스틱 — 대화형 수집 (소 1.1.6).
 
-🔴 지키는 계약: **사람이 답한 것만 적립된다.** 모델의 제안을 적립하면 다음 골조가 자기 말을
+[중요] 지키는 계약: **사람이 답한 것만 적립된다.** 모델의 제안을 적립하면 다음 골조가 자기 말을
 근거로 같은 선택을 반복한다 — 온톨로지 자동 승급을 껐던 것과 같은 이유.
 
 `.venv/bin/python master/test_heuristics.py`
@@ -26,7 +26,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 @dataclass
@@ -50,13 +50,13 @@ def test_questions_are_parsed_loosely() -> None:
 
 
 def test_no_block_means_no_questions() -> None:
-    """🔴 블록이 없으면 **지어내지 않는다.**"""
+    """[중요] 블록이 없으면 **지어내지 않는다.**"""
     check("빈 목록", H.parse_questions("=== FILE: a.h ===\nclass A {};") == [])
     check("빈 입력도 안전", H.parse_questions("") == [])
 
 
 def test_questions_never_leak_into_files() -> None:
-    """🔴 질문이 파일 본문에 섞이면 그대로 워커에게 배달된다."""
+    """[중요] 질문이 파일 본문에 섞이면 그대로 워커에게 배달된다."""
     raw = ("=== FILE: Source/A.h ===\nclass A {};\n"
            "=== QUESTIONS ===\n- Should A be final?\n")
     files, _notes = S.parse_files(raw, want=["Source/A.h"])
@@ -66,7 +66,7 @@ def test_questions_never_leak_into_files() -> None:
 
 
 def test_only_human_answers_are_stored() -> None:
-    """🔴 적립되는 것은 사람의 답이다 — 주제·결정이 없으면 거부."""
+    """[중요] 적립되는 것은 사람의 답이다 — 주제·결정이 없으면 거부."""
     with tempfile.TemporaryDirectory() as d:
         paths = P(root=Path(d))
         check("처음엔 비어 있다", H.load(paths) == [])
@@ -74,9 +74,9 @@ def test_only_human_answers_are_stored() -> None:
                     H.Heuristic(topic="T", decision="")):
             try:
                 H.add(paths, bad)
-                check("🔴 빈 휴리스틱은 거부", False)
+                check("[중요] 빈 휴리스틱은 거부", False)
             except ValueError:
-                check("🔴 빈 휴리스틱은 거부", True)
+                check("[중요] 빈 휴리스틱은 거부", True)
 
         H.add(paths, H.Heuristic(topic="스냅샷은 컴포넌트인가 서브시스템인가",
                                  decision="컴포넌트", why="액터 수명에 묶여야 한다",
@@ -92,7 +92,7 @@ def test_only_human_answers_are_stored() -> None:
 
 
 def test_second_answer_appends_not_overwrites() -> None:
-    """🔴 판단이 바뀐 것도 기록이다 — 옛 결정을 조용히 지우지 않는다."""
+    """[중요] 판단이 바뀐 것도 기록이다 — 옛 결정을 조용히 지우지 않는다."""
     with tempfile.TemporaryDirectory() as d:
         paths = P(root=Path(d))
         H.add(paths, H.Heuristic(topic="틱", decision="쓴다"))
@@ -103,7 +103,7 @@ def test_second_answer_appends_not_overwrites() -> None:
 
 
 def test_scope_keeps_one_work_from_polluting_another() -> None:
-    """🔴 사용자 지적: *"저 질문들은 답변하면 모든 분산 작업에 적용되는거야?"* — 안 된다."""
+    """[중요] 사용자 지적: *"저 질문들은 답변하면 모든 분산 작업에 적용되는거야?"* — 안 된다."""
     items = [
         H.Heuristic(topic="상태 보관", decision="컴포넌트", scope=H.SCOPE_PROJECT),
         H.Heuristic(topic="미션 틱", decision="이벤트로", scope="domain:MissionRuntime"),
@@ -111,20 +111,20 @@ def test_scope_keeps_one_work_from_polluting_another() -> None:
     ]
     check("project 는 늘 적용", items[0].applies_to([]) and items[0].applies_to(["X"]))
     check("domain 은 그 도메인만", items[1].applies_to(["MissionRuntime"]))
-    check("🔴 다른 도메인엔 안 실린다", not items[1].applies_to(["MissionEditor"]))
+    check("[중요] 다른 도메인엔 안 실린다", not items[1].applies_to(["MissionEditor"]))
     check("도메인 미상이면 domain 것은 빠진다", not items[1].applies_to([]))
 
     t = H.render(items, domains=["MissionRuntime"])
     check("project 가 실린다", "상태 보관" in t)
     check("맞는 도메인이 실린다", "미션 틱" in t)
-    check("🔴 남의 도메인은 안 실린다", "UI 레이어" not in t, t)
+    check("[중요] 남의 도메인은 안 실린다", "UI 레이어" not in t, t)
 
     t2 = H.render(items, domains=[])
     check("도메인 미상이면 project 만", "상태 보관" in t2 and "미션 틱" not in t2, t2)
 
 
 def test_once_is_used_but_never_stored() -> None:
-    """🔴 *이번만* 은 적립하지 않는다 — 적립하면 남의 작업을 오염시킨다."""
+    """[중요] *이번만* 은 적립하지 않는다 — 적립하면 남의 작업을 오염시킨다."""
     import tempfile as _tf
     once = H.Heuristic(topic="이 스냅샷", decision="컴포넌트로", scope=H.SCOPE_ONCE)
     check("적립 대상이 아니다", not once.storable)
@@ -132,9 +132,9 @@ def test_once_is_used_but_never_stored() -> None:
         paths = P(root=Path(d))
         try:
             H.add(paths, once)
-            check("🔴 적립을 거부한다", False)
+            check("[중요] 적립을 거부한다", False)
         except ValueError as e:
-            check("🔴 적립을 거부한다", "once" in str(e), str(e))
+            check("[중요] 적립을 거부한다", "once" in str(e), str(e))
         check("파일이 안 생긴다", not H.path_for(paths).is_file())
     # 그래도 이번 프롬프트에는 실린다
     t = H.render([], domains=[], extra=[once])
@@ -142,28 +142,28 @@ def test_once_is_used_but_never_stored() -> None:
 
 
 def test_render_prefers_recent_and_says_what_it_cut() -> None:
-    """🔴 잘랐으면 잘랐다고 적는다 — 조용히 빼면 '그런 결정은 없다' 로 읽힌다."""
+    """[중요] 잘랐으면 잘랐다고 적는다 — 조용히 빼면 '그런 결정은 없다' 로 읽힌다."""
     items = [H.Heuristic(topic=f"T{i}", decision="D" * 200) for i in range(10)]
     text = H.render(items, budget=600)
     check("최근 것이 실린다", "T9" in text, text[:200])
     check("오래된 것은 잘린다", "T0" not in text)
-    check("🔴 잘랐다고 말한다", "omitted for budget" in text, text[-200:])
+    check("[중요] 잘랐다고 말한다", "omitted for budget" in text, text[-200:])
     check("여전히 유효하다고 말한다", "still stand" in text)
     check("사람의 결정이라고 못박는다", "human decisions, not suggestions" in text)
     check("빈 목록은 빈 문자열", H.render([]) == "")
 
 
 def test_prompt_puts_heuristics_first() -> None:
-    """🔴 이미 내려진 사람의 결정이라 다른 재료보다 위다."""
+    """[중요] 이미 내려진 사람의 결정이라 다른 재료보다 위다."""
     spec = S.SkeletonSpec(stem="F", files=["a.h"], classes=["UF"], instruction="만든다")
     p = S.build_prompt(spec, heuristics_text="=== HEURISTICS ===\nX",
                        norms="=== DOMAIN NORMS ===\nY",
                        declarations="=== DECLARATIONS ===\nZ")
     check("휴리스틱이 규범보다 앞", p.index("HEURISTICS") < p.index("DOMAIN NORMS"))
     check("규범이 선언부보다 앞", p.index("DOMAIN NORMS") < p.index("DECLARATIONS"))
-    # 🔴 질문을 요구하되, 그것 때문에 파일을 바꾸지는 말라고 해야 한다
+    # [중요] 질문을 요구하되, 그것 때문에 파일을 바꾸지는 말라고 해야 한다
     check("질문 블록을 요구한다", "=== QUESTIONS ===" in p)
-    check("🔴 주인이 정한다고 못박는다", "the owner decides" in p, "")
+    check("[중요] 주인이 정한다고 못박는다", "the owner decides" in p, "")
 
 
 def main() -> int:
@@ -176,7 +176,7 @@ def main() -> int:
                test_prompt_puts_heuristics_first):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_heuristics: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_heuristics: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

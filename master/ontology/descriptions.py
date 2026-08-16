@@ -7,7 +7,7 @@
 레이어가 무슨 책임을 지는지는 여전히 사람이 멤버 목록을 보고 유추해야 했고, 그 공백을 메우는
 칸이다. manifest 의 `summary`·핵심 책임은 **도메인 전체** 단위라 안정도 관점이 빠진다.
 
-⚠️ **우리 `layers.py` 는 이것이 아니다** — 그것은 다른 원본 파일(`ontology_layers.py`, η.6.1)의
+[주의] **우리 `layers.py` 는 이것이 아니다** — 그것은 다른 원본 파일(`ontology_layers.py`, η.6.1)의
 이식본이고 **레이어를 추정**한다(LLM 0). 「어느 레이어인가」와 「그 레이어가 무슨 책임인가」는
 다른 산출물이다. 마일스톤 4 함정 *"이름이 비슷한 다른 파일을 대응으로 착각한다"* 가 겨눈 자리다.
 
@@ -19,14 +19,14 @@
                                 한둘 변경에 둔감하다 (호출자가 게이트)
     stale 축 제외                리비전 워터마크에 참여하지 않는다 (eventually-consistent)
     verified_by_user            사람이 손본 서술은 재초안이 **덮지 않는다**
-    🔴 비용 가드                 active 레이어 서술이 **전부 잠겨 있으면 LLM 을 아예 안 부른다**
-    🔴 환각 레이어 제거          멤버가 0인 레이어에 LLM 이 서술을 붙이면 **버린다**
+    [중요] 비용 가드                 active 레이어 서술이 **전부 잠겨 있으면 LLM 을 아예 안 부른다**
+    [중요] 환각 레이어 제거          멤버가 0인 레이어에 LLM 이 서술을 붙이면 **버린다**
 
-## 🔴 우리 쪽에서 다르게 둔 것 셋
+## [중요] 우리 쪽에서 다르게 둔 것 셋
 
 **① LLM 호출은 주입한다.** 원본은 `common._call_llm` 을 모듈 전역에서 잡지만, 우리 합성기는
 브로커(8102)를 통해 **모델 이름으로 노드를 고른다.** 호출자가 함수를 넘기면 테스트가
-네트워크 없이 돈다 — 🔴 이 세션에 `dry_run` 이 LLM 을 안 막는다는 것을 이미 겪었다.
+네트워크 없이 돈다 — [중요] 이 세션에 `dry_run` 이 LLM 을 안 막는다는 것을 이미 겪었다.
 
 **② 파싱 실패를 값으로 돌려준다** (`Result.reason`). 원본은 `_LOG` 로 흘린다. σ 감사 기준이
 *"예외·판정을 값으로 돌려주면 조용하지 않다"* 이고, 이 모듈은 **실패해도 재합성을 죽이지 않는**
@@ -95,7 +95,7 @@ def _pkg(paths: ProjectPaths, domain: str) -> Path:
 def collect_layer_members(paths: ProjectPaths, domain: str) -> dict:
     """패키지에서 레이어별 **멤버 이름만** 걷는다 (glob stem — 본문을 안 읽는다).
 
-    🔴 **쓰기 직후에 부른다.** `package.write` 가 `L{n}/…/*.yaml` 을 디스크에 올린 상태를
+    [중요] **쓰기 직후에 부른다.** `package.write` 가 `L{n}/…/*.yaml` 을 디스크에 올린 상태를
     읽는 함수다(원본도 같은 순서를 계약으로 적어 뒀다).
     """
     root = _pkg(paths, domain)
@@ -113,7 +113,7 @@ def has_content(members: dict) -> bool:
 
 
 def build_prompt(domain: str, summary: str, responsibilities: list, layer_members: dict) -> str:
-    """LLM 1회분 프롬프트. 🔴 **문구는 원본 그대로** (바꾸면 산출물을 비교할 수 없다)."""
+    """LLM 1회분 프롬프트. [중요] **문구는 원본 그대로** (바꾸면 산출물을 비교할 수 없다)."""
     parts = [PROMPT_HEADER, f"== 도메인: {domain} =="]
     if summary:
         parts.append(f"[도메인 요약]\n{summary}")
@@ -137,7 +137,7 @@ def build_prompt(domain: str, summary: str, responsibilities: list, layer_member
 
 
 def parse_response(text: str) -> tuple:
-    """LLM 응답 → `({레이어: 서술}, 사유)`. 🔴 **실패 사유를 값으로 돌려준다.**
+    """LLM 응답 → `({레이어: 서술}, 사유)`. [중요] **실패 사유를 값으로 돌려준다.**
 
     키는 `"1"`·`"L1"`·`1` 을 모두 받는다(원본의 관대 정규화).
     """
@@ -185,14 +185,14 @@ def read(path: Path) -> dict | None:
     truthy = lambda v: str(v).strip().lower() in ("true", "1", "yes", "on")   # noqa: E731
     return {"body": body, "layer": layer, "created": fm.get("created", ""),
             "verified_by_user": truthy(fm.get("verified_by_user", "")),
-            # 🔴 **우리 표식** — `package.locked_items` 와 같은 규약(둘을 함께 본다).
+            # [중요] **우리 표식** — `package.locked_items` 와 같은 규약(둘을 함께 본다).
             # 원본에 없는 이유는 원본엔 "받아온 스냅샷" 이라는 상태가 없어서다.
             "protected": truthy(fm.get("protected", "")),
             "protected_reason": fm.get("protected_reason", "")}
 
 
 def is_locked(meta) -> bool:
-    """재생성이 **대체하면 안 되는** 서술인가. 🔴 뜻이 다른 두 표식을 함께 본다.
+    """재생성이 **대체하면 안 되는** 서술인가. [중요] 뜻이 다른 두 표식을 함께 본다.
 
         verified_by_user   사람이 검수했다
         protected          받아온 스냅샷이다 — 우리가 같은 품질로 재생산하지 못한다
@@ -205,11 +205,11 @@ def is_locked(meta) -> bool:
 
 def dump(domain: str, layer: int, body: str, *, verified: bool = False,
          created: str = "", now=None, protected: str = "") -> str:
-    """`description.md` 본문. 🔴 자동 초안은 **언제나 `verified_by_user: false`**.
+    """`description.md` 본문. [중요] 자동 초안은 **언제나 `verified_by_user: false`**.
 
     `created` 를 받는 이유는 원본과 같다 — 본문을 갱신해도 **최초 생성일을 보존**한다.
     `now` 는 주입 가능하다(원본은 `datetime.now()` 직접 호출 — 그러면 테스트가 시간을 못 고정한다.
-    🔴 원본 자신이 `attempt_branch(ts=…)` 에서 같은 이유로 인자를 뒀다).
+    [중요] 원본 자신이 `attempt_branch(ts=…)` 에서 같은 이유로 인자를 뒀다).
     """
     created = created or (now or datetime.now()).strftime("%Y-%m-%d")
     return (
@@ -229,7 +229,7 @@ def dump(domain: str, layer: int, body: str, *, verified: bool = False,
 @dataclass
 class WriteStats:
     written: int = 0
-    preserved_verified: int = 0      # 🔴 사람이 검수한 것 — 덮지 않았다
+    preserved_verified: int = 0      # [중요] 사람이 검수한 것 — 덮지 않았다
     unchanged: int = 0
     removed: int = 0                 # 멤버가 0이 된 레이어의 비검증 서술 (drift 정리)
     layers: list = field(default_factory=list)
@@ -238,7 +238,7 @@ class WriteStats:
     def summary(self) -> str:
         s = f"서술 작성 {self.written} · 그대로 {self.unchanged}"
         if self.preserved_verified:
-            s += f" · 🔒 검수 보존 {self.preserved_verified}"
+            s += f" ·  검수 보존 {self.preserved_verified}"
         if self.removed:
             s += f" · 정리 {self.removed}"
         return s
@@ -293,7 +293,7 @@ def write(paths: ProjectPaths, domain: str, descriptions: dict, *,
 class Result:
     domain: str
     descriptions: dict = field(default_factory=dict)
-    reason: str = ""                 # 🔴 안 뽑은/못 뽑은 이유 — 조용히 비지 않는다
+    reason: str = ""                 # [중요] 안 뽑은/못 뽑은 이유 — 조용히 비지 않는다
     llm_calls: int = 0
     dropped_layers: list = field(default_factory=list)   # 멤버 0인데 LLM 이 지어낸 것
 
@@ -305,7 +305,7 @@ class Result:
     def summary(self) -> str:
         s = f"{self.domain}: 서술 {len(self.descriptions)}개(L{','.join(str(n) for n in sorted(self.descriptions)) or '-'})"
         if self.dropped_layers:
-            s += f" · 🔴 환각 레이어 {len(self.dropped_layers)}건 버림"
+            s += f" · [중요] 환각 레이어 {len(self.dropped_layers)}건 버림"
         if self.reason:
             s += f" · {self.reason}"
         return s
@@ -314,7 +314,7 @@ class Result:
 def extract(paths: ProjectPaths, domain: str, *, call) -> Result:
     """도메인 하나의 레이어 책임 서술 — **LLM 최대 1회.**
 
-    `call(prompt) -> str` 을 주입받는다(위 「다르게 둔 것 ①」). 🔴 **비용 가드 둘이 먼저**다:
+    `call(prompt) -> str` 을 주입받는다(위 「다르게 둔 것 ①」). [중요] **비용 가드 둘이 먼저**다:
     멤버 있는 레이어가 0이거나, 그 레이어 서술이 **전부 검수 잠김**이면 LLM 을 안 부른다.
     """
     res = Result(domain=domain)
@@ -326,7 +326,7 @@ def extract(paths: ProjectPaths, domain: str, *, call) -> Result:
 
     root = _pkg(paths, domain)
     if all(is_locked(read(root / f"L{n}" / FILENAME)) for n in sorted(active)):
-        res.reason = "🔒 active 레이어 서술이 전부 잠김(검수·보호) — LLM 을 부르지 않는다"
+        res.reason = " active 레이어 서술이 전부 잠김(검수·보호) — LLM 을 부르지 않는다"
         return res
 
     doc = domain_md.read(paths, domain)
@@ -338,11 +338,11 @@ def extract(paths: ProjectPaths, domain: str, *, call) -> Result:
         text = call(prompt)
         res.llm_calls = 1
     except Exception as e:                              # noqa: BLE001
-        res.reason = f"🔴 LLM 호출 실패 — {type(e).__name__}: {e}"
+        res.reason = f"[중요] LLM 호출 실패 — {type(e).__name__}: {e}"
         return res
 
     parsed, reason = parse_response(text or "")
-    # 🔴 멤버가 0인 레이어에 붙은 서술은 버린다 — 근거가 없다
+    # [중요] 멤버가 0인 레이어에 붙은 서술은 버린다 — 근거가 없다
     res.descriptions = {n: t for n, t in parsed.items() if n in active}
     res.dropped_layers = sorted(set(parsed) - active)
     if not res.descriptions:

@@ -1,7 +1,7 @@
 > Part of the AX Cluster plan. Index: [`../PLAN.md`](../PLAN.md).
 > Section numbers are unchanged by the split — cross-references from other documents still resolve.
 
-## 7. 마스터 GPU 증설 검토 — GTX 1070 Ti (2026-08-06, 🔍 검토 단계)
+## 7. 마스터 GPU 증설 검토 — GTX 1070 Ti (2026-08-06,  검토 단계)
 
 > **아직 실행 안 함.** 사용자가 보유 중인 유휴 1070 Ti 를 마스터(192.168.0.57)에 증설하는 안.
 > 선결 조건(PSU 용량 확인·드라이버 설치)이 남아 있어 확정이 아니다.

@@ -529,7 +529,7 @@ async function deleteDomain() {
   const status = document.getElementById('domainDetailStatus').textContent;
   const isActive = status === 'active';
   const warn = '이 도메인을 모든 표면(MD + 패키지 yaml + DB row + 검색 인덱스)에서 완전 제거합니다.\\n되돌릴 수 없습니다.'
-    + (isActive ? '\\n\\n⚠ active 도메인입니다 — 사용자 SSOT 가 사라집니다. 정말 삭제하시겠습니까?' : '');
+    + (isActive ? '\\n\\n active 도메인입니다 — 사용자 SSOT 가 사라집니다. 정말 삭제하시겠습니까?' : '');
   if (!confirm(warn)) return;
   if (isActive && !confirm('한 번 더 확인: active 도메인 "' + _currentDomain + '" 을(를) 강제 삭제합니다.')) return;
   try {

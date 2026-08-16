@@ -4,11 +4,11 @@
 
     ① 도메인 MD 검출 셋 — 중복 stem · `status:` 누락 · `_archive` 안 `status: active`
     ② `_` 로 시작하는 파일은 도메인이 아니다 (`_overview` 등 — 원전과 같은 제외)
-    ③ 🔴 **read-only** — 감사가 파일을 고치지 않는다
+    ③ [중요] **read-only** — 감사가 파일을 고치지 않는다
     ④ 패키지 walk — objects/actions/invariants 카운트 + 레이어 분포
-    ⑤ 🔴 `domain.yaml` 이 없는 디렉토리는 **세지 않되 보고한다**
+    ⑤ [중요] `domain.yaml` 이 없는 디렉토리는 **세지 않되 보고한다**
        (원전은 조용히 건너뛴다 — 몇 개를 안 봤는지 모르면 「도메인 N개」가 전부인지 알 수 없다)
-    ⑥ 갭은 「수치 0건」 신호일 뿐 — 🔴 자동으로 고치지 않는다(원인 둘이 같은 외양)
+    ⑥ 갭은 「수치 0건」 신호일 뿐 — [중요] 자동으로 고치지 않는다(원인 둘이 같은 외양)
     ⑦ 읽기 실패를 세어서 돌려준다 (원전은 `except: continue`)
     ⑧ PyYAML 없이 frontmatter 를 읽는다 (감사가 파서에 의존하면 파서가 깨질 때 함께 눈을 감는다)
 
@@ -33,7 +33,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 def md(status: str = "active", extra: str = "") -> str:
@@ -93,15 +93,15 @@ def test_md_detects_three_gaps():
         check("① 중복 stem 을 잡는다", r["duplicate_stems"] == ["Dup"], str(r["duplicate_stems"]))
         check("① status 누락을 잡는다", r["missing_status"] == ["NoStatus.md"],
               str(r["missing_status"]))
-        # ⚠️ `Dup.md` 는 `status: archived` 라 잡히지 **않는다** — 중복 stem 이지만
+        # [주의] `Dup.md` 는 `status: archived` 라 잡히지 **않는다** — 중복 stem 이지만
         #    archive_active 는 아니다. 첫 판은 둘을 기대했고 그건 테스트가 틀린 것이었다.
-        check("① 🔴 _archive 안 active 를 잡는다",
+        check("① [중요] _archive 안 active 를 잡는다",
               r["archive_active"] == ["StillActive.md"], str(r["archive_active"]))
         check("② `_` 시작 파일은 도메인이 아니다", r["direct_count"] == 3,
               f"direct={r['direct_count']}")
 
         # ③ 감사가 아무것도 안 고쳤다
-        check("③ 🔴 read-only — status 가 그대로다",
+        check("③ [중요] read-only — status 가 그대로다",
               "status: active" in (fx.context / "_domains" / "StillActive.md").read_text()
               if False else "status: active" in
               (fx.context / "_domains" / "_archive" / "StillActive.md").read_text(encoding="utf-8"))
@@ -172,7 +172,7 @@ def test_manifestless_dir_is_reported_not_counted():
         fx.pkg("Legacy", manifest=False, objects=[("L1", 99)])
         r = PA.audit_packages(fx.ontology)
         check("⑤ manifest 없는 것은 세지 않는다", r["totals"]["domains"] == 1, str(r["totals"]))
-        check("⑤ 🔴 그래도 보고한다", r["skipped"] == ["Legacy"], str(r["skipped"]))
+        check("⑤ [중요] 그래도 보고한다", r["skipped"] == ["Legacy"], str(r["skipped"]))
         check("⑤ 그 안의 yaml 도 합계에 안 들어간다", r["totals"]["objects"] == 2,
               str(r["totals"]))
 
@@ -187,7 +187,7 @@ def test_zero_counts_are_gaps_not_fixes():
         check("⑥ actions=0 도", any("actions=0" in g for g in r["gaps"]), str(r["gaps"]))
         rep = PA.format_report({"direct_count": 0, "archive_count": 0, "duplicate_stems": [],
                                 "missing_status": [], "archive_active": [], "unreadable": []}, r)
-        check("⑥ 🔴 리포트가 「자동으로 고치지 않는다」를 말한다",
+        check("⑥ [중요] 리포트가 「자동으로 고치지 않는다」를 말한다",
               "자동으로 고치지 않는다" in rep, rep[:120])
         check("⑥ 원인이 둘임을 말한다", "같은 외양" in rep, rep[:200])
 
@@ -199,7 +199,7 @@ def main() -> int:
                test_zero_counts_are_gaps_not_fixes):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_pkg_audit: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_pkg_audit: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

@@ -1,8 +1,8 @@
-"""도메인 패키지 로더 — 🔴 **원전 그대로 복각** (`AgentTest/mcp/context_search/ontology_route_loaders.py`).
+"""도메인 패키지 로더 — [중요] **원전 그대로 복각** (`AgentTest/mcp/context_search/ontology_route_loaders.py`).
 
 사용자 지시 2026-08-13: *"그대로 복각하라고"*. 원전 온톨로지 뷰어(3,700줄)를 우리 스택에 올린다.
 
-## 🔴 왜 거의 그대로 옮겼나 — **데이터 레이아웃이 같다**
+## [중요] 왜 거의 그대로 옮겼나 — **데이터 레이아웃이 같다**
 
     원전   <base>/.claude/ontology/domains/<도메인>/domain.yaml + L{1,2,3}/{objects,actions,invariants}/*.yaml
     우리   <프로젝트>/ontology/domains/<도메인>/domain.yaml      + L{1,2,3}/{objects,actions,invariants}/*.yaml
@@ -11,7 +11,7 @@
 파서 import 뿐**이고 로직은 손대지 않았다 — 응답 모양이 조금이라도 달라지면 원전 프론트엔드
 (`domain.html` 1,056줄)가 그대로 못 돈다.
 
-⚠️ **이 파일을 "정리" 하지 말 것.** 원전과 diff 가 나는 만큼 프론트엔드가 깨진다.
+[주의] **이 파일을 "정리" 하지 말 것.** 원전과 diff 가 나는 만큼 프론트엔드가 깨진다.
 """
 from __future__ import annotations
 
@@ -25,10 +25,10 @@ from ..ontology import yaml_io
 
 
 def parse_domain_yaml(yaml_path: Path) -> Optional[dict]:
-    """🔴 원전 `domain_index.parse_domain_yaml` 대체 — 우리 YAML 리더를 쓴다.
+    """[중요] 원전 `domain_index.parse_domain_yaml` 대체 — 우리 YAML 리더를 쓴다.
 
     우리는 PyYAML 의존 0 으로 **우리가 쓴 것만** 읽는 파서를 갖고 있다(`ontology/yaml_io.py`).
-    ⚠️ `yaml_io.load` 는 **텍스트**를 받고 `yaml_io.read` 가 경로를 받는다 — 실측 2026-08-13 에
+    [주의] `yaml_io.load` 는 **텍스트**를 받고 `yaml_io.read` 가 경로를 받는다 — 실측 2026-08-13 에
     경로를 `load` 에 넘겨 **필드가 전부 비어 나왔다**(예외도 안 났다: 경로 문자열을 YAML 로
     파싱해 `{}` 를 돌려줬다). 조용히 빈 값을 주는 실패라 화면이 "데이터 없음" 처럼 보였다.
 
@@ -41,7 +41,7 @@ def parse_domain_yaml(yaml_path: Path) -> Optional[dict]:
 
 
 def _domains_root(base_dir: Path) -> Path:
-    """🔴 우리 경로. `base_dir` 는 `ProjectPaths.root`(트윈 데이터 디렉토리)다."""
+    """[중요] 우리 경로. `base_dir` 는 `ProjectPaths.root`(트윈 데이터 디렉토리)다."""
     return base_dir / "ontology" / "domains"
 
 
@@ -89,7 +89,7 @@ def _item_freshness(data: dict, path: Path) -> dict:
 
 
 def _class_graph_db_path(base_dir: Path) -> Path:
-    """🔴 우리 경로 — 그래프 wrapper 시각화가 이 DB 의 `parent` 를 읽는다."""
+    """[중요] 우리 경로 — 그래프 wrapper 시각화가 이 DB 의 `parent` 를 읽는다."""
     return base_dir / "class_graph.db"
 
 
@@ -139,7 +139,7 @@ def list_domains(base_dir: Path) -> list[dict]:
         data = parse_domain_yaml(manifest_path) or {}
         summary = str(data.get("summary") or "")
         summary_head = summary.split("\n")[0][:120] if summary else ""
-        # ⚠️ **원전과 다른 유일한 로직** (실측 2026-08-13): 원전은 여기서 평면 `pkg/objects` 만
+        # [주의] **원전과 다른 유일한 로직** (실측 2026-08-13): 원전은 여기서 평면 `pkg/objects` 만
         #    글로브해서, L-dir 레이아웃(`L1/objects/…`)에서는 **모든 도메인이 0개로 보인다.**
         #    같은 파일이 이미 `_glob_object_yamls`(L-dir 지원)를 갖고 있으므로 그것을 쓴다 —
         #    원전의 버그를 그대로 복각하면 게시판이 전부 "objects 0" 이 된다.

@@ -1,10 +1,10 @@
 """task_queue MCP stdio 모드 — Claude Code 가 자식 프로세스로 spawn 할 때만 쓴다.
 
-⚠️ 이 모듈은 `mcp` 패키지를 요구한다. 마스터의 주 실행 모드는 systemd 로 도는
+[주의] 이 모듈은 `mcp` 패키지를 요구한다. 마스터의 주 실행 모드는 systemd 로 도는
 HTTP 서버(`--serve`)이고 그쪽은 MCP SDK 가 필요 없으므로, `server.py` 는 이 모듈을
 **지연 import** 한다 (PLAN.md §9.5).
 
-🔴 설치본은 `mcp` 2.0.0 이라 `mcp.server.fastmcp` 가 **없다.** 고수준 API 는
+[중요] 설치본은 `mcp` 2.0.0 이라 `mcp.server.fastmcp` 가 **없다.** 고수준 API 는
 `mcp.server.MCPServer` — `master/projects/mcp_server.py` 와 같은 경로를 쓴다.
 2026-08-08 까지 이 파일이 옛 경로를 참조해 stdio 모드가 import 단계에서 죽어 있었다
 (HTTP `--serve` 는 지연 import 덕에 영향 없었다).

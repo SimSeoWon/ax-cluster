@@ -26,7 +26,7 @@ STATE_ROOT_ENV = "AX_TASK_QUEUE_ROOT"
 def _project_root() -> Path:
     """큐 상태(`<root>/.claude/tasks/`)가 놓일 루트. **명시적 설정만 받는다.**
 
-    🔴 원본(AgentTest)은 `Path(__file__).parent.parent.parent` 로 **파일 위치에서 역산**했다.
+    [중요] 원본(AgentTest)은 `Path(__file__).parent.parent.parent` 로 **파일 위치에서 역산**했다.
     exe 가 UE5 프로젝트 루트 안에 풀려 있다는 전제였는데, 마스터엔 UE5 프로젝트 루트가 없다.
     역산을 남겨두면 저장소 어딘가(`master/`의 부모 = `ax-cluster/`)에 큐 상태를 쓰게 된다.
 
@@ -112,7 +112,7 @@ def _gen_task_id() -> str:
 def _slugify(s: str) -> str:
     """ASCII-only slug — branch/디렉토리명 안전성 확보.
 
-    🔴 **비-ASCII 가 버려지면 해시를 붙인다 (2026-08-08 수정).**
+    [중요] **비-ASCII 가 버려지면 해시를 붙인다 (2026-08-08 수정).**
 
     원본은 비-ASCII 를 그냥 버리고 결과가 비면 `"work"` 로 폴백했다. 팀이 영문 제목을
     쓰던 환경에서는 드러나지 않았지만, **한국어 제목은 전부 `"work"` 로 떨어진다** —
@@ -324,7 +324,7 @@ def _atomic_write(path: Path, content: str):
 def parse_task_data(body: str) -> dict:
     """MD 본문의 ``## task_data`` json 블록을 되읽는다. 없으면 빈 dict.
 
-    🔴 **되읽지 못하는 것과 「없다」를 섞지 않는다** — 깨진 json 은 빈 dict 로 조용히 넘기지 않고
+    [중요] **되읽지 못하는 것과 「없다」를 섞지 않는다** — 깨진 json 은 빈 dict 로 조용히 넘기지 않고
     호출자가 로그를 남길 수 있게 그대로 빈 dict + `False` 를 구분… 하지 않는다. 여기서는 빈 dict
     가 맞다: 이 값은 **워커에게 전달되는 자료**이고, 판정에 쓰이는 신호가 아니다. 깨졌으면 워커가
     받을 것이 없는 것이고 그것은 등재 시점의 결함이다(등재는 우리가 json 으로 직렬화한다).
@@ -474,7 +474,7 @@ class TaskIndex:
         self.root = root
         self.tasks: dict[str, dict] = {}       # task_id → meta
         self.task_paths: dict[str, Path] = {}
-        # 🔴 task_data 는 프론트매터가 아니라 **MD 본문의 json 블록**에 산다 — 중첩 dict·리스트를
+        # [중요] task_data 는 프론트매터가 아니라 **MD 본문의 json 블록**에 산다 — 중첩 dict·리스트를
         #    담으므로 우리 제한적 YAML 파서(1-depth)로는 왕복이 안 된다. 그래서 meta 와 **따로**
         #    들고, `rebuild()` 가 본문에서 다시 읽는다.
         #    원전 근거(`cluster_selftest.py:223`): *"task_data 는 free-form dict → 확실히
@@ -525,5 +525,5 @@ class TaskIndex:
                     if tid:
                         self.tasks[tid] = meta
                         self.task_paths[tid] = f
-                        # 🔴 재기동해도 워커가 받을 자료가 남아야 한다 — 본문에서 되읽는다.
+                        # [중요] 재기동해도 워커가 받을 자료가 남아야 한다 — 본문에서 되읽는다.
                         self.task_data[tid] = parse_task_data(body)

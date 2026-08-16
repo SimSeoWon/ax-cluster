@@ -1,34 +1,34 @@
 """개명 cascade — 원전 `ontology_manage_rename.py` 이식 (소 3.6.1 · `#167`).
 
-🔴 **왜 cascade 인가**: 도메인·클래스 이름이 **디렉토리·파일명·YAML 값·다른 도메인의 참조**에
+[중요] **왜 cascade 인가**: 도메인·클래스 이름이 **디렉토리·파일명·YAML 값·다른 도메인의 참조**에
 그대로 박힌다. 한 곳만 고치면 나머지가 옛 이름을 가리키고, 그 상태는 조용하다 —
 뷰어 링크가 죽고 검색이 빗나가는데 아무도 오류를 보지 않는다.
 
-## 🔴 원전과 다르게 둔 것 하나 — **DB 를 건드리지 않는다**
+## [중요] 원전과 다르게 둔 것 하나 — **DB 를 건드리지 않는다**
 
 원전 `_rename_db` 는 `class_graph.db` 의 `domains`/`class_ontology` 행을 옮긴다. 우리는 **안
 옮긴다.** 근거는 이 저장소가 이미 내려 둔 결정이다(마일스톤 4 함정 목록):
 
     우리 SSOT 는 **YAML 하나**다. `class_ontology`·`domains` 표는 스키마만 있고 **행이 0**,
     쓰는 코드도 0건 — 그 구조가 **DB↔YAML 이중 소스 드리프트를 원천 제거**했다.
-    🔴 원전의 DB 쓰기 경로를 옮기면 **그 드리프트를 되살린다.**
+    [중요] 원전의 DB 쓰기 경로를 옮기면 **그 드리프트를 되살린다.**
 
-⚠️ 이것은 「안 옮기는 판단」이고, 재범위 규약대로 **닫지 않는다** — DB 를 SSOT 로 쓰기 시작하면
+[주의] 이것은 「안 옮기는 판단」이고, 재범위 규약대로 **닫지 않는다** — DB 를 SSOT 로 쓰기 시작하면
 그때 되살린다.
 
-## 🔴 되돌릴 수 없다 — 그래서 기본이 계획이다
+## [중요] 되돌릴 수 없다 — 그래서 기본이 계획이다
 
 트윈은 git 밖이라 **백업이 유일한 되돌리기**다(리포트 17). `apply=False` 가 기본이고, 계획은
 무엇이 어디로 가는지 전부 적는다. 사람이 보고 나서 실행한다.
 
-## ⚠️ 잠금은 이름을 따라간다
+## [주의] 잠금은 이름을 따라간다
 
 `verified_by_user`·`protected` 는 항목 안에 있으므로 파일이 통째로 움직이면 같이 간다.
-🔴 **다시 만들지 않는다** — 개명은 이동이지 재생성이 아니다(재생성하면 잠금이 날아간다).
+[중요] **다시 만들지 않는다** — 개명은 이동이지 재생성이 아니다(재생성하면 잠금이 날아간다).
 
 ## 색인은 여기서 안 만진다
 
-원전은 개명 끝에 도메인 인덱스를 재빌드한다. 🔴 우리 색인기는 **별도 프로세스**(`ax-indexer`)라
+원전은 개명 끝에 도메인 인덱스를 재빌드한다. [중요] 우리 색인기는 **별도 프로세스**(`ax-indexer`)라
 웹도 이 모듈도 재색인을 트리거하지 않는다(webui 가 같은 이유로 명령만 안내한다). 대신 개명이
 지문을 바꾸므로 다음 동기에서 잡힌다 — 계획에 그 사실을 적는다.
 """
@@ -65,7 +65,7 @@ class RenamePlan:
 
     def summary(self) -> str:
         if self.error:
-            return f"🔴 {self.error}"
+            return f"[중요] {self.error}"
         return (f"{self.kind} 개명 {self.old} → {self.new} — "
                 f"이동 {len(self.moves)}건 · 수정 {len(self.edits)}건"
                 + (" (적용됨)" if self.applied else " (계획만)"))
@@ -80,7 +80,7 @@ def _domain_md(paths, name: str) -> Path:
 
 
 def plan_domain(paths, old: str, new: str) -> RenamePlan:
-    """도메인 개명 계획. 🔴 **아무것도 쓰지 않는다.**"""
+    """도메인 개명 계획. [중요] **아무것도 쓰지 않는다.**"""
     p = RenamePlan(old=old, new=safe_name(new), kind="domain")
     if not p.new:
         p.error = "새 이름이 비었다"
@@ -113,7 +113,7 @@ def plan_domain(paths, old: str, new: str) -> RenamePlan:
             return p
         p.moves.append((str(old_md), str(new_md)))
 
-    # 🔴 다른 도메인의 참조 — 여기가 cascade 의 핵심이다. 안 고치면 링크가 조용히 죽는다.
+    # [중요] 다른 도메인의 참조 — 여기가 cascade 의 핵심이다. 안 고치면 링크가 조용히 죽는다.
     for other in sorted((Path(paths.ontology) / "domains").glob("*/domain.yaml")):
         if other.parent.name in (old, p.new):
             continue
@@ -132,15 +132,15 @@ def plan_domain(paths, old: str, new: str) -> RenamePlan:
         except OSError:
             continue
 
-    p.notes.append("🔴 class_graph DB 는 건드리지 않는다 — 우리 SSOT 는 YAML 이고 그 표는 0행이다 "
+    p.notes.append("[중요] class_graph DB 는 건드리지 않는다 — 우리 SSOT 는 YAML 이고 그 표는 0행이다 "
                    "(옮기면 DB↔YAML 드리프트가 되살아난다)")
     p.notes.append("색인은 여기서 안 만진다 — 지문이 바뀌므로 다음 동기가 잡는다 (`ax-indexer`)")
-    p.notes.append("⚠️ 트윈은 git 밖이다 — 적용 전에 백업할 것")
+    p.notes.append("[주의] 트윈은 git 밖이다 — 적용 전에 백업할 것")
     return p
 
 
 def _rewrite_refs(path: Path, old: str, new: str) -> bool:
-    """참조 문자열 치환. 🔴 **경계를 준다** — 부분 일치는 다른 이름을 삼킨다.
+    """참조 문자열 치환. [중요] **경계를 준다** — 부분 일치는 다른 이름을 삼킨다.
 
     실측된 사고가 근거다(`#167` 노트 정정): `%EditorView_MissionTask%` 같은 부분 일치가
     **현존하는 정상 클래스** `…MissionTaskDetailBase` 를 「옛이름」으로 잡아 stale 을
@@ -161,7 +161,7 @@ def _rewrite_refs(path: Path, old: str, new: str) -> bool:
 
 
 def apply_domain(paths, plan: RenamePlan) -> RenamePlan:
-    """계획을 실행한다. 🔴 **계획이 성립하지 않으면 아무것도 하지 않는다.**"""
+    """계획을 실행한다. [중요] **계획이 성립하지 않으면 아무것도 하지 않는다.**"""
     if not plan.ok:
         return plan
     old, new = plan.old, plan.new
@@ -215,8 +215,8 @@ def plan_class(paths, domain: str, old: str, new: str) -> RenamePlan:
             pass
     if not p.edits and not p.moves:
         p.error = f"`{old}` 을(를) `{domain}` 에서 찾지 못했다 — 이름을 확인할 것"
-    p.notes.append("🔴 경계를 준 치환이다 — 부분 일치는 다른 이름을 삼킨다 (실측된 오보고)")
-    p.notes.append("⚠️ 트윈은 git 밖이다 — 적용 전에 백업할 것")
+    p.notes.append("[중요] 경계를 준 치환이다 — 부분 일치는 다른 이름을 삼킨다 (실측된 오보고)")
+    p.notes.append("[주의] 트윈은 git 밖이다 — 적용 전에 백업할 것")
     return p
 
 

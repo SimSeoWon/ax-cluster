@@ -13,7 +13,7 @@ Index: [`../sim-desktop.md`](../sim-desktop.md) (= the master's `~/CLAUDE.md`)
 | **ax-broker** | **8102** | systemd `ax-broker.service` | `~/ax-cluster/master/broker/` |
 | **ax-projects** | **8103** | systemd `ax-projects.service` | `~/ax-cluster/master/projects/`, registry in `~/ax-cluster/projects.yaml`. Also serves the ported web UI (`master/webui/`) |
 | ax-indexer | — | systemd `ax-indexer.path` + `.service` | path-triggered; grows the twin on push |
-| **ax-status** | — | systemd **`ax-status.timer`** (5 min) + `.service` | 🔴 the only thing that refreshes `/cluster`; **read-only SSH probes**, exit code 3 = throttle guard, not a failure |
+| **ax-status** | — | systemd **`ax-status.timer`** (5 min) + `.service` | [중요] the only thing that refreshes `/cluster`; **read-only SSH probes**, exit code 3 = throttle guard, not a failure |
 
 ## Gitea is intentionally exposed to the internet
 
@@ -21,7 +21,7 @@ Via router port-forwarding, so friends can collaborate. It has been hardened (re
 disabled, OpenID disabled, sign-in required to view) but still serves **plain HTTP** — TLS
 migration was deferred; the options discussed were Tailscale (preferred) or DuckDNS + Caddy.
 
-## 🔴 The three AX services require a bearer token (since 2026-08-08)
+## [중요] The three AX services require a bearer token (since 2026-08-08)
 
 `ax-task-queue` (8101), `ax-broker` (8102), and `ax-projects` (8103) all authenticate with a
 **shared bearer token**: `~/.config/ax-cluster/token` (0600). Send
@@ -32,7 +32,7 @@ resident models) stays behind auth.
 **Fail-closed: a service will not start if the token is missing, empty, under 32 chars, or if the
 file's permissions are open.** "Run without auth" is not a fallback — that was the state being fixed.
 
-🔴 **One documented exception on 8103: the web pages are open, the APIs are not** (user decision,
+[중요] **One documented exception on 8103: the web pages are open, the APIs are not** (user decision,
 2026-08-13). `/`, `/ontology`, `/cluster` and the read-only endpoints they call are served with **no
 login**; `/mcp` and every mutating path still demand the bearer token (measured: `/mcp` → 401 at the
 same moment the pages returned 200). The reasoning is that the token rule exists to protect what can
@@ -55,7 +55,7 @@ is therefore enabled** as well. These defend different threats: the firewall blo
 outside the LAN; rebinding protection blocks a browser *inside* the LAN being tricked by a
 malicious page into poking the port. Both are needed.
 
-⚠️ The SDK's `allowed_hosts` **does not support the `*` wildcard** — only exact matches or `host:*`
+[주의] The SDK's `allowed_hosts` **does not support the `*` wildcard** — only exact matches or `host:*`
 (port wildcard). Passing `["*"]` rejects everything (measured 2026-08-08).
 
 ## Adding a new service

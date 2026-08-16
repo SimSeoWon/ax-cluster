@@ -6,7 +6,7 @@
 단어가 없으면 0건이다. 실제로 찾아야 할 것은 `AMonster` 인데 **문자가 하나도 겹치지 않아**
 trigram 으로도, 다국어 임베딩으로도 이어지지 않는다. 별칭표가 그 다리다.
 
-## 🔴 마스터는 사람에게 묻지 않는다 — 물을 재료를 돌려준다
+## [중요] 마스터는 사람에게 묻지 않는다 — 물을 재료를 돌려준다
 
 마스터는 화면도 사람도 없는 인프라다(§2). 검색 도중 입력을 기다리면 서비스가 멈춘다.
 그래서 역할을 가른다:
@@ -27,7 +27,7 @@ trigram 으로도, 다국어 임베딩으로도 이어지지 않는다. 별칭�
 2. **검색 상위 문서의 `related_classes`** — 합성기가 협력 관계로 지목한 것
 3. 둘 다 없으면 후보 없이 "모른다" 고 정직하게 말한다 (지어내지 않는다)
 
-## 🔴 등록은 병합이다 — 덮어쓰면 기존 별칭이 사라진다
+## [중요] 등록은 병합이다 — 덮어쓰면 기존 별칭이 사라진다
 
 원본 배포 규약이 **실제 함정으로 기록**해 뒀다: `edit_ontology_item(objects, {"aliases": […]})`
 는 top-level 얕은 덮어쓰기라 **기존 별칭 전체가 날아간다**(Phase η.11 에서 발견). 그래서
@@ -48,7 +48,7 @@ _ALIASES_INLINE = re.compile(r"^aliases:\s*\[(.*?)\]\s*$", re.MULTILINE)
 _NAME_RE = re.compile(r"^name:\s*(\S+)\s*$", re.MULTILINE)
 
 
-# 🔴 **규약: 대괄호는 클래스에만 쓴다** (사용자 확정 2026-08-08).
+# [중요] **규약: 대괄호는 클래스에만 쓴다** (사용자 확정 2026-08-08).
 #
 # 실측에서 이 규약이 필요해진 이유: `[완료]`·`[연출]` 처럼 **상태·개념**에 대괄호를 쓰면
 # 대응 클래스가 없는데도 후보 생성기가 어휘상 가까운 무관한 클래스(`FNMLocalization` 등)를
@@ -59,7 +59,7 @@ _NAME_RE = re.compile(r"^name:\s*(\S+)\s*$", re.MULTILINE)
 # 파일에 두는 이유는 클래스의 속성이 아니라 **어휘 판단**이라서다.
 IGNORE_FILE = "_thesaurus_ignore.txt"
 
-# 🔴 **온톨로지 밖 클래스의 별칭을 담는 곳.** 실측(2026-08-08): 클래스는 1,806개인데
+# [중요] **온톨로지 밖 클래스의 별칭을 담는 곳.** 실측(2026-08-08): 클래스는 1,806개인데
 # 온톨로지 object yaml 은 **7 도메인 112개뿐**이다. 원본은 별칭을 object yaml 에 넣지만
 # 그건 온톨로지가 코드베이스를 덮은 환경의 전제다 — 우리는 아직 6% 만 덮었고, 그래서
 # `add_alias` 가 `not_found` 로 실패해 **루프가 닫히지 않았다.**
@@ -270,7 +270,7 @@ def resolve(paths: ProjectPaths, terms: list[str], *, searcher=None) -> Resoluti
         if hit:
             res.known[t] = hit.class_name
         elif t.casefold() in ignored:
-            # 🔴 클래스가 아니라고 사용자가 이미 말했다 — 다시 묻지 않는다.
+            # [중요] 클래스가 아니라고 사용자가 이미 말했다 — 다시 묻지 않는다.
             res.ignored.append(t)
         else:
             res.unresolved.append(
@@ -299,7 +299,7 @@ def register(paths: ProjectPaths, class_name: str, term: str) -> str:
 
     반환: `added` · `noop`(이미 있음) · `not_found`(그 클래스의 yaml 이 없다)
 
-    🔴 덮어쓰기 금지가 이 함수의 존재 이유다. 원본이 top-level 얕은 덮어쓰기로 **기존
+    [중요] 덮어쓰기 금지가 이 함수의 존재 이유다. 원본이 top-level 얕은 덮어쓰기로 **기존
     별칭 전체를 날린 사고**를 기록해 뒀다.
     """
     term = (term or "").strip()
@@ -312,7 +312,7 @@ def register(paths: ProjectPaths, class_name: str, term: str) -> str:
             target = f
             break
     if target is None:
-        # 🔴 온톨로지에 그 클래스의 yaml 이 없다. **거부하지 않고 폴백에 적는다** —
+        # [중요] 온톨로지에 그 클래스의 yaml 이 없다. **거부하지 않고 폴백에 적는다** —
         # 여기서 막으면 클래스의 94% 에 대해 별칭을 못 만들고 루프가 닫히지 않는다.
         # 다만 그 클래스가 **실재하는지**는 확인한다. 오타를 영구 저장하지 않기 위해서다.
         if not _class_exists(paths, class_name):

@@ -1,6 +1,6 @@
 """미배정 클래스 노출 (소 1.3.6).
 
-지키는 계약: 🔴 **노출만 한다(자동 편입 0). 그리고 안 보여준 것을 세어서 말한다.**
+지키는 계약: [중요] **노출만 한다(자동 편입 0). 그리고 안 보여준 것을 세어서 말한다.**
 실측 1,806 중 1,695 가 미배정이라, *무엇을 숨겼는지* 말하지 않는 보고는 거짓이 된다.
 
 `.venv/bin/python master/test_unassigned.py`
@@ -25,15 +25,15 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 def test_no_graph_is_not_success() -> None:
-    """🔴 그래프가 없으면 '미배정 0' 이 아니라 **모른다** 다."""
+    """[중요] 그래프가 없으면 '미배정 0' 이 아니라 **모른다** 다."""
     with tempfile.TemporaryDirectory() as t:
         rep = U.scan(ProjectPaths(name="T", root=Path(t)))
         check("총 클래스 0", rep.total_classes == 0)
-        check("🔴 0을 성공으로 보고하지 않는다",
+        check("[중요] 0을 성공으로 보고하지 않는다",
               any("그래프가 없다" in n for n in rep.notes), str(rep.notes))
         check("무엇을 해야 하는지 말한다",
               any("master.graph build" in n for n in rep.notes), str(rep.notes))
@@ -56,16 +56,16 @@ def test_counts_are_honest() -> None:
           all(x in s for x in ("1806", "111", "1695", "266", "1429")), s)
 
     out = r.render(limit=5)
-    # 🔴 잘랐으면 잘랐다고 쓴다 — 안 그러면 "이게 전부" 로 읽힌다
-    check("🔴 인접을 자르면 남은 수를 적는다", "외 261건" in out, out[:300])
-    check("🔴 고립 총수를 숨기지 않는다", "1429건" in out, out[:400])
+    # [중요] 잘랐으면 잘랐다고 쓴다 — 안 그러면 "이게 전부" 로 읽힌다
+    check("[중요] 인접을 자르면 남은 수를 적는다", "외 261건" in out, out[:300])
+    check("[중요] 고립 총수를 숨기지 않는다", "1429건" in out, out[:400])
     check("표본이 규모 순이다", out.index("I0") < out.index("I1"))
-    # 🔴 이 모듈의 존재 이유
-    check("🔴 자동 편입 안 한다고 못박는다", "자동 편입은 하지 않는다" in out)
+    # [중요] 이 모듈의 존재 이유
+    check("[중요] 자동 편입 안 한다고 못박는다", "자동 편입은 하지 않는다" in out)
 
 
 def test_adjacent_carries_reason() -> None:
-    """🔴 근거 없는 후보는 판단할 수 없다 — `collect.propose` 와 같은 규칙."""
+    """[중요] 근거 없는 후보는 판단할 수 없다 — `collect.propose` 와 같은 규칙."""
     a = U.Adjacent(name="AFoo", domain="MissionRuntime", why="자식(구현체)", via="UBar")
     check("어디에 붙을지 말한다", "MissionRuntime" in a.line, a.line)
     check("왜인지 말한다", "자식" in a.line, a.line)
@@ -76,7 +76,7 @@ def test_adjacent_carries_reason() -> None:
 
 
 def test_isolated_is_a_signal_not_noise() -> None:
-    """🔴 고립분을 숨기면 *도메인이 모자라다* 는 신호가 사라진다."""
+    """[중요] 고립분을 숨기면 *도메인이 모자라다* 는 신호가 사라진다."""
     r = _report(total=1806, assigned=111, adj=0, iso_total=1429, iso_sample=3)
     out = r.render()
     check("인접이 없어도 그렇게 쓴다", "붙을 자리가 보이는 것 — 없다" in out, out[:200])
@@ -84,10 +84,10 @@ def test_isolated_is_a_signal_not_noise() -> None:
 
 
 def test_read_only() -> None:
-    """🔴 이 모듈은 아무것도 쓰지 않는다."""
+    """[중요] 이 모듈은 아무것도 쓰지 않는다."""
     src = (Path(__file__).resolve().parent / "ontology" / "unassigned.py").read_text("utf-8")
     for banned in ("yaml_io.write", ".write_text(", ".unlink(", "mkdir("):
-        check(f"🔴 {banned} 를 쓰지 않는다", banned not in src)
+        check(f"[중요] {banned} 를 쓰지 않는다", banned not in src)
 
 
 def main() -> int:
@@ -96,7 +96,7 @@ def main() -> int:
                test_read_only):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_unassigned: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_unassigned: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

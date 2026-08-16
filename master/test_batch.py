@@ -3,12 +3,12 @@
 검증하는 것:
 
     ① 시간 게이트 조건 다섯 — 각각이 **단독으로** 막는다 (원전 순서 그대로)
-    ② 🔴 안 도는 이유가 **항상 있다** (고장과 구별되려면)
+    ② [중요] 안 도는 이유가 **항상 있다** (고장과 구별되려면)
     ③ 마커 — 쓰고 읽고, 최소 간격이 실제로 막는다
-    ④ 🔴 마커는 **성공했을 때만** 쓴다 (실패하면 다음 회차에 다시 온다)
-    ⑤ 🔴 `force` 는 시각·요일·간격·입력최소치를 넘지만 **활성 플래그·일시 중지 게이트는 못 넘는다**
+    ④ [중요] 마커는 **성공했을 때만** 쓴다 (실패하면 다음 회차에 다시 온다)
+    ⑤ [중요] `force` 는 시각·요일·간격·입력최소치를 넘지만 **활성 플래그·일시 중지 게이트는 못 넘는다**
     ⑥ 배치 하나가 죽어도 나머지가 돌고, **조용히 넘어가지 않는다**
-    ⑦ 분석기 — 표본이 얇으면 🔴 **판단을 보류**한다 (오판이 무판정보다 비싸다)
+    ⑦ 분석기 — 표본이 얇으면 [중요] **판단을 보류**한다 (오판이 무판정보다 비싸다)
     ⑧ 분석기 — 채널 필드가 있으면 RRF 시뮬레이션이 실제로 돈다
 
 `.venv/bin/python master/test_batch.py`
@@ -39,7 +39,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 @dataclass
@@ -111,11 +111,11 @@ def test_marker_gap_blocks():
         back = gates.read_marker(p.root, "rag_analysis")
         check("③ 마커를 읽는다", back is not None and back.hour == 23, str(back))
 
-        # ⚠️ 같은 일요일 안에 머물러야 한다 — 자정을 넘기면 **요일·시각 게이트가 먼저**
+        # [주의] 같은 일요일 안에 머물러야 한다 — 자정을 넘기면 **요일·시각 게이트가 먼저**
         #    막아 간격 게이트를 재지 못한다(원전 순서상 정상 동작이고, 첫 판이 거기 걸렸다).
         v = gates.should_run(gates.RAG_ANALYSIS, {}, p.root, input_count=50,
                              now=SUNDAY_23 + timedelta(minutes=20))
-        check("③ 🔴 최소 간격이 막는다", not v.run and "간격 미달" in v.reason, v.reason)
+        check("③ [중요] 최소 간격이 막는다", not v.run and "간격 미달" in v.reason, v.reason)
 
         v = gates.should_run(gates.RAG_ANALYSIS, {}, p.root, input_count=50,
                              now=SUNDAY_23 + timedelta(days=7))
@@ -152,7 +152,7 @@ def test_marker_only_on_success():
             R.BATCHES = [_fake_batch(ok=False)]
             out = R.run(p, {}, now=SUNDAY_23)
             check("④ 실패는 error 로 보고된다", bool(out[0].error), str(out[0].result))
-            check("④ 🔴 실패하면 마커를 쓰지 않는다",
+            check("④ [중요] 실패하면 마커를 쓰지 않는다",
                   gates.read_marker(p.root, "rag_analysis") is None)
 
             R.BATCHES = [_fake_batch(ok=True)]
@@ -196,10 +196,10 @@ def test_force_skips_time_gate_only():
             check("⑤ force 면 시간 게이트를 넘는다", out[0].ran, out[0].verdict)
             check("⑤ force 를 이유에 남긴다", "force" in out[0].verdict, out[0].verdict)
 
-            # 🔴 force 도 활성 플래그는 못 넘는다 — 운영자가 끈 것을 되살리지 않는다
+            # [중요] force 도 활성 플래그는 못 넘는다 — 운영자가 끈 것을 되살리지 않는다
             out = R.run(p, {"batch": {"rag_analysis": False}},
                         now=SUNDAY_23.replace(hour=5), force=True)
-            check("⑤ 🔴 force 가 활성 플래그를 넘지 못한다", not out[0].ran, out[0].verdict)
+            check("⑤ [중요] force 가 활성 플래그를 넘지 못한다", not out[0].ran, out[0].verdict)
             check("⑤ 그 사실을 이유에 적는다", "force 무시됨" in out[0].verdict,
                   out[0].verdict)
         finally:
@@ -215,7 +215,7 @@ def test_plan_has_no_side_effects():
             out = R.plan(p, {}, now=SUNDAY_23)
             check("plan 은 돌 것을 알려 준다", out[0].result.get("would_run") is True,
                   str(out[0].result))
-            check("🔴 plan 은 마커를 쓰지 않는다",
+            check("[중요] plan 은 마커를 쓰지 않는다",
                   gates.read_marker(p.root, "rag_analysis") is None)
         finally:
             R.BATCHES = orig
@@ -251,7 +251,7 @@ def test_thin_sample_withholds_verdict():
         res = A.run_for_project(p)
         check("⑦ 리포트가 생성됐다", res["ok"], str(res))
         body = (Path(p.root) / "analysis" / A.CHANNEL_REPORT).read_text(encoding="utf-8")
-        check("⑦ 🔴 표본 부족을 명시한다", "표본" in body and "판단 보류" in body,
+        check("⑦ [중요] 표본 부족을 명시한다", "표본" in body and "판단 보류" in body,
               body[:200])
         check("⑦ 수치는 그대로 낸다 (참고용)", "채널 기여도" in body, body[:200])
 
@@ -268,7 +268,7 @@ def test_rrf_simulation_runs_with_channel_fields():
 
 
 def test_channel_fields_absent_means_empty_rrf():
-    """🔴 `to_dict()` 로 로그를 적었다면 이 자리가 통째로 빈다 — 그 사실을 고정한다."""
+    """[중요] `to_dict()` 로 로그를 적었다면 이 자리가 통째로 빈다 — 그 사실을 고정한다."""
     entries = [{"ts": "2026-08-14T23:00:00", "query": "x", "lang": "en",
                 "result_details": [{"file": "a.md", "source": "vector+bm25"}]}]
     rrf = A.rrf_simulate(entries)
@@ -302,7 +302,7 @@ def main() -> int:
                test_thesaurus_candidates_need_repetition):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_batch: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_batch: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

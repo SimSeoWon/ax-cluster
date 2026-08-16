@@ -5,11 +5,11 @@ AgentTest `double_buffered_index.py` 이식. **구조는 유지하고 경로 해
     AgentTest:  DoubleBufferedIndex(claude_dir)   ← 기동 시 고정, 클로저에 캡처 (§5.5.1)
     여기:       ContextIndex(paths)               ← `paths.resolve()` 가 매번 해석
 
-🔴 **더블 버퍼를 유지하는 이유** (§5.4.6): 검색은 항상 Live 컬렉션에서 즉시 답하고, 갱신은
+[중요] **더블 버퍼를 유지하는 이유** (§5.4.6): 검색은 항상 Live 컬렉션에서 즉시 답하고, 갱신은
 Work 컬렉션에서 진행한 뒤 원자적으로 교체한다. 재색인 중에도 검색이 막히지 않는다.
 이벤트 큐 소비자가 재색인을 도는 동안 작업장이 검색을 계속 쓸 수 있어야 하므로 필수다.
 
-🔴 **컬렉션 이름은 고정(`context_a`/`context_b`)이지만 프로젝트끼리 섞이지 않는다** —
+[중요] **컬렉션 이름은 고정(`context_a`/`context_b`)이지만 프로젝트끼리 섞이지 않는다** —
 `vector_db` 디렉토리가 프로젝트별로 갈리기 때문이다. §5.5.1 이 "컬렉션명에 프로젝트 식별자가
 없다" 고 지적한 문제가 **경로 분기로 해소된다.**
 """
@@ -55,7 +55,7 @@ class ContextIndex:
         self.model_mismatch = ""
         paths.ensure_derived()
         self._client = chromadb.PersistentClient(path=str(paths.vector_db))
-        # 🔴 **다국어 임베딩.** 영어 전용 모델에서는 한글 질의가 두 채널 모두 실패했다 —
+        # [중요] **다국어 임베딩.** 영어 전용 모델에서는 한글 질의가 두 채널 모두 실패했다 —
         # 근거와 실측은 `embedding.py` 독스트링. 별도 모델 서버는 여전히 필요 없다(ONNX).
         self._embed_model = embedding.model_name()
         self._embed = embedding.build(self._embed_model)
@@ -73,7 +73,7 @@ class ContextIndex:
     def _collection(self, name: str):
         """컬렉션을 얻는다. **임베딩 모델이 바뀌었으면 비우고 다시 만든다.**
 
-        🔴 chromadb 는 기존 컬렉션의 임베딩 함수 교체를 **거부한다** — 옳은 동작이다.
+        [중요] chromadb 는 기존 컬렉션의 임베딩 함수 교체를 **거부한다** — 옳은 동작이다.
         차원이 같아도(둘 다 384) 벡터 공간이 다르면 비교가 무의미하다.
 
         그래서 우리가 처리한다:
@@ -99,7 +99,7 @@ class ContextIndex:
                 had = 0
             self._client.delete_collection(name=name)
             self.model_mismatch = (
-                f"🔴 임베딩 모델이 바뀌어 `{name}` 을 비웠다 ({had}건) → {self._embed_model}. "
+                f"[중요] 임베딩 모델이 바뀌어 `{name}` 을 비웠다 ({had}건) → {self._embed_model}. "
                 f"벡터는 파생 자산이라 재구축된다 — 재색인해야 검색이 정상화된다"
             )
             return self._client.create_collection(
@@ -134,7 +134,7 @@ class ContextIndex:
                 "file_id": fid,
                 "score": 1.0 - float(dists[i]) if i < len(dists) else None,  # cosine → 유사도
                 "meta": metas[i] if i < len(metas) else {},
-                # 🔴 발췌 상한은 **호출자가 정한다.** 400 은 원본이 상용 API 토큰 비용을
+                # [중요] 발췌 상한은 **호출자가 정한다.** 400 은 원본이 상용 API 토큰 비용을
                 # 전제로 잡은 값인데, 우리는 로컬 LLM 이라 그 전제가 없다. 여기서 잘라
                 # 버리면 호출자가 늘리려 해도 **이미 없는 내용**이라 늘어나지 않는다
                 # (실측 2026-08-08: RELATED_EXCERPT 를 1500 으로 올렸는데 400 그대로였다).
@@ -222,14 +222,14 @@ class ContextIndex:
         with self._swap:
             self._live, self._work = self._work, self._live
             self._live_name = generation.other(self._live_name)
-        # 🔴 스왑 **후에** 쓴다 — 먼저 쓰고 죽으면 마커가 빈 세대를 가리킨다.
+        # [중요] 스왑 **후에** 쓴다 — 먼저 쓰고 죽으면 마커가 빈 세대를 가리킨다.
         generation.write(self.paths.root, self._live_name)
 
 
 def open_index(name: str = "", *, registry=None, gen: str | None = None) -> ContextIndex:
     """마운트된(또는 지정한) 프로젝트의 색인을 연다.
 
-    🔴 경로를 **매 호출 해석**한다 — 마운트가 바뀌면 다음 호출이 새 프로젝트를 연다.
+    [중요] 경로를 **매 호출 해석**한다 — 마운트가 바뀌면 다음 호출이 새 프로젝트를 연다.
     """
     from .paths import resolve
 

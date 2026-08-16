@@ -3,7 +3,7 @@
 원본: `AgentTest/watcher/context_md.py`. **순수 함수만** 둔다 — 파일을 읽거나 LLM 을 부르지
 않으므로 테스트가 값으로 끝난다.
 
-🔴 **이 모듈이 존재하는 이유는 실측된 사고다.** 원본 σ.7 기록:
+[중요] **이 모듈이 존재하는 이유는 실측된 사고다.** 원본 σ.7 기록:
 
 > 사무실 실측에서 컨텍스트 MD **1,097개 중 477개(43%)** 가 LLM 응답을 ` ```markdown … ``` `
 > 펜스째 저장한 손상 파일로 발견. `_inject_content_hash` 가 `^---` frontmatter 매치 실패 시
@@ -16,7 +16,7 @@
   남긴다 (σ.7-B). 손상 응답이 정상 MD 를 덮어쓰는 것이 진짜 사고였다 — 거부하면 다음
   사이클에 자연 재시도된다
 
-🔴 **`source_commit` 은 장식이 아니다.** 중 1.3 의 stale 판정이 *"온톨로지에 저장된
+[중요] **`source_commit` 은 장식이 아니다.** 중 1.3 의 stale 판정이 *"온톨로지에 저장된
 source_commit ≠ 이 문서의 source_commit"* 으로 이뤄진다(Phase η.8 이 dirty 플래그를 없애고
 이 워터마크로 대체했다). 이 스탬프가 빠지면 **온톨로지는 자기가 낡은 줄 모른다.**
 """
@@ -69,7 +69,7 @@ def strip_wrapper(md: str) -> str:
 def repair_frontmatter(md: str) -> str:
     """frontmatter 를 닫는 두 번째 `---` 가 빠진 경우만 **결정적으로** 복구한다.
 
-    🔴 실측(2026-08-08): `qwen2.5-coder:14b` 가 여는 `---` 와 필드는 쓰고 닫는 `---` 없이
+    [중요] 실측(2026-08-08): `qwen2.5-coder:14b` 가 여는 `---` 와 필드는 쓰고 닫는 `---` 없이
     바로 `## 요약` 으로 넘어간다. 사실 오류가 아니라 형식 슬립인데, 닫히지 않으면 스탬프
     (`content_hash`·`source_commit`)가 안 붙고 게이트가 문서를 통째로 버린다.
 
@@ -150,7 +150,7 @@ def content_hash(md: str) -> str:
 def stamp(md: str, *, commit: str = "") -> str:
     """`content_hash` + `source_commit` 을 frontmatter 에 새긴다.
 
-    🔴 `source_commit` 이 **중 1.3 stale 판정의 한쪽**이다. `commit` 이 비면 그 줄은
+    [중요] `source_commit` 이 **중 1.3 stale 판정의 한쪽**이다. `commit` 이 비면 그 줄은
     건드리지 않는다 — 수동 재생성이 실제 리비전 정보를 **지우면** 온톨로지가 영영
     stale 을 감지하지 못한다.
     """
@@ -178,7 +178,7 @@ def read_source_commit(md: str) -> str:
 def merge_comments(new_md: str, existing_md: str) -> str:
     """개발자 코멘트를 재생성된 문서로 이월한다.
 
-    🔴 LLM 에게 "코멘트를 만들지 말라" 고 지시하지만 **지시를 믿지 않는다** — 새 문서에
+    [중요] LLM 에게 "코멘트를 만들지 말라" 고 지시하지만 **지시를 믿지 않는다** — 새 문서에
     코멘트 섹션이 있으면 지우고, 기존 것을 붙인다.
     """
     comments = extract_comments(existing_md or "")

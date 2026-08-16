@@ -1,6 +1,6 @@
 """드리프트 감사 — **트윈과 소스가 언제 어긋났나** (소 2.4.1).
 
-## 🔴 "기준 커밋이 다르다" 로는 아무것도 못 말한다
+## [중요] "기준 커밋이 다르다" 로는 아무것도 못 말한다
 
 보호 항목에는 `protected_at`(그때의 트윈 커밋)이 적혀 있다. 그런데 커밋 하나만 지나도
 전부 다르므로, 그것만으로 깃발을 꽂으면 **240건이 한꺼번에 뜨고 아무도 안 본다.**
@@ -8,10 +8,10 @@
 그래서 좁힌다 — *"그 사이에 **그 도메인이 근거로 삼은 파일이 실제로 바뀌었는가**"*.
 bare 저장소에서 `git diff --name-only <기준> <현재>` 로 잰다(읽기 전용, `sg gitea`).
 
-    protected_at ≠ 현재  그리고  그 도메인 파일이 그 사이 바뀌었다   → 🔴 의심
+    protected_at ≠ 현재  그리고  그 도메인 파일이 그 사이 바뀌었다   → [중요] 의심
     protected_at ≠ 현재  인데    그 파일들은 그대로다                → 조용히 넘어간다
 
-## 🔴 감사는 지우지 않는다 — 보고만 한다
+## [중요] 감사는 지우지 않는다 — 보고만 한다
 
 `sync` 가 사라진 클래스를 지우지 않는 것과 같은 이유다: **삭제됐는지 그래프가 낡았는지
 여기선 모른다.** 판단은 사람이 하고, 수단은 이미 있다(`edit` · `remove(force)` · 보호 해제 후
@@ -24,7 +24,7 @@ bare 저장소에서 `git diff --name-only <기준> <현재>` 로 잰다(읽기 
     stale         컨텍스트 MD 기준으로 낡은 도메인
     protected_at  이 모듈이 더하는 유일한 새 신호
 
-🔴 **설계 규칙 서술은 여전히 자동으로 못 잡는다.** *"디테일 패널은 함수맵으로 라우팅된다"*
+[중요] **설계 규칙 서술은 여전히 자동으로 못 잡는다.** *"디테일 패널은 함수맵으로 라우팅된다"*
 같은 문장은 호출 표기가 없어 사실 게이트를 통과한다. `protected_at` + 파일 변경이 그것에
 대해 우리가 가진 **유일한 단서**다 — 그래서 이 모듈이 있다.
 """
@@ -50,14 +50,14 @@ class DomainDrift:
 
     @property
     def suspect(self) -> bool:
-        """🔴 **의심의 정의** — 근거가 바뀐 채 보호돼 있거나, 검사에 걸렸다."""
+        """[중요] **의심의 정의** — 근거가 바뀐 채 보호돼 있거나, 검사에 걸렸다."""
         return bool(self.changed_files or self.ghosts or self.missing)
 
     @property
     def line(self) -> str:
         if not self.suspect:
-            return f"  ✅ {self.domain}: 어긋남 없음 (보호 {self.protected})"
-        s = f"  🔴 {self.domain}: 보호 {self.protected}"
+            return f"  [완료] {self.domain}: 어긋남 없음 (보호 {self.protected})"
+        s = f"  [중요] {self.domain}: 보호 {self.protected}"
         if self.changed_files:
             s += (f" · 기준 {self.stale_since[:8]} 이후 **소스 {len(self.changed_files)}개 변경**"
                   f" ({', '.join(f.rsplit('/', 1)[-1] for f in self.changed_files[:3])}…)")
@@ -82,14 +82,14 @@ class Report:
 
     def render(self) -> str:
         out = [f"드리프트 감사 · 트윈 기준 {self.head[:8] or '미상'} · "
-               f"도메인 {len(self.domains)} · 🔴 의심 {len(self.suspects)}", ""]
+               f"도메인 {len(self.domains)} · [중요] 의심 {len(self.suspects)}", ""]
         out += [d.line for d in self.domains]
         if self.notes:
-            out += [""] + [f"  ⚠️ {n}" for n in self.notes]
+            out += [""] + [f"  [주의] {n}" for n in self.notes]
         out += ["",
-                "🔴 **감사는 지우지 않는다.** 판단은 사람이 한다 — 고치면 `edit`, 빼면 "
+                "[중요] **감사는 지우지 않는다.** 판단은 사람이 한다 — 고치면 `edit`, 빼면 "
                 "`remove(force)`, 다시 만들면 보호를 풀고 `refresh --model claude`.",
-                "⚠️ 설계 규칙 서술(호출 표기 없는 문장)은 자동으로 못 잡는다. 위 '소스 변경' "
+                "[주의] 설계 규칙 서술(호출 표기 없는 문장)은 자동으로 못 잡는다. 위 '소스 변경' "
                 "이 그것에 대한 유일한 단서다."]
         return "\n".join(out)
 
@@ -140,7 +140,7 @@ def audit(paths: ProjectPaths, *, domain: str = "") -> Report:
             by_domain.setdefault(p.name, DomainDrift(domain=p.name))
 
     for name, d in by_domain.items():
-        # ① 근거가 바뀌었나 — 🔴 커밋 차이가 아니라 **파일 변경**으로 좁힌다
+        # ① 근거가 바뀌었나 — [중요] 커밋 차이가 아니라 **파일 변경**으로 좁힌다
         if rep.head and d.stale_since and d.stale_since != rep.head:
             changed = set(_changed_between(paths, d.stale_since, rep.head))
             if changed:

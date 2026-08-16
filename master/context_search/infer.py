@@ -8,13 +8,13 @@
 전자는 *"이 질의와 비슷한 도메인"*, 후자는 *"이 질의가 말하는 클래스가 속한 도메인"* 이다.
 후자가 맞으면 **근거를 댈 수 있다** — *"`UMissionTaskExecutor` 가 MissionRuntime 소속이다"*.
 
-## 🔴 출처는 패키지 yaml 이다 — DB 표가 아니다
+## [중요] 출처는 패키지 yaml 이다 — DB 표가 아니다
 
 `class_graph.db` 에 `class_ontology` 표가 있지만 **행이 0 이다**(실측 2026-08-10). 우리
 파이프라인은 그 표를 채우지 않고, 실제 소속은 각 도메인의 `objects/*.yaml` 에 있다
 (`collect.classified_elsewhere` 도 거기서 읽는다). **죽은 표를 근거로 삼지 않는다.**
 
-## 🔴 모르면 비운다
+## [중요] 모르면 비운다
 
 질의에 아는 클래스가 하나도 없으면 **빈 결과**다. 산문에서 도메인 이름을 닮은 말을 찾아
 추측하지 않는다 — 그건 `search_norms` 의 일이고, 그쪽은 노이즈 3중 차단을 갖고 있다.
@@ -56,7 +56,7 @@ class Inference:
     @property
     def summary(self) -> str:
         if not self.domains:
-            # 🔴 왜 못 했는지가 요약에 없으면 사람은 "버그" 로 읽는다 — 사유를 싣는다
+            # [중요] 왜 못 했는지가 요약에 없으면 사람은 "버그" 로 읽는다 — 사유를 싣는다
             s = "도메인 추론 불가 — " + (self.notes[0] if self.notes
                                           else "질의에 아는 클래스가 없다")
             if self.unknown:
@@ -113,7 +113,7 @@ def infer(paths: ProjectPaths, query: str, *, expansion=None) -> Inference:
             inf.unknown.append(cls)
 
     if not found:
-        return inf                                     # 🔴 추측하지 않는다
+        return inf                                     # [중요] 추측하지 않는다
 
     counts: dict = {}
     for e in found.values():

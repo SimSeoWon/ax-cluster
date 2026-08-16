@@ -7,10 +7,10 @@
 작업했다. 즉 **깨진 골조가 `origin` 에 박히고 워커 전원이 그 위에서 짰다.** 순서를 뒤집어
 `Step 6=빌드 · Step 7=등재` 로 고친 것이 원전의 결론이다.
 
-🔴 **골조는 모든 조각의 base 다.** 조각 하나가 깨지면 그 조각만 다시 하면 되지만, **골조가
+[중요] **골조는 모든 조각의 base 다.** 조각 하나가 깨지면 그 조각만 다시 하면 되지만, **골조가
 깨지면 N개가 전부 헛일**이다. 그래서 여기만은 등재 *전에* 세운다.
 
-## 🔴 통합자가 세운다 (2026-08-11 토폴로지)
+## [중요] 통합자가 세운다 (2026-08-11 토폴로지)
 
 빌드는 UE5 가 있는 기계에서만 된다. 우리 구조에서 그것은 **통합자 `.2`** 다 —
 `docs/8-git-authority.md` §8.4. 마스터는 골조 **텍스트**를 건네고 판정을 받는다.
@@ -21,17 +21,17 @@
        ↓
     마스터   통과해야만 등재한다 (실패면 등재하지 않는다)
 
-⚠️ **여기서는 커밋하지 않는다.** 골조는 매니페스트로 워커에게 실려 가므로(`manifest.py`)
+[주의] **여기서는 커밋하지 않는다.** 골조는 매니페스트로 워커에게 실려 가므로(`manifest.py`)
 git 에 올라가지 않아도 파이프라인이 돈다. durable 에 커밋하는 것은 **소 1.4.3** 의 일이고,
 그쪽은 *"검증을 통과한 산출물"* 을 다룬다. 두 관심사를 여기서 섞지 않는다.
 
-## 🔴 fail-closed — 판정을 못 받으면 막는다
+## [중요] fail-closed — 판정을 못 받으면 막는다
 
 `layer3_verify.BuildResult` 의 계약을 그대로 쓴다: **UBT 가 실제로 판정을 낸 것만** 통과다.
 SSH 실패·타임아웃·`Result:` 줄 없음은 전부 **차단**이다. *"확인하지 못했다"* 를 *"괜찮다"* 로
 바꾸는 순간 이 게이트는 없는 것과 같다.
 
-⚠️ **게이트를 안 붙이는 것과 게이트가 통과하는 것은 다르다.** 호출자가 게이트를 주지 않으면
+[주의] **게이트를 안 붙이는 것과 게이트가 통과하는 것은 다르다.** 호출자가 게이트를 주지 않으면
 `register_work` 는 예전처럼 그냥 등재한다 — 그건 *"빌드를 확인하지 않았다"* 이지 통과가
 아니다. 결과에 그렇게 적는다.
 """
@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 
 from ..layer3_verify import BuildResult, run_build_on_workshop
 
-# 🔴 골조를 세울 때 짓는 것은 **에디터 타깃**이다. 골조엔 본문이 없으므로 게임 타깃까지
+# [중요] 골조를 세울 때 짓는 것은 **에디터 타깃**이다. 골조엔 본문이 없으므로 게임 타깃까지
 # 갈 이유가 없고, UHT(리플렉션 헤더 생성)가 도는 에디터 타깃이 우리가 잡고 싶은 실패
 # — `GENERATED_BODY`·`UPROPERTY` 오류 — 를 낸다.
 DEFAULT_TARGET_SUFFIX = "Editor"
@@ -51,7 +51,7 @@ BUILD_TIMEOUT = 3600
 
 @dataclass
 class GateResult:
-    """골조 게이트 판정. 🔴 `ok` 가 아니면 **등재하지 않는다.**"""
+    """골조 게이트 판정. [중요] `ok` 가 아니면 **등재하지 않는다.**"""
 
     stem: str
     checked: bool = False              # 게이트를 실제로 돌렸나 (안 돌린 것 ≠ 통과)
@@ -62,19 +62,19 @@ class GateResult:
 
     @property
     def ok(self) -> bool:
-        # 🔴 fail-closed — 돌리지 않았거나 판정이 없으면 통과가 아니다
+        # [중요] fail-closed — 돌리지 않았거나 판정이 없으면 통과가 아니다
         return bool(self.checked and self.build is not None and self.build.passed
                     and not self.error)
 
     @property
     def summary(self) -> str:
         if not self.checked:
-            # ⚠️ 이것은 통과가 아니다. 호출자가 구분할 수 있게 말로 적는다.
-            return f"{self.stem}: ⚠️ 빌드 미확인 (게이트를 돌리지 않았다)"
+            # [주의] 이것은 통과가 아니다. 호출자가 구분할 수 있게 말로 적는다.
+            return f"{self.stem}: [주의] 빌드 미확인 (게이트를 돌리지 않았다)"
         if self.error:
-            return f"{self.stem}: 🔴 게이트 실패 — {self.error}"
+            return f"{self.stem}: [중요] 게이트 실패 — {self.error}"
         b = self.build
-        head = "✅" if self.ok else "🔴"
+        head = "OK" if self.ok else "FAIL"
         s = f"{self.stem}: {head} {b.summary() if b else '판정 없음'}"
         if self.placed:
             s += f" · 파일 {len(self.placed)}"
@@ -90,13 +90,13 @@ def target_name(project: str, *, suffix: str = DEFAULT_TARGET_SUFFIX) -> str:
 
 
 def _win_join(base: str, rel: str) -> str:
-    """윈도우 경로로 잇는다. 🔴 원격이 `cmd` 라 슬래시를 섞으면 조용히 어긋난다."""
+    """윈도우 경로로 잇는다. [중요] 원격이 `cmd` 라 슬래시를 섞으면 조용히 어긋난다."""
     rel = str(rel or "").replace("/", "\\").lstrip("\\")
     return base.rstrip("\\") + "\\" + rel
 
 
 def place(facts, tree: str, files: dict, *, writer=None) -> list:
-    """골조 텍스트를 **격리된 트리**에 쓴다. 🔴 사람·워커의 트리가 아니다.
+    """골조 텍스트를 **격리된 트리**에 쓴다. [중요] 사람·워커의 트리가 아니다.
 
     `writer(facts, abs_path, text)` 를 주입할 수 있는 이유는 테스트다 — `.2` 없이 배치
     규칙을 검증한다.
@@ -126,7 +126,7 @@ def run(facts, skeleton, *, tree: str, project: str, uproject: str = "",
     if not files:
         g.error = "골조에 파일이 없다 — 세울 것이 없다"
         return g
-    # 🔴 골조가 골조가 아니면 빌드할 이유도 없다 — 싼 검사를 먼저 한다
+    # [중요] 골조가 골조가 아니면 빌드할 이유도 없다 — 싼 검사를 먼저 한다
     if not getattr(skeleton, "ok", False):
         g.error = "골조가 아니다 (`[PSEUDO]` 0 또는 동결 0) — 빌드 전에 막는다"
         return g
@@ -139,7 +139,7 @@ def run(facts, skeleton, *, tree: str, project: str, uproject: str = "",
 
     bb = build_bat or _build_bat_from(facts)
     if not bb:
-        # ⚠️ 엔진을 못 찾은 것은 **미확인**이지 통과가 아니다
+        # [주의] 엔진을 못 찾은 것은 **미확인**이지 통과가 아니다
         g.error = "UE5 Build.bat 을 찾지 못했다 — 확인 불가이므로 막는다"
         return g
     up = uproject or _win_join(tree, f"{project}.uproject")
@@ -154,11 +154,11 @@ def run(facts, skeleton, *, tree: str, project: str, uproject: str = "",
 def build_bat_from_editor(ue5_cmd: str) -> str:
     """`UnrealEditor-Cmd.exe` 경로 **문자열**에서 `Build.bat` 을 유도한다. 못 찾으면 빈 문자열.
 
-    🔴 실측 2026-08-11: 이 기계의 엔진은 `C:\\Program Files\\UE_5.8` 이다 —
+    [중요] 실측 2026-08-11: 이 기계의 엔진은 `C:\\Program Files\\UE_5.8` 이다 —
     `Epic Games` 하위가 **아니다.** 그래서 경로를 짐작하지 않고 `probe` 가 찾아 둔 값에서
     되짚는다.
 
-    ⚠️ **공개 함수로 뗀 이유** (중 2.1 `#135`): 요청자 `.33` 은 `facts` 객체가 아니라 배달된
+    [주의] **공개 함수로 뗀 이유** (중 2.1 `#135`): 요청자 `.33` 은 `facts` 객체가 아니라 배달된
     `.ax/config.json` 의 `backends.ue5_cmd` **문자열**을 갖는다. 유도 규칙을 거기에 다시 쓰면
     같은 규칙이 두 벌이 되고, 엔진 경로 관례가 바뀌는 날 한쪽만 고쳐진다.
     """

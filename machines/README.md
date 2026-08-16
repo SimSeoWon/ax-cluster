@@ -7,19 +7,19 @@ Each machine's `~/CLAUDE.md` (the file Claude Code auto-loads at session start) 
 |---|---|---|
 | [`sim-desktop.md`](sim-desktop.md) + [`sim-desktop.d/`](sim-desktop.d/) | master `sim-desktop` (192.168.0.57) | **symlink** → `/home/sim/CLAUDE.md` |
 | [`bc250-1.md`](bc250-1.md) | BC-250 #1 (192.168.0.43) | **symlink** → `sim@192.168.0.43:/home/sim/CLAUDE.md` |
-| [`win-worker-2.md`](win-worker-2.md) | Windows worker (192.168.0.2, account `janus`) | 🔴 **copy** → `C:\Users\janus\CLAUDE.md` (no repo clone there — see below) |
-| [`win-main-33.md`](win-main-33.md) | Windows **main work PC** (192.168.0.33, account `user`) | 🔴 **copy** → `C:\Users\USER\CLAUDE.md` ✅ delivered 2026-08-08 (7,365 B, byte-identical) |
+| [`win-worker-2.md`](win-worker-2.md) | Windows worker (192.168.0.2, account `janus`) | [중요] **copy** → `C:\Users\janus\CLAUDE.md` (no repo clone there — see below) |
+| [`win-main-33.md`](win-main-33.md) | Windows **main work PC** (192.168.0.33, account `user`) | [중요] **copy** → `C:\Users\USER\CLAUDE.md` [완료] delivered 2026-08-08 (7,365 B, byte-identical) |
 
 **192.168.0.33** now has its own guide — [`win-main-33.md`](win-main-33.md) — because SSH
 (account **`user`**) and Ollama came up on 2026-08-08 and there is real operating detail to carry:
-the Store-stub Python trap, the UE5 checkout path, and 🔴 **why it must never host a resident
+the Store-stub Python trap, the UE5 checkout path, and [중요] **why it must never host a resident
 model** (7.6 GiB free VRAM < 9.0 GB for the coder model). It is a **copy**, like `.2`.
 
-🔴 **`.2` and `.33` are not interchangeable.** `.2` is a workshop the master may drive freely;
+[중요] **`.2` and `.33` are not interchangeable.** `.2` is a workshop the master may drive freely;
 `.33` is the human's own machine, so the master is a guest — read-only by preference, dirty check
 before anything that writes.
 
-## 🔴 `.2` is a copy, not a symlink — refresh it deliberately
+## [중요] `.2` is a copy, not a symlink — refresh it deliberately
 
 `ax-cluster` is **not cloned** on the Windows worker, so there is nothing for a symlink to point
 at. Cloning the whole repo there just to carry one guide file costs more than the problem, so that
@@ -37,7 +37,7 @@ ssh janus@192.168.0.2 'powershell -NoProfile -Command "(Get-FileHash C:\Users\ja
 known exception with a compensating check, not as the pattern to copy. When `gjc` lands and that
 box needs more of the repo anyway, clone it and switch to a symlink like the other two.
 
-## 🔴 `~/CLAUDE.md` is a symlink — never turn it back into a regular file
+## [중요] `~/CLAUDE.md` is a symlink — never turn it back into a regular file
 
 ```
 /home/sim/CLAUDE.md  →  /home/sim/ax-cluster/machines/sim-desktop.md

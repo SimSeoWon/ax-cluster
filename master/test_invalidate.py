@@ -6,7 +6,7 @@
 맞췄고, **우리에게만 있는 것 둘**을 추가했다 — 잠금·보호 항목 보존, 그리고
 `prune=False` 가 manifest 를 잃지 않는 것.
 
-🔴 **여기서 고정하는 진짜 계약은 「보존」이다.** 무효화가 과하면 LLM 을 더 쓰고 끝나지만,
+[중요] **여기서 고정하는 진짜 계약은 「보존」이다.** 무효화가 과하면 LLM 을 더 쓰고 끝나지만,
 보존이 깨지면 사람이 검수한 것과 받아온 스냅샷이 **조용히 사라진다.**
 """
 from __future__ import annotations
@@ -30,10 +30,10 @@ def check(label, cond, detail=""):
     global PASS, FAIL
     if cond:
         PASS += 1
-        print(f"  ✅ {label}")
+        print(f"  [완료] {label}")
     else:
         FAIL += 1
-        print(f"  ❌ {label}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {label}" + (f" — {detail}" if detail else ""))
 
 
 def _paths(tmp: Path, name: str = "M") -> ProjectPaths:
@@ -85,7 +85,7 @@ def _run(tmp: Path) -> int:
     check("해시가 나온다 (md5 앞 16자)", len(h1) == 16, h1)
     check("같은 내용은 같은 해시", inv.domain_md_hash(P, "D") == h1)
     _domain_md(P, "D", "# D\n\n## 시스템 개요\n\n바뀐 내용\n")
-    check("🔴 내용이 바뀌면 해시가 바뀐다", inv.domain_md_hash(P, "D") != h1)
+    check("[중요] 내용이 바뀌면 해시가 바뀐다", inv.domain_md_hash(P, "D") != h1)
     check("MD 가 없으면 빈 문자열", inv.domain_md_hash(P, "없는도메인") == "")
 
     print("\n[2] manifest md_hash 읽기")
@@ -97,7 +97,7 @@ def _run(tmp: Path) -> int:
     y.write(root / pkg.MANIFEST, {"domain": "D", "md_hash": "abc123"})
     check("있으면 그 값", inv.manifest_md_hash(P, "D") == "abc123")
 
-    print("\n[3] 🔴 package.write 가 md_hash 를 찍는다 (없으면 영원히 full 폴백)")
+    print("\n[3] [중요] package.write 가 md_hash 를 찍는다 (없으면 영원히 full 폴백)")
     P2 = _paths(tmp, "M2")
     _domain_md(P2, "D")
     pkg.write(P2, "D", objects=[{"name": "UFoo", "layer": 3, "file": "Foo.h"}])
@@ -106,7 +106,7 @@ def _run(tmp: Path) -> int:
     P3 = _paths(tmp, "M3")
     pkg.write(P3, "D", objects=[{"name": "UFoo", "layer": 3, "file": "Foo.h"}])
     man3 = y.read(P3.ontology / "domains" / "D" / pkg.MANIFEST) or {}
-    check("🔴 MD 가 없으면 빈 md_hash 키를 만들지 않는다", "md_hash" not in man3, str(man3))
+    check("[중요] MD 가 없으면 빈 md_hash 키를 만들지 않는다", "md_hash" not in man3, str(man3))
 
     print("\n[4] 무효화 범위 — 언급된 것만, 애매하면 무효화")
     P4 = _paths(tmp, "M4")
@@ -119,15 +119,15 @@ def _run(tmp: Path) -> int:
     i_hit = _item(P4, "D", "invariants", "FooAlwaysValid", "UFoo 와 UBar 가 함께 나온다")
     r = inv.determine_invalidation(P4, "D", {"UFoo"})
     check("변경 클래스를 언급한 action 이 무효화", a_hit in r.actions, str(r.actions))
-    check("🔴 언급 없는 action 은 보존", a_miss not in r.actions and r.preserved_actions == 1, r.summary)
+    check("[중요] 언급 없는 action 은 보존", a_miss not in r.actions and r.preserved_actions == 1, r.summary)
     check("invariant 도 같은 규칙", i_hit in r.invariants, str(r.invariants))
-    check("🔴 응집 — 같이 언급된 멤버가 scope 에 들어온다", r.scope_classes == {"UFoo", "UBar"}, str(r.scope_classes))
+    check("[중요] 응집 — 같이 언급된 멤버가 scope 에 들어온다", r.scope_classes == {"UFoo", "UBar"}, str(r.scope_classes))
     check("objects 는 변경 클래스 자신", r.objects == {"UFoo"}, str(r.objects))
     r2 = inv.determine_invalidation(P4, "D", {"UQux"})       # 멤버도 아니고 언급도 없다
     check("무관한 클래스는 아무것도 무효화하지 않는다", r2.empty, r2.summary)
     check("그때 scope 는 변경 클래스 그대로", r2.scope_classes == {"UQux"}, str(r2.scope_classes))
 
-    print("\n[5] 🔴 잠금·보호 항목은 무효화하지 않는다 (원전에 없는 우리 개념)")
+    print("\n[5] [중요] 잠금·보호 항목은 무효화하지 않는다 (원전에 없는 우리 개념)")
     lock = _item(P4, "D", "actions", "LockedFoo", "UFoo 를 언급하지만 사람이 검수했다",
                  extra={"verified_by_user": True})
     prot = _item(P4, "D", "invariants", "SnapshotFoo", "UFoo 를 언급하는 받아온 스냅샷",
@@ -152,9 +152,9 @@ def _run(tmp: Path) -> int:
     except OSError:
         readable = False
     if readable:
-        print("     ⚠️ root 로 도는 환경이라 권한 실패를 못 만든다 — 이 항목만 건너뛴다")
+        print("     [주의] root 로 도는 환경이라 권한 실패를 못 만든다 — 이 항목만 건너뛴다")
     else:
-        check("🔴 읽기 실패는 무효화한다", bad in r4.actions, str(r4.actions))
+        check("[중요] 읽기 실패는 무효화한다", bad in r4.actions, str(r4.actions))
         check("그 수를 따로 센다", r4.unreadable == 1, r4.summary)
     bad.chmod(0o644)
 
@@ -172,10 +172,10 @@ def _run(tmp: Path) -> int:
     check("그 사유도 남긴다", "MD 변경" in p.reason, p.reason)
     y.write(r6root / pkg.MANIFEST, {"domain": "D", "md_hash": inv.domain_md_hash(P6, "D")})
     p2 = inv.plan_domain_refresh(P6, "D")
-    check("🔴 일치하면 full 이 아니다", not p2.full, p2.summary)
+    check("[중요] 일치하면 full 이 아니다", not p2.full, p2.summary)
     check("변경 클래스가 0 이면 빈 집합 (full 과 다르다)", p2.changed == set(), str(p2.changed))
 
-    print("\n[8] 🔴 prune=False 가 manifest 를 잃지 않는다 (부분 갱신의 전제)")
+    print("\n[8] [중요] prune=False 가 manifest 를 잃지 않는다 (부분 갱신의 전제)")
     P7 = _paths(tmp, "M7")
     _domain_md(P7, "D")
     pkg.write(P7, "D",
@@ -187,7 +187,7 @@ def _run(tmp: Path) -> int:
     pkg.write(P7, "D", actions=[{"name": "Redo", "layer": 3, "description": "다시 만든 것"}],
               prune=False)
     man7 = y.read(root7 / pkg.MANIFEST) or {}
-    check("🔴 안 들어온 항목의 경로가 manifest 에 남는다",
+    check("[중요] 안 들어온 항목의 경로가 manifest 에 남는다",
           set(man7.get("actions") or []) == before, str(man7.get("actions")))
     check("파일도 그대로 있다", (root7 / "L3" / "actions" / "Keep.yaml").is_file())
     check("다시 만든 것은 갱신됐다",
@@ -200,7 +200,7 @@ def _run(tmp: Path) -> int:
           str(man8.get("actions")))
     check("그 파일도 지워졌다", not (root7 / "L3" / "actions" / "Keep.yaml").is_file())
 
-    print("\n[9] 🔴 무효화 파일 삭제는 쓰기 직전에만 (실패해도 파괴하지 않는다)")
+    print("\n[9] [중요] 무효화 파일 삭제는 쓰기 직전에만 (실패해도 파괴하지 않는다)")
     from master.ontology import synth as sy
     P8 = _paths(tmp, "M8")
     _domain_md(P8, "D")
@@ -212,8 +212,8 @@ def _run(tmp: Path) -> int:
     check("무효화분을 지운다", n == 1 and not victim.is_file(), str(n))
     check("이미 없는 것을 또 지워도 죽지 않는다", sy._delete_invalidated(r9) == 0)
 
-    print("\n[10] 🔴 LLM 없이 partial 분기가 도는지 (합성기 배선)")
-    # 🔴 **`dry_run` 은 쓰기만 막고 LLM 은 막지 않는다.** 처음엔 그런 줄 알고 이 테스트가
+    print("\n[10] [중요] LLM 없이 partial 분기가 도는지 (합성기 배선)")
+    # [중요] **`dry_run` 은 쓰기만 막고 LLM 은 막지 않는다.** 처음엔 그런 줄 알고 이 테스트가
     # 실제 노드를 두드렸고(파일 하나가 **360초**), 헤더에는 *"LLM 없이"* 라고 적혀 있었다 —
     # 마일스톤 4 의 *"측정 도구 자신이 조용히 틀린다"* 가 테스트에서 재발한 것이다.
     # 추출 레인을 막아 **네트워크 0** 으로 만든다. 분기 판정은 추출 **전에** 끝난다.
@@ -225,12 +225,12 @@ def _run(tmp: Path) -> int:
         sy._lane = lane_orig
     check("건진 것이 0 이어도 예외를 던지지 않는다", isinstance(res, sy.DomainResult))
     check("사유가 남는다", bool(res.reasons), str(res.reasons))
-    check("🔴 멤버와 겹치면 partial 로 붙는다", res.partial and res.invalidation is not None,
+    check("[중요] 멤버와 겹치면 partial 로 붙는다", res.partial and res.invalidation is not None,
           f"partial={res.partial} reasons={res.reasons}")
-    check("🔴 scope 가 멤버와 안 겹치면 partial 을 포기하고 full 로 간다",
+    check("[중요] scope 가 멤버와 안 겹치면 partial 을 포기하고 full 로 간다",
           not res2.partial and any("full" in x for x in res2.reasons), str(res2.reasons))
 
-    print("\n[11] 🔴 워터마크 settle — 이것이 없으면 stale 이 영원히 안 가라앉는다")
+    print("\n[11] [중요] 워터마크 settle — 이것이 없으면 stale 이 영원히 안 가라앉는다")
     from master.ontology import stale as stm
     P10 = _paths(tmp, "MA")
     _domain_md(P10, "D")
@@ -245,12 +245,12 @@ def _run(tmp: Path) -> int:
     check("그래서 stale 로 잡힌다", res_st and res_st[0].changed == 1, str(res_st))
     n = stm.settle(P10, "D")
     check("settle 이 오브젝트 하나를 올린다", n == 1, str(n))
-    check("🔴 값은 컨텍스트 MD 의 리비전", (y.read(objp) or {}).get("source_commit") == "abc1234",
+    check("[중요] 값은 컨텍스트 MD 의 리비전", (y.read(objp) or {}).get("source_commit") == "abc1234",
           str(y.read(objp)))
-    check("🔴 그리고 stale 이 가라앉는다", stm.compute(P10, ["D"]) == [], str(stm.compute(P10, ["D"])))
+    check("[중요] 그리고 stale 이 가라앉는다", stm.compute(P10, ["D"]) == [], str(stm.compute(P10, ["D"])))
     check("다시 불러도 바뀔 것이 없다 (idempotent)", stm.settle(P10, "D") == 0)
 
-    print("\n[12] 🔴 settle 이 잠금·보호를 뚫되 본문은 안 건드린다 (원전은 objects 를 안 잠근다)")
+    print("\n[12] [중요] settle 이 잠금·보호를 뚫되 본문은 안 건드린다 (원전은 objects 를 안 잠근다)")
     P11 = _paths(tmp, "MB")
     _domain_md(P11, "D")
     ctx2 = P11.context / "Src"
@@ -264,12 +264,12 @@ def _run(tmp: Path) -> int:
     y.write(objp2, snap)
     check("settle 이 보호 항목도 올린다", stm.settle(P11, "D") == 1)
     after = y.read(objp2) or {}
-    check("🔴 워터마크만 바뀐다", after.get("source_commit") == "def5678", str(after.get("source_commit")))
-    check("🔴 별칭(사람 데이터)은 그대로", after.get("aliases") == ["바 매니저"], str(after.get("aliases")))
+    check("[중요] 워터마크만 바뀐다", after.get("source_commit") == "def5678", str(after.get("source_commit")))
+    check("[중요] 별칭(사람 데이터)은 그대로", after.get("aliases") == ["바 매니저"], str(after.get("aliases")))
     check("보호 표식도 그대로", after.get("protected") is True)
     check("스냅샷의 다른 필드도 그대로", after.get("confidence") == 0.85)
 
-    print("\n[13] 🔴 문서가 모른다고 하면 `-1` 도 찍는다 — 안 그러면 수렴하지 않는다")
+    print("\n[13] [중요] 문서가 모른다고 하면 `-1` 도 찍는다 — 안 그러면 수렴하지 않는다")
     P12 = _paths(tmp, "MC")
     _domain_md(P12, "D")
     pkg.write(P12, "D", objects=[{"name": "UBaz", "layer": 3, "file": "Src/Baz.h"}])
@@ -279,11 +279,11 @@ def _run(tmp: Path) -> int:
     y.write(objp3, o3)
     check("그 상태는 stale 로 잡힌다", bool(stm.compute(P12, ["D"])))
     check("settle 이 문서 값(-1)으로 내린다", stm.settle(P12, "D") == 1)
-    check("🔴 실제로 -1 이 찍혔다", (y.read(objp3) or {}).get("source_commit") == stm.MISSING,
+    check("[중요] 실제로 -1 이 찍혔다", (y.read(objp3) or {}).get("source_commit") == stm.MISSING,
           str((y.read(objp3) or {}).get("source_commit")))
-    check("🔴 그래서 수렴한다 — 매 사이클 재합성하지 않는다", stm.compute(P12, ["D"]) == [])
+    check("[중요] 그래서 수렴한다 — 매 사이클 재합성하지 않는다", stm.compute(P12, ["D"]) == [])
 
-    print("\n[14] 🔴 `_stored` 가 오브젝트 yaml 을 본다 (DB 는 0행이라 폴백)")
+    print("\n[14] [중요] `_stored` 가 오브젝트 yaml 을 본다 (DB 는 0행이라 폴백)")
     o3b = y.read(objp3) or {}
     o3b["source_commit"] = "실제리비전"
     y.write(objp3, o3b)
@@ -305,11 +305,11 @@ def _run(tmp: Path) -> int:
     ra = y.read(P13.ontology / "domains" / "D" / "L3" / "objects" / "UA.yaml") or {}
     rb = y.read(P13.ontology / "domains" / "D" / "L3" / "objects" / "UB.yaml") or {}
     check("UA 는 올랐다", ra.get("source_commit") == "revA", str(ra.get("source_commit")))
-    check("🔴 UB 는 안 올랐다 — 다시 안 뽑았으니 정합이라 말하면 거짓말이다",
+    check("[중요] UB 는 안 올랐다 — 다시 안 뽑았으니 정합이라 말하면 거짓말이다",
           not rb.get("source_commit"), str(rb.get("source_commit")))
     check("그래서 그 도메인은 여전히 stale", bool(stm.compute(P13, ["D"])))
 
-    print("\n[16] 🔴 실패한 조각의 클래스는 settle 하지 않는다 (2026-08-15 실사고)")
+    print("\n[16] [중요] 실패한 조각의 클래스는 settle 하지 않는다 (2026-08-15 실사고)")
     # 실사고: 재합성 중 BC-250 이 죽어 조각 절반이 실패했는데 "성공 2 · 실패 0" 으로 보고되고
     # stale 이 0 이 됐다 — **12개 클래스가 한 번도 재추출되지 않은 채** 정합으로 위장했다.
     P15 = _paths(tmp, "MF")
@@ -327,13 +327,13 @@ def _run(tmp: Path) -> int:
     ra = y.read(P15.ontology / "domains" / "D" / "L3" / "objects" / "UA.yaml") or {}
     rb = y.read(P15.ontology / "domains" / "D" / "L3" / "objects" / "UB.yaml") or {}
     check("반영된 클래스만 올린다", n15 == 1 and rb.get("source_commit") == "revB", str(n15))
-    check("🔴 미반영 클래스는 안 올린다", not ra.get("source_commit"), str(ra.get("source_commit")))
-    check("🔴 그래서 그 도메인은 stale 로 남는다 — 다음 사이클이 다시 본다",
+    check("[중요] 미반영 클래스는 안 올린다", not ra.get("source_commit"), str(ra.get("source_commit")))
+    check("[중요] 그래서 그 도메인은 stale 로 남는다 — 다음 사이클이 다시 본다",
           bool(stm.compute(P15, ["D"])))
     r15.actions = [{"name": "X"}]
     check("요약이 미반영을 드러낸다", "미반영 1클래스" in r15.summary, r15.summary)
 
-    print("\n[17] 🔴 재합성 끝에 검색 색인을 깨운다 (원전 ontology_refresh:527)")
+    print("\n[17] [중요] 재합성 끝에 검색 색인을 깨운다 (원전 ontology_refresh:527)")
     calls = []
     import master.context_search.domain_index as di
 
@@ -346,11 +346,11 @@ def _run(tmp: Path) -> int:
         note = sy.sync_index(P14)
         check("성공하면 요약을 값으로 돌려준다", note == _FakeStats.summary, note)
         check("실제로 한 번 불렀다", len(calls) == 1, str(len(calls)))
-        check("🔴 dry-run 이면 부르지 않는다", sy.sync_index(P14, dry_run=True) == "" and len(calls) == 1)
-        check("🔴 쓴 것이 없으면 부르지 않는다", sy.sync_index(P14, wrote=False) == "" and len(calls) == 1)
+        check("[중요] dry-run 이면 부르지 않는다", sy.sync_index(P14, dry_run=True) == "" and len(calls) == 1)
+        check("[중요] 쓴 것이 없으면 부르지 않는다", sy.sync_index(P14, wrote=False) == "" and len(calls) == 1)
         di.sync = lambda p, **k: (_ for _ in ()).throw(RuntimeError("색인 깨짐"))
         bad = sy.sync_index(P14)
-        check("🔴 색인이 실패해도 예외를 던지지 않는다", isinstance(bad, str) and bad.startswith("🔴"), bad)
+        check("[중요] 색인이 실패해도 예외를 던지지 않는다", isinstance(bad, str) and bad.startswith("[중요]"), bad)
         check("그리고 조용하지 않다 — 사유가 값에 실린다", "색인 깨짐" in bad, bad)
     finally:
         di.sync = orig_sync

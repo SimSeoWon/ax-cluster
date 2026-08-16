@@ -2,17 +2,17 @@
 
     assign_attempt      배정 — durable/attempt 이름을 계산한다 (git 접촉 0)
     push_attempt        ephemeral attempt 에 작업분을 commit·push
-    verify_and_merge    🔴 epoch 게이트 → 통과분만 durable 에 merge·push
-    cleanup_attempts    ephemeral 정리 — 🔴 기본은 **세기만** 한다 (아래 참조)
+    verify_and_merge    [중요] epoch 게이트 → 통과분만 durable 에 merge·push
+    cleanup_attempts    ephemeral 정리 — [중요] 기본은 **세기만** 한다 (아래 참조)
     fake_workshop       주입용 가짜 작업장 — 하드웨어·LLM 없이 한 바퀴 돌린다
     run_round           동기 1라운드 (드라이런). 실전은 같은 함수들을 비동기로 조립한다
 
-🔴 **왜 이걸 되살리나.** 마일스톤 3 에서 이 계층을 없앴는데(워커는 추론만 · 통합자가 유일한
+[중요] **왜 이걸 되살리나.** 마일스톤 3 에서 이 계층을 없앴는데(워커는 추론만 · 통합자가 유일한
 쓰기 주체), 리포트 14 §2 가 실측한 대로 **원전에 이미 있던 것**이었다. `verify_and_merge` 의
 원전 주석이 *"durable 단일 writer 보존"* 이고 **그 writer 는 서버**다 — 워커는 쓴다, 다만
 **ephemeral 에만** 쓴다. 없앤 것은 원칙이 아니라 그 원칙을 지키던 **장치**였다.
 
-## 🔴 원전과 다르게 둔 것 넷 — 이유가 있다
+## [중요] 원전과 다르게 둔 것 넷 — 이유가 있다
 
 **① `worker` 가 아니라 `workshop`.** 이 저장소에서 `worker/` 는 BC-250 추론 노드다.
 브랜치의 그 자리에 오는 것은 파일을 소유한 윈도우 PC = **작업장**이다.
@@ -21,7 +21,7 @@
 **② `cleanup_attempts(delete=False)` 가 기본.** 원전은 `push --delete` 로 원격 ephemeral 을
 지운다(리더의 terminal 결정 시 일괄). 우리는 **08-09 결정**으로 *"attempt 를 성공·실패 무관
 push"* 하고 그 목적이 **증거 보존**이라, `work/cleanup.py` 가 이미 *"원격을 없애는 것은 요청자와
-사람의 판단"* 이라고 못박아 뒀다. 🔴 **기제는 옮기고 정책은 바꾸지 않는다** — 지우려면 호출자가
+사람의 판단"* 이라고 못박아 뒀다. [중요] **기제는 옮기고 정책은 바꾸지 않는다** — 지우려면 호출자가
 명시해야 한다. 두 정책 다 일관성이 있고 **시점이 다를 뿐**이다(원전=work 종료 시, 우리=사람).
 
 **③ 드라이런 진입점 이름이 `fake_workshop`.** 원전 `fake_worker` 와 같은 것이다.
@@ -32,21 +32,21 @@ push 할 수 있었지만 **우리 마스터의 정본은 `origin` push 가 봉�
 2026-08-14)가 *"마스터가 diff 를 attempt 에 commit"* 을 요구하므로 별도 쓰기 표면
 (`gitea-write`)을 열었고, **이 인자 하나가 그 환경 차이를 전부 흡수한다** — 호출자가 어느
 표면으로 쏠지 고르고, 기본값은 원전 동작 그대로다(`selftest` 의 임시 저장소가 그 경로다).
-🔴 **봉인을 여는 대신 대체 가드를 뒀다**: 마스터 클론의 `pre-push` 훅이 `attempt/*`·`task/*`
+[중요] **봉인을 여는 대신 대체 가드를 뒀다**: 마스터 클론의 `pre-push` 훅이 `attempt/*`·`task/*`
 밖의 ref 와 **삭제 전부**를 거부한다(리포트 16 §5 — 네 대가 같은 Gitea 계정이라 서버측
 브랜치 보호로는 기계를 구분할 수 없다).
 
-## ⚠️ `push --force` 가 여기 있는 이유 (지우지 말 것)
+## [주의] `push --force` 가 여기 있는 이유 (지우지 말 것)
 
 `push_attempt` 는 attempt 에 `--force` 로 push 한다. **원전이 근거를 적어 뒀다** — ephemeral 은
 `(workshop, ts)` 로 그 작업장 전용 namespace 라 다른 작업장이 절대 안 쓰고, 같은 작업장의
 재시도(zombie 포함)가 자기 브랜치를 force 하는 것은 **공유 ref 가 아니므로 안전**하다.
 
-🔴 **durable 은 절대 force 하지 않는다.** `CLAUDE.md` 의 *"never `push --force`"* 는 **대화형
+[중요] **durable 은 절대 force 하지 않는다.** `CLAUDE.md` 의 *"never `push --force`"* 는 **대화형
 세션**과 **durable** 을 향한 규칙이고(*"Pipeline workers follow different rules"* 가 그 carve-out),
 ephemeral 은 그 반대편이다. 대상이 다르면 규칙이 다르다.
 
-## ⚠️ 이 모듈은 마스터에서 **로컬로** 돈다
+## [주의] 이 모듈은 마스터에서 **로컬로** 돈다
 
 `integrate.py` 의 `_git` 은 SSH 로 작업장을 때리지만 여기는 로컬 `repo` 경로를 받는다.
 git stdout 은 ref·SHA 라 ASCII 이고 마스터는 UTF-8 이므로 `.2` 콘솔 CP949 문제(리포트 13)가
@@ -68,7 +68,7 @@ class GitError(RuntimeError):
 
 
 def _git_cmd(repo: Path, *args: str) -> list:
-    """git 명령줄 조립 — 🔴 **커밋 신원의 단일 출처.**
+    """git 명령줄 조립 — [중요] **커밋 신원의 단일 출처.**
 
     인자로 박는 이유: 마스터의 전역 git 설정에 의존하면 환경마다 달라진다. `_git` 과
     `_git_rc` 가 **같은 이 함수**를 쓴다 — 따로 만들면 신원·서명 설정이 조용히 갈라진다.
@@ -87,12 +87,12 @@ def _git(repo: Path, *args: str, check: bool = True) -> str:
 
 
 def _git_rc(repo: Path, *args: str, timeout: int = 0) -> tuple:
-    """git 한 번 — `(rc, stdout+stderr)`. 🔴 **실패가 정상 결과인 자리**에서 쓴다.
+    """git 한 번 — `(rc, stdout+stderr)`. [중요] **실패가 정상 결과인 자리**에서 쓴다.
 
     머지 충돌·`ls-remote` 부재처럼 *"실패했다"* 가 곧 답인 연산은 예외로 만들면 흐름이
     끊긴다(원전도 `(rc, out)` 형태를 쓴다).
 
-    ⚠️ **출력 문구로 판정하지 말 것.** 이 기계는 `ko_KR` 이라 git 메시지가 번역된다 —
+    [주의] **출력 문구로 판정하지 말 것.** 이 기계는 `ko_KR` 이라 git 메시지가 번역된다 —
     *"nothing to commit"* 대조가 조용히 빗나간 전례가 있다(마일스톤 함정 목록). **rc 로
     판정하고**, 문구는 사람에게 보여 줄 때만 쓴다.
     """
@@ -112,7 +112,7 @@ def _noop_log(stage: str, msg: str) -> None:
 def assign_attempt(task_id: str, workshop: str, ts: str) -> dict:
     """배정 — 브랜치 **이름을 서버가 정한다**. git 을 건드리지 않는다.
 
-    🔴 원전 규약: *"push 모델상 서버가 브랜치명을 배정하므로 작업장은 받은 이름을 쓸 뿐
+    [중요] 원전 규약: *"push 모델상 서버가 브랜치명을 배정하므로 작업장은 받은 이름을 쓸 뿐
     (구성하지 않는다)."* 이름을 양쪽이 각자 조립하면 규약이 갈린다.
 
     `epoch` 는 여기서 만들지 않는다 — 큐(`task_queue/logic_claim.py`)가 배정마다 단조
@@ -133,7 +133,7 @@ def push_attempt(repo: Path, attempt: str, base_ref: str, work_fn, target_rel: s
     `work_fn(repo, target_rel)` 은 **디스크 워킹트리만 수정한다** — git 은 건드리지 않는다.
     드라이런이면 `fake_workshop`, 실전이면 작업장이 자기 클론에서 수행한다.
 
-    ⚠️ 변경이 없으면 `commit` 이 rc=1(`nothing to commit`)로 죽는다. 그건 **작업이 아무것도
+    [주의] 변경이 없으면 `commit` 이 rc=1(`nothing to commit`)로 죽는다. 그건 **작업이 아무것도
     안 했다는 사실**이므로 삼키지 않고 `GitError` 로 올린다.
     """
     _git(repo, "checkout", "-q", "-B", attempt, base_ref)
@@ -150,7 +150,7 @@ def push_attempt(repo: Path, attempt: str, base_ref: str, work_fn, target_rel: s
 def verify_and_merge(repo: Path, attempt: str, durable: str, *,
                      submit_epoch: int, current_epoch: int,
                      remote: str = "origin", logf=_noop_log) -> dict:
-    """🔴 epoch 게이트 → 통과분만 durable 에 merge·push. `{ok, merged, reason}`.
+    """[중요] epoch 게이트 → 통과분만 durable 에 merge·push. `{ok, merged, reason}`.
 
     **fencing 이 먼저다** — git 을 건드리기 전에 판정한다. 재배정으로 epoch 이 올라간 뒤
     들어온 이전 작업장(zombie)의 시도는 **부작용 없이** 거부되어야 한다.
@@ -159,7 +159,7 @@ def verify_and_merge(repo: Path, attempt: str, durable: str, *,
     *"회수된 줄 모르고 검증을 요청하는"* **권위 문제**뿐이고, 그것을 epoch 이 판정한다.
     → 원전 주석 그대로: **durable 단일 writer 보존.**
 
-    ⚠️ durable 은 `--force` 하지 않는다. 첫 검증분은 attempt 에서 브랜치를 **만들고**,
+    [주의] durable 은 `--force` 하지 않는다. 첫 검증분은 attempt 에서 브랜치를 **만들고**,
     이후는 merge 한다.
     """
     if submit_epoch < current_epoch:
@@ -187,7 +187,7 @@ def verify_and_merge(repo: Path, attempt: str, durable: str, *,
 
 def cleanup_attempts(repo: Path, task_id: str, *, delete: bool = False,
                      remote: str = "origin", logf=_noop_log) -> dict:
-    """그 task 의 ephemeral 목록. 🔴 **기본은 세기만 한다** — durable 은 언제나 보존.
+    """그 task 의 ephemeral 목록. [중요] **기본은 세기만 한다** — durable 은 언제나 보존.
 
     `delete=True` 를 **호출자가 명시**해야 원격에서 지운다. 위 「원전과 다르게 둔 것 ②」 참조 —
     *"attempt 를 성공·실패 무관 push"* 의 목적이 증거 보존이라, 지우는 시점은 사람이 정한다.
@@ -196,7 +196,7 @@ def cleanup_attempts(repo: Path, task_id: str, *, delete: bool = False,
     out = _git(repo, "ls-remote", "--heads", remote, glob, check=False)
     refs = [ln.split("refs/heads/")[-1] for ln in out.splitlines() if "refs/heads/" in ln]
     if not delete:
-        logf("cleanup", f"ephemeral {len(refs)}건 (glob={glob}) — 🔴 건드리지 않음")
+        logf("cleanup", f"ephemeral {len(refs)}건 (glob={glob}) — [중요] 건드리지 않음")
         return {"found": refs, "deleted": []}
     deleted = []
     for ref in refs:
@@ -207,7 +207,7 @@ def cleanup_attempts(repo: Path, task_id: str, *, delete: bool = False,
 
 
 # ─────────────────────────────────────────────────────────────
-# 드라이런 — 🔴 하드웨어·LLM·원격 PC 없이 2-tier 전체를 돌린다
+# 드라이런 — [중요] 하드웨어·LLM·원격 PC 없이 2-tier 전체를 돌린다
 #
 # 원전이 이 자리에 값을 매긴 이유(사용자 발화): *"시킬 일을 억지로 만드는 것도 고역"* —
 # 사람이 가짜 일감을 지어낼 필요 없이 서버가 캔드 작업을 주입해 한 바퀴 돌린다.
@@ -233,7 +233,7 @@ def run_round(repo: Path, *, task_id: str, workshop: str, ts: str, base_ref: str
               message: str, logf=_noop_log) -> dict:
     """동기 1라운드 (드라이런): assign → 작업·push → epoch 게이트 → merge.
 
-    ⚠️ **실전은 이 합성을 쓰지 않는다** — `assign_attempt`(서버) … `push_attempt`(작업장) …
+    [주의] **실전은 이 합성을 쓰지 않는다** — `assign_attempt`(서버) … `push_attempt`(작업장) …
     `verify_and_merge`(서버가 보고를 받고) 로 비동기 분리하되 **같은 함수들**을 재사용한다.
     합성이 드라이런에만 있는 이유는, 실전의 세 단계가 서로 다른 기계에서 다른 시점에 돌기
     때문이다.

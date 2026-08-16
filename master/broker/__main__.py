@@ -1,7 +1,7 @@
 """브로커 진입점 — `python -m master.broker`.
 
 포트 8102 (`ss -tln` 으로 비어 있음 확인, 2026-08-08). task_queue(8101) 와 같은 대역이다.
-🔴 task_queue 와 마찬가지로 **인증 계층이 없다.** LAN 한정 개방으로만 방어한다 —
+[중요] task_queue 와 마찬가지로 **인증 계층이 없다.** LAN 한정 개방으로만 방어한다 —
 `ufw allow from 192.168.0.0/24 to any port 8102`. `Anywhere` 로 넓히지 말 것.
 """
 from __future__ import annotations

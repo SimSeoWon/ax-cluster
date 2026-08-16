@@ -7,7 +7,7 @@ UE 매크로 전처리 + 클래스/구조체/메서드 선언 추출. **자기�
 정규식 5개, base clause 추출의 3분기(`type_identifier`/`template_type`/`qualified_identifier`),
 메서드 dedupe 정책이 전부 회사 코드베이스에서 검증된 값이라 조정하지 않는다.
 
-🔴 **바꾼 것 하나 — 없을 때 조용히 죽지 않는다.**
+[중요] **바꾼 것 하나 — 없을 때 조용히 죽지 않는다.**
 
 원본은 `TREE_SITTER_AVAILABLE=False` 면 `parse_file` 이 빈 리스트를 돌려주고, 호출자
 `build_full` 도 로그 한 줄 남기고 `return` 한다. 그러면 **그래프가 0건인 것과 파서가 없는
@@ -34,7 +34,7 @@ except Exception as e:                                    # pragma: no cover - �
 
 
 class ParserUnavailable(RuntimeError):
-    """tree-sitter 가 없다. 🔴 이 예외를 삼키면 안 된다 — 빈 그래프로 보이게 된다."""
+    """tree-sitter 가 없다. [중요] 이 예외를 삼키면 안 된다 — 빈 그래프로 보이게 된다."""
 
 
 def require() -> None:
@@ -95,14 +95,14 @@ _METHOD_CONTAINER_TYPES = {"field_declaration", "declaration", "function_definit
 _METHOD_NAME_NODE_TYPES = {"field_identifier", "identifier", "destructor_name", "operator_name"}
 
 
-# 🔴 재귀를 여기서 멈춘다 — 아래 `_find_function_declarator` 주석 참조.
+# [중요] 재귀를 여기서 멈춘다 — 아래 `_find_function_declarator` 주석 참조.
 _NESTED_SCOPES = {"class_specifier", "struct_specifier", "union_specifier", "enum_specifier"}
 
 
 def _find_function_declarator(node, *, _top: bool = True):
     """포인터/참조/const 래핑을 관통해 첫 `function_declarator` 를 찾는다.
 
-    🔴 **원본과 다른 유일한 지점이다 — 원본 버그를 고쳤다.**
+    [중요] **원본과 다른 유일한 지점이다 — 원본 버그를 고쳤다.**
 
     원본(`class_graph_parse.py:71`)은 자식 전체를 무제한 재귀한다. 그런데 중첩 클래스는
     바깥 클래스 본문의 `field_declaration` **안에** 들어 있다:
@@ -211,7 +211,7 @@ def parse_file(file_path: Path) -> tuple[list[dict], "source_text.Decoded | None
     멈추지 않는다. 호출자가 파일 수·클래스 수·인코딩 분포를 함께 보고하므로 결손이
     숫자에서 드러난다.
 
-    🔴 **인코딩을 왜 돌려주나.** 저장소의 44%(실측 723/1,654)가 CP949 다. 상속 그래프는
+    [중요] **인코딩을 왜 돌려주나.** 저장소의 44%(실측 723/1,654)가 CP949 다. 상속 그래프는
     식별자가 ASCII 라 영향이 없지만(실측 확인), **같은 파일을 읽는 컨텍스트 MD 합성은
     한글 주석이 핵심 신호**라 치명적이다. 여기서 분포를 세어 두면 그 위험이 보인다.
     """

@@ -1,12 +1,12 @@
-"""임베딩 모델 선택 — 🔴 **한국어를 실을 수 있는 벡터**.
+"""임베딩 모델 선택 — [중요] **한국어를 실을 수 있는 벡터**.
 
 ## 왜 바꿨나 (실측 2026-08-08)
 
 기본값이던 chromadb 내장 `ONNXMiniLM_L6_V2`(= `all-MiniLM-L6-v2`)는 **영어 전용**이다.
 같은 개념을 한글/영문으로 던져 실제 색인(961문서)에 검색한 결과:
 
-    「전역 이벤트 시스템」  → WNDMonsterCollectionMana · WNDUITopMenuBase · mapedit_enum  ❌
-     global event system   → GlobalEventSystem.md · EventBusSubsystem.md                 ✅
+    「전역 이벤트 시스템」  → WNDMonsterCollectionMana · WNDUITopMenuBase · mapedit_enum  [실패]
+     global event system   → GlobalEventSystem.md · EventBusSubsystem.md                 [완료]
                              (둘 다 vector+bm25 — 두 채널이 동의)
 
 **한글 질의는 두 채널 모두에서 실패한다.** 벡터는 모델이 영어 전용이라, BM25 는 토크나이저에
@@ -27,7 +27,7 @@
 않는다.** 원본의 *"PyTorch 불필요(~2GB 절약)"* 결정을 깨지 않는다(실측: `fastembed` +
 `loguru`·`pillow`·`py_rust_stemmers` 4개뿐).
 
-🔴 **모델을 바꾸면 기존 벡터는 전부 무효다.** 그래서 컬렉션 메타데이터에 모델 이름을 새기고,
+[중요] **모델을 바꾸면 기존 벡터는 전부 무효다.** 그래서 컬렉션 메타데이터에 모델 이름을 새기고,
 불일치를 **조용히 넘기지 않는다** — 안 그러면 "검색이 왜 이상하지" 가 된다.
 """
 from __future__ import annotations
@@ -61,7 +61,7 @@ class _FastEmbed:
     def __call__(self, input):                       # noqa: A002 - chromadb 규약
         return self._run(input)
 
-    # 🔴 chromadb 신 API 는 문서/질의 임베딩을 **따로 부른다**(`embed_documents` /
+    # [중요] chromadb 신 API 는 문서/질의 임베딩을 **따로 부른다**(`embed_documents` /
     # `embed_query`). 없으면 `AttributeError` 로 검색이 죽는다 — 실측으로 걸렸다.
     # 이 모델은 비대칭 접두어(e5 계열의 `query:`/`passage:`)를 쓰지 않으므로 같은 경로다.
     def embed_documents(self, input):                # noqa: A002

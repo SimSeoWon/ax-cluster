@@ -2,7 +2,7 @@
 
     .venv/bin/python master/test_provision.py
 
-🔴 지키는 불변식:
+[중요] 지키는 불변식:
    1. **점검은 아무것도 올리지 않는다** — 읽기만 한다
    2. **"됐다" 를 믿지 않는다** — pull 후 `/api/tags` 로 산출물을 다시 확인한다
    3. **상주 금지 노드에 모델이 올라와 있으면 잡아낸다** — 사용자 작업과 VRAM 을 다투는 중이다
@@ -29,10 +29,10 @@ def check_(label: str, cond: bool, detail: str = "") -> None:
     global PASS, FAIL
     if cond:
         PASS += 1
-        print(f"  ✅ {label}")
+        print(f"  [완료] {label}")
     else:
         FAIL += 1
-        print(f"  ❌ {label}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {label}" + (f" — {detail}" if detail else ""))
 
 
 def fake_get(tags=(), ps=(), fail=None):
@@ -64,7 +64,7 @@ def main() -> int:
     check_("모델 목록", st.models == sorted([CODER, "gemma4:e4b"]), str(st.models))
     check_("상주 목록은 /api/ps 에서", st.loaded == [CODER])
     check_("want 충족", st.missing == [] and st.ok)
-    check_("🔴 쓰기 호출이 없다", all("/api/pull" not in u for u in g.calls), str(g.calls))
+    check_("[중요] 쓰기 호출이 없다", all("/api/pull" not in u for u in g.calls), str(g.calls))
     check_("tags 와 ps 만 부른다", len(g.calls) == 2, str(g.calls))
 
     print("\n[2] /api/tags(디스크) 와 /api/ps(VRAM) 는 다르다")
@@ -72,24 +72,24 @@ def main() -> int:
     check_("받아는 놨지만 안 올라와 있다", st.models == [CODER] and st.loaded == [])
     check_("  그래도 ok (want 는 보유 기준)", st.ok)
 
-    print("\n[3] 🔴 상주 금지 노드에 모델이 올라와 있으면 잡는다")
+    print("\n[3] [중요] 상주 금지 노드에 모델이 올라와 있으면 잡는다")
     st = check_node(N_WS, getter=fake_get(tags=["gemma4:e4b"], ps=[]))
     check_("올라온 게 없으면 정상", not st.violating and st.ok)
     st = check_node(N_WS, getter=fake_get(tags=["gemma4:e4b"], ps=["gemma4:e4b"]))
     check_("올라와 있으면 위반", st.violating)
     check_("  출력에 드러난다", "상주 금지인데" in st.line(), st.line())
-    check_("  ⚠️ 로 표시", st.line().strip().startswith("⚠️"), st.line())
+    check_("  [주의] 로 표시", st.line().strip().startswith("[주의]"), st.line())
     st2 = check_node(N_INF, getter=fake_get(tags=[CODER], ps=[CODER]))
     check_("추론 노드는 상주해도 정상", not st2.violating)
 
-    print("\n[3b] 🔴 '받아는 두되 상주 금지' 를 표현할 수 있다 (.33 의 실제 상태)")
+    print("\n[3b] [중요] '받아는 두되 상주 금지' 를 표현할 수 있다 (.33 의 실제 상태)")
     n_disk = Node("disk", "10.0.0.3:11434", want=[CODER], resident=False)
     st = check_node(n_disk, getter=fake_get(tags=[CODER], ps=[]))
     check_("보유하면 ok", st.ok, str(st.missing))
     check_("  올라와 있지 않으니 위반 아님", not st.violating)
     st = check_node(n_disk, getter=fake_get(tags=[CODER], ps=[CODER]))
-    check_("🔴 보유는 만족해도 상주하면 위반", st.ok and st.violating)
-    check_("  출력이 ⚠️ 다", st.line().strip().startswith("⚠️"), st.line())
+    check_("[중요] 보유는 만족해도 상주하면 위반", st.ok and st.violating)
+    check_("  출력이 [주의] 다", st.line().strip().startswith("[주의]"), st.line())
     st = check_node(n_disk, getter=fake_get(tags=[], ps=[]))
     check_("아예 없으면 missing", st.missing == [CODER] and not st.ok)
 
@@ -121,7 +121,7 @@ def main() -> int:
     check_("tags 는 살아 있다", st.reachable and st.models == [CODER])
     check_("loaded 는 빈 채로 둔다 (추측하지 않는다)", st.loaded == [])
 
-    print("\n[7] 🔴 pull 의 '됐다' 를 믿지 않는다 — 산출물을 다시 본다")
+    print("\n[7] [중요] pull 의 '됐다' 를 믿지 않는다 — 산출물을 다시 본다")
     posts = []
 
     def poster(url, payload):
@@ -135,9 +135,9 @@ def main() -> int:
 
     try:
         pull(N_INF, CODER, poster=poster, getter=fake_get(tags=["딴것"], ps=[]))
-        check_("🔴 success 라도 tags 에 없으면 실패 처리", False, "통과해 버렸다")
+        check_("[중요] success 라도 tags 에 없으면 실패 처리", False, "통과해 버렸다")
     except ProvisionError as e:
-        check_("🔴 success 라도 tags 에 없으면 실패 처리", True)
+        check_("[중요] success 라도 tags 에 없으면 실패 처리", True)
         check_("  이유를 말한다", "받아지지 않았다" in str(e), str(e))
 
     print("\n[8] pull 실패 경로")
@@ -157,12 +157,12 @@ def main() -> int:
     except ProvisionError as e:
         check_("연결 실패를 거부", "pull 실패" in str(e), str(e))
 
-    print("\n[9] 🔴 reconcile 은 기본이 dry-run")
+    print("\n[9] [중요] reconcile 은 기본이 dry-run")
     posts.clear()
     msgs = []
     sts = reconcile([N_INF], dry_run=True, progress=msgs.append,
                     poster=poster, getter=fake_get(tags=["gemma4:e4b"], ps=[]))
-    check_("🔴 아무것도 받지 않는다", posts == [], str(posts))
+    check_("[중요] 아무것도 받지 않는다", posts == [], str(posts))
     check_("무엇을 받을지 알린다", any("dry-run" in m and CODER in m for m in msgs), str(msgs))
     check_("상태는 그대로 missing", sts[0].missing == [CODER])
 
@@ -192,9 +192,9 @@ def main() -> int:
     try:
         reconcile([N_INF], dry_run=False, getter=evolving,
                   poster=lambda u, p: (posts.append((u, p)), {"status": "success"})[1])
-        check_("🔴 거짓 성공을 통과시키지 않는다", False, "통과해 버렸다")
+        check_("[중요] 거짓 성공을 통과시키지 않는다", False, "통과해 버렸다")
     except ProvisionError:
-        check_("🔴 거짓 성공을 통과시키지 않는다", True)
+        check_("[중요] 거짓 성공을 통과시키지 않는다", True)
 
     posts.clear()
     reconcile([N_WS], dry_run=False, poster=poster, getter=fake_get(tags=[], ps=[]))

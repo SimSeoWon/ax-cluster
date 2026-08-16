@@ -1,13 +1,13 @@
 """`task_data` 가 등재 → claim 응답 → **재기동** 을 넘어 살아남는지 — 원전 능력 이식 (`#141`).
 
-🔴 **왜 이 파일이 생겼나.** 원전은 이 자리에 주석을 박아 뒀다 —
+[중요] **왜 이 파일이 생겼나.** 원전은 이 자리에 주석을 박아 뒀다 —
 *"task_data 는 free-form dict → 확실히 저장·**claim 응답에 전달**(top-level 은 모델이 drop)"*
 (`mcp/master_orchestrator/cluster_selftest.py:223`). 워커가 `force_backend` 를 읽는 경로가 그것이다.
 실측 2026-08-16: **우리 큐는 claim 응답에 `task_data` 를 아예 싣지 않았다.** MD 본문의 json
 블록에만 쓰고 메모리에는 들지 않아, 워커가 볼 방법이 없었다 — 셀프테스트의 라운드트립 단정이
 잡았다(유닛 55개는 전부 통과한 채였다: **주입은 계약을 재고 실물을 재지 않는다**).
 
-⚠️ **재기동 복원을 반드시 잰다.** 등재 직후만 재면 「메모리에만 있고 재기동하면 사라지는」
+[주의] **재기동 복원을 반드시 잰다.** 등재 직후만 재면 「메모리에만 있고 재기동하면 사라지는」
 상태를 통과시킨다 — 그러면 큐를 한 번 내렸다 올린 순간 워커가 조용히 다른 백엔드를 쓴다.
 
 실행: .venv/bin/python master/test_task_data.py
@@ -59,7 +59,7 @@ def test_parse_task_data_absent_and_broken():
 # ── 등재 → claim ──────────────────────────────────────────────
 
 def test_claim_carries_task_data():
-    """🔴 이것이 없으면 `force_backend` 이식은 죽은 이식이다."""
+    """[중요] 이것이 없으면 `force_backend` 이식은 죽은 이식이다."""
     idx, _root, wid = _idx()
     register_task(idx, work_id=wid, type="write", stem="p0",
                   task_data={"stem": "p0", "force_backend": "local_llm"})
@@ -70,7 +70,7 @@ def test_claim_carries_task_data():
 
 
 def test_claim_without_task_data_is_empty_dict():
-    """⚠️ `None` 이 아니라 빈 dict — 워커가 `.get()` 을 바로 부를 수 있어야 한다."""
+    """[주의] `None` 이 아니라 빈 dict — 워커가 `.get()` 을 바로 부를 수 있어야 한다."""
     idx, _root, wid = _idx()
     register_task(idx, work_id=wid, type="write", stem="p0", task_data={})
     job = claim_task(idx, worker_id="w1")
@@ -78,10 +78,10 @@ def test_claim_without_task_data_is_empty_dict():
     assert job.get("task_data") == {}, job.get("task_data")
 
 
-# ── 🔴 재기동 복원 ────────────────────────────────────────────
+# ── [중요] 재기동 복원 ────────────────────────────────────────────
 
 def test_survives_restart():
-    """🔴 큐를 내렸다 올려도 워커가 같은 값을 받아야 한다 (본문에서 되읽는다)."""
+    """[중요] 큐를 내렸다 올려도 워커가 같은 값을 받아야 한다 (본문에서 되읽는다)."""
     idx, root, wid = _idx()
     register_task(idx, work_id=wid, type="write", stem="p0",
                   task_data={"stem": "p0", "force_backend": "agy",
@@ -96,7 +96,7 @@ def test_survives_restart():
 
 
 def test_claim_does_not_erase_body():
-    """⚠️ claim 이 MD 를 다시 쓴다 — 그때 본문의 json 블록을 지우면 재기동 후 사라진다."""
+    """[주의] claim 이 MD 를 다시 쓴다 — 그때 본문의 json 블록을 지우면 재기동 후 사라진다."""
     idx, root, wid = _idx()
     r = register_task(idx, work_id=wid, type="write", stem="p0",
                       task_data={"force_backend": "local_llm"})

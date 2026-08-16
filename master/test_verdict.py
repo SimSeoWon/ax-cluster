@@ -30,7 +30,7 @@ def test_trailing_blank_lines_ignored():
     assert v.approved
 
 
-# ── 🔴 fail-closed 경로 — 전부 승인되지 않아야 한다 ──────────────
+# ── [중요] fail-closed 경로 — 전부 승인되지 않아야 한다 ──────────────
 
 def test_none_output_is_blocked():
     """백엔드 부재·타임아웃·예외. 기존 syntax_check 는 여기서 통과시켰다."""
@@ -118,16 +118,16 @@ def _backend(name, result):
 
 
 def _chain(*backends):
-    """🔴 **쿨다운은 프로세스 전역이다 — 테스트마다 지운다.**
+    """[중요] **쿨다운은 프로세스 전역이다 — 테스트마다 지운다.**
 
     실측 2026-08-13: `test_chain_approve_passes_through` 와 `test_chain_skips_unavailable_backend`
     가 **번갈아 실패**했다(17/19). 원인은 계약이 아니라 **테스트 간 상태 누출**이었다 —
     앞선 테스트에서 `None` 을 돌려준 백엔드 `a` 가 600초 쿨다운에 들어가고, 다음 테스트가 같은
     이름 `a` 를 쓰면 호출조차 되지 않아 `no_backend` 가 된다.
 
-    ⚠️ **`layer2_verify` 쪽을 고칠 문제가 아니다.** 전역 쿨다운은 의도한 동작이다(죽은 백엔드를
+    [주의] **`layer2_verify` 쪽을 고칠 문제가 아니다.** 전역 쿨다운은 의도한 동작이다(죽은 백엔드를
     조각마다 다시 두드리지 않는다 — 소 2.2.3). 순서 의존이 숨어 있던 쪽은 테스트다. 그래서
-    여기서 지운다. 🔴 이름이 겹치는 스텁을 쓰는 새 테스트도 반드시 이 함수를 거칠 것.
+    여기서 지운다. [중요] 이름이 겹치는 스텁을 쓰는 새 테스트도 반드시 이 함수를 거칠 것.
     """
     clear_cooldown()
     return verify_files(_FILES, backends=list(backends))
@@ -162,7 +162,7 @@ def test_chain_approve_passes_through():
 
 
 def test_cooldown_is_process_wide_and_never_approves():
-    """🔴 쿨다운은 **통과 사유가 아니다** — 전부 쿨다운이면 차단이다.
+    """[중요] 쿨다운은 **통과 사유가 아니다** — 전부 쿨다운이면 차단이다.
 
     위 `_chain` 이 감춘 동작을 여기서 **드러내 놓고** 검사한다. 순서 의존을 지우는 것과
     그 동작이 없는 척하는 것은 다르다.

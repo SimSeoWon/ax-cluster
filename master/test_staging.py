@@ -2,15 +2,15 @@
 
 검증하는 것:
 
-    ① 편집 중 🔴 **라이브가 안 바뀐다** (DoubleBufferedIndex 패턴의 파일시스템 버전)
+    ① 편집 중 [중요] **라이브가 안 바뀐다** (DoubleBufferedIndex 패턴의 파일시스템 버전)
     ② `begin` 은 **멱등** — 두 번 부르면 `resumed`
-    ③ 🔴 세션을 **강제하지 않는다** — 세션이 없으면 `working_pkg` 가 라이브를 준다
-    ④ 🔴 세션 메타는 staging **밖**의 형제다 (안에 두면 rename 때 pkg 를 오염시킨다)
+    ③ [중요] 세션을 **강제하지 않는다** — 세션이 없으면 `working_pkg` 가 라이브를 준다
+    ④ [중요] 세션 메타는 staging **밖**의 형제다 (안에 두면 rename 때 pkg 를 오염시킨다)
     ⑤ commit — rename swap · 백업 **1세대만** · 색인 **1회**
-    ⑥ 🔴 세션 중 라이브가 바뀌면 **막지 않고 알린다** (원전 판단: 저빈도, 과설계 방지)
+    ⑥ [중요] 세션 중 라이브가 바뀌면 **막지 않고 알린다** (원전 판단: 저빈도, 과설계 방지)
     ⑦ discard — staging 만 사라지고 라이브 무영향
     ⑧ 세션 없이 commit/discard 는 `no_session` (조용히 성공하지 않는다)
-    ⑨ 🔴 경로 탈출을 막는다
+    ⑨ [중요] 경로 탈출을 막는다
 
 `.venv/bin/python master/test_staging.py`
 """
@@ -35,7 +35,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 @dataclass
@@ -67,7 +67,7 @@ def test_editing_staging_leaves_live_alone():
 
         (work / "L1" / "objects" / "UThing.yaml").write_text("name: UThing\nv: 2\n",
                                                             encoding="utf-8")
-        check("① 🔴 라이브가 안 바뀌었다",
+        check("① [중요] 라이브가 안 바뀌었다",
               (live / "L1" / "objects" / "UThing.yaml").read_text(encoding="utf-8") == before)
 
         r2 = S.begin(p, "MissionRuntime")
@@ -78,7 +78,7 @@ def test_no_session_means_live():
     with tempfile.TemporaryDirectory() as tmp:
         p = fx(tmp)
         work = S.working_pkg(p, "MissionRuntime")
-        check("③ 🔴 세션이 없으면 라이브를 준다 (세션을 강제하지 않는다)",
+        check("③ [중요] 세션이 없으면 라이브를 준다 (세션을 강제하지 않는다)",
               not work.name.endswith(S.STAGING_SUFFIX), str(work))
         check("③ in_session 이 False", not S.in_session(p, "MissionRuntime"))
 
@@ -90,7 +90,7 @@ def test_meta_lives_outside_staging():
         pkg = S.pkg_path(p, "MissionRuntime")
         stg, meta = S.staging_paths(pkg)
         check("④ 메타가 존재한다", meta.exists(), str(meta))
-        check("④ 🔴 메타가 staging **밖**이다 (안이면 rename 때 pkg 를 오염시킨다)",
+        check("④ [중요] 메타가 staging **밖**이다 (안이면 rename 때 pkg 를 오염시킨다)",
               meta.parent == stg.parent and not str(meta).startswith(str(stg) + "/"),
               f"meta={meta} staging={stg}")
 
@@ -123,7 +123,7 @@ def test_commit_swaps_and_indexes_once():
         check("⑤ 백업에는 옛 내용이 있다",
               "v: 1" in (Path(r["backup"]) / "L1" / "objects" / "UThing.yaml")
               .read_text(encoding="utf-8"))
-        check("⑤ 🔴 색인은 **한 번만**", len(calls) == 1, str(len(calls)))
+        check("⑤ [중요] 색인은 **한 번만**", len(calls) == 1, str(len(calls)))
         _, meta = S.staging_paths(live)
         check("⑤ 메타가 정리됐다", not meta.exists())
 
@@ -156,7 +156,7 @@ def test_live_change_during_session_is_reported_not_blocked():
         (live / "domain.yaml").write_text("name: MissionRuntime\ntouched: 1\n", encoding="utf-8")
 
         r = S.commit(p, "MissionRuntime")
-        check("⑥ 🔴 막지 않는다 — 커밋은 성공한다", r["status"] == "committed", str(r))
+        check("⑥ [중요] 막지 않는다 — 커밋은 성공한다", r["status"] == "committed", str(r))
         check("⑥ 바뀐 사실을 알린다", r.get("live_changed_during_session") is True, str(r))
         check("⑥ 사유를 문장으로 남긴다", "막지 않았다" in (r.get("note") or ""), str(r.get("note")))
 
@@ -189,7 +189,7 @@ def test_discard_leaves_live_untouched():
                                                           encoding="utf-8")
         r = S.discard(p, "MissionRuntime")
         check("⑦ discarded", r["status"] == "discarded", str(r))
-        check("⑦ 🔴 라이브 무영향",
+        check("⑦ [중요] 라이브 무영향",
               (live / "L1" / "objects" / "UThing.yaml").read_text(encoding="utf-8") == before)
         check("⑦ staging 이 사라졌다", not S.in_session(p, "MissionRuntime"))
         _, meta = S.staging_paths(live)
@@ -222,7 +222,7 @@ def test_status_lists_open_sessions():
         check("열린 세션이 없으면 빈 목록", S.status(p)["sessions"] == [])
         S.begin(p, "MissionRuntime")
         st = S.status(p)
-        check("🔴 열린 세션을 찾아 준다 (잊으면 위험하다)",
+        check("[중요] 열린 세션을 찾아 준다 (잊으면 위험하다)",
               len(st["sessions"]) == 1 and st["sessions"][0]["domain"] == "MissionRuntime",
               str(st))
 
@@ -237,7 +237,7 @@ def main() -> int:
                test_path_escape_is_refused, test_status_lists_open_sessions):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_staging: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_staging: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

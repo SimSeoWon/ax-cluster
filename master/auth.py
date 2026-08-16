@@ -9,7 +9,7 @@ LAN 안의 무엇이든 — 감염된 기기, 브라우저가 연 악성 페이�
 마스터 자신)이고 전부 사람이 관리하는 LAN 장비다. 과한 장치는 운영이 안 되고, 운영 안 되는
 보안은 없는 것과 같다. 세분화가 필요해지면 서비스별 토큰으로 나눈다(구조는 그대로다).
 
-🔴 **fail-closed 3중:**
+[중요] **fail-closed 3중:**
 
 1. **토큰이 없으면 서비스가 뜨지 않는다.** "인증 없이 계속" 은 선택지가 아니다 —
    그게 바로 지금 고치려는 상태다.
@@ -28,7 +28,7 @@ import secrets
 import stat
 from pathlib import Path
 
-# 토큰 파일. 🔴 `~/ax-state` 에 두지 않는다 — 그쪽은 감사 커밋이 도는 git 저장소다.
+# 토큰 파일. [중요] `~/ax-state` 에 두지 않는다 — 그쪽은 감사 커밋이 도는 git 저장소다.
 DEFAULT_TOKEN_FILE = Path.home() / ".config" / "ax-cluster" / "token"
 MIN_TOKEN_LEN = 32
 
@@ -36,7 +36,7 @@ HEADER = "authorization"
 SCHEME = "Bearer"
 BASIC = "Basic"
 
-# 🔴 **뷰 토큰은 API 토큰과 다르다** (2026-08-13).
+# [중요] **뷰 토큰은 API 토큰과 다르다** (2026-08-13).
 #
 # 브라우저에서 화면을 보려면 브라우저가 자격증명을 들고 있어야 하는데, 그것이 **API 토큰이면
 # 그 브라우저는 MCP 도구를 호출할 수 있는 자격**을 들고 있는 셈이다. LAN 안의 악성 페이지가
@@ -44,7 +44,7 @@ BASIC = "Basic"
 # **애초에 다른 비밀이면 그 걱정 자체가 없다.**
 #
 # 그래서 읽기 전용 화면에는 **별도 토큰**을 쓴다. 이 토큰으로는 큐도 브로커도 MCP 도구도
-# 호출할 수 없다 — 정적 파일 두 장만 읽힌다. 🔴 없으면 뷰 경로는 **열리지 않는다**(fail-closed).
+# 호출할 수 없다 — 정적 파일 두 장만 읽힌다. [중요] 없으면 뷰 경로는 **열리지 않는다**(fail-closed).
 VIEW_TOKEN_FILE = Path.home() / ".config" / "ax-cluster" / "view-token"
 
 # 인증 없이 열어 두는 경로. **정보를 노출하지 않는 것만** 여기 들어갈 수 있다.
@@ -131,18 +131,18 @@ def view_token_file() -> Path:
 def load_view_token(path: Path | None = None) -> str | None:
     """뷰 토큰. **없으면 `None`** — 뷰 경로를 열지 않는다는 뜻이다(예외가 아니다).
 
-    ⚠️ API 토큰과 달리 *없어도 서비스는 뜬다* — 화면이 안 열릴 뿐이다. 화면 하나 때문에
+    [주의] API 토큰과 달리 *없어도 서비스는 뜬다* — 화면이 안 열릴 뿐이다. 화면 하나 때문에
     큐와 MCP 가 못 뜨는 것은 과하다.
     """
     p = path or view_token_file()
     if not p.is_file():
         return None
-    # 🔴 권한·길이 검사는 API 토큰과 **같은 기준**이다. 읽기 전용이라고 느슨하게 두지 않는다.
+    # [중요] 권한·길이 검사는 API 토큰과 **같은 기준**이다. 읽기 전용이라고 느슨하게 두지 않는다.
     return load_token(p)
 
 
 def parse_basic(header_value: str | None) -> str | None:
-    """`Basic base64(user:token)` → 토큰. 🔴 **브라우저를 위해서만** 받는다.
+    """`Basic base64(user:token)` → 토큰. [중요] **브라우저를 위해서만** 받는다.
 
     브라우저는 `Authorization: Bearer` 를 스스로 붙일 수 없다(자바스크립트 없이는). Basic 은
     URL·프롬프트로 붙는다 — 그래서 **사람이 보는 경로에만** 열어 준다. 사용자명은 무시한다:
@@ -171,8 +171,8 @@ def auth_headers(token: str | None = None) -> dict[str, str]:
 class BearerAuthMiddleware:
     """순수 ASGI 미들웨어 — FastAPI 와 MCP(Starlette) 양쪽에 같은 것을 쓴다.
 
-    🔴 `http` 가 아닌 스코프(`lifespan`)는 통과시킨다. 통과시키지 않으면 앱이 기동조차 못 한다.
-    🔴 `websocket` 은 **거부**한다 — 지금 쓰는 서비스가 없고, 인증 안 된 업그레이드 경로를
+    [중요] `http` 가 아닌 스코프(`lifespan`)는 통과시킨다. 통과시키지 않으면 앱이 기동조차 못 한다.
+    [중요] `websocket` 은 **거부**한다 — 지금 쓰는 서비스가 없고, 인증 안 된 업그레이드 경로를
        열어 둘 이유가 없다.
     """
 
@@ -184,19 +184,19 @@ class BearerAuthMiddleware:
         self.open_paths = frozenset(open_paths)
         self._view_prefix = view_prefix or ""
         self._view_token = view_token
-        # 🔴 **뷰는 기본적으로 인증 없이 열린다** (사용자 결정 2026-08-13).
+        # [중요] **뷰는 기본적으로 인증 없이 열린다** (사용자 결정 2026-08-13).
         #
         #   > *"그냥 있는거 보여주는 뷰어를 원하는거라니까."*
         #
         # 세 서비스에 토큰을 요구하는 규칙은 **조작 가능한 API** 를 위해 쓰인 것이다 — 큐를
-        # 조작하고 추론을 태우고 프로젝트를 전환하는 경로들. 🔴 `/view/` 는 **아무것도 못 한다**:
+        # 조작하고 추론을 태우고 프로젝트를 전환하는 경로들. [중요] `/view/` 는 **아무것도 못 한다**:
         # GET/HEAD 만, 화이트리스트된 파일만, 요청이 수집을 유발하지도 않는다. 규칙의 글자를
         # 지키려고 **쓰이지 않는 화면**을 만드는 것이 더 나쁘다 — 매번 64자를 치게 하면 안 본다.
         #
-        # ⚠️ **남는 방어는 ufw LAN 한정 한 층이다.** 그것이 이 경로의 의도된 상태다.
-        #    🔴 `AX_VIEW_REQUIRE_TOKEN=1` 로 되돌릴 수 있다(그때는 뷰 토큰이 필요하다).
+        # [주의] **남는 방어는 ufw LAN 한정 한 층이다.** 그것이 이 경로의 의도된 상태다.
+        #    [중요] `AX_VIEW_REQUIRE_TOKEN=1` 로 되돌릴 수 있다(그때는 뷰 토큰이 필요하다).
         self._view_public = view_public
-        # 🔴 읽기 전용 화면 접두어들 — 원전 웹 UI 복각(2026-08-13). 조작 경로가 아니다.
+        # [중요] 읽기 전용 화면 접두어들 — 원전 웹 UI 복각(2026-08-13). 조작 경로가 아니다.
         self._public = tuple(public_prefixes or ())
 
     async def __call__(self, scope, receive, send):
@@ -220,7 +220,7 @@ class BearerAuthMiddleware:
         is_view = bool(self._view_prefix) and path.startswith(self._view_prefix)
 
         if is_view:
-            # 🔴 기본은 **공개**다 (위 `view_public` § 참조)
+            # [중요] 기본은 **공개**다 (위 `view_public` § 참조)
             if self._view_public:
                 return await self.app(scope, receive, send)
             # 잠갔을 때는 **뷰 토큰만** 받는다. API 토큰으로 여기에 들어올 수 없고, 그 반대도
@@ -280,7 +280,7 @@ def _main(argv: list[str]) -> int:
         print(f"토큰: {tok}")
         print("\n브라우저에서 열 때 — 사용자명은 아무거나, 비밀번호에 이 토큰:")
         print(f"  http://192.168.0.57:8103/view/")
-        print("🔴 이 토큰으로는 큐·브로커·MCP 도구를 호출할 수 없다 (화면 전용).")
+        print("[중요] 이 토큰으로는 큐·브로커·MCP 도구를 호출할 수 없다 (화면 전용).")
         return 0
     if cmd == "show":
         try:
@@ -293,9 +293,9 @@ def _main(argv: list[str]) -> int:
     try:
         tok = load_token(p)
     except AuthError as e:
-        print(f"❌ {e}")
+        print(f"[실패] {e}")
         return 1
-    print(f"✅ 토큰 정상: {p} ({len(tok)}자)")
+    print(f"[완료] 토큰 정상: {p} ({len(tok)}자)")
     return 0
 
 

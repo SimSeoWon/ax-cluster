@@ -44,7 +44,7 @@ async def refresh(ep: Endpoint, client) -> None:
         ep.healthy = False
         ep.models = []
         ep.resident = None
-        ep.resident_known = False       # 🔴 모른다 — 없다가 아니다
+        ep.resident_known = False       # [중요] 모른다 — 없다가 아니다
         ep.last_error = f"{type(e).__name__}: {e}"
         return
     try:
@@ -55,7 +55,7 @@ async def refresh(ep: Endpoint, client) -> None:
         ep.resident_known = True
     except Exception as e:
         # tags 가 됐는데 ps 가 실패한 건 부분 장애다. 건강 판정은 유지하되 상주는 모른다고 본다.
-        # 🔴 **그 「모른다」를 값으로 남긴다** — 예전엔 `None`(=없다)과 구별이 안 돼서
+        # [중요] **그 「모른다」를 값으로 남긴다** — 예전엔 `None`(=없다)과 구별이 안 돼서
         # `ensure_pinned` 가 재적재를 걸었다.
         ep.resident = None
         ep.resident_known = False
@@ -65,7 +65,7 @@ async def refresh(ep: Endpoint, client) -> None:
 async def ensure_pinned(ep: Endpoint, pin: str, client, state: dict) -> bool:
     """`pin` 이 상주하고 있지 않으면 다시 올린다. 실제로 적재를 시도했으면 True.
 
-    🔴 **in-flight 요청이 있으면 건드리지 않는다.** `MAX_LOADED_MODELS=1` 이라 다른 모델을
+    [중요] **in-flight 요청이 있으면 건드리지 않는다.** `MAX_LOADED_MODELS=1` 이라 다른 모델을
     올리면 지금 쓰이는 모델이 **쫓겨난다** — 폴백으로 14b 를 쓰는 중에 브로커가 35B 를
     복구하려 들면 그 요청을 죽이는 꼴이다. 재확립은 노드가 놀 때만 한다.
     """
@@ -74,7 +74,7 @@ async def ensure_pinned(ep: Endpoint, pin: str, client, state: dict) -> bool:
     if ep.resident and _name_matches(ep.resident, pin):
         return False
     if not ep.resident_known:
-        # 🔴 **판정 불가는 보존**이다. `/api/ps` 를 못 읽은 노드에 35B 적재를 거는 것은
+        # [중요] **판정 불가는 보존**이다. `/api/ps` 를 못 읽은 노드에 35B 적재를 거는 것은
         # 힘들어하는 보드에 가장 비싼 일을 시키는 것이다 (2026-08-15: 그 직후 멈췄다).
         log.info("[repin] %s 건너뜀 — 상주를 못 읽었다 (없다는 뜻이 아니다)", ep.name)
         return False
@@ -89,12 +89,12 @@ async def ensure_pinned(ep: Endpoint, pin: str, client, state: dict) -> bool:
     try:
         r = await client.post(
             f"http://{ep.host}/api/generate",
-            # 🔴 **`num_ctx` 를 반드시 싣는다 — 프록시(`server.py`)와 같은 값으로.**
+            # [중요] **`num_ctx` 를 반드시 싣는다 — 프록시(`server.py`)와 같은 값으로.**
             # 이 경로에만 그 가드가 없어서, repin 이 **4096**(그 보드 Ollama 기본값)으로
             # 올려놓고 우리 요청은 8192 를 달라 하는 상태였다 → **매 요청이 통째로 재적재**.
             # 실측 2026-08-15: `load_duration` **59.6초**(옛 기록 61.6초와 일치).
             #
-            # ⚠️ **정정** — 처음엔 이 누락이 *"256K KV 할당 → 보드 정지"* 의 원인이라고 적었다.
+            # [주의] **정정** — 처음엔 이 누락이 *"256K KV 할당 → 보드 정지"* 의 원인이라고 적었다.
             # **틀렸다.** 그 보드는 `num_ctx` 없는 요청을 4096 으로 올린다(로그 실측).
             # 정지의 원인은 **요청마다 안 돌려주는 누적 메모리**였다(03:04 OOM). 이 가드의
             # 값은 「재적재 방지」이지 「크래시 방지」가 아니다 — 근거를 정확히 남긴다.

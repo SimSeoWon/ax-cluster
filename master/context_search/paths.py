@@ -1,6 +1,6 @@
 """마운트된 프로젝트 → 데이터 디렉토리 해석 (PLAN §5.5.2, §5.2-E).
 
-🔴 **이것이 이식의 핵심 변경점이다.**
+[중요] **이것이 이식의 핵심 변경점이다.**
 
 AgentTest 는 루트를 **기동 시 인자로 고정**했다 — `run_http_server(project_root, port)` 가
 `register_*_routes(app, project_root, ...)` 로 전 라우트를 클로저에 캡처하므로
@@ -24,12 +24,12 @@ AgentTest 는 루트를 **기동 시 인자로 고정**했다 — `run_http_serv
         config.yaml     추적 대상 + 색인 워터마크
         context/        원본 · 컨텍스트 MD
         ontology/       원본 · 도메인 yaml
-        repo/           소스 클론 — 🔴 **색인 대상은 여기의 Source/** 뿐이다** (§5.2-E)
+        repo/           소스 클론 — [중요] **색인 대상은 여기의 Source/** 뿐이다** (§5.2-E)
         vector_db/      파생 · 벡터 색인
         bm25.db         파생
         class_graph.db  파생
 
-🔴 **파생물은 프로젝트 디렉토리 안에 있다.** 컬렉션 이름(`context_a`/`context_b`)이 고정이어도
+[중요] **파생물은 프로젝트 디렉토리 안에 있다.** 컬렉션 이름(`context_a`/`context_b`)이 고정이어도
 **디렉토리가 갈리므로 프로젝트끼리 섞이지 않는다** — §5.5.1 이 지적한 "컬렉션명에 프로젝트
 식별자가 없다" 는 문제가 경로 분기로 해소된다.
 """
@@ -43,7 +43,7 @@ from ..projects.config import ConfigError, ProjectConfig, Registry
 # 파생 자산 이름 — `<Name>/.gitignore` 와 짝을 맞춘다. 바꾸면 양쪽을 같이 바꿀 것.
 VECTOR_DB = "vector_db"
 BM25_DB = "bm25.db"
-BM25_DOMAINS_DB = "bm25_domains.db"      # 🔴 도메인 색인은 **별도 DB** — 소 2.1.1
+BM25_DOMAINS_DB = "bm25_domains.db"      # [중요] 도메인 색인은 **별도 DB** — 소 2.1.1
 CLASS_GRAPH_DB = "class_graph.db"
 DEPENDENCY_GRAPH_DB = "dependency_graph.db"
 
@@ -68,7 +68,7 @@ class ProjectPaths:
     def repo(self) -> Path: return self.root / "repo"
     @property
     def source(self) -> Path:
-        """🔴 색인 대상. `Content/`(uasset, 워킹트리의 93%)는 여기 들어오지 않는다 (§5.2-E)."""
+        """[중요] 색인 대상. `Content/`(uasset, 워킹트리의 93%)는 여기 들어오지 않는다 (§5.2-E)."""
         return self.repo / SOURCE_SUBDIR
 
     @property
@@ -78,7 +78,7 @@ class ProjectPaths:
 
     @property
     def responses(self) -> Path:
-        """워커 추론 응답의 스풀 (소 1.3.2). 🔴 **파생물이 아니다.**
+        """워커 추론 응답의 스풀 (소 1.3.2). [중요] **파생물이 아니다.**
 
         매니페스트는 지우면 재수집되지만 이것은 **돈을 낸 LLM 출력**이다 — 지우면 같은 추론을
         다시 산다. 그리고 통합자가 적용할 때까지 **유일한 사본**이라, 이것이 곧 *"어디까지
@@ -88,7 +88,7 @@ class ProjectPaths:
 
     @property
     def search_log(self) -> Path:
-        """검색 로그 (소 3.4.5). 🔴 **파생물이 아니다** — canary 와 같은 결의 **관측 기록**이라
+        """검색 로그 (소 3.4.5). [중요] **파생물이 아니다** — canary 와 같은 결의 **관측 기록**이라
         지우면 복구되지 않는다. 원전은 `<프로젝트>/.claude/search_log.jsonl` 이지만 §5.5 가
         *"데이터를 프로젝트 밖으로"* 로 확정했다. 청소 대상에 넣지 말 것.
         """
@@ -96,7 +96,7 @@ class ProjectPaths:
 
     @property
     def canary(self) -> Path:
-        """🔴 **영구 유실 카나리 누적** (소 3.5.6). 원전 `permanent_loss_canary.jsonl` 이식.
+        """[중요] **영구 유실 카나리 누적** (소 3.5.6). 원전 `permanent_loss_canary.jsonl` 이식.
 
         저널만으로는 *"카나리가 **반복**되면 근본 원인을 먼저 해결하라"* 를 할 수 없다 —
         저널은 돌고, 반복은 **누적된 것을 봐야** 보인다. 파생물이 아니라 **관측 기록**이라
@@ -110,7 +110,7 @@ class ProjectPaths:
     def bm25_db(self) -> Path: return self.root / BM25_DB
     @property
     def bm25_domains_db(self) -> Path:
-        """도메인(온톨로지) BM25. 🔴 컨텍스트 MD 색인과 **파일이 다르다** — 도메인은 광범위
+        """도메인(온톨로지) BM25. [중요] 컨텍스트 MD 색인과 **파일이 다르다** — 도메인은 광범위
         신호라 같은 표에 넣으면 일반 검색 결과를 밀어낸다(원본이 같은 이유로 분리했다)."""
         return self.root / BM25_DOMAINS_DB
 
@@ -150,7 +150,7 @@ class ProjectPaths:
 def resolve(name: str = "", *, registry: Registry | None = None) -> ProjectPaths:
     """프로젝트명 → 경로. **`name` 을 비우면 지금 마운트된 프로젝트**를 쓴다.
 
-    🔴 매 호출마다 레지스트리를 읽는다. 캐시하지 않는 이유는 그게 이 설계의 요점이기
+    [중요] 매 호출마다 레지스트리를 읽는다. 캐시하지 않는 이유는 그게 이 설계의 요점이기
     때문이다 — 마운트가 바뀌면 **다음 호출이 바로 새 경로를 본다.**
     """
     reg = registry or Registry.load()

@@ -1,11 +1,11 @@
 """층1 — 결정적 자기검증 (중 2.1).
 
-🔴 지키는 계약은 넷이다:
+[중요] 지키는 계약은 넷이다:
 
     ① **휘발 태그는 잡고 보존 태그는 건드리지 않는다** — 태그가 두 종류라는 게 실제 계약이다
-    ② 🔴 **`[FEEDBACK]` 이 소스에 남으면 위반** — 원전에서 검증이 무한 실패한 그 자리다
+    ② [중요] **`[FEEDBACK]` 이 소스에 남으면 위반** — 원전에서 검증이 무한 실패한 그 자리다
     ③ **동결은 추가 허용 · 변경/삭제 위반 · 본문 채움 통과**
-    ④ 🔴 **fail-closed** — 안 돌린 것도, 기준 원본이 없는 것도 통과가 아니다
+    ④ [중요] **fail-closed** — 안 돌린 것도, 기준 원본이 없는 것도 통과가 아니다
 
 `.venv/bin/python master/test_layer1.py`
 """
@@ -28,7 +28,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 HDR = """#pragma once
@@ -55,7 +55,7 @@ def test_volatile_tags_are_caught() -> None:
 
 
 def test_permanent_tags_and_plain_comments_pass() -> None:
-    """🔴 `[DOC]`·`[STATE]`·`[BIND]`·`[REPLICATED]` 와 무태그 주석은 **남아 있어야 정상**이다."""
+    """[중요] `[DOC]`·`[STATE]`·`[BIND]`·`[REPLICATED]` 와 무태그 주석은 **남아 있어야 정상**이다."""
     body = ("// [DOC] 무엇을 하는가\n// [STATE] 상태 설명\n// [BIND] 바인딩\n"
             "// [REPLICATED] 복제됨\n// 그냥 주석\nvoid UFoo::F() {}\n")
     r = L1.check({C: body})
@@ -63,7 +63,7 @@ def test_permanent_tags_and_plain_comments_pass() -> None:
 
 
 def test_feedback_left_in_source_is_a_violation() -> None:
-    """🔴 원전: *"모든 주석 보존"* 지시가 `[FEEDBACK]` 삭제를 막아 **검증이 무한 실패**했다."""
+    """[중요] 원전: *"모든 주석 보존"* 지시가 `[FEEDBACK]` 삭제를 막아 **검증이 무한 실패**했다."""
     r = L1.check({C: "// [FEEDBACK] 빌드가 깨졌다\nvoid UFoo::F() {}\n"})
     check("[FEEDBACK] 잔재는 위반", not r.ok, r.summary)
     check("사유가 FEEDBACK 을 지목", any("FEEDBACK" in p for p in r.problems), str(r.problems))
@@ -115,10 +115,10 @@ def test_fail_closed_directions() -> None:
     check("동결은 미검사라고 적는다", "미검사" in no_base.summary, no_base.summary)
 
 
-# ── 🔴 배선 — 응답 수락 경로 (소 2.1.3) ─────────────────────────────────────────
+# ── [중요] 배선 — 응답 수락 경로 (소 2.1.3) ─────────────────────────────────────────
 
 def test_residue_response_is_rejected_at_acceptance_not_at_apply() -> None:
-    """🔴 잔재가 있는 응답이 *"통과"* 로 스풀에 들어가면 왕복이 하나 더 든다."""
+    """[중요] 잔재가 있는 응답이 *"통과"* 로 스풀에 들어가면 왕복이 하나 더 든다."""
     want = [H, C]
     good = f"=== FILE: {H} ===\n{HDR}=== FILE: {C} ===\nvoid UFoo::F() {{}}\n"
     ok = INF.judge("RESPONSE: 2\nRESULT: DONE", good, want=want)
@@ -126,7 +126,7 @@ def test_residue_response_is_rejected_at_acceptance_not_at_apply() -> None:
 
     bad = f"=== FILE: {H} ===\n{HDR}=== FILE: {C} ===\n// [PSEUDO] 나중에\n"
     r = INF.judge("RESPONSE: 2\nRESULT: DONE", bad, want=want)
-    check("🔴 잔재가 있으면 수락 단계에서 막는다", not r.ok, r.summary)
+    check("[중요] 잔재가 있으면 수락 단계에서 막는다", not r.ok, r.summary)
     check("치명 메모로 남는다", any("휘발 태그" in n for n in r.fatal), str(r.notes))
 
     fb = f"=== FILE: {H} ===\n{HDR}=== FILE: {C} ===\n// [FEEDBACK] 남았다\n"
@@ -135,7 +135,7 @@ def test_residue_response_is_rejected_at_acceptance_not_at_apply() -> None:
 
 
 def test_integrate_still_runs_layer1_as_the_last_line() -> None:
-    """🔴 두 곳 다 둔다 — 스풀을 손질하거나 재사용하는 경로에서 ①이 우회된다."""
+    """[중요] 두 곳 다 둔다 — 스풀을 손질하거나 재사용하는 경로에서 ①이 우회된다."""
     from master.work import integrate as ITG
     r = ITG.layer1({C: "// [IMPL] 미완\n"}, baseline=None)
     check("통합자 쪽도 같은 검사", not r.ok, r.summary)
@@ -151,7 +151,7 @@ def main() -> int:
                test_integrate_still_runs_layer1_as_the_last_line):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_layer1: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_layer1: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

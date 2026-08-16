@@ -9,13 +9,13 @@ object yaml 은 `file:` 로 소스를 가리킨다. 파일이 옮겨지거나 �
     path_sync   `file:`            ← 클래스 그래프(소스 실측)
     declared    `declared_methods:` ← methods 표(6,380행 실측)
 
-## 🔴 이 둘은 **기계의 사실**이지 사람의 내용이 아니다
+## [중요] 이 둘은 **기계의 사실**이지 사람의 내용이 아니다
 
 그래서 `verified_by_user` 로 잠긴 항목에도 **넣는다.** 잠금이 지키는 것은 사람이 쓴 설명·
 의도이지, *이 클래스가 어느 파일에 있는가* 가 아니다. 잠갔다고 경로가 낡은 채로 남으면
-잠금이 오히려 문서를 썩힌다. 🔴 **대신 그 두 필드 말고는 아무것도 건드리지 않는다.**
+잠금이 오히려 문서를 썩힌다. [중요] **대신 그 두 필드 말고는 아무것도 건드리지 않는다.**
 
-## 🔴 없는 클래스를 지우지 않는다
+## [중요] 없는 클래스를 지우지 않는다
 
 그래프에 없는 클래스는 ⑴ 정말 삭제됐거나 ⑵ 그래프가 낡았거나 ⑶ 파서가 못 읽은 것이다.
 셋을 구분할 수단이 여기엔 없다. **보고만 하고 남긴다** — 지우는 것은 사람이 판단한다.
@@ -36,7 +36,7 @@ from .package import LAYER_DIRS, MANIFEST
 
 PATH_FIELD = "file"
 DECLARED_FIELD = "declared_methods"
-MAX_DECLARED = 60           # 🔴 상한이 걸리면 본문에 그렇게 적는다
+MAX_DECLARED = 60           # [중요] 상한이 걸리면 본문에 그렇게 적는다
 
 
 @dataclass
@@ -54,8 +54,8 @@ class SyncStats:
         s = (f"{self.domain or '전체'}: 검사 {self.checked} · 경로 수정 {len(self.path_fixed)}"
              f" · declared {len(self.declared_set)}")
         if self.missing:
-            # 🔴 지우지 않았다는 것까지 말한다
-            s += f" · ⚠️ 그래프에 없음 {len(self.missing)}(남겨 둠)"
+            # [중요] 지우지 않았다는 것까지 말한다
+            s += f" · [주의] 그래프에 없음 {len(self.missing)}(남겨 둠)"
         if self.truncated:
             s += f" · 상한 적용 {len(self.truncated)}"
         if self.notes:
@@ -107,7 +107,7 @@ def sync_domain(paths: ProjectPaths, domain: str, *, files=None, methods=None,
     if files is None or methods is None:
         files, methods = _graph(paths)
     if files is None:
-        st.notes.append("🔴 클래스 그래프가 없다 — `python -m master.graph build` 먼저")
+        st.notes.append("[중요] 클래스 그래프가 없다 — `python -m master.graph build` 먼저")
         return st
 
     from . import hierarchy
@@ -118,7 +118,7 @@ def sync_domain(paths: ProjectPaths, domain: str, *, files=None, methods=None,
         name = str(item.get("name") or p.stem)
         st.checked += 1
         if name not in files:
-            # 🔴 지우지 않는다 — 삭제됐는지 그래프가 낡았는지 여기선 모른다
+            # [중요] 지우지 않는다 — 삭제됐는지 그래프가 낡았는지 여기선 모른다
             st.missing.append(name)
             continue
 
@@ -140,7 +140,7 @@ def sync_domain(paths: ProjectPaths, domain: str, *, files=None, methods=None,
                 changed = True
 
         if changed and apply:
-            yaml_io.write(p, item)      # 🔴 이 두 필드만 바뀐 dict 다
+            yaml_io.write(p, item)      # [중요] 이 두 필드만 바뀐 dict 다
     return st
 
 

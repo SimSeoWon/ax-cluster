@@ -27,7 +27,7 @@ _DEFAULT = [
 ]
 
 
-# 🔴 `num_ctx` 가 요청마다 다르면 Ollama 가 **모델을 통째로 다시 올린다** (2026-08-08 실측:
+# [중요] `num_ctx` 가 요청마다 다르면 Ollama 가 **모델을 통째로 다시 올린다** (2026-08-08 실측:
 # 같은 35B 인데 num_ctx 만 바꿨더니 61.6s 재적재). 호출자가 지정하지 않으면 이 값을 넣어
 # 사고를 막는다. 8192 인 이유는 리포트 06 §5.3 — 35B 는 32768 에서 9분 59초 후 HTTP 500 이
 # 나고 8192 는 정상이다. 3060 도 여유가 257 MiB 뿐이라 8192 가 상한이다.
@@ -41,7 +41,7 @@ def load_endpoints() -> tuple[list[Endpoint], dict[str, str]]:
     if cfg:
         p = Path(cfg)
         if not p.is_file():
-            # 🔴 폴백 없이 실패 — 설정을 가리켰는데 없으면 조용히 기본값으로 도는 게 더 나쁘다.
+            # [중요] 폴백 없이 실패 — 설정을 가리켰는데 없으면 조용히 기본값으로 도는 게 더 나쁘다.
             raise SystemExit(f"AX_BROKER_CONFIG 가 가리키는 파일이 없다: {p}")
         raw = json.loads(p.read_text(encoding="utf-8"))
     eps = [Endpoint(name=e["name"], host=e["host"], prefer=list(e.get("prefer") or []))

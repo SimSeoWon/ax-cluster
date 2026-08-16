@@ -15,7 +15,7 @@
 **`GlobalEventSystem` 은 178 로 거의 그대로**였다. 온 프로젝트가 include 하는 허브라
 상한으로 풀 문제가 아니다. 하위로 갈라 상위가 하위를 참조하면 상위의 후보가 사라진다.
 
-## 🔴 구현 규칙 둘 — 지키지 않으면 조용히 망가진다
+## [중요] 구현 규칙 둘 — 지키지 않으면 조용히 망가진다
 
 ⑴ **`kind: domain` 으로 종류를 구분한다.** 하위 문서 참조에는 `file` 도 `evidence` 도
    없다. 클래스 규칙으로 검사하면 **레이어 추정·사실 게이트가 전부 오탐**을 낸다.
@@ -58,7 +58,7 @@ def children(paths: ProjectPaths, domain: str) -> list:
 
 
 def descendants(paths: ProjectPaths, domain: str) -> list:
-    """모든 하위 문서 (전이적). 🔴 **순환에서 멈춘다.**"""
+    """모든 하위 문서 (전이적). [중요] **순환에서 멈춘다.**"""
     out, seen, stack = [], {domain}, list(children(paths, domain))
     while stack:
         cur = stack.pop()
@@ -111,7 +111,7 @@ def add_child(paths: ProjectPaths, parent: str, child: str) -> LinkResult:
     if not (c_dir / "domain.yaml").is_file():
         return LinkResult("not_found", f"하위 `{child}` 의 domain.yaml 이 없다")
     if parent == child or parent in descendants(paths, child):
-        # 🔴 child 의 자손에 parent 가 있으면 걸자마자 순환이다.
+        # [중요] child 의 자손에 parent 가 있으면 걸자마자 순환이다.
         return LinkResult("cycle", f"`{child}` 아래에 이미 `{parent}` 가 있다 — 순환이 된다")
     if child in children(paths, parent):
         return LinkResult("noop", "이미 걸려 있다")

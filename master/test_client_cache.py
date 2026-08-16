@@ -2,14 +2,14 @@
 
 검증하는 것:
 
-    ① 🔴 **3분기가 합쳐지지 않는다** — `absent` 는 폴백하지 않고 캐시하지도 않는다
+    ① [중요] **3분기가 합쳐지지 않는다** — `absent` 는 폴백하지 않고 캐시하지도 않는다
        (합치면 사람이 지운 개념이 캐시에서 되살아난다)
     ② 에러·파싱 불가 응답은 **적재되지 않는다** (캐시 = 마지막 「정상」 데이터)
     ③ stale 응답에 `_stale`·`_cached_at` 이 **주입된다** (표기 없으면 아무도 모른다)
     ④ TTL 이 없다 — 오래돼도 내준다 (온톨로지는 중앙 SSOT)
     ⑤ 초기화 실패는 **한 번만** 시도하고, 실패를 값으로 돌린다
     ⑥ 모르는 `outcome` 은 **예외** — 조용히 `unreachable` 로 접지 않는다
-    ⑦ 🔴 벡터 폴백: **해시가 같으면 임베딩을 다시 만들지 않는다**
+    ⑦ [중요] 벡터 폴백: **해시가 같으면 임베딩을 다시 만들지 않는다**
     ⑧ 벡터 폴백 결과에 `source` 표시가 박힌다 · 임베더는 **우리 다국어 모델**이다
 
 `.venv/bin/python master/test_client_cache.py`
@@ -37,7 +37,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 # ── ①⑥ 3분기 ────────────────────────────────────────────────────────────────
@@ -50,12 +50,12 @@ def test_three_outcomes_stay_separate():
         check("① ok → 서버 응답 그대로", how == "server" and body == GOOD, f"{how} {body[:40]}")
         check("① ok 는 캐시를 워밍한다", c.entries() == 1, str(c.entries()))
 
-        # 🔴 absent — 서버가 「없다」고 답했다. 폴백하면 지워진 개념이 되살아난다
+        # [중요] absent — 서버가 「없다」고 답했다. 폴백하면 지워진 개념이 되살아난다
         absent_body = json.dumps({"error": "not found"})
         body, how = c.serve("/onto/domain/MissionRuntime", lambda e: (absent_body, "absent"))
-        check("① 🔴 absent 는 폴백하지 않는다", how == "absent" and body == absent_body,
+        check("① [중요] absent 는 폴백하지 않는다", how == "absent" and body == absent_body,
               f"{how} {body[:40]}")
-        check("① 🔴 absent 는 캐시도 안 바꾼다",
+        check("① [중요] absent 는 캐시도 안 바꾼다",
               json.loads(c.get_stale("/onto/domain/MissionRuntime"))["domain"] == "MissionRuntime")
 
         body, how = c.serve("/onto/domain/MissionRuntime", lambda e: ("", "unreachable"))
@@ -124,7 +124,7 @@ def test_broken_cache_fails_open_once():
         r = c.put("/k", GOOD)
         check("⑤ put 이 예외를 올리지 않는다", not r["stored"], str(r))
         check("⑤ get 은 None", c.get_stale("/k") is None)
-        # 🔴 재시도하지 않는다 (한 번만 시도)
+        # [중요] 재시도하지 않는다 (한 번만 시도)
         c._tried = True
         check("⑤ 한 번만 시도한다", c._conn_or_none() is None)
 
@@ -146,7 +146,7 @@ def test_hash_skip_avoids_reembedding():
         r1 = vf.upsert(_results())
         check("⑦ 처음엔 적재한다", r1["upserted"] == 1, str(r1))
         r2 = vf.upsert(_results())
-        check("⑦ 🔴 해시가 같으면 건너뛴다", r2["upserted"] == 0 and r2["skipped"] == 1, str(r2))
+        check("⑦ [중요] 해시가 같으면 건너뛴다", r2["upserted"] == 0 and r2["skipped"] == 1, str(r2))
         r3 = vf.upsert(_results(h="h2"))
         check("⑦ 해시가 바뀌면 다시 적재한다", r3["upserted"] == 1, str(r3))
         bad = vf.upsert([{"file": "", "content_preview": ""}])
@@ -162,7 +162,7 @@ def test_search_marks_the_fallback_and_uses_our_model():
         vf.upsert(_results())
         hits = vf.search("미션 실행기", limit=3)
         check("⑧ 한글 질의로 결과가 나온다", len(hits) == 1, str(len(hits)))
-        check("⑧ 🔴 폴백임을 표시한다", hits[0]["source"] == "client_cache_vector",
+        check("⑧ [중요] 폴백임을 표시한다", hits[0]["source"] == "client_cache_vector",
               hits[0]["source"])
         check("⑧ 유사도가 0 이상", hits[0]["similarity"] >= 0.0, str(hits[0]["similarity"]))
         check("⑧ 태그를 되살린다", hits[0]["tags"] == ["미션", "실행기"], str(hits[0]["tags"]))
@@ -170,7 +170,7 @@ def test_search_marks_the_fallback_and_uses_our_model():
               "UMissionTaskExecutor" in hits[0]["related_classes"],
               str(hits[0]["related_classes"]))
         st = vf.stats()
-        check("⑧ 🔴 임베더가 우리 다국어 모델이다",
+        check("⑧ [중요] 임베더가 우리 다국어 모델이다",
               "multilingual" in (st["embed_model"] or ""), str(st["embed_model"]))
         check("⑧ 빈 질의는 빈 결과", vf.search("  ") == [])
 
@@ -182,7 +182,7 @@ def main() -> int:
                test_search_marks_the_fallback_and_uses_our_model):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_client_cache: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_client_cache: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

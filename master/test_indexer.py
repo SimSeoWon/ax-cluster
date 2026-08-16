@@ -2,7 +2,7 @@
 
     .venv/bin/python master/test_indexer.py
 
-🔴 지키는 불변식:
+[중요] 지키는 불변식:
    1. **미러를 `reset --hard` 로 덮지 않는다** — `merge --ff-only`. 갈라졌으면 알아야 한다
    2. **컨텍스트가 안 바뀌었으면 재색인하지 않는다** — 40초를 태워 같은 것을 넣지 않는다
    3. **그 '건너뜀' 을 조용히 넘기지 않는다** — 사유를 남긴다
@@ -37,10 +37,10 @@ def check(label: str, cond: bool, detail: str = "") -> None:
     global PASS, FAIL
     if cond:
         PASS += 1
-        print(f"  ✅ {label}")
+        print(f"  [완료] {label}")
     else:
         FAIL += 1
-        print(f"  ❌ {label}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {label}" + (f" — {detail}" if detail else ""))
 
 
 CONFIG = """# 사용자가 손으로 쓴 주석 — 갱신이 이걸 지우면 안 된다
@@ -106,14 +106,14 @@ def main() -> int:
     paths = make_project(tmp)
     reg = FakeReg(tmp)
 
-    print("\n[1] 🔴 미러를 덮어쓰지 않는다 — ff-only")
+    print("\n[1] [중요] 미러를 덮어쓰지 않는다 — ff-only")
     log = []
     r = process_event(ev(), registry=reg, git=git_ok(log), reindex=lambda p: 7)
     cmds = [" ".join(c) for c in log]
     check("fetch 한다", any(c.startswith("fetch") for c in cmds), str(cmds))
-    check("🔴 merge --ff-only 를 쓴다",
+    check("[중요] merge --ff-only 를 쓴다",
           any("merge --ff-only" in c for c in cmds), str(cmds))
-    check("🔴 reset --hard 를 쓰지 않는다",
+    check("[중요] reset --hard 를 쓰지 않는다",
           not any("reset" in c for c in cmds), str(cmds))
     check("소스 변경만 센다 (§5.2-E)",
           any("diff --name-only" in c and c.endswith("Source") for c in cmds), str(cmds))
@@ -124,11 +124,11 @@ def main() -> int:
     check("재색인함", r.reindexed and r.docs == 7, f"{r.reindexed} {r.docs}")
     check("다이제스트가 저장된다", bool(read_digest(paths)))
 
-    print("\n[3] 🔴 컨텍스트가 그대로면 재색인하지 않는다")
+    print("\n[3] [중요] 컨텍스트가 그대로면 재색인하지 않는다")
     calls = []
     r2 = process_event(ev(), registry=reg, git=git_ok([]),
                        reindex=lambda p: calls.append(1) or 7)
-    check("🔴 재색인을 부르지 않는다", calls == [], str(calls))
+    check("[중요] 재색인을 부르지 않는다", calls == [], str(calls))
     check("건너뛴 사유를 남긴다", "변화 없음" in r2.skipped, r2.skipped)
     check("  소스는 바뀐 상황이므로 이유를 덧붙인다",
           "합성이 문서를 바꾸지 않았다" in r2.skipped, r2.skipped)
@@ -143,7 +143,7 @@ def main() -> int:
     check("문서 수", r3.docs == 9)
     check("다이제스트 갱신", read_digest(paths) == context_digest(paths))
 
-    print("\n[5] 🔴 워터마크 갱신이 주석·순서를 뭉개지 않는다")
+    print("\n[5] [중요] 워터마크 갱신이 주석·순서를 뭉개지 않는다")
     text = paths.config.read_text(encoding="utf-8")
     check("커밋이 전진했다", "b" * 40 in text, text[:120])
     check("사용자 주석 보존", "사용자가 손으로 쓴 주석" in text)
@@ -151,7 +151,7 @@ def main() -> int:
     check("항목 순서 보존", text.index("last_indexed_commit") < text.index("source"))
     check("임시 파일 안 남음", not list(paths.root.glob("*.tmp")))
 
-    print("\n[6] 🔴 등록되지 않은 project_id 는 거부 (§5.5.4-④)")
+    print("\n[6] [중요] 등록되지 않은 project_id 는 거부 (§5.5.4-④)")
     r4 = process_event(ev(pid="Someone/Else"), registry=reg, git=git_ok([]),
                        reindex=lambda p: 1)
     check("거부", not r4.ok and "등록되지 않은" in r4.error, r4.error)
@@ -159,7 +159,7 @@ def main() -> int:
           process_event(ev(pid="sim/DEMO"), registry=reg, git=git_ok([]),
                         reindex=lambda p: 1).ok)
 
-    print("\n[7] 🔴 fetch 가 실패하면 재색인하지 않는다")
+    print("\n[7] [중요] fetch 가 실패하면 재색인하지 않는다")
     calls.clear()
 
     def git_fetch_fail(repo, *args):
@@ -170,9 +170,9 @@ def main() -> int:
     r5 = process_event(ev(), registry=reg, git=git_fetch_fail,
                        reindex=lambda p: calls.append(1) or 1)
     check("오류로 잡는다", not r5.ok and "fetch 실패" in r5.error, r5.error)
-    check("🔴 재색인을 부르지 않는다", calls == [], str(calls))
+    check("[중요] 재색인을 부르지 않는다", calls == [], str(calls))
 
-    print("\n[8] 🔴 미러가 갈라지면 조용히 덮지 않는다")
+    print("\n[8] [중요] 미러가 갈라지면 조용히 덮지 않는다")
 
     def git_diverged(repo, *args):
         if args[0] == "merge":
@@ -200,7 +200,7 @@ def main() -> int:
     r7 = process_event(ev(), registry=reg, git=git_ok([]), reindex=boom)
     check("오류로 보고", not r7.ok and "재색인 실패" in r7.error, r7.error)
     check("  원인이 남는다", "chromadb 죽음" in r7.error)
-    check("🔴 다이제스트를 갱신하지 않는다 (다음에 다시 시도한다)",
+    check("[중요] 다이제스트를 갱신하지 않는다 (다음에 다시 시도한다)",
           read_digest(paths) != context_digest(paths))
 
     print("\n[10] 소스 클론이 없으면 거부")
@@ -208,7 +208,7 @@ def main() -> int:
     r8 = process_event(ev(), registry=reg, git=git_ok([]), reindex=lambda p: 1)
     check("거부", not r8.ok and "소스 클론이 없다" in r8.error, r8.error)
 
-    print("\n[10-1] 🔴 트윈이 자란다 — 합성기가 색인기에 물려 있다 (중 1.2)")
+    print("\n[10-1] [중요] 트윈이 자란다 — 합성기가 색인기에 물려 있다 (중 1.2)")
     p3 = make_project(tmp / "grow")
     seen = {}
 
@@ -230,18 +230,18 @@ def main() -> int:
     check("합성을 부른다", "changed" in seen, str(seen))
     check("  변경 파일 목록을 넘긴다",
           seen.get("changed") == ["Source/A.cpp", "Source/B.cpp"], str(seen.get("changed")))
-    check("🔴 커밋 해시를 넘긴다 (source_commit 스탬프의 원천)",
+    check("[중요] 커밋 해시를 넘긴다 (source_commit 스탬프의 원천)",
           seen.get("commit") == "b" * 40, seen.get("commit"))
     check("합성 결과가 보고된다", r9.synth_written == 1, r9.summary)
-    check("🔴 합성이 문서를 바꿨으니 재색인이 돈다", r9.reindexed and calls == [1], r9.summary)
+    check("[중요] 합성이 문서를 바꿨으니 재색인이 돈다", r9.reindexed and calls == [1], r9.summary)
     check("그래프도 갱신 시도한다", bool(r9.graph_notes), str(r9.graph_notes))
     check("요약에 다 들어간다", "합성" in r9.summary and "색인" in r9.summary, r9.summary)
 
-    print("\n[10-2] 🔴 유실을 삼키지 않는다 (워터마크가 전진하므로 영구 유실이다)")
+    print("\n[10-2] [중요] 유실을 삼키지 않는다 (워터마크가 전진하므로 영구 유실이다)")
 
     class LostS:
         written, lost, aborted = 0, 2, ""
-        summary = "그룹 2 → 통과 0 · 🔴 사실 거부 2"
+        summary = "그룹 2 → 통과 0 · [중요] 사실 거부 2"
 
         class G:
             def __init__(self, k, why):
@@ -252,7 +252,7 @@ def main() -> int:
     r10 = process_event(ev(), registry=FakeReg(tmp / "grow"), git=git_ok([]),
                         reindex=lambda p: 1, synth_run=lambda *a, **k: LostS())
     check("유실 수를 센다", r10.synth_lost == 2, str(r10.synth_lost))
-    check("🔴 어느 그룹인지 남긴다", len(r10.lost_groups) == 2, str(r10.lost_groups))
+    check("[중요] 어느 그룹인지 남긴다", len(r10.lost_groups) == 2, str(r10.lost_groups))
     check("  사유도 남긴다", "유령 식별자" in r10.lost_groups[0], r10.lost_groups[0])
     check("요약이 유실을 드러낸다", "유실 2" in r10.summary, r10.summary)
 
@@ -261,10 +261,10 @@ def main() -> int:
     r11 = process_event(ev(), registry=FakeReg(tmp / "grow"), git=git_ok([]),
                         reindex=lambda p: 1, synthesize=False,
                         synth_run=lambda *a, **k: off.append(1))
-    check("🔴 합성을 부르지 않는다", off == [], str(off))
+    check("[중요] 합성을 부르지 않는다", off == [], str(off))
     check("  그래도 그래프는 갱신한다", bool(r11.graph_notes), str(r11.graph_notes))
 
-    print("\n[10-4] 🔴 합성이 터져도 색인기가 죽지 않는다")
+    print("\n[10-4] [중요] 합성이 터져도 색인기가 죽지 않는다")
 
     def boom_synth(*a, **k):
         raise RuntimeError("브로커 죽음")

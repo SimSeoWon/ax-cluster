@@ -3,12 +3,12 @@
 층3 은 **UE5 가 실제로 빌드되고 테스트가 도는가**다. 층2(§9.4.4)가 LLM 판정의 계약이라면
 이쪽은 **엔진 로그의 계약**이다. 형태는 같다 — 정확한 신호만 믿고, 없으면 막는다.
 
-🔴 **판정 신호는 이 둘뿐이다** (실측 2026-08-08, `.2` 에서 SSH·세션 0 구동):
+[중요] **판정 신호는 이 둘뿐이다** (실측 2026-08-08, `.2` 에서 SSH·세션 0 구동):
 
     LogAutomationController: Display: Test Completed. Result={Success|Fail} Name={..} Path={..}
     LogAutomationCommandLine: Display: **** TEST COMPLETE. EXIT CODE: N ****
 
-🔴 **틀린 신호 두 개 — 실측으로 걸렀다:**
+[중요] **틀린 신호 두 개 — 실측으로 걸렀다:**
 
 1. **SSH 종료 코드를 쓰지 마라. 양방향으로 틀린다** (실측 2026-08-08):
 
@@ -34,7 +34,7 @@
 아무것도 검증하지 않은 실행을 통과로 세면 게이트가 조용히 무의미해지는데, 그 방어가
 엔진 버전이 바뀌면 사라지는 것이면 방어가 아니다.
 
-⚠️ 이 모듈의 초안은 "매치가 없어도 exit 0" 이라고 적었다 — **실측으로 틀린 것이 확인돼
+[주의] 이 모듈의 초안은 "매치가 없어도 exit 0" 이라고 적었다 — **실측으로 틀린 것이 확인돼
 고쳤다.** 추측으로 쓴 근거는 실행해 보기 전까지 근거가 아니다.
 """
 from __future__ import annotations
@@ -62,14 +62,14 @@ Runner = Callable[[Sequence[str], int], subprocess.CompletedProcess]
 
 
 def _run(cmd: Sequence[str], timeout: int) -> subprocess.CompletedProcess:
-    """원격 명령 실행. 🔴 **바이트로 받아 우리 디코더로 푼다.**
+    """원격 명령 실행. [중요] **바이트로 받아 우리 디코더로 푼다.**
 
-    ⚠️ 실측 2026-08-11(골조 게이트 첫 실전 구동에서 터졌다): `text=True` 는 strict UTF-8 이라
+    [주의] 실측 2026-08-11(골조 게이트 첫 실전 구동에서 터졌다): `text=True` 는 strict UTF-8 이라
     **한국어 윈도우의 UBT 출력에서 `UnicodeDecodeError` 로 죽는다** — 링커가 CP949 로
     *"라이브러리 … 만들고 있습니다"* 를 뱉는다. 판정 문자열(`Result:`)은 ASCII 라 살아 있는데
     **디코딩이 먼저 죽어서 판정 자체에 도달하지 못했다.**
 
-    🔴 `errors="replace"` 로 때우지 않는다 — 그러면 빌드 실패 사유의 한국어가 깨져 **사람이
+    [중요] `errors="replace"` 로 때우지 않는다 — 그러면 빌드 실패 사유의 한국어가 깨져 **사람이
     로그를 못 읽는다.** 소스 44%가 CP949 라 이미 만들어 둔 `source_text.decode`(UTF-8 → CP949
     → replace)를 그대로 쓴다.
     """
@@ -145,7 +145,7 @@ class Layer3Result:
 def parse_automation_log(text: str, *, tail_lines: int = 15) -> Layer3Result:
     """엔진 로그에서 층3 판정을 뽑는다. **순수 함수 — 프로세스를 띄우지 않는다.**
 
-    🔴 `Error` 문자열도 SSH 종료 코드도 보지 않는다. 위 모듈 독스트링 참조.
+    [중요] `Error` 문자열도 SSH 종료 코드도 보지 않는다. 위 모듈 독스트링 참조.
     """
     text = text or ""
     lines = [ln for ln in text.splitlines() if ln.strip()]
@@ -250,7 +250,7 @@ class BuildResult:
 def parse_build_log(text: str, *, tail_lines: int = 15) -> BuildResult:
     """UBT 로그에서 빌드 판정을 뽑는다. **순수 함수.**
 
-    🔴 프로세스 반환 코드를 보지 않는다 — `Build.bat` 이 실패해도 `ssh` 는 0 을 낸다(실측).
+    [중요] 프로세스 반환 코드를 보지 않는다 — `Build.bat` 이 실패해도 `ssh` 는 0 을 낸다(실측).
     """
     text = text or ""
     lines = [ln for ln in text.splitlines() if ln.strip()]
@@ -331,15 +331,15 @@ def run_build_local(
 ) -> BuildResult:
     """**이 기계에서** 빌드를 돌리고 판정한다 (중 2.1 `#135` — 요청자 `.33` 의 검수 빌드).
 
-    🔴 **같은 명령·같은 파서, 전송만 다르다.** `run_build_on_workshop` 과 이 함수는
+    [중요] **같은 명령·같은 파서, 전송만 다르다.** `run_build_on_workshop` 과 이 함수는
     `build_build_command` 와 `parse_build_log` 를 **공유한다** — 여기서 명령을 다시 조립하거나
     판정을 다시 쓰면 두 경로가 조용히 갈라진다(`coordinator._git_cmd` 를 공유하는 것과 같은 결).
 
-    ⚠️ **왜 로컬 판이 필요한가**: 마스터에는 UE5 가 없어 `.2` 로 위임하지만, 요청자 `.33` 은
+    [주의] **왜 로컬 판이 필요한가**: 마스터에는 UE5 가 없어 `.2` 로 위임하지만, 요청자 `.33` 은
     자기 검수 worktree 를 **자기 디스크에** 갖고 있다. 거기서 SSH 로 자기 자신에게 붙을 이유가
     없다(사용자 결정 2026-08-16: *".33 로컬 (원전 그대로)"*).
 
-    🔴 **반환 코드를 보지 않는 것도 같다** — `Build.bat` 은 실패해도 0 을 낸 실측이 있다.
+    [중요] **반환 코드를 보지 않는 것도 같다** — `Build.bat` 은 실패해도 0 을 낸 실측이 있다.
     """
     cmd = ["cmd", "/c", build_build_command(build_bat, target, uproject,
                                             platform=platform, config=config)]
@@ -375,7 +375,7 @@ def run_tests_on_workshop(
 ) -> Layer3Result:
     """워크숍에서 층3 을 돌리고 판정한다.
 
-    🔴 **`runner` 의 반환 코드를 보지 않는다.** 판정은 오직 stdout 파싱이다 —
+    [중요] **`runner` 의 반환 코드를 보지 않는다.** 판정은 오직 stdout 파싱이다 —
     에디터가 성공해도 `ssh` 가 1 을 내는 것이 실측으로 확인됐다(모듈 독스트링).
     """
     cmd = [

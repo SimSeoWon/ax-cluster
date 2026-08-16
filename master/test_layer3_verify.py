@@ -2,7 +2,7 @@
 
     .venv/bin/python master/test_layer3_verify.py
 
-🔴 이 테스트가 지키는 불변식 (PLAN §5.5.4-⑥-③-1, 2026-08-08 실측에서 나온 것):
+[중요] 이 테스트가 지키는 불변식 (PLAN §5.5.4-⑥-③-1, 2026-08-08 실측에서 나온 것):
    1. **통과한 실행에도 `LogAutomationTest: Error` 가 있다** — Error 로 판정하면 안 된다
    2. **에디터가 0 이어도 `ssh` 는 1 을 낸다** — 프로세스 반환 코드로 판정하면 안 된다
    3. 완료 마커 없음 / exit != 0 / 성공 0건 → 전부 **fail-closed**
@@ -29,10 +29,10 @@ def check(label: str, cond: bool, detail: str = "") -> None:
     global PASS, FAIL
     if cond:
         PASS += 1
-        print(f"  ✅ {label}")
+        print(f"  [완료] {label}")
     else:
         FAIL += 1
-        print(f"  ❌ {label}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {label}" + (f" — {detail}" if detail else ""))
 
 
 # ── 실측 로그를 그대로 옮긴 픽스처 (.2, 2026-08-08) ───────────────────────────
@@ -66,7 +66,7 @@ def fake(stdout="", *, rc=0, stderr="", raises=None):
 
 
 def main() -> int:
-    print("[1] 🔴 실측 통과 로그 — Error 15줄이 있어도 통과다")
+    print("[1] [중요] 실측 통과 로그 — Error 15줄이 있어도 통과다")
     r = parse_automation_log(REAL_PASS)
     check("passed=True", r.passed, r.summary())
     check("계약 위반 없음", r.failure is None, str(r.failure))
@@ -74,7 +74,7 @@ def main() -> int:
     check("실패 0건", r.fail_count == 0)
     check("exit_code 0", r.exit_code == 0, str(r.exit_code))
     check(
-        "🔴 Error 줄이 판정에 영향을 주지 않았다",
+        "[중요] Error 줄이 판정에 영향을 주지 않았다",
         "LogAutomationTest: Error" in REAL_PASS and r.passed,
     )
 
@@ -86,7 +86,7 @@ def main() -> int:
     check("실패 목록에 경로", r.failures()[0].path == "X.B", str(r.failures()))
     check("summary 가 FAIL", r.summary().startswith("FAIL"), r.summary())
 
-    print("\n[3] 🔴 fail-closed — 세 가지 계약 위반")
+    print("\n[3] [중요] fail-closed — 세 가지 계약 위반")
     r = parse_automation_log(
         "LogAutomationController: Display: Test Completed. Result={Success} Name={A} Path={X.A}\n"
     )
@@ -140,7 +140,7 @@ def main() -> int:
         r = parse_automation_log(txt)
         check(f"{label} → 차단", not r.passed and bool(r.failure))
 
-    print("\n[7] 🔴 프로세스 반환 코드로 판정하지 않는다")
+    print("\n[7] [중요] 프로세스 반환 코드로 판정하지 않는다")
     # 실측: 에디터 EXIT CODE 0 인데 ssh 는 1 을 냈다.
     r = run_tests_on_workshop(
         "192.168.0.2", "janus", "C:/UE/UnrealEditor-Cmd.exe", "E:/p.uproject", "X",
@@ -171,7 +171,7 @@ def main() -> int:
         r"E:\trunk\ModularStage\ModularStage.uproject",
         "System.Core.Algo",
     )
-    check("🔴 -nullrhi (세션 0 의 핵심)", "-nullrhi" in cmd, cmd)
+    check("[중요] -nullrhi (세션 0 의 핵심)", "-nullrhi" in cmd, cmd)
     check("-unattended", "-unattended" in cmd)
     check("-nopause (프롬프트로 매달리지 않는다)", "-nopause" in cmd)
     check("-stdout (로그를 받아야 판정한다)", "-stdout" in cmd)
@@ -218,10 +218,10 @@ Total execution time: 1.04 seconds
     check("판정 줄 없음 → 계약 위반", not b.passed and b.failure, b.summary())
     check("빈 입력 → 계약 위반", not parse_build_log("").passed)
 
-    print("\n[12] 🔴 빌드도 반환 코드로 판정하지 않는다")
+    print("\n[12] [중요] 빌드도 반환 코드로 판정하지 않는다")
     # 실측: Build.bat 이 실패해도 ssh 는 0 을 낸다 — 이게 가장 위험한 방향이다.
     b = run_build_on_workshop("h", "u", "bb", "T", "p", runner=fake(BUILD_FAIL, rc=0))
-    check("🔴 rc=0 이어도 로그가 Failed 면 차단", not b.passed, b.summary())
+    check("[중요] rc=0 이어도 로그가 Failed 면 차단", not b.passed, b.summary())
     b = run_build_on_workshop("h", "u", "bb", "T", "p", runner=fake(BUILD_OK, rc=9))
     check("rc=9 여도 로그가 Succeeded 면 통과", b.passed, b.summary())
     b = run_build_on_workshop(

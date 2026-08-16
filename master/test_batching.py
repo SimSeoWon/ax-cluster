@@ -1,6 +1,6 @@
 """태스크 묶기 (레드마인 #65).
 
-🔴 지키는 계약은 **비용**이 아니라 **충돌 방지**다 — 사용자: *"클래스 별로 분리하는건
+[중요] 지키는 계약은 **비용**이 아니라 **충돌 방지**다 — 사용자: *"클래스 별로 분리하는건
 분산 작업시 충돌을 방지하기 위해서인데"*. 묶어서 싸지는 것은 그 계약을 깨지 않는 선에서만
 가치가 있다.
 
@@ -24,11 +24,11 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 def test_header_and_impl_stay_together() -> None:
-    """🔴 선언과 정의가 다른 워커로 가면 어긋난 채 각자 push 된다."""
+    """[중요] 선언과 정의가 다른 워커로 가면 어긋난 채 각자 push 된다."""
     us = B.units([("UFoo", "Source/A/Foo.h"), ("UFoo", "Source/A/Foo.cpp"),
                   ("UBar", "Source/B/Bar.h")])
     check("stem 으로 한 몸이 된다", len(us) == 2, [u.key for u in us])
@@ -38,7 +38,7 @@ def test_header_and_impl_stay_together() -> None:
 
 
 def test_ue_public_private_pair() -> None:
-    """🔴 UE 모듈은 선언·구현을 `Public/`↔`Private/` 로 가른다 — 그래도 한 몸이다.
+    """[중요] UE 모듈은 선언·구현을 `Public/`↔`Private/` 로 가른다 — 그래도 한 몸이다.
 
     실측 2026-08-10: 이 프로젝트에 50건. 원전(AgentTest)은 같은 폴더만 봐서 *"헤더 전용"*
     으로 오판하고 **워커 태스크를 통째로 누락**했다(2026-06-07 prod 발견).
@@ -51,7 +51,7 @@ def test_ue_public_private_pair() -> None:
 
 
 def test_same_name_in_other_module_splits() -> None:
-    """🔴 다른 모듈의 동명 파일은 **갈라야 한다** — 실측 9건이 포팅 원본↔대상이다.
+    """[중요] 다른 모듈의 동명 파일은 **갈라야 한다** — 실측 9건이 포팅 원본↔대상이다.
 
     묶으면 워커에게 *"이 둘은 한 몸이니 같이 고쳐라"* 가 되는데, 포팅 원본은 읽기 전용이다.
     """
@@ -68,7 +68,7 @@ def test_same_name_in_other_module_splits() -> None:
 
 
 def test_same_file_classes_never_split() -> None:
-    """🔴 한 파일의 클래스들이 갈라지면 두 워커가 같은 파일을 고친다."""
+    """[중요] 한 파일의 클래스들이 갈라지면 두 워커가 같은 파일을 고친다."""
     items = [("UA", "Source/X.h"), ("UB", "Source/X.h"), ("UC", "Source/Y.h")]
     groups = B.plan(items, size=1)          # 가장 잘게 쪼개도
     check("같은 파일은 한 묶음", B.check_disjoint(groups) == [], str(B.check_disjoint(groups)))
@@ -79,7 +79,7 @@ def test_same_file_classes_never_split() -> None:
 
 
 def test_disjoint_is_the_invariant() -> None:
-    """🔴 불변식이 깨지면 호출자가 파견하지 않아야 한다 — 그래서 검사가 따로 있다."""
+    """[중요] 불변식이 깨지면 호출자가 파견하지 않아야 한다 — 그래서 검사가 따로 있다."""
     ok = B.plan([("UA", "Source/A.h"), ("UB", "Source/B.h"), ("UC", "Source/C.h")], size=2)
     check("정상이면 위반 0", B.check_disjoint(ok) == [])
     check("요약이 안전하다고 말한다", "겹침 없음" in B.summary(ok), B.summary(ok))
@@ -88,16 +88,16 @@ def test_disjoint_is_the_invariant() -> None:
     bad = [[B.Unit(key="a", files=["Source/Same.h"])],
            [B.Unit(key="b", files=["Source/Same.h"])]]
     v = B.check_disjoint(bad)
-    check("🔴 파일 중복을 잡는다", len(v) == 1 and "Same.h" in v[0], str(v))
-    check("요약이 위험을 드러낸다", "🔴" in B.summary(bad), B.summary(bad))
+    check("[중요] 파일 중복을 잡는다", len(v) == 1 and "Same.h" in v[0], str(v))
+    check("요약이 위험을 드러낸다", "[중요]" in B.summary(bad), B.summary(bad))
 
 
 def test_pack_size() -> None:
     us = B.units([(f"U{i}", f"Source/F{i}.h") for i in range(9)])
     g = B.pack(us, size=4)
     check("4개씩 묶는다", [len(x) for x in g] == [4, 4, 1], str([len(x) for x in g]))
-    # 🔴 실측된 점은 4 하나뿐이다 — 기본값이 그것이어야 한다
-    check("🔴 기본 크기는 실측값 4", B.DEFAULT_SIZE == 4, str(B.DEFAULT_SIZE))
+    # [중요] 실측된 점은 4 하나뿐이다 — 기본값이 그것이어야 한다
+    check("[중요] 기본 크기는 실측값 4", B.DEFAULT_SIZE == 4, str(B.DEFAULT_SIZE))
     check("단위를 쪼개지 않는다", all(isinstance(u, B.Unit) for x in g for u in x))
     try:
         B.pack(us, size=0)
@@ -119,7 +119,7 @@ def main() -> int:
                test_disjoint_is_the_invariant, test_pack_size, test_no_file_no_problem):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_batching: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_batching: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

@@ -2,7 +2,7 @@
 
     .venv/bin/python master/test_context_search.py
 
-🔴 지키는 불변식:
+[중요] 지키는 불변식:
    1. **마운트가 경로를 정한다** — 전환하면 다음 호출이 바로 새 디렉토리를 본다 (§5.5.2)
    2. **본문 없는 스텁도 색인한다** — 클래스명이 그 문서의 존재 이유다
    3. **세대 포인터는 두 채널이 공유한다** — 벡터와 BM25 가 어긋나면 융합이 무의미해진다
@@ -44,10 +44,10 @@ def check(label: str, cond: bool, detail: str = "") -> None:
     global PASS, FAIL
     if cond:
         PASS += 1
-        print(f"  ✅ {label}")
+        print(f"  [완료] {label}")
     else:
         FAIL += 1
-        print(f"  ❌ {label}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {label}" + (f" — {detail}" if detail else ""))
 
 
 class FakeRegistry:
@@ -86,7 +86,7 @@ def main() -> int:
     check("active 를 따라간다", resolve(registry=reg).name == "Alpha")
     check("루트가 갈린다", resolve(registry=reg).root == tmp / "Alpha")
     reg.active = "Beta"
-    check("🔴 전환 즉시 새 경로 (재기동 없음)", resolve(registry=reg).root == tmp / "Beta")
+    check("[중요] 전환 즉시 새 경로 (재기동 없음)", resolve(registry=reg).root == tmp / "Beta")
     check("이름을 주면 그쪽", resolve("Alpha", registry=reg).name == "Alpha")
 
     for bad, why in [("", "active 가 비었다"), ("Gamma", "등록되지 않았다")]:
@@ -102,9 +102,9 @@ def main() -> int:
     check("마운트된 것은 통과", resolve_mounted_only("Alpha", registry=reg).name == "Alpha")
     try:
         resolve_mounted_only("Beta", registry=reg)
-        check("🔴 마운트 안 된 것은 거부", False, "통과해 버렸다")
+        check("[중요] 마운트 안 된 것은 거부", False, "통과해 버렸다")
     except ConfigError:
-        check("🔴 마운트 안 된 것은 거부", True)
+        check("[중요] 마운트 안 된 것은 거부", True)
     check("resolve() 는 여전히 허용 (층이 다르다)",
           resolve("Beta", registry=reg).name == "Beta")
 
@@ -122,13 +122,13 @@ def main() -> int:
     q = make_project(tmp, "Y", {"a.md": FULL})
     m = q.missing_sources()
     check("Source 는 있으니 통과", m == [], str(m))
-    print("\n[대괄호 규약] 🔴 사용자가 표시한 토큰만 질의로 쓴다")
+    print("\n[대괄호 규약] [중요] 사용자가 표시한 토큰만 질의로 쓴다")
     from master.context_search.search import focus
     check("한글 대괄호를 잡는다",
           focus("[미션시스템]에서 [완료]시 [연출] 부분이 어디야?") == "미션시스템 완료 연출")
     check("영문 식별자도 잡는다 (원본 규약과 호환)",
           focus("미션 에디터 창[MissionEditor] 어디") == "MissionEditor")
-    check("🔴 대괄호가 없으면 원문 그대로 (기존 질의 영향 0)",
+    check("[중요] 대괄호가 없으면 원문 그대로 (기존 질의 영향 0)",
           focus("전역 이벤트 시스템") == "전역 이벤트 시스템")
     check("빈 대괄호는 무시", focus("[] [  ] 실제내용") == "[] [  ] 실제내용")
     check("여러 단어가 든 대괄호도 보존", focus("[미션 완료 연출] 어디") == "미션 완료 연출")
@@ -154,7 +154,7 @@ def main() -> int:
     check("_archive/ 는 제외 아님", not is_excluded("_archive/old.md"))
     check("일반 문서 통과", not is_excluded("Source/A.md"))
 
-    print("\n[7] 🔴 본문 없는 스텁을 버리지 않는다 (이식 중 발견한 누락)")
+    print("\n[7] [중요] 본문 없는 스텁을 버리지 않는다 (이식 중 발견한 누락)")
     proj = make_project(tmp, "Docs", {
         "Manager/ManagerBase.md": STUB,
         "UI/Tile.md": FULL,
@@ -165,7 +165,7 @@ def main() -> int:
     check("스텁이 색인된다", "Manager/ManagerBase.md" in got, str(sorted(got)))
     check("  본문은 비어 있다", not got["Manager/ManagerBase.md"].has_body)
     txt = got["Manager/ManagerBase.md"].search_text
-    check("  🔴 클래스명이 검색 텍스트에 있다", "UManagerBase" in txt, txt)
+    check("  [중요] 클래스명이 검색 텍스트에 있다", "UManagerBase" in txt, txt)
     check("  태그도 들어간다", "manager" in txt)
     check("_domains/ 는 빠진다", "_domains/UI.md" not in got)
     check("내용 없는 placeholder 만 빠진다", "_archive/blank.md" not in got)
@@ -223,7 +223,7 @@ def main() -> int:
         n = bm.rebuild_into("a")
         check("스텁 포함 2건 (_domains·placeholder 제외)", n == 2, str(n))
         hits = dict(bm.search("UManagerBase"))
-        check("🔴 스텁을 식별자로 찾는다", "Manager/ManagerBase.md" in hits, str(hits))
+        check("[중요] 스텁을 식별자로 찾는다", "Manager/ManagerBase.md" in hits, str(hits))
         check("한글 본문도 찾는다", "UI/Tile.md" in dict(bm.search("타일 격자")))
         check("빈 쿼리는 빈 결과", bm.search("   ") == [])
         check("없는 말은 빈 결과", bm.search("존재하지않는토큰xyz") == [])
@@ -232,7 +232,7 @@ def main() -> int:
         check("다른 세대에 쌓아도 Live 는 그대로", bm.count() == 2, str(bm.count()))
         bm.use_generation("b")
         check("전환하면 새 세대", bm.count() == 2, str(bm.count()))
-        check("🔴 use_generation 은 마커를 쓰지 않는다 (조정자의 몫)",
+        check("[중요] use_generation 은 마커를 쓰지 않는다 (조정자의 몫)",
               generation.read(proj.root) is None)
         bm.close()
         check("닫은 뒤 검색은 빈 결과 (터지지 않는다)", bm.search("UManagerBase") == [])
@@ -252,7 +252,7 @@ def main() -> int:
     check("단일 채널 A", by["A"].source == "vector" and by["A"].vector_rank == 1)
     check("단일 채널 C (BM25 2위)", by["C"].source == "bm25" and by["C"].bm25_rank == 2,
           f'source={by["C"].source} rank={by["C"].bm25_rank}')
-    check("🔴 BM25 절대점수(12.0)가 순위를 못 바꾼다",
+    check("[중요] BM25 절대점수(12.0)가 순위를 못 바꾼다",
           abs(by["C"].rrf_score - 1 / (RRF_K + 2)) < 1e-12)
     check("벡터 메타/발췌가 보존된다", by["A"].excerpt == "a")
 

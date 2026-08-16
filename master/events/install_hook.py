@@ -3,7 +3,7 @@
     .venv/bin/python -m master.events.install_hook --check
     .venv/bin/python -m master.events.install_hook --apply
 
-🔴 **`pkexec` 로 마스터가 직접 처리한다.** 사용자에게 명령을 떠넘기지 않는다는 것이
+[중요] **`pkexec` 로 마스터가 직접 처리한다.** 사용자에게 명령을 떠넘기지 않는다는 것이
 이 저장소의 규약이다.
 
 하는 일 세 가지:
@@ -15,7 +15,7 @@
    않는 이유는 Gitea 가 표시 이름과 디스크 이름을 따로 쓰기 때문이다(§5.5.4-④).
 3. **훅 복사** — `post_receive_hook.py` 를 `hooks/post-receive.d/ax-index` 로.
 
-⚠️ **Gitea 의 기본 `post-receive` 훅을 건드리지 않는다.** `post-receive.d/` 는 Gitea 가
+[주의] **Gitea 의 기본 `post-receive` 훅을 건드리지 않는다.** `post-receive.d/` 는 Gitea 가
 여러 훅을 나란히 두라고 만든 자리다. 기본 `gitea` 훅을 덮으면 PR·웹훅이 죽는다.
 """
 from __future__ import annotations
@@ -70,9 +70,9 @@ def targets(registry: Registry | None = None) -> list[Target]:
         pid = (cfg.project_id or "").strip()
         if not pid:
             continue
-        # 🔴 표시용(`Sim/ModularStage`)과 디스크(`sim/modularstage`)를 갈라 쓴다 (§5.5.4-④).
+        # [중요] 표시용(`Sim/ModularStage`)과 디스크(`sim/modularstage`)를 갈라 쓴다 (§5.5.4-④).
         #    훅에 넣는 것은 표시용, 경로를 만드는 것은 디스크용이다.
-        # ⚠️ bare 저장소는 `<이름>.git` 이다. `project_id_disk_path` 는 접미사를 안 붙이므로
+        # [주의] bare 저장소는 `<이름>.git` 이다. `project_id_disk_path` 는 접미사를 안 붙이므로
         #    여기서 붙인다 — 빼먹으면 존재하지 않는 경로를 점검하고 "미설치" 로 보고한다.
         out.append(Target(project=name, project_id=pid,
                           repo_dir=GITEA_ROOT / (project_id_disk_path(pid) + ".git")))
@@ -87,22 +87,22 @@ def check(targets_: list[Target] | None = None) -> list[str]:
     for d in _SUBDIRS:
         p = spool / d
         if not p.is_dir():
-            lines.append(f"  ❌ {d}/ 없음")
+            lines.append(f"  [실패] {d}/ 없음")
             continue
         st = p.stat()
         import grp
         gname = grp.getgrgid(st.st_gid).gr_name
         mode = oct(st.st_mode & 0o7777)
         ok = gname == "gitea" and (st.st_mode & 0o2070) == 0o2070
-        lines.append(f"  {'✅' if ok else '❌'} {d}/ group={gname} mode={mode}"
+        lines.append(f"  {'OK' if ok else 'FAIL'} {d}/ group={gname} mode={mode}"
                      + ("" if ok else "  ← sim:gitea 2775 여야 한다"))
     for t in (targets_ if targets_ is not None else targets()):
         rc, out = _run(["test", "-e", str(t.hook_path)], root=True)
         installed = rc == 0
         lines.append(f"{t.project} ({t.project_id})")
-        lines.append(f"  {'✅' if installed else '❌'} 훅 {t.hook_path}")
+        lines.append(f"  {'OK' if installed else 'FAIL'} 훅 {t.hook_path}")
         rc2, _ = _run(["test", "-e", str(t.id_path)], root=True)
-        lines.append(f"  {'✅' if rc2 == 0 else '❌'} ax-project-id")
+        lines.append(f"  {'OK' if rc2 == 0 else 'FAIL'} ax-project-id")
     return lines
 
 
@@ -129,7 +129,7 @@ def apply(targets_: list[Target] | None = None, *, progress=None) -> int:
     for t in (targets_ if targets_ is not None else targets()):
         rc, out = _run(["test", "-d", str(t.repo_dir)], root=True)
         if rc != 0:
-            say(f"⚠️  {t.project}: bare 저장소가 없다 — 건너뜀 ({t.repo_dir})")
+            say(f"[주의]  {t.project}: bare 저장소가 없다 — 건너뜀 ({t.repo_dir})")
             continue
         _run(["mkdir", "-p", str(t.hook_dir)], root=True)
         rc, out = _run(["install", "-o", "gitea", "-g", "gitea", "-m", "755",
@@ -145,7 +145,7 @@ def apply(targets_: list[Target] | None = None, *, progress=None) -> int:
         if rc != 0:
             raise SystemExit(f"{t.project}: ax-project-id 기록 실패 — {out}")
         _run(["chown", "gitea:gitea", str(t.id_path)], root=True)
-        say(f"✅ {t.project} ({t.project_id}) → {t.hook_path}")
+        say(f"[완료] {t.project} ({t.project_id}) → {t.hook_path}")
         n += 1
     return n
 

@@ -5,7 +5,7 @@
 마스터가 각 기계의 Ollama 를 HTTP 로 점검하고 필요한 모델을 원격 설치한다.
 **모델을 올리지(load) 않는다** — 그건 브로커가 추론 요청을 보낼 때 알아서 일어난다.
 
-🔴 **왜 `.33`(메인 작업 PC)을 추론 엔드포인트로 만들지 않는가** (실측 2026-08-08):
+[중요] **왜 `.33`(메인 작업 PC)을 추론 엔드포인트로 만들지 않는가** (실측 2026-08-08):
 
     .33  RTX 3080 10240MiB · 사용 2401 · **여유 7651MiB**   ← 윈도우 바탕화면만 떠 있는 상태
          보유 모델 gemma4:e4b = 8.9GiB  →  **자기 모델조차 안 들어간다**
@@ -19,10 +19,10 @@ UE5 에디터를 열면 여유는 더 줄어든다. 상주시키면 Ollama 가 C
 
 | 역할 | 기계 | 상주 |
 |---|---|---|
-| 추론 엔드포인트 | `.43`(BC-250) · `.2`(RTX 3060) | ✅ 핀 고정 |
-| 작업장 겸 점검 대상 | `.33`(RTX 3080, 메인 작업 PC) | ❌ **점검·설치만** |
+| 추론 엔드포인트 | `.43`(BC-250) · `.2`(RTX 3060) | [완료] 핀 고정 |
+| 작업장 겸 점검 대상 | `.33`(RTX 3080, 메인 작업 PC) | [실패] **점검·설치만** |
 
-🔴 **"됐다" 를 믿지 않는다.** `~/CLAUDE.md` 하드룰이기도 하다 — pull 이 성공했다고 보고해도
+[중요] **"됐다" 를 믿지 않는다.** `~/CLAUDE.md` 하드룰이기도 하다 — pull 이 성공했다고 보고해도
 `/api/tags` 에 실제로 나타나는지 **다시 확인**한다. 상태가 아니라 산출물을 검증한다.
 """
 from __future__ import annotations
@@ -50,18 +50,18 @@ class Node:
     note: str = ""
 
 
-# 🔴 `.33` 은 `resident=False` 다. 이 플래그가 이 모듈의 존재 이유다.
+# [중요] `.33` 은 `resident=False` 다. 이 플래그가 이 모듈의 존재 이유다.
 NODES: list[Node] = [
     Node("bc250", "192.168.0.43:11434", want=[DRIVER, CODER],
          note="추론 엔드포인트 #1 — 35B 핀"),
     Node("rtx3060", "192.168.0.2:11434", want=[CODER],
          note="추론 엔드포인트 #2 겸 작업장 — 14b 핀"),
-    # 🔴 `want` 는 있는데 `resident=False` 다 — 모순이 아니라 **정확히 의도한 상태**다.
+    # [중요] `want` 는 있는데 `resident=False` 다 — 모순이 아니라 **정확히 의도한 상태**다.
     #    "디스크에는 둔다(설치) · VRAM 에는 안 올린다(상주 금지)" 를 그대로 표현한 것이고,
     #    사용자 지시 "상주시키지 말고 설치나 체크 등에 쓰라고" 가 이 두 축으로 갈린다.
     #    보유 여부는 `/api/tags`, 상주 여부는 `/api/ps` 가 답한다 — 서로 다른 질문이다.
     Node("rtx3080", "192.168.0.33:11434", want=[CODER], resident=False,
-         note="🔴 메인 작업 PC. 여유 VRAM 7.6GiB < 14b 9.0GB — 받아는 두되 상주 금지"),
+         note="[중요] 메인 작업 PC. 여유 VRAM 7.6GiB < 14b 9.0GB — 받아는 두되 상주 금지"),
 ]
 
 
@@ -104,17 +104,17 @@ class NodeStatus:
 
     def line(self) -> str:
         if not self.reachable:
-            return f"  ❌ {self.name:<9} {self.host:<22} 닿지 않음 — {self.error}"
+            return f"  [실패] {self.name:<9} {self.host:<22} 닿지 않음 — {self.error}"
         bits = [f"모델 {len(self.models)}종"]
         if self.loaded:
             bits.append(f"상주 {','.join(self.loaded)}")
         else:
             bits.append("상주 없음")
         if self.missing:
-            bits.append(f"🔴 없음: {','.join(self.missing)}")
+            bits.append(f"[중요] 없음: {','.join(self.missing)}")
         if self.violating:
-            bits.append("🔴 상주 금지인데 올라와 있다")
-        mark = "✅" if self.ok and not self.violating else "⚠️ "
+            bits.append("[중요] 상주 금지인데 올라와 있다")
+        mark = "[완료]" if self.ok and not self.violating else "[주의] "
         return f"  {mark} {self.name:<9} {self.host:<22} " + " · ".join(bits)
 
 
@@ -152,7 +152,7 @@ def check(nodes: list[Node] | None = None, *, getter=None) -> list[NodeStatus]:
 def pull(node: Node, model: str, *, progress=None, poster=None, getter=None) -> NodeStatus:
     """모델을 원격 설치한다. SSH 도 파일 접근도 필요 없다 — HTTP 만 오간다.
 
-    🔴 **pull 응답을 믿지 않고 `/api/tags` 로 다시 확인한다.** 위임한 백엔드의 "됐다" 를
+    [중요] **pull 응답을 믿지 않고 `/api/tags` 로 다시 확인한다.** 위임한 백엔드의 "됐다" 를
     그대로 받으면 안 된다는 것은 이 저장소의 하드룰이다(2026-08-07 agy 사건).
     """
     if progress:
@@ -213,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             print(pull(node, args.model, progress=lambda m: print(f"  {m}")).line())
         except ProvisionError as e:
-            print(f"  ❌ {e}")
+            print(f"  [실패] {e}")
             return 1
         return 0
 
@@ -227,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
         print(st.line())
     for n in NODES:
         if not n.resident:
-            print(f"\n  ℹ️  {n.name}: {n.note}")
+            print(f"\n  ℹ  {n.name}: {n.note}")
     bad = [s for s in sts if not s.ok or s.violating]
     return 1 if bad else 0
 

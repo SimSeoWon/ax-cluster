@@ -1,14 +1,14 @@
-"""마스터측 attempt 계층 (Flow Y 배선) — 🔴 **실제 git 저장소·실제 worktree 로** 돌린다.
+"""마스터측 attempt 계층 (Flow Y 배선) — [중요] **실제 git 저장소·실제 worktree 로** 돌린다.
 
 리포트 13 §14 · 14 §의 같은 교훈: **주입은 계약을 재고 실물을 재지 않는다.** 그래서 git 을
 흉내내지 않는다 — `tmp` 에 bare origin + 정본 클론을 만들고 실제 `git worktree` 를 세운다.
 
 검증하는 것:
 
-    ① 🔴 **실패 응답도 attempt 에 올라간다** (성공·실패 무관 — §8.4)
-    ② 🔴 정본 트리는 **안 움직인다** (색인기의 `merge --ff-only` 전제)
+    ① [중요] **실패 응답도 attempt 에 올라간다** (성공·실패 무관 — §8.4)
+    ② [중요] 정본 트리는 **안 움직인다** (색인기의 `merge --ff-only` 전제)
     ③ 작업 트리는 정본 **옆**이지 안이 아니다
-    ④ 🔴 추적되지 않은 잔재가 있으면 **거부**한다 (`add -A` 가 삼키는 것을 막는다)
+    ④ [중요] 추적되지 않은 잔재가 있으면 **거부**한다 (`add -A` 가 삼키는 것을 막는다)
     ⑤ 경로 탈출(`..`)은 예외
     ⑥ 통과분은 durable 을 만든다 · ⑦ stale epoch 은 durable 을 안 움직인다
     ⑧ 같은 내용 재제출은 *"커밋할 변경이 없다"* 라는 **사실**로 보고된다
@@ -41,7 +41,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 def _run(cwd: Path, *args: str) -> str:
@@ -104,7 +104,7 @@ def test_failed_response_is_pushed_anyway():
         fx = _fx(tmp)
         head_before = _run(fx.paths.repo, "rev-parse", "HEAD")
 
-        # 🔴 "실패한" 응답 — 이 계층은 판정하지 않는다. 그대로 올라가야 한다.
+        # [중요] "실패한" 응답 — 이 계층은 판정하지 않는다. 그대로 올라가야 한다.
         res = Res(files={REL: "// 컴파일 안 되는 것\n#error broken\n"})
         p = A.push_attempt_for(fx.paths, work_id=WORK, task_id=TASK, workshop=SHOP,
                                ts="t1", responses=[res], base_commit=fx.base,
@@ -141,7 +141,7 @@ def test_stray_untracked_is_refused():
         wt = A.ensure_attempt_tree(fx.paths, WORK, at_commit=fx.base)
         check("④ 잔재가 있으면 거부한다", not wt.ok, "통과해 버렸다")
         check("④ 거부 사유에 파일명이 있다", "leftover.txt" in wt.error, wt.error)
-        check("④ 🔴 잔재를 지우지 않았다", stray.exists(), "지워 버렸다")
+        check("④ [중요] 잔재를 지우지 않았다", stray.exists(), "지워 버렸다")
 
         p = A.push_attempt_for(fx.paths, work_id=WORK, task_id=TASK, workshop=SHOP,
                                ts="t1", responses=[Res(files={REL: "// x\n"})],
@@ -199,7 +199,7 @@ def test_stale_epoch_leaves_durable_alone():
         check("⑦ stale epoch 은 거부된다", not r.get("merged"), str(r))
         check("⑦ 사유가 epoch 이다", "stale_epoch" in r.get("reason", ""), str(r))
         refs = _run(fx.paths.repo, "ls-remote", "--heads", "origin")
-        check("⑦ 🔴 durable 이 안 생겼다 (부작용 0)",
+        check("⑦ [중요] durable 이 안 생겼다 (부작용 0)",
               durable_branch(TASK) not in refs, refs)
 
 
@@ -215,10 +215,10 @@ def test_no_change_is_reported_as_fact():
               not p.ok and "변경이 없다" in p.error, p.error)
 
 
-# ── 소 1.2.4 원격 정리 — 🔴 도달 가능한 것만 (사용자 결정 2026-08-14) ──────────
+# ── 소 1.2.4 원격 정리 — [중요] 도달 가능한 것만 (사용자 결정 2026-08-14) ──────────
 
 def test_cleanup_keeps_unmerged_evidence():
-    """🔴 이 저장소가 실제로 물릴 뻔한 것: attempt 가 **미병합인 채** 쌓인 상태."""
+    """[중요] 이 저장소가 실제로 물릴 뻔한 것: attempt 가 **미병합인 채** 쌓인 상태."""
     with tempfile.TemporaryDirectory() as tmp:
         fx = _fx(tmp)
         p = A.push_attempt_for(fx.paths, work_id=WORK, task_id=TASK, workshop=SHOP,
@@ -227,7 +227,7 @@ def test_cleanup_keeps_unmerged_evidence():
         check("정리: attempt 선행", p.ok, p.error)
 
         plan = A.plan_remote_cleanup(fx.paths, remote="origin")
-        check("🔴 미병합 attempt 는 삭제 대상이 아니다", not plan.delete,
+        check("[중요] 미병합 attempt 는 삭제 대상이 아니다", not plan.delete,
               str(plan.delete))
         check("보존 목록에 들어간다", any(p.attempt == r for r, _ in plan.keep),
               str(plan.keep))
@@ -236,7 +236,7 @@ def test_cleanup_keeps_unmerged_evidence():
 
         # 실제로 지우려 해도 대상이 없으므로 아무것도 안 지운다
         A.apply_remote_cleanup(fx.paths, plan, remote="origin")
-        check("🔴 아무것도 지우지 않았다", not plan.deleted, str(plan.deleted))
+        check("[중요] 아무것도 지우지 않았다", not plan.deleted, str(plan.deleted))
         refs = _run(fx.paths.repo, "ls-remote", "--heads", "origin")
         check("attempt 가 원격에 살아 있다", p.attempt in refs, refs)
 
@@ -255,9 +255,9 @@ def test_cleanup_deletes_merged_attempt():
              f"{durable_branch(TASK)}:main")
 
         plan = A.plan_remote_cleanup(fx.paths, remote="origin")
-        check("🔴 병합된 attempt 는 삭제 대상이다",
+        check("[중요] 병합된 attempt 는 삭제 대상이다",
               any(p.attempt == r for r, _ in plan.delete), str(plan.delete))
-        check("⚠️ durable 은 삭제 대상이 아니다 (원전대로 보존)",
+        check("[주의] durable 은 삭제 대상이 아니다 (원전대로 보존)",
               not any(r.startswith("task/") for r, _ in plan.delete), str(plan.delete))
         check("durable 은 세어서 보고된다",
               any(r == durable_branch(TASK) for r, _ in plan.durable), str(plan.durable))
@@ -266,21 +266,21 @@ def test_cleanup_deletes_merged_attempt():
         check("실제로 지워졌다", p.attempt in plan.deleted, str(plan.deleted))
         refs = _run(fx.paths.repo, "ls-remote", "--heads", "origin")
         check("attempt 가 원격에서 사라졌다", p.attempt not in refs, refs)
-        check("🔴 durable 은 살아 있다", durable_branch(TASK) in refs, refs)
+        check("[중요] durable 은 살아 있다", durable_branch(TASK) in refs, refs)
 
 
 def test_cleanup_without_tracking_deletes_nothing():
     with tempfile.TemporaryDirectory() as tmp:
         fx = _fx(tmp)
         plan = A.plan_remote_cleanup(fx.paths, remote="origin", base_branch="nosuchbranch")
-        check("🔴 기준 브랜치가 없으면 아무것도 안 지운다", not plan.delete, str(plan.delete))
+        check("[중요] 기준 브랜치가 없으면 아무것도 안 지운다", not plan.delete, str(plan.delete))
         check("오류로 보고한다", bool(plan.errors), str(plan.errors))
 
 
-# ── 가드 자체 — 🔴 **원본은 저장소 안이고, 설치 여부를 스스로 말한다** ──────────
+# ── 가드 자체 — [중요] **원본은 저장소 안이고, 설치 여부를 스스로 말한다** ──────────
 
 def test_hook_source_is_in_repo_and_installs():
-    """🔴 `.git/hooks/` 는 추적되지 않는다 — 원본이 저장소에 없으면 클론을 다시 만들 때
+    """[중요] `.git/hooks/` 는 추적되지 않는다 — 원본이 저장소에 없으면 클론을 다시 만들 때
     가드가 **조용히 사라진다.** 그것이 가드에는 최악의 실패다."""
     check("훅 원본이 저장소 안에 있다", A.HOOK_SOURCE.is_file(), str(A.HOOK_SOURCE))
 
@@ -296,7 +296,7 @@ def test_hook_source_is_in_repo_and_installs():
         # 손으로 고친 경우를 잡아내나
         A.hook_target(fx.paths).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         st = A.hook_status(fx.paths)
-        check("🔴 손으로 고친 것을 잡아낸다", not st["current"], st["reason"])
+        check("[중요] 손으로 고친 것을 잡아낸다", not st["current"], st["reason"])
 
 
 def main() -> int:
@@ -309,7 +309,7 @@ def main() -> int:
                test_cleanup_without_tracking_deletes_nothing):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_attempt: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_attempt: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

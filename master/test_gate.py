@@ -1,8 +1,8 @@
-"""색인 일시 중지 게이트 (소 3.5.1) — 🔴 **`in_progress` 만 멈춘다.**
+"""색인 일시 중지 게이트 (소 3.5.1) — [중요] **`in_progress` 만 멈춘다.**
 
 원전이 명시한 것: *"Phase 2 변경: `in_progress` 만 pause 조건. `ready_for_review` 는
 auto_cleanup 이 이미 main 으로 복귀시킨 시점이라 watcher 재개해야 함."*
-⚠️ 2026-08-14 에 내가 원전의 **cleanup 용 active 집합**을 pause 조건으로 잘못 옮겼다가
+[주의] 2026-08-14 에 내가 원전의 **cleanup 용 active 집합**을 pause 조건으로 잘못 옮겼다가
 정독에서 정정했다. 그 정정을 여기서 **테스트로 못박는다.**
 
 `.venv/bin/python master/test_gate.py`
@@ -25,7 +25,7 @@ def check(name, cond, detail=""):
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 def w(wid, status):
@@ -38,7 +38,7 @@ def test_only_in_progress_pauses():
 
     for st in ("ready_for_review", "merged", "rejected", "cancelled", "", None):
         v = G.check(works=[w("a", st)])
-        check(f"🔴 {st!r} 는 멈추지 않는다", not v.paused, str(v))
+        check(f"[중요] {st!r} 는 멈추지 않는다", not v.paused, str(v))
 
 
 def test_mixed():
@@ -54,7 +54,7 @@ def test_empty_and_case():
 
 
 def test_unknown_state_does_not_pause_forever():
-    """🔴 큐에도 디스크에도 못 물으면 **멈추지 않는다** — 항상 멈추는 게이트는 고장이다."""
+    """[중요] 큐에도 디스크에도 못 물으면 **멈추지 않는다** — 항상 멈추는 게이트는 고장이다."""
     v = G.check(queue_url="http://127.0.0.1:1", spool_root=Path("/nonexistent-ax-spool"))
     check("근거가 없으면 진행한다", not v.paused, str(v))
     check("그 사실이 degraded 에 남는다", bool(v.degraded), v.degraded)
@@ -75,7 +75,7 @@ def main() -> int:
                test_unknown_state_does_not_pause_forever, test_line_is_readable):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_gate: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_gate: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 

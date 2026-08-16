@@ -1,10 +1,10 @@
-"""BM25 0건 진단 (소 3.5.8) — 🔴 *"검색이 비었다"* 는 증상이고 원인은 여럿이다.
+"""BM25 0건 진단 (소 3.5.8) — [중요] *"검색이 비었다"* 는 증상이고 원인은 여럿이다.
 
-원전 카나리 `[BM25 0건 진단]` 이식. ⚠️ **원전처럼 로그를 찍지 않는다** — 이 저장소의 모듈은
+원전 카나리 `[BM25 0건 진단]` 이식. [주의] **원전처럼 로그를 찍지 않는다** — 이 저장소의 모듈은
 사실을 반환하고 호출자가 찍는다(테스트 가능·전역 상태 없음). 원전 카나리는 `watch.exe` 의 상주
 콘솔에 묶인 방식이었다. **기제를 옮기고 형태는 우리 것으로 둔다.**
 
-🔴 이것이 필요한 근거는 실제 사건이다 — 리포트 13 §19.1 에서 *"도메인이 비어있어"* 라는 보고를
+[중요] 이것이 필요한 근거는 실제 사건이다 — 리포트 13 §19.1 에서 *"도메인이 비어있어"* 라는 보고를
 받고 처음부터 재야 했다. 그때 이 함수가 있었으면 한 번에 답했다.
 
 `.venv/bin/python master/test_bm25_diagnose.py`
@@ -29,7 +29,7 @@ def check(name, cond, detail=""):
         PASS += 1
     else:
         FAIL += 1
-        print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+        print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
 def _idx(td: str):
@@ -49,7 +49,7 @@ def test_empty_index():
         check("stats 가 값을 준다 (메서드가 아니라 수)", st["documents"] == 0, str(st))
         check("stats 에 세대가 있다", bool(st["generation"]), str(st))
         d = idx.diagnose("아무거나")
-        check("🔴 빈 색인을 그렇게 말한다", d["reason"] == "색인이 비어 있다", d["reason"])
+        check("[중요] 빈 색인을 그렇게 말한다", d["reason"] == "색인이 비어 있다", d["reason"])
         check("결과 0", d["results"] == 0)
 
 
@@ -58,7 +58,7 @@ def test_unmatched_terms_are_the_cause():
         idx = _idx(td)
         idx.upsert([_doc("a.md", "미션 태스크 실행기", classes=["UMissionTaskExecutor"])])
         d = idx.diagnose("존재하지않는단어xyzq")
-        check("🔴 아무 토큰도 안 맞으면 그렇게 말한다",
+        check("[중요] 아무 토큰도 안 맞으면 그렇게 말한다",
               d["reason"] == "토큰이 하나도 색인 어휘와 맞지 않는다", d["reason"])
         check("unmatched 에 그 토큰이 다 들어간다",
               set(d["unmatched"]) == set(d["terms"]), str(d))
@@ -88,7 +88,7 @@ def test_hangul_flag_and_no_terms():
 
 
 def test_diagnose_never_raises():
-    """🔴 진단이 죽으면 안 된다 — 세어 보지 못한 토큰은 -1 로 표시한다."""
+    """[중요] 진단이 죽으면 안 된다 — 세어 보지 못한 토큰은 -1 로 표시한다."""
     with tempfile.TemporaryDirectory() as td:
         idx = _idx(td)
         idx.upsert([_doc("a.md", "x")])
@@ -106,7 +106,7 @@ def main() -> int:
                test_diagnose_never_raises):
         fn()
     total = PASS + FAIL
-    print(f"{'✅' if not FAIL else '🔴'} test_bm25_diagnose: {PASS}/{total} 통과")
+    print(f"{'OK' if not FAIL else 'FAIL'} test_bm25_diagnose: {PASS}/{total} 통과")
     return 1 if FAIL else 0
 
 
