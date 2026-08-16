@@ -162,6 +162,26 @@ class WriterSignalReq(BaseModel):
     work_id: str = ""
 
 
+class HistoryReq(BaseModel):
+    """작업 기록 (#207) — 원전 α′ frontmatter 규약의 요청자 자리.
+
+    비자명한 의사결정·아키텍처 변경 직후 요청자(`.33`) 세션이 부른다 (trivial 은 안 쓴다 —
+    원전 규약 그대로). history 파일은 마스터의 트윈 디렉토리에 있으므로 마스터가 대행한다.
+    파이프라인 종결 기록은 큐가 자동으로 남기므로 이 자리를 지나지 않는다.
+    """
+    title: str
+    decision_type: str = "feature"     # 원전 enum + feature (history_gen.DECISION_TYPES)
+    body: str = ""                     # 본문 구조는 자유 — frontmatter 만 의무 (원전 규약)
+    work_id: str = ""
+    session_id: str = ""
+    affected_classes: list = []        # CamelCase 식별자만
+    affected_domains: list = []
+    supersedes: str = ""               # 이전 결정을 뒤집을 때만 (drift 추적용)
+    alternatives_considered: list = [] # 검토했으나 채택 안 한 옵션 (negative knowledge)
+    tags: list = []
+    user_quote: str = ""               # 사용자 직접 발화 1~3줄 — WHY 신호, 본문보다 강함
+
+
 class AntiPatternNotifyReq(BaseModel):
     """리더가 머지한 새 안티패턴 엔트리 알림.
 

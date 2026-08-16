@@ -744,7 +744,9 @@ def _lay_signals(paths, itg: Integration, *, api=runner._api) -> None:
         intent = a.task_id
         try:
             t = api("GET", f"/api/v1/tasks/{a.task_id}") or {}
-            intent = (t.get("title") or "").strip() or a.task_id
+            # 실측 스키마 — task 레코드에 title 은 없다. 사람이 읽을 수 있는 순서로 폴백:
+            # target_file(무엇을 만들었나) → task_id (신호 유실이 제일 비싸다)
+            intent = (t.get("title") or t.get("target_file") or "").strip() or a.task_id
         except Exception:                                    # noqa: BLE001
             pass
         try:

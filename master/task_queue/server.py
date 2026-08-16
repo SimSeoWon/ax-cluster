@@ -27,7 +27,7 @@ from .models import (
     _VALID_DIRECTIVES, _VERIFY_RESULT_TO_STATUS, WorkRegisterReq, TaskRegisterReq,
     ClaimReq, HeartbeatReq, SubmitReq, SubmitFailReq, VerifyReq, AdminResetReq,
     WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq,
-    WriterSignalReq
+    WriterSignalReq, HistoryReq
 )
 from .persistence import (
     TaskIndex, _project_root, _tasks_dir, _archive_dir, _log_dir, _tq_log,
@@ -134,7 +134,49 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
                              review_decision=req.review_decision)
         if not r.get("ok"):
             raise HTTPException(404, r.get("error", "patch failed"))
+        # 생산자③ (#207) — 종결(merged/rejected)의 사실 기록. [중요] fail-soft: 기록이
+        # 죽어도 종결은 성립한다 — 다만 조용히 넘기지 않고 응답과 로그로 말한다.
+        if req.merge_status in ("merged", "rejected") and \
+                any(c.startswith("merge_status=") for c in r.get("changed", ())):
+            try:
+                from ..context_search.paths import resolve
+                from ..context_synth import history_gen as HG
+                tasks = [t for t in idx.tasks.values() if t.get("work_id") == work_id]
+                r["history_written"] = HG.record_work_terminal(
+                    resolve(""), r.get("work") or {}, tasks, req.merge_status)
+                _tq_log(f"[history] {work_id} {req.merge_status} → "
+                        f"{r['history_written']}", root)
+            except Exception as e:                           # noqa: BLE001
+                r["history_error"] = f"작업 기록 실패: {e}"
+                _tq_log(f"[history] [주의] {work_id} 기록 실패: {e}", root)
         return r
+
+    @app.post("/api/v1/history")
+    def history_ep(req: HistoryReq):
+        """작업 기록 (#207) — 요청자(`.33`) 세션의 비자명한 결정을 받는다.
+
+        `signals` 와 같은 마스터 대행 구조·같은 requester 스코프. 파이프라인 종결 기록은
+        위 PATCH 훅이 자동으로 하므로 이 자리는 **사람 주도 작업의 결정**만 온다.
+        """
+        from ..context_search.paths import resolve
+        from ..context_synth import history_gen as HG
+        try:
+            content = HG.render(
+                title=req.title, decision_type=req.decision_type,
+                work_id=req.work_id, session_id=req.session_id,
+                affected_classes=req.affected_classes,
+                affected_domains=req.affected_domains, supersedes=req.supersedes,
+                alternatives_considered=req.alternatives_considered,
+                tags=req.tags, user_quote=req.user_quote, body=req.body)
+            stored = HG.write(resolve(""), content, title=req.title)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        except Exception as e:                               # noqa: BLE001
+            _tq_log(f"[history] 저장 실패: {e}", root)
+            return {"ok": False, "error": f"작업 기록 저장 실패: {e}"}
+        _tq_log(f"[history] '{req.title[:60]}' type={req.decision_type} "
+                f"work={req.work_id or '-'}", root)
+        return {"ok": True, "stored_at": stored, "title": req.title}
 
     @app.get("/api/v1/works/{work_id}/summary")
     def work_summary_ep(work_id: str):

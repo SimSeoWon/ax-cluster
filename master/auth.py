@@ -170,6 +170,7 @@ REQUESTER_SCOPE: tuple = (
     ("PATCH", "/api/v1/works/"),
     ("POST", "/api/v1/redmine/note"),
     ("POST", "/api/v1/signals"),
+    ("POST", "/api/v1/history"),
 )
 
 

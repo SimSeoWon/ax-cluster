@@ -81,9 +81,10 @@ def test_protocol_roundtrip():
                                              "method": "notifications/initialized"}) is None)
     r = M.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in r["result"]["tools"]]
-    check("도구 7종 (조회 5 + 쓰기 대행 2: redmine·signal)",
+    check("도구 8종 (조회 5 + 쓰기 대행 3: redmine·signal·history)",
           names == ["list_works", "get_work", "search_context", "list_domains",
-                    "get_domain", "redmine_note", "log_writer_signal"], str(names))
+                    "get_domain", "redmine_note", "log_writer_signal", "log_history"],
+          str(names))
     check("모든 도구에 inputSchema", all("inputSchema" in t for t in r["result"]["tools"]))
     r = M.handle_message({"jsonrpc": "2.0", "id": 3, "method": "없는것"})
     check("모르는 요청은 -32601", r["error"]["code"] == -32601, str(r))

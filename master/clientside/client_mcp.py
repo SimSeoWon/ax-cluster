@@ -274,6 +274,22 @@ def tool_log_writer_signal(api, args: dict) -> dict:
     return api("POST", "/api/v1/signals", payload)
 
 
+def tool_log_history(api, args: dict) -> dict:
+    """작업 기록 적재 (#207) — 원전 α′ 규약의 클라 자리 (마스터 대행)."""
+    title = str(args.get("title") or "").strip()
+    if not title:
+        raise ClientError("title 이 비었다 — 무엇을 결정했는지가 기록의 축이다")
+    payload = {"title": title}
+    for k in ("decision_type", "body", "work_id", "session_id",
+              "supersedes", "user_quote"):
+        if str(args.get(k) or "").strip():
+            payload[k] = str(args[k]).strip()
+    for k in ("affected_classes", "affected_domains", "alternatives_considered", "tags"):
+        if args.get(k):
+            payload[k] = list(args[k])
+    return api("POST", "/api/v1/history", payload)
+
+
 def tool_search_context(papi, query: str, tags=None, n: int = 5, *, cache=None) -> dict:
     """통합 검색 — 8103 의 원전 라우트(`/api/v1/search/combined`) 프록시. 참조 지식이라
     [미연결] 시 마지막 정상 응답으로 폴백한다(`_stale` 표기)."""
@@ -362,6 +378,33 @@ TOOLS = [
                          "session_id": {"type": "string"},
                          "work_id": {"type": "string",
                                      "description": "분산 작업이면 work_id"}}}},
+    {"name": "log_history",
+     "description": "비자명한 의사결정·아키텍처 변경·정책 변경을 처리한 **직후** 작업 기록을 "
+                    "남긴다 (원전 α′ 규약 — 온톨로지 시드의 1순위 원천). 단순 버그 수정·"
+                    "리네이밍·오탈자 같은 trivial 작업은 쓰지 않는다. 파이프라인 완주는 "
+                    "자동 기록되므로 여기는 사람 주도 작업의 결정만. user_quote 에는 사용자 "
+                    "직접 발화 1~3줄을 담는다 — WHY 신호로 본문보다 강하다.",
+     "inputSchema": {"type": "object", "required": ["title"],
+                     "properties": {
+                         "title": {"type": "string", "description": "결정/작업 한 줄 요약"},
+                         "decision_type": {"type": "string",
+                                           "enum": ["architecture", "policy", "experiment",
+                                                    "revert", "bugfix", "refactor", "infra",
+                                                    "feature"]},
+                         "body": {"type": "string",
+                                  "description": "자유 본문 — 작업 개요 / 수정 파일 / 주요 설계 결정 / 후속"},
+                         "work_id": {"type": "string", "description": "분산 작업이면 work_id"},
+                         "session_id": {"type": "string"},
+                         "affected_classes": {"type": "array", "items": {"type": "string"},
+                                              "description": "CamelCase 식별자만"},
+                         "affected_domains": {"type": "array", "items": {"type": "string"}},
+                         "supersedes": {"type": "string",
+                                        "description": "이전 결정을 뒤집을 때만 — 그 history 파일명"},
+                         "alternatives_considered": {"type": "array", "items": {"type": "string"},
+                                                     "description": "검토했으나 채택 안 한 옵션"},
+                         "tags": {"type": "array", "items": {"type": "string"}},
+                         "user_quote": {"type": "string",
+                                        "description": "사용자 직접 발화 인용 1~3줄"}}}},
 ]
 
 
@@ -369,7 +412,7 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                   root: Path | None = None) -> dict:
     """도구 실행. `api`/`papi`/`cache` 주입은 테스트 자리 — 실전은 config·token 에서 만든다."""
     args = args or {}
-    if name in ("list_works", "get_work", "redmine_note", "log_writer_signal"):
+    if name in ("list_works", "get_work", "redmine_note", "log_writer_signal", "log_history"):
         a = api or queue_api(root)
         if name == "list_works":
             return tool_list_works(a, status=str(args.get("status") or ""))
@@ -377,6 +420,8 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
             return tool_get_work(a, str(args.get("work_id") or ""))
         if name == "log_writer_signal":
             return tool_log_writer_signal(a, args)
+        if name == "log_history":
+            return tool_log_history(a, args)
         return tool_redmine_note(a, args.get("issue_id"), str(args.get("notes") or ""),
                                  status_name=str(args.get("status_name") or ""),
                                  done_ratio=args.get("done_ratio"))

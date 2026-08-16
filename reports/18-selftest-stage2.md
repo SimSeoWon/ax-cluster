@@ -683,3 +683,31 @@ recipes/ **한 디렉토리만** 개방 — 큐 프로세스가 저장소 코드
 .33 stdio MCP 실 왕복 → 마스터 파일 착지 확인. 검증 찌꺼기 2건은 제거했다.
 [주의] 파이프라인 자동 적재는 주입 테스트만 — 다음 실 통합이 라이브 검증 자리다.
 테스트 31건 신규, 전체 3260/3260. .33 재배달(해시 대조 통과).
+
+## §42 생산자③ 작업 기록 (#207) — 생산자 3종 완료
+
+원전 α′ 규약(project_claude_md.py 「작업 히스토리 작성 규약」) 이식: 비자명한 결정 직후
+history/YYYY-MM-DD_HHMM_<작업요약>.md 를 frontmatter 의무 필드로 — 온톨로지 시드의 1순위
+원천, 소비자(#158 history_harvest)가 직접 읽는다.
+
+**원전 파서 함정 (이식이 잡음)**: history_harvest 의 미니 파서는 인라인 리스트([a, b])를
+못 읽는다 — 스칼라 문자열이 되어 isinstance(list) 검사에서 통째로 버려진다. 렌더러가 대시
+리스트만 쓰도록 박았고, 테스트가 산출물을 원전 파서 로직 그대로 재파싱해 계약을 잰다.
+
+적재 지점 둘 (#206 미러):
+    파이프라인    work 이 merged/rejected 로 PATCH 될 때 큐가 자동 기록. user_quote=검수
+                 노트(사람의 발화 = WHY 신호). fail-soft — 기록 실패가 종결을 막지 않되
+                 응답(history_error)·로그로 말한다.
+    요청자 .33    클라 MCP log_history → 8101 POST /api/v1/history (requester 스코프).
+                 규약은 도구 설명 + 배달 CLAUDE.md 요청자 블록에: 코드 작업 종료 시
+                 log_writer_signal · 비자명 결정 시 log_history · trivial 은 안 쓴다.
+
+실측 둘: task 레코드에 title 필드가 없다(스키마 실물 확인) — #206 통합자 intent 폴백을
+target_file 경유로 보정, history 파일 수집도 target_file/header_file 단수로.
+
+라이브: 마스터 curl 왕복 200/401/422 · 캔드 work rejected 전이 → 자동 기록 착지 ·
+.33 stdio MCP 실 왕복(도구 8종) → 마스터 착지. 큐 유닛 ReadWritePaths 에 history/ 한 줄.
+테스트 24건 신규, 전체 3284/3284. 검증 찌꺼기 제거.
+
+**중 3.3 현황: 생산자 3종([완료]) — 남은 것은 소비자 4종(#155 planner · #156 review_collector ·
+#157 recipes_synthesizer · #158 history_harvest).**
