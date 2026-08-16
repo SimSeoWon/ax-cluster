@@ -123,9 +123,20 @@ class Invalidation:
         return s
 
 
-def _mentioned_members(text: str, member_names: set) -> set:
-    """yaml 원문이 언급한 멤버 클래스 (식별자 토큰 ∩ 도메인 멤버)."""
-    return set(_IDENT_RE.findall(text)) & member_names
+def _mentioned_members(text: str, member_names: set, alias_map: dict = None) -> set:
+    """yaml 원문이 언급한 멤버 클래스 (식별자 토큰 ∩ 도메인 멤버 + **한글 별칭 경유**).
+
+    [중요] 별칭 경유는 #194 머지 지점 8 (2026-08-17) — `_IDENT_RE` 는 영문 식별자 전용이라
+    yaml 이 클래스를 한글 별칭으로만 가리키면 무효화가 새고, 변경 영향을 받은 yaml 이 낡은
+    채 남는다. 지금은 별칭 10개가 전부 객체 yaml 쪽이라 실해 0이지만, 커버리지가 오르기
+    **전에** 닫는다. 한글에는 `\\b` 가 안 걸리므로 부분 문자열로 본다 — 보수적 무효화의
+    방향과 같다 (과잉 무효화가 과소 무효화보다 싸다).
+    """
+    got = set(_IDENT_RE.findall(text)) & member_names
+    for alias, cls in (alias_map or {}).items():
+        if cls in member_names and cls not in got and alias in text:
+            got.add(cls)
+    return got
 
 
 def _iter_yaml(package_dir: Path, kind: str) -> list:
@@ -142,6 +153,14 @@ def determine_invalidation(paths: ProjectPaths, domain: str, changed_classes: se
     inv = Invalidation(domain=domain, objects=set(changed), scope_classes=set(changed))
     pkg = paths.ontology / "domains" / domain
     member_names = set(collect.members_of(paths, domain))
+    # 별칭 → 클래스 (한글 별칭 언급 감지, 머지 지점 8). 실패해도 판정을 막지 않는다 —
+    # 별칭 경유가 없던 시절의 판정으로 돌아갈 뿐이다.
+    alias_map: dict = {}
+    try:
+        from ..context_search import thesaurus
+        alias_map = {term: a.class_name for term, a in thesaurus.load(paths).items()}
+    except Exception:                                    # noqa: BLE001
+        pass
 
     for kind in KINDS:
         dst = inv.actions if kind == "actions" else inv.invariants
@@ -159,7 +178,7 @@ def determine_invalidation(paths: ProjectPaths, domain: str, changed_classes: se
                 inv.locked_kept += 1
                 _bump_preserved(inv, kind)
                 continue
-            mentioned = _mentioned_members(text, member_names)
+            mentioned = _mentioned_members(text, member_names, alias_map)
             if mentioned & changed:
                 dst.append(p)
                 inv.scope_classes |= mentioned      # 응집 — 같이 언급된 멤버까지

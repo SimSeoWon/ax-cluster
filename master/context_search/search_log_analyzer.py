@@ -325,8 +325,13 @@ def verdict_language(language: dict) -> str:
     en_zero = en["bm25_zero"] / en["total"] * 100
     gap = ko_zero - en_zero
     if gap >= LANG_GAP_PCT_THRESHOLD:
+        # [중요] 처방이 원전과 다르다 (#194 머지 지점 1, 2026-08-17). 원전은 "다국어 임베딩
+        #    검토"를 권했지만 우리는 이미 다국어 모델이다(embedding.py) — 우리 지렛대는
+        #    ① 태그·별칭 커버리지 (실측 4~7% 에서 멈춰 있다) ② KR 라우팅(정답 집합을 만든
+        #    뒤에만 — bm25.py 의 실측 판정). 같은 신호, 우리 층에 맞는 답.
         return (f"ko bm25_zero {ko_zero:.0f}% vs en {en_zero:.0f}% (갭 {gap:.0f}%p "
-                f"≥ {LANG_GAP_PCT_THRESHOLD:.0f}%p) → 한국어 인덱싱/토큰화 갭 의심")
+                f"≥ {LANG_GAP_PCT_THRESHOLD:.0f}%p) → 한국어 갭 의심. 처방: 한글 태그·별칭 "
+                f"커버리지 확대(현 4~7%), KR 라우팅은 정답 집합 이후 (다국어 임베딩은 이미 있음)")
     return (f"ko bm25_zero {ko_zero:.0f}% vs en {en_zero:.0f}% (갭 {gap:.0f}%p) "
             "→ 한국어 갭 임계 미만, 현 임베딩 유지 근거")
 
@@ -442,7 +447,11 @@ def fmt_zero_patterns(result: dict) -> list:
     out += ["**해석 가이드**:",
             "- `single-CamelCase` 가 많으면 → UE prefix gap (`UISubsystem` vs 인덱스 `UUISubsystem`)",
             "- `ident+korean-mixed` 가 많으면 → 다중 토큰에서 어느 토큰도 안 잡힘 (인덱싱 누락)",
-            "- `korean-only` 가 많으면 → 한국어 어절 매칭 자체가 약함", ""]
+            "- `korean-only` 가 많으면 → 한국어 어절 매칭 자체가 약함 — 처방은 한글 태그·별칭 "
+            "커버리지 (다국어 임베딩은 이미 있음, #194 지점 1)",
+            "- [주의] 로그의 질의는 `focus()` **이전 원문**이다 (실측) — `[대괄호]` 질의는 "
+            "실제 검색 때 괄호 안만 남는다. 대괄호 질의의 형태 통계는 그만큼 보수적으로 읽는다 "
+            "(#194 지점 2)", ""]
     return out
 
 

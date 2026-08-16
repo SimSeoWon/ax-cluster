@@ -69,6 +69,19 @@ def _wiring_probe(tmp: Path, sy):
             sy.refresh_domain(P, "D", changed_classes={"없는클래스"}, dry_run=True))
 
 
+def test_alias_mentions():
+    """[중요] #194 지점 8 — yaml 이 클래스를 한글 별칭으로만 가리켜도 무효화가 잡는다."""
+    from master.ontology.invalidate import _mentioned_members
+    text = "설명: 미션 매니저가 태스크를 발행한다\n"
+    members = {"UManager_Mission", "UMissionTaskBase"}
+    amap = {"미션 매니저": "UManager_Mission", "다른 것": "UOther"}
+    got = _mentioned_members(text, members, amap)
+    check("[중요] 한글 별칭 언급 → 클래스 매칭", got == {"UManager_Mission"}, str(got))
+    check("멤버 밖 별칭은 무시", _mentioned_members("다른 것", members, amap) == set())
+    check("별칭 맵 없이도 기존 동작 그대로",
+          _mentioned_members("UMissionTaskBase 참조", members) == {"UMissionTaskBase"})
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="ax-inval-"))
     try:

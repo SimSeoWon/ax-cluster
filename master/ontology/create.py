@@ -16,10 +16,13 @@
 크게 데인 자리다(2026-06-01 영구 비활성, 사용자 확인 *"오동작이 심했다"*). 멤버는 사람이
 `collect.propose` 의 후보를 보고 고른다.
 
-## [중요] 이름은 ASCII PascalCase 다
+## [중요] 이름 규칙은 원전과 같다 — 경로 위험문자만 거부 (한글 허용)
 
-한글 도메인명은 경로·URL·검색 식별자에서 깨진다. 원본이 같은 이유로 거부한다. 한글은
-**태그와 별칭**으로 넣는다 — 그쪽이 검색에 실제로 쓰이는 자리다(중 1.4).
+[주의] 이 자리에 있던 *"한글 도메인명은 깨진다. 원본이 같은 이유로 거부한다"* 는 **허위
+인용이었다** — 원전 실물(`domain.py:546`)은 `[\\/:*?"<>|\s]` 만 거르고 한글을 그대로 쓴다
+(M5 #194 머지 지점 5, 실측 2026-08-17). 웹 보드도 같은 규칙으로 이식돼 있었고, 두 입구가
+반대 규칙을 갖던 것을 사용자 결정(ⓐ 한글 허용)으로 통일했다. 리눅스에서 한글 파일명은
+문제가 아니라는 것도 보드 쪽 실측이 이미 확인했다 (2026-08-13).
 
 ## [중요] `## 도메인 경계` 를 빈 채로라도 넣는다
 
@@ -35,7 +38,8 @@ from dataclasses import dataclass, field
 from ..context_search.paths import ProjectPaths
 
 STATUS_DRAFT = "draft"          # [중요] 기본은 draft — 활성화는 사람이 명시한다
-_PASCAL = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+# 원전 domain.py:546 의 문자 집합 그대로 — 이것만 거부한다 (한글 통과)
+_DANGEROUS = re.compile(r'[\\/:*?"<>|\s]')
 
 # 씨앗에 넣는 절. [중요] 순서·표기가 `domain_md._CANON` 과 왕복돼야 한다.
 SECTIONS = (
@@ -72,16 +76,20 @@ class CreateResult:
 
 
 def validate_name(name: str) -> str:
-    """도메인명 검사. [중요] **고쳐 주지 않는다** — 조용히 바꾼 이름은 사람이 찾지 못한다."""
+    """도메인명 검사. [중요] **고쳐 주지 않는다** — 조용히 바꾼 이름은 사람이 찾지 못한다.
+
+    규칙은 원전(`domain.py:546`)과 같은 문자 집합이다: 경로 위험문자·공백만 거부, 한글 허용
+    (#194 머지 지점 5, 사용자 결정 ⓐ 2026-08-17). [주의] 원전은 위험문자를 `_` 로 **바꿔
+    주지만** 우리는 거부한다 — 조용한 정규화 금지는 우리 쪽 원칙이라 유지한다.
+    """
     n = (name or "").strip()
     if not n:
         raise CreateError("도메인명이 비었다")
-    if not n.isascii():
+    bad = _DANGEROUS.findall(n)
+    if bad:
         raise CreateError(
-            f"도메인명에 비ASCII 가 있다: {n!r} — 경로·URL·검색 식별자에서 깨진다. "
-            f"영문 PascalCase 로 짓고, 한글은 **태그와 별칭**으로 넣는다(중 1.4)")
-    if not _PASCAL.match(n):
-        raise CreateError(f"도메인명은 영문자로 시작하는 PascalCase 여야 한다: {n!r}")
+            f"도메인명에 경로 위험문자가 있다: {n!r} (문제 문자: {''.join(sorted(set(bad)))!r}) "
+            f"— 원전과 같은 규칙이다. 한글은 허용된다")
     return n
 
 

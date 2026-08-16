@@ -28,9 +28,16 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 
 
 def test_name_rules() -> None:
-    """[중요] 이름을 조용히 고쳐 주면 사람이 만든 것을 못 찾는다."""
+    """[중요] 규칙은 원전과 같다 — 경로 위험문자만 거부, 한글 허용 (#194 지점 5, 사용자 ⓐ).
+
+    이 자리에 있던 「비ASCII 거부」는 허위 인용("원본이 거부한다") 위의 검사였다 — 원전
+    실물(domain.py:546)은 한글을 통과시킨다. 조용한 정규화 금지는 그대로다.
+    """
     check("PascalCase 통과", C.validate_name("MissionRuntime") == "MissionRuntime")
-    for bad, why in (("미션런타임", "비ASCII"), ("", "빈 이름"), ("9Domain", "숫자 시작")):
+    check("[중요] 한글 도메인명 통과 (원전 규칙 · 사용자 결정 ⓐ)",
+          C.validate_name("미션런타임") == "미션런타임")
+    for bad, why in (("", "빈 이름"), ("미션/런타임", "경로 구분자"), ("a b", "공백"),
+                     ('x"y', "따옴표"), ("t:t", "콜론")):
         try:
             C.validate_name(bad)
             check(f"[중요] {why} 거부", False, f"{bad!r} 를 받았다")
