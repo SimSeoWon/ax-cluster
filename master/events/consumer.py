@@ -69,6 +69,8 @@ class ProjectResult:
     synth_note: str = ""
     lost_groups: list[str] = field(default_factory=list)
     canary_write_failed: int = 0   # [주의] 카나리 기록 자체가 실패한 횟수 (조용히 넘기지 않는다)
+    review_written: str = ""       # 자동 코드리뷰 리포트 경로 (소 3.3.5)
+    review_note: str = ""          # 리뷰 스킵/실패 사유
 
     @property
     def ok(self) -> bool:
@@ -81,6 +83,8 @@ class ProjectResult:
             parts.append(f"소스 {self.source_changed}")
         if self.graph_notes:
             parts.append("그래프 " + "·".join(self.graph_notes))
+        if self.review_written:
+            parts.append("리뷰 1")
         if self.synth_note:
             parts.append(f"합성 {self.synth_written}" +
                          (f" [중요]유실 {self.synth_lost}" if self.synth_lost else ""))
@@ -279,9 +283,45 @@ def _synthesize(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
                     r.canary_write_failed += 1
 
 
+def _auto_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
+                 *, review_run=None) -> None:
+    """자동 코드리뷰 생산자 (소 3.3.5 · `#205`) — 유저 커밋의 변경분을 리뷰해 되먹임의
+    원료(`reviews/<작성자>/`)를 만든다.
+
+    [중요] fail-soft 지만 조용하지 않다 — 이 함수 뒤에서 워터마크가 전진하므로 여기서 리뷰를
+    못 만들면 **그 커밋의 리뷰는 다시 생기지 않는다**. 합성 유실과 같은 기준으로 카나리에
+    누적한다(kind=review-lost). 스킵(trivial·작성자 제외)은 유실이 아니라 설계다 — 카나리 없음.
+    """
+    from ..context_synth import review_gen as rg
+    fn = review_run or rg.review_commit
+    try:
+        rv = fn(paths, r.to_commit, changed)
+    except Exception as e:                              # noqa: BLE001
+        r.review_note = f"[중요] 리뷰 생성 예외: {type(e).__name__}: {e}"
+        if not append_canary(paths, kind="review-lost",
+                             detail=r.review_note, commit=r.to_commit):
+            r.canary_write_failed += 1
+        return
+    if rv.written:
+        r.review_written = rv.written
+        if not getattr(rv, "format_ok", True):
+            # [중요] 저장은 됐지만 소비자는 0건으로 읽는다 — 되먹임 기준 유실이다
+            r.review_note = "[중요] 리뷰 형식 위반 — 소비자 파서 기준 이슈 0건 (사람만 읽을 수 있다)"
+            if not append_canary(paths, kind="review-format-invalid",
+                                 detail=Path(rv.written).name, commit=r.to_commit):
+                r.canary_write_failed += 1
+    elif rv.skipped:
+        r.review_note = f"리뷰 스킵: {rv.skipped}"
+    elif rv.error:
+        r.review_note = f"[중요] 리뷰 유실: {rv.error}"
+        if not append_canary(paths, kind="review-lost",
+                             detail=rv.error, commit=r.to_commit):
+            r.canary_write_failed += 1
+
+
 def process_event(ev: Event, *, registry: Registry | None = None,
                   reindex=None, git=None, synthesize: bool = True,
-                  synth_run=None) -> ProjectResult:
+                  synth_run=None, review_run=None) -> ProjectResult:
     """이벤트 하나(=프로젝트 하나)를 처리한다.
 
     `synthesize=False` 로 합성을 끌 수 있다 — 노드가 죽었거나 품질을 재보는 중일 때.
@@ -346,6 +386,9 @@ def process_event(ev: Event, *, registry: Registry | None = None,
         _update_graphs(paths, changed, r)
         if synthesize:
             _synthesize(paths, changed, r, synth_run=synth_run)
+            # ④ 자동 코드리뷰 (소 3.3.5) — 합성과 같은 게이트(synthesize) 아래 둔다:
+            #    노드가 죽어 합성을 껐다면 리뷰도 돌 수 없는 상태다.
+            _auto_review(paths, changed, r, review_run=review_run)
 
     # ── 재색인은 컨텍스트가 실제로 바뀐 경우에만 ──────────────
     now_digest = context_digest(paths)
