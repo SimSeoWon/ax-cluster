@@ -193,10 +193,23 @@ CI 러너 패턴으로 분리한다.
 **선결 설치**: `claude` [완료] v2.1.223 / `agy` [완료] v1.1.10(리포트 04) /
 ~~`bun`·`node`~~ → **마스터엔 불필요**(2026-08-08) — gjc 는 loopback 제약상 윈도우에서 돈다(`../PLAN.md` §9).
 
+| `context_synth/review_gen.py` | **생산자① 자동 코드리뷰** (#205) — 유저 커밋 → `reviews/<작성자>/`. [중요] 백엔드는 **상용 체인**(원전 기본값 — 14b 는 라이브에서 재시도 포함 2회 산문, 탈락 실측). 형식은 지시가 아니라 **검증기+재시도 1회**가 지킨다(검증 정규식 = 소비자 파서 그대로). trivial/파이프라인(author=ax-cluster) 스킵. 소비자 배선은 `events/consumer._auto_review` — fail-soft + 카나리 2종 |
+| `context_synth/signals.py` | **생산자② code-writer 신호** (#206) — 코드가 아니라 **작업 과정**(intent·검색·파일·피드백·거절·복구)을 `recipes/_signals.jsonl` 에. 적재 둘: 통합자가 **통과분만** 자동(불합격은 실패 카탈로그 소관) · 요청자는 큐 `POST /api/v1/signals`(redmine/note 와 같은 대행). [중요] 큐 유닛 샌드박스는 `recipes/`·`history/` **두 디렉토리만** 연다 |
+| `context_synth/history_gen.py` | **생산자③ 작업 기록** (#207) — 원전 α′ frontmatter. work 종결(merged/rejected) 시 큐가 자동 기록 + `.33` `log_history` 대행. [중요] **원전 미니 파서는 인라인 리스트를 통째로 버린다** — 대시 리스트만 (emission/parser 쌍 왕복 테스트) |
+| `context_synth/review_collector.py` `issue_classifier.py` | **소비자①** (#156) — 리뷰 MD → 구조화 이슈(원전 글자대로: 심각도 정규화·`[리뷰]` 코멘트 제외·라인 버킷 중복 제거·3파일+ 반복 패턴). [중요] **이 파서가 생산자 형식 계약 그 자체** — 「(없음)」 자리표시는 여기서 쓰레기 이슈 10건으로 측정돼 생산자에서 제거됐다 |
+| `context_synth/planner.py` (+`plan_generator`·`plan_dedup`·`plan_archive`·`plan_register`) | **소비자② 주간 플랜** (#155) — 리뷰→플랜 MD→**실 Redmine 이슈**(트래커 코드리뷰, id 를 frontmatter 에 되적어 다음 주는 갱신). [중요] Step 0(draft 자동 승급)은 **미이식** — 「자동 승급 영구 비활성」 확정 결정의 적용. *"코드를 직접 수정하지 않는다 — 사람이 확인 후 실행"* (원전 원문) |
+| `context_synth/recipes_synthesizer.py` | **소비자③** (#157) — 신호→LLM 클러스터→임계치(≥5) 도달만 레시피 합성→아카이브(28일)→`_anti_patterns.md` 4섹션. [주의] 읽기 도구(find_recipes 등)는 원전 code_recipes MCP 소관 — code-writer 배선 때 |
+| `context_synth/history_harvest.py` | **소비자④** (#158) — `.claude`(8필드)+`.gemini`(6섹션 A/B/C) 통합 read-only 파서 → 온톨로지 narrative 시드. 실물 코퍼스는 `.33` 에서 받아 `history/`·`history_gemini/`. audit 도메인 원천 = **온톨로지 YAML** (class_graph.db domains 는 비어 있음 실측) |
+| `work/carry.py` | [중요] **매니페스트 git-carried 배달** (#185 판정 — scp 의 전제 「마스터 push 불가」가 Flow Y 로 소멸). `publish` 가 durable `task/<id>` 에 멱등 commit·push, 워커는 fetch+`git show` 로 자기 클론에서 실체화(경로·형식은 scp 시절과 동일 — 운송만 교체) + **blob sha 대조**. 조용한 scp 폴백 없음 — `runner.deliver_manifest` 는 부활 조건용 보존 |
+| `ontology/edit_field.py` | **도메인 MD 필드 편집** (#189, MCP `edit_domain_field_tool`) — 원전 두 갈래: parent/tags/collab 는 manifest 직접 패치+인덱스(LLM 0), summary/status 는 MD-only. [중요] tags 통째 치환으로 사라지는 **한글 태그를 크게 보고** (#194 지점 7) · 이름은 조용한 정규화 대신 거부(한글 허용, 지점 5) |
+| `clientside/client_mcp.py` | **`.33` 로컬 stdio MCP** (stdlib 단일 파일, 번들로 배달) — 도구 8종: 조회 5(works/검색/도메인, `_stale` 캐시 폴백) + 마스터 대행 쓰기 3(redmine_note·log_writer_signal·log_history). 결정 도구는 없다 — 검수는 배달된 review 모듈이 유일 절차 |
+| `bench_kr.py` | **한글 검색 정답 집합 벤치** (#211) — `analysis/kr_ground_truth.tsv`(자연=로그 실물·구조=별칭+한글 태그) 위에서 4변형(baseline/kr_on/gated/kr+gated) × hit@1/5/MRR. [중요] 1차 실측: **게이팅이 hit@1 5배**(0.153→0.787) — bm25.py 가설(진범=RRF 벡터 상관 오답) 확인. 자연 확정 30건 전엔 스스로 「판정 보류」를 찍는다 |
+
 ## 설계 제약
 
-- **파일을 소유하지 않는다** — 추론 노드와는 텍스트만 왕복. 실제 파일 I/O·컴파일·코드 등록은
-  작업자(윈도우). **여기는 인프라지 작업장이 아니다.**
+- [주의] **「파일을 소유하지 않는다」는 Flow Y(2026-08-14)와 #185(2026-08-17)로 좁혀졌다** —
+  마스터는 `attempt/*`·`task/*` 에 쓰고(diff·매니페스트 commit), **`main` 과 빌드는 여전히
+  못 한다.** 실제 컴파일·에디터 작업은 작업자(윈도우). **여기는 인프라지 작업장이 아니다.**
 - **추론 요청은 stateless**, **피드백 누적은 git**(`task/<task_id>` 브랜치). 두 경로 분리.
 - 검증은 3층 게이트(워커 자기검증 → 상용 모델 문법검사 → 실제 UE5 빌드). `../PLAN.md` §4.3.
 
