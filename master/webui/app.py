@@ -214,9 +214,15 @@ class WebUI:
         if m:
             return await _send(send, 200, _j(routes.api_history(unquote(m.group(1)))))
         if path == "/api/v1/ontology/tasks":
-            return await _send(send, 200, _j(routes.api_tasks()))
-        if _API_TASK.match(path):
-            return await _send(send, 404, _j({"detail": routes.NOTES["tasks"]}))
+            return await _send(send, 200, _j(routes.api_tasks(paths)))
+        m = _API_TASK.match(path)
+        if m:
+            got = routes.api_task(paths, unquote(m.group(1)))
+            if got is None:
+                # ⚠️ 자원 부재이지 라우트 부재가 아니다 — 본문이 그것을 말한다
+                return await _send(send, 404, _j({"detail": "그 이름의 태스크 템플릿이 없다",
+                                                  "task_type": unquote(m.group(1))}))
+            return await _send(send, 200, _j(got))
 
         # ── API: Context Server 탭 ──
         if path == "/api/v1/health":

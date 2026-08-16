@@ -197,8 +197,30 @@ def api_history(cls: str) -> dict:
             "note": NOTES["history"]}
 
 
-def api_tasks() -> dict:
-    return {"status": "ok", "count": 0, "templates": [], "note": NOTES["tasks"]}
+def api_tasks(paths=None) -> dict:
+    """등록된 태스크 템플릿 목록. ✅ **더 이상 빈 목록이 아니다** (소 2.2.2 · `#140`).
+
+    🔴 **검색이 아니라 디렉토리 스캔이다** — 태스크 템플릿은 도메인 검색 채널에 인덱싱하지
+    않는다(채널 분리 불변식). 섞으면 도메인 문서와 경합해 한쪽이 묻힌다(원전, 사용자 지적).
+    """
+    if paths is None:
+        return {"status": "ok", "count": 0, "templates": [], "note": NOTES["tasks"]}
+    from ..ontology import tasks as _t
+    got = _t.listing(paths.ontology)
+    if not got.get("count"):
+        got["note"] = NOTES["tasks"]
+    return got
+
+
+def api_task(paths, task_type: str):
+    """템플릿 하나. 없으면 `None` (호출자가 404 로 만든다).
+
+    ⚠️ **404 는 두 가지다** — *"라우트 미등록"* 과 *"자원 없음"*. 여기서 `None` 은 뒤쪽이고,
+    본문에 그 사실을 적는다(리포트 14 §의 오탐 두 번이 이 구분에서 나왔다).
+    """
+    from ..ontology import tasks as _t
+    got = _t.get(paths.ontology, task_type)
+    return None if got.get("status") != "ok" else got
 
 
 # ── API — Context Server 탭 ──────────────────────────────────────────────────────
