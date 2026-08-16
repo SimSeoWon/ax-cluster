@@ -37,14 +37,24 @@ push 할 수 있어서 라이브 저장소에 worktree 격리로 셀프테스트
 > 결정이 **필요 없다** — 그 결정은 하니스의 토폴로지를 바꾸는 별건이다(`#127`/`#128` 계열).
 > ⚠️ 리포트 14 §15 가 *"증명 안 한 것: 마스터가 쓰기 주체"* 라고 적어 둔 그 칸이 바로 이것이다.
 
-## ⚠️ 2단계에서 **아직 못 옮기는 것 하나** — C.7 리더 통합 머지
+## ✅ C.7 리더 통합 머지 — 상류가 풀려 붙였다 (2026-08-16)
 
 원전 7b 는 *"실 leader 가 쓰는 `_integrate_push_durables` 를 **그대로** 태워"* feature +
-durable 집합이 한 브랜치로 합류하는지 본다(머지만·push 없음). 🔴 그 헬퍼는
-`executor_review_finalize.py`(중 2.1 `#135`)에 있고 **미이식**이다(우리 코퍼스 grep 0건).
-여기서 머지를 **새로 쓰면 검사의 의미가 달라진다** — *"실 leader 경로가 합류시킨다"* 가 아니라
-*"셀프테스트가 자기 머지를 돌렸다"* 가 되기 때문이다. 따라서 **`#135` 가 상류**이고, 그때
-`verify_and_merge`(per-task durable, push 함)와 **다른 능력**임에 주의한다.
+durable 집합이 한 브랜치로 합류하는지 본다(머지만·push 없음).
+
+⚠️ **이 절은 「아직 못 옮긴다」로 시작했다.** 그 헬퍼가 `executor_review_finalize.py`
+(중 2.1 `#135`)에 있고 미이식이었기 때문이다 — 🔴 **여기서 머지를 새로 쓰면 검사의 의미가
+달라진다**(*"실 leader 경로가 합류시킨다"* → *"셀프테스트가 자기 머지를 돌렸다"*). `#135` 가
+이식되면서 `work/review.py::integrate_durables` 가 생겼고, **그 함수를 그대로 태운다.**
+
+    실행 위치   🔴 마스터의 정본 클론 **옆** 임시 worktree (원전은 서버 트리에서 돈다.
+                우리 서버는 마스터이고, 정본은 색인기 전제상 `main` 에 앉아 있어야 한다)
+    remote      `gitea-write`(SSH) — `origin` 은 bare 경로라 `gitea` 그룹이 필요하고
+                그 실패는 *"저장소가 아니다"* 로 **원인을 감춘다**(§5 가 밟았던 함정)
+    🔴 fetch 만  push 하지 않는다. 트리는 끝나면 지운다
+
+⚠️ per-task durable 을 올리는 `verify_and_merge`(push 함)와는 **다른 능력**이다 — 이름이
+비슷하다고 대응으로 보지 말 것.
 
 ## ⚠️ 우리와 원전이 다른 것 — 매니페스트 배달 경로
 
@@ -276,6 +286,7 @@ class DryRun:
     workers_distinct: list = field(default_factory=list)
     parallel_overlap: bool = False
     parallel_asserted: bool = False                  # 🔴 단정했나 skip 했나를 남긴다
+    c7_integrated: bool = False                      # C.7 리더 통합이 전 probe 를 합류시켰나
 
     def chk(self, name: str, cond: bool, detail: str = "") -> None:
         self.checks.append(Check(name, bool(cond), detail))
@@ -801,6 +812,58 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
                 log("verify", f"probe[{i}] 실패 — fetch rc={rc_f} ({out_f[:80]}) "
                               f"show rc={rc_s} body={body[:100]!r}")
         r.chk(f"🔴 마스터 독립 검증 — NONCE 라운드트립 ({ok_n}/{n})", ok_n == n, f"{ok_n}개")
+
+        # ── 6. 🔴 C.7 리더 최종 통합 (원전 7b) ───────────────────
+        #
+        # 🔴 **실 leader 가 쓰는 함수를 그대로 태운다** (원전 주석: *"실 leader review/finalize
+        #    가 쓰는 `_integrate_push_durables` 를 그대로 태운다(머지 메커니즘 검증)"*).
+        #    여기서 머지를 새로 쓰면 검사의 뜻이 바뀐다 — *"실 경로가 합류시킨다"* 가 아니라
+        #    *"셀프테스트가 자기 머지를 돌렸다"* 가 된다. 그래서 `#135` 가 상류였다.
+        # 🔴 **push 하지 않는다** — 통합 전용 트리에서 머지만 하고 지운다(원전: *"main 무접촉"*).
+        # ⚠️ 원전은 이것을 서버의 트리에서 돌린다. 우리 서버는 마스터이므로 **마스터의 정본
+        #    클론 옆**에 임시 worktree 를 세운다 — 정본은 색인기 전제상 `main` 에 앉아 있어야
+        #    하므로 거기서 머지하지 않는다(`attempt.py` 머리말과 같은 규약).
+        # ⚠️ remote 는 `gitea-write`(SSH)를 쓴다 — `origin` 은 bare 경로라 `gitea` 그룹이 필요하고
+        #    그 실패는 *"저장소가 아니다"* 로 원인을 감춘다(§5 의 함정). 🔴 **fetch 만 한다.**
+        if ok_n == n and n > 0:
+            from . import review as R
+            from .branch_names import durable_branch as _dur
+            integ_tree = mirror.parent / f"ax-c7-{ts}"
+            c7_tasks = [{"task_id": f"{work_id}.{i}", "distribution_mode": "push",
+                         "status": "verified", "hierarchy_level": 0, "priority": 0,
+                         "created": f"{i:03d}"} for i in range(n)]
+            rc_f, out_f = C._git_rc(mirror, "fetch", "-q", "gitea-write", st_branch)
+            if integ_tree.exists():
+                C._git_rc(mirror, "worktree", "remove", "--force", str(integ_tree))
+            rc_w, out_w = C._git_rc(mirror, "worktree", "add", "--detach", "--force",
+                                    str(integ_tree), "gitea-write/main")
+            r.chk("C.7 통합 전용 트리 생성 (정본 미접촉)", rc_w == 0, out_w[:200])
+            if rc_w == 0:
+                try:
+                    integ = R.integrate_durables(integ_tree, target_branch=st_branch,
+                                                 tasks=c7_tasks,
+                                                 merge_label=f"[selftest-integ] {slug}",
+                                                 remote="gitea-write")
+                    r.chk(f"🔴 C.7 리더 통합 머지 (feature + durable {n}건, 충돌 0)",
+                          integ.ok and len(integ.merged) == n,
+                          integ.error or f"merged={len(integ.merged)} skip={integ.skipped}")
+                    if integ.ok:
+                        present = 0
+                        for i in range(n):
+                            body = C._git(integ_tree, "show", f"HEAD:{probe_rels[i]}", check=False)
+                            if nonces[i] in body and "[PSEUDO]" not in body:
+                                present += 1
+                        # 🔴 이것이 C.7 이 증명하는 것이다 — 조각들이 **한 브랜치로 합류**하고
+                        #    각자의 NONCE 가 살아남는다(머지가 서로를 덮지 않았다).
+                        r.chk(f"🔴 통합 브랜치에 전 probe 합류 ({present}/{n} NONCE)",
+                              present == n, f"{present}개 확인")
+                        r.c7_integrated = present == n
+                finally:
+                    C._git_rc(mirror, "worktree", "remove", "--force", str(integ_tree))
+                    C._git_rc(mirror, "worktree", "prune")
+                    log("c7", f"통합 트리 제거 {integ_tree.name}")
+        else:
+            log("c7", f"C.7 통합 단정 skip — 마스터 검증 {ok_n}/{n} (전 probe 통과가 전제)")
 
         r.ok = not r.fails
         return r
