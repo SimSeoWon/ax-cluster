@@ -10,8 +10,8 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
 ## Hard rules — inline on purpose
 
 - [중요] **Read which milestone you are in before planning anything.**
-  **M1·M2·M4 closed ([중요] M4 closed 2026-08-17, user decision); M3 is `locked` (halted
-  2026-08-13); [중요] M5 (두 버전 대조·머지) is open.**
+  **M1–M4 all closed ([중요] M3·M4 closed 2026-08-17, user decisions — M3's open 9 were
+  dispositioned: 5 done-by-M4, 4 → M6); [중요] M5 (두 버전 대조·머지) is open.**
   → [`docs/milestones/5-version-reconcile.md`](docs/milestones/5-version-reconcile.md) —
   numbers live in Redmine (version *마일스톤 5*; 3 items at open). M5 = 판정: M4 이식 중
   「우리 방식 vs 원전 방식」으로 갈린 자리들을 **둘 다 읽고 실측해서** 고른다. 진 쪽은
