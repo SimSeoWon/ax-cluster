@@ -131,8 +131,34 @@ def register_project(
     }
 
 
-def set_active(name: str, *, registry: Registry | None = None) -> dict:
-    """가리키는 프로젝트를 바꾼다. 디렉토리는 전부 남고 마운트 대상만 바뀐다."""
+def open_works_in_queue(*, fetcher=None) -> list:
+    """큐의 **미종결** work 목록 (#210 전환 가드의 눈). 큐에 못 닿으면 예외 — 판단 불가를
+    빈 목록으로 접지 않는다 (fail-closed)."""
+    import json as _json
+    import urllib.request
+    if fetcher is not None:
+        works = fetcher()
+    else:
+        from ..auth import auth_headers
+        req = urllib.request.Request("http://localhost:8101/api/v1/works",
+                                     headers=auth_headers())
+        with urllib.request.urlopen(req, timeout=10) as r:
+            works = _json.loads(r.read().decode("utf-8"))
+    terminal = {"merged", "rejected", "cancelled"}      # task_queue.logic 과 같은 집합
+    return [w for w in (works or [])
+            if (w.get("merge_status") or "in_progress") not in terminal]
+
+
+def set_active(name: str, *, registry: Registry | None = None,
+               force: bool = False, works_fetcher=None) -> dict:
+    """가리키는 프로젝트를 바꾼다. 디렉토리는 전부 남고 마운트 대상만 바뀐다.
+
+    [중요] 전환 가드 (#210, 사용자 전제 점검 2026-08-17): 큐에 미종결 work 가 있으면
+    거부한다 — 원전 데몬은 프로젝트 안에 살아 이 부류가 불가능했지만, 중앙 큐에서 활성을
+    바꾸면 미종결 work 의 종결 기록·신호·매니페스트가 **다른 프로젝트 트윈**에 착지한다.
+    큐가 죽어 확인이 불가한 것도 거부다 (모르는 채 바꾸지 않는다). `force=True` 는 사람이
+    결과를 감수하겠다는 뜻 — 그래도 무엇이 걸려 있었는지는 결과에 남긴다.
+    """
     reg = registry or Registry.load()
     validate_name(name)
     if name not in reg.names:
@@ -143,15 +169,40 @@ def set_active(name: str, *, registry: Registry | None = None) -> dict:
     if problems:
         raise ConfigError("전환할 수 없다 — " + " / ".join(problems))
 
+    forced_over: list = []
+    if reg.active and reg.active != name:
+        try:
+            open_works = open_works_in_queue(fetcher=works_fetcher)
+        except Exception as e:                           # noqa: BLE001
+            if not force:
+                raise ConfigError(
+                    f"전환할 수 없다 — 큐의 미종결 work 를 확인하지 못했다 ({e}). "
+                    f"모르는 채 바꾸지 않는다. 감수하려면 force") from e
+            forced_over = [f"(확인 불가: {e})"]
+        else:
+            if open_works and not force:
+                ids = ", ".join(str(w.get("work_id") or "?") for w in open_works[:5])
+                raise ConfigError(
+                    f"전환할 수 없다 — 미종결 work {len(open_works)}건이 큐에 있다 ({ids}"
+                    + (" …" if len(open_works) > 5 else "") + "). 종결시키거나 force. "
+                    f"[중요] 그냥 바꾸면 그 work 의 기록·신호가 새 프로젝트 트윈에 착지한다")
+            if open_works:
+                forced_over = [str(w.get("work_id") or "?") for w in open_works]
+
     previous = reg.active
     reg.active = name
     reg.save()
 
     cfg = reg.config_of(name)
+    out_forced = ({"forced_over_open_works": forced_over,
+                   "warning": "[중요] 미종결 work 를 둔 채 강제 전환했다 — 그 work 의 "
+                              "기록·신호는 스탬프(#210)가 있으면 제 프로젝트로, 없으면 "
+                              "새 활성 트윈으로 간다"} if forced_over else {})
     return {
         "ok": True,
         "previous": previous,
         "active": name,
+        **out_forced,
         "project_id": cfg.project_id,
         "branch": cfg.branch,
         "last_indexed_commit": cfg.last_indexed_commit,

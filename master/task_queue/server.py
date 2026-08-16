@@ -95,7 +95,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
     @app.post("/api/v1/works")
     def register_work_ep(req: WorkRegisterReq):
         return register_work(idx,
-            title=req.title, target_repo=req.target_repo,
+            title=req.title, target_repo=req.target_repo, project=req.project,
             reference_repo=req.reference_repo, target_branch=req.target_branch,
             branch_isolation=req.branch_isolation, created_branch_at=req.created_branch_at,
             original_request=req.original_request, decomposition=req.decomposition,
@@ -126,6 +126,21 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         tasks = [t for t in idx.tasks.values() if t.get("work_id") == work_id]
         return {"work": w, "tasks": tasks}
 
+    def _paths_for(work_meta=None, work_id: str = ""):
+        """트윈 해석 — [중요] 활성이 아니라 **work 의 프로젝트 스탬프**로 푼다 (#210).
+
+        원전 데몬은 프로젝트 안에 살아 귀속이 물리적이었다. 중앙 큐에서 활성으로 풀면
+        미종결 work 를 둔 채 활성을 바꿨을 때 산출물이 다른 프로젝트 트윈에 착지한다.
+        스탬프 없는 옛 work 는 활성으로 (호환).
+        """
+        from ..context_search.paths import resolve
+        proj = ""
+        if work_meta:
+            proj = work_meta.get("project") or ""
+        elif work_id:
+            proj = (idx.works.get(work_id) or {}).get("project") or ""
+        return resolve(proj or "")
+
     @app.patch("/api/v1/works/{work_id}")
     def patch_work_ep(work_id: str, req: WorkPatchReq):
         r = update_work_meta(idx, work_id,
@@ -139,11 +154,10 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         if req.merge_status in ("merged", "rejected") and \
                 any(c.startswith("merge_status=") for c in r.get("changed", ())):
             try:
-                from ..context_search.paths import resolve
                 from ..context_synth import history_gen as HG
                 tasks = [t for t in idx.tasks.values() if t.get("work_id") == work_id]
                 r["history_written"] = HG.record_work_terminal(
-                    resolve(""), r.get("work") or {}, tasks, req.merge_status)
+                    _paths_for(r.get("work")), r.get("work") or {}, tasks, req.merge_status)
                 _tq_log(f"[history] {work_id} {req.merge_status} → "
                         f"{r['history_written']}", root)
             except Exception as e:                           # noqa: BLE001
@@ -158,7 +172,6 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         `signals` 와 같은 마스터 대행 구조·같은 requester 스코프. 파이프라인 종결 기록은
         위 PATCH 훅이 자동으로 하므로 이 자리는 **사람 주도 작업의 결정**만 온다.
         """
-        from ..context_search.paths import resolve
         from ..context_synth import history_gen as HG
         try:
             content = HG.render(
@@ -168,7 +181,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
                 affected_domains=req.affected_domains, supersedes=req.supersedes,
                 alternatives_considered=req.alternatives_considered,
                 tags=req.tags, user_quote=req.user_quote, body=req.body)
-            stored = HG.write(resolve(""), content, title=req.title)
+            stored = HG.write(_paths_for(work_id=req.work_id), content, title=req.title)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
         except Exception as e:                               # noqa: BLE001
@@ -335,7 +348,6 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         대행한다 (`redmine/note` 와 같은 구조·같은 requester 스코프). 파이프라인 쪽 신호는
         통합자가 직접 적재하므로 이 자리를 지나지 않는다.
         """
-        from ..context_search.paths import resolve
         from ..context_synth import signals as SG
         try:
             record = SG.make_record(
@@ -345,7 +357,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
                 rejected_approaches=req.rejected_approaches,
                 error_recoveries=req.error_recoveries,
                 session_id=req.session_id, work_id=req.work_id, source="requester")
-            stored = SG.append_signal(resolve(""), record)
+            stored = SG.append_signal(_paths_for(work_id=req.work_id), record)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
         except Exception as e:                               # noqa: BLE001

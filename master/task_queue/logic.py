@@ -84,6 +84,7 @@ def find_active_duplicates(idx: TaskIndex, *, slug: str, target_repo: str) -> li
 
 
 def register_work(idx: TaskIndex, *, title: str, target_repo: str,
+                  project: str = "",
                   reference_repo: str = "", target_branch: str = "",
                   branch_isolation: bool = True, created_branch_at: str = "",
                   original_request: str = "", decomposition: str = "",
@@ -109,6 +110,7 @@ def register_work(idx: TaskIndex, *, title: str, target_repo: str,
         meta = {
             "work_id": work_id,
             "title": title,
+            "project": project or None,     # [중요] 귀속 스탬프 (#210) — None = 옛 등록
             "target_repo": target_repo,
             "reference_repo": reference_repo,
             "target_branch": target_branch or None,

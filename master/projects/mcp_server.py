@@ -91,10 +91,14 @@ def register_project_tool(
 
 
 @mcp.tool()
-def set_active_tool(name: str) -> str:
-    """가리키는 프로젝트를 바꾼다. 디렉토리는 전부 남고 마운트 대상만 바뀐다."""
+def set_active_tool(name: str, force: bool = False) -> str:
+    """가리키는 프로젝트를 바꾼다. 디렉토리는 전부 남고 마운트 대상만 바뀐다.
+
+    [중요] 큐에 미종결 work 가 있으면 거부한다 (#210) — 그 work 의 기록·신호가 다른
+    프로젝트 트윈에 착지하는 것을 막는 가드다. force=True 는 사람이 감수한다는 뜻.
+    """
     try:
-        return json.dumps(set_active(name), ensure_ascii=False)
+        return json.dumps(set_active(name, force=force), ensure_ascii=False)
     except (ConfigError, OSError) as e:
         return _fail(e)
 

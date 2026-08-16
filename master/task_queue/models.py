@@ -42,6 +42,10 @@ _VERIFY_RESULT_TO_STATUS = {
 class WorkRegisterReq(BaseModel):
     title: str
     target_repo: str
+    # [중요] 프로젝트 귀속 스탬프 (#210) — 원전 데몬은 프로젝트 안에 살아 귀속이 물리적이었다.
+    #    중앙 큐에서는 이 스탬프가 그 자리다: 종결 기록·신호가 활성이 아니라 **이 값**으로
+    #    트윈을 푼다. 빈 값 = 옛 등록 호환 (활성으로 해석).
+    project: str = ""
     reference_repo: str = ""
     target_branch: str = ""
     branch_isolation: bool = True

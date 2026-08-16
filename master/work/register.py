@@ -249,6 +249,8 @@ def register_work(
 
     work = post(f"{queue_url}/api/v1/works", {
         "title": title,
+        # [중요] 프로젝트 귀속 스탬프 (#210) — 종결 기록·신호가 활성이 아니라 이 값으로 푼다
+        "project": paths.name,
         "target_repo": target_repo,
         "target_branch": target_branch,
         "original_request": original_request or title,
