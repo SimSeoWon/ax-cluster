@@ -20,14 +20,15 @@ software repository.** There is no build, lint, or test tooling. **Don't assume 
 
 ## [중요] Where the project stands — read this before planning
 
-**M1–M4 all closed ([중요] M3·M4 closed 2026-08-17, user decisions — M3's 9 open items were
-dispositioned: 5 done-by-M4, 4 moved to M6). [중요] M5 (두 버전 대조·머지) is open — numbers
-live in Redmine (version *마일스톤 5*).**
+**M1–M5 all closed ([중요] M3·M4·M5 closed 2026-08-17, user decisions). [중요] M6 (개선·확장)
+is open — numbers live in Redmine (version *마일스톤 6*). A separate dateless bucket
+*아이디어 — 추후 검토 수집* holds not-yet-decided ideas (wiki [[아이디어수집]]) — items there
+are NOT work.**
 
 | | |
 |---|---|
-| Current milestone — **read only this one** | `~/ax-cluster/docs/milestones/5-version-reconcile.md` |
-| Closed, kept as reference | `4-origin-reconciliation.md` ([중요] its 「여기서 배운 것」 carries M4's traps — 왕복이 계약 · 원전 기본값 · census 한계) · `3-work-pipeline.md` (gates/grounding 실측 기록) · `2-twin-restoration.md` (its 「여기서 배운 것」 is the older trap list) · `1-infrastructure.md` |
+| Current milestone — **read only this one** | `~/ax-cluster/docs/milestones/6-improvements.md` |
+| Closed, kept as reference | `5-version-reconcile.md` (「여기서 배운 것」 — 전제가 죽은 선택 · 허위 인용 · 중앙화의 새 좌표) · `4-origin-reconciliation.md` ([중요] 왕복이 계약 · 원전 기본값 · census 한계) · `3-work-pipeline.md` (gates/grounding 실측) · `2-twin-restoration.md` · `1-infrastructure.md` |
 
 > [주의] **The next two blocks (Why M3 was halted · M4 counts) are M4's record, not a current
 > instruction** — M4 closed 2026-08-17 with 0 open issues (되먹임 7종 completed the last area,

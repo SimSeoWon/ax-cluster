@@ -10,12 +10,12 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
 ## Hard rules — inline on purpose
 
 - [중요] **Read which milestone you are in before planning anything.**
-  **M1–M4 all closed ([중요] M3·M4 closed 2026-08-17, user decisions — M3's open 9 were
-  dispositioned: 5 done-by-M4, 4 → M6); [중요] M5 (두 버전 대조·머지) is open.**
-  → [`docs/milestones/5-version-reconcile.md`](docs/milestones/5-version-reconcile.md) —
-  numbers live in Redmine (version *마일스톤 5*; 3 items at open). M5 = 판정: M4 이식 중
-  「우리 방식 vs 원전 방식」으로 갈린 자리들을 **둘 다 읽고 실측해서** 고른다. 진 쪽은
-  부활 조건과 함께 닫는다 (「미정」 금지 — 사용자 2026-08-16).
+  **M1–M5 all closed ([중요] M3·M4·M5 closed 2026-08-17, user decisions); [중요] M6
+  (개선·확장) is open.**
+  → [`docs/milestones/6-improvements.md`](docs/milestones/6-improvements.md) —
+  numbers live in Redmine (version *마일스톤 6*). 개선은 실측이 앞선다 — 검색 관련은
+  **정답 집합 없이 손대지 않는다** (M2 규칙). M5 의 판정들(git-carried·한글 베이스 머지·
+  중앙화 가드)은 부활 조건과 함께 닫혔다 — `5-version-reconcile.md` 「여기서 배운 것」.
   [주의] **The M4 paragraph below is a closed milestone's record, not a current instruction** —
   its traps (citation-first, census limits, topology) still bind; its scope/counts do not.
   M4's own 「여기서 배운 것」 (왕복이 계약 · 원전 기본값 확인 · 확정 결정 > 원전 코드) is in
@@ -121,6 +121,7 @@ milestone doc grew stale numbers before.
 | **Milestone doc** `docs/milestones/2-*.md` | *Why this order?* — chains, traps, measured evidence | [중요] **No numerators here.** They drifted twice (중 1.3 counted 7/10 against a 13-item list; 대 1 stayed at 15 after 중 1.3 went 5→8). Keep the reasoning an issue cannot hold |
 | **Redmine** `http://192.168.0.57:8080` | *Where are we, and what is open?* — **the milestone itself** | [중요] **Version = 마일스톤 · parent issue = 중분류 · subtask = 소분류** (user-confirmed 2026-08-09). Progress is **computed**, never typed. [중요] Only **완료(4)** is a closing status — 해결(3) still counts as open. Put the commit hash in the note |
 | **`reports/`** | *Why did we decide that?* — decisions, measurements, traps | One report per session, Korean. Not a task list |
+| **Redmine 위키 [[아이디어수집]]** | *What might we build someday?* — 미정 아이디어의 본문 | [중요] **일감이 아니다** (사용자 개설 2026-08-17). 항목 = 위키 절 + 버전 「아이디어 — 추후 검토 수집」의 이슈. 진행·집계 금지, 착수 결정 시 실 마일스톤으로 이동 |
 
 **At session start**: read the open milestone, then `GET /issues.json?status_id=open` for `[AX]`
 items. **At session end**: update the issues you moved, then write the report.
