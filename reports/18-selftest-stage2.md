@@ -776,3 +776,26 @@ rejected_approaches/error_recoveries 를 _anti_patterns.md 4섹션 카탈로그�
 
 테스트 18건 신규 (생산자 실물 왕복 · 클러스터 방어 4종 · 임계치 · signal_count 누적 ·
 28일 정리 · 안티패턴 스킵). 전체 3353/3353. 남은 소비자: #158 history_harvest 하나.
+
+## §46 소비자④ history_harvest (#158) — 되먹임 7종 완주
+
+원전 755줄 글자대로. .claude/history(8필드 frontmatter md) + .gemini/history(6섹션 txt,
+Format A/B/C) 통합 read-only 파서 → HistoryRecord 정규화 → prefix-tolerant 클래스 필터
+(온톨로지 UManager_X ↔ 기록 Manager_X) → 도메인 coverage audit.
+
+원전과의 차이 둘:
+- 두 디렉토리의 우리 자리: {root}/history (생산자③과 같은 규약) + {root}/history_gemini.
+  원전 프로젝트에서 .claude/ 는 gitignore 라 클론으로 안 넘어온다(실측 check-ignore) —
+  .33 에서 실물 코퍼스를 받아옴: claude 6건 + gemini 37건 (원전이 실측한 그 37파일).
+- audit 도메인 원천 = 온톨로지 YAML (class_graph.db 의 domains 테이블은 비어 있음 실측).
+
+라이브 (실 코퍼스 43파일 + 실 온톨로지 7도메인):
+    43건 전부 파싱 (Format C 분석 문서 포함) · 미지 prefix 9종 각 1회만 카나리(σ.15 dedupe)
+    coverage 2/7 — MissionRuntime 9 · MissionEditor 4 매칭, 미매칭 5도메인은 정직한 진단
+
+테스트 25건 신규 — 생산자③이 실제로 쓴 파일을 이 파서가 읽는 emission/parser 쌍 왕복이 축.
+전체 3378/3378.
+
+**중 3.3 되먹임 기계 7종 완주**: 생산자 ①리뷰 ②신호 ③기록 + 소비자 ①collector/classifier
+②planner ③recipes ④harvest — 전부 이식·라이브 검증. 유저 커밋 → 리뷰 → 플랜 → Redmine,
+작업 과정 → 레시피·안티패턴, 결정 기록 → 온톨로지 narrative 시드. 세 되먹임 루프가 돈다.

@@ -515,6 +515,15 @@ C.3 Git-as-feedback-bus(핵심 통찰) · C.4 인터페이스 동결(확정) · 
                                           [주의] 읽기 도구(find_recipes/get_anti_patterns)는
                                           원전 code_recipes MCP 소관 — 이 범위 밖, code-writer
                                           배선 때 필요해진다
+    [완료] 중 3.3  되먹임 7종 완주            — `#158` history_harvest (755줄 글자대로)로 마감.
+                                          .claude(8필드)+.gemini(6섹션 A/B/C) 통합 파서.
+                                          [중요] .33 실물 코퍼스를 트윈으로 받아옴 (claude 6 +
+                                          gemini 37 — 원전이 실측한 그 37파일): `history/` ·
+                                          `history_gemini/`. audit 도메인 원천은 class_graph
+                                          DB 가 아니라 **온톨로지 YAML** (DB domains 비어 있음
+                                          실측). 라이브: 43건 전부 파싱 · coverage 2/7
+                                          (MissionRuntime 9 · MissionEditor 4 — read-only 진단).
+                                          생산자 3종 + 소비자 4종 = **7종 전부 이식·라이브 검증**
     [대기] 나머지
 
 [완료] **그 갈림길은 닫혔다 (2026-08-14)** — `#123` 은 **마스터가 쓴다**로 확정·배선됐다. 걸려 있던
