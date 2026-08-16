@@ -151,14 +151,18 @@ def run(facts, skeleton, *, tree: str, project: str, uproject: str = "",
     return g
 
 
-def _build_bat_from(facts) -> str:
-    """`UnrealEditor-Cmd.exe` 경로에서 `Build.bat` 을 유도한다.
+def build_bat_from_editor(ue5_cmd: str) -> str:
+    """`UnrealEditor-Cmd.exe` 경로 **문자열**에서 `Build.bat` 을 유도한다. 못 찾으면 빈 문자열.
 
     🔴 실측 2026-08-11: 이 기계의 엔진은 `C:\\Program Files\\UE_5.8` 이다 —
-    `Epic Games` 하위가 **아니다.** 그래서 경로를 짐작하지 않고 `probe` 가 찾아 둔
-    `facts.ue5` 에서 되짚는다.
+    `Epic Games` 하위가 **아니다.** 그래서 경로를 짐작하지 않고 `probe` 가 찾아 둔 값에서
+    되짚는다.
+
+    ⚠️ **공개 함수로 뗀 이유** (중 2.1 `#135`): 요청자 `.33` 은 `facts` 객체가 아니라 배달된
+    `.ax/config.json` 의 `backends.ue5_cmd` **문자열**을 갖는다. 유도 규칙을 거기에 다시 쓰면
+    같은 규칙이 두 벌이 되고, 엔진 경로 관례가 바뀌는 날 한쪽만 고쳐진다.
     """
-    ue5 = (getattr(facts, "ue5", "") or "").strip()
+    ue5 = (ue5_cmd or "").strip()
     if not ue5:
         return ""
     low = ue5.replace("/", "\\").lower()
@@ -167,3 +171,8 @@ def _build_bat_from(facts) -> str:
         return ""
     root = ue5[:low.index(key)]
     return root + r"\Engine\Build\BatchFiles\Build.bat"
+
+
+def _build_bat_from(facts) -> str:
+    """`facts.ue5` 판 — 기존 호출자(`skeleton_gate`·`integrate`)가 쓰는 이름. 규칙은 위 하나다."""
+    return build_bat_from_editor(getattr(facts, "ue5", "") or "")

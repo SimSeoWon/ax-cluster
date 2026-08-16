@@ -319,6 +319,41 @@ def run_build_on_workshop(
     return parse_build_log((proc.stdout or "") + "\n" + (proc.stderr or ""))
 
 
+def run_build_local(
+    build_bat: str,
+    target: str,
+    uproject: str,
+    *,
+    platform: str = "Win64",
+    config: str = "Development",
+    runner: Runner = _run,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> BuildResult:
+    """**이 기계에서** 빌드를 돌리고 판정한다 (중 2.1 `#135` — 요청자 `.33` 의 검수 빌드).
+
+    🔴 **같은 명령·같은 파서, 전송만 다르다.** `run_build_on_workshop` 과 이 함수는
+    `build_build_command` 와 `parse_build_log` 를 **공유한다** — 여기서 명령을 다시 조립하거나
+    판정을 다시 쓰면 두 경로가 조용히 갈라진다(`coordinator._git_cmd` 를 공유하는 것과 같은 결).
+
+    ⚠️ **왜 로컬 판이 필요한가**: 마스터에는 UE5 가 없어 `.2` 로 위임하지만, 요청자 `.33` 은
+    자기 검수 worktree 를 **자기 디스크에** 갖고 있다. 거기서 SSH 로 자기 자신에게 붙을 이유가
+    없다(사용자 결정 2026-08-16: *".33 로컬 (원전 그대로)"*).
+
+    🔴 **반환 코드를 보지 않는 것도 같다** — `Build.bat` 은 실패해도 0 을 낸 실측이 있다.
+    """
+    cmd = ["cmd", "/c", build_build_command(build_bat, target, uproject,
+                                            platform=platform, config=config)]
+    try:
+        proc = runner(cmd, timeout)
+    except subprocess.TimeoutExpired:
+        return BuildResult(
+            passed=False, failure=f"{timeout}초 안에 끝나지 않았다 — 확인 실패이므로 막는다."
+        )
+    except OSError as e:
+        return BuildResult(passed=False, failure=f"빌드 실행 실패: {e} — 막는다.")
+    return parse_build_log((proc.stdout or "") + "\n" + (proc.stderr or ""))
+
+
 def build_command(editor_cmd: str, uproject: str, test_filter: str) -> str:
     """원격에서 실행할 명령 문자열. `-nullrhi` 가 세션 0 구동의 핵심이다."""
     return (

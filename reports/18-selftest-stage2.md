@@ -353,3 +353,80 @@ Flow Y(마스터가 push)로 옮길 때 비로소 생긴다.** 지금 형태의 
 
 🔴 **`#141` 이 처음 물었던 질문(ⓐ/ⓑ/ⓒ 브랜치명)은 끝내 답하지 않았다** — 그 질문 자체가
 전제가 틀려 존재하지 않았기 때문이다(§3.1). 하니스를 Flow Y 로 옮길 때 다시 생긴다.
+
+---
+
+# (같은 세션 4부) `#135` 잔여 — `.33` 검수 빌드 + 실 배달
+
+## §20 빌드 함수 — 🔴 판정을 두 벌로 만들지 않는다
+
+`review_work(build_fn=…)` 에 꽂을 것을 새로 쓰지 않았다. 위험은 빌드가 되느냐가 아니라
+**판정이 갈라지는 것**이라, 셋을 전부 공유한다:
+
+    명령      layer3_verify.build_build_command   (`run_build_on_workshop` 과 **같은 것**)
+    판정      layer3_verify.parse_build_log       (🔴 종료 코드를 보지 않는다)
+    경로 유도  skeleton_gate.build_bat_from_editor (⚠️ `_build_bat_from` 은 여기에 위임)
+
+새로 만든 것은 **전송 하나**뿐이다 — `run_build_local` (로컬 `cmd /c`). 마스터는 UE5 가 없어
+`.2` 로 위임하지만 요청자는 **자기 디스크의 검수 트리**를 갖고 있어 자기 자신에게 SSH 로 붙을
+이유가 없다(사용자 결정: *".33 로컬 (원전 그대로)"*).
+
+🔴 **`local_build_fn` 은 엔진을 못 찾으면 만들 때 죽는다.** 검수를 절반 돌린 뒤
+*"빌드는 못 했지만 통과"* 로 끝나는 것이 최악이라 착수 전에 드러낸다.
+
+### 🔴 경로를 짐작했으면 한쪽이 반드시 틀렸다 (프로브 실측)
+
+    .2   C:\Program Files\UE_5.8\…              ← Epic Games **없음**
+    .33  C:\Program Files\Epic Games\UE_5.8\…   ← **있음**
+
+두 배치가 실제로 공존한다. 그래서 유도 규칙은 짐작이 아니라 **프로브가 찾아 둔 값에서
+되짚는다**. 실증에서 유도된 `Build.bat` 이 `.33` 디스크에 **실재**함까지 확인했다
+(`os.path.isfile` = True — 문자열 조작이 아니라 실물).
+
+## §21 배달 — 🔴 저장소 배치를 미러링한다
+
+첫 판은 평면(`axwork/`)이었다. 그러면 `build_local` 의 `from ..layer3_verify import …` 가
+죽고, 남는 선택지는 **소스에 try/except 이중 임포트를 심는 것**뿐이다 — 배달 때문에 저장소
+코드를 더럽히는 짓이다. → `master/` → `axmaster/` 로 **배치를 그대로** 옮겼다.
+
+    .ax/lib/axmaster/__init__.py · layer3_verify.py
+    .ax/lib/axmaster/work/__init__.py · branch_names · coordinator · review · skeleton_gate · build_local
+
+⚠️ 배달되는 `work/__init__.py` 는 저장소의 것이 **아니다** — 저장소 쪽은 manifest·generate 를
+끌어와 폐포가 커진다. 배달본은 「손대지 말 것」만 적힌 최소 표식이다.
+
+## §22 실 배달 실증 (사용자 승인 2026-08-16)
+
+    배달 전 .33   main · M Content/…/BP_MissionPrefab_C_0.uasset (사람 작업)
+    배달          .2 / .33 / .43 셋 다 ✅ 해시 대조 통과
+    🔴 배달 후    **글자 하나 같다** — 같은 브랜치, 같은 미커밋 파일 하나뿐
+    .ax/          `.git/info/exclude` 에 있어 워킹트리를 더럽히지 않는다
+
+**배달본 실행 확인** (`.33` 에서, 읽기 전용 · 빌드 안 돌림):
+
+    config ue5_cmd  C:\Program Files\Epic Games\UE_5.8\…\UnrealEditor-Cmd.exe
+    유도 build_bat  C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat
+    실재 여부       **True**
+    임포트          axmaster.work.{review,build_local} · axmaster.layer3_verify 전부 OK
+    판정 계약        성공로그 True / 실패로그 False — 마스터와 같은 파서
+
+## §23 🔴 실 배달이 드러낸 **보고의 구멍** 둘
+
+**① `deliver` 출력이 페이로드를 안 찍었다.** 파일 8개가 **실제로 갔는데** 출력에 없어서,
+확인하려면 원격 디렉토리를 직접 뒤져야 했다. 🔴 *"배달했다고 믿지 않는다"* 는 **사람이 읽는
+출력에도** 적용된다 — 안 보이는 산출물은 다음 세션에 **없는 것으로 읽힌다.** `plan` 과
+`deliver` 양쪽에 찍게 고쳤다.
+
+**② `check` 가 페이로드를 안 쟀다.** 스킬은 문서라 낡아도 사람이 읽다 눈치채지만, 파이썬
+모듈은 **낡은 채로 조용히 돈다** — `.33` 이 옛 review 로직으로 검수하면 그 판정이 거짓말이
+된다. 해시 대조를 넣고 **음성 확인**까지 했다: 배달본 한 줄을 일부러 망치니
+
+    🔴 192.168.0.33 [requester]: … 🔴 payload 불일치/없음 1개: work/build_local.py
+
+재배달로 복구 → `payload 6개 일치`.
+
+## §24 마감 (4부)
+
+    테스트    2898 → **2934/2934 · 실패 0**
+    🔴 남은 것 `#135` 의 **실 검수 1회**(실 work 을 골라 시뮬레이션+빌드까지)는 아직이다 —
+              지금은 배달·임포트·경로·판정 계약까지 실증됐고, 그 위에서 도는 한 바퀴가 남았다

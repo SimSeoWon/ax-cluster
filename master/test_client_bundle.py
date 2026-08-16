@@ -175,11 +175,26 @@ def test_role_skills() -> None:
 def test_role_payload() -> None:
     """🔴 요청자에게는 **파이썬 모듈**도 간다 — 절차를 문서에만 쓰면 로직이 두 벌이 된다."""
     pay = bundle.payloads_for("requester")
-    check("요청자에게 review 의 의존 폐포가 간다",
-          set(pay) == {"review.py", "coordinator.py", "branch_names.py"}, str(pay))
+    check("요청자에게 review·build 의 의존 폐포가 간다",
+          set(pay) == {"layer3_verify.py", "work/branch_names.py", "work/coordinator.py",
+                       "work/review.py", "work/skeleton_gate.py", "work/build_local.py"},
+          str(pay))
     check("🔴 워커에는 안 간다 (역할 밖이다)", bundle.payloads_for("worker") == ())
     for n in pay:
         check(f"배달할 원문이 실재한다: {n}", len(bundle.payload_text(n)) > 100)
+    # 🔴 배치가 저장소를 미러링해야 `from ..layer3_verify import …` 가 산다
+    check("🔴 저장소 배치를 미러링한다 (평면이 아니다)",
+          any("/" in n for n in pay) and "layer3_verify.py" in pay, str(pay))
+    check("패키지 디렉토리를 빠짐없이 센다",
+          set(bundle.payload_dirs("requester")) == {"", "work"},
+          str(bundle.payload_dirs("requester")))
+    # 🔴 폐포 검사 — 배달분이 배달 안 된 형제 모듈을 상대 임포트하면 쓸 때 죽는다
+    delivered = {n.rsplit("/", 1)[-1][:-3] for n in pay}
+    import re as _re
+    for n in pay:
+        for m in _re.findall(r"^from \.+(\w+) import", bundle.payload_text(n), _re.M):
+            check(f"🔴 {n} 의 의존 `{m}` 도 배달된다", m in delivered or m == "runner",
+                  f"폐포 누락: {m}")
     check("패키지 초기화 파일이 「손대지 말 것」을 말한다",
           "손으로 고치지 말 것" in bundle.PAYLOAD_INIT, bundle.PAYLOAD_INIT[:60])
     try:

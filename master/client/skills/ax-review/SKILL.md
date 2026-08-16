@@ -30,9 +30,12 @@ description: 워커들이 올린 분산 작업 결과를 검수해서 main 에 �
 
 ## 2. 도구는 배달돼 있다
 
-    py -c "import sys; sys.path.insert(0,'.ax/lib'); from axwork import review"
+    py -c "import sys; sys.path.insert(0,'.ax/lib'); from axmaster.work import review, build_local"
 
 🔴 **`python` 이 아니라 `py` 다** — 이 PC 의 `python` 은 스토어 스텁이라 버전도 안 찍는다.
+
+배달본은 저장소 배치를 그대로 미러링한 사본이다(`master/` → `axmaster/`). **손으로 고치지
+말 것** — 다음 배달에 덮인다.
 
 큐·Redmine 호출은 **MCP 도구**가 한다(토큰은 이 기계에 두지 않는다). 그래서 `review` 함수에
 `api=` 로 주입하거나, work/tasks 를 MCP 로 읽어 인자로 넘긴다.
@@ -55,8 +58,19 @@ pop 실패 시 **로그 한 줄**로 끝난다. 바이너리는 되살릴 수 �
 
 ## 4. 빌드는 여기서 돈다
 
-이 PC 에 UE5 가 있으니 **검수 트리 위에서 바로 빌드**한다(`build_fn` 주입). 🔴 판정은
-**로그 파싱**이다 — SSH/배치 종료 코드는 양방향으로 틀린다(실패한 빌드를 통과로 만든 전례).
+이 PC 에 UE5 가 있으니 **검수 트리 위에서 바로 빌드**한다:
+
+    cfg  = json.load(open(".ax/config.json", encoding="utf-8"))
+    bfn  = build_local.local_build_fn(project=cfg["project"],
+                                      ue5_cmd=cfg["backends"]["ue5_cmd"])
+    res  = review.review_work(repo, work_id=..., work=..., tasks=..., build_fn=bfn)
+
+🔴 **엔진 경로를 손으로 적지 않는다** — 마스터가 **프로브해서** `config.json` 에 넣은 값이다.
+없으면 추측하지 말고 마스터에 배달을 다시 요청한다. 🔴 `local_build_fn` 은 엔진을 못 찾으면
+**만들 때 죽는다** — 검수를 절반 돌린 뒤 *"빌드는 못 했지만 통과"* 로 끝나는 것이 최악이다.
+
+🔴 판정은 **로그 파싱**이다 — 종료 코드는 양방향으로 틀린다(`Build.bat` 이 **실패해도 0** 을
+낸 실측이 있다). 타임아웃·실행 실패도 통과가 아니다: **확인 못 한 것과 통과한 것은 다르다.**
 
 빌드가 실패하면 도구가 Redmine 코멘트 **본문을 만들어 둔다.** 보내는 것은 §7.
 

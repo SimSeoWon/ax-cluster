@@ -50,6 +50,15 @@ def cmd_plan(project: str) -> int:
         for n in bundle.skills_for(f.role):
             print(f"   → {f.home}/.claude/skills/{n}/SKILL.md "
                   f"({len(bundle.skill_text(n))}자)  [role={f.role}]")
+        # 🔴 페이로드도 **눈으로 보여 준다** — 남의 기계에 쓰는 파일을 계획에서 감추면
+        #    `plan` 이 존재하는 이유가 없어진다 (모듈 독스트링: *"무엇을 어디에 쓸지 먼저 본다"*)
+        pay = bundle.payloads_for(f.role)
+        if pay:
+            base = f"{f.path}/{bundle.AX_DIR}/lib/{bundle.PAYLOAD_PKG}"
+            for d in bundle.payload_dirs(f.role):
+                print(f"   → {base}/{d + '/' if d else ''}__init__.py  (패키지 표식)")
+            for rel in pay:
+                print(f"   → {base}/{rel} ({len(bundle.payload_text(rel))}자)  [payload]")
         print(f"   → {f.path}/.git/info/exclude 에 `/{bundle.AX_DIR}/` (커밋 안 됨)")
     return 0
 
@@ -80,6 +89,12 @@ def cmd_deliver(project: str, *, init: bool = False) -> int:
             print(f"     ⚠️ {ini['error']}")
         for sp in r["skills"]:
             print(f"     skill={sp}")
+        # 🔴 **페이로드도 찍는다.** 첫 실 배달(2026-08-16)에서 파일 8개가 **실제로 갔는데**
+        #    출력에 안 나와서, 확인하려면 원격 디렉토리를 직접 뒤져야 했다.
+        #    *"배달했다고 믿지 않는다"* 는 사람이 읽는 출력에도 적용된다 — 안 보이는 산출물은
+        #    다음 세션에 **없는 것으로 읽힌다.**
+        for pp in r.get("payload") or []:
+            print(f"     payload={pp}")
         print("     .git/info/exclude ✅ · 해시 대조 통과")
     return 1 if bad else 0
 
@@ -108,10 +123,30 @@ def cmd_check(project: str) -> int:
                              (f'if exist "{cfg_path}" (echo OK)' if f.windows
                               else f"test -f '{cfg_path}' && echo OK"))
         ok_cfg = rc2 == 0
-        mark = "✅" if (ok_skill and ok_cfg) else "🔴"
+        # 🔴 **페이로드도 잰다.** 스킬은 문서라 낡아도 사람이 읽다 눈치채지만, 파이썬 모듈은
+        #    낡은 채로 **조용히 돈다** — `.33` 이 옛 review 로직으로 검수하면 그 판정은
+        #    거짓말이다. 사본이 갈라지는 것이 이 명령의 존재 이유다.
+        pay = bundle.payloads_for(f.role)
+        stale: list = []
+        for rel in pay:
+            want = hashlib.sha256(bundle.payload_text(rel).encode("utf-8")).hexdigest()
+            rp = f"{bundle.AX_DIR}/lib/{bundle.PAYLOAD_PKG}/{rel}"
+            target = (f"{f.path}\\{rp.replace('/', chr(92))}" if f.windows
+                      else f"{f.path}/{rp}")
+            cmd = (f'powershell -Command "(Get-FileHash -LiteralPath \'{target}\' -Algorithm SHA256).Hash"'
+                   if f.windows else f"sha256sum '{target}' 2>/dev/null | cut -d' ' -f1")
+            _rc, got = bundle._ssh(f.host, f.user, cmd)
+            if (got or "").strip().lower() != want:
+                stale.append(rel)
+        ok_pay = not stale
+        mark = "✅" if (ok_skill and ok_cfg and ok_pay) else "🔴"
+        pay_note = (f" · payload {len(pay)}개 일치" if pay and ok_pay
+                    else f" · 🔴 payload 불일치/없음 {len(stale)}개: {', '.join(stale[:3])}"
+                    if pay else "")
         print(f"  {mark} {f.host} [{f.role}]: 스킬 {len(names)}종 "
-              f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}")
-        bad += 0 if (ok_skill and ok_cfg) else 1
+              f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}"
+              f"{pay_note}")
+        bad += 0 if (ok_skill and ok_cfg and ok_pay) else 1
     return 1 if bad else 0
 
 

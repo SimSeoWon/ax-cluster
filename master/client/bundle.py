@@ -72,17 +72,27 @@ SKILLS_BY_ROLE = {
 SKILL_NAME = "ax-work"          # (호환) 단수 참조가 남아 있는 곳
 
 # 🔴 **역할별 파이썬 페이로드** (중 2.1 `#135`, 사용자 결정 2026-08-16).
-#   요청자 `.33` 의 `/review-work` 는 worktree 시뮬레이션·통합·정리 판정을 **git 이 있는 곳**
-#   에서 해야 한다. 절차를 스킬 문서에만 쓰면 **로직이 두 벌**이 되고 다음에 갈라진다 —
-#   마일스톤 4 가 생긴 바로 그 형태다. 그래서 모듈 자체를 배달한다.
-#   ⚠️ **의존 폐포 전부**를 보낸다(review → coordinator → branch_names). 하나라도 빠지면
-#   임포트에서 죽고, 그건 배달이 성공한 것처럼 보이는 실패다.
+#   요청자 `.33` 의 `/review-work` 는 worktree 시뮬레이션·통합·정리 판정·검수 빌드를
+#   **git 과 UE5 가 있는 곳**에서 해야 한다. 절차를 스킬 문서에만 쓰면 **로직이 두 벌**이 되고
+#   다음에 갈라진다 — 마일스톤 4 가 생긴 바로 그 형태다. 그래서 모듈 자체를 배달한다.
+#
+#   🔴 **경로는 저장소 배치를 그대로 미러링한다** (`master/` → `axmaster/`). 평면으로 펴면
+#   `build_local` 의 `from ..layer3_verify import …` 가 죽는다 — 그때 남는 선택지는 소스에
+#   try/except 이중 임포트를 심는 것뿐이고, 그건 배달 때문에 **저장소 코드를 더럽히는** 짓이다.
+#
+#   ⚠️ **의존 폐포 전부**를 보낸다. 하나라도 빠지면 임포트에서 죽고, 그건 배달이 성공한 것처럼
+#   보이는 실패다. 실측으로 확인한 폐포:
+#       review → coordinator → branch_names
+#       build_local → layer3_verify · skeleton_gate → layer3_verify
 #   🔴 **토큰은 여전히 안 보낸다** — 큐·Redmine 호출은 MCP 가 한다(`review.api=` 주입).
-PAYLOAD_PKG = "axwork"
+PAYLOAD_PKG = "axmaster"
 PAYLOAD_BY_ROLE = {
-    "requester": ("review.py", "coordinator.py", "branch_names.py"),
+    "requester": ("layer3_verify.py",
+                  "work/branch_names.py", "work/coordinator.py", "work/review.py",
+                  "work/skeleton_gate.py", "work/build_local.py"),
     "worker": (),
 }
+
 AX_DIR = ".ax"                      # 🔴 체크아웃 안. 상대경로가 모든 머신에서 같다
 CONFIG_REL = f"{AX_DIR}/config.json"
 WORK_REL = f"{AX_DIR}/work"
@@ -517,12 +527,26 @@ def skill_text(name: str = SKILL_NAME) -> str:
     return p.read_text(encoding="utf-8")
 
 
-def payload_text(fname: str) -> str:
-    """배달할 모듈 원문. 🔴 **저장소가 SSOT 다** — 사본을 따로 두지 않는다."""
-    p = Path(__file__).resolve().parents[1] / "work" / fname
+def payload_text(rel: str) -> str:
+    """배달할 모듈 원문. `rel` 은 `master/` 기준 상대경로. 🔴 **저장소가 SSOT 다.**"""
+    p = Path(__file__).resolve().parents[1] / rel
     if not p.is_file():
         raise BundleError(f"배달할 모듈이 없다: {p}")
     return p.read_text(encoding="utf-8")
+
+
+def payload_dirs(role: str) -> tuple:
+    """페이로드가 필요로 하는 **패키지 디렉토리**들 (`__init__.py` 를 놓을 자리).
+
+    🔴 `__init__.py` 가 없으면 나머지는 임포트되지 않는 파일 더미가 된다 — 배달은 성공한
+    것처럼 보이고 쓸 때 죽는다.
+    """
+    dirs = {""}
+    for rel in payloads_for(role):
+        parent = str(Path(rel).parent)
+        if parent not in (".", ""):
+            dirs.add(parent)
+    return tuple(sorted(dirs))
 
 
 def payloads_for(role: str) -> tuple:
@@ -623,8 +647,12 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
                    for n in skills_for(facts.role)],
         # 🔴 파이썬 페이로드 — 패키지로 둬야 모듈의 **상대 임포트가 그대로** 산다.
         #    `__init__.py` 를 먼저 쓰지 않으면 나머지는 임포트되지 않는 파일 더미가 된다.
-        "payload": ([_remote_write(facts, f"{AX_DIR}/lib/{PAYLOAD_PKG}/__init__.py",
-                                   PAYLOAD_INIT, base="checkout")]
+        # 🔴 파이썬 페이로드 — 저장소 배치를 미러링한다(상대 임포트가 그대로 산다).
+        #    `__init__.py` 를 **먼저** 놓는다 — 없으면 나머지는 임포트 안 되는 더미다.
+        "payload": ([_remote_write(facts,
+                                   f"{AX_DIR}/lib/{PAYLOAD_PKG}/{d + '/' if d else ''}__init__.py",
+                                   PAYLOAD_INIT, base="checkout")
+                     for d in payload_dirs(facts.role)]
                     + [_remote_write(facts, f"{AX_DIR}/lib/{PAYLOAD_PKG}/{n}",
                                      payload_text(n), base="checkout")
                        for n in payloads_for(facts.role)]) if payloads_for(facts.role) else [],
