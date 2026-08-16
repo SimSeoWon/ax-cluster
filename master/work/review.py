@@ -370,3 +370,208 @@ def review_work(repo: Path, *, work_id: str, work: dict, tasks,
             _git_rc(repo, "worktree", "remove", "--force", str(tree))
             _git_rc(repo, "worktree", "prune")
             logf("review", f"검수 트리 제거 {tree.name}")
+
+
+# ─────────────────────────────────────────────────────────────
+# 반려 · 승인 — 🔴 큐 호출은 **주입 가능한 한 자리**로 모은다
+# ─────────────────────────────────────────────────────────────
+
+def _default_api(method: str, path: str, payload=None):
+    """큐 호출. 🔴 `runner._api` 를 **재사용한다** — 토큰·타임아웃·오류 형태를 따로 만들면
+    조용히 갈라진다(`coordinator._git_cmd` 를 공유하는 것과 같은 이유)."""
+    from . import runner
+    return runner._api(method, path, payload)
+
+
+def fetch_work(work_id: str, *, api=None) -> tuple:
+    """큐에서 `(work, tasks)`. 🔴 이 모듈에서 HTTP 를 아는 유일한 자리다."""
+    resp = (api or _default_api)("GET", f"/api/v1/works/{work_id}") or {}
+    return (resp.get("work") or {}), (resp.get("tasks") or [])
+
+
+def _decision(result: str, reviewer: str, notes: str = "") -> dict:
+    from datetime import datetime, timezone
+    return {"decided_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+            "decided_by": reviewer or None, "result": result, "notes": notes or None}
+
+
+@dataclass
+class Decision:
+    ok: bool = False
+    work_id: str = ""
+    merge_status: str = ""
+    noop: bool = False
+    pushed: bool = False
+    merged_durables: list = field(default_factory=list)
+    tree: str = ""
+    cleanup: object = None          # CleanupPlan — 🔴 계획일 뿐이다
+    commands: list = field(default_factory=list)
+    redmine_note: str = ""
+    redmine_issue_id: str = ""
+    queue_patched: bool = False
+    error: str = ""
+
+
+def reject_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str = "",
+                reason: str = "", api=None, remote: str = DEFAULT_REMOTE,
+                base_branch: str = BASE_BRANCH, logf=C._noop_log) -> Decision:
+    """원전 `reject_work_impl` 이식 — 상태·통지 마무리. 🔴 **브랜치를 지우지 않는다.**
+
+    원전은 push work 반려 시 관련 원격 브랜치를 **전부** 지운다(증식 차단). 우리는 계획만
+    낸다 — 하드룰 + `#125`. ⚠️ 반려된 work 의 durable 은 `main` 에 도달할 리 없으므로
+    실질적으로 **전부 보존**된다. 그것이 의도다: 실패한 시도도 조사 자산이다(§8.4 누적 모델).
+    """
+    d = Decision(work_id=work_id)
+    cur = (work or {}).get("merge_status")
+    d.redmine_issue_id = str((work or {}).get("redmine_issue_id") or "")
+    if cur == "rejected":
+        d.ok, d.noop, d.merge_status = True, True, "rejected"
+        return d
+    if cur == "merged":
+        d.error = "이미 merged 된 work — 반려할 수 없다"
+        return d
+
+    try:
+        (api or _default_api)("PATCH", f"/api/v1/works/{work_id}",
+                              {"merge_status": "rejected",
+                               "review_decision": _decision("rejected", reviewer, reason)})
+        d.queue_patched = True
+    except Exception as e:                                  # noqa: BLE001
+        # 🔴 조용히 넘기지 않는다 — 큐 상태가 안 바뀌면 이 work 는 계속 열려 있다
+        d.error = f"큐 상태 갱신 실패 (수동 갱신 필요): {type(e).__name__}: {e}"
+        logf("reject", d.error)
+
+    d.merge_status = "rejected"
+    d.cleanup = plan_branch_cleanup(repo, tasks=tasks,
+                                    target_branch=(work or {}).get("target_branch") or "",
+                                    remote=remote, base_branch=base_branch, logf=logf)
+    d.commands = d.cleanup.commands(remote)
+    d.redmine_note = (
+        f"[반려] 검토자={reviewer or '(미지정)'}\n\n"
+        f"사유: {reason or '(미입력)'}\n\n"
+        f"- 🔴 브랜치는 **보존**된다 — 실패한 시도도 조사 자산이다(누적 모델). "
+        f"재작업은 같은 durable 위에 `[FEEDBACK]` 을 얹어 이어 간다\n"
+        f"- 영구 종결은 사람이 판단한다")
+    d.ok = not d.error
+    return d
+
+
+def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str = "",
+                  confirm: bool = False, api=None, remote: str = DEFAULT_REMOTE,
+                  base_branch: str = BASE_BRANCH, logf=C._noop_log) -> Decision:
+    """원전 `finalize_work_impl` 이식 — 승인 → 통합 → `main` 반영.
+
+    🔴 **`confirm=False` 가 기본이다** (fail-closed). 그때는 검수 트리에서 통합만 하고
+    **push 하지 않으며**, 사람이 그대로 실행할 명령을 돌려준다. 사용자 결정(2026-08-16):
+    *"머지·push 는 승인 후 자동, 브랜치 삭제는 사람"*. 승인은 대화에서 일어나므로 코드의
+    기본값은 **안 하는 쪽**이어야 한다.
+
+    🔴 **사람의 트리에서 `checkout main` 을 하지 않는다** — 원전은 그렇게 하지만 그 자리는
+    우리에겐 사람의 워킹트리다(모듈 머리말). 대신 `<정본 옆>` worktree 를 `<remote>/<base>`
+    에 세워 통합하고 **`HEAD:<base>` 로 push** 한다. ⚠️ 그래서 사람의 로컬 `main` 은 그대로다 —
+    끝난 뒤 `git pull` 하면 된다. 그 편이 안전하다.
+    """
+    d = Decision(work_id=work_id)
+    status = (work or {}).get("merge_status")
+    target = (work or {}).get("target_branch") or ""
+    d.redmine_issue_id = str((work or {}).get("redmine_issue_id") or "")
+    if status == "merged":
+        d.ok, d.noop, d.merge_status = True, True, "merged"
+        return d
+    if status not in ("ready_for_review", "in_progress"):
+        d.error = (f"merge_status={status!r} — ready_for_review / in_progress 만 승인할 수 있다 "
+                   f"(원전과 같은 게이트)")
+        return d
+    if not target:
+        d.error = "target_branch 가 없다"
+        return d
+
+    is_push = (work or {}).get("distribution_mode") == "push"
+    tree = review_tree_path(repo, work_id)
+    d.tree = str(tree)
+    try:
+        rc, out = _git_rc(repo, "fetch", remote, base_branch)
+        if rc != 0:
+            d.error = f"{remote}/{base_branch} fetch 실패: {out[:200]}"
+            return d
+        if tree.exists():
+            _git_rc(repo, "worktree", "remove", "--force", str(tree))
+        rc, out = _git_rc(repo, "worktree", "add", "--detach", "--force",
+                          str(tree), f"{remote}/{base_branch}")
+        if rc != 0:
+            d.error = f"통합 worktree 생성 실패: {out[:200]}"
+            return d
+
+        label = f"Merge work {work_id}: {(work or {}).get('title', target)}"
+        if reviewer:
+            label += f" (Reviewed-by: {reviewer})"
+        if is_push:
+            integ = integrate_durables(tree, target_branch=target, tasks=tasks,
+                                       merge_label=label, remote=remote, logf=logf)
+        else:
+            rc, out = _git_rc(tree, "fetch", remote, target)
+            if rc != 0:
+                integ = Integration(error=f"feature fetch 실패: {out[:200]}")
+            else:
+                rc, out = _git_rc(tree, "merge", "--no-ff", f"{remote}/{target}", "-m", label)
+                if rc != 0:
+                    _git_rc(tree, "merge", "--abort")
+                    integ = Integration(conflict=True, conflict_branch=target,
+                                        error=f"머지 충돌 — 수동 해결 필요: {out[:300]}")
+                else:
+                    integ = Integration(ok=True, merged=[target])
+        d.merged_durables = integ.merged
+        if not integ.ok:
+            d.error = integ.error
+            _git_rc(repo, "worktree", "remove", "--force", str(tree))   # 부분 머지 폐기
+            _git_rc(repo, "worktree", "prune")
+            return d
+
+        push_cmd = f"git -C {tree} push {remote} HEAD:{base_branch}"
+        if confirm:
+            rc, out = _git_rc(tree, "push", remote, f"HEAD:{base_branch}")
+            if rc != 0:
+                # 🔴 되돌리지 않는다 — 커밋은 이 트리에 그대로 있고 잃은 것이 없다.
+                #    `--force` 로 밀지 않는다(하드룰). 사람이 판단한다.
+                d.error = (f"{base_branch} push 거부됨 — 통합은 `{tree}` 에 그대로 있다. "
+                           f"밀어내지 않는다: {out[:200]}")
+                d.commands = [push_cmd]
+                return d
+            d.pushed = True
+            logf("finalize", f"{remote}/{base_branch} 갱신 (durable {len(d.merged_durables)}건)")
+        else:
+            d.commands = [push_cmd]
+            logf("finalize", "confirm=False — 통합만 하고 멈춘다 (트리 보존)")
+
+        if d.pushed:
+            try:
+                (api or _default_api)("PATCH", f"/api/v1/works/{work_id}",
+                                      {"merge_status": "merged",
+                                       "review_decision": _decision("approved", reviewer)})
+                d.queue_patched = True
+            except Exception as e:                          # noqa: BLE001
+                d.error = f"머지는 됐고 큐 상태 갱신만 실패했다 (수동 갱신 필요): {e}"
+                logf("finalize", d.error)
+            d.merge_status = "merged"
+            _git_rc(repo, "fetch", remote, base_branch)      # 정리 판정의 입력을 새로 읽는다
+            d.cleanup = plan_branch_cleanup(repo, tasks=tasks, target_branch=target,
+                                            remote=remote, base_branch=base_branch, logf=logf)
+            d.commands += d.cleanup.commands(remote)
+            d.redmine_note = (
+                f"분산 작업 완료 — {base_branch} 머지 완료\n\n"
+                f"- work_id: {work_id}\n"
+                f"- 통합: feature `{target}` + durable {len(d.merged_durables)}건 (no-ff)\n"
+                f"- 검토자: {reviewer or '(미지정)'}\n"
+                f"- 🔴 브랜치 정리는 사람이 실행한다 (도달 가능한 것만): "
+                f"{len(d.cleanup.delete)}건 대상 · {len(d.cleanup.keep)}건 보존")
+        d.ok = not d.error
+        return d
+    except GitError as e:
+        d.error = f"git 오류: {e}"
+        return d
+    finally:
+        # 🔴 push 했으면 트리를 지운다. **안 했으면 남긴다** — 그 안에 통합 결과가 있고,
+        #    사람이 `commands` 를 그대로 실행할 대상이 그 트리다.
+        if d.pushed and tree.exists():
+            _git_rc(repo, "worktree", "remove", "--force", str(tree))
+            _git_rc(repo, "worktree", "prune")

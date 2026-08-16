@@ -252,12 +252,161 @@ def test_missing_target_branch():
     check("target_branch 없으면 시작도 안 한다", not r.ok and "target_branch" in r.error, r.error)
 
 
+# ── 반려 ──────────────────────────────────────────────────────
+
+class FakeApi:
+    """큐 호출을 기록만 한다. 🔴 실 큐를 띄우지 않고 **계약**을 잰다."""
+
+    def __init__(self, fail: bool = False):
+        self.calls: list = []
+        self.fail = fail
+
+    def __call__(self, method, path, payload=None):
+        self.calls.append((method, path, payload))
+        if self.fail:
+            raise RuntimeError("큐 무응답")
+        return {"ok": True}
+
+
+def test_reject_patches_and_keeps_branches():
+    root, repo, work, tasks = fixture()
+    try:
+        work = dict(work, merge_status="ready_for_review", redmine_issue_id="42")
+        api = FakeApi()
+        d = R.reject_work(repo, work_id="w1", work=work, tasks=tasks,
+                          reviewer="사람", reason="설계가 다르다", api=api)
+        check("반려가 성공한다", d.ok, d.error)
+        check("큐에 rejected 를 PATCH 한다",
+              any(m == "PATCH" and p.get("merge_status") == "rejected" for m, _, p in api.calls),
+              str(api.calls))
+        check("결정에 검토자·사유가 실린다",
+              any((p or {}).get("review_decision", {}).get("decided_by") == "사람"
+                  and (p or {}).get("review_decision", {}).get("notes") == "설계가 다르다"
+                  for _, _, p in api.calls))
+        check("🔴 원격 브랜치가 그대로 있다 (지우지 않았다)",
+              durable_branch("t1") in g(repo, "ls-remote", "--heads", "origin")
+              and durable_branch("t2") in g(repo, "ls-remote", "--heads", "origin"))
+        check("🔴 반려된 work 는 전부 보존된다 (main 도달 불가라 구조적으로)",
+              not d.cleanup.delete and len(d.cleanup.keep) >= 3, str(d.cleanup.delete))
+        check("Redmine 본문을 만들어 둔다 (직접 쓰지 않는다)", "[반려]" in d.redmine_note)
+        check("반려 본문이 보존을 말한다", "보존" in d.redmine_note)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_reject_idempotent_and_guarded():
+    root, repo, work, tasks = fixture()
+    try:
+        d = R.reject_work(repo, work_id="w1", work=dict(work, merge_status="rejected"),
+                          tasks=tasks, api=FakeApi())
+        check("이미 반려면 no-op", d.ok and d.noop)
+        d2 = R.reject_work(repo, work_id="w1", work=dict(work, merge_status="merged"),
+                           tasks=tasks, api=FakeApi())
+        check("🔴 이미 머지된 work 는 반려 불가", not d2.ok and "merged" in d2.error)
+        api = FakeApi(fail=True)
+        d3 = R.reject_work(repo, work_id="w1", work=dict(work, merge_status="in_progress"),
+                           tasks=tasks, api=api)
+        check("🔴 큐 갱신 실패를 조용히 넘기지 않는다", not d3.ok and "수동 갱신" in d3.error,
+              d3.error)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+# ── 승인 — 🔴 기본값이 push 를 막는다 ─────────────────────────
+
+def test_finalize_default_does_not_push():
+    root, repo, work, tasks = fixture()
+    try:
+        before = g(repo, "ls-remote", "origin", "refs/heads/main")
+        api = FakeApi()
+        d = R.finalize_work(repo, work_id="w1", work=dict(work, merge_status="ready_for_review"),
+                            tasks=tasks, reviewer="사람", api=api)
+        check("confirm 없이도 통합은 된다", d.ok, d.error)
+        check("🔴 push 하지 않았다", not d.pushed)
+        check("🔴 원격 main 이 그대로다", g(repo, "ls-remote", "origin", "refs/heads/main") == before)
+        check("🔴 큐 상태도 안 바꿨다 (아직 머지가 아니다)",
+              not any(m == "PATCH" for m, _, _ in api.calls), str(api.calls))
+        check("사람이 실행할 push 명령을 준다",
+              any("push origin HEAD:main" in c for c in d.commands), str(d.commands))
+        check("🔴 통합 결과를 담은 트리를 남긴다 (명령의 대상)", Path(d.tree).exists(), d.tree)
+        check("사람 트리는 무사하다", (repo / "Content" / "BP_Live.uasset").exists())
+        shutil.rmtree(d.tree, ignore_errors=True)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_finalize_confirm_pushes_and_then_cleanup_is_possible():
+    root, repo, work, tasks = fixture()
+    try:
+        before = g(repo, "rev-parse", "origin/main").strip()
+        live_before = (repo / "Content" / "BP_Live.uasset").read_text(encoding="utf-8")
+        api = FakeApi()
+        d = R.finalize_work(repo, work_id="w1", work=dict(work, merge_status="ready_for_review"),
+                            tasks=tasks, reviewer="사람", confirm=True, api=api)
+        check("승인하면 성공한다", d.ok, d.error)
+        check("🔴 push 했다", d.pushed)
+        g(repo, "fetch", "origin")
+        check("🔴 원격 main 이 실제로 움직였다",
+              g(repo, "rev-parse", "origin/main").strip() != before)
+        check("durable 둘이 통합됐다", len(d.merged_durables) == 2, str(d.merged_durables))
+        check("큐에 merged 를 PATCH 한다",
+              any(m == "PATCH" and (p or {}).get("merge_status") == "merged"
+                  for m, _, p in api.calls))
+        check("🔴 머지 뒤에는 durable 이 삭제 후보가 된다 (도달 가능해졌다)",
+              {durable_branch("t1"), durable_branch("t2")} <= {r for r, _ in d.cleanup.delete},
+              str(d.cleanup.delete))
+        check("🔴 그래도 우리가 지우지는 않았다",
+              durable_branch("t1") in g(repo, "ls-remote", "--heads", "origin"))
+        check("삭제는 명령으로만 준다",
+              any("--delete" in c for c in d.commands), str(d.commands))
+        check("🔴 사람의 미커밋 작업이 그대로다",
+              (repo / "Content" / "BP_Live.uasset").read_text(encoding="utf-8") == live_before)
+        check("🔴 사람의 브랜치도 그대로 main 이다 (로컬은 pull 하면 된다)",
+              g(repo, "branch", "--show-current").strip() == "main")
+        check("push 했으면 트리를 정리한다", not Path(d.tree).exists())
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_finalize_status_gate():
+    root, repo, work, tasks = fixture()
+    try:
+        d = R.finalize_work(repo, work_id="w1", work=dict(work, merge_status="merged"),
+                            tasks=tasks, api=FakeApi())
+        check("이미 머지면 no-op", d.ok and d.noop)
+        for bad in ("rejected", "cancelled", "build_failed"):
+            db = R.finalize_work(repo, work_id="w1", work=dict(work, merge_status=bad),
+                                 tasks=tasks, api=FakeApi())
+            check(f"🔴 {bad} 상태는 승인 불가", not db.ok and bad in db.error, db.error)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_finalize_conflict_leaves_nothing():
+    root, repo, work, tasks = fixture(conflict=True)
+    try:
+        before = g(repo, "ls-remote", "origin", "refs/heads/main")
+        d = R.finalize_work(repo, work_id="w1", work=dict(work, merge_status="ready_for_review"),
+                            tasks=tasks, confirm=True, api=FakeApi())
+        check("충돌이면 실패한다", not d.ok)
+        check("🔴 원격 main 은 그대로다 (통째 중단)",
+              g(repo, "ls-remote", "origin", "refs/heads/main") == before)
+        check("🔴 부분 머지 트리를 남기지 않는다", not Path(d.tree).exists())
+        check("사람 트리는 무사하다", (repo / "Content" / "BP_Live.uasset").exists())
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (test_order_and_split, test_missing_target_branch,
                test_human_tree_untouched, test_review_integrates_and_cleans_up,
                test_build_fn_injected, test_conflict_aborts_whole,
                test_missing_durable_stops, test_cleanup_plan_splits_by_reachability,
-               test_cleanup_plan_fails_closed):
+               test_cleanup_plan_fails_closed,
+               test_reject_patches_and_keeps_branches, test_reject_idempotent_and_guarded,
+               test_finalize_default_does_not_push,
+               test_finalize_confirm_pushes_and_then_cleanup_is_possible,
+               test_finalize_status_gate, test_finalize_conflict_leaves_nothing):
         fn()
     total = PASS + FAIL
     print(f"{'✅' if not FAIL else '🔴'} test_review: {PASS}/{total} 통과")

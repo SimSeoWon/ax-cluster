@@ -26,7 +26,7 @@ from typing import Optional
 from .models import (
     _VALID_DIRECTIVES, _VERIFY_RESULT_TO_STATUS, WorkRegisterReq, TaskRegisterReq,
     ClaimReq, HeartbeatReq, SubmitReq, SubmitFailReq, VerifyReq, AdminResetReq,
-    WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq
+    WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq
 )
 from .persistence import (
     TaskIndex, _project_root, _tasks_dir, _archive_dir, _log_dir, _tq_log,
@@ -266,6 +266,23 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         if not r.get("ok"):
             raise HTTPException(400, r.get("error", "directive failed"))
         return r
+
+    @app.post("/api/v1/redmine/note")
+    def redmine_note_ep(req: RedmineNoteReq):
+        """🔴 검수 흐름의 Redmine 갱신을 **마스터가 대신** 한다.
+
+        원전은 리더 PC 의 `config.json` 에 API 키를 두고 직접 쓴다. 우리 키는 마스터의
+        컨테이너 DB 에만 있으므로(§10.1) 요청자는 본문만 만들고 이 자리를 부른다.
+        🔴 **키 값은 응답·로그 어디에도 나가지 않는다** — 결과 문장만 돌려준다.
+        """
+        from ..redmine import update_issue
+        result = update_issue(req.issue_id, notes=req.notes,
+                              status_name=req.status_name, done_ratio=req.done_ratio)
+        _tq_log(f"[redmine] #{req.issue_id} work={req.work_id or '-'} → {result}", root)
+        # ⚠️ 실패해도 200 이다 — 검수 흐름을 막지 않는다. 🔴 다만 `ok` 로 **말은 한다**
+        #    (조용한 실패 금지). 호출자가 사람에게 그대로 보여 준다.
+        return {"ok": not result.startswith("⚠️"), "result": result,
+                "issue_id": req.issue_id}
 
     @app.post("/api/v1/anti_patterns/notify")
     def anti_patterns_notify_ep(req: AntiPatternNotifyReq):

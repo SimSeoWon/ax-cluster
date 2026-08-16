@@ -127,6 +127,21 @@ class DirectiveReq(BaseModel):
     directive: str
 
 
+class RedmineNoteReq(BaseModel):
+    """🔴 **마스터 경유 Redmine 갱신** (중 2.1 `#135`, 사용자 결정 2026-08-16).
+
+    요청자 `.33` 의 `/review-work` 는 코멘트 **본문만** 만든다 — 우리 Redmine API 키는
+    저장소에도 `~/.config` 에도 없고 마스터의 컨테이너 DB 에만 있기 때문이다(§10.1).
+    ⚠️ 키를 `.33` 에 복사하는 대신 이 자리를 뒀다. 이 엔드포인트는 다른 것들과 같이
+    **bearer 토큰이 필수**다(fail-closed).
+    """
+    issue_id: int
+    notes: str = ""
+    status_name: str = ""      # 빈 문자열이면 상태를 안 바꾼다 (반려의 기본값)
+    done_ratio: Optional[int] = None
+    work_id: str = ""          # 감사 로그용 (선택)
+
+
 class AntiPatternNotifyReq(BaseModel):
     """리더가 머지한 새 안티패턴 엔트리 알림.
 
