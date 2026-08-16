@@ -757,3 +757,22 @@ identifier=modularstage · 트래커 코드리뷰 · 우선순위 높음/보통/
     → Redmine 이슈 → 사람이 확인 후 실행 (원전 원칙 그대로 — 코드는 직접 안 고친다)
 
 테스트 29건 신규, 전체 3335/3335. 남은 소비자: #157 recipes_synthesizer · #158 history_harvest.
+
+## §45 소비자③ recipes_synthesizer (#157)
+
+원전 629줄 글자대로. 신호 소화의 전체 사이클: LLM 클러스터링 → 임계치(기본 5, 하한 2)
+도달 클러스터만 레시피 MD 합성 → 처리분 _signals.archive.jsonl 이동(28일 보관) →
+rejected_approaches/error_recoveries 를 _anti_patterns.md 4섹션 카탈로그로 별도 집계.
+
+원전과의 차이: 백엔드 상용 체인(#205 근거 동일) · files_read 해석 기준 paths.repo.
+[주의] 읽기 도구(find_recipes/get_anti_patterns)는 원전 code_recipes MCP 서버 소관 —
+이 629줄 밖. code-writer 배선 때 필요해진다 (모듈 머리말에 명시).
+
+라이브 (실 신호 0건이라 트윈 오염 없이 스크래치 + 실 상용 체인, 47.5s):
+    실 리뷰 지적 재구성 신호 5건 → 클러스터 3개 — 의미 단위 정확 (include 경로 3건만 묶임)
+    → 임계치 도달 1개만 합성 (미달 2개는 다음 사이클까지 신호 유지)
+    → 레시피 [대괄호] 식별자 보존 · 아카이브 3건 이동/2건 잔류
+    → 안티패턴 카탈로그: linker error on [FInstancedStruct] → StructUtils 유지
+
+테스트 18건 신규 (생산자 실물 왕복 · 클러스터 방어 4종 · 임계치 · signal_count 누적 ·
+28일 정리 · 안티패턴 스킵). 전체 3353/3353. 남은 소비자: #158 history_harvest 하나.
