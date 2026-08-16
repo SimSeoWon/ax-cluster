@@ -37,8 +37,9 @@ comment reads *"durable 단일 writer 보존"* — 🔴 **"one writer" was never
 is the server, and workers push ephemeral `attempt/` branches.** This project is an **OS/environment
 port** (Windows+UE5 daemon → Linux+Gitea), and Linux forces exactly **one** change: the UE5 build
 step *inside* `verify_and_merge` moves to `.2`. ⚠️ Even Gitea wasn't forced — the origin's doc listed
-GitHub/Gitea/bare as a choice. M4 = 대 4 / 중 17 (🔴 소 count moved 62 → 75 in one session and later 75 → 80 — **the numbers live
-in Redmine**, version *마일스톤 4*), and 🔴 **소 1.1 (read the origin's design docs) is upstream of everything.**
+GitHub/Gitea/bare as a choice. M4 = 대 4 / 중 17 (🔴 소 count has moved **four times** — 62 → 75 → 80 → 81, and
+that list is **history, not the current count**: **the numbers live in Redmine**, version *마일스톤 4*),
+and 🔴 **소 1.1 (read the origin's design docs) is upstream of everything.**
 
 **What M2 delivered** (closed 소 43/43): the twin **grows, is indexed, and reaches code
 generation** — both of its goals run end to end. Manifests carry **domain norms** *and* **header
@@ -56,8 +57,9 @@ when its tip is reachable from `origin/main`, and workers return to **`main`**.
 deterministic gate** ③ 🔵 **build the operator surface** — status screen ✅, upper-layer commands and
 robustness remained when it was halted. Structure was 대 3 / 중 10. 🔴 **Numbers never live in a
 hand-edited doc** — the numerator drifted twice in M2, and the *denominator* moved on 2026-08-10
-(32 → 36) when reading the predecessor's design doc uncovered four missing sub-tasks. M4 moved
-**62 → 75 in one session, then 75 → 80** for the same reason.
+(32 → 36) when reading the predecessor's design doc uncovered four missing sub-tasks. M4 has moved
+**four times** (62 → 75 → 80 → 81) for the same reason. ⚠️ **That trail is history, not state** —
+it went stale inside a single session (2026-08-16), which is exactly why the numbers live in Redmine.
 
 🔴 **대 1 and 대 2 are closed (2026-08-12). 대 3 is the only one open.** The pipeline runs end
 to end and **four deterministic gates** sit in it:

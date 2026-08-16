@@ -28,9 +28,10 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
   🔴 **Neither the numerator nor the denominator is written in any document** — read both from
   Redmine (version *마일스톤 4*). Hand-kept numerators drifted twice in M2, and the denominator
-  moves whenever reading the origin uncovers work: M3 went 32 → 36, and **M4 went 62 → 75 in one
-  session, then 75 → 80** as later ports kept surfacing their own missing halves. That movement is
-  normal — record it.
+  moves whenever reading the origin uncovers work: M3 went 32 → 36, and M4 has moved **four times**
+  (62 → 75 → 80 → 81) as later ports kept surfacing their own missing halves. That movement is
+  normal — record it. ⚠️ **Those figures are history, not the current count** — this very line went
+  stale inside one session (2026-08-16), which is why the rule above exists. Never quote them as state.
   M4 structure: 대 4 / 중 17 — **소분류가 작업 단위다**. 대 1 topology restore · 대 2 turn the
   four open M3 items into ports · 대 3 un-ported assets · 대 4 recover the method/norms.
   Never size a task by line count: `class_graph`'s 1,341 lines turn out to be
