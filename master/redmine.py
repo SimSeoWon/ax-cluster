@@ -107,6 +107,75 @@ def resolve_status_id(name: str, *, key: str = "", url: str = "", sender=None):
     return None
 
 
+def resolve_tracker_id(name: str, *, key: str = "", url: str = "", sender=None):
+    """트래커 **이름 → id** (resolve_status_id 와 같은 결 — id 를 코드에 박지 않는다)."""
+    if not name:
+        return None
+    try:
+        got = _request("GET", f"{url or base_url()}/trackers.json", key, sender=sender)
+    except Exception:                                        # noqa: BLE001
+        return None
+    for t in (got or {}).get("trackers") or []:
+        if str(t.get("name", "")).strip() == name.strip():
+            return t.get("id")
+    return None
+
+
+def resolve_priority_id(name: str, *, key: str = "", url: str = "", sender=None):
+    """우선순위 **이름 → id** (enumerations API)."""
+    if not name:
+        return None
+    try:
+        got = _request("GET", f"{url or base_url()}/enumerations/issue_priorities.json",
+                       key, sender=sender)
+    except Exception:                                        # noqa: BLE001
+        return None
+    for p in (got or {}).get("issue_priorities") or []:
+        if str(p.get("name", "")).strip() == name.strip():
+            return p.get("id")
+    return None
+
+
+PROJECT_ID = "modularstage"     # [중요] 같은 프로젝트다 — 새 프로젝트를 만들지 않는다 (규칙)
+
+
+def create_issue(subject: str, description: str = "", *, tracker_name: str = "",
+                 priority_name: str = "", project: str = PROJECT_ID,
+                 key: str = "", url: str = "", sender=None) -> dict:
+    """이슈를 새로 만든다. 반환: `{"id": int}` 또는 `{"error": 사유}`.
+
+    원전 plan_register 의 생성부와 같은 결: 트래커·우선순위는 이름으로 해석하고, 해석이
+    안 되면 그 필드만 생략한다 (생성 자체를 막지 않는다). [중요] update_issue 와 달리
+    dict 를 돌려준다 — 호출자(플랜 등록)가 발급 id 를 frontmatter 에 되적어야 한다.
+    """
+    base = (url or base_url()).rstrip("/")
+    k = key or api_key()
+    if sender is None and not k:
+        return {"error": "API 키가 없다 (`AX_REDMINE_API_KEY` 또는 컨테이너 DB, §10.1)"}
+    if not (subject or "").strip():
+        return {"error": "subject 가 비었다"}
+
+    issue: dict = {"project_id": project, "subject": subject.strip()[:250],
+                   "description": description or ""}
+    tid = resolve_tracker_id(tracker_name, key=k, url=base, sender=sender)
+    if tid:
+        issue["tracker_id"] = tid
+    pid = resolve_priority_id(priority_name, key=k, url=base, sender=sender)
+    if pid:
+        issue["priority_id"] = pid
+
+    try:
+        got = _request("POST", f"{base}/issues.json", k, {"issue": issue}, sender=sender)
+    except urllib.error.HTTPError as e:
+        return {"error": f"HTTP {e.code}"}
+    except Exception as e:                                   # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}"}
+    new_id = ((got or {}).get("issue") or {}).get("id")
+    if not new_id:
+        return {"error": "생성 응답에 id 없음", "raw": got}
+    return {"id": int(new_id)}
+
+
 def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio=None,
                  key: str = "", url: str = "", sender=None) -> str:
     """기존 이슈에 코멘트·상태·완료율을 붙인다. **사람이 읽을 결과 문자열**을 돌려준다.

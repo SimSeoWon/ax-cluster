@@ -732,3 +732,28 @@ format_ok = 절 + 두 표 헤더 존재(데이터 행 0개도 정상 — 깨끗�
 패턴 승급. 전체 3306/3306. 재기동·재배달 불필요 (서버측 라이브러리).
 
 교훈: **소비자를 실물에 돌려 보기 전에는 생산자 계약을 믿지 마라 — 왕복이 계약이다.**
+
+## §44 소비자② 주간 플랜 (#155) — 되먹임 사슬이 끝까지 닫혔다
+
+원전 642줄(planner/plan_generator/plan_dedup) + 등록기(plan_register ~300줄) 이식, 로직
+글자대로. redmine.py 에 create_issue/resolve_tracker_id/resolve_priority_id 추가 (실측:
+identifier=modularstage · 트래커 코드리뷰 · 우선순위 높음/보통/낮음).
+
+원전과의 차이 둘, 둘 다 근거 있는 결정:
+- Step 0 (batch_upgrade_domains, draft→active 자동 승급) 미이식 — 좁힌 것이 아니라
+  「자동 승급 영구 비활성」(원전 2026-06-01 오동작, ontology/create.py 「활성화는 사람이
+  명시」) 확정 결정의 적용. 원전 planner 의 이 호출은 폐기 이전의 잔재였다.
+- Redmine 등록: exe 서브프로세스 대신 마스터 직호출 (같은 프로세스, 간접층 불요).
+
+라이브 (실 리뷰 1건, --min-reviews 1):
+    리뷰 1건 → 이슈 12건 → 파일 10그룹·패턴 1개 → 플랜 2건 (상용 체인, ~2,000토큰)
+    → Redmine #208 [플랜] ModularStage.Build.cs — HIGH (safety) · 코드리뷰 · 높음
+    → Redmine #209 [플랜] 반복 패턴 (네이밍 7파일)
+    → 발급 id 를 frontmatter 에 되적음 (plan_dedup 상속의 원천 — 매주 새 이슈 금지)
+    → 반영된 리뷰는 _archive/2026-W33/ 으로 (다음 주 재계수 방지)
+
+이로써 되먹임 사슬 전체가 실물로 닫혔다:
+    유저 커밋 → (생산자①) 자동 리뷰 → (소비자①) 파싱·분류 → (소비자②) 주간 플랜
+    → Redmine 이슈 → 사람이 확인 후 실행 (원전 원칙 그대로 — 코드는 직접 안 고친다)
+
+테스트 29건 신규, 전체 3335/3335. 남은 소비자: #157 recipes_synthesizer · #158 history_harvest.
