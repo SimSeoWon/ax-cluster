@@ -378,8 +378,19 @@ def review_work(repo: Path, *, work_id: str, work: dict, tasks,
 
 def _default_api(method: str, path: str, payload=None):
     """큐 호출. 🔴 `runner._api` 를 **재사용한다** — 토큰·타임아웃·오류 형태를 따로 만들면
-    조용히 갈라진다(`coordinator._git_cmd` 를 공유하는 것과 같은 이유)."""
-    from . import runner
+    조용히 갈라진다(`coordinator._git_cmd` 를 공유하는 것과 같은 이유).
+
+    ⚠️ **요청자(`.33`)에는 이 경로가 없다** — 배달되는 것은 이 모듈의 의존 폐포뿐이고
+    큐 토큰은 그 기계에 두지 않는다(`client/bundle.py`: *"토큰은 이 번들에 넣지 않는다"*).
+    거기서는 호출자가 `api=` 를 주입한다(MCP 도구가 토큰을 갖고 있다). 🔴 그래서 여기서
+    맨 `ImportError` 를 내지 않고 **무엇을 해야 하는지** 말한다.
+    """
+    try:
+        from . import runner
+    except ImportError as e:
+        raise ReviewError(
+            "이 머신에는 큐 클라이언트가 없다 — `api=` 를 주입하라 "
+            "(요청자에는 토큰을 두지 않는다: client/bundle.py)") from e
     return runner._api(method, path, payload)
 
 

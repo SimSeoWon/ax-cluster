@@ -143,7 +143,7 @@ def test_merge() -> None:
 
 
 def test_skill_is_readable() -> None:
-    for name in ("ax-work", "ax-infer", "ax-request", "ax-ontology"):
+    for name in ("ax-work", "ax-infer", "ax-request", "ax-ontology", "ax-review"):
         t = bundle.skill_text(name)
         check(f"{name}: 읽힌다", len(t) > 1000, str(len(t)))
         check(f"{name}: frontmatter", t.startswith("---") and f"name: {name}" in t)
@@ -160,11 +160,33 @@ def test_role_skills() -> None:
           set(bundle.skills_for("worker")) == {"ax-work", "ax-infer"},
           str(bundle.skills_for("worker")))
     # 🔴 요청자에게 워커 절차를 주지 않는다
-    check("🔴 요청자는 ax-request·ax-ontology (ax-work 아님)",
-          set(bundle.skills_for("requester")) == {"ax-request", "ax-ontology"},
+    # 🔴 `ax-review` 는 원전의 「리더(TD·팀장)」 자리다 — 그 그룹이 없어 요청자가 그 판단을
+    #    한다(사용자 확정 2026-08-16). 검수는 **판단**이지 구현이 아니라 이 역할에 맞는다.
+    check("🔴 요청자는 ax-request·ax-ontology·ax-review (ax-work 아님)",
+          set(bundle.skills_for("requester")) == {"ax-request", "ax-ontology", "ax-review"},
           str(bundle.skills_for("requester")))
     check("🔴 요청자 스킬에 ax-work 가 섞이지 않는다",
           "ax-work" not in bundle.skills_for("requester"))
+    # 🔴 스킬 원문이 실재해야 배달이 성립한다 — 이름만 등록하면 배달에서 죽는다
+    for n in bundle.skills_for("requester") + bundle.skills_for("worker"):
+        check(f"스킬 원문이 있다: {n}", bundle.skill_text(n).startswith("---"))
+
+
+def test_role_payload() -> None:
+    """🔴 요청자에게는 **파이썬 모듈**도 간다 — 절차를 문서에만 쓰면 로직이 두 벌이 된다."""
+    pay = bundle.payloads_for("requester")
+    check("요청자에게 review 의 의존 폐포가 간다",
+          set(pay) == {"review.py", "coordinator.py", "branch_names.py"}, str(pay))
+    check("🔴 워커에는 안 간다 (역할 밖이다)", bundle.payloads_for("worker") == ())
+    for n in pay:
+        check(f"배달할 원문이 실재한다: {n}", len(bundle.payload_text(n)) > 100)
+    check("패키지 초기화 파일이 「손대지 말 것」을 말한다",
+          "손으로 고치지 말 것" in bundle.PAYLOAD_INIT, bundle.PAYLOAD_INIT[:60])
+    try:
+        bundle.payloads_for("사장님")
+        check("🔴 모르는 역할은 예외", False, "조용히 빈 튜플을 돌려줬다")
+    except bundle.BundleError:
+        check("🔴 모르는 역할은 예외", True)
     try:
         bundle.skills_for("사장님")
         check("🔴 모르는 역할은 예외 (조용히 빈 배달 금지)", False, "통과해버렸다")
@@ -275,7 +297,7 @@ def test_merge_never_replaces_existing() -> None:
 
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
-               test_role_skills, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
+               test_role_skills, test_role_payload, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
                test_merge_never_replaces_existing):
         fn()
     total = PASS + FAIL

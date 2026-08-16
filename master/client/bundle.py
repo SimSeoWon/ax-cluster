@@ -65,9 +65,24 @@ SERVICES = {"task_queue": 8101, "broker": 8102, "projects": 8103}
 #   여지가 있는 동안 되돌릴 수 있게 둔다(§8.4 ⚠️).
 SKILLS_BY_ROLE = {
     "worker": ("ax-work", "ax-infer"),
-    "requester": ("ax-request", "ax-ontology"),
+    # 🔴 `ax-review` 는 원전의 「리더(TD·팀장)」 자리다 — 우리에겐 그 그룹이 없어
+    #   요청자가 그 판단을 한다(사용자 확정 2026-08-16). 가드가 이미 그렇게 적어 뒀다.
+    "requester": ("ax-request", "ax-ontology", "ax-review"),
 }
 SKILL_NAME = "ax-work"          # (호환) 단수 참조가 남아 있는 곳
+
+# 🔴 **역할별 파이썬 페이로드** (중 2.1 `#135`, 사용자 결정 2026-08-16).
+#   요청자 `.33` 의 `/review-work` 는 worktree 시뮬레이션·통합·정리 판정을 **git 이 있는 곳**
+#   에서 해야 한다. 절차를 스킬 문서에만 쓰면 **로직이 두 벌**이 되고 다음에 갈라진다 —
+#   마일스톤 4 가 생긴 바로 그 형태다. 그래서 모듈 자체를 배달한다.
+#   ⚠️ **의존 폐포 전부**를 보낸다(review → coordinator → branch_names). 하나라도 빠지면
+#   임포트에서 죽고, 그건 배달이 성공한 것처럼 보이는 실패다.
+#   🔴 **토큰은 여전히 안 보낸다** — 큐·Redmine 호출은 MCP 가 한다(`review.api=` 주입).
+PAYLOAD_PKG = "axwork"
+PAYLOAD_BY_ROLE = {
+    "requester": ("review.py", "coordinator.py", "branch_names.py"),
+    "worker": (),
+}
 AX_DIR = ".ax"                      # 🔴 체크아웃 안. 상대경로가 모든 머신에서 같다
 CONFIG_REL = f"{AX_DIR}/config.json"
 WORK_REL = f"{AX_DIR}/work"
@@ -502,6 +517,29 @@ def skill_text(name: str = SKILL_NAME) -> str:
     return p.read_text(encoding="utf-8")
 
 
+def payload_text(fname: str) -> str:
+    """배달할 모듈 원문. 🔴 **저장소가 SSOT 다** — 사본을 따로 두지 않는다."""
+    p = Path(__file__).resolve().parents[1] / "work" / fname
+    if not p.is_file():
+        raise BundleError(f"배달할 모듈이 없다: {p}")
+    return p.read_text(encoding="utf-8")
+
+
+def payloads_for(role: str) -> tuple:
+    """이 역할이 받을 파이썬 모듈. 🔴 모르는 역할은 예외 (`skills_for` 와 같은 이유)."""
+    if role not in PAYLOAD_BY_ROLE:
+        raise BundleError(f"모르는 role: {role!r} (가능: {', '.join(PAYLOAD_BY_ROLE)})")
+    return PAYLOAD_BY_ROLE[role]
+
+
+PAYLOAD_INIT = (
+    '"""마스터가 배달한다. 🔴 **손으로 고치지 말 것** — 다음 배달에 덮인다.\n\n'
+    "저장소(`master/work/`)가 SSOT 이고 여기는 사본이다. 쓰는 법:\n\n"
+    "    py -c \"import sys; sys.path.insert(0, '.ax/lib'); "
+    'from axwork import review\"\n"""\n'
+)
+
+
 def skills_for(role: str) -> tuple:
     """이 역할이 받을 스킬 이름들. 🔴 모르는 역할은 **빈 튜플이 아니라 예외**다 —
     조용히 아무것도 안 보내면 배달이 성공한 것처럼 보인다."""
@@ -558,7 +596,8 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     cfg = json.dumps(config_for(project, facts), ensure_ascii=False, indent=2) + "\n"
     if dry_run:
         return {"host": facts.host, "dry_run": True, "config_bytes": len(cfg),
-                "skills": list(skills_for(facts.role))}
+                "skills": list(skills_for(facts.role)),
+                "payload": list(payloads_for(facts.role))}
     # 🔴 CLAUDE.md 는 **읽어서 병합**한다 — 덮어쓰면 사람이 쓴 것을 날린다
     md_path = (f"{facts.path}\\CLAUDE.md" if facts.windows else f"{facts.path}/CLAUDE.md")
     prev = _remote_read(facts, md_path)
@@ -582,6 +621,13 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
         "claude_md": _remote_write(facts, "CLAUDE.md", merged, base="checkout"),
         "skills": [_remote_write(facts, f".claude/skills/{n}/SKILL.md", skill_text(n))
                    for n in skills_for(facts.role)],
+        # 🔴 파이썬 페이로드 — 패키지로 둬야 모듈의 **상대 임포트가 그대로** 산다.
+        #    `__init__.py` 를 먼저 쓰지 않으면 나머지는 임포트되지 않는 파일 더미가 된다.
+        "payload": ([_remote_write(facts, f"{AX_DIR}/lib/{PAYLOAD_PKG}/__init__.py",
+                                   PAYLOAD_INIT, base="checkout")]
+                    + [_remote_write(facts, f"{AX_DIR}/lib/{PAYLOAD_PKG}/{n}",
+                                     payload_text(n), base="checkout")
+                       for n in payloads_for(facts.role)]) if payloads_for(facts.role) else [],
         "excluded": _ensure_ignored(facts),
     }
     return {"host": facts.host, **written,
