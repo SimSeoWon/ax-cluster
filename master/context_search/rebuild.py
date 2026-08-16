@@ -42,6 +42,22 @@ class RebuildStats:
         return s
 
 
+def _canary(paths: ProjectPaths, note: str) -> None:
+    """🔴 **여기서 삼킨 실패는 self-heal 되지 않는다** (소 3.5.6 · `#182`).
+
+    위 `try` 는 도메인 색인 실패를 `note` 로 바꾸고 **정상 반환**한다 — 그래서 호출자
+    (`events/consumer`)는 재색인을 성공으로 보고 **digest 와 워터마크를 전진시킨다.**
+    그리고 재색인은 *"컨텍스트 MD 가 바뀔 때만"* 도므로, 소스만 바뀌는 푸시가 이어지는 동안
+    도메인 색인은 **깨진 채로 남는다.** 원전의 승격 기준(*"skip 후 워터마크가 전진하느냐"*)에
+    정확히 걸리는 자리다.
+
+    ⚠️ **fail-soft 는 그대로 둔다** — 도메인 색인이 죽어도 컨텍스트 검색은 멀쩡하고, 그래서
+    여기가 fail-soft 인 것은 옳다. 바꾸는 것은 *"조용히"* 뿐이다.
+    """
+    from ..canary import KIND_DOMAIN_INDEX_GAP, append_canary
+    append_canary(paths, kind=KIND_DOMAIN_INDEX_GAP, detail=note)
+
+
 def rebuild_all(paths: ProjectPaths, *, progress=None) -> RebuildStats:
     """벡터·BM25 를 work 세대에 모두 쌓은 뒤 **한 번만** 뒤집는다."""
     missing = paths.missing_sources()
@@ -82,8 +98,10 @@ def rebuild_all(paths: ProjectPaths, *, progress=None) -> RebuildStats:
         note = " / ".join(d.notes[:1])
     except domain_index.DomainIndexError as e:
         note = f"🔴 도메인 색인 실패: {e}"
+        _canary(paths, note)
     except Exception as e:                              # noqa: BLE001
         note = f"🔴 도메인 색인 오류: {type(e).__name__}: {e}"
+        _canary(paths, note)
     if progress and note:
         progress(f"도메인 색인 — {note}")
 

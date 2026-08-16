@@ -164,31 +164,12 @@ def _shquote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-def append_canary(paths, *, kind: str, detail: str, commit: str = "") -> bool:
-    """🔴 **영구 유실을 누적 기록한다** (소 3.5.6 — 원전 `permanent_loss_canary.jsonl` 이식).
-
-    저널에 한 줄 찍는 것만으로는 원전이 남긴 지침 *"카나리가 **반복**되면 근본 원인(LLM 쿼터·
-    타임아웃 등)을 먼저 해결할 것 — 재touch/rebuild 는 증상 복구일 뿐"* 을 따를 수 없다.
-    **반복은 누적된 것을 봐야 보인다.**
-
-    ⚠️ **기록에 실패해도 예외를 올리지 않는다** — 카나리를 쓰다 색인을 죽이면 본말전도다.
-    대신 `False` 를 돌려주므로 호출자가 그 사실을 셀 수 있다.
-
-    🔴 **판별 기준은 원전 그대로**: *"skip 후 워터마크가 전진하느냐."* 전진하지 않는 실패는
-    다음 회차에 self-heal 되므로 **카나리로 만들지 않는다**(원전은 except ~33개 중 딱 2개만
-    승격했다 — *"self-heal 되는 걸 카나리로 만들면 노이즈"*).
-    """
-    from datetime import datetime, timezone
-    try:
-        p = paths.canary
-        p.parent.mkdir(parents=True, exist_ok=True)
-        rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-               "kind": kind, "detail": detail[:500], "commit": commit}
-        with p.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        return True
-    except OSError:
-        return False
+# 🔴 카나리 기록기는 `master/canary.py` 로 옮겼다 (소 3.5.6 · `#182`).
+#    이유는 층이다 — `context_search/rebuild` 도 찍어야 하는데 그쪽이 `events` 를 부르면
+#    **층 역전**이다. ⚠️ 이 이름으로 부르던 곳(테스트 포함)이 그대로 돌도록 재수출한다.
+from ..canary import (  # noqa: E402,F401
+    KIND_CONTEXT_MD_LOST, KIND_DOMAIN_INDEX_GAP, append_canary,
+)
 
 
 def context_digest(paths: ProjectPaths) -> str:

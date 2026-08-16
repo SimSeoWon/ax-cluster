@@ -373,6 +373,16 @@ def main() -> int:
     check("펜스 금지를 명시", "No markdown fences" in pr)
     check("대상 파일", "Foo.cpp" in pr)
     check("지시가 실린다", "Init 구현" in pr)
+    # 🔴 소 3.5.7 (`#183`) — 원전 금지 3종. 이유가 **UE 특유**라 리뷰뿐 아니라 생성에도 걸린다:
+    #    Blueprint 에셋이 C++ 상속과 UPROPERTY **이름**을 직렬화해 들고 있고, 그 의존은
+    #    코드에 없다(*"LLM 은 코드만 분석 가능"*). 룰 1(동결)이 리네이밍을 **일부**만 막는다.
+    check("🔴 리네이밍 금지 + **이유**(Blueprint 에셋)",
+          "rename" in pr.lower() and "Blueprint" in pr, pr[:0])
+    check("🔴 상속 구조 변경 금지", "inheritance" in pr.lower())
+    check("🔴 모듈 간 이동 금지 (동결로는 못 막는 자리)",
+          "move code between modules" in pr.lower())
+    check("에셋을 코드에서 볼 수 없다는 사실을 알린다",
+          "cannot see those assets" in pr.lower() or "asset references" in pr.lower())
 
     print("\n[19] 🔴 매니페스트가 없으면 생성하지 않는다 (grounding 0 = 환각 조건)")
     gp = ProjectPaths(name="G", root=tmp / "G")

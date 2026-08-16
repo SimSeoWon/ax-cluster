@@ -120,6 +120,19 @@ def build_prompt(*, manifest_body: str, instruction: str, target_file: str = "",
         "no explanation before or after.",
         "4. Follow the conventions visible in the context below — this is an existing "
         "codebase, not a greenfield.",
+        # 🔴 원전 리뷰 프롬프트의 금지 3종 (소 3.5.7 · `#183`). 이유가 **UE 특유**라 리뷰뿐
+        #    아니라 생성에도 그대로 걸린다: Blueprint 에셋이 C++ 상속과 UPROPERTY **이름**을
+        #    직렬화해 들고 있어서, 이름·상속이 바뀌면 **에셋이 깨진다.** 그리고 그 의존은
+        #    코드에 없다 — 원전 원문: *"LLM 은 코드만 분석 가능 — UE5 에셋 의존 관계
+        #    (Blueprint 상속·데이터테이블 참조)는 파악 불가."*
+        # ⚠️ 룰 1(선언 동결)이 리네이밍을 **일부** 막지만 상속 변경·모듈 간 이동은 못 막는다.
+        "5. NEVER rename classes, components, functions, or UPROPERTY members — "
+        "Blueprint assets serialize these names and renaming BREAKS the assets. "
+        "You cannot see those assets from the code.",
+        "6. NEVER change a class's inheritance (base class, added/removed parents). "
+        "Blueprint classes derive from these and will break.",
+        "7. NEVER move code between modules. It breaks build dependencies and asset "
+        "references. If code looks misplaced, leave it exactly where it is.",
         "",
         "=== CONTEXT COLLECTED BY THE SERVER (read this; do not search) ===",
         manifest_body.strip(),
