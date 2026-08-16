@@ -635,6 +635,30 @@ def get_layer_description_tool(domain: str, layer: int = 0) -> str:
 
 
 @mcp.tool()
+def edit_domain_field_tool(domain: str, parent_domain: str = None, status: str = None,
+                           tags: list = None, collaborates_with: list = None,
+                           summary: str = None) -> str:
+    """도메인 MD 를 **필드 단위**로 고친다 (#189 — 원전 edit_domain_field 이식).
+
+    제공한 인자만 적용: parent_domain/status/tags 는 frontmatter, collaborates_with 는
+    `## 협력 도메인`, summary 는 `## 시스템 개요`. parent_domain/tags/collaborates_with 는
+    manifest 직접 패치 + 인덱스 재빌드(LLM 0), summary/status 는 MD-only.
+    [중요] tags 는 통째 치환이다 — 치환으로 한글 태그가 사라지면 결과에 크게 표시된다
+    (가중치 3.0 검색 채널). 기존 태그를 유지하려면 결과의 목록을 도로 합쳐 다시 불러라.
+    """
+    try:
+        from ..ontology.edit_field import edit_domain_field
+        r = edit_domain_field(_onto_paths(), domain, parent_domain=parent_domain,
+                              status=status, tags=list(tags) if tags is not None else None,
+                              collaborates_with=(list(collaborates_with)
+                                                 if collaborates_with is not None else None),
+                              summary=summary)
+        return json.dumps(r, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
 def edit_ontology_item_tool(domain: str, kind: str, name: str, patch: dict) -> str:
     """온톨로지 항목 하나를 고친다. [중요] **고치면 곧 검수 잠금이 걸린다.**
 
