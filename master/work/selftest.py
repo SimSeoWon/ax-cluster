@@ -22,6 +22,30 @@
 push 할 수 있어서 라이브 저장소에 worktree 격리로 셀프테스트 브랜치를 올렸지만, 우리는 그 자리에
 **임시 저장소**를 쓴다. 격리의 목적(*"라이브 데몬 메인 트리 미접촉"*)은 더 강하게 달성된다.
 
+> 🔴 **그 「결정 필요」도 전제가 틀렸다 — 실측 2026-08-16.** 위 문단은 *"마스터가 push 한다"* 를
+> 가정했지만 **`run_live` 의 git 은 한 줄도 마스터에서 돌지 않는다** — 전부 `_ssh` 로 작업장에서
+> 돈다. 그리고 작업장 `.43` 의 클론에는 **pre-push 훅이 없고**(실측) `origin` 이 곧장 Gitea 다.
+> 즉 **마스터 가드는 이 경로에 아예 없다.** 가드에 직접 입력을 넣어 잰 결과:
+>
+>     selftest/<slug>            push    🔴 거부   ← 마스터에서 밀 때만 해당
+>     attempt/selftest-…/…       push    ✅ rc=0
+>     도달 불가 attempt/* 삭제           🔴 거부   ← 원전 8단계 cleanup 이 하는 일
+>     도달 불가 task/<id> 삭제           🔴 거부
+>
+> 🔴 **그래서 ⓐ/ⓑ/ⓒ 는 브랜치명 문제가 아니라 「잔재를 어떻게 하나」 문제였고, 그것은
+> 하니스를 Flow Y(마스터가 push)로 옮길 때 비로소 생긴다.** 지금 형태로는 2단계에 가드
+> 결정이 **필요 없다** — 그 결정은 하니스의 토폴로지를 바꾸는 별건이다(`#127`/`#128` 계열).
+> ⚠️ 리포트 14 §15 가 *"증명 안 한 것: 마스터가 쓰기 주체"* 라고 적어 둔 그 칸이 바로 이것이다.
+
+## ⚠️ 2단계에서 **아직 못 옮기는 것 하나** — C.7 리더 통합 머지
+
+원전 7b 는 *"실 leader 가 쓰는 `_integrate_push_durables` 를 **그대로** 태워"* feature +
+durable 집합이 한 브랜치로 합류하는지 본다(머지만·push 없음). 🔴 그 헬퍼는
+`executor_review_finalize.py`(중 2.1 `#135`)에 있고 **미이식**이다(우리 코퍼스 grep 0건).
+여기서 머지를 **새로 쓰면 검사의 의미가 달라진다** — *"실 leader 경로가 합류시킨다"* 가 아니라
+*"셀프테스트가 자기 머지를 돌렸다"* 가 되기 때문이다. 따라서 **`#135` 가 상류**이고, 그때
+`verify_and_merge`(per-task durable, push 함)와 **다른 능력**임에 주의한다.
+
 ## ⚠️ 우리와 원전이 다른 것 — 매니페스트 배달 경로
 
     원전   git-carried — `.claude/tasks/<id>/context.md` 를 base 에 **커밋**해서 보낸다.
@@ -118,6 +142,96 @@ def extract_nonce(manifest_text: str, gidx: int) -> str:
     return m.group(1) if m else ""
 
 
+# ─────────────────────────────────────────────────────────────
+# 폴링 워커 · 병렬 판정 · 백엔드 레인 — 🔴 **기제는 원전, 신호원은 우리 것**
+# ─────────────────────────────────────────────────────────────
+#
+# 원전은 *"등록 워커(대부분 stale)가 아니라 **실제 폴링 중**(`last_seen` 있음) 워커 수"* 로
+# 병렬 가능성을 판정한다(사용자 2026-07-06: *"워커 1대여도 통과해야 한다. 병렬 단정은 폴링
+# ≥2 일 때만"*). 🔴 **그 판정식을 글자로 옮기면 우리 환경에서 거짓말을 한다** — 실측
+# 2026-08-16: 등록 4명 전원이 `last_seen` 을 갖고 있어 원전식으로는 **폴링 4명**이 나오는데,
+# 가장 최근 접촉이 **2일 18시간 전**이고 폴링 데몬은 **0개**다(`worker/` 는 README 뿐).
+#
+#     원전의 전제   상주 워커 데몬이 heartbeat 를 계속 찍는다 → 있으면 곧 살아 있다
+#     우리의 실제   `worker_last_seen` 은 claim/heartbeat 때 찍히고 **만료되지 않는다**
+#
+# 리포트 16 §12.7(σ.9.0 의 `mtime`)과 **같은 부류**다 — 기제(조건부 병렬 단정)는 그대로 옮기고
+# **신선도**라는 신호원을 우리가 고른다. 🔴 값은 새로 만들지 않고 이 저장소에 이미 있는 것을
+# 재사용한다: `task_queue/reclaim.py` 의 `_VERIFY_CAPABLE_RECENT_SEC = 300`("최근 접촉"의
+# 우리 답). 새 숫자를 발명하면 같은 뜻의 임계값이 둘이 되어 조용히 갈라진다.
+POLLING_FRESH_SEC = 300
+
+# 🔴 백엔드를 안 고른 기본 레인의 이름. 이 값일 때는 `force_backend` 를 **싣지 않는다** —
+#    뜻 없는 값을 큐에 남기면 다음 세션이 그것을 설정으로 읽는다.
+DEFAULT_LANE = "default"
+
+
+def count_polling(workers, *, fresh_s: int = POLLING_FRESH_SEC, now=None) -> tuple:
+    """`(폴링 중 수, [(worker_id, 경과초|None)])`. 🔴 **존재가 아니라 신선도로 센다.**
+
+    ⚠️ 파싱 못 한 `last_seen` 은 **폴링 아님**으로 센다 — 판정 불가를 "살아 있다" 쪽으로
+    기울이면 병렬 단정이 켜져서 **없는 결함**을 만든다(보수적 방향이 반대다: 여기서 fail-closed
+    는 "단정하지 않는다" 쪽이다).
+    """
+    from datetime import datetime, timezone
+    ref = now or datetime.now(timezone.utc).astimezone()
+    out: list = []
+    fresh = 0
+    for w in (workers or []):
+        wid = str((w or {}).get("worker_id", ""))
+        raw = (w or {}).get("last_seen")
+        age = None
+        if raw:
+            try:
+                seen = datetime.fromisoformat(str(raw))
+                if seen.tzinfo is None:
+                    seen = seen.replace(tzinfo=ref.tzinfo)
+                age = (ref - seen).total_seconds()
+            except ValueError:
+                age = None
+        if age is not None and 0 <= age <= fresh_s:
+            fresh += 1
+        out.append((wid, age))
+    return fresh, out
+
+
+def overlapping_pair(intervals):
+    """서로 **다른 워커**의 `[claimed_at, submitted_at]` 구간이 겹치는 첫 쌍 (없으면 `None`).
+
+    🔴 *"서로 다른 워커가 처리했다"* 만으로는 병렬이 아니다 — 순서대로 한 대씩 돌아도 그렇게
+    보인다. 원전이 **구간 겹침**을 요구하는 이유가 그것이다.
+
+    `intervals` = `[(worker_id, 시작, 끝, gidx), …]`. 반환 `(gidx_a, worker_a, gidx_b, worker_b)`.
+    """
+    items = list(intervals or [])
+    for a in range(len(items)):
+        wa, ca, sa, ia = items[a]
+        for b in range(a + 1, len(items)):
+            wb, cb, sb, ib = items[b]
+            if wa != wb and ca < sb and cb < sa:
+                return (ia, wa, ib, wb)
+    return None
+
+
+def build_specs(backends, per: int, ts: str, base_nonce: str) -> list:
+    """`backends × per` probe 스펙. 🔴 **`gidx` 는 전역 유일**이다 (원전 그대로).
+
+    원전은 백엔드별 write(로컬 LLM / agy 등)를 **격리 검증**하려고 같은 probe 를 백엔드마다
+    한 벌씩 등재한다(사용자 2026-07-05). ⚠️ **그래서 `per` 는 「백엔드당」이고 총 개수가
+    아니다** — 백엔드가 둘이면 task 는 `2 × per` 개가 된다. 우리 기본값(백엔드 1레인)에서는
+    둘이 같은 값이라 기존 호출이 그대로 돈다.
+    """
+    per = max(1, int(per))
+    lanes = [str(b).strip() for b in (backends or []) if str(b).strip()] or [DEFAULT_LANE]
+    specs: list = []
+    for b in lanes:
+        for _ in range(per):
+            g = len(specs)
+            specs.append({"gidx": g, "backend": b, "nonce": f"{base_nonce}_{g}",
+                          "probe_rel": f"cluster_selftest/probe_{ts}_{g}.py"})
+    return specs
+
+
 def manifest_reading_workshop(gidx: int, work_id: str):
     """🔴 **NONCE 를 인자로 받지 않는다** — 디스크의 매니페스트에서 읽는다.
 
@@ -155,6 +269,13 @@ class DryRun:
     fails: list = field(default_factory=list)
     kept_at: str = ""
     error: str = ""
+    # ── 2단계 이식분 (원전 `run_selftest` 반환 dict 의 같은 칸들) ──
+    backends: list = field(default_factory=list)
+    by_backend: dict = field(default_factory=dict)   # backend → {"ok": n, "total": n}
+    polling: int = 0                                 # 🔴 신선도로 센 폴링 중 워커 수
+    workers_distinct: list = field(default_factory=list)
+    parallel_overlap: bool = False
+    parallel_asserted: bool = False                  # 🔴 단정했나 skip 했나를 남긴다
 
     def chk(self, name: str, cond: bool, detail: str = "") -> None:
         self.checks.append(Check(name, bool(cond), detail))
@@ -197,6 +318,36 @@ def _q(method: str, url: str, payload=None, *, timeout: int = 30) -> tuple:
         return e.code, e.read().decode("utf-8", "replace")[:300]
     except Exception as e:                                  # noqa: BLE001
         return 0, f"{type(e).__name__}: {e}"
+
+
+def _parse_iso(s):
+    """ISO 타임스탬프 → `datetime` (못 읽으면 `None`). 원전 `_parse_iso` 와 같은 자리."""
+    if not s:
+        return None
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(str(s))
+    except ValueError:
+        return None
+
+
+def _call_work_fn(fn, gidx: int, probe_rel: str, nonce_key: str, work_id: str, backend: str):
+    """`work_fn_cmd` 호출 — 🔴 **인자 수를 세서** 옛 4인자 콜러도 그대로 받는다.
+
+    ⚠️ `TypeError` 를 잡아 4인자로 재시도하는 방식은 **쓰지 않는다** — 콜러 *안에서* 난
+    `TypeError` 까지 삼켜 *"인자 수가 안 맞나 보다"* 로 오진한다. 조용한 실패를 만드는 모양이라
+    σ 감사가 잡는 부류다.
+    """
+    import inspect
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):          # 시그니처를 못 읽는 콜러블 — 옛 계약으로 부른다
+        return fn(gidx, probe_rel, nonce_key, work_id)
+    positional = [p for p in params.values()
+                  if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    if any(p.kind is p.VAR_POSITIONAL for p in params.values()) or len(positional) >= 5:
+        return fn(gidx, probe_rel, nonce_key, work_id, backend)
+    return fn(gidx, probe_rel, nonce_key, work_id)
 
 
 def _sh(cwd: Path, *args: str) -> None:
@@ -363,38 +514,66 @@ def run_dry(*, tasks: int = 3, keep: bool = False, base_nonce: str = "",
 def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
              work_fn_cmd=None, keep: bool = False, base_nonce: str = "",
              via_queue: bool = False, queue_url: str = "http://127.0.0.1:8101",
-             logf=None) -> DryRun:
+             backends=None, logf=None) -> DryRun:
     """실 작업장·실 Gitea 로 한 바퀴.
 
-    `work_fn_cmd(gidx, probe_rel, nonce_key, work_id)` 는 wtB 에서 돌 셸 명령을 돌려준다
-    (없으면 스크립트 편집 = 2a). 🔴 **`work_id` 를 인자로 넘기는 이유**: 호출자가 매니페스트
-    경로를 만들려면 그 값이 필요한데, 밖에서 따로 계산하면 초 단위로 어긋나 프롬프트가 없는
-    파일을 가리킨다. 첫 실 구동(2026-08-14)에서 우연히 초가 맞아 **통과가 운이었을 수 있는**
+    `work_fn_cmd(gidx, probe_rel, nonce_key, work_id[, backend])` 는 wtB 에서 돌 셸 명령을
+    돌려준다 (없으면 스크립트 편집 = 2a). 🔴 **`work_id` 를 인자로 넘기는 이유**: 호출자가
+    매니페스트 경로를 만들려면 그 값이 필요한데, 밖에서 따로 계산하면 초 단위로 어긋나 프롬프트가
+    없는 파일을 가리킨다. 첫 실 구동(2026-08-14)에서 우연히 초가 맞아 **통과가 운이었을 수 있는**
     상태였다 — 계약으로 막는다.
+
+    🔴 **`backends` 를 주면 그 레인마다 `tasks` 개씩** 등재하고 각 task 를 `force_backend` 로
+    태깅한다(원전, 사용자 2026-07-05 — 백엔드별 write 격리 검증). ⚠️ **그래서 `tasks` 는
+    「백엔드당」이다.** 안 주면 오늘까지의 동작 그대로(1레인 · 태깅 없음)다.
+
+    ⚠️ **태그를 소비하는 주체는 지금 이 하니스의 `work_fn_cmd` 다.** 원전에서는 워커 데몬이
+    `task_data.force_backend` 를 읽지만 우리 `worker/` 는 아직 README 뿐이다 — 그 데몬이 생기면
+    (`#128`) 같은 필드를 읽으면 된다. 🔴 **찍기만 하고 읽는 데가 없으면 죽은 이식**이므로
+    (리포트 17 §3) 큐에 싣는 것과 하니스가 읽는 것을 **같이** 넣는다.
 
     🔴 정리는 `finally` 다 — 원격 브랜치(selftest/attempt/durable)와 worktree 를 지운다.
     probe 는 증거가 아니라 시험 산출물이다. `keep=True` 면 남긴다.
     """
     log = logf or (lambda stage, msg: None)
-    n = max(1, int(tasks))
     ts = time.strftime("%Y%m%d_%H%M%S")
     base_nonce = base_nonce or f"CSTNONCE{ts}_{os.getpid() % 100000}"
     work_id = f"selftest_{ts}"
     slug = f"cluster_selftest_{ts}"
     st_branch = f"selftest/{slug}"
-    nonces = {i: f"{base_nonce}_{i}" for i in range(n)}
-    probe_rels = {i: f"cluster_selftest/probe_{ts}_{i}.py" for i in range(n)}
+    specs = build_specs(backends, tasks, ts, base_nonce)
+    n = len(specs)
+    nonces = {s["gidx"]: s["nonce"] for s in specs}
+    probe_rels = {s["gidx"]: s["probe_rel"] for s in specs}
+    backend_of = {s["gidx"]: s["backend"] for s in specs}
+    lanes = sorted({s["backend"] for s in specs})
     man_rel = MANIFEST_REL_FMT.format(work_id=work_id)
     wtA, wtB = f"{checkout}/../_ax_st_A_{ts}", f"{checkout}/../_ax_st_B_{ts}"
-    r = DryRun(work_id=work_id, tasks=n, nonces=nonces)
+    r = DryRun(work_id=work_id, tasks=n, nonces=nonces, backends=lanes)
+    probe_ok: dict = {}
     made_remote: list = []
     qwork = ""
     qtasks: dict = {}
+    qstate: dict = {}      # gidx → 큐가 마지막으로 말한 task json (병렬 판정 입력)
 
     def sh(cmd: str, *, cwd: str = checkout, timeout: int = 180) -> tuple:
         return _ssh(host, user, f'cd "{cwd}" && {cmd}', timeout=timeout)
 
     try:
+        # ── 0. 사전 점검 — 폴링 중 워커 수 (원전 step 0) ─────────
+        #
+        # 🔴 **경고이지 단정이 아니다** (원전 그대로). 사용자 2026-07-06: *"워커 1대여도
+        #    통과해야 한다."* 여기서 실패로 만들면 폴링 데몬이 없는 우리 환경에서 하니스가
+        #    **영원히 빨간불**이 되고, 정작 재려던 NONCE 라운드트립을 못 잰다.
+        st_w, wres = _q("GET", f"{queue_url}/api/v1/admin/workers")
+        wlist = (wres or {}).get("workers") or [] if isinstance(wres, dict) else []
+        r.polling, ages = count_polling(wlist)
+        log("precheck", f"등록 워커 {len(wlist)}명 / 폴링 중 {r.polling}명 "
+                        f"(신선도 {POLLING_FRESH_SEC}s) · probe {n}개 · 레인 {lanes}")
+        if r.polling == 0:
+            log("precheck", "⚠️ 폴링 중인 워커 0명 — 실 워커가 claim 하지 않는다. "
+                            "이 하니스가 워커 자리를 대신 서므로 e2e 자체는 돈다")
+
         rc, out = sh("git rev-parse --abbrev-ref HEAD && git status --porcelain | wc -l")
         r.chk("작업장 트리가 깨끗하다 (메인 체크아웃 미접촉 전제)",
               rc == 0 and out.strip().endswith("0"), out[:200])
@@ -446,10 +625,15 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
             qwork = (wr or {}).get("work_id", "") if isinstance(wr, dict) else ""
             r.chk("🔴 큐에 work 등재", bool(qwork), f"{st} {str(wr)[:200]}")
             for i in range(n):
+                # 🔴 `force_backend` 는 **`task_data` 안**이다 (원전 주석: *"task_data 는
+                #    free-form dict → 확실히 저장·claim 응답에 전달. top-level 은 모델이 drop"*).
+                #    기본 레인이면 싣지 않는다 — 뜻 없는 값을 큐에 남기지 않는다.
+                tdata = {"stem": f"probe_{ts}_{i}", "classes": [f"selftest_probe_{i}"]}
+                if backend_of[i] != DEFAULT_LANE:
+                    tdata["force_backend"] = backend_of[i]
                 st, tr = _q("POST", f"{queue_url}/api/v1/tasks", {
                     "work_id": qwork, "type": "implement_module",
-                    "task_data": {"stem": f"probe_{ts}_{i}",
-                                  "classes": [f"selftest_probe_{i}"]},
+                    "task_data": tdata,
                     "base_commit": base2, "target_file": probe_rels[i], "header_file": "",
                     "depends_on": [], "hierarchy_level": 0, "priority": 0,
                     "stem": f"probe_{ts}_{i}", "origin": "selftest"})
@@ -490,6 +674,21 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
             r.chk("🔴 claim 이 epoch 를 발급했다 (fencing 전제)",
                   bool(claimed) and all(int(t.get("epoch", 0)) >= 1 for t in claimed.values()),
                   str({k: v.get("epoch") for k, v in claimed.items()}))
+
+            # 🔴 **`force_backend` 라운드트립은 큐가 돌려준 것으로만 판정한다.**
+            #    우리가 보낸 값을 우리 dict 에서 다시 읽으면 *"내가 아는 값을 내가 안다"* 일
+            #    뿐이고, **큐까지 실려 갔는지**는 아무것도 말해 주지 않는다 — NONCE 증명과 같은
+            #    논리다. ⚠️ 첫 라이브 런(2026-08-16)에서 이 자리가 비어 있는 것이 드러났다:
+            #    30개 단정이 전부 통과했는데 그중 무엇도 큐의 응답을 보지 않았다.
+            if lanes != [DEFAULT_LANE]:
+                back = {g: ((t.get("task_data") or {}).get("force_backend")
+                            if isinstance(t.get("task_data"), dict) else None)
+                        for g, t in claimed.items()}
+                bad = {g: v for g, v in back.items() if v != backend_of[g]}
+                r.chk("🔴 force_backend 가 **큐를 거쳐** claim 응답으로 돌아왔다",
+                      bool(back) and not bad,
+                      f"기대={{{', '.join(f'{g}:{backend_of[g]}' for g in sorted(back))}}} "
+                      f"실측={back} 어긋남={bad}")
             r.chk(f"전 task 가 claim 됐다 ({len(order)}/{n})", len(order) == n)
 
         for i in order:
@@ -502,20 +701,25 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
                        f'printf \'"""[SELFTEST] probe {i} — 구현됨."""\\n\\n\\n'
                        f'def selftest_probe_{i}() -> str:\\n    return "%s"\\n\' "$N" > {probe_rels[i]}')
             else:
-                cmd = work_fn_cmd(i, probe_rels[i], f"NONCE_{i}", work_id)
+                cmd = _call_work_fn(work_fn_cmd, i, probe_rels[i], f"NONCE_{i}", work_id,
+                                    backend_of[i])
             rc, out = sh(cmd, cwd=wtB, timeout=600)
+            ok_i = rc == 0
             r.chk(f"probe[{i}] 작업장 편집", rc == 0, out[:300])
             rc, out = sh(f"git add -A && git commit -q -m '[selftest] probe {i}' && "
                          f"git push -q --force origin {att}", cwd=wtB)
+            ok_i = ok_i and rc == 0
             r.chk(f"probe[{i}] attempt push", rc == 0, out[:200])
             if rc == 0:
                 made_remote.append(att)
             # 서버 역할(wtA)이 검증·머지
             rc, out = sh(f"git fetch -q origin {att} && git checkout -q -B {dur} origin/{att} && "
                          f"git push -q origin {dur}", cwd=wtA)
+            ok_i = ok_i and rc == 0
             r.chk(f"probe[{i}] durable 생성·push", rc == 0, out[:200])
             if rc == 0:
                 made_remote.append(dur)
+            probe_ok[i] = ok_i
             if via_queue and qtasks.get(i):
                 qtid = qtasks[i]
                 rc_h, head = sh(f"git rev-parse HEAD", cwd=wtB)
@@ -530,8 +734,52 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
                 r.chk(f"probe[{i}] 큐 verify(pass)", stv == 200, f"{stv} {str(vres)[:200]}")
                 stg, tst = _q("GET", f"{queue_url}/api/v1/tasks/{qtid}")
                 status = (tst or {}).get("status", "") if isinstance(tst, dict) else ""
+                qstate[i] = tst if isinstance(tst, dict) else {}
                 r.chk(f"🔴 probe[{i}] 큐 상태가 verified", status == "verified",
                       f"status={status!r}")
+                probe_ok[i] = probe_ok.get(i, False) and status == "verified"
+
+        # ── 4b. 백엔드별 격리 검증 (원전 step 7 — 사용자 2026-07-05) ──
+        #
+        # 🔴 *"로컬 LLM / agy 각각이 **실제로 파일을 편집**해서 내는가"* 를 레인별로 가른다.
+        #    합계만 보면 한 레인이 전부 실패해도 다른 레인이 가려 준다.
+        for b in lanes:
+            ids = [g for g in range(n) if backend_of[g] == b]
+            r.by_backend[b] = {"ok": sum(1 for g in ids if probe_ok.get(g)), "total": len(ids)}
+        if lanes != [DEFAULT_LANE]:
+            for b in lanes:
+                bb = r.by_backend[b]
+                r.chk(f"[{b}] write 격리 검증 ({bb['ok']}/{bb['total']})",
+                      bb["total"] > 0 and bb["ok"] == bb["total"],
+                      "미완료: " + ", ".join(str(g) for g in range(n)
+                                             if backend_of[g] == b and not probe_ok.get(g)))
+
+        # ── 4c. 병렬 판정 (원전 step 7) — 🔴 **조건부 단정** ──────
+        #
+        # 🔴 *"서로 다른 워커가 처리했다"* 는 병렬이 아니다(한 대씩 순서대로 돌아도 그렇다).
+        #    원전은 `[claimed_at, submitted_at]` **구간 겹침**을 요구한다.
+        # ⚠️ 지금 우리 환경에서는 이 단정이 **항상 skip** 된다 — 폴링 데몬이 0개이고 하니스가
+        #    워커 자리를 직렬로 대신 서기 때문이다. 🔴 **그 skip 자체가 사실의 기록**이고,
+        #    폴링 주체(`#128`)가 생기면 같은 코드가 그대로 단정으로 바뀐다.
+        intervals = []
+        for g, t in qstate.items():
+            wid = t.get("worker_id")
+            c, s = _parse_iso(t.get("claimed_at")), _parse_iso(t.get("submitted_at"))
+            if wid and c and s:
+                intervals.append((wid, c, s, g))
+        r.workers_distinct = sorted({iv[0] for iv in intervals})
+        pair = overlapping_pair(intervals)
+        r.parallel_overlap = pair is not None
+        if r.polling >= 2 and n >= 2:
+            r.parallel_asserted = True
+            r.chk("multi-worker — 서로 다른 워커 ≥2 가 task 를 처리", len(r.workers_distinct) >= 2,
+                  f"워커={r.workers_distinct}")
+            r.chk("병렬 — 서로 다른 워커의 처리 시간대 겹침", pair is not None,
+                  (f"probe{pair[0]}@{pair[1]} ∥ probe{pair[2]}@{pair[3]}"
+                   if pair else "겹치는 쌍 없음(직렬 처리됨)"))
+        else:
+            log("parallel", f"병렬 단정 skip — 폴링 {r.polling}명 / probe {n}개 "
+                            f"(원전 조건 「폴링 ≥2 & probe ≥2」 미충족 · 직렬 검증만)")
 
         # ── 5. 🔴 마스터가 **독립적으로** 검증한다 (읽기만) ──────
         #

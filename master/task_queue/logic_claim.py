@@ -206,6 +206,12 @@ def claim_task(idx: TaskIndex, worker_id: str, verify_capable: bool = False,
                           [idx.task_paths[chosen["task_id"]]])
         out = dict(chosen)
         out["job_kind"] = "write"   # Plan v5 C.3 — 워커가 write/verify 분기
+        # 🔴 워커가 실제로 무엇을 할지는 `task_data` 가 정한다 (`force_backend` 등).
+        #    원전 근거: *"task_data 는 free-form dict → 확실히 저장·**claim 응답에 전달**
+        #    (top-level 은 모델이 drop)"* (`cluster_selftest.py:223`).
+        #    ⚠️ 실측 2026-08-16 — 이 줄이 없어서 claim 응답에 task_data 가 **아예 없었다.**
+        #    셀프테스트의 `force_backend` 라운드트립 단정이 그것을 잡았다.
+        out["task_data"] = dict(idx.task_data.get(chosen["task_id"]) or {})
         return out
 
 

@@ -321,6 +321,36 @@ def _atomic_write(path: Path, content: str):
     tmp.replace(path)
 
 
+def parse_task_data(body: str) -> dict:
+    """MD 본문의 ``## task_data`` json 블록을 되읽는다. 없으면 빈 dict.
+
+    🔴 **되읽지 못하는 것과 「없다」를 섞지 않는다** — 깨진 json 은 빈 dict 로 조용히 넘기지 않고
+    호출자가 로그를 남길 수 있게 그대로 빈 dict + `False` 를 구분… 하지 않는다. 여기서는 빈 dict
+    가 맞다: 이 값은 **워커에게 전달되는 자료**이고, 판정에 쓰이는 신호가 아니다. 깨졌으면 워커가
+    받을 것이 없는 것이고 그것은 등재 시점의 결함이다(등재는 우리가 json 으로 직렬화한다).
+    """
+    if not body:
+        return {}
+    marker = "## task_data"
+    at = body.find(marker)
+    if at < 0:
+        return {}
+    start = body.find("```", at)
+    if start < 0:
+        return {}
+    nl = body.find("\n", start)
+    if nl < 0:
+        return {}
+    end = body.find("```", nl)
+    if end < 0:
+        return {}
+    try:
+        val = json.loads(body[nl + 1:end])
+    except (ValueError, TypeError):
+        return {}
+    return val if isinstance(val, dict) else {}
+
+
 def _read_md(path: Path) -> tuple[dict, str]:
     if not path.exists():
         return {}, ""
@@ -444,6 +474,14 @@ class TaskIndex:
         self.root = root
         self.tasks: dict[str, dict] = {}       # task_id → meta
         self.task_paths: dict[str, Path] = {}
+        # 🔴 task_data 는 프론트매터가 아니라 **MD 본문의 json 블록**에 산다 — 중첩 dict·리스트를
+        #    담으므로 우리 제한적 YAML 파서(1-depth)로는 왕복이 안 된다. 그래서 meta 와 **따로**
+        #    들고, `rebuild()` 가 본문에서 다시 읽는다.
+        #    원전 근거(`cluster_selftest.py:223`): *"task_data 는 free-form dict → 확실히
+        #    저장·**claim 응답에 전달**(top-level 은 모델이 drop)"* — 워커가 `force_backend`
+        #    같은 값을 읽는 경로가 이것이다. 실측 2026-08-16: 이 map 이 없어 claim 응답에
+        #    task_data 가 아예 없었고, `force_backend` 이식이 **죽은 이식**이 될 뻔했다.
+        self.task_data: dict[str, dict] = {}   # task_id → 등재 시 받은 free-form dict
         self.works: dict[str, dict] = {}       # work_id → meta
         self.work_paths: dict[str, Path] = {}
         # 워커 directive 큐: heartbeat / poll 응답으로 1회 소비됨
@@ -463,6 +501,7 @@ class TaskIndex:
         with self.lock:
             self.tasks.clear()
             self.task_paths.clear()
+            self.task_data.clear()
             self.works.clear()
             self.work_paths.clear()
             td = _tasks_dir(self.root)
@@ -481,8 +520,10 @@ class TaskIndex:
                 for f in work_dir.glob("*.md"):
                     if f.name == "_request.md":
                         continue
-                    meta, _ = _read_md(f)
+                    meta, body = _read_md(f)
                     tid = meta.get("task_id")
                     if tid:
                         self.tasks[tid] = meta
                         self.task_paths[tid] = f
+                        # 🔴 재기동해도 워커가 받을 자료가 남아야 한다 — 본문에서 되읽는다.
+                        self.task_data[tid] = parse_task_data(body)

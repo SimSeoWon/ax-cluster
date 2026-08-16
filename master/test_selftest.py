@@ -98,9 +98,107 @@ def test_keep_preserves():
         shutil.rmtree(r.kept_at, ignore_errors=True)
 
 
+# ─────────────────────────────────────────────────────────────
+# 2단계 이식분 (`#141`) — 폴링 워커 수 · 병렬 판정 · 백엔드 레인
+# ─────────────────────────────────────────────────────────────
+
+def test_count_polling():
+    """🔴 **존재가 아니라 신선도로 센다** — 원전 판정식을 그대로 옮기면 우리 큐에서 거짓말을 한다."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 8, 16, 20, 0, 0, tzinfo=timezone(timedelta(hours=9)))
+    iso = lambda **kw: (now - timedelta(**kw)).isoformat()   # noqa: E731
+    ws = [
+        {"worker_id": "fresh", "last_seen": iso(seconds=30)},
+        {"worker_id": "edge", "last_seen": iso(seconds=S.POLLING_FRESH_SEC - 1)},
+        {"worker_id": "stale", "last_seen": iso(days=7)},
+        {"worker_id": "never", "last_seen": None},
+        {"worker_id": "broken", "last_seen": "어제쯤"},
+    ]
+    n, ages = S.count_polling(ws, now=now)
+    check("신선한 워커만 센다 (2명)", n == 2, f"n={n}")
+    check("경과 초를 같이 돌려준다", len(ages) == 5 and ages[0][1] is not None)
+    check("파싱 못 한 stamp 는 폴링 아님", ages[4][1] is None)
+    # 🔴 같은 입력에서 두 판정식이 갈린다 — 이 갈림이 이식의 근거다(리포트 16 §12.7 부류).
+    origin_style = sum(1 for w in ws if w.get("last_seen"))
+    check("🔴 원전식(존재)이면 4, 신선도면 2 — 같은 입력에서 판정이 갈린다",
+          origin_style == 4 and n == 2, f"원전식={origin_style} 우리={n}")
+    check("빈 목록은 0", S.count_polling([], now=now)[0] == 0)
+    check("None 도 0", S.count_polling(None, now=now)[0] == 0)
+    # 🔴 미래 stamp(시계 어긋남)를 "신선" 으로 세지 않는다 — 판정 불가는 단정하지 않는 쪽으로.
+    future = [{"worker_id": "clock-skew", "last_seen": (now + timedelta(hours=1)).isoformat()}]
+    check("미래 stamp 는 폴링으로 세지 않는다", S.count_polling(future, now=now)[0] == 0)
+
+
+def test_overlapping_pair():
+    """🔴 *"서로 다른 워커가 처리했다"* 는 병렬이 아니다 — 구간이 겹쳐야 병렬이다."""
+    from datetime import datetime
+    t = lambda h, m: datetime(2026, 8, 16, h, m)      # noqa: E731
+    overlap = [("w1", t(10, 0), t(10, 30), 0), ("w2", t(10, 15), t(10, 45), 1)]
+    serial = [("w1", t(10, 0), t(10, 10), 0), ("w2", t(10, 20), t(10, 30), 1)]
+    same = [("w1", t(10, 0), t(10, 30), 0), ("w1", t(10, 15), t(10, 45), 1)]
+    p = S.overlapping_pair(overlap)
+    check("겹치면 쌍을 돌려준다", p is not None and p[0] == 0 and p[2] == 1, str(p))
+    check("직렬이면 None", S.overlapping_pair(serial) is None)
+    check("🔴 같은 워커의 겹침은 병렬이 아니다", S.overlapping_pair(same) is None)
+    check("빈 입력은 None", S.overlapping_pair([]) is None and S.overlapping_pair(None) is None)
+    check("한 건은 None", S.overlapping_pair(overlap[:1]) is None)
+
+
+def test_build_specs():
+    specs = S.build_specs(["local", "claude"], 2, "TS", "NB")
+    check("backends × per (2×2=4)", len(specs) == 4, str(len(specs)))
+    check("🔴 gidx 가 전역 유일", sorted(s["gidx"] for s in specs) == [0, 1, 2, 3])
+    check("레인이 고르게 나뉜다",
+          [s["backend"] for s in specs] == ["local", "local", "claude", "claude"])
+    check("NONCE 가 전부 다르다", len({s["nonce"] for s in specs}) == 4)
+    check("probe 경로가 전부 다르다", len({s["probe_rel"] for s in specs}) == 4)
+    d = S.build_specs(None, 3, "TS", "NB")
+    check("기본은 1레인이고 per 가 곧 총 개수", len(d) == 3 and
+          all(s["backend"] == S.DEFAULT_LANE for s in d))
+    check("빈 문자열 레인은 걸러진다", len(S.build_specs(["", "  "], 1, "TS", "NB")) == 1)
+    check("per 는 최소 1", len(S.build_specs(None, 0, "TS", "NB")) == 1)
+
+
+def test_call_work_fn():
+    """🔴 인자 수를 **세서** 부른다 — `TypeError` 를 삼키면 콜러 내부 결함이 숨는다."""
+    seen = {}
+
+    def four(gidx, probe_rel, nonce_key, work_id):
+        seen["four"] = (gidx, work_id)
+        return "CMD4"
+
+    def five(gidx, probe_rel, nonce_key, work_id, backend):
+        seen["five"] = backend
+        return "CMD5"
+
+    def varargs(*a):
+        seen["var"] = len(a)
+        return "CMDV"
+
+    check("옛 4인자 콜러가 그대로 돈다",
+          S._call_work_fn(four, 1, "p.py", "NONCE_1", "w", "local") == "CMD4")
+    check("5인자 콜러는 backend 를 받는다",
+          S._call_work_fn(five, 1, "p.py", "NONCE_1", "w", "local") == "CMD5"
+          and seen.get("five") == "local")
+    check("*args 콜러는 5개를 받는다",
+          S._call_work_fn(varargs, 1, "p.py", "NONCE_1", "w", "local") == "CMDV"
+          and seen.get("var") == 5)
+
+    def boom(gidx, probe_rel, nonce_key, work_id, backend):
+        raise TypeError("콜러 안에서 난 오류")
+
+    try:
+        S._call_work_fn(boom, 1, "p.py", "NONCE_1", "w", "local")
+        check("🔴 콜러 내부 TypeError 는 삼켜지지 않는다", False, "예외가 안 났다")
+    except TypeError as e:
+        check("🔴 콜러 내부 TypeError 는 삼켜지지 않는다", "콜러 안에서" in str(e), str(e))
+
+
 def main() -> int:
     for fn in (test_extract_nonce, test_probe_and_impl_source, test_happy_path,
-               test_gate_actually_blocks, test_keep_preserves):
+               test_gate_actually_blocks, test_keep_preserves,
+               test_count_polling, test_overlapping_pair, test_build_specs,
+               test_call_work_fn):
         fn()
     total = PASS + FAIL
     print(f"{'✅' if not FAIL else '🔴'} test_selftest: {PASS}/{total} 통과")

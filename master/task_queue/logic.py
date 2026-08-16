@@ -205,6 +205,9 @@ def register_task(idx: TaskIndex, *, work_id: str, type: str, task_data: dict,
         _atomic_write(path, _build_md(meta, body))
         idx.tasks[task_id] = meta
         idx.task_paths[task_id] = path
+        # 🔴 claim 응답으로 워커에 전달하려면 **메모리에도** 들고 있어야 한다. 본문에만 쓰면
+        #    재기동 전까지 아무도 못 읽는다(`rebuild()` 가 본문에서 되읽는 것과 짝이다).
+        idx.task_data[task_id] = dict(task_data or {})
         wmeta = idx.works[work_id]
         wmeta["total"] = int(wmeta.get("total", 0)) + 1
         _save_work(idx, work_id)
