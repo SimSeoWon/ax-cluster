@@ -208,8 +208,9 @@ def test_role_payload() -> None:
     check("[중요] 클라 MCP 가 요청자 페이로드에 있다 (#201)",
           "clientside/client_mcp.py" in pay, str(pay))
     check("요청자에게 review·build 의 의존 폐포가 간다",
-          set(pay) == {"clientside/client_mcp.py", "layer3_verify.py", "source_text.py",
-                       "utf8.py", "work/branch_names.py", "work/coordinator.py",
+          set(pay) == {"clientside/client_mcp.py", "clientside/ontology_cache.py",
+                       "layer3_verify.py", "source_text.py", "utf8.py",
+                       "work/branch_names.py", "work/coordinator.py",
                        "work/review.py", "work/skeleton_gate.py", "work/build_local.py"},
           str(pay))
     check("[중요] 워커에는 안 간다 (역할 밖이다)", bundle.payloads_for("worker") == ())

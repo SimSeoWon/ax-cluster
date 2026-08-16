@@ -41,7 +41,7 @@ def test_single_file_stdlib_only():
     src = Path(M.__file__).read_text(encoding="utf-8")
     tree = ast.parse(src)
     STDLIB = {"json", "sys", "urllib", "urllib.error", "urllib.request", "pathlib",
-              "__future__", "os"}
+              "__future__", "os", "importlib", "importlib.util"}
     bad = []
     for n in ast.walk(tree):
         if isinstance(n, ast.Import):
@@ -81,7 +81,9 @@ def test_protocol_roundtrip():
                                              "method": "notifications/initialized"}) is None)
     r = M.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in r["result"]["tools"]]
-    check("도구 3종", names == ["list_works", "get_work", "redmine_note"], str(names))
+    check("도구 6종 (조회 5 + redmine 1)",
+          names == ["list_works", "get_work", "search_context", "list_domains",
+                    "get_domain", "redmine_note"], str(names))
     check("모든 도구에 inputSchema", all("inputSchema" in t for t in r["result"]["tools"]))
     r = M.handle_message({"jsonrpc": "2.0", "id": 3, "method": "없는것"})
     check("모르는 요청은 -32601", r["error"]["code"] == -32601, str(r))
@@ -193,6 +195,95 @@ def test_tool_error_is_iserror_content():
 
 # ── ④ 불변식 — 결정은 MCP 도구가 아니다 ──────────────────────
 
+class FakeCache:
+    """OntologyCache 의 계약만 흉내낸다 — put(성공만) · get_stale(_stale 주입)."""
+    def __init__(self):
+        self.store = {}
+        self.puts = []
+    def put(self, key, body):
+        self.puts.append(key)
+        self.store[key] = body
+        return {"stored": True}
+    def get_stale(self, key):
+        if key not in self.store:
+            return None
+        obj = json.loads(self.store[key])
+        obj["_stale"] = True
+        obj["_cached_at"] = "2026-08-16T23:00:00"
+        return json.dumps(obj, ensure_ascii=False)
+
+
+def test_search_caches_and_falls_back():
+    """[중요] #162 캐시의 첫 실 소비자 — 성공은 적재, 미연결은 _stale 폴백."""
+    cache = FakeCache()
+    ok_api = lambda m, p, pl=None: {"query": pl["query"], "count": 1,
+                                    "results": [{"file": "X.h"}]}
+    got = M.tool_search_context(ok_api, "미션 완료", n=2, cache=cache)
+    check("성공 응답이 그대로 온다", got["count"] == 1, str(got))
+    check("[중요] 성공이 캐시에 적재된다", len(cache.puts) == 1, str(cache.puts))
+
+    def dead(m, p, pl=None):
+        raise M.ClientError("[미연결] 마스터(http://x:8103)에 연결할 수 없다")
+    stale = M.tool_search_context(dead, "미션 완료", n=2, cache=cache)
+    check("[중요] 미연결이면 마지막 정상 응답으로 폴백한다", stale["count"] == 1, str(stale))
+    check("[중요] _stale 표기가 주입된다 — 낡은 값임을 소비자가 안다",
+          stale.get("_stale") is True and "_cached_at" in stale, str(stale))
+    check("미연결 사유도 실린다", "[미연결]" in (stale.get("_note") or ""), str(stale.get("_note")))
+
+    try:
+        M.tool_search_context(dead, "캐시에 없는 질의", cache=cache)
+        check("캐시에도 없으면 원래 오류가 나간다", False)
+    except M.ClientError as e:
+        check("캐시에도 없으면 원래 오류가 나간다", "[미연결]" in str(e))
+    try:
+        M.tool_search_context(ok_api, "  ", cache=cache)
+        check("빈 질의 거부", False)
+    except M.ClientError:
+        check("빈 질의 거부", True)
+
+
+def test_domain_tools_cache_and_encode():
+    cache = FakeCache()
+    papi = lambda m, p, pl=None: {"domains": ["MissionRuntime"]} if "domains" in p else {}
+    got = M.tool_list_domains(papi, cache=cache)
+    check("도메인 목록", got["domains"] == ["MissionRuntime"], str(got))
+    calls = []
+    papi2 = lambda m, p, pl=None: calls.append(p) or {"domain": "X"}
+    M.tool_get_domain(papi2, "미션 런타임", cache=None)
+    check("[중요] 도메인 이름도 URL 인코딩 (#197 의 교훈)", "%EB%AF%B8" in calls[0], calls[0])
+
+
+def test_live_state_is_never_cached():
+    """[중요] 불변식 — works/tasks 는 캐시를 거치지 않는다. 낡은 merge_status 위에서
+    검수가 결정하면 안 된다."""
+    cache = FakeCache()
+    api = fake_api([], works=[{"work_id": "w", "merge_status": "ready_for_review"}])
+    M.dispatch_tool("list_works", {}, api=api, cache=cache)
+    M.dispatch_tool("get_work", {"work_id": "w"}, api=api, cache=cache)
+    check("[중요] 큐 조회가 캐시에 아무것도 적재하지 않았다", cache.puts == [], str(cache.puts))
+    import ast as _ast
+    src = Path(M.__file__).read_text(encoding="utf-8")
+    for fn in ("tool_list_works", "tool_get_work"):
+        seg = src[src.index(f"def {fn}"):]
+        seg = seg[:seg.index("\ndef ")]
+        check(f"{fn} 시그니처에 cache 자체가 없다", "cache" not in seg, fn)
+
+
+def test_cache_loader_is_file_relative():
+    """패키지 이름에 기대지 않는다 — 저장소/배달본 두 집 + 스크립트 모드를 한 번에 푼다."""
+    src = Path(M.__file__).read_text(encoding="utf-8")
+    check("spec_from_file_location 을 쓴다", "spec_from_file_location" in src)
+    check("axmaster/master 패키지명이 로더에 없다",
+          "import axmaster" not in src and "from axmaster" not in src)
+    check("실패해도 도구는 계속 돈다고 적어 둔다", "도구는 계속 돈다" in src)
+    # 실 로드 — 옆에 ontology_cache.py 가 실재하므로 성공해야 한다
+    M._CACHE = None
+    c = M._load_cache()
+    check("[중요] 옆 파일 실 로드가 된다 (저장소 배치)", c is not None,
+          "옆에 ontology_cache.py 가 있는데 로드 실패")
+    M._CACHE = None
+
+
 def test_no_decision_tools():
     names = {t["name"] for t in M.TOOLS}
     for banned in ("decide", "patch", "merge", "reject", "finalize", "approve"):
@@ -246,7 +337,9 @@ def test_queue_api_matches_review_contract():
 
 def main() -> int:
     for fn in (test_single_file_stdlib_only, test_protocol_roundtrip,
-               test_nonascii_work_id_is_encoded,
+               test_nonascii_work_id_is_encoded, test_search_caches_and_falls_back,
+               test_domain_tools_cache_and_encode, test_live_state_is_never_cached,
+               test_cache_loader_is_file_relative,
                test_tools_call_through_protocol, test_serve_loop_survives,
                test_failure_sentences_differ, test_tool_error_is_iserror_content,
                test_no_decision_tools, test_queue_api_matches_review_contract):

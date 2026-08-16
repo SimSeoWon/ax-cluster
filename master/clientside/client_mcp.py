@@ -18,12 +18,21 @@
 MCP 쪽이 절차(예: push 전에 merged 로 찍기)를 우회하는 길이 된다. 대신 `queue_api()` 를
 내보낸다 — 스킬이 `review.reject_work(api=queue_api())` 식으로 주입한다.
 
-## [중요] 큐 상태는 캐시하지 않는다
+## [중요] 캐시는 참조 지식에만 — 큐 상태에는 없다
 
-이식된 폴백 캐시(#162)는 **참조 지식**(온톨로지·검색, 소 3.8.5)의 것이다. works/tasks 는
-라이브 상태라, 낡은 `merge_status` 를 stale 표기로 내주면 검수가 그 위에서 결정한다.
-미연결이면 **명확한 오류**가 답이다 — 원전 `wiki_disconnected_error` 의 패턴 그대로,
-조용한 빈 결과를 금지한다.
+    참조 지식 (검색·온톨로지)   미연결 시 마지막 정상 응답을 `_stale` 표기로 내준다 (#162 배선)
+    라이브 상태 (works/tasks)  캐시 금지 — 낡은 `merge_status` 위에서 검수가 결정하게 된다.
+                              미연결이면 **명확한 오류**가 답이다 (원전 wiki_disconnected_error)
+
+캐시 모듈(`ontology_cache.py`)은 **옆 파일을 경로로 로드**한다(`_load_cache`) — 패키지 이름에
+기대지 않아 저장소(`master.clientside`)와 배달본(`axmaster.clientside`) **두 집 문제**가 없고
+스크립트 모드 제약도 지킨다. 로드가 실패하면 캐시만 꺼지고 도구는 계속 돈다(사유는 stderr).
+
+## [중요] 역할 게이팅 — 원전 wiki_mode 의 대응물
+
+이 MCP 가 노출하는 도구는 전부 **읽기 + redmine 코멘트**다. mutation(온톨로지 편집·도메인
+생성·큐 조작)은 등록 자체가 없다 — 원전이 wiki_mode 에서 mutation 도구를 아예 등록하지 않은
+것과 같은 방식이고, 스크러빙보다 강하다.
 
 ## 설정과 자격
 
@@ -48,6 +57,33 @@ HTTP_TIMEOUT = 30
 
 CONFIG_REL = Path(".ax/config.json")
 TOKEN_REL = Path(".ax/token")
+
+
+_CACHE = None          # None=미시도 · False=실패(재시도 안 함 — 원전 규약) · 객체=사용 가능
+
+
+def _load_cache():
+    """옆 파일 `ontology_cache.py` 를 **파일 경로로** 로드한다.
+
+    [중요] 패키지 import 를 쓰지 않는 이유: 이 파일은 저장소에선 `master.clientside`,
+    배달본에선 `axmaster.clientside` 로 **집이 둘**이고, 스크립트 모드에는 패키지 문맥이
+    아예 없다. 파일 상대 로드는 세 경우 모두에서 같은 한 가지로 동작한다.
+    """
+    global _CACHE
+    if _CACHE is not None:
+        return _CACHE or None
+    try:
+        import importlib.util
+        src = Path(__file__).with_name("ontology_cache.py")
+        spec = importlib.util.spec_from_file_location("ax_ontology_cache", src)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _CACHE = mod.OntologyCache(Path.cwd() / ".ax")
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[ax-client] 참조 캐시 비활성 (도구는 계속 돈다): {e}", file=sys.stderr)
+        _CACHE = False
+        return None
+    return _CACHE
 
 
 class ClientError(RuntimeError):
@@ -123,6 +159,48 @@ def _call(method: str, url: str, token: str, payload=None) -> dict | list:
             "  3) .ax/config.json 의 master 주소가 맞는가") from e
 
 
+def projects_url(cfg: dict) -> str:
+    m = cfg.get("master") or {}
+    host = m.get("host") or ""
+    port = (m.get("services") or {}).get("projects")
+    if not host or not port:
+        raise ClientError("[미구성] config 의 master.host / services.projects 가 비어 있다")
+    return f"http://{host}:{port}"
+
+
+def projects_api(root: Path | None = None):
+    """8103 읽기 표면 호출자. [중요] **토큰이 없다** — 이 표면은 읽기 전용 공개(ufw LAN 한정)다.
+    (사용자 결정 2026-08-13: *"그냥 있는거 보여주는 뷰어"* — 조작 경로가 아니다.)"""
+    cfg = load_config(root)
+    base = projects_url(cfg)
+
+    def api(method: str, path: str, payload=None):
+        return _call(method, base + path, "", payload)
+
+    return api
+
+
+def cached_fetch(cache, key: str, fetch):
+    """참조 지식 읽기 한 번 — 성공은 적재, [미연결] 은 마지막 정상 응답으로 폴백.
+
+    [중요] 폴백은 `_stale`·`_cached_at` 표기가 주입된 채 나간다(#162 계약) — 표기 없이 내주면
+    마스터가 죽은 것을 아무도 모른다. 캐시에도 없으면 원래의 [미연결] 오류가 그대로 나간다.
+    """
+    try:
+        got = fetch()
+    except ClientError as e:
+        if "[미연결]" in str(e) and cache is not None:
+            stale = cache.get_stale(key)
+            if stale:
+                out = json.loads(stale)
+                out["_note"] = str(e).splitlines()[0]
+                return out
+        raise
+    if cache is not None and isinstance(got, (dict, list)):
+        cache.put(key, json.dumps(got, ensure_ascii=False))
+    return got
+
+
 def queue_api(root: Path | None = None):
     """`review.reject_work(api=…)` / `finalize_work(api=…)` 에 꽂을 호출자.
 
@@ -174,6 +252,33 @@ def tool_redmine_note(api, issue_id: int, notes: str, status_name: str = "",
     return api("POST", "/api/v1/redmine/note", payload)
 
 
+def tool_search_context(papi, query: str, tags=None, n: int = 5, *, cache=None) -> dict:
+    """통합 검색 — 8103 의 원전 라우트(`/api/v1/search/combined`) 프록시. 참조 지식이라
+    [미연결] 시 마지막 정상 응답으로 폴백한다(`_stale` 표기)."""
+    if not (query or "").strip():
+        raise ClientError("query 가 비었다")
+    payload = {"query": query.strip(), "n": max(1, int(n))}
+    if tags:
+        payload["tags"] = list(tags)
+    key = "search/combined?" + json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return cached_fetch(cache, key,
+                        lambda: papi("POST", "/api/v1/search/combined", payload))
+
+
+def tool_list_domains(papi, *, cache=None) -> dict:
+    got = cached_fetch(cache, "ontology/domains",
+                       lambda: papi("GET", "/api/v1/ontology/domains"))
+    return got if isinstance(got, dict) else {"domains": got}
+
+
+def tool_get_domain(papi, name: str, *, cache=None) -> dict:
+    if not (name or "").strip():
+        raise ClientError("도메인 이름이 비었다")
+    q = urllib.parse.quote(name.strip(), safe="")
+    return cached_fetch(cache, f"domains/{q}",
+                        lambda: papi("GET", f"/api/v1/domains/{q}"))
+
+
 TOOLS = [
     {"name": "list_works",
      "description": "큐의 work 목록 (검수 대상 파악). status 로 거를 수 있다 — "
@@ -186,6 +291,20 @@ TOOLS = [
                     "work=/tasks= 인자에 넣는 모양이다.",
      "inputSchema": {"type": "object", "required": ["work_id"],
                      "properties": {"work_id": {"type": "string"}}}},
+    {"name": "search_context",
+     "description": "마스터 RAG 통합 검색 (읽기 전용 · 한국어 질의 가능). 마스터 미연결이면 "
+                    "마지막 정상 응답을 _stale 표기로 준다 — _stale 이 보이면 낡은 값이다.",
+     "inputSchema": {"type": "object", "required": ["query"],
+                     "properties": {"query": {"type": "string"},
+                                    "tags": {"type": "array", "items": {"type": "string"}},
+                                    "n": {"type": "integer", "description": "결과 수 (기본 5)"}}}},
+    {"name": "list_domains",
+     "description": "온톨로지 도메인 카탈로그 (읽기 전용 · _stale 폴백 있음).",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "get_domain",
+     "description": "도메인 상세 (읽기 전용 · _stale 폴백 있음).",
+     "inputSchema": {"type": "object", "required": ["name"],
+                     "properties": {"name": {"type": "string"}}}},
     {"name": "redmine_note",
      "description": "레드마인 이슈에 코멘트를 남긴다 (마스터 경유 — 키는 이 PC 에 없다). "
                     "상태 이름은 실재하는 것만: 신규·진행·해결·검토·완료. "
@@ -198,18 +317,28 @@ TOOLS = [
 ]
 
 
-def dispatch_tool(name: str, args: dict, *, api=None, root: Path | None = None) -> dict:
-    """도구 실행. `api` 주입은 테스트 자리 — 실전은 config·token 에서 만든다."""
-    a = api or queue_api(root)
+def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
+                  root: Path | None = None) -> dict:
+    """도구 실행. `api`/`papi`/`cache` 주입은 테스트 자리 — 실전은 config·token 에서 만든다."""
     args = args or {}
-    if name == "list_works":
-        return tool_list_works(a, status=str(args.get("status") or ""))
-    if name == "get_work":
-        return tool_get_work(a, str(args.get("work_id") or ""))
-    if name == "redmine_note":
+    if name in ("list_works", "get_work", "redmine_note"):
+        a = api or queue_api(root)
+        if name == "list_works":
+            return tool_list_works(a, status=str(args.get("status") or ""))
+        if name == "get_work":
+            return tool_get_work(a, str(args.get("work_id") or ""))
         return tool_redmine_note(a, args.get("issue_id"), str(args.get("notes") or ""),
                                  status_name=str(args.get("status_name") or ""),
                                  done_ratio=args.get("done_ratio"))
+    if name in ("search_context", "list_domains", "get_domain"):
+        pa = papi or projects_api(root)
+        c = cache if cache is not None else _load_cache()
+        if name == "search_context":
+            return tool_search_context(pa, str(args.get("query") or ""),
+                                       tags=args.get("tags"), n=args.get("n") or 5, cache=c)
+        if name == "list_domains":
+            return tool_list_domains(pa, cache=c)
+        return tool_get_domain(pa, str(args.get("name") or ""), cache=c)
     raise ClientError(f"모르는 도구: {name}")
 
 
@@ -217,7 +346,8 @@ def dispatch_tool(name: str, args: dict, *, api=None, root: Path | None = None) 
 # MCP stdio 서버 — 줄 단위 JSON-RPC
 # ─────────────────────────────────────────────────────────────
 
-def handle_message(msg: dict, *, api=None, root: Path | None = None) -> dict | None:
+def handle_message(msg: dict, *, api=None, papi=None, cache=None,
+                   root: Path | None = None) -> dict | None:
     """요청 하나 → 응답 하나. 알림(id 없음)은 `None`. [중요] 순수 함수 — 테스트가 이것을 잰다."""
     method = msg.get("method") or ""
     has_id = "id" in msg
@@ -238,7 +368,7 @@ def handle_message(msg: dict, *, api=None, root: Path | None = None) -> dict | N
         params = msg.get("params") or {}
         try:
             got = dispatch_tool(str(params.get("name") or ""), params.get("arguments") or {},
-                                api=api, root=root)
+                                api=api, papi=papi, cache=cache, root=root)
             text = json.dumps(got, ensure_ascii=False, indent=2)
             return {"jsonrpc": "2.0", "id": mid,
                     "result": {"content": [{"type": "text", "text": text}], "isError": False}}

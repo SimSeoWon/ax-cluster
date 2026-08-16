@@ -23,8 +23,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from master.client.ontology_cache import OntologyCache, is_error_payload   # noqa: E402
-from master.client import vector_fallback as VF                            # noqa: E402
+from master.clientside.ontology_cache import OntologyCache, is_error_payload   # noqa: E402
+from master.clientside import vector_fallback as VF                            # noqa: E402
 
 PASS = FAIL = 0
 GOOD = json.dumps({"domain": "MissionRuntime", "objects": ["UManager_Mission"]},
