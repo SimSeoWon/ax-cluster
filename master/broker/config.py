@@ -16,13 +16,21 @@ from pathlib import Path
 from .routing import Endpoint
 
 CODER = "qwen2.5-coder:14b"
+SYNTH = "gemma4:e4b"
 DRIVER = "hf.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M"
 
-# 실측 확정 배치 (PLAN §9.4.2):
-#   BC-250  = 35B 를 담을 수 있는 유일한 기계 (통합 ~15.6 GiB) → 에이전틱 드라이버
-#   RTX3060 = 14b 를 BC-250 보다 23% 빠르게 (31.1 vs 25.2 t/s)  → 코드 본문 생성기
+# [중요] 35B 상주 해제 (#105 판정, 사용자 결정 ⓐ 2026-08-17). 실측이 배치를 뒤집었다:
+#   통상 순차 추론(num_ctx 8192)만으로 사이클당 ~120MB GPU(GTT) 할당이 자라 4분/11사이클에
+#   가용 47MB 붕괴 — 유휴에도 반납 없음, ollama 재시작으로만 회복 (리포트 19 §8). 8/15 OOM
+#   은 배치 탓이 아니라 이 구조였다. 35B 는 층2 벤치에서도 오탐 2로 탈락했던 모델이다.
+# 새 배치:
+#   BC-250  = 합성 모델(e4b, ~5GB — 여유 ~10GB) 상주. [중요] e4b 가 폴백으로 35B 옆에
+#             실리던 것이 옛 OOM 위험이었는데, 이제 e4b 가 정식 상주라 그 위험도 소멸
+#   RTX3060 = 코더 14b (그대로)
+#   35B(DRIVER) = **핀 없음.** 에이전틱 드라이버 자리는 공석 — M6 #106(tool-calling 모델
+#             확보)이 그 자리의 후속이다. 상수는 라우팅 회귀 방지를 위해 남긴다
 _DEFAULT = [
-    {"name": "bc250",   "host": "192.168.0.43:11434", "prefer": [DRIVER], "pin": DRIVER},
+    {"name": "bc250",   "host": "192.168.0.43:11434", "prefer": [SYNTH], "pin": SYNTH},
     {"name": "rtx3060", "host": "192.168.0.2:11434",  "prefer": [CODER],  "pin": CODER},
 ]
 

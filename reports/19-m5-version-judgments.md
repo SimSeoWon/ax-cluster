@@ -259,3 +259,33 @@ bm25 의 제자리 upsert/delete 는 **실전 호출자가 0** 이다(전 갱신
 판정: **실사용 문제 아님.** 남는 이론적 창(한 요청이 도는 동안 재색인이 두 번 완주해 그
 요청의 세대를 지우는 경우)은 요청 ~1ms vs 재색인 1.2s 로 실질 불가능하고, 색인기는 단일
 프로세스라 직렬이다.
+
+### §8-2 #105 복구 + ⓐ 실행 (사용자 승인 — 실행 전 기록)
+
+진단 갱신: 지연 도착한 ps 가 결정타 — **상위 RSS 전부 ~0GB, 유저 프로세스가 15GB 를 쥐고
+있지 않다.** 소진처는 GPU 쪽 할당(GTT — BC-250 은 시스템 RAM 에서 VRAM 을 떼는 구조)이고,
+요청마다 GPU 할당이 자라며 유휴에도 반납되지 않았다.
+
+실행 계획 (순서대로, .43 NOPASSWD 실측 확인됨):
+    ① ssh sim@.43 sudo -n systemctl restart ollama   ← GPU 할당 해제 시도 (싼 복구)
+    ② 메모리 표본 — 회복되면 재부팅 생략
+    ③ 안 되면: ssh sim@.43 sudo -n systemctl reboot
+    ④ 회복 후 ⓐ: 브로커 설정에서 35B 상주 핀 제거 → ax-broker 재기동 →
+       문서 갱신 (bc250-1.md · machines/sim-desktop.md 인벤토리 행 — 자동 로드,
+       사용자 승인 범위) → #105 Redmine 마감
+
+### §8-3 #105 종결 — ollama 재시작 회복 + ⓐ 집행 (사용자 승인)
+
+    복구      sudo -n systemctl restart ollama (NOPASSWD 기존재) → 가용 6MB → **14,459MB**
+             즉시 회복. 재부팅 불필요. 15GB 를 쥔 것은 ollama 의 GPU(GTT) 할당이었음이 확정
+             (상위 RSS 전부 ~0GB — BC-250 은 시스템 RAM 에서 VRAM 을 떼는 구조)
+    ⓐ 집행    브로커 기본 배치 변경: bc250 핀 35B → **gemma4:e4b(~5GB)**. e4b 는 합성 모델
+             이자 옛 폴백-OOM 위험의 주인공 — 정식 상주가 되며 그 위험도 함께 소멸.
+             35B 는 디스크에 남고 핀 없음 — 에이전틱 드라이버 자리는 공석 (M6 #106 후속).
+             ax-broker 재기동, 헬스루프가 e4b 상주 확립 확인. **여유 10,175MB**
+    문서      machines/sim-desktop.md 인벤토리 행 · machines/bc250-1.md (자동 로드 —
+             사용자 승인 범위 안)
+
+원인의 다음 걸음(미해결로 남김): ollama 의 요청당 GTT 증가가 버그인지 설정인지 —
+e4b 상주에서도 같은 누적이 생기는지는 이후 자연 사용이 말해 준다. 재발 시 이 리포트의
+측정 스크립트(~/claude-workspace/bc250-stability-run.sh)를 재사용.
