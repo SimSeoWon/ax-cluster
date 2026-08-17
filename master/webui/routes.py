@@ -152,6 +152,28 @@ def cluster_page(paths) -> tuple:
     sec, _ = _age(p)
     if sec is not None and sec > STALE_SEC:
         body = inject(body, stale_banner(sec, "python -m master.status html"))
+
+    # [중요] 실시간 작업 층 (#216) — **서빙 순간** 큐(8101)·브로커(8102)를 로컬 HTTP 로 읽어
+    #    스냅샷의 LIVE_MARK 자리에 꽂는다. SSH 는 타지 않는다(120초 가드의 취지 그대로) —
+    #    신선해지는 것은 마스터 자신의 상태뿐이고, 하드웨어 층은 여전히 스냅샷이다.
+    #    토큰은 서버 측에서만 쓴다 — 브라우저에 절대 내려보내지 않는다.
+    from .. import status as _status
+    from datetime import datetime as _dt
+    got = _status.fetch_live()
+    live = _status.live_section(got.get("queue"), got.get("tasks"), got.get("endpoints"),
+                                error=got.get("error", ""),
+                                at=_dt.now().strftime("%H:%M:%S"))
+    # 자동 갱신 (사용자: "매번 F5 누르기 불편") — 탭이 보일 때만 15초마다 리로드.
+    #    페이지 전체가 가벼운 정적 서빙이라 부분 갱신 API 를 새로 여는 것보다 싸고,
+    #    토큰 없는 공개 API 를 만들지 않아도 된다.
+    live += ('<script>setInterval(function(){if(document.visibilityState==="visible")'
+             'location.reload();},15000);</script>'
+             '<div class="sub" style="margin:.2rem 0 0">15초마다 자동 갱신 '
+             '(탭이 보일 때만) — 실시간 층 기준. 하드웨어 스냅샷은 별도 주기</div>')
+    if _status.LIVE_MARK in body:
+        body = body.replace(_status.LIVE_MARK, live, 1)
+    else:
+        body = inject(body, live)      # 옛 스냅샷(마커 없음) 폴백
     # [중요] 원전 화면으로 돌아가는 링크 — 고아 페이지로 두지 않는다.
     #    색은 **원전 헤더와 같은 `#4ec9b0`**, 경계선은 `status.py` 의 `--line`(#30363d) 이다.
     #    [주의] 전에는 경계선을 `#2f2f2c` 로 박아 뒀는데, 그건 내가 만든 옛 팔레트의 값이었다 —

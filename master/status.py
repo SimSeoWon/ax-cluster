@@ -502,17 +502,182 @@ def _meter(temp) -> str:
             f'<span>주의 {warn} · 경고 {ser}</span><span>{TEMP_MAX}°C</span></div>')
 
 
+# [중요] 실시간 층이 꽂히는 자리 (#216). `cluster_page` 가 서빙 순간에 이 마커를 교체한다 —
+#    스냅샷 파일 자체는 불변이고, 신선한 것은 **마스터 자신의 상태**(큐·브로커, SSH 무관)뿐이다.
+LIVE_MARK = "<!--AX-LIVE-->"
+
+
+def topology_svg(snap: Snapshot) -> str:
+    """.57 중심 트리 (#216, 사용자 발의). [중요] 노드 4~5개에 그래프 라이브러리를 들이지
+    않는다 — 이 화면의 규약이 「자립형 한 장, 외부 자원 0」이다. 인라인 SVG + 클릭 시 해당
+    머신 카드로 스크롤·하이라이트. 상태는 여기서도 색+아이콘+라벨 셋이다."""
+    e = html.escape
+    n = len(snap.machines)
+    if not n:
+        return ""
+    h = max(120, 34 + n * 64)
+    cy = h // 2
+    active = sum(1 for v in snap.units.values() if v == "active")
+    master_kind = GOOD if active == len(snap.units) else CRIT
+    parts = [f'<svg viewBox="0 0 640 {h}" role="img" aria-label="클러스터 토폴로지" '
+             f'style="width:100%;max-width:640px;display:block">']
+    # 마스터 노드 (좌측 중앙)
+    parts.append(
+        f'<g><rect x="10" y="{cy - 26}" width="170" height="52" rx="10" '
+        f'fill="var(--card)" stroke="var(--{master_kind})" stroke-width="1.5"/>'
+        f'<text x="95" y="{cy - 6}" text-anchor="middle" fill="var(--fg)" '
+        f'font-size="14" font-weight="650" font-family="ui-monospace,Menlo,monospace">.57 master</text>'
+        f'<text x="95" y="{cy + 14}" text-anchor="middle" fill="var(--dim)" font-size="11">'
+        f'서비스 {active}/{len(snap.units)} active</text></g>')
+    for i, m in enumerate(snap.machines):
+        y = 34 + i * 64 + 26
+        kind = m.status
+        tail = m.host.split(".")[-1]
+        sub = m.role or "?"
+        if m.resident:
+            sub += " · " + short_model(m.resident, limit=18)
+        # 간선 — 마스터에서 각 머신으로
+        parts.append(f'<path d="M 180 {cy} C 260 {cy}, 280 {y}, 350 {y}" fill="none" '
+                     f'stroke="var(--line)" stroke-width="1.5"/>')
+        parts.append(
+            f'<g style="cursor:pointer" onclick="axGo(\'m-{e(m.host)}\')">'
+            f'<rect x="350" y="{y - 26}" width="270" height="52" rx="10" fill="var(--card)" '
+            f'stroke="var(--{kind})" stroke-width="1.5"/>'
+            f'<text x="366" y="{y - 4}" fill="var(--fg)" font-size="14" font-weight="650" '
+            f'font-family="ui-monospace,Menlo,monospace">.{e(tail)} {e(m.host)}</text>'
+            f'<text x="366" y="{y + 15}" fill="var(--dim)" font-size="11">{e(sub)}</text>'
+            f'<text x="604" y="{y + 5}" text-anchor="end" fill="var(--{kind})" font-size="12" '
+            f'font-weight="600">{_ICON[kind]} {e(m.label if len(m.label) <= 14 else _WORD[kind])}'
+            f'</text></g>')
+    parts.append("</svg>")
+    parts.append(
+        '<script>function axGo(id){var el=document.getElementById(id);if(!el)return;'
+        'el.scrollIntoView({behavior:"smooth",block:"center"});'
+        'el.style.outline="2px solid var(--accent)";'
+        'setTimeout(function(){el.style.outline="";},1600);}</script>')
+    return "".join(parts)
+
+
+def live_section(queue, tasks, endpoints, *, error: str = "", at: str = "") -> str:
+    """실시간 작업 층 (#216) — **서빙 시점** 데이터로 만든다. 순수 함수 (테스트 자리).
+
+    [중요] 여기 오는 것은 마스터 자신의 상태뿐이다(큐 8101 · 브로커 8102, 로컬 HTTP).
+    SSH 는 절대 타지 않는다 — 120초 가드(BC-250 을 두드리지 않는다)의 취지가 그대로 산다.
+    못 읽으면 **사유를 화면에** 적는다 — 조용한 빈칸은 "괜찮은가 보다"로 읽힌다.
+    """
+    e = html.escape
+    p = ['<div class="tile" style="margin:.9rem 0;border-left:4px solid var(--accent)">',
+         '<div style="display:flex;justify-content:space-between;align-items:baseline">'
+         '<b>지금 — 페이지를 연 순간 기준</b>'
+         f'<span class="sub">{e(at)} · 큐·브로커는 실시간, 아래 하드웨어는 스냅샷</span></div>']
+    if error:
+        p.append(f'<div class="sub">[주의] 실시간 층을 못 읽었다 — {e(error)}</div></div>')
+        return "".join(p)
+    by = (queue or {}).get("tasks_by_status") or {}
+    open_n = sum(v for k, v in by.items()
+                 if k not in Snapshot.CLOSED and isinstance(v, int))
+    bits = [f"열린 태스크 <b>{open_n}</b>"]
+    for ep in endpoints or []:
+        nm = e(str(ep.get("name", "")))
+        infl = int(ep.get("inflight") or 0)
+        ok = bool(ep.get("healthy"))
+        bits.append(f'{nm} {"추론 중 " + str(infl) + "건" if infl else "유휴"}'
+                    + ("" if ok else " · <b>unhealthy</b>"))
+    p.append('<div style="margin:.35rem 0">' + " · ".join(bits) + "</div>")
+    rows = [x for x in (tasks or []) if isinstance(x, dict)
+            and x.get("status") not in Snapshot.CLOSED]
+    if rows:
+        p.append('<table><tr><th>태스크</th><th>상태</th><th>맡은 워커</th>'
+                 '<th>대상</th><th>이후</th></tr>')
+        for x in rows[:12]:
+            p.append("<tr><td><code>%s</code></td><td>%s</td><td><code>%s</code></td>"
+                     "<td><code>%s</code></td><td class=\"n\">%s</td></tr>"
+                     % (e(str(x.get("task_id") or "")[:8]), e(str(x.get("status") or "")),
+                        e(str(x.get("assignee") or x.get("worker_id") or "—")),
+                        e(str(x.get("target_file") or "—").split("/")[-1]),
+                        e(str(x.get("claimed_at") or x.get("created") or "")[:19]
+                          .replace("T", " "))))
+        p.append("</table>")
+        if len(rows) > 12:
+            p.append(f'<div class="sub">…외 {len(rows) - 12}건</div>')
+    else:
+        p.append('<div class="sub">진행 중인 작업 없음 — 큐가 비어 있다</div>')
+    p.append("</div>")
+    return "".join(p)
+
+
+def fetch_live(*, token: str = "") -> dict:
+    """실시간 층의 재료 — 로컬 HTTP 셋. [중요] 짧은 타임아웃(2초): 페이지 서빙을 잡아먹지
+    않는다. 실패는 error 로 돌려준다 (호출자가 화면에 적는다)."""
+    if not token:
+        token = _read_token()
+    if not token:
+        return {"error": "토큰을 못 읽었다 (~/.config/ax-cluster/token)"}
+    out = {"queue": None, "tasks": None, "endpoints": None, "error": ""}
+    q = _api("http://127.0.0.1:8101/api/v1/status", token=token, timeout=2)
+    t = _api("http://127.0.0.1:8101/api/v1/tasks", token=token, timeout=2)
+    h = _api("http://127.0.0.1:8102/health", token=token, timeout=2)
+    if isinstance(q, dict):
+        out["queue"] = q
+    if isinstance(t, list):
+        out["tasks"] = t
+    if isinstance(h, dict):
+        out["endpoints"] = h.get("endpoints") or []
+    if out["queue"] is None and out["tasks"] is None:
+        out["error"] = "큐(8101)가 응답하지 않는다"
+    return out
+
+
+def _read_token() -> str:
+    try:
+        return (Path.home() / ".config" / "ax-cluster" / "token").read_text(
+            encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def refresh_after_event(reason: str, *, project: str = "", spawner=None) -> str:
+    """작업 요청·보고 직후의 스냅샷 갱신 (#216, 사용자 발의: "작업 요청·작업 보고 등에도
+    상태정보를 같이 넘겨서 갱신").
+
+    [중요] **추가 폴링이 아니다** — 파견·통합 순간에는 마스터가 어차피 그 머신과 대화 중이고,
+    여기서는 기존 수집 CLI 를 백그라운드로 던질 뿐이다. 120초 가드는 그대로 산다(자주 오는
+    이벤트는 TooSoon 으로 조용히 걸러진다 — 그게 정상 동작이다). 파이프라인을 절대 막지
+    않는다: 분리 세션 + 출력 버림 + 실패 무해.
+    """
+    import subprocess as sp
+    import sys as _sys
+    cmd = [_sys.executable, "-m", "master.status", "html"] + ([project] if project else [])
+    try:
+        if spawner is not None:
+            spawner(cmd)
+        else:
+            sp.Popen(cmd, stdout=sp.DEVNULL, stderr=sp.DEVNULL,
+                     start_new_session=True, cwd=str(Path(__file__).resolve().parent.parent))
+        return f"상태 갱신 요청 ({reason})"
+    except Exception as ex:                                  # noqa: BLE001
+        return f"[주의] 상태 갱신을 못 던졌다 ({reason}): {type(ex).__name__}"
+
+
 def render(snap: Snapshot, *, viewer_link: str = "") -> str:
     """자립형 HTML. [중요] 외부 자원 0 · 상태는 아이콘+라벨+색."""
     e = html.escape
     p = [f'<h1>AX 클러스터 상태</h1>',
          f'<div class="sub">{e(snap.at)} 수집 · {snap.seconds:.0f}초 소요 · '
-         f'<code>ax-status.timer</code> 가 {REFRESH_SEC // 60}분마다 갱신 · '
-         f'브라우저 새로고침은 수집을 유발하지 않는다(최소 간격 {MIN_INTERVAL}초)</div>']
+         f'<code>ax-status.timer</code> 가 {REFRESH_SEC // 60}분마다 갱신 (파견·통합 직후에도 '
+         f'갱신을 시도한다) · 브라우저 새로고침은 SSH 수집을 유발하지 않는다'
+         f'(최소 간격 {MIN_INTERVAL}초)</div>']
+
+    # [중요] 실시간 층 자리 — 파일로 직접 열면 마커가 그대로 숨고(주석), /cluster 로 서빙되면
+    #    그 순간의 큐·브로커 상태가 여기 꽂힌다 (#216).
+    p.append(LIVE_MARK)
 
     # [중요] 히어로는 하나 — 지금 큐에 무엇이 있나
     p += [f'<div class="hero"><b>{snap.open_tasks}</b>'
           f'<span>큐에 열린 태스크</span></div>']
+
+    p.append("<h2>토폴로지 — 노드를 누르면 상세로</h2>")
+    p.append(topology_svg(snap))
 
     # [중요] 첫 화면에 문제가 온다 (도메인 뷰어와 같은 판단)
     if snap.problems:
@@ -548,11 +713,11 @@ def render(snap: Snapshot, *, viewer_link: str = "") -> str:
         if m.worktrees:
             rows.append(("워크트리", f"{len(m.worktrees)}개"))
         p.append(
-            '<div class="tile"><div style="display:flex;justify-content:space-between;'
+            '<div class="tile" id="m-%s"><div style="display:flex;justify-content:space-between;'
             'align-items:center;gap:.5rem"><span class="who">%s</span>%s</div>'
             '<div class="sub">%s · %s</div><div class="val">%s</div>%s'
             '<dl>%s</dl>%s</div>'
-            % (e(m.host), _st(m.status, m.label),
+            % (e(m.host), e(m.host), _st(m.status, m.label),
                e(m.role or "?"), e(g.name or m.os or "?"), val, _meter(g.temp),
                "".join(f"<dt>{e(k)}</dt><dd>{e(v)}</dd>" for k, v in rows),
                f'<div class="sub">{e(g.note)}</div>' if g.note else ""))

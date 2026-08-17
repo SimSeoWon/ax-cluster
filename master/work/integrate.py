@@ -823,6 +823,9 @@ def main(argv) -> int:
         return 1
     itg = run(paths, ue[0], work_id, durable=(argv[3] if len(argv) > 3 else ""))
     print(itg.summary())
+    # [중요] 통합(작업 보고의 반영)도 상태가 바뀐 순간이다 — 스냅샷 갱신을 던진다 (#216).
+    from ..status import refresh_after_event
+    print("  " + refresh_after_event("통합", project=paths.name))
     return 0 if itg.ok else 1
 
 

@@ -548,16 +548,27 @@ def main(argv) -> int:
         print("선택: " + pick.summary)
         return 0
     if cmd == "once":
-        print(_summary(run_once(paths, facts=facts)))
+        r = run_once(paths, facts=facts)
+        print(_summary(r))
+        if r.get("task"):
+            # [중요] 파견은 상태가 실제로 바뀐 순간이다 — 스냅샷 갱신을 던진다 (#216).
+            #    백그라운드·무해·120초 가드 통과 시에만 실제 수집 (status.refresh_after_event)
+            from ..status import refresh_after_event
+            print("  " + refresh_after_event("파견", project=paths.name))
         return 0
     if cmd == "loop":
         n = int(argv[2]) if len(argv) > 2 else 5
+        did = False
         for i in range(n):
             r = run_once(paths, facts=facts)
             print(f"[{i+1}/{n}]")
             print(_summary(r))
+            did = did or bool(r.get("task"))
             if not r.get("task"):
                 break
+        if did:
+            from ..status import refresh_after_event
+            print("  " + refresh_after_event("파견 루프", project=paths.name))
         return 0
     print(__doc__.split("## ")[0])
     print("  probe | once | loop")
