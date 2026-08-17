@@ -86,9 +86,14 @@ for anything that writes, go through the dirty check first and let it say no.
 ### [중요] Both workshops track the same repository — the competition is real
 
 ```
-.33  C:\Users\USER\Documents\ModularStage  →  origin http://192.168.0.57:3000/Sim/ModularStage.git
-.2   E:\trunk\ModularStage                 →  same origin
+.33  C:\Users\USER\Documents\ModularStage  →  origin gitea@192.168.0.57:Sim/ModularStage.git
+.2   E:\trunk\ModularStage                 →  same repo (origin http://192.168.0.57:3000/Sim/ModularStage.git)
 ```
+
+[중요] `.33`'s origin switched HTTP → SSH on 2026-08-17 (user, via SourceTree — OpenSSH client,
+key `ax-requester-33`). **Gitea's SSH user is `gitea@`, not `git@`** — `git@192.168.0.57` fails
+with `Permission denied (publickey)` even with a registered key. That trap cost a debugging
+round; don't re-enter it.
 
 `.33` was on `main` at `bc4b38f` when probed. **This is the measured basis for §4.2's premise**
 that two workshops contend for the same `task/<id>` branches and the same task queue —
