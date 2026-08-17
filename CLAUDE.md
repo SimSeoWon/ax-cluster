@@ -235,10 +235,18 @@ python3 master/test_verdict.py               # venv 없이 도는 순수 로직
 curl -s localhost:8102/health | python3 -m json.tool   # 노드별 상주 모델
 systemctl status ax-task-queue ax-broker ax-projects ax-indexer.path
 journalctl -u ax-indexer -n 30 --no-pager              # push → 트윈 성장 이력
-.venv/bin/python -m master.work.runner once            # 큐에서 한 건 파견
+.venv/bin/python -m master.work.infer collect          # [중요] pull 데몬 응답 회수 → 스풀 (#204)
+.venv/bin/python -m master.work.integrate plan|run     # 통합 (조각별 빌드 → 커밋 → durable push)
 .venv/bin/python -m master.work.cleanup plan           # 찌꺼기 (기본은 안 지움)
+.venv/bin/python -m master.work.cleanup remote --apply # [중요] 병합 확인된 원격 attempt/task 삭제 (#219)
 .venv/bin/python -m master.ontology plan|dry|refresh   # [중요] 이 순서로
+.venv/bin/python -m master.ontology log-candidates     # 태깅 권장 리포트 (#169, LLM 0)
 ```
+
+[중요] **워커 상주 데몬이 큐를 폴링한다** (#204 실전 전환 2026-08-18): `.2` AxClaimer(schtasks
+5분 감시자, build+code) · `.43` cron 감시자(code 만). 등록된 code 태스크는 **20초 안에 데몬이
+집는다** — 파견의 기본은 pull 이고, 마스터 push 파견(`runner once`·`infer run`)은 §8.4 대로
+가역 보존. 데몬 운영법은 각 머신 가이드(`machines/win-worker-2.md`·`bc250-1.md`)에 있다.
 
 ## Three clones — keep them in sync
 
