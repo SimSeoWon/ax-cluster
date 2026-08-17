@@ -83,6 +83,38 @@ def test_topology_empty_machines_is_empty():
     assert S.topology_svg(S.Snapshot()) == ""
 
 
+# ── ②-1 최근 추론·활동 피드 (#216 후속) ────────────────────────
+
+def test_live_recent_inference_chips():
+    rec = [{"at": "12:00:01", "model": "gemma4:e4b", "endpoint": "bc250", "ms": 8700, "ok": True},
+           {"at": "12:00:02", "model": "qwen3:8b", "endpoint": "rtx3060", "ms": 300, "ok": False}]
+    out = S.live_section({}, [], [], recent=rec)
+    assert "최근 추론" in out and "8.7s" in out and "실패" in out
+
+
+def test_live_activity_feed():
+    act = [{"at": "08-18 00:30", "kind": "토론", "detail": "사이클 1 <시작>"}]
+    out = S.live_section({}, [], [], activity=act)
+    assert "마스터 활동" in out and "토론" in out and "&lt;시작&gt;" in out
+
+
+def test_activity_roundtrip_and_cap(tmp_root=None):
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        for i in range(S.ACTIVITY_KEEP + 10):
+            S.log_activity(tmp, "k", f"d{i}")
+        got = S.read_activity(tmp, limit=3)
+        assert [x["detail"] for x in got] == [f"d{S.ACTIVITY_KEEP + 9 - j}" for j in range(3)]
+        lines = (S.Path(tmp) / S.ACTIVITY_NAME).read_text(encoding="utf-8").splitlines()
+        assert len(lines) <= S.ACTIVITY_KEEP    # 무한히 자라지 않는다
+
+
+def test_activity_missing_file_is_empty():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        assert S.read_activity(tmp) == []
+
+
 # ── ③ 이벤트 갱신 ───────────────────────────────────────────────
 
 def test_refresh_spawns_status_html():

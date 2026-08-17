@@ -162,7 +162,9 @@ def cluster_page(paths) -> tuple:
     got = _status.fetch_live()
     live = _status.live_section(got.get("queue"), got.get("tasks"), got.get("endpoints"),
                                 error=got.get("error", ""),
-                                at=_dt.now().strftime("%H:%M:%S"))
+                                at=_dt.now().strftime("%H:%M:%S"),
+                                recent=got.get("recent"),
+                                activity=_status.read_activity(paths.root))
     # 자동 갱신 (사용자: "매번 F5 누르기 불편") — 탭이 보일 때만 15초마다 리로드.
     #    페이지 전체가 가벼운 정적 서빙이라 부분 갱신 API 를 새로 여는 것보다 싸고,
     #    토큰 없는 공개 API 를 만들지 않아도 된다.

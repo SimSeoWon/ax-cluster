@@ -558,7 +558,8 @@ def topology_svg(snap: Snapshot) -> str:
     return "".join(parts)
 
 
-def live_section(queue, tasks, endpoints, *, error: str = "", at: str = "") -> str:
+def live_section(queue, tasks, endpoints, *, error: str = "", at: str = "",
+                 recent=None, activity=None) -> str:
     """실시간 작업 층 (#216) — **서빙 시점** 데이터로 만든다. 순수 함수 (테스트 자리).
 
     [중요] 여기 오는 것은 마스터 자신의 상태뿐이다(큐 8101 · 브로커 8102, 로컬 HTTP).
@@ -602,6 +603,28 @@ def live_section(queue, tasks, endpoints, *, error: str = "", at: str = "") -> s
             p.append(f'<div class="sub">…외 {len(rows) - 12}건</div>')
     else:
         p.append('<div class="sub">진행 중인 작업 없음 — 큐가 비어 있다</div>')
+    # 최근 추론 이력 — inflight 는 순간값이라 토론·측정 같은 짧은 호출이 안 보였다 (#216 후속)
+    if recent:
+        p.append('<div style="margin:.5rem 0 .1rem"><b style="font-size:.85rem">최근 추론'
+                 '</b> <span class="sub">(브로커 링버퍼 — 재기동에 사라지는 관측값)</span></div>')
+        bits2 = []
+        for r in recent[:8]:
+            ok = r.get("ok")
+            mark = "" if ok else (" <b>실패</b>" if ok is False else " 진행중")
+            ms = r.get("ms")
+            bits2.append(f'<span class="chip">{e(str(r.get("at", "")))} '
+                         f'<code>{e(short_model(str(r.get("model", "")), limit=20))}</code>'
+                         f'→{e(str(r.get("endpoint", "")))}'
+                         f'{" · " + str(round(ms / 1000, 1)) + "s" if ms else ""}{mark}</span>')
+        p.append('<div class="chips">' + "".join(bits2) + "</div>")
+    # 마스터 활동 피드 — 큐를 타지 않는 작업(토론·파견·통합)의 자리 (#216 후속)
+    if activity:
+        p.append('<div style="margin:.5rem 0 .1rem"><b style="font-size:.85rem">마스터 활동'
+                 '</b></div><ul style="margin:.1rem 0 0;padding-left:1.1rem;font-size:.82rem">')
+        for a in activity[:ACTIVITY_SHOW]:
+            p.append(f'<li><span class="sub">{e(str(a.get("at", "")))}</span> '
+                     f'<b>{e(str(a.get("kind", "")))}</b> {e(str(a.get("detail", "")))}</li>')
+        p.append("</ul>")
     p.append("</div>")
     return "".join(p)
 
@@ -623,8 +646,54 @@ def fetch_live(*, token: str = "") -> dict:
         out["tasks"] = t
     if isinstance(h, dict):
         out["endpoints"] = h.get("endpoints") or []
+        out["recent"] = h.get("recent") or []      # 브로커 최근 추론 이력 (#216 후속)
     if out["queue"] is None and out["tasks"] is None:
         out["error"] = "큐(8101)가 응답하지 않는다"
+    return out
+
+
+ACTIVITY_NAME = "activity.jsonl"
+ACTIVITY_SHOW = 8
+ACTIVITY_KEEP = 400                # 파일이 무한히 자라지 않게 — 넘으면 꼬리만 남긴다
+
+
+def log_activity(root, kind: str, detail: str = "") -> None:
+    """마스터 활동 한 줄 기록 (#216 후속, 사용자 지적: "토론 같은 작업이 웹에 안 보인다").
+
+    큐를 타지 않는 마스터 작업(토론·파견·통합·측정)의 관측 채널이다.
+    [주의] **의도된 fail-soft** — 관측 기록이 실패해도 본 작업을 멈추지 않는다 (σ 규약:
+    의도를 적었으므로 설계다). 파일은 트윈 루트의 `activity.jsonl`, 파생물이다.
+    """
+    try:
+        p = Path(root) / ACTIVITY_NAME
+        line = json.dumps({"at": datetime.now().strftime("%m-%d %H:%M:%S"),
+                           "kind": kind, "detail": detail[:200]}, ensure_ascii=False)
+        text = ""
+        if p.is_file():
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+            if len(lines) >= ACTIVITY_KEEP:
+                lines = lines[-(ACTIVITY_KEEP // 2):]
+            text = "\n".join(lines) + "\n" if lines else ""
+        p.write_text(text + line + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def read_activity(root, limit: int = ACTIVITY_SHOW) -> list:
+    """최근 활동 — 최신이 앞. 없으면 빈 목록."""
+    try:
+        lines = (Path(root) / ACTIVITY_NAME).read_text(
+            encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    out = []
+    for ln in reversed(lines[-limit * 2:]):
+        try:
+            out.append(json.loads(ln))
+        except ValueError:
+            continue
+        if len(out) >= limit:
+            break
     return out
 
 
@@ -649,6 +718,12 @@ def refresh_after_event(reason: str, *, project: str = "", spawner=None) -> str:
     import sys as _sys
     cmd = [_sys.executable, "-m", "master.status", "html"] + ([project] if project else [])
     try:
+        # 활동 피드에도 남긴다 — 큐를 안 타는 이벤트가 화면에 보이는 자리 (#216 후속)
+        try:
+            from .context_search.paths import resolve as _resolve
+            log_activity(_resolve(project).root, reason, "상태 갱신 트리거")
+        except Exception:                                    # noqa: BLE001
+            pass                                             # 관측 채널 — 본 작업을 막지 않는다
         if spawner is not None:
             spawner(cmd)
         else:
@@ -857,8 +932,17 @@ def main(argv) -> int:
             rest.append(a)
     to = [h for h in to if h]
     project = rest[0] if rest else ""
+    if cmd == "note":
+        # 활동 피드 한 줄 — 토론·측정 같은 큐 밖 작업이 /cluster 에 보이게 (#216 후속)
+        #   python -m master.status note <kind> [<detail...>]
+        from .context_search.paths import resolve as _resolve
+        kind = rest[0] if rest else "메모"
+        detail = " ".join(rest[1:])
+        log_activity(_resolve("").root, kind, detail)
+        print(f"활동 기록: {kind} — {detail[:60]}")
+        return 0
     if cmd not in ("show", "html"):
-        print("  show [프로젝트] [--force] | html [프로젝트] [--force]")
+        print("  show [프로젝트] [--force] | html [프로젝트] [--force] | note <kind> [detail]")
         return 2
     try:
         snap = collect(project=project, force=force)

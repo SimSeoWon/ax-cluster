@@ -18,6 +18,9 @@ import contextlib
 import json
 import logging
 import os
+import time
+from collections import deque
+from datetime import datetime
 
 import httpx2 as httpx
 from fastapi import FastAPI, Request
@@ -46,7 +49,12 @@ _TIMEOUT = httpx.Timeout(connect=5.0, read=900.0, write=60.0, pool=10.0)
 def create_app():
     """ASGI 앱. 반환형이 `FastAPI` 가 아니라 **인증 미들웨어로 감싼 ASGI 콜러블**이다."""
     endpoints, pins = load_endpoints()
-    state: dict = {"inflight": {e.name: 0 for e in endpoints}, "repin_at": {}}
+    # [중요] `recent` 는 최근 추론 요청의 링버퍼 (#216 후속, 사용자 지적 2026-08-18:
+    #    "토론을 요청했는데 클러스터 페이지가 안 보여준다"). inflight 는 순간값이라 호출
+    #    사이사이엔 유휴로 보인다 — 무엇이 지나갔는지는 이력이 있어야 보인다. 메모리 안
+    #    20건뿐, 재기동에 사라지는 것이 맞는 성질의 데이터다(관측이지 기록이 아니다).
+    state: dict = {"inflight": {e.name: 0 for e in endpoints}, "repin_at": {},
+                   "recent": deque(maxlen=20)}
     app = FastAPI(title="AX cluster inference broker")
 
     # [중요] 인증 (PLAN §9.5.6). 토큰이 없으면 여기서 예외가 나고 서비스가 뜨지 않는다.
@@ -99,7 +107,8 @@ def create_app():
              "resident": e.resident, "pin": pins.get(e.name),
              "models": e.models, "inflight": state["inflight"].get(e.name, 0),
              "last_error": e.last_error}
-            for e in endpoints]}
+            for e in endpoints],
+            "recent": list(state["recent"])[::-1]}     # 최신이 앞
 
     # ── Ollama 호환 표면 ──────────────────────────────────────
     @app.get("/api/tags")
@@ -144,14 +153,22 @@ def create_app():
         state["inflight"][ep.name] = state["inflight"].get(ep.name, 0) + 1
         url = f"http://{ep.host}{path}"
         stream = bool(body.get("stream", False))
+        rec = {"at": datetime.now().strftime("%H:%M:%S"), "model": model,
+               "endpoint": ep.name, "path": path, "ms": None, "ok": None}
+        state["recent"].append(rec)
+        t0 = time.monotonic()
 
         if not stream:
             try:
                 r = await client.post(url, json=body)
+                rec["ms"] = int((time.monotonic() - t0) * 1000)
+                rec["ok"] = r.status_code < 400
                 return JSONResponse(json.loads(r.text), status_code=r.status_code,
                                     headers={"X-AX-Endpoint": ep.name})
             except Exception as e:
                 ep.healthy = False   # 다음 헬스 사이클이 되살리거나 확정한다
+                rec["ms"] = int((time.monotonic() - t0) * 1000)
+                rec["ok"] = False
                 log.error("[route] %s 실패: %s: %s", ep.name, type(e).__name__, e)
                 return JSONResponse({"error": f"{ep.name}: {type(e).__name__}: {e}"},
                                     status_code=502)
