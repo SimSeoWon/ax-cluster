@@ -322,10 +322,10 @@ M6 착수(측정 2건 종결·1건 구축) + 아이디어 바구니 개설.** �
 아이디어 바구니(비일감, #212 SAE).
 
 사용자 확인 대기 (이월):
-    1. gitea 검증 브랜치 task/selftest-carry-0817 삭제 (웹 UI)
-    2. _archive 안 status:active 한글 도메인 MD 1건 — 부활/삭제
-    3. Redmine #208·#209 — 시스템이 처음 만든 실 플랜 이슈 (특히 #208 StructUtils 위험)
-    4. kr_ground_truth.tsv 자연 3건의 기대 문서 라벨 (채우면 즉시 채점 합류)
+    1. gitea 검증 브랜치 task/selftest-carry-0817 삭제 (웹 UI) — [대기] 여전히 사람의 자리
+    2. _archive 안 status:active 한글 도메인 MD 1건 — [완료] 사용자 결정 삭제 (리포트 20 §1)
+    3. Redmine #208·#209 — [완료] #208 오탐 닫음(UE5.8 엔진 실물 확인) · #209 보류 (리포트 20 §1)
+    4. kr_ground_truth.tsv 자연 3건 라벨 — [완료] 사용자 라벨 확정, 자연 4건 (리포트 20 §1·§3)
 
 문서 최신화: master/README.md 신규 모듈 12행 + 설계 제약 정정(Flow Y·#185 반영) ·
 M6 문서 진행 기록 · bc250 메모리 정정.

@@ -189,7 +189,10 @@ def main() -> int:
     check("역방향 근사 경고를 붙인다", "근사" in r)
     check("[중요] 도메인 규범이 없다고 명시한다", "_없음 — 마일스톤 2 의 중 1.3" in r)
     p_txt = prompt.build(files=FILES, bodies={f: "code" for f in FILES}, grounding=gr)
-    check("프롬프트에 형식 지시가 있다", "tags: [태그1" in p_txt)
+    check("프롬프트에 형식 지시가 있다", "tags: [영문태그1" in p_txt)
+    check("[중요] 한글 태그 병기를 지시한다 (사용자 지시 2026-08-17)",
+          "한글 개념 태그 2~4개를 병기" in p_txt)
+    check("범용어 태그 금지를 지시한다", "범용어는 태그가 아니다" in p_txt)
     check("[중요] 펜스로 감싸지 말라고 지시한다", "펜스로" in p_txt)
     check("코멘트를 만들지 말라고 지시한다", "## 코멘트\" 섹션은 절대 생성하지 마" in p_txt)
     check("본문 상한을 적용한다",

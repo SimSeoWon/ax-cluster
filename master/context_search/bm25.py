@@ -203,6 +203,30 @@ class Bm25Index:
     def count(self) -> int:
         return self._count(self._gen)
 
+    def phrase_df(self, term: str):
+        """`term` 을 **정확 구(phrase)** 로 담은 문서 수. 측정 불가면 `None`.
+
+        [중요] 시소러스 가드(`thesaurus.register`)의 판별력 측정용. `search()` 히트수는
+        토큰 OR 라 다단어 표현이 수백 건씩 잡혀 기준이 못 된다(실측 2026-08-17:
+        '캐릭터 에셋 로드' 310건). 정확 구 빈도는 갈라진다 — 기존 별칭 최고 1.9%('미션
+        태스크') vs 범용어 최저 3.3%('연출').
+        """
+        if self._conn is None:
+            return None
+        tokens = tokenize(term)
+        if not tokens:
+            return None
+        phrase = '"' + " ".join(tokens) + '"'
+        table = _table(self._gen)
+        with self._lock:
+            try:
+                row = self._conn.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE {table} MATCH ?", (phrase,)
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return None
+        return int(row[0])
+
     def search(self, query: str, limit: int = 10) -> list[tuple[str, float]]:
         """FTS5 MATCH + 컬럼 가중치. `(file_id, score)` 내림차순.
 

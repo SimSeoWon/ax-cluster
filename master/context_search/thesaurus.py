@@ -294,17 +294,58 @@ def _class_exists(paths: ProjectPaths, class_name: str) -> bool:
         return True
 
 
-def register(paths: ProjectPaths, class_name: str, term: str) -> str:
+# [중요] 범용어 별칭 가드 (사용자 지시 2026-08-17) — 별칭은 검색 시 질의에 클래스명을
+# **덧붙여 확장**하므로, '완료'·'처리' 같은 범용어가 등록되면 그 단어가 든 모든 질의가
+# 한 클래스로 쏠린다(과적합). [주의] 원전에도 이 가드는 없다(`add_object_alias_impl` 은
+# 비어 있음만 거부) — 실측 근거를 갖춘 우리 추가다. 두 규칙 다 결정적이다:
+#   ① 짧음: 공백 제거 4자 미만 거부 ("짧은 형용사·범용 명사" — 지시의 문자 그대로)
+#   ② 판별력: 정확 구 DF 가 코퍼스의 2.5% 초과면 거부. 문턱값은 실측이다
+#      (2026-08-17, 961문서: 기존 별칭 11건 최고 '미션 태스크' 1.9% —
+#       범용어 최저 '연출' 3.3%. 2.5% 가 그 사이를 가른다)
+# [주의] DF 를 잴 수 없으면(FTS5 부재 등) ①만 적용하고 `added_unmeasured` 로 **말하고**
+# 통과시킨다 — 별칭 등록이 사람을 기다리는 인프라가 되면 안 된다(§2)는 것과 조용한
+# 실패 금지 사이의 자리다.
+GUARD_MIN_CHARS = 4
+GUARD_DF_RATIO = 0.025
+
+
+def _corpus_df(paths: ProjectPaths, term: str):
+    """(정확 구 DF, 코퍼스 크기). 측정 불가면 (None, 0)."""
+    try:
+        from .bm25 import Bm25Index
+        idx = Bm25Index(paths)
+        try:
+            return idx.phrase_df(term), idx.count()
+        finally:
+            idx.close()
+    except Exception:                                   # noqa: BLE001
+        return None, 0
+
+
+def register(paths: ProjectPaths, class_name: str, term: str, *, df_fn=None) -> str:
     """별칭 하나를 등록한다. **읽어서 합친다 — 덮어쓰지 않는다.**
 
-    반환: `added` · `noop`(이미 있음) · `not_found`(그 클래스의 yaml 이 없다)
+    반환: `added` · `added_unmeasured`(DF 측정 불가, ①만 통과) · `noop`(이미 있음) ·
+    `not_found`(그 클래스의 yaml 이 없다) · `rejected_…`(범용어 가드 — 사유 포함)
 
     [중요] 덮어쓰기 금지가 이 함수의 존재 이유다. 원본이 top-level 얕은 덮어쓰기로 **기존
     별칭 전체를 날린 사고**를 기록해 뒀다.
+
+    `df_fn` 은 테스트 주입 자리 — `term -> (df, corpus_n)`.
     """
     term = (term or "").strip()
     if not term or not class_name:
         return "not_found"
+    compact = term.replace(" ", "")
+    if len(compact) < GUARD_MIN_CHARS:
+        return (f"rejected_short: {len(compact)}자 < {GUARD_MIN_CHARS} — 짧은 표현은 "
+                "범용어라 별칭이 되면 그 단어가 든 모든 질의가 한 클래스로 쏠린다")
+    df, corpus_n = (df_fn or (lambda t: _corpus_df(paths, t)))(term)
+    unmeasured = df is None or not corpus_n
+    if not unmeasured and df / corpus_n > GUARD_DF_RATIO:
+        return (f"rejected_generic: 정확 구 DF {df}/{corpus_n} = {df / corpus_n * 100:.1f}% "
+                f"> {GUARD_DF_RATIO * 100:.1f}% — 코퍼스에 흔한 범용 표현이라 별칭이 되면 "
+                "검색이 한 클래스로 쏠린다")
     target = None
     for f in object_files(paths):
         m = _NAME_RE.search(f.read_text(encoding="utf-8", errors="replace"))
@@ -322,7 +363,7 @@ def register(paths: ProjectPaths, class_name: str, term: str) -> str:
         header = "" if f.is_file() else "# <클래스>\t<별칭> — 온톨로지 yaml 이 없는 클래스용\n"
         with f.open("a", encoding="utf-8") as fh:
             fh.write(header + f"{class_name}\t{term}\n")
-        return "added_side"
+        return "added_side_unmeasured" if unmeasured else "added_side"
 
     text = target.read_text(encoding="utf-8", errors="replace")
     existing = _parse_aliases(text)
@@ -339,4 +380,4 @@ def register(paths: ProjectPaths, class_name: str, term: str) -> str:
     tmp = target.with_suffix(".yaml.tmp")
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(target)          # 원자적 — 반쯤 쓰인 yaml 을 합성기가 읽지 않게
-    return "added"
+    return "added_unmeasured" if unmeasured else "added"

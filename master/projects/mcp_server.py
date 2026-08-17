@@ -367,18 +367,23 @@ def add_alias_tool(class_name: str, term: str) -> str:
 
         paths = resolve_paths("")
         status = th.register(paths, class_name, term)
+        notes = {
+            "added": "등록했다(온톨로지 yaml). 다음 검색부터 자동 확장된다",
+            "added_unmeasured": "등록했다 — [주의] DF 를 잴 수 없어 범용어 판정은 못 했다",
+            "added_side": "등록했다(폴백 저장소 — 그 클래스의 온톨로지 yaml 이 아직 없다). "
+                          "다음 검색부터 자동 확장된다",
+            "added_side_unmeasured": "등록했다(폴백 저장소) — [주의] DF 를 잴 수 없어 "
+                                     "범용어 판정은 못 했다",
+            "noop": "이미 등록돼 있다",
+            "not_found": f"`{class_name}` 은 클래스 그래프에 없다 — 클래스명을 확인하라",
+        }
+        # rejected_short / rejected_generic 은 status 자체가 사유 문장을 담는다
         return json.dumps({
-            "ok": status != "not_found",
+            "ok": status.startswith("added") or status == "noop",
             "status": status,
             "class": class_name,
             "term": term,
-            "note": {
-                "added": "등록했다(온톨로지 yaml). 다음 검색부터 자동 확장된다",
-                "added_side": "등록했다(폴백 저장소 — 그 클래스의 온톨로지 yaml 이 아직 없다). "
-                              "다음 검색부터 자동 확장된다",
-                "noop": "이미 등록돼 있다",
-                "not_found": f"`{class_name}` 은 클래스 그래프에 없다 — 클래스명을 확인하라",
-            }[status],
+            "note": notes.get(status, status),
         }, ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
