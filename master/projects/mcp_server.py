@@ -687,6 +687,49 @@ def edit_ontology_item_tool(domain: str, kind: str, name: str, patch: dict) -> s
 
 
 @mcp.tool()
+def list_log_tags_tool(domain: str) -> str:
+    """도메인의 실증 테스트용 로그 태그/CVar 매핑 조회 (#169, 원전 η.12.3 — read-only).
+
+    사이드카 `log_categories.yaml` 가 SSOT — 로그 태그 문자열을 임의로 추측하지 말고
+    이걸 본다. 뷰어의 invariant 목록에도 같은 매핑이 `log_tags` 로 자동 첨부된다.
+    """
+    try:
+        from ..ontology import log_tags as lt
+        return json.dumps(lt.list_impl(_onto_paths(), domain), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def set_log_tag_tool(domain: str, tag: str, cvar: str,
+                     related_invariants: list = None) -> str:
+    """로그 태그/CVar 매핑 확정 기입 — tag 기준 upsert (#169).
+
+    [중요] **저작 방향 (b) — 게임팀이 실제 코드에 CVar+태깅 로그를 구현한 뒤에만** 기입한다
+    (원전 2026-07-12 확정, 자동 생성·자동 편입 없음). 제안 목록은
+    `python -m master.ontology log-candidates` 리포트가 따로 만든다.
+    """
+    try:
+        from ..ontology import log_tags as lt
+        r = lt.set_impl(_onto_paths(), domain, tag, cvar,
+                        related_invariants=(list(related_invariants)
+                                            if related_invariants is not None else None))
+        return json.dumps(r, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def remove_log_tag_tool(domain: str, tag: str) -> str:
+    """로그 태그 1건 삭제 (#169). [중요] 되돌릴 수 없다 — 지우기 전 사람에게 확정 표시."""
+    try:
+        from ..ontology import log_tags as lt
+        return json.dumps(lt.remove_impl(_onto_paths(), domain, tag), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
 def remove_ontology_item_tool(domain: str, kind: str, name: str,
                               force: bool = False) -> str:
     """온톨로지 항목 하나를 지운다. [중요] **검수 잠금이 걸린 것은 `force` 없이는 안 지운다.**

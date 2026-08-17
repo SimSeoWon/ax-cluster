@@ -352,9 +352,18 @@ def load_domain_package(base_dir: Path, domain_name: str) -> Optional[dict]:
             actions.append(data)
 
     invariants: list[dict] = []
+    # #169 (원전 η.12.3) — 사이드카 매핑이 있으면 invariant 에 `log_tags` 자동 첨부.
+    # [중요] 매치 없음 = 필드 부재 (null 아님) — "로그로 실증 불가"와 "확인 안 함"의 구분.
+    # entries 는 한 번만 읽는다 — invariant 마다 파일을 다시 읽지 않는다.
+    from ..ontology import log_tags as _lt
+    _tag_entries = _lt.entries_at(pkg)
     for yaml_path in _glob_invariant_yamls(pkg):
         data = parse_domain_yaml(yaml_path)
         if data:
+            if _tag_entries:
+                hits = _lt.tags_for_invariant(_tag_entries, str(data.get("name") or ""))
+                if hits:
+                    data["log_tags"] = hits
             invariants.append(data)
 
     return {

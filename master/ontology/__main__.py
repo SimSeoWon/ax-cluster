@@ -343,11 +343,49 @@ def cmd_sync(argv: list) -> int:
         print("\n  [중요] 아무것도 쓰지 않았다. 반영하려면 `sync --apply`.")
     return 0
 
+def cmd_log_tags(argv: list) -> int:
+    """log-tags <도메인> list | set <tag> <cvar> [invariant...] | remove <tag> (#169).
+
+    [중요] 저작 방향 (b) — 게임팀이 실제 코드에 CVar+태깅 로그를 구현한 뒤 사람이 확정
+    기입한다. 자동 생성 없음. 제안 목록은 `log-candidates` 가 만든다.
+    """
+    import json as _json
+
+    from . import log_tags as lt
+    if len(argv) < 2:
+        print("  log-tags <도메인> list | set <tag> <cvar> [invariant...] | remove <tag>")
+        return 2
+    domain, sub, rest = argv[0], argv[1], argv[2:]
+    paths = _paths()
+    if sub == "list":
+        r = lt.list_impl(paths, domain)
+    elif sub == "set" and len(rest) >= 2:
+        r = lt.set_impl(paths, domain, rest[0], rest[1],
+                        related_invariants=rest[2:] or None)
+    elif sub == "remove" and rest:
+        r = lt.remove_impl(paths, domain, rest[0])
+    else:
+        print("  log-tags <도메인> list | set <tag> <cvar> [invariant...] | remove <tag>")
+        return 2
+    print(_json.dumps(r, ensure_ascii=False, indent=1))
+    return 0 if r.get("status") in ("ok", "created", "updated", "deleted") else 1
+
+
+def cmd_log_candidates(argv: list) -> int:
+    """log-candidates — 태깅 권장 지점 리포트 생성 (LLM 0, 제안형 · #169)."""
+    from . import log_candidates as lc
+    got = lc.generate(_paths())
+    print(f"후보 {got['total']}건 ({got['domains']}개 도메인, "
+          f"확정 등록됨 {got['registered']}건) → {got['path']}")
+    return 0
+
+
 _COMMANDS = {"status": cmd_status, "plan": cmd_plan, "verify": cmd_verify,
              "dry": cmd_dry, "refresh": cmd_refresh,
              "new": cmd_new, "unassigned": cmd_unassigned,
              "lock": cmd_lock, "unlock": cmd_unlock, "sync": cmd_sync, "describe": cmd_describe,
-             "protect": cmd_protect, "protected": cmd_protected, "drift": cmd_drift, "view": cmd_view}
+             "protect": cmd_protect, "protected": cmd_protected, "drift": cmd_drift, "view": cmd_view,
+             "log-tags": cmd_log_tags, "log-candidates": cmd_log_candidates}
 
 
 def main(argv: list) -> int:
