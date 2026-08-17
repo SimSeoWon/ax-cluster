@@ -1,4 +1,4 @@
-# 21 — #204 1단계: 빌드 게이트를 큐 잡으로 + 작업장 claimer
+# 21 — #204: 빌드 게이트 큐 잡 + 작업장 claimer (1단계) · 추론 pull (2단계)
 
 착수는 사용자 지시(2026-08-18)로 — 이슈의 착수 조건(UE5 워커 2대+ 또는 push 방식이 실제로
 아플 때)은 **사용자가 해제**했다. 범위도 사용자 확정: *"일단 기능 작동을 확인하고 확장"* —
@@ -59,10 +59,77 @@ ax-projects · ax-indexer.service · ax-status.timer) NOPASSWD. 사용자가 직
 그대로다: 대화형 세션이 **임의로** 재기동하지 않고, 코드 반영 등 사유가 있을 때 한다.
 이번 세션 확인 시점에 큐 서비스는 이미 새 코드로 재기동돼 있었다(01:03).
 
-## §4 남은 것
+## §4 남은 것 (1단계 시점 — §5 이후 갱신)
+
+    1. 커밋 — [완료] 5c11f06
+    2. 추론 pull 확장 — [완료] §5 (사용자 지시로 착수, 같은 날)
+    3. claimer 상주 데몬화 여부(지금은 --once 수동/호출식) — 미정, 사용자 결정
+    4. E2E 산출물: work 20260818_0113_buildjob… — [완료] §7 의 close 로 종결(merged)
+
+## §5 #204 2단계 — 추론 pull (사용자 지시 "추론 pull 확장 진행해")
+
+### 설계의 갈림길과 그 답 — 확정 결정 > 원전 코드
+
+원전 대조에서 갈림길이 하나 나왔다. 원전 토폴로지(cluster_coordinator.py)는 **워커가
+구현체를 ephemeral `attempt/` 브랜치로 push** 하고 서버가 verify_and_merge 한다 — pull
+워커가 응답을 git 으로 돌려보내는 그 모양이 원전에 실재한다. 그러나 **Flow Y (사용자 확정
+2026-08-14)** 가 「워커는 추론 텍스트만, attempt 쓰기는 마스터」를 이미 확정했고, M4 의
+교훈이 정확히 「확정 결정 > 원전 코드」다. 그래서:
+
+    회수 = 마스터 주도 scp **읽기** (push 파견의 read_response 와 같은 자리·같은 수단)
+
+[중요] #185(git-carried)와 모순이 아니다 — #185 가 scp 를 버린 이유는 *"pull 데몬은 claim
+시점에 마스터가 밀어줄 수 없다"* (배달 방향, 마스터 부재)였고, 회수는 마스터가 루프에
+있는 시점(collect·통합)에 일어나므로 그 제약이 성립하지 않는다.
+
+### 무엇이 생겼나
+
+    워커 (claimer)   --types=build,code opt-in. code 태스크: durable task/<id> 를 자기
+                     클론에서 fetch+show 로 실체화(#185 전제 — blob sha 기록) → claude -p
+                     (ax-infer, 프롬프트는 infer.py 정본과 글자 동일 — 테스트가 대조) →
+                     사실을 result.json 에 (rc·stdout·blob·epoch·소요). [중요] 판단도
+                     submit 도 없다 — 태스크는 claimed 로 남는다(push 파견과 동일 계약,
+                     submit 은 통합자가 빌드 통과 후). DONE 기록은 재사용(이중 구매 방지,
+                     epoch 만 갱신 — fencing 규약), BLOCKED 는 다시 돈다
+    마스터 (collect)  python -m master.work.infer collect — claimed 상태 code 태스크의
+                     result.json+response.txt 를 scp 로 읽어 **push 파견과 같은 judge
+                     (마커+층1) → 같은 스풀**에 넣는다. 이후 통합자 경로는 완전 합류.
+                     [중요] blob 불일치는 fail-closed (워커가 본 지시서 ≠ 정본이면 want
+                     목록부터 신뢰 불가) · epoch 어긋남은 [주의] 로 남기고 큐 fencing 에 맡김
+
+### 라이브 E2E (2026-08-18 01:48~01:52, 실 비용 $0.21)
+
+    등록      [pull-e2e] work + code 태스크 5ebaba14 · carry.publish → task/5ebaba14
+    .2 워커   claimer --once --types=code: claim → materialize(blob 1c66249d 대조) →
+             claude 추론 32s → result.json+response.txt 기록, submit 없음
+    마스터    collect: 회수 1 — judge DONE · 파일 1(AxPullProbe.h 85자, 지시 사양 그대로) ·
+             층1 통과 · epoch 1 · base b1ba6af9 · $0.2132 계측까지 스풀에 안착
+
+[중요] **E2E 가 실 함정 하나를 또 잡았다 (CP949 세 번째)**: 내 로그 문구의 em-dash(—)
+하나가 `.2` 콘솔 인코딩에서 **프로세스를 통째로 죽였다** (ax_safety 크래시 핸들러가 잡음 —
+이식한 가드가 첫 실전에서 제 몫을 했다). 콘솔 print 를 encode-replace 로 감싸 수정,
+같은 자리에서 라이브 재확인(em-dash → `?`, 생존). 기록(result.json)은 크래시 **전에**
+끝나 있어 collect 는 무영향이었다 — 원자적 기록을 로그보다 먼저 두는 순서가 옳았다.
+
+## §6 buildjob close — 1단계의 구멍을 2단계가 메웠다
+
+test_projects 가 실 큐를 읽다가 걸렸다: 1단계 E2E 의 buildjob work 가 **미종결로 남아
+프로젝트 전환 가드(#210)를 막고 있었다.** 종결 단계가 설계에 없었던 것 —
+`buildjob close <work> --result=pass|fail` 신설 (verify → auto-cleanup 의 되덮기
+(ready_for_review)를 기다렸다가 merged/rejected 를 쓴다).
+
+[주의] 실측 함정 둘: ① 마지막 verify 가 auto-cleanup 을 **비동기로** 깨우고 그 끝이
+merge_status 를 되덮는다 — 종결을 먼저 쓰면 뒤집힌다 ② 단건 GET /works/<id> 는
+`{"work": {...}}` 로 감싼다(목록 GET 과 다름) — 이걸 안 읽어 폴링이 60초를 헛기다렸다.
+둘 다 테스트에 실물 모양 그대로 새김. 1단계 work 는 close 로 merged 종결 완료.
+
+## §7 남은 것 (최종)
 
     1. 커밋 (승인 대기)
-    2. 추론 pull 확장 — 사용자 확인 후 (#204 이슈 노트에 기록)
-    3. claimer 상주 데몬화 여부(지금은 --once 수동/호출식) — 미정, 사용자 결정
-    4. E2E 산출물: work 20260818_0113_buildjob… 는 submitted 로 남아 있다 — 검증(verify)
-       은 마스터의 판단 영역이라 손대지 않았다
+    2. gitea 잔재: durable `task/5ebaba14` (pull-e2e 매니페스트 1커밋) — 마스터는 브랜치
+       삭제 불가(pre-push 가드), selftest-carry-0817 때처럼 사용자 삭제 대상
+    3. claimer 상주 데몬화 — 미정 (사용자 결정)
+    4. 실전 적용: 다음 실 work 등록부터 pull 경로를 쓸지, 기존 push 파견과 병행할지 —
+       사용자 결정 (§8.4: 두 경로 다 살아 있고 선택은 호출자가 명시)
+
+테스트: 전체 3502/3502 (2단계 신규 13 포함).

@@ -64,10 +64,19 @@
                              실재. 첫 실전(.33 편입 주제): e4b 규율 유지 · **qwen3 는 압박에서
                              허위 실측 인용** — 검증 역할 금지 실측. 리포트 20 §8
     [진행] #204 폴링 확장   — 착수 조건은 사용자가 해제 (2026-08-18). 1단계(빌드 잡 +
-                             claimer) 작동 확인 완료: enqueue → .2 claimer claim → UE5
-                             빌드 109s PASS → submit, 큐에 사실 기록. WORKER_SCOPE 로
-                             κ.0 ①/② 경계를 토큰이 강제 (claim/submit 만, verify 403).
-                             claim types 필터 — 빌드 claimer 가 infer 를 훔치지 않는다.
-                             ax_safety 이식 = #165 부활 조건 충족. 추론 pull 은 사용자
-                             확인 후 ("일단 기능 작동을 확인하고 확장") — 리포트 21
+                             claimer) 작동 확인: enqueue → .2 claimer claim → UE5 빌드
+                             109s PASS → submit. WORKER_SCOPE 로 κ.0 ①/② 경계를 토큰이
+                             강제 (claim/submit 만, verify 403). claim types 필터 —
+                             claimer 가 신고 안 한 유형을 훔치지 않는다. ax_safety 이식
+                             = #165 부활 조건 충족. **2단계(추론 pull) 작동 확인** (같은
+                             날, 사용자 지시): --types=code opt-in → durable 실체화(blob
+                             대조) → claude 추론 → 사실만 result.json (submit 없음) →
+                             마스터 collect 가 scp 로 걷어 push 파견과 같은 judge·스풀로
+                             합류. E2E $0.21 왕복 DONE. [중요] 갈림길(워커 attempt push
+                             vs scp 회수)은 Flow Y 확정이 답 — 확정 결정 > 원전 코드.
+                             [중요] CP949 세 번째 실측: 로그의 em-dash 가 .2 콘솔에서
+                             프로세스를 죽였다(ax_safety 가 잡음) → encode-replace.
+                             buildjob close 신설(미종결 work 가 #210 전환 가드를 막던
+                             1단계 구멍). 남은 것: 상주화·실전 pull 전환 = 사용자 결정.
+                             리포트 21 §5~§7
     [대기] 다음: #211 (자연 30건 대기) · #103 · #169

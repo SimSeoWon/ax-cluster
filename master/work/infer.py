@@ -646,12 +646,129 @@ def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner
     return hand
 
 
+# ── pull 회수 (#204 2단계) — 워커 claimer 가 남긴 사실을 가져와 **여기서** 판정한다 ──────
+#
+# 워커의 claimer(payload claimer.py)는 추론을 돌리고 `.ax/work/<id>/result.json`(실행 사실)
+# 과 `response.txt`(본문)를 체크아웃에 남길 뿐, 판단도 submit 도 하지 않는다 (κ.0 ①/②).
+# collect 는 그 사실을 scp 로 읽어 push 파견과 **같은 judge → 같은 스풀**에 넣는다 —
+# 이후(통합자 적용·빌드·커밋·submit)는 두 경로가 완전히 합류한다.
+#
+# [중요] 회수는 마스터 주도 scp **읽기**다 — #185 가 배달(마스터→워커)을 git 으로 돌린 이유는
+#    "pull 데몬은 claim 시점에 마스터가 밀어줄 수 없다"였고, 회수(워커→마스터)는 반대로
+#    마스터가 루프 안에 있는 시점(collect·통합)에 일어나므로 그 제약이 성립하지 않는다.
+
+RESULT_NAME = "result.json"
+
+
+def result_path(facts, task_id: str) -> str:
+    """워커 안의 실행 사실 기록 절대경로 (claimer 의 RESULT_NAME 과 동값)."""
+    rel = f"{bundle.WORK_REL}/{task_id}/{RESULT_NAME}"
+    if facts.windows:
+        return f"{facts.path}\\" + rel.replace("/", chr(92))
+    return f"{facts.path}/{rel}"
+
+
+def git_blob_sha(text: str) -> str:
+    """git 의 blob sha1 — 워커가 실체화한 매니페스트와 마스터 정본의 대조 기준.
+
+    [중요] 다르면 fail-closed 다: 워커가 본 지시서와 판정 기준(「대상 파일」 절)이 다른
+    문서라는 뜻이라, want 목록부터 신뢰할 수 없다.
+    """
+    import hashlib
+    data = (text or "").encode("utf-8")
+    return hashlib.sha1(b"blob %d\x00" % len(data) + data).hexdigest()
+
+
+def collect_task(paths, facts, task: dict, *, reader=None, order: int = 0) -> tuple:
+    """pull 태스크 하나 회수 → 판정 → 스풀. `(Response|None, 사람이 읽을 한 줄)`.
+
+    `None` 은 「아직 회수할 것이 없다」 — result.json 미도착은 실행 중/미실행의 정상 상태다.
+    읽기 실패와 구분한다: 도착했는데 못 읽으면 예외가 아니라 BLOCKED 로 **판정에 남긴다.**
+    """
+    task_id = str(task.get("task_id") or "")
+    work_id = str(task.get("work_id") or "")
+    r = reader or bundle._remote_read
+    try:
+        raw_rec = r(facts, result_path(facts, task_id))
+    except bundle.BundleError:
+        return None, f"{task_id[:8]}: 결과 미도착 — 실행 중이거나 아직 안 돌았다"
+    try:
+        rec = json.loads(raw_rec)
+    except ValueError as e:
+        rec = {"stdout": "", "epoch": None, "manifest_blob": f"(깨짐: {e})"}
+
+    body = runner._manifest_for(paths, task_id)
+    want = target_files_from(body)
+    try:
+        raw_resp = read_response(facts, task_id, reader=reader)
+    except bundle.BundleError:
+        raw_resp = ""                # judge 가 "DONE 인데 응답이 없다" 로 잡는다
+
+    res = judge(str(rec.get("stdout") or ""), raw_resp, want=want)
+    res.task_id, res.worker = task_id, str(task.get("worker_id") or rec.get("worker") or "")
+    res.epoch = rec.get("epoch")
+
+    expect = git_blob_sha(body)
+    got = str(rec.get("manifest_blob") or "")
+    if got != expect:
+        # [중요] 지시서가 다르다 — 응답이 그럴듯해도 판정 기준이 어긋난 문서다. fail-closed.
+        res.status = runner.BLOCKED
+        res.reason = (f"매니페스트 불일치 — 워커 blob {got[:12]} ≠ 정본 {expect[:12]} "
+                      f"(등록 후 정본이 바뀌었거나 워커가 낡은 durable 을 봤다)")
+    if rec.get("epoch") != task.get("epoch"):
+        res.notes.append(f"[주의] epoch 이 어긋난다 — 기록 {rec.get('epoch')} vs 현재 "
+                         f"{task.get('epoch')} (재확보됨). 제출은 큐 fencing 이 거른다")
+
+    try:
+        from . import twin_base
+        res.base_commit = twin_base.resolve(paths, task_id).commit or ""
+    except Exception:                                    # noqa: BLE001
+        res.base_commit = ""
+
+    spool(paths, res, work_id=work_id, order=order)
+    return res, f"{task_id[:8]}: {res.summary}"
+
+
+def collect(paths, *, project: str = "", work_id: str = "", facts=None,
+            api=runner._api, reader=None) -> dict:
+    """claimed 상태의 pull 추론 태스크들을 회수해 스풀에 넣는다. **판정은 전부 여기서.**
+
+    반환: `{"collected": n, "waiting": n, "lines": [...]}` — 사람이 읽는 요약.
+    [주의] 회수는 멱등이다 — 같은 태스크를 다시 걷으면 스풀을 같은 내용으로 덮는다.
+    """
+    if facts is None:
+        facts = [bundle.probe(h, u, p, d, r)
+                 for h, u, p, d, r in bundle.workshops(project or paths.name)]
+    by_host = {f.host: f for f in facts}
+    tasks = api("GET", "/api/v1/tasks") or []
+    targets = [t for t in tasks
+               if str(t.get("type")) == "code" and str(t.get("status")) == "claimed"
+               and (not work_id or str(t.get("work_id")) == work_id)]
+    targets.sort(key=lambda t: (int(t.get("hierarchy_level") or 0),
+                                str(t.get("created") or "")))
+    out = {"collected": 0, "waiting": 0, "lines": []}
+    for n, t in enumerate(targets, 1):
+        host = str(t.get("worker_id") or "")
+        f = by_host.get(host)
+        if f is None:
+            out["lines"].append(f"{str(t.get('task_id'))[:8]}: [중요] 워커 {host!r} 가 "
+                                f"레지스트리에 없다 — 회수 불가")
+            continue
+        res, line = collect_task(paths, f, t, reader=reader, order=n)
+        out["lines"].append(line)
+        out["collected" if res is not None else "waiting"] += 1
+    if not targets:
+        out["lines"].append("회수 대상이 없다 (claimed 상태의 code 태스크 0건)")
+    return out
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────────
 #
-#   python -m master.work.infer probe  [프로젝트]         누가 파견 가능한가 (큐 무접촉)
-#   python -m master.work.infer run    [프로젝트] [N]     최대 N건 추론 (직렬)
-#   python -m master.work.infer run-p  [프로젝트] [N]     [중요] 병렬 — 사람이 켠다
-#   python -m master.work.infer spool  [프로젝트] [work]  스풀에 무엇이 있나
+#   python -m master.work.infer probe   [프로젝트]         누가 파견 가능한가 (큐 무접촉)
+#   python -m master.work.infer run     [프로젝트] [N]     최대 N건 추론 (직렬)
+#   python -m master.work.infer run-p   [프로젝트] [N]     [중요] 병렬 — 사람이 켠다
+#   python -m master.work.infer spool   [프로젝트] [work]  스풀에 무엇이 있나
+#   python -m master.work.infer collect [프로젝트] [work]  pull 워커의 응답 회수 → 스풀
 #
 # [중요] 데몬으로 만들지 않는다(§5.5.4). 상주가 필요하면 systemd timer 로 `run` 을 부른다.
 
@@ -682,6 +799,12 @@ def main(argv) -> int:
         return _cli_spool(paths, argv[2] if len(argv) > 2 else "")
 
     facts = [bundle.probe(h, u, p, d, r) for h, u, p, d, r in bundle.workshops(paths.name)]
+    if cmd == "collect":
+        got = collect(paths, facts=facts, work_id=argv[2] if len(argv) > 2 else "")
+        print(f"회수 {got['collected']} · 대기 {got['waiting']}")
+        for ln in got["lines"]:
+            print("  " + ln)
+        return 0
     if cmd == "probe":
         workers, rejected = _free_workers(facts, clean=runner.cleanliness(paths.name))
         print(f"프로젝트 {paths.name}")
@@ -697,7 +820,7 @@ def main(argv) -> int:
         print(hand.summary())
         return 0
     print(__doc__.split("## ")[0])
-    print("  probe | run | run-p | spool")
+    print("  probe | run | run-p | spool | collect")
     return 2
 
 

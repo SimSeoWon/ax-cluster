@@ -1,25 +1,30 @@
-"""#204 계약 테스트 — 유형 필터·워커 스코프·claimer 실행·buildjob 등록.
+"""#204 계약 테스트 — 유형 필터·워커 스코프·claimer 실행·buildjob 등록·추론 pull.
 
-핵심 계약 넷:
+핵심 계약:
 ① claim 의 `types` 필터 — build claimer 가 infer(write) 일감을 **절대 훔치지 않는다**
 ② WORKER_SCOPE — worker 토큰으로 verify·등록은 **못 한다** (κ.0 ①/② 경계의 강제)
 ③ claimer 는 판단하지 않는다 — 빌드 실패도 submit(사실 보고)이고, 착수 실패만 submit-fail
 ④ buildjob.enqueue 는 pull 모드 work + requires=["ue5"] build 태스크를 건다
+⑤ 추론 pull (2단계) — 워커는 사실만 기록(submit 없음), 판정·스풀은 마스터 collect 가;
+   프롬프트는 infer.py 정본과 글자까지 같아야 한다
 
 실행: .venv/bin/python master/test_claimer.py  (task_queue 가 pydantic — venv)
 """
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master.auth import WORKER_SCOPE  # noqa: E402
 from master.task_queue.logic import register_work, register_task, claim_task  # noqa: E402
 from master.task_queue.persistence import TaskIndex  # noqa: E402
-from master.work import buildjob, claimer  # noqa: E402
+from master.work import buildjob, claimer, infer  # noqa: E402
 
 
 def _idx() -> TaskIndex:
@@ -89,6 +94,7 @@ class _FakeClient:
         self.root = Path(root)
         self.project = "P"
         self.ue5_cmd = ""
+        self.worker_id = "w-test"
         self.calls = []
 
     def heartbeat(self, tid):
@@ -158,6 +164,275 @@ def test_enqueue_registers_pull_work_and_ue5_build_task():
 def test_enqueue_work_failure_reports_step():
     got = buildjob.enqueue(api=lambda m, p, b: (503, {"error": "down"}))
     assert not got["ok"] and got["step"] == "work"
+
+
+def test_close_verifies_then_terminal_after_cleanup():
+    """[중요] close 는 verify 후 auto-cleanup 의 되덮기(ready_for_review)를 **기다렸다가**
+    종결을 쓴다 — 순서가 뒤집히면 work 가 미종결로 남아 전환 가드(#210)에 걸린다."""
+    calls = []
+    state = {"merge_status": "in_progress", "polls": 0}
+
+    def fake_api(method, path, payload=None):
+        calls.append((method, path))
+        if (method, path) == ("GET", "/api/v1/works"):
+            return 200, [{"work_id": "W1", "merge_status": state["merge_status"]}]
+        if (method, path) == ("GET", "/api/v1/tasks"):
+            return 200, [{"task_id": "T1", "work_id": "W1", "type": "build",
+                          "status": "submitted"}]
+        if path == "/api/v1/tasks/T1/verify":
+            assert payload == {"passed": True, "result": "pass"}
+            return 200, {"ok": True}
+        if (method, path) == ("GET", "/api/v1/works/W1"):
+            state["polls"] += 1
+            if state["polls"] >= 2:            # auto-cleanup 이 되덮은 시점을 흉내
+                state["merge_status"] = "ready_for_review"
+            # [주의] 실물 그대로 — 단건 GET 은 {"work": {...}} 로 감싼다 (실측: 이 포장을
+            #    안 읽어서 close 가 60초를 헛기다린 버그가 있었다)
+            return 200, {"work": {"work_id": "W1",
+                                  "merge_status": state["merge_status"]}, "tasks": []}
+        if (method, path) == ("PATCH", "/api/v1/works/W1"):
+            assert state["merge_status"] == "ready_for_review", \
+                "auto-cleanup 을 기다리지 않고 종결을 썼다"
+            assert payload == {"merge_status": "merged"}
+            return 200, {"ok": True}
+        raise AssertionError((method, path))
+    got = buildjob.close("W1", result="pass", api=fake_api,
+                         sleeper_close=lambda s: None)
+    assert got["ok"] and got["after_cleanup"] == "ready_for_review"
+
+
+def test_close_rejects_bad_result():
+    got = buildjob.close("W1", result="ok?", api=lambda *a: (500, {}))
+    assert not got["ok"] and "pass|fail" in got["error"]
+
+
+# ── ⑤ 추론 pull (#204 2단계) ───────────────────────────────────
+
+def test_infer_instruction_matches_master():
+    """[중요] 프롬프트 정본은 infer.py — payload 사본이 어긋나면 워커가 다른 지시를 받는다."""
+    assert claimer.INFER_INSTRUCTION == infer.INFER_INSTRUCTION
+
+
+def test_types_cli_rejects_unknown():
+    try:
+        claimer.main(["--types=xyz"])
+        raise AssertionError("모르는 유형이 통과했다")
+    except claimer.ClaimerError as e:
+        assert "xyz" in str(e)
+
+
+def _git_repo_with_durable(tmp: Path, tid: str, manifest: str) -> Path:
+    """durable task/<tid> 에 매니페스트가 실린 로컬 저장소 — origin 은 자기 자신."""
+    def g(*args, cwd=tmp):
+        r = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
+        assert r.returncode == 0, f"git {args}: {r.stderr}"
+        return r.stdout.strip()
+    g("init", "-q", "-b", "main")
+    g("config", "user.email", "t@t")
+    g("config", "user.name", "t")
+    (tmp / "a.txt").write_text("x", encoding="utf-8")
+    g("add", "a.txt")
+    g("commit", "-qm", "base")
+    g("checkout", "-qb", f"task/{tid}")
+    rel = claimer.CARRY_MANIFEST_REL.format(tid=tid)
+    p = tmp / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(manifest, encoding="utf-8")
+    g("add", "-f", rel)
+    g("commit", "-qm", f"skeleton context manifest for {tid}")
+    g("checkout", "-q", "main")
+    g("remote", "add", "origin", str(tmp))
+    return tmp
+
+
+_MANIFEST = "## 대상 파일\n\n- `Source/X.h`\n\n## 지시\n\n짧게.\n"
+
+
+def test_infer_records_facts_and_does_not_submit():
+    """[중요] 추론은 submit 하지 않는다 — result.json 에 사실만 남고 태스크는 claimed 로."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _git_repo_with_durable(Path(tmp), "t9", _MANIFEST)
+        c = _FakeClient(root)
+        ran = []
+
+        def fake_claude(tree, argv, timeout):
+            ran.append(argv)
+            (tree / claimer.WORK_REL / "t9" / claimer.RESPONSE_NAME).write_text(
+                "=== FILE: Source/X.h ===\n#pragma once\n", encoding="utf-8")
+            return 0, "prose\nRESPONSE: 1\nRESULT: DONE"
+
+        out = claimer.run_one(c, {"task_id": "t9", "type": "code", "epoch": 3},
+                              exec_fn=fake_claude, log=lambda m: None)
+        assert out.get("infer") == "recorded" and out["rc"] == 0
+        assert not any(x[0] in ("submit", "submit-fail") for x in c.calls), c.calls
+        rec = json.loads((root / claimer.WORK_REL / "t9" / claimer.RESULT_NAME)
+                         .read_text(encoding="utf-8"))
+        assert rec["epoch"] == 3 and "RESULT: DONE" in rec["stdout"]
+        assert rec["manifest_blob"] == infer.git_blob_sha(_MANIFEST)
+        # 지시에 스킬·응답 경로가 실려 있다
+        assert any("ax-infer" in a for a in ran[0])
+
+
+def test_infer_setup_failure_bounces():
+    """durable 에 매니페스트가 없으면 착수 실패 — submit-fail(infer-setup), 추론 없음."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "-C", str(root), "init", "-q", "-b", "main"],
+                       capture_output=True)
+        subprocess.run(["git", "-C", str(root), "remote", "add", "origin", str(root)],
+                       capture_output=True)
+        c = _FakeClient(root)
+        out = claimer.run_one(c, {"task_id": "t8", "type": "code"},
+                              exec_fn=lambda *a: (_ for _ in ()).throw(AssertionError),
+                              log=lambda m: None)
+        assert ("submit-fail", "t8", "infer-setup") in [x[:3] for x in c.calls]
+        assert "추론 착수 실패" in out["outcome"]
+
+
+def test_infer_reuses_done_record_and_refreshes_epoch():
+    """[중요] 같은 매니페스트의 DONE 기록은 다시 사지 않는다 — epoch 만 이번 claim 으로."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _git_repo_with_durable(Path(tmp), "t7", _MANIFEST)
+        c = _FakeClient(root)
+
+        def fake_claude(tree, argv, timeout):
+            (tree / claimer.WORK_REL / "t7" / claimer.RESPONSE_NAME).write_text(
+                "=== FILE: Source/X.h ===\nx\n", encoding="utf-8")
+            return 0, "RESPONSE: 1\nRESULT: DONE"
+        claimer.run_one(c, {"task_id": "t7", "type": "code", "epoch": 1},
+                        exec_fn=fake_claude, log=lambda m: None)
+
+        def must_not_run(*a):
+            raise AssertionError("재사용해야 하는데 추론을 다시 샀다")
+        out = claimer.run_one(c, {"task_id": "t7", "type": "code", "epoch": 5},
+                              exec_fn=must_not_run, log=lambda m: None)
+        assert out.get("infer") == "reused"
+        rec = json.loads((root / claimer.WORK_REL / "t7" / claimer.RESULT_NAME)
+                         .read_text(encoding="utf-8"))
+        assert rec["epoch"] == 5
+
+
+def test_infer_blocked_record_is_not_reused():
+    """BLOCKED 는 다시 돈다 — 재큐잉이 같은 실패만 되받는 회전을 막는다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _git_repo_with_durable(Path(tmp), "t6", _MANIFEST)
+        c = _FakeClient(root)
+
+        def blocked(tree, argv, timeout):
+            (tree / claimer.WORK_REL / "t6" / claimer.RESPONSE_NAME).write_text(
+                "", encoding="utf-8")
+            return 0, "사유\nRESULT: BLOCKED"
+        claimer.run_one(c, {"task_id": "t6", "type": "code", "epoch": 1},
+                        exec_fn=blocked, log=lambda m: None)
+        reran = []
+
+        def again(tree, argv, timeout):
+            reran.append(1)
+            return 0, "RESPONSE: 1\nRESULT: DONE"
+        claimer.run_one(c, {"task_id": "t6", "type": "code", "epoch": 2},
+                        exec_fn=again, log=lambda m: None)
+        assert reran, "BLOCKED 기록을 재사용해 버렸다"
+
+
+# ── ⑥ 마스터 collect — 판정은 전부 여기서 ──────────────────────
+
+def _paths(tmp: Path):
+    return SimpleNamespace(root=tmp, responses=tmp / "responses", name="P",
+                           repo=tmp / "no-repo")
+
+
+def _facts(host="192.168.0.2"):
+    return SimpleNamespace(host=host, user="u", path="E:\\t", windows=True)
+
+
+def _write_master_manifest(paths, tid: str, body: str):
+    from master.work import manifest as mm
+    p = mm.manifest_path(paths, tid)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body, encoding="utf-8")
+
+
+def _reader_for(files: dict):
+    from master.client import bundle
+
+    def r(facts, path):
+        for key, text in files.items():
+            if path.replace("\\", "/").endswith(key):
+                return text
+        raise bundle.BundleError(f"없음: {path}")
+    return r
+
+
+def test_collect_judges_and_spools_pull_response():
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _paths(Path(tmp))
+        _write_master_manifest(paths, "t5", _MANIFEST)
+        rec = {"task_id": "t5", "epoch": 4, "manifest_blob": infer.git_blob_sha(_MANIFEST),
+               "rc": 0, "stdout": "RESPONSE: 1\nRESULT: DONE", "worker": "192.168.0.2"}
+        reader = _reader_for({
+            f"t5/{infer.RESULT_NAME}": json.dumps(rec),
+            f"t5/{infer.RESPONSE_NAME}": "=== FILE: Source/X.h ===\n#pragma once\n"})
+        task = {"task_id": "t5", "work_id": "W", "worker_id": "192.168.0.2", "epoch": 4}
+        res, line = infer.collect_task(paths, _facts(), task, reader=reader, order=1)
+        assert res is not None and res.ok, line
+        assert res.epoch == 4 and res.files == {"Source/X.h": "#pragma once\n"}
+        back = infer.unspool(paths, "t5", "W")
+        assert back is not None and back.ok
+
+
+def test_collect_blob_mismatch_is_fail_closed():
+    """[중요] 워커가 본 지시서와 정본이 다르면 응답이 그럴듯해도 BLOCKED."""
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _paths(Path(tmp))
+        _write_master_manifest(paths, "t4", _MANIFEST + "\n(정본이 바뀌었다)\n")
+        rec = {"task_id": "t4", "epoch": 1, "manifest_blob": infer.git_blob_sha(_MANIFEST),
+               "rc": 0, "stdout": "RESPONSE: 1\nRESULT: DONE"}
+        reader = _reader_for({
+            f"t4/{infer.RESULT_NAME}": json.dumps(rec),
+            f"t4/{infer.RESPONSE_NAME}": "=== FILE: Source/X.h ===\nx\n"})
+        task = {"task_id": "t4", "work_id": "W", "worker_id": "192.168.0.2", "epoch": 1}
+        res, _ = infer.collect_task(paths, _facts(), task, reader=reader)
+        assert res is not None and not res.ok and "매니페스트 불일치" in res.reason
+
+
+def test_collect_waits_when_result_missing():
+    """result.json 미도착은 실패가 아니라 「아직」 — None 으로 구분한다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _paths(Path(tmp))
+        _write_master_manifest(paths, "t3", _MANIFEST)
+        task = {"task_id": "t3", "work_id": "W", "worker_id": "192.168.0.2", "epoch": 1}
+        res, line = infer.collect_task(paths, _facts(), task, reader=_reader_for({}))
+        assert res is None and "미도착" in line
+
+
+def test_collect_epoch_mismatch_is_noted():
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _paths(Path(tmp))
+        _write_master_manifest(paths, "t2", _MANIFEST)
+        rec = {"task_id": "t2", "epoch": 1, "manifest_blob": infer.git_blob_sha(_MANIFEST),
+               "rc": 0, "stdout": "RESPONSE: 1\nRESULT: DONE"}
+        reader = _reader_for({
+            f"t2/{infer.RESULT_NAME}": json.dumps(rec),
+            f"t2/{infer.RESPONSE_NAME}": "=== FILE: Source/X.h ===\nx\n"})
+        task = {"task_id": "t2", "work_id": "W", "worker_id": "192.168.0.2", "epoch": 7}
+        res, _ = infer.collect_task(paths, _facts(), task, reader=reader)
+        assert res is not None and any("epoch" in n for n in res.notes)
+
+
+def test_collect_filters_claimed_code_tasks_only():
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _paths(Path(tmp))
+        tasks = [
+            {"task_id": "a", "type": "build", "status": "claimed", "worker_id": "h"},
+            {"task_id": "b", "type": "code", "status": "submitted", "worker_id": "h"},
+            {"task_id": "c", "type": "code", "status": "claimed", "worker_id": "없는호스트",
+             "work_id": "W", "epoch": 1},
+        ]
+        got = infer.collect(paths, facts=[_facts("h")],
+                            api=lambda m, p, b=None: tasks, reader=_reader_for({}))
+        # build·submitted 는 대상이 아니고, 미등록 호스트는 회수 불가로 말한다
+        assert got["collected"] == 0 and got["waiting"] == 0
+        assert any("레지스트리에 없다" in ln for ln in got["lines"])
 
 
 if __name__ == "__main__":

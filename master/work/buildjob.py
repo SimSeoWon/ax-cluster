@@ -6,9 +6,14 @@ SSH 직접 경로는 그대로 있다(§8.4 — 조용한 폴백 없음, 경로 
 
     python -m master.work.buildjob enqueue [--tree <워커쪽 경로>] [--timeout N]
     python -m master.work.buildjob watch <task_id> [--timeout N]
+    python -m master.work.buildjob close <work_id 접두> --result=pass|fail
 
 `enqueue` 는 전용 work(`[buildjob]` 접두)를 만들고 `type="build"`·`requires=["ue5"]`
 태스크 하나를 건다. tree 를 안 주면 워커의 자기 체크아웃(claimer 의 config 기준)이 대상.
+
+[중요] `close` 는 사람이(또는 파이프라인이) watch 로 결과를 **읽은 뒤** 부른다 — verdict 는
+마스터의 판단이라 자동이 아니다 (κ.0 ①). 종결 없이 두면 work 가 미종결로 남아 프로젝트
+전환 가드(#210)에 걸린다 — 1단계 첫 실전이 정확히 그렇게 걸렸다.
 """
 from __future__ import annotations
 
@@ -92,6 +97,58 @@ def watch(task_id: str, *, timeout: int = 2400, api=None, sleeper=time.sleep) ->
     return {"ok": False, "error": f"{timeout}초 안에 안 끝났다 (마지막 status={last})"}
 
 
+def close(work_prefix: str, *, result: str, api=None, sleeper_close=None) -> dict:
+    """buildjob work 종결 — 태스크 verify + work merge_status. **verdict 는 호출자의 판단.**
+
+    result="pass" → verify(pass) + merged / "fail" → verify(reject) + rejected.
+    [주의] merged/rejected PATCH 는 종결 기록(생산자③)을 트윈에 남긴다 — 빌드 게이트가
+    돌았다는 사실은 기록할 가치가 있는 파이프라인 이벤트다.
+    """
+    if result not in ("pass", "fail"):
+        return {"ok": False, "error": f"result 는 pass|fail — {result!r}"}
+    st, works = _call("GET", "/api/v1/works", api=api)
+    if st != 200:
+        return {"ok": False, "error": f"works 조회 실패 HTTP {st}"}
+    w = next((x for x in works if str(x.get("work_id", "")).startswith(work_prefix)), None)
+    if w is None:
+        return {"ok": False, "error": f"work 가 없다: {work_prefix}"}
+    wid = str(w["work_id"])
+    st, tasks = _call("GET", "/api/v1/tasks", api=api)
+    if st != 200:
+        return {"ok": False, "error": f"tasks 조회 실패 HTTP {st}"}
+    done = []
+    for t in tasks:
+        if str(t.get("work_id")) != wid or str(t.get("type")) != "build":
+            continue
+        if str(t.get("status")) == "submitted":
+            st2, r2 = _call("POST", f"/api/v1/tasks/{t['task_id']}/verify",
+                            {"passed": result == "pass",
+                             "result": "pass" if result == "pass" else "reject"}, api=api)
+            done.append({"task": t["task_id"], "verify_http": st2,
+                         **({"detail": r2} if st2 != 200 else {})})
+    # [중요] 마지막 verify 가 auto-cleanup 을 **비동기로** 깨우고, 그 끝이 merge_status 를
+    #    ready_for_review 로 덮는다 (logic_cleanup §4). 종결을 먼저 쓰면 뒤집히므로 —
+    #    in_progress 를 벗어날 때까지 기다렸다가 종결을 쓴다. 60초 무변화면 그냥 쓴다(말하고).
+    waited = ""
+    if done:
+        for _ in range(30):
+            st_w, w_now = _call("GET", f"/api/v1/works/{wid}", api=api)
+            # [주의] 단건 GET 은 {"work": {...}, "tasks": [...]} 로 감싼다 — 목록 GET 과 다르다
+            inner = (w_now or {}).get("work") or (w_now or {})
+            s = inner.get("merge_status") if st_w == 200 else None
+            if s and s != "in_progress":
+                waited = s
+                break
+            (sleeper_close or time.sleep)(2)
+        else:
+            waited = "[주의] 60초 대기해도 in_progress — auto-cleanup 이 종결을 되덮을 수 있다"
+    st3, r3 = _call("PATCH", f"/api/v1/works/{wid}",
+                    {"merge_status": "merged" if result == "pass" else "rejected"}, api=api)
+    return {"ok": st3 == 200, "work_id": wid, "verified": done,
+            "after_cleanup": waited,
+            "merge_status_http": st3, **({"detail": r3} if st3 != 200 else {})}
+
+
 def main(argv) -> int:
     if not argv:
         print(__doc__)
@@ -104,6 +161,8 @@ def main(argv) -> int:
             kw["tree"] = a.split("=", 1)[1]
         elif a.startswith("--timeout="):
             kw["timeout"] = int(a.split("=", 1)[1])
+        elif a.startswith("--result="):
+            kw["result"] = a.split("=", 1)[1]
         elif not a.startswith("--"):
             pos.append(a)
     if cmd == "enqueue":
@@ -112,6 +171,10 @@ def main(argv) -> int:
         return 0 if got.get("ok") else 1
     if cmd == "watch" and pos:
         got = watch(pos[0], **({"timeout": kw["timeout"]} if "timeout" in kw else {}))
+        print(json.dumps(got, ensure_ascii=False, indent=2))
+        return 0 if got.get("ok") else 1
+    if cmd == "close" and pos and "result" in kw:
+        got = close(pos[0], result=kw["result"])
         print(json.dumps(got, ensure_ascii=False, indent=2))
         return 0 if got.get("ok") else 1
     print(__doc__)
