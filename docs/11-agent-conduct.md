@@ -49,6 +49,28 @@
 [주의] 이 규칙이 없어서 마일스톤 4 가 생겼다. 인용 census 로 **원전 74파일 / 23,710줄이 우리 저장소에서
 한 번도 언급되지 않았음**이 측정됐다 → [`milestones/4-origin-reconciliation.md`](milestones/4-origin-reconciliation.md).
 
+### 11.2.1 census 는 재실행 가능한 절차다 (#177/#178, 2026-08-17 제도화)
+
+리포트 14 §1 의 일회성 측정을 도구로 남겼다 — `master/census.py` (sigma_audit 와 같은 자리,
+순수 stdlib, `python3` 로 돈다):
+
+    python3 master/census.py                     전체 — 인용 0 목록 · 필독 4종 상태 · 한계 고지
+    python3 master/census.py <원전파일명> ...     [중요] **만들기 전에** — 그 파일이 우리
+                                                 저장소에 언급된 적 있는지. 0 이면 실물부터 연다
+
+방법: 원전 py/md(tests·plan_archive·history 제외)의 basename 이 우리 코퍼스(저장소 md·py·yaml·
+json·unit + `~/claude-workspace/reports/`, `.git`·`ModularStage`·`.venv` 제외)에 나타난 횟수.
+[주의] 원방법과 한 곳 다르다 — 경계 보정(`http_server.py` 가 `server.py` 로 안 잡히게, `_` 뒤 거부).
+
+    기준선  2026-08-13 (리포트 14)   인용 0 = 74파일 / 23,710줄
+    현재    2026-08-17 (제도화 시점)  인용 0 = **14파일 / 4,101줄** — M4 가 한 일이 수치로 보인다.
+           잔여 14건은 대부분 `watcher/ontology_*` facade 분리 산물(개념 중복 부류)
+
+[중요] **이 지표는 양방향으로 틀린다** — 인용됨≠읽음(원전 docs 4종은 인용이 "미독"이라 적힌
+문장이었다) · 인용 0≠미이식(`logic_lifecycle.py` 는 인용 0인데 이식돼 있었다) · 파일 수≠개념 수.
+**상한이지 손실량이 아니다** — 결론을 걸 파일은 반드시 실물을 열어 확인한다. 이 도구는 «미이식»
+딱지를 붙이지 않는다.
+
 ## 11.3 수정 권한 — 자동 로드 문서와 게임 소스
 
 **원전 1조 이식, [중요] 범위는 사용자 결정 2026-08-14.** 이 둘은 **고치기 전에 계획을 말하고 동의를

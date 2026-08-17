@@ -28,10 +28,14 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   `verify_and_merge` moves to `.2`. Everything I redesigned beyond that was redesign, not a port.
   [중요] **Do not argue the topology from M3's docs** — its label *"사용자 확정 2026-08-11"* is wrong
   (it was *"그래 해"* after I pushed it), and `settled-decisions.md` §214 carries the same bad label.
-  [중요] **Before building anything, read the origin and leave a citation.** Never-cited must-reads:
+  [중요] **Before building anything, read the origin and leave a citation.** Must-reads (M4 때
+  인용 0이었던 넷 — 2026-08-17 census 로 전부 인용 확인):
   `local_llm_distributed_workers_plan_v5.0.md` (463, user-confirmed C.1–C.7/κ.0),
   `.agents/AGENTS.md` (21 — its rule 3 *is* 애매하면 묻는다), `.claude/reviews/_silent_failure/
   audit_matrix.md` (99 — the σ audit method), `plan_completed_v4.5.md` (2397 — what already exists).
+  [중요] **만들기 전에 census**: `python3 master/census.py <원전파일>` — 인용 0이면 실물부터
+  연다. 절차와 census 의 양방향 한계(인용됨≠읽음 · 인용0≠미이식):
+  `docs/11-agent-conduct.md` §11.2.1.
   **Read only the open milestone** — closed ones are reference; don't load them. Progress
   lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
   [중요] **Neither the numerator nor the denominator is written in any document** — read both from
