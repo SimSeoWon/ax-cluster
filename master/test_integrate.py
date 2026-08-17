@@ -688,6 +688,67 @@ def test_no_spool_is_an_error_not_an_empty_run() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+# ── durable_base — #185 매니페스트 커밋과의 이음새 (실전 첫 work 실측 2026-08-18) ──────
+
+def _db_runner(script: dict):
+    """cmd 부분 문자열 → (rc, out). 스크립트 밖 명령은 실패로 — 무엇을 불렀는지가 계약."""
+    calls = []
+
+    def r(facts, cmd):
+        calls.append(cmd)
+        for key, resp in script.items():
+            if key in cmd:
+                return resp
+        return 1, f"(no script for: {cmd})"
+    r.calls = calls
+    return r
+
+
+def test_durable_base_builds_on_manifest_tip() -> None:
+    """durable 팁이 base 의 자손 + 대상 파일 무접촉(매니페스트 커밋뿐) → 팁 위에 짓는다."""
+    r = _db_runner({"fetch origin": (0, ""),
+                    "rev-parse": (0, "657214e2c8b16cc2509f746ebacf9e2139b52af0"),
+                    "merge-base --is-ancestor": (0, ""),
+                    "diff --name-only": (0, ".ax/tasks/88d84bfe/context.md\n")})
+    at, note = I.durable_base(FakeFacts(), "task/88d84bfe", "b1ba6af9",
+                              {"Source/X.cpp"}, runner_=r)
+    check("[중요] durable 팁 위에 짓는다 (ff push 성립)", at.startswith("657214e2"), f"{at} {note}")
+    check("사유를 말한다", "위에 짓는다" in note, note)
+
+
+def test_durable_base_refuses_when_targets_touched() -> None:
+    """base→팁 diff 가 대상 파일을 건드리면 추론 근거가 낡았다 — 기준 유지 + 시끄럽게."""
+    r = _db_runner({"fetch origin": (0, ""),
+                    "rev-parse": (0, "657214e2c8b16cc2509f746ebacf9e2139b52af0"),
+                    "merge-base --is-ancestor": (0, ""),
+                    "diff --name-only": (0, "Source/X.cpp\n")})
+    at, note = I.durable_base(FakeFacts(), "task/t", "b1ba6af9", {"Source/X.cpp"}, runner_=r)
+    check("[중요] 겹치면 기준 유지", at == "b1ba6af9", at)
+    check("낡음을 말한다", "낡았다" in note, note)
+
+
+def test_durable_base_refuses_non_descendant() -> None:
+    r = _db_runner({"fetch origin": (0, ""),
+                    "rev-parse": (0, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"),
+                    "merge-base --is-ancestor": (1, "")})
+    at, note = I.durable_base(FakeFacts(), "task/t", "b1ba6af9", set(), runner_=r)
+    check("자손이 아니면 기준 유지", at == "b1ba6af9", at)
+    check("사람 판단으로 넘긴다", "사람이 판단" in note, note)
+
+
+def test_durable_base_same_tip_is_noop() -> None:
+    r = _db_runner({"fetch origin": (0, ""),
+                    "rev-parse": (0, "b1ba6af9df47c39a351fc49728a25dc15e58aea5")})
+    at, note = I.durable_base(FakeFacts(), "task/t", "b1ba6af9", set(), runner_=r)
+    check("팁==기준이면 그대로 (잡음 0)", at == "b1ba6af9" and note == "", f"{at} {note!r}")
+
+
+def test_durable_base_without_durable_is_noop() -> None:
+    at, note = I.durable_base(FakeFacts(), "", "b1ba6af9", set(),
+                              runner_=_db_runner({}))
+    check("durable 없으면 그대로", at == "b1ba6af9" and note == "")
+
+
 def main() -> int:
     for fn in (test_worktree_is_a_sibling_not_a_child,
                test_worktree_is_detached_and_verified,
@@ -715,7 +776,12 @@ def main() -> int:
                test_failure_catalog_accumulates_from_build_errors,
                test_redmine_without_key_says_so_instead_of_silently_skipping,
                test_no_ue5_means_layer3_unverified_not_failed,
-               test_no_spool_is_an_error_not_an_empty_run):
+               test_no_spool_is_an_error_not_an_empty_run,
+               test_durable_base_builds_on_manifest_tip,
+               test_durable_base_refuses_when_targets_touched,
+               test_durable_base_refuses_non_descendant,
+               test_durable_base_same_tip_is_noop,
+               test_durable_base_without_durable_is_noop):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_integrate: {PASS}/{total} 통과")

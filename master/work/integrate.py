@@ -617,6 +617,50 @@ def one_base(responses: list) -> str:
     return base
 
 
+def durable_base(facts, durable: str, base: str, target_files: set, *,
+                 runner_=None) -> tuple:
+    """트리를 세울 커밋을 고른다. `(at_commit, note)`.
+
+    [중요] #185 이후 durable `task/<id>` 는 등록 시점에 **매니페스트 커밋**을 이미 얹고
+    있다 — 기준 커밋 위에 그대로 커밋하면 durable 팁과 형제 분기가 돼 ff push 가 거부된다
+    (실전 첫 work 에서 실측, 2026-08-18). 그래서 durable 팁이 안전하면 **그 위에** 짓는다:
+
+    ① 팁이 기준 커밋의 자손이다 (아니면 durable 이 다른 시점의 것 — 기준을 못 바꾼다)
+    ② 기준→팁 diff 가 **대상 파일과 겹치지 않는다** (겹치면 추론의 근거가 낡았다 —
+       그 위에 지으면 durable 의 변경을 되돌려 덮는다. fail-closed: 기준 유지 + 시끄럽게)
+
+    [주의] 동결 대조 원본(baseline)은 여기와 무관하게 **추론 기준 커밋**을 계속 쓴다 —
+    응답이 근거한 소스와 대조해야 동결 검사가 의미를 갖는다.
+    """
+    if not durable:
+        return base, ""
+    rc, _ = _git(facts, f"fetch origin +refs/heads/{durable}", runner_=runner_)
+    if rc != 0:
+        return base, f"[주의] durable {durable} 을 fetch 못 했다 — 기준 커밋 위에 짓는다 (push 는 거부될 수 있다)"
+    rc, tip = _git(facts, f"rev-parse refs/remotes/origin/{durable}", runner_=runner_)
+    lines = [ln for ln in (tip or "").strip().splitlines() if ln.strip()]
+    tip = lines[-1].strip() if rc == 0 and lines else ""
+    if rc != 0 or not tip:
+        return base, f"[주의] durable {durable} 팁을 못 읽었다 — 기준 커밋 위에 짓는다"
+    if tip.startswith(base) or base.startswith(tip):
+        return base, ""
+    rc, _ = _git(facts, f"merge-base --is-ancestor {base} {tip}", runner_=runner_)
+    if rc != 0:
+        return base, (f"[주의] durable 팁 {tip[:8]} 이 기준 {base[:8]} 의 자손이 아니다 — "
+                      f"기준 커밋 위에 짓는다 (push 는 사람이 판단)")
+    rc, changed = _git(facts, f"diff --name-only {base} {tip}", runner_=runner_)
+    touched = {ln.strip() for ln in (changed or "").splitlines() if ln.strip()} \
+        if rc == 0 else None
+    if touched is None:
+        return base, f"[주의] 기준→durable 팁 diff 를 못 읽었다 — 기준 커밋 위에 짓는다"
+    overlap = touched & set(target_files)
+    if overlap:
+        return base, (f"[중요] durable 팁이 대상 파일을 이미 바꿨다({', '.join(sorted(overlap)[:3])}) "
+                      f"— 추론 근거가 낡았다. 기준 위에 짓고 push 는 사람이 판단한다")
+    return tip, (f"durable 팁 {tip[:8]} 위에 짓는다 (기준 {base[:8]} 의 자손 · "
+                 f"대상 파일 무접촉 — ff push 가 성립한다)")
+
+
 AUTO = "auto"        # [중요] 기본은 **돌리는 것**이다. 끄려면 호출자가 명시적으로 None 을 준다
 
 
@@ -642,7 +686,14 @@ def run(paths, facts, work_id: str, *, project: str = "", durable: str = "",
     itg = Integration(work_id=work_id, base=base, branch=durable)
     proj = project or paths.name
 
-    wt = ensure_worktree(facts, work_id, at_commit=base, runner_=runner_)
+    # [중요] durable 팁 위에 지을 수 있으면 그렇게 — #185 의 매니페스트 커밋과 형제 분기가
+    #    되는 것을 막는다 (안전 조건·폴백은 durable_base 참조). 동결 대조는 계속 base 기준.
+    targets = {f for r in responses for f in r.files}
+    at, base_note = durable_base(facts, durable, base, targets, runner_=runner_)
+    if base_note:
+        itg.note = base_note
+
+    wt = ensure_worktree(facts, work_id, at_commit=at, runner_=runner_)
     itg.tree = wt.path
     if not wt.ok:
         itg.note = f"[중요] 격리 트리를 세우지 못했다 — {wt.error}"
@@ -655,7 +706,8 @@ def run(paths, facts, work_id: str, *, project: str = "", durable: str = "",
     l2_call = _default_layer2() if layer2 == AUTO else layer2
     if l2_call is None:
         # [주의] 미확인을 통과처럼 읽히게 두지 않는다
-        itg.note = "[주의] 층2 를 돌리지 않았다 (호출자가 껐다) — 문법·API 검사는 미확인이다"
+        itg.note = (itg.note + " · " if itg.note else "") + \
+            "[주의] 층2 를 돌리지 않았다 (호출자가 껐다) — 문법·API 검사는 미확인이다"
 
     stopped = ""
     for r in responses:
