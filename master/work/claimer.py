@@ -291,7 +291,7 @@ def _claude_argv(instr: str) -> list:
     return (["cmd", "/c"] + argv) if sys.platform == "win32" else argv
 
 
-def run_infer(c: Client, task: dict, *, exec_fn=None, log=None) -> dict:
+def run_infer(c: Client, task: dict, *, exec_fn=None, retry_sleep=None, log=None) -> dict:
     """추론 태스크 하나: 매니페스트 실체화 → claude 실행 → **사실을 result.json 에**.
 
     [중요] 판단하지 않고, submit 하지 않는다 — 마커 해석·층1·스풀은 마스터 collect 의 일이고
@@ -307,12 +307,25 @@ def run_infer(c: Client, task: dict, *, exec_fn=None, log=None) -> dict:
     log(f"[claim] {tid[:8]} code (infer) epoch={epoch}")
 
     with _Heart(lambda: c.heartbeat(tid)) as hb:
-        try:
-            _, blob = materialize_manifest(tree, tid)
-        except ClaimerError as e:
+        # [중요] 실체화는 참을성 있게 — 등록 순서상 durable publish 는 태스크 등록 **뒤**라
+        #    (task_id 가 나와야 브랜치명이 생긴다, 원전도 같은 모순을 work_id 폴백으로 풀었다)
+        #    20s 폴링 데몬은 publish 완료 전에 claim 할 수 있다. gitea 일시 오류도 같은 결
+        #    (실측 2026-08-18: "Gitea: Failed to execute git command"). 재시도는 판단이
+        #    아니라 운송의 인내다 — 상한(5회×15s)을 넘으면 사실로 되돌린다(fail-closed).
+        blob = None
+        last_err = None
+        for i in range(5):
+            try:
+                _, blob = materialize_manifest(tree, tid)
+                break
+            except ClaimerError as e:
+                last_err = e
+                log(f"[retry] {tid[:8]} 실체화 {i + 1}/5 실패 — 15s 후 재시도")
+                (retry_sleep or time.sleep)(15)
+        if blob is None:
             # 추론을 시작조차 못 했다 — 사실로 되돌린다 (build-setup 과 같은 계약)
-            c.submit_fail(tid, "infer-setup", str(e))
-            return {"task": tid, "outcome": f"[중요] 추론 착수 실패 — {e}"}
+            c.submit_fail(tid, "infer-setup", str(last_err))
+            return {"task": tid, "outcome": f"[중요] 추론 착수 실패 — {last_err}"}
 
         # [중요] 재사용 (소 1.3.3 의 워커판): 같은 매니페스트(blob)의 완료 기록이 이미 있으면
         #    다시 사지 않는다. epoch 만 이번 claim 의 것으로 갱신 — 낡은 epoch 제출은 큐가
@@ -377,13 +390,14 @@ def _atomic_json(p: Path, obj: dict) -> None:
     tmp.replace(p)                  # collect 가 반쯤 쓰인 기록을 읽으면 안 된다
 
 
-def run_one(c: Client, task: dict, *, build_fn=None, exec_fn=None, log=None) -> dict:
+def run_one(c: Client, task: dict, *, build_fn=None, exec_fn=None, retry_sleep=None,
+            log=None) -> dict:
     """잡 하나 실행 → 보고. 반환은 사람이 읽을 요약 (판단은 없다 — 사실만)."""
     log = log or (lambda m: _log(c.root, m))
     tid = task.get("task_id") or task.get("id") or ""
     kind = str(task.get("type") or "")
     if kind == "code":
-        return run_infer(c, task, exec_fn=exec_fn, log=log)
+        return run_infer(c, task, exec_fn=exec_fn, retry_sleep=retry_sleep, log=log)
     if kind != "build":
         # [중요] 유형 필터를 뚫고 왔다면 그건 큐 버그다 — 조용히 삼키지 않고 되돌린다
         c.submit_fail(tid, "unsupported-type", f"claimer 는 build·code 만 다룬다: {kind!r}")

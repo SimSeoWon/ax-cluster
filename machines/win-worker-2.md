@@ -72,13 +72,17 @@ Exactly the case above: a Scheduled Task (`AxClaimer`) wakes the claimer **every
 (pythonw, no console). A live instance holds the exclusive lock `.ax\claimer.lock`, so extra
 wake-ups yield silently; after a crash the OS releases the lock and the next tick restarts it.
 [주의] It runs **only while janus is logged on** (no stored password — same premise as the
-origin's `worker.exe`). [중요] It currently claims **build jobs only** — infer(code) pull is a
-separate, user-pending decision; don't add `--types` to the task on your own.
+origin's `worker.exe`). [중요] It claims **build and code(infer)** jobs (`--types=build,code` —
+실전 pull 전환, user decision 2026-08-18). For code tasks it runs Claude locally, records facts
+to `.ax\work\<task>\result.json`, and never submits — the master collects and judges.
 
-    logs   E:\trunk\ModularStage\.ax\logs\claimer.log  (+ claimer_crash.log)
-    stop   schtasks /end /tn AxClaimer  &  schtasks /change /tn AxClaimer /disable
-    code   delivered payload .ax\lib\axmaster\work\claimer.py — [중요] don't hand-edit; SSOT
-           is the master repo and the next `deliver` overwrites it
+    logs     E:\trunk\ModularStage\.ax\logs\claimer.log  (+ claimer_crash.log)
+    stop     schtasks /end /tn AxClaimer  &  schtasks /change /tn AxClaimer /disable
+    restart  /end → **wait a few seconds** → /run. [주의] Measured 2026-08-18: right after
+             /end the OS may not have released `.ax\claimer.lock` yet, so an immediate /run
+             bounces off the singleton and nothing runs — until the 5-min watchdog heals it
+    code     delivered payload .ax\lib\axmaster\work\claimer.py — [중요] don't hand-edit; SSOT
+             is the master repo and the next `deliver` overwrites it
 
 ## Unreal projects
 

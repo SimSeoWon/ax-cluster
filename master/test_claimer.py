@@ -273,8 +273,9 @@ def test_infer_records_facts_and_does_not_submit():
         assert any("ax-infer" in a for a in ran[0])
 
 
-def test_infer_setup_failure_bounces():
-    """durable 에 매니페스트가 없으면 착수 실패 — submit-fail(infer-setup), 추론 없음."""
+def test_infer_setup_failure_bounces_after_patient_retries():
+    """durable 에 매니페스트가 끝내 없으면 착수 실패 — 단, [중요] **5회 참을성 재시도 후에**
+    (등록→publish 순서상 claim 이 publish 를 앞지를 수 있다, 실측 2026-08-18)."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         subprocess.run(["git", "-C", str(root), "init", "-q", "-b", "main"],
@@ -282,11 +283,41 @@ def test_infer_setup_failure_bounces():
         subprocess.run(["git", "-C", str(root), "remote", "add", "origin", str(root)],
                        capture_output=True)
         c = _FakeClient(root)
+        naps = []
         out = claimer.run_one(c, {"task_id": "t8", "type": "code"},
                               exec_fn=lambda *a: (_ for _ in ()).throw(AssertionError),
-                              log=lambda m: None)
+                              retry_sleep=naps.append, log=lambda m: None)
         assert ("submit-fail", "t8", "infer-setup") in [x[:3] for x in c.calls]
         assert "추론 착수 실패" in out["outcome"]
+        assert len(naps) == 5, f"재시도 없이 포기했다 (naps={len(naps)})"
+
+
+def test_infer_retry_recovers_late_publish():
+    """publish 가 claim 보다 늦은 경합 — 재시도 중에 durable 이 생기면 정상 진행한다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _git_repo_with_durable(Path(tmp), "t1", _MANIFEST)
+        c = _FakeClient(root)
+        real = claimer.materialize_manifest
+        state = {"calls": 0}
+
+        def flaky(tree, tid):
+            state["calls"] += 1
+            if state["calls"] < 3:                 # 두 번은 아직 publish 전
+                raise claimer.ClaimerError("couldn't find remote ref")
+            return real(tree, tid)
+        claimer.materialize_manifest = flaky
+        try:
+            def fake_claude(tree, argv, timeout):
+                (tree / claimer.WORK_REL / "t1" / claimer.RESPONSE_NAME).write_text(
+                    "=== FILE: Source/X.h ===\nx\n", encoding="utf-8")
+                return 0, "RESPONSE: 1\nRESULT: DONE"
+            out = claimer.run_one(c, {"task_id": "t1", "type": "code", "epoch": 1},
+                                  exec_fn=fake_claude, retry_sleep=lambda s: None,
+                                  log=lambda m: None)
+        finally:
+            claimer.materialize_manifest = real
+        assert out.get("infer") == "recorded" and state["calls"] == 3
+        assert not any(x[0] == "submit-fail" for x in c.calls)
 
 
 def test_infer_reuses_done_record_and_refreshes_epoch():

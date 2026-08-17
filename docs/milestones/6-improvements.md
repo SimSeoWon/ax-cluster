@@ -82,8 +82,12 @@
                              (같은 날, 사용자 지시): .2 에 AxClaimer 작업 스케줄러
                              5분 감시자 + .ax/claimer.lock 배타 잠금 싱글턴, pythonw
                              무콘솔, 로그온 세션 한정(원전 worker.exe 와 같은 전제).
-                             상주는 **build 만** 집는다 — 실전 pull 전환(code)은 사용자
-                             결정 대기. 능력 신고는 하드코딩→config 실측값. 라이브:
-                             enqueue 3초 만에 데몬이 자가 claim→PASS→close.
-                             리포트 21 §5~§8
+                             능력 신고는 하드코딩→config 실측값. **실전 pull 전환 완료**
+                             (사용자 지시): .2 는 build+code, .43 은 cron 감시자+code 만
+                             (claude 인증 실측 후 편입). 라이브 왕복에서 gitea SSH 문제
+                             (사용자 수정)와 등록↔publish 경합 구멍 발견 → 실체화 재시도
+                             5×15s. [중요] 교차 복구 실측 — .2 실패분을 revise 경로로
+                             .43 이 epoch 2 로 집어 완주($0.23). 이후 실 work 의 code
+                             태스크는 데몬 pull 이 기본, push 파견은 가역 보존(§8.4).
+                             리포트 21 §5~§9
     [대기] 다음: #211 (자연 30건 대기) · #103 · #169

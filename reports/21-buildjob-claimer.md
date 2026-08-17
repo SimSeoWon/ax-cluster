@@ -162,5 +162,38 @@ flip(ready_for_review, verify 핸들러 안)과 **비동기 auto-cleanup 의 마
 **쓰고 → 되읽고 → 되덮였으면 다시 쓴다** (cleanup 은 verify 당 1회라 유한). 되덮임의
 실물 순서를 테스트에 새김.
 
-테스트: 전체 3504/3504. 남은 결정: 실전 pull 전환(code 를 상주 types 에 넣을지) ·
-.43 상주 여부(능력 신고가 실측이 된 지금은 code 전환 결정과 같은 자리).
+테스트: 전체 3504/3504 (§8 시점).
+
+## §9 실전 pull 전환 (사용자 지시 "실전 pull 전환도 진행해")
+
+    .2   AxClaimer /tr 에 --types=build,code (schtasks 재생성 — /change 는 암호를 물어 불가)
+    .43  claude 인증 라이브 확인("OK" 2.3s) 후 편입 — **cron 감시자** (*/5분, PATH 명시)
+         + 상주 폴링, --types=code 만 (ue5 없음 — caps 도 config 실측이라 build 는 애초에
+         못 집는다). linger=no·sudo 불가라 systemd user 서비스 대신 cron — 무권한으로 같은
+         감시자 패턴
+
+라이브 왕복 (2026-08-18 02:22~02:31, 프로브 태스크 7019c4d5):
+
+    1차 실패    .2 데몬이 claim 20초 안에 집었으나 fetch 가 "Gitea: Failed to execute git
+               command" — [중요] **사용자가 gitea SSH 문제를 확인·수정** (근본 원인)
+    구조 구멍   같은 자리에서 발견: 등록 순서상 durable publish 는 태스크 등록 **뒤**라
+               (task_id 가 나와야 브랜치명이 생긴다 — 원전도 같은 모순을 work_id 폴백으로
+               풀었다) 20s 폴링 데몬은 publish 전에 claim 할 수 있다 → **실체화 재시도
+               5회×15s** 를 claimer 에 (재시도는 판단이 아니라 운송의 인내, 상한 후
+               fail-closed)
+    되살리기    failed → reverify(→submitted) → verify(revise)(→needs_revision) — 큐의
+               설계된 피드백 경로로 **같은 태스크·같은 durable** 재사용 (새 잔재 0)
+    2차 성공    [중요] **교차 복구 실측** — .2 가 실패시킨 태스크를 .43 데몬이 epoch 2 로
+               집어 완주: claim → 실체화(blob 대조) → 추론 21s($0.23) → result.json →
+               마스터 collect → judge DONE → 스풀 (파일 1, 사양 그대로)
+
+[주의] 재기동 레이스 실측: /end 직후 /run 은 잠금 해제 지연에 튕겨 **아무것도 안 도는**
+상태가 될 수 있다 — 5분 감시자가 메우지만, 손 재기동은 /end → 몇 초 → /run 순서로.
+
+정리: 프로브 task cancel + work cancelled (미종결 0). gitea 잔재 task/7019c4d5 — 사용자
+삭제 대상. 문서: win-worker-2.md(types 갱신·재기동 절차) · bc250-1.md(claimer 절 신설,
+.43 은 심볼릭 링크라 pull 로 반영).
+
+이로써 #204 전체 완료: 빌드 큐잡 → 추론 pull → 상주화 → 실전 전환. 이후 등록되는 실
+work 의 code 태스크는 두 데몬이 pull 로 집는다 — 마스터 push 파견(infer run)은 §8.4
+대로 가역 보존.
