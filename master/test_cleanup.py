@@ -232,10 +232,74 @@ def test_park_to_main() -> None:
     check("main 위면 복귀 안 함", not C.survey(_facts(), runner=Fake(current="main")).park)
 
 
+# ── 원격 정리 (사용자 결정 2026-08-18 — 병합 확인분만 마스터가 지운다) ────────────────
+
+class FakeGit:
+    """마스터 정본 저장소의 git 을 흉내낸다 — is-ancestor 판정과 push 를 전부 기록한다."""
+
+    def __init__(self, refs, merged):
+        # refs: {ref이름: tip} · merged: 도달 가능한 tip 집합
+        self.refs, self.merged = refs, set(merged)
+        self.pushes = []
+
+    def __call__(self, repo, *args):
+        from master.work.coordinator import GitError
+        if args[0] == "fetch":
+            return ""
+        if args[0] == "ls-remote":
+            return "\n".join(f"{tip}\trefs/heads/{ref}" for ref, tip in self.refs.items())
+        if args[:2] == ("merge-base", "--is-ancestor"):
+            if args[2] in self.merged:
+                return ""
+            raise GitError("not an ancestor")
+        if args[0] == "push":
+            self.pushes.append(args)
+            return ""
+        raise AssertionError(args)
+
+
+class _Paths:
+    repo = "/tmp/fake-repo"
+    name = "P"
+
+
+def test_remote_only_merged_is_deleted():
+    g = FakeGit({"task/merged1": MERGED, "attempt/t/w/1": MERGED,
+                 "task/probe": UNMERGED}, merged=[MERGED])
+    p = C.survey_remote(_Paths(), git=g)
+    check("[중요] 병합분만 삭제 후보다", {r for r, _ in p.delete}
+          == {"task/merged1", "attempt/t/w/1"}, str(p.delete))
+    check("[중요] 미병합은 보존 + 사람 몫 사유", p.keep and "사람 몫" in p.keep[0][2],
+          str(p.keep))
+
+
+def test_remote_ls_failure_judges_nothing():
+    from master.work.coordinator import GitError
+
+    def boom(repo, *args):
+        raise GitError("연결 실패")
+    p = C.survey_remote(_Paths(), git=boom)
+    check("[중요] 원격을 못 보면 아무것도 판정하지 않는다",
+          not p.delete and not p.keep and "판정하지 않는다" in p.error, p.error)
+
+
+def test_remote_apply_follows_plan_only():
+    g = FakeGit({"task/merged1": MERGED, "task/probe": UNMERGED}, merged=[MERGED])
+    p = C.survey_remote(_Paths(), git=g)
+    done = C.apply_remote(_Paths(), p, git=g)
+    check("계획된 것만 지운다", done["deleted"] == ["task/merged1"], str(done))
+    check("push --delete 형태다", g.pushes and g.pushes[0][:2] == ("push", "gitea-write")
+          and "--delete" in g.pushes[0], str(g.pushes))
+    check("보존분은 push 되지 않았다",
+          not any("task/probe" in " ".join(x) for x in g.pushes))
+
+
 def main() -> int:
     for fn in (test_only_merged_is_deleted, test_format_has_no_space, test_uncertain_is_kept, test_current_branch_kept,
                test_never_touches_remote, test_artifacts, test_path_traversal,
-               test_apply_follows_plan_only, test_park_to_main):
+               test_apply_follows_plan_only, test_park_to_main,
+               test_remote_only_merged_is_deleted, test_remote_ls_failure_judges_nothing,
+               test_remote_apply_follows_plan_only):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_cleanup: {PASS}/{total} 통과")

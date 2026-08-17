@@ -20,10 +20,14 @@
 증거가 어딘가에 살아 있는지 **확인하기 전에는** 로컬을 없애지 않는다. 판정 자체를 못 하면
 (fetch 실패·ancestor 확인 실패) 역시 **남긴다** — fail-closed 의 방향이 여기서는 "보존" 이다.
 
-## [중요] 원격 브랜치는 지우지 않는다
+## [중요] 원격 브랜치 — 병합 확인분만, `remote` 서브커맨드로 (사용자 결정 2026-08-18)
 
-`push --delete` 는 하지 않는다. 원격 attempt/task 를 없애는 것은 **요청자와 사람의 판단**이고,
-마스터가 대신 할 일이 아니다(§2.1 과 같은 결). 여기서는 **세어서 보고만** 한다.
+옛 규칙(*"원격은 사람"*)을 사용자가 좁혔다: **팁이 기준 브랜치에서 도달 가능한**(=정말
+병합된) 원격 attempt/task 는 마스터가 지운다 — 원전 `cleanup_attempts` 로의 회귀이고,
+지우려는 순간 pre-push 훅(#125: main 도달 가능한 ref 만 삭제 허용)이 **두 번째 가드**로
+같은 판정을 한 번 더 한다. [중요] **도달 불가는 여전히 사람 몫** — 병합 안 된 것을 지우는
+결정은 자동화하지 않는다 (미병합 프로브·실패 증거가 그 부류다). 워커 로컬을 훑는
+plan/apply 와 달리 이건 **마스터 정본 저장소에서** 돈다.
 
 ## [중요] 부산물은 성공한 것만 지운다
 
@@ -271,14 +275,102 @@ def _render(p: HostPlan) -> str:
     return "\n".join(out)
 
 
+# ── 원격 정리 (사용자 결정 2026-08-18 — 원전 cleanup_attempts 회귀) ────────────────
+
+_CLEANUP_BASE_REF = "refs/ax/cleanup-base"
+
+
+@dataclass
+class RemotePlan:
+    """원격 attempt/task 의 처분 계획. [중요] 판정 불가는 전부 「보존」 쪽으로 넘어진다."""
+    delete: list = field(default_factory=list)       # [(ref, tip)] — 기준에서 도달 가능
+    keep: list = field(default_factory=list)         # [(ref, tip, 사유)] — 사람 몫
+    error: str = ""
+
+    def render(self) -> str:
+        out = [f"  원격(gitea-write): 삭제 후보 {len(self.delete)} · 보존 {len(self.keep)}"]
+        for ref, tip in self.delete:
+            out.append(f"    [삭제] {ref} @ {tip[:8]} — 기준에서 도달 가능(병합됨)")
+        for ref, tip, why in self.keep:
+            out.append(f"    [보존] {ref} @ {tip[:8]} — {why}")
+        if self.error:
+            out.append(f"    [중요] {self.error}")
+        return "\n".join(out)
+
+
+def survey_remote(paths, *, base_branch: str = "main", git=None) -> RemotePlan:
+    """gitea-write 의 attempt/*·task/* 를 세고 **기준 도달 가능성**으로 가른다.
+
+    [중요] 기준 팁을 fetch 하면 그 조상 전부가 로컬에 온다 — 도달 가능한 팁은 반드시
+    로컬에 존재하므로, `merge-base --is-ancestor` 가 객체 부재로 죽는 경우는 곧
+    「도달 불가」다. 판정 실패의 방향은 언제나 보존이다.
+    """
+    from pathlib import Path as _P
+
+    from .attempt import WRITE_REMOTE, GitError, _git
+    g = git or _git
+    repo = _P(paths.repo)
+    p = RemotePlan()
+    try:
+        g(repo, "fetch", WRITE_REMOTE,
+          f"+refs/heads/{base_branch}:{_CLEANUP_BASE_REF}")
+        out = g(repo, "ls-remote", "--heads", WRITE_REMOTE,
+                "refs/heads/attempt/*", "refs/heads/task/*")
+    except GitError as e:
+        p.error = f"원격을 못 봤다 — 아무것도 판정하지 않는다: {e}"
+        return p
+    for ln in out.splitlines():
+        parts = ln.split()
+        if len(parts) != 2:
+            continue
+        tip, ref = parts[0], parts[1].removeprefix("refs/heads/")
+        try:
+            g(repo, "merge-base", "--is-ancestor", tip, _CLEANUP_BASE_REF)
+            p.delete.append((ref, tip))
+        except GitError:
+            p.keep.append((ref, tip, f"origin/{base_branch} 에 없다 — 병합 안 됨, 사람 몫"))
+    return p
+
+
+def apply_remote(paths, plan: RemotePlan, *, git=None) -> dict:
+    """계획된 삭제만 집행. pre-push 훅(#125)이 같은 판정을 한 번 더 한다 (이중 가드)."""
+    from pathlib import Path as _P
+
+    from .attempt import WRITE_REMOTE, GitError, _git
+    g = git or _git
+    repo = _P(paths.repo)
+    done = {"deleted": [], "errors": []}
+    for ref, tip in plan.delete:
+        try:
+            g(repo, "push", WRITE_REMOTE, "--delete", ref)
+            done["deleted"].append(ref)
+        except GitError as e:
+            done["errors"].append(f"{ref}: {e}")
+    return done
+
+
 def main(argv) -> int:
     from ..context_search.paths import resolve
     from ..projects.config import ProjectConfig
     from .runner import pick_worker            # 역할 필터를 그대로 쓴다
 
     cmd = (argv[0] if argv else "plan").strip()
+    if cmd == "remote":
+        paths = resolve(argv[1] if len(argv) > 1 and not argv[1].startswith("--") else "")
+        base = (ProjectConfig.load(paths.config).branch or "main").strip()
+        plan = survey_remote(paths, base_branch=base)
+        print(f"프로젝트 {paths.name} · 기준 {base}")
+        print(plan.render())
+        if "--apply" not in argv:
+            print("\n  [중요] 아무것도 지우지 않았다. 실행하려면 `remote <프로젝트> --apply`.")
+            return 0
+        done = apply_remote(paths, plan)
+        print(f"  [완료] 원격 브랜치 {len(done['deleted'])} 삭제")
+        for e in done["errors"]:
+            print(f"  [중요] {e}")
+        return 1 if done["errors"] else 0
     if cmd not in ("plan", "apply"):
-        print("  plan | apply")
+        print("  plan | apply | remote [--apply]")
         return 2
     paths = resolve(argv[1] if len(argv) > 1 else "")
     base = (ProjectConfig.load(paths.config).branch or "main").strip()
