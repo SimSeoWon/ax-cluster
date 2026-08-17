@@ -173,6 +173,18 @@ REQUESTER_SCOPE: tuple = (
     ("POST", "/api/v1/history"),
 )
 
+# worker (작업장 claimer, #204 — κ.0 CI 러너 패턴): 집고(claim) · 살아 있다 알리고(heartbeat) ·
+#   결과를 낸다(submit). [중요] 등록·검수(verify)·정리는 **못 한다** — 판단은 마스터(①),
+#   워커는 실행+보고(②)라는 κ.0 경계를 토큰 스코프가 강제한다. 규칙의 3번째 원소는
+#   **접미사**다 (경로 중간의 task_id 가 가변이라 접두어만으로는 verify 를 못 가른다).
+WORKER_SCOPE: tuple = (
+    ("POST", "/api/v1/tasks/claim"),
+    ("POST", "/api/v1/tasks/", "/heartbeat"),
+    ("POST", "/api/v1/tasks/", "/submit"),
+    ("POST", "/api/v1/tasks/", "/submit-fail"),
+    ("GET", "/api/v1/tasks"),
+)
+
 
 def role_token_file(role: str) -> Path:
     raw = os.environ.get(f"AX_{role.upper()}_TOKEN_FILE", "").strip()
@@ -292,12 +304,17 @@ class BearerAuthMiddleware:
         if verify(provided, self._token):
             return await self.app(scope, receive, send)
         # 역할 스코프 토큰 — 신원이 맞으면 경로·메서드를 스코프에 대조한다.
+        # [중요] 규칙은 (METHOD, 접두어[, 접미사]) — 접미사(#204, WORKER_SCOPE)는 task_id 가
+        #    경로 중간에 끼는 자리를 가른다. 2원소 규칙은 기존 그대로(접미사 무조건 통과).
         method = (scope.get("method") or "").upper()
         for stok, rules in self._scoped:
             if not verify(provided, stok):
                 continue
-            if any(method == m and path.startswith(pfx) for m, pfx in rules):
-                return await self.app(scope, receive, send)
+            for rule in rules:
+                m, pfx = rule[0], rule[1]
+                sfx = rule[2] if len(rule) > 2 else ""
+                if method == m and path.startswith(pfx) and (not sfx or path.endswith(sfx)):
+                    return await self.app(scope, receive, send)
             # [중요] 401 이 아니라 403 — 신원은 맞고 권한이 없다. 이 구분이 없으면
             # 배선이 깨졌을 때 "토큰이 틀렸나" 로 오진한다.
             return await self._deny(send, status=403, why=b"forbidden (scope)",

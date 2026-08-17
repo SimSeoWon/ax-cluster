@@ -213,7 +213,14 @@ def test_role_payload() -> None:
                        "work/branch_names.py", "work/coordinator.py",
                        "work/review.py", "work/skeleton_gate.py", "work/build_local.py"},
           str(pay))
-    check("[중요] 워커에는 안 간다 (역할 밖이다)", bundle.payloads_for("worker") == ())
+    # [주의] 옛 계약("워커에는 안 간다")은 #204 로 의도 변경 — claimer 폐포가 간다.
+    check("[중요] 워커에는 claimer 폐포가 간다 (#204)",
+          set(bundle.payloads_for("worker")) == {
+              "work/claimer.py", "work/ax_safety.py", "work/build_local.py",
+              "work/skeleton_gate.py", "layer3_verify.py", "source_text.py", "utf8.py"},
+          str(bundle.payloads_for("worker")))
+    check("[중요] 워커 페이로드에 판단 모듈(review·coordinator)은 없다 — κ.0 경계",
+          not {"work/review.py", "work/coordinator.py"} & set(bundle.payloads_for("worker")))
     for n in pay:
         check(f"배달할 원문이 실재한다: {n}", len(bundle.payload_text(n)) > 100)
     # [중요] 배치가 저장소를 미러링해야 `from ..layer3_verify import …` 가 산다

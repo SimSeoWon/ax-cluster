@@ -87,6 +87,10 @@ class ClaimReq(BaseModel):
     # PLAN §5.2-C — 워커가 신고하는 보유 능력. **미신고(기본 빈값) = 능력 없음**이므로
     # `requires` 가 붙은 task 는 집지 못한다. 구 워커는 지금과 똑같이 동작한다(하위호환).
     capabilities: list = []
+    # [중요] #204 — 유형 필터. requires 는 "이 태스크에 필요한 능력"이지 "이 워커가 다룰 줄
+    #    아는 유형"이 아니다: ue5 능력을 신고한 빌드 claimer 가 requires 빈 infer 태스크를
+    #    집어가면 Flow Y 파이프라인의 일감을 훔친다. None = 전 유형(하위호환, 기존 호출자).
+    types: Optional[list] = None
 
 
 class HeartbeatReq(BaseModel):

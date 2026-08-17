@@ -129,8 +129,11 @@ def _claim_verify_job(idx: TaskIndex, worker_id: str, caps: Optional[set] = None
 
 
 def claim_task(idx: TaskIndex, worker_id: str, verify_capable: bool = False,
-               capabilities: Optional[list] = None) -> Optional[dict]:
+               capabilities: Optional[list] = None,
+               types: Optional[list] = None) -> Optional[dict]:
     caps = set(normalize_capabilities(capabilities))
+    # [중요] #204 — 유형 필터 (모양 정규화만, 판정은 후보 루프에서)
+    type_set = {str(x).strip() for x in (types or []) if str(x).strip()} or None
     with idx.lock:
         # Plan v5 C.3 — verify-capable 워커 접촉 기록 (backlog 카나리 liveness 입력).
         if verify_capable:
@@ -156,6 +159,10 @@ def claim_task(idx: TaskIndex, worker_id: str, verify_capable: bool = False,
         skipped_quota_block = 0
         skipped_capability = 0
         for t in candidates:
+            # [중요] #204 — 유형 필터: 신고한 유형이 아니면 이 워커의 후보가 아니다.
+            #    능력(requires)과 별개 축 — 빌드 claimer 가 infer 일감을 훔치지 않게.
+            if type_set is not None and str(t.get("type") or "") not in type_set:
+                continue
             deps = t.get("depends_on") or []
             if not all(d in completed for d in deps):
                 continue

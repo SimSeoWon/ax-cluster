@@ -91,7 +91,11 @@ PAYLOAD_BY_ROLE = {
                   "layer3_verify.py", "source_text.py", "utf8.py",
                   "work/branch_names.py", "work/coordinator.py", "work/review.py",
                   "work/skeleton_gate.py", "work/build_local.py"),
-    "worker": (),
+    # worker (#204): 폴링 claimer + 안전 가드 + 빌드 호출 사슬. claimer 는 build 유형만
+    # 집는다 (types 필터) — infer 는 현행 Flow Y(마스터 구동)가 계속 맡는다.
+    "worker": ("work/claimer.py", "work/ax_safety.py",
+               "work/build_local.py", "work/skeleton_gate.py", "layer3_verify.py",
+               "source_text.py", "utf8.py"),
 }
 
 AX_DIR = ".ax"                      # [중요] 체크아웃 안. 상대경로가 모든 머신에서 같다
@@ -601,7 +605,7 @@ PAYLOAD_INIT = (
     '"""마스터가 배달한다. [중요] **손으로 고치지 말 것** — 다음 배달에 덮인다.\n\n'
     "저장소(`master/work/`)가 SSOT 이고 여기는 사본이다. 쓰는 법:\n\n"
     "    py -c \"import sys; sys.path.insert(0, '.ax/lib'); "
-    'from axwork import review\"\n"""\n'
+    'from axmaster.work import review\"\n"""\n'
 )
 
 
@@ -699,21 +703,25 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
                        for n in payloads_for(facts.role)]) if payloads_for(facts.role) else [],
         "excluded": _ensure_ignored(facts),
     }
-    # ── 요청자 전용 (소 3.8.4): .mcp.json + 역할 토큰 ─────────────
+    # ── 요청자 전용 (소 3.8.4): .mcp.json ─────────────
     if facts.role == "requester":
         prev_mcp = _remote_read(facts, (f"{facts.path}\\.mcp.json" if facts.windows
                                         else f"{facts.path}/.mcp.json"))
         written["mcp_json"] = _remote_write(facts, ".mcp.json",
                                             merge_mcp_json(prev_mcp, facts), base="checkout")
+    # ── 역할 토큰 (#204 에서 requester 전용 → 역할 인식으로) ─────────────
+    #    requester 는 클라 MCP 가, worker 는 claimer(#204)가 `.ax/token` 을 읽는다.
+    #    [중요] 스코프는 큐 쪽에서 역할별로 강제된다 (auth.REQUESTER_SCOPE·WORKER_SCOPE).
+    if facts.role in ("requester", "worker"):
         from .. import auth as _auth
-        _rt = _auth.load_role_token("requester")
+        _rt = _auth.load_role_token(facts.role)
         if _rt:
             # [중요] 값은 출력에 싣지 않는다 — 경로만. _remote_write 가 해시로 대조한다.
             written["role_token"] = _remote_write(facts, f"{AX_DIR}/token", _rt + "\n",
                                                   base="checkout")
         else:
-            written["role_token"] = ("없음 — 마스터에서 `python -m master.auth init-role "
-                                     "requester` 후 재배달할 것 (그전까지 클라 MCP 는 [미구성])")
+            written["role_token"] = (f"없음 — 마스터에서 `python -m master.auth init-role "
+                                     f"{facts.role}` 후 재배달할 것")
     return {"host": facts.host, **written,
             "claude_md_mode": ("생성" if not (prev or "").strip()
                                else "블록 교체" if MD_BEGIN in (prev or "") else "블록 추가"),
