@@ -27,9 +27,16 @@
     py -c "import sys; sys.path.insert(0, r'.ax/lib'); from axmaster.work.claimer import main; raise SystemExit(main(['--once']))"
     py -c "import sys; sys.path.insert(0, r'.ax/lib'); from axmaster.work.claimer import main; raise SystemExit(main(['--once', '--types=build,code']))"
 
-읽는 것: `.ax/config.json`(마스터 주소·ue5_cmd·프로젝트 — 손으로 안 적는다) ·
+읽는 것: `.ax/config.json`(마스터 주소·ue5_cmd·능력·프로젝트 — 손으로 안 적는다) ·
 `.ax/token`(worker 역할 토큰 — deliver 가 놓는다). 상주 시 ax_safety 가드 3종이 걸린다
 (크래시 로그 `.ax/logs/claimer_crash.log` · 절전 차단 · Quick Edit 차단).
+
+## 상주 (원전 worker.exe 의 자리 — 로그온 세션의 데몬)
+
+스위치 없이 부르면 폴링 상주다. `.ax/claimer.lock` 배타 잠금이 **하나만** 살게 하므로,
+감시자(윈도우 작업 스케줄러가 5분마다 재호출)가 겹쳐 불러도 안전하고 크래시 후엔 다음
+틱에 되살아난다. [주의] 원전과 같은 전제: **로그온된 사용자 세션에서 돈다** (claude 인증·
+git 키가 그 사용자의 것) — 로그아웃 상태에서는 다음 로그온까지 쉰다.
 """
 from __future__ import annotations
 
@@ -49,7 +56,7 @@ BUILD_TIMEOUT = 1800
 GIT_TIMEOUT = 120
 INFER_TIMEOUT = 3600                # claude -p 한 번의 상한 (runner.DEFAULT_TIMEOUT 과 동값)
 HEARTBEAT_SEC = 240                 # 리스 1200s — 네 번 놓쳐도 산다 (runner 와 동값)
-CAPABILITIES = ["ue5"]
+LOG_MAX_BYTES = 512 * 1024          # 상주 로그 상한 — 넘으면 뒤 절반만 남긴다 (활동 피드와 같은 결)
 TYPES = ["build"]                   # [중요] 유형 필터 — 신고 안 한 유형을 훔치지 않는다
 
 
@@ -85,6 +92,10 @@ class Client:
                           or "unknown-workshop")
         self.project = cfg.get("project") or ""
         self.ue5_cmd = ((cfg.get("backends") or {}).get("ue5_cmd") or "")
+        # [중요] 능력은 **마스터가 잰 값**(config.json — deliver 가 probe 실측으로 쓴다)이다.
+        #    하드코딩(["ue5"])은 .43 같은 UE5 없는 워커에서 허위 신고가 된다 — 신고한 능력으로
+        #    빌드 잡을 집어놓고 못 돌리는 것이 최악이다.
+        self.capabilities = list(cfg.get("capabilities") or [])
         self.root = root
 
     def _call(self, method: str, path: str, payload=None):
@@ -104,7 +115,7 @@ class Client:
     def claim(self, types=None):
         st, got = self._call("POST", "/api/v1/tasks/claim",
                              {"worker_id": self.worker_id,
-                              "capabilities": CAPABILITIES,
+                              "capabilities": self.capabilities,
                               "types": list(types or TYPES)})
         return got if st == 200 else None
 
@@ -135,13 +146,43 @@ def _log(root: Path, msg: str) -> None:
         #    두 번 물린 함정의 세 번째). 콘솔은 손실 표시로 버티고, 원문은 아래 파일(UTF-8)에.
         enc = sys.stdout.encoding or "utf-8"
         print(line.encode(enc, "replace").decode(enc, "replace"), flush=True)
+    except OSError:
+        pass                        # pythonw(상주)에는 콘솔이 없다 — 파일 로그가 본선이다
     try:
         p = root / ".ax" / "logs" / "claimer.log"
         p.parent.mkdir(parents=True, exist_ok=True)
+        # 상주 데몬의 로그는 무한히 자란다 — 상한 넘으면 뒤 절반만 (활동 피드 400줄과 같은 결)
+        if p.is_file() and p.stat().st_size > LOG_MAX_BYTES:
+            keep = p.read_bytes()[-LOG_MAX_BYTES // 2:]
+            nl = keep.find(b"\n")
+            p.write_bytes(b"(...log truncated...)\n" + keep[nl + 1:] if nl >= 0 else keep)
         with p.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
     except OSError:
         pass                        # 로그 채널 — 본 작업을 막지 않는다 (의도된 fail-soft)
+
+
+def acquire_singleton(root: Path):
+    """상주 중복 방지 — `.ax/claimer.lock` 배타 잠금. 성공 = 열린 핸들(살아 있는 동안 유지),
+    실패 = None (이미 상주 중). [중요] 잠금은 프로세스 죽음과 함께 OS 가 풀어 준다 —
+    PID 파일과 달리 크래시 뒤 stale 잠금이 없어서, 감시자(schtasks)가 5분마다 불러도
+    「이미 돈다」/「죽었으니 새로 뜬다」 가 판정 없이 갈린다.
+    """
+    p = root / ".ax" / "claimer.lock"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    f = open(p, "a+b")              # noqa: SIM115 — 수명이 프로세스 수명이다
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return f
+    except OSError:
+        f.close()
+        return None
 
 
 def _head_commit(tree: Path) -> str:
@@ -400,10 +441,17 @@ def main(argv=None) -> int:
     if once:
         ax_safety.setup_crash_handler(root / ".ax" / "logs", log)   # 가드 셋 중 크래시만
     else:
+        # [중요] 상주는 하나만 — 감시자(schtasks 5분)가 겹쳐 불러도 두 번째는 조용히 물러난다
+        #    (겹치면 같은 큐를 두 입이 빤다). exit 0 — 감시자에게는 「이미 산다」가 정상이다.
+        #    [주의] 핸들 참조를 놓으면 GC 가 잠금을 풀어 버린다 — 루프가 사는 동안 쥔다.
+        _lock = acquire_singleton(root)                      # noqa: F841 — 참조 유지가 목적
+        if _lock is None:
+            log("[boot] 이미 상주 중 (claimer.lock 잠김) — 이 인스턴스는 물러난다")
+            return 0
         ax_safety.apply_all(root / ".ax" / "logs", log)
 
     log(f"[boot] claimer worker_id={c.worker_id} project={c.project} "
-        f"types={types} caps={CAPABILITIES} {'once' if once else f'poll {interval}s'}")
+        f"types={types} caps={c.capabilities} {'once' if once else f'poll {interval}s'}")
     while True:
         task = c.claim(types)
         if task:
@@ -419,4 +467,11 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    if __package__ in (None, ""):
+        # [중요] 직접 실행 자리 — 윈도우 작업 스케줄러(/tr)가 이 파일을 pythonw 로 바로
+        #    가리킨다 (런처 파일 없이). 상대 임포트가 죽으므로 패키지로 재진입한다.
+        #    배치 배열: <checkout>/.ax/lib/axmaster/work/claimer.py → parents[2] = lib
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from axmaster.work.claimer import main as _pkg_main
+        sys.exit(_pkg_main())
     sys.exit(main())

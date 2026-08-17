@@ -126,26 +126,29 @@ def close(work_prefix: str, *, result: str, api=None, sleeper_close=None) -> dic
                              "result": "pass" if result == "pass" else "reject"}, api=api)
             done.append({"task": t["task_id"], "verify_http": st2,
                          **({"detail": r2} if st2 != 200 else {})})
-    # [중요] 마지막 verify 가 auto-cleanup 을 **비동기로** 깨우고, 그 끝이 merge_status 를
-    #    ready_for_review 로 덮는다 (logic_cleanup §4). 종결을 먼저 쓰면 뒤집히므로 —
-    #    in_progress 를 벗어날 때까지 기다렸다가 종결을 쓴다. 60초 무변화면 그냥 쓴다(말하고).
-    waited = ""
-    if done:
-        for _ in range(30):
-            st_w, w_now = _call("GET", f"/api/v1/works/{wid}", api=api)
-            # [주의] 단건 GET 은 {"work": {...}, "tasks": [...]} 로 감싼다 — 목록 GET 과 다르다
-            inner = (w_now or {}).get("work") or (w_now or {})
-            s = inner.get("merge_status") if st_w == 200 else None
-            if s and s != "in_progress":
-                waited = s
-                break
-            (sleeper_close or time.sleep)(2)
-        else:
-            waited = "[주의] 60초 대기해도 in_progress — auto-cleanup 이 종결을 되덮을 수 있다"
-    st3, r3 = _call("PATCH", f"/api/v1/works/{wid}",
-                    {"merge_status": "merged" if result == "pass" else "rejected"}, api=api)
-    return {"ok": st3 == 200, "work_id": wid, "verified": done,
-            "after_cleanup": waited,
+    # [중요] 마지막 verify 는 merge_status 를 두 번 쓴다 — **동기로** ready_for_review
+    #    (logic_lifecycle, verify 안), 그리고 **비동기 auto-cleanup 의 끝**에서 또 한 번
+    #    (logic_cleanup §4). 실측 2026-08-18: 동기 flip 만 보고 종결을 썼더니 몇 초 뒤
+    #    비동기 쪽이 되덮었다. 그래서 「쓰고 → 되읽고 → 되덮였으면 다시 쓴다」 — cleanup 은
+    #    verify 당 한 번이라 유한하고, 종결이 붙는(stick) 것을 눈으로 확인해야 끝이다.
+    terminal = "merged" if result == "pass" else "rejected"
+    sleep = sleeper_close or time.sleep
+    stuck = ""
+    st3, r3 = 0, {}
+    for attempt in range(6):
+        st3, r3 = _call("PATCH", f"/api/v1/works/{wid}", {"merge_status": terminal}, api=api)
+        if st3 != 200:
+            break
+        sleep(3)
+        st_w, w_now = _call("GET", f"/api/v1/works/{wid}", api=api)
+        # [주의] 단건 GET 은 {"work": {...}, "tasks": [...]} 로 감싼다 — 목록 GET 과 다르다
+        inner = (w_now or {}).get("work") or (w_now or {})
+        if st_w == 200 and inner.get("merge_status") == terminal:
+            stuck = f"{terminal} 확정 (시도 {attempt + 1}회)"
+            break
+        stuck = f"[주의] 되덮임 감지 — 마지막 관측 {inner.get('merge_status')!r}"
+    return {"ok": st3 == 200 and stuck.startswith(terminal), "work_id": wid,
+            "verified": done, "settle": stuck,
             "merge_status_http": st3, **({"detail": r3} if st3 != 200 else {})}
 
 

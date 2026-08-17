@@ -66,6 +66,20 @@ a supervisor. (Same call the master made discarding `process_lifecycle.py` for s
 
 Detail: `~/ax-cluster/docs/5_5-project-isolation.md` §5.5.4-⑥.
 
+### AxClaimer — the resident queue claimer (2026-08-18, #204)
+
+Exactly the case above: a Scheduled Task (`AxClaimer`) wakes the claimer **every 5 minutes**
+(pythonw, no console). A live instance holds the exclusive lock `.ax\claimer.lock`, so extra
+wake-ups yield silently; after a crash the OS releases the lock and the next tick restarts it.
+[주의] It runs **only while janus is logged on** (no stored password — same premise as the
+origin's `worker.exe`). [중요] It currently claims **build jobs only** — infer(code) pull is a
+separate, user-pending decision; don't add `--types` to the task on your own.
+
+    logs   E:\trunk\ModularStage\.ax\logs\claimer.log  (+ claimer_crash.log)
+    stop   schtasks /end /tn AxClaimer  &  schtasks /change /tn AxClaimer /disable
+    code   delivered payload .ax\lib\axmaster\work\claimer.py — [중요] don't hand-edit; SSOT
+           is the master repo and the next `deliver` overwrites it
+
 ## Unreal projects
 
 Convention on this box — **already established, don't invent a new one:**

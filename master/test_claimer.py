@@ -166,14 +166,13 @@ def test_enqueue_work_failure_reports_step():
     assert not got["ok"] and got["step"] == "work"
 
 
-def test_close_verifies_then_terminal_after_cleanup():
-    """[중요] close 는 verify 후 auto-cleanup 의 되덮기(ready_for_review)를 **기다렸다가**
-    종결을 쓴다 — 순서가 뒤집히면 work 가 미종결로 남아 전환 가드(#210)에 걸린다."""
-    calls = []
-    state = {"merge_status": "in_progress", "polls": 0}
+def test_close_retries_until_terminal_sticks():
+    """[중요] verify 후의 비동기 auto-cleanup 이 종결을 **되덮는다** (실측 2026-08-18, 같은
+    초에 merged → ready_for_review). close 는 쓰고-되읽고-되덮였으면 다시 쓴다 —
+    안 그러면 work 가 미종결로 남아 전환 가드(#210)에 걸린다."""
+    state = {"merge_status": "in_progress", "patches": 0}
 
     def fake_api(method, path, payload=None):
-        calls.append((method, path))
         if (method, path) == ("GET", "/api/v1/works"):
             return 200, [{"work_id": "W1", "merge_status": state["merge_status"]}]
         if (method, path) == ("GET", "/api/v1/tasks"):
@@ -181,24 +180,25 @@ def test_close_verifies_then_terminal_after_cleanup():
                           "status": "submitted"}]
         if path == "/api/v1/tasks/T1/verify":
             assert payload == {"passed": True, "result": "pass"}
+            state["merge_status"] = "ready_for_review"       # verify 의 동기 flip
+            return 200, {"ok": True}
+        if (method, path) == ("PATCH", "/api/v1/works/W1"):
+            assert payload == {"merge_status": "merged"}
+            state["patches"] += 1
+            # 첫 PATCH 는 비동기 cleanup 이 되덮는 것을 흉내 — 두 번째부터 붙는다
+            state["merge_status"] = ("ready_for_review" if state["patches"] == 1
+                                     else "merged")
             return 200, {"ok": True}
         if (method, path) == ("GET", "/api/v1/works/W1"):
-            state["polls"] += 1
-            if state["polls"] >= 2:            # auto-cleanup 이 되덮은 시점을 흉내
-                state["merge_status"] = "ready_for_review"
             # [주의] 실물 그대로 — 단건 GET 은 {"work": {...}} 로 감싼다 (실측: 이 포장을
             #    안 읽어서 close 가 60초를 헛기다린 버그가 있었다)
             return 200, {"work": {"work_id": "W1",
                                   "merge_status": state["merge_status"]}, "tasks": []}
-        if (method, path) == ("PATCH", "/api/v1/works/W1"):
-            assert state["merge_status"] == "ready_for_review", \
-                "auto-cleanup 을 기다리지 않고 종결을 썼다"
-            assert payload == {"merge_status": "merged"}
-            return 200, {"ok": True}
         raise AssertionError((method, path))
     got = buildjob.close("W1", result="pass", api=fake_api,
                          sleeper_close=lambda s: None)
-    assert got["ok"] and got["after_cleanup"] == "ready_for_review"
+    assert got["ok"] and state["patches"] == 2, got
+    assert got["settle"].startswith("merged 확정")
 
 
 def test_close_rejects_bad_result():
@@ -332,6 +332,36 @@ def test_infer_blocked_record_is_not_reused():
         claimer.run_one(c, {"task_id": "t6", "type": "code", "epoch": 2},
                         exec_fn=again, log=lambda m: None)
         assert reran, "BLOCKED 기록을 재사용해 버렸다"
+
+
+# ── ⑦ 상주 운영 계약 ──────────────────────────────────────────
+
+def test_singleton_lock_excludes_second_instance():
+    """[중요] 상주는 하나만 — 잠금은 OS 가 프로세스 죽음과 함께 푼다 (stale 판정 불필요)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        first = claimer.acquire_singleton(root)
+        assert first is not None
+        assert claimer.acquire_singleton(root) is None      # 겹치면 물러난다
+        first.close()
+        again = claimer.acquire_singleton(root)             # 죽으면(닫히면) 자리가 난다
+        assert again is not None
+        again.close()
+
+
+def test_capabilities_read_from_config_not_hardcoded():
+    """[중요] 능력은 deliver 가 실측으로 쓴 config 값 — .43(UE5 없음)의 허위 신고를 막는다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ax = Path(tmp) / ".ax"
+        ax.mkdir()
+        (ax / "config.json").write_text(json.dumps({
+            "master": {"host": "127.0.0.1", "services": {"task_queue": 8101}},
+            "this_host": {"host": "192.168.0.43"},
+            "project": "P", "capabilities": [],
+            "backends": {}}), encoding="utf-8")
+        (ax / "token").write_text("tok\n", encoding="utf-8")
+        c = claimer.Client(Path(tmp))
+        assert c.capabilities == []                         # ue5 를 지어내지 않는다
 
 
 # ── ⑥ 마스터 collect — 판정은 전부 여기서 ──────────────────────
