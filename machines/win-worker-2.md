@@ -76,7 +76,10 @@ origin's `worker.exe`). [중요] It claims **build and code(infer)** jobs (`--ty
 실전 pull 전환, user decision 2026-08-18). For code tasks it runs Claude locally, records facts
 to `.ax\work\<task>\result.json`, and never submits — the master collects and judges.
 
-    logs     E:\trunk\ModularStage\.ax\logs\claimer.log  (+ claimer_crash.log)
+    logs     E:\trunk\ModularStage\.ax\logs\claimer_<date>.log  — daily, boot-rotated (_N),
+             7-day retention (#220). Per-task trace: .ax\logs\claimer_debug\<task_id>\
+             (heartbeat.log · llm_stdout.log · llm_stderr.log · build.log — kept after the
+             task ends, for post-mortem). Crash: claimer_crash.log
     stop     schtasks /end /tn AxClaimer  &  schtasks /change /tn AxClaimer /disable
     restart  /end → **wait a few seconds** → /run. [주의] Measured 2026-08-18: right after
              /end the OS may not have released `.ax\claimer.lock` yet, so an immediate /run

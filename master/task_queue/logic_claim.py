@@ -244,7 +244,7 @@ def push_worker_directive(idx: TaskIndex, worker_id: str, directive: str) -> dic
         return {"ok": True, "worker_id": worker_id, "directive": directive, "queue_len": len(q)}
 
 
-def heartbeat(idx: TaskIndex, task_id: str, worker_id: str) -> dict:
+def heartbeat(idx: TaskIndex, task_id: str, worker_id: str, note: str = "") -> dict:
     with idx.lock:
         t = idx.tasks.get(task_id)
         if not t:
@@ -258,6 +258,11 @@ def heartbeat(idx: TaskIndex, task_id: str, worker_id: str) -> dict:
             t["verify_heartbeat"] = _now_iso()
         else:
             t["last_heartbeat"] = _now_iso()
+        if note:
+            # 「지금 하는 일」 (#220 ③) — 마지막 줄만 유지. 빈 note 는 이전 값을 지우지
+            # 않는다 (심박마다 note 를 만들 의무를 워커에 지우지 않기 위해).
+            t["note"] = str(note)[:200]
+            t["note_at"] = _now_iso()
         idx.worker_last_seen[worker_id] = _now_iso()
         # heartbeat 는 git commit 안 함 (잦음). 메모리 + 파일만
         _save_task(idx, task_id)

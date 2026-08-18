@@ -558,6 +558,26 @@ def topology_svg(snap: Snapshot) -> str:
     return "".join(parts)
 
 
+def task_note(t: dict) -> str:
+    """워커 심박이 실어 온 「지금 하는 일」 한 줄 (#220 ③) — note + 나이. HTML 조각을
+    반환한다 (escape 포함). note 가 없으면 — (옛 claimer 나 note 이전의 task 도 표가
+    깨지지 않는다). 순수 함수 (테스트 자리)."""
+    note = str(t.get("note") or "").strip()
+    if not note:
+        return '<span class="sub">—</span>'
+    age = ""
+    try:
+        from datetime import datetime as _dt
+        dt = (_dt.now().astimezone()
+              - _dt.fromisoformat(str(t.get("note_at") or ""))).total_seconds()
+        if dt >= 0:
+            age = f" <span class=\"sub\">({int(dt // 60)}분 전)</span>" if dt >= 60 \
+                else f" <span class=\"sub\">({int(dt)}초 전)</span>"
+    except ValueError:
+        pass                        # note_at 이 없거나 형식이 다르다 — note 만 보여 준다
+    return html.escape(note[:60]) + age
+
+
 def live_section(queue, tasks, endpoints, *, error: str = "", at: str = "",
                  recent=None, activity=None) -> str:
     """실시간 작업 층 (#216) — **서빙 시점** 데이터로 만든다. 순수 함수 (테스트 자리).
@@ -589,13 +609,14 @@ def live_section(queue, tasks, endpoints, *, error: str = "", at: str = "",
             and x.get("status") not in Snapshot.CLOSED]
     if rows:
         p.append('<table><tr><th>태스크</th><th>상태</th><th>맡은 워커</th>'
-                 '<th>대상</th><th>이후</th></tr>')
+                 '<th>대상</th><th>지금</th><th>이후</th></tr>')
         for x in rows[:12]:
             p.append("<tr><td><code>%s</code></td><td>%s</td><td><code>%s</code></td>"
-                     "<td><code>%s</code></td><td class=\"n\">%s</td></tr>"
+                     "<td><code>%s</code></td><td>%s</td><td class=\"n\">%s</td></tr>"
                      % (e(str(x.get("task_id") or "")[:8]), e(str(x.get("status") or "")),
                         e(str(x.get("assignee") or x.get("worker_id") or "—")),
                         e(str(x.get("target_file") or "—").split("/")[-1]),
+                        task_note(x),
                         e(str(x.get("claimed_at") or x.get("created") or "")[:19]
                           .replace("T", " "))))
         p.append("</table>")

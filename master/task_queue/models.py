@@ -95,6 +95,9 @@ class ClaimReq(BaseModel):
 
 class HeartbeatReq(BaseModel):
     worker_id: str
+    # 워커의 「지금 하는 일」 한 줄 (#220 ③) — /cluster 실시간 층이 보여 준다.
+    # 로그 파일이 아니라 상태 표시다: 마지막 줄만 남고, 길이는 서버가 자른다.
+    note: str = ""
 
 
 class SubmitReq(BaseModel):

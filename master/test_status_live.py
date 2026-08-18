@@ -132,6 +132,25 @@ def test_refresh_failure_is_message_not_exception():
     assert msg.startswith("[주의]") and "통합" in msg
 
 
+def test_task_note_column_shows_worker_note():
+    """#220 ③ — 워커 심박의 「지금 하는 일」이 표에 뜬다. note 없는 task 는 — 로 (표 불파손)."""
+    from datetime import datetime, timedelta
+    at = (datetime.now().astimezone() - timedelta(seconds=90)).isoformat(timespec="seconds")
+    tasks = [{"task_id": "abcd1234ffff", "status": "claimed", "worker_id": "w",
+              "note": "UE5 빌드 중 <b>", "note_at": at},
+             {"task_id": "eeee0000ffff", "status": "claimed", "worker_id": "w"}]
+    out = S.live_section({}, tasks, [])
+    assert "지금" in out                                     # 열 헤더
+    assert "UE5 빌드 중 &lt;b&gt;" in out                     # note + 이스케이프
+    assert "1분 전" in out                                   # note 나이
+    assert S.task_note({}) == '<span class="sub">—</span>'   # note 없음 폴백
+
+
+def test_task_note_bad_timestamp_still_shows_note():
+    got = S.task_note({"note": "실체화 중", "note_at": "엉망"})
+    assert "실체화 중" in got and "전)" not in got
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = 0

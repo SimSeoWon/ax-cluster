@@ -231,7 +231,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
 
     @app.post("/api/v1/tasks/{task_id}/heartbeat")
     def heartbeat_ep(task_id: str, req: HeartbeatReq):
-        r = heartbeat(idx, task_id, req.worker_id)
+        r = heartbeat(idx, task_id, req.worker_id, note=req.note)
         if not r.get("ok"):
             raise HTTPException(r.get("code", 409), r.get("error", "heartbeat failed"))
         return r

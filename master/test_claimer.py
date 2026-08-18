@@ -97,8 +97,10 @@ class _FakeClient:
         self.worker_id = "w-test"
         self.calls = []
 
-    def heartbeat(self, tid):
+    def heartbeat(self, tid, note=""):
         self.calls.append(("heartbeat", tid))
+        if note:
+            self.notes = getattr(self, "notes", []) + [note]
 
     def submit(self, tid, **kw):
         self.calls.append(("submit", tid, kw))
@@ -118,7 +120,10 @@ def test_build_failure_is_submitted_not_submitfail():
             build_fn=lambda tree: {"ok": False, "passed": False, "failure": "컴파일 에러"},
             log=lambda m: None)
         kinds = [x[0] for x in c.calls]
-        assert kinds == ["heartbeat", "submit"], kinds
+        # #220: 심박은 위상 전환마다 즉시 1회 (빌드 시작·종료 note) — 횟수가 아니라
+        # 「심박이 있었고 마지막이 submit」이 계약이다
+        assert "heartbeat" in kinds and kinds[-1] == "submit", kinds
+        assert any("빌드" in n for n in getattr(c, "notes", [])), getattr(c, "notes", None)
         assert out["build_ok"] is False and out["submit_http"] == 200
 
 
@@ -494,6 +499,100 @@ def test_collect_filters_claimed_code_tasks_only():
         # build·submitted 는 대상이 아니고, 미등록 호스트는 회수 불가로 말한다
         assert got["collected"] == 0 and got["waiting"] == 0
         assert any("레지스트리에 없다" in ln for ln in got["lines"])
+
+
+# ── ⑦ #220 — 작업별 로그 축적 · heartbeat note ─────────────────
+
+def test_heartbeat_note_stored_and_empty_preserves():
+    """note 는 「지금 하는 일」 — 빈 note 는 이전 값을 지우지 않는다 (심박마다 note 의무 없음)."""
+    from master.task_queue.logic_claim import heartbeat
+    idx = _idx()
+    register_task(idx, work_id=idx._wid, type="build", task_data={}, stem="b")
+    t = claim_task(idx, "w-.2", capabilities=["ue5"], types=["build"])
+    tid = t["task_id"]
+    assert heartbeat(idx, tid, "w-.2", note="UE5 빌드 중")["ok"]
+    assert idx.tasks[tid]["note"] == "UE5 빌드 중" and idx.tasks[tid]["note_at"]
+    assert heartbeat(idx, tid, "w-.2")["ok"]                 # note 없는 심박
+    assert idx.tasks[tid]["note"] == "UE5 빌드 중"            # 이전 값 유지
+    assert heartbeat(idx, tid, "w-.2", note="x" * 500)["ok"]
+    assert len(idx.tasks[tid]["note"]) == 200                # 서버가 자른다
+
+
+def test_boot_rotation_renames_today_log():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        p = claimer._log_path(root)
+        p.parent.mkdir(parents=True)
+        p.write_text("이전 부팅\n", encoding="utf-8")
+        claimer._bootstrap_log_rotation(root)
+        assert not p.exists()
+        assert p.with_name(f"{p.stem}_1{p.suffix}").exists()
+        claimer._log(root, "새 부팅")                         # 새 파일로 다시 쓴다
+        assert "새 부팅" in p.read_text(encoding="utf-8")
+
+
+def test_retention_sweeps_old_logs_and_debug_dirs():
+    import os
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        d = claimer._log_dir(root)
+        old_log = d / "claimer_2020-01-01.log"
+        old_dbg = d / "claimer_debug" / "oldtask"
+        old_dbg.mkdir(parents=True)
+        old_log.write_text("x", encoding="utf-8")
+        past = 1577836800                                    # 2020-01-01 — 7일보다 오래됨
+        os.utime(old_log, (past, past))
+        os.utime(old_dbg, (past, past))
+        fresh = d / "claimer_debug" / "newtask"
+        fresh.mkdir(parents=True)
+        n = claimer._retention_sweep(root)
+        assert n == 2 and not old_log.exists() and not old_dbg.exists()
+        assert fresh.exists()                                # 최근 것은 남는다
+
+
+def test_heart_note_beats_immediately_and_logs():
+    """set_note 는 다음 interval 을 기다리지 않는다 — /cluster 가 위상을 놓치지 않도록."""
+    with tempfile.TemporaryDirectory() as tmp:
+        hb_p = Path(tmp) / "heartbeat.log"
+        beats = []
+        with claimer._Heart(lambda n="": beats.append(n), interval=9999,
+                            hb_path=hb_p) as hb:
+            hb.set_note("실체화 중")
+        assert beats == ["실체화 중"]                          # interval 없이 즉시 1회
+        text = hb_p.read_text(encoding="utf-8")
+        assert "[note] 실체화 중" in text and "[beat] ok" in text
+
+
+def test_run_claude_streams_stdout_and_keeps_stderr_separate():
+    """[중요] stderr 가 stdout 에 섞이면 collect 의 RESULT: 말미 계약이 깨진다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ddir = Path(tmp) / "dbg"
+        code = "import sys; print('RESULT: DONE'); sys.stderr.write('경고물결\\n')"
+        rc, out = claimer._run_claude(Path(tmp), [sys.executable, "-c", code],
+                                      timeout=60, stream_dir=ddir)
+        assert rc == 0 and out.strip().endswith("RESULT: DONE")
+        assert "경고물결" not in out                          # stderr 비혼입
+        assert "RESULT: DONE" in (ddir / "llm_stdout.log").read_text(encoding="utf-8")
+        assert "경고물결" in (ddir / "llm_stderr.log").read_text(encoding="utf-8")
+
+
+def test_infer_writes_debug_heartbeat_and_notes():
+    """run_infer 가 task 디버그(heartbeat.log)와 note 위상을 남긴다 (#220 ①·③)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _git_repo_with_durable(Path(tmp), "t7", _MANIFEST)
+        c = _FakeClient(root)
+
+        def fake_claude(tree, argv, timeout):
+            (tree / claimer.WORK_REL / "t7" / claimer.RESPONSE_NAME).write_text(
+                "=== FILE: Source/X.h ===\n#pragma once\n", encoding="utf-8")
+            return 0, "RESPONSE: 1\nRESULT: DONE"
+
+        claimer.run_one(c, {"task_id": "t7", "type": "code", "epoch": 1},
+                        exec_fn=fake_claude, log=lambda m: None)
+        hb_p = claimer._debug_dir(root, "t7") / "heartbeat.log"
+        assert hb_p.is_file() and "[note]" in hb_p.read_text(encoding="utf-8")
+        notes = getattr(c, "notes", [])
+        assert any("실체화" in n for n in notes) and any("추론" in n for n in notes), notes
 
 
 if __name__ == "__main__":

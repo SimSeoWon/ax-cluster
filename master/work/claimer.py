@@ -56,7 +56,7 @@ BUILD_TIMEOUT = 1800
 GIT_TIMEOUT = 120
 INFER_TIMEOUT = 3600                # claude -p 한 번의 상한 (runner.DEFAULT_TIMEOUT 과 동값)
 HEARTBEAT_SEC = 240                 # 리스 1200s — 네 번 놓쳐도 산다 (runner 와 동값)
-LOG_MAX_BYTES = 512 * 1024          # 상주 로그 상한 — 넘으면 뒤 절반만 남긴다 (활동 피드와 같은 결)
+LOG_RETENTION_DAYS = 7              # 일별 로그·task 디버그 보존 기간 (#220 — 원전 retention 회귀)
 TYPES = ["build"]                   # [중요] 유형 필터 — 신고 안 한 유형을 훔치지 않는다
 
 
@@ -119,9 +119,11 @@ class Client:
                               "types": list(types or TYPES)})
         return got if st == 200 else None
 
-    def heartbeat(self, task_id: str):
+    def heartbeat(self, task_id: str, note: str = ""):
+        # note = 「지금 하는 일」 한 줄 (#220 ③) — /cluster 실시간 층이 보여 준다.
+        # 빈 note 는 서버가 이전 값을 유지한다 (models.HeartbeatReq).
         self._call("POST", f"/api/v1/tasks/{task_id}/heartbeat",
-                   {"worker_id": self.worker_id})
+                   {"worker_id": self.worker_id, "note": str(note)[:200]})
 
     def submit(self, task_id: str, *, head_commit: str, build: dict, seconds: float,
                epoch=None):
@@ -137,6 +139,75 @@ class Client:
                           {"reason": reason[:200], "detail": detail[:2000]})
 
 
+def _log_dir(root: Path) -> Path:
+    return root / ".ax" / "logs"
+
+
+def _log_path(root: Path) -> Path:
+    """일별 메인 로그 (#220 ② — 원전 common.py 의 worker_<date>.log 회귀).
+    옛 단일 `claimer.log`(상한 절단)는 이 방식으로 대체됐다 — 절단은 문제가 난 날의
+    앞부분(원인)을 지웠다. 총량은 회전 + retention 이 묶는다."""
+    return _log_dir(root) / f"claimer_{datetime.now().strftime('%Y-%m-%d')}.log"
+
+
+def _debug_dir(root: Path, task_id: str) -> Path:
+    """task 별 디버그 디렉토리 (#220 ① — 원전 worker_debug/<task_id> 회귀).
+    메인 로그가 silent 일 때(심박 스레드·LLM 응답 대기) 무엇이 진행 중인지 여기서 추적.
+    task 종료 시 cleanup 안 함 — 사후 디버깅 용도. retention 은 메인 로그와 같은 7일."""
+    return _log_dir(root) / "claimer_debug" / task_id
+
+
+def _dlog(p: Path, msg: str) -> None:
+    """디버그 파일 한 줄 append — 실패해도 본 작업을 막지 않는다 (로그 채널 계약)."""
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+    except OSError:
+        pass
+
+
+def _bootstrap_log_rotation(root: Path) -> None:
+    """상주 부팅 시 1회 — 오늘 로그가 이미 있으면 _N 접미사로 rename (원전 common.py,
+    task_queue/persistence.py 와 같은 이식). 단발(--once)은 호출 안 함 — 파일 폭증."""
+    log_path = _log_path(root)
+    if not log_path.exists():
+        return
+    n = 1
+    while True:
+        candidate = log_path.with_name(f"{log_path.stem}_{n}{log_path.suffix}")
+        if not candidate.exists():
+            try:
+                log_path.rename(candidate)
+            except OSError:
+                pass                # 동시 부팅 race — 다른 프로세스가 이미 rename 함
+            return
+        n += 1
+
+
+def _retention_sweep(root: Path, *, days: int = LOG_RETENTION_DAYS) -> int:
+    """오래된 일별 로그·task 디버그 디렉토리 삭제 (원전 retention 7일). 상주 부팅 시 1회.
+    반환은 지운 항목 수 — 로그에 적는다 (조용한 삭제는 없다)."""
+    import shutil
+    cutoff = time.time() - days * 86400
+    removed = 0
+    d = _log_dir(root)
+    try:
+        for p in d.glob("claimer_*.log"):
+            if p.stat().st_mtime < cutoff:
+                p.unlink(missing_ok=True)
+                removed += 1
+        dbg = d / "claimer_debug"
+        if dbg.is_dir():
+            for sub in dbg.iterdir():
+                if sub.is_dir() and sub.stat().st_mtime < cutoff:
+                    shutil.rmtree(sub, ignore_errors=True)
+                    removed += 1
+    except OSError:
+        pass
+    return removed
+
+
 def _log(root: Path, msg: str) -> None:
     line = f"{datetime.now().strftime('%m-%d %H:%M:%S')} {msg}"
     try:
@@ -149,13 +220,8 @@ def _log(root: Path, msg: str) -> None:
     except OSError:
         pass                        # pythonw(상주)에는 콘솔이 없다 — 파일 로그가 본선이다
     try:
-        p = root / ".ax" / "logs" / "claimer.log"
+        p = _log_path(root)
         p.parent.mkdir(parents=True, exist_ok=True)
-        # 상주 데몬의 로그는 무한히 자란다 — 상한 넘으면 뒤 절반만 (활동 피드 400줄과 같은 결)
-        if p.is_file() and p.stat().st_size > LOG_MAX_BYTES:
-            keep = p.read_bytes()[-LOG_MAX_BYTES // 2:]
-            nl = keep.find(b"\n")
-            p.write_bytes(b"(...log truncated...)\n" + keep[nl + 1:] if nl >= 0 else keep)
         with p.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
     except OSError:
@@ -222,21 +288,54 @@ CARRY_REF = "refs/ax/carry/{tid}"
 
 class _Heart:
     """긴 실행 동안 리스를 살려 둔다. [중요] 실패해도 본 작업을 죽이지 않는다 —
-    하트비트 한 번 놓친 것과 워커가 죽은 것은 다르다 (runner._Beater 와 같은 계약)."""
+    하트비트 한 번 놓친 것과 워커가 죽은 것은 다르다 (runner._Beater 와 같은 계약).
 
-    def __init__(self, beat, interval: int = HEARTBEAT_SEC):
+    #220: `note` 는 「지금 하는 일」 한 줄 — 본 작업 스레드가 `set_note()` 로 갱신하면
+    다음 심박이 실어 나른다 (beat 가 인자를 받으면 전달, 아니면 종전대로). `hb_path` 가
+    있으면 매 심박 결과를 task 디버그 파일에 append (원전 heartbeat.py 회귀) —
+    메인 로그가 silent 일 때 심박 스레드 생존을 여기서 확인한다."""
+
+    def __init__(self, beat, interval: int = HEARTBEAT_SEC, hb_path: Path | None = None):
         self._beat, self._interval = beat, interval
         self._stop = threading.Event()
         self._t = None
+        self._hb_path = hb_path
+        self._note = ""
         self.errors = 0
+        # note 전달 여부는 여기서 한 번 판정 — 호출 시 TypeError 폴백은 beat **내부**의
+        # TypeError 까지 삼켜 심박을 조용히 절반만 돌게 한다 (그 함정을 피한다)
+        import inspect
+        try:
+            self._wants_note = len(inspect.signature(beat).parameters) >= 1
+        except (TypeError, ValueError):
+            self._wants_note = False
+
+    def set_note(self, note: str) -> None:
+        """위상 전환은 다음 interval 을 기다리지 않고 **즉시 한 번** 심박을 쏜다 —
+        240s 간격만으로는 /cluster 의 「지금」이 위상 하나를 통째로 놓친다.
+        note 변경은 task 당 손에 꼽는 횟수라 큐에 부담이 없다."""
+        self._note = str(note)
+        if self._hb_path is not None:
+            _dlog(self._hb_path, f"[note] {self._note}")
+        self._tick()
+
+    def _tick(self):
+        try:
+            if self._wants_note:
+                self._beat(self._note)
+            else:
+                self._beat()                                 # note 를 안 받는 beat (기존 계약)
+            if self._hb_path is not None:
+                _dlog(self._hb_path, f"[beat] ok errors={self.errors} note={self._note}")
+        except Exception as e:                               # noqa: BLE001
+            self.errors += 1
+            if self._hb_path is not None:
+                _dlog(self._hb_path, f"[beat] FAIL {type(e).__name__}: {e} errors={self.errors}")
 
     def __enter__(self):
         def _loop():
             while not self._stop.wait(self._interval):
-                try:
-                    self._beat()
-                except Exception:                            # noqa: BLE001
-                    self.errors += 1
+                self._tick()
         self._t = threading.Thread(target=_loop, daemon=True)
         self._t.start()
         return self
@@ -304,9 +403,12 @@ def run_infer(c: Client, task: dict, *, exec_fn=None, retry_sleep=None, log=None
     tree = c.root
     workdir = tree / WORK_REL / tid
     result_p = workdir / RESULT_NAME
-    log(f"[claim] {tid[:8]} code (infer) epoch={epoch}")
+    ddir = _debug_dir(c.root, tid)                       # #220 ① — 진행 중 추적의 자리
+    log(f"[claim] {tid[:8]} code (infer) epoch={epoch} · debug={ddir}")
 
-    with _Heart(lambda: c.heartbeat(tid)) as hb:
+    with _Heart(lambda n="": c.heartbeat(tid, note=n),
+                hb_path=ddir / "heartbeat.log") as hb:
+        hb.set_note("매니페스트 실체화 중")
         # [중요] 실체화는 참을성 있게 — 등록 순서상 durable publish 는 태스크 등록 **뒤**라
         #    (task_id 가 나와야 브랜치명이 생긴다, 원전도 같은 모순을 work_id 폴백으로 풀었다)
         #    20s 폴링 데몬은 publish 완료 전에 claim 할 수 있다. gitea 일시 오류도 같은 결
@@ -321,6 +423,7 @@ def run_infer(c: Client, task: dict, *, exec_fn=None, retry_sleep=None, log=None
             except ClaimerError as e:
                 last_err = e
                 log(f"[retry] {tid[:8]} 실체화 {i + 1}/5 실패 — 15s 후 재시도")
+                hb.set_note(f"실체화 재시도 {i + 1}/5 — 15s 대기")
                 (retry_sleep or time.sleep)(15)
         if blob is None:
             # 추론을 시작조차 못 했다 — 사실로 되돌린다 (build-setup 과 같은 계약)
@@ -349,10 +452,15 @@ def run_infer(c: Client, task: dict, *, exec_fn=None, retry_sleep=None, log=None
         instr = INFER_INSTRUCTION.format(work=WORK_REL, task=tid, resp=RESPONSE_NAME)
         data = task.get("task_data") or {}
         timeout = int(data.get("timeout") or INFER_TIMEOUT)
+        hb.set_note("claude 추론 중 (stdout 은 debug/llm_stdout.log 에 실시간)")
         t0 = time.time()
-        fn = exec_fn or _run_claude
-        rc, stdout = fn(tree, _claude_argv(instr), timeout)
+        if exec_fn is not None:
+            rc, stdout = exec_fn(tree, _claude_argv(instr), timeout)
+        else:
+            rc, stdout = _run_claude(tree, _claude_argv(instr), timeout,
+                                     stream_dir=ddir)
         dt = time.time() - t0
+        hb.set_note(f"추론 종료 rc={rc} ({dt:.0f}s) — result.json 기록")
 
     rec = {
         "task_id": tid, "epoch": epoch, "kind": "code",
@@ -370,18 +478,54 @@ def run_infer(c: Client, task: dict, *, exec_fn=None, retry_sleep=None, log=None
     return {"task": tid, "infer": "recorded", "rc": rc, "seconds": round(dt, 1)}
 
 
-def _run_claude(tree: Path, argv: list, timeout: int) -> tuple:
-    """`(rc, stdout)`. 예외를 던지지 않는다 — 타임아웃·기동 실패도 사실이다."""
+def _pump(pipe, sink: list, path: Path | None) -> threading.Thread:
+    """파이프를 실시간으로 파일에 흘리며 버퍼에 모은다 (#220 ① — 원전 claude_spawn 의
+    llm_stdout.log 회귀). LLM 응답 대기 중에도 debug 파일에서 진행을 볼 수 있다."""
+    def _run():
+        for line in pipe:
+            sink.append(line)
+            if path is not None:
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    with path.open("a", encoding="utf-8") as f:
+                        f.write(line)
+                except OSError:
+                    pass                # 로그 채널 — 본 작업을 막지 않는다
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return t
+
+
+def _run_claude(tree: Path, argv: list, timeout: int,
+                stream_dir: Path | None = None) -> tuple:
+    """`(rc, stdout)`. 예외를 던지지 않는다 — 타임아웃·기동 실패도 사실이다.
+
+    [주의] stderr 는 stdout 에 **섞지 않는다** — collect 의 마커 계약(`RESULT:` 가 stdout
+    말미)이 stderr 혼입으로 깨질 수 있다. stderr 는 debug 의 llm_stderr.log 로만 간다."""
     try:
-        r = subprocess.run(argv, cwd=str(tree), capture_output=True,
-                           timeout=timeout, encoding="utf-8", errors="replace")
-        return r.returncode, r.stdout or ""
-    except subprocess.TimeoutExpired as e:
-        out = e.output.decode("utf-8", "replace") if isinstance(e.output, bytes) \
-            else (e.output or "")
-        return -1, out + f"\n[claimer] {timeout}s 타임아웃 — 프로세스를 죽였다"
+        proc = subprocess.Popen(argv, cwd=str(tree), stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, encoding="utf-8",
+                                errors="replace")
     except OSError as e:
         return -1, f"[claimer] claude 기동 실패: {type(e).__name__}: {e}"
+    out: list = []
+    err: list = []
+    t_out = _pump(proc.stdout, out, (stream_dir / "llm_stdout.log") if stream_dir else None)
+    t_err = _pump(proc.stderr, err, (stream_dir / "llm_stderr.log") if stream_dir else None)
+    try:
+        rc = proc.wait(timeout=timeout)
+        t_out.join(timeout=10)
+        t_err.join(timeout=10)
+        return rc, "".join(out)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            pass
+        t_out.join(timeout=10)
+        t_err.join(timeout=10)
+        return -1, "".join(out) + f"\n[claimer] {timeout}s 타임아웃 — 프로세스를 죽였다"
 
 
 def _atomic_json(p: Path, obj: dict) -> None:
@@ -404,21 +548,31 @@ def run_one(c: Client, task: dict, *, build_fn=None, exec_fn=None, retry_sleep=N
         return {"task": tid, "outcome": f"[중요] 지원 안 하는 유형 {kind!r} — submit-fail"}
     data = task.get("task_data") or {}
     tree = Path(data.get("tree") or c.root)
-    log(f"[claim] {tid[:8]} build tree={tree}")
-    c.heartbeat(tid)
+    ddir = _debug_dir(c.root, tid)                       # #220 ① — 진행 중 추적의 자리
+    log(f"[claim] {tid[:8]} build tree={tree} · debug={ddir}")
     t0 = time.time()
     try:
-        fn = build_fn
-        if fn is None:
-            from .build_local import local_build_fn
-            fn = local_build_fn(project=c.project, ue5_cmd=c.ue5_cmd,
-                                timeout=int(data.get("timeout") or BUILD_TIMEOUT))
-        res = fn(tree)
+        # [중요] 빌드는 수 분(실측 109~194s)이라 심박 없이는 리스가 낡는다 — 이제 note 도
+        #    함께 나른다 (#220 ③). 옛 단발 c.heartbeat(tid) 는 이 스레드가 대체한다.
+        with _Heart(lambda n="": c.heartbeat(tid, note=n),
+                    hb_path=ddir / "heartbeat.log") as hb:
+            hb.set_note("UE5 빌드 중")
+            fn = build_fn
+            if fn is None:
+                from .build_local import local_build_fn
+                fn = local_build_fn(project=c.project, ue5_cmd=c.ue5_cmd,
+                                    timeout=int(data.get("timeout") or BUILD_TIMEOUT))
+            res = fn(tree)
+            hb.set_note(f"빌드 종료 — {str(res.get('summary') or '')[:80]} · submit 중")
     except Exception as e:                                    # noqa: BLE001
         # 빌드를 시작조차 못 했다 — 확인 불가는 통과가 아니다 (layer3 계약)
         c.submit_fail(tid, "build-setup", f"{type(e).__name__}: {e}")
         return {"task": tid, "outcome": f"[중요] 빌드 착수 실패 — {type(e).__name__}: {e}"}
     dt = time.time() - t0
+    # 빌드 근거를 task 디버그에 보존 (#220 ①) — submit 본문의 log_tail 은 잘린 꼬리고,
+    # 사후 디버깅은 워커 쪽 이 파일에서 시작한다 (전체 UBT 로그는 엔진 자신의 위치에 남는다)
+    _dlog(ddir / "build.log", f"summary={res.get('summary')} seconds={dt:.0f}\n"
+          + str(res.get("raw_tail") or res.get("log_tail") or "")[-16384:])
     # [중요] 실패도 submit 이다 — pass/fail 은 사실이고 판단(재시도 등)은 마스터의 것.
     #    submit-fail 은 "실행 자체가 안 됐다" 에만 쓴다.
     slim = {k: v for k, v in res.items()
@@ -463,6 +617,12 @@ def main(argv=None) -> int:
             log("[boot] 이미 상주 중 (claimer.lock 잠김) — 이 인스턴스는 물러난다")
             return 0
         ax_safety.apply_all(root / ".ax" / "logs", log)
+        # #220 ② — 부팅별 회전 + retention. 상주에서만: --once 는 회전하면 파일이 폭증한다
+        #    (원전 common.py 의 단서 그대로). 잠금 획득 **뒤**라 동시 부팅 race 도 없다.
+        _bootstrap_log_rotation(root)
+        swept = _retention_sweep(root)
+        if swept:
+            log(f"[boot] 로그 retention — {LOG_RETENTION_DAYS}일 지난 {swept}개 항목 삭제")
 
     log(f"[boot] claimer worker_id={c.worker_id} project={c.project} "
         f"types={types} caps={c.capabilities} {'once' if once else f'poll {interval}s'}")
