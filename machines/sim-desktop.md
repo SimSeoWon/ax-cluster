@@ -174,6 +174,13 @@ config was once found pointing at *another machine's* path.
   master load-balances *requests*. The boards have 1GbE and no PCIe slots, so tensor/pipeline
   parallelism starves on bandwidth.
 
+[중요] **Restart an AX service with `sudo -n /usr/bin/systemctl restart <unit>`** (NOPASSWD is
+registered for `ax-task-queue`·`ax-broker`·`ax-projects`·`ax-indexer.service`·`ax-status.timer`).
+Plain `systemctl restart` as `sim` intermittently hangs on polkit/D-Bus and reports *"Method call
+timed out"* — measured 3× in a row 2026-08-19 while the service itself was healthy, and `--no-block`
+timed out the same way. [주의] **Judge success by `ExecMainStartTimestamp`, not the exit code** —
+the failing command left the old process running, so `is-active` still said `active`.
+
 ## Detail documents
 
 | What you need | File |

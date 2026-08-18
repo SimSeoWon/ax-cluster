@@ -207,7 +207,11 @@ def test_work_rows_total_falls_back_to_counted_tasks():
 def test_work_section_shows_progress_as_fraction_never_percent():
     works, tasks = _works_and_tasks()
     out = S.work_section(works, tasks)
-    assert "2/3" in out and "%" not in out           # 분수만 — 퍼센트는 거짓말 (#221)
+    assert "2/3" in out
+    # 분수만 — 퍼센트는 거짓말 (#221). [주의] `%` 자체를 금지하면 SVG 의 width="100%"(속성)에
+    #    걸린다 — 막을 것은 **본문에 보이는 숫자 퍼센트**다.
+    import re as _re
+    assert not _re.search(r">[^<]*\d+%", out), _re.search(r">[^<]*\d+%", out).group()
     assert "작업(work) — 등록 단위" in out
 
 

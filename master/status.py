@@ -669,6 +669,107 @@ def work_rows(works, tasks) -> tuple:
 
 LOG_SHOW_LINES = 40                 # 화면에 펼치는 로그 꼬리 줄 수 (원문은 워커에 있다)
 
+# ── 파이프라인 스텝퍼 (#223) ────────────────────────────────────────────────────
+#
+# [중요] **큐가 기록하는 단계만 그린다.** 우리 파이프라인은 서술상 12단계(등록 → 골조 → 분해 →
+#    claim → 추론 → collect → 층1 → 적용 → 조각별 빌드 → 커밋 → verify → 머지)지만, 태스크
+#    레코드가 증거를 갖는 것은 **여섯**이다(실측 2026-08-19, 라이브 태스크 전 필드 확인):
+#    created · claimed_at · note(진행 위상) · submitted_at · verified_at+verdict · work.merge_status.
+#    마스터 측 단계(분해·collect·층1·적용·커밋)는 통합자 로그에만 있고 큐에는 없다 —
+#    **모르는 것을 그리면 그림이 거짓말을 한다.** 그리지 않고, 화면에 그 사실을 적는다.
+# [주의] 그래서 이것은 「12단계 중 어디」가 아니라 **「큐가 아는 여섯 중 어디」** 다.
+PIPE_STAGES = ("등록", "배정", "실행", "제출", "판정", "종결")
+STEPPER_MAX = 4                     # work 당 스텝퍼 개수 상한 (넘으면 화면이 스텝퍼로 덮인다)
+_ST_COLOR = {"done": "var(--good)", "current": "var(--accent)",
+             "failed": "var(--critical)", "pending": "var(--track)"}
+
+
+def stage_steps(task, work=None) -> list:
+    """태스크 하나의 단계별 상태 — `[(라벨, 상태, 시각)]`. 순수 함수 (테스트 자리).
+
+    상태는 `done`·`current`·`failed`·`pending` 넷. [중요] **추정하지 않는다** — 각 단계의
+    근거는 레코드의 특정 필드이고, 없으면 `pending` 이다(「아마 지났을 것」을 done 으로 만들지
+    않는다). 실행 단계의 세부 위상은 심박 note 가 말한다(#220).
+    """
+    t = task or {}
+    w = work or {}
+    st = str(t.get("status") or "")
+    claimed = str(t.get("claimed_at") or "")
+    submitted = str(t.get("submitted_at") or "")
+    verified = str(t.get("verified_at") or "")
+    merge = str(w.get("merge_status") or "")
+    failed = st == "failed"
+    # 착수 실패(build-setup·infer-setup)는 **제출에 이르지 못한** 실패다 — 실행에서 끊는다
+    setup_fail = failed and not submitted
+    out = [("등록", "done" if t.get("created") else "pending", str(t.get("created") or ""))]
+    out.append(("배정", "done" if claimed else ("failed" if failed else "current"), claimed))
+    if not claimed:
+        out.append(("실행", "pending", ""))
+    elif submitted or verified:
+        out.append(("실행", "done", ""))
+    else:
+        out.append(("실행", "failed" if setup_fail else "current", str(t.get("note_at") or "")))
+    out.append(("제출", "done" if submitted else
+                ("failed" if setup_fail else "pending"), submitted))
+    if verified:
+        out.append(("판정", "failed" if failed else "done", verified))
+    else:
+        out.append(("판정", "failed" if failed else
+                    ("current" if submitted else "pending"), ""))
+    if merge in ("merged",):
+        out.append(("종결", "done", str(w.get("created_branch_at") or "")))
+    elif merge in ("rejected", "cancelled"):
+        out.append(("종결", "failed", ""))
+    elif merge == "ready_for_review":
+        out.append(("종결", "current", ""))
+    else:
+        out.append(("종결", "pending", ""))
+    return out
+
+
+def stepper_svg(steps, *, width: int = 660) -> str:
+    """단계 스텝퍼 — **인라인 SVG** (자립형 규약: 외부 라이브러리 금지, #216 토폴로지와 같은 방식).
+
+    색만으로 의미를 전달하지 않는다 — 라벨과 `<title>`(상태 이름)이 함께 붙는다.
+    """
+    if not steps:
+        return ""
+    e = html.escape
+    n = len(steps)
+    pad, r = 46, 9
+    span = (width - pad * 2) / max(1, n - 1)
+    h = 62
+    p = [f'<svg viewBox="0 0 {width} {h}" role="img" width="100%" '
+         f'style="max-width:{width}px;height:auto;display:block" '
+         'aria-label="파이프라인 단계">']
+    for i in range(n - 1):
+        x1, x2 = pad + span * i, pad + span * (i + 1)
+        nxt = steps[i + 1][1]
+        col = _ST_COLOR["done"] if steps[i][1] == "done" and nxt != "pending" \
+            else _ST_COLOR["pending"]
+        p.append(f'<line x1="{x1:.0f}" y1="20" x2="{x2:.0f}" y2="20" '
+                 f'stroke="{col}" stroke-width="2"/>')
+    for i, (label, state, at) in enumerate(steps):
+        x = pad + span * i
+        col = _ST_COLOR.get(state, _ST_COLOR["pending"])
+        fill = col if state != "pending" else "none"
+        p.append(f'<circle cx="{x:.0f}" cy="20" r="{r}" fill="{fill}" stroke="{col}" '
+                 f'stroke-width="2"><title>{e(label)}: {e(state)}'
+                 + (f' ({e(at[:19].replace("T", " "))})' if at else "") + "</title></circle>")
+        if state == "current":                      # 현재 위치는 고리를 하나 더 (색 외 신호)
+            p.append(f'<circle cx="{x:.0f}" cy="20" r="{r + 4}" fill="none" stroke="{col}" '
+                     'stroke-width="1" opacity=".55"/>')
+        if state == "failed":                        # 실패는 X — 색맹에도 읽힌다
+            p.append(f'<path d="M{x - 4:.0f} 16 l8 8 M{x + 4:.0f} 16 l-8 8" '
+                     'stroke="#0d1117" stroke-width="2" fill="none"/>')
+        p.append(f'<text x="{x:.0f}" y="46" text-anchor="middle" font-size="12" '
+                 f'fill="{"var(--fg)" if state != "pending" else "var(--dim)"}">{e(label)}</text>')
+        if at:
+            p.append(f'<text x="{x:.0f}" y="58" text-anchor="middle" font-size="10" '
+                     f'fill="var(--dim)">{e(at[11:16])}</text>')
+    p.append("</svg>")
+    return "".join(p)
+
 
 def log_block(task_id: str, stored: dict) -> str:
     """회수된 워커 로그를 접힌 블록으로 (#220 ③-B). 순수 함수 — 파일을 읽지 않는다.
@@ -795,6 +896,15 @@ def work_section(works, tasks, logs=None) -> str:
                                  '<code>%s</code>%s</td></tr>'
                                  % (e(str(t.get("status") or "")), e(tid[:8]), blk))
                         shown.add(tid)
+            # 단계 스텝퍼 (#223) — 태스크마다 하나. [주의] 종료된 work 는 첫 태스크만:
+            #    끝난 일에 스텝퍼를 줄줄이 그리면 지금 도는 것이 묻힌다.
+            for t in (r["tasks"] if not closed else r["tasks"][:1])[:STEPPER_MAX]:
+                sv = stepper_svg(stage_steps(t, {"merge_status": r["status"]}))
+                if sv:
+                    p.append('<tr><td></td><td colspan="5"><div class="sub">'
+                             '<code>%s</code> %s</div>%s</td></tr>'
+                             % (e(str(t.get("task_id") or "")[:8]),
+                                e(str(t.get("type") or "")), sv))
 
     p.append('<table><tr><th>work</th><th>제목</th><th>상태</th><th>진행</th>'
              '<th>태스크</th><th>등록</th></tr>')
@@ -805,7 +915,9 @@ def work_section(works, tasks, logs=None) -> str:
         _rows(closed_rows[:WORK_SHOW_CLOSED], True)
     p.append("</table>")
     p.append('<div class="sub" style="margin-top:.3rem">진행은 <b>종료/전체 분수</b>다 — '
-             '추론은 진행률을 모르므로 퍼센트를 만들지 않는다. 일감·집계의 정본은 Redmine</div>')
+             '추론은 진행률을 모르므로 퍼센트를 만들지 않는다. 일감·집계의 정본은 Redmine<br>'
+             '단계는 <b>큐가 기록하는 여섯</b>이다 — 마스터 측 단계(분해·collect·층1·적용·커밋)는 '
+             '통합자 로그에만 있어 그리지 않는다(모르는 것을 그리면 그림이 거짓말을 한다)</div>')
     p.append("</div>")
     return "".join(p)
 
