@@ -351,6 +351,30 @@ def parse_task_data(body: str) -> dict:
     return val if isinstance(val, dict) else {}
 
 
+def parse_fail_reason(body: str) -> dict:
+    """MD 본문의 마지막 ``## fail`` 절에서 `fail_reason`·`fail_detail`·`failed_at` 을 되읽는다 (#222).
+
+    2026-08-19 부터 `submit_fail` 이 레코드에도 남기지만, 그 전 실패는 본문에만 있다 — 화면이
+    「왜 실패했나」를 답하려면 옛 기록도 읽혀야 한다. 없으면 빈 dict (실패가 아닌 태스크가 대부분).
+    같은 태스크가 여러 번 실패했으면 **마지막 것**이 현재 상태다.
+    """
+    if not body or "## fail" not in body:
+        return {}
+    sec = body.rsplit("## fail", 1)[1]
+    out = {}
+    for line in sec.splitlines():
+        line = line.strip()
+        if line.startswith("## "):
+            break                       # 다음 절 — fail 절은 끝났다
+        for key, field in (("reason:", "fail_reason"), ("detail:", "fail_detail"),
+                           ("at:", "failed_at")):
+            if line.startswith(key) and field not in out:
+                val = line[len(key):].strip()
+                if val:
+                    out[field] = val[:600]
+    return out
+
+
 def _read_md(path: Path) -> tuple[dict, str]:
     if not path.exists():
         return {}, ""
@@ -527,3 +551,7 @@ class TaskIndex:
                         self.task_paths[tid] = f
                         # [중요] 재기동해도 워커가 받을 자료가 남아야 한다 — 본문에서 되읽는다.
                         self.task_data[tid] = parse_task_data(body)
+                        # 실패 근거도 같은 이유로 되읽는다 (#222) — 2026-08-19 이전 실패는
+                        # 본문에만 있어서 API·화면이 「왜」를 몰랐다. 레코드 값이 우선.
+                        for k, v in parse_fail_reason(body).items():
+                            meta.setdefault(k, v)

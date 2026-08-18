@@ -23,7 +23,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from master.task_queue.logic import (  # noqa: E402
     register_work, register_task, claim_task,
 )
-from master.task_queue.persistence import TaskIndex, parse_task_data  # noqa: E402
+from master.task_queue.persistence import (  # noqa: E402
+    TaskIndex, parse_task_data, parse_fail_reason,
+)
 
 
 # ── 하네스 ────────────────────────────────────────────────────
@@ -108,6 +110,58 @@ def test_claim_does_not_erase_body():
     fresh = TaskIndex(root)
     fresh.rebuild()
     assert fresh.task_data.get(tid, {}).get("force_backend") == "local_llm", fresh.task_data
+
+
+# ── 실패 근거 (#222) — 「왜 그 상태인가」가 API·화면까지 닿아야 한다 ──
+
+def test_parse_fail_reason_from_body():
+    body = ("\n## verify\nresult: pass\n"
+            "\n## fail\nreason: build-setup\ndetail: UE5 Build.bat 을 찾지 못했다\n"
+            "at: 2026-08-19T10:00:00+09:00\n")
+    got = parse_fail_reason(body)
+    assert got["fail_reason"] == "build-setup"
+    assert "찾지 못했다" in got["fail_detail"]
+    assert got["failed_at"].startswith("2026-08-19")
+    assert parse_fail_reason("") == {} and parse_fail_reason("실패 없음") == {}
+
+
+def test_parse_fail_reason_takes_the_last_failure():
+    """같은 태스크가 두 번 실패했으면 **마지막**이 현재 상태다."""
+    body = ("\n## fail\nreason: 첫번째\ndetail: a\n"
+            "\n## fail\nreason: 두번째\ndetail: b\n")
+    assert parse_fail_reason(body)["fail_reason"] == "두번째"
+
+
+def test_submit_fail_records_reason_in_record_and_survives_restart():
+    from master.task_queue.logic_lifecycle import submit_fail
+    idx, root, wid = _idx()
+    register_task(idx, work_id=wid, type="build", task_data={}, stem="b")
+    t = claim_task(idx, "w-.2", capabilities=["ue5"], types=["build"])
+    tid = t["task_id"]
+    assert submit_fail(idx, tid, "build-setup", "엔진을 못 찾았다").get("ok")
+    rec = idx.tasks[tid]
+    assert rec["status"] == "failed"
+    assert rec["fail_reason"] == "build-setup" and "못 찾았다" in rec["fail_detail"]
+    # 재기동 — 근거가 본문에서 되읽혀야 한다 (2026-08-19 이전 실패도 이 경로로 살아난다)
+    again = TaskIndex(root)
+    again.rebuild()
+    assert again.tasks[tid]["fail_reason"] == "build-setup"
+    assert "못 찾았다" in again.tasks[tid]["fail_detail"]
+
+
+def test_verify_reject_records_verdict():
+    from master.task_queue.logic_lifecycle import verify_task
+    idx, root, wid = _idx()
+    register_task(idx, work_id=wid, type="build", task_data={}, stem="b")
+    t = claim_task(idx, "w-.2", capabilities=["ue5"], types=["build"])
+    tid = t["task_id"]
+    from master.task_queue.logic_lifecycle import submit_result
+    assert submit_result(idx, tid, branch="", head_commit="abc",
+                         self_check={"build": {"ok": True}}).get("ok")
+    assert verify_task(idx, tid, result="reject", feedback="환각 2건").get("ok")
+    rec = idx.tasks[tid]
+    assert rec["status"] == "failed" and rec["verdict"] == "reject"
+    assert rec["fail_reason"] == "verify:reject" and "환각" in rec["fail_detail"]
 
 
 if __name__ == "__main__":

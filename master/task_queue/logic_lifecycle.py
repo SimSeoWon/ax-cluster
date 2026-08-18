@@ -94,6 +94,11 @@ def submit_fail(idx: TaskIndex, task_id: str, reason: str, detail: str = "") -> 
             return {"ok": True, "released": True}
         # 일반 실패 — 기존 동작
         t["status"] = "failed"
+        # 근거를 **본문뿐 아니라 레코드에도** 남긴다 (#222) — 본문에만 있으면 API·화면이
+        # 「실패했다」까지만 알고 「왜」를 모른다. 본문은 감사 기록으로 그대로 유지한다.
+        t["fail_reason"] = str(reason)[:120]
+        t["fail_detail"] = str(detail)[:600]
+        t["failed_at"] = _now_iso()
         path = idx.task_paths[task_id]
         _, body = _read_md(path)
         body += f"\n## fail\nreason: {reason}\ndetail: {detail}\nat: {_now_iso()}\n"
@@ -159,6 +164,15 @@ def verify_task(idx: TaskIndex, task_id: str, passed: bool = True,
         t["verifier_id"] = None
         t["verify_claimed_at"] = None
         t["verify_heartbeat"] = None
+        # 판정 근거를 레코드에도 (#222) — 화면이 「왜 그 상태인가」를 답할 수 있어야 한다.
+        #    revise 의 last_result 와 달리 **모든** 판정에 남는다.
+        t["verdict"] = result
+        if feedback:
+            t["verdict_feedback"] = str(feedback)[:600]
+        if new_status == "failed":
+            t.setdefault("fail_reason", f"verify:{result}")
+            if feedback:
+                t.setdefault("fail_detail", str(feedback)[:600])
         # revise 시 feedback 을 frontmatter 에 저장 — claim_task 가 다음 시도에 워커에게 전달
         if new_status == "needs_revision":
             t["last_feedback"] = feedback

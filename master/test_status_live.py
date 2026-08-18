@@ -151,6 +151,88 @@ def test_task_note_bad_timestamp_still_shows_note():
     assert "실체화 중" in got and "전)" not in got
 
 
+# ── #222 work 중심 층 ───────────────────────────────────────────
+
+def _works_and_tasks():
+    works = [
+        {"work_id": "W-open", "title": "미션 태깅", "merge_status": "in_progress",
+         "total": 3, "created": "2026-08-19T09:00:00+09:00", "distribution_mode": "pull"},
+        {"work_id": "W-done", "title": "닫힌 작업", "merge_status": "merged",
+         "total": 1, "created": "2026-08-18T09:00:00+09:00"},
+    ]
+    tasks = [
+        {"task_id": "t1", "work_id": "W-open", "status": "verified"},
+        {"task_id": "t2", "work_id": "W-open", "status": "claimed", "worker_id": "192.168.0.43",
+         "note": "claude 추론 중", "note_at": "2026-08-19T09:05:00+09:00"},
+        {"task_id": "t3", "work_id": "W-open", "status": "failed",
+         "target_file": "Source/A/<B>.cpp", "fail_reason": "build-setup",
+         "fail_detail": "UE5 Build.bat 을 찾지 못했다"},
+        {"task_id": "t4", "work_id": "W-done", "status": "verified"},
+    ]
+    return works, tasks
+
+
+def test_work_rows_group_and_split_open_closed():
+    works, tasks = _works_and_tasks()
+    open_rows, closed_rows = S.work_rows(works, tasks)
+    assert [r["work_id"] for r in open_rows] == ["W-open"]
+    assert [r["work_id"] for r in closed_rows] == ["W-done"]
+    r = open_rows[0]
+    assert (r["done"], r["total"]) == (2, 3)          # verified+failed 가 종료, 3 은 메타
+    assert len(r["running"]) == 1 and len(r["failed"]) == 1
+    assert r["note"] == "claude 추론 중"               # 심박 note 가 work 로 올라온다
+    assert r["workers"] == ["192.168.0.43"]
+
+
+def test_work_rows_total_falls_back_to_counted_tasks():
+    """등재 직후엔 work.total 이 0 인 순간이 있다 — 그때는 실측 개수를 쓴다."""
+    works = [{"work_id": "W", "merge_status": "in_progress", "total": 0}]
+    tasks = [{"task_id": "a", "work_id": "W", "status": "pending"},
+             {"task_id": "b", "work_id": "W", "status": "claimed"}]
+    open_rows, _ = S.work_rows(works, tasks)
+    assert open_rows[0]["total"] == 2 and open_rows[0]["done"] == 0
+
+
+def test_work_section_shows_progress_as_fraction_never_percent():
+    works, tasks = _works_and_tasks()
+    out = S.work_section(works, tasks)
+    assert "2/3" in out and "%" not in out           # 분수만 — 퍼센트는 거짓말 (#221)
+    assert "작업(work) — 등록 단위" in out
+
+
+def test_work_section_shows_failure_reason_and_escapes():
+    works, tasks = _works_and_tasks()
+    out = S.work_section(works, tasks)
+    assert "build-setup" in out and "찾지 못했다" in out
+    assert "&lt;B&gt;.cpp" in out                    # 이스케이프
+
+
+def test_work_section_says_when_reason_missing():
+    """근거 없는 실패는 조용한 빈칸이 아니라 「미기록」이라고 적는다."""
+    works = [{"work_id": "W", "merge_status": "in_progress", "total": 1}]
+    tasks = [{"task_id": "a", "work_id": "W", "status": "failed"}]
+    out = S.work_section(works, tasks)
+    assert "근거 미기록" in out
+
+
+def test_work_section_empty_and_closed_cap():
+    assert "등록된 작업이 없다" in S.work_section([], [])
+    works = [{"work_id": f"W{i}", "merge_status": "merged", "total": 0,
+              "created": f"2026-08-{10 + i:02}T09:00:00+09:00"} for i in range(9)]
+    out = S.work_section(works, [])
+    assert "최근 5건만 표시" in out                   # 잘랐다는 것을 화면에 적는다
+    assert "W18" not in out and "W8" in out          # 최신부터 남는다
+
+
+def test_closed_work_hides_stale_note():
+    """종료된 work 에 「지금」을 붙이지 않는다 — 끝난 일의 마지막 위상은 현재가 아니다."""
+    works = [{"work_id": "W", "merge_status": "merged", "total": 1}]
+    tasks = [{"task_id": "a", "work_id": "W", "status": "verified",
+              "note": "빌드 중", "note_at": "2026-08-18T09:00:00+09:00"}]
+    out = S.work_section(works, tasks)
+    assert "지금: 빌드 중" not in out
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = 0

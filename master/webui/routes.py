@@ -165,6 +165,11 @@ def cluster_page(paths) -> tuple:
                                 at=_dt.now().strftime("%H:%M:%S"),
                                 recent=got.get("recent"),
                                 activity=_status.read_activity(paths.root))
+    # work 중심 층 (#222) — 화면의 주어를 등록 단위로 올린다. 실시간 층 **아래**에 둔다:
+    #    「지금 무엇이 도는가」가 먼저고, 「내 작업이 어디까지 왔나」가 그 다음이다.
+    #    실시간 층을 못 읽었으면(토큰·큐 장애) work 도 재료가 없으므로 그리지 않는다.
+    if not got.get("error"):
+        live += _status.work_section(got.get("works"), got.get("tasks"))
     # 자동 갱신 (사용자: "매번 F5 누르기 불편") — 탭이 보일 때만 15초마다 리로드.
     #    페이지 전체가 가벼운 정적 서빙이라 부분 갱신 API 를 새로 여는 것보다 싸고,
     #    토큰 없는 공개 API 를 만들지 않아도 된다.

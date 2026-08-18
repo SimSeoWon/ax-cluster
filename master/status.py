@@ -578,6 +578,135 @@ def task_note(t: dict) -> str:
     return html.escape(note[:60]) + age
 
 
+WORK_OPEN = ("in_progress", "ready_for_review", "", None)   # 열린 work (#222)
+WORK_SHOW_CLOSED = 5                # 종료 work 는 최근 이 개수만 (전량은 Redmine·리포트)
+
+
+def _elapsed(iso: str) -> str:
+    """ISO 시각 → 「3분」·「2시간」. 못 읽으면 빈 문자열 (조용한 0 을 만들지 않는다)."""
+    from datetime import datetime as _dt
+    try:
+        sec = (_dt.now().astimezone() - _dt.fromisoformat(str(iso))).total_seconds()
+    except (ValueError, TypeError):
+        return ""
+    if sec < 0:
+        return ""
+    if sec < 3600:
+        return f"{int(sec // 60)}분"
+    if sec < 86400:
+        return f"{int(sec // 3600)}시간"
+    return f"{int(sec // 86400)}일"
+
+
+def work_rows(works, tasks) -> tuple:
+    """work 중심 행을 만든다 (#222) — `(열린 work, 종료 work)`. 순수 함수 (테스트 자리).
+
+    화면의 주어를 task 에서 **work** 로 올린다: 등록하는 단위가 work 이므로 「내 작업이 지금
+    어떤 상태인가」의 답은 work 단위여야 한다. task 는 그 안에서 펼친다.
+
+    [중요] 진행은 **분수**(종료 n / 전체 N)로 낸다 — 퍼센트는 추론 진행률을 모르는 우리에게
+    거짓말이 된다(#221 의 거부 근거). work 의 `total` 이 0 이면 태스크 실측 개수를 쓴다:
+    등재 직후엔 메타가 아직 0 인 순간이 있다.
+    """
+    by_work = {}
+    for t in (tasks or []):
+        if isinstance(t, dict):
+            by_work.setdefault(str(t.get("work_id") or ""), []).append(t)
+    open_rows, closed_rows = [], []
+    for w in (works or []):
+        if not isinstance(w, dict):
+            continue
+        wid = str(w.get("work_id") or "")
+        mine = by_work.get(wid, [])
+        done = [t for t in mine if t.get("status") in Snapshot.CLOSED]
+        total = int(w.get("total") or 0) or len(mine)
+        failed = [t for t in mine if t.get("status") in ("failed", "cancelled")]
+        running = [t for t in mine if t.get("status") == "claimed"]
+        # 가장 최근 note = 이 work 가 「지금」 하는 일 (#220 의 심박 note 가 여기로 올라온다)
+        noted = sorted((t for t in mine if t.get("note")),
+                       key=lambda t: str(t.get("note_at") or ""), reverse=True)
+        row = {
+            "work_id": wid, "title": str(w.get("title") or ""),
+            "status": str(w.get("merge_status") or ""),
+            "done": len(done), "total": total,
+            "failed": failed, "running": running,
+            "note": (noted[0].get("note") if noted else ""),
+            "note_at": (noted[0].get("note_at") if noted else ""),
+            "workers": sorted({str(t.get("worker_id") or t.get("assignee") or "")
+                               for t in mine if t.get("worker_id") or t.get("assignee")}),
+            "created": str(w.get("created") or ""),
+            "mode": str(w.get("distribution_mode") or ""),
+            "tasks": mine,
+        }
+        (open_rows if row["status"] in WORK_OPEN else closed_rows).append(row)
+    closed_rows.sort(key=lambda r: r["created"], reverse=True)
+    open_rows.sort(key=lambda r: r["created"], reverse=True)
+    return open_rows, closed_rows
+
+
+def work_section(works, tasks) -> str:
+    """work 중심 층 (#222) — 열린 work 는 전부, 종료 work 는 최근 몇 건. 순수 함수."""
+    e = html.escape
+    open_rows, closed_rows = work_rows(works, tasks)
+    p = ['<div class="tile" style="margin:.9rem 0">',
+         '<div style="display:flex;justify-content:space-between;align-items:baseline">'
+         '<b>작업(work) — 등록 단위</b>'
+         f'<span class="sub">열림 {len(open_rows)} · 종료 {len(closed_rows)}'
+         f'{" (최근 " + str(WORK_SHOW_CLOSED) + "건만 표시)" if len(closed_rows) > WORK_SHOW_CLOSED else ""}'
+         '</span></div>']
+    if not open_rows and not closed_rows:
+        p.append('<div class="sub">등록된 작업이 없다 — 큐가 비어 있다</div></div>')
+        return "".join(p)
+
+    def _rows(rows, closed: bool):
+        for r in rows:
+            age = _elapsed(r["created"])
+            prog = f'{r["done"]}/{r["total"]}' if r["total"] else "—"
+            marks = []
+            if r["running"]:
+                marks.append(f'진행 {len(r["running"])}')
+            if r["failed"]:
+                marks.append(f'<b>실패 {len(r["failed"])}</b>')
+            p.append(
+                '<tr><td><code>%s</code></td><td>%s</td><td>%s</td><td class="n">%s</td>'
+                '<td>%s</td><td class="n">%s</td></tr>'
+                % (e(r["work_id"][:24]), e(r["title"][:46]) or '<span class="sub">—</span>',
+                   e(r["status"]) or '<span class="sub">—</span>', prog,
+                   " · ".join(marks) or '<span class="sub">—</span>',
+                   (age + " 전") if age else ""))
+            # 「지금」 — 심박 note (진행 중일 때만 있다)
+            if r["note"] and not closed:
+                nage = _elapsed(r["note_at"])
+                p.append('<tr><td></td><td colspan="5" class="sub">지금: %s%s</td></tr>'
+                         % (e(str(r["note"])[:70]),
+                            f" ({nage} 전)" if nage else ""))
+            # 실패 근거 — 「왜 그 상태인가」. 근거가 없으면 없다고 적는다 (조용한 빈칸 금지)
+            for t in r["failed"][:3]:
+                why = str(t.get("fail_reason") or t.get("verdict") or "").strip()
+                det = str(t.get("fail_detail") or t.get("verdict_feedback") or "").strip()
+                body = (f'<b>{e(why)}</b>' if why else
+                        '<span class="sub">근거 미기록 — 태스크 md 참조</span>')
+                if det:
+                    body += " · " + e(det[:120])
+                p.append('<tr><td></td><td colspan="5" class="sub">%s <code>%s</code> %s</td></tr>'
+                         % (e(str(t.get("status") or "")),
+                            e(str(t.get("target_file") or "").split("/")[-1] or t.get("task_id", "")[:8]),
+                            body))
+
+    p.append('<table><tr><th>work</th><th>제목</th><th>상태</th><th>진행</th>'
+             '<th>태스크</th><th>등록</th></tr>')
+    _rows(open_rows, False)
+    if closed_rows:
+        p.append('<tr><td colspan="6" class="sub" style="padding-top:.4rem">'
+                 '— 종료된 작업 —</td></tr>')
+        _rows(closed_rows[:WORK_SHOW_CLOSED], True)
+    p.append("</table>")
+    p.append('<div class="sub" style="margin-top:.3rem">진행은 <b>종료/전체 분수</b>다 — '
+             '추론은 진행률을 모르므로 퍼센트를 만들지 않는다. 일감·집계의 정본은 Redmine</div>')
+    p.append("</div>")
+    return "".join(p)
+
+
 def live_section(queue, tasks, endpoints, *, error: str = "", at: str = "",
                  recent=None, activity=None) -> str:
     """실시간 작업 층 (#216) — **서빙 시점** 데이터로 만든다. 순수 함수 (테스트 자리).
@@ -657,14 +786,17 @@ def fetch_live(*, token: str = "") -> dict:
         token = _read_token()
     if not token:
         return {"error": "토큰을 못 읽었다 (~/.config/ax-cluster/token)"}
-    out = {"queue": None, "tasks": None, "endpoints": None, "error": ""}
+    out = {"queue": None, "tasks": None, "endpoints": None, "works": None, "error": ""}
     q = _api("http://127.0.0.1:8101/api/v1/status", token=token, timeout=2)
     t = _api("http://127.0.0.1:8101/api/v1/tasks", token=token, timeout=2)
+    w = _api("http://127.0.0.1:8101/api/v1/works", token=token, timeout=2)
     h = _api("http://127.0.0.1:8102/health", token=token, timeout=2)
     if isinstance(q, dict):
         out["queue"] = q
     if isinstance(t, list):
         out["tasks"] = t
+    if isinstance(w, list):
+        out["works"] = w                # work 중심 층의 재료 (#222)
     if isinstance(h, dict):
         out["endpoints"] = h.get("endpoints") or []
         out["recent"] = h.get("recent") or []      # 브로커 최근 추론 이력 (#216 후속)
