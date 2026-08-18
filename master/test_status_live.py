@@ -146,6 +146,17 @@ def test_task_note_column_shows_worker_note():
     assert S.task_note({}) == '<span class="sub">—</span>'   # note 없음 폴백
 
 
+def test_elapsed_accepts_naive_timestamp():
+    """[중요] 실측 2026-08-19: 회수 메타가 tz 없는 시각을 넣어 나이 계산이 TypeError 로 죽고
+    화면에 「회수 시각 미상」이 떴다 — 값은 있는데 못 읽은 것이었다. naive 는 로컬로 본다."""
+    from datetime import datetime, timedelta
+    naive = (datetime.now() - timedelta(minutes=5)).isoformat(timespec="seconds")
+    assert S._elapsed(naive) == "5분"
+    aware = (datetime.now().astimezone() - timedelta(hours=2)).isoformat(timespec="seconds")
+    assert S._elapsed(aware) == "2시간"
+    assert S._elapsed("엉망") == "" and S._elapsed("") == ""
+
+
 def test_task_note_bad_timestamp_still_shows_note():
     got = S.task_note({"note": "실체화 중", "note_at": "엉망"})
     assert "실체화 중" in got and "전)" not in got

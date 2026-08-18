@@ -598,10 +598,18 @@ WORK_SHOW_CLOSED = 5                # 종료 work 는 최근 이 개수만 (전�
 
 
 def _elapsed(iso: str) -> str:
-    """ISO 시각 → 「3분」·「2시간」. 못 읽으면 빈 문자열 (조용한 0 을 만들지 않는다)."""
+    """ISO 시각 → 「3분」·「2시간」. 못 읽으면 빈 문자열 (조용한 0 을 만들지 않는다).
+
+    [중요] **tz 없는 값도 받는다 — 로컬 시각으로 본다.** 실측 2026-08-19: 회수 메타가
+    `datetime.now().isoformat()`(naive)을 넣었더니 aware 와의 뺄셈이 TypeError 로 죽어
+    화면에 「회수 시각 미상」이 떴다 — 값은 있는데 못 읽은 것이었다.
+    """
     from datetime import datetime as _dt
     try:
-        sec = (_dt.now().astimezone() - _dt.fromisoformat(str(iso))).total_seconds()
+        t = _dt.fromisoformat(str(iso))
+        if t.tzinfo is None:
+            t = t.astimezone()
+        sec = (_dt.now().astimezone() - t).total_seconds()
     except (ValueError, TypeError):
         return ""
     if sec < 0:
@@ -771,15 +779,22 @@ def work_section(works, tasks, logs=None) -> str:
                             body,
                             log_block(str(t.get("task_id") or ""),
                                       logs.get(str(t.get("task_id") or "")))))
-            # 진행 중 태스크의 로그 — 「왜 안 끝나나」의 답이 여기 있다 (#220 ③-B)
+            # 아직 안 닫힌 태스크의 로그 — 「왜 안 끝나나」의 답이 여기 있다 (#220 ③-B).
+            # [중요] `claimed` 만 보면 안 된다 — 실측 2026-08-19: 빌드가 끝나 `submitted`
+            #    (검증 대기)가 된 순간 진행 중도 실패도 아니게 되어 **회수해 둔 로그를 볼
+            #    길이 사라졌다.** 실패 행에서 이미 보여 준 것만 건너뛴다.
+            shown = {str(t.get("task_id") or "") for t in r["failed"]}
             if not closed:
-                for t in r["running"][:3]:
-                    blk = log_block(str(t.get("task_id") or ""),
-                                    logs.get(str(t.get("task_id") or "")))
+                for t in r["tasks"]:
+                    tid = str(t.get("task_id") or "")
+                    if tid in shown or t.get("status") in Snapshot.CLOSED:
+                        continue
+                    blk = log_block(tid, logs.get(tid))
                     if blk:
-                        p.append('<tr><td></td><td colspan="5" class="sub">진행 중 '
+                        p.append('<tr><td></td><td colspan="5" class="sub">%s '
                                  '<code>%s</code>%s</td></tr>'
-                                 % (e(str(t.get("task_id") or "")[:8]), blk))
+                                 % (e(str(t.get("status") or "")), e(tid[:8]), blk))
+                        shown.add(tid)
 
     p.append('<table><tr><th>work</th><th>제목</th><th>상태</th><th>진행</th>'
              '<th>태스크</th><th>등록</th></tr>')

@@ -220,6 +220,27 @@ def test_log_block_renders_tail_with_age_and_escape():
     assert S.log_block("t1", None) == "" and S.log_block("t1", {}) == ""
 
 
+def test_work_section_shows_log_for_submitted_task():
+    """[중요] 실측 2026-08-19: 빌드가 끝나 `submitted`(검증 대기)가 되면 진행 중도 실패도
+    아니어서 **회수해 둔 로그를 볼 길이 사라졌다.** 닫히지 않은 태스크면 보여 준다."""
+    works = [{"work_id": "W", "merge_status": "in_progress", "total": 1}]
+    tasks = [{"task_id": "s1", "work_id": "W", "status": "submitted"}]
+    logs = {"s1": {"at": "", "host": "h", "files": {"build.log": "BUILD OK(128.3s)"}}}
+    out = S.work_section(works, tasks, logs=logs)
+    assert "BUILD OK(128.3s)" in out and "submitted" in out
+    # 닫힌 태스크는 안 보여 준다 (끝난 일의 로그는 work 이력으로 남는다)
+    done = [{"task_id": "s1", "work_id": "W", "status": "verified"}]
+    assert "BUILD OK" not in S.work_section(works, done, logs=logs)
+
+
+def test_work_section_does_not_duplicate_failed_task_log():
+    works = [{"work_id": "W", "merge_status": "in_progress", "total": 1}]
+    tasks = [{"task_id": "f1", "work_id": "W", "status": "failed", "fail_reason": "x"}]
+    logs = {"f1": {"at": "", "host": "h", "files": {"build.log": "표식하나"}}}
+    out = S.work_section(works, tasks, logs=logs)
+    assert out.count("표식하나") == 1                 # 실패 행에서 한 번만
+
+
 def test_work_section_embeds_log_for_failed_and_running():
     works = [{"work_id": "W", "merge_status": "in_progress", "total": 2}]
     tasks = [{"task_id": "f1", "work_id": "W", "status": "failed",
@@ -229,7 +250,7 @@ def test_work_section_embeds_log_for_failed_and_running():
             "r1": {"at": "", "host": "h", "files": {"heartbeat.log": "[beat] ok"}}}
     out = S.work_section(works, tasks, logs=logs)
     assert "UBT 실패" in out and "[beat] ok" in out
-    assert "진행 중 <code>r1</code>" in out
+    assert "claimed <code>r1</code>" in out          # 상태 라벨 + 태스크 id
     # 로그가 없으면 블록 자체가 없다 (빈 details 를 만들지 않는다)
     assert "<details" not in S.work_section(works, tasks)
 

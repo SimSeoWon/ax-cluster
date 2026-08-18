@@ -94,7 +94,7 @@ def collect_host_log(paths, facts, *, reader=None, day: str = "",
         p.parent.mkdir(parents=True, exist_ok=True)
         stale = "" if back == 0 else f"  ← [주의] 오늘자가 아니다 ({back}일 전 파일)"
         body = (f"# {getattr(facts, 'host', '')} · claimer_{d}.log{stale} · 회수 "
-                f"{datetime.now().isoformat(timespec='seconds')}\n" + _tail(text))
+                f"{datetime.now().astimezone().isoformat(timespec='seconds')}\n" + _tail(text))
         p.write_text(body, encoding="utf-8")
         return len(text.encode("utf-8", "replace"))
     return 0
@@ -153,7 +153,7 @@ def collect_task_logs(paths, facts, task_id: str, *, reader=None, now: str = "")
         got[name] = len(text.encode("utf-8", "replace"))
     if got:
         meta = {"task_id": task_id, "host": getattr(facts, "host", ""),
-                "at": now or datetime.now().isoformat(timespec="seconds"),
+                "at": now or datetime.now().astimezone().isoformat(timespec="seconds"),
                 "bytes": got}
         (store_dir(paths, task_id) / META_NAME).write_text(
             json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
