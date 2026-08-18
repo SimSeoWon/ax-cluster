@@ -616,11 +616,13 @@ def main(argv=None) -> int:
         if _lock is None:
             log("[boot] 이미 상주 중 (claimer.lock 잠김) — 이 인스턴스는 물러난다")
             return 0
-        ax_safety.apply_all(root / ".ax" / "logs", log)
         # #220 ② — 부팅별 회전 + retention. 상주에서만: --once 는 회전하면 파일이 폭증한다
-        #    (원전 common.py 의 단서 그대로). 잠금 획득 **뒤**라 동시 부팅 race 도 없다.
+        #    (원전 common.py 의 단서 그대로). 잠금 획득 **뒤**(동시 부팅 race 없음)이면서
+        #    [주의] **이 부팅의 첫 로그 전**이어야 한다 — apply_all 이 먼저 쓰면 방금 만든
+        #    파일을 회전이 _1 로 밀어내 부팅 자신의 줄이 두 파일로 갈린다 (실측 2026-08-18).
         _bootstrap_log_rotation(root)
         swept = _retention_sweep(root)
+        ax_safety.apply_all(root / ".ax" / "logs", log)
         if swept:
             log(f"[boot] 로그 retention — {LOG_RETENTION_DAYS}일 지난 {swept}개 항목 삭제")
 
