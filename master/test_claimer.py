@@ -518,6 +518,18 @@ def test_heartbeat_note_stored_and_empty_preserves():
     assert len(idx.tasks[tid]["note"]) == 200                # 서버가 자른다
 
 
+def test_log_to_file_false_keeps_daily_log_clean():
+    """[중요] 감시자가 겹쳐 부를 때의 「이미 상주 중」은 파일에 안 남는다 — 5분×하루=288줄이
+    일별 로그를 뒤덮어 정작 볼 것(부팅·claim·실패)이 묻혔다 (실측 2026-08-19, #220 화면이 잡음)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        claimer._log(root, "[boot] 이미 상주 중", to_file=False)
+        assert not claimer._log_path(root).exists()
+        claimer._log(root, "[boot] 진짜 부팅")
+        assert "진짜 부팅" in claimer._log_path(root).read_text(encoding="utf-8")
+        assert "이미 상주 중" not in claimer._log_path(root).read_text(encoding="utf-8")
+
+
 def test_boot_rotation_renames_today_log():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)

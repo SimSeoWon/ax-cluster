@@ -208,7 +208,14 @@ def _retention_sweep(root: Path, *, days: int = LOG_RETENTION_DAYS) -> int:
     return removed
 
 
-def _log(root: Path, msg: str) -> None:
+def _log(root: Path, msg: str, *, to_file: bool = True) -> None:
+    """콘솔 + 일별 파일. `to_file=False` 는 **콘솔만** — 정보가 없는 정상 메시지 자리다.
+
+    [중요] 왜 이 스위치가 생겼나 (실측 2026-08-19): 감시자(5분)가 겹쳐 부를 때마다 남긴
+    「이미 상주 중」이 **하루 288줄**로 일별 로그를 뒤덮어, 정작 볼 것(부팅·claim·실패)이
+    묻혔다 — #220 의 로그 열람 화면이 그것을 바로 드러냈다. 데몬이 죽으면 다음 틱이 진짜
+    `[boot]` 을 남기므로, 물러나는 사건은 파일에 없어도 진단이 가능하다.
+    """
     line = f"{datetime.now().strftime('%m-%d %H:%M:%S')} {msg}"
     try:
         print(line, flush=True)
@@ -219,6 +226,8 @@ def _log(root: Path, msg: str) -> None:
         print(line.encode(enc, "replace").decode(enc, "replace"), flush=True)
     except OSError:
         pass                        # pythonw(상주)에는 콘솔이 없다 — 파일 로그가 본선이다
+    if not to_file:
+        return
     try:
         p = _log_path(root)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -614,7 +623,9 @@ def main(argv=None) -> int:
         #    [주의] 핸들 참조를 놓으면 GC 가 잠금을 풀어 버린다 — 루프가 사는 동안 쥔다.
         _lock = acquire_singleton(root)                      # noqa: F841 — 참조 유지가 목적
         if _lock is None:
-            log("[boot] 이미 상주 중 (claimer.lock 잠김) — 이 인스턴스는 물러난다")
+            # 콘솔만 — 감시자 5분 × 하루 = 288줄이 일별 로그를 뒤덮었다 (_log 머리말)
+            _log(root, "[boot] 이미 상주 중 (claimer.lock 잠김) — 이 인스턴스는 물러난다",
+                 to_file=False)
             return 0
         # #220 ② — 부팅별 회전 + retention. 상주에서만: --once 는 회전하면 파일이 폭증한다
         #    (원전 common.py 의 단서 그대로). 잠금 획득 **뒤**(동시 부팅 race 없음)이면서

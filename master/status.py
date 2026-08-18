@@ -380,6 +380,21 @@ def collect(*, project: str = "", token: str = "", force: bool = False,
             snap.problems.append(f"`{host}` — {m.label}"
                                  + (f" ({m.error})" if m.error else ""))
 
+    # ④ 워커 로그 회수 (#220 ③-B) — [중요] **이 자리에서만 걷는다.** 여기는 이미 SSH 를 타는
+    #    순간이고 120초 가드 안이다. 서빙 순간에 걷으면 15초 리로드가 원격을 두드린다
+    #    (BC-250 을 자주 두드리지 않는다 — #105). 실패는 노트로만 — 스냅샷을 죽이지 않는다.
+    if shops:
+        try:
+            from .context_search.paths import resolve as _resolve
+            from .work import logs as _logs
+            _p = _resolve(project or "")
+            got = _logs.collect(_p, project=_p.name, api=lambda m, path, b=None: _api(
+                f"http://127.0.0.1:8101{path}", token=token))
+            if got["files"]:
+                snap.notes.append(f"워커 로그 회수 {got['tasks']}건 · 파일 {got['files']}")
+        except Exception as e:                               # noqa: BLE001
+            snap.notes.append(f"[주의] 워커 로그를 못 걷었다 — {type(e).__name__}: {e}")
+
     snap.seconds = time.time() - t0
     try:
         stamp.parent.mkdir(parents=True, exist_ok=True)
@@ -644,9 +659,71 @@ def work_rows(works, tasks) -> tuple:
     return open_rows, closed_rows
 
 
-def work_section(works, tasks) -> str:
-    """work 중심 층 (#222) — 열린 work 는 전부, 종료 work 는 최근 몇 건. 순수 함수."""
+LOG_SHOW_LINES = 40                 # 화면에 펼치는 로그 꼬리 줄 수 (원문은 워커에 있다)
+
+
+def log_block(task_id: str, stored: dict) -> str:
+    """회수된 워커 로그를 접힌 블록으로 (#220 ③-B). 순수 함수 — 파일을 읽지 않는다.
+
+    [중요] **회수 사본을 읽을 뿐 원격을 타지 않는다** — 서빙 순간의 scp 는 15초 리로드와 만나
+    120초 가드를 깬다. 나이를 함께 적는다: 낡은 로그를 최신인 척 보여 주지 않는다.
+    """
+    if not stored:
+        return ""
     e = html.escape
+    age = _elapsed(str(stored.get("at") or ""))
+    head = (f'로그 {len(stored.get("files") or {})}개'
+            + (f' · {e(str(stored.get("host")))}' if stored.get("host") else "")
+            + (f' · {age} 전 회수' if age else " · 회수 시각 미상"))
+    p = [f'<details style="margin:.15rem 0 .3rem 1.2rem"><summary class="sub">{head}</summary>']
+    for name, text in sorted((stored.get("files") or {}).items()):
+        lines = str(text).splitlines()
+        shown = lines[-LOG_SHOW_LINES:]
+        cut = len(lines) - len(shown)
+        p.append(f'<div class="sub" style="margin-top:.3rem"><code>{e(name)}</code>'
+                 + (f' <span style="opacity:.7">(앞 {cut}줄 생략)</span>' if cut > 0 else "")
+                 + "</div>")
+        p.append('<pre style="margin:.1rem 0;padding:.4rem .6rem;background:var(--bg);'
+                 'border:1px solid var(--line);border-radius:4px;overflow-x:auto;'
+                 f'font-size:.78rem;line-height:1.45">{e(chr(10).join(shown))}</pre>')
+    p.append("</details>")
+    return "".join(p)
+
+
+def daemon_log_section(host_logs) -> str:
+    """워커 데몬(claimer)의 오늘자 로그 — 태스크가 없어도 「살아 있나·뭘 했나」에 답한다.
+
+    순수 함수 (테스트 자리). 재료는 **회수된 사본**이고, 회수는 ax-status.timer 의 SSH
+    순간에만 한다 (#220 ③-B).
+    """
+    if not host_logs:
+        return ""
+    e = html.escape
+    p = ['<div class="tile" style="margin:.9rem 0">'
+         '<div><b>워커 데몬 로그</b> <span class="sub">회수 사본 — 5분 주기'
+         '(서빙 순간엔 원격을 타지 않는다)</span></div>']
+    for host, text in sorted(host_logs.items()):
+        lines = str(text).splitlines()
+        shown = lines[-LOG_SHOW_LINES:]
+        cut = len(lines) - len(shown)
+        p.append(f'<details style="margin:.25rem 0"><summary class="sub"><code>{e(host)}</code>'
+                 + (f' <span style="opacity:.7">(앞 {cut}줄 생략)</span>' if cut > 0 else "")
+                 + "</summary>")
+        p.append('<pre style="margin:.1rem 0;padding:.4rem .6rem;background:var(--bg);'
+                 'border:1px solid var(--line);border-radius:4px;overflow-x:auto;'
+                 f'font-size:.78rem;line-height:1.45">{e(chr(10).join(shown))}</pre></details>')
+    p.append("</div>")
+    return "".join(p)
+
+
+def work_section(works, tasks, logs=None) -> str:
+    """work 중심 층 (#222) — 열린 work 는 전부, 종료 work 는 최근 몇 건. 순수 함수.
+
+    `logs`: `{task_id: {"at","host","files"}}` — 회수된 워커 로그(#220 ③-B). 호출자가
+    `work.logs.read_stored` 로 만들어 넘긴다(이 함수는 파일을 읽지 않는다 — 테스트 자리 보존).
+    """
+    e = html.escape
+    logs = logs or {}
     open_rows, closed_rows = work_rows(works, tasks)
     p = ['<div class="tile" style="margin:.9rem 0">',
          '<div style="display:flex;justify-content:space-between;align-items:baseline">'
@@ -688,10 +765,21 @@ def work_section(works, tasks) -> str:
                         '<span class="sub">근거 미기록 — 태스크 md 참조</span>')
                 if det:
                     body += " · " + e(det[:120])
-                p.append('<tr><td></td><td colspan="5" class="sub">%s <code>%s</code> %s</td></tr>'
+                p.append('<tr><td></td><td colspan="5" class="sub">%s <code>%s</code> %s%s</td></tr>'
                          % (e(str(t.get("status") or "")),
                             e(str(t.get("target_file") or "").split("/")[-1] or t.get("task_id", "")[:8]),
-                            body))
+                            body,
+                            log_block(str(t.get("task_id") or ""),
+                                      logs.get(str(t.get("task_id") or "")))))
+            # 진행 중 태스크의 로그 — 「왜 안 끝나나」의 답이 여기 있다 (#220 ③-B)
+            if not closed:
+                for t in r["running"][:3]:
+                    blk = log_block(str(t.get("task_id") or ""),
+                                    logs.get(str(t.get("task_id") or "")))
+                    if blk:
+                        p.append('<tr><td></td><td colspan="5" class="sub">진행 중 '
+                                 '<code>%s</code>%s</td></tr>'
+                                 % (e(str(t.get("task_id") or "")[:8]), blk))
 
     p.append('<table><tr><th>work</th><th>제목</th><th>상태</th><th>진행</th>'
              '<th>태스크</th><th>등록</th></tr>')

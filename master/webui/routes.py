@@ -169,7 +169,20 @@ def cluster_page(paths) -> tuple:
     #    「지금 무엇이 도는가」가 먼저고, 「내 작업이 어디까지 왔나」가 그 다음이다.
     #    실시간 층을 못 읽었으면(토큰·큐 장애) work 도 재료가 없으므로 그리지 않는다.
     if not got.get("error"):
-        live += _status.work_section(got.get("works"), got.get("tasks"))
+        # 회수된 워커 로그를 함께 넘긴다 (#220 ③-B) — [중요] **로컬 사본만 읽는다.**
+        #    서빙 순간의 scp 는 15초 자동 리로드와 만나 120초 가드를 깬다. 회수는
+        #    ax-status.timer(5분)의 SSH 순간에만 한다 (`master.work.logs`).
+        stored, host_logs = {}, {}
+        try:
+            from ..work import logs as _logs
+            ids = [str(t.get("task_id") or "") for t in (got.get("tasks") or [])
+                   if isinstance(t, dict)]
+            stored = _logs.read_stored(paths, ids)
+            host_logs = _logs.read_host_logs(paths)
+        except Exception:                                    # noqa: BLE001
+            stored, host_logs = {}, {}   # 로그는 부가 정보 — 없다고 화면을 죽이지 않는다
+        live += _status.work_section(got.get("works"), got.get("tasks"), logs=stored)
+        live += _status.daemon_log_section(host_logs)
     # 자동 갱신 (사용자: "매번 F5 누르기 불편") — 탭이 보일 때만 15초마다 리로드.
     #    페이지 전체가 가벼운 정적 서빙이라 부분 갱신 API 를 새로 여는 것보다 싸고,
     #    토큰 없는 공개 API 를 만들지 않아도 된다.
