@@ -18,9 +18,9 @@ software repository.** There is no build, lint, or test tooling. **Don't assume 
   (These guidance files are English on purpose: only Claude reads them, and Korean costs ~2.7×
   the tokens for the same content.)
 
-## [중요] Where the project stands — read this before planning
+## Where the project stands — read this before planning
 
-**M1–M5 all closed ([중요] M3·M4·M5 closed 2026-08-17, user decisions). [중요] M6 (개선·확장)
+**M1–M5 all closed (M3·M4·M5 closed 2026-08-17, user decisions). M6 (개선·확장)
 is open — numbers live in Redmine (version *마일스톤 6*). A separate dateless bucket
 *아이디어 — 추후 검토 수집* holds not-yet-decided ideas (wiki [[아이디어수집]]) — items there
 are NOT work.**
@@ -28,64 +28,33 @@ are NOT work.**
 | | |
 |---|---|
 | Current milestone — **read only this one** | `~/ax-cluster/docs/milestones/6-improvements.md` |
-| Closed, kept as reference | `5-version-reconcile.md` (「여기서 배운 것」 — 전제가 죽은 선택 · 허위 인용 · 중앙화의 새 좌표) · `4-origin-reconciliation.md` ([중요] 왕복이 계약 · 원전 기본값 · census 한계) · `3-work-pipeline.md` (gates/grounding 실측) · `2-twin-restoration.md` · `1-infrastructure.md` |
+| Closed, kept as reference | `5-version-reconcile.md` (「여기서 배운 것」 — 전제가 죽은 선택 · 허위 인용 · 중앙화의 새 좌표) · `4-origin-reconciliation.md` (왕복이 계약 · 원전 기본값 · census 한계) · `3-work-pipeline.md` (gates/grounding 실측) · `2-twin-restoration.md` · `1-infrastructure.md` |
 
-> [주의] **The next two blocks (Why M3 was halted · M4 counts) are M4's record, not a current
-> instruction** — M4 closed 2026-08-17 with 0 open issues (되먹임 7종 completed the last area,
-> report 18 §40–§48). The topology/census lessons stay because they still bind.
+> [주의] **Below are the traps that still bind, not the closed milestones' records.** Progress and
+> counts live in Redmine; the narrative (census numbers, M2/M3/M4 scope and timings, the ported web
+> UI's feature list) lives in the closed milestone docs listed above — this file does not repeat them.
 
-[중요] **Why M3 was halted (report 14, an origin-citation census).** Measured: **74 files / 23,710
-lines of `~/AgentTest` are never once mentioned in our repo.** The three losses in report 13 §18
-were not three mistakes but **a pattern** — they only surfaced because the user *saw* those screens.
-The worst hit is the topology: `cluster_coordinator.py` (200 lines, **cited 0 times**) already had
-`assign_attempt` / `push_attempt` / `verify_and_merge` / `cleanup_attempts` / `fake_worker`, and its
-comment reads *"durable 단일 writer 보존"* — [중요] **"one writer" was never my invention; that writer
-is the server, and workers push ephemeral `attempt/` branches.** This project is an **OS/environment
-port** (Windows+UE5 daemon → Linux+Gitea), and Linux forces exactly **one** change: the UE5 build
-step *inside* `verify_and_merge` moves to `.2`. [주의] Even Gitea wasn't forced — the origin's doc listed
-GitHub/Gitea/bare as a choice. M4 = 대 4 / 중 17 ([중요] 소 count has moved **four times** — 62 → 75 → 80 → 81, and
-that list is **history, not the current count**: **the numbers live in Redmine**, version *마일스톤 4*),
-and [중요] **소 1.1 (read the origin's design docs) is upstream of everything.**
+[중요] **"one writer" was never my invention; that writer is the server, and workers push ephemeral
+`attempt/` branches** (the origin's `cluster_coordinator.py` said *"durable 단일 writer 보존"* while
+our repo cited it 0 times — report 14). This project is an **OS/environment port** (Windows+UE5
+daemon → Linux+Gitea) and Linux forces exactly **one** change: the UE5 build step *inside*
+`verify_and_merge` moves to `.2`. Not even Gitea was forced — the origin's doc listed GitHub/Gitea/
+bare as a choice. **소 1.1 (read the origin's design docs) is upstream of everything.**
 
-**What M2 delivered** (closed 소 43/43): the twin **grows, is indexed, and reaches code
-generation** — both of its goals run end to end. Manifests carry **domain norms** *and* **header
-declarations** (measured: real hallucinations 2 → 0). The **worker runner** dispatches from the
-queue into a worker's Claude and submits the result (requester→worker loop measured 1m29s), and the
-master **cleans up worker debris** — [중요] workers may not delete branches, a branch is removed only
-when its tip is reachable from `origin/main`, and workers return to **`main`**.
+[중요] **Workers may not delete branches** — a branch is removed only when its tip is reachable from
+`origin/main`, and workers return to **`main`**.
 
-> [주의] **The block from here to 「Deliberately outside M3」 is M3's record, not a current
-> instruction.** M3 is `locked`. It stays because its **traps** are still live (the gates, the
-> grounding measurement, the zero-automation-test hole) — read them as *"what we learned"*, and read
-> **current** scope from M4's milestone doc and Redmine (version *마일스톤 4*).
-
-**M3 goals** (user, 2026-08-10): ① [완료] **decompose one big request** ② [완료] **judge with the 3-layer
-deterministic gate** ③ [진행] **build the operator surface** — status screen [완료], upper-layer commands and
-robustness remained when it was halted. Structure was 대 3 / 중 10. [중요] **Numbers never live in a
-hand-edited doc** — the numerator drifted twice in M2, and the *denominator* moved on 2026-08-10
-(32 → 36) when reading the predecessor's design doc uncovered four missing sub-tasks. M4 has moved
-**four times** (62 → 75 → 80 → 81) for the same reason. [주의] **That trail is history, not state** —
-it went stale inside a single session (2026-08-16), which is exactly why the numbers live in Redmine.
-
-[중요] **대 1 and 대 2 are closed (2026-08-12). 대 3 is the only one open.** The pipeline runs end
-to end and **four deterministic gates** sit in it:
+The pipeline (M3, four deterministic gates — detail in `3-work-pipeline.md`):
 
     요청 → 골조(claude:opus, 등재 전 빌드) → 분해 → 워커는 **추론만**(ax-infer) → 스풀
          → 통합자 `.2`: 층1 → 층2 → 적용 → **조각별 UE5 빌드** → 통과분만 커밋 → work 단위 RunTests
 
-Live: dispatch 45s/$0.27 · two workers in parallel 36s/$0.47 · integrator build 142s + commit ·
-unattended RunTests 74s. [완료] **중 3.2 status screen** is up (`python -m master.status html`) and
-**served on the LAN at `http://192.168.0.57:8103`** — [중요] **no login** (API paths on that port
-stay token-locked). [중요] **The predecessor's web UI was ported back verbatim** (`master/webui/`,
-2026-08-13): `/` Context Server (status cards + Search/Documents/Tags/Domains + the domain board
-with LLM create/chat/activate), `/ontology` the domain viewer (tree nav + **Cytoscape object
-graph** + layer-sized nodes), `/cluster` the cluster status snapshot. [주의] `/cluster` serves the **last
-generated** snapshot — a browser refresh never triggers SSH polling (that would defeat the 120s
-guard). [중요] **`ax-status.timer` refreshes it every 5 min**; a stale page still gets a red age banner,
-and because 5 min < the 15-min staleness threshold, **that banner appearing means the timer is
-actually broken.** [중요] Its palette is copied from the ported pages and is **dark-only on purpose** —
-one screen flipping to light on its own reads as a different app.
-[대기] Remaining in 대 3: upper-layer commands (중 3.1) and operational robustness (중 3.3).
+The status screen and the ported web UI are served on the LAN at `http://192.168.0.57:8103` —
+[중요] **no login** (API paths on that port stay token-locked), and its palette is **dark-only on
+purpose** (one screen flipping to light on its own reads as a different app). `/cluster` serves the
+**last generated** hardware snapshot — a browser refresh never triggers SSH polling (that would
+defeat the 120s guard). [중요] **`ax-status.timer` refreshes it every 5 min**; because 5 min < the
+15-min staleness threshold, **the red age banner appearing means the timer is actually broken.**
 
 [중요] **The gates paid for themselves — and the live runs, not the unit tests, found the defects.**
 Five real ones this session-and-the-last, each behind an injected seam while 63–96 unit checks
@@ -124,7 +93,7 @@ builder together.
 next task yourself** — milestone 1 failed exactly that way.
 
 [중요] **애매하면 묻는다 — 임의 판단으로 좁히지 않는다** (사용자 2026-08-13 · 원전 3조). 애매함은
-둘: **설계의 갈림길**과 [중요] **「작업 지시인지 단순 질문인지」**. [주의] **짧은 수긍(`응`)이 가장
+둘: **설계의 갈림길**과 [중요] **「작업 지시인지 단순 질문인지」**. **짧은 수긍(`응`)이 가장
 위험하다** — 앞에 물음이 없었으면 승인이 아니라 수긍일 수 있다(실측: 한 세션에서 `응` 두 번,
 하나만 승인).
 
@@ -133,7 +102,7 @@ next task yourself** — milestone 1 failed exactly that way.
 
 [중요] **만들기 전에 원전(`~/AgentTest`)과 기존 자산을 읽는다** — 안 읽고 만들면 요구를 좁힌다
 (그렇게 잃은 것 셋: 로컬 파일 웹 UI · 읽기 전용 화면의 로그인 · 원전 3,700줄을 안 읽고 새로 쓴
-229줄 뷰어). [중요] **제약 하나를 지키려고 요구를 희생하면 결과물은 못 쓴다. 묻는 쪽이 늘 싸다.**
+229줄 뷰어). **제약 하나를 지키려고 요구를 희생하면 결과물은 못 쓴다. 묻는 쪽이 늘 싸다.**
 
 → 위 셋의 근거·실측·범위와 원전 5조 대조표: `~/ax-cluster/docs/11-agent-conduct.md`
 
@@ -143,25 +112,25 @@ The project repo is cloned **here** at `~/ax-cluster` (`PLAN.md` is the index, c
 with copies on BC-250 #1 (`sim@192.168.0.43:~/ax-cluster`) and GitHub (`SimSeoWon/ax-cluster`,
 **private — keep it that way**, it holds LAN addresses and firewall rules). Keep all three in sync.
 The board has `main` checked out so pushing there is rejected — **`git pull` on that side instead.**
-[중요] `~/AgentTest` is the predecessor clone — **reference only. Never modify or push to it.**
+`~/AgentTest` is the predecessor clone — **reference only. Never modify or push to it.**
 
 ### Machine inventory (probed 2026-08-08)
 
 | IP | Machine | Login | Role | Reachable from here |
 |---|---|---|---|---|
 | **.57** | **sim-desktop** — this box | `sim` | **Master**: orchestration, RAG index, ontology/graph, task queue, broker, project registry | — |
-| **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) |  **Worker** *and* inference endpoint #2 (14b pinned). [중요] **The only machine that can run the layer-3 verdict unattended** (UE5 5.8). [중요] **Resident claimer `AxClaimer`** (#204, 2026-08-18) — schtasks 5-min watchdog, pulls **build+code** jobs from the queue (logon-session only; ops in `win-worker-2.md` § AxClaimer) | **`ssh janus@192.168.0.2`** [완료] passwordless · RDP 3389 · Ollama 11434 |
+| **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) |  **Worker** *and* inference endpoint #2 (14b pinned). **The only machine that can run the layer-3 verdict unattended** (UE5 5.8). **Resident claimer `AxClaimer`** (#204, 2026-08-18) — schtasks 5-min watchdog, pulls **build+code** jobs from the queue (logon-session only; ops in `win-worker-2.md` § AxClaimer) | **`ssh janus@192.168.0.2`** [완료] passwordless · RDP 3389 · Ollama 11434 |
 | **.33** | Windows 10.0.26200, **the user's main work PC**<br>host `DESKTOP-FU2GNGL` | **`user`** | [중요] **`requester`, not a worker** — registers work, verifies (it has UE5), gives feedback. **Never dispatched to** (`drivable_hosts` excludes it). Not an inference endpoint | **`ssh user@192.168.0.33`** [완료] passwordless (2026-08-08) · RDP 3389 · Ollama 11434 |
-| **.43** | **BC-250 #1** — Fedora, headless | `sim` |  **Worker** *and* inference endpoint #1. [중요] **35B residency was REMOVED 2026-08-17 (user decision ⓐ, measured #105)** — plain sequential inference grew GPU(GTT) allocations ~120MB/cycle and collapsed the node in 4 minutes; idle did not release it; only `systemctl restart ollama` did (NOPASSWD exists for it). Now pins **gemma4:e4b (~5GB, ~10GB headroom)** — the synth model, which also kills the old fallback-OOM hazard. The 35B stays on disk, unpinned. [중요] **e4b also fills the agentic-driver seat (#106 closed 2026-08-17)** — tool-calling gates 4/4 ×3 runs + Korean 3/3, 30-cycle sustained 30/30 with no #105-style accumulation (~-5MB/cycle vs 35B's -120). Fallback: `qwen3:8b` (4/4, lives on `.2`). Has the project clone at `~/trunk/ModularStage` — no longer stateless. [중요] **Resident claimer via cron watchdog** (#204, 2026-08-18) — pulls **code(infer)** jobs only (no UE5; caps come measured from `.ax/config.json`; ops in `bc250-1.md` § AX claimer) | `ssh sim@192.168.0.43` [완료] passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
+| **.43** | **BC-250 #1** — Fedora, headless | `sim` |  **Worker** *and* inference endpoint #1. **35B residency was REMOVED 2026-08-17 (user decision ⓐ, measured #105)** — plain sequential inference grew GPU(GTT) allocations ~120MB/cycle and collapsed the node in 4 minutes; idle did not release it; only `systemctl restart ollama` did (NOPASSWD exists for it). Now pins **gemma4:e4b (~5GB, ~10GB headroom)** — the synth model, which also kills the old fallback-OOM hazard. The 35B stays on disk, unpinned. **e4b also fills the agentic-driver seat (#106 closed 2026-08-17)** — tool-calling gates 4/4 ×3 runs + Korean 3/3, 30-cycle sustained 30/30 with no #105-style accumulation (~-5MB/cycle vs 35B's -120). Fallback: `qwen3:8b` (4/4, lives on `.2`). Has the project clone at `~/trunk/ModularStage` — no longer stateless. **Resident claimer via cron watchdog** (#204, 2026-08-18) — pulls **code(infer)** jobs only (no UE5; caps come measured from `.ax/config.json`; ops in `bc250-1.md` § AX claimer) | `ssh sim@192.168.0.43` [완료] passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
 | — | BC-250 #2 | — |  **Bazzite gaming machine — NOT an inference node.** Converting it means giving up that machine. **Never assume a 2nd board exists.** | n/a |
 
 ### `.33` — the main work PC has its own guide
 
-SSH and Ollama came up 2026-08-08; **the account is `user`**. But [중요] **it is not an inference
+SSH and Ollama came up 2026-08-08; **the account is `user`**. But **it is not an inference
 endpoint** — measured free VRAM **7651 MiB** is smaller than its own only model (8.95 GiB) and
 than the coder model (9.0 GB), and opening UE5 takes more (`resident=False`).
 
-[중요] **Its role is `requester`** (2026-08-09): it registers work, verifies (UE5 is here, so compile
+**Its role is `requester`** (2026-08-09): it registers work, verifies (UE5 is here, so compile
 errors surface fastest), and writes `[FEEDBACK]` blocks. It is **excluded from `drivable_hosts`** —
 never dispatched to. [주의] When it verifies, use **`git worktree`**, never a branch switch in the
 human's main tree: uncommitted `.uasset` work cannot be recovered.
@@ -209,15 +178,15 @@ config was once found pointing at *another machine's* path.
 
 | What you need | File |
 |---|---|
-| Self-hosted services · ports · **[중요] firewall rules for the 3 auth-less AX services** | [`sim-desktop.d/services.md`](sim-desktop.d/services.md) |
+| Self-hosted services · ports · **firewall rules for the 3 auth-less AX services** | [`sim-desktop.d/services.md`](sim-desktop.d/services.md) |
 | BC-250 access — SSH · **the no-TTY sudo trap** · mandatory reading before hardware work | [`sim-desktop.d/bc250-access.md`](sim-desktop.d/bc250-access.md) |
 | Windows main work PC `.33` — **guest rules**, UE5 path, Python trap | [`win-main-33.md`](win-main-33.md) |
 | PATH · **`pkexec` for privileged work** · Python · GPU | [`sim-desktop.d/environment.md`](sim-desktop.d/environment.md) |
-| **[중요] Which LLM is good at what · where hallucination was measured** | [`llm-fitness.md`](llm-fitness.md) |
+| **Which LLM is good at what · where hallucination was measured** | [`llm-fitness.md`](llm-fitness.md) |
 | Cluster design — settled vs open | `~/ax-cluster/PLAN.md` → `docs/` |
 | Working *in* the repo | `~/ax-cluster/CLAUDE.md` |
 
-## [중요] Work journal
+## Work journal
 
 Numbered work reports accumulate in `~/claude-workspace/reports/` (mirroring the BC-250's
 `~/bc250-backup-staging/reports/` convention). Reports are written in Korean — the user reads them.

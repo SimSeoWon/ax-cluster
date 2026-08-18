@@ -15,21 +15,21 @@ Cluster-wide rules live in [`sim-desktop.md`](sim-desktop.md); repo rules in
 |---|---|
 | **OS** | **Microsoft Windows 11 Pro**, build 10.0.26200.8875 |
 | **Host / IP** | `DESKTOP-FU2GNGL` / **192.168.0.33** |
-| **Account** | **`user`** — [중요] *not* `janus` (that's `.2`), *not* `sim`. Both fail with `Permission denied` |
+| **Account** | **`user`** — *not* `janus` (that's `.2`), *not* `sim`. Both fail with `Permission denied` |
 | **SSH** | `ssh user@192.168.0.33` — passwordless since 2026-08-08. Master's key is in `C:\ProgramData\ssh\administrators_authorized_keys` (admin path, same as `.2`) |
 | **GPU** | **NVIDIA GeForce RTX 3080 (10 GB)**, driver 610.47 |
 | **UE5** | **5.8.1** at `C:\Program Files\Epic Games\UE_5.8` — same version as `.2` |
 | **UE5 project** | **`C:\Users\USER\Documents\ModularStage`** — see § Unreal projects |
 | **git** | 2.53.0.windows.1 |
 
-## [중요] Not an inference endpoint — the VRAM does not allow it
+## Not an inference endpoint — the VRAM does not allow it
 
 Measured with **only the Windows desktop running** (UE5 editor not open):
 
 | | |
 |---|---|
 | VRAM total / in use / free | 10240 MiB / 2401 MiB / **7651 MiB** |
-| `gemma4:e4b` (its only model) | **8.95 GiB** — [중요] does not fit the free VRAM |
+| `gemma4:e4b` (its only model) | **8.95 GiB** — does not fit the free VRAM |
 | `qwen2.5-coder:14b` (the coder model) | 9.0 GB — does not fit either |
 | `/api/ps` | empty — nothing resident |
 
@@ -43,7 +43,7 @@ plain HTTP (`POST /api/pull`) — no SSH, no file access, so *only text crosses 
 
 Inference stays on **`.43`** (BC-250, 35B pinned) and **`.2`** (RTX 3060, 14b pinned).
 
-## [중요] Can / cannot — same session-0 boundary as `.2`
+## Can / cannot — same session-0 boundary as `.2`
 
 SSH lands in **session 0**, which has no desktop. The user's interactive login is a different
 session. This is a Windows boundary, not a permissions one — no flag works around it.
@@ -66,7 +66,7 @@ session. This is a Windows boundary, not a permissions one — no flag works aro
 | **Start / stop Unreal MCP** | Its lifetime *is* the editor's → the interactive session owns it. **Don't design a remote procedure — there isn't one** |
 | Anything needing a visible window | Same boundary |
 
-### [중요] Extra rule that applies here and not to `.2`
+### Extra rule that applies here and not to `.2`
 
 **The user may be working right now.** Long GPU jobs, editor launches, branch switches, and
 resets are not just technically risky — they interrupt a person. Prefer read-only probes;
@@ -78,19 +78,19 @@ for anything that writes, go through the dirty check first and let it say no.
 
 | Project | Path | |
 |---|---|---|
-| **ModularStage** | `C:\Users\USER\Documents\ModularStage` | [중요] **the mounted project** — see below |
+| **ModularStage** | `C:\Users\USER\Documents\ModularStage` | **the mounted project** — see below |
 | Project_Alpha | `C:\Users\USER\Documents\Project_Alpha` | The predecessor; its docs survive as `_archive/project_alpha_md/` in the twin's context |
 | ServerTest | `C:\Users\USER\Documents\ServerTest` | |
 | ListViewTest | `C:\Users\USER\Documents\Unreal Projects\ListViewTest` | |
 
-### [중요] Both workshops track the same repository — the competition is real
+### Both workshops track the same repository — the competition is real
 
 ```
 .33  C:\Users\USER\Documents\ModularStage  →  origin gitea@192.168.0.57:Sim/ModularStage.git
 .2   E:\trunk\ModularStage                 →  same repo (origin http://192.168.0.57:3000/Sim/ModularStage.git)
 ```
 
-[중요] `.33`'s origin switched HTTP → SSH on 2026-08-17 (user, via SourceTree — OpenSSH client,
+`.33`'s origin switched HTTP → SSH on 2026-08-17 (user, via SourceTree — OpenSSH client,
 key `ax-requester-33`). **Gitea's SSH user is `gitea@`, not `git@`** — `git@192.168.0.57` fails
 with `Permission denied (publickey)` even with a registered key. That trap cost a debugging
 round; don't re-enter it.
@@ -115,7 +115,7 @@ It read `driven: interactive` with the note *"SSH 없음(RDP 뿐)"* and carried 
 in-progress work — and correctly refused to dispatch. That is the behaviour we want here.
 
 ## LLMs available on this machine
-[중요] **어느 작업에 유리한지·환각이 있었는지는 [`llm-fitness.md`](llm-fitness.md) 에 실측으로 기록한다** — 모델 적합도는 머신 속성이 아니라 모델 속성이라 한 곳에 모았다. 여기(이 문서)는 **무엇이 설치돼 있는지**까지다.
+**어느 작업에 유리한지·환각이 있었는지는 [`llm-fitness.md`](llm-fitness.md) 에 실측으로 기록한다** — 모델 적합도는 머신 속성이 아니라 모델 속성이라 한 곳에 모았다. 여기(이 문서)는 **무엇이 설치돼 있는지**까지다.
 
 
 ### Local — Ollama `:11434`
@@ -125,7 +125,7 @@ in-progress work — and correctly refused to dispatch. That is the behaviour we
 | `gemma4:e4b` | 8.95 GiB | Q4_K_M | |
 | `qwen2.5-coder:14b` | 9.0 GB | Q4_K_M | ← installed remotely by the master, 2026-08-08 |
 
-[중요] **Both are on disk; neither fits the free VRAM, and neither is pinned.** That combination is
+**Both are on disk; neither fits the free VRAM, and neither is pinned.** That combination is
 deliberate, not an oversight — `master/provision.py` declares this host `want=[CODER]` *and*
 `resident=False`: **keep it on disk, never load it.** `/api/tags` answers "do we have it",
 `/api/ps` answers "is it loaded" — different questions, and the check flags the second one
@@ -144,7 +144,7 @@ turning true. `/api/ps` was empty right after the install, as intended.
 `--dangerously-skip-permissions`; AgentTest recorded it editing files without consent. Text in,
 text out only — and on *this* machine those would be the user's files.
 
-## [중요] The Python PATH trap — same shape as `.2`, different cause
+## The Python PATH trap — same shape as `.2`, different cause
 
 ```
 where python

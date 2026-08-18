@@ -10,19 +10,15 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
 ## Hard rules — inline on purpose
 
 - [중요] **Read which milestone you are in before planning anything.**
-  **M1–M5 all closed ([중요] M3·M4·M5 closed 2026-08-17, user decisions); [중요] M6
+  **M1–M5 all closed (M3·M4·M5 closed 2026-08-17, user decisions); M6
   (개선·확장) is open.**
   → [`docs/milestones/6-improvements.md`](docs/milestones/6-improvements.md) —
   numbers live in Redmine (version *마일스톤 6*). 개선은 실측이 앞선다 — 검색 관련은
   **정답 집합 없이 손대지 않는다** (M2 규칙). M5 의 판정들(git-carried·한글 베이스 머지·
   중앙화 가드)은 부활 조건과 함께 닫혔다 — `5-version-reconcile.md` 「여기서 배운 것」.
-  [주의] **The M4 paragraph below is a closed milestone's record, not a current instruction** —
-  its traps (citation-first, census limits, topology) still bind; its scope/counts do not.
-  M4's own 「여기서 배운 것」 (왕복이 계약 · 원전 기본값 확인 · 확정 결정 > 원전 코드) is in
-  its milestone doc.
-  [중요] **M4 is not a feature milestone — it is consistency.** An origin-citation census (report 14)
-  measured **74 files / 23,710 lines of `~/AgentTest` never once mentioned in this repo**, and the
-  worst hit is the topology: `cluster_coordinator.py`'s `verify_and_merge` already said
+  [주의] **What follows are the traps that still bind — not the closed milestones' scope or counts**
+  (those are in Redmine and the closed milestone docs; M4's own 「여기서 배운 것」 too).
+  **The topology was never mine to invent**: the origin's `verify_and_merge` already said
   *"durable 단일 writer 보존"* — **that writer is the server, and workers push ephemeral
   `attempt/` branches.** Linux forces exactly **one** change: the UE5 build step inside
   `verify_and_merge` moves to `.2`. Everything I redesigned beyond that was redesign, not a port.
@@ -39,13 +35,10 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   **Read only the open milestone** — closed ones are reference; don't load them. Progress
   lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
   [중요] **Neither the numerator nor the denominator is written in any document** — read both from
-  Redmine (version *마일스톤 4*). Hand-kept numerators drifted twice in M2, and the denominator
-  moves whenever reading the origin uncovers work: M3 went 32 → 36, and M4 has moved **four times**
-  (62 → 75 → 80 → 81) as later ports kept surfacing their own missing halves. That movement is
-  normal — record it. [주의] **Those figures are history, not the current count** — this very line went
-  stale inside one session (2026-08-16), which is why the rule above exists. Never quote them as state.
-  M4 structure: 대 4 / 중 17 — **소분류가 작업 단위다**. 대 1 topology restore · 대 2 turn the
-  four open M3 items into ports · 대 3 un-ported assets · 대 4 recover the method/norms.
+  Redmine. Hand-kept numerators drifted twice in M2, and the denominator moves whenever reading the
+  origin uncovers work (M3 32 → 36; M4 four times). That movement is normal — record it in Redmine,
+  and **never quote a figure from a document as state**: this very line went stale inside one
+  session (2026-08-16). **소분류가 작업 단위다.**
   Never size a task by line count: `class_graph`'s 1,341 lines turn out to be
   *"delete the file → full rescan on restart"*.
   [중요] **Two M2 rules that still bind here**: never bulk-regenerate the 1,055 snapshot docs (our
@@ -55,18 +48,18 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   [중요] **Do not pick the next task yourself** — M1 failed that way (I chose an order, dug into one
   piece, declared it "complete", repeated). The order is the user's call.
 - [중요] **애매하면 묻는다 — 임의 판단으로 좁히지 않는다** (사용자 2026-08-13, 세 번 반복된 실패 ·
-  원전 3조). 애매함은 둘이다: **설계의 갈림길**, 그리고 [중요] **「작업 지시인지 단순 질문인지」**.
+  원전 3조). 애매함은 둘이다: **설계의 갈림길**, 그리고 **「작업 지시인지 단순 질문인지」**.
   [주의] **짧은 수긍(`응`·`그래`)이 가장 위험하다 — 앞에 물음이 없었으면 승인이 아니라 수긍일 수 있다**
   (실측: 한 세션에서 `응` 이 두 번, 하나만 승인이었다). **내가 방금 무엇을 물었는지 확인하고 답과
   맞물리는지 본다.**
 - [중요] **만들기 전에 원전(`~/AgentTest`)과 기존 자산을 읽는다** — 대부분의 요구에는 이미 만들어진
   것이 있다. 안 읽고 만들면 요구를 좁힌다(그렇게 잃은 것 셋: 로컬 파일 웹 UI · 읽기 전용 화면의
-  로그인 · 원전 3,700줄을 안 읽고 새로 쓴 229줄 뷰어). [중요] **제약 하나를 지키려고 요구를 희생하면
+  로그인 · 원전 3,700줄을 안 읽고 새로 쓴 229줄 뷰어). **제약 하나를 지키려고 요구를 희생하면
   결과물은 못 쓴다.**
 - [중요] **이식이 우리 자산을 덮지 않는지 먼저 본다 — `verified_by_user` *와* `protected` 는 함께
   본다.** 원전에 없는 **우리 개념**(받아온 스냅샷 보호)이 이식의 **안전 조건**이다. 실측
   2026-08-15 에 같은 부류가 두 번 — 원전 무효화를 그대로 옮겼으면 스냅샷 **37건**이 선삭제됐고,
-  레이어 서술 이식은 트윈에 이미 있던 **원전 산출물 7건**(미잠금)을 덮을 뻔했다. [중요] **둘 다
+  레이어 서술 이식은 트윈에 이미 있던 **원전 산출물 7건**(미잠금)을 덮을 뻔했다. **둘 다
   착수 전 실측이 잡았다 — 코드를 돌리기 전에 그 자리에 무엇이 있는지 보라.**
   → `reports/17-*.md` §4·§14
 - [중요] **자동 로드 문서(`CLAUDE.md` 전부)와 게임 소스는 고치기 전에 계획을 말하고 동의를 받는다**
@@ -77,7 +70,7 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   → 위 네 규칙의 근거·실측·범위와 **원전 5조 대조표**(무엇을 안 옮겼나 포함):
   [`docs/11-agent-conduct.md`](docs/11-agent-conduct.md)
 - [중요] **The GitHub remote is private. Keep it that way** — it contains LAN addresses and firewall rules.
-- [중요] **The master is infrastructure, not a workshop** — [주의] **narrowed 2026-08-14, don't read the
+- **The master is infrastructure, not a workshop** — **narrowed 2026-08-14, don't read the
   old absolute.** It assembles context and hands it over; the Windows PC builds and tests.
   [중요] **Flow Y (user-confirmed 2026-08-14) gives the master exactly one write capability**: it
   commits inferred diffs to `attempt/<task>/<workshop>/<ts>` and merges verified ones into
@@ -94,7 +87,7 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   → `master/auth.py`, PLAN §9.5.6
 - [중요] **`/home/sim/AgentTest` is reference-only — never modify or push to it.** Port code *out* of it.
 - [중요] **Never commit or push without asking first** (user, 2026-08-14: *"커밋은 나에게 허락을
-  요구해줄래?"*). Prepare the message, **ask**, run only after approval. [중요] **The origin's rule is
+  요구해줄래?"*). Prepare the message, **ask**, run only after approval. **The origin's rule is
   stricter (*"forbidden even when told"*) and ours is looser because the *user* chose it** — no
   SourceTree on Linux. Keep that label straight. [중요] **빌드·배포·데몬 재기동도 같다** — 대화형
   세션이 `.2` 의 UE5 빌드나 서비스 재기동을 **임의로 돌리지 않는다**(원전 5조; 목적은 위험 분리).
@@ -123,7 +116,7 @@ milestone doc grew stale numbers before.
 | | Answers | Rule |
 |---|---|---|
 | **Milestone doc** `docs/milestones/2-*.md` | *Why this order?* — chains, traps, measured evidence | [중요] **No numerators here.** They drifted twice (중 1.3 counted 7/10 against a 13-item list; 대 1 stayed at 15 after 중 1.3 went 5→8). Keep the reasoning an issue cannot hold |
-| **Redmine** `http://192.168.0.57:8080` | *Where are we, and what is open?* — **the milestone itself** | [중요] **Version = 마일스톤 · parent issue = 중분류 · subtask = 소분류** (user-confirmed 2026-08-09). Progress is **computed**, never typed. [중요] Only **완료(4)** is a closing status — 해결(3) still counts as open. Put the commit hash in the note |
+| **Redmine** `http://192.168.0.57:8080` | *Where are we, and what is open?* — **the milestone itself** | [중요] **Version = 마일스톤 · parent issue = 중분류 · subtask = 소분류** (user-confirmed 2026-08-09). Progress is **computed**, never typed. Only **완료(4)** is a closing status — 해결(3) still counts as open. Put the commit hash in the note |
 | **`reports/`** | *Why did we decide that?* — decisions, measurements, traps | One report per session, Korean. Not a task list |
 | **Redmine 위키 [[아이디어수집]]** | *What might we build someday?* — 미정 아이디어의 본문 | [중요] **일감이 아니다** (사용자 개설 2026-08-17). 항목 = 위키 절 + 버전 「아이디어 — 추후 검토 수집」의 이슈. 진행·집계 금지, 착수 결정 시 실 마일스톤으로 이동 |
 
@@ -154,23 +147,19 @@ from the master's own container DB. [중요] **Never write the key value into a 
 모듈별 설명·함정·실측은 [`master/README.md`](master/README.md) 에 있다. 여기엔 **놓치면 안 되는 것만** 남긴다.
 
 `worker/` is still a README-only stub. **`client/` is live** — see the table row above.
-[중요] **Say "done" only for a whole area.** M2 closed 2026-08-10. **대 1 of M3 is closed
-(2026-08-12)** — 중 1.1 skeleton+freeze, 중 1.2 decompose, 중 1.3 inference dispatch, 중 1.4
-integrator. The pipeline runs end to end: request → skeleton (`claude:opus`, built on `.2` before
-registration) → decompose → workers **infer only** (`work/infer.py`, skill `ax-infer`) → responses
-spooled in apply order → **integrator applies, builds with UE5, and commits only what passes**
-(`work/integrate.py`, live: build 142s, commit). [중요] **The pipeline builds per piece, not once at
-the end** — §4.5's "apply everything then build once" was overturned by the measured 35–65s
-incremental build, because a single build can't say *which* piece broke it.
-**대 2 (3-layer gate) closed the same day** — the pipeline now has **four gates**: skeleton build,
-층1 (deterministic, run at *both* response-acceptance and apply time), 층2 (commercial model with
-**declaration grounding**), 층3 (per-piece UE5 build + one work-level RunTests).
+[중요] **Say "done" only for a whole area** — and when reporting status, give the denominator (read it
+from Redmine), never a scope narrowed to what got built.
+The pipeline runs end to end with **four gates**: skeleton build (`claude:opus`, built on `.2` before
+registration) → 층1 (deterministic, at *both* response-acceptance and apply time) → 층2 (commercial
+model with **declaration grounding**) → 층3 (per-piece UE5 build + one work-level RunTests). Workers
+**infer only** (`work/infer.py`, skill `ax-infer`); the integrator applies, builds and commits
+(`work/integrate.py`). **It builds per piece, not once at the end** — §4.5's "apply everything then
+build once" was overturned by the measured 35–65s incremental build, because a single build can't
+say *which* piece broke it.
 [중요] **One hole remains and code cannot close it: this project has ZERO automation tests** (measured
 2026-08-12 — no `AUTOMATION_TEST`/`FunctionalTest`/spec anywhere in `Source/`). §4.3's measured
 *"hallucinations that compile"* (`Cast<IInteractable>`, `IsValid()` logic errors) are catchable
 **only by tests**, so `RunTests` is deliberately **fail-open + loud warning** until tests exist.
-[대기] Untouched: 대 3 (operator surface). When reporting status, give the denominator (read it from
-Redmine), never a scope narrowed to what got built.
 [중요] **Grounding, not the model, is what makes 층2 work** (measured: 4 of 5 candidates missed an
 invented enum member without declarations, all caught it with them). Never call 층2 without
 declarations and then read a pass as meaningful — the code reports `l2_grounded=False` for exactly
@@ -201,7 +190,7 @@ isolated tree (nothing is lost) and a human decides — the pipeline does not re
 **세는 법**을 적는다. pytest 는 없다 — 각 파일이 그대로 실행된다.
 
 ```bash
-# 전부 돌리고 합계를 센다 — [중요] **판정은 종료코드로, 수치는 두 형식 모두 읽는다**
+# 전부 돌리고 합계를 센다 — **판정은 종료코드로, 수치는 두 형식 모두 읽는다**
 # (옛 `| tail -1` 은 틀렸다: ① 마지막 줄이 구분선인 파일 13개를 못 셌고 ② 크래시한 파일은
 #  수치를 안 찍어 **합계가 그대로 보였다** — 2026-08-14 에 import 실수로 3개가 죽었는데
 #  합계가 안 변해서 못 봤다. 실패는 rc 로, 수치는 두 형식으로.)
@@ -221,7 +210,7 @@ echo "$pass/$total 통과 · 실패 파일 $fail개"
 
 # 한 건만
 .venv/bin/python master/test_runner.py       # 워커 파견 — fail-closed 마커·계측
-.venv/bin/python master/test_batching.py     # [중요] 파일 불가분 (충돌 방지)
+.venv/bin/python master/test_batching.py     # 파일 불가분 (충돌 방지)
 .venv/bin/python master/test_ontology.py     # YAML 왕복·잠금 보존·사실 게이트
 python3 master/test_verdict.py               # venv 없이 도는 순수 로직
 ```
@@ -235,15 +224,15 @@ python3 master/test_verdict.py               # venv 없이 도는 순수 로직
 curl -s localhost:8102/health | python3 -m json.tool   # 노드별 상주 모델
 systemctl status ax-task-queue ax-broker ax-projects ax-indexer.path
 journalctl -u ax-indexer -n 30 --no-pager              # push → 트윈 성장 이력
-.venv/bin/python -m master.work.infer collect          # [중요] pull 데몬 응답 회수 → 스풀 (#204)
+.venv/bin/python -m master.work.infer collect          # pull 데몬 응답 회수 → 스풀 (#204)
 .venv/bin/python -m master.work.integrate plan|run     # 통합 (조각별 빌드 → 커밋 → durable push)
 .venv/bin/python -m master.work.cleanup plan           # 찌꺼기 (기본은 안 지움)
-.venv/bin/python -m master.work.cleanup remote --apply # [중요] 병합 확인된 원격 attempt/task 삭제 (#219)
-.venv/bin/python -m master.ontology plan|dry|refresh   # [중요] 이 순서로
+.venv/bin/python -m master.work.cleanup remote --apply # 병합 확인된 원격 attempt/task 삭제 (#219)
+.venv/bin/python -m master.ontology plan|dry|refresh   # 이 순서로
 .venv/bin/python -m master.ontology log-candidates     # 태깅 권장 리포트 (#169, LLM 0)
 ```
 
-[중요] **워커 상주 데몬이 큐를 폴링한다** (#204 실전 전환 2026-08-18): `.2` AxClaimer(schtasks
+**워커 상주 데몬이 큐를 폴링한다** (#204 실전 전환 2026-08-18): `.2` AxClaimer(schtasks
 5분 감시자, build+code) · `.43` cron 감시자(code 만). 등록된 code 태스크는 **20초 안에 데몬이
 집는다** — 파견의 기본은 pull 이고, 마스터 push 파견(`runner once`·`infer run`)은 §8.4 대로
 가역 보존. 데몬 운영법은 각 머신 가이드(`machines/win-worker-2.md`·`bc250-1.md`)에 있다.

@@ -16,7 +16,7 @@
 |---|---|
 | **OS** | **Microsoft Windows 10 Pro 22H2** (version 2009, build 10.0.19045) |
 | **Host / IP** | `DESKTOP-HV0I6DL` / **192.168.0.2** |
-| **Account** | **`janus`** — a local **Administrator**. [중요] *Not* `sim`; `ssh sim@…` fails |
+| **Account** | **`janus`** — a local **Administrator**. *Not* `sim`; `ssh sim@…` fails |
 | **SSH** | `ssh janus@192.168.0.2` — passwordless. Master's key is in `C:\ProgramData\ssh\administrators_authorized_keys` (admin path, not `~/.ssh/`) |
 | **GPU** | **NVIDIA GeForce RTX 3060 (12GB)** |
 | **UE5 project** | **`E:\trunk\ModularStage`** — see § Unreal projects |
@@ -30,7 +30,7 @@ This box is **two things at once**, which is the thing to keep straight:
 It is also **the only Windows machine the master can reach non-interactively** (SSH). The user's
 main work PC (`.33`) is RDP-only. Full cluster inventory: `machines/sim-desktop.md`.
 
-## [중요] Can / cannot — the session-0 boundary
+## Can / cannot — the session-0 boundary
 
 ```
 SSH login     → SessionId 0   (services session — NO desktop access)
@@ -71,8 +71,8 @@ Detail: `~/ax-cluster/docs/5_5-project-isolation.md` §5.5.4-⑥.
 Exactly the case above: a Scheduled Task (`AxClaimer`) wakes the claimer **every 5 minutes**
 (pythonw, no console). A live instance holds the exclusive lock `.ax\claimer.lock`, so extra
 wake-ups yield silently; after a crash the OS releases the lock and the next tick restarts it.
-[주의] It runs **only while janus is logged on** (no stored password — same premise as the
-origin's `worker.exe`). [중요] It claims **build and code(infer)** jobs (`--types=build,code` —
+It runs **only while janus is logged on** (no stored password — same premise as the
+origin's `worker.exe`). It claims **build and code(infer)** jobs (`--types=build,code` —
 실전 pull 전환, user decision 2026-08-18). For code tasks it runs Claude locally, records facts
 to `.ax\work\<task>\result.json`, and never submits — the master collects and judges.
 
@@ -81,7 +81,7 @@ to `.ax\work\<task>\result.json`, and never submits — the master collects and 
              (heartbeat.log · llm_stdout.log · llm_stderr.log · build.log — kept after the
              task ends, for post-mortem). Crash: claimer_crash.log
     stop     schtasks /end /tn AxClaimer  &  schtasks /change /tn AxClaimer /disable
-    restart  /end → **wait a few seconds** → /run. [주의] Measured 2026-08-18: right after
+    restart  /end → **wait a few seconds** → /run. Measured 2026-08-18: right after
              /end the OS may not have released `.ax\claimer.lock` yet, so an immediate /run
              bounces off the singleton and nothing runs — until the 5-min watchdog heals it
     code     delivered payload .ax\lib\axmaster\work\claimer.py — [중요] don't hand-edit; SSOT
@@ -120,7 +120,7 @@ cheap. If an isolated second checkout ever becomes necessary, share the DDC inst
 exists here (`LyraStarterGame`, unrelated to us) — new checkouts default there too easily.
 
 ## LLMs available on this machine
-[중요] **어느 작업에 유리한지·환각이 있었는지는 [`llm-fitness.md`](llm-fitness.md) 에 실측으로 기록한다** — 모델 적합도는 머신 속성이 아니라 모델 속성이라 한 곳에 모았다. 여기(이 문서)는 **무엇이 설치돼 있는지**까지다.
+**어느 작업에 유리한지·환각이 있었는지는 [`llm-fitness.md`](llm-fitness.md) 에 실측으로 기록한다** — 모델 적합도는 머신 속성이 아니라 모델 속성이라 한 곳에 모았다. 여기(이 문서)는 **무엇이 설치돼 있는지**까지다.
 
 
 ### Local — Ollama `:11434` (7 models, measured 2026-08-08)
@@ -149,11 +149,11 @@ Anything premised on several models resident here at once does not hold.
 | **`agy` (Antigravity)** | [실패] **not installed** | Only on the master. If research delegation is wanted here, install it first |
 | `gjc` (gajae-code) | ⬜ **not installed** | Prerequisite for PLAN §9. `node` is present, so nothing blocks it |
 
-[중요] **Claude Code here is an *orchestrator*, not a model backend.** Ollama cannot serve Claude, and
+**Claude Code here is an *orchestrator*, not a model backend.** Ollama cannot serve Claude, and
 the Claude Code CLI is not an inference server — don't try to put it behind the master's broker.
 This machine owns files; that is what makes a Claude session here valuable.
 
-## [중요] The SSH PATH trap
+## The SSH PATH trap
 
 The SSH session gets a minimal PATH. **`where` / `Get-Command` report installed tools as missing.**
 This produced two wrong "not installed" calls while writing this file — verify by absolute path
@@ -188,7 +188,7 @@ open. They are *also* LAN-only by firewall — don't expose them further.
 
 - [중요] **This machine owns files; the master does not.** The master assembles context and hands it
   over — applying code, building, testing, and committing happen *here*.
-- [중요] **Two workshops share this UE5 project** (`.2` and `.33`, same repo, same `task/<id>`
+- **Two workshops share this UE5 project** (`.2` and `.33`, same repo, same `task/<id>`
   branches). Claim/lease/fencing in the master's task queue is a **correctness requirement**, not
   overhead — don't work around it.
 - [중요] **Never `push --force`, `reset --hard`, delete branches, or rewrite history** in a human
