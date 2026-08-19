@@ -290,6 +290,64 @@ def tool_log_history(api, args: dict) -> dict:
     return api("POST", "/api/v1/history", payload)
 
 
+def _bare(name: str) -> str:
+    """UE 접두 한 글자를 뗀 이름. 파일 stem 은 접두가 없다 (`UActorComponent_X` →
+    `ActorComponent_X.cpp`), 그래서 evidence(파일:줄) 대조에는 이쪽이 필요하다."""
+    n = (name or "").strip()
+    return n[1:] if len(n) > 2 and n[0] in "UAFET" and n[1].isupper() else n
+
+
+def tool_find_invariants_by_class(papi, class_name: str, *, cache=None) -> dict:
+    """그 클래스가 얽힌 불변식을 **모든 도메인에서** 찾는다 (원전 `find_invariants_by_class`).
+
+    [중요] 서버에 전용 라우트가 없어 **도메인 스윕**으로 만든다 — 도메인이 7개이고 응답이
+    캐시를 타므로(`get_domain_layer` 와 같은 키) 비용이 작다. 라우트가 생기면 이 함수만 바뀐다.
+
+    [주의] **휴리스틱이다.** 우리 `evidence` 는 산문이 아니라 `파일.cpp:84-90` 형태라
+    클래스명이 그대로 안 들어 있다 — 그래서 ① 불변식 `text` 에 클래스명이 있거나
+    ② `evidence` 에 접두 뗀 이름(파일 stem)이 있으면 맞힌 것으로 본다. 어느 규칙으로
+    맞았는지 `matched_by` 로 **말해 준다** — 판단은 호출자가 한다.
+    """
+    c = (class_name or "").strip()
+    if not c:
+        raise ClientError("클래스명이 비었다")
+    cat = cached_fetch(cache, "ontology/domains",
+                       lambda: papi("GET", "/api/v1/ontology/domains"))
+    names = [x.get("name") for x in ((cat or {}).get("domains") or []) if isinstance(x, dict)]
+    bare = _bare(c)
+    hits, stale = [], {}
+    for dn in [n for n in names if n]:
+        q = urllib.parse.quote(dn, safe="")
+        got = cached_fetch(cache, f"ontology/domain/{q}",
+                           lambda q=q: papi("GET", f"/api/v1/ontology/domain/{q}"))
+        if not isinstance(got, dict):
+            continue
+        for m in MARKERS:
+            if m in got:
+                stale[m] = got[m]
+        for inv in (got.get("invariants") or []):
+            if not isinstance(inv, dict):
+                continue
+            why = []
+            if c in (inv.get("text") or ""):
+                why.append("text")
+            if bare and bare in (inv.get("evidence") or ""):
+                why.append("evidence")
+            if why:
+                hits.append({"domain": dn, "name": inv.get("name"),
+                             "layer": inv.get("layer"), "text": inv.get("text"),
+                             "evidence": inv.get("evidence"),
+                             "confidence": inv.get("confidence"),
+                             "matched_by": "+".join(why)})
+    out = {"class": c, "bare": bare, "domains_swept": len(names),
+           "count": len(hits), "invariants": hits}
+    if not hits:
+        out["_note"] = (f"'{c}' 로 맞은 불변식이 없다 — 이름을 확인하거나 "
+                        f"get_domain_layer(도메인) 의 invariants 목록을 직접 본다")
+    out.update(stale)
+    return out
+
+
 # ── 시소러스 쓰기 (2026-08-20) ────────────────────────────────
 # [중요] 큐(8101)로 간다. 온톨로지 읽기는 8103 이지만 그쪽 `/api/v1/*` 는 **무인증 공개**라
 #   쓰기를 둘 자리가 아니다(실측: 토큰 없이 200). 그리고 범용어 가드(#213)는 서버의
@@ -408,7 +466,16 @@ def tool_get_domain_layer(papi, domain: str, layer: int = 0, *, cache=None) -> d
         raise ClientError(f"도메인 응답이 객체가 아니다 ({type(got).__name__}) — "
                           "마스터 버전을 확인할 것")
     descs = got.get("layer_descriptions") or {}
+    man = got.get("manifest") or {}
     out = {"domain": got.get("name") or d, "layer": lv or "all",
+           # [중요] 매니페스트·네비게이션도 같이 준다 (2026-08-20). 원전의 `get_domain_manifest`
+           #   자리이고, 이것이 없으면 계층·연관(넓이) 탐색이 작업장에서 아예 불가능했다 —
+           #   서버 응답에 이미 실려 오는 값이라 왕복이 늘지 않는다.
+           "tier": man.get("tier"), "summary": man.get("summary"),
+           "layer_counts": man.get("layer_counts"),
+           "parent_domain": got.get("parent_domain") or "",
+           "sub_domains": got.get("sub_domains") or [],
+           "collaborated_by": got.get("collaborated_by") or [],
            "layer_descriptions": ({k: v for k, v in descs.items() if k == f"L{lv}"}
                                   if lv else descs)}
     for kind in ("objects", "actions", "invariants"):
@@ -481,6 +548,12 @@ TOOLS = [
                      "properties": {"domain": {"type": "string"},
                                     "name": {"type": "string",
                                              "description": "행위명 (예: AdvanceTaskOnTick)"}}}},
+    {"name": "find_invariants_by_class",
+     "description": "그 클래스가 얽힌 불변식을 모든 도메인에서 찾는다 (읽기 전용). "
+                    "[주의] 휴리스틱이다 — 불변식 text 의 클래스명 또는 evidence(파일:줄)의 "
+                    "접두 뗀 이름으로 맞힌다. 어느 규칙으로 맞았는지 matched_by 로 온다.",
+     "inputSchema": {"type": "object", "required": ["class_name"],
+                     "properties": {"class_name": {"type": "string"}}}},
     {"name": "add_object_alias",
      "description": "사용자가 확인해 준 시소러스 별칭 1건을 등록한다 (마스터 경유 — 온톨로지 "
                     "yaml 은 여기 없다). [중요] **추측으로 부르지 않는다** — 사용자가 명시로 "
@@ -591,7 +664,7 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                                  status_name=str(args.get("status_name") or ""),
                                  done_ratio=args.get("done_ratio"))
     if name in ("search_context", "list_domains", "get_domain", "get_domain_layer",
-                "get_object_spec", "get_action_spec"):
+                "get_object_spec", "get_action_spec", "find_invariants_by_class"):
         pa = papi or projects_api(root)
         c = cache if cache is not None else _load_cache()
         if name == "search_context":
@@ -602,6 +675,8 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
         if name == "get_domain_layer":
             return tool_get_domain_layer(pa, str(args.get("domain") or ""),
                                          layer=args.get("layer") or 0, cache=c)
+        if name == "find_invariants_by_class":
+            return tool_find_invariants_by_class(pa, str(args.get("class_name") or ""), cache=c)
         if name in ("get_object_spec", "get_action_spec"):
             kind = "object" if name == "get_object_spec" else "action"
             return _ontology_item(pa, kind, str(args.get("domain") or ""),

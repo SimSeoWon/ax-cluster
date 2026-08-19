@@ -81,11 +81,10 @@ def test_protocol_roundtrip():
                                              "method": "notifications/initialized"}) is None)
     r = M.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in r["result"]["tools"]]
-    check("도구 13종 (조회 8 + 쓰기 대행 5) — 온톨로지 세밀 조회 3종과 시소러스 쓰기 2종은 "
-          "2026-08-20 에 늘었다(원전 로컬 exe 은퇴분 인수)",
+    check("도구 14종 (조회 9 + 쓰기 대행 5) — 원전 로컬 exe 은퇴분 인수 (2026-08-20)",
           names == ["list_works", "get_work", "search_context", "list_domains",
                     "get_domain", "get_domain_layer", "get_object_spec", "get_action_spec",
-                    "add_object_alias", "mark_not_a_class",
+                    "find_invariants_by_class", "add_object_alias", "mark_not_a_class",
                     "redmine_note", "log_writer_signal", "log_history"],
           str(names))
     check("모든 도구에 inputSchema", all("inputSchema" in t for t in r["result"]["tools"]))
@@ -341,6 +340,9 @@ def test_queue_api_matches_review_contract():
 
 def _domain_payload():
     return {"name": "MissionRuntime",
+            "manifest": {"tier": 3, "summary": "미션 실행 계층",
+                         "layer_counts": {"L1": 1, "L2": 0, "L3": 10}},
+            "parent_domain": "", "sub_domains": [], "collaborated_by": ["MissionEditor"],
             "layer_descriptions": {"L1": {"body": "L1 서술"}, "L3": {"body": "L3 서술"}},
             "objects": [{"name": "UMissionTaskBase", "layer": 1,
                          "file": "Source/.../MissionTaskBase.h"},
@@ -502,6 +504,65 @@ def test_guard_verdict_passes_through_not_as_error():
           ("POST", "/api/v1/thesaurus/") in REQUESTER_SCOPE, str(REQUESTER_SCOPE))
 
 
+def test_domain_layer_carries_manifest_and_navigation():
+    """[중요] 넓이(계층·연관) 탐색이 작업장에서 되는가 — 원전 `get_domain_manifest` 자리.
+    서버 응답에 이미 실려 오는 값이라 왕복이 늘지 않는다."""
+    papi = lambda m, path, pl=None: _domain_payload()
+    got = M.tool_get_domain_layer(papi, "MissionRuntime", layer=1, cache=None)
+    check("tier·summary·layer_counts 가 온다",
+          got["tier"] == 3 and got["summary"] and got["layer_counts"]["L3"] == 10, str(got)[:200])
+    check("[중요] 연관(역참조)도 온다 — 옆 도메인으로 이동할 수 있다",
+          got["collaborated_by"] == ["MissionEditor"], str(got.get("collaborated_by")))
+    check("계층 필드는 비어도 키가 있다 (없음과 모름을 가른다)",
+          got["parent_domain"] == "" and got["sub_domains"] == [], str(got)[:120])
+
+
+def test_find_invariants_sweeps_and_says_how_it_matched():
+    """[주의] 우리 evidence 는 `파일.cpp:84-90` 이라 클래스명이 안 들어 있다 — 접두 뗀 이름으로
+    맞히는 휴리스틱이고, 그 사실을 matched_by 로 **말해야** 한다."""
+    calls = []
+    def papi(m, path, pl=None):
+        calls.append(path)
+        if path.endswith("/ontology/domains"):
+            return {"domains": [{"name": "MissionRuntime"}, {"name": "MissionEditor"}]}
+        if path.endswith("MissionRuntime"):
+            d = _domain_payload()
+            d["invariants"] = [
+                {"name": "A", "layer": 3, "text": "UMissionTaskExecutor 는 서버에서만 등록한다",
+                 "evidence": "Manager_Mission.cpp:10", "confidence": 0.9},
+                {"name": "B", "layer": 3, "text": "무관한 규칙",
+                 "evidence": "ActorComponent_MissionTaskExecutor.cpp:84-90", "confidence": 0.8},
+                {"name": "C", "layer": 3, "text": "무관", "evidence": "Other.cpp:1"}]
+            return d
+        d = _domain_payload(); d["invariants"] = []; d["name"] = "MissionEditor"
+        return d
+
+    got = M.tool_find_invariants_by_class(papi, "UMissionTaskExecutor", cache=None)
+    check("도메인 전체를 훑는다", got["domains_swept"] == 2, str(got["domains_swept"]))
+    check("[중요] text 로 맞은 것과 evidence(접두 뗀 이름)로 맞은 것 둘 다 잡는다",
+          got["count"] == 2 and {h["name"] for h in got["invariants"]} == {"A", "B"}, str(got))
+    by = {h["name"]: h["matched_by"] for h in got["invariants"]}
+    check("[중요] 어느 규칙으로 맞았는지 말한다", by == {"A": "text", "B": "evidence"}, str(by))
+    check("접두 뗀 이름도 돌려준다 (호출자가 판단할 근거)",
+          got["bare"] == "MissionTaskExecutor", str(got.get("bare")))
+    check("도메인 카탈로그를 먼저 부른다", calls[0].endswith("/ontology/domains"), calls[0])
+
+    none = M.tool_find_invariants_by_class(papi, "UNoSuch", cache=None)
+    check("0건이면 조용히 비지 않고 다음 수를 말한다",
+          none["count"] == 0 and "get_domain_layer" in (none.get("_note") or ""),
+          str(none.get("_note")))
+    try:
+        M.tool_find_invariants_by_class(papi, "  ", cache=None)
+        check("빈 클래스명 거부", False)
+    except M.ClientError:
+        check("빈 클래스명 거부", True)
+
+    cache = FakeCache()
+    M.tool_find_invariants_by_class(papi, "UMissionTaskExecutor", cache=cache)
+    check("[중요] 스윕이 get_domain_layer 와 **같은 캐시 키**를 쓴다 — 두 벌 적재 안 한다",
+          any(k == "ontology/domain/MissionRuntime" for k in cache.puts), str(cache.puts))
+
+
 def main() -> int:
     for fn in (test_single_file_stdlib_only, test_protocol_roundtrip,
                test_nonascii_work_id_is_encoded, test_search_caches_and_falls_back,
@@ -514,7 +575,9 @@ def main() -> int:
                test_domain_layer_filters_and_keeps_markers,
                test_ontology_read_tools_are_registered,
                test_thesaurus_writes_go_to_queue_uncached,
-               test_guard_verdict_passes_through_not_as_error):
+               test_guard_verdict_passes_through_not_as_error,
+               test_domain_layer_carries_manifest_and_navigation,
+               test_find_invariants_sweeps_and_says_how_it_matched):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_mcp: {PASS}/{total} 통과")
