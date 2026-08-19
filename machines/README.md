@@ -8,7 +8,7 @@ Each machine's `~/CLAUDE.md` (the file Claude Code auto-loads at session start) 
 | [`sim-desktop.md`](sim-desktop.md) + [`sim-desktop.d/`](sim-desktop.d/) | master `sim-desktop` (192.168.0.57) | **symlink** → `/home/sim/CLAUDE.md` |
 | [`bc250-1.md`](bc250-1.md) | BC-250 #1 (192.168.0.43) | **symlink** → `sim@192.168.0.43:/home/sim/CLAUDE.md` |
 | [`win-worker-2.md`](win-worker-2.md) | Windows worker (192.168.0.2, account `janus`) | [중요] **copy** → `C:\Users\janus\CLAUDE.md` (no repo clone there — see below) |
-| [`win-main-33.md`](win-main-33.md) | Windows **main work PC** (192.168.0.33, account `user`) | [중요] **copy** → `C:\Users\USER\CLAUDE.md` [완료] delivered 2026-08-08 (7,365 B, byte-identical) |
+| [`win-main-33.md`](win-main-33.md) | Windows **main work PC** (192.168.0.33, account `user`) | [중요] **copy** → `C:\Users\USER\CLAUDE.md` [완료] refreshed 2026-08-20 (10,676 B, MD5 identical — § 요청자 콘솔 포함) |
 
 **192.168.0.33** now has its own guide — [`win-main-33.md`](win-main-33.md) — because SSH
 (account **`user`**) and Ollama came up on 2026-08-08 and there is real operating detail to carry:
