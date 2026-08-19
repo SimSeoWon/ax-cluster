@@ -81,9 +81,11 @@ def test_protocol_roundtrip():
                                              "method": "notifications/initialized"}) is None)
     r = M.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in r["result"]["tools"]]
-    check("도구 8종 (조회 5 + 쓰기 대행 3: redmine·signal·history)",
+    check("도구 11종 (조회 8 + 쓰기 대행 3: redmine·signal·history) — 온톨로지 세밀 조회 3종은 "
+          "2026-08-20 에 늘었다(원전 로컬 exe 은퇴분 인수)",
           names == ["list_works", "get_work", "search_context", "list_domains",
-                    "get_domain", "redmine_note", "log_writer_signal", "log_history"],
+                    "get_domain", "get_domain_layer", "get_object_spec", "get_action_spec",
+                    "redmine_note", "log_writer_signal", "log_history"],
           str(names))
     check("모든 도구에 inputSchema", all("inputSchema" in t for t in r["result"]["tools"]))
     r = M.handle_message({"jsonrpc": "2.0", "id": 3, "method": "없는것"})
@@ -336,6 +338,119 @@ def test_queue_api_matches_review_contract():
         check("빈 work_id 거부", True)
 
 
+def _domain_payload():
+    return {"name": "MissionRuntime",
+            "layer_descriptions": {"L1": {"body": "L1 서술"}, "L3": {"body": "L3 서술"}},
+            "objects": [{"name": "UMissionTaskBase", "layer": 1,
+                         "file": "Source/.../MissionTaskBase.h"},
+                        {"name": "UMissionTaskExecutor", "layer": 3, "file": "X.h"}],
+            "actions": [{"name": "AdvanceTaskOnTick", "layer": 1},
+                        {"name": "InitTaskChain", "layer": 3}],
+            "invariants": [{"name": "ClientAutoRegisterOnce", "layer": 3}]}
+
+
+def test_ontology_item_tools_encode_and_cache():
+    """[중요] 원전의 get_object_spec/get_action_spec 자리 — 로컬 인덱스가 아니라 마스터로 간다."""
+    calls = []
+    def papi(m, path, pl=None):
+        calls.append(path)
+        return {"name": "UMissionTaskExecutor", "kind": "Object", "layer": 3}
+    cache = FakeCache()
+    got = M.tool_get_object_spec(papi, "MissionRuntime", "UMissionTaskExecutor", cache=cache)
+    check("클래스 스펙이 온다", got["kind"] == "Object", str(got))
+    check("object 라우트로 간다", calls[0] == "/api/v1/ontology/object/MissionRuntime/UMissionTaskExecutor",
+          calls[0])
+    check("[중요] 성공이 캐시에 적재된다", cache.puts and "ontology/object/" in cache.puts[0],
+          str(cache.puts))
+
+    M.tool_get_action_spec(papi, "MissionRuntime", "AdvanceTaskOnTick", cache=None)
+    check("action 은 action 라우트로 간다", calls[-1].startswith("/api/v1/ontology/action/"), calls[-1])
+
+    M.tool_get_object_spec(papi, "미션 런타임", "U태스크", cache=None)
+    check("[중요] 도메인·이름 **양쪽** 다 URL 인코딩 (#197 의 교훈)",
+          "%EB%AF%B8" in calls[-1] and "%ED%83%9C%EC%8A%A4%ED%81%AC" in calls[-1], calls[-1])
+
+    def dead(m, path, pl=None):
+        raise M.ClientError("[미연결] 마스터(http://x:8103)에 연결할 수 없다")
+    stale = M.tool_get_object_spec(dead, "MissionRuntime", "UMissionTaskExecutor", cache=cache)
+    check("[중요] 미연결이면 _stale 폴백", stale.get("_stale") is True, str(stale))
+
+    for bad in (("", "UX"), ("MissionRuntime", "  ")):
+        try:
+            M.tool_get_object_spec(papi, *bad, cache=None)
+            check(f"빈 인자 거부 {bad}", False)
+        except M.ClientError:
+            check(f"빈 인자 거부 {bad}", True)
+
+
+def test_domain_layer_filters_and_keeps_markers():
+    """[주의] 이 위임만 응답을 **줄인다** — 줄이면서 _stale 을 떨어뜨리면 마스터가 죽은 것을
+    아무도 모른다(#162 계약). 그 한 줄이 이 테스트의 이유다."""
+    papi = lambda m, path, pl=None: _domain_payload()
+    all_l = M.tool_get_domain_layer(papi, "MissionRuntime", cache=None)
+    check("layer 생략은 전체", all_l["layer"] == "all" and len(all_l["objects"]) == 2, str(all_l))
+    check("층 서술도 전체가 온다", set(all_l["layer_descriptions"]) == {"L1", "L3"},
+          str(all_l["layer_descriptions"]))
+
+    l1 = M.tool_get_domain_layer(papi, "MissionRuntime", layer=1, cache=None)
+    check("[중요] layer=1 은 1층만 남긴다",
+          [o["name"] for o in l1["objects"]] == ["UMissionTaskBase"]
+          and [a["name"] for a in l1["actions"]] == ["AdvanceTaskOnTick"]
+          and l1["invariants"] == [], str(l1))
+    check("그 층의 서술만 온다", set(l1["layer_descriptions"]) == {"L1"},
+          str(l1["layer_descriptions"]))
+    check("objects 는 파일 경로도 실어 준다 — 선언부로 갈 수 있다",
+          "file" in l1["objects"][0], str(l1["objects"][0]))
+
+    empty = M.tool_get_domain_layer(papi, "MissionRuntime", layer=2, cache=None)
+    check("빈 층은 조용히 비지 않고 사유를 말한다", "L2 에 항목이 없다" in (empty.get("_note") or ""),
+          str(empty.get("_note")))
+
+    cache = FakeCache()
+    M.tool_get_domain_layer(papi, "MissionRuntime", layer=1, cache=cache)
+    def dead(m, path, pl=None):
+        raise M.ClientError("[미연결] 마스터에 연결할 수 없다")
+    stale = M.tool_get_domain_layer(dead, "MissionRuntime", layer=1, cache=cache)
+    check("[중요] 변환 뒤에도 _stale·_cached_at 이 살아 남는다",
+          stale.get("_stale") is True and "_cached_at" in stale, str(stale))
+    check("[중요] 미연결 사유가 층 사유를 이긴다", "[미연결]" in (stale.get("_note") or ""),
+          str(stale.get("_note")))
+    check("폴백도 층 필터가 유지된다", [o["name"] for o in stale["objects"]] == ["UMissionTaskBase"],
+          str(stale["objects"]))
+
+    try:
+        M.tool_get_domain_layer(papi, "MissionRuntime", layer="셋", cache=None)
+        check("정수 아닌 layer 거부", False)
+    except M.ClientError as e:
+        check("정수 아닌 layer 거부", "정수" in str(e), str(e))
+    try:
+        M.tool_get_domain_layer(lambda m, p, pl=None: ["배열"], "MissionRuntime", cache=None)
+        check("객체 아닌 응답 거부", False)
+    except M.ClientError as e:
+        check("객체 아닌 응답 거부", "객체가 아니다" in str(e), str(e))
+
+
+def test_ontology_read_tools_are_registered():
+    """스키마가 없으면 클라가 호출 자체를 못 한다 — 함수만 만들고 끝나는 실패를 막는다."""
+    names = {t["name"] for t in M.TOOLS}
+    for n in ("get_domain_layer", "get_object_spec", "get_action_spec"):
+        check(f"{n} 이 TOOLS 에 있다", n in names, str(sorted(names)))
+        t = next(x for x in M.TOOLS if x["name"] == n)
+        check(f"{n} 스키마에 domain 이 있다", "domain" in t["inputSchema"]["properties"], str(t))
+    calls = []
+    papi = lambda m, path, pl=None: calls.append(path) or _domain_payload()
+    M.dispatch_tool("get_domain_layer", {"domain": "MissionRuntime", "layer": 3},
+                    papi=papi, cache=FakeCache())
+    M.dispatch_tool("get_object_spec", {"domain": "MissionRuntime", "name": "UX"},
+                    papi=papi, cache=FakeCache())
+    M.dispatch_tool("get_action_spec", {"domain": "MissionRuntime", "name": "AX"},
+                    papi=papi, cache=FakeCache())
+    check("[중요] 디스패치가 셋 다 라우팅한다",
+          [c.split("/")[4] for c in calls] == ["domain", "object", "action"], str(calls))
+    check("읽기 전용이다 — GET 만 쓴다",
+          "ontology" in calls[0] and all("/api/v1/ontology/" in c for c in calls), str(calls))
+
+
 def main() -> int:
     for fn in (test_single_file_stdlib_only, test_protocol_roundtrip,
                test_nonascii_work_id_is_encoded, test_search_caches_and_falls_back,
@@ -343,7 +458,10 @@ def main() -> int:
                test_cache_loader_is_file_relative,
                test_tools_call_through_protocol, test_serve_loop_survives,
                test_failure_sentences_differ, test_tool_error_is_iserror_content,
-               test_no_decision_tools, test_queue_api_matches_review_contract):
+               test_no_decision_tools, test_queue_api_matches_review_contract,
+               test_ontology_item_tools_encode_and_cache,
+               test_domain_layer_filters_and_keeps_markers,
+               test_ontology_read_tools_are_registered):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_mcp: {PASS}/{total} 통과")

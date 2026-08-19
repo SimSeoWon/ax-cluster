@@ -317,6 +317,85 @@ def tool_get_domain(papi, name: str, *, cache=None) -> dict:
                         lambda: papi("GET", f"/api/v1/domains/{q}"))
 
 
+# ── 온톨로지 세밀 조회 (2026-08-20) ───────────────────────────
+# [중요] 원전의 `get_object_spec` · `get_action_spec` · `get_domain_layer` 자리다. 그 셋은
+#   `.33` 의 **로컬 인덱스**를 읽었고, 온톨로지가 마스터로 옮겨진 뒤 그 인덱스는 정본이 아니다.
+#   실측 2026-08-20: 로컬 240항목은 전부 서버에 있었고(로컬 단독 0건) 서버가 54항목 앞서 있었다
+#   — 그런데도 로컬 exe 는 objects/actions 를 0/0 으로 답했다. **조용히 틀린 답**이 나오는
+#   입구를 남겨 두는 것이 문제이므로, 세밀 조회도 마스터로 위임한다.
+MARKERS = ("_stale", "_cached_at", "_note")
+
+
+def _ontology_item(papi, kind: str, domain: str, name: str, *, cache=None) -> dict:
+    d, n = (domain or "").strip(), (name or "").strip()
+    if not d:
+        raise ClientError("도메인 이름이 비었다")
+    if not n:
+        raise ClientError(f"{kind} 이름이 비었다")
+    qd = urllib.parse.quote(d, safe="")
+    qn = urllib.parse.quote(n, safe="")
+    return cached_fetch(cache, f"ontology/{kind}/{qd}/{qn}",
+                        lambda: papi("GET", f"/api/v1/ontology/{kind}/{qd}/{qn}"))
+
+
+def tool_get_object_spec(papi, domain: str, name: str, *, cache=None) -> dict:
+    """클래스 1건의 스펙 — 8103 `/api/v1/ontology/object/<도메인>/<이름>` 프록시."""
+    return _ontology_item(papi, "object", domain, name, cache=cache)
+
+
+def tool_get_action_spec(papi, domain: str, name: str, *, cache=None) -> dict:
+    """행위 1건의 스펙 — 같은 라우트의 `action` 쪽."""
+    return _ontology_item(papi, "action", domain, name, cache=cache)
+
+
+def tool_get_domain_layer(papi, domain: str, layer: int = 0, *, cache=None) -> dict:
+    """한 도메인의 층 서술 + 그 층의 항목 이름 목록.
+
+    [중요] 원전의 `get_domain_layer` 와 `list_actions` 를 **한 도구로** 받는다 — 층 서술과
+    그 층의 항목은 늘 같이 필요했고, 나눠 두면 왕복만 둘로 는다. 상세는 이름을 들고
+    `get_object_spec` / `get_action_spec` 으로 간다. `layer=0` 이면 전체 층.
+
+    [주의] `_stale` 표기는 **변환 뒤에도 그대로 실어 보낸다** — 떨어뜨리면 마스터가 죽은 것을
+    아무도 모른다(#162 계약). 이 함수는 응답을 줄이는 유일한 위임이라 그 위험이 여기만 있다.
+    """
+    d = (domain or "").strip()
+    if not d:
+        raise ClientError("도메인 이름이 비었다")
+    try:
+        lv = int(layer or 0)
+    except (TypeError, ValueError):
+        raise ClientError(f"layer 는 정수다 (받은 값: {layer!r})") from None
+    q = urllib.parse.quote(d, safe="")
+    got = cached_fetch(cache, f"ontology/domain/{q}",
+                       lambda: papi("GET", f"/api/v1/ontology/domain/{q}"))
+    if not isinstance(got, dict):
+        raise ClientError(f"도메인 응답이 객체가 아니다 ({type(got).__name__}) — "
+                          "마스터 버전을 확인할 것")
+    descs = got.get("layer_descriptions") or {}
+    out = {"domain": got.get("name") or d, "layer": lv or "all",
+           "layer_descriptions": ({k: v for k, v in descs.items() if k == f"L{lv}"}
+                                  if lv else descs)}
+    for kind in ("objects", "actions", "invariants"):
+        rows = []
+        for x in (got.get(kind) or []):
+            if not isinstance(x, dict):
+                continue
+            if lv and int(x.get("layer") or 0) != lv:
+                continue
+            row = {"name": x.get("name"), "layer": x.get("layer")}
+            if x.get("file"):
+                row["file"] = x["file"]
+            rows.append(row)
+        out[kind] = rows
+    if lv and not (out["objects"] or out["actions"] or out["invariants"]):
+        out["_note"] = (f"L{lv} 에 항목이 없다 — 이 도메인이 가진 층은 "
+                        f"{sorted(descs) or '없음'} 이다")
+    for m in MARKERS:                      # 마스터가 준 표기가 내 주석을 이긴다
+        if m in got:
+            out[m] = got[m]
+    return out
+
+
 TOOLS = [
     {"name": "list_works",
      "description": "큐의 work 목록 (검수 대상 파악). status 로 거를 수 있다 — "
@@ -343,6 +422,29 @@ TOOLS = [
      "description": "도메인 상세 (읽기 전용 · _stale 폴백 있음).",
      "inputSchema": {"type": "object", "required": ["name"],
                      "properties": {"name": {"type": "string"}}}},
+    {"name": "get_domain_layer",
+     "description": "도메인의 층 서술 + 그 층의 objects·actions·invariants 이름 목록 "
+                    "(읽기 전용 · _stale 폴백 있음). layer 생략/0 이면 전체 층. "
+                    "[중요] 온톨로지 조회는 이 입구가 정본이다 — 로컬 인덱스는 낡았다.",
+     "inputSchema": {"type": "object", "required": ["domain"],
+                     "properties": {"domain": {"type": "string"},
+                                    "layer": {"type": "integer",
+                                              "description": "1 또는 3 (0/생략=전체)"}}}},
+    {"name": "get_object_spec",
+     "description": "클래스 1건의 온톨로지 스펙 — 시그니처·부모·불변식 근거까지 "
+                    "(읽기 전용 · _stale 폴백 있음). 도메인을 모르면 list_domains → "
+                    "get_domain_layer 로 찾는다. [주의] 사실 확인은 최종적으로 소스 선언부다.",
+     "inputSchema": {"type": "object", "required": ["domain", "name"],
+                     "properties": {"domain": {"type": "string"},
+                                    "name": {"type": "string",
+                                             "description": "클래스명 (예: UMissionTaskExecutor)"}}}},
+    {"name": "get_action_spec",
+     "description": "행위(action) 1건의 온톨로지 스펙 — 트리거·흐름·영향 객체 "
+                    "(읽기 전용 · _stale 폴백 있음).",
+     "inputSchema": {"type": "object", "required": ["domain", "name"],
+                     "properties": {"domain": {"type": "string"},
+                                    "name": {"type": "string",
+                                             "description": "행위명 (예: AdvanceTaskOnTick)"}}}},
     {"name": "redmine_note",
      "description": "레드마인 이슈에 코멘트를 남긴다 (마스터 경유 — 키는 이 PC 에 없다). "
                     "상태 이름은 실재하는 것만: 신규·진행·해결·검토·완료. "
@@ -425,7 +527,8 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
         return tool_redmine_note(a, args.get("issue_id"), str(args.get("notes") or ""),
                                  status_name=str(args.get("status_name") or ""),
                                  done_ratio=args.get("done_ratio"))
-    if name in ("search_context", "list_domains", "get_domain"):
+    if name in ("search_context", "list_domains", "get_domain", "get_domain_layer",
+                "get_object_spec", "get_action_spec"):
         pa = papi or projects_api(root)
         c = cache if cache is not None else _load_cache()
         if name == "search_context":
@@ -433,6 +536,13 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                                        tags=args.get("tags"), n=args.get("n") or 5, cache=c)
         if name == "list_domains":
             return tool_list_domains(pa, cache=c)
+        if name == "get_domain_layer":
+            return tool_get_domain_layer(pa, str(args.get("domain") or ""),
+                                         layer=args.get("layer") or 0, cache=c)
+        if name in ("get_object_spec", "get_action_spec"):
+            kind = "object" if name == "get_object_spec" else "action"
+            return _ontology_item(pa, kind, str(args.get("domain") or ""),
+                                  str(args.get("name") or ""), cache=c)
         return tool_get_domain(pa, str(args.get("name") or ""), cache=c)
     raise ClientError(f"모르는 도구: {name}")
 
