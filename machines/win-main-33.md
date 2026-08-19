@@ -32,6 +32,9 @@ Cluster-wide rules live in [`sim-desktop.md`](sim-desktop.md); repo rules in
 | 무엇 | 어디 (실측) |
 |---|---|
 | 스킬 3종 | `C:\Users\USER\.claude\skills\` — `ax-request`(등재) · `ax-ontology` · `ax-review`(`/review-work`). **홈에 두는 것이 계약** — 절차는 프로젝트가 아니라 머신의 능력 |
+| 도구 (2026-08-20 확장) | `ax-client` **14종** — 조회 9: `search_context` · `list_domains` · `get_domain` · `get_domain_layer`(층 항목 + tier·summary·layer_counts·계층/연관) · `get_object_spec` · `get_action_spec` · `find_invariants_by_class` · `list_works` · `get_work` / 쓰기 대행 5: `add_object_alias` · `mark_not_a_class` · `redmine_note` · `log_writer_signal` · `log_history`. [중요] **읽기는 8103, 쓰기는 큐 8101** — 8103 의 `/api/v1/*` 는 무인증 공개라(실측: 토큰 없이 200) 쓰기를 둘 자리가 아니다 |
+| 은퇴한 것 | **원전 폴링 데몬 `watch.exe` + `config.json` 삭제**(2026-08-20 · 백업 `~/claude-workspace/backups/legacy-watcher-20260820/`). 로컬 `context-search` 는 정본이 아니다 — 온톨로지가 마스터로 옮겨진 뒤 objects/actions 를 **0/0 으로 답한다**(실측: 로컬 240항목 전부 서버에 있고 서버가 54항목 앞섬). [주의] `.mcp.json` 의 원전 exe 등록 제거는 **미완**(#226 4단계) |
+| 갱신된 사람 문서 | `.claude/CLAUDE.md`(14곳) · `.claude/skills/manage-domain`(5곳+머리말) · `manage-task`(1곳) — 도구 이름을 `mcp__ax-client__*` 로. 백업 `~/claude-workspace/backups/33-claude-docs-20260820/`. [중요] **고칠 파일은 루트 `CLAUDE.md` 가 아니라 `.claude/CLAUDE.md`** 였다 |
 | 클라 MCP | 체크아웃 루트 `.mcp.json` 의 `ax-client` = `py .ax/lib/axmaster/clientside/client_mcp.py` → 마스터 `8103/mcp` 위임. [완료] 사람이 쓰는 `gemini-cli`·`unreal-mission-editor`·`uelog-analyzer` **항목과 공존**(배달은 `ax-client` 항목만 건드린다) |
 | 배달물 | `.ax/config.json`(경로·능력 `ue5,windows`·UE5 5.8 실측) · `.ax/token`(**requester 역할** 토큰) · `.ax/lib` · `.ax/tasks` · `.ax/work` |
 | 프로젝트 `CLAUDE.md` | `AX:Begin`~`AX:End` 관리 블록에 역할 계약이 이미 적혀 있다 — *"요청하는 쪽"*, *"여기서 소스를 고치지 않는다"* |
