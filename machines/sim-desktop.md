@@ -18,6 +18,13 @@ software repository.** There is no build, lint, or test tooling. **Don't assume 
   (These guidance files are English on purpose: only Claude reads them, and Korean costs ~2.7×
   the tokens for the same content.)
 
+[중요] **This box is infrastructure — the workshop is `.33`** (사용자 2026-08-20). Unreal work
+**enters through `.33`**: the user opens `claude` in `C:\Users\USER\Documents\ModularStage`, and the
+delivered `ax-request` skill registers it. What is handled **here** is the cluster itself — queue ·
+broker · index/ontology · integration · the cluster's own code in `~/ax-cluster`. **A session here
+does not start a game-source task; it serves one.**
+→ [`win-main-33.md`](win-main-33.md) § 요청자 콘솔
+
 ## Where the project stands — read this before planning
 
 **M1–M5 all closed (M3·M4·M5 closed 2026-08-17, user decisions). M6 (개선·확장)
@@ -120,7 +127,7 @@ The board has `main` checked out so pushing there is rejected — **`git pull` o
 |---|---|---|---|---|
 | **.57** | **sim-desktop** — this box | `sim` | **Master**: orchestration, RAG index, ontology/graph, task queue, broker, project registry | — |
 | **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) |  **Worker** *and* inference endpoint #2 (14b pinned). **The only machine that can run the layer-3 verdict unattended** (UE5 5.8). **Resident claimer `AxClaimer`** (#204, 2026-08-18) — schtasks 5-min watchdog, pulls **build+code** jobs from the queue (logon-session only; ops in `win-worker-2.md` § AxClaimer) | **`ssh janus@192.168.0.2`** [완료] passwordless · RDP 3389 · Ollama 11434 |
-| **.33** | Windows 10.0.26200, **the user's main work PC**<br>host `DESKTOP-FU2GNGL` | **`user`** | [중요] **`requester`, not a worker** — registers work, verifies (it has UE5), gives feedback. **Never dispatched to** (`drivable_hosts` excludes it). Not an inference endpoint | **`ssh user@192.168.0.33`** [완료] passwordless (2026-08-08) · RDP 3389 · Ollama 11434 |
+| **.33** | Windows 10.0.26200, **the user's main work PC**<br>host `DESKTOP-FU2GNGL` | **`user`** | [중요] **`requester`, not a worker — and the entry point for all Unreal work** (사용자 2026-08-20): the user works in `ModularStage` here, opens `claude`, and the **already delivered requester console** registers it (home skills `ax-request`·`ax-ontology`·`ax-review` · `ax-client` MCP in the checkout's `.mcp.json` · `.ax/token`). Registration from the master is only ever standing in for this. Verifies (it has UE5), gives feedback. **Never dispatched to** (`drivable_hosts` excludes it). Not an inference endpoint | **`ssh user@192.168.0.33`** [완료] passwordless (2026-08-08) · RDP 3389 · Ollama 11434 |
 | **.43** | **BC-250 #1** — Fedora, headless | `sim` |  **Worker** *and* inference endpoint #1. **35B residency was REMOVED 2026-08-17 (user decision ⓐ, measured #105)** — plain sequential inference grew GPU(GTT) allocations ~120MB/cycle and collapsed the node in 4 minutes; idle did not release it; only `systemctl restart ollama` did (NOPASSWD exists for it). Now pins **gemma4:e4b (~5GB, ~10GB headroom)** — the synth model, which also kills the old fallback-OOM hazard. The 35B stays on disk, unpinned. **e4b also fills the agentic-driver seat (#106 closed 2026-08-17)** — tool-calling gates 4/4 ×3 runs + Korean 3/3, 30-cycle sustained 30/30 with no #105-style accumulation (~-5MB/cycle vs 35B's -120). Fallback: `qwen3:8b` (4/4, lives on `.2`). Has the project clone at `~/trunk/ModularStage` — no longer stateless. **Resident claimer via cron watchdog** (#204, 2026-08-18) — pulls **code(infer)** jobs only (no UE5; caps come measured from `.ax/config.json`; ops in `bc250-1.md` § AX claimer) | `ssh sim@192.168.0.43` [완료] passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
 | — | BC-250 #2 | — |  **Bazzite gaming machine — NOT an inference node.** Converting it means giving up that machine. **Never assume a 2nd board exists.** | n/a |
 

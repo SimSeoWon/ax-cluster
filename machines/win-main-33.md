@@ -22,6 +22,28 @@ Cluster-wide rules live in [`sim-desktop.md`](sim-desktop.md); repo rules in
 | **UE5 project** | **`C:\Users\USER\Documents\ModularStage`** — see § Unreal projects |
 | **git** | 2.53.0.windows.1 |
 
+## 요청자 콘솔 — [중요] **여기가 언리얼 작업의 창구다** (사용자 2026-08-20)
+
+사용자는 이 기계의 `ModularStage` 에서 실제 작업을 하다가 **여기서 `claude` 를 켜고 요청한다.**
+마스터(`.57`)는 인프라 서버다 — 큐·브로커·색인·통합을 돌리는 자리이고, 마스터 세션이 등재하는 것은
+**이 창구의 대행일 뿐**이다. 실측 2026-08-20: 배선은 **이미 다 배달돼 있었고**, 빠져 있던 것은
+마스터 쪽 `CLAUDE.md` 의 이 한 문단이었다 (그래서 세션마다 마스터에서 시작하는 것으로 착각했다).
+
+| 무엇 | 어디 (실측) |
+|---|---|
+| 스킬 3종 | `C:\Users\USER\.claude\skills\` — `ax-request`(등재) · `ax-ontology` · `ax-review`(`/review-work`). **홈에 두는 것이 계약** — 절차는 프로젝트가 아니라 머신의 능력 |
+| 클라 MCP | 체크아웃 루트 `.mcp.json` 의 `ax-client` = `py .ax/lib/axmaster/clientside/client_mcp.py` → 마스터 `8103/mcp` 위임. [완료] 사람이 쓰는 `gemini-cli`·`unreal-mission-editor`·`uelog-analyzer` **항목과 공존**(배달은 `ax-client` 항목만 건드린다) |
+| 배달물 | `.ax/config.json`(경로·능력 `ue5,windows`·UE5 5.8 실측) · `.ax/token`(**requester 역할** 토큰) · `.ax/lib` · `.ax/tasks` · `.ax/work` |
+| 프로젝트 `CLAUDE.md` | `AX:Begin`~`AX:End` 관리 블록에 역할 계약이 이미 적혀 있다 — *"요청하는 쪽"*, *"여기서 소스를 고치지 않는다"* |
+| 배달 시점 | 커밋 `8d55de9`. 저장소 HEAD 가 앞서가도 **번들 경로(`master/client`·`clientside`·`work/review.py`·`coordinator.py`·`layer3_verify.py`)에 변경이 없으면 재배달 불필요** — 2026-08-20 확인(HEAD `44274dc`, 해당 경로 무변경) |
+
+[주의] **낡은 번들은 조용히 돈다** (`master/client/__main__.py` 의 경고) — `.33` 이 옛 review 로직으로
+검수하면 그 판정 자체가 낡는다. 위 경로에 변경이 생기면 마스터에서
+`python -m master.client deliver` 를 다시 돌린다.
+
+검색은 이 머신에서 **`ax-client` MCP 의 `search_context`** 한 입구로만 간다 (시소러스 경유).
+다른 경로로 돌면 한국어 질의가 조용히 나빠진다 — 절차 본문은 `ax-request` 스킬에 있다.
+
 ## Not an inference endpoint — the VRAM does not allow it
 
 Measured with **only the Windows desktop running** (UE5 editor not open):
