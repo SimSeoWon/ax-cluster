@@ -194,6 +194,13 @@ def main() -> int:
     check("스코프 안 PATCH works (검수 결정) → 통과", st == 200, str(st))
     st, _b, _ = asyncio.run(call(sapp, "/api/v1/redmine/note", headers=H, method="POST"))
     check("스코프 안 redmine/note → 통과", st == 200, str(st))
+    st, _b, _ = asyncio.run(call(sapp, "/api/v1/thesaurus/alias", headers=H, method="POST"))
+    check("스코프 안 thesaurus/alias → 통과 (2026-08-20)", st == 200, str(st))
+    st, _b, _ = asyncio.run(call(sapp, "/api/v1/thesaurus/not-a-class", headers=H, method="POST"))
+    check("스코프 안 thesaurus/not-a-class → 통과", st == 200, str(st))
+    st, _b, _ = asyncio.run(call(sapp, "/api/v1/thesaurus/alias", headers=H, method="GET"))
+    check("[중요] 같은 경로의 GET 은 열리지 않는다 — 규칙은 (메서드, 접두어)다",
+          st == 403, str(st))
 
     st, body8, _ = asyncio.run(call(sapp, "/api/v1/tasks/claim", headers=H, method="POST"))
     check("[중요] 스코프 밖 POST claim → 403 (401 아님 — 신원은 맞다)", st == 403,

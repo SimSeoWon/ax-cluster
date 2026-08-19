@@ -290,6 +290,42 @@ def tool_log_history(api, args: dict) -> dict:
     return api("POST", "/api/v1/history", payload)
 
 
+# ── 시소러스 쓰기 (2026-08-20) ────────────────────────────────
+# [중요] 큐(8101)로 간다. 온톨로지 읽기는 8103 이지만 그쪽 `/api/v1/*` 는 **무인증 공개**라
+#   쓰기를 둘 자리가 아니다(실측: 토큰 없이 200). 그리고 범용어 가드(#213)는 서버의
+#   `thesaurus.register` 안에 있어 이 경로도 그것을 탄다 — 클라가 판정을 흉내내지 않는다.
+# [주의] **캐시를 타지 않는다** — 쓰기는 last-known-good 이 있을 수 없다.
+
+
+def tool_add_object_alias(api, class_name: str, term: str, *, project: str = "") -> dict:
+    """사용자가 **명시로 확인해 준** 별칭 하나를 등록한다.
+
+    [중요] 추측으로 부르지 않는다 — 별칭은 검색 질의에 클래스명을 덧붙여 확장하므로 잘못
+    등록되면 검색이 조용히 오염된다(원전 규약: silently auto-add 금지).
+    거부(`rejected_short`/`rejected_generic`)도 오류가 아니라 **사유 문장**으로 온다.
+    """
+    c, tm = (class_name or "").strip(), (term or "").strip()
+    if not c:
+        raise ClientError("클래스명이 비었다")
+    if not tm:
+        raise ClientError("별칭 표현이 비었다")
+    payload = {"class_name": c, "term": tm}
+    if project:
+        payload["project"] = project
+    return api("POST", "/api/v1/thesaurus/alias", payload)
+
+
+def tool_mark_not_a_class(api, term: str, *, project: str = "") -> dict:
+    """`그건 클래스가 아니다` 를 마스터에 기억시킨다 — 다음부터 묻지 않는다."""
+    tm = (term or "").strip()
+    if not tm:
+        raise ClientError("표현이 비었다")
+    payload = {"term": tm}
+    if project:
+        payload["project"] = project
+    return api("POST", "/api/v1/thesaurus/not-a-class", payload)
+
+
 def tool_search_context(papi, query: str, tags=None, n: int = 5, *, cache=None) -> dict:
     """통합 검색 — 8103 의 원전 라우트(`/api/v1/search/combined`) 프록시. 참조 지식이라
     [미연결] 시 마지막 정상 응답으로 폴백한다(`_stale` 표기)."""
@@ -445,6 +481,21 @@ TOOLS = [
                      "properties": {"domain": {"type": "string"},
                                     "name": {"type": "string",
                                              "description": "행위명 (예: AdvanceTaskOnTick)"}}}},
+    {"name": "add_object_alias",
+     "description": "사용자가 확인해 준 시소러스 별칭 1건을 등록한다 (마스터 경유 — 온톨로지 "
+                    "yaml 은 여기 없다). [중요] **추측으로 부르지 않는다** — 사용자가 명시로 "
+                    "확인한 표현만. 범용어·짧은 표현은 마스터 가드가 거부하고 사유를 돌려준다 "
+                    "(오류가 아니라 status=rejected_… 로 온다).",
+     "inputSchema": {"type": "object", "required": ["class_name", "term"],
+                     "properties": {"class_name": {"type": "string",
+                                                   "description": "클래스명 (예: UMissionTaskExecutor)"},
+                                    "term": {"type": "string",
+                                             "description": "사용자가 쓰는 한국어 표현 (예: 미션 태스크)"}}}},
+    {"name": "mark_not_a_class",
+     "description": "사용자가 \"그건 클래스가 아니다\" 라고 답한 표현을 기억시킨다 — 다음부터 "
+                    "묻지 않는다. 상태·개념어([완료]·[연출] 같은)가 여기로 간다.",
+     "inputSchema": {"type": "object", "required": ["term"],
+                     "properties": {"term": {"type": "string"}}}},
     {"name": "redmine_note",
      "description": "레드마인 이슈에 코멘트를 남긴다 (마스터 경유 — 키는 이 PC 에 없다). "
                     "상태 이름은 실재하는 것만: 신규·진행·해결·검토·완료. "
@@ -514,8 +565,20 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                   root: Path | None = None) -> dict:
     """도구 실행. `api`/`papi`/`cache` 주입은 테스트 자리 — 실전은 config·token 에서 만든다."""
     args = args or {}
-    if name in ("list_works", "get_work", "redmine_note", "log_writer_signal", "log_history"):
+    if name in ("list_works", "get_work", "redmine_note", "log_writer_signal", "log_history",
+                "add_object_alias", "mark_not_a_class"):
         a = api or queue_api(root)
+        if name in ("add_object_alias", "mark_not_a_class"):
+            # 프로젝트는 배달된 config 가 안다 — #210(활성 스위치)에 흔들리지 않게 실어 보낸다
+            proj = ""
+            try:
+                proj = str(load_config(root).get("project") or "")
+            except ClientError:
+                pass
+            if name == "add_object_alias":
+                return tool_add_object_alias(a, str(args.get("class_name") or ""),
+                                             str(args.get("term") or ""), project=proj)
+            return tool_mark_not_a_class(a, str(args.get("term") or ""), project=proj)
         if name == "list_works":
             return tool_list_works(a, status=str(args.get("status") or ""))
         if name == "get_work":

@@ -81,10 +81,11 @@ def test_protocol_roundtrip():
                                              "method": "notifications/initialized"}) is None)
     r = M.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in r["result"]["tools"]]
-    check("도구 11종 (조회 8 + 쓰기 대행 3: redmine·signal·history) — 온톨로지 세밀 조회 3종은 "
+    check("도구 13종 (조회 8 + 쓰기 대행 5) — 온톨로지 세밀 조회 3종과 시소러스 쓰기 2종은 "
           "2026-08-20 에 늘었다(원전 로컬 exe 은퇴분 인수)",
           names == ["list_works", "get_work", "search_context", "list_domains",
                     "get_domain", "get_domain_layer", "get_object_spec", "get_action_spec",
+                    "add_object_alias", "mark_not_a_class",
                     "redmine_note", "log_writer_signal", "log_history"],
           str(names))
     check("모든 도구에 inputSchema", all("inputSchema" in t for t in r["result"]["tools"]))
@@ -451,6 +452,56 @@ def test_ontology_read_tools_are_registered():
           "ontology" in calls[0] and all("/api/v1/ontology/" in c for c in calls), str(calls))
 
 
+def test_thesaurus_writes_go_to_queue_uncached():
+    """[중요] 쓰기는 큐(8101)로 간다 — 8103 의 /api/v1/* 은 **무인증 공개**라(실측 2026-08-20)
+    쓰기를 둘 자리가 아니다. 그리고 쓰기는 캐시를 타지 않는다 — last-known-good 이 없다."""
+    calls = []
+    def fake_api(method, path, payload=None):
+        calls.append((method, path, payload))
+        return {"ok": True, "status": "added", "class": (payload or {}).get("class_name"),
+                "term": (payload or {}).get("term")}
+    cache = FakeCache()
+    got = M.dispatch_tool("add_object_alias",
+                          {"class_name": "UMissionTaskExecutor", "term": "미션 태스크 실행기"},
+                          api=fake_api, cache=cache)
+    m, path, payload = calls[0]
+    check("[중요] POST /api/v1/thesaurus/alias (redmine_note·signals 와 같은 대행 구조)",
+          (m, path) == ("POST", "/api/v1/thesaurus/alias"), f"{m} {path}")
+    check("본문에 클래스와 표현이 실린다",
+          payload["class_name"] == "UMissionTaskExecutor" and payload["term"] == "미션 태스크 실행기",
+          str(payload))
+    check("응답 그대로 반환", got.get("status") == "added", str(got))
+    M.dispatch_tool("mark_not_a_class", {"term": "완료 처리"}, api=fake_api, cache=cache)
+    check("not-a-class 도 큐로", calls[1][1] == "/api/v1/thesaurus/not-a-class", str(calls[1]))
+    check("[중요] 쓰기가 캐시에 아무것도 적재하지 않았다", cache.puts == [], str(cache.puts))
+
+    for name, args in (("add_object_alias", {"class_name": "", "term": "미션 태스크"}),
+                       ("add_object_alias", {"class_name": "UFoo", "term": "  "}),
+                       ("mark_not_a_class", {"term": ""})):
+        try:
+            M.dispatch_tool(name, args, api=fake_api)
+            check(f"빈 인자는 왕복 전에 막는다 {name} {args}", False)
+        except M.ClientError:
+            check(f"빈 인자는 왕복 전에 막는다 {name} {args}", True)
+
+
+def test_guard_verdict_passes_through_not_as_error():
+    """[중요] 거부는 오류가 아니라 **사유 문장**으로 온다 — 클라가 판정을 흉내내면 서버의
+    가드(#213)와 두 벌이 되고, 문턱값이 바뀔 때 갈라진다."""
+    rejected = {"ok": False, "status": "rejected_generic: 정확 구 DF 32/961 = 3.3% > 2.5% — ...",
+                "class": "UFoo", "term": "연출"}
+    got = M.dispatch_tool("add_object_alias", {"class_name": "UFoo", "term": "연출"},
+                          api=lambda m, p, pl=None: rejected)
+    check("거부가 예외가 아니라 응답으로 온다", got["ok"] is False, str(got))
+    check("사유가 그대로 보인다", "rejected_generic" in got["status"], str(got))
+    src = Path(M.__file__).read_text(encoding="utf-8")
+    for dup in ("GUARD_MIN_CHARS", "0.025", "2.5"):
+        check(f"클라에 가드 문턱이 복제돼 있지 않다: {dup}", dup not in src)
+    from master.auth import REQUESTER_SCOPE
+    check("[중요] requester 스코프가 POST /api/v1/thesaurus/ 를 연다",
+          ("POST", "/api/v1/thesaurus/") in REQUESTER_SCOPE, str(REQUESTER_SCOPE))
+
+
 def main() -> int:
     for fn in (test_single_file_stdlib_only, test_protocol_roundtrip,
                test_nonascii_work_id_is_encoded, test_search_caches_and_falls_back,
@@ -461,7 +512,9 @@ def main() -> int:
                test_no_decision_tools, test_queue_api_matches_review_contract,
                test_ontology_item_tools_encode_and_cache,
                test_domain_layer_filters_and_keeps_markers,
-               test_ontology_read_tools_are_registered):
+               test_ontology_read_tools_are_registered,
+               test_thesaurus_writes_go_to_queue_uncached,
+               test_guard_verdict_passes_through_not_as_error):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_mcp: {PASS}/{total} 통과")

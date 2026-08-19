@@ -64,6 +64,19 @@ description: AX 클러스터 마스터에 일감을 등록하고 진행을 확�
 
 `[미션 시스템]` 처럼 **대괄호로 개념을 감싸면** 그게 시소러스 조회 신호다.
 
+### 2-1. 사용자가 답해 준 것을 기억시킨다 (2026-08-20)
+
+    add_object_alias(class_name, term)   확인된 별칭 등록
+    mark_not_a_class(term)               "그건 클래스가 아니다" 기록 — 다음부터 안 묻는다
+
+[중요] **사용자가 명시로 확인한 것만 부른다.** 별칭은 검색 질의에 클래스명을 덧붙여 확장하므로
+추측으로 등록하면 검색이 조용히 오염된다(원전 규약: silently auto-add 금지).
+
+[주의] **거부는 오류가 아니다** — 마스터의 범용어 가드가 `status: rejected_short`(공백 제거 4자
+미만) · `rejected_generic`(정확 구 DF 가 코퍼스의 2.5% 초과)로 **사유를 돌려준다.** 그대로
+사용자에게 보여 주고 더 판별력 있는 표현을 받는다. 오타 클래스는 `not_found` 로 막힌다.
+문턱값을 여기서 흉내내지 말 것 — 판정은 마스터 한 곳이다.
+
 ## 3. 등록
 
     register_work_tool(title, target_repo, specs_json, original_request, target_branch, project)

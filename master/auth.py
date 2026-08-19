@@ -164,6 +164,9 @@ def load_view_token(path: Path | None = None) -> str | None:
 #   PATCH      검수 결정 반영 (merge_status · review_decision — 사람의 자리)
 #   redmine    마스터 경유 코멘트 (키는 마스터에만 있다)
 #   signals    code-writer 신호 적재 (#206 — 신호 파일은 마스터의 트윈 디렉토리에 있다)
+#   thesaurus  별칭 등록·클래스 아님 기록 (2026-08-20 — 온톨로지 yaml 은 마스터에만 있고,
+#              범용어 가드(#213)가 `thesaurus.register` 안에 있어 이 경로도 그것을 탄다.
+#              [중요] 8103 의 `/api/v1/*` 는 무인증 공개라 쓰기를 둘 자리가 아니다)
 REQUESTER_SCOPE: tuple = (
     ("GET", "/api/v1/works"),
     ("GET", "/api/v1/tasks"),
@@ -171,6 +174,7 @@ REQUESTER_SCOPE: tuple = (
     ("POST", "/api/v1/redmine/note"),
     ("POST", "/api/v1/signals"),
     ("POST", "/api/v1/history"),
+    ("POST", "/api/v1/thesaurus/"),
 )
 
 # worker (작업장 claimer, #204 — κ.0 CI 러너 패턴): 집고(claim) · 살아 있다 알리고(heartbeat) ·

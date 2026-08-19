@@ -103,6 +103,28 @@ def test_noop_still_works_after_guard():
         assert th.register(p, "UFoo", "미션 흐름", df_fn=ok) == "noop"
 
 
+def test_queue_route_does_not_bypass_the_guard():
+    """[중요] 요청자 대행 라우트(2026-08-20)가 가드를 우회하지 않는가.
+
+    가드는 `thesaurus.register` **안**에 있다. 라우트가 판정을 다시 하면 두 벌이 되고
+    문턱값이 바뀔 때 갈라진다 — 그래서 라우트는 얇아야 하고, 문턱 상수가 거기 있으면
+    그것이 곧 복제의 증거다.
+    """
+    src = (Path(__file__).resolve().parent / "task_queue" / "server.py").read_text(encoding="utf-8")
+    seg = src[src.index('@app.post("/api/v1/thesaurus/alias")'):]
+    seg = seg[:seg.index('@app.post("/api/v1/anti_patterns/notify")')]
+    assert "th.register(" in seg, "라우트가 register 를 타지 않는다"
+    assert "th.ignore(" in seg, "not-a-class 가 ignore 를 타지 않는다"
+    for dup in ("GUARD_MIN_CHARS", "GUARD_DF_RATIO", "0.025"):
+        assert dup not in seg, f"라우트에 가드 문턱이 복제돼 있다: {dup}"
+    assert "rejected" in seg or 'status.startswith("added")' in seg, \
+        "거부 상태를 그대로 말하지 않는다"
+    # [중요] 8103 이 아니라 큐(8101)에 둔 이유를 코드가 스스로 적어 두는가 — 다음 세션이
+    #   "읽기가 8103 인데 왜 쓰기는 8101 이냐" 를 다시 파헤치지 않게.
+    models = (Path(__file__).resolve().parent / "task_queue" / "models.py").read_text(encoding="utf-8")
+    assert "무인증" in models, "무인증 공개(8103) 근거가 적혀 있지 않다"
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = 0

@@ -27,7 +27,7 @@ from .models import (
     _VALID_DIRECTIVES, _VERIFY_RESULT_TO_STATUS, WorkRegisterReq, TaskRegisterReq,
     ClaimReq, HeartbeatReq, SubmitReq, SubmitFailReq, VerifyReq, AdminResetReq,
     WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq,
-    WriterSignalReq, HistoryReq
+    WriterSignalReq, HistoryReq, AliasReq, NotAClassReq
 )
 from .persistence import (
     TaskIndex, _project_root, _tasks_dir, _archive_dir, _log_dir, _tq_log,
@@ -368,6 +368,36 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
                 f"read={len(record['files_read'])} modified={len(record['files_modified'])} "
                 f"errors={len(record['error_recoveries'])}", root)
         return {"ok": True, "stored_at": stored, "intent": record["intent"]}
+
+    @app.post("/api/v1/thesaurus/alias")
+    def thesaurus_alias_ep(req: AliasReq):
+        """사용자가 확인해 준 별칭을 등록한다 — 요청자(`.33`) 대행 (2026-08-20).
+
+        [중요] **판정을 여기서 다시 하지 않는다.** 범용어 가드(#213)는
+        `thesaurus.register` 안에 있고, 두 벌이 되면 다음에 갈라진다 —
+        `redmine/note`·`signals` 와 같은 얇은 대행이다.
+        [주의] 거부도 **200 + ok:false** 로 말한다. 조용히 무시하면 사용자는 등록된 줄 안다.
+        """
+        from ..context_search import thesaurus as th
+        from ..context_search.paths import resolve
+        paths = resolve(req.project or "")
+        status = th.register(paths, req.class_name, req.term)
+        ok = status.startswith("added") or status == "noop"
+        _tq_log(f"[thesaurus] alias {req.class_name} ← '{req.term}' "
+                f"→ {status.split(':')[0]} ({paths.name})", root)
+        return {"ok": ok, "status": status, "class": req.class_name,
+                "term": req.term, "project": paths.name}
+
+    @app.post("/api/v1/thesaurus/not-a-class")
+    def thesaurus_not_a_class_ep(req: NotAClassReq):
+        """`그건 클래스가 아니다` 를 기억한다 — 다음부터 묻지 않는다."""
+        from ..context_search import thesaurus as th
+        from ..context_search.paths import resolve
+        paths = resolve(req.project or "")
+        status = th.ignore(paths, req.term)
+        _tq_log(f"[thesaurus] not-a-class '{req.term}' → {status} ({paths.name})", root)
+        return {"ok": status != "not_found", "status": status,
+                "term": req.term, "project": paths.name}
 
     @app.post("/api/v1/anti_patterns/notify")
     def anti_patterns_notify_ep(req: AntiPatternNotifyReq):

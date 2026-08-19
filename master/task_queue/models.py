@@ -193,6 +193,30 @@ class HistoryReq(BaseModel):
     user_quote: str = ""               # 사용자 직접 발화 1~3줄 — WHY 신호, 본문보다 강함
 
 
+class AliasReq(BaseModel):
+    """[중요] **별칭 등록 대행** (2026-08-20) — 원전 `add_object_alias` 의 자리.
+
+    별칭은 온톨로지 yaml(없는 클래스는 폴백 저장소)에 쓰이고 그 파일은 **마스터에만** 있다.
+    [중요] 범용어 가드(#213: 4자 미만 · 정확 구 DF 2.5% 초과 거부)는 `thesaurus.register`
+    **안**에 있어서 이 경로도 그것을 탄다 — 가드를 우회하는 두 번째 입구를 만들지 않는 것이
+    이 자리를 8103 이 아니라 여기(토큰 잠김 큐)에 둔 이유다. 8103 의 `/api/v1/*` 는
+    **무인증 공개**다(실측 2026-08-20: 토큰 없이 200) — 쓰기가 갈 자리가 아니다.
+    """
+    class_name: str
+    term: str
+    project: str = ""          # 비면 활성. 요청자 config 는 project 를 알므로 보통 채워 보낸다
+
+
+class NotAClassReq(BaseModel):
+    """`그건 클래스가 아니다` 를 기억한다 — 원전 `mark_not_a_class` 의 자리.
+
+    [중요] 별칭 등록과 **같은 대화의 반쪽**이다. 기록하지 않으면 `[완료]` 같은 상태어를
+    매번 다시 묻게 되고, 그러면 사람이 이 기능을 꺼 버린다(원전이 그렇게 기록해 뒀다).
+    """
+    term: str
+    project: str = ""
+
+
 class AntiPatternNotifyReq(BaseModel):
     """리더가 머지한 새 안티패턴 엔트리 알림.
 
