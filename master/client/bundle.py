@@ -639,6 +639,96 @@ PAYLOAD_INIT = (
 )
 
 
+# ─────────────────────────────────────────────────────────────
+# 작업장 자산 (#226 4번) — 원전 `watch.exe` 가 첫 실행에 만들던 `.claude/` 구조
+#
+# [중요] **원전은 이것을 zip 에 넣지 않았다** — `build.bat` 이 zip 직전에 agents·skills·hooks 를
+#    일부러 rmdir 하고, `watch.exe` 가 설치 시 **생성**했다(정본은 `watcher/agent_defs.py` 등
+#    생성기). 우리는 생성기 대신 **저장소의 파일**을 정본으로 둔다 — 같은 배포 모델이고,
+#    파일이면 diff·리뷰·3자 동기가 그대로 붙는다.
+# [중요] **역할은 requester 뿐이다** (실측 2026-08-20: `.2`·`.43` 에 `.claude/agents`·`skills`
+#    **0건**). 이 자산은 사람이 대화로 쓰는 절차이고, 워커는 claimer·`ax-work` 로 돈다.
+#    워커에게도 필요해지면 그때 칸을 늘린다 — 안 쓰는 곳에 미리 뿌리지 않는다.
+# [주의] `agents`·`skills`·`rules`·`hooks` 는 **파일째 관리**한다(원전도 매 실행 재생성했다).
+#    반면 `.claude/CLAUDE.md` 는 **마커 블록만** 바꾼다 — 사람이 쓴 나머지를 날리지 않는다.
+WORKSHOP_ROLES = ("requester",)
+WORKSHOP_MD_REL = ".claude/CLAUDE.md"
+WS_BEGIN = "<!-- AgentWatch:Start -->"
+WS_END = "<!-- AgentWatch:End -->"
+
+
+def workshop_dir() -> Path:
+    return Path(__file__).with_name("workshop")
+
+
+def workshop_files(role: str) -> tuple:
+    """이 역할이 받을 작업장 자산 — `(체크아웃 기준 상대경로, 저장소 절대경로)` 목록.
+
+    [중요] `CLAUDE.md` 는 여기서 **제외**한다 — 병합 대상이라 쓰는 방식이 다르다.
+    """
+    if role not in WORKSHOP_ROLES:
+        return ()
+    root = workshop_dir()
+    if not root.is_dir():
+        return ()
+    out = []
+    for sub in ("agents", "skills", "rules", "hooks"):
+        d = root / sub
+        if not d.is_dir():
+            continue
+        for f in sorted(d.rglob("*")):
+            if f.is_file():
+                out.append((f".claude/{f.relative_to(root).as_posix()}", f))
+    return tuple(out)
+
+
+def workshop_text(src: Path) -> str:
+    """자산 원문. [중요] **바이트로 읽어 개행을 보존한다** — `read_text()` 는 개행을 번역해
+    읽어서 CRLF 를 LF 로 바꿔 보낸다(실측 2026-08-20에 그렇게 한 번 틀렸다). `_remote_write` 는
+    `newline=""` 로 쓰므로 문자열에 든 `\r\n` 이 그대로 나간다."""
+    if not src.is_file():
+        raise BundleError(f"배달할 작업장 자산이 없다: {src}")
+    return src.read_bytes().decode("utf-8")
+
+
+def with_newlines(text: str, *, windows: bool) -> str:
+    """개행을 **한 종류로** 통일한다 (윈도우 → CRLF, 그 밖 → LF).
+
+    [중요] **병합은 개행을 섞는다.** `_remote_read` 는 `read_text()` 로 읽어 CRLF 를 **LF 로
+    번역**하고(그 함수의 계약이다), 정본 파일은 CRLF 다 — 그대로 이어 붙이면 한 파일에 두
+    종류가 섞인다(실측 2026-08-20: 배달 후 CRLF 362 + LF 172, 크기 172바이트 감소).
+    [주의] **해시 대조는 이걸 못 잡는다** — 보낸 것과 도착한 것이 같은지만 재기 때문에,
+    *"보낸 것 자체가 섞여 있었다"* 는 통과한다. 그래서 쓰기 직전에 통일한다.
+    """
+    flat = text.replace("\r\n", "\n").replace("\r", "\n")
+    return flat.replace("\n", "\r\n") if windows else flat
+
+
+def merge_workshop_md(existing: str, role: str) -> str:
+    """`.claude/CLAUDE.md` — **마커 블록만** 정본으로 갈아끼운다.
+
+    원전 `project_claude_md.py` 가 쓰던 `AgentWatch:Start/End` 마커를 그대로 쓴다.
+    · 원격에 마커가 있으면 그 사이만 교체 (사람이 쓴 나머지는 그대로)
+    · 마커가 없으면 **원격을 건드리지 않는다** — 어디가 관리 블록인지 모른 채 덮으면
+      사람의 문서를 날린다. 대신 사유를 돌려준다(호출자가 사람에게 보여 준다)
+    · 원격이 비었으면 정본을 그대로 놓는다
+    """
+    src = workshop_dir() / "CLAUDE.md"
+    if role not in WORKSHOP_ROLES or not src.is_file():
+        return ""
+    canon = workshop_text(src)
+    if WS_BEGIN not in canon or WS_END not in canon:
+        raise BundleError(f"정본 {WORKSHOP_MD_REL} 에 관리 마커가 없다 — 배달 대상이 아니다")
+    block = canon[canon.index(WS_BEGIN):canon.index(WS_END) + len(WS_END)]
+    if not (existing or "").strip():
+        return canon
+    if WS_BEGIN in existing and WS_END in existing:
+        head = existing[:existing.index(WS_BEGIN)]
+        tail = existing[existing.index(WS_END) + len(WS_END):]
+        return head + block + tail
+    return ""          # [주의] 마커 없음 = 안 쓴다 (호출자가 사유를 싣는다)
+
+
 def skills_for(role: str) -> tuple:
     """이 역할이 받을 스킬 이름들. [중요] 모르는 역할은 **빈 튜플이 아니라 예외**다 —
     조용히 아무것도 안 보내면 배달이 성공한 것처럼 보인다."""
@@ -696,7 +786,8 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     if dry_run:
         return {"host": facts.host, "dry_run": True, "config_bytes": len(cfg),
                 "skills": list(skills_for(facts.role)),
-                "payload": list(payloads_for(facts.role))}
+                "payload": list(payloads_for(facts.role)),
+                "workshop": [rel for rel, _src in workshop_files(facts.role)]}
     # [중요] CLAUDE.md 는 **읽어서 병합**한다 — 덮어쓰면 사람이 쓴 것을 날린다
     md_path = (f"{facts.path}\\CLAUDE.md" if facts.windows else f"{facts.path}/CLAUDE.md")
     prev = _remote_read(facts, md_path)
@@ -733,6 +824,27 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
                        for n in payloads_for(facts.role)]) if payloads_for(facts.role) else [],
         "excluded": _ensure_ignored(facts),
     }
+    # ── 작업장 자산 (#226 4번) — 원전 watch.exe 가 생성하던 `.claude/` 구조 ─────────
+    # [중요] **손으로 맞추던 것을 배달 경로에 넣는다.** 3번 재배선까지 저장소와 `.33` 을 scp 로
+    #    맞췄고, 그 상태로는 조용히 갈린다(리포트 27 §13). 배달은 되읽어 해시 대조까지 한다.
+    ws = workshop_files(facts.role)
+    if ws:
+        written["workshop"] = [_remote_write(facts, rel, workshop_text(src), base="checkout")
+                               for rel, src in ws]
+        # [주의] `.claude/CLAUDE.md` 는 **마커 블록만** — 사람이 쓴 나머지를 날리지 않는다.
+        prev_ws = _remote_read(facts, (f"{facts.path}\.claude\CLAUDE.md" if facts.windows
+                                       else f"{facts.path}/.claude/CLAUDE.md"))
+        merged_ws = merge_workshop_md(prev_ws, facts.role)
+        if merged_ws:
+            # [중요] 개행 통일 — 병합이 섞기 때문이다 (`with_newlines` 독스트링 참조)
+            written["workshop_md"] = _remote_write(
+                facts, WORKSHOP_MD_REL, with_newlines(merged_ws, windows=facts.windows),
+                base="checkout")
+        else:
+            # [중요] 조용히 건너뛰지 않는다 — 왜 안 썼는지 말한다.
+            written["workshop_md"] = ("건너뜀 — 원격 `.claude/CLAUDE.md` 에 "
+                                      f"`{WS_BEGIN}` 마커가 없다 (어디가 관리 블록인지 모른 채 "
+                                      "덮으면 사람의 문서를 날린다)")
     # ── 요청자 전용 (소 3.8.4): .mcp.json ─────────────
     if facts.role == "requester":
         prev_mcp = _remote_read(facts, (f"{facts.path}\\.mcp.json" if facts.windows

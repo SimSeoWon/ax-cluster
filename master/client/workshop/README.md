@@ -88,7 +88,12 @@
    합성물 0건. `#152`(`@ms-contract` 0건 → 재범위)와 같은 판단. `code-recipes` MCP 등록은
    `.mcp.json` 에 남아 있어 `code-writer` 참조는 깨지지 않는다
 3. **재배선** — `agents/` 9종의 `tools:` 를 `mcp__ax-client__*` 로. 2 가 선행 조건
-4. **배달 경로** — `deliver` 가 이 디렉토리를 보낸다. **그전까지 `.33` 사본이 실사용본이므로
-   여기만 고치면 조용히 갈린다**
+4. [완료] **배달 경로** (2026-08-20) — `python -m master.client deliver` 가 이 디렉토리를 보낸다.
+   `plan` 이 개수·묶음을 먼저 찍고, `check` 가 **해시로 드리프트를 잰다**(요청자 행에
+   *"작업장 자산 31개 일치"*). [중요] **역할 게이팅** — 워커에게는 안 보낸다(실측: `.2`·`.43` 에
+   `agents`·`skills` 0건. 이 자산은 사람이 대화로 쓰는 절차이고 워커는 claimer·`ax-work` 로 돈다).
+   [주의] `agents`·`skills`·`rules`·`hooks` 는 **파일째** 관리하고(원전도 매 실행 재생성했다),
+   `.claude/CLAUDE.md` 는 **`AgentWatch:Start/End` 블록만** 바꾼다 — 마커가 없으면 **안 쓴다**
+   (어디가 관리 블록인지 모른 채 덮으면 사람 문서를 날린다)
 5. **템플릿화** — 프로젝트 고유 문자열 실측 `ModularStage` 13 · `MissionRuntime` 7 ·
    절대경로 6 · `Project_Alpha` 3. 두 번째 프로젝트가 실제로 생길 때 치환한다

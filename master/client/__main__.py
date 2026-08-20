@@ -59,6 +59,16 @@ def cmd_plan(project: str) -> int:
                 print(f"   → {base}/{d + '/' if d else ''}__init__.py  (패키지 표식)")
             for rel in pay:
                 print(f"   → {base}/{rel} ({len(bundle.payload_text(rel))}자)  [payload]")
+        ws = bundle.workshop_files(f.role)
+        if ws:
+            # [중요] **자산은 개수로 찍는다** — 33개를 한 줄씩 찍으면 계획이 안 읽힌다.
+            #    다만 어느 묶음이 몇 개인지는 말한다(안 보이는 산출물은 없는 것으로 읽힌다).
+            groups: dict = {}
+            for rel, _src in ws:
+                groups.setdefault(rel.split("/")[1], []).append(rel)
+            summary = " · ".join(f"{k} {len(v)}개" for k, v in sorted(groups.items()))
+            print(f"   → {f.path}/.claude/ 작업장 자산 {len(ws)}개 ({summary})  [workshop]")
+            print(f"   → {f.path}/.claude/CLAUDE.md — `{bundle.WS_BEGIN}` 블록만 교체")
         print(f"   → {f.path}/.git/info/exclude 에 `/{bundle.AX_DIR}/` (커밋 안 됨)")
     return 0
 
@@ -95,6 +105,11 @@ def cmd_deliver(project: str, *, init: bool = False) -> int:
         #    다음 세션에 **없는 것으로 읽힌다.**
         for pp in r.get("payload") or []:
             print(f"     payload={pp}")
+        if r.get("workshop"):
+            print(f"     workshop={len(r['workshop'])}개 → {f.path}/.claude/ "
+                  f"(agents·skills·rules·hooks)")
+        if "workshop_md" in r:
+            print(f"     workshop_md={r['workshop_md']}")
         if "mcp_json" in r:
             print(f"     mcp_json={r['mcp_json']}")
         if "role_token" in r:
@@ -173,14 +188,51 @@ def cmd_check(project: str) -> int:
             else:
                 client_note += " · [주의] 마스터에 requester 토큰이 없다 (init-role)"
         
-        mark = "OK" if (ok_skill and ok_cfg and ok_pay and ok_client) else "FAIL"
+        # [중요] **작업장 자산도 잰다** (#226 4번). 에이전트·스킬은 사람이 읽는 문서지만
+        #    `tools:` 허용목록이 낡으면 **오류 없이 능력만 사라진다**(리포트 27 §13) — 페이로드가
+        #    조용히 낡는 것과 같은 부류다. 33개를 한 번의 ssh 로 해시 뜬다.
+        ws = bundle.workshop_files(f.role)
+        ws_stale: list = []
+        if ws:
+            base = (f.path + chr(92) + ".claude") if f.windows else (f.path + "/.claude")
+            if f.windows:
+                # [주의] 인용이 세 겹(bash → ssh → powershell)이라 **조립해서** 만든다.
+                #    한 줄 f-string 에 넣으려다 두 번 깨졌다 — 읽는 사람도 못 읽는다.
+                ps = ("Get-ChildItem -LiteralPath '" + base + "' -Recurse -File "
+                      "-Include *.md,*.py | ForEach-Object { "
+                      "$h=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash; "
+                      "Write-Output ($_.FullName.Substring(" + str(len(base) + 1)
+                      + ") + ' ' + $h) }")
+                cmd = 'powershell -NoProfile -Command "' + ps + '"'
+            else:
+                cmd = (f"cd '{base}' 2>/dev/null && find . -type f \\( -name '*.md' -o "
+                       "-name '*.py' \\) -exec sha256sum {} + 2>/dev/null")
+            _rc, got = bundle._ssh(f.host, f.user, cmd)
+            remote = {}
+            for line in (got or "").splitlines():
+                parts = line.strip().replace("\\", "/").split()
+                if len(parts) == 2 and len(parts[1]) == 64:          # windows: 경로 해시
+                    remote[parts[0].lstrip("./")] = parts[1].lower()
+                elif len(parts) == 2 and len(parts[0]) == 64:        # linux: 해시 경로
+                    remote[parts[1].lstrip("./")] = parts[0].lower()
+            for rel, src in ws:
+                inner = rel.split("/", 1)[1]                         # `.claude/` 를 뗀다
+                want = hashlib.sha256(bundle.workshop_text(src).encode("utf-8")).hexdigest()
+                if remote.get(inner) != want:
+                    ws_stale.append(inner)
+        ok_ws = not ws_stale
+        ws_note = (f" · 작업장 자산 {len(ws)}개 일치" if ws and ok_ws
+                   else f" · [중요] 작업장 자산 불일치/없음 {len(ws_stale)}개: "
+                        f"{', '.join(ws_stale[:3])}" if ws else "")
+
+        mark = "OK" if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws) else "FAIL"
         pay_note = (f" · payload {len(pay)}개 일치" if pay and ok_pay
                     else f" · [중요] payload 불일치/없음 {len(stale)}개: {', '.join(stale[:3])}"
                     if pay else "")
         print(f"  {mark} {f.host} [{f.role}]: 스킬 {len(names)}종 "
               f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}"
-              f"{pay_note}{client_note}")
-        bad += 0 if (ok_skill and ok_cfg and ok_pay and ok_client) else 1
+              f"{pay_note}{ws_note}{client_note}")
+        bad += 0 if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws) else 1
     return 1 if bad else 0
 
 

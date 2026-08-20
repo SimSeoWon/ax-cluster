@@ -301,6 +301,64 @@ def test_role_block() -> None:
 
 
 
+def test_workshop_delivery() -> None:
+    """작업장 자산 배달 (#226 4번) — **손으로 맞추던 것을 배달 경로에 넣었다.**
+
+    3번까지 저장소와 `.33` 을 scp 로 맞췄고, 그 상태로는 조용히 갈린다. 여기서 재는 것:
+      ① 역할 게이팅 — 워커에게는 **안 보낸다**(실측: `.2`·`.43` 에 agents·skills 0건)
+      ② 무엇을 보내고 무엇을 안 보내는가 (README·mcp.json 은 배달물이 아니다)
+      ③ [중요] **개행** — 병합이 CRLF/LF 를 섞는다. 해시 대조는 그걸 못 잡는다
+      ④ [중요] **마커 없는 원격은 건드리지 않는다** — 사람 문서를 날리지 않는다
+    """
+    ws = bundle.workshop_files("requester")
+    if not ws:
+        check("작업장 자산이 아직 반입되지 않았다 — 건너뜀", True)
+        return
+    check("요청자는 자산을 받는다 (20개 이상)", len(ws) >= 20, str(len(ws)))
+    check("[중요] 워커에게는 안 보낸다 (실측: agents·skills 0건)",
+          bundle.workshop_files("worker") == ())
+    rels = [r for r, _ in ws]
+    check("전부 `.claude/` 아래로 간다", all(r.startswith(".claude/") for r in rels))
+    check("네 묶음만 (agents·skills·rules·hooks)",
+          {r.split("/")[1] for r in rels} <= {"agents", "skills", "rules", "hooks"},
+          str({r.split("/")[1] for r in rels}))
+    check("[중요] README·mcp.json 은 배달물이 아니다 (저장소 문서·병합 대상)",
+          not any(r.endswith(("README.md", "mcp.json")) for r in rels))
+    check("[중요] CLAUDE.md 는 파일째 배달하지 않는다 (마커 병합 대상)",
+          ".claude/CLAUDE.md" not in rels)
+
+    # ③ 개행 — 정본이 CRLF 인 파일은 CRLF 로 읽혀야 한다 (read_bytes 계약)
+    crlf_src = [src for _r, src in ws if b"\r\n" in src.read_bytes()]
+    if crlf_src:
+        check("[중요] 정본의 CRLF 가 보존된다 (read_text 는 개행을 번역한다)",
+              "\r\n" in bundle.workshop_text(crlf_src[0]))
+    check("with_newlines: 윈도우는 CRLF 로 통일",
+          bundle.with_newlines("a\nb\r\nc", windows=True) == "a\r\nb\r\nc")
+    check("with_newlines: 그 밖은 LF 로 통일",
+          bundle.with_newlines("a\r\nb\nc", windows=False) == "a\nb\nc")
+    check("[중요] 섞인 입력이 한 종류로 나온다 (병합 산출물이 그렇다)",
+          "\n" not in bundle.with_newlines("x\ny", windows=True).replace("\r\n", ""))
+
+    # ④ 마커 병합 — 사람이 쓴 나머지는 그대로, 마커 없으면 안 쓴다
+    canon = bundle.workshop_text(bundle.workshop_dir() / "CLAUDE.md")
+    check("정본에 관리 마커가 있다", bundle.WS_BEGIN in canon and bundle.WS_END in canon)
+    head, tail = "# 사람이 쓴 머리\n\n", "\n\n## 사람이 쓴 꼬리\n"
+    fake = head + bundle.WS_BEGIN + "\n옛 블록\n" + bundle.WS_END + tail
+    merged = bundle.merge_workshop_md(fake, "requester")
+    check("[중요] 마커 밖(사람 문서)은 그대로", merged.startswith(head) and merged.endswith(tail),
+          merged[:60])
+    check("블록 안은 정본으로 교체됨", "옛 블록" not in merged and bundle.WS_BEGIN in merged)
+    check("[중요] 마커가 없으면 **안 쓴다** (사람 문서 보호)",
+          bundle.merge_workshop_md("# 사람이 쓴 것뿐\n", "requester") == "")
+    check("원격이 비면 정본을 그대로 놓는다",
+          bundle.merge_workshop_md("", "requester") == canon)
+    check("[중요] 워커에게는 병합도 없다", bundle.merge_workshop_md(fake, "worker") == "")
+
+    dry = bundle.deliver("P", _facts(role="requester"), dry_run=True)
+    check("plan 이 자산을 노출한다 (안 보이는 산출물은 없는 것으로 읽힌다)",
+          len(dry.get("workshop") or []) == len(ws), str(len(dry.get("workshop") or [])))
+
+
 def test_workshop_assets_reference_only_live_tools() -> None:
     """[중요] **`tools:` 에 없는 서버를 적어 두면 오류가 아니다 — 그 도구 없이 그냥 돈다.**
 
@@ -456,7 +514,8 @@ def main() -> int:
                test_mcp_json_merge,
                test_role_skills, test_role_payload, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
                test_merge_never_replaces_existing,
-               test_workshop_assets_reference_only_live_tools):
+               test_workshop_assets_reference_only_live_tools,
+               test_workshop_delivery):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_bundle: {PASS}/{total} 통과")
