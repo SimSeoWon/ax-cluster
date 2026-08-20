@@ -252,6 +252,76 @@ def tool_redmine_note(api, issue_id: int, notes: str, status_name: str = "",
     return api("POST", "/api/v1/redmine/note", payload)
 
 
+# ── Redmine 조회·생성·연결 (#226 위임 구멍 ① — 원전 `redmine_tracker` 이식) ──────
+# [중요] **읽기도 큐(8101)** 다. 8103 은 무인증 공개라(실측 2026-08-20) 일감 본문·검수 이력을
+#    둘 자리가 아니다. 원전은 리더 PC 가 키를 갖고 직접 읽었지만 우리 키는 마스터에만 있다.
+# [주의] 서버가 실패를 200 + `error` 문장으로 준다 — 그대로 사람에게 보여 준다(조용한 실패 금지).
+
+def tool_redmine_list_issues(api, *, status: str = "open", tracker: str = "",
+                             fixed_version: str = "", limit: int = 25,
+                             offset: int = 0) -> dict:
+    q = [f"status={urllib.parse.quote(status or 'open')}",
+         f"limit={int(limit)}", f"offset={int(offset)}"]
+    if tracker:
+        q.append(f"tracker={urllib.parse.quote(tracker)}")
+    if fixed_version:
+        q.append(f"fixed_version={urllib.parse.quote(fixed_version)}")
+    return api("GET", "/api/v1/redmine/issues?" + "&".join(q))
+
+
+def tool_redmine_get_issue(api, issue_id) -> dict:
+    if not issue_id:
+        raise ClientError("issue_id 가 비었다")
+    return api("GET", f"/api/v1/redmine/issue/{int(issue_id)}")
+
+
+def tool_redmine_meta(api) -> dict:
+    return api("GET", "/api/v1/redmine/meta")
+
+
+def tool_redmine_create_issue(api, subject: str, description: str = "",
+                              tracker_name: str = "", priority_name: str = "") -> dict:
+    if not (subject or "").strip():
+        raise ClientError("subject 가 비었다 — 제목 없는 이슈는 만들지 않는다")
+    payload = {"subject": subject.strip(), "description": description or ""}
+    if tracker_name:
+        payload["tracker_name"] = tracker_name
+    if priority_name:
+        payload["priority_name"] = priority_name
+    return api("POST", "/api/v1/redmine/issue", payload)
+
+
+def tool_redmine_link_commit(api, issue_id, commit_hash: str, message: str = "") -> dict:
+    if not (commit_hash or "").strip():
+        raise ClientError("commit_hash 가 비었다")
+    return api("POST", "/api/v1/redmine/link-commit",
+               {"issue_id": int(issue_id), "commit_hash": commit_hash.strip(),
+                "message": message or ""})
+
+
+# ── 태스크 템플릿 (#226 위임 구멍 ② — 원전 `context_search.get_task_template`) ────
+# [중요] 이쪽은 **8103** 이다 — 태스크 템플릿은 온톨로지 구조 자료이고 도메인 조회와 같은 등급
+#    (공개 뷰가 이미 같은 데이터를 보여 준다). 라우트는 이미 있었다: `/api/v1/ontology/tasks`
+#    와 `/api/v1/ontology/task/<이름>`.
+# [주의] 스토어가 비어 있어도 **0 을 0 이라고 말한다** — 리포트 27 §3 의 교훈(조용히 0 으로
+#    답하는 입구가 없다고 답하는 입구보다 위험하다)이 여기 그대로 걸린다.
+
+def tool_list_task_templates(papi, cache=None) -> dict:
+    got = cached_fetch(cache, "tasks:list", lambda: papi("GET", "/api/v1/ontology/tasks"))
+    if isinstance(got, dict) and not got.get("count"):
+        got.setdefault("_note", "등록된 태스크 템플릿이 0건이다 — 이 프로젝트는 아직 안 쓴다")
+    return got
+
+
+def tool_get_task_template(papi, task_type: str, cache=None) -> dict:
+    t = (task_type or "").strip()
+    if not t:
+        raise ClientError("task_type 이 비었다")
+    return cached_fetch(cache, f"tasks:one:{t}",
+                        lambda: papi("GET", "/api/v1/ontology/task/"
+                                     + urllib.parse.quote(t, safe="")))
+
+
 def tool_log_writer_signal(api, args: dict) -> dict:
     """code-writer 신호 적재 (#206) — 원전 `log_writer_signal` 의 클라 자리.
 
@@ -578,6 +648,48 @@ TOOLS = [
                                     "notes": {"type": "string"},
                                     "status_name": {"type": "string"},
                                     "done_ratio": {"type": "integer"}}}},
+    {"name": "redmine_list_issues",
+     "description": "레드마인 이슈 목록 (마스터 경유 — 키는 이 PC 에 없다). status 는 open(기본)/"
+                    "closed/*. [중요] 우리 규약에서 닫힌 상태는 「완료」뿐이라 「해결」은 open 에 "
+                    "들어온다. tracker·fixed_version(마일스톤)으로 좁힐 수 있다.",
+     "inputSchema": {"type": "object", "properties": {
+         "status": {"type": "string", "description": "open(기본) · closed · *"},
+         "tracker": {"type": "string", "description": "예: 코드리뷰"},
+         "fixed_version": {"type": "string", "description": "마일스톤 이름 (부분 일치 허용)"},
+         "limit": {"type": "integer"}, "offset": {"type": "integer"}}}},
+    {"name": "redmine_get_issue",
+     "description": "레드마인 이슈 1건 상세 + 노트 이력. 없는 번호는 error 로 답한다(조용히 "
+                    "빈 것을 주지 않는다). 리뷰 지적 상담·검증 전에 이걸로 본문을 확보한다.",
+     "inputSchema": {"type": "object", "required": ["issue_id"],
+                     "properties": {"issue_id": {"type": "integer"}}}},
+    {"name": "redmine_meta",
+     "description": "이 레드마인의 상태·트래커·우선순위·마일스톤 카탈로그. 상태 이름을 추측하지 "
+                    "말고 여기서 확인한다 — 이 환경은 한국어이고 「반려」에 해당하는 상태가 없다.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "redmine_create_issue",
+     "description": "레드마인 이슈를 새로 만든다 (마스터 경유). 프로젝트는 ModularStage 고정 — "
+                    "새 프로젝트를 만들지 않는다. AX 인프라 건이면 제목에 [AX] 접두어를 쓴다.",
+     "inputSchema": {"type": "object", "required": ["subject"],
+                     "properties": {"subject": {"type": "string"},
+                                    "description": {"type": "string"},
+                                    "tracker_name": {"type": "string"},
+                                    "priority_name": {"type": "string"}}}},
+    {"name": "redmine_link_commit",
+     "description": "커밋 해시를 이슈에 노트로 연결한다 (원전과 같은 「커밋 연결: `<해시>`」 형식 — "
+                    "형식이 같아야 이력을 한 규칙으로 훑을 수 있다).",
+     "inputSchema": {"type": "object", "required": ["issue_id", "commit_hash"],
+                     "properties": {"issue_id": {"type": "integer"},
+                                    "commit_hash": {"type": "string"},
+                                    "message": {"type": "string"}}}},
+    {"name": "list_task_templates",
+     "description": "등록된 태스크 템플릿 목록 (구조 레지스트리 — 도메인 검색 채널과 분리돼 있다). "
+                    "0건이면 0건이라고 답한다.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "get_task_template",
+     "description": "태스크 템플릿 1건 — 구조·예시·계약·test_spec. 골조를 짜기 전에 같은 종류의 "
+                    "작업이 이미 표준화돼 있는지 여기서 확인한다.",
+     "inputSchema": {"type": "object", "required": ["task_type"],
+                     "properties": {"task_type": {"type": "string"}}}},
     {"name": "log_writer_signal",
      "description": "코드 작성 작업 1건의 **과정**을 마스터에 적재한다 (되먹임 원료 — 코드가 "
                     "아니라 과정이다). 작업 종료 직전, 사용자 최종 승인 후에 호출한다 — "
@@ -639,7 +751,9 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
     """도구 실행. `api`/`papi`/`cache` 주입은 테스트 자리 — 실전은 config·token 에서 만든다."""
     args = args or {}
     if name in ("list_works", "get_work", "redmine_note", "log_writer_signal", "log_history",
-                "add_object_alias", "mark_not_a_class"):
+                "add_object_alias", "mark_not_a_class", "redmine_list_issues",
+                "redmine_get_issue", "redmine_meta", "redmine_create_issue",
+                "redmine_link_commit"):
         a = api or queue_api(root)
         if name in ("add_object_alias", "mark_not_a_class"):
             # 프로젝트는 배달된 config 가 안다 — #210(활성 스위치)에 흔들리지 않게 실어 보낸다
@@ -660,13 +774,37 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
             return tool_log_writer_signal(a, args)
         if name == "log_history":
             return tool_log_history(a, args)
+        if name == "redmine_list_issues":
+            return tool_redmine_list_issues(a, status=str(args.get("status") or "open"),
+                                            tracker=str(args.get("tracker") or ""),
+                                            fixed_version=str(args.get("fixed_version") or ""),
+                                            limit=args.get("limit") or 25,
+                                            offset=args.get("offset") or 0)
+        if name == "redmine_get_issue":
+            return tool_redmine_get_issue(a, args.get("issue_id"))
+        if name == "redmine_meta":
+            return tool_redmine_meta(a)
+        if name == "redmine_create_issue":
+            return tool_redmine_create_issue(a, str(args.get("subject") or ""),
+                                             str(args.get("description") or ""),
+                                             str(args.get("tracker_name") or ""),
+                                             str(args.get("priority_name") or ""))
+        if name == "redmine_link_commit":
+            return tool_redmine_link_commit(a, args.get("issue_id"),
+                                            str(args.get("commit_hash") or ""),
+                                            str(args.get("message") or ""))
         return tool_redmine_note(a, args.get("issue_id"), str(args.get("notes") or ""),
                                  status_name=str(args.get("status_name") or ""),
                                  done_ratio=args.get("done_ratio"))
     if name in ("search_context", "list_domains", "get_domain", "get_domain_layer",
-                "get_object_spec", "get_action_spec", "find_invariants_by_class"):
+                "get_object_spec", "get_action_spec", "find_invariants_by_class",
+                "list_task_templates", "get_task_template"):
         pa = papi or projects_api(root)
         c = cache if cache is not None else _load_cache()
+        if name == "list_task_templates":
+            return tool_list_task_templates(pa, cache=c)
+        if name == "get_task_template":
+            return tool_get_task_template(pa, str(args.get("task_type") or ""), cache=c)
         if name == "search_context":
             return tool_search_context(pa, str(args.get("query") or ""),
                                        tags=args.get("tags"), n=args.get("n") or 5, cache=c)

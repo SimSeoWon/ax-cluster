@@ -217,3 +217,170 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
         return f"[주의] 레드마인 #{iid} 갱신 실패 — {type(e).__name__}: {e}"
     what = ", ".join(k2 for k2 in ("notes", "status_id", "done_ratio") if k2 in issue)
     return f"레드마인 #{iid} 갱신 ({what}){status_note}"
+
+
+# ─────────────────────────────────────────
+# 읽기 — 원전 `redmine_tracker` 의 조회 도구 이식 (#226 위임 구멍 ①)
+#
+# [중요] **이 자리는 8103 이 아니라 큐(8101)** 다. 8103 의 `/api/v1/*` 는 무인증 공개라
+#    (실측 2026-08-20: 토큰 없이 200) 일감 본문·검수 이력이 LAN 아무에게나 열린다.
+#    읽기라는 사실이 「공개 표면에 두라」는 뜻이 아니다.
+# [중요] 원전과 같은 **요약 형태**를 지킨다 — 이슈 원본 json 을 그대로 흘리지 않는다.
+#    작업장 세션이 쓰는 필드만 남기면 컨텍스트도 아끼고, 필드 이름이 절차 문서와 어긋나지 않는다.
+# ─────────────────────────────────────────
+
+def _issue_row(iss: dict, base: str) -> dict:
+    """목록 한 줄 (원전 `list_issues` 의 필드 구성 그대로)."""
+    return {
+        "id": iss.get("id"),
+        "subject": iss.get("subject"),
+        "tracker": (iss.get("tracker") or {}).get("name"),
+        "status": (iss.get("status") or {}).get("name"),
+        "priority": (iss.get("priority") or {}).get("name"),
+        "assigned_to": (iss.get("assigned_to") or {}).get("name", ""),
+        "author": (iss.get("author") or {}).get("name", ""),
+        "fixed_version": (iss.get("fixed_version") or {}).get("name", ""),
+        "updated_on": iss.get("updated_on"),
+        "url": f"{base}/issues/{iss.get('id')}",
+    }
+
+
+def list_issues(*, project: str = PROJECT_ID, status: str = "open", tracker: str = "",
+                fixed_version: str = "", limit: int = 25, offset: int = 0,
+                sort: str = "updated_on:desc", key: str = "", url: str = "",
+                sender=None) -> dict:
+    """이슈 목록. 반환 `{"total_count", "issues":[...]}` 또는 `{"error": 사유}`.
+
+    [주의] `status` 기본값은 원전과 같은 `"open"` 이다 — 우리 규약에서 **「해결」도 열린 것**
+    이므로(닫힌 상태는 「완료」뿐) 이 기본값이 규약과 같은 방향이다.
+    """
+    base = (url or base_url()).rstrip("/")
+    k = key or api_key()
+    if not k:
+        return {"error": "레드마인 API 키를 찾지 못했다 — 마스터 컨테이너 DB 확인"}
+    params = [f"limit={max(1, min(int(limit), 100))}", f"offset={max(0, int(offset))}",
+              f"sort={sort}"]
+    if project:
+        params.append(f"project_id={project}")
+    if status and status != "*":
+        params.append(f"status_id={status}")
+    if tracker:
+        tid = resolve_tracker_id(tracker, key=k, url=base, sender=sender)
+        if tid is None:
+            # [중요] 조용히 전체를 돌려주지 않는다 — 필터가 안 걸린 목록은 거짓말이다.
+            return {"error": f"트래커 `{tracker}` 를 이 Redmine 에서 찾지 못했다"}
+        params.append(f"tracker_id={tid}")
+    if fixed_version:
+        vid = resolve_version_id(fixed_version, project=project, key=k, url=base, sender=sender)
+        if vid is None:
+            return {"error": f"마일스톤(버전) `{fixed_version}` 을 찾지 못했다"}
+        params.append(f"fixed_version_id={vid}")
+    try:
+        got = _request("GET", f"{base}/issues.json?{'&'.join(params)}", k, sender=sender)
+    except urllib.error.HTTPError as e:
+        return {"error": f"레드마인 조회 실패 — HTTP {e.code}"}
+    except Exception as e:                                   # noqa: BLE001
+        return {"error": f"레드마인 조회 실패 — {type(e).__name__}: {e}"}
+    rows = [_issue_row(i, base) for i in (got or {}).get("issues") or []]
+    return {"total_count": (got or {}).get("total_count", len(rows)), "issues": rows}
+
+
+def get_issue(issue_id, *, key: str = "", url: str = "", sender=None) -> dict:
+    """이슈 1건 상세 + 노트 이력(원전과 같이 `journals` 중 **본문 있는 것만**)."""
+    base = (url or base_url()).rstrip("/")
+    k = key or api_key()
+    if not k:
+        return {"error": "레드마인 API 키를 찾지 못했다 — 마스터 컨테이너 DB 확인"}
+    try:
+        got = _request("GET", f"{base}/issues/{int(issue_id)}.json?include=journals",
+                       k, sender=sender)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {"error": f"#{issue_id} 없음 (404)"}
+        return {"error": f"레드마인 #{issue_id} 조회 실패 — HTTP {e.code}"}
+    except Exception as e:                                   # noqa: BLE001
+        return {"error": f"레드마인 #{issue_id} 조회 실패 — {type(e).__name__}: {e}"}
+    iss = (got or {}).get("issue") or {}
+    out = _issue_row(iss, base)
+    out.update({
+        "description": iss.get("description", ""),
+        "done_ratio": iss.get("done_ratio", 0),
+        "created_on": iss.get("created_on"),
+        "parent": (iss.get("parent") or {}).get("id"),
+        "journals": [{"user": (j.get("user") or {}).get("name", ""),
+                      "notes": j.get("notes"),
+                      "created_on": j.get("created_on")}
+                     for j in iss.get("journals") or [] if j.get("notes")],
+    })
+    return out
+
+
+def resolve_version_id(name: str, *, project: str = PROJECT_ID, key: str = "",
+                       url: str = "", sender=None):
+    """마일스톤(버전) **이름 → id**. 부분 일치를 허용한다 — 우리 버전명은
+    *"마일스톤 6 — 개선·확장"* 처럼 길어서 사람이 `마일스톤 6` 만 쓴다(실측)."""
+    if not name:
+        return None
+    try:
+        got = _request("GET", f"{(url or base_url()).rstrip('/')}/projects/{project}/versions.json",
+                       key or api_key(), sender=sender)
+    except Exception:                                        # noqa: BLE001
+        return None
+    vs = (got or {}).get("versions") or []
+    for v in vs:                                             # 정확 일치 우선
+        if str(v.get("name", "")).strip() == name.strip():
+            return v.get("id")
+    for v in vs:
+        if name.strip() in str(v.get("name", "")):
+            return v.get("id")
+    return None
+
+
+def meta(*, key: str = "", url: str = "", sender=None) -> dict:
+    """상태·트래커·우선순위·버전 카탈로그 (원전 `list_statuses`·`list_trackers` 자리).
+
+    [중요] **한 번에 준다** — 원전은 도구 두 개였지만 절차는 늘 둘을 같이 쓴다
+    (`update_issue` 전에 상태 이름을 확인하는 흐름). 나누면 왕복만 는다.
+    """
+    base = (url or base_url()).rstrip("/")
+    k = key or api_key()
+    if not k:
+        return {"error": "레드마인 API 키를 찾지 못했다 — 마스터 컨테이너 DB 확인"}
+    out: dict = {}
+    for field, ep, arr in (("statuses", "issue_statuses.json", "issue_statuses"),
+                           ("trackers", "trackers.json", "trackers"),
+                           ("priorities", "enumerations/issue_priorities.json",
+                            "issue_priorities")):
+        try:
+            got = _request("GET", f"{base}/{ep}", k, sender=sender)
+            out[field] = [str(x.get("name", "")) for x in (got or {}).get(arr) or []]
+        except Exception as e:                               # noqa: BLE001
+            out[field] = []
+            out.setdefault("errors", []).append(f"{field}: {type(e).__name__}")
+    try:
+        got = _request("GET", f"{base}/projects/{PROJECT_ID}/versions.json", k, sender=sender)
+        out["versions"] = [{"name": v.get("name"), "status": v.get("status")}
+                           for v in (got or {}).get("versions") or []]
+    except Exception as e:                                   # noqa: BLE001
+        out["versions"] = []
+        out.setdefault("errors", []).append(f"versions: {type(e).__name__}")
+    # [중요] 닫힌 상태가 무엇인지 **말해 준다** — 우리 규약(「완료」만 닫힘, 「해결」은 열림)을
+    #    도구 응답이 스스로 실어야 작업장 세션이 상태를 잘못 고르지 않는다.
+    out["note"] = "닫힌 상태는 「완료」뿐이다 — 「해결」은 아직 열린 것으로 센다"
+    return out
+
+
+def link_commit(issue_id, commit_hash: str, message: str = "", *,
+                key: str = "", url: str = "", sender=None) -> str:
+    """커밋 해시를 이슈에 노트로 연결한다 (원전 `link_commit` 의 문구 형식 그대로).
+
+    [주의] 새 능력이 아니라 **형식**이다 — `update_issue(notes=...)` 를 부르지만, 원전과 같은
+    `커밋 연결: \\`<hash>\\`` 문장을 써야 이력을 나중에 한 규칙으로 훑을 수 있다.
+    """
+    h = (commit_hash or "").strip()
+    if not h:
+        return "[주의] 커밋 연결 건너뜀 — 해시가 비었다"
+    lines = [f"커밋 연결: `{h}`"]
+    if message:
+        lines.append(message)
+    return update_issue(issue_id, notes="\n".join(lines), key=key, url=url, sender=sender)

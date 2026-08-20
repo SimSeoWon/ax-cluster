@@ -153,6 +153,26 @@ class RedmineNoteReq(BaseModel):
     work_id: str = ""          # 감사 로그용 (선택)
 
 
+class RedmineIssueReq(BaseModel):
+    """이슈 생성 대행 (#226 — 원전 `redmine_tracker.create_issue`·`create_review_issue`).
+
+    [중요] **프로젝트를 인자로 받지 않는다** — `ModularStage` 하나이고 새 프로젝트를 만들지
+    않는 것이 규칙이다(`docs/10-references.md` §10.1). 인자로 열어 두면 언젠가 새 프로젝트가
+    생긴다.
+    """
+    subject: str
+    description: str = ""
+    tracker_name: str = ""     # 비우면 Redmine 기본 트래커
+    priority_name: str = ""
+
+
+class RedmineLinkCommitReq(BaseModel):
+    """커밋 해시 연결 (#226 — 원전과 같은 노트 문구 형식을 서버가 만든다)."""
+    issue_id: int
+    commit_hash: str
+    message: str = ""
+
+
 class WriterSignalReq(BaseModel):
     """code-writer 신호 (#206) — 원전 `log_writer_signal` 인자 그대로.
 

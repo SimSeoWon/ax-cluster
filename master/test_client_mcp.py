@@ -67,6 +67,26 @@ def fake_api(calls, works=None, work=None):
             return work if work is not None else {"work": {}, "tasks": []}
         if path == "/api/v1/redmine/note":
             return {"ok": True, "result": "레드마인 #%s 갱신" % payload["issue_id"]}
+        if path.startswith("/api/v1/redmine/issues?"):
+            return {"total_count": 1, "issues": [{"id": 226, "subject": "[AX] 실증",
+                                                  "status": "진행"}]}
+        if path == "/api/v1/redmine/meta":
+            return {"statuses": ["신규", "진행", "해결", "검토", "완료"],
+                    "trackers": ["코드리뷰"], "priorities": ["보통"],
+                    "versions": [{"name": "마일스톤 6 — 개선·확장", "status": "open"}],
+                    "note": "닫힌 상태는 「완료」뿐이다"}
+        if path.startswith("/api/v1/redmine/issue/"):
+            return {"id": int(path.rsplit("/", 1)[1]), "subject": "[AX] 실증",
+                    "journals": [{"user": "u", "notes": "n", "created_on": "t"}]}
+        if path == "/api/v1/redmine/issue":
+            return {"id": 999}
+        if path == "/api/v1/redmine/link-commit":
+            return {"ok": True, "result": "레드마인 #%s 갱신 (notes)" % payload["issue_id"],
+                    "issue_id": payload["issue_id"]}
+        if path == "/api/v1/ontology/tasks":
+            return {"status": "ok", "count": 0, "templates": []}
+        if path.startswith("/api/v1/ontology/task/"):
+            return {"status": "ok", "task_type": "미션태스크추가", "structure": {}}
         raise AssertionError(f"예상 밖 호출: {method} {path}")
     return api
 
@@ -81,11 +101,14 @@ def test_protocol_roundtrip():
                                              "method": "notifications/initialized"}) is None)
     r = M.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in r["result"]["tools"]]
-    check("도구 14종 (조회 9 + 쓰기 대행 5) — 원전 로컬 exe 은퇴분 인수 (2026-08-20)",
+    check("도구 21종 (조회 11 + 쓰기 대행 10) — 원전 redmine_tracker·태스크 템플릿 인수 (#226)",
           names == ["list_works", "get_work", "search_context", "list_domains",
                     "get_domain", "get_domain_layer", "get_object_spec", "get_action_spec",
                     "find_invariants_by_class", "add_object_alias", "mark_not_a_class",
-                    "redmine_note", "log_writer_signal", "log_history"],
+                    "redmine_note", "redmine_list_issues", "redmine_get_issue",
+                    "redmine_meta", "redmine_create_issue", "redmine_link_commit",
+                    "list_task_templates", "get_task_template",
+                    "log_writer_signal", "log_history"],
           str(names))
     check("모든 도구에 inputSchema", all("inputSchema" in t for t in r["result"]["tools"]))
     r = M.handle_message({"jsonrpc": "2.0", "id": 3, "method": "없는것"})
@@ -121,6 +144,58 @@ def test_tools_call_through_protocol():
     check("redmine_note 가 마스터 경유 경로를 부른다",
           any(p == "/api/v1/redmine/note" for _m, p, _p2 in calls), str(calls[-1]))
     check("한글이 그대로 실린다", calls[-1][2]["notes"] == "확인")
+
+
+def test_redmine_delegation_goes_to_queue():
+    """[중요] **읽기라도 8103 이 아니라 큐(8101)** — 그 포트의 `/api/v1/*` 는 무인증 공개다.
+
+    이 테스트가 지키는 것은 경로 하나가 아니라 **판단**이다. 8103 으로 옮기면 일감 본문과
+    검수 이력이 LAN 아무에게나 열린다(실측 2026-08-20: 토큰 없이 200).
+    """
+    calls = []
+    api = fake_api(calls)
+    for name, args, want in (
+            ("redmine_list_issues", {"status": "open"}, "/api/v1/redmine/issues?"),
+            ("redmine_get_issue", {"issue_id": 226}, "/api/v1/redmine/issue/226"),
+            ("redmine_meta", {}, "/api/v1/redmine/meta"),
+            ("redmine_create_issue", {"subject": "[AX] 제목"}, "/api/v1/redmine/issue"),
+            ("redmine_link_commit", {"issue_id": 226, "commit_hash": "abc1234"},
+             "/api/v1/redmine/link-commit")):
+        r = M.handle_message({"jsonrpc": "2.0", "id": 90, "method": "tools/call",
+                              "params": {"name": name, "arguments": args}}, api=api)
+        check(f"{name} → {want}", calls[-1][1].startswith(want), str(calls[-1]))
+        check(f"{name} isError=False", r["result"]["isError"] is False, str(r))
+    check("이슈 생성은 프로젝트를 인자로 받지 않는다 (새 프로젝트 금지 규칙)",
+          "project" not in (calls[-2][2] or {}), str(calls[-2]))
+    check("커밋 연결 본문은 해시를 그대로 싣는다", calls[-1][2]["commit_hash"] == "abc1234")
+
+    # 빈 인자는 호출 전에 막는다 — 조용히 전체를 긁어 오거나 제목 없는 이슈를 만들지 않는다
+    for name, args in (("redmine_get_issue", {}),
+                       ("redmine_create_issue", {"subject": "  "}),
+                       ("redmine_link_commit", {"issue_id": 1, "commit_hash": ""})):
+        r = M.handle_message({"jsonrpc": "2.0", "id": 91, "method": "tools/call",
+                              "params": {"name": name, "arguments": args}}, api=api)
+        check(f"{name} 빈 인자 → isError", r["result"]["isError"] is True, str(r))
+
+
+def test_task_templates_read_surface():
+    """태스크 템플릿은 **8103**(공개 읽기) 이다 — 도메인 조회와 같은 등급의 구조 자료.
+
+    [중요] 0건이면 0건이라고 **말한다** (리포트 27 §3: 조용히 0 으로 답하는 입구가 위험하다).
+    """
+    calls = []
+    papi = fake_api(calls)
+    r = M.handle_message({"jsonrpc": "2.0", "id": 92, "method": "tools/call",
+                          "params": {"name": "list_task_templates", "arguments": {}}}, papi=papi)
+    body = json.loads(r["result"]["content"][0]["text"])
+    check("목록은 8103 라우트로", calls[-1][1] == "/api/v1/ontology/tasks", str(calls[-1]))
+    check("0건을 0건이라고 말한다", body["count"] == 0 and "_note" in body, str(body))
+    r = M.handle_message({"jsonrpc": "2.0", "id": 93, "method": "tools/call",
+                          "params": {"name": "get_task_template",
+                                     "arguments": {"task_type": "미션태스크추가"}}}, papi=papi)
+    check("한글 이름이 URL 인코딩돼 나간다", "%" in calls[-1][1], str(calls[-1]))
+    check("1건 조회 응답", json.loads(r["result"]["content"][0]["text"])["task_type"]
+          == "미션태스크추가")
 
 
 def test_serve_loop_survives():
@@ -577,7 +652,9 @@ def main() -> int:
                test_thesaurus_writes_go_to_queue_uncached,
                test_guard_verdict_passes_through_not_as_error,
                test_domain_layer_carries_manifest_and_navigation,
-               test_find_invariants_sweeps_and_says_how_it_matched):
+               test_find_invariants_sweeps_and_says_how_it_matched,
+               test_redmine_delegation_goes_to_queue,
+               test_task_templates_read_surface):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_mcp: {PASS}/{total} 통과")

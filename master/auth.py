@@ -162,7 +162,9 @@ def load_view_token(path: Path | None = None) -> str | None:
 # 요청자 역할이 여는 경로 — 검수 흐름 + 되먹임 생산, 그것뿐이다.
 #   읽기       works·tasks 조회 (검수 대상 파악)
 #   PATCH      검수 결정 반영 (merge_status · review_decision — 사람의 자리)
-#   redmine    마스터 경유 코멘트 (키는 마스터에만 있다)
+#   redmine    마스터 경유 코멘트·조회·이슈 생성·커밋 연결 (키는 마스터에만 있다).
+#              [중요] **읽기도 여기다** — 8103 의 `/api/v1/*` 는 무인증 공개라(실측 2026-08-20)
+#              일감 본문·검수 이력을 둘 자리가 아니다. 읽기라는 사실이 공개 표면을 뜻하지 않는다
 #   signals    code-writer 신호 적재 (#206 — 신호 파일은 마스터의 트윈 디렉토리에 있다)
 #   thesaurus  별칭 등록·클래스 아님 기록 (2026-08-20 — 온톨로지 yaml 은 마스터에만 있고,
 #              범용어 가드(#213)가 `thesaurus.register` 안에 있어 이 경로도 그것을 탄다.
@@ -172,6 +174,9 @@ REQUESTER_SCOPE: tuple = (
     ("GET", "/api/v1/tasks"),
     ("PATCH", "/api/v1/works/"),
     ("POST", "/api/v1/redmine/note"),
+    ("GET", "/api/v1/redmine/"),         # 조회 (#226 — 원전 redmine_tracker 이식)
+    ("POST", "/api/v1/redmine/issue"),   # 이슈 생성 (원전 code-validator 의 리뷰 등록)
+    ("POST", "/api/v1/redmine/link-commit"),
     ("POST", "/api/v1/signals"),
     ("POST", "/api/v1/history"),
     ("POST", "/api/v1/thesaurus/"),

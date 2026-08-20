@@ -281,8 +281,22 @@ def test_role_block() -> None:
     check("워커 블록은 ax-work 를 가리킨다", "`ax-work`" in w)
     check("[중요] 요청자 블록은 ax-work 를 가리키지 않는다", "ax-work" not in r, r[:200])
     check("요청자 블록은 ax-request 를 가리킨다", "ax-request" in r)
-    check("[중요] 요청자에게 '소스를 고치지 않는다' 를 말한다", "소스를 고치지 않는다" in r)
-    check("[중요] 워커에게만 attempt 브랜치 규약", "attempt/<task_id>" in w and "attempt/" not in r.split("실행은")[1])
+    # [중요] 2026-08-20 계약 변경 (사용자 확정) — 이식본이 「분배」 한 차선으로 좁혔던 것을
+    #    원전 규칙으로 되돌렸다. 옛 테스트는 *"요청자에게 소스를 고치지 않는다고 말한다"* 를
+    #    고정하고 있었다 — **그 문장이 요구를 좁힌 자리**였다. 지금 고정하는 것은 분기 자체다.
+    check("[중요] 요청자 블록이 분기를 말한다 (직접 처리 vs 분해·분배)",
+          "직접 처리" in r and "분해·분배" in r, r[-800:])
+    check("[중요] 원전의 경계를 그대로 싣는다 (단일 클래스 · 신규 3개 이상 + 관계)",
+          "단일 클래스" in r and "신규 파일 3개 이상" in r, r[-800:])
+    check("[중요] a/b/c 를 환경 상태로 거르지 말라고 말한다 (원전 BLOCKING)",
+          "a/b/c" in r and "자동 거르지 말 것" in r, r[-800:])
+    check("[중요] 등재는 마스터 큐 한 곳 (진실의 원천)", "마스터 큐 한 곳으로만" in r)
+    check("[주의] 직접 처리해도 사람의 트리라는 경고는 남는다",
+          "reset --hard" in r and ".uasset" in r)
+    check("[중요] 워커에게만 attempt 작업경로 규약",
+          "attempt/<task_id>" in w and "attempt/<task_id>" not in r)
+    check("요청자는 attempt 브랜치를 만들지 않는다고 말한다",
+          "`attempt/` 브랜치를" in r and "만들지 않는다" in r)
     check("두 역할 모두 '소스가 이긴다'", "소스가 이긴다" in w and "소스가 이긴다" in r)
 
 

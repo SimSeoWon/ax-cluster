@@ -27,6 +27,7 @@ from .models import (
     _VALID_DIRECTIVES, _VERIFY_RESULT_TO_STATUS, WorkRegisterReq, TaskRegisterReq,
     ClaimReq, HeartbeatReq, SubmitReq, SubmitFailReq, VerifyReq, AdminResetReq,
     WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq,
+    RedmineIssueReq, RedmineLinkCommitReq,
     WriterSignalReq, HistoryReq, AliasReq, NotAClassReq
 )
 from .persistence import (
@@ -337,6 +338,52 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         _tq_log(f"[redmine] #{req.issue_id} work={req.work_id or '-'} → {result}", root)
         # [주의] 실패해도 200 이다 — 검수 흐름을 막지 않는다. [중요] 다만 `ok` 로 **말은 한다**
         #    (조용한 실패 금지). 호출자가 사람에게 그대로 보여 준다.
+        return {"ok": not result.startswith("[주의]"), "result": result,
+                "issue_id": req.issue_id}
+
+    # ── Redmine 조회·생성·연결 (#226 위임 구멍 ①) ─────────────────────
+    # [중요] **읽기를 8103 에 두지 않았다.** 그 포트의 `/api/v1/*` 는 무인증 공개라(실측
+    #    2026-08-20: 토큰 없이 200) 일감 본문·검수 이력이 LAN 아무에게나 열린다. 원전은
+    #    리더 PC 가 키를 갖고 직접 읽었고, 우리는 키가 마스터에만 있으니 대행이 그 자리다.
+    # [주의] 실패해도 200 + `error` 문장이다 — `redmine/note` 와 같은 관례(조용한 실패 금지,
+    #    다만 흐름을 막지 않는다). 호출자가 사람에게 사유를 그대로 보여 준다.
+
+    @app.get("/api/v1/redmine/issues")
+    def redmine_issues_ep(status: str = "open", tracker: str = "", fixed_version: str = "",
+                          limit: int = 25, offset: int = 0,
+                          sort: str = "updated_on:desc"):
+        """이슈 목록 (원전 `list_issues`). 기본 `status=open` — 우리 규약에서 「해결」도 열린 것."""
+        from ..redmine import list_issues
+        return list_issues(status=status, tracker=tracker, fixed_version=fixed_version,
+                           limit=limit, offset=offset, sort=sort)
+
+    @app.get("/api/v1/redmine/meta")
+    def redmine_meta_ep():
+        """상태·트래커·우선순위·버전 카탈로그 (원전 `list_statuses`+`list_trackers` 를 한 번에)."""
+        from ..redmine import meta
+        return meta()
+
+    @app.get("/api/v1/redmine/issue/{issue_id}")
+    def redmine_issue_ep(issue_id: int):
+        """이슈 1건 + 노트 이력 (원전 `get_issue`). 없는 번호는 `error` 로 **말한다**."""
+        from ..redmine import get_issue
+        return get_issue(issue_id)
+
+    @app.post("/api/v1/redmine/issue")
+    def redmine_create_issue_ep(req: RedmineIssueReq):
+        """이슈 생성 대행 (원전 `create_issue`). 프로젝트는 고정 — 새 프로젝트를 만들지 않는다."""
+        from ..redmine import create_issue
+        r = create_issue(req.subject, req.description, tracker_name=req.tracker_name,
+                         priority_name=req.priority_name)
+        _tq_log(f"[redmine] 이슈 생성 → {r}", root)
+        return r
+
+    @app.post("/api/v1/redmine/link-commit")
+    def redmine_link_commit_ep(req: RedmineLinkCommitReq):
+        """커밋 해시 연결 (원전 `link_commit` — 같은 노트 문구 형식)."""
+        from ..redmine import link_commit
+        result = link_commit(req.issue_id, req.commit_hash, req.message)
+        _tq_log(f"[redmine] #{req.issue_id} 커밋 연결 {req.commit_hash[:12]} → {result}", root)
         return {"ok": not result.startswith("[주의]"), "result": result,
                 "issue_id": req.issue_id}
 
