@@ -226,11 +226,15 @@ systemctl status ax-task-queue ax-broker ax-projects ax-indexer.path
 journalctl -u ax-indexer -n 30 --no-pager              # push → 트윈 성장 이력
 .venv/bin/python -m master.work.infer collect          # pull 데몬 응답 회수 → 스풀 (#204)
 .venv/bin/python -m master.work.integrate plan|run     # 통합 (조각별 빌드 → 커밋 → durable push)
-.venv/bin/python -m master.work.cleanup plan           # 찌꺼기 (기본은 안 지움)
+.venv/bin/python -m master.work.cleanup plan|apply     # 찌꺼기 (plan 은 안 지움 · verified·cancelled 만)
 .venv/bin/python -m master.work.cleanup remote --apply # 병합 확인된 원격 attempt/task 삭제 (#219)
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client probe|plan|deliver|check
+                                                       # 배달 — check 가 스킬·payload·작업장 자산 31개를 해시로 잰다
 .venv/bin/python -m master.ontology plan|dry|refresh   # 이 순서로
 .venv/bin/python -m master.ontology log-candidates     # 태깅 권장 리포트 (#169, LLM 0)
 ```
+
+[중요] **승인 뒤는 한 호출이다** (원전 6단계 동등, 2026-08-21): `review.finalize_work(confirm=True)` 가 ①`main` `--no-ff` 머지+push ②Redmine 완료 기재(머지 커밋 해시 · 상태는 **「해결」** — 「완료」로 닫는 것은 사람이다) ③**도달 가능한 브랜치 삭제** ⑤`merge_status`→`merged` 를 이어서 한다. `confirm=False`(기본)는 **통합만 하고 멈추고** 사람이 실행할 명령을 돌려준다. [주의] 순서가 계약이다 — 정리는 **머지 뒤**여야 도달 가능 판정이 참이 된다.
 
 **워커 상주 데몬이 큐를 폴링한다** (#204 실전 전환 2026-08-18): `.2` AxClaimer(schtasks
 5분 감시자, build+code) · `.43` cron 감시자(code 만). 등록된 code 태스크는 **20초 안에 데몬이

@@ -55,6 +55,12 @@ The pipeline (M3, four deterministic gates — detail in `3-work-pipeline.md`):
 
     요청 → 골조(claude:opus, 등재 전 빌드) → 분해 → 워커는 **추론만**(ax-infer) → 스풀
          → 통합자 `.2`: 층1 → 층2 → 적용 → **조각별 UE5 빌드** → 통과분만 커밋 → work 단위 RunTests
+         → [사람 승인] `finalize`: `main` 머지 + Redmine 기재 + **도달 가능 브랜치 정리** (한 호출)
+
+[중요] **승인 뒤는 손으로 정리하지 않는다** (2026-08-21, 원전 `finalize_work` 6단계 동등):
+`finalize_work(confirm=True)` 가 머지·기재·정리를 이어서 한다. 기본값은 `confirm=False`(통합만 하고
+멈춤)이므로 **승인이 곧 트리거**다. [주의] 자동 삭제는 **`main` 에서 도달 가능한 것만** — 미병합은
+사람 몫이고, 그 판정을 pre-push 훅(`#125`)이 한 번 더 한다.
 
 The status screen and the ported web UI are served on the LAN at `http://192.168.0.57:8103` —
 [중요] **no login** (API paths on that port stay token-locked), and its palette is **dark-only on
