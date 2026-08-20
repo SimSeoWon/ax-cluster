@@ -1,7 +1,7 @@
 ---
 name: asset-validator
 description: UE5 DataValidation 커맨드렛 실행 결과를 분석하여 변경된 에셋(.uasset/.umap)의 유효성 문제를 보고한다. '에셋 검증', 'validation 돌려줘' 요청 시 위임.
-tools: Read, mcp__context-search__combined_search
+tools: Read, mcp__ax-client__search_context
 model: inherit
 ---
 

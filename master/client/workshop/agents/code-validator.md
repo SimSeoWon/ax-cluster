@@ -1,7 +1,7 @@
 ---
 name: code-validator
 description: 잠재적 버그·메모리 누수·스레드 안전성 이슈를 탐지하고, 요청 시 수동 리뷰 리포트를 생성하여 Redmine에 등록한다. 또한 '이미 수정된 이슈'는 코드와 대조하여 검증한 뒤 Redmine 노트 추가 + status Resolved 처리(close는 사람 권한). '리뷰해줘', '분석해서 점검', '시스템 검토', '수정했어 검토해줘', '이거 닫아줘' 같은 요청 시 위임.
-tools: Read, Write, Grep, Glob, Bash, mcp__redmine-tracker__get_issue, mcp__redmine-tracker__list_issues, mcp__redmine-tracker__update_issue, mcp__redmine-tracker__create_issue, mcp__redmine-tracker__create_review_issue, mcp__redmine-tracker__list_statuses, mcp__redmine-tracker__list_trackers, mcp__redmine-tracker__link_commit, mcp__context-search__combined_search
+tools: Read, Write, Grep, Glob, Bash, mcp__ax-client__redmine_get_issue, mcp__ax-client__redmine_list_issues, mcp__ax-client__redmine_note, mcp__ax-client__redmine_create_issue, mcp__ax-client__redmine_meta, mcp__ax-client__redmine_link_commit, mcp__ax-client__search_context
 model: inherit
 ---
 
@@ -53,7 +53,11 @@ model: inherit
 
 작성자 조회: `Bash`로 `git config user.name` 실행.
 
-MD 형식 (자동 리뷰와 동일 → `create_review_issue`가 파싱 가능):
+MD 형식 (자동 리뷰와 동일):
+> [주의] **`create_review_issue` 는 이 클러스터에 없다** (2026-08-20 · 원전 로컬 exe 은퇴,
+> 미이식). 리뷰 MD 를 파싱해 심각도별로 이슈를 나눠 만들던 그 단계는 **네가 직접 한다** —
+> 아래 5)의 절차를 따른다. 형식은 그대로 유지한다(사람이 읽는 형식이고, 나중에 이식되면
+> 그대로 입력이 된다).
 ```markdown
 # 코드 리뷰 리포트
 
@@ -83,7 +87,11 @@ MD 형식 (자동 리뷰와 동일 → `create_review_issue`가 파싱 가능):
 리뷰 저장 후 요약 보고 + **"Redmine에 이슈 등록할까요?"** 질문.
 
 ### 5) Redmine 등록 (사용자 승인 시)
-`create_review_issue(review_path=".claude/reviews/<작성자>/ad_hoc_*.md", min_severity="mid")` 호출 후 반환된 URL 전달.
+[중요] **직접 만든다** — `create_review_issue` 는 미이식이다.
+1. 저장한 리뷰 MD 에서 **`mid` 이상 지적만** 골라낸다 (필터는 네 몫이다)
+2. `mcp__ax-client__redmine_create_issue(subject="[리뷰] <모듈> — <핵심 지적>", description=<골라낸 지적을 그대로>, tracker_name="코드리뷰")`
+3. 반환된 `id` 로 URL(`http://192.168.0.57:8080/issues/<id>`)을 만들어 전달한다
+[주의] 여러 모듈이면 **모듈별로 한 건씩** — 원전이 모듈 그룹핑을 했던 이유가 그것이다.
 
 ## "수정 완료 처리" 워크플로우
 
@@ -91,7 +99,7 @@ MD 형식 (자동 리뷰와 동일 → `create_review_issue`가 파싱 가능):
 **검증 → Redmine 갱신 → Plan MD 갱신**의 짝 흐름을 처리한다. "의도된 기능"(review-consultant 담당)과 짝을 이룬다.
 
 ### 1) 대상 식별
-- 사용자가 이슈 번호 명시 → `mcp__redmine-tracker__get_issue(issue_id=N)`로 description·target_file·지적 라인 확보
+- 사용자가 이슈 번호 명시 → `mcp__ax-client__redmine_get_issue(issue_id=N)`로 description·target_file·지적 라인 확보
 - 미명시 → 사용자에게 이슈 번호나 대상 파일 확인 후 진행
 
 ### 2) 수정 검증
@@ -118,9 +126,9 @@ MD 형식 (자동 리뷰와 동일 → `create_review_issue`가 파싱 가능):
 사용자 컨펌 받기 전까지 **어느 단계도 실행 금지**.
 
 ### 4) 컨펌 후 실행
-- **a) Redmine 갱신**: `mcp__redmine-tracker__update_issue(issue_id=N, notes=<검증결과>, status_id=<Resolved>)`
+- **a) Redmine 갱신**: `mcp__ax-client__redmine_note(issue_id=N, notes=<검증결과>, status_id=<Resolved>)`
   - 노트 본문에는 수정 커밋 hash, 변경 라인 요약, 검증 표 포함
-  - status_id 모르면 `mcp__redmine-tracker__list_statuses()` 선조회
+  - status_id 모르면 `mcp__ax-client__redmine_meta()` 선조회
   - **Closed/Won't Fix 등 종결 상태로 변경 금지** — Resolved까지만
 - **b) Plan MD acted 갱신**: `.claude/plans/<author>/<week>/`에서 target_file 매칭 plan MD 찾아
   frontmatter `status: pending` → `status: acted`로 Edit. 없으면 스킵.

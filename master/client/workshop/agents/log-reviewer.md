@@ -1,7 +1,7 @@
 ---
 name: log-reviewer
 description: UE5 런타임 로그 파일을 분석하여 에러·경고·반복 패턴을 식별하고 원인과 해결 방향을 제시한다. '로그 분석', '로그 봐줘' 요청 시 위임.
-tools: Read, mcp__context-search__combined_search
+tools: Read, mcp__ax-client__search_context
 model: inherit
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: code-writer
 description: 컨텍스트 기반으로 새 기능 구현 코드 초안을 제공하거나 리팩터링 방향을 제안한다. 코드 생성·수정 요청 시 위임.
-tools: Read, Write, Edit, Glob, mcp__context-search__combined_search, mcp__context-search__get_task_template, mcp__code-recipes__find_recipes, mcp__code-recipes__get_anti_patterns, mcp__code-recipes__log_writer_signal
+tools: Read, Write, Edit, Glob, mcp__ax-client__search_context, mcp__ax-client__get_task_template, mcp__code-recipes__find_recipes, mcp__code-recipes__get_anti_patterns, mcp__ax-client__log_writer_signal
 model: inherit
 ---
 
@@ -13,7 +13,7 @@ model: inherit
 
 ## 필수 선행 절차 (BLOCKING — 순서 엄수)
 0. **작업 유형 템플릿 (지정됐을 때만 — 작업유형 권위)**: 프롬프트에 `## 작업 유형 템플릿` 으로
-   템플릿명이 주어졌으면, 먼저 `mcp__context-search__get_task_template("<name>")` 로 조회한다.
+   템플릿명이 주어졌으면, 먼저 `mcp__ax-client__get_task_template("<name>")` 로 조회한다.
    - structure(역할별 클래스 세트) — 이 작업이 만들 산출물 구조를 그대로 따른다
    - example.refs(기존 1건의 실측 파일 경로) — `Read` 로 열어 패턴 확인 (복사 X, 패턴만)
    - conventions(명명·베이스·금지) + contracts(pre/post/acceptance) — 위반 금지
@@ -58,7 +58,7 @@ model: inherit
 ### 호출 형식
 
 ```
-mcp__code-recipes__log_writer_signal(
+mcp__ax-client__log_writer_signal(
     intent="<한 줄 의도 요약, 식별자는 [] 보존>",
     queries=[<이번 작업에서 사용한 RAG 쿼리들>],
     files_read=[<Read 한 소스 파일 경로들>],

@@ -1,7 +1,7 @@
 ---
 name: review-consultant
 description: 코드 리뷰 지적 사항에 대해 개발자와 대화형 상담하고, 의견·설계 의도·고민을 컨텍스트 MD의 '## 코멘트' 섹션에 기록한다. '의도된 기능' 처리 시 컨텍스트 코멘트 + Redmine 이슈 + plan MD를 일괄 갱신한다. '이 지적 어떻게', '리뷰 상담', '의도된 기능' 요청 시 위임.
-tools: Read, Write, Edit, Glob, Grep, Bash, mcp__redmine-tracker__get_issue, mcp__redmine-tracker__update_issue, mcp__redmine-tracker__list_statuses, mcp__context-search__combined_search
+tools: Read, Write, Edit, Glob, Grep, Bash, mcp__ax-client__redmine_get_issue, mcp__ax-client__redmine_note, mcp__ax-client__redmine_meta, mcp__ax-client__search_context
 model: inherit
 ---
 
@@ -48,7 +48,7 @@ model: inherit
 **다음 3곳을 일관되게 갱신**하여 반복 지적 방지 + 이슈 종결을 한 번에 처리한다.
 
 ### 1. 대상 식별
-- 사용자가 Redmine 이슈 번호를 명시하면 `mcp__redmine-tracker__get_issue(issue_id=N)`로 description·target_file·source_review 확보
+- 사용자가 Redmine 이슈 번호를 명시하면 `mcp__ax-client__redmine_get_issue(issue_id=N)`로 description·target_file·source_review 확보
 - 이슈 번호 없이 파일·증상으로만 말하면 `combined_search`로 관련 컨텍스트 찾고 사용자에게 대상 확인
 
 ### 2. 처리 계획 사용자 컨펌 (필수)
@@ -74,8 +74,8 @@ model: inherit
   - [YYYY-MM-DD][방향] <시스템 설계 의도 1~2문장> (작성자)
   ```
   (Edit 도구 사용. 기존 `## 코멘트` 섹션 없으면 파일 끝에 새로 생성)
-- **b) Redmine 이슈 갱신**: `mcp__redmine-tracker__update_issue(issue_id=N, notes="의도된 동작 — <이유>", status_id=<Rejected_or_Closed>)`
-  - status_id 모르면 먼저 `mcp__redmine-tracker__list_statuses()`로 확인 후 사용
+- **b) Redmine 이슈 갱신**: `mcp__ax-client__redmine_note(issue_id=N, notes="의도된 동작 — <이유>", status_id=<Rejected_or_Closed>)`
+  - status_id 모르면 먼저 `mcp__ax-client__redmine_meta()`로 확인 후 사용
   - 노트는 한국어로 명확히
 - **c) Plan MD dismissed 갱신**: `.claude/plans/<author>/<week>/`에서 target_file 매칭 plan MD 찾아
   frontmatter의 `status: pending`을 `status: dismissed`로 Edit. 없으면 스킵.

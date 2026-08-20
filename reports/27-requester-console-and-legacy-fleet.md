@@ -299,3 +299,64 @@ rmdir 한다**(*"PC 별 환경 파일이 zip 에 섞이면 클라 PC 가 자기 
 [중요] **깨진 테스트가 계약 변경을 증언했다** — `test_client_bundle` 의
 *"요청자에게 「소스를 고치지 않는다」를 말한다"* 가 빨간불이 됐다. **그 문장이 요구를 좁힌
 자리였다.** 테스트를 원전 규칙(분기·경계·a/b/c·마스터 큐 단일)으로 갈아 고정했다.
+
+## §13 재배선 — 32곳, 그리고 「지우지 않고 말하기」 (2026-08-20)
+
+§11 이 정한 순서의 3번. 먼저 머지 방향대로 **`ue-editor-operator` 를 원전본으로 올렸다**
+(56 → 90줄 — §11 이 짚은 mutation 재조회 검증 의무·리플렉션 한계·게임소스 갭 절차가 들어왔다).
+그 위에 재배선했다.
+
+| 옛 이름 | 새 이름 | 건수 |
+|---|---|---|
+| `context-search__combined_search` | `ax-client__search_context` | 10 |
+| `redmine-tracker__update_issue` | `ax-client__redmine_note` | 4 |
+| `redmine-tracker__list_statuses`·`list_trackers` | `ax-client__redmine_meta` | 5 |
+| `redmine-tracker__get_issue` | `ax-client__redmine_get_issue` | 4 |
+| `redmine-tracker__list_issues`·`create_issue`·`link_commit` | 각 대응물 | 4 |
+| `context-search__get_task_template` | `ax-client__get_task_template` | 2 |
+| `context-search__get_domain_manifest`·`list_domains`·`get_object_spec` | 각 대응물 | 3 |
+| `code-recipes__log_writer_signal` | `ax-client__log_writer_signal` | 2 |
+
+총 **32곳 · 9파일**. [중요] **매핑을 명시적으로 뒀다** — 정규식 일괄 치환은 미이식 도구까지
+이름만 바꿔 **「있는 척하는 도구」**를 만든다. 안 바꾼 것은 `unreal-mcp`(로컬 에디터가 맞는 자리)와
+`code-recipes__find_recipes`·`get_anti_patterns`(합성 입력 0건, §12).
+
+### [중요] 죽은 허용목록 항목은 지우고, 사라진 절차는 **말한다**
+
+`tools:` 에 남은 죽은 항목을 걷어냈다 — **그게 조용한 실패의 자리**다. 다만 지우면서 그 능력이
+없어진 사실을 본문에 [주의] 로 남겼다. 지우기만 하면 다음 세션은 **그 절차가 원래 없었다고 읽는다.**
+
+- `code-validator`: 14 → 12종. `create_review_issue`(리뷰 MD 파싱 → 심각도별 이슈 자동 생성)는
+  **미이식** → 대신 *"골라내는 일은 네가 한다"* 로 3단계 절차를 적어 줬다(`mid` 이상만 골라 →
+  `redmine_create_issue` → URL 조립). [주의] 모듈별 한 건씩 — 원전이 그룹핑한 이유가 그것이다
+- `ue-editor-operator`: 11 → 9종. **그래프 조회 3종**(`find_subclasses`·`dependency_search`·
+  `find_ancestors`)은 위임 여부가 아직 #226 의 열린 칸이다 → *"필요하면 **선언부를 직접 읽어라** —
+  이 프로젝트 규약이 이미 그렇다"*. **없는 도구를 부르거나 추론으로 때우지 않는다**를 명시
+- 중복 정리: `list_statuses`+`list_trackers` 가 둘 다 `redmine_meta` 로 접히면서 허용목록에
+  같은 이름이 두 번 생겼다(§12 의 「하나로 합침」 결정이 남긴 흔적) — 순서 보존 dedup
+
+### 재발 방지 — 테스트가 이제 이것을 본다
+
+`test_client_bundle::test_workshop_assets_reference_only_live_tools` (5칸):
+
+    ① 에이전트에 은퇴 서버 참조 0건        ② 어디든 `tools:` 줄에 죽은 항목 0건
+    ③ 참조된 `mcp__ax-client__*` 가 전부 실재하는 21종 안 (지어낸 이름 금지)
+    ④ 남은 옛 이름은 **알려진 결정 대기분뿐** (#226)   ⑤ 미이식·미위임을 [주의] 로 말한다
+
+[중요] **「어디서나 0건」은 틀린 규칙이었다** — 처음 그렇게 쓰자 정당한 언급 둘이 빨간불이 됐다:
+`CLAUDE.md`·`manage-domain` 의 *"로컬 `context-search` 는 은퇴했다, 부르지 말 것"*(**금지 문장**)과
+원전 로컬 오케스트레이션 스킬 4종(`distribute`·`cluster-selftest`·`review-work`·`tdd-dryrun` —
+**은퇴 여부 결정 대기**). 그래서 강한 규칙은 에이전트와 `tools:` 줄에만 걸고, 나머지는
+**알려진 목록과 같은지**를 잰다 — 결정 대기 목록이 조용히 늘면 그때 빨간불이 된다.
+
+### 실측
+
+    유닛      3657 → 3664 통과 · 실패 0
+    이름 검증 참조된 ax-client 도구 15종 전부 실재 (21종 중) — 지어낸 이름 0
+    .33 적용  에이전트 10파일 전송(백업 `~/claude-workspace/backups/33-agents-20260820/`)
+              → 옛 이름 **0건** · `mcp__ax-client__` **10파일** · git 상태 불변(사용자 `.uasset`만)
+
+[주의] **개행 함정을 또 밟았다** — `ue-editor-operator` 를 원전본으로 쓸 때 `read_text()` 로
+CRLF 를 판정했다. 그 함수는 개행을 **번역해서 읽어** `'\r\n' in text` 가 늘 False 다 → LF 로
+써 버렸고 형제 파일들과 달라졌다. **개행 판정은 `read_bytes()` 로** 한다. 리포트 27 §3 의
+CRLF 함정과 같은 계열이고, 그때는 비교에서, 이번엔 쓰기에서 걸렸다.

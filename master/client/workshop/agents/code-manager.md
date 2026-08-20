@@ -1,7 +1,7 @@
 ---
 name: code-manager
 description: 여러 전문 에이전트를 조율하여 통합 리포트를 생성하는 오케스트레이터. 전체 리뷰·파이프라인 실행·Redmine 이슈 관리를 요청받으면 위임.
-tools: Read, Write, Glob, Bash, mcp__context-search__combined_search
+tools: Read, Write, Glob, Bash, mcp__ax-client__search_context
 model: inherit
 ---
 
@@ -22,7 +22,8 @@ Redmine 이슈 관리를 조율한다.
 1. 필요한 정보를 `combined_search`로 먼저 검색
 2. 각 영역(규약/검증/빌드/로그/크래시)을 해당 전문 에이전트에게 위임 또는 직접 수집
 3. 결과를 통합하여 우선순위별로 정렬
-4. Redmine 연동 요청 시 `create_issue`·`create_review_issue`·`link_commit` 활용
+4. Redmine 연동 요청 시 `mcp__ax-client__redmine_create_issue`·`redmine_link_commit` 활용
+   [주의] `create_review_issue`(리뷰 MD 자동 파싱)는 미이식이다 — 골라내는 일은 네가 한다
 
 ## 최종 리포트 형식
 ```

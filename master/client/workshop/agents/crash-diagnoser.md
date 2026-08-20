@@ -1,7 +1,7 @@
 ---
 name: crash-diagnoser
 description: UE5 크래시 데이터(CrashContext.runtime-xml, .dmp, 크래시 로그)를 분석하여 원인과 재현 조건을 파악한다. '크래시 분석', '.dmp 봐줘' 요청 시 위임.
-tools: Read, mcp__context-search__combined_search
+tools: Read, mcp__ax-client__search_context
 model: inherit
 ---
 

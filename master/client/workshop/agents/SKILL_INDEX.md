@@ -29,10 +29,12 @@
 - watch.py가 컨텍스트 갱신 시 자동 인덱싱
 
 ## Redmine 이슈 관리
-- `list_issues` / `get_issue` / `create_issue` / `update_issue`
-- `create_review_issue(review_path, min_severity)` — 리뷰 MD → 이슈 자동 생성
-- `link_commit(issue_id, commit_hash)` — 이슈에 커밋 연결
-- config.json에 `redmine_url`, `redmine_api_key`, `redmine_project` 설정 필요
+- `mcp__ax-client__redmine_list_issues` / `redmine_get_issue` / `redmine_create_issue` /
+  `redmine_note`(코멘트·상태·완료율) / `redmine_meta`(상태·트래커·마일스톤 카탈로그) /
+  `redmine_link_commit`
+- [주의] **`create_review_issue`(리뷰 MD 자동 파싱)는 미이식** — 골라내는 일은 에이전트가 한다
+- [중요] **API 키는 이 PC 에 없다** — 마스터(큐 8101)가 대행한다. `config.json` 설정 불필요
+  (그 파일은 2026-08-20 에 삭제됐다)
 
 ## 컨텍스트 코멘트 시스템
 - `.claude/context/<도메인>/<파일>.md`의 `## 코멘트` 섹션에 개발자 노트 기록

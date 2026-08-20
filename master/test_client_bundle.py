@@ -301,6 +301,67 @@ def test_role_block() -> None:
 
 
 
+def test_workshop_assets_reference_only_live_tools() -> None:
+    """[중요] **`tools:` 에 없는 서버를 적어 두면 오류가 아니다 — 그 도구 없이 그냥 돈다.**
+
+    #226 에서 원전 exe 등록 5종을 지웠을 때 에이전트 9종의 허용목록이 그것을 계속 가리키고
+    있었다. 리포트 27 §9-3 의 「조용히 0」보다 한 단계 조용한 실패다 — **응답이 아니라 능력이**
+    사라지고, 그 에이전트는 검색 없이 그럴듯하게 답한다.
+
+    [중요] **「어디서나 0건」은 틀린 규칙이다.** 두 종류의 언급이 정당하게 남는다:
+      · `CLAUDE.md` 의 *"로컬 `mcp__context-search__*` 로 부르지 말 것"* — **금지 문장**
+      · 원전 로컬 오케스트레이션 스킬 4종 — **은퇴 여부 결정 대기**(#226)
+    그래서 강한 규칙은 **에이전트와 모든 `tools:` 줄**에만 걸고, 나머지는 **알려진 목록과
+    같은지**를 잰다 — 새 파일이 죽은 참조를 얻으면 그때 빨간불이 된다.
+    """
+    import re
+    root = Path(__file__).resolve().parent / "client" / "workshop"
+    if not root.exists():                       # 반입 전 체크아웃 보호
+        check("workshop 자산이 아직 없다 — 건너뜀", True)
+        return
+    from master.clientside.client_mcp import TOOLS    # noqa: PLC0415
+    live = {t["name"] for t in TOOLS}
+    RETIRED = ("mcp__context-search__", "mcp__redmine-tracker__", "mcp__task-queue__",
+               "mcp__master-orchestrator__", "mcp__local-llm-runner__")
+
+    # ① 에이전트 — 죽은 참조 0건 (여기가 허용목록이 사는 곳이다)
+    bad = [f"{f.name}:{pre}" for f in sorted((root / "agents").rglob("*.md"))
+           for pre in RETIRED if pre in f.read_text(encoding="utf-8")]
+    check("[중요] 에이전트에 은퇴한 원전 서버 참조 0건 (조용한 실패 금지)", not bad, str(bad))
+
+    # ② 어디에 있든 `tools:` 줄에는 죽은 항목이 없다
+    dead_allow = [f"{f.name}:{l[:60]}" for f in sorted(root.rglob("*.md"))
+                  for l in f.read_text(encoding="utf-8").splitlines()
+                  if l.startswith("tools:") and any(r in l for r in RETIRED)]
+    check("[중요] 허용목록(tools:)에 죽은 항목 0건", not dead_allow, str(dead_allow))
+
+    # ③ 지어낸 이름 금지 — 참조된 ax-client 도구가 전부 실재한다
+    used = set()
+    for f in root.rglob("*.md"):
+        used |= set(re.findall(r"mcp__ax-client__([a-z_]+)", f.read_text(encoding="utf-8")))
+    check("[중요] 참조된 ax-client 도구가 전부 실재한다", not (used - live),
+          str(sorted(used - live)))
+    check("실제로 여러 도구를 쓴다 (치환이 통째로 날아가지 않았다)", len(used) >= 10, str(len(used)))
+
+    # ④ 남은 언급은 **알려진 것뿐** — 결정 대기 목록이 조용히 늘어나지 않는다
+    PENDING = {"CLAUDE.md", "manage-domain",     # 「은퇴했다 · 부르지 말 것」 금지 문장
+               "cluster-selftest", "distribute", "review-work", "tdd-dryrun"}  # 은퇴 여부 대기
+    left = set()
+    for f in root.rglob("*.md"):
+        if any(pre in f.read_text(encoding="utf-8") for pre in RETIRED):
+            left.add(f.name if f.name == "CLAUDE.md" else f.parent.name)
+    check("[주의] 남은 옛 이름은 알려진 결정 대기분뿐 (#226)", left <= PENDING,
+          str(sorted(left - PENDING)))
+
+    # ⑤ 미이식·미위임을 조용히 지우지 않고 **말한다**
+    val = (root / "agents" / "code-validator.md").read_text(encoding="utf-8")
+    check("[주의] 미이식(create_review_issue)을 말한다",
+          "create_review_issue" in val and "미이식" in val)
+    ue = (root / "agents" / "ue-editor-operator.md").read_text(encoding="utf-8")
+    check("[주의] 미위임(그래프 조회)을 말하고 대안을 준다",
+          "위임되지 않았다" in ue and "선언부를 직접" in ue)
+
+
 def test_ue5_detection() -> None:
     """[중요] UE5 는 한 곳에 있지 않다 (실측 2026-08-09) — 프로브에 경로를 박으면 프로브의 의미가 없다."""
     globs = " ".join(bundle.ue5_globs())
@@ -394,7 +455,8 @@ def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
                test_role_skills, test_role_payload, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
-               test_merge_never_replaces_existing):
+               test_merge_never_replaces_existing,
+               test_workshop_assets_reference_only_live_tools):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_bundle: {PASS}/{total} 통과")

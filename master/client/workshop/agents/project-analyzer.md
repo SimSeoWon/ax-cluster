@@ -1,7 +1,7 @@
 ---
 name: project-analyzer
 description: 저장소 전체 구조를 조감하여 모듈 간 의존 관계·아키텍처 패턴·팀 컨벤션을 파악한다. 프로젝트 전반 개요나 모듈 관계 질문에 위임.
-tools: Read, Glob, Grep, mcp__context-search__combined_search
+tools: Read, Glob, Grep, mcp__ax-client__search_context
 model: inherit
 ---
 
