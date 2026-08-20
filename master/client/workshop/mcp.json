@@ -1,0 +1,77 @@
+{
+  "mcpServers": {
+    "gemini-cli": {
+      "command": "node",
+      "args": [
+        "C:/Users/USER/Documents/ModularStage/.claude/mcp/gemini-cli.js"
+      ],
+      "env": {
+        "GEMINI_PROJECT_ROOT": "C:/Users/USER/Documents/ModularStage"
+      }
+    },
+    "unreal-mission-editor": {
+      "command": "C:/Users/USER/Documents/ModularStage/Source/MissionTools/PythonScripts/.venv/Scripts/python.exe",
+      "args": [
+        "C:/Users/USER/Documents/ModularStage/Source/MissionTools/PythonScripts/layer3_entry_points/mcp_server.py"
+      ]
+    },
+    "uelog-analyzer": {
+      "command": "C:/Users/USER/AppData/Local/Programs/Python/Python312/python.exe",
+      "args": [
+        "C:/Users/USER/Documents/ModularStage/.claude/mcp/uelog_analyzer.py"
+      ]
+    },
+    "log-analyzer": {
+      "command": "./.claude/mcp/log_analyzer.exe",
+      "args": [],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    },
+    "crash-analyzer": {
+      "command": "./.claude/mcp/crash_analyzer.exe",
+      "args": [],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    },
+    "commandlet-runner": {
+      "command": "./.claude/mcp/commandlet_runner.exe",
+      "args": [],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    },
+    "gemini-query": {
+      "command": "./.claude/mcp/gemini_query.exe",
+      "args": [],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    },
+    "code-recipes": {
+      "command": "./.claude/mcp/code_recipes.exe",
+      "args": [],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    },
+    "agy-query": {
+      "command": "./.claude/mcp/agy_query.exe",
+      "args": [],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    },
+    "unreal-mcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:8000/mcp"
+    },
+    "ax-client": {
+      "command": "py",
+      "args": [
+        ".ax/lib/axmaster/clientside/client_mcp.py"
+      ]
+    }
+  }
+}
