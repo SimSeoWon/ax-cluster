@@ -223,6 +223,15 @@ CANDIDATES = {
         p, timeout=timeout, model="opus"),
     "qwen2.5-coder:14b": _broker("qwen2.5-coder:14b"),
     "35b": _broker("hf.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M"),
+    # 트라이얼 후보 (사용자 요청 2026-08-21) — 코드 레인 교체 여부를 실측으로 정했고 **탈락**했다.
+    # 결과: 놓침 2(=14b 동률, 같은 표본 P3·P3g) · 계약위반 0→3 · 493s vs 19s → `llm-fitness.md`.
+    # [주의] **이 모델은 지금 어느 노드에도 없다** — 측정 후 `.2` 에서 지웠다(10GB). 다시 재려면
+    #    `ollama pull hf.co/mradermacher/Qwen3.6-27B-A3B-Coder-GGUF:Q2_K` 부터 한다. 항목을 남기는
+    #    이유는 **재현 가능하게 두려는 것**이지 지금 쓸 수 있다는 뜻이 아니다.
+    # [주의] ollama 라이브러리엔 qwen3.6 이 없다(실측 404) — HF GGUF 경유. `.33` 은 여유 7.7GB 로
+    #    불가, `.43` 은 #105 재발 위험이라 후보지가 `.2` 뿐이었다.
+    "qwen3.6-27b-a3b-coder:Q2_K": _broker(
+        "hf.co/mradermacher/Qwen3.6-27B-A3B-Coder-GGUF:Q2_K"),
 }
 
 
