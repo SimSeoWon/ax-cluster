@@ -185,6 +185,31 @@ class CleanupPlan:
                 (f" · 오류 {len(self.errors)}건" if self.errors else ""))
 
 
+def apply_branch_cleanup(repo: Path, plan: "CleanupPlan", *, remote: str = DEFAULT_REMOTE,
+                         logf=C._noop_log) -> tuple:
+    """[중요] **`plan.delete` 만** 지운다 — 그건 *"base 에서 도달 가능"* 으로 판정된 것뿐이다.
+
+    사용자 결정 2026-08-21: 원전 `finalize_work` 6단계 동등으로 올린다(③ 원격 브랜치 정리).
+    2026-08-16 의 *"브랜치 삭제는 사람"* 을 뒤집는 것이고, 뒤집어도 안전한 근거는 **가드가
+    둘**이라는 점이다 — 이 함수는 `plan.delete`(도달 가능분)만 받고, 그 위에서 pre-push 훅
+    (`#125`)이 **같은 판정을 한 번 더** 한다. 훅이 거부하면 그건 우리 판정이 틀렸다는 뜻이므로
+    **밀어붙이지 않는다**(`--no-verify` 금지).
+
+    [주의] **실패는 머지를 되돌리지 않는다** — 머지는 이미 끝났고 브랜치가 남는 것은 잡음일
+    뿐이다. 사유를 돌려주고 사람이 본다. 반환: `(deleted, failed)`.
+    """
+    deleted, failed = [], []
+    for ref, tip in (plan.delete if plan else []):
+        rc, out = _git_rc(repo, "push", remote, "--delete", ref)
+        if rc == 0:
+            deleted.append(ref)
+            logf("cleanup", f"삭제 {ref} ({tip[:8]})")
+        else:
+            failed.append((ref, out.strip()[:160]))
+            logf("cleanup", f"[주의] 삭제 실패 {ref} — {out.strip()[:120]}")
+    return deleted, failed
+
+
 def plan_branch_cleanup(repo: Path, *, tasks, target_branch: str = "",
                         remote: str = DEFAULT_REMOTE, base_branch: str = BASE_BRANCH,
                         logf=C._noop_log) -> CleanupPlan:
@@ -420,6 +445,11 @@ class Decision:
     redmine_note: str = ""
     redmine_issue_id: str = ""
     queue_patched: bool = False
+    # 원전 6단계 동등 (사용자 결정 2026-08-21) — ② Redmine 기재 · ③ 브랜치 정리 실행
+    merge_commit: str = ""          # main 에 올라간 머지 커밋 (원전이 이슈에 적는 그 값)
+    redmine_posted: bool = False    # 노트 전송 성공 (마스터 대행 경유)
+    deleted_branches: list = field(default_factory=list)
+    cleanup_failed: list = field(default_factory=list)   # (ref, 사유) — 실패해도 머지는 끝났다
     error: str = ""
 
 
@@ -549,7 +579,10 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
                 d.commands = [push_cmd]
                 return d
             d.pushed = True
-            logf("finalize", f"{remote}/{base_branch} 갱신 (durable {len(d.merged_durables)}건)")
+            rc2, head = _git_rc(tree, "rev-parse", "HEAD")
+            d.merge_commit = (head or "").strip() if rc2 == 0 else ""
+            logf("finalize", f"{remote}/{base_branch} 갱신 (durable {len(d.merged_durables)}건)"
+                             + (f" · {d.merge_commit[:8]}" if d.merge_commit else ""))
         else:
             d.commands = [push_cmd]
             logf("finalize", "confirm=False — 통합만 하고 멈춘다 (트리 보존)")
@@ -567,14 +600,39 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
             _git_rc(repo, "fetch", remote, base_branch)      # 정리 판정의 입력을 새로 읽는다
             d.cleanup = plan_branch_cleanup(repo, tasks=tasks, target_branch=target,
                                             remote=remote, base_branch=base_branch, logf=logf)
-            d.commands += d.cleanup.commands(remote)
+            # ── ③ 정리 실행 (원전 6단계 ③ · 사용자 결정 2026-08-21) ──────────
+            # [중요] 머지가 끝난 **뒤**라 도달 가능 판정이 이제 참이다. 순서를 바꾸면
+            #    (정리를 머지 전에 하면) 같은 ref 가 「미병합」으로 보여 아무것도 안 지워진다.
+            d.deleted_branches, d.cleanup_failed = apply_branch_cleanup(
+                repo, d.cleanup, remote=remote, logf=logf)
+            # 못 지운 것만 사람 몫으로 남긴다 — 지운 것을 명령으로 또 주면 혼선이다
+            d.commands += [f"git push {remote} --delete {ref}" for ref, _ in d.cleanup_failed]
+            kept = len(d.cleanup.keep)
             d.redmine_note = (
                 f"분산 작업 완료 — {base_branch} 머지 완료\n\n"
                 f"- work_id: {work_id}\n"
                 f"- 통합: feature `{target}` + durable {len(d.merged_durables)}건 (no-ff)\n"
                 f"- 검토자: {reviewer or '(미지정)'}\n"
-                f"- [중요] 브랜치 정리는 사람이 실행한다 (도달 가능한 것만): "
-                f"{len(d.cleanup.delete)}건 대상 · {len(d.cleanup.keep)}건 보존")
+                + (f"- 커밋 연결: `{d.merge_commit}`\n" if d.merge_commit else "")
+                + f"- 브랜치 정리: 삭제 {len(d.deleted_branches)}건"
+                + (f" · [주의] 실패 {len(d.cleanup_failed)}건(사람 확인)" if d.cleanup_failed else "")
+                + (f" · [중요] 보존 {kept}건 — 미병합은 증거다" if kept else ""))
+            # ── ② Redmine 기재 (원전 6단계 ② — 상태·머지 커밋) ──────────────
+            # [중요] **키는 이 코드가 도는 기계에 없다** — 이 모듈은 `.33` 에도 배달된다.
+            #    그래서 마스터 대행(`/api/v1/redmine/note`)을 지나간다. 값이 아니라 본문만 만든다.
+            # [주의] 상태는 **「해결」**이다 — 「완료」로 닫는 것은 사람의 결정이라는 규약
+            #    (`redmine.STATUS_ON_FINALIZE` 과 같은 방향). 여기서 닫지 않는다.
+            if d.redmine_issue_id:
+                try:
+                    (api or _default_api)("POST", "/api/v1/redmine/note",
+                                          {"issue_id": int(d.redmine_issue_id),
+                                           "notes": d.redmine_note,
+                                           "status_name": "해결",
+                                           "work_id": work_id})
+                    d.redmine_posted = True
+                except Exception as e:                      # noqa: BLE001
+                    # 머지·정리는 끝났다 — 기재 실패는 조용히 넘기지 않고 사유만 싣는다
+                    logf("finalize", f"[주의] Redmine 기재 실패 — {type(e).__name__}: {e}")
         d.ok = not d.error
         return d
     except GitError as e:

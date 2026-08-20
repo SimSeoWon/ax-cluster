@@ -341,7 +341,10 @@ def test_finalize_confirm_pushes_and_then_cleanup_is_possible():
         before = g(repo, "rev-parse", "origin/main").strip()
         live_before = (repo / "Content" / "BP_Live.uasset").read_text(encoding="utf-8")
         api = FakeApi()
-        d = R.finalize_work(repo, work_id="w1", work=dict(work, merge_status="ready_for_review"),
+        d = R.finalize_work(repo, work_id="w1",
+                            # 분산 work 은 등재 때 Redmine 이슈를 갖는다 — ② 기재 경로를 태운다
+                            work=dict(work, merge_status="ready_for_review",
+                                      redmine_issue_id="226"),
                             tasks=tasks, reviewer="사람", confirm=True, api=api)
         check("승인하면 성공한다", d.ok, d.error)
         check("[중요] push 했다", d.pushed)
@@ -355,15 +358,95 @@ def test_finalize_confirm_pushes_and_then_cleanup_is_possible():
         check("[중요] 머지 뒤에는 durable 이 삭제 후보가 된다 (도달 가능해졌다)",
               {durable_branch("t1"), durable_branch("t2")} <= {r for r, _ in d.cleanup.delete},
               str(d.cleanup.delete))
-        check("[중요] 그래도 우리가 지우지는 않았다",
-              durable_branch("t1") in g(repo, "ls-remote", "--heads", "origin"))
-        check("삭제는 명령으로만 준다",
-              any("--delete" in c for c in d.commands), str(d.commands))
+        # [중요] **계약이 바뀌었다** (사용자 결정 2026-08-21 — 원전 `finalize_work` 6단계 동등).
+        #    2026-08-16 의 *"브랜치 삭제는 사람"* 을 뒤집었고, 안전 근거는 **가드가 둘**이다:
+        #    ① `plan.delete` 는 도달 가능분만 ② 그 위에서 pre-push 훅(`#125`)이 같은 판정을
+        #    한 번 더 한다. 그래서 여기서 재는 것은 「안 지웠나」가 아니라 **「도달 가능한
+        #    것만 지웠나」**다.
+        heads = g(repo, "ls-remote", "--heads", "origin")
+        check("[중요] 도달 가능해진 durable 을 실제로 지웠다",
+              durable_branch("t1") not in heads and durable_branch("t2") not in heads, heads)
+        check("삭제 목록이 결과에 남는다 (안 보이는 산출물은 없는 것으로 읽힌다)",
+              {durable_branch("t1"), durable_branch("t2")} <= set(d.deleted_branches),
+              str(d.deleted_branches))
+        check("[중요] 성공한 삭제를 명령으로 또 주지 않는다 (혼선 금지)",
+              not any("--delete" in c for c in d.commands), str(d.commands))
+        check("머지 커밋을 알아 둔다 (원전이 이슈에 적는 값)",
+              len(d.merge_commit) == 40, d.merge_commit)
+        check("[중요] Redmine 기재를 대행 경로로 보낸다 (키는 이 기계에 없다)",
+              any(m == "POST" and p2 == "/api/v1/redmine/note" for m, p2, _ in api.calls),
+              str([(m, p2) for m, p2, _ in api.calls]))
+        note = next((p or {}) for m, p2, p in api.calls
+                    if m == "POST" and p2 == "/api/v1/redmine/note")
+        check("[주의] 상태는 「해결」이다 — 「완료」로 닫는 것은 사람이다",
+              note.get("status_name") == "해결", str(note.get("status_name")))
+        check("노트에 머지 커밋이 실린다", d.merge_commit in (note.get("notes") or ""))
         check("[중요] 사람의 미커밋 작업이 그대로다",
               (repo / "Content" / "BP_Live.uasset").read_text(encoding="utf-8") == live_before)
         check("[중요] 사람의 브랜치도 그대로 main 이다 (로컬은 pull 하면 된다)",
               g(repo, "branch", "--show-current").strip() == "main")
         check("push 했으면 트리를 정리한다", not Path(d.tree).exists())
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_finalize_six_step_edges():
+    """원전 6단계 동등의 **가장자리** (사용자 결정 2026-08-21).
+
+    재는 것 셋:
+      ① `confirm=False` 는 **아무것도 하지 않는다** — 지우지도, 기재하지도 않는다(fail-closed)
+      ② Redmine 이슈가 없는 work 은 기재를 **건너뛰고도 성공**이다 (없는 곳에 쓰지 않는다)
+      ③ [중요] 기재가 실패해도 **머지·정리는 유지**된다 — 되돌리면 잃는 것이 더 크다
+    """
+    # ① confirm=False
+    root, repo, work, tasks = fixture()
+    try:
+        api = FakeApi()
+        d = R.finalize_work(repo, work_id="w1",
+                            work=dict(work, merge_status="ready_for_review",
+                                      redmine_issue_id="226"),
+                            tasks=tasks, reviewer="사람", confirm=False, api=api)
+        check("[중요] confirm=False 는 push 하지 않는다", not d.pushed)
+        check("[중요] confirm=False 는 브랜치를 지우지 않는다", d.deleted_branches == [],
+              str(d.deleted_branches))
+        check("[중요] confirm=False 는 Redmine 에 쓰지 않는다",
+              not d.redmine_posted and not any(p2 == "/api/v1/redmine/note"
+                                              for _m, p2, _p in api.calls))
+        check("대신 사람이 실행할 push 명령을 준다",
+              any("push" in c and "HEAD:main" in c for c in d.commands), str(d.commands))
+        check("통합 트리는 남긴다 (그 안에 결과가 있다)", Path(d.tree).exists())
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    # ② 이슈 없는 work
+    root, repo, work, tasks = fixture()
+    try:
+        api = FakeApi()
+        d = R.finalize_work(repo, work_id="w1", work=dict(work, merge_status="ready_for_review"),
+                            tasks=tasks, confirm=True, api=api)
+        check("이슈가 없으면 기재를 건너뛴다", not d.redmine_posted)
+        check("[중요] 그래도 성공이다 — 없는 곳에 쓰지 않는 것은 실패가 아니다", d.ok, d.error)
+        check("머지·정리는 그대로 됐다", d.pushed and len(d.deleted_branches) >= 2,
+              f"{d.pushed} {d.deleted_branches}")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    # ③ 기재 실패
+    root, repo, work, tasks = fixture()
+    try:
+        class Boom(FakeApi):
+            def __call__(self, method, path, payload=None):
+                if path == "/api/v1/redmine/note":
+                    raise RuntimeError("redmine down")
+                return super().__call__(method, path, payload)
+        api = Boom()
+        d = R.finalize_work(repo, work_id="w1",
+                            work=dict(work, merge_status="ready_for_review",
+                                      redmine_issue_id="226"),
+                            tasks=tasks, confirm=True, api=api)
+        check("[중요] 기재 실패가 머지를 되돌리지 않는다", d.pushed and d.ok, d.error)
+        check("[중요] 정리도 유지된다", len(d.deleted_branches) >= 2, str(d.deleted_branches))
+        check("기재만 안 된 것으로 남는다", not d.redmine_posted)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -406,7 +489,8 @@ def main() -> int:
                test_reject_patches_and_keeps_branches, test_reject_idempotent_and_guarded,
                test_finalize_default_does_not_push,
                test_finalize_confirm_pushes_and_then_cleanup_is_possible,
-               test_finalize_status_gate, test_finalize_conflict_leaves_nothing):
+               test_finalize_status_gate,
+               test_finalize_six_step_edges, test_finalize_conflict_leaves_nothing):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_review: {PASS}/{total} 통과")
