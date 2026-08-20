@@ -150,3 +150,59 @@ CRLF 보존(원본 전부 CRLF — 로컬 사본에서 고쳐 해시 대조 후 
    우리 `evidence` 가 산문이 아니라 파일:줄이기 때문이다. 그럴 때 **응답이 스스로 말하게** 한다
    (`matched_by`).
 7. 도구 수: 클라 MCP **8 → 14종**(조회 9 + 쓰기 대행 5). 테스트 3463 → **3633**, 실패 0.
+
+## §10 4단계 — `.mcp.json` 원전 exe 등록 제거 (2026-08-20 이어서)
+
+`.33` 체크아웃 루트 `.mcp.json`: **16종 → 11종.** 제거는 #226 본문이 지정한 5종 그대로 —
+`context-search` · `task-queue` · `master-orchestrator` · `local-llm-runner` · `redmine-tracker`.
+「확인 후 결정 3종」(`gemini-query`·`code-recipes`·`agy-query`)은 손대지 않았다.
+
+[중요] **지우기 전에 세었더니 5종은 이미 무장 해제 상태였다.** 원전 소스 대조:
+
+    redmine_tracker/server.py:87        config.json → redmine_api_key
+    context_search/remote_client.py:21  config.json → context_server_url
+    task_queue/logic_cleanup.py:19      config.json → redmine 설정
+    master_orchestrator/common.py:175   config.json → distribution_mode·agy_path
+    local_llm_runner/server.py:48       config.json → local_llm_endpoint·model
+
+전부 **프로젝트 루트 `config.json`** 에서 설정을 읽는데, 그 파일은 §2 의 와처 정리에서 삭제됐다
+(실측: 루트에 남은 json 은 `.mcp.json` 하나뿐). 즉 §2 는 데몬만 죽인 게 아니라 **이 5종의 자격·주소를
+같이 걷어갔다** — 등록만 살아 있고 기능은 어제부터 죽어 있었다. 그래서 이번 제거는 위험이 아니라 정리다.
+
+안전 확인 순서(전부 실측): `.gitignore:40` 등재 → git 무영향 · 편집 전 `tasklist` 에 claude 세션과
+legacy exe **0건** · scp 백업(`~/claude-workspace/backups/33-mcp-json-20260820/`) · 줄끝은 **LF**(이번엔
+CRLF 함정 없음) · 남은 11종은 값·**키 순서까지 바이트 동일** · JSON 유효 · 사용자 미커밋 `.uasset` 불변.
+
+### [중요] 부수 발견 — 등록을 지워도 참조는 남고, 그 실패는 조용하다
+
+제거 전 `.claude/**/*.md` 참조 실측(tasks·history 제외):
+
+| 제거된 서버 | 참조하는 곳 |
+|---|---|
+| `context-search` | **에이전트 9종 전부**의 `tools:` + `CLAUDE.md`(§7 에서 은퇴 표기) + `distribute`·`manage-domain` + 스킬 8종의 `context_search` 언급 |
+| `redmine-tracker` | `code-validator`(도구 8종 + 절차 3곳) · `review-consultant`(도구 3종 + 절차 2곳) · `CLAUDE.md:477`(도구 목록 아직 살아 있음) |
+| `master-orchestrator` | `cluster-selftest` · `distribute` · `review-work` · `tdd-dryrun` |
+| `task-queue` | `CLAUDE.md`(산문) · 위 네 스킬 |
+| `local-llm-runner` | **0건** |
+
+[주의] **`tools:` 에 없는 서버를 적어 두면 오류가 아니다 — 그 도구 없이 그냥 돈다.** §9-3 의
+「조용히 0 으로 답하는 입구」와 같은 실패 계열이고, 이번 것은 한 단계 더 조용하다(응답이 아니라
+**능력**이 사라진다). 8종은 온톨로지 검색을 잃은 채 그럴듯하게 답할 것이다.
+
+바로 대체되는 것: `combined_search`→`mcp__ax-client__search_context` · `list_domains`→동명 ·
+`get_domain_manifest`→`get_domain_layer`(§6 에서 매니페스트 필드를 동승시켜 둔 것이 여기서 쓰인다).
+
+**위임 구멍 2개 — 사용자 결정 대기:**
+
+1. **Redmine 읽기·수정 미위임** — `get_issue`·`list_issues`·`update_issue`·`list_statuses`·
+   `list_trackers`. `ax-client` 에는 `redmine_note`(노트 추가) 하나뿐이다. `code-validator`·
+   `review-consultant` 의 절차가 이것에 의존한다
+2. **`get_task_template` 미위임** — `code-writer` 가 쓴다(`list_task_templates` 와 함께 기지의 미위임)
+
+선택지: ⓐ 마스터에 Redmine 읽기 위임을 추가하고 에이전트를 재배선 · ⓑ 에이전트·스킬을 은퇴
+(우리 `/distribute`·`ax-review` 가 대체) · ⓒ 매핑 가능한 것만 재배선하고 구멍은 [주의] 로 표기.
+
+[중요] **이 결정은 「distribute 은퇴 여부」와 같은 결정이다** — `master-orchestrator`·`task-queue` 를
+참조하는 네 스킬(`cluster-selftest`·`distribute`·`review-work`·`tdd-dryrun`)은 전부 원전 로컬
+오케스트레이션이고, 우리 클러스터가 그 자리를 이미 갖고 있다. 하나씩 재배선할지, 묶어서 은퇴할지가
+같은 질문이다.
