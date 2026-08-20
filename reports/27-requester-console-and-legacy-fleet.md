@@ -409,3 +409,34 @@ CRLF 함정과 같은 계열이고, 그때는 비교에서, 이번엔 쓰기에�
     배달      31개 · `.claude/CLAUDE.md` 마커 병합 → 사람 문서 **0줄 변경**(바이트 동일)
     check     `.33` 작업장 자산 31개 일치 · `.2`·`.43` 은 대상 아님(역할 게이팅)
     git       `.33` 상태 불변 (사용자 미커밋 `.uasset` 1건 그대로)
+
+## §15 `.2` 원전 바이너리 정리 — 602.4MB, 그리고 **셋째 설치본**을 찾았다 (2026-08-20)
+
+사용자 승인으로 `.2`(윈도우 워커)의 원전 exe 함대를 지웠다. `.33` 의 `worker.exe` 와 같은
+부류(재빌드 가능한 AgentTest 산출물)라 백업 없이.
+
+    E:\trunk\ModularStage\.claude\mcp\        18 files  576.7 MB  (exe 12종 + onnx 임베딩 모델)
+    E:\trunk\ModularStage\.claude\daemons\worker.exe   25.7 MB
+    → 실측 회수 602.4 MB (E 드라이브 free 증가로 확인)
+
+[중요] **「잠들어 있다」는 내 판단이 틀렸다 — 돌고 있는 것이 있었다.** 지우기 직전 프로세스를
+세니 `context_search.exe` **4개**가 살아 있었다. 그런데 경로가 달랐다:
+
+    실행 중 : E:\trunk\ModularStage\**AgentWiki**\.claude\mcp\context_search.exe  (4개)
+              20:56 에 `claude.exe`(pid 21248) 가 띄운 stdio MCP — 살아 있는 세션이다
+    삭제 대상: E:\trunk\ModularStage\.claude\mcp\*                          (미실행 · 미등록)
+
+**`.2` 에는 원전 AgentWiki 설치본이 따로 있다** — 우리가 한 번도 세지 않은 **셋째 설치본**
+(mcp 7파일 190.2MB, 무손상). `.33`·`.2` 의 프로젝트 루트만 보고 「원전 함대를 정리했다」고
+적었던 §2 는 그만큼 좁았다.
+
+[중요] **경로가 아니라 프로세스로 물었기 때문에 살았다.** 삭제 스크립트가 첫 단계에서
+*"이 경로 아래 도는 프로세스"* 를 세고, 있으면 **중단**한다(`ABORT`). 파일 목록만 보고 지웠으면
+살아 있는 세션의 MCP 를 끊었을 것이다 — 그리고 그건 남의 기계에서다.
+
+[주의] `.2` 에는 아직 `_archive_agenttest_20260809`·`tools`·`vector_db`·`vector_db_client`·
+`context.bak-20260718_165030` 이 남아 있다. **세지 않았으므로 판단하지 않는다** — 다음 정리의
+입력이다.
+
+정리 후 배선 확인: `.ax/`(config·lib·token·claimer.lock) 무손상 · `AxClaimer` 실행 중 ·
+`client check` 세 대 모두 OK · 큐 200.
