@@ -221,8 +221,11 @@ def test_role_payload() -> None:
           str(bundle.payloads_for("worker")))
     check("[중요] 워커 페이로드에 판단 모듈(review·coordinator)은 없다 — κ.0 경계",
           not {"work/review.py", "work/coordinator.py"} & set(bundle.payloads_for("worker")))
-    for n in pay:
-        check(f"배달할 원문이 실재한다: {n}", len(bundle.payload_text(n)) > 100)
+    # [주의] **원문은 저장소에서, 자리는 배달 경로에서** (#262). 한 값으로 쓰면 재배치 뒤에
+    #    「원문이 있다」가 배달 위치를 검사하는 말이 된다.
+    for dest, src in bundle.payload_pairs("requester"):
+        check(f"배달할 원문이 실재한다: {src} → {dest}",
+              len(bundle.payload_text(src)) > 100)
     # [중요] 배치가 저장소를 미러링해야 `from ..layer3_verify import …` 가 산다
     check("[중요] 저장소 배치를 미러링한다 (평면이 아니다)",
           any("/" in n for n in pay) and "layer3_verify.py" in pay, str(pay))
@@ -236,8 +239,10 @@ def test_role_payload() -> None:
     delivered = {n[:-3].replace("/", ".") for n in pay}          # 예: work.review
     delivered |= {d.rsplit(".", 1)[-1] for d in delivered}       # 단축명도 (from . import x)
     GUARDED_OK = {"runner", "client.bundle", "client"}           # 명시적 가드 화이트리스트
-    for n in pay:
-        tree_ = _ast.parse(bundle.payload_text(n))
+    # [중요] 상대 임포트는 **배달된 트리**에서 해석되므로 `n` 은 배달 경로여야 하고, 파싱할
+    #    원문은 **저장소**에서 와야 한다 (#262). 두 값이 같던 때는 구별이 안 보였다.
+    for n, src_ in bundle.payload_pairs("requester"):
+        tree_ = _ast.parse(bundle.payload_text(src_))
         guarded_nodes = set()
         for t_ in _ast.walk(tree_):
             if isinstance(t_, _ast.Try) and any(
@@ -273,6 +278,51 @@ def test_role_payload() -> None:
         check("[중요] 모르는 역할은 예외 (조용히 빈 배달 금지)", False, "통과해버렸다")
     except bundle.BundleError:
         check("모르는 역할은 예외", True)
+
+
+def test_payload_split() -> None:
+    """[중요] **#262 — 저장소 위치와 배달 위치를 갈랐다. 배달 위치는 한 글자도 변하면 안 된다.**
+
+    왜 이 테스트가 있나: 배달 위치는 함부로 못 바꾼다. `.33` 의 `.mcp.json` args 가 그 값이고
+    (`mcp_entry_for`), `.2` schtasks·`.43` cron 이 `axmaster.work.claimer` 로 상주를 부른다
+    (`work/claimer.py:27-28`). **저장소 재배치(#263·#264)가 이 목록을 흔들면 두 기계가 죽는다** —
+    그때 이 테스트가 먼저 죽어야 한다.
+    """
+    FROZEN = {
+        "requester": ("clientside/client_mcp.py", "clientside/ontology_cache.py",
+                      "layer3_verify.py", "source_text.py", "utf8.py",
+                      "work/branch_names.py", "work/coordinator.py", "work/review.py",
+                      "work/skeleton_gate.py", "work/build_local.py"),
+        "worker": ("work/claimer.py", "work/ax_safety.py", "work/build_local.py",
+                   "work/skeleton_gate.py", "layer3_verify.py", "source_text.py",
+                   "utf8.py"),
+    }
+    for role, want in FROZEN.items():
+        got = bundle.payloads_for(role)
+        check(f"[중요] {role} 의 **배달 위치**가 동결값과 순서까지 같다",
+              got == want, f"실제={got}")
+    # [중요] 상주가 부르는 경로는 이름이 박혀 있다 — 이 한 줄이 `.2`·`.43` 의 생사다
+    check("[중요] claimer 의 배달 위치가 `work/claimer.py` 다 (상주가 그 경로로 부른다)",
+          "work/claimer.py" in bundle.payloads_for("worker"))
+    f = bundle.HostFacts(host="h", user="u", path="p", driven="ssh", role="requester")
+    check("[중요] `.mcp.json` args 가 배달 위치와 맞물린다",
+          bundle.mcp_entry_for(f)["args"]
+          == [f"{bundle.AX_DIR}/lib/{bundle.PAYLOAD_PKG}/clientside/client_mcp.py"],
+          str(bundle.mcp_entry_for(f)))
+    # 쌍의 순서 관례 — workshop_files 와 같아야 한다 (한 파일에 관례 둘이면 다음에 갈린다)
+    for dest, src in bundle.payload_pairs("worker"):
+        check(f"쌍은 (배달, 저장소) 순서다: {dest}", "/" in dest or dest.endswith(".py"))
+        check(f"저장소 원문이 실재한다: {src}", len(bundle.payload_text(src)) > 100)
+    # [주의] 지금은 두 값이 같다. **갈라지는 날 이 검사가 그 사실을 알려 준다** — 실패해도
+    #    결함이 아니라 「#263·#264 가 진행됐다」는 신호이고, 그때 위 동결값을 다시 판정한다.
+    same = [d == s for d, s in bundle.payload_pairs("requester")]
+    check("[주의] 지금은 저장소 배치를 그대로 미러링한다 (#263 이후 갈릴 수 있다)",
+          all(same), str(bundle.payload_pairs("requester")))
+    try:
+        bundle.payload_pairs("사장님")
+        check("[중요] 모르는 역할은 예외 (payload_pairs)", False, "조용히 돌려줬다")
+    except bundle.BundleError:
+        check("[중요] 모르는 역할은 예외 (payload_pairs)", True)
 
 
 def test_role_block() -> None:
@@ -546,7 +596,7 @@ def test_merge_never_replaces_existing() -> None:
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
-               test_role_skills, test_role_payload, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
+               test_role_skills, test_role_payload, test_payload_split, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
                test_merge_never_replaces_existing,
                test_workshop_assets_reference_only_live_tools,
                test_workshop_delivery):

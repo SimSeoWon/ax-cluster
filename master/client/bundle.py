@@ -86,16 +86,42 @@ SKILL_NAME = "ax-work"          # (호환) 단수 참조가 남아 있는 곳
 #       build_local → layer3_verify · skeleton_gate → layer3_verify
 #   [중요] **토큰은 여전히 안 보낸다** — 큐·Redmine 호출은 MCP 가 한다(`review.api=` 주입).
 PAYLOAD_PKG = "axmaster"
+
+# [중요] **항목은 `(배달 상대경로, 저장소 경로)` 다** (#262, 2026-08-22). 그전까지 한 값이 두 뜻을
+#    겸했고, 그래서 **저장소에서 파일을 옮기면 배달 위치가 따라 움직였다.** 배달 위치는 함부로
+#    못 바꾼다 — `.33` 의 `.mcp.json` args 가 그 값이고(`mcp_entry_for`), `.2` schtasks·`.43` cron 이
+#    `axmaster.work.claimer` 로 상주를 부른다(`work/claimer.py:27-28`). 둘을 갈라 두면 저장소
+#    재배치(#263·#264)가 배달을 흔들지 않는다.
+# [주의] **지금 두 값은 전부 같다.** 이 단계는 자리를 만드는 것이고 **동작은 바꾸지 않는다** —
+#    배달 위치가 한 글자라도 달라지면 그것은 이 변경의 실패다(`test_payload_split`).
+
+
+def _pair(rel: str, dest: str = "") -> tuple:
+    """`(배달 상대경로, 저장소 경로)`. `dest` 를 비우면 **저장소 배치를 미러링**한다.
+
+    [중요] 순서는 `workshop_files()` 와 **같다** — 그 함수가 이미
+    `(체크아웃 기준 상대경로, 저장소 경로)` 를 돌려준다. 한 파일에 관례가 둘이면 다음에 갈린다.
+    [중요] 미러링이 기본인 이유는 상대 임포트다 — 평면으로 펴면 `build_local` 의
+    `from ..layer3_verify import …` 가 죽는다(그 자세한 근거는 위 주석).
+    [주의] **경로가 실재하는지는 여기서 검사하지 않는다** — `payload_text()` 의
+    *"배달할 모듈이 없다"* 와 테스트의 *"배달할 원문이 실재한다"* 가 이미 잡는다. 목록을
+    한 벌 더 두면 그 두 벌이 갈리는 것이 새 결함이 된다.
+    """
+    return (dest or rel, rel)
+
+
 PAYLOAD_BY_ROLE = {
-    "requester": ("clientside/client_mcp.py", "clientside/ontology_cache.py",
-                  "layer3_verify.py", "source_text.py", "utf8.py",
-                  "work/branch_names.py", "work/coordinator.py", "work/review.py",
-                  "work/skeleton_gate.py", "work/build_local.py"),
+    "requester": (_pair("clientside/client_mcp.py"), _pair("clientside/ontology_cache.py"),
+                  _pair("layer3_verify.py"), _pair("source_text.py"), _pair("utf8.py"),
+                  _pair("work/branch_names.py"), _pair("work/coordinator.py"),
+                  _pair("work/review.py"),
+                  _pair("work/skeleton_gate.py"), _pair("work/build_local.py")),
     # worker (#204): 폴링 claimer + 안전 가드 + 빌드 호출 사슬. claimer 는 build 유형만
     # 집는다 (types 필터) — infer 는 현행 Flow Y(마스터 구동)가 계속 맡는다.
-    "worker": ("work/claimer.py", "work/ax_safety.py",
-               "work/build_local.py", "work/skeleton_gate.py", "layer3_verify.py",
-               "source_text.py", "utf8.py"),
+    "worker": (_pair("work/claimer.py"), _pair("work/ax_safety.py"),
+               _pair("work/build_local.py"), _pair("work/skeleton_gate.py"),
+               _pair("layer3_verify.py"),
+               _pair("source_text.py"), _pair("utf8.py")),
 }
 
 AX_DIR = ".ax"                      # [중요] 체크아웃 안. 상대경로가 모든 머신에서 같다
@@ -615,20 +641,35 @@ def payload_dirs(role: str) -> tuple:
 
     [중요] `__init__.py` 가 없으면 나머지는 임포트되지 않는 파일 더미가 된다 — 배달은 성공한
     것처럼 보이고 쓸 때 죽는다.
+    [주의] **배달 위치 기준**이다 (#262) — 저장소 배치가 아니라 클라에 놓이는 자리를 센다.
     """
     dirs = {""}
-    for rel in payloads_for(role):
-        parent = str(Path(rel).parent)
+    for dest in payloads_for(role):
+        parent = str(Path(dest).parent)
         if parent not in (".", ""):
             dirs.add(parent)
     return tuple(sorted(dirs))
 
 
-def payloads_for(role: str) -> tuple:
-    """이 역할이 받을 파이썬 모듈. [중요] 모르는 역할은 예외 (`skills_for` 와 같은 이유)."""
+def payload_pairs(role: str) -> tuple:
+    """이 역할이 받을 `(배달 상대경로, 저장소 경로)` 쌍들 (#262).
+
+    [중요] **쓸 자리는 첫째, 읽을 원문은 둘째**다 — `workshop_files()` 와 순서가 같다.
+    하나로 쓰면 저장소 재배치가 배달 위치를 끌고 간다 — 그것이 이 함수가 생긴 이유다.
+    """
     if role not in PAYLOAD_BY_ROLE:
         raise BundleError(f"모르는 role: {role!r} (가능: {', '.join(PAYLOAD_BY_ROLE)})")
     return PAYLOAD_BY_ROLE[role]
+
+
+def payloads_for(role: str) -> tuple:
+    """이 역할이 받을 파이썬 모듈의 **배달 상대경로** (#262 이후 뜻이 하나다).
+
+    [중요] 모르는 역할은 예외 (`skills_for` 와 같은 이유).
+    [주의] 원문을 읽으려면 이 값이 아니라 `payload_pairs()` 의 첫째를 써야 한다 — 지금은 두
+    값이 같아서 구별이 안 보이지만, 저장소가 재배치되면(#263·#264) 갈린다.
+    """
+    return tuple(dest for dest, _src in payload_pairs(role))
 
 
 PAYLOAD_INIT = (
@@ -819,9 +860,10 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
                                    f"{AX_DIR}/lib/{PAYLOAD_PKG}/{d + '/' if d else ''}__init__.py",
                                    PAYLOAD_INIT, base="checkout")
                      for d in payload_dirs(facts.role)]
-                    + [_remote_write(facts, f"{AX_DIR}/lib/{PAYLOAD_PKG}/{n}",
-                                     payload_text(n), base="checkout")
-                       for n in payloads_for(facts.role)]) if payloads_for(facts.role) else [],
+                    + [_remote_write(facts, f"{AX_DIR}/lib/{PAYLOAD_PKG}/{dest}",
+                                     payload_text(src), base="checkout")
+                       for dest, src in payload_pairs(facts.role)]
+                    ) if payload_pairs(facts.role) else [],
         "excluded": _ensure_ignored(facts),
     }
     # ── 작업장 자산 (#226 4번) — 원전 watch.exe 가 생성하던 `.claude/` 구조 ─────────

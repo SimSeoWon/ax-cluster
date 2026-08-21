@@ -52,13 +52,15 @@ def cmd_plan(project: str) -> int:
                   f"({len(bundle.skill_text(n))}자)  [role={f.role}]")
         # [중요] 페이로드도 **눈으로 보여 준다** — 남의 기계에 쓰는 파일을 계획에서 감추면
         #    `plan` 이 존재하는 이유가 없어진다 (모듈 독스트링: *"무엇을 어디에 쓸지 먼저 본다"*)
-        pay = bundle.payloads_for(f.role)
+        #    [주의] **읽는 자리와 쓰는 자리를 갈라 쓴다** (#262) — 계획에 찍히는 것은 *배달 위치*고
+        #    글자 수는 *저장소 원문*에서 온다. 한 값으로 쓰면 재배치가 계획을 조용히 바꾼다.
+        pay = bundle.payload_pairs(f.role)
         if pay:
             base = f"{f.path}/{bundle.AX_DIR}/lib/{bundle.PAYLOAD_PKG}"
             for d in bundle.payload_dirs(f.role):
                 print(f"   → {base}/{d + '/' if d else ''}__init__.py  (패키지 표식)")
-            for rel in pay:
-                print(f"   → {base}/{rel} ({len(bundle.payload_text(rel))}자)  [payload]")
+            for dest, src in pay:
+                print(f"   → {base}/{dest} ({len(bundle.payload_text(src))}자)  [payload]")
         ws = bundle.workshop_files(f.role)
         if ws:
             # [중요] **자산은 개수로 찍는다** — 33개를 한 줄씩 찍으면 계획이 안 읽힌다.
@@ -146,10 +148,11 @@ def cmd_check(project: str) -> int:
         # [중요] **페이로드도 잰다.** 스킬은 문서라 낡아도 사람이 읽다 눈치채지만, 파이썬 모듈은
         #    낡은 채로 **조용히 돈다** — `.33` 이 옛 review 로직으로 검수하면 그 판정은
         #    거짓말이다. 사본이 갈라지는 것이 이 명령의 존재 이유다.
-        pay = bundle.payloads_for(f.role)
+        #    [주의] 해시는 **저장소 원문**으로 내고 **배달 위치**의 파일과 댄다 (#262).
+        pay = bundle.payload_pairs(f.role)
         stale: list = []
-        for rel in pay:
-            want = hashlib.sha256(bundle.payload_text(rel).encode("utf-8")).hexdigest()
+        for rel, src in pay:
+            want = hashlib.sha256(bundle.payload_text(src).encode("utf-8")).hexdigest()
             rp = f"{bundle.AX_DIR}/lib/{bundle.PAYLOAD_PKG}/{rel}"
             target = (f"{f.path}\\{rp.replace('/', chr(92))}" if f.windows
                       else f"{f.path}/{rp}")
