@@ -118,6 +118,24 @@
 
 결과: **공개 심볼 913개 중 프로덕션 참조 0 = 46개**, 46/46 분류 완료.
 
+[중요] **그 46 은 하한이다 (정정 2026-08-22).** 첫 스캐너는 **이름 기준**이라 모듈을 구분하지
+않았고, `run`·`plan` 같은 흔한 이름은 다른 모듈의 동명 심볼에 가려졌다 — 실제로
+`work/tdd_dryrun.py:235 run()`(호출자·CLI·MCP 도구 전부 없음)을 놓쳤다. 모듈 한정 키로 다시
+쓰니 **63개**가 됐다.
+
+[주의] 그런데 63 도 그대로 쓸 수 없다. 스캐너는 **여섯 번** 고쳤고 그때마다 수치가 수십씩
+움직였다: 46(이름 기준) → 114(모듈 한정) → 100(스크립트모드 보정) → 72(**클래스 본문 방문
+버그** — `for x in n.body: self.visit(x); return` 의 `return` 이 루프 안에 있어 첫 문장만 봤다)
+→ 63(파사드 재export 접기 + 참조를 버리지 않고 기록). 그리고 63 에는 **의도된 동적 로딩**으로
+인한 false positive 가 남아 있다 — `integrate.py:486` 의 `__import__("master.layer3_verify",…)`
+문자열 import(→ `run_tests_on_workshop`), `client_mcp.py:77-81` 의 `spec_from_file_location`
+파일 경로 로드(→ `OntologyCache`). 둘 다 코드에 근거가 적혀 있다.
+
+**결론: 정적 「실 코드」 축에는 하한이 있고, 확정 결론은 손 검증에서만 나온다.**
+`sigma_audit.py` 가 σ.1 을 자동화하지 않은 근거(*"코드로 만들면 또 하나의 조용히 틀리는 자리가
+된다"*)가 내 도구에서 그대로 재현됐다. 아래 A~D 의 판정은 **전부 손으로 확인한 것**이고,
+수치는 표적을 좁히는 데만 썼다.
+
 ### A. 기록이 거짓이거나 오해를 유발 — 5건
 
 | | 실물 | 기록의 주장 |
@@ -145,6 +163,11 @@
 1건 · `review_work`/`reject_work`/`finalize_work` 는 정본 스킬 `ax-review` 가 호출자를 명시.
 
 ### D. 미배선 부채 — 24건 (기록 언급 0 → 거짓 보고 아님)
+
+[주의] **이 24 는 위 46건의 잔여이지 전수가 아니다.** 모듈 한정 재스캔(63건)에서 손으로
+분류하지 않은 후보가 더 있고, 그중 확정된 것은 `work/tdd_dryrun.py:235 run()` 하나다
+(호출자·CLI·MCP 도구 전부 없음 — 유일한 진입 경로였던 `tdd-dryrun` 스킬은 죽은 서버를
+가리킨다 → #234·#232). 나머지 후보의 손 분류는 남은 일이다.
 
 `rename.py` 4 · `staging` 2 · `layer2.cooldown_state` · `layers.distribution` ·
 `tasks.collect_test_filters` · `loaders` 2 · `index.open_index` · `paths.project_config` ·

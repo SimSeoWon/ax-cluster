@@ -97,3 +97,25 @@
    (어디가 관리 블록인지 모른 채 덮으면 사람 문서를 날린다)
 5. **템플릿화** — 프로젝트 고유 문자열 실측 `ModularStage` 13 · `MissionRuntime` 7 ·
    절대경로 6 · `Project_Alpha` 3. 두 번째 프로젝트가 실제로 생길 때 치환한다
+
+## §5 은퇴시킨 스킬 — 파일은 지우고 절차는 남긴다 (2026-08-22)
+
+사용자 결정: *"교체해야 하면 왜 남겨둬야해?"* — **원본 보존은 원전이 하고 있다**
+(`~/AgentTest`, 참조 전용). 이 디렉토리는 사본이므로 사본을 지워도 원본은 안 사라진다.
+그리고 #226 이 적어 둔 규칙이 *"죽은 허용목록은 지우고 **사라진 절차는 말한다**"* 다 —
+지우기만 하면 다음 세션이 「원래 없었다」로 읽는다. 그래서 이 절이 남는다.
+
+| 지운 스킬 | 무엇을 했나 | 대응물 | 부를 수 있나 |
+|---|---|---|---|
+| `skills/review-work/` | `mcp__master-orchestrator__review_work`·`integration_build`·`finalize_work`·`reject_work` 를 부르는 검수 절차 | `master/client/skills/ax-review/SKILL.md` — `review.review_work`/`reject_work`/`finalize_work` 를 호출자로 명시 | [완료] **예** (감사 확인) |
+| `skills/distribute/` | 원전 로컬 오케스트레이션 — `prepare_work_branch`·`generate_skeletons`·`register_skeletons`·`build_project` 등 8종 + `mcp__context-search__list_task_templates`·`get_task_template` | 마스터측 `/distribute` 스킬 + `ax-request`(요청자) | [완료] **예** ([주의] 태스크 템플릿 2종 위임 구멍은 #226 「남은 것」) |
+
+[중요] **왜 지금 지웠나.** 둘 다 `.33` 으로 **배달되는** 자산인데, 부르라고 적힌 MCP 서버
+(`master-orchestrator`·`context-search`·`task-queue`)가 #226 에서 `.mcp.json` 에서 제거됐다.
+즉 `.33` 세션이 이 스킬을 따라가면 **없는 도구를 부르고 조용히 실패**한다(#232).
+`test_client_bundle.py` 의 ⑤칸이 그 부류를 이제 호출 단위로 막는다.
+
+[주의] **`cluster-selftest`·`tdd-dryrun` 은 남겼다** — 같은 문제를 갖고 있지만
+대응물(`work/selftest.py:run_live`·`work/tdd_dryrun.py:run`)이 **호출자·CLI·MCP 도구가 없어
+부를 수 없다**(#234). 지금 지우면 「그 능력이 있었다」는 흔적만 사라지고 능력은 돌아오지
+않는다. **#234 에서 진입점을 만들거나 폐기를 결정한 뒤** 지운다.

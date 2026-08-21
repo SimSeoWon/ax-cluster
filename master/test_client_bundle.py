@@ -401,17 +401,51 @@ def test_workshop_assets_reference_only_live_tools() -> None:
           str(sorted(used - live)))
     check("실제로 여러 도구를 쓴다 (치환이 통째로 날아가지 않았다)", len(used) >= 10, str(len(used)))
 
+    # [중요] **배달되는 것만 검사한다.** `root.rglob("*.md")` 로 훑으면 저장소 문서
+    #    (`README.md` — 위 §「배달물이 아니다」 칸이 그렇게 단정한다)까지 걸린다. 그 문서는
+    #    **무엇을 지웠는지 기록**하려고 죽은 서버 이름을 정당하게 적는다 — 실제로 §5 를 쓰자
+    #    이 테스트가 빨간불이 됐다(2026-08-22). 배달 대상은 `workshop_files` 가 정한 네
+    #    디렉토리와 병합되는 `CLAUDE.md` 뿐이다.
+    def delivered_md():
+        for sub in ("agents", "skills", "rules", "hooks"):
+            yield from sorted((root / sub).rglob("*.md"))
+        cm = root / "CLAUDE.md"
+        if cm.is_file(): yield cm
+
     # ④ 남은 언급은 **알려진 것뿐** — 결정 대기 목록이 조용히 늘어나지 않는다
+    # [중요] `review-work`·`distribute` 는 **2026-08-22 삭제**됐다 (사용자 결정: *"교체해야 하면
+    #    왜 남겨둬야해?"*). 대응물이 실제로 도는 것을 감사로 확인했다 — `ax-review` 스킬이
+    #    `review_work`/`reject_work`/`finalize_work` 를 호출자로 명시하고, 분배는 마스터측
+    #    `/distribute` + `ax-request` 가 받는다. 사라진 절차는 `workshop/README.md` §5 가 말한다.
     PENDING = {"CLAUDE.md", "manage-domain",     # 「은퇴했다 · 부르지 말 것」 금지 문장
-               "cluster-selftest", "distribute", "review-work", "tdd-dryrun"}  # 은퇴 여부 대기
+               "cluster-selftest", "tdd-dryrun"}  # 은퇴 여부 대기 — 대응물이 **부를 수 없다**(#234)
     left = set()
-    for f in root.rglob("*.md"):
+    for f in delivered_md():
         if any(pre in f.read_text(encoding="utf-8") for pre in RETIRED):
             left.add(f.name if f.name == "CLAUDE.md" else f.parent.name)
     check("[주의] 남은 옛 이름은 알려진 결정 대기분뿐 (#226)", left <= PENDING,
           str(sorted(left - PENDING)))
+    check("[중요] 삭제한 둘이 되살아나지 않았다",
+          not ({"review-work", "distribute"} & left), str(sorted(left)))
 
-    # ⑤ 미이식·미위임을 조용히 지우지 않고 **말한다**
+    # ⑤ [중요] **호출과 금지 문장을 갈라서** 본다 — ④ 는 파일 단위라 금지 문장이 사는 파일에
+    #    새 호출이 들어와도 통과한다. 괄호가 그 둘을 가른다(실측 2026-08-22):
+    #        `mcp__master-orchestrator__review_work(`  → **호출** (16줄이 이 모양이었다)
+    #        `mcp__context-search__*` 로 부르지 말 것   → **금지 문장** (괄호 없음)
+    #    [주의] 괄호만으로는 부족하다 — *"…analyze_skeletons 호출 가능"* 처럼 괄호 없이
+    #    호출을 지시하는 줄이 있었다(전부 삭제된 `distribute` 안). 그래서 이것은 **하한**이고,
+    #    ④ 의 파일 단위 규칙과 **함께** 걸어야 의미가 있다.
+    CALL = re.compile(r"mcp__(?:" + "|".join(
+        r[len("mcp__"):-len("__")] for r in RETIRED) + r")__[a-z_0-9]+\(")
+    calls = sorted(f"{f.parent.name}/{f.name}" for f in delivered_md()
+                   if CALL.search(f.read_text(encoding="utf-8")))
+    allowed = {"cluster-selftest/SKILL.md", "tdd-dryrun/SKILL.md"}   # #234 까지 대기
+    check("[중요] 죽은 서버를 **호출**하는 파일은 대기분뿐 (조용한 실패)",
+          set(calls) <= allowed, str(sorted(set(calls) - allowed)))
+    check("대기분이 실제로 남아 있다 — 해소되면 이 목록을 지울 것",
+          set(calls) == allowed, f"실제 {calls}")
+
+    # ⑥ 미이식·미위임을 조용히 지우지 않고 **말한다**
     val = (root / "agents" / "code-validator.md").read_text(encoding="utf-8")
     check("[주의] 미이식(create_review_issue)을 말한다",
           "create_review_issue" in val and "미이식" in val)
