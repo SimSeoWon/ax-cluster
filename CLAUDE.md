@@ -151,7 +151,10 @@ from the master's own container DB. [중요] **Never write the key value into a 
 [중요] **표는 여기 두지 않는다** — 하루에도 네 행이 늘었고, 이 파일은 매 세션에 로드되는 **색인**이다.
 모듈별 설명·함정·실측은 [`master/README.md`](master/README.md) 에 있다. 여기엔 **놓치면 안 되는 것만** 남긴다.
 
-`worker/` is still a README-only stub. **`client/` is live** — see the table row above.
+`worker/` is still a README-only stub. [중요] **`client/` (repo root) = what runs on the client;
+`master/client/` = the deliverer. The criterion is *where it runs* — `master/` is this infra server**
+(#263). [주의] **Delivered paths did NOT move** — clients still get `.ax/lib/axmaster/clientside/`;
+source vs delivered are two fields now (#262). Detail: [`client/README.md`](client/README.md).
 [중요] **Say "done" only for a whole area** — and when reporting status, give the denominator (read it
 from Redmine), never a scope narrowed to what got built.
 The pipeline runs end to end with **four gates**: skeleton build (`claude:opus`, built on `.2` before
