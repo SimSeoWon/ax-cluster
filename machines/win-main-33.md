@@ -39,7 +39,7 @@ Cluster-wide rules live in [`sim-desktop.md`](sim-desktop.md); repo rules in
 | [중요] 남은 참조 | **등록을 지워도 참조는 남는다** — `.claude/agents/` **9종 전부**의 `tools:` 허용목록이 `mcp__context-search__combined_search` 를(둘은 `mcp__redmine-tracker__*` 도) 아직 가리킨다. [주의] **서버가 없으면 오류가 아니라 그 도구 없이 그냥 돈다** — 리포트 27 §9-3 의 「조용히 0」과 같은 계열. 매핑: `combined_search`→`search_context` · `get_domain_manifest`→`get_domain_layer`. **위임 구멍 2개**: Redmine 읽기(`get_issue`·`list_issues`·`update_issue`·`list_statuses`·`list_trackers` — `ax-client` 에는 `redmine_note` 만) · `get_task_template`. 결정 대기(#226) |
 | 배달물 | `.ax/config.json`(경로·능력 `ue5,windows`·UE5 5.8 실측) · `.ax/token`(**requester 역할** 토큰) · `.ax/lib` · `.ax/tasks` · `.ax/work` |
 | 프로젝트 `CLAUDE.md` | `AX:Begin`~`AX:End` 관리 블록에 역할 계약이 이미 적혀 있다 — *"요청하는 쪽"*, *"여기서 소스를 고치지 않는다"* |
-| 배달 시점 | 커밋 `8d55de9`. 저장소 HEAD 가 앞서가도 **번들 경로(`master/client`·`clientside`·`work/review.py`·`coordinator.py`·`layer3_verify.py`)에 변경이 없으면 재배달 불필요** — 2026-08-20 확인(HEAD `44274dc`, 해당 경로 무변경) |
+| 배달 시점 | 커밋 `8d55de9`. 저장소 HEAD 가 앞서가도 **번들 경로(`master/client`·**`client/runtime`**(2026-08-22 이동, #263)·`master/work/review.py`·`coordinator.py`·`layer3_verify.py`)에 변경이 없으면 재배달 불필요** — 2026-08-20 확인(HEAD `44274dc`, 해당 경로 무변경) |
 
 [주의] **낡은 번들은 조용히 돈다** (`master/client/__main__.py` 의 경고) — `.33` 이 옛 review 로직으로
 검수하면 그 판정 자체가 낡는다. 위 경로에 변경이 생기면 마스터에서

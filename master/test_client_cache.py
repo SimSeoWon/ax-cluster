@@ -23,8 +23,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from master.clientside.ontology_cache import OntologyCache, is_error_payload   # noqa: E402
-from master.clientside import vector_fallback as VF                            # noqa: E402
+from client.runtime.ontology_cache import OntologyCache, is_error_payload      # noqa: E402
+from master.context_search import vector_fallback as VF                        # noqa: E402
 
 PASS = FAIL = 0
 GOOD = json.dumps({"domain": "MissionRuntime", "objects": ["UManager_Mission"]},
@@ -141,7 +141,12 @@ def test_hash_skip_avoids_reembedding():
     with tempfile.TemporaryDirectory() as tmp:
         vf = VF.VectorFallback(tmp)
         if not vf.available:
-            check("⑦ (건너뜀) chromadb 를 못 열었다", True, vf.error)
+            # [중요] **chromadb 부재만 건너뜀이다.** 그 밖의 사유는 결함이므로 실패로 낸다 —
+            #    2026-08-22 에 `client/runtime/` 이동이 상대 임포트를 깨뜨렸는데
+            #    (`No module named 'client.context_search'`) 이 자리가 그것을 삼켜 **검사 9개가
+            #    조용히 사라지고 「통과」로 보고됐다.** 분모가 33→24 로 줄어야 겨우 보였다.
+            check("⑦ (건너뜀) chromadb 를 못 열었다", "chromadb" in (vf.error or ""),
+                  vf.error)
             return
         r1 = vf.upsert(_results())
         check("⑦ 처음엔 적재한다", r1["upserted"] == 1, str(r1))
@@ -157,7 +162,9 @@ def test_search_marks_the_fallback_and_uses_our_model():
     with tempfile.TemporaryDirectory() as tmp:
         vf = VF.VectorFallback(tmp)
         if not vf.available:
-            check("⑧ (건너뜀) chromadb 를 못 열었다", True, vf.error)
+            # [중요] ⑦ 과 같은 이유로 **chromadb 부재만** 건너뜀이다 (2026-08-22).
+            check("⑧ (건너뜀) chromadb 를 못 열었다", "chromadb" in (vf.error or ""),
+                  vf.error)
             return
         vf.upsert(_results())
         hits = vf.search("미션 실행기", limit=3)

@@ -96,22 +96,30 @@ PAYLOAD_PKG = "axmaster"
 #    배달 위치가 한 글자라도 달라지면 그것은 이 변경의 실패다(`test_payload_split`).
 
 
-def _pair(rel: str, dest: str = "") -> tuple:
-    """`(배달 상대경로, 저장소 경로)`. `dest` 를 비우면 **저장소 배치를 미러링**한다.
+def _pair(dest: str, src: str = "") -> tuple:
+    """`(배달 상대경로, 저장소 경로 — **저장소 루트 기준**)`.
 
-    [중요] 순서는 `workshop_files()` 와 **같다** — 그 함수가 이미
-    `(체크아웃 기준 상대경로, 저장소 경로)` 를 돌려준다. 한 파일에 관례가 둘이면 다음에 갈린다.
+    `src` 를 비우면 `master/<dest>` — 즉 **배달 트리가 `master/` 를 미러링**한다.
     [중요] 미러링이 기본인 이유는 상대 임포트다 — 평면으로 펴면 `build_local` 의
     `from ..layer3_verify import …` 가 죽는다(그 자세한 근거는 위 주석).
+    [중요] 순서는 `workshop_files()` 와 **같다** — 그 함수가 이미
+    `(체크아웃 기준 상대경로, 저장소 경로)` 를 돌려준다. 한 파일에 관례가 둘이면 다음에 갈린다.
     [주의] **경로가 실재하는지는 여기서 검사하지 않는다** — `payload_text()` 의
     *"배달할 모듈이 없다"* 와 테스트의 *"배달할 원문이 실재한다"* 가 이미 잡는다. 목록을
     한 벌 더 두면 그 두 벌이 갈리는 것이 새 결함이 된다.
     """
-    return (dest or rel, rel)
+    return (dest, src or f"master/{dest}")
 
 
 PAYLOAD_BY_ROLE = {
-    "requester": (_pair("clientside/client_mcp.py"), _pair("clientside/ontology_cache.py"),
+    # [중요] **배달 위치는 `clientside/` 그대로, 저장소 위치만 `client/runtime/` 이다** (#263).
+    #    `.33` 의 `.mcp.json` args 가 배달 위치를 가리키므로 그것은 못 바꾼다 — 여기가 두 값을
+    #    가른 것(#262)이 실제로 쓰이는 첫 자리다.
+    #    [주의] claimer 사슬(`work/claimer.py`·`ax_safety`·`build_local`·`skeleton_gate`)은
+    #    **`master/` 에 남는다** — `layer3_verify`(마스터도 `integrate.py` 에서 쓴다)를 상대경로로
+    #    올려다보기 때문이다. 사용자 결정 ⓒ, 2026-08-22.
+    "requester": (_pair("clientside/client_mcp.py", "client/runtime/client_mcp.py"),
+                  _pair("clientside/ontology_cache.py", "client/runtime/ontology_cache.py"),
                   _pair("layer3_verify.py"), _pair("source_text.py"), _pair("utf8.py"),
                   _pair("work/branch_names.py"), _pair("work/coordinator.py"),
                   _pair("work/review.py"),
@@ -629,8 +637,13 @@ def skill_text(name: str = SKILL_NAME) -> str:
 
 
 def payload_text(rel: str) -> str:
-    """배달할 모듈 원문. `rel` 은 `master/` 기준 상대경로. [중요] **저장소가 SSOT 다.**"""
-    p = Path(__file__).resolve().parents[1] / rel
+    """배달할 모듈 원문. `rel` 은 **저장소 루트 기준** 상대경로 (#263 부터).
+
+    [중요] **저장소가 SSOT 다.**
+    [주의] 기준이 `master/` 에서 저장소 루트로 바뀐 이유는 배달물이 `master/` 밖에도 살기
+    때문이다(`client/runtime/`). 인자를 `payload_pairs()` 의 **둘째**로 받으면 자동으로 맞는다.
+    """
+    p = Path(__file__).resolve().parents[2] / rel
     if not p.is_file():
         raise BundleError(f"배달할 모듈이 없다: {p}")
     return p.read_text(encoding="utf-8")

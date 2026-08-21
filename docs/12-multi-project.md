@@ -72,7 +72,7 @@
 ### 1단계 — 자리를 만든다 (§12.5-e · **동작 불변**)
 
     #262  PAYLOAD_BY_ROLE 을 (저장소 → 배달) 로 가른다
-    #263  clientside + claimer → client/runtime/
+    #263  clientside → client/runtime/          ← [완료] 2026-08-22. claimer 사슬은 ⓒ 로 잔류
     #264  payload·skills·workshop → client/
     #265  client/README 를 실물 색인으로
 
@@ -301,7 +301,7 @@ fail-closed 를 먼저 켜면 `.33`·워커의 모든 세션이 사유를 받고
 전부 거절되고, 클라이언트가 서버보다 앞서면 서버가 모르는 인자를 받는다.
 
 [완료] **클라이언트 쪽은 전례가 이미 있다 — 새 패턴을 만들지 않는다.** 실측:
-`clientside/client_mcp.py:762` 가 `load_config(root).get("project")` 를 읽어 **쓰기 2종에만**
+`client/runtime/client_mcp.py:762` 가 `load_config(root).get("project")` 를 읽어 **쓰기 2종에만**
 실어 보내고, `work/claimer.py:93` 도 같은 자리를 읽는다. **값도 코드도 이미 있고, 검색에 안 걸려
 있을 뿐이다.** [주의] 다만 지금은 `or ""` 로 **조용히 빈 값**을 보낸다 — fail-closed 아래에서
 그 조용함은 *"검색이 안 된다"* 만 남기고 원인을 감춘다. #258 이 그것까지 든다.
@@ -378,7 +378,9 @@ fail-closed 를 먼저 켜면 `.33`·워커의 모든 세션이 사유를 받고
 
 배달되는 파이썬 12개를 재보니 **클라 전용은 셋**이다(마스터 쪽 import 0):
 `clientside/client_mcp.py` · `clientside/ontology_cache.py` · `work/claimer.py`.
-나머지 아홉은 **공용**이다 — `source_text.py` 는 마스터 8곳, `work/branch_names.py` 는 7곳이 쓴다.
+[완료] **앞의 둘은 `client/runtime/` 으로 옮겼고**(#263, 2026-08-22) `claimer.py` 는 **`master/work/`
+에 남겼다** — 사용자 결정 ⓒ. 근거: `claimer` → `build_local` → `layer3_verify` 이고 그
+`layer3_verify` 를 마스터도 쓴다(`integrate.py:423,486` 의 `__import__`). 나머지 아홉은 **공용**이다 — `source_text.py` 는 마스터 8곳, `work/branch_names.py` 는 7곳이 쓴다.
 
 [주의] **첫 스캔은 `utf8.py` 를 클라 전용으로, `claimer.py` 를 공용으로 냈다 — 둘 다 반대였다.**
 `from ..utf8 import` 형태를 놓친 패턴이었고, `claimer` 는 마스터 쪽 파일에 **주석·문자열로만**

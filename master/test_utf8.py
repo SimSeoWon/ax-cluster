@@ -113,7 +113,7 @@ def test_it_reaches_the_windows_machines():
     from master.client import bundle
     pay = bundle.payloads_for("requester")
     check("[중요] 요청자(.33 · 한글 윈도우) 페이로드에 들어간다", "utf8.py" in pay, str(pay))
-    check("배달할 원문이 실재한다", len(bundle.payload_text("utf8.py")) > 200)
+    check("배달할 원문이 실재한다", len(bundle.payload_text("master/utf8.py")) > 200)
     src = Path(U.__file__).read_text(encoding="utf-8")
     check("왜 한 번 틀렸는지를 모듈이 적어 둔다", "카고 컬트는 다르다" in src or "규칙을 거꾸로" in src)
     check("[중요] 임포트 부작용이 아니다 (진입점에서 부른다)",

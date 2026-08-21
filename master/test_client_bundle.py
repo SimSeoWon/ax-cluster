@@ -313,11 +313,20 @@ def test_payload_split() -> None:
     for dest, src in bundle.payload_pairs("worker"):
         check(f"쌍은 (배달, 저장소) 순서다: {dest}", "/" in dest or dest.endswith(".py"))
         check(f"저장소 원문이 실재한다: {src}", len(bundle.payload_text(src)) > 100)
-    # [주의] 지금은 두 값이 같다. **갈라지는 날 이 검사가 그 사실을 알려 준다** — 실패해도
-    #    결함이 아니라 「#263·#264 가 진행됐다」는 신호이고, 그때 위 동결값을 다시 판정한다.
-    same = [d == s for d, s in bundle.payload_pairs("requester")]
-    check("[주의] 지금은 저장소 배치를 그대로 미러링한다 (#263 이후 갈릴 수 있다)",
-          all(same), str(bundle.payload_pairs("requester")))
+    # [중요] **저장소 위치도 동결한다** (#263 이후). 갈린 곳은 `client/runtime/` 둘뿐이고
+    #    나머지는 `master/<배달경로>` 미러링이다 — 사용자 결정 ⓒ(claimer 사슬은 `master/` 에
+    #    남는다, `layer3_verify` 를 상대경로로 올려다보기 때문). 의도하지 않은 갈림도 여기서 죽는다.
+    SPLIT = {"clientside/client_mcp.py": "client/runtime/client_mcp.py",
+             "clientside/ontology_cache.py": "client/runtime/ontology_cache.py"}
+    for role in FROZEN:
+        for dest, src in bundle.payload_pairs(role):
+            want = SPLIT.get(dest, f"master/{dest}")
+            check(f"[중요] 저장소 위치가 동결값이다: {dest} ← {src}", src == want, f"기대={want}")
+    check("[중요] claimer 사슬은 master/ 에 남는다 (ⓒ) — layer3_verify 상대 임포트가 산다",
+          all(src.startswith("master/work/")
+              for dest, src in bundle.payload_pairs("worker") if "claimer" in dest
+              or "ax_safety" in dest or "build_local" in dest or "skeleton_gate" in dest),
+          str(bundle.payload_pairs("worker")))
     try:
         bundle.payload_pairs("사장님")
         check("[중요] 모르는 역할은 예외 (payload_pairs)", False, "조용히 돌려줬다")
@@ -427,7 +436,7 @@ def test_workshop_assets_reference_only_live_tools() -> None:
     if not root.exists():                       # 반입 전 체크아웃 보호
         check("workshop 자산이 아직 없다 — 건너뜀", True)
         return
-    from master.clientside.client_mcp import TOOLS    # noqa: PLC0415
+    from client.runtime.client_mcp import TOOLS       # noqa: PLC0415
     live = {t["name"] for t in TOOLS}
     RETIRED = ("mcp__context-search__", "mcp__redmine-tracker__", "mcp__task-queue__",
                "mcp__master-orchestrator__", "mcp__local-llm-runner__")

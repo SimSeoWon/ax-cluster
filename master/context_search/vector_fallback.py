@@ -71,7 +71,7 @@ class VectorFallback:
         try:
             import chromadb                      # 무겁다 — 지연 import (우리 index.py 와 같은 규약)
 
-            from ..context_search import embedding
+            from . import embedding
 
             self.dir.mkdir(parents=True, exist_ok=True)
             client = chromadb.PersistentClient(path=str(self.dir))

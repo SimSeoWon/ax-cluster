@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from master.clientside import client_mcp as M     # noqa: E402
+from client.runtime import client_mcp as M        # noqa: E402
 
 PASS = FAIL = 0
 

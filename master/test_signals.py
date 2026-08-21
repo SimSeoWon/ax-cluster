@@ -83,7 +83,7 @@ def test_roundtrip_and_broken_lines():
 
 def _load_client():
     import importlib.util
-    f = Path(__file__).parent / "clientside" / "client_mcp.py"
+    f = Path(__file__).resolve().parents[1] / "client" / "runtime" / "client_mcp.py"
     spec = importlib.util.spec_from_file_location("_cm", f)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
