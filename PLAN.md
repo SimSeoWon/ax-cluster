@@ -68,7 +68,7 @@ missing halves. That movement is normal — record it, don't hide it.
 | 3 | [Open items](docs/3-open-items.md) | Settled vs still-open status — **start here before working** | Inference requests go through the master broker |
 | 4 | [Work loop](docs/4-work-loop.md) | The path one task travels, and the hallucination-verification pipeline | 3 verification layers — L1 self-check / L2 syntax+API / L3 UE5 build |
 | 5 | [Master orchestration](docs/5-master-orchestration.md) | Language choice, what to port and in what order, systemd execution model | Python, plus a systemd+venv execution model |
-| 5.5 | [Project isolation](docs/5_5-project-isolation.md) | Multi-project directory layout and the mount contract | Many directories, **one mount** — mismatched requests get 409, fail-closed |
+| 5.5 | [Project isolation](docs/5_5-project-isolation.md) | Multi-project directory layout and the mount contract | Many directories, **one mount** — [주의] the 409/fail-closed enforcement was **never wired** (`resolve_mounted_only` has zero production callers); see [`docs/12`](docs/12-multi-project.md) §12.4 |
 | 6 | [Node failover](docs/6-node-failover.md) | Liveness detection and remote power recovery | Streaming chunk gap *is* the heartbeat (no separate comms infra) |
 | 7 | [Master GPU](docs/7-master-gpu.md) | Whether to add a GTX 1070 Ti for RAG/CUDA | **Open** — confirming the PSU's PCIe aux connector comes first |
 | 8 | [git authority](docs/8-git-authority.md) | The permission boundary between human sessions and the pipeline | Humans: no destructive git. Pipeline: autonomous on `task/` branches only. Also the **branch lifecycle** (durable `task/<id>` → attempt → `main` return) and [중요] **who may delete branches** — workers may not; the master cleans, and only when the tip is reachable from `origin/<base>` |
@@ -77,6 +77,7 @@ missing halves. That movement is normal — record it, don't hide it.
 | — | [Settled decisions](docs/settled-decisions.md) | Closed calls, gathered in one place | Don't relitigate without new measurements |
 | 10 | [References](docs/10-references.md) | Original design, reports, external repos | — |
 | 11 | [Agent conduct](docs/11-agent-conduct.md) | [중요] **행동 수칙** — 묻기(설계 갈림길 *및* 「지시인지 질문인지」) · 만들기 전에 읽기 · 수정 권한 · 승인과 검토 비용 · 실행 권한. 원전 `.agents/AGENTS.md` 5조 이식분이 여기 모여 있다 | 1조는 **범위 좁혀** 이식(자동 로드 문서 + 게임 소스) · 3·4조 이식 · 5조는 빌드 조항만 · [중요] **2조는 안 옮긴다**(Claude Code 는 툴 호출을 전부 띄운다 — 「몰래 호출」이 구조적으로 불가능) |
+| 12 | [Multi-project](docs/12-multi-project.md) | 다중 프로젝트 운영 — 갈린 축과 안 갈린 축, 네 부모 일감의 지도 | [중요] **항목·진행은 레드마인만** (사용자 2026-08-22) · 마운트 강제는 **배선된 적이 없다**(§12.4 가 같은 거짓 서술 네 곳을 정정) |
 
 ---
 

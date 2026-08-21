@@ -9,7 +9,11 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
 
 ## Hard rules — inline on purpose
 
-- [중요] **Read which milestone you are in before planning anything.**
+- [중요] **세션 시작에 이 둘을 먼저 읽는다 — 조건부가 아니다** (사용자 2026-08-22):
+  **① 열린 마일스톤** [`docs/milestones/6-improvements.md`](docs/milestones/6-improvements.md)
+  · **② 지금 열린 축의 지도** [`docs/12-multi-project.md`](docs/12-multi-project.md).
+  둘 다 읽지 않고 코드부터 grep 하면 규칙을 코드에서 알아내려 하게 된다 — 2026-08-21 세션이
+  그렇게 §11.5(데몬 재기동)를 어겼다. [주의] **항목·진행은 레드마인만** 본다.
   **M1–M5 all closed (M3·M4·M5 closed 2026-08-17, user decisions); M6
   (개선·확장) is open.**
   → [`docs/milestones/6-improvements.md`](docs/milestones/6-improvements.md) —
@@ -135,6 +139,7 @@ from the master's own container DB. [중요] **Never write the key value into a 
 | Need | Go to |
 |---|---|
 | What's decided vs open | [`PLAN.md`](PLAN.md) — index of `docs/` |
+| [중요] **지금 열린 축 — 다중 프로젝트** | [`docs/12-multi-project.md`](docs/12-multi-project.md) — 갈린 축과 안 갈린 축 · 네 부모 일감의 지도. [주의] 마운트 강제는 **배선된 적이 없다**(§12.4 가 같은 거짓 서술 네 곳을 정정) |
 | Closed decisions, don't relitigate | [`docs/settled-decisions.md`](docs/settled-decisions.md) |
 | Still open | [`docs/3-open-items.md`](docs/3-open-items.md) |
 | Per-machine operating guide | [`machines/`](machines/README.md) |

@@ -204,6 +204,7 @@ the failing command left the old process running, so `is-active` still said `act
 | PATH · **`pkexec` for privileged work** · Python · GPU | [`sim-desktop.d/environment.md`](sim-desktop.d/environment.md) |
 | **Which LLM is good at what · where hallucination was measured** | [`llm-fitness.md`](llm-fitness.md) |
 | Cluster design — settled vs open | `~/ax-cluster/PLAN.md` → `docs/` |
+| [중요] **세션 시작에 먼저 읽을 둘** | `~/ax-cluster/docs/milestones/6-improvements.md`(열린 마일스톤) · `~/ax-cluster/docs/12-multi-project.md`(지금 열린 축). [주의] 항목·진행은 **레드마인만** |
 | Working *in* the repo | `~/ax-cluster/CLAUDE.md` |
 
 ## Work journal
