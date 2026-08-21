@@ -72,9 +72,13 @@
 ### 1단계 — 자리를 만든다 (§12.5-e · **동작 불변**)
 
     #262  PAYLOAD_BY_ROLE 을 (저장소 → 배달) 로 가른다
-    #263  clientside → client/runtime/          ← [완료] 2026-08-22. claimer 사슬은 ⓒ 로 잔류
-    #264  payload·skills·workshop → client/
-    #265  client/README 를 실물 색인으로
+                                                ← [완료] 커밋 `30d5ed0`. 동작 불변을 기준선
+                                                  `diff` 로 확인(배달 위치 · `.mcp.json` args)
+    #263  clientside → client/runtime/          ← [완료] 커밋 `9959c88`. claimer 사슬은 ⓒ 로 잔류
+    #264  payload·skills·workshop → client/     ← [주의] **디렉토리 전수로 잰다.** 목록
+                                                  (`PAYLOAD_BY_ROLE`)을 대상 집합으로 쓰면 목록
+                                                  밖 파일이 조용히 깨진다 — #263 의 교훈
+    #265  client/README 를 실물 색인으로        ← 최소 정정만 해 뒀다(아래 표가 이동 전 기준)
 
 [중요] **`#262` 가 코드 변경의 첫 자리다.** 동작이 완전히 같아야 하는 단계라 「됐다」를
 해시·`plan` 출력으로 **객관적으로** 확인할 수 있다. 2026-08-21 의 전량 되돌림 직후이므로,
