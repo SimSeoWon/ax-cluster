@@ -101,15 +101,17 @@ def test_protocol_roundtrip():
                                              "method": "notifications/initialized"}) is None)
     r = M.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in r["result"]["tools"]]
-    check("도구 21종 (조회 11 + 쓰기 대행 10) — 원전 redmine_tracker·태스크 템플릿 인수 (#226)",
-          names == ["list_works", "get_work", "search_context", "list_domains",
-                    "get_domain", "get_domain_layer", "get_object_spec", "get_action_spec",
-                    "find_invariants_by_class", "add_object_alias", "mark_not_a_class",
-                    "redmine_note", "redmine_list_issues", "redmine_get_issue",
-                    "redmine_meta", "redmine_create_issue", "redmine_link_commit",
-                    "list_task_templates", "get_task_template",
-                    "log_writer_signal", "log_history"],
+    # [주의] **셈을 박지 않는다.** 종전엔 "도구 21종" + 전체 목록을 하드코딩했고, 도구가 둘
+    #    늘자(`#267` find_recipes·get_anti_patterns) 그 자리가 깨졌다. 깨지는 것은 옳지만
+    #    고칠 것은 **셈이 아니라 계약**이다: ① 목록과 선언이 같다 ② 있어야 할 이름이 있다.
+    check("목록이 선언과 같다 (두 벌이 아니다)", names == [t["name"] for t in M.TOOLS],
           str(names))
+    for must in ("list_works", "search_context", "add_object_alias", "log_writer_signal",
+                 "log_history", "list_task_templates",
+                 # 컨벤션 루프의 반대 방향 (`#267`) — 없으면 루프가 한 방향이다
+                 "find_recipes", "get_anti_patterns"):
+        check(f"도구 목록에 {must} 이 있다", must in names, str(names))
+    check("이름이 중복되지 않는다", len(names) == len(set(names)), str(names))
     check("모든 도구에 inputSchema", all("inputSchema" in t for t in r["result"]["tools"]))
     r = M.handle_message({"jsonrpc": "2.0", "id": 3, "method": "없는것"})
     check("모르는 요청은 -32601", r["error"]["code"] == -32601, str(r))

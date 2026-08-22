@@ -16,7 +16,7 @@
 | 5 | `commandlet_runner.exe` | `.claude/mcp/` | **로컬 유지** (UE5 커맨드릿) |
 | 6 | `agy_query.exe` | `.claude/mcp/` | 로컬 `agy` CLI (마스터에도 있다) |
 | 7 | `redmine_tracker.exe` | `.claude/mcp/` | [주의] **미이식** — `ax-client` 에 `redmine_note` 하나뿐 |
-| 8 | `code_recipes.exe` | `.claude/mcp/` | [주의] **미이식** — `log_writer_signal` 만 이식됨 |
+| 8 | `code_recipes.exe` | `.claude/mcp/` | [완료] **`ax-client` 가 흡수**(`#267`, 2026-08-23) — `log_writer_signal` · `find_recipes` · `get_anti_patterns`. 별 서버를 만들지 않았다: 레시피는 **마스터 트윈**에 있고 요청자 기계엔 그 디렉토리가 없어 큐가 대행한다. [주의] 그 전까지 `code-writer` 에이전트가 **없는 서버**를 부르도록 적혀 있었다 |
 | 9 | `task_queue.exe` | `.claude/mcp/` | 마스터 큐 8101 (단일 writer) |
 | 10 | `worker.exe` | `.claude/daemons/` | 마스터 claimer + `ax-work` 스킬. **2026-08-20 삭제**(재빌드 가능한 산출물이라 백업 없이) |
 | 11 | `master_orchestrator.exe` | `.claude/mcp/` | 마스터 통합자·파이프라인 |

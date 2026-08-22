@@ -27,6 +27,11 @@ from .review_gen import commercial_chat
 from .signals import read_signals, signals_path
 
 ARCHIVE_FILENAME = "_signals.archive.jsonl"
+# [중요] **태그는 검색 색인이므로 한글을 함께 담는다** (사용자 지적 2026-08-23).
+#    원전 규칙은 *"Output ENGLISH for recipe_name, intent, tags"* 였고 그것을 그대로 옮겼더니
+#    **한글 질의가 자기 레시피를 못 찾았다**(실측: `find_recipes("미션 태스크 추가")` → 0건,
+#    레시피는 `MissionTaskDefinition`). 찾는 사람은 한글로 묻는다 — 색인이 영문뿐이면 색인이
+#    아니다. [주의] 한글은 **신호 원문에서 그대로** 뽑는다(지어내면 없는 말로 색인된다).
 ANTI_PATTERNS_FILENAME = "_anti_patterns.md"
 RECIPE_MIN_SIGNALS = 5          # 원전 config 기본값 (하한 2)
 ARCHIVE_KEEP_DAYS = 28
@@ -85,21 +90,28 @@ def _cluster_signals(signals: list, *, chat=None, logf=None) -> list:
 Cluster signals with similar intent. For each cluster assign:
 - recipe_name: ASCII identifier, PascalCase, no spaces (e.g. "MissionTaskAdd", "AbilityRegister")
 - intent: one English sentence describing the cluster
-- tags: 2-5 keywords identifying the domain (e.g. ["Mission", "BTTask", "Combat"])
+- tags: **the search index.** Include BOTH:
+    (a) 2-4 English/identifier keywords for the domain (e.g. "Mission", "BTTask", "Combat")
+    (b) 2-4 Korean keywords TAKEN VERBATIM from the source intents (e.g. "미션", "태스크")
+  Do NOT invent Korean words that are absent from the signals — copy the nouns the humans used.
+  Rationale: whoever searches types Korean (`find_recipes("미션 태스크 추가")`), so an
+  English-only index cannot be found. Measured 2026-08-23: it was not found.
 
 Signal list:
 {summary}
 
 Rules:
 - Singleton clusters are allowed but only synthesized if they meet the threshold downstream.
-- Output ENGLISH for recipe_name, intent, tags. Source intent may be Korean; summarize in English.
+- Output ENGLISH for recipe_name and intent. Source intent may be Korean; summarize in English.
+  [IMPORTANT] tags are the EXCEPTION — they are a search index and must carry Korean too (above).
 - BRACKET CONVENTION: tokens enclosed in [square brackets] in source intents are code identifiers
   (class names, UE features). Preserve them VERBATIM — do not translate, rename, or strip the brackets.
 
 Output ONLY the JSON array below. No prose, no code fences.
 
 [
-  {{"recipe_name": "...", "intent": "...", "signal_indices": [0, 1, 2], "tags": ["Tag1", "Tag2"]}}
+  {{"recipe_name": "...", "intent": "...", "signal_indices": [0, 1, 2],
+   "tags": ["Mission", "Task", "미션", "태스크"]}}
 ]
 """
     try:

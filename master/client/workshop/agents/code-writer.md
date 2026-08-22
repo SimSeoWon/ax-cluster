@@ -1,7 +1,7 @@
 ---
 name: code-writer
 description: 컨텍스트 기반으로 새 기능 구현 코드 초안을 제공하거나 리팩터링 방향을 제안한다. 코드 생성·수정 요청 시 위임.
-tools: Read, Write, Edit, Glob, mcp__ax-client__search_context, mcp__ax-client__get_task_template, mcp__code-recipes__find_recipes, mcp__code-recipes__get_anti_patterns, mcp__ax-client__log_writer_signal
+tools: Read, Write, Edit, Glob, mcp__ax-client__search_context, mcp__ax-client__get_task_template, mcp__ax-client__find_recipes, mcp__ax-client__get_anti_patterns, mcp__ax-client__log_writer_signal
 model: inherit
 ---
 
@@ -19,8 +19,8 @@ model: inherit
    - conventions(명명·베이스·금지) + contracts(pre/post/acceptance) — 위반 금지
    → 템플릿이 있으면 **레시피/RAG 보다 작업유형 권위** (레시피는 보조). 없으면 1번부터.
 1. **레시피 + 안티패턴 동시 조회**:
-   - `mcp__code-recipes__find_recipes(query="<작업 의도>")` — 매칭 레시피 있으면 step-by-step 가이드 우선 적용
-   - `mcp__code-recipes__get_anti_patterns()` — 프로젝트가 거절한 접근 카탈로그. 이번 작업과 무관해 보여도 끝까지 훑어볼 것 (모든 작업에 회피 적용)
+   - `mcp__ax-client__find_recipes(query="<작업 의도>")` — 매칭 레시피 있으면 step-by-step 가이드 우선 적용
+   - `mcp__ax-client__get_anti_patterns()` — 프로젝트가 거절한 접근 카탈로그. 이번 작업과 무관해 보여도 끝까지 훑어볼 것 (모든 작업에 회피 적용)
    - 레시피 없으면 일반 절차로 진행 (이후 신호 누적되어 다음 사이클에 레시피화됨)
 2. **RAG 검색**: `combined_search`로 관련 도메인 문서 검색
 3. 도메인의 "시스템 개요", "핵심 구현 패턴(시스템 수준)", "확장 포인트" 확인 — 시스템 큰 그림 파악용. 작업 단위 step-by-step 은 도메인이 아닌 1번의 레시피 시스템이 담당
@@ -113,6 +113,7 @@ mcp__ax-client__log_writer_signal(
 - `error_recoveries`: 도구·런타임·관찰된 행동이 거절한 접근. 빌드/크래시/추적 anti-pattern. 두 negative-learning 스트림이 모여 `_anti_patterns.md` 4섹션 카탈로그가 됨
 
 이 신호는 로컬 PC의 `.claude/recipes/_signals.jsonl` 에 누적되며, 야간·주말 유휴 시간에
-watch.py 가 합성하여 다음 작업의 `find_recipes` / `get_anti_patterns` 응답에 포함된다.
+소비자(`recipes_synthesizer`)가 합성하여 다음 작업의 `find_recipes` / `get_anti_patterns` 응답에 포함된다 — [중요] 그 둘은 **`ax-client`** 도구다(`#267`). 원전의 `code-recipes` MCP 서버는 이식되지 않았고, 읽기 두 개를 `ax-client` 가 흡수했다: 레시피는 **마스터 트윈**에 있고 이 기계엔 그 디렉토리가 없으므로 큐가 대행한다.
+[주의] 한글로 물어도 된다 — 태그에 한글이 함께 들어간다(사용자 지적 2026-08-23). 안 걸리면 레시피 **목록**이 사유와 함께 온다.
 
 호출 누락 = 학습 단절. 작업 결과 보고 직전에 반드시 호출할 것.

@@ -28,7 +28,7 @@ from .models import (
     ClaimReq, HeartbeatReq, SubmitReq, SubmitFailReq, VerifyReq, AdminResetReq,
     WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq,
     RedmineIssueReq, RedmineLinkCommitReq,
-    WriterSignalReq, HistoryReq, AliasReq, NotAClassReq
+    WriterSignalReq, HistoryReq, AliasReq, NotAClassReq, RecipeSearchReq
 )
 from . import tagging                      # 라우트별 태그 정책 (#257)
 from .persistence import (
@@ -585,6 +585,50 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         _tq_log(f"[thesaurus] not-a-class '{req.term}' → {status} ({paths.name})", root)
         return {"ok": status != "not_found", "status": status,
                 "term": req.term, "project": paths.name}
+
+    @app.post("/api/v1/recipes/search")
+    def recipes_ep(req: RecipeSearchReq):
+        """합성된 레시피 검색 — 요청자(`.33`) 대행 (`#267`).
+
+        [중요] **경로 권위는 마스터다.** 레시피는 마스터 트윈(`<프로젝트>/recipes/`)에 있고
+        요청자 기계엔 그 디렉토리가 없다 — `signals`·`history` 와 같은 대행 구조다.
+        [주의] 읽기인데 마운트를 대조하는 이유: **답의 정확성이 프로젝트에 달렸다.** 남의
+        프로젝트 레시피를 돌려주면 빈 결과보다 나쁘다.
+        [중요] **읽기인데 POST 인 이유는 질의가 한글이기 때문이다** (사용자 지적 2026-08-23).
+        URL 에 넣으면 퍼센트 인코딩으로 저널이 못 읽게 되고 손으로 curl 하면 깨진다 —
+        이 저장소 관례도 이미 본문이다(`POST /api/v1/search/combined`).
+        """
+        from ..context_synth import recipes_read as RR
+        from ..projects.config import ConfigError
+        try:
+            paths = _mounted_paths(req.project)
+        except ConfigError as e:
+            _tq_log(f"[recipes] 거부 — {e}", root)
+            return {"ok": False, "status": "not_mounted", "reason": str(e),
+                    "project": req.project}
+        out = RR.find(paths, req.query, req.n)
+        _tq_log(f"[recipes] '{req.query[:40]}' → {len(out.get('matches') or [])}건 "
+                f"(총 {out.get('total_recipes')}) ({paths.name})", root)
+        return {**out, "project": paths.name}
+
+    @app.get("/api/v1/anti_patterns")
+    def anti_patterns_ep(project: str = ""):
+        """안티패턴 카탈로그 — *"이 프로젝트에서 거절당한 접근"* (`#267`).
+
+        [중요] `exists=False` 로 **「없음」을 명시**한다 — 빈 값만 돌려주면 부르는 쪽이
+        고장과 구분할 수 없다(원전 규약 그대로).
+        """
+        from ..context_synth import recipes_read as RR
+        from ..projects.config import ConfigError
+        try:
+            paths = _mounted_paths(project)
+        except ConfigError as e:
+            _tq_log(f"[anti-pattern] 거부 — {e}", root)
+            return {"ok": False, "status": "not_mounted", "reason": str(e),
+                    "project": project}
+        out = RR.anti_patterns(paths)
+        _tq_log(f"[anti-pattern] 카탈로그 조회 exists={out.get('exists')} ({paths.name})", root)
+        return {**out, "project": paths.name}
 
     @app.post("/api/v1/anti_patterns/notify")
     def anti_patterns_notify_ep(req: AntiPatternNotifyReq):

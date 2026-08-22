@@ -357,6 +357,35 @@ def tool_log_writer_signal(api, args: dict) -> dict:
     return api("POST", "/api/v1/signals", payload)
 
 
+def tool_find_recipes(api, args: dict) -> dict:
+    """합성된 레시피 검색 (`#267`) — **작업 시작 직후에 부른다.**
+
+    원전 주석이 호출 시점까지 못박아 뒀다: *"code-writer 에이전트는 작업 시작 직후에 호출해
+    step-by-step 가이드를 컨텍스트로 받는다."* 그 호출이 여태 **불가능했다** — 합성은 이식
+    됐는데(`recipes_synthesizer`) 읽는 도구가 없어 컨벤션 루프가 한 방향이었다.
+
+    [중요] **레시피 디렉토리를 직접 읽지 않는다** — 마스터 트윈에 있고 이 기계엔 없다.
+    `signals`·`log_history` 와 같은 대행 구조다(`#267` 완료 조건 2).
+    """
+    query = str(args.get("query") or "").strip()
+    if not query:
+        raise ClientError("query 가 비었다 — 무엇을 하려는지가 매칭의 근거다 "
+                          "(예: '미션 태스크 추가')")
+    n = int(args.get("n_results") or 3)
+    # [중요] **본문으로 보낸다** — 질의는 한글이다(*"미션 태스크 추가"*). URL 에 넣으면 저널이
+    #    퍼센트 인코딩으로 남고 손으로 curl 할 수도 없다(사용자 지적 2026-08-23).
+    return api("POST", "/api/v1/recipes/search", {"query": query, "n": max(1, n)})
+
+
+def tool_get_anti_patterns(api, args: dict) -> dict:
+    """안티패턴 카탈로그 (`#267`) — *"이 프로젝트에서 거절당한 접근"*.
+
+    작업 시작 시 불러 **알려진 함정을 처음부터 회피**한다(원전 규약).
+    [중요] 카탈로그가 없으면 `exists=False` + 사유가 온다 — 빈 값과 고장을 섞지 않는다.
+    """
+    return api("GET", "/api/v1/anti_patterns")
+
+
 def tool_log_history(api, args: dict) -> dict:
     """작업 기록 적재 (#207) — 원전 α′ 규약의 클라 자리 (마스터 대행)."""
     title = str(args.get("title") or "").strip()
@@ -756,6 +785,28 @@ TOOLS = [
                          "tags": {"type": "array", "items": {"type": "string"}},
                          "user_quote": {"type": "string",
                                         "description": "사용자 직접 발화 인용 1~3줄"}}}},
+    # [중요] **컨벤션 루프의 반대 방향** (`#267`). 합성은 이식됐는데(`recipes_synthesizer`)
+    #    읽는 도구가 없어 한 방향이었다. 원전 주석이 호출 시점까지 못박아 뒀다:
+    #    *"code-writer 에이전트는 **작업 시작 직후에 호출**해 step-by-step 가이드를 컨텍스트로
+    #    받는다."* 그래서 설명도 그 시점을 말한다 — 도구가 있어도 안 부르면 루프는 여전히 한
+    #    방향이다.
+    {"name": "find_recipes",
+     "description": "**작업을 시작하기 직전에 부른다.** 이 프로젝트에 합성된 코드 레시피"
+                    "(step-by-step 가이드)를 의도·키워드로 찾는다 — 같은 일을 앞서 한 기록이 "
+                    "있으면 그 관습을 따르는 것이 이 프로젝트의 컨벤션이다. 없으면 사유가 "
+                    "온다(「없음」과 「고장」을 구분한다).",
+     "inputSchema": {"type": "object", "required": ["query"],
+                     "properties": {
+                         "query": {"type": "string",
+                                   "description": "작업 의도 또는 키워드 (예: '미션 태스크 추가')"},
+                         "n_results": {"type": "integer",
+                                       "description": "반환 최대 건수 (기본 3)"}}}},
+    {"name": "get_anti_patterns",
+     "description": "**작업을 시작하기 직전에 부른다.** 이 프로젝트에서 **거절당한 접근**의 "
+                    "카탈로그를 받아 알려진 함정을 처음부터 회피한다(누적된 "
+                    "rejected_approaches·error_recoveries 를 dedupe 한 결과). 아직 없으면 "
+                    "`exists=false` 와 사유가 온다.",
+     "inputSchema": {"type": "object", "properties": {}}},
 ]
 
 
@@ -766,7 +817,9 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
     if name in ("list_works", "get_work", "redmine_note", "log_writer_signal", "log_history",
                 "add_object_alias", "mark_not_a_class", "redmine_list_issues",
                 "redmine_get_issue", "redmine_meta", "redmine_create_issue",
-                "redmine_link_commit"):
+                "redmine_link_commit",
+                # 레시피·안티패턴 읽기 — 큐 대행이므로 같은 자리다 (`#267`)
+                "find_recipes", "get_anti_patterns"):
         a = api or queue_api(root)
         if name in ("add_object_alias", "mark_not_a_class"):
             # 프로젝트는 배달된 config 가 안다 — #210(활성 스위치)에 흔들리지 않게 실어 보낸다
@@ -785,6 +838,10 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
             return tool_get_work(a, str(args.get("work_id") or ""))
         if name == "log_writer_signal":
             return tool_log_writer_signal(a, args)
+        if name == "find_recipes":
+            return tool_find_recipes(a, args)
+        if name == "get_anti_patterns":
+            return tool_get_anti_patterns(a, args)
         if name == "log_history":
             return tool_log_history(a, args)
         if name == "redmine_list_issues":

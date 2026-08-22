@@ -303,3 +303,13 @@ class WorkPatchReq(BaseModel):
     merge_status: Optional[str] = None
     redmine_issue_id: Optional[int] = None
     review_decision: Optional[dict] = None
+
+
+class RecipeSearchReq(BaseModel):
+    """레시피 검색 (`#267`). [중요] **질의를 본문으로 받는다 — URL 에 한글을 넣지 않는다**
+    (사용자 지적 2026-08-23). 이 저장소 관례가 이미 본문이다(`search/combined`)."""
+
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다.
+    project: str = ""
+    query: str
+    n: int = 3

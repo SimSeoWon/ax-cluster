@@ -262,7 +262,13 @@ def test_request_surface_gate() -> None:
     # 엔드포인트가 그 함수를 쓰고 **200 + ok:false** 로 답하는지 (형태가 계약이다)
     src = (Path(__file__).resolve().parent / "task_queue" / "server.py").read_text(
         encoding="utf-8")
-    check("[중요] thesaurus 표면이 게이트를 쓴다", src.count("_mounted_paths(req.project)") == 2,
+    # [주의] **셈이 아니라 자리로 잰다** — `_mounted_paths` 를 쓰는 표면이 늘면(`#267` 레시피
+    #    검색) 셈은 깨지지만 계약은 그대로다. 물어야 할 것은 *"그 엔드포인트가 게이트를 쓰나"* 다.
+    for _fn in ("thesaurus_alias_ep", "thesaurus_not_a_class_ep", "recipes_ep"):
+        _i = src.index(f"def {_fn}(")
+        check(f"[중요] {_fn} 이 마운트 게이트를 쓴다",
+              "_mounted_paths(" in src[_i:_i + 1800], _fn)
+    check("[중요] thesaurus 표면이 게이트를 쓴다", src.count("_mounted_paths(req.project)") >= 2,
           str(src.count("_mounted_paths(req.project)")))
     # [주의] **`_paths_for` 의 `resolve(proj or "")` 는 남아 있어야 한다** — `#210` 의 의도된
     #    예외다(work 스탬프). 칸을 「전부 금지」로 쓰면 그 예외까지 잡아 거짓 실패가 난다.
