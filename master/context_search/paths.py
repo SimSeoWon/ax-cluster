@@ -50,6 +50,10 @@ DEPENDENCY_GRAPH_DB = "dependency_graph.db"
 # 소스 클론 안에서 색인할 하위 경로. §5.2-E — 소스 한정.
 SOURCE_SUBDIR = "Source"
 
+# 트윈 안의 소스 클론 디렉토리 **기본값**. 실제 값은 `config.yaml` 의 `track.local_clone` 이다
+# (#266 완료 조건 5): 저장하면서 안 읽는 값을 남기지 않는다 — `#260`(branch 하드코딩)과 같은 부류였다.
+DEFAULT_CLONE_DIR = "repo"
+
 
 @dataclass(frozen=True)
 class ProjectPaths:
@@ -57,6 +61,9 @@ class ProjectPaths:
 
     name: str
     root: Path
+    # [중요] `config.yaml` 의 `track.local_clone`. `resolve()` 가 채운다 — 직접 만들 때는
+    #    기본값이 곧 종전 동작이다(하드코딩이던 `"repo"`).
+    clone_dir: str = DEFAULT_CLONE_DIR
 
     @property
     def config(self) -> Path: return self.root / "config.yaml"
@@ -65,7 +72,7 @@ class ProjectPaths:
     @property
     def ontology(self) -> Path: return self.root / "ontology"
     @property
-    def repo(self) -> Path: return self.root / "repo"
+    def repo(self) -> Path: return self.root / (self.clone_dir or DEFAULT_CLONE_DIR)
     @property
     def source(self) -> Path:
         """[중요] 색인 대상. `Content/`(uasset, 워킹트리의 93%)는 여기 들어오지 않는다 (§5.2-E)."""
@@ -161,7 +168,20 @@ def resolve(name: str = "", *, registry: Registry | None = None) -> ProjectPaths
         raise ConfigError(
             f"등록되지 않은 프로젝트다: {target}. 등록된 것: {', '.join(reg.names) or '(없음)'}"
         )
-    return ProjectPaths(name=target, root=reg.dir_of(target))
+    root = reg.dir_of(target)
+    return ProjectPaths(name=target, root=root, clone_dir=clone_dir_of(root))
+
+
+def clone_dir_of(root: Path) -> str:
+    """`config.yaml` 의 `track.local_clone`. **설정이 없으면** 기본값이다.
+
+    [주의] 파싱 오류는 삼키지 않는다 — 깨진 `config.yaml` 이 조용히 기본값으로 접히면
+    그 프로젝트는 남의 디렉토리를 색인하게 된다. 없는 것과 깨진 것은 다르다.
+    """
+    cfg = root / "config.yaml"
+    if not cfg.is_file():
+        return DEFAULT_CLONE_DIR
+    return (ProjectConfig.load(cfg).local_clone or DEFAULT_CLONE_DIR).strip() or DEFAULT_CLONE_DIR
 
 
 def resolve_mounted_only(name: str = "", *, registry: Registry | None = None) -> ProjectPaths:

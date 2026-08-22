@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from master.client import bundle                                    # noqa: E402
+from master.client import bundle, spec                              # noqa: E402
 from master.projects.config import ROLE_REQUESTER, ROLE_WORKER, Workshop, ConfigError  # noqa: E402
 
 PASS = FAIL = 0
@@ -413,7 +413,8 @@ def test_workshop_delivery() -> None:
           bundle.merge_workshop_md("", "requester") == canon)
     check("[중요] 워커에게는 병합도 없다", bundle.merge_workshop_md(fake, "worker") == "")
 
-    dry = bundle.deliver("P", _facts(role="requester"), dry_run=True)
+    dry = bundle.deliver("P", _facts(role="requester"), dry_run=True,
+                          project_init=spec.EMPTY_INIT)
     check("plan 이 자산을 노출한다 (안 보이는 산출물은 없는 것으로 읽힌다)",
           len(dry.get("workshop") or []) == len(ws), str(len(dry.get("workshop") or [])))
 

@@ -53,22 +53,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..projects.config import Registry
+from . import spec
 
 MASTER_HOST = "192.168.0.57"
 SERVICES = {"task_queue": 8101, "broker": 8102, "projects": 8103}
-# [중요] 역할별 스킬 — 요청자에게 워커 절차를 주지 않는다 (사용자 확정 2026-08-09).
-#   사람이 편집 중인 트리에서 에이전트가 브랜치를 만들고 파일을 고치는 것이,
-#   더티 체크가 막으려던 바로 그 사고다.
-# [중요] 워커에 스킬이 **둘** 배달된다 — 파견 지시가 어느 쪽인지 이름으로 고른다.
-#   `ax-infer` 가 현 토폴로지(워커는 추론만)이고, `ax-work` 는 구 토폴로지(워커가 커밋)다.
-#   구 것을 **지우지 않는 이유**는 settled 결정이다: N-writer 기계장치는 측정으로 뒤집힐
-#   여지가 있는 동안 되돌릴 수 있게 둔다(§8.4 [주의]).
-SKILLS_BY_ROLE = {
-    "worker": ("ax-work", "ax-infer"),
-    # [중요] `ax-review` 는 원전의 「리더(TD·팀장)」 자리다 — 우리에겐 그 그룹이 없어
-    #   요청자가 그 판단을 한다(사용자 확정 2026-08-16). 가드가 이미 그렇게 적어 뒀다.
-    "requester": ("ax-request", "ax-ontology", "ax-review"),
-}
+# [중요] **표는 `spec.py` 가 소유한다** (#266). 여기 있던 정의를 옮겼다 — 같은 값이 두
+#    곳에 있으면 다음에 갈린다(리포트 29 §7-5: *관례는 세기 전에 찾는다*).
+SKILLS_BY_ROLE = spec.SKILLS_BY_ROLE
 SKILL_NAME = "ax-work"          # (호환) 단수 참조가 남아 있는 곳
 
 # [중요] **역할별 파이썬 페이로드** (중 2.1 `#135`, 사용자 결정 2026-08-16).
@@ -138,8 +129,10 @@ WORK_REL = f"{AX_DIR}/work"
 
 # [중요] 관리 블록 마커 — 원본과 같은 방식(`project_claude_md.py` 의 `AgentWatch:Start/End`).
 # **이 블록 안만 덮는다.** 밖은 사람(과 `/init`)의 것이라 절대 건드리지 않는다.
-MD_BEGIN = "<!-- AX:Begin — 마스터가 생성한다. 이 블록만 덮인다 -->"
-MD_END = "<!-- AX:End -->"
+# 선언은 `spec.MD_BLOCKS` 다 (#266) — 마커 글자는 이미 배달된 파일 안에 있어 **바꿀 수 없다**.
+_MD_AX = spec.md_block("ax")
+MD_BEGIN = _MD_AX.begin
+MD_END = _MD_AX.end
 SSH_TIMEOUT = 60
 
 
@@ -593,7 +586,8 @@ def write_file(facts: HostFacts, path: str, content: str, *, base: str = "abs") 
     return _remote_write(facts, path, content, base=base)
 
 
-MCP_SERVER_NAME = "ax-client"
+# 이름의 선언은 `spec.MCP_BY_ROLE` 다 (#266) — 여기서는 그 한 항목의 이름만 꺼낸다.
+MCP_SERVER_NAME = spec.MCP_BY_ROLE["requester"][0]
 
 
 def mcp_entry_for(facts: HostFacts) -> dict:
@@ -634,6 +628,26 @@ def skill_text(name: str = SKILL_NAME) -> str:
     if not p.is_file():
         raise BundleError(f"스킬 원본이 없다: {p}")
     return p.read_text(encoding="utf-8")
+
+
+def validate_spec(init=None) -> tuple:
+    """선언과 저장소가 어긋난 곳을 **이름으로** 돌려준다. 빈 튜플이면 온전하다 (#266).
+
+    [중요] **실측이 만든 함수다** (2026-08-22). `config.yaml` 에 없는 스킬을 선언해 `plan` 을
+    돌렸더니 `skill_text` 의 `BundleError` 가 그대로 올라와 **생 트레이스백으로 죽었고**, 그
+    바람에 뒤 호스트(`.43`)는 계획조차 나오지 않았다. 사유를 말해야 하는 자리에서 스택을
+    보여주는 것은 *"거부도 200 + ok:false 로 말한다"* 관례에 어긋난다.
+
+    [주의] 남의 기계를 하나도 건드리기 **전에** 부른다 — 절반 배달이 가장 고치기 어렵다.
+    """
+    problems = []
+    root = Path(__file__).with_name("skills")
+    for role in spec.SKILLS_BY_ROLE:
+        for n in spec.skills_for(role, init):
+            if not (root / n / "SKILL.md").is_file():
+                problems.append(f"[{role}] 선언한 스킬의 원본이 없다: {n} "
+                                f"({root / n / 'SKILL.md'})")
+    return tuple(problems)
 
 
 def payload_text(rel: str) -> str:
@@ -706,9 +720,10 @@ PAYLOAD_INIT = (
 # [주의] `agents`·`skills`·`rules`·`hooks` 는 **파일째 관리**한다(원전도 매 실행 재생성했다).
 #    반면 `.claude/CLAUDE.md` 는 **마커 블록만** 바꾼다 — 사람이 쓴 나머지를 날리지 않는다.
 WORKSHOP_ROLES = ("requester",)
-WORKSHOP_MD_REL = ".claude/CLAUDE.md"
-WS_BEGIN = "<!-- AgentWatch:Start -->"
-WS_END = "<!-- AgentWatch:End -->"
+_MD_WS = spec.md_block("workshop")            # 선언은 spec.MD_BLOCKS (#266)
+WORKSHOP_MD_REL = _MD_WS.rel
+WS_BEGIN = _MD_WS.begin
+WS_END = _MD_WS.end
 
 
 def workshop_dir() -> Path:
@@ -783,12 +798,15 @@ def merge_workshop_md(existing: str, role: str) -> str:
     return ""          # [주의] 마커 없음 = 안 쓴다 (호출자가 사유를 싣는다)
 
 
-def skills_for(role: str) -> tuple:
+def skills_for(role: str, init=None) -> tuple:
     """이 역할이 받을 스킬 이름들. [중요] 모르는 역할은 **빈 튜플이 아니라 예외**다 —
-    조용히 아무것도 안 보내면 배달이 성공한 것처럼 보인다."""
+    조용히 아무것도 안 보내면 배달이 성공한 것처럼 보인다.
+
+    `init` — `spec.ProjectInit`(프로젝트 절 오버레이). 안 주면 기본 표만 (#266).
+    """
     if role not in SKILLS_BY_ROLE:
         raise BundleError(f"모르는 role: {role!r} (가능: {', '.join(SKILLS_BY_ROLE)})")
-    return SKILLS_BY_ROLE[role]
+    return spec.skills_for(role, init)
 
 
 INIT_TIMEOUT = 900
@@ -834,12 +852,28 @@ def run_init(facts: HostFacts, *, runner=None) -> dict:
 
 
 def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
-            init: bool = False) -> dict:
-    """한 머신에 config + 스킬을 배달한다. [중요] **되읽어 대조까지가 배달이다.**"""
+            init: bool = False, project_init=None) -> dict:
+    """한 머신에 config + 스킬을 배달한다. [중요] **되읽어 대조까지가 배달이다.**
+
+    [주의] **이름이 둘이라 헷갈리는 자리다.** `init` 은 원격에서 클로드 `/init` 을 돌릴지의
+    **플래그**(`--init`)이고, `project_init` 은 `#266` 의 **사양 오버레이**(`spec.ProjectInit`)다.
+    처음에 후자를 `init` 이라는 지역변수에 담아 **플래그를 가렸고**, 그러면 `--init` 없이도
+    `/init` 이 도는 상태가 된다(실측 $1.68 짜리 호출이다). 이름을 갈라 둔 이유가 그것이다.
+
+    `project_init` 을 주지 않으면 레지스트리에서 읽는다 — 그래서 **레지스트리 없이 부르려면
+    명시**해야 한다(순수 유닛 테스트의 자리).
+    """
     cfg = json.dumps(config_for(project, facts), ensure_ascii=False, indent=2) + "\n"
+    # [중요] 프로젝트 절 오버레이 (#266) — 선언한 추가 스킬이 실제로 실리는 자리다. 선언이
+    #    없으면 `EMPTY_INIT` 이라 종전과 **글자까지 같다**.
+    pinit = spec.load_init(project) if project_init is None else project_init
+    bad = validate_spec(pinit)
+    if bad:
+        raise BundleError("초기화 사양이 저장소와 어긋난다 (#266) — 배달하지 않는다:\n  "
+                          + "\n  ".join(bad))
     if dry_run:
         return {"host": facts.host, "dry_run": True, "config_bytes": len(cfg),
-                "skills": list(skills_for(facts.role)),
+                "skills": list(skills_for(facts.role, pinit)),
                 "payload": list(payloads_for(facts.role)),
                 "workshop": [rel for rel, _src in workshop_files(facts.role)]}
     # [중요] CLAUDE.md 는 **읽어서 병합**한다 — 덮어쓰면 사람이 쓴 것을 날린다
@@ -864,7 +898,7 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
         "config": _remote_write(facts, CONFIG_REL, cfg, base="checkout"),
         "claude_md": _remote_write(facts, "CLAUDE.md", merged, base="checkout"),
         "skills": [_remote_write(facts, f".claude/skills/{n}/SKILL.md", skill_text(n))
-                   for n in skills_for(facts.role)],
+                   for n in skills_for(facts.role, pinit)],
         # [중요] 파이썬 페이로드 — 패키지로 둬야 모듈의 **상대 임포트가 그대로** 산다.
         #    `__init__.py` 를 먼저 쓰지 않으면 나머지는 임포트되지 않는 파일 더미가 된다.
         # [중요] 파이썬 페이로드 — 저장소 배치를 미러링한다(상대 임포트가 그대로 산다).
