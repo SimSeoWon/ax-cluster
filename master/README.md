@@ -15,6 +15,8 @@
 | `layer2_verify.py` | 층2 검증기 — UE5/C++ 문법 프롬프트 + 백엔드 체인(`agy` → `claude`). `verify_files([(경로, 내용)])` |
 | `test_*.py` | **테스트는 저장소 루트 `CLAUDE.md` 의 세는 법을 따른다.** pytest 불필요 — 각 파일을 그대로 실행한다. 목록은 저장소 루트 `CLAUDE.md` 참조 |
 | `task_queue/` | **잡 분배 큐** (AgentTest `mcp/task_queue/` 이식, 2,717줄). HTTP 서비스 + MCP stdio |
+| `task_queue/tagging.py` | [중요] **요청 태그 정책의 정본** (`#257`·`#258`, 2026-08-22) — 35개 라우트에 4정책(`OPEN`/`TAG`/`MOUNT`/`STAMP`). **선언 없는 라우트가 생기면 `test_tagging.py` 가 깨진다** — 엔드포인트마다 `if` 를 뿌리면 다음 것이 빠지기 때문이고, `#243` 이 시소러스 둘만 배선하고 `signals`·`history`·`claim` 을 남긴 사고가 그 실측이다. [중요] **`MOUNT`(마운트와 대조, 태그 없음도 거절)와 `STAMP`(work 스탬프로 판정, 대조만)를 가르는 것이 핵심** — `STAMP` 에 마운트를 강제하면 `#210`(미종결 work 는 원래 프로젝트로)을 깨뜨린다. 거절 사유 셋(`no_project_tag`·`not_mounted`·`project_mismatch`)은 **고칠 곳이 다르기 때문**에 가른 것이고, 형태는 전부 **200 + `ok:false`**(§12.5-c: 4xx/5xx 는 `ax-client` 가 [미연결]로 읽어 낡은 스냅샷을 정답처럼 돌려준다) |
+| `systemd/*.service` | [주의] **저장소 사본이 정본이다 — 실물을 손으로 고치지 말 것.** 실측 2026-08-22: 실물에만 3줄 더 있었고(`AX_PROJECTS_ROOT` 포함) 다음 배포가 그것을 되돌린다. `test_sandbox.py` 가 **사본==실물**을 잰다. 그리고 유닛에 **프로젝트 이름을 박지 않는다**(`#276`) — 박혀 있던 동안 시소러스 대행이 처음부터 500 이었다 |
 | `auth.py` | [중요] **공용 인증 — 공유 베어러 토큰, fail-closed.** [주의] **뷰 경로(`/view/`)는 기본 공개다** — 조작 불가능한 읽기 전용 화면에 토큰을 요구하면 안 쓰이게 된다(사용자 결정). 잠그려면 `AX_VIEW_REQUIRE_TOKEN=1` + `init-view`. 세 서비스가 같은 ASGI 미들웨어를 쓴다. 토큰이 없거나 약하거나 파일 권한이 열려 있으면 **서비스가 뜨지 않는다**. 열린 경로는 `/livez` 하나 |
 | `layer3_verify.py` | **층3 판정 계약 (fail-closed).** UE5 자동화 로그(`Result={Success\|Fail}` + `TEST COMPLETE. EXIT CODE:`)와 UBT 빌드 로그(`Result: Succeeded\|Failed`)를 각각 파싱한다. [중요] **프로세스 반환 코드를 읽지 않는다** — 실측에서 거짓 실패·거짓 성공이 둘 다 나왔다 |
 | `broker/` | **추론 브로커** (Ollama API 호환). [완료] **가동 중** — `ax-broker.service` `:8102` |

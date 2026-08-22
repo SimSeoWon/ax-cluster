@@ -44,7 +44,7 @@ def normalize_project_id(project_id: str) -> str:
     저장은 표시용 정규값으로 하고(사람과 로그가 읽는 이름), **비교는 여기를 통과시킨다.**
     Gitea 가 `lower_name` 컬럼을 따로 두는 이유가 그것이다 — 표시 이름은 라벨이고
     동일성은 소문자다. 이 구분을 지키지 않으면 Gitea 에서 대소문자만 바꾸는 rename
-    한 번에 훅이 조용히 409 로 전부 거부된다.
+    한 번에 훅이 조용히 전부 거부된다([주의] 형태는 409 가 아니라 소비자의 **건너뛰기**다).
     """
     return (project_id or "").strip().casefold()
 
@@ -308,7 +308,9 @@ class Registry:
 
         훅은 `Sim/ModularStage` 를 싣고 config 에도 그 값이 있지만, Gitea 에서 대소문자만
         바꾸는 rename 이 일어나면 두 값이 갈린다. 동일성은 casefold 로 판정한다.
-        찾지 못하면 빈 문자열 — 호출자가 fail-closed(409) 로 처리한다.
+        찾지 못하면 빈 문자열 — 호출자가 fail-closed 로 처리한다. [주의] 그 형태는 **409 가
+        아니다**: 훅 경로의 호출자는 `events/consumer.py` 이고 **건너뛰고 사유를 남긴다**
+        (HTTP 응답이 없는 경로다). 요청 표면의 거절 형태는 `200 + ok:false`(§12.5-c).
         """
         want = normalize_project_id(project_id)
         if not want:
