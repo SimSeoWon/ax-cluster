@@ -299,9 +299,15 @@ def set_active(name: str, *, registry: Registry | None = None,
         "project_id": cfg.project_id,
         "branch": cfg.branch,
         "last_indexed_commit": cfg.last_indexed_commit,
+        # [중요] 이 문구는 `#242` 로 **참이 됐다.** 그 전에는 색인기가 마운트를 보지 않아
+        #    *"멈춰 있었다"* 가 없는 동작을 전제했다(`#241` 이 그것을 적발했다).
+        # [주의] 따라잡는 **기준은 `last_indexed_commit` 이 아니라 미러 HEAD** 다 —
+        #    `process_event` 가 `rev-parse HEAD` → `fetch` → 그 사이를 diff 한다. 마운트 밖이면
+        #    fetch 를 안 하므로 미러가 그대로 있고, 재개 시 그 지점부터 전부 들어온다.
+        #    워터마크는 색인한 것이 있을 때만 전진하므로(`#244`) 따라잡기 기준이 될 수 없다.
         "note": (
-            "가리키는 프로젝트가 다른 동안에는 이 프로젝트의 문서 갱신이 멈춰 있었다. "
-            "재개하면 last_indexed_commit 부터 따라잡는다."
+            "가리키는 프로젝트가 다른 동안에는 이 프로젝트의 문서 갱신이 멈춰 있었다(#242). "
+            "재개하면 미러 HEAD 부터 따라잡는다."
             if cfg.last_indexed_commit
             else "아직 한 번도 색인하지 않았다(last_indexed_commit 이 비어 있다)."
         ),

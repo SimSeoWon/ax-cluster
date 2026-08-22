@@ -196,6 +196,19 @@ def context_digest(paths: ProjectPaths) -> str:
     return h.hexdigest()[:16]
 
 
+def has_context_md(paths: ProjectPaths) -> bool:
+    """`context/` 에 MD 가 **한 건이라도** 있는가 (`#244`).
+
+    [중요] `context_digest()` 와 다르다 — 그쪽은 *변화*를 보는 지문이라 **빈 디렉토리에도 해시를
+    돌려준다.** 「색인할 것이 있는가」는 개수 문제다.
+    [주의] 하위 디렉토리를 센다 — 실물이 `context/Source/…` 에 있어 `context/*.md` 로 세면 0 이다.
+    """
+    ctx = paths.context
+    if not ctx.is_dir():
+        return False
+    return any(True for _ in ctx.rglob("*.md"))
+
+
 def _digest_path(paths: ProjectPaths) -> Path:
     return paths.root / DIGEST_FILE
 
@@ -342,6 +355,19 @@ def process_event(ev: Event, *, registry: Registry | None = None,
         r.error = str(e)
         return r
 
+    # [중요] **마운트되지 않은 프로젝트는 여기서 멈춘다** (`#242`). git 을 부르기 **전에** 막아야
+    #    한다 — fetch·그래프·합성이 마운트 밖 프로젝트에 돌면 그것이 곧 비용이고, 워터마크까지
+    #    찍히면 상태가 오염된다(실측 2026-08-22: 등록만 된 NS 를 색인하고 워터마크를 찍어
+    #    온보딩 판정이 *"전부 초기화됐다"* 고 거짓 보고했다).
+    # [중요] **`active` 가 비어도 막는다** — fail-closed. 2026-08-21 에 만든 게이트가 바로 그
+    #    구멍(빈 active 면 통과)을 가졌다. 「모르면 통과」는 게이트가 아니다.
+    # [주의] 건너뜀은 **에러가 아니다** — 유닛을 빨갛게 만들지 않고 사유만 남긴다.
+    mounted = (reg.active or "").strip()
+    if name != mounted:
+        r.skipped = (f"마운트되지 않았다 (활성: {mounted or '(없음)'}) — "
+                     f"git 을 부르지 않고 건너뛴다 (§5.5.2 단일 마운트)")
+        return r
+
     if not paths.repo.is_dir():
         r.error = f"소스 클론이 없다: {paths.repo}"
         return r
@@ -408,8 +434,21 @@ def process_event(ev: Event, *, registry: Registry | None = None,
             r.error = f"재색인 실패: {type(e).__name__}: {e}"
             return r
 
-    if r.to_commit:
+    # [중요] **워터마크는 색인할 것이 있었을 때만 찍는다** (`#244`). 종전에는 `to_commit` 만
+    #    참이면 찍어서 **컨텍스트 MD 0건에도 찍혔다** — 실측: ServerTest 가 MD 0건인데
+    #    `last_indexed_commit` 이 HEAD 였고, 2026-08-22 NS 온보딩에서도 표본 2건으로 워터마크가
+    #    찍혀 온보딩 판정이 *"전부 초기화됐다"* 고 **거짓 보고**했다.
+    #    [주의] 거짓 신선도는 합성을 **영원히 건너뛰게** 만든다 — 다음 이벤트가 그 커밋을
+    #    기준으로 diff 하므로 변경분이 사라진다.
+    # [주의] **`context_digest()` 로 판정하면 안 된다** — 빈 디렉토리도 해시(빈 문자열의
+    #    sha256)를 돌려주므로 참이 된다. 실측 2026-08-22: 그렇게 짰다가 회귀 칸에 잡혔다.
+    #    조건은 *"MD 가 한 건이라도 있는가"* 다(`#244` 완료 조건 그대로).
+    if r.to_commit and has_context_md(paths):
         _update_watermark(paths, r.to_commit)
+    elif r.to_commit:
+        # 조용히 넘기지 않는다 — 「안 찍었다」와 「찍었다」는 다른 상태다.
+        r.skipped = ((r.skipped + " · ") if r.skipped else "") + \
+            "워터마크 미기입 — context/ 에 MD 가 없다 (색인할 것이 없으면 기준을 전진시키지 않는다)"
     return r
 
 
@@ -471,8 +510,12 @@ def consume_once(spool: Spool | None = None, *, registry: Registry | None = None
     if not batch.events:
         # project_id 는 각 프로젝트의 `config.yaml` 이 SSOT 다(`track.project_id`).
         # [주의] 못 읽는 프로젝트는 조용히 건너뛰지 않고 **세어서** 결과에 남긴다.
+        # [중요] **마운트된 것만 돈다** (`#242`). 종전에는 `reg.names` 전부를 돌아, 등록만 된
+        #    프로젝트도 5분마다 fetch·대조 대상이 됐다(실측 2026-08-22: `프로젝트 2개`).
+        #    관문(`process_event`)이 다시 막지만 여기서 애초에 만들지 않는 것이 싸다.
         ids = []
-        for _name in reg.names:
+        _mounted = (reg.active or "").strip()
+        for _name in ([_mounted] if _mounted and _mounted in reg.names else []):
             try:
                 pid = (reg.config_of(_name).project_id or "").strip()
             except Exception:                               # noqa: BLE001
