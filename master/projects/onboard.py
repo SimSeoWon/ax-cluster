@@ -235,3 +235,160 @@ def plan(name: str, *, registry: Registry | None = None, hosts: bool = True) -> 
         except Exception as e:                               # noqa: BLE001
             p.error = f"기계 조회 실패: {type(e).__name__}: {e}"
     return p
+
+
+# ── 실행기 ─────────────────────────────────────────────────────────
+#
+# [중요] **`confirm=False` 가 기본이다.** 승인이 곧 트리거이므로 코드의 기본값은 안 하는 쪽이다
+# (`finalize_work` 선례). 그리고 `only=` 로 단계를 끊을 수 있다 — `synth` 는 LLM 을 태우므로
+# 돈과 시간이 들고, 저장소 관례가 *"단계마다 사람이 끊는다"* 다.
+
+# [중요] 마스터는 소스 저장소에 push 하지 않는다(§2.1). URL 이 아닌 **센티넬**을 넣어 시도 자체가
+#    시끄럽게 실패하게 한다 — 기존 `ModularStage/repo` 가 그렇게 되어 있고 그 관례를 복제한다.
+PUSH_DISABLED = "DISABLED://마스터는-소스저장소에-push하지-않는다-PLAN.md-2.1"
+WRITE_REMOTE = "gitea-write"
+
+
+def _git(cwd, *args, timeout: int = 600, env_extra=None) -> tuple:
+    import os as _os
+    import subprocess
+    env = None
+    if env_extra:
+        env = dict(_os.environ)
+        env.update(env_extra)
+    r = subprocess.run(["git", *(["-C", str(cwd)] if cwd else []), *args],
+                       capture_output=True, text=True, timeout=timeout, check=False, env=env)
+    return r.returncode, ((r.stdout or "") + (r.stderr or "")).strip()
+
+
+def _ensure_safe_directory(bare: str) -> str:
+    """[중요] §5.5.3-a — bare 는 `gitea` 소유라 global config 의 `safe.directory` 가 **유일한
+    방법**이다. `-c` 도 `GIT_CONFIG_*` 환경변수도 무시된다(git 2.34.1 실측)."""
+    rc, out = _git(None, "config", "--global", "--get-all", "safe.directory")
+    if bare in (out or "").splitlines():
+        return "이미 등록됨"
+    rc, out = _git(None, "config", "--global", "--add", "safe.directory", bare)
+    if rc != 0:
+        raise ConfigError(f"safe.directory 등록 실패: {out[:200]}")
+    return "등록함"
+
+
+def do_clone(paths, cfg) -> str:
+    """소스 클론 — 기존 `ModularStage/repo` 의 리모트 구성을 **복제한다**.
+
+    [주의] 클론 자체보다 **리모트 구성이 계약이다**: `origin` 은 로컬 bare 에서 fetch 하고
+    push 는 센티넬로 막히며, attempt push 는 `gitea-write` 로만 나간다.
+    """
+    notes = [f"safe.directory {_ensure_safe_directory(cfg.bare_path)}"]
+    if paths.repo.exists() and any(paths.repo.iterdir()):
+        raise ConfigError(f"이미 무언가 있다: {paths.repo} — 덮지 않는다")
+    # [중요] **LFS smudge 를 끈다** (실측 2026-08-22, NS 라이브 런에서 잡혔다).
+    #    NS 의 `.gitattributes` 가 `*.uasset filter=lfs` 라, 로컬 bare 경로에서 클론하면 LFS
+    #    엔드포인트가 없어 *"Smudge error: Error downloading …"* 로 클론이 실패한다.
+    #    [중요] 그런데 **마스터는 그 바이트가 필요 없다** — `Content/**` 는 색인 제외이고 트윈의
+    #    범위는 source-only 다. 포인터만 받으면 되고, 그 편이 137MB+ 를 안 내려받아 더 낫다.
+    #    [주의] ModularStage 는 LFS 를 쓰지 않아(매칭 0건) 이 함정이 지금까지 안 드러났다 —
+    #    그 클론은 `cp -a` 로 만들어졌다(§5.5.3-a).
+    rc, out = _git(None, "clone", "--branch", cfg.branch or "main",
+                   cfg.bare_path, str(paths.repo), timeout=1800,
+                   env_extra={"GIT_LFS_SKIP_SMUDGE": "1"})
+    if rc != 0:
+        raise ConfigError(f"클론 실패: {out[:300]}")
+    notes.append("LFS smudge 생략(포인터만 — Content/ 는 색인 제외)")
+    rc, out = _git(paths.repo, "remote", "set-url", "--push", "origin", PUSH_DISABLED)
+    if rc != 0:
+        raise ConfigError(f"origin push 차단 실패: {out[:200]}")
+    notes.append("origin push 차단(센티넬)")
+    if cfg.clone_url:
+        rc, out = _git(paths.repo, "remote", "add", WRITE_REMOTE, cfg.clone_url)
+        notes.append(f"{WRITE_REMOTE} 추가" if rc == 0 else f"{WRITE_REMOTE} 실패: {out[:80]}")
+    else:
+        notes.append(f"[주의] clone_url 이 비어 {WRITE_REMOTE} 를 못 만들었다 — attempt push 불가")
+    rc, head = _git(paths.repo, "rev-parse", "--short", "HEAD")
+    return f"{head} · " + " · ".join(notes)
+
+
+def do_graph(paths) -> str:
+    """그래프 전체 구축 — LLM 0. 결정적이라 싸다."""
+    from ..graph import class_graph as cg, dependency as dep
+    a = cg.build_full(paths)
+    b = dep.build_full(paths)
+    return f"class_graph {getattr(a, 'classes', '?')} · dependency {getattr(b, 'files', '?')}"
+
+
+def do_synth(paths, *, limit: int = 0) -> str:
+    """컨텍스트 MD 최초 합성 — [중요] **LLM 을 태운다.** 원전 `initial_context_build` 대응.
+
+    `skip_existing=True` 라 중단 후 재실행이 누락분만 채운다(원전과 같은 계약).
+    """
+    from ..context_synth import synth
+    s = synth.run(paths, changed=None, skip_existing=True, limit=limit)
+    return (f"그룹 {s.groups} · 작성 {s.written} · 건너뜀 {s.skipped} · 거부 {s.refused} "
+            f"· 사실게이트 {s.unfactual} · 실패 {s.failed}"
+            + (f" · [중요] {s.aborted}" if s.aborted else ""))
+
+
+def do_index(paths) -> str:
+    """색인 전체 구축 + 워터마크 기입. [중요] 워터마크가 이 흐름의 완료 지표다."""
+    from ..context_search.rebuild import rebuild_all
+    from ..events.consumer import _update_watermark
+    st = rebuild_all(paths)
+    rc, head = _git(paths.repo, "rev-parse", "HEAD")
+    if rc != 0 or not head:
+        raise ConfigError("HEAD 를 읽지 못해 워터마크를 찍지 않는다 — 색인만 됐다")
+    _update_watermark(paths, head.strip())
+    return f"vector {getattr(st, 'vector_docs', '?')} · 워터마크 {head.strip()[:7]}"
+
+
+RUNNERS = {"clone": do_clone, "graph": do_graph, "synth": do_synth, "index": do_index}
+
+
+def run(name: str, *, confirm: bool = False, only=None, registry: Registry | None = None,
+        limit: int = 0) -> dict:
+    """서버 절을 이어서 실행한다. [중요] **`confirm=False` 는 계획만 낸다.**
+
+    `only` — 실행할 단계 이름들. 없으면 남은 것 전부. `synth` 는 LLM 을 태우므로 끊을 수 있게 뒀다.
+    """
+    reg = registry or Registry.load()
+    from ..context_search.paths import resolve
+    from .config import ProjectConfig
+
+    steps = probe_server(name, registry=reg)
+    remaining = [s.key for s in steps if not s.done and s.key in RUNNERS]
+    todo = [k for k in remaining if not only or k in set(only)]
+    out = {"project": name, "confirm": confirm, "remaining": remaining, "todo": todo,
+           "done": [], "results": {}, "error": ""}
+    blockers = [s.key for s in steps if not s.done and s.key not in RUNNERS]
+    if blockers:
+        out["error"] = (f"이 흐름이 만들 수 없는 단계가 남았다: {', '.join(blockers)} "
+                        f"— `bare` 는 Gitea 에, `register` 는 register_project 가 만든다")
+        return out
+    if not confirm:
+        out["commands"] = [f"python -m master.projects.onboard {name} --confirm"
+                           + (f" --only {','.join(todo)}" if only else "")]
+        out["note"] = ("할 것이 없다" if not todo
+                       else f"실행할 단계: {', '.join(todo)} — confirm=True 가 이어서 한다")
+        return out
+
+    paths = resolve(name, registry=reg)
+    cfg = ProjectConfig.load(paths.config)
+    for key in todo:
+        fn = RUNNERS[key]
+        try:
+            if key == "clone":
+                detail = fn(paths, cfg)
+            elif key == "synth":
+                detail = fn(paths, limit=limit)
+            else:
+                detail = fn(paths)
+        except Exception as e:                               # noqa: BLE001
+            # [중요] 뒤 단계를 태우지 않는다 — 클론이 없는데 그래프를 돌리면 0건으로 덮는다.
+            out["error"] = f"{key} 실패: {type(e).__name__}: {e}"
+            out["results"][key] = f"실패: {e}"
+            return out
+        out["done"].append(key)
+        out["results"][key] = detail
+        if key == "clone":
+            paths = resolve(name, registry=Registry.load())   # local_clone 재해석
+    out["note"] = f"완료: {', '.join(out['done']) or '(없음)'}"
+    return out
