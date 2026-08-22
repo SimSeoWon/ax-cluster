@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+from pathlib import Path
 
 from . import bundle, spec
 
@@ -73,7 +74,19 @@ def cmd_plan(project: str) -> int:
     for f in _facts(project):
         print(f"\n── {f.summary}")
         if not f.checkout_ok:
-            print("   [중요] 체크아웃이 없어 배달 대상이 아니다")
+            # [중요] **배달 항목으로 낸다** (`#254` 완료 조건 1) — 종전에는 *"배달 대상이 아니다"*
+            #    라고만 찍어서, 「무엇을 하면 이 기계가 준비되는가」가 계획에 없었다.
+            # [주의] **임포트도 `try` 안에 둔다** — 밖에 뒀다가 `Path` 미임포트로 `NameError` 가
+            #    나서 사유조차 안 찍혔다(실측 2026-08-22). 실패를 말하지 못하면 없는 것과 같다.
+            try:
+                sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+                from client.init import bootstrap as _B
+                cfg_ = bundle.Registry.load().config_of(project)
+                for line in _B.plan_lines(f, cfg_):
+                    print(line)
+            except Exception as e:                           # noqa: BLE001
+                print(f"   [중요] 체크아웃이 없고 클론 계획도 못 냈다: {e}")
+            print("   [주의] 위 클론이 끝나야 아래 배달물이 갈 자리가 생긴다")
             continue
         cfg = bundle.config_for(project, f)
         # [중요] **태그를 계획에 명시한다** (사용자 2026-08-22: *"태그 명시해서 저장하고,
@@ -158,9 +171,17 @@ def cmd_deliver(project: str, *, init: bool = False) -> int:
     bad = 0
     for f in _facts(project):
         if not f.checkout_ok:
-            print(f"  [중요] {f.host}: 체크아웃 없음 — 배달하지 않는다 ({'; '.join(f.errors)})")
-            bad += 1
-            continue
+            # [중요] **먼저 놓는다** (`#254`). 종전에는 사유만 적고 건너뛰어서, 새 기계는
+            #    사람이 손으로 클론해야 했다 — 자동화 전제와 어긋난다.
+            try:
+                r0 = bundle.bootstrap_checkout(project, f)
+                print(f"  [완료] {f.host}: 체크아웃 부트스트랩 — "
+                      f"{r0.get('commit','?')} · LFS {r0.get('lfs','?')}")
+                f = bundle.probe(f.host, f.user, f.path, f.driven, f.role)
+            except bundle.BundleError as e:
+                print(f"  [중요] {f.host}: 부트스트랩 실패 — {e}")
+                bad += 1
+                continue
         try:
             r = bundle.deliver(project, f, init=init, project_init=pinit)
         except bundle.BundleError as e:

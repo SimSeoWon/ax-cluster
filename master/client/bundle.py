@@ -1128,6 +1128,40 @@ def _ancestor(commit: str, head: str):
     return r2.returncode == 0
 
 
+def bootstrap_checkout(project: str, facts: HostFacts, cfg=None) -> dict:
+    """체크아웃이 없는 기계에 **레포를 놓는다** (`#254`). 선언은 `client/init/bootstrap.py` 다.
+
+    [중요] **`probe` 를 건드리지 않는다** — 재는 것(읽기 전용)과 놓는 것을 갈라 둔다.
+    [주의] 실패를 삼키지 않는다. 클론이 안 됐는데 배달을 이어가면 `.ax/` 만 있는 디렉토리가
+    남고, 다음 `probe` 가 그것을 「체크아웃 없음」으로 다시 보고한다 — 조용한 반쪽 상태다.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from client.init import bootstrap as B
+
+    if not B.needs_bootstrap(facts):
+        return {"skipped": "체크아웃이 이미 있다"}
+    if cfg is None:
+        cfg = Registry.load().config_of(project)
+    done = []
+    for label, cmd in B.commands(facts, cfg):
+        timeout = (B.CLONE_TIMEOUT if label == "clone"
+                   else B.OWNER_TIMEOUT if label == "owner" else SSH_TIMEOUT)
+        rc, out = _ssh(facts.host, facts.user, cmd, timeout=timeout)
+        # [주의] `symbolic-ref` 는 이미 그 브랜치면 rc=0 이고, `mkdir` 은 있으면 rc≠0 일 수 있다.
+        #    그래서 **클론 성공을 최종 판정으로** 삼는다 — 중간 rc 를 사유로만 남긴다.
+        done.append(f"{label}:rc={rc}" + (f" ({out.strip()[:80]})" if rc != 0 and out else ""))
+        if label == "clone" and rc != 0:
+            raise BundleError(f"{facts.host}: 클론 실패 — {out.strip()[:300]}")
+    # 놓은 뒤 **다시 재서** 확인한다 — 「했다」를 믿지 않는다(저장소 하드룰)
+    after = probe(facts.host, facts.user, facts.path, facts.driven, facts.role)
+    if not after.checkout_ok:
+        raise BundleError(f"{facts.host}: 클론했다는데 체크아웃을 못 읽는다 — "
+                          f"{'; '.join(after.errors)[:200]}")
+    return {"steps": done, "commit": after.commit,
+            "lfs": "실물" if B.wants_lfs(facts) else "포인터"}
+
+
 def merge_gitignore(existing: str) -> str:
     """`.gitignore` 에 **관리 블록만** 갈아끼운다 — 사람이 쓴 나머지는 그대로 둔다 (#266).
 
