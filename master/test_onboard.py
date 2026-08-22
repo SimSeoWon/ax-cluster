@@ -62,11 +62,17 @@ def test_uninitialized() -> None:
     try:
         os.environ["AX_PROJECTS_ROOT"] = str(tmp / "root")
         d = plan("없는것", hosts=False).to_dict()
-        check("여섯 단계가 다 남았다", len(d["remaining"]) == 6, str(d["remaining"]))
+        # [주의] 개수를 박지 않는다 — 단계가 늘면(2026-08-22 에 `hook` 이 늘었다) 칸이 조용히
+        #    거짓이 된다. **사양에서 세는 것**이 옳다.
+        from master.client import spec
+        check("모든 단계가 남았다", len(d["remaining"]) == len(spec.SERVER_STEPS),
+              f"{d['remaining']} vs {len(spec.SERVER_STEPS)}")
         check("이름으로 답한다", "bare" in d["remaining"] and "index" in d["remaining"])
         # [중요] 선결이 깨진 단계는 **판정을 시도하지 않는다** — "비었다" 와 "잴 수 없다" 는 다르다
         blocked = [s for s in d["steps"] if s.get("blocked")]
         check("[중요] 선결 미충족은 blocked 로 갈린다", len(blocked) == 4, str(len(blocked)))
+        check("[주의] hook 은 blocked 가 아니다 — 레지스트리만 있으면 잴 수 있다",
+              not next(s for s in d["steps"] if s["step"] == "hook").get("blocked"))
         check("blocked 가 사유를 말한다", all("아직이다" in s["blocked"] for s in blocked))
         check("판정 실패가 아니라 계획이다 (ok=True)", d["ok"], str(d))
     finally:
@@ -91,7 +97,7 @@ def test_registered_only() -> None:
         check("register 통과", by["register"]["done"], str(by["register"]))
         check("clone 은 남았다", not by["clone"]["done"] and "클론이 없다" in by["clone"]["detail"],
               str(by["clone"]))
-        check("남은 넷을 이름으로", d["remaining"] == ["clone", "graph", "synth", "index"],
+        check("남은 것을 이름으로", d["remaining"] == ["hook", "clone", "graph", "synth", "index"],
               str(d["remaining"]))
         # [중요] clone 이 아직이면 그래프·합성·색인은 **잴 수 없다** (0건과 구분한다)
         check("[중요] clone 미완이 뒤 셋을 blocked 로 만든다",

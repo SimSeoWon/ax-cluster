@@ -29,6 +29,35 @@ from pathlib import Path
 from ..projects.config import Registry
 from .spool import DEFAULT_SPOOL, _SUBDIRS
 
+
+def spool_dir() -> Path:
+    """스풀 경로. [중요] **`Path.home()` 에 의존하면 root 로 올렸을 때 틀린다.**
+
+    실측 2026-08-22: `pkexec` 로 `--apply` 를 돌리자 `DEFAULT_SPOOL` 이 `/root/ax-spool` 이 되어
+    **엉뚱한 곳에 스풀을 만들고** 진짜 스풀(`/home/sim/ax-spool`)의 권한은 손대지 않았다.
+    조용히 「완료」로 보고됐다 — 훅은 `gitea` 로 돌고 소비자는 `sim` 으로 도는데, 그 권한이
+    안 맞으면 **훅이 만든 파일을 소비자가 지우지 못한다**(이 파일 머리말 1번이 그것이다).
+
+    [주의] 그래서 **root 로 돌 때는 추측하지 않고 거부한다** — `AX_EVENT_SPOOL` 이나
+    `SUDO_USER`/`PKEXEC_UID` 로 실제 소유자를 알 수 있을 때만 진행한다.
+    """
+    env = (os.environ.get("AX_EVENT_SPOOL") or "").strip()
+    if env:
+        return Path(env)
+    if os.geteuid() != 0:
+        return Path(DEFAULT_SPOOL)
+    # root 다 — 누구의 홈인지 정해야 한다
+    import pwd
+    name = (os.environ.get("SUDO_USER") or "").strip()
+    if not name:
+        uid = (os.environ.get("PKEXEC_UID") or "").strip()
+        if uid.isdigit():
+            name = pwd.getpwuid(int(uid)).pw_name
+    if not name:
+        raise SystemExit("[중요] root 로 돌고 있는데 스풀 소유자를 알 수 없다 — "
+                         "AX_EVENT_SPOOL 을 명시하라. 추측해서 /root/ax-spool 을 만들지 않는다.")
+    return Path(pwd.getpwnam(name).pw_dir) / "ax-spool"
+
 GITEA_ROOT = Path("/var/lib/gitea/gitea-repositories")
 HOOK_NAME = "ax-index"
 SOURCE = Path(__file__).resolve().parent / "post_receive_hook.py"
@@ -82,7 +111,7 @@ def targets(registry: Registry | None = None) -> list[Target]:
 def check(targets_: list[Target] | None = None) -> list[str]:
     """설치 상태를 **읽기만** 해서 보고한다. 고치지 않는다."""
     lines = []
-    spool = Path(os.environ.get("AX_EVENT_SPOOL") or DEFAULT_SPOOL)
+    spool = spool_dir()
     lines.append(f"스풀 {spool}")
     for d in _SUBDIRS:
         p = spool / d
@@ -112,7 +141,7 @@ def apply(targets_: list[Target] | None = None, *, progress=None) -> int:
         if progress:
             progress(m)
 
-    spool = Path(os.environ.get("AX_EVENT_SPOOL") or DEFAULT_SPOOL)
+    spool = spool_dir()
     for d in _SUBDIRS:
         (spool / d).mkdir(parents=True, exist_ok=True)
     # setgid 를 붙여야 훅(gitea)이 만든 파일의 그룹이 gitea 로 유지되고,

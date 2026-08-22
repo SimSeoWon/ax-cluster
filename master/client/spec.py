@@ -76,6 +76,15 @@ SERVER_STEPS = (
          "resolve_bare_path 가 예외 없이 통과"),
     Step("register", "트윈 디렉토리·config.yaml·gitignore·원본 git 잠금",
          "<트윈>/config.yaml 이 있다"),
+    # [중요] **훅은 클론과 무관하다** — 저장소(bare)에 붙는 것이고, 이것이 없으면 push 해도
+    #    이벤트가 안 생겨 **즉시성이 사라진다**(폴링 5분이 결국 따라잡지만 그건 다른 것이다).
+    #    `#227` 절차 ③에 있는데 이 표에 빠져 있어서 NS 온보딩을 「4/6」으로 **분모까지 틀리게**
+    #    보고했다(#273).
+    # [중요] **무인으로 돈다** — `/usr/local/bin/ax-install-hook` + sudoers NOPASSWD 를 등록했다
+    #    (사용자 2026-08-22: *"자동화를 전제로 프로젝트 구성중"*). root 가 필요하다고 사람의
+    #    인증창을 기다리면 그 단계는 자동이 아니다.
+    Step("hook", "Gitea post-receive 훅 설치 (저장소별 ax-index · ax-project-id)",
+         "<bare>/hooks/post-receive.d/ax-index 가 있다"),
     Step("clone", "소스 클론 — <트윈>/<local_clone>/ 에 워킹트리",
          "paths.repo 가 git 저장소다"),
     Step("graph", "클래스·의존 그래프 전체 구축",

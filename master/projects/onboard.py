@@ -38,6 +38,7 @@ ModularStage 가 도는 이유는 일회성 경로였다 — `#227` 본문: *"`c
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ..client import spec
 from ..context_search.paths import SOURCE_SUBDIR
@@ -119,6 +120,26 @@ def _probe_register(reg: Registry, name: str) -> tuple:
     return True, str(cfg)
 
 
+def _probe_hook(reg: Registry, name: str) -> tuple:
+    """저장소에 우리 훅이 붙어 있는가. [주의] `sim` 은 `gitea` 그룹이라 **읽기는 된다** —
+    설치만 root 가 필요하다."""
+    from .logic import resolve_bare_path
+    try:
+        cfg = reg.config_of(name)
+        bare = Path(resolve_bare_path(cfg.project_id, cfg.bare_path))
+    except Exception as e:                                   # noqa: BLE001
+        return False, f"bare 를 풀지 못했다: {e}"
+    # [주의] **둘 다 `post-receive.d/` 안**에 있다 — `install_hook.py:82` 가 `hook_dir` 기준으로
+    #    쓴다(*"훅 옆에 둔다"*). 처음에 `hooks/ax-project-id` 로 짚어 판정이 늘 [남음] 이었다.
+    hook_dir = bare / "hooks" / "post-receive.d"
+    hook = hook_dir / "ax-index"
+    pid = hook_dir / "ax-project-id"
+    missing = [p.name for p in (hook, pid) if not p.is_file()]
+    if missing:
+        return False, f"없다: {', '.join(missing)} ({hook_dir})"
+    return True, str(hook)
+
+
 def _probe_clone(paths) -> tuple:
     """[주의] 「디렉토리가 있다」로 판정하지 않는다 — 빈 디렉토리를 통과시킨다."""
     if not paths.repo.is_dir():
@@ -169,6 +190,7 @@ def _probe_index(paths) -> tuple:
 PROBES = {
     "bare": _probe_bare,
     "register": _probe_register,
+    "hook": _probe_hook,
     "clone": _probe_clone,
     "graph": _probe_graph,
     "synth": _probe_synth,
@@ -188,7 +210,7 @@ def probe_server(name: str, *, registry: Registry | None = None) -> list:
     reg_ok = False
     for step in spec.SERVER_STEPS:
         fn = PROBES[step.key]
-        if step.key in ("bare", "register"):
+        if step.key in ("bare", "register", "hook"):
             done, detail = fn(reg, name)
             if step.key == "register":
                 reg_ok = done
@@ -204,7 +226,9 @@ def probe_server(name: str, *, registry: Registry | None = None) -> list:
             out.append(StepState(step.key, step.what, False, "",
                                  blocked="register 가 아직이다 — 이 단계는 잴 수 없다"))
             continue
-        if step.key != "clone" and not out[2].done:
+        # [주의] clone 의 인덱스가 밀렸다 — 이름으로 찾는다(위치로 세면 단계가 늘 때 조용히 깨진다)
+        _clone_done = next((s.done for s in out if s.key == "clone"), False)
+        if step.key != "clone" and not _clone_done:
             out.append(StepState(step.key, step.what, False, "",
                                  blocked="clone 이 아직이다 — 이 단계는 잴 수 없다"))
             continue
@@ -271,6 +295,31 @@ def _ensure_safe_directory(bare: str) -> str:
     if rc != 0:
         raise ConfigError(f"safe.directory 등록 실패: {out[:200]}")
     return "등록함"
+
+
+HOOK_WRAPPER = "/usr/local/bin/ax-install-hook"
+
+
+def do_hook(paths) -> str:
+    """훅 설치 — **무인으로 돈다** (sudoers NOPASSWD, 사용자 결정 2026-08-22).
+
+    [중요] root 가 필요한 단계인데 `pkexec` 로 두면 **사람이 인증창을 눌러야** 하고 그것은
+    자동이 아니다. 이 프로젝트는 자동화를 전제로 구성된다 — 그래서 래퍼 한 경로만 허용하는
+    sudoers 규칙을 등록했다(`/etc/sudoers.d/ax-install-hook`).
+
+    [주의] 실패를 삼키지 않는다 — 규칙이 없거나 지워지면 `sudo -n` 이 즉시 실패하고, 그
+    사유를 그대로 낸다(조용히 건너뛰면 훅 없는 프로젝트가 「완료」로 보인다).
+    """
+    import subprocess
+    if not Path(HOOK_WRAPPER).is_file():
+        raise ConfigError(f"훅 설치 래퍼가 없다: {HOOK_WRAPPER} — sudoers 등록이 풀렸다")
+    r = subprocess.run(["sudo", "-n", HOOK_WRAPPER, "--apply"],
+                       capture_output=True, text=True, timeout=300, check=False)
+    out = ((r.stdout or "") + (r.stderr or "")).strip()
+    if r.returncode != 0:
+        raise ConfigError(f"훅 설치 실패(rc={r.returncode}) — {out[:300]}")
+    done = [l.strip() for l in out.splitlines() if "[완료]" in l]
+    return f"{len(done)}개 설치/확인" + (f" · {done[-1][:80]}" if done else "")
 
 
 def do_clone(paths, cfg) -> str:
@@ -354,7 +403,8 @@ def do_index(paths) -> str:
     return f"vector {getattr(st, 'vector_docs', '?')} · 워터마크 {head.strip()[:7]}"
 
 
-RUNNERS = {"clone": do_clone, "graph": do_graph, "synth": do_synth, "index": do_index}
+RUNNERS = {"hook": do_hook, "clone": do_clone, "graph": do_graph,
+           "synth": do_synth, "index": do_index}
 
 
 def run(name: str, *, confirm: bool = False, only=None, registry: Registry | None = None,
@@ -391,6 +441,8 @@ def run(name: str, *, confirm: bool = False, only=None, registry: Registry | Non
         try:
             if key == "clone":
                 detail = fn(paths, cfg)
+            elif key == "hook":
+                detail = fn(paths)
             elif key == "synth":
                 detail = fn(paths, limit=limit)
             else:
