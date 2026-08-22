@@ -478,3 +478,89 @@ def run(name: str, *, confirm: bool = False, only=None, registry: Registry | Non
             paths = resolve(name, registry=Registry.load())   # local_clone 재해석
     out["note"] = f"완료: {', '.join(out['done']) or '(없음)'}"
     return out
+
+
+# ── CLI (`#256`) ──────────────────────────────────────────────────────────────
+#
+# [중요] **이 진입점이 없었다.** 실측 2026-08-23: `run` 이 안내 문구로
+# *"python -m master.projects.onboard <name> --confirm"* 을 돌려주는데 **그 명령이 존재하지
+# 않았다** — `plan`·`run` 은 라이브러리뿐이라 파이썬 세션에서만 부를 수 있었다. 그래서 절차가
+# 문서가 아니라 **사람(또는 세션)의 기억**에 살았고, 그것이 `#256` 이 말한 병이다.
+# [주의] 관례를 따른다 — `plan` 이 기본, `--confirm` 이 트리거(`finalize_work`·`cleanup`·
+# `handover` 와 같은 모양).
+
+def render(plan_or_run) -> str:
+    """사람이 읽을 보고. [중요] **남은 것을 이름으로** 낸다 — 셈만 주면 판단할 수 없다."""
+    d = plan_or_run.to_dict() if hasattr(plan_or_run, "to_dict") else plan_or_run
+    lines = [f"온보딩 — {d.get('project')}"]
+    for s in d.get("steps", []):
+        mark = "[완료]" if s.get("done") else ("[막힘]" if s.get("blocked") else "[남음]")
+        why = s.get("detail") or s.get("blocked") or ""
+        # [주의] 실물 키는 `step` 이다 — `key` 로 추측했다가 `None` 서식 오류가 났다.
+        #    `to_dict` 를 확인해서 쓴다(이번 세션 세 번째 「추측한 이름」이다).
+        lines.append(f"  {mark} {s.get('step', '?'):9} {s.get('what', '')}"
+                     + (f" — {why}" if why else ""))
+    for h in d.get("hosts", []):
+        if isinstance(h, str):
+            lines.append(f"  · {h}")
+            continue
+        # [주의] raw dict 를 그대로 찍으면 사람이 못 읽는다 — 무엇이 안 됐는지가 가려진다
+        mark = "[완료]" if h.get("ok") else "[남음]"
+        lines.append(f"  {mark} {str(h.get('host', '?')):16} {h.get('role', ''):9}"
+                     f" {h.get('reason', '')[:70]}")
+    if d.get("error"):
+        lines.append(f"  [주의] {d['error']}")
+    if d.get("note"):
+        lines.append(f"  → {d['note']}")
+    for c in d.get("commands", []) or []:
+        lines.append(f"  실행: {c}")
+    return "\n".join(lines)
+
+
+def main(argv) -> int:
+    """`python -m master.projects.onboard <프로젝트> [--confirm] [--only a,b] [--limit N]`
+
+    인자 없이 부르면 사용법. [중요] **`--confirm` 없이는 아무것도 쓰지 않는다.**
+    """
+    args = [a for a in argv if not a.startswith("--")]
+    if not args:
+        print(main.__doc__)
+        print("\n  단계:", ", ".join(s.key for s in spec.SERVER_STEPS))
+        return 2
+    name = args[0]
+    confirm = "--confirm" in argv
+    only = None
+    limit = 0
+    for a in argv:
+        if a.startswith("--only"):
+            v = a.split("=", 1)[1] if "=" in a else ""
+            if not v:                       # `--only a,b` 형태
+                i = list(argv).index(a)
+                v = argv[i + 1] if i + 1 < len(argv) else ""
+            only = [x.strip() for x in v.split(",") if x.strip()]
+        elif a.startswith("--limit"):
+            v = a.split("=", 1)[1] if "=" in a else ""
+            if not v:
+                i = list(argv).index(a)
+                v = argv[i + 1] if i + 1 < len(argv) else "0"
+            limit = int(v or 0)
+    if not confirm:
+        # [중요] 계획은 **호스트까지** 본다 — 서버 절만 보고 「됐다」 하면 클라가 빠진다
+        print(render(plan(name)))
+        return 0
+    out = run(name, confirm=True, only=only, limit=limit)
+    print(f"온보딩 실행 — {out['project']} · 남은 단계 {out['remaining']} · 이번 실행 {out['todo']}")
+    for k, v in (out.get("results") or {}).items():
+        print(f"  [{k}] {str(v)[:160]}")
+    if out.get("error"):
+        print(f"  [주의] {out['error']}")
+        return 1
+    print(f"  → 완료 {out.get('done')}")
+    # [중요] **하고 나서 다시 잰다** — 「했다」를 믿지 않는다(저장소 하드룰)
+    print(render(plan(name)))
+    return 0
+
+
+if __name__ == "__main__":
+    import sys as _s
+    _s.exit(main(_s.argv[1:]))

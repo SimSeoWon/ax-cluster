@@ -124,6 +124,7 @@ def set_workshop_tool(
     driven: str = "interactive",
     path: str = "",
     user: str = "",
+    role: str = "worker",
     note: str = "",
 ) -> str:
     """작업장 한 대의 UE5 체크아웃 위치를 등록·갱신한다 (PLAN §5.5.4).
@@ -135,10 +136,15 @@ def set_workshop_tool(
     driven: 'ssh' = 마스터가 밀어넣을 수 있다 / 'interactive' = 사람이 앉아서 한다.
             'ssh' 를 고르면 path 와 user 가 반드시 있어야 한다.
     path:   그 머신의 프로젝트 경로. 윈도우는 역슬래시 그대로 (예: E:\\trunk\\ModularStage).
+    role:   'worker' = 큐에서 태스크를 집는다 / 'requester' = 등재·검증만 하고 **파견되지
+            않는다**(`.33` 이 그렇다). [중요] 이 인자가 **없어서** 요청자를 이 표면으로는
+            등재할 수 없었다(실측 2026-08-23: `logic.set_workshop` 엔 있는데 도구가 안 열어
+            뒀다). 역할을 못 정하면 사람의 기계에 작업이 파견된다 — 기본값에 기대면 안 된다.
     """
     try:
         return json.dumps(
-            set_workshop(name, host, driven=driven, path=path, user=user, note=note),
+            set_workshop(name, host, driven=driven, path=path, user=user,
+                         role=role, note=note),
             ensure_ascii=False,
         )
     except (ConfigError, OSError) as e:
