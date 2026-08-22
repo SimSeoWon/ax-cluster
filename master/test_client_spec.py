@@ -435,9 +435,12 @@ def test_synth_source_only() -> None:
 
 # ── ⑥-g 기계↔마스터 커밋 대조 (사용자 2026-08-22) ────────────────
 
-def _fake_facts(windows: bool = False):
+def _fake_facts(windows: bool = False, checkout_ok: bool = True):
+    # [주의] `checkout_ok` 기본이 False 라 명시하지 않으면 `sync_check` 가 검사기를 **타지 않고**
+    #    「체크아웃 없음」으로 빠진다 — 그래서 칸이 우연히 통과했다(실측 2026-08-22).
     return bundle.HostFacts(host="h", user="u", path="/p", driven="ssh", role="worker",
-                            os="windows" if windows else "linux")
+                            os="windows" if windows else "linux", checkout_ok=checkout_ok,
+                            commit="abc1234")
 
 
 def test_delivered_stamp() -> None:
@@ -463,11 +466,13 @@ def test_delivered_stamp() -> None:
 
 
 def test_compare_version() -> None:
-    """[중요] 판정 규칙 — **설명할 수 없을 때만 실패**다.
+    """[중요] 판정은 `version.compare` 가 한다 — `same` 만 통과다.
 
-    뒤처짐 자체는 실패로 세지 않는다: 내용의 최신성은 페이로드·스킬 해시 대조가 판정하고
-    스탬프가 답하는 것은 **출처**다. 실측(2026-08-22)이 그 분리를 정당화했다 — 세 기계 모두
-    해시는 전부 일치하는데 출처는 21 커밋 뒤였다(그 커밋들이 배달물을 안 바꿨다는 뜻).
+    처음에 「뒤처짐은 실패가 아니다」로 짰고 사용자가 정정했다(2026-08-22): *"작업 저장소를
+    가리키는 것과 관리 마스터는 하나의 버전 관리만 쓰잖아 … 마스터쪽 통신 규칙이 바뀌었는데 …
+    서로 안맞춘다고?"*. 클러스터는 **버전이 하나**다. 그리고 저장소에 이미 그 판정이 있었는데
+    (`version.compare`, 호출자 0) 그 독스트링이 *"`same` 으로 접으면 있는 드리프트를 놓친다"*
+    라고 못박아 뒀다 — 내가 정확히 그것을 했다.
     """
     keep_read, keep_run = bundle._remote_read, bundle._run_local
     try:
@@ -484,13 +489,20 @@ def test_compare_version() -> None:
 
         stamp("OLD")
         v = bundle.compare_version(_fake_facts(), head="HEADHASH", runner=lambda c, h: True)
-        check("조상이면 뒤처짐을 센다", v["ok"] and v["behind"] == 21, str(v))
-        check("재배달 대상이라고 말한다", "재배달" in v["reason"], v["reason"])
+        check("[중요] 뒤처지면 실패다 (버전이 하나다)", not v["ok"], str(v))
+        check("drifted 로 판정한다", v["verdict"] == "drifted", str(v))
+        check("얼마나 뒤인지 말한다", v["behind"] == 21, str(v))
+        check("맞춰야 한다고 말한다", "재배달" in v["reason"], v["reason"])
 
         stamp("OLD", dirty=True)
         v = bundle.compare_version(_fake_facts(), head="HEADHASH", runner=lambda c, h: True)
         check("[중요] dirty 배달을 감추지 않는다",
               v["stamp_dirty"] and "dirty" in v["reason"], str(v))
+
+        stamp("HEADHASH", dirty=True)
+        v = bundle.compare_version(_fake_facts(), head="HEADHASH")
+        check("[중요] 커밋이 같아도 dirty 면 통과가 아니다 — 추적 불가다",
+              not v["ok"] and v["verdict"] == "same", str(v))
 
         stamp("SIDE")
         v = bundle.compare_version(_fake_facts(), head="HEADHASH", runner=lambda c, h: False)
@@ -502,7 +514,16 @@ def test_compare_version() -> None:
 
         stamp("")
         v = bundle.compare_version(_fake_facts(), head="HEADHASH", runner=lambda c, h: True)
-        check("빈 커밋은 실패", not v["ok"] and "비어 있다" in v["reason"], str(v))
+        check("[중요] 커밋을 모르면 unknown — 같다고도 다르다고도 않는다",
+              not v["ok"] and v["verdict"] == "unknown", str(v))
+
+        # 계약 버전(도구 표면)이 다르면 별도로 시끄럽게 — 커밋 거리와 다른 축이다
+        import json as _j
+        bundle._remote_read = lambda f, p: _j.dumps(
+            {"delivered_by": {"commit": "OLD", "dirty": False, "contract": 99}})
+        v = bundle.compare_version(_fake_facts(), head="HEADHASH", runner=lambda c, h: True)
+        check("[중요] 계약 버전 차이를 별도로 말한다",
+              "계약 버전이 다르다" in v["reason"], v["reason"])
 
         bundle._remote_read = lambda f, p: ""
         v = bundle.compare_version(_fake_facts(), head="HEADHASH")
@@ -521,6 +542,97 @@ def test_config_documents_comparison() -> None:
     check("그 문구가 delivered_by.commit 을 가리킨다",
           "delivered_by.commit` 을 마스터" in src)
     check("dirty 의 뜻도 적었다", "delivered_by.dirty=true" in src)
+
+
+# ── ⑥-h 전환이 동기화 지점이다 (사용자 2026-08-22) ────────────────
+
+def test_switch_syncs() -> None:
+    """*"마운트 하지 않은 프로젝트를 불필요하게 동기화 할 필요는 없지만 마운트 대상을 바꿀때
+    체크 한번 해서 맞추면 되는거잖아."*
+
+    [중요] 경계가 둘이다 — ① 마운트가 **실제로 바뀔 때만** 본다(같은 프로젝트 재지정에 SSH 를
+    태우지 않는다) ② 미마운트 프로젝트를 순회하지 않는다.
+    """
+    from master.projects import logic as L
+
+    calls = []
+
+    def fake_sync():
+        calls.append(1)
+        return {"checked": True, "drifted": ["h1"], "commands": ["deliver X"]}
+
+    reg = type("R", (), {})()
+    reg.names = ["A", "B"]
+    reg.active = "A"
+    reg.save = lambda: None
+    reg.config_of = lambda n: type("C", (), {"project_id": "o/r", "branch": "main",
+                                             "last_indexed_commit": "abc"})()
+    keep_check = L._check_one
+    keep_open = L.open_works_in_queue
+    try:
+        L._check_one = lambda r, n: []
+        L.open_works_in_queue = lambda fetcher=None: []
+
+        out = L.set_active("B", registry=reg, sync_fn=fake_sync)
+        check("[중요] 전환하면 동기 확인이 돈다", len(calls) == 1 and "sync" in out, str(out))
+        check("어긋난 기계를 이름으로 낸다", out["sync"]["drifted"] == ["h1"], str(out["sync"]))
+
+        reg.active = "B"
+        calls.clear()
+        out2 = L.set_active("B", registry=reg, sync_fn=fake_sync)
+        check("[중요] 같은 프로젝트 재지정에는 안 돈다 (불필요한 동기 금지)",
+              not calls and "sync" not in out2, str(out2))
+
+        reg.active = "A"
+        calls.clear()
+        out3 = L.set_active("B", registry=reg, sync=False, sync_fn=fake_sync)
+        check("sync=False 로 끌 수 있다", not calls and "sync" not in out3)
+
+        # [주의] 동기 확인이 죽어도 전환을 되돌리지 않는다 — 전환은 이미 됐다
+        reg.active = "A"
+
+        def boom():
+            raise RuntimeError("ssh 죽음")
+        out4 = L.set_active("B", registry=reg, sync_fn=boom)
+        check("[주의] 동기 실패가 전환을 되돌리지 않는다",
+              out4["ok"] and out4["active"] == "B", str(out4))
+        check("실패 사유를 싣는다", "ssh 죽음" in out4["sync"]["reason"], str(out4["sync"]))
+    finally:
+        L._check_one, L.open_works_in_queue = keep_check, keep_open
+
+
+def test_sync_check_shape() -> None:
+    """`sync_check` — 기본은 **보고**, `align=True` 가 맞춘다 (`finalize_work` 관례)."""
+    from master.projects import logic as L
+
+    facts = _fake_facts()
+    delivered = []
+
+    import master.client.bundle as B
+    keep_ws, keep_probe = B.workshops, B.probe
+    try:
+        B.workshops = lambda n: [("h1", "u", "/p", "ssh", "worker")]
+        B.probe = lambda *a: facts
+
+        drift = lambda f: {"ok": False, "verdict": "drifted", "behind": 3, "reason": "3 뒤"}
+        out = L.sync_check("X", checker=drift)
+        check("검사기를 실제로 탔다", out["hosts"][0].get("verdict") == "drifted",
+              str(out["hosts"]))
+        check("어긋나면 명령을 돌려준다", out["commands"] == ["python -m master.client deliver X"],
+              str(out))
+        check("맞추지는 않는다 (기본)", out["aligned"] == [], str(out))
+
+        out2 = L.sync_check("X", align=True, checker=drift,
+                            deliverer=lambda f: delivered.append(f.host))
+        check("[중요] align=True 면 맞춘다", delivered == ["h"], str(delivered))
+        check("맞췄으면 명령을 안 돌려준다", out2["commands"] == [], str(out2))
+
+        same = lambda f: {"ok": True, "verdict": "same", "behind": 0, "reason": "같다"}
+        out3 = L.sync_check("X", checker=same)
+        check("같으면 어긋난 기계가 없다", out3["drifted"] == [] and "같은 버전" in out3["note"],
+              str(out3))
+    finally:
+        B.workshops, B.probe = keep_ws, keep_probe
 
 
 # ── ⑦-b load_init — 환경 오류와 부재를 가른다 ────────────────────
@@ -592,7 +704,8 @@ if __name__ == "__main__":
                test_init_flag_not_shadowed, test_git_excludes, test_gitignore_block,
                test_register_seeds_defaults, test_synth_source_only,
                test_delivered_stamp, test_compare_version,
-               test_config_documents_comparison,
+               test_config_documents_comparison, test_switch_syncs,
+               test_sync_check_shape,
                test_server_steps,
                test_load_init_env,
                test_clone_dir):

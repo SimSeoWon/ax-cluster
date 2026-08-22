@@ -1017,44 +1017,62 @@ def delivered_stamp(facts: HostFacts) -> dict:
 
 
 def compare_version(facts: HostFacts, *, head: str = "", runner=None) -> dict:
-    """배달본의 출처 커밋을 **마스터 HEAD 와 대조한다** (#266).
+    """배달본의 출처 커밋을 **마스터와 대조한다** (#266). 판정은 `version.compare` 가 한다.
 
-    돌려주는 것: `{ok, behind, stamp_dirty, reason}`. [중요] **`ok=False` 는 「설명할 수 없다」
-    일 때만**이다(스탬프 부재·파싱 실패·조상이 아님). *뒤처짐 자체는 실패로 세지 않는다* —
-    배달본 내용의 최신성은 페이로드·스킬 **해시 대조**가 이미 판정하고, 스탬프가 답하는 것은
-    **출처**다. 둘을 섞으면 어느 쪽이 틀렸는지 알 수 없게 된다.
+    [중요] **판정을 여기서 새로 만들지 않는다.** 이 저장소에 이미 `version.compare()` 가 있고
+    (`same`/`drifted`/`unknown`), 그 독스트링이 못박아 뒀다 — *"`same` 으로 접으면 **있는
+    드리프트를 놓친다**"*. 그런데 호출자가 0건이었다.
 
-    [주의] 그래도 뒤처짐과 `dirty` 는 **사유 문자열로 시끄럽게** 낸다. `dirty=True` 면 그
-    커밋이 배달 내용을 다 말하지 못한다 — 추적 불가 상태이고 그것을 감추지 않는다.
+    [중요] **처음에 「뒤처짐은 실패가 아니다」로 짰던 것을 되돌렸다** (사용자 정정 2026-08-22:
+    *"작업 저장소를 가리키는 것과 관리 마스터는 하나의 버전 관리만 쓰잖아 … 마스터쪽 통신
+    규칙이 바뀌었는데 … 서로 안맞춘다고?"*). 클러스터는 **버전이 하나**다. 배달물 해시가 같은
+    것은 *그 커밋들이 배달물을 안 바꿨다*는 뜻일 뿐이고, `config.json` 자체가 마스터 코드의
+    산출물이며 도구 표면(`CONTRACT`)도 마스터에 있다. **다르면 맞춘다** — 초록불로 넘기지 않는다.
+
+    돌려주는 것: `{ok, verdict, behind, stamp_dirty, contract_theirs, reason}`.
+    `ok` 는 `verdict == "same"` 일 때만 참이다(`unknown` 도 거짓 — fail-closed).
     """
-    # [주의] 조상 판정은 **3상**(참/거짓/판정불가)이라 문자열 반환 헬퍼로는 표현이 안 된다.
-    #    처음에 `_run_local` 을 그대로 썼다가 성공·실패가 둘 다 빈 문자열이어서 뒤집혔다.
-    anc_of = runner or _ancestor
+    from ..version import CONTRACT, compare as _compare
     stamp = delivered_stamp(facts)
     if stamp.get("error"):
-        return {"ok": False, "behind": None, "stamp_dirty": None, "reason": stamp["error"]}
-    commit = str(stamp.get("commit") or "").strip()
-    if not commit:
-        return {"ok": False, "behind": None, "stamp_dirty": stamp.get("dirty"),
-                "reason": "delivered_by.commit 이 비어 있다 — 어느 커밋이 배달했는지 알 수 없다"}
+        return {"ok": False, "verdict": "unknown", "behind": None, "stamp_dirty": None,
+                "contract_theirs": None, "reason": stamp["error"]}
     head = head or _run_local("rev-parse", "HEAD")
+    got = _compare(stamp, {"commit": head})
+    verdict = got["verdict"]
     dirty = stamp.get("dirty")
-    if commit == head:
-        return {"ok": True, "behind": 0, "stamp_dirty": dirty,
-                "reason": "마스터 HEAD 와 같다"
-                          + (" [중요] 단 배달 시점 트리가 dirty 였다" if dirty else "")}
+    ct = stamp.get("contract")
+    tail = ""
+    if dirty:
+        # [중요] dirty 배달은 **추적 불가**다 — 그 커밋이 무엇이 갔는지 다 말하지 못한다.
+        tail += " · [중요] 배달 시점 트리가 dirty 였다 (그 커밋이 배달 내용을 다 말하지 못한다)"
+    if ct is not None and ct != CONTRACT:
+        tail += f" · [중요] 계약 버전이 다르다 ({ct} ≠ {CONTRACT}) — 도구 표면이 바뀌었다"
+
+    if verdict == "same":
+        return {"ok": not dirty, "verdict": verdict, "behind": 0, "stamp_dirty": dirty,
+                "contract_theirs": ct,
+                "reason": ("마스터 HEAD 와 같다" if not dirty
+                           else "커밋은 같지만 추적 불가") + tail}
+    if verdict == "unknown":
+        return {"ok": False, "verdict": verdict, "behind": None, "stamp_dirty": dirty,
+                "contract_theirs": ct, "reason": got["reason"] + tail}
+
+    # drifted — 얼마나 뒤인지까지 말한다(같다/다르다만으로는 무엇을 할지 모른다)
+    anc_of = runner or _ancestor
+    commit = str(stamp.get("commit") or "").strip()
     anc = anc_of(commit, head)
     if anc is None:
-        return {"ok": False, "behind": None, "stamp_dirty": dirty,
-                "reason": f"{commit[:7]} 이 이 저장소의 커밋이 아니다 — 다른 계보에서 배달됐다"}
-    if not anc:
-        return {"ok": False, "behind": None, "stamp_dirty": dirty,
-                "reason": f"{commit[:7]} 이 HEAD 의 조상이 아니다 (앞서 있거나 갈라졌다)"}
-    n = _run_local("rev-list", "--count", f"{commit}..{head}")
-    return {"ok": True, "behind": int(n or 0), "stamp_dirty": dirty,
-            "reason": f"{commit[:7]} — HEAD 보다 {n} 커밋 뒤 (재배달 대상)"
-                      + (" · [중요] 배달 시점 트리가 dirty 였다 — 그 커밋이 배달 내용을 "
-                         "다 말하지 못한다" if dirty else "")}
+        why = f"{commit[:7]} 이 이 저장소의 커밋이 아니다 — 다른 계보에서 배달됐다"
+        behind = None
+    elif anc:
+        behind = int(_run_local("rev-list", "--count", f"{commit}..{head}") or 0)
+        why = f"{commit[:7]} — HEAD 보다 {behind} 커밋 뒤 (재배달 필요)"
+    else:
+        behind = None
+        why = f"{commit[:7]} 이 HEAD 의 조상이 아니다 (앞서 있거나 갈라졌다)"
+    return {"ok": False, "verdict": verdict, "behind": behind, "stamp_dirty": dirty,
+            "contract_theirs": ct, "reason": why + tail}
 
 
 def _run_local(*args) -> str:

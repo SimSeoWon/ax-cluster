@@ -315,9 +315,10 @@ def cmd_check(project: str) -> int:
         #    *"커밋한 해시키 등을 이용해 각 워커들과 인프라 서버간 비교하는게 있어야"* +
         #    *"config 파일 문서에 명기하면 이것만 비교하면 되는거잖아"*). 값은 이미
         #    `.ax/config.json` 의 `delivered_by` 에 있었고 **아무도 안 읽었다.**
-        #    [주의] 판정 규칙: **설명할 수 없을 때만 FAIL**(스탬프 부재·파싱 실패·조상 아님).
-        #    뒤처짐 자체는 실패로 세지 않는다 — 내용의 최신성은 위 해시 대조가 판정하고,
-        #    스탬프가 답하는 것은 **출처**다. 둘을 섞으면 어느 쪽이 틀렸는지 알 수 없다.
+        #    [중요] **판정은 `version.compare` 가 한다** — `same` 만 통과다. 처음에 「뒤처짐은
+        #    실패가 아니다」로 짰다가 사용자 정정으로 되돌렸다: 클러스터는 **버전이 하나**이고,
+        #    통신 규칙(`CONTRACT`)과 `config.json` 생성기가 모두 마스터에 있다. 배달물 해시가
+        #    같은 것은 *그 커밋들이 배달물을 안 바꿨다*는 뜻일 뿐 **같은 버전이라는 뜻이 아니다.**
         ver = bundle.compare_version(f)
         ok_ver = ver["ok"]
         ver_note = f" · 출처 {ver['reason']}"
@@ -331,15 +332,17 @@ def cmd_check(project: str) -> int:
               f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}"
               f"{pay_note}{ws_note}{client_note}{rm_note}{ver_note}")
         bad += 0 if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws and ok_ver) else 1
-        if ver["ok"] and (ver.get("behind") or 0) > 0:
-            behind_hosts.append((f.host, ver["behind"], ver.get("stamp_dirty")))
+        if not ver["ok"]:
+            behind_hosts.append((f.host, ver.get("behind"), ver.get("stamp_dirty")))
     # [중요] **끝에 한 줄로 모아 말한다** — 호스트별 줄에 섞이면 「몇 대가 낡았나」가 안 보인다.
     if behind_hosts:
-        worst = max(n for _h, n, _d in behind_hosts)
+        known = [n for _h, n, _d in behind_hosts if n is not None]
         dirty_n = sum(1 for _h, _n, d in behind_hosts if d)
-        print(f"\n  [중요] 배달본이 낡은 기계 {len(behind_hosts)}대 (최대 {worst} 커밋 뒤"
+        span = f"최대 {max(known)} 커밋 뒤" if known else "거리 판정 불가"
+        print(f"\n  [중요] 마스터와 버전이 다른 기계 {len(behind_hosts)}대 ({span}"
               + (f" · {dirty_n}대는 dirty 트리에서 배달됨" if dirty_n else "") + ")")
-        print("        → `python -m master.client deliver <프로젝트>` 로 재배달한다")
+        print("        [중요] 클러스터는 버전이 하나다 — 배달물 해시가 같아도 같은 버전이 아니다.")
+        print("        → `python -m master.client deliver <프로젝트>` 로 맞춘다")
     return 1 if bad else 0
 
 

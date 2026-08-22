@@ -22,6 +22,7 @@ from pathlib import Path
 
 from .config import (ROLE_WORKER,
     DRIVEN_INTERACTIVE,
+    DRIVEN_SSH,
     GITEA_REPO_ROOT,
     PROJECT_CONFIG,
     ConfigError,
@@ -161,8 +162,74 @@ def open_works_in_queue(*, fetcher=None) -> list:
             if (w.get("merge_status") or "in_progress") not in terminal]
 
 
+def sync_check(name: str, *, align: bool = False, checker=None, deliverer=None) -> dict:
+    """이 프로젝트의 등재된 기계들이 **마스터와 같은 버전인지** 본다 (#266, 사용자 2026-08-22).
+
+    > *"마운트 하지 않은 프로젝트를 불필요하게 동기화 할 필요는 없지만 마운트 대상을 바꿀때
+    > 체크 한번 해서 맞추면 되는거잖아."*
+
+    [중요] **경계가 그것이다** — 주기 동기도, 미마운트 프로젝트 순회도 하지 않는다. 전환이
+    일어나는 그 한 번만 본다. 클러스터는 버전이 하나이므로(`version.compare`) 다르면 맞춘다.
+
+    `align=False`(기본)는 **보고만** 한다 — `finalize_work(confirm=False)` 와 같은 모양이다.
+    `align=True` 면 어긋난 기계에 재배달한다. [주의] 남의 기계에 쓰는 동작이라 기본이 아니다.
+
+    `checker`/`deliverer` 는 주입 자리 — 테스트가 SSH 를 타지 않는다.
+    """
+    from ..client import bundle as _b
+    check = checker or (lambda f: _b.compare_version(f))
+    deliver = deliverer or (lambda f: _b.deliver(name, f))
+
+    hosts, aligned, failed = [], [], []
+    try:
+        shops = _b.workshops(name)
+    except Exception as e:                                   # noqa: BLE001
+        return {"checked": False, "reason": f"작업장 목록을 읽지 못했다: {e}"}
+
+    for host, user, path, driven, role in shops:
+        if driven != DRIVEN_SSH or not user or not path:
+            continue                     # 몰 수 없는 기계는 대상이 아니다 (.33 도 배달은 SSH 다)
+        try:
+            facts = _b.probe(host, user, path, driven, role)
+        except Exception as e:                               # noqa: BLE001
+            hosts.append({"host": host, "ok": False, "reason": f"프로브 실패: {e}"})
+            continue
+        if not facts.checkout_ok:
+            hosts.append({"host": host, "ok": False, "reason": "체크아웃 없음 — 부트스트랩 대상"})
+            continue
+        v = check(facts)
+        entry = {"host": host, "role": role, "ok": v["ok"], "verdict": v.get("verdict"),
+                 "behind": v.get("behind"), "reason": v["reason"]}
+        if not v["ok"] and align:
+            try:
+                deliver(facts)
+                entry["aligned"] = True
+                aligned.append(host)
+            except Exception as e:                           # noqa: BLE001
+                entry["aligned"] = False
+                entry["align_error"] = f"{type(e).__name__}: {e}"
+                failed.append(host)
+        hosts.append(entry)
+
+    drifted = [h["host"] for h in hosts if not h["ok"]]
+    return {
+        "checked": True,
+        "hosts": hosts,
+        "drifted": drifted,
+        "aligned": aligned,
+        "align_failed": failed,
+        # [중요] 맞추지 않았으면 **사람이 실행할 명령을 돌려준다** (finalize_work 관례).
+        "commands": ([] if align or not drifted
+                     else [f"python -m master.client deliver {name}"]),
+        "note": ("전부 마스터와 같은 버전이다" if not drifted
+                 else f"버전이 다른 기계 {len(drifted)}대 — 클러스터는 버전이 하나다"
+                      + ("" if align else ". 맞추려면 align=True 또는 위 명령")),
+    }
+
+
 def set_active(name: str, *, registry: Registry | None = None,
-               force: bool = False, works_fetcher=None) -> dict:
+               force: bool = False, works_fetcher=None,
+               sync: bool = True, align: bool = False, sync_fn=None) -> dict:
     """가리키는 프로젝트를 바꾼다. 디렉토리는 전부 남고 마운트 대상만 바뀐다.
 
     [중요] 전환 가드 (#210, 사용자 전제 점검 2026-08-17): 큐에 미종결 work 가 있으면
@@ -202,6 +269,7 @@ def set_active(name: str, *, registry: Registry | None = None,
                 forced_over = [str(w.get("work_id") or "?") for w in open_works]
 
     previous = reg.active
+    changed = previous != name
     reg.active = name
     reg.save()
 
@@ -210,11 +278,24 @@ def set_active(name: str, *, registry: Registry | None = None,
                    "warning": "[중요] 미종결 work 를 둔 채 강제 전환했다 — 그 work 의 "
                               "기록·신호는 스탬프(#210)가 있으면 제 프로젝트로, 없으면 "
                               "새 활성 트윈으로 간다"} if forced_over else {})
+    # [중요] **전환이 동기화 지점이다** (사용자 2026-08-22). 마운트가 실제로 바뀔 때만 본다 —
+    #    같은 프로젝트를 다시 가리키는 호출에 SSH 를 태우지 않고, 미마운트 프로젝트는 순회하지
+    #    않는다. 기본은 **보고**이고 `align=True` 가 맞춘다(남의 기계에 쓰는 동작이라 기본 아님).
+    sync_out: dict = {}
+    if sync and changed:
+        runner = sync_fn or (lambda: sync_check(name, align=align))
+        try:
+            sync_out = {"sync": runner()}
+        except Exception as e:                               # noqa: BLE001
+            # [주의] 전환은 이미 됐다 — 동기 확인 실패로 전환을 되돌리지 않는다. 사유만 싣는다.
+            sync_out = {"sync": {"checked": False, "reason": f"{type(e).__name__}: {e}"}}
+
     return {
         "ok": True,
         "previous": previous,
         "active": name,
         **out_forced,
+        **sync_out,
         "project_id": cfg.project_id,
         "branch": cfg.branch,
         "last_indexed_commit": cfg.last_indexed_commit,

@@ -91,14 +91,19 @@ def register_project_tool(
 
 
 @mcp.tool()
-def set_active_tool(name: str, force: bool = False) -> str:
+def set_active_tool(name: str, force: bool = False, align: bool = False) -> str:
     """가리키는 프로젝트를 바꾼다. 디렉토리는 전부 남고 마운트 대상만 바뀐다.
 
     [중요] 큐에 미종결 work 가 있으면 거부한다 (#210) — 그 work 의 기록·신호가 다른
     프로젝트 트윈에 착지하는 것을 막는 가드다. force=True 는 사람이 감수한다는 뜻.
+
+    [중요] **전환이 동기화 지점이다** (`#266`, 사용자 2026-08-22: *"마운트 대상을 바꿀때 체크
+    한번 해서 맞추면 되는거잖아"*). 마운트가 실제로 바뀌면 그 프로젝트의 등재된 기계들이
+    마스터와 같은 버전인지 보고 결과를 `sync` 로 낸다 — 미마운트 프로젝트는 순회하지 않는다.
+    `align=True` 면 어긋난 기계에 **재배달까지** 한다(기본은 보고 + 실행할 명령).
     """
     try:
-        return json.dumps(set_active(name, force=force), ensure_ascii=False)
+        return json.dumps(set_active(name, force=force, align=align), ensure_ascii=False)
     except (ConfigError, OSError) as e:
         return _fail(e)
 
