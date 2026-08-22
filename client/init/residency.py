@@ -142,7 +142,7 @@ def blocked_reason(project: str, mounted: str) -> str:
 
 CLAIMER_REL_WIN = CLAIMER_REL.replace("/", chr(92))
 PROBE_KEYS = ("running", "stale", "busy", "restart_pending", "pid", "started",
-              "alive_age", "boot_mtime", "code_mtime", "locked", "no_stamp")
+              "alive_age", "boot_mtime", "code_mtime", "locked", "no_stamp", "hung")
 
 
 def console_python(path: str) -> str:
@@ -241,6 +241,10 @@ def refresh_plan_lines(facts, state: dict) -> list:
     if not state.get("running"):
         return [f"   · {facts.host}: 상주 없음 — 갱신 대상이 아니다 "
                 f"(감시자가 다음 주기에 새 코드로 띄운다)"]
+    if state.get("hung"):
+        # [중요] 잠금은 쥐었는데 루프가 멈췄다 — 갱신과 다른 병이다(코드는 최신일 수 있다)
+        return [f"   [주의] {facts.host}: 상주가 **먹통**이다 (잠금 보유 · alive "
+                f"{state.get('alive_age')}초 전) — 갱신이 아니라 사람이 볼 일이다"]
     if not state.get("stale"):
         return [f"   [완료] {facts.host}: 도는 것이 지금 코드다 "
                 f"(부팅 mtime {state.get('boot_mtime')} ≥ 코드 {state.get('code_mtime')})"]

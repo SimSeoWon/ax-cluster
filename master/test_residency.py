@@ -179,6 +179,11 @@ def test_claimer_state_is_process_based() -> None:
     check("안 돌고 있으면 running=False", not st["running"])
     check("[중요] 안 도는 것은 stale 이 아니다 (감시자가 새 코드로 띄운다)", not st["stale"])
 
+    # [중요] **실물처럼 잠금을 쥔다** — 도는 상주는 `claimer.lock` 을 배타적으로 잡고 있다.
+    #    (종전 테스트는 스탬프만 쓰고 「돈다」로 가정했다. 그 계약은 2026-08-23 에 바뀌었다:
+    #    죽인 직후 신선한 `alive` 에 속지 않으려고 **잠금을 권위로** 삼았다.)
+    _held = C.acquire_singleton(root)
+    check("잠금을 쥐었다 (테스트 전제)", _held is not None)
     C.write_boot_stamp(root); C.touch_alive(root)
     st = C.probe_state(root)
     check("부팅 스탬프 뒤 running", st["running"])
@@ -205,10 +210,26 @@ def test_claimer_state_is_process_based() -> None:
     C.clear_restart(root)
     check("치우면 사라진다", not C.restart_requested(root))
 
-    # ── alive 가 낡으면 「도는 것이 아니다」
-    (root / ".ax" / C.ALIVE_FILE).write_text(str(int(_t.time()) - 10_000), encoding="utf-8")
-    check("[주의] alive 가 낡으면 running=False (죽은 프로세스의 스탬프에 속지 않는다)",
-          not C.probe_state(root)["running"])
+    _held.close()                                  # 상주가 죽은 상태로 만든다
+    # ── [중요] **살아 있음의 권위는 잠금이다** (실측 2026-08-23 에 고친 자리)
+    #    처음엔 `fresh or locked` 였다 → 죽인 직후 60초 동안 「아직 돈다」로 읽혀 배달이
+    #    *"여전히 stale — 사람이 봐야 한다"* 를 냈다. 파일은 죽은 뒤에도 남는다.
+    C.touch_alive(root)                       # 신선한 alive, 그러나 잠금은 아무도 안 쥠
+    st = C.probe_state(root)
+    check("[중요] 잠금이 없으면 running=False (신선한 alive 에 속지 않는다)",
+          not st["running"], str(st))
+    check("[중요] 그래서 죽인 직후는 stale 이 아니다 (감시자가 새 코드로 띄운다)",
+          not st["stale"], str(st))
+    src_probe = (Path(__file__).resolve().parent / "work" / "claimer.py").read_text(
+        encoding="utf-8")
+    check("`fresh or locked` 로 되돌아가지 않았다", "running = locked" in src_probe)
+    check("그 이유가 주석에 남아 있다", "죽인 직후" in src_probe)
+    # ── 먹통(잠금은 쥐었는데 루프가 멈췄다)은 **다른 병**이다
+    check("hung 을 낸다", "hung" in st)
+    from client.init import residency as _R
+    lines = _R.refresh_plan_lines(_f(windows=False), {"stale": 0, "running": 1, "hung": 1,
+                                                      "alive_age": 999})
+    check("먹통을 갱신과 갈라 보고한다", any("먹통" in l for l in lines), str(lines))
 
     # ── 트리 전체를 본다 (claimer.py 만 보지 않는다)
     src = (Path(__file__).resolve().parent / "work" / "claimer.py").read_text(encoding="utf-8")

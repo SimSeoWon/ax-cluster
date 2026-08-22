@@ -144,6 +144,13 @@ class Client:
         #    태스크로 착각한다(실측 2026-08-22: `st == 200` 만 봤다). 그리고 사유를 삼키지
         #    않는다 — 태그 배선이 틀리면 워커가 조용히 아무 일도 안 하는 것으로 보인다.
         if st != 200:
+            # [중요] **전이를 양방향으로 남긴다.** 실측 2026-08-23: 마운트를 되돌린 뒤에도
+            #    로그의 마지막 줄이 「거절」이어서 **아직 막혀 있는 것처럼 읽혔다.** 거절만
+            #    찍고 해소를 안 찍으면 로그가 지난 상태를 말한다.
+            #    [주의] 204(집을 것 없음)가 정상 경로다 — 그때가 해소 시점이다.
+            if st == 204 and getattr(self, "_last_refusal", None):
+                self._last_refusal = None
+                self.log("[claim] 거절이 풀렸다 — 이제 정상(집을 잡이 없음)")
             return None
         if isinstance(got, dict) and got.get("ok") is False:
             # [중요] **로그 파일에 남긴다.** 실측 2026-08-23: 처음엔 `stderr` 로만 찍었는데
@@ -161,6 +168,9 @@ class Client:
             return None
         if not (isinstance(got, dict) and got.get("task_id")):
             return None
+        if getattr(self, "_last_refusal", None):
+            self._last_refusal = None
+            self.log("[claim] 거절이 풀렸다 — 태스크를 집었다")
         return got
 
     def heartbeat(self, task_id: str, note: str = ""):
@@ -421,10 +431,14 @@ def probe_state(root: Path, *, interval: int = POLL_SEC) -> dict:
     alive_age = (now - alive_at) if alive_at else -1
     fresh = bool(alive_at) and 0 <= alive_age <= interval * ALIVE_STALE_MULT
     locked = someone_holds_lock(root)
-    # [중요] **살아 있음의 축이 둘이다.** 스탬프(이 코드가 남긴다)와 잠금(어느 코드든 쥔다).
-    #    잠금만 잡히고 스탬프가 없으면 **`#277` 이전 코드가 돌고 있다** — 그것이 가장 위험한
-    #    상태다(깃발을 모르고, 거절을 태스크로 읽는다). 그래서 그때는 무조건 stale 이다.
-    running = fresh or locked
+    # [중요] **살아 있음의 권위는 잠금이다** — OS 가 프로세스 죽음과 함께 풀어 준다.
+    #    [주의] 실측 2026-08-23: 처음엔 `fresh or locked` 로 했더니 **죽인 직후 60초 동안
+    #    「아직 돈다」로 읽혔다**(죽은 프로세스가 남긴 `claimer.alive` 가 신선했다). 그래서
+    #    배달이 *"여전히 stale — 사람이 봐야 한다"* 를 냈다. 파일은 죽은 뒤에도 남는다.
+    #    그리고 `alive` 는 **새 코드만 쓴다** — 새 코드는 잠금도 쥔다. 즉 liveness 에 보태는
+    #    것이 없다. `alive` 의 값은 다른 데 있다: 잠금은 쥐었는데 루프가 멈춘 **먹통** 탐지.
+    running = locked
+    hung = bool(locked and alive_at and not fresh)
     boot_mtime = int(boot.get("code_mtime") or 0)
     no_stamp = locked and not boot_mtime
     # [주의] 안 돌고 있으면 stale 이 아니다 — 감시자가 다음 주기에 새 코드로 띄운다.
@@ -437,7 +451,7 @@ def probe_state(root: Path, *, interval: int = POLL_SEC) -> dict:
     return {"running": running, "pid": pid,
             "started": int(boot.get("started") or 0), "alive_age": alive_age,
             "boot_mtime": boot_mtime, "code_mtime": cur, "stale": stale,
-            "locked": locked, "no_stamp": no_stamp,
+            "locked": locked, "no_stamp": no_stamp, "hung": hung,
             "busy": _state_path(root, BUSY_FILE).exists(),
             "restart_pending": restart_requested(root)}
 
@@ -853,7 +867,8 @@ def main(argv=None) -> int:
         #    그리고 같은 코드가 두 OS 에서 돌아 로컬 유닛으로 잴 수 있다.
         st = probe_state(root, interval=interval)
         for k in ("running", "stale", "busy", "restart_pending", "pid", "started",
-                  "alive_age", "boot_mtime", "code_mtime", "locked", "no_stamp"):
+                  "alive_age", "boot_mtime", "code_mtime", "locked", "no_stamp",
+                  "hung"):
             v = st[k]
             print(f"{k}={int(v) if isinstance(v, bool) else v}")
         return 0
