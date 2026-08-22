@@ -214,11 +214,18 @@ def test_role_payload() -> None:
                        "work/review.py", "work/skeleton_gate.py", "work/build_local.py"},
           str(pay))
     # [주의] 옛 계약("워커에는 안 간다")은 #204 로 의도 변경 — claimer 폐포가 간다.
-    check("[중요] 워커에는 claimer 폐포가 간다 (#204)",
+    #    그리고 2026-08-23 에 한 번 더 늘었다 (사용자 결정 *"전부 열어 준다"*, `#267`·`#261`):
+    #    **워커도 클라 MCP 를 받는다** — 코드를 추론하는 자리에서 레시피·안티패턴을 읽어야
+    #    한다. 폐포는 `client_mcp.py` + **옆 파일로 로드되는** `ontology_cache.py` 둘이다.
+    check("[중요] 워커에는 claimer 폐포 + 클라 MCP 가 간다 (#204 · #267)",
           set(bundle.payloads_for("worker")) == {
+              "clientside/client_mcp.py", "clientside/ontology_cache.py",
               "work/claimer.py", "work/ax_safety.py", "work/build_local.py",
               "work/skeleton_gate.py", "layer3_verify.py", "source_text.py", "utf8.py"},
           str(bundle.payloads_for("worker")))
+    check("[중요] MCP 폐포가 함께 간다 (옆 파일이 빠지면 조회 도구가 조용히 죽는다)",
+          {"clientside/client_mcp.py", "clientside/ontology_cache.py"}
+          <= set(bundle.payloads_for("worker")))
     check("[중요] 워커 페이로드에 판단 모듈(review·coordinator)은 없다 — κ.0 경계",
           not {"work/review.py", "work/coordinator.py"} & set(bundle.payloads_for("worker")))
     # [주의] **원문은 저장소에서, 자리는 배달 경로에서** (#262). 한 값으로 쓰면 재배치 뒤에
@@ -293,7 +300,10 @@ def test_payload_split() -> None:
                       "layer3_verify.py", "source_text.py", "utf8.py",
                       "work/branch_names.py", "work/coordinator.py", "work/review.py",
                       "work/skeleton_gate.py", "work/build_local.py"),
-        "worker": ("work/claimer.py", "work/ax_safety.py", "work/build_local.py",
+        # [주의] 동결값을 **결정으로** 갱신한다 (2026-08-23, `#267`) — 이 동결의 목적은
+        #    *사고로* 바뀌는 것을 막는 것이고, 결정된 변경은 기준선을 옮기는 것이 맞다.
+        "worker": ("clientside/client_mcp.py", "clientside/ontology_cache.py",
+                   "work/claimer.py", "work/ax_safety.py", "work/build_local.py",
                    "work/skeleton_gate.py", "layer3_verify.py", "source_text.py",
                    "utf8.py"),
     }

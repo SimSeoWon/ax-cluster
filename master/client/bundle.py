@@ -117,7 +117,14 @@ PAYLOAD_BY_ROLE = {
                   _pair("work/skeleton_gate.py"), _pair("work/build_local.py")),
     # worker (#204): 폴링 claimer + 안전 가드 + 빌드 호출 사슬. claimer 는 build 유형만
     # 집는다 (types 필터) — infer 는 현행 Flow Y(마스터 구동)가 계속 맡는다.
-    "worker": (_pair("work/claimer.py"), _pair("work/ax_safety.py"),
+    # [중요] **워커도 클라 MCP 를 받는다** (사용자 결정 2026-08-23 — `#267`·`#261`).
+    #    코드를 추론하는 자리에서 레시피·안티패턴을 읽어야 한다. 폐포는 둘이다:
+    #    `client_mcp.py` 와 **옆 파일로 로드되는** `ontology_cache.py`(`_load_cache` 가
+    #    `Path(__file__).with_name` 으로 찾는다 — 빠지면 조회 도구가 조용히 죽는다).
+    #    [주의] 권한은 이 표가 아니라 **토큰 스코프**가 정한다(`auth.WORKER_SCOPE` — 쓰기는 403).
+    "worker": (_pair("clientside/client_mcp.py", "client/runtime/client_mcp.py"),
+               _pair("clientside/ontology_cache.py", "client/runtime/ontology_cache.py"),
+               _pair("work/claimer.py"), _pair("work/ax_safety.py"),
                _pair("work/build_local.py"), _pair("work/skeleton_gate.py"),
                _pair("layer3_verify.py"),
                _pair("source_text.py"), _pair("utf8.py")),
@@ -943,8 +950,12 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
             written["workshop_md"] = ("건너뜀 — 원격 `.claude/CLAUDE.md` 에 "
                                       f"`{WS_BEGIN}` 마커가 없다 (어디가 관리 블록인지 모른 채 "
                                       "덮으면 사람의 문서를 날린다)")
-    # ── 요청자 전용 (소 3.8.4): .mcp.json ─────────────
-    if facts.role == "requester":
+    # ── MCP 등록: **선언이 정한다** (`spec.MCP_BY_ROLE`) ─────────────
+    #    [주의] 종전엔 `facts.role == "requester"` **하드코딩**이었다. 그래서 사양의
+    #    `MCP_BY_ROLE["worker"]` 를 열어도 배달이 따라오지 않았다(실측 2026-08-23: 선언을
+    #    바꾸고 배달했는데 워커에 `.mcp.json` 이 안 갔다). 선언과 배선이 **두 벌**이면 이런 일이
+    #    조용히 난다 — 이제 한 곳(`mcp_for`)이 정한다.
+    if spec.mcp_for(facts.role, pinit):
         prev_mcp = _remote_read(facts, (f"{facts.path}\\.mcp.json" if facts.windows
                                         else f"{facts.path}/.mcp.json"))
         written["mcp_json"] = _remote_write(facts, ".mcp.json",

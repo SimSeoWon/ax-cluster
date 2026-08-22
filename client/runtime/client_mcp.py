@@ -130,7 +130,8 @@ def queue_url(cfg: dict) -> str:
 # 큐 호출 — 실패 모드마다 다른 문장. 401/403 구분이 배선 오진을 막는다
 # ─────────────────────────────────────────────────────────────
 
-def _call(method: str, url: str, token: str, payload=None) -> dict | list:
+def _call(method: str, url: str, token: str, payload=None, *,
+          root_hint: Path | None = None) -> dict | list:
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, method=method,
                                  headers={"Authorization": f"Bearer {token}",
@@ -145,9 +146,19 @@ def _call(method: str, url: str, token: str, payload=None) -> dict | list:
                 "[자격] 토큰이 거부됐다(401) — .ax/token 이 마스터의 requester 토큰과 다르다. "
                 "마스터에서 재배달: python -m master.client deliver") from e
         if e.code == 403:
+            # [주의] **역할을 문구에 박지 않는다.** 종전엔 "requester 토큰으로는" 이었고,
+            #    워커에도 MCP 를 열자(`#267`) **워커에서 틀린 말을 했다**(실측 2026-08-23).
+            #    역할은 배달된 config 가 안다 — 모르면 말하지 않는다.
+            _role = ""
+            try:
+                _role = str((load_config(root_hint).get("this_host") or {}).get("role") or "")
+            except Exception:                                # noqa: BLE001
+                _role = ""
+            who = f"{_role} 토큰" if _role else "이 기계의 역할 토큰"
             raise ClientError(
-                f"[스코프] requester 토큰으로는 이 경로를 열 수 없다(403): {method} {url} — "
-                "검수 흐름 밖의 조작이다. 필요하면 마스터에서 직접 할 것") from e
+                f"[스코프] {who}으로는 이 경로를 열 수 없다(403): {method} {url} — "
+                f"판단·쓰기는 마스터가 한다(κ.0 경계는 토큰이 강제한다). 필요하면 마스터에서 "
+                f"직접 할 것") from e
         detail = e.read().decode("utf-8", "replace")[:300]
         raise ClientError(f"[서버] {method} {url} → {e.code}: {detail}") from e
     except urllib.error.URLError as e:
@@ -225,7 +236,7 @@ def queue_api(root: Path | None = None):
         #    (FastAPI 기본) 모든 GET 에 안전하게 붙고, 목록 라우트는 그것으로 거른다.
         if method.upper() == "GET" and project and "project=" not in path:
             path += ("&" if "?" in path else "?") + "project=" + urllib.parse.quote(project)
-        return _call(method, base + path, tok, payload)
+        return _call(method, base + path, tok, payload, root_hint=root)
 
     return api
 
