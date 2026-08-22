@@ -165,14 +165,34 @@ def _probe_graph(paths) -> tuple:
 
 
 def _probe_synth(paths) -> tuple:
-    """[중요] **재귀로 센다.** `context/*.md` 로 세면 0 이 나온다 — 실물은 하위 디렉토리에
-    있다(실측 2026-08-22: `Source/` 927 · `_archive/` 101 · `_domains/` 18 · `Content/` 8)."""
+    """[중요] **문서 없는 그룹 수로 판정한다** (`#274`). 「MD 가 있다」로 재면 **부분 완료가
+    「완료」로 읽힌다** — 실측 2026-08-22: NS 가 42그룹 중 13건인 상태에서 `[완료]` 로 찍혔고,
+    그 상태로 마운트하면 색인기가 워터마크를 찍어 온보딩이 *"전부 초기화됐다"* 고 거짓 보고했다.
+
+    [주의] **개수 비교로는 안 된다** — ModularStage 는 문서 1,055 > 그룹 909 다(`_archive/`·
+    `_domains/`·삭제된 파일의 문서가 쌓인다). 그래서 **그룹마다 문서가 있는지**를 센다.
+    실측: ModularStage 0 · NS 42(전부 없음). 비용 6~64ms, LLM 0.
+
+    [주의] 게이트가 거부한 그룹은 문서가 없는 것이 옳다 — 그러면 이 판정은 계속 `[남음]` 이다.
+    그것이 정직하다: `skip_existing=True` 라 재실행이 그 그룹만 다시 시도하므로 **남음 = 재시도
+    대상**이라는 말이 참이다. 「완료」로 접으면 다시 시도할 근거가 사라진다.
+    """
     if not paths.context.is_dir():
         return False, f"context/ 가 없다: {paths.context}"
-    n = sum(1 for _ in paths.context.rglob("*.md"))
-    if not n:
-        return False, "context/ 에 MD 가 없다 — 최초 합성이 아직이다"
-    return True, f"MD {n}건"
+    from ..context_synth import synth
+    from ..graph import class_graph as cg
+    try:
+        groups = synth.group(cg.list_source_files(paths))
+    except Exception as e:                                   # noqa: BLE001
+        return False, f"그룹을 세지 못했다: {type(e).__name__}: {e}"
+    if not groups:
+        return False, "합성할 그룹이 없다 (Source/ 경계를 확인하라)"
+    missing = [k for k in groups if not synth.doc_path(paths, k).is_file()]
+    have = len(groups) - len(missing)
+    if missing:
+        return False, (f"{have}/{len(groups)} 그룹 — {len(missing)}개 미합성 "
+                       f"(예: {', '.join(sorted(missing)[:2])})")
+    return True, f"{have}/{len(groups)} 그룹 완료"
 
 
 def _probe_index(paths) -> tuple:

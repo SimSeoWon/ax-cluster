@@ -173,9 +173,11 @@ def test_live_modularstage() -> None:
         by = {s["step"]: s for s in d["steps"]}
         check("근거가 실물이다 (그래프 건수)", "classes=" in by["graph"]["detail"],
               by["graph"]["detail"])
-        # [중요] 재귀로 세지 않으면 0 이 나온다 — 실물은 하위 디렉토리에 있다
-        check("[중요] synth 를 재귀로 센다 (context/*.md 는 0건이다)",
-              by["synth"]["done"] and "MD " in by["synth"]["detail"], by["synth"]["detail"])
+        # [중요] 판정은 **그룹마다 문서가 있는지**다 (`#274`) — 「MD N건」이 아니다.
+        #    실물은 문서 1,055 > 그룹 909 라 개수 비교로는 판정이 안 된다.
+        check("[중요] synth 가 분모를 든다 (909/909 꼴)",
+              by["synth"]["done"] and "/" in by["synth"]["detail"]
+              and "그룹" in by["synth"]["detail"], by["synth"]["detail"])
         check("index 가 워터마크를 근거로 든다", "@" in by["index"]["detail"],
               by["index"]["detail"])
     finally:

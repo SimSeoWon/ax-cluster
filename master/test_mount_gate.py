@@ -135,13 +135,77 @@ def test_watermark_needs_context() -> None:
 
     # 게이트가 그 호출을 막는지 — 소스로 잰다(process_event 전체를 태우지 않는다)
     src = (Path(__file__).resolve().parent / "events" / "consumer.py").read_text(encoding="utf-8")
-    check("[중요] 워터마크가 MD 개수 조건 아래 있다",
-          "if r.to_commit and has_context_md(paths):" in src)
+    # [중요] 조건이 **두 번 좁아졌다**: to_commit 만 → MD 0건 가드(#244) → 미합성 0 (#274).
+    #    지금 기준은 `synth_complete()` 다. 옛 두 형태가 남아 있으면 되돌아간 것이다.
+    # [주의] 호출 형태를 문자열로 박지 않는다 — 주입 인자가 붙어 `synth_complete(paths, git=run)`
+    #    이 되자 칸이 빨갛게 됐다(실측). **함수 이름**으로 잰다.
+    check("[중요] 워터마크가 synth_complete 아래 있다", "synth_complete(" in src)
+    check("주입 자리를 통과시킨다 (테스트가 실제 git 을 안 탄다)", "git=run" in src)
     check("[주의] digest 로 판정하지 않는다",
           "if r.to_commit and context_digest(paths):" not in src)
+    check("[주의] MD 0건 가드만으로 찍지 않는다",
+          "if r.to_commit and has_context_md(paths):" not in src)
     check("안 찍은 것을 사유로 남긴다", "워터마크 미기입" in src)
     check("[주의] to_commit 만 보는 옛 조건이 사라졌다",
           "if r.to_commit:\n        _update_watermark" not in src)
+
+
+# ── #274 부분 완료를 완료로 읽지 않는다 ────────────────────────────
+
+def test_partial_synth_is_not_done() -> None:
+    """[중요] **실측이 이 칸을 만들었다** (2026-08-22).
+
+    NS 가 42그룹 중 13건인 상태에서 `synth [완료]` 로 찍혔고, 그 상태로 마운트하면 색인기가
+    워터마크를 찍어 온보딩이 *"전부 초기화됐다"* 고 거짓 보고했다. `#244` 의 0건 가드는
+    **부분 완료를 막지 못한다.**
+
+    [주의] **개수 비교로는 안 된다** — ModularStage 는 문서 1,055 > 그룹 909 다(`_archive/`·
+    `_domains/`·삭제된 파일의 문서가 쌓인다). **그룹마다 문서가 있는지**를 세야 한다.
+    """
+    from master.events.consumer import synth_complete
+    from master.context_search.paths import ProjectPaths
+    from master.projects.onboard import _probe_synth
+
+    tmp = Path(tempfile.mkdtemp(prefix="ax-partial-test-"))
+    (tmp / "repo" / "Source" / "M").mkdir(parents=True)
+    for stem in ("A", "B", "C"):
+        for ext in (".h", ".cpp"):
+            (tmp / "repo" / "Source" / "M" / f"{stem}{ext}").write_text("int x;\n",
+                                                                       encoding="utf-8")
+    (tmp / "context").mkdir()
+    paths = ProjectPaths(name="T", root=tmp)
+
+    # git 없이 그룹을 세게 — list_source_files 는 git ls-files 를 쓰므로 주입 대신 실제 git 을 만든다
+    import subprocess
+    subprocess.run(["git", "init", "-q", str(tmp / "repo")], check=True)
+    subprocess.run(["git", "-C", str(tmp / "repo"), "add", "-A"], check=True,
+                   capture_output=True)
+
+    done, why = _probe_synth(paths)
+    check("0/3 은 미완", not done and "0/3" in why, why)
+    check("[중요] 분모가 보인다", "3" in why and "미합성" in why, why)
+    check("워터마크 게이트도 막는다", not synth_complete(paths)[0], str(synth_complete(paths)))
+
+    # 부분 — 두 그룹만 문서를 만든다
+    (tmp / "context" / "Source" / "M").mkdir(parents=True)
+    for stem in ("A", "B"):
+        (tmp / "context" / "Source" / "M" / f"{stem}.md").write_text("x", encoding="utf-8")
+    done2, why2 = _probe_synth(paths)
+    check("[중요] 2/3 은 **미완이다** (부분 완료를 완료로 읽지 않는다)",
+          not done2 and "2/3" in why2, why2)
+    check("워터마크 게이트도 여전히 막는다", not synth_complete(paths)[0])
+
+    # 전부
+    (tmp / "context" / "Source" / "M" / "C.md").write_text("x", encoding="utf-8")
+    done3, why3 = _probe_synth(paths)
+    check("3/3 이면 완료", done3 and "3/3" in why3, why3)
+    check("그때 워터마크 게이트가 통과한다", synth_complete(paths)[0])
+
+    # [주의] MD 가 있기만 하면 통과하던 옛 기준이 남아 있지 않은지
+    src = (Path(__file__).resolve().parent / "projects" / "onboard.py").read_text(
+        encoding="utf-8")
+    check("[주의] 옛 기준(MD 가 있으면 완료)이 사라졌다",
+          'return True, f"MD {n}건"' not in src)
 
 
 # ── #241 문구 ───────────────────────────────────────────────────────
@@ -160,7 +224,7 @@ def test_set_active_note_true() -> None:
 if __name__ == "__main__":
     for fn in (test_gate_blocks_unmounted, test_gate_fails_closed_on_empty_active,
                test_poll_loop_only_mounted, test_watermark_needs_context,
-               test_set_active_note_true):
+               test_partial_synth_is_not_done, test_set_active_note_true):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_mount_gate: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

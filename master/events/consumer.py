@@ -209,6 +209,34 @@ def has_context_md(paths: ProjectPaths) -> bool:
     return any(True for _ in ctx.rglob("*.md"))
 
 
+def synth_complete(paths: ProjectPaths, *, git=None) -> tuple:
+    """합성이 **끝났는가** — 문서 없는 그룹이 0 인가 (`#274`). `(끝났나, 사유)`.
+
+    [중요] `has_context_md()`(=`#244`, 0건 가드)는 **부분 완료를 막지 못한다.** 실측 2026-08-22:
+    NS 가 42그룹 중 13건인 상태에서 워터마크가 찍혀 온보딩이 *"전부 초기화됐다"* 고 거짓 보고했다.
+    워터마크는 *"이 커밋까지 트윈에 반영됐다"* 는 주장이므로, 미합성 그룹이 남아 있으면 거짓이다.
+
+    [주의] 판정 불가는 **막는 쪽**으로 접는다(fail-closed) — 세지 못하는데 전진시키면 그 커밋의
+    변경이 영구 유실된다.
+
+    [중요] **`git` 주입 자리를 통과시킨다** — `process_event` 가 받은 러너를 그대로 써야 한다.
+    처음에 `cg` 를 직접 불러 실제 git 을 타서, 주입으로 도는 테스트가 깨졌다(저장소 관례를
+    어긴 것이고, 그 관례가 있는 이유가 정확히 이것이다).
+    """
+    try:
+        from ..context_synth import synth
+        from ..graph import class_graph as cg
+        groups = synth.group(cg.list_source_files(paths, git=git))
+    except Exception as e:                                   # noqa: BLE001
+        return False, f"그룹을 세지 못했다: {type(e).__name__}: {e}"
+    if not groups:
+        return False, "합성할 그룹이 없다"
+    missing = sum(1 for k in groups if not synth.doc_path(paths, k).is_file())
+    if missing:
+        return False, f"{len(groups) - missing}/{len(groups)} 그룹 — {missing}개 미합성"
+    return True, f"{len(groups)}/{len(groups)} 그룹"
+
+
 def _digest_path(paths: ProjectPaths) -> Path:
     return paths.root / DIGEST_FILE
 
@@ -443,12 +471,14 @@ def process_event(ev: Event, *, registry: Registry | None = None,
     # [주의] **`context_digest()` 로 판정하면 안 된다** — 빈 디렉토리도 해시(빈 문자열의
     #    sha256)를 돌려주므로 참이 된다. 실측 2026-08-22: 그렇게 짰다가 회귀 칸에 잡혔다.
     #    조건은 *"MD 가 한 건이라도 있는가"* 다(`#244` 완료 조건 그대로).
-    if r.to_commit and has_context_md(paths):
-        _update_watermark(paths, r.to_commit)
-    elif r.to_commit:
-        # 조용히 넘기지 않는다 — 「안 찍었다」와 「찍었다」는 다른 상태다.
-        r.skipped = ((r.skipped + " · ") if r.skipped else "") + \
-            "워터마크 미기입 — context/ 에 MD 가 없다 (색인할 것이 없으면 기준을 전진시키지 않는다)"
+    if r.to_commit:
+        ok_synth, why = synth_complete(paths, git=run)
+        if ok_synth:
+            _update_watermark(paths, r.to_commit)
+        else:
+            # 조용히 넘기지 않는다 — 「안 찍었다」와 「찍었다」는 다른 상태다.
+            r.skipped = ((r.skipped + " · ") if r.skipped else "") + \
+                f"워터마크 미기입 — 합성이 안 끝났다({why}). 기준을 전진시키면 남은 그룹의 변경이 유실된다"
     return r
 
 

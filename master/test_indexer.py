@@ -70,6 +70,13 @@ def make_project(root: Path) -> ProjectPaths:
     p = ProjectPaths(name="Demo", root=root / "Demo")
     (p.repo / SOURCE_SUBDIR).mkdir(parents=True, exist_ok=True)
     p.context.mkdir(parents=True, exist_ok=True)
+    # [중요] **문서 경로는 그룹 키를 따른다** (`synth.doc_path`) — 그룹 `Source/A` 의 문서는
+    #    `context/Source/A.md` 다. 평면으로 두면 `#274` 게이트가 「미합성」으로 판정한다
+    #    (실측 2026-08-22: 픽스처가 `context/A.md` 라 워터마크가 안 찍혀 칸이 빨갛게 됐다).
+    (p.context / "Source").mkdir(parents=True, exist_ok=True)
+    for stem in ("A", "B"):
+        (p.context / "Source" / f"{stem}.md").write_text(
+            f"---\ntags: [{stem}]\n---\n본문", encoding="utf-8")
     (p.context / "A.md").write_text("---\ntags: [x]\n---\n본문", encoding="utf-8")
     p.config.write_text(CONFIG, encoding="utf-8")
     return p
@@ -92,6 +99,11 @@ def git_ok(log: list):
             return 0, ("b" * 40) if state["fetched"] else ("a" * 40)
         if args[0] == "diff":
             return 0, "Source/A.cpp\nSource/B.cpp"
+        if args[0] == "ls-files":
+            # [중요] `#274` 워터마크 게이트가 **그룹 수**를 센다 — 소스가 없는 픽스처면
+            #    「합성할 그룹이 없다」로 막혀 워터마크가 안 찍힌다(fail-closed).
+            #    실제 프로젝트는 소스가 있으므로 픽스처도 그래야 검증이 성립한다.
+            return 0, "Source/A.cpp\nSource/A.h\nSource/B.cpp\nSource/B.h"
         return 0, ""
     return run
 
