@@ -110,8 +110,12 @@ def cmd_plan(project: str) -> int:
         #    클론 로컬이라 그 기계에만 듣고, 팀원이 새로 클론하면 없다. 원전도 `.gitignore` 에
         #    마커 블록을 써서 사람이 커밋하게 했다(ModularStage `.gitignore:30-42` 가 그 결과다).
         #    [주의] 쓰는 것은 #259 onboard 다 — 여기서는 무엇이 들어갈지만 보여 준다.
-        print(f"   → {f.path}/.gitignore 의 `{spec.GITIGNORE_BEGIN.split(chr(32))[0]}` 블록 "
-              f"({len(spec.GITIGNORE_BODY)}줄, 커밋은 사람 몫 — 마스터는 push 못 한다)")
+        # [중요] **`deliver` 는 아직 이것을 쓰지 않는다.** 계획이 배달하지 않는 것을 `→` 로
+        #    찍으면 계획이 거짓말을 한다 — 그 부류가 이 저장소가 가장 싫어하는 것이다
+        #    (§12.6: *"plan 에 안 보이면 미완"* 의 뒤집힌 형태). 표시를 갈라 둔다.
+        print(f"   ◦ {f.path}/.gitignore 의 `{spec.GITIGNORE_BEGIN.split(' — ')[0]}` 블록 "
+              f"({len(spec.GITIGNORE_BODY)}줄) — [주의] **이 명령은 쓰지 않는다** "
+              f"(#259 onboard 의 자리 · 추적 파일이라 커밋은 사람 몫)")
         tracked = bundle.tracked_managed(f)
         if tracked:
             print(f"   [중요] 저장소가 **추적 중**이라 exclude 가 안 듣는다: {', '.join(tracked)}"
@@ -336,13 +340,23 @@ def cmd_check(project: str) -> int:
             behind_hosts.append((f.host, ver.get("behind"), ver.get("stamp_dirty")))
     # [중요] **끝에 한 줄로 모아 말한다** — 호스트별 줄에 섞이면 「몇 대가 낡았나」가 안 보인다.
     if behind_hosts:
-        known = [n for _h, n, _d in behind_hosts if n is not None]
-        dirty_n = sum(1 for _h, _n, d in behind_hosts if d)
-        span = f"최대 {max(known)} 커밋 뒤" if known else "거리 판정 불가"
-        print(f"\n  [중요] 마스터와 버전이 다른 기계 {len(behind_hosts)}대 ({span}"
-              + (f" · {dirty_n}대는 dirty 트리에서 배달됨" if dirty_n else "") + ")")
+        # [중요] **원인을 갈라 말한다.** 「커밋이 뒤처짐」과 「커밋은 같은데 추적 불가(dirty)」는
+        #    고치는 방법이 다르다 — 전자는 재배달, 후자는 **마스터를 먼저 커밋**한 뒤 재배달이다.
+        #    실측 2026-08-22: 재배달 직후 「최대 0 커밋 뒤」라고 찍혀 문구가 사실을 흐렸다.
+        behind = [(h, n) for h, n, _d in behind_hosts if n]
+        dirty_only = [h for h, n, d in behind_hosts if d and not n]
+        other = [h for h, n, d in behind_hosts if not n and not d]
+        print(f"\n  [중요] 마스터와 버전이 어긋난 기계 {len(behind_hosts)}대")
         print("        [중요] 클러스터는 버전이 하나다 — 배달물 해시가 같아도 같은 버전이 아니다.")
-        print("        → `python -m master.client deliver <프로젝트>` 로 맞춘다")
+        if behind:
+            print(f"        · 커밋이 뒤처짐 {len(behind)}대 (최대 {max(n for _h, n in behind)} "
+                  f"커밋) → `python -m master.client deliver <프로젝트>`")
+        if dirty_only:
+            print(f"        · 커밋은 같지만 **dirty 트리에서 배달됨** {len(dirty_only)}대 — "
+                  f"무엇이 갔는지 추적할 수 없다")
+            print("          → 마스터를 **먼저 커밋**한 뒤 재배달한다 (순서가 계약이다)")
+        if other:
+            print(f"        · 판정 불가/계보 밖 {len(other)}대 — 위 사유 참조")
     return 1 if bad else 0
 
 

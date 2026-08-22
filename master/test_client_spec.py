@@ -340,6 +340,17 @@ def test_gitignore_block() -> None:
     check("우리 블록도 함께 있다", spec.GITIGNORE_BEGIN in m)
     check("마커가 겹치지 않는다", spec.GITIGNORE_BEGIN != "# AgentWatch:Start")
 
+    # [중요] **계획이 배달하지 않는 것을 배달한다고 찍으면 안 된다** (실측 2026-08-22:
+    #    `plan` 이 `.gitignore` 블록을 `→` 로 찍는데 `deliver` 는 그것을 하지 않았다).
+    cli = (Path(__file__).resolve().parent / "client" / "__main__.py").read_text(encoding="utf-8")
+    dlv = (Path(__file__).resolve().parent / "client" / "bundle.py").read_text(encoding="utf-8")
+    writes = "merge_gitignore" in dlv.split("def deliver(")[1].split("\ndef ")[0]
+    line = [l for l in cli.splitlines() if ".gitignore 의" in l]
+    check("plan 에 .gitignore 줄이 있다", bool(line), str(line))
+    if line and not writes:
+        check("[중요] 안 쓰면 배달 기호(→)로 찍지 않는다",
+              "→" not in line[0] and "쓰지 않는다" in cli, line[0].strip())
+
 
 # ── ⑥-e 등록이 기본 설정을 **저장**한다 ─────────────────────────
 
