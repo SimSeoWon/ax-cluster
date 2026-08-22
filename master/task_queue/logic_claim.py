@@ -128,10 +128,20 @@ def _claim_verify_job(idx: TaskIndex, worker_id: str, caps: Optional[set] = None
     return out
 
 
+def _work_project(idx: TaskIndex, t: dict) -> str:
+    """태스크가 속한 work 의 프로젝트 스탬프. 없으면 빈 문자열(옛 work)."""
+    return ((idx.works.get(t.get("work_id") or "") or {}).get("project") or "").strip()
+
+
 def claim_task(idx: TaskIndex, worker_id: str, verify_capable: bool = False,
                capabilities: Optional[list] = None,
-               types: Optional[list] = None) -> Optional[dict]:
+               types: Optional[list] = None,
+               project: str = "") -> Optional[dict]:
     caps = set(normalize_capabilities(capabilities))
+    # [중요] **프로젝트 축** (`#248`) — 잠금은 체크아웃 단위인데 큐는 공유다. 필터가 없으면
+    #    한 기계의 두 claimer 가 같은 큐를 빨며 **남의 프로젝트 태스크를 집는다.**
+    #    [주의] 빈 값이면 거르지 않는다(하위 호환) — 스탬프 없는 옛 work 도 계속 후보다.
+    want_project = (project or "").strip()
     # [중요] #204 — 유형 필터 (모양 정규화만, 판정은 후보 루프에서)
     type_set = {str(x).strip() for x in (types or []) if str(x).strip()} or None
     with idx.lock:
@@ -157,12 +167,19 @@ def claim_task(idx: TaskIndex, worker_id: str, verify_capable: bool = False,
         ))
         chosen = None
         skipped_quota_block = 0
+        skipped_project = 0
         skipped_capability = 0
         for t in candidates:
             # [중요] #204 — 유형 필터: 신고한 유형이 아니면 이 워커의 후보가 아니다.
             #    능력(requires)과 별개 축 — 빌드 claimer 가 infer 일감을 훔치지 않게.
             if type_set is not None and str(t.get("type") or "") not in type_set:
                 continue
+            # 프로젝트 필터 — 스탬프가 **있고** 다를 때만 건너뛴다
+            if want_project:
+                wp = _work_project(idx, t)
+                if wp and wp != want_project:
+                    skipped_project += 1
+                    continue
             deps = t.get("depends_on") or []
             if not all(d in completed for d in deps):
                 continue
@@ -186,6 +203,10 @@ def claim_task(idx: TaskIndex, worker_id: str, verify_capable: bool = False,
             if skipped_capability > 0:
                 _tq_log(f"[claim] {worker_id} 능력 미달로 {skipped_capability}건 skip "
                         f"(보유={','.join(sorted(caps)) or '-'}) — 능력 보유 워커 대기", idx.root)
+            # [중요] 세고 읽는다 — 남의 프로젝트 태스크를 몇 건 걸렀는지가 `#248` 의 실측이다
+            if skipped_project > 0:
+                _tq_log(f"[claim] {worker_id} 다른 프로젝트 태스크 {skipped_project}건 skip "
+                        f"(요청 project={want_project}) — #248 프로젝트 축", idx.root)
             if skipped_quota_block > 0:
                 _tq_log(f"[claim] {worker_id} quota-blocked task {skipped_quota_block}건 skip — 다른 워커 대기", idx.root)
             return None

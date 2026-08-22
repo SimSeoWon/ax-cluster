@@ -62,6 +62,9 @@ class WorkRegisterReq(BaseModel):
 
 
 class TaskRegisterReq(BaseModel):
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
     work_id: str
     type: str
     task_data: dict
@@ -80,6 +83,9 @@ class TaskRegisterReq(BaseModel):
 
 
 class ClaimReq(BaseModel):
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
     worker_id: str
     # Plan v5 C.3 — 워커가 상용 모델 검증 자격(verifier_model 설정됨)을 신고. True 면 claim 이
     # verify job(submitted && author≠me && push)도 후보에 넣음. 빈값 워커는 write 전용.
@@ -94,6 +100,9 @@ class ClaimReq(BaseModel):
 
 
 class HeartbeatReq(BaseModel):
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
     worker_id: str
     # 워커의 「지금 하는 일」 한 줄 (#220 ③) — /cluster 실시간 층이 보여 준다.
     # 로그 파일이 아니라 상태 표시다: 마지막 줄만 남고, 길이는 서버가 자른다.
@@ -101,6 +110,9 @@ class HeartbeatReq(BaseModel):
 
 
 class SubmitReq(BaseModel):
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
     branch: str
     head_commit: str
     self_check: dict
@@ -110,11 +122,17 @@ class SubmitReq(BaseModel):
 
 
 class SubmitFailReq(BaseModel):
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
     reason: str
     detail: str = ""
 
 
 class VerifyReq(BaseModel):
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
     passed: bool = True   # 하위 호환 (result 우선)
     feedback: str = ""
     result: str = ""       # "pass" | "revise" | "reject" | "superseded"
@@ -131,6 +149,9 @@ class AdminResetReq(BaseModel):
 
 
 class WorkerPollReq(BaseModel):
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
     worker_id: str
 
 
@@ -146,6 +167,9 @@ class RedmineNoteReq(BaseModel):
     [주의] 키를 `.33` 에 복사하는 대신 이 자리를 뒀다. 이 엔드포인트는 다른 것들과 같이
     **bearer 토큰이 필수**다(fail-closed).
     """
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
     issue_id: int
     notes: str = ""
     status_name: str = ""      # 빈 문자열이면 상태를 안 바꾼다 (반려의 기본값)
@@ -160,6 +184,9 @@ class RedmineIssueReq(BaseModel):
     않는 것이 규칙이다(`docs/10-references.md` §10.1). 인자로 열어 두면 언젠가 새 프로젝트가
     생긴다.
     """
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
     subject: str
     description: str = ""
     tracker_name: str = ""     # 비우면 Redmine 기본 트래커
@@ -168,6 +195,9 @@ class RedmineIssueReq(BaseModel):
 
 class RedmineLinkCommitReq(BaseModel):
     """커밋 해시 연결 (#226 — 원전과 같은 노트 문구 형식을 서버가 만든다)."""
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
     issue_id: int
     commit_hash: str
     message: str = ""
@@ -181,6 +211,9 @@ class WriterSignalReq(BaseModel):
     [중요] 저장하는 것은 코드가 아니라 **작업 과정**이다 (intent·검색·읽은/고친 파일·피드백·
     거절·에러 복구). 서술 속 코드 식별자는 [대괄호]로 감싼다 (원전 규약).
     """
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
     intent: str
     queries: list = []
     files_read: list = []
@@ -200,6 +233,9 @@ class HistoryReq(BaseModel):
     원전 규약 그대로). history 파일은 마스터의 트윈 디렉토리에 있으므로 마스터가 대행한다.
     파이프라인 종결 기록은 큐가 자동으로 남기므로 이 자리를 지나지 않는다.
     """
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
     title: str
     decision_type: str = "feature"     # 원전 enum + feature (history_gen.DECISION_TYPES)
     body: str = ""                     # 본문 구조는 자유 — frontmatter 만 의무 (원전 규약)
@@ -243,6 +279,9 @@ class AntiPatternNotifyReq(BaseModel):
     finalize_work_impl 가 머지 commit 의 .claude/recipes/_distribute_failures.md 변경을 감지하면
     호출. 서버는 audit log 에 한 줄 기록 — 이후 audit 추적 용도.
     """
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
     work_id: str
     repo: str = ""
     commit_sha: str = ""
@@ -258,6 +297,9 @@ class WorkPatchReq(BaseModel):
     - review_decision: 리더 결정 메타 (decided_at/decided_by/result/notes)
     필드는 모두 Optional — 명시된 키만 patch.
     """
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
     merge_status: Optional[str] = None
     redmine_issue_id: Optional[int] = None
     review_decision: Optional[dict] = None

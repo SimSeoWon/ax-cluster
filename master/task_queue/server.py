@@ -30,6 +30,7 @@ from .models import (
     RedmineIssueReq, RedmineLinkCommitReq,
     WriterSignalReq, HistoryReq, AliasReq, NotAClassReq
 )
+from . import tagging                      # 라우트별 태그 정책 (#257)
 from .persistence import (
     TaskIndex, _project_root, _tasks_dir, _archive_dir, _log_dir, _tq_log,
     _bootstrap_log_rotation, _atomic_write, _read_md, _git_repo, _slugify
@@ -95,6 +96,12 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
 
     @app.post("/api/v1/works")
     def register_work_ep(req: WorkRegisterReq):
+        # [중요] **비마운트 프로젝트의 work 는 등재되지 않는다** (§5.5.2 · `#257`).
+        #    이 관문이 없던 동안 요청 표면이 열려 있었다 — 등재까지는 다 됐고 훅·색인에서만
+        #    막혔다(그래서 「다 막힌다」는 서술이 거짓이었다).
+        bad = _mount_gate(req.project, require=True)
+        if bad:
+            return bad
         return register_work(idx,
             title=req.title, target_repo=req.target_repo, project=req.project,
             reference_repo=req.reference_repo, target_branch=req.target_branch,
@@ -116,8 +123,19 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         return {"slug": eff_slug, "target_repo": target_repo, "duplicates": dups}
 
     @app.get("/api/v1/works")
-    def list_works():
-        return list(idx.works.values())
+    def list_works(project: str = ""):
+        """[중요] `project` 로 거른다 (`#257` · 정책 `TAG`) — 거부하지 않고 **걸러 준다.**
+
+        [주의] 스탬프 없는 옛 work 는 어느 태그로도 빠지지 않는다 — 필터가 그것을 숨기면
+        옛 work 가 조회에서 사라진다(같은 호환 규칙: `_paths_for`·claim 필터).
+        """
+        works = list(idx.works.values())
+        want = (project or "").strip()
+        if not want:
+            return works
+        return [w for w in works
+                if not (w.get("project") or "").strip()
+                or (w.get("project") or "").strip() == want]
 
     @app.get("/api/v1/works/{work_id}")
     def get_work(work_id: str):
@@ -150,6 +168,9 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
 
     @app.patch("/api/v1/works/{work_id}")
     def patch_work_ep(work_id: str, req: WorkPatchReq):
+        bad = _stamp_gate(req.project, work_id=work_id)
+        if bad:
+            return bad
         r = update_work_meta(idx, work_id,
                              merge_status=req.merge_status,
                              redmine_issue_id=req.redmine_issue_id,
@@ -180,6 +201,15 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         위 PATCH 훅이 자동으로 하므로 이 자리는 **사람 주도 작업의 결정**만 온다.
         """
         from ..context_synth import history_gen as HG
+        bad = _stamp_gate(req.project, work_id=req.work_id)
+        if bad:
+            return bad
+        # [중요] work 가 없으면 스탬프가 없다 → **마운트를 강제한다**. 그러지 않으면 태그만으로
+        #    남의 트윈에 기록이 쌓인다(`#243` 이 시소러스에서 막은 것과 같은 구멍).
+        if not req.work_id:
+            bad = _mount_gate(req.project, require=True)
+            if bad:
+                return bad
         try:
             content = HG.render(
                 title=req.title, decision_type=req.decision_type,
@@ -230,8 +260,18 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
 
     @app.post("/api/v1/tasks/claim")
     def claim_ep(req: ClaimReq):
+        # [중요] **워커는 자기 프로젝트의 태스크만 집는다** (`#248`). 태그가 마운트와 다르면
+        #    거부하고, 통과하면 그 프로젝트로 후보를 거른다 — 한 기계에 두 프로젝트의
+        #    claimer 가 돌아도 남의 태스크를 집지 않는 근거가 여기다.
+        # [주의] 태그를 안 보내는 기존 claimer 는 **마운트로 해석된다**(하위 호환) — 스탬프가
+        #    없는 옛 work 는 계속 후보다(`_paths_for` 와 같은 호환 규칙).
+        bad = _mount_gate(req.project, require=True)
+        if bad:
+            return bad
+        eff_project = (req.project or "").strip() or getattr(_mount_gate, "last", "")
         t = claim_task(idx, req.worker_id, verify_capable=req.verify_capable,
-                       capabilities=req.capabilities, types=req.types)
+                       capabilities=req.capabilities, types=req.types,
+                       project=eff_project)
         if t is None:
             raise HTTPException(204, "no available task")
         return t
@@ -277,8 +317,16 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         return t
 
     @app.get("/api/v1/tasks")
-    def list_tasks_ep(status: str = "", work_id: str = "", limit: int = 200):
+    def list_tasks_ep(status: str = "", work_id: str = "", limit: int = 200,
+                      project: str = ""):
         tasks = list(idx.tasks.values())
+        # [중요] 프로젝트 필터 (`#257` · 정책 `TAG`) — task 는 스탬프를 갖지 않으므로
+        #    **그 task 가 속한 work 의 스탬프**로 판정한다. 스탬프 없는 옛 work 는 남긴다.
+        want = (project or "").strip()
+        if want:
+            def _wp(t):
+                return ((idx.works.get(t.get("work_id") or "") or {}).get("project") or "").strip()
+            tasks = [t for t in tasks if not _wp(t) or _wp(t) == want]
         if status:
             tasks = [t for t in tasks if t.get("status") == status]
         if work_id:
@@ -318,6 +366,9 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         # URL path 의 worker_id 가 권위 — body 의 worker_id 는 검증용
         if req.worker_id and req.worker_id != worker_id:
             raise HTTPException(400, "worker_id mismatch (path vs body)")
+        bad = _mount_gate(req.project, require=True)          # claim 과 같은 파견 축이다 (`#248`)
+        if bad:
+            return bad
         r = poll_worker(idx, worker_id)
         if not r.get("ok"):
             raise HTTPException(400, r.get("error", "poll failed"))
@@ -402,6 +453,13 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         통합자가 직접 적재하므로 이 자리를 지나지 않는다.
         """
         from ..context_synth import signals as SG
+        bad = _stamp_gate(req.project, work_id=req.work_id)
+        if bad:
+            return bad
+        if not req.work_id:                     # 스탬프가 없으면 마운트를 강제한다 (위와 같은 규칙)
+            bad = _mount_gate(req.project, require=True)
+            if bad:
+                return bad
         try:
             record = SG.make_record(
                 intent=req.intent, queries=req.queries, files_read=req.files_read,
@@ -421,6 +479,50 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
                 f"read={len(record['files_read'])} modified={len(record['files_modified'])} "
                 f"errors={len(record['error_recoveries'])}", root)
         return {"ok": True, "stored_at": stored, "intent": record["intent"]}
+
+    def _mount_gate(project: str, *, require: bool = False):
+        """`MOUNT` 정책 표면의 관문 — 태그가 마운트와 다르면 **거부 응답**을 돌려준다.
+
+        [중요] 경로를 풀지 않는다 — 트윈을 만지지 않는 표면(`claim`·`poll`·`works` 등재)도
+        같은 판정을 써야 하므로, 판정과 경로 해석을 갈랐다. 통과면 `None`.
+        [주의] 통과하면 해석된 마운트 이름을 `_mount_gate.last` 에 남긴다 — 태그를 안 보낸
+        요청의 유효 프로젝트가 그 값이다(레지스트리를 두 번 읽지 않는다).
+        [주의] 실측 2026-08-22 — 이 관문이 없어 **요청 표면이 열려 있었다**: 비마운트 프로젝트로
+        work 를 등재하고 태스크를 넣을 수 있었다(막힌 것은 훅·색인 쪽뿐이었다).
+        """
+        from ..context_search.paths import resolve_mounted_only
+        from ..projects.config import ConfigError
+        if require and not (project or "").strip():
+            # [중요] 태그 없음도 거절이다 (사용자 2026-08-22) — 마운트로 「가정」하는 순간
+            #    판정 근거 없는 요청이 마운트 트윈에 쌓인다.
+            try:
+                mounted = resolve_mounted_only("").name
+            except ConfigError:
+                mounted = ""
+            return tagging.reject_untagged(mounted)
+        try:
+            _mount_gate.last = resolve_mounted_only(project or "").name
+            return None
+        except ConfigError as e:
+            _mount_gate.last = ""
+            return tagging.reject(str(e), project=(project or "").strip())
+
+    def _stamp_gate(project: str, work_id: str = "", work_meta=None):
+        """`STAMP` 정책 표면의 대조 — 태그가 그 work 의 스탬프와 다르면 거부.
+
+        [중요] **마운트와 비교하지 않는다** (`#210`) — 미종결 work 를 둔 채 활성을 바꿔도
+        그 work 의 요청은 계속 처리돼야 한다. 통과면 `None`.
+        """
+        stamped = ""
+        if work_meta:
+            stamped = work_meta.get("project") or ""
+        elif work_id:
+            stamped = (idx.works.get(work_id) or {}).get("project") or ""
+        why = tagging.check_stamp(project or "", stamped)
+        if why:
+            return {"ok": False, "status": "project_mismatch", "reason": why,
+                    "project": (project or "").strip(), "work_project": stamped}
+        return None
 
     def _mounted_paths(project: str):
         """요청의 태그를 **마운트와 대조**해 푼다 (`#243`). 거부는 예외로 올린다.
@@ -447,6 +549,10 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         """
         from ..context_search import thesaurus as th
         from ..projects.config import ConfigError
+        bad = _mount_gate(req.project, require=True)     # 태그 없음도 거절 (사용자 2026-08-22)
+        if bad:
+            _tq_log(f"[thesaurus] 거부 — {bad['status']}", root)
+            return {**bad, "class": req.class_name, "term": req.term}
         try:
             paths = _mounted_paths(req.project)
         except ConfigError as e:
@@ -465,6 +571,10 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         """`그건 클래스가 아니다` 를 기억한다 — 다음부터 묻지 않는다."""
         from ..context_search import thesaurus as th
         from ..projects.config import ConfigError
+        bad = _mount_gate(req.project, require=True)     # 태그 없음도 거절 (사용자 2026-08-22)
+        if bad:
+            _tq_log(f"[thesaurus] 거부 — {bad['status']}", root)
+            return {**bad, "term": req.term}
         try:
             paths = _mounted_paths(req.project)
         except ConfigError as e:

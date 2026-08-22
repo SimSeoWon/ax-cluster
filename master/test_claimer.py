@@ -156,18 +156,24 @@ def test_enqueue_registers_pull_work_and_ue5_build_task():
         seen.append((method, path, payload))
         if path == "/api/v1/works":
             assert payload["distribution_mode"] == "pull"
+            # [중요] 프로젝트 태그·target_repo 가 **하드코딩이 아니어야** 한다 (#257).
+            #    실측 2026-08-22: `target_repo` 가 `"ModularStage"` 문자열로 박혀 있었고
+            #    `project` 는 안 보내서 큐에 `project: null` work 3건이 남았다.
+            assert payload["project"] == "NS", payload
+            assert payload["target_repo"] == "NS", payload
             return 200, {"ok": True, "work_id": "W1"}
         if path == "/api/v1/tasks":
             assert payload["type"] == "build" and payload["requires"] == ["ue5"]
+            assert payload["project"] == "NS", payload
             return 200, {"ok": True, "task_id": "T1"}
         raise AssertionError(path)
-    got = buildjob.enqueue(tree="E:/trunk/ModularStage", api=fake_api)
+    got = buildjob.enqueue(tree="E:/trunk/ModularStage", api=fake_api, project="NS")
     assert got == {"ok": True, "work_id": "W1", "task_id": "T1"}
     assert seen[1][2]["task_data"]["tree"] == "E:/trunk/ModularStage"
 
 
 def test_enqueue_work_failure_reports_step():
-    got = buildjob.enqueue(api=lambda m, p, b: (503, {"error": "down"}))
+    got = buildjob.enqueue(api=lambda m, p, b: (503, {"error": "down"}), project="NS")
     assert not got["ok"] and got["step"] == "work"
 
 

@@ -99,6 +99,12 @@ class Client:
         self.root = root
 
     def _call(self, method: str, path: str, payload=None):
+        # [중요] **태그를 여기서 붙인다** (`#258`). 실측 2026-08-22: `self.project` 를 config 에서
+        #    읽어 두고 **요청에 넣지 않았다** — 저장하고 안 읽는 값이었다. 체크아웃은 단일
+        #    프로젝트이므로 이 값이 곧 이 워커의 프로젝트다(요청자가 고르는 값이 아니다).
+        if self.project and isinstance(payload, dict) \
+                and not str(payload.get("project") or "").strip():
+            payload = {**payload, "project": self.project}
         req = urllib.request.Request(
             self.base + path,
             data=(json.dumps(payload).encode("utf-8") if payload is not None else None),
@@ -117,7 +123,18 @@ class Client:
                              {"worker_id": self.worker_id,
                               "capabilities": self.capabilities,
                               "types": list(types or TYPES)})
-        return got if st == 200 else None
+        # [중요] **거절은 `200 + ok:false` 다** (§12.5-c) — 상태 코드만 보면 거절 응답을
+        #    태스크로 착각한다(실측 2026-08-22: `st == 200` 만 봤다). 그리고 사유를 삼키지
+        #    않는다 — 태그 배선이 틀리면 워커가 조용히 아무 일도 안 하는 것으로 보인다.
+        if st != 200:
+            return None
+        if isinstance(got, dict) and got.get("ok") is False:
+            print(f"[claim 거절] status={got.get('status')} {got.get('reason', '')[:160]}",
+                  file=sys.stderr)
+            return None
+        if not (isinstance(got, dict) and got.get("task_id")):
+            return None
+        return got
 
     def heartbeat(self, task_id: str, note: str = ""):
         # note = 「지금 하는 일」 한 줄 (#220 ③) — /cluster 실시간 층이 보여 준다.

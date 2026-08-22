@@ -210,8 +210,21 @@ def queue_api(root: Path | None = None):
     cfg = load_config(root)
     base = queue_url(cfg)
     tok = load_token(root)
+    # [중요] **태그는 여기 한 곳에서 붙는다** (`#258`). 도구마다 넣게 하면 다음에 추가되는
+    #    도구는 태그가 없다 — 실측이 그랬다: `thesaurus/*` 둘만 `project` 를 보내고
+    #    `signals`·`history`·`claim` 은 안 보냈다. `.ax/config.json` 이 이 체크아웃의
+    #    프로젝트를 알고 있으므로 **요청자가 고르는 값이 아니다**.
+    project = str(cfg.get("project") or "").strip()
 
     def api(method: str, path: str, payload=None):
+        # [주의] 이미 값이 있으면 덮지 않는다 — 호출자가 명시한 태그가 더 구체적이다
+        #    (예: 다른 프로젝트의 work 를 조회하는 검수 흐름).
+        if project and isinstance(payload, dict) and not str(payload.get("project") or "").strip():
+            payload = {**payload, "project": project}
+        # [중요] GET 은 본문이 없다 → **쿼리로 붙인다.** 서버가 모르는 쿼리는 무시하므로
+        #    (FastAPI 기본) 모든 GET 에 안전하게 붙고, 목록 라우트는 그것으로 거른다.
+        if method.upper() == "GET" and project and "project=" not in path:
+            path += ("&" if "?" in path else "?") + "project=" + urllib.parse.quote(project)
         return _call(method, base + path, tok, payload)
 
     return api

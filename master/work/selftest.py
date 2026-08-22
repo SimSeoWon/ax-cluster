@@ -317,6 +317,18 @@ def _q(method: str, url: str, payload=None, *, timeout: int = 30) -> tuple:
         tok = token_file().read_text(encoding="utf-8").strip()
     except OSError as e:
         return 0, f"토큰을 읽지 못했다: {e}"
+    # [중요] e2e 자기점검도 태그를 실어야 한다 — 안 실으면 `#258` 조임 뒤 전부 거절된다
+    if isinstance(payload, dict) and not str(payload.get("project") or "").strip():
+        try:
+            from ..task_queue import tagging
+            from ..projects.config import Registry
+            _path = "/api/v1/" + url.split("/api/v1/", 1)[1] if "/api/v1/" in url else url
+            if tagging.requires_tag(method, _path):
+                _act = (Registry.load().active or "").strip()
+                if _act:
+                    payload = {**payload, "project": _act}
+        except Exception:                                # noqa: BLE001
+            pass
     data = _json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(url, data=data, method=method,
                                  headers={"Authorization": f"Bearer {tok}",

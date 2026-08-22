@@ -51,12 +51,24 @@ def _call(method: str, path: str, payload=None, *, api=None):
         return e.code, {"error": e.read().decode("utf-8", "replace")[:300]}
 
 
-def enqueue(*, tree: str = "", timeout: int = 1800, api=None) -> dict:
-    """work + build 태스크 등록. 반환에 task_id — watch 가 그걸 받는다."""
+def enqueue(*, tree: str = "", timeout: int = 1800, api=None, project: str = "") -> dict:
+    """work + build 태스크 등록. 반환에 task_id — watch 가 그걸 받는다.
+
+    [중요] `project` 는 **인자로 받는다** (`#257`). 안에서 환경(`AX_PROJECTS_ROOT`)을 읽으면
+    `api=` 주입 이음을 우회해 버린다 — 실측 2026-08-22 에 그렇게 유닛 하나가 깨졌고, 그것이
+    옳은 신호였다: 이 함수는 **어느 프로젝트의 빌드인지 알아야** 한다. 비면 마운트에서 푼다.
+    """
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    # [중요] **프로젝트를 하드코딩하지 않는다** (`#257`). 실측 2026-08-22: `target_repo` 가
+    #    `"ModularStage"` 문자열로 박혀 있었고 `project` 는 아예 안 보내서 큐에
+    #    `project: null` 로 저장된 work 가 3건 생겼다 — 그 work 의 산출물은 마운트로 떨어진다.
+    if not (project or "").strip():
+        from ..context_search.paths import resolve_mounted_only
+        project = resolve_mounted_only("").name
     st, w = _call("POST", "/api/v1/works", {
         "title": f"[buildjob] 빌드 게이트 큐 잡 {stamp}",
-        "target_repo": "ModularStage",
+        "project": project,
+        "target_repo": project,
         "distribution_mode": "pull",              # C.6 플래그 — 이 work 는 pull 이 정체성
         "original_request": "#204 — 빌드를 큐 잡으로 (κ.0 CI 러너 패턴)",
     }, api=api)
@@ -64,6 +76,7 @@ def enqueue(*, tree: str = "", timeout: int = 1800, api=None) -> dict:
         return {"ok": False, "step": "work", "http": st, "detail": w}
     st, t = _call("POST", "/api/v1/tasks", {
         "work_id": w["work_id"],
+        "project": project,
         "type": "build",
         "task_data": ({"tree": tree} if tree else {}) | {"timeout": timeout},
         "requires": ["ue5"],

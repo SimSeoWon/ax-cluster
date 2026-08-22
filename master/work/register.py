@@ -275,6 +275,8 @@ def register_work(
         try:
             reg = post(f"{queue_url}/api/v1/tasks", {
                 "work_id": work_id,
+                # work 와 같은 스탬프를 싣는다 — 서버가 대조한다(어긋나면 등록이 거절된다)
+                "project": paths.name,
                 "type": "code",
                 "stem": spec.stem,
                 "target_file": spec.target_file,

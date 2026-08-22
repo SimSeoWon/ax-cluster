@@ -356,9 +356,30 @@ class QueueError(RuntimeError):
     """큐와 말이 통하지 않는다."""
 
 
+def _tag(method: str, path: str, payload):
+    """[중요] **태그가 필수인 표면에만** 마운트를 실어 준다 (`#258`).
+
+    [주의] 전부에 붙이면 안 된다 — `STAMP` 표면(submit·verify·PATCH)은 **그 work 의 스탬프**로
+    풀린다(`#210`). 마운트를 붙이면 미종결 work 를 둔 채 활성을 바꿨을 때 `project_mismatch` 가
+    나고, 그것은 `#210` 이 지키려던 바로 그 흐름을 깨는 것이다. 그래서 축을 나눈다.
+    """
+    if not isinstance(payload, dict) or str(payload.get("project") or "").strip():
+        return payload
+    try:
+        from ..task_queue import tagging
+        if not tagging.requires_tag(method, path):
+            return payload
+        from ..projects.config import Registry
+        active = (Registry.load().active or "").strip()
+    except Exception:                                    # noqa: BLE001
+        return payload                                   # 태그를 못 정하면 서버가 거절한다
+    return {**payload, "project": active} if active else payload
+
+
 def _api(method: str, path: str, payload=None, *, timeout: int = HTTP_TIMEOUT):
     """큐 호출 한 번. [중요] **토큰은 마스터에만 있다** — 이 함수가 워커로 건너가면 안 된다."""
     url = QUEUE_URL.rstrip("/") + path
+    payload = _tag(method, path, payload)
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Content-Type", "application/json")
