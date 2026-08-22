@@ -962,17 +962,15 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
 
 
 def _ensure_ignored(facts: HostFacts) -> bool:
-    """[중요] `.ax/` 를 **`.git/info/exclude`** 에 넣는다 — `.gitignore` 가 아니다.
+    """마스터가 체크아웃 안에 쓰는 것을 **`.git/info/exclude`** 에 넣는다 — `.gitignore` 가 아니다.
 
     `.gitignore` 는 커밋해야 효력이 있고 **마스터는 소스 저장소에 push 할 수 없다**(§2.1).
     `info/exclude` 는 클론 로컬이라 커밋 없이 즉시 듣는다. 이게 없으면 부산물이 워킹트리를
     더럽혀 **더티 체크가 다음 파견을 막는다.**
 
-    이미 들어 있으면 다시 넣지 않는다(멱등).
+    목록의 선언은 `spec.GIT_EXCLUDES` 다 (#266). 이미 들어 있으면 다시 넣지 않는다(멱등).
     """
-    # [중요] `.mcp.json` 도 여기 들어간다 (소 3.8.4) — 체크아웃 루트에 놓여야 Claude Code 가
-    # 읽는데, 추적되지 않은 채 남으면 **더티 체크가 파견을 막는다** (`.ax/` 와 같은 이유).
-    lines = (f"/{AX_DIR}/", "/.mcp.json")
+    lines = spec.git_excludes_for(facts.role)
     for line in lines:
         if facts.windows:
             cmd = (f'powershell -Command "$p=\'{facts.path}\\.git\\info\\exclude\'; '
@@ -987,6 +985,29 @@ def _ensure_ignored(facts: HostFacts) -> bool:
         if rc != 0 or "OK" not in out:
             raise BundleError(f"{facts.host}: .git/info/exclude 에 {line} 를 넣지 못했다 — {out[:120]}")
     return True
+
+
+def tracked_managed(facts: HostFacts) -> tuple:
+    """마스터가 쓰는 파일 중 **저장소가 추적 중인 것**의 이름 (#266).
+
+    [중요] **`info/exclude` 는 추적 중인 파일에 아무 효력이 없다.** 프로젝트가 `CLAUDE.md` 를
+    커밋해 두고 있으면 우리 관리 블록이 그것을 **modified** 로 만들고, 더티 체크가 다음 파견을
+    막는다. 원전은 그때 index 에서 빼고 디스크를 보존했다(`_untrack_ambient_managed_files`).
+
+    [주의] **여기서 고치지 않는다** — 사람의 저장소 인덱스를 바꾸는 일이라 이름으로 보고만
+    한다. 처분은 `#259` onboard 의 확인 단계다.
+    """
+    names = " ".join(shlex.quote(n) if not facts.windows else n
+                     for n in spec.AMBIENT_MANAGED)
+    if facts.windows:
+        cmd = f'cmd /c "cd /d {facts.path} && git ls-files -- {names}"'
+    else:
+        cmd = f"cd {shlex.quote(facts.path)} && git ls-files -- {names}"
+    rc, out = _ssh(facts.host, facts.user, cmd)
+    if rc != 0:
+        return ()
+    got = {x.strip().replace(chr(92), "/") for x in (out or "").splitlines() if x.strip()}
+    return tuple(n for n in spec.AMBIENT_MANAGED if n in got)
 
 
 def workshops(project: str) -> list:

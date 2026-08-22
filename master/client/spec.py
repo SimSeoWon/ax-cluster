@@ -139,6 +139,45 @@ MCP_BY_ROLE = {
 DEPRECATED_MCP: tuple = ()
 
 
+# ── 커밋 제외 대상 ───────────────────────────────────────────────────
+#
+# [중요] **마스터가 체크아웃 안에 쓰는 것은 전부 여기 들어야 한다.** 배달물이 워킹트리를
+# 더럽히면 **더티 체크가 다음 파견을 막는다** — 그것이 이 목록의 존재 이유다.
+#
+# [중요] **`.gitignore` 가 아니라 `.git/info/exclude` 다.** `.gitignore` 는 커밋해야 효력이 있고
+# **마스터는 소스 저장소에 push 할 수 없다**(§2.1). `info/exclude` 는 클론 로컬이라 커밋 없이
+# 즉시 듣는다.
+#
+# [주의] **실측이 이 표를 넓혔다** (2026-08-22, 사용자 지적). 종전에는 `/.ax/`·`/.mcp.json` 두
+# 줄뿐이었고 그래도 `.33` 이 안 더러웠는데, 이유는 **ModularStage 저장소 자신의 `.gitignore` 가
+# 그 줄을 갖고 있어서**였다(실측: `.gitignore:36 .claude/` · `:40 /.mcp.json` · `:41 /CLAUDE.md`).
+# **그건 그 프로젝트의 파일이다** — 새 프로젝트엔 없고, 우리는 그것을 고칠 수 없다. 즉 종전
+# 목록은 「지금 안 터지는」 것이었을 뿐 **다음 프로젝트에서 반드시 터지는** 종류였다.
+#
+# 원전도 그 자리를 넓게 처리했다: `setup._update_project_gitignore` +
+# `_untrack_ambient_managed_files`(*"ambient 파일(.mcp.json, CLAUDE.md)이 이미 tracked 였으면
+# untrack — 새 .gitignore 가 효력 발휘하려면 index 에서 제거 필요. 디스크 보존"*).
+GIT_EXCLUDES = (
+    ("/.ax/", ()),                 # 부산물·config·토큰·페이로드 (역할 무관)
+    ("/.mcp.json", ()),            # 요청자만 받지만, 있어도 해가 없고 목록이 갈리는 것이 더 나쁘다
+    ("/CLAUDE.md", ()),            # 마스터가 관리 블록을 넣는다 — 모든 역할이 받는다
+    ("/.claude/", ("requester",)),  # 작업장 자산 29개 (요청자 전용)
+)
+
+
+def git_excludes_for(role: str) -> tuple:
+    """이 역할의 체크아웃에서 커밋 제외할 경로들."""
+    return tuple(line for line, roles in GIT_EXCLUDES if not roles or role in roles)
+
+
+# [중요] **추적 중인 파일은 exclude 로 못 막는다.** 프로젝트가 `CLAUDE.md` 를 커밋해 두고 있으면
+# 우리 블록이 그것을 **modified** 로 만들고, `info/exclude` 는 그것에 아무 효력이 없다. 원전은
+# 그때 index 에서 빼고 디스크를 보존했다(`git rm --cached`). [주의] 그것은 **사람의 저장소
+# 인덱스를 고치는 일**이라, 우리는 지금 **찾아서 이름으로 보고**만 한다 — 자동 untrack 여부는
+# 사람 결정 자리다(#259 onboard 의 확인 단계).
+AMBIENT_MANAGED = ("CLAUDE.md", ".mcp.json", ".claude/CLAUDE.md")
+
+
 @dataclass(frozen=True)
 class MdBlock:
     """마커로 감싼 **관리 구역** 하나. 그 사이만 덮고 사람이 쓴 나머지는 건드리지 않는다."""

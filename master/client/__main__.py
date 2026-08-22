@@ -99,7 +99,17 @@ def cmd_plan(project: str) -> int:
             summary = " · ".join(f"{k} {len(v)}개" for k, v in sorted(groups.items()))
             print(f"   → {f.path}/.claude/ 작업장 자산 {len(ws)}개 ({summary})  [workshop]")
             print(f"   → {f.path}/.claude/CLAUDE.md — `{bundle.WS_BEGIN}` 블록만 교체")
-        print(f"   → {f.path}/.git/info/exclude 에 `/{bundle.AX_DIR}/` (커밋 안 됨)")
+        # [중요] **제외 목록을 전부 찍는다** (#266, 사용자 지적 2026-08-22). 종전에는 `.ax/` 만
+        #    찍었고 목록도 두 줄이었다 — `.33` 이 안 더러운 이유가 **그 프로젝트 `.gitignore` 의
+        #    세 줄**(실측 `:36 .claude/` `:40 /.mcp.json` `:41 /CLAUDE.md`)이었지 우리 목록이
+        #    아니었다. 새 프로젝트엔 그 줄이 없고 우리는 `.gitignore` 를 고칠 수 없다(§2.1).
+        exc = ", ".join(f"`{x}`" for x in spec.git_excludes_for(f.role))
+        print(f"   → {f.path}/.git/info/exclude 에 {exc} (커밋 안 됨)")
+        # [주의] 추적 중인 파일은 exclude 로 못 막는다 — 이름으로 보고한다(고치지는 않는다).
+        tracked = bundle.tracked_managed(f)
+        if tracked:
+            print(f"   [중요] 저장소가 추적 중이라 exclude 가 안 듣는다: {', '.join(tracked)}"
+                  f" — 관리 블록이 그 파일을 modified 로 만든다 (처분은 #259)")
         # [중요] **폐지분을 이름으로 찍는다** (#266 완료 조건 3). 표에서 지우는 것만으로는 이미
         #    배달된 기계가 정리되지 않는다 — `#232` 가 그 부류였고 그때 실패는 조용했다.
         rm = spec.removals_for(f.role, init)

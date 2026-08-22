@@ -244,6 +244,12 @@ class ProjectConfig:
         )
         data["index"] = index
         data["engine"] = self.engine
+        # [중요] **`init:`(초기화 사양 오버레이, #266)을 `engine:` 뒤로 보낸다.** `dict(self.raw)`
+        #    로 시작하므로 그대로 두면 `version:` 보다 **앞에** 찍힌다 — 사람이 읽는 파일이라
+        #    순서가 내용이다. 모르는 키의 통과는 그대로 두고(그것이 raw 의 값이다) **우리가 쓰는
+        #    키 하나만** 자리를 정한다.
+        if "init" in data:
+            data["init"] = data.pop("init")
         if self.workshops:
             data["workshops"] = {h: w.to_dict() for h, w in self.workshops.items()}
         else:

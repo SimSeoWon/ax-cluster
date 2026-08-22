@@ -87,6 +87,12 @@ def register_project(
     created_dir = True
     try:
         # 2. config.yaml — 먼저 만든다
+        # [중요] **기본 설정을 등록 시점에 적는다** (#266, 사용자 2026-08-22:
+        #    *"마스터가 설치해주려고 규격을 정하고 디폴트 설정을 저장하는거잖아"*).
+        #    `include`/`exclude` 가 이미 그 관례다 — 사양의 기본값도 같은 자리에 적어야
+        #    **사람이 보고 고칠 수 있다.** 비워 두면 「선언할 수 있다」는 사실이 숨는다.
+        #    [주의] 값은 그대로가 기본이므로 **동작은 안 바뀐다** — 보이게 하는 것이 목적이다.
+        from ..client import spec as _spec
         cfg = ProjectConfig(
             name=name,
             project_id=project_id,
@@ -96,6 +102,12 @@ def register_project(
             engine=engine,
             include=list(DEFAULT_INCLUDE),
             exclude=list(DEFAULT_EXCLUDE),
+            raw={"init": {
+                "domains": list(_spec.DEFAULT_DOMAINS),
+                "convention_sections": list(_spec.DEFAULT_CONVENTION_SECTIONS),
+                "extra_skills": {},
+                "extra_mcp": {},
+            }},
         )
         write_project_config(target / PROJECT_CONFIG, cfg)
         (target / "context").mkdir(exist_ok=True)

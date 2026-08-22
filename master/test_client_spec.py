@@ -265,6 +265,89 @@ def test_init_flag_not_shadowed() -> None:
     check("/init 게이트가 여전히 플래그를 본다", "if init and not (prev or" in body)
 
 
+# ── ⑥-d 커밋 제외 대상 (사용자 지적 2026-08-22) ──────────────────
+
+def test_git_excludes() -> None:
+    """[중요] **마스터가 체크아웃 안에 쓰는 것은 전부 제외돼야 한다.**
+
+    실측이 이 칸을 만들었다: 종전 목록은 `/.ax/`·`/.mcp.json` 두 줄뿐인데 `.33` 은 안
+    더러웠다 — 이유는 **ModularStage `.gitignore` 자신의 세 줄**(`:36 .claude/` ·
+    `:40 /.mcp.json` · `:41 /CLAUDE.md`)이었다. 그건 그 프로젝트의 파일이고 새 프로젝트엔
+    없다. 즉 종전 목록은 「지금 안 터지는」 것이었을 뿐이다.
+    """
+    w = spec.git_excludes_for("worker")
+    r = spec.git_excludes_for("requester")
+    check("부산물 디렉토리", "/.ax/" in w and "/.ax/" in r)
+    check("[중요] CLAUDE.md — 모든 역할이 관리 블록을 받는다", "/CLAUDE.md" in w)
+    check("[중요] 작업장 자산은 요청자 전용",
+          "/.claude/" in r and "/.claude/" not in w, f"{w} / {r}")
+    check("전부 저장소 루트 고정(`/` 시작)", all(x.startswith("/") for x in w + r), str(w + r))
+
+    # [중요] **배달하는 것과 제외하는 것이 어긋나면 워킹트리가 더러워진다.** 배달 위치를
+    #    제외 목록이 덮는지 잰다 — 이 대조가 없으면 다음에 배달물을 늘릴 때 조용히 깨진다.
+    for role in ("worker", "requester"):
+        exc = spec.git_excludes_for(role)
+        targets = [bundle.CONFIG_REL, "CLAUDE.md"]
+        if role == "requester":
+            targets += [bundle.WORKSHOP_MD_REL, ".mcp.json"]
+        for rel in targets:
+            covered = any(rel == e.lstrip("/") or rel.startswith(e.lstrip("/"))
+                          for e in exc)
+            check(f"[{role}] 배달물이 제외에 덮인다: {rel}", covered, f"{rel} ∉ {exc}")
+
+    # 추적 중인 파일은 exclude 로 막을 수 없다 — 그 목록이 선언돼 있다
+    check("ambient 목록이 있다", "CLAUDE.md" in spec.AMBIENT_MANAGED
+          and ".mcp.json" in spec.AMBIENT_MANAGED)
+    check("[주의] 우리가 고치지 않는다 — 보고 함수만 있다",
+          callable(getattr(bundle, "tracked_managed", None)))
+
+
+# ── ⑥-e 등록이 기본 설정을 **저장**한다 ─────────────────────────
+
+def test_register_seeds_defaults() -> None:
+    """사용자 2026-08-22: *"마스터가 설치해주려고 규격을 정하고 디폴트 설정을 저장하는거잖아"*.
+
+    [중요] 관례가 이미 있었다 — `register_project` 는 `include`/`exclude` 를 새 `config.yaml` 에
+    적는다. 사양의 기본값도 같은 자리에 적어야 **사람이 보고 고칠 수 있다.**
+    """
+    import os
+    from master.projects.config import ProjectConfig
+    from master.projects.logic import register_project
+
+    tmp = Path(tempfile.mkdtemp(prefix="ax-reg-test-"))
+    (tmp / "gitea" / "o" / "r.git").mkdir(parents=True)
+    (tmp / "gitea" / "o" / "r.git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (tmp / "root").mkdir()
+    (tmp / "root" / "projects.yaml").write_text('version: 1\nactive: ""\nprojects: []\n',
+                                                encoding="utf-8")
+    keep = (os.environ.get("AX_GITEA_REPO_ROOT"), os.environ.get("AX_PROJECTS_ROOT"))
+    try:
+        os.environ["AX_GITEA_REPO_ROOT"] = str(tmp / "gitea")
+        os.environ["AX_PROJECTS_ROOT"] = str(tmp / "root")
+        # [주의] `GITEA_REPO_ROOT` 는 **임포트 시점 상수**라 환경변수를 늦게 넣어도 안 듣는다
+        #    (test_projects.py 는 임포트 전에 넣는다). 여기서는 bare_path 를 명시해 우회한다.
+        r = register_project("Seeded", "o/r",
+                             bare_path=str(tmp / "gitea" / "o" / "r.git"))
+        text = Path(r["config"]).read_text(encoding="utf-8")
+        check("등록이 init: 을 적는다", "init:" in text, text[:120])
+        check("컨벤션 절 기본값이 보인다", "Code conventions" in text)
+        # [중요] 순서가 내용이다 — `dict(self.raw)` 로 시작하므로 자리를 정하지 않으면
+        #    `init:` 이 `version:` 보다 앞에 찍힌다(실측).
+        check("[중요] init: 은 engine: 뒤다",
+              text.index("engine:") < text.index("init:"), "순서 뒤집힘")
+        check("version: 이 맨 앞이다", text.lstrip().startswith("version:"), text[:40])
+        cfg = ProjectConfig.load(Path(r["config"]))
+        check("적힌 값이 기본값과 같다 (동작 불변)",
+              spec.ProjectInit.from_config(cfg) == spec.EMPTY_INIT,
+              str(spec.ProjectInit.from_config(cfg)))
+    finally:
+        for k, v in zip(("AX_GITEA_REPO_ROOT", "AX_PROJECTS_ROOT"), keep):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 # ── ⑦-b load_init — 환경 오류와 부재를 가른다 ────────────────────
 
 def test_load_init_env() -> None:
@@ -331,7 +414,8 @@ if __name__ == "__main__":
     for fn in (test_single_table, test_unchanged, test_project_overlay,
                test_overlay_from_config, test_overlay_rejects_garbage, test_removals,
                test_mcp_roles, test_md_blocks, test_validate_spec,
-               test_init_flag_not_shadowed, test_server_steps,
+               test_init_flag_not_shadowed, test_git_excludes,
+               test_register_seeds_defaults, test_server_steps,
                test_load_init_env,
                test_clone_dir):
         fn()
