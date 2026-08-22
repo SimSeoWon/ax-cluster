@@ -315,6 +315,37 @@ def test_deliver_refreshes_residency() -> None:
     check("kill 이 pid 로 나갔다", any(c == "kill 777" for c in calls), str(calls))
     check("깃발도 먼저 나갔다", any("claimer.restart" in c for c in calls))
 
+    # [중요] **깃발을 볼 시간을 준다** — 실측 2026-08-23: 즉시 재확인했더니 새 코드도
+    #    「깃발을 모르는 코드」로 판정돼 매번 강제 종료했다(우아한 경로가 죽은 코드였다).
+    #    유닛이 통과한 이유는 stub 이 즉시 응답했기 때문이다 — 그래서 **기다림 자체**를 잰다.
+    naps, probes = [], []
+
+    def slow(cmd, timeout=60):
+        if "--probe" in cmd:
+            probes.append(1)
+            # 세 번째 관측에서 비로소 물러난다 (claimer 가 루프 top 에 도달)
+            return (0, "running=1\nstale=1\nbusy=0\npid=42\n" if len(probes) < 3
+                    else "running=0\nstale=0\n")
+        return 0, ""
+
+    r = bundle.refresh_residency(f, runner=slow, sleeper=lambda s: naps.append(s))
+    check("[중요] 기다렸다가 우아하게 끝낸다", r.get("refreshed") == "깃발", str(r))
+    check("기다린 시간을 보고한다", r.get("waited_sec", 0) > 0, str(r))
+    check("한 번이 아니라 여러 번 관측한다", len(probes) >= 3, str(len(probes)))
+    check("[주의] 무한정 기다리지 않는다",
+          bundle.FLAG_GRACE_SEC <= 120 and bundle.FLAG_POLL_SEC <= 10,
+          f"{bundle.FLAG_GRACE_SEC}/{bundle.FLAG_POLL_SEC}")
+    # 계속 반응이 없으면 결국 강제 종료 — 사유에 기다린 시간이 든다
+    naps2 = []
+    r2 = bundle.refresh_residency(
+        f, runner=lambda c, t=60: (0, "running=1\nstale=1\nbusy=0\npid=7\n")
+        if "--probe" in c else (0, ""), sleeper=lambda s: naps2.append(s))
+    check("반응 없으면 강제 종료", r2.get("pid_killed") == 7, str(r2))
+    check("[중요] 사유에 기다린 시간이 든다", "초 기다렸" in (r2.get("refreshed") or ""),
+          str(r2.get("refreshed")))
+    check("유예를 다 쓴다", sum(naps2) >= bundle.FLAG_GRACE_SEC - bundle.FLAG_POLL_SEC,
+          str(naps2))
+
     # 깃발을 아는 코드: 두 번째 probe 에서 stale 이 풀린다
     seq = iter(["running=1\nstale=1\nbusy=0\npid=5\n", "running=0\nstale=0\n"])
 

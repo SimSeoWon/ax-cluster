@@ -974,7 +974,17 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
             "verified": True}
 
 
-def refresh_residency(facts: HostFacts, *, runner=None) -> dict:
+# [중요] 깃발을 놓은 뒤 **기다려 준다** (`#277`). claimer 는 깃발을 **루프 top**(다음 claim
+#    전)에서만 본다 — 그것이 「진행 중 작업을 죽이지 않는다」의 방법이다. 즉 반응까지 최대
+#    한 폴링 주기(20초) + 왕복이 걸린다.
+#    [주의] 실측 2026-08-23: 즉시 재확인했더니 **새 코드도 「깃발을 모르는 코드」로 판정**돼
+#    매번 강제 종료했다 — 우아한 경로가 죽은 코드였다. 유닛은 통과했다(주입 stub 이 즉시
+#    응답했으니까).
+FLAG_GRACE_SEC = 35                 # claimer POLL_SEC(20) + 왕복 여유
+FLAG_POLL_SEC = 5
+
+
+def refresh_residency(facts: HostFacts, *, runner=None, sleeper=None) -> dict:
     """배달 뒤 상주 갱신 (`#277`). **관측 → 요구 → 재관측** 세 걸음.
 
     [중요] **판정은 파일이 아니라 도는 프로세스다** — `claimer.py --probe` 가 부팅 시점의 코드
@@ -1004,10 +1014,20 @@ def refresh_residency(facts: HostFacts, *, runner=None) -> dict:
                         else "상주 없음 — 감시자가 새 코드로 띄운다")}
     for label, cmd in residency.refresh_commands(facts):
         run(cmd)
-    rc, out2 = run(residency.probe_command(facts, python_path=py))
-    after = residency.parse_probe(out2)
+    # [중요] 깃발을 볼 시간을 준다 — 반응이 오면 **강제 종료하지 않는다**.
+    import time as _t
+    nap = sleeper or _t.sleep
+    waited, after = 0, {}
+    while True:
+        rc, out2 = run(residency.probe_command(facts, python_path=py))
+        after = residency.parse_probe(out2)
+        if not after.get("stale") or after.get("busy") or waited >= FLAG_GRACE_SEC:
+            break
+        nap(FLAG_POLL_SEC)
+        waited += FLAG_POLL_SEC
     if not after.get("stale"):
-        return {"ok": True, "refreshed": "깃발", "pid_was": state.get("pid")}
+        return {"ok": True, "refreshed": "깃발", "pid_was": state.get("pid"),
+                "waited_sec": waited}
     if after.get("busy"):
         return {"ok": True, "pending": "처리 중 — 태스크가 끝난 뒤 물러난다",
                 "pid": after.get("pid")}
@@ -1023,7 +1043,8 @@ def refresh_residency(facts: HostFacts, *, runner=None) -> dict:
         run(cmd)
     rc, out3 = run(residency.probe_command(facts, python_path=py))
     final = residency.parse_probe(out3)
-    return {"ok": not final.get("stale"), "refreshed": "강제 종료 (깃발을 모르는 코드)",
+    return {"ok": not final.get("stale"),
+            "refreshed": f"강제 종료 (깃발을 {waited}초 기다렸으나 반응 없음)",
             "pid_killed": pid or None,
             "note": ("감시자가 새 코드로 되살린다" if not final.get("running")
                      else "여전히 stale — 사람이 봐야 한다")}
