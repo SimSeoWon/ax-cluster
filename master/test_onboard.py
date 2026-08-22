@@ -111,6 +111,42 @@ def test_registered_only() -> None:
             os.environ["AX_PROJECTS_ROOT"] = keep
 
 
+def test_synth_stamps_commit() -> None:
+    """[중요] **최초 합성도 `source_commit` 을 박는다** (사용자 지적 2026-08-22).
+
+    처음엔 `do_synth` 가 `commit` 을 넘기지 않아 **신규 프로젝트의 문서 전부가 스탬프 없이**
+    만들어졌다. `md.py:153` 이 *"`commit` 이 비면 그 줄이 안 붙는다"* 고 적어 뒀고, `md.py:19` 는
+    그 값이 **중 1.3 stale 판정의 한쪽**이라고 못박았다. 훅 경로(`consumer._synthesize`)는
+    넘기는데 온보딩 경로는 안 넘겼다 — **두 경로가 같은 계약이어야 한다.**
+    """
+    import inspect
+    from master.projects import onboard
+
+    src = inspect.getsource(onboard.do_synth)
+    check("[중요] synth.run 에 commit 을 넘긴다", "commit=head.strip()" in src, src[-200:])
+    check("HEAD 를 못 읽으면 합성하지 않는다", "HEAD 를 읽지 못해 합성하지 않는다" in src)
+    # 훅 경로와 대조 — 두 곳이 같은 계약인지
+    from master.events import consumer
+    hook_src = inspect.getsource(consumer._synthesize)
+    check("훅 경로도 commit 을 넘긴다 (대조군)", "commit=r.to_commit" in hook_src)
+
+    # 넘기지 않으면 스탬프가 안 붙는다는 것 자체를 잰다 (md 계약 확인)
+    # [주의] `finalize` 는 **형식 게이트를 통과한 문서**에만 스탬프를 찍는다 — 최소 문서로
+    #    부르면 게이트에서 막혀 스탬프를 못 본다(내가 그렇게 짜서 칸이 빨갛게 됐다).
+    #    그래서 `stamp()` 를 직접 잰다 — 이 계약이 요점이다.
+    from master.context_synth import md as M
+    doc = ("---\ntags: [x]\ncategory: a/b/c\nrelated_classes:\n  - UX: a.h\n---\n\n"
+           "## 요약\nUX 는 무엇을 한다.\n\n## 개선 필요 사항\n없음\n")
+    check("[중요] commit 을 주면 박힌다",
+          "source_commit: abc1234" in M.stamp(doc, commit="abc1234"))
+    check("[주의] 안 주면 안 박힌다 (그래서 넘겨야 한다)",
+          "source_commit:" not in M.stamp(doc, commit=""))
+    # 형식을 갖춘 문서로 finalize 왕복도 확인한다
+    out, verdict = M.finalize(doc, existing="", commit="abc1234")
+    check("finalize 도 같은 결과", verdict.ok and "source_commit: abc1234" in out,
+          f"{verdict} {out[:80]}")
+
+
 def test_live_modularstage() -> None:
     """[중요] **라이브 판정** — 이미 초기화된 실물에서 여섯 단계가 전부 참이어야 한다.
 
@@ -145,7 +181,7 @@ def test_live_modularstage() -> None:
 
 if __name__ == "__main__":
     for fn in (test_step_source_is_spec, test_uninitialized, test_registered_only,
-               test_live_modularstage):
+               test_synth_stamps_commit, test_live_modularstage):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_onboard: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

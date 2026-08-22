@@ -320,11 +320,25 @@ def do_synth(paths, *, limit: int = 0) -> str:
     """컨텍스트 MD 최초 합성 — [중요] **LLM 을 태운다.** 원전 `initial_context_build` 대응.
 
     `skip_existing=True` 라 중단 후 재실행이 누락분만 채운다(원전과 같은 계약).
+
+    [중요] **`commit` 을 반드시 넘긴다** (사용자 지적 2026-08-22: *"컨텍스트 문서 작성할 때
+    해시값 처리 안한 것도 문제"*). 처음엔 안 넘겨서 **최초 합성 문서 전부가 `source_commit`
+    없이** 만들어졌다 — `md.py:153` 이 *"`commit` 이 비면 그 줄이 안 붙는다"* 고 적어 뒀고,
+    `md.py:19` 는 그 값이 **중 1.3 stale 판정의 한쪽**이라고 못박았다. 즉 신규 프로젝트가
+    처음부터 「어느 커밋 기준인지 모르는 문서」로 시작하게 되는 것이었다
+    (`#275` 가 ModularStage 이관물에서 지적한 그 상태를 새 프로젝트에 재생산하는 코드였다).
+    [주의] 훅 경로(`consumer._synthesize`)는 `commit=r.to_commit` 을 넘긴다 — 두 경로가
+    달랐다. **같은 계약이어야 한다.**
     """
     from ..context_synth import synth
-    s = synth.run(paths, changed=None, skip_existing=True, limit=limit)
-    return (f"그룹 {s.groups} · 작성 {s.written} · 건너뜀 {s.skipped} · 거부 {s.refused} "
-            f"· 사실게이트 {s.unfactual} · 실패 {s.failed}"
+    rc, head = _git(paths.repo, "rev-parse", "HEAD")
+    if rc != 0 or not (head or "").strip():
+        raise ConfigError("HEAD 를 읽지 못해 합성하지 않는다 — source_commit 없는 문서를 "
+                          "만들면 stale 판정이 그 문서에 영원히 안 먹는다")
+    s = synth.run(paths, changed=None, skip_existing=True, limit=limit,
+                  commit=head.strip())
+    return (f"{head.strip()[:7]} · 그룹 {s.groups} · 작성 {s.written} · 건너뜀 {s.skipped} "
+            f"· 거부 {s.refused} · 사실게이트 {s.unfactual} · 실패 {s.failed}"
             + (f" · [중요] {s.aborted}" if s.aborted else ""))
 
 
