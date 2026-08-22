@@ -191,10 +191,19 @@ def resolve_mounted_only(name: str = "", *, registry: Registry | None = None) ->
     두 번째 프로젝트를 동시에 열기로 하면 **이 함수만 안 쓰면 된다** — `resolve()` 는 그대로다.
     """
     reg = registry or Registry.load()
-    target = (name or reg.active or "").strip()
-    if name and reg.active and name != reg.active:
+    active = (reg.active or "").strip()
+    target = (name or active).strip()
+    # [중요] **`active` 가 비어도 막는다** (fail-closed, `#243`). 종전 조건은
+    #    `if name and reg.active and …` 라 **활성이 비면 어떤 태그든 통과**했다 —
+    #    2026-08-21 에 만든 색인기 게이트가 같은 구멍을 가졌고(`#242` 에서 고쳤다) 이 함수도
+    #    같은 모양이었다. 「모르면 통과」는 게이트가 아니다.
+    if not active:
         raise ConfigError(
-            f"마운트되지 않은 프로젝트다: {name} (마운트: {reg.active}). "
+            "마운트된 프로젝트가 없다 — 태그가 있어도 거부한다 (§5.5.2). 먼저 전환할 것."
+        )
+    if name and name != active:
+        raise ConfigError(
+            f"마운트되지 않은 프로젝트다: {name} (마운트: {active}). "
             "동시에 하나만 연다 (§5.5.2) — 전환 후 다시 요청할 것."
         )
     return resolve(target, registry=reg)

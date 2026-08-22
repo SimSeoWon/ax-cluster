@@ -133,6 +133,12 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         원전 데몬은 프로젝트 안에 살아 귀속이 물리적이었다. 중앙 큐에서 활성으로 풀면
         미종결 work 를 둔 채 활성을 바꿨을 때 산출물이 다른 프로젝트 트윈에 착지한다.
         스탬프 없는 옛 work 는 활성으로 (호환).
+
+        [중요] **여기는 `#243` 의 마운트 강제를 적용하지 않는다 — 의도된 예외다.** `#210` 이
+        *"활성이 아니라 work 의 스탬프로 푼다"* 를 명시적으로 정했고, 그 이유가 정확히 이 함수의
+        존재 이유다: 미종결 work 를 둔 채 활성을 바꿨을 때 산출물이 **원래 프로젝트로** 가야 한다.
+        [주의] 요청 표면(`thesaurus/*`)과 다른 축이다 — 그쪽은 **요청자가 태그를 고른다**(우회 가능)
+        이고, 이쪽은 **큐가 등록 시점에 스탬프한 값**이다. 전자만 강제한다.
         """
         from ..context_search.paths import resolve
         proj = ""
@@ -416,6 +422,20 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
                 f"errors={len(record['error_recoveries'])}", root)
         return {"ok": True, "stored_at": stored, "intent": record["intent"]}
 
+    def _mounted_paths(project: str):
+        """요청의 태그를 **마운트와 대조**해 푼다 (`#243`). 거부는 예외로 올린다.
+
+        [중요] **거부 형태는 200 + `ok:false` + 사유**다 (§12.5-c 확정). 409 를 쓰지 않는 이유는
+        실측이다 — `ax-client` 는 [미연결] 시 지난 스냅샷으로 폴백하도록 되어 있어 **거절을
+        장애로 오인해 낡은 결과를 돌려준다.** 그리고 500 은 더 나쁘다: 사유가 없다.
+        [주의] 실측 2026-08-22 — 배선 전에는 `resolve(req.project or "")` 가 태그를 검사 없이
+        따라, `project=NS`(비마운트) 요청이 `thesaurus.register` 까지 진입해 `open()` 에서
+        **500** 으로 죽었다. 막은 것은 우리 코드가 아니라 systemd 샌드박스였다 —
+        **의도된 방어가 아니다.**
+        """
+        from ..context_search.paths import resolve_mounted_only
+        return resolve_mounted_only(project or "")
+
     @app.post("/api/v1/thesaurus/alias")
     def thesaurus_alias_ep(req: AliasReq):
         """사용자가 확인해 준 별칭을 등록한다 — 요청자(`.33`) 대행 (2026-08-20).
@@ -426,8 +446,13 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         [주의] 거부도 **200 + ok:false** 로 말한다. 조용히 무시하면 사용자는 등록된 줄 안다.
         """
         from ..context_search import thesaurus as th
-        from ..context_search.paths import resolve
-        paths = resolve(req.project or "")
+        from ..projects.config import ConfigError
+        try:
+            paths = _mounted_paths(req.project)
+        except ConfigError as e:
+            _tq_log(f"[thesaurus] 거부 — {e}", root)
+            return {"ok": False, "status": "not_mounted", "reason": str(e),
+                    "class": req.class_name, "term": req.term, "project": req.project}
         status = th.register(paths, req.class_name, req.term)
         ok = status.startswith("added") or status == "noop"
         _tq_log(f"[thesaurus] alias {req.class_name} ← '{req.term}' "
@@ -439,8 +464,13 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
     def thesaurus_not_a_class_ep(req: NotAClassReq):
         """`그건 클래스가 아니다` 를 기억한다 — 다음부터 묻지 않는다."""
         from ..context_search import thesaurus as th
-        from ..context_search.paths import resolve
-        paths = resolve(req.project or "")
+        from ..projects.config import ConfigError
+        try:
+            paths = _mounted_paths(req.project)
+        except ConfigError as e:
+            _tq_log(f"[thesaurus] 거부 — {e}", root)
+            return {"ok": False, "status": "not_mounted", "reason": str(e),
+                    "term": req.term, "project": req.project}
         status = th.ignore(paths, req.term)
         _tq_log(f"[thesaurus] not-a-class '{req.term}' → {status} ({paths.name})", root)
         return {"ok": status != "not_found", "status": status,

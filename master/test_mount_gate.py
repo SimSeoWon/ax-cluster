@@ -208,6 +208,61 @@ def test_partial_synth_is_not_done() -> None:
           'return True, f"MD {n}건"' not in src)
 
 
+# ── #243 요청 표면의 마운트 강제 ────────────────────────────────────
+
+def test_request_surface_gate() -> None:
+    """[중요] **사용자 요구가 이것이다** — *"인프라 서버는 단일 하나의 프로젝트만 관리한다.
+    그 이외의 작업은 모두 거절하도록 요청에 태그 넣으라"*.
+
+    [주의] 배선 전 실측(2026-08-22): `resolve(req.project or "")` 가 태그를 **검사 없이** 따라
+    `project=NS`(비마운트) 요청이 `thesaurus.register` 까지 진입해 `open()` 에서 **500** 으로
+    죽었다. 막은 것은 우리 코드가 아니라 **systemd 샌드박스**였다 — 의도된 방어가 아니다.
+    """
+    import os
+    from master.context_search.paths import resolve_mounted_only
+    from master.projects.config import ConfigError
+
+    class R:
+        def __init__(self, active, names):
+            self.active, self.names, self.root = active, names, Path("/tmp")
+        def dir_of(self, n):
+            return Path("/tmp") / n
+
+    reg = R("A", ["A", "B"])
+    check("활성과 같으면 통과", resolve_mounted_only("A", registry=reg).name == "A")
+    check("빈 태그는 활성으로", resolve_mounted_only("", registry=reg).name == "A")
+    for bad in ("B", "없는것"):
+        try:
+            resolve_mounted_only(bad, registry=reg)
+            check(f"[중요] {bad} 는 거부", False, "통과해버렸다")
+        except ConfigError as e:
+            check(f"{bad} 는 거부", "마운트되지 않은" in str(e) or "등록되지" in str(e), str(e))
+
+    # [중요] **활성이 비어도 막는다** — 종전 조건 `if name and reg.active and …` 는 통과시켰다
+    try:
+        resolve_mounted_only("A", registry=R("", ["A"]))
+        check("[중요] 활성이 비면 태그가 있어도 거부 (fail-closed)", False, "통과해버렸다")
+    except ConfigError as e:
+        check("활성이 비면 거부", "마운트된 프로젝트가 없다" in str(e), str(e))
+
+    # 엔드포인트가 그 함수를 쓰고 **200 + ok:false** 로 답하는지 (형태가 계약이다)
+    src = (Path(__file__).resolve().parent / "task_queue" / "server.py").read_text(
+        encoding="utf-8")
+    check("[중요] thesaurus 표면이 게이트를 쓴다", src.count("_mounted_paths(req.project)") == 2,
+          str(src.count("_mounted_paths(req.project)")))
+    # [주의] **`_paths_for` 의 `resolve(proj or "")` 는 남아 있어야 한다** — `#210` 의 의도된
+    #    예외다(work 스탬프). 칸을 「전부 금지」로 쓰면 그 예외까지 잡아 거짓 실패가 난다.
+    #    금지 대상은 **요청자가 고르는 태그**를 검사 없이 따르는 형태다.
+    body = src.split("def thesaurus_alias_ep")[1].split("def anti_patterns_notify_ep")[0]
+    check("[주의] thesaurus 표면에 검사 없는 resolve 가 없다",
+          'resolve(req.project or "")' not in body)
+    check("거부가 200 + ok:false 다", '"ok": False, "status": "not_mounted"' in src)
+    check("사유를 담는다", '"reason": str(e)' in src)
+    # [중요] work 해석은 **의도된 예외**다 (#210) — 강제하면 미종결 work 산출물이 엉뚱한 곳으로
+    check("[중요] work 스탬프 경로는 예외로 남긴다",
+          "여기는 `#243` 의 마운트 강제를 적용하지 않는다" in src)
+
+
 # ── #241 문구 ───────────────────────────────────────────────────────
 
 def test_set_active_note_true() -> None:
@@ -224,7 +279,8 @@ def test_set_active_note_true() -> None:
 if __name__ == "__main__":
     for fn in (test_gate_blocks_unmounted, test_gate_fails_closed_on_empty_active,
                test_poll_loop_only_mounted, test_watermark_needs_context,
-               test_partial_synth_is_not_done, test_set_active_note_true):
+               test_partial_synth_is_not_done, test_request_surface_gate,
+               test_set_active_note_true):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_mount_gate: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)
