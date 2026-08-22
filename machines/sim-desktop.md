@@ -194,6 +194,11 @@ timed out"* — measured 3× in a row 2026-08-19 while the service itself was he
 timed out the same way. [주의] **Judge success by `ExecMainStartTimestamp`, not the exit code** —
 the failing command left the old process running, so `is-active` still said `active`.
 
+[중요] **훅 설치도 NOPASSWD 다** — `sudo -n /usr/local/bin/ax-install-hook --apply`. 온보딩의
+`hook` 단계가 무인으로 돌아야 하기 때문이다(사용자 2026-08-22: *"자동화를 전재로 프로젝트
+구성중"*). [주의] 그 규칙은 실질적으로 `sim`→root 경로다 — 근거·완화는
+`sim-desktop.d/environment.md` § Registered NOPASSWD commands.
+
 ## Detail documents
 
 | What you need | File |
