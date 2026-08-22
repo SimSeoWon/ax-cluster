@@ -238,6 +238,18 @@ def test_senders_are_wired() -> None:
     check("[중요] claimer 가 거절을 태스크로 읽지 않는다",
           'got.get("ok") is False' in claimer, "200+ok:false 를 태스크로 착각한다")
     check("거절 사유를 삼키지 않는다", "claim 거절" in claimer)
+    # [중요] **로그 파일에 남아야 한다** — 실측 2026-08-23: NS 로 마운트를 바꾸자 큐가
+    #    ModularStage 상주의 claim 을 옳게 거절했는데(60초에 6건) **claimer 로그에는 사유가
+    #    없었다.** `stderr` 로만 찍었고 cron 상주는 `2>&1 >/dev/null` 로 뜬다.
+    #    이번 세션 **세 번째** 부류다: 판정을 했는데 안 보이면 「안 한 것」과 구분되지 않는다.
+    i = claimer.index("[claim 거절]")
+    check("[중요] 파일 로거로 찍는다 (stderr 만이 아니다)",
+          "self.log(" in claimer[i - 300:i + 300], claimer[i - 60:i + 60])
+    check("[주의] 매 주기 찍지 않는다 — 사유가 바뀔 때만",
+          "_last_refusal" in claimer, "20초 폴링 × 하루 = 4,320줄이 로그를 덮는다")
+    check("main 이 파일 로거를 꽂는다", "c.log = log" in claimer)
+    check("[주의] 기본 로거는 stderr 다 (단발·테스트가 파일 로그를 만들지 않는다)",
+          "self.log = lambda m: print(m, file=sys.stderr)" in claimer)
 
     cmcp = (root / "client" / "runtime" / "client_mcp.py").read_text(encoding="utf-8")
     check("클라가 관문에서 붙인다", 'payload = {**payload, "project": project}' in cmcp)
