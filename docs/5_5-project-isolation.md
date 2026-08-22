@@ -94,24 +94,39 @@ AgentTest 의 `mcp/context_search/` 도 같은 형태다. 새 계층이 아니�
 ③ 에 따라 거부된다 — [중요] **형태는 `409` 가 아니라 `200 + ok:false + 사유`** 다
 (§12.5-c 확정 2026-08-22, 아래 ③ 표 참조).
 
+[주의] **아래는 2026-08-23 에 실물로 갱신했다** (`#227` 소 3.1). 종전 예시는 `projects:` 아래에
+**프로젝트별 키**를 그렸는데, 실물은 그렇지 않다 — 루트는 **이름 목록**만 들고 상세는 각
+`<프로젝트>/config.yaml` 에 산다. 그 분리가 이 설계의 요점이다: 프로젝트를 하나 추가할 때
+루트 파일은 **한 줄**만 자란다.
+
 ```yaml
-# ~/ax-cluster/projects.yaml  (실제 파일, 2026-08-08 작성)
+# ~/ax-cluster/projects.yaml  (실측 2026-08-23)
 version: 1
 active: ModularStage                   # [중요] 없거나 목록에 없으면 기동 실패
-projects:
-  ModularStage:
-    dir: ModularStage                  # ax-cluster 하위 디렉토리명
-    project_id: sim/modularstage       # Gitea 저장소 식별자 (훅 이벤트가 이걸로 온다)
-    bare_path: /var/lib/gitea/gitea-repositories/sim/modularstage.git
-    clone_url: http://192.168.0.57:3000/sim/modularstage.git
-    branch: main
-    engine: "5.8.1"                    # .uproject 에서 못 읽는다(EngineAssociation 이 GUID)
-    index:
-      include: ["Source/**/*.cpp", "Source/**/*.h", "Source/**/*.cs", "Config/**"]
-      exclude: ["Content/**"]          # 1,021MB / 전체의 93%
+projects:                              # **이름 목록뿐이다** — 상세는 각 프로젝트 파일에
+- ModularStage
+- NS
 ```
 
-**디렉토리명(`ModularStage`)과 `project_id`(`sim/modularstage`)를 분리했다.** 전자는 사람이
+```yaml
+# ~/ax-cluster/ModularStage/config.yaml  (프로젝트별 상세가 여기 있다)
+project_id: Sim/ModularStage           # Gitea 저장소 식별자 (훅 이벤트가 이걸로 온다)
+bare_path: /var/lib/gitea/gitea-repositories/sim/modularstage.git
+clone_url: gitea@192.168.0.57:Sim/ModularStage.git
+branch: main
+index:
+  last_indexed_commit: 4cd229f3…       # 워터마크 (#244 — 색인한 것이 있을 때만 전진)
+  include: ["Source/**/*.cpp", "Source/**/*.h", "Source/**/*.cs", "Config/**"]
+  exclude: ["Content/**"]              # 1,021MB / 전체의 93%
+workshops:                             # host → driven/role/user/path (#227 소 1.1: role 필수)
+- host: 192.168.0.2
+  role: worker
+  driven: ssh
+  user: janus
+  path: E:\trunk\ModularStage
+```
+
+**디렉토리명(`ModularStage`)과 `project_id`(`Sim/ModularStage`)를 분리했다.** 전자는 사람이
 보는 이름, 후자는 훅 이벤트가 실어 오는 Gitea 식별자다. 규약 ② 의 "별칭 금지"는 여전히
 유효하다 — `project_id` 는 **여기서 지어내지 않고 Gitea 값을 그대로 적는다.**
 
