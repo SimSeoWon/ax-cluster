@@ -987,6 +987,29 @@ def _ensure_ignored(facts: HostFacts) -> bool:
     return True
 
 
+def merge_gitignore(existing: str) -> str:
+    """`.gitignore` 에 **관리 블록만** 갈아끼운다 — 사람이 쓴 나머지는 그대로 둔다 (#266).
+
+    `merge_claude_md` 와 같은 규약이다. 없으면 맨 뒤에 붙이고, 있으면 그 사이만 교체하고,
+    여러 개면 걷어내고 하나만 남긴다.
+
+    [주의] **원전의 `# AgentWatch:` 블록은 건드리지 않는다** — 그 안의 `/watch.exe` 등은 원전
+    자산이고 우리가 그 상태를 단정할 수 없다. 항목이 겹치는 것은 해가 없다(`.gitignore` 는
+    중복에 관대하다).
+    """
+    block = spec.gitignore_block()
+    b, e = spec.GITIGNORE_BEGIN, spec.GITIGNORE_END
+    if not (existing or "").strip():
+        return block + "\n"
+    if b in existing and e in existing:
+        head = existing.split(b)[0]
+        rest = existing.split(e)[-1]
+        while b in rest:
+            rest = rest.split(e)[-1] if e in rest else rest.split(b)[0]
+        return head.rstrip() + "\n\n" + block + rest
+    return existing.rstrip() + "\n\n" + block + "\n"
+
+
 def tracked_managed(facts: HostFacts) -> tuple:
     """마스터가 쓰는 파일 중 **저장소가 추적 중인 것**의 이름 (#266).
 

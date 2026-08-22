@@ -334,6 +334,18 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
     if not files:
         raise SynthError("합성할 소스가 없다 — `Source/` 경계나 변경 목록을 확인하라. "
                          "빈 배치를 성공으로 보고하지 않는다")
+    # [중요] **컨텍스트 문서 생성은 `Source/` 한정이다** (§5.2-E, 사용자 재확인 2026-08-22).
+    #    `changed=None` 경로는 `list_source_files` 가 경계를 **두 겹**으로 지키는데(pathspec +
+    #    접두 검사), `changed` 를 받는 경로에는 검사가 **없었다** — 호출자가 한 번 잘못 넘기면
+    #    `Content/`(워킹트리의 93%, uasset 바이너리)가 그대로 합성 대상이 된다.
+    #    [주의] 조용히 걸러내지 않고 **거부한다.** 걸러내면 호출자는 그것도 합성된 줄 안다.
+    files = [str(f).strip().replace("\\", "/") for f in files]
+    outside = [f for f in files if not f.startswith(f"{cg.SOURCE_SUBDIR}/")]
+    if outside:
+        raise SynthError(
+            f"`{cg.SOURCE_SUBDIR}/` 밖의 파일이 합성 목록에 있다 ({len(outside)}건) — "
+            f"컨텍스트 문서는 소스 한정이다(§5.2-E): "
+            + ", ".join(outside[:5]) + (" ..." if len(outside) > 5 else ""))
     groups = group([f for f in files if (paths.repo / f).is_file()])
     if not groups:
         raise SynthError("살아 있는 소스 파일이 없다 (전부 삭제됐거나 경로가 틀렸다)")

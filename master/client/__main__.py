@@ -106,10 +106,17 @@ def cmd_plan(project: str) -> int:
         exc = ", ".join(f"`{x}`" for x in spec.git_excludes_for(f.role))
         print(f"   → {f.path}/.git/info/exclude 에 {exc} (커밋 안 됨)")
         # [주의] 추적 중인 파일은 exclude 로 못 막는다 — 이름으로 보고한다(고치지는 않는다).
+        # [중요] **`.gitignore` 가 산출물 오염을 막는 쪽이다** (사용자 2026-08-22). info/exclude 는
+        #    클론 로컬이라 그 기계에만 듣고, 팀원이 새로 클론하면 없다. 원전도 `.gitignore` 에
+        #    마커 블록을 써서 사람이 커밋하게 했다(ModularStage `.gitignore:30-42` 가 그 결과다).
+        #    [주의] 쓰는 것은 #259 onboard 다 — 여기서는 무엇이 들어갈지만 보여 준다.
+        print(f"   → {f.path}/.gitignore 의 `{spec.GITIGNORE_BEGIN.split(chr(32))[0]}` 블록 "
+              f"({len(spec.GITIGNORE_BODY)}줄, 커밋은 사람 몫 — 마스터는 push 못 한다)")
         tracked = bundle.tracked_managed(f)
         if tracked:
-            print(f"   [중요] 저장소가 추적 중이라 exclude 가 안 듣는다: {', '.join(tracked)}"
-                  f" — 관리 블록이 그 파일을 modified 로 만든다 (처분은 #259)")
+            print(f"   [중요] 저장소가 **추적 중**이라 exclude 가 안 듣는다: {', '.join(tracked)}"
+                  f"\n       → 인프라 파일이 게임 산출물에 섞여 있다. `git rm --cached <파일>` +"
+                  f" 위 .gitignore 블록을 **사람이 한 번 커밋**하면 끝난다 (처분은 #259)")
         # [중요] **폐지분을 이름으로 찍는다** (#266 완료 조건 3). 표에서 지우는 것만으로는 이미
         #    배달된 기계가 정리되지 않는다 — `#232` 가 그 부류였고 그때 실패는 조용했다.
         rm = spec.removals_for(f.role, init)

@@ -302,6 +302,45 @@ def test_git_excludes() -> None:
           callable(getattr(bundle, "tracked_managed", None)))
 
 
+# ── ⑥-d2 .gitignore 관리 블록 — 산출물 오염을 막는 쪽 ────────────
+
+def test_gitignore_block() -> None:
+    """사용자 2026-08-22: *"클로드가 실제 작업 결과물에 포함되는게 문제인거지"*.
+
+    [중요] `info/exclude` 는 **클론 로컬**이라 그 기계에만 듣는다 — 팀원이 새로 클론하면
+    없다. 커밋되는 `.gitignore` 만 저장소 전체에 듣는다. 원전도 그래서 `.gitignore` 에 마커
+    블록을 썼다(ModularStage `.gitignore:30-42` 가 그 결과물이다).
+    """
+    blk = spec.gitignore_block()
+    for line in ("/.ax/", "/.mcp.json", "/CLAUDE.md", ".claude/"):
+        check(f"블록이 {line} 를 든다", line in blk, blk)
+    check("마커로 감싸였다",
+          blk.startswith(spec.GITIGNORE_BEGIN) and blk.endswith(spec.GITIGNORE_END))
+    # [중요] 배달물 전부가 블록에 덮여야 한다 — 어긋나면 산출물에 섞인다
+    for rel in (bundle.CONFIG_REL, "CLAUDE.md", ".mcp.json", bundle.WORKSHOP_MD_REL):
+        top = rel.split("/")[0]
+        check(f"배달물이 .gitignore 블록에 덮인다: {rel}",
+              f"/{top}" in blk or f"{top}/" in blk or f"/{rel}" in blk, rel)
+
+    # 병합 규약 — merge_claude_md 와 같다
+    once = bundle.merge_gitignore("*.tmp\n")
+    check("사람이 쓴 줄을 보존한다", "*.tmp" in once)
+    check("[중요] 멱등 — 두 번 병합이 같다", bundle.merge_gitignore(once) == once)
+    check("블록이 하나만 남는다", once.count(spec.GITIGNORE_BEGIN) == 1)
+
+    dup = bundle.merge_gitignore(once + "\n" + spec.gitignore_block() + "\n")
+    check("여러 개면 걷어내고 하나만", dup.count(spec.GITIGNORE_BEGIN) == 1,
+          str(dup.count(spec.GITIGNORE_BEGIN)))
+
+    # [주의] 원전 블록은 우리 것이 아니다 — 건드리지 않는다
+    orig = "# AgentWatch:Start\n/watch.exe\n/.watch_state\n# AgentWatch:End\n"
+    m = bundle.merge_gitignore(orig)
+    check("[주의] 원전 AgentWatch 블록을 보존한다",
+          "# AgentWatch:Start" in m and "/watch.exe" in m, m)
+    check("우리 블록도 함께 있다", spec.GITIGNORE_BEGIN in m)
+    check("마커가 겹치지 않는다", spec.GITIGNORE_BEGIN != "# AgentWatch:Start")
+
+
 # ── ⑥-e 등록이 기본 설정을 **저장**한다 ─────────────────────────
 
 def test_register_seeds_defaults() -> None:
@@ -346,6 +385,52 @@ def test_register_seeds_defaults() -> None:
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+
+# ── ⑥-f 컨텍스트 문서 생성은 Source/ 한정 (사용자 재확인 2026-08-22) ──
+
+def test_synth_source_only() -> None:
+    """[중요] 경계가 **호출 방식에 딸려 다니지 않게** 한다 (§5.2-E).
+
+    `list_source_files` 는 pathspec + 접두 검사로 두 겹인데, `synth.run(changed=...)` 경로에는
+    검사가 **없었다** — 호출자가 한 번 잘못 넘기면 `Content/`(워킹트리의 93%, uasset 바이너리)가
+    그대로 합성 대상이 됐다. [주의] 조용히 걸러내지 않고 **거부한다** — 걸러내면 호출자는
+    그것도 합성된 줄 안다.
+    """
+    from master.context_search.paths import SOURCE_SUBDIR
+    from master.context_synth import synth
+
+    check("경계 이름이 하나다", SOURCE_SUBDIR == "Source", SOURCE_SUBDIR)
+    check("사양의 synth 단계가 경계를 적는다",
+          any(s.key == "synth" and "Source/" in s.what for s in spec.SERVER_STEPS))
+
+    src = (Path(__file__).resolve().parent / "context_synth" / "synth.py").read_text(
+        encoding="utf-8")
+    check("synth 가 SOURCE_SUBDIR 로 검사한다", "SOURCE_SUBDIR}/" in src)
+
+    tmp = Path(tempfile.mkdtemp(prefix="ax-synth-scope-"))
+    (tmp / "repo" / "Source").mkdir(parents=True)
+    (tmp / "repo" / "Source" / "A.cpp").write_text("int a;\n", encoding="utf-8")
+    (tmp / "repo" / "Content").mkdir()
+    (tmp / "repo" / "Content" / "B.uasset").write_bytes(b"\x00")
+    from master.context_search.paths import ProjectPaths
+    paths = ProjectPaths(name="T", root=tmp)
+
+    for bad, label in ((["Content/B.uasset"], "Content/ 단독"),
+                       (["Source/A.cpp", "Content/B.uasset"], "섞여 들어옴"),
+                       (["../../etc/passwd"], "경로 탈출")):
+        try:
+            synth.run(paths, changed=bad, dry_run=True)
+            check(f"[중요] {label} → 거부", False, "통과해버렸다")
+        except synth.SynthError as e:
+            check(f"{label} → 거부", "Source/" in str(e), str(e)[:80])
+
+    # 정상 경로는 그대로 돈다 (경계가 기능을 막지 않는다)
+    s = synth.run(paths, changed=["Source/A.cpp"], dry_run=True)
+    check("Source/ 안은 통과한다", s.groups == 1, str(s.groups))
+    # 윈도우 diff 출력(백슬래시)도 같은 판정을 받는다
+    s2 = synth.run(paths, changed=["Source\\A.cpp"], dry_run=True)
+    check("백슬래시도 정규화 후 통과", s2.groups == 1, str(s2.groups))
 
 
 # ── ⑦-b load_init — 환경 오류와 부재를 가른다 ────────────────────
@@ -414,8 +499,9 @@ if __name__ == "__main__":
     for fn in (test_single_table, test_unchanged, test_project_overlay,
                test_overlay_from_config, test_overlay_rejects_garbage, test_removals,
                test_mcp_roles, test_md_blocks, test_validate_spec,
-               test_init_flag_not_shadowed, test_git_excludes,
-               test_register_seeds_defaults, test_server_steps,
+               test_init_flag_not_shadowed, test_git_excludes, test_gitignore_block,
+               test_register_seeds_defaults, test_synth_source_only,
+               test_server_steps,
                test_load_init_env,
                test_clone_dir):
         fn()

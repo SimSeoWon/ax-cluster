@@ -80,7 +80,11 @@ SERVER_STEPS = (
          "paths.repo 가 git 저장소다"),
     Step("graph", "클래스·의존 그래프 전체 구축",
          "class_graph.db · dependency_graph.db 에 행이 있다"),
-    Step("synth", "컨텍스트 MD 최초 합성 (누락분만 — 중단 후 재실행 가능)",
+    # [중요] **컨텍스트 문서 생성은 `Source/` 한정이다** (§5.2-E, 사용자 재확인 2026-08-22).
+    #    `Content/` 는 워킹트리의 93%(uasset 바이너리)이고 합성 대상이 아니다. 경계는 세 겹으로
+    #    지킨다: `list_source_files` 의 pathspec + 접두 검사, 그리고 `synth.run` 이 **넘겨받은
+    #    목록도 거부**한다(호출자가 한 번 잘못 넘기면 조용히 들어오던 자리였다).
+    Step("synth", "컨텍스트 MD 최초 합성 — **Source/ 한정** (누락분만, 중단 후 재실행 가능)",
          "<트윈>/context/ 에 MD 가 있다"),
     Step("index", "벡터·BM25 색인 전체 구축 + 워터마크 기입",
          "config.yaml 의 index.last_indexed_commit 이 비어 있지 않다"),
@@ -168,6 +172,44 @@ GIT_EXCLUDES = (
 def git_excludes_for(role: str) -> tuple:
     """이 역할의 체크아웃에서 커밋 제외할 경로들."""
     return tuple(line for line, roles in GIT_EXCLUDES if not roles or role in roles)
+
+
+# ── `.gitignore` 관리 블록 — 산출물 오염을 막는 쪽 ─────────────────
+#
+# [중요] **문제는 인프라 파일이 게임 저장소의 산출물에 섞이는 것이다** (사용자 2026-08-22:
+# *"클로드가 실제 작업 결과물에 포함되는게 문제인거지"* · *"기존에 claude.md 파일이 커밋된 것도
+# 잘못 추적되는거야"*). `.git/info/exclude` 는 **클론 로컬**이라 그 기계에만 듣는다 — 팀원이 새로
+# 클론하면 없다. 커밋되는 `.gitignore` 만이 저장소 전체에 듣는다.
+#
+# [중요] **원전의 답이 ModularStage 에 이미 커밋돼 있다** (실측 `.gitignore:30-42`):
+# `# AgentWatch:Start ~ End` 마커 블록에 `/watch.exe`·`/config.json`·`/.watch_state`·`.claude/`·
+# `/.mcp.json`·`/CLAUDE.md`. 원전 주석이 이유를 둘 다 적었다 — *"서버/클라/개인 PC 가 각자 값을
+# 갖고 git 동기화 시 충돌"* · *"추적 시 매 cycle 마다 'M ...' 가 발생해 워커·마스터의 브랜치
+# 전환·머지가 막힘"*.
+#
+# [주의] **그 블록을 우리가 가로채지 않는다.** `# AgentWatch:` 는 원전이 만든 것이고 그 안의
+# `/watch.exe` 등은 원전 자산이다 — 지금 그 함대가 어떤 상태인지 우리가 단정할 수 없다.
+# 우리 블록은 따로 둔다(사람이 쓴 것을 덮지 않는다는 관례와 같은 결).
+#
+# [주의] 마스터는 소스 저장소에 push 할 수 없다(§2.1). 그래서 이 블록을 **쓰기만** 하고
+# **커밋은 사람이 한다** — 원전도 그랬다(watcher 가 쓰고 개발자가 커밋).
+GITIGNORE_BEGIN = "# AX:Begin — 마스터가 생성한다. 이 블록만 덮인다 (직접 편집 금지)"
+GITIGNORE_END = "# AX:End"
+
+GITIGNORE_BODY = (
+    "# AX 클러스터 산출물 — 기계마다 값이 다른 환경 설정·런타임 데이터다.",
+    "# 추적하면 ① 인프라 파일이 게임 산출물에 섞이고 ② 매 배달마다 'M ...' 가 생겨",
+    "#          워커·마스터의 브랜치 전환·머지를 방해한다 (원전 .gitignore 주석과 같은 사유).",
+    "/.ax/",
+    "/.mcp.json",
+    "/CLAUDE.md",
+    ".claude/",
+)
+
+
+def gitignore_block() -> str:
+    """`.gitignore` 에 넣을 관리 블록 전문."""
+    return "\n".join((GITIGNORE_BEGIN, *GITIGNORE_BODY, GITIGNORE_END))
 
 
 # [중요] **추적 중인 파일은 exclude 로 못 막는다.** 프로젝트가 `CLAUDE.md` 를 커밋해 두고 있으면
