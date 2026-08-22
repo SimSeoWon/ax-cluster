@@ -90,14 +90,53 @@ def strip_comments(src: str) -> tuple[str, str]:
     return "".join(live), "\n".join(dead)
 
 
+# [중요] **식별자 모양을 요구한다** (`#270`). 종전에는 3자 이상 영단어 전부가 후보라, 주석의
+# 산문(`for`·`game`·`person`·`Simple`·`Constructor`·`stub`)이 식별자로 세어졌다 — 모델이 한국어
+# 문장에서 그 낱말을 쓰는 순간 *"주석에만 있는 식별자"* 로 거부됐다(실측: NS 최초 합성).
+#
+# 규칙: **내부 대문자 또는 밑줄**이 있어야 식별자로 본다. 코드 이름은 거의 다 그렇고
+# (`LogNS`·`ULegacyLoader`·`FOldPayload`·`EOld`·`DoWork`·`GENERATED_BODY`), 산문 낱말은 아니다.
+# [주의] 이것으로 놓치는 것은 **단일 혹 이름**(`Foo` 같은)뿐이다. 게이트가 지키는 실제 사례
+# (주석 처리된 UE 클래스·구조체·enum)는 접두 규약 때문에 전부 내부 대문자를 갖는다 —
+# 회귀 칸이 그 셋을 그대로 잰다.
+# [주의] **UE 접두 이름은 대문자가 연속이다** — `EOld`·`FBox`·`UObject` 는 `[a-z][A-Z]` 전이가
+#    없다. 실측(2026-08-22): 그 규칙만 두었더니 `EOld` 가 후보에서 빠져 **게이트가 죽었다**
+#    (회귀 칸이 잡았다). 그래서 세 모양을 인정한다: 밑줄 · 내부 대문자 · 대문자 2개 이상.
+_SHAPED_RE = re.compile(r"_|[a-z0-9][A-Z]|[A-Z].*[A-Z]")
+
+
 def identifiers(text: str) -> set[str]:
-    return {m for m in _IDENT_RE.findall(text or "") if m not in _NOISE}
+    return {m for m in _IDENT_RE.findall(text or "")
+            if m not in _NOISE and _SHAPED_RE.search(m)}
+
+
+# 저작권·라이선스 머리말을 알아보는 표지. [중요] **파일 첫 주석 블록만** 대상으로 본다 —
+# 본문 주석에서 이 낱말이 나오는 것은 정상 서술이므로 건드리지 않는다.
+_LICENSE_HINT = re.compile(r"copyright|all rights reserved|licensed under|spdx",
+                           re.IGNORECASE)
+
+
+def _drop_license_header(dead: str) -> str:
+    """주석 텍스트에서 **첫 줄의 저작권 머리말**을 떼어낸다 (`#270`).
+
+    [중요] `// Copyright Epic Games, Inc. All Rights Reserved.` 는 **모든 UE 파일**에 있다.
+    그 낱말들(`All`·`Rights`·`Epic`·`Games`…)을 식별자로 세면, 모델이 산문에서 그 낱말을 쓰는
+    순간 거부된다 — 실측: NS 최초 합성 4그룹 중 3 거부, 그중 2가 이 부류였다.
+
+    [주의] 그것은 **코드에 대한 주장이 아니다.** 게이트가 잡아야 하는 것은 *"주석 처리된 클래스를
+    살아 있다고 서술"* 이지 저작권 문구가 아니다.
+    """
+    lines = (dead or "").splitlines()
+    return "\n".join(l for l in lines if not _LICENSE_HINT.search(l))
 
 
 def comment_only(src: str) -> set[str]:
-    """주석 안에만 등장하는 식별자. **이것이 게이트의 판정 근거다.**"""
+    """주석 안에만 등장하는 식별자. **이것이 게이트의 판정 근거다.**
+
+    [주의] 저작권 머리말은 제외한다(`_drop_license_header`) — `#270`.
+    """
     live, dead = strip_comments(src)
-    return identifiers(dead) - identifiers(live)
+    return identifiers(_drop_license_header(dead)) - identifiers(live)
 
 
 # 문서에서 사실 주장이 실리는 절. 「개선 필요 사항」은 **제외한다** — 거기서 "이건 주석
@@ -149,10 +188,34 @@ def verify(doc: str, *, sources: dict[str, str], declared: list[str] | None = No
     모델이 다른 파일을 서술한 경우다. `declared` 가 비면 그 검사는 건너뛴다(파서가 없거나
     클래스가 없는 파일은 정상이다).
     """
+    # [중요] **그룹 전체를 한 몸으로 본다** (`#270`, 실측 2026-08-22). 종전에는 파일별
+    #    `comment_only` 를 **합집합**만 했다 — 그러면 *같은 그룹의 다른 파일에서 살아 있는*
+    #    식별자가 유령으로 잡힌다.
+    #
+    #    실측한 그 사례: `NS.h` 는 `DECLARE_LOG_CATEGORY_EXTERN(LogNS, Log, All)` 로 `All` 이
+    #    **코드**에 있고, `NS.cpp` 는 저작권 헤더(`// … All Rights Reserved.`)에만 있다.
+    #    합집합만 하면 `All` 이 유령이 되고, 모델이 문서에 그 낱말을 쓰면 거부된다.
+    #    [중요] **`.h`/`.cpp` 쌍은 저작권 헤더가 항상 양쪽에 있으므로 모든 UE 프로젝트에서
+    #    반복된다** — NS 최초 합성이 4그룹 중 3 거부(그중 2가 이 부류)였다.
+    #
+    #    [주의] 게이트를 무디게 하는 것이 아니다 — **그룹 안에서 실제로 살아 있는 것만** 뺀다.
+    #    다른 파일·다른 그룹의 코드는 여전히 근거가 아니고, 주석에만 있는 것은 그대로 잡힌다.
     ghost_pool: set[str] = set()
+    live_pool: set[str] = set()
     for src in sources.values():
         ghost_pool |= comment_only(src)
+        live_pool |= identifiers(strip_comments(src)[0])
+    ghost_pool -= live_pool
     said = claimed(doc)
+    # [중요] **살아 있는 식별자의 부분열은 유령이 아니다** (`#270`). UE 규약 때문에 문서가
+    #    접두를 떼고 쓰는 것이 자연스럽다 — 문서의 `GameMode` 는 코드의 `ANSGameMode`,
+    #    `StateTree` 는 `UStateTreeAIComponent` 를 가리킨다(실측 거부 사례 둘).
+    #    [주의] **없는 것을 지어낸 경우는 그대로 잡힌다** — 지어낸 이름은 어떤 live 식별자의
+    #    부분열도 아니다(2026-08-12 의 「없는 enum 멤버」가 그 부류다). 게이트를 무디게 하는
+    #    것이 아니라, *실재하는 것을 가리키는 서술*을 위반으로 세지 않는 것이다.
+    if said and live_pool:
+        said = {s for s in said
+                if not any(s != lv and s in lv for lv in live_pool)}
     ghosts = sorted(said & ghost_pool)
 
     mentioned = True
