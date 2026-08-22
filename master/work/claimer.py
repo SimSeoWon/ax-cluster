@@ -110,6 +110,10 @@ class Client:
         #    빌드 잡을 집어놓고 못 돌리는 것이 최악이다.
         self.capabilities = list(cfg.get("capabilities") or [])
         self.root = root
+        # [중요] 로거를 **주입 가능**하게 둔다 — `main` 이 파일 로거를 꽂는다. 기본이 stderr 인
+        #    이유는 단발(`--once`)·테스트 경로가 파일 로그를 만들지 않아야 하기 때문이다.
+        self.log = lambda m: print(m, file=sys.stderr)
+        self._last_refusal = None
 
     def _call(self, method: str, path: str, payload=None):
         # [중요] **태그를 여기서 붙인다** (`#258`). 실측 2026-08-22: `self.project` 를 config 에서
@@ -142,8 +146,18 @@ class Client:
         if st != 200:
             return None
         if isinstance(got, dict) and got.get("ok") is False:
-            print(f"[claim 거절] status={got.get('status')} {got.get('reason', '')[:160]}",
-                  file=sys.stderr)
+            # [중요] **로그 파일에 남긴다.** 실측 2026-08-23: 처음엔 `stderr` 로만 찍었는데
+            #    cron 상주는 `2>&1 >/dev/null` 로 떠서 **사유가 어디에도 없었다** — 큐는 옳게
+            #    거절하고 있었고 방어는 작동하는데, 운영자가 보는 로그에는 아무것도 없었다.
+            #    이번 세션에 세 번째로 나온 부류다: 판정을 했는데 안 보이면 「안 한 것」과
+            #    구분되지 않는다.
+            # [주의] **매 주기 찍지 않는다** — 20초 폴링 × 하루 = 4,320줄이 로그를 덮는다
+            #    (`_log` 머리말이 같은 이유로 감시자 288줄을 경계한다). **사유가 바뀔 때만.**
+            key = f"{got.get('status')}|{got.get('reason', '')[:80]}"
+            if key != getattr(self, "_last_refusal", None):
+                self._last_refusal = key
+                self.log(f"[claim 거절] status={got.get('status')} "
+                         f"{got.get('reason', '')[:200]}")
             return None
         if not (isinstance(got, dict) and got.get("task_id")):
             return None
@@ -845,6 +859,7 @@ def main(argv=None) -> int:
         return 0
     c = Client(root)
     log = lambda m: _log(root, m)                            # noqa: E731
+    c.log = log                                              # 거절 사유가 로그 파일에 남는다
 
     from . import ax_safety
     if once:
