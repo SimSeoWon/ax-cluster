@@ -149,6 +149,16 @@ def cmd_plan(project: str) -> int:
                   f" 위 .gitignore 블록을 **사람이 한 번 커밋**하면 끝난다 (처분은 #259)")
         # [중요] **폐지분을 이름으로 찍는다** (#266 완료 조건 3). 표에서 지우는 것만으로는 이미
         #    배달된 기계가 정리되지 않는다 — `#232` 가 그 부류였고 그때 실패는 조용했다.
+        # [중요] **상주 등록을 계획에 낸다** (`#255` 완료 조건 1) — 종전에는 두 기계의 등록
+        #    방식이 문서에만 있어 새 기계에서 재현되지 않았다. 켜면 안 되는 경우의 사유도 찍는다.
+        if f.role != "requester":
+            try:
+                from client.init import residency as _R
+                mounted = (bundle.Registry.load().active or "").strip()
+                for line in _R.plan_lines(project, f, mounted=mounted):
+                    print(line)
+            except Exception as e:                           # noqa: BLE001
+                print(f"   [주의] 상주 등록 계획을 못 냈다: {e}")
         rm = spec.removals_for(f.role, init)
         for kind, names in (("스킬", rm["skills"]), ("MCP 엔트리", rm["mcp"])):
             if names:
