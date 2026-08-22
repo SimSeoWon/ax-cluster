@@ -433,6 +433,96 @@ def test_synth_source_only() -> None:
     check("백슬래시도 정규화 후 통과", s2.groups == 1, str(s2.groups))
 
 
+# ── ⑥-g 기계↔마스터 커밋 대조 (사용자 2026-08-22) ────────────────
+
+def _fake_facts(windows: bool = False):
+    return bundle.HostFacts(host="h", user="u", path="/p", driven="ssh", role="worker",
+                            os="windows" if windows else "linux")
+
+
+def test_delivered_stamp() -> None:
+    """`.ax/config.json` 의 `delivered_by` 를 읽는다. [주의] 「없음」과 「못 읽음」을 가른다."""
+    keep = bundle._remote_read
+    try:
+        bundle._remote_read = lambda f, path: '{"delivered_by": {"commit": "abc", "dirty": false}}'
+        check("스탬프를 읽는다", bundle.delivered_stamp(_fake_facts())["commit"] == "abc")
+
+        bundle._remote_read = lambda f, path: '{"other": 1}'
+        check("delivered_by 부재를 사유로 말한다",
+              "delivered_by" in bundle.delivered_stamp(_fake_facts()).get("error", ""))
+
+        bundle._remote_read = lambda f, path: "{not json"
+        check("파싱 실패를 사유로 말한다",
+              "JSON" in bundle.delivered_stamp(_fake_facts()).get("error", ""))
+
+        bundle._remote_read = lambda f, path: ""
+        check("[중요] 빈 응답을 빈 dict 로 접지 않는다",
+              "읽지 못했다" in bundle.delivered_stamp(_fake_facts()).get("error", ""))
+    finally:
+        bundle._remote_read = keep
+
+
+def test_compare_version() -> None:
+    """[중요] 판정 규칙 — **설명할 수 없을 때만 실패**다.
+
+    뒤처짐 자체는 실패로 세지 않는다: 내용의 최신성은 페이로드·스킬 해시 대조가 판정하고
+    스탬프가 답하는 것은 **출처**다. 실측(2026-08-22)이 그 분리를 정당화했다 — 세 기계 모두
+    해시는 전부 일치하는데 출처는 21 커밋 뒤였다(그 커밋들이 배달물을 안 바꿨다는 뜻).
+    """
+    keep_read, keep_run = bundle._remote_read, bundle._run_local
+    try:
+        bundle._run_local = lambda *a: ("HEADHASH" if a[0] == "rev-parse" else "21")
+
+        def stamp(commit, dirty=False):
+            import json as _j
+            bundle._remote_read = lambda f, p: _j.dumps(
+                {"delivered_by": {"commit": commit, "dirty": dirty}})
+
+        stamp("HEADHASH")
+        v = bundle.compare_version(_fake_facts(), head="HEADHASH")
+        check("HEAD 와 같으면 behind 0", v["ok"] and v["behind"] == 0, str(v))
+
+        stamp("OLD")
+        v = bundle.compare_version(_fake_facts(), head="HEADHASH", runner=lambda c, h: True)
+        check("조상이면 뒤처짐을 센다", v["ok"] and v["behind"] == 21, str(v))
+        check("재배달 대상이라고 말한다", "재배달" in v["reason"], v["reason"])
+
+        stamp("OLD", dirty=True)
+        v = bundle.compare_version(_fake_facts(), head="HEADHASH", runner=lambda c, h: True)
+        check("[중요] dirty 배달을 감추지 않는다",
+              v["stamp_dirty"] and "dirty" in v["reason"], str(v))
+
+        stamp("SIDE")
+        v = bundle.compare_version(_fake_facts(), head="HEADHASH", runner=lambda c, h: False)
+        check("[중요] 조상이 아니면 실패", not v["ok"] and "조상이 아니다" in v["reason"], str(v))
+
+        v = bundle.compare_version(_fake_facts(), head="HEADHASH", runner=lambda c, h: None)
+        check("[중요] 판정 불가를 거짓으로 접지 않는다",
+              not v["ok"] and "커밋이 아니다" in v["reason"], str(v))
+
+        stamp("")
+        v = bundle.compare_version(_fake_facts(), head="HEADHASH", runner=lambda c, h: True)
+        check("빈 커밋은 실패", not v["ok"] and "비어 있다" in v["reason"], str(v))
+
+        bundle._remote_read = lambda f, p: ""
+        v = bundle.compare_version(_fake_facts(), head="HEADHASH")
+        check("못 읽으면 실패", not v["ok"], str(v))
+    finally:
+        bundle._remote_read, bundle._run_local = keep_read, keep_run
+
+
+def test_config_documents_comparison() -> None:
+    """사용자 2026-08-22: *"config 파일 문서에 명기하면 이것만 비교하면 되는거잖아"*.
+
+    [중요] 파일만 보고도 **무엇을 비교하면 되는지** 알아야 한다.
+    """
+    src = (Path(__file__).resolve().parent / "client" / "bundle.py").read_text(encoding="utf-8")
+    check("config 에 _compare 필드가 있다", '"_compare"' in src)
+    check("그 문구가 delivered_by.commit 을 가리킨다",
+          "delivered_by.commit` 을 마스터" in src)
+    check("dirty 의 뜻도 적었다", "delivered_by.dirty=true" in src)
+
+
 # ── ⑦-b load_init — 환경 오류와 부재를 가른다 ────────────────────
 
 def test_load_init_env() -> None:
@@ -501,6 +591,8 @@ if __name__ == "__main__":
                test_mcp_roles, test_md_blocks, test_validate_spec,
                test_init_flag_not_shadowed, test_git_excludes, test_gitignore_block,
                test_register_seeds_defaults, test_synth_source_only,
+               test_delivered_stamp, test_compare_version,
+               test_config_documents_comparison,
                test_server_steps,
                test_load_init_env,
                test_clone_dir):

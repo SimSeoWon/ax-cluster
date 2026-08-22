@@ -186,6 +186,7 @@ def cmd_deliver(project: str, *, init: bool = False) -> int:
 def cmd_check(project: str) -> int:
     """배달본이 정본과 같은가. [중요] 사본은 갈라진다 — 그래서 잰다."""
     bad = 0
+    behind_hosts: list = []
     init = spec.load_init(project)
     for f in _facts(project):
         if not f.checkout_ok:
@@ -310,14 +311,35 @@ def cmd_check(project: str) -> int:
         rm_note = (f" · [중요] 폐지 스킬이 남아 있다: {', '.join(left)}" if left else
                    f" · 폐지 {len(rm['skills'])}종 없음(정리됨)" if rm["skills"] else "")
 
-        mark = "OK" if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws) else "FAIL"
+        # [중요] **배달본의 출처 커밋을 마스터 HEAD 와 댄다** (#266, 사용자 2026-08-22:
+        #    *"커밋한 해시키 등을 이용해 각 워커들과 인프라 서버간 비교하는게 있어야"* +
+        #    *"config 파일 문서에 명기하면 이것만 비교하면 되는거잖아"*). 값은 이미
+        #    `.ax/config.json` 의 `delivered_by` 에 있었고 **아무도 안 읽었다.**
+        #    [주의] 판정 규칙: **설명할 수 없을 때만 FAIL**(스탬프 부재·파싱 실패·조상 아님).
+        #    뒤처짐 자체는 실패로 세지 않는다 — 내용의 최신성은 위 해시 대조가 판정하고,
+        #    스탬프가 답하는 것은 **출처**다. 둘을 섞으면 어느 쪽이 틀렸는지 알 수 없다.
+        ver = bundle.compare_version(f)
+        ok_ver = ver["ok"]
+        ver_note = f" · 출처 {ver['reason']}"
+
+        mark = ("OK" if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws and ok_ver)
+                else "FAIL")
         pay_note = (f" · payload {len(pay)}개 일치" if pay and ok_pay
                     else f" · [중요] payload 불일치/없음 {len(stale)}개: {', '.join(stale[:3])}"
                     if pay else "")
         print(f"  {mark} {f.host} [{f.role}]: 스킬 {len(names)}종 "
               f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}"
-              f"{pay_note}{ws_note}{client_note}{rm_note}")
-        bad += 0 if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws) else 1
+              f"{pay_note}{ws_note}{client_note}{rm_note}{ver_note}")
+        bad += 0 if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws and ok_ver) else 1
+        if ver["ok"] and (ver.get("behind") or 0) > 0:
+            behind_hosts.append((f.host, ver["behind"], ver.get("stamp_dirty")))
+    # [중요] **끝에 한 줄로 모아 말한다** — 호스트별 줄에 섞이면 「몇 대가 낡았나」가 안 보인다.
+    if behind_hosts:
+        worst = max(n for _h, n, _d in behind_hosts)
+        dirty_n = sum(1 for _h, _n, d in behind_hosts if d)
+        print(f"\n  [중요] 배달본이 낡은 기계 {len(behind_hosts)}대 (최대 {worst} 커밋 뒤"
+              + (f" · {dirty_n}대는 dirty 트리에서 배달됨" if dirty_n else "") + ")")
+        print("        → `python -m master.client deliver <프로젝트>` 로 재배달한다")
     return 1 if bad else 0
 
 

@@ -308,8 +308,17 @@ def config_for(project: str, facts: HostFacts) -> dict:
         "generated_by": "master/client/bundle.py",
         # [중요] **누가 언제 배달했는지** (소 3.1.8 · `#191`). 이것이 없어서 작업장 번들이 어느
         #    마스터에서 왔는지 확인할 방법이 **전혀 없었다** — 원전이 `get_server_version` 을
-        #    만든 계기와 같은 상태였다. `get_master_version_tool` 과 맞춰 드리프트를 본다.
+        #    만든 계기와 같은 상태였다.
+        # [중요] **이 필드가 기계↔마스터 대조의 기준이다** (사용자 2026-08-22:
+        #    *"config 파일 문서에 명기하면 이것만 비교하면 되는거잖아"*). `check` 가
+        #    `compare_version` 으로 `delivered_by.commit` 을 마스터 HEAD 와 댄다 — 값이 있어도
+        #    읽지 않으면 없는 것과 같았고, 실측(2026-08-22) 세 기계 전부 **21 커밋 뒤 · dirty**
+        #    였는데 아무도 몰랐다.
         "delivered_by": _delivery_stamp(),
+        # 그 대조를 파일 안에도 적어 둔다 — 이 파일만 보고도 무엇을 비교하면 되는지 알게 한다.
+        "_compare": ("기계와 마스터가 같은 코드인지 보려면 `delivered_by.commit` 을 마스터 "
+                     "저장소 HEAD 와 대조한다 (`python -m master.client check <프로젝트>`). "
+                     "`delivered_by.dirty=true` 면 그 커밋이 배달 내용을 다 말하지 못한다."),
         "master": {"host": MASTER_HOST, "services": SERVICES,
                    "mcp": f"http://{MASTER_HOST}:{SERVICES['projects']}/mcp"},
         "this_host": {"host": facts.host, "user": facts.user, "os": facts.os},
@@ -985,6 +994,86 @@ def _ensure_ignored(facts: HostFacts) -> bool:
         if rc != 0 or "OK" not in out:
             raise BundleError(f"{facts.host}: .git/info/exclude 에 {line} 를 넣지 못했다 — {out[:120]}")
     return True
+
+
+def delivered_stamp(facts: HostFacts) -> dict:
+    """그 기계의 `.ax/config.json` 에 적힌 **배달 시점 마스터 정체** (#266).
+
+    [중요] **값은 이미 있었고 아무도 안 읽었다.** `_delivery_stamp()` 가 배달마다
+    `delivered_by.commit` 을 심는데 `check` 가 그것을 보지 않았다 — 이번 세션에 같은 부류를
+    셋 봤다(`local_clone`·`branch`·이것). 저장하고 안 읽는 값은 없는 값과 같다.
+
+    못 읽으면 `{"error": ...}` — 빈 dict 로 접지 않는다(「없음」과 「못 읽음」은 다르다).
+    """
+    rel = CONFIG_REL.replace("/", chr(92)) if facts.windows else CONFIG_REL
+    path = f"{facts.path}{chr(92) if facts.windows else '/'}{rel}"
+    raw = _remote_read(facts, path)
+    if not (raw or "").strip():
+        return {"error": f"config 를 읽지 못했다(빈 응답): {path}"}
+    try:
+        return (json.loads(raw).get("delivered_by") or {}) or {"error": "delivered_by 가 없다"}
+    except ValueError as e:
+        return {"error": f"config JSON 파싱 실패: {e}"}
+
+
+def compare_version(facts: HostFacts, *, head: str = "", runner=None) -> dict:
+    """배달본의 출처 커밋을 **마스터 HEAD 와 대조한다** (#266).
+
+    돌려주는 것: `{ok, behind, stamp_dirty, reason}`. [중요] **`ok=False` 는 「설명할 수 없다」
+    일 때만**이다(스탬프 부재·파싱 실패·조상이 아님). *뒤처짐 자체는 실패로 세지 않는다* —
+    배달본 내용의 최신성은 페이로드·스킬 **해시 대조**가 이미 판정하고, 스탬프가 답하는 것은
+    **출처**다. 둘을 섞으면 어느 쪽이 틀렸는지 알 수 없게 된다.
+
+    [주의] 그래도 뒤처짐과 `dirty` 는 **사유 문자열로 시끄럽게** 낸다. `dirty=True` 면 그
+    커밋이 배달 내용을 다 말하지 못한다 — 추적 불가 상태이고 그것을 감추지 않는다.
+    """
+    # [주의] 조상 판정은 **3상**(참/거짓/판정불가)이라 문자열 반환 헬퍼로는 표현이 안 된다.
+    #    처음에 `_run_local` 을 그대로 썼다가 성공·실패가 둘 다 빈 문자열이어서 뒤집혔다.
+    anc_of = runner or _ancestor
+    stamp = delivered_stamp(facts)
+    if stamp.get("error"):
+        return {"ok": False, "behind": None, "stamp_dirty": None, "reason": stamp["error"]}
+    commit = str(stamp.get("commit") or "").strip()
+    if not commit:
+        return {"ok": False, "behind": None, "stamp_dirty": stamp.get("dirty"),
+                "reason": "delivered_by.commit 이 비어 있다 — 어느 커밋이 배달했는지 알 수 없다"}
+    head = head or _run_local("rev-parse", "HEAD")
+    dirty = stamp.get("dirty")
+    if commit == head:
+        return {"ok": True, "behind": 0, "stamp_dirty": dirty,
+                "reason": "마스터 HEAD 와 같다"
+                          + (" [중요] 단 배달 시점 트리가 dirty 였다" if dirty else "")}
+    anc = anc_of(commit, head)
+    if anc is None:
+        return {"ok": False, "behind": None, "stamp_dirty": dirty,
+                "reason": f"{commit[:7]} 이 이 저장소의 커밋이 아니다 — 다른 계보에서 배달됐다"}
+    if not anc:
+        return {"ok": False, "behind": None, "stamp_dirty": dirty,
+                "reason": f"{commit[:7]} 이 HEAD 의 조상이 아니다 (앞서 있거나 갈라졌다)"}
+    n = _run_local("rev-list", "--count", f"{commit}..{head}")
+    return {"ok": True, "behind": int(n or 0), "stamp_dirty": dirty,
+            "reason": f"{commit[:7]} — HEAD 보다 {n} 커밋 뒤 (재배달 대상)"
+                      + (" · [중요] 배달 시점 트리가 dirty 였다 — 그 커밋이 배달 내용을 "
+                         "다 말하지 못한다" if dirty else "")}
+
+
+def _run_local(*args) -> str:
+    """마스터 저장소에서 git 한 번. 실패는 빈 문자열 (호출자가 사유를 만든다)."""
+    r = subprocess.run(["git", "-C", str(Path(__file__).resolve().parents[2]), *args],
+                       capture_output=True, text=True, check=False)
+    return (r.stdout or "").strip() if r.returncode == 0 else ""
+
+
+def _ancestor(commit: str, head: str):
+    """`commit` 이 `head` 의 조상인가. 판정 불가면 `None` — 거짓으로 접지 않는다."""
+    root = str(Path(__file__).resolve().parents[2])
+    r = subprocess.run(["git", "-C", root, "cat-file", "-e", f"{commit}^{{commit}}"],
+                       capture_output=True, text=True, check=False)
+    if r.returncode != 0:
+        return None
+    r2 = subprocess.run(["git", "-C", root, "merge-base", "--is-ancestor", commit, head],
+                        capture_output=True, text=True, check=False)
+    return r2.returncode == 0
 
 
 def merge_gitignore(existing: str) -> str:
