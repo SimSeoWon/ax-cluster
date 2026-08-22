@@ -642,6 +642,64 @@ def test_sync_check_shape() -> None:
         out3 = L.sync_check("X", checker=same)
         check("같으면 어긋난 기계가 없다", out3["drifted"] == [] and "같은 버전" in out3["note"],
               str(out3))
+
+        # ── [중요] 커밋은 맞췄는데 **마스터 트리가 dirty** 라 FAIL 인 경우 (#245 라이브 실측)
+        #    판정은 옳지만 사유를 말하지 않으면 *"align 했는데 왜 FAIL?"* 로 읽힌다.
+        dirty = lambda f: {"ok": False, "verdict": "same", "behind": 0,
+                           "reason": "커밋은 같지만 배달 시점 트리가 dirty 였다"}
+        out4 = L.sync_check("X", align=True, checker=dirty, deliverer=lambda f: None)
+        check("[중요] dirty 를 드리프트와 가른다", out4["dirty_master"] is True, str(out4))
+        check("무엇을 하면 통과하는지 말한다",
+              "커밋한 뒤" in out4["note"] and "dirty" in out4["note"], out4["note"])
+        out5 = L.sync_check("X", align=True, checker=drift, deliverer=lambda f: None)
+        check("[주의] 진짜 드리프트는 dirty 로 접지 않는다", out5["dirty_master"] is False,
+              str(out5))
+
+        # ── [중요] 체크아웃이 없는 기계는 **부트스트랩 대상**이다 (#254 ↔ #245)
+        #    [주의] 이 연결은 주입으로만 쟀다 — 지금 체크아웃이 없는 기계가 없기 때문이다.
+        #    부트스트랩 자체와 배달 자체는 각각 라이브로 확인됐다(리포트 31 · 이 세션).
+        gone = _fake_facts()
+        gone = gone.__class__(**{**gone.__dict__, "checkout_ok": False})
+        boots, delivers = [], []
+
+        # [중요] **놓은 뒤 다시 재는** 계약을 stub 도 지켜야 한다 — 처음엔 없고, 부트스트랩
+        #    뒤엔 있다. (첫 시도에 계속 「없음」을 돌려줬더니 코드가 옳게 거부했다:
+        #    *"부트스트랩 뒤에도 체크아웃을 못 읽는다"*. 그 규율이 이 stub 을 고치게 했다.)
+        state = {"ok": False}
+        B.probe = lambda *a: (facts if state["ok"] else gone)
+
+        def _boot(f):
+            boots.append(f.host)
+            state["ok"] = True                  # 실물처럼 — 놓았으니 이제 읽힌다
+            return {"steps": ["clone:rc=0"]}
+
+        out6 = L.sync_check("X", align=True, checker=drift,
+                            bootstrapper=_boot,
+                            deliverer=lambda f: delivers.append(f.host))
+        check("[중요] 체크아웃 없으면 검사기를 타지 않는다",
+              out6["hosts"][0]["verdict"] == "no_checkout", str(out6["hosts"]))
+        check("[중요] align 이면 부트스트랩을 부른다", boots == ["h"], str(boots))
+        check("[중요] 부트스트랩 뒤 배달까지 간다", delivers == ["h"], str(delivers))
+        check("부트스트랩 결과를 보고에 담는다",
+              "steps" in (out6["hosts"][0].get("bootstrapped") or {}), str(out6["hosts"]))
+        state["ok"] = False
+        out7 = L.sync_check("X", checker=drift,
+                            bootstrapper=lambda f: boots.append("안 돼"))
+        check("[주의] align 아니면 부트스트랩하지 않는다 (남의 기계에 쓰지 않는다)",
+              boots == ["h"], str(boots))
+        check("보고에는 사유가 남는다", "부트스트랩" in out7["hosts"][0]["reason"])
+
+        # 부트스트랩이 실패하면 **삼키지 않는다**
+        state["ok"] = False
+        def _boom(f):
+            raise RuntimeError("클론 실패")
+        out8 = L.sync_check("X", align=True, checker=drift, bootstrapper=_boom,
+                            deliverer=lambda f: delivers.append("안 돼"))
+        check("[중요] 부트스트랩 실패를 사유로 남긴다",
+              "클론 실패" in (out8["hosts"][0].get("align_error") or ""), str(out8["hosts"]))
+        check("실패하면 배달로 가지 않는다", delivers == ["h"], str(delivers))
+        check("align_failed 에 실린다 (호스트 이름은 작업장 목록의 것)",
+              out8["align_failed"] == ["h1"], str(out8["align_failed"]))
     finally:
         B.workshops, B.probe = keep_ws, keep_probe
 
