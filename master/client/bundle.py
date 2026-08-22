@@ -1016,6 +1016,40 @@ def delivered_stamp(facts: HostFacts) -> dict:
         return {"error": f"config JSON 파싱 실패: {e}"}
 
 
+def stored_project(facts: HostFacts) -> dict:
+    """그 기계의 `.ax/config.json` 에 **저장된 프로젝트 태그** (#266).
+
+    [중요] 「저장」만 있고 「관리」가 없으면 태그가 조용히 어긋난다 — `check` 가 이것을 기대값과
+    댄다. 못 읽으면 사유를 돌려준다(빈 문자열로 접지 않는다).
+    """
+    rel = CONFIG_REL.replace("/", chr(92)) if facts.windows else CONFIG_REL
+    path = f"{facts.path}{chr(92) if facts.windows else '/'}{rel}"
+    raw = _remote_read(facts, path)
+    if not (raw or "").strip():
+        return {"error": f"config 를 읽지 못했다(빈 응답): {path}"}
+    try:
+        return {"project": str(json.loads(raw).get(spec.TAG_FIELD) or "")}
+    except ValueError as e:
+        return {"error": f"config JSON 파싱 실패: {e}"}
+
+
+def compare_tag(facts: HostFacts, expected: str) -> dict:
+    """저장된 태그가 기대값과 같은가. **fail-closed** — 모르면 통과시키지 않는다."""
+    got = stored_project(facts)
+    if got.get("error"):
+        return {"ok": False, "stored": "", "reason": got["error"]}
+    stored = got["project"]
+    if not stored:
+        return {"ok": False, "stored": "",
+                "reason": f"태그가 비어 있다 — 이 기계는 어느 프로젝트인지 말하지 못한다 "
+                          f"(`{spec.TAG_FIELD}` 가 빈 값)"}
+    if stored != expected:
+        return {"ok": False, "stored": stored,
+                "reason": f"[중요] 태그가 다르다 — 저장 {stored!r} ≠ 기대 {expected!r}. "
+                          f"이 태그로 요청·응답이 결정된다 (다른 프로젝트로 일한다)"}
+    return {"ok": True, "stored": stored, "reason": f"태그 {stored}"}
+
+
 def compare_version(facts: HostFacts, *, head: str = "", runner=None) -> dict:
     """배달본의 출처 커밋을 **마스터와 대조한다** (#266). 판정은 `version.compare` 가 한다.
 

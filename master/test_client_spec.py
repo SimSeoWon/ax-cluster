@@ -646,6 +646,99 @@ def test_sync_check_shape() -> None:
         B.workshops, B.probe = keep_ws, keep_probe
 
 
+# ── ⑥-i 프로젝트 인자는 필수 — 폴백이 없다 (#227 소 1.2) ──────────
+
+def test_project_arg_required() -> None:
+    """사용자 2026-08-22: *"아무것도 설정 안하고 폴백에서 처리된다면 그게 폴백 처리냐?"*
+
+    [중요] `DEFAULT_PROJECT = "ModularStage"` 는 **폴백이 아니라 조용한 오답**이었다.
+    `config.json` 의 `project` 는 요청·응답을 결정하는 태그이고, 인자를 한 번 빼먹으면 다른
+    프로젝트의 기계가 `ModularStage` 태그를 받아 남의 프로젝트로 일한다.
+    """
+    from master.client import __main__ as CLI
+
+    check("[중요] 하드코딩 폴백이 사라졌다", not hasattr(CLI, "DEFAULT_PROJECT"))
+
+    src = (Path(__file__).resolve().parent / "client" / "__main__.py").read_text(
+        encoding="utf-8")
+    # [주의] **언급 금지가 아니라 대입 금지다.** 머리말이 그 상수를 *왜 없앴는지* 설명하려고
+    #    이름을 든다 — 그 설명은 남겨야 한다(다음 사람이 되살리지 않게).
+    check("대입이 없다", not any(l.startswith("DEFAULT_PROJECT") for l in src.splitlines()))
+    # [주의] 줄바꿈을 넘는 문구로 찾으면 안 잡힌다 (실측 — 원문이 "조용한\n오답" 으로 접힌다)
+    check("없앤 이유는 문서로 남았다", "폴백이 아니라 조용한" in src)
+    check("사용법이 인자를 필수로 적는다",
+          "plan  <프로젝트>" in src and "plan  [<프로젝트>]" not in src)
+
+    for cmd in ("probe", "plan", "deliver", "check"):
+        check(f"{cmd}: 인자 없으면 rc=2 (거부)", CLI.main([cmd]) == 2, cmd)
+
+    check("모르는 명령도 거부", CLI.main(["없는명령"]) == 2)
+    check("빈 인자도 거부", CLI.main([]) == 2)
+
+    # [주의] 이 저장소의 관례와 같은 방향인지 — `projects_root` 도 폴백이 없다
+    from master.projects.config import projects_root
+    import os
+    keep = os.environ.pop("AX_PROJECTS_ROOT", None)
+    try:
+        try:
+            projects_root()
+            check("관례 확인: 루트도 폴백이 없다", False, "통과해버렸다")
+        except Exception:                                   # noqa: BLE001
+            check("관례 확인: 루트도 폴백이 없다", True)
+    finally:
+        if keep is not None:
+            os.environ["AX_PROJECTS_ROOT"] = keep
+
+
+# ── ⑥-j 태그: 명시·저장·관리 (사용자 2026-08-22) ──────────────────
+
+def test_tag_managed() -> None:
+    """*"초반 프로젝트 설치하고 설정 과정에서 태그 명시해서 저장하고, 관리해."*
+
+    [중요] 셋을 갈라 지킨다 — **명시**(인자 필수) · **저장**(config 에 기록) ·
+    **관리**(`check` 가 기대값과 대조). 「저장」만 있고 「관리」가 없으면 태그가 조용히
+    어긋난다. 실측 전례: `.2` 의 `.mcp.json` 이 `.33` 의 경로를 갖고 있었고 **글자까지 같아서**
+    에러 없이 죽어 있었다.
+    """
+    import json as _j
+    keep = bundle._remote_read
+    try:
+        bundle._remote_read = lambda f, p: _j.dumps({"project": "A"})
+        v = bundle.compare_tag(_fake_facts(), "A")
+        check("같으면 통과", v["ok"] and v["stored"] == "A", str(v))
+
+        v = bundle.compare_tag(_fake_facts(), "B")
+        check("[중요] 다르면 실패", not v["ok"], str(v))
+        check("두 값을 다 보여준다", "'A'" in v["reason"] and "'B'" in v["reason"], v["reason"])
+        check("무엇이 걸린 일인지 말한다", "요청·응답" in v["reason"], v["reason"])
+
+        bundle._remote_read = lambda f, p: _j.dumps({"project": ""})
+        v = bundle.compare_tag(_fake_facts(), "A")
+        check("[중요] 빈 태그는 실패 (fail-closed)", not v["ok"] and "비어 있다" in v["reason"],
+              str(v))
+
+        bundle._remote_read = lambda f, p: ""
+        v = bundle.compare_tag(_fake_facts(), "A")
+        check("[중요] 못 읽으면 실패 — 모르면 통과시키지 않는다", not v["ok"], str(v))
+
+        bundle._remote_read = lambda f, p: "{깨짐"
+        check("파싱 실패도 실패", not bundle.compare_tag(_fake_facts(), "A")["ok"])
+    finally:
+        bundle._remote_read = keep
+
+    # 저장 쪽 — config_for 가 인자를 그대로 태그로 쓴다
+    cfg = bundle.config_for("어떤프로젝트", _fake_facts())
+    check("저장: config 에 태그가 기록된다", cfg[spec.TAG_FIELD] == "어떤프로젝트", str(cfg.get("project")))
+
+    # 관리 쪽 — check 가 실제로 그 대조를 부르는지 (배선 확인)
+    cli = (Path(__file__).resolve().parent / "client" / "__main__.py").read_text(encoding="utf-8")
+    body = cli.split("def cmd_check(")[1].split("\ndef ")[0]
+    check("[중요] check 가 compare_tag 를 부른다", "compare_tag" in body)
+    check("태그 불일치가 판정에 들어간다", "ok_tag" in body)
+    plan_body = cli.split("def cmd_plan(")[1].split("\ndef ")[0]
+    check("plan 이 쓸 태그를 명시한다", "[태그 " in plan_body)
+
+
 # ── ⑦-b load_init — 환경 오류와 부재를 가른다 ────────────────────
 
 def test_load_init_env() -> None:
@@ -715,7 +808,9 @@ if __name__ == "__main__":
                test_init_flag_not_shadowed, test_git_excludes, test_gitignore_block,
                test_register_seeds_defaults, test_synth_source_only,
                test_delivered_stamp, test_compare_version,
-               test_config_documents_comparison, test_switch_syncs,
+               test_config_documents_comparison, test_project_arg_required,
+               test_tag_managed,
+               test_switch_syncs,
                test_sync_check_shape,
                test_server_steps,
                test_load_init_env,

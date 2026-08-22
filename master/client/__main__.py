@@ -1,12 +1,22 @@
 """워커 번들 CLI (레드마인 #21).
 
-    python -m master.client probe [<프로젝트>]     각 워커를 잰다 (읽기 전용)
-    python -m master.client plan  [<프로젝트>]     배달할 내용만 보여준다 (쓰지 않는다)
-    python -m master.client deliver [<프로젝트>]   config + 스킬 배달 → 되읽어 대조
-    python -m master.client check [<프로젝트>]     배달된 것이 정본과 같은지 검사
+    python -m master.client probe <프로젝트>     각 워커를 잰다 (읽기 전용)
+    python -m master.client plan  <프로젝트>     배달할 내용만 보여준다 (쓰지 않는다)
+    python -m master.client deliver <프로젝트>   config + 스킬 배달 → 되읽어 대조
+    python -m master.client check <프로젝트>     배달된 것이 정본과 같은지 검사
 
 [중요] **`probe` → `plan` → `deliver` 순서로 쓴다.** 남의 기계에 쓰는 작업이므로, 무엇을 어디에
 쓸지 먼저 눈으로 본다.
+
+## [중요] 프로젝트 인자는 **필수**다 — 폴백이 없다 (`#227` 소 1.2)
+
+전에는 생략하면 `DEFAULT_PROJECT = "ModularStage"` 로 떨어졌다. **그것은 폴백이 아니라 조용한
+오답이다** (사용자 2026-08-22: *"아무것도 설정 안하고 폴백에서 처리된다면 그게 폴백 처리냐?"*) —
+`config.json` 의 `project` 는 **요청·응답을 결정하는 태그**이고, 인자를 한 번 빼먹으면 다른
+프로젝트의 기계가 `ModularStage` 태그를 받아 **남의 프로젝트로 일한다.**
+
+이 저장소의 관례가 이미 그쪽이다: `projects_root()` 는 *"폴백은 없다 — 명시하라"*,
+태그 계약(§12.5-c)은 *"빈 태그도 거절(fail-closed)"* 이다. 여기만 값을 주워 쓰고 있었다.
 """
 from __future__ import annotations
 
@@ -16,7 +26,6 @@ import sys
 
 from . import bundle, spec
 
-DEFAULT_PROJECT = "ModularStage"
 
 
 def _facts(project: str) -> list:
@@ -67,7 +76,11 @@ def cmd_plan(project: str) -> int:
             print("   [중요] 체크아웃이 없어 배달 대상이 아니다")
             continue
         cfg = bundle.config_for(project, f)
-        print(f"   → {f.path}/{bundle.CONFIG_REL}")
+        # [중요] **태그를 계획에 명시한다** (사용자 2026-08-22: *"태그 명시해서 저장하고,
+        #    관리해"*). 이 값으로 요청·응답이 결정되므로 계획에서 눈으로 확인해야 한다.
+        tag = bundle.compare_tag(f, project)
+        print(f"   → {f.path}/{bundle.CONFIG_REL}  [태그 {project}]"
+              + ("" if tag["ok"] else f"  ← [중요] 지금 저장된 값: {tag['stored'] or '(없음)'}"))
         print("     " + json.dumps(cfg["checkout"], ensure_ascii=False)
               + f" caps={cfg['capabilities']}")
         print(f"     backends={json.dumps(cfg['backends'], ensure_ascii=False)}")
@@ -326,16 +339,22 @@ def cmd_check(project: str) -> int:
         ver = bundle.compare_version(f)
         ok_ver = ver["ok"]
         ver_note = f" · 출처 {ver['reason']}"
+        # [중요] **저장된 태그를 기대값과 댄다** — 「저장」만 있고 「관리」가 없으면 태그가
+        #    조용히 어긋난다. 이 태그로 요청·응답이 결정된다(§12.5-c).
+        tag = bundle.compare_tag(f, project)
+        ok_tag = tag["ok"]
+        tag_note = f" · {tag['reason']}"
 
-        mark = ("OK" if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws and ok_ver)
-                else "FAIL")
+        mark = ("OK" if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws
+                         and ok_ver and ok_tag) else "FAIL")
         pay_note = (f" · payload {len(pay)}개 일치" if pay and ok_pay
                     else f" · [중요] payload 불일치/없음 {len(stale)}개: {', '.join(stale[:3])}"
                     if pay else "")
         print(f"  {mark} {f.host} [{f.role}]: 스킬 {len(names)}종 "
               f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}"
-              f"{pay_note}{ws_note}{client_note}{rm_note}{ver_note}")
-        bad += 0 if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws and ok_ver) else 1
+              f"{pay_note}{ws_note}{client_note}{rm_note}{tag_note}{ver_note}")
+        bad += 0 if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws
+                     and ok_ver and ok_tag) else 1
         if not ver["ok"]:
             behind_hosts.append((f.host, ver.get("behind"), ver.get("stamp_dirty")))
     # [중요] **끝에 한 줄로 모아 말한다** — 호스트별 줄에 섞이면 「몇 대가 낡았나」가 안 보인다.
@@ -371,7 +390,16 @@ def main(argv: list) -> int:
         print(__doc__)
         return 2
     rest = [a for a in argv[1:] if not a.startswith("-")]
-    project = rest[0] if rest else DEFAULT_PROJECT
+    # [중요] **fail-closed** — 주워 쓰지 않는다 (`#227` 소 1.2, 모듈 머리말 참조).
+    if not rest:
+        print(f"[중요] 프로젝트 인자가 없다 — 폴백은 없다.\n"
+              f"    python -m master.client {argv[0]} <프로젝트>\n"
+              f"  이 값이 각 기계의 `.ax/config.json` 의 `project` 태그가 되고, 그 태그로 "
+              f"요청·응답이 결정된다.\n"
+              f"  등록된 프로젝트를 보려면: python -m master.projects (MCP) 또는 "
+              f"레지스트리(projects.yaml)")
+        return 2
+    project = rest[0]
     # [중요] `--init` 은 **명시할 때만**. 실측으로 값을 못 했다(22턴 $1.68 대 payload 0원,
     #    미상 목록이 글자까지 같았다) — payload 가 저장소 대비 낡았을 때만 쓴다.
     if argv[0] == "deliver":
