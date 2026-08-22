@@ -259,9 +259,31 @@ def sync_check(name: str, *, align: bool = False, checker=None, deliverer=None,
     }
 
 
+def _handover_lines(rep: dict) -> str:
+    """거절 메시지에 붙일 **짧은** 인계 요약. [중요] 셈만 주지 않는다 — 이름을 조금이라도 낸다.
+
+    [주의] 전체 보고는 `work/handover.render()` 다. 여기서 그것을 다 쏟으면 예외 메시지가
+    화면을 덮는다 — 사람이 읽을 것은 *"무엇이 걸려 있나"* 와 *"어디를 보면 되나"* 다.
+    """
+    if rep.get("error"):
+        return f"  [주의] 인계 조사를 못 했다 — {rep['error']}"
+    out = []
+    for kind, k in (rep.get("kinds") or {}).items():
+        if k.get("error"):
+            out.append(f"  [{kind}] 판정 불가 — {k['error']}")
+        elif k.get("count"):
+            head = ", ".join(str(n) for n in k["names"][:3])
+            more = f" … +{k['count'] - 3}" if k["count"] > 3 else ""
+            out.append(f"  [{kind}] {k['count']}건 — {head}{more}")
+    if not out:
+        return "  [인계] 남은 것 없음 (큐의 미종결 work 만 걸려 있다)"
+    return "남은 것 (전환하면 잔재가 된다):\n" + "\n".join(out)
+
+
 def set_active(name: str, *, registry: Registry | None = None,
                force: bool = False, works_fetcher=None,
-               sync: bool = True, align: bool = False, sync_fn=None) -> dict:
+               sync: bool = True, align: bool = False, sync_fn=None,
+               handover_fn=None) -> dict:
     """가리키는 프로젝트를 바꾼다. 디렉토리는 전부 남고 마운트 대상만 바뀐다.
 
     [중요] 전환 가드 (#210, 사용자 전제 점검 2026-08-17): 큐에 미종결 work 가 있으면
@@ -280,7 +302,21 @@ def set_active(name: str, *, registry: Registry | None = None,
     if problems:
         raise ConfigError("전환할 수 없다 — " + " / ".join(problems))
 
+    # [중요] **전환은 인계다** (`#253`, 사용자 정정 2026-08-22: *"그냥 바라보는 레포만
+    #    바꾸는건 잘못된거지"*). 떠나는 프로젝트에 남는 것을 **다섯 부류 전부 이름으로** 낸다 —
+    #    거절할 때도, 넘어갈 때도. [주의] 이 도구는 **조사만** 한다: 지우는 주체·범위는
+    #    `#253` 의 [미결] 이고 사람 결정 자리다.
+    def _handover(of: str) -> dict:
+        if handover_fn is not None:
+            return handover_fn(of)
+        try:
+            from ..work import handover as H
+            return H.survey_project(of)
+        except Exception as e:                           # noqa: BLE001
+            return {"project": of, "error": f"인계 조사 실패: {e}", "clean": False}
+
     forced_over: list = []
+    leaving = reg.active if (reg.active and reg.active != name) else ""
     if reg.active and reg.active != name:
         try:
             open_works = open_works_in_queue(fetcher=works_fetcher)
@@ -293,10 +329,14 @@ def set_active(name: str, *, registry: Registry | None = None,
         else:
             if open_works and not force:
                 ids = ", ".join(str(w.get("work_id") or "?") for w in open_works[:5])
+                # [중요] **거절만 하지 않는다 — 무엇을 치워야 하는지 이름으로 말한다** (`#253`).
+                #    종전에는 문을 잠그기만 했고 잠긴 문 안을 보는 도구가 없었다.
+                rep = _handover(leaving or reg.active)
                 raise ConfigError(
                     f"전환할 수 없다 — 미종결 work {len(open_works)}건이 큐에 있다 ({ids}"
                     + (" …" if len(open_works) > 5 else "") + "). 종결시키거나 force. "
-                    f"[중요] 그냥 바꾸면 그 work 의 기록·신호가 새 프로젝트 트윈에 착지한다")
+                    f"[중요] 그냥 바꾸면 그 work 의 기록·신호가 새 프로젝트 트윈에 착지한다\n"
+                    + _handover_lines(rep))
             if open_works:
                 forced_over = [str(w.get("work_id") or "?") for w in open_works]
 
@@ -313,6 +353,10 @@ def set_active(name: str, *, registry: Registry | None = None,
     # [중요] **전환이 동기화 지점이다** (사용자 2026-08-22). 마운트가 실제로 바뀔 때만 본다 —
     #    같은 프로젝트를 다시 가리키는 호출에 SSH 를 태우지 않고, 미마운트 프로젝트는 순회하지
     #    않는다. 기본은 **보고**이고 `align=True` 가 맞춘다(남의 기계에 쓰는 동작이라 기본 아님).
+    handover_out: dict = {}
+    if changed and leaving:
+        # [중요] 넘어간 뒤에도 남은 것을 낸다 — 「전환됨」만 보고하면 잔재가 조용히 남는다.
+        handover_out = _handover(leaving)
     sync_out: dict = {}
     if sync and changed:
         runner = sync_fn or (lambda: sync_check(name, align=align))
@@ -328,6 +372,8 @@ def set_active(name: str, *, registry: Registry | None = None,
         "active": name,
         **out_forced,
         **sync_out,
+        # [중요] **떠난 프로젝트에 남은 것**을 다섯 부류 이름으로 (`#253`). 없으면 키도 없다.
+        **({"handover": handover_out} if handover_out else {}),
         "project_id": cfg.project_id,
         "branch": cfg.branch,
         "last_indexed_commit": cfg.last_indexed_commit,
