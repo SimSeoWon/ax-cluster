@@ -294,7 +294,14 @@ def _run(tmp: Path) -> int:
     check("settle 이 문서 값(-1)으로 내린다", stm.settle(P12, "D") == 1)
     check("[중요] 실제로 -1 이 찍혔다", (y.read(objp3) or {}).get("source_commit") == stm.MISSING,
           str((y.read(objp3) or {}).get("source_commit")))
-    check("[중요] 그래서 수렴한다 — 매 사이클 재합성하지 않는다", stm.compute(P12, ["D"]) == [])
+    # [중요] 수렴의 판정도 `#275` 로 바뀌었다 — 이제 **나오되 stale 이 아니다.**
+    #    `settle` 이 양쪽을 `-1` 로 맞췄으므로 「비교 근거 없음」이 되고, 그것은 침묵이 아니라
+    #    **판정 불가**로 드러난다. 재합성을 부르지 않는 것이 수렴의 내용이다.
+    _c = stm.compute(P12, ["D"])
+    check("[중요] 그래서 수렴한다 — 매 사이클 재합성하지 않는다",
+          all(not r.stale for r in _c), stm.summary(_c))
+    check("[중요] 다만 조용히 통과하지는 않는다 (판정 불가로 드러난다)",
+          len(_c) == 1 and _c[0].unknown == 1, stm.summary(_c))
 
     print("\n[14] [중요] `_stored` 가 오브젝트 yaml 을 본다 (DB 는 0행이라 폴백)")
     o3b = y.read(objp3) or {}

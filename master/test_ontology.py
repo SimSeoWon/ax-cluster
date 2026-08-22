@@ -138,8 +138,18 @@ def main() -> int:
     check("활성 도메인을 찾는다 (status 키가 없으면 active)",
           st_mod.active_domains(P) == ["D"], str(st_mod.active_domains(P)))
     put_doc(None)
-    check("[중요] 둘 다 -1 이면 stale 아니다 (첫 배포 폭주 방지)",
-          st_mod.compute(P) == [], st_mod.summary(st_mod.compute(P)))
+    # [중요] **계약이 바뀌었다** (`#275`, 2026-08-23). 종전엔 양쪽 `-1` 이면 결과에 **안 나왔다**
+    #    — 그것이 「첫 배포 폭주 방지」의 방법이었지만, 동시에 **82%를 조용히 통과**시켰다
+    #    (실측: 도메인 멤버 112건 중 92건). 지금은 **나오되 재합성을 부르지 않는다.**
+    #    의도(폭주 방지)는 그대로이고, 침묵만 없앴다.
+    _r0 = st_mod.compute(P)
+    check("[중요] 둘 다 -1 이면 **판정 불가로 드러난다** (침묵 아님)",
+          len(_r0) == 1 and _r0[0].undecidable and _r0[0].unknown == 1,
+          st_mod.summary(_r0))
+    check("[중요] 그래도 stale 이 아니다 — 첫 배포 폭주 방지는 그대로",
+          not _r0[0].stale, st_mod.summary(_r0))
+    check("요약이 「최신」으로 말하지 않는다",
+          "알 수 없다" in st_mod.summary(_r0), st_mod.summary(_r0))
     put_doc("bc4b38f4")
     r = st_mod.compute(P)
     check("문서에 커밋이 찍히면 stale", len(r) == 1 and r[0].stale, st_mod.summary(r))

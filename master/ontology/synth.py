@@ -537,9 +537,15 @@ def run(paths: ProjectPaths, *, domains: list | None = None,
         results = stale.compute(paths)
         domains = [r.domain for r in results if r.stale]
         if not domains:
+            # [중요] **「최신이라서 없다」와 「알 수 없어서 없다」를 가른다** (`#275`).
+            #    판정 불가가 있는데 *"재합성할 이유가 없다"* 만 말하면 거짓 안심을 준다.
+            _unk = sum(r.unknown for r in results)
             raise SynthError(
                 "stale 한 도메인이 없다 — 재합성할 이유가 없다. 특정 도메인을 강제하려면 "
-                "이름을 명시하라. 빈 배치를 성공으로 보고하지 않는다")
+                "이름을 명시하라. 빈 배치를 성공으로 보고하지 않는다"
+                + (f"\n[중요] 다만 **판정 불가 {_unk}건**이 있다 — 「최신」이 아니라 "
+                   f"「알 수 없음」이다(`source_commit` 부재, #275). 그 문서들은 소스가 바뀌어 "
+                   f"재합성될 때 비로소 스탬프를 얻는다." if _unk else ""))
         # [중요] **stale walk 만 부분 갱신 대상이다** (원전 배선 그대로). 사람이 도메인을
         # 명시한 것은 *"이 도메인을 다시 만들어라"* 라는 뜻이므로 언제나 full 이다 —
         # 원전도 `force_all`/`force_domains` 를 None(full) 으로 넘긴다.

@@ -61,14 +61,30 @@ class DomainStale:
     changed: int = 0
     total: int = 0
     members: list = field(default_factory=list)     # (클래스, stored, latest) — 바뀐 것만
+    # [중요] **「모른다」를 「최신이다」와 가른다** (`#275`, 사용자 결정 2026-08-23).
+    #    양쪽 `source_commit` 이 모두 없으면 `s == l` 이라 종전에는 **조용히 통과**했다.
+    #    실측 2026-08-23: 도메인 멤버 112건 중 **92건(82%)이 그 상태**였다 — 판정이 실제로
+    #    보고 있던 것은 20건뿐이다. 판정이 안 되는 것을 통과로 접는 것은 거짓 보고다.
+    unknown: int = 0
+    unknown_members: list = field(default_factory=list)   # (클래스, stored, latest)
 
     @property
     def stale(self) -> bool:
+        # [주의] **판정 불가를 stale 로 만들지 않는다.** 그러면 92건이 재합성 대상이 되고,
+        #    그것은 `~/CLAUDE.md`·M2 가 금지한 **1,055건 일괄 재생성**이다(로컬 모델이 받아온
+        #    스냅샷보다 나쁘게 측정됐다). 시끄럽게 **보고**하는 것이 이 일감의 완료 조건이다.
         return self.changed > 0
 
     @property
+    def undecidable(self) -> bool:
+        return self.unknown > 0
+
+    @property
     def reason(self) -> str:
-        return f"stale={self.changed}/{self.total}"
+        out = f"stale={self.changed}/{self.total}"
+        if self.unknown:
+            out += f" · 판정불가={self.unknown}"
+        return out
 
 
 def _members(paths: ProjectPaths, domain: str) -> dict:
@@ -190,10 +206,19 @@ def compute(paths: ProjectPaths, domains: list | None = None) -> list:
         st = DomainStale(domain=domain, total=len(members))
         for name, src in sorted(members.items()):
             s, l = stored.get(name, MISSING), latest_commit(paths, src)
-            if s != l:
+            if s == MISSING and l == MISSING:
+                # [중요] 양쪽이 없다 = **비교할 근거가 없다.** 종전에는 `s == l` 이라 최신으로
+                #    접혔다. [주의] 한쪽만 없는 것은 여기 오지 않는다 — 그것은 아래에서
+                #    `changed` 가 되고, 재합성이 스탬프를 박아 **스스로 판정 가능해진다**
+                #    (실측 5건, 자기 치유).
+                st.unknown += 1
+                st.unknown_members.append((name, s, l))
+            elif s != l:
                 st.changed += 1
                 st.members.append((name, s, l))
-        if st.stale:
+        # [중요] 판정 불가만 있는 도메인도 **결과에 나와야 한다** — 안 나오면 그것이 침묵이다.
+        #    소비자는 `r.stale` 로 재합성을 거르므로(`synth.py`) 이 행이 재합성을 부르지 않는다.
+        if st.stale or st.undecidable:
             out.append(st)
     return out
 
@@ -262,6 +287,20 @@ def settle(paths: ProjectPaths, domain: str, classes=None) -> int:
 
 
 def summary(results: list) -> str:
+    """[중요] **「전부 최신」과 「판정 불가가 있다」를 가른다** (`#275`).
+
+    종전 문구 *"stale 도메인 없음 — 재합성할 것이 없다"* 는 판정 불가가 있을 때 **거짓**이다:
+    재합성할 것이 없는 이유가 「최신이라서」가 아니라 「알 수 없어서」일 수 있다.
+    """
     if not results:
         return "stale 도메인 없음 — 재합성할 것이 없다"
-    return " · ".join(f"{r.domain}({r.reason})" for r in results)
+    stale_rows = [r for r in results if r.stale]
+    unk = sum(r.unknown for r in results)
+    head = " · ".join(f"{r.domain}({r.reason})" for r in results)
+    if not stale_rows and unk:
+        return (f"{head}\n[중요] **재합성 대상은 없지만 판정 불가 {unk}건이 있다** — "
+                f"「최신이다」가 아니라 「알 수 없다」다(`source_commit` 부재, `#275`). "
+                f"소스가 바뀌어 재합성되면 그때 스탬프가 붙어 판정 가능해진다")
+    if unk:
+        return f"{head}\n[주의] 그중 판정 불가 {unk}건 — 「최신」이 아니라 「알 수 없음」이다"
+    return head
