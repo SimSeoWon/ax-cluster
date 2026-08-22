@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import re
 import sys
 import types
 from pathlib import Path
@@ -164,20 +165,44 @@ def test_worker_dirs_use_real_field_shapes() -> None:
     check("[중요] 요청자는 세지 않는다 (사람의 기계다)", "h2" not in joined, joined)
 
 
-def test_it_never_deletes() -> None:
-    """[중요] **조사만 한다** — 지우는 주체는 `#253` 의 [미결] 이고 사람 결정 자리다."""
+def test_deletion_is_gated_and_narrow() -> None:
+    """[중요] **삭제가 있지만 좁고 잠겨 있다** (사용자 결정 ③, 2026-08-23).
+
+    [주의] 이 테스트는 한 번 갈아 썼다 — 결정 전에는 *"이 모듈은 아무것도 지우지 않는다"* 가
+    계약이었다. 결정으로 `apply(confirm=True)` 가 생겼으니 계약이 바뀌었고, **낡은 계약을
+    지키는 테스트는 새 결정을 막는다.**
+    """
     src = (Path(__file__).resolve().parent / "work" / "handover.py").read_text(encoding="utf-8")
-    for bad in ("apply_remote", "cleanup.apply(", "unlink", "rmtree", "shutil"):
-        check(f"{bad} 를 부르지 않는다", bad not in src, "삭제 경로가 들어왔다")
-    # [주의] **언급 금지가 아니라 호출 금지다** — 이 저장소가 이미 배운 구분이다
-    #    (`test_client_spec` 의 `DEFAULT_PROJECT` 자리). `--apply` 는 *"치우려면 이 명령"* 이라는
-    #    **안내 문구**에 들어 있어야 한다: 사람에게 도구를 알려주는 것이 이 모듈의 일이다.
+
+    # ── ① 조사·계획 경로에는 삭제가 없다
+    for fn in ("def survey_project", "def plan("):
+        i = src.index(fn)
+        body = src[i:src.index("\ndef ", i + 10)]
+        for bad in ("unlink", "rmdir", "act(", "doer"):
+            check(f"{fn.strip()} 에 {bad} 가 없다", bad not in body, body[:60])
+
+    # ── ② 삭제는 `apply` 안에만, 그리고 confirm 뒤에만
+    ap = src[src.index("def apply("):src.index("def _rmdir")]
+    check("[중요] apply 는 confirm 없이 실행하지 않는다",
+          "if not confirm:" in ap and ap.index("if not confirm:") < ap.index("act("), ap[:80])
+    check("[중요] 못 본 부류가 있으면 거부한다",
+          ap.index("safe_to_apply") < ap.index("act("), "거부가 삭제 뒤에 있다")
+
+    # ── ③ [주의] **언급 금지가 아니라 호출 금지다** (이 저장소가 이미 배운 구분)
+    check("`shutil` 을 import 하지 않는다",
+          not re.search(r"^\s*(import shutil|from shutil)", src, re.M),
+          "재귀 삭제 도구를 들여왔다")
+    check("`rmtree` 를 부르지 않는다", "rmtree(" not in src)
+    check("[중요] 그 이유가 문서에 있다 (다음 사람이 들여오지 않게)",
+          "rmtree" in src and "깊은 재귀 삭제" in src)
     apply_lines = [l for l in src.splitlines() if "--apply" in l]
-    check("`--apply` 는 안내 문구에만 있다", apply_lines and all(
-        (".note" in l or "note =" in l or "f\"" in l) for l in apply_lines), str(apply_lines))
-    check("[중요] 그 문구가 실제로 도구를 알려준다",
-          any("cleanup remote --apply" in l for l in apply_lines), str(apply_lines))
-    check("문서가 그것을 못박는다", "조사만" in src and "[미결]" in src)
+    check("`--apply` 는 사람에게 도구를 알려주는 문구다",
+          apply_lines and all(("note" in l or 'f"' in l or '"' in l) for l in apply_lines),
+          str(apply_lines))
+
+    # ── ④ 보존 결정이 문서에 박혀 있다
+    check("보존 결정을 문서가 못박는다",
+          "미종결" in src and "보존" in src and "사용자 결정" in src)
 
 
 def test_switch_reports_leftovers() -> None:
@@ -205,11 +230,139 @@ def test_switch_reports_leftovers() -> None:
     check("길면 줄인다 (+N 로)", "+6" in L._handover_lines(many), L._handover_lines(many))
 
 
+# ── 정리 — 계획 → 승인 → 실행 (사용자 결정 2026-08-23) ────────────────────────
+
+def _rep(spool=(), queue=(), durable=(), eph=(), unknown=()):
+    kinds = {k: {"count": 0, "names": [], "note": "", "error": ""} for k in H.KINDS}
+    kinds["spool"]["names"] = list(spool); kinds["spool"]["count"] = len(spool)
+    kinds["queue"]["names"] = list(queue); kinds["queue"]["count"] = len(queue)
+    kinds["remote_durable"]["names"] = list(durable)
+    kinds["remote_durable"]["count"] = len(durable)
+    kinds["remote_ephemeral"]["names"] = list(eph); kinds["remote_ephemeral"]["count"] = len(eph)
+    for u in unknown:
+        kinds[u]["error"] = "못 봄"
+    total = sum(v["count"] for v in kinds.values())
+    return {"project": "X", "kinds": kinds, "total": total, "unknown": list(unknown),
+            "clean": total == 0 and not unknown, "note": ""}
+
+
+def test_plan_preserves_what_the_user_chose() -> None:
+    """[중요] **미종결·failed·미병합 durable 은 전환에도 보존** (사용자 결정 2026-08-23)."""
+    works = [{"work_id": "w-done", "project": "X", "merge_status": "merged"},
+             {"work_id": "w-open", "project": "X", "merge_status": "in_progress"},
+             {"work_id": "w-fail", "project": "X", "merge_status": "failed"}]
+    api = lambda m, p: works
+    rep = _rep(spool=["w-done (1건)", "w-open (2건)", "w-fail (1건)", "live-itg (1건)"],
+               queue=["w-open [in_progress]", "w-fail [failed]"],
+               durable=["task/t1 @aaaa — 병합 안 됨"],
+               eph=["attempt/t2/HV/1 @bbbb — 병합 안 됨"])
+    pl = H.plan("X", api=api, rep=rep)
+    dropped = [e for e, _ in pl["drop"]["spool"]]
+    kept = " ".join(w for w, _ in pl["keep"])
+    check("[중요] 종결 work 의 스풀만 지운다", dropped == ["w-done"], str(dropped))
+    check("미종결 work 의 스풀은 보존", "spool:w-open" in kept, kept)
+    check("[중요] failed 의 스풀도 보존 (증거)", "spool:w-fail" in kept, kept)
+    check("[중요] 큐에 없는 이름은 보존 (모르는 것은 손대지 않는다)",
+          "spool:live-itg" in kept, kept)
+    check("미종결 work 레코드는 보존", "queue:w-open [in_progress]" in kept, kept)
+    check("[중요] 미병합 durable 은 보존", "remote_durable:task/t1" in kept, kept)
+    check("미병합 attempt 도 보존", "remote_ephemeral:attempt/t2/HV/1" in kept, kept)
+    check("보존 사유를 남긴다 (사람이 판단할 근거)",
+          all(why for _, why in pl["keep"]), str(pl["keep"]))
+    check("실행 명령을 준다", "handover apply X --confirm" in pl["command"], pl["command"])
+
+
+def test_plan_never_invents_deletion() -> None:
+    """[중요] **새 삭제 의미를 만들지 않는다** — 기존 도구가 지우는 것만 조합한다."""
+    pl = H.plan("X", api=lambda m, p: [], rep=_rep())
+    check("워커는 cleanup 에 넘긴다", "cleanup.apply" in pl["drop"]["worker_dirs"],
+          pl["drop"]["worker_dirs"])
+    check("원격은 cleanup_remote 에 넘긴다", "apply_remote" in pl["drop"]["remote"],
+          pl["drop"]["remote"])
+    check("도달 가능한 것만이라고 못박는다", "도달 가능" in pl["drop"]["remote"])
+
+
+def test_apply_needs_confirm() -> None:
+    """[중요] `confirm=False`(기본)는 **계획만** — `finalize_work` 관례 그대로."""
+    import tempfile
+    calls = []
+    works = [{"work_id": "w1", "project": "X", "merge_status": "merged"}]
+    import master.client.bundle as B
+    import master.work.cleanup as C
+    keep_ws, keep_sr = B.workshops, C.survey_remote
+    try:
+        B.workshops = lambda n: []
+        C.survey_remote = lambda paths, **k: types.SimpleNamespace(error="", keep=[], delete=[])
+        r = H.apply("X", api=lambda m, p: works, paths=_paths(Path(tempfile.mkdtemp())),
+                    doer=lambda t: calls.append(t),
+                    surveyor=lambda f: types.SimpleNamespace(), prober=lambda *a: None)
+    finally:
+        B.workshops, C.survey_remote = keep_ws, keep_sr
+    check("[중요] 기본은 실행하지 않는다", r["applied"] is False, str(r)[:120])
+    check("아무것도 부르지 않았다", calls == [], str(calls))
+    check("무엇을 하면 실행되는지 말한다", "confirm" in r["note"], r["note"])
+
+
+def test_apply_refuses_when_it_cannot_see() -> None:
+    """[중요] **모르는 채 지우지 않는다** — 못 본 부류가 있으면 거부한다."""
+    def boom(*a, **k):
+        raise RuntimeError("큐 다운")
+    import tempfile
+    calls = []
+    r = H.apply("X", confirm=True, api=boom, paths=_paths(Path(tempfile.mkdtemp())),
+                doer=lambda t: calls.append(t),
+                surveyor=lambda f: types.SimpleNamespace(),
+                prober=lambda *a: None,
+                git=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("원격 없음")))
+    check("[중요] 거부한다", r["applied"] is False and r.get("refused"), str(r)[:160])
+    check("사유에 못 본 부류를 든다", "queue" in (r.get("refused") or ""), str(r.get("refused")))
+    check("아무것도 지우지 않았다", calls == [], str(calls))
+
+
+def test_apply_deletes_only_the_planned_spool() -> None:
+    """실행 경로 — 계획에 든 것만, 실물 파일로 확인."""
+    import tempfile
+    tmp = Path(tempfile.mkdtemp())
+    p = _paths(tmp)
+    for n in ("w-done", "w-open"):
+        (p.responses / n).mkdir()
+        (p.responses / n / "r.json").write_text("{}", encoding="utf-8")
+    works = [{"work_id": "w-done", "project": "X", "merge_status": "merged"},
+             {"work_id": "w-open", "project": "X", "merge_status": "in_progress"}]
+    # [중요] **네 부류를 다 보이게 만들어야 실행된다** — 하나라도 못 보면 `apply` 가 거부한다.
+    #    처음엔 workers·remote 를 stub 하지 않았고 거부가 났다. 그것이 옳은 동작이다.
+    import master.client.bundle as B
+    import master.work.cleanup as C
+    keep_ws, keep_sr = B.workshops, C.survey_remote
+    try:
+        B.workshops = lambda n: []                  # 워커 없음 = 볼 것이 없다(오류가 아니다)
+        C.survey_remote = lambda paths, **k: types.SimpleNamespace(error="", keep=[], delete=[])
+        r = H.apply("X", confirm=True, api=lambda m, pa: works, paths=p,
+                    surveyor=lambda f: types.SimpleNamespace(),
+                    prober=lambda *a: None, git=None)
+    finally:
+        B.workshops, C.survey_remote = keep_ws, keep_sr
+    check("실행했다", r["applied"] is True, str(r)[:120])
+    check("[중요] 종결분은 사라졌다", not (p.responses / "w-done").exists())
+    check("[중요] 미종결분은 남았다", (p.responses / "w-open").is_dir())
+    check("무엇을 지웠는지 이름으로 보고한다",
+          any("w-done" in x for x in r["done"]["spool"]), str(r["done"]))
+    check("실패를 삼키지 않는 자리가 있다", "errors" in r["done"])
+    check("[주의] 한 겹만 지운다 (재귀 삭제 도구를 안 쓴다)",
+          not re.search(r"^\s*import shutil",
+                        (Path(__file__).resolve().parent / "work" / "handover.py")
+                        .read_text(encoding="utf-8"), re.M))
+
+
 if __name__ == "__main__":
     for fn in (test_all_five_kinds_present, test_names_not_just_counts,
                test_queue_uses_the_project_stamp, test_failure_is_not_folded_into_clean,
                test_durable_is_counted_but_kept, test_worker_dirs_use_real_field_shapes,
-               test_it_never_deletes, test_switch_reports_leftovers):
+               test_deletion_is_gated_and_narrow, test_switch_reports_leftovers,
+               test_plan_preserves_what_the_user_chose,
+               test_plan_never_invents_deletion, test_apply_needs_confirm,
+               test_apply_refuses_when_it_cannot_see,
+               test_apply_deletes_only_the_planned_spool):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_handover: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

@@ -17,9 +17,14 @@
 
 즉 거절은 되는데 **무엇을 치워야 하는지 이름으로 말해 주는 것**이 없었다. 이 모듈이 그 자리다.
 
-[중요] **조사만 한다 — 아무것도 지우지 않는다.** 지우는 주체·범위·`force` 는 `#253` 의
-[미결] 셋이고 사용자 결정 자리다(이 저장소 관례: `plan` 이 기본, `apply` 는 대화형 세션이
-부르지 않는다).
+[중요] **`survey`·`plan` 은 아무것도 지우지 않는다.** 정리는 `apply(confirm=True)` 뿐이다 —
+사용자 결정(2026-08-23) ③계획→승인→실행. [주의] 대화형 세션이 임의로 `confirm=True` 를
+부르지 않는다(저장소 하드룰) — **승인이 곧 트리거**다.
+
+[중요] **보존 결정이 `apply` 의 범위를 정한다** (사용자 결정 2026-08-23): 미종결 work ·
+`failed` · 미병합 durable · 미병합 attempt 는 **전환할 때도 남긴다.** 증거를 지우면 왜
+실패했는지 다시 물을 수 없다. 그래서 `apply` 는 **새 삭제 의미를 만들지 않고** 기존 도구가
+이미 지우는 것만 프로젝트 단위로 조합한다.
 """
 from __future__ import annotations
 
@@ -213,5 +218,166 @@ def render(rep: dict) -> str:
             lines.append(f"      … 그리고 {k['count'] - 20}건 더")
     lines.append(f"  → {rep['note']}")
     if not rep["clean"]:
-        lines.append("  [중요] 지우는 주체·범위는 `#253` 의 [미결] — 이 도구는 **조사만** 한다")
+        # [주의] 이 문장은 한 번 낡았다 — `apply` 가 생기기 전에는 *"이 도구는 조사만 한다"*
+        #    였다. 사용자 결정(2026-08-23)으로 ③계획→승인→실행이 됐으니 그대로 적는다.
+        lines.append("  [중요] `survey`·`plan` 은 지우지 않는다 — 정리는 "
+                     "`apply(confirm=True)` 뿐이고, **미종결·`failed`·미병합 durable 은 "
+                     "보존한다**(사용자 결정)")
     return "\n".join(lines)
+
+
+# ── 정리 — 계획 → 승인 → 실행 (사용자 결정 2026-08-23) ────────────────────────
+#
+# [미결] 셋이 사용자 결정으로 닫혔다:
+#
+#   1. 정리의 주체   → **③ 계획 → 승인 → 실행.** `apply(confirm=True)` 만 손을 댄다.
+#                      저장소 관례(`cleanup plan|apply` · `finalize_work(confirm=False)`)와 같다
+#   2. 미종결 삭제   → **보존한다. 전환도 예외가 아니다.** `failed`·미병합 durable·미종결 work
+#                      레코드는 남긴다 — 증거를 지우면 왜 실패했는지 다시 물을 수 없다
+#   3. `force=True`  → **유지하고, 무엇을 두고 갔는지 응답에 남긴다** (이미 배선됨)
+#
+# [중요] 그래서 이 `apply` 는 **새 삭제 의미를 만들지 않는다.** 기존 도구를 프로젝트 단위로
+#    조합할 뿐이다: `cleanup.apply`(종결 태스크 디렉토리) · `cleanup.apply_remote`(도달 가능
+#    브랜치) · 스풀(종결 work 것만). 보존 대상은 **이름으로 거부 사유를 낸다.**
+
+TERMINAL_TASK = ("verified", "cancelled")
+
+
+def _spool_verdicts(name: str, rep: dict, *, api=None) -> tuple:
+    """스풀 항목을 **지울 것/보존할 것**으로 가른다.
+
+    [중요] 판정 근거는 **그 work 의 종결 여부**다. 큐에 없는 이름(예: `live-itg`)은
+    **모르는 것이므로 보존한다** — fail-closed. 실측 2026-08-23 에 그런 항목이 하나 있었다.
+    """
+    drop, keep = [], []
+    try:
+        if api is None:
+            from . import runner
+            works = runner._api("GET", f"/api/v1/works?project={name}") or []
+        else:
+            works = api("GET", f"/api/v1/works?project={name}") or []
+    except Exception as e:                                 # noqa: BLE001
+        for n in rep["kinds"]["spool"]["names"]:
+            keep.append((n.split(" (")[0], f"큐를 못 봐서 판정 불가 ({e})"))
+        return drop, keep
+    status = {w.get("work_id"): (w.get("merge_status") or "in_progress")
+              for w in works if (w.get("project") or "").strip() == name}
+    for raw in rep["kinds"]["spool"]["names"]:
+        entry = raw.split(" (")[0]
+        st = status.get(entry)
+        if st is None:
+            keep.append((entry, "큐에 없는 이름 — 모르는 것은 보존한다"))
+        elif st in TERMINAL:
+            drop.append((entry, f"work 종결({st})"))
+        else:
+            keep.append((entry, f"work 미종결({st}) — 보존"))
+    return drop, keep
+
+
+def plan(name: str, *, api=None, paths=None, git=None, surveyor=None, prober=None,
+         rep=None) -> dict:
+    """정리 계획. **아무것도 지우지 않는다** — 실행은 `apply(confirm=True)` 다.
+
+    [중요] 보존 결정([미결] 2)이 이 계획의 모양을 정한다: 미종결·`failed`·미병합 durable 은
+    **거부 사유와 함께** 보존 목록에 남는다. 지우는 것은 셋뿐이다 —
+    종결 태스크 디렉토리 · 도달 가능 원격 브랜치 · 종결 work 의 스풀.
+    """
+    r = rep or survey_project(name, api=api, paths=paths, git=git,
+                              surveyor=surveyor, prober=prober)
+    spool_drop, spool_keep = _spool_verdicts(name, r, api=api)
+    keep = [(f"queue:{n}", "미종결 work 는 보존한다 — 사람이 종결시킬 것 (사용자 결정)")
+            for n in r["kinds"]["queue"]["names"]]
+    keep += [(f"remote_durable:{n.split(' @')[0]}", "미병합 durable 은 사람 몫 — 원전대로 보존")
+             for n in r["kinds"]["remote_durable"]["names"]]
+    keep += [(f"remote_ephemeral:{n.split(' @')[0]}", "미병합 attempt — 병합 확인 전에는 보존")
+             for n in r["kinds"]["remote_ephemeral"]["names"]]
+    keep += [(f"spool:{e}", why) for e, why in spool_keep]
+    return {
+        "project": name,
+        "survey": r,
+        # [중요] 지우는 것은 **기존 도구가 이미 지우는 것**뿐이다 (새 의미를 만들지 않는다)
+        "drop": {"spool": spool_drop,
+                 "worker_dirs": "cleanup.apply — 종결 태스크 디렉토리만",
+                 "remote": "cleanup.apply_remote — main 에서 도달 가능한 것만"},
+        "keep": keep,
+        "unknown": r["unknown"],
+        # [중요] 못 본 부류가 있으면 **실행을 권하지 않는다** — 모르는 채 지우지 않는다.
+        "safe_to_apply": not r["unknown"],
+        "command": f"python -m master.work.handover apply {name} --confirm",
+        "note": ("남은 것이 없다 — 정리할 것도 없다" if r["total"] == 0 and not r["unknown"]
+                 else f"지울 후보 스풀 {len(spool_drop)}건 · 보존 {len(keep)}건"
+                      + (f" · [주의] 판정 불가 {len(r['unknown'])}부류" if r["unknown"] else "")),
+    }
+
+
+def apply(name: str, *, confirm: bool = False, api=None, paths=None, git=None,
+          surveyor=None, prober=None, doer=None) -> dict:
+    """계획을 실행한다. [중요] **`confirm=False`(기본)는 계획만 낸다** — 관례 그대로.
+
+    [주의] 대화형 세션이 임의로 `confirm=True` 를 부르지 않는다(저장소 하드룰). 사용자 승인이
+    곧 트리거다 — `finalize_work(confirm=True)` 와 같은 모양이다.
+    """
+    p = plan(name, api=api, paths=paths, git=git, surveyor=surveyor, prober=prober)
+    if not confirm:
+        return {**p, "applied": False,
+                "note": p["note"] + " · 실행하려면 confirm (기본은 계획만 낸다)"}
+    if not p["safe_to_apply"]:
+        return {**p, "applied": False,
+                "refused": f"못 본 부류가 있다 ({', '.join(p['unknown'])}) — 모르는 채 지우지 않는다"}
+    from ..context_search.paths import resolve
+    pth = paths or resolve(name)
+    done = {"spool": [], "errors": []}
+    act = doer or (lambda path: path.unlink() if path.is_file() else _rmdir(path))
+    for entry, why in p["drop"]["spool"]:
+        target = pth.responses / entry
+        try:
+            act(target)
+            done["spool"].append(f"{entry} ({why})")
+        except Exception as e:                             # noqa: BLE001
+            done["errors"].append(f"{entry}: {type(e).__name__}: {e}")
+    return {**p, "applied": True, "done": done,
+            "note": f"스풀 {len(done['spool'])}건 정리" +
+                    (f" · 실패 {len(done['errors'])}건" if done["errors"] else "")
+                    + ". 워커 디렉토리·원격 브랜치는 `cleanup apply`·`cleanup remote --apply` 가"
+                      " 각자의 판정으로 지운다 (여기서 그 의미를 다시 만들지 않는다)"}
+
+
+def _rmdir(path) -> None:
+    """디렉토리 하나를 지운다. [주의] `shutil.rmtree` 를 쓰지 않는다 — 깊은 재귀 삭제를 이
+    모듈에 두면 다음 사람이 그것으로 다른 것을 지운다. 스풀은 한 겹이다."""
+    for child in sorted(path.iterdir()):
+        if child.is_dir():
+            _rmdir(child)
+        else:
+            child.unlink()
+    path.rmdir()
+
+
+def main(argv) -> int:
+    """`python -m master.work.handover plan|apply <프로젝트> [--confirm]`"""
+    import sys as _s
+    if len(argv) < 2 or argv[0] not in ("plan", "apply", "survey"):
+        print(main.__doc__)
+        return 2
+    cmd, name = argv[0], argv[1]
+    if cmd == "survey":
+        print(render(survey_project(name)))
+        return 0
+    r = apply(name, confirm="--confirm" in argv) if cmd == "apply" else plan(name)
+    print(render(r["survey"]))
+    print()
+    for what, why in r["keep"]:
+        print(f"  [보존] {what} — {why}")
+    for entry, why in r["drop"]["spool"]:
+        print(f"  [{'지웠다' if r.get('applied') else '지울 것'}] spool:{entry} — {why}")
+    if r.get("refused"):
+        print(f"  [중요] 거부 — {r['refused']}")
+    print(f"  → {r['note']}")
+    if not r.get("applied") and r["drop"]["spool"]:
+        print(f"  실행: {r['command']}")
+    return 1 if r.get("done", {}).get("errors") else 0
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    _sys.exit(main(_sys.argv[1:]))
