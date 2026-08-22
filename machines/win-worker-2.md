@@ -93,6 +93,16 @@ It runs **only while janus is logged on** (no stored password — same premise a
 origin's `worker.exe`). It claims **build and code(infer)** jobs (`--types=build,code` —
 실전 pull 전환, user decision 2026-08-18). For code tasks it runs Claude locally, records facts
 to `.ax\work\<task>\result.json`, and never submits — the master collects and judges.
+[중요] **claim requires a project tag** (`#257`, 2026-08-22). The value comes from
+`E:\trunk\<Project>\.ax\config.json` → `project`, and `claimer._call` attaches it to every
+request; an untagged claim is refused with `no_project_tag`. **Never hand-edit that value** —
+`deliver` generates it.
+
+[중요] **After a delivery, restart the resident** (`#277`) — `deliver` replaces the *file* while
+the running process still holds the **old code** in memory. Measured 2026-08-22: a resident from
+before the tag rollout read the refusal as a task and looped, growing its log to 4.4 MB.
+`schtasks /end /tn AxClaimer` (or just kill `pythonw`) is enough — the 5-min watchdog brings it
+back with the new code. → [`../docs/13-request-tagging.md`](../docs/13-request-tagging.md) §13.6
 
     logs     E:\trunk\ModularStage\.ax\logs\claimer_<date>.log  — daily, boot-rotated (_N),
              7-day retention (#220). Per-task trace: .ax\logs\claimer_debug\<task_id>\
