@@ -187,11 +187,36 @@ def test_removals() -> None:
 # ── ⑤ MCP 는 역할로 갈린다 (#261 을 보이게) ──────────────────────
 
 def test_mcp_roles() -> None:
+    """[중요] **계약이 바뀌었다** (사용자 결정 2026-08-23: *"전부 열어 준다"*).
+
+    종전엔 `worker: ()` 였고 이 테스트가 *"워커는 못 받는다 — 그 판단이 표에 보인다"* 를
+    지켰다. 그런데 그 결과 **코드를 추론하는 자리에서 레시피·안티패턴을 읽을 수 없었다**
+    (`#267` 의 루프가 반 바퀴만 돌았다). 사용자 지적으로 드러났다: *"워커들이 작동하는
+    디렉토리는 어디야? … 거기 클로드 문서에 MCP를 추가 안했다는거야?"*
+
+    [주의] **낡은 계약을 지키는 테스트는 새 결정을 막는다** — 이번 세션 세 번째다.
+    """
     check("요청자는 ax-client 를 받는다", spec.mcp_for("requester") == ("ax-client",))
-    check("[중요] 워커는 못 받는다 — 그 판단이 표에 보인다", spec.mcp_for("worker") == ())
+    check("[중요] 워커도 받는다 (컨벤션을 읽어야 하는 자리다)",
+          spec.mcp_for("worker") == ("ax-client",))
     check("프로젝트가 추가할 수 있다",
           spec.mcp_for("worker", spec.ProjectInit(extra_mcp={"worker": ("unreal-mcp",)}))
-          == ("unreal-mcp",))
+          == ("ax-client", "unreal-mcp"), str(spec.mcp_for(
+              "worker", spec.ProjectInit(extra_mcp={"worker": ("unreal-mcp",)}))))
+
+    # ── [중요] **도구를 여는 것과 권한은 다른 축이다.** κ.0 경계는 토큰이 지킨다.
+    from master import auth
+    ws = {(m, "".join(rest)) for m, *rest in auth.WORKER_SCOPE}
+    check("[중요] 워커는 컨벤션 **읽기**가 열려 있다",
+          ("POST", "/api/v1/recipes/search") in ws and ("GET", "/api/v1/anti_patterns") in ws,
+          str(sorted(ws)))
+    for closed in (("POST", "/api/v1/thesaurus/"), ("POST", "/api/v1/history"),
+                   ("POST", "/api/v1/signals"), ("POST", "/api/v1/works"),
+                   ("POST", "/api/v1/redmine/note")):
+        check(f"[중요] 워커에게 {closed[1]} 는 닫혀 있다 (403 이 정상 — 판단은 마스터다)",
+              closed not in ws, str(closed))
+    check("[주의] 요청자에겐 그 쓰기가 열려 있다",
+          ("POST", "/api/v1/history") in {(m, "".join(r)) for m, *r in auth.REQUESTER_SCOPE})
 
 
 # ── ⑥ 관리 구역은 역할로 갈린다 ──────────────────────────────────
