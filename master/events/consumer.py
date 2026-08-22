@@ -124,6 +124,8 @@ class RunResult:
     note: str = ""
     paused: str = ""          # [중요] 게이트가 멈췄으면 그 사유 (소 3.5.1)
     polled: int = 0           # 이벤트 0건일 때 상태 대조만 돌린 프로젝트 수
+    # [중요] 마운트 밖이라 **의도적으로** 안 돈 프로젝트 (`#246` ③) — 고장과 설계를 가른다
+    unmounted: list = field(default_factory=list)
     poll_skipped: int = 0     # project_id 를 못 읽어 폴하지 못한 프로젝트 수
     deferred: int = 0         # 멈춰서 넘긴 이벤트 수 (유실 아님 — state-based 라 누적분이 다음에 잡힌다)
 
@@ -134,7 +136,9 @@ class RunResult:
     def summary(self) -> str:
         if self.note:
             return self.note
-        return (f"이벤트 {self.claimed}건 → 프로젝트 {len(self.results)}개 "
+        _unm = (f" · 마운트 밖 {len(self.unmounted)}개 건너뜀"
+                f"({', '.join(self.unmounted[:3])})" if self.unmounted else "")
+        return (f"이벤트 {self.claimed}건 → 프로젝트 {len(self.results)}개{_unm} "
                 f"(합침 {self.coalesced}, 거부 {self.rejected})")
 
 
@@ -545,6 +549,11 @@ def consume_once(spool: Spool | None = None, *, registry: Registry | None = None
         #    관문(`process_event`)이 다시 막지만 여기서 애초에 만들지 않는 것이 싸다.
         ids = []
         _mounted = (reg.active or "").strip()
+        # [중요] **비마운트 프로젝트를 「건너뜀」으로 남긴다** (`#246` 완료 조건 ③).
+        #    실측 2026-08-23: 마운트 왕복 뒤 로그에 마운트된 것만 나오고 나머지는 **아예
+        #    언급이 없었다** — 부재는 기록이 아니다. 「NS 는 왜 안 도나」를 로그로 답할 수
+        #    없으면 운영자는 고장과 설계를 구분하지 못한다.
+        res.unmounted = [n for n in reg.names if n != _mounted]
         for _name in ([_mounted] if _mounted and _mounted in reg.names else []):
             try:
                 pid = (reg.config_of(_name).project_id or "").strip()

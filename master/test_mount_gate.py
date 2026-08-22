@@ -98,6 +98,20 @@ def test_poll_loop_only_mounted() -> None:
     check("[중요] 폴링이 reg.names 전부를 돌지 않는다",
           "for _name in reg.names:" not in body, "전수 순회가 남아 있다")
     check("마운트된 것만 만든다", "_mounted" in body and "reg.active" in body, body[:120])
+    # [중요] **비마운트 프로젝트를 「건너뜀」으로 남긴다** (`#246` 완료 조건 ③).
+    #    실측 2026-08-23: 마운트 왕복 뒤 로그에 마운트된 것만 나오고 나머지는 **아예 언급이
+    #    없었다** — 부재는 기록이 아니다. 「NS 는 왜 안 도나」를 로그로 답할 수 없으면 운영자는
+    #    **고장과 설계를 구분하지 못한다.**
+    check("비마운트를 세어 남긴다", "res.unmounted" in body, "부재로 두면 기록이 아니다")
+    from master.events import consumer as C
+    r = C.RunResult()                       # [주의] 실물 이름을 쓴다 — 추측하면 조용히 통과한다
+    check("기본은 빈 목록", r.unmounted == [])
+    check("없으면 요약이 조용하다", "건너뜀" not in r.summary(), r.summary())
+    r.unmounted = ["NS", "Foo"]
+    line = r.summary()
+    check("[중요] 요약에 이름으로 나온다", "NS" in line and "건너뜀" in line, line)
+    check("몇 개인지 센다", "2개" in line, line)
+    check("[주의] 셋 이상이면 줄인다", "Foo" in line and line.count(",") <= 2, line)
 
 
 # ── #244 워터마크 ───────────────────────────────────────────────────
