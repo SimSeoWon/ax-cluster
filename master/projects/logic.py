@@ -162,7 +162,8 @@ def open_works_in_queue(*, fetcher=None) -> list:
             if (w.get("merge_status") or "in_progress") not in terminal]
 
 
-def sync_check(name: str, *, align: bool = False, checker=None, deliverer=None) -> dict:
+def sync_check(name: str, *, align: bool = False, checker=None, deliverer=None,
+               bootstrapper=None) -> dict:
     """이 프로젝트의 등재된 기계들이 **마스터와 같은 버전인지** 본다 (#266, 사용자 2026-08-22).
 
     > *"마운트 하지 않은 프로젝트를 불필요하게 동기화 할 필요는 없지만 마운트 대상을 바꿀때
@@ -179,6 +180,9 @@ def sync_check(name: str, *, align: bool = False, checker=None, deliverer=None) 
     from ..client import bundle as _b
     check = checker or (lambda f: _b.compare_version(f))
     deliver = deliverer or (lambda f: _b.deliver(name, f))
+    # [중요] **체크아웃이 없는 기계는 배달 대상이 아니라 부트스트랩 대상이다** (`#254`).
+    #    종전에는 그렇게 **보고만** 했다 — `align=True` 가 「맞춘다」인데 맞추지 않았다.
+    bootstrap = bootstrapper or (lambda f: _b.bootstrap_checkout(name, f))
 
     hosts, aligned, failed = [], [], []
     try:
@@ -195,7 +199,24 @@ def sync_check(name: str, *, align: bool = False, checker=None, deliverer=None) 
             hosts.append({"host": host, "ok": False, "reason": f"프로브 실패: {e}"})
             continue
         if not facts.checkout_ok:
-            hosts.append({"host": host, "ok": False, "reason": "체크아웃 없음 — 부트스트랩 대상"})
+            entry = {"host": host, "role": role, "ok": False, "verdict": "no_checkout",
+                     "reason": "체크아웃 없음 — 부트스트랩 대상"}
+            if align:
+                # [중요] 놓고 → **다시 재서** → 배달한다. `bootstrap_checkout` 이 스스로
+                #    되재므로(「했다」를 믿지 않는다) 여기서는 그 결과로 facts 를 갱신한다.
+                try:
+                    entry["bootstrapped"] = bootstrap(facts)
+                    facts2 = _b.probe(host, user, path, driven, role)
+                    if not facts2.checkout_ok:
+                        raise RuntimeError("부트스트랩 뒤에도 체크아웃을 못 읽는다")
+                    deliver(facts2)
+                    entry["aligned"] = True
+                    aligned.append(host)
+                except Exception as e:                       # noqa: BLE001
+                    entry["aligned"] = False
+                    entry["align_error"] = f"{type(e).__name__}: {e}"
+                    failed.append(host)
+            hosts.append(entry)
             continue
         v = check(facts)
         entry = {"host": host, "role": role, "ok": v["ok"], "verdict": v.get("verdict"),
@@ -212,6 +233,12 @@ def sync_check(name: str, *, align: bool = False, checker=None, deliverer=None) 
         hosts.append(entry)
 
     drifted = [h["host"] for h in hosts if not h["ok"]]
+    # [중요] **맞췄는데도 FAIL 로 남는 경우가 하나 있다: 마스터 트리가 dirty 일 때.**
+    #    커밋이 같아도(`verdict=same`) 그 커밋이 배달 내용을 다 말하지 못하므로 `ok=False` 다.
+    #    판정은 옳지만 사유를 말하지 않으면 *"align 했는데 왜 FAIL?"* 로 읽힌다 — 실측
+    #    2026-08-22 에 내가 그렇게 읽었다. 그래서 **무엇을 하면 통과하는지** 함께 낸다.
+    dirty_only = bool(drifted) and all(
+        (h.get("verdict") == "same") for h in hosts if not h["ok"])
     return {
         "checked": True,
         "hosts": hosts,
@@ -221,9 +248,14 @@ def sync_check(name: str, *, align: bool = False, checker=None, deliverer=None) 
         # [중요] 맞추지 않았으면 **사람이 실행할 명령을 돌려준다** (finalize_work 관례).
         "commands": ([] if align or not drifted
                      else [f"python -m master.client deliver {name}"]),
+        # [중요] 「맞췄다」와 「맞출 수 없다」를 가른다 — 고칠 곳이 다르다(#276 의 사유 셋과 같은 결).
+        "dirty_master": dirty_only,
         "note": ("전부 마스터와 같은 버전이다" if not drifted
-                 else f"버전이 다른 기계 {len(drifted)}대 — 클러스터는 버전이 하나다"
-                      + ("" if align else ". 맞추려면 align=True 또는 위 명령")),
+                 else (f"커밋은 맞췄다({len(drifted)}대) — 남은 FAIL 은 **마스터 트리가 dirty**"
+                       f" 이기 때문이다. 커밋한 뒤 다시 재면 통과한다"
+                       if dirty_only and align else
+                       f"버전이 다른 기계 {len(drifted)}대 — 클러스터는 버전이 하나다"
+                       + ("" if align else ". 맞추려면 align=True 또는 위 명령"))),
     }
 
 
