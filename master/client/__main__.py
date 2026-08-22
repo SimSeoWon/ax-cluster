@@ -228,6 +228,23 @@ def cmd_deliver(project: str, *, init: bool = False) -> int:
             # [중요] 값이 아니라 경로(또는 부재 안내)만 찍힌다
             print(f"     role_token={r['role_token']}")
         print("     .git/info/exclude [완료] · 해시 대조 통과")
+        # [중요] **배달은 파일을 놓는 것으로 끝나지 않는다** (`#277`) — 도는 상주가 새 코드인지
+        #    까지가 배달이다. 실측 2026-08-22: 해시가 3자 일치하는데 상주가 옛 코드로 폭주했다.
+        #    [주의] 이 줄이 없어서 갱신 결과가 화면에 안 보였다 — 판정을 했는데 안 보이면
+        #    「안 한 것」과 구분되지 않는다.
+        res = r.get("residency") or {}
+        if res.get("skipped"):
+            pass                                # requester — 상주가 없다
+        elif res.get("unknown"):
+            print(f"     [주의] 상주 상태를 읽지 못했다 — 건드리지 않았다 ({res.get('why','')})")
+        elif res.get("refreshed"):
+            extra = (f" · pid {res['pid_killed']} 종료" if res.get("pid_killed") else "")
+            print(f"     상주 갱신 [완료] — {res['refreshed']}{extra}"
+                  + (f" · {res['note']}" if res.get("note") else ""))
+        elif res.get("pending"):
+            print(f"     [주의] 상주 갱신 대기 — {res['pending']} (pid {res.get('pid')})")
+        elif res:
+            print(f"     상주 [완료] — {res.get('why', '이상 없음')}")
     return 1 if bad else 0
 
 

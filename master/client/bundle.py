@@ -962,12 +962,71 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
         else:
             written["role_token"] = (f"없음 — 마스터에서 `python -m master.auth init-role "
                                      f"{facts.role}` 후 재배달할 것")
+    # [중요] **배달은 파일을 놓는 것으로 끝나지 않는다** (`#277`) — 도는 상주는 옛 코드를
+    #    메모리에 쥔다. 실측 2026-08-22: 파일 해시가 3자 일치하는데 `.43` 상주가 폭주했다.
+    #    그래서 배달 절차 자체가 **도는 프로세스**를 보고 갱신을 요구한다(사람 눈이 아니다).
+    written["residency"] = refresh_residency(facts)
     return {"host": facts.host, **written,
             "claude_md_mode": ("생성" if not (prev or "").strip()
                                else "블록 교체" if MD_BEGIN in (prev or "") else "블록 추가"),
             # [주의] 일회성 프로비저닝 비용 — **작업 비용과 섞지 않는다** (#64)
             "init": init_info,
             "verified": True}
+
+
+def refresh_residency(facts: HostFacts, *, runner=None) -> dict:
+    """배달 뒤 상주 갱신 (`#277`). **관측 → 요구 → 재관측** 세 걸음.
+
+    [중요] **판정은 파일이 아니라 도는 프로세스다** — `claimer.py --probe` 가 부팅 시점의 코드
+    mtime 을 들고 있고, 지금 코드 mtime 과 비교한다(같은 기계·같은 시계라 스큐가 없다).
+    [중요] **진행 중 태스크를 죽이지 않는다** — 깃발(`claimer.restart`)을 놓으면 claimer 가
+    **다음 claim 전에** 물러난다. `busy` 면 그것으로 끝이고, 강제 종료는 하지 않는다.
+    [주의] **옛 코드는 깃발을 모른다.** 그래서 `busy=0` 이고 재관측에도 여전히 stale 이면
+    **pid 로만** 죽인다 — 이름/패턴으로 죽이면 남의 프로젝트 상주까지 죽는다(`#250` 이 깨진다).
+    [주의] 상태를 **못 읽으면 아무것도 하지 않는다** — 모르는 것을 고치면 진행 중 작업을 죽인다.
+    """
+    from client.init import residency          # 관례: 함수 안 절대 import (루트는 패키지가 아니다)
+    if facts.role != "worker":
+        return {"skipped": "worker 가 아니다 — 상주가 없다"}
+    run = runner or (lambda cmd, timeout=60: _ssh(facts.host, facts.user, cmd, timeout=timeout))
+    py = ""
+    if facts.windows:
+        rc, out = run(residency.PYTHONW_PROBE)
+        py = residency.parse_python_probe(out)
+    rc, out = run(residency.probe_command(facts, python_path=py))
+    state = residency.parse_probe(out)
+    if not state or "stale" not in state:
+        return {"unknown": True, "why": "probe 를 읽지 못했다 — **건드리지 않는다**",
+                "raw": (out or "")[:200]}
+    if not residency.needs_refresh(state):
+        return {"ok": True, "running": bool(state.get("running")),
+                "why": ("도는 것이 지금 코드다" if state.get("running")
+                        else "상주 없음 — 감시자가 새 코드로 띄운다")}
+    for label, cmd in residency.refresh_commands(facts):
+        run(cmd)
+    rc, out2 = run(residency.probe_command(facts, python_path=py))
+    after = residency.parse_probe(out2)
+    if not after.get("stale"):
+        return {"ok": True, "refreshed": "깃발", "pid_was": state.get("pid")}
+    if after.get("busy"):
+        return {"ok": True, "pending": "처리 중 — 태스크가 끝난 뒤 물러난다",
+                "pid": after.get("pid")}
+    # 여기까지 왔으면 깃발을 모르는 코드다 (이번 사고의 상주가 그랬다)
+    pid = int(after.get("pid") or state.get("pid") or 0)
+    for label, cmd in residency.refresh_commands(facts, force=True, pid=pid):
+        if label == "kill" and pid > 0:
+            run(cmd)
+    # [주의] 깃발을 치운다 — 강제 종료로 이미 목적을 이뤘고, 남기면 **감시자가 되살린 새
+    #    프로세스가 그것을 먹고 즉시 물러난다**(실측 2026-08-22: 한 주기를 버렸다).
+    #    claimer 도 부팅 시각으로 걸러 내지만, 놓은 쪽이 치우는 것이 옳다.
+    for label, cmd in residency.clear_flag_commands(facts):
+        run(cmd)
+    rc, out3 = run(residency.probe_command(facts, python_path=py))
+    final = residency.parse_probe(out3)
+    return {"ok": not final.get("stale"), "refreshed": "강제 종료 (깃발을 모르는 코드)",
+            "pid_killed": pid or None,
+            "note": ("감시자가 새 코드로 되살린다" if not final.get("running")
+                     else "여전히 stale — 사람이 봐야 한다")}
 
 
 def _ensure_ignored(facts: HostFacts) -> bool:

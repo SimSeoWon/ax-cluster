@@ -39,6 +39,7 @@ import shlex
 TASK_NAME = "AxClaimer"          # `.2` 의 실물 이름 — 바꾸면 기존 등록과 둘이 된다
 INTERVAL_MIN = 5                 # 감시자 주기. 잠금 싱글턴이 겹침을 흡수한다
 CLAIMER_REL = ".ax/lib/axmaster/work/claimer.py"
+RESTART_FILE = "claimer.restart"    # claimer.RESTART_FILE 과 같은 값 (배달물은 마스터를 import 하지 않는다)
 
 
 def types_for(facts) -> str:
@@ -135,3 +136,118 @@ def blocked_reason(project: str, mounted: str) -> str:
         return (f"마운트되지 않은 프로젝트({project} ≠ {mounted})의 상주는 `#248`(큐가 project 로 "
                 f"거른다) 뒤에 켠다 — 잠금은 체크아웃 단위지만 큐는 공유다")
     return ""
+
+
+# ── 배달 뒤 갱신 (`#277`) ──────────────────────────────────────────────────────
+
+CLAIMER_REL_WIN = CLAIMER_REL.replace("/", chr(92))
+PROBE_KEYS = ("running", "stale", "busy", "restart_pending", "pid", "started",
+              "alive_age", "boot_mtime", "code_mtime", "locked", "no_stamp")
+
+
+def console_python(path: str) -> str:
+    """`pythonw.exe` → `python.exe`. [중요] 출력이 필요한 호출에는 콘솔판을 쓴다."""
+    p = (path or "").strip()
+    if p.lower().endswith("pythonw.exe"):
+        return p[: -len("pythonw.exe")] + "python.exe"
+    if p.lower() == "pythonw":
+        return "python"
+    return p
+
+
+def probe_command(facts, *, python_path: str = "") -> str:
+    """상주 상태를 묻는 원격 명령 한 줄.
+
+    [중요] **판정 로직을 명령줄에 짜지 않는다** — `claimer.py --probe` 안(파이썬)에 있다.
+    이유 둘: ⓐ bash→ssh→cmd 삼중 인용에서 `for /f`·PowerShell 한 줄이 깨진 실측이 있다
+    (위 `PYTHONW_PROBE` 주석) ⓑ 같은 코드가 두 OS 에서 돌아 **로컬 유닛으로 잴 수 있다**.
+    """
+    if facts.windows:
+        # [중요] **인터프리터를 박지 않는다** — 실측 2026-08-22: `.2` 에서 `where pythonw` 가
+        #    빈 값이었다(실물은 `%LOCALAPPDATA%\Programs\Python\Python310\`). `python` 도
+        #    PATH 에 있다고 가정하면 안 된다. 호출자가 `PYTHONW_PROBE` 로 잰 값을 넘긴다.
+        # [중요] **probe 는 `pythonw` 로 돌리면 안 된다 — 콘솔이 없어 stdout 이 사라진다.**
+        #    상주는 콘솔 창을 띄우지 않으려고 `pythonw` 를 쓰지만, 관측은 출력이 목적이다.
+        py = console_python(python_path or python_for(facts))
+        return f'cd /d "{facts.path}" && "{py}" "{facts.path}\\{CLAIMER_REL_WIN}" --probe'
+    return (f"cd {shlex.quote(facts.path)} && {python_for(facts)} "
+            f"{shlex.quote(CLAIMER_REL)} --probe")
+
+
+def parse_probe(out: str) -> dict:
+    """`key=value` 줄을 읽는다. [주의] 못 읽은 키는 **없는 것으로 두지 않는다** — 호출자가
+    「모른다」와 「거짓」을 구분해야 한다(모르면 갱신을 강행하지 않는다)."""
+    got = {}
+    for line in (out or "").splitlines():
+        line = line.strip()
+        if "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        if k.strip() in PROBE_KEYS:
+            try:
+                got[k.strip()] = int(v.strip())
+            except ValueError:
+                continue
+    return got
+
+
+def needs_refresh(state: dict) -> bool:
+    """갱신해야 하나. [중요] **`stale` 하나만 본다** — `running=0` 은 갱신 대상이 아니다
+    (감시자가 다음 주기에 새 코드로 띄운다). 상태를 못 읽었으면 **건드리지 않는다.**"""
+    if not state or "stale" not in state:
+        return False
+    return bool(state.get("stale"))
+
+
+def refresh_commands(facts, *, force: bool = False, pid: int = 0) -> list:
+    """갱신 명령 `(라벨, 명령)`. **깃발이 먼저, 강제 종료는 폴백이다.**
+
+    [중요] 완료 조건 3(*"재기동이 진행 중 작업을 죽이지 않는다"*)을 지키는 방법이 깃발이다 —
+    claimer 가 **다음 claim 전에** 그것을 보고 물러나므로 처리 중 태스크를 버리지 않는다.
+    [주의] 그런데 **옛 코드는 깃발을 모른다**(이번 사고의 상주가 그랬다). 그래서 폴백이 필요하고,
+    폴백은 `force=True` 로만 나간다 — 호출자가 `busy=0` 을 확인한 뒤에만 켠다.
+    """
+    flag = f"{facts.path}\\.ax\\{RESTART_FILE}" if facts.windows \
+        else f"{facts.path}/.ax/{RESTART_FILE}"
+    out = [("flag", f'echo 1 > "{flag}"' if facts.windows
+            else f"echo 1 > {shlex.quote(flag)}")]
+    if force:
+        # [주의] 강제 종료는 **깃발을 모르는 옛 코드**를 위한 것이다. 감시자가 되살린다.
+        # [중요] **pid 로만 죽인다.** 이름/패턴으로 죽이면(`taskkill /im pythonw.exe`,
+        #    `pkill -f claimer.py`) **다른 프로젝트의 상주까지 죽는다** — 한 기계에 여럿을
+        #    허용한 것(`#250`)이 이 갱신 절차 때문에 깨지면 안 된다. pid 는 probe 가 준다.
+        if pid > 0:
+            out.append(("kill", f"taskkill /f /pid {pid}" if facts.windows
+                        else f"kill {pid}"))
+        else:
+            out.append(("kill", "(pid 를 모른다 — 강제 종료를 건너뛴다. "
+                                "이름으로 죽이면 남의 프로젝트 상주까지 죽는다)"))
+    return out
+
+
+def clear_flag_commands(facts) -> list:
+    """깃발 제거 — **놓은 쪽이 치운다.** 강제 종료 뒤에 부른다."""
+    flag = f"{facts.path}\\.ax\\{RESTART_FILE}" if facts.windows \
+        else f"{facts.path}/.ax/{RESTART_FILE}"
+    return [("clear", f'del /q "{flag}" 2>nul' if facts.windows
+             else f"rm -f {shlex.quote(flag)}")]
+
+
+def refresh_plan_lines(facts, state: dict) -> list:
+    """`plan` 이 찍을 줄 — [중요] **무엇을 근거로 갱신하는지 함께 찍는다.**"""
+    if not state or "stale" not in state:
+        return [f"   ? {facts.host}: 상주 상태를 읽지 못했다 — **건드리지 않는다** "
+                f"(모르는 것을 고치면 진행 중 작업을 죽인다)"]
+    if not state.get("running"):
+        return [f"   · {facts.host}: 상주 없음 — 갱신 대상이 아니다 "
+                f"(감시자가 다음 주기에 새 코드로 띄운다)"]
+    if not state.get("stale"):
+        return [f"   [완료] {facts.host}: 도는 것이 지금 코드다 "
+                f"(부팅 mtime {state.get('boot_mtime')} ≥ 코드 {state.get('code_mtime')})"]
+    busy = " · **처리 중** — 태스크가 끝난 뒤 물러난다" if state.get("busy") else ""
+    if state.get("no_stamp"):
+        # [중요] 가장 위험한 상태다 — 깃발을 모르고, 거절을 태스크로 읽는다(이번 사고의 상주)
+        return [f"   ⟳ {facts.host}: **`#277` 이전 코드가 돌고 있다** (잠금은 쥐었는데 부팅 "
+                f"스탬프가 없다) → 깃발은 무시될 것이므로 **pid 로 강제 종료**한다{busy}"]
+    return [f"   ⟳ {facts.host}: **옛 코드로 돌고 있다** "
+            f"(부팅 {state.get('boot_mtime')} < 코드 {state.get('code_mtime')}) → 갱신 깃발{busy}"]

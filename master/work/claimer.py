@@ -41,6 +41,7 @@ git 키가 그 사용자의 것) — 로그아웃 상태에서는 다음 로그�
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -58,6 +59,18 @@ INFER_TIMEOUT = 3600                # claude -p 한 번의 상한 (runner.DEFAUL
 HEARTBEAT_SEC = 240                 # 리스 1200s — 네 번 놓쳐도 산다 (runner 와 동값)
 LOG_RETENTION_DAYS = 7              # 일별 로그·task 디버그 보존 기간 (#220 — 원전 retention 회귀)
 TYPES = ["build"]                   # [중요] 유형 필터 — 신고 안 한 유형을 훔치지 않는다
+
+# ── 상주 갱신 (#277) ────────────────────────────────────────────────────────────
+# [중요] **파일 해시로는 이 문제를 볼 수 없다.** `deliver` 는 파일을 바꾸지만 도는 프로세스는
+#    옛 코드를 메모리에 쥔다. 실측 2026-08-22: 파일은 이미 맞았는데 상주가 폭주했다.
+#    그래서 **도는 프로세스가 자기 부팅 시점의 코드 mtime 을 스스로 남긴다** — 판정은
+#    「지금 도는 것이 지금 코드인가」이고, 같은 기계·같은 시계의 두 값만 비교한다
+#    (기계 간 시계 비교가 없다 = 스큐가 판정에 안 들어온다).
+BOOT_FILE = "claimer.boot"          # {pid, started, code_mtime} — 부팅 때 한 번
+ALIVE_FILE = "claimer.alive"        # 루프마다 touch — 살아 있음의 증거
+BUSY_FILE = "claimer.busy"          # 태스크 처리 중에만 존재 — 진행 중 작업을 죽이지 않으려고
+RESTART_FILE = "claimer.restart"    # 마스터가 놓는 깃발 — **다음 claim 전에** 물러난다
+ALIVE_STALE_MULT = 3                # alive 가 이 배수 × interval 보다 낡으면 「도는 것이 아니다」
 
 
 class ClaimerError(RuntimeError):
@@ -223,6 +236,196 @@ def _retention_sweep(root: Path, *, days: int = LOG_RETENTION_DAYS) -> int:
     except OSError:
         pass
     return removed
+
+
+def lib_mtime(root: Path) -> int:
+    """배달된 코드(`.ax/lib`)의 **가장 최근 mtime**. 없으면 0.
+
+    [중요] 파일 하나가 아니라 트리 전체를 본다 — `claimer.py` 만 보면 그것이 안 바뀐 배달
+    (`layer3_verify.py` 만 바뀐 경우 등)을 놓친다.
+    """
+    lib = root / ".ax" / "lib"
+    newest = 0
+    if not lib.is_dir():
+        return 0
+    for f in lib.rglob("*"):
+        try:
+            if f.is_file():
+                newest = max(newest, int(f.stat().st_mtime))
+        except OSError:
+            continue
+    return newest
+
+
+def _state_path(root: Path, name: str) -> Path:
+    return root / ".ax" / name
+
+
+def write_boot_stamp(root: Path, *, mtime: int = -1) -> dict:
+    """부팅 스탬프 — **도는 프로세스 자신이** 남긴다 (`#277`)."""
+    rec = {"pid": os.getpid(),
+           "started": int(time.time()),
+           "code_mtime": lib_mtime(root) if mtime < 0 else mtime}
+    try:
+        _state_path(root, BOOT_FILE).write_text(json.dumps(rec), encoding="utf-8")
+    except OSError:
+        pass                        # 스탬프는 관측용이다 — 못 써도 상주는 돈다
+    return rec
+
+
+def touch_alive(root: Path) -> None:
+    """살아 있음의 증거. [주의] 잠금 파일로는 대체할 수 없다 — 잠금은 **놓인 시각**이
+    아니라 열린 핸들이고, 크래시하면 OS 가 풀어 버려 「얼마나 오래 살았나」를 못 남긴다."""
+    try:
+        _state_path(root, ALIVE_FILE).write_text(str(int(time.time())), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def restart_requested(root: Path, *, booted_at: int = 0) -> bool:
+    """마스터가 갱신을 요구했나. [중요] **다음 claim 전에만** 본다 — 처리 중 태스크를
+    버리지 않는 것이 `#277` 완료 조건 3 이다.
+
+    [중요] **내가 뜨기 전에 놓인 깃발은 내 것이 아니다.** 실측 2026-08-22: 옛 상주를 강제
+    종료한 뒤 깃발이 남아 있었고, 감시자가 새 코드로 되살린 프로세스가 **그 깃발을 먹고 즉시
+    물러났다** — 한 주기(5분)를 버린다. 그래서 깃발의 mtime 을 내 부팅 시각과 비교한다.
+    `booted_at=0` 이면 존재만 본다(관측용 호출).
+    """
+    f = _state_path(root, RESTART_FILE)
+    if not f.exists():
+        return False
+    if not booted_at:
+        return True
+    try:
+        return int(f.stat().st_mtime) >= booted_at
+    except OSError:
+        return True                 # 못 읽으면 요구가 있는 것으로 본다 (fail-safe: 물러난다)
+
+
+def clear_restart(root: Path) -> None:
+    try:
+        _state_path(root, RESTART_FILE).unlink()
+    except OSError:
+        pass
+
+
+def someone_holds_lock(root: Path) -> bool:
+    """상주가 **살아 있는가** — 잠금을 잡아 본다(성공하면 아무도 없다는 뜻이라 곧 놓는다).
+
+    [중요] **이 축이 없으면 옛 코드를 못 본다.** 실측 2026-08-22: `#277` 이전 상주는
+    `claimer.boot`·`claimer.alive` 를 남기지 않으므로 스탬프만 보면 **「안 돌고 있다」**로
+    읽힌다 — 그러면 배달이 아무것도 하지 않고 그 사고가 그대로 반복된다. 잠금은 **프로세스가
+    쥐는 것**이라 코드 버전과 무관하게 참이다.
+    [주의] 관측이 부작용을 갖지 않아야 한다 — 잠금을 얻었으면 **즉시 닫고 파일은 남긴다**
+    (지우면 진짜 상주의 싱글턴이 깨진다).
+    """
+    f = acquire_singleton(root)
+    if f is None:
+        return True                 # 누가 쥐고 있다 = 상주가 산다
+    try:
+        f.close()
+    except OSError:
+        pass
+    return False
+
+
+def find_resident_pid(root: Path) -> int:
+    """이 **체크아웃의** 상주 pid. 못 찾으면 0.
+
+    [중요] **프로젝트 단위로 정확해야 한다.** 패턴으로 찾아 죽이면 한 기계의 다른 프로젝트
+    상주까지 죽는다(`#250` 이 깨진다). 두 OS 에서 정확해지는 근거가 다르다:
+
+        리눅스  cmdline 이 **상대경로**(`.ax/lib/...`)라 패턴으로는 프로젝트를 못 가른다
+                → `/proc/<pid>/cwd` 가 이 체크아웃인지 본다 (커널이 주는 사실)
+        윈도우  schtasks 등록이 **절대경로**를 쓴다 → cmdline 에 체크아웃 경로가 들어 있다
+                → `wmic` 목록에서 그 경로를 포함하는 것만 고른다
+
+    [주의] 부팅 스탬프의 pid 를 쓰면 `#277` 이전 상주(스탬프 없음)를 못 죽인다 — 그 상태가
+    가장 위험하다(깃발을 모른다). 그래서 프로세스를 직접 찾는 이 함수가 필요하다.
+    """
+    me = os.getpid()
+    if sys.platform == "win32":
+        try:
+            out = subprocess.run(
+                ["wmic", "process", "where", "name='pythonw.exe'",
+                 "get", "ProcessId,CommandLine", "/format:list"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=30).stdout or ""
+        except (OSError, subprocess.SubprocessError):
+            return 0
+        want = str(root).lower()
+        pid, cmd = 0, ""
+        for line in out.splitlines():
+            line = line.strip()
+            if line.lower().startswith("commandline="):
+                cmd = line.split("=", 1)[1].lower()
+            elif line.lower().startswith("processid="):
+                try:
+                    pid = int(line.split("=", 1)[1])
+                except ValueError:
+                    pid = 0
+                if pid and pid != me and want in cmd and "claimer.py" in cmd:
+                    return pid
+                pid, cmd = 0, ""
+        return 0
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return 0
+    for d in proc.iterdir():
+        if not d.name.isdigit() or int(d.name) == me:
+            continue
+        try:
+            cmdline = (d / "cmdline").read_bytes().decode("utf-8", "replace")
+            if "claimer.py" not in cmdline:
+                continue
+            # [중요] cwd 가 이 체크아웃인지 — 커널이 주는 사실이다(패턴 추측이 아니다)
+            if (d / "cwd").resolve() == root.resolve():
+                return int(d.name)
+        except OSError:
+            continue
+    return 0
+
+
+def probe_state(root: Path, *, interval: int = POLL_SEC) -> dict:
+    """지금 상태를 사실로 낸다 — `--probe` 가 이것을 찍고 마스터가 읽는다.
+
+    [중요] **판정은 「도는 프로세스의 부팅 코드 mtime」 대 「지금 코드 mtime」**이다.
+    파일 해시 대조가 아니다(해시는 배달이 됐는지만 말하고, 도는 것이 그것인지는 말하지 않는다).
+    """
+    now = int(time.time())
+    cur = lib_mtime(root)
+    boot = {}
+    try:
+        boot = json.loads(_state_path(root, BOOT_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        boot = {}
+    alive_at = 0
+    try:
+        alive_at = int(_state_path(root, ALIVE_FILE).read_text(encoding="utf-8").strip() or 0)
+    except (OSError, ValueError):
+        alive_at = 0
+    alive_age = (now - alive_at) if alive_at else -1
+    fresh = bool(alive_at) and 0 <= alive_age <= interval * ALIVE_STALE_MULT
+    locked = someone_holds_lock(root)
+    # [중요] **살아 있음의 축이 둘이다.** 스탬프(이 코드가 남긴다)와 잠금(어느 코드든 쥔다).
+    #    잠금만 잡히고 스탬프가 없으면 **`#277` 이전 코드가 돌고 있다** — 그것이 가장 위험한
+    #    상태다(깃발을 모르고, 거절을 태스크로 읽는다). 그래서 그때는 무조건 stale 이다.
+    running = fresh or locked
+    boot_mtime = int(boot.get("code_mtime") or 0)
+    no_stamp = locked and not boot_mtime
+    # [주의] 안 돌고 있으면 stale 이 아니다 — 감시자가 다음 주기에 새 코드로 띄운다.
+    stale = bool(no_stamp or (running and cur and boot_mtime and cur > boot_mtime))
+    # [중요] 스탬프의 pid 가 없으면 **프로세스를 직접 찾는다** — 그러지 않으면 `#277` 이전
+    #    상주(스탬프 없음)를 강제 종료할 수 없고, 그 상태가 정확히 이번 사고다.
+    pid = int(boot.get("pid") or 0)
+    if running and (no_stamp or not pid):
+        pid = find_resident_pid(root) or pid
+    return {"running": running, "pid": pid,
+            "started": int(boot.get("started") or 0), "alive_age": alive_age,
+            "boot_mtime": boot_mtime, "code_mtime": cur, "stale": stale,
+            "locked": locked, "no_stamp": no_stamp,
+            "busy": _state_path(root, BUSY_FILE).exists(),
+            "restart_pending": restart_requested(root)}
 
 
 def _log(root: Path, msg: str, *, to_file: bool = True) -> None:
@@ -628,6 +831,18 @@ def main(argv=None) -> int:
                 raise ClaimerError(f"모르는 유형 {bad} — claimer 가 다루는 것은 build·code")
             types = want or types
     root = find_root()
+    if "--probe" in argv:
+        # [중요] **관측 전용 — 아무것도 바꾸지 않는다** (`#277`). 마스터가 배달 뒤에 이 한 줄을
+        #    부른다: `python .ax/lib/axmaster/work/claimer.py --probe`.
+        #    [주의] 로직을 **여기(파이썬)** 에 두는 이유는 인용이다 — bash→ssh→cmd 삼중 인용에서
+        #    `for /f`·PowerShell 한 줄이 깨진 실측이 있다(`residency.PYTHONW_PROBE` 주석).
+        #    그리고 같은 코드가 두 OS 에서 돌아 로컬 유닛으로 잴 수 있다.
+        st = probe_state(root, interval=interval)
+        for k in ("running", "stale", "busy", "restart_pending", "pid", "started",
+                  "alive_age", "boot_mtime", "code_mtime", "locked", "no_stamp"):
+            v = st[k]
+            print(f"{k}={int(v) if isinstance(v, bool) else v}")
+        return 0
     c = Client(root)
     log = lambda m: _log(root, m)                            # noqa: E731
 
@@ -665,10 +880,42 @@ def main(argv=None) -> int:
 
     log(f"[boot] claimer worker_id={c.worker_id} project={c.project} "
         f"types={types} caps={c.capabilities} {'once' if once else f'poll {interval}s'}")
+    if not once:
+        # [중요] **도는 프로세스가 자기 부팅 코드 mtime 을 남긴다** (`#277`) — 마스터가 배달
+        #    뒤에 「도는 것이 지금 코드인가」를 물을 근거다. 단발(--once)은 상주가 아니므로 안 쓴다.
+        boot = write_boot_stamp(root)
+        log(f"[boot] 코드 mtime={boot['code_mtime']} pid={boot['pid']} — 갱신 판정의 기준선")
+        # [주의] 내가 뜨기 **전에** 놓인 깃발은 이미 이행된 요구다(그 요구로 죽은 것이 앞
+        #    프로세스다). 남겨 두면 관측이 계속 `restart_pending` 을 보고한다.
+        if _state_path(root, RESTART_FILE).exists() and not restart_requested(
+                root, booted_at=boot["started"]):
+            clear_restart(root)
+            log("[boot] 옛 갱신 깃발을 치웠다 — 앞 프로세스에게 내려진 요구였다")
     while True:
+        if not once and restart_requested(root, booted_at=boot["started"]):
+            # [중요] **다음 claim 전에만** 물러난다 — 처리 중 태스크는 버리지 않는다
+            #    (`#277` 완료 조건 3). 감시자(schtasks/cron)가 새 코드로 되살린다.
+            clear_restart(root)
+            log("[restart] 마스터가 갱신을 요구했다 — 물러난다 (감시자가 새 코드로 되살린다)")
+            return 0
+        if not once:
+            touch_alive(root)
         task = c.claim(types)
         if task:
-            out = run_one(c, task, log=log)
+            busy = _state_path(root, BUSY_FILE)
+            try:
+                if not once:
+                    busy.write_text(str(task.get("task_id") or ""), encoding="utf-8")
+            except OSError:
+                pass
+            try:
+                out = run_one(c, task, log=log)
+            finally:
+                # [주의] 반드시 지운다 — 남으면 마스터가 영원히 「처리 중」으로 보고 갱신을 미룬다
+                try:
+                    busy.unlink()
+                except OSError:
+                    pass
             log(f"[done] {json.dumps(out, ensure_ascii=False)}")
             if once:
                 return 0 if out.get("build_ok") or "outcome" not in out else 1
