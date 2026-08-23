@@ -1217,9 +1217,15 @@ def refresh_residency(facts: HostFacts, *, runner=None, sleeper=None) -> dict:
         return {"unknown": True, "why": "probe 를 읽지 못했다 — **건드리지 않는다**",
                 "raw": (out or "")[:200]}
     if not residency.needs_refresh(state):
-        return {"ok": True, "running": bool(state.get("running")),
-                "why": ("도는 것이 지금 코드다" if state.get("running")
-                        else "상주 없음 — 감시자가 새 코드로 띄운다")}
+        why = ("도는 것이 지금 코드다" if state.get("running")
+               else "상주 없음 — 감시자가 새 코드로 띄운다")
+        # [중요] **상주가 상태 파일을 못 읽었으면 그 사실을 올린다** (`#296`). 그것을 삼키면
+        #    「상주 없음」이 *정말 없는 것*인지 *못 읽은 것*인지 구분되지 않는다 — `#277` 의
+        #    판정이 그 값에 걸려 있다.
+        errs = state.get("read_errors") or []
+        if errs:
+            why += " · [주의] 상주가 못 읽은 것: " + " · ".join(str(e) for e in errs[:3])
+        return {"ok": True, "running": bool(state.get("running")), "why": why}
     for label, cmd in residency.refresh_commands(facts):
         run(cmd)
     # [중요] 깃발을 볼 시간을 준다 — 반응이 오면 **강제 종료하지 않는다**.

@@ -418,15 +418,28 @@ def probe_state(root: Path, *, interval: int = POLL_SEC) -> dict:
     """
     now = int(time.time())
     cur = lib_mtime(root)
+    # [중요] **「없다」와 「깨졌다」를 가른다** (`#296`). 이 값들이 `#277`(배달이 상주를 갱신하지
+    #    않는다)의 판정 근거다 — 못 읽었을 때 조용히 빈 값으로 접으면 판정이 *"안 돈다"* 로
+    #    나오고, 그것은 **정말 안 도는 것과 구분되지 않는다.** 파일 부재는 정상(첫 기동)이므로
+    #    사유는 **깨진 경우만** 싣는다.
+    notes: list = []
     boot = {}
+    bp = _state_path(root, BOOT_FILE)
     try:
-        boot = json.loads(_state_path(root, BOOT_FILE).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        boot = json.loads(bp.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        pass                            # 첫 기동 — 정상이다
+    except (OSError, ValueError) as e:
+        notes.append(f"부팅 기록을 읽지 못했다 ({bp.name}): {type(e).__name__}")
         boot = {}
     alive_at = 0
+    ap = _state_path(root, ALIVE_FILE)
     try:
-        alive_at = int(_state_path(root, ALIVE_FILE).read_text(encoding="utf-8").strip() or 0)
-    except (OSError, ValueError):
+        alive_at = int(ap.read_text(encoding="utf-8").strip() or 0)
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as e:
+        notes.append(f"심박을 읽지 못했다 ({ap.name}): {type(e).__name__}")
         alive_at = 0
     alive_age = (now - alive_at) if alive_at else -1
     fresh = bool(alive_at) and 0 <= alive_age <= interval * ALIVE_STALE_MULT
@@ -448,12 +461,17 @@ def probe_state(root: Path, *, interval: int = POLL_SEC) -> dict:
     pid = int(boot.get("pid") or 0)
     if running and (no_stamp or not pid):
         pid = find_resident_pid(root) or pid
-    return {"running": running, "pid": pid,
-            "started": int(boot.get("started") or 0), "alive_age": alive_age,
-            "boot_mtime": boot_mtime, "code_mtime": cur, "stale": stale,
-            "locked": locked, "no_stamp": no_stamp, "hung": hung,
-            "busy": _state_path(root, BUSY_FILE).exists(),
-            "restart_pending": restart_requested(root)}
+    out = {"running": running, "pid": pid,
+           "started": int(boot.get("started") or 0), "alive_age": alive_age,
+           "boot_mtime": boot_mtime, "code_mtime": cur, "stale": stale,
+           "locked": locked, "no_stamp": no_stamp, "hung": hung,
+           "busy": _state_path(root, BUSY_FILE).exists(),
+           "restart_pending": restart_requested(root)}
+    # [중요] **사유를 만들었으면 내보낸다** (`#296`). 결과에 싣지 않으면 방금 고친 그 병
+    #    (판정을 했는데 안 보인다)을 한 단계 뒤로 옮기는 것뿐이다. 마스터가 이 dict 를 읽는다.
+    if notes:
+        out["read_errors"] = notes
+    return out
 
 
 def _log(root: Path, msg: str, *, to_file: bool = True) -> None:
@@ -693,7 +711,11 @@ def run_infer(c: Client, task: dict, *, exec_fn=None, retry_sleep=None, log=None
         if result_p.is_file() and (workdir / RESPONSE_NAME).is_file():
             try:
                 old = json.loads(result_p.read_text(encoding="utf-8"))
-            except ValueError:
+            except ValueError as e:
+                # [중요] **말한다** (`#296`). 조용히 비우면 재사용이 안 되고 **추론을 다시 산다** —
+                #    「왜 재사용 안 됐나」가 로그에 없으면 비용이 어디서 났는지 못 되짚는다.
+                _log(root, f"[주의] 이전 결과를 못 읽어 재사용하지 않는다 "
+                           f"({result_p.name}): {type(e).__name__}: {e}")
                 old = {}
             # [주의] "RESULT: DONE" 존재는 판정이 아니라 값싼 사실 필터다 (판정은 마스터의
             #    collect 가 층1까지 한다). BLOCKED 기록을 재사용하면 마스터가 재큐잉해도

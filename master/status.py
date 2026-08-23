@@ -399,8 +399,13 @@ def collect(*, project: str = "", token: str = "", force: bool = False,
     try:
         stamp.parent.mkdir(parents=True, exist_ok=True)
         stamp.write_text(str(time.time()), encoding="utf-8")
-    except OSError:
-        pass
+    except OSError as e:
+        # [중요] **말한다** (`#296`). 스탬프를 못 쓰면 다음 회차가 주기 가드를 못 읽어
+        #    **120초 가드가 무력화된다** — 그리고 BC-250 은 부하로 커널이 멈춘 전례가 있다
+        #    (위 MIN_INTERVAL 주석). 조용히 넘기면 「가드가 도는데 왜 자주 두드리나」를
+        #    영원히 못 찾는다.
+        snap.problems.append(f"[중요] 주기 가드 스탬프를 쓰지 못했다 ({stamp}) — "
+                             f"다음 회차가 가드 없이 돈다: {type(e).__name__}: {e}")
     return snap
 
 

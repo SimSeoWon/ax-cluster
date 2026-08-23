@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -611,6 +612,46 @@ def test_infer_writes_debug_heartbeat_and_notes():
         assert hb_p.is_file() and "[note]" in hb_p.read_text(encoding="utf-8")
         notes = getattr(c, "notes", [])
         assert any("실체화" in n for n in notes) and any("추론" in n for n in notes), notes
+
+
+
+def test_probe_tells_what_it_could_not_read() -> None:
+    """[중요] **「없다」와 「깨졌다」를 가른다** (`#296`).
+
+    `probe_state` 의 값이 `#277`(배달이 상주를 갱신하지 않는다) 판정의 근거다. 상태 파일을 못
+    읽었을 때 조용히 빈 값으로 접으면 판정이 *"안 돈다"* 로 나오고, 그것은 **정말 안 도는 것과
+    구분되지 않는다.** [주의] 파일 **부재**는 정상(첫 기동)이라 사유는 **깨진 경우만** 싣는다.
+    """
+    from master.work import claimer as C
+
+    tmp = Path(tempfile.mkdtemp(prefix="ax-probe-"))
+    try:
+        (tmp / ".ax").mkdir(parents=True)
+        st = C.probe_state(tmp)
+        assert "read_errors" not in st, st          # 첫 기동은 사유가 없다
+
+        (tmp / ".ax" / C.BOOT_FILE).write_text("{깨진 JSON", encoding="utf-8")
+        (tmp / ".ax" / C.ALIVE_FILE).write_text("숫자가 아니다", encoding="utf-8")
+        st = C.probe_state(tmp)
+        errs = st.get("read_errors") or []
+        assert len(errs) == 2, errs                 # 깨진 둘을 사유로 남긴다
+        assert any(C.BOOT_FILE in e for e in errs), errs   # 이름으로 말한다
+        assert "running" in st and "stale" in st, st       # 판정은 계속 나온다
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_broken_result_says_why_it_is_not_reused() -> None:
+    """[중요] 이전 결과를 못 읽어 **추론을 다시 사는** 것을 말한다 (`#296`).
+
+    조용히 비우면 재사용이 안 되고 비용이 다시 드는데, 「왜 재사용 안 됐나」가 로그에 없으면
+    그 비용이 어디서 났는지 되짚을 수 없다.
+    """
+    from master.work import claimer as C
+
+    src = Path(C.__file__).read_text(encoding="utf-8")
+    assert "이전 결과를 못 읽어 재사용하지 않는다" in src
+    assert "except ValueError as e:" in src, "조용한 except 가 남아 있다"
 
 
 if __name__ == "__main__":

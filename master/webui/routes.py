@@ -306,11 +306,16 @@ def api_index_status(paths) -> dict:
     #    틀렸고 주석으로 남겼다(*"과거 len(tag_cache) 는 draft·빈 문서를 안 걸러 벡터보다 많아
     #    needs_rebuild 가 상시 true 였음"*). 우리 정본은 `documents.iter_documents` 다 — 색인이
     #    실제로 넣는 그 목록이라, 그것으로 세지 않으면 판정이 영구히 「재색인 필요」가 된다.
+    fallback = ""
     try:
         from ..context_search.documents import iter_documents
         md = sum(1 for _ in iter_documents(paths.context))
-    except Exception:                                        # noqa: BLE001
-        md = _doc_count(paths)          # 최후 폴백 — 그러면 판정이 헐거워진다
+    except Exception as e:                                   # noqa: BLE001
+        # [중요] 폴백을 쓰면 **판정이 헐거워진다** — 파일 개수로 세므로 `needs_rebuild` 가
+        #    과대 판정된다. 주석에 그렇게 적어 두고 **말하지 않으면** 화면을 보는 사람이
+        #    「왜 재색인 필요라고 나오나」를 못 되짚는다 (`#296`).
+        md = _doc_count(paths)
+        fallback = f"색인 대상 목록을 못 읽어 파일 개수로 셌다: {type(e).__name__}"
     vec = bm25 = None
     try:
         from ..context_search.index import open_index
@@ -338,11 +343,14 @@ def api_index_status(paths) -> dict:
         "generation": "",
         "updating": False,
     }
+    if fallback:
+        out["note"] = fallback
     try:
         from ..context_search.generation import current
         out["generation"] = current(paths)
-    except Exception:                                        # noqa: BLE001
-        pass
+    except Exception as e:                                   # noqa: BLE001
+        out["note"] = ((out.get("note", "") + " · ") if out.get("note") else "") + \
+            f"세대를 못 읽었다: {type(e).__name__}"
     return out
 
 
