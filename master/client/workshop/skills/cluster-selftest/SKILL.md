@@ -25,7 +25,7 @@ description: 실 워커 클러스터(N대)가 push/2-tier/fencing/매니페스�
   `task_queue_autostart=true`, 또는 `http://localhost:8101/api/v1/health` 200.)
 - **워커 ≥ 1대 폴링 중**이어야 claim 됨. 0대면 경고 — 워커 데몬 기동부터.
 - distribution_mode 가 pull 이어도 무방 — 셀프테스트는 **push 경로를 강제**로 검증한다
-  (단, 실 /distribute 가 push 로 동작하려면 별도로 config flip 필요).
+  (단, 실 분산 파이프라인이 push 로 동작하려면 별도로 config flip 필요).
 
 ## 절차
 

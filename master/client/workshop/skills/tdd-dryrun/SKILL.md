@@ -1,6 +1,6 @@
 ---
 name: tdd-dryrun
-description: 태스크 템플릿의 TDD 계약(3a 루브릭 + 3c 실제 테스트)을 분산 파이프라인 밖에서 검증·튜닝한다. 서버에서 Claude 에이전트가 contracts 로 테스트를 만들고, 준수/위반 샘플을 구현해, red-green 이 닫히는지 단계별 로그로 확인한다. Git 브랜치·Redmine·task_queue 에 흔적을 안 남기는 스테이징 — 결과를 보고 실제 분산 TDD 게이트·템플릿을 보정. 자연어 "TDD 드라이런", "<TaskType> 계약 테스트 검증", "tdd 드라이런 돌려줘", "TDD 1차 테스트" 에 발동. 분산 작업 검수(/review-work)나 템플릿 등록(/manage-task)과 별개.
+description: 태스크 템플릿의 TDD 계약(3a 루브릭 + 3c 실제 테스트)을 분산 파이프라인 밖에서 검증·튜닝한다. 서버에서 Claude 에이전트가 contracts 로 테스트를 만들고, 준수/위반 샘플을 구현해, red-green 이 닫히는지 단계별 로그로 확인한다. Git 브랜치·Redmine·task_queue 에 흔적을 안 남기는 스테이징 — 결과를 보고 실제 분산 TDD 게이트·템플릿을 보정. 자연어 "TDD 드라이런", "<TaskType> 계약 테스트 검증", "tdd 드라이런 돌려줘", "TDD 1차 테스트" 에 발동. 분산 작업 검수(`ax-review`)나 템플릿 등록(/manage-task)과 별개.
 ---
 
 # TDD Dry-run — 서버측 계약 테스트 검증 하니스

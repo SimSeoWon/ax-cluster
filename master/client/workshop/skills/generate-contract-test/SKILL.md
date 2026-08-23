@@ -1,6 +1,6 @@
 ---
 name: generate-contract-test
-description: 태스크 템플릿의 contracts(pre/post/acceptance)를 검증하는 UE FAutomationTest .cpp 초안을 Claude 가 작성한다. 클라이언트(개발자) PC 에서 실행 — Claude(고신뢰) 가 테스트(명세)를 쓰고, 값싼 분산 워커(Gemma/Gemini)는 구현을 하고, 서버 통합 빌드 게이트가 위반을 잡는 TDD 분업의 "테스트 작성" 단계. 로컬 UE 소스에서 실제 API 를 읽어 컴파일되는 테스트를 만들고, 사람이 검토·커밋한 뒤 템플릿에 tdd:true + test_spec.filter 를 등록한다. 자연어 "이 작업유형 계약 테스트 만들어줘", "MissionTaskAddition TDD 테스트 생성", "contracts 검증 테스트 작성" 에 발동. 분산 작업 결과 검수(/review-work)나 템플릿 등록(/manage-task)과 별개.
+description: 태스크 템플릿의 contracts(pre/post/acceptance)를 검증하는 UE FAutomationTest .cpp 초안을 Claude 가 작성한다. 클라이언트(개발자) PC 에서 실행 — Claude(고신뢰) 가 테스트(명세)를 쓰고, 값싼 분산 워커(Gemma/Gemini)는 구현을 하고, 서버 통합 빌드 게이트가 위반을 잡는 TDD 분업의 "테스트 작성" 단계. 로컬 UE 소스에서 실제 API 를 읽어 컴파일되는 테스트를 만들고, 사람이 검토·커밋한 뒤 템플릿에 tdd:true + test_spec.filter 를 등록한다. 자연어 "이 작업유형 계약 테스트 만들어줘", "MissionTaskAddition TDD 테스트 생성", "contracts 검증 테스트 작성" 에 발동. 분산 작업 결과 검수(`ax-review`)나 템플릿 등록(/manage-task)과 별개.
 ---
 
 # Generate Contract Test — 계약 검증 FAutomationTest 작성 (클라이언트측 Claude)
@@ -46,7 +46,7 @@ TDD 게이트의 목적은 **값싼 LLM 워커(무비용 로컬 Gemma + 토큰 �
      0건 매칭 안 함.
    - 커밋은 사용자가(테스트=사람 SSOT). 본 스킬은 작성·등록까지, push 는 안내만.
 6. **실행은 서버 게이트가** — 실제 red-green(컴파일+RunTests)은 **서버측 통합 빌드 게이트**
-   (`integration_build` / `/review-work`)가 머지 전에 수행. 클라이언트 로컬 빌드+`UnrealEditor-Cmd
+   (`integration_build` / `ax-review`)가 머지 전에 수행. 클라이언트 로컬 빌드+`UnrealEditor-Cmd
    RunTests` 로 사전 확인은 선택(비용 큼 — 안내만, 강제 X).
 
 ## 안전 가드

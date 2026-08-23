@@ -10,6 +10,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 whether UE5 is installed, which backends exist — is in the **AX managed block at the end of this
 file**, generated per machine by the master. Read that before assuming you can build.
 
+- [중요] **게임 소스는 고치기 전에 계획을 말하고 동의를 받는다** (원전 1조 · `docs/11`).
+  대상은 `Source/**` · `*.uproject` · `Config/*.ini` · `Content/**` 이고 **빌드·에디터 실행도
+  그 뒤**다. 읽기·검색·계획 제시는 자유다 — 막는 것은 **쓰기**다.
+  [주의] 「단일 클래스·미세 수정」은 *어디서* 처리할지의 기준이지 *동의가 필요한지*의 기준이
+  **아니다**(실측 2026-08-24: 그 둘을 섞어 `.uproject` 를 동의 없이 고치고 빌드까지 갔다 —
+  `#298`).
 - `/CLAUDE.md` and `/.claude/` are **gitignored**, so this file is local to each checkout and never
   gets committed. Don't "fix" that by un-ignoring it.
 - Push to the source repo is disabled on non-authoring checkouts. Work on

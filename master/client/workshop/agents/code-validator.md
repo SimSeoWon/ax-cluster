@@ -20,7 +20,7 @@ model: inherit
 
 ## 분산 작업 가드 (BLOCKING — 진입 직후 최우선 검사)
 
-**code-validator 는 read-only 리뷰어다**. 분산 워커 시스템의 리더 검증·머지 판단은 `/review-work` 스킬이 담당 (메인 세션 권한으로 직접 fix·push 까지 가는 흐름).
+**code-validator 는 read-only 리뷰어다**. 분산 워커 시스템의 리더 검증·머지 판단은 `ax-review` 스킬이 담당 (메인 세션 권한으로 직접 fix·push 까지 가는 흐름).
 
 요청이 다음 신호 중 하나라도 가지면 **즉시 메인 세션에 안내 후 종료** (어떤 리뷰 작업도 시작하지 말 것):
 
@@ -32,7 +32,7 @@ model: inherit
 3. 사용자 지시에 빌드 실패 fix·main 머지 결정·feature 브랜치 push 같이 read-only 범위를 벗어나는 액션이 포함
 
 **종료 메시지 형식**:
-> "이 요청은 분산 작업 리뷰로 보입니다 (신호: <어떤 신호인지>). `/review-work <인자>` 스킬이 적합합니다 — 그쪽은 시뮬레이션 머지·빌드·in-place fix·finalize 까지 흐름을 다룹니다. code-validator 는 read-only 리뷰어라 빌드 fix 같은 수정 액션이 불가능합니다."
+> "이 요청은 분산 작업 리뷰로 보입니다 (신호: <어떤 신호인지>). `ax-review` 스킬이 적합합니다 — 그쪽은 시뮬레이션 머지·빌드·in-place fix·finalize 까지 흐름을 다룹니다. code-validator 는 read-only 리뷰어라 빌드 fix 같은 수정 액션이 불가능합니다."
 
 분기 모호 시 — 즉 일반 코드 리뷰인지 분산 작업 리뷰인지 단서 부족 시 — 작업 시작 전에 사용자에게 한 줄로 확인. 추측으로 진행 금지.
 

@@ -706,6 +706,101 @@ def test_workshop_assets_have_a_project_axis() -> None:
           "공통에 MS 클래스 사실 서술이 남아 있다")
 
 
+def test_workshop_assets_reference_only_live_skills() -> None:
+    """[중요] **배달 문서가 없는 스킬을 부르면 안 된다** (`#297`, `.33` 라이브가 발견).
+
+    `#232` 가 만든 게이트는 **MCP 서버 이름**만 봤고 **스킬 이름**은 안 봤다. 그래서 `#232` 에서
+    `/distribute`·`/review-work` 를 지우고도 그것을 **20회 부르는 문서**가 통과했다
+    (`workshop/CLAUDE.md` 9곳 포함). `.33` 세션이 *"위임 대상으로 지시하는데 존재하지 않는다"*
+    를 스스로 발견해야 했다.
+
+    [중요] **「어디서나 0건」은 여기서도 틀린 규칙이다.** 정당하게 남는 언급이 셋이다:
+      · *"이 기계에 없다 … 자리가 옮겨졌다"* — **부재를 말하는 문장**(지우면 다음 세션이
+        「원래 없었다」로 읽는다 — 리포트 27 의 교훈)
+      · `ax-review` description 의 `/review-work` — **사용자 발화 트리거**(그 말을 쓸 수 있다)
+      · *"원전의 … 를 그대로 옮긴 것"* — **원전 기록**
+    그래서 규칙은 **「부르라고 지시하는 문장」**에만 건다.
+    """
+    import re
+
+    print("\n[참조] 배달 문서가 실재하는 스킬만 부른다 (#297)")
+    root = Path(__file__).resolve().parent / "client"
+    if not (root / "workshop").exists():
+        check("workshop 자산이 아직 없다 — 건너뜀", True)
+        return
+
+    # 실재하는 스킬 = 배달분 + 역할별 홈 스킬 (선언이 정본)
+    live = {d.name for d in (root / "workshop" / "skills").iterdir() if d.is_dir()}
+    live |= {d.name for d in (root / "skills").iterdir() if d.is_dir()}
+    for role in ("requester", "worker"):
+        live |= set(spec.skills_for(role))
+
+    # [주의] 마스터 전용 스킬은 **요청자 문서가 부르면 안 된다** — 그 기계엔 없다.
+    #    실재 여부와 별개로 「누구의 것인가」가 축이다.
+    MASTER_ONLY = {"distribute", "debate"}
+
+    bad: list = []
+    for f in sorted((root / "workshop").rglob("*.md")):
+        if f.name == "README.md":          # 원전 대조 감사표 — 기록이고 배달물이 아니다
+            continue
+        for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if any(k in line for k in ("이 기계에 없다", "자리가 옮겨졌다", "로 읽는다",
+                                       "그대로 옮긴 것", "기록이다", "트리거", "발화에 발동")):
+                continue                    # 부재·기록·트리거 서술
+            for m in re.finditer(r"`?/([a-z][a-z0-9-]{2,})`?\s*(스킬|을 부른다|로 분산|사용)", line):
+                name = m.group(1)
+                if name in MASTER_ONLY:
+                    bad.append(f"{f.name}:{i} 마스터 전용 `{name}` 을 이 기계에서 부른다")
+                elif name not in live:
+                    bad.append(f"{f.name}:{i} 없는 스킬 `{name}`")
+    check("[중요] 배달 문서에 죽은/남의 스킬 지시가 없다", not bad, "; ".join(bad[:4]))
+
+    # 홈 스킬(요청자·워커 절차서)도 같은 규칙
+    bad2: list = []
+    for f in sorted((root / "skills").rglob("SKILL.md")):
+        for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if any(k in line for k in ("그대로 옮긴 것", "발화에 발동", "description:")):
+                continue
+            for m in re.finditer(r"`?/([a-z][a-z0-9-]{2,})`?\s*(스킬|을 부른다|로 분산)", line):
+                if m.group(1) in MASTER_ONLY or m.group(1) not in live:
+                    bad2.append(f"{f.parent.name}:{i} `{m.group(1)}`")
+    check("  홈 스킬도 같다", not bad2, "; ".join(bad2[:4]))
+
+
+def test_consent_rule_reaches_the_requester() -> None:
+    """[중요] **게임 소스는 고치기 전에 동의** — 그 조항이 요청자에게 닿아야 한다 (`#298`).
+
+    실측 2026-08-24: `.33` 세션이 「직접 처리」 분기를 타면서 `.uproject` 를 고치고 **빌드까지**
+    간 뒤 사용자가 중단했다. 분기 판단은 규칙과 맞았고(플러그인 활성화 = 미세 수정) **빠진 것은
+    이 절차**였다 — `ax-request/SKILL.md` 와 내가 만든 골격에 그 조항이 **0곳**이었다.
+
+    [중요] **두 축을 섞지 않는다**: 「미세 수정」은 *어디서* 처리할지의 기준이고 *동의가
+    필요한지*의 기준이 아니다.
+    """
+    print("\n[동의] 게임 소스 쓰기 전 동의 조항이 닿는다 (#298)")
+    root = Path(__file__).resolve().parent / "client"
+
+    skill = (root / "skills" / "ax-request" / "SKILL.md").read_text(encoding="utf-8")
+    check("[중요] 요청자 절차서에 동의 조항이 있다",
+          "동의를 받는다" in skill, skill[:200])
+    check("  대상에 `.uproject` 가 들어간다", ".uproject" in skill)
+    check("  [중요] **빌드도 그 뒤**라고 말한다",
+          "빌드" in skill and "산출물을 바꾼다" in skill)
+    check("  [중요] 두 축을 섞지 말라고 못박는다",
+          "동의가 필요한지의 기준이 아니다" in skill.replace("*", ""), "축 구분이 없다")
+    # 분기 표의 「직접 처리」 칸이 동의를 가리켜야 한다 — 거기서 규칙이 사라진 자리다
+    for line in skill.splitlines():
+        if "여기서 직접 처리한다" in line:
+            check("  분기 표의 「직접 처리」가 동의를 가리킨다", "§0.05" in line, line[:120])
+            break
+
+    body = bundle.claude_md_body("NS")
+    check("[중요] 마스터가 생성하는 CLAUDE.md 본문에도 있다 (매 세션 읽히는 자리)",
+          "동의를 받는다" in body, body[:300])
+    check("  읽기는 막지 않는다고 말한다 (과잉 차단 방지)",
+          "읽기" in body and "쓰기" in body, "읽기/쓰기 구분이 없다")
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
@@ -714,7 +809,9 @@ def main() -> int:
                test_workshop_assets_reference_only_live_tools,
                test_workshop_delivery,
                test_claude_md_body_has_a_project_axis,
-               test_workshop_assets_have_a_project_axis):
+               test_workshop_assets_have_a_project_axis,
+               test_workshop_assets_reference_only_live_skills,
+               test_consent_rule_reaches_the_requester):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_bundle: {PASS}/{total} 통과")
