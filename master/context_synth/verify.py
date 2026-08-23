@@ -28,7 +28,21 @@ import re
 from dataclasses import dataclass, field
 
 # 3자 이상만 본다. 짧은 토큰(`id`·`b`)은 우연 일치가 많아 게이트를 시끄럽게 만든다.
-_IDENT_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\b")
+# [중요] **`\b` 를 쓰면 한글 조사 앞에서 식별자를 놓친다** (`#287`, 실측 2026-08-23).
+#   파이썬 `re` 의 `\b` 는 `\w`↔non-`\w` 경계인데 **한글이 `\w` 에 포함된다.** 그래서
+#   `APlatformingGameMode는` 은 `Mode`와 `는` 사이에 경계가 없어 **전체가 한 낱말**이 되고,
+#   `[A-Za-z_][A-Za-z0-9_]{2,}` 는 매치되지 않는다:
+#
+#       'ANSCharacter는 ACharacter를 상속'   → []      ← 둘 다 놓친다
+#       'ANSCharacter 는 ACharacter 를 상속' → 둘 다 잡힌다
+#
+#   [중요] 이 프로젝트의 컨텍스트 문서는 **한국어**다. 즉 사실 게이트가 조사 붙은 식별자를
+#   통째로 못 보고 있었다 — NS 라이브에서 3그룹이 그 때문에 5분마다 무한 재시도했고,
+#   통과한 39건은 `related_classes:` 블록(별도 정규식, 조사가 안 붙는다)에 자기 클래스가
+#   우연히 들어가 살아난 것이었다. **게이트가 반쯤 눈을 감고 있었다.**
+#   [주의] 경계는 **ASCII 식별자 문자**로만 판단한다(`(?<!…)`/`(?!…)`) — 한글·기호·백틱은
+#   경계로 인정하고, `FooBar` 안의 `oo` 같은 부분 매치는 여전히 막는다.
+_IDENT_RE = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]{2,}(?![A-Za-z0-9_])")
 
 # 검사에서 뺄 것 — 언어 키워드·UE 매크로처럼 어디에나 있는 토큰.
 _NOISE = {
@@ -213,14 +227,27 @@ def verify(doc: str, *, sources: dict[str, str], declared: list[str] | None = No
     #    [주의] **없는 것을 지어낸 경우는 그대로 잡힌다** — 지어낸 이름은 어떤 live 식별자의
     #    부분열도 아니다(2026-08-12 의 「없는 enum 멤버」가 그 부류다). 게이트를 무디게 하는
     #    것이 아니라, *실재하는 것을 가리키는 서술*을 위반으로 세지 않는 것이다.
+    said_all = set(said)                     # [중요] 필터 **전** 집합을 남긴다 (아래 언급 판정용)
     if said and live_pool:
         said = {s for s in said
                 if not any(s != lv and s in lv for lv in live_pool)}
     ghosts = sorted(said & ghost_pool)
 
+    # [중요] **언급 판정은 필터 전 집합으로 한다** (`#286`, 실측 2026-08-23). 위 `#270` 완화가
+    #    *유령* 판정을 위해 「live 의 부분열」을 뺐는데, 같은 집합을 언급 판정이 쓰면서
+    #    **정반대로 작동했다**: 모델이 UE 접두를 떼고 `PlatformingGameMode` 라고 쓰면 그것이
+    #    `APlatformingGameMode` 의 부분열이라 빠지고, 그래서 *"하나도 언급하지 않았다"* 로
+    #    거부됐다. 재현: 같은 소스·같은 내용에서 접두 붙임 ok=True / 접두 뗌 ok=False.
+    #    [주의] `#270` 주석이 스스로 *"문서가 접두를 떼고 쓰는 것이 자연스럽다"* 고 적어 뒀다 —
+    #    자연스럽다고 인정한 표기를 다른 판정이 떨어뜨리고 있었다.
+    # [중요] 그리고 **부분열도 언급으로 센다** — 문서의 `GameMode` 는 코드의 `ANSGameMode` 를
+    #    가리킨다(그 판단은 `#270` 이 이미 내렸다). 판정 하나가 그 규약을 따르고 다른 하나가
+    #    안 따르면, 규약이 둘이 된다.
     mentioned = True
     if declared:
-        mentioned = bool(said & set(declared))
+        decl = set(declared)
+        mentioned = bool(said_all & decl) or any(
+            s != d and s in d for s in said_all for d in decl)
 
     return Report(ok=(not ghosts and mentioned), ghosts=ghosts,
                   declared=list(declared or []), mentioned_declared=mentioned)

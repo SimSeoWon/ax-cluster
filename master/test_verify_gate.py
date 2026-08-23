@@ -177,9 +177,85 @@ class UThing { void Go(); };
     check("live(EMode) 의 부분열 Mode 는 통과", r5.ok, str(r5.ghosts))
 
 
+def test_mention_uses_unfiltered_set() -> None:
+    """[중요] **언급 판정은 `#270` 필터 전 집합으로 한다** (`#286`, 실측 2026-08-23).
+
+    `#270` 이 유령 판정을 위해 「live 의 부분열」을 뺐는데, 같은 집합을 언급 판정이 쓰면서
+    **정반대로 작동했다**: UE 접두를 뗀 `PlatformingGameMode` 가 `APlatformingGameMode` 의
+    부분열이라 빠지고, 그래서 *"하나도 언급하지 않았다"* 로 거부됐다.
+    NS 라이브에서 3그룹이 이것 때문에 5분마다 무한 재시도했다.
+    """
+    print("\n[언급] 접두를 떼도 언급으로 센다 (#286)")
+    SRC = ("class APlatformingGameMode : public AGameModeBase {\n"
+           "  void BeginPlay();\n};\n")
+    srcs = {"PlatformingGameMode.h": SRC}
+    decl = ["APlatformingGameMode"]
+
+    r_pre = V.verify(_doc("APlatformingGameMode 는 AGameModeBase 를 상속한다."),
+                     sources=srcs, declared=decl)
+    check("접두를 붙여 쓰면 통과 (종전에도 통과)", r_pre.ok, r_pre.reason)
+
+    r_bare = V.verify(_doc("PlatformingGameMode 는 GameModeBase 를 상속한다."),
+                      sources=srcs, declared=decl)
+    check("[중요] 접두를 떼도 통과한다 (UE 규약 — #270 이 자연스럽다고 적어 둔 표기)",
+          r_bare.ok and r_bare.mentioned_declared, r_bare.reason)
+
+    # [중요] **게이트를 무디게 만들지 않았다** — 아래 둘은 여전히 막힌다
+    r_other = V.verify(_doc("ACombatEnemy 는 적 AI 를 담당한다."),
+                       sources=srcs, declared=decl)
+    check("[중요] 다른 파일을 서술하면 여전히 막는다",
+          not r_other.ok and not r_other.mentioned_declared, r_other.reason)
+
+    r_made = V.verify(_doc("APlatformingHoverBoard 가 부양을 처리한다."),
+                      sources=srcs, declared=decl)
+    check("[중요] 지어낸 이름도 여전히 막는다 (부분열이 아니다)",
+          not r_made.ok, r_made.reason)
+
+    # [주의] 역방향은 언급이 **아니다** — 선언이 문서 낱말의 부분열인 경우
+    #    (`Mode` 만 쓰고 `APlatformingGameMode` 를 가리킨다고 볼 수 없다)
+    r_rev = V.verify(_doc("APlatformingGameModeExtendedHelper 를 쓴다."),
+                     sources=srcs, declared=decl)
+    check("선언이 문서 낱말의 부분열인 것은 언급으로 세지 않는다",
+          not r_rev.mentioned_declared, r_rev.reason)
+
+
+def test_korean_particles_do_not_hide_identifiers() -> None:
+    """[중요] **`\\b` 는 한글 앞에서 경계가 아니다** (`#287`, 실측 2026-08-23).
+
+    파이썬 `re` 의 `\\b` 는 `\\w`↔non-`\\w` 경계인데 한글이 `\\w` 에 포함된다. 그래서
+    `ANSCharacter는` 이 한 낱말이 되어 식별자가 **통째로 안 잡혔다.** 이 프로젝트의 컨텍스트
+    문서는 한국어이므로, 게이트가 반쯤 눈을 감고 있었던 것이다 — NS 3그룹이 그 때문에
+    5분마다 무한 재시도했다.
+    """
+    print("\n[한글] 조사가 붙어도 식별자를 본다 (#287)")
+    check("조사 `는` 이 붙어도 잡는다",
+          V.identifiers("ANSCharacter는 상속한다") == {"ANSCharacter"},
+          str(V.identifiers("ANSCharacter는 상속한다")))
+    check("조사 `를` 도, 두 개가 한 줄에 있어도",
+          V.identifiers("ANSCharacter는 ACharacter를 상속") == {"ANSCharacter", "ACharacter"},
+          str(V.identifiers("ANSCharacter는 ACharacter를 상속")))
+    check("백틱·괄호도 경계다",
+          "ACharacter" in V.identifiers("`ACharacter`를 (UObject)와"),
+          str(V.identifiers("`ACharacter`를 (UObject)와")))
+    # [중요] **경계 판정을 무디게 만들지 않았다** — 부분 매치는 여전히 안 된다
+    check("[중요] 식별자 안쪽의 부분열은 잡지 않는다",
+          V.identifiers("FooBarBaz") == {"FooBarBaz"}, str(V.identifiers("FooBarBaz")))
+    check("소문자 낱말은 여전히 제외 (모양 규칙)",
+          V.identifiers("abc는 소문자") == set(), str(V.identifiers("abc는 소문자")))
+
+    # 실전 형태 — 조사 붙은 선언 클래스가 언급으로 세어진다
+    SRC = "class APlatformingGameMode : public AGameModeBase {\n  void BeginPlay();\n};\n"
+    r = V.verify(_doc("APlatformingGameMode는 AGameModeBase를 상속한다."),
+                 sources={"G.h": SRC}, declared=["APlatformingGameMode"])
+    check("[중요] 조사 붙은 선언 클래스를 언급으로 센다 (NS 3그룹이 여기서 막혔다)",
+          r.ok and r.mentioned_declared, r.reason)
+
+
 if __name__ == "__main__":
     for fn in (test_license_header_not_identifier, test_cross_file_live_wins,
-               test_ue_prefix_substring, test_real_violation_still_caught):
+               test_ue_prefix_substring, test_real_violation_still_caught,
+               test_mention_uses_unfiltered_set,
+               test_korean_particles_do_not_hide_identifiers):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_verify_gate: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)
