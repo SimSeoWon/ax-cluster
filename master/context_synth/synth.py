@@ -27,6 +27,8 @@
 """
 from __future__ import annotations
 
+import sys
+
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -152,6 +154,15 @@ class Stats:
         return f"{s} · {self.encodings.summary}"
 
 
+def _log(msg: str) -> None:
+    """합성 경로의 사유 기록 (`#285`). 저널에 실린다 — 유닛이 stderr 를 잡는다.
+
+    [중요] 원전 `watcher/context.py` 는 같은 자리에서 `common.log` 를 부른다. 우리 이식이
+    사유를 버린 것이 **이식 누락**이었다.
+    """
+    print(f"[synth] {msg}", file=sys.stderr, flush=True)
+
+
 def group(files: list[str]) -> dict[str, list[str]]:
     """소스 파일 → `{부모/stem: [파일…]}`.
 
@@ -186,7 +197,11 @@ def collect_related(paths: ProjectPaths, key: str, files: list[str], existing: s
         try:
             from ..context_search.search import open_search
             searcher = open_search(paths.name)
-        except Exception:                               # noqa: BLE001
+        except Exception as e:                          # noqa: BLE001
+            # [중요] **조용히 비우지 않는다** (`#285`). 관련 문서 0건은 프롬프트를 약하게
+            #    만들고, 약한 프롬프트가 「다른 파일을 서술」로 이어진다(NS 실측). 그 인과를
+            #    나중에 되짚으려면 여기서 말해야 한다.
+            _log(f"[related] 검색기를 열지 못했다 ({paths.name}) — {type(e).__name__}: {e}")
             return []
     stem = Path(files[0]).stem if files else key.rsplit("/", 1)[-1]
     query = stem
@@ -208,7 +223,9 @@ def collect_related(paths: ProjectPaths, key: str, files: list[str], existing: s
             out.append((hit.file_id, (hit.excerpt or "")[:prompt_mod.RELATED_EXCERPT]))
             if len(out) >= prompt_mod.RELATED_LIMIT:
                 break
-    except Exception:                                   # noqa: BLE001
+    except Exception as e:                              # noqa: BLE001
+        _log(f"[related] 검색 실패 ({key}) — {type(e).__name__}: {e} · "
+             f"관련 문서 {len(out)}건으로 진행한다")
         return out
     return out
 
@@ -224,8 +241,12 @@ def collect_grounding(paths: ProjectPaths, files: list[str]) -> prompt_mod.Groun
     for f in files:
         try:
             classes, _ = gparse.parse_file(paths.repo / f)
-        except gparse.ParserUnavailable:
-            break                      # 파서가 없으면 선언 근거 자체가 없다 — 조용히 비운다
+        except gparse.ParserUnavailable as e:
+            # [중요] **말한다.** 선언 근거가 없으면 모델이 파일을 혼동하고, 그것이 사실 게이트
+            #    거부로 나타난다(NS 실측 2026-08-23: 「실측 선언 클래스를 하나도 언급하지
+            #    않았다」 계열). 사유가 없으면 모델 탓과 환경 탓을 구분할 수 없다.
+            _log(f"[grounding] 파서 없음 — 선언 근거 없이 진행한다 ({f}): {e}")
+            break
         declared.extend(c["name"] for c in classes)
     g.declared_classes = sorted(dict.fromkeys(declared))
     for c in g.declared_classes[:prompt_mod.GROUNDING_LIMIT]:

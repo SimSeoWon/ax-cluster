@@ -19,6 +19,14 @@ SupplementaryGroups=gitea
 WorkingDirectory=/home/sim/ax-cluster
 Environment=AX_PROJECTS_ROOT=/home/sim/ax-cluster
 Environment=PYTHONUNBUFFERED=1
+# [중요] **PATH 를 유닛에 박지 않는다** (사용자 정정 2026-08-23). systemd 가 `.bashrc` 를 읽지
+#   않아 `~/.local/bin` 의 `agy`·`claude` 를 못 찾는 것은 맞다(NS 리뷰 26건이 그래서 실패).
+#   그러나 유닛마다 PATH 를 적으면 **같은 값이 N벌**이 되고 실제로 갈려 있었다 —
+#   `ax-status` 는 짧은 PATH · `ax-projects` 는 긴 PATH · 색인기는 없음, **세 벌이 서로 달랐다.**
+#   해법은 실행 파일을 **시스템 경로**에 두는 것이다: `/usr/local/bin/{claude,agy}` 심링크.
+#   기본 PATH 에 `/usr/local/bin` 이 이미 있으므로 유닛은 아무것도 안 적으면 된다.
+#   [주의] `/home/sim/.local/bin` 을 시스템 전역 PATH 에 넣는 길도 있었지만 **안 골랐다** —
+#   한 사용자의 홈이 root 유닛의 실행 경로가 된다.
 
 ExecStart=/home/sim/ax-cluster/.venv/bin/python -m master.events.consumer
 

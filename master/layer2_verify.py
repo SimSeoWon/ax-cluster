@@ -76,25 +76,70 @@ def build_prompt(files: list[tuple[str, str]], *, declarations: str = "") -> str
 # ── 백엔드 ──────────────────────────────────────────────────
 # 각 백엔드는 성공 시 응답 텍스트, 실패 시 None 을 돌린다. None 은 verdict.parse_verdict 가
 # fail-closed 로 받는다 — 여기서 임의로 통과시키지 않는다.
+#
+# [중요] **실패 사유는 버리지 않는다 — 이식 누락 복구** (`#285`, 사용자 지적 2026-08-23).
+#   원전 `master_orchestrator/common.call_agy` 는 반환 계약 자체가 사유를 실어 보낸다
+#   (*"정상 텍스트 / `AgyCooldown: …` / `Error …`"*) 그리고 실패마다 `_mo_log` 를 남긴다 —
+#   실행파일 없음(**PATH 미등록**) · PTY 실패 · 쿼터 · rc≠0(stderr 앞 200자)를 **처음부터
+#   갈라 놨다**. 우리 이식은 그것을 `None` 하나로 접었다.
+#   실측된 대가: NS 리뷰 26건이 *"응답 없음"* 으로 기록됐는데 진짜 원인은 **systemd 유닛에
+#   PATH 가 없어 `which` 가 실패**한 것이었다. 사유가 틀리면 고칠 곳도 틀린다 —
+#   「서비스가 죽었나」를 파게 된다. 없는 로그보다 **틀린 로그가 더 비싸다.**
+#   [주의] 그래서 `None` 은 유지하되(호출부의 fail-closed 계약) **사유를 함께** 돌려준다.
 
-def _run(cmd: list[str], *, timeout: int) -> str | None:
+_LOGF = None            # 주입 자리. 없으면 stderr — 저널에 실린다(유닛이 그것을 잡는다)
+
+
+def _log(msg: str) -> None:
+    """실패 사유를 **반드시 어딘가에 남긴다.** 원전 `_mo_log` 대응."""
+    if _LOGF is not None:
+        try:
+            _LOGF(msg)
+            return
+        except Exception:                                    # noqa: BLE001
+            pass
+    print(f"[layer2] {msg}", file=sys.stderr, flush=True)
+
+
+def _run(cmd: list[str], *, timeout: int) -> tuple:
+    """`(출력, 사유)`. 성공이면 `(텍스트, "")`, 실패면 `(None, 사유)`.
+
+    [중요] 네 갈래를 **가른다** — 종전에는 전부 `None` 이었다. 특히 `rc != 0` 에서 **stderr 를
+    버렸다**: CLI 가 무엇이라 말했는지가 사라져 원인 추적이 불가능했다(원전은 앞 200자를 싣는다).
+    """
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", stdin=subprocess.DEVNULL, timeout=timeout)
-    except (subprocess.TimeoutExpired, OSError):
-        return None
+    except subprocess.TimeoutExpired:
+        return None, f"타임아웃 {timeout}초"
+    except OSError as e:
+        return None, f"실행 실패 — {type(e).__name__}: {e}"
     if r.returncode != 0:
-        return None
-    return r.stdout if (r.stdout and r.stdout.strip()) else None
+        err = (r.stderr or r.stdout or "").strip().replace("\n", " ")
+        return None, f"rc={r.returncode}: {err[:200] or '(출력 없음)'}"
+    if not (r.stdout and r.stdout.strip()):
+        return None, "빈 출력 (rc=0)"
+    return r.stdout, ""
 
 
 def call_agy(prompt: str, *, timeout: int = TIMEOUT_SEC) -> str | None:
     """`agy` 호출. [주의] `-p` 는 **반드시 프롬프트 직전**에 둔다 — 앞에 두면 다음 토큰을
     프롬프트 값으로 먹는다(2026-08-08 실측)."""
+    out, why = call_agy_why(prompt, timeout=timeout)
+    return out
+
+
+def call_agy_why(prompt: str, *, timeout: int = TIMEOUT_SEC) -> tuple:
+    """`(출력, 사유)`. 사유는 실패했을 때만 채워진다."""
     exe = shutil.which("agy")
     if not exe:
-        return None
-    return _run([exe, "--dangerously-skip-permissions", "-p", prompt], timeout=timeout)
+        why = MISSING_EXE                      # [중요] 쿨다운 대상이 아니다 — 설정 오류다
+        _log(f"[agy] {missing_exe_hint('agy')}")
+        return None, why
+    out, why = _run([exe, "--dangerously-skip-permissions", "-p", prompt], timeout=timeout)
+    if out is None:
+        _log(f"[agy] 실패 — {why}")
+    return out, why
 
 
 def call_claude(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "") -> str | None:
@@ -103,13 +148,53 @@ def call_claude(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "") -> 
     [중요] **층2 는 model 을 주지 않는다** — 검증기 모델을 여기서 고정하면 소 2.2.1(모델 선정)이
     코드에 박히는 셈이다. 지정은 호출자 몫이다.
     """
+    out, why = call_claude_why(prompt, timeout=timeout, model=model)
+    return out
+
+
+def call_claude_why(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "") -> tuple:
+    """`(출력, 사유)`."""
     exe = shutil.which("claude")
     if not exe:
-        return None
+        why = MISSING_EXE
+        _log(f"[claude] {missing_exe_hint('claude')}")
+        return None, why
     cmd = [exe, "-p"]
     if (model or "").strip():
         cmd += ["--model", model.strip()]
-    return _run(cmd + [prompt], timeout=timeout)
+    out, why = _run(cmd + [prompt], timeout=timeout)
+    if out is None:
+        _log(f"[claude] 실패 — {why}")
+    return out, why
+
+
+# [중요] **실행파일 부재는 다른 부류다.** 쿨다운(600초)을 걸어도 600초 뒤에 생기지 않는다 —
+#   고칠 곳이 코드가 아니라 **환경**(PATH · 설치)이다. 그래서 사유를 상수로 두고 호출부가
+#   구별할 수 있게 한다.
+#
+# [중요] **사유에 OS 를 박지 않는다** (사용자 정정 2026-08-23). 이 모듈은 마스터(리눅스)와
+#   작업장 `.2`·`.33`(윈도우) **양쪽에서 돈다** — 층2 판정·리뷰가 그렇다. 첫 구현은
+#   *"systemd 유닛은 PATH 를 상속하지 않는다"* 를 상수에 박았는데, 윈도우에는 systemd 가
+#   없으므로 그 문장은 **거기서 거짓이고 엉뚱한 곳을 파게 만든다.** 「없는 로그보다 틀린 로그가
+#   비싸다」를 적어 놓고 같은 것을 만든 자리다. 원인도 OS 마다 다르다:
+#
+#     리눅스   서비스가 로그인 셸을 안 거쳐 `~/.local/bin` 이 PATH 에 없다
+#              → 해법은 실행 파일을 시스템 경로에 두는 것(`/usr/local/bin` 심링크)
+#     윈도우   작업 스케줄러·세션 0 의 환경이 사용자 셸과 다르고, `PATHEXT`(`.cmd`/`.exe`)도
+#              걸린다 → 심링크 해법은 **여기 적용되지 않는다**(머신 문서에서 따로 판단)
+MISSING_EXE = "실행파일 없음 — PATH 에서 찾지 못했다"
+
+
+def missing_exe_hint(name: str = "") -> str:
+    """부재 사유에 붙일 **플랫폼별 힌트.** 사실만 적고 처방은 머신 문서로 넘긴다."""
+    what = f"`{name}` " if name else ""
+    if sys.platform.startswith("win"):
+        return (f"{what}실행파일을 PATH 에서 찾지 못했다 — 윈도우: 서비스·작업 스케줄러의 "
+                "환경은 사용자 셸과 다르다 (PATHEXT 도 확인)")
+    return (f"{what}실행파일을 PATH 에서 찾지 못했다 — 리눅스: 서비스는 로그인 셸을 거치지 "
+            "않으므로 `~/.local/bin` 이 PATH 에 없다 (시스템 경로에 두는 것이 해법)")
+
+WHY_BACKENDS = [("agy", call_agy_why), ("claude", call_claude_why)]
 
 
 # [중요] **순서를 실측으로 확인했다** (2026-08-12, 소 2.2.1 · `bench_layer2.py`).

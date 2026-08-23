@@ -83,6 +83,7 @@ class ProjectResult:
     commits_nonsource: int = 0     # 소스 밖 변경만 있어 합성 없이 전진시킨 커밋 수
     nonsource_notes: list = field(default_factory=list)
     halted: str = ""               # [중요] 걷기를 멈춘 사유. 멈췄으면 커서는 그 앞에 있다
+    retry_skipped: int = 0         # 재시도에서 **이미 이 커밋으로 스탬프된** 그룹의 파일 수
 
     @property
     def ok(self) -> bool:
@@ -109,6 +110,8 @@ class ProjectResult:
             parts.append(f"커서 {self.cursor_to[:8]}")
         if self.cursor_note:
             parts.append(f"[주의] {self.cursor_note[:70]}")
+        if self.retry_skipped:
+            parts.append(f"재시도 생략 {self.retry_skipped}")
         if self.halted:
             parts.append(f"[중요] 멈춤({self.halted[:60]})")
         if self.skipped:
@@ -305,6 +308,29 @@ def _update_watermark(paths: ProjectPaths, commit: str) -> None:
 def _note(r: "ProjectResult", why: str) -> None:
     """건너뜀 사유를 **쌓는다.** 대입하면 앞 단계의 판정을 지운다."""
     r.skipped = (r.skipped + " · " + why) if r.skipped else why
+
+
+def _unstamped_files(paths: ProjectPaths, changed: list[str], commit: str) -> list[str]:
+    """이 커밋으로 **아직 스탬프되지 않은** 그룹의 파일만 남긴다 (`#280` 재시도 낭비 차단).
+
+    [중요] 판정은 문서 프론트매터의 `source_commit` 이다 — 사용자가 설계한 그 값. 같은 커밋을
+    다시 걸을 때(앞 회차에서 일부 그룹이 게이트에 막혀 커서가 안 올라간 경우) 이미 끝난 그룹을
+    다시 합성하면 그만큼이 순전히 낭비다.
+    [주의] **커밋이 다르면 반드시 다시 만든다** — 그것이 최신화의 본체다.
+    """
+    from ..context_synth import md as md_mod, synth as cs
+
+    keep: list[str] = []
+    for key, files in cs.group(changed).items():
+        doc = cs.doc_path(paths, key)
+        try:
+            if doc.is_file() and md_mod.read_source_commit(
+                    doc.read_text(encoding="utf-8", errors="replace")) == commit:
+                continue                                  # 이 커밋으로 이미 끝났다
+        except OSError:
+            pass
+        keep.extend(files)
+    return keep
 
 
 def _update_cursor(paths: ProjectPaths, commit: str) -> bool:
@@ -604,10 +630,19 @@ def process_event(ev: Event, *, registry: Registry | None = None,
                 #    영구히 안 만들어진다.
                 r.halted = "합성이 꺼져 있다 — 그래프만 갱신하고 커서는 그대로 둔다"
                 break
-            _synthesize(paths, changed, r, commit=c, synth_run=synth_run)
+            # [중요] **재시도에서 이미 이 커밋으로 스탬프된 그룹은 다시 만들지 않는다.**
+            #    커밋 단위 트랜잭션이라 한 그룹이 실패하면 커서가 안 올라가고 다음 회차가 같은
+            #    커밋을 다시 걷는데, 종전 구현은 **성공한 그룹까지 매번 다시 합성**했다
+            #    (실측 2026-08-23 NS: 회차마다 20여 건이 헛일 · `.43` 이 계속 돌았다).
+            #    판정 근거는 사용자가 설계한 그 값이다 — 문서에 찍힌 `source_commit`.
+            todo = _unstamped_files(paths, changed, c)
+            if len(todo) != len(changed):
+                r.retry_skipped += len(changed) - len(todo)
+            if todo:
+                _synthesize(paths, todo, r, commit=c, synth_run=synth_run)
             # ④ 자동 코드리뷰 (소 3.3.5) — 합성과 같은 게이트(synthesize) 아래 둔다:
             #    노드가 죽어 합성을 껐다면 리뷰도 돌 수 없는 상태다.
-            _auto_review(paths, changed, r, commit=c, review_run=review_run)
+                _auto_review(paths, todo, r, commit=c, review_run=review_run)
             # [중요] **그 커밋의 문서가 실제로 생겼는지 본다.** 합성 실패·게이트 거부를
             #    「완료」로 세면 커서가 그 위를 넘어가고, 그 커밋의 변경은 영구 유실이다
             #    (원전이 가진 구멍 — `process_commit` 은 예외를 안 던지고 호출부가 그대로

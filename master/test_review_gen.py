@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -263,11 +264,118 @@ def test_consumer_canaries_format_invalid():
     check("note 가 사람에게 말한다", "형식 위반" in r.review_note, r.review_note)
 
 
+def test_failure_reasons_are_never_silent() -> None:
+    """[중요] **모든 실패 경로가 사유를 남긴다** (`#285`, 사용자 지시 2026-08-23).
+
+    실측된 대가: NS 리뷰 26건이 *"응답 없음"* 으로 기록됐는데 진짜 원인은 systemd 유닛에
+    PATH 가 없어 `which` 가 실패한 것이었다. **없는 로그보다 틀린 로그가 비싸다** —
+    「응답 없음」은 서비스 장애로 읽혀 엉뚱한 곳을 파게 만든다. 원전
+    `master_orchestrator/common.call_agy` 는 처음부터 갈라 놨다(이식 누락 복구).
+    """
+    import io as _io
+    import sys as _sys
+    from master import layer2_verify as l2
+
+    print("\n[사유] 실패 경로마다 사유가 남는가")
+
+    # ── ① 실행파일 부재 — 쿨다운이 아니라 **설정 오류**다
+    # [주의] 이 기계에는 `agy` 가 PATH 에 **있다.** 부재 경로를 재려면 PATH 를 비워야 한다 —
+    #    안 그러면 실제 CLI 를 호출해 타임아웃이 나고, 그것은 다른 사유다(테스트가 잡았다).
+    import os as _os
+    buf, old = _io.StringIO(), _sys.stderr
+    saved_path = _os.environ.get("PATH", "")
+    _sys.stderr = buf
+    _os.environ["PATH"] = ""
+    try:
+        out, why = l2.call_agy_why("ping", timeout=1)
+    finally:
+        _os.environ["PATH"] = saved_path
+        _sys.stderr = old
+    check("[중요] 실행파일 부재를 사유로 돌려준다", out is None and l2.MISSING_EXE in why, why)
+    check("  PATH 를 지목한다 (고칠 곳이 코드가 아니라 환경이다)", "PATH" in why, why)
+    check("  로그에도 남는다", "agy" in buf.getvalue() and "PATH" in buf.getvalue(),
+          buf.getvalue()[:120])
+    # [중요] **사유에 OS 를 박지 않는다** — 이 모듈은 윈도우 작업장에서도 돈다.
+    #    첫 구현은 상수에 "systemd" 를 넣어 `.2`·`.33` 에서 거짓 사유가 되게 했다.
+    check("[중요] 상수가 OS 중립이다 (윈도우에서도 참이어야 한다)",
+          "systemd" not in l2.MISSING_EXE and "유닛" not in l2.MISSING_EXE, l2.MISSING_EXE)
+    hint = l2.missing_exe_hint("agy")
+    check("  힌트는 이 플랫폼을 말한다", ("리눅스" in hint) != ("윈도우" in hint), hint)
+
+    # ── ② rc != 0 — stderr 를 버리지 않는다 (종전엔 버렸다)
+    out, why = l2._run(["/bin/sh", "-c", "echo 상세원인 1>&2; exit 3"], timeout=5)
+    check("[중요] rc 와 stderr 를 함께 남긴다",
+          out is None and "rc=3" in why and "상세원인" in why, why)
+
+    # ── ③ 타임아웃 · ④ 빈 출력 — 서로 구별된다
+    out, why = l2._run(["/bin/sh", "-c", "sleep 5"], timeout=1)
+    check("타임아웃을 그렇게 말한다", out is None and "타임아웃" in why, why)
+    out, why = l2._run(["/bin/true"], timeout=5)
+    check("빈 출력을 그렇게 말한다", out is None and "빈 출력" in why, why)
+    out, why = l2._run(["/bin/echo", "hi"], timeout=5)
+    check("성공은 사유가 없다", (out or "").strip() == "hi" and why == "", f"{out!r} {why!r}")
+
+    # ── ⑤ 네 갈래가 **서로 다른 문장**이어야 한다 (뭉개면 고칠 곳을 못 찾는다)
+    whys = {l2.MISSING_EXE,
+            l2._run(["/bin/sh", "-c", "exit 3"], timeout=5)[1],
+            l2._run(["/bin/sh", "-c", "sleep 5"], timeout=1)[1],
+            l2._run(["/bin/true"], timeout=5)[1]}
+    check("[중요] 네 사유가 서로 다르다", len(whys) == 4, str(whys))
+
+    # ── ⑥ 체인 실패가 **백엔드별 사유**를 예외에 싣는다
+    def dead_missing(prompt, *, timeout=0, **kw):
+        return None, l2.MISSING_EXE
+
+    def dead_rc(prompt, *, timeout=0, **kw):
+        return None, "rc=1: 쿼터 초과"
+
+    saved = l2.WHY_BACKENDS
+    l2.WHY_BACKENDS = [("agy", dead_missing), ("claude", dead_rc)]
+    try:
+        RG.commercial_chat("x", timeout=1)
+        check("[중요] 둘 다 실패하면 예외", False, "예외가 안 났다")
+    except RG.ReviewChatError as e:
+        msg = str(e)
+        check("[중요] 예외가 백엔드별 사유를 싣는다",
+              "agy" in msg and "claude" in msg and "PATH" in msg and "쿼터" in msg, msg)
+        check("  「응답 없음」으로 뭉개지 않는다", "응답 없음" not in msg, msg)
+    finally:
+        l2.WHY_BACKENDS = saved
+
+
+def test_synth_paths_log_their_gaps() -> None:
+    """[중요] 합성기의 **grounding 구멍**도 말한다 (`#285`).
+
+    NS 실측: 사실 게이트 거부 사유가 *"실측 선언 클래스를 하나도 언급하지 않았다"* 였다 —
+    선언 근거가 비면 모델이 파일을 혼동한다. 그 구멍이 조용하면 **모델 탓과 환경 탓을 구분할
+    수 없다.**
+    """
+    import io as _io
+    import sys as _sys
+    from master.context_search.paths import ProjectPaths
+    from master.context_synth import synth as CS
+
+    print("\n[사유] 합성 경로의 구멍이 보이는가")
+    tmp = Path(tempfile.mkdtemp(prefix="ax-synthlog-"))
+    p = ProjectPaths(name="없는프로젝트", root=tmp / "X")
+    buf, old = _io.StringIO(), _sys.stderr
+    _sys.stderr = buf
+    try:
+        out = CS.collect_related(p, "Source/A", ["Source/A.cpp"], "")
+    finally:
+        _sys.stderr = old
+    check("검색기를 못 열면 빈 목록", out == [], str(out))
+    check("[중요] 그 사실을 말한다", "검색기를 열지 못했다" in buf.getvalue(),
+          buf.getvalue()[:150])
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (test_trivial_detection, test_author_exclusion_skips_before_llm,
                test_format_validation_and_retry, test_consumer_canaries_format_invalid,
                test_report_is_parseable_by_origin_collector, test_prompt_carries_the_contract,
-               test_consumer_wiring_failure_goes_to_canary):
+               test_consumer_wiring_failure_goes_to_canary,
+               test_failure_reasons_are_never_silent, test_synth_paths_log_their_gaps):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_review_gen: {PASS}/{total} 통과")

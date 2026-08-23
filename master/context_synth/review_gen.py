@@ -246,13 +246,21 @@ class ReviewResult:
 
 
 def commercial_chat(prompt: str, *, timeout: int = REVIEW_TIMEOUT) -> str:
-    """상용 체인 agy → claude (층2와 같은 체인·같은 순서). 둘 다 실패하면 예외."""
+    """상용 체인 agy → claude (층2와 같은 체인·같은 순서). 둘 다 실패하면 예외.
+
+    [중요] **실패 사유를 예외에 싣는다** (`#285`, 사용자 지적 2026-08-23). 종전 메시지는
+    *"둘 다 응답 없음"* 이었는데, 실측된 진짜 원인은 **systemd 유닛에 PATH 가 없어 `which` 가
+    실패**한 것이었다(NS 리뷰 26건). 「응답 없음」은 서비스 장애로 읽히므로 **엉뚱한 곳을
+    파게 만든다** — 없는 로그보다 틀린 로그가 비싸다. 원전 `call_agy` 는 처음부터 갈라 놨다.
+    """
     from .. import layer2_verify as l2
-    for name, fn in l2.BACKENDS:
-        out = fn(prompt, timeout=timeout)
+    whys = []
+    for name, fn in l2.WHY_BACKENDS:
+        out, why = fn(prompt, timeout=timeout)
         if out and out.strip():
             return out
-    raise ReviewChatError("상용 체인(agy → claude) 둘 다 응답 없음")
+        whys.append(f"{name}: {why or '사유 미기록'}")
+    raise ReviewChatError("상용 체인(agy → claude) 실패 — " + " · ".join(whys))
 
 
 class ReviewChatError(RuntimeError):
