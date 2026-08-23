@@ -12,8 +12,10 @@ Unreal MCP (UE 5.8.1+), and code-writing agents into one pipeline.
 |---|---|---|
 | **1 — Infrastructure** | [`docs/milestones/1-infrastructure.md`](docs/milestones/1-infrastructure.md) | [완료] **closed** 2026-08-08. Its section documents (`docs/1`–`docs/10`) **stay valid** — kept, not discarded |
 | **2 — Digital twin restoration** | [`docs/milestones/2-twin-restoration.md`](docs/milestones/2-twin-restoration.md) | [완료] **closed** 2026-08-10 · 소 43/43. [중요] Read its **「여기서 배운 것」** section before repeating its mistakes |
-| **3 — Work pipeline** | [`docs/milestones/3-work-pipeline.md`](docs/milestones/3-work-pipeline.md) | [중요] **`locked` — halted** 2026-08-13. 42/51 closed; its 9 open issues carry a *"M4 재검토 대기"* note. **Do not work there** |
-| **4 — 원전 대조·재이식** | [`docs/milestones/4-origin-reconciliation.md`](docs/milestones/4-origin-reconciliation.md) | [진행] **open** 2026-08-13 — **read only this one.** Not a feature milestone: **consistency** |
+| **3 — Work pipeline** | [`docs/milestones/3-work-pipeline.md`](docs/milestones/3-work-pipeline.md) | [완료] **closed** 2026-08-17 (user approval). It was halted as `locked` 2026-08-13 with 9 open issues; those were then disposed — **5 finished inside M4**, **4 carried to M6** (`#103`–`#106`). Its body (gates, measurements, traps) stays valid |
+| **4 — 원전 대조·재이식** | [`docs/milestones/4-origin-reconciliation.md`](docs/milestones/4-origin-reconciliation.md) | [완료] **closed** 2026-08-17 (user decision) · 0 open. Not a feature milestone: **consistency**. [중요] Read its **「여기서 배운 것」** — 전제가 죽은 선택 · 허위 인용 · 왕복이 계약 |
+| **5 — 두 버전 대조·머지** | [`docs/milestones/5-version-reconcile.md`](docs/milestones/5-version-reconcile.md) | [완료] **closed** 2026-08-17 — opened and closed the same day (user decision). 4 judgments: `#185` git-carried 전환 · `#194` 한글 베이스 머지 · `#189` edit_domain_field · `#210` 중앙화 갭. [중요] Read its **「여기서 배운 것」** |
+| **6 — 개선·확장** | [`docs/milestones/6-improvements.md`](docs/milestones/6-improvements.md) | [진행] **open** 2026-08-17 — **read only this one.** M4/M5 가 끝난 뒤의 개선·확장이고, 지금 열린 축은 **다중 프로젝트** — 착수 순서는 [`docs/12-multi-project.md`](docs/12-multi-project.md) §12.3-a. [주의] A separate dateless bucket *아이디어 — 추후 검토 수집* is **not work** |
 
 [중요] **Milestone 1 wired the pipe. Milestone 2 made what flows through it.** The twin grows, is
 indexed, and feeds code generation — both of M2's goals run end to end.
@@ -29,8 +31,8 @@ The worst hit: `cluster_coordinator.verify_and_merge` already said *"durable 단
 **that writer is the server** — workers push ephemeral `attempt/` branches. This project is an
 **OS/environment port** (Windows+UE5 daemon → Linux+Gitea) and Linux forces exactly **one** change:
 the UE5 build step inside `verify_and_merge`. Everything redesigned beyond that was redesign.
-→ M4 restores the origin's shape, turns M3's four open items into **ports**, recovers un-ported
-assets, and reclaims the origin's **method and norms**.
+→ M4 restored the origin's shape, turned M3's four open items into **ports**, recovered un-ported
+assets, and reclaimed the origin's **method and norms**. [완료] It closed 2026-08-17 with 0 open.
 
 [중요] **「안 옮기는 판단」에도 근거가 필요하다** — 4 items were re-scoped, not ported, because the
 **condition the origin's fix targeted does not exist here**: console-UTF8 (our master is already
@@ -43,7 +45,7 @@ origin's whole DB↔YAML drift problem**). κ.8 marks the same kind with *"리�
 measured, two workers were 12% faster and **90% more expensive**, and the 3.2× saving came from
 batching, not parallelism. See `docs/4-work-loop.md` §4.5.
 [중요] **Neither the numerator nor the denominator is written in any document** — read both from Redmine
-(version *마일스톤 4*). Hand-kept numerators drifted twice in M2, and the **denominator moves whenever
+(version *마일스톤 6* — the open one). Hand-kept numerators drifted twice in M2, and the **denominator moves whenever
 reading the origin uncovers work**: M3 went 32 → 36, and **M4 went 62 → 75 in one session** (three
 separate reads each found real gaps), then **75 → 80** as later ports kept surfacing their own
 missing halves. That movement is normal — record it, don't hide it.

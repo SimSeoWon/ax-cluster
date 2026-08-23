@@ -10,8 +10,9 @@
   `~/bc250-backup-staging/reports/24-ttm-gtt-tuning-headless-cluster-link.md`
 - 2026-08-06 모델 품질 비교(UE5 태스크 6종):
   `~/bc250-backup-staging/reports/25-model-quality-comparison-14b-vs-35b.md`
-- [중요] **저장소 작업 리포트는 저장소 안으로 옮겼다** (2026-08-08): [`../reports/`](../reports/) — 06~09.
-  밖에 두면 3자 동기에서 빠지고, 실제로 안 읽혔다.
+- [중요] **저장소 작업 리포트는 저장소 안으로 옮겼다** (2026-08-08): [`../reports/`](../reports/) —
+  **06~35** (2026-08-23 기준 · 15 는 마스터 로컬). 밖에 두면 3자 동기에서 빠지고, 실제로 안 읽혔다.
+  어느 리포트에 무엇이 있는지는 [`../reports/README.md`](../reports/README.md) 표로 본다.
 - 하드웨어·인프라 로그(01·03·04·05): `sim@192.168.0.57:~/claude-workspace/reports/`
 
 ## 10.1 레드마인 — **AX 클러스터는 `ModularStage` 와 같은 프로젝트다** (사용자 확정 2026-08-09)
