@@ -48,6 +48,9 @@ from ..projects.config import ConfigError, Registry, normalize_project_id
 from .spool import Batch, Event, Spool
 
 DIGEST_FILE = "context_digest.json"
+# git 의 **빈 트리** 오브젝트 — 모든 저장소에서 같은 값이다. 첫 커밋의 diff 기준으로 쓴다
+# (저장 해시가 없으면 「이력 처음부터 하나씩」이 기본 동작이므로 그 시작점이 필요하다).
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 GIT_TIMEOUT = 300
 
 
@@ -342,9 +345,10 @@ def _commits_between(repo: Path, old: str, new: str, run) -> tuple:
     원전 `watcher/git_ops.get_commits_between` 과 같은 계약이다(그쪽도 `reverse()` 한다).
     [주의] 실패를 빈 목록으로 접지 않는다 — 「걸을 커밋이 없다」와 구분되지 않는다.
     """
-    rc, out = run(repo, "log", "--format=%H", f"{old}..{new}")
+    rng = f"{old}..{new}" if old else new
+    rc, out = run(repo, "log", "--format=%H", rng)
     if rc != 0:
-        return [], f"git log {old[:8]}..{new[:8]} 실패 (rc={rc}): {out[:200]}"
+        return [], f"git log {rng[:20]} 실패 (rc={rc}): {out[:200]}"
     hs = [x.strip() for x in out.splitlines() if x.strip()]
     hs.reverse()
     return hs, ""
@@ -546,13 +550,16 @@ def process_event(ev: Event, *, registry: Registry | None = None,
     r.cursor_from = cursor
 
     if not cursor:
-        # [중요] **「모른다」를 「최신」과 가른다** (`#275` 와 같은 부류). 커서가 비면 전 이력을
-        #    걷고 싶어지는데 그것이 **M2 금기**(1,055건 일괄 재생성)다. 최초 합성은 온보딩
-        #    `synth` 단계의 일이고, 여기서는 **시끄럽게 보고**한다.
-        r.skipped = ("분석 커서가 비어 있다 — 최초 합성이 아직이다"
-                     " (`python -m master.projects.onboard <프로젝트> --confirm`)."
-                     " 전 이력을 걷지 않는다: 일괄 재생성은 M2 금기다")
-    elif cursor == r.to_commit:
+        # [중요] **커서가 없다는 것도 「다르다」다** (사용자 정정 2026-08-23): *"마지막 컨텍스트
+        #    문서 분석한 해시값을 저장하고 다르면 깃에 헤더까지 하나씩 분석하고 문서를 만들면서
+        #    해시값 맞추는 게 기본 동작"*. 그래서 **이력 처음부터** 걷는다 — 첫 커밋의 diff
+        #    기준은 빈 트리다.
+        #    [주의] 종전 구현은 여기서 멈추고 *"최초 합성은 온보딩 일"* 이라고 보고했다. 그것은
+        #    지시에 없던 **내 판단**이었다. M2 금기(일괄 재생성)와도 다른 문제다 — 금기는 *이미
+        #    있는 문서*를 한꺼번에 다시 만드는 것이고, 여기서 걷는 것은 그 커밋이 실제로 만진
+        #    파일뿐이다.
+        r.skipped = "저장된 해시가 없다 — 이력 처음부터 하나씩 분석한다"
+    if cursor and cursor == r.to_commit:
         r.skipped = f"최신 — 커서가 현재 커밋과 같다 ({cursor[:8]})"
     else:
         commits, err = _commits_between(paths.repo, cursor, r.to_commit, run)
@@ -563,9 +570,10 @@ def process_event(ev: Event, *, registry: Registry | None = None,
         if not commits:
             # [주의] 커서가 이 이력의 조상이 아니다 — 되감김·강제 푸시·잘못 적힌 값.
             #    조용히 「최신」으로 접으면 그 프로젝트는 영원히 안 자란다.
-            r.skipped = (f"커서 {cursor[:8]} → {r.to_commit[:8]} 사이에 커밋이 없다 — "
-                         "커서가 이 이력의 조상이 아니다(되감김/강제 푸시?). 사람이 봐야 한다")
-        prev = cursor
+            _note(r, (f"커서 {cursor[:8] or '(없음)'} → {r.to_commit[:8]} 사이에 커밋이 "
+                      "없다 — 커서가 이 이력의 조상이 아니다(되감김/강제 푸시?). 사람이 봐야 한다"))
+        # 첫 커밋의 기준 — 커서가 없으면 **빈 트리**(그래야 그 커밋의 파일이 전부 들어온다)
+        prev = cursor or EMPTY_TREE
         for c in commits:
             # [중요] 경계는 **두 겹**이다 — pathspec 으로 좁히고(`class_graph` 관례),
             #    `_source_only` 가 확장자로 한 번 더 자른다. 한 겹이면 인자를 한 번 잘못

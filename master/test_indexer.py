@@ -448,18 +448,36 @@ def main() -> int:
     check("  사유를 남긴다", any("소스 밖" in x for x in r.nonsource_notes),
           str(r.nonsource_notes))
 
-    print("\n[12-5] 커서가 비어 있으면 시끄럽게 보고하고 전 이력을 걷지 않는다 (M2 금기)")
+    print("\n[12-5] [중요] 저장 해시가 없으면 **이력 처음부터** 하나씩 (사용자 정정 2026-08-23)")
     pn = make_project(tmp / "nocur")
-    # [중요] **둘 다 비어야** 이 경로다 — 워터마크가 있으면 [12-9] 의 이행 폴백이 맞다.
+    # [중요] 커서도 워터마크도 없다 — 「다르다」의 한 경우이므로 **걷는 것이 기본 동작**이다.
+    #    (종전 구현은 여기서 멈추고 "최초 합성은 온보딩 일" 이라고 보고했다 — 지시에 없던
+    #     내 판단이었고 사용자가 정정했다.)
     pn.config.write_text("project_id: Sim/Demo\nindex:\n  last_indexed_commit: ''\n",
                          encoding="utf-8")
+    seen_cmds = []
     walked = []
-    r = process_event(ev(), registry=FakeReg(tmp / "nocur"),
-                      git=git_walk([C1, C2, C3]), reindex=lambda p: 1,
-                      synth_run=lambda *a, **k: walked.append(1))
-    check("[중요] 합성을 부르지 않는다", walked == [], str(walked))
-    check("커서 없음을 사유로 남긴다", "커서가 비어 있다" in r.skipped, r.skipped)
-    check("[중요] 「최신」이라고 말하지 않는다", "최신" not in r.skipped, r.skipped)
+
+    def git_rec(commits):
+        base = git_walk(commits)
+
+        def run(repo, *args):
+            seen_cmds.append(list(args))
+            return base(repo, *args)
+        return run
+
+    r = process_event(ev(), registry=FakeReg(tmp / "nocur"), git=git_rec([C1, C2, C3]),
+                      reindex=lambda p: 1,
+                      synth_run=lambda *a, **k: walked.append(k.get("commit")) or synth_writes(*a, **k))
+    check("[중요] 멈추지 않고 걷는다", r.commits_done == 3, r.summary)
+    check("  커밋마다 합성한다", walked == [C1, C2, C3], str(walked))
+    check("  커서가 마지막 커밋", cursor_of(pn) == C3, cursor_of(pn))
+    first_diff = next(c for c in seen_cmds if c[0] == "diff")
+    check("[중요] 첫 커밋의 기준은 **빈 트리** (그 커밋의 파일이 전부 들어온다)",
+          first_diff[2] == "4b825dc642cb6eb9a060e54bf8d69288fbee4904", str(first_diff))
+    check("  전 이력 범위로 log 를 부른다 (`..` 없이)",
+          any(c[0] == "log" and ".." not in c[-1] for c in seen_cmds), str(seen_cmds))
+    check("사유를 남긴다", "저장된 해시가 없다" in r.skipped, r.skipped)
 
     print("\n[12-6] 커서 키가 없는 구 config 에도 기록된다 (`index:` 아래 삽입)")
     pn2 = make_project(tmp / "oldcfg")
