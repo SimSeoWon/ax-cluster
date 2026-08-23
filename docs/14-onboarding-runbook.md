@@ -19,7 +19,7 @@
 [중요] **`--confirm` 없이는 아무것도 쓰지 않는다.** 이 저장소의 관례다(`cleanup plan|apply` ·
 `finalize_work(confirm=False)` · `handover apply --confirm`).
 
-## 14.1 서버 절 — 일곱 단계
+## 14.1 서버 절 — 여덟 단계
 
 `onboard` 가 **실측으로** 무엇이 남았는지 답한다. 순서는 코드가 강제한다(선결이 깨진 단계는
 `[막힘]` 으로 나오고 **판정을 시도하지 않는다** — *"안 만들었다"* 와 *"만들 수 없었다"* 를
@@ -30,10 +30,11 @@
 | 1 | `bare` | Gitea bare 저장소 | `onboard` 가 `[남음] bare` · 이 단계는 **`onboard` 가 못 만든다**(Gitea 에서 만든다) |
 | 2 | `register` | 트윈 디렉토리 + `config.yaml` | 뒤 단계가 전부 `[막힘]` — 경로를 풀 수 없어 **아무것도 잴 수 없다** |
 | 3 | `hook` | `post-receive.d/ax-index` + `ax-project-id` | push 해도 **트윈이 자라지 않는다.** 에러가 아니라 **침묵**이다 |
-| 4 | `clone` | 트윈 안의 소스 워킹트리 | `graph`·`synth`·`index` 가 `[막힘]` |
-| 5 | `graph` | 클래스·의존 그래프 | 검색이 클래스를 못 찾는다 (`classes=0`) |
-| 6 | `synth` | 컨텍스트 MD (**`Source/` 한정**) | `N/M 그룹` 이 안 채워진다. [주의] 문서 **개수**가 아니라 **문서 없는 그룹 수**로 판정한다(`#274`) |
-| 7 | `index` | 벡터·BM25 + 워터마크 | `last_indexed_commit` 이 빈 값 → 훅이 와도 **따라잡을 기준이 없다** |
+| 4 | `clone` | 트윈 안의 소스 워킹트리 | 뒤 단계가 전부 `[막힘]` |
+| 5 | `conventions` | 미러의 `CLAUDE.md` — **컨벤션의 원천** | 워커 매니페스트의 컨벤션이 **영구히 빈다.** 에러가 아니라 침묵이다 — 워커가 관례 없이 코드를 쓴다 |
+| 6 | `graph` | 클래스·의존 그래프 | 검색이 클래스를 못 찾는다 (`classes=0`) |
+| 7 | `synth` | 컨텍스트 MD (**`Source/` 한정**) | `N/M 그룹` 이 안 채워진다. [주의] 문서 **개수**가 아니라 **문서 없는 그룹 수**로 판정한다(`#274`) |
+| 8 | `index` | 벡터·BM25 + 워터마크 | `last_indexed_commit` 이 빈 값 → 훅이 와도 **따라잡을 기준이 없다** |
 
 ### 1 · `bare` — Gitea 저장소 (온보딩 밖)
 
@@ -58,18 +59,29 @@ register_project_tool(name="NS", project_id="Sim/NS",
 [중요] `project_id` 는 **훅이 보내는 이름**과 같아야 한다(`Sim/NS` — 대소문자는 무시되지만
 **형식은 `소유자/저장소`**). 다르면 훅이 와도 어느 프로젝트인지 못 찾고 **조용히 건너뛴다**.
 
-### 3~7 · 나머지는 한 명령
+### 3~8 · 나머지는 한 명령
 
 ```bash
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트> --confirm
 # 끊어 돌리려면 (synth 는 LLM·시간을 태운다)
-AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트> --confirm --only hook,clone,graph
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트> --confirm --only hook,clone,conventions,graph
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트> --confirm --only synth --limit 5
 ```
 
 [중요] **`hook` 은 무인으로 돈다** — `sudo -n /usr/local/bin/ax-install-hook --apply` 가
 NOPASSWD 로 등록돼 있다(`#273`). 사람이 인증창을 누르는 단계는 없다.
 [주의] 실행 뒤 `onboard` 가 **다시 재서** 찍는다 — 「했다」를 믿지 않는다.
+
+[중요] **`conventions` 는 미러에 `CLAUDE.md` 를 놓는 단계다 (`#294`).** 워커 매니페스트의
+컨벤션은 `<트윈>/repo/CLAUDE.md` 의 `## Code conventions` 절에서 오는데, 배달
+(`master.client deliver`)은 각 기계의 **체크아웃**에만 가므로 미러는 이 단계가 채운다.
+안 됐으면 파견된 워커가 **관례 없이 코드를 쓴다** — 에러가 아니라 침묵이라 산출물을 봐야 안다
+(실측 2026-08-24: NS 미러에 파일이 없었고, ModularStage 는 사람이 놓아 둬서 **우연히** 돌았다).
+판정은 「파일이 있다」가 아니라 **「절이 읽힌다」**다 — 절 이름이 계약(`WANTED_SECTIONS`)이라
+파일만 있고 절이 없으면 매니페스트는 여전히 빈다.
+[주의] **이미 있으면 덮지 않는다**(사람이 확정한 관례가 있을 수 있다). 미러도 더럽히지 않는다 —
+프로젝트 `.gitignore` 에 `/CLAUDE.md` 가 있다고 기대할 수 없어(NS 는 UE 템플릿이라 없었다)
+**`.git/info/exclude`** 에 넣는다. 소스의 `.gitignore` 를 고치는 것은 게임 소스를 건드리는 것이다.
 
 ## 14.2 클라 절 — 작업장 등재 → 클론 → 배달 → 대조
 

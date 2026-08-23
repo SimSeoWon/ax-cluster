@@ -21,6 +21,8 @@ file**, generated per machine by the master. Read that before assuming you can b
 소스 트리 실측이고 **매 배달마다 마스터가 갱신한다.** 본문에 적으면 첫 배달 때 한 번 쓰이고
 늙는다(파일이 있으면 병합이 본문을 건드리지 않는다 — 사람이 쓴 것을 지키는 규약).
 
+{CONVENTIONS}
+
 ## [중요] What this file does **not** say yet
 
 이 문서의 프로젝트 서술은 **실측된 것만** 담고 있다 — `.uproject`·`*.Target.cs`·`*.Build.cs` 에서

@@ -238,11 +238,34 @@ def _probe_index(paths) -> tuple:
     return True, f"{c[:7]} @ {cfg.last_indexed_at or '?'}"
 
 
+def _probe_conventions(paths) -> tuple:
+    """미러의 `CLAUDE.md` 에 컨벤션 절이 있는가 (`#294`).
+
+    [중요] **파일 존재만으로는 부족하다** — 절 이름이 계약이므로(`WANTED_SECTIONS`) 절이
+    없으면 매니페스트의 컨벤션이 빈다. 「있다」와 「읽힌다」는 다르다.
+    """
+    from ..work import conventions as C
+    from ..client.spec import DEFAULT_CONVENTION_SECTIONS
+
+    doc = paths.repo / "CLAUDE.md"
+    if not doc.is_file():
+        return False, f"미러에 CLAUDE.md 가 없다 — 워커 매니페스트의 컨벤션이 빈다: {doc}"
+    text, note = C.project_doc(paths.repo)
+    if note:
+        return False, note
+    want = DEFAULT_CONVENTION_SECTIONS[0]
+    body = C.extract_section(text, want)
+    if not body.strip():
+        return False, f"파일은 있는데 `## {want}` 절이 비었다 — 절 이름이 계약이다"
+    return True, f"`## {want}` {len(body)}자"
+
+
 PROBES = {
     "bare": _probe_bare,
     "register": _probe_register,
     "hook": _probe_hook,
     "clone": _probe_clone,
+    "conventions": _probe_conventions,
     "graph": _probe_graph,
     "synth": _probe_synth,
     "index": _probe_index,
@@ -408,6 +431,55 @@ def do_clone(paths, cfg) -> str:
     return f"{head} · " + " · ".join(notes)
 
 
+def do_conventions(paths, *, project: str = "") -> str:
+    """미러에 `CLAUDE.md` 를 놓는다 — **컨벤션의 원천** (`#294`).
+
+    [중요] 본문은 `bundle.claude_md_body` 가 만든다 — 배달물과 **같은 생성기**를 쓴다. 여기서
+    따로 만들면 미러와 체크아웃이 다른 컨벤션을 갖게 되고, 그 둘은 언젠가 갈린다.
+    [주의] **이미 있으면 덮지 않는다.** 사람이 확정한 관례가 들어 있을 수 있고(MS 가 그렇다),
+    이 단계의 목적은 *비어 있는 것을 채우는 것*이다. 갱신은 배달의 관리 블록 축이 한다.
+    """
+    from ..client.bundle import claude_md_body
+
+    name = project or paths.name
+    doc = paths.repo / "CLAUDE.md"
+    if doc.is_file():
+        return f"이미 있다 — 덮지 않는다 ({doc})"
+    if not paths.repo.is_dir():
+        raise ConfigError(f"소스 클론이 없다 — 먼저 clone 단계를 돌린다: {paths.repo}")
+    body = claude_md_body(name)
+    tmp = doc.with_suffix(".tmp")
+    tmp.write_text(body, encoding="utf-8")
+    tmp.replace(doc)
+    # [중요] **미러를 더럽히지 않는다.** 프로젝트의 `.gitignore` 에 `/CLAUDE.md` 가 있을 것이라
+    #    기대할 수 없다 — MS 는 사람이 넣어 뒀지만 NS(UE 템플릿)에는 없어서 파일을 놓자마자
+    #    `?? CLAUDE.md` 로 dirty 가 됐다(실측 2026-08-24). 소스의 `.gitignore` 를 고치는 것은
+    #    **게임 소스를 건드리는 것**이므로, 배달이 쓰는 것과 같은 관례로 `.git/info/exclude`
+    #    (커밋되지 않는 로컬 목록)에 넣는다. 선언은 `spec.GIT_EXCLUDES` 가 정본이다.
+    ign = _exclude_in_mirror(paths)
+    return f"{doc} · {len(body.splitlines())}줄 · {ign}"
+
+
+def _exclude_in_mirror(paths) -> str:
+    """미러의 `.git/info/exclude` 에 `/CLAUDE.md` 를 넣는다 (없으면). 사람이 읽을 결과 문자열."""
+    from ..client.spec import GIT_EXCLUDES
+
+    want = [line for line, _roles in GIT_EXCLUDES if line == "/CLAUDE.md"]
+    info = paths.repo / ".git" / "info"
+    if not info.is_dir():
+        return "[주의] `.git/info` 가 없다 — 무시 목록을 넣지 못했다"
+    f = info / "exclude"
+    have = f.read_text(encoding="utf-8", errors="replace") if f.is_file() else ""
+    add = [w for w in want if w not in have.splitlines()]
+    if not add:
+        return "무시 목록 이미 있음"
+    text = (have.rstrip("\n") + "\n" if have.strip() else "") + "\n".join(add) + "\n"
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(f)
+    return f"무시 목록 추가 {', '.join(add)}"
+
+
 def do_graph(paths) -> str:
     """그래프 전체 구축 — LLM 0. 결정적이라 싸다."""
     from ..graph import class_graph as cg, dependency as dep
@@ -454,8 +526,8 @@ def do_index(paths) -> str:
     return f"vector {getattr(st, 'vector_docs', '?')} · 워터마크 {head.strip()[:7]}"
 
 
-RUNNERS = {"hook": do_hook, "clone": do_clone, "graph": do_graph,
-           "synth": do_synth, "index": do_index}
+RUNNERS = {"hook": do_hook, "clone": do_clone, "conventions": do_conventions,
+           "graph": do_graph, "synth": do_synth, "index": do_index}
 
 
 def run(name: str, *, confirm: bool = False, only=None, registry: Registry | None = None,
@@ -496,6 +568,8 @@ def run(name: str, *, confirm: bool = False, only=None, registry: Registry | Non
                 detail = fn(paths)
             elif key == "synth":
                 detail = fn(paths, limit=limit)
+            elif key == "conventions":
+                detail = fn(paths, project=name)
             else:
                 detail = fn(paths)
         except Exception as e:                               # noqa: BLE001

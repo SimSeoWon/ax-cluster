@@ -422,6 +422,52 @@ def _uproject_facts(project: str) -> dict:
     return out
 
 
+def _convention_facts(project: str) -> list:
+    """소스에서 **실측한** 코드 관례 (`#294`). 문장이 아니라 **개수**를 적는다.
+
+    [중요] MS 의 컨벤션 절은 프로젝트 고유 지식이다(`Project_Alpha` 포팅 이력, 특정 헤더의
+    forward-declare 의도 등) — **실측할 수 없고 지어내서도 안 된다.** 그래서 여기서는 셀 수
+    있는 것만 세고, 나머지는 **비어 있다고 적는다.** 근거(개수)를 함께 남기는 이유는 다음
+    사람이 *"이 줄이 어디서 왔나"* 를 되짚을 수 있어야 하기 때문이다.
+    [주의] 개수는 **관례를 제안**하지만 확정하지 않는다 — 판단은 사람이 한다.
+    """
+    import re
+
+    try:
+        from ..context_search.paths import resolve
+        repo = resolve(project).repo
+    except Exception:                                        # noqa: BLE001
+        return []
+    src = repo / "Source"
+    if not src.is_dir():
+        return []
+    files = sorted([*src.rglob("*.h"), *src.rglob("*.cpp")])[:400]
+    if not files:
+        return []
+    text = "\n".join(f.read_text(encoding="utf-8", errors="replace") for f in files)
+
+    def cnt(pat: str) -> int:
+        return len(re.findall(pat, text))
+
+    tobj, uprop = cnt(r"TObjectPtr<"), cnt(r"UPROPERTY\(")
+    valid, nullp = cnt(r"\bIsValid\s*\("), cnt(r"!=\s*nullptr")
+    ko = cnt(r"//[^\n]*[가-힣]")
+    rows = [f"- 파일 {len(files)}개 실측 (`Source/**` 의 `.h`·`.cpp`)."]
+    if uprop:
+        rows.append(f"- `TObjectPtr<>` {tobj}회 / `UPROPERTY(` {uprop}회 — "
+                    + ("헤더 객체 참조는 `TObjectPtr` 관례로 보인다."
+                       if tobj * 4 >= uprop else
+                       "[주의] 비율이 낮다 — 생 포인터가 섞여 있다. 관례를 사람이 확정할 것."))
+    if valid or nullp:
+        rows.append(f"- `IsValid(` {valid}회 / `!= nullptr` {nullp}회 — "
+                    + ("`IsValid` 우세." if valid >= nullp else
+                       "[주의] `!= nullptr` 가 더 많다."))
+    rows.append(f"- 한글 주석 줄 {ko}개 — "
+                + ("주석은 한국어로 쓴다." if ko else
+                   "주석은 영문이다(한글 주석 0)."))
+    return rows
+
+
 def claude_md_body(project: str) -> str:
     """체크아웃에 파일이 없을 때 넣을 **본문**. (`#290`)
 
@@ -472,8 +518,23 @@ def claude_md_body(project: str) -> str:
             "클론이 비었거나 아직 UE 프로젝트가 아니다.")
     # [중요] 빌드·타깃 표는 **본문이 아니라 관리 블록**에 있다 (`_project_facts_rows`) —
     #    본문은 병합이 건드리지 않으므로 거기 적은 사실은 늙는다. 여기서는 한 줄만 만든다.
+    # [중요] **절 이름이 계약이다** (`#294`) — `work/conventions.WANTED_SECTIONS` 가 이 이름으로
+    #    절을 찾아 워커 매니페스트에 싣는다. 생성물이 그 이름을 만들지 않으면 컨벤션이 **영구히
+    #    빈다**(실측 2026-08-24: NS 미러에 CLAUDE.md 가 없어 매니페스트의 컨벤션이 비었다).
+    from .spec import DEFAULT_CONVENTION_SECTIONS
+    facts = _convention_facts(project)
+    conv = [f"## {DEFAULT_CONVENTION_SECTIONS[0]}", ""]
+    if facts:
+        conv += ["[중요] 아래는 **소스 실측**이다 — 관례를 *제안*하지만 확정하지 않는다."
+                 " 확정은 사람이 이 절을 고쳐서 한다.", ""] + facts
+    else:
+        conv += ["[주의] **비어 있다** — 소스를 읽지 못했다(클론이 없거나 `Source/` 가 비었다)."]
+    conv += ["", "[주의] **프로젝트 고유 관례는 여기 없다** — 왜 그 설계인지, 어느 헤더의 "
+             "forward-declare 가 의도된 것인지 같은 것은 실측 대상이 아니다. "
+             "**지어내지 않는다**: 사람이 이 절에 적거나 `/init` 이 채운다.", ""]
     body = (d / "_skeleton.md").read_text(encoding="utf-8")
-    return body.replace("{PROJECT_LINE}", line)
+    return (body.replace("{PROJECT_LINE}", line)
+                .replace("{CONVENTIONS}", "\n".join(conv)))
 
 
 def _project_facts_rows(project: str) -> list:

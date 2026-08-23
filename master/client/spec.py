@@ -87,6 +87,16 @@ SERVER_STEPS = (
          "<bare>/hooks/post-receive.d/ax-index 가 있다"),
     Step("clone", "소스 클론 — <트윈>/<local_clone>/ 에 워킹트리",
          "paths.repo 가 git 저장소다"),
+    # [중요] **컨벤션의 원천은 마스터 미러의 `CLAUDE.md` 다** (`#294`, 실측 2026-08-24).
+    #    `work/conventions.project_doc` 이 `<트윈>/repo/CLAUDE.md` 의 `## Code conventions` 절을
+    #    읽어 **워커 매니페스트**에 싣는다. 그런데 배달은 각 기계의 *체크아웃*에만 갔고 미러는
+    #    대상이 아니었다 — NS 미러에 파일이 없어 매니페스트의 컨벤션이 **영구히 비었다.**
+    #    ModularStage 는 사람이 그 파일을 놓아 둬서 우연히 돌고 있었다(N=1 에서는 우연과 설계가
+    #    구별되지 않는다 — 이 세션 네 번째).
+    #    [주의] 프로젝트에서 `/CLAUDE.md` 는 gitignore 대상이라(실측: `.gitignore:41`) 미러에
+    #    놓아도 `merge --ff-only` 를 깨지 않는다.
+    Step("conventions", "마스터 미러에 CLAUDE.md — **컨벤션의 원천** (워커 매니페스트가 읽는다)",
+         "<트윈>/repo/CLAUDE.md 에 `## Code conventions` 절이 있다"),
     Step("graph", "클래스·의존 그래프 전체 구축",
          "class_graph.db · dependency_graph.db 에 행이 있다"),
     # [중요] **컨텍스트 문서 생성은 `Source/` 한정이다** (§5.2-E, 사용자 재확인 2026-08-22).

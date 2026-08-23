@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -70,7 +71,13 @@ def test_uninitialized() -> None:
         check("이름으로 답한다", "bare" in d["remaining"] and "index" in d["remaining"])
         # [중요] 선결이 깨진 단계는 **판정을 시도하지 않는다** — "비었다" 와 "잴 수 없다" 는 다르다
         blocked = [s for s in d["steps"] if s.get("blocked")]
-        check("[중요] 선결 미충족은 blocked 로 갈린다", len(blocked) == 4, str(len(blocked)))
+        # [주의] 분모는 `SERVER_STEPS` 를 따른다 — 숫자를 박으면 단계가 늘 때마다 갈린다
+        #    (`#273` 이 「4/6」으로 잘못 보고한 그 부류). **register 가 깨지면 트윈 경로를
+        #    모르므로 그것을 쓰는 단계 전부**가 blocked 다 — `hook` 은 bare 만 보므로 제외.
+        expect_blocked = sum(1 for st in spec.SERVER_STEPS
+                             if st.key in ("clone", "conventions", "graph", "synth", "index"))
+        check("[중요] 선결 미충족은 blocked 로 갈린다", len(blocked) == expect_blocked,
+              f"{len(blocked)} vs {expect_blocked}")
         check("[주의] hook 은 blocked 가 아니다 — 레지스트리만 있으면 잴 수 있다",
               not next(s for s in d["steps"] if s["step"] == "hook").get("blocked"))
         check("blocked 가 사유를 말한다", all("아직이다" in s["blocked"] for s in blocked))
@@ -97,7 +104,8 @@ def test_registered_only() -> None:
         check("register 통과", by["register"]["done"], str(by["register"]))
         check("clone 은 남았다", not by["clone"]["done"] and "클론이 없다" in by["clone"]["detail"],
               str(by["clone"]))
-        check("남은 것을 이름으로", d["remaining"] == ["hook", "clone", "graph", "synth", "index"],
+        check("남은 것을 이름으로",
+              d["remaining"] == ["hook", "clone", "conventions", "graph", "synth", "index"],
               str(d["remaining"]))
         # [중요] clone 이 아직이면 그래프·합성·색인은 **잴 수 없다** (0건과 구분한다)
         check("[중요] clone 미완이 뒤 셋을 blocked 로 만든다",
@@ -187,9 +195,70 @@ def test_live_modularstage() -> None:
             os.environ["AX_PROJECTS_ROOT"] = keep
 
 
+def test_conventions_step_is_the_manifest_source() -> None:
+    """[중요] **컨벤션의 원천은 마스터 미러의 CLAUDE.md 다** (`#294`, 실측 2026-08-24).
+
+    `work/conventions.project_doc` 이 `<트윈>/repo/CLAUDE.md` 의 `## Code conventions` 절을
+    읽어 워커 매니페스트에 싣는데, 배달은 각 기계의 **체크아웃**에만 갔고 미러는 대상이
+    아니었다 — NS 미러에 파일이 없어 매니페스트의 컨벤션이 **영구히 비었다.** MS 는 사람이
+    그 파일을 놓아 둬서 우연히 돌고 있었다(N=1 에서는 우연과 설계가 구별되지 않는다).
+    """
+    from master.client import spec
+    from master.context_search.paths import ProjectPaths
+    from master.projects import onboard as O
+    from master.work import conventions as C
+
+    print("\n[컨벤션] 미러가 원천이다 (#294)")
+    check("단계 선언에 있다", any(st.key == "conventions" for st in spec.SERVER_STEPS),
+          str([st.key for st in spec.SERVER_STEPS]))
+    check("실행기가 배선돼 있다", "conventions" in O.RUNNERS, str(sorted(O.RUNNERS)))
+    check("판정기가 배선돼 있다", "conventions" in O.PROBES, str(sorted(O.PROBES)))
+
+    tmp = _sandbox()
+    p = ProjectPaths(name="ModularStage", root=tmp / "T")
+    p.repo.mkdir(parents=True, exist_ok=True)
+    (p.repo / ".git" / "info").mkdir(parents=True, exist_ok=True)
+
+    ok, why = O._probe_conventions(p)
+    check("[중요] 파일이 없으면 남음으로 답한다", not ok and "CLAUDE.md 가 없다" in why, why)
+
+    # [중요] **파일 존재만으로는 부족하다** — 절 이름이 계약이다
+    (p.repo / "CLAUDE.md").write_text("# CLAUDE.md\n\n본문만 있고 절이 없다\n",
+                                      encoding="utf-8")
+    ok, why = O._probe_conventions(p)
+    check("[중요] 절이 없으면 「있다」로 세지 않는다", not ok and "절이 비었다" in why, why)
+
+    # 실행기 — 본문을 넣고 무시 목록까지
+    (p.repo / "CLAUDE.md").unlink()
+    detail = O.do_conventions(p, project="ModularStage")
+    text, note = C.project_doc(p.repo)
+    sec = C.extract_section(text, spec.DEFAULT_CONVENTION_SECTIONS[0])
+    check("절을 만든다", bool(sec.strip()), f"{detail} · {note}")
+    ok, _ = O._probe_conventions(p)
+    check("판정이 통과로 바뀐다", ok, detail)
+
+    # [중요] **미러를 더럽히지 않는다** — 소스의 `.gitignore` 에 `/CLAUDE.md` 가 있다고
+    #    기대할 수 없다(NS 는 UE 템플릿이라 없었고, 파일을 놓자마자 `?? CLAUDE.md` 였다).
+    exclude = (p.repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+    check("[중요] `.git/info/exclude` 에 넣는다 (`.gitignore` 를 고치지 않는다)",
+          "/CLAUDE.md" in exclude, exclude)
+    check("  두 번 돌려도 중복으로 넣지 않는다",
+          O._exclude_in_mirror(p) == "무시 목록 이미 있음", O._exclude_in_mirror(p))
+
+    # [주의] 이미 있으면 **덮지 않는다** — 사람이 확정한 관례가 들어 있을 수 있다
+    (p.repo / "CLAUDE.md").write_text("# 사람이 쓴 것\n\n## Code conventions\n\n- 손으로 정한 규칙\n",
+                                      encoding="utf-8")
+    d2 = O.do_conventions(p, project="ModularStage")
+    check("[주의] 이미 있으면 덮지 않는다", "덮지 않는다" in d2, d2)
+    check("  사람이 쓴 내용이 남는다",
+          "손으로 정한 규칙" in (p.repo / "CLAUDE.md").read_text(encoding="utf-8"))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     for fn in (test_step_source_is_spec, test_uninitialized, test_registered_only,
-               test_synth_stamps_commit, test_live_modularstage):
+               test_synth_stamps_commit, test_live_modularstage,
+               test_conventions_step_is_the_manifest_source):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_onboard: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)
