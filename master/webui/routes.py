@@ -46,6 +46,7 @@ import json
 import re
 from pathlib import Path
 
+from ..context_search import documents
 from . import loaders
 
 STATIC = Path(__file__).parent / "static" / "ontology"
@@ -301,9 +302,40 @@ def api_tags(root: Path, paths=None) -> dict:
     [주의] **모양이 계약이다**: 원전 `renderTagCloud` 는 `tags.tags` 를 **`{태그: 개수}` 객체**로
     받고 `Object.entries(...)` 로 돈다. 배열로 주면 화면이 빈 채로 뜬다(실측). 배지는 `total_tags`.
 
-    출처는 둘 — 도메인 manifest 의 `tags`(온톨로지) + 오브젝트 `aliases`(시소러스의 한국어 말).
+    ## [중요] 출처의 정본은 **컨텍스트 문서**다 — 이식 드리프트 복구 (`#288`)
+
+    원전 `search_routes.py:400 api_list_tags` 는 `_index.tag_cache` 를 돈다. 그 캐시는
+    `double_buffered_index._build_tag_cache` 가 **`context/` 의 모든 MD 프론트매터**에서
+    만든 것이다(`_domains/*.md` 만 제외). 우리 이식은 그 축을 빼먹고 **도메인만** 셌다.
+
+    실측 2026-08-23: NS 가 컨텍스트 문서 42건에 한글 태그를 갖고 있는데 도메인이 0개라
+    화면이 **완전히 비어 있었다.** ModularStage 는 도메인이 많아 채워져 보였으므로 이
+    차이가 드러나지 않았다 — **N=1 이 설계를 검증하지 않는다**(`#231` 과 같은 부류).
+
+    [주의] 도메인 manifest·`aliases` 집계는 **뺀 것이 아니라 더한 것**이다. 우리 확장이고
+    (시소러스의 한국어 말) 지우면 ModularStage 화면이 후퇴한다. 원전 축을 정본으로 두고
+    우리 축을 합친다.
     """
     counts: dict = {}
+
+    # ① 원전 정본 — 컨텍스트 문서의 프론트매터 태그
+    # [중요] 파서는 **재사용한다** — `documents.parse_frontmatter` 가 색인이 쓰는 그 파서다.
+    #    여기서 새로 정규식을 쓰면 화면과 색인이 다른 태그를 보게 된다.
+    ctx = (paths.context if paths is not None else root / "context")
+    if ctx.is_dir():
+        for md in sorted(ctx.rglob("*.md")):
+            rel = md.relative_to(ctx).as_posix()
+            if documents.is_excluded(rel):
+                continue
+            try:
+                meta = documents.parse_frontmatter(md.read_text(encoding="utf-8",
+                                                               errors="replace"))
+            except OSError:
+                continue
+            for t in (meta.get("tags") or []):
+                counts[str(t)] = counts.get(str(t), 0) + 1
+
+    # ② 우리 확장 — 도메인 manifest 의 `tags` + 오브젝트 `aliases`
     for d in loaders.list_domains(root):
         for t in d.get("tags") or []:
             counts[str(t)] = counts.get(str(t), 0) + 1
@@ -314,7 +346,10 @@ def api_tags(root: Path, paths=None) -> dict:
             data = loaders.parse_domain_yaml(y) or {}
             for a in (data.get("aliases") or []):
                 counts[str(a)] = counts.get(str(a), 0) + 1
-    return {"tags": counts, "total_tags": len(counts)}
+
+    # 원전과 같이 **많이 쓰인 순**으로 준다 (`sorted_tags` — 화면이 크기를 그 순서로 준다)
+    ordered = dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+    return {"tags": ordered, "total_tags": len(ordered)}
 
 
 def api_search(paths, query: str, limit: int = 5) -> dict:

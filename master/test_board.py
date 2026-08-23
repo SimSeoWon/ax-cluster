@@ -263,6 +263,46 @@ def test_create_refuses_empty_topic() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_tag_cloud_counts_context_documents() -> None:
+    """[중요] **태그 클라우드의 정본은 컨텍스트 문서다** (`#288`, 이식 드리프트 복구).
+
+    원전 `search_routes.py:400` 은 `_index.tag_cache` 를 돌고, 그 캐시는
+    `_build_tag_cache` 가 **`context/` 의 모든 MD 프론트매터**에서 만든다(`_domains/` 제외).
+    우리 이식은 그 축을 빼먹고 **도메인만** 셌다 — 실측 2026-08-23: NS 는 컨텍스트 문서 42건에
+    한글 태그가 있는데 도메인이 0개라 화면이 **완전히 비어 있었다.** ModularStage 는 도메인이
+    많아 채워져 보였으므로 드러나지 않았다(**N=1 이 설계를 검증하지 않는다**).
+    """
+    from master.context_search.paths import ProjectPaths
+    from master.webui import routes as R
+
+    print("\n[태그] 컨텍스트 문서의 프론트매터를 센다 (#288)")
+    tmp = Path(tempfile.mkdtemp(prefix="ax-tags-"))
+    p = ProjectPaths(name="T", root=tmp / "T")
+    (p.context / "Source" / "NS").mkdir(parents=True)
+    (p.context / "Source" / "NS" / "A.md").write_text(
+        "---\ntags: [캐릭터, 점프, Character]\n---\n본문", encoding="utf-8")
+    (p.context / "Source" / "NS" / "B.md").write_text(
+        "---\ntags: [캐릭터, 게임모드]\n---\n본문", encoding="utf-8")
+    # [중요] `_domains/*.md` 는 제외한다 — 원전과 같은 규칙(별도 진입점)
+    (p.context / "_domains").mkdir(parents=True)
+    (p.context / "_domains" / "D.md").write_text(
+        "---\ntags: [도메인문서는_안_센다]\n---\n본문", encoding="utf-8")
+
+    r = R.api_tags(p.root, p)
+    check("컨텍스트 문서 태그를 센다 (도메인 0개여도)", r["total_tags"] == 4,
+          f"{r['total_tags']} {r['tags']}")
+    check("[중요] 한글 태그가 들어간다 (문서가 한국어다)",
+          r["tags"].get("캐릭터") == 2 and "게임모드" in r["tags"], str(r["tags"]))
+    check("[중요] `_domains/` 는 제외한다 (원전 규칙)",
+          "도메인문서는_안_센다" not in r["tags"], str(r["tags"]))
+    check("많이 쓰인 순으로 준다 (화면이 크기를 그 순서로 정한다)",
+          list(r["tags"])[0] == "캐릭터", str(list(r["tags"])[:3]))
+    # [주의] 모양이 계약이다 — 원전 renderTagCloud 는 `{태그: 개수}` 객체를 Object.entries 로 돈다
+    check("[주의] 배열이 아니라 객체다 (배열이면 화면이 빈 채로 뜬다)",
+          isinstance(r["tags"], dict), type(r["tags"]).__name__)
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (test_board_lists_md_not_ontology, test_detail_carries_source_contents,
                test_korean_names_allowed_traversal_blocked,
@@ -270,7 +310,8 @@ def main() -> int:
                test_activate_flips_status_and_inherits_tags,
                test_delete_archives_instead_of_removing, test_writes_are_atomic,
                test_chat_history_round_trip, test_frontmatter_parses_our_format,
-               test_create_without_llm_says_so, test_create_refuses_empty_topic):
+               test_create_without_llm_says_so, test_create_refuses_empty_topic,
+               test_tag_cloud_counts_context_documents):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_board: {PASS}/{total} 통과")
