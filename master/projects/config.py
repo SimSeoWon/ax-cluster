@@ -191,6 +191,13 @@ class ProjectConfig:
     engine: str = ""
     last_indexed_commit: str = ""
     last_indexed_at: str = ""
+    # [중요] **분석 커서** — 「어디까지 커밋을 걸었나」 (`#278`, 사용자 지시 2026-08-23).
+    #    `last_indexed_commit` 과 **다른 값이다**: 저쪽은 *"이 커밋까지 트윈에 반영됐다"* 는
+    #    완료 주장이라 미합성 그룹이 있으면 전진하지 못한다(`#274`). 이쪽은 커밋을 하나씩
+    #    걸으며 **그 커밋의 문서가 끝날 때마다** 전진하는 재개 지점이다. 한 값에 둘을 담으면
+    #    부분 완료가 「완료」로 보고되고, 그것이 `#274` 가 고친 바로 그 거짓 보고다.
+    analyzed_commit: str = ""
+    analyzed_at: str = ""
     include: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
     workshops: dict[str, Workshop] = field(default_factory=dict)
@@ -217,6 +224,8 @@ class ProjectConfig:
             engine=str(data.get("engine") or ""),
             last_indexed_commit=str(index.get("last_indexed_commit") or ""),
             last_indexed_at=str(index.get("last_indexed_at") or ""),
+            analyzed_commit=str(index.get("analyzed_commit") or ""),
+            analyzed_at=str(index.get("analyzed_at") or ""),
             include=list(index.get("include") or []),
             exclude=list(index.get("exclude") or []),
             raw=data,
@@ -238,6 +247,8 @@ class ProjectConfig:
             {
                 "last_indexed_commit": self.last_indexed_commit,
                 "last_indexed_at": self.last_indexed_at,
+                "analyzed_commit": self.analyzed_commit,
+                "analyzed_at": self.analyzed_at,
                 "include": self.include,
                 "exclude": self.exclude,
             }

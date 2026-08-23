@@ -48,9 +48,19 @@ project_id: Sim/Demo
 index:
   last_indexed_commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   last_indexed_at: '2026-08-01T00:00:00'
+  analyzed_commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  analyzed_at: '2026-08-01T00:00:00'
   source: infra_state.zip
   include:
   - Source/**/*.cpp     # 소스 한정 (§5.2-E)
+"""
+
+# [중요] **커서 키가 없는 구 config** — `_update_cursor` 가 `index:` 아래에 새로 넣어야 한다.
+#    조용히 아무 것도 안 하면 커서가 영원히 비어 판정이 「미확인」에 머문다 (`#280`).
+CONFIG_NO_CURSOR = """project_id: Sim/Demo
+index:
+  last_indexed_commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  last_indexed_at: '2026-08-01T00:00:00'
 """
 
 
@@ -82,6 +92,16 @@ def make_project(root: Path) -> ProjectPaths:
     return p
 
 
+def rewind(paths, commit: str = "a" * 40) -> None:
+    """커서를 되감는다. [중요] 커서가 **파일에 남는** 것이 이 기능의 요점이라(`#280`),
+    같은 프로젝트 디렉토리를 쓰는 다음 셀은 되감지 않으면 「최신」으로 접힌다."""
+    import re
+    t = paths.config.read_text(encoding="utf-8")
+    paths.config.write_text(
+        re.sub(r"(^\s*analyzed_commit:\s*).*$", rf"\g<1>{commit}", t,
+               count=1, flags=re.MULTILINE), encoding="utf-8")
+
+
 def git_ok(log: list):
     """성공하는 가짜 git. **fetch 전후로 HEAD 가 달라진다** — 실제 푸시가 그렇다.
 
@@ -97,6 +117,9 @@ def git_ok(log: list):
             return 0, ""
         if args[0] == "rev-parse":
             return 0, ("b" * 40) if state["fetched"] else ("a" * 40)
+        if args[0] == "log":
+            # [중요] 커서 → HEAD 사이의 커밋. 하나씩 걷는 계약(`#280`)이라 목록이 필요하다.
+            return 0, "b" * 40
         if args[0] == "diff":
             return 0, "Source/A.cpp\nSource/B.cpp"
         if args[0] == "ls-files":
@@ -142,9 +165,25 @@ def main() -> int:
                        reindex=lambda p: calls.append(1) or 7)
     check("[중요] 재색인을 부르지 않는다", calls == [], str(calls))
     check("건너뛴 사유를 남긴다", "변화 없음" in r2.skipped, r2.skipped)
-    check("  소스는 바뀐 상황이므로 이유를 덧붙인다",
-          "합성이 문서를 바꾸지 않았다" in r2.skipped, r2.skipped)
+    check("[중요] 커서가 최신이면 같은 커밋을 다시 걷지 않는다 (`#280`)",
+          r2.source_changed == 0 and r2.commits_total == 0,
+          f"{r2.source_changed} {r2.commits_total}")
+    check("[중요] 걷기 단계의 사유를 재색인 절이 덮지 않는다",
+          "최신" in r2.skipped and "변화 없음" in r2.skipped, r2.skipped)
     check("그래도 실패는 아니다", r2.ok)
+
+    print("\n[3-1] 합성이 돌았는데 문서가 안 바뀌면 그 사실을 덧붙인다")
+    rewind(paths)
+
+    class NoChange:
+        written, lost, aborted = 0, 0, ""
+        summary = "그룹 2 → 통과 0"
+        results: list = []
+
+    r2b = process_event(ev(), registry=reg, git=git_ok([]), reindex=lambda p: 7,
+                        synth_run=lambda *a, **k: NoChange())
+    check("소스 변경은 셌다", r2b.source_changed == 2, str(r2b.source_changed))
+    check("이유를 덧붙인다", "합성이 문서를 바꾸지 않았다" in r2b.skipped, r2b.skipped)
 
     print("\n[4] 컨텍스트가 바뀌면 다시 색인한다")
     (paths.context / "B.md").write_text("---\ntags: [y]\n---\n새 문서", encoding="utf-8")
@@ -261,6 +300,7 @@ def main() -> int:
         results = [G("Source/A", "사실 게이트 거부 — 유령 식별자"),
                    G("Source/B", "LLM 실패: 타임아웃")]
 
+    rewind(p3)
     r10 = process_event(ev(), registry=FakeReg(tmp / "grow"), git=git_ok([]),
                         reindex=lambda p: 1, synth_run=lambda *a, **k: LostS())
     check("유실 수를 센다", r10.synth_lost == 2, str(r10.synth_lost))
@@ -270,6 +310,7 @@ def main() -> int:
 
     print("\n[10-3] 합성을 끌 수 있다 (노드가 죽었을 때)")
     off = []
+    rewind(p3)
     r11 = process_event(ev(), registry=FakeReg(tmp / "grow"), git=git_ok([]),
                         reindex=lambda p: 1, synthesize=False,
                         synth_run=lambda *a, **k: off.append(1))
@@ -281,6 +322,7 @@ def main() -> int:
     def boom_synth(*a, **k):
         raise RuntimeError("브로커 죽음")
 
+    rewind(p3)
     r12 = process_event(ev(), registry=FakeReg(tmp / "grow"), git=git_ok([]),
                         reindex=lambda p: 1, synth_run=boom_synth)
     check("오류로 잡고 계속한다", r12.ok and "합성 실패" in r12.synth_note, r12.synth_note)
@@ -296,6 +338,175 @@ def main() -> int:
     write_digest(p2, "abc123")
     check("쓰고 읽는다", read_digest(p2) == "abc123")
     check("없으면 빈 문자열", read_digest(ProjectPaths(name="Y", root=tmp / "없음2")) == "")
+
+    # ══════════════════════════════════════════════════════════════════
+    # [12] 분석 커서 (`#278` — 사용자 지시 2026-08-23)
+    #      불변식: 기준은 **config 의 커서**다 · 커밋을 **하나씩** 걷는다 ·
+    #              소스 밖은 스킵하되 **커서는 전진**한다 · 못 끝낸 커밋은 **넘지 않는다**
+    # ══════════════════════════════════════════════════════════════════
+    import re as _re
+
+    def cursor_of(paths) -> str:
+        m = _re.search(r"^\s*analyzed_commit:\s*(\S*)\s*$",
+                       paths.config.read_text(encoding="utf-8"), flags=_re.MULTILINE)
+        return m.group(1) if m else ""
+
+    def git_walk(commits, *, diffs=None, head=None, log=None):
+        """푸시가 없어 **HEAD 가 안 움직이는** 가짜 git — NS 의 실제 상태다.
+
+        `diffs` 는 커밋별 diff 결과(없으면 소스 2건). `log` 를 주면 그것을 쓴다.
+        """
+        h = head or ("b" * 40)
+
+        def run(repo, *args):
+            if args[0] == "fetch":
+                return 0, ""
+            if args[0] == "rev-parse":
+                return 0, h                      # [중요] fetch 전후가 **같다**
+            if args[0] == "log":
+                return 0, (log if log is not None else "\n".join(reversed(commits)))
+            if args[0] == "diff":
+                target = args[3]                 # diff --name-only prev c -- Source
+                if diffs is not None:
+                    return 0, diffs.get(target, "Source/A.cpp\nSource/B.cpp")
+                return 0, "Source/A.cpp\nSource/B.cpp"
+            if args[0] == "ls-files":
+                return 0, "Source/A.cpp\nSource/A.h\nSource/B.cpp\nSource/B.h"
+            return 0, ""
+        return run
+
+    def synth_writes(paths_, *, changed=None, commit="", **kw):
+        """실제로 그 그룹의 문서를 만든다 — 커서 전진의 전제다."""
+        for k in {str(Path(f).parent / Path(f).stem) for f in (changed or [])}:
+            d = paths_.context / f"{k}.md"
+            d.parent.mkdir(parents=True, exist_ok=True)
+            d.write_text(f"---\nsource_commit: {commit}\n---\n본문", encoding="utf-8")
+
+        class S:
+            written, lost, aborted = 1, 0, ""
+            summary = "그룹 1 → 통과 1"
+            results: list = []
+        return S()
+
+    print("\n[12-1] [중요] 기준은 클론 HEAD 가 아니라 커서다 (`#279` — NS 의 상태)")
+    pc = make_project(tmp / "cur")
+    C1, C2, C3 = "1" * 40, "2" * 40, "3" * 40
+    rewind(pc)                                          # 커서 = a*40, HEAD = b*40 고정
+    r = process_event(ev(), registry=FakeReg(tmp / "cur"), git=git_walk([C1]),
+                      reindex=lambda p: 1, synth_run=synth_writes)
+    check("HEAD 가 안 움직여도 걷는다", r.commits_total == 1, r.summary)
+    check("  그 커밋을 끝냈다", r.commits_done == 1, r.summary)
+    check("[중요] 커서가 파일에 남는다", cursor_of(pc) == C1, cursor_of(pc))
+
+    print("\n[12-2] [중요] 커밋을 하나씩 걷는다 — 커서가 마지막 완료 커밋을 가리킨다")
+    rewind(pc)
+    r = process_event(ev(), registry=FakeReg(tmp / "cur"),
+                      git=git_walk([C1, C2, C3]), reindex=lambda p: 1,
+                      synth_run=synth_writes)
+    check("셋을 다 걷는다", (r.commits_total, r.commits_done) == (3, 3), r.summary)
+    check("커서 = 마지막 커밋", cursor_of(pc) == C3, cursor_of(pc))
+
+    print("\n[12-3] [중요] 중간에서 멈추면 커서는 그 앞에 있다 (재개 지점)")
+    rewind(pc)
+    hit = {"n": 0}
+
+    def synth_second_fails(paths_, *, changed=None, commit="", **kw):
+        hit["n"] += 1
+        if hit["n"] == 2:                               # 두 번째 커밋에서 문서를 안 만든다
+            for f in changed or []:
+                d = paths_.context / f"{Path(f).parent / Path(f).stem}.md"
+                if d.exists():
+                    d.unlink()
+
+            class L:
+                written, lost, aborted = 0, 1, ""
+                summary = "그룹 1 → 통과 0 · 사실 거부 1"
+                results: list = []
+            return L()
+        return synth_writes(paths_, changed=changed, commit=commit)
+
+    r = process_event(ev(), registry=FakeReg(tmp / "cur"),
+                      git=git_walk([C1, C2, C3]), reindex=lambda p: 1,
+                      synth_run=synth_second_fails)
+    check("[중요] 실패한 커밋을 넘지 않는다", r.commits_done == 1, r.summary)
+    check("  커서는 직전 완료 커밋", cursor_of(pc) == C1, cursor_of(pc))
+    check("  멈춘 사유를 남긴다", "문서 없음" in r.halted, r.halted)
+    check("  세 번째 커밋을 건드리지 않았다", hit["n"] == 2, str(hit["n"]))
+
+    print("\n[12-4] [중요] 소스 밖 변경만 있는 커밋 — 합성 없이 커서만 전진 (`#281`)")
+    rewind(pc)
+    called = []
+    r = process_event(
+        ev(), registry=FakeReg(tmp / "cur"),
+        git=git_walk([C1, C2], diffs={C1: "", C2: "Source/A.cpp"}),
+        reindex=lambda p: 1,
+        synth_run=lambda *a, **k: called.append(k.get("commit")) or synth_writes(*a, **k))
+    check("소스 밖 커밋에는 합성을 안 부른다", called == [C2], str(called))
+    check("[중요] 그래도 커서는 전진한다 (안 그러면 무한 재시도)",
+          cursor_of(pc) == C2, cursor_of(pc))
+    check("건너뛴 것을 센다", r.commits_nonsource == 1, r.summary)
+    check("  사유를 남긴다", any("소스 밖" in x for x in r.nonsource_notes),
+          str(r.nonsource_notes))
+
+    print("\n[12-5] 커서가 비어 있으면 시끄럽게 보고하고 전 이력을 걷지 않는다 (M2 금기)")
+    pn = make_project(tmp / "nocur")
+    # [중요] **둘 다 비어야** 이 경로다 — 워터마크가 있으면 [12-9] 의 이행 폴백이 맞다.
+    pn.config.write_text("project_id: Sim/Demo\nindex:\n  last_indexed_commit: ''\n",
+                         encoding="utf-8")
+    walked = []
+    r = process_event(ev(), registry=FakeReg(tmp / "nocur"),
+                      git=git_walk([C1, C2, C3]), reindex=lambda p: 1,
+                      synth_run=lambda *a, **k: walked.append(1))
+    check("[중요] 합성을 부르지 않는다", walked == [], str(walked))
+    check("커서 없음을 사유로 남긴다", "커서가 비어 있다" in r.skipped, r.skipped)
+    check("[중요] 「최신」이라고 말하지 않는다", "최신" not in r.skipped, r.skipped)
+
+    print("\n[12-6] 커서 키가 없는 구 config 에도 기록된다 (`index:` 아래 삽입)")
+    pn2 = make_project(tmp / "oldcfg")
+    pn2.config.write_text(CONFIG_NO_CURSOR.replace(
+        "  last_indexed_at: '2026-08-01T00:00:00'",
+        "  last_indexed_at: '2026-08-01T00:00:00'\n  analyzed_commit: " + "a" * 40),
+        encoding="utf-8")
+    r = process_event(ev(), registry=FakeReg(tmp / "oldcfg"), git=git_walk([C1]),
+                      reindex=lambda p: 1, synth_run=synth_writes)
+    check("걷고 기록한다", cursor_of(pn2) == C1, cursor_of(pn2))
+    from master.events.consumer import _update_cursor as _uc
+    pn3 = make_project(tmp / "insert")
+    pn3.config.write_text("project_id: Sim/Demo\nindex:\n  last_indexed_commit: x\n",
+                          encoding="utf-8")
+    check("[중요] 키가 없으면 새로 넣는다", _uc(pn3, C2) and cursor_of(pn3) == C2,
+          pn3.config.read_text(encoding="utf-8"))
+    pn4 = make_project(tmp / "noindex")
+    pn4.config.write_text("project_id: Sim/Demo\n", encoding="utf-8")
+    check("  `index:` 절이 없으면 조용히 넘기지 않고 실패를 알린다",
+          _uc(pn4, C2) is False)
+
+    print("\n[12-7] 커서가 이 이력의 조상이 아니면 사람에게 넘긴다 (되감김/강제 푸시)")
+    rewind(pc)
+    r = process_event(ev(), registry=FakeReg(tmp / "cur"),
+                      git=git_walk([], log=""), reindex=lambda p: 1,
+                      synth_run=synth_writes)
+    check("걸을 커밋 0 을 「최신」으로 접지 않는다",
+          "조상이 아니다" in r.skipped, r.skipped)
+
+    print("\n[12-8] 합성이 꺼져 있으면 커서를 전진시키지 않는다")
+    rewind(pc)
+    r = process_event(ev(), registry=FakeReg(tmp / "cur"), git=git_walk([C1]),
+                      reindex=lambda p: 1, synthesize=False)
+    check("[중요] 커서 그대로", cursor_of(pc) == "a" * 40, cursor_of(pc))
+    check("  사유를 남긴다", "합성이 꺼져" in r.halted, r.halted)
+    check("  그래프는 갱신한다", bool(r.graph_notes), str(r.graph_notes))
+
+    print("\n[12-9] 이행 — 커서 키가 없으면 **번 워터마크**를 출발점으로 삼고, 그것을 말한다")
+    pm = make_project(tmp / "migrate")
+    pm.config.write_text(CONFIG_NO_CURSOR.replace(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "9" * 40), encoding="utf-8")
+    r = process_event(ev(), registry=FakeReg(tmp / "migrate"), git=git_walk([C1]),
+                      reindex=lambda p: 1, synth_run=synth_writes)
+    check("걷는다 (「최초 합성 필요」로 접지 않는다)", r.commits_done == 1, r.summary)
+    check("출발점이 워터마크", r.cursor_from == "9" * 40, r.cursor_from)
+    check("[중요] 폴백을 조용히 하지 않는다", "워터마크" in r.cursor_note, r.cursor_note)
+    check("  그리고 커서를 적는다", cursor_of(pm) == C1, cursor_of(pm))
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")

@@ -43,7 +43,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..context_search.paths import ProjectPaths, resolve
+from ..context_search.paths import SOURCE_SUBDIR, ProjectPaths, resolve
 from ..projects.config import ConfigError, Registry, normalize_project_id
 from .spool import Batch, Event, Spool
 
@@ -71,6 +71,15 @@ class ProjectResult:
     canary_write_failed: int = 0   # [주의] 카나리 기록 자체가 실패한 횟수 (조용히 넘기지 않는다)
     review_written: str = ""       # 자동 코드리뷰 리포트 경로 (소 3.3.5)
     review_note: str = ""          # 리뷰 스킵/실패 사유
+    # ── 분석 커서 (`#278` — 커밋 하나씩) ──
+    cursor_from: str = ""          # 이 회차가 시작한 커서 (config.yaml 의 analyzed_commit)
+    cursor_note: str = ""          # 커서를 어디서 얻었는지 (이행: 워터마크 폴백)
+    cursor_to: str = ""            # 이 회차가 적어 둔 커서. 비면 **한 커밋도 못 끝냈다**
+    commits_total: int = 0         # 커서 → 현재 커밋 사이의 커밋 수
+    commits_done: int = 0          # 문서까지 끝나 커서를 전진시킨 커밋 수
+    commits_nonsource: int = 0     # 소스 밖 변경만 있어 합성 없이 전진시킨 커밋 수
+    nonsource_notes: list = field(default_factory=list)
+    halted: str = ""               # [중요] 걷기를 멈춘 사유. 멈췄으면 커서는 그 앞에 있다
 
     @property
     def ok(self) -> bool:
@@ -90,6 +99,15 @@ class ProjectResult:
                          (f" [중요]유실 {self.synth_lost}" if self.synth_lost else ""))
         if self.reindexed:
             parts.append(f"색인 {self.docs}")
+        if self.commits_total:
+            parts.append(f"커밋 {self.commits_done}/{self.commits_total}"
+                         + (f"(소스밖 {self.commits_nonsource})" if self.commits_nonsource else ""))
+        if self.cursor_to:
+            parts.append(f"커서 {self.cursor_to[:8]}")
+        if self.cursor_note:
+            parts.append(f"[주의] {self.cursor_note[:70]}")
+        if self.halted:
+            parts.append(f"[중요] 멈춤({self.halted[:60]})")
         if self.skipped:
             parts.append(f"건너뜀({self.skipped[:40]})")
         if self.error:
@@ -281,6 +299,72 @@ def _update_watermark(paths: ProjectPaths, commit: str) -> None:
     tmp.replace(cfg)
 
 
+def _note(r: "ProjectResult", why: str) -> None:
+    """건너뜀 사유를 **쌓는다.** 대입하면 앞 단계의 판정을 지운다."""
+    r.skipped = (r.skipped + " · " + why) if r.skipped else why
+
+
+def _update_cursor(paths: ProjectPaths, commit: str) -> bool:
+    """`config.yaml` 의 `index.analyzed_commit` 을 이 커밋으로 적는다 (`#280`).
+
+    [중요] **커밋 하나가 끝날 때마다** 부른다. 원전(`watcher/watch.py`)은 루프가 끝난 뒤
+    `save_state` 를 한 번 부르고, 그래서 중간에 죽으면 배치를 **처음부터** 다시 한다 —
+    그 재실행이 LLM 비용이다(사용자 요구가 원전보다 엄격한 자리).
+
+    [주의] **키가 없는 구 config 도 있다** — 그때는 `index:` 아래에 새로 넣는다. 조용히 아무
+    것도 안 하면 커서가 영원히 비어 판정이 계속 「미확인」에 머문다.
+    """
+    import re
+
+    cfg = paths.config
+    text = cfg.read_text(encoding="utf-8")
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+    text2 = re.sub(r"(^\s*analyzed_commit:\s*).*$", rf"\g<1>{commit}",
+                   text, count=1, flags=re.MULTILINE)
+    if text2 != text:
+        text2 = re.sub(r"(^\s*analyzed_at:\s*).*$", rf"\g<1>'{stamp}'",
+                       text2, count=1, flags=re.MULTILINE)
+    else:
+        m = re.search(r"^index:[ \t]*$", text, flags=re.MULTILINE)
+        if not m:
+            return False                        # `index:` 절이 없다 — 호출자가 알아야 한다
+        head, tail = text[:m.end()], text[m.end():]
+        text2 = f"{head}\n  analyzed_commit: {commit}\n  analyzed_at: '{stamp}'{tail}"
+    tmp = cfg.with_suffix(".tmp")
+    tmp.write_text(text2, encoding="utf-8")
+    tmp.replace(cfg)
+    return True
+
+
+def _commits_between(repo: Path, old: str, new: str, run) -> tuple:
+    """`old..new` 커밋 해시를 **오래된 순**으로. 반환 `(목록, 오류사유)`.
+
+    원전 `watcher/git_ops.get_commits_between` 과 같은 계약이다(그쪽도 `reverse()` 한다).
+    [주의] 실패를 빈 목록으로 접지 않는다 — 「걸을 커밋이 없다」와 구분되지 않는다.
+    """
+    rc, out = run(repo, "log", "--format=%H", f"{old}..{new}")
+    if rc != 0:
+        return [], f"git log {old[:8]}..{new[:8]} 실패 (rc={rc}): {out[:200]}"
+    hs = [x.strip() for x in out.splitlines() if x.strip()]
+    hs.reverse()
+    return hs, ""
+
+
+def _source_only(files: list[str]) -> list[str]:
+    """소스 디렉토리 밖은 버린다 (사용자 지시 2026-08-23 · §5.2-E).
+
+    [중요] **판정식을 새로 만들지 않는다** — `class_graph.list_source_files` 와 같은 두 겹
+    (`Source/` 접두 + 파서 확장자)이다. `config.yaml` 의 `include` 글롭으로 따로 짜면 매처가
+    둘이 되고, 그 둘은 언젠가 갈라진다(원전 대조에서 반복 확인된 부류).
+    """
+    from ..context_search.paths import SOURCE_SUBDIR
+    from ..graph import parse
+
+    prefix = f"{SOURCE_SUBDIR}/"
+    return [f for f in files
+            if f.startswith(prefix) and Path(f).suffix.lower() in parse.PARSE_EXTS]
+
+
 def _update_graphs(paths: ProjectPaths, changed: list[str], r: "ProjectResult") -> None:
     """관계 그래프 증분 (중 1.1). **LLM 0 이라 커밋 즉시 돈다.**
 
@@ -297,7 +381,7 @@ def _update_graphs(paths: ProjectPaths, changed: list[str], r: "ProjectResult") 
 
 
 def _synthesize(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
-                *, synth_run=None) -> None:
+                *, commit: str = "", synth_run=None) -> None:
     """컨텍스트 MD 합성 (중 1.2). **여기가 트윈을 자라게 한다.**
 
     [중요] 실패·거부를 **삼키지 않는다.** 원본이 판별 기준을 적어 뒀다 — *"skip 후 워터마크가
@@ -307,7 +391,10 @@ def _synthesize(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
     from ..context_synth import synth as cs
     fn = synth_run or cs.run
     try:
-        st = fn(paths, changed=changed, commit=r.to_commit)
+        # [중요] 스탬프는 **지금 걷고 있는 커밋**이다 — `to_commit`(HEAD)을 넘기면 아직
+        #    분석하지 않은 커밋을 근거로 적는 것이고, 그것이 거짓 신선도다(`#280`).
+        #    실측: 회귀 칸 [12-4] 가 이 자리를 잡았다.
+        st = fn(paths, changed=changed, commit=(commit or r.to_commit))
     except cs.SynthError as e:
         r.synth_note = f"합성 건너뜀: {e}"
         return
@@ -329,7 +416,7 @@ def _synthesize(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
 
 
 def _auto_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
-                 *, review_run=None) -> None:
+                 *, commit: str = "", review_run=None) -> None:
     """자동 코드리뷰 생산자 (소 3.3.5 · `#205`) — 유저 커밋의 변경분을 리뷰해 되먹임의
     원료(`reviews/<작성자>/`)를 만든다.
 
@@ -340,7 +427,7 @@ def _auto_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
     from ..context_synth import review_gen as rg
     fn = review_run or rg.review_commit
     try:
-        rv = fn(paths, r.to_commit, changed)
+        rv = fn(paths, (commit or r.to_commit), changed)
     except Exception as e:                              # noqa: BLE001
         r.review_note = f"[중요] 리뷰 생성 예외: {type(e).__name__}: {e}"
         if not append_canary(paths, kind="review-lost",
@@ -422,14 +509,6 @@ def process_event(ev: Event, *, registry: Registry | None = None,
     rc, out = run(paths.repo, "rev-parse", "HEAD")
     r.to_commit = out.strip() if rc == 0 else ""
 
-    changed: list[str] = []
-    if r.from_commit and r.to_commit and r.from_commit != r.to_commit:
-        rc, out = run(paths.repo, "diff", "--name-only",
-                      r.from_commit, r.to_commit, "--", "Source")
-        if rc == 0:
-            changed = [x.strip() for x in out.splitlines() if x.strip()]
-            r.source_changed = len(changed)
-
     # ── [중요] 여기가 트윈이 자라는 지점이다 (중 1.1 · 중 1.2) ──────────
     #
     # 원본 `watch.py` 의 커밋 처리 순서를 그대로 따른다:
@@ -440,22 +519,116 @@ def process_event(ev: Event, *, registry: Registry | None = None,
     # 순서가 뒤집히면 안 된다: ①이 그래프를 **근거로** 읽으므로 그래프가 먼저면 좋지만,
     # 원본은 MD 를 먼저 만든다(그래야 `source_commit` 워터마크가 stale 판정의 기준이 된다).
     # 우리는 **그래프를 먼저** 돌린다 — LLM 0 이라 싸고, 합성이 최신 그래프를 근거로 쓴다.
-    if changed:
-        _update_graphs(paths, changed, r)
-        if synthesize:
-            _synthesize(paths, changed, r, synth_run=synth_run)
+    #
+    # ── [중요] 커밋을 **하나씩** 걷는다 (`#278`·`#280`, 사용자 지시 2026-08-23) ────
+    #
+    # 기준은 `config.yaml` 의 **분석 커서**다 — 클론의 fetch 전 HEAD 가 아니다. 그 둘은
+    # 갈라진다: 클론은 매 회차 ff 로 전진하는데 커서는 *문서가 끝난* 커밋에서만 전진하므로,
+    # HEAD 를 기준으로 삼으면 **끝나지 않은 커밋의 변경이 다음 회차 diff 에서 사라진다.**
+    # 원전도 `get_commits_between(last_hash, actual)` 로 커밋을 하나씩 걷는다 — 우리 이식이
+    # 그 루프를 HEAD diff 하나로 뭉갠 것이 누락이었다(`#279`).
+    from ..projects.config import ProjectConfig
+    try:
+        _cfg = ProjectConfig.load(paths.config)
+    except Exception as e:                                  # noqa: BLE001
+        r.error = f"config 를 읽지 못했다: {type(e).__name__}: {e}"
+        return r
+    cursor = (_cfg.analyzed_commit or "").strip()
+    if not cursor and (_cfg.last_indexed_commit or "").strip():
+        # [중요] **이행 폴백 — 값을 지어내는 것이 아니다.** `last_indexed_commit` 은 `#244`·`#274`
+        #    게이트가 *"전 그룹 합성이 끝났다"* 를 확인했을 때만 찍힌 값이라, 커서가 뜻하는
+        #    *"여기까지 문서가 끝났다"* 와 **같은 주장**이다. 이미 번 값을 새 키로 옮기는 것과
+        #    없는 근거를 만드는 것은 다르다 — 후자는 `#275` 가 거부한 그것이다.
+        #    [주의] 폴백을 **말한다.** 조용히 쓰면 다음 세션이 커서가 원래 있었다고 읽는다.
+        cursor = (_cfg.last_indexed_commit or "").strip()
+        r.cursor_note = (f"커서가 비어 워터마크({cursor[:8]})를 출발점으로 삼았다 — "
+                         "같은 주장이다(#274 게이트가 확인하고 찍은 값). 이번 회차가 커서를 적는다")
+    r.cursor_from = cursor
+
+    if not cursor:
+        # [중요] **「모른다」를 「최신」과 가른다** (`#275` 와 같은 부류). 커서가 비면 전 이력을
+        #    걷고 싶어지는데 그것이 **M2 금기**(1,055건 일괄 재생성)다. 최초 합성은 온보딩
+        #    `synth` 단계의 일이고, 여기서는 **시끄럽게 보고**한다.
+        r.skipped = ("분석 커서가 비어 있다 — 최초 합성이 아직이다"
+                     " (`python -m master.projects.onboard <프로젝트> --confirm`)."
+                     " 전 이력을 걷지 않는다: 일괄 재생성은 M2 금기다")
+    elif cursor == r.to_commit:
+        r.skipped = f"최신 — 커서가 현재 커밋과 같다 ({cursor[:8]})"
+    else:
+        commits, err = _commits_between(paths.repo, cursor, r.to_commit, run)
+        if err:
+            r.error = err
+            return r
+        r.commits_total = len(commits)
+        if not commits:
+            # [주의] 커서가 이 이력의 조상이 아니다 — 되감김·강제 푸시·잘못 적힌 값.
+            #    조용히 「최신」으로 접으면 그 프로젝트는 영원히 안 자란다.
+            r.skipped = (f"커서 {cursor[:8]} → {r.to_commit[:8]} 사이에 커밋이 없다 — "
+                         "커서가 이 이력의 조상이 아니다(되감김/강제 푸시?). 사람이 봐야 한다")
+        prev = cursor
+        for c in commits:
+            # [중요] 경계는 **두 겹**이다 — pathspec 으로 좁히고(`class_graph` 관례),
+            #    `_source_only` 가 확장자로 한 번 더 자른다. 한 겹이면 인자를 한 번 잘못
+            #    넘길 때 `Content/`(워킹트리의 93%)가 조용히 들어온다.
+            rc, out = run(paths.repo, "diff", "--name-only", prev, c,
+                          "--", SOURCE_SUBDIR)
+            if rc != 0:
+                r.halted = f"{c[:8]} diff 실패 — 커서를 전진시키지 않는다: {out[:120]}"
+                break
+            touched = [x.strip() for x in out.splitlines() if x.strip()]
+            changed = _source_only(touched)
+            if not changed:
+                # 사용자 지시: **분석 대상이 소스 디렉토리 밖이면 스킵한다.**
+                # [중요] 그때 **커서는 전진시킨다** — 안 그러면 매 회차가 같은 커밋을 다시
+                #    걷는다(사용자 확인 2026-08-23: *"안 그럼 무한히 재시도할테니"*).
+                if not _update_cursor(paths, c):
+                    r.halted = f"{c[:8]} 커서 기록 실패 — config 에 `index:` 절이 없다"
+                    break
+                r.cursor_to, prev = c, c
+                r.commits_nonsource += 1
+                r.nonsource_notes.append(f"{c[:8]}: 소스 밖 변경만 — 합성 없음")
+                continue
+            r.source_changed += len(changed)
+            _update_graphs(paths, changed, r)
+            if not synthesize:
+                # [중요] 합성이 꺼졌으면 **커서를 전진시키지 않는다.** 그래프는 풀 스캔으로
+                #    복구되는 파생 자산이지만 문서는 아니다 — 전진시키면 그 커밋의 문서가
+                #    영구히 안 만들어진다.
+                r.halted = "합성이 꺼져 있다 — 그래프만 갱신하고 커서는 그대로 둔다"
+                break
+            _synthesize(paths, changed, r, commit=c, synth_run=synth_run)
             # ④ 자동 코드리뷰 (소 3.3.5) — 합성과 같은 게이트(synthesize) 아래 둔다:
             #    노드가 죽어 합성을 껐다면 리뷰도 돌 수 없는 상태다.
-            _auto_review(paths, changed, r, review_run=review_run)
+            _auto_review(paths, changed, r, commit=c, review_run=review_run)
+            # [중요] **그 커밋의 문서가 실제로 생겼는지 본다.** 합성 실패·게이트 거부를
+            #    「완료」로 세면 커서가 그 위를 넘어가고, 그 커밋의 변경은 영구 유실이다
+            #    (원전이 가진 구멍 — `process_commit` 은 예외를 안 던지고 호출부가 그대로
+            #    `save_state` 를 부른다. 우리는 멈춘다).
+            from ..context_synth import synth as _cs
+            missing = [k for k in _cs.group(changed)
+                       if not _cs.doc_path(paths, k).is_file()]
+            if missing:
+                r.halted = (f"{c[:8]} 의 그룹 {len(missing)}개가 문서 없음 — 커서를 "
+                            f"전진시키지 않는다(다음 회차가 이 커밋을 다시 한다)")
+                break
+            if not _update_cursor(paths, c):
+                r.halted = f"{c[:8]} 커서 기록 실패 — config 에 `index:` 절이 없다"
+                break
+            r.cursor_to, prev = c, c
+            r.commits_done += 1
 
     # ── 재색인은 컨텍스트가 실제로 바뀐 경우에만 ──────────────
+    #
+    # [중요] 사유를 **덮지 않고 쌓는다.** 걷기 단계가 이미 사유를 남겼을 수 있는데(커서가
+    #    최신 · 커서 없음 · 조상 아님) 여기서 대입하면 그 판정이 사라진다 — 판정을 했는데
+    #    안 보이면 「안 한 것」과 구분되지 않는다(이 저장소에서 반복 확인된 부류).
     now_digest = context_digest(paths)
     if not now_digest:
-        r.skipped = "context/ 가 없다"
+        _note(r, "context/ 가 없다")
     elif now_digest == read_digest(paths):
-        r.skipped = ("컨텍스트 MD 변화 없음"
-                     + (" — 합성이 문서를 바꾸지 않았다 (게이트 거부/실패는 위 사유 참조)"
-                        if r.source_changed else ""))
+        _note(r, "컨텍스트 MD 변화 없음"
+                 + (" — 합성이 문서를 바꾸지 않았다 (게이트 거부/실패는 위 사유 참조)"
+                    if r.source_changed else ""))
     else:
         do = reindex or _default_reindex
         try:
@@ -481,8 +654,8 @@ def process_event(ev: Event, *, registry: Registry | None = None,
             _update_watermark(paths, r.to_commit)
         else:
             # 조용히 넘기지 않는다 — 「안 찍었다」와 「찍었다」는 다른 상태다.
-            r.skipped = ((r.skipped + " · ") if r.skipped else "") + \
-                f"워터마크 미기입 — 합성이 안 끝났다({why}). 기준을 전진시키면 남은 그룹의 변경이 유실된다"
+            _note(r, f"워터마크 미기입 — 합성이 안 끝났다({why}). "
+                     f"기준을 전진시키면 남은 그룹의 변경이 유실된다")
     return r
 
 

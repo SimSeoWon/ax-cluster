@@ -189,10 +189,41 @@ def _probe_synth(paths) -> tuple:
         return False, "합성할 그룹이 없다 (Source/ 경계를 확인하라)"
     missing = [k for k in groups if not synth.doc_path(paths, k).is_file()]
     have = len(groups) - len(missing)
+    unk = unstamped(paths)
+    # [중요] **「모른다」를 세어서 말한다** (`#282`, 사용자 지시 2026-08-23). 스탬프 없는 문서는
+    #    「최신」이 아니라 **미확인**이다 — 그 값이 최신화 판단의 한쪽이므로, 없으면 그 문서에
+    #    대해서는 판단 자체가 불가능하다. [주의] 여기서 **채우지 않는다** — 추정 스탬프는
+    #    그 문서를 영구히 「최신」으로 굳혀 재합성을 다시는 안 걸리게 만든다(`#275`).
+    tail = f" · [주의] 스탬프 미확인 {unk[0]}/{unk[1]}" if unk[0] else ""
     if missing:
         return False, (f"{have}/{len(groups)} 그룹 — {len(missing)}개 미합성 "
-                       f"(예: {', '.join(sorted(missing)[:2])})")
-    return True, f"{have}/{len(groups)} 그룹 완료"
+                       f"(예: {', '.join(sorted(missing)[:2])}){tail}")
+    return True, f"{have}/{len(groups)} 그룹 완료{tail}"
+
+
+def unstamped(paths) -> tuple:
+    """컨텍스트 MD 중 `source_commit` 이 **없는** 것 `(미확인, 전체)` (`#282`).
+
+    [중요] 이 값이 0 이 아니면 그만큼은 **최신인지 알 수 없다.** `stale` 판정이 저장 스탬프와
+    문서 스탬프를 비교하므로, 문서 쪽이 없으면 `-1 == -1` 로 조용히 통과한다(`#275` 가 도메인
+    축에서 잰 그 구멍이 컨텍스트 축에도 있다 — 실측 2026-08-23 ModularStage 1,010/1,055).
+
+    [주의] **채우는 함수가 아니다.** 세는 함수다.
+    """
+    from ..context_synth import md as md_mod
+
+    ctx = paths.context
+    if not ctx.is_dir():
+        return 0, 0
+    total = miss = 0
+    for f in ctx.rglob("*.md"):
+        total += 1
+        try:
+            if md_mod.read_source_commit(f.read_text(encoding="utf-8", errors="replace")) == "-1":
+                miss += 1
+        except OSError:
+            miss += 1
+    return miss, total
 
 
 def _probe_index(paths) -> tuple:
