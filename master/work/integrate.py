@@ -50,6 +50,8 @@
 """
 from __future__ import annotations
 
+import sys
+
 import posixpath
 from dataclasses import dataclass, field
 
@@ -199,7 +201,9 @@ def local_baseline(paths, base_commit: str):
         import yaml
         cfg = yaml.safe_load(paths.config.read_text(encoding="utf-8")) or {}
         indexed = str(((cfg.get("index") or {}).get("last_indexed_commit")) or "")
-    except Exception:                                    # noqa: BLE001
+    except Exception as e:                               # noqa: BLE001
+        _log(f"트윈 커밋을 읽지 못했다 ({paths.config}) — 동결 판정을 못 한다: "
+             f"{type(e).__name__}: {e}")
         return None
     if not indexed or not base_commit:
         return None
@@ -246,7 +250,11 @@ def classes_in(paths, files) -> list:
                            if r["file"] and str(r["file"]).replace("\\", "/") in want})
         finally:
             conn.close()
-    except Exception:                                    # noqa: BLE001
+    except Exception as e:                               # noqa: BLE001
+        # [중요] 클래스 목록이 비면 **층2 가 선언부 없이 판정한다** — 그것이 놓침의 원인이다
+        #    (`#85` 실측). 조용히 빈 목록을 돌려주면 「근거 없이 통과」와 구분되지 않는다.
+        _log(f"[중요] 그래프에서 클래스를 읽지 못했다 — 층2 grounding 이 빈다: "
+             f"{type(e).__name__}: {e}")
         return []
 
 
@@ -264,7 +272,9 @@ def layer2_grounding(paths, files) -> str:
     try:
         from .skeleton import include_decls
         return include_decls(paths, names)
-    except Exception:                                    # noqa: BLE001
+    except Exception as e:                               # noqa: BLE001
+        _log(f"[중요] 선언부를 모으지 못했다 ({len(names)}개 클래스) — 층2 가 grounding 없이 "
+             f"판정한다: {type(e).__name__}: {e}")
         return ""
 
 
@@ -497,6 +507,16 @@ def run_tests(facts, *, tree: str, project: str, test_filter: str = "",
     # [중요] 진짜 불합격이다
     names = ", ".join(t.name or t.path for t in r.failures()[:3])
     return r, True, f"[중요] 층3 RunTests 불합격 — {r.summary()}: {names}"
+
+
+def _log(msg: str) -> None:
+    """통합 경로의 사유 기록 (`#285` 와 같은 계약). stderr → 저널.
+
+    [중요] **층2 grounding 이 조용히 비면 판정 품질이 조용히 떨어진다.** `#85` 실측이
+    *"차이를 만드는 것은 모델이 아니라 grounding 이다"* 였다 — 5개 후보 중 4개가 선언부 없이는
+    없는 enum 멤버를 놓쳤다. 그러니 grounding 을 못 모은 것은 **말해야 하는 사건**이다.
+    """
+    print(f"[integrate] {msg}", file=sys.stderr, flush=True)
 
 
 def report_to_redmine(subject: str, body: str, *, api_key: str = "", url: str = "",
@@ -815,8 +835,10 @@ def _lay_signals(paths, itg: Integration, *, api=runner._api) -> None:
             # 실측 스키마 — task 레코드에 title 은 없다. 사람이 읽을 수 있는 순서로 폴백:
             # target_file(무엇을 만들었나) → task_id (신호 유실이 제일 비싸다)
             intent = (t.get("title") or t.get("target_file") or "").strip() or a.task_id
-        except Exception:                                    # noqa: BLE001
-            pass
+        except Exception as e:                               # noqa: BLE001
+            # 폴백은 위 주석대로 `task_id` 다 — 다만 **왜 폴백했는지는 남긴다** (`#285`).
+            _log(f"태스크 제목을 못 읽어 intent 를 task_id 로 둔다 ({a.task_id}): "
+                 f"{type(e).__name__}: {e}")
         try:
             SG.append_signal(paths, SG.make_record(
                 intent=intent,

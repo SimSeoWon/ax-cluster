@@ -286,8 +286,58 @@ def api_index_status(paths) -> dict:
 
     [주의] 실측 2026-08-13: 내가 `documents` 로 냈더니 화면이 **DOCUMENTS 0** 을 보였다(문서는
     1,055개 있었다). 프론트엔드를 그대로 쓰는 복각이므로 **모양을 맞추는 쪽이 우리다.**
+
+    ## [중요] 필드 다섯이 빠져 있었다 — 이식 드리프트 복구 (`#295`)
+
+    원전 `search_routes.py:409` 는 `status`·`context_md_files`·`bm25_documents`·
+    `needs_rebuild`·`vector_available`·`bm25_available` 을 함께 낸다. 그리고 **`indexed_documents`
+    는 벡터 색인의 실측**(`_index.live.count()`)이지 파일 개수가 아니다.
+
+    [중요] 우리 종전 구현은 `_doc_count`(=`context/**/*.md` **파일 수**)를 `indexed_documents`
+    로 냈다. 그러면 **색인이 실패해도 화면은 정상으로 보인다** — 파일은 그대로 있으니까.
+    원전이 `needs_rebuild = count != md_count` 를 둔 이유가 정확히 그것이다(원전 주석:
+    *"과거 len(tag_cache) 는 draft·빈 문서를 안 걸러 벡터보다 많아 needs_rebuild 가 상시
+    true 였음"* — 그쪽도 같은 자리에서 한 번 틀렸다).
+
+    [주의] 못 읽는 항목은 **`None`** 으로 두고 `available` 을 False 로 낸다 — 0 으로 두면
+    「비었다」와 「못 읽었다」가 섞인다(이 세션에서 반복 확인된 부류).
     """
-    out = {"indexed_documents": _doc_count(paths), "generation": "", "updating": False}
+    # [중요] **분모는 「색인 가능한」 문서다** — 파일 개수가 아니다. 원전이 같은 자리에서 한 번
+    #    틀렸고 주석으로 남겼다(*"과거 len(tag_cache) 는 draft·빈 문서를 안 걸러 벡터보다 많아
+    #    needs_rebuild 가 상시 true 였음"*). 우리 정본은 `documents.iter_documents` 다 — 색인이
+    #    실제로 넣는 그 목록이라, 그것으로 세지 않으면 판정이 영구히 「재색인 필요」가 된다.
+    try:
+        from ..context_search.documents import iter_documents
+        md = sum(1 for _ in iter_documents(paths.context))
+    except Exception:                                        # noqa: BLE001
+        md = _doc_count(paths)          # 최후 폴백 — 그러면 판정이 헐거워진다
+    vec = bm25 = None
+    try:
+        from ..context_search.index import open_index
+        vec = int(open_index(paths.name).count())
+    except Exception:                                        # noqa: BLE001
+        pass
+    try:
+        from ..context_search.bm25 import Bm25Index
+        bm25 = int(Bm25Index(paths).count())
+    except Exception:                                        # noqa: BLE001
+        pass
+    out = {
+        # [중요] 화면이 읽는 이름 — 벡터 색인 실측이다. 못 읽으면 0 이 아니라 그 사실을
+        #    `vector_available: False` 로 말한다.
+        "indexed_documents": vec if vec is not None else 0,
+        "context_md_files": md,
+        "bm25_documents": bm25 if bm25 is not None else 0,
+        # [중요] **불일치를 드러내는 것이 이 API 의 값이다.** 못 읽었으면 「필요 없다」고 하지
+        #    않는다 — 모르는 것을 괜찮다고 말하지 않는다.
+        "needs_rebuild": (vec != md) if vec is not None else True,
+        "vector_available": vec is not None,
+        "bm25_available": bool(bm25),
+        "status": ("정상" if (vec is not None and vec == md)
+                   else "재색인 필요" if vec is not None else "색인을 읽지 못했다"),
+        "generation": "",
+        "updating": False,
+    }
     try:
         from ..context_search.generation import current
         out["generation"] = current(paths)

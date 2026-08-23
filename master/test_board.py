@@ -303,6 +303,44 @@ def test_tag_cloud_counts_context_documents() -> None:
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_index_status_reveals_mismatch() -> None:
+    """[중요] **색인 상태는 불일치를 드러내야 한다** (`#295`, 이식 드리프트 복구).
+
+    원전 `search_routes.py:409` 는 `status`·`context_md_files`·`bm25_documents`·
+    `needs_rebuild`·`vector_available`·`bm25_available` 을 함께 낸다. 우리는 그 다섯이 없었고,
+    더 나쁘게 **`indexed_documents` 에 파일 개수를 냈다** — 그러면 색인이 실패해도 화면은
+    정상으로 보인다(파일은 그대로 있으니까).
+
+    [주의] **분모는 「색인 가능한」 문서다** — 파일 개수로 세면 판정이 영구히 「재색인 필요」가
+    된다. 원전이 같은 자리에서 한 번 틀리고 주석으로 남겼고, 나도 이 커밋에서 처음 그렇게 짜
+    ModularStage 를 961/1055 로 읽었다(실제로는 961/961 이 맞다 — 제외 규칙·빈 문서).
+    """
+    from master.context_search.paths import ProjectPaths
+    from master.webui import routes as R
+
+    print("\n[색인] 상태가 불일치를 드러낸다 (#295)")
+    tmp = Path(tempfile.mkdtemp(prefix="ax-idxst-"))
+    p = ProjectPaths(name="T", root=tmp / "T")
+    (p.context / "Source").mkdir(parents=True)
+    (p.context / "Source" / "A.md").write_text("---\ntags: [a]\n---\n본문", encoding="utf-8")
+    # [중요] 제외·빈 문서는 분모에서 빠진다 — 색인이 넣지 않는 것을 분모에 넣으면 판정이 거짓이 된다
+    (p.context / "_domains").mkdir(parents=True)
+    (p.context / "_domains" / "D.md").write_text("---\ntags: [d]\n---\n본문", encoding="utf-8")
+    (p.context / "Source" / "empty.md").write_text("", encoding="utf-8")
+
+    d = R.api_index_status(p)
+    for k in ("status", "indexed_documents", "context_md_files", "bm25_documents",
+              "needs_rebuild", "vector_available", "bm25_available"):
+        check(f"필드 `{k}` 가 있다 (원전 계약)", k in d, str(sorted(d)))
+    check("[중요] 분모는 색인 가능한 문서 1건 (`_domains`·빈 문서 제외)",
+          d["context_md_files"] == 1, f"{d['context_md_files']} {d}")
+    # 색인이 없는 프로젝트 — [중요] **「모른다」를 「괜찮다」로 접지 않는다**
+    check("[중요] 색인을 못 읽으면 재색인 필요로 답한다", d["needs_rebuild"] is True, str(d))
+    check("  그리고 그 사실을 말한다 (0 으로 뭉개지 않는다)",
+          d["vector_available"] is False and "읽지 못했다" in d["status"], str(d))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (test_board_lists_md_not_ontology, test_detail_carries_source_contents,
                test_korean_names_allowed_traversal_blocked,
@@ -311,7 +349,8 @@ def main() -> int:
                test_delete_archives_instead_of_removing, test_writes_are_atomic,
                test_chat_history_round_trip, test_frontmatter_parses_our_format,
                test_create_without_llm_says_so, test_create_refuses_empty_topic,
-               test_tag_cloud_counts_context_documents):
+               test_tag_cloud_counts_context_documents,
+               test_index_status_reveals_mismatch):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_board: {PASS}/{total} 통과")
