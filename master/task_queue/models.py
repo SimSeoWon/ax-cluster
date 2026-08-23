@@ -180,9 +180,11 @@ class RedmineNoteReq(BaseModel):
 class RedmineIssueReq(BaseModel):
     """이슈 생성 대행 (#226 — 원전 `redmine_tracker.create_issue`·`create_review_issue`).
 
-    [중요] **프로젝트를 인자로 받지 않는다** — `ModularStage` 하나이고 새 프로젝트를 만들지
-    않는 것이 규칙이다(`docs/10-references.md` §10.1). 인자로 열어 두면 언젠가 새 프로젝트가
-    생긴다.
+    [중요] **레드마인 프로젝트를 직접 받지 않는다** — 아래 `project` **태그**(`#257`)가 정하고,
+    그 태그 → 레드마인 식별자 변환은 `<트윈>/config.yaml` 의 `redmine.project` 가 한다(`#293`).
+    [주의] 종전 서술은 *"`ModularStage` 하나이고 새 프로젝트를 만들지 않는 것이 규칙"* 이었다.
+    사용자가 정한 것은 「**AX 인프라 이슈**를 게임 프로젝트와 분리하지 않는다」(2026-08-09)이고
+    「레드마인 프로젝트는 하나다」가 아니었다 — 게임 프로젝트가 늘면 그 일감의 자리도 늘어난다.
     """
     # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
     #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).

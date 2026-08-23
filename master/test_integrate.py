@@ -662,9 +662,21 @@ def test_redmine_without_key_says_so_instead_of_silently_skipping() -> None:
     import os
     saved = os.environ.pop("AX_REDMINE_API_KEY", None)
     try:
-        msg = I.report_to_redmine("제목", "본문")
+        # [주의] 프로젝트는 준다 — 그걸 안 주면 **다른 사유**로 먼저 걸린다(아래 칸)
+        msg = I.report_to_redmine("제목", "본문", project_id=1)
         check("건너뛴다고 말한다", "건너뜀" in msg, msg)
         check("어디서 키를 찾는지 알려준다", "AX_REDMINE_API_KEY" in msg, msg)
+
+        # [중요] **등재 대상은 그 프로젝트의 config 가 정한다** (`#293`). 종전 기본값은
+        #    `project_id=1`(modularstage) 하드코딩이라 NS 의 실패가 **남의 프로젝트로**
+        #    등재됐다. 폴백하지 않는 것이 계약이다.
+        m2 = I.report_to_redmine("제목", "본문")
+        check("[중요] 프로젝트를 안 주면 등재하지 않는다", "건너뜀" in m2, m2)
+        check("  사유가 프로젝트를 지목한다", "어느 프로젝트인지" in m2, m2)
+        m3 = I.report_to_redmine("제목", "본문", project="레드마인미설정프로젝트")
+        check("[중요] `redmine.project` 가 없으면 **폴백하지 않는다**",
+              "건너뜀" in m3 and "폴백하지 않는다" in m3, m3)
+        check("  다른 프로젝트에 쓰면 오염이라고 말한다", "오염" in m3, m3)
     finally:
         if saved is not None:
             os.environ["AX_REDMINE_API_KEY"] = saved

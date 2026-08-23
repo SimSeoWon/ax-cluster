@@ -198,6 +198,11 @@ class ProjectConfig:
     #    부분 완료가 「완료」로 보고되고, 그것이 `#274` 가 고친 바로 그 거짓 보고다.
     analyzed_commit: str = ""
     analyzed_at: str = ""
+    # [중요] **이 프로젝트의 일감이 등재될 레드마인 프로젝트** (`#293`). 비어 있으면 **폴백하지
+    #    않는다** — 조용히 남의 프로젝트로 떨어지면 그것이 오염이다(`#257` 이 태그에서 내린 것과
+    #    같은 판단). [주의] **AX 인프라 이슈는 이 값과 무관하다** — 그것은 사용자 확정
+    #    (2026-08-09)대로 `ModularStage` 에 둔다. 여기 값은 *게임 소스 일감*의 자리다.
+    redmine_project: str = ""
     include: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
     workshops: dict[str, Workshop] = field(default_factory=dict)
@@ -226,6 +231,7 @@ class ProjectConfig:
             last_indexed_at=str(index.get("last_indexed_at") or ""),
             analyzed_commit=str(index.get("analyzed_commit") or ""),
             analyzed_at=str(index.get("analyzed_at") or ""),
+            redmine_project=str((data.get("redmine") or {}).get("project") or ""),
             include=list(index.get("include") or []),
             exclude=list(index.get("exclude") or []),
             raw=data,
@@ -255,6 +261,10 @@ class ProjectConfig:
         )
         data["index"] = index
         data["engine"] = self.engine
+        # [주의] `redmine:` 절은 값이 있을 때만 쓴다 — 빈 절을 만들면 "설정했는데 비었다" 와
+        #    "아직 안 정했다" 가 구별되지 않는다.
+        if self.redmine_project:
+            data["redmine"] = {"project": self.redmine_project}
         # [중요] **`init:`(초기화 사양 오버레이, #266)을 `engine:` 뒤로 보낸다.** `dict(self.raw)`
         #    로 시작하므로 그대로 두면 `version:` 보다 **앞에** 찍힌다 — 사람이 읽는 파일이라
         #    순서가 내용이다. 모르는 키의 통과는 그대로 두고(그것이 raw 의 값이다) **우리가 쓰는

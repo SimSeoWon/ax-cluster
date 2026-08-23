@@ -408,11 +408,21 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
     @app.get("/api/v1/redmine/issues")
     def redmine_issues_ep(status: str = "open", tracker: str = "", fixed_version: str = "",
                           limit: int = 25, offset: int = 0,
-                          sort: str = "updated_on:desc"):
-        """이슈 목록 (원전 `list_issues`). 기본 `status=open` — 우리 규약에서 「해결」도 열린 것."""
-        from ..redmine import list_issues
-        return list_issues(status=status, tracker=tracker, fixed_version=fixed_version,
-                           limit=limit, offset=offset, sort=sort)
+                          sort: str = "updated_on:desc", project: str = ""):
+        """이슈 목록 (원전 `list_issues`). 기본 `status=open` — 우리 규약에서 「해결」도 열린 것.
+
+        [중요] **읽기도 프로젝트 축을 받는다** (`#293`). 안 주면 AX 인프라 프로젝트를 본다 —
+        읽기는 오염이 아니므로 폴백해도 되지만, **무엇을 봤는지 응답에 적는다.**
+        """
+        from ..redmine import AX_PROJECT_ID, list_issues, project_of
+        target = project_of(project) if (project or "").strip() else AX_PROJECT_ID
+        if (project or "").strip() and not target:
+            return {"error": f"`{project}` 의 config.yaml 에 `redmine.project` 가 없다"}
+        out = list_issues(status=status, tracker=tracker, fixed_version=fixed_version,
+                          limit=limit, offset=offset, sort=sort, project=target)
+        if isinstance(out, dict):
+            out["redmine_project"] = target      # 무엇을 봤는지 말한다
+        return out
 
     @app.get("/api/v1/redmine/meta")
     def redmine_meta_ep():
@@ -428,11 +438,23 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
 
     @app.post("/api/v1/redmine/issue")
     def redmine_create_issue_ep(req: RedmineIssueReq):
-        """이슈 생성 대행 (원전 `create_issue`). 프로젝트는 고정 — 새 프로젝트를 만들지 않는다."""
-        from ..redmine import create_issue
+        """이슈 생성 대행 (원전 `create_issue`).
+
+        [중요] **등재 대상은 요청의 프로젝트 태그가 정한다** (`#293`, 사용자 지적 2026-08-24).
+        종전 주석은 *"프로젝트는 고정 — 새 프로젝트를 만들지 않는다"* 였는데, 사용자가 정한 것은
+        「**AX 인프라 이슈**를 게임 프로젝트와 분리하지 않는다」이고(2026-08-09) 「레드마인
+        프로젝트는 하나다」가 아니었다. 게임 프로젝트가 늘면 그 일감의 자리도 늘어난다.
+        [주의] **폴백하지 않는다** — `config.yaml` 에 `redmine.project` 가 없으면 거부한다.
+        조용히 남의 프로젝트에 쓰면 그것이 오염이다(`#257` 과 같은 판단).
+        """
+        from ..redmine import create_issue, project_of
+        target = project_of(req.project or "")
+        if not target:
+            return {"error": f"`{req.project or '(태그 없음)'}` 의 config.yaml 에 "
+                             "`redmine.project` 가 없다 — 폴백하지 않는다"}
         r = create_issue(req.subject, req.description, tracker_name=req.tracker_name,
-                         priority_name=req.priority_name)
-        _tq_log(f"[redmine] 이슈 생성 → {r}", root)
+                         priority_name=req.priority_name, project=target)
+        _tq_log(f"[redmine] 이슈 생성 project={target} → {r}", root)
         return r
 
     @app.post("/api/v1/redmine/link-commit")

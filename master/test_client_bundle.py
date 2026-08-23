@@ -613,13 +613,59 @@ def test_merge_never_replaces_existing() -> None:
           f"{len(merged)} vs {len(empty_doc)}")
 
 
+def test_claude_md_body_has_a_project_axis() -> None:
+    """[중요] **본문에 프로젝트 축이 있어야 한다** (`#290`, 사용자 지적 2026-08-24).
+
+    종전에는 `payload/CLAUDE.md` **한 벌**을 넣었고 그 내용이 ModularStage 문서였다. 주석은
+    *"`/init` 산출 정본"* 이라 적었지만 실제로는 **MS 의** 산출물이다 — 프로젝트가 하나일 때는
+    구별되지 않았고, NS 를 붙이자 드러났다: NS 체크아웃이 *"ModularStage … mission system …
+    hexagonal prefab modules"* 를 받았고 거기엔 그런 것이 없다.
+    **매 세션 읽히는 문서의 거짓 서술이 코드가 덜 된 것보다 비싸다**(`docs/12` §12.4).
+    """
+    print("\n[본문] 프로젝트별로 생성된다 (#290)")
+
+    ns = bundle.claude_md_body("NS")
+    check("[중요] NS 본문에 ModularStage 가 없다",
+          "ModularStage" not in ns and "hexagonal" not in ns, ns[:200])
+    # [중요] **실측은 본문이 아니라 관리 블록에 있다** (사용자 지시 2026-08-24) — 본문은
+    #    병합이 건드리지 않으므로 거기 적으면 첫 배달 때 굳어 늙는다. 블록은 배달마다 갈린다.
+    check("본문은 실측을 적지 않고 블록을 가리킨다",
+          "AX 관리 블록에 있다" in ns and "NS.uproject" not in ns, ns[:400])
+    f = bundle.probe("192.168.0.33", "user", r"C:\Users\USER\Documents\NS",
+                     "ssh", "requester")
+    blk = bundle.managed_block("NS", f)
+    check("[중요] 블록이 실측 uproject 를 적는다", "NS.uproject" in blk, blk[:300])
+    check("[중요] 블록이 실측 Editor 타깃으로 빌드 명령을 만든다",
+          "NSEditor" in blk and "Build.bat" in blk, blk[:300])
+    check("  블록에도 ModularStage 가 없다", "ModularStage" not in blk, blk[:300])
+    check("[중요] 모르는 것을 **모른다고** 적는다 (지어내지 않는다)",
+          "아직 비어 있고" in ns, ns[-400:])
+    check("[중요] 이 체크아웃에서 관리하지 않는다고 말한다",
+          "마스터가 배달한다" in ns, ns[-300:])
+
+    ms = bundle.claude_md_body("ModularStage")
+    check("프로젝트별 정본이 있으면 그것을 쓴다 (MS 228줄 문서 보존)",
+          "mission system" in ms and len(ms.splitlines()) > 100,
+          f"{len(ms.splitlines())}줄")
+
+    # [주의] 없는 프로젝트는 **골격**으로 답하고 사실을 지어내지 않는다
+    unknown = bundle.claude_md_body("없는프로젝트이름")
+    check("[주의] 소스를 못 읽으면 본문이 그 사실을 말한다",
+          "찾지 못했다" in unknown, unknown[:400])
+    rows = "\n".join(bundle._project_facts_rows("없는프로젝트이름"))
+    check("[중요] 블록도 빌드 명령을 **지어내지 않는다**",
+          "적지 않았다" in rows, rows[:300])
+    check("  못 읽었다는 것을 표에 적는다", "찾지 못했다" in rows, rows[:300])
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
                test_role_skills, test_role_payload, test_payload_split, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
                test_merge_never_replaces_existing,
                test_workshop_assets_reference_only_live_tools,
-               test_workshop_delivery):
+               test_workshop_delivery,
+               test_claude_md_body_has_a_project_axis):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_bundle: {PASS}/{total} 통과")

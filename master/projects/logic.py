@@ -103,6 +103,13 @@ def register_project(
             engine=engine,
             include=list(DEFAULT_INCLUDE),
             exclude=list(DEFAULT_EXCLUDE),
+            # [중요] **레드마인 프로젝트 기본값도 등록 시점에 적는다** (`#293`). 손으로 넣으면
+            #    다음 프로젝트에서 또 비고, 그러면 등재가 거부된다(폴백이 없으므로 그것이
+            #    설계다 — 조용히 남의 프로젝트에 쓰는 것보다 낫다). 규약은 **소문자 식별자**다
+            #    (레드마인 `identifier`: `ModularStage`→`modularstage` · `NS`→`ns`).
+            #    [주의] 이 값이 가리키는 레드마인 프로젝트를 **사람이 만들어야** 등재가 된다 —
+            #    그 사실은 반환값의 `next` 가 말한다.
+            redmine_project=name.lower(),
             raw={"init": {
                 "domains": list(_spec.DEFAULT_DOMAINS),
                 "convention_sections": list(_spec.DEFAULT_CONVENTION_SECTIONS),
@@ -140,7 +147,9 @@ def register_project(
         "gitignore_added": ignored,
         "git_locked": git_ok,
         "note": git_note,
-        "next": "소스 클론과 최초 색인은 아직이다 — last_indexed_commit 이 비어 있다.",
+        "next": ("소스 클론과 최초 색인은 아직이다 — last_indexed_commit 이 비어 있다. "
+                 f"[중요] 레드마인 프로젝트 `{cfg.redmine_project}` 는 **사람이 만들어야** "
+                 "일감 등재가 된다(없으면 등재가 거부된다 — 폴백하지 않는다, `#293`)."),
     }
 
 

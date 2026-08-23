@@ -396,6 +396,116 @@ def _remote_read(facts: HostFacts, abs_path: str) -> str:
             pass
 
 
+def _uproject_facts(project: str) -> dict:
+    """소스 트리에서 **실측**한다 — `.uproject` · `*.Target.cs` · `*.Build.cs`.
+
+    [중요] 추측하지 않는다. 못 읽으면 그 항목을 **비우고 비었다고 적는다** — 지어낸 빌드
+    명령은 사람을 엉뚱한 곳으로 보낸다.
+    """
+    out = {"uproject": "", "targets": [], "modules": []}
+    try:
+        from ..context_search.paths import resolve
+        repo = resolve(project).repo
+    except Exception:                                        # noqa: BLE001
+        return out
+    if not repo.is_dir():
+        return out
+    ups = sorted(repo.glob("*.uproject"))
+    if ups:
+        out["uproject"] = ups[0].name
+    src = repo / "Source"
+    if src.is_dir():
+        out["targets"] = sorted(f.name[: -len(".Target.cs")]
+                                for f in src.glob("*.Target.cs"))
+        out["modules"] = sorted(f.name[: -len(".Build.cs")]
+                                for f in src.glob("*/*.Build.cs"))
+    return out
+
+
+def claude_md_body(project: str) -> str:
+    """체크아웃에 파일이 없을 때 넣을 **본문**. (`#290`)
+
+    ## [중요] 프로젝트 축이 여기 있었어야 했다
+
+    종전에는 `payload/CLAUDE.md` **한 벌**을 넣었고 그 내용이 ModularStage 문서였다 —
+    주석은 *"`/init` 산출 정본"* 이라 적었지만 실제로는 **MS 의** `/init` 산출물이다.
+    프로젝트가 하나일 때는 그 둘이 같아 구별되지 않았고, NS 를 붙이자 드러났다:
+    NS 체크아웃이 *"ModularStage … mission system … hexagonal prefab modules"* 를 받았고
+    거기엔 그런 것이 없다(실측 2026-08-23, 사용자 지적).
+
+    우선순위:
+        ① `<트윈>/claude_md.md`            — 사람 또는 `/init` 이 그 프로젝트용으로 쓴 것
+        ② `payload/claude_md/<프로젝트>.md` — 저장소에 보관된 프로젝트별 정본
+        ③ 골격 + **실측**                   — 그 밖에는 지어내지 않고 「비어 있다」고 적는다
+    """
+    d = Path(__file__).with_name("payload") / "claude_md"
+    try:
+        from ..context_search.paths import resolve
+        twin = resolve(project).root / "claude_md.md"
+        if twin.is_file():
+            return twin.read_text(encoding="utf-8")
+    except Exception:                                        # noqa: BLE001
+        pass
+    per = d / f"{project}.md"
+    if per.is_file():
+        return per.read_text(encoding="utf-8")
+
+    f = _uproject_facts(project)
+    up = f["uproject"] or "(찾지 못했다)"
+    editor = next((t for t in f["targets"] if t.lower().endswith("editor")), "")
+    if f["uproject"] and editor:
+        build = ('```bat\n"<UE5>\\Engine\\Build\\BatchFiles\\Build.bat" ^\n'
+                 f'  {editor} Win64 Development "<checkout>\\{up}" '
+                 '-WaitMutex -FromMsBuild\n```\n\n'
+                 '(only where UE5 is installed — check the AX block)')
+    else:
+        build = ("[중요] **빌드 명령을 적지 않았다** — 소스 트리에서 "
+                 f"`.uproject`({up}) 또는 Editor 타깃({', '.join(f['targets']) or '없음'})을 "
+                 "확정하지 못했다. 추측한 명령은 사람을 엉뚱한 곳으로 보낸다.")
+    rows = ["| | |", "|---|---|",
+            f"| `.uproject` | `{up}` |",
+            f"| Targets | {', '.join(f'`{t}`' for t in f['targets']) or '(없음)'} |",
+            f"| Modules | {', '.join(f'`{m}`' for m in f['modules']) or '(없음)'} |"]
+    line = (f"`{project}` — Unreal Engine 프로젝트. 아래 값은 소스 트리 **실측**이다."
+            if f["uproject"] else
+            f"`{project}` — [주의] 소스 트리에서 `.uproject` 를 찾지 못했다. "
+            "클론이 비었거나 아직 UE 프로젝트가 아니다.")
+    # [중요] 빌드·타깃 표는 **본문이 아니라 관리 블록**에 있다 (`_project_facts_rows`) —
+    #    본문은 병합이 건드리지 않으므로 거기 적은 사실은 늙는다. 여기서는 한 줄만 만든다.
+    body = (d / "_skeleton.md").read_text(encoding="utf-8")
+    return body.replace("{PROJECT_LINE}", line)
+
+
+def _project_facts_rows(project: str) -> list:
+    """프로젝트 축 실측 — 관리 블록에 실린다 (`#290`).
+
+    [중요] **본문이 아니라 블록이다.** 본문은 파일이 있으면 병합이 건드리지 않으므로(사람 것을
+    지키는 규약) 거기 적은 사실은 첫 배달 시점에 굳어 늙는다. 블록은 배달마다 갈린다 —
+    *"인프라 서버 기준으로 덮어쓴다"* 가 그 뜻이다.
+    [주의] 못 읽은 항목은 **비웠다고 적는다.** 지어낸 빌드 명령은 사람을 엉뚱한 곳으로 보낸다.
+    """
+    f = _uproject_facts(project)
+    up = f["uproject"]
+    editor = next((t for t in f["targets"] if t.lower().endswith("editor")), "")
+    rows = [
+        f"### 프로젝트 `{project}` — 소스 트리 실측 (매 배달 갱신)",
+        "",
+        "| | |",
+        "|---|---|",
+        f"| `.uproject` | {f'`{up}`' if up else '[주의] **찾지 못했다** — 클론이 비었거나 아직 UE 프로젝트가 아니다'} |",
+        f"| Targets | {', '.join(f'`{t}`' for t in f['targets']) or '(없음)'} |",
+        f"| Modules | {', '.join(f'`{m}`' for m in f['modules']) or '(없음)'} |",
+    ]
+    if up and editor:
+        rows += ["| 빌드 (UE5 있는 곳에서만) | "
+                 f"`Build.bat {editor} Win64 Development \"<checkout>\\{up}\" "
+                 "-WaitMutex -FromMsBuild` |"]
+    else:
+        rows += ["| 빌드 | [중요] **적지 않았다** — `.uproject` 또는 Editor 타깃을 "
+                 "확정하지 못했다. 추측한 명령은 사람을 엉뚱한 곳으로 보낸다 |"]
+    return rows + [""]
+
+
 def managed_block(project: str, facts: HostFacts) -> str:
     """머신별 AX 블록. **실측값만 들어간다.**"""
     caps = ", ".join(facts.capabilities) or "(없음)"
@@ -443,6 +553,12 @@ def managed_block(project: str, facts: HostFacts) -> str:
         f" · ollama {facts.ollama_models}종 |",
         f"| 마스터 | `{MASTER_HOST}` — 8101 큐 · 8102 브로커 · 8103 MCP(`ax-projects`) |",
         "",
+        # [중요] **프로젝트 실측을 블록 안에 둔다** (사용자 지시 2026-08-24: *"마스터가 관리하는
+        #    블록을 나누고 거기만 계속 변경점이 있을때마다 찾아서 최신화하도록해. 그냥 인프라
+        #    서버 기준으로 덮어쓰면 되는거잖아"*). 본문에 두면 **첫 배달 때 한 번 쓰고 늙는다** —
+        #    파일이 있으면 병합이 본문을 건드리지 않기 때문이다(사람 것을 지키는 규약).
+        #    블록은 매 배달마다 통째로 갈리므로, **갱신이 공짜로 따라온다.**
+        *_project_facts_rows(project),
         (f"[중요] **절차는 스킬 `{'` · `'.join(skills_for(facts.role))}` 에 있다.** "
          + ("마스터 일감을 받으면 그것부터 읽는다." if facts.role == "worker"
             else "[중요] **이 머신은 요청하는 쪽이다** — 큐에서 집지 않고, `attempt/` 브랜치를 "
@@ -519,8 +635,7 @@ def merge_claude_md(existing: str, project: str, facts: HostFacts) -> str:
     """
     block = managed_block(project, facts)
     if not (existing or "").strip():
-        body = (Path(__file__).with_name("payload") / "CLAUDE.md").read_text(encoding="utf-8")
-        return body.rstrip() + "\n\n" + block + "\n"
+        return claude_md_body(project).rstrip() + "\n\n" + block + "\n"
     if MD_BEGIN in existing and MD_END in existing:
         # [중요] **블록이 여러 개면 전부 걷어내고 하나만 남긴다.** 읽기 실패로 두 번 붙은 파일이
         # 실제로 나왔다(`.2`, 2026-08-09). 병합이 스스로 고칠 수 있어야 한다.

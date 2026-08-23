@@ -136,7 +136,34 @@ def resolve_priority_id(name: str, *, key: str = "", url: str = "", sender=None)
     return None
 
 
-PROJECT_ID = "modularstage"     # [중요] 같은 프로젝트다 — 새 프로젝트를 만들지 않는다 (규칙)
+# [중요] **AX 인프라 이슈의 자리** (사용자 확정 2026-08-09, `docs/10` §10.1). AX 클러스터는
+#   그 R&D 를 위한 도구이지 별개 산출물이 아니라, 인프라 이슈를 게임 프로젝트와 **분리하지
+#   않는다.** 구분은 제목 접두어 `[AX]` 로 한다.
+#
+# [주의] **종전 주석은 이 결정의 범위를 넓혀 적었다** — *"새 프로젝트를 만들지 않는다"*.
+#   사용자가 정한 것은 「AX 이슈를 분리하지 않는다」이고 「레드마인 프로젝트는 하나다」가
+#   아니었다(사용자 지적 2026-08-24). 게임 프로젝트가 늘면 레드마인 프로젝트도 함께 늘고,
+#   **게임 소스 일감이 어디로 갈지는 `<트윈>/config.yaml` 의 `redmine.project` 가 정한다**
+#   (`#293`). 이 상수는 그 축이 아니라 **AX 인프라 축의 기본값**이다.
+AX_PROJECT_ID = "modularstage"
+PROJECT_ID = AX_PROJECT_ID      # 하위 호환 — 기존 호출자가 이 이름을 쓴다
+
+
+def project_of(project: str, *, registry=None) -> str:
+    """게임 프로젝트 이름 → 그 일감이 등재될 레드마인 프로젝트 식별자 (`#293`).
+
+    [중요] **폴백하지 않는다.** 미설정이면 사유를 문자열로 돌려주고 호출자가 멈춘다 —
+    조용히 `modularstage` 로 떨어지면 **남의 프로젝트를 오염시킨다**(`#257` 이 태그에서
+    내린 것과 같은 판단: 없는 것을 가정으로 메우지 않는다).
+    """
+    if not (project or "").strip():
+        return ""
+    try:
+        from .projects.config import Registry
+        reg = registry or Registry.load()
+        return (reg.config_of(project).redmine_project or "").strip()
+    except Exception:                                        # noqa: BLE001
+        return ""
 
 
 def create_issue(subject: str, description: str = "", *, tracker_name: str = "",

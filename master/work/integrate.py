@@ -500,7 +500,7 @@ def run_tests(facts, *, tree: str, project: str, test_filter: str = "",
 
 
 def report_to_redmine(subject: str, body: str, *, api_key: str = "", url: str = "",
-                      project_id: int = 1, poster=None) -> str:
+                      project_id=None, project: str = "", poster=None) -> str:
     """실패를 레드마인에 등재한다 (소 2.3.3). [중요] **실패해도 파이프라인을 막지 않는다.**
 
     전임 시스템의 `[빌드 실패] 통합 빌드 게이트 차단` 이슈가 정확히 이 형태다(#13~#20).
@@ -512,9 +512,25 @@ def report_to_redmine(subject: str, body: str, *, api_key: str = "", url: str = 
     import json as _json
     import os as _os
     import urllib.request
+
+    # [중요] **등재 대상은 그 프로젝트의 config 가 정한다** (`#293`, 사용자 지적 2026-08-24).
+    #    종전 기본값은 `project_id=1`(= modularstage) 하드코딩이라, NS 의 통합 실패가
+    #    **ModularStage 이슈로 등재**됐다. [주의] **폴백하지 않는다** — 미설정이면 사유를
+    #    돌려주고 등재하지 않는다. 조용히 남의 프로젝트에 쓰면 그것이 오염이다(`#257` 과
+    #    같은 판단). AX 인프라 이슈는 이 축이 아니다(`redmine.AX_PROJECT_ID`).
+    target = project_id
+    if target is None:
+        if not (project or "").strip():
+            return "[주의] 레드마인 등재 건너뜀 — 어느 프로젝트인지 받지 못했다 (project 인자)"
+        from .. import redmine as _rm
+        target = _rm.project_of(project)
+        if not target:
+            return (f"[주의] 레드마인 등재 건너뜀 — `{project}` 의 "
+                    "`config.yaml` 에 `redmine.project` 가 없다. 폴백하지 않는다 "
+                    "(다른 프로젝트에 쓰면 오염이다)")
     key = api_key or _os.environ.get("AX_REDMINE_API_KEY", "")
     base = (url or _os.environ.get("AX_REDMINE_URL", "http://192.168.0.57:8080")).rstrip("/")
-    payload = {"issue": {"project_id": project_id, "subject": subject[:250],
+    payload = {"issue": {"project_id": target, "subject": subject[:250],
                          "description": body[:8000]}}
     # [중요] 키 검사는 **기본 전송 수단**에 대한 것이다. `poster` 를 주입했다면 전송의 책임은
     #    주입자에게 있다 — `writer`·`runner`·`builder` 와 같은 규약이다.
@@ -734,7 +750,7 @@ def run(paths, facts, work_id: str, *, project: str = "", durable: str = "",
                 # [중요] 이슈 추적이 안 되는 것과 게이트가 통과한 것은 다르다 — 사유를 남긴다
                 itg.reported.append(report_to_redmine(
                     f"[통합 실패] {a.task_id} — work {work_id}",
-                    feedback_block(a), poster=poster))
+                    feedback_block(a), project=paths.name, poster=poster))
             if stop_on_fail:
                 stopped = a.task_id
 
@@ -757,7 +773,7 @@ def run(paths, facts, work_id: str, *, project: str = "", durable: str = "",
             itg.reported.append(report_to_redmine(
                 f"[층3 실패] work {work_id} — RunTests 불합격",
                 itg.l3_note + "\n\n" + (getattr(itg.l3, "raw_tail", "") or ""),
-                poster=poster))
+                project=paths.name, poster=poster))
         itg.note = ("[중요] 층3 불합격으로 push 하지 않았다 — 커밋은 격리 트리에 남아 있다"
                     + (f" ({itg.note})" if itg.note else ""))
         return itg
