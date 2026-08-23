@@ -564,6 +564,13 @@ def _project_facts_rows(project: str) -> list:
     else:
         rows += ["| 빌드 | [중요] **적지 않았다** — `.uproject` 또는 Editor 타깃을 "
                  "확정하지 못했다. 추측한 명령은 사람을 엉뚱한 곳으로 보낸다 |"]
+    # [중요] **프로젝트 고유 자산을 실측으로 적는다** (`#292`). 공통 자산은 어느 프로젝트에나
+    #    같으므로 셈만 하고, **그 프로젝트에만 간 것은 이름으로** 적는다 — 「내가 무엇을
+    #    받았나」를 문서가 답할 수 있어야 한다(공통 표에 적으면 남의 프로젝트에서 거짓이 된다).
+    own = sorted(r for r, _s in workshop_files("requester", project)
+                 if (workshop_by_project_dir(project) / r[len(".claude/"):]).is_file())
+    rows.append(f"| 이 프로젝트만의 작업장 자산 | "
+                + (", ".join(f"`{r}`" for r in own) if own else "(없음 — 공통만)") + " |")
     return rows + [""]
 
 
@@ -922,25 +929,39 @@ def workshop_dir() -> Path:
     return Path(__file__).with_name("workshop")
 
 
-def workshop_files(role: str) -> tuple:
+def workshop_by_project_dir(project: str) -> Path:
+    """프로젝트 고유 작업장 자산 자리 (`#292`).
+
+    [중요] **공통 자산과 프로젝트 고유 자산은 다른 것이다.** 전수 실측 2026-08-24: 자산 29개 중
+    `rules/mission-editor-mcp.md` 하나가 **NS 에 없는 클래스와 구조를 사실로 서술**했다
+    (`AMissionPrefab` · `SeptetTiles[0..6]` 7개 헥스 타일 · `FMissionTaskInfo[]`).
+    나머지 5개의 언급은 **발화 예시**라 거짓 서술이 아니다 — 부류를 갈라서 하나만 옮겼다.
+    """
+    return Path(__file__).with_name("workshop_by_project") / project
+
+
+def workshop_files(role: str, project: str = "") -> tuple:
     """이 역할이 받을 작업장 자산 — `(체크아웃 기준 상대경로, 저장소 절대경로)` 목록.
 
     [중요] `CLAUDE.md` 는 여기서 **제외**한다 — 병합 대상이라 쓰는 방식이 다르다.
+    [중요] **공통 + 프로젝트 고유**를 합친다 (`#292`). 같은 상대경로면 프로젝트 것이 이긴다 —
+    프로젝트가 공통을 덮을 수 있어야 한다(그 반대는 뜻이 없다).
+    [주의] `project` 를 안 주면 공통만 간다 — 폴백으로 **남의 프로젝트 자산을 보내지 않는다.**
     """
     if role not in WORKSHOP_ROLES:
         return ()
-    root = workshop_dir()
-    if not root.is_dir():
-        return ()
-    out = []
-    for sub in ("agents", "skills", "rules", "hooks"):
-        d = root / sub
-        if not d.is_dir():
+    out: dict = {}
+    for root in (workshop_dir(), workshop_by_project_dir(project) if project else None):
+        if root is None or not root.is_dir():
             continue
-        for f in sorted(d.rglob("*")):
-            if f.is_file():
-                out.append((f".claude/{f.relative_to(root).as_posix()}", f))
-    return tuple(out)
+        for sub in ("agents", "skills", "rules", "hooks"):
+            d = root / sub
+            if not d.is_dir():
+                continue
+            for f in sorted(d.rglob("*")):
+                if f.is_file():
+                    out[f".claude/{f.relative_to(root).as_posix()}"] = f
+    return tuple(sorted(out.items()))
 
 
 def workshop_text(src: Path) -> str:
@@ -1067,7 +1088,7 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
         return {"host": facts.host, "dry_run": True, "config_bytes": len(cfg),
                 "skills": list(skills_for(facts.role, pinit)),
                 "payload": list(payloads_for(facts.role)),
-                "workshop": [rel for rel, _src in workshop_files(facts.role)]}
+                "workshop": [rel for rel, _src in workshop_files(facts.role, project)]}
     # [중요] CLAUDE.md 는 **읽어서 병합**한다 — 덮어쓰면 사람이 쓴 것을 날린다
     md_path = (f"{facts.path}\\CLAUDE.md" if facts.windows else f"{facts.path}/CLAUDE.md")
     prev = _remote_read(facts, md_path)
@@ -1108,7 +1129,7 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     # ── 작업장 자산 (#226 4번) — 원전 watch.exe 가 생성하던 `.claude/` 구조 ─────────
     # [중요] **손으로 맞추던 것을 배달 경로에 넣는다.** 3번 재배선까지 저장소와 `.33` 을 scp 로
     #    맞췄고, 그 상태로는 조용히 갈린다(리포트 27 §13). 배달은 되읽어 해시 대조까지 한다.
-    ws = workshop_files(facts.role)
+    ws = workshop_files(facts.role, project)
     if ws:
         written["workshop"] = [_remote_write(facts, rel, workshop_text(src), base="checkout")
                                for rel, src in ws]

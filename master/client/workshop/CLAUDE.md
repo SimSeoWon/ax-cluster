@@ -167,7 +167,11 @@ Full details: `.claude/rules/code-style.md`
 | `.claude/rules/code-style.md` | Pointers, casting, RPC naming, IWYU |
 | `.claude/rules/async-loading.md` | Soft references, async streaming, caching |
 | `.claude/rules/session-management.md` | Listen server session lifecycle, host migration policy |
-| `.claude/rules/mission-editor-mcp.md` | MCP 툴로 프리팹 편집 시 워크플로우, GUID 규칙, 태스크-컴포넌트 연결 방법 |
+
+[주의] **프로젝트 고유 규칙은 이 표에 없다** (`#292`) — `master/client/workshop_by_project/<프로젝트>/`
+에 있고 그 프로젝트에만 배달된다. **실제로 무엇을 받았는지는 AX 관리 블록의 실측 목록**을 본다.
+(전수 실측 2026-08-24: `rules/mission-editor-mcp.md` 가 `AMissionPrefab`·헥스 타일 구조를 사실로
+서술해 NS 에 가면 거짓이었다. 나머지 자산의 프로젝트 언급 5건은 **발화 예시**라 그대로 둔다.)
 
 <!-- AgentWatch:Start -->
 ## AgentWatch — 자동화 컨텍스트 시스템

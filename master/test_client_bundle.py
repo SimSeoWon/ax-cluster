@@ -658,6 +658,54 @@ def test_claude_md_body_has_a_project_axis() -> None:
     check("  못 읽었다는 것을 표에 적는다", "찾지 못했다" in rows, rows[:300])
 
 
+def test_workshop_assets_have_a_project_axis() -> None:
+    """[중요] **프로젝트 고유 자산은 그 프로젝트에만 간다** (`#292`, 전수 실측 2026-08-24).
+
+    자산 29개를 **디렉토리 전수로** 셌다(목록을 대상 집합으로 쓰면 목록 밖 파일이 조용히
+    빠진다 — `#264` 교훈). 프로젝트 언급 6건이 나왔고 **부류가 둘**이었다:
+
+        발화 예시 5건   code-writer · generate-contract-test · manage-task ·
+                        ontology-register · tdd-dryrun → NS 에서 읽어도 거짓이 아니다
+        고유 사실 1건   rules/mission-editor-mcp.md — `AMissionPrefab`·`SeptetTiles[0..6]`
+                        7개 헥스 타일·`FMissionTaskInfo[]` → **NS 에 없는 것을 사실로 서술**
+
+    하나만 옮겼다. **부류를 가르지 않고 전부 옮기면** 공통 자산이 프로젝트마다 갈린다.
+    """
+    print("\n[자산] 프로젝트 고유만 갈라 보낸다 (#292)")
+    ms = bundle.workshop_files("requester", "ModularStage")
+    ns = bundle.workshop_files("requester", "NS")
+    common = bundle.workshop_files("requester")
+    if not common:
+        check("작업장 자산이 아직 반입되지 않았다 — 건너뜀", True)
+        return
+
+    ms_rels, ns_rels = {r for r, _ in ms}, {r for r, _ in ns}
+    own = ms_rels - ns_rels
+    check("[중요] MS 전용 규칙은 MS 에만 간다",
+          own == {".claude/rules/mission-editor-mcp.md"}, str(own))
+    check("[중요] NS 는 그것을 받지 않는다 (없는 클래스를 사실로 서술하는 문서)",
+          not any("mission-editor" in r for r in ns_rels), str(sorted(ns_rels)[:3]))
+    check("공통은 둘 다 받는다", len(ns_rels) >= 20 and ns_rels < ms_rels,
+          f"{len(ns_rels)} / {len(ms_rels)}")
+    check("[주의] 프로젝트를 안 주면 **공통만** (남의 자산을 폴백으로 보내지 않는다)",
+          {r for r, _ in common} == ns_rels, str(len({r for r, _ in common})))
+
+    # [중요] **무엇을 받았는지 관리 블록이 답한다** — 공통 표에 적으면 남의 프로젝트에서 거짓이 된다
+    rows = "\n".join(bundle._project_facts_rows("ModularStage"))
+    check("[중요] 블록이 이 프로젝트만의 자산을 이름으로 적는다",
+          "mission-editor-mcp.md" in rows, rows[-200:])
+    rows_ns = "\n".join(bundle._project_facts_rows("NS"))
+    check("  없으면 「없음」이라고 적는다 (빈칸으로 두지 않는다)",
+          "(없음 — 공통만)" in rows_ns, rows_ns[-200:])
+
+    # [주의] 공통 자산에 남은 프로젝트 언급은 **발화 예시**다 — 사실 서술이 아니므로 그대로 둔다.
+    #    이 칸은 그 판단을 기록해 둔다: 예시가 늘어도 깨지지 않고, **사실 서술이 새로 들어오면**
+    #    사람이 이 주석을 보고 부류를 다시 가른다.
+    check("공통 자산에 프로젝트 고유 **사실 서술**이 없다 (예시는 허용)",
+          not any("AMissionPrefab" in bundle.workshop_text(src) for _r, src in common),
+          "공통에 MS 클래스 사실 서술이 남아 있다")
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
@@ -665,7 +713,8 @@ def main() -> int:
                test_merge_never_replaces_existing,
                test_workshop_assets_reference_only_live_tools,
                test_workshop_delivery,
-               test_claude_md_body_has_a_project_axis):
+               test_claude_md_body_has_a_project_axis,
+               test_workshop_assets_have_a_project_axis):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_bundle: {PASS}/{total} 통과")

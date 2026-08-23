@@ -115,7 +115,7 @@ def cmd_plan(project: str) -> int:
                 print(f"   → {base}/{d + '/' if d else ''}__init__.py  (패키지 표식)")
             for dest, src in pay:
                 print(f"   → {base}/{dest} ({len(bundle.payload_text(src))}자)  [payload]")
-        ws = bundle.workshop_files(f.role)
+        ws = bundle.workshop_files(f.role, project)
         if ws:
             # [중요] **자산은 개수로 찍는다** — 33개를 한 줄씩 찍으면 계획이 안 읽힌다.
             #    다만 어느 묶음이 몇 개인지는 말한다(안 보이는 산출물은 없는 것으로 읽힌다).
@@ -323,7 +323,7 @@ def cmd_check(project: str) -> int:
         # [중요] **작업장 자산도 잰다** (#226 4번). 에이전트·스킬은 사람이 읽는 문서지만
         #    `tools:` 허용목록이 낡으면 **오류 없이 능력만 사라진다**(리포트 27 §13) — 페이로드가
         #    조용히 낡는 것과 같은 부류다. 33개를 한 번의 ssh 로 해시 뜬다.
-        ws = bundle.workshop_files(f.role)
+        ws = bundle.workshop_files(f.role, project)
         ws_stale: list = []
         if ws:
             base = (f.path + chr(92) + ".claude") if f.windows else (f.path + "/.claude")
