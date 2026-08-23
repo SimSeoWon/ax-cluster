@@ -306,6 +306,17 @@ def collect(*, project: str = "", token: str = "", force: bool = False,
         if snap.units[u] != "active":
             snap.problems.append(f"서비스 `{u}` 가 {snap.units[u]} 다")
 
+    # ①-b [중요] **`active` 는 「지금 코드로 돈다」가 아니다** (`#301`). 실측 2026-08-24:
+    #    `ax-task-queue` 가 `active` 인 채로 **하루 동안 옛 코드**로 돌아 `.33` 의 프로젝트
+    #    태그가 무시됐다. `is-active` 로는 그것이 안 보인다 — 기동 시각과 코드 mtime 을 잰다.
+    #    [주의] 판정하고 **말하는 것까지**다. 자동 재기동은 승인 사항이다(`docs/11` §11.5).
+    try:
+        from . import service_freshness as _fresh
+        for ln in _fresh.stale_lines():
+            snap.problems.append(ln)
+    except Exception as e:                                   # noqa: BLE001
+        snap.problems.append(f"[주의] 서비스 신선도를 재지 못했다 — {type(e).__name__}: {e}")
+
     if not token:
         try:
             token = (Path.home() / ".config" / "ax-cluster" / "token").read_text(

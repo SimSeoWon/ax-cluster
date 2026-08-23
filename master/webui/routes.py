@@ -345,12 +345,17 @@ def api_index_status(paths) -> dict:
     }
     if fallback:
         out["note"] = fallback
+    # [중요] **없는 함수를 부르고 있었다** (`#301` 검증에서 잡혔다). 종전 코드는
+    #    `from ..context_search.generation import current` 였고 그 이름은 **존재하지 않는다** —
+    #    `except: pass` 가 그것을 가려 `generation` 이 **영구히 빈 문자열**이었다. 사유를
+    #    남기게 고친 직후 `note: "세대를 못 읽었다: ImportError"` 로 드러났다.
+    #    실제 API 는 `generation.read(root)` 다(`a`/`b` 세대 포인터 · PLAN §5.4.6).
     try:
-        from ..context_search.generation import current
-        out["generation"] = current(paths)
+        from ..context_search import generation as _gen
+        out["generation"] = _gen.read(paths.root) or ""
     except Exception as e:                                   # noqa: BLE001
         out["note"] = ((out.get("note", "") + " · ") if out.get("note") else "") + \
-            f"세대를 못 읽었다: {type(e).__name__}"
+            f"세대를 못 읽었다: {type(e).__name__}: {e}"
     return out
 
 

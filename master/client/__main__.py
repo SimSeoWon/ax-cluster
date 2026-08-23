@@ -424,6 +424,22 @@ def cmd_check(project: str) -> int:
             print("          → 마스터를 **먼저 커밋**한 뒤 재배달한다 (순서가 계약이다)")
         if other:
             print(f"        · 판정 불가/계보 밖 {len(other)}대 — 위 사유 참조")
+
+    # [중요] **마스터 자신의 서비스도 잰다** (`#301`). 배달 검증이 워커의 상주는 보는데
+    #    마스터 서비스는 아무도 안 봤다 — 실측 2026-08-24: `ax-task-queue` 가 하루 동안
+    #    옛 코드로 돌아 `.33` 의 프로젝트 태그가 무시됐다(`#293` 이 안 먹었다).
+    #    [주의] 판정하고 **말하는 것까지**다 — 자동 재기동은 `docs/11` §11.5 위반이다.
+    try:
+        from .. import service_freshness as _fresh
+        lines = _fresh.stale_lines()
+    except Exception as e:                                   # noqa: BLE001
+        lines = [f"[주의] 서비스 신선도를 재지 못했다 — {type(e).__name__}: {e}"]
+    if lines:
+        print(f"\n  [중요] 마스터 서비스 {len(lines)}개가 지금 코드가 아니다")
+        for ln in lines:
+            print(f"        · {ln}")
+        print("        [주의] 자동 재기동은 하지 않는다 — 승인 사항이다 (`docs/11` §11.5)")
+        bad = 1
     return 1 if bad else 0
 
 
