@@ -450,21 +450,39 @@ Plan 형식: 영향 파일 목록, 핵심 변경 요약(3~5줄), 위험 요소(�
 
 ### 작업 히스토리 작성 규약 (Phase α′ — ontology 시드 원천)
 
-비자명한 의사결정·아키텍처 변경·정책 변경을 처리한 직후 `.claude/history/YYYY-MM-DD_HHMM_<작업요약>.md` 파일을 생성한다. 단순 버그 수정·리네이밍·문서 오탈자 같은 trivial 작업은 생성 불필요. **본 디렉토리의 history 는 ontology 시드의 1순위 원천** (plan v4.3 Phase α′) 이므로 frontmatter 8필드 의무 적용:
+비자명한 의사결정·아키텍처 변경·정책 변경을 처리한 직후 기록을 남긴다. 단순 버그 수정·리네이밍·문서 오탈자 같은 trivial 작업은 불필요. **history 는 ontology 시드의 1순위 원천** (plan v4.3 Phase α′) 이라, 안 남기면 다음 세션이 같은 결정을 처음부터 다시 한다.
+
+🔴 [중요] **자리가 옮겨졌다 — 이 기계에 파일로 쓰지 않는다.** 종전 이 절은 `.claude/history/YYYY-MM-DD_HHMM_<작업요약>.md` 를 **로컬 파일로** 만들라고 적어 뒀다(원전 레이아웃: 원전은 데이터가 UE5 프로젝트의 `.claude/` 안에 있었다). 우리는 그 데이터를 **마스터의 디지털 트윈**으로 옮겼고, 이 줄이 따라오지 않아 실제로 한 세션이 *"작업했는데 히스토리가 없다"* 고 판단했다(2026-08-24, `#304`). 기록은 있었다 — 마스터에 있었다.
+
+**적재 지점은 둘이고, 이 기계는 둘 다 탄다.** 어느 쪽인지에 따라 할 일이 정반대다:
+
+| 경로 | 언제 | 누가 쓰나 | 세션이 할 일 |
+|---|---|---|---|
+| **직접 처리** | 이 세션이 스스로 코드를 고쳤다 | **너** — `log_history` MCP (마스터 대행) | 🔴 **부른다.** 안 부르면 기록이 없다 |
+| **분산 작업** | 마스터에 등재해 워커가 처리했다 | **큐가 자동** — work 이 `merged`/`rejected` 로 종결될 때 | ❌ 아무것도 안 한다 (두 번 쓰면 중복이다) |
+
+[중요] **쓰는 것은 서버 하나다** (「단일 writer」). `log_history` 는 이 기계가 파일을 만드는 것이 아니라 **마스터에게 쓰라고 시키는 것**이고, 그래서 이 기계에는 결과 파일이 안 생긴다. 확인하고 싶으면 마스터 트윈의 `history/` 를 본다 — 파일명은 마스터가 `YYYY-MM-DD_HHMM_<작업요약>.md` 로 짓는다.
+
+[주의] **`work_id` 를 아는 경우엔 반드시 실어라.** 그 값이 어느 프로젝트의 트윈에 쓸지를 푸는 스탬프다. 없으면 마운트된 프로젝트로 간다 — 마운트가 내가 작업한 프로젝트와 다르면 **남의 트윈에 쌓인다.**
+
+frontmatter 의무 필드 (`log_history` 인자와 1:1):
 
 ```yaml
 ---
-date: YYYY-MM-DD HH:MM
+date: YYYY-MM-DD HH:MM                            # 마스터가 찍는다
 work_id: null or "<분산 작업 work_id>"            # 마스터에 등재된 작업이면 채움
-session_id: null or "<UUID>"                      # 같은 작업 단위 그룹핑, 미지정 시 ts 인접도로 사후 추론
-decision_type: architecture | policy | experiment | revert | bugfix | refactor | infra
-affected_classes: []                              # CamelCase 식별자만 (BM25 related_classes 와 동일 토큰)
-affected_domains: []                              # 자동 승급 도메인명 (`.claude/context/_domains/` 의 파일명)
-supersedes: null or "<이전 history 파일명>"        # 이전 결정 뒤집을 때만 채움 (drift 추적용)
-alternatives_considered: []                       # 검토했으나 채택 안 한 옵션 (negative knowledge)
-tags: []                                          # 자유 태그 (BM25 매칭 토큰)
+session_id: null or "<UUID>"                      # 같은 작업 단위 그룹핑
+decision_type: architecture | policy | experiment | revert | bugfix | refactor | infra | feature
+affected_classes:                                 # CamelCase 식별자만 (BM25 related_classes 와 같은 토큰)
+  - UMyClass
+affected_domains:                                 # 승급된 도메인명
+supersedes: null or "<이전 history 파일명>"        # 이전 결정을 뒤집을 때만 (drift 추적)
+alternatives_considered:                          # 검토했으나 안 쓴 것 (negative knowledge — 이게 제일 귀하다)
+  - "UMG 단독 (포커스를 직접 짜야 해서 제외)"
+tags:                                             # 자유 태그 (BM25 매칭)
+  - gamepad
 user_quote: |
-  사용자 직접 발화 인용 1~3줄 (WHY 신호 — 본문보다 강함)
+  사용자 직접 발화 인용 1~3줄 (WHY 신호 — 본문보다 강하다)
 ---
 
 # <제목>
@@ -475,7 +493,9 @@ user_quote: |
 ## 후속 작업 / 미해결 검토
 ```
 
-본문 구조는 자유. frontmatter 만 의무. 후속 ontology 분류기·drift 추적기가 이 frontmatter 를 직접 소비한다.
+🔴 [중요] **리스트는 대시(`- item`)로만 쓴다.** 종전 예시의 `affected_classes: []` 같은 **인라인 형태를 소비자가 못 읽는다** — 원전 미니 파서가 스칼라 문자열로 읽어 `isinstance(list)` 검사에서 **통째로 버린다**(실측). 비어 있으면 키 뒤를 그냥 비워 둔다. 이 규약은 그 파서를 고칠 수 없어서 있는 것이 아니라, **소비자가 원전 것이라 형식이 계약이기 때문**이다.
+
+[주의] `decision_type` 은 위 **8개 중 하나**여야 한다 — 그 밖의 값은 마스터가 422 로 거절한다(조용히 `feature` 로 바꾸지 않는다). 본문 구조는 자유이고 frontmatter 만 의무다. 후속 ontology 분류기·drift 추적기가 이것을 직접 소비한다.
 
 ### 에이전트 목록
 `.claude/agents/SKILL_INDEX.md` 참고
