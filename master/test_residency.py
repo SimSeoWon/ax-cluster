@@ -123,6 +123,33 @@ def test_claim_policy_matches_the_reason() -> None:
           "project" in ClaimReq.model_fields, str(sorted(ClaimReq.model_fields)))
 
 
+def test_unregister_mirrors_register() -> None:
+    """[중요] **켜는 쪽과 멈추는 쪽이 같은 이름·같은 표식을 써야 한다** (`#311`).
+
+    ⓐ 는 「상주는 마운트를 따른다」이므로 이전이 늘 둘(켜기+멈추기)이다. 멈추는 쪽이 코드에
+    없어 손으로 쓰였고(실측 2026-08-25), 그러면 다음번에 작업 이름이 갈린다.
+    """
+    win = _f(windows=True)
+    reg = R.commands("NS", win, python_path=r"C:\py\pythonw.exe")[0][1]
+    unreg = R.unregister_commands("NS", win)[0][1]
+    name = R.task_name("NS")
+    check("[중요] 윈도우는 같은 작업 이름을 지운다",
+          f"/tn {name}" in reg and f"/tn {name}" in unreg, f"{reg}\n{unreg}")
+    check("강제 삭제다 (확인 프롬프트가 무인 실행을 막는다)", "/f" in unreg, unreg)
+
+    lnx = _f(windows=False)
+    reg_l = R.commands("NS", lnx)[0][1]
+    unreg_l = R.unregister_commands("NS", lnx)[0][1]
+    marker = R.cron_marker(lnx)
+    check("[중요] 리눅스는 같은 표식으로 찾는다",
+          marker in reg_l and marker in unreg_l, f"{reg_l}\n{unreg_l}")
+    check("[주의] 우리 줄만 뺀다 — crontab 을 통째로 쓰지 않는다 (PATH 줄 보존)",
+          "grep -vF" in unreg_l and "echo" not in unreg_l, unreg_l)
+    check("표식이 체크아웃 경로다 (프로젝트별로 갈린다)", lnx.path in marker, marker)
+    other = R.cron_marker(_f(windows=False, path="/home/sim/trunk/Other"))
+    check("[중요] 다른 프로젝트의 줄은 안 걸린다", other != marker, f"{marker} vs {other}")
+
+
 def test_python_probe() -> None:
     """[중요] 경로를 **박지 않고 잰다** — `Python310` 같은 버전 디렉토리가 들어간다."""
     check("PATH 먼저 본다", R.PYTHONW_PROBE.startswith("where pythonw"))
@@ -413,6 +440,7 @@ if __name__ == "__main__":
                test_linux_command_preserves_path_line,
                test_gate_is_mount_singularity_not_a_missing_axis,
                test_claim_policy_matches_the_reason,
+               test_unregister_mirrors_register,
                test_python_probe,
                test_probe_command_never_uses_pythonw,
                test_probe_parse_distinguishes_unknown_from_false,

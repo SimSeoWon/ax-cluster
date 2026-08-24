@@ -110,10 +110,32 @@ def commands(project: str, facts, *, python_path: str = "") -> list:
     # [중요] **PATH 줄을 지키고 우리 줄만 갈아끼운다** — 실측: `.43` crontab 첫 줄이
     #    `PATH=/home/sim/.local/bin:…` 이고, 그것이 없으면 claimer 가 도구를 못 찾는다.
     #    [주의] `crontab -l | grep -v` 로 통째로 다시 쓰면 그 줄을 날린다.
-    marker = f"cd {facts.path} &&"
+    marker = cron_marker(facts)          # [중요] 해제와 **같은 표식** (`#311`)
     return [("register",
              "( crontab -l 2>/dev/null | grep -vF " + q(marker)
              + "; echo " + q(line) + " ) | crontab -")]
+
+
+def cron_marker(facts) -> str:
+    """`.43` 류의 crontab 에서 **우리 줄을 찾는 표식**. [중요] 등록과 해제가 같은 값을 써야
+    한다 — 두 벌로 쓰면 해제가 남의 줄을 지우거나 우리 줄을 못 지운다."""
+    return f"cd {facts.path} &&"
+
+
+def unregister_commands(project: str, facts) -> list:
+    """상주 **해제** 명령 `(라벨, 명령)` (`#311`).
+
+    [중요] **ⓐ 결정의 짝이다** — 「상주는 마운트를 따른다」면 옮기는 일이 늘 둘이다: 새 것을
+    켜고 **이전 것을 멈춘다**. 켜는 쪽만 코드에 있으면 멈추는 쪽은 매번 손으로 쓰이고, 그러면
+    작업 이름·표식이 등록과 갈린다(실측 2026-08-25: 손으로 쓴 뒤 이 함수를 만들었다).
+    [주의] crontab 은 **우리 줄만** 뺀다 — 통째로 다시 쓰면 `PATH=` 줄이 날아가고 claimer 가
+    도구를 못 찾는다(`commands()` 의 같은 주의).
+    """
+    if facts.windows:
+        return [("unregister", f"schtasks /delete /f /tn {task_name(project)}")]
+    q = shlex.quote
+    return [("unregister",
+             "( crontab -l 2>/dev/null | grep -vF " + q(cron_marker(facts)) + " ) | crontab -")]
 
 
 def plan_lines(project: str, facts, *, mounted: str = "") -> list:

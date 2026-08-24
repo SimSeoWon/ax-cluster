@@ -174,8 +174,34 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check   <프로젝트>
 `plan`·`deliver` 가 그 문장을 그대로 찍는다 — **여기 다시 적지 않는다.**
 
 [주의] **마운트를 옮기면 상주도 옮긴다** — 이전 프로젝트의 상주를 멈추고 새 프로젝트의 것을
-켠다. 지금 이것을 자동으로 하는 코드는 없다(전환은 `#245` 로 **재배달을 요구**하지만 상주
-이전은 요구하지 않는다). 그래서 전환 뒤 워커가 조용하면 **먼저 상주의 체크아웃을 본다.**
+켠다. 전환이 이것을 **자동으로 하지는 않는다**(`#245` 는 재배달만 요구한다). 그래서 전환 뒤
+워커가 조용하면 **먼저 상주의 체크아웃을 본다.**
+
+**이전은 늘 둘이다 — 켜기 + 멈추기.** 명령은 손으로 쓰지 말고 코드에서 뽑는다(작업 이름·표식이
+등록과 갈리면 해제가 남의 줄을 지우거나 우리 줄을 못 지운다):
+
+```bash
+AX_PROJECTS_ROOT=$PWD .venv/bin/python - <<'PY'
+import sys; sys.path.insert(0, '.')
+from master.client import bundle
+from client.init import residency as R
+f = bundle.probe("<호스트>", "<계정>", r"<새 프로젝트 체크아웃>", "ssh", "worker")
+pyw = ""                                  # 윈도우면 R.PYTHONW_PROBE 를 원격에서 돌려 파싱
+print(R.commands("<새 프로젝트>", f, python_path=pyw)[0][1])       # 켤 것
+old = bundle.probe("<호스트>", "<계정>", r"<이전 체크아웃>", "ssh", "worker")
+print(R.unregister_commands("<이전 프로젝트>", old)[0][1])          # 멈출 것
+PY
+```
+
+[중요] **윈도우 `pythonw` 경로는 박지 말고 잰다** — `R.PYTHONW_PROBE` 를 원격에서 돌려
+`R.parse_python_probe()` 로 파싱한다. PATH 에 없고 버전 디렉토리(`Python310`)가 들어간다.
+[주의] crontab 해제는 **우리 줄만** 뺀다 — 통째로 다시 쓰면 `PATH=` 줄이 날아가고 claimer 가
+도구를 못 찾는다.
+
+실측 확인법(2026-08-25 · 마운트 NS 에서 이전 직후):
+
+    새 상주 1회   project=NS · "집을 잡이 없다"                          ← 받아들여졌다
+    옛 상주 1회   project=ModularStage · [claim 거절] status=not_mounted  ← 이것이 멈춰야 하는 것
 안 됐으면: 태스크를 등록해도 **아무도 집지 않는다.** 큐 저널에 claim 요청이 아예 안 온다.
 
 ## 14.3 마운트 — 마지막, 사람 승인 자리
