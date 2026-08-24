@@ -55,7 +55,9 @@ _SAFE = re.compile(r"^[A-Za-z0-9_.-]+$")
 # [중요] 원전과 다른 점을 화면이 스스로 말하게 하는 문구 (위 § ①~⑤)
 NOTES = {
     "vscode": "[중요] 마스터는 파일을 소유하지 않는다(§2.1) — 경로를 복사해 작업 머신에서 연다",
-    "history": "우리 트윈에는 항목별 history 기록이 아직 없다",
+    # [주의] 이 문구는 **기록이 0건일 때만** 나간다 (`#307`) — 종전에는 하드코딩된 빈 응답에
+    #    항상 붙어 있어서, 기록이 생긴 뒤에도 화면이 「없다」고 말했다
+    "history": "이 트윈에 아직 작업 기록(history)이 없다",
     "tasks": "태스크 템플릿은 이 저장소에 아직 없다",
     "rebuild": ("[중요] 재색인은 웹에서 하지 않는다 — 색인기는 별도 프로세스다(`ax-indexer`). "
                 "마스터에서: `python -m master.context_search.rebuild`"),
@@ -234,10 +236,45 @@ def api_action(root: Path, domain: str, action: str):
     return loaders.load_action(root, domain, action)
 
 
-def api_history(cls: str) -> dict:
-    # [주의] 원전엔 있고 우리에겐 없다 — **빈 목록 + 사유**. 없는 것을 있는 척하지 않는다
-    return {"class": cls, "source": "all", "count": 0, "records": [],
-            "note": NOTES["history"]}
+def api_history(paths, cls: str, *, limit: int = 3) -> dict:
+    """클래스 → 최근 작업 narrative (`#307`). 프론트 계약: `records[].{source,date,
+    decision_type,summary_head,path}`.
+
+    [중요] **종전에는 하드코딩된 빈 목록이었다** — 사유가 *"우리 트윈에는 항목별 history 기록이
+    아직 없다"* 였고 2026-08-24 부터 그 문장이 **거짓**이 됐다. `#295`(색인 실패를 정상으로
+    보여준 자리)와 같은 부류이고 방향만 반대다: 있는 것을 없다고 말했다.
+
+    🔴 [중요] **이 포트는 무인증 공개다** (실측 2026-08-24: 토큰 없이 `/api/v1/*` 200 — 루프백과
+    LAN 주소 둘 다). 그래서 여기서 내보내는 것을 **의도적으로 줄였다**:
+
+        내보낸다      date · decision_type · source · 파일명 · 제목에서 뽑은 한 줄
+        안 내보낸다   `user_quote`(사람의 발화 원문) · 본문 · 절대경로
+
+    사유: 저장소가 같은 판단을 이미 한 자리가 있다 — 레드마인 **읽기**를 8103 에 두지 않고
+    8101 로 보낸 것(*"일감 본문·검수 이력이 LAN 아무에게나 열린다"*). 전문 조회는 토큰이 걸린
+    8101 의 `find_history`(`#306`)가 맡는다. **화면은 돌고, 사람의 말은 안 나간다.**
+    [주의] 이 절충은 판정이고 뒤집을 수 있다 — 뒤집으려면 이 주석과 함께 고칠 것.
+    """
+    from ..context_synth import history_harvest as HH
+    try:
+        cdir, gdir = HH.project_history_dirs(paths)
+        recs = HH.walk_histories(cdir, gdir)
+    except Exception as e:                                   # noqa: BLE001
+        # [중요] **빈 목록으로 위장하지 않는다** (`#285` 축) — 못 읽은 것과 없는 것은 다르다
+        return {"class": cls, "source": "all", "count": 0, "records": [],
+                "error": f"history 를 읽지 못했다 — {type(e).__name__}: {e}"}
+    matched = HH.filter_for_classes(recs, {cls}, limit=max(1, int(limit)))
+    out = {"class": cls, "source": "all", "count": len(matched),
+           "records": [{"source": r.source, "date": r.date,
+                        "decision_type": r.decision_type,
+                        # [주의] `summary` 는 user_quote 를 담을 수 있다 — 제목을 쓴다
+                        "summary_head": (r.title or "")[:160],
+                        "path": Path(r.path).name} for r in matched]}
+    if not matched:
+        # [중요] 사유는 **없을 때만** 붙인다 — 있는데도 「없다」고 적으면 화면이 거짓말을 한다
+        out["note"] = (NOTES["history"] if not recs else
+                       f"이 트윈에 기록 {len(recs)}건이 있지만 `{cls}` 를 다룬 것은 없다")
+    return out
 
 
 def api_tasks(paths=None) -> dict:

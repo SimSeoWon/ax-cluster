@@ -212,7 +212,15 @@ class WebUI:
             return await _send(send, 200, _j(got))
         m = _API_HISTORY.match(path)
         if m:
-            return await _send(send, 200, _j(routes.api_history(unquote(m.group(1)))))
+            # [중요] `limit` 을 실제로 쓴다 (`#307`) — 프론트가 `?limit=3` 을 보내는데 종전
+            #    시그니처엔 인자가 없어 **조용히 무시**됐다. 파싱 실패는 기본값으로 떨어진다
+            _q = parse_qs(scope.get("query_string", b"").decode("utf-8", "replace"))
+            try:
+                lim = int((_q.get("limit") or ["3"])[0])
+            except (TypeError, ValueError):
+                lim = 3
+            return await _send(send, 200,
+                               _j(routes.api_history(paths, unquote(m.group(1)), limit=lim)))
         if path == "/api/v1/ontology/tasks":
             return await _send(send, 200, _j(routes.api_tasks(paths)))
         m = _API_TASK.match(path)

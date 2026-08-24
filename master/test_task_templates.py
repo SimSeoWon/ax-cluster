@@ -174,10 +174,63 @@ def test_web_surface_has_data_now():
         check("비어 있으면 안내 문구가 붙는다", empty["count"] == 0 and "note" in empty, str(empty))
 
 
+# ── history 웹 표면 (`#307`) ──────────────────────────────────
+
+def test_history_web_surface_stops_lying():
+    """[중요] 종전엔 **하드코딩된 빈 목록 + 「기록이 아직 없다」** 였다. 기록이 생긴 뒤에도
+    화면이 「없다」고 말했다 — `#295` 와 같은 부류이고 방향만 반대다."""
+    import datetime as _dt
+    from master.context_synth import history_gen as HG
+    with tempfile.TemporaryDirectory() as d:
+        class P:
+            root = Path(d)
+            ontology = Path(d)
+        pp = P()
+        (Path(d) / "history").mkdir()
+        HG.write(pp, HG.render(title="패드 입력 채택", decision_type="architecture",
+                               affected_classes=["UCommonGameViewportClient"],
+                               user_quote="사용자가 한 말 — 이건 LAN 에 나가면 안 된다",
+                               date=_dt.datetime(2026, 8, 1),
+                               body="# 패드 입력 채택\n\n본문 상세"),
+                 title="패드 입력 채택", date=_dt.datetime(2026, 8, 1))
+
+        got = routes.api_history(pp, "UCommonGameViewportClient")
+        check("[중요] 실물을 돌려준다 (하드코딩 0 이 아니다)", got["count"] == 1, str(got))
+        rec = got["records"][0]
+        for k in ("source", "date", "decision_type", "summary_head", "path"):
+            check(f"프론트 계약 필드 {k}", k in rec, str(rec))
+        check("제목이 head 로 간다", rec["summary_head"] == "패드 입력 채택", str(rec))
+        check("[중요] 기록이 있으면 「없다」 문구를 안 붙인다", "note" not in got, str(got.get("note")))
+
+        blob = str(got)
+        check("🔴 [중요] user_quote 를 LAN 에 내보내지 않는다 (이 포트는 무인증)",
+              "이건 LAN 에 나가면 안 된다" not in blob, blob[:200])
+        check("🔴 본문도 안 내보낸다", "본문 상세" not in blob, blob[:200])
+        check("🔴 절대경로 대신 파일명만", "/" not in rec["path"] and rec["path"].endswith(".md"),
+              rec["path"])
+
+        other = routes.api_history(pp, "UNothingToDoWithIt")
+        check("[중요] 기록은 있는데 그 클래스가 없으면 **그렇게 말한다**",
+              other["count"] == 0 and "1건이 있지만" in other.get("note", ""),
+              str(other.get("note")))
+
+        prefixed = routes.api_history(pp, "CommonGameViewportClient")
+        check("prefix 관용 매칭 (#158 과 같은 규칙)", prefixed["count"] == 1, str(prefixed["count"]))
+
+    with tempfile.TemporaryDirectory() as d2:
+        class Q:
+            root = Path(d2)
+        empty = routes.api_history(Q(), "UX")
+        check("정말 0건이면 그때 안내 문구", empty["count"] == 0 and "note" in empty, str(empty))
+        check("[주의] 문구가 「아직 없다」로 사실을 말한다",
+              "아직 작업 기록" in empty["note"], empty["note"])
+
+
 def main() -> int:
     for fn in (test_roundtrip, test_name_rules, test_edit_preserves_unsent_fields,
                test_registry_is_not_a_search_channel, test_tdd_gate,
-               test_web_surface_has_data_now):
+               test_web_surface_has_data_now,
+               test_history_web_surface_stops_lying):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_task_templates: {PASS}/{total} 통과")
