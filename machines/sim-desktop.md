@@ -69,7 +69,13 @@ The pipeline (M3, four deterministic gates — detail in `3-work-pipeline.md`):
 사람 몫이고, 그 판정을 pre-push 훅(`#125`)이 한 번 더 한다.
 
 The status screen and the ported web UI are served on the LAN at `http://192.168.0.57:8103` —
-[중요] **no login** (API paths on that port stay token-locked), and its palette is **dark-only on
+[중요] **no login — and that includes `/api/v1` on that port** (measured 2026-08-25: 200 with no
+token, on loopback *and* the LAN address; `webui/app.py PREFIXES` lists `/api/v1` and that tuple is
+passed as `public_prefixes`, because the web UI calls its own API). **The remaining defence is the
+one ufw LAN-only layer** — reversible with `AX_VIEW_REQUIRE_TOKEN=1`. [주의] So never put a
+sensitive body on this port: `api_history` deliberately withholds `user_quote`, bodies and absolute
+paths, and full reads live on token-locked 8101 (`find_history`) — the same call the repo already
+made for Redmine reads. Its palette is **dark-only on
 purpose** (one screen flipping to light on its own reads as a different app). `/cluster` serves the
 **last generated** hardware snapshot — a browser refresh never triggers SSH polling (that would
 defeat the 120s guard). [중요] **`ax-status.timer` refreshes it every 5 min**; because 5 min < the
