@@ -801,6 +801,37 @@ def test_consent_rule_reaches_the_requester() -> None:
           "읽기" in body and "쓰기" in body, "읽기/쓰기 구분이 없다")
 
 
+def test_direct_branch_records_what_it_did() -> None:
+    """[중요] **분산 경로엔 자동 기재가 있고 직접 경로엔 없다** (`#310`).
+
+    실측 `ns#302`: 직접 처리한 작업이 **노트 0건 · 상태 신규**로 남았고 본문은 마스터가
+    대신 적어야 했다. `#298` 이 고친 것은 *동의 선행*이고 *기재*가 아니다 — 다른 구멍이다.
+    """
+    print("\n[기재] 직접 처리 뒤 기록이 남는다 (#310)")
+    root = Path(__file__).resolve().parent / "client"
+    skill = (root / "skills" / "ax-request" / "SKILL.md").read_text(encoding="utf-8")
+
+    check("[중요] 절차서에 기재 절이 있다", "기재한다" in skill, skill[:200])
+    for tool in ("log_history", "redmine_note", "redmine_link_commit"):
+        check(f"  셋을 한 묶음으로 — {tool}", tool in skill, f"{tool} 이 없다")
+    check("  [중요] 왜 여기만 수동인지 말한다 (큐를 지나지 않는다)",
+          "큐를 지나지 않" in skill, "사유가 없다")
+    check("  [중요] 상태는 「해결」까지 — 닫는 것은 사람",
+          "해결" in skill and "완료" in skill, "상태 규약이 없다")
+    check("  [주의] 커밋은 별개의 승인이라고 말한다",
+          "커밋은 별개" in skill.replace("**", ""), "커밋 축이 섞여 있다")
+    check("  [주의] 미커밋이면 그렇게 적으라고 한다", "미커밋" in skill, "미커밋 서술이 없다")
+    check("  trivial 예외를 적었다", "trivial" in skill, "trivial 예외가 없다")
+    # [중요] 도구 이름이 **실재**해야 한다 — `#297` 이 죽은 참조 20건을 잡은 그 축이다
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "client" / "runtime"))
+    import client_mcp as _M                                  # noqa: E402
+    names = {t["name"] for t in _M.TOOLS}
+    for tool in ("log_history", "redmine_note", "redmine_link_commit"):
+        check(f"  [중요] `{tool}` 이 실재하는 도구다 (죽은 참조 금지)", tool in names,
+              str(sorted(names)))
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
@@ -808,6 +839,7 @@ def main() -> int:
                test_merge_never_replaces_existing,
                test_workshop_assets_reference_only_live_tools,
                test_workshop_delivery,
+               test_direct_branch_records_what_it_did,
                test_claude_md_body_has_a_project_axis,
                test_workshop_assets_have_a_project_axis,
                test_workshop_assets_reference_only_live_skills,
