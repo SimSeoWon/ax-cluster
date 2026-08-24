@@ -175,6 +175,10 @@ class RedmineNoteReq(BaseModel):
     status_name: str = ""      # 빈 문자열이면 상태를 안 바꾼다 (반려의 기본값)
     done_ratio: Optional[int] = None
     work_id: str = ""          # 감사 로그용 (선택)
+    # [중요] 사후 스탬프 (`#303`) — 이미 만들어진 일감에 마일스톤·부모를 붙인다.
+    #    [주의] 버전은 프로젝트에 속하므로 위 `project` 태그가 그 조회 대상을 정한다.
+    fixed_version: str = ""
+    parent_issue_id: Optional[int] = None
 
 
 class RedmineIssueReq(BaseModel):
@@ -193,6 +197,10 @@ class RedmineIssueReq(BaseModel):
     description: str = ""
     tracker_name: str = ""     # 비우면 Redmine 기본 트래커
     priority_name: str = ""
+    # [중요] 등재를 완결시키는 둘 (`#303`). 안 주면 무버전·부모 없음으로 떨어진다 —
+    #    그 상태가 실제로 13건 쌓였다. 이름 해석 실패는 응답의 `skipped` 에 사유가 온다.
+    fixed_version: str = ""            # 마일스톤 이름. 부분 일치 허용 (`마일스톤 6`)
+    parent_issue_id: Optional[int] = None
 
 
 class RedmineLinkCommitReq(BaseModel):

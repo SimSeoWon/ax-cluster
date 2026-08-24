@@ -389,9 +389,17 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         컨테이너 DB 에만 있으므로(§10.1) 요청자는 본문만 만들고 이 자리를 부른다.
         [중요] **키 값은 응답·로그 어디에도 나가지 않는다** — 결과 문장만 돌려준다.
         """
-        from ..redmine import update_issue
+        from ..redmine import AX_PROJECT_ID, project_of, update_issue
+        # [중요] 버전은 **프로젝트에 속한다** (`#303`) — 태그가 조회 대상을 정한다. 태그가
+        #    없으면 AX 프로젝트다(읽기 폴백과 같은 방향이고, 무엇을 봤는지 응답에 적는다).
+        target = project_of(req.project) if (req.project or "").strip() else AX_PROJECT_ID
+        if (req.project or "").strip() and not target:
+            return {"ok": False, "issue_id": req.issue_id,
+                    "result": f"[주의] `{req.project}` 의 config.yaml 에 `redmine.project` 가 없다"}
         result = update_issue(req.issue_id, notes=req.notes,
-                              status_name=req.status_name, done_ratio=req.done_ratio)
+                              status_name=req.status_name, done_ratio=req.done_ratio,
+                              fixed_version=req.fixed_version,
+                              parent_issue_id=req.parent_issue_id, project=target)
         _tq_log(f"[redmine] #{req.issue_id} work={req.work_id or '-'} → {result}", root)
         # [주의] 실패해도 200 이다 — 검수 흐름을 막지 않는다. [중요] 다만 `ok` 로 **말은 한다**
         #    (조용한 실패 금지). 호출자가 사람에게 그대로 보여 준다.
@@ -453,7 +461,9 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
             return {"error": f"`{req.project or '(태그 없음)'}` 의 config.yaml 에 "
                              "`redmine.project` 가 없다 — 폴백하지 않는다"}
         r = create_issue(req.subject, req.description, tracker_name=req.tracker_name,
-                         priority_name=req.priority_name, project=target)
+                         priority_name=req.priority_name, project=target,
+                         fixed_version=req.fixed_version,
+                         parent_issue_id=req.parent_issue_id)
         _tq_log(f"[redmine] 이슈 생성 project={target} → {r}", root)
         return r
 

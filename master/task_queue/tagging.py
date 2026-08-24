@@ -82,8 +82,10 @@ POLICY = {
     "POST /api/v1/thesaurus/alias":                 MOUNT,
     "POST /api/v1/thesaurus/not-a-class":           MOUNT,
 
-    # Redmine 대행 — 트윈이 아니다. [주의] Redmine 프로젝트는 하나(`ModularStage` id 1)이므로
-    #    태그는 **귀속 기록**용이다. 다중 프로젝트가 Redmine 축에서 갈리는 것은 별 축이다
+    # Redmine 대행 — 트윈이 아니다. 태그는 **어느 레드마인 프로젝트에 등재하는가**를 정한다
+    #    (`#293` — `<트윈>/config.yaml` 의 `redmine.project` 가 변환하고 폴백은 없다).
+    #    [주의] 종전 주석은 *"Redmine 프로젝트는 하나(`ModularStage` id 1)"* 였다 — `ns` 가
+    #    생긴 뒤로 거짓이다. 마운트를 강제하지 않는 이유는 여전히 「트윈에 쓰지 않아서」다
     "POST /api/v1/redmine/note":                    TAG,
     "POST /api/v1/redmine/issue":                   TAG,
     "POST /api/v1/redmine/link-commit":             TAG,

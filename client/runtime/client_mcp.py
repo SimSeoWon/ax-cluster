@@ -267,12 +267,21 @@ def tool_get_work(api, work_id: str) -> dict:
 
 
 def tool_redmine_note(api, issue_id: int, notes: str, status_name: str = "",
-                      done_ratio=None) -> dict:
+                      done_ratio=None, fixed_version: str = "",
+                      parent_issue_id=None) -> dict:
+    """코멘트·상태·완료율 + **사후 스탬프**(마일스톤·부모, `#303`).
+
+    [주의] 마일스톤이 안 붙어도 갱신 자체는 성공한다 — 사유가 `result` 문장에 붙어 온다.
+    """
     payload = {"issue_id": int(issue_id), "notes": notes or ""}
     if status_name:
         payload["status_name"] = status_name
     if done_ratio is not None:
         payload["done_ratio"] = int(done_ratio)
+    if fixed_version:
+        payload["fixed_version"] = fixed_version
+    if parent_issue_id not in (None, "", 0):
+        payload["parent_issue_id"] = int(parent_issue_id)
     return api("POST", "/api/v1/redmine/note", payload)
 
 
@@ -304,7 +313,10 @@ def tool_redmine_meta(api) -> dict:
 
 
 def tool_redmine_create_issue(api, subject: str, description: str = "",
-                              tracker_name: str = "", priority_name: str = "") -> dict:
+                              tracker_name: str = "", priority_name: str = "",
+                              fixed_version: str = "", parent_issue_id=None) -> dict:
+    """이슈 생성. [중요] **마일스톤을 같이 준다** (`#303`) — 안 주면 무버전으로 떨어지고,
+    그 상태로 쌓인 것이 실측 13건이다. 부모를 주면 Redmine 네이티브 계층에 들어간다."""
     if not (subject or "").strip():
         raise ClientError("subject 가 비었다 — 제목 없는 이슈는 만들지 않는다")
     payload = {"subject": subject.strip(), "description": description or ""}
@@ -312,6 +324,10 @@ def tool_redmine_create_issue(api, subject: str, description: str = "",
         payload["tracker_name"] = tracker_name
     if priority_name:
         payload["priority_name"] = priority_name
+    if fixed_version:
+        payload["fixed_version"] = fixed_version
+    if parent_issue_id not in (None, "", 0):
+        payload["parent_issue_id"] = int(parent_issue_id)
     return api("POST", "/api/v1/redmine/issue", payload)
 
 
@@ -700,7 +716,11 @@ TOOLS = [
                      "properties": {"issue_id": {"type": "integer"},
                                     "notes": {"type": "string"},
                                     "status_name": {"type": "string"},
-                                    "done_ratio": {"type": "integer"}}}},
+                                    "done_ratio": {"type": "integer"},
+                                    "fixed_version": {"type": "string",
+                                                      "description": "마일스톤 이름 (부분 일치). 사후 스탬프용"},
+                                    "parent_issue_id": {"type": "integer",
+                                                        "description": "부모 이슈 번호"}}}},
     {"name": "redmine_list_issues",
      "description": "레드마인 이슈 목록 (마스터 경유 — 키는 이 PC 에 없다). status 는 open(기본)/"
                     "closed/*. [중요] 우리 규약에서 닫힌 상태는 「완료」뿐이라 「해결」은 open 에 "
@@ -720,13 +740,19 @@ TOOLS = [
                     "말고 여기서 확인한다 — 이 환경은 한국어이고 「반려」에 해당하는 상태가 없다.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "redmine_create_issue",
-     "description": "레드마인 이슈를 새로 만든다 (마스터 경유). 프로젝트는 ModularStage 고정 — "
-                    "새 프로젝트를 만들지 않는다. AX 인프라 건이면 제목에 [AX] 접두어를 쓴다.",
+     "description": "레드마인 이슈를 새로 만든다 (마스터 경유). 등재될 레드마인 프로젝트는 "
+                    "요청의 프로젝트 태그가 정한다 (#293 — 게임 프로젝트가 늘면 자리도 늘어난다). "
+                    "AX 인프라 건이면 제목에 [AX] 접두어를 쓰고 ModularStage 에 둔다. "
+                    "[중요] fixed_version(마일스톤)을 같이 줄 것 — 빼면 무버전으로 떨어진다.",
      "inputSchema": {"type": "object", "required": ["subject"],
                      "properties": {"subject": {"type": "string"},
                                     "description": {"type": "string"},
                                     "tracker_name": {"type": "string"},
-                                    "priority_name": {"type": "string"}}}},
+                                    "priority_name": {"type": "string"},
+                                    "fixed_version": {"type": "string",
+                                                      "description": "마일스톤 이름 (부분 일치 허용)"},
+                                    "parent_issue_id": {"type": "integer",
+                                                        "description": "부모 이슈 번호 — 소분류를 낼 때"}}}},
     {"name": "redmine_link_commit",
      "description": "커밋 해시를 이슈에 노트로 연결한다 (원전과 같은 「커밋 연결: `<해시>`」 형식 — "
                     "형식이 같아야 이력을 한 규칙으로 훑을 수 있다).",
@@ -869,14 +895,18 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
             return tool_redmine_create_issue(a, str(args.get("subject") or ""),
                                              str(args.get("description") or ""),
                                              str(args.get("tracker_name") or ""),
-                                             str(args.get("priority_name") or ""))
+                                             str(args.get("priority_name") or ""),
+                                             str(args.get("fixed_version") or ""),
+                                             args.get("parent_issue_id"))
         if name == "redmine_link_commit":
             return tool_redmine_link_commit(a, args.get("issue_id"),
                                             str(args.get("commit_hash") or ""),
                                             str(args.get("message") or ""))
         return tool_redmine_note(a, args.get("issue_id"), str(args.get("notes") or ""),
                                  status_name=str(args.get("status_name") or ""),
-                                 done_ratio=args.get("done_ratio"))
+                                 done_ratio=args.get("done_ratio"),
+                                 fixed_version=str(args.get("fixed_version") or ""),
+                                 parent_issue_id=args.get("parent_issue_id"))
     if name in ("search_context", "list_domains", "get_domain", "get_domain_layer",
                 "get_object_spec", "get_action_spec", "find_invariants_by_class",
                 "list_task_templates", "get_task_template"):

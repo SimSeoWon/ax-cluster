@@ -137,12 +137,92 @@ def test_api_key_never_returned_from_logs():
     check("빈 값도 안전", RM.api_key(reader=lambda: None) == "")
 
 
+# ── 마일스톤·부모 스탬프 (`#303`) ────────────────────────────────
+# [중요] 원전에 없던 추가라 계약을 여기서 못박는다: **못 붙으면 사유가 보인다.**
+
+class VerSender(Sender):
+    """버전 카탈로그까지 답하는 전송. `versions.json` 이 프로젝트별 경로인 것이 요점이다."""
+
+    def __init__(self, versions=("마일스톤 6 — 개선·확장",), **kw):
+        super().__init__(**kw)
+        self.versions = versions
+
+    def __call__(self, method, url, payload=None):
+        if "/versions.json" in url:
+            self.calls.append((method, url, payload))
+            return {"versions": [{"id": 70 + i, "name": n}
+                                 for i, n in enumerate(self.versions)]}
+        if url.endswith("/issues.json") and method == "POST":
+            self.calls.append((method, url, payload))
+            return {"issue": {"id": 999}}
+        return super().__call__(method, url, payload)
+
+    @property
+    def posts(self):
+        return [(u, p) for m, u, p in self.calls if m == "POST"]
+
+
+def test_create_stamps_version_and_parent():
+    s = VerSender()
+    out = RM.create_issue("제목", "본문", fixed_version="마일스톤 6",
+                          parent_issue_id=304, project="modularstage", sender=s)
+    check("생성 id 를 돌려준다", out.get("id") == 999, str(out))
+    check("[중요] 못 붙은 것이 없으면 skipped 를 달지 않는다", "skipped" not in out, str(out))
+    iss = s.posts[0][1]["issue"]
+    check("부분 일치로 버전 id 를 붙인다", iss.get("fixed_version_id") == 70, str(iss))
+    check("부모를 붙인다", iss.get("parent_issue_id") == 304, str(iss))
+    vurl = [u for m, u, _ in s.calls if "/versions.json" in u][0]
+    check("[중요] 버전은 프로젝트 경로에서 찾는다",
+          "/projects/modularstage/versions.json" in vurl, vurl)
+
+
+def test_create_unknown_version_is_skipped_loudly():
+    s = VerSender(versions=("마일스톤 2 — 디지털 트윈 복원",))
+    out = RM.create_issue("제목", fixed_version="마일스톤 6", sender=s)
+    check("생성 자체는 막지 않는다", out.get("id") == 999, str(out))
+    check("[중요] 사유가 실린다", any("마일스톤" in x for x in out.get("skipped") or []), str(out))
+    iss = s.posts[0][1]["issue"]
+    check("없는 버전은 필드를 안 넣는다", "fixed_version_id" not in iss, str(iss))
+
+
+def test_create_bad_parent_is_skipped_loudly():
+    s = VerSender()
+    out = RM.create_issue("제목", parent_issue_id="부모아님", sender=s)
+    check("이슈 번호가 아니면 그 필드만 생략", "parent_issue_id" not in s.posts[0][1]["issue"])
+    check("[중요] 조용히 넘어가지 않는다",
+          any("부모" in x for x in out.get("skipped") or []), str(out))
+
+
+def test_update_can_stamp_without_notes():
+    s = VerSender()
+    out = RM.update_issue(305, fixed_version="마일스톤 6", parent_issue_id=304,
+                          project="modularstage", sender=s)
+    check("코멘트 없이도 갱신이 성립한다", "갱신 건너뜀" not in out, out)
+    iss = s.puts[0][1]["issue"]
+    check("버전이 실린다", iss.get("fixed_version_id") == 70, str(iss))
+    check("부모가 실린다", iss.get("parent_issue_id") == 304, str(iss))
+    check("무엇을 바꿨는지 문장에 적는다", "fixed_version_id" in out, out)
+
+
+def test_update_version_needs_right_project():
+    """[주의] 기본 프로젝트로 남의 프로젝트 버전을 찾으면 못 찾는다 — 그 사실이 보여야 한다."""
+    s = VerSender(versions=("마일스톤 1 — 입력·UI 토대 (게임패드)",))
+    out = RM.update_issue(302, notes="유지 결정", fixed_version="마일스톤 6", sender=s)
+    check("코멘트는 그대로 실린다", s.puts[0][1]["issue"].get("notes") == "유지 결정")
+    check("[중요] 못 찾았다고 말한다", "찾지 못해 생략" in out, out)
+
+
 def main() -> int:
     for fn in (test_updates_notes_only, test_status_name_resolved_dynamically,
                test_unknown_status_keeps_notes_and_says_so, test_default_status_names_are_ours,
                test_nothing_to_change, test_bad_issue_id,
                test_http_failure_is_reported_not_raised, test_missing_key_is_loud,
-               test_api_key_never_returned_from_logs):
+               test_api_key_never_returned_from_logs,
+               test_create_stamps_version_and_parent,
+               test_create_unknown_version_is_skipped_loudly,
+               test_create_bad_parent_is_skipped_loudly,
+               test_update_can_stamp_without_notes,
+               test_update_version_needs_right_project):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_redmine: {PASS}/{total} 통과")

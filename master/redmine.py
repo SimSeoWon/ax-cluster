@@ -166,14 +166,47 @@ def project_of(project: str, *, registry=None) -> str:
         return ""
 
 
+def _stamp_fields(issue: dict, fixed_version: str, parent_issue_id, *,
+                  project: str, key: str, base: str, sender=None) -> list:
+    """마일스톤·부모를 `issue` 에 채운다. 돌려주는 것은 **못 붙인 것의 사유 목록** (`#303`).
+
+    [중요] create 와 update 가 **같은 규칙**을 써야 한다 — 두 벌로 쓰면 한쪽만 부분 일치를
+    허용하는 식으로 조용히 갈린다. 이름→id 는 `resolve_version_id` 하나뿐이다.
+    """
+    skipped = []
+    if fixed_version:
+        vid = resolve_version_id(fixed_version, project=project, key=key, url=base,
+                                 sender=sender)
+        if vid:
+            issue["fixed_version_id"] = vid
+        else:
+            skipped.append(f"마일스톤 `{fixed_version}` 을 이 프로젝트(`{project}`)에서 "
+                           "찾지 못해 생략")
+    if parent_issue_id not in (None, "", 0):
+        try:
+            issue["parent_issue_id"] = int(parent_issue_id)
+        except (TypeError, ValueError):
+            skipped.append(f"부모 `{parent_issue_id!r}` 가 이슈 번호가 아니어서 생략")
+    return skipped
+
+
 def create_issue(subject: str, description: str = "", *, tracker_name: str = "",
                  priority_name: str = "", project: str = PROJECT_ID,
+                 fixed_version: str = "", parent_issue_id=None,
                  key: str = "", url: str = "", sender=None) -> dict:
     """이슈를 새로 만든다. 반환: `{"id": int}` 또는 `{"error": 사유}`.
 
     원전 plan_register 의 생성부와 같은 결: 트래커·우선순위는 이름으로 해석하고, 해석이
     안 되면 그 필드만 생략한다 (생성 자체를 막지 않는다). [중요] update_issue 와 달리
     dict 를 돌려준다 — 호출자(플랜 등록)가 발급 id 를 frontmatter 에 되적어야 한다.
+
+    [중요] **`fixed_version`·`parent_issue_id` 는 원전에 없던 추가다** (`#303`). 원전
+    `redmine_tracker/server.py:549 create_issue` 도 버전·부모를 안 받고, 계층은 읽기
+    (`list_child_issues`)만 썼다 — 사람이 UI 에서 붙이는 방식이다. 우리가 추가하는 근거는
+    우리 규약이다: 「항목·진행은 레드마인만」 + 마일스톤을 **버전**으로 관리 + 「자동화를
+    전제로」(사용자 2026-08-22). 안 붙이면 등재가 반쪽이고 무버전 버킷으로 떨어진다(실측 13건).
+    [주의] **해석 실패는 그 필드만 생략하고 `skipped` 에 사유를 담는다** — 트래커·우선순위와
+    같은 관례다. 생성 자체를 막지 않되 조용히 넘어가지도 않는다.
     """
     base = (url or base_url()).rstrip("/")
     k = key or api_key()
@@ -190,6 +223,8 @@ def create_issue(subject: str, description: str = "", *, tracker_name: str = "",
     pid = resolve_priority_id(priority_name, key=k, url=base, sender=sender)
     if pid:
         issue["priority_id"] = pid
+    skipped = _stamp_fields(issue, fixed_version, parent_issue_id,
+                            project=project, key=k, base=base, sender=sender)
 
     try:
         got = _request("POST", f"{base}/issues.json", k, {"issue": issue}, sender=sender)
@@ -200,15 +235,24 @@ def create_issue(subject: str, description: str = "", *, tracker_name: str = "",
     new_id = ((got or {}).get("issue") or {}).get("id")
     if not new_id:
         return {"error": "생성 응답에 id 없음", "raw": got}
-    return {"id": int(new_id)}
+    out = {"id": int(new_id)}
+    if skipped:
+        out["skipped"] = skipped        # [중요] 붙지 않은 것은 말한다 — 조용한 생략 금지
+    return out
 
 
 def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio=None,
-                 key: str = "", url: str = "", sender=None) -> str:
+                 fixed_version: str = "", parent_issue_id=None,
+                 project: str = PROJECT_ID, key: str = "", url: str = "",
+                 sender=None) -> str:
     """기존 이슈에 코멘트·상태·완료율을 붙인다. **사람이 읽을 결과 문자열**을 돌려준다.
 
     [중요] 실패해도 예외를 던지지 않는다 — 검수 흐름은 이것 때문에 멈추면 안 된다. 다만
     **조용히 넘어가지도 않는다**: 무엇이 안 됐는지 문장으로 남는다.
+
+    [주의] `fixed_version` 을 쓸 때는 `project` 도 줘야 한다 (`#303`) — 버전은 **프로젝트에
+    속하므로** 기본값(AX 프로젝트)으로 `ns` 이슈의 마일스톤을 찾으면 못 찾는다. 못 찾으면
+    그 필드만 생략하고 결과 문장에 사유가 붙는다.
     """
     base = (url or base_url()).rstrip("/")
     k = key or api_key()
@@ -233,8 +277,13 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
             status_note = f" (상태 `{status_name}` 은 이 Redmine 에 없어 건너뜀)"
         else:
             issue["status_id"] = sid
+    stamp_note = ""
+    sk = _stamp_fields(issue, fixed_version, parent_issue_id,
+                       project=project, key=k, base=base, sender=sender)
+    if sk:
+        stamp_note = " (" + " · ".join(sk) + ")"
     if not issue:
-        return "[주의] 레드마인 갱신 건너뜀 — 바꿀 것이 없다"
+        return "[주의] 레드마인 갱신 건너뜀 — 바꿀 것이 없다" + stamp_note
 
     try:
         _request("PUT", f"{base}/issues/{iid}.json", k, {"issue": issue}, sender=sender)
@@ -242,8 +291,9 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
         return f"[주의] 레드마인 #{iid} 갱신 실패 — HTTP {e.code}"
     except Exception as e:                                   # noqa: BLE001
         return f"[주의] 레드마인 #{iid} 갱신 실패 — {type(e).__name__}: {e}"
-    what = ", ".join(k2 for k2 in ("notes", "status_id", "done_ratio") if k2 in issue)
-    return f"레드마인 #{iid} 갱신 ({what}){status_note}"
+    what = ", ".join(k2 for k2 in ("notes", "status_id", "done_ratio",
+                                   "fixed_version_id", "parent_issue_id") if k2 in issue)
+    return f"레드마인 #{iid} 갱신 ({what}){status_note}{stamp_note}"
 
 
 # ─────────────────────────────────────────
