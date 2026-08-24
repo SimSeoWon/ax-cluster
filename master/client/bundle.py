@@ -402,13 +402,19 @@ def _uproject_facts(project: str) -> dict:
     [중요] 추측하지 않는다. 못 읽으면 그 항목을 **비우고 비었다고 적는다** — 지어낸 빌드
     명령은 사람을 엉뚱한 곳으로 보낸다.
     """
-    out = {"uproject": "", "targets": [], "modules": []}
+    out = {"uproject": "", "targets": [], "modules": [], "why": ""}
     try:
         from ..context_search.paths import resolve
         repo = resolve(project).repo
-    except Exception:                                        # noqa: BLE001
+    except Exception as e:                                   # noqa: BLE001
+        # [중요] **설정 오류를 「이 프로젝트엔 .uproject 가 없다」로 보고하면 안 된다** (`#309`).
+        #    실측 2026-08-24: `AX_PROJECTS_ROOT` 없는 셸에서 트윈에 `NS.uproject` 가 멀쩡히
+        #    있는데도 *"찾지 못했다"* 로 렌더됐다 — 그 문장이 배달되는 CLAUDE.md 에 들어간다.
+        #    사유를 실어 보내 **못 본 것과 없는 것을 가른다**(`#285`·`#296` 축).
+        out["why"] = f"트윈 경로를 풀지 못했다 — {type(e).__name__}: {e}"
         return out
     if not repo.is_dir():
+        out["why"] = f"소스 클론 디렉토리가 없다: {repo}"
         return out
     ups = sorted(repo.glob("*.uproject"))
     if ups:
@@ -553,7 +559,7 @@ def _project_facts_rows(project: str) -> list:
         "",
         "| | |",
         "|---|---|",
-        f"| `.uproject` | {f'`{up}`' if up else '[주의] **찾지 못했다** — 클론이 비었거나 아직 UE 프로젝트가 아니다'} |",
+        f"| `.uproject` | {f'`{up}`' if up else ('[주의] **찾지 못했다** — ' + (f['why'] or '클론이 비었거나 아직 UE 프로젝트가 아니다'))} |",
         f"| Targets | {', '.join(f'`{t}`' for t in f['targets']) or '(없음)'} |",
         f"| Modules | {', '.join(f'`{m}`' for m in f['modules']) or '(없음)'} |",
     ]
@@ -607,6 +613,14 @@ def managed_block(project: str, facts: HostFacts) -> str:
         "",
         f"## AX 클러스터 — 이 머신의 역할 (마스터 생성)",
         "",
+        # [중요] **축을 문서가 스스로 말한다** (`#309`, 사용자 지시 2026-08-24: *"워커쪽에
+        #    기입되는 내용은 하나의 프로젝트에 디펜던시가 되지 않고, 신규 프로젝트를 등록한다고
+        #    할 때 셋업시 처리할 수 있도록 관리되어야 해"*). 종전에는 규약과 프로젝트 사실이
+        #    한 블록에 섞여 있어, 읽는 쪽이 **무엇이 프로젝트에 묶인 서술인지** 알 수 없었다.
+        ("[중요] **이 절의 규약은 역할 축이다 — 프로젝트가 바뀌어도 같다.** 프로젝트에 묶인 것은 "
+         "아래 「소스 트리 실측」 절뿐이고, 그 절은 **매 배달마다 마스터가 다시 만든다.** "
+         "그래서 새 프로젝트를 등록할 때 사람이 옮겨 적을 것이 없다."),
+        "",
         f"| | |",
         f"|---|---|",
         f"| 이 체크아웃 | `{facts.path}` |",
@@ -637,7 +651,15 @@ def managed_block(project: str, facts: HostFacts) -> str:
         "알려주는 지도이지 사실의 원천이 아니다 — 시그니처·멤버명·enum 은 **선언부를 열어 확인**한다.",
         "규범과 소스가 어긋나면 **소스가 이긴다.**",
         "",
-        *(["[중요] **이게 네가 로컬 모델보다 나은 지점이다.** Ollama 모델은 파일을 못 읽어 규범만 주면",
+        *(["[중요] **기록은 네가 쓰지 않는다.** 분산 작업의 작업 기록(history)은 work 이 "
+           "종결될 때 **큐가 자동으로** 남긴다(단일 writer 는 서버다). 네가 또 쓰면 중복이고, "
+           "실제로 토큰이 막는다 — 쓰기 대행은 403 이 사유와 함께 온다(실측). "
+           "[중요] **대신 읽는 것은 네 일이다**: 작업 시작 직전에 `find_recipes`(관습) · "
+           "`get_anti_patterns`(거절된 접근) · `find_history`(과거 결정)를 부른다. "
+           "[주의] `supersedes` 가 달린 기록은 **뒤집힌 결정**이다 — 옛것을 근거로 삼으면 "
+           "되돌린 것을 되돌린다.",
+           "",
+           "[중요] **이게 네가 로컬 모델보다 나은 지점이다.** Ollama 모델은 파일을 못 읽어 규범만 주면",
            "`CurrentStep`(실제는 `Step`) 같은 **한 글자 차이**를 지어낸다(실측). 너는 헤더를 열 수",
            "있으니 **정확한 선언을 뽑아 모델에게 넣어 주고**, 돌아온 것을 소스와 대조한다.",
            "",

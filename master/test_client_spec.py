@@ -218,6 +218,44 @@ def test_mcp_roles() -> None:
     check("[주의] 요청자에겐 그 쓰기가 열려 있다",
           ("POST", "/api/v1/history") in {(m, "".join(r)) for m, *r in auth.REQUESTER_SCOPE})
 
+    # ── [중요] **선언(도구)과 배선(스코프)이 갈리는 것을 여기서 막는다** (`#309`).
+    #    실측 2026-08-24: `find_history` 를 워커에 배달하고 배달 문서가 *"작업 시작 직전에
+    #    부른다"* 고 지시했는데 스코프에 없어 **403** 이었다. `#261` 과 같은 부류가 한 세션
+    #    안에서 재현됐다. 그래서 **도구에서 경로를 뽑아** 대조한다 — 목록을 손으로 적으면
+    #    그 목록이 또 갈린다.
+    import sys as _sys
+    from pathlib import Path as _P
+    _sys.path.insert(0, str(_P(__file__).resolve().parent.parent / "client" / "runtime"))
+    import client_mcp as _M                                  # noqa: E402
+    queue_reads = {}
+    for t in _M.TOOLS:
+        n = t["name"]
+        if not (n.startswith("find_") or n.startswith("get_anti")):
+            continue
+        hit = {}
+        def _api(method, path, payload=None, _h=hit):
+            _h["q"] = (method, path)
+            return {"ok": True}
+        def _papi(method, path, payload=None, _h=hit):
+            _h["p"] = (method, path)
+            return {"ok": True, "domain": "X", "layers": {}}
+        try:
+            # [주의] 인자를 넉넉히 준다 — `find_recipes` 는 query 가 없으면 거절한다.
+            #    빈 dict 로 돌렸다가 그 도구를 놓쳐 게이트가 2개만 봤다(실측).
+            _M.dispatch_tool(n, {"query": "x", "class_name": "UX", "domain": "D", "n": 1},
+                             api=_api, papi=_papi, cache=None)
+        except Exception:                                    # noqa: BLE001
+            pass                                             # 인자가 필요한 도구는 건너뛴다
+        if "q" in hit:
+            queue_reads[n] = hit["q"]
+    check("[중요] 큐로 가는 읽기 도구를 실제로 찾아냈다", len(queue_reads) >= 3,
+          str(queue_reads))
+    for n, (m, path) in sorted(queue_reads.items()):
+        # 접두어 규칙이므로 정확 일치 또는 접두어 포함으로 본다
+        opened = any(m == wm and path.startswith(wp) for wm, wp in ws)
+        check(f"[중요] 워커가 부를 도구 `{n}` 의 경로가 스코프에 열려 있다 ({path})",
+              opened, str(sorted(ws)))
+
 
 # ── ⑥ 관리 구역은 역할로 갈린다 ──────────────────────────────────
 
