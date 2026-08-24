@@ -315,6 +315,24 @@ class WorkPatchReq(BaseModel):
     review_decision: Optional[dict] = None
 
 
+class HistorySearchReq(BaseModel):
+    """작업 기록 검색 (`#306`). [중요] **질의를 본문으로 받는다** — `recipes/search` 와 같은
+    이유다(URL 에 한글을 넣으면 저널이 못 읽는 문자열이 되고 손 curl 이 깨진다).
+
+    [주의] 필터는 **AND** 다. 빈 축은 조건이 아니다.
+    """
+
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다.
+    project: str = ""
+    query: str = ""                    # 자유 질의 — 제목·요지·태그·클래스를 훑는다
+    decision_type: str = ""            # architecture | policy | … (8종)
+    classes: list = []                 # prefix 관용 매칭 (UManager_X ↔ Manager_X)
+    tags: list = []
+    supersedes_only: bool = False      # 뒤집힌 결정만 — drift 를 쫓는 축
+    limit: int = 10
+    excerpt_chars: int = 500
+
+
 class RecipeSearchReq(BaseModel):
     """레시피 검색 (`#267`). [중요] **질의를 본문으로 받는다 — URL 에 한글을 넣지 않는다**
     (사용자 지적 2026-08-23). 이 저장소 관례가 이미 본문이다(`search/combined`)."""

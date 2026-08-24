@@ -104,6 +104,9 @@ POLICY = {
     #    이 저장소 관례가 이미 그쪽이다(`POST /api/v1/search/combined`). 퍼센트 인코딩된 URL 은
     #    저널에 알아볼 수 없는 문자열로 남고, 손으로 curl 하면 그냥 깨진다(실측: raw 한글 GET 이
     #    `Invalid HTTP request`). 읽기지만 POST 인 이유가 그것이다.
+    # [중요] history **읽기** (`#306`) — 레시피와 같은 이유로 `MOUNT` 다: 오염은 없지만
+    #    남의 프로젝트 결정 이력을 이 프로젝트의 것으로 읽으면 빈 결과보다 나쁘다.
+    "POST /api/v1/history/search":                  MOUNT,
     "POST /api/v1/recipes/search":                  MOUNT,
     "GET /api/v1/anti_patterns":                    MOUNT,
 }

@@ -413,6 +413,30 @@ def tool_get_anti_patterns(api, args: dict) -> dict:
     return api("GET", "/api/v1/anti_patterns")
 
 
+def tool_find_history(api, args: dict) -> dict:
+    """작업 기록 검색 (`#306`) — **작업 시작 직후에 부른다** (`find_recipes` 와 같은 자리).
+
+    [중요] `log_history` 는 여태 **쓰기만** 있었다. 쓰기만 있는 기록은 다음 세션에게 없는 것과
+    같다 — 실측: 한 세션이 자기가 남긴 기록을 못 찾아 *"히스토리가 없다"* 고 판단했다(`#304`).
+    [주의] 같은 자리를 앞서 건드린 결정이 있으면 **그 결정이 이 프로젝트의 전제**다. 특히
+    `supersedes` 가 달린 기록은 *뒤집힌* 결정이라, 옛것을 근거로 삼으면 되돌린 것을 되돌린다.
+    """
+    payload = {}
+    for k in ("query", "decision_type"):
+        v = str(args.get(k) or "").strip()
+        if v:
+            payload[k] = v
+    for k in ("classes", "tags"):
+        v = args.get(k) or []
+        if v:
+            payload[k] = [str(x) for x in v]
+    if args.get("supersedes_only"):
+        payload["supersedes_only"] = True
+    if args.get("limit"):
+        payload["limit"] = int(args["limit"])
+    return api("POST", "/api/v1/history/search", payload)
+
+
 def tool_log_history(api, args: dict) -> dict:
     """작업 기록 적재 (#207) — 원전 α′ 규약의 클라 자리 (마스터 대행)."""
     title = str(args.get("title") or "").strip()
@@ -795,6 +819,22 @@ TOOLS = [
                          "session_id": {"type": "string"},
                          "work_id": {"type": "string",
                                      "description": "분산 작업이면 work_id"}}}},
+    {"name": "find_history",
+     "description": "이 프로젝트의 **과거 결정 기록**을 찾는다 (원전 α′ history — 온톨로지 시드의 "
+                    "1순위 원천). 작업 시작 직후에 `find_recipes`·`get_anti_patterns` 와 함께 "
+                    "부른다. 같은 자리를 앞서 건드린 결정이 있으면 **그것이 이 프로젝트의 전제**다. "
+                    "[중요] 기록은 마스터 트윈에 있고 이 기계엔 없다 — 로컬 파일을 찾지 말 것. "
+                    "[주의] supersedes 가 달린 기록은 뒤집힌 결정이다: 옛것을 근거로 삼으면 "
+                    "되돌린 것을 되돌린다. 0건이면 dir·exists 로 「없다」와 「못 봤다」를 갈라 답한다.",
+     "inputSchema": {"type": "object", "properties": {
+         "query": {"type": "string", "description": "자유 질의 — 제목·요지·태그·클래스를 훑는다. 한글 가능"},
+         "decision_type": {"type": "string",
+                           "description": "architecture · policy · experiment · revert · bugfix · refactor · infra · feature"},
+         "classes": {"type": "array", "items": {"type": "string"},
+                     "description": "클래스명 (UE prefix 관용 — UManager_X 와 Manager_X 가 같이 걸린다)"},
+         "tags": {"type": "array", "items": {"type": "string"}},
+         "supersedes_only": {"type": "boolean", "description": "뒤집힌 결정만 본다"},
+         "limit": {"type": "integer"}}}},
     {"name": "log_history",
      "description": "비자명한 의사결정·아키텍처 변경·정책 변경을 처리한 **직후** 작업 기록을 "
                     "남긴다 (원전 α′ 규약 — 온톨로지 시드의 1순위 원천). 단순 버그 수정·"
@@ -860,7 +900,9 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                 "redmine_get_issue", "redmine_meta", "redmine_create_issue",
                 "redmine_link_commit",
                 # 레시피·안티패턴 읽기 — 큐 대행이므로 같은 자리다 (`#267`)
-                "find_recipes", "get_anti_patterns"):
+                "find_recipes", "get_anti_patterns",
+                # history 읽기 (`#306`) — 쓰기(`log_history`)와 같은 대행 자리
+                "find_history"):
         a = api or queue_api(root)
         if name in ("add_object_alias", "mark_not_a_class"):
             # 프로젝트는 배달된 config 가 안다 — #210(활성 스위치)에 흔들리지 않게 실어 보낸다
@@ -883,6 +925,8 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
             return tool_find_recipes(a, args)
         if name == "get_anti_patterns":
             return tool_get_anti_patterns(a, args)
+        if name == "find_history":
+            return tool_find_history(a, args)
         if name == "log_history":
             return tool_log_history(a, args)
         if name == "redmine_list_issues":

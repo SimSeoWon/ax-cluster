@@ -28,7 +28,8 @@ from .models import (
     ClaimReq, HeartbeatReq, SubmitReq, SubmitFailReq, VerifyReq, AdminResetReq,
     WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq,
     RedmineIssueReq, RedmineLinkCommitReq,
-    WriterSignalReq, HistoryReq, AliasReq, NotAClassReq, RecipeSearchReq
+    WriterSignalReq, HistoryReq, AliasReq, NotAClassReq, RecipeSearchReq, \
+    HistorySearchReq
 )
 from . import tagging                      # 라우트별 태그 정책 (#257)
 from .persistence import (
@@ -617,6 +618,40 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         _tq_log(f"[thesaurus] not-a-class '{req.term}' → {status} ({paths.name})", root)
         return {"ok": status != "not_found", "status": status,
                 "term": req.term, "project": paths.name}
+
+    @app.post("/api/v1/history/search")
+    def history_search_ep(req: HistorySearchReq):
+        """작업 기록 **읽기** — 요청자·워커 대행 (`#306`).
+
+        [중요] **쓰기(`POST /api/v1/history`)만 있었다.** 쓰기만 있는 기록은 다음 세션에게
+        없는 것과 같다 — 실측 2026-08-24: `.33` 세션이 자기가 남긴 기록을 못 찾아 *"작업했는데
+        히스토리가 없다"* 고 판단했다. 기록은 마스터 트윈에 멀쩡히 있었다.
+        [주의] 읽기인데 마운트를 대조한다 — `recipes/search` 와 같은 판단이다: 남의 프로젝트
+        결정 이력을 이 프로젝트 것으로 읽으면 **빈 결과보다 나쁘다**.
+        [중요] 응답은 `dir`·`exists` 를 함께 싣는다 — **0건과 「디렉토리가 없다」는 다르다.**
+        """
+        from ..context_synth import history_harvest as HH
+        from ..projects.config import ConfigError
+        try:
+            paths = _mounted_paths(req.project)
+        except ConfigError as e:
+            _tq_log(f"[history] 조회 거부 — {e}", root)
+            return {"ok": False, "status": "not_mounted", "reason": str(e),
+                    "project": req.project}
+        try:
+            out = HH.search(paths, query=req.query, decision_type=req.decision_type,
+                            classes=req.classes, tags=req.tags,
+                            supersedes_only=req.supersedes_only,
+                            limit=req.limit, excerpt_chars=req.excerpt_chars)
+        except Exception as e:                               # noqa: BLE001
+            # [중요] 사유를 실어 보낸다 — 빈 목록으로 위장하지 않는다 (`#285` 축)
+            _tq_log(f"[history] 조회 실패 — {type(e).__name__}: {e}", root)
+            return {"ok": False, "error": f"작업 기록 조회 실패 — {type(e).__name__}: {e}"}
+        _tq_log(f"[history] 조회 '{(req.query or '(전체)')[:40]}' → {out['count']}건 "
+                f"(총 {out['total']}) ({paths.name})", root)
+        out["ok"] = True
+        out["project"] = paths.name
+        return out
 
     @app.post("/api/v1/recipes/search")
     def recipes_ep(req: RecipeSearchReq):

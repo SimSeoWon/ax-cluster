@@ -503,7 +503,7 @@ user_quote: |
 ### 등록된 MCP 서버
 | 서버 | 실행 파일 | 주요 툴 |
 |------|-----------|---------|
-| `ax-client` | `py .ax/lib/axmaster/clientside/client_mcp.py` (마스터가 배달·손대지 말 것) | 조회 11: `search_context`, `list_domains`, `get_domain`, `get_domain_layer`, `get_object_spec`, `get_action_spec`, `find_invariants_by_class`, `list_works`, `get_work`, **`find_recipes`**, **`get_anti_patterns`** · 쓰기 대행 5: `add_object_alias`, `mark_not_a_class`, `redmine_note`, `log_writer_signal`, `log_history` · 조회 6(레드마인·템플릿): `redmine_list_issues`, `redmine_get_issue`, `redmine_meta`, `redmine_create_issue`, `redmine_link_commit`, `list_task_templates`/`get_task_template` |
+| `ax-client` | `py .ax/lib/axmaster/clientside/client_mcp.py` (마스터가 배달·손대지 말 것) | 조회 12: `search_context`, `list_domains`, `get_domain`, `get_domain_layer`, `get_object_spec`, `get_action_spec`, `find_invariants_by_class`, `list_works`, `get_work`, **`find_recipes`**, **`get_anti_patterns`**, **`find_history`** · 쓰기 대행 5: `add_object_alias`, `mark_not_a_class`, `redmine_note`, `log_writer_signal`, `log_history` · 조회 6(레드마인·템플릿): `redmine_list_issues`, `redmine_get_issue`, `redmine_meta`, `redmine_create_issue`, `redmine_link_commit`, `list_task_templates`/`get_task_template` |
 | ~~`context-search`~~ | ~~`.claude/mcp/context_search.exe`~~ | **은퇴 (2026-08-20)** — 온톨로지가 마스터로 옮겨져 이 인덱스는 낡았고 0/0 으로 답한다. 색인 갱신(`rebuild_index`·`index_status`)은 마스터가 push 훅으로 자동 처리한다(`ax-indexer`) |
 | `log-analyzer` | `.claude/mcp/log_analyzer.exe` | `analyze_log`, `search_log` |
 | `crash-analyzer` | `.claude/mcp/crash_analyzer.exe` | `analyze_crash`, `analyze_crash_log` |
@@ -512,7 +512,7 @@ user_quote: |
 | `redmine-tracker` | `.claude/mcp/redmine_tracker.exe` | `list_projects`, `list_issues`, `get_issue`, `create_issue`, `update_issue`, `list_trackers`, `list_statuses`, `create_review_issue`, `link_commit` (+ CLI: `--register-plan`) |
 | `code-recipes` | — | [완료] **`ax-client` 가 흡수했다** (`#267`, 2026-08-23). 별 서버를 만들지 않았다: 레시피는 **마스터 트윈**에 있고 이 기계엔 그 디렉토리가 없어 큐가 대행한다. [주의] 그 전까지 이 표와 `code-writer` 에이전트가 **없는 서버**를 부르라고 적어 뒀다 |
 
-[중요] **작업을 시작하기 직전에 `find_recipes` 와 `get_anti_patterns` 를 부른다** (`#267`, 원전 규약: *"code-writer 는 작업 시작 직후에 호출해 step-by-step 가이드를 컨텍스트로 받는다"*). **도구가 있어도 안 부르면 컨벤션 루프는 한 방향이다** — 합성은 돌지만 아무도 읽지 않는다. 같은 일을 앞서 한 기록이 있으면 **그 관습이 이 프로젝트의 컨벤션**이고, 거절된 접근 카탈로그는 이번 작업과 무관해 보여도 끝까지 훑는다.
+[중요] **작업을 시작하기 직전에 `find_recipes` · `get_anti_patterns` · `find_history` 를 부른다** (`#267`, 원전 규약: *"code-writer 는 작업 시작 직후에 호출해 step-by-step 가이드를 컨텍스트로 받는다"*). **도구가 있어도 안 부르면 컨벤션 루프는 한 방향이다** — 합성은 돌지만 아무도 읽지 않는다. 같은 일을 앞서 한 기록이 있으면 **그 관습이 이 프로젝트의 컨벤션**이고, 거절된 접근 카탈로그는 이번 작업과 무관해 보여도 끝까지 훑는다.
 [주의] **한글로 물어도 된다** — 태그에 한글이 함께 들어간다. 안 걸리면 레시피 목록이 사유와 함께 오고, *"아직 없습니다"* 는 고장이 아니라 신호가 덜 쌓인 것이다.
 
 ### 인프라 컴퓨터 이전 — 발화 규약 (BLOCKING, 2026-07-18)

@@ -531,6 +531,38 @@ def test_ontology_read_tools_are_registered():
           "ontology" in calls[0] and all("/api/v1/ontology/" in c for c in calls), str(calls))
 
 
+def test_find_history_is_registered_and_routed():
+    """[중요] **읽기 없는 기록은 없는 기록이다** (`#306`). 쓰기(`log_history`)만 있던 자리라
+    스키마·라우팅·본문 전송을 여기서 못박는다."""
+    names = {t["name"] for t in M.TOOLS}
+    check("find_history 가 TOOLS 에 있다", "find_history" in names, str(sorted(names)))
+    t = next(x for x in M.TOOLS if x["name"] == "find_history")
+    props = t["inputSchema"]["properties"]
+    for k in ("query", "decision_type", "classes", "tags", "supersedes_only"):
+        check(f"스키마에 {k} 가 있다", k in props, str(sorted(props)))
+    check("[중요] 설명이 「로컬에 없다」를 말한다",
+          "로컬" in t["description"] and "마스터" in t["description"], t["description"])
+    check("[주의] supersedes 함정을 설명에 적었다", "supersedes" in t["description"])
+
+    calls = []
+    def fake_api(method, path, payload=None):
+        calls.append((method, path, payload))
+        return {"ok": True, "count": 0, "total": 0, "exists": True, "records": []}
+    M.dispatch_tool("find_history", {"query": "패드 입력", "tags": ["gamepad"],
+                                     "supersedes_only": True, "limit": 3}, api=fake_api)
+    m, path, pl = calls[0]
+    check("[중요] 큐(8101) 대행이다", path == "/api/v1/history/search", path)
+    check("[중요] 한글 질의를 **본문**으로 보낸다 — URL 에 넣지 않는다",
+          m == "POST" and pl.get("query") == "패드 입력", str(calls[0]))
+    check("빈 축은 실어 보내지 않는다", "decision_type" not in pl and "classes" not in pl, str(pl))
+    check("불리언·정수가 그대로 간다", pl.get("supersedes_only") is True and pl.get("limit") == 3,
+          str(pl))
+
+    calls.clear()
+    M.dispatch_tool("find_history", {}, api=fake_api)
+    check("[주의] 인자 없이도 부를 수 있다 (전체 최신순)", calls[0][2] == {}, str(calls[0]))
+
+
 def test_thesaurus_writes_go_to_queue_uncached():
     """[중요] 쓰기는 큐(8101)로 간다 — 8103 의 /api/v1/* 은 **무인증 공개**라(실측 2026-08-20)
     쓰기를 둘 자리가 아니다. 그리고 쓰기는 캐시를 타지 않는다 — last-known-good 이 없다."""
@@ -651,6 +683,7 @@ def main() -> int:
                test_ontology_item_tools_encode_and_cache,
                test_domain_layer_filters_and_keeps_markers,
                test_ontology_read_tools_are_registered,
+               test_find_history_is_registered_and_routed,
                test_thesaurus_writes_go_to_queue_uncached,
                test_guard_verdict_passes_through_not_as_error,
                test_domain_layer_carries_manifest_and_navigation,

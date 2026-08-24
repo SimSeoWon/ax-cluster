@@ -211,9 +211,67 @@ def test_audit():
     check("온톨로지 없으면 빈 진단 (silent)", HH.audit_coverage(p2)["total_domains"] == 0)
 
 
+# ── ⑥ 세션이 되읽는 표면 (`#306`) ─────────────────────────────
+
+def test_search_surface():
+    """[중요] **쓰기만 있던 자리에 읽기를 붙였다** — 계약을 여기서 못박는다."""
+    import datetime as _dt
+    p = fixture()
+    cdir, _g = HH.project_history_dirs(p)
+    cdir.mkdir(parents=True)
+    HG.write(p, HG.render(title="패드 입력 채택", decision_type="architecture",
+                          affected_classes=["UCommonGameViewportClient"],
+                          tags=["gamepad", "CommonUI"],
+                          alternatives_considered=["UMG 단독 (포커스를 직접 짜야 해서 제외)"],
+                          date=_dt.datetime(2026, 8, 1), body="# 패드 입력 채택\n\n본문"),
+             title="패드 입력 채택", date=_dt.datetime(2026, 8, 1))
+    HG.write(p, HG.render(title="그 결정을 되돌린다", decision_type="revert",
+                          supersedes="2026-08-01_0000_패드_입력_채택.md",
+                          tags=["gamepad"], date=_dt.datetime(2026, 8, 5),
+                          body="# 그 결정을 되돌린다\n\n본문"),
+             title="그 결정을 되돌린다", date=_dt.datetime(2026, 8, 5))
+
+    a = HH.search(p)
+    check("전체가 최신순", a["count"] == 2 and a["records"][0]["date"] == "2026-08-05", str(a["count"]))
+    check("[중요] 어디를 봤는지 말한다", a["exists"] and a["dir"].endswith("/history"), a["dir"])
+    check("[중요] 절대경로를 흘리지 않는다 — 파일명만",
+          "/" not in a["records"][0]["path"], a["records"][0]["path"])
+    check("제목을 본문에서 뽑는다", a["records"][0]["title"] == "그 결정을 되돌린다",
+          a["records"][0]["title"])
+
+    check("decision_type 으로 좁힌다",
+          HH.search(p, decision_type="architecture")["count"] == 1)
+    check("태그로 좁힌다 (대소문자 무관)",
+          HH.search(p, tags=["GAMEPAD"])["count"] == 2)
+    check("[중요] prefix 관용 매칭 — UE prefix 를 떼고도 걸린다",
+          HH.search(p, classes=["CommonGameViewportClient"])["count"] == 1)
+    sup = HH.search(p, supersedes_only=True)
+    check("[중요] 뒤집힌 결정만 골라낸다 (drift 축)",
+          sup["count"] == 1 and sup["records"][0]["decision_type"] == "revert", str(sup["count"]))
+    check("자유 질의는 태그·제목을 훑는다", HH.search(p, query="되돌린")["count"] == 1)
+    check("[주의] 필터는 AND 다 — 겹치지 않으면 0건",
+          HH.search(p, decision_type="revert", classes=["UCommonGameViewportClient"])["count"] == 0)
+    check("[중요] alternatives 를 next_steps 와 갈라 돌려준다",
+          HH.search(p, decision_type="architecture")["records"][0]["alternatives_considered"],
+          str(HH.search(p, decision_type="architecture")["records"][0]))
+    check("없는 태그는 0건이지만 total 은 말한다",
+          HH.search(p, tags=["없는태그"])["count"] == 0
+          and HH.search(p, tags=["없는태그"])["total"] == 2)
+
+
+def test_search_on_empty_dir_is_not_a_lie():
+    """[중요] **0건과 「디렉토리가 없다」는 다르다** — 그 차이가 안 보여서 사고가 났다."""
+    p = fixture()
+    out = HH.search(p)
+    check("0건", out["count"] == 0 and out["total"] == 0)
+    check("[중요] exists=False 로 「못 봤다」를 구분한다", out["exists"] is False, str(out))
+    check("어디를 봤는지는 그래도 말한다", out["dir"].endswith("/history"), out["dir"])
+
+
 def main() -> int:
     for fn in (test_producer_roundtrip, test_claude_parser_defenses,
-               test_gemini_parser, test_walk_and_filter, test_audit):
+               test_gemini_parser, test_walk_and_filter, test_audit,
+               test_search_surface, test_search_on_empty_dir_is_not_a_lie):
         fn()
     print(f"{'OK' if not FAIL else '[실패]'} test_history_harvest: {PASS}/{PASS + FAIL} 통과")
     return 1 if FAIL else 0

@@ -52,6 +52,15 @@ class HistoryRecord:
     flow_narrative: str = ""       # 흐름·변경 narrative (cap 1500자)
     next_steps: list = field(default_factory=list)
     raw_excerpt: str = ""          # LLM 프롬프트 첨부용 통합 발췌 (cap 1500자)
+    # ── 세션이 되읽는 데 필요한 필드 (`#306`) — **뒤에 덧붙였다.** 기존 소비자(온톨로지 시드,
+    #    `#158`)는 읽는 것만 읽으므로 추가는 안전하고, 파서를 두 벌로 쓰지 않기 위해서다
+    #    (`#303` 의 `_stamp_fields` 와 같은 판단: 같은 규칙은 한 자리에서만).
+    title: str = ""                # 본문 첫 `# ` 제목 — `log_history` 의 필수 인자였던 것
+    tags: list = field(default_factory=list)
+    alternatives_considered: list = field(default_factory=list)   # next_steps 와 갈라 보관
+    supersedes: str = ""           # 뒤집힌 결정을 따라가는 축 — 이것 없이는 drift 를 못 쫓는다
+    work_id: str = ""
+    session_id: str = ""
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -295,6 +304,17 @@ def parse_claude_history(path: Path) -> Optional[HistoryRecord]:
             if m:
                 next_steps.append(m.group(1).strip())
 
+    tags = fm.get("tags") or []
+    if not isinstance(tags, list):
+        tags = []
+    alternatives = [str(x) for x in alt if x] if isinstance(alt, list) else []
+    supersedes = str(fm.get("supersedes") or "").strip()
+    title = ""
+    for ln in body.splitlines():
+        if ln.startswith("# "):
+            title = ln[2:].strip()
+            break
+
     raw_excerpt_parts = [user_quote, flow_narrative]
     raw_excerpt = "\n\n".join(p for p in raw_excerpt_parts if p)[:1500].strip()
 
@@ -309,6 +329,12 @@ def parse_claude_history(path: Path) -> Optional[HistoryRecord]:
         flow_narrative=flow_narrative[:1500],
         next_steps=next_steps,
         raw_excerpt=raw_excerpt,
+        title=title,
+        tags=[str(x) for x in tags],
+        alternatives_considered=alternatives,
+        supersedes=supersedes,
+        work_id=str(fm.get("work_id") or "").strip(),
+        session_id=str(fm.get("session_id") or "").strip(),
     )
 
 
@@ -544,6 +570,79 @@ def project_history_dirs(paths) -> tuple:
     """우리 트윈의 두 history 디렉토리 (원전 `.claude/history`·`.gemini/history` 자리)."""
     root = Path(paths.root)
     return (root / "history", root / "history_gemini")
+
+
+# ─────────────────────────────────────────────────────────────────
+# 세션이 되읽는 표면 (`#306`)
+#
+# [중요] **읽는 기계는 이미 있었다.** `walk_histories`·`parse_claude_history`·
+#    `filter_for_classes` 는 온톨로지 시드(`#158`)를 위해 이식돼 있었고, 없던 것은
+#    **세션이 부를 자리**다. 그래서 여기서 파서를 새로 쓰지 않는다 — 위의 것을 그대로 쓴다.
+# [주의] `log_history` 는 **쓰기만** 있었다. 쓰기만 있는 기록은 다음 세션에게 없는 것과 같다
+#    (실측 2026-08-24: `.33` 세션이 자기가 남긴 기록을 못 찾아 *"없다"* 고 판단했다).
+# ─────────────────────────────────────────────────────────────────
+
+def _row(rec, *, excerpt_chars: int) -> dict:
+    """세션이 읽을 한 줄. [중요] **원본 json 을 그대로 흘리지 않는다** — 컨텍스트를 아끼고,
+    필드 이름이 절차 문서(`log_history` 인자)와 같게 유지한다(`redmine._issue_row` 와 같은 규약)."""
+    return {
+        "path": Path(rec.path).name,          # [주의] 절대경로를 내보내지 않는다 — 마스터 디스크 구조다
+        "date": rec.date,
+        "title": rec.title,
+        "decision_type": rec.decision_type,
+        "affected_classes": rec.affected_classes,
+        "affected_domains": rec.affected_domains,
+        "tags": rec.tags,
+        "alternatives_considered": rec.alternatives_considered,
+        "supersedes": rec.supersedes,
+        "work_id": rec.work_id,
+        "summary": (rec.summary or "")[:excerpt_chars],
+        "next_steps": rec.next_steps,
+        "source": rec.source,
+    }
+
+
+def _hay(rec) -> str:
+    """자유 질의가 훑을 텍스트. [주의] 본문 전체가 아니라 **발췌까지**다 — 파일을 다 읽어
+    grep 하면 느려지고, 정작 필요한 것은 프론트매터와 요지다."""
+    return " ".join([rec.title, rec.summary, rec.flow_narrative,
+                     " ".join(rec.tags), " ".join(rec.affected_classes),
+                     " ".join(rec.affected_domains),
+                     " ".join(rec.alternatives_considered)]).lower()
+
+
+def search(paths, *, query: str = "", decision_type: str = "", classes=(),
+           tags=(), supersedes_only: bool = False, limit: int = 10,
+           excerpt_chars: int = 500) -> dict:
+    """트윈의 history 를 조건으로 훑는다. 반환 `{"count", "total", "records", "dir"}`.
+
+    필터는 **AND** 다 — 좁히려고 여러 축을 주는 것이므로. 빈 축은 조건이 아니다.
+    `classes` 는 `filter_for_classes` 와 같은 **prefix 관용** 매칭이다(`UManager_X` ↔ `Manager_X`);
+    두 자리가 다른 규칙을 쓰면 같은 질문에 다른 답이 나온다.
+
+    [중요] **없으면 없다고 말한다** — 빈 목록 + `dir`(어디를 봤는가)을 함께 돌려준다. 0건과
+    「디렉토리를 못 찾았다」는 다르고, 그 차이가 안 보이면 다음 세션이 또 「기록이 없다」고 읽는다.
+    """
+    cdir, gdir = project_history_dirs(paths)
+    recs = walk_histories(cdir, gdir)
+    total = len(recs)
+    if decision_type:
+        recs = [r for r in recs if r.decision_type == decision_type]
+    if classes:
+        recs = filter_for_classes(recs, set(classes), limit=max(1, int(limit)),
+                                  per_record_chars=excerpt_chars)
+    if tags:
+        want = {str(t).strip().lower() for t in tags if str(t).strip()}
+        recs = [r for r in recs if {t.lower() for t in r.tags} & want]
+    if supersedes_only:
+        recs = [r for r in recs if r.supersedes]
+    if query:
+        q = str(query).strip().lower()
+        recs = [r for r in recs if q in _hay(r)]
+    out = recs[:max(1, int(limit))]
+    return {"count": len(out), "total": total, "dir": str(cdir),
+            "exists": cdir.is_dir(),
+            "records": [_row(r, excerpt_chars=excerpt_chars) for r in out]}
 
 
 # ─────────────────────────────────────────────────────────────────
