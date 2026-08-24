@@ -77,18 +77,50 @@ def test_linux_command_preserves_path_line() -> None:
     check("출력을 버린다 (감시자 로그 폭증 방지)", ">/dev/null 2>&1" in c, c)
 
 
-def test_gate_before_second_project() -> None:
-    """[중요] **`#248` 전에는 두 번째 프로젝트의 상주를 켜지 않는다** (`#251` 실측 근거)."""
+def test_gate_is_mount_singularity_not_a_missing_axis() -> None:
+    """[중요] **막는 이유가 바뀌었다** (`#311`, 사용자 결정 ⓐ 2026-08-25).
+
+    종전 사유는 *"claim 에 프로젝트 축이 없다(`#248`)"* 였고 **낡았다** — `#248` 은 닫혔고
+    `ClaimReq.project` 가 있고 claimer 가 `#258` 로 태그를 붙인다. 실제 제약은 **마운트
+    단일성**(§5.5.2)이고, 비마운트 claim 은 거르는 것이 아니라 **거절**된다.
+    [주의] **낡은 사유를 지키는 테스트가 새 사실을 막는다** — 그래서 이 테스트를 갈아치웠다.
+    """
     check("마운트와 같으면 막지 않는다", R.blocked_reason("M", "M") == "")
     why = R.blocked_reason("NS", "ModularStage")
     check("[중요] 다르면 막는다", bool(why), why)
-    check("사유가 #248 을 가리킨다", "#248" in why, why)
-    check("잠금은 체크아웃·큐는 공유라는 근거를 든다", "큐는 공유" in why, why)
+    check("[중요] 사유가 **거절**을 말한다 (거른다가 아니다)",
+          "거절" in why and "거른" not in why, why)
+    check("사유가 마운트 단일성을 든다", "§5.5.2" in why or "마운트를 따른다" in why, why)
+    check("[주의] 낡은 근거를 다시 들지 않는다 — 프로젝트 축은 있다",
+          "#248" not in why and "축이 없" not in why, why)
+    check("주기를 말해 「헛돈다」가 구체적이다", str(R.INTERVAL_MIN) in why, why)
 
     lines = R.plan_lines("NS", _f(windows=False), mounted="ModularStage")
     check("계획에 그 사유가 찍힌다", any("지금 켜지 않는다" in l for l in lines), str(lines))
+    check("[중요] 계획이 **정본 문장 그대로**를 쓴다 (두 벌 금지)",
+          any(why in l for l in lines), str(lines))
     ok = R.plan_lines("ModularStage", _f(windows=False), mounted="ModularStage")
     check("같은 프로젝트면 그 줄이 없다", not any("지금 켜지 않는다" in l for l in ok), str(ok))
+
+
+def test_claim_policy_matches_the_reason() -> None:
+    """[중요] **사유가 근거로 든 정책을 실제로 잰다** (`#311` 완료 조건 3).
+
+    문서만 있고 잰 것이 없어서 네 곳이 갈렸다. claim 이 `MOUNT` 가 아니게 되면 이 테스트가
+    깨지고, 그때는 `blocked_reason` 을 같이 고쳐야 한다 — 그것이 이 게이트의 요점이다.
+    """
+    import sys as _s
+    from pathlib import Path as _P
+    _s.path.insert(0, str(_P(__file__).resolve().parent.parent))
+    from master.task_queue import tagging as T
+    check("[중요] claim 은 MOUNT 정책이다 (비마운트를 거절한다)",
+          T.POLICY.get("POST /api/v1/tasks/claim") == T.MOUNT,
+          str(T.POLICY.get("POST /api/v1/tasks/claim")))
+    check("[주의] 태그를 요구한다 — 빈 태그도 거절",
+          T.requires_tag("POST", "/api/v1/tasks/claim"))
+    from master.task_queue.models import ClaimReq
+    check("[중요] 프로젝트 축이 실재한다 (사유가 그 부재를 들면 거짓이 된다)",
+          "project" in ClaimReq.model_fields, str(sorted(ClaimReq.model_fields)))
 
 
 def test_python_probe() -> None:
@@ -379,7 +411,8 @@ if __name__ == "__main__":
                test_task_name_per_project,
                test_windows_command_shape,
                test_linux_command_preserves_path_line,
-               test_gate_before_second_project,
+               test_gate_is_mount_singularity_not_a_missing_axis,
+               test_claim_policy_matches_the_reason,
                test_python_probe,
                test_probe_command_never_uses_pythonw,
                test_probe_parse_distinguishes_unknown_from_false,

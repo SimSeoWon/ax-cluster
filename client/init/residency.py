@@ -124,17 +124,44 @@ def plan_lines(project: str, facts, *, mounted: str = "") -> list:
     if facts.windows:
         out.append("     [주의] 로그온 세션 전용 — 세션이 없으면 `0x800710e0`(요청 거부)이 "
                    "정상이다. 사람 PC 에 백그라운드 상주를 심지 않는다")
-    if mounted and project != mounted:
-        out.append(f"     [중요] **지금 켜지 않는다** — 마운트는 {mounted} 이고 claim 에 "
-                   f"프로젝트 축이 없다(#248). 두 상주가 같은 큐를 빨면 남의 태스크를 집는다")
+    # [중요] **사유를 여기 다시 쓰지 않는다** (`#311`) — 종전에는 여기와 `blocked_reason` 이
+    #    각자 적어 두 벌이었고, `#248` 이 닫힌 뒤 **둘 다** 낡은 채로 남았다.
+    why = blocked_reason(project, mounted)
+    if why:
+        out.append(f"     [중요] **지금 켜지 않는다** — {why}")
     return out
 
 
+# [중요] **이 사유가 정본이다** (`#311`, 사용자 결정 ⓐ 2026-08-25). `plan_lines` 도 이 함수를
+#    쓰고, `projects/onboard.py` 와 `docs/14-onboarding-runbook.md` §14.2-4 는 이 함수를
+#    **가리킨다**. 종전에는 같은 규칙이 **네 곳**에 각자 적혀 있었고 넷 다 낡은 전제였다:
+#    *"claim 에 프로젝트 축이 없다(#248)"* — 축은 **있다**(`#248` 닫힘 · `ClaimReq.project` ·
+#    `claimer.py` 가 `#258` 로 태그를 붙인다).
 def blocked_reason(project: str, mounted: str) -> str:
-    """켜면 안 되는 사유. 빈 문자열이면 켜도 된다 (`#251` 실측 근거)."""
+    """켜면 안 되는 사유. 빈 문자열이면 켜도 된다.
+
+    [중요] **막는 이유는 프로젝트 축의 부재가 아니라 마운트의 단일성이다** (§5.5.2 *"동시에
+    하나만 연다"*, 사용자 결정 ⓐ). claim 은 `tagging.POLICY` 에서 **`MOUNT`** 이므로 비마운트
+    프로젝트의 claim 은 **거절된다** — 실측 2026-08-25(마운트 NS):
+
+        project="NS"            → 204            (정상 · 큐가 비었다)
+        project="ModularStage"  → 200 ok:false   status=not_mounted
+        project=""              → 200 ok:false   status=no_project_tag
+
+    [주의] **거르는 것이 아니라 거절이다.** 그래서 비마운트 상주는 남의 태스크를 집지는
+    않지만 **5분마다 거절만 받으며 헛돈다** — 「도는데 아무 일도 안 한다」로 보이는 상태이고,
+    그것이 켜지 말아야 하는 이유다.
+
+    [중요] **상주는 마운트를 따른다.** 마운트를 옮기면 이전 프로젝트의 상주를 멈추고 새
+    프로젝트의 상주를 켠다. 한 기계가 두 프로젝트를 **동시에** 맡는 길은 ⓐ 에서 없다
+    (그것을 원하면 claim 을 스탬프 축으로 내려야 하고, 그건 마운트의 뜻을 바꾸는 별 결정이다).
+    """
     if mounted and project != mounted:
-        return (f"마운트되지 않은 프로젝트({project} ≠ {mounted})의 상주는 `#248`(큐가 project 로 "
-                f"거른다) 뒤에 켠다 — 잠금은 체크아웃 단위지만 큐는 공유다")
+        # [주의] 호출자가 *"지금 켜지 않는다 — "* 를 앞에 붙인다. 여기서 다시 「켜지 않는다」를
+        #    말하면 한 줄에 두 번 나온다(실측). **이 문장은 사유만 담는다.**
+        return (f"{project} 는 마운트되지 않았다(마운트: {mounted}). claim 이 `MOUNT` 정책이라 "
+                f"200 + `not_mounted` 로 **거절**되고, 상주는 {INTERVAL_MIN}분마다 그 거절만 "
+                f"받는다 — 상주는 마운트를 따른다(§5.5.2)")
     return ""
 
 
