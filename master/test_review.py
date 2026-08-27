@@ -256,6 +256,46 @@ def test_order_and_split():
     check("빈 입력도 안전", R.split_push_tasks(None) == ([], []))
 
 
+def test_manifest_only_durable_is_not_merged():
+    """[중요] `#319` ⓐ — 매니페스트만 든 조각 durable 은 머지하지 않는다 (사용자 결정 2026-08-27).
+
+    실측 2026-08-27: 통합자가 코드를 **작업 브랜치**에 올리므로 조각 durable 에는
+    `.ax/tasks/<T>/context.md` 하나만 남는다. 그것을 머지하면 인프라 파일이 게임 `main` 에
+    박힌다 — NS 첫 완주의 미결과 같은 자리다.
+    """
+    root, repo, work, tasks = fixture()
+    try:
+        # t2 의 durable 을 **매니페스트 전용**으로 다시 만든다 (소스 변경 0)
+        g(repo, "push", "origin", "--delete", durable_branch("t2"))
+        g(repo, "checkout", "feature/w1")
+        g(repo, "checkout", "-B", durable_branch("t2"))
+        write(repo / ".ax" / "tasks" / "t2" / "context.md", "# 매니페스트\n")
+        # [주의] `-A` 를 쓰면 픽스처의 **미커밋** Content/BP_Live.uasset 까지 담겨
+        #    이 durable 이 `.ax/` 밖을 건드린 것이 된다 — 경로를 집어서 담는다.
+        g(repo, "add", "-f", ".ax"); g(repo, "commit", "-m", "manifest only")
+        g(repo, "push", "-f", "origin", durable_branch("t2"))
+        g(repo, "checkout", "main")
+        g(repo, "fetch", "origin")
+
+        tree = root / "wt"
+        g(repo, "worktree", "add", "--detach", str(tree), "origin/main")
+        integ = R.integrate_durables(tree, work_id=WORK, target_branch="feature/w1",
+                                     tasks=tasks, merge_label="[t]")
+        check("통합 성공", integ.ok, integ.error)
+        check("[중요] 소스를 든 t1 은 머지한다", durable_branch("t1") in integ.merged,
+              str(integ.merged))
+        check("[중요] 매니페스트 전용 t2 는 머지하지 않는다",
+              durable_branch("t2") not in integ.merged, str(integ.merged))
+        check("[중요] 안 했다고 **말한다** (빠뜨린 것과 구분된다)",
+              durable_branch("t2") in integ.manifest_only, str(integ.manifest_only))
+        got = g(tree, "ls-tree", "-r", "--name-only", "HEAD")
+        check("[중요] 트리에 `.ax/` 가 없다 — 게임 main 에 인프라 파일을 넣지 않는다",
+              ".ax/" not in got, got[:200])
+        check("t1 의 소스는 들어왔다", "a.txt" in got, got[:200])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_missing_target_branch():
     # [중요] `#319` — 이름은 이제 **work_id 에서 유도**된다. 그래서 "없다" 는 work_id 까지
     #    없을 때만 성립한다. 유도가 되면 시작하고, 뒤에서 실물이 없어 실패한다(그건 다른 사유다).
@@ -499,6 +539,7 @@ def test_finalize_conflict_leaves_nothing():
 
 def main() -> int:
     for fn in (test_order_and_split, test_missing_target_branch,
+               test_manifest_only_durable_is_not_merged,
                test_human_tree_untouched, test_review_integrates_and_cleans_up,
                test_build_fn_injected, test_conflict_aborts_whole,
                test_missing_durable_stops, test_cleanup_plan_splits_by_reachability,

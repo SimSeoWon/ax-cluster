@@ -715,10 +715,25 @@ def run(paths, facts, work_id: str, *, project: str = "", durable: str = "",
         timeout: int = skeleton_gate.BUILD_TIMEOUT) -> Integration:
     """work 하나를 통합한다 — [중요] **적용은 순차, 통과분만 커밋.**
 
-    `durable` — durable 브랜치 이름(없으면 push 하지 않고 로컬 커밋까지만 한다).
+    `durable` — push 대상 브랜치. **비우면 작업 브랜치 `task/<work_id>/base` 로 간다**
+    (`#319` ⓐ, 사용자 결정 2026-08-27). 종전에는 비면 push 를 안 했는데, 계층형에서는 그 이름이
+    work_id 로부터 결정되므로 「모른다」가 성립하지 않는다.
+
+    [중요] **조각 durable 로 보내지 않는 이유**: 통합자는 격리 트리 하나에 조각들을 **순차
+    누적**한다. 조각 2의 커밋은 조각 1의 변경을 이미 포함하므로, 그것을 조각 2의 durable 로
+    밀면 남의 조각까지 실린다. 코드가 모이는 자리는 **작업 브랜치**이고, 조각 durable 은
+    매니페스트 운반 전용으로 남는다(`review.integrate_durables` 가 그것을 머지하지 않는다).
     """
     responses = load_handoff(paths, work_id)
     base = one_base(responses)
+    # [중요] `#319` ⓐ — 기본 push 대상은 **작업 브랜치**다. 이름은 큐가 발급한 work_id 에서
+    #    유도되므로 지어내는 것이 아니다.
+    if not (durable or "").strip():
+        from .branch_names import base_branch as _base_branch, BranchNameError
+        try:
+            durable = _base_branch(work_id)
+        except BranchNameError:
+            durable = ""
     itg = Integration(work_id=work_id, base=base, branch=durable)
     proj = project or paths.name
 
@@ -799,9 +814,9 @@ def run(paths, facts, work_id: str, *, project: str = "", durable: str = "",
         return itg
 
     if not durable:
-        # [주의] 없는 것을 있는 척하지 않는다
-        itg.note = ("[주의] durable 브랜치를 받지 못해 **로컬 커밋까지만** 했다. "
-                    "요청자(`.33`)가 `task/<id>` 를 만들어야 push 할 곳이 생긴다(§8.4)")
+        # [주의] 없는 것을 있는 척하지 않는다 — work_id 가 브랜치명이 못 될 때만 여기 온다
+        itg.note = ("[주의] push 대상 브랜치를 정하지 못해 **로컬 커밋까지만** 했다 "
+                    f"(work_id={work_id!r} 로 브랜치명을 만들 수 없다)")
         return itg
     if push:
         # [중요] ff-only. `--force` 는 쓰지 않는다 — 남의 커밋을 지운다
@@ -911,6 +926,7 @@ def main(argv) -> int:
     if not ue:
         print("[중요] UE5 가 있는 워커가 없다 — 빌드 판정을 못 하므로 통합하지 않는다")
         return 1
+    # [중요] 인자를 안 주면 작업 브랜치로 간다 (`#319` ⓐ) — 손으로 매번 지정하지 않는다
     itg = run(paths, ue[0], work_id, durable=(argv[3] if len(argv) > 3 else ""))
     print(itg.summary())
     # [중요] 통합(작업 보고의 반영)도 상태가 바뀐 순간이다 — 스냅샷 갱신을 던진다 (#216).
