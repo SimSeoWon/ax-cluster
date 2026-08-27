@@ -97,6 +97,12 @@ class Registered:
     generated: list = field(default_factory=list)   # 골조를 마스터가 만든 stem (소 1.1.4)
     gates: list = field(default_factory=list)       # 골조 빌드 게이트 판정 (소 1.1.5)
     base_branch: str = ""                           # `#319` 작업 브랜치 — 조각이 갈라진 자리
+    # [중요] `#328` — 골조가 *"여기서 추측했다"* 고 말한 지점. **사람에게 닿아야 한다.**
+    #    종전에는 `_fill_skeletons` 가 이것을 **버렸다** — 물음이 나와도 볼 길이 없었고,
+    #    그래서 적립 루프가 한 번도 안 돌았다(적립 파일이 존재조차 안 했다).
+    #    [주의] 이것은 **모델의 물음**이지 휴리스틱이 아니다 — 적립되는 것은 사람의 답뿐이다.
+    questions: list = field(default_factory=list)   # [(stem, [Question, …])]
+    accrued: list = field(default_factory=list)     # 이번 호출로 적립된 휴리스틱 주제
 
     @property
     def gate_checked(self) -> bool:
@@ -113,6 +119,7 @@ class Registered:
 
     def summary(self) -> str:
         n_ok = sum(1 for t in self.tasks if t.ok)
+        # (아래에서 물음·적립을 덧붙인다 — `#328`)
         degraded = sum(1 for t in self.tasks if t.manifest_degraded)
         s = f"work={self.work_id} 태스크 {n_ok}/{len(self.tasks)} 등록"
         if degraded:
@@ -124,7 +131,22 @@ class Registered:
               else " · [주의] 골조 빌드 미확인")
         if self.failed:
             s += f" · [중요] 실패 {len(self.failed)}건"
+        # [중요] `#328` — **물음이 있으면 크게 말한다.** 종전에는 버려져서 사람이 볼 길이
+        #    없었고, 그래서 적립 루프가 한 번도 안 돌았다. 안 보이면 없는 것과 같다.
+        n_q = sum(len(qs) for _stem, qs in self.questions)
+        if n_q:
+            s += f" · [중요] **골조가 물음 {n_q}건을 냈다 — 답해야 적립된다**"
+        if self.accrued:
+            s += f" · 휴리스틱 적립 {len(self.accrued)}건"
         return s
+
+    def question_lines(self) -> list:
+        """사람에게 보일 물음. [주의] **모델의 제안이지 답이 아니다** — 그대로 적립하지 않는다."""
+        out: list = []
+        for stem, qs in self.questions:
+            for q in qs:
+                out.append(f"{stem}: {getattr(q, 'summary', str(q))}")
+        return out
 
 
 def _post(url: str, payload: dict, *, token: str | None = None,
@@ -145,8 +167,49 @@ def _post(url: str, payload: dict, *, token: str | None = None,
         raise RegisterError(f"{url} → 연결 실패: {e.reason}") from e
 
 
+def _accrue(paths: ProjectPaths, heuristics) -> tuple:
+    """사람의 답을 적립한다 (`#328`). `(적립된 주제, once 답 목록)`.
+
+    [중요] **적립되는 것은 사람이 답한 것뿐이다** — 모델이 낸 물음(`Registered.questions`)은
+    반대 방향으로 나가고, 여기 들어오지 않는다. 그 구분이 자동 승급을 껐던 것과 같은 이유다:
+    모델의 제안을 적립하면 다음 골조가 **자기가 한 말을 근거로** 같은 선택을 반복한다.
+
+    [중요] **`scope=once` 는 적립하지 않는다** — 이번 골조에만 실린다(`SkeletonSpec.answers`).
+    적립하면 *"이번 스냅샷은 컴포넌트로"* 가 관계없는 다음 작업을 오염시킨다(사용자 지적
+    2026-08-11: *"저 질문들은 답변하면 모든 분산 작업에 적용되는거야?"*).
+
+    [주의] 적립 실패는 **등록을 막지 않는다** — 사유를 결과에 실어 올린다. 휴리스틱은 다음
+    골조를 좋게 하는 것이지 이번 등록의 전제가 아니다.
+    """
+    from . import heuristics as H
+    accrued: list = []
+    once: list = []
+    for item in (heuristics or []):
+        if not isinstance(item, dict):
+            accrued.append(f"[주의] 형식이 아니다 — 건너뜀: {str(item)[:60]}")
+            continue
+        h = H.Heuristic(topic=str(item.get("topic") or "").strip(),
+                        decision=str(item.get("decision") or "").strip(),
+                        why=str(item.get("why") or "").strip(),
+                        at=str(item.get("at") or "").strip(),
+                        scope=str(item.get("scope") or H.SCOPE_PROJECT).strip())
+        if not h.storable:
+            # 이번 골조에만 — 프롬프트에 실을 문장으로 넘긴다
+            once.append(f"{h.topic}: {h.decision}" if h.topic else h.decision)
+            accrued.append(f"(once) {h.topic or h.decision[:30]} — 적립하지 않는다")
+            continue
+        try:
+            H.add(paths, h)
+            accrued.append(f"{h.scope} · {h.topic}")
+        except (ValueError, OSError) as e:                   # noqa: BLE001
+            accrued.append(f"[주의] 적립 실패 — {h.topic or '(주제 없음)'}: {e}")
+    return accrued, once
+
+
 def _fill_skeletons(specs: list, *, paths: ProjectPaths, make_skeleton=None,
-                    gate=None, gate_results: list | None = None) -> list:
+                    gate=None, gate_results: list | None = None,
+                    questions_out: list | None = None,
+                    once_answers: list | None = None) -> list:
     """골조가 빈 명세를 채운다 (소 1.1.4). **제자리에서 고치고** 생성한 stem 을 돌려준다.
 
     [중요] **생성 조건은 하나다 — `instruction` 이 있고 `skeleton` 이 없을 때.** 둘 다 없는 명세는
@@ -169,7 +232,11 @@ def _fill_skeletons(specs: list, *, paths: ProjectPaths, make_skeleton=None,
     for s in need:
         spec = sk.SkeletonSpec(stem=s.stem, files=list(s.target_files),
                                classes=list(s.classes), instruction=s.instruction,
-                               source_files=list(s.source_files))
+                               source_files=list(s.source_files),
+                               # [중요] `#328` — `scope=once` 인 답은 **적립하지 않고 이 골조에만**
+                               #    실린다. 적립하면 *"이번 스냅샷은 컴포넌트로"* 가 관계없는
+                               #    다음 작업을 오염시킨다(사용자 지적 2026-08-11).
+                               answers=list(once_answers or []))
         built = fn(paths, spec)
         if not built.ok:
             raise RegisterError(f"{s.stem}: 골조 생성 실패 — " + "; ".join(built.notes))
@@ -188,6 +255,9 @@ def _fill_skeletons(specs: list, *, paths: ProjectPaths, make_skeleton=None,
                                  for p, t in sorted(built.files.items()))
         if not (s.contracts or "").strip():
             s.contracts = built.contracts()
+        # [중요] `#328` — 물음을 **버리지 않고 올린다.** 사람이 답할 수 있어야 루프가 돈다.
+        if questions_out is not None and getattr(built, "questions", None):
+            questions_out.append((s.stem, list(built.questions)))
         s.depth_set = built.depth_set
         made.append(s.stem)
     return made
@@ -210,6 +280,7 @@ def register_work(
     gate=None,
     carrier="AUTO",
     require_base: bool | None = None,
+    heuristics=None,
 ) -> Registered:
     """work 를 만들고 태스크를 등록한다. 태스크마다 매니페스트를 1회 수집한다.
 
@@ -235,9 +306,18 @@ def register_work(
         s.validate()
     # [중요] **골조 생성은 큐를 만지기 전에 끝낸다.** 등록 도중 생성이 실패하면 반쪽 work 가
     #    남고, 그건 사람이 치운다 — 위 검증 선행과 같은 이유다.
+    # ── `#328` 적립 루프 ────────────────────────────────────────────────
+    # [중요] **적립이 골조 생성보다 먼저다.** 순서를 뒤집으면 이번에 답한 것이 이번 프롬프트에
+    #    안 실린다 — 사람이 답했는데 아무것도 안 바뀌는 것으로 보인다.
+    # [주의] 들어오는 것은 **사람의 답**이다. 나가는 것(`Registered.questions`)은 모델의 물음이고,
+    #    둘은 **방향이 반대**다 — 그 구분이 이 저장소의 규칙이다(모델의 제안을 적립하지 않는다).
+    accrued, once_answers = _accrue(paths, heuristics)
+
     gates: list = []
+    questions: list = []
     generated = _fill_skeletons(specs, paths=paths, make_skeleton=make_skeleton,
-                                gate=gate, gate_results=gates)
+                                gate=gate, gate_results=gates,
+                                questions_out=questions, once_answers=once_answers)
     for s in specs:
         if s.stem in seen:
             raise RegisterError(f"stem 이 중복이다: {s.stem} — 매니페스트가 서로를 덮어쓴다")
@@ -301,7 +381,8 @@ def register_work(
     results = register_tasks(work_id, specs, paths=paths, queue_url=queue_url, token=token,
                              poster=post, searcher=searcher, carrier=carrier)
     return Registered(work_id=work_id, tasks=results, generated=generated,
-                      gates=gates, base_branch=base_ref)
+                      gates=gates, base_branch=base_ref,
+                      questions=questions, accrued=accrued)
 
 
 def create_work(title: str, *, paths: ProjectPaths, target_repo: str,
@@ -354,7 +435,8 @@ def base_status(paths: ProjectPaths, work_id: str, *, branch: str = "", runner=N
 
 def register_tasks(work_id: str, specs: list[TaskSpec], *, paths: ProjectPaths,
                    queue_url: str = DEFAULT_QUEUE, token: str | None = None,
-                   poster=None, searcher=None, carrier=None) -> list[TaskResult]:
+                   poster=None, searcher=None, carrier=None,
+                   heuristics=None, accrued_out: list | None = None) -> list[TaskResult]:
     """이미 있는 work 아래에 태스크를 등록한다 — `#317` 미결 ① 순서의 3번.
 
     [중요] 골조 텍스트는 **더 이상 실어 보내지 않는다** (`#319` 완료 조건 3) — 작업 브랜치에
@@ -362,6 +444,17 @@ def register_tasks(work_id: str, specs: list[TaskSpec], *, paths: ProjectPaths,
     삼았는지는 나중에 물어볼 수 있어야 한다).
     """
     post = poster or (lambda u, p: _post(u, p, token=token))
+    # [중요] `#328` — `#319` 순서(0 등재 → 1 브랜치 → 2 **골조+질문·답** → 3 태스크 등재)에서
+    #    답이 나오는 시점과 마스터를 두드리는 시점이 **같은 순간**이다. 그래서 여기서도 받는다.
+    #    [주의] 골조는 이 함수가 만들지 않으므로 `once` 답은 쓸 자리가 없다 — 적립분만 본다.
+    #    [중요] `register_work` 는 **여기로 넘기지 않는다** — 그쪽이 이미 적립했다(이중 적립 방지).
+    if heuristics:
+        acc, once = _accrue(paths, heuristics)
+        if once:
+            acc.append(f"[주의] `once` 답 {len(once)}건은 이 표면에서 쓸 자리가 없다 — "
+                       f"골조를 만드는 호출에 실어야 한다")
+        if accrued_out is not None:
+            accrued_out.extend(acc)
     # 검색기는 태스크마다 새로 열지 않는다 — 모델 로딩이 태스크 수만큼 반복된다.
     if searcher is None:
         try:
