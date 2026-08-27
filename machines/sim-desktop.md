@@ -41,9 +41,15 @@ are NOT work.**
 > counts live in Redmine; the narrative (census numbers, M2/M3/M4 scope and timings, the ported web
 > UI's feature list) lives in the closed milestone docs listed above — this file does not repeat them.
 
-[중요] **"one writer" was never my invention; that writer is the server, and workers push ephemeral
-`attempt/` branches** (the origin's `cluster_coordinator.py` said *"durable 단일 writer 보존"* while
-our repo cited it 0 times — report 14). This project is an **OS/environment port** (Windows+UE5
+[중요] **"one writer" was never my invention; that writer is the server** (the origin's
+`cluster_coordinator.py` said *"durable 단일 writer 보존"* while our repo cited it 0 times —
+report 14). [주의] **The origin's second half — workers pushing ephemeral `attempt/` branches —
+is no longer ours**: `#327` tore that tier down 2026-08-27 (`#317` 미결 ⑦). `carry.publish` now
+pushes straight to the durable `task/<work>/<task>` **after** the gate passes (verify-then-commit),
+and isolation is the **worktree** (`#321` forces it), not a branch. The evidence a failed attempt
+used to carry lives in the spool and the Redmine note instead.
+
+This project is an **OS/environment port** (Windows+UE5
 daemon → Linux+Gitea) and Linux forces exactly **one** change: the UE5 build step *inside*
 `verify_and_merge` moves to `.2`. Not even Gitea was forced — the origin's doc listed GitHub/Gitea/
 bare as a choice. **소 1.1 (read the origin's design docs) is upstream of everything.**
@@ -53,7 +59,7 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
 
 The pipeline (M3, four deterministic gates — detail in `3-work-pipeline.md`):
 
-    요청 → 골조(claude:opus, 등재 전 빌드) → 분해 → 워커는 **추론만**(ax-infer) → 스풀
+    요청 → 골조(claude:opus, 등재 전 **UHT 게이트**) → 분해 → 워커는 **추론만**(ax-infer) → 스풀
          → 통합자 `.2`: 층1 → 층2 → 적용 → **조각별 UE5 빌드** → 통과분만 커밋 → work 단위 RunTests
          → [사람 승인] `finalize`: `main` 머지 + Redmine 기재 + **도달 가능 브랜치 정리** (한 호출)
 
