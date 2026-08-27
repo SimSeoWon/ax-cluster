@@ -380,7 +380,7 @@ def collect(*, project: str = "", token: str = "", force: bool = False,
         snap.notes.append(f"[주의] 레지스트리에서 머신 목록을 못 읽었다: {e}")
 
     by_host = {str(e.get("host", "")).split(":")[0]: e for e in snap.endpoints}
-    for host, user, path, _driven, role in shops:
+    for host, user, path, _driven, role, _dispatch in shops:
         m = read_machine(host, user, path, role)
         e = by_host.get(host)
         if e:
@@ -391,20 +391,12 @@ def collect(*, project: str = "", token: str = "", force: bool = False,
             snap.problems.append(f"`{host}` — {m.label}"
                                  + (f" ({m.error})" if m.error else ""))
 
-    # ④ 워커 로그 회수 (#220 ③-B) — [중요] **이 자리에서만 걷는다.** 여기는 이미 SSH 를 타는
-    #    순간이고 120초 가드 안이다. 서빙 순간에 걷으면 15초 리로드가 원격을 두드린다
-    #    (BC-250 을 자주 두드리지 않는다 — #105). 실패는 노트로만 — 스냅샷을 죽이지 않는다.
-    if shops:
-        try:
-            from .context_search.paths import resolve as _resolve
-            from .work import logs as _logs
-            _p = _resolve(project or "")
-            got = _logs.collect(_p, project=_p.name, api=lambda m, path, b=None: _api(
-                f"http://127.0.0.1:8101{path}", token=token))
-            if got["files"]:
-                snap.notes.append(f"워커 로그 회수 {got['tasks']}건 · 파일 {got['files']}")
-        except Exception as e:                               # noqa: BLE001
-            snap.notes.append(f"[주의] 워커 로그를 못 걷었다 — {type(e).__name__}: {e}")
+    # ④ [중요] **워커 로그 회수가 여기 있었다 — `#323` 으로 걷어냈다** (2026-08-28).
+    #    `claimer` 가 남기던 `claimer_debug/<task>/…` 를 5분마다 SSH 로 걷었는데, 그 상주가
+    #    `#320` 으로 철거된 뒤 **결과가 정해진 SSH** 가 됐다 — 파일을 쓰는 주체가 없으니
+    #    언제나 「로그 없음」이다. *"BC-250 을 자주 두드리지 않는다"*(`#105`)와 어긋난다.
+    #    [중요] 대신 읽는 것은 **스풀**이고, 그건 파견이 이미 마스터 디스크에 쓴다 — SSH 0.
+    #    화면 쪽 배선은 `webui/routes.py` → `work/logs.read_runs`.
 
     snap.seconds = time.time() - t0
     try:
@@ -815,30 +807,13 @@ def log_block(task_id: str, stored: dict) -> str:
     return "".join(p)
 
 
-def daemon_log_section(host_logs) -> str:
-    """워커 데몬(claimer)의 오늘자 로그 — 태스크가 없어도 「살아 있나·뭘 했나」에 답한다.
-
-    순수 함수 (테스트 자리). 재료는 **회수된 사본**이고, 회수는 ax-status.timer 의 SSH
-    순간에만 한다 (#220 ③-B).
-    """
-    if not host_logs:
-        return ""
-    e = html.escape
-    p = ['<div class="tile" style="margin:.9rem 0">'
-         '<div><b>워커 데몬 로그</b> <span class="sub">회수 사본 — 5분 주기'
-         '(서빙 순간엔 원격을 타지 않는다)</span></div>']
-    for host, text in sorted(host_logs.items()):
-        lines = str(text).splitlines()
-        shown = lines[-LOG_SHOW_LINES:]
-        cut = len(lines) - len(shown)
-        p.append(f'<details style="margin:.25rem 0"><summary class="sub"><code>{e(host)}</code>'
-                 + (f' <span style="opacity:.7">(앞 {cut}줄 생략)</span>' if cut > 0 else "")
-                 + "</summary>")
-        p.append('<pre style="margin:.1rem 0;padding:.4rem .6rem;background:var(--bg);'
-                 'border:1px solid var(--line);border-radius:4px;overflow-x:auto;'
-                 f'font-size:.78rem;line-height:1.45">{e(chr(10).join(shown))}</pre></details>')
-    p.append("</div>")
-    return "".join(p)
+# [중요] **`daemon_log_section` 이 여기 있었다 — `#323` 으로 걷어냈다** (2026-08-28).
+#    「워커 데몬 로그」 절은 `claimer` 가 남기던 머신별 일별 로그를 보여줬다. 그 상주가
+#    `#320` 으로 철거된 뒤 그 파일은 **더 늘지 않았고**, 화면은 2026-08-27 02:26 에 얼어붙은
+#    사본을 계속 보여줬다(마지막 줄이 *"물러난다"* 였다). 낡음 표시는 붙어 있었지만, **없는
+#    데몬의 이름을 단 절**이 남아 있는 것 자체가 오독을 부른다.
+#    [중요] 그 자리의 질문(「누가·언제·뭘 했나」)은 사라지지 않았다 — `work_section` 의
+#    태스크별 기록이 이제 **스풀**에서 그것에 답한다(`work/logs.read_runs`).
 
 
 def work_section(works, tasks, logs=None) -> str:
