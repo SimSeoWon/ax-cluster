@@ -240,6 +240,24 @@ def _parse_yaml_simple(text: str) -> dict:
     return out
 
 
+def _as_id(v: Any) -> str:
+    """식별자를 **문자열로** 고정한다 (`#325`, 2026-08-28).
+
+    [중요] `_parse_scalar` 가 `isdigit()` 인 값을 `int()` 로 바꾼다. `task_id` 는
+    `secrets.token_hex(4)` 라 8자 중 **전부 숫자일 확률이 (10/16)^8 = 2.33%** 이고, 그런
+    레코드는 재기동 뒤 인덱스가 **int 로 키잉**돼 문자열 조회가 전부 빗나갔다
+    (`GET /tasks/<id>`·submit·heartbeat 가 다 404). 실측: 30회 중 3회 재현.
+
+    [주의] **되살릴 수 없는 경우가 하나 있다** — 선행 0 이 붙은 전부-숫자 id(`0043144512`)는
+    `int()` 가 **10진수로 읽어 0 을 버리므로**(8진수가 아니다 — 실측) 원래 문자열이 남지
+    않는다. 그건 여기서 못 고치고, **파일명**(`<task_id>_<stem>.md`)이 유일한 근거다.
+    실물 확인 2026-08-28: 지금 디스크의 태스크 34개에 그런 id 는 **0개**다.
+    """
+    if v is None:
+        return ""
+    return str(v)
+
+
 def _parse_scalar(s: str) -> Any:
     s = s.strip()
     if s == '' or s.lower() in ('null', '~'):
@@ -301,6 +319,15 @@ def _emit_scalar(v: Any) -> str:
     if s == '' or any(c in s for c in '#\n') or s.lower() in ('true', 'false', 'null', 'yes', 'no'):
         return f'"{s}"'
     if s.startswith('[') or s.startswith('{') or s.startswith('-') or s.startswith('"') or s.startswith("'"):
+        return f'"{s}"'
+    # [중요] **왕복이 안 되는 문자열은 인용한다** (`#325`, 2026-08-28).
+    #    `_parse_scalar` 가 `isdigit()` 이면 `int()` 로 바꾸므로, 전부-숫자 문자열
+    #    (`task_id` 8자 hex 의 **2.33%**)이 재기동 뒤 **int 키**가 되어 조회되지 않았다.
+    #    [중요] 숫자만 특별대우하지 않고 **왕복으로** 판정하는 이유: 파서에 규칙이 하나 늘 때마다
+    #    여기에도 같은 규칙을 손으로 옮겨 적어야 하면 두 벌이 되고, 언젠가 한쪽만 고쳐진다.
+    #    [주의] `_parse_scalar` 는 숫자 검사를 따옴표 벗기기보다 **먼저** 하므로 인용이 먹는다
+    #    (실측: `"43144512"` → `'43144512'` str).
+    if _parse_scalar(s) != s:
         return f'"{s}"'
     return s
 
@@ -537,7 +564,11 @@ class TaskIndex:
                 req = work_dir / "_request.md"
                 if req.exists():
                     meta, _ = _read_md(req)
-                    wid = meta.get("work_id") or work_dir.name
+                    # [중요] **id 는 언제나 문자열이다** (`#325`). 옛 레코드가 인용 없이
+                    #    적혀 있으면 파서가 int 로 돌려주고, 그러면 이 인덱스가 int 로 키잉돼
+                    #    문자열 조회가 전부 빗나간다. 쓰는 쪽(`_emit_scalar` 왕복 인용)이 새
+                    #    레코드를 막고, **이 줄이 이미 디스크에 있는 것을 산다.**
+                    wid = _as_id(meta.get("work_id")) or work_dir.name
                     meta["work_id"] = wid
                     self.works[wid] = meta
                     self.work_paths[wid] = req
@@ -545,7 +576,10 @@ class TaskIndex:
                     if f.name == "_request.md":
                         continue
                     meta, body = _read_md(f)
-                    tid = meta.get("task_id")
+                    # [중요] 위와 같은 이유 (`#325`) — 8자 hex 의 **2.33%** 가 전부 숫자다.
+                    tid = _as_id(meta.get("task_id"))
+                    if tid:
+                        meta["task_id"] = tid
                     if tid:
                         self.tasks[tid] = meta
                         self.task_paths[tid] = f
