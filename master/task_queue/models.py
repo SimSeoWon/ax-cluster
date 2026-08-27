@@ -312,6 +312,9 @@ class WorkPatchReq(BaseModel):
     project: str = ""
     merge_status: Optional[str] = None
     redmine_issue_id: Optional[int] = None
+    # [중요] `#319` — 작업 브랜치 `task/<work_id>/base`. work_id 발급 뒤에만 만들 수 있어
+    #    생성 POST 가 아니라 이 patch 로 들어온다.
+    target_branch: Optional[str] = None
     review_decision: Optional[dict] = None
 
 

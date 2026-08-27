@@ -189,7 +189,7 @@ def push_attempt_for(paths, *, work_id: str, task_id: str, workshop: str, ts: st
     이 함수는 **판정하지 않는다.** 판정(층1·층2·빌드)은 durable merge 앞에 서고, 여기서
     막으면 §8.4 *"실패도 커밋한다"* 가 다시 깨진다 — 실패의 증거가 어디에도 안 남는다.
     """
-    p = Pushed(task_id=task_id, workshop=workshop, durable=durable_branch(task_id))
+    p = Pushed(task_id=task_id, workshop=workshop, durable=durable_branch(work_id, task_id))
     p.files = sorted({f for r in responses for f in (r.files or {})})
     if not p.files:
         p.error = "올릴 파일이 없다 — 응답이 비었다"
@@ -200,7 +200,7 @@ def push_attempt_for(paths, *, work_id: str, task_id: str, workshop: str, ts: st
         p.error = wt.error
         return p
 
-    a = C.assign_attempt(task_id, workshop, ts)
+    a = C.assign_attempt(work_id, task_id, workshop, ts)
     p.attempt, p.durable = a["attempt"], a["durable"]
     logf("assign", f"{task_id} → {workshop}, attempt={p.attempt}")
 
@@ -258,11 +258,25 @@ class RemoteCleanup:
                 + (f" · [중요] 오류 {len(self.errors)}" if self.errors else ""))
 
 
-def plan_remote_cleanup(paths, task_id: str = "", *, remote: str = WRITE_REMOTE,
+def plan_remote_cleanup(paths, task_id: str = "", *, work_id: str = "",
+                        remote: str = WRITE_REMOTE,
                         base_branch: str = "main") -> RemoteCleanup:
     """무엇을 지울 수 있는지 **계획만** 낸다. [중요] 지우지 않는다.
 
-    `task_id` 를 주면 그 태스크의 것만, 비우면 전부 본다.
+    범위는 좁은 것부터 넓은 것까지 셋이다 (`#319` 계층형):
+
+        work_id + task_id   그 조각만            attempt/<W>/<T>/*  ·  task/<W>/<T>
+        work_id 만          그 작업 전부          attempt/<W>/*      ·  task/<W>/*  (base 포함)
+        둘 다 없음          전부                  attempt/*          ·  task/*
+
+    [중요] **`task_id` 만 주는 옛 호출도 받는다** — 옛 한 칸짜리 durable(`task/<task_id>`)이
+    origin 에 실재하고(사용자 결정: 읽기만 호환), 그것을 못 보면 정리에서 조용히 빠진다.
+    [주의] git 의 ls-remote 패턴은 `/` 를 넘는다(실측 2026-08-27) — `task/*` 하나가 평평한
+    옛 이름과 계층형을 **둘 다** 잡는다. 훅의 POSIX `case` 와 같은 성질이다.
+
+    [주의] 인자 `base_branch` 는 **기본 브랜치(main)** 이지 작업 브랜치가 아니다 —
+    `branch_names.base_branch()` 와 이름이 겹친다. 여기서 안 고치는 이유는 키워드로 부르는
+    호출자가 있어서다. 고칠 때는 호출자를 같이 본다.
     """
     repo = Path(paths.repo)
     plan = RemoteCleanup()
@@ -282,8 +296,17 @@ def plan_remote_cleanup(paths, task_id: str = "", *, remote: str = WRITE_REMOTE,
         plan.errors.append(f"{tracking} 이 없다 — 도달 여부를 잴 수 없으므로 아무것도 지우지 않는다")
         return plan
 
-    pats = ([f"refs/heads/attempt/{task_id}/*", f"refs/heads/task/{task_id}"] if task_id
-            else ["refs/heads/attempt/*", "refs/heads/task/*"])
+    if work_id and task_id:
+        pats = [f"refs/heads/attempt/{work_id}/{task_id}/*",
+                f"refs/heads/task/{work_id}/{task_id}"]
+    elif work_id:
+        pats = [f"refs/heads/attempt/{work_id}/*", f"refs/heads/task/{work_id}/*"]
+    elif task_id:
+        # 옛 평평한 이름 + 계층형 어디에 있든 그 조각을 잡는다 (읽기 호환)
+        pats = [f"refs/heads/attempt/{task_id}/*", f"refs/heads/attempt/*/{task_id}/*",
+                f"refs/heads/task/{task_id}", f"refs/heads/task/*/{task_id}"]
+    else:
+        pats = ["refs/heads/attempt/*", "refs/heads/task/*"]
     try:
         out = _git(repo, "ls-remote", "--heads", remote, *pats)
     except GitError as e:
@@ -388,7 +411,7 @@ def merge_verified(paths, *, work_id: str, task_id: str, attempt: str,
     wt = tree_path(paths, work_id)
     if not wt.is_dir():
         raise AttemptError(f"작업 트리가 없다: {wt}")
-    return C.verify_and_merge(wt, attempt, durable_branch(task_id),
+    return C.verify_and_merge(wt, attempt, durable_branch(work_id, task_id),
                               submit_epoch=submit_epoch, current_epoch=current_epoch,
                               remote=remote, logf=logf)
 

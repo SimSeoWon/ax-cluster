@@ -515,12 +515,19 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
     if not task_id:
         raise DispatchError(f"claim 응답에 task_id 가 없다 — {str(task)[:160]}")
 
-    body = runner.refresh_base(runner._manifest_for(paths, task_id), paths, task_id)
+    # [중요] `#319` — 계층형 브랜치 이름은 work_id 없이는 만들 수 없다. 인자로 받은 값이
+    #    없으면 태스크가 실어 온 값을 쓰고, 그래도 없으면 **막는다**(옛 평평한 이름으로
+    #    조용히 접으면 조각이 골조 없는 base 에서 난다).
+    work_id = (work_id or "").strip() or str(task.get("work_id") or "")
+    if not work_id:
+        raise DispatchError(f"work_id 가 없다 — 작업 브랜치를 못 정한다 (task={task_id})")
+
+    body = runner.refresh_base(runner._manifest_for(paths, task_id), paths, work_id)
     want = target_files_from(body)
     base = ""
     try:
         from . import twin_base
-        base = twin_base.resolve(paths, task_id).commit or ""
+        base = twin_base.resolve(paths, work_id).commit or ""
     except Exception:                                    # noqa: BLE001
         # [주의] 기준 커밋을 모르면 **재사용 판정을 못 한다** — 그래도 파견은 막지 않는다.
         #    매니페스트 자체가 이미 그 결손을 적어서 워커에게 간다.
@@ -540,7 +547,7 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
     #    테스트는 writer 로 scp 자리를 그대로 잰다.
     if deliver is None and writer is None:
         from . import carry
-        _d = carry.deliverer(paths)
+        _d = carry.deliverer(paths, work_id)
         deliver = lambda f_, t_, txt: _d(f_, t_, txt)     # noqa: E731
 
     res = infer_task(facts, task_id, body, want=want,
@@ -721,7 +728,7 @@ def collect_task(paths, facts, task: dict, *, reader=None, order: int = 0) -> tu
 
     try:
         from . import twin_base
-        res.base_commit = twin_base.resolve(paths, task_id).commit or ""
+        res.base_commit = twin_base.resolve(paths, work_id).commit or "" if work_id else ""
     except Exception:                                    # noqa: BLE001
         res.base_commit = ""
 

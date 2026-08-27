@@ -48,7 +48,8 @@ def _update_index_md(idx: TaskIndex):
 def update_work_meta(idx: TaskIndex, work_id: str, *,
                      merge_status: Optional[str] = None,
                      redmine_issue_id: Optional[int] = None,
-                     review_decision: Optional[dict] = None) -> dict:
+                     review_decision: Optional[dict] = None,
+                     target_branch: Optional[str] = None) -> dict:
     """work 메타 부분 갱신. 명시된 필드만 patch. PATCH /api/v1/works/{work_id} 의 코어."""
     with idx.lock:
         wmeta = idx.works.get(work_id)
@@ -64,6 +65,12 @@ def update_work_meta(idx: TaskIndex, work_id: str, *,
         if review_decision is not None:
             wmeta["review_decision"] = review_decision
             changed.append("review_decision")
+        # [중요] 작업 브랜치 이름은 **work_id 를 받은 뒤에야** 만들어진다 (`#319`) —
+        #    `task/<work_id>/base`. 생성 POST 에는 실을 수 없으므로 등록이 곧바로 patch 한다.
+        #    큐가 work 메타의 SSOT 이므로 유도값을 여기 적어 둔다 (표·조회가 그것을 읽는다).
+        if target_branch is not None and target_branch != wmeta.get("target_branch"):
+            wmeta["target_branch"] = target_branch
+            changed.append(f"target_branch={target_branch}")
         if not changed:
             return {"ok": True, "work_id": work_id, "changed": []}
         _save_work(idx, work_id)

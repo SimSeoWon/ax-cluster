@@ -18,6 +18,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# [중요] `#319` — 조각 durable 은 `task/<work_id>/<task_id>` 다. work_id 가 이름의 한 칸이다.
+W = "w1"
+
 from master.work import carry as C                              # noqa: E402
 
 PASS = FAIL = 0
@@ -83,23 +86,23 @@ BODY = "# 매니페스트\n\n## 대상 파일\n- Source/A.cpp\n"
 def test_publish_and_idempotency():
     p, bare, worker, base = fixture()
     logs = []
-    pub = C.publish(p, "t-1", BODY, base_commit=base, logf=logs.append)
-    check("[중요] publish 성공 — durable 신설", pub.ok and pub.created
-          and pub.durable == "task/t-1", pub.error)
+    pub = C.publish(p, W, "t-1", BODY, base_commit=base, logf=logs.append)
+    check("[중요] publish 성공 — 조각 durable 신설 (계층형, #319)", pub.ok and pub.created
+          and pub.durable == f"task/{W}/t-1", pub.error)
     check("[중요] .gitignore 아래서도 실린다 (add -f — 원전 함정)",
-          g(p.repo, "ls-remote", "--heads", str(bare), "refs/heads/task/t-1") != "")
+          g(p.repo, "ls-remote", "--heads", str(bare), f"refs/heads/task/{W}/t-1") != "")
     remote_file = g(p.repo, "show", f"{pub.head}:.ax/tasks/t-1/context.md")
     check("본문이 커밋에 그대로", remote_file == BODY.rstrip("\n"), remote_file[:50])
     check("원전 커밋 메시지 그대로", "skeleton context manifest for t-1" in
           g(p.repo, "log", "-1", "--format=%s", pub.head))
     check("worktree 잔재가 없다", not (p.root / "ax-carry-t-1").exists())
 
-    pub2 = C.publish(p, "t-1", BODY, base_commit=base)
+    pub2 = C.publish(p, W, "t-1", BODY, base_commit=base)
     check("[중요] 같은 본문 재-publish = 커밋 없음 (멱등 — 파견 루프가 매번 불러도 안전)",
           pub2.ok and pub2.skipped and pub2.head == pub.head, pub2.skipped or pub2.error)
     check("blob 은 동일", pub2.blob == pub.blob)
 
-    pub3 = C.publish(p, "t-1", BODY + "\n## 갱신\nbase 가 바뀌었다\n", base_commit=base)
+    pub3 = C.publish(p, W, "t-1", BODY + "\n## 갱신\nbase 가 바뀌었다\n", base_commit=base)
     check("[중요] 바뀐 본문 = durable tip **위에** 새 커밋 (이력 보존)",
           pub3.ok and not pub3.skipped and
           g(p.repo, "rev-parse", f"{pub3.head}^") == pub.head, pub3.error)
@@ -109,7 +112,7 @@ def test_publish_and_idempotency():
 
 def test_materialize_real_roundtrip():
     p, bare, worker, base = fixture()
-    pub = C.publish(p, "t-2", BODY, base_commit=base)
+    pub = C.publish(p, W, "t-2", BODY, base_commit=base)
     f = Facts(worker, windows=False)
 
     def sh(facts, cmd, timeout):
@@ -117,7 +120,7 @@ def test_materialize_real_roundtrip():
                            encoding="utf-8", timeout=timeout)
         return r.returncode, r.stdout + r.stderr
 
-    got = C.materialize(f, "t-2", expect_blob=pub.blob, runner_=sh)
+    got = C.materialize(f, W, "t-2", expect_blob=pub.blob, runner_=sh)
     check("[중요] 실 클론 왕복 — fetch → show → 파일 실체화 → blob 대조 통과",
           got == pub.blob)
     mat = (worker / ".ax" / "work" / "t-2" / "manifest.md").read_text(encoding="utf-8")
@@ -126,8 +129,8 @@ def test_materialize_real_roundtrip():
           "task/t-2" not in g(worker, "branch", "--list", "task/t-2"))
 
     # refresh 후 재배달 — 새 blob 이 실체화된다
-    pub2 = C.publish(p, "t-2", BODY + "갱신\n", base_commit=base)
-    got2 = C.materialize(f, "t-2", expect_blob=pub2.blob, runner_=sh)
+    pub2 = C.publish(p, W, "t-2", BODY + "갱신\n", base_commit=base)
+    got2 = C.materialize(f, W, "t-2", expect_blob=pub2.blob, runner_=sh)
     check("갱신본 재실체화", got2 == pub2.blob and
           "갱신" in (worker / ".ax" / "work" / "t-2" / "manifest.md").read_text(encoding="utf-8"))
 
@@ -136,45 +139,45 @@ def test_materialize_real_roundtrip():
 
 def test_fail_closed():
     p, bare, worker, base = fixture()
-    pub = C.publish(p, "t-3", BODY, base_commit=base)
+    pub = C.publish(p, W, "t-3", BODY, base_commit=base)
     f = Facts(worker)
 
     try:
-        C.materialize(f, "t-3", expect_blob="0" * 40,
+        C.materialize(f, W, "t-3", expect_blob="0" * 40,
                       runner_=lambda ft, c, t: (0, pub.blob + "\n"))
         check("[중요] blob 불일치는 예외 (전송을 신뢰하지 않는다)", False)
     except C.CarryError as e:
         check("[중요] blob 불일치는 예외 (전송을 신뢰하지 않는다)", "다르다" in str(e))
     try:
-        C.materialize(f, "t-3", expect_blob=pub.blob, runner_=lambda ft, c, t: (1, "죽음"))
+        C.materialize(f, W, "t-3", expect_blob=pub.blob, runner_=lambda ft, c, t: (1, "죽음"))
         check("rc≠0 은 예외", False)
     except C.CarryError:
         check("rc≠0 은 예외", True)
     try:
-        C.materialize(f, "t-3", expect_blob=pub.blob, runner_=lambda ft, c, t: (0, "sha아님"))
+        C.materialize(f, W, "t-3", expect_blob=pub.blob, runner_=lambda ft, c, t: (0, "sha아님"))
         check("sha 를 못 읽으면 예외", False)
     except C.CarryError:
         check("sha 를 못 읽으면 예외", True)
     try:
-        C.materialize(f, "t-3", expect_blob="")
+        C.materialize(f, W, "t-3", expect_blob="")
         check("[중요] 기대 blob 없이 실체화하지 않는다", False)
     except C.CarryError:
         check("[중요] 기대 blob 없이 실체화하지 않는다", True)
 
-    check("빈 본문은 publish 오류", not C.publish(p, "t-4", "  ", base_commit=base).ok)
+    check("빈 본문은 publish 오류", not C.publish(p, W, "t-4", "  ", base_commit=base).ok)
     check("[중요] 기준 커밋도 durable 도 없으면 오류 (어디에 얹을지 모른 채 커밋 금지)",
-          "기준 커밋" in C.publish(p, "t-5", BODY, base_commit="").error)
-    check("브랜치명이 못 되는 task_id 는 오류", not C.publish(p, "t 5", BODY, base_commit="x").ok)
+          "기준 커밋" in C.publish(p, W, "t-5", BODY, base_commit="").error)
+    check("브랜치명이 못 되는 task_id 는 오류", not C.publish(p, W, "t 5", BODY, base_commit="x").ok)
 
 
 # ── 명령 모양 (양 OS) ─────────────────────────────────────────
 
 def test_command_shapes():
-    win = C.materialize_command(Facts(r"C:\Users\u\Documents\MS", windows=True), "t-9")
+    win = C.materialize_command(Facts(r"C:\Users\u\Documents\MS", windows=True), W, "t-9")
     check("[중요] 윈도우 모양 — cd /d · 역슬래시 · mkdir 가드",
           'cd /d "C:\\Users\\u\\Documents\\MS"' in win and ".ax\\work\\t-9" in win
           and "if not exist" in win, win[:120])
-    lin = C.materialize_command(Facts("/home/sim/trunk/MS"), "t-9")
+    lin = C.materialize_command(Facts("/home/sim/trunk/MS"), W, "t-9")
     check("리눅스 모양 — mkdir -p · 슬래시", "mkdir -p" in lin and ".ax/work/t-9" in lin)
     for cmd in (win, lin):
         check("fetch→show→hash-object 사슬", "git fetch origin" in cmd
@@ -217,11 +220,12 @@ def test_register_wiring():
     try:
         got = REG.register_work("제목", [spec], paths=Paths(), target_repo="r",
                                 poster=poster, searcher=object(), make_skeleton=lambda *a, **k: "",
-                                carrier=lambda paths, tid, body, *, base_commit:
-                                    fake_mf_calls.append((tid, body, base_commit)) or
+                                carrier=lambda paths, wid, tid, body, *, base_commit:
+                                    fake_mf_calls.append((wid, tid, body, base_commit)) or
                                     type("X", (), {"ok": True, "head": "h1", "error": ""})())
-        check("[중요] carrier 가 태스크마다 불린다 (본문·base 동반)",
-              fake_mf_calls == [("t-0", BODY, "abc123")], str(fake_mf_calls))
+        # [중요] `#319` — carrier 는 work_id 도 받는다. 조각 durable 이 `task/<W>/<T>` 라서다.
+        check("[중요] carrier 가 태스크마다 불린다 (work_id·본문·base 동반)",
+              fake_mf_calls == [("w-1", "t-0", BODY, "abc123")], str(fake_mf_calls))
         check("carried_head 가 결과에 실린다", got.tasks[0].carried_head == "h1")
 
         got2 = REG.register_work("제목", [REG.TaskSpec(stem="b", target_file="Source/B.cpp",

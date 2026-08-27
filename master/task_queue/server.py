@@ -175,7 +175,8 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         r = update_work_meta(idx, work_id,
                              merge_status=req.merge_status,
                              redmine_issue_id=req.redmine_issue_id,
-                             review_decision=req.review_decision)
+                             review_decision=req.review_decision,
+                             target_branch=req.target_branch)
         if not r.get("ok"):
             raise HTTPException(404, r.get("error", "patch failed"))
         # 생산자③ (#207) — 종결(merged/rejected)의 사실 기록. [중요] fail-soft: 기록이

@@ -263,7 +263,7 @@ def test_queue_calls() -> None:
 def test_run_once_happy() -> None:
     orig = _with_manifest()
     try:
-        api = _Api(task={"task_id": "t1", "epoch": 3})
+        api = _Api(task={"task_id": "t1", "work_id": "w1", "epoch": 3})
         good = f"ATTEMPT: attempt/t1/bc250/1\nHEAD: {SHA}\nRESULT: DONE\n"
         r = R.run_once(_paths_stub(), clean=None, facts=[_facts()], api=api,
                        runner=lambda f, c, t: (0, good), writer=lambda *a, **k: "ok")
@@ -279,7 +279,7 @@ def test_run_once_returns_the_task() -> None:
     orig = _with_manifest()
     try:
         # BLOCKED — 반납해야 한다
-        api = _Api(task={"task_id": "t2", "epoch": 1})
+        api = _Api(task={"task_id": "t2", "work_id": "w1", "epoch": 1})
         r = R.run_once(_paths_stub(), clean=None, facts=[_facts()], api=api,
                        runner=lambda f, c, t: (0, "RESULT: BLOCKED\n"),
                        writer=lambda *a, **k: "ok")
@@ -287,7 +287,7 @@ def test_run_once_returns_the_task() -> None:
         check("submit-fail 로 갔다", api.paths[-1].endswith("/submit-fail"), str(api.paths))
 
         # [중요] 파견 도중 예외 — 집은 채로 죽으면 리스 1200초를 태운다
-        api2 = _Api(task={"task_id": "t3", "epoch": 1})
+        api2 = _Api(task={"task_id": "t3", "work_id": "w1", "epoch": 1})
         try:
             R.run_once(_paths_stub(), clean=None, facts=[_facts()], api=api2,
                        runner=lambda f, c, t: (_ for _ in ()).throw(RuntimeError("SSH 폭발")),
@@ -303,7 +303,7 @@ def test_run_once_returns_the_task() -> None:
 
 def test_run_once_guards() -> None:
     # [중요] 워커가 없으면 claim 조차 하지 않는다 — 집어놓고 못 돌리는 게 더 나쁘다
-    api = _Api(task={"task_id": "t4"})
+    api = _Api(task={"task_id": "t4", "work_id": "w1"})
     r = R.run_once(_paths_stub(), clean=None, facts=[_facts(role="requester")], api=api)
     check("[중요] 워커가 없으면 claim 하지 않는다", not api.calls and r["task"] is None, str(api.paths))
     check("왜 안 했는지 말한다", "집어놓고" in r.get("note", ""), r.get("note", ""))
@@ -316,7 +316,7 @@ def test_run_once_guards() -> None:
     orig = R._manifest_for
     R._manifest_for = lambda p, t: (_ for _ in ()).throw(R.DispatchError("매니페스트가 없다"))
     try:
-        api3 = _Api(task={"task_id": "t5"})
+        api3 = _Api(task={"task_id": "t5", "work_id": "w1"})
         ran = []
         try:
             R.run_once(_paths_stub(), clean=None, facts=[_facts()], api=api3,
@@ -335,27 +335,29 @@ def test_run_once_guards() -> None:
 def test_refresh_base() -> None:
     """[중요] 등록 시점의 기준은 정상 흐름에서 반드시 낡는다 — 파견 시점에 다시 푼다."""
     stale = ("# 태스크\n\n## 기준 (커밋·브랜치)\n\n"
-             "- 작업 브랜치: `task/t1`\n"
+             "- 작업 브랜치: `task/w1/base`\n"
              "- [중요] **그 브랜치가 원격에 아직 없다.** 요청자가 먼저 만들어야 한다\n\n"
              "## 대상 클래스\n\n- UFoo\n")
 
     class _Base:
-        commit, branch, exists, error, bare = SHA, "task/t1", True, "", "/b.git"
-        checked, instruction = True, ""
+        # [중요] `#319` — 기준은 조각 durable 이 아니라 **작업 브랜치**다. `twin` 은 브랜치를
+        #    처음 만들 때의 출발점(트윈 커밋)이라 매니페스트 절이 참조한다.
+        commit, branch, exists, error, bare = SHA, "task/w1/base", True, "", "/b.git"
+        checked, instruction, twin = True, "", SHA
 
-    fresh = R.refresh_base(stale, _paths_stub(), "t1", resolver=lambda p, t: _Base())
+    fresh = R.refresh_base(stale, _paths_stub(), "w1", resolver=lambda p, t: _Base())
     check("[중요] 낡은 '아직 없다' 가 사라진다", "원격에 아직 없다" not in fresh, fresh[:200])
     check("있다고 갱신된다", "원격에 있다" in fresh, fresh[:200])
     check("[중요] 뒤 절을 잘라먹지 않는다", "## 대상 클래스" in fresh and "UFoo" in fresh)
     check("절이 하나만 남는다", fresh.count(R.BASE_HEADING) == 1)
 
     # [중요] 못 풀면 옛 값을 지우지 않고 경고만 붙인다 — 모르는 것을 지어내지 않는다
-    bad = R.refresh_base(stale, _paths_stub(), "t1",
+    bad = R.refresh_base(stale, _paths_stub(), "w1",
                          resolver=lambda p, t: (_ for _ in ()).throw(RuntimeError("bare 못 읽음")))
-    check("[중요] 못 풀면 지우지 않는다", "task/t1" in bad and "## 대상 클래스" in bad)
+    check("[중요] 못 풀면 지우지 않는다", "task/w1/base" in bad and "## 대상 클래스" in bad)
     check("낡았을 수 있다고 경고한다", "낡았을 수 있다" in bad, bad[:220])
 
-    none = R.refresh_base("# 태스크\n\n## 대상 클래스\n", _paths_stub(), "t1",
+    none = R.refresh_base("# 태스크\n\n## 대상 클래스\n", _paths_stub(), "w1",
                           resolver=lambda p, t: _Base())
     check("절이 없으면 앞에 붙인다", none.startswith(R.BASE_HEADING), none[:40])
 

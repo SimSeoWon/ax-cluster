@@ -18,7 +18,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master.work import review as R          # noqa: E402
-from master.work.branch_names import durable_branch   # noqa: E402
+from master.work.branch_names import durable_branch as _dur   # noqa: E402
+
+# [중요] `#319` — 조각 durable 은 `task/<work_id>/<task_id>` 다. 이 파일의 work 는 전부 `w1`
+#    이므로 얇은 래퍼로 감아 호출부를 그대로 둔다(브랜치 계층이 바뀐 것이지 검사 의도가
+#    바뀐 것이 아니다).
+WORK = "w1"
+
+
+def durable_branch(tid: str) -> str:
+    return _dur(WORK, tid)
 
 PASS = FAIL = 0
 
@@ -188,7 +197,7 @@ def test_missing_durable_stops():
 def test_cleanup_plan_splits_by_reachability():
     root, repo, work, tasks = fixture()
     try:
-        plan = R.plan_branch_cleanup(repo, tasks=tasks, target_branch="feature/w1")
+        plan = R.plan_branch_cleanup(repo, tasks=tasks, work_id=WORK, target_branch="feature/w1")
         refs_keep = {ref for ref, _ in plan.keep}
         check("[중요] main 미도달 브랜치는 보존된다 (증거)",
               {durable_branch("t1"), durable_branch("t2"), "feature/w1"} <= refs_keep,
@@ -201,7 +210,7 @@ def test_cleanup_plan_splits_by_reachability():
         g(repo, "merge", "--no-ff", "-m", "merge", f"origin/{durable_branch('t1')}")
         g(repo, "push", "origin", "main")
         g(repo, "fetch", "origin")
-        plan2 = R.plan_branch_cleanup(repo, tasks=tasks, target_branch="")
+        plan2 = R.plan_branch_cleanup(repo, tasks=tasks, work_id=WORK, target_branch="")
         check("병합된 durable 은 삭제 후보가 된다",
               durable_branch("t1") in {ref for ref, _ in plan2.delete}, str(plan2.delete))
         check("아직 미병합인 것은 여전히 보존", durable_branch("t2") in {r for r, _ in plan2.keep})
@@ -218,7 +227,7 @@ def test_cleanup_plan_fails_closed():
     """판정을 못 하면 **보존** 쪽으로 기운다."""
     root, repo, work, tasks = fixture()
     try:
-        plan = R.plan_branch_cleanup(repo, tasks=tasks, target_branch="feature/w1",
+        plan = R.plan_branch_cleanup(repo, tasks=tasks, work_id=WORK, target_branch="feature/w1",
                                      base_branch="존재하지-않는-브랜치")
         check("기준을 못 잡으면 오류로 남긴다", bool(plan.errors), str(plan.errors))
         check("[중요] 그때는 아무것도 삭제 후보가 아니다", not plan.delete)
@@ -248,8 +257,16 @@ def test_order_and_split():
 
 
 def test_missing_target_branch():
-    r = R.review_work(Path("/tmp"), work_id="w", work={}, tasks=[])
-    check("target_branch 없으면 시작도 안 한다", not r.ok and "target_branch" in r.error, r.error)
+    # [중요] `#319` — 이름은 이제 **work_id 에서 유도**된다. 그래서 "없다" 는 work_id 까지
+    #    없을 때만 성립한다. 유도가 되면 시작하고, 뒤에서 실물이 없어 실패한다(그건 다른 사유다).
+    r = R.review_work(Path("/tmp"), work_id="", work={}, tasks=[])
+    check("[중요] work_id 도 target_branch 도 없으면 시작도 안 한다",
+          not r.ok and "작업 브랜치를 정할 수 없다" in r.error, r.error)
+    check("  이름 규약을 사유에 적는다", "task/<work_id>/base" in r.error, r.error)
+    check("[중요] work_id 만 있어도 유도한다 (저장값 없이)",
+          R.work_base_branch("w9") == "task/w9/base")
+    check("[중요] 저장된 target_branch 가 이긴다 (옛 work 호환)",
+          R.work_base_branch("w9", {"target_branch": "feature/x"}) == "feature/x")
 
 
 # ── 반려 ──────────────────────────────────────────────────────

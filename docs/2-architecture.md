@@ -105,7 +105,8 @@
    > 확정됐다(마일스톤 4 문서 「Flow Y 확정」). 원전에서도 **쓰는 주체는 서버**였다 —
    > `cluster_coordinator.verify_and_merge` 의 주석 *"durable 단일 writer 보존"* 의 그 writer 다.
    >
-   >     마스터가 쓸 수 있는 것   attempt/<task>/<workshop>/<ts>  ·  task/<id>
+   >     마스터가 쓸 수 있는 것   attempt/<work>/<task>/<작업장>/<ts>  ·  task/<work>/<task>
+   >                              [주의] `task/<work>/base` 는 **요청자**가 만든다 (#319)
    >     마스터가 못 쓰는 것      [중요] **main** · 그 밖의 모든 ref · 미병합 브랜치 삭제
    >     마스터가 여전히 안 하는 것  [중요] **빌드·테스트** (UE5 가 없다 — 그것이 리눅스가 강제한
    >                                유일한 변경이고 `.2` 로 위임한다)

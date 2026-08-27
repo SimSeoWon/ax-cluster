@@ -56,9 +56,13 @@ Gitea push → post-receive 훅 → 스풀 → inotify → 색인기
 아니고, 그 하나는 통합자가 아니라 서버다.** 원전의 모양은 **2단 브랜치**다:
 
 ```
-durable  task/<id>                                    ← [중요] **서버만** 쓴다 (verify_and_merge)
-ephemeral attempt/<id>/<workshop>/<ts>                ← 작업장이 자유롭게 push (force 허용)
-                                                        epoch 이 낡으면 병합 거부(좀비 차단)
+base      task/<work_id>/base                       ← 요청자가 만든다. 골조가 **실물로** 올라간다
+durable   task/<work_id>/<task_id>                  ← [중요] **서버만** 쓴다 (verify_and_merge).
+                                                      base 에서 갈라진다
+ephemeral attempt/<work_id>/<task_id>/<작업장>/<ts>   ← 작업장이 자유롭게 push (force 허용)
+                                                      epoch 이 낡으면 병합 거부(좀비 차단)
+
+[중요] 계층형은 `#319`(2026-08-27, 사용자 결정 ⓐ) — 종전 평평한 이름은 **읽기만 호환**.
 ```
 
 [중요] **리눅스가 강제하는 변경은 정확히 하나다** — `verify_and_merge` 안의 **UE5 빌드 단계가 `.2` 로

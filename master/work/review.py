@@ -64,7 +64,26 @@ from pathlib import Path
 
 from . import coordinator as C
 from .coordinator import GitError, _git, _git_rc
-from .branch_names import durable_branch, attempt_glob
+from .branch_names import (
+    BranchNameError, base_branch as _base_branch, durable_branch, attempt_glob,
+)
+
+
+def work_base_branch(work_id: str, work: dict | None = None) -> str:
+    """이 work 의 작업 브랜치 이름 (`#319`).
+
+    [중요] **저장된 `target_branch` 가 이긴다** — 옛 work(그 값이 `main` 이나 `feature/…`)도
+    그대로 돌아야 한다. 없으면 **work_id 에서 유도**한다: 이름의 SSOT 는 큐가 발급한 id 이므로
+    유도는 지어내는 것이 아니다(`#197` 이 값을 치른 구분).
+    [주의] 못 만들면 **빈 문자열** — 호출자가 사유를 붙여 거절한다(예외로 새지 않는다).
+    """
+    stored = ((work or {}).get("target_branch") or "").strip()
+    if stored:
+        return stored
+    try:
+        return _base_branch(work_id)
+    except BranchNameError:
+        return ""
 
 REVIEW_TREE_PREFIX = "ax-review"
 DEFAULT_REMOTE = "origin"
@@ -114,9 +133,20 @@ def split_push_tasks(tasks) -> tuple:
     return verified, skipped
 
 
-def integrate_durables(repo: Path, *, target_branch: str, tasks, merge_label: str,
-                       remote: str = DEFAULT_REMOTE, logf=C._noop_log) -> Integration:
-    """Plan v5 C.7 — feature(골조·글루) + **verified** task durable 을 현재 브랜치에 머지한다.
+def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
+                       merge_label: str, remote: str = DEFAULT_REMOTE,
+                       logf=C._noop_log) -> Integration:
+    """Plan v5 C.7 — 작업 브랜치(골조) + **verified** 조각 durable 을 현재 브랜치에 머지한다.
+
+    [중요] `#319` 이후 계층은 3단이다:
+
+        attempt/<W>/<T>/<작업장>/<ts>   시도
+          └ task/<W>/<T>                조각 durable — 검증 통과분이 여기 merge 된다
+             └ task/<W>/base            작업 브랜치 — 골조가 실물로 있고 조각들이 여기서 갈라졌다
+                └ main                  사람이 옮긴다 (요청자 `.33`)
+
+    그래서 **작업 브랜치를 먼저 머지한다** — 조각들의 공통 조상이라 대개 fast-forward 로
+    흡수되지만, 골조만 있고 조각이 하나도 없는 work 에서도 골조가 살아남아야 한다.
 
     [중요] **호출 전제**: 호출자가 통합 대상 브랜치를 **이미 체크아웃**해 뒀다 (원전과 같다).
     [중요] **push 하지 않는다** — 머지 정합성만 본다. 어디에 올릴지는 호출자(review=시뮬레이션
@@ -143,7 +173,7 @@ def integrate_durables(repo: Path, *, target_branch: str, tasks, merge_label: st
     merged: list = []
     for t in verified:
         tid = t.get("task_id")
-        dur = durable_branch(tid)
+        dur = durable_branch(work_id, tid)
         # [중요] verified 인데 durable 이 없다 = 이상(검증 워커의 merge 누락) → 통째 중단.
         #    [주의] 여기서 넘어가면 **검증됐다고 기록된 것이 빠진 채** 통합이 성공으로 보인다.
         rc, ls = _git_rc(repo, "ls-remote", "--heads", remote, dur)
@@ -210,7 +240,7 @@ def apply_branch_cleanup(repo: Path, plan: "CleanupPlan", *, remote: str = DEFAU
     return deleted, failed
 
 
-def plan_branch_cleanup(repo: Path, *, tasks, target_branch: str = "",
+def plan_branch_cleanup(repo: Path, *, tasks, work_id: str = "", target_branch: str = "",
                         remote: str = DEFAULT_REMOTE, base_branch: str = BASE_BRANCH,
                         logf=C._noop_log) -> CleanupPlan:
     """원전 `_cleanup_all_work_branches` 이식 — [중요] **지우지 않고 가른다.**
@@ -233,13 +263,15 @@ def plan_branch_cleanup(repo: Path, *, tasks, target_branch: str = "",
         tid = t.get("task_id")
         if not tid:
             continue
-        rc, out = _git_rc(repo, "ls-remote", "--heads", remote, attempt_glob(tid))
+        rc, out = _git_rc(repo, "ls-remote", "--heads", remote,
+                          attempt_glob(work_id, tid) if work_id else f"refs/heads/attempt/*/{tid}/*")
         if rc == 0:
             for line in out.splitlines():
                 parts = line.split()
                 if len(parts) == 2 and parts[1].startswith("refs/heads/"):
                     refs.append((parts[1][len("refs/heads/"):], parts[0]))
-        rc, out = _git_rc(repo, "ls-remote", "--heads", remote, durable_branch(tid))
+        rc, out = _git_rc(repo, "ls-remote", "--heads", remote,
+                          durable_branch(work_id, tid) if work_id else f"refs/heads/task/*/{tid}")
         if rc == 0:
             for line in out.splitlines():
                 parts = line.split()
@@ -310,9 +342,12 @@ def review_work(repo: Path, *, work_id: str, work: dict, tasks,
     원전처럼 `stash` + `checkout main` 을 하지 않는다 (모듈 머리말의 반사실 실측).
     """
     r = ReviewResult(work_id=work_id)
-    target = (work or {}).get("target_branch") or ""
+    # [중요] `#319` — 저장된 값이 이기고, 없으면 **work_id 에서 유도**한다.
+    #    이름의 SSOT 는 큐가 발급한 work_id 이므로 유도는 지어내는 것이 아니다.
+    target = work_base_branch(work_id, work)
     if not target:
-        r.error = "target_branch 가 없다 — branch_isolation=False work 인가?"
+        r.error = ("작업 브랜치를 정할 수 없다 — work_id 도 target_branch 도 쓸 수 없다 "
+                   "(`#319`: 이름은 `task/<work_id>/base`)")
         return r
     r.target_branch = target
     r.title = (work or {}).get("title") or work_id
@@ -338,7 +373,7 @@ def review_work(repo: Path, *, work_id: str, work: dict, tasks,
 
         label = f"[REVIEW SIM] {work_id}: {r.title}"
         if is_push:
-            integ = integrate_durables(tree, target_branch=target, tasks=tasks,
+            integ = integrate_durables(tree, work_id=work_id, target_branch=target, tasks=tasks,
                                        merge_label=label, remote=remote, logf=logf)
         else:
             rc, out = _git_rc(tree, "fetch", remote, target)
@@ -483,8 +518,8 @@ def reject_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str = 
         logf("reject", d.error)
 
     d.merge_status = "rejected"
-    d.cleanup = plan_branch_cleanup(repo, tasks=tasks,
-                                    target_branch=(work or {}).get("target_branch") or "",
+    d.cleanup = plan_branch_cleanup(repo, tasks=tasks, work_id=work_id,
+                                    target_branch=work_base_branch(work_id, work),
                                     remote=remote, base_branch=base_branch, logf=logf)
     d.commands = d.cleanup.commands(remote)
     d.redmine_note = (
@@ -514,7 +549,7 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
     """
     d = Decision(work_id=work_id)
     status = (work or {}).get("merge_status")
-    target = (work or {}).get("target_branch") or ""
+    target = work_base_branch(work_id, work)
     d.redmine_issue_id = str((work or {}).get("redmine_issue_id") or "")
     if status == "merged":
         d.ok, d.noop, d.merge_status = True, True, "merged"
@@ -524,7 +559,8 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
                    f"(원전과 같은 게이트)")
         return d
     if not target:
-        d.error = "target_branch 가 없다"
+        d.error = ("작업 브랜치를 정할 수 없다 — work_id 도 target_branch 도 쓸 수 없다 "
+                   "(`#319`: 이름은 `task/<work_id>/base`)")
         return d
 
     is_push = (work or {}).get("distribution_mode") == "push"
@@ -547,7 +583,7 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
         if reviewer:
             label += f" (Reviewed-by: {reviewer})"
         if is_push:
-            integ = integrate_durables(tree, target_branch=target, tasks=tasks,
+            integ = integrate_durables(tree, work_id=work_id, target_branch=target, tasks=tasks,
                                        merge_label=label, remote=remote, logf=logf)
         else:
             rc, out = _git_rc(tree, "fetch", remote, target)
@@ -598,7 +634,8 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
                 logf("finalize", d.error)
             d.merge_status = "merged"
             _git_rc(repo, "fetch", remote, base_branch)      # 정리 판정의 입력을 새로 읽는다
-            d.cleanup = plan_branch_cleanup(repo, tasks=tasks, target_branch=target,
+            d.cleanup = plan_branch_cleanup(repo, tasks=tasks, work_id=work_id,
+                                            target_branch=target,
                                             remote=remote, base_branch=base_branch, logf=logf)
             # ── ③ 정리 실행 (원전 6단계 ③ · 사용자 결정 2026-08-21) ──────────
             # [중요] 머지가 끝난 **뒤**라 도달 가능 판정이 이제 참이다. 순서를 바꾸면

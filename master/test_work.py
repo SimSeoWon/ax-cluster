@@ -70,47 +70,73 @@ def main() -> int:
     paths = ProjectPaths(name="TestProj", root=tmp / "TestProj")
 
     # ── 브랜치 규약 ─────────────────────────────────
-    print("\n[1] 2-tier 규약")
-    check("durable", bn.durable_branch("task_5") == "task/task_5")
-    check("attempt", bn.attempt_branch("task_5", "HV0I6DL", "20260808_120000")
-          == "attempt/task_5/HV0I6DL/20260808_120000")
-    check("durable 판별", bn.is_durable("task/task_5") and not bn.is_durable("attempt/x/y/z"))
-    check("attempt 판별", bn.is_attempt("attempt/x/y/z") and not bn.is_attempt("task/task_5"))
-    check("glob", bn.attempt_glob("task_5") == "attempt/task_5/*")
+    print("\n[1] 3-tier 규약 (#319 — 계층형, 사용자 결정 ⓐ)")
+    check("base", bn.base_branch("w9") == "task/w9/base")
+    check("durable", bn.durable_branch("w9", "task_5") == "task/w9/task_5")
+    check("attempt", bn.attempt_branch("w9", "task_5", "HV0I6DL", "20260808_120000")
+          == "attempt/w9/task_5/HV0I6DL/20260808_120000")
+    check("durable 판별", bn.is_durable("task/w9/task_5") and not bn.is_durable("attempt/x/y/z"))
+    check("attempt 판별", bn.is_attempt("attempt/x/y/z") and not bn.is_attempt("task/w9/task_5"))
+    check("base 판별", bn.is_base("task/w9/base") and not bn.is_base("task/w9/task_5"))
+    check("glob", bn.attempt_glob("w9", "task_5") == "attempt/w9/task_5/*")
+    check("work glob (base + 조각 전부)", bn.work_glob("w9") == "task/w9/*")
+    # [중요] `#317` 실측: `task/W` 와 `task/W/T` 는 공존 불가라 작업 브랜치가 `…/base` 여야 한다.
+    #    그래서 `base` 는 task_id 로 쓸 수 없다 — 통과시키면 둘이 같은 이름이 된다.
+    check("[중요] task_id 로 'base' 는 거부",
+          _raises(lambda: bn.durable_branch("w9", "base"), bn.BranchNameError))
+    check("[중요] 작업 브랜치는 durable 로 파싱되지 않는다",
+          bn.parse_durable("task/w9/base") is None)
 
     print("\n[2] [중요] zombie race 가 구조적으로 성립하지 않는다")
-    a = bn.attempt_branch("task_5", "HV0I6DL", "t1")     # 작업장 A
-    b = bn.attempt_branch("task_5", "JFVS693", "t2")     # 재배정된 B
+    a = bn.attempt_branch("w9", "task_5", "HV0I6DL", "t1")     # 작업장 A
+    b = bn.attempt_branch("w9", "task_5", "JFVS693", "t2")     # 재배정된 B
     check("서로 다른 ref", a != b, f"{a} vs {b}")
     check("둘 다 durable 이 아니다", not bn.is_durable(a) and not bn.is_durable(b))
     check("같은 작업장 재시도도 갈린다",
-          bn.attempt_branch("task_5", "A", "t1") != bn.attempt_branch("task_5", "A", "t2"))
+          bn.attempt_branch("w9", "task_5", "A", "t1") != bn.attempt_branch("w9", "task_5", "A", "t2"))
     check("같은 glob 으로 일괄 정리된다",
           bn.parse_attempt(a)["task_id"] == bn.parse_attempt(b)["task_id"] == "task_5")
 
     print("\n[3] 파싱 왕복")
     got = bn.parse_attempt(a)
-    check("필드", got == {"task_id": "task_5", "workshop": "HV0I6DL", "ts": "t1"}, str(got))
-    check("durable 파싱", bn.parse_durable("task/task_5") == "task_5")
-    for bad in ("task/task_5", "attempt/a/b", "attempt/a/b/c/d", "", "쓰레기", None):
+    check("필드", got == {"work_id": "w9", "task_id": "task_5",
+                          "workshop": "HV0I6DL", "ts": "t1"}, str(got))
+    check("durable 파싱", bn.parse_durable("task/w9/task_5")
+          == {"work_id": "w9", "task_id": "task_5"})
+    check("base 파싱", bn.parse_base("task/w9/base") == "w9")
+    # [중요] **읽기만 호환** (사용자 결정 2026-08-27) — origin 에 옛 한 칸짜리가 실재한다
+    #    (`task/62efc6a6`·`task/6ff986ed`). 모르는 격으로 두면 정리에서 조용히 빠진다.
+    check("[중요] 옛 한 칸짜리 durable 도 읽는다",
+          bn.parse_durable("task/62efc6a6")
+          == {"work_id": None, "task_id": "62efc6a6", "legacy": True})
+    check("[중요] 옛 4토큰 attempt 도 읽는다",
+          (bn.parse_attempt("attempt/t1/HV/ts") or {}).get("legacy") is True)
+    check("[주의] 쓰기는 계층형뿐 — 옛 모양을 만드는 함수는 없다",
+          bn.durable_branch("w9", "t1").count("/") == 2)
+    for bad in ("attempt/a/b", "attempt/a/b/c/d/e", "", "쓰레기", None):
         check(f"  attempt 아님: {bad!r}", bn.parse_attempt(bad) is None)
-    for bad in ("attempt/a/b/c", "task/a/b", "", None):
+    for bad in ("attempt/a/b/c", "task/a/b/c", "", None):
         check(f"  durable 아님: {bad!r}", bn.parse_durable(bad) is None)
 
     print("\n[4] [중요] 잘못된 식별자를 조용히 고치지 않는다")
     for bad, why in [("", "빈 값"), ("   ", "공백뿐"), ("a/b", "슬래시"),
                      ("a b", "공백"), ("a:b", "콜론"), ("한글", "비ASCII")]:
         try:
-            bn.durable_branch(bad)
+            bn.durable_branch("w9", bad)
             check(f"  거부: {why}", False, "통과해 버렸다")
         except bn.BranchNameError:
             check(f"  거부: {why}", True)
+        try:
+            bn.base_branch(bad)
+            check(f"  base 도 거부: {why}", False, "통과해 버렸다")
+        except bn.BranchNameError:
+            check(f"  base 도 거부: {why}", True)
     check("attempt 도 작업장명을 검사한다",
-          _raises(lambda: bn.attempt_branch("t", "a/b", "ts"), bn.BranchNameError))
+          _raises(lambda: bn.attempt_branch("w", "t", "a/b", "ts"), bn.BranchNameError))
     check("attempt 도 ts 를 검사한다",
-          _raises(lambda: bn.attempt_branch("t", "w", ""), bn.BranchNameError))
+          _raises(lambda: bn.attempt_branch("w", "t", "w", ""), bn.BranchNameError))
     check("앞뒤 공백은 다듬는다 (내용은 안 바꾼다)",
-          bn.durable_branch("  task_5  ") == "task/task_5")
+          bn.durable_branch("  w9  ", "  task_5  ") == "task/w9/task_5")
 
     # ── 매니페스트 ──────────────────────────────────
     print("\n[5] 매니페스트 조립")
@@ -133,13 +159,18 @@ def main() -> int:
     check("발췌 없는 히트도 실린다", "B.md" in m.body)
     check("재검색 불필요를 명시", "재검색 불필요" in m.body)
 
-    print("\n[5b] [중요] 골조는 매니페스트로 간다 (task_data 는 전송 수단이 아니다)")
-    ms = mf.build(paths, "t", classes=["UFoo"], skeleton="class UFoo { void Init(); };",
+    print("\n[5b] [중요] 골조는 **매니페스트에 없다** — 작업 브랜치에 실물로 있다 (#319)")
+    # 종전에는 여기서 `skeleton=` 을 실어 `## 골조` 절을 만들었다. `#319` 완료 조건 3 이
+    # 그 절을 뺐다 — 실측(`#317`): 매니페스트 298줄 중 198줄(2/3)이 골조였고, 조각마다 같은
+    # 텍스트를 인바운드 토큰으로 실어 보내고 있었다.
+    check("[중요] build 는 더 이상 skeleton 인자를 받지 않는다",
+          _raises(lambda: mf.build(paths, "t", skeleton="x",
+                                   searcher=FakeSearch([]), now=NOW), TypeError))
+    ms = mf.build(paths, "t", classes=["UFoo"],
                   searcher=FakeSearch([FakeHit("A.md")]), now=NOW)
-    check("골조 섹션", "## 골조" in ms.body)
-    check("본문이 실린다", "class UFoo { void Init(); };" in ms.body)
-    check("cpp 펜스", "```cpp" in ms.body)
-    check("골조 없으면 섹션도 없다", "## 골조" not in m.body)
+    check("골조 절이 없다", "## 골조" not in ms.body)
+    check("[중요] 어디에 있는지는 기준 절이 말한다",
+          "골조는 이 브랜치에 실물로 있다" in ms.body or "작업 브랜치" in ms.body, ms.body[:400])
 
     print("\n[5-1] [중요] 소켓 타임아웃도 GenerateError 로 (배치를 크래시시키지 않는다)")
     import urllib.error as _ue
@@ -208,8 +239,11 @@ def main() -> int:
     # [중요] 다른 채널이 결손을 남겨도 이 메시지가 사라지면 안 된다 (2026-08-09 회귀)
     check("결과 0건도 결손으로 표시", not m3.ok and "결과가 없다" in m3.body)
     m3b = mf.build(paths, "t", classes=["UFoo"], searcher=FakeSearch([]), now=NOW)
-    check("[중요] 기준 커밋이 없어도 '검색 결과가 없다' 는 남는다",
-          "결과가 없다" in m3b.body and "기준 커밋을 정할 수 없다" in m3b.body, m3b.degraded)
+    # [중요] `#319` — 기준은 트윈 커밋이 아니라 **작업 브랜치**이고, work_id 가 없으면 그 이름을
+    #    만들 수 없다. 결손 문구가 바뀌었을 뿐 **채널마다 자기 결손을 센다**는 성질은 그대로다.
+    check("[중요] 기준을 못 정해도 '검색 결과가 없다' 는 남는다",
+          "결과가 없다" in m3b.body
+          and any("작업 브랜치를 정할 수 없다" in d for d in m3b.degraded), m3b.degraded)
 
     m4 = mf.build(paths, "t", searcher=FakeSearch([FakeHit("X.md")]), now=NOW)
     check("질의를 못 만들면 검색하지 않는다", not m4.ok and "질의를 만들 수 없" in m4.body)
@@ -297,7 +331,9 @@ def main() -> int:
                         skeleton="class UManagerBase {};", requires=["ue5"]),
                TaskSpec(stem="TableData", classes=["UManager_TableData"])])
     check("ok", got.ok, got.summary())
-    check("work 1회 + task 2회", len(calls) == 3, str(len(calls)))
+    # [중요] `#319` 로 호출이 하나 늘었다 — work 생성 → **작업 브랜치 patch** → task ×2.
+    #    이름은 work_id 를 받은 뒤에야 만들어지므로 생성 POST 에 실을 수 없다.
+    check("work 1회 + patch 1회 + task 2회", len(calls) == 4, str([u for u, _ in calls]))
     check("work_id", got.work_id == "w1")
     check("태스크 2건", len(got.tasks) == 2)
     check("매니페스트가 붙는다", all(t.manifest_path for t in got.tasks))
@@ -305,11 +341,16 @@ def main() -> int:
     check("  task_id 로 읽힌다", mf.read(paths, got.tasks[0].task_id) is not None)
 
     wp = calls[0][1]
-    check("[중요] 2-tier 를 쓴다", wp["distribution_mode"] == "push", str(wp))
-    tp = calls[1][1]
-    check("task_data 에도 남는다 (감사 기록)", tp["task_data"]["skeleton"] == "class UManagerBase {};")
-    check("[중요] 골조가 매니페스트에 도달한다",
-          "class UManagerBase {};" in (mf.read(paths, got.tasks[0].task_id) or ""))
+    check("[중요] 3-tier 를 쓴다", wp["distribution_mode"] == "push", str(wp))
+    pu, pp = calls[1]
+    check("[중요] 작업 브랜치를 큐에 기록한다 (#319)",
+          pu.endswith("/works/w1") and pp["target_branch"] == "task/w1/base", f"{pu} {pp}")
+    check("  patch 도 프로젝트 스탬프를 싣는다 (#257)", pp.get("project") == paths.name, str(pp))
+    check("  결과에 작업 브랜치가 실린다", got.base_branch == "task/w1/base", got.base_branch)
+    tp = calls[2][1]
+    check("task_data 에 감사 사본이 남는다", tp["task_data"]["skeleton"] == "class UManagerBase {};")
+    check("[중요] 골조는 **매니페스트로 가지 않는다** (#319 — 작업 브랜치에 실물로 있다)",
+          "class UManagerBase {};" not in (mf.read(paths, got.tasks[0].task_id) or ""))
     check("동결 계약이 실린다", tp["task_data"]["contracts"] == "Init() 동결")
     check("능력 라우팅", tp["requires"] == ["ue5"])
     check("[중요] 저장소를 만지는 필드가 없다",
@@ -320,6 +361,8 @@ def main() -> int:
     def flaky(url, payload):
         if url.endswith("/works"):
             return {"work_id": "w2"}
+        if "/works/" in url:                 # `#319` 작업 브랜치 patch
+            return {"ok": True}
         if payload["stem"] == "Bad":
             raise RegisterError("HTTP 500")
         return {"task_id": "task_ok"}
@@ -394,7 +437,7 @@ def main() -> int:
         check("  이유를 말한다", "grounding" in str(e))
 
     print("\n[20] 생성 → 층2 → 인계")
-    mf.write(gp, mf.build(gp, "t1", classes=["UFoo"], skeleton="class UFoo{};",
+    mf.write(gp, mf.build(gp, "t1", classes=["UFoo"],
                           searcher=FakeSearch([FakeHit("A.md")]), now=NOW))
     seen = {}
 

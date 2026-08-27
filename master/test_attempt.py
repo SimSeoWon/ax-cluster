@@ -113,7 +113,7 @@ def test_failed_response_is_pushed_anyway():
 
         refs = _run(fx.paths.repo, "ls-remote", "--heads", "origin")
         check("① attempt 가 원격에 있다", f"refs/heads/{p.attempt}" in refs, refs)
-        check("① durable 은 아직 없다", durable_branch(TASK) not in refs, refs)
+        check("① durable 은 아직 없다", durable_branch(WORK, TASK) not in refs, refs)
 
         body = _run(fx.paths.repo, "show", f"origin/{p.attempt}:{REL}")
         check("① 올라간 것이 그 본문이다", "#error broken" in body, body[:60])
@@ -185,7 +185,7 @@ def test_verified_creates_durable():
                              submit_epoch=1, current_epoch=1, remote="origin")
         check("⑥ merge 됐다", r.get("merged"), str(r))
         refs = _run(fx.paths.repo, "ls-remote", "--heads", "origin")
-        check("⑥ durable 이 생겼다", f"refs/heads/{durable_branch(TASK)}" in refs, refs)
+        check("⑥ durable 이 생겼다", f"refs/heads/{durable_branch(WORK, TASK)}" in refs, refs)
 
 
 def test_stale_epoch_leaves_durable_alone():
@@ -200,7 +200,7 @@ def test_stale_epoch_leaves_durable_alone():
         check("⑦ 사유가 epoch 이다", "stale_epoch" in r.get("reason", ""), str(r))
         refs = _run(fx.paths.repo, "ls-remote", "--heads", "origin")
         check("⑦ [중요] durable 이 안 생겼다 (부작용 0)",
-              durable_branch(TASK) not in refs, refs)
+              durable_branch(WORK, TASK) not in refs, refs)
 
 
 # ── ⑧ 변경 없음은 사실이다 ────────────────────────────────────────────────────
@@ -252,7 +252,7 @@ def test_cleanup_deletes_merged_attempt():
                          submit_epoch=1, current_epoch=1, remote="origin")
         # durable 을 main 으로 올린다 — 요청자·사람이 하는 그 단계
         _run(fx.paths.repo, "push", "-q", "origin",
-             f"{durable_branch(TASK)}:main")
+             f"{durable_branch(WORK, TASK)}:main")
 
         plan = A.plan_remote_cleanup(fx.paths, remote="origin")
         check("[중요] 병합된 attempt 는 삭제 대상이다",
@@ -260,13 +260,13 @@ def test_cleanup_deletes_merged_attempt():
         check("[주의] durable 은 삭제 대상이 아니다 (원전대로 보존)",
               not any(r.startswith("task/") for r, _ in plan.delete), str(plan.delete))
         check("durable 은 세어서 보고된다",
-              any(r == durable_branch(TASK) for r, _ in plan.durable), str(plan.durable))
+              any(r == durable_branch(WORK, TASK) for r, _ in plan.durable), str(plan.durable))
 
         A.apply_remote_cleanup(fx.paths, plan, remote="origin")
         check("실제로 지워졌다", p.attempt in plan.deleted, str(plan.deleted))
         refs = _run(fx.paths.repo, "ls-remote", "--heads", "origin")
         check("attempt 가 원격에서 사라졌다", p.attempt not in refs, refs)
-        check("[중요] durable 은 살아 있다", durable_branch(TASK) in refs, refs)
+        check("[중요] durable 은 살아 있다", durable_branch(WORK, TASK) in refs, refs)
 
 
 def test_cleanup_without_tracking_deletes_nothing():

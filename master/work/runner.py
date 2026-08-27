@@ -443,11 +443,11 @@ def _manifest_for(paths, task_id: str) -> str:
 BASE_HEADING = "## 기준 (커밋·브랜치)"
 
 
-def refresh_base(body: str, paths, task_id: str, *, resolver=None) -> str:
+def refresh_base(body: str, paths, work_id: str, *, resolver=None) -> str:
     """[중요] 기준 절을 **파견 시점에 다시 푼다.**
 
-    등록 시점에 푼 값은 **정상 흐름에서 반드시 낡는다** — durable `task/<id>` 는 설계상
-    *등록 이후에* 요청자가 만들기 때문이다(§2.1: 마스터는 push 할 수 없다). 실측 2026-08-09:
+    등록 시점에 푼 값은 **정상 흐름에서 낡을 수 있다** — 작업 브랜치 `task/<work_id>/base` 는
+    요청자가 만들고, 골조 커밋이 얹히면 tip 이 움직인다(`#319`). 실측 2026-08-09:
     브랜치를 만든 뒤에도 매니페스트는 *"원격에 아직 없다 — 요청자가 먼저 만들어야 한다"* 로
     남아 있었다. 그대로 보내면 워커가 **있는 브랜치를 없다고 믿고 BLOCKED** 를 낸다.
 
@@ -455,7 +455,7 @@ def refresh_base(body: str, paths, task_id: str, *, resolver=None) -> str:
     """
     from . import twin_base
     try:
-        base = (resolver or twin_base.resolve)(paths, task_id)
+        base = (resolver or twin_base.resolve)(paths, work_id)
         fresh = "\n".join([BASE_HEADING, ""] + twin_base.manifest_section(base))
     except Exception as e:                                   # noqa: BLE001
         return body.replace(
@@ -504,15 +504,22 @@ def run_once(paths, *, facts=None, project: str = "", api=_api, runner=None, wri
     if not task_id:
         raise QueueError(f"claim 응답에 task_id 가 없다 — {str(task)[:160]}")
 
-    res = {"picked": pick.summary, "task": task_id, "worker": f.host, "epoch": epoch}
+    work_id = str(task.get("work_id") or "")
+    res = {"picked": pick.summary, "task": task_id, "worker": f.host, "epoch": epoch,
+           "work": work_id}
+    if not work_id:
+        # [중요] `#319` — work_id 없이는 작업 브랜치도 조각 durable 도 이름을 못 만든다.
+        #    조용히 옛 평평한 이름으로 접지 않는다(그러면 골조 없는 base 에서 난다).
+        raise QueueError(f"claim 응답에 work_id 가 없다 — 계층형 브랜치를 만들 수 없다 "
+                         f"(task={task_id})")
     try:
-        body = refresh_base(_manifest_for(paths, task_id), paths, task_id)
+        body = refresh_base(_manifest_for(paths, task_id), paths, work_id)
         deliver = None
         if writer is None:
             # [중요] 실전 배달 = git-carried (#185 판정 2026-08-17). writer 주입(테스트)은
             #    scp 자리를 그대로 잰다.
             from . import carry
-            _d = carry.deliverer(paths)
+            _d = carry.deliverer(paths, work_id)
             deliver = lambda f_, t_, txt: _d(f_, t_, txt)  # noqa: E731
         out = run_task(f, task_id, body,
                        beat=lambda: heartbeat(task_id, worker_id, api=api),

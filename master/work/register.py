@@ -29,7 +29,8 @@ from dataclasses import dataclass, field
 
 from ..auth import auth_headers
 from ..context_search.paths import ProjectPaths
-from . import manifest as mf
+from . import manifest as mf, twin_base
+from .branch_names import base_branch
 
 DEFAULT_QUEUE = "http://localhost:8101"
 TIMEOUT = 30
@@ -95,6 +96,7 @@ class Registered:
     tasks: list[TaskResult]
     generated: list = field(default_factory=list)   # 골조를 마스터가 만든 stem (소 1.1.4)
     gates: list = field(default_factory=list)       # 골조 빌드 게이트 판정 (소 1.1.5)
+    base_branch: str = ""                           # `#319` 작업 브랜치 — 조각이 갈라진 자리
 
     @property
     def gate_checked(self) -> bool:
@@ -125,10 +127,12 @@ class Registered:
         return s
 
 
-def _post(url: str, payload: dict, *, token: str | None = None) -> dict:
+def _post(url: str, payload: dict, *, token: str | None = None,
+          method: str = "POST") -> dict:
+    """큐 호출 한 번. `method` 는 `#319` 가 PATCH(작업 브랜치 기록)를 쓰면서 열었다."""
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
-        url, data=body, method="POST",
+        url, data=body, method=method,
         headers={"Content-Type": "application/json", **auth_headers(token)},
     )
     try:
@@ -200,10 +204,12 @@ def register_work(
     queue_url: str = DEFAULT_QUEUE,
     token: str | None = None,
     poster=None,
+    patch=None,
     searcher=None,
     make_skeleton=None,
     gate=None,
     carrier="AUTO",
+    require_base: bool | None = None,
 ) -> Registered:
     """work 를 만들고 태스크를 등록한다. 태스크마다 매니페스트를 1회 수집한다.
 
@@ -238,6 +244,17 @@ def register_work(
         seen.add(s.stem)
 
     post = poster or (lambda u, p: _post(u, p, token=token))
+    # [중요] **주입된 큐가 PATCH 도 받는다** — `carrier="AUTO"` 와 같은 관례다. poster 를 주입한
+    #    것은 "큐가 가짜다" 라는 뜻이고, 그때 실 HTTP 로 나가면 테스트가 마스터를 두드린다.
+    if patch is not None:
+        patcher = patch
+    elif poster is not None:
+        patcher = poster
+    else:
+        patcher = lambda u, p: _post(u, p, token=token, method="PATCH")   # noqa: E731
+    # [중요] 작업 브랜치 요구도 같은 관례를 따른다 — 가짜 큐에는 트윈도 bare 도 없다.
+    if require_base is None:
+        require_base = poster is None
 
     # [중요] carrier 기본 AUTO — 실전은 carry.publish, poster 주입(테스트)은 큐가 가짜이므로
     #    git 도 만지지 않는다 (None). 명시 주입이 둘 다 이긴다.
@@ -247,6 +264,57 @@ def register_work(
         else:
             carrier = None
 
+    work_id = create_work(title, paths=paths, target_repo=target_repo,
+                          original_request=original_request, target_branch=target_branch,
+                          queue_url=queue_url, token=token, poster=post)
+
+    # ── `#319` 작업 브랜치 ────────────────────────────────────────────────
+    # [중요] **이름은 work_id 를 받은 뒤에야 만들어진다** — 생성 POST 에 실을 수 없어서
+    #    곧바로 patch 한다. 큐가 work 메타의 SSOT 이고, 표·조회·검수가 그 값을 읽는다.
+    base_ref = target_branch.strip() or base_branch(work_id)
+    try:
+        patcher(f"{queue_url}/api/v1/works/{work_id}",
+                {"project": paths.name, "target_branch": base_ref})
+    except RegisterError as e:
+        # [주의] 조용히 넘기지 않는다 — 큐의 표가 브랜치를 거짓으로 말하면 검수가 엉뚱한
+        #    브랜치를 머지한다. 다만 work 는 이미 생겼으므로 사유를 실어 올린다.
+        raise RegisterError(
+            f"work {work_id} 는 만들어졌으나 작업 브랜치({base_ref})를 큐에 기록하지 못했다: {e}"
+        ) from e
+
+    if require_base:
+        # [중요] `#319` 완료 조건 2 — **없으면 시끄럽게 실패한다.** 조용히 main 으로 접으면
+        #    조각 N개가 각자 main 에서 나고 골조 동결이 약속으로만 남는다(옛 동작).
+        #    [주의] 여기서 멈추면 큐에 **태스크 없는 work** 가 남는다 — 그건 사람이 치운다.
+        #    반쪽 등록(태스크 절반)보다 낫다는 판단은 이 파일의 기존 관례와 같다.
+        b = base_status(paths, work_id, branch=base_ref)
+        if not b.checked:
+            raise RegisterError(
+                f"작업 브랜치 `{base_ref}` 존재를 확인하지 못했다 ({b.error}) — "
+                f"확인 실패는 통과가 아니다. work_id={work_id}")
+        if not b.exists:
+            raise RegisterError(
+                f"작업 브랜치 `{base_ref}` 가 원격에 없다 — 골조가 거기 실물로 있어야 조각이 "
+                f"갈라진다(`#319`). 요청자가 먼저 만들 것:\n    {b.instruction}\n"
+                f"work_id={work_id}")
+
+    results = register_tasks(work_id, specs, paths=paths, queue_url=queue_url, token=token,
+                             poster=post, searcher=searcher, carrier=carrier)
+    return Registered(work_id=work_id, tasks=results, generated=generated,
+                      gates=gates, base_branch=base_ref)
+
+
+def create_work(title: str, *, paths: ProjectPaths, target_repo: str,
+                original_request: str = "", target_branch: str = "",
+                queue_url: str = DEFAULT_QUEUE, token: str | None = None,
+                poster=None) -> str:
+    """work 하나를 만들고 **work_id 를 돌려준다** — `#317` 미결 ① 순서의 0번.
+
+    [중요] **떼어 낸 이유**: 작업 브랜치 이름이 `task/<work_id>/base` 라서 **work_id 가 먼저**
+    나와야 요청자가 브랜치를 만들 수 있다. 등록을 한 덩어리로 두면 그 사이에 사람이 낄 자리가
+    없다. 순서는 0) work 등재 → 1) 브랜치 생성 → 2) 골조 커밋·UHT·push → 3) 태스크 등재다.
+    """
+    post = poster or (lambda u, p: _post(u, p, token=token))
     work = post(f"{queue_url}/api/v1/works", {
         "title": title,
         # [중요] 프로젝트 귀속 스탬프 (#210) — 종결 기록·신호가 활성이 아니라 이 값으로 푼다
@@ -254,13 +322,46 @@ def register_work(
         "target_repo": target_repo,
         "target_branch": target_branch,
         "original_request": original_request or title,
-        # [중요] 2-tier 브랜치를 쓴다. 원본의 pull 레거시 경로는 우리에게 없다 (`branch_names.py`).
+        # [중요] 3-tier 브랜치를 쓴다. 원본의 pull 레거시 경로는 우리에게 없다 (`branch_names.py`).
         "distribution_mode": "push",
     })
     work_id = str(work.get("work_id") or work.get("id") or "")
     if not work_id:
         raise RegisterError(f"work_id 를 받지 못했다: {work}")
+    return work_id
 
+
+def base_status(paths: ProjectPaths, work_id: str, *, branch: str = "", runner=None):
+    """작업 브랜치가 원격에 있나 — `twin_base.Base` 를 돌려준다 (`#319`).
+
+    `branch` 를 주면 그 이름으로 본다(저장된 `target_branch` 가 유도값을 이기는 경우).
+    """
+    b = twin_base.resolve(paths, work_id, runner=runner)
+    if branch and branch != b.branch:
+        b.branch = branch
+        b.exists = False
+        b.commit = ""
+        try:
+            heads = twin_base.remote_heads(paths, runner=runner)
+        except twin_base.TwinBaseError as e:
+            b.error = str(e)
+            return b
+        b.exists = branch in heads
+        if b.exists:
+            b.commit = heads[branch]
+    return b
+
+
+def register_tasks(work_id: str, specs: list[TaskSpec], *, paths: ProjectPaths,
+                   queue_url: str = DEFAULT_QUEUE, token: str | None = None,
+                   poster=None, searcher=None, carrier=None) -> list[TaskResult]:
+    """이미 있는 work 아래에 태스크를 등록한다 — `#317` 미결 ① 순서의 3번.
+
+    [중요] 골조 텍스트는 **더 이상 실어 보내지 않는다** (`#319` 완료 조건 3) — 작업 브랜치에
+    실물로 있다. `task_data.skeleton` 은 **감사용 기록**으로만 남긴다(누가 무엇을 골조로
+    삼았는지는 나중에 물어볼 수 있어야 한다).
+    """
+    post = poster or (lambda u, p: _post(u, p, token=token))
     # 검색기는 태스크마다 새로 열지 않는다 — 모델 로딩이 태스크 수만큼 반복된다.
     if searcher is None:
         try:
@@ -289,7 +390,8 @@ def register_work(
                     "stem": spec.stem,
                     "classes": spec.classes,
                     "contracts": spec.contracts,
-                    # 골조 텍스트를 실어 보낸다. **파일로 쓰는 것은 작업장 몫이다.**
+                    # [주의] 감사용 사본이다 — **전송 수단이 아니다**(`#319`). 워커는 작업
+                    #    브랜치에서 골조를 읽는다.
                     "skeleton": spec.skeleton,
                 },
             })
@@ -302,10 +404,9 @@ def register_work(
         if r.task_id:
             # 매니페스트는 베스트에포트다 — 실패해도 등록을 되돌리지 않는다.
             # 다만 결손을 결과에 실어 호출자가 알 수 있게 한다.
-            # [중요] 골조를 매니페스트에 싣는다 — `task_data` 는 전송 수단이 아니다(§4.7 ④).
-            m = mf.build(paths, r.task_id, classes=spec.classes,
+            m = mf.build(paths, r.task_id, work_id=work_id, classes=spec.classes,
                          target_files=spec.target_files, stem=spec.stem,
-                         contracts=spec.contracts, skeleton=spec.skeleton,
+                         contracts=spec.contracts,
                          # [중요] 포팅 원본 (소 1.3.5) — 사람이 준 `source_files` 가 이기고,
                          #    없으면 대상 파일로 자동 조회한다. **경로만** 실린다.
                          source_files=spec.source_files,
@@ -313,15 +414,13 @@ def register_work(
             r.manifest_path = str(mf.write(paths, m))
             r.manifest_hits = m.hits
             r.manifest_degraded = m.degraded
-            # [중요] git-carried (#185 판정 2026-08-17) — 매니페스트를 durable `task/<id>` 에
-            #    commit·push 한다. 원전 C.2 의 성질 복원: 재배정은 fetch 만, 이력은 git 에.
-            #    실패해도 등록은 성립하되(트윈 사본은 있다) **결과에 크게 남긴다** — 파견은
-            #    fail-closed 라 이대로면 그 태스크는 배달에서 막힌다.
+            # [중요] git-carried (#185 판정 2026-08-17) — 매니페스트를 조각 durable
+            #    `task/<work_id>/<task_id>` 에 commit·push 한다. 원전 C.2 의 성질 복원:
+            #    재배정은 fetch 만, 이력은 git 에. 실패해도 등록은 성립하되(트윈 사본은 있다)
+            #    **결과에 크게 남긴다** — 파견은 fail-closed 라 이대로면 배달에서 막힌다.
             if carrier is not None:
-                c = carrier(paths, r.task_id, m.body, base_commit=m.base_commit)
+                c = carrier(paths, work_id, r.task_id, m.body, base_commit=m.base_commit)
                 r.carried_head = c.head if c.ok else ""
                 r.carried_error = c.error
         results.append(r)
-
-    return Registered(work_id=work_id, tasks=results, generated=generated,
-                      gates=gates)
+    return results

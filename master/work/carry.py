@@ -66,9 +66,12 @@ def _remote_tip(repo: Path, remote: str, branch: str) -> str:
     return ""
 
 
-def publish(paths, task_id: str, body: str, *, base_commit: str,
+def publish(paths, work_id: str, task_id: str, body: str, *, base_commit: str,
             remote: str = WRITE_REMOTE, logf=None) -> Published:
-    """매니페스트를 durable `task/<task_id>` 에 commit·push 한다.
+    """매니페스트를 조각 durable `task/<work_id>/<task_id>` 에 commit·push 한다.
+
+    [중요] `work_id` 가 앞에 붙은 것은 `#319`(계층형) 때문이다 — 조각은 작업 브랜치에서
+    갈라지고, `base_commit` 은 그 **작업 브랜치 tip** 이다(옛 값: 트윈 커밋).
 
     멱등이다: durable tip 에 같은 내용이 이미 있으면 커밋 없이 그 blob 을 돌려준다 —
     파견 루프가 매번 불러도 refresh 로 내용이 바뀐 때만 커밋이 생긴다.
@@ -76,7 +79,7 @@ def publish(paths, task_id: str, body: str, *, base_commit: str,
     log = logf or (lambda m: None)
     p = Published(task_id=task_id)
     try:
-        p.durable = branch_names.durable_branch(task_id)
+        p.durable = branch_names.durable_branch(work_id, task_id)
     except branch_names.BranchNameError as e:
         p.error = str(e)
         return p
@@ -128,7 +131,7 @@ def publish(paths, task_id: str, body: str, *, base_commit: str,
     return p
 
 
-def materialize_command(facts, task_id: str) -> str:
+def materialize_command(facts, work_id: str, task_id: str) -> str:
     """워커에서 도는 한 줄 — fetch → `git show` 로 자기 클론에서 매니페스트를 꺼내
     `./.ax/work/<task>/manifest.md` 에 놓고, **blob sha 를 마지막 줄로 찍는다.**
 
@@ -138,7 +141,7 @@ def materialize_command(facts, task_id: str) -> str:
     git → 로컬 리다이렉트로만 흐른다.
     """
     from ..client import bundle
-    durable = branch_names.durable_branch(task_id)
+    durable = branch_names.durable_branch(work_id, task_id)
     ref = _CARRY_REF_FMT.format(task_id=task_id)
     rel = manifest_rel(task_id)
     dst_dir = f"{bundle.WORK_REL}/{task_id}"
@@ -158,7 +161,7 @@ def materialize_command(facts, task_id: str) -> str:
             f'git hash-object "{dst}"')
 
 
-def materialize(facts, task_id: str, *, expect_blob: str, runner_=None,
+def materialize(facts, work_id: str, task_id: str, *, expect_blob: str, runner_=None,
                 timeout: int = 120) -> str:
     """워커 클론에 매니페스트를 실체화하고 **blob sha 를 대조한다.** 불일치·실패 = 예외.
 
@@ -166,7 +169,7 @@ def materialize(facts, task_id: str, *, expect_blob: str, runner_=None,
     """
     if not (expect_blob or "").strip():
         raise CarryError(f"{task_id}: 기대 blob 이 비었다 — publish 결과 없이 실체화하지 않는다")
-    cmd = materialize_command(facts, task_id)
+    cmd = materialize_command(facts, work_id, task_id)
     if runner_ is not None:
         rc, out = runner_(facts, cmd, timeout)
     else:
@@ -188,8 +191,11 @@ def materialize(facts, task_id: str, *, expect_blob: str, runner_=None,
     return got
 
 
-def deliverer(paths, *, logf=None):
+def deliverer(paths, work_id: str, *, logf=None):
     """파견 루프용 배달 함수 — `deliver(facts, task_id, text)` 모양 (scp 자리의 대체).
+
+    [중요] `work_id` 는 **만들 때 묶는다** (`#319`) — 한 번의 파견은 한 work 안이고, 배달
+    함수의 인자 모양(`facts, task_id, text`)은 두 호출자가 공유하므로 안 바꾼다.
 
     refresh 로 본문이 바뀌었으면 publish 가 새 커밋을 만들고(멱등), 실체화가 blob 대조까지
     한다. 실패는 예외로 — **조용한 scp 폴백은 없다** (있으면 실전이 어느 경로로 돌았는지
@@ -199,11 +205,17 @@ def deliverer(paths, *, logf=None):
         from . import twin_base
         base = ""
         try:
-            base = twin_base.resolve(paths, task_id).commit or ""
+            base = twin_base.resolve(paths, work_id).commit or ""
         except Exception:                                # noqa: BLE001
             base = ""
-        pub = publish(paths, task_id, text, base_commit=base, logf=logf)
+        if not base:
+            # [중요] `#319` — 작업 브랜치가 없으면 조각을 어디에 얹을지 모른다. 종전에는
+            #    트윈 커밋으로 조용히 접혔고, 그래서 조각들이 각자 main 에서 났다.
+            raise DispatchError(
+                f"{task_id}: 작업 브랜치 tip 을 못 구했다 — 조각을 얹을 자리가 없다. "
+                f"`task/{work_id}/base` 가 원격에 있는지 확인할 것 (`#319`)")
+        pub = publish(paths, work_id, task_id, text, base_commit=base, logf=logf)
         if not pub.ok:
             raise DispatchError(f"{task_id}: git-carried publish 실패 — {pub.error}")
-        return materialize(facts, task_id, expect_blob=pub.blob, runner_=runner_)
+        return materialize(facts, work_id, task_id, expect_blob=pub.blob, runner_=runner_)
     return _deliver

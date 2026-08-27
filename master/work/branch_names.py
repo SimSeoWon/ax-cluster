@@ -1,7 +1,22 @@
-"""2-tier 브랜치 규약 (AgentTest plan v5 C.1 이식).
+"""3-tier 브랜치 규약 — 작업 브랜치 · 조각 durable · 시도 (AgentTest plan v5 C.1 이식 + `#319`).
 
-    durable    task/<task_id>                       canonical — 검증 통과분 + 피드백 누적
-    ephemeral  attempt/<task_id>/<workshop>/<ts>    1회용 시도 — 머지 후 폐기
+    base       task/<work_id>/base                              작업 브랜치 — 골조가 **실물로** 올라간다
+    durable    task/<work_id>/<task_id>                          조각 — base 에서 갈라진다
+    ephemeral  attempt/<work_id>/<task_id>/<workshop>/<ts>       1회용 시도 — 머지 후 폐기
+
+[중요] **계층형 이름은 사용자 결정 ⓐ 다** (2026-08-27, `#317` 미결 ①). 제약 넷이 이 형태를
+골랐다 — 근거 전문은 `#317` 의 「미결 ① 결정」 노트에 있고, 여기 옮겨 적는 것은 **이 파일을
+고칠 때 깨지는 것**뿐이다:
+
+    ① 훅은 `/` 를 넘는다   `work/pre_push_hook.sh` 의 POSIX `case "refs/heads/task/*"` 는
+                            경로 구분자를 가리지 않는다 → **훅을 고칠 필요가 없다**
+    ② ref 충돌            `task/W` 와 `task/W/T` 는 **공존 불가**(양방향 실측). 그래서 작업
+                            브랜치가 `task/<work_id>` 일 수 없고 `…/base` 여야 한다
+    ③ 이름의 SSOT 는 큐    `#197` 이 값을 치렀다 — 하니스가 자기 내부 id 로 durable 을 밀었더니
+                            소비자가 *"origin 에 없다"* 로 통째 중단했다. **여기서 id 를 짓지 않는다**
+
+[중요] **`base` 는 leaf 로 예약돼 있다** — `task/<W>/base` 를 durable 로 읽으면 조각 브랜치와
+구별되지 않는다. `parse_durable` 이 그 한 자리를 명시적으로 뺀다.
 
 [중요] **이 규약이 zombie race 를 구조적으로 없앤다.** 작업장 A 가 타임아웃되어 B 에 재배정돼도
 A=`attempt/t5/HV0I6DL/t1`, B=`attempt/t5/JFVS693/t2` 로 **서로 다른 ref** 다. A 가 되살아나
@@ -25,9 +40,11 @@ import re
 
 DURABLE_PREFIX = "task"
 ATTEMPT_PREFIX = "attempt"
+BASE_LEAF = "base"                  # [중요] 예약어 — task_id 로 쓸 수 없다 (아래 `_check` 가 막는다)
 
-# 브랜치명에 쓸 수 없는 문자를 걸러낸다. git 이 거부하는 것보다 좁게 잡는다 —
-# 여기서 통과한 이름이 나중에 glob·파싱에서 깨지지 않아야 하므로 `/` 도 막는다.
+# 브랜치명 **한 토큰**에 쓸 수 있는 문자. git 이 거부하는 것보다 좁게 잡는다 — 여기서 통과한
+# 이름이 나중에 glob·파싱에서 깨지지 않아야 하므로 `/` 도 막는다. 계층은 이 함수가 아니라
+# **조립 함수가** 만든다(토큰마다 따로 검사한다).
 _SAFE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
@@ -44,21 +61,35 @@ def _check(kind: str, value: str) -> str:
         raise BranchNameError(
             f"{kind} 에 쓸 수 없는 문자가 있다: {value!r} — 허용: 영숫자 . _ -"
         )
+    if kind == "task_id" and v == BASE_LEAF:
+        # [중요] 통과시키면 `task/<W>/base` 가 조각 durable 과 같은 이름이 된다 — 작업
+        #    브랜치를 조각으로 착각해 머지·정리가 조용히 어긋난다.
+        raise BranchNameError(f"task_id 로 {BASE_LEAF!r} 를 쓸 수 없다 — 작업 브랜치의 예약어다")
     return v
 
 
-def durable_branch(task_id: str) -> str:
-    """canonical 브랜치. **단일 writer** — 검증을 통과시킨 쪽만 여기 merge 한다."""
-    return f"{DURABLE_PREFIX}/{_check('task_id', task_id)}"
+def base_branch(work_id: str) -> str:
+    """작업 브랜치. **골조가 실물로 올라가는 자리**이고 조각들이 여기서 갈라진다 (`#319`).
+
+    [중요] **마스터가 만들지 않는다** — 요청자(`.33`)가 골조를 커밋하고 push 한다. 마스터는
+    없으면 **시끄럽게 실패**한다(`twin_base.resolve`). 조용히 `main` 으로 접으면 조각 N개가
+    각자 다른 base 에서 나고, 그때 동결(인터페이스 고정)이 약속으로만 남는다.
+    """
+    return f"{DURABLE_PREFIX}/{_check('work_id', work_id)}/{BASE_LEAF}"
 
 
-def attempt_branch(task_id: str, workshop: str, ts: str) -> str:
+def durable_branch(work_id: str, task_id: str) -> str:
+    """조각 canonical 브랜치. **단일 writer** — 검증을 통과시킨 쪽만 여기 merge 한다."""
+    return f"{DURABLE_PREFIX}/{_check('work_id', work_id)}/{_check('task_id', task_id)}"
+
+
+def attempt_branch(work_id: str, task_id: str, workshop: str, ts: str) -> str:
     """1회용 시도 브랜치.
 
     `ts` 를 인자로 받는 이유는 원본과 같다 — **테스트에서 시간을 고정**할 수 있어야 한다.
     같은 작업장이 재시도해도 ts 가 달라 브랜치가 겹치지 않는다.
     """
-    return (f"{ATTEMPT_PREFIX}/{_check('task_id', task_id)}"
+    return (f"{ATTEMPT_PREFIX}/{_check('work_id', work_id)}/{_check('task_id', task_id)}"
             f"/{_check('workshop', workshop)}/{_check('ts', ts)}")
 
 
@@ -70,23 +101,61 @@ def is_attempt(name: str) -> bool:
     return (name or "").startswith(f"{ATTEMPT_PREFIX}/")
 
 
-def attempt_glob(task_id: str) -> str:
-    """그 task 의 모든 시도 브랜치 (일괄 정리용). 계층형이라 glob 이 깔끔하게 걸린다."""
-    return f"{ATTEMPT_PREFIX}/{_check('task_id', task_id)}/*"
+def is_base(name: str) -> bool:
+    return parse_base(name) is not None
+
+
+def attempt_glob(work_id: str, task_id: str) -> str:
+    """그 조각의 모든 시도 브랜치 (일괄 정리용). 계층형이라 glob 이 깔끔하게 걸린다."""
+    return (f"{ATTEMPT_PREFIX}/{_check('work_id', work_id)}"
+            f"/{_check('task_id', task_id)}/*")
+
+
+def work_glob(work_id: str) -> str:
+    """그 작업의 **모든** 브랜치 — base·조각 durable 을 한 번에 훑는다 (`finalize` 정리)."""
+    return f"{DURABLE_PREFIX}/{_check('work_id', work_id)}/*"
+
+
+def parse_base(name: str) -> str | None:
+    """작업 브랜치명 → `work_id`. 아니면 `None`."""
+    m = re.match(rf"^{DURABLE_PREFIX}/([^/]+)/{BASE_LEAF}$", name or "")
+    return m.group(1) if m else None
 
 
 def parse_attempt(name: str) -> dict | None:
-    """시도 브랜치명 → `{task_id, workshop, ts}`. 형식이 안 맞으면 `None`.
+    """시도 브랜치명 → `{work_id, task_id, workshop, ts}`. 형식이 안 맞으면 `None`.
 
-    **정확히 4토큰**만 받는다. task_id 에 `/` 가 없다는 전제이고, 그 전제는 `_check` 가 강제한다.
+    [주의] **옛 4토큰 이름도 읽는다** (`attempt/<task_id>/<workshop>/<ts>`) — 그때는
+    `work_id=None` 이다. 사용자 결정 2026-08-27: **읽기만 호환, 쓰기는 계층형만.**
     """
+    m = re.match(rf"^{ATTEMPT_PREFIX}/([^/]+)/([^/]+)/([^/]+)/([^/]+)$", name or "")
+    if m:
+        return {"work_id": m.group(1), "task_id": m.group(2),
+                "workshop": m.group(3), "ts": m.group(4)}
     m = re.match(rf"^{ATTEMPT_PREFIX}/([^/]+)/([^/]+)/([^/]+)$", name or "")
     if not m:
         return None
-    return {"task_id": m.group(1), "workshop": m.group(2), "ts": m.group(3)}
+    return {"work_id": None, "task_id": m.group(1),
+            "workshop": m.group(2), "ts": m.group(3), "legacy": True}
 
 
-def parse_durable(name: str) -> str | None:
-    """durable 브랜치명 → `task_id`. 아니면 `None`."""
+def parse_durable(name: str) -> dict | None:
+    """조각 durable 브랜치명 → `{work_id, task_id}`. 아니면 `None`.
+
+    [중요] **작업 브랜치(`…/base`)는 durable 이 아니다** — `None` 을 돌려준다. 그것을 조각으로
+    읽으면 통합이 base 를 조각처럼 머지한다.
+    [주의] **옛 한 칸짜리도 읽는다** (`task/<task_id>`) — 그때는 `work_id=None` 이고
+    `legacy=True` 다. 사용자 결정 2026-08-27: **읽기만 호환, 쓰기는 계층형만.**
+    근거: NS bare 에 `task/62efc6a6`(첫 완주 산출물, 머지 갈래 미결) · `task/6ff986ed` 가
+    실재한다. 모르는 격으로 두면 `cleanup`·`finalize` 의 도달 가능 판정에서 **조용히 빠져**
+    영원히 남는다.
+    """
+    m = re.match(rf"^{DURABLE_PREFIX}/([^/]+)/([^/]+)$", name or "")
+    if m:
+        if m.group(2) == BASE_LEAF:
+            return None
+        return {"work_id": m.group(1), "task_id": m.group(2)}
     m = re.match(rf"^{DURABLE_PREFIX}/([^/]+)$", name or "")
-    return m.group(1) if m else None
+    if not m:
+        return None
+    return {"work_id": None, "task_id": m.group(1), "legacy": True}

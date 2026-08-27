@@ -67,13 +67,13 @@ def test_twin_commit() -> None:
 def test_resolve() -> None:
     with tempfile.TemporaryDirectory() as t:
         paths = _project(Path(t))
-        br = "task/w1"
+        br = "task/w1/base"        # `#319` 계층형 작업 브랜치
 
         r = _runner(f"{COMMIT}\trefs/heads/main\n{COMMIT}\trefs/heads/{br}\n")
         b = twin_base.resolve(paths, "w1", runner=r)
         check("브랜치가 있으면 exists", b.exists and b.checked, b.summary)
         check("커밋을 싣는다", b.commit == COMMIT)
-        check("이름 규약은 durable", b.branch == br, b.branch)
+        check("이름 규약은 작업 브랜치 (task/<work_id>/base)", b.branch == br, b.branch)
         check("있으면 시킬 게 없다", b.instruction == "")
         check("읽기 전용 명령만 부른다",
               all("ls-remote" in c and "push" not in c for c in r.calls), str(r.calls))
@@ -84,6 +84,12 @@ def test_resolve() -> None:
         check("[중요] 만들 명령을 알려준다",
               b2.branch in b2.instruction and COMMIT in b2.instruction and "push" in b2.instruction,
               b2.instruction)
+        # [중요] `#319` — 빈 브랜치만 따면 조각이 골조 없는 base 에서 난다. 안내가 골조 커밋과
+        #    UHT 게이트까지 말해야 요청자가 그 절반을 빠뜨리지 않는다.
+        check("[중요] 골조 커밋과 UHT 게이트까지 말한다",
+              "골조" in b2.instruction and "UHT" in b2.instruction, b2.instruction)
+        check("[중요] 없으면 기준 커밋을 비운다 (트윈 커밋으로 조용히 접지 않는다)",
+              b2.commit == "" and b2.twin == COMMIT, f"commit={b2.commit!r} twin={b2.twin!r}")
 
         # [중요] 못 본 것과 없는 것은 다르다
         b3 = twin_base.resolve(paths, "w1", runner=_runner("permission denied", rc=128))
@@ -100,16 +106,18 @@ def test_manifest_section() -> None:
         paths = _project(Path(t))
 
         have = twin_base.resolve(paths, "w1",
-                                 runner=_runner(f"{COMMIT}\trefs/heads/task/w1\n"))
+                                 runner=_runner(f"{COMMIT}\trefs/heads/task/w1/base\n"))
         txt = "\n".join(twin_base.manifest_section(have))
         check("기준 커밋이 본문에 있다", COMMIT in txt)
         check("[중요] ff-only 를 못박는다", "fast-forward" in txt and "reset --hard" in txt)
         check("있으면 '만들어야 한다' 를 안 쓴다", "아직 없다" not in txt)
+        # [중요] `#319` 완료 조건 3 — 골조는 매니페스트가 아니라 이 브랜치에 있다.
+        check("[중요] 골조가 브랜치에 실물로 있다고 말한다", "실물로" in txt, txt[:200])
 
         miss = twin_base.resolve(paths, "w1", runner=_runner(""))
         txt2 = "\n".join(twin_base.manifest_section(miss))
         check("[중요] 없으면 본문에 그렇게 쓴다", "원격에 아직 없다" in txt2)
-        check("만들 명령이 본문에 실린다", "git push -u origin task/w1" in txt2)
+        check("만들 명령이 본문에 실린다", "git push -u origin task/w1/base" in txt2)
 
         bad = twin_base.resolve(paths, "w1", runner=_runner("boom", rc=1))
         txt3 = "\n".join(twin_base.manifest_section(bad))

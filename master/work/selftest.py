@@ -465,7 +465,7 @@ def run_dry(*, tasks: int = 3, keep: bool = False, base_nonce: str = "",
         # 드라이런도 그 형태로 태워야 실전 경로를 잰다.
         for i in range(n):
             tid = f"{work_id}.{i}"
-            a = C.assign_attempt(tid, workshop, f"t{i}")                      # 서버
+            a = C.assign_attempt(work_id, tid, workshop, f"t{i}")             # 서버
             C.push_attempt(shop, a["attempt"], base2,                          # 작업장
                            manifest_reading_workshop(i, work_id), probe_rels[i],
                            message=f"[selftest] probe {i}", logf=log)
@@ -476,7 +476,7 @@ def run_dry(*, tasks: int = 3, keep: bool = False, base_nonce: str = "",
         # ── 5. 단정 — durable 에 NONCE 라운드트립 + [PSEUDO] 제거 ──
         ok_n = 0
         for i in range(n):
-            tid, dur = f"{work_id}.{i}", durable_branch(f"{work_id}.{i}")
+            tid, dur = f"{work_id}.{i}", durable_branch(work_id, f"{work_id}.{i}")
             _sh(work, "fetch", "-q", "origin", dur)
             body = subprocess.run(["git", "-C", str(work), "show", f"origin/{dur}:{probe_rels[i]}"],
                                   capture_output=True, text=True,
@@ -493,7 +493,8 @@ def run_dry(*, tasks: int = 3, keep: bool = False, base_nonce: str = "",
         refs = subprocess.run(["git", "-C", str(work), "ls-remote", "--heads", "origin"],
                               capture_output=True, text=True).stdout
         r.chk("attempt 브랜치가 원격에 있다",
-              all(attempt_branch(f"{work_id}.{i}", workshop, f"t{i}") in refs for i in range(n)))
+              all(attempt_branch(work_id, f"{work_id}.{i}", workshop, f"t{i}") in refs
+                  for i in range(n)))
 
         # ── 6. 정리 — [중요] probe 는 증거가 아니므로 지운다 ─────────
         if keep:
@@ -502,9 +503,9 @@ def run_dry(*, tasks: int = 3, keep: bool = False, base_nonce: str = "",
         else:
             for i in range(n):
                 tid = f"{work_id}.{i}"
-                C.cleanup_attempts(work, tid, delete=True, logf=log)
+                C.cleanup_attempts(work, work_id, tid, delete=True, logf=log)
                 subprocess.run(["git", "-C", str(work), "push", "-q", "origin",
-                                "--delete", durable_branch(tid)], capture_output=True)
+                                "--delete", durable_branch(work_id, tid)], capture_output=True)
             left = subprocess.run(["git", "-C", str(work), "ls-remote", "--heads", "origin"],
                                   capture_output=True, text=True).stdout
             r.chk("정리 후 probe 브랜치가 남지 않는다",
@@ -732,7 +733,8 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
 
         for i in order:
             tid = live_task_id(qtasks, work_id, i)     # [중요] 큐 id 가 브랜치의 SSOT
-            att, dur = attempt_branch(tid, host.replace(".", "-"), f"t{i}"), durable_branch(tid)
+            att, dur = (attempt_branch(work_id, tid, host.replace(".", "-"), f"t{i}"),
+                        durable_branch(work_id, tid))
             local_atts.append(att)
             sh(f"git checkout -q -B {att} {base2}", cwd=wtB)
             if work_fn_cmd is None:
@@ -832,7 +834,7 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
         mirror = Path(__file__).resolve().parents[2] / "ModularStage" / "repo"
         ok_n = 0
         for i in range(n):
-            dur = durable_branch(live_task_id(qtasks, work_id, i))
+            dur = durable_branch(work_id, live_task_id(qtasks, work_id, i))
             rc_f, out_f = _mirror_git(mirror, "fetch", "-q", "origin", dur)
             rc_s, body = _mirror_git(mirror, "show", f"FETCH_HEAD:{probe_rels[i]}")
             if rc_f == 0 and rc_s == 0 and nonces[i] in body and "[PSEUDO]" not in body:
@@ -871,7 +873,8 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
             r.chk("C.7 통합 전용 트리 생성 (정본 미접촉)", rc_w == 0, out_w[:200])
             if rc_w == 0:
                 try:
-                    integ = R.integrate_durables(integ_tree, target_branch=st_branch,
+                    integ = R.integrate_durables(integ_tree, work_id=work_id,
+                                                 target_branch=st_branch,
                                                  tasks=c7_tasks,
                                                  merge_label=f"[selftest-integ] {slug}",
                                                  remote="gitea-write")
@@ -925,7 +928,7 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
             sh("git worktree prune")
             sh(f"git branch -D {st_branch} 2>&1 | tail -1")
             for i in range(n):
-                sh(f"git branch -D {durable_branch(live_task_id(qtasks, work_id, i))} 2>&1 | tail -1")
+                sh(f"git branch -D {durable_branch(work_id, live_task_id(qtasks, work_id, i))} 2>&1 | tail -1")
             # [중요] **로컬 attempt 도 지운다.** wtB 가 `checkout -B <attempt>` 로 만든 브랜치는
             #    공유 저장소의 ref 라, worktree 를 지워도 **ref 는 남는다.** 2026-08-14 첫 실
             #    구동 3회에서 로컬 attempt 7개가 쌓인 것을 사후 점검이 잡았다 — 원격만 보고

@@ -57,7 +57,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from .branch_names import attempt_branch, attempt_glob, durable_branch
+from .branch_names import attempt_branch, attempt_glob, base_branch, durable_branch
 
 GIT_TIMEOUT = 120
 
@@ -109,8 +109,12 @@ def _noop_log(stage: str, msg: str) -> None:
 # 2-tier git 연산 — 드라이런과 실전이 **같은 함수**를 쓴다
 # ─────────────────────────────────────────────────────────────
 
-def assign_attempt(task_id: str, workshop: str, ts: str) -> dict:
+def assign_attempt(work_id: str, task_id: str, workshop: str, ts: str) -> dict:
     """배정 — 브랜치 **이름을 서버가 정한다**. git 을 건드리지 않는다.
+
+    [중요] `work_id` 가 인자에 들어온 것은 `#319`(계층형) 때문이다 — 조각 durable 이
+    `task/<work_id>/<task_id>` 이고, **base 도 같이 돌려준다**. 배정을 받는 쪽이 base 를
+    따로 조립하면 그 순간 이름이 두 벌이 된다(`#197` 이 값을 치른 자리).
 
     [중요] 원전 규약: *"push 모델상 서버가 브랜치명을 배정하므로 작업장은 받은 이름을 쓸 뿐
     (구성하지 않는다)."* 이름을 양쪽이 각자 조립하면 규약이 갈린다.
@@ -119,10 +123,12 @@ def assign_attempt(task_id: str, workshop: str, ts: str) -> dict:
     증가시키는 것이 **이미 이식돼 있다**. 호출자가 그 값을 `verify_and_merge` 로 넘긴다.
     """
     return {
+        "work_id": work_id,
         "task_id": task_id,
         "workshop": workshop,
-        "durable": durable_branch(task_id),
-        "attempt": attempt_branch(task_id, workshop, ts),
+        "base": base_branch(work_id),
+        "durable": durable_branch(work_id, task_id),
+        "attempt": attempt_branch(work_id, task_id, workshop, ts),
     }
 
 
@@ -185,14 +191,14 @@ def verify_and_merge(repo: Path, attempt: str, durable: str, *,
     return {"ok": True, "merged": True, "reason": "merged"}
 
 
-def cleanup_attempts(repo: Path, task_id: str, *, delete: bool = False,
+def cleanup_attempts(repo: Path, work_id: str, task_id: str, *, delete: bool = False,
                      remote: str = "origin", logf=_noop_log) -> dict:
     """그 task 의 ephemeral 목록. [중요] **기본은 세기만 한다** — durable 은 언제나 보존.
 
     `delete=True` 를 **호출자가 명시**해야 원격에서 지운다. 위 「원전과 다르게 둔 것 ②」 참조 —
     *"attempt 를 성공·실패 무관 push"* 의 목적이 증거 보존이라, 지우는 시점은 사람이 정한다.
     """
-    glob = attempt_glob(task_id)
+    glob = attempt_glob(work_id, task_id)
     out = _git(repo, "ls-remote", "--heads", remote, glob, check=False)
     refs = [ln.split("refs/heads/")[-1] for ln in out.splitlines() if "refs/heads/" in ln]
     if not delete:
@@ -228,7 +234,7 @@ def fake_workshop(append_line: str):
     return _fn
 
 
-def run_round(repo: Path, *, task_id: str, workshop: str, ts: str, base_ref: str,
+def run_round(repo: Path, *, work_id: str, task_id: str, workshop: str, ts: str, base_ref: str,
               target_rel: str, work_fn, submit_epoch: int, current_epoch: int,
               message: str, logf=_noop_log) -> dict:
     """동기 1라운드 (드라이런): assign → 작업·push → epoch 게이트 → merge.
@@ -238,7 +244,7 @@ def run_round(repo: Path, *, task_id: str, workshop: str, ts: str, base_ref: str
     합성이 드라이런에만 있는 이유는, 실전의 세 단계가 서로 다른 기계에서 다른 시점에 돌기
     때문이다.
     """
-    a = assign_attempt(task_id, workshop, ts)
+    a = assign_attempt(work_id, task_id, workshop, ts)
     logf("assign", f"{task_id} → {workshop} (epoch={submit_epoch}), durable={a['durable']}")
     head = push_attempt(repo, a["attempt"], base_ref, work_fn, target_rel,
                         message=message, logf=logf)

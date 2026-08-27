@@ -77,8 +77,9 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
 - **The master is infrastructure, not a workshop** — **narrowed 2026-08-14, don't read the
   old absolute.** It assembles context and hands it over; the Windows PC builds and tests.
   [중요] **Flow Y (user-confirmed 2026-08-14) gives the master exactly one write capability**: it
-  commits inferred diffs to `attempt/<task>/<workshop>/<ts>` and merges verified ones into
-  `task/<id>` — nothing else. So *"files never leave Windows"* and *"no file I/O on the master"*
+  commits inferred diffs to `attempt/<work>/<task>/<workshop>/<ts>` and merges verified ones into
+  `task/<work>/<task>` — nothing else (hierarchical since `#319`; the requester owns
+  `task/<work>/base`, where the skeleton lives as real files). So *"files never leave Windows"* and *"no file I/O on the master"*
   are **no longer true as written**; what holds is **the master never touches `main`** and never
   builds. Mechanism: `master/work/attempt.py`, a push-only second remote `gitea-write`, and a
   `pre-push` hook that rejects every ref outside `attempt/*`·`task/*` (deletions only when the tip

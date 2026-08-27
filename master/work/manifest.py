@@ -51,8 +51,9 @@ class Manifest:
     project: str
     body: str
     hits: int = 0
-    base_commit: str = ""        # [중요] 이 매니페스트의 근거 시점 (#21)
-    base_branch: str = ""
+    base_commit: str = ""        # [중요] 이 매니페스트의 근거 시점 = 작업 브랜치 tip (#21 · #319)
+    base_branch: str = ""        # `task/<work_id>/base`
+    work_id: str = ""
     norm_domains: int = 0        # 실린 도메인 수 (소 2.3.1)
     norm_items: int = 0          # invariant + action 수
     degraded: list[str] = field(default_factory=list)   # 비어 있으면 온전히 수집된 것
@@ -94,11 +95,11 @@ def build(
     paths: ProjectPaths,
     task_id: str,
     *,
+    work_id: str = "",
     classes: list[str] | None = None,
     target_files: list[str] | None = None,
     stem: str = "",
     contracts: str = "",
-    skeleton: str = "",
     extra_query: str = "",
     hits: int = DEFAULT_HITS,
     searcher=None,
@@ -126,11 +127,17 @@ def build(
     # [중요] 기준 커밋 — 이게 없으면 워커가 낡은 소스에서 짜도 아무도 모른다 (레드마인 #21)
     lines.append("## 기준 (커밋·브랜치)\n")
     if base is None:
-        try:
-            base = twin_base.resolve(paths, task_id)
-        except twin_base.TwinBaseError as e:
-            base = None
-            degraded.append(f"기준 커밋을 정할 수 없다: {e}")
+        if not (work_id or "").strip():
+            # [중요] `#319` — 기준은 **작업 브랜치**이고 그 이름은 work_id 로만 만들어진다.
+            #    없으면 조용히 트윈 커밋으로 접지 않는다(완료 조건 2).
+            degraded.append("work_id 가 없어 작업 브랜치를 정할 수 없다 — "
+                            "기준 없이 내보내면 워커가 어느 커밋에서 짜는지 아무도 모른다")
+        else:
+            try:
+                base = twin_base.resolve(paths, work_id)
+            except twin_base.TwinBaseError as e:
+                base = None
+                degraded.append(f"작업 브랜치 기준을 정할 수 없다: {e}")
     if base is None:
         lines.append("_[중요] **기준 커밋 미상** — 이 매니페스트의 근거가 어느 시점인지 알 수 없다. "
                      "워커는 작업하지 말고 보고할 것._")
@@ -139,7 +146,11 @@ def build(
         if not base.checked:
             degraded.append(f"작업 브랜치 확인 실패: {base.error}")
         elif not base.exists:
-            degraded.append(f"작업 브랜치 `{base.branch}` 가 원격에 없다 — 요청자가 만들어야 한다")
+            # [중요] `#319` 이후 이것은 **치명**이다 — 골조가 그 브랜치에만 있으므로 브랜치가
+            #    없으면 워커가 골조를 어디서도 못 찾는다. 종전에는 매니페스트에 텍스트가
+            #    실려 있어 없어도 어떻게든 돌아갔다.
+            degraded.append(f"[중요] 작업 브랜치 `{base.branch}` 가 원격에 없다 — "
+                            f"골조가 거기 있어야 한다. 요청자가 먼저 만들어야 작업이 성립한다")
     lines.append("")
 
     if classes:
@@ -176,16 +187,13 @@ def build(
         lines.append("## 계약 (동결 — 바꾸지 말 것)\n")
         lines.append(contracts.strip())
         lines.append("")
-    if skeleton.strip():
-        # [중요] 골조가 여기 실리는 이유: 원본은 서버가 골조를 **git 에 커밋해** 보냈지만
-        # 우리 마스터는 push 를 못 한다(§4.7 ④). `task_data` 는 태스크 마크다운 본문으로만
-        # 저장되고 JSON API 로 안 나온다(`task_queue/logic.py:202`) — 전송 수단이 아니다.
-        # 매니페스트가 마스터→작업장 텍스트 채널이므로 골조도 여기로 간다.
-        lines.append("## 골조 (이 파일을 만들 것 — `[PSEUDO]` 본문만 채운다)\n")
-        lines.append("```cpp")
-        lines.append(skeleton.strip())
-        lines.append("```")
-        lines.append("")
+    # [중요] **골조 절이 여기 있었다 — `#319` 로 뺐다** (완료 조건 3, 2026-08-27).
+    #    종전 이유는 *"마스터가 push 를 못 하니 매니페스트가 유일한 텍스트 채널"* 이었다.
+    #    그 전제가 바뀌었다: 골조는 **작업 브랜치 `task/<work_id>/base` 에 실물로** 올라가고,
+    #    워커는 그 브랜치를 체크아웃하므로 헤더가 이미 트리에 있다.
+    #    실측 근거(`#317`): 매니페스트 298줄 중 **198줄(2/3)이 골조**였다 — 조각마다 같은
+    #    텍스트를 인바운드 토큰으로 실어 보내고 있었다.
+    #    [주의] 어디에 있는지는 위 「기준」 절이 말한다(`twin_base.manifest_section`).
 
     found = []
     # [중요] **이 채널의 결손만 본다.** 전에는 `if not found and not degraded:` 로 **전역** 결손
@@ -264,6 +272,7 @@ def build(
                     hits=len(found), norm_domains=nd, norm_items=ni + na,
                     base_commit=(base.commit if base else ""),
                     base_branch=(base.branch if base else ""),
+                    work_id=work_id,
                     degraded=degraded)
 
 
@@ -287,7 +296,10 @@ def read(paths: ProjectPaths, task_id: str) -> str | None:
 
 
 def collect(paths: ProjectPaths, task_id: str, **kw) -> tuple[Path, Manifest]:
-    """수집 + 저장. 태스크 등록 경로가 부르는 진입점."""
+    """수집 + 저장. 태스크 등록 경로가 부르는 진입점.
+
+    [주의] `work_id` 를 넘겨야 기준(작업 브랜치)이 잡힌다 — `#319`.
+    """
     searcher = kw.pop("searcher", None)
     if searcher is None:
         try:

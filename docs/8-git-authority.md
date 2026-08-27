@@ -11,7 +11,7 @@
 
 **[주의] 그 규칙을 이 프로젝트에 그대로 복사하면 안 된다.** AgentTest 규칙이 막은 것은
 **"개발 저장소에서 Claude 가 사람 대신 커밋하는 것"** 이지, **파이프라인이 설계대로 하는 git 조작**
-(워커가 `task/<id>` 브랜치에 커밋, durable merge CAS)이 아니다. 후자는 plan v5.0 C.3 의 정상 동작이다.
+(워커가 `task/<work>/<task>` 브랜치에 커밋, durable merge CAS)이 아니다. 후자는 plan v5.0 C.3 의 정상 동작이다.
 **AX 클러스터는 마스터가 자율 오케스트레이션을 하므로 이 둘이 섞이기 쉽다** — 권한을 명시적으로 나눈다.
 
 ### 8.1 사람 세션 (Claude Code — 윈도우 오케스트레이터 ① / 마스터 작업 세션)
@@ -32,7 +32,7 @@
 
 | 구분 | 규칙 |
 |---|---|
-| [완료] 자율 허용 | `task/<task_id>` 및 attempt 브랜치 생성·커밋·push, `[FEEDBACK]` 커밋, durable merge(**CAS**), **`<remote>/main` 에서 도달 가능한 `attempt/`·`task/` 삭제** (#219 2026-08-18 · `finalize_work` 2026-08-21) |
+| [완료] 자율 허용 | `task/<work_id>/<task_id>` 및 attempt 브랜치 생성·커밋·push, `[FEEDBACK]` 커밋, durable merge(**CAS**), **`<remote>/main` 에서 도달 가능한 `attempt/`·`task/` 삭제** (#219 2026-08-18 · `finalize_work` 2026-08-21) |
 | [실패] **금지** | `main` 직접 push · `push --force` · 히스토리 재작성 · 사람이 만든 브랜치 삭제 · [중요] **미병합(도달 불가) 브랜치 삭제** — 그 커밋이 거기에만 있을 수 있다 |
 | 필수 | **CAS(compare-and-swap)로만 durable 전진** — 좀비 워커 방어(plan v5.0 C.2). 모든 조작은 로그로 추적 가능해야 한다 |
 
@@ -84,9 +84,9 @@ AgentTest 가 이미 같은 계열 문제를 다루고 있다: `**TASK_COMPLETE*
 
 | 주체 | 하는 일 | 왜 그 주체인가 |
 |---|---|---|
-| **요청자** (`.33`, 사람의 PC) | ① `main` 최신화 ② **durable `task/<id>` 를 만들어 원격에 push** ③ 등록 ④ 최종 리뷰·`[FEEDBACK]` | [주의] 여기 있던 *"마스터는 소스 저장소에 push 할 수 없다(§2.1)"* 는 **2026-08-14 에 좁혀졌다** — 마스터는 `attempt/*`·`task/*` 에 쓴다. 남는 근거는 **`main` 은 사람이 보는 자리**라는 것이고, 그것은 그대로다 — 파이프라인이 `main` 에 커밋을 밀어넣지 않는다 |
+| **요청자** (`.33`, 사람의 PC) | ① `main` 최신화 ② [중요] **작업 브랜치 `task/<work_id>/base` 를 만들고 골조를 실물로 커밋해 push** (`#319` — 조각은 여기서 갈라진다) ③ 등록 ④ 최종 리뷰·`[FEEDBACK]` | [주의] 여기 있던 *"마스터는 소스 저장소에 push 할 수 없다(§2.1)"* 는 **2026-08-14 에 좁혀졌다** — 마스터는 `attempt/*`·`task/*` 에 쓴다. 남는 근거는 **`main` 은 사람이 보는 자리**라는 것이고, 그것은 그대로다 — 파이프라인이 `main` 에 커밋을 밀어넣지 않는다 |
 | **마스터** | 큐·매니페스트·라우팅·**골조 생성** · [중요] **attempt/durable 커밋** (정정 2026-08-14) | [주의] *"파일을 소유하지 않는다"* 는 **Flow Y 로 좁혀졌다** — `attempt/*`·`task/*` 에만 쓰고 **`main` 과 빌드는 못 한다**(§2.2-1 2차 정정) |
-| **작업장** (`.2`·`.43`) | durable/base 를 fetch → 작업 → [중요] **ephemeral `attempt/<id>/<workshop>/<ts>` 에 push** | [중요] **쓴다 — 다만 ephemeral 에만.** 공유 write 타깃이 없어 zombie push 충돌이 **구조적으로** 소멸한다 |
+| **작업장** (`.2`·`.43`) | durable/base 를 fetch → 작업 → [중요] **ephemeral `attempt/<work_id>/<task_id>/<workshop>/<ts>` 에 push** | [중요] **쓴다 — 다만 ephemeral 에만.** 공유 write 타깃이 없어 zombie push 충돌이 **구조적으로** 소멸한다 |
 | **검증·머지 주체** | attempt 를 검증하고 [중요] **통과분만 durable 에 merge·push** | [중요] **durable 단일 writer.** epoch 게이트가 stale assignee(zombie)를 거부한다 |
 
 > [중요] **정정 2026-08-14 (리포트 14 §2·§11.3).** 이 표에 있던 **「통합자(`.2`) = 유일한 쓰기 주체 /
@@ -183,14 +183,14 @@ e2e 잔여 6개), **지우기 전에 팁을 보존한다**: `git bundle create <
 
 ### [중요] 워커는 끝나면 **`main` 으로 돌아온다** (사용자 확정 2026-08-09)
 
-    시작:  fetch → checkout task/<id> → merge --ff-only → checkout -b attempt/…
+    시작:  fetch → checkout task/<work>/<task> → merge --ff-only → checkout -b attempt/…
     끝:    push attempt  →  checkout main  →  그 다음에야 판정 마커 세 줄
 
 이유가 둘이고 **둘 다 실측에서 나왔다**:
 
 ⑴ **다음 작업의 출발점** — attempt 브랜치 위에 남으면 무관한 두 작업이 한 줄에 쌓인다
    (실측: 첫 시험 파견 뒤 `.43` 이 attempt 에 남아 있었다).
-⑵ [중요] **정리가 가능해진다** — 체크아웃된 브랜치는 삭제 대상에서 빠지므로, `task/<id>` 에 앉아
+⑵ [중요] **정리가 가능해진다** — 체크아웃된 브랜치는 삭제 대상에서 빠지므로, `task/<work>/<task>` 에 앉아
    있으면 그 브랜치는 **영영 정리되지 않는다**(실측: 1회차 보존 → `main` 복귀 후 2회차 삭제).
 
 **복귀는 마커보다 먼저** 한다 — 마커는 출력의 마지막 세 줄이어야 하고, push 로 커밋은 이미
@@ -256,7 +256,8 @@ e2e 잔여 6개), **지우기 전에 팁을 보존한다**: `git bundle create <
 
 우리는 다르다:
 
-    task/<id>  ──▶ 워커들이 attempt 를 얹으며 **오래 산다**
+    task/<work>/base ──▶ 골조. 조각들이 여기서 갈라진다
+    task/<work>/<task> ──▶ 워커들이 attempt 를 얹으며 **오래 산다**
                    요청자가 대화식으로 [FEEDBACK] 을 박고 재작업을 돌린다 (몇 번이든)
                    ▼
     main       ──▶ [중요] **다 됐을 때, 사람이, 한 번** 머지한다
@@ -307,7 +308,7 @@ durable 브랜치를 빌드하려면 그 브랜치를 체크아웃해야 하는�
 
 [중요] **그래서 요청자는 자기 메인 트리에서 브랜치를 갈아타지 않는다.** 대신:
 
-    git worktree add ../ModularStage-task-<id> task/<id>
+    git worktree add ../ModularStage-task-<id> task/<work>/<task>
 
 **별도 워킹트리**를 만들어 거기서 빌드한다. 사람의 트리는 손대지 않고, DDC·Binaries 는
 재생성 비용이 있지만 **사람의 미커밋 작업을 날리는 것보다 훨씬 싸다.**
@@ -395,7 +396,7 @@ passwd 홈인 `/home/gitea`** 를 본다. 두 경로가 어긋나 **키는 등�
 `<프로젝트>/config.yaml` 의 `index.last_indexed_commit` 이 곧 **트윈이 지어진 커밋**이다
 (지금 `bc4b38f`). 그러므로:
 
-    durable task/<id> 를 만드는 기준 커밋  ==  매니페스트의 twin_commit
+    조각 durable 의 기준 커밋  ==  작업 브랜치 task/<work>/base 의 tip   (#319 — 옛 값은 twin_commit)
                                           ==  index.last_indexed_commit
 
 **따로 만들 필요가 없다.** 브랜치를 그 커밋에서 따면 워커가 받는 소스와 매니페스트의 근거가

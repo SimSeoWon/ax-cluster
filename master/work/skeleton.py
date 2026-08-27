@@ -33,6 +33,22 @@
     [DOC] · [STATE] · [BIND] · [REPLICATED]     [중요] **절대 보존** — 삭제·수정 금지
     태그 없는 주석                                보존 (임의 판단으로 제거 금지)
 
+## [중요] **「무엇을 왜」는 `[DOC]`, 「여기를 채워라」만 `[PSEUDO]`** (사용자 결정 2026-08-27)
+
+종전에는 작업 지시가 통째로 `[PSEUDO]` 에 들어가서 **구현과 함께 사라졌다.** 그래서 나중에
+`main` 에서 그 함수를 읽는 사람에게 *"왜 이렇게 생겼나"* 가 남지 않았다. 둘을 가른다:
+
+    // [DOC] N 이 0 이하이면 0 을 돌려준다 — 호출부가 음수를 거르지 않는다   ← 보존, main 까지 산다
+    // [PSEUDO] 위 규칙대로 합을 계산한다                                    ← 휘발, 구현하면 지운다
+
+[주의] **「작업 완료」 마킹은 만들지 않는다.** 그것은 **워커의 자기 신고**이고, 이 저장소가
+`RESULT: DONE` 을 판정 근거로 안 쓰기로 한 것과 같은 부류다(`layer1.py` 의 실측: *"워커는 실제로
+계약을 어겼다 — 마커를 응답 파일에 써 넣었다"*). **`[PSEUDO]` 가 사라진 것이 곧 완료 표시**이고,
+그것은 층1이 **결정적으로** 검사한다 — 위조하면 통과가 안 된다.
+[중요] 머지 시점의 판단 근거는 주석이 아니라 **git** 이다: 골조 원본이 작업 브랜치
+`task/<work_id>/base` 에 영구 보존되므로 `diff base...tip` 이 「지시 vs 구현」을 사실로 낸다
+(`#319`).
+
 [주의] **getter/setter 에는 주석을 달지 않는다** — 시그니처로 충분하고, 불필요한 주석은 워커
 프롬프트의 노이즈가 된다.
 
@@ -343,7 +359,10 @@ class Skeleton:
         out += sorted(self.frozen)
         out += ["", "Tags: [PSEUDO]/[PSEUDO:N]/[IMPL] — delete the marker line once "
                 "implemented. [DOC]/[STATE]/[BIND]/[REPLICATED] and untagged comments — "
-                "[중요] keep verbatim.",
+                "[중요] keep verbatim. The requirement lives in [DOC] and MUST survive; "
+                "[PSEUDO] only marks where to write. [중요] Do NOT add a 'done' marker of "
+                "your own — the absence of [PSEUDO] is the completion signal and it is "
+                "checked deterministically.",
                 "=== END FROZEN INTERFACE ==="]
         return "\n".join(out)
 
@@ -386,15 +405,19 @@ def build_prompt(spec: SkeletonSpec, *, declarations: str = "", norms: str = "",
         "RULES — violating any of these makes the output unusable:",
         "1. Write COMPLETE, COMPILABLE declarations: includes, UCLASS/USTRUCT/UENUM macros, "
         "GENERATED_BODY(), member declarations, method signatures.",
-        "2. Do NOT write real logic. Every function body is `// [PSEUDO] <what this must "
-        "do>` — but [중요] THE SKELETON MUST STILL COMPILE. A non-void function therefore ends "
+        "2. Do NOT write real logic. Each function body carries TWO comment lines: "
+        "`// [DOC] <what this must do and why>` which STAYS FOREVER, then "
+        "`// [PSEUDO] <fill this in>` which the worker deletes once implemented. "
+        "[중요] The requirement lives in [DOC]; [PSEUDO] only marks the spot. "
+        "[중요] THE SKELETON MUST STILL COMPILE. A non-void function therefore ends "
         "with a minimal placeholder return on its own line (`return false;`, `return {};`, "
         "`return nullptr;`) directly after the [PSEUDO] comment. A void function has the "
         "comment alone.",
         "3. Use `// [PSEUDO:1]`, `// [PSEUDO:2]` … instead of `[PSEUDO]` ONLY when this file "
         "is large enough that one pass cannot implement it: depth 1 = foundational logic, "
         "depth 2 = builds on depth 1, depth 3+ = integration. Otherwise use plain [PSEUDO].",
-        "4. Mark durable comments so they survive implementation: `[DOC]` design notes, "
+        "4. Mark durable comments so they survive implementation: `[DOC]` the requirement "
+        "itself (see 2 — that is where intent lives) and design notes, "
         "`[STATE]` what a member is for, `[BIND]` Blueprint/event wiring, `[REPLICATED]` "
         "network replication. [중요] Do NOT put any comment on getters/setters.",
         "5. Output the file contents, each preceded by a line `=== FILE: <path> ===`. "
