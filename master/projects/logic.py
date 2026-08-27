@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import (ROLE_WORKER,
+    DISPATCH_UNSET,
     DRIVEN_INTERACTIVE,
     DRIVEN_SSH,
     GITEA_REPO_ROOT,
@@ -199,11 +200,11 @@ def sync_check(name: str, *, align: bool = False, checker=None, deliverer=None,
     except Exception as e:                                   # noqa: BLE001
         return {"checked": False, "reason": f"작업장 목록을 읽지 못했다: {e}"}
 
-    for host, user, path, driven, role in shops:
+    for host, user, path, driven, role, dispatch in shops:
         if driven != DRIVEN_SSH or not user or not path:
             continue                     # 몰 수 없는 기계는 대상이 아니다 (.33 도 배달은 SSH 다)
         try:
-            facts = _b.probe(host, user, path, driven, role)
+            facts = _b.probe(host, user, path, driven, role, dispatch)
         except Exception as e:                               # noqa: BLE001
             hosts.append({"host": host, "ok": False, "reason": f"프로브 실패: {e}"})
             continue
@@ -215,7 +216,7 @@ def sync_check(name: str, *, align: bool = False, checker=None, deliverer=None,
                 #    되재므로(「했다」를 믿지 않는다) 여기서는 그 결과로 facts 를 갱신한다.
                 try:
                     entry["bootstrapped"] = bootstrap(facts)
-                    facts2 = _b.probe(host, user, path, driven, role)
+                    facts2 = _b.probe(host, user, path, driven, role, dispatch)
                     if not facts2.checkout_ok:
                         raise RuntimeError("부트스트랩 뒤에도 체크아웃을 못 읽는다")
                     deliver(facts2)
@@ -434,6 +435,7 @@ def set_workshop(
     user: str = "",
     role: str = ROLE_WORKER,
     note: str = "",
+    dispatch: str = DISPATCH_UNSET,
     registry: Registry | None = None,
 ) -> dict:
     """작업장 한 대의 체크아웃을 등록하거나 갱신한다 (§5.5.4).
@@ -458,6 +460,7 @@ def set_workshop(
         user=str(user).strip(),
         role=str(role).strip(),
         note=str(note).strip(),
+        dispatch=str(dispatch).strip(),
     )
     shop.validate()  # fail-closed — 검증 전에 파일을 건드리지 않는다
 
@@ -472,6 +475,7 @@ def set_workshop(
         "workshop": shop.to_dict(),
         "replaced": previous.to_dict() if previous else None,
         "drivable": shop.drivable,
+        "dispatch": shop.dispatch or "(미지정 — role 에서 유도)",
         "note": (
             f"마스터가 {shop.user}@{shop.host}:{shop.path} 로 밀어넣을 수 있다."
             if shop.drivable

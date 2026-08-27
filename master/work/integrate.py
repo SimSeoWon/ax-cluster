@@ -918,7 +918,7 @@ def main(argv) -> int:
         print(f"[중요] {e}")
         return 1
 
-    facts = [bundle.probe(h, u, p, d, r) for h, u, p, d, r in bundle.workshops(paths.name)]
+    facts = [bundle.probe(h, u, p, d, r, dp) for h, u, p, d, r, dp in bundle.workshops(paths.name)]
     # [중요] 통합자는 **UE5 가 있는 기계**다. 없으면 빌드 판정을 못 하므로 통합자가 아니다.
     ue = [f for f in facts if f.role == "worker" and f.checkout_ok and f.ue5]
     if cmd == "plan":

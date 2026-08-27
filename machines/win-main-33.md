@@ -8,6 +8,13 @@ Cluster-wide rules live in [`sim-desktop.md`](sim-desktop.md); repo rules in
 > workshop the master may drive freely; `.33` is where the user actually works, so the master
 > is a **guest** here — it checks before acting and never takes resources the user needs.
 > Probed 2026-08-08.
+>
+> [중요] **`dispatch` cannot override this** (`#321`, 2026-08-27). The workshop schema now has a
+> third axis — `role` = what may be asked of a machine, `dispatch` = whether to send work *right
+> now*. It is **narrowing-only**: writing `dispatch: always` on a `requester` is **rejected by
+> `validate()`**, not silently ignored. The only way to dispatch here would be to change `role`,
+> and that costs the requester payload (`review`·`coordinator`) and makes the token 403 on
+> writes — which is exactly why the axis was split.
 
 ## Identity
 

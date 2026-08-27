@@ -156,12 +156,20 @@ def survey(facts, *, base_branch: str = "main", closed=None, runner=None) -> Hos
     # 체크아웃된 브랜치는 삭제 대상에서 빠지므로, 워커가 `task/<id>` 에 앉아 있는 한 그
     # 브랜치는 **영영 정리되지 않는다.** 작업물은 이미 원격에 있으니 잃는 것이 없다.
     # [주의] 단 워킹트리가 깨끗할 때만 — 더러우면 체크아웃이 사람의 편집을 건드린다.
+    # [중요] **범위가 `Source/` 뿐이었다 — `#321` 완료 조건 4 가 지목한 그 구멍이다.**
+    #    조건이 이름 붙인 손실 경로는 미커밋 **`.uasset`**(= `Content/`)인데, 가드는 그것을
+    #    보지 않았다. 트리 전체로 넓힌다.
+    # [주의] **추적 파일만** 본다(`-uno`). 미추적까지 세면 빌드 부산물 하나로 정리가 영영
+    #    안 돌고, 그 방향의 실패는 조용하다 — 「가드가 있는데 아무것도 안 지워진다」로 보인다.
+    #    미추적 파일은 `git checkout` 이 지우지도 않으므로 손실 경로가 아니다.
     if p.current and _OURS.match(p.current):
-        rc, out = _git(facts, "status --porcelain -- Source/", runner=runner)
+        rc, out = _git(facts, "status --porcelain -uno", runner=runner)
         if rc != 0:
             p.errors.append("더티 확인 실패 — 브랜치를 되돌리지 않는다")
         elif out.strip():
-            p.keep.append((p.current, f"{base_branch} 로 되돌리지 않았다 — Source/ 가 더럽다"))
+            first = [ln.strip() for ln in out.splitlines() if ln.strip()][:3]
+            p.keep.append((p.current, f"{base_branch} 로 되돌리지 않았다 — 추적 파일이 더럽다: "
+                                      + ", ".join(first)))
         else:
             p.park = base_branch
 
@@ -374,7 +382,7 @@ def main(argv) -> int:
         return 2
     paths = resolve(argv[1] if len(argv) > 1 else "")
     base = (ProjectConfig.load(paths.config).branch or "main").strip()
-    facts = [bundle.probe(h, u, p, d, r) for h, u, p, d, r in bundle.workshops(paths.name)]
+    facts = [bundle.probe(h, u, p, d, r, dp) for h, u, p, d, r, dp in bundle.workshops(paths.name)]
     # [중요] 정리는 파견보다 조건이 느슨하다 — 더러워도 지울 수 있다(브랜치·부산물만 건드린다).
     #    다만 **역할과 체크아웃은 그대로 본다.** 요청자 기계는 마스터가 치울 곳이 아니다.
     targets = [f for f in facts if pick_worker([f]).chosen is not None]

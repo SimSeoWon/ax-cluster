@@ -126,6 +126,7 @@ def set_workshop_tool(
     user: str = "",
     role: str = "worker",
     note: str = "",
+    dispatch: str = "",
 ) -> str:
     """작업장 한 대의 UE5 체크아웃 위치를 등록·갱신한다 (PLAN §5.5.4).
 
@@ -140,11 +141,16 @@ def set_workshop_tool(
             않는다**(`.33` 이 그렇다). [중요] 이 인자가 **없어서** 요청자를 이 표면으로는
             등재할 수 없었다(실측 2026-08-23: `logic.set_workshop` 엔 있는데 도구가 안 열어
             뒀다). 역할을 못 정하면 사람의 기계에 작업이 파견된다 — 기본값에 기대면 안 된다.
+    dispatch: 지금 파견해도 되나 — `''`(미지정, **role 에서 유도**) / `'always'` / `'never'`.
+            [중요] **좁히기 전용**이다 (`#321`): 워커를 점검·자원 부족으로 **잠시 뺄** 때 쓰고,
+            요청자를 켜는 데는 쓸 수 없다(`role != worker` 에 `always` 를 적으면 거부된다).
+            `role` 은 **자격**, `dispatch` 는 **가용성**이다.
+            [주의] 손으로 YAML 을 고치지 말 것 — 이 도구가 유일한 쓰기 표면이다.
     """
     try:
         return json.dumps(
             set_workshop(name, host, driven=driven, path=path, user=user,
-                         role=role, note=note),
+                         role=role, note=note, dispatch=dispatch),
             ensure_ascii=False,
         )
     except (ConfigError, OSError) as e:

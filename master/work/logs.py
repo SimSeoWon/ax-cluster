@@ -175,8 +175,8 @@ def collect(paths, *, project: str = "", facts=None, api=None, reader=None) -> d
         out["lines"].append(f"[주의] 큐를 못 읽었다 — {type(e).__name__}: {e}")
         return out
     if facts is None:
-        facts = [bundle.probe(h, u, p, d, r)
-                 for h, u, p, d, r in bundle.workshops(project or paths.name)]
+        facts = [bundle.probe(h, u, p, d, r, dp)
+                 for h, u, p, d, r, dp in bundle.workshops(project or paths.name)]
     by_host = {f.host: f for f in facts}
     targets = [t for t in tasks if isinstance(t, dict)
                and str(t.get("status")) in WANT_STATUS

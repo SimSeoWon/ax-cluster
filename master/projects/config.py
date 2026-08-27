@@ -95,6 +95,23 @@ ROLE_WORKER = "worker"          # 큐에서 claim 해 처리한다
 ROLE_REQUESTER = "requester"    # 요청만 한다 — 사람의 기계. [중요] 파견 대상이 아니다
 ROLES = (ROLE_WORKER, ROLE_REQUESTER)
 
+# [중요] **파견 여부는 `role` 과 다른 축이다** (`#317` 미결 ④ · `#321`, 사용자 결정 2026-08-27).
+#    `role` 하나가 세 가지를 겸했다 — 파견 여부 · 배달 내용물(`bundle.PAYLOAD_BY_ROLE`) ·
+#    토큰 스코프(`auth.WORKER_SCOPE`). 그래서 `.33` 을 파견 대상으로 만들려고 role 을 바꾸면
+#    검수·머지에 필요한 `review`·`coordinator` 를 잃고 쓰기가 403 이 된다. 축을 갈랐다.
+#
+# [중요] **이 필드는 「좁히기 전용」이다** (사용자 보완 2026-08-27: *"플래그는 분리하고, 해당
+#    값이 있더라도 롤을 체크해서 작업 요청하는 메인 작업 PC면 무시하면 되겠네"*).
+#    **워커를 일시적으로 뺄 수는 있어도 요청자를 켤 수는 없다** — 사람이 편집 중인 트리에서
+#    파이프라인이 브랜치를 다루는 것 자체가 위험이라는 판단이다.
+#
+# 값이 **문자열**인 이유: 나중에 「사람이 없을 때만」 같은 조건이 필요해지면 값만 늘리면 된다.
+#    boolean 이면 그때 스키마를 또 바꾼다.
+DISPATCH_UNSET = ""             # 미지정 — `role` 에서 유도한다 (기존 레지스트리 무변경 동작)
+DISPATCH_ALWAYS = "always"      # 파견 대상 — [주의] role 이 worker 일 때만 유효하다
+DISPATCH_NEVER = "never"        # 파견에서 뺀다 (점검 중·자원 부족 등)
+DISPATCH_MODES = (DISPATCH_UNSET, DISPATCH_ALWAYS, DISPATCH_NEVER)
+
 
 @dataclass
 class Workshop:
@@ -113,6 +130,11 @@ class Workshop:
 
         requester  일감을 **요청**하고 온톨로지를 등록한다. 큐에서 집지 않는다
         worker     큐에서 claim 해 처리하고 제출한다
+
+    [중요] **`dispatch` 는 세 번째 축이다** (`#321`, 2026-08-27) — *지금 보내도 되나*.
+    `role` 은 **자격**(무엇을 시켜도 되나), `dispatch` 는 **가용성**(지금 보낼까)이다. 점검
+    중이거나 자원이 모자란 워커를 **잠시 빼는** 자리이고, [중요] **요청자를 켜는 자리가
+    아니다** — `role != worker` 면 값이 있어도 무시한다.
     """
 
     host: str
@@ -121,15 +143,32 @@ class Workshop:
     user: str = ""
     role: str = ROLE_WORKER
     note: str = ""
+    dispatch: str = DISPATCH_UNSET
+
+    @property
+    def dispatch_resolved(self) -> bool:
+        """지금 파견해도 되나 — **미지정이면 `role` 에서 유도**한다 (`#321`).
+
+        [중요] 미지정이 `role` 유도인 덕분에 **기존 레지스트리가 한 글자도 안 바뀌고** 그대로
+        돈다. 명시하면 그것이 이기지만, 이기는 방향은 **좁히는 쪽뿐**이다 — `drivable` 이
+        `role == worker` 를 따로 본다.
+        """
+        if not self.dispatch:
+            return self.role == ROLE_WORKER
+        return self.dispatch == DISPATCH_ALWAYS
 
     @property
     def drivable(self) -> bool:
         """마스터가 원격으로 **일감을 파견**할 수 있는가.
 
         [중요] 닿을 수 있는 것과 시켜도 되는 것은 다르다 — `requester` 는 SSH 가 열려 있어도
-        파견 대상이 아니다.
+        파견 대상이 아니다. 이 문장은 `#321` 이후에도 **그대로 유효하다**(사용자 보완
+        2026-08-27): `dispatch` 는 좁히기 전용이라 요청자를 켜지 못한다.
+
+            drivable = (driven == ssh) and (role == worker) and dispatch_resolved
         """
-        return self.driven == DRIVEN_SSH and self.role == ROLE_WORKER
+        return (self.driven == DRIVEN_SSH and self.role == ROLE_WORKER
+                and self.dispatch_resolved)
 
     @property
     def reachable(self) -> bool:
@@ -141,6 +180,19 @@ class Workshop:
             raise ConfigError("워크숍 host 가 비어 있다.")
         if self.role not in ROLES:
             raise ConfigError(f"role 은 {' | '.join(ROLES)} 중 하나여야 한다: {self.role!r}")
+        if self.dispatch not in DISPATCH_MODES:
+            raise ConfigError(
+                f"dispatch 는 {' | '.join(repr(m) for m in DISPATCH_MODES)} 중 하나여야 한다: "
+                f"{self.dispatch!r}"
+            )
+        # [주의] **모순을 조용히 넘기지 않는다** — 요청자에 `always` 를 적어 두면 「켰다」고
+        #    믿게 된다. 무시하는 것이 설계지만, 무시한다는 사실은 **말해야** 한다.
+        if self.dispatch == DISPATCH_ALWAYS and self.role != ROLE_WORKER:
+            raise ConfigError(
+                f"dispatch={DISPATCH_ALWAYS!r} 는 role={ROLE_WORKER!r} 에만 쓸 수 있다 "
+                f"({self.host} 는 role={self.role!r}). 이 필드는 **좁히기 전용**이다 — "
+                f"워커를 빼는 데 쓰고, 요청자를 켜는 데 쓰지 않는다 (`#321`)"
+            )
         if self.driven not in DRIVEN_MODES:
             raise ConfigError(
                 f"driven 은 {' | '.join(DRIVEN_MODES)} 중 하나여야 한다: {self.driven!r}"
@@ -166,13 +218,15 @@ class Workshop:
             user=str(d.get("user") or ""),
             role=str(d.get("role") or ROLE_WORKER),
             note=str(d.get("note") or ""),
+            dispatch=str(d.get("dispatch") or DISPATCH_UNSET),
         )
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {"driven": self.driven, "role": self.role}
         # 빈 값을 쓰지 않는다 — interactive 워크숍에 빈 path 가 남으면 "미설정"과
         # "설정했는데 비었다"가 구분되지 않는다.
-        for key, val in (("user", self.user), ("path", self.path), ("note", self.note)):
+        for key, val in (("user", self.user), ("path", self.path), ("note", self.note),
+                         ("dispatch", self.dispatch)):
             if val:
                 out[key] = val
         return out

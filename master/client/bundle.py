@@ -157,6 +157,9 @@ class HostFacts:
     path: str
     driven: str
     role: str = "worker"
+    # [중요] `#321` — **가용성 축.** `role` 은 *자격*, `dispatch` 는 *지금 보낼까*.
+    #    빈 값은 미지정이고 `role` 에서 유도된다(기존 레지스트리 무변경 동작).
+    dispatch: str = ""
     os: str = ""
     home: str = ""
     claude: str = ""
@@ -166,6 +169,17 @@ class HostFacts:
     checkout_ok: bool = False
     commit: str = ""
     errors: list = field(default_factory=list)
+
+    @property
+    def dispatchable(self) -> bool:
+        """지금 파견해도 되나 (`#321`). [중요] **좁히기 전용** — 요청자는 켜지지 않는다.
+
+        `projects.config.Workshop.drivable` 과 **같은 규칙 하나**여야 한다. 두 벌이 되면
+        레지스트리는 「뺐다」고 하는데 파견 루프는 그대로 미는 상태가 생긴다.
+        """
+        if self.role != "worker":
+            return False
+        return (self.role == "worker") if not self.dispatch else (self.dispatch == "always")
 
     @property
     def windows(self) -> bool:
@@ -253,9 +267,11 @@ def _find_ue5(host: str, user: str, *, runner=None) -> str:
     return _pick_ue5(found)
 
 
-def probe(host: str, user: str, path: str, driven: str, role: str = "worker") -> HostFacts:
+def probe(host: str, user: str, path: str, driven: str, role: str = "worker",
+          dispatch: str = "") -> HostFacts:
     """머신 하나를 잰다. **읽기 전용** — 아무것도 바꾸지 않는다."""
-    f = HostFacts(host=host, user=user, path=path, driven=driven, role=role)
+    f = HostFacts(host=host, user=user, path=path, driven=driven, role=role,
+                  dispatch=dispatch)
     rc, out = _ssh(host, user, "uname -s 2>/dev/null || ver")
     if rc != 0 and not out:
         f.errors.append("SSH 실패")
@@ -1453,4 +1469,7 @@ def workshops(project: str) -> list:
         raise BundleError(f"프로젝트를 모른다: {project} ({e})") from e
     ws = cfg.workshops
     items = ws.values() if isinstance(ws, dict) else ws
-    return [(w.host, w.user or "", w.path or "", w.driven, w.role) for w in items]
+    # [중요] `#321` — `dispatch` 를 같이 싣는다. 안 실으면 파견 루프가 그 축을 못 보고,
+    #    레지스트리에서 「뺐다」고 해도 계속 밀린다(필드가 거짓말이 된다).
+    return [(w.host, w.user or "", w.path or "", w.driven, w.role, w.dispatch)
+            for w in items]

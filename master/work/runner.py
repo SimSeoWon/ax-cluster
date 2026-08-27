@@ -223,6 +223,10 @@ def pick_worker(facts: list, requires=(), *, clean=None) -> Pick:
     [중요] `role` 로 먼저 거른다 — `.33` 은 SSH 가 닿지만 `requester` 이고, 사람이 편집 중인
     작업 트리에 파견하면 안 된다(`driven` ≠ `role`).
 
+    [중요] 그 다음이 **`dispatch`** 다 (`#321`) — `role` 은 *자격*, `dispatch` 는 *지금 보낼까*.
+    점검 중이거나 자원이 모자란 워커를 **잠시 빼는** 자리다. [주의] **좁히기 전용**이라
+    요청자는 이 값으로 켜지지 않는다 — 위 role 검사가 먼저 걸러 낸다.
+
     [중요] `clean` 을 주면 **워킹트리까지 보고 고른다.** 실측 2026-08-09: `.2` 의 추적 파일이
     더러운 줄 모르고 태스크를 집었고, 워커가 (옳게) 거부해 **집었다 반납하는 왕복**만 남았다.
     거부는 워커의 마지막 방어선이지 **선택 기준**이 아니다 — 못 돌릴 워커에게 주지 않는다.
@@ -232,6 +236,9 @@ def pick_worker(facts: list, requires=(), *, clean=None) -> Pick:
     for f in facts:
         if f.role != ROLE_WORKER:
             p.rejected.append((f.host, f"역할이 {f.role} 다 — 파견 대상 아님"))
+            continue
+        if not f.dispatchable:
+            p.rejected.append((f.host, f"dispatch={f.dispatch!r} — 파견에서 빠져 있다 (`#321`)"))
             continue
         if not f.checkout_ok:
             p.rejected.append((f.host, "체크아웃이 없다"))
@@ -525,8 +532,8 @@ def run_once(paths, *, facts=None, project: str = "", api=_api, runner=None, wri
     집을 게 없으면 `{"task": None}`.
     """
     if facts is None:
-        facts = [bundle.probe(h, u, p, d, r)
-                 for h, u, p, d, r in bundle.workshops(project or paths.name)]
+        facts = [bundle.probe(h, u, p, d, r, dp)
+                 for h, u, p, d, r, dp in bundle.workshops(project or paths.name)]
     if clean == AUTO:
         clean = cleanliness(project or paths.name)
     pick = pick_worker(facts, clean=clean)
@@ -609,7 +616,7 @@ def main(argv) -> int:
     cmd = (argv[0] if argv else "probe").strip()
     project = argv[1] if len(argv) > 1 else ""
     paths = resolve(project)
-    facts = [bundle.probe(h, u, p, d, r) for h, u, p, d, r in bundle.workshops(paths.name)]
+    facts = [bundle.probe(h, u, p, d, r, dp) for h, u, p, d, r, dp in bundle.workshops(paths.name)]
 
     if cmd == "probe":
         pick = pick_worker(facts, clean=cleanliness(paths.name))

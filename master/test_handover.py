@@ -150,8 +150,9 @@ def test_worker_dirs_use_real_field_shapes() -> None:
     import master.client.bundle as B
     keep_ws = B.workshops
     try:
-        B.workshops = lambda n: [("h1", "u", "/p", "ssh", "worker"),
-                                 ("h2", "u", "/p", "ssh", "requester")]
+        # [주의] `#321` — 워크숍 튜플에 `dispatch` 가 붙었다 (6번째).
+        B.workshops = lambda n: [("h1", "u", "/p", "ssh", "worker", ""),
+                                 ("h2", "u", "/p", "ssh", "requester", "")]
         out = H._worker_leftovers("X", surveyor=lambda f: plan,
                                   prober=lambda *a: types.SimpleNamespace(host="h1"))
     finally:

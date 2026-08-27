@@ -31,11 +31,11 @@ from . import bundle, spec
 
 def _facts(project: str) -> list:
     out = []
-    for host, user, path, driven, role in bundle.workshops(project):
+    for host, user, path, driven, role, dispatch in bundle.workshops(project):
         if not user or not path:
             print(f"  [주의] {host}: user/path 미등록 — 건너뜀 (레지스트리를 고칠 것)")
             continue
-        out.append(bundle.probe(host, user, path, driven, role))
+        out.append(bundle.probe(host, user, path, driven, role, dispatch))
     return out
 
 
@@ -179,7 +179,7 @@ def cmd_deliver(project: str, *, init: bool = False) -> int:
                 r0 = bundle.bootstrap_checkout(project, f)
                 print(f"  [완료] {f.host}: 체크아웃 부트스트랩 — "
                       f"{r0.get('commit','?')} · LFS {r0.get('lfs','?')}")
-                f = bundle.probe(f.host, f.user, f.path, f.driven, f.role)
+                f = bundle.probe(f.host, f.user, f.path, f.driven, f.role, f.dispatch)
             except bundle.BundleError as e:
                 print(f"  [중요] {f.host}: 부트스트랩 실패 — {e}")
                 bad += 1

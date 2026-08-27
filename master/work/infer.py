@@ -578,8 +578,8 @@ def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner
     **헛일이 확실하다.** 이번 실행에서 실패한 것을 마스터가 기억해 막는다.
     """
     if facts is None:
-        facts = [bundle.probe(h, u, p, d, r)
-                 for h, u, p, d, r in bundle.workshops(project or paths.name)]
+        facts = [bundle.probe(h, u, p, d, r, dp)
+                 for h, u, p, d, r, dp in bundle.workshops(project or paths.name)]
     if clean == runner.AUTO:
         clean = runner.cleanliness(project or paths.name)
 
@@ -758,8 +758,8 @@ def collect(paths, *, project: str = "", work_id: str = "", facts=None,
     [주의] 회수는 멱등이다 — 같은 태스크를 다시 걷으면 스풀을 같은 내용으로 덮는다.
     """
     if facts is None:
-        facts = [bundle.probe(h, u, p, d, r)
-                 for h, u, p, d, r in bundle.workshops(project or paths.name)]
+        facts = [bundle.probe(h, u, p, d, r, dp)
+                 for h, u, p, d, r, dp in bundle.workshops(project or paths.name)]
     by_host = {f.host: f for f in facts}
     tasks = api("GET", "/api/v1/tasks") or []
     targets = [t for t in tasks
@@ -819,7 +819,7 @@ def main(argv) -> int:
     if cmd == "spool":
         return _cli_spool(paths, argv[2] if len(argv) > 2 else "")
 
-    facts = [bundle.probe(h, u, p, d, r) for h, u, p, d, r in bundle.workshops(paths.name)]
+    facts = [bundle.probe(h, u, p, d, r, dp) for h, u, p, d, r, dp in bundle.workshops(paths.name)]
     if cmd == "collect":
         got = collect(paths, facts=facts, work_id=argv[2] if len(argv) > 2 else "")
         print(f"회수 {got['collected']} · 대기 {got['waiting']}")

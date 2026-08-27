@@ -685,7 +685,8 @@ def test_sync_check_shape() -> None:
     import master.client.bundle as B
     keep_ws, keep_probe = B.workshops, B.probe
     try:
-        B.workshops = lambda n: [("h1", "u", "/p", "ssh", "worker")]
+        # [주의] `#321` — 워크숍 튜플에 `dispatch` 가 붙었다 (6번째).
+        B.workshops = lambda n: [("h1", "u", "/p", "ssh", "worker", "")]
         B.probe = lambda *a: facts
 
         drift = lambda f: {"ok": False, "verdict": "drifted", "behind": 3, "reason": "3 뒤"}

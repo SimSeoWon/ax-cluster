@@ -92,17 +92,17 @@ def _worker_leftovers(name: str, *, surveyor=None, prober=None) -> Leftover:
     from ..client import bundle as _b
     from . import cleanup
     survey = surveyor or (lambda f: cleanup.survey(f))
-    probe = prober or (lambda h, u, p, d, r: _b.probe(h, u, p, d, r))
+    probe = prober or (lambda h, u, p, d, r, dp="": _b.probe(h, u, p, d, r, dp))
     try:
         shops = _b.workshops(name)
     except Exception as e:                                 # noqa: BLE001
         out.error = f"작업장 목록을 읽지 못했다: {e}"
         return out
-    for host, user, path, driven, role in shops:
+    for host, user, path, driven, role, dispatch in shops:
         if role != "worker" or not user or not path:
             continue                    # [주의] 요청자(`.33`)는 사람의 기계다 — 세지 않는다
         try:
-            facts = probe(host, user, path, driven, role)
+            facts = probe(host, user, path, driven, role, dispatch)
             plan = survey(facts)
         except Exception as e:                             # noqa: BLE001
             out.names.append(f"{host}: (조사 실패 — {type(e).__name__}: {e})")

@@ -1281,10 +1281,10 @@ def deliver(html_text: str, host: str, *, project: str = "") -> str:
     파일을 얹지 않는다(게스트 규칙). 스냅샷이므로 덮어써도 잃을 것이 없다.
     """
     from .client import bundle
-    for h, user, path, driven, role in bundle.workshops(project or ""):
+    for h, user, path, driven, role, dispatch in bundle.workshops(project or ""):
         if h != host:
             continue
-        facts = bundle.probe(h, user, path, driven, role)
+        facts = bundle.probe(h, user, path, driven, role, dispatch)
         if not facts.home:
             raise RuntimeError(f"{host}: 홈 디렉토리를 못 읽었다 — 보낼 자리를 모른다")
         sep = "\\" if facts.windows else "/"

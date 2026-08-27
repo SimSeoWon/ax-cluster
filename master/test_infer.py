@@ -73,6 +73,14 @@ class FakeFacts:
     claude: str = "/usr/bin/claude"
     checkout_ok: bool = True
     capabilities: list = field(default_factory=list)
+    # [주의] `#321` — 파견 판정이 보는 축이 하나 늘었다 (`role` = 자격, `dispatch` = 가용성).
+    dispatch: str = ""
+
+    @property
+    def dispatchable(self) -> bool:
+        if self.role != "worker":
+            return False
+        return True if not self.dispatch else (self.dispatch == "always")
 
     @property
     def windows(self) -> bool:
