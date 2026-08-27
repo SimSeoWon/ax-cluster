@@ -74,8 +74,11 @@ def test_uninitialized() -> None:
         # [주의] 분모는 `SERVER_STEPS` 를 따른다 — 숫자를 박으면 단계가 늘 때마다 갈린다
         #    (`#273` 이 「4/6」으로 잘못 보고한 그 부류). **register 가 깨지면 트윈 경로를
         #    모르므로 그것을 쓰는 단계 전부**가 blocked 다 — `hook` 은 bare 만 보므로 제외.
-        expect_blocked = sum(1 for st in spec.SERVER_STEPS
-                             if st.key in ("clone", "conventions", "graph", "synth", "index"))
+        # [주의] **여기도 이름을 박아 뒀다** — `#330` 이 `guard` 를 넣자 5 vs 6 으로 깨졌다.
+        #    성질로 센다: `bare`·`register`·`hook` 은 `(reg, name)` 을 받아 트윈 경로가 필요
+        #    없고, **그 밖 전부**가 register 미완이면 blocked 다.
+        _no_paths = {"bare", "register", "hook"}
+        expect_blocked = sum(1 for st in spec.SERVER_STEPS if st.key not in _no_paths)
         check("[중요] 선결 미충족은 blocked 로 갈린다", len(blocked) == expect_blocked,
               f"{len(blocked)} vs {expect_blocked}")
         check("[주의] hook 은 blocked 가 아니다 — 레지스트리만 있으면 잴 수 있다",
@@ -104,8 +107,13 @@ def test_registered_only() -> None:
         check("register 통과", by["register"]["done"], str(by["register"]))
         check("clone 은 남았다", not by["clone"]["done"] and "클론이 없다" in by["clone"]["detail"],
               str(by["clone"]))
+        # [주의] **이름 목록을 박지 않는다 — 사양에서 유도한다.** 같은 파일의 다른 검사가
+        #    이미 *"개수를 박지 않는다"* 라고 적어 뒀는데 여기만 이름을 박아 뒀고, `#330` 이
+        #    `guard` 를 넣자 조용히 깨졌다. 「이름으로 답한다」는 성질은 그대로 잰다.
+        from master.client import spec as _spec
+        _done = {"bare", "register"}
         check("남은 것을 이름으로",
-              d["remaining"] == ["hook", "clone", "conventions", "graph", "synth", "index"],
+              d["remaining"] == [s.key for s in _spec.SERVER_STEPS if s.key not in _done],
               str(d["remaining"]))
         # [중요] clone 이 아직이면 그래프·합성·색인은 **잴 수 없다** (0건과 구분한다)
         check("[중요] clone 미완이 뒤 셋을 blocked 로 만든다",
@@ -123,6 +131,35 @@ def test_registered_only() -> None:
             os.environ.pop("AX_PROJECTS_ROOT", None)
         else:
             os.environ["AX_PROJECTS_ROOT"] = keep
+
+
+def test_guard_step_is_the_write_surface(*, _tmp=None) -> None:
+    """[중요] `#330` — 온보딩이 **pre-push 쓰기 가드**를 깐다.
+
+    이 단계가 없어서 NS 가 무방비로 돌았다(실측 2026-08-28): 가드 원본은 2026-08-14 에
+    코드로 들어왔지만 온보딩 단계가 아니었고, 그 뒤 온보딩한 NS 는 그것을 지나지 않았다.
+    [주의] **`hook` 과 다른 것이다** — 그쪽은 Gitea 서버의 post-receive(받은 push → 재색인),
+    이쪽은 마스터 자기 클론의 pre-push(나가는 push 를 막는다). 이름이 겹쳐 있는 줄 알았다.
+    """
+    from master.client import spec as _spec
+    from master.projects import onboard as _ob
+    keys = [s.key for s in _spec.SERVER_STEPS]
+    check("사양에 `guard` 단계가 있다", "guard" in keys, str(keys))
+    check("[중요] `hook` 과 별개 단계다 (이름이 겹치지 않는다)",
+          "hook" in keys and keys.index("guard") != keys.index("hook"), str(keys))
+    # [주의] LFS 저장소를 클론하면 git-lfs 가 pre-push 를 넣는다 — 먼저 깔면 클론이 덮는다
+    check("[주의] `guard` 는 `clone` **뒤**다 (LFS 훅이 덮지 못하게)",
+          keys.index("guard") > keys.index("clone"), str(keys))
+    check("판정기·실행기가 배선돼 있다",
+          "guard" in _ob.PROBES and "guard" in _ob.RUNNERS,
+          f"{list(_ob.PROBES)} / {list(_ob.RUNNERS)}")
+
+    # [중요] **판정을 두 벌로 만들지 않았다** — `#329` 의 `hook_status` 를 그대로 쓴다
+    import inspect
+    src = inspect.getsource(_ob._probe_guard)
+    check("[중요] `hook_status` 를 재사용한다 (판정이 한 벌이다)", "hook_status" in src, src[:120])
+    check("  설치기도 `install_hook` 하나다",
+          "install_hook" in inspect.getsource(_ob.do_guard))
 
 
 def test_synth_stamps_commit() -> None:
@@ -257,7 +294,7 @@ def test_conventions_step_is_the_manifest_source() -> None:
 
 if __name__ == "__main__":
     for fn in (test_step_source_is_spec, test_uninitialized, test_registered_only,
-               test_synth_stamps_commit, test_live_modularstage,
+               test_guard_step_is_the_write_surface, test_synth_stamps_commit, test_live_modularstage,
                test_conventions_step_is_the_manifest_source):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_onboard: {PASS}/{PASS + FAIL} 통과")

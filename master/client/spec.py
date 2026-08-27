@@ -87,6 +87,20 @@ SERVER_STEPS = (
          "<bare>/hooks/post-receive.d/ax-index 가 있다"),
     Step("clone", "소스 클론 — <트윈>/<local_clone>/ 에 워킹트리",
          "paths.repo 가 git 저장소다"),
+    # [중요] **이 단계가 없어서 NS 가 무방비로 돌았다** (`#330`, 실측 2026-08-28).
+    #    `#125` 의 pre-push 가드는 2026-08-14 에 코드로 들어왔지만 **온보딩 단계가 아니었고**,
+    #    그때 있던 ModularStage 클론에만 손으로 깔렸다. 2026-08-22 에 온보딩한 NS 는 그 단계를
+    #    지나지 않아 **가드 없이 시작했다** — 마스터의 `task/*` 밖 push · `main` 이동 ·
+    #    미병합 삭제가 그동안 무방비였다.
+    # [중요] **이름을 `guard` 로 둔다 — 위 `hook` 과 겹치지 않게.** 그 겹침이 사고의 원인이다:
+    #    `hook` 은 **Gitea 서버**의 post-receive(받은 push → 재색인)이고 이것은 **마스터 자기
+    #    클론**의 pre-push(나가는 push 를 막는다)다. 하는 일이 정반대인데 둘 다 "hook" 이라
+    #    **있는 줄 알았다.**
+    # [주의] **순서가 `clone` 뒤여야 한다** — LFS 저장소를 클론하면 git-lfs 가 자기 pre-push 를
+    #    그 자리에 넣는다(NS 가 그랬다). 먼저 깔면 클론이 덮는다. 설치본은 LFS 위임을 포함한다
+    #    (`#327` 에서 그렇게 고쳤다 — 그냥 덮으면 `.uasset` push 가 깨진다).
+    Step("guard", "마스터 클론에 **pre-push 쓰기 가드** 설치 (`#125` — 오발 push 를 막는다)",
+         "<트윈>/repo/.git/hooks/pre-push 가 우리 가드다 (`hook_status.state == ok`)"),
     # [중요] **컨벤션의 원천은 마스터 미러의 `CLAUDE.md` 다** (`#294`, 실측 2026-08-24).
     #    `work/conventions.project_doc` 이 `<트윈>/repo/CLAUDE.md` 의 `## Code conventions` 절을
     #    읽어 **워커 매니페스트**에 싣는다. 그런데 배달은 각 기계의 *체크아웃*에만 갔고 미러는

@@ -154,6 +154,21 @@ def _probe_clone(paths) -> tuple:
     return True, str(paths.repo)
 
 
+def _probe_guard(paths) -> tuple:
+    """마스터 클론의 pre-push 쓰기 가드 (`#330`).
+
+    [중요] **판정을 두 벌로 만들지 않는다** — `#329` 가 만든 `attempt.hook_status` 를 그대로
+    쓴다. 여기서 다시 판정하면 언젠가 한쪽만 고쳐진다(`#311` 이 값을 치른 부류).
+    [주의] `stale`(우리 가드인데 원본과 다르다)도 **미완료로 본다** — 온보딩은 *"원본대로
+    서 있나"* 를 재는 자리이고, 설치가 멱등이라 다시 깔면 그만이다.
+    """
+    from ..work.attempt import hook_status, STATE_OK
+    st = hook_status(paths)
+    if st.get("state") == STATE_OK:
+        return True, str(paths.repo / ".git" / "hooks" / "pre-push")
+    return False, st.get("reason", "확인 실패")
+
+
 def _probe_graph(paths) -> tuple:
     from ..graph import db as gdb, dependency as dep
     c = gdb.counts(paths)
@@ -268,6 +283,7 @@ PROBES = {
     "register": _probe_register,
     "hook": _probe_hook,
     "clone": _probe_clone,
+    "guard": _probe_guard,
     "conventions": _probe_conventions,
     "graph": _probe_graph,
     "synth": _probe_synth,
@@ -276,7 +292,8 @@ PROBES = {
 
 
 def probe_server(name: str, *, registry: Registry | None = None) -> list:
-    """서버 절 여섯 단계의 현재 상태. **읽기 전용.**
+    """서버 절 각 단계의 현재 상태. **읽기 전용.** (단계 수는 `spec.SERVER_STEPS` 가 정본이다 —
+    여기에 숫자를 적으면 단계가 늘 때 조용히 거짓말이 된다: 실제로 「여섯」이라 적혀 있었다.)
 
     [중요] 선결이 깨진 단계는 `blocked` 로 표시하고 **판정을 시도하지 않는다** — 클론이 없는데
     그래프를 재면 "비었다" 가 나오고, 그것은 *"안 만들었다"* 와 *"만들 수 없었다"* 를 섞는다.
@@ -434,6 +451,19 @@ def do_clone(paths, cfg) -> str:
     return f"{head} · " + " · ".join(notes)
 
 
+def do_guard(paths) -> str:
+    """pre-push 쓰기 가드를 마스터 클론에 설치한다 (`#330`).
+
+    [중요] **설치기도 하나만 둔다** — `attempt.install_hook` 이 원본(SSOT)을 복사하고 설치 뒤
+    스스로 재검증한다. 여기서 복사를 다시 쓰면 두 벌이 된다.
+    [주의] **멱등이다** — 이미 온보딩된 프로젝트에 다시 돌려도 안전하고, 그것이 NS 처럼
+    가드 없이 시작한 프로젝트를 낫게 하는 경로다.
+    """
+    from ..work.attempt import install_hook
+    st = install_hook(paths)
+    return f"pre-push 가드 설치 — {st['reason']} ({paths.repo / '.git' / 'hooks' / 'pre-push'})"
+
+
 def do_conventions(paths, *, project: str = "") -> str:
     """미러에 `CLAUDE.md` 를 놓는다 — **컨벤션의 원천** (`#294`).
 
@@ -529,7 +559,8 @@ def do_index(paths) -> str:
     return f"vector {getattr(st, 'vector_docs', '?')} · 워터마크 {head.strip()[:7]}"
 
 
-RUNNERS = {"hook": do_hook, "clone": do_clone, "conventions": do_conventions,
+RUNNERS = {"hook": do_hook, "clone": do_clone, "guard": do_guard,
+           "conventions": do_conventions,
            "graph": do_graph, "synth": do_synth, "index": do_index}
 
 
