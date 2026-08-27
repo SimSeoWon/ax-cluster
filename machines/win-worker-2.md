@@ -84,36 +84,14 @@ a supervisor. (Same call the master made discarding `process_lifecycle.py` for s
 
 Detail: `~/ax-cluster/docs/5_5-project-isolation.md` §5.5.4-⑥.
 
-### AxClaimer — the resident queue claimer (2026-08-18, #204)
+### AxClaimer — removed 2026-08-27 (#320)
 
-Exactly the case above: a Scheduled Task (`AxClaimer`) wakes the claimer **every 5 minutes**
-(pythonw, no console). A live instance holds the exclusive lock `.ax\claimer.lock`, so extra
-wake-ups yield silently; after a crash the OS releases the lock and the next tick restarts it.
-It runs **only while janus is logged on** (no stored password — same premise as the
-origin's `worker.exe`). It claims **build and code(infer)** jobs (`--types=build,code` —
-실전 pull 전환, user decision 2026-08-18). For code tasks it runs Claude locally, records facts
-to `.ax\work\<task>\result.json`, and never submits — the master collects and judges.
-[중요] **claim requires a project tag** (`#257`, 2026-08-22). The value comes from
-`E:\trunk\<Project>\.ax\config.json` → `project`, and `claimer._call` attaches it to every
-request; an untagged claim is refused with `no_project_tag`. **Never hand-edit that value** —
-`deliver` generates it.
-
-[중요] **After a delivery, restart the resident** (`#277`) — `deliver` replaces the *file* while
-the running process still holds the **old code** in memory. Measured 2026-08-22: a resident from
-before the tag rollout read the refusal as a task and looped, growing its log to 4.4 MB.
-`schtasks /end /tn AxClaimer` (or just kill `pythonw`) is enough — the 5-min watchdog brings it
-back with the new code. → [`../docs/13-request-tagging.md`](../docs/13-request-tagging.md) §13.6
-
-    logs     E:\trunk\ModularStage\.ax\logs\claimer_<date>.log  — daily, boot-rotated (_N),
-             7-day retention (#220). Per-task trace: .ax\logs\claimer_debug\<task_id>\
-             (heartbeat.log · llm_stdout.log · llm_stderr.log · build.log — kept after the
-             task ends, for post-mortem). Crash: claimer_crash.log
-    stop     schtasks /end /tn AxClaimer  &  schtasks /change /tn AxClaimer /disable
-    restart  /end → **wait a few seconds** → /run. Measured 2026-08-18: right after
-             /end the OS may not have released `.ax\claimer.lock` yet, so an immediate /run
-             bounces off the singleton and nothing runs — until the 5-min watchdog heals it
-    code     delivered payload .ax\lib\axmaster\work\claimer.py — [중요] don't hand-edit; SSOT
-             is the master repo and the next `deliver` overwrites it
+A Scheduled Task (`AxClaimer_NS`) used to wake a resident claimer every 5 min (#204,
+2026-08-18). It is **gone** — both the watchdog and the running `pythonw` process
+(measured after teardown: 341 scheduled tasks, 0 matching; 0 python processes).
+Work now arrives as a **master-driven SSH push** (`layer3_verify.run_build_on_workshop`),
+which needs no payload code on this box. [주의] `.ax\logs\claimer_*.log` from the
+resident era is still on disk — historical, nothing writes it now.
 
 ## Unreal projects
 

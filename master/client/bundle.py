@@ -80,9 +80,10 @@ PAYLOAD_PKG = "axmaster"
 
 # [중요] **항목은 `(배달 상대경로, 저장소 경로)` 다** (#262, 2026-08-22). 그전까지 한 값이 두 뜻을
 #    겸했고, 그래서 **저장소에서 파일을 옮기면 배달 위치가 따라 움직였다.** 배달 위치는 함부로
-#    못 바꾼다 — `.33` 의 `.mcp.json` args 가 그 값이고(`mcp_entry_for`), `.2` schtasks·`.43` cron 이
-#    `axmaster.work.claimer` 로 상주를 부른다(`work/claimer.py:27-28`). 둘을 갈라 두면 저장소
+#    못 바꾼다 — `.33` 의 `.mcp.json` args 가 그 값이다(`mcp_entry_for`). 둘을 갈라 두면 저장소
 #    재배치(#263·#264)가 배달을 흔들지 않는다.
+# [주의] **종전에는 이유가 하나 더 있었다** — `.2` schtasks·`.43` cron 이 `axmaster.work.claimer`
+#    로 상주를 불렀다. 상주는 `#320`(2026-08-27)으로 철거됐다. 되살린다면 이 제약도 같이 돌아온다.
 # [주의] **지금 두 값은 전부 같다.** 이 단계는 자리를 만드는 것이고 **동작은 바꾸지 않는다** —
 #    배달 위치가 한 글자라도 달라지면 그것은 이 변경의 실패다(`test_payload_split`).
 
@@ -106,17 +107,19 @@ PAYLOAD_BY_ROLE = {
     # [중요] **배달 위치는 `clientside/` 그대로, 저장소 위치만 `client/runtime/` 이다** (#263).
     #    `.33` 의 `.mcp.json` args 가 배달 위치를 가리키므로 그것은 못 바꾼다 — 여기가 두 값을
     #    가른 것(#262)이 실제로 쓰이는 첫 자리다.
-    #    [주의] claimer 사슬(`work/claimer.py`·`ax_safety`·`build_local`·`skeleton_gate`)은
-    #    **`master/` 에 남는다** — `layer3_verify`(마스터도 `integrate.py` 에서 쓴다)를 상대경로로
-    #    올려다보기 때문이다. 사용자 결정 ⓒ, 2026-08-22.
+    #    [주의] 빌드 사슬(`build_local`·`skeleton_gate`)은 **`master/` 에 남는다** —
+    #    `layer3_verify`(마스터도 `integrate.py` 에서 쓴다)를 상대경로로 올려다보기 때문이다.
+    #    사용자 결정 ⓒ, 2026-08-22.
     "requester": (_pair("clientside/client_mcp.py", "client/runtime/client_mcp.py"),
                   _pair("clientside/ontology_cache.py", "client/runtime/ontology_cache.py"),
                   _pair("layer3_verify.py"), _pair("source_text.py"), _pair("utf8.py"),
                   _pair("work/branch_names.py"), _pair("work/coordinator.py"),
                   _pair("work/review.py"),
                   _pair("work/skeleton_gate.py"), _pair("work/build_local.py")),
-    # worker (#204): 폴링 claimer + 안전 가드 + 빌드 호출 사슬. claimer 는 build 유형만
-    # 집는다 (types 필터) — infer 는 현행 Flow Y(마스터 구동)가 계속 맡는다.
+    # [중요] **worker 에는 폴링 상주가 없다** (`#320`, 2026-08-27 — `#317` 미결 ⑤ 상주 전폐).
+    # `work/claimer.py`·`work/ax_safety.py` 가 여기 있었고 걷어냈다. 빌드·추론 둘 다 마스터가
+    # SSH 로 민다(`layer3_verify.run_build_on_workshop` — 워커에 파이썬 payload 를 요구하지 않고
+    # `Build.bat` 을 직접 부른다). [주의] 되살릴 조건은 `#320` 노트에 있다.
     # [중요] **워커도 클라 MCP 를 받는다** (사용자 결정 2026-08-23 — `#267`·`#261`).
     #    코드를 추론하는 자리에서 레시피·안티패턴을 읽어야 한다. 폐포는 둘이다:
     #    `client_mcp.py` 와 **옆 파일로 로드되는** `ontology_cache.py`(`_load_cache` 가
@@ -124,7 +127,6 @@ PAYLOAD_BY_ROLE = {
     #    [주의] 권한은 이 표가 아니라 **토큰 스코프**가 정한다(`auth.WORKER_SCOPE` — 쓰기는 403).
     "worker": (_pair("clientside/client_mcp.py", "client/runtime/client_mcp.py"),
                _pair("clientside/ontology_cache.py", "client/runtime/ontology_cache.py"),
-               _pair("work/claimer.py"), _pair("work/ax_safety.py"),
                _pair("work/build_local.py"), _pair("work/skeleton_gate.py"),
                _pair("layer3_verify.py"),
                _pair("source_text.py"), _pair("utf8.py")),
@@ -936,7 +938,7 @@ PAYLOAD_INIT = (
 #    생성기). 우리는 생성기 대신 **저장소의 파일**을 정본으로 둔다 — 같은 배포 모델이고,
 #    파일이면 diff·리뷰·3자 동기가 그대로 붙는다.
 # [중요] **역할은 requester 뿐이다** (실측 2026-08-20: `.2`·`.43` 에 `.claude/agents`·`skills`
-#    **0건**). 이 자산은 사람이 대화로 쓰는 절차이고, 워커는 claimer·`ax-work` 로 돈다.
+#    **0건**). 이 자산은 사람이 대화로 쓰는 절차이고, 워커는 마스터의 SSH push 로 돈다(`#320`).
 #    워커에게도 필요해지면 그때 칸을 늘린다 — 안 쓰는 곳에 미리 뿌리지 않는다.
 # [주의] `agents`·`skills`·`rules`·`hooks` 는 **파일째 관리**한다(원전도 매 실행 재생성했다).
 #    반면 `.claude/CLAUDE.md` 는 **마커 블록만** 바꾼다 — 사람이 쓴 나머지를 날리지 않는다.
@@ -1180,7 +1182,8 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
         written["mcp_json"] = _remote_write(facts, ".mcp.json",
                                             merge_mcp_json(prev_mcp, facts), base="checkout")
     # ── 역할 토큰 (#204 에서 requester 전용 → 역할 인식으로) ─────────────
-    #    requester 는 클라 MCP 가, worker 는 claimer(#204)가 `.ax/token` 을 읽는다.
+    #    requester·worker 둘 다 **클라 MCP** 가 `.ax/token` 을 읽는다 (worker 의 claimer 는
+#    `#320` 으로 철거됐고, 워커도 클라 MCP 를 받는다 — `#267`·`#261`).
     #    [중요] 스코프는 큐 쪽에서 역할별로 강제된다 (auth.REQUESTER_SCOPE·WORKER_SCOPE).
     if facts.role in ("requester", "worker"):
         from .. import auth as _auth
@@ -1192,98 +1195,16 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
         else:
             written["role_token"] = (f"없음 — 마스터에서 `python -m master.auth init-role "
                                      f"{facts.role}` 후 재배달할 것")
-    # [중요] **배달은 파일을 놓는 것으로 끝나지 않는다** (`#277`) — 도는 상주는 옛 코드를
-    #    메모리에 쥔다. 실측 2026-08-22: 파일 해시가 3자 일치하는데 `.43` 상주가 폭주했다.
-    #    그래서 배달 절차 자체가 **도는 프로세스**를 보고 갱신을 요구한다(사람 눈이 아니다).
-    written["residency"] = refresh_residency(facts)
+    # [중요] **상주 갱신 절이 여기 있었다** (`#277` → `#320` 으로 철거, 2026-08-27).
+    #    *"배달은 파일을 놓는 것으로 끝나지 않는다 — 도는 상주는 옛 코드를 메모리에 쥔다"* 는
+    #    실측(2026-08-22: 해시 3자 일치인데 `.43` 상주가 폭주)은 **상주가 있을 때만** 성립한다.
+    #    [주의] 마스터 서비스에는 같은 병이 그대로 있다 — `service_freshness.py` 가 그 자리다.
     return {"host": facts.host, **written,
             "claude_md_mode": ("생성" if not (prev or "").strip()
                                else "블록 교체" if MD_BEGIN in (prev or "") else "블록 추가"),
             # [주의] 일회성 프로비저닝 비용 — **작업 비용과 섞지 않는다** (#64)
             "init": init_info,
             "verified": True}
-
-
-# [중요] 깃발을 놓은 뒤 **기다려 준다** (`#277`). claimer 는 깃발을 **루프 top**(다음 claim
-#    전)에서만 본다 — 그것이 「진행 중 작업을 죽이지 않는다」의 방법이다. 즉 반응까지 최대
-#    한 폴링 주기(20초) + 왕복이 걸린다.
-#    [주의] 실측 2026-08-23: 즉시 재확인했더니 **새 코드도 「깃발을 모르는 코드」로 판정**돼
-#    매번 강제 종료했다 — 우아한 경로가 죽은 코드였다. 유닛은 통과했다(주입 stub 이 즉시
-#    응답했으니까).
-FLAG_GRACE_SEC = 35                 # claimer POLL_SEC(20) + 왕복 여유
-FLAG_POLL_SEC = 5
-
-
-def refresh_residency(facts: HostFacts, *, runner=None, sleeper=None) -> dict:
-    """배달 뒤 상주 갱신 (`#277`). **관측 → 요구 → 재관측** 세 걸음.
-
-    [중요] **판정은 파일이 아니라 도는 프로세스다** — `claimer.py --probe` 가 부팅 시점의 코드
-    mtime 을 들고 있고, 지금 코드 mtime 과 비교한다(같은 기계·같은 시계라 스큐가 없다).
-    [중요] **진행 중 태스크를 죽이지 않는다** — 깃발(`claimer.restart`)을 놓으면 claimer 가
-    **다음 claim 전에** 물러난다. `busy` 면 그것으로 끝이고, 강제 종료는 하지 않는다.
-    [주의] **옛 코드는 깃발을 모른다.** 그래서 `busy=0` 이고 재관측에도 여전히 stale 이면
-    **pid 로만** 죽인다 — 이름/패턴으로 죽이면 남의 프로젝트 상주까지 죽는다(`#250` 이 깨진다).
-    [주의] 상태를 **못 읽으면 아무것도 하지 않는다** — 모르는 것을 고치면 진행 중 작업을 죽인다.
-    """
-    from client.init import residency          # 관례: 함수 안 절대 import (루트는 패키지가 아니다)
-    if facts.role != "worker":
-        return {"skipped": "worker 가 아니다 — 상주가 없다"}
-    run = runner or (lambda cmd, timeout=60: _ssh(facts.host, facts.user, cmd, timeout=timeout))
-    py = ""
-    if facts.windows:
-        rc, out = run(residency.PYTHONW_PROBE)
-        py = residency.parse_python_probe(out)
-    rc, out = run(residency.probe_command(facts, python_path=py))
-    state = residency.parse_probe(out)
-    if not state or "stale" not in state:
-        return {"unknown": True, "why": "probe 를 읽지 못했다 — **건드리지 않는다**",
-                "raw": (out or "")[:200]}
-    if not residency.needs_refresh(state):
-        why = ("도는 것이 지금 코드다" if state.get("running")
-               else "상주 없음 — 감시자가 새 코드로 띄운다")
-        # [중요] **상주가 상태 파일을 못 읽었으면 그 사실을 올린다** (`#296`). 그것을 삼키면
-        #    「상주 없음」이 *정말 없는 것*인지 *못 읽은 것*인지 구분되지 않는다 — `#277` 의
-        #    판정이 그 값에 걸려 있다.
-        errs = state.get("read_errors") or []
-        if errs:
-            why += " · [주의] 상주가 못 읽은 것: " + " · ".join(str(e) for e in errs[:3])
-        return {"ok": True, "running": bool(state.get("running")), "why": why}
-    for label, cmd in residency.refresh_commands(facts):
-        run(cmd)
-    # [중요] 깃발을 볼 시간을 준다 — 반응이 오면 **강제 종료하지 않는다**.
-    import time as _t
-    nap = sleeper or _t.sleep
-    waited, after = 0, {}
-    while True:
-        rc, out2 = run(residency.probe_command(facts, python_path=py))
-        after = residency.parse_probe(out2)
-        if not after.get("stale") or after.get("busy") or waited >= FLAG_GRACE_SEC:
-            break
-        nap(FLAG_POLL_SEC)
-        waited += FLAG_POLL_SEC
-    if not after.get("stale"):
-        return {"ok": True, "refreshed": "깃발", "pid_was": state.get("pid"),
-                "waited_sec": waited}
-    if after.get("busy"):
-        return {"ok": True, "pending": "처리 중 — 태스크가 끝난 뒤 물러난다",
-                "pid": after.get("pid")}
-    # 여기까지 왔으면 깃발을 모르는 코드다 (이번 사고의 상주가 그랬다)
-    pid = int(after.get("pid") or state.get("pid") or 0)
-    for label, cmd in residency.refresh_commands(facts, force=True, pid=pid):
-        if label == "kill" and pid > 0:
-            run(cmd)
-    # [주의] 깃발을 치운다 — 강제 종료로 이미 목적을 이뤘고, 남기면 **감시자가 되살린 새
-    #    프로세스가 그것을 먹고 즉시 물러난다**(실측 2026-08-22: 한 주기를 버렸다).
-    #    claimer 도 부팅 시각으로 걸러 내지만, 놓은 쪽이 치우는 것이 옳다.
-    for label, cmd in residency.clear_flag_commands(facts):
-        run(cmd)
-    rc, out3 = run(residency.probe_command(facts, python_path=py))
-    final = residency.parse_probe(out3)
-    return {"ok": not final.get("stale"),
-            "refreshed": f"강제 종료 (깃발을 {waited}초 기다렸으나 반응 없음)",
-            "pid_killed": pid or None,
-            "note": ("감시자가 새 코드로 되살린다" if not final.get("running")
-                     else "여전히 stale — 사람이 봐야 한다")}
 
 
 def _ensure_ignored(facts: HostFacts) -> bool:

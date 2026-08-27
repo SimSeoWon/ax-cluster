@@ -232,49 +232,11 @@ def test_senders_are_wired() -> None:
     check("[중요] runner 는 필수 표면만 붙인다", "requires_tag(method, path)" in runner)
     check("붙이는 값은 마운트다", "Registry.load().active" in runner)
 
-    claimer = (root / "master" / "work" / "claimer.py").read_text(encoding="utf-8")
-    check("claimer 가 _call 에서 붙인다", "self.project" in claimer
-          and 'payload.get("project")' in claimer)
-    check("[중요] claimer 가 거절을 태스크로 읽지 않는다",
-          'got.get("ok") is False' in claimer, "200+ok:false 를 태스크로 착각한다")
-    check("거절 사유를 삼키지 않는다", "claim 거절" in claimer)
-    # [중요] **로그 파일에 남아야 한다** — 실측 2026-08-23: NS 로 마운트를 바꾸자 큐가
-    #    ModularStage 상주의 claim 을 옳게 거절했는데(60초에 6건) **claimer 로그에는 사유가
-    #    없었다.** `stderr` 로만 찍었고 cron 상주는 `2>&1 >/dev/null` 로 뜬다.
-    #    이번 세션 **세 번째** 부류다: 판정을 했는데 안 보이면 「안 한 것」과 구분되지 않는다.
-    i = claimer.index("[claim 거절]")
-    check("[중요] 파일 로거로 찍는다 (stderr 만이 아니다)",
-          "self.log(" in claimer[i - 300:i + 300], claimer[i - 60:i + 60])
-    check("[주의] 매 주기 찍지 않는다 — 사유가 바뀔 때만",
-          "_last_refusal" in claimer, "20초 폴링 × 하루 = 4,320줄이 로그를 덮는다")
-    check("main 이 파일 로거를 꽂는다", "c.log = log" in claimer)
-    check("[주의] 기본 로거는 stderr 다 (단발·테스트가 파일 로그를 만들지 않는다)",
-          "self.log = lambda m: print(m, file=sys.stderr)" in claimer)
-    # [중요] **전이를 양방향으로 남긴다** — 실측 2026-08-23: 마운트를 되돌린 뒤에도 로그의
-    #    마지막 줄이 「거절」이어서 아직 막혀 있는 것처럼 읽혔다.
-    check("[중요] 해소도 찍는다", "거절이 풀렸다" in claimer, "거절만 찍으면 로그가 지난 상태를 말한다")
-    check("204(집을 것 없음)에서 해소를 본다", 'st == 204 and getattr(self, "_last_refusal"' in claimer)
-    check("태스크를 집었을 때도 해소한다", claimer.count("거절이 풀렸다") >= 2)
-
-    # ── 실제 동작으로 잰다 (문자열 검사만으로는 순서를 못 본다)
-    import types as _t
-    from master.work import claimer as _C
-    c = _C.Client.__new__(_C.Client)
-    logs = []
-    c.log, c._last_refusal, c.worker_id, c.capabilities, c.project = (
-        logs.append, None, "w", [], "X")
-    seq = [(200, {"ok": False, "status": "not_mounted", "reason": "다른 프로젝트"}),
-           (200, {"ok": False, "status": "not_mounted", "reason": "다른 프로젝트"}),
-           (204, {}),
-           (204, {})]
-    c._call = lambda m, p, payload=None: seq.pop(0)
-    for _ in range(4):
-        c.claim(["code"])
-    check("[중요] 거절은 한 번만 찍는다 (매 주기 아님)",
-          sum("거절] " in l for l in logs) == 1, str(logs))
-    check("[중요] 해소는 한 번 찍는다", sum("풀렸다" in l for l in logs) == 1, str(logs))
-    check("순서가 거절 → 해소다", logs[0].startswith("[claim 거절]") and "풀렸다" in logs[1],
-          str(logs))
+    # [중요] **claimer 발신자 검사 절이 여기 있었다** — `#320`(2026-08-27) 으로 상주가 철거되며
+    #    같이 걷혔다. 그 절이 지키던 것(claim 이 `_call` 에서 태그를 붙인다 · 200+ok:false 를
+    #    태스크로 착각하지 않는다 · 거절 사유를 파일 로그로 한 번만 찍는다)은 **push 파견에서는
+    #    `runner.py` 가 같은 자리**다 — 바로 위 세 검사가 그것이다.
+    #    [주의] 상주를 되살린다면 이 검사들도 같이 되살릴 것(`#320` 노트의 되살릴 조건).
 
     cmcp = (root / "client" / "runtime" / "client_mcp.py").read_text(encoding="utf-8")
     check("클라가 관문에서 붙인다", 'payload = {**payload, "project": project}' in cmcp)

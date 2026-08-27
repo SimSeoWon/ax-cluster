@@ -213,15 +213,17 @@ def test_role_payload() -> None:
                        "work/branch_names.py", "work/coordinator.py",
                        "work/review.py", "work/skeleton_gate.py", "work/build_local.py"},
           str(pay))
-    # [주의] 옛 계약("워커에는 안 간다")은 #204 로 의도 변경 — claimer 폐포가 간다.
-    #    그리고 2026-08-23 에 한 번 더 늘었다 (사용자 결정 *"전부 열어 준다"*, `#267`·`#261`):
-    #    **워커도 클라 MCP 를 받는다** — 코드를 추론하는 자리에서 레시피·안티패턴을 읽어야
-    #    한다. 폐포는 `client_mcp.py` + **옆 파일로 로드되는** `ontology_cache.py` 둘이다.
-    check("[중요] 워커에는 claimer 폐포 + 클라 MCP 가 간다 (#204 · #267)",
+    # [주의] 이 칸은 세 번 움직였다: 옛 계약("워커에는 안 간다") → `#204` 로 claimer 폐포 추가
+    #    → 2026-08-23 클라 MCP 추가(`#267`·`#261`) → **2026-08-27 claimer 폐포 제거**(`#320`,
+    #    상주 전폐). 워커는 이제 마스터의 SSH push 로 돈다.
+    check("[중요] 워커에는 클라 MCP + 빌드 사슬이 간다 · **claimer 폐포는 없다** (#320)",
           set(bundle.payloads_for("worker")) == {
               "clientside/client_mcp.py", "clientside/ontology_cache.py",
-              "work/claimer.py", "work/ax_safety.py", "work/build_local.py",
+              "work/build_local.py",
               "work/skeleton_gate.py", "layer3_verify.py", "source_text.py", "utf8.py"},
+          str(bundle.payloads_for("worker")))
+    check("[중요] 상주 폐포가 워커 payload 에 되살아나지 않는다 (#320 — 되살리려면 결정이 먼저다)",
+          not {"work/claimer.py", "work/ax_safety.py"} & set(bundle.payloads_for("worker")),
           str(bundle.payloads_for("worker")))
     check("[중요] MCP 폐포가 함께 간다 (옆 파일이 빠지면 조회 도구가 조용히 죽는다)",
           {"clientside/client_mcp.py", "clientside/ontology_cache.py"}
@@ -290,10 +292,11 @@ def test_role_payload() -> None:
 def test_payload_split() -> None:
     """[중요] **#262 — 저장소 위치와 배달 위치를 갈랐다. 배달 위치는 한 글자도 변하면 안 된다.**
 
-    왜 이 테스트가 있나: 배달 위치는 함부로 못 바꾼다. `.33` 의 `.mcp.json` args 가 그 값이고
-    (`mcp_entry_for`), `.2` schtasks·`.43` cron 이 `axmaster.work.claimer` 로 상주를 부른다
-    (`work/claimer.py:27-28`). **저장소 재배치(#263·#264)가 이 목록을 흔들면 두 기계가 죽는다** —
-    그때 이 테스트가 먼저 죽어야 한다.
+    왜 이 테스트가 있나: 배달 위치는 함부로 못 바꾼다. `.33` 의 `.mcp.json` args 가 그 값이다
+    (`mcp_entry_for`). **저장소 재배치(#263·#264)가 이 목록을 흔들면 배달이 죽는다** — 그때 이
+    테스트가 먼저 죽어야 한다.
+    [주의] 종전에는 이유가 하나 더 있었다 — `.2` schtasks·`.43` cron 이 `axmaster.work.claimer`
+    로 상주를 불렀다. 상주는 `#320`(2026-08-27)으로 철거됐다.
     """
     FROZEN = {
         "requester": ("clientside/client_mcp.py", "clientside/ontology_cache.py",
@@ -303,7 +306,7 @@ def test_payload_split() -> None:
         # [주의] 동결값을 **결정으로** 갱신한다 (2026-08-23, `#267`) — 이 동결의 목적은
         #    *사고로* 바뀌는 것을 막는 것이고, 결정된 변경은 기준선을 옮기는 것이 맞다.
         "worker": ("clientside/client_mcp.py", "clientside/ontology_cache.py",
-                   "work/claimer.py", "work/ax_safety.py", "work/build_local.py",
+                   "work/build_local.py",
                    "work/skeleton_gate.py", "layer3_verify.py", "source_text.py",
                    "utf8.py"),
     }
@@ -311,9 +314,6 @@ def test_payload_split() -> None:
         got = bundle.payloads_for(role)
         check(f"[중요] {role} 의 **배달 위치**가 동결값과 순서까지 같다",
               got == want, f"실제={got}")
-    # [중요] 상주가 부르는 경로는 이름이 박혀 있다 — 이 한 줄이 `.2`·`.43` 의 생사다
-    check("[중요] claimer 의 배달 위치가 `work/claimer.py` 다 (상주가 그 경로로 부른다)",
-          "work/claimer.py" in bundle.payloads_for("worker"))
     f = bundle.HostFacts(host="h", user="u", path="p", driven="ssh", role="requester")
     check("[중요] `.mcp.json` args 가 배달 위치와 맞물린다",
           bundle.mcp_entry_for(f)["args"]
@@ -324,7 +324,7 @@ def test_payload_split() -> None:
         check(f"쌍은 (배달, 저장소) 순서다: {dest}", "/" in dest or dest.endswith(".py"))
         check(f"저장소 원문이 실재한다: {src}", len(bundle.payload_text(src)) > 100)
     # [중요] **저장소 위치도 동결한다** (#263 이후). 갈린 곳은 `client/runtime/` 둘뿐이고
-    #    나머지는 `master/<배달경로>` 미러링이다 — 사용자 결정 ⓒ(claimer 사슬은 `master/` 에
+    #    나머지는 `master/<배달경로>` 미러링이다 — 사용자 결정 ⓒ(빌드 사슬은 `master/` 에
     #    남는다, `layer3_verify` 를 상대경로로 올려다보기 때문). 의도하지 않은 갈림도 여기서 죽는다.
     SPLIT = {"clientside/client_mcp.py": "client/runtime/client_mcp.py",
              "clientside/ontology_cache.py": "client/runtime/ontology_cache.py"}
@@ -332,10 +332,10 @@ def test_payload_split() -> None:
         for dest, src in bundle.payload_pairs(role):
             want = SPLIT.get(dest, f"master/{dest}")
             check(f"[중요] 저장소 위치가 동결값이다: {dest} ← {src}", src == want, f"기대={want}")
-    check("[중요] claimer 사슬은 master/ 에 남는다 (ⓒ) — layer3_verify 상대 임포트가 산다",
+    check("[중요] 빌드 사슬은 master/ 에 남는다 (ⓒ) — layer3_verify 상대 임포트가 산다",
           all(src.startswith("master/work/")
-              for dest, src in bundle.payload_pairs("worker") if "claimer" in dest
-              or "ax_safety" in dest or "build_local" in dest or "skeleton_gate" in dest),
+              for dest, src in bundle.payload_pairs("worker")
+              if "build_local" in dest or "skeleton_gate" in dest),
           str(bundle.payload_pairs("worker")))
     try:
         bundle.payload_pairs("사장님")
