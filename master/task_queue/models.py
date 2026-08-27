@@ -119,6 +119,9 @@ class SubmitReq(BaseModel):
     escalation_questions: list = []
     metrics: dict = {}
     epoch: Optional[int] = None   # Plan v5 C.2 — fencing: 배정 시 받은 epoch. stale 면 거부. (구 워커는 None)
+    # [중요] `#318` — **고지자 신원.** 태스크의 `worker_id` 와 대조한다. 없으면 거부(미확인은
+    #    통과가 아니다). 큐를 두드리는 주체가 전부 마스터 코드라 하위호환 예외를 안 둔다.
+    worker_id: str = ""
 
 
 class SubmitFailReq(BaseModel):
@@ -127,6 +130,10 @@ class SubmitFailReq(BaseModel):
     project: str = ""
     reason: str
     detail: str = ""
+    # [중요] `#318` — 실패 경로에도 **같은 두 게이트**를 건다. 종전에는 epoch 조차 없어서
+    #    회수당한 zombie 가 **살아 있는 작업을 죽일 수 있었다.**
+    epoch: Optional[int] = None
+    worker_id: str = ""
 
 
 class VerifyReq(BaseModel):

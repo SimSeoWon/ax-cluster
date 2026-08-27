@@ -290,14 +290,15 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         r = submit_result(idx, task_id,
             branch=req.branch, head_commit=req.head_commit,
             self_check=req.self_check, escalation_questions=req.escalation_questions,
-            metrics=req.metrics, epoch=req.epoch)
+            metrics=req.metrics, epoch=req.epoch, worker_id=req.worker_id)
         if not r.get("ok"):
             raise HTTPException(409, r.get("error"))
         return r
 
     @app.post("/api/v1/tasks/{task_id}/submit-fail")
     def submit_fail_ep(task_id: str, req: SubmitFailReq):
-        r = submit_fail(idx, task_id, req.reason, req.detail)
+        r = submit_fail(idx, task_id, req.reason, req.detail,
+                        epoch=req.epoch, worker_id=req.worker_id)
         if not r.get("ok"):
             raise HTTPException(409, r.get("error"))
         return r

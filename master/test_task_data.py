@@ -138,7 +138,9 @@ def test_submit_fail_records_reason_in_record_and_survives_restart():
     register_task(idx, work_id=wid, type="build", task_data={}, stem="b")
     t = claim_task(idx, "w-.2", capabilities=["ue5"], types=["build"])
     tid = t["task_id"]
-    assert submit_fail(idx, tid, "build-setup", "엔진을 못 찾았다").get("ok")
+    # [중요] `#318` — submit/fail 은 **신원·epoch 게이트**를 지난다. 소유자로 보낸다.
+    assert submit_fail(idx, tid, "build-setup", "엔진을 못 찾았다",
+                       epoch=t.get("epoch"), worker_id="w-.2").get("ok")
     rec = idx.tasks[tid]
     assert rec["status"] == "failed"
     assert rec["fail_reason"] == "build-setup" and "못 찾았다" in rec["fail_detail"]
@@ -157,7 +159,8 @@ def test_verify_reject_records_verdict():
     tid = t["task_id"]
     from master.task_queue.logic_lifecycle import submit_result
     assert submit_result(idx, tid, branch="", head_commit="abc",
-                         self_check={"build": {"ok": True}}).get("ok")
+                         self_check={"build": {"ok": True}},
+                         epoch=t.get("epoch"), worker_id="w-.2").get("ok")
     assert verify_task(idx, tid, result="reject", feedback="환각 2건").get("ok")
     rec = idx.tasks[tid]
     assert rec["status"] == "failed" and rec["verdict"] == "reject"

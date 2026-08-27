@@ -768,7 +768,10 @@ def run_live(*, host: str, user: str, checkout: str, tasks: int = 2,
                 sts, sres = _q("POST", f"{queue_url}/api/v1/tasks/{qtid}/submit", {
                     "branch": att, "head_commit": head.strip(),
                     "self_check": {"selftest": True},
-                    "epoch": int(claimed.get(i, {}).get("epoch", 1))})
+                    "epoch": int(claimed.get(i, {}).get("epoch", 1)),
+                    # [중요] `#318` — 큐가 신원을 대조한다. claim 한 그 worker_id 를 그대로 쓴다.
+                    "worker_id": (claimed.get(i, {}).get("worker_id")
+                                  or f"selftest-{host}")})
                 r.chk(f"probe[{i}] 큐 submit", sts == 200 and isinstance(sres, dict)
                       and sres.get("ok", True) is not False, f"{sts} {str(sres)[:200]}")
                 stv, vres = _q("POST", f"{queue_url}/api/v1/tasks/{qtid}/verify",

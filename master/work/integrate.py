@@ -877,6 +877,9 @@ def _submit_ok(r: Response, a: Applied, durable: str, *, api=runner._api,
                            "layer3": l3_note or "미확인",
                            "by": "integrator"},
             "epoch": r.epoch,
+            # [중요] `#318` — 큐가 신원을 대조한다. **통합자가 제출하지만 소유자는 그 태스크를
+            #    claim 한 대상 기계**이고, 그 값이 스풀에 `Response.worker` 로 실려 왔다.
+            "worker_id": r.worker,
         })
     except Exception:                                    # noqa: BLE001 — 통합을 되돌리지 않는다
         pass
@@ -885,7 +888,10 @@ def _submit_ok(r: Response, a: Applied, durable: str, *, api=runner._api,
 def _submit_fail(r: Response, a: Applied, *, api=runner._api) -> None:
     try:
         api("POST", f"/api/v1/tasks/{r.task_id}/submit-fail",
-            {"reason": "통합 실패", "detail": feedback_block(a)[-2000:]})
+            {"reason": "통합 실패", "detail": feedback_block(a)[-2000:],
+             # [중요] `#318` — 실패 경로에도 같은 두 게이트. 없으면 zombie 가 살아 있는
+             #    작업을 죽인다.
+             "epoch": r.epoch, "worker_id": r.worker})
     except Exception:                                    # noqa: BLE001
         pass
 

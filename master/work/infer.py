@@ -585,6 +585,16 @@ def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner
 
     workers, rejected = _free_workers(facts, clean=clean)
     hand = Handoff(work_id=work_id)
+    # [중요] `#318` 완료 조건 5 — 회수돼 돌아온 태스크를 **집었다는 사실**을 보고에 남긴다.
+    #    claim 이 그것을 집으면서 `worker_id` 를 갱신하고 `epoch` 를 올린다(= 재파견이다).
+    #    말하지 않으면 「처음 파견」과 「재파견」이 구분되지 않는다.
+    try:
+        _w = runner.waiting_summary(project or paths.name, api=api)
+        if _w["reclaimed"]:
+            hand.note = (f"[주의] 회수된 태스크 {_w['reclaimed']}건이 대기 중이다 — "
+                         f"이번 파견이 그것을 다시 민다")
+    except Exception:                                        # noqa: BLE001
+        pass
     if not workers:
         hand.note = ("[중요] 파견할 워커가 없어 claim 조차 하지 않았다 — "
                      + ("; ".join(f"{h}: {r}" for h, r in rejected) or "후보 자체가 없다"))
@@ -618,7 +628,10 @@ def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner
                 # [중요] 앞 단계가 이번에 실패했다. 추론해도 헛일이므로 **파견하지 않고 반납한다.**
                 why = f"선행 {', '.join(blocked)} 이 이번 실행에서 실패했다"
                 try:
-                    runner.submit_fail(task_id, "선행 실패", why, api=api)
+                    # [중요] `#318` — 반납도 신원·epoch 게이트를 통과해야 한다. 이 태스크는
+                    #    방금 `f.host` 로 claim 했으므로 그것이 소유자다.
+                    runner.submit_fail(task_id, "선행 실패", why, api=api,
+                                       epoch=task.get("epoch"), worker_id=f.host)
                 except runner.QueueError as e:
                     why += f" · [중요] 반납 실패({e}) — 리스 만료까지 붙잡힌다"
                 with lock:
@@ -634,7 +647,8 @@ def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner
                 res = Response(task_id=task_id, worker=f.host,
                                reason=f"{type(e).__name__}: {e}")
                 try:
-                    runner.submit_fail(task_id, "파견 실패", res.reason, api=api)
+                    runner.submit_fail(task_id, "파견 실패", res.reason, api=api,
+                                       epoch=task.get("epoch"), worker_id=f.host)
                 except Exception as e2:                  # noqa: BLE001
                     res.reason += f" · [중요] 반납 실패({e2}) — 리스 만료까지 붙잡힌다"
             with lock:
@@ -820,6 +834,22 @@ def main(argv) -> int:
         print(f"추론 가능: {', '.join(f.host for f in workers) or '[중요] 없다'}")
         for h, r in rejected:
             print(f"  제외 {h}: {r}")
+        # [중요] `#318` 완료 조건 5 — **집히기를 기다리는 것을 보여 준다.** `reclaim` 이 되돌린
+        #    태스크는 push 모델에서 **집을 주체가 없어** 마스터가 다시 밀어야 하고, 상주가
+        #    철거된 지금(`#320`) 그 루프는 사람이 시작한다. 안 보이면 조용히 멈춘다.
+        w = runner.waiting_summary(paths.name)
+        if w["pending"] or w["stuck"]:
+            print(f"\n대기: pending {w['pending']} · stuck {w['stuck']}"
+                  + (f" · [주의] 회수된 것 {w['reclaimed']}건 — `infer run` 이 다시 민다"
+                     if w["reclaimed"] else ""))
+            for ln in w["lines"][:10]:
+                print("  " + ln)
+            if w["stuck"]:
+                print("  [중요] `stuck` 은 재파견 대상이 아니다 — 회수 3회 초과로 큐가 손들었다. "
+                      "사람이 볼 것")
+        else:
+            for ln in w["lines"]:
+                print("  " + ln)
         return 0
     if cmd in ("run", "run-p"):
         n = int(argv[2]) if len(argv) > 2 else 4

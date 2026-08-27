@@ -406,24 +406,65 @@ def claim(worker_id: str, capabilities, *, api=_api):
                {"worker_id": worker_id, "capabilities": list(capabilities)})
 
 
+def waiting_summary(project: str = "", *, api=_api) -> dict:
+    """지금 **집히기를 기다리는** 태스크. `{pending, stuck, reclaimed, lines}` (`#318` 완료 조건 5).
+
+    [중요] **이 함수가 있는 이유**: `reclaim` 이 만기 리스를 회수해 `pending` 으로 되돌리는데,
+    pull 에서는 다른 워커가 알아서 집었지만 **push 에서는 집을 주체가 없다.** 마스터가 파견
+    루프를 다시 돌려야 하고(그것이 곧 재파견이다 — `claim` 이 pending 을 집으면서 `worker_id`
+    를 갱신하고 `epoch` 를 올린다), 상주가 철거된 지금(`#320`) 그 루프는 **사람이 시작한다.**
+    그래서 「기다리는 것이 있다」가 **보여야** 한다 — 안 보이면 조용히 멈춘다.
+
+    [주의] `stuck` 은 재파견 대상이 아니다 — `reclaim_count > 3` 으로 큐가 손든 것이라
+    사람이 봐야 한다. 세되 pending 과 **섞지 않는다.**
+    """
+    out = {"pending": 0, "stuck": 0, "reclaimed": 0, "lines": []}
+    try:
+        tasks = api("GET", f"/api/v1/tasks?limit=500"
+                          + (f"&project={project}" if project else ""), None)
+    except Exception as e:                                   # noqa: BLE001
+        out["lines"].append(f"[주의] 대기 목록을 읽지 못했다 ({e}) — 없다는 뜻이 아니다")
+        return out
+    for t in tasks or []:
+        st = t.get("status")
+        if st not in ("pending", "stuck"):
+            continue
+        out[st] = out.get(st, 0) + 1
+        n = int(t.get("reclaim_count", 0) or 0)
+        if n:
+            out["reclaimed"] += 1
+        out["lines"].append(
+            f"{str(t.get('task_id'))[:8]} · {st}"
+            + (f" · [주의] 회수 {n}회" if n else "")
+            + f" · {t.get('stem') or t.get('work_id') or ''}")
+    return out
+
+
 def heartbeat(task_id: str, worker_id: str, *, api=_api):
     return api("POST", f"/api/v1/tasks/{task_id}/heartbeat", {"worker_id": worker_id})
 
 
-def submit(task_id: str, out: Outcome, *, epoch=None, api=_api):
-    """성공 제출. [중요] `submittable` 이 아닌 것을 여기로 보내지 않는다 — 근거가 없다."""
+def submit(task_id: str, out: Outcome, *, epoch=None, worker_id: str = "", api=_api):
+    """성공 제출. [중요] `submittable` 이 아닌 것을 여기로 보내지 않는다 — 근거가 없다.
+
+    [중요] `worker_id` 는 **큐가 신원을 대조하는 값**이다 (`#318`). 빈 값을 보내면 거부된다 —
+    그것이 설계다(미확인은 통과가 아니다).
+    """
     if not out.submittable:
         raise QueueError(f"제출 불가한 결과를 submit 하려 했다 — {out.summary}")
     return api("POST", f"/api/v1/tasks/{task_id}/submit", {
         "branch": out.branch, "head_commit": out.head,
         "self_check": {"worker_report": out.tail[-2000:], "gates": "worker-side only"},
-        "epoch": epoch,
+        "epoch": epoch, "worker_id": worker_id,
     })
 
 
-def submit_fail(task_id: str, reason: str, detail: str = "", *, api=_api):
+def submit_fail(task_id: str, reason: str, detail: str = "", *, epoch=None,
+                worker_id: str = "", api=_api):
+    """실패 고지. [중요] **submit 과 같은 두 게이트**를 통과해야 한다 (`#318`)."""
     return api("POST", f"/api/v1/tasks/{task_id}/submit-fail",
-               {"reason": reason[:200], "detail": detail[-2000:]})
+               {"reason": reason[:200], "detail": detail[-2000:],
+                "epoch": epoch, "worker_id": worker_id})
 
 
 def _manifest_for(paths, task_id: str) -> str:
@@ -527,16 +568,18 @@ def run_once(paths, *, facts=None, project: str = "", api=_api, runner=None, wri
         res["outcome"] = out.summary
         res["tail"] = out.tail
         if out.submittable:
-            submit(task_id, out, epoch=epoch, api=api)
+            submit(task_id, out, epoch=epoch, worker_id=worker_id, api=api)
             res["submitted"] = "submit"
         else:
-            submit_fail(task_id, out.status, out.reason + "\n" + out.tail, api=api)
+            submit_fail(task_id, out.status, out.reason + "\n" + out.tail,
+                        epoch=epoch, worker_id=worker_id, api=api)
             res["submitted"] = "submit-fail"
     except Exception as e:                                   # noqa: BLE001
         # [중요] 집은 태스크를 붙잡은 채 죽지 않는다. 반납이 실패해도 사유를 남긴다.
         res["error"] = f"{type(e).__name__}: {e}"
         try:
-            submit_fail(task_id, "파견 실패", res["error"], api=api)
+            submit_fail(task_id, "파견 실패", res["error"],
+                        epoch=epoch, worker_id=worker_id, api=api)
             res["submitted"] = "submit-fail(예외)"
         except Exception as e2:                              # noqa: BLE001
             res["submitted"] = f"[중요] 반납 실패 — 리스 만료까지 {LEASE_SEC}s 붙잡힌다 ({e2})"

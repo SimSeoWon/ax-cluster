@@ -28,11 +28,39 @@ def _is_stale_epoch(submit_epoch: Optional[int], current_epoch: int) -> bool:
     return int(submit_epoch) < int(current_epoch)
 
 
+def _identity_gate(t: dict, worker_id: Optional[str], what: str) -> Optional[dict]:
+    """고지자가 **그 태스크의 현재 소유자**인가 (`#318` 완료 조건 1·2).
+
+    [중요] 종전에는 이 판정이 아예 없었고, 코드 주석이 근거를 밝혔다 —
+    *"notify 게이트의 권위 판정 (2-tier 구조가 push 충돌은 이미 차단)"*. **구조에 기댄** 것이고,
+    그 전제는 프로젝트 1개·워커 1대일 때만 성립했다(`#251` 이 잠금에서 발견한 것과 같은 부류).
+
+    [중요] **미확인은 통과가 아니다** — `worker_id` 를 안 보내면 거부한다. 실측 2026-08-27:
+    큐의 submit 표면을 두드리는 주체는 **전부 이 저장소의 마스터 코드**다(워커에 배달되는
+    `ax-work` 스킬은 *"마스터: 마커를 읽어 큐에 submit"* 이라고 적혀 있고, 상주 claimer 는
+    `#320` 으로 철거됐다). 그래서 하위호환 예외를 둘 이유가 없다.
+
+    [주의] 사유를 **돌려준다** — 조용한 실패를 만들지 않는다(이 저장소 관례).
+    """
+    owner = (t.get("worker_id") or "").strip()
+    got = (worker_id or "").strip()
+    if not got:
+        return {"ok": False, "code": 409, "identity": True,
+                "error": (f"{what}: worker_id 가 없다 — 고지자를 확인할 수 없다. "
+                          f"미확인은 통과가 아니다 (`#318`)")}
+    if owner and got != owner:
+        return {"ok": False, "code": 409, "identity": True,
+                "error": (f"{what}: 고지자 {got!r} 가 소유자 {owner!r} 가 아니다 — "
+                          f"거부한다 (`#318`)")}
+    return None
+
+
 def submit_result(idx: TaskIndex, task_id: str, *,
                   branch: str, head_commit: str, self_check: dict,
                   escalation_questions: Optional[list] = None,
                   metrics: Optional[dict] = None,
-                  epoch: Optional[int] = None) -> dict:
+                  epoch: Optional[int] = None,
+                  worker_id: Optional[str] = None) -> dict:
     with idx.lock:
         t = idx.tasks.get(task_id)
         if not t:
@@ -44,6 +72,10 @@ def submit_result(idx: TaskIndex, task_id: str, *,
                     f"(재배정됨; zombie assignee submit)", idx.root)
             return {"ok": False, "code": 409, "stale": True,
                     "error": f"stale epoch {epoch} < current {t.get('epoch')} (reassigned)"}
+        bad = _identity_gate(t, worker_id, "submit")
+        if bad:
+            _tq_log(f"[submit] 거부 — {task_id} {bad['error']}", idx.root)
+            return bad
         if t.get("status") != "claimed":
             return {"ok": False, "error": f"not in claimed state (current={t.get('status')})"}
         t["status"] = "submitted"
@@ -65,11 +97,27 @@ def submit_result(idx: TaskIndex, task_id: str, *,
         return {"ok": True}
 
 
-def submit_fail(idx: TaskIndex, task_id: str, reason: str, detail: str = "") -> dict:
+def submit_fail(idx: TaskIndex, task_id: str, reason: str, detail: str = "", *,
+                epoch: Optional[int] = None, worker_id: Optional[str] = None) -> dict:
+    """실패 고지. [중요] **submit 과 같은 두 게이트를 건다** (`#318` 완료 조건 2).
+
+    [중요] 종전에는 이 경로에 **epoch 게이트조차 없었다.** 만기돼 회수당한 워커가 뒤늦게
+    「실패했다」고 고지하면 **재할당된 태스크가 실패로 뒤집혔다** — submit 은 fencing 하면서
+    fail 은 안 하는 비대칭이었고, 방향이 나빴다: zombie 가 **살아 있는 작업을 죽인다.**
+    """
     with idx.lock:
         t = idx.tasks.get(task_id)
         if not t:
             return {"ok": False, "error": "task not found"}
+        if _is_stale_epoch(epoch, int(t.get("epoch", 0))):
+            _tq_log(f"[submit-fail] 거부 — {task_id} stale epoch {epoch} < 현재 "
+                    f"{t.get('epoch')} (재배정됨; zombie 가 살아 있는 작업을 죽이려 했다)", idx.root)
+            return {"ok": False, "code": 409, "stale": True,
+                    "error": f"stale epoch {epoch} < current {t.get('epoch')} (reassigned)"}
+        bad = _identity_gate(t, worker_id, "submit-fail")
+        if bad:
+            _tq_log(f"[submit-fail] 거부 — {task_id} {bad['error']}", idx.root)
+            return bad
         if t.get("status") not in ("claimed", "submitted"):
             return {"ok": False, "error": f"not in claim/submit state (current={t.get('status')})"}
         # Phase 3 lite — quota_exhausted 는 task 결과물이 아닌 워커 환경 문제이므로
