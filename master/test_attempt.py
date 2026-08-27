@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import pathlib
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -99,137 +100,66 @@ def _fx(tmp):
 
 # ── ①②③ 성공·실패 무관 push · 정본 불변 · 트리 위치 ───────────────────────────
 
-def test_failed_response_is_pushed_anyway():
-    with tempfile.TemporaryDirectory() as tmp:
-        fx = _fx(tmp)
-        head_before = _run(fx.paths.repo, "rev-parse", "HEAD")
+# [중요] **`push_attempt_for`·`merge_verified`·`apply_responses` 검사 7개가 여기 있었다 —
+#    `#327` 로 그 주제가 사라져 같이 걷었다** (2026-08-28). 대상이 없는 것을 재는 검사는
+#    남기지 않는다(`#323` 에서 같은 판단을 했다).
+#    걷은 검사: 실패도 push 된다 · 미추적 잔재 거부 · 경로 탈출 거부 · 빈 응답도 사실이다 ·
+#    검증분이 durable 을 만든다 · stale epoch 이 durable 을 안 건드린다 · 무변경도 사실이다.
+#    [주의] **그중 「경로 탈출 거부」는 성질이 다르다** — 보안 성격이라 통합자 경로에도 같은
+#    방어가 있어야 한다. `integrate.apply_one` → `skeleton_gate.place` 가 해시 대조까지 하는
+#    자리이고, `test_integrate` 가 그것을 잰다.
 
-        # [중요] "실패한" 응답 — 이 계층은 판정하지 않는다. 그대로 올라가야 한다.
-        res = Res(files={REL: "// 컴파일 안 되는 것\n#error broken\n"})
-        p = A.push_attempt_for(fx.paths, work_id=WORK, task_id=TASK, workshop=SHOP,
-                               ts="t1", responses=[res], base_commit=fx.base,
-                               remote="origin")
-        check("① 실패 응답도 attempt 에 올라간다", p.ok, p.error)
+def test_dead_wiring_stays_dead():
+    """[중요] `#327` — 걷어낸 배선이 되살아나지 않는지 **이름으로** 잰다.
 
-        refs = _run(fx.paths.repo, "ls-remote", "--heads", "origin")
-        check("① attempt 가 원격에 있다", f"refs/heads/{p.attempt}" in refs, refs)
-        check("① durable 은 아직 없다", durable_branch(WORK, TASK) not in refs, refs)
-
-        body = _run(fx.paths.repo, "show", f"origin/{p.attempt}:{REL}")
-        check("① 올라간 것이 그 본문이다", "#error broken" in body, body[:60])
-
-        head_after = _run(fx.paths.repo, "rev-parse", "HEAD")
-        check("② 정본 HEAD 가 안 움직였다", head_before == head_after,
-              f"{head_before[:8]} → {head_after[:8]}")
-        check("② 정본 트리가 청결하다", _run(fx.paths.repo, "status", "--porcelain") == "")
-
-        wt = A.tree_path(fx.paths, WORK)
-        check("③ 작업 트리는 정본 옆이다", wt.parent == fx.paths.root, str(wt))
-        check("③ 작업 트리가 정본 안이 아니다",
-              not str(wt).startswith(str(fx.paths.repo) + "/"), str(wt))
-
-
-# ── ④ 잔재는 삼키지 않고 거부한다 ─────────────────────────────────────────────
-
-def test_stray_untracked_is_refused():
-    with tempfile.TemporaryDirectory() as tmp:
-        fx = _fx(tmp)
-        A.ensure_attempt_tree(fx.paths, WORK, at_commit=fx.base)
-        stray = A.tree_path(fx.paths, WORK) / "leftover.txt"
-        stray.write_text("이전 라운드의 잔재\n", encoding="utf-8")
-
-        wt = A.ensure_attempt_tree(fx.paths, WORK, at_commit=fx.base)
-        check("④ 잔재가 있으면 거부한다", not wt.ok, "통과해 버렸다")
-        check("④ 거부 사유에 파일명이 있다", "leftover.txt" in wt.error, wt.error)
-        check("④ [중요] 잔재를 지우지 않았다", stray.exists(), "지워 버렸다")
-
-        p = A.push_attempt_for(fx.paths, work_id=WORK, task_id=TASK, workshop=SHOP,
-                               ts="t1", responses=[Res(files={REL: "// x\n"})],
-                               base_commit=fx.base, remote="origin")
-        check("④ push 도 그 자리에서 멈춘다", not p.ok and "잔재" in p.error, p.error)
+    `#323` 의 `test_no_ssh_surface_left` 와 같은 자리다: 지운 경로가 조용히 돌아오면
+    「안 도는 지도」가 다시 생긴다.
+    """
+    for gone in ("push_attempt_for", "merge_verified", "apply_responses",
+                 "ensure_attempt_tree", "tree_path", "AttemptTree", "Pushed"):
+        check(f"attempt.{gone} 가 없다", not hasattr(A, gone), "되살아났다")
+    from master.work import coordinator as _C
+    check("coordinator.run_round 가 없다", not hasattr(_C, "run_round"), "되살아났다")
+    # [주의] **남아야 하는 것도 같이 잰다** — 과잉 철거를 잡는다
+    for live in ("plan_remote_cleanup", "apply_remote_cleanup",
+                 "hook_target", "hook_status", "install_hook", "WRITE_REMOTE"):
+        check(f"attempt.{live} 는 산다", hasattr(A, live), "같이 걷혔다")
+    for live in ("assign_attempt", "push_attempt", "verify_and_merge", "cleanup_attempts"):
+        check(f"coordinator.{live} 는 산다 (selftest 드라이런이 쓴다)",
+              hasattr(_C, live), "같이 걷혔다")
 
 
-# ── ⑤ 경로 탈출 ───────────────────────────────────────────────────────────────
+def _make_attempt(fx, *, task_id=TASK, ts="t1", body="// 시도\n") -> str:
+    """attempt 브랜치 하나를 **직접 git 으로** 만든다 (`#327` 이후).
 
-def test_path_escape_raises():
-    with tempfile.TemporaryDirectory() as tmp:
-        fx = _fx(tmp)
-        fn = A.apply_responses([Res(files={"../../etc/evil": "x"})])
-        try:
-            fn(A.tree_path(fx.paths, WORK), "")
-            check("⑤ 경로 탈출은 예외다", False, "예외가 안 났다")
-        except A.AttemptError:
-            check("⑤ 경로 탈출은 예외다", True)
+    [중요] 종전에는 `push_attempt_for` 로 만들었는데 그 배선이 걷혔다. 정리(`plan_remote_cleanup`)
+    는 **살아 있고**, 그것이 재는 것은 *"attempt 브랜치가 원격에 있을 때 무엇을 지울 수 있나"*
+    이지 *"그 브랜치를 누가 만들었나"* 가 아니다 — 그래서 만드는 쪽만 갈아 끼운다.
+    """
+    from master.work.branch_names import attempt_branch
+    br = attempt_branch(WORK, task_id, SHOP, ts)
+    repo = fx.paths.repo
+    _run(repo, "checkout", "-q", "-B", br, fx.base)
+    f = pathlib.Path(repo) / REL
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(body, encoding="utf-8")
+    _run(repo, "add", "-A", REL)
+    _run(repo, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "-m", br)
+    _run(repo, "push", "-q", "origin", br)
+    _run(repo, "checkout", "-q", "main")
+    return br
 
-
-def test_empty_response_is_a_fact():
-    with tempfile.TemporaryDirectory() as tmp:
-        fx = _fx(tmp)
-        p = A.push_attempt_for(fx.paths, work_id=WORK, task_id=TASK, workshop=SHOP,
-                               ts="t1", responses=[Res(files={})],
-                               base_commit=fx.base, remote="origin")
-        check("⑤ 빈 응답은 사실로 보고된다", not p.ok and "비었다" in p.error, p.error)
-
-
-# ── ⑥⑦ durable 은 검증 통과분만 · epoch 게이트 ────────────────────────────────
-
-def test_verified_creates_durable():
-    with tempfile.TemporaryDirectory() as tmp:
-        fx = _fx(tmp)
-        p = A.push_attempt_for(fx.paths, work_id=WORK, task_id=TASK, workshop=SHOP,
-                               ts="t1", responses=[Res(files={REL: "// 통과분\n"})],
-                               base_commit=fx.base, remote="origin")
-        check("⑥ attempt 선행", p.ok, p.error)
-
-        r = A.merge_verified(fx.paths, work_id=WORK, task_id=TASK, attempt=p.attempt,
-                             submit_epoch=1, current_epoch=1, remote="origin")
-        check("⑥ merge 됐다", r.get("merged"), str(r))
-        refs = _run(fx.paths.repo, "ls-remote", "--heads", "origin")
-        check("⑥ durable 이 생겼다", f"refs/heads/{durable_branch(WORK, TASK)}" in refs, refs)
-
-
-def test_stale_epoch_leaves_durable_alone():
-    with tempfile.TemporaryDirectory() as tmp:
-        fx = _fx(tmp)
-        p = A.push_attempt_for(fx.paths, work_id=WORK, task_id=TASK, workshop=SHOP,
-                               ts="t1", responses=[Res(files={REL: "// 좀비\n"})],
-                               base_commit=fx.base, remote="origin")
-        r = A.merge_verified(fx.paths, work_id=WORK, task_id=TASK, attempt=p.attempt,
-                             submit_epoch=1, current_epoch=2, remote="origin")
-        check("⑦ stale epoch 은 거부된다", not r.get("merged"), str(r))
-        check("⑦ 사유가 epoch 이다", "stale_epoch" in r.get("reason", ""), str(r))
-        refs = _run(fx.paths.repo, "ls-remote", "--heads", "origin")
-        check("⑦ [중요] durable 이 안 생겼다 (부작용 0)",
-              durable_branch(WORK, TASK) not in refs, refs)
-
-
-# ── ⑧ 변경 없음은 사실이다 ────────────────────────────────────────────────────
-
-def test_no_change_is_reported_as_fact():
-    with tempfile.TemporaryDirectory() as tmp:
-        fx = _fx(tmp)
-        p = A.push_attempt_for(fx.paths, work_id=WORK, task_id=TASK, workshop=SHOP,
-                               ts="t1", responses=[Res(files={REL: "// base\n"})],
-                               base_commit=fx.base, remote="origin")
-        check("⑧ 같은 내용은 사실로 보고된다",
-              not p.ok and "변경이 없다" in p.error, p.error)
-
-
-# ── 소 1.2.4 원격 정리 — [중요] 도달 가능한 것만 (사용자 결정 2026-08-14) ──────────
 
 def test_cleanup_keeps_unmerged_evidence():
     """[중요] 이 저장소가 실제로 물릴 뻔한 것: attempt 가 **미병합인 채** 쌓인 상태."""
     with tempfile.TemporaryDirectory() as tmp:
         fx = _fx(tmp)
-        p = A.push_attempt_for(fx.paths, work_id=WORK, task_id=TASK, workshop=SHOP,
-                               ts="t1", responses=[Res(files={REL: "// 실패한 시도\n"})],
-                               base_commit=fx.base, remote="origin")
-        check("정리: attempt 선행", p.ok, p.error)
+        att = _make_attempt(fx, body="// 실패한 시도\n")
 
         plan = A.plan_remote_cleanup(fx.paths, remote="origin")
         check("[중요] 미병합 attempt 는 삭제 대상이 아니다", not plan.delete,
               str(plan.delete))
-        check("보존 목록에 들어간다", any(p.attempt == r for r, _ in plan.keep),
+        check("보존 목록에 들어간다", any(att == r for r, _ in plan.keep),
               str(plan.keep))
         check("사유가 「병합되지 않았다」 다",
               any("병합되지 않았다" in why for _, why in plan.keep), str(plan.keep))
@@ -238,34 +168,32 @@ def test_cleanup_keeps_unmerged_evidence():
         A.apply_remote_cleanup(fx.paths, plan, remote="origin")
         check("[중요] 아무것도 지우지 않았다", not plan.deleted, str(plan.deleted))
         refs = _run(fx.paths.repo, "ls-remote", "--heads", "origin")
-        check("attempt 가 원격에 살아 있다", p.attempt in refs, refs)
+        check("attempt 가 원격에 살아 있다", att in refs, refs)
 
 
 def test_cleanup_deletes_merged_attempt():
     """병합되면 지울 수 있게 된다 — 영구 누적이 아니라는 성질."""
     with tempfile.TemporaryDirectory() as tmp:
         fx = _fx(tmp)
-        p = A.push_attempt_for(fx.paths, work_id=WORK, task_id=TASK, workshop=SHOP,
-                               ts="t1", responses=[Res(files={REL: "// 통과분\n"})],
-                               base_commit=fx.base, remote="origin")
-        A.merge_verified(fx.paths, work_id=WORK, task_id=TASK, attempt=p.attempt,
-                         submit_epoch=1, current_epoch=1, remote="origin")
-        # durable 을 main 으로 올린다 — 요청자·사람이 하는 그 단계
-        _run(fx.paths.repo, "push", "-q", "origin",
-             f"{durable_branch(WORK, TASK)}:main")
+        att = _make_attempt(fx, body="// 통과분\n")
+        # 통과분을 durable 로 올린다 — 종전엔 `merge_verified` 가 했고, 지금은 통합자가
+        # 작업 브랜치로 올린다(`#319` ⓐ). 여기서는 **정리가 볼 상태**만 만들면 된다.
+        dur = durable_branch(WORK, TASK)
+        _run(fx.paths.repo, "push", "-q", "origin", f"{att}:{dur}")
+        _run(fx.paths.repo, "push", "-q", "origin", f"{att}:main")
 
         plan = A.plan_remote_cleanup(fx.paths, remote="origin")
         check("[중요] 병합된 attempt 는 삭제 대상이다",
-              any(p.attempt == r for r, _ in plan.delete), str(plan.delete))
+              any(att == r for r, _ in plan.delete), str(plan.delete))
         check("[주의] durable 은 삭제 대상이 아니다 (원전대로 보존)",
               not any(r.startswith("task/") for r, _ in plan.delete), str(plan.delete))
         check("durable 은 세어서 보고된다",
               any(r == durable_branch(WORK, TASK) for r, _ in plan.durable), str(plan.durable))
 
         A.apply_remote_cleanup(fx.paths, plan, remote="origin")
-        check("실제로 지워졌다", p.attempt in plan.deleted, str(plan.deleted))
+        check("실제로 지워졌다", att in plan.deleted, str(plan.deleted))
         refs = _run(fx.paths.repo, "ls-remote", "--heads", "origin")
-        check("attempt 가 원격에서 사라졌다", p.attempt not in refs, refs)
+        check("attempt 가 원격에서 사라졌다", att not in refs, refs)
         check("[중요] durable 은 살아 있다", durable_branch(WORK, TASK) in refs, refs)
 
 
@@ -293,6 +221,16 @@ def test_hook_source_is_in_repo_and_installs():
         check("설치 후 원본과 같다", st["current"], st["reason"])
         check("실행 가능하다", st["executable"], st["reason"])
 
+        # [중요] **git-lfs 훅과 공존해야 한다** (실측 2026-08-28) — `git lfs install` 이
+        #    `pre-push` 를 자기 것으로 덮어 **NS 클론의 가드가 통째로 사라져 있었다.**
+        #    반대로 우리가 그냥 덮으면 LFS 저장소의 `.uasset` push 가 깨진다.
+        src = A.HOOK_SOURCE.read_text(encoding="utf-8")
+        check("[중요] LFS 에 위임하는 절이 있다", "git lfs pre-push" in src)
+        check("  stdin 을 버퍼에 담아 **두 번** 먹인다 (ref 목록은 한 번 읽으면 사라진다)",
+              src.count('printf \'%s\\n\' "$_refs"') >= 2, src[:200])
+        check("  [주의] 가드가 먼저다 (거부할 push 에 LFS 업로드 비용을 안 치른다)",
+              src.index("_guard") < src.index("git lfs pre-push"))
+
         # 손으로 고친 경우를 잡아내나
         A.hook_target(fx.paths).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         st = A.hook_status(fx.paths)
@@ -300,11 +238,7 @@ def test_hook_source_is_in_repo_and_installs():
 
 
 def main() -> int:
-    for fn in (test_hook_source_is_in_repo_and_installs,
-               test_failed_response_is_pushed_anyway, test_stray_untracked_is_refused,
-               test_path_escape_raises, test_empty_response_is_a_fact,
-               test_verified_creates_durable, test_stale_epoch_leaves_durable_alone,
-               test_no_change_is_reported_as_fact,
+    for fn in (test_hook_source_is_in_repo_and_installs, test_dead_wiring_stays_dead,
                test_cleanup_keeps_unmerged_evidence, test_cleanup_deletes_merged_attempt,
                test_cleanup_without_tracking_deletes_nothing):
         fn()

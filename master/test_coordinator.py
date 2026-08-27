@@ -2,7 +2,7 @@
 
 리포트 13 §14 가 같은 교훈을 네 번 적었다: **주입은 계약을 재고 실물을 재지 않는다.**
 그래서 여기서는 git 을 흉내내지 않는다 — `tmp` 에 bare origin + 작업 클론을 실제로 만들고
-`run_round` 를 태운다. 검증하는 것:
+assign → push_attempt → verify_and_merge 를 태운다 (`#327` 이후 합성은 이 파일 안에). 검증하는 것:
 
     ① attempt 가 원격에 생기고 작업분이 실려 있다
     ② 첫 통과분이 durable 을 **만든다**
@@ -77,10 +77,28 @@ class Repo:
         return _run(self.work, "show", f"origin/{ref}:{TARGET}")
 
 
+def _round(repo, *, work_id, task_id, workshop, ts, base_ref, target_rel, work_fn,
+           submit_epoch, current_epoch, message, logf=C._noop_log) -> dict:
+    """assign → push_attempt → verify_and_merge 를 한 번에 (`#327` 이후 테스트 안의 합성).
+
+    [중요] 종전에는 `coordinator.run_round` 가 이 합성을 들고 있었는데 **부르는 곳이 이 테스트
+    뿐**이었고 `#327` 로 걷혔다. **밑의 세 함수는 산다** — `selftest` 드라이런이 쓴다. 그래서
+    검사를 지우지 않고 합성만 여기로 옮겼다.
+    [주의] 순서는 실전 형태 그대로다: `assign`(서버) → `push_attempt`(작업장) →
+    `verify_and_merge`(서버). selftest 가 *"real 모드는 합성을 쓰지 않는다"* 며 택한 그 형태다.
+    """
+    a = C.assign_attempt(work_id, task_id, workshop, ts)
+    head = C.push_attempt(repo, a["attempt"], base_ref, work_fn, target_rel,
+                          message=message, logf=logf)
+    res = C.verify_and_merge(repo, a["attempt"], a["durable"],
+                             submit_epoch=submit_epoch, current_epoch=current_epoch, logf=logf)
+    return {**a, "head": head, **res}
+
+
 def test_full_round_creates_durable():
     with tempfile.TemporaryDirectory() as td:
         r = Repo(Path(td))
-        res = C.run_round(r.work, work_id=WORK, task_id=TASK, workshop=SHOP, ts="t1", base_ref=r.base,
+        res = _round(r.work, work_id=WORK, task_id=TASK, workshop=SHOP, ts="t1", base_ref=r.base,
                           target_rel=TARGET, work_fn=C.fake_workshop("// round1"),
                           submit_epoch=1, current_epoch=1, message="[probe] r1")
 
@@ -101,11 +119,11 @@ def test_second_round_accumulates():
     """[중요] reject 는 폐기·재구현이 아니라 전진·수정이다 (2026-06-21 정정)."""
     with tempfile.TemporaryDirectory() as td:
         r = Repo(Path(td))
-        C.run_round(r.work, work_id=WORK, task_id=TASK, workshop=SHOP, ts="t1", base_ref=r.base,
+        _round(r.work, work_id=WORK, task_id=TASK, workshop=SHOP, ts="t1", base_ref=r.base,
                     target_rel=TARGET, work_fn=C.fake_workshop("// round1"),
                     submit_epoch=1, current_epoch=1, message="[probe] r1")
         dur = durable_branch(WORK, TASK)
-        res2 = C.run_round(r.work, work_id=WORK, task_id=TASK, workshop=SHOP, ts="t2",
+        res2 = _round(r.work, work_id=WORK, task_id=TASK, workshop=SHOP, ts="t2",
                            base_ref=f"origin/{dur}", target_rel=TARGET,
                            work_fn=C.fake_workshop("// round2"),
                            submit_epoch=1, current_epoch=1, message="[probe] r2")
@@ -121,7 +139,7 @@ def test_second_round_accumulates():
 def test_stale_epoch_rejected_without_side_effects():
     with tempfile.TemporaryDirectory() as td:
         r = Repo(Path(td))
-        C.run_round(r.work, work_id=WORK, task_id=TASK, workshop=SHOP, ts="t1", base_ref=r.base,
+        _round(r.work, work_id=WORK, task_id=TASK, workshop=SHOP, ts="t1", base_ref=r.base,
                     target_rel=TARGET, work_fn=C.fake_workshop("// round1"),
                     submit_epoch=1, current_epoch=1, message="[probe] r1")
         dur = durable_branch(WORK, TASK)
@@ -144,7 +162,7 @@ def test_stale_epoch_rejected_without_side_effects():
 def test_cleanup_default_keeps_everything():
     with tempfile.TemporaryDirectory() as td:
         r = Repo(Path(td))
-        C.run_round(r.work, work_id=WORK, task_id=TASK, workshop=SHOP, ts="t1", base_ref=r.base,
+        _round(r.work, work_id=WORK, task_id=TASK, workshop=SHOP, ts="t1", base_ref=r.base,
                     target_rel=TARGET, work_fn=C.fake_workshop("// round1"),
                     submit_epoch=1, current_epoch=1, message="[probe] r1")
         out = C.cleanup_attempts(r.work, WORK, TASK)
@@ -155,7 +173,7 @@ def test_cleanup_default_keeps_everything():
 def test_cleanup_delete_spares_durable():
     with tempfile.TemporaryDirectory() as td:
         r = Repo(Path(td))
-        C.run_round(r.work, work_id=WORK, task_id=TASK, workshop=SHOP, ts="t1", base_ref=r.base,
+        _round(r.work, work_id=WORK, task_id=TASK, workshop=SHOP, ts="t1", base_ref=r.base,
                     target_rel=TARGET, work_fn=C.fake_workshop("// round1"),
                     submit_epoch=1, current_epoch=1, message="[probe] r1")
         out = C.cleanup_attempts(r.work, WORK, TASK, delete=True)

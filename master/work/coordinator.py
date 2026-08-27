@@ -234,20 +234,12 @@ def fake_workshop(append_line: str):
     return _fn
 
 
-def run_round(repo: Path, *, work_id: str, task_id: str, workshop: str, ts: str, base_ref: str,
-              target_rel: str, work_fn, submit_epoch: int, current_epoch: int,
-              message: str, logf=_noop_log) -> dict:
-    """동기 1라운드 (드라이런): assign → 작업·push → epoch 게이트 → merge.
-
-    [주의] **실전은 이 합성을 쓰지 않는다** — `assign_attempt`(서버) … `push_attempt`(작업장) …
-    `verify_and_merge`(서버가 보고를 받고) 로 비동기 분리하되 **같은 함수들**을 재사용한다.
-    합성이 드라이런에만 있는 이유는, 실전의 세 단계가 서로 다른 기계에서 다른 시점에 돌기
-    때문이다.
-    """
-    a = assign_attempt(work_id, task_id, workshop, ts)
-    logf("assign", f"{task_id} → {workshop} (epoch={submit_epoch}), durable={a['durable']}")
-    head = push_attempt(repo, a["attempt"], base_ref, work_fn, target_rel,
-                        message=message, logf=logf)
-    res = verify_and_merge(repo, a["attempt"], a["durable"],
-                           submit_epoch=submit_epoch, current_epoch=current_epoch, logf=logf)
-    return {**a, "head": head, **res}
+# [중요] **`run_round`(드라이런 합성)가 여기 있었다 — `#327` 로 걷어냈다** (2026-08-28).
+#    `assign → push_attempt → verify_and_merge` 를 한 함수로 묶은 것이었는데, **부르는 곳이
+#    테스트뿐**이었다. `selftest` 는 일부러 안 썼다 — 그 파일 주석이 그 이유를 적어 뒀다:
+#    *"real 모드는 합성(run_round)을 쓰지 않고 assign(서버) … push_attempt(원격 작업장) …
+#    verify_and_merge(서버) 로 비동기 분리하되 같은 함수들을 재사용한다."*
+#    즉 실전 형태를 재는 쪽이 합성을 피했고, 합성은 자기 테스트만 갖고 있었다.
+#
+# [주의] **위 세 함수는 남는다** — `selftest` 드라이런이 그것들을 운송 수단 삼아 매니페스트
+#    왕복·`[PSEUDO]` 제거·좀비 epoch 거부를 증명한다. 소비자가 있는 것은 걷지 않는다.

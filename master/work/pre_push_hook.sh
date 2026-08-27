@@ -31,8 +31,22 @@
 # **실패 시도 3건의 유일한 사본이 사라졌다.** 이 기준은 그것을 구조적으로 못 지운다.
 #
 # 되돌리기: rm <클론>/.git/hooks/pre-push
+#
+# [중요] **git-lfs 훅과 공존한다** (2026-08-28). `git lfs install` 은 `pre-push` 를 **자기 것으로
+# 덮는다** — 실측: NS 클론의 훅이 LFS 것 세 줄뿐이었고 **우리 가드가 통째로 사라져 있었다.**
+# 이 파일 머리말이 경고한 바로 그 사고다(*"클론을 다시 만드는 순간 가드가 조용히 사라진다"*).
+# 반대로 우리가 그냥 덮으면 LFS 저장소(NS)의 `.uasset` push 가 깨진다. 그래서 **둘 다 돈다**:
+#
+#   [주의] `pre-push` 는 ref 목록을 **stdin** 으로 받는다 — 한 번 읽으면 사라진다.
+#          그래서 먼저 통째로 버퍼에 담고 **두 번 먹인다.** 순서는 가드가 먼저다 —
+#          거부할 push 에 LFS 업로드 비용을 치르지 않는다.
 
 remote_name="$1"
+
+# stdin 을 한 번만 읽는다 (아래에서 두 번 쓴다)
+_refs=$(cat)
+
+_guard() {
 
 # 기본 브랜치 — `cleanup.py` 의 `base_branch` 와 같은 역할. 바뀌면 양쪽을 같이 고친다.
 base_branch="main"
@@ -88,4 +102,24 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 done
 
 [ $status -ne 0 ] && echo "   (가드를 지우지 말 것. 근거 = reports/16-master-write-surface.md §5)" >&2
-exit $status
+	return $status
+}
+
+printf '%s\n' "$_refs" | _guard
+_g=$?
+if [ $_g -ne 0 ]; then
+	exit $_g
+fi
+
+# ── LFS 위임 — [중요] 가드가 통과했을 때만 ──
+if command -v git-lfs >/dev/null 2>&1; then
+	printf '%s\n' "$_refs" | git lfs pre-push "$@"
+	exit $?
+fi
+# [중요] **조용히 넘기지 않는다.** LFS 저장소에서 git-lfs 없이 push 하면 포인터만 올라가
+# 나중에 smudge 가 죽는다(`#313` 이 그 부류였다). 우리 가드는 이미 통과시켰으므로 막지는
+# 않되, 사실을 크게 말한다.
+if [ -f .gitattributes ] && grep -q "filter=lfs" .gitattributes 2>/dev/null; then
+	echo "[중요] 이 저장소는 LFS 를 쓰는데 git-lfs 가 PATH 에 없다 — LFS 오브젝트가 안 올라간다" >&2
+fi
+exit 0

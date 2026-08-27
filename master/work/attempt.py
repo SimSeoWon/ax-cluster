@@ -74,158 +74,21 @@ class AttemptError(RuntimeError):
     """attempt 를 올릴 수 없다. [중요] **모르는 채로 push 하지 않는다.**"""
 
 
-@dataclass
-class AttemptTree:
-    """마스터 소유 작업 트리. [중요] **사람의 트리에 같은 논리를 적용하지 말 것.**"""
-
-    path: Path
-    base: str = ""
-    created: bool = False
-    error: str = ""
-
-    @property
-    def ok(self) -> bool:
-        return not self.error
-
-
-def tree_path(paths, work_id: str) -> Path:
-    """정본 **옆**. 안에 두면 색인 대상과 겹치고 `add -A` 가 그것을 삼킨다."""
-    return Path(paths.root) / f"{WORKTREE_PREFIX}-{work_id}"
-
-
-def ensure_attempt_tree(paths, work_id: str, *, at_commit: str) -> AttemptTree:
-    """`at_commit` 에 선 트리를 보장한다. 있으면 **그 커밋으로 되맞춘다.**
-
-    [중요] `at_commit` 을 모르면 만들지 않는다 — 어느 시점에 적용하는지 모르면 적용해선 안 된다
-    (`integrate.ensure_worktree` 와 같은 판단).
-    """
-    base = (at_commit or "").strip()
-    if not base:
-        raise AttemptError("기준 커밋이 비었다 — 어디에 적용할지 모른 채로 트리를 세우지 않는다")
-
-    repo = Path(paths.repo)
-    if not repo.is_dir():
-        raise AttemptError(f"정본 클론이 없다: {repo}")
-
-    wt = AttemptTree(path=tree_path(paths, work_id), base=base)
-    if not wt.path.exists():
-        _git(repo, "worktree", "add", "--detach", "--force", str(wt.path), base)
-        wt.created = True
-    else:
-        # 재사용 — 기준으로 되맞춘다. [중요] 이 트리가 **파이프라인 소유**라서만 안전하다.
-        _git(wt.path, "checkout", "--detach", "--force", base)
-
-    # [중요] 추적되지 않은 잔재를 확인한다. `push_attempt` 가 `add -A` 를 하므로(원전 그대로)
-    #    남아 있으면 **이번 조각과 무관한 것이 커밋에 실린다.** 지우지 않고 **거부**한다 —
-    #    무엇이 남았는지 모르는 채 지우는 쪽이 더 위험하다.
-    out = _git(wt.path, "status", "--porcelain")
-    stray = [ln[3:] for ln in out.splitlines() if ln.startswith("??")]
-    if stray:
-        wt.error = ("[중요] 추적되지 않은 잔재가 있다 — 지우지 않고 멈춘다 "
-                    f"({len(stray)}건: {', '.join(stray[:5])}"
-                    f"{' …' if len(stray) > 5 else ''})")
-        return wt
-
-    head = _git(wt.path, "rev-parse", "HEAD")
-    if not (head.startswith(base) or base.startswith(head[:len(base)])):
-        wt.error = f"HEAD 가 기준과 다르다 — 기대 {base[:12]} 실측 {head[:12]}"
-    return wt
-
-
-def apply_responses(responses):
-    """응답들을 트리에 쓰는 `work_fn` 을 만든다 — `coordinator.push_attempt` 의 주입 자리.
-
-    [중요] **원전이 만든 그 seam 을 그대로 쓴다.** 드라이런은 `fake_workshop`, 실전은 이것 —
-    같은 2-tier 경로를 타므로 *"드라이런에서만 되는" 코드가 생기지 않는다.*
-
-    `Response.files` 는 `{경로: 완성 본문}` 이다(부분 diff 가 아니다) — 그대로 쓴다.
-    [주의] `target_rel` 인자는 원전 서명 때문에 받지만 여기서는 쓰지 않는다. 파일 목록은
-    응답이 들고 있고, 그것이 **여러 개**다.
-    """
-    def _fn(repo: Path, target_rel: str) -> None:
-        for res in responses:
-            for rel, body in (res.files or {}).items():
-                rel = rel.replace("\\", "/").lstrip("/")
-                if ".." in rel.split("/"):
-                    raise AttemptError(f"경로가 트리를 벗어난다: {rel!r}")
-                p = Path(repo) / rel
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(body, encoding="utf-8")
-                # [중요] 되읽어 확인한다. 원전이 해시 대조를 둔 자리와 같은 목적 —
-                #    쓴 줄 알았는데 안 쓰인 것이 이 저장소가 반복해 물린 유형이다.
-                if p.read_text(encoding="utf-8") != body:
-                    raise AttemptError(f"쓴 내용이 다시 읽히지 않는다: {rel}")
-    return _fn
-
-
-@dataclass
-class Pushed:
-    """한 태스크의 attempt 결과."""
-
-    task_id: str = ""
-    workshop: str = ""
-    attempt: str = ""
-    durable: str = ""
-    head: str = ""
-    files: list = field(default_factory=list)
-    error: str = ""
-
-    @property
-    def ok(self) -> bool:
-        return bool(self.head) and not self.error
-
-    def summary(self) -> str:
-        if self.error:
-            return f"{self.task_id}: [중요] {self.error}"
-        return (f"{self.task_id}: attempt {self.attempt} ← {self.head[:8]} "
-                f"· 파일 {len(self.files)}")
-
-
-def push_attempt_for(paths, *, work_id: str, task_id: str, workshop: str, ts: str,
-                     responses, base_commit: str, message: str = "",
-                     remote: str = WRITE_REMOTE, logf=C._noop_log) -> Pushed:
-    """[중요] **성공·실패 무관** — 받은 응답을 attempt 브랜치에 올린다.
-
-    이 함수는 **판정하지 않는다.** 판정(층1·층2·빌드)은 durable merge 앞에 서고, 여기서
-    막으면 §8.4 *"실패도 커밋한다"* 가 다시 깨진다 — 실패의 증거가 어디에도 안 남는다.
-    """
-    p = Pushed(task_id=task_id, workshop=workshop, durable=durable_branch(work_id, task_id))
-    p.files = sorted({f for r in responses for f in (r.files or {})})
-    if not p.files:
-        p.error = "올릴 파일이 없다 — 응답이 비었다"
-        return p
-
-    wt = ensure_attempt_tree(paths, work_id, at_commit=base_commit)
-    if not wt.ok:
-        p.error = wt.error
-        return p
-
-    a = C.assign_attempt(work_id, task_id, workshop, ts)
-    p.attempt, p.durable = a["attempt"], a["durable"]
-    logf("assign", f"{task_id} → {workshop}, attempt={p.attempt}")
-
-    msg = message or f"{task_id}: 마스터 적용 (검증 전 — ephemeral)"
-    try:
-        p.head = C.push_attempt(wt.path, p.attempt, base_commit,
-                                apply_responses(responses), "",
-                                message=msg, remote=remote, logf=logf)
-    except GitError as e:
-        # [주의] 변경이 없으면 commit 이 rc=1 이다. 그건 **작업이 아무것도 안 했다는 사실**이므로
-        #    삼키지 않되, 진짜 git 사고와 갈라야 한다.
-        #
-        # [중요] **문구로 가르지 않는다.** 이 기계는 `ko_KR.UTF-8` 이라 git 이 한국어로 말한다 —
-        #    `"nothing to commit"` 대조는 여기서 **조용히 빗나간다**(실측: 이 테스트가 잡았다).
-        #    대신 **트리 상태로** 판정한다: 스테이징 후에도 변경이 0이면 그것이 곧 그 사실이다.
-        #    [주의] `integrate.py` 는 아직 문구 대조를 쓴다 — 거기는 git 이 영어인 윈도우 작업장에서
-        #    도는 코드라 지금은 맞지만, 마스터로 옮겨오면 같은 자리에서 깨진다.
-        try:
-            dirty = _git(wt.path, "status", "--porcelain")
-        except GitError:
-            dirty = "?"                      # 상태조차 못 읽으면 사실 주장을 하지 않는다
-        p.error = ("커밋할 변경이 없다 — 응답이 기존 파일과 같다" if dirty == ""
-                   else f"attempt push 실패: {e}")
-    return p
-
+# [중요] **마스터측 attempt 배선이 여기 있었다 — `#327` 로 걷어냈다** (2026-08-28).
+#    `AttemptTree` · `tree_path` · `ensure_attempt_tree` · `apply_responses` · `Pushed` ·
+#    `push_attempt_for` — 「커밋 후 검증」 계층의 마스터 쪽 절반이다.
+#
+# [중요] **걷은 근거는 측정이다.** `#317` 미결 ⑦ 이 *"통합자 커밋 전 검증 → 워커 커밋 후 검증"*
+#    을 물었고, 재 보니 **이 배선은 한 번도 안 돌았다** — 프로덕션 호출자 0 · bare 에 attempt
+#    브랜치 0. `master/README.md` 도 이미 *"실 파이프라인이 한 번도 부르지 않았다"* 고 적어 뒀다.
+#    사용자 결정 2026-08-28: **검증 → 통과분만 커밋**이 정본이고, 이 층은 걷는다.
+#
+# [주의] **`coordinator.py` 의 2-tier 원전 이식은 남겼다** — `selftest` 드라이런이 그것을
+#    운송 수단 삼아 매니페스트 왕복·`[PSEUDO]` 제거·좀비 epoch 거부를 증명한다(살아 있는
+#    소비자다). **소비자 0 인 것만 걷는 것**이 이번 절단면이다(사용자 결정).
+#
+# [주의] 워크트리 헬퍼는 `integrate.py` 가 **자기 것을 따로 갖고 있다**(`worktree_path`) —
+#    여기 것이 사라져도 통합자는 영향이 없다. 되살릴 조건은 `#327` 노트, 원형은 git 이력에.
 
 # ── 소 1.2.4 (`#125`) 원격 정리 — [중요] **도달 가능한 것만** ──────────────────────
 #
@@ -400,23 +263,9 @@ def install_hook(paths) -> dict:
     return st
 
 
-def merge_verified(paths, *, work_id: str, task_id: str, attempt: str,
-                   submit_epoch: int, current_epoch: int,
-                   remote: str = WRITE_REMOTE, logf=C._noop_log) -> dict:
-    """검증을 통과한 attempt 만 durable 로 올린다 — [중요] epoch 게이트가 먼저 판정한다.
-
-    [주의] **빌드 판정은 이 함수의 몫이 아니다.** 호출자가 작업장(`.2`)의 판정을 받아 통과했을
-    때만 부른다 — 리눅스가 강제한 유일한 변경(빌드 스텝의 원격 위임, 소 1.3.1)이 그 자리다.
-    """
-    wt = tree_path(paths, work_id)
-    if not wt.is_dir():
-        raise AttemptError(f"작업 트리가 없다: {wt}")
-    return C.verify_and_merge(wt, attempt, durable_branch(work_id, task_id),
-                              submit_epoch=submit_epoch, current_epoch=current_epoch,
-                              remote=remote, logf=logf)
-
-
-# ── CLI — [중요] 정리는 **계획이 기본**이다 (`cleanup.py` 와 같은 규약) ─────────────
+# [중요] **`merge_verified` 가 여기 있었다 — `#327` 로 걷어냈다.** 검증 통과분을 durable 로
+#    올리는 함수였고, `master/README.md` 가 *"부르는 파이프라인 호출자는 아직 없다"* 고
+#    적어 둔 채 끝까지 없었다.
 
 def main(argv: list[str] | None = None) -> int:
     from ..context_search.paths import resolve

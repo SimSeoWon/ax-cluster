@@ -83,7 +83,13 @@ def test_rebuild_survives_numeric_id() -> None:
 
     # 파일을 **옛 모양**(인용 없는 전부-숫자 id)으로 바꿔 심는다 — 마이그레이션 대상 재현
     path = idx.task_paths[old_tid]
-    text = path.read_text(encoding="utf-8").replace(f"task_id: {old_tid}", "task_id: 43144512")
+    # [주의] **인용 여부를 가정하지 않는다** — 무작위 id 가 전부 숫자면 `#325` 의 왕복 인용이
+    #    걸려 파일에는 `task_id: "12345678"` 로 저장된다. 인용 없는 형태만 찾으면 2.33% 확률로
+    #    치환이 빗나가 이 테스트가 **간헐 실패**한다(실제로 그랬다 — 이 파일이 잡으려는 결함과
+    #    같은 부류다). 줄 전체를 정규식으로 갈아 끼운다.
+    import re as _re
+    text = _re.sub(r"^task_id:.*$", "task_id: 43144512", path.read_text(encoding="utf-8"),
+                   count=1, flags=_re.M)
     path.write_text(text, encoding="utf-8")
 
     again = TaskIndex(root)
