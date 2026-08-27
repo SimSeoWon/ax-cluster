@@ -77,13 +77,17 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
 - **The master is infrastructure, not a workshop** — **narrowed 2026-08-14, don't read the
   old absolute.** It assembles context and hands it over; the Windows PC builds and tests.
   [중요] **Flow Y (user-confirmed 2026-08-14) gives the master exactly one write capability**: it
-  commits inferred diffs to `attempt/<work>/<task>/<workshop>/<ts>` and merges verified ones into
-  `task/<work>/<task>` — nothing else (hierarchical since `#319`; the requester owns
-  `task/<work>/base`, where the skeleton lives as real files). So *"files never leave Windows"* and *"no file I/O on the master"*
-  are **no longer true as written**; what holds is **the master never touches `main`** and never
-  builds. Mechanism: `master/work/attempt.py`, a push-only second remote `gitea-write`, and a
-  `pre-push` hook that rejects every ref outside `attempt/*`·`task/*` (deletions only when the tip
-  is reachable from `<remote>/main`). The 정본 clone's `origin` push stays sealed as a loud guard.
+  commits inferred diffs to the durable `task/<work>/<task>` — nothing else. Hierarchical since
+  `#319`; the requester owns `task/<work>/base`, where the skeleton lives as real files.
+  🔴 **The ephemeral `attempt/` tier was torn down 2026-08-27** (`#317` 미결 ⑦ → `#327`) —
+  `carry.publish` now pushes to the durable branch **after the gate passes** (verify-then-commit),
+  and isolation is the **worktree** (`#321` forces it), not a branch. So *"files never leave
+  Windows"* and *"no file I/O on the master"* are **no longer true as written**; what holds is
+  **the master never touches `main`** and never builds. Mechanism: `master/work/carry.py`, a
+  push-only second remote `gitea-write`, and a `pre-push` hook that rejects every ref outside
+  `attempt/*`·`task/*` (deletions only when the tip is reachable from `<remote>/main`).
+  [주의] `attempt/*` stays in that allowlist only for **legacy debris cleanup**
+  (`attempt.plan_remote_cleanup`). The 정본 clone's `origin` push stays sealed as a loud guard.
   → [`docs/2-architecture.md`](docs/2-architecture.md) §2.2-1 · `reports/16-master-write-surface.md`
 - [중요] **All three services require a bearer token** (`task_queue` 8101, broker 8102, projects 8103).
   Token: `~/.config/ax-cluster/token`, 0600, **fail-closed — a service will not start without it**.
@@ -102,8 +106,8 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   history rewriting — **not even with approval**; describe the command instead. Don't read a
   first-person statement ("I'll commit and come back") as an instruction to you — that exact
   misreading caused an incident in AgentTest (*"다 지워진 줄 알고 깜짝 놀랐다"*).
-  [주의] **Pipeline code committing is a different thing** — the integrator/worker writing to
-  `attempt`/`durable` branches is designed behavior; these rules bind the *interactive session*.
+  [주의] **Pipeline code committing is a different thing** — the integrator writing to the durable
+  `task/<work>/<task>` branch is designed behavior; these rules bind the *interactive session*.
   → [`docs/8-git-authority.md`](docs/8-git-authority.md)
 - [중요] **Never trust a delegated backend's "done".** Measured 2026-08-07: `agy` returned
   `status:"SUCCESS"` while writing no file. Verify the artifact, not the status.
@@ -247,10 +251,12 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client probe|plan|deliver|check
 
 [중요] **승인 뒤는 한 호출이다** (원전 6단계 동등, 2026-08-21): `review.finalize_work(confirm=True)` 가 ①`main` `--no-ff` 머지+push ②Redmine 완료 기재(머지 커밋 해시 · 상태는 **「해결」** — 「완료」로 닫는 것은 사람이다) ③**도달 가능한 브랜치 삭제** ⑤`merge_status`→`merged` 를 이어서 한다. `confirm=False`(기본)는 **통합만 하고 멈추고** 사람이 실행할 명령을 돌려준다. [주의] 순서가 계약이다 — 정리는 **머지 뒤**여야 도달 가능 판정이 참이 된다.
 
-**워커 상주 데몬이 큐를 폴링한다** (#204 실전 전환 2026-08-18): `.2` AxClaimer(schtasks
-5분 감시자, build+code) · `.43` cron 감시자(code 만). 등록된 code 태스크는 **20초 안에 데몬이
-집는다** — 파견의 기본은 pull 이고, 마스터 push 파견(`runner once`·`infer run`)은 §8.4 대로
-가역 보존. 데몬 운영법은 각 머신 가이드(`machines/win-worker-2.md`·`bc250-1.md`)에 있다.
+[중요] **상주 데몬은 없다 — 마스터가 SSH 로 민다** (`#320` 철거 2026-08-27, `#317` 미결 ⑤).
+`.2` 의 `AxClaimer_NS` schtasks 와 `.43` 의 cron 감시자를 **둘 다 걷었다.** 지금 큐를 폴링하는
+프로세스는 어느 워커에도 없다 — 파견은 전부 마스터가 건다(`run_build_on_workshop` 이
+`Build.bat` 를 직접 부르므로 **빌드에는 워커에 파이썬 페이로드가 필요 없다**).
+[주의] 그래서 「사람이 끊는 구간」이 되살아났다 — 등재해도 **아무도 집지 않는다.** 이것은
+버그가 아니라 결정이다. 부활 조건은 `#320` 노트에 있다.
 
 ## Three clones — keep them in sync
 

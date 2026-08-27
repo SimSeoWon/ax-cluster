@@ -19,7 +19,7 @@
 [중요] **`--confirm` 없이는 아무것도 쓰지 않는다.** 이 저장소의 관례다(`cleanup plan|apply` ·
 `finalize_work(confirm=False)` · `handover apply --confirm`).
 
-## 14.1 서버 절 — 여덟 단계
+## 14.1 서버 절 — 아홉 단계
 
 `onboard` 가 **실측으로** 무엇이 남았는지 답한다. 순서는 코드가 강제한다(선결이 깨진 단계는
 `[막힘]` 으로 나오고 **판정을 시도하지 않는다** — *"안 만들었다"* 와 *"만들 수 없었다"* 를
@@ -76,7 +76,7 @@ register_project_tool(name="NS", project_id="Sim/NS",
 [중요] `project_id` 는 **훅이 보내는 이름**과 같아야 한다(`Sim/NS` — 대소문자는 무시되지만
 **형식은 `소유자/저장소`**). 다르면 훅이 와도 어느 프로젝트인지 못 찾고 **조용히 건너뛴다**.
 
-### 3~8 · 나머지는 한 명령
+### 3~9 · 나머지는 한 명령
 
 ```bash
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트> --confirm
@@ -145,9 +145,9 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client deliver <프로젝트>
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check   <프로젝트>
 ```
 
-[중요] **배달은 파일을 놓는 것으로 끝나지 않는다** — 도는 상주가 새 코드인지까지가 배달이다
-(`#277`). `deliver` 가 `상주 갱신 [완료] — 깃발` 또는 `… 강제 종료` 를 찍는다.
-안 됐으면: 파일 해시는 맞는데 **상주가 옛 코드로 돈다**(실측 사고: 거절을 태스크로 읽고 폭주).
+[주의] **`#277`(배달이 상주를 갱신하지 않는다)의 자리는 비었다** — `#320` 이 상주를 걷어
+갱신할 프로세스가 없다. 배달은 이제 **파일을 놓는 것으로 끝난다.** 상주가 부활하면
+「도는 것이 새 코드인가」가 다시 배달의 일부가 된다(그 사고: 옛 코드가 거절을 태스크로 읽고 폭주).
 
 [주의] **마스터 트리가 dirty 면 `check` 가 통과하지 않는다** — 커밋이 같아도 그 커밋이 배달
 내용을 다 말하지 못한다(`dirty_master`). **커밋이 먼저다.**
@@ -168,58 +168,32 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check   <프로젝트>
 실패를 삼켜 *"`.uproject` 를 찾지 못했다"* 로 렌더했다(`#309` 에서 고쳐 지금은 사유가 표에
 찍힌다). 위 명령줄에 그 변수가 붙어 있는 것이 우연이 아니다.
 
-### 4 · 상주 등록 (claimer)
+### 4 · 상주 등록 — **없다** (`#320`, 2026-08-27)
 
-`worker` 역할 기계에만. 선언은 [`client/init/residency.py`](../client/init/residency.py) 다.
+🔴 [중요] **이 단계는 사라졌다. 워커에 켤 것이 없다.** `.2` 의 schtasks `AxClaimer_NS` 와 `.43`
+의 `*/5` cron 감시자를 **둘 다 걷었고**, 선언이던 `client/init/residency.py` 도 지웠다. 지금
+**큐를 폴링하는 프로세스는 어느 워커에도 없다.**
 
-    .2  (Windows)  schtasks `AxClaimer` · 5분 감시자 · `--types=build,code`
-    .43 (Linux)    crontab `*/5` 감시자 · `--types=code`
+    빌드   마스터가 `run_build_on_workshop` 으로 `Build.bat` 를 직접 부른다
+           → 워커에 **파이썬 페이로드가 필요 없다**
+    추론   마스터가 `infer run` 으로 민다
 
-[중요] **유형은 능력에서 나온다** — `ue5` probe 실측이 `build,code` 와 `code` 를 가른다.
-하드코딩하면 UE5 없는 기계가 빌드 잡을 집어놓고 못 돌린다.
-🔴 [중요] **한 기계에 두 프로젝트의 상주를 동시에 켜지 않는다 — 상주는 마운트를 따른다**
-(사용자 결정 ⓐ, `#311` 2026-08-25). 종전 이 자리엔 *"켤 수 있다 — 큐가 요청 태그와 work
-스탬프로 거른다"* 가 적혀 있었다. **거짓이었다**: claim 은 `tagging.POLICY` 에서 `MOUNT` 라
-비마운트 프로젝트의 claim 은 **거르는 것이 아니라 거절**된다(실측 2026-08-25 · 마운트 NS):
+[주의] **그래서 온보딩이 끝나도 워커는 조용하다 — 정상이다.** 등재해도 아무도 집지 않는다.
+종전 이 자리엔 *"태스크를 등록해도 아무도 집지 않으면 상주의 체크아웃을 보라"* 가 있었는데,
+지금은 **집는 주체 자체가 없는 것이 설계**다. 버그로 오진하지 않는다.
+
+[중요] **부활하면 같이 부활하는 것이 넷이다** — `#312`(사람이 끊는 구간을 없앤다) ·
+`#314`(일시정지·재개) · `#315`(감시자 생존 확인) · `#316`(한 기계 상주 2개). 넷 다 **고쳐서**
+닫힌 것이 아니라 대상이 사라져 **소멸**로 닫혔다. 되살릴 때 그 노트부터 읽는다.
+그리고 `#311` 의 ⓐ 규칙(**상주는 마운트를 따른다 — 한 기계에 두 프로젝트를 동시에 켜지
+않는다**)은 결정으로 살아 있다. 근거: claim 정책이 `MOUNT` 라 비마운트 claim 은 거르는 것이
+아니라 **거절**된다(실측 2026-08-25 · 마운트 NS).
 
     project="NS"            → 204            정상 (큐가 비었다)
     project="ModularStage"  → 200 ok:false   status=not_mounted
     project=""              → 200 ok:false   status=no_project_tag
 
-즉 켜 두면 남의 태스크를 집지는 않지만 **5분마다 거절만 받는다.** 판정 정본은
-[`client/init/residency.py`](../client/init/residency.py) `blocked_reason()` 이고
-`plan`·`deliver` 가 그 문장을 그대로 찍는다 — **여기 다시 적지 않는다.**
-
-[주의] **마운트를 옮기면 상주도 옮긴다** — 이전 프로젝트의 상주를 멈추고 새 프로젝트의 것을
-켠다. 전환이 이것을 **자동으로 하지는 않는다**(`#245` 는 재배달만 요구한다). 그래서 전환 뒤
-워커가 조용하면 **먼저 상주의 체크아웃을 본다.**
-
-**이전은 늘 둘이다 — 켜기 + 멈추기.** 명령은 손으로 쓰지 말고 코드에서 뽑는다(작업 이름·표식이
-등록과 갈리면 해제가 남의 줄을 지우거나 우리 줄을 못 지운다):
-
-```bash
-AX_PROJECTS_ROOT=$PWD .venv/bin/python - <<'PY'
-import sys; sys.path.insert(0, '.')
-from master.client import bundle
-from client.init import residency as R
-f = bundle.probe("<호스트>", "<계정>", r"<새 프로젝트 체크아웃>", "ssh", "worker")
-pyw = ""                                  # 윈도우면 R.PYTHONW_PROBE 를 원격에서 돌려 파싱
-print(R.commands("<새 프로젝트>", f, python_path=pyw)[0][1])       # 켤 것
-old = bundle.probe("<호스트>", "<계정>", r"<이전 체크아웃>", "ssh", "worker")
-print(R.unregister_commands("<이전 프로젝트>", old)[0][1])          # 멈출 것
-PY
-```
-
-[중요] **윈도우 `pythonw` 경로는 박지 말고 잰다** — `R.PYTHONW_PROBE` 를 원격에서 돌려
-`R.parse_python_probe()` 로 파싱한다. PATH 에 없고 버전 디렉토리(`Python310`)가 들어간다.
-[주의] crontab 해제는 **우리 줄만** 뺀다 — 통째로 다시 쓰면 `PATH=` 줄이 날아가고 claimer 가
-도구를 못 찾는다.
-
-실측 확인법(2026-08-25 · 마운트 NS 에서 이전 직후):
-
-    새 상주 1회   project=NS · "집을 잡이 없다"                          ← 받아들여졌다
-    옛 상주 1회   project=ModularStage · [claim 거절] status=not_mounted  ← 이것이 멈춰야 하는 것
-안 됐으면: 태스크를 등록해도 **아무도 집지 않는다.** 큐 저널에 claim 요청이 아예 안 온다.
+부활 조건과 철거 실측은 `#320` 노트에 있다.
 
 ## 14.3 마운트 — 마지막, 사람 승인 자리
 
@@ -247,7 +221,7 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.work.handover apply  <프로젝
 ## 14.4 전체 확인 — 세 줄
 
 ```bash
-AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트>   # 서버 7단계 + 3대
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트>   # 서버 9단계 + 3대
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check <프로젝트>       # 배달본 해시 대조
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.ontology status               # 도메인·stale 판정
 ```

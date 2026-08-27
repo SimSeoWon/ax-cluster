@@ -129,14 +129,17 @@ adding it.
 | **Roles** | `driven` (can we reach it) and `role` (may we dispatch to it) are **different axes**. `.33` has SSH yet is a `requester` and is excluded from `drivable_hosts` — never dispatch into the human's working tree |
 | **Every worker holds the clone** | Source-based judgment is the worker's *primary* capability and **all workers are equal in it**. UE5 only decides who can run the layer-3 verdict |
 | **durable `task/<id>`** | A **long-lived working space**, not something to merge fast. The requester creates it (the master cannot push — §2.1); `main` is merged **once, by the human, at the end** |
-| **Always push the attempt** | Success *or* failure. Discarding failures destroys the evidence and the basis for feedback — and the model is **accumulative**: a rejected attempt is fixed, not reimplemented |
+| ~~**Always push the attempt**~~ | 🔴 **OVERTURNED 2026-08-27** (`#317` 미결 ⑦ → `#327`). The ephemeral `attempt/` tier is gone: `carry.publish` pushes straight to the durable `task/<work>/<task>` **after** the gate passes. What the decision was protecting — *evidence of failure* — now lives in the spool (`read_runs`) and the Redmine note, not in a branch. The original reasoning still holds for **accumulation**: a rejected piece is fixed, not reimplemented |
 | **Feedback is code-located** | A `[FEEDBACK]` block goes into the file at the failing spot, exactly like `[PSEUDO]` skeletons. A queue text field cannot say *where*. `layer2_verify.py` already rejects leftover markers |
 | **Layer-3 location** | The requester is fastest (UE5 is on `.33`) — but [주의] **never switch branches in the human's main tree**; use `git worktree`. `.2` is the unattended path |
 | **Dropped by this shape** | per-author split, durable-merge CAS, and "the model holds merge authority" (`verify_worker.py`) — **not a redesign, simply unnecessary** |
 
-[중요] **What is *not* dropped**: attempt-branch isolation, lease, and epoch fencing. Two worker
-machines contend for real — the criterion is *"are there actually multiple concurrent actors?"*,
-not *"is this a team feature?"*
+[중요] **What is *not* dropped**: lease and epoch fencing — plus, since `#318`, a **worker-identity
+gate on both `submit_result` and `submit_fail`**. Two worker machines contend for real; the criterion
+is *"are there actually multiple concurrent actors?"*, not *"is this a team feature?"*
+[주의] **Attempt-branch isolation *was* dropped** (`#327`) — isolation is now the **worktree**
+(`#321` forces it), not a branch. `attempt/*` survives only in the pre-push allowlist and in
+`plan_remote_cleanup`, which sweeps branches left over from the old shape.
 → [`8-git-authority.md`](8-git-authority.md) §8.4
 
 ## Worker configuration — [중요] generated, never copied (2026-08-09)

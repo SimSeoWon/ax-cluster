@@ -116,12 +116,40 @@ def test_every_server_step_is_documented() -> None:
           f"{t.count('| `')} < {len(spec.SERVER_STEPS)}")
 
 
+def _step_table(t: str) -> list[list[str]]:
+    """§14.1 서버 단계 표의 **본문 행**만 돌려준다 (헤더·구분선 제외).
+
+    [중요] **범위를 표로 좁힌 이유** (2026-08-28): 종전에는 문서 **전체**에서
+    `"안 보이나"`·`"안 됐으면"` 출현 수를 세어 단계 수와 비교했다. 그 프록시는
+    **서버 단계와 무관한 절의 산문을 지워도 깨진다** — 실제로 `#320`(상주 철거)으로
+    죽은 문장 둘을 클라 절에서 걷어내자 8 < 9 로 실패했다. 잡으려던 것은
+    *"사양의 단계가 늘면 런북이 깨진다"*(`#273`)이지 산문의 총량이 아니다.
+    """
+    rows = []
+    for line in t.split("\n"):
+        s = line.strip()
+        if not s.startswith("|"):
+            continue
+        cells = [c.strip() for c in s.strip("|").split("|")]
+        if len(cells) != 4 or set("".join(cells)) <= set("-: "):
+            continue
+        rows.append(cells)
+    return rows
+
+
 def test_each_step_says_what_you_would_not_see() -> None:
     """[중요] 완료 조건 — 각 단계에 **「안 됐으면 무엇이 안 보이나」**가 붙는다."""
     t = _text()
-    n = t.count("안 보이나") + t.count("안 됐으면")
-    check("[중요] 그 줄이 단계 수만큼 있다", n >= len(spec.SERVER_STEPS),
-          f"{n} < {len(spec.SERVER_STEPS)}")
+    rows = _step_table(t)
+    check("[중요] 서버 단계 표를 찾았다", bool(rows), "4칸 표가 없다")
+    head, body = rows[0], rows[1:]
+    check("[중요] 마지막 칸이 「안 됐으면 무엇이 안 보이나」다", "안 보이나" in head[-1],
+          f"헤더가 {head[-1]!r} — 이 열이 사라지면 완료 조건이 사라진다")
+    check("[중요] 표의 행이 사양의 단계 수와 같다", len(body) == len(spec.SERVER_STEPS),
+          f"표 {len(body)}행 vs 사양 {len(spec.SERVER_STEPS)}단계")
+    for cells in body:
+        check(f"[중요] `{cells[1]}` 단계가 안 되면 무엇이 안 보이는지 적었다",
+              len(cells[-1]) >= 10, f"마지막 칸이 비었거나 짧다: {cells[-1]!r}")
     # 침묵으로 실패하는 자리를 명시한다 — 이 프로젝트가 반복해 맞은 부류다
     for phrase in ("침묵", "조용히"):
         check(f"조용한 실패를 말한다 ({phrase})", phrase in t)
