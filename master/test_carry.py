@@ -75,10 +75,44 @@ def fixture():
     g(p.repo, "push", "-q", "gitea-write", "main")
     worker = root / "worker"
     g(root, "clone", "-q", str(bare), str(worker))
+    # [중요] **쓰기 가드를 세운다** (`#329`) — `publish` 가 push 직전에 확인하고, 없으면
+    #    fail-closed 로 막는다. 실전 클론에는 있으므로 픽스처도 같게 둔다.
+    #    [주의] 이 줄이 없으면 `publish` 가 (옳게) 거부한다 — 그것 자체가 게이트의 증거다.
+    from master.work.attempt import install_hook
+    install_hook(p)
     return p, bare, worker, g(p.repo, "rev-parse", "HEAD")
 
 
 BODY = "# 매니페스트\n\n## 대상 파일\n- Source/A.cpp\n"
+
+
+def test_publish_refuses_without_guard():
+    """[중요] `#329` — 쓰기 가드가 없으면 **push 하지 않는다** (fail-closed).
+
+    실측 2026-08-28: `git lfs install` 이 NS 클론의 훅을 덮어 가드가 통째로 사라졌는데
+    **아무 표면도 말하지 않았다.** 이제 미는 자리에서 막는다.
+    """
+    p, bare, worker, base = fixture()
+    from master.work.attempt import hook_target
+    # ① 아예 없을 때
+    hook_target(p).unlink()
+    r = C.publish(p, W, "t-g1", BODY, base_commit=base)
+    check("[중요] 가드가 없으면 거부한다", not r.ok and "가드가 서 있지 않다" in (r.error or ""),
+          r.error)
+    check("  복구 방법을 사유에 적는다", "install-hook" in (r.error or ""), r.error)
+    # ② 남의 훅이 덮었을 때 (LFS 가 그랬다)
+    hook_target(p).write_text("#!/bin/sh\ngit lfs pre-push \"$@\"\n", encoding="utf-8")
+    r2 = C.publish(p, W, "t-g2", BODY, base_commit=base)
+    check("[중요] 남의 훅이 덮어도 거부한다", not r2.ok and "가드가 서 있지 않다" in (r2.error or ""),
+          r2.error)
+    check("  「우리 가드가 아니다」라고 말한다", "우리 가드가 아니다" in (r2.error or ""), r2.error)
+    # ③ 낡았을 뿐이면 **막지 않는다** — 우리 가드가 맞고 지금 막고 있다
+    from master.work.attempt import HOOK_SOURCE
+    hook_target(p).write_text(HOOK_SOURCE.read_text(encoding="utf-8") + "\n# 낡은 사본\n",
+                              encoding="utf-8")
+    hook_target(p).chmod(0o755)
+    r3 = C.publish(p, W, "t-g3", BODY, base_commit=base)
+    check("[주의] 낡았을 뿐이면 막지 않는다 (우리 가드가 맞다)", r3.ok, r3.error)
 
 
 # ── ① publish + ② 멱등 ──────────────────────────────────────
@@ -241,7 +275,8 @@ def test_register_wiring():
 
 def main() -> int:
     for fn in (test_publish_and_idempotency, test_materialize_real_roundtrip,
-               test_fail_closed, test_command_shapes, test_register_wiring):
+               test_fail_closed, test_command_shapes, test_register_wiring,
+               test_publish_refuses_without_guard):
         fn()
     print(f"{'OK' if not FAIL else '[실패]'} test_carry: {PASS}/{PASS + FAIL} 통과")
     return 1 if FAIL else 0

@@ -391,7 +391,31 @@ def collect(*, project: str = "", token: str = "", force: bool = False,
             snap.problems.append(f"`{host}` — {m.label}"
                                  + (f" ({m.error})" if m.error else ""))
 
-    # ④ [중요] **워커 로그 회수가 여기 있었다 — `#323` 으로 걷어냈다** (2026-08-28).
+    # ④ 쓰기 가드 (`#329`, 사용자 결정 2026-08-28) — [중요] **마스터 자기 클론의 상태다.**
+    #    워크숍을 도는 표면(`client deliver`·`check`)은 이것을 **못 본다** — 가드는
+    #    `<트윈>/repo/.git/hooks/pre-push` 에 있고 그건 이 기계다.
+    #    [중요] 실측 2026-08-28: `git lfs install` 이 NS 클론의 훅을 덮어 `#125` 가드가 통째로
+    #    사라졌는데 **아무 표면도 말하지 않았다.** 이제 화면이 말한다(막는 것은 push 직전
+    #    검사가 한다 — `carry._guard_or_reason`). 안 보이면 조용히 멈춘다.
+    #    [주의] 로컬 파일 두 개를 읽을 뿐이라 SSH·원격을 타지 않는다 — 주기 가드와 무관하다.
+    try:
+        from .context_search.paths import resolve as _resolve_g
+        from .work.attempt import hook_status as _hs, STATE_MISSING, STATE_FOREIGN
+        _gp = _resolve_g(project or "")
+        _gst = _hs(_gp)
+        snap.notes.append(f"쓰기 가드({_gp.name}): {_gst['state']} — {_gst['reason'][:80]}")
+        if _gst.get("state") in (STATE_MISSING, STATE_FOREIGN):
+            # [주의] 사유에 이미 `[중요]` 가 붙어 있다 — 겹쳐 찍지 않는다(표식 남발은 노이즈)
+            snap.problems.append(f"쓰기 가드가 서 있지 않다 ({_gp.name}) — "
+                                 f"{_gst['reason'][:120]}")
+        elif not _gst.get("current"):
+            snap.problems.append(f"[주의] 쓰기 가드 사본이 원본과 다르다 ({_gp.name}) — "
+                                 f"막고는 있다. `install-hook` 으로 맞출 것")
+    except Exception as e:                                   # noqa: BLE001
+        # [중요] **미확인을 정상으로 접지 않는다** — 못 쟀다는 사실을 올린다
+        snap.problems.append(f"[중요] 쓰기 가드를 확인하지 못했다 — {type(e).__name__}: {e}")
+
+    # ⑤ [중요] **워커 로그 회수가 여기 있었다 — `#323` 으로 걷어냈다** (2026-08-28).
     #    `claimer` 가 남기던 `claimer_debug/<task>/…` 를 5분마다 SSH 로 걷었는데, 그 상주가
     #    `#320` 으로 철거된 뒤 **결과가 정해진 SSH** 가 됐다 — 파일을 쓰는 주체가 없으니
     #    언제나 「로그 없음」이다. *"BC-250 을 자주 두드리지 않는다"*(`#105`)와 어긋난다.

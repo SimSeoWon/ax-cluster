@@ -66,6 +66,25 @@ def _remote_tip(repo: Path, remote: str, branch: str) -> str:
     return ""
 
 
+def _guard_or_reason(paths) -> str:
+    """쓰기 가드가 서 있나. 서 있으면 `""`, 아니면 **막을 사유**를 돌려준다 (`#329`).
+
+    [중요] **「낡았다」는 막지 않는다** — 그건 우리 가드가 맞고 지금 막고 있다는 뜻이다.
+    막는 것은 **없거나 우리 것이 아닐 때**뿐이다. 그 구분이 `#329` 의 요지다.
+    [주의] 확인 자체가 실패하면(예외) **막는다** — 미확인은 통과가 아니다.
+    """
+    try:
+        from .attempt import hook_status, STATE_MISSING, STATE_FOREIGN
+        st = hook_status(paths)
+    except Exception as e:                                   # noqa: BLE001
+        return (f"[중요] 쓰기 가드를 확인하지 못했다 ({type(e).__name__}: {e}) — "
+                f"미확인은 통과가 아니다. push 하지 않는다 (`#329`)")
+    if st.get("state") in (STATE_MISSING, STATE_FOREIGN):
+        return (f"[중요] 쓰기 가드가 서 있지 않다 — {st.get('reason')} "
+                f"· 복구: `python -m master.work.attempt install-hook <프로젝트>` (`#125`·`#329`)")
+    return ""
+
+
 def publish(paths, work_id: str, task_id: str, body: str, *, base_commit: str,
             remote: str = WRITE_REMOTE, logf=None) -> Published:
     """매니페스트를 조각 durable `task/<work_id>/<task_id>` 에 commit·push 한다.
@@ -85,6 +104,18 @@ def publish(paths, work_id: str, task_id: str, body: str, *, base_commit: str,
         return p
     if not (body or "").strip():
         p.error = "매니페스트 본문이 비었다 — 빈 것을 실어 보내지 않는다"
+        return p
+
+    # [중요] **push 직전에 쓰기 가드를 확인한다** (`#329`, 사용자 결정 2026-08-28).
+    #    여기가 마스터가 `gitea-write` 로 실제로 미는 자리다 — **가드가 필요한 바로 그 순간**에
+    #    재는 것이 가장 강하다. 실측 2026-08-28: `git lfs install` 이 NS 클론의 훅을 덮어
+    #    가드가 통째로 사라졌는데 **아무 표면도 그것을 말하지 않았다**(`#125` 가 막던 셋 —
+    #    `task/*` 밖 push · main 이동 · 미병합 삭제 — 이 그동안 무방비였다).
+    # [주의] **fail-closed 다 — 없으면 막는다.** 파이프라인이 멈추는 것이 무방비로 미는 것보다
+    #    낫다. 사유가 `install-hook` 을 가리키므로 사람이 한 줄로 복구한다.
+    guard = _guard_or_reason(paths)
+    if guard:
+        p.error = guard
         return p
 
     repo = Path(paths.repo)

@@ -231,10 +231,39 @@ def test_hook_source_is_in_repo_and_installs():
         check("  [주의] 가드가 먼저다 (거부할 push 에 LFS 업로드 비용을 안 치른다)",
               src.index("_guard") < src.index("git lfs pre-push"))
 
-        # 손으로 고친 경우를 잡아내나
-        A.hook_target(fx.paths).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        # ── `#329` 상태 넷을 가른다 ───────────────────────────────────
+        # [중요] **원본에 표식이 있어야 판정이 성립한다** (완료 조건 4). 표식을 바꾸면
+        #    이 검사가 **먼저** 죽어야 한다 — 안 그러면 판정이 조용히 무너진다.
+        for m in A.GUARD_MARKS:
+            check(f"원본에 가드 표식이 있다: {m!r}", m in src, "표식이 사라졌다")
+
+        # ① 우리 것이 아니다 — LFS 훅이 덮은 그 모양 (실측 2026-08-28)
+        A.hook_target(fx.paths).write_text('#!/bin/sh\ngit lfs pre-push "$@"\n',
+                                           encoding="utf-8")
         st = A.hook_status(fx.paths)
-        check("[중요] 손으로 고친 것을 잡아낸다", not st["current"], st["reason"])
+        check("[중요] 남의 훅이 덮은 것을 **foreign** 으로 잡는다",
+              st["state"] == A.STATE_FOREIGN and not st["ours"], str(st))
+        check("  사유가 「우리 가드가 아니다」라고 말한다",
+              "우리 가드가 아니다" in st["reason"], st["reason"])
+        check("  [중요] 「지금은 아무것도 안 막는다」를 말한다",
+              "아무것도 안 막는다" in st["reason"], st["reason"])
+
+        # ② 낡았다 — 우리 것이지만 원본과 다르다
+        A.install_hook(fx.paths)
+        A.hook_target(fx.paths).write_text(src + "\n# 낡은 사본\n", encoding="utf-8")
+        st = A.hook_status(fx.paths)
+        check("[중요] 낡은 사본은 **stale** 로 가른다 (foreign 이 아니다)",
+              st["state"] == A.STATE_STALE and st["ours"], str(st))
+        check("  [주의] 「막고는 있다」를 말한다", "막고는 있다" in st["reason"], st["reason"])
+
+        # ③ 없다
+        A.hook_target(fx.paths).unlink()
+        st = A.hook_status(fx.paths)
+        check("없으면 **missing**", st["state"] == A.STATE_MISSING, str(st))
+
+        # [중요] **두 상태가 섞이지 않는다** — 이것이 `#329` 의 요지다.
+        #    종전에는 ①과 ②가 같은 문구(*"원본과 다르다 — 손으로 고쳤나?"*)를 받았고,
+        #    그래서 NS 의 무방비가 조용히 지나갔다.
 
 
 def main() -> int:

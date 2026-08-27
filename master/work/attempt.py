@@ -231,22 +231,60 @@ def hook_target(paths) -> Path:
     return Path(paths.repo) / ".git" / "hooks" / HOOK_NAME
 
 
+# [중요] **가드 고유 표식** (`#329`) — 「우리 것이 아니다」와 「낡았다」를 가르는 근거다.
+#    둘 다 있어야 우리 훅으로 본다: 하나는 **판정 분기**(`case` 패턴), 하나는 **거절 메시지**라
+#    성격이 달라 한쪽만 우연히 겹칠 일이 없다.
+# [주의] **원본에서 이 문자열이 사라지면 판정이 조용히 무너진다** — `test_attempt` 가
+#    원본에 표식이 있는지 먼저 잰다(조건 4). 표식을 바꾸면 그 검사가 **먼저** 죽는다.
+GUARD_MARKS = ("refs/heads/attempt/", "pre-push 거부")
+
+# 상태 넷 — [중요] **「낡았다」와 「우리 것이 아니다」는 값이 다르다.**
+#    전자는 *"지금 막고 있다, 사본이 낡았을 뿐"*, 후자는 **"지금 아무것도 안 막고 있다"**.
+STATE_MISSING = "missing"     # 파일이 없다
+STATE_FOREIGN = "foreign"     # [중요] 우리 가드가 아니다 (예: `git lfs install` 이 덮었다)
+STATE_STALE = "stale"         # 우리 것이지만 원본과 다르다
+STATE_OK = "ok"
+
+
 def hook_status(paths) -> dict:
-    """설치돼 있나 · 원본과 같나 · 실행 가능한가. **추측하지 않고 읽어서** 답한다."""
+    """설치돼 있나 · **우리 것인가** · 원본과 같나 · 실행 가능한가.
+
+    [중요] `#329` — 종전에는 「우리 것이 아니다」를 **「원본과 다르다」로 뭉갰다.** 실측
+    2026-08-28: `git lfs install` 이 NS 클론의 훅을 덮어 가드가 **통째로 사라져 있었는데**,
+    주석 표기만 옛 판이던 ModularStage 와 **같은 문구**를 받았다. 하나는 지금 막고 있고 다른
+    하나는 **아무것도 안 막고 있는데** 같은 말을 하면 사람이 뒤를 안 본다 — 실제로 안 봤다.
+    """
     t = hook_target(paths)
     if not t.exists():
-        return {"installed": False, "current": False, "executable": False,
-                "reason": f"없다: {t}"}
+        return {"installed": False, "ours": False, "current": False, "executable": False,
+                "state": STATE_MISSING, "reason": f"없다: {t}"}
     try:
-        same = t.read_bytes() == HOOK_SOURCE.read_bytes()
+        raw = t.read_bytes()
+        text = raw.decode("utf-8", "replace")
     except OSError as e:
-        return {"installed": True, "current": False, "executable": False,
-                "reason": f"읽지 못했다: {e}"}
+        return {"installed": True, "ours": False, "current": False, "executable": False,
+                "state": STATE_MISSING, "reason": f"읽지 못했다: {e}"}
+    ours = all(m in text for m in GUARD_MARKS)
+    same = raw == HOOK_SOURCE.read_bytes()
     import os
     ex = os.access(t, os.X_OK)
-    return {"installed": True, "current": same, "executable": ex,
-            "reason": ("정상" if same and ex else
-                       ("실행 권한이 없다" if same else "[중요] 원본과 다르다 — 손으로 고쳤나?"))}
+    if not ours:
+        # [중요] **가장 위험한 상태다** — 파일은 있는데 우리 가드가 아니다. 사유가 그것을
+        #    말해야 사람이 `install-hook` 을 부른다.
+        head = text.strip().splitlines()[1:2]
+        return {"installed": True, "ours": False, "current": False, "executable": ex,
+                "state": STATE_FOREIGN,
+                "reason": ("[중요] **우리 가드가 아니다** — 다른 훅이 덮었다"
+                           + (f" (첫 줄: {head[0].strip()[:60]})" if head else "")
+                           + ". `install-hook` 으로 다시 세울 것 — 지금은 아무것도 안 막는다")}
+    if not same:
+        return {"installed": True, "ours": True, "current": False, "executable": ex,
+                "state": STATE_STALE,
+                "reason": "[주의] 우리 가드이지만 **원본과 다르다** (낡은 사본이거나 손으로 "
+                          "고쳤다) — 막고는 있다. `install-hook` 으로 맞출 것"}
+    return {"installed": True, "ours": True, "current": True, "executable": ex,
+            "state": STATE_OK if ex else STATE_STALE,
+            "reason": "정상" if ex else "실행 권한이 없다"}
 
 
 def install_hook(paths) -> dict:
