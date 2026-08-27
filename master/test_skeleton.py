@@ -288,8 +288,64 @@ def test_register_wiring() -> None:
     check("[중요] 큐를 만지지 않았다", posted == [], str(posted))
 
 
+def test_gate_mode_is_uht_by_default() -> None:
+    """[중요] `#317` 미결 ② — 골조 게이트의 기본은 **UHT** 다 (구현·실측 2026-08-28).
+
+    골조 단계에 풀 빌드는 성립하지 않는다 — 골조가 헤더 계약이면 정의 없는 `UFUNCTION`
+    하나로 `LNK2019` 가 나고, 그건 *골조가 깨진 것*이 아니라 *미완성인 것*이다.
+    """
+    from master.work import skeleton_gate as G
+    from master import layer3_verify as L
+
+    seen = {}
+
+    def fake_build(host, user, bb, target, up, **kw):
+        seen["fn"] = "full"
+        return L.BuildResult(passed=True, failure=None, result="Succeeded")
+
+    sk = S.Skeleton(stem="P", files={"a.h": "x"}, frozen={"k"}, pseudo=1)
+
+    class F:
+        host, user, ue5, windows = "h", "u", r"C:\UE\Engine\Binaries\Win64\UnrealEditor-Cmd.exe", True
+
+    # 기본 모드가 uht 인지 — 주입 없이 부르면 `run_uht_on_workshop` 이 골라져야 한다
+    import inspect
+    src = inspect.getsource(G.run)
+    check("[중요] 기본값이 MODE_UHT 다", "mode: str = MODE_UHT" in src, src[:200])
+    check("  uht 면 run_uht_on_workshop 을 고른다",
+          "run_uht_on_workshop if mode == MODE_UHT" in src, src[:400])
+    check("  full 이면 옛 경로가 남아 있다 (되돌릴 자리)",
+          "run_build_on_workshop" in src and G.MODE_FULL == "full")
+
+    # 모르는 모드는 조용히 넘기지 않는다
+    try:
+        G.run(F(), sk, tree="T", project="P", mode="maybe")
+        check("모르는 모드 거부", False, "통과해 버렸다")
+    except ValueError as e:
+        check("모르는 모드 거부", "uht|full" in str(e), str(e))
+
+    # 판정 결과에 무엇으로 쟀는지 남는다 — 「안 돌린 것 ≠ 통과」와 같은 결
+    g = G.run(F(), sk, tree="T", project="P", writer=lambda *a, **k: None,
+              builder=fake_build, mode=G.MODE_FULL)
+    check("[주의] 무엇으로 쟀는지 결과에 남는다", g.mode == "full", str(g.mode))
+
+
+def test_uht_command_shape() -> None:
+    """[주의] 중첩 인용 — `-Target="…"` 안에 `-Project="…"` 가 들어간다 (실측으로 고른 형태)."""
+    from master import layer3_verify as L
+    cmd = L.build_uht_command(r"C:\UE\Build.bat", "NSEditor", r"E:\t\NS.uproject")
+    check("UHT 모드를 쓴다", "-Mode=UnrealHeaderTool" in cmd, cmd)
+    check("타깃·플랫폼·구성이 -Target 안에 있다",
+          '-Target="NSEditor Win64 Development' in cmd, cmd)
+    check("[주의] uproject 가 안쪽 따옴표로 감싸인다 (공백 있는 경로 대비)",
+          '-Project="E:\\t\\NS.uproject"' in cmd, cmd)
+    check("[중요] 풀 빌드 명령과 다르다", cmd != L.build_build_command(
+        r"C:\UE\Build.bat", "NSEditor", r"E:\t\NS.uproject"))
+
+
 def main() -> int:
-    for fn in (test_frozen_decls_picks_the_contract, test_ue_declaration_macro_families,
+    for fn in (test_gate_mode_is_uht_by_default, test_uht_command_shape,
+               test_frozen_decls_picks_the_contract, test_ue_declaration_macro_families,
                test_inline_log_is_not_frozen, test_filling_a_body_is_not_a_violation,
                test_adding_is_allowed_changing_is_not, test_statement_is_not_a_signature,
                test_depths_and_pseudo, test_parse_files_rejects_unrequested_paths,

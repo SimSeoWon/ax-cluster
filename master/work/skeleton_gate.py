@@ -59,6 +59,7 @@ class GateResult:
     placed: list = field(default_factory=list)   # 원격에 쓴 경로
     error: str = ""
     seconds: float | None = None
+    mode: str = ""                     # `#317` 미결 ② — 무엇으로 쟀나 (uht | full)
 
     @property
     def ok(self) -> bool:
@@ -123,13 +124,36 @@ def place(facts, tree: str, files: dict, *, writer=None) -> list:
     return out
 
 
+MODE_UHT = "uht"        # [중요] 기본 — 헤더 계약만 본다 (`#317` 미결 ② 결정)
+MODE_FULL = "full"      # 링크까지 — [주의] 골조 단계에는 성립하지 않는다 (아래 참조)
+
+
 def run(facts, skeleton, *, tree: str, project: str, uproject: str = "",
         build_bat: str = "", timeout: int = BUILD_TIMEOUT,
-        writer=None, builder=None) -> GateResult:
+        writer=None, builder=None, mode: str = MODE_UHT) -> GateResult:
     """골조를 세워 본다. **통과해야만 등재한다.**
 
     `builder` 를 주입할 수 있는 이유는 테스트다 — 실제 UE5 빌드 없이 계약을 검증한다.
+
+    ## [중요] 기본은 **UHT** 다 (`#317` 미결 ② 결정 2026-08-27 · 구현·실측 2026-08-28)
+
+    사용자 말 그대로: *"경량해서 검사해도 될 거 같아. 모든 사이클 끝나고 `.33` 에서 머지작업
+    할 거잖아."* **골조 단계에 풀 빌드는 성립하지 않는다** — 골조가 헤더 계약이면 정의 없는
+    `UFUNCTION` 하나로 `LNK2019` 가 나고, 그건 *골조가 깨진 것*이 아니라 *미완성인 것*이다.
+
+    실측 (`.2` 격리 워크트리 · NSEditor):
+
+        UHT   정상 골조 **9.7초**(첫 회, 생성 86파일) / 재실행 6.1초
+              엉터리 지정자 **5.3초에 파일:행** — `AxUhtProbe.h(12): Error: Unknown specifier …`
+        풀    75~122초 — **8~12배**
+
+    [주의] **UHT 가 놓치는 부류**(실측 2026-08-28): 정의 없는 `UFUNCTION` · include 누락 ·
+    없는 부모 상속. 그것들은 **조각 빌드에서 N번 터진다.** 사용자가 그 비용을 받아들였고
+    마지막 `.33` 머지가 안전망이다. `mode=MODE_FULL` 로 옛 동작을 부를 수 있다 —
+    되돌릴 자리를 남긴다.
     """
+    if mode not in (MODE_UHT, MODE_FULL):
+        raise ValueError(f"mode 는 {MODE_UHT}|{MODE_FULL} 여야 한다: {mode!r}")
     g = GateResult(stem=getattr(skeleton, "stem", "?"))
     files = getattr(skeleton, "files", None) or {}
     if not files:
@@ -154,7 +178,12 @@ def run(facts, skeleton, *, tree: str, project: str, uproject: str = "",
     up = uproject or _win_join(tree, f"{project}.uproject")
 
     g.checked = True
-    fn = builder or run_build_on_workshop
+    g.mode = mode
+    if builder is not None:
+        fn = builder
+    else:
+        from ..layer3_verify import run_uht_on_workshop
+        fn = run_uht_on_workshop if mode == MODE_UHT else run_build_on_workshop
     g.build = fn(facts.host, facts.user, bb, target_name(project), up, timeout=timeout)
     g.seconds = getattr(g.build, "seconds", None)
     return g

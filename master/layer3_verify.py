@@ -289,9 +289,40 @@ def parse_build_log(text: str, *, tail_lines: int = 15) -> BuildResult:
     )
 
 
+def build_uht_command(build_bat: str, target: str, uproject: str,
+                      *, platform: str = "Win64", config: str = "Development") -> str:
+    """**헤더만** 본다 — UBT 의 `-Mode=UnrealHeaderTool` (`#317` 미결 ② 결정의 구현).
+
+    [중요] **골조 단계에 풀 빌드는 성립하지 않는다.** 골조가 헤더 계약이라면 정의 없는
+    `UFUNCTION` 하나로 `LNK2019` 가 난다 — 그건 *"골조가 깨진 것"* 이 아니라 *"골조가 미완성인
+    것"* 이고, 그 단계에 풀 빌드를 요구하는 것은 검사가 아니라 **요구사항을 바꾸는 것**이다
+    (사용자 결정 2026-08-27).
+
+    실측 (2026-08-28, `.2` 격리 워크트리 · NSEditor):
+
+        정상 골조             UHT **rc=0 · 9.7초**    (풀 빌드 75~122초 — **8~12배**)
+        엉터리 지정자          UHT **rc=6 · 5.3초**    파일:행으로 잡는다
+                             `AxUhtProbe.h(12): Error: Unknown specifier 'NotARealSpecifier'`
+        [주의] 정의 없는 UFUNCTION   UHT **통과 — 놓친다** (풀 빌드는 LNK2019 로 잡는다)
+        [주의] include 누락·없는 부모  UHT **통과 — 놓친다** (풀 빌드는 컴파일 에러로 잡는다)
+
+    [중요] **놓치는 부류는 조각 빌드에서 N번 터진다.** 그 비용은 사용자가 받아들인 것이고,
+    마지막 `.33` 머지 단계가 안전망이다(`#317` 미결 ② 노트).
+    [주의] **판정은 `parse_build_log` 를 공유한다** — UHT 모드도 `Result: Succeeded|Failed` 를
+    찍는다(실측). 파서를 새로 쓰면 두 경로가 조용히 갈라진다.
+    """
+    # [주의] `-Target="…"` **안에** `-Project="…"` 가 다시 들어간다. 중첩 인용이지만
+    #    cmd 가 받아 준다(실측 2026-08-28: 이 형태로 `Result: Succeeded` · 6.1초).
+    #    안쪽 따옴표를 빼도 지금 경로에서는 돌지만 **공백 있는 경로**에서 깨진다.
+    return (
+        f'call "{build_bat}" -Mode=UnrealHeaderTool '
+        f'-Target="{target} {platform} {config} -Project=\"{uproject}\"" -WaitMutex'
+    )
+
+
 def build_build_command(build_bat: str, target: str, uproject: str,
                         *, platform: str = "Win64", config: str = "Development") -> str:
-    """Jenkins 등 외부 구동이 쓰는 표준 UBT 호출 형태."""
+    """Jenkins 등 외부 구동이 쓰는 표준 UBT 호출 형태 — **풀 빌드**(링크까지)."""
     return (
         f'call "{build_bat}" {target} {platform} {config} '
         f'-Project="{uproject}" -WaitMutex'
@@ -314,6 +345,39 @@ def run_build_on_workshop(
     cmd = [
         "ssh", "-o", "BatchMode=yes", f"{user}@{host}",
         build_build_command(build_bat, target, uproject, platform=platform, config=config),
+    ]
+    try:
+        proc = runner(cmd, timeout)
+    except subprocess.TimeoutExpired:
+        return BuildResult(
+            passed=False, failure=f"{timeout}초 안에 끝나지 않았다 — 확인 실패이므로 막는다."
+        )
+    except OSError as e:
+        return BuildResult(passed=False, failure=f"SSH 실행 실패: {e} — 막는다.")
+    return parse_build_log((proc.stdout or "") + "\n" + (proc.stderr or ""))
+
+
+def run_uht_on_workshop(
+    host: str,
+    user: str,
+    build_bat: str,
+    target: str,
+    uproject: str,
+    *,
+    platform: str = "Win64",
+    config: str = "Development",
+    runner: Runner = _run,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> BuildResult:
+    """워크숍에서 **UHT 만** 돌리고 판정한다 (`#317` 미결 ②).
+
+    [중요] `run_build_on_workshop` 과 **같은 파서·같은 전송**이고 **명령만 다르다** —
+    그 파일의 관례 그대로다(*"같은 명령·같은 파서, 전송만 다르다"*). 판정을 다시 쓰면
+    두 경로가 조용히 갈라진다.
+    """
+    cmd = [
+        "ssh", "-o", "BatchMode=yes", f"{user}@{host}",
+        build_uht_command(build_bat, target, uproject, platform=platform, config=config),
     ]
     try:
         proc = runner(cmd, timeout)
