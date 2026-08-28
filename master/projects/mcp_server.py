@@ -253,8 +253,11 @@ def register_work_tool(
         "work_id": got.work_id,
         "summary": got.summary(),
         "tasks": [
+            # [중요] `carried_*` 를 실어 보낸다 — 요청자 세션이 「매니페스트가 durable 에
+            #    실렸나」를 기계로 읽어야 한다. summary 문장만으로는 태스크를 못 짚는다.
             {"stem": t.stem, "task_id": t.task_id, "manifest": t.manifest_path,
-             "hits": t.manifest_hits, "degraded": t.manifest_degraded, "error": t.error}
+             "hits": t.manifest_hits, "degraded": t.manifest_degraded, "error": t.error,
+             "carried_head": t.carried_head, "carried_error": t.carried_error}
             for t in got.tasks
         ],
     }, ensure_ascii=False)

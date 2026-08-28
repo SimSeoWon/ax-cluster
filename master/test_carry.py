@@ -273,9 +273,29 @@ def test_register_wiring():
         mf.build, mf.write = orig_build, orig_write
 
 
+def test_carry_failure_is_loud():
+    """[중요] carry 실패가 **사람 화면에 찍혀야** 한다 (리포트 39 지적).
+
+    등록은 성립하지만 파견은 fail-closed 로 막힌다 — 그 사실이 등록 응답에 없으면
+    요청자 세션이 「성공」으로 읽고 다음 단계로 간다.
+    """
+    from master.work import register as REG
+    ok = REG.TaskResult(stem="a", task_id="t-0", carried_head="h1")
+    bad = REG.TaskResult(stem="b", task_id="t-1", carried_error="pre-push 훅이 막았다")
+    got = REG.Registered(work_id="w-1", tasks=[ok, bad])
+    s = got.summary()
+    check("[중요] carry 실패 건수를 말한다", "carry 실패 1건" in s, s)
+    check("[중요] 파견이 막힌다고 말한다", "파견이 막힌다" in s, s)
+    check("어느 태스크인지 말한다", "t-1" in s, s)
+    check("사유를 말한다", "pre-push" in s, s)
+    clean = REG.Registered(work_id="w-1", tasks=[ok]).summary()
+    check("성공만이면 그 절이 없다", "carry 실패" not in clean, clean)
+
+
 def main() -> int:
     for fn in (test_publish_and_idempotency, test_materialize_real_roundtrip,
                test_fail_closed, test_command_shapes, test_register_wiring,
+               test_carry_failure_is_loud,
                test_publish_refuses_without_guard):
         fn()
     print(f"{'OK' if not FAIL else '[실패]'} test_carry: {PASS}/{PASS + FAIL} 통과")

@@ -129,6 +129,15 @@ class Registered:
         # [주의] 빌드를 확인했는지 **말로 적는다** — 안 적으면 미확인이 통과처럼 읽힌다
         s += (f" · 골조 빌드 [완료] {len(self.gates)}건" if self.gates
               else " · [주의] 골조 빌드 미확인")
+        # [중요] **carry 실패는 크게 말한다** (리포트 39 지적, 2026-08-25 → 2026-08-29 수정).
+        #    종전에는 `carried_error` 를 채우고 **아무 데서도 찍지 않았다** — 등록이 「성공」으로
+        #    읽히고, 파견 단계에서 fail-closed 로 막혀서야 드러났다. 등록 실패는 아니지만
+        #    (트윈 사본은 있다) **다음 단계가 막히는 사실**이라 물음·게이트와 같은 급으로 찍는다.
+        carried = [t for t in self.tasks if (t.carried_error or "").strip()]
+        if carried:
+            head = "; ".join(f"{t.task_id or t.stem}: {t.carried_error}" for t in carried[:2])
+            more = f" (외 {len(carried) - 2}건)" if len(carried) > 2 else ""
+            s += f" · [중요] **carry 실패 {len(carried)}건 — 파견이 막힌다** — {head}{more}"
         if self.failed:
             s += f" · [중요] 실패 {len(self.failed)}건"
         # [중요] `#328` — **물음이 있으면 크게 말한다.** 종전에는 버려져서 사람이 볼 길이
