@@ -220,10 +220,48 @@ uproject 는 §0.05 대상 · init 스펙에 축 없음 · GUI 단계가 남아 
 5. **EOL 은 골조 커밋을 통째로 오염시킬 수 있다.** `git ls-files --eol` 로 인덱스·워킹·속성을
    보고 쓰면 13줄이 13줄로 들어간다
 
-## 12. 남은 것
+## 12. 라이브 등재 (03:14~03:17) — 관문은 등재였다
 
-    [사용자]  Phase 0 잔여 — PP 머티리얼 · 언바운드 PPV · IA_Interact (`.33` 의 claude + unreal-mcp)
-             그 뒤 Phase 1 등재 → 파견 → 통합 → 머지. **실증은 아직 시작 전이다**
+`.33` 세션이 *"`register_work_tool` 이 이 기계의 ax-client 에 없습니다"* 로 막혔다. 전수 확인:
+
+    클라 로스터    `client/runtime/client_mcp.py` 에 `register_work` 문자열 **0건**
+    토큰 스코프    `REQUESTER_SCOPE` 에 `POST /api/v1/works` **없음** → 403 forbidden (scope) 가 정상
+    스킬          `ax-request` §3 은 `register_work_tool(...)` 을 부르라고 적었다 (마스터 MCP 의 도구)
+
+즉 **요청자는 등재할 수 없는데 절차서는 등재를 지시한다** — `#297` 부류다. 아까 잡은 401 여섯 번이
+같은 원인이었다(`.ax/config.json` 이 `:8103/mcp` 를 엔드포인트로 알려주는데 토큰이 없다).
+[중요] **내 실수도 여기 있다** — 오늘 §3.5(등재 *다음* 단계)를 넣으면서 **등재 자체의 도달
+가능성을 재지 않았다.** §3 이 오래 그렇게 적혀 있다는 사실을 검증으로 착각했다.
+
+마스터 등재는 우회가 아니다 — `~/CLAUDE.md` 가 *"Registration from the master is only ever
+standing in for this"* 로 명시한다. 그래서 마스터에서 등재했고, **두 번 막혔다**:
+
+    1차 (MCP)   base 확인 실패 — `setgid: 명령을 허용하지 않음`
+                원인: `twin_base.py:137` 이 `sg gitea -c` 를 **무조건** 쓰는데 서비스 유닛은
+                `NoNewPrivileges=true`·`RestrictSUIDSGID=true` 다. 정작 서비스는 `User=sim` 으로
+                **이미 gitea 그룹을 갖고 있어 `sg` 가 필요 없다**
+                [주의] 그 자리에서 `total=0` 미종결 work 가 남았다 → 사람이 PATCH 로 취소
+    2차 (셸)     `sg` 는 되지만 `require_base=True` 가 base 부재를 거절한다.
+                그런데 `#317` ① 결정이 **「등재를 0번으로」**다 — base 는 등재 뒤에 생긴다.
+                **`#319` 완료조건 2 와 `#317` ① 이 서로를 부정한다** → `#336`
+
+3차에 `require_base=False`(**기존 인자**, 코드 미변경)로 등재했다. 안전망은 `#331` 거절이다.
+
+    work=20260829_0317_phase_1_2_ns334_82b89f4b · base task/…/base · 태스크 3/3
+    d4c04e7f Interactable · 0ff993e8 Interactor · a9d787e7 PromptWidget
+
+[완료] **`8b0c0aa` 가 두 시간 만에 값을 했다** — summary 에 *"[중요] carry 실패 3건 — 파견이
+막힌다 — 기준 커밋이 비었고 durable 도 없다"* 가 찍혔다. 그 커밋 전이면 「태스크 3/3 등록」만
+보고 파견으로 넘어갔을 것이다. 결손도 정확했다 — *"작업 브랜치가 원격에 없다 … 요청자가 먼저
+만들어야 작업이 성립한다"* · *"질의와 정확히 매칭되는 도메인이 없다(노이즈 차단이 정상 동작한
+결과일 수 있다)"*. **둘 다 예정된 상태다.**
+
+## 13. 남은 것
+
+    🔴 [.33]  **base 브랜치 + 골조 커밋** — `task/20260829_0317_phase_1_2_ns334_82b89f4b/base`
+             (이름을 지어내지 말 것). 그 push 뒤에 매니페스트 재수집 → 파견 → 통합 → 머지
+    [사용자]  Phase 0 잔여 — 아웃라인 PP 머티리얼 · 언바운드 PPV (IA_Interact 는 생성 확인)
+    #336     등재 경로 모순 — require_base 기본값 · 서비스의 `sg` · 비원자성 (`#317` 자식)
     ns#334   버전(마일스톤) 미지정 — NS 열린 마일스톤을 마스터가 조회하지 못했다(0건)
     #332     cancel 경로에 work 집계 전이가 없다 (마운트 전환·test_projects 를 막는다)
     #333     cleanup 이 워크트리를 안 본다 + 취소된 work 브랜치 삭제 예외 (`#125` 갱신 필요)
