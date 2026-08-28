@@ -216,6 +216,11 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check   <프로젝트>
 의 **Auto Start Server** → 콘솔 `ModelContextProtocol.GenerateClientConfig Claude` 로 그 기계의
 `claude` 에 서버를 등재 → `claude` 재시작.
 
+[완료] **`.mcp.json` 을 둘이 같이 쓴다 — 서로 지우지 않는다** (실측 2026-08-29). UE 는 그 파일에
+`unreal-mcp` 를 **병합해** 넣고(`ax-client` 가 남는다), 배달의 `merge_mcp_json` 도 ax-client 항목만
+넣고 나머지를 보존한다(깨진 JSON 이면 덮지 않고 멈춘다). 리스너는 `127.0.0.1:8000` 이어야 한다 —
+`0.0.0.0` 이나 LAN IP 로 잡히면 **인증 없는 서버가 LAN 에 열린 것**이므로 포트 설정을 되돌린다.
+
 [중요] **마스터는 이 서버에 붙지 않는다.** loopback 전용 + non-loopback `Origin` 거부 + 인증 없음이고
 Epic 이 *"not safe to expose beyond the local machine"* 이라고 적었다(리포트 05 에서 확정). SSH
 터널로 끌어오는 길은 미검증이고 **설계하지 않는다**(`docs/5_5-project-isolation.md` §Unreal MCP).
