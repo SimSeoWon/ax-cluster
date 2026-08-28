@@ -195,6 +195,42 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check   <프로젝트>
 
 부활 조건과 철거 실측은 `#320` 노트에 있다.
 
+### 5 · 요청자 에디터 — Unreal MCP (UE5 프로젝트만)
+
+요청자(`role=requester`)는 **에셋을 만들어야 한다** — PP 머티리얼·PPV·InputAction·DataTable·
+위젯 BP 는 에디터 밖에서 만들 수 없다. 마스터는 그 자리에 못 간다(SSH 는 세션 0 이고 데스크톱이
+없다). 그래서 **그 기계의 `claude` 가 에디터 안의 MCP 서버에 로컬로 붙는 것**이 설계된 경로다.
+
+`<체크아웃>/<이름>.uproject` 의 `Plugins` 에 둘을 켠다:
+
+```json
+{ "Name": "ModelContextProtocol", "Enabled": true, "TargetAllowList": ["Editor"] },
+{ "Name": "EditorToolset",        "Enabled": true, "TargetAllowList": ["Editor"] }
+```
+
+[중요] **`TargetAllowList` 를 `Editor` 로 묶는다.** `ModelContextProtocol`(에디터 UI 의 이름은
+**"Unreal MCP"**, 5.8 1st-party)은 Runtime 모듈도 갖고 있어서 안 묶으면 **패키징에 실려 나간다** —
+인증 계층이 없는 서버다.
+
+나머지는 사람이 에디터에서 한다: 재시작 → `Editor Preferences > General > Model Context Protocol`
+의 **Auto Start Server** → 콘솔 `ModelContextProtocol.GenerateClientConfig Claude` 로 그 기계의
+`claude` 에 서버를 등재 → `claude` 재시작.
+
+[중요] **마스터는 이 서버에 붙지 않는다.** loopback 전용 + non-loopback `Origin` 거부 + 인증 없음이고
+Epic 이 *"not safe to expose beyond the local machine"* 이라고 적었다(리포트 05 에서 확정). SSH
+터널로 끌어오는 길은 미검증이고 **설계하지 않는다**(`docs/5_5-project-isolation.md` §Unreal MCP).
+
+[주의] 도구를 공급하는 것은 **툴셋**이다 — `EditorToolset` 이 최소이고 필요할 때 한 줄씩 늘린다
+(`UMGToolSet` 위젯 BP · `GameplayTagsToolset` · `ConfigSettingsToolset` · `AutomationTestToolset`).
+`AllToolsets` 는 한 줄이지만 Experimental 25종을 프로젝트에 영구히 끌어온다. **머티리얼 전용
+툴셋은 없다**(5.8 목록 실측) — PP 머티리얼은 사람이 만드는 편이 확실하다.
+
+안 됐으면: `Edit > Plugins` 에 "Unreal MCP" 가 없거나, 있어도 `claude` 의 MCP 목록에 그 서버가
+안 보인다. 후자는 `GenerateClientConfig` 를 안 한 것이다.
+
+[주의] **이 단계는 `deliver` 로 자동화되지 않는다** — 배달이 만지는 것은 `.ax/`·스킬·MCP 설정이고
+`uproject` 는 게임 소스다(§0.05 계획·동의 대상). 자동화는 `#335` 로 남겼다.
+
 ## 14.3 마운트 — 마지막, 사람 승인 자리
 
 ```
@@ -230,7 +266,7 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.ontology status               #
 1,010/1,055 건에 `source_commit` 이 없어 **비교할 근거가 없다.** 그 값은 소스가 바뀌어
 재합성될 때 붙는다.
 
-## 14.5 [주의] 이 런북이 만들어지며 드러난 구멍 둘
+## 14.5 [주의] 이 런북이 만들어지며 드러난 구멍 셋
 
 절차를 명령으로 적으려 하자 **실행 표면이 없는 자리**가 나왔다 — 산문으로만 적었으면 안 보였다.
 
@@ -240,3 +276,6 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.ontology status               #
     role 을 못 준다      `logic.set_workshop` 엔 `role` 이 있는데 **MCP 도구가 안 열어 뒀다**.
                          즉 `requester`(사람의 기계)를 문서화된 표면으로 등재할 수 없었다 →
                          열었다. 기본값(`worker`)에 기대면 사람 기계에 파견이 간다
+    요청자 에디터 없음    UE5 프로젝트인데 **요청자가 에셋을 만들 수 있게 하는 단계가 없었다**.
+                         NS 는 2026-08-22 온보딩을 마쳤는데도 에셋 작업 경로가 열려 있지 않았고,
+                         2026-08-29 상호작용 작업에서 드러나 §14.2-5 가 신설됐다
