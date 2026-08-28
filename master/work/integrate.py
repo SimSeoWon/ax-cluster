@@ -664,6 +664,16 @@ def durable_base(facts, durable: str, base: str, target_files: set, *,
     ② 기준→팁 diff 가 **대상 파일과 겹치지 않는다** (겹치면 추론의 근거가 낡았다 —
        그 위에 지으면 durable 의 변경을 되돌려 덮는다. fail-closed: 기준 유지 + 시끄럽게)
 
+    [중요] **`at_commit` 이 빈 문자열이면 거절이다** (사용자 결정 2026-08-28). durable 이 원격에
+    없으면 여기서 멈춘다 — 종전에는 기준 커밋 위에 짓고 계속 갔는데, push 가
+    `HEAD:refs/heads/<durable>` 이라 **없는 ref 를 만들어 버린다.** 그러면 골조 없는
+    `task/<W>/base` 가 생기고 조각들이 그 위에서 갈라져 **인터페이스 동결이 다시 약속으로만**
+    남는다(`#319` 가 고친 자리 · `twin_base` 의 *"브랜치를 만드는 것은 요청자다"*).
+
+    [주의] **거절과 폴백을 가른다** — 브랜치가 *있는데* 팁을 그 위에 못 쌓는 경우(자손 아님 ·
+    대상 파일 접촉 · diff 못 읽음)는 종전대로 **기준 커밋 위에 짓고 시끄럽게 적는다.** 그때는
+    ref 가 이미 있어 push 가 새로 만드는 일이 없다.
+
     [주의] 동결 대조 원본(baseline)은 여기와 무관하게 **추론 기준 커밋**을 계속 쓴다 —
     응답이 근거한 소스와 대조해야 동결 검사가 의미를 갖는다.
     """
@@ -671,12 +681,15 @@ def durable_base(facts, durable: str, base: str, target_files: set, *,
         return base, ""
     rc, _ = _git(facts, f"fetch origin +refs/heads/{durable}", runner_=runner_)
     if rc != 0:
-        return base, f"[주의] durable {durable} 을 fetch 못 했다 — 기준 커밋 위에 짓는다 (push 는 거부될 수 있다)"
+        return "", (f"[중요] **거절** — durable `{durable}` 을 fetch 못 했다: 브랜치가 원격에 "
+                    f"없거나 원격을 못 봤다. **요청자가 골조를 담은 그 브랜치를 만들어야 한다** "
+                    f"— 통합자는 만들지 않는다")
     rc, tip = _git(facts, f"rev-parse refs/remotes/origin/{durable}", runner_=runner_)
     lines = [ln for ln in (tip or "").strip().splitlines() if ln.strip()]
     tip = lines[-1].strip() if rc == 0 and lines else ""
     if rc != 0 or not tip:
-        return base, f"[주의] durable {durable} 팁을 못 읽었다 — 기준 커밋 위에 짓는다"
+        return "", (f"[중요] **거절** — durable `{durable}` 팁을 못 읽었다(원격에 없다). "
+                    f"**요청자가 골조를 담은 그 브랜치를 만들어야 한다** — 통합자는 만들지 않는다")
     if tip.startswith(base) or base.startswith(tip):
         return base, ""
     rc, _ = _git(facts, f"merge-base --is-ancestor {base} {tip}", runner_=runner_)
@@ -742,6 +755,11 @@ def run(paths, facts, work_id: str, *, project: str = "", durable: str = "",
     at, base_note = durable_base(facts, durable, base, targets, runner_=runner_)
     if base_note:
         itg.note = base_note
+    # [중요] **거절이면 여기서 멈춘다** (사용자 결정 2026-08-28) — 적용도 커밋도 하지 않는다.
+    #    격리 트리를 기준 커밋 위에 세워 놓고 push 로 넘어가면 없는 base 를 만들어 버린다.
+    #    `passed` 가 비므로 `ok` 는 False 다 — 미확인이 통과로 읽히지 않는다.
+    if not at:
+        return itg
 
     wt = ensure_worktree(facts, work_id, at_commit=at, runner_=runner_)
     itg.tree = wt.path

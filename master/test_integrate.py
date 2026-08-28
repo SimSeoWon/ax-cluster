@@ -132,12 +132,16 @@ class Git:
     """원격 git 대역. 부른 명령을 순서대로 기록하고, 규칙대로 답한다."""
 
     def __init__(self, *, head="aaaa111", dirty="", worktree_exists=False,
-                 push_rc=0, commit_rc=0):
+                 push_rc=0, commit_rc=0, origin_tip="aaaa111"):
         self.calls: list = []
         self.head, self.dirty = head, dirty
         self.worktree_exists = worktree_exists
         self.push_rc, self.commit_rc = push_rc, commit_rc
         self.commits = 0
+        # [중요] `origin_tip=None` 은 **원격에 그 브랜치가 없다**는 뜻이다. 종전 더블은
+        #    fetch 에 rc=0, rev-parse 에 빈 문자열을 줘서 「있는데 팁을 못 읽는」 실물에
+        #    없는 상태를 만들었고, 그 위에서 계약이 갈렸다(`durable_base` 거절 경로).
+        self.origin_tip = origin_tip
 
     def __call__(self, facts, cmd):
         self.calls.append(cmd)
@@ -148,6 +152,11 @@ class Git:
             return 0, self.dirty
         if "rev-parse HEAD" in cmd:
             return 0, self.head
+        if "fetch origin +refs/heads/" in cmd:
+            # 실물: 없는 브랜치를 fetch 하면 rc≠0 이다 (`couldn't find remote ref`)
+            return (0, "") if self.origin_tip else (128, "fatal: couldn't find remote ref")
+        if "rev-parse refs/remotes/origin/" in cmd:
+            return (0, self.origin_tip) if self.origin_tip else (128, "")
         if cmd.split("git -C")[-1].strip().startswith('"') and " commit " in cmd:
             pass
         if " commit " in cmd:
@@ -185,6 +194,14 @@ def tmp_paths():
         @property
         def repo(self):
             return root / "repo"
+
+        # [중요] 실물 `ProjectPaths` 에 있는 것이다(`context_search/paths.py:125`).
+        #    없으면 `classes_in` 이 AttributeError 를 잡아 *"그래프에서 클래스를 읽지
+        #    못했다"* 로 찍는데, 그것은 **제품 결함처럼 읽히는 더블 결함**이었다 —
+        #    20건 넘는 케이스가 층2 grounding 이 빈 채로 통과했다.
+        @property
+        def class_graph_db(self):
+            return root / "class_graph.db"
     return P(), root
 
 
@@ -557,15 +574,24 @@ def test_push_is_ff_only_and_refusal_is_not_forced() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
-def test_no_durable_means_local_only_and_says_so() -> None:
+def test_missing_base_branch_is_refused_not_created() -> None:
+    """[중요] base 가 원격에 없으면 **거절**한다 (사용자 결정 2026-08-28).
+
+    종전 계약은 *"push 를 안 하고 로컬 커밋까지만"* 이었다. 그것이 `#319`(계층형) 에서
+    깨졌다 — `durable` 이 비어도 이름은 `work_id` 에서 유도되므로 「모른다」가 성립하지 않고,
+    push 는 `HEAD:refs/heads/<durable>` 이라 **없는 ref 를 만든다.** 그러면 골조 없는
+    `task/<W>/base` 가 생기고 조각들이 그 위에서 갈라져 인터페이스 동결이 사라진다.
+    """
     paths, root = tmp_paths()
     try:
         spool_two(paths)
-        itg, g = _run(paths, durable="")
-        check("커밋은 했다", len(itg.passed) == 2, itg.summary())
-        check("push 는 안 했다", not itg.pushed and not g.ran(" push "))
-        check("로컬까지만이라고 말한다", "로컬 커밋까지만" in itg.note, itg.note)
+        itg, g = _run(paths, durable="", git=Git(origin_tip=None))
+        check("[중요] 거절이다 — ok 가 아니다", not itg.ok, itg.summary())
+        check("[중요] 브랜치를 만들지 않았다", not g.ran(" push "), str(g.calls))
+        check("커밋도 하지 않았다", not g.ran(" commit ") and not itg.passed, itg.summary())
+        check("거절이라고 말한다", "거절" in itg.note, itg.note)
         check("요청자가 만들어야 한다고 말한다", "요청자" in itg.note, itg.note)
+        check("골조를 담아야 한다고 말한다", "골조" in itg.note, itg.note)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -781,7 +807,7 @@ def main() -> int:
                test_sequential_and_stops_at_first_failure,
                test_partial_pass_keeps_the_increment,
                test_push_is_ff_only_and_refusal_is_not_forced,
-               test_no_durable_means_local_only_and_says_so,
+               test_missing_base_branch_is_refused_not_created,
                test_submit_carries_epoch_and_build_evidence,
                test_layer3_no_tests_is_fail_open_but_said_loudly,
                test_layer3_real_failure_blocks_push, test_layer3_pass_is_reported_as_pass,
