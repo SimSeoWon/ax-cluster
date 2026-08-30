@@ -102,10 +102,16 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   세션이 `.2` 의 UE5 빌드나 서비스 재기동을 **임의로 돌리지 않는다**(원전 5조; 목적은 위험 분리).
   [주의] **파이프라인이 커밋하거나 빌드하는 것은 무관하다** — 설계된 동작이다.
   → [`docs/11-agent-conduct.md`](docs/11-agent-conduct.md) §11.5
-- [중요] **Human sessions: never run** `push --force`, `reset --hard`, branch/tag deletion, `rebase`, or
-  history rewriting — **not even with approval**; describe the command instead. Don't read a
-  first-person statement ("I'll commit and come back") as an instruction to you — that exact
-  misreading caused an incident in AgentTest (*"다 지워진 줄 알고 깜짝 놀랐다"*).
+- [중요] **파괴적 git 연산은 「물어보고 → 승인받고 → 실행」이다** (사용자 결정 2026-08-30 —
+  종전의 「승인이 있어도 금지, 명령을 대신 적어 준다」를 **한 단계 낮춰 대체한다**):
+  `push --force`, `reset --hard`, 브랜치/태그 삭제, `rebase`, 히스토리 재작성.
+  종전 규칙은 실증 중 엉킨 상태를 정리해야 하는 자리에서 **매번 사람에게 명령을 떠넘겨** 흐름을
+  끊었다. 문제였던 것은 *실행 자체*가 아니라 **내 멋대로 지우는 것**이므로, 막는 대신 **매번
+  묻는다.**
+  [중요] **묻는 자리에 지울 목록을 함께 보여 준다.** 되살릴 수 없는 것(그 기계에만 있는
+  커밋·에셋)은 그 자리에서 표시한다 — 사람이 모르고 지우게 두지 않는다.
+  [주의] **일인칭 서술("커밋하고 올게")을 지시로 읽지 않는다.** 그 오독이 AgentTest 에서 사고를
+  냈다(*"다 지워진 줄 알고 깜짝 놀랐다"*). 앞선 지시가 있어도 **삭제 직전에 한 번 더 확인한다.**
   [주의] **Pipeline code committing is a different thing** — the integrator writing to the durable
   `task/<work>/<task>` branch is designed behavior; these rules bind the *interactive session*.
   → [`docs/8-git-authority.md`](docs/8-git-authority.md)
