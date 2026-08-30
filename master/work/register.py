@@ -236,7 +236,16 @@ def _fill_skeletons(specs: list, *, paths: ProjectPaths, make_skeleton=None,
     if not need:
         return []
     from . import skeleton as sk
-    fn = make_skeleton or sk.build
+    # [중요] **`sk.build` 로 폴백하지 않는다** (사용자 결정 2026-08-30). 골조는 `.33` 이
+    #    만든다(`#317` ①·`#319` · `ax-request` §3.5) — 마스터에 「조용히 만드는」 경로를
+    #    남겨 두면 그 결정이 코드에서 다시 열린다. 실제로 그렇게 열려 있었고, 첫 실전 등재가
+    #    `claude:opus` 를 동시 2프로세스로 돌렸다.
+    #    [주의] 주입 없이 여기 오는 것은 **호출부의 버그**다 — 조용히 만들지 말고 말한다.
+    if make_skeleton is None:
+        raise RegisterError(
+            "골조 생성기가 주입되지 않았다 — 마스터는 골조를 만들지 않는다. "
+            "골조는 요청자가 `task/<work_id>/base` 에 실물로 커밋한다 (`#317` ①·`#319`)")
+    fn = make_skeleton
     made: list = []
     for s in need:
         spec = sk.SkeletonSpec(stem=s.stem, files=list(s.target_files),
