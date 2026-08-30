@@ -815,6 +815,16 @@ def test_registration_doc_matches_reality() -> None:
     check("[중요] specs 설명이 depth_set 의 **형과 뜻**을 말한다",
           "정수 배열" in specs and "PSEUDO:N" in specs)
 
+    # [중요] **조각 독립성** — 실측 2026-08-30: 서로 다른 파일 넷에 `depends_on` 을 붙여
+    #    병렬로 갈 수 있는 것을 직렬로 묶었고, 첫 조각 뒤 나머지가 안 풀렸다. 설명이
+    #    「언제 쓰는가」를 안 적었기 때문이다.
+    check("[중요] depends_on 을 보통 비우라고 말한다", "보통 비운다" in specs, specs[:200])
+    check("  같은 파일 뎁스일 때만이라고 말한다", "같은 파일" in specs)
+    check("[중요] requires 가 능력 라우팅이고 추론엔 UE5 가 필요 없다고 말한다",
+          "능력 라우팅" in specs and "필요 없다" in specs)
+    check("[중요] 절차서도 조각이 독립이라고 말한다",
+          "depends_on` 을 붙이지 마라" in skill or "붙이지 마라" in skill, skill[:100])
+
 
 def test_consent_rule_reaches_the_requester() -> None:
     """[중요] **게임 소스는 고치기 전에 동의** — 그 조항이 요청자에게 닿아야 한다 (`#298`).
