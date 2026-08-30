@@ -718,9 +718,35 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["title", "specs"],
                      "properties": {
                          "title": {"type": "string", "description": "한국어 그대로 좋다"},
-                         "specs": {"type": "array", "description": "태스크 명세 목록 — "
-                                   "항목마다 stem·classes·target_file·header_file·contracts",
-                                   "items": {"type": "object"}},
+                         # [중요] **필드를 정확히 적는다.** 실측 2026-08-30: 첫 실전 등재가
+                         #    `summary` 라는 없는 필드를 실어 거절됐다 — 설명이 "항목마다
+                         #    stem·classes·…" 식이라 목록이 닫혀 있는지 열려 있는지 알 수 없었다.
+                         "specs": {"type": "array",
+                                   "description": "태스크 명세 목록. [중요] **아래 필드만** 쓴다 "
+                                   "— 다른 이름을 넣으면 등재가 거절된다. "
+                                   "stem(필수) · classes · contracts(동결 인터페이스) · "
+                                   "target_file · target_files · header_file · depends_on · "
+                                   "requires · priority · instruction · source_files · "
+                                   "skeleton · depth_set",
+                                   "items": {"type": "object",
+                                             "required": ["stem"],
+                                             "properties": {
+                                                 "stem": {"type": "string"},
+                                                 "classes": {"type": "array",
+                                                             "items": {"type": "string"}},
+                                                 "contracts": {"type": "string"},
+                                                 "target_file": {"type": "string"},
+                                                 "target_files": {"type": "array",
+                                                                  "items": {"type": "string"}},
+                                                 "header_file": {"type": "string"},
+                                                 "depends_on": {"type": "array",
+                                                                "items": {"type": "string"}},
+                                                 "requires": {"type": "array",
+                                                              "items": {"type": "string"}},
+                                                 "priority": {"type": "integer"},
+                                                 "instruction": {"type": "string"},
+                                                 "source_files": {"type": "array",
+                                                                  "items": {"type": "string"}}}}},
                          "original_request": {"type": "string",
                                               "description": "[중요] 사용자 원문 그대로"},
                          "target_repo": {"type": "string"},

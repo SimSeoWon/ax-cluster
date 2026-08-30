@@ -96,15 +96,50 @@ def _run(payload: dict) -> dict:
     if not isinstance(raw_specs, list) or not raw_specs:
         return {"ok": False, "reason": "bad_specs", "error": "specs 가 비었거나 배열이 아니다"}
 
+    # [중요] **형을 여기서 검사한다** (실측 2026-08-30). `TaskSpec(**s)` 는 dataclass 라
+    #    **형을 검사하지 않는다** — `.33` 이 `contracts` 를 리스트로 보냈고 그대로 통과한 뒤
+    #    `manifest.build` 에서 `'list' object has no attribute 'strip'` 로 터졌다. 그때는 이미
+    #    work 과 태스크 일부가 만들어진 뒤라 **반쪽 등재**가 남았다(`#336` ③).
+    #    깊은 곳에서 터지는 것보다 **입구에서 사유를 말하고 거절하는 것**이 낫다.
+    import dataclasses as _dc
+    _TYPES = {f.name: f.type for f in _dc.fields(TaskSpec)}
+    _STR = {"stem", "contracts", "skeleton", "target_file", "header_file", "instruction"}
+    _LIST = {"classes", "target_files", "depends_on", "requires", "source_files", "depth_set"}
+
     specs = []
     for i, s in enumerate(raw_specs):
         if not isinstance(s, dict):
             return {"ok": False, "reason": "bad_specs", "error": f"specs[{i}] 가 객체가 아니다"}
+        for k, v in s.items():
+            if k in _STR and not isinstance(v, str):
+                return {"ok": False, "reason": "bad_specs",
+                        "error": f"specs[{i}].{k} 는 문자열이어야 한다 — {type(v).__name__} 이 왔다",
+                        "hint": (f"`{k}` 가 여러 줄이면 줄바꿈으로 이어 붙인 **한 문자열**로 보낸다"
+                                 if isinstance(v, list) else f"`{k}` 의 값 형을 확인하라")}
+            if k in _LIST and not isinstance(v, list):
+                return {"ok": False, "reason": "bad_specs",
+                        "error": f"specs[{i}].{k} 는 배열이어야 한다 — {type(v).__name__} 이 왔다"}
+            if k == "priority" and not isinstance(v, int):
+                return {"ok": False, "reason": "bad_specs",
+                        "error": f"specs[{i}].priority 는 정수여야 한다 — {type(v).__name__} 이 왔다"}
         try:
             specs.append(TaskSpec(**s))
         except TypeError as e:
+            # [중요] **무엇이 유효한지 말한다.** 종전에는 파이썬 `TypeError` 를 그대로 흘려서
+            #    (`got an unexpected keyword argument 'summary'`) 호출자가 **고칠 근거가
+            #    없었다.** 실측 2026-08-30: `.33` 이 첫 실전 등재에서 `summary` 를 지어내 실었고
+            #    거절 사유만 보고는 무엇을 빼야 하는지 알 수 없었다.
+            #    이 저장소 관례다 — *"거부도 200 + ok:false 로 말한다"* 는 **사유와 조치**를
+            #    준다는 뜻이지 예외 문자열을 전달한다는 뜻이 아니다.
+            import dataclasses
+            valid = [f.name for f in dataclasses.fields(TaskSpec)]
+            unknown = sorted(set(s) - set(valid))
             return {"ok": False, "reason": "bad_specs",
-                    "error": f"specs[{i}]: 모르는 필드이거나 형이 틀리다 — {e}"}
+                    "error": f"specs[{i}]: {e}",
+                    "unknown_fields": unknown,
+                    "valid_fields": valid,
+                    "hint": (f"모르는 필드를 빼라: {', '.join(unknown)}" if unknown
+                             else "필드 이름은 맞는데 형이 틀리다 — 값 타입을 확인하라")}
 
     paths = resolve(project)
     got = register_work(
