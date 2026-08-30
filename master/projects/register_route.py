@@ -36,6 +36,17 @@ PATH = "/work/register"
 MAX_BODY = 1 << 20                      # 1MB — 명세 목록이 커도 이 안이다
 
 
+def _log(scope, msg: str) -> None:
+    """저널 한 줄. [중요] **성공도 찍는다** — 거절만 찍으면 「등재가 왔는데 왜 없나」를 못 쫓는다.
+
+    [주의] 큐는 전이마다 `~/ax-state` 에 커밋까지 남기지만(`[work-register]` · `[register]`),
+    **여기서 거절되면 큐에 아무것도 안 간다.** 그 구간이 비면 요청자만 사유를 알고 서버는
+    모른다 — 사용자 지적(2026-08-30): *"로그를 남기고, 그래야 버그가 있을때 찾지"*.
+    """
+    cli = (scope.get("client") or ("?", 0))[0]
+    print(f"[register] {cli} {msg}", flush=True)
+
+
 async def _read_body(receive) -> bytes:
     chunks, total = [], 0
     while True:
@@ -121,15 +132,21 @@ class RegisterApp:
         try:
             raw = await _read_body(receive)
         except ValueError as e:
+            _log(scope, f"거절 too_large — {e}")
             return await _send_json(send, {"ok": False, "reason": "too_large", "error": str(e)}, 413)
         try:
             payload = json.loads(raw or b"{}")
         except ValueError as e:
+            _log(scope, f"거절 bad_json — {e}")
             return await _send_json(send, {"ok": False, "reason": "bad_json",
                                            "error": f"본문이 JSON 이 아니다: {e}"})
         if not isinstance(payload, dict):
+            _log(scope, "거절 bad_json — 최상위가 객체가 아니다")
             return await _send_json(send, {"ok": False, "reason": "bad_json",
                                            "error": "본문 최상위가 객체가 아니다"})
+        _log(scope, f"수신 project={payload.get('project') or '(없음)'} "
+                    f"title={str(payload.get('title') or '')[:60]!r} "
+                    f"specs={len(payload.get('specs') or []) if isinstance(payload.get('specs'), list) else '?'}")
         try:
             import anyio
             got = await anyio.to_thread.run_sync(_run, payload)
@@ -137,7 +154,15 @@ class RegisterApp:
             # [중요] 스택을 그대로 흘리지 않는다 — 사유 한 줄과 형만 준다.
             #    `validate_spec` 이 값을 치른 자리와 같다: 사유를 말해야 하는 곳에서
             #    생 트레이스백을 보여주면 호출자가 조치를 못 고른다.
-            print("[register_route] " + "".join(traceback.format_exception_only(type(e), e)).strip())
+            #    [주의] 다만 **저널에는 전체 트레이스백을 남긴다** — 서버에서 못 쫓으면
+            #    사유만으로는 고칠 수 없다.
+            print("[register] 예외:\n" + traceback.format_exc(), flush=True)
             return await _send_json(send, {"ok": False, "reason": "server_error",
                                            "error": f"{type(e).__name__}: {e}"})
+        if got.get("ok"):
+            deg = sum(1 for t in got.get("tasks") or [] if t.get("manifest_degraded"))
+            _log(scope, f"[완료] work={got.get('work_id')} 태스크={len(got.get('tasks') or [])}"
+                        + (f" · [주의] 매니페스트 결손 {deg}건" if deg else ""))
+        else:
+            _log(scope, f"거절 {got.get('reason') or '?'} — {str(got.get('error') or '')[:200]}")
         return await _send_json(send, got)
