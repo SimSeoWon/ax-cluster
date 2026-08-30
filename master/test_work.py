@@ -461,6 +461,42 @@ def main() -> int:
     finally:
         _r2._build_manifest_and_carry = _orig
 
+    print("\n[16-e] [중요] 등재는 **골조를 만들지 않는다** — 마스터가 LLM 을 부르지 않는다")
+    # [중요] 실측 2026-08-30 21:57: `.33` 이 `instruction` 을 실은 명세 5개를 등재하자
+    #    마스터가 `claude:opus` 를 **동시 2프로세스**로 돌리기 시작했다. `#317` ①·`#319` 는
+    #    골조 제작을 요청자로 옮겼는데 `_fill_skeletons` 가 등재 경로에 남아 있었다.
+    #    사용자: *"골조를 니가 왜 만드는데?"* → 제거(사용자 결정 2026-08-30).
+    # [주의] **내가 라우트를 만들 때 이걸 확인했어야 했다** — 내 테스트는 `instruction` 없는
+    #    명세만 썼고, 그래서 이 경로가 한 번도 안 걸렸다. 첫 실전 페이로드가 밟았다.
+    def _probe_skeleton(sink):
+        """골조 생성기가 **불렸는지만** 잰다 — 실제 생성은 `test_skeleton` 의 몫이다."""
+        from master.work.skeleton import Skeleton
+
+        def fn(_paths, spec):
+            sink.append(spec.stem)
+            # [주의] `Skeleton.ok` 는 fail-closed 다 — files·pseudo·frozen 셋이 다 있어야
+            #    골조로 인정된다. 프로브도 그 계약을 지킨다.
+            return Skeleton(stem=spec.stem,
+                            files={f: "// [PSEUDO] x\n" for f in spec.files},
+                            frozen={"void F()"}, pseudo=1)
+        return fn
+
+    called = []
+    spec_with_instruction = TaskSpec(stem="A", classes=["UA"], target_file="A.cpp",
+                                     instruction="이걸 만들어라")   # skeleton 은 비었다
+    got = register_work("t", [spec_with_instruction], paths=paths, target_repo="r",
+                        poster=poster, searcher=FakeSearch([]),
+                        make_skeleton=_probe_skeleton(called))
+    check("[중요] 주입하면 돈다 (테스트 자리는 살아 있다)", bool(called), str(called))
+
+    called.clear()
+    got = register_work("t", [TaskSpec(stem="B", classes=["UB"], target_file="B.cpp",
+                                       instruction="이것도 만들어라")],
+                        paths=paths, target_repo="r", poster=poster, searcher=FakeSearch([]))
+    check("[중요] **기본값에서는 골조를 만들지 않는다** — instruction 이 있어도",
+          not called and not got.generated, f"called={called} generated={got.generated}")
+    check("등재 자체는 성립한다", got.work_id and len(got.tasks) == 1, got.summary())
+
     # ── 생성 → 층2 → 인계 ───────────────────────────
     F = chr(96) * 3
     print("\n[17] 마크다운 펜스 — §4.4 가 실측한 coder 모델의 유일한 결함")

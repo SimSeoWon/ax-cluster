@@ -324,9 +324,27 @@ def register_work(
 
     gates: list = []
     questions: list = []
-    generated = _fill_skeletons(specs, paths=paths, make_skeleton=make_skeleton,
-                                gate=gate, gate_results=gates,
-                                questions_out=questions, once_answers=once_answers)
+    # ── [중요] **마스터는 등재에서 골조를 만들지 않는다** (사용자 결정 2026-08-30) ──────────
+    #
+    # `#317` ①·`#319` 가 골조 제작을 **요청자(`.33`)** 로 옮겼다 — 골조는 `task/<work_id>/base`
+    # 에 **실물로** 커밋돼야 조각들이 같은 계약을 본다(`ax-request` §3.5). 그런데 `#319` 는
+    # 골조를 **나르는 것**만 없앴고(`register.py` 의 "골조 텍스트는 더 이상 실어 보내지 않는다"),
+    # **만드는 것**은 이 자리에 그대로 남아 있었다.
+    #
+    # [주의] 그래서 첫 실전 등재(2026-08-30 21:57)에서 **마스터가 `claude:opus` 로 골조를
+    # 생성하기 시작했다** — 조각 5개, 동시 2프로세스. 클라 타임아웃은 30초라 요청자는 이미
+    # 포기했고, 재시도가 겹쳐 같은 골조를 여러 번 만들 뻔했다. 사용자: *"골조를 니가 왜 만드는데?"*
+    #
+    # `#336` ①(require_base)과 **같은 부류**다 — 사용자 결정 둘이 다른 시점에 구현됐고
+    # 한쪽을 구현할 때 다른 쪽을 안 봤다.
+    #
+    # [주의] `make_skeleton` 을 **명시로 주입할 때만** 돈다 — 테스트가 그 자리를 쓴다.
+    #    기본값(=주입 없음)에서는 **LLM 을 부르지 않는다.**
+    generated: list = []
+    if make_skeleton is not None:
+        generated = _fill_skeletons(specs, paths=paths, make_skeleton=make_skeleton,
+                                    gate=gate, gate_results=gates,
+                                    questions_out=questions, once_answers=once_answers)
     for s in specs:
         if s.stem in seen:
             raise RegisterError(f"stem 이 중복이다: {s.stem} — 매니페스트가 서로를 덮어쓴다")
