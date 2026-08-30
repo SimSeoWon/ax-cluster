@@ -104,6 +104,14 @@ def cmd_plan(project: str) -> int:
         #    숨어 있으면 아무도 그것을 보지 못한다 (#261).
         mcp = spec.mcp_for(f.role, init)
         print(f"   → {f.path}/.mcp.json — 엔트리 {', '.join(mcp) or '(없음 — 이 역할은 받지 않는다)'}")
+        # [중요] **훅 「등록」을 계획에 찍는다** (`#337`) — 파일 배달과 다른 자리다. 종전에는
+        #    `.claude/hooks/domain_hint.py` 가 배달 목록에만 있어서, 그것이 **등록되지 않아
+        #    한 번도 안 돈다**는 사실이 계획에도 보고에도 나타나지 않았다.
+        hk = spec.managed_hooks_for(f.role)
+        if hk:
+            print(f"   → {f.path}/{spec.SETTINGS_REL} — 훅 등록 "
+                  + ", ".join(f"{ev}({rel.rsplit('/', 1)[-1]})" for ev, _m, rel, _t in hk)
+                  + "  [관리 항목만 교체 · 사용자 훅 보존]")
         # [중요] 페이로드도 **눈으로 보여 준다** — 남의 기계에 쓰는 파일을 계획에서 감추면
         #    `plan` 이 존재하는 이유가 없어진다 (모듈 독스트링: *"무엇을 어디에 쓸지 먼저 본다"*)
         #    [주의] **읽는 자리와 쓰는 자리를 갈라 쓴다** (#262) — 계획에 찍히는 것은 *배달 위치*고
@@ -216,6 +224,9 @@ def cmd_deliver(project: str, *, init: bool = False) -> int:
             print(f"     workshop_md={r['workshop_md']}")
         if "mcp_json" in r:
             print(f"     mcp_json={r['mcp_json']}")
+        if "settings_json" in r:
+            # [중요] 훅 **등록** 자리 — 파일 배달과 다른 것이다 (`#337`)
+            print(f"     settings_json={r['settings_json']}  [훅 등록]")
         if "role_token" in r:
             # [중요] 값이 아니라 경로(또는 부재 안내)만 찍힌다
             print(f"     role_token={r['role_token']}")
@@ -282,6 +293,32 @@ def cmd_check(project: str) -> int:
             if entry != bundle.mcp_entry_for(f):
                 ok_client = False
                 client_note = " · [실패] .mcp.json 의 ax-client 항목이 없거나 다르다"
+            # [중요] **훅이 「등록」됐는지 잰다** (`#337`). 이 검사가 없어서 배달은 계속
+            #    [완료] 를 보고했고 `domain_hint.py` 는 배달된 채 죽어 있었다 — 파일 해시는
+            #    3자 일치였다. **파일이 있다 ≠ 훅이 돈다.**
+            want_hooks = spec.managed_hooks_for(f.role)
+            if want_hooks:
+                _sr = (spec.SETTINGS_REL.replace("/", chr(92)) if f.windows
+                       else spec.SETTINGS_REL)
+                _sp = chr(92) if f.windows else "/"
+                raw_s = bundle._remote_read(f, f"{f.path}{_sp}{_sr}")
+                try:
+                    hooks_got = (json.loads(raw_s or "{}").get("hooks") or {})
+                except ValueError:
+                    hooks_got = None
+                if hooks_got is None:
+                    ok_client = False
+                    client_note += f" · [실패] {spec.SETTINGS_REL} 이 깨진 JSON 이다"
+                else:
+                    for ev, matcher, rel, timeout in want_hooks:
+                        want_e = {"matcher": matcher,
+                                  "hooks": [{"type": "command",
+                                             "command": bundle.hook_command_for(rel, f),
+                                             "timeout": timeout}]}
+                        if want_e not in (hooks_got.get(ev) or []):
+                            ok_client = False
+                            client_note += (f" · [실패] 훅 미등록 — {ev}: "
+                                            f"{rel} (배달만 되고 안 돈다)")
             from .. import auth as _auth
             _rt = _auth.load_role_token("requester")
             if _rt:

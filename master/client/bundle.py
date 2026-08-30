@@ -862,6 +862,70 @@ def merge_mcp_json(prev_text: str, facts: HostFacts) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
 
+def hook_command_for(rel: str, facts: HostFacts) -> str:
+    """훅 스크립트를 부르는 명령. [중요] **인터프리터는 원격 기준**이다.
+
+    원전은 `sys.executable` 을 박았지만(`setup.py:325`) 그건 훅을 **설치하는 기계와 도는 기계가
+    같았기** 때문이다. 우리는 마스터(리눅스)가 `.33`(윈도우)에 배달하므로 마스터의
+    `sys.executable` 을 박으면 **없는 경로**가 등록된다. `mcp_entry_for` 와 같은 판단을 쓴다 —
+    윈도우는 `py`(맨 `python` 은 스토어 스텁이라 버전도 안 찍는다, 실측된 함정).
+
+    [주의] 경로는 **상대·슬래시**다 — `.mcp.json` args 와 같은 근거로, 훅의 cwd 는 체크아웃
+    루트다. 절대경로를 박으면 체크아웃이 옮겨질 때 조용히 죽는다.
+    """
+    return f"{'py' if facts.windows else 'python3'} {rel}"
+
+
+def merge_settings_json(prev_text: str, facts: HostFacts) -> str:
+    """기존 `.claude/settings.json` 에 **관리 훅만** 넣는다 — 사람 것은 보존한다 (`#337`).
+
+    원전 `watcher/setup.py:315 _merge_managed_hooks` 이식. 그쪽과 같은 규약이다:
+    스크립트 경로를 marker 로 삼아 **우리 항목만 걷어내고 새로 얹는다.** 사용자가 등록한 다른
+    훅은 순서까지 그대로 앞에 남는다.
+
+    [중요] 기존 파일이 깨진 JSON 이면 **덮지 않고 멈춘다** — `merge_mcp_json` 과 같은 판단이고,
+    덮으면 사람 내용이 사라진다(배달이 저지를 수 있는 최악).
+    [주의] **`settings.local.json` 은 이 함수가 절대 만지지 않는다** — 원전 분담이 그렇고
+    (`history/2026-03-28_1550`), `.33` 의 그 파일에는 사람의 MCP 토글이 들어 있다.
+    """
+    txt = (prev_text or "").strip()
+    if txt:
+        try:
+            data = json.loads(txt)
+        except ValueError as e:
+            raise BundleError(
+                f"{facts.host}: 기존 {spec.SETTINGS_REL} 이 깨진 JSON 이다 — 덮지 않는다. "
+                f"사람이 확인할 것 ({e})") from e
+        if not isinstance(data, dict):
+            raise BundleError(
+                f"{facts.host}: 기존 {spec.SETTINGS_REL} 최상위가 객체가 아니다 — 덮지 않는다")
+    else:
+        data = {}
+
+    wanted = spec.managed_hooks_for(facts.role)
+    hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise BundleError(f"{facts.host}: {spec.SETTINGS_REL} 의 `hooks` 가 객체가 아니다 — 덮지 않는다")
+
+    for event, matcher, rel, timeout in wanted:
+        entries = hooks.get(event) or []
+        if not isinstance(entries, list):
+            raise BundleError(
+                f"{facts.host}: {spec.SETTINGS_REL} 의 `hooks.{event}` 가 배열이 아니다 — 덮지 않는다")
+        # marker 는 스크립트 경로 — 우리가 앞서 넣은 것만 걷어낸다 (사람 것은 남는다)
+        kept = [e for e in entries
+                if not any(rel in str(h.get("command", ""))
+                           for h in (e.get("hooks") or []) if isinstance(h, dict))]
+        kept.append({"matcher": matcher,
+                     "hooks": [{"type": "command",
+                                "command": hook_command_for(rel, facts),
+                                "timeout": timeout}]})
+        hooks[event] = kept
+    if not hooks:
+        data.pop("hooks", None)          # 빈 키를 남기지 않는다 (역할에 훅이 없을 때)
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
 def skill_text(name: str = SKILL_NAME) -> str:
     p = Path(__file__).with_name("skills") / name / "SKILL.md"
     if not p.is_file():
@@ -1197,6 +1261,19 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
                                         else f"{facts.path}/.mcp.json"))
         written["mcp_json"] = _remote_write(facts, ".mcp.json",
                                             merge_mcp_json(prev_mcp, facts), base="checkout")
+    # ── 훅 등록: **파일을 놓는 것으로 끝나지 않는다** (`#337`) ──────────
+    #    작업장 자산이 `.claude/hooks/` 를 보내지만 훅은 `settings.json` 의 `hooks` 키에
+    #    등록돼야 돈다. 그 등록이 없어 `domain_hint.py` 가 배달된 채 죽어 있었다(실측
+    #    2026-08-30). 선언은 `spec.MANAGED_HOOKS` 하나다.
+    #    [주의] `settings.local.json` 은 건드리지 않는다 — 사람 것이다 (원전 분담).
+    if spec.managed_hooks_for(facts.role):
+        _set_rel = (spec.SETTINGS_REL.replace("/", chr(92)) if facts.windows
+                    else spec.SETTINGS_REL)
+        _sep = chr(92) if facts.windows else "/"
+        prev_set = _remote_read(facts, f"{facts.path}{_sep}{_set_rel}")
+        written["settings_json"] = _remote_write(facts, spec.SETTINGS_REL,
+                                                 merge_settings_json(prev_set, facts),
+                                                 base="checkout")
     # ── 역할 토큰 (#204 에서 requester 전용 → 역할 인식으로) ─────────────
     #    requester·worker 둘 다 **클라 MCP** 가 `.ax/token` 을 읽는다 (worker 의 claimer 는
 #    `#320` 으로 철거됐고, 워커도 클라 MCP 를 받는다 — `#267`·`#261`).

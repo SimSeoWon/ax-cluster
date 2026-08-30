@@ -274,7 +274,45 @@ def gitignore_block() -> str:
 # 그때 index 에서 빼고 디스크를 보존했다(`git rm --cached`). [주의] 그것은 **사람의 저장소
 # 인덱스를 고치는 일**이라, 우리는 지금 **찾아서 이름으로 보고**만 한다 — 자동 untrack 여부는
 # 사람 결정 자리다(#259 onboard 의 확인 단계).
-AMBIENT_MANAGED = ("CLAUDE.md", ".mcp.json", ".claude/CLAUDE.md")
+AMBIENT_MANAGED = ("CLAUDE.md", ".mcp.json", ".claude/CLAUDE.md", ".claude/settings.json")
+
+
+# ── 관리 훅 — **배달만으로는 안 돈다** (`#337`, 원전 `setup._merge_managed_hooks` 이식) ──
+#
+# [중요] **훅 파일은 2026-08-20부터 배달됐고 한 번도 안 돌았다.** `bundle.workshop_files` 가
+# `hooks/` 를 파일째 보내지만(`bundle.py` `WORKSHOP_ROLES` 절), 훅은 **파일이 있다고 도는 것이
+# 아니라 `settings.json` 의 `hooks` 키에 등록돼야** 돈다. 실측 2026-08-30: 배달 코드 전체에
+# `settings.json`·`PostToolUse`·`SessionStart` 문자열 **0건**, `.33` 의 `settings.local.json` 은
+# `enabledMcpjsonServers` 뿐이고 `~/.claude/settings.json` 은 model/theme 뿐 — `hooks` 키 0건.
+# 즉 `workshop/hooks/domain_hint.py` 는 **배달된 채 죽어 있었다.**
+# [주의] `#317` 이 지목한 「돌기는 도는데 아무도 모른다」의 뒤집힌 짝이다 — **안 도는데 아무도
+# 모른다.** 배달이 성공을 보고했고 파일 해시도 3자 일치였다.
+#
+# 원전에는 이 배선이 있었다 — `watcher/setup.py:315 _merge_managed_hooks` 가 `domain_hint.py`
+# 를 marker 로 삼아 **관리 항목만 교체하고 사용자 훅은 보존**했고, `:414 _update_project_settings`
+# 가 `.claude/settings.json` 을 읽어 머지했다. `census.py setup.py` → 인용 7회인데 이 부분만
+# 안 따라왔다. **이식 누락이지 새 기능이 아니다.**
+#
+# [중요] 파일 분담도 원전을 따른다 (`history/2026-03-28_1550_기존Claude환경머지검증및수정.md`):
+#
+#     .claude/settings.local.json   **건드리지 않는다** — 사람 것 (MCP 토글·permissions)
+#     .claude/settings.json         우리가 관리 — 관리 항목만 교체, 나머지 보존
+#
+# [주의] **선언은 여기 하나다.** 배선을 따로 하드코딩하면 `mcp_for` 가 치른 값을 또 치른다
+# (실측 2026-08-23: 선언을 바꿨는데 배달이 안 따라와 워커에 `.mcp.json` 이 안 갔다).
+MANAGED_HOOKS = (
+    # (event, matcher, 체크아웃 기준 스크립트 경로, timeout초)
+    # [중요] marker 는 스크립트 경로다 — 이 문자열이 든 기존 항목만 우리 것으로 보고 교체한다.
+    ("PostToolUse", "Edit|Write", ".claude/hooks/domain_hint.py", 10),
+)
+
+# 관리 훅이 실리는 파일. [주의] `settings.local.json` 이 **아니다** — 위 분담 참조.
+SETTINGS_REL = ".claude/settings.json"
+
+
+def managed_hooks_for(role: str) -> tuple:
+    """이 역할이 등록받을 관리 훅. 훅 스크립트는 작업장 자산이라 요청자만 받는다."""
+    return MANAGED_HOOKS if role == "requester" else ()
 
 
 @dataclass(frozen=True)

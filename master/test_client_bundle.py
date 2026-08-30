@@ -832,6 +832,70 @@ def test_direct_branch_records_what_it_did() -> None:
               str(sorted(names)))
 
 
+
+# ── 훅 등록 (`#337`) ─────────────────────────────────────────────
+#
+# [중요] **이 테스트가 잡는 것은 「배달됐다」와 「돈다」의 차이다.** 실측 2026-08-30: 훅 파일은
+#    2026-08-20부터 배달됐고 해시도 3자 일치였는데 `settings.json` 에 등록이 없어 한 번도 안
+#    돌았다. `check` 는 계속 [완료] 를 보고했다.
+
+def test_hook_registration() -> None:
+    import json as _json
+    r = bundle.HostFacts(host="h", user="u", path="C:\\ws", driven="ssh",
+                         role="requester", os="windows")
+    lin = bundle.HostFacts(host="h", user="u", path="/ws", driven="ssh", role="requester")
+
+    # 빈 상태 → 관리 훅이 등록된다
+    got = _json.loads(bundle.merge_settings_json("", r))
+    ev = got["hooks"]["PostToolUse"]
+    check("[중요] 빈 settings 에 관리 훅이 등록된다", len(ev) == 1, str(got))
+    cmd = ev[0]["hooks"][0]["command"]
+    check("[중요] 윈도우 인터프리터는 `py` — 마스터의 sys.executable 이 아니다",
+          cmd.startswith("py "), cmd)
+    check("훅 경로는 상대·슬래시 (cwd = 체크아웃 루트)",
+          cmd.endswith(".claude/hooks/domain_hint.py"), cmd)
+    check("리눅스는 python3",
+          _json.loads(bundle.merge_settings_json("", lin))["hooks"]["PostToolUse"][0]
+          ["hooks"][0]["command"].startswith("python3 "))
+
+    # [중요] 사용자 훅 보존 — 원전 `_merge_managed_hooks` 의 계약
+    prev = _json.dumps({"hooks": {"PostToolUse": [
+        {"matcher": "Write", "hooks": [{"type": "command", "command": "my_own.py"}]}]},
+        "model": "opus"})
+    got = _json.loads(bundle.merge_settings_json(prev, r))
+    cmds = [h["command"] for e in got["hooks"]["PostToolUse"] for h in e["hooks"]]
+    check("[중요] 사용자 훅은 보존된다", "my_own.py" in cmds, str(cmds))
+    check("[중요] 사용자의 다른 키도 보존된다", got.get("model") == "opus", str(got))
+
+    # 멱등 — 두 번 배달해도 항목이 늘지 않는다
+    twice = _json.loads(bundle.merge_settings_json(_json.dumps(got), r))
+    check("[중요] 재배달이 훅을 중복 등록하지 않는다",
+          len(twice["hooks"]["PostToolUse"]) == len(got["hooks"]["PostToolUse"]),
+          str(twice))
+
+    # 깨진 JSON → 덮지 않고 멈춘다 (merge_mcp_json 과 같은 판단)
+    try:
+        bundle.merge_settings_json("{ 이건 JSON 이 아니다", r)
+        check("[중요] 깨진 settings.json 은 덮지 않는다", False, "통과해버렸다")
+    except bundle.BundleError:
+        check("[중요] 깨진 settings.json 은 덮지 않는다", True)
+
+    # 워커는 훅을 안 받는다 (작업장 자산이 요청자 전용)
+    check("워커 역할엔 관리 훅이 없다", spec.managed_hooks_for("worker") == ())
+
+    # [중요] 선언된 훅 스크립트가 **실제로 배달되는 목록에 있어야** 한다 —
+    #    없으면 없는 파일을 등록하게 된다 (선언과 배선이 두 벌이면 나는 사고)
+    delivered = {rel for rel, _src in bundle.workshop_files("requester")}
+    for _ev, _m, rel, _t in spec.MANAGED_HOOKS:
+        check(f"[중요] 등록할 훅이 배달 목록에 있다 — {rel}", rel in delivered,
+              f"배달 목록에 없다: {sorted(delivered)[:5]}…")
+
+    # settings.local.json 은 이름조차 건드리지 않는다
+    check("[주의] 관리 대상은 settings.json — local 이 아니다",
+          spec.SETTINGS_REL.endswith("/settings.json")
+          and "local" not in spec.SETTINGS_REL, spec.SETTINGS_REL)
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
@@ -843,7 +907,8 @@ def main() -> int:
                test_claude_md_body_has_a_project_axis,
                test_workshop_assets_have_a_project_axis,
                test_workshop_assets_reference_only_live_skills,
-               test_consent_rule_reaches_the_requester):
+               test_consent_rule_reaches_the_requester,
+               test_hook_registration):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_bundle: {PASS}/{total} 통과")
