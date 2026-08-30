@@ -767,6 +767,55 @@ def test_workshop_assets_reference_only_live_skills() -> None:
     check("  홈 스킬도 같다", not bad2, "; ".join(bad2[:4]))
 
 
+def test_registration_doc_matches_reality() -> None:
+    """[중요] **절차서·도구 설명이 실제 도구와 맞는가** (`#339`, 실측 2026-08-30).
+
+    오늘 실전 등재가 네 번 막혔고 **넷 다 설명이 없거나 틀려서**였다:
+    `summary` 를 지어냄 · `contracts` 를 리스트로 · `depth_set` 을 문자열로 ·
+    `target_branch=main` · 타임아웃을 실패로 읽고 재시도(중복 실행).
+
+    [중요] 절차서 §3 은 **없는 도구를 잘못된 시그니처로** 지시하고 있었다
+    (`register_work_tool(… specs_json …)`) — `#297` 부류다.
+    """
+    print("\n[등재 문서] 절차서·도구 설명이 실물과 맞는가 (#339)")
+    root = Path(__file__).resolve().parent / "client"
+    skill = (root / "skills" / "ax-request" / "SKILL.md").read_text(encoding="utf-8")
+
+    # [주의] 이름을 **부르는 형태**(`(`)만 잡는다 — "이건 `register_work_tool` 이 아니다"
+    #    라는 경고 문장은 남아 있어야 한다(다음 세션이 옛 이름을 다시 쓰지 않게).
+    check("[중요] 없는 도구를 **호출하라고** 적지 않는다",
+          "register_work_tool(" not in skill)
+    check("[주의] 대신 옛 이름이 틀렸다는 경고는 남아 있다",
+          "register_work_tool` 이 아니다" in skill)
+    check("실제 도구 이름을 적는다", "register_work(" in skill)
+    check("[중요] `target_branch` 를 보내지 말라고 말한다",
+          "target_branch" in skill and "보내지 마라" in skill)
+    check("[중요] 골조는 마스터가 만들지 않는다고 말한다",
+          "골조는 마스터가 만들지 않는다" in skill)
+    check("[주의] 타임아웃이 실패가 아니라고 말한다",
+          "타임아웃" in skill and "실패가 아니다" in skill)
+    check("[주의] 재시도가 중복이라고 말한다", "중복 등재" in skill)
+
+    # 도구 스키마 쪽 — 세션이 실제로 읽는 곳
+    import importlib.util
+    sp = importlib.util.spec_from_file_location(
+        "cm", Path(__file__).resolve().parent.parent / "client" / "runtime" / "client_mcp.py")
+    cm = importlib.util.module_from_spec(sp)
+    sp.loader.exec_module(cm)
+    tool = next(t for t in cm.TOOLS if t["name"] == "register_work")
+    desc = tool["description"]
+    specs = tool["inputSchema"]["properties"]["specs"]["description"]
+
+    check("[중요] 도구 설명이 「마스터가 골조를 만든다」고 말하지 않는다",
+          "마스터가 분해·골조" not in desc, desc[:120])
+    check("도구 설명이 골조는 요청자 몫이라고 말한다", "골조는 마스터가 만들지 않는다" in desc)
+    check("도구 설명이 target_branch 를 비우라고 말한다", "보내지 마라" in desc)
+    check("[주의] 도구 설명이 타임아웃≠실패를 말한다", "실패가 아니다" in desc)
+    check("[중요] specs 설명이 contracts 의 **형**을 말한다", "한 문자열" in specs)
+    check("[중요] specs 설명이 depth_set 의 **형과 뜻**을 말한다",
+          "정수 배열" in specs and "PSEUDO:N" in specs)
+
+
 def test_consent_rule_reaches_the_requester() -> None:
     """[중요] **게임 소스는 고치기 전에 동의** — 그 조항이 요청자에게 닿아야 한다 (`#298`).
 
@@ -918,6 +967,7 @@ def main() -> int:
                test_workshop_assets_have_a_project_axis,
                test_workshop_assets_reference_only_live_skills,
                test_consent_rule_reaches_the_requester,
+               test_registration_doc_matches_reality,
                test_hook_registration):
         fn()
     total = PASS + FAIL

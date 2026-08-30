@@ -711,10 +711,19 @@ def tool_get_domain_layer(papi, domain: str, layer: int = 0, *, cache=None) -> d
 
 TOOLS = [
     {"name": "register_work",
-     "description": "분산 작업을 마스터에 등재한다 (work + 태스크 N개). 마스터가 분해·골조·"
-                    "매니페스트를 처리하고 work_id 를 돌려준다. [중요] 등재 다음은 작업 "
-                    "브랜치다 — `task/<work_id>/base` 에 골조를 실물로 커밋해야 조각이 "
-                    "같은 계약을 본다.",
+     "description": (
+         "분산 작업을 마스터에 등재한다 (work + 태스크 N개) → `work_id` 를 돌려준다. "
+         "마스터가 하는 것은 **큐 등록과 매니페스트 수집**이다. "
+         "[중요] **골조는 마스터가 만들지 않는다** — 등재 뒤 네가 "
+         "`task/<work_id>/base` 브랜치를 만들고 골조(.h + 컴파일되는 .cpp 스텁)를 "
+         "**실물로 한 커밋**에 올려야 조각들이 같은 계약을 본다 (`#317`·`#319`). "
+         "[중요] **`target_branch` 는 보내지 마라** — 비우면 마스터가 "
+         "`task/<work_id>/base` 로 잡는다. `main` 을 넣으면 조각이 main 에서 갈라진다. "
+         "[주의] **동기 호출이라 매니페스트 수집만큼 걸린다.** 타임아웃이 나도 서버는 계속 "
+         "돈다 — **실패가 아니다.** 먼저 `list_works` 로 들어갔는지 보고, 있으면 "
+         "재시도하지 마라(중복 등재가 된다). "
+         "[주의] 거절은 200 + `ok:false` 로 온다 — `reason`·`hint`·`valid_fields` 를 "
+         "읽고 고친다."),
      "inputSchema": {"type": "object", "required": ["title", "specs"],
                      "properties": {
                          "title": {"type": "string", "description": "한국어 그대로 좋다"},
@@ -722,12 +731,20 @@ TOOLS = [
                          #    `summary` 라는 없는 필드를 실어 거절됐다 — 설명이 "항목마다
                          #    stem·classes·…" 식이라 목록이 닫혀 있는지 열려 있는지 알 수 없었다.
                          "specs": {"type": "array",
-                                   "description": "태스크 명세 목록. [중요] **아래 필드만** 쓴다 "
-                                   "— 다른 이름을 넣으면 등재가 거절된다. "
-                                   "stem(필수) · classes · contracts(동결 인터페이스) · "
-                                   "target_file · target_files · header_file · depends_on · "
-                                   "requires · priority · instruction · source_files · "
-                                   "skeleton · depth_set",
+                                   "description": (
+                                       "태스크 명세 목록. [중요] **아래 필드만** 쓴다 — "
+                                       "다른 이름을 넣으면 거절된다. "
+                                       "stem(필수, 조각 이름) · classes(문자열 배열) · "
+                                       "contracts(**한 문자열** — 동결 인터페이스. 여러 줄이면 "
+                                       "줄바꿈으로 이어 붙인다. 워커가 읽는 계약이다) · "
+                                       "target_file/target_files(이 조각이 맡는 파일) · "
+                                       "header_file · depends_on(배열) · requires(배열, 예 [\"ue5\"]) · "
+                                       "priority(정수) · source_files(배열) · "
+                                       "depth_set(**정수 배열** — `[PSEUDO:N]` 의 N 목록, 예 [1,2]. "
+                                       "쓸 일 없으면 아예 넣지 마라) · "
+                                       "instruction(**보통 넣지 마라** — 골조를 마스터가 만들던 "
+                                       "옛 경로의 재료다. 지금은 골조를 요청자가 만든다) · "
+                                       "skeleton(감사용 사본. 워커는 작업 브랜치에서 읽는다)"),
                                    "items": {"type": "object",
                                              "required": ["stem"],
                                              "properties": {
