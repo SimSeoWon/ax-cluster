@@ -104,8 +104,16 @@ def test_human_steps_are_printed() -> None:
     """[중요] 자동화는 절반이다 — 남은 GUI 셋을 안 찍으면 사람이 「끝났다」고 읽는다."""
     init = spec.ProjectInit(uproject_plugins=({"name": "A", "targets": ("Editor",)},))
     txt = "\n".join(U.plan("P", init=init, workshops=[]))
-    for s in ("Auto Start Server", "GenerateClientConfig", "재시작"):
+    for s in ("Auto Start Server", "GenerateClientConfig", "재시작",
+              # [중요] 화면 이름이 정확해야 한다 — `Project Settings` 는 **틀린 이름**이다
+              #    (실측 2026-08-30: 그렇게 적어서 사용자가 항목을 못 찾았다)
+              "Editor Preferences", "Unreal MCP"):
         check(f"계획이 사람 단계를 찍는다 — {s}", s in txt)
+    check("[중요] 재시작이 **첫 단계**다 — 그 전에는 항목이 화면에 없다",
+          txt.index("재시작") < txt.index("Auto Start Server"))
+    check("[주의] 틀린 화면 이름을 쓰지 않는다", "Project Settings" not in txt)
+    # [주의] 개수를 문장에 박지 않는다 — 단계가 늘었는데 「셋」이라고 적혀 있었다(실측 2026-08-30)
+    check("[주의] 단계 개수를 세서 찍는다", f"{len(U.HUMAN_STEPS)}개" in txt, txt[-200:])
     check("[주의] 계획은 동의를 요구한다", "--confirm" in txt and "동의" in txt)
 
     empty = "\n".join(U.plan("P", init=spec.ProjectInit(), workshops=[]))

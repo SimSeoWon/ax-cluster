@@ -30,11 +30,20 @@ import json
 from . import bundle, spec
 
 # [중요] 자동화가 못 하는 GUI 단계 — 출력이 이것을 반드시 찍는다 (`#335` 완료 조건 3)
+# [중요] **순서가 중요하다 — 재시작이 먼저다.** 재시작 전에는 플러그인이 로드되지 않아
+#    `Editor Preferences` 에 그 항목 자체가 없다(실측 2026-08-30: 사용자가 *"에디터에 설정에
+#    해당 옵션 없는데?"* — 재시작 전이었다). 종전 문구는 순서가 거꾸로였고 화면 이름도 틀렸다
+#    (`Project Settings` 가 아니라 **`Editor Preferences`**).
+# [주의] 문구의 정본은 `docs/14-onboarding-runbook.md` §14.2-5 다 — 여기서 지어내지 않는다.
 HUMAN_STEPS = (
-    "에디터 Project Settings → Model Context Protocol → **Auto Start Server** 를 켠다",
-    "같은 화면의 **GenerateClientConfig** 로 `.mcp.json` 항목을 만든다 "
-    "(마스터가 쓴 `ax-client` 항목은 보존된다 — 실측 2026-08-29)",
-    "**에디터를 재시작**한다 — 플러그인 활성화는 재시작 뒤에 듣는다",
+    "**에디터를 재시작**한다 — 플러그인은 재시작 뒤에 로드된다. 이걸 먼저 하지 않으면 "
+    "아래 항목이 화면에 **없다**",
+    "`Edit > Plugins` 에 **\"Unreal MCP\"** 가 보이는지 확인한다 "
+    "(에디터 UI 의 이름이 그것이다 — `ModelContextProtocol` 로는 안 보인다)",
+    "`Editor Preferences > General > Model Context Protocol` 의 **Auto Start Server** 를 켠다",
+    "에디터 콘솔에 `ModelContextProtocol.GenerateClientConfig Claude` — 그 기계의 `claude` 에 "
+    "서버를 등재한다 (`.mcp.json` 의 `ax-client` 항목은 보존된다, 실측 2026-08-29)",
+    "`claude` 를 재시작한다",
 )
 
 
@@ -121,7 +130,7 @@ def plan(project: str, *, init=None, workshops=None) -> list:
     out.append("")
     out.append("[주의] 쓰기 전에 동의를 받는다 (`.uproject` 는 게임 소스 — §0.05). "
                "실행: `python -m master.client uproject <프로젝트> --confirm`")
-    out.append("[중요] 자동화가 못 하는 사람 단계 셋:")
+    out.append(f"[중요] 자동화가 못 하는 사람 단계 {len(HUMAN_STEPS)}개 — **순서대로**:")
     for i, s in enumerate(HUMAN_STEPS, 1):
         out.append(f"  {i}. {s}")
     return out
@@ -163,7 +172,7 @@ def apply(project: str, *, init=None, facts=None, reader=None, writer=None) -> l
         out.append(f"  [완료] {f.host}: {wr(f, up, body, base='checkout')} "
                    f"— 바뀐 플러그인 {', '.join(changed)}")
     out.append("")
-    out.append("[중요] 여기까지는 절반이다. 사람이 할 셋:")
+    out.append(f"[중요] 여기까지는 절반이다. 사람이 할 {len(HUMAN_STEPS)}개 — **순서대로**:")
     for i, s in enumerate(HUMAN_STEPS, 1):
         out.append(f"  {i}. {s}")
     return out
