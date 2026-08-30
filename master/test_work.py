@@ -417,6 +417,50 @@ def main() -> int:
     finally:
         _reg.base_status = _orig_bs
 
+    print("\n[16-c] `#336` ③ — 등재가 죽으면 **반쪽 work 를 남기지 않는다**")
+    # [중요] 실측 2026-08-30: `.33` 첫 실전 등재가 `manifest.build` 에서 예외로 죽어
+    #    `total=1`(specs 는 4) 인 work 이 `in_progress` 로 남았고, 다음 세션이 그것을
+    #    「이미 등재돼 있다」로 읽어 판단이 흐려졌다. 큐엔 삭제 API 가 없으니 **종결**시킨다.
+    seen_patch = []
+
+    def poster_boom(url, payload):
+        seen_patch.append((url, payload))
+        if url.endswith("/works"):
+            return {"work_id": "wboom"}
+        raise RuntimeError("태스크 등록이 죽었다")
+
+    try:
+        register_work("t", [TaskSpec(stem="A", classes=["U"])], paths=paths,
+                      target_repo="r", poster=poster_boom, searcher=FakeSearch([]))
+        check("[중요] 죽으면 예외를 올린다", False, "조용히 통과해버렸다")
+    except Exception as e:                                  # noqa: BLE001
+        check("[중요] 죽으면 예외를 올린다", True)
+        check("[중요] 사람에게 종결 사실을 말한다", "cancelled" in str(e), str(e)[:160])
+    cancels = [p for _u, p in seen_patch if p.get("merge_status") == "cancelled"]
+    check("[중요] 실패한 work 를 cancelled 로 종결한다", len(cancels) == 1, str(seen_patch)[:200])
+    if cancels:
+        check("[주의] 사유를 남긴다",
+              "등재 실패" in str(cancels[0].get("review_decision") or ""), str(cancels[0]))
+
+    print("\n[16-d] 매니페스트 예외는 **등록을 죽이지 않는다** (베스트에포트가 계약이다)")
+    # [중요] 주석은 「베스트에포트」였는데 `try` 가 없었다 — 그래서 `contracts` 가 리스트일 때
+    #    `mf.build` 의 `contracts.strip()` 이 AttributeError 로 등록 전체를 죽였다.
+    from master.work import register as _r2
+    _orig = _r2._build_manifest_and_carry
+    _r2._build_manifest_and_carry = lambda *a, **k: (_ for _ in ()).throw(
+        AttributeError("'list' object has no attribute 'strip'"))
+    try:
+        got = register_work("t", [TaskSpec(stem="A", classes=["U"]),
+                                  TaskSpec(stem="B", classes=["V"])],
+                            paths=paths, target_repo="r", poster=poster,
+                            searcher=FakeSearch([]))
+        check("[중요] 매니페스트가 죽어도 태스크는 전부 등록된다", len(got.tasks) == 2, str(got.tasks))
+        check("[중요] 결손을 결과에 싣는다",
+              all(t.manifest_degraded for t in got.tasks), str(got.tasks)[:200])
+        check("요약에 드러난다", "결손" in got.summary(), got.summary())
+    finally:
+        _r2._build_manifest_and_carry = _orig
+
     # ── 생성 → 층2 → 인계 ───────────────────────────
     F = chr(96) * 3
     print("\n[17] 마크다운 펜스 — §4.4 가 실측한 coder 모델의 유일한 결함")

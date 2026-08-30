@@ -372,6 +372,42 @@ def register_work(
                           original_request=original_request, target_branch=target_branch,
                           queue_url=queue_url, token=token, poster=post)
 
+    # ── [중요] 여기부터는 **보상 취소**가 붙는다 (`#336` ③, 실측 2026-08-30) ──────────
+    #    큐에는 삭제 API 가 없다(추가 전용 감사 로그). 그래서 등재가 중간에 죽으면 **열린
+    #    반쪽 work** 가 남고, 그것은 마운트 전환(`set_active`)과 `test_projects.py` 를 막는다.
+    #    실측: `.33` 첫 실전 등재가 `manifest.build` 에서 예외로 죽어 `total=1`(specs 4) 인
+    #    work 이 `in_progress` 로 남았고, 다음 세션이 그것을 「이미 등재돼 있다」로 읽었다.
+    #    지울 수 없으면 **종결시킨다** — 열려 있지만 않으면 다음 실행을 오염시키지 않는다.
+    try:
+        return _register_after_create(
+            work_id, specs, paths=paths, target_branch=target_branch, queue_url=queue_url,
+            token=token, post=post, patcher=patcher, searcher=searcher, carrier=carrier,
+            require_base=require_base, generated=generated, gates=gates,
+            questions=questions, accrued=accrued)
+    except BaseException as e:                              # noqa: BLE001
+        note = _abandon_work(work_id, paths=paths, queue_url=queue_url,
+                             patcher=patcher, reason=f"{type(e).__name__}: {e}")
+        raise RegisterError(f"{e}\n[중요] work {work_id} 는 {note}") from e
+
+
+def _abandon_work(work_id: str, *, paths, queue_url: str, patcher, reason: str) -> str:
+    """실패한 등재를 **종결**시킨다. 반환은 사람에게 보일 한 마디."""
+    try:
+        patcher(f"{queue_url}/api/v1/works/{work_id}",
+                {"project": paths.name, "merge_status": "cancelled",
+                 "review_decision": {"decision": "cancelled", "reviewer": "register",
+                                     "reason": f"등재 실패로 자동 종결 — {reason[:300]}"}})
+        return "자동으로 `cancelled` 처리했다 (반쪽 work 를 남기지 않는다)"
+    except Exception as e:                                  # noqa: BLE001
+        # [주의] 이것마저 실패하면 **크게 말한다** — 조용히 넘기면 반쪽이 남은 줄 모른다
+        return (f"[중요] **열린 채로 남았다** — 자동 종결도 실패했다({e}). "
+                f"사람이 `PATCH /api/v1/works/{work_id}` 로 `merge_status=cancelled` 할 것")
+
+
+def _register_after_create(work_id, specs, *, paths, target_branch, queue_url, token,
+                           post, patcher, searcher, carrier, require_base,
+                           generated, gates, questions, accrued):
+    """work 생성 **뒤**의 단계들. 여기서 죽으면 호출부가 보상 취소한다."""
     # ── `#319` 작업 브랜치 ────────────────────────────────────────────────
     # [중요] **이름은 work_id 를 받은 뒤에야 만들어진다** — 생성 POST 에 실을 수 없어서
     #    곧바로 patch 한다. 큐가 work 메타의 SSOT 이고, 표·조회·검수가 그 값을 읽는다.
@@ -521,23 +557,41 @@ def register_tasks(work_id: str, specs: list[TaskSpec], *, paths: ProjectPaths,
         if r.task_id:
             # 매니페스트는 베스트에포트다 — 실패해도 등록을 되돌리지 않는다.
             # 다만 결손을 결과에 실어 호출자가 알 수 있게 한다.
-            m = mf.build(paths, r.task_id, work_id=work_id, classes=spec.classes,
-                         target_files=spec.target_files, stem=spec.stem,
-                         contracts=spec.contracts,
-                         # [중요] 포팅 원본 (소 1.3.5) — 사람이 준 `source_files` 가 이기고,
-                         #    없으면 대상 파일로 자동 조회한다. **경로만** 실린다.
-                         source_files=spec.source_files,
-                         searcher=searcher)
-            r.manifest_path = str(mf.write(paths, m))
-            r.manifest_hits = m.hits
-            r.manifest_degraded = m.degraded
-            # [중요] git-carried (#185 판정 2026-08-17) — 매니페스트를 조각 durable
-            #    `task/<work_id>/<task_id>` 에 commit·push 한다. 원전 C.2 의 성질 복원:
-            #    재배정은 fetch 만, 이력은 git 에. 실패해도 등록은 성립하되(트윈 사본은 있다)
-            #    **결과에 크게 남긴다** — 파견은 fail-closed 라 이대로면 배달에서 막힌다.
-            if carrier is not None:
-                c = carrier(paths, work_id, r.task_id, m.body, base_commit=m.base_commit)
-                r.carried_head = c.head if c.ok else ""
-                r.carried_error = c.error
+            #
+            # [중요] **주석은 그렇게 적혀 있었는데 `try` 가 없었다** (`#336` ③, 실측 2026-08-30).
+            #    `.33` 의 첫 실전 등재가 `contracts` 를 리스트로 보냈고 `mf.build` 안의
+            #    `contracts.strip()` 이 `AttributeError` 로 터졌다. 그 예외가 **루프 밖으로
+            #    빠져나가** 등록 전체를 죽였고, 이미 등록된 태스크 1건과 work 이 큐에 남았다
+            #    (specs 는 4건이었다). 「베스트에포트」가 계약이면 **잡아야 계약이다.**
+            #    [주의] 여기서 잡는 것은 **매니페스트·carry** 뿐이다 — 태스크 등록 자체의
+            #    실패는 위 `except RegisterError` 가 이미 `r.error` 로 싣는다.
+            try:
+                _build_manifest_and_carry(r, spec, paths=paths, work_id=work_id,
+                                          searcher=searcher, carrier=carrier)
+            except Exception as e:                          # noqa: BLE001
+                r.manifest_degraded = list(r.manifest_degraded) + [
+                    f"[중요] 매니페스트 생성이 예외로 죽었다 — {type(e).__name__}: {e}"]
         results.append(r)
     return results
+
+
+def _build_manifest_and_carry(r, spec, *, paths, work_id, searcher, carrier) -> None:
+    """매니페스트 수집 + git-carried 적재. **예외를 잡지 않는다** — 호출부가 잡는다."""
+    m = mf.build(paths, r.task_id, work_id=work_id, classes=spec.classes,
+                 target_files=spec.target_files, stem=spec.stem,
+                 contracts=spec.contracts,
+                 # [중요] 포팅 원본 (소 1.3.5) — 사람이 준 `source_files` 가 이기고,
+                 #    없으면 대상 파일로 자동 조회한다. **경로만** 실린다.
+                 source_files=spec.source_files,
+                 searcher=searcher)
+    r.manifest_path = str(mf.write(paths, m))
+    r.manifest_hits = m.hits
+    r.manifest_degraded = m.degraded
+    # [중요] git-carried (#185 판정 2026-08-17) — 매니페스트를 조각 durable
+    #    `task/<work_id>/<task_id>` 에 commit·push 한다. 원전 C.2 의 성질 복원:
+    #    재배정은 fetch 만, 이력은 git 에. 실패해도 등록은 성립하되(트윈 사본은 있다)
+    #    **결과에 크게 남긴다** — 파견은 fail-closed 라 이대로면 배달에서 막힌다.
+    if carrier is not None:
+        c = carrier(paths, work_id, r.task_id, m.body, base_commit=m.base_commit)
+        r.carried_head = c.head if c.ok else ""
+        r.carried_error = c.error
