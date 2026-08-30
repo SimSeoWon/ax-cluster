@@ -179,6 +179,28 @@ def projects_url(cfg: dict) -> str:
     return f"http://{host}:{port}"
 
 
+def projects_write_api(root: Path | None = None):
+    """8103 의 **토큰 잠긴** 표면 호출자 (`#336` ④ — 등재).
+
+    [중요] `projects_api` 와 갈라 둔다. 그쪽(`/api/v1/*`)은 **무인증 공개**라 토큰을 실을
+    자리가 아니고, 이쪽(`/work/*`)은 `REQUESTER_SCOPE` 로 잠겨 있다. 한 함수가 둘을 겸하면
+    다음에 추가되는 경로가 어느 쪽인지 호출부가 판단하게 된다 — 그 판단을 없앤다.
+    [주의] 태그는 여기서 붙인다 — `queue_api` 와 같은 이유다(`#258`: 도구마다 넣게 하면
+    다음에 추가되는 도구는 태그가 없다).
+    """
+    cfg = load_config(root)
+    base = projects_url(cfg)
+    tok = load_token(root)
+    project = str(cfg.get("project") or "").strip()
+
+    def api(method: str, path: str, payload=None):
+        if project and isinstance(payload, dict) and not str(payload.get("project") or "").strip():
+            payload = {**payload, "project": project}
+        return _call(method, base + path, tok, payload, root_hint=root)
+
+    return api
+
+
 def projects_api(root: Path | None = None):
     """8103 읽기 표면 호출자. [중요] **토큰이 없다** — 이 표면은 읽기 전용 공개(ufw LAN 한정)다.
     (사용자 결정 2026-08-13: *"그냥 있는거 보여주는 뷰어"* — 조작 경로가 아니다.)"""
@@ -254,6 +276,31 @@ def tool_list_works(api, status: str = "") -> dict:
              "merge_status": w.get("merge_status"), "target_branch": w.get("target_branch"),
              "total": w.get("total"), "created": w.get("created")} for w in works]
     return {"count": len(slim), "works": slim}
+
+
+def tool_register_work(_unused, args: dict, *, root=None) -> dict:
+    """분산 작업 등재 (`#336` ④). **8103 의 토큰 잠긴 `/work/register`** 로 간다.
+
+    [중요] 이 도구가 오래 **없었다.** `ax-request` §3 은 등재를 지시했는데 로스터에 없었고
+    스코프에도 없어 403 이 정상 동작이었다(실측 2026-08-29) — 절차서가 못 하는 것을 지시하던
+    `#297` 부류다. 그동안 마스터가 대신 등재했고, `~/CLAUDE.md` 는 그것을 *"standing in"* 이라
+    적어 뒀다. 이제 요청자가 직접 한다.
+
+    [주의] **판단은 마스터가 한다.** 이 함수는 명세를 실어 보내기만 한다 — 분해·골조·게이트·
+    매니페스트·carry 는 전부 서버 쪽이다(κ.0 경계).
+    """
+    title = str(args.get("title") or "").strip()
+    if not title:
+        raise ClientError("title 이 비었다")
+    specs = args.get("specs")
+    if specs in (None, "", [], {}):
+        raise ClientError("specs 가 비었다 — 태스크 목록이 있어야 등재가 성립한다")
+    body = {"title": title, "specs": specs}
+    for k in ("target_repo", "original_request", "target_branch"):
+        v = args.get(k)
+        if v not in (None, ""):
+            body[k] = v
+    return projects_write_api(root)("POST", "/work/register", body)
 
 
 def tool_get_work(api, work_id: str) -> dict:
@@ -663,6 +710,21 @@ def tool_get_domain_layer(papi, domain: str, layer: int = 0, *, cache=None) -> d
 
 
 TOOLS = [
+    {"name": "register_work",
+     "description": "분산 작업을 마스터에 등재한다 (work + 태스크 N개). 마스터가 분해·골조·"
+                    "매니페스트를 처리하고 work_id 를 돌려준다. [중요] 등재 다음은 작업 "
+                    "브랜치다 — `task/<work_id>/base` 에 골조를 실물로 커밋해야 조각이 "
+                    "같은 계약을 본다.",
+     "inputSchema": {"type": "object", "required": ["title", "specs"],
+                     "properties": {
+                         "title": {"type": "string", "description": "한국어 그대로 좋다"},
+                         "specs": {"type": "array", "description": "태스크 명세 목록 — "
+                                   "항목마다 stem·classes·target_file·header_file·contracts",
+                                   "items": {"type": "object"}},
+                         "original_request": {"type": "string",
+                                              "description": "[중요] 사용자 원문 그대로"},
+                         "target_repo": {"type": "string"},
+                         "target_branch": {"type": "string"}}}},
     {"name": "list_works",
      "description": "큐의 work 목록 (검수 대상 파악). status 로 거를 수 있다 — "
                     "검수 대상은 보통 ready_for_review.",
@@ -895,6 +957,11 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                   root: Path | None = None) -> dict:
     """도구 실행. `api`/`papi`/`cache` 주입은 테스트 자리 — 실전은 config·token 에서 만든다."""
     args = args or {}
+    # [중요] **표면이 다르다** — 등재는 8103 의 토큰 잠긴 `/work/register` 로 간다 (`#336` ④).
+    #    큐(8101)도 아니고 8103 의 공개 `/api/v1/*` 도 아니다. 그래서 큐 호출자를 만들기 전에
+    #    여기서 가른다 — 섞으면 다음에 추가되는 도구가 어느 표면인지 호출부가 판단하게 된다.
+    if name == "register_work":
+        return tool_register_work(None, args, root=root)
     if name in ("list_works", "get_work", "redmine_note", "log_writer_signal", "log_history",
                 "add_object_alias", "mark_not_a_class", "redmine_list_issues",
                 "redmine_get_issue", "redmine_meta", "redmine_create_issue",

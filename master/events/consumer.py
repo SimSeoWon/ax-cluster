@@ -43,6 +43,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .. import gitea_group
 from ..context_search.paths import SOURCE_SUBDIR, ProjectPaths, resolve
 from ..projects.config import ConfigError, Registry, normalize_project_id
 from .spool import Batch, Event, Spool
@@ -166,34 +167,14 @@ class RunResult:
                 f"(합침 {self.coalesced}, 거부 {self.rejected})")
 
 
-def _has_gitea_group() -> bool:
-    """이 프로세스가 이미 `gitea` 그룹을 갖고 있나.
-
-    서비스로 돌 때는 `SupplementaryGroups=gitea` 라 갖고 있고, 사람이 셸에서 돌릴 때는
-    **세션이 그룹 추가 이전에 시작됐으면 없다**(실측 2026-08-08: DB 에는 있는데 프로세스에는
-    없었다). 있으면 감싸지 않는다 — `sg` 는 호출마다 저널에 그룹 전환 두 줄을 남겨
-    **정작 읽어야 할 소비자 출력을 덮는다.**
-    """
-    import grp
-    try:
-        return grp.getgrnam("gitea").gr_gid in os.getgroups()
-    except KeyError:
-        return False
-
-
+# [중요] **판정은 `master/gitea_group` 하나다** (`#336` ②). 이 함수가 원래 여기 있었고
+#    `twin_base`·`ontology/drift` 는 무조건 `sg` 로 감싸 서비스 컨텍스트에서 죽었다. 같은 판정을
+#    세 벌 두면 조용히 어긋난다 — 그래서 정본을 옮기고 여기서는 부른다.
 def _git(repo: Path, *args: str, group: bool | None = None) -> tuple[int, str]:
-    """git 실행. 필요할 때만 `sg gitea` 로 감싼다."""
-    cmd = ["git", "-C", str(repo), *args]
-    need = (not _has_gitea_group()) if group is None else group
-    if need:
-        inner = " ".join(_shquote(c) for c in cmd)
-        cmd = ["sg", "gitea", "-c", inner]
+    """git 실행. 필요할 때만 `sg gitea` 로 감싼다 (`gitea_group.wrap`)."""
+    cmd = gitea_group.wrap(["git", "-C", str(repo), *args], force=group)
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=GIT_TIMEOUT)
     return p.returncode, (p.stdout + p.stderr).strip()
-
-
-def _shquote(s: str) -> str:
-    return "'" + s.replace("'", "'\\''") + "'"
 
 
 # [중요] 카나리 기록기는 `master/canary.py` 로 옮겼다 (소 3.5.6 · `#182`).

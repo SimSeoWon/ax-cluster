@@ -391,6 +391,32 @@ def main() -> int:
     check("결손이 기록된다", bool(got4.tasks[0].manifest_degraded))
     check("요약에 드러난다", "결손" in got4.summary(), got4.summary())
 
+    print("\n[16-b] `require_base` 기본값은 **off** — `#336` ① (사용자 결정 2026-08-30)")
+    # [중요] 종전 기본값(`poster is None`)은 실전에서 항상 True 였고, 그것이 `#317` ①
+    #    (등재를 0번으로)과 정면으로 부딪혔다 — 브랜치 이름이 `task/<work_id>/base` 라
+    #    work_id 를 받은 뒤에야 생기므로 등재 시점에 base 는 **있을 수 없다.**
+    #    부재 판정을 없앤 것이 아니라 파견·통합(`#331`)으로 자리를 옮겼다.
+    from master.work import register as _reg
+    seen = []
+    _orig_bs = _reg.base_status
+    _reg.base_status = lambda *a, **k: seen.append(k.get("branch") or a) or _orig_bs(*a, **k)
+    try:
+        seen.clear()
+        register_work("t", [TaskSpec(stem="A", classes=["U"])], paths=paths,
+                      target_repo="r", poster=poster, searcher=FakeSearch([]))
+        check("[중요] 기본값에서 base 를 확인하지 않는다 (등재는 기록이다)", not seen, str(seen))
+
+        seen.clear()
+        try:
+            register_work("t", [TaskSpec(stem="A", classes=["U"])], paths=paths,
+                          target_repo="r", poster=poster, searcher=FakeSearch([]),
+                          require_base=True)
+        except Exception:                                   # noqa: BLE001
+            pass                    # 트윈이 없는 테스트 환경이라 거절/예외 어느 쪽이든 좋다
+        check("[주의] 명시하면 종전대로 확인한다 — 게이트를 없앤 것이 아니다", bool(seen))
+    finally:
+        _reg.base_status = _orig_bs
+
     # ── 생성 → 층2 → 인계 ───────────────────────────
     F = chr(96) * 3
     print("\n[17] 마크다운 펜스 — §4.4 가 실측한 coder 모델의 유일한 결함")

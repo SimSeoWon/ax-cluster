@@ -341,9 +341,24 @@ def register_work(
         patcher = poster
     else:
         patcher = lambda u, p: _post(u, p, token=token, method="PATCH")   # noqa: E731
-    # [중요] 작업 브랜치 요구도 같은 관례를 따른다 — 가짜 큐에는 트윈도 bare 도 없다.
+    # ── `require_base` 기본값은 **off** 다 (`#336` ① · 사용자 결정 2026-08-30) ──────────
+    #
+    # [중요] **종전 기본값(`poster is None` → 실전에서 항상 True)은 재설계 순서와 어긋났다.**
+    #    `#317` 미결 ① 이 「work 등재를 0번으로」로 정했는데, 브랜치 이름이
+    #    `task/<work_id>/base` 라 **work_id 를 받은 뒤에야 이름이 생긴다.** 그 시점에 base 는
+    #    있을 수 없다(요청자가 그 다음에 만든다). 즉 재설계대로 가면 **등재가 구조적으로 한 번
+    #    실패**했다 — `#319` 완료조건 2 와 `#317` ① 이 서로를 부정했고, 한쪽을 구현할 때 다른
+    #    쪽을 안 봤다.
+    #
+    # [중요] **부재 판정을 없애는 것이 아니라 자리를 옮기는 것이다.** 뒤에 그대로 있다:
+    #    · `#331` — base 가 원격에 없으면 통합자가 **거절**한다(at_commit="" · push 없음)
+    #    · 매니페스트 — *"요청자가 먼저 만들어야 작업이 성립한다"* 를 결손으로 찍는다
+    #    · `carry.publish` — 기준 커밋이 비면 실패하고 `8b0c0aa` 가 등록 응답에 크게 남긴다
+    #    등재는 **기록**이고, 브랜치가 필요한 것은 **파견·통합**이다. 게이트를 필요한 자리에 둔다.
+    #
+    # [주의] 여전히 켤 수 있다 — `require_base=True` 를 명시하면 종전과 같이 거절한다.
     if require_base is None:
-        require_base = poster is None
+        require_base = False
 
     # [중요] carrier 기본 AUTO — 실전은 carry.publish, poster 주입(테스트)은 큐가 가짜이므로
     #    git 도 만지지 않는다 (None). 명시 주입이 둘 다 이긴다.

@@ -95,14 +95,20 @@ class Report:
 
 
 def _changed_between(paths: ProjectPaths, old: str, new: str) -> list:
-    """`git diff --name-only`. **읽기 전용**이고 `sg gitea` 로 우회한다(§8.5)."""
+    """`git diff --name-only`. **읽기 전용**이고 bare 는 `gitea` 그룹으로 읽는다(§8.5).
+
+    [중요] **`sg` 는 필요할 때만** (`#336` ②) — 판정은 `gitea_group` 한 곳이 한다. 종전에는
+    무조건 감쌌고, 그러면 서비스 컨텍스트(`NoNewPrivileges=true`)에서 조용히 빈 목록을
+    돌려준다. 이 함수는 실패를 `return []` 로 삼키므로 **드리프트가 0건으로 보였을 것이다.**
+    """
     from ..projects.config import ProjectConfig
+    from .. import gitea_group
     bare = (ProjectConfig.load(paths.config).bare_path or "").strip()
     if not bare or not old or not new or old == new:
         return []
     cmd = f"git --git-dir={bare} diff --name-only {old} {new}"
     try:
-        p = subprocess.run(["sg", "gitea", "-c", cmd], capture_output=True, text=True,
+        p = subprocess.run(gitea_group.wrap_shell(cmd), capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT)
     except (subprocess.SubprocessError, OSError):
         return []

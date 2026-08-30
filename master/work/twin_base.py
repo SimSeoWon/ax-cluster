@@ -42,6 +42,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import gitea_group
 from ..context_search.paths import ProjectPaths
 from ..projects.config import ConfigError, ProjectConfig
 from .branch_names import base_branch
@@ -124,7 +125,12 @@ def _bare_path(paths: ProjectPaths) -> str:
 def remote_heads(paths: ProjectPaths, *, runner=None) -> dict:
     """bare 의 브랜치 목록 `{이름: 커밋}`. **읽기 전용.**
 
-    `runner` 는 테스트 주입용 — 실제로는 `sg gitea -c 'git ls-remote --heads <bare>'`.
+    `runner` 는 테스트 주입용 — 실제로는 `git ls-remote --heads <bare>` 다.
+
+    [중요] **`sg` 로 무조건 감싸지 않는다** (`#336` ②). 종전에는 `["sg","gitea","-c",cmd]` 를
+    조건 없이 썼고, 그래서 **서비스 컨텍스트에서 이 함수가 항상 실패했다**
+    (`NoNewPrivileges=true` → `setgid: 명령을 허용하지 않음`). 정작 서비스는 `User=sim` 이라
+    `gitea` 그룹을 이미 들고 있어 `sg` 가 필요 없다. 판정은 `gitea_group` 한 곳이 한다.
     """
     bare = _bare_path(paths)
     if not bare:
@@ -134,7 +140,7 @@ def remote_heads(paths: ProjectPaths, *, runner=None) -> dict:
         rc, out = runner(cmd)
     else:
         try:
-            p = subprocess.run(["sg", "gitea", "-c", cmd], capture_output=True, text=True,
+            p = subprocess.run(gitea_group.wrap_shell(cmd), capture_output=True, text=True,
                                encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT)
             rc, out = p.returncode, (p.stdout or "") + (p.stderr or "")
         except (subprocess.SubprocessError, OSError) as e:

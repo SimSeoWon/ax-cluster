@@ -81,7 +81,23 @@ def main() -> None:
     #    이쪽은 아무나 찌르는 것을 막는다 — 서로 다른 위협이라 둘 다 필요하다.
     # [중요] 루트와 파비콘을 인증에서 연다 — 라우터가 **직접 처리하고 뒤로 넘기지 않으므로**
     #    MCP 앱에 인증 없이 도달하는 경로가 생기지 않는다(리다이렉트와 빈 응답뿐이다).
-    uvicorn.run(BearerAuthMiddleware(served, auth_token,
+    # ── 요청자 등재 표면 (`#336` ④) ────────────────────────────────────
+    #    [중요] `/work/register` 는 **`/api/v1/` 밖**이다 — 그쪽은 무인증 공개라
+    #    (`public_prefixes`) 등재를 두면 토큰 없이 열린다. 여기 감싸면 인증을 정면으로 탄다.
+    from .register_route import RegisterApp
+    served = RegisterApp(served)
+    # [중요] **역할 스코프를 이 포트에도 배선한다.** 종전에는 큐(8101)에만 있어서 `.33` 이
+    #    `config.json` 의 `mcp: …:8103/mcp` 를 부르면 401 이었다(실측 2026-08-29, 여섯 번).
+    #    [주의] 스코프가 여는 것은 `REQUESTER_SCOPE` 의 **경로들**뿐이다 — `/mcp` 는 그 목록에
+    #    없으므로 여전히 마스터 토큰만 연다.
+    from ..auth import REQUESTER_SCOPE, WORKER_SCOPE, load_role_token
+    _scoped = []
+    for _role, _scope in (("requester", REQUESTER_SCOPE), ("worker", WORKER_SCOPE)):
+        _tok = load_role_token(_role)
+        if _tok:
+            _scoped.append((_tok, _scope))
+    print(f"[auth] 역할 스코프 토큰 {len(_scoped)}개 배선")
+    uvicorn.run(BearerAuthMiddleware(served, auth_token, scoped=tuple(_scoped),
                                      # [중요] 원전 UI 경로는 공개(읽기 전용) — `/mcp` 는 잠김
                                      open_paths=OPEN_PATHS | {"/", FAVICON},
                                      # [중요] 목록을 여기 다시 적지 않는다 — `webui.app` 이 소유한다.
