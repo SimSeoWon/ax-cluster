@@ -85,6 +85,17 @@ def _guard_or_reason(paths) -> str:
     return ""
 
 
+def _has_commit(repo, sha: str) -> bool:
+    """이 저장소가 그 커밋 객체를 갖고 있나. [중요] **없으면 `worktree add` 가 죽는다.**"""
+    if not (sha or "").strip():
+        return False
+    try:
+        _git(repo, "cat-file", "-e", f"{sha}^{{commit}}")
+        return True
+    except GitError:
+        return False
+
+
 def publish(paths, work_id: str, task_id: str, body: str, *, base_commit: str,
             remote: str = WRITE_REMOTE, logf=None) -> Published:
     """매니페스트를 조각 durable `task/<work_id>/<task_id>` 에 commit·push 한다.
@@ -133,6 +144,29 @@ def publish(paths, work_id: str, task_id: str, body: str, *, base_commit: str,
                 p.error = ("기준 커밋이 비었고 durable 도 없다 — 어디에 얹을지 모른 채 "
                            "커밋하지 않는다")
                 return p
+            # [중요] **base 커밋도 fetch 한다** (`#341`, 실측 2026-08-30). durable 경로는 위에서
+            #    fetch 하는데 이 갈래는 안 했다 — `#319` 로 base 브랜치가 도입될 때 durable 쪽만
+            #    넣고 여기를 빠뜨렸다. **첫 조각은 durable 이 아직 없어 반드시 이리 온다.**
+            #    미러에 그 커밋이 없으면 바로 아래 `worktree add` 가 죽는다:
+            #        fatal: 잘못된 레퍼런스: 953587343eda…
+            #    [주의] `twin_base.resolve()` 는 **bare 를 직접 읽어** exists=True 를 냈는데,
+            #    carry 는 **미러의 로컬 객체**를 쓴다. 둘이 보는 곳이 달라서 「있다고 했는데
+            #    없다」가 됐다 — 첫 실전 파견이 여기서 죽었다.
+            if not _has_commit(repo, base):
+                # [주의] **이미 로컬에 있으면 건드리지 않는다** — fetch 실패를 치명으로 보면
+                #    원격이 없는 테스트·오프라인 경로가 죽는다. 없을 때만 가져온다.
+                _base_br = branch_names.base_branch(work_id)
+                try:
+                    _git(repo, "fetch", remote,
+                         f"+refs/heads/{_base_br}:refs/ax/carry-base/{task_id}")
+                except GitError as e:
+                    p.error = (f"기준 커밋 {base[:8]} 이 로컬에 없고 base 브랜치도 못 가져왔다 "
+                               f"— {_base_br}: {str(e)[:160]}")
+                    return p
+                if not _has_commit(repo, base):
+                    p.error = (f"base 브랜치를 가져왔는데도 기준 커밋 {base[:8]} 이 없다 "
+                               f"— {_base_br} tip 과 어긋난다")
+                    return p
             p.created = True
 
         _git(repo, "worktree", "add", "--detach", "--force", str(wt_path), base)

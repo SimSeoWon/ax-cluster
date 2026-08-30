@@ -497,6 +497,48 @@ def main() -> int:
           not called and not got.generated, f"called={called} generated={got.generated}")
     check("등재 자체는 성립한다", got.work_id and len(got.tasks) == 1, got.summary())
 
+    print("\n[16-f] `depends_on` 은 stem 으로 받고 **task_id 로 보낸다** (`#343`)")
+    # [중요] 실측 2026-08-30: `.33` 이 `depends_on=['interactable_component']`(stem)로 보냈다.
+    #    큐는 `completed = {task_id …}` 와 대조하므로 stem 은 **영원히 안 들어간다** — 세 조각이
+    #    조용히 안 풀렸다. 등재 시점엔 task_id 가 없으니 호출자가 쓸 이름은 stem 뿐이다.
+    sent = []
+
+    def poster_dep(url, payload):
+        sent.append((url, payload))
+        if url.endswith("/works"):
+            return {"work_id": "wdep"}
+        return {"task_id": f"id_{payload.get('stem')}"}
+
+    got = register_work("t", [TaskSpec(stem="A", classes=["UA"]),
+                              TaskSpec(stem="B", classes=["UB"], depends_on=["A"])],
+                        paths=paths, target_repo="r", poster=poster_dep,
+                        searcher=FakeSearch([]))
+    dep_payload = [p for u, p in sent if u.endswith("/tasks") and p.get("stem") == "B"]
+    check("[중요] stem 이 task_id 로 바뀌어 나간다",
+          dep_payload and dep_payload[0]["depends_on"] == ["id_A"],
+          str(dep_payload[:1]))
+    check("등재는 성립한다", got.work_id == "wdep" and len(got.tasks) == 2)
+
+    # [주의] 뒤엣것을 가리키면 거절한다 — 그때는 id 가 아직 없다
+    sent.clear()
+    got2 = register_work("t", [TaskSpec(stem="A", classes=["UA"], depends_on=["B"]),
+                               TaskSpec(stem="B", classes=["UB"])],
+                         paths=paths, target_repo="r", poster=poster_dep,
+                         searcher=FakeSearch([]))
+    bad = [t for t in got2.tasks if t.stem == "A"]
+    check("[주의] 뒤에 오는 조각을 가리키면 거절한다",
+          bad and "뒤에 오는 조각" in (bad[0].error or ""), str(bad[:1]))
+    check("  나머지 조각은 등록된다", any(t.ok for t in got2.tasks))
+
+    # 모르는 이름은 조용히 통과시키지 않는다
+    sent.clear()
+    got3 = register_work("t", [TaskSpec(stem="A", classes=["UA"], depends_on=["없는거"])],
+                         paths=paths, target_repo="r", poster=poster_dep,
+                         searcher=FakeSearch([]))
+    check("[중요] 모르는 의존 이름은 거절한다",
+          got3.tasks and "task_id 도 아니다" in (got3.tasks[0].error or ""),
+          str(got3.tasks[:1]))
+
     # ── 생성 → 층2 → 인계 ───────────────────────────
     F = chr(96) * 3
     print("\n[17] 마크다운 펜스 — §4.4 가 실측한 coder 모델의 유일한 결함")

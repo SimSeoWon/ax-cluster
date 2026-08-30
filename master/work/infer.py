@@ -605,7 +605,9 @@ def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner
                      "조각이 클 때만 `parallel=True` 를 켠다.")
 
     lock = threading.Lock()
-    state = {"taken": 0, "failed": set(), "stop": False}
+    state = {"taken": 0, "failed": set(), "stop": False,
+             # [중요] `#342` — 빈손인 워커를 센다. 전원이 빈손일 때만 「큐가 비었다」다.
+             "idle": set(), "workers": len(workers)}
 
     def loop(f):
         while True:
@@ -616,9 +618,16 @@ def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner
                 order = state["taken"]
             task = runner.claim(f.host, f.capabilities, api=api)
             if not task:
+                # [중요] **빈 claim 은 「큐가 비었다」가 아니다** (`#342`, 실측 2026-08-30).
+                #    능력 라우팅이 있으면 *"나에게 줄 게 없다"* 일 수 있다. 실측: `.43`(ue5 없음)
+                #    이 `requires=[ue5]` 태스크 4건 앞에서 즉시 빈 값을 받았고, 그것을 「큐가
+                #    비었다」로 읽어 **`.2` 까지 세웠다** — 첫 조각만 돌고 나머지 3건이 남았다.
+                #    그래서 **자기 루프만** 끝내고, 모두가 빈손일 때만 전체를 세운다.
                 with lock:
                     state["taken"] -= 1
-                    state["stop"] = True        # 큐가 비었다 — 다른 워커도 그만둔다
+                    state["idle"].add(f.host)
+                    if len(state["idle"]) >= state["workers"]:
+                        state["stop"] = True    # 전원이 빈손 — 그때가 「큐가 비었다」
                 return
             task_id = str(task.get("task_id") or task.get("id") or "")
             deps = list(task.get("depends_on") or [])

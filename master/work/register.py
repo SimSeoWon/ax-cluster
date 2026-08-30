@@ -550,9 +550,53 @@ def register_tasks(work_id: str, specs: list[TaskSpec], *, paths: ProjectPaths,
         except Exception as e:                       # noqa: BLE001
             searcher = mf._BrokenSearcher(e)
 
+    # ── [중요] `depends_on` 은 **stem 으로 받고 task_id 로 보낸다** (`#343`, 사용자 결정) ──────
+    #
+    # 등재 시점에는 **task_id 가 아직 없다** — 큐가 등록하면서 발급한다. 그래서 호출자가 쓸 수
+    # 있는 이름은 `stem` 뿐이다. 그런데 큐는 `task_id` 로 대조한다:
+    #
+    #     completed = {tid for tid, t in idx.tasks.items() if status in (verified,cancelled,failed)}
+    #     if not all(d in completed for d in deps):   ← stem 은 여기 절대 안 들어간다
+    #
+    # 실측 2026-08-30: `.33` 이 `depends_on=['interactable_component']`(stem)로 보냈고, 세 조각이
+    # **영원히 안 풀리는** 상태가 됐다. 조용히 막힌다 — 큐도 등재도 아무 말을 안 했다.
+    #
+    # [주의] **앞선 조각이 먼저 등록돼야 한다** — 목록 순서가 곧 의존 순서다. 뒤엣것을 가리키면
+    #    아직 id 가 없으므로 **거절한다**(조용히 stem 을 그대로 보내면 같은 병이 재발한다).
+    stem_to_id: dict = {}
+
+    def _resolve_deps(spec) -> list:
+        out = []
+        for d in spec.depends_on or []:
+            d = str(d).strip()
+            if not d:
+                continue
+            if d in stem_to_id:
+                out.append(stem_to_id[d])
+            elif any(x.stem == d for x in specs):
+                raise RegisterError(
+                    f"{spec.stem}: `depends_on` 이 **뒤에 오는 조각**을 가리킨다 ({d}) — "
+                    f"목록 순서가 의존 순서다. 앞으로 옮길 것")
+            else:
+                # [주의] 이미 task_id 인 경우도 받는다(재등록·수동 조립). 모르는 이름은 거절 —
+                #    조용히 통과시키면 그 태스크가 영원히 안 풀린다.
+                if not any(x.stem == d for x in specs) and len(d) >= 6 and " " not in d:
+                    out.append(d)
+                else:
+                    raise RegisterError(
+                        f"{spec.stem}: `depends_on` 의 `{d}` 는 이 work 의 stem 도 "
+                        f"task_id 도 아니다")
+        return out
+
     results: list[TaskResult] = []
     for spec in specs:
         r = TaskResult(stem=spec.stem)
+        try:
+            deps = _resolve_deps(spec)
+        except RegisterError as e:
+            r.error = str(e)
+            results.append(r)
+            continue
         try:
             reg = post(f"{queue_url}/api/v1/tasks", {
                 "work_id": work_id,
@@ -562,7 +606,7 @@ def register_tasks(work_id: str, specs: list[TaskSpec], *, paths: ProjectPaths,
                 "stem": spec.stem,
                 "target_file": spec.target_file,
                 "header_file": spec.header_file,
-                "depends_on": spec.depends_on,
+                "depends_on": deps,          # [중요] stem → task_id 로 바뀐 값 (`#343`)
                 "requires": spec.requires,
                 "priority": spec.priority,
                 "origin": "master",
@@ -578,6 +622,8 @@ def register_tasks(work_id: str, specs: list[TaskSpec], *, paths: ProjectPaths,
             r.task_id = str(reg.get("task_id") or reg.get("id") or "")
             if not r.task_id:
                 r.error = f"task_id 를 받지 못했다: {reg}"
+            else:
+                stem_to_id[spec.stem] = r.task_id      # 뒤 조각이 이 이름을 가리킬 수 있다
         except RegisterError as e:
             r.error = str(e)
 

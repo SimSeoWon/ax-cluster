@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import subprocess
+import pathlib
 import sys
 import tempfile
 from pathlib import Path
@@ -206,6 +207,35 @@ def test_fail_closed():
 
 # ── 명령 모양 (양 OS) ─────────────────────────────────────────
 
+def test_base_commit_missing_locally():
+    """[중요] **미러에 base 커밋이 없으면 가져온다** (`#341`, 실측 2026-08-30).
+
+    첫 실전 파견이 여기서 죽었다:
+
+        git worktree add --detach --force …/ax-carry-0c98a727 953587343eda…
+        fatal: 잘못된 레퍼런스: 953587343eda…
+
+    `.33` 이 gitea 에 골조를 push 했는데 **마스터 미러가 fetch 를 안 했다.** durable 갈래는
+    위에서 fetch 하는데 base 갈래는 `#319` 때 빠뜨렸다 — **첫 조각은 durable 이 없어 반드시
+    이리 온다.**
+    [주의] `twin_base.resolve()` 는 bare 를 직접 읽어 `exists=True` 를 냈다. carry 는 미러의
+    로컬 객체를 쓴다 — 둘이 보는 곳이 달라 「있다고 했는데 없다」가 됐다.
+    """
+    print("\n[base fetch] 미러에 기준 커밋이 없으면 가져온다 (#341)")
+    p, bare, worker, base = fixture()
+
+    check("[중요] 로컬에 있으면 그대로 쓴다 (fetch 안 한다)",
+          C._has_commit(pathlib.Path(p.repo), base))
+    check("없는 sha 는 False", not C._has_commit(pathlib.Path(p.repo), "0" * 40))
+    check("빈 sha 는 False", not C._has_commit(pathlib.Path(p.repo), ""))
+
+    # 미러가 모르는 커밋 → base 브랜치도 원격에 없다 → 사유를 말하고 멈춘다
+    got = C.publish(p, W, "t-nofetch", BODY, base_commit="0" * 40)
+    check("[중요] 기준 커밋이 없으면 조용히 넘어가지 않는다", not got.ok, str(got.error)[:120])
+    check("  사유가 기준 커밋과 base 브랜치를 둘 다 말한다",
+          "기준 커밋" in got.error and "base" in got.error.lower(), got.error[:160])
+
+
 def test_command_shapes():
     win = C.materialize_command(Facts(r"C:\Users\u\Documents\MS", windows=True), W, "t-9")
     check("[중요] 윈도우 모양 — cd /d · 역슬래시 · mkdir 가드",
@@ -294,7 +324,8 @@ def test_carry_failure_is_loud():
 
 def main() -> int:
     for fn in (test_publish_and_idempotency, test_materialize_real_roundtrip,
-               test_fail_closed, test_command_shapes, test_register_wiring,
+               test_fail_closed, test_base_commit_missing_locally,
+               test_command_shapes, test_register_wiring,
                test_carry_failure_is_loud,
                test_publish_refuses_without_guard):
         fn()
