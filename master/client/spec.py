@@ -304,6 +304,12 @@ MANAGED_HOOKS = (
     # (event, matcher, 체크아웃 기준 스크립트 경로, timeout초)
     # [중요] marker 는 스크립트 경로다 — 이 문자열이 든 기존 항목만 우리 것으로 보고 교체한다.
     ("PostToolUse", "Edit|Write", ".claude/hooks/domain_hint.py", 10),
+    # [중요] **세션 시작 미머지 점검** (`#337` 본체, 사용자 결정 ⓑ 2026-08-30). 승인이 곧
+    #    트리거인데 「승인 기다리는 게 있다」를 사람이 찾아야만 알 수 있었다.
+    #    [주의] matcher 는 `source` 를 **정규식으로** 가른다 — 실측 2026-08-30(`claude -p`):
+    #    "resume" → 미발동 · "startup" → 발동 · "startup|resume|clear" → 발동.
+    #    `compact` 는 뺐다 — 압축은 「켠 것」이 아니라 한 세션 안의 일이다.
+    ("SessionStart", "startup|resume|clear", ".claude/hooks/pending_works.py", 15),
 )
 
 # 관리 훅이 실리는 파일. [주의] `settings.local.json` 이 **아니다** — 위 분담 참조.

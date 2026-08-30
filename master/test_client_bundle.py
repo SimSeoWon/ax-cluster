@@ -890,6 +890,16 @@ def test_hook_registration() -> None:
         check(f"[중요] 등록할 훅이 배달 목록에 있다 — {rel}", rel in delivered,
               f"배달 목록에 없다: {sorted(delivered)[:5]}…")
 
+    # [중요] SessionStart 훅도 같은 배선을 탄다 (`#337` 본체)
+    got = _json.loads(bundle.merge_settings_json("", r))
+    ss = got["hooks"].get("SessionStart") or []
+    check("[중요] SessionStart 훅이 등록된다", len(ss) == 1, str(got.get("hooks")))
+    check("matcher 는 source 를 가른다 — compact 는 빼고 startup/resume/clear",
+          ss and ss[0].get("matcher") == "startup|resume|clear",
+          str(ss[0].get("matcher")) if ss else "없음")
+    check("[주의] 두 훅이 서로 다른 이벤트에 걸린다",
+          set(got["hooks"]) == {"PostToolUse", "SessionStart"}, str(set(got["hooks"])))
+
     # settings.local.json 은 이름조차 건드리지 않는다
     check("[주의] 관리 대상은 settings.json — local 이 아니다",
           spec.SETTINGS_REL.endswith("/settings.json")
