@@ -233,8 +233,27 @@ Epic 이 *"not safe to expose beyond the local machine"* 이라고 적었다(리
 안 됐으면: `Edit > Plugins` 에 "Unreal MCP" 가 없거나, 있어도 `claude` 의 MCP 목록에 그 서버가
 안 보인다. 후자는 `GenerateClientConfig` 를 안 한 것이다.
 
-[주의] **이 단계는 `deliver` 로 자동화되지 않는다** — 배달이 만지는 것은 `.ax/`·스킬·MCP 설정이고
-`uproject` 는 게임 소스다(§0.05 계획·동의 대상). 자동화는 `#335` 로 남겼다.
+[완료] **`#335` 로 코드가 됐다** (2026-08-30) — `uproject` 는 여전히 게임 소스라 `deliver` 가
+만지지 않는다. 대신 **동의 게이트가 있는 별도 명령**을 만들었다:
+
+```
+python -m master.client uproject <프로젝트>            계획만 (쓰지 않는다)
+python -m master.client uproject <프로젝트> --confirm  요청자의 .uproject 에 쓴다
+```
+
+선언은 `<트윈>/config.yaml` 의 `init.uproject_plugins` 이고 **기본값은 비어 있다** — 선언하지
+않은 프로젝트를 건드리지 않는다. `TargetAllowList` 가 빈 항목은 **거부**한다.
+[중요] **사람 단계는 순서가 있다 — 재시작이 먼저다.** 재시작 전에는 플러그인이 로드되지 않아
+아래 항목이 화면에 **없다**(실측 2026-08-30: 그래서 *"에디터에 설정에 해당 옵션 없는데?"* 가 났다):
+
+    1. 에디터 재시작
+    2. `Edit > Plugins` 에 **"Unreal MCP"** 확인 (`ModelContextProtocol` 로는 안 보인다)
+    3. `Editor Preferences > General > Model Context Protocol` → Auto Start Server
+    4. 콘솔 `ModelContextProtocol.GenerateClientConfig Claude`
+    5. `claude` 재시작
+
+라이브 확인(2026-08-30 `.33`): `TCP 127.0.0.1:8000 LISTENING` — **loopback 전용**이고
+`.mcp.json` 에 `ax-client` 와 공존한다. 마스터에서는 연결되지 않는다(설계대로).
 
 ## 14.3 마운트 — 마지막, 사람 승인 자리
 

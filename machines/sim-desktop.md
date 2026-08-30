@@ -59,9 +59,18 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
 
 The pipeline (M3, four deterministic gates — detail in `3-work-pipeline.md`):
 
-    요청 → 골조(claude:opus, 등재 전 **UHT 게이트**) → 분해 → 워커는 **추론만**(ax-infer) → 스풀
+    요청(`.33`) → **`.33` 이 골조를 만들어** `task/<work>/base` 에 실물 한 커밋 (UHT 게이트) → 등재
+         → [마스터] 파견 → 워커는 **추론만**(ax-infer) → 스풀
          → 통합자 `.2`: 층1 → 층2 → 적용 → **조각별 UE5 빌드** → 통과분만 커밋 → work 단위 RunTests
          → [사람 승인] `finalize`: `main` 머지 + Redmine 기재 + **도달 가능 브랜치 정리** (한 호출)
+
+[중요] **마스터는 골조를 만들지 않는다** (`#339`, 2026-08-30 — 그 경로를 코드에서 지웠다).
+`#317` ①·`#319` 가 골조 제작을 요청자로 옮겼는데 `#319` 는 「나르기」만 없애고 「만들기」를
+남겨 뒀고, 첫 실전 등재가 마스터에서 `claude:opus` 를 동시 2프로세스로 돌렸다. 등재가 하는
+것은 **큐 등록과 매니페스트 수집**이다.
+[주의] **파견 트리거는 아직 사람이다** — `#320` 이 상주를 걷으면서 원전의 배당 엔진(워커 데몬
+30초 poll·claim)이 사라졌고, 대체(`#340` `master/work/autodispatch.py`)는 **CLI 까지만** 됐다:
+`python -m master.work.autodispatch <프로젝트> [work_id]`.
 
 [중요] **서버로 가는 모든 「쓰는」 요청은 프로젝트 태그를 실어야 한다** (`#257`, 2026-08-22).
 태그가 없거나 마운트와 다르면 **200 + `ok:false`** 로 거절되고 사유가 셋이다 — `no_project_tag`
