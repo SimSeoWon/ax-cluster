@@ -4,6 +4,7 @@
     python -m master.client plan  <프로젝트>     배달할 내용만 보여준다 (쓰지 않는다)
     python -m master.client deliver <프로젝트>   config + 스킬 배달 → 되읽어 대조
     python -m master.client check <프로젝트>     배달된 것이 정본과 같은지 검사
+    python -m master.client uproject <프로젝트>  에디터 플러그인 계획 (`--confirm` 으로 적용)
 
 [중요] **`probe` → `plan` → `deliver` 순서로 쓴다.** 남의 기계에 쓰는 작업이므로, 무엇을 어디에
 쓸지 먼저 눈으로 본다.
@@ -457,7 +458,26 @@ def cmd_check(project: str) -> int:
     return 1 if bad else 0
 
 
-_CMDS = {"probe": cmd_probe, "plan": cmd_plan, "deliver": cmd_deliver, "check": cmd_check}
+def cmd_uproject(project: str, *, confirm: bool = False) -> int:
+    """`.uproject` 의 에디터 플러그인 (`#335`). [중요] **`plan` 이 기본, `--confirm` 이 트리거.**
+
+    `.uproject` 는 게임 소스라 §0.05 대상이다 — 배달이 조용히 켜지 않는다.
+    """
+    from . import uproject as U
+    init = spec.load_init(project)
+    for line in U.plan(project, init=init):
+        print(line)
+    if not confirm or not init.uproject_plugins:
+        return 0
+    print()
+    print("[중요] --confirm 이 있다 — 요청자의 `.uproject` 에 쓴다")
+    for line in U.apply(project, init=init, facts=_facts(project)):
+        print(line)
+    return 0
+
+
+_CMDS = {"probe": cmd_probe, "plan": cmd_plan, "deliver": cmd_deliver, "check": cmd_check,
+         "uproject": cmd_uproject}
 
 
 def main(argv: list) -> int:
@@ -482,6 +502,9 @@ def main(argv: list) -> int:
     #    미상 목록이 글자까지 같았다) — payload 가 저장소 대비 낡았을 때만 쓴다.
     if argv[0] == "deliver":
         return cmd_deliver(project, init="--init" in argv)
+    if argv[0] == "uproject":
+        # [중요] 관례대로 `plan` 이 기본 — 쓰려면 `--confirm` 을 명시한다
+        return cmd_uproject(project, confirm="--confirm" in argv)
     return _CMDS[argv[0]](project)
 
 

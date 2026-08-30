@@ -370,6 +370,12 @@ class ProjectInit:
     convention_sections: tuple = DEFAULT_CONVENTION_SECTIONS
     extra_skills: dict = field(default_factory=dict)      # role → (name, ...)
     extra_mcp: dict = field(default_factory=dict)         # role → (name, ...)
+    # [중요] **요청자 에디터 플러그인** (`#335`). 기본값이 **비어 있는 것이 계약이다** —
+    #    선언하지 않은 프로젝트의 `.uproject` 를 우리가 건드릴 이유가 없고, `uproject` 는
+    #    **게임 소스**라 §0.05(계획·동의)의 대상이다. 배달이 조용히 켜면 규약 위반이다.
+    # [주의] `AllToolsets` 를 여기 넣지 말 것 — Experimental 25종을 프로젝트에 영구히 끌어온다
+    #    (`#335` 주의). 최소는 `EditorToolset` 이고 늘리는 것은 프로젝트 결정이다.
+    uproject_plugins: tuple = ()                          # ({"name":…, "targets":[…]}, …)
 
     @classmethod
     def from_config(cls, cfg) -> "ProjectInit":
@@ -386,7 +392,38 @@ class ProjectInit:
                                       or DEFAULT_CONVENTION_SECTIONS),
             extra_skills=_by_role(raw.get("extra_skills"), "extra_skills"),
             extra_mcp=_by_role(raw.get("extra_mcp"), "extra_mcp"),
+            uproject_plugins=_plugins(raw.get("uproject_plugins")),
         )
+
+
+# [중요] `TargetAllowList: ["Editor"]` 가 **기본값이자 필수**다 (`#335`). `ModelContextProtocol`
+#    은 Runtime 모듈도 갖고 있어서 안 묶으면 **인증 없는 MCP 서버가 패키징에 실려 나간다.**
+DEFAULT_PLUGIN_TARGETS = ("Editor",)
+
+
+def _plugins(val) -> tuple:
+    """`uproject_plugins` 정규화 — 문자열 목록도 받고, 매핑이면 `targets` 를 존중한다.
+
+    [주의] 조용히 무시하지 않는다 — `_by_role` 과 같은 결이다. 오타 난 항목을 넘기면 사용자는
+    켜진 줄 안다.
+    """
+    if not val:
+        return ()
+    if not isinstance(val, (list, tuple)):
+        raise ValueError(f"`init.uproject_plugins` 는 리스트여야 한다: {type(val).__name__}")
+    out = []
+    for i, item in enumerate(val):
+        if isinstance(item, str):
+            out.append({"name": item, "targets": DEFAULT_PLUGIN_TARGETS})
+            continue
+        if not isinstance(item, dict) or not str(item.get("name") or "").strip():
+            raise ValueError(f"`init.uproject_plugins[{i}]` 는 이름 문자열이거나 "
+                             f"`name` 을 가진 매핑이어야 한다")
+        tg = item.get("targets") or DEFAULT_PLUGIN_TARGETS
+        if isinstance(tg, str):
+            tg = (tg,)
+        out.append({"name": str(item["name"]).strip(), "targets": tuple(tg)})
+    return tuple(out)
 
 
 def _by_role(val, label: str) -> dict:
