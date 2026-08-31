@@ -104,11 +104,14 @@ def main() -> None:
         #    `in_progress · claimed 4` 까지만 보이고, 그것이 세션 한도로 멈춘 것인지 고장인지
         #    사람이 구분할 수 없다 — 오늘 이틀을 잃은 것과 같은 모양이다.
         #    [주의] 이 조회가 실패해도 위의 고지는 살린다(아래 try 를 따로 둔 이유).
-        hold = {}
+        hold, hold_err = {}, ""
         try:
             hold = (api("GET", "/api/v1/status") or {}).get("dispatch_hold") or {}
-        except Exception:                                   # noqa: BLE001,S110
-            hold = {}
+        except Exception as e:                              # noqa: BLE001
+            # [중요] **삼키지 않는다.** 처음에 `except: pass` 로 뒀더니 스코프에 경로가 없어
+            #    403 이 났는데 훅이 **아무 말도 안 했다**(실측 2026-09-01). 이 파일 머리말이
+            #    금지한 「조용한 빈 결과」를 내가 만든 자리다.
+            hold_err = str(e).splitlines()[0]
     except Exception as e:                                  # noqa: BLE001
         # [중요] **침묵하지 않는다.** 못 물어본 것을 「없다」로 읽으면 이 훅은 있으나 마나다.
         print(f"[분산 작업] [주의] 미머지 점검을 못 했다 — {str(e).splitlines()[0]}\n"
@@ -135,6 +138,10 @@ def main() -> None:
               f"{hold.get('project') or '<프로젝트>'} {hold.get('work_id') or ''}".rstrip())
     elif hold.get("blocked"):
         print(f"[분산 작업] [주의] 자동 파견이 멈춰 있다 — {hold.get('line') or '사유 미상'}")
+    elif hold_err:
+        print(f"[분산 작업] [주의] 자동 파견이 멈춰 있는지 **확인하지 못했다** — {hold_err}\n"
+              f"  침묵을 「정상」으로 읽지 말 것. 마스터에서: "
+              f"journalctl -u ax-dispatch -u ax-dispatch-catchup -n 30 --no-pager")
 
     details: dict = {}
     for w in (ready + running)[:DETAIL_MAX]:
