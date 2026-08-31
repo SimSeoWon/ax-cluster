@@ -688,6 +688,58 @@ def _default_reindex(paths: ProjectPaths) -> int:
     return rebuild_all(paths).vector_docs
 
 
+def _note_dispatch_triggers(batch, reg) -> int:
+    """골조 push(`task/<work>/base`)를 봤으면 **파견 트리거만** 남긴다 (`#340` 갈래 ⓑ).
+
+    [중요] **게이트보다 먼저 불려야 한다.** 게이트는 `claim_batch` 로 이벤트를 claim 하고
+    `done()` 으로 버린 뒤 `return` 하므로, 이 호출이 게이트 뒤에 있으면 **영원히 안 불린다** —
+    그리고 골조 push 는 **정의상 항상 진행 중 work 이 있을 때** 일어난다(`#317` ① 순서:
+    0 등재 → 1 브랜치 → 2 골조 push). 실측 2026-08-31 23:08:24: 그 이벤트 1건이 그대로
+    버려졌고, `[dispatch]` 줄이 하나도 없어 사람이 영원히 기다렸다.
+
+    [중요] **`batch.events` 를 보지 않고 배치 디렉토리를 직접 읽는다.** `coalesce()` 가
+    `project_id` 당 **최신 하나만** 남기므로, 골조 push 뒤에 같은 프로젝트의 다른 push 가
+    한 배치에 들어오면 골조 이벤트가 **조용히 사라진다.** 색인은 state-based 라 그래도
+    되지만(미러 HEAD 를 대조한다) 파견의 트리거는 그 이벤트 하나뿐이라 안 된다.
+
+    [주의] 여기서 파견하지 않는다 — 파견은 분 단위이고 이 소비자는 oneshot 이다.
+    """
+    import json as _json
+
+    from ..work.autodispatch import note_trigger, work_id_from_ref
+    n = 0
+    try:
+        files = sorted(f for f in batch.dir.iterdir() if f.is_file())
+    except OSError as e:
+        print(f"[dispatch-trigger] [주의] 배치를 못 읽었다 — {type(e).__name__}: {e}")
+        return 0
+    for f in files:
+        try:
+            d = _json.loads(f.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, ValueError):
+            continue                      # 거부 처리는 `_read_batch` 몫이다
+        if not isinstance(d, dict):
+            continue
+        wid = work_id_from_ref(str(d.get("ref") or ""))
+        if not wid:
+            continue
+        pid = str(d.get("project_id") or "")
+        name = reg.find_by_project_id(pid) if pid else ""
+        if not name:
+            # 조용히 넘기지 않는다 — 골조 push 를 봤는데 프로젝트를 못 풀면 파견이 영구 정지다.
+            print(f"[dispatch-trigger] [중요] 골조 push 인데 프로젝트를 못 찾았다 — "
+                  f"project_id={pid!r} · work={wid}")
+            continue
+        try:
+            path = note_trigger(wid, name, str(d.get("ref") or ""))
+        except OSError as e:
+            print(f"[dispatch-trigger] [중요] 트리거를 못 썼다 — {type(e).__name__}: {e}")
+            continue
+        print(f"[dispatch-trigger] 골조 push 감지 — {name}/{wid} → {path}")
+        n += 1
+    return n
+
+
 def consume_once(spool: Spool | None = None, *, registry: Registry | None = None,
                  reindex=None, git=None, progress=None) -> RunResult:
     """스풀을 한 번 비운다. **다른 소비자가 돌고 있으면 즉시 물러난다** (flock)."""
@@ -716,6 +768,8 @@ def consume_once(spool: Spool | None = None, *, registry: Registry | None = None
     g = _gate_check(spool_root=sp.root if hasattr(sp, "root") else None)
     if g.paused:
         batch = sp.claim_batch(is_registered=known)
+        # [중요] 게이트가 버리기 **전에** 파견 트리거를 뽑는다 (`#340`) — 위 helper 참조.
+        _note_dispatch_triggers(batch, reg)
         res.paused = g.line()
         res.deferred = len(batch.events)
         res.claimed = res.deferred + batch.coalesced_away + batch.rejected + batch.skipped_index_output
@@ -725,6 +779,8 @@ def consume_once(spool: Spool | None = None, *, registry: Registry | None = None
         res.note = (res.note + " · " if res.note else "") + g.degraded
 
     batch: Batch = sp.claim_batch(is_registered=known)
+    # 게이트에 안 걸린 경우에도 골조 push 는 올 수 있다 (진행 중 work 이 없던 순간의 재-push 등).
+    _note_dispatch_triggers(batch, reg)
     res.coalesced = batch.coalesced_away
     res.rejected = batch.rejected
     # [중요] **이벤트가 없어도 한 바퀴 돈다** (소 3.5.1 과 짝).

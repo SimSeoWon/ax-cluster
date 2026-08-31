@@ -1,0 +1,19 @@
+[Unit]
+Description=AX 자동 파견 따라잡기 실행 (열린 work 전부 훑기 · #340)
+Documentation=https://github.com/SimSeoWon/ax-cluster
+# 🔴 ax-dispatch.service 와 **같은 일 + 열린 work 훑기**다. 유닛을 나눈 이유는 systemd 의
+#    .timer 가 Unit= 하나만 가리킬 수 있고, `--catchup` 을 붙일 자리가 필요하기 때문이다.
+#    [주의] 둘이 동시에 떠도 안전하다 — dispatch() 가 work 당 flock 을 잡는다.
+After=network-online.target local-fs.target ax-task-queue.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sim
+Group=sim
+WorkingDirectory=/home/sim/ax-cluster
+Environment=AX_PROJECTS_ROOT=/home/sim/ax-cluster
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/sim/ax-cluster/.venv/bin/python -m master.work.autodispatch --drain --catchup
+TimeoutStartSec=7200
+Nice=0

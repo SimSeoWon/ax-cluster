@@ -920,6 +920,36 @@ def _submit_fail(r: Response, a: Applied, *, api=runner._api) -> None:
 #
 # [중요] `plan` 은 아무것도 쓰지 않는다. 남의 기계에 쓰는 작업이라 먼저 본다(`client` 와 같은 규약).
 
+def pick_integrator(project: str) -> list:
+    """통합자 후보 — [중요] **UE5 가 있는 워커만.** 없으면 빈 리스트.
+
+    UE5 가 없으면 빌드 판정을 못 하므로 통합자가 아니다. `main()` 과 자동 트리거가 **같은
+    이 함수**를 쓴다 — 선택 규칙을 두 벌 두면 갈린다(`#311` 이 상주 등재에서 그렇게 갈렸다).
+    """
+    facts = [bundle.probe(h, u, pth, d, r, dp)
+             for h, u, pth, d, r, dp in bundle.workshops(project)]
+    return [f for f in facts if f.role == "worker" and f.checkout_ok and f.ue5]
+
+
+def run_auto(paths, work_id: str, *, durable: str = "", **kw) -> tuple:
+    """통합자를 골라 `run` 한다. `(Integration|None, 사유)`.
+
+    [중요] **파견 다음 칸을 이어 붙이는 자리** (`#340` 의 한 칸 뒤 — 실측 2026-09-01).
+    종전에는 `integrate.run` 의 프로덕션 호출부가 **0곳**이었다: 주석 두 줄(CLI 사용법)이
+    전부였고, `dispatch()` 는 *"파견 끝"* 을 찍고 `return` 했다. 그래서 추론이 4/4 성공해도
+    조각은 `claimed` 에 `submitted_at=None` 으로 남고 **아무도 안 집었다** — `#340` 이 고친
+    것과 **같은 종류의 침묵**이 한 칸 뒤에 그대로 있었다.
+
+    [주의] 사람 게이트는 여기가 아니다. `~/CLAUDE.md` 의 파이프라인에서 `[사람 승인]` 표식이
+    붙은 곳은 **finalize(main 머지) 한 곳뿐**이다. 통합은 자동이고, 그래서 이 함수가 있다.
+    """
+    ue = pick_integrator(paths.name)
+    if not ue:
+        return None, "UE5 가 있는 워커가 없다 — 빌드 판정을 못 하므로 통합하지 않는다"
+    itg = run(paths, ue[0], work_id, project=paths.name, durable=durable, **kw)
+    return itg, ""
+
+
 def main(argv) -> int:
     from ..context_search.paths import resolve
     cmd = (argv[0] if argv else "").strip()
@@ -935,9 +965,8 @@ def main(argv) -> int:
         print(f"[중요] {e}")
         return 1
 
-    facts = [bundle.probe(h, u, p, d, r, dp) for h, u, p, d, r, dp in bundle.workshops(paths.name)]
-    # [중요] 통합자는 **UE5 가 있는 기계**다. 없으면 빌드 판정을 못 하므로 통합자가 아니다.
-    ue = [f for f in facts if f.role == "worker" and f.checkout_ok and f.ue5]
+    # [중요] 선택 규칙은 `pick_integrator` 하나뿐이다 — 자동 트리거와 같은 경로를 쓴다.
+    ue = pick_integrator(paths.name)
     if cmd == "plan":
         print(f"work {work_id} · 기준 {base[:12]} · 조각 {len(responses)}")
         for i, r in enumerate(responses, 1):
@@ -950,7 +979,10 @@ def main(argv) -> int:
         print("[중요] UE5 가 있는 워커가 없다 — 빌드 판정을 못 하므로 통합하지 않는다")
         return 1
     # [중요] 인자를 안 주면 작업 브랜치로 간다 (`#319` ⓐ) — 손으로 매번 지정하지 않는다
-    itg = run(paths, ue[0], work_id, durable=(argv[3] if len(argv) > 3 else ""))
+    itg, why = run_auto(paths, work_id, durable=(argv[3] if len(argv) > 3 else ""))
+    if itg is None:
+        print(f"[중요] {why}")
+        return 1
     print(itg.summary())
     # [중요] 통합(작업 보고의 반영)도 상태가 바뀐 순간이다 — 스냅샷 갱신을 던진다 (#216).
     from ..status import refresh_after_event

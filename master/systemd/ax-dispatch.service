@@ -1,0 +1,36 @@
+[Unit]
+Description=AX 클러스터 자동 파견 (골조 push → 워커 배당 · #340)
+Documentation=https://github.com/SimSeoWon/ax-cluster
+# 🔴 **색인기와 별도 유닛인 이유** (`#340` 갈래 ⓑ). 파견은 **분 단위**이고
+#    ax-indexer.service 는 oneshot 으로 색인이 본업이다 — 그 안에서 동기로 돌리면
+#    색인이 파견 시간만큼 막힌다(갈래 ⓒ 가 안 되는 이유). 수명도 다르고, 실패했을 때
+#    볼 저널도 분리돼야 한다.
+After=network-online.target local-fs.target ax-task-queue.service
+Wants=network-online.target
+
+[Service]
+# 트리거를 다 소비하면 끝난다. 상주 프로세스를 두지 않는다(`#320` 이 걷은 그 형태로
+# 돌아가지 않는다 — 여기서 폴링하는 것은 큐가 아니라 **트리거 디렉토리**다).
+Type=oneshot
+User=sim
+Group=sim
+
+WorkingDirectory=/home/sim/ax-cluster
+Environment=AX_PROJECTS_ROOT=/home/sim/ax-cluster
+Environment=PYTHONUNBUFFERED=1
+# [중요] **PATH 를 여기 적지 않는다** (ax-indexer.service 와 같은 이유 — 유닛마다 적으면
+#   같은 값이 N벌이 되고 실제로 갈렸다). 추론이 부르는 `claude`·`agy` 는
+#   /usr/local/bin 심링크로 기본 PATH 에서 잡힌다.
+
+ExecStart=/home/sim/ax-cluster/.venv/bin/python -m master.work.autodispatch --drain
+
+# 🔴 조각마다 LLM 추론이다 — 실측 조각 1건 162.7초. 4조각 work 이면 11분 넘고,
+#    run_many 는 워커가 빌 때마다 다음 조각을 집으므로 work 이 클수록 길어진다.
+#    무한정 매달리지는 않게 2시간에서 끊는다.
+TimeoutStartSec=7200
+
+# 🔴 색인기와 달리 idle 로 내리지 않는다 — 이것이 지금 사람이 기다리고 있는 본작업이다.
+Nice=0
+
+[Install]
+WantedBy=multi-user.target

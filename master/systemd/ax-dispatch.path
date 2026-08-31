@@ -1,0 +1,18 @@
+[Unit]
+Description=AX 자동 파견 트리거 (골조 push 신호가 들어오면 파견을 깨운다 · #340)
+Documentation=https://github.com/SimSeoWon/ax-cluster
+
+[Path]
+# 🔴 inotify 다 — 폴링이 아니다. `master.events.consumer` 의 _note_dispatch_triggers 가
+#    골조 push(`task/<work>/base`)를 보면 이 디렉토리에 신호 파일을 쓴다.
+# 🔴 **색인 스풀(~/ax-spool/incoming)과 다른 디렉토리인 이유**: 소비자는 색인 게이트에
+#    걸리면 자기 스풀을 claim 하고 **버린다.** 골조 push 는 정의상 항상 그 게이트가 켜진
+#    상태에서 일어나므로, 같은 곳에 두면 파견 신호도 같이 사라진다
+#    (실측 2026-08-31 23:08:24 — 그 이벤트 1건이 그렇게 버려졌다).
+PathExistsGlob=/home/sim/ax-spool/dispatch/*.json
+MakeDirectory=true
+DirectoryMode=0755
+Unit=ax-dispatch.service
+
+[Install]
+WantedBy=multi-user.target
