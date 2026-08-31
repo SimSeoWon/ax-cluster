@@ -131,32 +131,63 @@ def session_limit_until(reasons) -> tuple:
     return 0.0, ""
 
 
-def set_hold(until: float, reason: str) -> None:
-    """[중요] 파일로 남긴다 — **재부팅을 넘어야** 한다. 타이머는 부팅 5분 뒤에도 뜬다."""
+def _write_hold(d: dict) -> None:
     LOCK_DIR.mkdir(parents=True, exist_ok=True)
-    HOLD_FILE.write_text(json.dumps(
-        {"until": until, "until_str": time.strftime("%Y-%m-%d %H:%M:%S",
-                                                   time.localtime(until)),
-         "reason": reason[:500], "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")},
-        ensure_ascii=False) + "\n", encoding="utf-8")
+    HOLD_FILE.write_text(json.dumps(d, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def set_hold(until: float, reason: str, *, work_id: str = "", project: str = "") -> None:
+    """[중요] 파일로 남긴다 — **재부팅을 넘어야** 한다. 타이머는 부팅 5분 뒤에도 뜬다."""
+    _write_hold({"state": "held", "until": until,
+                 "until_str": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(until)),
+                 "reason": reason[:500], "work_id": work_id, "project": project,
+                 "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+
+
+def clear_hold() -> bool:
+    """보류를 지운다. `--resume` 만 부른다 — [중요] **시간이 지났다는 사실로는 안 지운다.**"""
+    try:
+        HOLD_FILE.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def hold_state() -> dict:
+    """보류 파일 원문(없으면 빈 dict). 큐의 상태 표면이 이것을 실어 요청자에게 보낸다."""
+    try:
+        d = json.loads(HOLD_FILE.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
 
 def hold_active() -> tuple:
-    """`(보류중인가, 사유문장)`. 지난 보류는 **파일을 지운다** — 남기면 영구 정지로 읽힌다."""
-    try:
-        d = json.loads(HOLD_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    """`(막을까, 사유문장)`.
+
+    [중요] **시각이 지나도 자동으로 풀지 않는다** (사용자 결정 2026-09-01):
+    *"공지하고 내가 작업 시작 지시하면 이어서 진행해야 해"*. 그래서 만료는 「해제」가 아니라
+    **`awaiting_resume` 로의 전이**이고, 그 뒤로도 계속 막는다. 푸는 것은 `--resume` 뿐이다.
+    [주의] 종전에는 만료 시 파일을 지워 **다음 타이머가 자동으로 재파견**했다 — 사람이 모르는
+    사이에 돈이 나가는 자리였고, 사용자가 그것을 사람 게이트로 바꾸라고 지시했다.
+    """
+    d = hold_state()
+    if not d:
         return False, ""
     until = float(d.get("until") or 0)
-    if until <= time.time():
-        try:
-            HOLD_FILE.unlink()
-        except OSError:
-            pass
-        return False, ""
-    left = int(until - time.time())
-    return True, (f"세션 한도로 보류 중 — {d.get('until_str')} 까지 "
-                  f"(남은 {left // 60}분) · {str(d.get('reason'))[:120]}")
+    wid = str(d.get("work_id") or "")
+    if until > time.time():
+        left = int(until - time.time())
+        return True, (f"세션 한도로 보류 중 — {d.get('until_str')} 까지 "
+                      f"(남은 {left // 60}분) · {str(d.get('reason'))[:120]}")
+    if str(d.get("state") or "") != "awaiting_resume":
+        d["state"] = "awaiting_resume"
+        d["expired_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        _write_hold(d)
+    proj = str(d.get("project") or "<프로젝트>")
+    return True, (f"[재개 대기] 세션 한도가 풀렸다({d.get('until_str')}) — "
+                  f"**사람이 지시해야 이어간다.** "
+                  f"재개: python -m master.work.autodispatch --resume {proj} {wid}".rstrip())
 
 
 def _log(msg: str) -> None:
@@ -382,12 +413,14 @@ def dispatch(paths, work_id: str, *, limit: int = 0, api=None, runner_many=None)
         until, why_lim = session_limit_until(
             [getattr(r, "reason", "") for r in bad] + [note])
         if until:
-            set_hold(until, why_lim)
+            set_hold(until, why_lim, work_id=work_id, project=paths.name)
             _log(f"[중요] {work_id} 세션 한도 — "
                  f"{time.strftime('%m-%d %H:%M', time.localtime(until))} 까지 보류한다. "
                  f"통합하지 않는다 (부분 적용은 재적용을 만든다)")
-            _log(f"  재개는 자동이다 — 리스가 만료되면 조각이 pending 으로 돌아오고, "
-                 f"ax-dispatch.timer(부팅 5분 뒤·이후 10분)가 보류 해제 후 다시 집는다")
+            _log(f"  [중요] 재개는 자동이 아니다 (사용자 결정 2026-09-01) — 시각이 지나면 "
+                 f"「재개 대기」로 바뀌고 사람의 지시를 기다린다. "
+                 f"`.33` 세션 시작 훅이 그 사실을 고지한다")
+            _log(f"  재개: python -m master.work.autodispatch --resume {paths.name} {work_id}")
             out["held_until"] = until
             return out
 
@@ -556,6 +589,33 @@ def main(argv) -> int:
     """
     from ..context_search.paths import resolve
     from . import runner
+    if argv and argv[0] in ("--resume", "resume"):
+        # [중요] **사람이 이어가라고 말하는 자리.** 보류를 지우고 그 자리에서 한 번 민다.
+        st = hold_state()
+        if not st:
+            print("[주의] 보류가 없다 — 막혀 있지 않다. 그냥 `--drain` 이면 된다")
+        else:
+            print(f"보류 해제 — state={st.get('state')} · until={st.get('until_str')} · "
+                  f"work={st.get('work_id')}")
+            clear_hold()
+        proj = argv[1] if len(argv) > 1 else str(st.get("project") or "")
+        wid = argv[2] if len(argv) > 2 else str(st.get("work_id") or "")
+        if not proj:
+            print("[중요] 프로젝트를 모른다 — `--resume <프로젝트> [work_id]`")
+            return 2
+        paths = resolve(proj)
+        if wid:
+            r = dispatch(paths, wid)
+            if not r.get("dispatched"):
+                # 파견할 것이 없으면 통합이 남았을 수 있다 — 회수 경로를 그 자리에서 본다.
+                need, why = needs_integration(paths, wid)
+                if need:
+                    integrate_now(paths, wid)
+                else:
+                    _log(f"{wid} 이어갈 것이 없다 — {why}")
+            return 0
+        r = drain(catchup=True)
+        return 1 if r["errors"] else 0
     if argv and argv[0] in ("--drain", "drain"):
         # `ax-dispatch.service` 가 부르는 자리. `--catchup` 은 타이머용.
         r = drain(catchup="--catchup" in argv[1:])

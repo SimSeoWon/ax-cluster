@@ -100,6 +100,15 @@ def main() -> None:
     try:
         api = client_mcp.queue_api(cwd)
         got = client_mcp.tool_list_works(api)
+        # [중요] **「왜 멈췄나」를 같이 묻는다** (사용자 지시 2026-09-01). work 목록만 보면
+        #    `in_progress · claimed 4` 까지만 보이고, 그것이 세션 한도로 멈춘 것인지 고장인지
+        #    사람이 구분할 수 없다 — 오늘 이틀을 잃은 것과 같은 모양이다.
+        #    [주의] 이 조회가 실패해도 위의 고지는 살린다(아래 try 를 따로 둔 이유).
+        hold = {}
+        try:
+            hold = (api("GET", "/api/v1/status") or {}).get("dispatch_hold") or {}
+        except Exception:                                   # noqa: BLE001,S110
+            hold = {}
     except Exception as e:                                  # noqa: BLE001
         # [중요] **침묵하지 않는다.** 못 물어본 것을 「없다」로 읽으면 이 훅은 있으나 마나다.
         print(f"[분산 작업] [주의] 미머지 점검을 못 했다 — {str(e).splitlines()[0]}\n"
@@ -114,6 +123,18 @@ def main() -> None:
 
     ready = [w for w in works if w.get("merge_status") == "ready_for_review"]
     running = [w for w in works if w not in ready]
+
+    # [중요] **보류를 맨 앞에 말한다** — 그것이 「지금 왜 안 도나」의 답이고, 재개 지시가
+    #    사람 몫이기 때문이다(사용자 결정 2026-09-01: 공지 → 사람이 지시 → 이어서 진행).
+    if hold.get("state") == "awaiting_resume":
+        print(f"[분산 작업] 🔴 **재개 대기** — 세션 한도로 멈췄고 한도는 이미 풀렸다"
+              f"({hold.get('until') or '?'}).\n"
+              f"  work {hold.get('work_id') or '?'} · 사유: {hold.get('reason') or '?'}\n"
+              f"  [중요] 자동으로 이어가지 않는다 — 사용자가 시작을 지시해야 한다.\n"
+              f"  마스터에서: python -m master.work.autodispatch --resume "
+              f"{hold.get('project') or '<프로젝트>'} {hold.get('work_id') or ''}".rstrip())
+    elif hold.get("blocked"):
+        print(f"[분산 작업] [주의] 자동 파견이 멈춰 있다 — {hold.get('line') or '사유 미상'}")
 
     details: dict = {}
     for w in (ready + running)[:DETAIL_MAX]:

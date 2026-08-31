@@ -343,7 +343,25 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         for t in idx.tasks.values():
             s = t.get("status", "unknown")
             out[s] = out.get(s, 0) + 1
-        return {"tasks_by_status": out, "works": len(idx.works), "tasks": len(idx.tasks)}
+        body = {"tasks_by_status": out, "works": len(idx.works), "tasks": len(idx.tasks)}
+        # [중요] **「왜 아무것도 안 도나」를 여기서 말한다** (사용자 지시 2026-09-01).
+        #    자동 파견이 세션 한도로 멈추면 그 사실은 마스터 로컬 파일에만 있었고, 요청자
+        #    (`.33`)의 세션 시작 훅은 큐만 읽으므로 *"태스크 claimed 4"* 까지만 말했다 —
+        #    사람이 한도 때문인지 고장인지 구분할 수 없었다(오늘 이틀을 잃은 것과 같은 모양).
+        #    [주의] 상태 표면이므로 **없으면 조용히 비운다** — 여기서 실패해도 큐는 답해야 한다.
+        try:
+            from ..work.autodispatch import hold_active, hold_state   # noqa: PLC0415
+            st = hold_state()
+            if st:
+                blocked, line = hold_active()
+                body["dispatch_hold"] = {
+                    "state": str(st.get("state") or ""), "blocked": bool(blocked),
+                    "until": st.get("until_str") or "", "work_id": st.get("work_id") or "",
+                    "project": st.get("project") or "",
+                    "reason": str(st.get("reason") or "")[:300], "line": line}
+        except Exception:                                             # noqa: BLE001,S110
+            pass
+        return body
 
     @app.post("/api/v1/tasks/{task_id}/cancel")
     def cancel_ep(task_id: str):
