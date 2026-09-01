@@ -492,6 +492,34 @@ def _convention_facts(project: str) -> list:
     return rows
 
 
+# [중요] **본문의 출처를 한 곳에서 판정한다.** 종전에는 이 우선순위가 `claude_md_body` 안에만
+#    있어서, 온보딩 판정기(`projects/onboard._probe_conventions`)는 *"절이 비었나"* 만 물었다.
+#    실측으로 생성된 절도 비어 있지 않으므로 **오염된 규약이 온보딩을 통과했다**(NS, 2026-09-01:
+#    `"한글 주석 0개 → 주석은 영문이다"` 가 SSOT 가 되어 골조 계약과 충돌). 둘이 같은 것을
+#    물어야 갈라지지 않는다.
+CLAUDE_MD_TWIN = "twin"          # <트윈>/claude_md.md — 사람 또는 `/init` 이 쓴 것
+CLAUDE_MD_PAYLOAD = "payload"    # payload/claude_md/<프로젝트>.md — 저장소 정본 (git 관리)
+CLAUDE_MD_GENERATED = "generated"  # [주의] **결정이 아니다** — 골격 + 실측
+
+
+def claude_md_source(project: str):
+    """본문이 어디서 오는가. `(종류, 경로|None)` — 경로가 `None` 이면 생성될 것이다.
+
+    [중요] 규약은 **결정**이라 `generated` 는 통과가 아니다. 판정기가 그것을 구분한다.
+    """
+    try:
+        from ..context_search.paths import resolve
+        twin = resolve(project).root / "claude_md.md"
+        if twin.is_file():
+            return CLAUDE_MD_TWIN, twin
+    except Exception:                                        # noqa: BLE001
+        pass
+    per = Path(__file__).with_name("payload") / "claude_md" / f"{project}.md"
+    if per.is_file():
+        return CLAUDE_MD_PAYLOAD, per
+    return CLAUDE_MD_GENERATED, None
+
+
 def claude_md_body(project: str) -> str:
     """체크아웃에 파일이 없을 때 넣을 **본문**. (`#290`)
 
@@ -509,16 +537,9 @@ def claude_md_body(project: str) -> str:
         ③ 골격 + **실측**                   — 그 밖에는 지어내지 않고 「비어 있다」고 적는다
     """
     d = Path(__file__).with_name("payload") / "claude_md"
-    try:
-        from ..context_search.paths import resolve
-        twin = resolve(project).root / "claude_md.md"
-        if twin.is_file():
-            return twin.read_text(encoding="utf-8")
-    except Exception:                                        # noqa: BLE001
-        pass
-    per = d / f"{project}.md"
-    if per.is_file():
-        return per.read_text(encoding="utf-8")
+    kind, src = claude_md_source(project)
+    if src is not None:
+        return src.read_text(encoding="utf-8")
 
     f = _uproject_facts(project)
     up = f["uproject"] or "(찾지 못했다)"
@@ -547,15 +568,31 @@ def claude_md_body(project: str) -> str:
     #    빈다**(실측 2026-08-24: NS 미러에 CLAUDE.md 가 없어 매니페스트의 컨벤션이 비었다).
     from .spec import DEFAULT_CONVENTION_SECTIONS
     facts = _convention_facts(project)
+    # [중요] **실측을 이 절에 넣지 않는다** (사용자 지시 2026-09-01).
+    #    종전에는 `facts` 를 여기 실으면서 *"제안하지만 확정하지 않는다"* 라는 유보를 달았다.
+    #    그런데 이 절은 `work/conventions.WANTED_SECTIONS` 가 **SSOT 로 읽어** 워커에게
+    #    나르는 자리다 — 유보를 단 추측이 그대로 **프로젝트의 규약이 됐다.**
+    # [중요] 실측 2026-09-01: NS 의 이 절에 *"한글 주석 줄 0개 — 주석은 영문이다"* 가 적립돼
+    #    있었고(main 이 에픽 템플릿이라 당연히 영문), 그것이 매니페스트로 워커에게 갔다.
+    #    같은 작업의 골조 계약은 **한국어 주석**이었다 — 규약과 계약이 정면으로 충돌했다.
+    # [주의] 규약은 **결정**이지 측정이 아니다. 그래서 이 절은 비워 두고 사람이 채운다.
+    #    실측은 아래 별도 절로 내린다 — 이름이 `WANTED_SECTIONS` 밖이므로 워커에게 가지 않는다.
     conv = [f"## {DEFAULT_CONVENTION_SECTIONS[0]}", ""]
+    conv += ["[주의] **비어 있다 — 그리고 비어 있다는 것이 사실이다.** 규약은 결정이라 "
+             "실측으로 채우지 않는다. 사람이 이 절에 적거나 `/init` 이 채운다.", "",
+             "[중요] 이 절은 워커 프롬프트로 그대로 나간다 — 여기 적은 것이 곧 계약이다. "
+             "주석 언어·포인터 관례·include 규약처럼 **지켜야 하는 것**을 적는다.", ""]
+    conv += ["", "[주의] **프로젝트 고유 관례는 실측 대상이 아니다** — 왜 그 설계인지, 어느 "
+             "헤더의 forward-declare 가 의도된 것인지 같은 것. **지어내지 않는다.**", ""]
     if facts:
-        conv += ["[중요] 아래는 **소스 실측**이다 — 관례를 *제안*하지만 확정하지 않는다."
-                 " 확정은 사람이 이 절을 고쳐서 한다.", ""] + facts
+        # [주의] 참고용이다. 절 이름이 `Code conventions` 가 아니므로 규약으로 실리지 않는다.
+        conv += ["## 소스 실측 (참고 — 규약이 아니다)", "",
+                 "[중요] 아래는 **현재 코드가 어떻게 생겼나**일 뿐이다. 규약이 아니므로 "
+                 "워커에게 나가지 않는다. 규약으로 삼을 것이 있으면 사람이 위 절에 옮겨 적는다.",
+                 ""] + facts + [""]
     else:
-        conv += ["[주의] **비어 있다** — 소스를 읽지 못했다(클론이 없거나 `Source/` 가 비었다)."]
-    conv += ["", "[주의] **프로젝트 고유 관례는 여기 없다** — 왜 그 설계인지, 어느 헤더의 "
-             "forward-declare 가 의도된 것인지 같은 것은 실측 대상이 아니다. "
-             "**지어내지 않는다**: 사람이 이 절에 적거나 `/init` 이 채운다.", ""]
+        conv += ["## 소스 실측 (참고 — 규약이 아니다)", "",
+                 "[주의] 소스를 읽지 못했다(클론이 없거나 `Source/` 가 비었다).", ""]
     body = (d / "_skeleton.md").read_text(encoding="utf-8")
     return (body.replace("{PROJECT_LINE}", line)
                 .replace("{CONVENTIONS}", "\n".join(conv)))

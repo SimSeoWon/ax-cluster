@@ -63,6 +63,24 @@ def extract_section(text: str, heading: str) -> str:
     return (rest[: nxt.start()] if nxt else rest).strip()
 
 
+def replace_section(text: str, heading: str, body: str) -> str:
+    """`## <heading>` 절의 **본문만** 갈아 끼운다. 절이 없으면 원문을 그대로 돌려준다.
+
+    [중요] 절 단위로 바꾸는 이유: 미러의 `CLAUDE.md` 끝에는 배달이 관리하는 **AX 블록**이
+    붙어 있고, 파일을 통째로 덮으면 그것이 사라진다. 규약만 정본에서 오면 되므로 그 절만 만진다.
+    [주의] 절이 없으면 **만들지 않는다** — 절 이름은 계약이고(`#294`), 없는 것은 다른 문제다.
+    """
+    if not text or not heading:
+        return text
+    m = re.search(rf"^##\s+{re.escape(heading)}\s*$", text, re.MULTILINE)
+    if not m:
+        return text
+    rest = text[m.end():]
+    nxt = re.search(r"^##\s+", rest, re.MULTILINE)
+    tail = rest[nxt.start():] if nxt else ""
+    return text[: m.end()] + "\n\n" + (body or "").strip() + "\n\n" + tail
+
+
 def project_doc(repo: Path) -> tuple:
     """프로젝트 미러의 `CLAUDE.md` 본문. `(text, note)` — 못 읽으면 `note` 에 사유.
 

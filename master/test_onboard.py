@@ -282,11 +282,28 @@ def test_conventions_step_is_the_manifest_source() -> None:
     check("  두 번 돌려도 중복으로 넣지 않는다",
           O._exclude_in_mirror(p) == "무시 목록 이미 있음", O._exclude_in_mirror(p))
 
-    # [주의] 이미 있으면 **덮지 않는다** — 사람이 확정한 관례가 들어 있을 수 있다
+    # [중요] **정본이 있으면 규약 절은 정본에서 갱신된다** (사용자 지시 2026-09-01).
+    #    옛 계약은 *"이미 있으면 무조건 덮지 않는다"* 였는데, 그 보호가 실제로는 **골격+실측으로
+    #    생성된 절을 영구히 굳혔다**(NS: 2026-08-24 생성 → 09-01 까지 *"주석은 영문"* 이 SSOT).
+    #    정본은 사람의 결정이므로 미러를 이긴다.
+    (p.repo / "CLAUDE.md").write_text(
+        "# 사람이 쓴 것\n\n## Code conventions\n\n- 손으로 정한 규칙\n\n## 딴 절\n\n- 남아야 한다\n",
+        encoding="utf-8")
+    d2 = O.do_conventions(p, project="ModularStage")
+    after = (p.repo / "CLAUDE.md").read_text(encoding="utf-8")
+    check("[중요] 정본이 있으면 규약 절을 정본에서 갱신한다", "정본에서 갱신했다" in d2, d2)
+    check("  미러의 옛 규약은 사라진다", "손으로 정한 규칙" not in after, after[:200])
+    check("  [중요] 규약 **절만** 만진다 — 다른 절은 보존",
+          "남아야 한다" in after, after[:400])
+    canon = C.extract_section(after, spec.DEFAULT_CONVENTION_SECTIONS[0])
+    check("  판정이 통과다 (미러 == 정본)", O._probe_conventions(p)[0], canon[:120])
+
+    # [주의] **정본이 없으면 종전대로 손대지 않는다** — 미러의 내용이 사람이 적은 것일 수 있고,
+    #    그것을 실측본으로 덮는 것이 바로 그 버그였다.
     (p.repo / "CLAUDE.md").write_text("# 사람이 쓴 것\n\n## Code conventions\n\n- 손으로 정한 규칙\n",
                                       encoding="utf-8")
-    d2 = O.do_conventions(p, project="ModularStage")
-    check("[주의] 이미 있으면 덮지 않는다", "덮지 않는다" in d2, d2)
+    d3 = O.do_conventions(p, project="정본없는프로젝트")
+    check("[주의] 정본이 없으면 덮지 않는다", "덮지 않는다" in d3, d3)
     check("  사람이 쓴 내용이 남는다",
           "손으로 정한 규칙" in (p.repo / "CLAUDE.md").read_text(encoding="utf-8"))
     shutil.rmtree(tmp, ignore_errors=True)

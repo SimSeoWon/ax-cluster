@@ -275,7 +275,31 @@ def _probe_conventions(paths) -> tuple:
     body = C.extract_section(text, want)
     if not body.strip():
         return False, f"파일은 있는데 `## {want}` 절이 비었다 — 절 이름이 계약이다"
-    return True, f"`## {want}` {len(body)}자"
+
+    # [중요] **절이 있는 것으로는 부족하다 — 결정에서 와야 한다** (사용자 지시 2026-09-01).
+    #    종전 기준은 「절이 비었나」뿐이었고, 골격+실측으로 생성된 절도 그 조건을 만족했다.
+    #    그래서 NS 가 *"한글 주석 0개 → 주석은 영문이다"* 를 SSOT 로 들고 온보딩을 통과했고
+    #    (실측 2026-09-01), 그 값이 워커 매니페스트로 가서 골조 계약(한국어 주석)과 정면으로
+    #    충돌했다. **규약은 측정이 아니라 결정이다.**
+    from ..client.bundle import claude_md_source, CLAUDE_MD_GENERATED
+    kind, src = claude_md_source(paths.name)
+    if kind == CLAUDE_MD_GENERATED:
+        return False, (f"`## {want}` 절이 있지만 **정본이 없다** — 지금 것은 골격+실측이라 "
+                       f"결정이 아니다. 규약을 사람이 정해 "
+                       f"`master/client/payload/claude_md/{paths.name}.md` (git 관리) 또는 "
+                       f"`<트윈>/claude_md.md` 에 쓴 뒤 다시 배달할 것. "
+                       f"[주의] 측정값을 규약으로 두면 워커가 그것을 계약으로 받는다")
+    # [중요] **정본이 있는 것으로도 부족하다 — 미러가 그것과 같아야 한다.** 정본을 고쳐도
+    #    배달을 안 하면 워커는 옛 절을 읽는다(실측 2026-09-01: 정본 854자 vs 미러 422자 —
+    #    미러에는 실측본이 그대로 있었고 판정기는 통과라고 했다).
+    canon = C.extract_section(src.read_text(encoding="utf-8"), want)
+    if canon.strip() != body.strip():
+        return False, (f"미러의 `## {want}` 가 정본과 다르다 — 미러 {len(body)}자 vs "
+                       f"정본 {len(canon)}자 ({kind}:{src.name}). 정본을 고쳤으면 "
+                       f"`python -m master.projects.onboard {paths.name} --only conventions` "
+                       f"로 미러를 갱신할 것 — [주의] `deliver` 는 각 기계의 **체크아웃**만 "
+                       f"갱신하고 미러는 이 단계가 놓는다. 워커 매니페스트는 **미러**를 읽는다")
+    return True, f"`## {want}` {len(body)}자 · 정본={kind}:{src.name} 과 일치"
 
 
 PROBES = {
@@ -477,7 +501,37 @@ def do_conventions(paths, *, project: str = "") -> str:
     name = project or paths.name
     doc = paths.repo / "CLAUDE.md"
     if doc.is_file():
-        return f"이미 있다 — 덮지 않는다 ({doc})"
+        # [중요] **정본이 있으면 규약 절은 정본에서 갱신한다** (사용자 지시 2026-09-01).
+        #    종전에는 무조건 *"이미 있다 — 덮지 않는다"* 로 끝냈다. 그 보호는 *사람이 미러에
+        #    직접 적은 관례*를 지키려는 것이었는데, 실제로는 **골격+실측으로 생성된 절이
+        #    영구히 굳는** 결과를 냈다(NS: 2026-08-24 생성 → 2026-09-01 까지 *"주석은
+        #    영문이다"* 가 SSOT). 정본(`payload/claude_md/<P>.md` 또는 `<트윈>/claude_md.md`)
+        #    은 **사람의 결정**이므로 그것이 미러를 이긴다.
+        # [주의] 정본이 없으면 종전대로 **손대지 않는다** — 미러의 내용이 사람이 적은 것일 수
+        #    있고, 그것을 실측본으로 덮는 것이 바로 이 버그였다.
+        from ..client.bundle import claude_md_source, CLAUDE_MD_GENERATED
+        from ..client.spec import DEFAULT_CONVENTION_SECTIONS
+        from ..work import conventions as C
+
+        kind, src = claude_md_source(name)
+        if kind == CLAUDE_MD_GENERATED:
+            return f"이미 있다 · 정본 없음 — 덮지 않는다 ({doc})"
+        want = DEFAULT_CONVENTION_SECTIONS[0]
+        cur = doc.read_text(encoding="utf-8")
+        canon = C.extract_section(src.read_text(encoding="utf-8"), want)
+        if not canon.strip():
+            return f"이미 있다 · 정본에 `## {want}` 절이 없다 — 덮지 않는다 ({src})"
+        if C.extract_section(cur, want).strip() == canon.strip():
+            return f"이미 있다 · `## {want}` 가 정본과 같다 ({kind}:{src.name})"
+        new_text = C.replace_section(cur, want, canon)
+        if new_text == cur:
+            return (f"[주의] 미러에 `## {want}` 절이 없어 갈아 끼울 자리가 없다 — "
+                    f"절 이름이 계약이다 (`#294`): {doc}")
+        tmp = doc.with_suffix(".tmp")
+        tmp.write_text(new_text, encoding="utf-8")
+        tmp.replace(doc)
+        return (f"`## {want}` 를 정본에서 갱신했다 ({kind}:{src.name} · {len(canon)}자) — "
+                f"나머지 절과 AX 관리 블록은 보존")
     if not paths.repo.is_dir():
         raise ConfigError(f"소스 클론이 없다 — 먼저 clone 단계를 돌린다: {paths.repo}")
     body = claude_md_body(name)
