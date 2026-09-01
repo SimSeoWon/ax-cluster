@@ -287,10 +287,21 @@ def test_register_wiring():
                                 carrier=lambda paths, wid, tid, body, *, base_commit:
                                     fake_mf_calls.append((wid, tid, body, base_commit)) or
                                     type("X", (), {"ok": True, "head": "h1", "error": ""})())
-        # [중요] `#319` — carrier 는 work_id 도 받는다. 조각 durable 이 `task/<W>/<T>` 라서다.
-        check("[중요] carrier 가 태스크마다 불린다 (work_id·본문·base 동반)",
-              fake_mf_calls == [("w-1", "t-0", BODY, "abc123")], str(fake_mf_calls))
-        check("carried_head 가 결과에 실린다", got.tasks[0].carried_head == "h1")
+        # [중요] **등재는 이제 아무것도 나르지 않는다** (사용자 지시 2026-09-01).
+        #    종전에는 `carry.publish` 가 매니페스트를 `.ax/tasks/<T>/context.md` 로
+        #    조각 durable 에 commit·push 했다. 없앤 이유 셋(`register.py` 주석에 전문):
+        #    ⑴ 등재 시점은 골조가 없어 전체 구조를 모른다 — 그래서 2026-09-01 실전
+        #       매니페스트가 자기 안에서 모순됐고 관례도 반대로 실었다
+        #    ⑵ `.ax/` 는 exclude 경로라 `add -f` 로 억지 커밋 → 「매니페스트만 든」 브랜치가
+        #       `main` 에서 도달 불가라 자동 정리에서 영구히 빠졌다
+        #    ⑶ 워커는 서로를 모른다 — 조각 간 관계를 아는 것은 골조뿐이고, 그래서 골조가
+        #       **헤더의 `[DOC]`** 에 쓴다 (git 이 이미 관리하는 파일이고 `main` 까지 산다)
+        check("[중요] carrier 를 부르지 않는다 (별도 파일을 만들지 않는다)",
+              fake_mf_calls == [], str(fake_mf_calls))
+        check("carried_head 는 비어 있다 (나른 것이 없다)",
+              got.tasks[0].carried_head == "", str(got.tasks[0].carried_head))
+        check("manifest_path 도 비어 있다 (디스크에도 쓰지 않는다)",
+              got.tasks[0].manifest_path == "", str(got.tasks[0].manifest_path))
 
         got2 = REG.register_work("제목", [REG.TaskSpec(stem="b", target_file="Source/B.cpp",
                                                      header_file="Source/B.h", classes=["B"],

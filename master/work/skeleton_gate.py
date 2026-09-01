@@ -96,6 +96,18 @@ def _win_join(base: str, rel: str) -> str:
     return base.rstrip("\\") + "\\" + rel
 
 
+# [중요] 리터럴이다 — `skeleton.PERMANENT_TAGS[0]` 과 같은 값이지만 **임포트하지 않는다.**
+#    이 모듈은 작업장 배달본에 실리고 `work/skeleton.py` 는 실리지 않는다(배달 가드 테스트가
+#    그것을 잰다). 상대 임포트를 넣으면 배달본에서 ImportError 로 죽는다.
+DOC_TAG = "[DOC]"
+
+
+def _has_doc(files: dict) -> bool:
+    """골조 어디든 `[DOC]` 가 하나라도 있나. [주의] 헤더·구현 둘 다 본다 — 계약이 어느
+    파일에 실릴지는 조각의 성질이 정하고, 게이트가 그것까지 규정하지는 않는다."""
+    return any(DOC_TAG in (t or "") for t in (files or {}).values())
+
+
 def place(facts, tree: str, files: dict, *, writer=None) -> list:
     """골조 텍스트를 **격리된 트리**에 쓴다. [중요] 사람·워커의 트리가 아니다.
 
@@ -162,6 +174,21 @@ def run(facts, skeleton, *, tree: str, project: str, uproject: str = "",
     # [중요] 골조가 골조가 아니면 빌드할 이유도 없다 — 싼 검사를 먼저 한다
     if not getattr(skeleton, "ok", False):
         g.error = "골조가 아니다 (`[PSEUDO]` 0 또는 동결 0) — 빌드 전에 막는다"
+        return g
+
+    # [중요] **계약이 보존 태그로 남았는가** — 실측 2026-09-01 에 이것이 0 이었다.
+    #    그날 골조는 「무엇을 왜」를 전부 `[PSEUDO]` 에 넣었다(11파일 `[DOC]` 0개 ·
+    #    `[PSEUDO]` 86개). `[PSEUDO]` 는 구현하면 워커가 **지우는** 태그라, Opus 로 11분
+    #    들여 만든 계약이 첫 구현에서 증발하고 `main` 에는 *"왜 이렇게 생겼나"* 가 안 남는다.
+    #    그것을 막자는 것이 2026-08-27 결정(「무엇을 왜」는 `[DOC]`)인데 **재는 게이트가
+    #    없어서** 손으로 쓴 골조가 UHT 빌드만 통과하고 지나갔다.
+    # [주의] 세는 것은 `[DOC]` 뿐이다 — `[STATE]`/`[BIND]`/`[REPLICATED]` 는 성질 표시라
+    #    조각에 따라 없는 게 정상이다. 「계약이 하나도 보존되지 않았다」만 결정적으로 잡는다.
+    if not _has_doc(files):
+        g.error = ("계약이 보존 태그로 남지 않았다 (`[DOC]` 0개) — 빌드 전에 막는다. "
+                   "「무엇을 왜」는 `[DOC]`, 「여기를 채워라」만 `[PSEUDO]` "
+                   "(사용자 결정 2026-08-27) — `[PSEUDO]` 는 구현하면 지워지므로 "
+                   "계약을 거기 두면 `main` 에 남지 않는다")
         return g
 
     try:

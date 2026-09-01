@@ -303,7 +303,11 @@ def test_gate_mode_is_uht_by_default() -> None:
         seen["fn"] = "full"
         return L.BuildResult(passed=True, failure=None, result="Succeeded")
 
-    sk = S.Skeleton(stem="P", files={"a.h": "x"}, frozen={"k"}, pseudo=1)
+    # [중요] `[DOC]` 가 있어야 게이트를 지난다 (2026-09-01) — 계약이 보존 태그로
+    #    남지 않은 골조는 빌드 전에 막힌다. 이 절이 재는 것은 **무엇으로 쟀나**이므로
+    #    골조는 통과 조건을 갖춰 둔다. 차단 자체는 아래 별도 절이 잰다.
+    sk = S.Skeleton(stem="P", files={"a.h": "// [DOC] 왜 이렇게 생겼나\nx"},
+                    frozen={"k"}, pseudo=1)
 
     class F:
         host, user, ue5, windows = "h", "u", r"C:\UE\Engine\Binaries\Win64\UnrealEditor-Cmd.exe", True
@@ -328,6 +332,16 @@ def test_gate_mode_is_uht_by_default() -> None:
     g = G.run(F(), sk, tree="T", project="P", writer=lambda *a, **k: None,
               builder=fake_build, mode=G.MODE_FULL)
     check("[주의] 무엇으로 쟀는지 결과에 남는다", g.mode == "full", str(g.mode))
+
+    # [중요] `[DOC]` 0개는 빌드 전에 막는다 (실측 2026-09-01: 골조 11파일 `[DOC]` 0 ·
+    #    `[PSEUDO]` 86 — 계약을 휘발 태그에 넣어 첫 구현에서 증발할 상태였는데 UHT 빌드만
+    #    통과해 지나갔다). 「무엇을 왜」는 `[DOC]` (사용자 결정 2026-08-27).
+    no_doc = S.Skeleton(stem="P", files={"a.h": "// [PSEUDO] 여기를 채워라\nx"},
+                        frozen={"k"}, pseudo=1)
+    gd = G.run(F(), no_doc, tree="T", project="P", writer=lambda *a, **k: None,
+               builder=fake_build, mode=G.MODE_FULL)
+    check("[중요] `[DOC]` 0개면 막는다", "[DOC]" in gd.error and not gd.ok, gd.error)
+    check("  차단은 빌드 전이다 (builder 를 부르지 않는다)", gd.checked is False, str(gd.checked))
 
 
 def test_uht_command_shape() -> None:

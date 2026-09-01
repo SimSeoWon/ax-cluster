@@ -38,6 +38,16 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 WANT = ["Source/A/Foo.h", "Source/A/Foo.cpp"]
 GOOD_RESPONSE = ("=== FILE: Source/A/Foo.h ===\n#pragma once\nclass A {};\n"
                  "=== FILE: Source/A/Foo.cpp ===\n#include \"Foo.h\"\n")
+def _t(task_id, **kw):
+    """가짜 claim 레코드. [중요] **대상 파일이 레코드에 있다** (2026-09-01) — 파견은 이제
+    매니페스트를 읽지 않고 큐 레코드에서 목록을 만들며, 그 하나가 워커 지시와 판정에 같이 쓰인다.
+    """
+    d = {"task_id": task_id, "target_file": "Source/A/Foo.cpp",
+         "header_file": "Source/A/Foo.h"}
+    d.update(kw)
+    return d
+
+
 MANIFEST = """# 컨텍스트 매니페스트 — `t1`
 
 ## 기준 (커밋·브랜치)
@@ -375,7 +385,7 @@ def _run(paths, q, *, tasks_manifest=MANIFEST, response=GOOD_RESPONSE, workers=1
 def test_run_many_takes_several_and_orders_them() -> None:
     paths, root = tmp_paths()
     try:
-        q = FakeQueue([{"task_id": "t1", "epoch": 1}, {"task_id": "t2", "epoch": 1}])
+        q = FakeQueue([_t("t1", epoch=1), _t("t2", epoch=1)])
         hand = _run(paths, q)
         check("두 건을 파견했다", len(hand.items) == 2, str(hand.items))
         check("둘 다 통과", len(hand.ordered()) == 2, hand.summary())
@@ -391,8 +401,8 @@ def test_dependents_of_a_failure_are_not_dispatched() -> None:
     """[중요] 큐는 `failed` 를 의존 해소로 센다(*영원 block 방지*) — 마스터가 막는다."""
     paths, root = tmp_paths()
     try:
-        q = FakeQueue([{"task_id": "X.d1", "epoch": 1},
-                       {"task_id": "X.d2", "epoch": 1, "depends_on": ["X.d1"]}])
+        q = FakeQueue([_t("X.d1", epoch=1),
+                       _t("X.d2", epoch=1, depends_on=["X.d1"])])
         # 응답을 비워 첫 건을 실패시킨다
         hand = _run(paths, q, response="")
         check("첫 건 실패", hand.items and not hand.items[0][1].ok, hand.summary())
@@ -408,7 +418,7 @@ def test_no_worker_means_no_claim() -> None:
     """[중요] 집어놓고 못 돌리는 것이 가장 나쁘다 — claim 조차 하지 않는다."""
     paths, root = tmp_paths()
     try:
-        q = FakeQueue([{"task_id": "t1"}])
+        q = FakeQueue([_t("t1")])
         facts = [FakeFacts(host="r1", role="requester")]
         hand = I.run_many(paths, facts=facts, api=q, clean=lambda f: Clean(),
                           work_id="W1", runner_=lambda *a: (0, "RESULT: DONE"),
@@ -425,7 +435,7 @@ def test_serial_is_the_default_and_says_so() -> None:
     """[중요] 병렬은 기본값이 아니다 (실측: 12% 빠르고 90% 비쌌다)."""
     paths, root = tmp_paths()
     try:
-        q = FakeQueue([{"task_id": "t1"}, {"task_id": "t2"}])
+        q = FakeQueue([_t("t1"), _t("t2")])
         hand = _run(paths, q, workers=2)
         check("직렬임을 말한다", "직렬" in hand.note, hand.note)
         check("실측 근거를 적는다", "90%" in hand.note, hand.note)
@@ -436,7 +446,7 @@ def test_serial_is_the_default_and_says_so() -> None:
 def test_parallel_uses_both_workers() -> None:
     paths, root = tmp_paths()
     try:
-        q = FakeQueue([{"task_id": "t1"}, {"task_id": "t2"}])
+        q = FakeQueue([_t("t1"), _t("t2")])
         hand = _run(paths, q, workers=2, parallel=True)
         used = {r.worker for _, r in hand.items}
         check("두 워커가 다 일했다", used == {"w1", "w2"}, str(used))
@@ -448,7 +458,7 @@ def test_parallel_uses_both_workers() -> None:
 def test_limit_is_respected() -> None:
     paths, root = tmp_paths()
     try:
-        q = FakeQueue([{"task_id": f"t{i}"} for i in range(5)])
+        q = FakeQueue([_t(f"t{i}") for i in range(5)])
         hand = _run(paths, q, limit=2)
         check("상한을 지킨다", len(hand.items) == 2, str(len(hand.items)))
         check("나머지는 큐에 남는다", len(q.tasks) == 3, str(len(q.tasks)))
@@ -460,7 +470,7 @@ def test_handoff_states_that_nobody_applies_yet() -> None:
     """[주의] 없는 것을 있는 척하지 않는다 — 통합자(중 1.4)는 아직 비어 있다."""
     paths, root = tmp_paths()
     try:
-        q = FakeQueue([{"task_id": "t1"}])
+        q = FakeQueue([_t("t1")])
         s = _run(paths, q).summary()
         check("적용이 안 됐음을 말한다", "적용은 아직" in s, s[-200:])
         check("리스 만료를 말한다", "리스" in s, s[-200:])
@@ -482,7 +492,7 @@ def test_reuse_avoids_paying_twice() -> None:
             calls.append(t)
             return 0, "RESULT: DONE"
 
-        q = FakeQueue([{"task_id": "t1"}])
+        q = FakeQueue([_t("t1")])
         facts = [FakeFacts()]
 
         class FakeBase:

@@ -649,22 +649,27 @@ def register_tasks(work_id: str, specs: list[TaskSpec], *, paths: ProjectPaths,
 
 
 def _build_manifest_and_carry(r, spec, *, paths, work_id, searcher, carrier) -> None:
-    """매니페스트 수집 + git-carried 적재. **예외를 잡지 않는다** — 호출부가 잡는다."""
-    m = mf.build(paths, r.task_id, work_id=work_id, classes=spec.classes,
-                 target_files=spec.target_files, stem=spec.stem,
-                 contracts=spec.contracts,
-                 # [중요] 포팅 원본 (소 1.3.5) — 사람이 준 `source_files` 가 이기고,
-                 #    없으면 대상 파일로 자동 조회한다. **경로만** 실린다.
-                 source_files=spec.source_files,
-                 searcher=searcher)
-    r.manifest_path = str(mf.write(paths, m))
-    r.manifest_hits = m.hits
-    r.manifest_degraded = m.degraded
-    # [중요] git-carried (#185 판정 2026-08-17) — 매니페스트를 조각 durable
-    #    `task/<work_id>/<task_id>` 에 commit·push 한다. 원전 C.2 의 성질 복원:
-    #    재배정은 fetch 만, 이력은 git 에. 실패해도 등록은 성립하되(트윈 사본은 있다)
-    #    **결과에 크게 남긴다** — 파견은 fail-closed 라 이대로면 배달에서 막힌다.
-    if carrier is not None:
-        c = carrier(paths, work_id, r.task_id, m.body, base_commit=m.base_commit)
-        r.carried_head = c.head if c.ok else ""
-        r.carried_error = c.error
+    """[중요] **아무 파일도 만들지 않는다** (사용자 지시 2026-09-01).
+
+    ## 왜 없앴나 — 이유가 셋이고 전부 실측이다
+
+    ⑴ **시점이 틀렸다.** 이 수집은 **등재 시점**에 돌았다. 그때는 골조가 아직 없어서 전체
+       구조를 모른다. 그래서 2026-09-01 실전 매니페스트가 자기 안에서 모순됐다 — 상단은
+       *"그 브랜치가 원격에 있다"*, 하단은 *"작업 브랜치가 원격에 없다"*(골조 push 는 7분
+       뒤였다). 관례도 `main`(에픽 템플릿)을 훑어 *"주석은 영문이다"* 라고 실어 보냈는데
+       골조 계약은 한국어 주석이었다. **전체 구조를 아는 유일한 시점은 골조 생성이다.**
+    ⑵ **경로가 git 관리 밖이었다.** `.ax/` 는 온보딩이 `.git/info/exclude` 에 넣는 경로라
+       `add -f` 로 억지 커밋해야 했고, 그렇게 생긴 「매니페스트만 든」 조각 브랜치는 `main`
+       에서 **도달 불가**라 자동 정리에서 영구히 빠졌다(`review.py` 실측).
+    ⑶ **워커는 서로를 모른다.** 조각별로 각자 작업하므로 「이 조각이 다른 조각과 어떻게
+       맞물리나」는 워커가 알 수 없다. 그것을 아는 것은 골조뿐이고, 그래서 골조가 **헤더의
+       `[DOC]`** 에 써 넣는다 — git 이 이미 관리하는 파일이고 `main` 까지 산다.
+
+    [주의] `manifest.py`·`carry.publish`·`runner.deliver_manifest` 는 **지우지 않았다** —
+    `selftest` 드라이런과 옛 판정 기록이 참조한다. 등재 경로에서 **부르지 않는 것**이 변경분이다.
+    """
+    r.manifest_path = ""
+    r.manifest_hits = 0
+    r.manifest_degraded = []
+    r.carried_head = ""
+    r.carried_error = ""

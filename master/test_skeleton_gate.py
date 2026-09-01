@@ -43,8 +43,8 @@ def good_skeleton() -> S.Skeleton:
     head = ("#pragma once\nUCLASS()\nclass FOO_API UFoo : public UObject\n{\n"
             "    GENERATED_BODY()\npublic:\n    void Go();\n};\n")
     return S.Skeleton(stem="Foo",
-                      files={"Source/A/Foo.h": head,
-                             "Source/A/Foo.cpp": "// [PSEUDO] 구현한다"},
+                      files={"Source/A/Foo.h": "// [DOC] 왜 이렇게 생겼나\n" + head,
+                             "Source/A/Foo.cpp": "// [DOC] 무엇을 왜\n// [PSEUDO] 구현한다"},
                       frozen=S.frozen_decls(head), pseudo=1)
 
 

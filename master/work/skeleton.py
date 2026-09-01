@@ -420,15 +420,22 @@ def build_prompt(spec: SkeletonSpec, *, declarations: str = "", norms: str = "",
         "itself (see 2 — that is where intent lives) and design notes, "
         "`[STATE]` what a member is for, `[BIND]` Blueprint/event wiring, `[REPLICATED]` "
         "network replication. [중요] Do NOT put any comment on getters/setters.",
-        "5. Output the file contents, each preceded by a line `=== FILE: <path> ===`. "
+        "5. [중요] Each HEADER starts with a `// [DOC]` block that states, for THIS file: "
+        "what it is for, and HOW IT CONNECTS TO THE OTHER FILES of this work (which one "
+        "registers with which, who owns the tick, who must not duplicate what). "
+        "[중요] The workers are dispatched one piece at a time and CANNOT see each other's "
+        "pieces or this prompt — this block is the only place that relationship survives, "
+        "and you are the only step that knows the whole structure. Do not write it as a "
+        "separate file; it belongs in the header, which git already tracks.",
+        "6. Output the file contents, each preceded by a line `=== FILE: <path> ===`. "
         "No markdown fences.",
-        "6. [중요] AFTER the files, output a `=== QUESTIONS ===` block: every place where you "
+        "7. [중요] AFTER the files, output a `=== QUESTIONS ===` block: every place where you "
         "had to GUESS, and every structure you think would be better than what the task "
         "asked for. One per line, phrased as a question with the alternatives "
         "(`Should X be a component or a subsystem?`). Write `(none)` only if you truly had "
         "no choice to make. [중요] Do NOT change the files because of these — the owner decides, "
         "not you.",
-        "7. Follow the conventions of the existing codebase shown below — this is not "
+        "8. Follow the conventions of the existing codebase shown below — this is not "
         "greenfield code.",
         "",
     ]

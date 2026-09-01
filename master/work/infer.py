@@ -55,13 +55,25 @@ SPOOL_SUFFIX = ".json"
 
 # [중요] ASCII 만. 한글을 명령줄에 실으면 워커 콘솔에서 깨진다(`runner` 의 § 참조).
 #    스킬 이름을 **명시**한다 — 워커에는 `ax-work`(구 토폴로지)도 배달돼 있다.
+# [중요] **매니페스트 파일을 가리키지 않는다** (사용자 지시 2026-09-01). 지시서는 체크아웃에
+#    이미 있는 **헤더의 `[DOC]` 블록**이다 — 골조가 전체 구조를 알 때 써 넣은 것이고, git 이
+#    관리하는 파일이라 늙지 않는다. 별도 파일(`.ax/tasks/*/context.md`)은 만들지 않는다.
+# [중요] 대상 파일은 **명령줄에 명시**한다 — 워커가 산문에서 우연히 읽지 않게(실측 2026-08-09).
+#    판정(`judge(want=...)`)과 지시가 **같은 목록**에서 나와야 어긋나지 않으므로, 둘 다
+#    `dispatch_task` 가 큐 레코드에서 만든 하나의 리스트를 쓴다.
 INFER_INSTRUCTION = (
     "Follow the ax-infer skill (INFERENCE ONLY, not ax-work). "
-    "Read ./{work}/{task}/manifest.md and do exactly what it says. "
+    "Implement EXACTLY these files and nothing else: {files}. "
+    "Your instructions are the [DOC] comment blocks already present in those files and in "
+    "their headers in this checkout - read them first; they state what each function must do, "
+    "why, and how this piece connects to the other pieces of this work. "
+    "Fill in every [PSEUDO] marker and DELETE that marker line; keep [DOC]/[STATE]/[BIND]/"
+    "[REPLICATED] comments verbatim. Do NOT add a completion marker of your own. "
+    "Do NOT change any declaration in the headers - they are a frozen contract. "
     "Judge from the source files in this checkout, not from memory. "
     "Do NOT edit source files, do NOT commit, do NOT push, do NOT create branches. "
     "Write the complete new content of every target file to ./{work}/{task}/{resp} as UTF-8, "
-    "one block per file, each starting with a line: === FILE: <path from the manifest> === . "
+    "one block per file, each starting with a line: === FILE: <path> === . "
     "That file must contain ONLY those blocks: do NOT write RESPONSE: or RESULT: into it. "
     "Then PRINT to stdout, as the last two non-empty lines you print and nothing after them: "
     "RESPONSE: <number of files> / RESULT: DONE "
@@ -167,9 +179,15 @@ class Response:
         return " — ".join(bits)
 
 
-def infer_command(facts, task_id: str) -> str:
-    """워커에서 실제로 도는 한 줄. [중요] 경로는 레지스트리에서 온 값(`facts.path`)이다."""
-    instr = INFER_INSTRUCTION.format(work=bundle.WORK_REL, task=task_id, resp=RESPONSE_NAME)
+def infer_command(facts, task_id: str, files=()) -> str:
+    """워커에서 실제로 도는 한 줄. [중요] 경로는 레지스트리에서 온 값(`facts.path`)이다.
+
+    [중요] `files` 는 **판정에 쓰는 그 목록**이다 — 지시와 판정이 갈라지지 않게 하나만 돈다.
+    비면 지시문에 `(none given)` 이 박혀 워커가 스스로 고르려 들므로 호출부가 막는다.
+    """
+    shown = ", ".join(str(f) for f in (files or [])) or "(none given)"
+    instr = INFER_INSTRUCTION.format(work=bundle.WORK_REL, task=task_id, resp=RESPONSE_NAME,
+                                     files=shown)
     cd = f'cd /d "{facts.path}"' if facts.windows else f'cd "{facts.path}"'
     # `--output-format json` — 마커는 `result` 안으로 오고, 대신 토큰·비용을 함께 받는다.
     # 계측 없이 "분산이 이득인가" 를 논할 수 없다(실측이 두 번 결론을 뒤집었다).
@@ -327,15 +345,23 @@ def infer_task(facts, task_id: str, manifest_text: str, *, want=None, beat=None,
     돌려준다 — 적용·빌드·커밋은 통합자(중 1.4)의 일이다.
     """
     files_wanted = list(want) if want is not None else target_files_from(manifest_text)
-    # [중요] 배달 주입 자리 — 실전은 git-carried(carry.deliverer, #185 판정 2026-08-17),
-    #    writer 주입(테스트·레거시)은 scp 그대로. 조용한 폴백은 없다 — 어느 경로로 돌았는지
-    #    모르게 되는 것이 최악이다.
+    # [중요] **fail-closed** — 대상 파일을 모르면 파견하지 않는다. 빈 목록으로 보내면 워커가
+    #    스스로 할 일을 고르고, 그것이 가장 비싼 실패다(`_manifest_for` 가 같은 이유로 막았다).
+    if not files_wanted:
+        raise DispatchError(f"대상 파일이 비었다 (task={task_id}) — 지시와 판정의 근거가 "
+                            f"없으므로 파견하지 않는다")
+    # [중요] **아무것도 배달하지 않는다** (사용자 지시 2026-09-01). 지시서는 체크아웃의
+    #    헤더 `[DOC]` 이고 그것은 base 커밋에 이미 있다 — 나를 것이 없다.
+    # [주의] `deliver`/`writer` 를 **명시로 주입한 경우에만** 옛 배달을 돈다 —
+    #    `selftest` 드라이런과 옛 판정 기록이 그 자리를 그대로 잰다. 조용한 폴백은 없다.
     if deliver is not None:
         deliver(facts, task_id, manifest_text)
-    else:
+    elif writer is not None:
         runner.deliver_manifest(facts, task_id, manifest_text, writer=writer)
     with runner._Beater(beat) as b:
-        rc, out = (runner_ or _default_runner)(facts, task_id, timeout)
+        rc, out = (runner_ or (lambda f_, t_, to_: _default_runner(f_, t_, to_,
+                                                                   files_wanted)))(
+            facts, task_id, timeout)
     try:
         raw = read_response(facts, task_id, reader=reader)
     except bundle.BundleError as e:
@@ -360,8 +386,9 @@ def infer_task(facts, task_id: str, manifest_text: str, *, want=None, beat=None,
     return res
 
 
-def _default_runner(facts, task_id: str, timeout: int) -> tuple:
-    return bundle._ssh(facts.host, facts.user, infer_command(facts, task_id), timeout=timeout)
+def _default_runner(facts, task_id: str, timeout: int, files=()) -> tuple:
+    return bundle._ssh(facts.host, facts.user, infer_command(facts, task_id, files),
+                       timeout=timeout)
 
 
 # ── 스풀 — [중요] **돈을 낸 출력이고, 진행 상황의 유일한 사본이다** (소 1.3.2·1.3.3) ──────
@@ -522,8 +549,18 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
     if not work_id:
         raise DispatchError(f"work_id 가 없다 — 작업 브랜치를 못 정한다 (task={task_id})")
 
-    body = runner.refresh_base(runner._manifest_for(paths, task_id), paths, work_id)
-    want = target_files_from(body)
+    # [중요] **매니페스트를 읽지 않는다** (사용자 지시 2026-09-01). 종전에는
+    #    `_manifest_for` + `refresh_base` 로 등재 시점 문서를 되읽어 파견 시점에 기준 절만
+    #    다시 풀었다. 그 문서는 등재 시점(골조 없음)에 조립돼 **자기 안에서 모순됐고**
+    #    (실측 2026-09-01: 상단 "브랜치가 원격에 있다" / 하단 "원격에 없다"), 관례도 `main`
+    #    실측으로 계약과 반대로 실었다. 지시서는 이제 **base 커밋의 헤더 `[DOC]`** 이다.
+    # [중요] 대상 파일은 **큐 레코드**에서 만든다 — 등재가 만든 그 목록이고, 판정(`want=`)과
+    #    워커 지시가 **같은 하나**에서 나온다(그 등가성이 실측 2026-08-09 의 요구였다).
+    want = [str(f) for f in (task.get("target_file"), task.get("header_file")) if f]
+    if not want:
+        raise DispatchError(f"큐 레코드에 target_file·header_file 이 없다 (task={task_id}) — "
+                            f"무엇을 만들지 모르므로 파견하지 않는다")
+    body = ""
     base = ""
     try:
         from . import twin_base
