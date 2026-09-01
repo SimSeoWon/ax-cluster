@@ -26,12 +26,18 @@
 """
 from __future__ import annotations
 
+import pathlib
+
 from dataclasses import dataclass, field
 
 from ..context_search.paths import ProjectPaths
 
 PER_CLASS = 1500        # 클래스당 헤더 발췌
 TOTAL = 6000            # 전체 상한 (≈2,100 tok — 실측 여유 5,368 안)
+
+
+class DeclError(RuntimeError):
+    """선언부를 모을 수 없다. [중요] 삼키면 grounding 없이 돈 것이 통과로 보인다."""
 
 
 @dataclass
@@ -87,6 +93,88 @@ def _files_for(paths: ProjectPaths, classes: list) -> dict:
                 if r["name"] in want}
     finally:
         conn.close()
+
+
+HEADER_SUFFIXES = (".h", ".hpp")
+
+
+def _mirror_git(paths, *args, check: bool = True) -> str:
+    """미러에서 git 한 번. [주의] 실패를 조용히 빈 문자열로 접지 않는다 — 호출부가 사유를 싣는다."""
+    import subprocess
+    r = subprocess.run(["git", "-C", str(paths.repo), *args],
+                       capture_output=True, timeout=120)
+    if r.returncode != 0:
+        if check:
+            raise DeclError(f"git {' '.join(args)} 실패 (rc={r.returncode}): "
+                            f"{(r.stderr or b'').decode('utf-8', 'replace')[:200]}")
+        return ""
+    from ..source_text import decode
+    return decode(r.stdout).text
+
+
+def work_headers(paths, commit: str, *, main_branch: str = "main") -> list:
+    """`commit`(작업 브랜치 base)이 `main` 대비 **추가·수정한 헤더 경로**.
+
+    [중요] 이것이 그 work 의 **동결 계약 전체**다 — 골조가 한 커밋으로 올린 것이고, 조각들이
+    서로를 참조할 때 필요한 선언이 다 여기 있다. 클래스 그래프로는 얻을 수 없다(신규 클래스는
+    그래프에 없고, 색인은 분산 작업 중 의도적으로 멈춘다 — 실측 2026-09-01).
+    """
+    out = _mirror_git(paths, "diff", "--name-only", f"{main_branch}...{commit}")
+    return sorted({ln.strip() for ln in out.splitlines()
+                   if ln.strip().lower().endswith(HEADER_SUFFIXES)})
+
+
+def from_commit(paths: ProjectPaths, commit: str, *, main_branch: str = "main",
+                per_class: int = PER_CLASS, total: int = TOTAL) -> Declarations:
+    """그 work 의 동결 계약 헤더를 **base 커밋에서** 읽는다. **읽기 전용.**
+
+    ## 왜 커밋에서 읽나 — 실패가 두 겹이었다 (실측 2026-09-01)
+
+        `_files_for`      → 클래스 그래프 `classes` 표.  NS 61개 중 `NSInteract%` **0개**
+        `excerpt_header`  → `paths.repo / file` = 미러 워킹트리 = `main`.  파일 자체가 없다
+
+    그래프를 채워도 두 번째가 남고, 색인은 분산 작업 중 멈춘다. 선언부는 **있었는데 안 봤다** —
+    `e3aa6ab7:…/NSInteractableComponent.h` 에 `CanBeInteractedBy` 가 그대로 있었다. 그래서
+    층2 가 `[주의] 선언부 없이 돌렸다` 로 돌았고, 그것은 실측 4/5 가 「없는 열거값」을 놓친 조건이다.
+
+    [주의] 실패는 예외로 낸다 — 호출자가 `l2_grounded=False` 와 **사유**를 싣는다.
+    """
+    from ..source_text import decode as _dec                      # noqa: F401  (의도 명시)
+
+    d = Declarations()
+    if not (commit or "").strip():
+        raise DeclError("기준 커밋이 비었다 — 무엇의 선언부인지 모른다")
+    ensure_commit(paths, commit)
+    used = 0
+    for rel in work_headers(paths, commit, main_branch=main_branch):
+        if used >= total:
+            d.dropped.append(rel)                     # [중요] 조용히 빼지 않는다
+            continue
+        room = min(per_class, total - used)
+        text = _mirror_git(paths, "show", f"{commit}:{rel}", check=False)
+        if not (text or "").strip():
+            d.missing.append(rel)
+            continue
+        if len(text) > room:
+            text = text[:room]
+            d.truncated.append(rel)
+        # [주의] 「클래스」 칸에 **파일 stem** 을 쓴다 — 이 경로는 클래스 이름을 모른다(파싱하지
+        #    않는다). 프롬프트에는 경로가 같이 찍히므로 모델이 무엇인지 알 수 있다.
+        d.blocks.append((pathlib.PurePosixPath(rel).stem, rel, text.rstrip()))
+        used += len(text)
+    return d
+
+
+def ensure_commit(paths: ProjectPaths, commit: str, *, remote: str = "gitea-write") -> None:
+    """미러에 그 커밋이 없으면 fetch 한다. 선례: `carry.py` 의 base fetch (`#341`).
+
+    [주의] **이미 있으면 건드리지 않는다** — 네트워크 실패를 치명으로 만들지 않기 위해서다.
+    """
+    if _mirror_git(paths, "cat-file", "-t", commit, check=False).strip() == "commit":
+        return
+    _mirror_git(paths, "fetch", remote, commit)
+    if _mirror_git(paths, "cat-file", "-t", commit, check=False).strip() != "commit":
+        raise DeclError(f"기준 커밋을 미러로 가져오지 못했다 — {commit} ({remote})")
 
 
 def collect(paths: ProjectPaths, classes: list, *, per_class: int = PER_CLASS,

@@ -257,7 +257,7 @@ def classes_in(paths, files) -> list:
         return []
 
 
-def layer2_grounding(paths, files) -> str:
+def layer2_grounding(paths, files, *, base_commit: str = "") -> str:
     """층2 프롬프트에 실을 **선언부**. [중요] 이것이 검출력을 갈랐다 (실측 소 2.2.1).
 
     같은 표본을 후보 5개에 돌렸더니 **넷이 "없는 열거값" 을 놓쳤고**, 선언부를 함께 준
@@ -265,16 +265,48 @@ def layer2_grounding(paths, files) -> str:
 
     [주의] 실패하면 빈 문자열이다 — 호출자가 *"grounding 없이 돌렸다"* 를 **말해야** 한다.
     """
+    parts: list = []
+    src: list = []
+
+    # ① **그 work 의 동결 계약 헤더 — base 커밋에서** (사용자 확정 2026-09-01).
+    #    클래스 그래프는 신규 클래스를 모르고(실측: NS 61개 중 `NSInteract%` 0개), 미러
+    #    워킹트리는 `main` 이라 파일 자체가 없다. base 커밋은 `main` + 골조라 **그 work 의
+    #    헤더에 대해 그래프의 상위집합**이다 — 기존 클래스를 고치는 작업도 여기 다 있다.
+    if (base_commit or "").strip():
+        try:
+            from . import declarations as dcl
+            d = dcl.from_commit(paths, base_commit)
+            if d.ok:
+                parts.append(d.render())
+                src.append(f"base:{base_commit[:8]} 헤더 {len(d.blocks)}개")
+            else:
+                _log(f"[주의] base 커밋에 헤더가 없다 — {d.summary} ({base_commit[:8]})")
+        except Exception as e:                           # noqa: BLE001
+            _log(f"[중요] base 커밋에서 선언부를 못 읽었다 — 층2 검출력이 낮아진다: "
+                 f"{type(e).__name__}: {e}")
+    else:
+        _log("[주의] 기준 커밋을 모른다 — 그 work 의 헤더를 실을 수 없다")
+
+    # ② **외부에서 참조하는 헤더 — 그래프·의존** (`include_decls` 가 하던 일).
+    #    실측 2026-08-11: 관계 블록이 `include` 로 **이름만 댄** 헤더의 열거값을 모델이 섞었다.
+    #    이름을 댔으면 내용도 줘야 한다. 이 갈래는 **기존 코드**가 대상이므로 그래프가 맞다.
     names = classes_in(paths, files)
-    if not names:
-        return ""
-    try:
-        from .skeleton import include_decls
-        return include_decls(paths, names)
-    except Exception as e:                               # noqa: BLE001
-        _log(f"[중요] 선언부를 모으지 못했다 ({len(names)}개 클래스) — 층2 가 grounding 없이 "
-             f"판정한다: {type(e).__name__}: {e}")
-        return ""
+    if names:
+        try:
+            from .skeleton import include_decls
+            ext = include_decls(paths, names)
+            if (ext or "").strip():
+                parts.append(ext)
+                src.append(f"그래프 {len(names)}클래스")
+        except Exception as e:                           # noqa: BLE001
+            _log(f"[중요] 참조 헤더를 모으지 못했다 ({len(names)}개 클래스): "
+                 f"{type(e).__name__}: {e}")
+
+    # [중요] **무엇으로 grounding 했는지 남긴다.** 종전에는 참/거짓만 있어서 「됐다는데 뭘로?」를
+    #    다시 물어야 했다. 이 줄이 다음 사고의 첫 단서다.
+    if parts:
+        _log(f"[layer2] grounding — {' · '.join(src)}")
+    return "\n\n".join(parts)
 
 
 def remote_baseline(facts, tree: str, *, reader=None):
@@ -785,7 +817,9 @@ def run(paths, facts, work_id: str, *, project: str = "", durable: str = "",
             itg.applied.append(a)
             continue
         a = apply_one(facts, r, tree=wt.path, project=proj, baseline=base_fn,
-                      layer2=l2_call, declarations=layer2_grounding(paths, sorted(r.files)),
+                      layer2=l2_call,
+                      declarations=layer2_grounding(
+                          paths, sorted(r.files), base_commit=base),
                       builder=builder, writer=writer, runner_=runner_, timeout=timeout)
         itg.applied.append(a)
         if not a.ok:
