@@ -349,6 +349,61 @@ def test_payload_split() -> None:
         check("[중요] 모르는 역할은 예외 (payload_pairs)", True)
 
 
+def test_deliver_removes_deprecated_skills() -> None:
+    """[중요] **`#232` 완결 — `deliver` 가 폐지 스킬을 지운다** (2026-09-02).
+
+    실측: `spec.DEPRECATED_SKILLS` 주석은 *"`deliver` 가 지운다"* 였는데 **구현이 없었다.**
+    `plan` 은 *"지우는 것은 아직 하지 않는다 (#232)"* 를 정직하게 찍고 있었고 `check` 는 남은
+    것을 이름으로 답했다 — 두 표면은 맞았고 가운데가 비어 있었다. `ax-work` 배달을 멈춘 날
+    `check` 가 *"폐지 스킬이 남아 있다: ax-work"* 로 잡아 드러났다.
+    """
+    calls: list = []
+
+    def fake_ssh(host, user, cmd, *, timeout=None):
+        calls.append(cmd)
+        # probe 는 「사라졌다」로 답한다 (삭제가 성공한 정상 경로)
+        if "GONE" in cmd:
+            return 0, "GONE"
+        return 0, ""
+
+    saved = bundle._ssh
+    bundle._ssh = fake_ssh
+    try:
+        f = _facts(role="worker")
+        got = [bundle._remote_rm_dir(f, f".claude/skills/{n}")
+               for n in spec.removals_for("worker")["skills"]]
+        check("[중요] 폐지 스킬마다 삭제를 시도한다",
+              len(got) == len(spec.removals_for("worker")["skills"]), str(got))
+        check("  전부 [완료] 로 답한다", all("[완료]" in g for g in got), str(got))
+        check("  `ax-work` 가 대상이다", any("ax-work" in g for g in got), str(got))
+        check("[주의] 디렉토리째 지운다 (SKILL.md 만 지우면 빈 디렉토리가 남는다)",
+              any("rmdir /s /q" in c or "rm -rf" in c for c in calls), str(calls[:3]))
+        check("  지운 뒤 되확인한다 (「지웠다」를 확인 없이 말하지 않는다)",
+              any("GONE" in c for c in calls), str(calls[:4]))
+    finally:
+        bundle._ssh = saved
+
+    # [중요] **fail-open** — 삭제 실패가 배달을 막지 않는다. 사유를 문자열로 돌려준다.
+    def failing_ssh(host, user, cmd, *, timeout=None):
+        if "GONE" in cmd:
+            return 0, "LEFT"
+        return 1, "권한 없음"
+
+    bundle._ssh = failing_ssh
+    try:
+        r = bundle._remote_rm_dir(_facts(role="worker"), ".claude/skills/ax-work")
+        check("[중요] 실패해도 예외를 던지지 않는다 (fail-open)", isinstance(r, str), repr(r))
+        check("  사유를 말한다", "[주의]" in r, r)
+    finally:
+        bundle._ssh = saved
+
+    # [주의] 오버레이로 되살린 이름은 지우지 않는다 — `removals_for` 가 이미 그렇게 만들어져 있다
+    revived = spec.ProjectInit(extra_skills={"worker": ("ax-work",)})
+    check("[중요] 오버레이로 되살린 이름은 제거 목록에서 빠진다",
+          "ax-work" not in spec.removals_for("worker", revived)["skills"],
+          str(spec.removals_for("worker", revived)["skills"]))
+
+
 def test_role_block() -> None:
     w = bundle.managed_block("P", _facts(role="worker"))
     r = bundle.managed_block("P", _facts(role="requester"))
@@ -975,7 +1030,7 @@ def test_hook_registration() -> None:
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
-               test_role_skills, test_role_payload, test_payload_split, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
+               test_role_skills, test_role_payload, test_payload_split, test_deliver_removes_deprecated_skills, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
                test_merge_never_replaces_existing,
                test_workshop_assets_reference_only_live_tools,
                test_workshop_delivery,

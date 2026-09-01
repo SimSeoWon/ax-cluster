@@ -792,6 +792,42 @@ def merge_claude_md(existing: str, project: str, facts: HostFacts) -> str:
     return existing.rstrip() + "\n\n" + block + "\n"
 
 
+def _remote_rm_dir(facts: HostFacts, rel: str) -> str:
+    """홈 기준 디렉토리를 **재귀 삭제**하고 사라졌는지 되확인한다. `"<rel> [완료]"` 또는 사유.
+
+    ## [중요] 왜 생겼나 — 「지운다」가 주석에만 있었다 (`#232`, 실측 2026-09-02)
+
+    `spec.DEPRECATED_SKILLS` 주석은 *"`plan` 이 제거 항목으로 들고, `deliver` 가 지운다"* 였는데
+    **`deliver` 에 지우는 코드가 없었다.** `plan` 은 매번 *"지우는 것은 아직 이 명령이 하지
+    않는다 (#232)"* 를 찍고 있었고, `check` 는 남은 것을 이름으로 답하고 있었다 — 즉 두 표면은
+    정직했고 **구현만 비어 있었다.** `ax-work` 배달을 멈춘 날 `check` 가 *"폐지 스킬이 남아
+    있다: ax-work"* 로 잡아 드러났다.
+
+    [중요] **fail-open** — 삭제 실패가 배달을 막지 않는다. 배달의 본업은 「놓는 것」이고, 못
+    지운 것은 `check` 가 다음에 이름으로 잡는다. 반대로 fail-closed 면 지우기 실패 하나가
+    배달 전체를 세운다.
+    [주의] **디렉토리째 지운다** — `SKILL.md` 만 지우면 빈 디렉토리가 남아 스킬 목록에 이름이
+    계속 보인다.
+    """
+    root = facts.home
+    if facts.windows:
+        target = f"{root}\\{rel.replace('/', chr(92))}"
+        cmd = f'if exist "{target}" rmdir /s /q "{target}"'
+        probe = f'if exist "{target}" (echo LEFT) else (echo GONE)'
+    else:
+        target = f"{root}/{rel}"
+        cmd = f"rm -rf {shlex.quote(target)}"
+        probe = f"test -e {shlex.quote(target)} && echo LEFT || echo GONE"
+    rc, out = _ssh(facts.host, facts.user, cmd)
+    if rc != 0:
+        return f"{rel} [주의] 삭제 실패 (rc={rc}) — {(out or '')[:80]}"
+    _rc2, got = _ssh(facts.host, facts.user, probe)
+    if "GONE" not in (got or ""):
+        # [중요] 「지웠다」를 되확인 없이 말하지 않는다 — 그 습관이 이 결함을 낳았다
+        return f"{rel} [주의] 지웠는데 아직 있다 — {(got or '').strip()[:60]}"
+    return f"{rel} [완료]"
+
+
 def _remote_write(facts: HostFacts, rel: str, content: str, *, base: str = "home") -> str:
     """원격 파일 쓰기 + **되읽어 sha256 대조.** 불일치면 예외.
 
@@ -1228,6 +1264,7 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     if dry_run:
         return {"host": facts.host, "dry_run": True, "config_bytes": len(cfg),
                 "skills": list(skills_for(facts.role, pinit)),
+                "removed": list(spec.removals_for(facts.role, pinit)["skills"]),
                 "payload": list(payloads_for(facts.role)),
                 "workshop": [rel for rel, _src in workshop_files(facts.role, project)]}
     # [중요] CLAUDE.md 는 **읽어서 병합**한다 — 덮어쓰면 사람이 쓴 것을 날린다
@@ -1253,6 +1290,13 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
         "claude_md": _remote_write(facts, "CLAUDE.md", merged, base="checkout"),
         "skills": [_remote_write(facts, f".claude/skills/{n}/SKILL.md", skill_text(n))
                    for n in skills_for(facts.role, pinit)],
+        # [중요] **폐지분을 지운다** (`#232` 완결, 2026-09-02). 목록의 유일한 출처는
+        #    `spec.removals_for` 다 — `plan`·`check` 가 부르는 그 함수여서 셋이 갈라지지 않는다.
+        #    `keep_skills` 를 이미 존중하므로 프로젝트가 오버레이로 되살린 이름은 지우지 않는다.
+        # [주의] 사용자가 손으로 만든 스킬은 목록에 없으므로 **영향받지 않는다**
+        #    (원전 `DEPRECATED_SKILL_NAMES` 와 같은 계약).
+        "removed": [_remote_rm_dir(facts, f".claude/skills/{n}")
+                    for n in spec.removals_for(facts.role, pinit)["skills"]],
         # [중요] 파이썬 페이로드 — 패키지로 둬야 모듈의 **상대 임포트가 그대로** 산다.
         #    `__init__.py` 를 먼저 쓰지 않으면 나머지는 임포트되지 않는 파일 더미가 된다.
         # [중요] 파이썬 페이로드 — 저장소 배치를 미러링한다(상대 임포트가 그대로 산다).

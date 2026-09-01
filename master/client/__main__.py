@@ -163,8 +163,12 @@ def cmd_plan(project: str) -> int:
         rm = spec.removals_for(f.role, init)
         for kind, names in (("스킬", rm["skills"]), ("MCP 엔트리", rm["mcp"])):
             if names:
-                print(f"   ✕ 폐지 {kind}: {', '.join(names)}  "
-                      f"[주의] 지우는 것은 아직 이 명령이 하지 않는다 (#232)")
+                # [중요] `#232` 는 2026-09-02 에 닫혔다 — `deliver` 가 실제로 지운다
+                #    (`bundle._remote_rm_dir`, fail-open). 종전 문구는 *"지우는 것은 아직 이
+                #    명령이 하지 않는다"* 였고 **그 말이 맞았다** — 주석만 「지운다」고 적혀
+                #    있었고 구현이 없었다. `check` 가 `ax-work` 잔존을 잡아 드러났다.
+                doing = "deliver 가 지운다" if kind == "스킬" else "지우지 않는다 (#235 미결)"
+                print(f"   ✕ 폐지 {kind}: {', '.join(names)}  [주의] {doing}")
     return 0
 
 
@@ -212,6 +216,9 @@ def cmd_deliver(project: str, *, init: bool = False) -> int:
             print(f"     [주의] {ini['error']}")
         for sp in r["skills"]:
             print(f"     skill={sp}")
+        # [중요] 제거 결과를 **이름으로** 찍는다 — 합계만 찍으면 무엇이 안 지워졌는지 모른다
+        for rmv in r.get("removed") or []:
+            print(f"     removed={rmv}")
         # [중요] **페이로드도 찍는다.** 첫 실 배달(2026-08-16)에서 파일 8개가 **실제로 갔는데**
         #    출력에 안 나와서, 확인하려면 원격 디렉토리를 직접 뒤져야 했다.
         #    *"배달했다고 믿지 않는다"* 는 사람이 읽는 출력에도 적용된다 — 안 보이는 산출물은
