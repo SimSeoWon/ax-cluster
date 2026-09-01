@@ -580,12 +580,17 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
             spool(paths, old, work_id=work_id, order=order)
             return old
 
-    # [중요] 실전 배달 = git-carried (#185 판정). writer/deliver 주입이 없을 때만 켠다 —
-    #    테스트는 writer 로 scp 자리를 그대로 잰다.
-    if deliver is None and writer is None:
-        from . import carry
-        _d = carry.deliverer(paths, work_id)
-        deliver = lambda f_, t_, txt: _d(f_, t_, txt)     # noqa: E731
+    # [중요] **배달자를 만들지 않는다** (실측 2026-09-01, 이 자리가 회귀를 냈다).
+    #    매니페스트를 없앨 때(`e3a318f`) `infer_task` 안의 **소비** 자리는 고쳤는데 여기,
+    #    즉 **생산** 자리를 지우지 않았다. 그래서 `deliver` 가 항상 생기고 `infer_task` 의
+    #    `if deliver is not None` 이 빈 본문으로 `carry.publish` 를 불러 4/4 가 죽었다:
+    #    *"매니페스트 본문이 비었다 — 빈 것을 실어 보내지 않는다"*.
+    # [주의] **유닛이 이 결함을 구조적으로 못 봤다** — 테스트는 `infer_task` 를 직접 부르며
+    #    `deliver`/`writer` 를 주입하므로 `dispatch_task` 가 스스로 만드는 이 경로를 한 번도
+    #    지나지 않았다(`test_infer` 78/78 통과). 리포트 44 의 「호출부 0곳」과 같은 구조의
+    #    반대편이다. 그래서 이 함수를 지나는 검사를 `test_infer` 에 넣었다.
+    #    지시서는 base 커밋의 헤더 `[DOC]` 이므로 **나를 것이 없다.** `deliver` 는 인자로
+    #    명시 주입될 때만(테스트·`selftest`) 산다.
 
     res = infer_task(facts, task_id, body, want=want,
                 beat=lambda: runner.heartbeat(task_id, facts.host, api=api),

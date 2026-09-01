@@ -414,6 +414,45 @@ def test_dependents_of_a_failure_are_not_dispatched() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_dispatch_task_delivers_nothing() -> None:
+    """[중요] **실전 형태로 돈다 — `writer`/`deliver` 를 주입하지 않는다.**
+
+    이 검사가 없어서 회귀가 통과했다(실측 2026-09-01, 라이브 4/4 실패). 매니페스트를 없앨 때
+    `infer_task` 의 **소비** 자리는 고쳤는데 `dispatch_task` 의 **생산** 자리가 남아 있었고,
+    거기서 만든 `deliver` 가 빈 본문으로 `carry.publish` 를 불러 전부 죽었다:
+    *"매니페스트 본문이 비었다 — 빈 것을 실어 보내지 않는다"*.
+
+    [주의] 다른 검사들은 `writer=` 를 주입하므로 `infer_task` 의 `elif writer is not None`
+    갈래로 빠져 **이 경로를 지나지 않는다**. 그래서 78/78 이 초록이었다 — 리포트 44 의
+    「호출부 0곳」과 같은 구조의 반대편이다.
+    """
+    paths, root = tmp_paths()
+    from master.work import carry as C
+    saved = C.deliverer
+    calls: list = []
+
+    def spy(p_, work_id):                    # 불리면 그 자체가 실패다
+        calls.append(work_id)
+        return lambda *a, **k: None
+
+    C.deliverer = spy
+    try:
+        q = FakeQueue([_t("t1", epoch=1)])
+        hand = I.run_many(paths, facts=[FakeFacts(host="w1")], api=q,
+                          clean=lambda f: Clean(), work_id="W1",
+                          runner_=lambda f, t, to: (0, "RESULT: DONE"),
+                          reader=lambda *a: GOOD_RESPONSE)   # writer·deliver 없음
+        check("[중요] 배달자를 만들지 않는다 (지시서는 base 커밋의 헤더 [DOC] 다)",
+              calls == [], str(calls))
+        check("  그래도 파견은 성립한다", len(hand.items) == 1, hand.summary())
+        check("  빈 매니페스트 예외가 없다",
+              all("매니페스트 본문이 비었다" not in (r.reason or "")
+                  for _, r in hand.items), hand.summary())
+    finally:
+        C.deliverer = saved
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_no_worker_means_no_claim() -> None:
     """[중요] 집어놓고 못 돌리는 것이 가장 나쁘다 — claim 조차 하지 않는다."""
     paths, root = tmp_paths()
@@ -536,6 +575,7 @@ def main() -> int:
                test_same_base_commit_is_reused_other_is_not,
                test_run_many_takes_several_and_orders_them,
                test_dependents_of_a_failure_are_not_dispatched,
+               test_dispatch_task_delivers_nothing,
                test_no_worker_means_no_claim,
                test_serial_is_the_default_and_says_so,
                test_parallel_uses_both_workers, test_limit_is_respected,
