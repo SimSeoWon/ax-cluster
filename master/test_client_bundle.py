@@ -153,12 +153,17 @@ def test_skill_is_readable() -> None:
 
 
 def test_role_skills() -> None:
-    # [중요] 워커에는 **둘** 간다 — `ax-infer`(현 토폴로지: 추론만) + `ax-work`(구 토폴로지).
-    #    구 것을 지우지 않는 이유는 settled 결정이다: N-writer 기계장치는 측정으로 뒤집힐
-    #    여지가 있는 동안 되돌릴 수 있게 둔다(§8.4). 파견 지시가 이름으로 고른다.
-    check("워커는 ax-work + ax-infer",
-          set(bundle.skills_for("worker")) == {"ax-work", "ax-infer"},
+    # [중요] 워커에는 **`ax-infer` 하나만** 간다 (사용자 결정 2026-09-02).
+    # [주의] §8.4 의 *"되돌릴 수 있게 둔다"* 는 유지된다 — **파일은 지우지 않았다**
+    #    (`client/skills/ax-work/SKILL.md` 는 그대로 있고 `#320` 노트에 부활 조건이 있다).
+    #    바뀐 것은 **배달**뿐이다: 죽은 절차서를 기계에 놓으면 워커가 그것을 집는다.
+    #    실측 2026-09-02 00:02 — 매니페스트를 없앤 뒤 스킬 문구가 남아 4/4 가 `BLOCKED` 됐고
+    #    워커가 근거로 스킬을 댔다("Per skill §2/§8"). 명령줄과 문서가 갈리면 문서가 이긴다.
+    check("워커는 ax-infer 하나",
+          tuple(bundle.skills_for("worker")) == ("ax-infer",),
           str(bundle.skills_for("worker")))
+    check("  [중요] 파일은 남아 있다 (되돌릴 수 있음 — §8.4)",
+          (Path(bundle.__file__).with_name("skills") / "ax-work" / "SKILL.md").is_file())
     # [중요] 요청자에게 워커 절차를 주지 않는다
     # [중요] `ax-review` 는 원전의 「리더(TD·팀장)」 자리다 — 그 그룹이 없어 요청자가 그 판단을
     #    한다(사용자 확정 2026-08-16). 검수는 **판단**이지 구현이 아니라 이 역할에 맞는다.
@@ -347,7 +352,9 @@ def test_payload_split() -> None:
 def test_role_block() -> None:
     w = bundle.managed_block("P", _facts(role="worker"))
     r = bundle.managed_block("P", _facts(role="requester"))
-    check("워커 블록은 ax-work 를 가리킨다", "`ax-work`" in w)
+    # [중요] 배달을 멈췄으므로 **어느 블록도** `ax-work` 를 가리키지 않는다 (2026-09-02)
+    check("워커 블록은 ax-infer 를 가리킨다", "ax-infer" in w, w[:200])
+    check("[중요] 워커 블록이 ax-work 를 가리키지 않는다", "ax-work" not in w, w[:200])
     check("[중요] 요청자 블록은 ax-work 를 가리키지 않는다", "ax-work" not in r, r[:200])
     check("요청자 블록은 ax-request 를 가리킨다", "ax-request" in r)
     # [중요] 2026-08-20 계약 변경 (사용자 확정) — 이식본이 「분배」 한 차선으로 좁혔던 것을

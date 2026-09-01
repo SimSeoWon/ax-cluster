@@ -75,7 +75,8 @@ def test_unchanged() -> None:
           bundle.WORKSHOP_MD_REL)
     check("MCP 엔트리 이름 불변", bundle.MCP_SERVER_NAME == "ax-client",
           bundle.MCP_SERVER_NAME)
-    check("워커 스킬 불변", bundle.skills_for("worker") == ("ax-work", "ax-infer"),
+    # [중요] `ax-work` 는 2026-09-02 배달 중단 — 근거는 `spec.SKILLS_BY_ROLE` 주석에 있다
+    check("워커 스킬 불변 (`ax-infer` 하나)", bundle.skills_for("worker") == ("ax-infer",),
           str(bundle.skills_for("worker")))
     check("요청자 스킬 불변",
           bundle.skills_for("requester") == ("ax-request", "ax-ontology", "ax-review"),
@@ -99,7 +100,7 @@ def test_project_overlay() -> None:
     check("선언한 추가 스킬이 실린다", got[-1] == "ax-extra", str(got))
     check("기본 표가 앞에 남는다", got[:3] == ("ax-request", "ax-ontology", "ax-review"), str(got))
     check("[중요] 다른 역할은 영향 없다", bundle.skills_for("worker", init)
-          == ("ax-work", "ax-infer"), str(bundle.skills_for("worker", init)))
+          == ("ax-infer",), str(bundle.skills_for("worker", init)))
 
     # 리스트로 주면 모든 역할 — 원전 표의 「무조건 등록」과 같은 결
     flat = spec.ProjectInit(extra_skills=spec._by_role(["ax-all"], "extra_skills"))
@@ -109,7 +110,7 @@ def test_project_overlay() -> None:
 
     check("중복은 접힌다",
           bundle.skills_for("worker", spec.ProjectInit(
-              extra_skills={"worker": ("ax-work",)})) == ("ax-work", "ax-infer"))
+              extra_skills={"worker": ("ax-infer",)})) == ("ax-infer",))
 
 
 def test_overlay_from_config() -> None:
@@ -167,7 +168,7 @@ def test_overlay_rejects_garbage() -> None:
 def test_removals() -> None:
     rm = spec.removals_for("requester")
     check("폐지 스킬이 제거 목록에 있다",
-          set(rm["skills"]) == {"distribute", "review-work"}, str(rm["skills"]))
+          set(rm["skills"]) == {"distribute", "review-work", "ax-work"}, str(rm["skills"]))
     check("[주의] 폐지 MCP 목록은 비어 있다 (귀속 미결 #235)", rm["mcp"] == (), str(rm["mcp"]))
 
     # [중요] 배달과 제거가 같은 이름을 두고 싸우지 않는다 — 배달이 이긴다
@@ -892,6 +893,44 @@ def test_load_init_env() -> None:
 
 # ── ⑧ local_clone 하드코딩 제거 (완료 조건 5) ────────────────────
 
+def test_delivered_skills_do_not_contradict_the_command_line() -> None:
+    """[중요] **배달되는 스킬 문서와 마스터의 명령줄이 서로 모순되면 문서가 이긴다.**
+
+    실측 2026-09-02 00:02: 매니페스트를 없애고 `INFER_INSTRUCTION` 은 헤더 `[DOC]` 를 가리키게
+    고쳤는데, 배달되는 `ax-infer/SKILL.md` 에 *"읽을 것은 manifest.md 하나다. 없으면
+    RESULT: BLOCKED"* 가 남아 있었다. 워커 4/4 가 그 문구를 근거로 멈췄고("Per skill §2/§8"),
+    비용 $0.65 를 쓰고 산출물 0건이었다.
+
+    [중요] **코드엔 유닛이 있었지만 문서엔 없어서 통과했다.** 바꾼 것의 소비자를 전수로 세지
+    않은 것이 원인이고, 이 검사가 그 자리를 결정적으로 막는다.
+    """
+    from master.work import infer as I
+
+    root = Path(__file__).parent / "client" / "skills"
+    delivered = sorted({n for names in spec.SKILLS_BY_ROLE.values() for n in names})
+    check("배달 스킬 목록이 비어 있지 않다", bool(delivered), str(delivered))
+    check("[중요] `ax-work` 는 배달하지 않는다 (구 토폴로지 · `#320`)",
+          "ax-work" not in delivered, str(delivered))
+    check("  폐지 목록에 있어 이미 놓인 사본도 정리된다",
+          "ax-work" in spec.DEPRECATED_SKILLS, str(spec.DEPRECATED_SKILLS))
+
+    # [중요] 명령줄이 매니페스트를 안 가리키면, 배달되는 스킬도 그것을 **요구**해서는 안 된다.
+    instr = I.INFER_INSTRUCTION
+    cmd_wants_manifest = "manifest" in instr.lower()
+    check("명령줄은 매니페스트를 가리키지 않는다", not cmd_wants_manifest, instr[:120])
+
+    # 「요구」의 표지 — 없으면 막으라고 지시하는 문구
+    demands = ("매니페스트가 없으면", "manifest.md` 하나다", "매니페스트를 읽고")
+    for name in delivered:
+        f = root / name / "SKILL.md"
+        if not f.is_file():
+            check(f"{name}: SKILL.md 가 있다", False, str(f))
+            continue
+        text = f.read_text(encoding="utf-8")
+        hits = [d for d in demands if d in text]
+        check(f"[중요] {name} 이 매니페스트를 요구하지 않는다", not hits, f"{hits} in {f.name}")
+
+
 def test_clone_dir() -> None:
     src = (Path(__file__).resolve().parent / "context_search" / "paths.py").read_text(
         encoding="utf-8")
@@ -936,6 +975,7 @@ if __name__ == "__main__":
                test_sync_check_shape,
                test_server_steps,
                test_load_init_env,
+               test_delivered_skills_do_not_contradict_the_command_line,
                test_clone_dir):
         fn()
     # [중요] 형식 A(`N/M 통과`)로 찍는다 — 러너가 읽는 두 형식 중 하나여야 합계에
