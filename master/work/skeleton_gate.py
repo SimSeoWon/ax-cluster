@@ -101,98 +101,12 @@ def _win_join(base: str, rel: str) -> str:
 #    이 모듈은 작업장 배달본에 실리고 `work/skeleton.py` 는 실리지 않는다(배달 가드 테스트가
 #    그것을 잰다). 상대 임포트를 넣으면 배달본에서 ImportError 로 죽는다.
 DOC_TAG = "[DOC]"
-# 휘발 태그 — 「여기를 채워라」. 구현하면 워커가 **지운다**
-_PSEUDO_RE = re.compile(r"^[ \t]*//[ \t]*\[PSEUDO(?::\d+)?\]", re.M)
-# 주석·전처리기·빈 줄 — 「본문」으로 세지 않는다
-# [주의] `}` 는 여기 넣지 않는다 — **구간의 끝**이다 (아래 `_BLOCK_END`). 넣었더니 함수
-#    끝을 지나쳐 **다음 함수의 선언줄**을 본문으로 셌다(정상 골조 오탐 — 테스트가 잡았다).
-_NOT_CODE = re.compile(r"^[ \t]*(?://|/\*|\*|#|$)")
-# 함수/블록 끝 — 여기서 구간을 닫는다. 골조의 정상형은 `[PSEUDO]` 다음이 바로 이 줄이다.
-_BLOCK_END = re.compile(r"^[ \t]*\}\s*;?\s*$")
-# 골조가 컴파일·정합성을 유지하려고 **반드시 두는 것** — 워커가 채울 본문이 아니다.
-# ⑴ placeholder return (프롬프트 규칙 2가 명시적으로 요구한다)
-# ⑵ 🔴 `Super::` 호출 — 실측 2026-09-03 **오탐**: `EndPlay` 의 `Super::EndPlay(...)` 를
-#    「본문」으로 세서 정상 골조 2건을 막았다. UE5 가 요구하는 뼈대이므로 골조에 있는 것이
-#    맞고, 오히려 **없으면** 골조가 틀린 것이다. 「오탐이 더 비싸다」를 테스트에 적어 놓고
-#    이 형태를 빠뜨렸다.
-_PLACEHOLDER = re.compile(
-    r"^[ \t]*(?:"
-    r"return\s*(?:false|true|0|\{\s*\}|nullptr|NAME_None|"
-    r"FString\(\)|EForceInit::ForceInit)?\s*;"
-    r"|Super::[A-Za-z_]\w*\s*\([^;]*\)\s*;"
-    r"|return\s+Super::[A-Za-z_]\w*\s*\([^;]*\)\s*;"
-    r")[ \t]*$")
 
 
 def _has_doc(files: dict) -> bool:
     """골조 어디든 `[DOC]` 가 하나라도 있나. [주의] 헤더·구현 둘 다 본다 — 계약이 어느
     파일에 실릴지는 조각의 성질이 정하고, 게이트가 그것까지 규정하지는 않는다."""
     return any(DOC_TAG in (t or "") for t in (files or {}).values())
-
-
-def pseudo_with_code(files: dict, *, lookahead: int = 12) -> list:
-    """🔴 `[PSEUDO]` 뒤에 **실코드**가 붙은 자리. `["<경로>:<줄> <태그 앞부분>", …]`.
-
-    [중요] **이것이 골조와 완성품을 가르는 유일한 결정적 검사다.** 프롬프트 규칙 2가
-    *"Do NOT write real logic"* 를 말하지만 그것은 **모델에게 하는 부탁**이고, 실측
-    2026-09-03 에 모델은 그것을 무시했다(13/13 이 실코드였다). 부탁은 게이트가 아니다.
-
-    [주의] **placeholder `return` 은 실코드가 아니다** — 규칙 2가 *"non-void function ends
-    with a minimal placeholder return directly after the [PSEUDO] comment"* 로 **요구**한다.
-    그것을 위반으로 세면 정상 골조가 전부 막힌다.
-
-    세는 방법: `[PSEUDO]` 줄 다음부터 `lookahead` 줄 안에서, 주석·전처리기·placeholder 가
-    아닌 **첫 줄**이 나오면 그 자리를 위반으로 본다. 다음 `[PSEUDO]` 나 **함수 끝(`}` 단독)**
-    을 만나면 그 구간은 비어 있는 것으로 보고 닫는다.
-
-    [주의] **함수 끝에서 닫는 것이 필수다** — 처음 구현에서 `}` 를 「본문 아님」으로만 두고
-    구간을 안 닫았더니, 스캔이 함수를 넘어가 **다음 함수의 선언줄**을 본문으로 셌다. 정상
-    골조가 통째로 막히는 오탐이었고 테스트가 잡았다.
-    """
-    hits: list = []
-    for rel in sorted(files or {}):
-        lines = (files[rel] or "").replace("\r", "").split("\n")
-        for i, ln in enumerate(lines):
-            if not _PSEUDO_RE.match(ln):
-                continue
-            for nxt in lines[i + 1:i + 1 + lookahead]:
-                if _PSEUDO_RE.match(nxt):
-                    break                      # 다음 마커 — 이 구간은 비어 있다
-                if _BLOCK_END.match(nxt):
-                    break                      # [중요] 함수 끝 — 본문이 없다는 뜻이다
-                if _NOT_CODE.match(nxt):
-                    continue                   # 주석·전처리기·빈 줄
-                if _PLACEHOLDER.match(nxt):
-                    continue                   # 규칙 2가 요구하는 placeholder
-                hits.append(f"{rel}:{i + 1} {ln.strip()[:60]}")
-                break
-    return hits
-
-
-def check_tags(files: dict) -> str:
-    """🔴 **골조 태그 계약만** 재는 진입점. 통과면 `""`, 아니면 **막을 사유**.
-
-    [중요] `run()` 과 갈라 두는 이유: 이 검사는 **텍스트뿐**이라 기계도 UE5 도 빌드도 필요
-    없다. `run()` 은 UHT 빌드까지 하므로 `facts`·`tree` 가 있어야 하고, 그래서 주입이 없는
-    경로(`register_work_tool`)에서 **통째로 건너뛰어졌다**. 공짜인 검사가 비싼 검사에 묶여
-    있으면 비싼 쪽이 없는 자리에서 공짜인 쪽도 사라진다.
-
-    [주의] 순서가 계약이다 — `[DOC]` 부재를 먼저 본다(계약이 아예 없는 것이 더 근본적이다).
-    """
-    if not files:
-        return "골조에 파일이 없다 — 잴 것이 없다"
-    if not _has_doc(files):
-        return ("계약이 보존 태그로 남지 않았다 (`[DOC]` 0개) — 「무엇을 왜」는 `[DOC]`, "
-                "「여기를 채워라」만 `[PSEUDO]` (사용자 결정 2026-08-27). "
-                "`[PSEUDO]` 는 구현하면 지워지므로 계약을 거기 두면 `main` 에 남지 않는다")
-    coded = pseudo_with_code(files)
-    if coded:
-        return (f"`[PSEUDO]` 에 이미 본문이 있다 ({len(coded)}곳) — 골조가 아니라 완성품이다. "
-                f"「무엇을 왜」는 `[DOC]` 로 적고 본문은 **비워** 둔다 (non-void 는 placeholder "
-                f"`return` 한 줄만). 채울 자리가 없으면 워커는 `[PSEUDO]` 를 지울 수도 남길 "
-                f"수도 없고, 지우면 설명이 사라지고 남기면 층1 이 막는다. "
-                f"자리: {'; '.join(coded[:4])}")
-    return ""
 
 
 def place(facts, tree: str, files: dict, *, writer=None) -> list:
@@ -276,20 +190,6 @@ def run(facts, skeleton, *, tree: str, project: str, uproject: str = "",
                    "「무엇을 왜」는 `[DOC]`, 「여기를 채워라」만 `[PSEUDO]` "
                    "(사용자 결정 2026-08-27) — `[PSEUDO]` 는 구현하면 지워지므로 "
                    "계약을 거기 두면 `main` 에 남지 않는다")
-        return g
-
-    # 🔴 [중요] **골조가 본문까지 써 버렸는가** — 실측 2026-09-03 에 13/13 이 그랬다.
-    #    프롬프트 규칙 2 는 *"Do NOT write real logic"* 인데 모델이 무시했고, UHT 빌드는
-    #    실코드를 당연히 통과시킨다. **부탁은 게이트가 아니다** — 결정적으로 잡는다.
-    # [주의] 이것이 통과하면 파이프라인이 어느 쪽으로도 못 간다: 워커는 채울 게 없고,
-    #    `[PSEUDO]` 를 지우면 설명이 사라지고 안 지우면 층1 이 막는다.
-    coded = pseudo_with_code(files)
-    if coded:
-        g.error = (f"`[PSEUDO]` 에 이미 본문이 있다 ({len(coded)}곳) — 골조가 아니라 완성품이다. "
-                   f"빌드 전에 막는다. 「무엇을 왜」는 `[DOC]` 로 적고 본문은 **비워** 둔다 "
-                   f"(non-void 는 placeholder `return` 한 줄만) — 워커가 채울 자리가 없으면 "
-                   f"`[PSEUDO]` 를 지울 수도 남길 수도 없다. "
-                   f"자리: {'; '.join(coded[:4])}")
         return g
 
     try:
