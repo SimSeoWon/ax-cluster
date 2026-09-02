@@ -51,6 +51,11 @@ from .runner import DispatchError
 
 # 원전 커밋 메시지 규약 (`docs/distributed-workers.md` § 워커 사이클)
 COMMIT_FMT = "[task:{task_id}] worker={host} target={target}"
+# [중요] 사이클이 끝나면 **`main` 으로 돌아온다** (원전 § 워커 사이클 · 사용자 결정 2026-08-09).
+#    실측 2026-09-03: 이 단계가 없어서 `.2` 가 조각 브랜치에 체크아웃된 채 남았고, 그러면
+#    **정리기가 그 브랜치를 영영 못 지운다**(체크아웃된 브랜치는 삭제 대상에서 빠진다).
+#    작업물은 이미 원격에 있으므로 돌아와도 잃는 것이 없다.
+HOME_BRANCH = "main"
 PUSH_TIMEOUT = 300
 GIT_TIMEOUT = 180
 
@@ -63,6 +68,7 @@ class Committed:
     files: dict = field(default_factory=dict)       # 되읽은 본문 {경로: 내용}
     want: list = field(default_factory=list)
     layer1_violations: list = field(default_factory=list)
+    notes: list = field(default_factory=list)       # [주의] 로 시작하는 것은 비치명 경고다
     stage: str = ""                                 # 어디까지 갔나 (실패 지점)
     reason: str = ""
 
@@ -107,6 +113,26 @@ def checkout_command(facts, branch: str, base_commit: str) -> str:
     return (f'{cd} && git fetch --all --quiet && git reset --hard --quiet HEAD && '
             f'git clean -fd && git checkout -q -B "{branch}" "{base_commit}" && '
             f'git rev-parse HEAD')
+
+
+def return_home_command(facts, home: str = HOME_BRANCH) -> str:
+    """사이클 종료 자세 — `main` 으로 복귀한다.
+
+    [중요] **원전이 이 단계를 갖고 있고 이유가 정리다**: 체크아웃된 브랜치는 `git branch -d`
+    대상에서 빠지므로, 조각 브랜치에 서 있는 채로 끝나면 병합 뒤에도 지워지지 않는다.
+    실측 2026-09-03 에 `.2` 가 정확히 그 상태로 남았다.
+    [주의] 실패해도 커밋을 되돌리지 않는다 — 산출물은 이미 원격에 있다. 사유만 남긴다.
+    """
+    cd = f'cd /d "{facts.path}"' if facts.windows else f'cd "{facts.path}"'
+    # [중요] **먼저 트리를 정리한다.** 실측 2026-09-03: 층1 에서 막힌 조각의 미커밋 본문이
+    #    남아 `git checkout main` 이 *"local changes would be overwritten"* 로 거부됐고,
+    #    그래서 워커가 조각 브랜치에 남았다. 테스트가 잡은 자리다.
+    # [주의] **버리는 것이 안전한 이유**: ⑴ 이 트리는 파이프라인 소유다(사람 트리가 아니다 —
+    #    `.33` 에 이 명령을 절대 돌리지 않는다) ⑵ 통과한 본문은 이미 커밋·push 됐고,
+    #    막힌 본문은 **스풀에 원문이 남는다**(`Response.files`) — 증거를 잃지 않는다
+    #    ⑶ 다음 사이클의 `checkout_base` 가 어차피 `reset --hard` 로 시작한다.
+    return (f'{cd} && git reset --hard -q HEAD && git clean -fdq && '
+            f'git checkout -q "{home}" && git rev-parse --abbrev-ref HEAD')
 
 
 def commit_command(facts, branch: str, task_id: str, targets, message: str = "") -> str:
@@ -175,6 +201,18 @@ def run(facts, task, *, work_id: str, base_commit: str, want, llm,
         c.reason = (f"서브 브랜치를 세우지 못했다 (rc={rc}) — {(out or '').strip()[-300:]}")
         return c
 
+    # ⑥ [중요] **복귀는 `finally` 다** — 실측 2026-09-03: 성공 경로에만 붙였더니 층1 에서
+    #    막힌 조각이 브랜치에 체크아웃된 채 남았고, 테스트가 그것을 잡았다. **잔재가 남는
+    #    것은 성공/실패와 무관하다** — 체크아웃을 옮긴 쪽이 되돌릴 책임을 진다.
+    try:
+        return _cycle(facts, task_id, c, base, llm, do_ssh, do_read, baseline)
+    finally:
+        _return_home(facts, do_ssh, c)
+
+
+def _cycle(facts, task_id: str, c: "Committed", base: str, llm, do_ssh, do_read,
+           baseline) -> "Committed":
+    """체크아웃이 선 뒤의 사이클 — ② 본문 → ③ 되읽기 → ④ 층1 → ⑤ 커밋·push."""
     # ② LLM — [중요] **본문만 쓴다.** git 은 만지지 않는다
     c.stage = "본문 작성"
     try:
@@ -221,3 +259,15 @@ def run(facts, task, *, work_id: str, base_commit: str, want, llm,
         return c
     c.head, c.stage = head, ""
     return c
+
+
+def _return_home(facts, do_ssh, c: Committed) -> None:
+    """`main` 복귀. [주의] **실패를 치명으로 보지 않는다** — 커밋은 이미 원격에 있다."""
+    try:
+        rc, out = do_ssh(facts, return_home_command(facts), GIT_TIMEOUT)
+        if rc != 0 or HOME_BRANCH not in (out or ""):
+            c.notes.append(f"[주의] `{HOME_BRANCH}` 복귀 실패 (rc={rc}) — 조각 브랜치에 "
+                           f"체크아웃된 채 남으면 정리기가 그것을 못 지운다: "
+                           f"{(out or '').strip()[-160:]}")
+    except Exception as e:                                   # noqa: BLE001
+        c.notes.append(f"[주의] `{HOME_BRANCH}` 복귀를 시도하지 못했다 — {type(e).__name__}: {e}")

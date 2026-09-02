@@ -8,6 +8,7 @@
     ③ 본문이 비면 커밋하지 않는다 · 커밋이 안 생겼으면(HEAD==base) 성공으로 읽지 않는다
     ④ `add` 는 **명시 목록만** — 사람의 WIP 를 삼키지 않는다
     ⑤ `clean -fd` 에 `-x` 가 없다 (gitignore 대상 보존)
+    ⑥ [중요] **끝나면 `main` 으로 돌아온다** — 조각 브랜치에 서 있으면 정리기가 못 지운다
 
 `python3 master/test_wcommit.py`
 """
@@ -141,6 +142,31 @@ def test_commands():
         check("[중요] 대상이 없으면 커밋 명령을 만들지 않는다", True)
 
 
+def test_returns_to_main():
+    """🔴 [중요] 실측 2026-09-03 — 이 단계가 없어서 `.2` 가 조각 브랜치에 남았다.
+
+    체크아웃된 브랜치는 `git branch -d` 대상에서 빠지므로, 병합이 끝나도 **정리기가 영영
+    못 지운다**. 원전 사이클에 이 단계가 있고 이유가 정확히 그것이다.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        facts, bare, base, worker = _world(Path(td))
+        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+                        want=[SRC], llm=_llm_writes(GOOD), ssh=_shell, reader=_reader,
+                        baseline=lambda p: KEEP_HDR if p == HDR else None)
+        check("통과한다", c.ok, c.summary)
+        cur = sh(worker, "git", "rev-parse", "--abbrev-ref", "HEAD")
+        check("[중요] **`main` 으로 돌아왔다**", cur == "main", cur)
+        check("  그래도 커밋은 원격에 있다",
+              _heads(bare).get(f"task/{WORK}/{TASK}") == c.head, f"{_heads(bare)}")
+        # 실패 경로도 돌아와야 한다 — 잔재가 남는 것은 성공/실패와 무관하다
+        c2 = wcommit.run(facts, {"task_id": "bad1"}, work_id=WORK, base_commit=base,
+                         want=[SRC], llm=_llm_writes({SRC: "// [PSEUDO] 안 채웠다\n"}),
+                         ssh=_shell, reader=_reader)
+        check("막혔어도 돌아온다", not c2.ok and
+              sh(worker, "git", "rev-parse", "--abbrev-ref", "HEAD") == "main",
+              c2.summary)
+
+
 def test_happy_path():
     with tempfile.TemporaryDirectory() as td:
         facts, bare, base, worker = _world(Path(td))
@@ -227,7 +253,7 @@ def test_llm_failure_does_not_commit():
 
 
 def main() -> int:
-    for fn in (test_commands, test_happy_path, test_layer1_blocks_commit,
+    for fn in (test_commands, test_returns_to_main, test_happy_path, test_layer1_blocks_commit,
                test_empty_body_blocks, test_no_change_is_not_success,
                test_refusals, test_llm_failure_does_not_commit):
         fn()
