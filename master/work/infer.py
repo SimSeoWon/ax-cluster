@@ -506,6 +506,31 @@ def _free_workers(facts, *, clean=None) -> tuple:
     return chosen, rejected
 
 
+def _skeleton_contract_reason(paths, base: str, want) -> str:
+    """base 커밋의 실물 골조가 태그 계약을 지켰나. 통과면 `""`, 아니면 **막을 사유**.
+
+    [주의] **읽지 못하면 막지 않는다** — 미러에 커밋이 없거나 git 이 없는 환경(테스트·
+    오프라인)에서 「못 읽었다」를 「위반」으로 접으면 정상 파견이 죽는다. 대신 사유를 로그에
+    남긴다. [중요] 반대로 **읽었는데 위반이면 막는다** — 그것이 이 게이트의 전부다.
+    """
+    try:
+        from . import skeleton_gate as SG
+        from .declarations import _mirror_git, ensure_commit
+        ensure_commit(paths, base)
+        files = {}
+        for rel in want:
+            txt = _mirror_git(paths, "show", f"{base}:{rel}", check=False)
+            if (txt or "").strip():
+                files[rel] = txt
+        if not files:
+            _log(f"[골조] base {base[:8]} 에서 대상 파일을 못 읽었다 — 계약 미확인")
+            return ""
+        return SG.check_tags(files)
+    except Exception as e:                                   # noqa: BLE001
+        _log(f"[골조] 계약을 재지 못했다 ({type(e).__name__}: {e}) — 미확인으로 진행한다")
+        return ""
+
+
 def _log(msg: str) -> None:
     """[중요] **파견 로그는 `[dispatch]` 접두어 하나로 모인다** — 「걸었는지」와 「왜 안 걸었는지」를
     둘 다 찍어야 침묵이 배선 사망과 구별된다(그 침묵이 2026-08-29~31 이틀을 태웠다).
@@ -557,6 +582,27 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
     #    사용자 서술: *"작업 브랜치에서 갈라진 각각의 서브 브랜치를 만들고 워커들에게 브랜치와
     #    작업할 클래스를 전달해"*. 이름을 배정하는 것은 서버다(원전 `cluster_coordinator.py:11`
     #    *"서버가 브랜치명을 배정하므로 워커는 받은 이름을 쓸 뿐"*).
+    # 🔴 [중요] **골조 태그 계약을 파견 직전에 잰다** (실측 2026-09-03). base 커밋의 **실물**
+    #    을 읽는다 — 워커가 받는 것이 그것이고, 등재 시점에는 아직 push 되지 않아 볼 수 없다.
+    # [중요] **워커 토큰이 나가기 직전이 마지막 싼 자리다.** 이 검사가 없어서 골조가 본문까지
+    #    써 버린 채 파견됐고(13/13 실코드), 층2 도 층3 도 아니라 **층1** 이 막았다 —
+    #    즉 워커 한 대의 추론값을 통째로 버린 뒤에 드러났다.
+    if base:
+        why_tags = _skeleton_contract_reason(paths, base, want)
+        if why_tags:
+            _log(f"[골조] {task_id} 파견 안 한다 — {why_tags}")
+            res = Response(task_id=task_id, worker=facts.host, want=want,
+                           base_commit=base, epoch=task.get("epoch"),
+                           reason=f"골조 계약 위반 — {why_tags}")
+            res.notes.append(f"[중요] {why_tags}")
+            spool(paths, res, work_id=work_id, order=order)
+            try:
+                runner.submit_fail(task_id, runner.BLOCKED, why_tags,
+                                   epoch=task.get("epoch"), worker_id=facts.host, api=api)
+            except Exception as e:                           # noqa: BLE001
+                res.notes.append(f"[주의] 반납도 실패했다 — {type(e).__name__}: {e}")
+            return res
+
     # 🔴 [중요] **여기는 fail-closed 다** — ⑸ 가 이 브랜치에 커밋하므로 없으면 진행이 불가하다.
     #    (⑷ 를 만들 때는 비차단이었다. ⑸ 가 배선된 지금 그 유예가 끝났다.)
     sub_name = sub_err = ""
