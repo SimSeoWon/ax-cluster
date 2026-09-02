@@ -74,6 +74,21 @@ FVector UNSInteractableComponent::GetFocusLocation() const
     // [PSEUDO] 여기를 채워라
     return {};
 }
+
+void UNSInteractableComponent::EndPlay(EEndPlayReason::Type EndPlayReason)
+{
+    // [DOC] 서브시스템에서 등록 해제한다.
+    // [PSEUDO] 여기를 채워라
+
+    Super::EndPlay(EndPlayReason);
+}
+
+void UNSInteractableComponent::TickComponent(float DT, ELevelTick T, FActorComponentTickFunction* F)
+{
+    // [DOC] 여기서는 아무것도 하지 않는다 — 판정은 서브시스템이 중앙에서 한다.
+    // [PSEUDO] 여기를 채워라
+    Super::TickComponent(DT, T, F);
+}
 """
 
 # ── 실측 2026-09-03 의 모양 — 본문이 이미 실렸다 ─────────────────────────────
@@ -108,6 +123,21 @@ def test_good_skeleton_passes():
           str(G.pseudo_with_code({"X.cpp": GOOD_CPP})))
     check("  void 함수의 주석 단독도 통과", not G.pseudo_with_code(
         {"V.cpp": "void A::B()\n{\n    // [PSEUDO] 여기를 채워라\n}\n"}))
+    # 🔴 실측 2026-09-03 — 이것을 빠뜨려 **정상 골조 2건을 막았다**
+    check("[중요] **`Super::` 호출은 본문이 아니다** (UE5 가 요구하는 뼈대)",
+          not G.pseudo_with_code({"E.cpp": "void A::EndPlay(T R)\n{\n"
+                                           "    // [PSEUDO] 여기를 채워라\n\n"
+                                           "    Super::EndPlay(R);\n}\n"}),
+          str(G.pseudo_with_code({"E.cpp": "void A::EndPlay(T R)\n{\n"
+                                           "    // [PSEUDO] 여기를 채워라\n\n"
+                                           "    Super::EndPlay(R);\n}\n"})))
+    check("  `return Super::…;` 도 통과",
+          not G.pseudo_with_code({"R.cpp": "bool A::B()\n{\n"
+                                           "    // [PSEUDO] 채워라\n    return Super::B();\n}\n"}))
+    check("[중요] **`Super::` 뒤에 실코드가 오면 여전히 잡는다**",
+          len(G.pseudo_with_code({"X.cpp": "void A::EndPlay(T R)\n{\n"
+                                           "    // [PSEUDO] 채워라\n    Super::EndPlay(R);\n"
+                                           "    DoRealWork();\n}\n"})) == 1)
 
 
 def test_body_already_written_is_blocked():

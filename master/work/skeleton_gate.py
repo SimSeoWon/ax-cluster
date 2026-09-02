@@ -109,10 +109,19 @@ _PSEUDO_RE = re.compile(r"^[ \t]*//[ \t]*\[PSEUDO(?::\d+)?\]", re.M)
 _NOT_CODE = re.compile(r"^[ \t]*(?://|/\*|\*|#|$)")
 # 함수/블록 끝 — 여기서 구간을 닫는다. 골조의 정상형은 `[PSEUDO]` 다음이 바로 이 줄이다.
 _BLOCK_END = re.compile(r"^[ \t]*\}\s*;?\s*$")
-# 골조가 컴파일되게 두는 최소 placeholder (프롬프트 규칙 2가 명시적으로 허용한 것)
+# 골조가 컴파일·정합성을 유지하려고 **반드시 두는 것** — 워커가 채울 본문이 아니다.
+# ⑴ placeholder return (프롬프트 규칙 2가 명시적으로 요구한다)
+# ⑵ 🔴 `Super::` 호출 — 실측 2026-09-03 **오탐**: `EndPlay` 의 `Super::EndPlay(...)` 를
+#    「본문」으로 세서 정상 골조 2건을 막았다. UE5 가 요구하는 뼈대이므로 골조에 있는 것이
+#    맞고, 오히려 **없으면** 골조가 틀린 것이다. 「오탐이 더 비싸다」를 테스트에 적어 놓고
+#    이 형태를 빠뜨렸다.
 _PLACEHOLDER = re.compile(
-    r"^[ \t]*return\s*(?:false|true|0|\{\s*\}|nullptr|NAME_None|"
-    r"FString\(\)|EForceInit::ForceInit)?\s*;[ \t]*$")
+    r"^[ \t]*(?:"
+    r"return\s*(?:false|true|0|\{\s*\}|nullptr|NAME_None|"
+    r"FString\(\)|EForceInit::ForceInit)?\s*;"
+    r"|Super::[A-Za-z_]\w*\s*\([^;]*\)\s*;"
+    r"|return\s+Super::[A-Za-z_]\w*\s*\([^;]*\)\s*;"
+    r")[ \t]*$")
 
 
 def _has_doc(files: dict) -> bool:
