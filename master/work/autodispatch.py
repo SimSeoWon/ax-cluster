@@ -393,7 +393,10 @@ def dispatch(paths, work_id: str, *, limit: int = 0, api=None, runner_many=None)
         fn = runner_many
         if fn is None:
             from .infer import run_many as fn                # noqa: PLC0415
-        hand = fn(paths, limit=n, project=paths.name, work_id=work_id)
+        # 🔴 [중요] **병렬을 명시로 넘긴다** (사용자 확정 2026-09-03). 종전에는 넘기지 않아
+        #    `run_many` 의 옛 기본값(`False`)이 그대로 먹었고, **자동 파견 경로에는 병렬을
+        #    켤 자리가 아예 없었다.** 기본값에 의존하면 그 기본값이 바뀐 줄도 모른다.
+        hand = fn(paths, limit=n, project=paths.name, work_id=work_id, parallel=True)
         # [중요] **필드 이름을 확인하고 읽는다** (`#342`, 실측 2026-08-30). 처음에
         #    `hand.responses` 를 읽어 **성공을 「응답 0건」으로 보고**했다 — 실제로는
         #    `Handoff.items` 다(`[(order, Response), …]`). 만들고 확인하지 않은 자리다.

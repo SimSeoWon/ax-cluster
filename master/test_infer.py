@@ -386,7 +386,7 @@ class FakeQueue:
 
 
 def _run(paths, q, *, body="void X::Go() { Do(); }\n", workers=1,
-         limit=4, parallel=False, stdout="RESULT: DONE"):
+         limit=4, parallel=True, stdout="RESULT: DONE"):
     """정본 ⑸ 로 한 바퀴 — 워커가 본문을 쓰고 마스터가 커밋한다.
 
     `body` 가 비면 **본문이 안 채워진 것**이라 커밋이 생기지 않는다(fail-closed).
@@ -467,14 +467,36 @@ def test_no_worker_means_no_claim() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
-def test_serial_is_the_default_and_says_so() -> None:
-    """[중요] 병렬은 기본값이 아니다 (실측: 12% 빠르고 90% 비쌌다)."""
+def test_parallel_is_the_default() -> None:
+    """🔴 [중요] **병렬이 기본값이다** (사용자 확정 2026-09-03).
+
+    정본 ⑸: *"워커들은 각각 지정된 서브 브랜치에 커밋하고 작업을 마치고 다음 작업을 요청"* —
+    **클래스 단위로 쪼개는 목적이 병렬**이다(`#343`). 종전 기본값은 `False` 였고 근거가
+    *"2대는 12% 빠르고 90% 비쌌다"* 였는데, **그 비용을 감수할지는 사용자가 정한다.**
+    """
     paths, root = tmp_paths()
     try:
         q = FakeQueue([_t("t1"), _t("t2")])
-        hand = _run(paths, q, workers=2)
+        hand = _run(paths, q, workers=2)          # parallel 을 주지 않는다 = 기본값
+        check("[중요] **기본값이 병렬이라 직렬 문구가 없다**", "직렬" not in hand.note, hand.note)
+        check("  두 건 다 돌았다", len(hand.items) == 2, str(hand.items))
+        # [중요] 워커가 1대면 「병렬로 켰다」와 「병렬로 돌았다」가 다르다 — 그것을 말해야 한다
+        q1 = FakeQueue([_t("s1")])
+        h1 = _run(paths, q1, workers=1)
+        check("[중요] **워커 1대면 실제로는 직렬임을 말한다**",
+              "1대" in h1.note and "직렬" in h1.note, h1.note)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_serial_only_when_asked() -> None:
+    """[주의] 끄는 것은 **호출자의 명시**다 — 기본값으로 조용히 직렬이 되지 않는다."""
+    paths, root = tmp_paths()
+    try:
+        q = FakeQueue([_t("t1"), _t("t2")])
+        hand = _run(paths, q, workers=2, parallel=False)
         check("직렬임을 말한다", "직렬" in hand.note, hand.note)
-        check("실측 근거를 적는다", "90%" in hand.note, hand.note)
+        check("  누가 껐는지 말한다", "명시" in hand.note, hand.note)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -571,7 +593,7 @@ def main() -> int:
                test_run_many_takes_several_and_orders_them,
                test_dependents_of_a_failure_are_not_dispatched,
                test_no_worker_means_no_claim,
-               test_serial_is_the_default_and_says_so,
+               test_parallel_is_the_default, test_serial_only_when_asked,
                test_parallel_uses_both_workers, test_limit_is_respected,
                test_handoff_states_that_nobody_applies_yet,
                test_reuse_avoids_paying_twice):

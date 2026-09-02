@@ -34,10 +34,12 @@
 
 ## [중요] 병렬을 기본값으로 두지 않는다 (실측 2026-08-09)
 
-워커 2대는 **12% 빠른데 90% 비쌌다** — 캐시 생성이 워커별 고정비라 조각이 작으면 손해다.
-반대로 **묶는 것은 확실히 이득**이다(4파일 묶음 파일당 3.2배 쌈). 그래서 동시 파견은 구현하되
-`parallel=False` 가 기본이고, 켜는 것은 사람의 선택이다. 분산의 값은 **처리량이 아니라 증분**
-이다(사용자 재정의 2026-08-11).
+🔴 **병렬이 기본값이다** (사용자 확정 2026-09-03) — 정본 ⑸ 의 *"워커들은 각각 … 다음 작업을
+요청"* 이 그것이고, **클래스 단위로 쪼개는 목적이 병렬**이다.
+
+[주의] 실측 2026-08-09 은 여전히 유효한 **사실**이다 — 워커 2대는 12% 빠른데 90% 비쌌고
+(캐시 생성이 워커별 고정비), 묶는 것은 확실히 이득이었다(4파일 묶음 파일당 3.2배 쌈).
+**그러나 그 비용을 감수할지는 사용자가 정한다** — 내가 기본값으로 정할 자리가 아니었다.
 """
 from __future__ import annotations
 
@@ -714,7 +716,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
 
 
 def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner._api,
-             clean=runner.AUTO, parallel: bool = False, work_id: str = "",
+             clean=runner.AUTO, parallel: bool = True, work_id: str = "",
              runner_=None, reader=None, ssh=None,
              timeout: int = runner.DEFAULT_TIMEOUT) -> Handoff:
     """큐에서 최대 `limit` 건을 집어 추론시키고, **인계 묶음**을 돌려준다 (소 1.3.1).
@@ -722,8 +724,13 @@ def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner
     [중요] **워커가 빌 때만 집는다.** 집어놓고 못 돌리는 것이 가장 나쁘다 — `run_once` 가 이미
     같은 규칙이다(리스가 1200초 붙잡히고 사람은 *"왜 아무것도 안 도나"* 를 본다).
 
-    [중요] **병렬은 기본값이 아니다** (실측: 워커 2대 = 12% 빠르고 90% 비쌌다). `parallel=True` 는
-    사람이 켜는 것이고, 조각이 클 때만 이득이다.
+    🔴 [중요] **병렬이 기본값이다** (사용자 확정 2026-09-03). 정본 ⑸: *"작업을 전달받은
+    **워커들은** … **각각** 지정된 서브 브랜치에 커밋하고 작업을 마치고 **다음 작업을
+    요청**한다"* — 복수 워커가 동시에 돌고 각자 끝나면 다음을 집는 것이 그 문장이고,
+    **클래스 단위로 쪼개는 이유가 그것**이다(`#343` 「클래스 단위 조각은 독립」).
+    [주의] 종전 기본값은 `False` 였고 근거가 *"워커 2대 = 12% 빠르고 90% 비쌌다"*(실측
+    2026-08-09)였다. **비용은 사용자가 판단할 것이고 내가 기본값으로 정할 것이 아니다** —
+    직렬로 두면 조각을 쪼갠 값이 사라진다. 끄려면 호출자가 `parallel=False` 를 명시한다.
 
     [중요] **실패한 태스크의 후속(`depends_on`)은 파견하지 않는다.** 큐는 `failed` 를 의존 해소로
     **센다**(`logic_claim.py`: *"failed 도 dependents 차단 X — 영원 block 방지"*). 그 선택은
@@ -754,8 +761,14 @@ def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner
         return hand
     if not parallel:
         workers = workers[:1]
-        hand.note = ("[주의] 직렬로 돌렸다 (기본값) — 워커 2대는 실측에서 12% 빠르고 90% 비쌌다. "
-                     "조각이 클 때만 `parallel=True` 를 켠다.")
+        hand.note = ("[주의] **직렬로 돌렸다 — 호출자가 `parallel=False` 를 명시했다.** "
+                     "기본값은 병렬이다(정본 ⑸, 사용자 확정 2026-09-03).")
+    elif len(workers) == 1:
+        # [중요] **워커가 하나면 병렬이라도 실제로는 직렬이다** — 그 사실을 숨기지 않는다.
+        #    「병렬로 켰다」와 「병렬로 돌았다」는 다르고, 뒤엣것만 실측이다.
+        hand.note = (f"[주의] 병렬이지만 **파견 가능한 워커가 1대**라 실제로는 직렬로 돈다"
+                     + (f" — 제외: {'; '.join(f'{h}: {r}' for h, r in rejected)}"
+                        if rejected else ""))
 
     lock = threading.Lock()
     state = {"taken": 0, "failed": set(), "stop": False,
