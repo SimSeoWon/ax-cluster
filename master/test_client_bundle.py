@@ -153,14 +153,13 @@ def test_skill_is_readable() -> None:
 
 
 def test_role_skills() -> None:
-    # [중요] 워커에는 **`ax-infer` 하나만** 간다 (사용자 결정 2026-09-02).
-    # [주의] §8.4 의 *"되돌릴 수 있게 둔다"* 는 유지된다 — **파일은 지우지 않았다**
-    #    (`client/skills/ax-work/SKILL.md` 는 그대로 있고 `#320` 노트에 부활 조건이 있다).
-    #    바뀐 것은 **배달**뿐이다: 죽은 절차서를 기계에 놓으면 워커가 그것을 집는다.
-    #    실측 2026-09-02 00:02 — 매니페스트를 없앤 뒤 스킬 문구가 남아 4/4 가 `BLOCKED` 됐고
-    #    워커가 근거로 스킬을 댔다("Per skill §2/§8"). 명령줄과 문서가 갈리면 문서가 이긴다.
-    check("워커는 ax-infer 하나",
-          tuple(bundle.skills_for("worker")) == ("ax-infer",),
+    # 🔴 [중요] 정본 ⑸ (사용자 확정 2026-09-02) — 워커는 **`ax-work`** 계약을 받는다.
+    # [주의] 실측 2026-09-02 00:02 의 교훈은 그대로 산다 — 매니페스트를 없앤 뒤 스킬 문구가
+    #    남아 4/4 가 `BLOCKED` 됐고 워커가 근거로 스킬을 댔다("Per skill §2/§8").
+    #    **명령줄과 문서가 갈리면 문서가 이긴다** — 그래서 `ax-work` SKILL.md 본문도 같이
+    #    정본으로 고쳤다(git 금지·`RESULT: DONE` 한 줄).
+    check("워커는 ax-work + ax-infer",
+          tuple(bundle.skills_for("worker")) == ("ax-work", "ax-infer"),
           str(bundle.skills_for("worker")))
     check("  [중요] 파일은 남아 있다 (되돌릴 수 있음 — §8.4)",
           (Path(bundle.__file__).with_name("skills") / "ax-work" / "SKILL.md").is_file())
@@ -375,7 +374,9 @@ def test_deliver_removes_deprecated_skills() -> None:
         check("[중요] 폐지 스킬마다 삭제를 시도한다",
               len(got) == len(spec.removals_for("worker")["skills"]), str(got))
         check("  전부 [완료] 로 답한다", all("[완료]" in g for g in got), str(got))
-        check("  `ax-work` 가 대상이다", any("ax-work" in g for g in got), str(got))
+        # [주의] `ax-work` 는 삭제 대상이 **아니다** — 정본 ⑸ 의 계약이다
+        check("[중요] `ax-work` 는 삭제 대상이 아니다",
+              not any("ax-work" in g for g in got), str(got))
         check("[주의] 디렉토리째 지운다 (SKILL.md 만 지우면 빈 디렉토리가 남는다)",
               any("rmdir /s /q" in c or "rm -rf" in c for c in calls), str(calls[:3]))
         check("  지운 뒤 되확인한다 (「지웠다」를 확인 없이 말하지 않는다)",
@@ -407,9 +408,10 @@ def test_deliver_removes_deprecated_skills() -> None:
 def test_role_block() -> None:
     w = bundle.managed_block("P", _facts(role="worker"))
     r = bundle.managed_block("P", _facts(role="requester"))
-    # [중요] 배달을 멈췄으므로 **어느 블록도** `ax-work` 를 가리키지 않는다 (2026-09-02)
-    check("워커 블록은 ax-infer 를 가리킨다", "ax-infer" in w, w[:200])
-    check("[중요] 워커 블록이 ax-work 를 가리키지 않는다", "ax-work" not in w, w[:200])
+    # 🔴 정본 ⑸ — 워커 블록은 `ax-work` 를 가리킨다. 요청자에게는 여전히 주지 않는다
+    #    (사람이 편집 중인 트리에서 에이전트가 파일을 고치는 것이 더티 체크가 막던 사고다).
+    check("워커 블록은 ax-work 를 가리킨다", "ax-work" in w, w[:200])
+    check("워커 블록은 ax-infer 도 가리킨다", "ax-infer" in w, w[:200])
     check("[중요] 요청자 블록은 ax-work 를 가리키지 않는다", "ax-work" not in r, r[:200])
     check("요청자 블록은 ax-request 를 가리킨다", "ax-request" in r)
     # [중요] 2026-08-20 계약 변경 (사용자 확정) — 이식본이 「분배」 한 차선으로 좁혔던 것을

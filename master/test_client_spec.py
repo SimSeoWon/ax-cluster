@@ -75,8 +75,10 @@ def test_unchanged() -> None:
           bundle.WORKSHOP_MD_REL)
     check("MCP 엔트리 이름 불변", bundle.MCP_SERVER_NAME == "ax-client",
           bundle.MCP_SERVER_NAME)
-    # [중요] `ax-work` 는 2026-09-02 배달 중단 — 근거는 `spec.SKILLS_BY_ROLE` 주석에 있다
-    check("워커 스킬 불변 (`ax-infer` 하나)", bundle.skills_for("worker") == ("ax-infer",),
+    # 🔴 [중요] 정본 ⑸ (사용자 확정 2026-09-02) — 워커 계약은 **`ax-work`** 다. 라이브 파견이
+    #    `INSTRUCTION`(*"Follow the ax-work skill"*)을 쓰므로 **없으면 계약을 못 읽는다.**
+    check("워커 스킬 — `ax-work` 가 앞에 온다",
+          bundle.skills_for("worker") == ("ax-work", "ax-infer"),
           str(bundle.skills_for("worker")))
     check("요청자 스킬 불변",
           bundle.skills_for("requester") == ("ax-request", "ax-ontology", "ax-review"),
@@ -100,7 +102,7 @@ def test_project_overlay() -> None:
     check("선언한 추가 스킬이 실린다", got[-1] == "ax-extra", str(got))
     check("기본 표가 앞에 남는다", got[:3] == ("ax-request", "ax-ontology", "ax-review"), str(got))
     check("[중요] 다른 역할은 영향 없다", bundle.skills_for("worker", init)
-          == ("ax-infer",), str(bundle.skills_for("worker", init)))
+          == ("ax-work", "ax-infer"), str(bundle.skills_for("worker", init)))
 
     # 리스트로 주면 모든 역할 — 원전 표의 「무조건 등록」과 같은 결
     flat = spec.ProjectInit(extra_skills=spec._by_role(["ax-all"], "extra_skills"))
@@ -110,7 +112,7 @@ def test_project_overlay() -> None:
 
     check("중복은 접힌다",
           bundle.skills_for("worker", spec.ProjectInit(
-              extra_skills={"worker": ("ax-infer",)})) == ("ax-infer",))
+              extra_skills={"worker": ("ax-infer",)})) == ("ax-work", "ax-infer"))
 
 
 def test_overlay_from_config() -> None:
@@ -167,8 +169,9 @@ def test_overlay_rejects_garbage() -> None:
 
 def test_removals() -> None:
     rm = spec.removals_for("requester")
+    # [주의] `ax-work` 는 폐지가 아니다 — 정본 ⑸ 의 계약이라 되돌렸다 (2026-09-02)
     check("폐지 스킬이 제거 목록에 있다",
-          set(rm["skills"]) == {"distribute", "review-work", "ax-work"}, str(rm["skills"]))
+          set(rm["skills"]) == {"distribute", "review-work"}, str(rm["skills"]))
     check("[주의] 폐지 MCP 목록은 비어 있다 (귀속 미결 #235)", rm["mcp"] == (), str(rm["mcp"]))
 
     # [중요] 배달과 제거가 같은 이름을 두고 싸우지 않는다 — 배달이 이긴다
@@ -909,10 +912,13 @@ def test_delivered_skills_do_not_contradict_the_command_line() -> None:
     root = Path(__file__).parent / "client" / "skills"
     delivered = sorted({n for names in spec.SKILLS_BY_ROLE.values() for n in names})
     check("배달 스킬 목록이 비어 있지 않다", bool(delivered), str(delivered))
-    check("[중요] `ax-work` 는 배달하지 않는다 (구 토폴로지 · `#320`)",
-          "ax-work" not in delivered, str(delivered))
-    check("  폐지 목록에 있어 이미 놓인 사본도 정리된다",
-          "ax-work" in spec.DEPRECATED_SKILLS, str(spec.DEPRECATED_SKILLS))
+    # 🔴 [중요] 정본 ⑸ — `ax-work` 를 **반드시 배달한다.** 폐지로 표시했다가 되돌린 자리다:
+    #    `plan` 이 *"✕ 폐지 스킬: … ax-work — deliver 가 지운다"* 로 찍고 있었고, 그대로
+    #    배달하면 워커에서 계약 문서가 **삭제**됐다. 배달 전에 `plan` 을 읽어 잡았다.
+    check("[중요] `ax-work` 를 배달한다 (정본 ⑸ 의 계약)",
+          "ax-work" in delivered, str(delivered))
+    check("  폐지 목록에 없다", "ax-work" not in spec.DEPRECATED_SKILLS,
+          str(spec.DEPRECATED_SKILLS))
 
     # [중요] 명령줄이 매니페스트를 안 가리키면, 배달되는 스킬도 그것을 **요구**해서는 안 된다.
     instr = I.INFER_INSTRUCTION
