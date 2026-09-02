@@ -80,8 +80,7 @@ def test_questions_reach_the_result() -> None:
         q = H.Question(topic="스냅샷을 컴포넌트로?", options=["컴포넌트", "서브시스템"])
         calls: list = []
         got = REG.register_work("t", [REG.TaskSpec(stem="A", classes=["U"], instruction="만들어")],
-                                paths=p, target_repo="r", poster=_poster(calls),
-                                searcher=object(), make_skeleton=_fake_skeleton([q]))
+                                paths=p, target_repo="r", poster=_poster(calls), make_skeleton=_fake_skeleton([q]))
         check("물음이 결과에 있다", got.questions and got.questions[0][0] == "A",
               str(got.questions))
         check("  요약이 크게 말한다", "물음 1건" in got.summary(), got.summary())
@@ -99,7 +98,7 @@ def test_answers_accrue_with_scope() -> None:
         calls: list = []
         got = REG.register_work(
             "t", [REG.TaskSpec(stem="A", classes=["U"], instruction="만들어")],
-            paths=p, target_repo="r", poster=_poster(calls), searcher=object(),
+            paths=p, target_repo="r", poster=_poster(calls),
             make_skeleton=_fake_skeleton(),
             heuristics=[
                 {"topic": "상태 보관", "decision": "액터 수명에 묶이면 컴포넌트", "scope": "project"},
@@ -123,7 +122,7 @@ def test_once_reaches_this_skeleton_only() -> None:
         p = _paths(Path(td))
         got = REG.register_work(
             "t", [REG.TaskSpec(stem="A", classes=["U"], instruction="만들어")],
-            paths=p, target_repo="r", poster=_poster([]), searcher=object(),
+            paths=p, target_repo="r", poster=_poster([]),
             make_skeleton=_fake_skeleton(),
             heuristics=[{"topic": "이번만", "decision": "컴포넌트로", "scope": "once"}])
         check("[중요] 골조가 그 답을 받았다 (SkeletonSpec.answers)",
@@ -144,7 +143,7 @@ def test_accrual_is_before_skeleton() -> None:
                                frozen={"a::F"}, pseudo=1)
 
         REG.register_work("t", [REG.TaskSpec(stem="A", classes=["U"], instruction="x")],
-                          paths=p, target_repo="r", poster=_poster([]), searcher=object(),
+                          paths=p, target_repo="r", poster=_poster([]),
                           make_skeleton=build,
                           heuristics=[{"topic": "T", "decision": "D", "scope": "project"}])
         check("[중요] 골조 생성 시점에 이미 적립돼 있다", seen == [1],
@@ -157,7 +156,7 @@ def test_bad_input_does_not_block_registration() -> None:
         p = _paths(Path(td))
         got = REG.register_work(
             "t", [REG.TaskSpec(stem="A", classes=["U"], instruction="x")],
-            paths=p, target_repo="r", poster=_poster([]), searcher=object(),
+            paths=p, target_repo="r", poster=_poster([]),
             make_skeleton=_fake_skeleton(),
             heuristics=[{"topic": "", "decision": ""}, "형식아님"])
         check("등록은 성공한다", got.ok, got.summary())
@@ -175,7 +174,7 @@ def test_accrued_reaches_the_next_prompt() -> None:
     with tempfile.TemporaryDirectory() as td:
         p = _paths(Path(td))
         REG.register_work("t", [REG.TaskSpec(stem="A", classes=["U"], instruction="x")],
-                          paths=p, target_repo="r", poster=_poster([]), searcher=object(),
+                          paths=p, target_repo="r", poster=_poster([]),
                           make_skeleton=_fake_skeleton(),
                           heuristics=[
                               {"topic": "전역", "decision": "컴포넌트로", "scope": "project"},

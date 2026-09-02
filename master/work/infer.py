@@ -1,13 +1,14 @@
 """추론 파견 — 워커는 읽고 추론하고 **텍스트로 답한다** (중 1.3 · §4.5 · §8.4).
 
-## [중요] 무엇이 `runner.py` 와 다른가 — 쓰는 주체가 하나다
+## 🔴 [중요] 이것은 정본이 아니다 — 정본 ⑸ 는 **워커가 커밋한다**
 
-    runner.py    (구 토폴로지) 워커가 고치고 커밋하고 attempt push → 마커로 판정
-    infer.py     (현 토폴로지) [중요] 워커는 **추론만** → 응답을 모아 **통합자에게 순서대로 넘긴다**
+    이 파일       워커는 추론만 → 응답을 스풀에 → 통합이 적용·커밋      ← 지금 도는 것
+    정본 ⑸        워커가 **자기 서브 브랜치에 커밋**하고 다음 작업을 요청  ← `wcommit.py`
 
-사용자 확정 2026-08-11. `runner.py` 를 **지우지 않는다** — N-writer 기계장치는 측정으로
-뒤집힐 여지가 있는 동안 되돌릴 수 있게 둔다(§8.4 [주의]). 워커에는 스킬이 둘 배달돼 있고
-(`ax-work`·`ax-infer`), **파견 지시가 이름으로 고른다.**
+사용자 확정 2026-09-02. 종전 라벨 *"사용자 확정 2026-08-11"* 은 **틀렸다**(`settled-decisions.md`
+가 mislabeled 로 닫아 뒀다 — `"그래 해"` 를 확정으로 적은 것이다). `runner.py`·`ax-work` 는
+**정본 방향의 재료**이므로 지우지 않는다. 워커에는 스킬이 둘 배달돼 있고 **파견 지시가 이름으로
+고른다.**
 
 ## [중요] 응답은 stdout 이 아니라 **파일로** 받는다
 
@@ -55,9 +56,9 @@ SPOOL_SUFFIX = ".json"
 
 # [중요] ASCII 만. 한글을 명령줄에 실으면 워커 콘솔에서 깨진다(`runner` 의 § 참조).
 #    스킬 이름을 **명시**한다 — 워커에는 `ax-work`(구 토폴로지)도 배달돼 있다.
-# [중요] **매니페스트 파일을 가리키지 않는다** (사용자 지시 2026-09-01). 지시서는 체크아웃에
-#    이미 있는 **헤더의 `[DOC]` 블록**이다 — 골조가 전체 구조를 알 때 써 넣은 것이고, git 이
-#    관리하는 파일이라 늙지 않는다. 별도 파일(`.ax/tasks/*/context.md`)은 만들지 않는다.
+# 🔴 [중요] **지시서는 파일이 아니라 골조 주석이다** (사용자 확정 · 매니페스트 철거 2026-09-02).
+#    체크아웃에 이미 있는 **헤더의 `[DOC]`·`[PSEUDO]` 블록**이 지시서다 — 골조가 전체 구조를
+#    알 때 써 넣은 것이고, git 이 관리하는 파일이라 늙지 않는다. 별도 문서·그 배달 배선은 없다.
 # [중요] 대상 파일은 **명령줄에 명시**한다 — 워커가 산문에서 우연히 읽지 않게(실측 2026-08-09).
 #    판정(`judge(want=...)`)과 지시가 **같은 목록**에서 나와야 어긋나지 않으므로, 둘 다
 #    `dispatch_task` 가 큐 레코드에서 만든 하나의 리스트를 쓴다.
@@ -83,43 +84,11 @@ INFER_INSTRUCTION = (
 _RESPONSE_MARK = re.compile(r"^RESPONSE:\s*(\d+)\s*$")
 # [중요] 응답 **파일 끝**에 붙은 마커 — 실전 첫 구동에서 나왔다(2026-08-12). 아래 § 참조.
 _TRAILING_MARK = re.compile(r"^(RESPONSE:\s*\d+|RESULT:\s*(DONE|BLOCKED).*)$")
-# 매니페스트의 「대상 파일」 절 — 마스터가 자기가 쓴 형식을 되읽는다(`manifest.build`)
-_TARGET_HEADING = "## 대상 파일"
-_BULLET = re.compile(r"^-\s*`([^`]+)`\s*$")
 
 
 class DispatchError(RuntimeError):
     """파견 자체가 불가능하다 — [중요] 태스크를 집은 채로 죽지 않게 호출자가 반납한다."""
 
-
-# ── 대상 파일 — [중요] 마스터가 **말한 것**만 받는다 ────────────────────────────────
-
-def target_files_from(manifest_text: str) -> list:
-    """매니페스트의 「대상 파일」 절을 되읽는다. **LLM 0 · 결정적.**
-
-    [중요] **큐 레코드가 아니라 매니페스트에서 읽는 이유**: 워커가 본 것이 이것이다. 큐의
-    `target_file` 은 단수이고(여러 개면 첫 번째만), 실측 2026-08-09 에 *"워커는 어느 파일을
-    고칠지를 `contracts` 산문에서 우연히 읽고 있었다"* 가 나온 그 자리다. **판정 기준과 지시가
-    같은 문서에서 나와야** 어긋나지 않는다.
-    """
-    want: list = []
-    inside = False
-    for line in (manifest_text or "").replace("\r", "").split("\n"):
-        s = line.strip()
-        if s.startswith("## "):
-            inside = s.startswith(_TARGET_HEADING)
-            continue
-        if not inside:
-            continue
-        m = _BULLET.match(s)
-        if m:
-            f = m.group(1).strip()
-            if f and f not in want:
-                want.append(f)
-    return want
-
-
-# ── 판정 ────────────────────────────────────────────────────────────────────────
 
 @dataclass
 class Response:
@@ -136,6 +105,12 @@ class Response:
     usage: dict = field(default_factory=dict)
     base_commit: str = ""                          # [중요] 이 응답이 어느 소스를 근거로 하나
     reused: bool = False                           # 스풀에서 되살렸나 (소 1.3.3)
+    # 🔴 정본 ⑷ — 이 조각의 **서브 브랜치**(작업 브랜치에서 갈라진 것). 마스터가 배정하고
+    #    워커는 받은 이름을 쓴다(원전 `cluster_coordinator.py:11`). ⑸ 에서 워커가 여기에
+    #    커밋한다. [주의] 못 만들었으면 사유가 `subbranch_error` 에 남는다 — 빈 문자열을
+    #    「없어도 된다」로 읽지 않기 위해 둘을 나눈다.
+    subbranch: str = ""
+    subbranch_error: str = ""
     # [중요] claim 때 받은 리스 epoch. **통합자가 제출할 때 필요하다**(소 1.4.3) — 없으면 큐의
     #    fencing 이 꺼져 좀비 제출을 못 막는다. 파견과 제출이 다른 프로세스라 스풀에 실어 둔다.
     epoch: object = None
@@ -277,7 +252,7 @@ def judge(stdout: str, raw_response: str, *, want: list) -> Response:
     res = Response(status=status, reason=reason, tail=tail, usage=meta, want=list(want))
     if not want:
         res.status = runner.BLOCKED
-        res.reason = ("대상 파일 목록이 비었다 — 매니페스트의 「대상 파일」 절을 못 읽었다. "
+        res.reason = ("대상 파일 목록이 비었다 — 큐 레코드의 대상 파일을 못 읽었다. "
                       "무엇을 받아야 하는지 모르면 무엇을 받아도 통과시킬 수 없다")
         return res
     if res.status != runner.DONE:
@@ -336,28 +311,25 @@ def judge(stdout: str, raw_response: str, *, want: list) -> Response:
     return res
 
 
-def infer_task(facts, task_id: str, manifest_text: str, *, want=None, beat=None, runner_=None,
-               deliver=None,
-          writer=None, reader=None, timeout: int = runner.DEFAULT_TIMEOUT) -> Response:
-    """파견 한 건: 배달 → 추론(하트비트 유지) → 응답 되읽기 → 판정.
+def infer_task(facts, task_id: str, *, want, beat=None, runner_=None,
+               reader=None, timeout: int = runner.DEFAULT_TIMEOUT) -> Response:
+    """파견 한 건: 추론(하트비트 유지) → 응답 되읽기 → 판정.
+
+    [중요] **배달 인자가 없다** (2026-09-02): 지시서는 base 커밋의 헤더 `[DOC]` 이고
+    git 이 나른다. `want` 는 이제 **필수**다 — 큐 레코드에서 오고, 그것이 지시와 판정의
+    같은 하나다(종전에는 매니페스트 본문에서 되읽었다).
 
     [중요] **큐를 만지지 않고, 응답을 적용하지도 않는다.** 이 함수는 *워커가 무엇을 답했는가* 만
     돌려준다 — 적용·빌드·커밋은 통합자(중 1.4)의 일이다.
     """
-    files_wanted = list(want) if want is not None else target_files_from(manifest_text)
+    files_wanted = list(want or [])
     # [중요] **fail-closed** — 대상 파일을 모르면 파견하지 않는다. 빈 목록으로 보내면 워커가
-    #    스스로 할 일을 고르고, 그것이 가장 비싼 실패다(`_manifest_for` 가 같은 이유로 막았다).
+    #    스스로 할 일을 고르고, 그것이 가장 비싼 실패다.
     if not files_wanted:
         raise DispatchError(f"대상 파일이 비었다 (task={task_id}) — 지시와 판정의 근거가 "
                             f"없으므로 파견하지 않는다")
-    # [중요] **아무것도 배달하지 않는다** (사용자 지시 2026-09-01). 지시서는 체크아웃의
-    #    헤더 `[DOC]` 이고 그것은 base 커밋에 이미 있다 — 나를 것이 없다.
-    # [주의] `deliver`/`writer` 를 **명시로 주입한 경우에만** 옛 배달을 돈다 —
-    #    `selftest` 드라이런과 옛 판정 기록이 그 자리를 그대로 잰다. 조용한 폴백은 없다.
-    if deliver is not None:
-        deliver(facts, task_id, manifest_text)
-    elif writer is not None:
-        runner.deliver_manifest(facts, task_id, manifest_text, writer=writer)
+    # [중요] **아무것도 배달하지 않는다.** 지시서는 배정된 브랜치의 헤더 `[DOC]` 이고
+    #    base 커밋에 이미 있다 — 나를 것이 없다 (매니페스트 배선 철거 2026-09-02).
     with runner._Beater(beat) as b:
         rc, out = (runner_ or (lambda f_, t_, to_: _default_runner(f_, t_, to_,
                                                                    files_wanted)))(
@@ -415,6 +387,9 @@ def spool(paths, res: Response, *, work_id: str = "", order: int = 0) -> str:
         "task_id": res.task_id, "work_id": work_id, "order": order,
         "worker": res.worker, "status": res.status, "reason": res.reason,
         "base_commit": res.base_commit, "epoch": res.epoch,
+        # 🔴 정본 ⑷ — 조각의 서브 브랜치. [중요] **스풀에 실어야 통합·검수가 안다** (파견과
+        #    통합은 다른 프로세스다 — `epoch` 를 여기 실은 것과 같은 이유).
+        "subbranch": res.subbranch, "subbranch_error": res.subbranch_error,
         "want": res.want, "files": res.files,
         "notes": res.notes, "usage": res.usage, "tail": res.tail[-4000:],
         "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -437,7 +412,8 @@ def unspool(paths, task_id: str, work_id: str = "") -> Response | None:
         want=list(rec.get("want") or []), notes=list(rec.get("notes") or []),
         reason=rec.get("reason", ""), tail=rec.get("tail", ""),
         usage=dict(rec.get("usage") or {}), base_commit=rec.get("base_commit", ""),
-        epoch=rec.get("epoch"), reused=True)
+        epoch=rec.get("epoch"), reused=True,
+        subbranch=rec.get("subbranch", ""), subbranch_error=rec.get("subbranch_error", ""))
 
 
 def reusable(paths, task_id: str, *, base_commit: str, work_id: str = "") -> Response | None:
@@ -530,8 +506,16 @@ def _free_workers(facts, *, clean=None) -> tuple:
     return chosen, rejected
 
 
+def _log(msg: str) -> None:
+    """[중요] **파견 로그는 `[dispatch]` 접두어 하나로 모인다** — 「걸었는지」와 「왜 안 걸었는지」를
+    둘 다 찍어야 침묵이 배선 사망과 구별된다(그 침묵이 2026-08-29~31 이틀을 태웠다).
+    `autodispatch._log` 와 같은 형식을 쓰는 것이 요점이다 — journalctl 에서 한 줄기로 읽힌다.
+    """
+    print(f"[dispatch] {msg}", flush=True)
+
+
 def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", order: int = 0,
-                 runner_=None, writer=None, reader=None, deliver=None,
+                 runner_=None, reader=None, ssh=None,
                  timeout: int = runner.DEFAULT_TIMEOUT) -> Response:
     """집어 둔 태스크 하나를 워커에서 추론시키고 **스풀에 남긴다.**
 
@@ -549,11 +533,10 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
     if not work_id:
         raise DispatchError(f"work_id 가 없다 — 작업 브랜치를 못 정한다 (task={task_id})")
 
-    # [중요] **매니페스트를 읽지 않는다** (사용자 지시 2026-09-01). 종전에는
-    #    `_manifest_for` + `refresh_base` 로 등재 시점 문서를 되읽어 파견 시점에 기준 절만
-    #    다시 풀었다. 그 문서는 등재 시점(골조 없음)에 조립돼 **자기 안에서 모순됐고**
-    #    (실측 2026-09-01: 상단 "브랜치가 원격에 있다" / 하단 "원격에 없다"), 관례도 `main`
-    #    실측으로 계약과 반대로 실었다. 지시서는 이제 **base 커밋의 헤더 `[DOC]`** 이다.
+    # [중요] **읽을 지시서 문서가 없다** (매니페스트 철거 2026-09-02). 종전에는 등재 시점
+    #    문서를 되읽어 기준 절만 다시 풀었다. 그 문서는 등재 시점(골조 없음)에 조립돼
+    #    **자기 안에서 모순됐고**(실측 2026-09-01: 상단 "브랜치가 원격에 있다" / 하단
+    #    "원격에 없다"), 관례도 `main` 실측으로 계약과 반대로 실었다. 지시서는 골조 주석이다.
     # [중요] 대상 파일은 **큐 레코드**에서 만든다 — 등재가 만든 그 목록이고, 판정(`want=`)과
     #    워커 지시가 **같은 하나**에서 나온다(그 등가성이 실측 2026-08-09 의 요구였다).
     want = [str(f) for f in (task.get("target_file"), task.get("header_file")) if f]
@@ -567,8 +550,27 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
         base = twin_base.resolve(paths, work_id).commit or ""
     except Exception:                                    # noqa: BLE001
         # [주의] 기준 커밋을 모르면 **재사용 판정을 못 한다** — 그래도 파견은 막지 않는다.
-        #    매니페스트 자체가 이미 그 결손을 적어서 워커에게 간다.
+        #    결손은 `Response.subbranch_error` 와 `[dispatch]` 로그에 남는다.
         base = ""
+
+    # 🔴 **정본 ⑷ — 조각의 서브 브랜치를 작업 브랜치에서 갈라 둔다** (사용자 확정 2026-09-02).
+    #    사용자 서술: *"작업 브랜치에서 갈라진 각각의 서브 브랜치를 만들고 워커들에게 브랜치와
+    #    작업할 클래스를 전달해"*. 이름을 배정하는 것은 서버다(원전 `cluster_coordinator.py:11`
+    #    *"서버가 브랜치명을 배정하므로 워커는 받은 이름을 쓸 뿐"*).
+    # 🔴 [중요] **여기는 fail-closed 다** — ⑸ 가 이 브랜치에 커밋하므로 없으면 진행이 불가하다.
+    #    (⑷ 를 만들 때는 비차단이었다. ⑸ 가 배선된 지금 그 유예가 끝났다.)
+    sub_name = sub_err = ""
+    if base:
+        try:
+            from . import subbranch as _sb
+            _c = _sb.create(paths, work_id, task_id, base_commit=base, logf=_log)
+            sub_name, sub_err = (_c.branch if _c.ok else ""), _c.error
+        except Exception as e:                               # noqa: BLE001
+            sub_name, sub_err = "", f"{type(e).__name__}: {e}"
+    else:
+        sub_err = "기준 커밋을 몰라 서브 브랜치를 만들지 않았다 (작업 브랜치 미확인)"
+    if sub_err:
+        _log(f"[subbranch] {task_id} 실패 — {sub_err}")
 
     if base:
         old = reusable(paths, task_id, base_commit=base, work_id=work_id)
@@ -577,34 +579,97 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
             # [중요] epoch 은 **이번 claim 의 것으로 갱신한다.** 재확보되면 epoch 가 올라가고,
             #    낡은 epoch 로 제출하면 큐가 stale 로 거부한다(fencing 은 그러라고 있다).
             old.epoch = task.get("epoch")
+            old.subbranch, old.subbranch_error = sub_name, sub_err
             spool(paths, old, work_id=work_id, order=order)
             return old
 
-    # [중요] **배달자를 만들지 않는다** (실측 2026-09-01, 이 자리가 회귀를 냈다).
-    #    매니페스트를 없앨 때(`e3a318f`) `infer_task` 안의 **소비** 자리는 고쳤는데 여기,
-    #    즉 **생산** 자리를 지우지 않았다. 그래서 `deliver` 가 항상 생기고 `infer_task` 의
-    #    `if deliver is not None` 이 빈 본문으로 `carry.publish` 를 불러 4/4 가 죽었다:
-    #    *"매니페스트 본문이 비었다 — 빈 것을 실어 보내지 않는다"*.
-    # [주의] **유닛이 이 결함을 구조적으로 못 봤다** — 테스트는 `infer_task` 를 직접 부르며
-    #    `deliver`/`writer` 를 주입하므로 `dispatch_task` 가 스스로 만드는 이 경로를 한 번도
-    #    지나지 않았다(`test_infer` 78/78 통과). 리포트 44 의 「호출부 0곳」과 같은 구조의
-    #    반대편이다. 그래서 이 함수를 지나는 검사를 `test_infer` 에 넣었다.
-    #    지시서는 base 커밋의 헤더 `[DOC]` 이므로 **나를 것이 없다.** `deliver` 는 인자로
-    #    명시 주입될 때만(테스트·`selftest`) 산다.
+    # 🔴 **정본 ⑸ — 워커가 자기 서브 브랜치에 커밋한다** (사용자 확정 2026-09-02).
+    #    [중요] 서브 브랜치가 없으면 **여기서 멈춘다** — 커밋할 자리가 없다.
+    if not sub_name:
+        res = Response(task_id=task_id, worker=facts.host, want=want,
+                       base_commit=base, epoch=task.get("epoch"),
+                       subbranch="", subbranch_error=sub_err,
+                       reason=f"서브 브랜치가 없어 파견하지 않는다 — {sub_err}")
+        spool(paths, res, work_id=work_id, order=order)
+        return res
 
-    res = infer_task(facts, task_id, body, want=want,
-                beat=lambda: runner.heartbeat(task_id, facts.host, api=api),
-                runner_=runner_, writer=writer, reader=reader, deliver=deliver,
-                timeout=timeout)
-    res.base_commit = base
-    res.epoch = task.get("epoch")
+    res = commit_task(paths, facts, task, work_id=work_id, base=base, want=want,
+                      branch=sub_name, api=api, runner_=runner_, reader=reader, ssh=ssh,
+                      timeout=timeout)
+    res.subbranch, res.subbranch_error = sub_name, sub_err
     spool(paths, res, work_id=work_id, order=order)
+    return res
+
+
+def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: str,
+                api=runner._api, runner_=None, reader=None, ssh=None,
+                timeout: int = runner.DEFAULT_TIMEOUT) -> Response:
+    """정본 ⑸ 한 바퀴: 워커가 본문을 쓰고 **마스터가 검증해 그 브랜치에 커밋**한다.
+
+    사이클 자체는 `wcommit.py` 에 있다(원전 `worker/worker.py` 이식). 이 함수가 하는 것은
+    **큐와의 연결**이다 — 하트비트로 리스를 살리고, 커밋이 생기면 **제출한다.**
+
+    [중요] **제출이 여기 있다** (원전과 같은 자리): 원전 사이클은
+    `... commit·push → submit_result → 다시 claim` 이고, 커밋이 생긴 시점이 곧 그 태스크가
+    끝난 시점이다. 종전 구조는 제출을 통합자에 뒀는데, 그 때문에 리스가 붙잡힌 채 만료되고
+    **같은 추론을 다시 사는** 자리가 됐다(실측 2026-09-01 `f0c13582` reclaims=1).
+
+    [주의] 실패도 **반납한다**(`submit_fail`) — 집은 채로 죽으면 리스 1200초를 태운다.
+    """
+    from . import wcommit
+
+    task_id = str(task.get("task_id") or task.get("id") or "")
+    epoch = task.get("epoch")
+
+    def llm(f, tid, files):
+        """워커의 `ax-work` 를 한 번 돌린다. [중요] **본문만 쓴다** — git 은 안 만진다."""
+        with runner._Beater(lambda: runner.heartbeat(tid, f.host, api=api)):
+            return (runner_ or (lambda f_, t_, to_: runner.run_worker(
+                f_, t_, files=files, runner=None, timeout=to_)))(f, tid, timeout)
+
+    # 동결 대조 원본 — 마스터의 색인 클론이 같은 커밋이면 그것을 쓴다(왕복 0).
+    # [주의] 없으면 `None` 이라 층1 이 **동결 미검사로 기록**한다 — 통과로 접지 않는다.
+    try:
+        from .integrate import local_baseline
+        baseline = local_baseline(paths, base)
+    except Exception as e:                                   # noqa: BLE001
+        _log(f"[wcommit] {task_id} 동결 원본을 못 잡았다 — {type(e).__name__}: {e}")
+        baseline = None
+
+    c = wcommit.run(facts, task, work_id=work_id, base_commit=base, want=want,
+                    llm=llm, ssh=ssh, reader=reader, baseline=baseline, branch=branch)
+
+    res = Response(task_id=task_id, worker=facts.host, want=list(c.want),
+                   files=dict(c.files), base_commit=base, epoch=epoch)
+    if c.ok:
+        res.status = runner.DONE
+        _log(f"[wcommit] {task_id} {c.summary}")
+        # [중요] **커밋이 생겼으므로 제출한다** (원전 `submit_result` 자리)
+        out = runner.Outcome(status=runner.DONE, branch=c.branch, head=c.head,
+                             tail=(c.reason or "")[-2000:])
+        try:
+            runner.submit(task_id, out, epoch=epoch, worker_id=facts.host, api=api)
+        except Exception as e:                               # noqa: BLE001
+            # [주의] 제출 실패는 **커밋을 되돌리지 않는다** — 코드는 브랜치에 안전하게 있다.
+            #    사유만 남긴다(사람이 재제출한다). 조용히 성공으로 접지 않는다.
+            res.notes.append(f"[중요] 커밋은 됐는데 큐 제출이 실패했다 — {type(e).__name__}: {e}")
+            _log(f"[wcommit] {task_id} 제출 실패 — {e}")
+    else:
+        res.status = runner.BLOCKED
+        res.reason = c.summary
+        res.notes.extend(f"[중요] {v}" for v in c.layer1_violations[:5])
+        _log(f"[wcommit] {task_id} {c.summary}")
+        try:
+            runner.submit_fail(task_id, runner.BLOCKED, c.summary,
+                               epoch=epoch, worker_id=facts.host, api=api)
+        except Exception as e:                               # noqa: BLE001
+            res.notes.append(f"[주의] 반납도 실패했다 — {type(e).__name__}: {e}")
     return res
 
 
 def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner._api,
              clean=runner.AUTO, parallel: bool = False, work_id: str = "",
-             runner_=None, writer=None, reader=None,
+             runner_=None, reader=None, ssh=None,
              timeout: int = runner.DEFAULT_TIMEOUT) -> Handoff:
     """큐에서 최대 `limit` 건을 집어 추론시키고, **인계 묶음**을 돌려준다 (소 1.3.1).
 
@@ -691,7 +756,7 @@ def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner
                 continue
             try:
                 res = dispatch_task(paths, f, task, api=api, work_id=work_id, order=order,
-                                   runner_=runner_, writer=writer, reader=reader,
+                                   runner_=runner_, reader=reader, ssh=ssh,
                                    timeout=timeout)
             except Exception as e:                       # noqa: BLE001
                 # [중요] 집은 태스크를 붙잡은 채 죽지 않는다. 반납이 실패해도 사유를 남긴다.
@@ -718,120 +783,9 @@ def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner
     return hand
 
 
-# ── pull 회수 (#204 2단계) — 워커 claimer 가 남긴 사실을 가져와 **여기서** 판정한다 ──────
-#
-# 워커의 claimer(payload claimer.py)는 추론을 돌리고 `.ax/work/<id>/result.json`(실행 사실)
-# 과 `response.txt`(본문)를 체크아웃에 남길 뿐, 판단도 submit 도 하지 않는다 (κ.0 ①/②).
-# collect 는 그 사실을 scp 로 읽어 push 파견과 **같은 judge → 같은 스풀**에 넣는다 —
-# 이후(통합자 적용·빌드·커밋·submit)는 두 경로가 완전히 합류한다.
-#
-# [중요] 회수는 마스터 주도 scp **읽기**다 — #185 가 배달(마스터→워커)을 git 으로 돌린 이유는
-#    "pull 데몬은 claim 시점에 마스터가 밀어줄 수 없다"였고, 회수(워커→마스터)는 반대로
-#    마스터가 루프 안에 있는 시점(collect·통합)에 일어나므로 그 제약이 성립하지 않는다.
-
-RESULT_NAME = "result.json"
-
-
-def result_path(facts, task_id: str) -> str:
-    """워커 안의 실행 사실 기록 절대경로 (claimer 의 RESULT_NAME 과 동값)."""
-    rel = f"{bundle.WORK_REL}/{task_id}/{RESULT_NAME}"
-    if facts.windows:
-        return f"{facts.path}\\" + rel.replace("/", chr(92))
-    return f"{facts.path}/{rel}"
-
-
-def git_blob_sha(text: str) -> str:
-    """git 의 blob sha1 — 워커가 실체화한 매니페스트와 마스터 정본의 대조 기준.
-
-    [중요] 다르면 fail-closed 다: 워커가 본 지시서와 판정 기준(「대상 파일」 절)이 다른
-    문서라는 뜻이라, want 목록부터 신뢰할 수 없다.
-    """
-    import hashlib
-    data = (text or "").encode("utf-8")
-    return hashlib.sha1(b"blob %d\x00" % len(data) + data).hexdigest()
-
-
-def collect_task(paths, facts, task: dict, *, reader=None, order: int = 0) -> tuple:
-    """pull 태스크 하나 회수 → 판정 → 스풀. `(Response|None, 사람이 읽을 한 줄)`.
-
-    `None` 은 「아직 회수할 것이 없다」 — result.json 미도착은 실행 중/미실행의 정상 상태다.
-    읽기 실패와 구분한다: 도착했는데 못 읽으면 예외가 아니라 BLOCKED 로 **판정에 남긴다.**
-    """
-    task_id = str(task.get("task_id") or "")
-    work_id = str(task.get("work_id") or "")
-    r = reader or bundle._remote_read
-    try:
-        raw_rec = r(facts, result_path(facts, task_id))
-    except bundle.BundleError:
-        return None, f"{task_id[:8]}: 결과 미도착 — 실행 중이거나 아직 안 돌았다"
-    try:
-        rec = json.loads(raw_rec)
-    except ValueError as e:
-        rec = {"stdout": "", "epoch": None, "manifest_blob": f"(깨짐: {e})"}
-
-    body = runner._manifest_for(paths, task_id)
-    want = target_files_from(body)
-    try:
-        raw_resp = read_response(facts, task_id, reader=reader)
-    except bundle.BundleError:
-        raw_resp = ""                # judge 가 "DONE 인데 응답이 없다" 로 잡는다
-
-    res = judge(str(rec.get("stdout") or ""), raw_resp, want=want)
-    res.task_id, res.worker = task_id, str(task.get("worker_id") or rec.get("worker") or "")
-    res.epoch = rec.get("epoch")
-
-    expect = git_blob_sha(body)
-    got = str(rec.get("manifest_blob") or "")
-    if got != expect:
-        # [중요] 지시서가 다르다 — 응답이 그럴듯해도 판정 기준이 어긋난 문서다. fail-closed.
-        res.status = runner.BLOCKED
-        res.reason = (f"매니페스트 불일치 — 워커 blob {got[:12]} ≠ 정본 {expect[:12]} "
-                      f"(등록 후 정본이 바뀌었거나 워커가 낡은 durable 을 봤다)")
-    if rec.get("epoch") != task.get("epoch"):
-        res.notes.append(f"[주의] epoch 이 어긋난다 — 기록 {rec.get('epoch')} vs 현재 "
-                         f"{task.get('epoch')} (재확보됨). 제출은 큐 fencing 이 거른다")
-
-    try:
-        from . import twin_base
-        res.base_commit = twin_base.resolve(paths, work_id).commit or "" if work_id else ""
-    except Exception:                                    # noqa: BLE001
-        res.base_commit = ""
-
-    spool(paths, res, work_id=work_id, order=order)
-    return res, f"{task_id[:8]}: {res.summary}"
-
-
-def collect(paths, *, project: str = "", work_id: str = "", facts=None,
-            api=runner._api, reader=None) -> dict:
-    """claimed 상태의 pull 추론 태스크들을 회수해 스풀에 넣는다. **판정은 전부 여기서.**
-
-    반환: `{"collected": n, "waiting": n, "lines": [...]}` — 사람이 읽는 요약.
-    [주의] 회수는 멱등이다 — 같은 태스크를 다시 걷으면 스풀을 같은 내용으로 덮는다.
-    """
-    if facts is None:
-        facts = [bundle.probe(h, u, p, d, r, dp)
-                 for h, u, p, d, r, dp in bundle.workshops(project or paths.name)]
-    by_host = {f.host: f for f in facts}
-    tasks = api("GET", "/api/v1/tasks") or []
-    targets = [t for t in tasks
-               if str(t.get("type")) == "code" and str(t.get("status")) == "claimed"
-               and (not work_id or str(t.get("work_id")) == work_id)]
-    targets.sort(key=lambda t: (int(t.get("hierarchy_level") or 0),
-                                str(t.get("created") or "")))
-    out = {"collected": 0, "waiting": 0, "lines": []}
-    for n, t in enumerate(targets, 1):
-        host = str(t.get("worker_id") or "")
-        f = by_host.get(host)
-        if f is None:
-            out["lines"].append(f"{str(t.get('task_id'))[:8]}: [중요] 워커 {host!r} 가 "
-                                f"레지스트리에 없다 — 회수 불가")
-            continue
-        res, line = collect_task(paths, f, t, reader=reader, order=n)
-        out["lines"].append(line)
-        out["collected" if res is not None else "waiting"] += 1
-    if not targets:
-        out["lines"].append("회수 대상이 없다 (claimed 상태의 code 태스크 0건)")
-    return out
+# [중요] **pull 회수 절(`#204` 2단계)은 걷었다** (2026-09-02). 판정 기준이 매니페스트 blob
+#    sha 였고 그 문서가 없어졌으며, `#320` 이 상주를 걷은 뒤로는 **쓰는 주체가 없어 언제나
+#    「결과 미도착」**이었다. 정본 ⑸ 는 워커가 커밋하므로 회수 자리가 `wcommit` 이다.
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────────
@@ -840,7 +794,6 @@ def collect(paths, *, project: str = "", work_id: str = "", facts=None,
 #   python -m master.work.infer run     [프로젝트] [N]     최대 N건 추론 (직렬)
 #   python -m master.work.infer run-p   [프로젝트] [N]     [중요] 병렬 — 사람이 켠다
 #   python -m master.work.infer spool   [프로젝트] [work]  스풀에 무엇이 있나
-#   python -m master.work.infer collect [프로젝트] [work]  pull 워커의 응답 회수 → 스풀
 #
 # [중요] 데몬으로 만들지 않는다(§5.5.4). 상주가 필요하면 systemd timer 로 `run` 을 부른다.
 
@@ -871,12 +824,6 @@ def main(argv) -> int:
         return _cli_spool(paths, argv[2] if len(argv) > 2 else "")
 
     facts = [bundle.probe(h, u, p, d, r, dp) for h, u, p, d, r, dp in bundle.workshops(paths.name)]
-    if cmd == "collect":
-        got = collect(paths, facts=facts, work_id=argv[2] if len(argv) > 2 else "")
-        print(f"회수 {got['collected']} · 대기 {got['waiting']}")
-        for ln in got["lines"]:
-            print("  " + ln)
-        return 0
     if cmd == "probe":
         workers, rejected = _free_workers(facts, clean=runner.cleanliness(paths.name))
         print(f"프로젝트 {paths.name}")
@@ -908,7 +855,7 @@ def main(argv) -> int:
         print(hand.summary())
         return 0
     print(__doc__.split("## ")[0])
-    print("  probe | run | run-p | spool | collect")
+    print("  probe | run | run-p | spool")
     return 2
 
 

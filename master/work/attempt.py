@@ -305,6 +305,54 @@ def install_hook(paths) -> dict:
 #    올리는 함수였고, `master/README.md` 가 *"부르는 파이프라인 호출자는 아직 없다"* 고
 #    적어 둔 채 끝까지 없었다.
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 공유 git/가드 유틸 — [중요] **`carry.py` 에서 옮겨 왔다** (매니페스트 철거, 2026-09-02).
+#
+# `#327` 이 정한 규칙을 그대로 따른다: *"유틸이 여러 곳에 쓰이면 옮길지 남길지 판정하고 근거를
+# 적는다."* 이 셋은 매니페스트와 무관한 순수 git/가드 조회이고, 소비자가 `carry` 밖에 있다
+# (`subbranch`·`cleanup`). 가드의 집이 이 파일이므로(`hook_status`) 여기가 자리다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def remote_tip(repo, remote: str, branch: str) -> str:
+    """그 원격 브랜치의 tip. 없으면 `""`."""
+    out = _git(repo, "ls-remote", "--heads", remote, f"refs/heads/{branch}")
+    for ln in out.splitlines():
+        parts = ln.split()
+        if parts:
+            return parts[0]
+    return ""
+
+
+def has_commit(repo, sha: str) -> bool:
+    """이 저장소가 그 커밋 객체를 갖고 있나. [중요] **없으면 `worktree add`·push 가 죽는다.**"""
+    if not (sha or "").strip():
+        return False
+    try:
+        _git(repo, "cat-file", "-e", f"{sha}^{{commit}}")
+        return True
+    except GitError:
+        return False
+
+
+def guard_or_reason(paths) -> str:
+    """쓰기 가드가 서 있나. 서 있으면 `""`, 아니면 **막을 사유**를 돌려준다 (`#329`).
+
+    [중요] **「낡았다」는 막지 않는다** — 그건 우리 가드가 맞고 지금 막고 있다는 뜻이다.
+    막는 것은 **없거나 우리 것이 아닐 때**뿐이다. 그 구분이 `#329` 의 요지다.
+    [주의] 확인 자체가 실패하면(예외) **막는다** — 미확인은 통과가 아니다.
+    """
+    try:
+        st = hook_status(paths)
+    except Exception as e:                                   # noqa: BLE001
+        return (f"[중요] 쓰기 가드를 확인하지 못했다 ({type(e).__name__}: {e}) — "
+                f"미확인은 통과가 아니다. push 하지 않는다 (`#329`)")
+    if st.get("state") in (STATE_MISSING, STATE_FOREIGN):
+        return (f"[중요] 쓰기 가드가 서 있지 않다 — {st.get('reason')} "
+                f"· 복구: `python -m master.work.attempt install-hook <프로젝트>` (`#125`·`#329`)")
+    return ""
+
 def main(argv: list[str] | None = None) -> int:
     from ..context_search.paths import resolve
 

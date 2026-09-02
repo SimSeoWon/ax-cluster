@@ -178,8 +178,12 @@ def counterparts(paths, target_files: list, *, source_dirs=DEFAULT_SOURCE_DIRS,
 MANIFEST_HEADING = "## 포팅 원본 — [중요] **읽기 전용 · 의도 파악 전용**"
 
 
-def manifest_section(p: Porting) -> list:
-    """매니페스트에 실을 절. [중요] **경로만** 싣는다 — 워커가 자기 체크아웃에서 연다."""
+def source_section(p: Porting) -> list:
+    """골조 헤더 주석에 실을 절. [중요] **경로만** 싣는다 — 워커가 자기 체크아웃에서 연다.
+
+    [주의] 종전 이름은 `manifest_section` 이었다 — 매니페스트 파일을 걷으면서(2026-09-02)
+    이름을 실제 소비처(골조)로 맞췄다. 기능은 그대로다.
+    """
     if not p.matches:
         return []
     lines = [MANIFEST_HEADING, ""]
@@ -250,7 +254,7 @@ def main(argv) -> int:
     if cmd == "find":
         p = counterparts(paths, argv[2:])
         print(p.summary())
-        for line in manifest_section(p):
+        for line in source_section(p):
             print(line)
         return 0
     print("  pairs | find <파일…>")

@@ -23,7 +23,7 @@
 
 ## [주의] 이 모듈은 판단하지 않는다
 
-`register_work` 를 그대로 부른다. 분해·골조·게이트·매니페스트·carry 는 전부 그쪽 몫이고,
+`register_work` 를 그대로 부른다. 분해·골조·게이트는 전부 그쪽 몫이고,
 여기는 **HTTP 를 파이썬 호출로 바꾸는 얇은 층**이다. 실패는 사유를 실어 200 + `ok:false` 로
 낸다 — 이 저장소의 거절 관례다(*"거부도 200 + ok:false 로 말한다"*).
 """
@@ -98,7 +98,7 @@ def _run(payload: dict) -> dict:
 
     # [중요] **형을 여기서 검사한다** (실측 2026-08-30). `TaskSpec(**s)` 는 dataclass 라
     #    **형을 검사하지 않는다** — `.33` 이 `contracts` 를 리스트로 보냈고 그대로 통과한 뒤
-    #    `manifest.build` 에서 `'list' object has no attribute 'strip'` 로 터졌다. 그때는 이미
+    #    등재가 `'list' object has no attribute 'strip'` 로 터졌다. 그때는 이미
     #    work 과 태스크 일부가 만들어진 뒤라 **반쪽 등재**가 남았다(`#336` ③).
     #    깊은 곳에서 터지는 것보다 **입구에서 사유를 말하고 거절하는 것**이 낫다.
     import dataclasses as _dc
@@ -149,8 +149,8 @@ def _run(payload: dict) -> dict:
         target_branch=str(payload.get("target_branch") or ""),
     )
     return {"ok": bool(got.ok), "work_id": got.work_id, "summary": got.summary(),
-            "tasks": [{"stem": t.stem, "task_id": t.task_id, "error": t.error,
-                       "manifest_degraded": t.manifest_degraded} for t in got.tasks]}
+            "tasks": [{"stem": t.stem, "task_id": t.task_id, "error": t.error}
+                      for t in got.tasks]}
 
 
 class RegisterApp:
@@ -195,9 +195,8 @@ class RegisterApp:
             return await _send_json(send, {"ok": False, "reason": "server_error",
                                            "error": f"{type(e).__name__}: {e}"})
         if got.get("ok"):
-            deg = sum(1 for t in got.get("tasks") or [] if t.get("manifest_degraded"))
-            _log(scope, f"[완료] work={got.get('work_id')} 태스크={len(got.get('tasks') or [])}"
-                        + (f" · [주의] 매니페스트 결손 {deg}건" if deg else ""))
+            _log(scope, f"[완료] work={got.get('work_id')} "
+                        f"태스크={len(got.get('tasks') or [])}")
         else:
             _log(scope, f"거절 {got.get('reason') or '?'} — {str(got.get('error') or '')[:200]}")
         return await _send_json(send, got)

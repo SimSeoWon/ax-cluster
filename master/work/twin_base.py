@@ -185,7 +185,7 @@ def resolve(paths: ProjectPaths, work_id: str, *, runner=None) -> Base:
     return b
 
 
-def manifest_section(base: Base) -> list:
+def base_section(base: Base) -> list:
     """매니페스트에 넣을 줄. [중요] **없으면 없다고 쓴다.**
 
     [중요] `#319` 로 이 절의 무게가 커졌다 — 골조가 **여기 적힌 브랜치에 실물로** 있고,

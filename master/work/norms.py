@@ -84,7 +84,7 @@ class NormBundle:
                 sum(len(d.actions) for d in self.domains))
 
     def render(self) -> list:
-        """매니페스트에 넣을 마크다운 줄. **비면 왜 비었는지 쓴다.**"""
+        """골조 프롬프트에 넣을 마크다운 줄. **비면 왜 비었는지 쓴다.**"""
         if not self.domains:
             why = " / ".join(self.degraded) or "관련 도메인을 찾지 못했다"
             return [f"_규범 없음 — {why}. "

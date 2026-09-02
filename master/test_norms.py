@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master.context_search.paths import ProjectPaths        # noqa: E402
 from master.ontology import yaml_io                          # noqa: E402
-from master.work import manifest, norms                      # noqa: E402
+from master.work import norms, skeleton                      # noqa: E402
 
 PASS = FAIL = 0
 
@@ -115,28 +115,43 @@ def test_degraded_is_visible() -> None:
         check("터진 사유를 적는다", "규범 검색 실패" in " ".join(b.degraded), str(b.degraded))
 
 
-def test_manifest_wiring() -> None:
+def test_skeleton_wiring() -> None:
+    """[중요] 규범의 소비처는 **골조 프롬프트**다 (매니페스트 철거 2026-09-02).
+
+    종전에는 `manifest.build` 가 규범 절을 본문에 넣는지를 쟀다. 그 문서가 없어졌으므로
+    같은 계약을 실제 소비처에서 잰다 — `skeleton.build_prompt` 가 규범을 싣는가.
+    """
     with tempfile.TemporaryDirectory() as t:
         paths = _project(Path(t))
         bundle = norms.attach(paths, classes=["UMissionTaskExecutor"],
                               search=lambda *a, **k: _hit())
-        m = manifest.build(paths, "task-1", classes=["UMissionTaskExecutor"],
-                           searcher=None, norms=bundle)
-        check("매니페스트에 규범 절이 있다", "## 도메인 규범 (온톨로지)" in m.body)
-        check("규범 본문이 들어간다", "지켜야 할 규칙" in m.body)
-        check("도메인 수를 센다", m.norm_domains == 1, str(m.norm_domains))
-        check("항목 수를 센다", m.norm_items == norms.MAX_INVARIANTS + 1, str(m.norm_items))
+        lines = bundle.render()
+        check("규범 줄이 나온다", bool(lines), str(lines)[:120])
+        body = "\n".join(lines)
+        check("규범 본문이 들어간다", "지켜야 할 규칙" in body, body[:160])
+        d, inv, act = bundle.counts
+        check("도메인 수를 센다", d == 1, str(d))
+        # [중요] 예산이 도메인당 `MAX_INVARIANTS` 로 잘린다 — 그 상한이 계약이다
+        check("항목 수가 예산 상한에서 잘린다", inv == norms.MAX_INVARIANTS, str(inv))
         # [중요] '_미구현_' 은 이제 나오면 안 된다 (소 2.3.1 완료)
-        check("[중요] '_미구현_' 자리표시자가 사라졌다", "_미구현" not in m.body)
+        check("[중요] '_미구현_' 자리표시자가 사라졌다", "_미구현" not in body)
+
+        spec = skeleton.SkeletonSpec(stem="X", classes=["UMissionTaskExecutor"],
+                                     instruction="만들어라",
+                                     files=["Source/X.h", "Source/X.cpp"])
+        prompt = skeleton.build_prompt(
+            spec, norms="=== DOMAIN NORMS ===\n" + body + "\n=== END DOMAIN NORMS ===")
+        check("[중요] **골조 프롬프트가 규범을 싣는다**",
+              "DOMAIN NORMS" in prompt and "지켜야 할 규칙" in prompt, prompt[:200])
 
         empty = norms.NormBundle(degraded=["없음"])
-        m2 = manifest.build(paths, "task-2", classes=["UFoo"], searcher=None, norms=empty)
-        check("규범이 비면 매니페스트도 degraded 로 표시", not m2.ok, str(m2.degraded))
-        check("규범 0건도 본문에 명시", "규범 grounding 없이" in m2.body)
+        check("규범이 비면 degraded 로 표시", not empty.ok, str(empty.degraded))
+        check("[중요] 왜 비었는지를 돌려준다 (조용히 빈 값 아님)",
+              bool(empty.degraded), str(empty.degraded))
 
 
 def main() -> int:
-    for fn in (test_relevance, test_budget, test_degraded_is_visible, test_manifest_wiring):
+    for fn in (test_relevance, test_budget, test_degraded_is_visible, test_skeleton_wiring):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_norms: {PASS}/{total} 통과")

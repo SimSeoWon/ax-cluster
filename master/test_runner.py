@@ -111,8 +111,12 @@ def test_command() -> None:
     c = R.worker_command(_facts(), "t1")
     check("체크아웃으로 이동한다", "/home/sim/trunk/ModularStage" in c, c)
     check("스킬을 지목한다", "ax-work" in c)
-    check("매니페스트 경로를 준다", ".ax/work/t1/manifest.md" in c, c)
-    check("판정 마커를 요구한다", "RESULT: DONE" in c and "ATTEMPT" in c and "HEAD" in c)
+    # 🔴 정본 ⑸ (2026-09-02) — 지시서는 파일이 아니라 **골조 주석**이고, git 은 워커의 LLM 이
+    #    만지지 않는다(`wcommit` 이 결정적으로 한다). 그래서 셋을 잰다:
+    check("[중요] 매니페스트 경로를 주지 않는다", "manifest.md" not in c, c)
+    check("[중요] 골조 주석을 읽으라고 한다", "[DOC]" in c and "[PSEUDO]" in c, c)
+    check("[중요] git 을 금지한다", "Do not run any git command" in c, c)
+    check("판정 마커를 요구한다", "RESULT: DONE" in c, c)
     check("승인을 연다 (사용자 결정)", "--dangerously-skip-permissions" in c)
     check("명령 전체가 ASCII", c.isascii(), c[:80])
 
@@ -124,28 +128,6 @@ def test_command() -> None:
 
 
 # ── 배달 ─────────────────────────────────────────────────────────────────────
-
-def test_deliver() -> None:
-    seen = {}
-
-    def writer(facts, rel, content, *, base="home"):
-        seen.update(rel=rel, base=base, content=content)
-        return "/remote/" + rel
-
-    R.deliver_manifest(_facts(), "t9", "매니페스트 본문", writer=writer)
-    check("체크아웃 기준으로 쓴다", seen["base"] == "checkout", seen.get("base"))
-    check("태스크별 디렉토리", seen["rel"] == ".ax/work/t9/manifest.md", seen.get("rel"))
-    check("본문은 한글 그대로 (파일이라 안전)", seen["content"] == "매니페스트 본문")
-
-    def boom(*a, **k):
-        raise R.bundle.BundleError("해시 불일치")
-
-    try:
-        R.deliver_manifest(_facts(), "t9", "x", writer=boom)
-        check("[중요] 배달 실패는 예외", False, "조용히 넘어갔다")
-    except R.DispatchError as e:
-        check("[중요] 배달 실패는 예외", "해시 불일치" in str(e), str(e)[:60])
-
 
 # ── 하트비트 ─────────────────────────────────────────────────────────────────
 
@@ -182,29 +164,20 @@ def test_run_task() -> None:
         calls.append(("run", timeout))
         return 0, good
 
-    r = R.run_task(_facts(), "t1", "본문", runner=runner, writer=writer, timeout=77)
-    check("배달 → 실행 순서", [c[0] for c in calls] == ["write", "run"], str(calls))
-    check("타임아웃을 넘긴다", calls[1][1] == 77)
+    r = R.run_task(_facts(), "t1", runner=runner, timeout=77)
+    # [중요] 배달 단계가 없어졌다 (매니페스트 철거 2026-09-02) — 실행 한 번만 돈다
+    check("실행만 돈다 (배달 없음)", [c[0] for c in calls] == ["run"], str(calls))
+    check("타임아웃을 넘긴다", calls[0][1] == 77)
     check("성공을 제출 가능으로 본다", r.submittable, r.summary)
 
     # [중요] 워커는 DONE 이라는데 껍데기가 실패했다
-    r2 = R.run_task(_facts(), "t1", "본문",
-                           runner=lambda f, c, t: (255, good), writer=writer)
+    r2 = R.run_task(_facts(), "t1", runner=lambda f, c, t: (255, good))
     check("[중요] ssh 실패면 DONE 이라도 BLOCKED", not r2.ok and "rc=255" in r2.reason, r2.summary)
 
-    r3 = R.run_task(_facts(), "t1", "본문",
-                           runner=lambda f, c, t: (255, "죽었다"), writer=writer)
+    r3 = R.run_task(_facts(), "t1", runner=lambda f, c, t: (255, "죽었다"))
     check("실패 + 마커 없음도 BLOCKED", not r3.ok, r3.summary)
     check("두 사유가 다 남는다", "rc=255" in r3.reason and "RESULT" in r3.reason, r3.reason)
 
-    try:
-        R.run_task(_facts(), "t1", "본문",
-                          runner=lambda f, c, t: (0, good),
-                          writer=lambda *a, **k: (_ for _ in ()).throw(
-                              R.bundle.BundleError("못 씀")))
-        check("[중요] 배달 실패면 실행하지 않는다", False, "실행까지 갔다")
-    except R.DispatchError:
-        check("[중요] 배달 실패면 실행하지 않는다", True)
 
 
 
@@ -235,12 +208,6 @@ def _paths_stub():
     return P()
 
 
-def _with_manifest(text="지시서"):
-    orig = R._manifest_for
-    R._manifest_for = lambda paths, tid: text
-    return orig
-
-
 def test_queue_calls() -> None:
     api = _Api()
     R.claim("w1", ["ue5"], api=api)
@@ -261,49 +228,41 @@ def test_queue_calls() -> None:
 
 
 def test_run_once_happy() -> None:
-    orig = _with_manifest()
-    try:
-        api = _Api(task={"task_id": "t1", "work_id": "w1", "epoch": 3})
+    if True:
+        api = _Api(task={"task_id": "t1", "work_id": "w1", "epoch": 3, "target_file": "Source/X.cpp", "header_file": "Source/X.h"})
         good = f"ATTEMPT: attempt/t1/bc250/1\nHEAD: {SHA}\nRESULT: DONE\n"
         r = R.run_once(_paths_stub(), clean=None, facts=[_facts()], api=api,
-                       runner=lambda f, c, t: (0, good), writer=lambda *a, **k: "ok")
+                       runner=lambda f, c, t: (0, good))
         check("한 건이 끝까지 간다", r["submitted"] == "submit", str(r))
         check("claim → submit 순서",
               api.paths[0].endswith("/claim") and api.paths[-1].endswith("/submit"), str(api.paths))
         check("태스크 id 를 들고 나온다", r["task"] == "t1")
-    finally:
-        R._manifest_for = orig
 
 
 def test_run_once_returns_the_task() -> None:
-    orig = _with_manifest()
-    try:
+    if True:
         # BLOCKED — 반납해야 한다
-        api = _Api(task={"task_id": "t2", "work_id": "w1", "epoch": 1})
+        api = _Api(task={"task_id": "t2", "work_id": "w1", "epoch": 1, "target_file": "Source/X.cpp", "header_file": "Source/X.h"})
         r = R.run_once(_paths_stub(), clean=None, facts=[_facts()], api=api,
-                       runner=lambda f, c, t: (0, "RESULT: BLOCKED\n"),
-                       writer=lambda *a, **k: "ok")
+                       runner=lambda f, c, t: (0, "RESULT: BLOCKED\n"))
         check("[중요] BLOCKED 는 반납한다", r["submitted"] == "submit-fail", str(r))
         check("submit-fail 로 갔다", api.paths[-1].endswith("/submit-fail"), str(api.paths))
 
         # [중요] 파견 도중 예외 — 집은 채로 죽으면 리스 1200초를 태운다
-        api2 = _Api(task={"task_id": "t3", "work_id": "w1", "epoch": 1})
+        api2 = _Api(task={"task_id": "t3", "work_id": "w1", "epoch": 1, "target_file": "Source/X.cpp", "header_file": "Source/X.h"})
         try:
             R.run_once(_paths_stub(), clean=None, facts=[_facts()], api=api2,
-                       runner=lambda f, c, t: (_ for _ in ()).throw(RuntimeError("SSH 폭발")),
-                       writer=lambda *a, **k: "ok")
+                       runner=lambda f, c, t: (_ for _ in ()).throw(RuntimeError("SSH 폭발")))
             check("[중요] 예외는 삼키지 않는다", False, "조용히 넘어갔다")
         except RuntimeError:
             check("[중요] 예외는 삼키지 않는다", True)
         check("[중요] 예외가 나도 태스크를 반납한다",
               any(p.endswith("/submit-fail") for p in api2.paths), str(api2.paths))
-    finally:
-        R._manifest_for = orig
 
 
 def test_run_once_guards() -> None:
     # [중요] 워커가 없으면 claim 조차 하지 않는다 — 집어놓고 못 돌리는 게 더 나쁘다
-    api = _Api(task={"task_id": "t4", "work_id": "w1"})
+    api = _Api(task={"task_id": "t4", "work_id": "w1", "target_file": "Source/X.cpp", "header_file": "Source/X.h"})
     r = R.run_once(_paths_stub(), clean=None, facts=[_facts(role="requester")], api=api)
     check("[중요] 워커가 없으면 claim 하지 않는다", not api.calls and r["task"] is None, str(api.paths))
     check("왜 안 했는지 말한다", "집어놓고" in r.get("note", ""), r.get("note", ""))
@@ -311,55 +270,6 @@ def test_run_once_guards() -> None:
     api2 = _Api(task=None)
     r2 = R.run_once(_paths_stub(), clean=None, facts=[_facts()], api=api2)
     check("집을 게 없으면 조용히 끝난다", r2["task"] is None and "없다" in r2["note"], str(r2))
-
-    # [중요] 매니페스트가 없으면 파견하지 않는다 (워커가 할 일을 지어낸다)
-    orig = R._manifest_for
-    R._manifest_for = lambda p, t: (_ for _ in ()).throw(R.DispatchError("매니페스트가 없다"))
-    try:
-        api3 = _Api(task={"task_id": "t5", "work_id": "w1"})
-        ran = []
-        try:
-            R.run_once(_paths_stub(), clean=None, facts=[_facts()], api=api3,
-                       runner=lambda f, c, t: (ran.append(1), (0, "RESULT: DONE"))[1],
-                       writer=lambda *a, **k: "ok")
-        except R.DispatchError:
-            pass
-        check("[중요] 매니페스트가 없으면 워커를 돌리지 않는다", not ran)
-        check("[중요] 그래도 태스크는 반납한다",
-              any(p.endswith("/submit-fail") for p in api3.paths), str(api3.paths))
-    finally:
-        R._manifest_for = orig
-
-
-
-def test_refresh_base() -> None:
-    """[중요] 등록 시점의 기준은 정상 흐름에서 반드시 낡는다 — 파견 시점에 다시 푼다."""
-    stale = ("# 태스크\n\n## 기준 (커밋·브랜치)\n\n"
-             "- 작업 브랜치: `task/w1/base`\n"
-             "- [중요] **그 브랜치가 원격에 아직 없다.** 요청자가 먼저 만들어야 한다\n\n"
-             "## 대상 클래스\n\n- UFoo\n")
-
-    class _Base:
-        # [중요] `#319` — 기준은 조각 durable 이 아니라 **작업 브랜치**다. `twin` 은 브랜치를
-        #    처음 만들 때의 출발점(트윈 커밋)이라 매니페스트 절이 참조한다.
-        commit, branch, exists, error, bare = SHA, "task/w1/base", True, "", "/b.git"
-        checked, instruction, twin = True, "", SHA
-
-    fresh = R.refresh_base(stale, _paths_stub(), "w1", resolver=lambda p, t: _Base())
-    check("[중요] 낡은 '아직 없다' 가 사라진다", "원격에 아직 없다" not in fresh, fresh[:200])
-    check("있다고 갱신된다", "원격에 있다" in fresh, fresh[:200])
-    check("[중요] 뒤 절을 잘라먹지 않는다", "## 대상 클래스" in fresh and "UFoo" in fresh)
-    check("절이 하나만 남는다", fresh.count(R.BASE_HEADING) == 1)
-
-    # [중요] 못 풀면 옛 값을 지우지 않고 경고만 붙인다 — 모르는 것을 지어내지 않는다
-    bad = R.refresh_base(stale, _paths_stub(), "w1",
-                         resolver=lambda p, t: (_ for _ in ()).throw(RuntimeError("bare 못 읽음")))
-    check("[중요] 못 풀면 지우지 않는다", "task/w1/base" in bad and "## 대상 클래스" in bad)
-    check("낡았을 수 있다고 경고한다", "낡았을 수 있다" in bad, bad[:220])
-
-    none = R.refresh_base("# 태스크\n\n## 대상 클래스\n", _paths_stub(), "w1",
-                          resolver=lambda p, t: _Base())
-    check("절이 없으면 앞에 붙인다", none.startswith(R.BASE_HEADING), none[:40])
 
 
 
@@ -432,10 +342,9 @@ def test_json_usage() -> None:
 
 
 def main() -> int:
-    for fn in (test_parse, test_pick, test_command, test_deliver, test_beater, test_run_task,
+    for fn in (test_parse, test_pick, test_command, test_beater, test_run_task,
                test_queue_calls, test_run_once_happy, test_run_once_returns_the_task,
-               test_run_once_guards, test_refresh_base,
-               test_result_asymmetry, test_pick_skips_dirty,
+               test_run_once_guards, test_result_asymmetry, test_pick_skips_dirty,
                test_json_usage):
         fn()
     total = PASS + FAIL

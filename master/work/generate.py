@@ -2,7 +2,7 @@
 
     작업장 ① 요청
        ↓
-    마스터 ② 매니페스트로 프롬프트 조립 → 브로커로 라우팅
+    마스터 ② 골조 주석·선언부로 프롬프트 조립 → 브로커로 라우팅
        ↓
     추론 노드 ③ 로컬 LLM 이 코드 생성 (무료)
        ↓
@@ -33,7 +33,6 @@ from ..auth import auth_headers
 from ..context_search.paths import ProjectPaths
 from ..layer2_verify import verify_files
 from ..verdict import Verdict
-from . import manifest as mf
 
 DEFAULT_BROKER = "http://localhost:8102"
 CODER = "qwen2.5-coder:14b"          # §4.4 — UE5 C++ 생성용으로 확정
@@ -102,9 +101,12 @@ def strip_fence(text: str) -> tuple[str, bool]:
     return (m.group(1), True) if m else ((text or "").strip(), False)
 
 
-def build_prompt(*, manifest_body: str, instruction: str, target_file: str = "",
+def build_prompt(*, context: str, instruction: str, target_file: str = "",
                  declarations: str = "") -> str:
-    """생성 프롬프트. **매니페스트를 그대로 싣는다** — 워커가 재검색하지 않게 (§4.2).
+    """생성 프롬프트. **컨텍스트를 그대로 싣는다** — 워커가 재검색하지 않게 (§4.2).
+
+    [중요] `context` 는 **골조의 `[DOC]` 주석과 base 커밋의 선언부**다 (2026-09-02 정본).
+    종전에는 매니페스트 파일 본문이었고, 그 파일은 걷었다 — 지시서가 소스 주석으로 갔다.
 
     [중요] 인터페이스 동결을 명시한다. 클래스 단위 병렬 생성이 성립하려면 선언이 안 바뀌어야
     한다(§4.5) — 조각끼리 시그니처를 다르게 가정하면 컴파일에서야 드러난다.
@@ -135,7 +137,7 @@ def build_prompt(*, manifest_body: str, instruction: str, target_file: str = "",
         "references. If code looks misplaced, leave it exactly where it is.",
         "",
         "=== CONTEXT COLLECTED BY THE SERVER (read this; do not search) ===",
-        manifest_body.strip(),
+        context.strip(),
         "=== END CONTEXT ===",
         "",
     ]
@@ -225,19 +227,21 @@ def unload_model(model: str, *, broker: str = DEFAULT_BROKER,
         raise GenerateError(f"모델 회수 실패: {e}") from e
 
 
-def generate(paths: ProjectPaths, task_id: str, *, instruction: str,
+def generate(paths: ProjectPaths, task_id: str, *, instruction: str, context: str,
              target_file: str = "", classes: list | None = None,
              model: str = CODER, **kw) -> Generated:
-    """매니페스트를 읽어 코드를 생성한다. 매니페스트가 없으면 **거부한다.**
+    """컨텍스트를 실어 코드를 생성한다. **컨텍스트가 비면 거부한다.**
 
     없는 채로 진행하면 로컬 LLM 이 grounding 0 으로 짜게 되고, 그건 §4.3 이 실측한
     환각(없는 API 호출)이 나오는 조건 그대로다. 조용히 진행하지 않는다.
+
+    [중요] `context` 는 호출자가 준다 (2026-09-02) — 골조의 `[DOC]` 주석과 base 커밋
+    선언부다(`declarations.from_commit`). 매니페스트 파일을 읽던 자리이고, 그 파일은 걷었다.
     """
-    body = mf.read(paths, task_id)
-    if body is None:
+    if not (context or "").strip():
         raise GenerateError(
-            f"컨텍스트 매니페스트가 없다: {mf.manifest_path(paths, task_id)} — "
-            "grounding 없이 생성하지 않는다 (§4.3)")
+            "컨텍스트가 비었다 — grounding 없이 생성하지 않는다 (§4.3). "
+            "골조 헤더의 `[DOC]` 와 base 커밋 선언부를 실어 줄 것")
     # [중요] 대상 클래스를 주면 **헤더 선언을 프롬프트에 싣는다** (#26) — 규범만으로는
     #    한 글자 차이 철자 환각이 남는다는 것이 실측됐다.
     decls = ""
@@ -245,7 +249,7 @@ def generate(paths: ProjectPaths, task_id: str, *, instruction: str,
         from . import declarations as decl_mod
         d = decl_mod.collect(paths, list(classes))
         decls = d.render()
-    prompt = build_prompt(manifest_body=body, instruction=instruction, declarations=decls,
+    prompt = build_prompt(context=context, instruction=instruction, declarations=decls,
                           target_file=target_file)
     raw = call_broker(prompt, model=model, **kw)
     code, stripped = strip_fence(raw)
@@ -253,7 +257,7 @@ def generate(paths: ProjectPaths, task_id: str, *, instruction: str,
                      stripped_fence=stripped, prompt_chars=len(prompt))
 
 
-def dispatch(paths: ProjectPaths, task_id: str, *, instruction: str,
+def dispatch(paths: ProjectPaths, task_id: str, *, instruction: str, context: str,
              target_file: str = "", model: str = CODER,
              verifier=None, **kw) -> Dispatch:
     """생성 → 층2 → 인계 준비. **마스터가 하는 일의 끝이다.**
@@ -263,7 +267,7 @@ def dispatch(paths: ProjectPaths, task_id: str, *, instruction: str,
     """
     d = Dispatch(task_id=task_id)
     try:
-        d.generated = generate(paths, task_id, instruction=instruction,
+        d.generated = generate(paths, task_id, instruction=instruction, context=context,
                                target_file=target_file, model=model, **kw)
     except GenerateError as e:
         d.error = str(e)

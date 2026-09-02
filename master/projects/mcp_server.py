@@ -4,7 +4,6 @@
   · register_project — 디지털 트윈을 생성할 프로젝트를 등록한다(설정 파일 생성부터)
   · set_active       — 가리키는 프로젝트를 바꾼다
   · register_work    — 작업장이 일감을 등록한다 (§4.7 복구 ①)
-  · get_manifest     — 작업장이 컨텍스트 매니페스트를 받아 간다 (§4.2)
   · get_code         — [중요] 생성 + 층2 를 거친 **코드 뭉치**를 받아 간다 (§4.2 ②③④)
 
 [주의] 이 서버가 프로젝트 레지스트리를 넘어 **작업장의 단일 창구**가 되고 있다. 의도된 통합이다 —
@@ -42,7 +41,6 @@ from .logic import (
 from .config import Registry
 from .workshop_check import check_project_workshops
 from ..context_search.paths import resolve
-from ..work import manifest as _mf
 from ..work.generate import GenerateError, dispatch
 from ..work.register import RegisterError, TaskSpec, register_work
 
@@ -253,37 +251,10 @@ def register_work_tool(
         "work_id": got.work_id,
         "summary": got.summary(),
         "tasks": [
-            # [중요] `carried_*` 를 실어 보낸다 — 요청자 세션이 「매니페스트가 durable 에
-            #    실렸나」를 기계로 읽어야 한다. summary 문장만으로는 태스크를 못 짚는다.
-            {"stem": t.stem, "task_id": t.task_id, "manifest": t.manifest_path,
-             "hits": t.manifest_hits, "degraded": t.manifest_degraded, "error": t.error,
-             "carried_head": t.carried_head, "carried_error": t.carried_error}
+            {"stem": t.stem, "task_id": t.task_id, "error": t.error}
             for t in got.tasks
         ],
     }, ensure_ascii=False)
-
-
-@mcp.tool()
-def get_manifest(task_id: str, project: str = "") -> str:
-    """태스크의 컨텍스트 매니페스트를 반환한다.
-
-    [중요] **작업장은 이것을 읽고 작업한다 — 재검색할 필요가 없다.** 마스터가 등록 시 1회
-    수집해 둔 것이고, 로컬 LLM(도구 호출 불가)도 이 텍스트로 grounding 을 받는다 (§4.2).
-
-    없으면 `ok:false` 다 — 빈 매니페스트와 구분된다.
-    """
-    try:
-        paths = resolve(project)
-        body = _mf.read(paths, task_id)
-    except ConfigError as e:
-        return _fail(e)
-    if body is None:
-        return json.dumps({
-            "ok": False, "task_id": task_id,
-            "error": f"매니페스트가 없다: {_mf.manifest_path(paths, task_id)}",
-        }, ensure_ascii=False)
-    return json.dumps({"ok": True, "task_id": task_id, "project": paths.name,
-                       "manifest": body}, ensure_ascii=False)
 
 
 @mcp.tool()

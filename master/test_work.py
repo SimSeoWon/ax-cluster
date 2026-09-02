@@ -5,9 +5,9 @@
 [중요] 지키는 불변식 (PLAN §4.2, plan v5 C.1/C.2):
    1. **두 작업장이 같은 ref 에 push 하지 않는다** — zombie race 가 구조적으로 성립 불가
    2. **식별자를 조용히 정규화하지 않는다** — 이름이 곧 정체성이다
-   3. **매니페스트는 1회 수집** — 작업장은 읽기만 한다
+   3. **지시서는 골조 주석** — 작업장은 자기 체크아웃에서 읽는다 (매니페스트 철거 2026-09-02)
    4. **수집 결손을 숨기지 않는다** — grounding 없이 일하는 줄 알아야 한다
-   5. **매니페스트 쓰기는 원자적** — 반쯤 쓰인 것을 읽으면 안 된다
+   5. **스풀 쓰기는 원자적** — 반쯤 쓰인 것을 읽으면 안 된다
 """
 from __future__ import annotations
 
@@ -22,7 +22,6 @@ sys.path.insert(0, str(_ROOT))
 
 from master.context_search.paths import ProjectPaths  # noqa: E402
 from master.work import branch_names as bn  # noqa: E402
-from master.work import manifest as mf  # noqa: E402
 from master.work.register import (  # noqa: E402
     RegisterError, TaskSpec, register_work,
 )
@@ -138,40 +137,6 @@ def main() -> int:
     check("앞뒤 공백은 다듬는다 (내용은 안 바꾼다)",
           bn.durable_branch("  w9  ", "  task_5  ") == "task/w9/task_5")
 
-    # ── 매니페스트 ──────────────────────────────────
-    print("\n[5] 매니페스트 조립")
-    s = FakeSearch([FakeHit("A.md"), FakeHit("B.md", 0.02, "vector", "")])
-    # [중요] 규범 번들을 주입한다 — 안 주면 실제 도메인 색인을 찾아가고, 테스트 프로젝트에는
-    #    색인이 없어 degraded 가 붙는다. 여기서 재는 것은 **RAG 채널**이다.
-    from master.work import norms as nm
-    ok_norms = nm.NormBundle(domains=[nm.DomainNorms(
-        domain="D", summary="요약", invariants=[{"name": "R", "text": "규칙", "evidence": "X:1"}])])
-    # 기준 커밋도 주입한다 — 테스트 프로젝트엔 config.yaml 이 없다. 여기서 재는 것은 RAG 채널이다.
-    from master.work import twin_base as tb
-    ok_base = tb.Base(commit="a" * 40, branch="task/task_1", exists=True)
-    m = mf.build(paths, "task_1", classes=["UManagerBase"], stem="초기화",
-                 contracts="Init() 동결", searcher=s, norms=ok_norms, base=ok_base, now=NOW)
-    check("온전히 수집", m.ok and m.hits == 2, f"ok={m.ok} hits={m.hits}")
-    check("클래스명이 질의 앞에 온다", s.calls[0][0].startswith("UManagerBase"), s.calls[0][0])
-    check("stem 도 질의에 들어간다", "초기화" in s.calls[0][0])
-    for want in ("task_1", "TestProj", "UManagerBase", "Init() 동결", "A.md", "B.md"):
-        check(f"  본문에 {want}", want in m.body)
-    check("발췌 없는 히트도 실린다", "B.md" in m.body)
-    check("재검색 불필요를 명시", "재검색 불필요" in m.body)
-
-    print("\n[5b] [중요] 골조는 **매니페스트에 없다** — 작업 브랜치에 실물로 있다 (#319)")
-    # 종전에는 여기서 `skeleton=` 을 실어 `## 골조` 절을 만들었다. `#319` 완료 조건 3 이
-    # 그 절을 뺐다 — 실측(`#317`): 매니페스트 298줄 중 198줄(2/3)이 골조였고, 조각마다 같은
-    # 텍스트를 인바운드 토큰으로 실어 보내고 있었다.
-    check("[중요] build 는 더 이상 skeleton 인자를 받지 않는다",
-          _raises(lambda: mf.build(paths, "t", skeleton="x",
-                                   searcher=FakeSearch([]), now=NOW), TypeError))
-    ms = mf.build(paths, "t", classes=["UFoo"],
-                  searcher=FakeSearch([FakeHit("A.md")]), now=NOW)
-    check("골조 절이 없다", "## 골조" not in ms.body)
-    check("[중요] 어디에 있는지는 기준 절이 말한다",
-          "골조는 이 브랜치에 실물로 있다" in ms.body or "작업 브랜치" in ms.body, ms.body[:400])
-
     print("\n[5-1] [중요] 소켓 타임아웃도 GenerateError 로 (배치를 크래시시키지 않는다)")
     import urllib.error as _ue
 
@@ -216,72 +181,6 @@ def main() -> int:
     check("  temperature 는 유지", seen["options"]["temperature"] == 0)
     check("  stateless 유지 (context 없음)", "context" not in seen)
 
-    print("\n[6] [중요] 도메인 규범 채널 (소 2.3.1)")
-    check("규범 섹션이 있다", "도메인 규범" in m.body)
-    check("규범 본문이 실린다", "지켜야 할 규칙" in m.body and "규칙" in m.body)
-    check("도메인·항목 수를 센다", m.norm_domains == 1 and m.norm_items == 1,
-          f"{m.norm_domains}/{m.norm_items}")
-    # [중요] 자리표시자는 사라졌다 — 이 단언이 깨지면 규범 채널이 되돌아간 것이다
-    check("[중요] '_미구현_' 자리표시자가 없다", "_미구현" not in m.body)
-    m_empty = mf.build(paths, "t0", classes=["UManagerBase"], searcher=s,
-                       norms=nm.NormBundle(degraded=["색인 없음"]), now=NOW)
-    check("[중요] 규범이 비면 비었다고 본문에 쓴다",
-          "규범 grounding 없이" in m_empty.body and not m_empty.ok)
-
-    print("\n[7] [중요] 수집 결손을 숨기지 않는다 (베스트에포트지만 조용하지 않다)")
-    m2 = mf.build(paths, "t", classes=["UFoo"], searcher=FakeSearch(exc=RuntimeError("죽음")),
-                  now=NOW)
-    check("검색 실패해도 매니페스트는 나온다", bool(m2.body))
-    check("  ok=False", not m2.ok)
-    check("  본문에 경고", "수집이 온전하지 않다" in m2.body and "RuntimeError" in m2.body)
-
-    m3 = mf.build(paths, "t", classes=["UFoo"], searcher=FakeSearch([]), base=ok_base, now=NOW)
-    # [중요] 다른 채널이 결손을 남겨도 이 메시지가 사라지면 안 된다 (2026-08-09 회귀)
-    check("결과 0건도 결손으로 표시", not m3.ok and "결과가 없다" in m3.body)
-    m3b = mf.build(paths, "t", classes=["UFoo"], searcher=FakeSearch([]), now=NOW)
-    # [중요] `#319` — 기준은 트윈 커밋이 아니라 **작업 브랜치**이고, work_id 가 없으면 그 이름을
-    #    만들 수 없다. 결손 문구가 바뀌었을 뿐 **채널마다 자기 결손을 센다**는 성질은 그대로다.
-    check("[중요] 기준을 못 정해도 '검색 결과가 없다' 는 남는다",
-          "결과가 없다" in m3b.body
-          and any("작업 브랜치를 정할 수 없다" in d for d in m3b.degraded), m3b.degraded)
-
-    m4 = mf.build(paths, "t", searcher=FakeSearch([FakeHit("X.md")]), now=NOW)
-    check("질의를 못 만들면 검색하지 않는다", not m4.ok and "질의를 만들 수 없" in m4.body)
-
-    m5 = mf.build(paths, "t", classes=["UFoo"], searcher=None, now=NOW)
-    check("검색기 없음도 기록", not m5.ok and "검색기가 없다" in m5.body)
-
-    print("\n[8] 히트 수 제한과 발췌 길이")
-    many = FakeSearch([FakeHit(f"{i}.md", excerpt="가" * 500) for i in range(20)])
-    m6 = mf.build(paths, "t", classes=["UFoo"], hits=3, searcher=many, now=NOW)
-    check("limit 이 전달된다", many.calls[0][1] == 3, str(many.calls[0]))
-    check("히트 수", m6.hits == 3)
-    check("발췌가 잘린다", "…" in m6.body and "가" * 200 not in m6.body)
-
-    print("\n[9] 저장 — 원자적, 파생물 위치")
-    p = mf.write(paths, m)
-    check("경로", p == paths.root / "manifests" / "task_1.md", str(p))
-    check("트윈 파생물 아래", p.parent == paths.manifests)
-    check("읽힌다", mf.read(paths, "task_1") == m.body)
-    check("임시 파일이 안 남는다", not list(p.parent.glob("*.tmp")))
-    check("없는 것은 None (빈 문자열과 구분)", mf.read(paths, "없는거") is None)
-    p2 = mf.write(paths, mf.build(paths, "task_1", classes=["UBar"],
-                                  searcher=FakeSearch([FakeHit("C.md")]), now=NOW))
-    check("덮어쓰기", p2 == p and "C.md" in mf.read(paths, "task_1"))
-
-    print("\n[10] 경로 안전")
-    check("슬래시가 디렉토리를 벗어나지 못한다",
-          mf.manifest_path(paths, "a/b").parent == paths.manifests,
-          str(mf.manifest_path(paths, "a/b")))
-    check("빈 task_id 거부", _raises(lambda: mf.manifest_path(paths, "  "), mf.ManifestError))
-
-    print("\n[11] collect() — 검색기를 못 열어도 등록을 막지 않는다")
-    broken = mf._BrokenSearcher(OSError("DB 없음"))
-    m7 = mf.build(paths, "t9", classes=["UFoo"], searcher=broken, now=NOW)
-    check("예외가 새어 나오지 않는다", not m7.ok)
-    check("원인이 기록된다", "OSError" in m7.body and "DB 없음" in m7.body)
-
-    # ── 큐 slug (워크플로우가 드러낸 잠복 버그) ──────
     print("\n[11b] [중요] 한글 제목이 전부 같은 slug 가 되던 문제")
     from master.task_queue.logic import _slugify  # noqa: E402
     ko = ["워크플로우 복구", "골조 전달", "매니저 초기화"]
@@ -309,7 +208,7 @@ def main() -> int:
 
     def reg(specs, **kw):
         return register_work("제목", specs, paths=paths, target_repo="r",
-                             poster=poster, searcher=FakeSearch([FakeHit("A.md")]), **kw)
+                             poster=poster, **kw)
 
     for bad, why in [
         ([], "태스크 0개"),
@@ -336,9 +235,6 @@ def main() -> int:
     check("work 1회 + patch 1회 + task 2회", len(calls) == 4, str([u for u, _ in calls]))
     check("work_id", got.work_id == "w1")
     check("태스크 2건", len(got.tasks) == 2)
-    check("매니페스트가 붙는다", all(t.manifest_path for t in got.tasks))
-    check("  디스크에 실재", all(Path(t.manifest_path).is_file() for t in got.tasks))
-    check("  task_id 로 읽힌다", mf.read(paths, got.tasks[0].task_id) is not None)
 
     wp = calls[0][1]
     check("[중요] 3-tier 를 쓴다", wp["distribution_mode"] == "push", str(wp))
@@ -349,8 +245,6 @@ def main() -> int:
     check("  결과에 작업 브랜치가 실린다", got.base_branch == "task/w1/base", got.base_branch)
     tp = calls[2][1]
     check("task_data 에 감사 사본이 남는다", tp["task_data"]["skeleton"] == "class UManagerBase {};")
-    check("[중요] 골조는 **매니페스트로 가지 않는다** (#319 — 작업 브랜치에 실물로 있다)",
-          "class UManagerBase {};" not in (mf.read(paths, got.tasks[0].task_id) or ""))
     check("동결 계약이 실린다", tp["task_data"]["contracts"] == "Init() 동결")
     check("능력 라우팅", tp["requires"] == ["ue5"])
     check("[중요] 저장소를 만지는 필드가 없다",
@@ -369,8 +263,7 @@ def main() -> int:
 
     got2 = register_work("t", [TaskSpec(stem="Good", classes=["U"]),
                                TaskSpec(stem="Bad", classes=["V"])],
-                         paths=paths, target_repo="r", poster=flaky,
-                         searcher=FakeSearch([FakeHit("A.md")]))
+                         paths=paths, target_repo="r", poster=flaky)
     check("ok=False", not got2.ok)
     check("실패 1건", len(got2.failed) == 1 and got2.failed[0].stem == "Bad")
     check("성공분은 살아 있다", got2.tasks[0].ok)
@@ -378,18 +271,9 @@ def main() -> int:
 
     print("\n[15] task_id 를 못 받으면 실패로 잡는다")
     got3 = register_work("t", [TaskSpec(stem="A", classes=["U"])], paths=paths,
-                         target_repo="r", searcher=FakeSearch([]),
+                         target_repo="r",
                          poster=lambda u, p: {"work_id": "w3"} if u.endswith("/works") else {})
     check("ok=False", not got3.ok and "task_id" in got3.tasks[0].error)
-    check("매니페스트도 안 만든다", not got3.tasks[0].manifest_path)
-
-    print("\n[16] 매니페스트 결손이 등록을 막지 않는다 (베스트에포트)")
-    got4 = register_work("t", [TaskSpec(stem="A", classes=["U"])], paths=paths,
-                         target_repo="r", poster=poster,
-                         searcher=FakeSearch(exc=RuntimeError("검색 죽음")))
-    check("등록은 성공", got4.ok, got4.summary())
-    check("결손이 기록된다", bool(got4.tasks[0].manifest_degraded))
-    check("요약에 드러난다", "결손" in got4.summary(), got4.summary())
 
     print("\n[16-b] `require_base` 기본값은 **off** — `#336` ① (사용자 결정 2026-08-30)")
     # [중요] 종전 기본값(`poster is None`)은 실전에서 항상 True 였고, 그것이 `#317` ①
@@ -403,13 +287,13 @@ def main() -> int:
     try:
         seen.clear()
         register_work("t", [TaskSpec(stem="A", classes=["U"])], paths=paths,
-                      target_repo="r", poster=poster, searcher=FakeSearch([]))
+                      target_repo="r", poster=poster)
         check("[중요] 기본값에서 base 를 확인하지 않는다 (등재는 기록이다)", not seen, str(seen))
 
         seen.clear()
         try:
             register_work("t", [TaskSpec(stem="A", classes=["U"])], paths=paths,
-                          target_repo="r", poster=poster, searcher=FakeSearch([]),
+                          target_repo="r", poster=poster,
                           require_base=True)
         except Exception:                                   # noqa: BLE001
             pass                    # 트윈이 없는 테스트 환경이라 거절/예외 어느 쪽이든 좋다
@@ -418,7 +302,7 @@ def main() -> int:
         _reg.base_status = _orig_bs
 
     print("\n[16-c] `#336` ③ — 등재가 죽으면 **반쪽 work 를 남기지 않는다**")
-    # [중요] 실측 2026-08-30: `.33` 첫 실전 등재가 `manifest.build` 에서 예외로 죽어
+    # [중요] 실측 2026-08-30: `.33` 첫 실전 등재가 예외로 죽어
     #    `total=1`(specs 는 4) 인 work 이 `in_progress` 로 남았고, 다음 세션이 그것을
     #    「이미 등재돼 있다」로 읽어 판단이 흐려졌다. 큐엔 삭제 API 가 없으니 **종결**시킨다.
     seen_patch = []
@@ -431,7 +315,7 @@ def main() -> int:
 
     try:
         register_work("t", [TaskSpec(stem="A", classes=["U"])], paths=paths,
-                      target_repo="r", poster=poster_boom, searcher=FakeSearch([]))
+                      target_repo="r", poster=poster_boom)
         check("[중요] 죽으면 예외를 올린다", False, "조용히 통과해버렸다")
     except Exception as e:                                  # noqa: BLE001
         check("[중요] 죽으면 예외를 올린다", True)
@@ -441,25 +325,6 @@ def main() -> int:
     if cancels:
         check("[주의] 사유를 남긴다",
               "등재 실패" in str(cancels[0].get("review_decision") or ""), str(cancels[0]))
-
-    print("\n[16-d] 매니페스트 예외는 **등록을 죽이지 않는다** (베스트에포트가 계약이다)")
-    # [중요] 주석은 「베스트에포트」였는데 `try` 가 없었다 — 그래서 `contracts` 가 리스트일 때
-    #    `mf.build` 의 `contracts.strip()` 이 AttributeError 로 등록 전체를 죽였다.
-    from master.work import register as _r2
-    _orig = _r2._build_manifest_and_carry
-    _r2._build_manifest_and_carry = lambda *a, **k: (_ for _ in ()).throw(
-        AttributeError("'list' object has no attribute 'strip'"))
-    try:
-        got = register_work("t", [TaskSpec(stem="A", classes=["U"]),
-                                  TaskSpec(stem="B", classes=["V"])],
-                            paths=paths, target_repo="r", poster=poster,
-                            searcher=FakeSearch([]))
-        check("[중요] 매니페스트가 죽어도 태스크는 전부 등록된다", len(got.tasks) == 2, str(got.tasks))
-        check("[중요] 결손을 결과에 싣는다",
-              all(t.manifest_degraded for t in got.tasks), str(got.tasks)[:200])
-        check("요약에 드러난다", "결손" in got.summary(), got.summary())
-    finally:
-        _r2._build_manifest_and_carry = _orig
 
     print("\n[16-e] [중요] 등재는 **골조를 만들지 않는다** — 마스터가 LLM 을 부르지 않는다")
     # [중요] 실측 2026-08-30 21:57: `.33` 이 `instruction` 을 실은 명세 5개를 등재하자
@@ -485,14 +350,14 @@ def main() -> int:
     spec_with_instruction = TaskSpec(stem="A", classes=["UA"], target_file="A.cpp",
                                      instruction="이걸 만들어라")   # skeleton 은 비었다
     got = register_work("t", [spec_with_instruction], paths=paths, target_repo="r",
-                        poster=poster, searcher=FakeSearch([]),
+                        poster=poster,
                         make_skeleton=_probe_skeleton(called))
     check("[중요] 주입하면 돈다 (테스트 자리는 살아 있다)", bool(called), str(called))
 
     called.clear()
     got = register_work("t", [TaskSpec(stem="B", classes=["UB"], target_file="B.cpp",
                                        instruction="이것도 만들어라")],
-                        paths=paths, target_repo="r", poster=poster, searcher=FakeSearch([]))
+                        paths=paths, target_repo="r", poster=poster)
     check("[중요] **기본값에서는 골조를 만들지 않는다** — instruction 이 있어도",
           not called and not got.generated, f"called={called} generated={got.generated}")
     check("등재 자체는 성립한다", got.work_id and len(got.tasks) == 1, got.summary())
@@ -511,8 +376,7 @@ def main() -> int:
 
     got = register_work("t", [TaskSpec(stem="A", classes=["UA"]),
                               TaskSpec(stem="B", classes=["UB"], depends_on=["A"])],
-                        paths=paths, target_repo="r", poster=poster_dep,
-                        searcher=FakeSearch([]))
+                        paths=paths, target_repo="r", poster=poster_dep)
     dep_payload = [p for u, p in sent if u.endswith("/tasks") and p.get("stem") == "B"]
     check("[중요] stem 이 task_id 로 바뀌어 나간다",
           dep_payload and dep_payload[0]["depends_on"] == ["id_A"],
@@ -523,8 +387,7 @@ def main() -> int:
     sent.clear()
     got2 = register_work("t", [TaskSpec(stem="A", classes=["UA"], depends_on=["B"]),
                                TaskSpec(stem="B", classes=["UB"])],
-                         paths=paths, target_repo="r", poster=poster_dep,
-                         searcher=FakeSearch([]))
+                         paths=paths, target_repo="r", poster=poster_dep)
     bad = [t for t in got2.tasks if t.stem == "A"]
     check("[주의] 뒤에 오는 조각을 가리키면 거절한다",
           bad and "뒤에 오는 조각" in (bad[0].error or ""), str(bad[:1]))
@@ -533,8 +396,7 @@ def main() -> int:
     # 모르는 이름은 조용히 통과시키지 않는다
     sent.clear()
     got3 = register_work("t", [TaskSpec(stem="A", classes=["UA"], depends_on=["없는거"])],
-                         paths=paths, target_repo="r", poster=poster_dep,
-                         searcher=FakeSearch([]))
+                         paths=paths, target_repo="r", poster=poster_dep)
     check("[중요] 모르는 의존 이름은 거절한다",
           got3.tasks and "task_id 도 아니다" in (got3.tasks[0].error or ""),
           str(got3.tasks[:1]))
@@ -555,38 +417,11 @@ def main() -> int:
     check("[중요] 중간 펜스는 남긴다 (층2 가 잡아야 한다)", F in code and not st, code)
     check("빈 입력", strip_fence("") == ("", False))
 
-    print("\n[18] 프롬프트 — 매니페스트를 싣고 동결을 명시한다")
-    pr = build_prompt(manifest_body="## 골조\nclass UFoo;", instruction="Init 구현",
-                      target_file="Foo.cpp")
-    check("매니페스트가 통째로 실린다", "class UFoo;" in pr)
-    check("[중요] 동결을 명시", "FROZEN" in pr)
-    check("재검색 금지를 명시", "do not search" in pr)
-    check("펜스 금지를 명시", "No markdown fences" in pr)
-    check("대상 파일", "Foo.cpp" in pr)
-    check("지시가 실린다", "Init 구현" in pr)
-    # [중요] 소 3.5.7 (`#183`) — 원전 금지 3종. 이유가 **UE 특유**라 리뷰뿐 아니라 생성에도 걸린다:
-    #    Blueprint 에셋이 C++ 상속과 UPROPERTY **이름**을 직렬화해 들고 있고, 그 의존은
-    #    코드에 없다(*"LLM 은 코드만 분석 가능"*). 룰 1(동결)이 리네이밍을 **일부**만 막는다.
-    check("[중요] 리네이밍 금지 + **이유**(Blueprint 에셋)",
-          "rename" in pr.lower() and "Blueprint" in pr, pr[:0])
-    check("[중요] 상속 구조 변경 금지", "inheritance" in pr.lower())
-    check("[중요] 모듈 간 이동 금지 (동결로는 못 막는 자리)",
-          "move code between modules" in pr.lower())
-    check("에셋을 코드에서 볼 수 없다는 사실을 알린다",
-          "cannot see those assets" in pr.lower() or "asset references" in pr.lower())
-
-    print("\n[19] [중요] 매니페스트가 없으면 생성하지 않는다 (grounding 0 = 환각 조건)")
-    gp = ProjectPaths(name="G", root=tmp / "G")
-    try:
-        generate(gp, "없는태스크", instruction="x")
-        check("거부", False, "생성해 버렸다")
-    except GenerateError as e:
-        check("거부", "매니페스트가 없다" in str(e), str(e))
-        check("  이유를 말한다", "grounding" in str(e))
-
     print("\n[20] 생성 → 층2 → 인계")
-    mf.write(gp, mf.build(gp, "t1", classes=["UFoo"],
-                          searcher=FakeSearch([FakeHit("A.md")]), now=NOW))
+    # [중요] 컨텍스트는 **호출자가 준다** (매니페스트 철거 2026-09-02) — 골조의 `[DOC]` 와
+    #    base 커밋 선언부다. 비면 `generate` 가 거절한다(아래 [19] 대체 검사).
+    gp = ProjectPaths(name="G", root=tmp / "G")
+    CTX = "## 관련 코드\n- `A.md` 발췌"
     seen = {}
 
     def caller(url, payload):
@@ -594,7 +429,7 @@ def main() -> int:
         return f"{F}cpp\nvoid UFoo::Init(){{}}\n{F}"
 
     ok_v = Verdict(approved=True, failure=None)
-    d = dispatch(gp, "t1", instruction="Init 구현", target_file="Foo.cpp",
+    d = dispatch(gp, "t1", instruction="Init 구현", context=CTX, target_file="Foo.cpp",
                  caller=caller, verifier=lambda files: ok_v)
     check("ok", d.ok, d.summary())
     check("펜스가 벗겨진 코드", d.code == "void UFoo::Init(){}", repr(d.code))
@@ -606,51 +441,44 @@ def main() -> int:
 
     print("\n[21] [중요] fail-closed — 층2 를 못 넘으면 인계하지 않는다")
     bad = Verdict(approved=False, failure=None, findings=["세미콜론 누락"])
-    d = dispatch(gp, "t1", instruction="x", caller=caller, verifier=lambda f: bad)
+    d = dispatch(gp, "t1", instruction="x", context=CTX, caller=caller, verifier=lambda f: bad)
     check("차단", not d.ok and d.verdict.blocked)
     check("  코드는 들고 있다 (진단용)", bool(d.code))
     check("  요약에 드러난다", "차단" in d.summary(), d.summary())
 
-    d = dispatch(gp, "t1", instruction="x", caller=lambda u, p: "",
+    d = dispatch(gp, "t1", instruction="x", context=CTX, caller=lambda u, p: "",
                  verifier=lambda f: ok_v)
     check("빈 생성 = 차단", not d.ok and "비었다" in d.error, d.error)
 
-    d = dispatch(gp, "t1", instruction="x", caller=caller, verifier=lambda f: None)
+    d = dispatch(gp, "t1", instruction="x", context=CTX, caller=caller, verifier=lambda f: None)
     check("[중요] verdict 가 없으면 통과가 아니다", not d.ok)
 
     def dead(url, payload):
         raise GenerateError("브로커에 닿지 않는다")
 
-    d = dispatch(gp, "t1", instruction="x", caller=dead)
+    d = dispatch(gp, "t1", instruction="x", context=CTX, caller=dead)
     check("브로커 장애 = 차단", not d.ok and "닿지 않는다" in d.error)
+    check("  층2 를 부르지 않는다", d.verdict is None)
+
+    print("\n[21b] [중요] 컨텍스트가 비면 생성하지 않는다 (grounding 0 = 환각 조건)")
+    d = dispatch(gp, "t1", instruction="x", context="   ", caller=caller,
+                 verifier=lambda f: ok_v)
+    check("[중요] 빈 컨텍스트는 차단", not d.ok and "컨텍스트가 비었다" in d.error, d.error)
     check("  층2 를 부르지 않는다", d.verdict is None)
 
     print("\n[22] 층2 에 넘기는 파일명")
     names = []
-    dispatch(gp, "t1", instruction="x", target_file="Bar.cpp", caller=caller,
+    dispatch(gp, "t1", instruction="x", context=CTX, target_file="Bar.cpp", caller=caller,
              verifier=lambda f: (names.append(f[0][0]), ok_v)[1])
     check("target_file 을 쓴다", names == ["Bar.cpp"], str(names))
     names.clear()
-    dispatch(gp, "t1", instruction="x", caller=caller,
+    dispatch(gp, "t1", instruction="x", context=CTX, caller=caller,
              verifier=lambda f: (names.append(f[0][0]), ok_v)[1])
     check("없으면 task_id 로", names == ["t1.cpp"], str(names))
 
     shutil.rmtree(tmp, ignore_errors=True)
 
     # ── 대상 파일 (#65) ─────────────────────────────
-    print("\n[대상 파일] [중요] 매니페스트가 어느 파일인지 싣는가")
-    mt = mf.build(paths, "tf1", classes=["UFoo"],
-                  target_files=["Source/A/Foo.h", "Source/A/Foo.cpp"],
-                  searcher=None, base=None)
-    check("대상 파일 절이 있다", "## 대상 파일" in mt.body, mt.body[:200])
-    check("파일이 다 실린다",
-          "Source/A/Foo.h" in mt.body and "Source/A/Foo.cpp" in mt.body)
-    # [중요] 사용자: "클래스 별로 분리하는건 분산 작업시 충돌을 방지하기 위해서"
-    check("[중요] 목록 밖 금지를 못박는다", "이 목록 밖은 건드리지 않는다" in mt.body)
-    check("[중요] 파일이 갈라지면 안 되는 이유를 적는다", "두 워커가 같은 곳을 고친다" in mt.body)
-    empty = mf.build(paths, "tf2", classes=["UFoo"], searcher=None, base=None)
-    check("파일이 없으면 절을 안 만든다", "## 대상 파일" not in empty.body)
-
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 

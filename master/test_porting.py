@@ -99,7 +99,7 @@ def test_prefix_match_is_found_but_flagged() -> None:
         check("전부 prefix 규칙", all(m.rule == P.PREFIX for m in p.matches),
               str([m.rule for m in p.matches]))
         check("confident 가 아니다", not any(m.confident for m in p.matches))
-        sec = "\n".join(P.manifest_section(p))
+        sec = "\n".join(P.source_section(p))
         check("확인하라고 적는다", "대응이 맞는지 먼저 확인" in sec)
     finally:
         shutil.rmtree(root, ignore_errors=True)
@@ -112,7 +112,7 @@ def test_no_counterpart_invents_nothing() -> None:
         p = P.counterparts(paths, ["Source/ModularStage/Mission/MSMissionTask.h"])
         check("아무것도 안 붙인다", not p.matches, str([m.target for m in p.matches]))
         check("신규로 본다고 말한다", any("신규" in n for n in p.notes), str(p.notes))
-        check("절을 만들지 않는다", P.manifest_section(p) == [])
+        check("절을 만들지 않는다", P.source_section(p) == [])
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -158,23 +158,14 @@ def test_porting_paths_never_leak_into_target_list() -> None:
     paths, root = tree(REAL_SHAPE)
     try:
         p = P.counterparts(paths, ["Source/ModularStage/Table/TableEnum.h"])
-        manifest = "\n".join([
-            "# 컨텍스트 매니페스트",
-            "",
-            "## 대상 파일 — [중요] **이 목록 밖은 건드리지 않는다**",
-            "",
-            "- `Source/ModularStage/Table/TableEnum.h`",
-            "",
-            *P.manifest_section(p),
-            "",
-            "## 관련 코드 (RAG)",
-            "",
-            "- `Source/Other/Thing.h` (rrf=0.1, bm25)",
-        ])
-        got = I.target_files_from(manifest)
-        check("대상은 하나뿐", got == ["Source/ModularStage/Table/TableEnum.h"], str(got))
-        check("원본이 안 섞였다", not any("Project_Alpha" in g for g in got), str(got))
-        check("RAG 결과도 안 섞였다", not any("Other/Thing" in g for g in got), str(got))
+        sec = "\n".join(P.source_section(p))
+        # [중요] 대상 파일은 이제 **큐 레코드**에서 온다 (매니페스트 파싱 철거 2026-09-02).
+        #    여기서 지킬 계약은 하나로 좁혀졌다: **원본 절이 원본 경로만 싣는가.**
+        check("원본 경로가 실린다", "Project_Alpha" in sec, sec[:160])
+        # [중요] 원본 절이 실는 것은 **원본 경로**뿐이다 — 대상(트윈) 경로가 아니다
+        items = [ln for ln in sec.splitlines() if ln.strip().startswith("- 원본")]
+        check("[중요] 원본 절의 항목은 원본 경로뿐이다",
+              bool(items) and all("Project_Alpha" in ln for ln in items), str(items)[:200])
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

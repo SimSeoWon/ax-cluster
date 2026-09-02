@@ -12,7 +12,6 @@ AgentTest 의 `master_orchestrator` 는 **윈도우 UE5 프로젝트 루트에 �
 | 작업 브랜치 생성 | [실패] **작업장이 한다** |
 | 골조 파일 쓰기 · 커밋 | [실패] **작업장이 한다** — 마스터는 골조 *텍스트*만 실어 보낸다 |
 | 중복 검사 · work/task 큐 등록 | [완료] 마스터 |
-| 컨텍스트 매니페스트 수집 | [완료] 마스터 (`manifest.py`) |
 
 **이 경계가 §2.1 그대로다** — 마스터는 코드 뭉치를 조립해 건네는 데서 끝난다.
 
@@ -29,7 +28,7 @@ from dataclasses import dataclass, field
 
 from ..auth import auth_headers
 from ..context_search.paths import ProjectPaths
-from . import manifest as mf, twin_base
+from . import twin_base
 from .branch_names import base_branch
 
 DEFAULT_QUEUE = "http://localhost:8101"
@@ -49,7 +48,7 @@ class TaskSpec:
     contracts: str = ""                        # [중요] 동결 인터페이스 — 병렬 생성의 전제 (§4.5)
     skeleton: str = ""                         # 골조 텍스트. 파일로 쓰는 것은 작업장 몫
     target_file: str = ""            # 큐 레코드용(단수) — 여러 개면 `target_files` 의 첫 번째
-    # [중요] 한 태스크가 맡는 파일 전부. **매니페스트에 실린다** — 예전엔 큐에만 있었다(#65).
+    # [중요] 한 태스크가 맡는 파일 전부 (#65).
     target_files: list = field(default_factory=list)
     header_file: str = ""
     depends_on: list = field(default_factory=list)
@@ -70,7 +69,7 @@ class TaskSpec:
         if not self.classes and not self.target_file:
             raise RegisterError(
                 f"{self.stem}: classes 도 target_file 도 없다 — "
-                "매니페스트를 수집할 근거가 없다"
+                "무엇을 만들라는 것인지 식별할 수 없다"
             )
 
 
@@ -78,12 +77,7 @@ class TaskSpec:
 class TaskResult:
     stem: str
     task_id: str = ""
-    manifest_path: str = ""
-    manifest_hits: int = 0
-    carried_head: str = ""       # git-carried (#185) — durable 에 실린 커밋. 빈 값 = 못 실었다
-    carried_error: str = ""
     error: str = ""
-    manifest_degraded: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -120,24 +114,12 @@ class Registered:
     def summary(self) -> str:
         n_ok = sum(1 for t in self.tasks if t.ok)
         # (아래에서 물음·적립을 덧붙인다 — `#328`)
-        degraded = sum(1 for t in self.tasks if t.manifest_degraded)
         s = f"work={self.work_id} 태스크 {n_ok}/{len(self.tasks)} 등록"
-        if degraded:
-            s += f" · 매니페스트 결손 {degraded}건"
         if self.generated:
             s += f" · 골조 생성 {len(self.generated)}건"
         # [주의] 빌드를 확인했는지 **말로 적는다** — 안 적으면 미확인이 통과처럼 읽힌다
         s += (f" · 골조 빌드 [완료] {len(self.gates)}건" if self.gates
               else " · [주의] 골조 빌드 미확인")
-        # [중요] **carry 실패는 크게 말한다** (리포트 39 지적, 2026-08-25 → 2026-08-29 수정).
-        #    종전에는 `carried_error` 를 채우고 **아무 데서도 찍지 않았다** — 등록이 「성공」으로
-        #    읽히고, 파견 단계에서 fail-closed 로 막혀서야 드러났다. 등록 실패는 아니지만
-        #    (트윈 사본은 있다) **다음 단계가 막히는 사실**이라 물음·게이트와 같은 급으로 찍는다.
-        carried = [t for t in self.tasks if (t.carried_error or "").strip()]
-        if carried:
-            head = "; ".join(f"{t.task_id or t.stem}: {t.carried_error}" for t in carried[:2])
-            more = f" (외 {len(carried) - 2}건)" if len(carried) > 2 else ""
-            s += f" · [중요] **carry 실패 {len(carried)}건 — 파견이 막힌다** — {head}{more}"
         if self.failed:
             s += f" · [중요] 실패 {len(self.failed)}건"
         # [중요] `#328` — **물음이 있으면 크게 말한다.** 종전에는 버려져서 사람이 볼 길이
@@ -293,14 +275,12 @@ def register_work(
     token: str | None = None,
     poster=None,
     patch=None,
-    searcher=None,
     make_skeleton=None,
     gate=None,
-    carrier="AUTO",
     require_base: bool | None = None,
     heuristics=None,
 ) -> Registered:
-    """work 를 만들고 태스크를 등록한다. 태스크마다 매니페스트를 1회 수집한다.
+    """work 를 만들고 태스크를 등록한다.
 
     `poster` 를 주입할 수 있는 이유는 테스트다 — 큐를 띄우지 않고 등록 규칙을 검증한다.
 
@@ -356,7 +336,7 @@ def register_work(
                                     questions_out=questions, once_answers=once_answers)
     for s in specs:
         if s.stem in seen:
-            raise RegisterError(f"stem 이 중복이다: {s.stem} — 매니페스트가 서로를 덮어쓴다")
+            raise RegisterError(f"stem 이 중복이다: {s.stem} — 조각을 구별할 수 없다")
         seen.add(s.stem)
 
     post = poster or (lambda u, p: _post(u, p, token=token))
@@ -379,21 +359,11 @@ def register_work(
     #
     # [중요] **부재 판정을 없애는 것이 아니라 자리를 옮기는 것이다.** 뒤에 그대로 있다:
     #    · `#331` — base 가 원격에 없으면 통합자가 **거절**한다(at_commit="" · push 없음)
-    #    · 매니페스트 — *"요청자가 먼저 만들어야 작업이 성립한다"* 를 결손으로 찍는다
-    #    · `carry.publish` — 기준 커밋이 비면 실패하고 `8b0c0aa` 가 등록 응답에 크게 남긴다
     #    등재는 **기록**이고, 브랜치가 필요한 것은 **파견·통합**이다. 게이트를 필요한 자리에 둔다.
     #
     # [주의] 여전히 켤 수 있다 — `require_base=True` 를 명시하면 종전과 같이 거절한다.
     if require_base is None:
         require_base = False
-
-    # [중요] carrier 기본 AUTO — 실전은 carry.publish, poster 주입(테스트)은 큐가 가짜이므로
-    #    git 도 만지지 않는다 (None). 명시 주입이 둘 다 이긴다.
-    if carrier == "AUTO":
-        if poster is None:
-            from .carry import publish as carrier      # noqa: F811
-        else:
-            carrier = None
 
     work_id = create_work(title, paths=paths, target_repo=target_repo,
                           original_request=original_request, target_branch=target_branch,
@@ -402,13 +372,13 @@ def register_work(
     # ── [중요] 여기부터는 **보상 취소**가 붙는다 (`#336` ③, 실측 2026-08-30) ──────────
     #    큐에는 삭제 API 가 없다(추가 전용 감사 로그). 그래서 등재가 중간에 죽으면 **열린
     #    반쪽 work** 가 남고, 그것은 마운트 전환(`set_active`)과 `test_projects.py` 를 막는다.
-    #    실측: `.33` 첫 실전 등재가 `manifest.build` 에서 예외로 죽어 `total=1`(specs 4) 인
+    #    실측: `.33` 첫 실전 등재가 예외로 죽어 `total=1`(specs 4) 인
     #    work 이 `in_progress` 로 남았고, 다음 세션이 그것을 「이미 등재돼 있다」로 읽었다.
     #    지울 수 없으면 **종결시킨다** — 열려 있지만 않으면 다음 실행을 오염시키지 않는다.
     try:
         return _register_after_create(
             work_id, specs, paths=paths, target_branch=target_branch, queue_url=queue_url,
-            token=token, post=post, patcher=patcher, searcher=searcher, carrier=carrier,
+            token=token, post=post, patcher=patcher,
             require_base=require_base, generated=generated, gates=gates,
             questions=questions, accrued=accrued)
     except BaseException as e:                              # noqa: BLE001
@@ -432,7 +402,7 @@ def _abandon_work(work_id: str, *, paths, queue_url: str, patcher, reason: str) 
 
 
 def _register_after_create(work_id, specs, *, paths, target_branch, queue_url, token,
-                           post, patcher, searcher, carrier, require_base,
+                           post, patcher, require_base,
                            generated, gates, questions, accrued):
     """work 생성 **뒤**의 단계들. 여기서 죽으면 호출부가 보상 취소한다."""
     # ── `#319` 작업 브랜치 ────────────────────────────────────────────────
@@ -466,7 +436,7 @@ def _register_after_create(work_id, specs, *, paths, target_branch, queue_url, t
                 f"work_id={work_id}")
 
     results = register_tasks(work_id, specs, paths=paths, queue_url=queue_url, token=token,
-                             poster=post, searcher=searcher, carrier=carrier)
+                             poster=post)
     return Registered(work_id=work_id, tasks=results, generated=generated,
                       gates=gates, base_branch=base_ref,
                       questions=questions, accrued=accrued)
@@ -522,7 +492,7 @@ def base_status(paths: ProjectPaths, work_id: str, *, branch: str = "", runner=N
 
 def register_tasks(work_id: str, specs: list[TaskSpec], *, paths: ProjectPaths,
                    queue_url: str = DEFAULT_QUEUE, token: str | None = None,
-                   poster=None, searcher=None, carrier=None,
+                   poster=None,
                    heuristics=None, accrued_out: list | None = None) -> list[TaskResult]:
     """이미 있는 work 아래에 태스크를 등록한다 — `#317` 미결 ① 순서의 3번.
 
@@ -542,14 +512,6 @@ def register_tasks(work_id: str, specs: list[TaskSpec], *, paths: ProjectPaths,
                        f"골조를 만드는 호출에 실어야 한다")
         if accrued_out is not None:
             accrued_out.extend(acc)
-    # 검색기는 태스크마다 새로 열지 않는다 — 모델 로딩이 태스크 수만큼 반복된다.
-    if searcher is None:
-        try:
-            from ..context_search import ContextSearch
-            searcher = ContextSearch(paths)
-        except Exception as e:                       # noqa: BLE001
-            searcher = mf._BrokenSearcher(e)
-
     # ── [중요] `depends_on` 은 **stem 으로 받고 task_id 로 보낸다** (`#343`, 사용자 결정) ──────
     #
     # 등재 시점에는 **task_id 가 아직 없다** — 큐가 등록하면서 발급한다. 그래서 호출자가 쓸 수
@@ -627,49 +589,7 @@ def register_tasks(work_id: str, specs: list[TaskSpec], *, paths: ProjectPaths,
         except RegisterError as e:
             r.error = str(e)
 
-        if r.task_id:
-            # 매니페스트는 베스트에포트다 — 실패해도 등록을 되돌리지 않는다.
-            # 다만 결손을 결과에 실어 호출자가 알 수 있게 한다.
-            #
-            # [중요] **주석은 그렇게 적혀 있었는데 `try` 가 없었다** (`#336` ③, 실측 2026-08-30).
-            #    `.33` 의 첫 실전 등재가 `contracts` 를 리스트로 보냈고 `mf.build` 안의
-            #    `contracts.strip()` 이 `AttributeError` 로 터졌다. 그 예외가 **루프 밖으로
-            #    빠져나가** 등록 전체를 죽였고, 이미 등록된 태스크 1건과 work 이 큐에 남았다
-            #    (specs 는 4건이었다). 「베스트에포트」가 계약이면 **잡아야 계약이다.**
-            #    [주의] 여기서 잡는 것은 **매니페스트·carry** 뿐이다 — 태스크 등록 자체의
-            #    실패는 위 `except RegisterError` 가 이미 `r.error` 로 싣는다.
-            try:
-                _build_manifest_and_carry(r, spec, paths=paths, work_id=work_id,
-                                          searcher=searcher, carrier=carrier)
-            except Exception as e:                          # noqa: BLE001
-                r.manifest_degraded = list(r.manifest_degraded) + [
-                    f"[중요] 매니페스트 생성이 예외로 죽었다 — {type(e).__name__}: {e}"]
         results.append(r)
     return results
 
 
-def _build_manifest_and_carry(r, spec, *, paths, work_id, searcher, carrier) -> None:
-    """[중요] **아무 파일도 만들지 않는다** (사용자 지시 2026-09-01).
-
-    ## 왜 없앴나 — 이유가 셋이고 전부 실측이다
-
-    ⑴ **시점이 틀렸다.** 이 수집은 **등재 시점**에 돌았다. 그때는 골조가 아직 없어서 전체
-       구조를 모른다. 그래서 2026-09-01 실전 매니페스트가 자기 안에서 모순됐다 — 상단은
-       *"그 브랜치가 원격에 있다"*, 하단은 *"작업 브랜치가 원격에 없다"*(골조 push 는 7분
-       뒤였다). 관례도 `main`(에픽 템플릿)을 훑어 *"주석은 영문이다"* 라고 실어 보냈는데
-       골조 계약은 한국어 주석이었다. **전체 구조를 아는 유일한 시점은 골조 생성이다.**
-    ⑵ **경로가 git 관리 밖이었다.** `.ax/` 는 온보딩이 `.git/info/exclude` 에 넣는 경로라
-       `add -f` 로 억지 커밋해야 했고, 그렇게 생긴 「매니페스트만 든」 조각 브랜치는 `main`
-       에서 **도달 불가**라 자동 정리에서 영구히 빠졌다(`review.py` 실측).
-    ⑶ **워커는 서로를 모른다.** 조각별로 각자 작업하므로 「이 조각이 다른 조각과 어떻게
-       맞물리나」는 워커가 알 수 없다. 그것을 아는 것은 골조뿐이고, 그래서 골조가 **헤더의
-       `[DOC]`** 에 써 넣는다 — git 이 이미 관리하는 파일이고 `main` 까지 산다.
-
-    [주의] `manifest.py`·`carry.publish`·`runner.deliver_manifest` 는 **지우지 않았다** —
-    `selftest` 드라이런과 옛 판정 기록이 참조한다. 등재 경로에서 **부르지 않는 것**이 변경분이다.
-    """
-    r.manifest_path = ""
-    r.manifest_hits = 0
-    r.manifest_degraded = []
-    r.carried_head = ""
-    r.carried_error = ""

@@ -82,7 +82,7 @@ from master.projects import mcp_server as pj  # noqa: E402
 check("모듈 import", True)
 check("MCPServer 인스턴스", type(pj.mcp).__name__ == "MCPServer", type(pj.mcp).__name__)
 _pj = tool_names(pj.mcp)
-check("도구 34종 등록 (#169 log-tags 3종 추가)", len(_pj) == 34, f"실제 {len(_pj)}종: {_pj}")
+check("도구 33종 등록 (get_manifest 철거 2026-09-02)", len(_pj) == 33, f"실제 {len(_pj)}종: {_pj}")
 check("  [중요] 도메인 필드 편집: edit_domain_field_tool", "edit_domain_field_tool" in _pj)
 # [중요] **서술 조회 창구** (소 3.1.4, 원전 η.7.4) — 서술을 만들어 두고 읽는 곳이 없으면
 #   그 산출물은 없는 것과 같다. 원전은 라우트·도구 둘 다 갖고 있었다(리포트 14 §7.5).
@@ -107,7 +107,7 @@ for name in ("register_project_tool", "set_active_tool",
              "set_workshop_tool", "remove_workshop_tool", "list_workshops_tool",
              "check_workshops_clean_tool",
              # 워크플로우 (§4.7) — 작업장이 부르는 두 창구
-             "register_work_tool", "get_manifest", "get_code"):
+             "register_work_tool", "get_code"):
     check(f"  {name}", name in _pj)
 
 

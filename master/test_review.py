@@ -287,7 +287,7 @@ def test_manifest_only_durable_is_not_merged():
         check("[중요] 매니페스트 전용 t2 는 머지하지 않는다",
               durable_branch("t2") not in integ.merged, str(integ.merged))
         check("[중요] 안 했다고 **말한다** (빠뜨린 것과 구분된다)",
-              durable_branch("t2") in integ.manifest_only, str(integ.manifest_only))
+              durable_branch("t2") in integ.ax_only, str(integ.ax_only))
         got = g(tree, "ls-tree", "-r", "--name-only", "HEAD")
         check("[중요] 트리에 `.ax/` 가 없다 — 게임 main 에 인프라 파일을 넣지 않는다",
               ".ax/" not in got, got[:200])

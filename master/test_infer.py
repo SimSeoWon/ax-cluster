@@ -103,11 +103,12 @@ class Clean:
 
 
 def tmp_paths():
-    """`ProjectPaths` 대역 — 스풀만 쓴다."""
+    """`ProjectPaths` 대역 — 스풀과 (⑷ 용) `repo` 만 쓴다."""
     root = Path(tempfile.mkdtemp(prefix="axinfer"))
 
     class P:
         name = "T"
+        repo = root / "repo"
 
         @property
         def responses(self):
@@ -115,14 +116,35 @@ def tmp_paths():
     return P(), root
 
 
-# ── ② 대상 파일은 매니페스트에서 ────────────────────────────────────────────────
+# ── 정본 ⑸ 주입 대역 ─────────────────────────────────────────────────────────
+# [중요] **실물 증명은 `test_wcommit.py`(실 git)가 한다.** 여기서 잴 것은 큐 오케스트레이션 —
+#    누구를 몇 건 집나 · 순서 · 재사용 · 실패 후속 차단 · **커밋이 생기면 제출하나**.
 
-def test_target_files_come_from_the_manifest() -> None:
-    got = I.target_files_from(MANIFEST)
-    check("대상 파일 2개", got == WANT, str(got))
-    # [중요] 다른 절의 백틱 낱말을 파일로 오인하면 판정 기준이 오염된다
-    check("다른 절을 안 먹는다", "NotAFile.h" not in got, str(got))
-    check("빈 매니페스트는 빈 목록", I.target_files_from("") == [])
+SUB_TIP = "1" * 40          # 서브 브랜치가 선 커밋 (= 골조 커밋)
+WORKER_HEAD = "2" * 40      # 워커가 만든 커밋
+
+
+def _fake_subbranch(monkey=True):
+    """⑷ 를 주입으로 세운다 — 실 git 없이 「브랜치가 있다」를 만든다."""
+    from master.work import subbranch as SB
+
+    def create(paths, work_id, task_id, *, base_commit, remote="", logf=None):
+        return SB.Created(task_id=task_id, branch=f"task/{work_id}/{task_id}",
+                          tip=base_commit, created=True)
+    orig = SB.create
+    SB.create = create
+    return SB, orig
+
+
+def _fake_shell(bodies):
+    """checkout·commit 명령을 흉내낸다. `bodies` 가 비면 커밋이 안 생긴 것으로 본다."""
+    def ssh(facts, cmd, timeout):
+        if "checkout -q -B" in cmd:
+            return 0, SUB_TIP
+        if "git commit" in cmd:
+            return (0, WORKER_HEAD) if bodies else (1, "nothing to commit")
+        return 0, ""
+    return ssh
 
 
 def test_no_target_list_is_blocked_not_passed() -> None:
@@ -225,7 +247,7 @@ def test_infer_task_delivers_reads_and_judges() -> None:
     f = FakeFacts()
     delivered: dict = {}
 
-    def writer(facts, rel, content, base="home"):
+    def writer(facts, rel, content, base="home"):     # 불리면 그 자체가 실패다
         delivered[rel] = content
         return rel
 
@@ -237,10 +259,10 @@ def test_infer_task_delivers_reads_and_judges() -> None:
         check("응답을 체크아웃 안에서 읽는다", abs_path.startswith("/checkout"), abs_path)
         return GOOD_RESPONSE
 
-    r = I.infer_task(f, "t1", MANIFEST, runner_=fake_runner, writer=writer, reader=reader)
+    r = I.infer_task(f, "t1", want=WANT, runner_=fake_runner, reader=reader)
     check("통과", r.ok, r.summary)
-    check("매니페스트를 배달했다", any("t1" in k and "manifest" in k for k in delivered),
-          str(list(delivered)))
+    # [중요] **아무것도 배달하지 않는다** (매니페스트 철거 2026-09-02) — 지시서는 골조 주석이다
+    check("[중요] 배달이 없다", not delivered, str(list(delivered)))
     check("계측을 들고 온다", abs(r.cost_usd - 0.0123) < 1e-9, str(r.usage))
     check("워커를 기록한다", r.worker == "w1", r.worker)
 
@@ -251,8 +273,7 @@ def test_ssh_failure_does_not_pass_a_done() -> None:
     def fake_runner(facts, task_id, timeout):
         return 1, "RESPONSE: 2\nRESULT: DONE"
 
-    r = I.infer_task(f, "t1", MANIFEST, runner_=fake_runner,
-                     writer=lambda *a, **k: "ok", reader=lambda *a: GOOD_RESPONSE)
+    r = I.infer_task(f, "t1", want=WANT, runner_=fake_runner, reader=lambda *a: GOOD_RESPONSE)
     check("rc≠0 이면 DONE 을 접지 않는다", not r.ok, r.summary)
     check("rc 를 사유에 적는다", "rc=1" in r.reason, r.reason)
 
@@ -265,8 +286,7 @@ def test_unreadable_response_is_not_absent() -> None:
     def boom(facts, abs_path):
         raise bundle.BundleError("scp 거부")
 
-    r = I.infer_task(f, "t1", MANIFEST, runner_=lambda *a: (0, "RESULT: DONE"),
-                     writer=lambda *a, **k: "ok", reader=boom)
+    r = I.infer_task(f, "t1", want=WANT, runner_=lambda *a: (0, "RESULT: DONE"), reader=boom)
     check("읽기 실패는 BLOCKED", not r.ok, r.summary)
     check("읽기 실패를 사유에 적는다", "읽기 실패" in r.reason, r.reason)
 
@@ -347,6 +367,7 @@ class FakeQueue:
     def __init__(self, tasks: list):
         self.tasks = list(tasks)
         self.failed: list = []
+        self.submitted: list = []      # 🔴 정본 ⑸ — 커밋이 생기면 여기 쌓인다
         self.beats = 0
 
     def __call__(self, method, path, payload=None, *, timeout=20):
@@ -358,28 +379,38 @@ class FakeQueue:
         if path.endswith("/submit-fail"):
             self.failed.append((path.split("/")[-2], (payload or {}).get("reason", "")))
             return {"ok": True}
+        if path.endswith("/submit"):
+            self.submitted.append(dict(payload or {}))
+            return {"ok": True}
         raise AssertionError(f"예상 밖 호출: {method} {path}")
 
 
-def _run(paths, q, *, tasks_manifest=MANIFEST, response=GOOD_RESPONSE, workers=1,
+def _run(paths, q, *, body="void X::Go() { Do(); }\n", workers=1,
          limit=4, parallel=False, stdout="RESULT: DONE"):
+    """정본 ⑸ 로 한 바퀴 — 워커가 본문을 쓰고 마스터가 커밋한다.
+
+    `body` 가 비면 **본문이 안 채워진 것**이라 커밋이 생기지 않는다(fail-closed).
+    """
     facts = [FakeFacts(host=f"w{i+1}") for i in range(workers)]
+    SB, orig = _fake_subbranch()
+    import master.work.integrate as IG
+    import master.work.twin_base as TB
+    saved_bl, saved_tb = IG.local_baseline, TB.resolve
 
-    def fake_manifest(p, task_id):
-        return tasks_manifest
+    class _Base:
+        commit = SUB_TIP
 
-    def fake_refresh(body, p, task_id, resolver=None):
-        return body
-
-    saved = (R._manifest_for, R.refresh_base)
-    R._manifest_for, R.refresh_base = fake_manifest, fake_refresh
+    IG.local_baseline = lambda p, b: None      # 동결 원본 없음 → 층1 이 미검사로 기록
+    TB.resolve = lambda p, w: _Base()          # 작업 브랜치 tip (골조 커밋)
     try:
         return I.run_many(paths, limit=limit, facts=facts, api=q, clean=lambda f: Clean(),
                           parallel=parallel, work_id="W1",
                           runner_=lambda f, t, to: (0, stdout),
-                          writer=lambda *a, **k: "ok", reader=lambda *a: response)
+                          ssh=_fake_shell(body),
+                          reader=lambda f, p: body)
     finally:
-        R._manifest_for, R.refresh_base = saved
+        SB.create = orig
+        IG.local_baseline, TB.resolve = saved_bl, saved_tb
 
 
 def test_run_many_takes_several_and_orders_them() -> None:
@@ -392,7 +423,13 @@ def test_run_many_takes_several_and_orders_them() -> None:
         ids = [r.task_id for r in hand.ordered()]
         check("적용 순서는 파견 순서", ids == ["t1", "t2"], str(ids))
         check("큐가 비면 멈춘다", not q.tasks)
-        check("제출하지 않는다 — 통합자의 일이다", not q.failed, str(q.failed))
+        # 🔴 정본 ⑸ — **커밋이 생긴 시점이 태스크가 끝난 시점**이므로 여기서 제출한다
+        #    (원전 `... commit·push → submit_result → 다시 claim`). 종전에는 통합자에 뒀고,
+        #    그래서 리스가 붙잡힌 채 만료돼 **같은 추론을 다시 사는** 자리가 됐다.
+        check("[중요] **커밋이 생기면 제출한다**", len(q.submitted) == 2, str(q.submitted))
+        check("  브랜치와 커밋을 실어 보낸다",
+              all(p.get("branch", "").startswith("task/W1/") and p.get("head_commit")
+                  for p in q.submitted), str(q.submitted))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -404,52 +441,13 @@ def test_dependents_of_a_failure_are_not_dispatched() -> None:
         q = FakeQueue([_t("X.d1", epoch=1),
                        _t("X.d2", epoch=1, depends_on=["X.d1"])])
         # 응답을 비워 첫 건을 실패시킨다
-        hand = _run(paths, q, response="")
+        hand = _run(paths, q, body="")
         check("첫 건 실패", hand.items and not hand.items[0][1].ok, hand.summary())
         check("후속은 파견하지 않았다", len(hand.skipped) == 1, str(hand.skipped))
         check("사유가 선행 실패를 말한다",
               hand.skipped and "X.d1" in hand.skipped[0][1], str(hand.skipped))
         check("후속을 큐에 반납했다", ("X.d2", "선행 실패") in q.failed, str(q.failed))
     finally:
-        shutil.rmtree(root, ignore_errors=True)
-
-
-def test_dispatch_task_delivers_nothing() -> None:
-    """[중요] **실전 형태로 돈다 — `writer`/`deliver` 를 주입하지 않는다.**
-
-    이 검사가 없어서 회귀가 통과했다(실측 2026-09-01, 라이브 4/4 실패). 매니페스트를 없앨 때
-    `infer_task` 의 **소비** 자리는 고쳤는데 `dispatch_task` 의 **생산** 자리가 남아 있었고,
-    거기서 만든 `deliver` 가 빈 본문으로 `carry.publish` 를 불러 전부 죽었다:
-    *"매니페스트 본문이 비었다 — 빈 것을 실어 보내지 않는다"*.
-
-    [주의] 다른 검사들은 `writer=` 를 주입하므로 `infer_task` 의 `elif writer is not None`
-    갈래로 빠져 **이 경로를 지나지 않는다**. 그래서 78/78 이 초록이었다 — 리포트 44 의
-    「호출부 0곳」과 같은 구조의 반대편이다.
-    """
-    paths, root = tmp_paths()
-    from master.work import carry as C
-    saved = C.deliverer
-    calls: list = []
-
-    def spy(p_, work_id):                    # 불리면 그 자체가 실패다
-        calls.append(work_id)
-        return lambda *a, **k: None
-
-    C.deliverer = spy
-    try:
-        q = FakeQueue([_t("t1", epoch=1)])
-        hand = I.run_many(paths, facts=[FakeFacts(host="w1")], api=q,
-                          clean=lambda f: Clean(), work_id="W1",
-                          runner_=lambda f, t, to: (0, "RESULT: DONE"),
-                          reader=lambda *a: GOOD_RESPONSE)   # writer·deliver 없음
-        check("[중요] 배달자를 만들지 않는다 (지시서는 base 커밋의 헤더 [DOC] 다)",
-              calls == [], str(calls))
-        check("  그래도 파견은 성립한다", len(hand.items) == 1, hand.summary())
-        check("  빈 매니페스트 예외가 없다",
-              all("매니페스트 본문이 비었다" not in (r.reason or "")
-                  for _, r in hand.items), hand.summary())
-    finally:
-        C.deliverer = saved
         shutil.rmtree(root, ignore_errors=True)
 
 
@@ -460,8 +458,7 @@ def test_no_worker_means_no_claim() -> None:
         q = FakeQueue([_t("t1")])
         facts = [FakeFacts(host="r1", role="requester")]
         hand = I.run_many(paths, facts=facts, api=q, clean=lambda f: Clean(),
-                          work_id="W1", runner_=lambda *a: (0, "RESULT: DONE"),
-                          writer=lambda *a, **k: "ok", reader=lambda *a: GOOD_RESPONSE)
+                          work_id="W1", runner_=lambda *a: (0, "RESULT: DONE"), reader=lambda *a: GOOD_RESPONSE)
         check("파견 0건", not hand.items, str(hand.items))
         check("태스크가 큐에 남아 있다", len(q.tasks) == 1, str(q.tasks))
         check("왜 못 했는지 말한다", "워커가 없어" in hand.note, hand.note)
@@ -538,16 +535,14 @@ def test_reuse_avoids_paying_twice() -> None:
             commit = "abc1234"
 
         import master.work.twin_base as tb
-        saved = (R._manifest_for, R.refresh_base, tb.resolve)
-        R._manifest_for = lambda p, t: MANIFEST
-        R.refresh_base = lambda b, p, t, resolver=None: b
+        saved = tb.resolve
         tb.resolve = lambda p, t: FakeBase()
         try:
             hand = I.run_many(paths, facts=facts, api=q, clean=lambda f: Clean(),
                               work_id="W1", runner_=counting_runner,
-                              writer=lambda *a, **k: "ok", reader=lambda *a: GOOD_RESPONSE)
+                              reader=lambda *a: GOOD_RESPONSE)
         finally:
-            R._manifest_for, R.refresh_base, tb.resolve = saved
+            tb.resolve = saved
         check("워커를 부르지 않았다", not calls, str(calls))
         check("그래도 인계에 들어간다", len(hand.ordered()) == 1, hand.summary())
         check("재사용 표시가 보인다", hand.ordered()[0].reused, hand.ordered()[0].summary)
@@ -556,7 +551,7 @@ def test_reuse_avoids_paying_twice() -> None:
 
 
 def main() -> int:
-    for fn in (test_target_files_come_from_the_manifest,
+    for fn in (
                test_no_target_list_is_blocked_not_passed,
                test_marker_and_file_must_both_hold,
                test_missing_file_is_not_partial_success,
@@ -575,7 +570,6 @@ def main() -> int:
                test_same_base_commit_is_reused_other_is_not,
                test_run_many_takes_several_and_orders_them,
                test_dependents_of_a_failure_are_not_dispatched,
-               test_dispatch_task_delivers_nothing,
                test_no_worker_means_no_claim,
                test_serial_is_the_default_and_says_so,
                test_parallel_uses_both_workers, test_limit_is_respected,

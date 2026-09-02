@@ -574,7 +574,7 @@ def build(paths: ProjectPaths, spec: SkeletonSpec, *, model: str = DEFAULT_MODEL
         try:
             from . import norms as nm
             n = nm.attach(paths, classes=spec.classes, stem=spec.stem)
-            # [중요] `render()` 는 매니페스트용 마크다운 **줄 목록**이다. 비어도 *왜 비었는지*를
+            # [중요] `render()` 는 마크다운 **줄 목록**이다. 비어도 *왜 비었는지*를
             #    돌려주므로(`degraded`) 그대로 싣는다 — 규범이 없다는 사실도 grounding 이다.
             lines = n.render()
             norms_text = ("=== DOMAIN NORMS ===\n" + "\n".join(lines)

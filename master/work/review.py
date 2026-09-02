@@ -106,7 +106,7 @@ class Integration:
     skipped: list = field(default_factory=list)
     # [중요] `#319` ⓐ — **매니페스트만 든 조각 durable 은 머지하지 않는다.** 여기 이름이 남는다:
     #    "안 머지했다" 와 "빠뜨렸다" 는 다르고, 그 차이가 안 보이면 나중에 구분할 수 없다.
-    manifest_only: list = field(default_factory=list)
+    ax_only: list = field(default_factory=list)
     conflict: bool = False
     conflict_branch: str = ""
     missing_durable: str = ""
@@ -179,7 +179,7 @@ def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
 
     verified, skipped = split_push_tasks(tasks)
     merged: list = []
-    manifest_only: list = []
+    ax_only: list = []
     for t in verified:
         tid = t.get("task_id")
         dur = durable_branch(work_id, tid)
@@ -202,7 +202,7 @@ def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
         #    그래서 판정은 「이 조각이 `.ax/` 밖을 건드리나」다.
         outside = _touches_outside_ax(repo, f"{remote}/{target_branch}", f"{remote}/{dur}")
         if not outside:
-            manifest_only.append(dur)
+            ax_only.append(dur)
             logf("integrate", f"durable {dur} — 매니페스트 전용이라 머지하지 않는다 (#319 ⓐ)")
             continue
         rc, out = _git_rc(repo, "merge", "--no-ff", f"{remote}/{dur}", "-m", f"{lab}: {dur}")
@@ -218,11 +218,11 @@ def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
     #    `main` 에 인프라 파일이 박히고, 그건 사람이 손으로 걷어내야 한다.
     stray = _ax_paths_in_tree(repo)
     if stray:
-        return Integration(merged=merged, skipped=skipped, manifest_only=manifest_only,
+        return Integration(merged=merged, skipped=skipped, ax_only=ax_only,
                            error=("[중요] 통합 트리에 `.ax/` 파일이 들어왔다 — 게임 `main` 에 "
                                   "인프라 파일을 넣지 않는다(`#319` ⓐ). 통째 중단: "
                                   + ", ".join(stray[:5])))
-    return Integration(ok=True, merged=merged, skipped=skipped, manifest_only=manifest_only)
+    return Integration(ok=True, merged=merged, skipped=skipped, ax_only=ax_only)
 
 
 def _touches_outside_ax(repo: Path, base_ref: str, dur_ref: str) -> list:
@@ -368,7 +368,7 @@ class ReviewResult:
     tree: str = ""
     merged_durables: list = field(default_factory=list)
     # [중요] `#319` ⓐ — 머지 **안 한** 매니페스트 전용 조각. "안 했다"와 "빠뜨렸다"는 다르다
-    manifest_only: list = field(default_factory=list)
+    ax_only: list = field(default_factory=list)
     skipped: list = field(default_factory=list)
     conflicts: bool = False
     build_passed: bool = True
@@ -442,7 +442,7 @@ def review_work(repo: Path, *, work_id: str, work: dict, tasks,
                 else:
                     integ = Integration(ok=True, merged=[target])
         r.merged_durables = integ.merged
-        r.manifest_only = integ.manifest_only
+        r.ax_only = integ.ax_only
         r.skipped = integ.skipped
         r.conflicts = integ.conflict
         if not integ.ok:
@@ -476,8 +476,8 @@ def review_work(repo: Path, *, work_id: str, work: dict, tasks,
                 f"- 검수 트리: {tree.name} (시뮬레이션 — {base_branch} 미변경)\n"
                 f"- 통합된 durable {len(r.merged_durables)}건"
                 + (f" · [주의] 매니페스트 전용이라 **머지하지 않은 것** "
-                   f"{len(r.manifest_only)}건 (`#319` ⓐ — 게임 `main` 에 `.ax/` 를 넣지 않는다)"
-                   if r.manifest_only else "") + "\n"
+                   f"{len(r.ax_only)}건 (`#319` ⓐ — 게임 `main` 에 `.ax/` 를 넣지 않는다)"
+                   if r.ax_only else "") + "\n"
                 f"- 상세: {str(r.build_detail)[:1500]}")
         return r
     except GitError as e:
@@ -533,7 +533,7 @@ class Decision:
     pushed: bool = False
     merged_durables: list = field(default_factory=list)
     # [중요] `#319` ⓐ — 머지 **안 한** 매니페스트 전용 조각. "안 했다"와 "빠뜨렸다"는 다르다
-    manifest_only: list = field(default_factory=list)
+    ax_only: list = field(default_factory=list)
     tree: str = ""
     cleanup: object = None          # CleanupPlan — [중요] 계획일 뿐이다
     commands: list = field(default_factory=list)
@@ -658,7 +658,7 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
                 else:
                     integ = Integration(ok=True, merged=[target])
         d.merged_durables = integ.merged
-        d.manifest_only = integ.manifest_only
+        d.ax_only = integ.ax_only
         if not integ.ok:
             d.error = integ.error
             _git_rc(repo, "worktree", "remove", "--force", str(tree))   # 부분 머지 폐기
@@ -711,8 +711,8 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
                 f"- work_id: {work_id}\n"
                 f"- 통합: 작업 브랜치 `{target}` + 소스를 든 durable "
                 f"{len(d.merged_durables)}건 (no-ff)"
-                + (f" · 매니페스트 전용 {len(d.manifest_only)}건은 **머지하지 않았다** "
-                   f"(`#319` ⓐ)" if d.manifest_only else "") + "\n"
+                + (f" · 매니페스트 전용 {len(d.ax_only)}건은 **머지하지 않았다** "
+                   f"(`#319` ⓐ)" if d.ax_only else "") + "\n"
                 f"- 검토자: {reviewer or '(미지정)'}\n"
                 + (f"- 커밋 연결: `{d.merge_commit}`\n" if d.merge_commit else "")
                 + f"- 브랜치 정리: 삭제 {len(d.deleted_branches)}건"

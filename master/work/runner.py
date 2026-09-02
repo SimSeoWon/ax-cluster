@@ -2,7 +2,9 @@
 
 ## [중요] 워커에는 큐 토큰을 주지 않는다 — 마스터가 중개한다
 
-    claim(마스터) → 매니페스트 파일 배달(scp) → ssh claude -p(워커) → submit(마스터)
+    claim(마스터) → ssh claude -p(워커) → submit(마스터)
+    [중요] **배달 단계가 없다** (2026-09-02) — 지시서는 배정된 브랜치의 골조 주석이고
+    git 이 나른다. 매니페스트 파일과 그 scp/carry 배선은 걷었다.
 
 실측 2026-08-09: 두 워커 모두 `8101/api/v1/health` 가 **401** 이고 AX MCP 등록은 **0건**이다.
 `ax-work` 스킬은 *"MCP 는 등록에 헤더가 박혀 있다"* 를 전제했지만 **사실이 아니었다.** 고르는
@@ -71,14 +73,19 @@ _RESULT_LOOSE = re.compile(r"^RESULT:\s*BLOCKED\b(.*)$")
 _ATTEMPT = re.compile(r"^ATTEMPT:\s*(\S+)\s*$")
 _HEAD = re.compile(r"^HEAD:\s*([0-9a-fA-F]{7,40})\s*$")
 
-MANIFEST_REL = "manifest.md"    # <checkout>/.ax/work/<task_id>/manifest.md
-
 # [중요] ASCII 만. 위 § 참조 — 한글을 명령줄에 실으면 워커 콘솔에서 깨진다.
+# 🔴 정본 ⑸ (사용자 확정 2026-09-02) — **지시서는 파일이 아니라 골조 주석이다.**
+#    매니페스트 파일은 걷었다(2026-09-02): 컨텍스트·작업 지시는 배정된 브랜치의 `.h`/`.cpp`
+#    헤더 주석(`[DOC]`·`[PSEUDO]`)에 실려 있고, git 이 그것을 나른다.
+# [중요] **git 은 워커의 LLM 이 만지지 않는다** — checkout·commit·push 는 `wcommit` 이
+#    결정적으로 한다(원전도 데몬의 `git_ops.py` 가 했다). 그래서 이 지시서는 push 를
+#    요구하지 않고 `ATTEMPT`/`HEAD` 도 요구하지 않는다.
 INSTRUCTION = (
-    "Follow the ax-work skill. Read ./{work}/{task}/manifest.md and do exactly what it says. "
+    "Follow the ax-work skill. You are on the assigned branch already. "
+    "Read the [DOC] and [PSEUDO] comments in these files and write their bodies: {files}. "
     "Judge from the source files in this checkout, not from memory. "
-    "The last three non-empty lines of your output must be exactly: "
-    "ATTEMPT: <branch you pushed> / HEAD: <commit sha> / RESULT: DONE "
+    "Do not run any git command. Do not commit or push. "
+    "The last non-empty line of your output must be exactly RESULT: DONE "
     "(use RESULT: BLOCKED if you could not finish, and say why above it)."
 )
 
@@ -263,19 +270,15 @@ def pick_worker(facts: list, requires=(), *, clean=None) -> Pick:
     return p
 
 
-def deliver_manifest(facts, task_id: str, text: str, *, writer=None) -> str:
-    """매니페스트를 워커 체크아웃 안에 놓는다. [중요] **되읽어 sha256 대조까지 `bundle` 이 한다.**"""
-    rel = f"{bundle.WORK_REL}/{task_id}/{MANIFEST_REL}"
-    w = writer or bundle._remote_write
-    try:
-        return w(facts, rel, text, base="checkout")
-    except bundle.BundleError as e:
-        raise DispatchError(f"{facts.host}: 매니페스트를 배달하지 못했다 — {e}") from e
+def worker_command(facts, task_id: str, files=()) -> str:
+    """워커에서 실제로 도는 한 줄. [중요] **경로는 레지스트리에서 온 값**(`facts.path`)이다.
 
-
-def worker_command(facts, task_id: str) -> str:
-    """워커에서 실제로 도는 한 줄. [중요] **경로는 레지스트리에서 온 값**(`facts.path`)이다."""
-    instr = INSTRUCTION.format(work=bundle.WORK_REL, task=task_id)
+    [중요] `files` 는 **판정에 쓰는 그 목록**이다 (`infer_command` 와 같은 계약) — 지시와
+    판정이 갈라지지 않게 하나만 돈다. 비면 지시문에 `(none given)` 이 박혀 워커가 스스로
+    고르려 들므로 호출부가 막는다.
+    """
+    shown = ", ".join(str(f) for f in (files or [])) or "(none given)"
+    instr = INSTRUCTION.format(files=shown)
     cd = f'cd /d "{facts.path}"' if facts.windows else f'cd "{facts.path}"'
     # [중요] `--output-format json` — 판정 마커는 `result` 안에 들어오고, 그 대신
     # **토큰·비용·턴 수**를 함께 받는다. 계측 없이 "분산이 이득인가" 를 논할 수 없다.
@@ -283,9 +286,10 @@ def worker_command(facts, task_id: str) -> str:
             f'--dangerously-skip-permissions "{instr}"')
 
 
-def run_worker(facts, task_id: str, *, runner=None, timeout: int = DEFAULT_TIMEOUT) -> tuple:
+def run_worker(facts, task_id: str, *, files=(), runner=None,
+               timeout: int = DEFAULT_TIMEOUT) -> tuple:
     """워커에서 Claude 를 한 번 돌린다. `(rc, stdout)`. **예외를 던지지 않는다.**"""
-    cmd = worker_command(facts, task_id)
+    cmd = worker_command(facts, task_id, files)
     if runner is not None:
         return runner(facts, cmd, timeout)
     return bundle._ssh(facts.host, facts.user, cmd, timeout=timeout)
@@ -323,20 +327,18 @@ class _Beater:
         return False
 
 
-def run_task(facts, task_id: str, manifest_text: str, *, beat=None, runner=None,
-             writer=None, deliver=None, timeout: int = DEFAULT_TIMEOUT) -> Outcome:
-    """파견 한 건: 배달 → 실행(하트비트 유지) → 판정.
+def run_task(facts, task_id: str, *, files=(), beat=None, runner=None,
+             timeout: int = DEFAULT_TIMEOUT) -> Outcome:
+    """파견 한 건: 실행(하트비트 유지) → 판정.
+
+    [중요] **배달 단계가 없다** (2026-09-02): 지시서는 배정된 브랜치의 골조 주석이고
+    git 이 나른다 — 파일을 밀어 넣을 것이 남아 있지 않다.
 
     [중요] **큐에 제출하지 않는다.** 제출은 호출자(마스터)의 일이다 — 이 함수는 *워커가 무엇을
     했는가* 만 돌려준다. 판정과 제출을 한 곳에 섞으면 실패 경로에서 리스를 반납하지 못한다.
     """
-    if deliver is not None:
-        # git-carried (#185 판정 2026-08-17) — scp 자리의 대체. 주입이 없으면 기존 scp.
-        deliver(facts, task_id, manifest_text)
-    else:
-        deliver_manifest(facts, task_id, manifest_text, writer=writer)
     with _Beater(beat) as b:
-        rc, out = run_worker(facts, task_id, runner=runner, timeout=timeout)
+        rc, out = run_worker(facts, task_id, files=files, runner=runner, timeout=timeout)
     res = parse_result(out)
     if rc != 0 and not res.ok:
         res.reason = (res.reason + " · " if res.reason else "") + f"ssh rc={rc}"
@@ -474,53 +476,6 @@ def submit_fail(task_id: str, reason: str, detail: str = "", *, epoch=None,
                 "epoch": epoch, "worker_id": worker_id})
 
 
-def _manifest_for(paths, task_id: str) -> str:
-    """등록 때 마스터가 써 둔 매니페스트. [중요] **없으면 파견하지 않는다.**
-
-    빈 지시서로 보내면 워커의 Claude 가 *스스로 할 일을 지어낸다* — 그게 가장 비싼 실패다.
-    """
-    from . import manifest as manifest_mod
-    body = manifest_mod.read(paths, task_id)
-    if not body or not body.strip():
-        raise DispatchError(
-            f"매니페스트가 없다 ({manifest_mod.manifest_path(paths, task_id)}). 등록 단계에서 "
-            f"조립되지 않았다 — 빈 지시서로 파견하면 워커가 할 일을 지어낸다")
-    return body
-
-
-BASE_HEADING = "## 기준 (커밋·브랜치)"
-
-
-def refresh_base(body: str, paths, work_id: str, *, resolver=None) -> str:
-    """[중요] 기준 절을 **파견 시점에 다시 푼다.**
-
-    등록 시점에 푼 값은 **정상 흐름에서 낡을 수 있다** — 작업 브랜치 `task/<work_id>/base` 는
-    요청자가 만들고, 골조 커밋이 얹히면 tip 이 움직인다(`#319`). 실측 2026-08-09:
-    브랜치를 만든 뒤에도 매니페스트는 *"원격에 아직 없다 — 요청자가 먼저 만들어야 한다"* 로
-    남아 있었다. 그대로 보내면 워커가 **있는 브랜치를 없다고 믿고 BLOCKED** 를 낸다.
-
-    풀지 못하면 **옛 절을 지우지 않고 경고만 덧붙인다** — 모르는 것을 지어내지 않는다.
-    """
-    from . import twin_base
-    try:
-        base = (resolver or twin_base.resolve)(paths, work_id)
-        fresh = "\n".join([BASE_HEADING, ""] + twin_base.manifest_section(base))
-    except Exception as e:                                   # noqa: BLE001
-        return body.replace(
-            BASE_HEADING,
-            f"{BASE_HEADING}\n\n[주의] 파견 시점에 기준을 다시 풀지 못했다 ({e}) — 아래는 "
-            f"**등록 시점의 값**이라 낡았을 수 있다. `git ls-remote` 로 직접 확인할 것.", 1)
-
-    if BASE_HEADING not in body:
-        return fresh + "\n\n" + body
-    head, _, rest = body.partition(BASE_HEADING)
-    tail = ""
-    idx = rest.find("\n## ")
-    if idx >= 0:
-        tail = rest[idx:]
-    return head + fresh + tail
-
-
 AUTO = "auto"          # [중요] 기본은 **재는 것**이다. 끄려면 호출자가 명시적으로 None 을 준다.
 
 
@@ -561,17 +516,15 @@ def run_once(paths, *, facts=None, project: str = "", api=_api, runner=None, wri
         raise QueueError(f"claim 응답에 work_id 가 없다 — 계층형 브랜치를 만들 수 없다 "
                          f"(task={task_id})")
     try:
-        body = refresh_base(_manifest_for(paths, task_id), paths, work_id)
-        deliver = None
-        if writer is None:
-            # [중요] 실전 배달 = git-carried (#185 판정 2026-08-17). writer 주입(테스트)은
-            #    scp 자리를 그대로 잰다.
-            from . import carry
-            _d = carry.deliverer(paths, work_id)
-            deliver = lambda f_, t_, txt: _d(f_, t_, txt)  # noqa: E731
-        out = run_task(f, task_id, body,
+        # [중요] 대상 파일은 **큐 레코드**에서 온다 — 지시와 판정이 같은 하나에서 나온다
+        #    (`infer.dispatch_task` 와 같은 계약).
+        want = [str(x) for x in (task.get("target_file"), task.get("header_file")) if x]
+        if not want:
+            raise QueueError(f"큐 레코드에 target_file·header_file 이 없다 (task={task_id}) — "
+                             f"무엇을 만들지 모르므로 파견하지 않는다")
+        out = run_task(f, task_id, files=want,
                        beat=lambda: heartbeat(task_id, worker_id, api=api),
-                       runner=runner, writer=writer, deliver=deliver, timeout=timeout)
+                       runner=runner, timeout=timeout)
         res["outcome"] = out.summary
         res["tail"] = out.tail
         if out.submittable:

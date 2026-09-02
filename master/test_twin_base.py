@@ -107,7 +107,7 @@ def test_manifest_section() -> None:
 
         have = twin_base.resolve(paths, "w1",
                                  runner=_runner(f"{COMMIT}\trefs/heads/task/w1/base\n"))
-        txt = "\n".join(twin_base.manifest_section(have))
+        txt = "\n".join(twin_base.base_section(have))
         check("기준 커밋이 본문에 있다", COMMIT in txt)
         check("[중요] ff-only 를 못박는다", "fast-forward" in txt and "reset --hard" in txt)
         check("있으면 '만들어야 한다' 를 안 쓴다", "아직 없다" not in txt)
@@ -115,12 +115,12 @@ def test_manifest_section() -> None:
         check("[중요] 골조가 브랜치에 실물로 있다고 말한다", "실물로" in txt, txt[:200])
 
         miss = twin_base.resolve(paths, "w1", runner=_runner(""))
-        txt2 = "\n".join(twin_base.manifest_section(miss))
+        txt2 = "\n".join(twin_base.base_section(miss))
         check("[중요] 없으면 본문에 그렇게 쓴다", "원격에 아직 없다" in txt2)
         check("만들 명령이 본문에 실린다", "git push -u origin task/w1/base" in txt2)
 
         bad = twin_base.resolve(paths, "w1", runner=_runner("boom", rc=1))
-        txt3 = "\n".join(twin_base.manifest_section(bad))
+        txt3 = "\n".join(twin_base.base_section(bad))
         check("[중요] 확인 못 했으면 그렇게 쓴다 (없다고 하지 않는다)",
               "확인하지 못했다" in txt3 and "원격에 아직 없다" not in txt3, txt3[:120])
 

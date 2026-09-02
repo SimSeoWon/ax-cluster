@@ -72,12 +72,12 @@ def test_prompt_places_it_last() -> None:
     """[중요] 베낄 텍스트가 지시에서 멀수록 모델은 기억에서 꺼낸다."""
     import importlib
     G = importlib.import_module("master.work.generate")   # 함수가 모듈을 가린다
-    p = G.build_prompt(manifest_body="MANIFEST-BODY", instruction="DO-THIS",
+    p = G.build_prompt(context="MANIFEST-BODY", instruction="DO-THIS",
                        target_file="a.h", declarations="DECL-BLOCK")
     check("선언부가 매니페스트보다 뒤", p.index("DECL-BLOCK") > p.index("MANIFEST-BODY"), "순서")
     check("[중요] 선언부가 TASK 앞", p.index("DECL-BLOCK") < p.index("DO-THIS"), "순서")
     check("안 주면 안 넣는다",
-          "DECL" not in G.build_prompt(manifest_body="M", instruction="T"))
+          "DECL" not in G.build_prompt(context="M", instruction="T"))
 
 
 def main() -> int:
