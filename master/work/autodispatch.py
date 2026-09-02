@@ -294,9 +294,17 @@ def needs_integration(paths, work_id: str, *, api=None) -> tuple:
         return False, "태스크가 없다"
     if any(str(t.get("status") or "") == "pending" for t in tasks):
         return False, "pending 이 남았다 — 파견이 먼저다"
-    # 제출·검증까지 간 것이 하나라도 있으면 통합이 이미 손을 댔다 — 재적용하지 않는다.
-    if any(str(t.get("status") or "") in ("submitted", "verified", "failed") for t in tasks):
-        return False, "이미 통합이 손을 댔다 (submitted/verified/failed 존재)"
+    # 🔴 [중요] 정본 ⑸ 이후 `submitted` 의 뜻이 바뀌었다 (2026-09-02): **워커가 자기 서브
+    #    브랜치에 커밋하고 제출한 것**이다(종전에는 통합자가 제출했다). 그래서 여기서 멈추는
+    #    것이 옳고, 다음 칸은 **⑺ 사람 승인**이다 — 자동 통합이 아니다.
+    # [주의] **사유 문구가 거짓말을 하지 않게 한다** — 종전 문구는 *"이미 통합이 손을 댔다"*
+    #    였는데 통합은 손댄 적이 없다. 그 종류의 오문구가 2026-08-29~31 이틀을 태웠다.
+    done = [t for t in tasks if str(t.get("status") or "") in ("submitted", "verified")]
+    if done:
+        return False, (f"워커 커밋 완료 {len(done)}/{len(tasks)}건 — **⑺ 사람 승인 대기**"
+                       f" (정본 7단계: 통합 여부는 `.33` 이 묻는다)")
+    if any(str(t.get("status") or "") == "failed" for t in tasks):
+        return False, "실패한 조각이 있다 — 재적용하지 않는다 (사람이 판단한다)"
     stuck = [t for t in tasks if str(t.get("status") or "") == "claimed"]
     if not stuck:
         return False, "claimed 인 조각이 없다"
