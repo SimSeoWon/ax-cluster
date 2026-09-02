@@ -27,8 +27,12 @@ L2 commercial model / L3 UE5 build + RunTests) — and then **it was halted.**
 [중요] **Milestone 4 is why.** An origin-citation census (report 14) measured **74 files / 23,710 lines
 of `~/AgentTest` never once mentioned in this repo**, and what was lost was not three mistakes but
 a **pattern** — the three losses in report 13 §18 only surfaced because the user *saw* those screens.
-The worst hit: `cluster_coordinator.verify_and_merge` already said *"durable 단일 writer 보존"* and
-**that writer is the server** — workers push ephemeral `attempt/` branches. This project is an
+The worst hit: `cluster_coordinator.verify_and_merge` already said *"durable 단일 writer 보존"*.
+🔴 [중요] **And M4's reading of it — *"that writer is the server"* — is itself wrong** (원문 확인
+2026-09-02): the docstring says *"**검증 워커**: …"* and Plan v5 C.3 says *"verify 를 서버 단독에서
+**워커 역할로 풀었다**"*. That writer is the **verifying worker**, and *"단일 writer"* is an
+**epoch-fencing invariant**, not a one-writer pipeline. **정본 = the user's 7 steps (사용자 확정
+2026-09-02): the worker commits to its own sub-branch.** This project is an
 **OS/environment port** (Windows+UE5 daemon → Linux+Gitea) and Linux forces exactly **one** change:
 the UE5 build step inside `verify_and_merge`. Everything redesigned beyond that was redesign.
 → M4 restored the origin's shape, turned M3's four open items into **ports**, recovered un-ported

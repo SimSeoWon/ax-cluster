@@ -22,10 +22,17 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   중앙화 가드)은 부활 조건과 함께 닫혔다 — `5-version-reconcile.md` 「여기서 배운 것」.
   [주의] **What follows are the traps that still bind — not the closed milestones' scope or counts**
   (those are in Redmine and the closed milestone docs; M4's own 「여기서 배운 것」 too).
-  **The topology was never mine to invent**: the origin's `verify_and_merge` already said
-  *"durable 단일 writer 보존"* — **that writer is the server, and workers push ephemeral
-  `attempt/` branches.** Linux forces exactly **one** change: the UE5 build step inside
+  🔴 **The topology is the user's 정본 7단계 (사용자 확정 2026-09-02)** — memory
+  `distributed-pipeline-intended-shape`. **The worker commits to its own sub-branch and asks for
+  the next task.** Linux forces exactly **one** change: the UE5 build step inside
   `verify_and_merge` moves to `.2`. Everything I redesigned beyond that was redesign, not a port.
+  🔴 [중요] **And the citation I redesigned it with was a misquote** (found 2026-09-02):
+  `cluster_coordinator.verify_and_merge`'s docstring is *"**검증 워커**: … durable 단일 writer
+  보존"* — the writer is the **verifying worker**, not the server (Plan v5 C.3: *"verify 를 서버
+  단독에서 **워커 역할로 풀었다**"*), and *"단일 writer"* is an **epoch-fencing invariant**, not a
+  claim that the pipeline has one writer. **No origin mode leaves git untouched by the worker**:
+  pull mode pushes `worker/<host>/<task_id>` → server squash-merges into feature; push mode
+  pushes ephemeral `attempt/…` → verifying worker merges into durable.
   [중요] **Do not argue the topology from M3's docs** — its label *"사용자 확정 2026-08-11"* is wrong
   (it was *"그래 해"* after I pushed it), and `settled-decisions.md` §214 carries the same bad label.
   [중요] **Before building anything, read the origin and leave a citation.** Must-reads (M4 때
@@ -76,14 +83,16 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
 - [중요] **The GitHub remote is private. Keep it that way** — it contains LAN addresses and firewall rules.
 - **The master is infrastructure, not a workshop** — **narrowed 2026-08-14, don't read the
   old absolute.** It assembles context and hands it over; the Windows PC builds and tests.
-  [중요] **Flow Y (user-confirmed 2026-08-14) gives the master exactly one write capability**: it
-  commits inferred diffs to the durable `task/<work>/<task>` — nothing else. Hierarchical since
-  `#319`; the requester owns `task/<work>/base`, where the skeleton lives as real files.
-  🔴 **The ephemeral `attempt/` tier was torn down 2026-08-27** (`#317` 미결 ⑦ → `#327`) —
-  `carry.publish` now pushes to the durable branch **after the gate passes** (verify-then-commit),
-  and isolation is the **worktree** (`#321` forces it), not a branch. So *"files never leave
-  Windows"* and *"no file I/O on the master"* are **no longer true as written**; what holds is
-  **the master never touches `main`** and never builds. Mechanism: `master/work/carry.py`, a
+  🔴 [중요] **Write authority under 정본 7단계**: the **requester** owns `task/<work>/base`
+  (골조), the **worker** commits its piece to its own sub-branch off that base (⑸), and the
+  master creates those sub-branches and integrates on approval (⑷·⑺). What still holds without
+  qualification: **the master never touches `main`** and never builds.
+  [주의] **Today's code does none of ⑸** — workers infer, the invented 「통합자」 is the sole writer, and
+  passing pieces pile onto `task/<work>/base` (`e3a318f` left no sub-branch at all). Flow Y
+  (2026-08-14, *"master commits inferred diffs to the durable branch"*) and the `#327` teardown of
+  the `attempt/` tier are **the redesign, superseded by the 7 steps** — `#327` argued from *"0
+  production callers"*, which is circular for a path nobody wired. Mechanism as built today:
+  `master/work/carry.py`, a
   push-only second remote `gitea-write`, and a `pre-push` hook that rejects every ref outside
   `attempt/*`·`task/*` (deletions only when the tip is reachable from `<remote>/main`).
   [주의] `attempt/*` stays in that allowlist only for **legacy debris cleanup**
@@ -112,7 +121,7 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   커밋·에셋)은 그 자리에서 표시한다 — 사람이 모르고 지우게 두지 않는다.
   [주의] **일인칭 서술("커밋하고 올게")을 지시로 읽지 않는다.** 그 오독이 AgentTest 에서 사고를
   냈다(*"다 지워진 줄 알고 깜짝 놀랐다"*). 앞선 지시가 있어도 **삭제 직전에 한 번 더 확인한다.**
-  [주의] **Pipeline code committing is a different thing** — the integrator writing to the durable
+  [주의] **Pipeline code committing is a different thing** — the integration step writing to the durable
   `task/<work>/<task>` branch is designed behavior; these rules bind the *interactive session*.
   → [`docs/8-git-authority.md`](docs/8-git-authority.md)
 - [중요] **Never trust a delegated backend's "done".** Measured 2026-08-07: `agy` returned
@@ -172,11 +181,14 @@ source vs delivered are two fields now (#262). Detail: [`client/README.md`](clie
 from Redmine), never a scope narrowed to what got built.
 The pipeline runs end to end with **four gates**: skeleton build (`claude:opus`, built on `.2` before
 registration) → 층1 (deterministic, at *both* response-acceptance and apply time) → 층2 (commercial
-model with **declaration grounding**) → 층3 (per-piece UE5 build + one work-level RunTests). Workers
-**infer only** (`work/infer.py`, skill `ax-infer`); the integrator applies, builds and commits
-(`work/integrate.py`). **It builds per piece, not once at the end** — §4.5's "apply everything then
-build once" was overturned by the measured 35–65s incremental build, because a single build can't
-say *which* piece broke it.
+model with **declaration grounding**) → 층3 (per-piece UE5 build + one work-level RunTests).
+**It builds per piece, not once at the end** — §4.5's "apply everything then build once" was
+overturned by the measured 35–65s incremental build, because a single build can't say *which*
+piece broke it. [주의] The gates are **not** what 정본 7단계 changes; they stay.
+🔴 [주의] **What is wrong today: workers `infer only` (`work/infer.py`, skill `ax-infer`) and the
+「통합자」 is the sole writer.** 정본 ⑸ has the worker commit to its own sub-branch. The
+`ax-work` skill and `work/runner.py` hold that path and are **deliberately not deleted** — they
+are the restoration material, not dead code.
 [중요] **One hole remains and code cannot close it: this project has ZERO automation tests** (measured
 2026-08-12 — no `AUTOMATION_TEST`/`FunctionalTest`/spec anywhere in `Source/`). §4.3's measured
 *"hallucinations that compile"* (`Cast<IInteractable>`, `IsValid()` logic errors) are catchable
@@ -187,21 +199,24 @@ declarations and then read a pass as meaningful — the code reports `l2_grounde
 that reason. Local models are **not usable** for 층2: 35B blocked two correct files (false alarms).
 [중요] **Injection tests contracts, not reality.** Four separate real defects this session lived behind
 an injected seam while 63–96 unit checks passed. Put one live run behind every gate.
-[중요] **Two framings that changed on 2026-08-11 — don't argue from the old ones**: the pipeline has
-**one writer** (the integrator `.2` builds, then commits), and distribution buys **incremental
-progress, not throughput** (measured: 2 workers = 12% faster, 90% dearer).
-[중요] **Two skills go to a worker and the dispatch names which one applies**: `ax-infer` (current —
-infer only, never commit) and `ax-work` (old N-writer topology). `runner.py` and `ax-work` are
-**deliberately not deleted** — settled: keep the N-writer machinery reversible until measurement
-overturns it (§8.4). Do not "clean up" either one.
+🔴 [중요] **The "one writer" framing is dead — superseded by 정본 7단계 (2026-09-02).** Its label
+*"user-confirmed 2026-08-11"* was already known to be wrong (`settled-decisions.md:251` strikes it
+through as mislabeled — it was *"그래 해"* after I pushed it). Do not argue from it.
+What **does** still hold from that date: distribution buys **incremental progress, not
+throughput** (measured: 2 workers = 12% faster, 90% dearer) — user-reframed, and unrelated to who
+writes.
+[중요] **Two skills go to a worker and the dispatch names which one applies**: `ax-work`
+(**the 정본 direction** — worker commits to its sub-branch) and `ax-infer` (what runs today —
+infer only, never commit). Neither may be "cleaned up": `ax-work`+`runner.py` are the restoration
+material for ⑸, and `ax-infer` is what the live pipeline still calls.
 [중요] **Content travels as files in both directions, never on the command line or stdout.** `.2`'s
 console is CP949: the master→worker rule ("instructions ASCII, content by file") applies to
 worker→master too — responses land in `.ax/work/<task>/response.txt` and come back by `scp`.
-[중요] **The integrator's worktree is pipeline-owned; a human's tree never is.** `ax-wt-<work_id>` sits
+[중요] **The integration worktree is pipeline-owned; a human's tree never is.** `ax-wt-<work_id>` sits
 **beside** the checkout (never inside it) and `ensure_worktree` resets it to the base commit on
 reuse. That reset is safe *only* because nobody edits that tree by hand — never apply the same
 reasoning to `.33`'s or a worker's main checkout.
-[중요] **Never `push --force` from the integrator.** If a push is rejected, the commits stay in the
+[중요] **Never `push --force` from the integration step.** If a push is rejected, the commits stay in the
 isolated tree (nothing is lost) and a human decides — the pipeline does not rewrite history.
 → `docs/5-master-orchestration.md` §5.2-E ④-1, §5.3 진행 현황
 
@@ -257,15 +272,21 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client probe|plan|deliver|check
 
 [중요] **승인 뒤는 한 호출이다** (원전 6단계 동등, 2026-08-21): `review.finalize_work(confirm=True)` 가 ①`main` `--no-ff` 머지+push ②Redmine 완료 기재(머지 커밋 해시 · 상태는 **「해결」** — 「완료」로 닫는 것은 사람이다) ③**도달 가능한 브랜치 삭제** ⑤`merge_status`→`merged` 를 이어서 한다. `confirm=False`(기본)는 **통합만 하고 멈추고** 사람이 실행할 명령을 돌려준다. [주의] 순서가 계약이다 — 정리는 **머지 뒤**여야 도달 가능 판정이 참이 된다.
 
+🔴 [주의] **아래는 「지금 도는 것」이고 정본이 아니다.** 정본 ⑸ 는 **워커가 끝내고 다음 작업을
+요청**하는 것(= 상주 폴링)이므로, `#320` 의 상주 철거는 **되돌릴 목록**에 있다. 원전도 워커
+데몬이 `poll → claim → LLM → commit·push → submit → 다시 claim` 을 돈다.
+
 [중요] **상주 데몬은 없다 — 마스터가 SSH 로 민다** (`#320` 철거 2026-08-27, `#317` 미결 ⑤).
 `.2` 의 `AxClaimer_NS` schtasks 와 `.43` 의 cron 감시자를 **둘 다 걷었다.** 지금 큐를 폴링하는
 프로세스는 어느 워커에도 없다 — 파견은 전부 마스터가 건다(`run_build_on_workshop` 이
 `Build.bat` 를 직접 부르므로 **빌드에는 워커에 파이썬 페이로드가 필요 없다**).
 [완료] **그러나 「등재해도 아무도 집지 않는다」는 2026-09-01 부터 틀리다** (`#340`,
 `c33316e`·`9cc73d9`). 상주가 없는 것은 그대로이고, 그 자리를 **마스터의 유닛이 잇는다**:
-골조 push 이벤트 → `ax-dispatch.path` → 파견 → **통합까지 연속**. [중요] **사람 게이트는
-finalize(`main` 머지) 한 곳뿐이다** — 파이프라인 그림의 `[사람 승인]` 표식이 그 자리다.
-통합 앞에 게이트를 만들지 않는다(2026-09-01 에 내가 만들었다가 정정받았다).
+골조 push 이벤트 → `ax-dispatch.path` → 파견 → **통합까지 연속**.
+🔴 [중요] **사람 게이트는 둘이다 — ⑺ 통합 앞과 finalize(`main` 머지)** (정본 7단계, 사용자 확정
+2026-09-02). [주의] **종전 서술 「finalize 한 곳뿐 · 통합 앞에 만들지 않는다」는 폐기됐다** —
+2026-09-01 에 내가 만든 게이트를 정정받은 것은 맞지만, 그것을 「통합 승인은 없다」로 넓혀 적은
+것이 틀렸다. **지금 코드에 ⑺ 게이트가 없는 것은 미구현이다.**
 [주의] **세션 한도만 예외다** — 멈추고 보류하며, 시각이 지나도 자동 재개하지 않는다
 (사용자 결정). 재개는 `--resume`, 고지는 `.33` 세션 시작 훅.
 [주의] `#320` 의 부활 조건은 그 노트에 그대로 있다 — 지금 없는 것은 **상주 claimer** 뿐이다.

@@ -301,7 +301,7 @@ expensive** (cache creation is a per-worker fixed cost), the **3.2× saving came
 
 What the machinery in §4.5 actually buys is that **work accumulates in a state that always
 compiles**: the frozen interface stops pieces from breaking each other, the skeleton build gate
-makes sure the base stands, dependency order decides what stacks on what, and the integrator
+makes sure the base stands, dependency order decides what stacks on what, and the leader (`.33`)
 commits **only what built**. Under the 2026-08-11 write-authority decision every commit on a
 durable branch is build-verified, so the branch is monotonically green.
 

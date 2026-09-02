@@ -41,13 +41,29 @@ are NOT work.**
 > counts live in Redmine; the narrative (census numbers, M2/M3/M4 scope and timings, the ported web
 > UI's feature list) lives in the closed milestone docs listed above — this file does not repeat them.
 
-[중요] **"one writer" was never my invention; that writer is the server** (the origin's
-`cluster_coordinator.py` said *"durable 단일 writer 보존"* while our repo cited it 0 times —
-report 14). [주의] **The origin's second half — workers pushing ephemeral `attempt/` branches —
-is no longer ours**: `#327` tore that tier down 2026-08-27 (`#317` 미결 ⑦). `carry.publish` now
-pushes straight to the durable `task/<work>/<task>` **after** the gate passes (verify-then-commit),
-and isolation is the **worktree** (`#321` forces it), not a branch. The evidence a failed attempt
-used to carry lives in the spool and the Redmine note instead.
+🔴 [중요] **The pipeline's canonical shape is the user's 7 steps — 사용자 확정 2026-09-02.**
+Read them before planning anything in this area: memory `distributed-pipeline-intended-shape`.
+**In them the worker commits to its own sub-branch and asks for the next task.** Every record
+that says otherwise lost to those 7 steps on that date.
+
+🔴 [중요] **"one writer = the server" was a misquote of the origin, and it is what turned this
+port into a redesign** (found 2026-09-02 by finally reading the file). The origin's
+`cluster_coordinator.verify_and_merge` docstring reads:
+
+    """**검증 워커**: 시도 epoch 게이트 → 통과 시 durable 에 merge·push.
+       … stale assignee(zombie) → 거부(merge 안 함). durable 단일 writer 보존."""
+
+So ⑴ that writer is the **verifying worker**, not the server — Plan v5 C.3 says in as many words
+*"verify 를 **서버 단독에서 워커 역할로 풀었다**"* — and ⑵ *"단일 writer"* is an **epoch-fencing
+invariant** (two assignees must never write the same durable ref), **not** a claim that the
+pipeline has one writer. [중요] **The origin has no mode in which a worker leaves git alone:**
+pull mode pushes `worker/<host>/<task_id>` and the server squash-merges it into the feature
+branch; push mode pushes ephemeral `attempt/…` and the verifying worker merges it into durable.
+
+[주의] **Current code still does the redesigned thing** — workers infer only, the invented
+「통합자」(`.2`) is the sole writer, and passing pieces pile onto `task/<work>/base` (no sub-branch is created at
+all since `e3a318f`). **That is the defect list, not the design.** `#327` tore the attempt tier
+down 2026-08-27 citing *"0 production callers"* — circular, because that path was never wired.
 
 This project is an **OS/environment port** (Windows+UE5
 daemon → Linux+Gitea) and Linux forces exactly **one** change: the UE5 build step *inside*
@@ -57,12 +73,27 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
 [중요] **Workers may not delete branches** — a branch is removed only when its tip is reachable from
 `origin/main`, and workers return to **`main`**.
 
-The pipeline (M3, four deterministic gates — detail in `3-work-pipeline.md`):
+🔴 **The pipeline — 정본 7단계 (사용자 확정 2026-09-02).** This is the shape to build toward;
+`[미구현]` marks where today's code differs (that difference is a defect, not a variant):
 
-    요청(`.33`) → **`.33` 이 골조를 만들어** `task/<work>/base` 에 실물 한 커밋 (UHT 게이트) → 등재
-         → [마스터] 파견 → 워커는 **추론만**(ax-infer) → 스풀
-         → 통합자 `.2`: 층1 → 층2 → 적용 → **조각별 UE5 빌드** → 통과분만 커밋 → work 단위 RunTests
-         → [사람 승인] `finalize`: `main` 머지 + Redmine 기재 + **도달 가능 브랜치 정리** (한 호출)
+    1 요청(`.33`) → 마스터에 **컨텍스트 문서 요청**
+    2 `.33` 이 **모든 클래스의 동작을 계획**하고 **골조**를 만든다
+          골조 = 프로퍼티·메서드의 기본 정의 + 내용물은 **주석 작업지시서**(`[DOC]`·`[PSEUDO]`)
+    3 `.33` 이 골조를 **작업 브랜치 `task/<work>/base` 에 커밋**하고 마스터에 요청 (UHT 게이트)
+    4 마스터가 **골조 파일 기준으로** 서브태스크를 만들고
+          🔴 **작업 브랜치에서 갈라진 서브 브랜치를 조각마다 만들어**  [미구현 — base 에 누적]
+          워커에게 **브랜치 + 작업할 클래스**를 전달
+    5 워커가 🔴 **제미나이·로컬 LLM 까지 써서** 본문을 코드로 바꾸고  [미구현 — `claude -p` 하드코딩]
+          🔴 **자기 서브 브랜치에 커밋**하고                          [미구현 — 추론만·스풀]
+          🔴 **끝내고 다음 작업을 요청한다**                          [미구현 — 마스터 SSH push]
+    6 모든 서브태스크가 끝나면 **요청한 `.33` 에 전달**               [미구현 — 통보 없음 (`#337` ①)]
+    7 `.33` 이 🔴 **통합할지 사람에게 묻는다** → 승인하면 서브 브랜치를 **전부 적용 + 빌드 테스트**
+          → `finalize`: `main` 머지 + Redmine 기재 + **도달 가능 브랜치 정리** (한 호출)
+
+[주의] **The four deterministic gates stay** (층1 · 층2 grounding · 조각별 UE5 빌드 · RunTests —
+detail in `3-work-pipeline.md`). 정본이 바꾸는 것은 **누가 쓰고 누가 묻는가**이고, 게이트가
+판정한다는 원칙은 그대로다. The origin agrees: its per-task verify is static-only and a
+**통합 빌드** on the feature branch is what catches cross-file breakage.
 
 [중요] **마스터는 골조를 만들지 않는다** (`#339`, 2026-08-30 — 그 경로를 코드에서 지웠다).
 `#317` ①·`#319` 가 골조 제작을 요청자로 옮겼는데 `#319` 는 「나르기」만 없애고 「만들기」를
@@ -70,8 +101,13 @@ The pipeline (M3, four deterministic gates — detail in `3-work-pipeline.md`):
 것은 **큐 등록과 매니페스트 수집**이다.
 [완료] **파견은 자동이다** (`#340` `c33316e`·`9cc73d9`, 라이브 2026-09-01 — 4/4 · 10분 4초 ·
 사람 개입 0). 요청자가 `task/<work_id>/base` 를 push 하면 그 이벤트가 `ax-dispatch.path` 를
-깨우고, **파견이 끝나면 통합까지 이어진다.** [중요] **사람 게이트는 finalize(`main` 머지)
-한 곳뿐이다** — 통합 앞에 게이트를 만들지 않는다(내가 근거 없이 하나 만들었다가 정정받았다).
+깨우고, **파견이 끝나면 통합까지 이어진다.**
+🔴 [중요] **사람 게이트는 **둘**이다 — 정본 7단계 (사용자 확정 2026-09-02):
+**⑺ 통합 앞**(「통합할까요」를 `.33` 이 묻는다) **와 finalize(`main` 머지)**.
+[주의] **종전 서술 「사람 게이트는 finalize 한 곳뿐, 통합 앞에 만들지 않는다」는 폐기됐다** —
+2026-09-01 에 내가 만든 게이트를 정정받은 것은 맞지만, 그 정정을 「통합 승인이 없다」로 넓혀
+적은 것이 틀렸다. 정본 7단계가 통합 승인을 명시한다. [주의] **지금 코드에는 그 게이트가 없다**
+(파견 → 통합 연속) — 되돌릴 목록에 있다.
 [주의] **세션 한도로 멈추면 재개만 사람 지시다** (사용자 결정 2026-09-01): 보류가
 `~/.cache/ax-dispatch/hold.json` 에 남아 **재부팅을 넘고**, 시각이 지나도 자동으로 풀리지 않는다.
 `.33` 세션 시작 훅이 「재개 대기」를 고지하고, 푸는 것은
@@ -107,7 +143,7 @@ defeat the 120s guard). [중요] **`ax-status.timer` refreshes it every 5 min**;
 Five real ones this session-and-the-last, each behind an injected seam while 63–96 unit checks
 passed: layer 3's decoder on Korean UBT output · the skeleton contract hole (`[PSEUDO]` alone
 doesn't compile for non-void) · an invented enum value · `decode()` returning `Decoded` not `str` ·
-the integrator dying where the graph was absent. **Put one live run behind every gate.**
+the integration step dying where the graph was absent. **Put one live run behind every gate.**
 
 [중요] **Grounding, not the model, is what makes 층2 work** (measured 2026-08-12): 4 of 5 candidates
 missed an invented enum member with no declarations in the prompt; all caught it with them. And
@@ -184,9 +220,9 @@ The board has `main` checked out so pushing there is rejected — **`git pull` o
 | IP | Machine | Login | Role | Reachable from here |
 |---|---|---|---|---|
 | **.57** | **sim-desktop** — this box | `sim` | **Master**: orchestration, RAG index, ontology/graph, task queue, broker, project registry | — |
-| **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) |  **Worker** *and* inference endpoint #2 (14b pinned). **The only machine that can run the layer-3 verdict unattended** (UE5 5.8). [중요] **No resident claimer — torn down 2026-08-27** (`#320`, user decision; `#317` 미결 ⑤). The master drives this box over SSH: `run_build_on_workshop` calls `Build.bat` directly, so **no Python payload is needed here** to build. Nothing on this box polls the queue. Revival condition: `#320` notes | **`ssh janus@192.168.0.2`** [완료] passwordless · RDP 3389 · Ollama 11434 |
+| **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) |  **Worker** *and* inference endpoint #2 (14b pinned). **The only machine that can run the layer-3 verdict unattended** (UE5 5.8). 🔴 **정본 ⑸: this box commits its piece to its own sub-branch and then asks for the next task** (사용자 확정 2026-09-02). The master drives builds over SSH (`run_build_on_workshop` calls `Build.bat` directly, so **no Python payload is needed to build**). [주의] **No resident claimer today** — torn down 2026-08-27 (`#320`); that teardown is **on the restoration list**, since ⑸ requires the worker to pull its next task | **`ssh janus@192.168.0.2`** [완료] passwordless · RDP 3389 · Ollama 11434 |
 | **.33** | Windows 10.0.26200, **the user's main work PC**<br>host `DESKTOP-FU2GNGL` | **`user`** | [중요] **`requester`, not a worker — and the entry point for all Unreal work** (사용자 2026-08-20): the user works in `ModularStage` here, opens `claude`, and the **already delivered requester console** registers it (home skills `ax-request`·`ax-ontology`·`ax-review` · `ax-client` MCP in the checkout's `.mcp.json` · `.ax/token`). Registration from the master is only ever standing in for this. Verifies (it has UE5), gives feedback. **Never dispatched to** (`drivable_hosts` excludes it) — [중요] the `dispatch` field (`#321`) does **not** change this: it is **narrowing-only**, meaning it can pull a *worker* out of rotation (maintenance, low resources) but cannot switch a requester on. `role` is the *right* to be sent work; `dispatch` is *availability right now*. Not an inference endpoint | **`ssh user@192.168.0.33`** [완료] passwordless (2026-08-08) · RDP 3389 · Ollama 11434 |
-| **.43** | **BC-250 #1** — Fedora, headless | `sim` |  **Worker** *and* inference endpoint #1. **35B residency was REMOVED 2026-08-17 (user decision ⓐ, measured #105)** — plain sequential inference grew GPU(GTT) allocations ~120MB/cycle and collapsed the node in 4 minutes; idle did not release it; only `systemctl restart ollama` did (NOPASSWD exists for it). Now pins **gemma4:e4b (~5GB, ~10GB headroom)** — the synth model, which also kills the old fallback-OOM hazard. The 35B stays on disk, unpinned. **e4b also fills the agentic-driver seat (#106 closed 2026-08-17)** — tool-calling gates 4/4 ×3 runs + Korean 3/3, 30-cycle sustained 30/30 with no #105-style accumulation (~-5MB/cycle vs 35B's -120). Fallback: `qwen3:8b` (4/4, lives on `.2`). Has the project clone at `~/trunk/ModularStage` — no longer stateless. [중요] **No resident claimer — the cron watchdog was removed 2026-08-27** (`#320`). Master-driven SSH push only. Caps still come measured from `.ax/config.json` | `ssh sim@192.168.0.43` [완료] passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
+| **.43** | **BC-250 #1** — Fedora, headless | `sim` |  **Worker** *and* inference endpoint #1. **35B residency was REMOVED 2026-08-17 (user decision ⓐ, measured #105)** — plain sequential inference grew GPU(GTT) allocations ~120MB/cycle and collapsed the node in 4 minutes; idle did not release it; only `systemctl restart ollama` did (NOPASSWD exists for it). Now pins **gemma4:e4b (~5GB, ~10GB headroom)** — the synth model, which also kills the old fallback-OOM hazard. The 35B stays on disk, unpinned. **e4b also fills the agentic-driver seat (#106 closed 2026-08-17)** — tool-calling gates 4/4 ×3 runs + Korean 3/3, 30-cycle sustained 30/30 with no #105-style accumulation (~-5MB/cycle vs 35B's -120). Fallback: `qwen3:8b` (4/4, lives on `.2`). Has the project clone at `~/trunk/ModularStage` — no longer stateless. 🔴 [중요] **This box is a committing worker too, exactly like `.2`** (사용자 정정 2026-09-02): **the memory limit decides only *which model* it may run locally, never whether it may commit**, and **building was never the worker's job** (the origin's per-task verify is static-only; UE5 belongs to the integration gate). I had blocked its commits on the strength of the "one writer" misquote and then re-justified it with memory/UE5 — neither reason holds. Inference it cannot host locally goes through the broker (8102). [주의] **No resident claimer today** — cron watchdog removed 2026-08-27 (`#320`); on the restoration list, since ⑸ requires the worker to pull its next task. Caps still come measured from `.ax/config.json` | `ssh sim@192.168.0.43` [완료] passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
 | — | BC-250 #2 | — |  **Bazzite gaming machine — NOT an inference node.** Converting it means giving up that machine. **Never assume a 2nd board exists.** | n/a |
 
 ### `.33` — the main work PC has its own guide

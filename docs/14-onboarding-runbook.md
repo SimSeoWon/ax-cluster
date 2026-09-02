@@ -184,8 +184,11 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check   <프로젝트>
 
 🔴 [중요] **다만 「등재해도 아무도 집지 않는다」는 2026-09-01 부터 틀리다** (`#340`, `c33316e`).
 파견은 **자동**이다 — 요청자가 `task/<work_id>/base` 를 push 하면 그 이벤트가
-`ax-dispatch.path` 를 깨우고, 파견이 끝나면 **통합까지 이어진다**(`9cc73d9`). 사람 게이트는
-finalize(`main` 머지) 한 곳이다. 온보딩 뒤 확인할 것은 「집는 주체가 있나」가 아니라
+`ax-dispatch.path` 를 깨우고, 파견이 끝나면 **통합까지 이어진다**(`9cc73d9`).
+🔴 [주의] **사람 게이트는 둘이다 — ⑺ 통합 앞과 finalize** (정본 7단계, 사용자 확정 2026-09-02).
+종전의 「finalize 한 곳」은 폐기됐고, **⑺ 게이트는 아직 미구현**이다.
+[주의] 정본 ⑸ 는 **워커가 다음 작업을 요청**하는 것이므로 「집는 주체」는 되살릴 대상이다 —
+아래 확인 항목은 「지금 도는 것」의 점검이다. 온보딩 뒤 확인할 것은
 **「트리거 유닛이 무장돼 있나」**다:
 
     systemctl is-enabled ax-dispatch.path ax-dispatch.timer     둘 다 enabled 여야 한다

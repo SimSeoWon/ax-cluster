@@ -102,8 +102,14 @@
 
    > [중요] **2차 정정 2026-08-14 — 마스터도 이제 쓴다. 다만 한 곳에만.** Flow Y(사용자 확정
    > 2026-08-14)가 *"마스터가 노드에서 받은 diff 를 task/attempt 브랜치에 **commit**"* 으로
-   > 확정됐다(마일스톤 4 문서 「Flow Y 확정」). 원전에서도 **쓰는 주체는 서버**였다 —
-   > `cluster_coordinator.verify_and_merge` 의 주석 *"durable 단일 writer 보존"* 의 그 writer 다.
+   > 확정됐다(마일스톤 4 문서 「Flow Y 확정」).
+   > 🔴 [중요] **「원전에서도 쓰는 주체는 서버였다」는 오인용이다** (2026-09-02 원문 확인).
+   > `cluster_coordinator.verify_and_merge` 의 독스트링은 *"**검증 워커**: … durable 단일
+   > writer 보존"* 이고, Plan v5 C.3 은 *"verify 를 서버 단독에서 **워커 역할로 풀었다**"* 다.
+   > 그 writer 는 **검증 워커**이고, *"단일 writer"* 는 같은 durable ref 에 두 명이 동시에 쓰지
+   > 못하게 하는 **epoch fencing 불변식**이다 — 파이프라인의 쓰기 주체가 하나라는 말이 아니다.
+   > 🔴 **그리고 Flow Y 자체가 정본 7단계(사용자 확정 2026-09-02)에 밀렸다** — ⑸ 에서 **워커가
+   > 자기 서브 브랜치에 커밋**한다. 아래 표는 「지금 도는 것」이다.
    >
    >     마스터가 쓸 수 있는 것   attempt/<work>/<task>/<작업장>/<ts>  ·  task/<work>/<task>
    >                              [주의] `task/<work>/base` 는 **요청자**가 만든다 (#319)
