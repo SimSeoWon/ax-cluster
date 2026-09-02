@@ -81,10 +81,11 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
           골조 = 프로퍼티·메서드의 기본 정의 + 내용물은 **주석 작업지시서**(`[DOC]`·`[PSEUDO]`)
     3 `.33` 이 골조를 **작업 브랜치 `task/<work>/base` 에 커밋**하고 마스터에 요청 (UHT 게이트)
     4 마스터가 **골조 파일 기준으로** 서브태스크를 만들고
-          🔴 **작업 브랜치에서 갈라진 서브 브랜치를 조각마다 만들어**  [미구현 — base 에 누적]
-          워커에게 **브랜치 + 작업할 클래스**를 전달
+          **작업 브랜치에서 갈라진 서브 브랜치를 조각마다 만들어**   [완료] 라이브 2026-09-03
+          워커에게 **브랜치 + 작업할 클래스**를 전달 · **병렬이 기본**  [완료] `.2`+`.43` 동시
     5 워커가 🔴 **제미나이·로컬 LLM 까지 써서** 본문을 코드로 바꾸고  [미구현 — `claude -p` 하드코딩]
-          🔴 **자기 서브 브랜치에 커밋**하고                          [미구현 — 추론만·스풀]
+          **자기 서브 브랜치에 커밋**하고                            [완료] 라이브 2026-09-03
+          (끝나면 `main` 복귀 — 체크아웃된 브랜치는 정리에서 빠진다)  [완료] 실측
           🔴 **끝내고 다음 작업을 요청한다**                          [미구현 — 마스터 SSH push]
     6 모든 서브태스크가 끝나면 **요청한 `.33` 에 전달**               [미구현 — 통보 없음 (`#337` ①)]
     7 `.33` 이 🔴 **통합할지 사람에게 묻는다** → 승인하면 서브 브랜치를 **전부 적용 + 빌드 테스트**
@@ -94,6 +95,14 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
 detail in `3-work-pipeline.md`). 정본이 바꾸는 것은 **누가 쓰고 누가 묻는가**이고, 게이트가
 판정한다는 원칙은 그대로다. The origin agrees: its per-task verify is static-only and a
 **통합 빌드** on the feature branch is what catches cross-file breakage.
+
+🔴 [중요] **게이트를 다섯 번째로 만들지 않는다** (2026-09-03, 걷었다). 골조가 `[PSEUDO]` 에
+본문까지 써 버린 것을 파견 **전에** 막는 게이트를 하나 만들었는데, **원전에 없는 계층**이었고
+(원전 Step 6 은 UE 빌드뿐 · `[PSEUDO]` 검사는 `worker/validator.py` 의 **구현 뒤** = 우리 층1)
+정상 골조를 **5개 조각** 차단했다(`Super::EndPlay` · `RETURN_QUICK_DECLARE_CYCLE_STAT` ·
+`PrimaryComponentTick` 을 「본문」으로 오인). 태운 것: 골조 생성 2회 + 재작성 1회(`.33` Opus)
+· 실증 라운드 2회. [주의] **층1 이 그 일을 하는 것을 로그로 보고도** 만들었다 —
+`만들기 전에 ①원전에 있나 ②이미 잡는 게 있나 ③오탐이면 뭐가 죽나`.
 
 [중요] **마스터는 골조를 만들지 않는다** (`#339`, 2026-08-30 — 그 경로를 코드에서 지웠다).
 `#317` ①·`#319` 가 골조 제작을 요청자로 옮겼는데 `#319` 는 「나르기」만 없애고 「만들기」를
@@ -155,10 +164,17 @@ anywhere in `Source/`). §4.3's *"hallucinations that compile"* are catchable **
 층3's `RunTests` is deliberately **fail-open with a loud warning**. That hole cannot be closed by
 code — writing tests is a project decision, parked in the milestone's 「예정」.
 
-[중요] **What distribution buys is incremental progress, not throughput** (user-reframed 2026-08-11).
-Measured: two workers were 12% faster and **90% more expensive**; the 3.2× saving came from
-batching, not parallelism; layer 3 was serial on `.2` all along. The value is that work accumulates
-**in a state that always compiles** — which makes verification a premise, not an option.
+🔴 [중요] **Parallel is the default** (사용자 확정 2026-09-03). 정본 ⑸: *"작업을 전달받은
+**워커들은** … **각각** 지정된 서브 브랜치에 커밋하고 작업을 마치고 **다음 작업을 요청**"* —
+**splitting per class exists for this.** Measured live 2026-09-03: pieces went to `.2` **and**
+`.43` in one round. [주의] `autodispatch` now passes `parallel=True` **explicitly** — it used to
+pass nothing, so the real path was always serial and no one could see it.
+
+[주의] The 2026-08-09 measurement still stands as **fact** — two workers were 12% faster and 90%
+more expensive; the 3.2× saving came from batching, not parallelism. **But whether to accept that
+cost is the user's call, not a default I get to set.** Serial only when a caller says
+`parallel=False`. Incremental progress remains the other half of the value: work accumulates
+**in a state that always compiles**, which makes verification a premise, not an option.
 
 [중요] **Skeletons are not fully automatic either** (user, 2026-08-11). The skeleton reports where it
 had to guess, **only the human's answers are stored**, and each answer carries a scope
