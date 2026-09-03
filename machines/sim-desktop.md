@@ -60,10 +60,11 @@ pipeline has one writer. [중요] **The origin has no mode in which a worker lea
 pull mode pushes `worker/<host>/<task_id>` and the server squash-merges it into the feature
 branch; push mode pushes ephemeral `attempt/…` and the verifying worker merges it into durable.
 
-[주의] **Current code still does the redesigned thing** — workers infer only, the invented
-「통합자」(`.2`) is the sole writer, and passing pieces pile onto `task/<work>/base` (no sub-branch is created at
-all since `e3a318f`). **That is the defect list, not the design.** `#327` tore the attempt tier
-down 2026-08-27 citing *"0 production callers"* — circular, because that path was never wired.
+[완료] **코드가 정본으로 왔다** (2026-09-04). 「통합자」는 **삭제**됐다 — `integrate.py`
+약 1,000줄과 테스트 131건을 지웠고, `master/test_no_integrator.py` 가 부활을 막는다.
+⑷⑸⑹ 은 라이브 완주했다(01:28→01:30 · **4/4 · 실패 0 · 1분 38초**). 남은 것은 ⑺ 실증
+하나다(`#355`). `#327` 이 attempt 계층을 걷은 근거(*"0 production callers"*)는 여전히
+순환이었다 — 그 경로를 배선한 적이 없었으니 당연하다.
 
 This project is an **OS/environment port** (Windows+UE5
 daemon → Linux+Gitea) and Linux forces exactly **one** change: the UE5 build step *inside*
@@ -83,13 +84,23 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
     4 마스터가 **골조 파일 기준으로** 서브태스크를 만들고
           **작업 브랜치에서 갈라진 서브 브랜치를 조각마다 만들어**   [완료] 라이브 2026-09-03
           워커에게 **브랜치 + 작업할 클래스**를 전달 · **병렬이 기본**  [완료] `.2`+`.43` 동시
-    5 워커가 🔴 **제미나이·로컬 LLM 까지 써서** 본문을 코드로 바꾸고  [미구현 — `claude -p` 하드코딩]
+    5 워커가 🔴 **제미나이·로컬 LLM 까지 써서** 본문을 코드로 바꾸고  [완료] `work/lanes.py`
+          레인 순서 **agy → 로컬(qwen2.5-coder:14b)** · `claude` 는 체인에서 뺐다
+          (한도가 공용 자원 — 429 하나로 4조각 중 3이 죽었다. 사용자 지시 2026-09-04)
           **자기 서브 브랜치에 커밋**하고                            [완료] 라이브 2026-09-03
           (끝나면 `main` 복귀 — 체크아웃된 브랜치는 정리에서 빠진다)  [완료] 실측
           🔴 **끝내고 다음 작업을 요청한다**                          [미구현 — 마스터 SSH push]
-    6 모든 서브태스크가 끝나면 **요청한 `.33` 에 전달**               [미구현 — 통보 없음 (`#337` ①)]
-    7 `.33` 이 🔴 **통합할지 사람에게 묻는다** → 승인하면 서브 브랜치를 **전부 적용 + 빌드 테스트**
-          → `finalize`: `main` 머지 + Redmine 기재 + **도달 가능 브랜치 정리** (한 호출)
+    6 모든 서브태스크가 끝나면 **요청한 `.33` 에 전달**               [완료] Redmine `[리뷰 요청]`
+          이슈가 실제로 발행된다 (`#350`·`#352`·`#354`) · `.33` 훅이 **세션 시작과 매 턴** 고지
+          [주의] **알림 채널이 없다** — Redmine SMTP 미설정 (`#356`). 이슈는 나는데 부르지 않는다
+    7 🔴 **`.33` 이 서브 브랜치를 전부 「작업 브랜치」에 머지하고 한 번 검사한 뒤,
+          「버그냐 구조 수정이냐」를 묻고 그 브랜치를 한 칸 전진시킨다**  [진행] `#355` 미실증
+          → `ax-advance` (`review.advance_work`) · `confirm=False` 기본 · 빌드 미측정도 거절
+          → 다음 라운드는 전진분의 `.h`/`.cpp` 에 지시 주석을 남기고 재등재
+            (`target_branch` 에 그 브랜치 — `work_base_branch` 가 「저장된 값이 이긴다」)
+          [중요] **`main` 은 그보다 뒤다** — 작업 전체가 끝났을 때만 `ax-review` → `finalize`
+          [주의] 그 둘을 섞어 오지시를 냈다 (2026-09-04) — 라운드 직후 공지가 `main` 머지를
+            권했다. 사용자: *"리뷰 요청은 왜한건데? 전혀 다른 스킬을 요청한거 같은데"*
 
 [주의] **The four deterministic gates stay** (층1 · 층2 grounding · 조각별 UE5 빌드 · RunTests —
 detail in `3-work-pipeline.md`). 정본이 바꾸는 것은 **누가 쓰고 누가 묻는가**이고, 게이트가
@@ -110,13 +121,14 @@ detail in `3-work-pipeline.md`). 정본이 바꾸는 것은 **누가 쓰고 누�
 것은 **큐 등록과 매니페스트 수집**이다.
 [완료] **파견은 자동이다** (`#340` `c33316e`·`9cc73d9`, 라이브 2026-09-01 — 4/4 · 10분 4초 ·
 사람 개입 0). 요청자가 `task/<work_id>/base` 를 push 하면 그 이벤트가 `ax-dispatch.path` 를
-깨우고, **파견이 끝나면 통합까지 이어진다.**
+깨우고, **파견이 끝나면 조각을 종결하고 `.33` 에 공지하는 것으로 끝난다** (2026-09-04 —
+「통합까지 이어진다」는 종전 서술은 통합자와 함께 폐기됐다).
 🔴 [중요] **사람 게이트는 **둘**이다 — 정본 7단계 (사용자 확정 2026-09-02):
-**⑺ 통합 앞**(「통합할까요」를 `.33` 이 묻는다) **와 finalize(`main` 머지)**.
-[주의] **종전 서술 「사람 게이트는 finalize 한 곳뿐, 통합 앞에 만들지 않는다」는 폐기됐다** —
-2026-09-01 에 내가 만든 게이트를 정정받은 것은 맞지만, 그 정정을 「통합 승인이 없다」로 넓혀
-적은 것이 틀렸다. 정본 7단계가 통합 승인을 명시한다. [주의] **지금 코드에는 그 게이트가 없다**
-(파견 → 통합 연속) — 되돌릴 목록에 있다.
+**⑺ 전진 앞**(`ax-advance` 가 「버그냐 구조냐」를 묻는다) **와 finalize(`main` 머지)**.
+[완료] **둘 다 코드에 있다** (2026-09-04): `advance_work(confirm=False)` 가 기본이고
+`finalize_work(confirm=False)` 도 기본이다 — 승인 발화가 곧 트리거다.
+[주의] **종전 서술 「사람 게이트는 finalize 한 곳뿐」은 폐기됐다** — 2026-09-01 에 내가 만든
+게이트를 정정받은 것은 맞지만, 그 정정을 「통합 승인이 없다」로 넓혀 적은 것이 틀렸다.
 [주의] **세션 한도로 멈추면 재개만 사람 지시다** (사용자 결정 2026-09-01): 보류가
 `~/.cache/ax-dispatch/hold.json` 에 남아 **재부팅을 넘고**, 시각이 지나도 자동으로 풀리지 않는다.
 `.33` 세션 시작 훅이 「재개 대기」를 고지하고, 푸는 것은

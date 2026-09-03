@@ -87,14 +87,23 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   (골조), the **worker** commits its piece to its own sub-branch off that base (⑸), and the
   master creates those sub-branches and integrates on approval (⑷·⑺). What still holds without
   qualification: **the master never touches `main`** and never builds.
-  [주의] **Today's code does none of ⑸** — workers infer, the invented 「통합자」 is the sole writer, and
-  passing pieces pile onto `task/<work>/base` (`e3a318f` left no sub-branch at all). Flow Y
+  [완료] **⑷⑸⑹ are live** (measured 2026-09-04 01:28→01:30: **4/4 · 0 failed · 1m38s**).
+  Sub-branch per piece, the worker commits its pair (`.h`+`.cpp`) to it, the piece closes at that
+  commit, and when all pieces are terminal the queue posts a Redmine `[리뷰 요청]` issue to the
+  requester. **The 「통합자」 is gone** — `integrate.py` (≈1,000 lines) and its 131 tests are
+  deleted; `master/test_no_integrator.py` fails if any of it comes back.
+  [진행] **⑺ is wired but unproven** (`#355`): `review.advance_work()` + the `ax-advance` skill
+  merge every sub-branch into the **work branch** (not `main`), build once on `.33`, ask *"bug or
+  structural change?"*, and push the advance only on `confirm=True`. Flow Y
   (2026-08-14, *"master commits inferred diffs to the durable branch"*) and the `#327` teardown of
   the `attempt/` tier are **the redesign, superseded by the 7 steps** — `#327` argued from *"0
   production callers"*, which is circular for a path nobody wired. Mechanism as built today:
-  `master/work/carry.py`, a
+  `master/work/subbranch.py` + `wcommit.py` (the worker's commit cycle), a
   push-only second remote `gitea-write`, and a `pre-push` hook that rejects every ref outside
   `attempt/*`·`task/*` (deletions only when the tip is reachable from `<remote>/main`).
+  [주의] **`carry.py` is gone** (torn down 2026-09-02 with the manifest) — if a doc still names it
+  as current mechanism, that doc is stale. The instructions travel as `[DOC]`/`[PSEUDO]` comments
+  in the skeleton and git carries them.
   [주의] `attempt/*` stays in that allowlist only for **legacy debris cleanup**
   (`attempt.plan_remote_cleanup`). The 정본 clone's `origin` push stays sealed as a loud guard.
   → [`docs/2-architecture.md`](docs/2-architecture.md) §2.2-1 · `reports/16-master-write-surface.md`
@@ -185,10 +194,20 @@ model with **declaration grounding**) → 층3 (per-piece UE5 build + one work-l
 **It builds per piece, not once at the end** — §4.5's "apply everything then build once" was
 overturned by the measured 35–65s incremental build, because a single build can't say *which*
 piece broke it. [주의] The gates are **not** what 정본 7단계 changes; they stay.
-🔴 [주의] **What is wrong today: workers `infer only` (`work/infer.py`, skill `ax-infer`) and the
-「통합자」 is the sole writer.** 정본 ⑸ has the worker commit to its own sub-branch. The
-`ax-work` skill and `work/runner.py` hold that path and are **deliberately not deleted** — they
-are the restoration material, not dead code.
+[완료] **Bodies are written through a lane chain, not a hardcoded `claude -p`** (`#346`,
+2026-09-04 · user's order: *"agy, 그다음 로컬로 배선하고, 클로드는 나중에 사용해"*).
+`work/lanes.py` tries **`agy` → local `qwen2.5-coder:14b`**, fail-forward; `claude` is off the
+default chain because its session limit is a **shared** resource — one 429 killed 3 of 4 pieces
+(measured 00:16). The lane convention is **not new**: `ontology/synth.generate` already picks the
+backend from the model string. Measured on one skeleton, same prompt, same 층1 verdict:
+agy **58.5s** 2/2 files · local **117.6s** 2/2 · claude 90–154s then 429.
+[중요] **"Local models can't write bodies" was a claim I made with no measurement behind it** —
+the evidence I cited (35B blocking two correct files) was **층2 = judgement**, a different task.
+With `[DOC]`+`[PSEUDO]`+frozen headers spelling out the design, a 14B writes bodies that pass 층1.
+[주의] 층2 stays commercial — that measurement does hold for judgement.
+[주의] The lanes run **on the master** and hand back text, so the result is written into the
+worker's files (`bundle._remote_write`, scp + sha256) and `wcommit` then **re-reads from disk**
+before 층1 — **no gate was removed.**
 [중요] **One hole remains and code cannot close it: this project has ZERO automation tests** (measured
 2026-08-12 — no `AUTOMATION_TEST`/`FunctionalTest`/spec anywhere in `Source/`). §4.3's measured
 *"hallucinations that compile"* (`Cast<IInteractable>`, `IsValid()` logic errors) are catchable
@@ -206,9 +225,13 @@ What **does** still hold from that date: distribution buys **incremental progres
 throughput** (measured: 2 workers = 12% faster, 90% dearer) — user-reframed, and unrelated to who
 writes.
 [중요] **Two skills go to a worker and the dispatch names which one applies**: `ax-work`
-(**the 정본 direction** — worker commits to its sub-branch) and `ax-infer` (what runs today —
-infer only, never commit). Neither may be "cleaned up": `ax-work`+`runner.py` are the restoration
-material for ⑸, and `ax-infer` is what the live pipeline still calls.
+(**the 정본 direction** — worker commits to its sub-branch) and `ax-infer` (infer only, never
+commit). Neither may be "cleaned up" — both are live paths.
+[주의] **The requester now gets four skills** — `ax-request` · `ax-ontology` · **`ax-advance`** ·
+`ax-review`. The last two are **different stages** and I confused them once (2026-09-04): a round
+that just finished goes to **`ax-advance`** (merge subs into the work branch, build once, ask
+*"bug or structure?"*, advance it); `main` only comes later, via `ax-review` → `finalize_work`.
+Each SKILL.md now points at the other so that utterance never lands in the wrong place.
 [중요] **Content travels as files in both directions, never on the command line or stdout.** `.2`'s
 console is CP949: the master→worker rule ("instructions ASCII, content by file") applies to
 worker→master too — responses land in `.ax/work/<task>/response.txt` and come back by `scp`.
