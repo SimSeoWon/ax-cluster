@@ -14,21 +14,42 @@ from .persistence import (
 from .logic_persist import update_work_meta
 
 
-def _read_redmine_config(root: Path) -> dict:
-    """프로젝트 루트 config.json 에서 redmine 설정 읽기. 미설정이면 빈 dict."""
+def _read_redmine_config(root: Path, project: str = "") -> dict:
+    """redmine 설정. 큐 루트 `config.json` → 없으면 **마스터의 정본 해석자**로 폴백.
+
+    [중요] **폴백이 없으면 이 이식본은 리눅스에서 영구히 침묵한다** (실측 2026-09-03):
+    원전은 인프라 PC 의 `config.json` 에 redmine 3종을 적어 두는 배포 형태였는데, 우리
+    큐 루트(`/home/sim/ax-state`)에는 그 파일이 **없다**. 그래서 `rm_cfg` 가 빈 dict 가 되고
+    ⑹ 완료 통보가 *"config.redmine_url 미설정"* 으로 조용히 반환됐다.
+
+    폴백 출처는 이미 있는 것들이다 — 새로 만들지 않았다:
+        url      `redmine.base_url()`  (env `AX_REDMINE_URL` → 기본값)
+        api_key  `redmine.api_key()`   (env → **컨테이너 DB**. `#347` 이 지적한 그 경로)
+        project  `redmine.project_of(<work 의 project>)` — 레지스트리의 `redmine.project`
+
+    [주의] `project_of` 는 **폴백하지 않는다**(`#293`) — 미설정이면 빈 문자열이고, 그때는
+    이슈를 만들지 않는다. 조용히 `modularstage` 로 떨어지면 남의 프로젝트를 오염시킨다.
+    """
     cfg_path = root / "config.json"
-    if not cfg_path.exists():
-        return {}
-    try:
-        with open(cfg_path, encoding='utf-8-sig') as f:
-            cfg = json.load(f)
-        return {
-            "url": (cfg.get("redmine_url") or "").rstrip("/"),
-            "api_key": cfg.get("redmine_api_key") or "",
-            "project": cfg.get("redmine_project") or "",
-        }
-    except Exception:
-        return {}
+    cfg = {}
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, encoding='utf-8-sig') as f:
+                cfg = json.load(f)
+        except Exception:
+            cfg = {}
+    url = (cfg.get("redmine_url") or "").rstrip("/")
+    key = cfg.get("redmine_api_key") or ""
+    proj = cfg.get("redmine_project") or ""
+    if not (url and key and proj):
+        try:
+            from ..redmine import base_url, api_key, project_of
+            url = url or base_url()
+            key = key or api_key()
+            proj = proj or (project_of(project) if project else "")
+        except Exception:                                    # noqa: BLE001
+            pass
+    return {"url": url, "api_key": key, "project": proj}
 
 
 def _redmine_post_issue(rm_cfg: dict, subject: str, description: str) -> Optional[int]:
@@ -78,6 +99,9 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                     return  # 이미 생성됨 (멱등성)
                 title = wmeta.get("title", work_id)
                 target_branch = wmeta.get("target_branch") or "(unknown)"
+                # [중요] 레드마인 프로젝트는 **work 의 project 축**에서 온다 (`#293`) —
+                #    상수로 박으면 NS 의 완료가 ModularStage 에 등재된다.
+                work_project = wmeta.get("project") or ""
                 # verified / failed / cancelled 분리
                 tasks_all = [t for t in idx.tasks.values() if t.get("work_id") == work_id]
                 tasks_v = [t for t in tasks_all if t.get("status") == "verified"]
@@ -93,9 +117,15 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                     last_fb = t.get("last_feedback") or t.get("last_result") or ""
                     fail_details.append((rf, str(last_fb)[:200]))
 
-            rm_cfg = _read_redmine_config(idx.root)
-            if not rm_cfg.get("url"):
-                _tq_log(f"[redmine] {work_id} 스킵 — config.redmine_url 미설정", idx.root)
+            rm_cfg = _read_redmine_config(idx.root, work_project)
+            # [중요] **무엇이 없어서 안 갔는지 찍는다.** 종전에는 url 하나만 보고 한 문구로
+            #    반환해서, 키가 없는 것과 프로젝트가 없는 것이 같은 침묵으로 보였다.
+            missing = [n for n, v in (("url", rm_cfg.get("url")),
+                                      ("api_key", rm_cfg.get("api_key")),
+                                      ("project", rm_cfg.get("project"))) if not v]
+            if missing:
+                _tq_log(f"[redmine] {work_id} 스킵 — 없는 것: {', '.join(missing)} "
+                        f"(work.project={work_project!r})", idx.root)
                 return
 
             partial = bool(tasks_f or tasks_c)
@@ -107,21 +137,33 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
             else:
                 subject_prefix = "[리뷰 요청]"
             subject = f"{subject_prefix} {title}"
-            header_line = ("통합 빌드 실패 — 수동 fix 후 재시도 필요"
-                           if build_failed
-                           else "분산 워커 작업 완료 — 머지 결정 요청")
+            # [중요] **여기서 「검증 통과」·「빌드 통과」를 주장하지 않는다** (사용자 지적
+            #    2026-09-03). 조각 하나씩 도장을 찍는 것은 값이 없고, 마스터는 애초에 빌드를
+            #    하지 않는다. 조각의 `verified` 는 *"그 조각 작업이 끝났다"* 는 신호일 뿐이다.
+            #    **실제 검사는 `.33` 이 서브 브랜치를 전부 머지한 뒤 한 곳에서 한다.**
+            #    [주의] 종전 문구는 `통합 빌드: [완료] 통과` 를 **무조건** 찍었다 — 아무도
+            #    빌드하지 않았는데 통과라고 적는 거짓말이었다.
+            header_line = "분산 워커 작업 완료 — 통합·검사·머지 판단 요청"
             lines = [
                 header_line,
                 "",
                 f"- work_id: {work_id}",
-                f"- feature 브랜치: `origin/{target_branch}`",
-                f"- 검증 통과 task: {len(tasks_v)}건"
+                f"- 작업 브랜치: `origin/{target_branch}`",
+                f"- 완료된 조각: {len(tasks_v)}건"
                 + (f" / 실패: {len(tasks_f)}건" if tasks_f else "")
                 + (f" / 취소: {len(tasks_c)}건" if tasks_c else ""),
-                f"- 통합 빌드: {'[실패] 실패' if build_failed else '[완료] 통과'}",
                 "",
-                "## 구현 파일 (검증 통과)",
+                "[중요] **아직 아무것도 검증되지 않았다.** 조각은 각자 자기 서브 브랜치에",
+                "커밋만 된 상태다 — 통합 빌드도, 교차 파일 정합성 검사도 하지 않았다.",
+                "그 검사는 아래 ⑴ 에서 **전부 머지한 뒤 한 번** 한다.",
+                "",
+                "## 서브 브랜치 (머지 대상)",
             ]
+            for t in tasks_v:
+                b = t.get("branch") or f"task/{work_id}/{t.get('task_id','')}"
+                lines.append(f"- `{b}` — `{t.get('target_file','')}`")
+            lines.append("")
+            lines.append("## 구현 파일")
             for f in files_v[:50]:
                 lines.append(f"- `{f}`")
             if len(files_v) > 50:
@@ -151,22 +193,31 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                     lines.append(build_log_tail[-2500:])
                     lines.append("```")
 
+            # [중요] **지시는 받는 사람이 실제로 칠 수 있는 것이어야 한다.** 원전 문구는
+            #    `master_orchestrator --finalize` 였는데 그 exe 는 `.33` 에 없다 — 있지도
+            #    않은 명령을 지시하는 절차서가 원전 이식에서 값을 치른 그 부류(`#297`)다.
+            #    우리 정본 ⑺ 은 요청자(`.33`)가 `ax-review` 로 통합·빌드·승인하는 것이다.
             lines += [
                 "",
-                "## 다음 단계",
+                "## 다음 단계 — `.33` 메인 작업 컴퓨터에서 한다",
                 "",
-                "1. feature 브랜치 확인 (`git fetch && git checkout " + target_branch + "`)",
+                f"1. `.33` 체크아웃에서 `claude` 를 열고 **`work {work_id} 리뷰`** "
+                f"(또는 `#N 리뷰`) — `ax-review` 스킬이 잡는다.",
+                "2. **서브 브랜치를 전부 머지한다.** 위 목록 전부를 옆에 세운 worktree 에 모은다.",
+                "   [중요] 사람의 워킹트리는 건드리지 않는다 — 검수 트리는 체크아웃의 형제다.",
+                "3. **거기서 한 번 검사한다** — `.33` 의 UE5 로 통합 빌드. 조각별로 나눠 보지 않는다:",
+                "   교차 파일 정합성은 전부 모아 놓고 세워야 드러난다.",
             ]
-            if build_failed:
-                lines.append("2. 빌드 에러 fix → feature 브랜치에 직접 commit + push (cross-file 정합성 보강)")
-                lines.append("3. fix 후 통합 빌드 재시도: 서버에서 `master_orchestrator --integration-build " + work_id + " --repo <repo>`")
-                lines.append("4. 빌드 통과되면 finalize 가능: `master_orchestrator --finalize " + work_id + "`")
-            elif partial:
-                lines.append("2.  미완성 파일 수동 작성 / 또는 수동 task 재등재 후 워커 재실행")
-                lines.append("3. 승인: 서버에서 `master_orchestrator --finalize " + work_id + "` 실행")
+            if partial:
+                lines.append("4. 실패·취소분은 손으로 채우거나 task 를 재등재해 워커를 다시 돌린다.")
+                lines.append("5. 빌드가 통과하고 사람이 승인하면 `main` 에 올린다 — "
+                             "`review.finalize_work(..., confirm=True)` "
+                             "([중요] `confirm=False` 가 기본 — 승인 발화가 곧 트리거다).")
             else:
-                lines.append("2. 승인: 서버에서 `master_orchestrator --finalize " + work_id + "` 실행")
-                lines.append("3. 반려/추가 작업: 본 이슈에 코멘트 + 워커 PC 에 추가 task 등재")
+                lines.append("4. 빌드가 통과하고 사람이 승인하면 `main` 에 올린다 — "
+                             "`review.finalize_work(..., confirm=True)` "
+                             "([중요] `confirm=False` 가 기본 — 승인 발화가 곧 트리거다).")
+                lines.append("5. 반려: `review.reject_work(...)` · 추가 작업은 본 이슈에 코멘트.")
             description = "\n".join(lines)
 
             issue_id = _redmine_post_issue(rm_cfg, subject, description)
@@ -181,142 +232,24 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
     threading.Thread(target=_job, daemon=True).start()
 
 
-def _run_integration_build(idx: TaskIndex, work_id: str) -> dict:
-    """master_orchestrator.exe --integration-build <work_id> 호출.
-    Returns {build_passed: bool, exit_code, build_log_tail, error?} 또는 {ok: False, error: ...}
-    호출 자체 실패 (master_orch 없음, timeout 등) 는 ok=False — caller 가 build_failed 로 간주.
-    """
-    import subprocess as _sp
-    master_orch = idx.root / ".claude" / "mcp" / "master_orchestrator.exe"
-    if not master_orch.exists():
-        _tq_log(f"[integration-build] {work_id} master_orchestrator.exe 없음 ({master_orch}) — 빌드 게이트 스킵 (ok 가정)", idx.root)
-        # exe 가 없으면 빌드 검증 자체를 못함 → 보수적으로 PASS 처리해 기존 흐름 유지
-        return {"ok": True, "build_passed": True, "skipped": True, "reason": "master_orch.exe missing"}
-    try:
-        r = _sp.run(
-            [str(master_orch), "--integration-build", work_id, "--repo", str(idx.root)],
-            capture_output=True, text=True, encoding='utf-8', errors='replace',
-            stdin=_sp.DEVNULL, timeout=1900,  # build 자체 timeout 1800s + 여유 100s
-        )
-    except _sp.TimeoutExpired:
-        _tq_log(f"[integration-build] {work_id} master_orch timeout — build_failed 로 간주", idx.root)
-        return {"ok": True, "build_passed": False, "error": "integration-build timeout"}
-    except Exception as e:
-        _tq_log(f"[integration-build] {work_id} 호출 예외: {e}", idx.root)
-        return {"ok": True, "build_passed": False, "error": f"call exception: {e}"}
-    # master_orch 의 stdout 마지막에 JSON 결과 — 파싱
-    out_text = (r.stdout or "").strip()
-    try:
-        # 출력 끝의 JSON 블록만 (다른 로그가 앞에 있을 수 있음)
-        json_start = out_text.rfind("{")
-        json_end = out_text.rfind("}")
-        if json_start >= 0 and json_end > json_start:
-            payload = json.loads(out_text[json_start:json_end+1])
-            return {"ok": True, **payload}
-    except Exception as e:
-        _tq_log(f"[integration-build] {work_id} JSON 파싱 실패 (stdout 끝부분): {e}", idx.root)
-    if r.returncode != 0:
-        return {"ok": True, "build_passed": False,
-                "error": f"master_orch rc={r.returncode}",
-                "build_log_tail": (r.stderr or "")[-2000:]}
-    return {"ok": True, "build_passed": False, "error": "no JSON in stdout"}
-
-
-def _do_auto_cleanup(idx: TaskIndex, work_id: str):
-    """all_verified 직후 서버 측 자동 정리 (백그라운드 스레드 본문).
-    1) git fetch --all
-    2) 원격 worker/<*>/<task_id> 삭제 (이 work 의 task 만)
-    3) **통합 빌드 게이트** (옵션 A) — feature 브랜치 위에서 UE Build.bat 호출
-       - 빌드 실패 시: merge_status=build_failed + Redmine 이슈에 빌드 로그 → 종료
-       - 빌드 성공 시: 다음 단계
-    4) git checkout main + pull origin main
-    5) merge_status → ready_for_review (verify_task 가 이미 한 경우 idempotent)
-    6) Redmine 이슈 자동 생성 트리거
-    실패는 모두 log 만 — cleanup 미완료여도 finalize_work 가 수동 복구 가능."""
-    repo = _git_repo(idx.root)
-    if not (repo / ".git").exists():
-        _tq_log(f"[auto-cleanup] {work_id} 스킵 — git repo 없음 ({repo})", idx.root)
-        return
-
-    # 1) fetch
-    rc, out = _git(repo, "fetch", "--all", "--prune")
-    if rc != 0:
-        _tq_log(f"[auto-cleanup] {work_id} fetch 실패: {out[:200]}", idx.root)
-
-    # 2) 이 work 의 worker 브랜치 수집·삭제 (origin only — 로컬 worker/* 는 서버에 보통 없음)
-    with idx.lock:
-        worker_branches: list[str] = []
-        for t in idx.tasks.values():
-            if t.get("work_id") != work_id:
-                continue
-            wid = t.get("worker_id") or ""
-            tid = t.get("task_id") or ""
-            if wid and tid:
-                b = f"worker/{wid}/{tid}"
-                if b not in worker_branches:
-                    worker_branches.append(b)
-
-    for b in worker_branches:
-        rc, out = _git(repo, "push", "origin", "--delete", b)
-        if rc == 0:
-            _tq_log(f"[auto-cleanup] origin/{b} 삭제", idx.root)
-        elif "remote ref does not exist" not in out:
-            _tq_log(f"[auto-cleanup] origin/{b} 삭제 실패 (계속): {out[:120]}", idx.root)
-
-    # 3) 통합 빌드 게이트 (옵션 A) — feature 브랜치 위에서 UE Build.bat. master_orch.exe 가
-    #    feature 체크아웃 + Build.bat 까지 일괄 처리하므로 task_queue 는 결과만 받음.
-    _tq_log(f"[auto-cleanup] {work_id} 통합 빌드 게이트 시작", idx.root)
-    bres = _run_integration_build(idx, work_id)
-    if bres.get("skipped"):
-        _tq_log(f"[auto-cleanup] {work_id} 통합 빌드 스킵 — {bres.get('reason')}", idx.root)
-    elif not bres.get("build_passed"):
-        # 빌드 실패 — build_failed 로 flip, Redmine 이슈에 로그 첨부 후 종료 (main 체크아웃 X)
-        err = bres.get("error", "build failed")
-        log_tail = bres.get("build_log_tail") or ""
-        _tq_log(f"[auto-cleanup] {work_id} 통합 빌드 실패 — merge_status=build_failed: {err}", idx.root)
-        update_work_meta(idx, work_id, merge_status="build_failed")
-        _try_create_review_issue_async(idx, work_id,
-                                        build_status="failed",
-                                        build_log_tail=log_tail,
-                                        build_error=err)
-        # main 으로 복귀는 시도 (운영자가 작업하기 좋게)
-        rc_co, _ = _git(repo, "checkout", "main")
-        if rc_co != 0:
-            _git(repo, "checkout", "master")
-        return
-    else:
-        _tq_log(f"[auto-cleanup] {work_id} 통합 빌드 통과 "
-                f"(exit={bres.get('exit_code')} duration={bres.get('duration_seconds')}s)", idx.root)
-
-    # 4) checkout main + pull (서버가 워커 브랜치 또는 feature 위에 있을 수 있음)
-    #    feature 브랜치는 finalize_work 가 머지·삭제하므로 여기선 손대지 않음
-    rc, out = _git(repo, "checkout", "main")
-    if rc != 0:
-        # main 없으면 master 시도
-        rc2, out2 = _git(repo, "checkout", "master")
-        if rc2 != 0:
-            _tq_log(f"[auto-cleanup] {work_id} checkout main/master 실패: {out[:120]} / {out2[:120]}", idx.root)
-        else:
-            _tq_log(f"[auto-cleanup] master 체크아웃", idx.root)
-    else:
-        _tq_log(f"[auto-cleanup] main 체크아웃", idx.root)
-    # --ff-only: 서버의 로컬 main 이 origin 과 divergence 면 (수동 commit 등)
-    # 머지 에디터를 띄우지 않고 깨끗이 실패. stdin=DEVNULL 환경에서의 hang 위험 차단.
-    rc, out = _git(repo, "pull", "--ff-only", "origin", "main")
-    if rc != 0:
-        rc2, _ = _git(repo, "pull", "--ff-only", "origin", "master")
-        if rc2 != 0:
-            _tq_log(f"[auto-cleanup] {work_id} pull --ff-only 실패 (계속): {out[:120]}", idx.root)
-
-    # 4) merge_status idempotent flip (verify_task 가 보통 먼저 처리)
-    update_work_meta(idx, work_id, merge_status="ready_for_review")
-
-    # 5) Redmine 이슈 생성 트리거 (백그라운드)
-    _try_create_review_issue_async(idx, work_id)
-    _tq_log(f"[auto-cleanup] {work_id} 완료 — 워커 브랜치={len(worker_branches)} 정리, ready_for_review", idx.root)
-
+# [중요] **여기 있던 `_run_integration_build` 와 `_do_auto_cleanup` 을 지웠다**
+# (사용자 확정 2026-09-03, 반복 지시: *"통합자 필요 없다"*).
+#
+# 원전은 인프라 PC 의 큐 루트가 **git 저장소**이고 거기서 `master_orchestrator.exe` 로 통합
+# 빌드까지 돌리는 배포였다. 우리 큐 루트(`/home/sim/ax-state`)는 git 저장소가 아니라서
+# `_do_auto_cleanup` 은 초입에서 *"git repo 없음"* 으로 반환했고 — **완료 공지가 그 함수
+# 안에 들어 있었기 때문에 공지도 같이 죽었다**(실측 2026-09-03 22:38:59).
+#
+# 게다가 그 함수의 ⑶단계가 통합 빌드 게이트였다. 정본 ⑺ 은 *"서브 브랜치를 딴 것은 `.33`
+# 메인 작업 컴퓨터에서 머지한다"* 이므로 마스터에 그 자리는 없다.
+#
+# 남긴 것은 **공지 하나**다 — 조각이 전부 terminal 이면 `.33` 에 알린다. 그게 마스터의 끝이다.
 
 def _auto_cleanup_work_async(idx: TaskIndex, work_id: str):
-    """verify_task 에서 호출 — auto-cleanup 을 백그라운드 스레드로 위임.
-    HTTP 응답 지연 차단 + verify_task 의 lock 점유 최소화."""
-    threading.Thread(target=_do_auto_cleanup, args=(idx, work_id), daemon=True).start()
+    """조각이 전부 끝났다 — **요청자(`.33`)에 완료를 공지한다.** 그게 전부다.
+
+    [중요] 이름은 호출부(`logic_lifecycle`·`logic`) 계약을 지키려고 남겼다. 하는 일은
+    **공지 하나**다: git 도 안 만지고 빌드도 안 한다. 통합은 `.33` 이 `ax-review` 로 한다.
+    """
+    _tq_log(f"[notify] {work_id} 조각 전부 종결 — 요청자에 완료 공지", idx.root)
+    _try_create_review_issue_async(idx, work_id)

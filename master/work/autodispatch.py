@@ -343,36 +343,6 @@ def needs_integration(paths, work_id: str, *, api=None) -> tuple:
                   f"통과 {n_ok}건{' [주의] 나머지는 실패라 적용되지 않는다' if n_ok < n else ''}")
 
 
-def integrate_now(paths, work_id: str, *, locked: bool = False) -> dict:
-    """통합을 부르고 결과를 저널에 남긴다. [중요] **실패는 고치지 않고 사유만 남긴다.**
-
-    [중요] **`locked=False` 면 여기서 work 잠금을 잡는다** (실측 2026-09-01 01:04, 내가 낸 사고).
-    회수 경로를 잠금 **밖**에 두었더니, `dispatch()` 가 통합을 돌리는 중에 10분 타이머의
-    catchup 이 같은 work 에 두 번째 통합을 띄웠다 — **같은 워크트리(`.2` 의 `ax-wt-<work_id>`)를
-    두 프로세스가 만졌다.** `ensure_worktree` 는 재사용 시 트리를 기준 커밋으로 **되돌리므로**,
-    한쪽이 다른 쪽 밑에서 트리를 치우는 형태가 된다.
-    `locked=True` 는 호출자가 이미 `_Lock` 안에 있을 때만 쓴다(`dispatch()`).
-    """
-    if not locked:
-        with _Lock(work_id) as lk:
-            if lk is None:
-                _log(f"{work_id} 통합 안 한다 — 이미 파견·통합이 돌고 있다 (잠금)")
-                return {"integrated": False, "reason": "이미 돌고 있다"}
-            return integrate_now(paths, work_id, locked=True)
-    _log(f"{work_id} 통합 시작 — 층1 → 층2 → 적용 → 조각별 빌드")
-    try:
-        from . import integrate
-        itg, why = integrate.run_auto(paths, work_id)
-    except Exception as e:                                       # noqa: BLE001
-        _log(f"[중요] {work_id} 통합 중 예외 — {type(e).__name__}: {e}")
-        return {"integrated": False, "error": f"{type(e).__name__}: {e}"}
-    if itg is None:
-        _log(f"{work_id} 통합 안 걸림 — {why}")
-        return {"integrated": False, "reason": why}
-    _log(f"{work_id} 통합 끝 — {itg.summary()}")
-    return {"integrated": bool(getattr(itg, "ok", False))}
-
-
 def dispatch(paths, work_id: str, *, limit: int = 0, api=None, runner_many=None) -> dict:
     """한 work 을 **끝까지** 민다. `run_many` 가 워커가 빌 때마다 다음 조각을 집는다.
 
@@ -452,11 +422,15 @@ def dispatch(paths, work_id: str, *, limit: int = 0, api=None, runner_many=None)
         # [중요] 판정을 **한 함수로 모은다** — `needs_integration` 이 「응답이 조각 수만큼
         #    스풀에 있는가」로 본다. 종전에 여기만 `pending 0` 으로 봤다가, 실패가 `claimed` 로
         #    남는 경로에서 1/4 만 들고 통합에 들어갔다(실측 2026-09-01 01:03).
+        # [중요] **마스터는 여기서 끝난다** (사용자 확정 2026-09-03). 종전에는 이 자리에서
+        #    「통합자」를 골라 적용·빌드·커밋까지 했는데, 정본 ⑺ 은 **모든 서브태스크가 끝나면
+        #    요청자(`.33`)에 완료를 공지하고, 통합 여부는 거기서 사람이 정하는 것**이다.
+        #    공지는 큐가 낸다 — 조각이 전부 terminal 이 되면 `merge_status` 가
+        #    `ready_for_review` 로 뒤집히고 `logic_cleanup` 이 Redmine [리뷰 요청] 이슈를 만든다.
         need, why_i = needs_integration(paths, work_id, api=api)
-        if not need:
-            _log(f"{work_id} 통합 보류 — {why_i}")
-            return out
-        out.update(integrate_now(paths, work_id, locked=True))
+        out["all_pieces_done"] = bool(need)
+        _log(f"{work_id} " + ("조각 전부 완료 — 요청자(.33) 공지 대기 (통합은 .33 에서)"
+                              if need else f"아직 안 끝났다 — {why_i}"))
         return out
 
 
@@ -578,11 +552,10 @@ def drain(*, catchup: bool = False, api=None) -> dict:
                 if not r.get("dispatched"):
                     need, why2 = needs_integration(paths_, wid, api=api)
                     if need:
-                        _log(f"{name}/{wid} 통합 회수 — {why2}")
+                        # [중요] 통합하지 않는다 — `.33` 의 자리다. 여기서는 고지만 한다.
+                        _log(f"{name}/{wid} 조각 전부 완료 — 요청자(.33) 처리 대기 ({why2})")
                         res.setdefault("recovered", 0)
                         res["recovered"] += 1
-                        if integrate_now(paths_, wid).get("integrated"):
-                            res["integrated"] = res.get("integrated", 0) + 1
 
     # [중요] **한 줄은 반드시 남긴다** — 「아무것도 안 했다」와 「안 돌았다」는 다른 상태이고,
     #    그 둘을 구분 못 해서 2026-08-29~31 이틀을 잃었다(`#340` 노트).
@@ -620,10 +593,8 @@ def main(argv) -> int:
             if not r.get("dispatched"):
                 # 파견할 것이 없으면 통합이 남았을 수 있다 — 회수 경로를 그 자리에서 본다.
                 need, why = needs_integration(paths, wid)
-                if need:
-                    integrate_now(paths, wid)
-                else:
-                    _log(f"{wid} 이어갈 것이 없다 — {why}")
+                _log(f"{wid} " + ("조각 전부 완료 — 통합은 `.33` 에서 한다"
+                                  if need else f"이어갈 것이 없다 — {why}"))
             return 0
         r = drain(catchup=True)
         return 1 if r["errors"] else 0

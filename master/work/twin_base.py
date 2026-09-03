@@ -214,3 +214,57 @@ def base_section(base: Base) -> list:
                "못 따라잡으면 작업하지 말고 보고할 것 — `reset --hard` 로 맞추면 사람이 "
                "편집 중이던 것이 사라진다.")
     return out
+
+
+# ── 동결 대조 원본 ────────────────────────────────────────────────────────────────
+#
+# [중요] **`work/integrate.py`(통합자)에서 옮겨 왔다** (2026-09-03, 통합자 삭제).
+#    통합자는 지웠지만 이 함수는 통합과 무관하다 — 워커 응답을 층1 이 대조할 때 쓰는
+#    「적용 전 원본」이고, 기준 커밋을 다루는 이 모듈이 제 집이다.
+
+
+def _log(msg: str) -> None:
+    """사유 기록 (`#285` 계약). stderr → 저널. [중요] **조용히 비는 것을 말한다.**"""
+    import sys
+    print(f"[twin-base] {msg}", file=sys.stderr, flush=True)
+
+
+def local_baseline(paths, base_commit: str):
+    """마스터의 색인 클론을 기준 원본으로 쓴다 — **왕복 없이** 동결을 대조한다.
+
+    [중요] 근거: §8.4 가 *"durable 을 만드는 기준 커밋 == 매니페스트의 twin_commit ==
+    `index.last_indexed_commit`"* 로 정의해 뒀다. 세 값이 같으므로 마스터의 로컬 소스가 곧
+    적용 전 상태다. **정말 같은지 확인하고**, 다르면 `None` 을 돌려 호출자가 원격에서 읽게 한다
+    — 낡은 사본으로 동결을 판정하면 조용히 틀린다.
+    """
+    try:
+        import yaml
+        cfg = yaml.safe_load(paths.config.read_text(encoding="utf-8")) or {}
+        indexed = str(((cfg.get("index") or {}).get("last_indexed_commit")) or "")
+    except Exception as e:                               # noqa: BLE001
+        _log(f"트윈 커밋을 읽지 못했다 ({paths.config}) — 동결 판정을 못 한다: "
+             f"{type(e).__name__}: {e}")
+        return None
+    if not indexed or not base_commit:
+        return None
+    if not (indexed.startswith(base_commit) or base_commit.startswith(indexed)):
+        return None
+
+    root = paths.repo
+
+    def read(path: str):
+        p = root / str(path).replace("\\", "/")
+        if not p.is_file():
+            return None                          # 신규 파일 — 동결할 원본이 없다
+        from ..source_text import decode          # [중요] 소스 44%가 CP949 다
+        d = decode(p.read_bytes())
+        # [중요] `decode` 는 **`Decoded` 를 돌려준다 — 문자열이 아니다.** 실측 2026-08-12: 그대로
+        #    넘겼더니 `frozen_decls` 가 터졌다. 단위 테스트가 `baseline` 을 주입해서 이 실물
+        #    경로를 안 밟았고, **실전에서 나왔다.**
+        if d.degraded:
+            # [주의] 문자가 유실된 사본으로 동결을 판정하면 **없는 위반을 만든다**(치환된 글자가
+            #    선언 키를 바꾼다). 정상 작업을 막는 게이트가 통과시키는 게이트보다 나쁘다 —
+            #    `None` 을 돌려 그 파일은 **동결 미검사**로 기록되게 한다.
+            return None
+        return d.text
+    return read

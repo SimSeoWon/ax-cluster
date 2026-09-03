@@ -134,21 +134,17 @@ def test_residue_response_is_rejected_at_acceptance_not_at_apply() -> None:
     check("[FEEDBACK] 잔재도 수락 단계에서 막는다", not r2.ok, r2.summary)
 
 
-def test_integrate_still_runs_layer1_as_the_last_line() -> None:
-    """[중요] 두 곳 다 둔다 — 스풀을 손질하거나 재사용하는 경로에서 ①이 우회된다."""
-    from master.work import integrate as ITG
-    r = ITG.layer1({C: "// [IMPL] 미완\n"}, baseline=None)
-    check("통합자 쪽도 같은 검사", not r.ok, r.summary)
-    check("같은 구현을 쓴다", ITG.Layer1 is L1.Layer1)
-
+# [중요] **여기 있던 `test_integrate_still_runs_layer1_as_the_last_line` 를 지웠다**
+# (2026-09-03, 통합자 삭제). 층1 이 「두 곳」에 있다는 계약이 한 곳으로 줄었다 —
+# 통합 시점 검사는 마스터에 없고, 응답 수락(`infer.judge`)과 커밋 직전(`wcommit`)이 남는다.
+# 통합 검사는 `.33` 이 서브 브랜치를 전부 머지한 뒤 한 번 한다.
 
 def main() -> int:
     for fn in (test_volatile_tags_are_caught, test_permanent_tags_and_plain_comments_pass,
                test_feedback_left_in_source_is_a_violation, test_fence_residue_is_a_violation,
                test_freeze_semantics, test_cpp_is_not_a_freeze_target,
                test_new_file_has_nothing_to_freeze, test_fail_closed_directions,
-               test_residue_response_is_rejected_at_acceptance_not_at_apply,
-               test_integrate_still_runs_layer1_as_the_last_line):
+               test_residue_response_is_rejected_at_acceptance_not_at_apply):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_layer1: {PASS}/{total} 통과")

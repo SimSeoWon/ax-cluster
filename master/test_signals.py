@@ -127,54 +127,15 @@ def test_client_tool_posts_master_mediated():
 
 # ── ④ 통합자 배선 ─────────────────────────────────────────────
 
-def test_integrator_lays_signals_for_passed_only():
-    from master.work import integrate as IG
-    p = fixture()
-    itg = IG.Integration(work_id="w-9")
-    ok = IG.Applied(task_id="t-ok", files=["Source/M/A.cpp"], commit="abc123")
-    bad = IG.Applied(task_id="t-bad", files=["Source/M/B.cpp"], error="층1 불합격")
-    itg.applied = [ok, bad]
-
-    def fake_api(method, path, payload=None):
-        assert path == "/api/v1/tasks/t-ok"
-        return {"task_id": "t-ok", "title": "히트박스[UHitBox] 판정 추가"}
-
-    IG._lay_signals(p, itg, api=fake_api)
-    got = SG.read_signals(p)
-    check("[중요] 통과분만 적재된다 (불합격은 실패 카탈로그 소관)",
-          len(got) == 1 and got[0]["work_id"] == "w-9", str(len(got)))
-    check("intent = 큐의 task 제목 (사람이 쓴 요청)",
-          got[0]["intent"] == "히트박스[UHitBox] 판정 추가", got[0]["intent"])
-    check("source=pipeline", got[0].get("source") == "pipeline")
-    check("고친 파일이 실린다",
-          got[0]["files_modified"] == [{"path": "Source/M/A.cpp", "summary": ""}])
-
-    p2 = fixture()
-    itg2 = IG.Integration(work_id="w-10")
-    itg2.applied = [IG.Applied(task_id="t-x", files=["f"], commit="def456")]
-
-    def dead_api(method, path, payload=None):
-        raise RuntimeError("큐 죽음")
-
-    IG._lay_signals(p2, itg2, api=dead_api)
-    got2 = SG.read_signals(p2)
-    check("[중요] 제목 조회 실패해도 task_id 로 남긴다 — 신호 유실이 더 비싸다",
-          len(got2) == 1 and got2[0]["intent"] == "t-x", str(got2))
-
-    class BadPaths:
-        root = "/proc/없는곳/여긴못쓴다"
-
-    itg3 = IG.Integration(work_id="w-11")
-    itg3.applied = [IG.Applied(task_id="t-y", files=["f"], commit="aaa111")]
-    IG._lay_signals(BadPaths(), itg3, api=dead_api)
-    check("적재 실패는 통합을 안 막고 note 로 말한다 (조용한 실패 금지)",
-          "신호 적재 실패" in itg3.note, itg3.note)
-
+# [중요] **여기 있던 `test_integrator_lays_signals_for_passed_only` 를 지웠다**
+# (2026-09-03, 통합자 삭제). 신호 적재를 「통합자가 커밋할 때」 하던 배선이 사라졌다.
+# [주의] **그래서 지금 자동으로 신호를 놓는 주체가 없다** — 큐의 엔드포인트
+# (`task_queue/server.py:508`)는 남아 있으니 호출만 하면 되지만, 그 호출자를
+# 아직 안 만들었다. 미결로 보고했다.
 
 def main() -> int:
     for fn in (test_record_schema, test_roundtrip_and_broken_lines,
-               test_client_tool_posts_master_mediated,
-               test_integrator_lays_signals_for_passed_only):
+               test_client_tool_posts_master_mediated):
         fn()
     print(f"{'OK' if not FAIL else '[실패]'} test_signals: {PASS}/{PASS + FAIL} 통과")
     return 1 if FAIL else 0

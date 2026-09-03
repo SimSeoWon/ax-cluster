@@ -468,6 +468,35 @@ def submit(task_id: str, out: Outcome, *, epoch=None, worker_id: str = "", api=_
     })
 
 
+def verify(task_id: str, *, passed: bool = True, feedback: str = "", api=_api):
+    """조각을 **종결**한다 — [중요] 「검증했다」가 아니라 **「그 조각 작업이 끝났다」**이다.
+
+    [중요] **조각 단위로 통과 도장을 찍지 않는다** (사용자 지적 2026-09-03): 미시적인 한
+    부분씩 검사해 봐야 값이 없다. 실제 검사는 `.33` 이 **서브 브랜치를 전부 머지한 뒤
+    한 곳에서 한 번** 한다 — 교차 파일 정합성은 모아 놔야 드러나기 때문이다.
+    이 호출은 큐에 *"이 조각은 더 이상 진행할 것이 없다"* 를 알리는 것뿐이고,
+    `verified` 라는 상태 이름은 큐의 어휘일 뿐 판정의 주장이 아니다.
+
+    [중요] **submit 만으로는 태스크가 끝나지 않는다.**
+
+    큐의 `terminal = verified + failed + cancelled` 이고, `terminal >= total` 일 때만
+    work 이 `ready_for_review` 로 뒤집히며 **거기에 `.33` 완료 공지(Redmine [리뷰 요청]
+    이슈)가 달려 있다**(`task_queue/logic_cleanup.py`).
+
+    [중요] **이것이 없어서 교착이었다** (실측 2026-09-03): 조각 4/4 가 커밋에 성공해도 전부
+    `submitted` 에 남아 terminal 0/4 → 공지 없음 → `.33` 은 끝난 줄 모름. 그런데 종전 코드는
+    verify 를 「통합자」 안에 두었고 통합은 사람 승인을 기다렸으므로, **승인하라는 공지가
+    통합 뒤에 나오는** 순환이 됐다. 정본대로 조각의 끝은 **워커 커밋**이므로 판정도 거기서 낸다.
+
+    [주의] `verify_epoch` 는 보내지 않는다 — 원전 규약상 `None` 은 재배정 fencing 대상이
+    아닌 주체(서버측 verify)를 뜻한다.
+    """
+    return api("POST", f"/api/v1/tasks/{task_id}/verify", {
+        "passed": bool(passed), "result": "pass" if passed else "reject",
+        "feedback": feedback[:600],
+    })
+
+
 def submit_fail(task_id: str, reason: str, detail: str = "", *, epoch=None,
                 worker_id: str = "", api=_api):
     """실패 고지. [중요] **submit 과 같은 두 게이트**를 통과해야 한다 (`#318`)."""

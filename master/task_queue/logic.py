@@ -34,7 +34,7 @@ from .logic_lifecycle import (  # noqa: F401  (re-export)
 )
 from .logic_cleanup import (  # noqa: F401  (re-export)
     _read_redmine_config, _redmine_post_issue, _try_create_review_issue_async,
-    _run_integration_build, _do_auto_cleanup, _auto_cleanup_work_async,
+    _auto_cleanup_work_async,
 )
 
 

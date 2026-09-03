@@ -633,7 +633,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
     # 동결 대조 원본 — 마스터의 색인 클론이 같은 커밋이면 그것을 쓴다(왕복 0).
     # [주의] 없으면 `None` 이라 층1 이 **동결 미검사로 기록**한다 — 통과로 접지 않는다.
     try:
-        from .integrate import local_baseline
+        from .twin_base import local_baseline
         baseline = local_baseline(paths, base)
     except Exception as e:                                   # noqa: BLE001
         _log(f"[wcommit] {task_id} 동결 원본을 못 잡았다 — {type(e).__name__}: {e}")
@@ -652,6 +652,22 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                              tail=(c.reason or "")[-2000:])
         try:
             runner.submit(task_id, out, epoch=epoch, worker_id=facts.host, api=api)
+            # [중요] **제출에서 끝내지 않는다 — 조각의 끝은 여기다.** 커밋이 생겼고 층1 을
+            #    통과했으므로 이 조각은 끝났다. verify 까지 내야 큐에서 terminal 이 되고,
+            #    조각이 전부 terminal 이 돼야 `.33` 에 완료 공지가 나간다(정본 ⑹).
+            #    [주의] 종전에는 이 판정이 「통합자」 안에 있었고 통합은 사람 승인을 기다렸다 —
+            #    승인하라는 공지가 통합 뒤에 나오는 **교착**이었다(실측 2026-09-03 22:30).
+            try:
+                runner.verify(task_id, passed=True,
+                              feedback=f"조각 작업 완료 — {c.branch} ← {c.head[:8]}. "
+                                       f"[주의] 검증 아님: 통합 검사는 `.33` 이 서브 브랜치를 "
+                                       f"전부 머지한 뒤 한 번 한다", api=api)
+                _log(f"[wcommit] {task_id} 조각 종결 — 큐에 완료 기록 (검증은 `.33`)")
+            except Exception as e:                           # noqa: BLE001
+                # [중요] 조용히 넘기지 않는다 — 이 한 줄이 안 나가면 공지가 통째로 멈춘다.
+                res.notes.append(f"[중요] 커밋·제출은 됐는데 판정(verify)이 실패했다 — "
+                                 f"{type(e).__name__}: {e}. **공지가 안 나간다**")
+                _log(f"[wcommit] [중요] {task_id} verify 실패 — {e} (공지가 막힌다)")
         except Exception as e:                               # noqa: BLE001
             # [주의] 제출 실패는 **커밋을 되돌리지 않는다** — 코드는 브랜치에 안전하게 있다.
             #    사유만 남긴다(사람이 재제출한다). 조용히 성공으로 접지 않는다.

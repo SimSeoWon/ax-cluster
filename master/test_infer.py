@@ -368,6 +368,7 @@ class FakeQueue:
         self.tasks = list(tasks)
         self.failed: list = []
         self.submitted: list = []      # 🔴 정본 ⑸ — 커밋이 생기면 여기 쌓인다
+        self.verified: list = []       # 🔴 정본 ⑹ — 판정이 나야 `.33` 공지가 나간다
         self.beats = 0
 
     def __call__(self, method, path, payload=None, *, timeout=20):
@@ -382,6 +383,9 @@ class FakeQueue:
         if path.endswith("/submit"):
             self.submitted.append(dict(payload or {}))
             return {"ok": True}
+        if path.endswith("/verify"):
+            self.verified.append((path.split("/")[-2], dict(payload or {})))
+            return {"ok": True}
         raise AssertionError(f"예상 밖 호출: {method} {path}")
 
 
@@ -393,14 +397,13 @@ def _run(paths, q, *, body="void X::Go() { Do(); }\n", workers=1,
     """
     facts = [FakeFacts(host=f"w{i+1}") for i in range(workers)]
     SB, orig = _fake_subbranch()
-    import master.work.integrate as IG
     import master.work.twin_base as TB
-    saved_bl, saved_tb = IG.local_baseline, TB.resolve
+    saved_bl, saved_tb = TB.local_baseline, TB.resolve
 
     class _Base:
         commit = SUB_TIP
 
-    IG.local_baseline = lambda p, b: None      # 동결 원본 없음 → 층1 이 미검사로 기록
+    TB.local_baseline = lambda p, b: None      # 동결 원본 없음 → 층1 이 미검사로 기록
     TB.resolve = lambda p, w: _Base()          # 작업 브랜치 tip (골조 커밋)
     try:
         return I.run_many(paths, limit=limit, facts=facts, api=q, clean=lambda f: Clean(),
@@ -410,7 +413,7 @@ def _run(paths, q, *, body="void X::Go() { Do(); }\n", workers=1,
                           reader=lambda f, p: body)
     finally:
         SB.create = orig
-        IG.local_baseline, TB.resolve = saved_bl, saved_tb
+        TB.local_baseline, TB.resolve = saved_bl, saved_tb
 
 
 def test_run_many_takes_several_and_orders_them() -> None:
@@ -430,6 +433,35 @@ def test_run_many_takes_several_and_orders_them() -> None:
         check("  브랜치와 커밋을 실어 보낸다",
               all(p.get("branch", "").startswith("task/W1/") and p.get("head_commit")
                   for p in q.submitted), str(q.submitted))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_committed_piece_is_verified_so_the_requester_gets_told() -> None:
+    """🔴 정본 ⑹ — **조각이 다 끝나면 `.33` 에 완료를 공지한다.** 그 공지의 방아쇠가 여기다.
+
+    큐는 `terminal = verified + failed + cancelled` 가 `total` 에 닿을 때만 work 을
+    `ready_for_review` 로 뒤집고, 그 flip 에 Redmine [리뷰 요청] 이슈 생성이 달려 있다
+    (`task_queue/logic_cleanup.py`). 즉 **submit 만 하면 공지는 영원히 안 나간다.**
+
+    [중요] 실측 2026-09-03 22:30 — 조각 4/4 가 커밋에 성공했는데 전부 `submitted` 로 남아
+    terminal 0/4, `[work-ready]` 0건, Redmine 0건, `.33` 은 끝난 줄 몰랐다. 당시 판정은
+    「통합자」 안에 있었고 통합은 사람 승인 대기였으므로 **승인하라는 공지가 통합 뒤에 나오는
+    교착**이었다. 통합자는 지웠다(통합은 `.33` 의 자리다) — 조각의 끝은 워커 커밋이다.
+    """
+    paths, root = tmp_paths()
+    try:
+        q = FakeQueue([_t("t1", epoch=1), _t("t2", epoch=1)])
+        _run(paths, q)
+        check("[중요] **커밋한 조각마다 판정이 나간다**", len(q.verified) == 2, str(q.verified))
+        check("  제출한 것과 같은 태스크다",
+              sorted(t for t, _ in q.verified) == sorted(
+                  ["t1", "t2"]), str(q.verified))
+        check("  pass 로 확정한다",
+              all(p.get("result") == "pass" and p.get("passed") is True
+                  for _, p in q.verified), str(q.verified))
+        check("  판정 근거를 싣는다", all(p.get("feedback") for _, p in q.verified),
+              str(q.verified))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -591,6 +623,7 @@ def main() -> int:
                test_spool_round_trip, test_failure_is_spooled_too,
                test_same_base_commit_is_reused_other_is_not,
                test_run_many_takes_several_and_orders_them,
+               test_committed_piece_is_verified_so_the_requester_gets_told,
                test_dependents_of_a_failure_are_not_dispatched,
                test_no_worker_means_no_claim,
                test_parallel_is_the_default, test_serial_only_when_asked,
