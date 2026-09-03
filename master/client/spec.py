@@ -322,6 +322,23 @@ MANAGED_HOOKS = (
     #    "resume" → 미발동 · "startup" → 발동 · "startup|resume|clear" → 발동.
     #    `compact` 는 뺐다 — 압축은 「켠 것」이 아니라 한 세션 안의 일이다.
     ("SessionStart", "startup|resume|clear", ".claude/hooks/pending_works.py", 15),
+    # 🔴 [중요] **매 턴에도 고지한다** (사용자 지시 2026-09-04).
+    #
+    # `SessionStart` 하나로는 **켜져 있는 세션에 아무것도 안 뜬다.** 실측 2026-09-04 01:30:
+    # 라운드가 4/4 완주하고 Redmine `#354` 까지 났는데 `.33` 콘솔은 끝난 줄 몰랐다.
+    # 사용자: *"작업 요청한 .33이 알 수 없는데 어떻게 알아..."*.
+    #
+    # [중요] 원전에는 **알림을 받는 주체**가 있었다 — `watcher/skill_defs_collab.py:406`
+    # *"리더 그룹이 분산 작업 완료 알림(Redmine 이슈)을 받아"*. 그런데 우리 Redmine 은
+    # **메일이 미설정**(`configuration.yml` 없음 · `settings` 에 `mail_from` 0건)이라 이슈가
+    # 서버에 쌓이기만 한다. 즉 이식이 절반이었다. 그 절반을 훅으로 메운다.
+    #
+    # [주의] **소음이 안 되는 근거가 있다** — `pending_works.py:124` 가 열린 work 이 0이면
+    # 침묵한다(*"세션마다 「없음」을 찍는 것은 소음이다"*). 있을 때만 말한다.
+    #
+    # [주의] `UserPromptSubmit` 은 stdout 이 **컨텍스트로 들어간다**(SessionStart 와 같은 계약).
+    # timeout 을 짧게 둔다 — 사람의 매 턴을 붙잡지 않기 위해서다.
+    ("UserPromptSubmit", "", ".claude/hooks/pending_works.py", 8),
 )
 
 # 관리 훅이 실리는 파일. [주의] `settings.local.json` 이 **아니다** — 위 분담 참조.

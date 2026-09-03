@@ -1020,8 +1020,19 @@ def test_hook_registration() -> None:
     check("matcher 는 source 를 가른다 — compact 는 빼고 startup/resume/clear",
           ss and ss[0].get("matcher") == "startup|resume|clear",
           str(ss[0].get("matcher")) if ss else "없음")
-    check("[주의] 두 훅이 서로 다른 이벤트에 걸린다",
-          set(got["hooks"]) == {"PostToolUse", "SessionStart"}, str(set(got["hooks"])))
+    # 🔴 [중요] **전제가 2026-09-04 에 바뀌었다** (사용자 지시). 종전은 *"두 훅이 서로 다른
+    #    이벤트"* 였는데, `SessionStart` 하나로는 **켜져 있는 세션에 아무것도 안 뜬다** —
+    #    실측 01:30: 라운드가 4/4 완주하고 Redmine `#354` 까지 났는데 `.33` 은 끝난 줄 몰랐다.
+    #    그래서 `pending_works` 를 `UserPromptSubmit` 에도 걸어 **매 턴** 고지한다.
+    #    [주의] 소음이 안 되는 근거는 스크립트에 있다 — 열린 work 이 0이면 침묵한다.
+    check("[중요] 세 이벤트에 걸린다 (매 턴 고지 포함)",
+          set(got["hooks"]) == {"PostToolUse", "SessionStart", "UserPromptSubmit"},
+          str(set(got["hooks"])))
+    ups = got["hooks"].get("UserPromptSubmit") or []
+    check("  같은 스크립트를 쓴다 (판정 로직을 두 벌 두지 않는다)",
+          ups and "pending_works.py" in str(ups[0]), str(ups))
+    check("  타임아웃이 세션시작보다 짧다 (사람의 매 턴을 붙잡지 않는다)",
+          ups and int(ups[0].get("hooks", [{}])[0].get("timeout", 99)) < 15, str(ups))
 
     # settings.local.json 은 이름조차 건드리지 않는다
     check("[주의] 관리 대상은 settings.json — local 이 아니다",
