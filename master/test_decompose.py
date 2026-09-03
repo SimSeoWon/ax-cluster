@@ -205,6 +205,110 @@ def test_empty_is_stated() -> None:
     check("빈 것을 말한다", any("조각이 없다" in n for n in p.notes), str(p.notes))
 
 
+# ── 🔴 정본 ⑷ — 조각의 짝 채우기 (사용자 결정 ⓐ 2026-09-03) ────────────────────────
+
+class _FakeMirror:
+    """골조 커밋의 `main...<base>` diff 대역. **실 git 을 두드리지 않는다.**"""
+
+    def __init__(self, changed: list):
+        self.changed = list(changed)
+        self.calls: list = []
+
+    def ensure_commit(self, paths, commit, **kw):
+        self.calls.append(("ensure", commit))
+
+    def mirror_git(self, paths, *args, **kw):
+        self.calls.append(("git",) + args)
+        return "\n".join(self.changed) + "\n"
+
+
+def _with_mirror(changed):
+    """`decompose.complete_pairs` 가 쓰는 두 함수를 갈아 끼운다."""
+    from master.work import declarations as DE
+    fake = _FakeMirror(changed)
+    saved = (DE.ensure_commit, DE._mirror_git)
+    DE.ensure_commit, DE._mirror_git = fake.ensure_commit, fake.mirror_git
+    return fake, saved
+
+
+def _restore(saved):
+    from master.work import declarations as DE
+    DE.ensure_commit, DE._mirror_git = saved
+
+
+SKEL = ["Source/NS/Interaction/NSInteractable.h",
+        "Source/NS/Interaction/NSInteractable.cpp",
+        "Source/NS/Interaction/NSInteractableComponent.h",
+        "Source/NS/Interaction/NSInteractableComponent.cpp"]
+
+
+def test_header_only_piece_gets_its_cpp() -> None:
+    """🔴 **이것이 없어서 라운드 하나가 4/4 죽었다** (실측 2026-09-03 23:12~23:16).
+
+    등재가 `.h` 만 실어 보냈고, 워커는 골조의 `[PSEUDO]` 가 있는 `.cpp` 를 고쳤다. 커밋은
+    `want` 만 스테이징하므로 `.h` 는 무변경 → `"no changes added to commit"` → rc=1 →
+    BLOCKED. **실제 산출물이 통째로 버려졌다.**
+    """
+    fake, saved = _with_mirror(SKEL)
+    try:
+        want, added, why = D.complete_pairs(None, "deadbee",
+                                            ["Source/NS/Interaction/NSInteractable.h"])
+        check("[중요] `.cpp` 를 채운다",
+              "Source/NS/Interaction/NSInteractable.cpp" in want, str(want))
+        check("무엇을 붙였는지 돌려준다",
+              added == ["Source/NS/Interaction/NSInteractable.cpp"], str(added))
+        check("원래 것을 잃지 않는다",
+              "Source/NS/Interaction/NSInteractable.h" in want, str(want))
+        check("사유 없음(성공)", not why, why)
+    finally:
+        _restore(saved)
+
+
+def test_cpp_only_piece_gets_its_header() -> None:
+    """반대 방향도 같다 — 선언만 고치는 조각이면 헤더가 없으면 커밋이 빈다."""
+    fake, saved = _with_mirror(SKEL)
+    try:
+        want, added, _ = D.complete_pairs(None, "deadbee",
+                                          ["Source/NS/Interaction/NSInteractable.cpp"])
+        check("`.h` 를 채운다", "Source/NS/Interaction/NSInteractable.h" in want, str(want))
+        check("한 짝만 붙인다", len(added) == 1, str(added))
+    finally:
+        _restore(saved)
+
+
+def test_only_files_the_skeleton_touched_are_paired() -> None:
+    """[주의] **아무 짝이나 끌어오지 않는다.** 실측 2026-08-10: 다른 모듈·같은 이름 9건은
+    **갈라야** 한다 — 골조 diff 안으로 한정하면 그 위험이 사라진다."""
+    fake, saved = _with_mirror(["Source/NS/Interaction/NSInteractable.h"])   # `.cpp` 없음
+    try:
+        want, added, why = D.complete_pairs(None, "deadbee",
+                                            ["Source/NS/Interaction/NSInteractable.h"])
+        check("[중요] 골조에 없는 짝은 안 붙인다", not added, str(added))
+        check("want 를 망가뜨리지 않는다", want == ["Source/NS/Interaction/NSInteractable.h"],
+              str(want))
+        check("조용히 넘기지 않는다 (사유 없음이 정상)", why == "", why)
+    finally:
+        _restore(saved)
+
+
+def test_public_private_split_is_paired() -> None:
+    """UE 는 선언을 `Public/`, 정의를 `Private/` 에 두는 배치가 흔하다 (실측 50쌍)."""
+    fake, saved = _with_mirror(["Source/M/Public/Foo.h", "Source/M/Private/Foo.cpp"])
+    try:
+        want, added, _ = D.complete_pairs(None, "deadbee", ["Source/M/Public/Foo.h"])
+        check("[중요] Public↔Private 을 넘어 짝을 찾는다",
+              "Source/M/Private/Foo.cpp" in want, str(want))
+    finally:
+        _restore(saved)
+
+
+def test_missing_commit_says_why_and_does_not_break_dispatch() -> None:
+    """[주의] 짝을 못 채운 것과 조각이 틀린 것은 다르다 — 사유를 돌려주고 파견은 막지 않는다."""
+    want, added, why = D.complete_pairs(None, "", ["Source/A/B.h"])
+    check("want 를 그대로 돌려준다", want == ["Source/A/B.h"], str(want))
+    check("사유를 말한다", "기준 커밋" in why, why)
+
+
 def main() -> int:
     for fn in (test_pieces_inherit_file_indivisibility, test_dependency_comes_first,
                test_chain_of_three, test_cycle_is_reported_not_blocked,
@@ -213,7 +317,12 @@ def main() -> int:
                test_ungraphed_files_are_flagged_not_dropped,
                test_depth_split_is_sequential_not_concurrent,
                test_plain_pseudo_is_one_task, test_concurrent_overlap_is_caught,
-               test_to_specs_refuses_broken_plans, test_empty_is_stated):
+               test_to_specs_refuses_broken_plans, test_empty_is_stated,
+               test_header_only_piece_gets_its_cpp,
+               test_cpp_only_piece_gets_its_header,
+               test_only_files_the_skeleton_touched_are_paired,
+               test_public_private_split_is_paired,
+               test_missing_commit_says_why_and_does_not_break_dispatch):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_decompose: {PASS}/{total} 통과")

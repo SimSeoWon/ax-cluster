@@ -278,3 +278,74 @@ def to_specs(p: Plan, *, instruction: str = "", requires: list | None = None) ->
             depends_on=list(piece.depends_on),
         ))
     return specs
+
+
+# ── 🔴 정본 ⑷ — 조각의 파일 집합을 **골조 파일 기준으로** 채운다 ─────────────────────────
+#
+# [중요] **이것이 없어서 라운드 하나가 4/4 죽었다** (실측 2026-09-03 23:12~23:16).
+#
+#     태스크 target   Source/NS/Interaction/NSInteractable.h
+#     워커가 고친 것  Source/NS/Interaction/NSInteractable.cpp   ← 조각의 집합 밖
+#     커밋            대상 파일만 스테이징 → `.h` 는 무변경 → "no changes added to commit"
+#                     → rc=1 → BLOCKED. **실제 산출물이 통째로 버려졌다.**
+#
+# 왜 났나: 조각 나눔은 요청자(`.33`)가 `specs_json` 으로 보내고(`register_work_tool` 계약이
+# *"이미 클래스 단위로 쪼개진 것"*), 그 명세에 `.h` 만 실려 있었다. 골조 커밋에는 `.h` 4개와
+# `.cpp` 4개가 **다 있었는데** 등재가 절반만 실었다. 앞 라운드는 `target_file=.cpp` +
+# `header_file=.h` 라 둘이 갔고 그래서 통과했다 — **짝이 붙으면 되고 갈리면 죽는다.**
+#
+# [중요] **왜 등재가 아니라 여기인가.** 등재 시점에는 골조가 아직 push 되지 않았다
+# (실측: 등재 23:07:21 → 골조 push 23:12). 골조 파일을 실제로 볼 수 있는 첫 자리가 파견이고,
+# 정본 ⑷ 이 *"마스터가 **골조 파일 기준으로** 서브태스크를 만든다"* 고 한 그 자리다.
+#
+# [주의] **골조 커밋이 건드린 파일만** 후보로 본다. 아무 짝이나 끌어오면 `batching` 이 막던
+# 반대편 사고가 난다 — 실측 2026-08-10: 다른 모듈·같은 이름 9건(파일 36개)은 **갈라야** 한다.
+# 골조 diff 안으로 한정하면 그 위험이 사라진다(그 커밋이 만든 짝만 붙는다).
+
+_PAIR = {".h": (".cpp",), ".hpp": (".cpp", ".cxx"), ".cpp": (".h", ".hpp"),
+         ".cxx": (".hpp", ".h")}
+
+
+def _siblings(rel: str) -> list:
+    """`rel` 의 짝 후보 경로들. 같은 폴더 먼저, 그 다음 UE `Public/`↔`Private/`."""
+    import posixpath
+    rel = str(rel or "").replace("\\", "/")
+    stem, ext = posixpath.splitext(rel)
+    out: list = []
+    for e in _PAIR.get(ext.lower(), ()):  # 같은 폴더
+        out.append(stem + e)
+        # UE 는 선언을 `Public/`, 정의를 `Private/` 에 두는 배치가 흔하다 (실측 50쌍)
+        for a, b in (("/Public/", "/Private/"), ("/Private/", "/Public/")):
+            if a in stem:
+                out.append(stem.replace(a, b) + e)
+    return out
+
+
+def complete_pairs(paths, commit: str, want: list, *, main_branch: str = "main") -> tuple:
+    """`(채운 want, 추가된 것, 사유)`. **읽기 전용** — git 을 쓰기로 만지지 않는다.
+
+    [주의] 실패해도 파견을 막지 않는다 — 짝을 못 채운 것과 조각이 틀린 것은 다르다.
+    사유를 돌려주고 호출자가 로그에 남긴다(조용히 비지 않게).
+    """
+    base_want = [str(w).replace("\\", "/") for w in (want or []) if str(w or "").strip()]
+    if not (commit or "").strip():
+        return base_want, [], "기준 커밋이 없다 — 짝을 못 찾는다"
+    try:
+        from . import declarations as D
+        D.ensure_commit(paths, commit)
+        out = D._mirror_git(paths, "diff", "--name-only", f"{main_branch}...{commit}")
+        changed = {ln.strip().replace("\\", "/") for ln in out.splitlines() if ln.strip()}
+    except Exception as e:                                   # noqa: BLE001
+        return base_want, [], f"골조 파일 목록을 못 읽었다 — {type(e).__name__}: {e}"
+    if not changed:
+        return base_want, [], f"골조 커밋이 바꾼 파일이 없다 ({main_branch}...{commit[:8]})"
+
+    have = set(base_want)
+    added: list = []
+    for w in base_want:
+        for cand in _siblings(w):
+            if cand in changed and cand not in have:
+                have.add(cand)
+                added.append(cand)
+                break                     # 짝은 하나면 된다
+    return base_want + added, added, ""

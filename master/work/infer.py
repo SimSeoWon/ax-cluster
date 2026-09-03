@@ -556,6 +556,21 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
         #    결손은 `Response.subbranch_error` 와 `[dispatch]` 로그에 남는다.
         base = ""
 
+    # 🔴 **정본 ⑷ — 골조 파일 기준으로 조각의 짝을 채운다** (사용자 결정 ⓐ, 2026-09-03).
+    #    등재가 `.h` 만 실어 보내면 워커는 골조의 `[PSEUDO]` 가 있는 `.cpp` 를 고치고,
+    #    커밋은 `want` 만 스테이징하므로 **산출물이 통째로 버려진다**(실측: 라운드 4/4 실패).
+    #    [주의] 조용히 채우지 않는다 — 무엇을 왜 붙였는지 로그에 남긴다.
+    try:
+        from . import decompose as _DC
+        want, _added, _why = _DC.complete_pairs(paths, base, want)
+        if _added:
+            _log(f"[pairs] {task_id} 골조에서 짝을 채웠다 — {', '.join(_added)}")
+        elif _why:
+            _log(f"[pairs] [주의] {task_id} 짝을 못 채웠다 — {_why}")
+    except Exception as e:                               # noqa: BLE001
+        # [주의] 짝 채우기 실패가 파견을 막지 않는다 — 사유만 남긴다
+        _log(f"[pairs] [주의] {task_id} 짝 채우기 예외 — {type(e).__name__}: {e}")
+
     # 🔴 **정본 ⑷ — 조각의 서브 브랜치를 작업 브랜치에서 갈라 둔다** (사용자 확정 2026-09-02).
     #    사용자 서술: *"작업 브랜치에서 갈라진 각각의 서브 브랜치를 만들고 워커들에게 브랜치와
     #    작업할 클래스를 전달해"*. 이름을 배정하는 것은 서버다(원전 `cluster_coordinator.py:11`
