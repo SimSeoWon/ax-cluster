@@ -662,6 +662,29 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
     return res
 
 
+
+def _skeleton_at(paths, commit: str, files) -> dict:
+    """`{경로: 골조 본문}` — **base 커밋에서** 읽는다. 못 읽으면 빈 dict.
+
+    [중요] 워킹트리를 읽지 않는다 — 미러 워킹트리는 `main` 이라 신규 파일이 아예 없다
+    (실측 2026-09-01, 층2 grounding 이 그렇게 비었다).
+    """
+    if not (commit or "").strip():
+        return {}
+    try:
+        from . import declarations as D
+        D.ensure_commit(paths, commit)
+        out = {}
+        for rel in (files or []):
+            r = str(rel).replace(chr(92), "/")
+            try:
+                out[r] = D._mirror_git(paths, "show", f"{commit}:{r}")
+            except Exception:                                # noqa: BLE001
+                return {}                                    # 하나라도 없으면 계약이 깨진다
+        return out
+    except Exception:                                        # noqa: BLE001
+        return {}
+
 def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: str,
                 api=runner._api, runner_=None, reader=None, ssh=None,
                 timeout: int = runner.DEFAULT_TIMEOUT) -> Response:
@@ -683,10 +706,30 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
     epoch = task.get("epoch")
 
     def llm(f, tid, files):
-        """워커의 `ax-work` 를 한 번 돌린다. [중요] **본문만 쓴다** — git 은 안 만진다."""
+        """본문을 쓴다. [중요] **git 은 안 만진다** — 커밋은 `wcommit` 이 결정적으로 한다.
+
+        🔴 **레인 순서는 `agy` → 로컬 → (명시하면) `claude`** 다 (사용자 지시 2026-09-04).
+        종전에는 워커의 `claude -p` 하드코딩이었고, 계정 한도 하나로 **4조각 중 3이 동시에
+        죽었다**(실측 00:16, `429 session limit`). 근거·실측은 `lanes.py` 머리말에 있다.
+
+        [주의] `runner_` 주입이 **가장 먼저**다 — 테스트가 그 자리를 쓴다(실 CLI·실 노드를
+        두드리지 않게). 주입이 없을 때만 레인 체인이 돈다.
+        """
         with runner._Beater(lambda: runner.heartbeat(tid, f.host, api=api)):
-            return (runner_ or (lambda f_, t_, to_: runner.run_worker(
-                f_, t_, files=files, runner=None, timeout=to_)))(f, tid, timeout)
+            if runner_ is not None:
+                return runner_(f, tid, timeout)
+            from . import lanes as _LN
+            skel = _skeleton_at(paths, base, files)
+            if not skel:
+                # [중요] 골조를 못 읽으면 레인이 쓸 재료가 없다 — 워커 CLI 로 되돌린다
+                #    (그 경로는 자기 체크아웃을 직접 읽는다). 조용히 실패하지 않는다.
+                _log(f"[lane] {tid} 골조를 못 읽었다 — 워커 CLI 로 되돌린다")
+                return runner.run_worker(f, tid, files=files, runner=None, timeout=timeout)
+            got, tried = _LN.run_chain(f, skel, timeout=timeout, logf=_log)
+            if got is None:
+                why = " / ".join(t.summary for t in tried) or "레인이 없다"
+                return 1, f"RESULT: BLOCKED - all lanes failed: {why}"
+            return 0, f"RESULT: DONE (lane={got.lane})"
 
     # 동결 대조 원본 — 마스터의 색인 클론이 같은 커밋이면 그것을 쓴다(왕복 0).
     # [주의] 없으면 `None` 이라 층1 이 **동결 미검사로 기록**한다 — 통과로 접지 않는다.

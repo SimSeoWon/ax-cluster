@@ -60,6 +60,10 @@ ReadOnlyPaths=/home/sim/ax-cluster/docs
 ReadOnlyPaths=/home/sim/ax-cluster/machines
 ReadOnlyPaths=/home/sim/ax-cluster/reports
 ReadOnlyPaths=/home/sim/ax-cluster/ax-exports
+# [중요] 2026-09-04 신설 — 운영 스크립트(세 클론 동기·실증 초기화). 큐 서비스가 쓸 일이 없다.
+#    [주의] 이 줄을 빼먹어 `test_sandbox` 가 잡았다: *"트윈이 아닌 최상위 항목이 전부 읽기 전용
+#    목록에 있다 — ['scripts']"*. 최상위에 디렉토리를 만들면 **여기에도 같이 넣는다.**
+ReadOnlyPaths=/home/sim/ax-cluster/scripts
 ReadOnlyPaths=/home/sim/ax-cluster/.git
 ReadOnlyPaths=/home/sim/ax-cluster/PLAN.md
 ReadOnlyPaths=/home/sim/ax-cluster/README.md
