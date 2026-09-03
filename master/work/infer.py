@@ -590,6 +590,49 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
     if sub_err:
         _log(f"[subbranch] {task_id} 실패 — {sub_err}")
 
+    # 🔴 **ⓐ 할 일이 없는 조각은 파견하지 않는다** (사용자 결정 2026-09-03 · 원전 이식).
+    #
+    # `skeleton.py` 머리말: *"`[PSEUDO]` 가 하나도 없으면 그것은 **완성된 파일**이지 골조가
+    # 아니다. **원전은 그 경우 워커 태스크 등재를 skip 한다**(글루 파일이 워커에게 배정되던
+    # 버그를 그렇게 고쳤다)."* 즉 이 판정은 원전에 있고, 우리는 골조를 볼 수 있는 **이 자리**에
+    # 둔다(등재 시점엔 골조가 아직 push 되지 않는다 — 실측 23:07 등재 → 23:12 push).
+    #
+    # [중요] 실측 2026-09-03: `NSInteractionPromptWidget` 이 두 라운드 연속 여기서 죽었다.
+    # 골조가 *"이 클래스에는 C++ 로직을 추가하지 않는다"* 이고 `[PSEUDO]` 0개인데, 파견해서
+    # 추론을 사고(조각당 $0.66~$1.08) 워커가 골조를 그대로 돌려주면 실패로 적었다.
+    # [주의] ⓑ(커밋 단계의 `no_op`)가 뒤를 받치지만, **ⓐ 는 추론 자체를 안 산다.**
+    #
+    # [주의] **못 세면 파견한다** — `-1` 은 「마커가 없다」가 아니라 「못 셌다」다.
+    try:
+        from . import decompose as _DC2
+        _n, _why2 = _DC2.pseudo_in_skeleton(paths, base, want)
+        if _n == 0:
+            _log(f"[nowork] {task_id} 파견하지 않는다 — 골조에 `[PSEUDO]` 가 0개다 "
+                 f"(완성된 파일이다) · {', '.join(want)}")
+            res = Response(task_id=task_id, worker="(파견 안 함)", want=list(want),
+                           status=runner.DONE, base_commit=base, epoch=task.get("epoch"),
+                           subbranch=sub_name, subbranch_error=sub_err)
+            res.files = {w: "" for w in want}       # 되읽지 않았다 — 본문을 가진 척하지 않는다
+            res.notes.append("[주의] 골조에 `[PSEUDO]` 가 0개다 — 채울 본문이 없어 파견하지 "
+                             "않았다 (원전도 이 경우 태스크를 skip 한다). 추론 비용 0")
+            try:
+                runner.submit(task_id, runner.Outcome(status=runner.DONE, branch=sub_name,
+                                                      head=base, tail="no-op: [PSEUDO] 0"),
+                              epoch=task.get("epoch"), worker_id="(none)", api=api)
+                runner.verify(task_id, passed=True,
+                              feedback="할 일이 없는 조각 — 골조에 `[PSEUDO]` 0개 "
+                                       "(파견 안 함 · 검증은 `.33`)", api=api)
+                _log(f"[nowork] {task_id} 조각 종결 — 큐에 완료 기록")
+            except Exception as e:                           # noqa: BLE001
+                res.notes.append(f"[중요] no-op 종결을 큐에 못 알렸다 — {type(e).__name__}: {e}")
+                _log(f"[nowork] [중요] {task_id} 큐 기록 실패 — {e}")
+            spool(paths, res, work_id=work_id, order=order)
+            return res
+        if _why2:
+            _log(f"[nowork] [주의] {task_id} `[PSEUDO]` 를 못 셌다 — {_why2} (그대로 파견한다)")
+    except Exception as e:                                   # noqa: BLE001
+        _log(f"[nowork] [주의] {task_id} 마커 계수 예외 — {type(e).__name__}: {e} (파견한다)")
+
     if base:
         old = reusable(paths, task_id, base_commit=base, work_id=work_id)
         if old is not None:
@@ -662,6 +705,10 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
     if c.ok:
         res.status = runner.DONE
         _log(f"[wcommit] {task_id} {c.summary}")
+        if c.no_op:
+            # 🔴 할 일이 없던 조각 — 원전 `ok_no_op`. **실패로 적지 않는다.**
+            res.notes.append("[주의] 골조에 `[PSEUDO]` 가 0개였다 — 채울 본문이 없는 조각이다 "
+                             "(커밋 없음이 정상)")
         # [중요] **커밋이 생겼으므로 제출한다** (원전 `submit_result` 자리)
         out = runner.Outcome(status=runner.DONE, branch=c.branch, head=c.head,
                              tail=(c.reason or "")[-2000:])

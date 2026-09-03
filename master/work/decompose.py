@@ -349,3 +349,37 @@ def complete_pairs(paths, commit: str, want: list, *, main_branch: str = "main")
                 added.append(cand)
                 break                     # 짝은 하나면 된다
     return base_want + added, added, ""
+
+
+def pseudo_in_skeleton(paths, commit: str, files: list) -> tuple:
+    """`(마커 수, 사유)` — 그 조각의 골조에 `[PSEUDO]` 가 몇 개인가. **읽기 전용.**
+
+    🔴 [중요] **0 이면 그것은 골조가 아니라 완성된 파일이다** — `skeleton.py` 머리말이 그렇게
+    적어 뒤 놨고, **원전은 그 경우 워커 태스크 등재를 skip 한다**(글루 파일이 워커에게
+    배정되던 버그를 그렇게 고쳤다). 즉 파견하지 않는 것이 이식이다.
+
+    [중요] **실측 2026-09-03 — 이것이 없어서 두 라운드 연속으로 같은 조각을 헛돌렸다:**
+    `NSInteractionPromptWidget` 의 골조가 *"UpdatePrompt 는 BlueprintImplementableEvent 라
+    C++ 기본 구현이 없다 — 이 클래스에는 C++ 로직을 추가하지 않는다"* 이고 `[PSEUDO]` 0개다.
+    워커는 매번 골조를 바이트 동일하게 돌려줬고(정답이다) 커밋 단계가 실패로 읽었다.
+    조각당 $0.66~$1.08 × 2 라운드.
+
+    [주의] **못 읽으면 파견을 막지 않는다** — `(-1, 사유)` 를 돌려주고 호출자가 그대로 보낸다.
+    「마커가 없다」와 「못 셌다」는 다르고, 후자를 전자로 접으면 정상 조각이 안 나간다.
+    """
+    if not (commit or "").strip():
+        return -1, "기준 커밋이 없다 — 골조를 못 읽는다"
+    try:
+        from . import declarations as D
+        from .skeleton import pseudo_count
+        D.ensure_commit(paths, commit)
+        n = 0
+        for rel in (files or []):
+            try:
+                body = D._mirror_git(paths, "show", f"{commit}:{str(rel).replace(chr(92), '/')}")
+            except Exception:                                # noqa: BLE001
+                continue                                     # 신규 파일이 아직 없을 수 있다
+            n += pseudo_count(body)
+        return n, ""
+    except Exception as e:                                   # noqa: BLE001
+        return -1, f"골조를 못 읽었다 — {type(e).__name__}: {e}"

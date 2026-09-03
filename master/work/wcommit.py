@@ -71,6 +71,10 @@ class Committed:
     notes: list = field(default_factory=list)       # [주의] 로 시작하는 것은 비치명 경고다
     stage: str = ""                                 # 어디까지 갔나 (실패 지점)
     reason: str = ""
+    # 🔴 **할 일이 없던 조각** (원전 `worker/validator.py:547` = `ok_no_op`).
+    #    골조에 `[PSEUDO]` 가 하나도 없으면 그것은 **완성된 파일**이고(`skeleton.py` 머리말),
+    #    워커가 그대로 돌려준 것이 정답이다. 그때 커밋은 생기지 않는다 — **실패가 아니다.**
+    no_op: bool = False
 
     @property
     def missing(self) -> list:
@@ -78,12 +82,21 @@ class Committed:
 
     @property
     def ok(self) -> bool:
-        """[중요] **fail-closed.** 커밋 해시가 있고 층1 위반이 없고 빠진 파일이 없어야 통과다."""
+        """[중요] **fail-closed.** 커밋 해시가 있고 층1 위반이 없고 빠진 파일이 없어야 통과다.
+
+        [주의] 예외는 `no_op` 하나다 — 골조에 `[PSEUDO]` 가 없어 **채울 것이 없던** 조각이고,
+        원전이 `ok_no_op` 으로 통과시키는 그 경우다. 커밋 해시가 없는 것이 정상이다.
+        """
+        if self.no_op:
+            return not self.layer1_violations and not self.missing
         return (bool(self.head) and not self.reason
                 and not self.layer1_violations and not self.missing)
 
     @property
     def summary(self) -> str:
+        if self.no_op:
+            return (f"[완료] 할 일이 없는 조각이었다 — 골조에 `[PSEUDO]` 가 0개다 "
+                    f"({self.branch} · 파일 {len(self.files)}). 커밋 없음이 정상이다")
         if self.ok:
             return f"[완료] {self.branch} ← {self.head[:8]} · 파일 {len(self.files)}"
         bits = [f"[중요] {self.stage or '미상'}"]
@@ -148,7 +161,13 @@ def commit_command(facts, branch: str, task_id: str, targets, message: str = "")
                                        target=targets[0])
     adds = " ".join(f'"{_q(t, facts.windows)}"' for t in targets)
     # [주의] `--force-with-lease` — 이유는 머리말 § 참조. `--force` 아님.
-    return (f'{cd} && git add {adds} && git commit -q -m "{msg}" && '
+    # 🔴 [중요] **빈 커밋을 관용한다** (원전 `git_ops.py:149` — `"nothing to commit"` 은 에러가
+    #    아니다). 종전에는 `&&` 사슬이라 커밋이 실패하면 `rev-parse` 까지 안 갔고, 그래서
+    #    호출자가 **git 의 지역화된 메시지를 읽어야** 했다. 실측 2026-09-03: 이 저장소의 git 은
+    #    한국어로 답한다 — *"커밋할 사항 없음, 작업 폴더 깨끗함"*. 영어 문구만 보면 못 잡는다.
+    #    관용하고 `rev-parse` 를 항상 돌리면 판정이 **`HEAD == base` 하나**로 끝난다(지역화 무관).
+    tolerate = "ver >nul" if facts.windows else "true"
+    return (f'{cd} && git add {adds} && (git commit -q -m "{msg}" || {tolerate}) && '
             f'git push --quiet --force-with-lease -u origin "{branch}" && '
             f'git rev-parse HEAD')
 
@@ -250,12 +269,41 @@ def _cycle(facts, task_id: str, c: "Committed", base: str, llm, do_ssh, do_read,
     c.stage = "커밋"
     rc, out = do_ssh(facts, commit_command(facts, c.branch, task_id, c.want), PUSH_TIMEOUT)
     head = _last_sha(out)
-    if rc != 0 or not head:
-        c.reason = f"커밋·push 가 실패했다 (rc={rc}) — {(out or '').strip()[-300:]}"
+    text = (out or "")
+    # 🔴 **원전 계약 이식** (`worker/git_ops.py:149` · `worker/validator.py:547`).
+    #
+    #     git_ops    `if rc != 0 and "nothing to commit" not in out:`  ← 그 문구는 에러가 아니다
+    #     validator  양쪽 다 변화 없음 → 원본에 `[PSEUDO]` 가 없었으면 **`ok_no_op`(정상)**,
+    #                있었으면 `no_changes_but_pseudo_present`(진짜 실패)
+    #
+    # [중요] **이 이식이 빠져서 정상 조각이 두 라운드 연속 죽었다** (실측 2026-09-03):
+    # `NSInteractionPromptWidget` 의 골조가 *"UpdatePrompt 는 BlueprintImplementableEvent 라
+    # C++ 기본 구현이 없다 — 이 클래스에는 C++ 로직을 추가하지 않는다"* 라고 적어 놨고
+    # `[PSEUDO]` 가 0개였다. 워커는 골조를 **바이트 동일**하게 돌려줬고(그것이 정답이다)
+    # 커밋 단계가 `nothing to commit` → rc=1 → BLOCKED 로 읽었다. 조각당 $0.66~$1.08 을
+    # 두 번 태우고 실패로 기록했다.
+    #
+    # [주의] 판정 근거는 **되읽은 본문의 `[PSEUDO]` 유무**다. 변화가 없었으므로 되읽은 것이
+    # 곧 원본이고, 원전이 `original_target` 으로 보는 것과 같은 값이다.
+    # [중요] 판정은 **`HEAD == base`** 다 — 지역화된 메시지를 읽지 않는다(위 § 참조).
+    #    문구 검사는 `rev-parse` 가 못 돈 경우의 **보조 신호**로만 남긴다.
+    from .skeleton import pseudo_count
+    had_pseudo = any(pseudo_count(v) for v in c.files.values())
+    nothing = ("nothing to commit" in text) or ("커밋할 사항 없음" in text)
+    unchanged = bool(head and head == base) or (not head and nothing)
+    if unchanged:
+        if had_pseudo:
+            # 채울 것이 있었는데 아무것도 안 바뀌었다 — 진짜 실패다(원전과 같은 판정)
+            c.reason = ("변경이 없는데 골조에 `[PSEUDO]` 가 남아 있다 — 워커가 본문을 "
+                        f"쓰지 않았다 (마커 {sum(pseudo_count(v) for v in c.files.values())}개)")
+            return c
+        # [중요] HEAD 는 **base 그대로**다 — 서브 브랜치가 base 에서 갈라진 뒤 아무것도
+        #    안 얹혔으니 그 팁이 base 다. 원전도 `commit_and_push` 가 `rev-parse HEAD`
+        #    (= base)를 돌려주고 그 값으로 제출한다. 사실을 그대로 싣는다.
+        c.no_op, c.head, c.stage = True, (head or base), ""
         return c
-    if head == base:
-        # [주의] base 와 같으면 **아무것도 커밋되지 않았다** — 성공으로 읽으면 빈 조각이 통과한다
-        c.reason = f"커밋이 생기지 않았다 (HEAD 가 기준 커밋 그대로 {head[:8]})"
+    if rc != 0 or not head:
+        c.reason = f"커밋·push 가 실패했다 (rc={rc}) — {text.strip()[-300:]}"
         return c
     c.head, c.stage = head, ""
     return c

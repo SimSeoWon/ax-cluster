@@ -215,16 +215,25 @@ def test_empty_body_blocks():
 
 
 def test_no_change_is_not_success():
-    """[주의] LLM 이 아무것도 안 바꿨으면 HEAD==base 다 — 성공으로 읽지 않는다."""
+    """[주의] 채울 것이 있었는데 아무것도 안 바뀌었으면 **통과가 아니다.**
+
+    🔴 [중요] **이 테스트의 전제가 2026-09-03 에 좁혀졌다** (사용자 결정 ⓑ · 원전 이식).
+    종전에는 *"변경 0 이면 무조건 실패"* 였는데, 원전 `worker/validator.py:547` 은
+    *"원본에 `[PSEUDO]` 가 없었으면 no-op(정상), 있었으면 진짜 실패"* 로 가른다.
+    그래서 잼대를 **`[PSEUDO]` 가 있는 파일**(`.cpp` 골조)로 바꿨다 — 헤더는 `[DOC]` 만
+    있어서 이제 정상 no-op 이다(`test_no_pseudo_and_no_change_is_a_no_op_not_a_failure`).
+
+    [주의] 실제로 막는 것은 **층1** 이다 — 휘발 태그 잔재를 커밋 **전에** 잡는다. 커밋
+    단계의 검사는 그 뒤를 받치는 두 번째 그물이다.
+    """
     with tempfile.TemporaryDirectory() as td:
         facts, _bare, base, _w = _world(Path(td))
         c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
-                        want=[HDR], llm=lambda f, t, w: (0, "아무것도 안 했다"),
-                        ssh=_shell, reader=_reader,
-                        baseline=lambda p: KEEP_HDR if p == HDR else None)
-        check("변경 0이면 통과가 아니다", not c.ok, c.summary)
-        check("  사유가 그렇게 말한다", "커밋이 생기지 않았다" in c.reason or "커밋" in c.reason,
-              c.reason[:100])
+                        want=[SRC], llm=lambda f, t, w: (0, "아무것도 안 했다"),
+                        ssh=_shell, reader=_reader, baseline=lambda p: None)
+        check("변경 0 + `[PSEUDO]` 잔존 = 통과가 아니다", not c.ok, c.summary)
+        check("  no_op 으로 접지 않는다", not c.no_op, c.summary)
+        check("  사유를 말한다", bool(c.reason or c.layer1_violations), c.summary)
 
 
 def test_refusals():
@@ -252,8 +261,35 @@ def test_llm_failure_does_not_commit():
         check("  원격도 그대로", f"task/{WORK}/{TASK}" not in _heads(bare))
 
 
+
+# ── 🔴 할 일이 없는 조각 (원전 `ok_no_op` 이식 · 사용자 결정 ⓑ 2026-09-03) ──────────
+
+def test_no_pseudo_and_no_change_is_a_no_op_not_a_failure():
+    """🔴 **정상 조각이 두 라운드 연속 죽은 자리다** (실측 2026-09-03).
+
+    `NSInteractionPromptWidget` 의 골조가 *"UpdatePrompt 는 BlueprintImplementableEvent 라
+    C++ 기본 구현이 없다 — 이 클래스에는 C++ 로직을 추가하지 않는다"* 이고 `[PSEUDO]` 0개다.
+    워커는 골조를 **바이트 동일**하게 돌려줬고 **그것이 정답인데**, 커밋 단계가
+    `nothing to commit` → rc=1 → BLOCKED 로 읽었다. 조각당 $0.66~$1.08 × 2 라운드.
+
+    원전 계약: `worker/git_ops.py:149` 는 그 문구를 에러로 안 보고,
+    `worker/validator.py:547` 이 *"원본에 `[PSEUDO]` 가 없었으면 no-op(정상), 있었으면
+    진짜 실패"* 로 가른다. 여기 want 는 헤더뿐이고 헤더에는 `[DOC]` 만 있다.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        facts, _bare, base, _w = _world(Path(td))
+        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+                        want=[HDR], llm=lambda f, t, w: (0, "채울 것이 없다"),
+                        ssh=_shell, reader=_reader, baseline=lambda p: KEEP_HDR)
+        check("[중요] 실패가 아니다", c.ok, c.summary)
+        check("  no_op 으로 표시한다", c.no_op, c.summary)
+        check("  사유를 남기지 않는다", not c.reason, c.reason)
+        check("  무엇이었는지 말한다", "[PSEUDO]" in c.summary and "0개" in c.summary, c.summary)
+
+
 def main() -> int:
-    for fn in (test_commands, test_returns_to_main, test_happy_path, test_layer1_blocks_commit,
+    for fn in (test_no_pseudo_and_no_change_is_a_no_op_not_a_failure,
+               test_commands, test_returns_to_main, test_happy_path, test_layer1_blocks_commit,
                test_empty_body_blocks, test_no_change_is_not_success,
                test_refusals, test_llm_failure_does_not_commit):
         fn()

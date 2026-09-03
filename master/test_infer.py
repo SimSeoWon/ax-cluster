@@ -389,8 +389,17 @@ class FakeQueue:
         raise AssertionError(f"예상 밖 호출: {method} {path}")
 
 
+def _counting_runner(stdout, calls):
+    """워커 호출을 센다 — [중요] **ⓐ 는 「부르지 않았다」를 재는 것**이라 세지 않으면 못 잰다."""
+    def call(f, t, to):
+        if calls is not None:
+            calls.append((getattr(f, "host", "?"), t))
+        return (0, stdout)
+    return call
+
+
 def _run(paths, q, *, body="void X::Go() { Do(); }\n", workers=1,
-         limit=4, parallel=True, stdout="RESULT: DONE"):
+         limit=4, parallel=True, stdout="RESULT: DONE", runner_calls=None):
     """정본 ⑸ 로 한 바퀴 — 워커가 본문을 쓰고 마스터가 커밋한다.
 
     `body` 가 비면 **본문이 안 채워진 것**이라 커밋이 생기지 않는다(fail-closed).
@@ -408,7 +417,7 @@ def _run(paths, q, *, body="void X::Go() { Do(); }\n", workers=1,
     try:
         return I.run_many(paths, limit=limit, facts=facts, api=q, clean=lambda f: Clean(),
                           parallel=parallel, work_id="W1",
-                          runner_=lambda f, t, to: (0, stdout),
+                          runner_=_counting_runner(stdout, runner_calls),
                           ssh=_fake_shell(body),
                           reader=lambda f, p: body)
     finally:
@@ -604,6 +613,53 @@ def test_reuse_avoids_paying_twice() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+# ── 🔴 ⓐ 할 일이 없는 조각은 파견하지 않는다 (원전 「등재 skip」 이식) ─────────────────
+
+def test_piece_without_pseudo_is_not_dispatched_at_all() -> None:
+    """🔴 **추론을 사기 전에 막는다** (사용자 결정 ⓐ 2026-09-03).
+
+    `skeleton.py` 머리말: *"`[PSEUDO]` 가 하나도 없으면 그것은 완성된 파일이지 골조가 아니다.
+    **원전은 그 경우 워커 태스크 등재를 skip 한다**"*.
+
+    실측 2026-09-03: `NSInteractionPromptWidget`(골조에 *"이 클래스에는 C++ 로직을 추가하지
+    않는다"* · `[PSEUDO]` 0개)이 **두 라운드 연속** 파견돼 조각당 $0.66~$1.08 을 태우고
+    실패로 기록됐다. ⓑ(커밋 단계 no-op)가 뒤를 받치지만 **ⓐ 는 추론 자체를 안 산다.**
+    """
+    from master.work import decompose as DC
+    paths, root = tmp_paths()
+    saved = DC.pseudo_in_skeleton
+    calls: list = []
+    DC.pseudo_in_skeleton = lambda p, c, f: (0, "")       # 골조에 마커 0
+    try:
+        q = FakeQueue([_t("t1", epoch=1)])
+        _run(paths, q, runner_calls=calls)
+        check("[중요] **워커를 부르지 않는다**", not calls, str(calls))
+        check("그래도 조각을 종결한다 (submit)", len(q.submitted) == 1, str(q.submitted))
+        check("판정까지 낸다 (verify)", len(q.verified) == 1, str(q.verified))
+        check("  사유가 마커를 지목한다",
+              any("PSEUDO" in (p.get("feedback") or "") for _, p in q.verified),
+              str(q.verified))
+    finally:
+        DC.pseudo_in_skeleton = saved
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_unreadable_skeleton_still_dispatches() -> None:
+    """[주의] `-1` 은 「마커가 없다」가 아니라 **「못 셌다」**다 — 접으면 정상 조각이 안 나간다."""
+    from master.work import decompose as DC
+    paths, root = tmp_paths()
+    saved = DC.pseudo_in_skeleton
+    calls: list = []
+    DC.pseudo_in_skeleton = lambda p, c, f: (-1, "골조를 못 읽었다")
+    try:
+        q = FakeQueue([_t("t1", epoch=1)])
+        _run(paths, q, runner_calls=calls)
+        check("[중요] 못 셌으면 파견한다", len(calls) == 1, str(calls))
+    finally:
+        DC.pseudo_in_skeleton = saved
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (
                test_no_target_list_is_blocked_not_passed,
@@ -624,6 +680,8 @@ def main() -> int:
                test_same_base_commit_is_reused_other_is_not,
                test_run_many_takes_several_and_orders_them,
                test_committed_piece_is_verified_so_the_requester_gets_told,
+               test_piece_without_pseudo_is_not_dispatched_at_all,
+               test_unreadable_skeleton_still_dispatches,
                test_dependents_of_a_failure_are_not_dispatched,
                test_no_worker_means_no_claim,
                test_parallel_is_the_default, test_serial_only_when_asked,
