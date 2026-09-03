@@ -7,10 +7,25 @@
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+_REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO))
+
+# 🔴 [중요] **테스트가 스스로 환경을 세운다** (2026-09-04).
+#
+# `AX_PROJECTS_ROOT` 가 없으면 `managed_block` 이 레지스트리를 못 읽어 **실측 절을 조용히
+# 비운다**(`ConfigError` 를 잡는다). 그래서 이 파일은 실행 방법에 따라 결과가 갈렸다 —
+# 그냥 돌리면 292/294, 환경변수를 주면 **294/294**.
+#
+# [주의] 그것을 오늘 세 번 *"기존 실패라 무관"* 으로 넘겼다. 무관한 게 아니라 **테스트가
+# 환경을 안 갖추고 돈 것**이었다. 사용자: *"기존에 실패하면 안고칠꺼야? 작업이 끝난뒤 체크해야지"*.
+#
+# 같은 부류를 오늘 둘 더 봤다 — 재개 안내문의 `AX_PROJECTS_ROOT` 누락 · `#345`(테스트가
+# 라이브 큐에 결합). **실행 조건을 파일 안에 박으면 「어떻게 돌렸나」가 결과를 바꾸지 않는다.**
+os.environ.setdefault("AX_PROJECTS_ROOT", str(_REPO))
 
 from master.client import bundle, spec                              # noqa: E402
 from master.projects.config import ROLE_REQUESTER, ROLE_WORKER, Workshop, ConfigError  # noqa: E402
