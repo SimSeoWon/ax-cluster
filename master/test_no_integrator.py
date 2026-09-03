@@ -156,7 +156,13 @@ def test_notice_does_not_claim_a_build_it_never_ran() -> None:
     check("[중요] 「검증 통과」를 주장하지 않는다", "검증 통과" not in code,
           "조각 종결을 검증으로 적는다")
     check("아직 검증되지 않았음을 명시한다", "아직 아무것도 검증되지 않았다" in src)
-    check("전부 머지해 한 번 검사하라고 적는다", "전부 머지한다" in src)
+    # [주의] 문구는 2026-09-04 에 바뀌었다 — 정본 ⑺ 이 `ax-advance`(작업 브랜치 전진)로
+    #    갈리면서 본문이 「전부 작업 브랜치에 머지 → 한 번 통합 빌드」로 다시 쓰였다.
+    #    검사하는 것은 **문장이 아니라 계약**이다: 전부 모아서 · 한 번 · 작업 브랜치에.
+    check("전부 모아 한 번 검사하라고 적는다",
+          "전부 작업 브랜치에 머지한다" in src and "한 번 통합 빌드한다" in src)
+    check("[중요] main 단계가 아니라고 못박는다", "`main` 에 올리는 단계가 아니다" in src)
+    check("[중요] ax-advance 를 가리킨다 (ax-review 가 아니다)", "`ax-advance`" in src)
 
 
 def main() -> int:

@@ -80,8 +80,10 @@ def test_unchanged() -> None:
     check("워커 스킬 — `ax-work` 가 앞에 온다",
           bundle.skills_for("worker") == ("ax-work", "ax-infer"),
           str(bundle.skills_for("worker")))
+    # 🔴 2026-09-04 — `ax-advance` 추가 (정본 ⑺ 라운드 종결 · `ax-review` 와 다른 단계)
     check("요청자 스킬 불변",
-          bundle.skills_for("requester") == ("ax-request", "ax-ontology", "ax-review"),
+          bundle.skills_for("requester")
+          == ("ax-request", "ax-ontology", "ax-advance", "ax-review"),
           str(bundle.skills_for("requester")))
     check("오버레이 없음 == 종전",
           bundle.skills_for("requester") == bundle.skills_for("requester", spec.EMPTY_INIT))
@@ -100,7 +102,8 @@ def test_project_overlay() -> None:
                             extra_skills={"requester": ("ax-extra",)})
     got = bundle.skills_for("requester", init)
     check("선언한 추가 스킬이 실린다", got[-1] == "ax-extra", str(got))
-    check("기본 표가 앞에 남는다", got[:3] == ("ax-request", "ax-ontology", "ax-review"), str(got))
+    check("기본 표가 앞에 남는다",
+          got[:4] == ("ax-request", "ax-ontology", "ax-advance", "ax-review"), str(got))
     check("[중요] 다른 역할은 영향 없다", bundle.skills_for("worker", init)
           == ("ax-work", "ax-infer"), str(bundle.skills_for("worker", init)))
 

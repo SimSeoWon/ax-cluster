@@ -745,3 +745,186 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
         if d.pushed and tree.exists():
             _git_rc(repo, "worktree", "remove", "--force", str(tree))
             _git_rc(repo, "worktree", "prune")
+
+
+# ── 🔴 정본 ⑺ — **라운드 종결: 작업 브랜치를 한 칸 전진시킨다** (사용자 확정 2026-09-04) ──
+#
+# ## [중요] `main` 반영과 다른 단계다 — 오늘 그 둘을 섞어 오지시를 냈다
+#
+#     ② main 반영 판단   `review_work` + `finalize_work`   ← 작업 **전체**가 끝났을 때
+#     ③ 라운드 종결      **여기**                          ← 매 라운드
+#
+# 사용자 서술: *"서브 브랜치들을 처음 등록된 분산 작업용 메인 브랜치에 머지하고 테스트하고
+# 리뷰한뒤 버그가 있는가, 아니면 구조를 수정해야 하는가? 등을 확인하고 물어본뒤 분산 작업용
+# 메인 브랜치에 커밋해 한단계 전진시키는거야."* · *"분산 작업 브랜치를 전진시킨게 재사용하기
+# 위함이고. 전진한 메인 작업 브랜치를 기준으로 서브 작업이 있다면 해당 기점을 기준으로
+# 서브 태스크용 브랜치를 추가할 생각이었어."*
+#
+# ## [중요] 원전에 없다 — **사용자 설계**다 (확인 2026-09-04)
+#
+# 원전 스킬 전수(13종)에 `review-work` 는 있고 라운드 루프는 없다. 원전 모델은
+# 「조각 검증 → 서버가 feature 에 머지 → 리더가 feature→main」로 **한 번** 끝난다.
+# 그러니 이것은 이식 누락이 아니라 원전보다 한 겹 더 있는 구조다. 만들기 전 셋을 답했다:
+#
+#     ① 원전에 있나       없다 (스킬 전수 확인)
+#     ② 이미 잡는 게 있나  `integrate_durables`(머지만·push 0)와 `finalize_work`(confirm 게이트)
+#                        가 재료다 — **조립이 없었을 뿐** 새로 만들지 않는다
+#     ③ 오탐이면 뭐가 죽나 전진을 잘못 push 하면 다음 라운드 조각이 그 위에서 갈라진다.
+#                        되돌리려면 사람이 브랜치를 되감아야 한다 → **`confirm` 게이트 필수**
+#
+# ## [중요] 기준이 `main` 이 아니라 **작업 브랜치**다
+#
+# `review_work` 는 `origin/main` 에 트리를 세운다(시뮬레이션이라 그게 맞다). 여기는
+# **`origin/<작업 브랜치>`** 에 세운다 — 전진분 위에 얹는 것이므로.
+
+ADVANCE_TREE_PREFIX = "ax-advance"
+
+
+def advance_tree_path(repo: Path, work_id: str) -> Path:
+    """정본 **옆**. `review_work` 트리와도 이름이 갈린다 — 둘이 동시에 있어도 안 부딪힌다."""
+    return Path(repo).parent / f"{ADVANCE_TREE_PREFIX}-{work_id}"
+
+
+@dataclass
+class Advance:
+    """라운드 종결 결과. [중요] **모르는 것을 통과로 접지 않는다.**"""
+    ok: bool = False
+    work_id: str = ""
+    target_branch: str = ""          # 전진시킬 작업 브랜치
+    before: str = ""                 # 전진 전 tip
+    head: str = ""                   # 머지 뒤 트리의 HEAD
+    pushed: bool = False
+    merged: list = field(default_factory=list)
+    ax_only: list = field(default_factory=list)
+    skipped: list = field(default_factory=list)
+    conflicts: bool = False
+    build_passed: bool | None = None   # [중요] `None` = **안 쟀다**. False 와 다르다
+    build_note: str = ""
+    tree: str = ""
+    commands: list = field(default_factory=list)
+    error: str = ""
+
+    @property
+    def summary(self) -> str:
+        if self.error:
+            return f"[중요] {self.error}"
+        b = ("[완료] 빌드 통과" if self.build_passed
+             else "[중요] 빌드 실패" if self.build_passed is False
+             else "[주의] 빌드 미확인")
+        s = (f"조각 {len(self.merged)}개 머지 · {b} · "
+             f"{self.target_branch} {self.before[:8]}→{self.head[:8]}")
+        return s + (" · **push 됨(전진)**" if self.pushed else " · push 안 함(승인 대기)")
+
+    @property
+    def question(self) -> str:
+        """[중요] 사람에게 물을 문장. 정본이 요구하는 그 물음이다."""
+        if self.build_passed is False:
+            return ("빌드가 깨졌다 — **버그인가, 구조를 고쳐야 하는가?** "
+                    "버그면 이 트리에서 고쳐 커밋하고, 구조 문제면 전진을 보류하고 "
+                    "`.h`/`.cpp` 에 지시 주석을 남겨 다음 라운드를 등재한다.")
+        if self.build_passed is None:
+            return ("빌드를 **재지 못했다** — 확인 못 한 것은 통과가 아니다. "
+                    "빌드를 돌린 뒤에 전진을 판단한다.")
+        return ("빌드는 통과했다 — **코드에 버그가 없는가, 구조를 고쳐야 하지 않는가?** "
+                "이상 없으면 승인해 전진시키고, 고칠 것이 있으면 위와 같이 다음 라운드로 넘긴다.")
+
+
+def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
+                 confirm: bool = False, remote: str = DEFAULT_REMOTE,
+                 keep_tree: bool = False, logf=C._noop_log) -> Advance:
+    """서브 브랜치를 **작업 브랜치에** 모아 세우고, 승인되면 그 브랜치를 전진시킨다.
+
+    [중요] **`confirm=False` 가 기본이다** (fail-closed · `finalize_work` 와 같은 규약).
+    그때는 머지·빌드만 하고 **push 하지 않으며**, 트리를 남기고 실행할 명령을 돌려준다 —
+    사람이 `question` 에 답한 뒤에야 전진한다.
+
+    [중요] **사람의 워킹트리를 건드리지 않는다** — `<정본 옆>/ax-advance-<work_id>` 에서 돈다.
+    `main` 은 **만지지 않는다**: 그것은 작업 전체가 끝난 뒤 `finalize_work` 의 몫이다.
+    """
+    a = Advance(work_id=work_id)
+    target = work_base_branch(work_id, work)
+    if not target:
+        a.error = ("작업 브랜치를 정할 수 없다 — work_id 도 target_branch 도 쓸 수 없다 "
+                   "(`#319`: 이름은 `task/<work_id>/base`)")
+        return a
+    a.target_branch = target
+
+    tree = advance_tree_path(repo, work_id)
+    a.tree = str(tree)
+    try:
+        # ── ① 기준은 **작업 브랜치**다 (`review_work` 는 여기가 main 이다 — 다른 단계다) ──
+        rc, out = _git_rc(repo, "fetch", remote, target)
+        if rc != 0:
+            a.error = f"{remote}/{target} fetch 실패: {out[:200]}"
+            return a
+        rc, before = _git_rc(repo, "rev-parse", f"{remote}/{target}")
+        if rc != 0:
+            a.error = f"{remote}/{target} tip 을 못 읽었다: {before[:200]}"
+            return a
+        a.before = before.strip()
+
+        if tree.exists():
+            _git_rc(repo, "worktree", "remove", "--force", str(tree))
+        rc, out = _git_rc(repo, "worktree", "add", "--detach", "--force",
+                          str(tree), f"{remote}/{target}")
+        if rc != 0:
+            a.error = f"전진 worktree 생성 실패: {out[:200]}"
+            return a
+        logf("advance", f"worktree {tree.name} = {remote}/{target} @ {a.before[:8]} "
+                        f"(사람 트리 미접촉 · main 미접촉)")
+
+        # ── ② 서브 브랜치 전부 머지 — [중요] 충돌이면 **통째 중단** ──────────────────
+        integ = integrate_durables(tree, work_id=work_id, target_branch=target, tasks=tasks,
+                                   merge_label=f"[ADVANCE] {work_id}", remote=remote, logf=logf)
+        a.merged, a.ax_only, a.skipped = integ.merged, integ.ax_only, integ.skipped
+        a.conflicts = integ.conflict
+        if not integ.ok:
+            a.error = integ.error
+            return a
+        rc, head = _git_rc(tree, "rev-parse", "HEAD")
+        a.head = head.strip() if rc == 0 else ""
+        if a.head and a.head == a.before:
+            # [주의] 머지했는데 tip 이 안 움직였다 = 전진할 것이 없다. 성공으로 접지 않는다
+            a.error = "머지 뒤에도 tip 이 그대로다 — 전진할 것이 없다 (조각이 이미 반영됐나)"
+            return a
+
+        # ── ③ 통합 빌드 — [중요] **한 번**. 조각별로 나눠 보지 않는다 ────────────────
+        if build_fn is None:
+            a.build_note = ("[주의] 빌드를 돌리지 않았다 (`build_fn` 미주입) — "
+                            "**확인 못 한 것은 통과가 아니다**")
+            logf("advance", a.build_note)
+        else:
+            try:
+                res = build_fn(tree)
+                a.build_passed = bool(getattr(res, "passed", res))
+                a.build_note = getattr(res, "summary", lambda: str(res))() \
+                    if callable(getattr(res, "summary", None)) else str(res)
+            except Exception as e:                           # noqa: BLE001
+                a.build_note = f"빌드 호출이 실패했다 — {type(e).__name__}: {e}"
+                logf("advance", f"[중요] {a.build_note}")
+            logf("advance", f"빌드 {a.build_passed} — {a.build_note[:160]}")
+
+        # ── ④ 전진 — [중요] **승인 없이는 push 하지 않는다** ─────────────────────────
+        a.commands = [f"git -C {tree} log --oneline {a.before[:8]}..HEAD",
+                      f"git -C {tree} push {remote} HEAD:refs/heads/{target}"]
+        if not confirm:
+            a.ok = True                  # 머지·빌드까지는 됐다. 전진만 안 한 것이다
+            logf("advance", "confirm=False — 전진하지 않았다 (사람의 답이 트리거다)")
+            return a
+        if a.build_passed is not True:
+            a.error = ("빌드가 통과하지 않았다 — 전진하지 않는다. "
+                       "[중요] 확인 못 한 것도 통과가 아니다")
+            return a
+        rc, out = _git_rc(tree, "push", remote, f"HEAD:refs/heads/{target}")
+        if rc != 0:
+            a.error = (f"push 거부됨 — {out.strip()[:200]}. 커밋은 트리에 남아 있다 "
+                       f"(잃지 않았다). **force 하지 않는다** — 사람이 판단한다")
+            return a
+        a.pushed, a.ok = True, True
+        logf("advance", f"[완료] {target} 전진 — {a.before[:8]} → {a.head[:8]}")
+    finally:
+        # [중요] push 했으면 트리를 지운다. **안 했으면 남긴다** — 사람이 그 안에서 보고 고친다
+        if a.pushed and not keep_tree and tree.exists():
+            _git_rc(repo, "worktree", "remove", "--force", str(tree))
+            _git_rc(repo, "worktree", "prune")
+    return a

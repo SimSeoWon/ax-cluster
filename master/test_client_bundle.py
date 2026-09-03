@@ -181,8 +181,11 @@ def test_role_skills() -> None:
     # [중요] 요청자에게 워커 절차를 주지 않는다
     # [중요] `ax-review` 는 원전의 「리더(TD·팀장)」 자리다 — 그 그룹이 없어 요청자가 그 판단을
     #    한다(사용자 확정 2026-08-16). 검수는 **판단**이지 구현이 아니라 이 역할에 맞는다.
-    check("[중요] 요청자는 ax-request·ax-ontology·ax-review (ax-work 아님)",
-          set(bundle.skills_for("requester")) == {"ax-request", "ax-ontology", "ax-review"},
+    # 🔴 `ax-advance` 는 ⑺ 라운드 종결(작업 브랜치 전진) · `ax-review` 는 main 반영 —
+    #    **다른 단계**다. 그 둘을 섞어 오지시를 낸 것이 2026-09-04 의 결함이었다.
+    check("[중요] 요청자는 request·ontology·advance·review (ax-work 아님)",
+          set(bundle.skills_for("requester"))
+          == {"ax-request", "ax-ontology", "ax-advance", "ax-review"},
           str(bundle.skills_for("requester")))
     check("[중요] 요청자 스킬에 ax-work 가 섞이지 않는다",
           "ax-work" not in bundle.skills_for("requester"))

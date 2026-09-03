@@ -537,8 +537,130 @@ def test_finalize_conflict_leaves_nothing():
         shutil.rmtree(root, ignore_errors=True)
 
 
+
+# ── 🔴 정본 ⑺ — 라운드 종결: 작업 브랜치 전진 (사용자 확정 2026-09-04) ────────────────
+
+class _Build:
+    def __init__(self, passed=True):
+        self.passed = passed
+
+    def summary(self):
+        return "BUILD OK" if self.passed else "BUILD FAILED"
+
+
+def test_advance_bases_on_the_work_branch_not_main():
+    """🔴 **`review_work` 와 기준이 다르다.** 그쪽은 `origin/main` 에 트리를 세우고(시뮬레이션),
+    여기는 **`origin/<작업 브랜치>`** 에 세운다 — 전진분 위에 얹는 것이기 때문이다.
+
+    실측 2026-09-04: 코드가 `main` 기준이라 정본과 갈려 있었다(사용자 지적).
+    """
+    root, repo, work, tasks = fixture()
+    try:
+        before = g(repo, "rev-parse", "origin/feature/w1").strip()
+        a = R.advance_work(repo, work_id="w1", work=work, tasks=tasks,
+                           build_fn=lambda t: _Build(True))
+        check("[중요] 기준이 작업 브랜치다", a.target_branch == "feature/w1", a.target_branch)
+        check("  전진 전 tip 을 그 브랜치에서 읽는다", a.before == before, f"{a.before} vs {before}")
+        check("  트리 이름이 review 와 갈린다", "ax-advance-w1" in a.tree, a.tree)
+        check("  조각 둘을 머지했다", len(a.merged) == 2, str(a.merged))
+        check("  tip 이 움직였다", a.head and a.head != a.before, f"{a.before}→{a.head}")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_advance_does_not_push_without_confirm():
+    """[중요] **`confirm=False` 가 기본이다** (`finalize_work` 와 같은 규약).
+
+    [주의] 전진을 잘못 push 하면 **다음 라운드 조각이 그 위에서 갈라진다** — 되돌리려면
+    사람이 브랜치를 되감아야 한다. 그래서 게이트가 필수다.
+    """
+    root, repo, work, tasks = fixture()
+    try:
+        before = g(repo, "rev-parse", "origin/feature/w1").strip()
+        a = R.advance_work(repo, work_id="w1", work=work, tasks=tasks,
+                           build_fn=lambda t: _Build(True))
+        check("[중요] push 하지 않았다", not a.pushed, a.summary)
+        after = g(repo, "rev-parse", "origin/feature/w1").strip()
+        check("  원격 브랜치가 그대로다", after == before, f"{before}→{after}")
+        check("  머지·빌드까지는 됐다고 말한다", a.ok, a.summary)
+        check("  실행할 명령을 돌려준다", any("push" in c for c in a.commands), str(a.commands))
+        check("  트리를 남긴다 (사람이 그 안에서 본다)", Path(a.tree).exists(), a.tree)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_advance_pushes_on_confirm():
+    root, repo, work, tasks = fixture()
+    try:
+        a = R.advance_work(repo, work_id="w1", work=work, tasks=tasks,
+                           build_fn=lambda t: _Build(True), confirm=True)
+        check("[중요] 승인하면 전진한다", a.pushed and a.ok, a.summary)
+        after = g(repo, "rev-parse", "origin/feature/w1").strip()
+        check("  원격 브랜치가 전진했다", after == a.head, f"{after} vs {a.head}")
+        check("  main 은 만지지 않는다",
+              g(repo, "rev-parse", "origin/main").strip() != a.head, "main 이 움직였다")
+        check("  push 했으면 트리를 지운다", not Path(a.tree).exists(), a.tree)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_advance_refuses_when_build_failed_or_unmeasured():
+    """[중요] **확인 못 한 것은 통과가 아니다** — `build_fn` 미주입도 거절한다."""
+    root, repo, work, tasks = fixture()
+    try:
+        a = R.advance_work(repo, work_id="w1", work=work, tasks=tasks,
+                           build_fn=lambda t: _Build(False), confirm=True)
+        check("[중요] 빌드 실패면 전진하지 않는다", not a.pushed, a.summary)
+        check("  사유를 말한다", "빌드가 통과하지 않았다" in (a.error or ""), a.error)
+        b = R.advance_work(repo, work_id="w1", work=work, tasks=tasks, confirm=True)
+        check("[중요] 빌드 미측정도 전진하지 않는다", not b.pushed, b.summary)
+        check("  None 과 False 를 구분한다", b.build_passed is None, str(b.build_passed))
+        check("  미확인이라고 말한다", "확인 못 한" in (b.error or "") or "미확인" in b.build_note,
+              f"{b.error} / {b.build_note}")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_advance_asks_the_canonical_question():
+    """🔴 정본이 요구하는 물음 — *"버그가 있는가, 아니면 구조를 수정해야 하는가?"*"""
+    root, repo, work, tasks = fixture()
+    try:
+        ok = R.advance_work(repo, work_id="w1", work=work, tasks=tasks,
+                            build_fn=lambda t: _Build(True))
+        check("[중요] 버그·구조를 묻는다",
+              "버그" in ok.question and "구조" in ok.question, ok.question)
+        bad = R.advance_work(repo, work_id="w1", work=work, tasks=tasks,
+                             build_fn=lambda t: _Build(False))
+        check("  빌드가 깨지면 다음 라운드를 안내한다",
+              "다음 라운드" in bad.question, bad.question)
+        none = R.advance_work(repo, work_id="w1", work=work, tasks=tasks)
+        check("  미측정은 「재지 못했다」로 말한다", "재지 못했다" in none.question, none.question)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_advance_stops_whole_on_conflict():
+    """[주의] 부분 머지를 남기지 않는다 — 그 상태로 빌드하면 무엇이 문제인지 알 수 없다."""
+    root, repo, work, tasks = fixture(conflict=True)
+    try:
+        before = g(repo, "rev-parse", "origin/feature/w1").strip()
+        a = R.advance_work(repo, work_id="w1", work=work, tasks=tasks,
+                           build_fn=lambda t: _Build(True), confirm=True)
+        check("[중요] 통째 중단한다", not a.ok and not a.pushed, a.summary)
+        check("  충돌을 표시한다", a.conflicts, str(a.conflicts))
+        check("  원격은 그대로다",
+              g(repo, "rev-parse", "origin/feature/w1").strip() == before, "브랜치가 움직였다")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
 def main() -> int:
-    for fn in (test_order_and_split, test_missing_target_branch,
+    for fn in (test_advance_bases_on_the_work_branch_not_main,
+               test_advance_does_not_push_without_confirm,
+               test_advance_pushes_on_confirm,
+               test_advance_refuses_when_build_failed_or_unmeasured,
+               test_advance_asks_the_canonical_question,
+               test_advance_stops_whole_on_conflict,
+               test_order_and_split, test_missing_target_branch,
                test_manifest_only_durable_is_not_merged,
                test_human_tree_untouched, test_review_integrates_and_cleans_up,
                test_build_fn_injected, test_conflict_aborts_whole,
