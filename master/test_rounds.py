@@ -175,51 +175,76 @@ def test_completion_is_a_note_not_a_new_issue() -> None:
          LC._redmine_add_note) = s_cfg, s_new, s_note
 
 
-def test_completion_pushes_a_desktop_notice() -> None:
-    """🔴 **사람에게 민다 — 토스트로** (사용자 2026-09-05).
+def test_registration_itself_triggers_dispatch() -> None:
+    """🔴 **등재도 트리거다 — 단 라이브 큐일 때만** (사용자 2026-09-05).
 
-    알림이 전부 pull 이라 라운드가 끝나도 사람과 켜져 있는 세션에는 아무것도 안 떴다
-    (*"왜 완료 안알려준다고 메인 컴퓨터는 그러고"*).
+    종전 트리거는 골조 push 하나뿐이었다. 라운드 2 실측: 요청자가 push(01:35:01) → 등재
+    (01:35:53) 순으로 했더니 그 push 는 *"진행 중인 work 만 민다"* 로 거절됐고, 등재 뒤에는
+    새 push 가 없어 **트리거가 다시 안 울렸다.** 조각 3건이 catchup(10분)을 기다렸다.
 
-    [주의] 처음엔 `msg.exe` 로 배선했다가 물렸다 — *"에러창처럼 띄우는 사람이 어디있어"*.
-    모달 대화상자는 알림이 아니다. 지금은 윈도우 **토스트**다.
-    [중요] 명령은 `-EncodedCommand`(UTF-16LE) — ssh 인라인 PowerShell 은 따옴표가 깨진다.
-    그래서 **한글 본문이 그대로 간다**(ASCII 로 접을 필요가 없다).
+    🔴 [주의] **임시 큐 루트에서는 쓰지 않는다.** 이 가드가 없어서 테스트가 라이브 스풀
+    (`~/ax-spool/dispatch`)에 가짜 신호를 썼고, 파견 유닛이 15초에 다섯 번 깨어나
+    `start-limit-hit` 으로 죽었다(2026-09-05). `#345` 와 같은 뿌리다.
     """
-    import base64 as _b64
-    import types as _types
-    from master.task_queue import logic_cleanup as LC
-    import master.client.bundle as B
-
-    ran: list = []
-    s_ws, s_sp = B.workshops, LC.subprocess
-    B.workshops = lambda project: [("192.168.0.33", "user", "C:\\NS", True, "requester", True),
-                                   ("192.168.0.43", "sim", "/t/NS", True, "worker", True)]
-    # [주의] **모듈 자체를 갈아 끼운다** — `LC.subprocess.run` 을 바꾸면 전역 subprocess 가
-    #    바뀌어 레드마인 키를 읽는 `docker exec` 까지 이 목록에 들어온다(실측).
-    LC.subprocess = _types.SimpleNamespace(run=lambda cmd, **kw: (
-        ran.append(cmd) or _types.SimpleNamespace(returncode=0, stderr="", stdout="")))
+    import os as _os
+    from master.work import autodispatch as AD
+    calls: list = []
+    saved = AD.note_trigger
+    AD.note_trigger = lambda wid, project, ref="": calls.append((wid, project, ref))
     try:
+        # ⓐ 임시 루트 — 신호를 쓰지 않는다 (기본 상태)
         idx, wid = _work()
-        LC._push_desktop_notice(idx, wid, "라운드 1 완료 — 조각 2/2 · 레드마인 #900")
-        check("🔴 요청자에게만 민다", len(ran) == 1, str(ran)[:200])
-        check("  그 기계가 `.33` 이다", "user@192.168.0.33" in ran[0], str(ran[0])[:120])
-        cmd = " ".join(ran[0])
-        check("  토스트다 (`msg` 대화상자가 아니다)",
-              "EncodedCommand" in cmd and "msg *" not in cmd, cmd[:120])
-        enc = ran[0][-1].split()[-1]
-        script = _b64.b64decode(enc).decode("utf-16-le")
-        check("  ToastNotification 을 띄운다", "ToastNotification" in script, script[:120])
-        check("[중요] 한글 본문이 그대로 간다", "라운드 1 완료" in script, script[-300:])
+        register_task(idx, work_id=wid, type="code", task_data={},
+                      target_file="Source/A/T.cpp", stem="t")
+        check("🔴 임시 큐 루트에서는 신호를 안 쓴다 (라이브 스풀 오염 금지)",
+              calls == [], str(calls))
 
-        def boom(cmd, **kw):
-            raise RuntimeError("ssh 안 됨")
-
-        LC.subprocess = _types.SimpleNamespace(run=boom)
-        LC._push_desktop_notice(idx, wid, "AX")      # 예외가 새면 여기서 죽는다
-        check("  밀기 실패가 예외로 새지 않는다 (레드마인 노트가 정본이다)", True)
+        # ⓑ 그 루트를 라이브로 선언하면 — 쓴다
+        prev = _os.environ.get("AX_TASK_QUEUE_ROOT")
+        _os.environ["AX_TASK_QUEUE_ROOT"] = str(idx.root)
+        try:
+            register_task(idx, work_id=wid, type="code", task_data={},
+                          target_file="Source/A/U.cpp", stem="u")
+        finally:
+            if prev is None:
+                _os.environ.pop("AX_TASK_QUEUE_ROOT", None)
+            else:
+                _os.environ["AX_TASK_QUEUE_ROOT"] = prev
+        check("🔴 라이브 큐면 등재가 신호를 남긴다", [c[0] for c in calls] == [wid], str(calls))
+        check("  프로젝트 스탬프를 싣는다", calls and calls[0][1] == "NS", str(calls))
+        check("  출처를 적는다 (push 와 구분된다)", calls and calls[0][2] == "register",
+              str(calls))
     finally:
-        B.workshops, LC.subprocess = s_ws, s_sp
+        AD.note_trigger = saved
+
+
+def test_bad_trigger_is_quarantined_not_left_to_thrash() -> None:
+    """🔴 **못 쓰는 트리거는 `*.json` 밖으로 치운다** (실측 2026-09-05).
+
+    `ax-dispatch.path` 는 `PathExistsGlob=…/*.json` 이라 그 파일이 남아 있는 한 계속 깨운다.
+    종전 규칙은 *"못 읽는 파일은 지우지 않고 사유만 찍는다"*(증거 보존)였고, 그 하나가
+    유닛을 `start-limit-hit` 으로 죽였다 — 그 뒤로는 push 트리거가 **아예** 안 걸린다.
+    지우지 않고 이름만 바꾼다: 증거는 남고 glob 에서는 빠진다.
+    """
+    import tempfile as _tf
+    from pathlib import Path as _P
+    from master.work import autodispatch as AD
+    d = _P(_tf.mkdtemp(prefix="ax-trig-"))
+    saved = AD.TRIGGER_DIR
+    AD.TRIGGER_DIR = d
+    try:
+        (d / "broken.json").write_text("{ 이건 JSON 이 아니다", encoding="utf-8")
+        (d / "noid.json").write_text('{"ref": "register"}', encoding="utf-8")
+        (d / "good.json").write_text('{"work_id": "w1", "project": "NS"}', encoding="utf-8")
+        got = AD._read_triggers()
+        check("정상 트리거만 돌려준다", [g[0] for g in got] == ["w1"], str(got))
+        left = sorted(f.name for f in d.glob("*.json"))
+        check("🔴 못 쓰는 것은 glob 에서 빠진다 (유닛이 다시 안 깨어난다)",
+              left == ["good.json"], str(left))
+        bad = sorted(f.name for f in d.glob("*.json.bad"))
+        check("  증거는 남는다", bad == ["broken.json.bad", "noid.json.bad"], str(bad))
+    finally:
+        AD.TRIGGER_DIR = saved
 
 
 def test_round_is_in_the_branch_name() -> None:
@@ -270,7 +295,8 @@ def main() -> int:
     for fn in (test_new_tasks_reopen_the_work, test_dispatch_gate_agrees,
                test_issue_is_created_at_registration,
                test_completion_is_a_note_not_a_new_issue,
-               test_completion_pushes_a_desktop_notice,
+               test_registration_itself_triggers_dispatch,
+               test_bad_trigger_is_quarantined_not_left_to_thrash,
                test_round_is_in_the_branch_name,
                test_finished_work_is_not_revived):
         fn()

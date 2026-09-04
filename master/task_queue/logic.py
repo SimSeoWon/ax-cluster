@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import threading
 import urllib.request
@@ -45,6 +46,10 @@ from .logic_cleanup import (  # noqa: F401  (re-export)
 
 # merge_status 가 이 집합에 들어가면 "이미 종결된 work" 로 간주 — 중복 판정에서 제외.
 _TERMINAL_MERGE_STATUSES = {"merged", "rejected", "cancelled"}
+
+
+class _NotLiveQueue(Exception):
+    """테스트용 임시 큐 루트 — 파견 신호를 쓰지 않는다는 표시(제어 흐름 전용)."""
 
 
 def _norm_repo(p: str) -> str:
@@ -252,6 +257,36 @@ def register_task(idx: TaskIndex, *, work_id: str, type: str, task_data: dict,
         _save_work(idx, work_id)
         _tq_log(f"[register] {task_id} work={work_id} type={type} target={target_file} "
                 f"level={hierarchy_level} requires={','.join(req_caps) or '-'}", idx.root)
+        # 🔴 [중요] **등재도 파견 트리거다** (사용자 2026-09-05).
+        #
+        # 종전 트리거는 **골조 push 하나뿐**이었다. 그래서 요청자가 push 를 먼저 하고 등재를
+        # 뒤에 하면(라운드 2 실측 2026-09-05: push 01:35:01 → 등재 01:35:53) 그 push 는
+        # *"진행 중인 work 만 민다"* 로 거절되고, 등재 뒤에는 새 push 가 없어 **트리거가 다시
+        # 안 울린다.** 그날 조각 3건이 catchup 타이머(10분)를 기다렸고, `.33` 은 그 4분 동안
+        # *"아무도 안 집는다"* 만 보고 있었다.
+        #
+        # [주의] 여기서 **파견하지 않는다** — 신호만 쓴다(`note_trigger` 규약). 골조가 아직
+        # 안 올라왔으면 파견 쪽이 *"base 가 원격에 없다"* 로 거절하고 그 사유를 work 에 적는다.
+        # 조각 N건이면 같은 파일에 N번 쓰지만 이름이 `<work_id>.json` 이라 합쳐진다.
+        try:
+            # 🔴 [중요] **라이브 큐일 때만 신호를 쓴다** (실측 2026-09-05 — 이걸 안 갈라서
+            #    사고가 났다). 테스트는 임시 루트로 `TaskIndex` 를 만드는데, 신호 경로는
+            #    `~/ax-spool/dispatch` 상수라 **테스트가 라이브 스풀에 썼다.** 가짜 work_id
+            #    트리거가 파견 유닛을 15초에 다섯 번 깨워 `start-limit-hit` 으로 `.service` 와
+            #    `.path` 를 둘 다 죽였고, 그 복구(`reset-failed`)는 NOPASSWD 밖이라 사람 몫이 됐다.
+            #    `#345`(테스트가 라이브 큐에 결합)와 **같은 뿌리**다 — 실행 경로가 파일 밖에 있다.
+            from pathlib import Path as _P                    # noqa: PLC0415
+            _live = _P(os.environ.get("AX_TASK_QUEUE_ROOT") or (_P.home() / "ax-state"))
+            if _P(idx.root).resolve() != _live.resolve():
+                raise _NotLiveQueue(f"임시 큐 루트({idx.root}) — 신호를 쓰지 않는다")
+            from ..work.autodispatch import note_trigger      # noqa: PLC0415
+            note_trigger(work_id, str(idx.works[work_id].get("project") or ""),
+                         ref="register")
+        except _NotLiveQueue:
+            pass                                              # 테스트 경로 — 조용히 넘긴다
+        except Exception as e:                                # noqa: BLE001
+            _tq_log(f"[register] [주의] {task_id} 파견 트리거를 못 남겼다 — "
+                    f"{type(e).__name__}: {e} (catchup 이 최대 10분 뒤 집는다)", idx.root)
         _git_commit_tasks(idx.root,
                           f"[task-register] {task_id} → {work_id}: {stem or 'task'}",
                           [path, idx.work_paths[work_id]])

@@ -2,9 +2,7 @@
 
 lifecycle → cleanup 단방향 의존 — 이 모듈은 logic_lifecycle 을 import 하지 않는다.
 """
-import base64
 import json
-import subprocess
 import threading
 import urllib.request
 import urllib.error
@@ -400,70 +398,6 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
 #
 # 남긴 것은 **공지 하나**다 — 조각이 전부 terminal 이면 `.33` 에 알린다. 그게 마스터의 끝이다.
 
-_TOAST_PS = """
-$ErrorActionPreference = "Stop"
-[void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime]
-$tpl = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
-$tx = $tpl.GetElementsByTagName("text")
-[void]$tx.Item(0).AppendChild($tpl.CreateTextNode("{title}"))
-[void]$tx.Item(1).AppendChild($tpl.CreateTextNode("{body}"))
-$toast = New-Object Windows.UI.Notifications.ToastNotification $tpl
-$aid = "{{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}}\\WindowsPowerShell\\v1.0\\powershell.exe"
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($aid).Show($toast)
-"""
-
-
-def _push_desktop_notice(idx: TaskIndex, work_id: str, text: str) -> None:
-    """🔴 **요청자 화면에 밀어 준다 — 토스트 알림으로** (사용자 2026-09-05).
-
-    [중요] 지금 알림은 전부 **당기는(pull)** 구조다 — 레드마인 이슈 · `:8103` · `.33` 세션 훅.
-    켜져 있는 세션과 **사람**에게는 아무것도 안 뜬다. 실측 2026-09-05: 라운드가 끝났는데
-    `.33` 세션이 *"완료 노티 안 오는거야?"* 로 물었고 사람이 직접 상태를 캐물었다.
-    (`#356` — 레드마인 SMTP 미설정이라 메일 경로도 없다.)
-
-    [주의] **`msg.exe` 는 쓰지 않는다** — 처음에 그걸로 배선했더니 사용자가
-    *"에러창처럼 띄우는 사람이 어디있어"* 라고 했다. 모달 대화상자는 알림이 아니다.
-    지금은 **윈도우 토스트**(`ToastNotificationManager`)이고, 실측 2026-09-05 `.33` 에서 떴다.
-
-    [중요] 명령은 **`-EncodedCommand`(UTF-16LE base64)** 로 보낸다 — PowerShell 을 ssh 인라인
-    으로 넘기면 `$`·따옴표가 깨져 **출력이 아예 없는** 실패가 난다(메모리
-    `live_test_starts_clean` ⑹). 인코딩해 보내면 한글 본문도 그대로 간다.
-
-    [주의] 실패는 삼킨다 — 레드마인 노트가 정본이고 이 알림은 덤이다. 다만 **사유는 찍는다.**
-    """
-    try:
-        from ..client.bundle import workshops                     # noqa: PLC0415
-        wmeta = idx.works.get(work_id) or {}
-        project = str(wmeta.get("project") or "").strip()
-        if not project:
-            return
-        targets = [(h, u) for h, u, _p, _d, role, _dp in workshops(project)
-                   if str(role) == "requester" and h and u]
-    except Exception as e:                                        # noqa: BLE001
-        _tq_log(f"[notify-desktop] {work_id} 대상 조회 실패 — {type(e).__name__}: {e}", idx.root)
-        return
-    if not targets:
-        _tq_log(f"[notify-desktop] {work_id} 요청자 작업장이 없다 — 밀 곳이 없다", idx.root)
-        return
-    body = str(text).replace('"', "'").replace("\n", " ")[:200]
-    script = _TOAST_PS.format(title="AX 분산 작업", body=body)
-    enc = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
-    for host, user in targets:
-        try:
-            r = subprocess.run(
-                ["ssh", "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-                 f"{user}@{host}", f"powershell -NoProfile -EncodedCommand {enc}"],
-                capture_output=True, text=True, timeout=40)
-            if r.returncode == 0:
-                _tq_log(f"[notify-desktop] {work_id} → {host} 토스트 띄움", idx.root)
-            else:
-                _tq_log(f"[notify-desktop] {work_id} → {host} 실패 rc={r.returncode} "
-                        f"{(r.stderr or '').strip()[:120]}", idx.root)
-        except Exception as e:                                    # noqa: BLE001
-            _tq_log(f"[notify-desktop] {work_id} → {host} 예외 — {type(e).__name__}: {e}",
-                    idx.root)
-
-
 def _auto_cleanup_work_async(idx: TaskIndex, work_id: str):
     """조각이 전부 끝났다 — **요청자(`.33`)에 완료를 공지한다.** 그게 전부다.
 
@@ -472,15 +406,9 @@ def _auto_cleanup_work_async(idx: TaskIndex, work_id: str):
     """
     _tq_log(f"[notify] {work_id} 조각 전부 종결 — 요청자에 완료 공지", idx.root)
     _try_create_review_issue_async(idx, work_id)
-    # 🔴 **사람에게도 민다** — 레드마인 노트는 당겨야 보인다(사용자 2026-09-05).
-    with idx.lock:
-        wmeta = idx.works.get(work_id) or {}
-        rnd = int(wmeta.get("round", 1) or 1)
-        tot = int(wmeta.get("total", 0))
-        ver = int(wmeta.get("verified", 0))
-        iss = wmeta.get("redmine_issue_id")
-    threading.Thread(target=_push_desktop_notice, args=(
-        idx, work_id,
-        f"라운드 {rnd} 완료 — 조각 {ver}/{tot}"
-        + (f" · 레드마인 #{iss}" if iss else "")
-        + ". 이 PC 에서 ax-advance 로 라운드를 종결하세요."), daemon=True).start()
+    # [중요] **요청자에게 미는 채널을 여기서 만들지 않는다** (사용자 2026-09-05: *"훅이
+    #    있다는거야? 그거써"*). `.33` 은 `SessionStart` 와 **`UserPromptSubmit`(매 턴)** 에
+    #    `pending_works.py` 훅이 등록돼 있고(실측: 그 기계 `settings.json`), 열린 work 이
+    #    있으면 그 턴에 「라운드 종결 대기」를 세션에 주입한다.
+    #    [주의] 내가 `msg.exe` → 윈도우 토스트를 배선했다가 둘 다 물렸다 — *"에러창처럼
+    #    띄우는 사람이 어디있어"* · *"그런거 안쓰는데"*. **있는 것을 쓴다.**

@@ -488,8 +488,26 @@ def note_trigger(work_id: str, project: str, ref: str = "") -> Path:
     return final
 
 
+def _quarantine(f: Path, why: str) -> None:
+    """🔴 **못 쓰는 트리거를 `*.json` 밖으로 치운다** (실측 2026-09-05 — 이것 때문에 유닛이 죽었다).
+
+    종전 규칙은 *"못 읽는 파일은 지우지 않고 사유만 찍는다"*(증거 보존)였다. 그런데
+    `ax-dispatch.path` 는 **`PathExistsGlob=…/*.json`** 이라 그 파일이 남아 있는 한 계속
+    깨운다 — 형식이 깨진 트리거 하나가 15초에 다섯 번 기동을 만들고 `start-limit-hit` 으로
+    **service 와 path 를 둘 다 failed** 로 떨어뜨렸다. 그 뒤로는 push 트리거가 아예 죽는다.
+
+    그래서 지우지 않고 **이름만 바꾼다** — 증거는 남고 glob 에서는 빠진다.
+    """
+    try:
+        f.rename(f.with_suffix(".json.bad"))
+        _log(f"[주의] 못 쓰는 트리거를 치웠다 ({why}) — {f.name} → {f.name}.bad")
+    except OSError as e:
+        _log(f"[중요] 못 쓰는 트리거를 치우지 못했다 — {f.name}: {e} "
+             f"(이 파일이 남아 있으면 파견 유닛이 계속 깨어난다)")
+
+
 def _read_triggers() -> list:
-    """`(work_id, project, path)` 목록. 못 읽는 파일은 **지우지 않고** 사유만 찍는다."""
+    """`(work_id, project, path)` 목록. 못 읽는 파일은 **격리**한다(`.json.bad`)."""
     out = []
     if not TRIGGER_DIR.is_dir():
         return out
@@ -498,10 +516,10 @@ def _read_triggers() -> list:
             d = json.loads(f.read_text(encoding="utf-8"))
             wid, proj = str(d.get("work_id") or ""), str(d.get("project") or "")
         except (OSError, ValueError) as e:                   # noqa: PERF203
-            _log(f"[주의] 트리거를 못 읽었다 — {f.name}: {type(e).__name__}: {e}")
+            _quarantine(f, f"{type(e).__name__}: {e}")
             continue
         if not (wid and proj):
-            _log(f"[주의] 트리거에 work_id·project 가 없다 — {f.name}")
+            _quarantine(f, "work_id·project 가 없다")
             continue
         out.append((wid, proj, f))
     return out
