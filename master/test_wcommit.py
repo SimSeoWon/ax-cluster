@@ -167,6 +167,43 @@ def test_returns_to_main():
               c2.summary)
 
 
+def test_worker_keeps_nothing() -> None:
+    """🔴 **워커는 임시 저장소다 — 커밋하고 나면 아무것도 안 남는다** (사용자 2026-09-04).
+
+    *"작업 워커는 그냥 임시 저장소로 쓰는거야. 거기 뭘 남길 필요가 없어"*.
+
+    [주의] 종전에는 `main` 복귀만 하고 조각 브랜치를 남겼다. 지우는 판정을 `cleanup.py` 가
+    「팁이 `origin/main` 에서 도달 가능한가」로 했는데 전진분은 `main` 이 아니라 작업
+    브랜치로 들어가므로 **영원히 「보존」** 이었다 — 실측 2026-09-04 에 라운드 하나가
+    세 기계에 잔재를 남겼고 사람이 손으로 걷었다.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        facts, bare, base, worker = _world(Path(td))
+        art = worker / ".ax" / "work" / TASK
+        art.mkdir(parents=True, exist_ok=True)
+        (art / "response.txt").write_text("x\n", encoding="utf-8")
+
+        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+                        want=[SRC], llm=_llm_writes(GOOD), ssh=_shell, reader=_reader,
+                        baseline=lambda p: KEEP_HDR if p == HDR else None)
+        check("통과한다", c.ok, c.summary)
+        local = sh(worker, "git", "for-each-ref", "--format=%(refname:short)", "refs/heads")
+        check("🔴 **조각 브랜치가 로컬에 안 남는다**",
+              f"task/{WORK}/{TASK}" not in local.split(), local)
+        check("  `main` 만 남는다", local.split() == ["main"], local)
+        check("[중요] 그래도 커밋은 원격에 있다 — 잃은 것이 없다",
+              _heads(bare).get(f"task/{WORK}/{TASK}") == c.head, str(_heads(bare)))
+        check("  부산물 디렉토리도 지운다", not art.exists(), str(art))
+
+        # 실패 경로도 같다 — 잔재가 남는 것은 성공/실패와 무관하다
+        c2 = wcommit.run(facts, {"task_id": "bad9"}, work_id=WORK, base_commit=base,
+                         want=[SRC], llm=_llm_writes({SRC: "// [PSEUDO] 안 채웠다\n"}),
+                         ssh=_shell, reader=_reader)
+        local2 = sh(worker, "git", "for-each-ref", "--format=%(refname:short)", "refs/heads")
+        check("막혔어도 로컬에 안 남는다",
+              not c2.ok and local2.split() == ["main"], f"{c2.summary} · {local2}")
+
+
 def test_happy_path():
     with tempfile.TemporaryDirectory() as td:
         facts, bare, base, worker = _world(Path(td))
@@ -289,7 +326,8 @@ def test_no_pseudo_and_no_change_is_a_no_op_not_a_failure():
 
 def main() -> int:
     for fn in (test_no_pseudo_and_no_change_is_a_no_op_not_a_failure,
-               test_commands, test_returns_to_main, test_happy_path, test_layer1_blocks_commit,
+               test_commands, test_returns_to_main, test_worker_keeps_nothing,
+               test_happy_path, test_layer1_blocks_commit,
                test_empty_body_blocks, test_no_change_is_not_success,
                test_refusals, test_llm_failure_does_not_commit):
         fn()

@@ -51,7 +51,10 @@ from .runner import DispatchError
 
 # 원전 커밋 메시지 규약 (`docs/distributed-workers.md` § 워커 사이클)
 COMMIT_FMT = "[task:{task_id}] worker={host} target={target}"
-# [중요] 사이클이 끝나면 **`main` 으로 돌아온다** (원전 § 워커 사이클 · 사용자 결정 2026-08-09).
+# 🔴 [중요] 사이클이 끝나면 **`main` 으로 돌아오고 그 작업의 흔적을 전부 지운다**
+# (사용자 2026-09-04: *"작업 워커는 그냥 임시 저장소로 쓰는거야. 거기 뭘 남길 필요가 없어"*).
+# 지우는 것: 조각 브랜치 · 원격추적 캐시 · `.ax/work/<task_id>`. 커밋은 push 된 순간
+# 원격에 있고, 통과 못 한 본문은 마스터 스풀에 원문이 남는다.
 #    실측 2026-09-03: 이 단계가 없어서 `.2` 가 조각 브랜치에 체크아웃된 채 남았고, 그러면
 #    **정리기가 그 브랜치를 영영 못 지운다**(체크아웃된 브랜치는 삭제 대상에서 빠진다).
 #    작업물은 이미 원격에 있으므로 돌아와도 잃는 것이 없다.
@@ -128,8 +131,20 @@ def checkout_command(facts, branch: str, base_commit: str) -> str:
             f'git rev-parse HEAD')
 
 
-def return_home_command(facts, home: str = HOME_BRANCH) -> str:
-    """사이클 종료 자세 — `main` 으로 복귀한다.
+def return_home_command(facts, home: str = HOME_BRANCH, branch: str = "",
+                        task_id: str = "") -> str:
+    """사이클 종료 자세 — `main` 으로 복귀하고 **그 조각 브랜치를 지운다.**
+
+    🔴 [중요] **워커는 임시 저장소다 — 거기 남길 것이 없다** (사용자 2026-09-04:
+    *"작업 워커는 그냥 임시 저장소로 쓰는거야. 거기 뭘 남길 필요가 없어"*).
+    커밋은 push 된 순간 원격(gitea)에 있고, 통과 못 한 본문은 마스터 스풀에 원문이 남는다.
+    로컬 브랜치를 남겨 둘 이유가 없다.
+
+    [주의] **종전에는 복귀만 하고 브랜치를 남겼다.** 지우는 판정을 `cleanup.py` 가
+    「팁이 `origin/main` 에서 도달 가능한가」로 했는데, 전진분은 `main` 이 아니라 작업
+    브랜치로 들어가므로 그 기준으로는 **영원히 「도달 불가 = 보존」** 이었다. 실측
+    2026-09-04: 라운드 하나에 `.2`·`.43`·`.33` 세 기계 모두에 조각 브랜치가 쌓였고
+    사람이 손으로 걷어냈다. 그 「보존」 규칙은 사용자 결정이 아니라 내가 붙인 것이다.
 
     [중요] **원전이 이 단계를 갖고 있고 이유가 정리다**: 체크아웃된 브랜치는 `git branch -d`
     대상에서 빠지므로, 조각 브랜치에 서 있는 채로 끝나면 병합 뒤에도 지워지지 않는다.
@@ -144,8 +159,22 @@ def return_home_command(facts, home: str = HOME_BRANCH) -> str:
     #    `.33` 에 이 명령을 절대 돌리지 않는다) ⑵ 통과한 본문은 이미 커밋·push 됐고,
     #    막힌 본문은 **스풀에 원문이 남는다**(`Response.files`) — 증거를 잃지 않는다
     #    ⑶ 다음 사이클의 `checkout_base` 가 어차피 `reset --hard` 로 시작한다.
-    return (f'{cd} && git reset --hard -q HEAD && git clean -fdq && '
-            f'git checkout -q "{home}" && git rev-parse --abbrev-ref HEAD')
+    # [주의] 브랜치 삭제는 **복귀 뒤**다 — 체크아웃돼 있으면 `-D` 가 거부된다.
+    #    전부 `|| true`(윈도우 `|| ver >nul`)로 관용한다: 이미 없어도 사이클을 실패로 만들지
+    #    않는다. 판정은 마지막 `rev-parse` 가 `main` 을 찍는가 하나다.
+    tolerate = "ver >nul" if facts.windows else "true"
+    steps = [f'git checkout -q "{home}"']
+    if branch:
+        steps.append(f'(git branch -D "{branch}" -q || {tolerate})')
+    # 원격추적 캐시도 남기지 않는다 — 원격에서 지워도 prune 전까지 남는다(실측 2026-09-01)
+    steps.append(f'(git remote prune origin -q || {tolerate})')
+    if task_id:
+        art = (f'{facts.path}\\.ax\\work\\{task_id}' if facts.windows
+               else f'{facts.path}/.ax/work/{task_id}')
+        steps.append(f'(rmdir /s /q "{art}" || {tolerate})' if facts.windows
+                     else f'(rm -rf "{art}" || {tolerate})')
+    steps.append('git rev-parse --abbrev-ref HEAD')
+    return f'{cd} && git reset --hard -q HEAD && git clean -fdq && ' + " && ".join(steps)
 
 
 def commit_command(facts, branch: str, task_id: str, targets, message: str = "") -> str:
@@ -312,10 +341,10 @@ def _cycle(facts, task_id: str, c: "Committed", base: str, llm, do_ssh, do_read,
 def _return_home(facts, do_ssh, c: Committed) -> None:
     """`main` 복귀. [주의] **실패를 치명으로 보지 않는다** — 커밋은 이미 원격에 있다."""
     try:
-        rc, out = do_ssh(facts, return_home_command(facts), GIT_TIMEOUT)
+        rc, out = do_ssh(facts, return_home_command(facts, branch=c.branch,
+                                                    task_id=c.task_id), GIT_TIMEOUT)
         if rc != 0 or HOME_BRANCH not in (out or ""):
-            c.notes.append(f"[주의] `{HOME_BRANCH}` 복귀 실패 (rc={rc}) — 조각 브랜치에 "
-                           f"체크아웃된 채 남으면 정리기가 그것을 못 지운다: "
-                           f"{(out or '').strip()[-160:]}")
+            c.notes.append(f"[주의] 워커 정리 실패 (rc={rc}) — 임시 저장소에 그 작업이 "
+                           f"남았다: {(out or '').strip()[-160:]}")
     except Exception as e:                                   # noqa: BLE001
         c.notes.append(f"[주의] `{HOME_BRANCH}` 복귀를 시도하지 못했다 — {type(e).__name__}: {e}")
