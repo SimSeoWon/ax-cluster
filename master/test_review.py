@@ -550,6 +550,60 @@ class _Build:
         return "BUILD OK" if self.passed else "BUILD FAILED"
 
 
+class _Api:
+    """마스터 대행 대역 — `.33` 에는 레드마인 키가 없다."""
+
+    def __init__(self):
+        self.calls: list = []
+
+    def __call__(self, method, path, payload=None, **kw):
+        self.calls.append((method, path, payload))
+        return {"ok": True}
+
+
+def test_advance_records_the_decision_in_redmine():
+    """🔴 **전진과 그 자리의 결정을 이슈에 남긴다** (사용자 2026-09-04).
+
+    *"추가 개선 요청했을때 레드마인에 내용이 기입되어야 할 꺼같은데 지금은 모든 분산 작업이
+    완료된 후 처리하니까 이것도 타이밍이 안맞고"*.
+
+    [중요] 사람의 답(`decision_note`)은 **호출자가 실어 준다.** 없으면 그 사실을 노트에
+    적는다 — 추측해서 채우지 않는다.
+    """
+    root, repo, work, tasks = fixture()
+    try:
+        w = dict(work); w["redmine_issue_id"] = 900
+        api = _Api()
+        a = R.advance_work(repo, work_id="w1", work=w, tasks=tasks, confirm=True,
+                           build_fn=lambda t: _Build(True), api=api,
+                           decision_note="버그 아님 · 구조 유지 · 추가 개선: 입력 검증 보강")
+        check("전진했다", a.pushed, a.summary)
+        note = next(((p or {}) for m, p2, p in api.calls
+                     if m == "POST" and p2 == "/api/v1/redmine/note"), None)
+        check("🔴 레드마인에 노트를 남긴다", note is not None, str(api.calls))
+        check("  이슈는 등재 때 만들어진 그것이다", (note or {}).get("issue_id") == 900,
+              str((note or {}).get("issue_id")))
+        body = (note or {}).get("notes") or ""
+        check("  전진 전후 tip 이 적힌다", a.before[:8] in body and a.head[:8] in body, body[:200])
+        check("  🔴 사람이 정한 것이 그대로 실린다", "입력 검증 보강" in body, body[:300])
+
+        # 답을 안 실으면 — 비어 있다고 말한다 (조용히 넘기지 않는다)
+        root2, repo2, work2, tasks2 = fixture()
+        try:
+            w2 = dict(work2); w2["redmine_issue_id"] = 901
+            api2 = _Api()
+            R.advance_work(repo2, work_id="w1", work=w2, tasks=tasks2, confirm=True,
+                           build_fn=lambda t: _Build(True), api=api2)
+            body2 = next(((p or {}).get("notes", "") for m, p2, p in api2.calls
+                          if p2 == "/api/v1/redmine/note"), "")
+            check("[주의] 판단이 없으면 없다고 적는다",
+                  "기록되지 않았다" in body2, body2[:200])
+        finally:
+            shutil.rmtree(root2, ignore_errors=True)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_advance_merges_only_this_round():
     """🔴 **이번 라운드 조각만 머지한다** (사용자 2026-09-04).
 
@@ -694,6 +748,7 @@ def test_advance_stops_whole_on_conflict():
 def main() -> int:
     for fn in (test_advance_bases_on_the_work_branch_not_main,
                test_advance_merges_only_this_round,
+               test_advance_records_the_decision_in_redmine,
                test_advance_does_not_push_without_confirm,
                test_advance_pushes_on_confirm,
                test_advance_refuses_when_build_failed_or_unmeasured,

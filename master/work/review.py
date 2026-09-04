@@ -806,6 +806,7 @@ class Advance:
     build_note: str = ""
     tree: str = ""
     commands: list = field(default_factory=list)
+    notes: list = field(default_factory=list)   # 레드마인 기재 등 부수 기록
     error: str = ""
 
     @property
@@ -835,7 +836,8 @@ class Advance:
 
 def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
                  confirm: bool = False, remote: str = DEFAULT_REMOTE,
-                 keep_tree: bool = False, logf=C._noop_log) -> Advance:
+                 keep_tree: bool = False, api=None, decision_note: str = "",
+                 logf=C._noop_log) -> Advance:
     """서브 브랜치를 **작업 브랜치에** 모아 세우고, 승인되면 그 브랜치를 전진시킨다.
 
     [중요] **`confirm=False` 가 기본이다** (fail-closed · `finalize_work` 와 같은 규약).
@@ -937,6 +939,36 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
             return a
         a.pushed, a.ok = True, True
         logf("advance", f"[완료] {target} 전진 — {a.before[:8]} → {a.head[:8]}")
+
+        # 🔴 **전진과 그 자리의 결정을 레드마인에 남긴다** (사용자 2026-09-04:
+        #    *"추가 개선 요청했을때 레드마인에 내용이 기입되어야 할 꺼같은데 … 타이밍이
+        #    안맞고"*). 이슈는 **등재 때** 이미 만들어져 있고, 여기서 노트를 붙인다.
+        #
+        # [중요] `decision_note` 는 **사람의 답**이다 — 「버그냐 구조냐」·「추가 개선인가
+        #    마감인가」를 묻고 받은 내용을 호출자(`ax-advance`)가 그대로 실어 준다.
+        #    비어 있으면 전진 사실만 적는다. **추측해서 채우지 않는다.**
+        # [주의] 기재 실패가 전진을 되돌리지 않는다 — push 는 이미 끝났다. 사유만 남긴다.
+        issue_id = (work or {}).get("redmine_issue_id")
+        if issue_id:
+            note = "\n".join([
+                f"라운드 {cur_round} 전진 — `{target}` {a.before[:8]} → {a.head[:8]}",
+                "",
+                f"- 머지한 서브 브랜치: {len(a.merged)}건"
+                + (f" ({', '.join(a.merged[:8])})" if a.merged else ""),
+                f"- 통합 빌드: {a.build_note or '(미기록)'}",
+            ] + (["", "## 이 자리에서 사람이 정한 것", "", decision_note]
+                 if decision_note else
+                 ["", "[주의] 사람의 판단이 기록되지 않았다 — "
+                  "「버그냐 구조냐 · 추가 개선인가 마감인가」를 묻고 그 답을 실어야 한다"]))
+            try:
+                (api or _default_api)("POST", "/api/v1/redmine/note",
+                                      {"issue_id": int(issue_id), "notes": note,
+                                       "work_id": work_id})
+                a.notes.append(f"레드마인 #{issue_id} 에 전진 기록")
+            except Exception as e:                           # noqa: BLE001
+                logf("advance", f"[주의] 레드마인 기재 실패 — {type(e).__name__}: {e}")
+        else:
+            logf("advance", "[주의] 이 work 에 레드마인 이슈 id 가 없다 — 기록하지 못했다")
     finally:
         # [중요] push 했으면 트리를 지운다. **안 했으면 남긴다** — 사람이 그 안에서 보고 고친다
         if a.pushed and not keep_tree and tree.exists():

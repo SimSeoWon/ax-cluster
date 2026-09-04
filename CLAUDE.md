@@ -293,7 +293,7 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client probe|plan|deliver|check
 .venv/bin/python -m master.ontology log-candidates     # 태깅 권장 리포트 (#169, LLM 0)
 ```
 
-[중요] **승인 뒤는 한 호출이다** (원전 6단계 동등, 2026-08-21): `review.finalize_work(confirm=True)` 가 ①`main` `--no-ff` 머지+push ②Redmine 완료 기재(머지 커밋 해시 · 상태는 **「해결」** — 「완료」로 닫는 것은 사람이다) ③**도달 가능한 브랜치 삭제** ⑤`merge_status`→`merged` 를 이어서 한다. `confirm=False`(기본)는 **통합만 하고 멈추고** 사람이 실행할 명령을 돌려준다. [주의] 순서가 계약이다 — 정리는 **머지 뒤**여야 도달 가능 판정이 참이 된다.
+[중요] **승인 뒤는 한 호출이다** (원전 6단계 동등, 2026-08-21): `review.finalize_work(confirm=True)` 가 ①`main` `--no-ff` 머지+push ②Redmine 기재 + **이슈를 「완료」로 닫는다**(머지 커밋 해시 · 사용자 2026-09-04 *"레드마인 닫고 메인에 머지해야지"* — 이 호출 자체가 승인으로만 도는 자리라 자동으로 닫히는 것이 아니다) ③**도달 가능한 브랜치 삭제** ⑤`merge_status`→`merged` 를 이어서 한다. `confirm=False`(기본)는 **통합만 하고 멈추고** 사람이 실행할 명령을 돌려준다. [주의] 순서가 계약이다 — 정리는 **머지 뒤**여야 도달 가능 판정이 참이 된다.
 
 🔴 [주의] **아래는 「지금 도는 것」이고 정본이 아니다.** 정본 ⑸ 는 **워커가 끝내고 다음 작업을
 요청**하는 것(= 상주 폴링)이므로, `#320` 의 상주 철거는 **되돌릴 목록**에 있다. 원전도 워커
