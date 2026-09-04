@@ -152,15 +152,21 @@ def main() -> None:
 
     out = ["[분산 작업] 머지되지 않은 work 가 있다 — 세션 시작 점검 (`#337`)"]
     if ready:
-        out.append(f"\n■ 승인 대기 {len(ready)}건 — **사람의 승인이 곧 트리거다**")
+        out.append(f"\n■ 라운드 종결 대기 {len(ready)}건 — **작업 브랜치를 한 칸 전진**"
+                   f"시키는 자리다 (`main` 이 아니다)")
         out += [_line(w, details.get(w.get("work_id"))) for w in ready]
-        out.append("  → 통합이 끝났으면 `finalize_work(confirm=True)`. 기본값은 "
-                   "`confirm=False`(통합만 하고 멈춤)다.")
+        out.append("  → `ax-advance`: 서브 브랜치를 전부 작업 브랜치에 머지 → 거기서 "
+                   "**한 번** UE5 빌드")
+        out.append("     · 빌드가 실패하면 고치고 **다시 빌드한다** — 통과를 재기 전에는 "
+                   "전진하지 않는다")
+        out.append("     · 통과하면 사람에게 묻는다 — **추가 개선인가, 마감인가**")
+        out.append("        추가 개선 → 전진(push) 뒤 `.h`/`.cpp` 에 지시 주석 → 재등재")
+        out.append("        마감      → 그때만 `ax-review` → `finalize_work(confirm=True)`")
     if running:
         out.append(f"\n■ 진행 중 {len(running)}건")
         out += [_line(w, details.get(w.get("work_id"))) for w in running]
-        out.append("  → [주의] 상주 클레이머는 0이다(`#320`). 저절로 진행되지 않으니 "
-                   "파견·통합은 마스터에서 이어서 한다.")
+        out.append("  → 파견은 자동이다 (`ax-dispatch.path` — 골조 push 가 트리거). "
+                   "조각이 전부 끝나면 여기 「라운드 종결 대기」로 올라온다.")
     out.append("\n[주의] 사용자가 묻기 전에 이 내용을 먼저 알린다. 임의로 머지하지 않는다 — "
                "승인은 사람이 한다.")
     print("\n".join(out))
