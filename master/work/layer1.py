@@ -47,7 +47,24 @@ from . import skeleton
 
 # [중요] 소스에 남아 있으면 안 되는 것들. 보존 태그(`skeleton.PERMANENT_TAGS`)는 여기 없다.
 FEEDBACK_TAG = "[FEEDBACK]"
+# 🔴 [중요] **마커와 「인용」을 가른다** (실측 2026-09-05 — 오탐으로 조각 하나가 죽었다).
+#    골조의 `[DOC]` 문장이 태그를 **언급**한 것뿐인데 위반으로 잡혔다:
+#
+#        * EvaluateInteractor 의 후보 판정에 이 가드가 추가된다(아래 [PSEUDO] 참고).
+#
+#    워커는 본문을 다 쓰고 실제 마커도 전부 지웠는데(`.cpp` 0개 · `.h` 는 이 문장 하나),
+#    문자열 포함 판정이라 커밋이 막혔다. 추론값을 통째로 버렸다.
+#
+# 마커의 실제 모양은 **주석의 시작**이다 — `// [PSEUDO]` · `/* [PSEUDO]` · `* [PSEUDO]`
+# (블록 주석 이어지는 줄) · `# [PSEUDO]`. 문장 **중간**에 나오는 것은 인용이다.
+# [주의] 느슨하게 푸는 것이 아니다 — 채워야 할 자리는 언제나 「주석 한 줄이 통째로 지시」이고,
+#    그 형태만 본다. 실제 마커를 놓치면 미완성이 `main` 으로 가므로 형태를 좁게 잡는다.
 _VOLATILE = re.compile(
+    r"(?m)^[ \t]*(?://+|/\*+|\*|#)[ \t]*(?:"
+    + "|".join(re.escape(t.rstrip("]")) + r"(?::\d+)?\]" for t in skeleton.VOLATILE_TAGS)
+    + ")")
+# 위반 문구에 태그 이름을 싣기 위한 보조 — 어떤 태그였나만 뽑는다
+_VOLATILE_NAME = re.compile(
     "|".join(re.escape(t.rstrip("]")) + r"(?::\d+)?\]" for t in skeleton.VOLATILE_TAGS))
 
 
@@ -92,7 +109,9 @@ def check(files: dict, *, baseline=None) -> Layer1:
         m = _VOLATILE.search(text)
         if m:
             # [중요] 휘발 태그는 *"여기를 채워라"* 는 표시다 — 남아 있으면 본문이 안 채워졌다
-            L.problems.append(f"{path}: 휘발 태그 `{m.group(0)}` 가 남아 있다")
+            _n = _VOLATILE_NAME.search(m.group(0))
+            L.problems.append(f"{path}: 휘발 태그 `{_n.group(0) if _n else m.group(0)}` 가 "
+                              f"남아 있다")
         if FEEDBACK_TAG in text:
             # [중요] 소스에 남으면 다음 라운드가 그것을 또 읽는다 (리포트 11 §30 의 무한 실패)
             L.problems.append(f"{path}: `{FEEDBACK_TAG}` 가 소스에 남아 있다")

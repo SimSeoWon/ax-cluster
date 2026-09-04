@@ -139,8 +139,34 @@ def test_residue_response_is_rejected_at_acceptance_not_at_apply() -> None:
 # 통합 시점 검사는 마스터에 없고, 응답 수락(`infer.judge`)과 커밋 직전(`wcommit`)이 남는다.
 # 통합 검사는 `.33` 이 서브 브랜치를 전부 머지한 뒤 한 번 한다.
 
+def test_a_citation_is_not_a_marker() -> None:
+    """🔴 **`[DOC]` 문장이 태그를 인용한 것은 위반이 아니다** (실측 2026-09-05).
+
+    라운드 2 조각 하나가 이렇게 죽었다 — 워커는 본문을 다 쓰고 실제 마커도 전부 지웠는데,
+    골조의 설명 문장이 태그 이름을 **언급**하고 있었다:
+
+        * EvaluateInteractor 의 후보 판정에 이 가드가 추가된다(아래 [PSEUDO] 참고).
+
+    문자열 포함으로 보던 판정이 그것을 잡아 **커밋을 막고 추론값을 버렸다.**
+    [주의] 느슨해진 것이 아니다 — 마커의 실제 모양(주석이 통째로 지시)만 본다.
+    """
+    cite = ("/**\n * [DOC] 이 가드는 후보 판정에 추가된다(아래 [PSEUDO] 참고).\n */\n"
+            "void A::Go() { Do(); }\n")
+    L = L1.check({"A.cpp": cite}, baseline=lambda p: None)
+    check("🔴 인용은 통과한다", L.ok, L.summary)
+
+    for real, why in (("// [PSEUDO] 여기를 채워라\n", "줄 주석"),
+                      ("    // [PSEUDO:2] 두 번째\n", "들여쓴 줄 주석"),
+                      (" * [IMPL] 채워라\n", "블록 주석 이어지는 줄"),
+                      ("/* [PSEUDO] */\n", "블록 주석 시작")):
+        L2 = L1.check({"A.cpp": "void A::Go() {}\n" + real}, baseline=lambda p: None)
+        check(f"  실제 마커는 그대로 막는다 ({why})", not L2.ok, L2.summary)
+        check(f"    사유가 태그를 지목한다 ({why})",
+              any("휘발 태그" in p for p in L2.problems), L2.summary)
+
+
 def main() -> int:
-    for fn in (test_volatile_tags_are_caught, test_permanent_tags_and_plain_comments_pass,
+    for fn in (test_a_citation_is_not_a_marker,test_volatile_tags_are_caught, test_permanent_tags_and_plain_comments_pass,
                test_feedback_left_in_source_is_a_violation, test_fence_residue_is_a_violation,
                test_freeze_semantics, test_cpp_is_not_a_freeze_target,
                test_new_file_has_nothing_to_freeze, test_fail_closed_directions,

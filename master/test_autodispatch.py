@@ -187,8 +187,34 @@ def test_merge_status_gate():
         A.hold_active = orig
 
 
+def test_dispatch_reason_is_written_where_the_requester_can_read_it() -> None:
+    """🔴 **요청자가 「왜 안 걸렸나」를 볼 수 있어야 한다** (사용자 2026-09-05 · `.33` 보고).
+
+    `.33` → 마스터 SSH 가 없어 그쪽은 `journalctl` 을 못 본다. 실측 2026-09-05: 라운드 2
+    조각이 10분간 pending 이었고(원인은 「골조 push 가 등재보다 먼저라 트리거가 거절됐다」)
+    `.33` 은 *"아무도 안 집는다"* 까지만 알고 사람에게 물었다. 큐가 말하면 된다.
+    """
+    from master.work import autodispatch as AD
+    seen: list = []
+
+    def api(method, path, payload=None, **kw):
+        seen.append((method, path, payload))
+        if method == "GET":
+            return {"work": {"work_id": "w1", "merge_status": "ready_for_review"},
+                    "tasks": []}
+        return {"ok": True}
+
+    AD.dispatch(None, "w1", api=api)
+    patches = [p for m, path, p in seen if m == "PATCH"]
+    check("🔴 사유가 큐에 적힌다", any("dispatch_note" in (p or {}) for p in patches),
+          str(patches))
+    note = next((p["dispatch_note"] for p in patches if "dispatch_note" in (p or {})), "")
+    check("  거절 사유가 그대로 실린다", "진행 중인 work 만 민다" in note, note)
+    check("  걸렸는지 아닌지를 앞에 말한다", note.startswith("안 걸림"), note)
+
+
 def main() -> int:
-    for fn in (test_submitted_means_worker_committed, test_failed_is_its_own_reason,
+    for fn in (test_dispatch_reason_is_written_where_the_requester_can_read_it,test_submitted_means_worker_committed, test_failed_is_its_own_reason,
                test_pending_blocks_first, test_claimed_with_full_spool_integrates,
                test_partial_spool_waits, test_all_failed_spool_has_nothing_to_apply,
                test_hold_blocks_integration_too, test_merge_status_gate):

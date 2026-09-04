@@ -598,8 +598,25 @@ def test_advance_records_the_decision_in_redmine():
                           if p2 == "/api/v1/redmine/note"), "")
             check("[주의] 판단이 없으면 없다고 적는다",
                   "기록되지 않았다" in body2, body2[:200])
+
         finally:
             shutil.rmtree(root2, ignore_errors=True)
+
+        # 🔴 기재가 **실패**하면 결과·요약에 실린다 (실측 2026-09-05: 호출자가 `api=` 를
+        #    안 넘겨 조용히 실패했고, 전진은 성공으로 보여 라운드 기록이 통째로 비었다)
+        root3, repo3, work3, tasks3 = fixture()
+        try:
+            w3 = dict(work3); w3["redmine_issue_id"] = 902
+
+            def boom(*a, **k):
+                raise RuntimeError("토큰이 없다")
+
+            a3 = R.advance_work(repo3, work_id="w1", work=w3, tasks=tasks3, confirm=True,
+                                build_fn=lambda t: _Build(True), api=boom)
+            check("전진 자체는 성공이다 (기재 실패가 되돌리지 않는다)", a3.pushed, a3.summary)
+            check("🔴 요약이 기재 실패를 말한다", "기재 실패" in a3.summary, a3.summary)
+        finally:
+            shutil.rmtree(root3, ignore_errors=True)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

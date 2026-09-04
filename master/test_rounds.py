@@ -175,6 +175,53 @@ def test_completion_is_a_note_not_a_new_issue() -> None:
          LC._redmine_add_note) = s_cfg, s_new, s_note
 
 
+def test_completion_pushes_a_desktop_notice() -> None:
+    """🔴 **사람에게 민다 — 토스트로** (사용자 2026-09-05).
+
+    알림이 전부 pull 이라 라운드가 끝나도 사람과 켜져 있는 세션에는 아무것도 안 떴다
+    (*"왜 완료 안알려준다고 메인 컴퓨터는 그러고"*).
+
+    [주의] 처음엔 `msg.exe` 로 배선했다가 물렸다 — *"에러창처럼 띄우는 사람이 어디있어"*.
+    모달 대화상자는 알림이 아니다. 지금은 윈도우 **토스트**다.
+    [중요] 명령은 `-EncodedCommand`(UTF-16LE) — ssh 인라인 PowerShell 은 따옴표가 깨진다.
+    그래서 **한글 본문이 그대로 간다**(ASCII 로 접을 필요가 없다).
+    """
+    import base64 as _b64
+    import types as _types
+    from master.task_queue import logic_cleanup as LC
+    import master.client.bundle as B
+
+    ran: list = []
+    s_ws, s_sp = B.workshops, LC.subprocess
+    B.workshops = lambda project: [("192.168.0.33", "user", "C:\\NS", True, "requester", True),
+                                   ("192.168.0.43", "sim", "/t/NS", True, "worker", True)]
+    # [주의] **모듈 자체를 갈아 끼운다** — `LC.subprocess.run` 을 바꾸면 전역 subprocess 가
+    #    바뀌어 레드마인 키를 읽는 `docker exec` 까지 이 목록에 들어온다(실측).
+    LC.subprocess = _types.SimpleNamespace(run=lambda cmd, **kw: (
+        ran.append(cmd) or _types.SimpleNamespace(returncode=0, stderr="", stdout="")))
+    try:
+        idx, wid = _work()
+        LC._push_desktop_notice(idx, wid, "라운드 1 완료 — 조각 2/2 · 레드마인 #900")
+        check("🔴 요청자에게만 민다", len(ran) == 1, str(ran)[:200])
+        check("  그 기계가 `.33` 이다", "user@192.168.0.33" in ran[0], str(ran[0])[:120])
+        cmd = " ".join(ran[0])
+        check("  토스트다 (`msg` 대화상자가 아니다)",
+              "EncodedCommand" in cmd and "msg *" not in cmd, cmd[:120])
+        enc = ran[0][-1].split()[-1]
+        script = _b64.b64decode(enc).decode("utf-16-le")
+        check("  ToastNotification 을 띄운다", "ToastNotification" in script, script[:120])
+        check("[중요] 한글 본문이 그대로 간다", "라운드 1 완료" in script, script[-300:])
+
+        def boom(cmd, **kw):
+            raise RuntimeError("ssh 안 됨")
+
+        LC.subprocess = _types.SimpleNamespace(run=boom)
+        LC._push_desktop_notice(idx, wid, "AX")      # 예외가 새면 여기서 죽는다
+        check("  밀기 실패가 예외로 새지 않는다 (레드마인 노트가 정본이다)", True)
+    finally:
+        B.workshops, LC.subprocess = s_ws, s_sp
+
+
 def test_round_is_in_the_branch_name() -> None:
     """🔴 **이름 자체에 라운드가 들어간다** (사용자 2026-09-04).
 
@@ -223,6 +270,7 @@ def main() -> int:
     for fn in (test_new_tasks_reopen_the_work, test_dispatch_gate_agrees,
                test_issue_is_created_at_registration,
                test_completion_is_a_note_not_a_new_issue,
+               test_completion_pushes_a_desktop_notice,
                test_round_is_in_the_branch_name,
                test_finished_work_is_not_revived):
         fn()

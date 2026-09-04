@@ -57,7 +57,7 @@ work·tasks 는 큐에서 읽어 넘긴다(이 모듈은 HTTP 를 모른다 — 
 ## 3. 세워 본다 — [중요] 사람의 트리를 건드리지 않는다
 
     res = review.advance_work(repo, work_id=..., work=..., tasks=...,
-                              build_fn=bfn)          # confirm 생략 = False
+                              build_fn=bfn, api=api)   # confirm 생략 = False
 
 하는 일: `<체크아웃 옆>/ax-advance-<work_id>` worktree 를 **`origin/<작업 브랜치>`** 에 세우고
 (여기가 `ax-review` 와 다르다 — 그쪽은 `origin/main` 이다), 서브 브랜치를 **전부** 머지한 뒤
@@ -96,8 +96,13 @@ work·tasks 는 큐에서 읽어 넘긴다(이 모듈은 HTTP 를 모른다 — 
 
 ## 5. 전진 — 사용자의 승인 발화가 있고 나서
 
-    review.advance_work(..., confirm=True,
+    review.advance_work(..., confirm=True, api=api,        # §2 의 queue_api()
                         decision_note="<사람이 방금 답한 것을 그대로>")
+
+🔴 [중요] **`api=queue_api()` 를 반드시 넘긴다** (실측 2026-09-05: 안 넘겨서 전진은 됐는데
+레드마인 기재가 조용히 실패했다). 이 기계에는 큐 토큰이 없어 기본 경로가 없다 — 자격은
+MCP 모듈이 들고 있다. 없으면 `advance_work` 는 전진을 끝내고 *"[주의] 레드마인 기재 실패"*
+를 로그로만 남긴다(전진을 되돌리지는 않는다).
 
 `confirm=True` 여야 `HEAD:refs/heads/<작업 브랜치>` 로 push 한다. **빌드가 통과하지 않았으면
 `confirm` 이 있어도 거절한다** — 미측정도 거절이다(fail-closed).

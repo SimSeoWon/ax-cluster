@@ -50,7 +50,9 @@ def update_work_meta(idx: TaskIndex, work_id: str, *,
                      redmine_issue_id: Optional[int] = None,
                      review_decision: Optional[dict] = None,
                      target_branch: Optional[str] = None,
-                     noticed_round: Optional[int] = None) -> dict:
+                     noticed_round: Optional[int] = None,
+                     dispatch_note: Optional[str] = None,
+                     dispatch_at: Optional[str] = None) -> dict:
     """work 메타 부분 갱신. 명시된 필드만 patch. PATCH /api/v1/works/{work_id} 의 코어."""
     with idx.lock:
         wmeta = idx.works.get(work_id)
@@ -67,6 +69,16 @@ def update_work_meta(idx: TaskIndex, work_id: str, *,
         if noticed_round is not None and int(noticed_round) != int(wmeta.get("noticed_round", 0) or 0):
             wmeta["noticed_round"] = int(noticed_round)
             changed.append(f"noticed_round={noticed_round}")
+        # 🔴 [중요] **「왜 안 걸렸나」를 큐가 말한다** (사용자 2026-09-05 · `.33` 보고).
+        #    요청자에서 마스터로 가는 SSH 가 없어서, 파견이 안 돌면 `.33` 은 *"pending 인데
+        #    아무도 안 집는다"* 까지만 알고 사유를 못 봤다 — 사람이 마스터에 물어야 했다.
+        #    파견기가 매번 이 자리에 사유를 적으면 `get_work`·`list_works` 가 그대로 돌려준다.
+        #    [주의] 값이 같으면 `changed` 가 비어 **아무것도 쓰지 않는다** — catchup 이 10분마다
+        #    돌아도 커밋이 쌓이지 않는다.
+        if dispatch_note is not None and str(dispatch_note) != str(wmeta.get("dispatch_note") or ""):
+            wmeta["dispatch_note"] = str(dispatch_note)[:300]
+            wmeta["dispatch_at"] = dispatch_at or _now_iso()
+            changed.append("dispatch_note")
         if redmine_issue_id is not None and redmine_issue_id != wmeta.get("redmine_issue_id"):
             wmeta["redmine_issue_id"] = redmine_issue_id
             changed.append(f"redmine_issue_id={redmine_issue_id}")

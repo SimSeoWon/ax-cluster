@@ -343,6 +343,23 @@ def needs_integration(paths, work_id: str, *, api=None) -> tuple:
                   f"통과 {n_ok}건{' [주의] 나머지는 실패라 적용되지 않는다' if n_ok < n else ''}")
 
 
+def _record_dispatch_note(work_id: str, note: str, *, api=None) -> None:
+    """🔴 **왜 걸렸나·왜 안 걸렸나를 큐에 적는다** (사용자 2026-09-05 · `.33` 보고).
+
+    요청자(`.33`)에서 마스터로 가는 SSH 는 없다 — 그쪽은 `journalctl` 을 볼 수 없다.
+    실측 2026-09-05: 라운드 2 조각이 10분간 `pending` 이었는데(원인은 「push 가 등재보다
+    먼저라 트리거가 거절됐다」) `.33` 은 *"아무도 안 집는다"* 까지만 알고 사람에게 물었다.
+
+    [주의] 실패해도 파견을 막지 않는다 — 이것은 **기록**이다.
+    """
+    from . import runner
+    call = api or runner._api
+    try:
+        call("PATCH", f"/api/v1/works/{work_id}", {"dispatch_note": note[:300]})
+    except Exception as e:                                       # noqa: BLE001
+        _log(f"[note] {work_id} 파견 사유 기재 실패 — {type(e).__name__}: {e}")
+
+
 def dispatch(paths, work_id: str, *, limit: int = 0, api=None, runner_many=None) -> dict:
     """한 work 을 **끝까지** 민다. `run_many` 가 워커가 빌 때마다 다음 조각을 집는다.
 
@@ -350,6 +367,7 @@ def dispatch(paths, work_id: str, *, limit: int = 0, api=None, runner_many=None)
     *"워커가 빌 때만 집는다"* 는 실측된 규칙(집어놓고 못 돌리면 리스가 1200초 묶인다)이다.
     """
     ok, why = should_dispatch(paths, work_id, api=api)
+    _record_dispatch_note(work_id, ("파견함 — " if ok else "안 걸림 — ") + why, api=api)
     if not ok:
         _log(f"{work_id} 안 건다 — {why}")
         return {"dispatched": False, "reason": why}
@@ -377,6 +395,10 @@ def dispatch(paths, work_id: str, *, limit: int = 0, api=None, runner_many=None)
         bad = [r for _o, r in items if str(getattr(r, "status", "")) != "DONE"]
         _log(f"{work_id} 파견 끝 — 성공 {len(ok)} · 실패 {len(bad)} · 건너뜀 {len(skipped)}"
              + (f" · {note}" if note else ""))
+        _record_dispatch_note(work_id,
+                              f"파견 끝 — 성공 {len(ok)} · 실패 {len(bad)} · "
+                              f"건너뜀 {len(skipped)}" + (f" · {note}" if note else ""),
+                              api=api)
         # [중요] **실패·건너뜀은 한 줄씩 찍는다** — 수를 세는 것만으로는 왜 멈췄는지 모른다.
         for r in bad:
             _log(f"  [실패] {getattr(r,'task_id','?')} @ {getattr(r,'worker','?')} — "

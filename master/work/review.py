@@ -811,6 +811,9 @@ class Advance:
 
     @property
     def summary(self) -> str:
+        # [중요] 기재 실패 같은 **비치명 결손을 요약에 싣는다** — 성공 문장만 보면 사람이
+        #    「다 됐다」로 읽는다(실측 2026-09-05: 전진은 됐고 레드마인만 비었다).
+        tail = "".join(f" · {n}" for n in self.notes if n.startswith("[중요]"))
         if self.error:
             return f"[중요] {self.error}"
         b = ("[완료] 빌드 통과" if self.build_passed
@@ -818,7 +821,8 @@ class Advance:
              else "[주의] 빌드 미확인")
         s = (f"조각 {len(self.merged)}개 머지 · {b} · "
              f"{self.target_branch} {self.before[:8]}→{self.head[:8]}")
-        return s + (" · **push 됨(전진)**" if self.pushed else " · push 안 함(승인 대기)")
+        return (s + (" · **push 됨(전진)**" if self.pushed else " · push 안 함(승인 대기)")
+                + tail)
 
     @property
     def question(self) -> str:
@@ -966,9 +970,18 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
                                        "work_id": work_id})
                 a.notes.append(f"레드마인 #{issue_id} 에 전진 기록")
             except Exception as e:                           # noqa: BLE001
-                logf("advance", f"[주의] 레드마인 기재 실패 — {type(e).__name__}: {e}")
+                # [중요] **결과에도 싣는다** — 로그로만 남기면 아무도 안 본다. 실측
+                #    2026-09-05: 호출자가 `api=` 를 안 넘겨 기재가 조용히 실패했고, 전진은
+                #    성공으로 보여서 라운드 기록이 통째로 비었다(사람은 다음 라운드에서야 안다).
+                why = (f"[중요] 레드마인 #{issue_id} 기재 실패 — {type(e).__name__}: {e}"
+                       + ("  · `api=queue_api()` 를 넘겼는지 확인하라"
+                          if api is None else ""))
+                a.notes.append(why)
+                logf("advance", why)
         else:
-            logf("advance", "[주의] 이 work 에 레드마인 이슈 id 가 없다 — 기록하지 못했다")
+            why = "[중요] 이 work 에 레드마인 이슈 id 가 없다 — 전진을 기록하지 못했다"
+            a.notes.append(why)
+            logf("advance", why)
     finally:
         # [중요] push 했으면 트리를 지운다. **안 했으면 남긴다** — 사람이 그 안에서 보고 고친다
         if a.pushed and not keep_tree and tree.exists():
