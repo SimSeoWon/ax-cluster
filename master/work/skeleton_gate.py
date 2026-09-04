@@ -192,6 +192,22 @@ def run(facts, skeleton, *, tree: str, project: str, uproject: str = "",
                    "계약을 거기 두면 `main` 에 남지 않는다")
         return g
 
+    # 🔴 [중요] **`[FEEDBACK]` 은 골조에 쓸 수 없다** (2026-09-05, `.33` 이 라운드 2 골조에
+    #    쓰려다 잡혔다). 두 곳에서 부딪힌다:
+    #      ① 층1(`layer1.py:96`)이 **소스에 남은 `[FEEDBACK]` 을 위반**으로 잡는다 —
+    #         원전에서 *"모든 주석 보존"* 지시와 겹쳐 검증이 무한 실패했던 그 태그다
+    #      ② 사전 훑기(`decompose.pseudo_in_skeleton`)는 **`[PSEUDO]` 개수로만** 「할 일
+    #         있음」을 판정한다 — `[FEEDBACK]` 만 든 파일은 *"골조가 완성본"* 으로 걷힌다
+    #    즉 **할 일이 있는데 조용히 파견되지 않는다.** 기존 코드 수정 지시도 `[PSEUDO]` 로 쓴다.
+    _fb = sorted(p for p, t in files.items() if "[FEEDBACK]" in (t or ""))
+    if _fb:
+        g.error = ("골조에 `[FEEDBACK]` 이 있다 — 빌드 전에 막는다: "
+                   + ", ".join(_fb[:5])
+                   + ". 「여기를 고쳐라」도 **`[PSEUDO]` 로 쓴다**. `[FEEDBACK]` 은 "
+                     "⑴ 층1 이 소스 잔재를 위반으로 잡고 ⑵ 사전 훑기가 그것을 「할 일」로 "
+                     "세지 않아 조각이 조용히 파견되지 않는다")
+        return g
+
     try:
         g.placed = place(facts, tree, files, writer=writer)
     except Exception as e:                                   # noqa: BLE001

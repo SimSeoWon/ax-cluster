@@ -105,6 +105,27 @@ def test_gate_blocks_before_building_when_not_a_skeleton() -> None:
     check("[중요] 파일이 없으면 막는다", not g2.ok and "세울 것이 없다" in g2.error, g2.error)
 
 
+def test_gate_refuses_feedback_in_a_skeleton() -> None:
+    """🔴 **`[FEEDBACK]` 은 골조에 쓸 수 없다** (2026-09-05 — `.33` 이 라운드 2 골조에
+    「기존 코드 수정 지시」로 쓰려다 잡혔다).
+
+    둘 다 **조용히** 실패하는 자리라 사람이 못 본다:
+      ① 층1 이 소스에 남은 `[FEEDBACK]` 을 위반으로 잡아 워커 커밋이 막힌다
+      ② 사전 훑기는 `[PSEUDO]` 개수로만 「할 일 있음」을 판정한다 — `[FEEDBACK]` 만 든
+         파일은 *"골조가 이미 완성본"* 으로 걷혀 **파견조차 되지 않는다**
+    """
+    built: list = []
+    sk = good_skeleton()
+    first = sorted(sk.files)[0]
+    sk.files[first] = sk.files[first] + "\n    // [FEEDBACK] 여기 필터가 빠졌다 — 고쳐라\n"
+    g = G.run(Facts(), sk, tree=r"E:\wt", project="ModularStage",
+              writer=lambda *a: None, builder=lambda *a, **k: built.append(1))
+    check("🔴 통과가 아니다", not g.ok, g.summary)
+    check("  빌드를 부르지 않았다 (싼 검사가 먼저다)", built == [], str(built))
+    check("  사유가 태그를 지목한다", "[FEEDBACK]" in g.error, g.error)
+    check("  대신 무엇을 쓸지 말한다", "`[PSEUDO]`" in g.error, g.error)
+
+
 def test_gate_is_fail_closed_on_every_uncertainty() -> None:
     """[중요] *"확인하지 못했다"* 는 통과가 아니다."""
     sk = good_skeleton()
@@ -167,6 +188,7 @@ def main() -> int:
     for fn in (test_build_bat_is_derived_not_guessed, test_target_name,
                test_place_writes_into_the_isolated_tree,
                test_gate_blocks_before_building_when_not_a_skeleton,
+               test_gate_refuses_feedback_in_a_skeleton,
                test_gate_is_fail_closed_on_every_uncertainty,
                test_gate_passes_only_on_a_real_verdict, test_not_run_is_not_a_pass):
         fn()
