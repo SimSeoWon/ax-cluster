@@ -106,10 +106,18 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 tasks_all = [t for t in idx.tasks.values() if t.get("work_id") == work_id]
                 tasks_v = [t for t in tasks_all if t.get("status") == "verified"]
                 tasks_f = [t for t in tasks_all if t.get("status") == "failed"]
-                tasks_c = [t for t in tasks_all if t.get("status") == "cancelled"]
+                # 🔴 [중요] `cancelled` 를 **둘로 가른다** (사용자 결정 2026-09-04).
+                #    `no_work` = *"골조에 `[PSEUDO]` 가 0개 = 이미 완성된 파일"* 이고 실패도
+                #    취소도 아니다. 뭉뚱그리면 공지에서 실패로 읽힌다 — 공지 본문이 사실과
+                #    다른 말을 하는 것을 사용자가 「눈속임」이라 불렀다(2026-09-03).
+                tasks_cx = [t for t in tasks_all if t.get("status") == "cancelled"]
+                tasks_nw = [t for t in tasks_cx if t.get("no_work")]
+                tasks_c = [t for t in tasks_cx if not t.get("no_work")]
                 files_v = sorted({t.get("target_file", "") for t in tasks_v if t.get("target_file")})
                 files_f = sorted({t.get("target_file", "") for t in tasks_f if t.get("target_file")})
                 files_c = sorted({t.get("target_file", "") for t in tasks_c if t.get("target_file")})
+                nw_details = [(t.get("target_file", "?"),
+                               str(t.get("cancel_reason") or "")[:200]) for t in tasks_nw]
                 # failed task 의 reason 도 같이 — 사용자 진단용
                 fail_details = []
                 for t in tasks_f:
@@ -128,6 +136,8 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                         f"(work.project={work_project!r})", idx.root)
                 return
 
+            # [주의] **`no_work` 는 미완성이 아니다** — 제목에 「일부 미완성」을 붙이지
+            #    않는다. 골조가 완성본이라 채울 것이 없었던 조각이고, 그것은 정상 결과다.
             partial = bool(tasks_f or tasks_c)
             build_failed = (build_status == "failed")
             if build_failed:
@@ -151,6 +161,7 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 f"- 작업 브랜치: `origin/{target_branch}`",
                 f"- 완료된 조각: {len(tasks_v)}건"
                 + (f" / 실패: {len(tasks_f)}건" if tasks_f else "")
+                + (f" / 할 일 없음: {len(tasks_nw)}건" if tasks_nw else "")
                 + (f" / 취소: {len(tasks_c)}건" if tasks_c else ""),
                 "",
                 "[중요] **아직 아무것도 검증되지 않았다.** 조각은 각자 자기 서브 브랜치에",
@@ -178,6 +189,18 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                         lines.append(f"- `{rf}`")
                 if len(fail_details) > 30:
                     lines.append(f"- … 외 {len(fail_details) - 30}건")
+
+            if tasks_nw:
+                lines += ["", f"## 할 일 없음 — 골조가 이미 완성본이다 ({len(tasks_nw)}건)", "",
+                          "[중요] 실패가 아니다. 이 조각들은 골조에 `[PSEUDO]` 가 0개라",
+                          "채울 본문이 없었고 **파견하지 않았다**(추론 비용 0). 원전도 그 경우",
+                          "태스크를 skip 한다. 서브 브랜치도 없으므로 머지 대상이 아니다.",
+                          "[주의] 의도한 것이 아니라면 **골조에 `[PSEUDO]` 를 넣어** 다시 등재한다.",
+                          ""]
+                for rf, why in nw_details[:30]:
+                    lines.append(f"- `{rf}`" + (f" — {why}" if why else ""))
+                if len(nw_details) > 30:
+                    lines.append(f"- … 외 {len(nw_details) - 30}건")
 
             if tasks_c:
                 lines += ["", "## 취소된 파일 (cancelled)"]

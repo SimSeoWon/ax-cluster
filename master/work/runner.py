@@ -497,6 +497,21 @@ def verify(task_id: str, *, passed: bool = True, feedback: str = "", api=_api):
     })
 
 
+def cancel(task_id: str, *, reason: str = "", no_work: bool = False, api=_api):
+    """조각을 **종결**한다 — 소유권 게이트가 없는 유일한 종결 경로다.
+
+    🔴 [중요] `no_work=True` 는 *"골조에 `[PSEUDO]` 가 0개 = 채울 본문이 없다"* 다.
+    실패도 취소도 아니고, **원전이 등재 자체를 skip 하는** 그 조각이다.
+
+    [중요] **`submit`+`verify` 로 종결하지 않는다** (실측 2026-09-04 21:32): 그 두 경로는
+    `#318` 신원 게이트가 있어 *"고지자 '(none)' 가 소유자 '192.168.0.2' 가 아니다"* 로
+    **409** 를 냈고, 조각 2건이 `claimed` 로 남아 `terminal 2/4` 교착이 됐다. 파견하지 않은
+    조각을 워커 이름으로 제출하는 것도 사실이 아니다 — 그 워커는 아무것도 안 했다.
+    """
+    return api("POST", f"/api/v1/tasks/{task_id}/cancel",
+               {"reason": reason[:300], "no_work": bool(no_work)})
+
+
 def submit_fail(task_id: str, reason: str, detail: str = "", *, epoch=None,
                 worker_id: str = "", api=_api):
     """실패 고지. [중요] **submit 과 같은 두 게이트**를 통과해야 한다 (`#318`)."""

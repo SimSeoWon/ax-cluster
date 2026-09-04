@@ -369,11 +369,32 @@ class FakeQueue:
         self.failed: list = []
         self.submitted: list = []      # 🔴 정본 ⑸ — 커밋이 생기면 여기 쌓인다
         self.verified: list = []       # 🔴 정본 ⑹ — 판정이 나야 `.33` 공지가 나간다
+        self.cancelled: list = []      # 🔴 「할 일 없음」 종결 (claim 앞에서 걷어낸 것)
+        self.claims = 0                # claim 호출 횟수
+        # 🔴 [중요] **실제로 워커에 건네진 조각**. ⓐ(claim 뒤 판정)와 ⓑ(claim 앞 판정)를
+        #    가르는 것은 이것 하나다 — 폴백이 뒤에서 같은 결과를 내므로 `cancelled` 만
+        #    보면 두 설계가 구분되지 않는다(실측: 사전 훑기를 꺼도 테스트가 통과했다).
+        self.handed: list = []
         self.beats = 0
 
     def __call__(self, method, path, payload=None, *, timeout=20):
+        if method == "GET" and "/works/" in path:
+            # [중요] 사전 훑기(`prescreen_nowork`)가 읽는 표면이다 — 없으면 훑기가
+            #    조용히 생략되고 **claim 앞에서 걷는지**를 잴 수 없다.
+            return {"work": {"work_id": path.rsplit("/", 1)[-1]},
+                    "tasks": [{**t, "status": "pending"} for t in self.tasks]}
+        if path.endswith("/cancel"):
+            tid = path.split("/")[-2]
+            self.cancelled.append((tid, dict(payload or {})))
+            self.tasks = [t for t in self.tasks if t.get("task_id") != tid]
+            return {"ok": True}
         if path.endswith("/claim"):
-            return self.tasks.pop(0) if self.tasks else None
+            self.claims += 1
+            if not self.tasks:
+                return None
+            t = self.tasks.pop(0)
+            self.handed.append(t.get("task_id"))
+            return t
         if path.endswith("/heartbeat"):
             self.beats += 1
             return {"ok": True}
@@ -623,7 +644,11 @@ def test_piece_without_pseudo_is_not_dispatched_at_all() -> None:
 
     실측 2026-09-03: `NSInteractionPromptWidget`(골조에 *"이 클래스에는 C++ 로직을 추가하지
     않는다"* · `[PSEUDO]` 0개)이 **두 라운드 연속** 파견돼 조각당 $0.66~$1.08 을 태우고
-    실패로 기록됐다. ⓑ(커밋 단계 no-op)가 뒤를 받치지만 **ⓐ 는 추론 자체를 안 산다.**
+    실패로 기록됐다.
+
+    🔴 [중요] **판정이 claim 앞으로 옮겼다** (사용자 결정 ⓑ, 2026-09-04). 종전에는 claim
+    **뒤에** 판정하고 `submit(worker_id="(none)")` 로 종결했는데, `#318` 신원 게이트가 409 로
+    막아 조각이 `claimed` 에 갇혔다(실측 21:32, `terminal 2/4` 교착 · 공지 0건).
     """
     from master.work import decompose as DC
     paths, root = tmp_paths()
@@ -634,11 +659,65 @@ def test_piece_without_pseudo_is_not_dispatched_at_all() -> None:
         q = FakeQueue([_t("t1", epoch=1)])
         _run(paths, q, runner_calls=calls)
         check("[중요] **워커를 부르지 않는다**", not calls, str(calls))
-        check("그래도 조각을 종결한다 (submit)", len(q.submitted) == 1, str(q.submitted))
-        check("판정까지 낸다 (verify)", len(q.verified) == 1, str(q.verified))
+        check("🔴 **집지도 않는다** — 걷어낸 뒤 claim 은 빈손이다",
+              q.handed == [], str(q.handed))
+        check("조각을 종결한다 (cancel)", len(q.cancelled) == 1, str(q.cancelled))
+        check("  「할 일 없음」으로 적힌다 — 실패도 취소도 아니다",
+              all(p.get("no_work") is True for _, p in q.cancelled), str(q.cancelled))
         check("  사유가 마커를 지목한다",
-              any("PSEUDO" in (p.get("feedback") or "") for _, p in q.verified),
-              str(q.verified))
+              any("PSEUDO" in (p.get("reason") or "") for _, p in q.cancelled),
+              str(q.cancelled))
+        check("[중요] 소유권 게이트를 건드리지 않는다 (submit/verify 0)",
+              not q.submitted and not q.verified,
+              f"submit={q.submitted} verify={q.verified}")
+    finally:
+        DC.pseudo_in_skeleton = saved
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_nowork_is_screened_before_the_claim_not_after() -> None:
+    """🔴 **claim 앞이어야 한다** — 그것이 ⓐ 와 ⓑ 를 가르는 전부다 (실측 2026-09-04 21:32).
+
+    claim 뒤에 종결하면 `#318` 이 *"고지자 '(none)' 가 소유자 '192.168.0.2' 가 아니다"* 로
+    409 를 낸다. 소유자가 있는 조각을 소유자 아닌 이름으로 끝낼 방법은 없고, 파견도 안 한
+    조각을 워커 이름으로 제출하는 것은 사실도 아니다.
+    """
+    from master.work import decompose as DC
+    paths, root = tmp_paths()
+    saved = DC.pseudo_in_skeleton
+    # 조각 둘 중 하나만 마커가 없다 — 걷힌 것과 파견된 것이 갈리는지 본다
+    DC.pseudo_in_skeleton = lambda p, c, f: (0, "") if "Bar" in " ".join(f) else (3, "")
+    calls: list = []
+    try:
+        q = FakeQueue([_t("t1", epoch=1),
+                       _t("t2", epoch=1, target_file="Source/A/Bar.cpp",
+                          header_file="Source/A/Bar.h")])
+        _run(paths, q, runner_calls=calls)
+        check("걷힌 것은 하나다", [t for t, _ in q.cancelled] == ["t2"], str(q.cancelled))
+        check("[중요] 남은 조각은 정상 파견된다", len(calls) == 1, str(calls))
+        check("🔴 **걷힌 조각은 워커에 건네지지 않는다** (claim 앞에서 걷었다)",
+              q.handed == ["t1"], str(q.handed))
+    finally:
+        DC.pseudo_in_skeleton = saved
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_prescreen_failure_does_not_block_dispatch() -> None:
+    """[주의] **fail-open 이다** — 훑기가 죽어도 파견은 돈다. 조용히도 아니다(로그에 남는다)."""
+    from master.work import decompose as DC
+    paths, root = tmp_paths()
+    saved = DC.pseudo_in_skeleton
+
+    def boom(*a, **k):
+        raise RuntimeError("골조 저장소를 못 읽었다")
+
+    DC.pseudo_in_skeleton = boom
+    calls: list = []
+    try:
+        q = FakeQueue([_t("t1", epoch=1)])
+        _run(paths, q, runner_calls=calls)
+        check("[중요] 계수가 터져도 파견한다", len(calls) == 1, str(calls))
+        check("  걷어내지 않았다", not q.cancelled, str(q.cancelled))
     finally:
         DC.pseudo_in_skeleton = saved
         shutil.rmtree(root, ignore_errors=True)
@@ -681,6 +760,8 @@ def main() -> int:
                test_run_many_takes_several_and_orders_them,
                test_committed_piece_is_verified_so_the_requester_gets_told,
                test_piece_without_pseudo_is_not_dispatched_at_all,
+               test_nowork_is_screened_before_the_claim_not_after,
+               test_prescreen_failure_does_not_block_dispatch,
                test_unreadable_skeleton_still_dispatches,
                test_dependents_of_a_failure_are_not_dispatched,
                test_no_worker_means_no_claim,

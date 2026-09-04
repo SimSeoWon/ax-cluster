@@ -517,6 +517,83 @@ def _log(msg: str) -> None:
     print(f"[dispatch] {msg}", flush=True)
 
 
+def prescreen_nowork(paths, work_id: str, *, api=runner._api) -> list:
+    """🔴 **claim 하기 전에** 할 일이 없는 조각을 걷어낸다 (사용자 결정 ⓑ, 2026-09-04).
+
+    골조에 `[PSEUDO]` 가 0개면 그것은 골조가 아니라 **완성된 파일**이고, **원전은 그 경우
+    워커 태스크 등재를 skip 한다**(`skeleton.py` 머리말). 우리는 등재가 요청자(`.33`)에서
+    골조 push **이전에** 일어나므로 그 자리를 쓸 수 없다 — 대신 골조가 이미 push 돼 있는
+    **파견 초입**(실측: 21:27 등재 → 21:32 파견)에서 판정한다.
+
+    [중요] **claim 앞이어야 한다** (실측 2026-09-04 21:32). 종전에는 claim 뒤 `dispatch_task`
+    안에서 판정하고 `submit(worker_id="(none)")` 으로 종결하려 했는데, `#318` 신원 게이트가
+    *"고지자 '(none)' 가 소유자 '192.168.0.2' 가 아니다"* 로 **409** 를 냈다. 조각 2건이
+    `claimed` 에 갇혀 `terminal 2/4` → 완료 공지가 안 나가고 `.33` 은 끝을 몰랐다.
+
+    [주의] **fail-open 이다.** 기준 커밋을 모르거나 골조를 못 읽으면(`-1`) **그대로 파견한다** —
+    「마커가 없다」와 「못 셌다」는 다르고, 후자를 전자로 접으면 정상 조각이 안 나간다.
+
+    돌려주는 것은 걷어낸 `[(task_id, 파일들, 사유)]` 다. 아무것도 안 걷었으면 빈 목록.
+    """
+    out: list = []
+    work_id = (work_id or "").strip()
+    if not work_id:
+        return out
+    try:
+        got = api("GET", f"/api/v1/works/{work_id}") or {}
+        pend = [t for t in (got.get("tasks") or [])
+                if str(t.get("status") or "") == "pending"]
+    except Exception as e:                                   # noqa: BLE001
+        _log(f"[nowork] [주의] {work_id} 사전 훑기 생략 — 조회 실패 {type(e).__name__}: {e}")
+        return out
+    if not pend:
+        return out
+    try:
+        from . import twin_base
+        base = twin_base.resolve(paths, work_id).commit or ""
+    except Exception as e:                                   # noqa: BLE001
+        base = ""
+        _log(f"[nowork] [주의] {work_id} 기준 커밋 확인 실패 — {type(e).__name__}: {e}")
+    if not base:
+        # [주의] 골조를 못 보는 상태다. 막지 않는다 — 그대로 파견하고 사유만 남긴다.
+        _log(f"[nowork] [주의] {work_id} 사전 훑기 생략 — 기준 커밋(작업 브랜치)을 모른다")
+        return out
+    from . import decompose as _DC
+    for t in pend:
+        tid = str(t.get("task_id") or t.get("id") or "")
+        want = [str(f) for f in (t.get("target_file"), t.get("header_file")) if f]
+        if not tid or not want:
+            continue
+        try:
+            want, _added, _ = _DC.complete_pairs(paths, base, want)
+        except Exception:                                    # noqa: BLE001
+            pass                                             # 짝을 못 채워도 계수는 한다
+        try:
+            n, why = _DC.pseudo_in_skeleton(paths, base, want)
+        except Exception as e:                               # noqa: BLE001
+            _log(f"[nowork] [주의] {tid} 마커 계수 예외 — {type(e).__name__}: {e} (파견한다)")
+            continue
+        if n != 0:
+            if why:
+                _log(f"[nowork] [주의] {tid} `[PSEUDO]` 를 못 셌다 — {why} (그대로 파견한다)")
+            continue
+        reason = ("골조에 `[PSEUDO]` 가 0개다 — 이미 완성된 파일이라 채울 본문이 없다 "
+                  f"({', '.join(want)})")
+        _log(f"[nowork] {tid} 파견하지 않는다 (claim 전) — {reason}")
+        try:
+            # [중요] 종결은 `cancel` 이다 — `submit`/`verify` 는 `#318` 소유권 게이트가 있고,
+            #    이 조각에는 소유자가 없다(집지 않았다). 분모에는 그대로 남아 terminal 로 센다.
+            runner.cancel(tid, reason=reason, no_work=True, api=api)
+            out.append((tid, list(want), reason))
+        except Exception as e:                               # noqa: BLE001
+            # [중요] 못 걷었으면 **파견하게 둔다** — 뒤의 fallback 이 한 번 더 잡는다.
+            _log(f"[nowork] [중요] {tid} 종결 기록 실패 — {type(e).__name__}: {e} (그대로 둔다)")
+    if out:
+        _log(f"[nowork] {work_id} 사전 훑기 — {len(out)}건 걷어냈다 "
+             f"(분모는 그대로 · terminal 로 센다)")
+    return out
+
+
 def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", order: int = 0,
                  runner_=None, reader=None, ssh=None,
                  timeout: int = runner.DEFAULT_TIMEOUT) -> Response:
@@ -615,14 +692,19 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
             res.files = {w: "" for w in want}       # 되읽지 않았다 — 본문을 가진 척하지 않는다
             res.notes.append("[주의] 골조에 `[PSEUDO]` 가 0개다 — 채울 본문이 없어 파견하지 "
                              "않았다 (원전도 이 경우 태스크를 skip 한다). 추론 비용 0")
+            # [중요] **여기는 이제 그물이다** — 정상 경로는 `prescreen_nowork` 가 claim
+            #    **앞에서** 걷는다. 사전 훑기가 기준 커밋을 못 봤거나(fail-open) 사람이 손으로
+            #    claim 한 경우에만 여기까지 온다.
+            # 🔴 [중요] 종결은 `cancel` 이다. 종전 코드는 `submit(worker_id="(none)")` 이었고
+            #    `#318` 신원 게이트에 **409** 로 막혔다(실측 2026-09-04 21:32) — 조각이
+            #    `claimed` 에 갇혀 `terminal 2/4` 교착이 됐다. 파견도 안 한 조각을 워커
+            #    이름으로 제출하는 것은 사실도 아니다.
             try:
-                runner.submit(task_id, runner.Outcome(status=runner.DONE, branch=sub_name,
-                                                      head=base, tail="no-op: [PSEUDO] 0"),
-                              epoch=task.get("epoch"), worker_id="(none)", api=api)
-                runner.verify(task_id, passed=True,
-                              feedback="할 일이 없는 조각 — 골조에 `[PSEUDO]` 0개 "
-                                       "(파견 안 함 · 검증은 `.33`)", api=api)
-                _log(f"[nowork] {task_id} 조각 종결 — 큐에 완료 기록")
+                runner.cancel(task_id,
+                              reason=("골조에 `[PSEUDO]` 가 0개다 — 이미 완성된 파일이라 "
+                                      f"채울 본문이 없다 ({', '.join(want)})"),
+                              no_work=True, api=api)
+                _log(f"[nowork] {task_id} 조각 종결 — 큐에 「할 일 없음」 기록")
             except Exception as e:                           # noqa: BLE001
                 res.notes.append(f"[중요] no-op 종결을 큐에 못 알렸다 — {type(e).__name__}: {e}")
                 _log(f"[nowork] [중요] {task_id} 큐 기록 실패 — {e}")
@@ -813,6 +895,15 @@ def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner
     큐 입장에서 맞지만, 뎁스 분할(`X.d1`→`X.d2`)에서는 앞 단계 없이 뒷 단계를 추론하면
     **헛일이 확실하다.** 이번 실행에서 실패한 것을 마스터가 기억해 막는다.
     """
+    # 🔴 **claim 앞에서 할 일 없는 조각을 걷어낸다** (사용자 결정 ⓑ, 2026-09-04).
+    #    [중요] 워커 유무보다 **먼저** 한다 — 이것은 큐 정리이지 파견이 아니고, 걷어낸 결과로
+    #    남은 조각이 0이면 work 이 그 자리에서 terminal 이 돼 완료 공지가 나가야 한다.
+    if work_id:
+        try:
+            prescreen_nowork(paths, work_id, api=api)
+        except Exception as e:                               # noqa: BLE001
+            # [주의] 사전 훑기 실패가 파견을 막지 않는다 — 사유만 남긴다.
+            _log(f"[nowork] [주의] {work_id} 사전 훑기 예외 — {type(e).__name__}: {e}")
     if facts is None:
         facts = [bundle.probe(h, u, p, d, r, dp)
                  for h, u, p, d, r, dp in bundle.workshops(project or paths.name)]

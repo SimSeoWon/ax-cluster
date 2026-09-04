@@ -150,6 +150,22 @@ class VerifyReq(BaseModel):
     verify_epoch: Optional[int] = None
 
 
+class CancelReq(BaseModel):
+    """태스크 종결 — **취소**와 **할 일 없음**을 가른다 (`#332` · 사용자 결정 2026-09-04).
+
+    [중요] `no_work=True` 는 *"골조에 `[PSEUDO]` 가 0개다 = 이미 완성된 파일이라 채울 본문이
+    없다"* 는 뜻이고 **실패도 취소도 아니다.** 둘을 `cancelled` 하나로 뭉뚱그리면 공지에서
+    실패로 읽힌다 — 어제 사용자가 「눈속임」이라 부른 것이 공지 본문이 사실과 다른 말을 한
+    경우였다. 분모(`total`)에는 **그대로 남는다**: 요청자가 「4조각 중 2는 골조가 이미
+    완성본이었다」를 봐야 다음 라운드 골조가 달라진다.
+    """
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — cancel 은 `STAMP` 라
+    #    큐가 등재 때 찍은 값으로 풀고 태그는 대조만 한다.
+    project: str = ""
+    reason: str = ""
+    no_work: bool = False
+
+
 class AdminResetReq(BaseModel):
     purge: bool = False
     cleanup_branches: bool = False

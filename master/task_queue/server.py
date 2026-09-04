@@ -25,7 +25,8 @@ from typing import Optional
 
 from .models import (
     _VALID_DIRECTIVES, _VERIFY_RESULT_TO_STATUS, WorkRegisterReq, TaskRegisterReq,
-    ClaimReq, HeartbeatReq, SubmitReq, SubmitFailReq, VerifyReq, AdminResetReq,
+    ClaimReq, HeartbeatReq, SubmitReq, SubmitFailReq, VerifyReq, CancelReq,
+    AdminResetReq,
     WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq,
     RedmineIssueReq, RedmineLinkCommitReq,
     WriterSignalReq, HistoryReq, AliasReq, NotAClassReq, RecipeSearchReq, \
@@ -364,8 +365,12 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         return body
 
     @app.post("/api/v1/tasks/{task_id}/cancel")
-    def cancel_ep(task_id: str):
-        r = cancel_task(idx, task_id)
+    def cancel_ep(task_id: str, req: CancelReq | None = None):
+        # [중요] 본문은 **선택**이다 — 종전 호출자(본문 없이 POST)를 그대로 받는다.
+        #    새 필드 `no_work` 가 「취소」와 「할 일 없음(골조가 완성본)」을 가른다.
+        r = cancel_task(idx, task_id,
+                        reason=(req.reason if req else ""),
+                        no_work=bool(req.no_work) if req else False)
         if not r.get("ok"):
             raise HTTPException(404, r.get("error"))
         return r

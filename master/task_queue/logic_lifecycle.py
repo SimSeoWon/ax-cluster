@@ -18,6 +18,35 @@ from .logic_claim import _mark_worker_quota_blocked
 from .logic_cleanup import _auto_cleanup_work_async
 
 
+def _flip_if_all_terminal(idx: TaskIndex, wid: str, *, why: str) -> bool:
+    """조각이 **전부 terminal** 이면 work 을 `ready_for_review` 로 뒤집는다. lock 보유 가정.
+
+    🔴 [중요] `#332` — **이 전이가 `cancel` 경로에 없었다.** 그래서 마지막으로 상태가 바뀌는
+    조각이 취소분이면 work 이 `in_progress` 로 영원히 남고, 여기에 달린 완료 공지(⑹)가
+    **성공했는데도 안 나간다.** 실측 2026-09-04 21:34: 조각 4 중 2가 `[PSEUDO]` 0이라
+    파견되지 않았는데 종결 기록이 막혀 `terminal 2/4` 로 멈췄고 `.33` 은 끝을 몰랐다.
+
+    [주의] 종전에는 같은 블록이 `verify_task`·`submit_fail` 에 **복제**돼 있었다. 복제였기
+    때문에 세 번째 경로(cancel)를 만들 때 빠뜨렸다 — 그래서 지운다.
+
+    돌려주는 값은 *"뒤집었다"* 이고, 호출자는 그때만 `_auto_cleanup_work_async` 를 부른다.
+    """
+    wmeta = idx.works.get(wid)
+    if not wmeta:
+        return False
+    terminal = _count_terminal_in_work(idx, wid)
+    total = int(wmeta.get("total", 0))
+    if not (terminal >= total and total > 0 and wmeta.get("merge_status") == "in_progress"):
+        return False
+    wmeta["merge_status"] = "ready_for_review"
+    v = int(wmeta.get("verified", 0))
+    f = total - v
+    _tq_log(f"[work-ready] {wid} all tasks done ({why}) → ready_for_review "
+            f"(verified={v}, 나머지={f})", idx.root)
+    _save_work(idx, wid)
+    return True
+
+
 def _is_stale_epoch(submit_epoch: Optional[int], current_epoch: int) -> bool:
     """Plan v5 C.2 fencing 판정 (순수) — submit 의 epoch 이 현재보다 낮으면 stale(zombie).
 
@@ -156,18 +185,8 @@ def submit_fail(idx: TaskIndex, task_id: str, reason: str, detail: str = "", *,
         # Phase 2 보강 — submit_fail 도 terminal 트리거 검사. failed task 가 마지막 상태
         # 라면 work 의 cleanup 진입.
         wid = t.get("work_id")
-        if wid in idx.works:
-            wmeta = idx.works[wid]
-            terminal = _count_terminal_in_work(idx, wid)
-            total = int(wmeta.get("total", 0))
-            if terminal >= total and total > 0 and wmeta.get("merge_status") == "in_progress":
-                wmeta["merge_status"] = "ready_for_review"
-                v = int(wmeta.get("verified", 0))
-                f = total - v
-                _tq_log(f"[work-ready] {wid} all tasks done (post-fail) → ready_for_review "
-                        f"(verified={v}, failed/cancelled={f})", idx.root)
-                _save_work(idx, wid)
-                _auto_cleanup_work_async(idx, wid)
+        if wid in idx.works and _flip_if_all_terminal(idx, wid, why="post-fail"):
+            _auto_cleanup_work_async(idx, wid)
         return {"ok": True}
 
 
@@ -244,17 +263,9 @@ def verify_task(idx: TaskIndex, task_id: str, passed: bool = True,
                 wmeta["verified"] = int(wmeta.get("verified", 0)) + 1
             # Phase 2 보강 (2026-05-10) — terminal 카운트로 트리거.
             # 이전엔 verified >= total 조건이 failed 무시 → 영구 stuck.
-            terminal = _count_terminal_in_work(idx, wid)
-            total = int(wmeta.get("total", 0))
-            if terminal >= total and total > 0 and wmeta.get("merge_status") == "in_progress":
-                wmeta["merge_status"] = "ready_for_review"
-                triggered_auto_cleanup = True
-                v = int(wmeta.get("verified", 0))
-                f = total - v
-                if f > 0:
-                    _tq_log(f"[work-ready] {wid} all tasks done → ready_for_review (verified={v}, failed/cancelled={f})", idx.root)
-                else:
-                    _tq_log(f"[work-ready] {wid} all tasks verified → ready_for_review", idx.root)
+            # [중요] 판정은 `_flip_if_all_terminal` **하나**다 (`#332`) — 종전에는 같은 블록이
+            #    여기와 `submit_fail` 에 복제돼 있었고, 복제였기에 cancel 경로에서 빠졌다.
+            triggered_auto_cleanup = _flip_if_all_terminal(idx, wid, why="post-verify")
             _save_work(idx, wid)
             paths.append(idx.work_paths[wid])
         _tq_log(f"[verify] {task_id} → {new_status} (result={result})", idx.root)
@@ -299,14 +310,40 @@ def reverify_task(idx: TaskIndex, task_id: str) -> dict:
         return {"ok": True, "task_id": task_id, "status": "submitted"}
 
 
-def cancel_task(idx: TaskIndex, task_id: str) -> dict:
+def cancel_task(idx: TaskIndex, task_id: str, *,
+                reason: str = "", no_work: bool = False) -> dict:
+    """조각을 terminal 로 종결한다 — **취소**이거나 **할 일 없음**이다.
+
+    🔴 [중요] `no_work=True` 는 *"골조에 `[PSEUDO]` 가 0개다"* 다. 실패도 취소도 아니고,
+    **원전이 그 경우 태스크 등재 자체를 skip 하는** 그 조각이다(`skeleton.py` 머리말).
+    우리는 등재가 요청자(`.33`)에서 골조 push **전에** 일어나므로 그 자리를 쓸 수 없어
+    파견 초입에서 판정한다 — 그래서 「등재는 됐지만 할 일이 없는」 상태가 존재한다.
+
+    [중요] **분모(`total`)에서 빼지 않는다** (사용자 결정 2026-09-04). 빼려면 등재 뒤에
+    `total` 을 깎아야 하는데 그러면 큐·공지·`:8103` 이 서로 다른 시점의 분모를 본다.
+    남기고 terminal 로 세면 기존 집계 계약(`verified+failed+cancelled`)을 그대로 쓴다.
+
+    [주의] **집계 전이가 여기 있어야 한다** (`#332`). 없으면 마지막에 상태가 바뀌는 조각이
+    취소분일 때 work 이 `in_progress` 로 남아 완료 공지가 영원히 안 나간다.
+    """
     with idx.lock:
         t = idx.tasks.get(task_id)
         if not t:
             return {"ok": False, "error": "task not found"}
         t["status"] = "cancelled"
+        # [중요] 사유를 **레코드에** 적는다 — 본문에만 있으면 공지·화면이 「취소됐다」까지만
+        #    알고 「할 일이 없었다」를 모른다(`#222` 와 같은 부류).
+        t["no_work"] = bool(no_work)
+        if reason:
+            t["cancel_reason"] = str(reason)[:300]
+        t["cancelled_at"] = _now_iso()
         _save_task(idx, task_id)
         path = idx.task_paths[task_id]
-        _tq_log(f"[cancel] {task_id}", idx.root)
-        _git_commit_tasks(idx.root, f"[cancel] {task_id}", [path])
-        return {"ok": True}
+        kind = "nowork" if no_work else "cancel"
+        _tq_log(f"[{kind}] {task_id}" + (f" — {str(reason)[:160]}" if reason else ""), idx.root)
+        _git_commit_tasks(idx.root, f"[{kind}] {task_id}", [path])
+        wid = t.get("work_id")
+        flipped = bool(wid in idx.works and _flip_if_all_terminal(idx, wid, why=f"post-{kind}"))
+    if flipped:
+        _auto_cleanup_work_async(idx, wid)
+    return {"ok": True, "no_work": bool(no_work)}
