@@ -92,7 +92,20 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   commit, and when all pieces are terminal the queue posts a Redmine `[리뷰 요청]` issue to the
   requester. **The 「통합자」 is gone** — `integrate.py` (≈1,000 lines) and its 131 tests are
   deleted; `master/test_no_integrator.py` fails if any of it comes back.
-  [진행] **⑺ is wired but unproven** (`#355`): `review.advance_work()` + the `ax-advance` skill
+  [완료] **⑺ ran live 2026-09-05** (`#355`): `.33` merged the round's sub-branches into the work
+  branch, the integration build caught **four real defects in worker output**, `.33` fixed them in
+  that tree, rebuilt, and advanced `8db9826 → 7c3e472`. The decision it was asked for
+  ("bug or structural change?") is recorded as a note on the work's Redmine issue.
+  🔴 [중요] **A work runs many rounds** (user-confirmed 2026-09-05). After ⑺ advances the branch,
+  more work goes into the **same** work — the requester calls `register_work` with **`work_id`**
+  (= reactivation): `round +1`, sub-branches become `task/<work>/r<N>/<piece>`, and ⑺ merges
+  **only that round's** pieces. The Redmine issue is opened **at registration** and every event
+  (round done · advance · the human's decision) lands on it as a note; `finalize` closes it as
+  **완료** with the `main` merge. Dispatch now has **two** triggers — skeleton push *and*
+  registration (with only push, "push first, register second" waited for the 10-min catchup).
+  [주의] Workers keep nothing: after commit+push the cycle deletes the piece branch, prunes
+  remote-tracking refs and removes `.ax/work/<task>`.
+  [진행] ⑺ mechanics: `review.advance_work()` + the `ax-advance` skill
   merge every sub-branch into the **work branch** (not `main`), build once on `.33`, ask *"bug or
   structural change?"*, and push the advance only on `confirm=True`. Flow Y
   (2026-08-14, *"master commits inferred diffs to the durable branch"*) and the `#327` teardown of
