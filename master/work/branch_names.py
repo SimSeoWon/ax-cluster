@@ -78,9 +78,24 @@ def base_branch(work_id: str) -> str:
     return f"{DURABLE_PREFIX}/{_check('work_id', work_id)}/{BASE_LEAF}"
 
 
-def durable_branch(work_id: str, task_id: str) -> str:
-    """조각 canonical 브랜치. **단일 writer** — 검증을 통과시킨 쪽만 여기 merge 한다."""
-    return f"{DURABLE_PREFIX}/{_check('work_id', work_id)}/{_check('task_id', task_id)}"
+def durable_branch(work_id: str, task_id: str, round_no: int = 0) -> str:
+    """조각 canonical 브랜치. **단일 writer** — 검증을 통과시킨 쪽만 여기 merge 한다.
+
+    🔴 [중요] **라운드 번호가 이름에 들어간다** (사용자 2026-09-04: *"이미 전진했는데 그냥 다
+    머지하는게 말이 안되는거니까. 이름 자체에 라운드 번호를 넣는건 좋은 아이디어"*).
+
+        task/<work_id>/r2/<task_id>
+
+    분산 작업(work) 하나는 여러 라운드를 돈다. 라운드 N 조각은 ⑺ 에서 이미 작업 브랜치로
+    들어갔으므로, 라운드 N+1 의 머지 대상에 끼면 **이미 전진한 것을 또 머지**하게 된다.
+    이름에 라운드가 있으면 목록만 봐도 갈린다.
+
+    [주의] `round_no <= 0` 이면 옛 이름(`task/<work>/<task>`)을 그대로 낸다 — 라운드 스탬프가
+    없는 레코드를 조용히 다른 브랜치로 보내지 않기 위해서다.
+    """
+    head = f"{DURABLE_PREFIX}/{_check('work_id', work_id)}"
+    leaf = _check('task_id', task_id)
+    return f"{head}/r{int(round_no)}/{leaf}" if int(round_no or 0) > 0 else f"{head}/{leaf}"
 
 
 def attempt_branch(work_id: str, task_id: str, workshop: str, ts: str) -> str:

@@ -79,12 +79,16 @@ def _ensure_base_locally(repo: Path, work_id: str, base: str, remote: str) -> st
 
 
 def create(paths, work_id: str, task_id: str, *, base_commit: str,
-           remote: str = WRITE_REMOTE, logf=None) -> Created:
-    """조각의 서브 브랜치를 base 커밋 위에 세운다. **멱등 · 덮어쓰지 않음.**"""
+           remote: str = WRITE_REMOTE, logf=None, round_no: int = 0) -> Created:
+    """조각의 서브 브랜치를 base 커밋 위에 세운다. **멱등 · 덮어쓰지 않음.**
+
+    [중요] `round_no` 가 있으면 이름에 들어간다 — `task/<work>/r<N>/<task>`. 라운드가
+    바뀌면 이름이 갈리므로 이미 전진한 라운드의 조각과 섞이지 않는다.
+    """
     log = logf or (lambda m: None)
     c = Created(task_id=task_id)
     try:
-        c.branch = branch_names.durable_branch(work_id, task_id)
+        c.branch = branch_names.durable_branch(work_id, task_id, round_no)
     except branch_names.BranchNameError as e:
         c.error = str(e)
         return c

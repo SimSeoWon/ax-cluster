@@ -658,7 +658,8 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
     if base:
         try:
             from . import subbranch as _sb
-            _c = _sb.create(paths, work_id, task_id, base_commit=base, logf=_log)
+            _c = _sb.create(paths, work_id, task_id, base_commit=base, logf=_log,
+                            round_no=int(task.get("round") or 0))
             sub_name, sub_err = (_c.branch if _c.ok else ""), _c.error
         except Exception as e:                               # noqa: BLE001
             sub_name, sub_err = "", f"{type(e).__name__}: {e}"

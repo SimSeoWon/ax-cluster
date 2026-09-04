@@ -182,7 +182,7 @@ def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
     ax_only: list = []
     for t in verified:
         tid = t.get("task_id")
-        dur = durable_branch(work_id, tid)
+        dur = durable_branch(work_id, tid, int(t.get("round") or 0))
         # [중요] verified 인데 durable 이 없다 = 이상(검증 워커의 merge 누락) → 통째 중단.
         #    [주의] 여기서 넘어가면 **검증됐다고 기록된 것이 빠진 채** 통합이 성공으로 보인다.
         rc, ls = _git_rc(repo, "ls-remote", "--heads", remote, dur)
@@ -842,6 +842,17 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
     `main` 은 **만지지 않는다**: 그것은 작업 전체가 끝난 뒤 `finalize_work` 의 몫이다.
     """
     a = Advance(work_id=work_id)
+    # 🔴 [중요] **이번 라운드 조각만 머지한다** (사용자 2026-09-04: *"이미 전진했는데 그냥 다
+    #    머지하는게 말이 안되는거니까"*). 지난 라운드 조각은 그때 전진에서 이미 작업 브랜치로
+    #    들어갔다 — 목록에 끼면 `.33` 이 「이번에 만든 것」을 못 가려낸다.
+    #    [주의] 라운드 스탬프가 없는 옛 레코드는 **거르지 않는다** — 스탬프 없음을 0으로 읽어
+    #    통째로 빼면 머지할 것이 사라진다.
+    cur_round = int((work or {}).get("round", 1) or 1)
+    stamped = [t for t in (tasks or []) if int(t.get("round") or 0) > 0]
+    if stamped:
+        tasks = [t for t in (tasks or []) if int(t.get("round") or 0) in (0, cur_round)]
+        logf("advance", f"라운드 {cur_round} 조각 {len(tasks)}건만 머지한다 "
+                        f"(지난 라운드분은 이미 작업 브랜치에 있다)")
     target = work_base_branch(work_id, work)
     if not target:
         a.error = ("작업 브랜치를 정할 수 없다 — work_id 도 target_branch 도 쓸 수 없다 "

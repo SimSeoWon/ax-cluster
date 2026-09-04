@@ -548,6 +548,42 @@ class _Build:
         return "BUILD OK" if self.passed else "BUILD FAILED"
 
 
+def test_advance_merges_only_this_round():
+    """🔴 **이번 라운드 조각만 머지한다** (사용자 2026-09-04).
+
+    *"이미 전진했는데 그냥 다 머지하는게 말이 안되는거니까. 이름 자체에 라운드 번호를
+    넣는건 좋은 아이디어"*.
+
+    분산 작업(work) 하나가 라운드를 여러 번 돈다. 라운드 1 조각은 그때 전진에서 이미 작업
+    브랜치에 들어갔으므로, 라운드 2 의 머지 대상에 끼면 **이미 반영된 것을 다시 훑는다** —
+    `.33` 이 받는 목록에서 「이번에 만든 것」이 안 보이게 된다.
+    """
+    root, repo, work, tasks = fixture()
+    try:
+        # 라운드 2 조각 하나를 만든다 — 이름에 라운드가 들어간다
+        g(repo, "checkout", "feature/w1")
+        g(repo, "checkout", "-b", "task/w1/r2/t9")
+        write(repo / "r2.txt", "라운드 2 산출물\n")
+        g(repo, "add", "-A"); g(repo, "commit", "-m", "t9")
+        g(repo, "push", "origin", "task/w1/r2/t9")
+        g(repo, "checkout", "main")
+
+        rounds = [{"task_id": "t1", "round": 1, "distribution_mode": "push",
+                   "status": "verified", "hierarchy_level": 0, "priority": 0, "created": "1"},
+                  {"task_id": "t9", "round": 2, "distribution_mode": "push",
+                   "status": "verified", "hierarchy_level": 0, "priority": 0, "created": "9"}]
+        w2 = dict(work); w2["round"] = 2
+        a = R.advance_work(repo, work_id="w1", work=w2, tasks=rounds,
+                           build_fn=lambda t: _Build(True))
+        check("🔴 라운드 2 것만 머지한다", a.merged == ["task/w1/r2/t9"], str(a.merged))
+        tree = Path(a.tree)
+        check("  그 산출물이 트리에 있다", (tree / "r2.txt").exists(), a.tree)
+        check("[중요] 지난 라운드 조각은 안 훑는다 (이미 작업 브랜치에 있다)",
+              not any("r2" not in b for b in a.merged), str(a.merged))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_advance_bases_on_the_work_branch_not_main():
     """🔴 **`review_work` 와 기준이 다르다.** 그쪽은 `origin/main` 에 트리를 세우고(시뮬레이션),
     여기는 **`origin/<작업 브랜치>`** 에 세운다 — 전진분 위에 얹는 것이기 때문이다.
@@ -655,6 +691,7 @@ def test_advance_stops_whole_on_conflict():
 
 def main() -> int:
     for fn in (test_advance_bases_on_the_work_branch_not_main,
+               test_advance_merges_only_this_round,
                test_advance_does_not_push_without_confirm,
                test_advance_pushes_on_confirm,
                test_advance_refuses_when_build_failed_or_unmeasured,

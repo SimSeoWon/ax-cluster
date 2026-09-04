@@ -104,6 +104,13 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 work_project = wmeta.get("project") or ""
                 # verified / failed / cancelled 분리
                 tasks_all = [t for t in idx.tasks.values() if t.get("work_id") == work_id]
+                # 🔴 [중요] **이번 라운드 것만 알린다.** work 하나가 여러 라운드를 돌고,
+                #    지난 라운드 조각은 ⑺ 에서 이미 작업 브랜치로 들어갔다. 다 실으면
+                #    `.33` 이 「이번에 머지할 것」을 목록에서 가려낼 수 없다.
+                _round = int(wmeta.get("round", 1) or 1)
+                if any(int(t.get("round") or 0) > 0 for t in tasks_all):
+                    tasks_all = [t for t in tasks_all
+                                 if int(t.get("round") or 0) in (0, _round)]
                 tasks_v = [t for t in tasks_all if t.get("status") == "verified"]
                 tasks_f = [t for t in tasks_all if t.get("status") == "failed"]
                 # 🔴 [중요] `cancelled` 를 **둘로 가른다** (사용자 결정 2026-09-04).

@@ -128,8 +128,11 @@ def _fake_subbranch(monkey=True):
     """⑷ 를 주입으로 세운다 — 실 git 없이 「브랜치가 있다」를 만든다."""
     from master.work import subbranch as SB
 
-    def create(paths, work_id, task_id, *, base_commit, remote="", logf=None):
-        return SB.Created(task_id=task_id, branch=f"task/{work_id}/{task_id}",
+    def create(paths, work_id, task_id, *, base_commit, remote="", logf=None, round_no=0):
+        # [중요] 이름에 라운드가 들어간다 (`task/<work>/r<N>/<task>`) — 대역도 실물과 같은
+        #    규약을 써야 「어느 라운드 브랜치에 커밋했나」를 테스트가 잴 수 있다.
+        return SB.Created(task_id=task_id,
+                          branch=SB.branch_names.durable_branch(work_id, task_id, round_no),
                           tip=base_commit, created=True)
     orig = SB.create
     SB.create = create

@@ -117,6 +117,9 @@ def register_work(idx: TaskIndex, *, title: str, target_repo: str,
             "branch_isolation": branch_isolation,
             "created_branch_at": created_branch_at or None,
             "merge_status": "in_progress",
+            # 🔴 분산 작업은 **여러 라운드**를 돈다 (사용자 2026-09-04). 조각·브랜치 이름이
+            #    이 번호를 달고, 공지·전진은 **그 라운드 것만** 본다.
+            "round": 1,
             "review_scheduled": review_scheduled or None,
             "review_decision": {"decided_at": None, "decided_by": None,
                                 "result": None, "notes": None},
@@ -164,10 +167,38 @@ def register_task(idx: TaskIndex, *, work_id: str, type: str, task_data: dict,
                 "error": f"unknown requires: {','.join(unknown)} "
                          f"(allowed: {','.join(_KNOWN_CAPABILITIES)})"}
     with idx.lock:
+        # 🔴 [중요] **라운드 N+1 이 시작된 것이다 — work 을 다시 연다** (사용자 2026-09-04).
+        #
+        # 분산 작업(work) 하나는 **여러 라운드**를 돈다: ⑺ 에서 작업 브랜치를 한 칸 전진시킨
+        # 뒤, 더 고칠 것이 있으면 그 브랜치에 조각을 다시 등재해 ④부터 다시 돈다. work 이
+        # 끝나는 것은 사람이 *"더 없다"* 로 마감할 때뿐이다.
+        #
+        # [주의] 라운드가 끝나면 `merge_status` 가 `ready_for_review` 로 뒤집힌다(그게 `.33`
+        # 완료 공지의 트리거다). 그 상태로 남아 있으면 **다음 라운드가 파견되지 않는다** —
+        # `autodispatch.should_dispatch` 가 *"진행 중인 work 만 민다"* 로 거절한다.
+        #
+        # [중요] **이 블록이 `meta` 생성보다 앞이어야 한다** — 조각에 새기는 라운드가 올라간
+        # 값이어야 하기 때문이다. 뒤에 두었더니 라운드 2 조각에 `round=1` 이 찍혔다(테스트가
+        # 잡았다). 그러면 브랜치 이름도 `r1` 이 되어 지난 라운드와 섞인다.
+        #
+        # [주의] 종결된 work(`merged`·`rejected`·`cancelled`)은 되살리지 않는다.
+        _w = idx.works[work_id]
+        if str(_w.get("merge_status") or "") == "ready_for_review":
+            _w["merge_status"] = "in_progress"
+            _w["round"] = int(_w.get("round", 1)) + 1
+            # 다음 라운드의 완료 공지가 다시 나가야 한다 — 이슈 id 를 들고 있으면
+            # `_try_create_review_issue_async` 가 「이미 생성됨」으로 조용히 반환한다.
+            _prev_issue = _w.pop("redmine_issue_id", None)
+            _tq_log(f"[work-reopen] {work_id} ready_for_review → in_progress · "
+                    f"라운드 {_w['round']} 시작"
+                    + (f" (지난 라운드 이슈 #{_prev_issue})" if _prev_issue else ""), idx.root)
         task_id = _gen_task_id()
         meta = {
             "task_id": task_id,
             "work_id": work_id,
+            # [중요] 등재 시점의 라운드를 **조각에 새긴다** — 브랜치 이름과 머지 대상 판정이
+            #    이 값에서 나온다. 나중에 work 의 라운드가 올라가도 이 조각은 안 따라간다.
+            "round": int(idx.works[work_id].get("round", 1)),
             "type": type,
             "status": "pending",
             "base_commit": base_commit,
