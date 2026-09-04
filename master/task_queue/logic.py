@@ -33,7 +33,8 @@ from .logic_lifecycle import (  # noqa: F401  (re-export)
     _is_stale_epoch, submit_result, submit_fail, verify_task, reverify_task, cancel_task,
 )
 from .logic_cleanup import (  # noqa: F401  (re-export)
-    _read_redmine_config, _redmine_post_issue, _try_create_review_issue_async,
+    _read_redmine_config, _redmine_post_issue, _redmine_add_note,
+    _try_create_review_issue_async, create_work_issue_async as _create_work_issue_async,
     _auto_cleanup_work_async,
 )
 
@@ -142,6 +143,10 @@ def register_work(idx: TaskIndex, *, title: str, target_repo: str,
         idx.works[work_id] = meta
         idx.work_paths[work_id] = path
         _tq_log(f"[work-register] {work_id} title={title}", idx.root)
+        # 🔴 **레드마인 이슈는 등재 때 만든다** (사용자 2026-09-04: *"완료시 만들지말고 작업
+        #    등재할때 만들라고"*). 라운드 완료·전진·추가 개선·마감이 그 이슈에 노트로 쌓인다.
+        #    [주의] 비동기이고 실패해도 등재를 막지 않는다 — 큐가 정본이다.
+        _create_work_issue_async(idx, work_id)
         _git_commit_tasks(idx.root, f"[work-register] {work_id}: {title}", [path])
         _update_index_md(idx)
         result = dict(meta)
@@ -186,12 +191,13 @@ def register_task(idx: TaskIndex, *, work_id: str, type: str, task_data: dict,
         if str(_w.get("merge_status") or "") == "ready_for_review":
             _w["merge_status"] = "in_progress"
             _w["round"] = int(_w.get("round", 1)) + 1
-            # 다음 라운드의 완료 공지가 다시 나가야 한다 — 이슈 id 를 들고 있으면
-            # `_try_create_review_issue_async` 가 「이미 생성됨」으로 조용히 반환한다.
-            _prev_issue = _w.pop("redmine_issue_id", None)
+            # [중요] **이슈 id 는 그대로 둔다** — work 하나에 이슈 하나이고, 라운드는 그
+            #    이슈의 노트로 쌓인다 (사용자 2026-09-04). 종전에 여기서 id 를 버렸는데,
+            #    그러면 라운드마다 새 이슈가 나서 work 하나에 이슈가 여러 개가 된다.
             _tq_log(f"[work-reopen] {work_id} ready_for_review → in_progress · "
                     f"라운드 {_w['round']} 시작"
-                    + (f" (지난 라운드 이슈 #{_prev_issue})" if _prev_issue else ""), idx.root)
+                    + (f" (이슈 #{_w['redmine_issue_id']})" if _w.get("redmine_issue_id")
+                       else ""), idx.root)
         task_id = _gen_task_id()
         meta = {
             "task_id": task_id,

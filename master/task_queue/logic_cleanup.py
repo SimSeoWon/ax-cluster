@@ -77,6 +77,85 @@ def _redmine_post_issue(rm_cfg: dict, subject: str, description: str) -> Optiona
         return None
 
 
+def _redmine_add_note(rm_cfg: dict, issue_id: int, notes: str,
+                      status_name: str = "") -> bool:
+    """기존 이슈에 **노트**를 붙인다 (필요하면 상태도). 성공 여부만 돌려준다.
+
+    [중요] 사건마다 이슈를 새로 만들지 않는다 — work 하나에 이슈 하나이고, 라운드·전진·
+    추가 개선·마감이 **그 이슈의 노트**로 쌓인다 (사용자 2026-09-04).
+    """
+    if not (rm_cfg.get("url") and rm_cfg.get("api_key") and issue_id):
+        return False
+    issue: dict = {"notes": notes}
+    if status_name:
+        issue["status_name"] = status_name
+    body = json.dumps({"issue": issue}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{rm_cfg['url']}/issues/{int(issue_id)}.json", data=body, method="PUT",
+        headers={"X-Redmine-API-Key": rm_cfg["api_key"], "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return 200 <= resp.status < 300
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
+def create_work_issue_async(idx: TaskIndex, work_id: str):
+    """🔴 **등재 시점에** 그 분산 작업의 레드마인 이슈를 만든다 (사용자 2026-09-04:
+    *"완료시 만들지말고 작업 등재할때 만들라고"*).
+
+    [주의] 종전에는 **라운드가 끝나야** 이슈가 났다. 그래서 ⑺ 에서 「추가 개선을 하기로 했다」
+    같은 결정이 생겨도 적을 자리가 없었고, 기입이 전부 마지막에 몰렸다 — 타이밍이 안 맞았다.
+
+    [중요] 실패는 등재를 막지 않는다 — 큐가 정본이고 레드마인은 기록이다. 다만 **왜 못 만들었는지
+    는 찍는다**(조용한 침묵이 이 저장소가 가장 비싸게 치른 부류다).
+    """
+    def _job():
+        try:
+            with idx.lock:
+                wmeta = idx.works.get(work_id)
+                if not wmeta or wmeta.get("redmine_issue_id"):
+                    return
+                title = wmeta.get("title", work_id)
+                target_branch = wmeta.get("target_branch") or "(unknown)"
+                project = wmeta.get("project") or ""
+            rm_cfg = _read_redmine_config(idx.root, project)
+            missing = [n for n, v in (("url", rm_cfg.get("url")),
+                                      ("api_key", rm_cfg.get("api_key")),
+                                      ("project", rm_cfg.get("project"))) if not v]
+            if missing:
+                _tq_log(f"[redmine] {work_id} 이슈 생성 스킵 — 없는 것: {', '.join(missing)} "
+                        f"(work.project={project!r})", idx.root)
+                return
+            desc = "\n".join([
+                "분산 작업 등재 — 이 이슈에 라운드마다 기록이 쌓인다",
+                "",
+                f"- work_id: {work_id}",
+                f"- 작업 브랜치: `{target_branch}`",
+                f"- 프로젝트: {project}",
+                "",
+                "## 진행 방식",
+                "",
+                "1. 마스터가 조각을 워커에 파견하고, 조각마다 서브 브랜치에 커밋한다",
+                "2. 전부 끝나면 이 이슈에 **라운드 완료** 노트가 붙는다",
+                "3. `.33` 이 `ax-advance` 로 서브 브랜치를 작업 브랜치에 머지·빌드하고 전진시킨다",
+                "4. 더 고칠 것이 있으면 그 내용을 여기 적고 다음 라운드를 등재한다",
+                "5. 마감하면 `main` 머지 뒤 이 이슈를 닫는다",
+            ])
+            iid = _redmine_post_issue(rm_cfg, f"[분산 작업] {title}", desc)
+            if not iid:
+                _tq_log(f"[redmine] {work_id} 이슈 생성 실패 (네트워크/인증/필수필드 확인)",
+                        idx.root)
+                return
+            update_work_meta(idx, work_id, redmine_issue_id=iid)
+            _tq_log(f"[redmine] {work_id} 등재 이슈 생성: #{iid}", idx.root)
+        except Exception as e:                               # noqa: BLE001
+            _tq_log(f"[redmine] {work_id} 등재 이슈 예외: {e}", idx.root)
+
+    threading.Thread(target=_job, daemon=True).start()
+
+
 def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                                     build_status: str = "passed",
                                     build_log_tail: str = "",
@@ -95,8 +174,13 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 wmeta = idx.works.get(work_id)
                 if not wmeta:
                     return
-                if wmeta.get("redmine_issue_id"):
-                    return  # 이미 생성됨 (멱등성)
+                # [중요] 이슈는 **등재 때** 만들어져 있다 — 라운드 완료는 그 이슈에 **노트**로
+                #    붙인다 (사용자 2026-09-04). 없으면(등재 때 실패) 여기서 만든다.
+                issue_id = wmeta.get("redmine_issue_id")
+                # 멱등 — 같은 라운드의 완료를 두 번 적지 않는다
+                _r = int(wmeta.get("round", 1) or 1)
+                if int(wmeta.get("noticed_round", 0) or 0) >= _r:
+                    return
                 title = wmeta.get("title", work_id)
                 target_branch = wmeta.get("target_branch") or "(unknown)"
                 # [중요] 레드마인 프로젝트는 **work 의 project 축**에서 온다 (`#293`) —
@@ -160,7 +244,7 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
             #    **실제 검사는 `.33` 이 서브 브랜치를 전부 머지한 뒤 한 곳에서 한다.**
             #    [주의] 종전 문구는 `통합 빌드: [완료] 통과` 를 **무조건** 찍었다 — 아무도
             #    빌드하지 않았는데 통과라고 적는 거짓말이었다.
-            header_line = "분산 워커 작업 완료 — 통합·검사·머지 판단 요청"
+            header_line = f"라운드 {_r} 완료 — 통합·검사·전진 판단 요청"
             lines = [
                 header_line,
                 "",
@@ -266,12 +350,22 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
             ]
             description = "\n".join(lines)
 
-            issue_id = _redmine_post_issue(rm_cfg, subject, description)
-            if not issue_id:
-                _tq_log(f"[redmine] {work_id} 이슈 생성 실패 (네트워크/인증/필수필드 확인)", idx.root)
-                return
-            update_work_meta(idx, work_id, redmine_issue_id=issue_id)
-            _tq_log(f"[redmine] {work_id} 이슈 생성: #{issue_id}", idx.root)
+            if issue_id:
+                if not _redmine_add_note(rm_cfg, int(issue_id), description):
+                    _tq_log(f"[redmine] {work_id} 라운드 {_r} 노트 실패 — #{issue_id}", idx.root)
+                    return
+                update_work_meta(idx, work_id, noticed_round=_r)
+                _tq_log(f"[redmine] {work_id} 라운드 {_r} 완료 노트 → #{issue_id}", idx.root)
+            else:
+                # 등재 때 못 만들었다 — 여기서 만든다 (제목은 등재분과 같은 규약)
+                issue_id = _redmine_post_issue(rm_cfg, subject, description)
+                if not issue_id:
+                    _tq_log(f"[redmine] {work_id} 이슈 생성 실패 (네트워크/인증/필수필드 확인)",
+                            idx.root)
+                    return
+                update_work_meta(idx, work_id, redmine_issue_id=issue_id, noticed_round=_r)
+                _tq_log(f"[redmine] {work_id} 이슈 생성: #{issue_id} "
+                        f"[주의] 등재 때 만들어졌어야 한다", idx.root)
         except Exception as e:
             _tq_log(f"[redmine] {work_id} 예외: {e}", idx.root)
 

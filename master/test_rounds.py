@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -76,9 +77,9 @@ def test_new_tasks_reopen_the_work() -> None:
           idx.works[wid]["merge_status"] == "in_progress", idx.works[wid]["merge_status"])
     check("  분모가 늘어난다 (2 → 3)", int(idx.works[wid]["total"]) == 3,
           str(idx.works[wid]["total"]))
-    check("[중요] 지난 라운드 이슈 id 를 버린다 — 안 버리면 다음 공지가 "
-          "「이미 생성됨」으로 조용히 안 나간다",
-          "redmine_issue_id" not in idx.works[wid], str(idx.works[wid].get("redmine_issue_id")))
+    check("🔴 **이슈 id 는 그대로 둔다** — work 하나에 이슈 하나, 라운드는 노트로 쌓인다",
+          idx.works[wid].get("redmine_issue_id") == 357,
+          str(idx.works[wid].get("redmine_issue_id")))
 
 
 def test_dispatch_gate_agrees() -> None:
@@ -106,6 +107,63 @@ def test_dispatch_gate_agrees() -> None:
               ok2, f"{ok2} {why2}")
     finally:
         TB.resolve = saved
+
+
+def test_issue_is_created_at_registration() -> None:
+    """🔴 **등재 시점에** 이슈가 난다 — 완료를 기다리지 않는다 (사용자 2026-09-04)."""
+    from master.task_queue import logic_cleanup as LC
+    made: list = []
+    s_cfg, s_new = LC._read_redmine_config, LC._redmine_post_issue
+    LC._read_redmine_config = lambda root, project="": {"url": "http://x", "api_key": "k",
+                                                        "project": "ns"}
+    LC._redmine_post_issue = lambda cfg, subj, desc: (made.append((subj, desc)) or 901)
+    try:
+        idx, wid = _work()
+        for _ in range(200):
+            if made:
+                break
+            time.sleep(0.01)
+        check("🔴 등재만으로 이슈가 난다", len(made) == 1, str(made)[:160])
+        check("  제목이 분산 작업임을 말한다", made and made[0][0].startswith("[분산 작업]"),
+              str(made)[:120])
+        check("  work 에 id 가 기록된다", idx.works[wid].get("redmine_issue_id") == 901,
+              str(idx.works[wid].get("redmine_issue_id")))
+    finally:
+        LC._read_redmine_config, LC._redmine_post_issue = s_cfg, s_new
+
+
+def test_completion_is_a_note_not_a_new_issue() -> None:
+    """🔴 이슈는 **등재 때** 만들고, 라운드 완료는 그 이슈에 **노트**로 붙는다.
+
+    사용자 2026-09-04: *"완료시 만들지말고 작업 등재할때 만들라고"* · *"추가 개선 요청했을때
+    레드마인에 내용이 기입되어야 할 꺼같은데 지금은 모든 분산 작업이 완료된 후 처리하니까
+    이것도 타이밍이 안맞고"*.
+    """
+    from master.task_queue import logic_cleanup as LC
+    made: list = []
+    notes: list = []
+    s_cfg, s_new, s_note = (LC._read_redmine_config, LC._redmine_post_issue,
+                            LC._redmine_add_note)
+    LC._read_redmine_config = lambda root, project="": {"url": "http://x", "api_key": "k",
+                                                        "project": "ns"}
+    LC._redmine_post_issue = lambda cfg, subj, desc: (made.append(subj) or 900)
+    LC._redmine_add_note = lambda cfg, iid, notes_, status_name="": (
+        notes.append((iid, notes_)) or True)
+    try:
+        idx, wid = _work()
+        idx.works[wid]["redmine_issue_id"] = 900          # 등재 때 만들어진 이슈
+        _round(idx, wid, 1)
+        for _ in range(200):
+            if notes:
+                break
+            time.sleep(0.01)
+        check("🔴 새 이슈를 만들지 않는다", not made, str(made))
+        check("  그 이슈에 노트가 붙는다", [i for i, _ in notes] == [900], str(notes))
+        check("  노트가 라운드를 말한다", any("라운드 1" in n for _, n in notes),
+              str(notes)[:200])
+    finally:
+        (LC._read_redmine_config, LC._redmine_post_issue,
+         LC._redmine_add_note) = s_cfg, s_new, s_note
 
 
 def test_round_is_in_the_branch_name() -> None:
@@ -154,6 +212,8 @@ def test_finished_work_is_not_revived() -> None:
 def main() -> int:
     print("=== work 은 라운드를 여러 번 돈다 — 마감은 사람이 한다 ===")
     for fn in (test_new_tasks_reopen_the_work, test_dispatch_gate_agrees,
+               test_issue_is_created_at_registration,
+               test_completion_is_a_note_not_a_new_issue,
                test_round_is_in_the_branch_name,
                test_finished_work_is_not_revived):
         fn()

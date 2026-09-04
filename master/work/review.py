@@ -721,14 +721,18 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
             # ── ② Redmine 기재 (원전 6단계 ② — 상태·머지 커밋) ──────────────
             # [중요] **키는 이 코드가 도는 기계에 없다** — 이 모듈은 `.33` 에도 배달된다.
             #    그래서 마스터 대행(`/api/v1/redmine/note`)을 지나간다. 값이 아니라 본문만 만든다.
-            # [주의] 상태는 **「해결」**이다 — 「완료」로 닫는 것은 사람의 결정이라는 규약
-            #    (`redmine.STATUS_ON_FINALIZE` 과 같은 방향). 여기서 닫지 않는다.
+            # 🔴 [중요] **여기서 닫는다 — 상태는 「완료」다** (사용자 2026-09-04:
+            #    *"레드마인 닫고 메인에 머지해야지"*). 마감은 분산 작업의 끝이고, `main` 머지가
+            #    이미 일어난 자리다.
+            #    [주의] 종전 규약은 *"「해결」까지만 — 닫는 것은 사람"* 이었다. 그 규약이
+            #    지키려던 것은 **사람이 판단한다**인데, `finalize_work(confirm=True)` 자체가
+            #    사람의 승인 발화로만 도는 자리다. 자동으로 닫히는 것이 아니다.
             if d.redmine_issue_id:
                 try:
                     (api or _default_api)("POST", "/api/v1/redmine/note",
                                           {"issue_id": int(d.redmine_issue_id),
                                            "notes": d.redmine_note,
-                                           "status_name": "해결",
+                                           "status_name": "완료",
                                            "work_id": work_id})
                     d.redmine_posted = True
                 except Exception as e:                      # noqa: BLE001

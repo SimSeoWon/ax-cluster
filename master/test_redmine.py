@@ -83,8 +83,9 @@ def test_unknown_status_keeps_notes_and_says_so():
 def test_default_status_names_are_ours():
     """[중요] 실측 2026-08-16: 이 Redmine 은 신규·진행·해결·검토·완료 뿐이다."""
     real = {"신규", "진행", "해결", "검토", "완료"}
-    check("[중요] finalize 기본이 「완료」가 아니다 — 닫는 것은 사람이다",
-          RM.STATUS_ON_FINALIZE == "해결", RM.STATUS_ON_FINALIZE)
+    check("🔴 **finalize 는 「완료」로 닫는다** (사용자 2026-09-04) — 마감이 분산 작업의 "
+          "끝이고, 그 호출은 사람의 승인으로만 돈다",
+          RM.STATUS_ON_FINALIZE == "완료", RM.STATUS_ON_FINALIZE)
     check("[중요] finalize 기본이 **실재하는** 상태다",
           RM.STATUS_ON_FINALIZE in real, RM.STATUS_ON_FINALIZE)
     check("[중요] 반려 기본은 상태를 안 바꾼다 (해당 상태가 없다)",

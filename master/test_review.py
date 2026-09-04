@@ -435,8 +435,10 @@ def test_finalize_confirm_pushes_and_then_cleanup_is_possible():
               str([(m, p2) for m, p2, _ in api.calls]))
         note = next((p or {}) for m, p2, p in api.calls
                     if m == "POST" and p2 == "/api/v1/redmine/note")
-        check("[주의] 상태는 「해결」이다 — 「완료」로 닫는 것은 사람이다",
-              note.get("status_name") == "해결", str(note.get("status_name")))
+        check("🔴 **마감은 닫는다 — 상태 「완료」** (사용자 2026-09-04: *\"레드마인 닫고 "
+              "메인에 머지해야지\"*). 종전 「해결」은 이 호출 자체가 사람의 승인으로만 "
+              "돈다는 사실을 안 셈한 것이었다",
+              note.get("status_name") == "완료", str(note.get("status_name")))
         check("노트에 머지 커밋이 실린다", d.merge_commit in (note.get("notes") or ""))
         check("[중요] 사람의 미커밋 작업이 그대로다",
               (repo / "Content" / "BP_Live.uasset").read_text(encoding="utf-8") == live_before)
