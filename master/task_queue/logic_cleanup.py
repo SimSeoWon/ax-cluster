@@ -261,8 +261,21 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 "",
                 "## 서브 브랜치 (머지 대상)",
             ]
+            # [중요] **이름을 여기서 조립하지 않는다** — 규약은 `branch_names.durable_branch`
+            #    하나다. 실측 2026-09-05: 여기서 `task/{work}/{task}` 로 만들어 라운드
+            #    (`r1/`)가 빠졌고, 사람이 읽는 목록이 **실물과 다른 브랜치**를 가리켰다.
+            def _branch_of(t) -> str:
+                if t.get("branch"):
+                    return str(t["branch"])
+                try:
+                    from ..work.branch_names import durable_branch     # noqa: PLC0415
+                    return durable_branch(work_id, str(t.get("task_id", "")),
+                                          int(t.get("round") or 0))
+                except Exception:                                      # noqa: BLE001
+                    return f"task/{work_id}/{t.get('task_id','')}"
+
             for t in tasks_v:
-                b = t.get("branch") or f"task/{work_id}/{t.get('task_id','')}"
+                b = _branch_of(t)
                 lines.append(f"- `{b}` — `{t.get('target_file','')}`")
             lines.append("")
             lines.append("## 구현 파일")

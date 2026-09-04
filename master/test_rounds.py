@@ -161,6 +161,15 @@ def test_completion_is_a_note_not_a_new_issue() -> None:
         check("  그 이슈에 노트가 붙는다", [i for i, _ in notes] == [900], str(notes))
         check("  노트가 라운드를 말한다", any("라운드 1" in n for _, n in notes),
               str(notes)[:200])
+        # 🔴 실측 2026-09-05 00:06 — 노트 본문이 브랜치 이름을 **직접 조립**해서 `r1/` 이
+        #    빠졌다. 사람이 읽는 목록이 실물과 다른 브랜치를 가리켰다.
+        check("🔴 브랜치 이름에 라운드가 들어간다 (본문에서 조립하지 않는다)",
+              all("/r1/" in n for _, n in notes if "서브 브랜치" in n), str(notes)[:400])
+        # 🔴 실측 같은 시각 — `update_work_meta` 는 화이트리스트라 없는 키워드에 TypeError 를
+        #    냈고, 노트는 붙었는데 멱등 표시가 안 남았다.
+        check("🔴 멱등 표시가 저장된다 (같은 라운드를 두 번 안 적는다)",
+              int(idx.works[wid].get("noticed_round", 0)) == 1,
+              str(idx.works[wid].get("noticed_round")))
     finally:
         (LC._read_redmine_config, LC._redmine_post_issue,
          LC._redmine_add_note) = s_cfg, s_new, s_note

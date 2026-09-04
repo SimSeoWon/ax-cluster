@@ -49,7 +49,8 @@ def update_work_meta(idx: TaskIndex, work_id: str, *,
                      merge_status: Optional[str] = None,
                      redmine_issue_id: Optional[int] = None,
                      review_decision: Optional[dict] = None,
-                     target_branch: Optional[str] = None) -> dict:
+                     target_branch: Optional[str] = None,
+                     noticed_round: Optional[int] = None) -> dict:
     """work 메타 부분 갱신. 명시된 필드만 patch. PATCH /api/v1/works/{work_id} 의 코어."""
     with idx.lock:
         wmeta = idx.works.get(work_id)
@@ -59,6 +60,13 @@ def update_work_meta(idx: TaskIndex, work_id: str, *,
         if merge_status is not None and merge_status != wmeta.get("merge_status"):
             wmeta["merge_status"] = merge_status
             changed.append(f"merge_status={merge_status}")
+        # [중요] 라운드 완료 노트의 **멱등 표시** — 같은 라운드를 두 번 적지 않기 위한 것.
+        #    [주의] 이 함수는 **화이트리스트**다. 없는 키워드를 넘기면 `TypeError` 가 나고,
+        #    실측 2026-09-05 00:06 에 그것으로 노트 기록 뒤 저장이 통째로 깨졌다
+        #    (노트는 붙었는데 표시가 안 남아 재발동 시 두 번 붙는 상태였다).
+        if noticed_round is not None and int(noticed_round) != int(wmeta.get("noticed_round", 0) or 0):
+            wmeta["noticed_round"] = int(noticed_round)
+            changed.append(f"noticed_round={noticed_round}")
         if redmine_issue_id is not None and redmine_issue_id != wmeta.get("redmine_issue_id"):
             wmeta["redmine_issue_id"] = redmine_issue_id
             changed.append(f"redmine_issue_id={redmine_issue_id}")
