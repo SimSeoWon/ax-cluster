@@ -224,6 +224,34 @@ def main() -> int:
                                         paths=paths, target_repo="r", poster=poster),
                   RegisterError))
 
+    print("\n[12.5] 🔴 `work_id` 가 오면 **재활성화**다 — 새 work 을 만들지 않는다")
+    # 사용자 2026-09-05: *"등재하는게 아니라 다시 분산작업 활성화 시키는거 맞아?"* ·
+    # *"라운드는 올라가고? 라운드 개념으로 해당 분산 작업 끝나면 머지할 대상 결정하잖아"*.
+    # [주의] 이 경로가 없어서 라운드 2로 갈 수가 없었다 — 요청자 도구가 **항상 새 work** 을
+    #    만들었고, 지난 work 은 `ready_for_review` 로 남았다(실측 2026-09-05).
+    calls.clear()
+    got_re = register_work("제목", [TaskSpec(stem="R2", classes=["UR2"])],
+                           paths=paths, target_repo="r", poster=poster,
+                           work_id="20260905_0014_work_682fa5e5")
+    check("  🔴 `/works` 를 부르지 않는다 (새 work 없음)",
+          not any(u.endswith("/works") for u, _ in calls),
+          str([u for u, _ in calls]))
+    check("  그 work 에 조각을 등록한다",
+          any("/tasks" in u for u, _ in calls), str([u for u, _ in calls]))
+    check("  돌려주는 work_id 가 받은 그것이다", got_re.work_id == "20260905_0014_work_682fa5e5",
+          got_re.work_id)
+
+    def poster_boom_task(url, payload):
+        if url.endswith("/works"):
+            return {"work_id": "wX"}
+        raise RuntimeError("태스크 등록이 죽었다")
+
+    check("[중요] 재활성화가 실패해도 그 work 을 **종결시키지 않는다** "
+          "(지난 라운드 산출물까지 닫힌다)",
+          _raises(lambda: register_work("제목", [TaskSpec(stem="R2", classes=["UR2"])],
+                                        paths=paths, target_repo="r", poster=poster_boom_task,
+                                        work_id="20260905_0014_work_682fa5e5"), RegisterError))
+
     print("\n[13] 정상 등록")
     calls.clear()
     got = reg([TaskSpec(stem="ManagerBase", classes=["UManagerBase"], contracts="Init() 동결",

@@ -271,6 +271,7 @@ def register_work(
     target_repo: str,
     original_request: str = "",
     target_branch: str = "",
+    work_id: str = "",
     queue_url: str = DEFAULT_QUEUE,
     token: str | None = None,
     poster=None,
@@ -365,9 +366,22 @@ def register_work(
     if require_base is None:
         require_base = False
 
-    work_id = create_work(title, paths=paths, target_repo=target_repo,
-                          original_request=original_request, target_branch=target_branch,
-                          queue_url=queue_url, token=token, poster=post)
+    # 🔴 [중요] **`work_id` 가 오면 새로 만들지 않는다 — 그 분산 작업을 다시 돌리는 것이다**
+    #    (사용자 2026-09-05: *"등재하는게 아니라 다시 분산작업 활성화 시키는거 맞아?"*).
+    #
+    # 분산 작업 하나는 여러 라운드를 돈다. ⑺ 에서 작업 브랜치를 전진시킨 뒤 더 고칠 것이
+    # 있으면 **같은 work 에 조각을 더한다** — 그때 큐가 `ready_for_review → in_progress` 로
+    # 되돌리고 `round` 를 올린다(`logic.register_task`). 서브 브랜치는 `r<N>` 으로 갈리고,
+    # ⑺ 의 머지 대상은 그 라운드 조각만이다.
+    #
+    # [주의] **이 경로가 없어서 라운드 2로 갈 수가 없었다** (실측 2026-09-05): 요청자 도구는
+    #    `POST /work/register` 하나였고 그것이 **항상 새 work** 을 만들었다. 그러면 지난
+    #    work 은 `ready_for_review` 로 영원히 남고, 라운드·`r<N>`·이슈 노트가 전부 끊긴다.
+    reused = bool((work_id or "").strip())
+    if not reused:
+        work_id = create_work(title, paths=paths, target_repo=target_repo,
+                              original_request=original_request, target_branch=target_branch,
+                              queue_url=queue_url, token=token, poster=post)
 
     # ── [중요] 여기부터는 **보상 취소**가 붙는다 (`#336` ③, 실측 2026-08-30) ──────────
     #    큐에는 삭제 API 가 없다(추가 전용 감사 로그). 그래서 등재가 중간에 죽으면 **열린
@@ -382,6 +396,12 @@ def register_work(
             require_base=require_base, generated=generated, gates=gates,
             questions=questions, accrued=accrued)
     except BaseException as e:                              # noqa: BLE001
+        # [중요] **보상 취소는 「내가 만든 work」에만 한다.** 재활성화(`work_id` 를 받은 경우)에
+        #    실패했다고 그 work 을 `cancelled` 로 닫으면 **지난 라운드 산출물까지 종결**된다.
+        if reused:
+            raise RegisterError(
+                f"{e}\n[중요] 라운드 추가가 실패했다 — work {work_id} 는 **그대로 둔다**"
+                f"(종결시키지 않는다). 등재된 조각이 있으면 큐에서 확인하라") from e
         note = _abandon_work(work_id, paths=paths, queue_url=queue_url,
                              patcher=patcher, reason=f"{type(e).__name__}: {e}")
         raise RegisterError(f"{e}\n[중요] work {work_id} 는 {note}") from e

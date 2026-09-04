@@ -296,7 +296,11 @@ def tool_register_work(_unused, args: dict, *, root=None) -> dict:
     if specs in (None, "", [], {}):
         raise ClientError("specs 가 비었다 — 태스크 목록이 있어야 등재가 성립한다")
     body = {"title": title, "specs": specs}
-    for k in ("target_repo", "original_request", "target_branch"):
+    # 🔴 [중요] **`work_id` 를 실으면 「새 등재」가 아니라 「그 분산 작업 재활성화」다**
+    #    (사용자 2026-09-05: *"등재하는게 아니라 다시 분산작업 활성화 시키는거 맞아?"*).
+    #    라운드가 +1 되고, 조각은 그 work 에 더해지며, 서브 브랜치가 `r<N>` 으로 갈린다.
+    #    ⑺ 의 머지 대상도 그 라운드 조각만이다. **없으면** 새 분산 작업을 만든다.
+    for k in ("work_id", "target_repo", "original_request", "target_branch"):
         v = args.get(k)
         if v not in (None, ""):
             body[k] = v
@@ -723,10 +727,18 @@ TOOLS = [
          "돈다 — **실패가 아니다.** 먼저 `list_works` 로 들어갔는지 보고, 있으면 "
          "재시도하지 마라(중복 등재가 된다). "
          "[주의] 거절은 200 + `ok:false` 로 온다 — `reason`·`hint`·`valid_fields` 를 "
-         "읽고 고친다."),
+         "읽고 고친다. "
+         "🔴 [중요] **이미 도는 분산 작업의 다음 라운드면 `work_id` 를 실어라** — 그때는 "
+         "새 등재가 아니라 **그 작업을 다시 활성화**하는 것이다. 라운드가 +1 되고 조각은 "
+         "그 work 에 더해지며, 서브 브랜치가 `r<N>` 으로 갈리고 ⑺ 의 머지 대상도 그 라운드 "
+         "것만이 된다. 기록도 그 work 의 레드마인 이슈에 노트로 쌓인다. **비우면 새 분산 "
+         "작업이 만들어진다** — 그러면 지난 work 이 열린 채 남는다."),
      "inputSchema": {"type": "object", "required": ["title", "specs"],
                      "properties": {
                          "title": {"type": "string", "description": "한국어 그대로 좋다"},
+                         "work_id": {"type": "string", "description": (
+                             "🔴 다음 라운드면 그 work_id — **재활성화**(라운드 +1). "
+                             "새 분산 작업이면 비운다")},
                          # [중요] **필드를 정확히 적는다.** 실측 2026-08-30: 첫 실전 등재가
                          #    `summary` 라는 없는 필드를 실어 거절됐다 — 설명이 "항목마다
                          #    stem·classes·…" 식이라 목록이 닫혀 있는지 열려 있는지 알 수 없었다.

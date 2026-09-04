@@ -142,13 +142,19 @@ def _run(payload: dict) -> dict:
                              else "필드 이름은 맞는데 형이 틀리다 — 값 타입을 확인하라")}
 
     paths = resolve(project)
+    # 🔴 **`work_id` 가 오면 새 등재가 아니라 「그 분산 작업 재활성화(라운드 추가)」다**
+    #    (사용자 2026-09-05). 큐가 `ready_for_review → in_progress` 로 되돌리고 라운드를
+    #    올린다 — 서브 브랜치는 `r<N>` 으로 갈린다.
+    reuse = str(payload.get("work_id") or "").strip()
     got = register_work(
         title, specs, paths=paths,
         target_repo=str(payload.get("target_repo") or project),
         original_request=str(payload.get("original_request") or ""),
         target_branch=str(payload.get("target_branch") or ""),
+        work_id=reuse,
     )
     return {"ok": bool(got.ok), "work_id": got.work_id, "summary": got.summary(),
+            "reactivated": bool(reuse),
             "tasks": [{"stem": t.stem, "task_id": t.task_id, "error": t.error}
                       for t in got.tasks]}
 
