@@ -94,18 +94,30 @@ class LaneRun:
     files: dict = field(default_factory=dict)     # {경로: 본문}
     missing: list = field(default_factory=list)
     reason: str = ""
+    # 🔴 **토큰 계측** (사용자 결정 2026-09-05) — 「위임하면 클로드 토큰이 주는가」는
+    #    추정으로 답할 수 없다. 레인마다 실제로 쓴 것을 남긴다.
+    #    [중요] 못 읽으면 **None** 이다 — 0 으로 적으면 「안 썼다」로 읽힌다.
+    usage: object = None
 
     @property
     def summary(self) -> str:
         if self.ok:
-            return (f"[완료] {self.lane} · {self.seconds:.0f}초 · 파일 {len(self.files)}"
+            base = (f"[완료] {self.lane} · {self.seconds:.0f}초 · 파일 {len(self.files)}"
                     f" · {self.chars:,}자")
-        s = f"[중요] {self.lane}"
-        if self.reason:
-            s += f" — {self.reason}"
-        if self.missing:
-            s += f" · 빠진 파일 {len(self.missing)}: {', '.join(self.missing[:3])}"
-        return s
+        else:
+            base = f"[중요] {self.lane}"
+            if self.reason:
+                base += f" — {self.reason}"
+            if self.missing:
+                base += f" · 빠진 파일 {len(self.missing)}: {', '.join(self.missing[:3])}"
+        # 🔴 **토큰을 요약에 싣는다** — 이 줄이 곧 계측 기록이다(파견 로그가 정본).
+        #    [중요] 미상은 **미상이라고 적는다** — 안 적으면 0 처럼 읽힌다.
+        if self.usage is not None:
+            if getattr(self.usage, "known", False):
+                base += " · " + self.usage.summary()
+            elif getattr(self.usage, "note", ""):
+                base += f" · [주의] 토큰 미상({self.usage.note})"
+        return base
 
 
 def build_prompt(skeleton: dict) -> str:
@@ -164,10 +176,20 @@ def run_one(skeleton: dict, lane: str, *, broker: str = "", num_ctx: int = 16384
         if generator is not None:
             out = generator(prompt, lane)
         else:
-            from ..ontology import synth
-            from .generate import DEFAULT_BROKER
-            out = synth.generate(prompt, lane, broker=broker or DEFAULT_BROKER,
-                                 num_ctx=num_ctx, timeout=timeout)
+            # 🔴 **CLI 레인은 계측 경로로 부른다** — 같은 호출에서 본문과 토큰이 함께 온다
+            #    (`claude`/`agy` 는 `--output-format json`, `codex` 는 출력의 `tokens used`).
+            #    [주의] 로컬 모델은 브로커가 답하므로 종전 경로 그대로다 — 그쪽 토큰은 미상이다.
+            from . import usage as U
+            if U.is_cli_lane(lane):
+                call = U.call(lane, prompt, timeout=timeout)
+                if call.error:
+                    raise LaneError(call.error)
+                out, r.usage = call.text, call.usage
+            else:
+                from ..ontology import synth
+                from .generate import DEFAULT_BROKER
+                out = synth.generate(prompt, lane, broker=broker or DEFAULT_BROKER,
+                                     num_ctx=num_ctx, timeout=timeout)
     except Exception as e:                                   # noqa: BLE001
         r.seconds = time.time() - t0
         r.reason = f"{type(e).__name__}: {e}"

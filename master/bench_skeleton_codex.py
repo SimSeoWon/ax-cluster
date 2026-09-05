@@ -52,21 +52,43 @@ REQUESTER = ("user", "192.168.0.33")
 # [주의] **저장소 루트에 두지 않는다** — 루트 신규 파일은 유닛의 `ReadOnlyPaths`
 #    목록과 어긋나 `test_sandbox` 가 잡고, 맞추려면 살아 있는 큐를 재기동해야 한다.
 #    수치의 정본은 레드마인 노트와 리포트다. 이 파일은 그 사이의 원본일 뿐이다.
-OUT = Path("/tmp/bench_skeleton_codex_result.json")
+OUT = Path("/tmp/bench_skeleton_codex_result.json")   # `--case` 마다 덮어쓴다
 
-# [중요] **아직 저장소에 없는 것**을 시킨다 — 이미 있는 클래스를 시키면 모델이 기억이나 문맥에서
-#    베껴 와 「골조를 얼마나 잘 쓰나」가 아니라 「얼마나 잘 찾나」를 재게 된다.
-SPEC = SK.SkeletonSpec(
-    stem="NSInteractionPromptWidget",
-    files=["Source/NS/UI/NSInteractionPromptWidget.h",
-           "Source/NS/UI/NSInteractionPromptWidget.cpp"],
-    classes=["UNSInteractionPromptWidget"],
-    instruction=(
-        "상호작용 대상이 포커스되면 화면에 「E 키로 열기」 같은 프롬프트를 띄우는 UMG 위젯이다. "
-        "UNSInteractionWorldSubsystem 이 포커스 변화를 알려 주면 표시/숨김을 바꾸고, "
-        "대상이 주는 표시 문구와 입력 키 이름을 받아 갱신한다. "
-        "위젯 자체는 대상 판정을 하지 않는다 — 받은 것만 그린다."),
-)
+# ── 두 경우를 잰다 — **grounding 두께가 다르면 과제가 다르다** ────────────────────────────
+#
+# [중요] 표본 1로 결론 내지 않기 위해서다. 2026-09-05 첫 A/B 는 **신규 클래스**였고, 그때
+#    Codex 는 *"제공되지 않았다 … 추측하지 않기 위해 선언을 보류한다"* 로 동결 선언 5개만 냈다.
+#    그 결과가 **모델의 성향** 때문인지 **grounding 이 얇아서**인지 가려면, 선언부가 실제로
+#    존재하는 **기존 클래스 수정**으로 한 번 더 재야 한다(사용자 요청 2026-09-05).
+CASES = {
+    # ⓐ 신규 — 저장소에 없는 클래스 (베끼기가 아니라 작성을 잰다)
+    "new": SK.SkeletonSpec(
+        stem="NSInteractionPromptWidget",
+        files=["Source/NS/UI/NSInteractionPromptWidget.h",
+               "Source/NS/UI/NSInteractionPromptWidget.cpp"],
+        classes=["UNSInteractionPromptWidget"],
+        instruction=(
+            "상호작용 대상이 포커스되면 화면에 「E 키로 열기」 같은 프롬프트를 띄우는 UMG 위젯이다. "
+            "UNSInteractionWorldSubsystem 이 포커스 변화를 알려 주면 표시/숨김을 바꾸고, "
+            "대상이 주는 표시 문구와 입력 키 이름을 받아 갱신한다. "
+            "위젯 자체는 대상 판정을 하지 않는다 — 받은 것만 그린다."),
+    ),
+    # ⓑ 기존 수정 — 선언부 grounding 이 두껍다 (2026-09-05 `main` 에 올라간 실물 107+166줄)
+    "existing": SK.SkeletonSpec(
+        stem="NSInteractableComponent",
+        files=["Source/NS/Interaction/NSInteractableComponent.h",
+               "Source/NS/Interaction/NSInteractableComponent.cpp"],
+        classes=["UNSInteractableComponent"],
+        instruction=(
+            "이미 있는 UNSInteractableComponent 에 **상호작용 쿨다운**을 더한다. "
+            "한 번 상호작용하면 지정된 시간(기본 0.5초) 동안 다시 상호작용할 수 없고, "
+            "그 사이에는 포커스는 유지하되 프롬프트가 「대기 중」임을 알 수 있어야 한다. "
+            "쿨다운 시간은 에디터에서 액터마다 조절할 수 있어야 하고, 0 이면 쿨다운 없음이다. "
+            "[중요] **기존 공개 선언(등록/해제·포커스·아웃라인)의 시그니처를 바꾸지 않는다** — "
+            "다른 조각들이 이미 그 계약을 보고 있다."),
+    ),
+}
+SPEC = CASES["new"]        # `--case` 가 갈아 끼운다
 
 
 def _codex(prompt: str, timeout: int = 1800) -> str:
@@ -91,6 +113,27 @@ def _codex(prompt: str, timeout: int = 1800) -> str:
     if r.returncode != 0:
         raise RuntimeError((r.stdout + r.stderr)[-400:])
     return r.stdout
+
+
+def widen_declarations(per_class: int, total: int):
+    """🔴 **선언부 예산을 측정에서만 넓힌다** (사용자 지시 2026-09-05).
+
+    실측 2026-09-05: 기존 클래스 수정 골조가 *"TRUNCATED (excerpt cut by budget)"* 로 잘렸다.
+    `UNSInteractableComponent.h` 는 **5,235자**인데 클래스당 예산이 **1,500자**다(3.5배 초과).
+    Codex 는 그것을 정확히 짚고 거절했다 — *"SetDetected 다음에서 잘려 … 작성할 수 없습니다"*.
+    **모델이 아니라 프롬프트를 재고 있던 것이다.**
+
+    [중요] **기본값은 안 바꾼다** — 그 값이 왜 1,500 인지(로컬 8K 컨텍스트 기준으로 보인다)는
+    별개 결정이고, 여기서는 *"예산이 충분하면 결과가 달라지나"* 만 잰다.
+    [주의] `collect` 의 기본 인자는 **정의 시점에 묶인다** — 모듈 상수를 바꿔도 안 먹는다.
+    그래서 함수 자체를 감싼다.
+    """
+    from master.work import declarations as dcl
+    orig = dcl.collect
+    dcl.collect = lambda paths, classes, **kw: orig(
+        paths, classes, per_class=kw.get("per_class", per_class),
+        total=kw.get("total", total))
+    return lambda: setattr(dcl, "collect", orig)
 
 
 def run_lane(paths, model: str) -> dict:
@@ -134,12 +177,23 @@ def measure(text: str) -> dict:
 def main(argv) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", choices=["claude", "codex"], default="")
+    ap.add_argument("--case", choices=sorted(CASES), default="new")
+    ap.add_argument("--budget", type=int, default=0,
+                    help="선언부 예산(클래스당 자수). 0 이면 기본값(1,500)")
     args = ap.parse_args(argv)
 
+    global SPEC
+    SPEC = CASES[args.case]
     paths = resolve(PROJECT)
-    print(f"대상 {SPEC.stem} — 저장소에 없는 클래스 (베끼기가 아니라 작성을 잰다)")
+    print(f"대상 {SPEC.stem} · case={args.case} "
+          f"({'저장소에 없는 클래스' if args.case == 'new' else '기존 클래스 수정 — grounding 두껍다'})")
 
-    result = {"spec": SPEC.stem, "runs": {}}
+    restore = None
+    if args.budget:
+        restore = widen_declarations(args.budget, args.budget * 4)
+        print(f"[측정] 선언부 예산을 클래스당 {args.budget:,}자로 넓혔다 (기본 1,500)")
+
+    result = {"spec": SPEC.stem, "budget": args.budget or 1500, "runs": {}}
     for name in ("claude:opus", "codex"):
         if args.only and not name.startswith(args.only):
             continue
@@ -160,13 +214,15 @@ def main(argv) -> int:
                 "notes": [n[:120] for n in (sk.notes or [])][:6],
             })
             for path_, text in sk.files.items():
-                out = Path(f"/tmp/ax_bench_{name.replace(':', '_')}_{path_.split('/')[-1]}")
+                out = Path(f"/tmp/ax_bench_{args.case}_{name.replace(':', '_')}_{path_.split('/')[-1]}")
                 out.write_text(text, encoding="utf-8")
         else:
             row["error"] = r.get("error", "")[:400]
         result["runs"][name] = row
         print("  " + json.dumps(row, ensure_ascii=False)[:500], flush=True)
 
+    if restore:
+        restore()
     OUT.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n결과 → {OUT}")
     return 0
