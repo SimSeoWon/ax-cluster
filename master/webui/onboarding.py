@@ -145,6 +145,23 @@ _NODES = [
 # [중요] **세로다** (사용자 2026-09-05: *"세로 방향으로 바꿀까 영역이 부족해보이는데"*).
 #    레인을 가로로 눕히면 단계 9개가 1,700px 이 되어 화면 밖으로 나간다 — 레인을 **열**로 세우고
 #    단계가 아래로 흐르게 하면 폭 안에 들어오고, 세로 스크롤은 페이지가 원래 하는 일이다.
+# 🔴 간선마다 **어느 채널로 가는지** 적는다 (사용자 요청 2026-09-05: *"화살표에도 명시해줘"*).
+#    [중요] 이 파이프라인은 **채널이 셋 섞여 있고 방향이 비대칭이다** — 마스터는 워커에 SSH 로
+#    밀 수 있지만 `.33` 에서 마스터로 가는 SSH 는 없다(그래서 요청자는 journalctl 을 못 보고,
+#    「왜 안 걸렸나」를 큐가 말해야 한다 = `#364`). 그림이 그것을 말하지 않으면 다음 사람은
+#    전부 SSH 라고 읽는다 — 실제로 그 질문을 받았다.
+#    실측: `git remote -v` (gitea@…:Sim/NS.git) · 마스터→워커 scp/ssh 호출부 · 클라 MCP 는 HTTP.
+_EDGES = [
+    "HTTP 8103 · ax-client MCP",          # ① → ②
+    "HTTP 응답 (검색 결과)",               # ② → ③
+    "git SSH push + HTTP 8103 등재",       # ③ → ④  (트리거 둘)
+    "마스터 내부 (큐)",                    # ④ → ⑤
+    "SSH · scp (마스터가 민다)",           # ⑤ → ⑥
+    "git SSH push + HTTP 8101 종결",       # ⑥ → ⑦
+    "HTTP 8101 · 세션 훅이 당긴다",         # ⑦ → ⑧
+    "git SSH push + HTTP 8101",            # ⑧ → ⑨
+]
+
 _LANE_X0, _LANE_W, _LANE_GAP = 18, 300, 22
 _HEAD_H, _ROW_H, _BOX_H = 46, 92, 66
 _CHANNEL = 34                       # 오른쪽 여백 — 되돌아오는 고리가 지나는 길
@@ -215,6 +232,16 @@ def flow_svg() -> str:
         d = f"M{x1},{y1} V{mid} H{x2} V{y2}" if l1 != l2 else f"M{x1},{y1} V{y2}"
         p.append(f'<path d="{d}" fill="none" stroke="#8b949e" stroke-width="1.5" '
                  f'marker-end="url(#ah)"/>')
+        # 채널 라벨 — 레인이 바뀌면 가로 구간 위에, 같은 레인이면 세로선 오른쪽에
+        lab = _EDGES[idx] if idx < len(_EDGES) else ""
+        if lab:
+            if l1 != l2:
+                p.append(f'<text x="{(x1 + x2) // 2}" y="{mid - 6}" fill="#8b949e" '
+                         f'font-size="10.5" text-anchor="middle" '
+                         f'font-family="ui-monospace,Menlo,monospace">{e(lab)}</text>')
+            else:
+                p.append(f'<text x="{x1 + 10}" y="{mid + 4}" fill="#8b949e" font-size="10.5" '
+                         f'font-family="ui-monospace,Menlo,monospace">{e(lab)}</text>')
 
     # 🔴 되돌아오는 고리 — 개선요청(라운드 +1). 오른쪽 여백 길로 올라간다
     ch = w - _CHANNEL // 2
@@ -229,6 +256,9 @@ def flow_svg() -> str:
     p.append(f'<text x="{_lane_x(0) + _LANE_W + 4}" y="{y_from - 10}" fill="#d29922" '
              f'font-size="12.5" font-weight="650">'
              f'더 고칠 것이 있다 → 개선요청 · 라운드 +1</text>')
+    p.append(f'<text x="{_lane_x(0) + _LANE_W + 4}" y="{y_from + 32}" fill="#8b949e" '
+             f'font-size="10.5" font-family="ui-monospace,Menlo,monospace">'
+             f'HTTP 8103 /work/improve + git SSH 골조 push</text>')
     p.append(f'<text x="{_lane_x(0) + _LANE_W + 4}" y="{y_from + 16}" fill="#8b949e" '
              f'font-size="11">브랜치가 r2 · r3 … 로 갈린다 · ⑧ 머지 대상은 그 라운드만</text>')
     p.append(f'<text x="{_lane_x(0) + 12}" y="{h - 14}" fill="#d29922" font-size="11.5">'
@@ -293,6 +323,13 @@ def render() -> str:
 <div class="flow">{flow}</div>
 <div class="legend"><span><b>■</b> 사람이 정하는 자리</span>
   <span>주황 점선 = 개선요청으로 되돌아가는 고리 (라운드 +1)</span></div>
+<div class="note"><b>채널은 셋이고 방향이 비대칭이다.</b>
+<code>HTTP + 토큰</code> — 워커·요청자가 마스터의 큐(8101)·브로커(8102)·등재(8103)를 부른다 ·
+<code>SSH/scp</code> — <b>마스터가 워커에 미는 방향만</b> (파견·파일·UE5 빌드) ·
+<code>git SSH</code> — 모든 기계가 Gitea(<code>gitea@…:Sim/&lt;프로젝트&gt;.git</code>)와 코드를 주고받는다.
+[중요] <b><code>.33</code> 에서 마스터로 가는 SSH 는 없다</b> — 그래서 요청자는 마스터 로그를 볼 수 없고,
+「왜 파견이 안 걸렸나」를 <b>큐가 말해 줘야</b> 한다. 마스터의 <code>origin</code> push 는 아예 막혀 있다
+(<code>DISABLED://</code>) — 쓰기는 <code>gitea-write</code> 로만, 그것도 훅이 <code>task/*</code>·<code>attempt/*</code> 밖을 거절한다.</div>
 
 <h2>에이전트 — 누가 무엇을 하나</h2>
 {_machines_html()}
