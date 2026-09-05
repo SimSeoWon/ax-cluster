@@ -51,9 +51,8 @@ _EXTRA = """
 .note{border:1px solid var(--line);border-left:4px solid var(--accent);background:var(--card);
  border-radius:8px;padding:.7rem .9rem;margin:.9rem 0;font-size:.88rem}
 .note.warn{border-left-color:var(--warning)}
-.flow{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card);
- padding:.4rem}
-.flow svg{display:block;min-width:0}
+.flow{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:.5rem}
+.flow svg{display:block;width:100%;height:auto}
 .legend{display:flex;gap:1rem;flex-wrap:wrap;color:var(--dim);font-size:.78rem;margin:.45rem 0 0}
 .legend b{color:var(--warning)}
 """
@@ -140,92 +139,93 @@ _NODES = [
     (8, 0, "⑨ 마감", "`main` 머지 · 이슈 「완료」", True),
 ]
 
-_X0, _COLW, _GAP = 150, 158, 26
-_LANE_TOP, _LANE_H, _BOX_H = 58, 116, 68
+# [중요] **세로다** (사용자 2026-09-05: *"세로 방향으로 바꿀까 영역이 부족해보이는데"*).
+#    레인을 가로로 눕히면 단계 9개가 1,700px 이 되어 화면 밖으로 나간다 — 레인을 **열**로 세우고
+#    단계가 아래로 흐르게 하면 폭 안에 들어오고, 세로 스크롤은 페이지가 원래 하는 일이다.
+_LANE_X0, _LANE_W, _LANE_GAP = 18, 300, 22
+_HEAD_H, _ROW_H, _BOX_H = 46, 92, 66
+_CHANNEL = 34                       # 오른쪽 여백 — 되돌아오는 고리가 지나는 길
 
 
-def _col_x(c: int) -> int:
-    return _X0 + c * (_COLW + _GAP)
+def _lane_x(l: int) -> int:
+    return _LANE_X0 + l * (_LANE_W + _LANE_GAP)
 
 
-def _lane_y(l: int) -> int:
-    return _LANE_TOP + l * _LANE_H
+def _row_y(r: int) -> int:
+    return _HEAD_H + r * _ROW_H
 
 
 def flow_svg() -> str:
-    """자립형 인라인 SVG. 가로로 길어서 호출부가 `overflow-x:auto` 로 감싼다."""
+    """자립형 인라인 SVG. **세로 흐름 · 3열 스윔레인** — 폭에 맞춰 줄어든다(viewBox)."""
     e = html.escape
-    w = _col_x(len(_NODES) - 1) + _COLW + 30
-    h = _LANE_TOP + 3 * _LANE_H + 96
-    p = [f'<svg viewBox="0 0 {w} {h}" width="{w}" height="{h}" role="img" '
-         f'aria-label="분산 작업 파이프라인 — 요청자·마스터·워커 3레인과 라운드 반복 고리">',
+    w = _lane_x(2) + _LANE_W + _CHANNEL
+    h = _row_y(len(_NODES) - 1) + _BOX_H + 46
+    p = [f'<svg viewBox="0 0 {w} {h}" width="100%" height="auto" role="img" '
+         f'preserveAspectRatio="xMidYMin meet" '
+         f'aria-label="분산 작업 파이프라인 — 요청자·마스터·워커 3영역과 라운드 반복 고리">',
          '<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
          'markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker>'
          '<marker id="ahl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
          'markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d29922"/></marker>'
          '</defs>']
 
-    # 레인 배경 + 이름
+    # 레인(열) 배경 + 머리말
     for i, (name, sub) in enumerate(_LANES):
-        y = _lane_y(i)
+        x = _lane_x(i)
         fill = "#161b22" if i % 2 == 0 else "#12171e"
-        p.append(f'<rect x="0" y="{y}" width="{w}" height="{_LANE_H}" fill="{fill}"/>')
-        p.append(f'<line x1="0" y1="{y}" x2="{w}" y2="{y}" stroke="#30363d"/>')
-        p.append(f'<text x="14" y="{y + 40}" fill="#e6edf3" font-size="14" font-weight="650" '
+        p.append(f'<rect x="{x}" y="0" width="{_LANE_W}" height="{h}" rx="10" fill="{fill}" '
+                 f'stroke="#30363d"/>')
+        p.append(f'<text x="{x + 14}" y="24" fill="#e6edf3" font-size="13.5" font-weight="650" '
                  f'font-family="ui-monospace,Menlo,monospace">{e(name.replace("`", ""))}</text>')
-        p.append(f'<text x="14" y="{y + 60}" fill="#8b949e" font-size="11.5">{e(sub)}</text>')
-    p.append(f'<line x1="0" y1="{_lane_y(3)}" x2="{w}" y2="{_lane_y(3)}" stroke="#30363d"/>')
-    p.append(f'<line x1="{_X0 - 18}" y1="{_LANE_TOP}" x2="{_X0 - 18}" y2="{_lane_y(3)}" '
-             f'stroke="#30363d"/>')
+        p.append(f'<text x="{x + 14}" y="39" fill="#8b949e" font-size="11">{e(sub)}</text>')
 
-    # 상자
-    for c, l, title, sub, human in _NODES:
-        x, y = _col_x(c), _lane_y(l) + (_LANE_H - _BOX_H) // 2
+    # 단계 상자 — 한 행에 하나. 행이 곧 순서다
+    for idx, (_c, l, title, sub, human) in enumerate(_NODES):
+        x, y = _lane_x(l) + 12, _row_y(idx)
+        bw = _LANE_W - 24
         edge = "#d29922" if human else "#30363d"
-        p.append(f'<rect x="{x}" y="{y}" width="{_COLW}" height="{_BOX_H}" rx="9" '
-                 f'fill="#0d1117" stroke="{edge}" stroke-width="{2 if human else 1}"/>')
+        p.append(f'<rect x="{x}" y="{y}" width="{bw}" height="{_BOX_H}" rx="9" fill="#0d1117" '
+                 f'stroke="{edge}" stroke-width="{2 if human else 1}"/>')
         if human:                     # 사람 게이트 — 색 말고 표식으로도 말한다
             p.append(f'<rect x="{x}" y="{y}" width="4" height="{_BOX_H}" rx="2" fill="#d29922"/>')
-        p.append(f'<text x="{x + 12}" y="{y + 24}" fill="#e6edf3" font-size="13" '
+        p.append(f'<text x="{x + 14}" y="{y + 25}" fill="#e6edf3" font-size="13.5" '
                  f'font-weight="650">{e(title)}</text>')
-        # 부제는 두 줄까지 접는다 — 자르면 뜻이 사라진다
         words, line, lines = e(sub.replace("**", "").replace("`", "")).split(), "", []
         for word in words:
             trial = (line + " " + word).strip()
-            if len(trial) > 22 and line:
+            if len(trial) > 34 and line:
                 lines.append(line); line = word
             else:
                 line = trial
         lines.append(line)
         for k, ln in enumerate(lines[:2]):
-            p.append(f'<text x="{x + 12}" y="{y + 43 + k * 15}" fill="#8b949e" '
-                     f'font-size="11">{ln}</text>')
+            p.append(f'<text x="{x + 14}" y="{y + 44 + k * 15}" fill="#8b949e" '
+                     f'font-size="11.5">{ln}</text>')
 
-    # 상자 사이 화살표 (레인이 바뀌면 ㄱ자로 꺾는다)
-    for (c1, l1, *_), (c2, l2, *_) in zip(_NODES, _NODES[1:]):
-        x1 = _col_x(c1) + _COLW
-        y1 = _lane_y(l1) + _LANE_H // 2
-        x2 = _col_x(c2)
-        y2 = _lane_y(l2) + _LANE_H // 2
-        mid = x1 + _GAP // 2
-        d = (f"M{x1},{y1} H{mid} V{y2} H{x2}" if l1 != l2 else f"M{x1},{y1} H{x2}")
+    # 상자 사이 화살표 — 같은 레인이면 곧게, 레인이 바뀌면 ㄱ자로
+    for idx, ((_c1, l1, *_), (_c2, l2, *_)) in enumerate(zip(_NODES, _NODES[1:])):
+        y1 = _row_y(idx) + _BOX_H
+        y2 = _row_y(idx + 1)
+        x1 = _lane_x(l1) + _LANE_W // 2
+        x2 = _lane_x(l2) + _LANE_W // 2
+        mid = y1 + (y2 - y1) // 2
+        d = f"M{x1},{y1} V{mid} H{x2} V{y2}" if l1 != l2 else f"M{x1},{y1} V{y2}"
         p.append(f'<path d="{d}" fill="none" stroke="#8b949e" stroke-width="1.5" '
                  f'marker-end="url(#ah)"/>')
 
-    # 🔴 되돌아오는 고리 — 개선요청(라운드 +1)
-    loop_y = _lane_y(3) + 44
-    xa = _col_x(7) + _COLW // 2
-    xb = _col_x(3) + _COLW // 2
-    p.append(f'<path d="M{xa},{_lane_y(0) + _LANE_H - 24} V{loop_y} H{xb} '
-             f'V{_lane_y(1) + (_LANE_H - _BOX_H) // 2 + _BOX_H}" fill="none" stroke="#d29922" '
-             f'stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#ahl)"/>')
-    p.append(f'<text x="{xb + 16}" y="{loop_y - 8}" fill="#d29922" font-size="12" '
-             f'font-weight="650">더 고칠 것이 있다 → 개선요청 · 라운드 +1 '
-             f'(브랜치 r2 · r3 …)</text>')
-    p.append(f'<text x="{_col_x(8) - 40}" y="{_lane_y(0) - 10}" fill="#8b949e" '
-             f'font-size="11.5">더 없다 →</text>')
-    p.append(f'<text x="14" y="{loop_y - 8}" fill="#d29922" font-size="11.5">■ 사람이 '
-             f'정하는 자리</text>')
+    # 🔴 되돌아오는 고리 — 개선요청(라운드 +1). 오른쪽 여백 길로 올라간다
+    ch = w - _CHANNEL // 2
+    y_from = _row_y(7) + _BOX_H // 2                     # ⑧ 머지·전진
+    y_to = _row_y(3) + _BOX_H // 2                       # ④ 등록
+    p.append(f'<path d="M{_lane_x(0) + _LANE_W - 12},{y_from} H{ch} V{y_to} '
+             f'H{_lane_x(1) + _LANE_W - 12}" fill="none" stroke="#d29922" stroke-width="1.8" '
+             f'stroke-dasharray="6 4" marker-end="url(#ahl)"/>')
+    p.append(f'<text x="{ch - 8}" y="{(y_from + y_to) // 2}" fill="#d29922" font-size="11.5" '
+             f'font-weight="650" text-anchor="middle" '
+             f'transform="rotate(90 {ch - 8} {(y_from + y_to) // 2})">'
+             f'더 고칠 것이 있다 → 개선요청 · 라운드 +1 (r2 · r3 …)</text>')
+    p.append(f'<text x="{_lane_x(0) + 12}" y="{h - 14}" fill="#d29922" font-size="11.5">'
+             f'■ 사람이 정하는 자리 — ① 요청 · ③ 골조 · ⑧ 전진 · ⑨ 마감</text>')
     p.append("</svg>")
     return "".join(p)
 
@@ -284,8 +284,8 @@ def render() -> str:
 
 <h2>플로우 — 요청 하나가 세 기계를 어떻게 도나</h2>
 <div class="flow">{flow}</div>
-<div class="legend"><span><b>■</b> 사람이 정하는 자리 — 시작 요청 · 골조 · ⑧ 전진 · ⑨ 마감</span>
-  <span>가로로 넘치면 스크롤됩니다</span></div>
+<div class="legend"><span><b>■</b> 사람이 정하는 자리</span>
+  <span>주황 점선 = 개선요청으로 되돌아가는 고리 (라운드 +1)</span></div>
 
 <h2>에이전트 — 누가 무엇을 하나</h2>
 {_machines_html()}
