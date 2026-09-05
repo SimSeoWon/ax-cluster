@@ -97,6 +97,8 @@ class Registered:
     #    [주의] 이것은 **모델의 물음**이지 휴리스틱이 아니다 — 적립되는 것은 사람의 답뿐이다.
     questions: list = field(default_factory=list)   # [(stem, [Question, …])]
     accrued: list = field(default_factory=list)     # 이번 호출로 적립된 휴리스틱 주제
+    # 🔴 라운드 — 등록은 1, 개선요청은 큐가 열어 준 값 (사용자 결정 2026-09-05)
+    round: int = 1
 
     @property
     def gate_checked(self) -> bool:
@@ -114,7 +116,8 @@ class Registered:
     def summary(self) -> str:
         n_ok = sum(1 for t in self.tasks if t.ok)
         # (아래에서 물음·적립을 덧붙인다 — `#328`)
-        s = f"work={self.work_id} 태스크 {n_ok}/{len(self.tasks)} 등록"
+        s = (f"work={self.work_id} 라운드 {self.round} "
+             f"태스크 {n_ok}/{len(self.tasks)} 등록")
         if self.generated:
             s += f" · 골조 생성 {len(self.generated)}건"
         # [주의] 빌드를 확인했는지 **말로 적는다** — 안 적으면 미확인이 통과처럼 읽힌다
@@ -152,7 +155,19 @@ def _post(url: str, payload: dict, *, token: str | None = None,
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", "replace")[:300]
+        detail = e.read().decode("utf-8", "replace")[:600]
+        # [중요] **큐가 낸 사유를 그대로 꺼낸다** — 요청자가 읽고 고치는 문장이다. 종전에는
+        #    FastAPI 의 `{"detail": {...}}` 포장이 그대로 나가서, 라운드 불일치 같은 **조치가
+        #    분명한 거절**이 JSON 뭉치로 보였다(실측 2026-09-05, 개선요청 표면).
+        try:
+            got = json.loads(detail)
+            inner = got.get("detail") if isinstance(got, dict) else None
+            if isinstance(inner, dict) and inner.get("error"):
+                raise RegisterError(str(inner["error"])) from e
+            if isinstance(inner, str) and inner:
+                raise RegisterError(inner) from e
+        except (ValueError, AttributeError):
+            pass
         raise RegisterError(f"{url} → HTTP {e.code}: {detail}") from e
     except urllib.error.URLError as e:
         raise RegisterError(f"{url} → 연결 실패: {e.reason}") from e
@@ -263,43 +278,12 @@ def _fill_skeletons(specs: list, *, paths: ProjectPaths, make_skeleton=None,
     return made
 
 
-def register_work(
-    title: str,
-    specs: list[TaskSpec],
-    *,
-    paths: ProjectPaths,
-    target_repo: str,
-    original_request: str = "",
-    target_branch: str = "",
-    work_id: str = "",
-    queue_url: str = DEFAULT_QUEUE,
-    token: str | None = None,
-    poster=None,
-    patch=None,
-    make_skeleton=None,
-    gate=None,
-    require_base: bool | None = None,
-    heuristics=None,
-) -> Registered:
-    """work 를 만들고 태스크를 등록한다.
+def _prepare_specs(specs, *, paths, make_skeleton, gate, heuristics) -> dict:
+    """명세 검증 · 답 적립 · (주입됐으면) 골조 생성 — **큐를 만지기 전에** 끝내는 것들.
 
-    `poster` 를 주입할 수 있는 이유는 테스트다 — 큐를 띄우지 않고 등록 규칙을 검증한다.
-
-    [중요] **명세 검증을 먼저 전부 돌린다.** 절반 등록하고 실패하면 큐에 반쪽 work 가 남는데,
-    그건 사람이 치워야 한다. 막을 수 있는 것은 미리 막는다.
-
-    `make_skeleton` 은 골조가 없는 명세를 위해 **등록 전에** 불린다 (소 1.1.4). 기본은
-    `skeleton.build` 이고, 골조를 이미 넘겨준 명세는 **건드리지 않는다**(하위 호환 — 사람이
-    직접 쓴 골조가 LLM 출력보다 낫다면 그쪽이 이긴다).
-
-    `gate(skeleton) -> GateResult` 를 주면 **골조를 세워 보고 통과해야만 등재한다**
-    (소 1.1.5, `skeleton_gate.run`). [주의] **게이트를 안 주는 것은 통과가 아니라 미확인이다** —
-    결과의 `gate_checked` 로 구분한다.
+    [중요] **등재와 개선요청이 같은 준비를 쓴다.** 두 입구로 갈렸어도(사용자 결정
+    2026-09-05) 조각을 만드는 규칙은 하나여야 한다 — 갈라 두면 한쪽만 고치는 사고가 난다.
     """
-    if not (title or "").strip():
-        raise RegisterError("title 이 비었다")
-    if not specs:
-        raise RegisterError("등록할 태스크가 없다")
     seen: set[str] = set()
     for s in specs:
         s.validate()
@@ -339,7 +323,58 @@ def register_work(
         if s.stem in seen:
             raise RegisterError(f"stem 이 중복이다: {s.stem} — 조각을 구별할 수 없다")
         seen.add(s.stem)
+    return {"generated": generated, "gates": gates,
+            "questions": questions, "accrued": accrued}
 
+
+def register_work(
+    title: str,
+    specs: list[TaskSpec],
+    *,
+    paths: ProjectPaths,
+    target_repo: str,
+    original_request: str = "",
+    target_branch: str = "",
+    work_id: str = "",
+    queue_url: str = DEFAULT_QUEUE,
+    token: str | None = None,
+    poster=None,
+    patch=None,
+    make_skeleton=None,
+    gate=None,
+    require_base: bool | None = None,
+    heuristics=None,
+) -> Registered:
+    """work 를 만들고 태스크를 등록한다.
+
+    `poster` 를 주입할 수 있는 이유는 테스트다 — 큐를 띄우지 않고 등록 규칙을 검증한다.
+
+    [중요] **명세 검증을 먼저 전부 돌린다.** 절반 등록하고 실패하면 큐에 반쪽 work 가 남는데,
+    그건 사람이 치워야 한다. 막을 수 있는 것은 미리 막는다.
+
+    `make_skeleton` 은 골조가 없는 명세를 위해 **등록 전에** 불린다 (소 1.1.4). 기본은
+    `skeleton.build` 이고, 골조를 이미 넘겨준 명세는 **건드리지 않는다**(하위 호환 — 사람이
+    직접 쓴 골조가 LLM 출력보다 낫다면 그쪽이 이긴다).
+
+    `gate(skeleton) -> GateResult` 를 주면 **골조를 세워 보고 통과해야만 등재한다**
+    (소 1.1.5, `skeleton_gate.run`). [주의] **게이트를 안 주는 것은 통과가 아니라 미확인이다** —
+    결과의 `gate_checked` 로 구분한다.
+    """
+    # 🔴 [중요] **등재는 최초 전용이다 — 개선요청은 다른 호출이다** (사용자 결정 2026-09-05:
+    #    *"분산작업 등록과 라운드 값을 받는 분산작업 개선 요청으로 말이야"*).
+    #    종전에는 `work_id` 를 실으면 이 함수가 **재활성화**로 갈렸다. 한 입구에 두 뜻이라
+    #    라운드를 상태로 추론했고, 상태가 예상 밖이면 조용히 틀렸다(`logic.register_task` 주석).
+    if (work_id or "").strip():
+        raise RegisterError(
+            f"등재에 work_id 를 실을 수 없다 ({work_id}) — 이미 있는 분산 작업의 다음 라운드는 "
+            f"**개선요청**이다: `improve_work(work_id=…, round=현재+1, specs=[…])`. "
+            f"등재(`register_work`)는 **새 분산 작업**만 만든다(round=1)")
+    if not (title or "").strip():
+        raise RegisterError("title 이 비었다")
+    if not specs:
+        raise RegisterError("등록할 태스크가 없다")
+    _prep = _prepare_specs(specs, paths=paths, make_skeleton=make_skeleton,
+                           gate=gate, heuristics=heuristics)
     post = poster or (lambda u, p: _post(u, p, token=token))
     # [중요] **주입된 큐가 PATCH 도 받는다** — `carrier="AUTO"` 와 같은 관례다. poster 를 주입한
     #    것은 "큐가 가짜다" 라는 뜻이고, 그때 실 HTTP 로 나가면 테스트가 마스터를 두드린다.
@@ -366,22 +401,9 @@ def register_work(
     if require_base is None:
         require_base = False
 
-    # 🔴 [중요] **`work_id` 가 오면 새로 만들지 않는다 — 그 분산 작업을 다시 돌리는 것이다**
-    #    (사용자 2026-09-05: *"등재하는게 아니라 다시 분산작업 활성화 시키는거 맞아?"*).
-    #
-    # 분산 작업 하나는 여러 라운드를 돈다. ⑺ 에서 작업 브랜치를 전진시킨 뒤 더 고칠 것이
-    # 있으면 **같은 work 에 조각을 더한다** — 그때 큐가 `ready_for_review → in_progress` 로
-    # 되돌리고 `round` 를 올린다(`logic.register_task`). 서브 브랜치는 `r<N>` 으로 갈리고,
-    # ⑺ 의 머지 대상은 그 라운드 조각만이다.
-    #
-    # [주의] **이 경로가 없어서 라운드 2로 갈 수가 없었다** (실측 2026-09-05): 요청자 도구는
-    #    `POST /work/register` 하나였고 그것이 **항상 새 work** 을 만들었다. 그러면 지난
-    #    work 은 `ready_for_review` 로 영원히 남고, 라운드·`r<N>`·이슈 노트가 전부 끊긴다.
-    reused = bool((work_id or "").strip())
-    if not reused:
-        work_id = create_work(title, paths=paths, target_repo=target_repo,
-                              original_request=original_request, target_branch=target_branch,
-                              queue_url=queue_url, token=token, poster=post)
+    work_id = create_work(title, paths=paths, target_repo=target_repo,
+                          original_request=original_request, target_branch=target_branch,
+                          queue_url=queue_url, token=token, poster=post)
 
     # ── [중요] 여기부터는 **보상 취소**가 붙는다 (`#336` ③, 실측 2026-08-30) ──────────
     #    큐에는 삭제 API 가 없다(추가 전용 감사 로그). 그래서 등재가 중간에 죽으면 **열린
@@ -393,18 +415,102 @@ def register_work(
         return _register_after_create(
             work_id, specs, paths=paths, target_branch=target_branch, queue_url=queue_url,
             token=token, post=post, patcher=patcher,
-            require_base=require_base, generated=generated, gates=gates,
-            questions=questions, accrued=accrued)
+            require_base=require_base, **_prep)
     except BaseException as e:                              # noqa: BLE001
-        # [중요] **보상 취소는 「내가 만든 work」에만 한다.** 재활성화(`work_id` 를 받은 경우)에
-        #    실패했다고 그 work 을 `cancelled` 로 닫으면 **지난 라운드 산출물까지 종결**된다.
-        if reused:
-            raise RegisterError(
-                f"{e}\n[중요] 라운드 추가가 실패했다 — work {work_id} 는 **그대로 둔다**"
-                f"(종결시키지 않는다). 등재된 조각이 있으면 큐에서 확인하라") from e
+        # [중요] **보상 취소는 「내가 만든 work」에만 한다** — 등재는 방금 만든 work 이라
+        #    여기서 닫아도 남의 산출물이 죽지 않는다. 개선요청(`improve_work`)은 **닫지 않는다.**
         note = _abandon_work(work_id, paths=paths, queue_url=queue_url,
                              patcher=patcher, reason=f"{type(e).__name__}: {e}")
         raise RegisterError(f"{e}\n[중요] work {work_id} 는 {note}") from e
+
+
+def improve_work(
+    work_id: str,
+    specs: list[TaskSpec],
+    *,
+    round: int,
+    paths: ProjectPaths,
+    target_branch: str = "",
+    queue_url: str = DEFAULT_QUEUE,
+    token: str | None = None,
+    poster=None,
+    patch=None,
+    make_skeleton=None,
+    gate=None,
+    require_base: bool | None = None,
+    heuristics=None,
+) -> Registered:
+    """🔴 **분산작업 개선요청 — 이미 있는 work 을 다음 라운드로 연다** (사용자 결정 2026-09-05).
+
+    사용자: *"분산작업 등록과 라운드 값을 받는 분산작업 개선 요청으로 말이야"* ·
+    *"라운드는 처음 작업 요청할 때는 1이고 모든 분산 작업 완료되어 `.33` 메인 작업 컴퓨터에서
+    머지하고 개선 요청을 받은 경우 +1 이 되서 2 라운드 시작"*.
+
+        ① 등록      `register_work(title, specs)`               round = 1
+        ② 개선요청   `improve_work(work_id, round=N, specs)`     N = 현재 + 1   ← **여기**
+        ③ 마감      `review.finalize_work(confirm=True)`        main 머지 · 큐 merged · 이슈 완료
+
+    [중요] **`round` 는 확인용이다** — 값은 큐가 이미 알고 있고(현재+1), 요청자가 실어 보내는
+    것은 *"내가 아는 라운드가 이거다"* 라는 대조다. 어긋나면 큐가 **거절**한다(맞추지 않는다).
+
+    [중요] **승격이 조각 등재보다 먼저다.** 그래야 조각에 새겨지는 라운드가 올라간 값이고,
+    서브 브랜치가 `task/<work>/r<N>/<조각>` 으로 갈린다. 종전에는 `register_task` 가 부수효과로
+    승격해서, 상태가 예상 밖이면 지난 라운드 번호가 조용히 찍혔다.
+
+    [주의] **실패해도 그 work 을 종결시키지 않는다.** 보상 취소(`_abandon_work`)는 「내가 만든
+    work」에만 붙는다 — 지난 라운드까지 끝난 남의 work 을 닫으면 산출물이 통째로 죽는다.
+    승격만 되고 등재가 실패한 경우는 **같은 호출을 다시 부르면 된다**(큐의 `reopen_work` 가
+    「그 라운드 조각 0건」을 재시도로 본다).
+
+    [주의] **`target_branch` 를 안 실으면 큐에 저장된 값을 쓴다** — 여기서 유도해 덮어쓰면
+    ⑺ 이 전진시킨 브랜치가 조용히 `task/<work_id>/base` 로 원복된다.
+    """
+    wid = (work_id or "").strip()
+    if not wid:
+        raise RegisterError(
+            "work_id 가 비었다 — 개선요청은 **이미 있는 분산 작업**을 여는 것이다. "
+            "새 작업이면 `register_work(title=…, specs=[…])` 를 쓴다")
+    if not specs:
+        raise RegisterError("등록할 태스크가 없다")
+    if int(round or 0) < 2:
+        raise RegisterError(
+            f"round={round!r} — 개선요청의 라운드는 2 이상이다(라운드 1은 **등록**이다). "
+            f"큐가 아는 현재 라운드 + 1 을 실어라")
+    _prep = _prepare_specs(specs, paths=paths, make_skeleton=make_skeleton,
+                           gate=gate, heuristics=heuristics)
+    post = poster or (lambda u, p: _post(u, p, token=token))
+    if patch is not None:
+        patcher = patch
+    elif poster is not None:
+        patcher = poster
+    else:
+        patcher = lambda u, p: _post(u, p, token=token, method="PATCH")   # noqa: E731
+    # [중요] **2회차부터는 작업 브랜치가 이미 있어야 한다** — 라운드 1의 `require_base=False`
+    #    는 *"work_id 를 받은 뒤에야 이름이 생긴다"* 가 근거였고(`#336` ①), 그 근거가 여기서는
+    #    성립하지 않는다. 없으면 조각이 갈라질 자리가 없다.
+    if require_base is None:
+        require_base = True
+
+    # ── ① 승격 (큐가 판정한다) ──────────────────────────────────────────────
+    got = post(f"{queue_url}/api/v1/works/{wid}/reopen",
+               {"project": paths.name, "round": int(round)})
+    if isinstance(got, dict) and got.get("ok") is False:
+        raise RegisterError(str(got.get("error") or got))
+    opened = int((got or {}).get("round") or round)
+    stored = str((got or {}).get("target_branch") or "")
+
+    # ── ② 조각 등재 ────────────────────────────────────────────────────────
+    try:
+        r = _register_after_create(
+            wid, specs, paths=paths, target_branch=(target_branch.strip() or stored),
+            queue_url=queue_url, token=token, post=post, patcher=patcher,
+            require_base=require_base, **_prep)
+    except BaseException as e:                              # noqa: BLE001
+        raise RegisterError(
+            f"{e}\n[중요] 라운드 {opened} 등재가 실패했다 — work {wid} 는 **그대로 둔다**"
+            f"(종결시키지 않는다). 같은 개선요청을 다시 부르면 이어서 등재한다") from e
+    r.round = opened
+    return r
 
 
 def _abandon_work(work_id: str, *, paths, queue_url: str, patcher, reason: str) -> str:

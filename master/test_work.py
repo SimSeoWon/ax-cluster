@@ -224,33 +224,63 @@ def main() -> int:
                                         paths=paths, target_repo="r", poster=poster),
                   RegisterError))
 
-    print("\n[12.5] 🔴 `work_id` 가 오면 **재활성화**다 — 새 work 을 만들지 않는다")
-    # 사용자 2026-09-05: *"등재하는게 아니라 다시 분산작업 활성화 시키는거 맞아?"* ·
-    # *"라운드는 올라가고? 라운드 개념으로 해당 분산 작업 끝나면 머지할 대상 결정하잖아"*.
-    # [주의] 이 경로가 없어서 라운드 2로 갈 수가 없었다 — 요청자 도구가 **항상 새 work** 을
-    #    만들었고, 지난 work 은 `ready_for_review` 로 남았다(실측 2026-09-05).
+    print("\n[12.5] 🔴 등재와 **개선요청**은 다른 호출이다 (사용자 결정 2026-09-05)")
+    # 사용자: *"이럴꺼면 기능을 분리하던지. 라운드값으로 최초 처리인지 아니면 2회차 3회차
+    #    개선요청인지 구분 못해서 그런거 아니야?"* · *"분산작업 등록과 라운드 값을 받는
+    #    분산작업 개선 요청으로 말이야"*.
+    # [주의] 종전에는 `register_work(work_id=…)` 가 재활성화로 갈렸다 — 한 입구에 두 뜻이라
+    #    라운드를 **상태로 추론**했고, 상태가 예상 밖이면 조용히 틀렸다.
+    from master.work.register import improve_work
+    check("  🔴 등재는 work_id 를 거절한다 (개선요청으로 보낸다)",
+          _raises(lambda: register_work("제목", [TaskSpec(stem="R2", classes=["UR2"])],
+                                        paths=paths, target_repo="r", poster=poster,
+                                        work_id="20260905_0014_work_682fa5e5"), RegisterError))
+    check("  개선요청은 라운드 1을 거절한다 (라운드 1은 등록이다)",
+          _raises(lambda: improve_work("20260905_0014_work_682fa5e5",
+                                       [TaskSpec(stem="R2", classes=["UR2"])],
+                                       round=1, paths=paths, poster=poster), RegisterError))
     calls.clear()
-    got_re = register_work("제목", [TaskSpec(stem="R2", classes=["UR2"])],
-                           paths=paths, target_repo="r", poster=poster,
-                           work_id="20260905_0014_work_682fa5e5")
+    got_re = improve_work("20260905_0014_work_682fa5e5",
+                          [TaskSpec(stem="R2", classes=["UR2"])],
+                          round=2, paths=paths, poster=poster, require_base=False)
     check("  🔴 `/works` 를 부르지 않는다 (새 work 없음)",
           not any(u.endswith("/works") for u, _ in calls),
           str([u for u, _ in calls]))
+    check("  🔴 **승격이 조각보다 먼저다** — reopen 이 첫 호출이다",
+          calls and calls[0][0].endswith("/reopen"), str([u for u, _ in calls]))
+    check("  라운드 값을 실어 보낸다 (확인용)", calls and calls[0][1].get("round") == 2,
+          str(calls[0][1]) if calls else "")
     check("  그 work 에 조각을 등록한다",
           any("/tasks" in u for u, _ in calls), str([u for u, _ in calls]))
     check("  돌려주는 work_id 가 받은 그것이다", got_re.work_id == "20260905_0014_work_682fa5e5",
           got_re.work_id)
+    check("  결과가 라운드를 말한다", got_re.round == 2, str(got_re.round))
+
+    def poster_refuse(url, payload):
+        if url.endswith("/reopen"):
+            return {"ok": False, "reason": "round_mismatch", "error": "라운드가 어긋난다"}
+        return {"work_id": "wX"}
+
+    check("🔴 큐가 라운드를 거절하면 등재로 넘어가지 않는다",
+          _raises(lambda: improve_work("W1", [TaskSpec(stem="R2", classes=["UR2"])],
+                                       round=2, paths=paths, poster=poster_refuse),
+                  RegisterError))
 
     def poster_boom_task(url, payload):
-        if url.endswith("/works"):
-            return {"work_id": "wX"}
-        raise RuntimeError("태스크 등록이 죽었다")
+        if url.endswith("/reopen"):
+            return {"ok": True, "round": 2, "target_branch": "task/W1/base"}
+        if "/tasks" in url:
+            raise RuntimeError("태스크 등록이 죽었다")
+        return {}
 
-    check("[중요] 재활성화가 실패해도 그 work 을 **종결시키지 않는다** "
+    check("[중요] 개선요청이 실패해도 그 work 을 **종결시키지 않는다** "
           "(지난 라운드 산출물까지 닫힌다)",
-          _raises(lambda: register_work("제목", [TaskSpec(stem="R2", classes=["UR2"])],
-                                        paths=paths, target_repo="r", poster=poster_boom_task,
-                                        work_id="20260905_0014_work_682fa5e5"), RegisterError))
+          _raises(lambda: improve_work("W1", [TaskSpec(stem="R2", classes=["UR2"])],
+                                       round=2, paths=paths, poster=poster_boom_task,
+                                       require_base=False), RegisterError))
+    check("  그 실패에 `cancelled` 를 쓰지 않는다",
+          not any(p.get("merge_status") == "cancelled" for _, p in calls),
+          str([p for _, p in calls if isinstance(p, dict) and p.get("merge_status")]))
 
     print("\n[13] 정상 등록")
     calls.clear()

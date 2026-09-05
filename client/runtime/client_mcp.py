@@ -296,15 +296,51 @@ def tool_register_work(_unused, args: dict, *, root=None) -> dict:
     if specs in (None, "", [], {}):
         raise ClientError("specs 가 비었다 — 태스크 목록이 있어야 등재가 성립한다")
     body = {"title": title, "specs": specs}
-    # 🔴 [중요] **`work_id` 를 실으면 「새 등재」가 아니라 「그 분산 작업 재활성화」다**
-    #    (사용자 2026-09-05: *"등재하는게 아니라 다시 분산작업 활성화 시키는거 맞아?"*).
-    #    라운드가 +1 되고, 조각은 그 work 에 더해지며, 서브 브랜치가 `r<N>` 으로 갈린다.
-    #    ⑺ 의 머지 대상도 그 라운드 조각만이다. **없으면** 새 분산 작업을 만든다.
-    for k in ("work_id", "target_repo", "original_request", "target_branch"):
+    # 🔴 [중요] **등재는 최초 전용이다 — 다음 라운드는 `improve_work`** (사용자 결정 2026-09-05:
+    #    *"분산작업 등록과 라운드 값을 받는 분산작업 개선 요청으로 말이야"*). 종전에는 여기에
+    #    `work_id` 를 실으면 재활성화로 갈렸는데, 한 입구에 두 뜻이라 라운드를 **상태로 추론**했다.
+    if str(args.get("work_id") or "").strip():
+        raise ClientError(
+            "등재에 work_id 를 실을 수 없다 — 이미 있는 분산 작업의 다음 라운드는 "
+            "`improve_work(work_id=…, round=현재+1, specs=[…])` 다")
+    for k in ("target_repo", "original_request", "target_branch"):
         v = args.get(k)
         if v not in (None, ""):
             body[k] = v
     return projects_write_api(root)("POST", "/work/register", body)
+
+
+def tool_improve_work(_unused, args: dict, *, root=None) -> dict:
+    """🔴 **분산 작업 개선요청** — 이미 있는 work 을 다음 라운드로 연다 (사용자 결정 2026-09-05).
+
+        ① 등록      `register_work`   새 분산 작업 (round = 1)
+        ② 개선요청   **여기**          이미 있는 work · round = 현재 + 1
+        ③ 마감      `ax-review` → `finalize_work`   main 머지 · 레드마인 완료
+
+    [중요] `round` 는 **확인용**이다 — 값은 큐가 이미 안다(현재+1). 어긋나면 큐가 거절하고
+    맞추지 않는다: 요청자와 큐가 서로 다른 라운드를 보고 있다는 뜻이기 때문이다.
+    """
+    work_id = str(args.get("work_id") or "").strip()
+    if not work_id:
+        raise ClientError("work_id 가 비었다 — 새 분산 작업이면 `register_work` 를 쓴다")
+    try:
+        round_no = int(args.get("round") or 0)
+    except (TypeError, ValueError):
+        raise ClientError(f"round 가 정수가 아니다: {args.get('round')!r}") from None
+    if round_no < 2:
+        raise ClientError(
+            "round 를 실어야 한다(2 이상) — 라운드 1은 **등록**이다. "
+            "`get_work` 로 현재 라운드를 보고 +1 을 싣는다")
+    specs = args.get("specs")
+    if specs in (None, "", [], {}):
+        raise ClientError("specs 가 비었다 — 이번 라운드에 무엇을 고칠지가 조각이다")
+    body = {"work_id": work_id, "round": round_no, "specs": specs}
+    # [주의] **`target_branch` 는 보통 비운다** — 비우면 큐에 저장된 작업 브랜치를 그대로 쓴다.
+    #    여기서 지어내면 ⑺ 이 전진시킨 브랜치가 조용히 원복된다.
+    v = args.get("target_branch")
+    if v not in (None, ""):
+        body["target_branch"] = v
+    return projects_write_api(root)("POST", "/work/improve", body)
 
 
 def tool_get_work(api, work_id: str) -> dict:
@@ -728,17 +764,12 @@ TOOLS = [
          "재시도하지 마라(중복 등재가 된다). "
          "[주의] 거절은 200 + `ok:false` 로 온다 — `reason`·`hint`·`valid_fields` 를 "
          "읽고 고친다. "
-         "🔴 [중요] **이미 도는 분산 작업의 다음 라운드면 `work_id` 를 실어라** — 그때는 "
-         "새 등재가 아니라 **그 작업을 다시 활성화**하는 것이다. 라운드가 +1 되고 조각은 "
-         "그 work 에 더해지며, 서브 브랜치가 `r<N>` 으로 갈리고 ⑺ 의 머지 대상도 그 라운드 "
-         "것만이 된다. 기록도 그 work 의 레드마인 이슈에 노트로 쌓인다. **비우면 새 분산 "
-         "작업이 만들어진다** — 그러면 지난 work 이 열린 채 남는다."),
+         "🔴 [중요] **이 도구는 새 분산 작업만 만든다 (라운드 1).** 이미 있는 작업의 "
+         "다음 라운드는 **개선요청**이다 — `improve_work(work_id, round=현재+1, specs)`. "
+         "`work_id` 를 여기 실으면 거절한다."),
      "inputSchema": {"type": "object", "required": ["title", "specs"],
                      "properties": {
                          "title": {"type": "string", "description": "한국어 그대로 좋다"},
-                         "work_id": {"type": "string", "description": (
-                             "🔴 다음 라운드면 그 work_id — **재활성화**(라운드 +1). "
-                             "새 분산 작업이면 비운다")},
                          # [중요] **필드를 정확히 적는다.** 실측 2026-08-30: 첫 실전 등재가
                          #    `summary` 라는 없는 필드를 실어 거절됐다 — 설명이 "항목마다
                          #    stem·classes·…" 식이라 목록이 닫혀 있는지 열려 있는지 알 수 없었다.
@@ -1015,6 +1046,51 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {}}},
 ]
 
+# ── 🔴 **개선요청** — 등재와 같은 명세, 다른 뜻 (사용자 결정 2026-09-05) ──────────────────
+#
+#     ① 등록      register_work   새 분산 작업          round = 1
+#     ② 개선요청   improve_work    이미 있는 work        round = 현재 + 1
+#     ③ 마감      ax-review → finalize_work            main 머지 · 레드마인 완료
+#
+# [중요] **`specs` 스키마를 복사하지 않는다** — 등재의 것을 그대로 참조한다. 조각 명세의 규칙은
+#    하나여야 하고, 갈라 두면 한쪽만 고치는 사고가 난다(등재/개선요청을 가른 이유와 같은 논리).
+def _register_specs_schema() -> dict:
+    for _t in TOOLS:
+        if _t["name"] == "register_work":
+            return _t["inputSchema"]["properties"]["specs"]
+    raise KeyError("register_work 도구가 없다 — 개선요청이 참조할 명세 스키마가 사라졌다")
+
+
+TOOLS.append(
+    {"name": "improve_work",
+     "description": (
+         "🔴 **이미 있는 분산 작업의 다음 라운드를 연다** (개선요청). ⑺ 에서 서브 브랜치를 "
+         "작업 브랜치에 머지하고 검사한 뒤 **더 고칠 것이 있으면** 이것을 부른다 — 새 등재가 "
+         "아니다. 라운드가 +1 되고, 서브 브랜치는 `task/<work_id>/r<N>/<조각>` 으로 갈리며, "
+         "⑺ 의 머지 대상도 **그 라운드 조각만**이다. 기록은 그 work 의 레드마인 이슈에 노트로 "
+         "쌓인다(라운드마다 새 이슈를 만들지 않는다). "
+         "[중요] **`round` 는 확인용이다** — 값은 큐가 이미 안다(현재+1). `get_work` 로 현재 "
+         "라운드를 보고 +1 을 실어라. 어긋나면 큐가 **거절**한다(맞추지 않는다) — 너와 큐가 "
+         "서로 다른 라운드를 보고 있다는 뜻이기 때문이다. "
+         "[중요] **부를 수 있는 상태는 `ready_for_review` 뿐이다** — 조각이 아직 도는 중이거나 "
+         "마감된 work 이면 사유를 실어 거절한다. "
+         "[주의] **`target_branch` 는 보통 비운다** — 비우면 큐에 저장된 작업 브랜치를 쓴다. "
+         "지어내면 ⑺ 이 전진시킨 브랜치가 원복된다. "
+         "[주의] 골조는 여기서도 **네가** 만든다 — 전진한 `.h`/`.cpp` 에 `[PSEUDO]` 지시 주석을 "
+         "남겨 작업 브랜치에 커밋하고 부른다. **`[FEEDBACK]` 은 쓰지 마라**(게이트가 막는다). "
+         "마감(`main` 머지)은 또 다른 호출이다 — `ax-review` 의 `finalize`."),
+     "inputSchema": {"type": "object", "required": ["work_id", "round", "specs"],
+                     "properties": {
+                         "work_id": {"type": "string",
+                                     "description": "다시 열 분산 작업 (`list_works` 로 찾는다)"},
+                         "round": {"type": "integer",
+                                   "description": ("🔴 이번에 여는 라운드 = **현재 + 1** (2 이상). "
+                                                   "확인용이라 어긋나면 거절된다")},
+                         "specs": _register_specs_schema(),
+                         "target_branch": {"type": "string",
+                                           "description": "보통 비운다 — 저장된 작업 브랜치를 쓴다"}}}})
+
+
 
 def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                   root: Path | None = None) -> dict:
@@ -1025,6 +1101,8 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
     #    여기서 가른다 — 섞으면 다음에 추가되는 도구가 어느 표면인지 호출부가 판단하게 된다.
     if name == "register_work":
         return tool_register_work(None, args, root=root)
+    if name == "improve_work":
+        return tool_improve_work(None, args, root=root)
     if name in ("list_works", "get_work", "redmine_note", "log_writer_signal", "log_history",
                 "add_object_alias", "mark_not_a_class", "redmine_list_issues",
                 "redmine_get_issue", "redmine_meta", "redmine_create_issue",

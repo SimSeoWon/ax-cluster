@@ -61,6 +61,8 @@ POLICY = {
     "PATCH /api/v1/works/{work_id}":                STAMP,
     "GET /api/v1/works/{work_id}/summary":          STAMP,
     "POST /api/v1/works/{work_id}/rebase-pending":  STAMP,
+    # 🔴 개선요청(라운드 승격) — work 스탬프로 푼다 (등재와 같은 축)
+    "POST /api/v1/works/{work_id}/reopen":          STAMP,
     "POST /api/v1/tasks":                           STAMP,
     "GET /api/v1/tasks/{task_id}":                  STAMP,
     "POST /api/v1/tasks/{task_id}/heartbeat":       STAMP,

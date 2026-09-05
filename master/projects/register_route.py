@@ -33,6 +33,9 @@ import json
 import traceback
 
 PATH = "/work/register"
+# 🔴 **개선요청은 다른 입구다** (사용자 결정 2026-09-05) — 등재는 최초 전용이고,
+#    이미 있는 분산 작업의 다음 라운드는 여기로 온다. `round` 는 확인용이다.
+PATH_IMPROVE = "/work/improve"
 MAX_BODY = 1 << 20                      # 1MB — 명세 목록이 커도 이 안이다
 
 
@@ -72,10 +75,14 @@ async def _send_json(send, payload: dict, status: int = 200) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
-def _run(payload: dict) -> dict:
-    """등재 한 번. [중요] 여기서 판단하지 않는다 — `register_work` 가 다 한다."""
+def _run(payload: dict, *, improve: bool = False) -> dict:
+    """등재/개선요청 한 번. [중요] 여기서 판단하지 않는다 — `register.py` 가 다 한다.
+
+    🔴 **두 입구가 이 함수를 공유한다** (사용자 결정 2026-09-05): 명세 파싱·형 검사는 하나여야
+    하고, 갈리는 것은 **무엇을 요구하느냐**뿐이다 — 등재는 `title`, 개선요청은 `work_id`+`round`.
+    """
     from ..context_search.paths import resolve
-    from ..work.register import TaskSpec, register_work
+    from ..work.register import TaskSpec, improve_work, register_work
 
     project = str(payload.get("project") or "").strip()
     if not project:
@@ -83,8 +90,31 @@ def _run(payload: dict) -> dict:
         return {"ok": False, "reason": "no_project_tag",
                 "error": "project 태그가 없다 — 쓰는 요청은 태그를 싣는다 (`#257`)"}
     title = str(payload.get("title") or "").strip()
-    if not title:
-        return {"ok": False, "reason": "no_title", "error": "title 이 비었다"}
+    work_id = str(payload.get("work_id") or "").strip()
+    try:
+        round_no = int(payload.get("round") or 0)
+    except (TypeError, ValueError):
+        return {"ok": False, "reason": "bad_round",
+                "error": f"round 가 정수가 아니다: {payload.get('round')!r}"}
+    if improve:
+        if not work_id:
+            return {"ok": False, "reason": "no_work_id",
+                    "error": ("work_id 가 없다 — 개선요청은 **이미 있는 분산 작업**을 여는 것이다. "
+                              "새 작업이면 `/work/register` 를 쓴다")}
+        if round_no < 2:
+            return {"ok": False, "reason": "no_round",
+                    "error": ("round 를 실어야 한다(2 이상) — 개선요청은 **몇 라운드를 여는지** "
+                              "말하는 호출이다. 값은 큐가 아는 현재 라운드 + 1 이고, 어긋나면 "
+                              "큐가 거절한다(맞추지 않는다)")}
+    else:
+        if work_id:
+            # [중요] 한 입구에 두 뜻을 두지 않는다 — 그것이 라운드를 상태로 추론하게 만든 원인이다
+            return {"ok": False, "reason": "work_id_on_register",
+                    "error": (f"등재에 work_id 를 실을 수 없다 ({work_id}) — 다음 라운드는 "
+                              f"**개선요청**이다: `POST /work/improve` "
+                              f"(work_id + round=현재+1)")}
+        if not title:
+            return {"ok": False, "reason": "no_title", "error": "title 이 비었다"}
 
     raw_specs = payload.get("specs")
     if isinstance(raw_specs, str):
@@ -142,32 +172,42 @@ def _run(payload: dict) -> dict:
                              else "필드 이름은 맞는데 형이 틀리다 — 값 타입을 확인하라")}
 
     paths = resolve(project)
-    # 🔴 **`work_id` 가 오면 새 등재가 아니라 「그 분산 작업 재활성화(라운드 추가)」다**
-    #    (사용자 2026-09-05). 큐가 `ready_for_review → in_progress` 로 되돌리고 라운드를
-    #    올린다 — 서브 브랜치는 `r<N>` 으로 갈린다.
-    reuse = str(payload.get("work_id") or "").strip()
-    got = register_work(
-        title, specs, paths=paths,
-        target_repo=str(payload.get("target_repo") or project),
-        original_request=str(payload.get("original_request") or ""),
-        target_branch=str(payload.get("target_branch") or ""),
-        work_id=reuse,
-    )
+    from ..work.register import RegisterError
+    try:
+        if improve:
+            got = improve_work(
+                work_id, specs, round=round_no, paths=paths,
+                target_branch=str(payload.get("target_branch") or ""),
+            )
+        else:
+            got = register_work(
+                title, specs, paths=paths,
+                target_repo=str(payload.get("target_repo") or project),
+                original_request=str(payload.get("original_request") or ""),
+                target_branch=str(payload.get("target_branch") or ""),
+            )
+    except RegisterError as e:
+        # [중요] **거절은 200 + `ok:false`** 다 — 큐가 낸 사유(라운드 불일치 · 상태 불가)를
+        #    그대로 요청자에게 넘긴다. 이 저장소의 거절 관례이고, `.33` 이 읽고 고치는 자리다.
+        return {"ok": False, "reason": "improve_refused" if improve else "register_refused",
+                "work_id": work_id, "error": str(e)}
     return {"ok": bool(got.ok), "work_id": got.work_id, "summary": got.summary(),
-            "reactivated": bool(reuse),
+            "round": got.round, "improved": bool(improve),
             "tasks": [{"stem": t.stem, "task_id": t.task_id, "error": t.error}
                       for t in got.tasks]}
 
 
 class RegisterApp:
-    """`POST /work/register` 만 처리하고 나머지는 뒤로 넘기는 얇은 ASGI 층."""
+    """`POST /work/register`·`/work/improve` 만 처리하고 나머지는 뒤로 넘기는 얇은 ASGI 층."""
 
     def __init__(self, next_app):
         self.next_app = next_app
 
     async def __call__(self, scope, receive, send):
-        if scope.get("type") != "http" or scope.get("path") != PATH:
+        path = scope.get("path")
+        if scope.get("type") != "http" or path not in (PATH, PATH_IMPROVE):
             return await self.next_app(scope, receive, send)
+        improve = (path == PATH_IMPROVE)
         if (scope.get("method") or "").upper() != "POST":
             return await _send_json(send, {"ok": False, "error": "POST 만 받는다"}, 405)
         try:
@@ -185,12 +225,15 @@ class RegisterApp:
             _log(scope, "거절 bad_json — 최상위가 객체가 아니다")
             return await _send_json(send, {"ok": False, "reason": "bad_json",
                                            "error": "본문 최상위가 객체가 아니다"})
-        _log(scope, f"수신 project={payload.get('project') or '(없음)'} "
+        _log(scope, f"{'개선요청' if improve else '등재'} "
+                    f"project={payload.get('project') or '(없음)'} "
                     f"title={str(payload.get('title') or '')[:60]!r} "
                     f"specs={len(payload.get('specs') or []) if isinstance(payload.get('specs'), list) else '?'}")
         try:
             import anyio
-            got = await anyio.to_thread.run_sync(_run, payload)
+            import functools
+            got = await anyio.to_thread.run_sync(
+                functools.partial(_run, payload, improve=improve))
         except Exception as e:                              # noqa: BLE001
             # [중요] 스택을 그대로 흘리지 않는다 — 사유 한 줄과 형만 준다.
             #    `validate_spec` 이 값을 치른 자리와 같다: 사유를 말해야 하는 곳에서
@@ -202,6 +245,7 @@ class RegisterApp:
                                            "error": f"{type(e).__name__}: {e}"})
         if got.get("ok"):
             _log(scope, f"[완료] work={got.get('work_id')} "
+                        f"라운드={got.get('round')} "
                         f"태스크={len(got.get('tasks') or [])}")
         else:
             _log(scope, f"거절 {got.get('reason') or '?'} — {str(got.get('error') or '')[:200]}")

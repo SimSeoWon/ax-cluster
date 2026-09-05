@@ -159,6 +159,82 @@ def register_work(idx: TaskIndex, *, title: str, target_repo: str,
         return result
 
 
+def reopen_work(idx: TaskIndex, *, work_id: str, expected_round: int = 0) -> dict:
+    """🔴 **개선요청 — 끝난 라운드의 work 을 다음 라운드로 연다** (사용자 결정 2026-09-05).
+
+    사용자: *"분산작업 등록과 라운드 값을 받는 분산작업 개선 요청으로 말이야"* ·
+    *"라운드는 처음 작업 요청할 때는 1이고 … 머지하고 개선 요청을 받은 경우 +1 이 되서
+    2 라운드 시작"*.
+
+        등록      round = 1 고정                     `register_work`
+        개선요청   round = 현재 + 1                   **여기**
+        마감      main 머지 · 큐 merged · 이슈 완료   `review.finalize_work`
+
+    [중요] **`expected_round` 는 명령이 아니라 확인이다.** 값은 이미 정해져 있고(현재+1),
+    요청자가 실어 보내는 것은 *"내가 아는 라운드가 이거다"* 라는 대조다. 어긋나면 **거절**한다 —
+    맞추지 않는다. 그래야 요청자와 큐가 서로 다른 라운드를 보고 있는 상태가 드러난다.
+
+    [주의] **전진(⑺)이 실제로 있었는지는 보지 않는다** (사용자 2026-09-05:
+    *"그건 모두 .33 메인 컴퓨터에서 처리되겠지. 마스터가 왜 신경써"*). 마스터가 판정하는 것은
+    **자기가 가진 큐 상태**까지다 — `ready_for_review` 는 조각이 다 끝났다는 큐 자신의 사실이고,
+    그 다음 판단은 요청자 몫이다. 여기에 「머지했나」 게이트를 더하면 원전에 없는 계층이 된다.
+    """
+    if work_id not in idx.works:
+        return {"ok": False, "reason": "unknown_work", "error": f"unknown work_id: {work_id}"}
+    with idx.lock:
+        w = idx.works[work_id]
+        cur = int(w.get("round", 1) or 1)
+        st = str(w.get("merge_status") or "")
+        nxt = cur + 1
+        if st != "ready_for_review":
+            # [중요] **열어 놓고 조각 등재가 실패한 경우의 재시도를 막지 않는다.** 승격은
+            #    조각보다 앞이라, 그 사이에서 죽으면 work 이 `in_progress` · 라운드는 이미
+            #    올라간 상태로 남는다. 그때 다시 거절하면 그 work 은 개선요청으로 되살릴 길이
+            #    없어진다(마감밖에 안 남는다). **그 라운드 조각이 0건일 때만** 재시도로 본다 —
+            #    관측 가능한 조건이고, 도는 중인 라운드에 조각을 밀어 넣는 길은 열리지 않는다.
+            n_cur = sum(1 for t in idx.tasks.values()
+                        if t.get("work_id") == work_id and int(t.get("round") or 0) == cur)
+            if st == "in_progress" and int(expected_round or 0) == cur and n_cur == 0:
+                return {"ok": True, "work_id": work_id, "round": cur, "previous_round": cur,
+                        "reopened": False,
+                        "note": (f"이미 라운드 {cur} 로 열려 있고 그 라운드 조각이 0건이다 — "
+                                 f"승격 뒤 등재가 실패한 재시도로 본다"),
+                        "target_branch": w.get("target_branch") or "",
+                        "redmine_issue_id": w.get("redmine_issue_id") or "",
+                        "title": w.get("title") or ""}
+            why = ("라운드가 아직 도는 중이다 — 조각이 전부 끝나면 `ready_for_review` 가 된다"
+                   if st in ("in_progress", "") else "종결된 work 이다 — 마감된 것은 다시 열지 않는다")
+            return {"ok": False, "reason": "not_reopenable",
+                    "error": (f"work {work_id} 는 merge_status={st!r} · 라운드 {cur} 다 — "
+                              f"개선요청을 받을 수 있는 상태가 아니다. {why}"),
+                    "round": cur, "merge_status": st}
+        if not int(expected_round or 0):
+            return {"ok": False, "reason": "round_required",
+                    "error": (f"라운드 값이 없다 — 개선요청은 몇 라운드를 여는지 실어야 한다. "
+                              f"work {work_id} 의 다음 라운드는 {nxt} 다"),
+                    "round": cur, "next_round": nxt}
+        if int(expected_round) != nxt:
+            return {"ok": False, "reason": "round_mismatch",
+                    "error": (f"라운드가 어긋난다 — 받은 값 {int(expected_round)}, "
+                              f"큐가 아는 다음 라운드 {nxt} (현재 {cur}). "
+                              f"맞추지 않고 거절한다 — 서로 다른 라운드를 보고 있다는 뜻이다"),
+                    "round": cur, "next_round": nxt}
+        w["merge_status"] = "in_progress"
+        w["round"] = nxt
+        # [중요] **이슈 id 는 그대로 둔다** — work 하나에 이슈 하나이고, 라운드는 그 이슈의
+        #    노트로 쌓인다 (사용자 2026-09-04). 여기서 버리면 라운드마다 새 이슈가 난다.
+        _save_work(idx, work_id)
+        _tq_log(f"[work-reopen] {work_id} ready_for_review → in_progress · "
+                f"라운드 {cur} → {nxt} (개선요청)"
+                + (f" (이슈 #{w['redmine_issue_id']})" if w.get("redmine_issue_id") else ""),
+                idx.root)
+        return {"ok": True, "work_id": work_id, "round": nxt, "previous_round": cur,
+                "reopened": True,
+                "target_branch": w.get("target_branch") or "",
+                "redmine_issue_id": w.get("redmine_issue_id") or "",
+                "title": w.get("title") or ""}
+
+
 def register_task(idx: TaskIndex, *, work_id: str, type: str, task_data: dict,
                   base_commit: str = "", target_file: str = "",
                   header_file: str = "", depends_on: Optional[list] = None,
@@ -177,32 +253,32 @@ def register_task(idx: TaskIndex, *, work_id: str, type: str, task_data: dict,
                 "error": f"unknown requires: {','.join(unknown)} "
                          f"(allowed: {','.join(_KNOWN_CAPABILITIES)})"}
     with idx.lock:
-        # 🔴 [중요] **라운드 N+1 이 시작된 것이다 — work 을 다시 연다** (사용자 2026-09-04).
+        # 🔴 [중요] **라운드 승격은 여기서 하지 않는다 — 개선요청이 명시로 한다**
+        #    (사용자 결정 2026-09-05: *"분산작업 등록과 라운드 값을 받는 분산작업 개선 요청으로"*).
         #
-        # 분산 작업(work) 하나는 **여러 라운드**를 돈다: ⑺ 에서 작업 브랜치를 한 칸 전진시킨
-        # 뒤, 더 고칠 것이 있으면 그 브랜치에 조각을 다시 등재해 ④부터 다시 돈다. work 이
-        # 끝나는 것은 사람이 *"더 없다"* 로 마감할 때뿐이다.
+        # 종전에는 이 자리에서 `ready_for_review` 를 보고 **조각 등재의 부수효과로** work 을
+        # 다시 열고 `round` 를 올렸다. 그래서 등재가 「최초냐 N회차 개선요청이냐」를 **상태로
+        # 추론**했고, 상태가 예상 밖이면 조용히 틀렸다:
         #
-        # [주의] 라운드가 끝나면 `merge_status` 가 `ready_for_review` 로 뒤집힌다(그게 `.33`
-        # 완료 공지의 트리거다). 그 상태로 남아 있으면 **다음 라운드가 파견되지 않는다** —
-        # `autodispatch.should_dispatch` 가 *"진행 중인 work 만 민다"* 로 거절한다.
+        #     in_progress 인 work 에 등재   승격 없음 → 새 조각이 **지난 라운드 번호**로 찍혀
+        #                                   같은 `r<N>` 브랜치 이름에 섞인다
+        #     merged·cancelled 인 work      등재는 성공하고 조각은 pending 에 박힌 뒤,
+        #                                   파견 게이트가 영원히 거절한다 (조용한 교착)
         #
-        # [중요] **이 블록이 `meta` 생성보다 앞이어야 한다** — 조각에 새기는 라운드가 올라간
-        # 값이어야 하기 때문이다. 뒤에 두었더니 라운드 2 조각에 `round=1` 이 찍혔다(테스트가
-        # 잡았다). 그러면 브랜치 이름도 `r1` 이 되어 지난 라운드와 섞인다.
-        #
-        # [주의] 종결된 work(`merged`·`rejected`·`cancelled`)은 되살리지 않는다.
+        # 이제 승격은 `reopen_work()` **하나뿐**이고(요청자의 개선요청이 부른다), 여기는
+        # **거절만 한다.** 라운드는 추론 결과가 아니라 호출이 정한 값이다.
         _w = idx.works[work_id]
-        if str(_w.get("merge_status") or "") == "ready_for_review":
-            _w["merge_status"] = "in_progress"
-            _w["round"] = int(_w.get("round", 1)) + 1
-            # [중요] **이슈 id 는 그대로 둔다** — work 하나에 이슈 하나이고, 라운드는 그
-            #    이슈의 노트로 쌓인다 (사용자 2026-09-04). 종전에 여기서 id 를 버렸는데,
-            #    그러면 라운드마다 새 이슈가 나서 work 하나에 이슈가 여러 개가 된다.
-            _tq_log(f"[work-reopen] {work_id} ready_for_review → in_progress · "
-                    f"라운드 {_w['round']} 시작"
-                    + (f" (이슈 #{_w['redmine_issue_id']})" if _w.get("redmine_issue_id")
-                       else ""), idx.root)
+        _st = str(_w.get("merge_status") or "")
+        _cur = int(_w.get("round", 1) or 1)
+        if _st == "ready_for_review":
+            return {"ok": False, "reason": "round_closed",
+                    "error": (f"work {work_id} 는 라운드 {_cur} 가 끝난 상태다"
+                              f"(ready_for_review) — 조각을 더하려면 **개선요청이 먼저다**: "
+                              f"`POST /work/improve` (round={_cur + 1})")}
+        if _st not in ("in_progress", ""):
+            return {"ok": False, "reason": "work_closed",
+                    "error": (f"work {work_id} 는 merge_status={_st!r} 다 — 종결된 work 에는 "
+                              f"조각을 등재하지 않는다(파견 게이트가 영원히 거절한다)")}
         task_id = _gen_task_id()
         meta = {
             "task_id": task_id,

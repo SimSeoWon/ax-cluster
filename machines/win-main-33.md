@@ -52,6 +52,18 @@ Cluster-wide rules live in [`sim-desktop.md`](sim-desktop.md); repo rules in
 검수하면 그 판정 자체가 낡는다. 위 경로에 변경이 생기면 마스터에서
 `python -m master.client deliver` 를 다시 돌린다.
 
+🔴 [중요] **분산 작업의 갈래를 이 기계가 고른다 — 마스터는 추론하지 않는다**
+(사용자 결정 2026-09-05: *"당연히 .33 메인 작업 컴퓨터에서 스스로 분리해서 요청해야 하니까"*).
+셋은 **서로 다른 호출**이고, 라운드 값은 **확인용**이다(큐가 아는 현재+1 과 다르면 거절된다):
+
+    ① 등록      `register_work(title, specs)`                  새 분산 작업 · round = 1
+    ② 개선요청   `improve_work(work_id, round=현재+1, specs)`    ⑺ 전진 뒤 더 고칠 것이 있을 때
+    ③ 마감      `ax-review` → `finalize_work(confirm=True)`     `main` 머지 · 이슈 「완료」
+
+[주의] 종전에는 ①에 `work_id` 를 실으면 ②가 됐다 — 한 입구에 두 뜻이라 라운드를 **상태로
+추론**했고, 상태가 예상 밖이면(도는 중 · 마감됨) 조각이 지난 라운드에 섞이거나 pending 에 박혀
+조용히 죽었다. 지금은 ①에 `work_id` 를 실으면 **거절**한다.
+
 검색은 이 머신에서 **`ax-client` MCP 의 `search_context`** 한 입구로만 간다 (시소러스 경유).
 다른 경로로 돌면 한국어 질의가 조용히 나빠진다 — 절차 본문은 `ax-request` 스킬에 있다.
 

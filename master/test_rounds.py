@@ -24,7 +24,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master.task_queue import logic_lifecycle as LL                            # noqa: E402
-from master.task_queue.logic import claim_task, register_task, register_work   # noqa: E402
+from master.task_queue.logic import (claim_task, register_task,      # noqa: E402
+                                     register_work, reopen_work)   # noqa: E402
 from master.task_queue.persistence import TaskIndex                            # noqa: E402
 from master.work import autodispatch as AD                                     # noqa: E402
 
@@ -63,23 +64,77 @@ def _work():
     return idx, w["work_id"]
 
 
-def test_new_tasks_reopen_the_work() -> None:
-    print("\n[1] 라운드 N+1 조각이 등재되면 work 이 다시 열린다")
+def test_improve_request_reopens_the_work() -> None:
+    """🔴 **승격은 개선요청 하나뿐이다 — 조각 등재는 거절만 한다** (사용자 결정 2026-09-05).
+
+    *"분산작업 등록과 라운드 값을 받는 분산작업 개선 요청으로 말이야"* ·
+    *"라운드는 처음 작업 요청할 때는 1이고 … 머지하고 개선 요청을 받은 경우 +1 이 되서
+    2 라운드 시작"*.
+
+    종전에는 `register_task` 가 `ready_for_review` 를 보고 **부수효과로** 승격했다. 그래서
+    등재가 「최초냐 개선요청이냐」를 상태로 추론했고, 상태가 예상 밖이면 조용히 틀렸다.
+    """
+    print("\n[1] 개선요청이 work 을 다음 라운드로 연다 — 조각 등재는 못 연다")
     idx, wid = _work()
     _round(idx, wid, 2)
     check("라운드 1 이 끝나면 `ready_for_review`",
           idx.works[wid]["merge_status"] == "ready_for_review", idx.works[wid]["merge_status"])
     idx.works[wid]["redmine_issue_id"] = 357          # 그 라운드의 공지
 
-    register_task(idx, work_id=wid, type="code", task_data={},
-                  target_file="Source/A/R0.cpp", stem="r0b")
-    check("🔴 **다시 `in_progress`** — 아니면 다음 라운드가 파견되지 않는다",
-          idx.works[wid]["merge_status"] == "in_progress", idx.works[wid]["merge_status"])
-    check("  분모가 늘어난다 (2 → 3)", int(idx.works[wid]["total"]) == 3,
+    # 🔴 개선요청 없이 조각부터 등재하면 **거절**이다 (종전에는 조용히 승격했다)
+    r = register_task(idx, work_id=wid, type="code", task_data={},
+                      target_file="Source/A/R0.cpp", stem="r0b")
+    check("🔴 조각 등재는 라운드를 못 연다 — 거절하고 사유를 낸다",
+          r.get("ok") is False and r.get("reason") == "round_closed", str(r)[:200])
+    check("  사유가 무엇을 부르라고 말한다", "개선요청" in str(r.get("error")), str(r)[:200])
+    check("  분모는 그대로 (반쪽 등재가 안 남는다)", int(idx.works[wid]["total"]) == 2,
           str(idx.works[wid]["total"]))
+
+    got = reopen_work(idx, work_id=wid, expected_round=2)
+    check("🔴 개선요청이 라운드 2를 연다", got.get("ok") and got.get("round") == 2, str(got)[:200])
+    check("  **다시 `in_progress`** — 아니면 다음 라운드가 파견되지 않는다",
+          idx.works[wid]["merge_status"] == "in_progress", idx.works[wid]["merge_status"])
     check("🔴 **이슈 id 는 그대로 둔다** — work 하나에 이슈 하나, 라운드는 노트로 쌓인다",
           idx.works[wid].get("redmine_issue_id") == 357,
           str(idx.works[wid].get("redmine_issue_id")))
+
+    r2 = register_task(idx, work_id=wid, type="code", task_data={},
+                       target_file="Source/A/R0.cpp", stem="r0b")
+    check("  연 뒤에는 등재가 된다", bool(r2.get("task_id")), str(r2)[:160])
+    check("  분모가 늘어난다 (2 → 3)", int(idx.works[wid]["total"]) == 3,
+          str(idx.works[wid]["total"]))
+
+
+def test_round_value_is_a_check_not_a_command() -> None:
+    """🔴 **라운드 값은 확인용이다 — 어긋나면 맞추지 않고 거절한다** (사용자 결정 2026-09-05).
+
+    값은 큐가 이미 안다(현재+1). 요청자가 싣는 것은 *"내가 아는 라운드가 이거다"* 라는 대조이고,
+    어긋난다는 것은 **둘이 서로 다른 라운드를 보고 있다**는 뜻이라 그대로 진행하면 지난 라운드
+    브랜치와 섞인다.
+    """
+    print("\n[1.5] 라운드 값 대조")
+    idx, wid = _work()
+    _round(idx, wid, 1)
+    bad = reopen_work(idx, work_id=wid, expected_round=5)
+    check("🔴 어긋난 라운드는 거절 — 맞추지 않는다",
+          bad.get("ok") is False and bad.get("reason") == "round_mismatch", str(bad)[:200])
+    check("  큐가 아는 다음 라운드를 말해 준다", bad.get("next_round") == 2, str(bad)[:200])
+    check("  거절이 상태를 바꾸지 않는다",
+          idx.works[wid]["merge_status"] == "ready_for_review" and idx.works[wid]["round"] == 1,
+          f"{idx.works[wid]['merge_status']} r{idx.works[wid]['round']}")
+    none = reopen_work(idx, work_id=wid)
+    check("  값이 없으면 거절 (몇 라운드를 여는지 말하는 호출이다)",
+          none.get("ok") is False and none.get("reason") == "round_required", str(none)[:160])
+
+    ok = reopen_work(idx, work_id=wid, expected_round=2)
+    check("맞는 값이면 연다", ok.get("ok") and ok.get("reopened") is True, str(ok)[:160])
+    again = reopen_work(idx, work_id=wid, expected_round=2)
+    check("🔴 **승격만 되고 등재가 실패한 재시도는 통과한다** (그 라운드 조각 0건)",
+          again.get("ok") and again.get("reopened") is False, str(again)[:200])
+    register_task(idx, work_id=wid, type="code", task_data={}, target_file="a.cpp", stem="a")
+    stuck = reopen_work(idx, work_id=wid, expected_round=2)
+    check("  조각이 들어온 뒤에는 도는 라운드에 못 밀어 넣는다",
+          stuck.get("ok") is False and stuck.get("reason") == "not_reopenable", str(stuck)[:200])
 
 
 def test_dispatch_gate_agrees() -> None:
@@ -100,10 +155,11 @@ def test_dispatch_gate_agrees() -> None:
     try:
         ok, why = AD.should_dispatch(None, wid, api=api)
         check("라운드 끝난 상태에서는 안 민다", not ok and "진행 중인 work" in why, f"{ok} {why}")
+        reopen_work(idx, work_id=wid, expected_round=2)          # 개선요청이 연다
         register_task(idx, work_id=wid, type="code", task_data={},
                       target_file="Source/A/R0.cpp", stem="again")
         ok2, why2 = AD.should_dispatch(None, wid, api=api)
-        check("🔴 조각을 등재하면 게이트를 통과한다 (여기서 막히면 라운드가 한 번뿐이다)",
+        check("🔴 개선요청 + 조각 등재면 게이트를 통과한다 (막히면 라운드가 한 번뿐이다)",
               ok2, f"{ok2} {why2}")
     finally:
         TB.resolve = saved
@@ -264,9 +320,10 @@ def test_round_is_in_the_branch_name() -> None:
     idx, wid = _work()
     t1 = _round(idx, wid, 1)[0]                           # 라운드 1 — 등재부터 종결까지
     check("첫 조각은 라운드 1", idx.tasks[t1]["round"] == 1, str(idx.tasks[t1]["round"]))
+    reopen_work(idx, work_id=wid, expected_round=2)           # 🔴 개선요청이 라운드를 올린다
     t2 = register_task(idx, work_id=wid, type="code", task_data={},
                        target_file="a.cpp", stem="a2")["task_id"]
-    check("🔴 재개하면 work 라운드가 2", int(idx.works[wid]["round"]) == 2,
+    check("🔴 개선요청 뒤 work 라운드가 2", int(idx.works[wid]["round"]) == 2,
           str(idx.works[wid]["round"]))
     check("  새 조각에 라운드 2 가 새겨진다", idx.tasks[t2]["round"] == 2,
           str(idx.tasks[t2]["round"]))
@@ -279,20 +336,28 @@ def test_round_is_in_the_branch_name() -> None:
 
 
 def test_finished_work_is_not_revived() -> None:
-    print("\n[3] 마감된 work 은 되살리지 않는다")
+    print("\n[3] 마감된 work 은 되살리지 않는다 — 조각도 안 받는다")
     for st in ("merged", "rejected", "cancelled"):
         idx, wid = _work()
         _round(idx, wid, 1)
         idx.works[wid]["merge_status"] = st
-        register_task(idx, work_id=wid, type="code", task_data={},
-                      target_file="Source/A/X.cpp", stem="x")
+        r = register_task(idx, work_id=wid, type="code", task_data={},
+                          target_file="Source/A/X.cpp", stem="x")
+        # 🔴 종전에는 **등재가 성공**했다 — 조각이 pending 에 박히고 파견 게이트가 영원히
+        #    거절해 조용한 교착이 됐다. 이제 입구에서 사유를 내고 거절한다.
+        check(f"  {st}: 조각 등재를 거절한다",
+              r.get("ok") is False and r.get("reason") == "work_closed", str(r)[:160])
         check(f"  {st} 는 그대로", idx.works[wid]["merge_status"] == st,
               idx.works[wid]["merge_status"])
+        ro = reopen_work(idx, work_id=wid, expected_round=2)
+        check(f"  {st}: 개선요청도 거절한다",
+              ro.get("ok") is False and ro.get("reason") == "not_reopenable", str(ro)[:160])
 
 
 def main() -> int:
     print("=== work 은 라운드를 여러 번 돈다 — 마감은 사람이 한다 ===")
-    for fn in (test_new_tasks_reopen_the_work, test_dispatch_gate_agrees,
+    for fn in (test_improve_request_reopens_the_work,
+               test_round_value_is_a_check_not_a_command, test_dispatch_gate_agrees,
                test_issue_is_created_at_registration,
                test_completion_is_a_note_not_a_new_issue,
                test_registration_itself_triggers_dispatch,

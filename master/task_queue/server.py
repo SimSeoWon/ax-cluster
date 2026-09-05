@@ -38,7 +38,7 @@ from .persistence import (
     _bootstrap_log_rotation, _atomic_write, _read_md, _git_repo, _slugify
 )
 from .logic import (
-    register_work, register_task, claim_task, heartbeat, poll_worker,
+    register_work, register_task, reopen_work, claim_task, heartbeat, poll_worker,
     submit_result, submit_fail, verify_task, cancel_task, admin_reset,
     push_worker_directive, update_work_meta, get_work_summary,
     rebase_pending_tasks_in_work, recover_stuck_works, reverify_task,
@@ -246,6 +246,20 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         r = rebase_pending_tasks_in_work(idx, work_id, new_base)
         if not r.get("ok"):
             raise HTTPException(400, r.get("error", "rebase failed"))
+        return r
+
+    @app.post("/api/v1/works/{work_id}/reopen")
+    def reopen_work_ep(work_id: str, payload: dict):
+        """🔴 **개선요청** — 끝난 라운드의 work 을 다음 라운드로 연다 (사용자 결정 2026-09-05).
+
+        body: `{"round": N}` — N 은 **확인용**이다(현재+1 이어야 한다). 어긋나면 409 로 거절하고
+        맞추지 않는다. 승격이 여기 하나로 모였으므로 `register_task` 는 이제 **거절만** 한다.
+        """
+        r = reopen_work(idx, work_id=work_id,
+                        expected_round=int((payload or {}).get("round") or 0))
+        if not r.get("ok"):
+            # [중요] 409 다 — 요청은 멀쩡하고 **상태가 안 맞는 것**이다(400 이 아니다).
+            raise HTTPException(409, r)
         return r
 
     @app.post("/api/v1/tasks")
