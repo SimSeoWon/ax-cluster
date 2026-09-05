@@ -51,6 +51,11 @@ _EXTRA = """
 .note{border:1px solid var(--line);border-left:4px solid var(--accent);background:var(--card);
  border-radius:8px;padding:.7rem .9rem;margin:.9rem 0;font-size:.88rem}
 .note.warn{border-left-color:var(--warning)}
+.flow{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card);
+ padding:.4rem}
+.flow svg{display:block;min-width:0}
+.legend{display:flex;gap:1rem;flex-wrap:wrap;color:var(--dim);font-size:.78rem;margin:.45rem 0 0}
+.legend b{color:var(--warning)}
 """
 
 # 🔴 정본 7단계 — 사용자 확정 2026-09-02 (⑺ 은 2026-09-05 라이브 완주).
@@ -104,6 +109,127 @@ _GATES = [
 ]
 
 
+# ── 🔴 플로우 비주얼라이저 (사용자 요청 2026-09-05) ──────────────────────────────────
+#
+# 사용자 서술 그대로를 그린다: *"메인 작업 컴퓨터에서 대규모 일을 요청 - 마스터에서 1차로
+# 컨텍스트 문서 수집하여 전달 - 응답 받은 작업 컴퓨터는 분산 작업을 할 수 있는지 판단,
+# 분산 작업 요청, 레드마인에 일감 추가 - 마스터는 워커들에게 일감 할당 - 모두 완료되면
+# 작업 요청자에게 공지 - 머지하면서 버그 유무를 판단. 상태 전진. 추가 개선할지 물어봄"*.
+#
+# [중요] **레인이 셋인 것이 이 그림의 요점이다** — 같은 일을 누가 하느냐가 이 파이프라인에서
+#    가장 자주 틀린 것이었다(골조를 누가 만드나 · 통합을 누가 하나 · 마스터가 무엇을 판정하나).
+#    단계만 나열하면 그 경계가 안 보인다.
+# [중요] **되돌아오는 고리를 그린다** — 개선요청(라운드 +1)은 이 파이프라인의 기본 형태이고,
+#    직선으로 그리면 「한 번 돌고 끝」으로 읽힌다.
+# [주의] 외부 자원 0 — 인라인 SVG 다. 색만으로 뜻을 전하지 않는다(번호·라벨·점선이 함께 간다).
+
+_LANES = [("`.33` 요청자", "사람이 있는 자리"),
+          ("`.57` 마스터", "큐 · 파견 · 색인"),
+          ("`.2` · `.43` 워커", "코드를 채운다")]
+
+#            열, 레인, 제목, 부제, 사람게이트
+_NODES = [
+    (0, 0, "① 대규모 작업 요청", "사용자가 `claude` 로 말한다", True),
+    (1, 1, "② 컨텍스트 문서 수집", "트윈·온톨로지에서 모아 전달", False),
+    (2, 0, "③ 분산 가능 판단 · 골조", "쪼갤 수 있나 → `[DOC]`·`[PSEUDO]` 골조 push", True),
+    (3, 1, "④ 등록", "큐에 work · **레드마인 이슈 발행**", False),
+    (4, 1, "⑤ 분해 · 파견", "조각마다 서브 브랜치 · 병렬 배분", False),
+    (5, 2, "⑥ 본문 작성 · 커밋", "LLM 레인으로 채우고 자기 브랜치에", False),
+    (6, 1, "⑦ 완료 공지", "전부 끝나면 요청자에게", False),
+    (7, 0, "⑧ 머지 · 통합 빌드", "버그 유무 판단 → **전진** → 더 고칠까?", True),
+    (8, 0, "⑨ 마감", "`main` 머지 · 이슈 「완료」", True),
+]
+
+_X0, _COLW, _GAP = 150, 158, 26
+_LANE_TOP, _LANE_H, _BOX_H = 58, 116, 68
+
+
+def _col_x(c: int) -> int:
+    return _X0 + c * (_COLW + _GAP)
+
+
+def _lane_y(l: int) -> int:
+    return _LANE_TOP + l * _LANE_H
+
+
+def flow_svg() -> str:
+    """자립형 인라인 SVG. 가로로 길어서 호출부가 `overflow-x:auto` 로 감싼다."""
+    e = html.escape
+    w = _col_x(len(_NODES) - 1) + _COLW + 30
+    h = _LANE_TOP + 3 * _LANE_H + 96
+    p = [f'<svg viewBox="0 0 {w} {h}" width="{w}" height="{h}" role="img" '
+         f'aria-label="분산 작업 파이프라인 — 요청자·마스터·워커 3레인과 라운드 반복 고리">',
+         '<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
+         'markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker>'
+         '<marker id="ahl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
+         'markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d29922"/></marker>'
+         '</defs>']
+
+    # 레인 배경 + 이름
+    for i, (name, sub) in enumerate(_LANES):
+        y = _lane_y(i)
+        fill = "#161b22" if i % 2 == 0 else "#12171e"
+        p.append(f'<rect x="0" y="{y}" width="{w}" height="{_LANE_H}" fill="{fill}"/>')
+        p.append(f'<line x1="0" y1="{y}" x2="{w}" y2="{y}" stroke="#30363d"/>')
+        p.append(f'<text x="14" y="{y + 40}" fill="#e6edf3" font-size="14" font-weight="650" '
+                 f'font-family="ui-monospace,Menlo,monospace">{e(name.replace("`", ""))}</text>')
+        p.append(f'<text x="14" y="{y + 60}" fill="#8b949e" font-size="11.5">{e(sub)}</text>')
+    p.append(f'<line x1="0" y1="{_lane_y(3)}" x2="{w}" y2="{_lane_y(3)}" stroke="#30363d"/>')
+    p.append(f'<line x1="{_X0 - 18}" y1="{_LANE_TOP}" x2="{_X0 - 18}" y2="{_lane_y(3)}" '
+             f'stroke="#30363d"/>')
+
+    # 상자
+    for c, l, title, sub, human in _NODES:
+        x, y = _col_x(c), _lane_y(l) + (_LANE_H - _BOX_H) // 2
+        edge = "#d29922" if human else "#30363d"
+        p.append(f'<rect x="{x}" y="{y}" width="{_COLW}" height="{_BOX_H}" rx="9" '
+                 f'fill="#0d1117" stroke="{edge}" stroke-width="{2 if human else 1}"/>')
+        if human:                     # 사람 게이트 — 색 말고 표식으로도 말한다
+            p.append(f'<rect x="{x}" y="{y}" width="4" height="{_BOX_H}" rx="2" fill="#d29922"/>')
+        p.append(f'<text x="{x + 12}" y="{y + 24}" fill="#e6edf3" font-size="13" '
+                 f'font-weight="650">{e(title)}</text>')
+        # 부제는 두 줄까지 접는다 — 자르면 뜻이 사라진다
+        words, line, lines = e(sub.replace("**", "").replace("`", "")).split(), "", []
+        for word in words:
+            trial = (line + " " + word).strip()
+            if len(trial) > 22 and line:
+                lines.append(line); line = word
+            else:
+                line = trial
+        lines.append(line)
+        for k, ln in enumerate(lines[:2]):
+            p.append(f'<text x="{x + 12}" y="{y + 43 + k * 15}" fill="#8b949e" '
+                     f'font-size="11">{ln}</text>')
+
+    # 상자 사이 화살표 (레인이 바뀌면 ㄱ자로 꺾는다)
+    for (c1, l1, *_), (c2, l2, *_) in zip(_NODES, _NODES[1:]):
+        x1 = _col_x(c1) + _COLW
+        y1 = _lane_y(l1) + _LANE_H // 2
+        x2 = _col_x(c2)
+        y2 = _lane_y(l2) + _LANE_H // 2
+        mid = x1 + _GAP // 2
+        d = (f"M{x1},{y1} H{mid} V{y2} H{x2}" if l1 != l2 else f"M{x1},{y1} H{x2}")
+        p.append(f'<path d="{d}" fill="none" stroke="#8b949e" stroke-width="1.5" '
+                 f'marker-end="url(#ah)"/>')
+
+    # 🔴 되돌아오는 고리 — 개선요청(라운드 +1)
+    loop_y = _lane_y(3) + 44
+    xa = _col_x(7) + _COLW // 2
+    xb = _col_x(3) + _COLW // 2
+    p.append(f'<path d="M{xa},{_lane_y(0) + _LANE_H - 24} V{loop_y} H{xb} '
+             f'V{_lane_y(1) + (_LANE_H - _BOX_H) // 2 + _BOX_H}" fill="none" stroke="#d29922" '
+             f'stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#ahl)"/>')
+    p.append(f'<text x="{xb + 16}" y="{loop_y - 8}" fill="#d29922" font-size="12" '
+             f'font-weight="650">더 고칠 것이 있다 → 개선요청 · 라운드 +1 '
+             f'(브랜치 r2 · r3 …)</text>')
+    p.append(f'<text x="{_col_x(8) - 40}" y="{_lane_y(0) - 10}" fill="#8b949e" '
+             f'font-size="11.5">더 없다 →</text>')
+    p.append(f'<text x="14" y="{loop_y - 8}" fill="#d29922" font-size="11.5">■ 사람이 '
+             f'정하는 자리</text>')
+    p.append("</svg>")
+    return "".join(p)
+
+
 def _steps_html() -> str:
     out = []
     for n, title, who, body in _STEPS:
@@ -134,6 +260,7 @@ def _gates_html() -> str:
 
 def render() -> str:
     """자립형 HTML — 외부 자원 0 (상태 화면과 같은 규약)."""
+    flow = flow_svg()
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AX 클러스터 — 온보딩</title><style>{_CSS}{_EXTRA}</style></head><body>
@@ -154,6 +281,11 @@ def render() -> str:
 <div class="note"><b>세 종류의 에이전트가 있고, 역할이 겹치지 않는다.</b>
 요청자는 <b>만들 것을 정하고 검수</b>하고, 마스터는 <b>쪼개서 나르고</b>, 워커는
 <b>채운다</b>. 이 경계가 흐려지면 같은 일을 두 곳이 하거나 아무도 안 한다.</div>
+
+<h2>플로우 — 요청 하나가 세 기계를 어떻게 도나</h2>
+<div class="flow">{flow}</div>
+<div class="legend"><span><b>■</b> 사람이 정하는 자리 — 시작 요청 · 골조 · ⑧ 전진 · ⑨ 마감</span>
+  <span>가로로 넘치면 스크롤됩니다</span></div>
 
 <h2>에이전트 — 누가 무엇을 하나</h2>
 {_machines_html()}
