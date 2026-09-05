@@ -261,6 +261,48 @@ def test_cleanup_finds_round_branches_by_prefix():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_cleanup_ok_and_named_refs_in_note():
+    """🔴 **`cleanup_ok` 와 이름 있는 노트** (`#371`, 2026-09-05).
+
+    실측: 마감 노트가 *"durable 7건 머지 · 정리 삭제 1건"* 이라는 **자기모순을 개수로만** 적어
+    그냥 지나갔다(`#362`). 사람이 무엇을 확인해야 하는지 알려면 **ref 이름**이 있어야 한다.
+
+    [중요] **보존은 실패가 아니다** — 미병합은 증거라서 남기는 것이 규칙이다(`#125`).
+    [중요] **마감의 ok 와 분리한다** — main 머지가 끝난 뒤라 정리 실패로 마감을 실패시키면
+    「마감 실패인데 main 에는 올라가 있다」가 된다. 강제는 `#372` 한 곳에서 한다.
+    """
+    d = R.Decision(work_id="w1")
+    check("[중요] 못 지운 것이 없으면 cleanup_ok", d.cleanup_ok, "빈 상태")
+    d.cleanup = R.CleanupPlan()
+    d.cleanup.keep.append(("task/w1/r1/t1", "미병합 — 증거"))
+    check("  **보존은 실패가 아니다** (증거는 남기는 것이 규칙)", d.cleanup_ok, str(d.cleanup.keep))
+    d.cleanup_failed.append(("task/w1/r2/t2", "push 거부"))
+    check("🔴 도달 가능한데 못 지운 것이 있으면 False", not d.cleanup_ok, str(d.cleanup_failed))
+
+    # 노트가 이름을 말하는가 — 실물 문자열 조립부를 탄다
+    root, repo, work, tasks = fixture()
+    try:
+        g(repo, "checkout", "main")
+        g(repo, "merge", "--no-ff", "-m", "m", f"origin/{durable_branch('t1')}")
+        g(repo, "push", "origin", "main")
+        g(repo, "fetch", "origin")
+        # [주의] 마감 게이트는 `ready_for_review`/`in_progress` 만 받는다 — fixture 의 work 은
+        #    상태가 비어 있어 그대로 넣으면 **게이트에서 막혀** 노트 자체가 안 만들어진다
+        work2 = dict(work); work2["merge_status"] = "ready_for_review"
+        got = R.finalize_work(repo, work_id=WORK, work=work2, tasks=tasks,
+                              reviewer="t", confirm=True, api=lambda *a, **k: {},
+                              logf=lambda *a: None)
+        note = got.redmine_note or ""
+        check("🔴 노트가 삭제한 ref 를 **이름으로** 말한다",
+              ("삭제: " in note) and (durable_branch("t1") in note), note[-300:])
+        # [주의] `cleanup` 은 정리까지 간 경우에만 채워진다 — 없으면 그 검사를 건너뛴다
+        keep = list(getattr(got.cleanup, "keep", []) or []) if got.cleanup else []
+        check("  보존도 이름으로 말한다 (있으면)",
+              ("보존(증거): " in note) if keep else True, note[-300:])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_cleanup_tells_already_clean_from_half_cleaned():
     """🔴 **0건은 이상이 아니다 — 「반쯤 정리됨」만 이상이다** (드라이런이 잡은 내 오탐, 2026-09-05).
 
@@ -844,6 +886,7 @@ def main() -> int:
                test_missing_durable_stops, test_cleanup_plan_splits_by_reachability,
                test_cleanup_finds_round_branches_by_prefix,
                test_cleanup_tells_already_clean_from_half_cleaned,
+               test_cleanup_ok_and_named_refs_in_note,
                test_cleanup_plan_fails_closed,
                test_reject_patches_and_keeps_branches, test_reject_idempotent_and_guarded,
                test_finalize_default_does_not_push,

@@ -594,6 +594,19 @@ class Decision:
     cleanup_failed: list = field(default_factory=list)   # (ref, 사유) — 실패해도 머지는 끝났다
     error: str = ""
 
+    @property
+    def cleanup_ok(self) -> bool:
+        """🔴 **지워도 되는 것을 다 지웠나** (`#371`, 2026-09-05).
+
+        [중요] **보존은 실패가 아니다** — 미병합 브랜치는 증거라서 남기는 것이 규칙이다(`#125`).
+        판정 대상은 **도달 가능하다고 판정됐는데 삭제에 실패한 것**뿐이다.
+
+        [중요] **마감의 성공/실패와 분리한다.** `main` 머지는 이미 끝난 뒤라 정리 실패를
+        `ok=False` 로 만들면 「마감 실패인데 main 에는 올라가 있다」가 된다(사용자 결정
+        2026-09-05). 강제는 `#372`(차단 게이트) 한 곳에서 한다 — 여기서는 **사실만** 낸다.
+        """
+        return not self.cleanup_failed
+
 
 def reject_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str = "",
                 reason: str = "", api=None, remote: str = DEFAULT_REMOTE,
@@ -764,7 +777,23 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
                 + (f"- 커밋 연결: `{d.merge_commit}`\n" if d.merge_commit else "")
                 + f"- 브랜치 정리: 삭제 {len(d.deleted_branches)}건"
                 + (f" · [주의] 실패 {len(d.cleanup_failed)}건(사람 확인)" if d.cleanup_failed else "")
-                + (f" · [중요] 보존 {kept}건 — 미병합은 증거다" if kept else ""))
+                + (f" · [중요] 보존 {kept}건 — 미병합은 증거다" if kept else "")
+                # 🔴 **이름을 적는다** (`#371`) — 개수만 적으면 사람이 무엇을 확인해야 하는지
+                #    모른다. 실측 2026-09-05: *"durable 7건 머지 · 정리 삭제 1건"* 이라는
+                #    자기모순이 **개수만 적혀 있어서** 그냥 지나갔다.
+                + ("\n  - [주의] **못 지운 것**: "
+                   + ", ".join(f"`{ref}`" for ref, _ in d.cleanup_failed[:8])
+                   + (f" 외 {len(d.cleanup_failed) - 8}건" if len(d.cleanup_failed) > 8 else "")
+                   if d.cleanup_failed else "")
+                + ("\n  - 보존(증거): "
+                   + ", ".join(f"`{ref}`" for ref, _ in d.cleanup.keep[:8])
+                   + (f" 외 {kept - 8}건" if kept > 8 else "")
+                   if kept else "")
+                + ("\n  - 삭제: "
+                   + ", ".join(f"`{ref}`" for ref in d.deleted_branches[:8])
+                   + (f" 외 {len(d.deleted_branches) - 8}건"
+                      if len(d.deleted_branches) > 8 else "")
+                   if d.deleted_branches else ""))
             # ── ② Redmine 기재 (원전 6단계 ② — 상태·머지 커밋) ──────────────
             # [중요] **키는 이 코드가 도는 기계에 없다** — 이 모듈은 `.33` 에도 배달된다.
             #    그래서 마스터 대행(`/api/v1/redmine/note`)을 지나간다. 값이 아니라 본문만 만든다.
