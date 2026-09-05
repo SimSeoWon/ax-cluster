@@ -195,7 +195,8 @@ class Report:
         return " · ".join(parts)
 
 
-def verify(doc: str, *, sources: dict[str, str], declared: list[str] | None = None) -> Report:
+def verify(doc: str, *, sources: dict[str, str], declared: list[str] | None = None,
+           known: set | None = None) -> Report:
     """문서 vs 소스 실측. `sources` 는 `{경로: 원문}`, `declared` 는 tree-sitter 실측 클래스.
 
     `declared` 를 주면 "실측 클래스를 하나도 안 쓴 문서" 도 잡는다 — 그룹을 잘못 묶었거나
@@ -231,6 +232,12 @@ def verify(doc: str, *, sources: dict[str, str], declared: list[str] | None = No
     if said and live_pool:
         said = {s for s in said
                 if not any(s != lv and s in lv for lv in live_pool)}
+    # 🔴 **프로젝트에 실재하는 심볼은 유령이 아니다** (`#367`, 2026-09-06).
+    #    파일 경계를 넘는 정상 참조를 잡던 자리다 — 실측: `NSPropsBase` 주석의
+    #    *"서브클래스(예: ANSLootableChest)"* 가 거부됐는데 그 클래스는 `NSLootableChest.h:27`
+    #    에 실재한다. [주의] 지어낸 이름은 그래프에도 없으므로 **그대로 잡힌다.**
+    if known:
+        ghost_pool -= set(known)
     ghosts = sorted(said & ghost_pool)
 
     # [중요] **언급 판정은 필터 전 집합으로 한다** (`#286`, 실측 2026-08-23). 위 `#270` 완화가

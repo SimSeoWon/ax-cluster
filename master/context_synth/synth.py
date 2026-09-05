@@ -163,6 +163,61 @@ def _log(msg: str) -> None:
     print(f"[synth] {msg}", file=sys.stderr, flush=True)
 
 
+# 🔴 그룹을 **디스크 기준으로 채운다** (`#367`, 2026-09-06)
+#
+# [중요] 합성은 **변경된 파일만** 받는다(`events/consumer.py:_synthesize(changed=…)`). 그래서
+#    커밋이 `.h` 하나만 바꾸면 그 그룹에 `.h` 뿐이고, 사실 게이트는 **짝 파일의 살아 있는 코드를
+#    못 본다** → `.cpp` 에서 실제로 호출되는 이름이 *"주석에만 있는 식별자"* 로 거부된다.
+#
+#    실측 2026-09-05~06 (`#367`): `NSInteractionWorldSubsystem` 이 `SetDetected`·`SetFocused`·
+#    `TriggerInteraction`·`ANSPlayerController` 로 거부됐는데, 그 셋은 **같은 그룹 `.cpp` 의
+#    실제 호출**이다(67·78·86행). 두 파일을 함께 주면 유령이 아니다(재현 확인).
+#
+# [중요] **문서는 그룹 단위다** — 한 문서가 `.h`+`.cpp` 를 함께 서술한다. 그러니 판정도 그룹
+#    전체를 봐야 한다(`#270` 이 이미 *"그룹 전체를 한 몸으로 본다"* 고 정한 규칙이고, 그 전제가
+#    **입력이 완전할 때만** 성립했다).
+# [주의] 없는 파일을 지어내지 않는다 — **디스크에 있는 것만** 더한다.
+_PAIR_EXTS = (".h", ".hpp", ".inl", ".cpp", ".cc", ".c")
+
+
+def project_symbols(paths) -> set:
+    """🔴 **프로젝트 전체의 실재 심볼** — 클래스 이름 + 메서드 이름 (`#367`, 2026-09-06).
+
+    [중요] **사실 게이트가 파일 하나만 보고 판정하면 안 되는 자리가 있다.** 그룹을 채워도
+    (`complete_group`) 다른 파일에 선언된 것을 서술하면 여전히 유령으로 잡힌다 — 실측:
+    `NSPropsBase` 주석이 *"서브클래스(예: ANSLootableChest)"* 라고 썼는데 그 클래스는
+    `NSLootableChest.h:27` 에 **실재**한다.
+
+    [중요] **게이트를 무디게 하는 것이 아니라 판정 근거를 넓히는 것이다.** 지어낸 이름은
+    클래스 그래프에도 없으므로 그대로 잡힌다(2026-08-12 의 「없는 enum 멤버」가 그 부류).
+    [주의] **그래프가 없으면 빈 집합**이다 — 그때는 종전과 똑같이 판정한다(조용히 통과시키지
+    않는다). 그래프는 색인기가 매 커밋 갱신한다.
+    """
+    try:
+        from ..graph import db as gdb
+        if not gdb.exists(paths):
+            return set()
+        with gdb.lock():
+            con = gdb.connect(paths)
+            names = {r[0] for r in con.execute("SELECT name FROM classes") if r and r[0]}
+            names |= {r[0] for r in con.execute("SELECT method_name FROM methods") if r and r[0]}
+        return {n for n in names if isinstance(n, str) and len(n) > 2}
+    except Exception:                                        # noqa: BLE001
+        # [주의] 판정 근거를 못 얻은 것이지 통과가 아니다 — 빈 집합이면 종전 판정 그대로다
+        return set()
+
+
+def complete_group(repo_root, key: str, files: list[str]) -> list[str]:
+    """그룹 키의 **짝 파일을 디스크에서 채운다**. 원소 순서는 `group()` 규약과 같다."""
+    have = {str(f).replace("\\", "/") for f in files}
+    for ext in _PAIR_EXTS:
+        cand = f"{key}{ext}"
+        if cand not in have and (Path(repo_root) / cand).is_file():
+            have.add(cand)
+    return sorted(have, key=lambda f: (0 if Path(f).suffix.lower() in HEADER_EXTS else 1,
+                                       Path(f).name))
+
+
 def group(files: list[str]) -> dict[str, list[str]]:
     """소스 파일 → `{부모/stem: [파일…]}`.
 
@@ -322,7 +377,9 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
     # [중요] **사실 게이트** — 소스 실측과 대조한다. LLM 에게 자기 검증을 맡기지 않는다
     # (설계 규칙: 결정적 게이트가 LLM 판단보다 우선). 형식 게이트와 같은 처리 —
     # 거부하면 기존 파일이 남고 다음 사이클에 재시도된다.
-    report = verify_mod.verify(doc, sources=bodies, declared=grounding.declared_classes)
+    report = verify_mod.verify(doc, sources=bodies,
+                               declared=grounding.declared_classes,
+                               known=project_symbols(paths))
     res.verify = report
     if not report.ok:
         res.reason = f"사실 게이트 거부 — {report.reason}"
@@ -368,6 +425,8 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
             f"컨텍스트 문서는 소스 한정이다(§5.2-E): "
             + ", ".join(outside[:5]) + (" ..." if len(outside) > 5 else ""))
     groups = group([f for f in files if (paths.repo / f).is_file()])
+    # 🔴 **짝 파일을 채운다** (`#367`) — 변경분만 들어와도 판정은 그룹 전체를 본다
+    groups = {k: complete_group(paths.repo, k, fs) for k, fs in groups.items()}
     if not groups:
         raise SynthError("살아 있는 소스 파일이 없다 (전부 삭제됐거나 경로가 틀렸다)")
 

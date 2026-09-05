@@ -251,11 +251,41 @@ def test_korean_particles_do_not_hide_identifiers() -> None:
           r.ok and r.mentioned_declared, r.reason)
 
 
+def test_project_symbols_are_not_ghosts() -> None:
+    """🔴 **파일 경계를 넘는 정상 참조를 유령으로 잡지 않는다** (`#367`, 2026-09-06).
+
+    실측: `NSPropsBase` 주석의 *"서브클래스(예: ANSLootableChest)"* 가 거부됐는데 그 클래스는
+    `NSLootableChest.h:27` 에 **실재**한다. 색인기는 **변경된 파일만** 합성에 넘기므로 그룹이
+    반쪽인 경우도 있고(그건 `synth.complete_group` 이 채운다), 다른 파일의 선언은 그래도 남는다.
+
+    [중요] **게이트를 무디게 하는 것이 아니다** — 판정 근거를 프로젝트 범위로 넓히는 것이다.
+    아래 세 번째 검사가 그 계약이다: **주석에만 있고 프로젝트에도 없으면 그대로 잡힌다.**
+    """
+    src = {"A.h": "// UNSGhostOnly 는 주석에만 있다\n// ANSLootableChest 는 다른 파일에 있다\n"
+                  "class ANSPropsBase { void Run(); };\n"}
+    doc = "## 요약\n\nANSPropsBase 는 ANSLootableChest 를 서브클래스로 갖는다\n\n## 끝\n"
+    before = V.verify(doc, sources=src, declared=["ANSPropsBase"])
+    check("[주의] 종전에는 다른 파일의 실재 클래스가 유령이었다",
+          not before.ok and "ANSLootableChest" in before.ghosts, str(before.ghosts))
+    after = V.verify(doc, sources=src, declared=["ANSPropsBase"],
+                     known={"ANSLootableChest", "ANSPropsBase"})
+    check("🔴 프로젝트에 실재하면 유령이 아니다", after.ok, str(after.ghosts))
+
+    ghost_doc = "## 요약\n\nANSPropsBase 는 UNSGhostOnly 를 쓴다\n\n## 끝\n"
+    still = V.verify(ghost_doc, sources=src, declared=["ANSPropsBase"],
+                     known={"ANSLootableChest", "ANSPropsBase"})
+    check("[중요] **주석에만 있고 프로젝트에도 없으면 그대로 잡는다** (무뎌지지 않았다)",
+          not still.ok and "UNSGhostOnly" in still.ghosts, str(still.ghosts))
+    check("  근거가 없으면(known 없음) 종전 판정 그대로 — 조용히 통과시키지 않는다",
+          not V.verify(doc, sources=src, declared=["ANSPropsBase"], known=set()).ok)
+
+
 if __name__ == "__main__":
     for fn in (test_license_header_not_identifier, test_cross_file_live_wins,
                test_ue_prefix_substring, test_real_violation_still_caught,
                test_mention_uses_unfiltered_set,
-               test_korean_particles_do_not_hide_identifiers):
+               test_korean_particles_do_not_hide_identifiers,
+               test_project_symbols_are_not_ghosts):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_verify_gate: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

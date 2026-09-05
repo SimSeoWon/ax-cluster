@@ -75,7 +75,10 @@ def main(argv: list[str]) -> int:
             return 2
         key = str(__import__("pathlib").Path(rest[0]).parent
                   / __import__("pathlib").Path(rest[0]).stem)
-        files = sorted(synth.group([rest[0]])[key])
+        # [중요] `one` 도 짝 파일을 채운다 (`#367`) — 안 그러면 `.h` 만 보고
+        #    `.cpp` 의 살아 있는 호출을 유령으로 잡는다
+        files = synth.complete_group(paths.repo, key,
+                                     synth.group([rest[0]])[key])
         r = synth.synthesize_group(paths, key, files, model=model, content_limit=climit)
         if not r.written:
             print(f"[실패] {key} — {r.reason}")
