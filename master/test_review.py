@@ -223,6 +223,60 @@ def test_cleanup_plan_splits_by_reachability():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_cleanup_finds_round_branches_by_prefix():
+    """🔴 **라운드 브랜치를 접두어로 찾는다** (`#362`, 실측 2026-09-05).
+
+    2026-09-04 에 이름에 라운드 한 겹이 늘었는데(`task/<work>/r<N>/<조각>`) 정리는 **옛 이름을
+    조립**해 찾고 있었다. `ls-remote` 가 0건 → refs 에 안 들어옴 → **삭제도 보존도 아닌
+    「존재를 모름」**. 마감 노트가 *"durable 7건 머지 · 정리 삭제 1건"* 이라는 자기모순을 쓰고도
+    조용했던 이유다. 실측: 라이브 work 의 조각 브랜치 7개가 전부 남았다.
+    """
+    root, repo, work, tasks = fixture()
+    try:
+        # 라운드 스탬프가 붙은 조각 브랜치 — **이름을 조립하는 방식으로는 안 잡힌다**
+        g(repo, "checkout", "main")
+        g(repo, "checkout", "-b", f"task/{WORK}/r2/t9")
+        (repo / "r2.txt").write_text("round2", encoding="utf-8")
+        g(repo, "add", "-A"); g(repo, "commit", "-m", "r2")
+        g(repo, "push", "origin", f"task/{WORK}/r2/t9")
+        g(repo, "checkout", "main")
+
+        plan = R.plan_branch_cleanup(repo, tasks=[{"task_id": "t9", "round": 2}],
+                                     work_id=WORK, target_branch="")
+        seen = {ref for ref, _ in plan.delete} | {ref for ref, _ in plan.keep}
+        check("🔴 `r2/` 조각이 목록에 **들어온다** (종전에는 존재를 몰랐다)",
+              f"task/{WORK}/r2/t9" in seen, str(seen))
+        check("  아직 미병합이므로 보존이다 (판정 기준은 그대로)",
+              f"task/{WORK}/r2/t9" in {ref for ref, _ in plan.keep}, str(plan.keep))
+
+        # main 에 넣으면 삭제 후보가 된다 — **라운드 이름이어도 같은 판정**
+        g(repo, "merge", "--no-ff", "-m", "merge r2", f"origin/task/{WORK}/r2/t9")
+        g(repo, "push", "origin", "main")
+        g(repo, "fetch", "origin")
+        plan2 = R.plan_branch_cleanup(repo, tasks=[{"task_id": "t9", "round": 2}],
+                                      work_id=WORK, target_branch="")
+        check("병합되면 삭제 후보 (라운드 이름이어도)",
+              f"task/{WORK}/r2/t9" in {ref for ref, _ in plan2.delete}, str(plan2.delete))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_cleanup_is_loud_when_prefix_finds_nothing():
+    """🔴 **0건이면 소리를 낸다** — 조용히 지나가면 다음에도 같은 방식으로 안 보인다.
+
+    `#362` 가 하루 늦게 드러난 이유가 이것이다: 못 찾은 것이 로그에도 결과에도 안 남았다.
+    """
+    root, repo, work, tasks = fixture()
+    try:
+        plan = R.plan_branch_cleanup(repo, tasks=[{"task_id": "nosuch"}],
+                                     work_id="w-없는-work", target_branch="")
+        check("[중요] 조각이 있는데 하나도 못 찾으면 오류로 말한다",
+              any("하나도 못 찾았다" in e for e in plan.errors), str(plan.errors))
+        check("  그리고 아무것도 안 지운다 (fail-closed)", not plan.delete, str(plan.delete))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_cleanup_plan_fails_closed():
     """판정을 못 하면 **보존** 쪽으로 기운다."""
     root, repo, work, tasks = fixture()
@@ -776,6 +830,8 @@ def main() -> int:
                test_human_tree_untouched, test_review_integrates_and_cleans_up,
                test_build_fn_injected, test_conflict_aborts_whole,
                test_missing_durable_stops, test_cleanup_plan_splits_by_reachability,
+               test_cleanup_finds_round_branches_by_prefix,
+               test_cleanup_is_loud_when_prefix_finds_nothing,
                test_cleanup_plan_fails_closed,
                test_reject_patches_and_keeps_branches, test_reject_idempotent_and_guarded,
                test_finalize_default_does_not_push,

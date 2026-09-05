@@ -66,6 +66,7 @@ from . import coordinator as C
 from .coordinator import GitError, _git, _git_rc
 from .branch_names import (
     BranchNameError, base_branch as _base_branch, durable_branch, attempt_glob,
+    DURABLE_PREFIX, ATTEMPT_PREFIX,
 )
 
 
@@ -310,31 +311,64 @@ def plan_branch_cleanup(repo: Path, *, tasks, work_id: str = "", target_branch: 
     if rc != 0:
         plan.errors.append(f"{tracking} 가 없어 도달 여부를 못 잰다 — 먼저 `git fetch {remote}`")
 
+    # 🔴 [중요] **접두어로 훑는다 — 조각마다 이름을 조립하지 않는다** (`#362`, 2026-09-05).
+    #
+    # 종전에는 `durable_branch(work_id, tid)` 로 이름을 만들어 하나씩 `ls-remote` 했다. 그런데
+    # 2026-09-04 에 이름에 라운드 한 겹이 늘었고(`task/<work>/r<N>/<조각>`), **머지 쪽만** 라운드를
+    # 넘기도록 고쳐졌다. 정리 쪽은 옛 이름을 찾으니 `ls-remote` 가 **0건** → refs 에 안 들어오고 →
+    # 삭제도 보존도 아닌 **「존재를 모름」** 이 됐다. 마감 노트가 *"durable 7건 머지 · 정리 삭제
+    # 1건"* 이라는 자기모순을 쓰고도 조용했던 이유다.
+    #
+    # [중요] **이름 규약이 또 바뀌어도 안 깨진다** — 그 work 의 것이면 접두어에 걸린다.
+    #    도달 가능 판정(미병합은 증거라 남긴다)은 그대로다. 지우는 기준을 넓힌 것이 아니라
+    #    **찾는 방법**을 바꾼 것이다.
+    # [주의] `work_id` 가 없으면 접두어를 만들 수 없다 — 그때만 옛 방식(조각별 조회)으로 떨어지고
+    #    **그 사실을 로그에 남긴다**(조용히 절반만 훑지 않는다).
     refs: list = []
-    for t in tasks or []:
-        tid = t.get("task_id")
-        if not tid:
-            continue
-        rc, out = _git_rc(repo, "ls-remote", "--heads", remote,
-                          attempt_glob(work_id, tid) if work_id else f"refs/heads/attempt/*/{tid}/*")
-        if rc == 0:
-            for line in out.splitlines():
-                parts = line.split()
-                if len(parts) == 2 and parts[1].startswith("refs/heads/"):
-                    refs.append((parts[1][len("refs/heads/"):], parts[0]))
-        rc, out = _git_rc(repo, "ls-remote", "--heads", remote,
-                          durable_branch(work_id, tid) if work_id else f"refs/heads/task/*/{tid}")
-        if rc == 0:
-            for line in out.splitlines():
-                parts = line.split()
-                if len(parts) == 2:
-                    refs.append((parts[1][len("refs/heads/"):], parts[0]))
+    seen: set = set()
+
+    def _add(out: str) -> None:
+        for line in (out or "").splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[1].startswith("refs/heads/"):
+                ref = parts[1][len("refs/heads/"):]
+                if ref not in seen:
+                    seen.add(ref)
+                    refs.append((ref, parts[0]))
+
+    if work_id:
+        # `task/<work>/**` 와 `attempt/<work>/**` 를 통째로. base 도 여기 걸린다.
+        for pat in (f"refs/heads/{DURABLE_PREFIX}/{work_id}/*",
+                    f"refs/heads/{DURABLE_PREFIX}/{work_id}/*/*",
+                    f"refs/heads/{ATTEMPT_PREFIX}/{work_id}/*",
+                    f"refs/heads/{ATTEMPT_PREFIX}/{work_id}/*/*",
+                    f"refs/heads/{ATTEMPT_PREFIX}/{work_id}/*/*/*"):
+            rc, out = _git_rc(repo, "ls-remote", "--heads", remote, pat)
+            if rc == 0:
+                _add(out)
+        # 🔴 **0건이면 소리를 낸다** — 조각이 있었는데 하나도 안 잡히면 이름 규약이 또 바뀐 것이다
+        if not refs and (tasks or []):
+            plan.errors.append(
+                f"[중요] 조각 {len(tasks)}건인데 `{DURABLE_PREFIX}/{work_id}/…` 접두어로 "
+                f"원격 브랜치를 **하나도 못 찾았다** — 이름 규약이 바뀌었거나 원격이 다르다. "
+                f"정리를 건너뛴다(fail-closed)")
+    else:
+        logf("cleanup", "[주의] work_id 가 없다 — 조각별 조회로 떨어진다(접두어 훑기 불가)")
+        for t in tasks or []:
+            tid = t.get("task_id")
+            if not tid:
+                continue
+            for pat in (f"refs/heads/{ATTEMPT_PREFIX}/*/{tid}/*",
+                        f"refs/heads/{DURABLE_PREFIX}/*/{tid}",
+                        f"refs/heads/{DURABLE_PREFIX}/*/*/{tid}"):
+                rc, out = _git_rc(repo, "ls-remote", "--heads", remote, pat)
+                if rc == 0:
+                    _add(out)
+
     if target_branch:
         rc, out = _git_rc(repo, "ls-remote", "--heads", remote, target_branch)
-        if rc == 0 and out.strip():
-            parts = out.split()
-            if len(parts) >= 2:
-                refs.append((parts[1][len("refs/heads/"):], parts[0]))
+        if rc == 0:
+            _add(out)
 
     for ref, tip in refs:
         if plan.errors:                       # 판정 자체가 불가 — 전부 보존
