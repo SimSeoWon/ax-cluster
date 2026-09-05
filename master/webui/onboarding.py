@@ -220,10 +220,14 @@ def flow_svg() -> str:
     p.append(f'<path d="M{_lane_x(0) + _LANE_W - 12},{y_from} H{ch} V{y_to} '
              f'H{_lane_x(1) + _LANE_W - 12}" fill="none" stroke="#d29922" stroke-width="1.8" '
              f'stroke-dasharray="6 4" marker-end="url(#ahl)"/>')
-    p.append(f'<text x="{ch - 8}" y="{(y_from + y_to) // 2}" fill="#d29922" font-size="11.5" '
-             f'font-weight="650" text-anchor="middle" '
-             f'transform="rotate(90 {ch - 8} {(y_from + y_to) // 2})">'
-             f'더 고칠 것이 있다 → 개선요청 · 라운드 +1 (r2 · r3 …)</text>')
+    # [주의] **라벨을 세로로 쓰지 않는다** (사용자 2026-09-05: *"세로로 적지 말고 … 가로로 적어
+    #    글을 읽을 수 없잖아"*). 90도 돌린 글자는 읽히지 않는다. 고리가 ⑧ 에서 **옆으로
+    #    빠지는 그 자리**에 가로로 적는다 — 선이 시작하는 곳이 사람이 눈으로 따라가는 곳이다.
+    p.append(f'<text x="{_lane_x(0) + _LANE_W + 4}" y="{y_from - 10}" fill="#d29922" '
+             f'font-size="12.5" font-weight="650">'
+             f'더 고칠 것이 있다 → 개선요청 · 라운드 +1</text>')
+    p.append(f'<text x="{_lane_x(0) + _LANE_W + 4}" y="{y_from + 16}" fill="#8b949e" '
+             f'font-size="11">브랜치가 r2 · r3 … 로 갈린다 · ⑧ 머지 대상은 그 라운드만</text>')
     p.append(f'<text x="{_lane_x(0) + 12}" y="{h - 14}" fill="#d29922" font-size="11.5">'
              f'■ 사람이 정하는 자리 — ① 요청 · ③ 골조 · ⑧ 전진 · ⑨ 마감</text>')
     p.append("</svg>")
