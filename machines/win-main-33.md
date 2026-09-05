@@ -64,6 +64,19 @@ Cluster-wide rules live in [`sim-desktop.md`](sim-desktop.md); repo rules in
 추론**했고, 상태가 예상 밖이면(도는 중 · 마감됨) 조각이 지난 라운드에 섞이거나 pending 에 박혀
 조용히 죽었다. 지금은 ①에 `work_id` 를 실으면 **거절**한다.
 
+**Codex CLI** 가 있다 (2026-09-05 설치 · `codex-cli 0.153.4` · npm 전역
+`C:\Users\USER\AppData\Roaming\npm\codex.ps1` · ChatGPT 구독 로그인 완료).
+
+    ssh 로 부를 때   cmd /c "cd %TEMP% && type p.txt | codex exec --skip-git-repo-check --json -o last.txt"
+    ① 프롬프트는 **파일로** — 인용부호가 SSH→PowerShell→cmd 를 거치며 깨진다
+    ② `codex exec` 는 **stdin 을 읽는다** · ③ `--skip-git-repo-check` 없으면 거절
+    ④ PowerShell 은 `< NUL` 을 못 쓴다 → `cmd /c`
+    ⑤ **`--json -o`** — 텍스트 출력엔 세션 머리말·추론 요약이 섞인다(본문을 3배로 오독했다)
+
+[주의] **추론 기본값이 `none` 이다** — `-c model_reasoning_effort="medium"` 처럼 명시한다.
+[중요] **레인은 마스터에서 돈다** — `.57` 에도 codex 가 있으므로 이 기계가 꺼져 있어도 파이프라인은
+돈다(2026-09-05 이전에는 `.33` 을 SSH 로 거쳤다). 여기 있는 것은 **사람이 쓰는 자리**와 폴백용이다.
+
 검색은 이 머신에서 **`ax-client` MCP 의 `search_context`** 한 입구로만 간다 (시소러스 경유).
 다른 경로로 돌면 한국어 질의가 조용히 나빠진다 — 절차 본문은 `ax-request` 스킬에 있다.
 

@@ -11,6 +11,21 @@
 > gets a copy. **Copies drift** — change the canonical file first. Structure: [`README.md`](README.md).
 
 
+## Codex CLI (2026-09-05 설치)
+
+`codex-cli 0.153.4` · npm 전역 `C:\Users\janus\AppData\Roaming\npm\codex.ps1` ·
+`codex login status` → **Logged in using ChatGPT**(설치 시점에 이미 인증돼 있었다).
+
+🔴 [중요] **이 기계는 PowerShell 경로로 불러야 한다** — `cmd /c` 로 부르면
+*"지정된 경로를 찾을 수 없습니다"* 가 **CP949 로 깨져** 온다(`.33` 은 cmd 로도 된다).
+
+    powershell -NoProfile -Command "Set-Location $env:TEMP; Get-Content p.txt |
+      codex exec --skip-git-repo-check --json -o last.txt"
+
+[주의] **구독 한도는 네 대 공용이다** — 워커가 자기 세션으로 codex 를 돌리기 시작하면
+`claude` 를 레인에서 뺀 것과 같은 위험이 살아난다(2026-09-04: 429 하나로 4조각 중 3 사망).
+지금 레인은 **마스터 한 곳에서만** 부른다.
+
 ## 원전 로컬 함대 — 정리됨, 다만 **설치본이 둘이다** (2026-08-20 · #226)
 
 | 무엇 | 상태 |
