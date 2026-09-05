@@ -145,21 +145,46 @@ def call_agy(prompt: str, *, timeout: int = TIMEOUT) -> Call:
     return Call(text=text, usage=u)
 
 
-def call_codex(prompt: str, *, timeout: int = TIMEOUT, host: str = "", remote_tmp: str = "") -> Call:
-    """`.33` 원격 CLI. 본문과 토큰이 **같은 텍스트에 섞여** 온다 (JSON 출력이 없다)."""
+def call_codex(prompt: str, *, timeout: int = TIMEOUT, reasoning: str = "") -> Call:
+    """`.33` 원격 CLI. **`--json` 이벤트에서 항목별 사용량**을 읽는다 (2026-09-05 실측).
+
+        turn.completed → usage {input_tokens, cached_input_tokens,
+                                cache_write_input_tokens, output_tokens,
+                                reasoning_output_tokens}
+
+    [주의] 종전에는 텍스트의 `tokens used` 한 줄(합계)만 읽었다 — 항목이 없어 agy/claude 와
+    같은 축으로 비교할 수 없었다.
+    """
     from .. import layer2_verify as L2
-    host = host or L2.CODEX_HOST
-    remote_tmp = remote_tmp or L2.CODEX_REMOTE_TMP
-    out, why = L2.call_codex_why(prompt, timeout=timeout)
-    if out is None:
+    text, events, why = L2.call_codex_why(
+        prompt, timeout=timeout, reasoning=(reasoning or L2.CODEX_REASONING))
+    if text is None:
         return Call(error=why)
     u = Usage(lane="codex")
-    m = _CODEX_TOKENS.search(out)
-    if m:
-        u.total_tokens = int(m.group(1).replace(",", ""))
+    last = None
+    for line in (events or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if (d.get("type") == "turn.completed") and isinstance(d.get("usage"), dict):
+            last = d["usage"]
+    if last:
+        u.input_tokens = last.get("input_tokens")
+        u.output_tokens = last.get("output_tokens")
+        u.cache_read = last.get("cached_input_tokens")
+        # [주의] **합계를 지어내지 않는다** — 캐시 입력을 어떻게 셀지는 과금 정책이다
     else:
-        u.note = "`tokens used` 줄을 못 찾았다"
-    return Call(text=out, usage=u)
+        m = _CODEX_TOKENS.search(text or "")
+        if m:
+            u.total_tokens = int(m.group(1).replace(",", ""))
+            u.note = "이벤트가 없어 텍스트 합계를 읽었다(항목 미상)"
+        else:
+            u.note = "`turn.completed` 이벤트를 못 찾았다"
+    return Call(text=text, usage=u)
 
 
 def call(lane: str, prompt: str, *, timeout: int = TIMEOUT) -> Call:

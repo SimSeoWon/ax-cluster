@@ -159,21 +159,73 @@ def call_agy_why(prompt: str, *, timeout: int = TIMEOUT_SEC) -> tuple:
 #    블록만 뽑아 쓰므로 문제되지 않지만, 이 함수의 반환을 **그대로 본문으로 쓰지 않는다**.
 CODEX_HOST = "user@192.168.0.33"
 CODEX_REMOTE_TMP = "C:/Users/USER/AppData/Local/Temp/ax_codex_lane.txt"
+# [중요] 추론 등급 기본값 — 실측 기본이 `none` 이라 **명시하지 않으면 추론 없이 돈다**
+CODEX_REASONING = "medium"
+# 본문과 이벤트를 한 왕복으로 가르는 구분자 (ASCII 만 — 콘솔 인코딩을 타지 않는다)
+CODEX_SPLIT = "---AXSPLIT---"
 
 
-def call_codex(prompt: str, *, timeout: int = TIMEOUT_SEC) -> str | None:
-    out, why = call_codex_why(prompt, timeout=timeout)
+def call_codex(prompt: str, *, timeout: int = TIMEOUT_SEC,
+               reasoning: str = CODEX_REASONING) -> str | None:
+    out, _events, _why = call_codex_why(prompt, timeout=timeout, reasoning=reasoning)
     return out
 
 
-def call_codex_why(prompt: str, *, timeout: int = TIMEOUT_SEC) -> tuple:
-    """`(출력, 사유)`. `.33` 의 codex CLI 를 SSH 로 부른다."""
+def call_codex_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
+                   reasoning: str = CODEX_REASONING) -> tuple:
+    """`(본문, 이벤트 JSONL, 사유)`.
+
+    🔴 [중요] **로컬이 먼저다** (2026-09-05 — 마스터에 codex 를 깔았다). 종전에는 `.33` 을 SSH 로
+    거쳤는데, 그러면 **사용자 PC 가 켜져 있어야 파이프라인이 돈다.** 마스터에 있으면 그 의존도,
+    scp 왕복도 없다. 없을 때만 원격으로 떨어진다.
+
+        로컬   codex exec … (마스터)                  ← 기본
+        원격   ssh .33 → cmd /c type … | codex exec   ← 마스터에 없을 때만
+
+    [중요] **`--json -o` 를 쓴다.** 종전 텍스트 출력에는 세션 머리말·추론 요약·`tokens used` 가
+    섞여 있어 본문 길이를 23,856자로 잘못 읽었다(실제 8,061자).
+
+        -o <파일>   최종 메시지만          → 본문이 깨끗하다
+        --json      이벤트 JSONL          → `turn.completed` 에 **항목별 usage**
+
+    [중요] **추론 등급을 명시한다** — 기본이 `reasoning effort: none` 이다(실측). 그 상태로 Opus 와
+    비교해 *"골조에 못 쓴다"* 는 결론을 낼 뻔했다.
+    """
     import subprocess
     import tempfile
+    eff = ["-c", f'model_reasoning_effort="{reasoning}"'] if reasoning else []
+    exe = shutil.which("codex")
+    if exe:
+        with tempfile.TemporaryDirectory(prefix="ax-codex-") as td:
+            last = Path(td) / "last.txt"
+            try:
+                r = subprocess.run(
+                    [exe, "exec", "--skip-git-repo-check", *eff, "--json",
+                     "-o", str(last), prompt],
+                    capture_output=True, text=True, timeout=timeout, cwd=td)
+            except subprocess.TimeoutExpired:
+                _log(f"[codex] 시간 초과 ({timeout}초)")
+                return None, "", "timeout"
+            except OSError as e:                             # noqa: BLE001
+                _log(f"[codex] 호출 실패 — {type(e).__name__}: {e}")
+                return None, "", f"{type(e).__name__}: {e}"
+            if r.returncode != 0:
+                why = ((r.stderr or "") + (r.stdout or ""))[-200:]
+                _log(f"[codex] 실패 — {why}")
+                return None, "", why
+            # [주의] `-o` 파일이 비면 **성공으로 접지 않는다** — 모델이 답을 안 낸 것이다
+            text = last.read_text(encoding="utf-8", errors="replace") if last.is_file() else ""
+            if not text.strip():
+                _log("[codex] 최종 메시지가 비었다")
+                return None, r.stdout or "", "최종 메시지 없음"
+            return text.strip(), r.stdout or "", ""
+
+    # ── 폴백: `.33` 원격 (마스터에 codex 가 없을 때) ────────────────────────────────
     ssh, scp = shutil.which("ssh"), shutil.which("scp")
     if not (ssh and scp):
-        _log("[codex] ssh/scp 가 없다 — 원격 레인을 쓸 수 없다")
-        return None, MISSING_EXE
+        _log("[codex] 로컬에도 없고 ssh/scp 도 없다")
+        return None, "", MISSING_EXE
+    _log("[codex] 로컬에 없다 — `.33` 원격으로 간다")
     try:
         with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8",
                                          delete=False) as fh:
@@ -185,22 +237,30 @@ def call_codex_why(prompt: str, *, timeout: int = TIMEOUT_SEC) -> tuple:
         if r.returncode != 0:
             why = f"프롬프트 전달 실패: {(r.stderr or '')[:160]}"
             _log(f"[codex] {why}")
-            return None, why
+            return None, "", why
+        eff_s = f' -c model_reasoning_effort="{reasoning}"' if reasoning else ""
         cmd = ('cmd /c "cd %TEMP% && type ax_codex_lane.txt | '
-               'codex exec --skip-git-repo-check 2>&1"')
+               f'codex exec --skip-git-repo-check{eff_s} --json -o ax_codex_last.txt '
+               f'> ax_codex_events.jsonl 2>nul && echo {CODEX_SPLIT} && '
+               f'type ax_codex_last.txt && echo {CODEX_SPLIT} && '
+               'type ax_codex_events.jsonl"')
         r = subprocess.run([ssh, "-o", "ConnectTimeout=15", CODEX_HOST, cmd],
                            capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         _log(f"[codex] 시간 초과 ({timeout}초)")
-        return None, "timeout"
+        return None, "", "timeout"
     except OSError as e:                                     # noqa: BLE001
         _log(f"[codex] 호출 실패 — {type(e).__name__}: {e}")
-        return None, f"{type(e).__name__}: {e}"
+        return None, "", f"{type(e).__name__}: {e}"
     if r.returncode != 0:
         why = ((r.stdout or "") + (r.stderr or ""))[-200:]
         _log(f"[codex] 실패 — {why}")
-        return None, why
-    return r.stdout, ""
+        return None, "", why
+    parts = (r.stdout or "").split(CODEX_SPLIT)
+    if len(parts) < 3:
+        _log("[codex] 출력 형식이 예상과 다르다 — 구분자를 못 찾았다")
+        return None, "", "출력 구분자 없음(형식 변화 의심)"
+    return parts[1].strip(), parts[2], ""
 
 
 def call_claude(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "") -> str | None:
