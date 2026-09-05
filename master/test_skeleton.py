@@ -357,6 +357,72 @@ def test_uht_command_shape() -> None:
         r"C:\UE\Build.bat", "NSEditor", r"E:\t\NS.uproject"))
 
 
+def test_declaration_budget_is_sized_for_the_model_and_truncation_is_loud() -> None:
+    """🔴 **선언부 예산 (`#369`)** — 잘리면 계약을 다 못 본 골조가 나오고, 그것이 **조용했다**.
+
+    실측 2026-09-05: `declarations.PER_CLASS = 1,500` 은 로컬 8K 전제로 잡힌 값인데 골조 생성은
+    상용 모델이 한다. NS+MS 헤더 904개의 중앙값이 **1,533자** — 절반이 잘린다. Codex 가 그것을
+    감지해 거절한 덕에 드러났다(*"SetDetected 다음에서 잘려 … 작성할 수 없습니다"*).
+    """
+    from master.work import declarations as dcl
+    check("[중요] 골조 예산이 헤더 중앙값(1,533자)보다 크다", S.DECL_PER_CLASS > 1533,
+          str(S.DECL_PER_CLASS))
+    check("  p90(6,621자)도 담는다", S.DECL_PER_CLASS > 6621, str(S.DECL_PER_CLASS))
+    check("[주의] 무한이 아니다 — 193KB 짜리 헤더가 프롬프트를 먹지 않는다",
+          S.DECL_PER_CLASS < 100000 and S.DECL_TOTAL < 200000,
+          f"{S.DECL_PER_CLASS}/{S.DECL_TOTAL}")
+    check("[중요] **로컬 모델 경로는 종전 예산 그대로** (8K 전제가 거기선 살아 있다)",
+          dcl.PER_CLASS == 1500 and dcl.TOTAL == 6000,
+          f"{dcl.PER_CLASS}/{dcl.TOTAL}")
+
+    # 🔴 잘림이 **사람이 보는 자리**에 남는가 — 종전에는 프롬프트 본문에만 있었다.
+    #    `build()` 를 실물로 태운다(생성만 스텁) — 문구를 재조립해 검사하면 배선을 안 잰다.
+    class _Paths:
+        name = "T"
+        root = Path("/tmp")
+        repo = Path("/tmp")
+
+    class _D:
+        blocks = [("UFoo", "Foo.h", "class UFoo {};")]
+        missing: list = []
+        truncated = ["UFoo"]
+        dropped = ["UBar"]
+        ok = True
+        summary = "선언부 1개 · [중요] 잘림 1"
+
+        def render(self):
+            return "=== DECLARATIONS ===\nclass UFoo {};"
+
+    from master.ontology import synth
+    saved_collect, saved_gen = dcl.collect, synth.generate
+    seen = {}
+
+    def _collect(paths, classes, **kw):
+        seen.update(kw)
+        return _D()
+
+    dcl.collect = _collect
+    synth.generate = lambda prompt, model, **kw: (
+        "=== FILE: A/Foo.h ===\nclass UFoo { void Run(); };\n"
+        "// [PSEUDO] 여기를 채워라\n"
+        "=== FILE: A/Foo.cpp ===\nvoid UFoo::Run() {}\n// [PSEUDO] 여기도\n")
+    try:
+        spec = S.SkeletonSpec(stem="Foo", files=["A/Foo.h", "A/Foo.cpp"],
+                              classes=["UFoo"], instruction="만들어라")
+        sk = S.build(_Paths(), spec, model="stub", ground=True)
+        check("[중요] 골조 예산이 `collect` 로 실제로 전달된다",
+              seen.get("per_class") == S.DECL_PER_CLASS and seen.get("total") == S.DECL_TOTAL,
+              str(seen))
+        check("🔴 잘림이 `notes` 에 올라온다 (조용한 절단 금지)",
+              any("잘렸다" in n for n in sk.notes), str(sk.notes)[:200])
+        check("  못 실은 클래스도 말한다", any("못 실은" in n for n in sk.notes),
+              str(sk.notes)[:200])
+        check("  잘린 클래스 이름이 들어간다", any("UFoo" in n for n in sk.notes),
+              str(sk.notes)[:200])
+    finally:
+        dcl.collect, synth.generate = saved_collect, saved_gen
+
+
 def main() -> int:
     for fn in (test_gate_mode_is_uht_by_default, test_uht_command_shape,
                test_frozen_decls_picks_the_contract, test_ue_declaration_macro_families,
@@ -366,7 +432,8 @@ def main() -> int:
                test_parse_files_reports_missing_and_fence, test_skeleton_is_fail_closed,
                test_contracts_text_carries_the_tag_rules, test_header_is_the_source_of_freeze,
                test_prompt_grounds_and_states_porting_rules, test_spec_validation,
-               test_register_wiring):
+               test_register_wiring,
+               test_declaration_budget_is_sized_for_the_model_and_truncation_is_loud):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_skeleton: {PASS}/{total} 통과")

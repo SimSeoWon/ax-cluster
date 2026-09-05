@@ -118,6 +118,23 @@ HEADER_SUFFIXES = (".h", ".hpp")
 # 이야기이고, 골조는 **작업 하나당 1회**이면서 **모든 병렬 조각의 계약**이 된다. 틀린 골조는
 # N개 조각을 전부 오염시키므로, 배칭 실측이 말한 것과 같은 논리로 여기가 값을 쓸 자리다.
 # 레인 문법은 `synth.generate` 와 같다 — `claude:opus` · `claude` · `agy` · 그 밖은 브로커.
+# 🔴 **골조 생성의 선언부 예산은 따로 잡는다** (`#369`, 2026-09-05).
+#
+# [중요] `declarations.PER_CLASS = 1,500` 은 **로컬 모델 8K 컨텍스트 전제**로 잡힌 값이다
+#    (주석: *"≈2,100 tok — 실측 여유 5,368 안"*). 그런데 **골조 생성은 상용 모델이 한다**
+#    (`DEFAULT_MODEL = claude:opus`, 2026-09-05 부터 codex 도). 전제가 바뀐 값이 남아 있었다.
+#
+# 실측 2026-09-05 (NS+ModularStage 헤더 **904개**): 중앙값 1,533자 · p90 6,621자 · 최대 193,851자.
+#    → **1,500 은 중앙값도 못 담는다.** NS 헤더 47개 중 21개(45%)가 잘린 채 프롬프트에 들어갔다.
+#    그 결과 기존 클래스 수정 골조가 계약의 일부만 보고 만들어졌고, Codex 는 그것을 감지해
+#    거절했다(*"SetDetected 다음에서 잘려 … 작성할 수 없습니다"*) — **모델이 우리 결함을 잡았다.**
+#
+# [주의] p90 의 3배 남짓으로 잡되 **무한이 아니다** — 193KB 짜리 생성 헤더 하나가 프롬프트를
+#    통째로 먹는 것을 막는다. 잘리면 아래 `build()` 가 **소리를 낸다**(조용한 절단 금지).
+# [주의] **로컬 모델 경로(층2·합성)는 종전 예산을 그대로 쓴다** — 거기서는 8K 전제가 살아 있다.
+DECL_PER_CLASS = 24000
+DECL_TOTAL = 60000
+
 DEFAULT_MODEL = "claude:opus"
 
 
@@ -543,7 +560,8 @@ def _strip_wrap(text: str) -> tuple:
 
 def build(paths: ProjectPaths, spec: SkeletonSpec, *, model: str = DEFAULT_MODEL,
           broker: str = "", num_ctx: int = 8192, timeout: int = 900,
-          ground: bool = True) -> Skeleton:
+          ground: bool = True, decl_per_class: int = DECL_PER_CLASS,
+          decl_total: int = DECL_TOTAL) -> Skeleton:
     """골조를 **텍스트로** 만든다. [중요] 파일을 쓰지 않는다.
 
     레인은 `synth.generate` 와 같은 규약이다 — `claude[:모델]`/`agy` 는 마스터의 상용 CLI,
@@ -565,10 +583,23 @@ def build(paths: ProjectPaths, spec: SkeletonSpec, *, model: str = DEFAULT_MODEL
         # [중요] 이미 있는 것을 쓴다 — 새로 만들지 않는다
         try:
             from . import declarations as dcl
-            d = dcl.collect(paths, spec.classes)
+            d = dcl.collect(paths, spec.classes,
+                            per_class=decl_per_class, total=decl_total)
             decl = d.render()
             if decl:
                 sk.grounding.append(f"선언부 {d.summary}")
+            # 🔴 [중요] **잘렸으면 소리를 낸다** (`#369`). 종전에는 프롬프트 본문에만
+            #    `TRUNCATED` 가 찍혀 **사람이 보는 자리에는 아무것도 안 남았다** — 잘린 계약
+            #    위에 세운 골조도 `[PSEUDO]` 만 있으면 게이트를 통과한다(조용한 실패).
+            if d.truncated:
+                sk.notes.append(
+                    f"[중요] 선언부가 예산에 잘렸다 — {', '.join(d.truncated[:4])} "
+                    f"(클래스당 {decl_per_class:,}자). **계약을 다 못 본 골조다** — "
+                    f"기존 클래스 수정이면 예산을 올려 다시 만들 것")
+            if d.dropped:
+                sk.notes.append(
+                    f"[중요] 선언부를 아예 못 실은 클래스 — {', '.join(d.dropped[:4])} "
+                    f"(전체 예산 {decl_total:,}자 소진)")
         except Exception as e:                              # noqa: BLE001
             sk.notes.append(f"[주의] 선언부 수집 실패 — 없이 진행한다: {e}")
         try:
