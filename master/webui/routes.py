@@ -109,7 +109,14 @@ _CLUSTER_LINK = (
     'background:#252526;border:1px solid #d7ba7d;border-radius:6px;padding:6px 14px;'
     'text-decoration:none;margin-right:8px;">클러스터 상태 →</a>')
 _CLUSTER_LINK_SMALL = (
-    '<a href="/cluster" class="back" style="margin:0;color:#d7ba7d;">/ 클러스터 상태</a>')
+    '<a href="/cluster" class="back" style="margin:0;color:#d7ba7d;">/ 클러스터 상태</a>'
+    '<a href="/onboarding" class="back" style="margin:0;color:#d7ba7d;">/ 온보딩</a>')
+# 🔴 온보딩 — **처음 보는 사람이 여기가 무엇인지 알 자리** (사용자 요청 2026-09-05).
+#    [중요] 링크도 **같은 자리에 끼운다** — 새 내비게이션을 발명하지 않는다(위 규약 그대로).
+_ONBOARD_LINK = (
+    '<a href="/onboarding" style="font-size:0.7em;font-weight:500;color:#d7ba7d;'
+    'background:#252526;border:1px solid #d7ba7d;border-radius:6px;padding:6px 14px;'
+    'text-decoration:none;margin-right:8px;">온보딩 →</a>')
 
 
 def context_server_html() -> bytes:
@@ -118,7 +125,7 @@ def context_server_html() -> bytes:
     anchor = '<a href="/ontology"'
     html_text = WEB_UI_HTML
     if anchor in html_text:
-        html_text = html_text.replace(anchor, _CLUSTER_LINK + anchor, 1)
+        html_text = html_text.replace(anchor, _ONBOARD_LINK + _CLUSTER_LINK + anchor, 1)
     return html_text.encode("utf-8")
 
 
@@ -152,6 +159,15 @@ def cluster_page(paths) -> tuple:
                      "<p>마스터에서: <code>python -m master.status html</code></p>"
                      '<p><a href="/">← Context Search</a></p>').encode("utf-8")
     body = p.read_text(encoding="utf-8", errors="replace")
+    # 🔴 온보딩 링크는 **서빙 시점에 끼운다** (사용자 요청 2026-09-05).
+    #    [중요] `cluster.html` 은 파일로도 열리는 자립형 HTML 이라(`status.write`·`deliver`)
+    #    절대 경로 링크를 본문에 박으면 `file://` 로 열었을 때 죽는다 — `test_status` 의
+    #    *"외부 자원 0"* 계약이 그것을 잡는다. 원전 페이지 링크를 주입으로 처리한 것과 같은 판단.
+    body = body.replace(
+        '<div class="sub">',
+        '<div class="sub" style="margin-bottom:.35rem">'
+        '<a href="/onboarding" style="color:#58a6ff;text-decoration:none">'
+        '온보딩 — 에이전트가 무엇이고 누가 무엇을 하나 →</a></div><div class="sub">', 1)
     sec, _ = _age(p)
     if sec is not None and sec > STALE_SEC:
         body = inject(body, stale_banner(sec, "python -m master.status html"))

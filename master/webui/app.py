@@ -30,7 +30,7 @@ from . import routes
 #    라우트를 추가할 때 손대야 하는 곳이 셋(핸들러 · 라우터 분기 · 인증 공개 목록)이었고,
 #    매번 하나를 빠뜨려 401/404 가 났다. **목록을 하나로 모으면 그 부류가 사라진다** —
 #    `viewer.Router` 와 `projects/__main__` 이 이 상수를 import 해서 쓴다.
-PREFIXES = ("/ontology", "/ontology-static", "/api/v1", "/cluster")
+PREFIXES = ("/ontology", "/ontology-static", "/api/v1", "/cluster", "/onboarding")
 # 정확히 이 경로만(접두어가 아니라 완전 일치) 이 앱이 가져간다
 EXACT = ("/", "", "/cluster.html")
 
@@ -184,6 +184,12 @@ class WebUI:
         if _TASK_PAGE.match(path):
             return await _send(send, 200,
                                routes.inject_cluster_link(routes.page("task.html")), HTML)
+        # 🔴 온보딩 — **에이전트가 무엇인가** (사용자 요청 2026-09-05). 상태(`/cluster`)가
+        #    *"지금 어떤가"* 라면 여기는 *"무엇인가"* 다. 생성물이 아니라 코드에서 바로 낸다 —
+        #    스냅샷이 아니므로 낡을 자리가 없다.
+        if path in ("/onboarding", "/onboarding/", "/onboarding.html"):
+            from . import onboarding
+            return await _send(send, 200, onboarding.page(), HTML)
         # [중요] 클러스터 상태 — `/view` 를 없애고 여기로 모았다 (사용자 지시)
         if path in ("/cluster", "/cluster/", "/cluster.html"):
             st, body = routes.cluster_page(paths)
