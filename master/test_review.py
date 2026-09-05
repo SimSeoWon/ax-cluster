@@ -261,18 +261,30 @@ def test_cleanup_finds_round_branches_by_prefix():
         shutil.rmtree(root, ignore_errors=True)
 
 
-def test_cleanup_is_loud_when_prefix_finds_nothing():
-    """🔴 **0건이면 소리를 낸다** — 조용히 지나가면 다음에도 같은 방식으로 안 보인다.
+def test_cleanup_tells_already_clean_from_half_cleaned():
+    """🔴 **0건은 이상이 아니다 — 「반쯤 정리됨」만 이상이다** (드라이런이 잡은 내 오탐, 2026-09-05).
 
-    `#362` 가 하루 늦게 드러난 이유가 이것이다: 못 찾은 것이 로그에도 결과에도 안 남았다.
+    처음엔 *"조각이 있는데 0건이면 오류"* 로 적었는데, **이미 정리된 work 을 다시 훑으면 정상
+    상태가 오류로 떴다**(마감·삭제까지 끝낸 work 에서 경고). 접두어 훑기에서는 이름을 조립하지
+    않으므로 **0건이 곧 「없다」**다. 진짜 이상은 **base 는 살아 있는데 조각이 0건**인 경우뿐이다.
     """
     root, repo, work, tasks = fixture()
     try:
+        # ⓐ 이미 정리된 work — 아무것도 없다. **오류가 아니다**
         plan = R.plan_branch_cleanup(repo, tasks=[{"task_id": "nosuch"}],
-                                     work_id="w-없는-work", target_branch="")
-        check("[중요] 조각이 있는데 하나도 못 찾으면 오류로 말한다",
-              any("하나도 못 찾았다" in e for e in plan.errors), str(plan.errors))
-        check("  그리고 아무것도 안 지운다 (fail-closed)", not plan.delete, str(plan.delete))
+                                     work_id="w-이미-정리됨", target_branch="")
+        check("[중요] 이미 정리된 상태는 오류가 아니다 (정상)", not plan.errors, str(plan.errors))
+        check("  지울 것도 보존할 것도 없다", not plan.delete and not plan.keep,
+              f"{plan.delete} {plan.keep}")
+
+        # ⓑ base 는 살아 있는데 조각이 0건 — **반쯤 정리된 상태**다
+        # [주의] `WORK` 를 쓰면 안 된다 — 그 work 엔 조각 브랜치가 **실제로 있다**(fixture).
+        #    조각이 0건이면서 base 만 사는 상태를 만들려면 **다른 work_id** 로 훑어야 한다.
+        plan2 = R.plan_branch_cleanup(repo, tasks=[{"task_id": "nosuch"}],
+                                      work_id="w-조각-없음", target_branch="feature/w1")
+        check("🔴 base 만 남고 조각이 0건이면 오류로 말한다",
+              any("반쯤" in e for e in plan2.errors), str(plan2.errors))
+        check("  그리고 아무것도 안 지운다 (fail-closed)", not plan2.delete, str(plan2.delete))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -831,7 +843,7 @@ def main() -> int:
                test_build_fn_injected, test_conflict_aborts_whole,
                test_missing_durable_stops, test_cleanup_plan_splits_by_reachability,
                test_cleanup_finds_round_branches_by_prefix,
-               test_cleanup_is_loud_when_prefix_finds_nothing,
+               test_cleanup_tells_already_clean_from_half_cleaned,
                test_cleanup_plan_fails_closed,
                test_reject_patches_and_keeps_branches, test_reject_idempotent_and_guarded,
                test_finalize_default_does_not_push,

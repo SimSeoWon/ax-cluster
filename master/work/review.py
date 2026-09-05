@@ -346,12 +346,17 @@ def plan_branch_cleanup(repo: Path, *, tasks, work_id: str = "", target_branch: 
             rc, out = _git_rc(repo, "ls-remote", "--heads", remote, pat)
             if rc == 0:
                 _add(out)
-        # 🔴 **0건이면 소리를 낸다** — 조각이 있었는데 하나도 안 잡히면 이름 규약이 또 바뀐 것이다
+        # 🔴 **0건일 때 — 「이미 정리됨」과 「못 찾음」을 가른다** (드라이런이 잡은 오탐, 2026-09-05)
+        #
+        # 처음엔 *"조각이 있는데 0건이면 오류"* 로 적었는데, **이미 정리된 work 을 다시 훑으면
+        # 정상 상태가 오류로 뜬다**(실측: 마감·삭제까지 끝낸 work 에서 경고가 났다).
+        #
+        # [중요] **접두어 훑기에서는 0건이 곧 「없다」다** — 이름을 조립하지 않으므로 규약이 바뀌어도
+        #    걸린다. 그래서 0건 자체는 이상 신호가 아니다. **진짜 이상은 이것 하나**:
+        #    **작업 브랜치(base)는 살아 있는데 조각이 하나도 없다** — 정리가 반쯤 된 상태다.
         if not refs and (tasks or []):
-            plan.errors.append(
-                f"[중요] 조각 {len(tasks)}건인데 `{DURABLE_PREFIX}/{work_id}/…` 접두어로 "
-                f"원격 브랜치를 **하나도 못 찾았다** — 이름 규약이 바뀌었거나 원격이 다르다. "
-                f"정리를 건너뛴다(fail-closed)")
+            logf("cleanup", f"[주의] `{DURABLE_PREFIX}/{work_id}/…` 로 원격 브랜치가 0건이다 "
+                            f"— 이미 정리됐거나(정상) work_id·원격이 다르다")
     else:
         logf("cleanup", "[주의] work_id 가 없다 — 조각별 조회로 떨어진다(접두어 훑기 불가)")
         for t in tasks or []:
@@ -365,10 +370,18 @@ def plan_branch_cleanup(repo: Path, *, tasks, work_id: str = "", target_branch: 
                 if rc == 0:
                     _add(out)
 
+    n_pieces = len(refs)
     if target_branch:
         rc, out = _git_rc(repo, "ls-remote", "--heads", remote, target_branch)
         if rc == 0:
             _add(out)
+    # 🔴 **반쯤 정리된 상태만 오류다** — base 는 살아 있는데 조각이 0건이면 누군가 조각만 지웠거나
+    #    이름이 갈렸다는 뜻이다. 둘 다 사람이 봐야 한다.
+    if work_id and (tasks or []) and n_pieces == 0 and len(refs) > 0:
+        plan.errors.append(
+            f"[중요] 작업 브랜치 `{target_branch}` 는 남아 있는데 조각 브랜치가 **0건**이다 "
+            f"(조각 {len(tasks)}건 등재됨) — 정리가 반쯤 됐거나 이름 규약이 갈렸다. "
+            f"정리를 건너뛴다(fail-closed)")
 
     for ref, tip in refs:
         if plan.errors:                       # 판정 자체가 불가 — 전부 보존
