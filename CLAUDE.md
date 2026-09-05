@@ -97,9 +97,15 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   that tree, rebuilt, and advanced `8db9826 → 7c3e472`. The decision it was asked for
   ("bug or structural change?") is recorded as a note on the work's Redmine issue.
   🔴 [중요] **A work runs many rounds** (user-confirmed 2026-09-05). After ⑺ advances the branch,
-  more work goes into the **same** work — the requester calls `register_work` with **`work_id`**
-  (= reactivation): `round +1`, sub-branches become `task/<work>/r<N>/<piece>`, and ⑺ merges
-  **only that round's** pieces. The Redmine issue is opened **at registration** and every event
+  more work goes into the **same** work — the requester calls **`improve_work(work_id,
+  round=current+1, specs)`**, a *separate* call from registration (user-confirmed 2026-09-05:
+  *"분산작업 등록과 라운드 값을 받는 분산작업 개선 요청으로"*): `round +1`, sub-branches become
+  `task/<work>/r<N>/<piece>`, and ⑺ merges **only that round's** pieces. [중요] **The round value
+  is a check, not a command** — the queue already knows it (current+1) and **refuses** a mismatch
+  rather than adjusting. [주의] `register_work` with a `work_id` is now **rejected**: one entrance
+  with two meanings is what made the round get *inferred from state*, and when the state was
+  unexpected it was silently wrong (pieces stamped with the previous round, or stuck pending on a
+  closed work). The Redmine issue is opened **at registration** and every event
   (round done · advance · the human's decision) lands on it as a note; `finalize` closes it as
   **완료** with the `main` merge. Dispatch now has **two** triggers — skeleton push *and*
   registration (with only push, "push first, register second" waited for the 10-min catchup).
