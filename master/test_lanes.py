@@ -48,14 +48,20 @@ def both(marker: str = "") -> str:
 
 # ── ① 순서 ──────────────────────────────────────────────────────────────────────
 
-def test_default_order_is_agy_then_local_and_claude_is_absent() -> None:
+def test_default_order_is_agy_then_codex_then_local() -> None:
     """🔴 **사용자 지시 2026-09-04**: *"agy, 그다음 로컬로 배선하고, 클로드는 나중에 사용해"*.
 
     [중요] `claude` 를 뺀 것은 품질 판정이 아니다 — 한도가 **공용 자원**이라 먼저 쓰면 라운드
     전체가 그 한도에 묶인다. 실측 00:16: `429 session limit` 하나로 4조각 중 3이 동시에 죽었다.
     """
     check("[중요] 첫 레인이 agy", LN.DEFAULT_LANES[0] == "agy", str(LN.DEFAULT_LANES))
-    check("  둘째가 로컬 모델", ":" in LN.DEFAULT_LANES[1] and "claude" not in LN.DEFAULT_LANES[1],
+    # 🔴 **codex 가 2순위** (사용자 결정 2026-09-05). A/B 실측: 같은 골조로 본문 작성에
+    #    agy 32.9초 · codex 98.6초 · 로컬 117.6초 — **셋 다 층1 통과**이고 두 레인의 헤더가
+    #    바이트 단위로 같았다(동결 보존). 품질이 같으니 **빠른 순**으로 세운다.
+    check("  둘째가 codex (원격 `.33` CLI)", LN.DEFAULT_LANES[1] == "codex",
+          str(LN.DEFAULT_LANES))
+    check("  마지막이 로컬 모델 — 상용이 다 막혔을 때 남는 자리",
+          ":" in LN.DEFAULT_LANES[-1] and "claude" not in LN.DEFAULT_LANES[-1],
           str(LN.DEFAULT_LANES))
     check("[중요] claude 는 기본 체인에 없다",
           not any(l.startswith("claude") for l in LN.DEFAULT_LANES), str(LN.DEFAULT_LANES))
@@ -91,7 +97,8 @@ def test_chain_moves_on_when_a_lane_fails() -> None:
                               writer=lambda f, rel, body, base="": wrote.setdefault(rel, body))
     check("[중요] 다음 레인으로 넘어간다", got is not None and got.lane == LN.DEFAULT_LANES[1],
           str([t.summary for t in tried]))
-    check("  순서대로 시도했다", seen == list(LN.DEFAULT_LANES), str(seen))
+    # [주의] **성공하면 거기서 멈춘다** — 뒤 레인까지 다 부르지 않는다(폴백이지 병렬이 아니다)
+    check("  순서대로 시도하고 성공에서 멈춘다", seen == list(LN.DEFAULT_LANES[:2]), str(seen))
     check("  실패 사유를 남긴다", "session limit" in (tried[0].reason or ""), tried[0].reason)
     check("  두 파일을 워커에 썼다", set(wrote) == {H, C}, str(sorted(wrote)))
 
@@ -152,7 +159,7 @@ def test_unknown_paths_are_ignored() -> None:
 
 
 def main() -> int:
-    for fn in (test_default_order_is_agy_then_local_and_claude_is_absent,
+    for fn in (test_default_order_is_agy_then_codex_then_local,
                test_prompt_names_every_file,
                test_chain_moves_on_when_a_lane_fails,
                test_all_lanes_failing_is_blocked_not_silent,

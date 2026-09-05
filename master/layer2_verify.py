@@ -142,6 +142,67 @@ def call_agy_why(prompt: str, *, timeout: int = TIMEOUT_SEC) -> tuple:
     return out, why
 
 
+# ── 🔴 Codex CLI — **요청자(`.33`)에만 있다** (2026-09-05) ──────────────────────────────
+#
+# [중요] **다른 둘과 달리 원격 호출이다.** `claude`·`agy` 는 마스터에 설치돼 있지만 codex 는
+#    node 가 필요하고 마스터에는 node 가 없다(실측). `.33` 에 깔려 있고 구독 로그인도 그쪽이라
+#    SSH 로 부른다 — 레인의 계약(프롬프트를 주면 텍스트를 돌려준다)은 그대로다.
+#
+# 실측된 함정 넷 (2026-09-05, 전부 밟고 얻었다):
+#   ① 인용부호가 SSH→PowerShell→cmd 를 거치며 깨진다 → **프롬프트는 파일로** 보낸다
+#      (이 저장소의 기존 규약과 같다: 명령은 ASCII, 내용은 파일)
+#   ② `codex exec` 는 **stdin 을 읽는다** — 안 닫으면 멈춘다 → `type` 으로 파이프
+#   ③ `--skip-git-repo-check` 없으면 *"Not inside a trusted directory"* 로 거절
+#   ④ PowerShell 은 `< NUL` 리디렉션을 못 쓴다(`'<' operator is reserved`) → `cmd /c`
+#
+# [주의] **출력에 세션 머리말이 섞인다**(`session id`·`tokens used` 등). 레인은 `=== FILE:`
+#    블록만 뽑아 쓰므로 문제되지 않지만, 이 함수의 반환을 **그대로 본문으로 쓰지 않는다**.
+CODEX_HOST = "user@192.168.0.33"
+CODEX_REMOTE_TMP = "C:/Users/USER/AppData/Local/Temp/ax_codex_lane.txt"
+
+
+def call_codex(prompt: str, *, timeout: int = TIMEOUT_SEC) -> str | None:
+    out, why = call_codex_why(prompt, timeout=timeout)
+    return out
+
+
+def call_codex_why(prompt: str, *, timeout: int = TIMEOUT_SEC) -> tuple:
+    """`(출력, 사유)`. `.33` 의 codex CLI 를 SSH 로 부른다."""
+    import subprocess
+    import tempfile
+    ssh, scp = shutil.which("ssh"), shutil.which("scp")
+    if not (ssh and scp):
+        _log("[codex] ssh/scp 가 없다 — 원격 레인을 쓸 수 없다")
+        return None, MISSING_EXE
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8",
+                                         delete=False) as fh:
+            fh.write(prompt)
+            local = fh.name
+        r = subprocess.run([scp, "-o", "ConnectTimeout=15", local,
+                            f"{CODEX_HOST}:{CODEX_REMOTE_TMP}"],
+                           capture_output=True, text=True, timeout=180)
+        if r.returncode != 0:
+            why = f"프롬프트 전달 실패: {(r.stderr or '')[:160]}"
+            _log(f"[codex] {why}")
+            return None, why
+        cmd = ('cmd /c "cd %TEMP% && type ax_codex_lane.txt | '
+               'codex exec --skip-git-repo-check 2>&1"')
+        r = subprocess.run([ssh, "-o", "ConnectTimeout=15", CODEX_HOST, cmd],
+                           capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _log(f"[codex] 시간 초과 ({timeout}초)")
+        return None, "timeout"
+    except OSError as e:                                     # noqa: BLE001
+        _log(f"[codex] 호출 실패 — {type(e).__name__}: {e}")
+        return None, f"{type(e).__name__}: {e}"
+    if r.returncode != 0:
+        why = ((r.stdout or "") + (r.stderr or ""))[-200:]
+        _log(f"[codex] 실패 — {why}")
+        return None, why
+    return r.stdout, ""
+
+
 def call_claude(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "") -> str | None:
     """`claude -p` 호출. `model` 을 주면 `--model` 로 넘긴다(별칭 `opus`·`sonnet` 실측 통과).
 

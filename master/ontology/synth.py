@@ -85,7 +85,8 @@ UNLOAD_EVERY = {HEAVY_MODEL: 5}
 # 도메인 7개 × 드물게(stale 일 때만)라 "대량" 이 아니고, 마일스톤이 목표 ①에서 온톨로지를
 # *"전자동이 아니라 사용자의 수동 명령과 대화형"* 이라고 못박아 뒀다. 그래도 **기본값은
 # 로컬**로 두고, 상용은 명시할 때만 쓴다.
-CLI_MODELS = ("claude", "agy")
+# 🔴 `codex` 는 **원격(.33) CLI** 다 — 마스터엔 node 가 없다 (2026-09-05)
+CLI_MODELS = ("claude", "agy", "codex")
 
 
 class SynthError(RuntimeError):
@@ -269,9 +270,12 @@ def generate(prompt: str, model: str, *, broker: str, num_ctx: int, timeout: int
         if lane == "claude":
             out = layer2_verify.call_claude(prompt, timeout=timeout, model=sub)
         else:
+            # [주의] `claude` 외에는 **모델 지정을 받지 않는다** — 서브태그를 조용히 버리면
+            #    호출자는 지정이 먹은 줄 안다.
             if sub:
-                raise GenerateError(f"agy 는 모델 지정을 받지 않는다: {model}")
-            out = layer2_verify.call_agy(prompt, timeout=timeout)
+                raise GenerateError(f"{lane} 는 모델 지정을 받지 않는다: {model}")
+            call = (layer2_verify.call_codex if lane == "codex" else layer2_verify.call_agy)
+            out = call(prompt, timeout=timeout)
         if out is None:
             raise GenerateError(f"{model} CLI 가 응답하지 않았다 (미설치·타임아웃·비정상 종료)")
         return out
