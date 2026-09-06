@@ -124,6 +124,7 @@ class Stats:
     skipped: int = 0            # 이미 있고 안 바뀜
     aborted: str = ""           # 서킷브레이커가 끊었으면 사유
     unloads: int = 0            # 캐시 회수를 위해 모델을 내린 횟수
+    retried: int = 0            # 보류에서 다시 끌어온 그룹 수 (`#377`)
     elapsed_ms: int = 0
     encodings: source_text.EncodingTally = field(default_factory=source_text.EncodingTally)
     results: list[GroupResult] = field(default_factory=list)
@@ -149,6 +150,8 @@ class Stats:
             s += f" · [중요] 사실 거부 {self.unfactual}"
         if self.failed:
             s += f" · [중요] LLM 실패 {self.failed}"
+        if self.retried:
+            s += f" · 보류 재시도 {self.retried}"      # `#377` — 다시 끌어온 그룹
         if self.unloads:
             s += f" · 모델 회수 {self.unloads}회"
         if self.aborted:
@@ -323,6 +326,27 @@ def collect_grounding(paths: ProjectPaths, files: list[str]) -> prompt_mod.Groun
     return g
 
 
+def _remember(paths, key: str, files: list, res, commit: str, dry_run: bool):
+    """거부는 **보류로 남기고**, 성공하면 지운다 (`#377` ⓑ).
+
+    [중요] **자리가 여기다** — 배치 루프가 아니라 `synthesize_group` 이다. `one`·`fill`·`all`·
+    소비자가 전부 이 함수를 거치므로, 루프에 두면 **경로에 따라 기록이 갈린다**(실측: `one` 으로
+    거부가 났는데 보류가 안 남았다).
+    [주의] dry-run 은 적지 않는다 — 쓰지 않은 실행이 목록을 바꾸면 안 된다.
+    """
+    if dry_run:
+        return res
+    from . import pending as pending_mod
+    try:
+        if res.written:
+            pending_mod.clear(paths, key)
+        elif res.reason and res.reason != "변화 없음":
+            pending_mod.record(paths, key, list(files), res.reason, commit=commit)
+    except Exception:                                        # noqa: BLE001
+        pass                            # 기록이 합성을 죽이지 않는다
+    return res
+
+
 def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                      commit: str = "", broker: str = DEFAULT_BROKER,
                      model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
@@ -368,13 +392,13 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                           num_ctx=SYNTH_NUM_CTX, caller=caller)
     except GenerateError as e:
         res.reason = f"LLM 실패: {e}"
-        return res
+        return _remember(paths, key, files, res, commit, dry_run)
 
     doc, verdict = md_mod.finalize(raw, existing=existing, commit=commit)
     if not verdict.ok:
         # σ.7-B — [중요] 기존 파일을 남긴다. 다음 사이클에 다시 시도된다.
         res.reason = f"형식 게이트 {verdict.summary} · preview={verdict.preview!r}"
-        return res
+        return _remember(paths, key, files, res, commit, dry_run)
 
     # [중요] **사실 게이트** — 소스 실측과 대조한다. LLM 에게 자기 검증을 맡기지 않는다
     # (설계 규칙: 결정적 게이트가 LLM 판단보다 우선). 형식 게이트와 같은 처리 —
@@ -385,7 +409,7 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
     res.verify = report
     if not report.ok:
         res.reason = f"사실 게이트 거부 — {report.reason}"
-        return res
+        return _remember(paths, key, files, res, commit, dry_run)
 
     # [중요] **쓰기 직전에 `related_classes` 를 스키마 형태로 맞춘다** (`#382`). 합성이 경로만
     #    내거나 `<이름>: 경로` 로 감싸면 파서가 **조용히 버린다** — 문서는 멀쩡하고 필드만 빈다
@@ -405,7 +429,7 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
     out.write_text(doc, encoding="utf-8")
     res.written = True
     res.elapsed_ms = int((time.monotonic() - t0) * 1000)
-    return res
+    return _remember(paths, key, files, res, commit, dry_run)
 
 
 def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = "",
@@ -435,12 +459,24 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
             f"컨텍스트 문서는 소스 한정이다(§5.2-E): "
             + ", ".join(outside[:5]) + (" ..." if len(outside) > 5 else ""))
     groups = group([f for f in files if (paths.repo / f).is_file()])
+    # 🔴 [중요] **거부된 그룹을 다시 끌어온다** (`#377` ⓑ). 사실/형식 게이트가 거부하면 기존
+    #    문서가 남고 커서는 전진하므로(`#375`) 다시 만들 계기가 **영영 없었다** — 파일이 있으니
+    #    아무도 모르고 RAG 는 옛 내용을 답한다. 변경이 없어도 보류분은 다시 시도한다.
+    #    [주의] **상한이 있는 재시도다** — 리포트 51 의 「같은 커밋을 하루 종일」을 만들지 않는다.
+    from . import pending as pending_mod
+    retried = 0
+    for pkey, pfiles in pending_mod.due(paths):
+        alive = [f for f in pfiles if (paths.repo / f).is_file()]
+        if alive and pkey not in groups:
+            groups[pkey] = alive
+            retried += 1
     # 🔴 **짝 파일을 채운다** (`#367`) — 변경분만 들어와도 판정은 그룹 전체를 본다
     groups = {k: complete_group(paths.repo, k, fs) for k, fs in groups.items()}
     if not groups:
         raise SynthError("살아 있는 소스 파일이 없다 (전부 삭제됐거나 경로가 틀렸다)")
 
     stats = Stats(groups=len(groups))
+    stats.retried = retried
     t0 = time.monotonic()
     consecutive = 0
     for i, (key, fs) in enumerate(sorted(groups.items()), 1):

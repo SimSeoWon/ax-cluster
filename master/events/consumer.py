@@ -431,6 +431,12 @@ def _synthesize(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
     r.synth_written = st.written
     r.synth_lost = st.lost
     r.synth_note = st.summary
+    # [중요] **보류·포기를 로그에 싣는다** (`#377`). 거부된 그룹은 다음 실행이 다시 시도하고,
+    #    상한을 넘으면 자동 재시도를 멈추는데 — **그 사실이 안 보이면 조용히 죽은 것과 같다.**
+    from ..context_synth import pending as _pending
+    _p = _pending.summary(paths)
+    if _p:
+        r.synth_note += " · " + _p
     if st.lost:
         # [중요] 어느 그룹이 유실됐는지 남긴다 — 숫자만으로는 다시 찾을 수 없다.
         for g in st.results:
