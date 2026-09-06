@@ -184,6 +184,39 @@ def test_cooldown_is_process_wide_and_never_approves():
     clear_cooldown()
 
 
+
+# ── `#379` 작성자와 같은 계열은 검증에서 뺀다 ────────────────────────────
+# 🔴 그러지 않으면 **자기가 쓴 것을 자기가 통과시킨다.** 종전에는 그 보장이 **우연**이었다 —
+#   층2 호출부가 하나뿐이고 거기 작성자가 로컬 모델 고정이라 상용 검증기와 자동으로 교차했다.
+#   작성 레인이 2026-09-06 에 `codex → agy → 로컬` 로 바뀌면서 그 우연이 깨질 수 있게 됐다.
+
+def test_author_family_is_excluded():
+    from layer2_verify import exclude_author, family_of
+    chain = [_backend("agy", "x"), _backend("claude", "y"), _backend("codex", "z")]
+    assert [n for n, _f in exclude_author(chain, "agy")] == ["claude", "codex"]
+    assert [n for n, _f in exclude_author(chain, "claude:opus")] == ["agy", "codex"]
+    # 로컬 작성분은 아무것도 빠지지 않는다 — 계열이 다르다
+    assert len(exclude_author(chain, "qwen2.5-coder:14b")) == 3
+    assert family_of("claude:sonnet") == "claude" and family_of("gemma4:e4b") == "local"
+
+
+def test_author_exclusion_can_block_and_says_why():
+    """[중요] 남는 백엔드가 없으면 **차단**이다 — 이 게이트의 기존 계약 그대로."""
+    clear_cooldown()
+    v = verify_files(_FILES, backends=[_backend("agy", f"- x\n{APPROVE}")], author_lane="agy")
+    assert v.failure is not None, "같은 계열만 남으면 통과시키면 안 된다"
+    assert any("같은 계열 제외" in w for w in v.warnings), v.warnings
+
+    # 교차가 되면 통과한다 — 그리고 무엇을 뺐는지 사유에 남는다
+    clear_cooldown()
+    v2 = verify_files(_FILES, backends=[_backend("agy", f"- x\n{APPROVE}"),
+                                        _backend("claude", f"- x\n{APPROVE}")],
+                      author_lane="agy")
+    assert v2.approved, v2.summary()
+    assert any("backend=claude" in w for w in v2.warnings), v2.warnings
+    assert any("같은 계열 제외" in w for w in v2.warnings), v2.warnings
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = 0

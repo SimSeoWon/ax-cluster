@@ -376,10 +376,37 @@ def clear_cooldown() -> None:
     _cooldown.clear()
 
 
+def family_of(lane: str) -> str:
+    """레인 이름 → **계열**. 상용 CLI 셋은 자기 이름, 그 밖(로컬 모델)은 `local` (`#379`).
+
+    [주의] `claude:opus` 처럼 모델이 붙어 와도 계열은 `claude` 다.
+    """
+    name = str(lane or "").strip().lower().split(":")[0]
+    return name if name in ("codex", "agy", "claude") else "local"
+
+
+def exclude_author(backends, author_lane: str) -> tuple:
+    """작성자와 **같은 계열**을 검증 백엔드에서 뺀다 (`#379`).
+
+    🔴 [중요] 그러지 않으면 **자기가 쓴 것을 자기가 통과시킨다.** 종전에는 이 보장이
+    **우연**이었다 — 층2 를 부르는 자리가 하나뿐이고(`work/generate.dispatch`) 거기 작성자가
+    로컬 모델 고정이라 상용 검증기와 자동으로 교차했다. 작성 레인이 바뀌면(2026-09-06 부터
+    `codex → agy → 로컬`) 그 우연이 깨진다 — 구조로 바꾼다.
+    [주의] 로컬 작성분은 상용 아무나로 검증한다 — 계열이 다르므로 아무것도 빠지지 않는다.
+    """
+    fam = family_of(author_lane)
+    if fam == "local":
+        return tuple(backends)
+    return tuple((n, f) for n, f in backends if family_of(n) != fam)
+
+
 def verify_files(files: list[tuple[str, str]], *, timeout: int = TIMEOUT_SEC,
-                 backends=None, declarations: str = "",
+                 backends=None, declarations: str = "", author_lane: str = "",
                  cooldown_sec: int = COOLDOWN_SEC) -> Verdict:
     """층2 검증 실행. `files=[(상대경로, 내용)]`.
+
+    `author_lane` — **누가 썼는가**. 같은 계열은 백엔드에서 빠진다(`#379`). 남는 것이
+    없으면 **차단**이다 — 이 게이트의 기존 계약 그대로(백엔드 부재 = fail-closed).
 
     백엔드를 순서대로 시도하되 **"응답이 없는 것"과 "판정을 못 낸 것"을 구분한다:**
     응답 자체가 없으면 다음 백엔드로 넘어가고, 응답은 왔는데 계약을 어겼으면 **거기서 차단**한다
@@ -391,7 +418,15 @@ def verify_files(files: list[tuple[str, str]], *, timeout: int = TIMEOUT_SEC,
     now = time.time()
     # `backends or BACKENDS` 로 쓰면 안 된다 — 빈 목록이 falsy 라 "백엔드 없음"이 조용히
     # 기본 체인으로 바뀐다. 호출자가 백엔드를 동적으로 계산해 빈 목록이 나온 경우 fail-open 이다.
-    for name, fn in (BACKENDS if backends is None else backends):
+    chain = BACKENDS if backends is None else backends
+    author_dropped = ""
+    if author_lane:
+        kept = exclude_author(chain, author_lane)
+        if len(kept) != len(chain):
+            author_dropped = (f"작성자와 같은 계열 제외(author={family_of(author_lane)}): "
+                              + ", ".join(n for n, _f in chain if (n, _f) not in kept))
+        chain = kept
+    for name, fn in chain:
         until = _cooldown.get(name, 0.0)
         if until > now:
             skipped.append(f"{name}(쿨다운 {until - now:.0f}초)")
@@ -406,10 +441,14 @@ def verify_files(files: list[tuple[str, str]], *, timeout: int = TIMEOUT_SEC,
         _cooldown.pop(name, None)         # 되살아났으면 쿨다운을 푼다
         v = parse_verdict(raw, backend=name)
         v.warnings.append(f"backend={name}")
+        if author_dropped:
+            v.warnings.append(author_dropped)
         if skipped:
             v.warnings.append("건너뜀: " + ", ".join(skipped))
         return v
     warn = [f"시도한 백엔드: {', '.join(attempted) or '없음'}"]
+    if author_dropped:
+        warn.append(author_dropped)
     if skipped:
         warn.append("건너뜀: " + ", ".join(skipped))
     return Verdict(approved=False, failure="no_backend", warnings=warn)

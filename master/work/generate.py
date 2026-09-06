@@ -281,5 +281,11 @@ def dispatch(paths: ProjectPaths, task_id: str, *, instruction: str, context: st
 
     name = target_file or f"{task_id}.cpp"
     verify = verifier or verify_files
-    d.verdict = verify([(name, d.generated.code)])
+    # [중요] **누가 썼는지 검증에 넘긴다** (`#379`) — 같은 계열이 자기 산출물을 통과시키지
+    #    않게. 이 경로의 작성자는 로컬 모델이라 지금은 아무것도 빠지지 않지만, 그 보장이
+    #    **우연이 아니라 구조**여야 한다(작성 레인은 2026-09-06 에 이미 한 번 바뀌었다).
+    try:
+        d.verdict = verify([(name, d.generated.code)], author_lane=model)
+    except TypeError:
+        d.verdict = verify([(name, d.generated.code)])    # 주입된 테스트 더블 호환
     return d
