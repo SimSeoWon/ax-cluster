@@ -10,6 +10,7 @@
     ⑥ 🔴 **막지 않는다** — 어떤 분기도 예외를 던지지 않고, 캐시가 깨져도 고지는 산다
     ⑦ PowerShell `ToString('o')` 소수점 7자리 파싱
     ⑧ 🔴 **리빌드 경로** — `ok → gone → 다시 켬` 이 다시 `ok` 가 되면 「붙음」이라고 거짓말한다
+    ⑨ 실증 로그 — **조용한 세션 시작도 남는다**(그게 「훅이 돌았다」의 증거다) · 바뀐 턴만 · 상한
 
 `python3 master/test_client_editor_mcp.py`  (순수 로직 — venv 불필요)
 """
@@ -236,6 +237,45 @@ def test_rebuild_cycle_never_says_attached():
             lis2.close()
 
 
+# ── ⑨ 실증 로그 ────────────────────────────────────────────────────────
+def _log_rows(cwd: Path):
+    f = cwd.joinpath(*EM.LOG_REL)
+    return [json.loads(x) for x in f.read_text(encoding="utf-8").splitlines() if x.strip()] \
+        if f.is_file() else []
+
+
+def test_log_makes_the_live_run_checkable():
+    """스냅샷은 **최신 상태 한 건**이라 전이가 안 남는다 — 실증은 이력이 있어야 한다."""
+    print("⑨ 실증 로그")
+    port = _free_port()
+    body = b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 29\r\n\r\n{"jsonrpc":"2.0","result":{}}'
+    with tempfile.TemporaryDirectory() as d:
+        cwd = _proj(Path(d), port)
+        lis = Listener(respond=body, port=port)
+        try:
+            check("붙어 있으면 세션 시작이 조용하다",
+                  EM.notice(_payload(cwd, "SessionStart")) is None)
+            rows = _log_rows(cwd)
+            check("🔴 [중요] **조용해도 로그에는 남는다** — 그게 「훅이 돌았다」의 증거다",
+                  len(rows) == 1 and rows[0]["code"] == "ok" and rows[0]["spoke"] is False,
+                  str(rows))
+            check("어디를 쟀는지 남는다", rows[0]["where"].endswith(str(port)), str(rows[0]))
+            EM.notice(_payload(cwd, "UserPromptSubmit"))
+            check("판정이 그대로인 턴은 **안 남는다** (매 턴 적으면 그 자체가 소음)",
+                  len(_log_rows(cwd)) == 1, str(_log_rows(cwd)))
+        finally:
+            lis.close()
+        EM.notice(_payload(cwd, "UserPromptSubmit"))          # 에디터를 껐다
+        rows = _log_rows(cwd)
+        check("바뀐 턴은 남고 **직전 부류**도 함께 남는다",
+              len(rows) == 2 and rows[1]["code"] == "gone" and rows[1]["prev"] == "up", str(rows))
+
+        for _ in range(EM.LOG_MAX + 5):                        # 상한 — 사람 기계를 키우지 않는다
+            EM.log_event(cwd, {"event": "x", "session": "s", "code": "off", "spoke": False})
+        check(f"최근 {EM.LOG_MAX}줄만 남는다", len(_log_rows(cwd)) == EM.LOG_MAX,
+              str(len(_log_rows(cwd))))
+
+
 # ── ⑥ 막지 않는다 ──────────────────────────────────────────────────────
 def test_never_blocks():
     print("⑥ 어떤 경우에도 세션을 막지 않는다")
@@ -266,7 +306,8 @@ def test_ps_time_parsing():
 def main() -> int:
     for fn in (test_optin_gate, test_port_comes_from_file, test_verdict_table,
                test_snapshot_and_noise, test_stale_is_the_trap,
-               test_rebuild_cycle_never_says_attached, test_never_blocks,
+               test_rebuild_cycle_never_says_attached, test_log_makes_the_live_run_checkable,
+               test_never_blocks,
                test_ps_time_parsing):
         fn()
     total = PASS + FAIL

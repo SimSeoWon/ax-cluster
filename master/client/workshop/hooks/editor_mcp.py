@@ -69,6 +69,8 @@ from urllib.parse import urlsplit
 SERVER_NAME = "unreal-mcp"                 # `.mcp.json` 의 항목 이름 = 옵트인 스위치
 SNAPSHOT_REL = (".ax", "editor_mcp.json")  # `.ax/` 는 커밋되지 않는다 (spec.GITIGNORE_BODY)
 SNAPSHOT_MAX = 4                           # 한 체크아웃에 동시에 열린 세션 — 오래된 것부터 버린다
+LOG_REL = (".ax", "editor_mcp.log")        # 실증용 이력 — `.ax/` 라 커밋되지 않는다
+LOG_MAX = 200                              # 최근 N줄만 남긴다 (사람 기계에 파일을 키우지 않는다)
 TCP_TIMEOUT = 0.6                          # 루프백이라 거절은 즉시다 — 매 턴 도는 값
 MCP_TIMEOUT = 1.5                          # handshake 는 **세션 시작 1회**만
 PS_TIMEOUT = 4.0
@@ -244,6 +246,30 @@ def write_snapshot(cwd: Path, session_id: str, entry: dict) -> None:
         pass
 
 
+def log_event(cwd: Path, entry: dict) -> None:
+    """한 줄 append — **실증을 위해서다** (사용자 요청 2026-09-06).
+
+    [중요] **스냅샷만으로는 실증이 안 된다.** 그것은 세션별 *최신 상태* 한 건이라
+    전이(`붙음 → 꺼졌다 → 다시 켬 → 못 붙었다`)가 남지 않고, 세션 4개가 넘으면 지워진다.
+    사람이 평소대로 작업한 뒤 이 파일 하나로 전 구간을 되짚을 수 있어야 한다.
+
+    [주의] **바뀐 것만 적는다** — 세션 시작 1건 + 판정 부류가 바뀐 턴. 매 턴 적으면 그 자체가
+    소음이고, 사람의 기계에 파일만 키운다.
+    [중요] **실패해도 삼킨다** — 로그 때문에 고지가 죽으면 본말이 뒤집힌다.
+    """
+    path = cwd.joinpath(*LOG_REL)
+    row = json.dumps({"ts": time.strftime("%Y-%m-%d %H:%M:%S"), **entry}, ensure_ascii=False)
+    try:
+        prev = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    except OSError:
+        prev = []
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join([*prev, row][-LOG_MAX:]) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 # ── 판정 — 순수 함수 (`.venv` 없이 테스트된다) ──────────────────────────
 def verdict(live, at_start) -> str:
     """`live` 지금(True/False/None=MCP 아님) · `at_start` 세션 시작에(True/False/None=모름)."""
@@ -311,6 +337,8 @@ def notice(data: dict):
         # 지금이 곧 세션 시작이다 — 추정할 것이 없다
         code = verdict(live, live is True)
         write_snapshot(cwd, sid, {"at_start": live is True, "last": CLASS[code]})
+        log_event(cwd, {"event": "SessionStart", "session": sid[:8], "code": code,
+                        "spoke": code != "ok", "where": f"{host}:{port}"})
         # [중요] **정상은 조용하다** (사용자 결정 2026-09-06). 이 파일의 원래 규약이 그것이고
         #    (`pending_works.py`: *"세션마다 「없음」을 찍는 것은 소음이다"*), 「붙음」에서만
         #    그 규약을 어기고 있었다. 위험한 넷만 말한다 — **스냅샷은 그대로 남긴다**(조용해도
@@ -338,6 +366,9 @@ def notice(data: dict):
     #    재빌드 할때 연결 끊어질꺼 아니야"*). 다시 켠 뒤의 정답은 `stale` — `/mcp reconnect`.
     at_start = False if code == "gone" else at_start
     write_snapshot(cwd, sid, {"at_start": at_start, "last": CLASS[code]})
+    log_event(cwd, {"event": str(data.get("hook_event_name") or "?"), "session": sid[:8],
+                    "code": code, "prev": (snap or {}).get("last"), "spoke": True,
+                    "where": f"{host}:{port}"})
     return line(code, host, port)
 
 
