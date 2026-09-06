@@ -9,6 +9,7 @@
     ⑤ 매 턴 같은 말을 하지 않는다 — 판정이 바뀐 턴에만 낸다
     ⑥ 🔴 **막지 않는다** — 어떤 분기도 예외를 던지지 않고, 캐시가 깨져도 고지는 산다
     ⑦ PowerShell `ToString('o')` 소수점 7자리 파싱
+    ⑧ 🔴 **리빌드 경로** — `ok → gone → 다시 켬` 이 다시 `ok` 가 되면 「붙음」이라고 거짓말한다
 
 `python3 master/test_client_editor_mcp.py`  (순수 로직 — venv 불필요)
 """
@@ -134,6 +135,8 @@ def test_verdict_table():
     check("MCP 응답이 아니다 → not_mcp", EM.verdict(None, True) == "not_mcp")
     check("모르면 단정하지 않는다 → unknown", EM.verdict(True, None) == "unknown")
     # [중요] 처방이 바뀌었다 — 세션 재시작이 아니라 `/mcp reconnect` 가 먼저다 (2026-09-06)
+    check("문구는 **사람에게 요청**하는 형태다 (슬래시 명령은 세션이 못 친다)",
+          "요청한다" in EM.line("stale", "h", 1) and "요청한다" in EM.line("gone", "h", 1))
     check("stale 문구가 **재연결 명령**을 말한다", EM.RECONNECT in EM.line("stale", "h", 1))
     check("세션 재시작은 **차선**으로만 나온다", "그래도 도구가 안 보이면" in EM.line("stale", "h", 1))
     check("gone 문구가 리빌드 흐름을 말한다 — 켜는 것만으로는 안 붙는다",
@@ -150,7 +153,8 @@ def test_snapshot_and_noise():
         with tempfile.TemporaryDirectory() as d:
             cwd = _proj(Path(d), lis.port)
             first = EM.notice(_payload(cwd, "SessionStart"))
-            check("세션 시작에 한 줄 — 붙음", first is not None and "붙음" in first, str(first))
+            # [중요] 정상은 조용하다 (사용자 결정 2026-09-06) — 그래도 스냅샷은 남아야 한다
+            check("🔴 붙어 있으면 **아무 말도 하지 않는다**", first is None, str(first))
             snap = EM.read_snapshot(cwd, "s1")
             check("스냅샷에 `at_start=True` 가 적힌다", bool(snap and snap["at_start"]), str(snap))
             check("[중요] 다음 턴엔 침묵한다 (판정이 그대로다)",
@@ -161,7 +165,8 @@ def test_snapshot_and_noise():
             gone = EM.notice(_payload(cwd, "UserPromptSubmit"))
             check("🔴 상태가 바뀐 턴에는 말한다 — gone",
                   gone is not None and "꺼졌다" in gone, str(gone))
-            check("그 다음 턴은 다시 침묵",
+            # [중요] 다음 턴의 판정은 `off` 지만 사람에게는 **같은 사실**이다 — 부류로 묶는다
+            check("그 다음 턴은 다시 침묵 (gone 과 off 는 같은 부류)",
                   EM.notice(_payload(cwd, "UserPromptSubmit")) is None)
 
             check("[중요] 남의 세션 스냅샷을 빌려 쓰지 않는다",
@@ -198,6 +203,39 @@ def test_stale_is_the_trap():
             lis.close()
 
 
+# ── ⑧ 리빌드 경로 ──────────────────────────────────────────────────────
+def test_rebuild_cycle_never_says_attached():
+    """🔴 C++ 리빌드가 이 기능의 기본 경로다 — 에디터를 닫고 빌드하고 다시 켠다.
+
+    그때 이 세션의 MCP 연결은 **죽고 돌아오지 않는다.** 다시 켠 것을 `ok` 로 읽으면
+    **「붙음」이라고 거짓말**하게 된다 (사용자 지적 2026-09-06).
+    """
+    print("⑧ 🔴 리빌드 — 껐다 켠 뒤에 「붙음」이라고 말하면 안 된다")
+    port = _free_port()
+    body = b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 29\r\n\r\n{"jsonrpc":"2.0","result":{}}'
+    with tempfile.TemporaryDirectory() as d:
+        cwd = _proj(Path(d), port)
+        lis = Listener(respond=body, port=port)
+        try:
+            check("세션 시작엔 붙어 있었다 (조용하다)",
+                  EM.notice(_payload(cwd, "SessionStart")) is None)
+        finally:
+            lis.close()                                    # ← 빌드하려고 에디터를 닫았다
+        gone = EM.notice(_payload(cwd, "UserPromptSubmit"))
+        check("에디터가 꺼진 것을 말한다", gone is not None and "꺼졌다" in gone, str(gone))
+
+        lis2 = Listener(respond=body, port=port)           # ← 빌드 끝, 다시 켰다
+        try:
+            back = EM.notice(_payload(cwd, "UserPromptSubmit"))
+            check("🔴 **「붙음」이라고 하지 않는다**",
+                  back is not None and "붙음" not in back, str(back))
+            check("🔴 못 붙었다고 말하고 **재연결을 사람에게 요청**한다",
+                  back is not None and "이 세션은 못 붙었다" in back and EM.RECONNECT in back,
+                  str(back))
+        finally:
+            lis2.close()
+
+
 # ── ⑥ 막지 않는다 ──────────────────────────────────────────────────────
 def test_never_blocks():
     print("⑥ 어떤 경우에도 세션을 막지 않는다")
@@ -227,7 +265,8 @@ def test_ps_time_parsing():
 
 def main() -> int:
     for fn in (test_optin_gate, test_port_comes_from_file, test_verdict_table,
-               test_snapshot_and_noise, test_stale_is_the_trap, test_never_blocks,
+               test_snapshot_and_noise, test_stale_is_the_trap,
+               test_rebuild_cycle_never_says_attached, test_never_blocks,
                test_ps_time_parsing):
         fn()
     total = PASS + FAIL

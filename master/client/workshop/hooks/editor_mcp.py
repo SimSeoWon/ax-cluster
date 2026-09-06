@@ -34,10 +34,22 @@ MCP 는 **세션 시작에 한 번만** 붙고 자동 재시도가 없다(원전
 기동은 사람의 결정이고, 원격 기동은 설계하지 않는다 — `win-main-33.md`: *"Unreal MCP 의 수명은
 에디터의 수명 → 대화형 세션이 소유한다. 원격 절차를 설계하지 마라 — 그런 것은 없다"*.
 
+## [중요] 정상은 조용하다 — 위험한 것만 말한다 (사용자 결정 2026-09-06)
+
+`붙음`(ok)이면 **아무 말도 하지 않는다.** 이 파일의 이웃(`pending_works.py`)이 이미 그 규약이고
+(*"세션마다 「없음」을 찍는 것은 소음이다"*), 「붙음」에서만 그것을 어기고 있었다.
+[주의] 조용해도 **스냅샷은 남긴다** — 뒤 턴의 판정 근거가 그것이다.
+
 ## [주의] 매 턴 같은 말을 하지 않는다
 
-`pending_works.py` 는 `SessionStart` 와 `UserPromptSubmit` 양쪽에 등록돼 있다. 세션 시작에는
-한 줄을 내고, 그 뒤로는 **판정이 바뀐 턴에만** 낸다(`#364` 의 교훈 — 닿아야 하지만 반복은 소음).
+`pending_works.py` 는 `SessionStart` 와 `UserPromptSubmit` 양쪽에 등록돼 있다. 세션 시작에 한 번,
+그 뒤로는 **판정이 바뀐 턴에만** 낸다(`#364` 의 교훈 — 닿아야 하지만 반복은 소음).
+
+## 🔴 [중요] 리빌드가 이 기능의 기본 경로다
+
+C++ 을 고치면 **에디터를 닫고 → 빌드하고 → 다시 켠다.** 그때 이 세션의 연결은 **죽고 돌아오지
+않는다.** 그래서 `gone` 을 한 번 본 세션은 그 뒤로 `ok` 가 될 수 없다(스냅샷의 `at_start` 를
+내린다) — 다시 켠 뒤의 정답은 `stale` 이고, 처방은 **사람에게 `/mcp reconnect` 를 요청**하는 것이다.
 """
 from __future__ import annotations
 
@@ -70,6 +82,9 @@ PREFIX = "[에디터 MCP]"
 #    (사용자 지적 2026-09-06) 연결은 하루에도 여러 번 끊긴다. 그때마다 세션을 새로 여는 것은
 #    맥락을 버리는 일이고, 재연결은 한 줄이다.
 RECONNECT = "/mcp reconnect unreal-mcp"
+# [중요] **그 명령은 사람이 친다** — 슬래시 명령은 세션이 실행할 수 없다. 그래서 문구는
+#    전부 「사람에게 요청한다」로 쓴다(사용자 지시 2026-09-06: *"사람은 자리에 앉아있는거니까
+#    대신 요청하면 될듯해 — 에디터를 켜달라거나 MCP를 다시 시작해달라거나"*).
 
 # 원전 런북 §12-5 의 그 본문 — 포트를 잡은 것이 **정말 MCP 서버인지** 가른다
 _INIT_BODY = {
@@ -241,6 +256,13 @@ def verdict(live, at_start) -> str:
     return "ok" if at_start else "stale"
 
 
+# [중요] **중복 판정은 「부류」로 한다** — `gone`(방금 꺼졌다)과 `off`(꺼져 있다)는 사람에게
+#    같은 사실이다. 코드로 비교하면 에디터를 닫은 다음 턴에 **같은 말을 두 번** 하게 된다
+#    (실측 2026-09-06: 테스트가 잡았다). 문구는 정확한 것을 내고, **말할지 말지는 부류로** 정한다.
+CLASS = {"ok": "up", "off": "down", "gone": "down",
+         "stale": "detached", "not_mcp": "not_mcp", "unknown": "unknown"}
+
+
 def line(code: str, host: str, port: int) -> str:
     where = f"{host}:{port}"
     if code == "ok":
@@ -248,23 +270,26 @@ def line(code: str, host: str, port: int) -> str:
                 f"애셋·블루프린트 작업 가능.")
     if code == "off":
         return (f"{PREFIX} 꺼짐 — 에디터가 안 떠 있다 ({where}). 소스·빌드·로그 작업은 영향 "
-                f"없다. 애셋·BP·입력 매핑을 건드려야 하면 **사람에게 에디터 기동을 요청**하고 "
-                f"(임의로 켜지 않는다), 켜진 뒤 `{RECONNECT}` 로 이 세션에 붙인다.")
+                f"없다. 애셋·BP·입력 매핑을 건드려야 하면 **사람에게 「에디터를 켜 주세요」**라고 "
+                f"요청하고(임의로 켜지 않는다), 켜진 뒤 **「`{RECONNECT}` 를 실행해 주세요」**까지 "
+                f"함께 부탁한다.")
     if code == "stale":
-        return (f"{PREFIX} 🔴 열렸지만 **이 세션은 못 붙었다** — 에디터가 세션 시작 뒤에 떴다 "
+        return (f"{PREFIX} 🔴 열렸지만 **이 세션은 못 붙었다** — 에디터가 세션 시작 뒤에 떴거나 "
+                f"중간에 다시 떴다 "
                 f"({where}). MCP 는 세션 시작에 한 번만 붙고 **자동 재시도가 없다**. "
-                f"애셋·BP 작업이 필요하면 **`{RECONNECT}`** — 그래도 도구가 안 보이면 그때 "
-                f"세션을 다시 열어 달라고 요청한다.")
+                f"애셋·BP 작업이 필요하면 **사람에게 「`{RECONNECT}` 를 실행해 주세요」**라고 "
+                f"요청한다 — 그래도 도구가 안 보이면 그때 세션을 다시 열어 달라고 부탁한다.")
     if code == "gone":
         return (f"{PREFIX} 에디터가 꺼졌다 — 세션 시작엔 떠 있었다 ({where}). `unreal-mcp` 도구는 "
-                f"목록에 남아 있어도 **호출은 실패한다**. 리빌드 등으로 다시 켠 뒤에는 "
-                f"**`{RECONNECT}`** 가 필요하다 (에디터만 켜면 붙지 않는다).")
+                f"목록에 남아 있어도 **호출은 실패한다**. 리빌드로 다시 켠 뒤에는 사람에게 "
+                f"**「`{RECONNECT}` 를 실행해 주세요」**라고 요청한다 — **에디터만 켜면 붙지 "
+                f"않는다.**")
     if code == "not_mcp":
         return (f"{PREFIX} [주의] 포트는 열렸는데 MCP 응답이 아니다 ({where}) — 다른 프로세스가 "
                 f"그 포트를 잡고 있을 수 있다. 원전 런북 §12 순서로 확인할 것.")
     return (f"{PREFIX} 열려 있다 ({where}) — 다만 **이 세션이 붙었는지는 모른다**(세션 시작 "
             f"기록이 없다). 애셋·BP 작업 전에 `mcp__unreal-mcp__*` 도구가 이 세션에 있는지 "
-            f"확인하고, 없으면 `{RECONNECT}`.")
+            f"확인하고, 없으면 사람에게 `{RECONNECT}` 실행을 요청한다.")
 
 
 # ── 훅에서 부르는 자리 ──────────────────────────────────────────────────
@@ -285,8 +310,12 @@ def notice(data: dict):
     if at_startup:
         # 지금이 곧 세션 시작이다 — 추정할 것이 없다
         code = verdict(live, live is True)
-        write_snapshot(cwd, sid, {"at_start": live is True, "last": code})
-        return line(code, host, port)
+        write_snapshot(cwd, sid, {"at_start": live is True, "last": CLASS[code]})
+        # [중요] **정상은 조용하다** (사용자 결정 2026-09-06). 이 파일의 원래 규약이 그것이고
+        #    (`pending_works.py`: *"세션마다 「없음」을 찍는 것은 소음이다"*), 「붙음」에서만
+        #    그 규약을 어기고 있었다. 위험한 넷만 말한다 — **스냅샷은 그대로 남긴다**(조용해도
+        #    뒤 턴의 판정 근거는 있어야 한다).
+        return None if code == "ok" else line(code, host, port)
 
     snap = read_snapshot(cwd, sid)
     if snap is not None:
@@ -299,9 +328,16 @@ def notice(data: dict):
         at_start = None
 
     code = verdict(live, at_start)
-    if snap is not None and snap.get("last") == code:
-        return None                       # 매 턴 같은 말을 하지 않는다
-    write_snapshot(cwd, sid, {"at_start": at_start, "last": code})
+    if snap is not None and snap.get("last") == CLASS[code]:
+        return None                       # 매 턴 같은 **부류**를 두 번 말하지 않는다
+
+    # 🔴 [중요] **에디터가 한 번 꺼지면 이 세션의 연결은 죽는다** — 다시 켜도 안 돌아온다.
+    #    그래서 `gone` 을 본 순간 `at_start` 를 내린다. 안 그러면 리빌드 흐름
+    #    (`ok → gone → 다시 켬`)이 **다시 `ok`** 로 판정돼 **「붙음」이라고 거짓말한다.**
+    #    그것이 이 기능이 가장 자주 만나는 경로다(사용자 지적 2026-09-06: *"코드 변경해서
+    #    재빌드 할때 연결 끊어질꺼 아니야"*). 다시 켠 뒤의 정답은 `stale` — `/mcp reconnect`.
+    at_start = False if code == "gone" else at_start
+    write_snapshot(cwd, sid, {"at_start": at_start, "last": CLASS[code]})
     return line(code, host, port)
 
 
