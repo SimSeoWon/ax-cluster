@@ -280,12 +280,46 @@ def test_project_symbols_are_not_ghosts() -> None:
           not V.verify(doc, sources=src, declared=["ANSPropsBase"], known=set()).ok)
 
 
+def test_prose_acronyms_are_not_identifiers() -> None:
+    """🔴 **산문 약어는 유령이 아니다** (사용자 결정 2026-09-07).
+
+    실측: `NSPlayerController` 는 코드가 매핑 컨텍스트를 **실제로** 다루는데
+    (`UInputMappingContext`·`DefaultMappingContexts`·`AddMappingContext`) 주석에는 약어로만
+    적혀 있었다(`// only add IMCs`). 요약이 "IMC 를 등록한다"고 쓴 것은 **사실**인데 게이트가
+    유령으로 잡아 문서를 **세 번 거부**했다(`#377` 이 그 값을 쟀다).
+    """
+    print("\n[약어] 산문 약어(IMC·HUD)는 식별자가 아니다")
+    SRC = LIC + ("// only add IMCs for local player controllers\n"
+                 "class ANSPlayerController { void SetupInputComponent(); };\n"
+                 "UInputMappingContext* DefaultMappingContexts;\n")
+    r = V.verify(_doc("ANSPlayerController 는 IMC 를 등록한다.",
+                      related="ANSPlayerController: P.h"),
+                 sources={"P.h": SRC}, declared=["ANSPlayerController"])
+    check("🔴 `IMC` 를 유령으로 잡지 않는다", r.ok and "IMC" not in r.ghosts,
+          f"ok={r.ok} ghosts={r.ghosts}")
+    check("  2~4자 순수 대문자만 면제 (`AI`·`HUD`·`JSON`)",
+          not V.identifiers("AI HUD JSON"), str(V.identifiers("AI HUD JSON")))
+    check("[중요] UE 실물 이름은 그대로 식별자다 (게이트가 죽지 않았다)",
+          V.identifiers("UObject EOld FBox") == {"UObject", "EOld", "FBox"},
+          str(V.identifiers("UObject EOld FBox")))
+    check("  5자 이상 대문자는 그대로 후보다", "SPAWNER" in V.identifiers("SPAWNER"),
+          str(V.identifiers("SPAWNER")))
+
+    # [주의] **대가를 회귀로 적어 둔다** — 지어낸 2~4자 약어는 이제 통과한다.
+    SRC2 = LIC + "// 예전엔 XYZ 를 썼다\nclass UThing { void Go(); };\n"
+    r2 = V.verify(_doc("UThing 은 XYZ 로 처리한다.", related="UThing: T.h"),
+                  sources={"T.h": SRC2}, declared=["UThing"])
+    check("[주의] 그 대가 — 주석에만 있는 2~4자 약어는 통과한다 (알고 연 구멍)",
+          r2.ok, f"ok={r2.ok} ghosts={r2.ghosts}")
+
+
 if __name__ == "__main__":
     for fn in (test_license_header_not_identifier, test_cross_file_live_wins,
                test_ue_prefix_substring, test_real_violation_still_caught,
                test_mention_uses_unfiltered_set,
                test_korean_particles_do_not_hide_identifiers,
-               test_project_symbols_are_not_ghosts):
+               test_project_symbols_are_not_ghosts,
+               test_prose_acronyms_are_not_identifiers):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_verify_gate: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

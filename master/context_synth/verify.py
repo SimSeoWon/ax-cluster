@@ -118,10 +118,25 @@ def strip_comments(src: str) -> tuple[str, str]:
 #    (회귀 칸이 잡았다). 그래서 세 모양을 인정한다: 밑줄 · 내부 대문자 · 대문자 2개 이상.
 _SHAPED_RE = re.compile(r"_|[a-z0-9][A-Z]|[A-Z].*[A-Z]")
 
+# 🔴 [중요] **산문 약어는 식별자가 아니다** (사용자 결정 2026-09-07, `#377`/`#382` 축).
+#    위 모양 규칙은 「대문자 2개 이상」도 식별자로 보는데, 그러면 **`IMC`·`HUD`·`RPC` 같은
+#    약어**가 걸린다. 실측 사례: `NSPlayerController` 는 코드가 매핑 컨텍스트를 **실제로**
+#    다루는데(`UInputMappingContext`·`DefaultMappingContexts`·`AddMappingContext`) 주석에는
+#    약어로만(`// only add IMCs`) 적혀 있었다. 요약이 "IMC 를 등록한다"고 쓴 것은 **사실**인데
+#    게이트가 유령으로 잡아 **문서를 세 번 거부**했다.
+#    규칙: **소문자·숫자·밑줄이 없는 2~4자 순수 대문자**만 면제한다.
+#    [주의] UE 실물 이름은 이 조건에 안 걸린다 — 클래스는 접두 뒤가 소문자(`UObject`),
+#    매크로는 5자 이상이거나 밑줄이 있다(`UENUM`·`UCLASS`·`GENERATED_BODY`·`UPROPERTY`).
+#    [주의] **대가를 알고 연다** — 지어낸 2~4자 대문자 약어는 통과한다. 반대편 대가는
+#    문서 하나를 영영 잃는 것이고(`#377` 이 그 값을 쟀다), 이 게이트는 **문서**를 지키지
+#    코드를 지키지 않는다. 코드 쪽 판정(층1·층2)은 이 규칙과 무관하다.
+_PROSE_ACRONYM_RE = re.compile(r"^[A-Z]{2,4}$")
+
 
 def identifiers(text: str) -> set[str]:
     return {m for m in _IDENT_RE.findall(text or "")
-            if m not in _NOISE and _SHAPED_RE.search(m)}
+            if m not in _NOISE and _SHAPED_RE.search(m)
+            and not _PROSE_ACRONYM_RE.match(m)}
 
 
 # 저작권·라이선스 머리말을 알아보는 표지. [중요] **파일 첫 주석 블록만** 대상으로 본다 —
