@@ -9,7 +9,7 @@
     ⑤ 매 턴 같은 말을 하지 않는다 — 판정이 바뀐 턴에만 낸다
     ⑥ 🔴 **막지 않는다** — 어떤 분기도 예외를 던지지 않고, 캐시가 깨져도 고지는 산다
     ⑦ PowerShell `ToString('o')` 소수점 7자리 파싱
-    ⑧ 🔴 **리빌드 경로** — `ok → gone → 다시 켬` 이 다시 `ok` 가 되면 「붙음」이라고 거짓말한다
+    ⑧ 🔴 **리빌드 경로** — 붙어 있던 연결은 껐다 켜도 **스스로 회복한다**(실측 75초)
     ⑨ 실증 로그 — **조용한 세션 시작도 남는다**(그게 「훅이 돌았다」의 증거다) · 바뀐 턴만 · 상한
 
 `python3 master/test_client_editor_mcp.py`  (순수 로직 — venv 불필요)
@@ -137,11 +137,15 @@ def test_verdict_table():
     check("모르면 단정하지 않는다 → unknown", EM.verdict(True, None) == "unknown")
     # [중요] 처방이 바뀌었다 — 세션 재시작이 아니라 `/mcp reconnect` 가 먼저다 (2026-09-06)
     check("문구는 **사람에게 요청**하는 형태다 (슬래시 명령은 세션이 못 친다)",
-          "요청한다" in EM.line("stale", "h", 1) and "요청한다" in EM.line("gone", "h", 1))
+          "요청한다" in EM.line("stale", "h", 1) and "요청" in EM.line("off", "h", 1))
     check("stale 문구가 **재연결 명령**을 말한다", EM.RECONNECT in EM.line("stale", "h", 1))
     check("세션 재시작은 **차선**으로만 나온다", "그래도 도구가 안 보이면" in EM.line("stale", "h", 1))
-    check("gone 문구가 리빌드 흐름을 말한다 — 켜는 것만으로는 안 붙는다",
-          EM.RECONNECT in EM.line("gone", "h", 1) and "에디터만 켜면 붙지 않는다" in EM.line("gone", "h", 1))
+    # 🔴 실측이 뒤집은 자리 — 붙어 있던 연결은 껐다 켜면 스스로 회복한다(75초 중단에도)
+    check("🔴 gone 은 **재연결을 요구하지 않는다** — 다시 켜기만 하면 된다",
+          EM.RECONNECT not in EM.line("gone", "h", 1)
+          and "다시 켜기만 하면 된다" in EM.line("gone", "h", 1))
+    check("stale 만이 재연결이 필요한 경우다 (세션 시작에 서버가 없었다)",
+          EM.RECONNECT in EM.line("stale", "h", 1) and "몇 초 만에 포기" in EM.line("stale", "h", 1))
     check("off 문구가 **임의 기동 금지**를 말한다", "임의로 켜지 않는다" in EM.line("off", "h", 1))
 
 
@@ -205,13 +209,18 @@ def test_stale_is_the_trap():
 
 
 # ── ⑧ 리빌드 경로 ──────────────────────────────────────────────────────
-def test_rebuild_cycle_never_says_attached():
-    """🔴 C++ 리빌드가 이 기능의 기본 경로다 — 에디터를 닫고 빌드하고 다시 켠다.
+def test_rebuild_cycle_recovers_by_itself():
+    """🔴 리빌드는 **사람이 할 일이 없다** — 붙어 있던 연결은 스스로 회복한다.
 
-    그때 이 세션의 MCP 연결은 **죽고 돌아오지 않는다.** 다시 켠 것을 `ok` 로 읽으면
-    **「붙음」이라고 거짓말**하게 된다 (사용자 지적 2026-09-06).
+    실측 2026-09-06 (가짜 MCP 서버, `claude` 2.1.263):
+
+        세션 시작에 붙어 있었다  3초 중단 ✅ · **75초 중단 ✅** (재연결 명령 없이 새 프로세스에)
+        세션 시작에 없었다      2초 ✅ · 10 · 20 · 55 · 170초 ❌ 도구없음
+
+    [주의] 한때 이 테스트는 **반대**를 요구했다 — 「다시 켜도 안 붙는다」고 단정하고
+    `gone` 뒤에 `at_start` 를 내렸다(`4dfd75b`). 재고 나서 되돌렸다.
     """
-    print("⑧ 🔴 리빌드 — 껐다 켠 뒤에 「붙음」이라고 말하면 안 된다")
+    print("⑧ 🔴 리빌드 — 껐다 켜면 스스로 회복한다 (사람이 할 일 없음)")
     port = _free_port()
     body = b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 29\r\n\r\n{"jsonrpc":"2.0","result":{}}'
     with tempfile.TemporaryDirectory() as d:
@@ -223,16 +232,21 @@ def test_rebuild_cycle_never_says_attached():
         finally:
             lis.close()                                    # ← 빌드하려고 에디터를 닫았다
         gone = EM.notice(_payload(cwd, "UserPromptSubmit"))
-        check("에디터가 꺼진 것을 말한다", gone is not None and "꺼졌다" in gone, str(gone))
+        check("꺼진 것은 말한다 — 지금은 호출이 실패하니까",
+              gone is not None and "꺼졌다" in gone, str(gone))
+        check("🔴 다만 **재연결을 요구하지 않는다** (다시 켜기만 하면 된다)",
+              gone is not None and EM.RECONNECT not in gone, str(gone))
 
         lis2 = Listener(respond=body, port=port)           # ← 빌드 끝, 다시 켰다
         try:
             back = EM.notice(_payload(cwd, "UserPromptSubmit"))
-            check("🔴 **「붙음」이라고 하지 않는다**",
-                  back is not None and "붙음" not in back, str(back))
-            check("🔴 못 붙었다고 말하고 **재연결을 사람에게 요청**한다",
-                  back is not None and "이 세션은 못 붙었다" in back and EM.RECONNECT in back,
-                  str(back))
+            check("🔴 다시 켜면 **붙은 것으로 본다** (못 붙었다고 하지 않는다)",
+                  back is None or "못 붙었다" not in back, str(back))
+            check("🔴 복구를 **말한다** — 직전에 「호출이 실패한다」고 알렸으니까",
+                  back is not None and "다시 붙었다" in back, str(back))
+            check("사람이 한 일이 없다는 것까지 적는다",
+                  back is not None and "사람이 한 일은 없다" in back, str(back))
+            check("그 다음 턴은 침묵", EM.notice(_payload(cwd, "UserPromptSubmit")) is None)
         finally:
             lis2.close()
 
@@ -306,7 +320,7 @@ def test_ps_time_parsing():
 def main() -> int:
     for fn in (test_optin_gate, test_port_comes_from_file, test_verdict_table,
                test_snapshot_and_noise, test_stale_is_the_trap,
-               test_rebuild_cycle_never_says_attached, test_log_makes_the_live_run_checkable,
+               test_rebuild_cycle_recovers_by_itself, test_log_makes_the_live_run_checkable,
                test_never_blocks,
                test_ps_time_parsing):
         fn()
