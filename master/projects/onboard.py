@@ -143,6 +143,38 @@ def _probe_hook(reg: Registry, name: str) -> tuple:
     return True, str(hook)
 
 
+# 🔴 [중요] **LFS skip 은 config 로 남아야 한다** (`#376`, 실측 2026-09-06).
+#    종전에는 클론 그 순간의 환경변수(`GIT_LFS_SKIP_SMUDGE=1`) 하나뿐이었다. 그것은 **그 명령에만
+#    듣고 저장소 config 에 남지 않는다** — 그래서 이후 색인기가 도는 모든 `pull`/`checkout` 이
+#    smudge 를 켠 채 돌았고, NS 가 `.uasset` 을 건드린 첫 커밋에서 색인이 멈췄다
+#    (*"Error downloading object … Smudge error"*, 커서가 하루치 밀릴 뻔했다).
+#    [주의] 미러는 **포인터만** 있으면 된다 — 트윈의 범위는 source-only 이고 `Content/**` 는
+#    색인 제외다. 실물을 받으면 137MB+ 를 헛되이 내려받는다.
+LFS_SKIP_CONFIG = (
+    ("filter.lfs.smudge", "git-lfs smudge --skip -- %f"),
+    ("filter.lfs.process", "git-lfs filter-process --skip"),
+    ("filter.lfs.required", "false"),
+)
+
+
+def lfs_skip_missing(repo) -> tuple:
+    """`LFS_SKIP_CONFIG` 중 **없거나 값이 다른** 키들. 빈 튜플이면 박혀 있다."""
+    out = []
+    for key, want in LFS_SKIP_CONFIG:
+        rc, got = _git(repo, "config", "--local", "--get", key)
+        if rc != 0 or got.strip() != want:
+            out.append(key)
+    return tuple(out)
+
+
+def apply_lfs_skip(repo) -> None:
+    """멱등 — 이미 박혀 있으면 같은 값을 다시 쓴다."""
+    for key, want in LFS_SKIP_CONFIG:
+        rc, out = _git(repo, "config", "--local", key, want)
+        if rc != 0:
+            raise ConfigError(f"LFS skip 설정 실패({key}): {out[:200]}")
+
+
 def _probe_clone(paths) -> tuple:
     """[주의] 「디렉토리가 있다」로 판정하지 않는다 — 빈 디렉토리를 통과시킨다."""
     if not paths.repo.is_dir():
@@ -151,6 +183,12 @@ def _probe_clone(paths) -> tuple:
         return False, f"git 저장소가 아니다: {paths.repo}"
     if not paths.source.is_dir():
         return False, f"`{SOURCE_SUBDIR}/` 가 없다: {paths.source} — 색인할 소스가 없다"
+    # [중요] **탐지가 아니라 선언 확인이다** (`#376` ⑵). 「LFS 를 받으려 했나」를 잡으면 이미
+    #    늦다 — 워킹트리가 반쯤 적용된 뒤다. 있어야 할 config 가 있는지만 본다.
+    miss = lfs_skip_missing(paths.repo)
+    if miss:
+        return False, (f"LFS skip 설정이 없다({', '.join(miss)}) — pull 이 smudge 로 죽는다 "
+                       f"(`#376`). `--confirm` 이 보정한다(클론은 그대로 둔다)")
     return True, str(paths.repo)
 
 
@@ -448,6 +486,11 @@ def do_clone(paths, cfg) -> str:
     """
     notes = [f"safe.directory {_ensure_safe_directory(cfg.bare_path)}"]
     if paths.repo.exists() and any(paths.repo.iterdir()):
+        # [중요] **이미 클론된 트윈은 보정만 한다** (`#376` ⑵). 다시 클론하지 않는다 —
+        #    빠진 것이 설정 하나뿐인데 137MB 를 다시 받을 이유가 없고, 덮는 것은 위험하다.
+        if (paths.repo / ".git").exists() and lfs_skip_missing(paths.repo):
+            apply_lfs_skip(paths.repo)
+            return f"LFS skip 설정 보정(멱등) — 클론은 그대로 둔다: {paths.repo}"
         raise ConfigError(f"이미 무언가 있다: {paths.repo} — 덮지 않는다")
     # [중요] **LFS smudge 를 끈다** (실측 2026-08-22, NS 라이브 런에서 잡혔다).
     #    NS 의 `.gitattributes` 가 `*.uasset filter=lfs` 라, 로컬 bare 경로에서 클론하면 LFS
@@ -461,7 +504,9 @@ def do_clone(paths, cfg) -> str:
                    env_extra={"GIT_LFS_SKIP_SMUDGE": "1"})
     if rc != 0:
         raise ConfigError(f"클론 실패: {out[:300]}")
-    notes.append("LFS smudge 생략(포인터만 — Content/ 는 색인 제외)")
+    # [중요] 환경변수는 **이 클론 한 번**에만 듣는다 — 이후 pull 까지 살리려면 config 다 (`#376`)
+    apply_lfs_skip(paths.repo)
+    notes.append("LFS smudge 생략(포인터만 — Content/ 는 색인 제외) · config 로 지속")
     rc, out = _git(paths.repo, "remote", "set-url", "--push", "origin", PUSH_DISABLED)
     if rc != 0:
         raise ConfigError(f"origin push 차단 실패: {out[:200]}")

@@ -185,6 +185,22 @@ from ..canary import (  # noqa: E402,F401
 )
 
 
+def _ff_reason(repo: Path, out: str, run) -> str:
+    """fast-forward 가 깨진 사유를 **관측으로** 가른다 (`#376` ⑶).
+
+    갈라졌다고 말하려면 근거가 둘 중 하나여야 한다 — 미러에만 있는 커밋이 세어지거나,
+    git 자신이 그렇게 말했거나(`Not possible to fast-forward`). 둘 다 아니면 **단정하지 않고**
+    원문을 낸다(LFS smudge 실패가 그 자리였다).
+    """
+    rc, cnt = run(repo, "rev-list", "--count", "FETCH_HEAD..HEAD")
+    n = int(cnt.strip()) if rc == 0 and cnt.strip().isdigit() else -1
+    if n > 0:
+        return f"미러가 갈라졌다 (미러에만 {n}커밋): {out[:300]}"
+    if "Not possible to fast-forward" in out or "diverged" in out:
+        return f"미러가 갈라졌다: {out[:300]}"
+    return f"[주의] 갈라진 것이 아니다 (미러에만 있는 커밋 {max(n, 0)}건) — 원문: {out[:400]}"
+
+
 def context_digest(paths: ProjectPaths) -> str:
     """`context/` 의 상태 지문. **내용이 바뀌었는지만** 알면 되므로 크기·mtime 으로 충분하다.
 
@@ -514,7 +530,11 @@ def process_event(ev: Event, *, registry: Registry | None = None,
     #    항상 fast-forward 여야 하고, **아니라면 그건 알아야 할 사고**다. 조용히 덮어쓰지 않는다.
     rc, out = run(paths.repo, "merge", "--ff-only", "FETCH_HEAD")
     if rc != 0 and "Already up to date" not in out:
-        r.error = f"fast-forward 실패 — 미러가 갈라졌다: {out[:200]}"
+        # 🔴 [중요] **사유를 라벨로 덮지 않는다** (`#376` ⑶). 종전에는 무조건
+        #    *"미러가 갈라졌다"* 로 적었는데, 2026-09-06 의 실패는 **갈라짐이 아니라 LFS
+        #    smudge 실패**였다(`origin/main..HEAD` 0건). 그 라벨을 믿고 조사하면 엉뚱한
+        #    곳을 판다 — 라벨은 **재서** 붙이고, 못 재면 원문만 낸다.
+        r.error = f"fast-forward 실패 — {_ff_reason(paths.repo, out, run)}"
         return r
 
     rc, out = run(paths.repo, "rev-parse", "HEAD")

@@ -233,6 +233,21 @@ def main() -> int:
     r6 = process_event(ev(), registry=reg, git=git_diverged, reindex=lambda p: 1)
     check("오류로 잡는다", not r6.ok and "갈라졌다" in r6.error, r6.error)
 
+    # 🔴 [중요] **갈라지지 않은 실패를 「갈라졌다」로 적지 않는다** (`#376` ⑶).
+    #    실측 2026-09-06: LFS smudge 실패였는데 라벨이 갈라짐이라, 그 말을 믿고 조사하면
+    #    엉뚱한 곳을 판다(`origin/main..HEAD` 는 0건이었다).
+    def git_smudge(repo, *args):
+        if args[0] == "merge":
+            return 1, ("Downloading Content/Input/Actions/IA_Interact.uasset (1.7 KB)\n"
+                       "Error downloading object: IA_Interact.uasset (346bd89): Smudge error")
+        if args[0] == "rev-list":
+            return 0, "0"                       # 미러에만 있는 커밋 0건 = 갈라진 적 없다
+        return 0, "b" * 40
+
+    r6b = process_event(ev(), registry=reg, git=git_smudge, reindex=lambda p: 1)
+    check("🔴 갈라졌다고 하지 않는다", not r6b.ok and "갈라졌다" not in r6b.error, r6b.error)
+    check("🔴 원문(Smudge error)을 그대로 싣는다", "Smudge error" in r6b.error, r6b.error)
+
     def git_uptodate(repo, *args):
         if args[0] == "merge":
             return 1, "Already up to date."

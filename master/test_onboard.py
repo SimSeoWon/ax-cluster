@@ -309,10 +309,44 @@ def test_conventions_step_is_the_manifest_source() -> None:
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_lfs_skip_persists_in_config() -> None:
+    """🔴 LFS skip 은 **클론 순간의 환경변수가 아니라 config** 여야 한다 (`#376`).
+
+    실측 2026-09-06: 환경변수는 그 명령에만 듣고 config 에 안 남아, 이후 색인기의 `pull` 이
+    smudge 를 켠 채 돌다 죽었다(*"Smudge error"*). 커서가 멈춰 RAG 가 커밋을 못 봤다.
+    [중요] 판정은 **선언 확인**이다 — 「LFS 를 받으려 했나」를 잡으면 이미 늦다.
+    """
+    print("\n[LFS] 미러는 포인터 전용 — 설정이 지속되고, 없으면 잡히고, 보정된다 (`#376`)")
+    import subprocess
+
+    from master.projects import onboard as O                              # noqa: N806
+    tmp = Path(tempfile.mkdtemp(prefix="ax-lfs-"))
+    repo = tmp / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+
+    miss = O.lfs_skip_missing(repo)
+    check("설정이 없으면 **세 키를 이름으로** 답한다", len(miss) == 3, str(miss))
+
+    O.apply_lfs_skip(repo)
+    check("보정하면 빈 튜플", O.lfs_skip_missing(repo) == (), str(O.lfs_skip_missing(repo)))
+    got = subprocess.run(["git", "-C", str(repo), "config", "--local", "--get",
+                          "filter.lfs.smudge"], capture_output=True, text=True).stdout.strip()
+    check("  smudge 가 `--skip` 이다", got == "git-lfs smudge --skip -- %f", got)
+    O.apply_lfs_skip(repo)
+    check("멱등 — 두 번 걸어도 그대로", O.lfs_skip_missing(repo) == ())
+
+    # 값이 **다르면** 없는 것으로 본다 (사람이 되돌린 경우)
+    subprocess.run(["git", "-C", str(repo), "config", "--local", "filter.lfs.smudge",
+                    "git-lfs smudge -- %f"], check=True)
+    check("[중요] 값이 다르면 잡는다 (있다/없다가 아니라 **같은가**)",
+          "filter.lfs.smudge" in O.lfs_skip_missing(repo), str(O.lfs_skip_missing(repo)))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     for fn in (test_step_source_is_spec, test_uninitialized, test_registered_only,
                test_guard_step_is_the_write_surface, test_synth_stamps_commit, test_live_modularstage,
-               test_conventions_step_is_the_manifest_source):
+               test_conventions_step_is_the_manifest_source, test_lfs_skip_persists_in_config):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_onboard: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)
