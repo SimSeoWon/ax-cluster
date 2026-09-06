@@ -100,6 +100,8 @@ class GroupResult:
     elapsed_ms: int = 0
     verify: "verify_mod.Report | None" = None
     dry_ok: bool = False      # dry-run 에서 검증까지 통과했나
+    related_fixed: int = 0            # `related_classes` 를 스키마 형태로 고친 줄 수 (`#382`)
+    related_unresolved: list = field(default_factory=list)   # 못 푼 항목 — 지어내지 않는다
 
     @property
     def passed(self) -> bool:
@@ -384,6 +386,14 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
     if not report.ok:
         res.reason = f"사실 게이트 거부 — {report.reason}"
         return res
+
+    # [중요] **쓰기 직전에 `related_classes` 를 스키마 형태로 맞춘다** (`#382`). 합성이 경로만
+    #    내거나 `<이름>: 경로` 로 감싸면 파서가 **조용히 버린다** — 문서는 멀쩡하고 필드만 빈다
+    #    (실측 NS 27%). [주의] 이름을 **지어내지 않는다** — 클래스 그래프가 못 풀면 그 줄을 그대로
+    #    두고 세어서 사유에 싣는다. 게이트가 아니라 **정규화**다: 거부하면 문서를 통째로 잃는다.
+    from . import related as related_mod
+    doc, _fixed, _unres = related_mod.normalize_doc(doc, paths)
+    res.related_fixed, res.related_unresolved = _fixed, list(_unres)
 
     res.chars = len(doc)
     if dry_run:
