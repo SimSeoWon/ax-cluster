@@ -1136,9 +1136,30 @@ def workshop_files(role: str, project: str = "") -> tuple:
             if not d.is_dir():
                 continue
             for f in sorted(d.rglob("*")):
-                if f.is_file():
+                if f.is_file() and not is_build_residue(f):
                     out[f".claude/{f.relative_to(root).as_posix()}"] = f
     return tuple(sorted(out.items()))
+
+
+# [중요] **파이썬이 만드는 부산물은 배달하지 않는다** (`#374`, 2026-09-06).
+# `hooks/` 는 이제 **import 되는 모듈**을 담는다(`pending_works.py` → `editor_mcp.py`).
+# 그 순간 이 디렉토리 옆에 `__pycache__/*.pyc` 가 생기고, 위 `rglob("*")` 는 그것까지
+# 쓸어 담아 **사람의 `.claude/hooks/` 로 배달한다.** 실측 2026-09-06: 테스트가 훅을 import
+# 하자 `.pyc` 가 목록에 들어왔고, `workshop_text` 가 그 바이트를 utf-8 로 읽다
+# `UnicodeDecodeError` 로 죽었다 — 즉 **배달 자체가 그 자리에서 실패한다.**
+# [주의] 만드는 쪽도 막아 뒀지만(`sys.dont_write_bytecode`), 그것은 **우리 코드에서만** 듣는다.
+#    사람이 손으로 `python hooks/editor_mcp.py` 를 한 번 돌리면 다시 생긴다. 여기가 마지막 문이다.
+# [중요] **거르는 것은 부산물뿐이다** — 확장자 허용 목록으로 좁히지 않는다. 새 자산 종류가
+#    조용히 빠지는 편이 부산물이 섞이는 것보다 나쁘고, 텍스트가 아닌 것이 남으면
+#    `workshop_text` 가 **시끄럽게** 실패한다(그게 맞는 실패다).
+_RESIDUE_DIRS = ("__pycache__",)
+_RESIDUE_SUFFIXES = (".pyc", ".pyo")
+
+
+def is_build_residue(path: Path) -> bool:
+    """배달 목록에서 뺄 부산물인가 — 파이썬 바이트코드와 그 캐시 디렉토리."""
+    return (any(part in _RESIDUE_DIRS for part in path.parts)
+            or path.suffix.lower() in _RESIDUE_SUFFIXES)
 
 
 def workshop_text(src: Path) -> str:

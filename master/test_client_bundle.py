@@ -478,6 +478,30 @@ def test_workshop_delivery() -> None:
     check("[중요] CLAUDE.md 는 파일째 배달하지 않는다 (마커 병합 대상)",
           ".claude/CLAUDE.md" not in rels)
 
+    # [중요] **파이썬 부산물은 배달 목록에 못 들어온다** (`#374`). `hooks/` 는 import 되는
+    #    모듈을 담게 됐고(`pending_works.py` → `editor_mcp.py`), 그러면 `__pycache__` 가
+    #    생긴다. 실측 2026-09-06: 그것이 목록에 들어와 `workshop_text` 가 utf-8 로 읽다
+    #    죽었다 — **거르지 않으면 배달이 그 자리에서 실패한다.**
+    #    [주의] 흉내가 아니라 **진짜 만들어 본다** — 판정을 파일 없이 재면 rglob 계약이 빠진다.
+    residue = bundle.workshop_dir() / "hooks" / "__pycache__"
+    made = not residue.exists()
+    try:
+        residue.mkdir(parents=True, exist_ok=True)
+        pyc = residue / "editor_mcp.cpython-312.pyc"
+        pyc.write_bytes(b"\x00\x9d\xf0\r\r\n")          # 실제 .pyc 처럼 utf-8 이 아니다
+        after = [r for r, _s in bundle.workshop_files("requester")]
+        check("[중요] `__pycache__` 가 있어도 배달 목록에 안 들어온다",
+              not any("__pycache__" in r or r.endswith(".pyc") for r in after),
+              str([r for r in after if "pycache" in r or r.endswith(".pyc")]))
+        check("그러면서 나머지 자산 수는 그대로다", len(after) == len(rels), f"{len(after)} vs {len(rels)}")
+        check("판정은 경로 하나로도 답한다", bundle.is_build_residue(pyc)
+              and not bundle.is_build_residue(bundle.workshop_dir() / "hooks" / "editor_mcp.py"))
+    finally:
+        for p in sorted(residue.rglob("*"), reverse=True):
+            p.unlink()
+        if made:
+            residue.rmdir()
+
     # ③ 개행 — 정본이 CRLF 인 파일은 CRLF 로 읽혀야 한다 (read_bytes 계약)
     crlf_src = [src for _r, src in ws if b"\r\n" in src.read_bytes()]
     if crlf_src:
