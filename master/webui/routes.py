@@ -504,6 +504,20 @@ def api_tags(root: Path, paths=None) -> dict:
     return {"tags": ordered, "total_tags": len(ordered)}
 
 
+def _tag_list(v) -> list:
+    """태그를 **배열**로 (`#380`). 화면이 `(r.tags || []).map(...)` 을 부른다.
+
+    🔴 [중요] **벡터 저장소 메타는 태그를 콤마 문자열로 갖는다** — 리스트를 못 넣기 때문이다.
+    원전은 내보낼 때 쪼갠다(`search_routes.py:91` `[t for t in meta.get("tags","").split(",") if t]`).
+    우리는 그 한 줄을 안 옮겨 **원문 문자열을 그대로 흘렸고**, 화면에서 `.map is not a function`
+    으로 죽었다(사용자 실측 2026-09-06: 문서를 클릭하면 *"Search failed"*).
+    [주의] 이미 리스트인 경로(`api_documents` 는 프론트매터에서 바로 읽는다)도 있으므로 둘 다 받는다.
+    """
+    if isinstance(v, (list, tuple)):
+        return [str(t) for t in v if str(t).strip()]
+    return [t.strip() for t in str(v or "").split(",") if t.strip()]
+
+
 def api_search(paths, query: str, limit: int = 5) -> dict:
     """융합 검색(벡터+BM25). [중요] 우리 `ContextSearch` 를 그대로 쓴다.
 
@@ -527,7 +541,7 @@ def api_search(paths, query: str, limit: int = 5) -> dict:
     return {"query": query, "count": len(hits),
             "results": [{"file": h.file_id, "score": round(h.rrf_score, 4),
                          "source": h.source, "category": (h.meta or {}).get("category", ""),
-                         "tags": (h.meta or {}).get("tags", []),
+                         "tags": _tag_list((h.meta or {}).get("tags")),
                          "body": h.excerpt} for h in hits]}
 
 

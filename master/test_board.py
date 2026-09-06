@@ -366,6 +366,16 @@ def test_blank_query_lists_documents() -> None:
         check("limit 이 듣는다", R.api_documents(paths, 1)["count"] == 1)
         check("문서가 없으면 빈 목록 (예외가 아니다)",
               R.api_documents(tmp_paths(with_src=False)[0], 10)["count"] == 0)
+
+        # 🔴 [중요] **태그는 언제나 배열이다** (`#380`). 벡터 저장소 메타는 콤마 문자열로 갖는데
+        #    원전은 내보낼 때 쪼갠다 — 그 한 줄을 안 옮겨 화면이 `.map is not a function` 으로
+        #    죽었다(사용자 실측: 문서를 클릭하면 *"Search failed"*).
+        check("문자열 메타를 배열로 쪼갠다", R._tag_list("A,B, C") == ["A", "B", "C"],
+              str(R._tag_list("A,B, C")))
+        check("이미 배열이면 그대로", R._tag_list(["A", "B"]) == ["A", "B"])
+        check("빈 값은 빈 배열 (None 도)", R._tag_list(None) == [] and R._tag_list("") == [])
+        check("[주의] 빈 조각은 버린다 — 화면에 빈 태그 칩이 생긴다",
+              R._tag_list("A,,B,") == ["A", "B"], str(R._tag_list("A,,B,")))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
