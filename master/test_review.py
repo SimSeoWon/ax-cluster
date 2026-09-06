@@ -547,6 +547,11 @@ def test_finalize_confirm_pushes_and_then_cleanup_is_possible():
               "메인에 머지해야지\"*). 종전 「해결」은 이 호출 자체가 사람의 승인으로만 "
               "돈다는 사실을 안 셈한 것이었다",
               note.get("status_name") == "완료", str(note.get("status_name")))
+        # 🔴 [중요] **진행률도 채운다** (`#366`). 상태만 바꾸면 닫힌 이슈가 **0%** 로 남아
+        #    마일스톤 진행률이 거짓이 된다 — 실측 2026-09-06: 고쳐서 커밋까지 한 일감들이
+        #    「완료」인데 0% 였다.
+        check("🔴 마감이 진행률을 100 으로 채운다 (닫힌 이슈가 0% 로 남지 않게)",
+              note.get("done_ratio") == 100, str(note.get("done_ratio")))
         check("노트에 머지 커밋이 실린다", d.merge_commit in (note.get("notes") or ""))
         check("[중요] 사람의 미커밋 작업이 그대로다",
               (repo / "Content" / "BP_Live.uasset").read_text(encoding="utf-8") == live_before)

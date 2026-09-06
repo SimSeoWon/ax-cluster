@@ -321,6 +321,12 @@ def _issue_row(iss: dict, base: str) -> dict:
         "author": (iss.get("author") or {}).get("name", ""),
         "fixed_version": (iss.get("fixed_version") or {}).get("name", ""),
         "updated_on": iss.get("updated_on"),
+        # [중요] **진행률을 목록에도 싣는다** (`#366`). 없으면 목록으로 감사할 때 전부
+        #    `None` 으로 보여 **닫힌 이슈가 0% 인 것처럼** 읽힌다(실측 2026-09-07: 그 착시로
+        #    100건을 「진행률 미달」로 셀 뻔했다 — 개별 조회로는 전부 100 이었다).
+        #    [주의] 원전 필드 구성에 없던 것을 **더한** 것이다. 화면·소비자는 모르는 키를
+        #    무시하므로 안전하고, 없으면 관측이 거짓이 된다.
+        "done_ratio": iss.get("done_ratio"),
         "url": f"{base}/issues/{iss.get('id')}",
     }
 

@@ -809,6 +809,12 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
                                           {"issue_id": int(d.redmine_issue_id),
                                            "notes": d.redmine_note,
                                            "status_name": "완료",
+                                           # [중요] **진행률도 채운다** (`#366`). 상태만 바꾸면
+                                           #    닫힌 이슈가 **0%** 로 남아 마일스톤 진행률이
+                                           #    거짓이 된다(실측 2026-09-06: 오늘 고쳐 커밋한
+                                           #    일감들이 「완료」인데 0% 였다). 마감은 `main`
+                                           #    머지가 끝난 자리이므로 100 이다.
+                                           "done_ratio": 100,
                                            "work_id": work_id})
                     d.redmine_posted = True
                 except Exception as e:                      # noqa: BLE001
