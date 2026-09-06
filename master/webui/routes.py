@@ -518,6 +518,73 @@ def _tag_list(v) -> list:
     return [t.strip() for t in str(v or "").split(",") if t.strip()]
 
 
+def _related_classes(paths, file_id: str):
+    """컨텍스트 문서 프론트매터의 `related_classes` (`#381`).
+
+    [주의] **색인 메타에는 없다** — 실측(2026-09-06) 메타 키는 `category·content_hash·file_id·
+    has_body·path·tags` 뿐이다. 원전은 Chroma 메타에 JSON 으로 넣어 뒀지만 우리 색인은 그러지
+    않으므로 **디스크의 프론트매터**에서 읽는다(반환 행 ≤50개라 비싸지 않다).
+    """
+    try:
+        text = (paths.context / file_id).read_text(encoding="utf-8", errors="replace")
+    except Exception:                                        # noqa: BLE001
+        return {}                       # 보강이 검색을 죽이지 않는다 (위 `_included_by` 와 같은 이유)
+    return (documents.parse_frontmatter(text) or {}).get("related_classes") or {}
+
+
+def _included_by(paths, file_id: str, cap: int = 5) -> list:
+    """이 문서가 서술하는 소스를 `#include` 하는 쪽 (`#381`).
+
+    원전은 `search_routes.py:312` 에서 `dependency_graph.db` 를 직접 열어 역방향 맵을 만든다.
+    [중요] **우리는 그 판정을 다시 적지 않는다** — `graph.dependency.dependents` 가 같은 일을
+    하고(basename 매칭까지 같다), 판정이 두 벌이면 언젠가 한쪽만 고쳐진다.
+    [주의] 검색 행은 **문서**(`…/Foo.md`)이고 그래프는 **소스**(`…/Foo.h|.cpp`)다 — stem 으로 잇는다.
+    """
+    # [중요] **보강이 검색을 죽이지 않는다** — 이것은 화면의 한 줄이고, 없으면 그 줄만 안 뜬다.
+    #    (테스트가 잡았다: 그래프 경로가 없는 `paths` 에서 `AttributeError` 로 결과 전체가 죽었다.)
+    try:
+        from ..graph import dependency as dep
+        if not dep.exists(paths):
+            return []                   # 그래프가 없으면 빈 배열 — 화면은 그 줄을 안 그린다
+        stem = Path(file_id).stem
+        out: list = []
+        for ext in (".h", ".cpp"):
+            for f in dep.dependents(paths, stem + ext, depth=1):
+                if f not in out and Path(f).stem != stem:
+                    out.append(f)
+        return sorted(out)[:cap]
+    except Exception:                                        # noqa: BLE001
+        return []
+
+
+def _search_row(paths, h) -> dict:
+    """검색 결과 행 — **원전 스키마** (`#381`).
+
+    [중요] `similarity` 는 **지어내지 않는다.** `Hit.similarity` 가 진짜 벡터 유사도이고
+    BM25 단독이면 `0.0` 이다 — 그때는 `None` 으로 낸다. 화면은 `similarity != null && > 0` 일
+    때만 퍼센트를 쓰고 아니면 `source` 를 보이므로(`vector+bm25` 등) 그 폴백이 정답이다.
+    [주의] 우리 `rrf_score` 는 융합 순위 점수라 **유사도가 아니다** — 그것을 `similarity` 로
+    내보내면 화면이 「1.6%」를 보여 준다. 별도 키(`score`)로 남긴다.
+    [주의] `co_changed` 는 **원전 서버에도 없다**(화면만 읽는다) — 만들지 않는다.
+    """
+    meta = h.meta or {}
+    return {
+        "file": h.file_id,
+        "similarity": round(h.similarity, 4) if h.similarity else None,
+        "category": meta.get("category", ""),
+        "tags": _tag_list(meta.get("tags")),
+        "related_classes": _related_classes(paths, h.file_id),
+        "content_hash": meta.get("content_hash", ""),
+        "content_preview": h.excerpt,
+        "included_by": _included_by(paths, h.file_id),
+        # 우리 확장 — 융합 순위와 채널 (원전에도 `source`·`bm25_score` 가 있다)
+        "source": h.source,
+        "score": round(h.rrf_score, 4),
+        "bm25_score": round(h.bm25_score, 4) if h.bm25_score else 0.0,
+        "body": h.excerpt,               # [주의] 하위호환 — 우리 소비자가 이 이름을 쓴다
+    }
+
+
 def api_search(paths, query: str, limit: int = 5) -> dict:
     """융합 검색(벡터+BM25). [중요] 우리 `ContextSearch` 를 그대로 쓴다.
 
@@ -539,10 +606,7 @@ def api_search(paths, query: str, limit: int = 5) -> dict:
     from ..context_search import search_log
     search_log.log_search(paths, query=query, hits=hits, caller="web_ui")
     return {"query": query, "count": len(hits),
-            "results": [{"file": h.file_id, "score": round(h.rrf_score, 4),
-                         "source": h.source, "category": (h.meta or {}).get("category", ""),
-                         "tags": _tag_list((h.meta or {}).get("tags")),
-                         "body": h.excerpt} for h in hits]}
+            "results": [_search_row(paths, h) for h in hits]}
 
 
 def api_rebuild() -> dict:

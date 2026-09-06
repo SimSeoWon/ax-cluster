@@ -380,9 +380,54 @@ def test_blank_query_lists_documents() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+
+# ── ⑤ 검색 결과 행이 원전 스키마다 (`#381`) ─────────────────────────────────────
+
+class _FakeHit:
+    def __init__(self, **kw):
+        self.file_id = kw.get("file_id", "Source/A/Foo.md")
+        self.source = kw.get("source", "vector")
+        self.rrf_score = kw.get("rrf_score", 0.0164)
+        self.similarity = kw.get("similarity", 0.6089)
+        self.bm25_score = kw.get("bm25_score", 0.0)
+        self.meta = kw.get("meta", {"category": "C/D", "tags": "A,B",
+                                    "content_hash": "deadbeef"})
+        self.excerpt = kw.get("excerpt", "본문 발췌")
+
+
+def test_search_row_matches_origin_schema() -> None:
+    """🔴 원전 결과 행 키를 갖는다 (`#381`). 프론트엔드를 그대로 쓰므로 **모양을 맞추는 쪽이 우리**다.
+
+    [중요] `similarity` 를 **지어내지 않는다** — BM25 단독(0.0)이면 `None` 이고, 화면은 그때
+    `source` 를 보인다. 우리 `rrf_score` 는 융합 순위라 유사도가 아니다(넣으면 「1.6%」가 뜬다).
+    """
+    print("\n[⑤] 검색 행이 원전 스키마다 (`#381`)")
+    from master.webui import routes as R
+    paths, root = tmp_paths()
+    try:
+        row = R._search_row(paths, _FakeHit())
+        for k in ("file", "similarity", "category", "tags", "related_classes",
+                  "content_hash", "content_preview"):
+            check(f"원전 키 `{k}` 가 있다", k in row, str(sorted(row)))
+        check("  tags 는 배열", row["tags"] == ["A", "B"], str(row["tags"]))
+        check("  similarity 는 **진짜 벡터 유사도**", row["similarity"] == 0.6089, str(row["similarity"]))
+        check("🔴 BM25 단독이면 similarity 는 None (화면이 source 로 폴백)",
+              R._search_row(paths, _FakeHit(similarity=0.0))["similarity"] is None)
+        check("  [주의] 융합 점수를 similarity 로 내보내지 않는다 — 별도 키 `score`",
+              row["score"] == 0.0164 and row["similarity"] != row["score"], str(row))
+        check("  하위호환 `body` 도 남는다 (우리 소비자가 쓴다)", row["body"] == "본문 발췌")
+        check("  그래프가 없으면 included_by 는 빈 배열", row["included_by"] == [],
+              str(row["included_by"]))
+        check("[주의] `co_changed` 는 만들지 않는다 — **원전 서버에도 없다**(화면만 읽는다)",
+              "co_changed" not in row, str(sorted(row)))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (test_board_lists_md_not_ontology, test_detail_carries_source_contents,
                test_korean_names_allowed_traversal_blocked, test_blank_query_lists_documents,
+               test_search_row_matches_origin_schema,
                test_management_docs_are_never_written, test_update_refuses_empty,
                test_activate_flips_status_and_inherits_tags,
                test_delete_archives_instead_of_removing, test_writes_are_atomic,
