@@ -330,6 +330,7 @@ def test_failure_reasons_are_never_silent() -> None:
         return None, "rc=1: 쿼터 초과"
 
     saved = l2.WHY_BACKENDS
+    # [주의] 체인 길이·이름에 묶지 않는다 — 2026-09-06 에 codex 가 1순위로 들어왔다
     l2.WHY_BACKENDS = [("agy", dead_missing), ("claude", dead_rc)]
     try:
         RG.commercial_chat("x", timeout=1)
@@ -370,12 +371,32 @@ def test_synth_paths_log_their_gaps() -> None:
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+
+def test_generation_chain_is_codex_first_but_verification_is_not() -> None:
+    """🔴 **쓰는 일은 코덱스, 보는 일은 아니다** (사용자 결정 2026-09-06).
+
+    생성(리뷰 응답·계획·레시피·게시판 채팅)에는 교차 계열 조건이 없어 codex 가 1순위다.
+    [중요] **검증(`BACKENDS`)에는 codex 를 넣지 않는다** — 작성 레인이 codex 이므로 넣는 순간
+    자기가 쓴 것을 자기가 통과시킨다.
+    """
+    print("\n[체인] 생성은 codex 1순위 · 검증은 codex 없음 (2026-09-06)")
+    from master import layer2_verify as l2
+    from master.work import lanes as LN
+    names = [n for n, _ in l2.WHY_BACKENDS]
+    check("🔴 생성 체인 1순위가 codex", names[0] == "codex", str(names))
+    check("  그다음 agy, 마지막 claude", names[1:] == ["agy", "claude"], str(names))
+    vnames = [n for n, _ in l2.BACKENDS]
+    check("🔴 [중요] 검증 체인에는 codex 가 없다 (교차 계열)", "codex" not in vnames, str(vnames))
+    check("  그리고 작성 레인 1순위는 codex 다 — 그래서 검증에 넣으면 안 된다",
+          LN.DEFAULT_LANES[0] == "codex", str(LN.DEFAULT_LANES))
+
 def main() -> int:
     for fn in (test_trivial_detection, test_author_exclusion_skips_before_llm,
                test_format_validation_and_retry, test_consumer_canaries_format_invalid,
                test_report_is_parseable_by_origin_collector, test_prompt_carries_the_contract,
                test_consumer_wiring_failure_goes_to_canary,
-               test_failure_reasons_are_never_silent, test_synth_paths_log_their_gaps):
+               test_failure_reasons_are_never_silent, test_synth_paths_log_their_gaps,
+               test_generation_chain_is_codex_first_but_verification_is_not):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_review_gen: {PASS}/{total} 통과")

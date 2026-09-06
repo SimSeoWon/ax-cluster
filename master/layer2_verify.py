@@ -144,9 +144,10 @@ def call_agy_why(prompt: str, *, timeout: int = TIMEOUT_SEC) -> tuple:
 
 # ── 🔴 Codex CLI — **요청자(`.33`)에만 있다** (2026-09-05) ──────────────────────────────
 #
-# [중요] **다른 둘과 달리 원격 호출이다.** `claude`·`agy` 는 마스터에 설치돼 있지만 codex 는
-#    node 가 필요하고 마스터에는 node 가 없다(실측). `.33` 에 깔려 있고 구독 로그인도 그쪽이라
-#    SSH 로 부른다 — 레인의 계약(프롬프트를 주면 텍스트를 돌려준다)은 그대로다.
+# [주의] **종전 서술 「마스터엔 node 가 없어 원격 전용」은 폐기됐다** (2026-09-05 `f5d4dfa` —
+#    마스터에 깔았다. 실측 2026-09-06: `codex-cli 0.153.4` at `~/.local/bin/codex`).
+#    지금은 **로컬 우선**이고 없을 때만 `.33` 을 SSH 로 부른다 — 아래 `call_codex_why` 참조.
+#    레인의 계약(프롬프트를 주면 텍스트를 돌려준다)은 로컬·원격 어느 쪽이든 같다.
 #
 # 실측된 함정 넷 (2026-09-05, 전부 밟고 얻었다):
 #   ① 인용부호가 SSH→PowerShell→cmd 를 거치며 깨진다 → **프롬프트는 파일로** 보낸다
@@ -315,7 +316,21 @@ def missing_exe_hint(name: str = "") -> str:
     return (f"{what}실행파일을 PATH 에서 찾지 못했다 — 리눅스: 서비스는 로그인 셸을 거치지 "
             "않으므로 `~/.local/bin` 이 PATH 에 없다 (시스템 경로에 두는 것이 해법)")
 
-WHY_BACKENDS = [("agy", call_agy_why), ("claude", call_claude_why)]
+def call_codex_text_why(prompt: str, *, timeout: int = TIMEOUT_SEC) -> tuple:
+    """`call_codex_why` 의 3-튜플을 체인 계약(`(본문, 사유)`)에 맞춘 어댑터."""
+    out, _events, why = call_codex_why(prompt, timeout=timeout)
+    return out, why
+
+
+# 🔴 [중요] **이 목록은 「생성」용이다 — 검증용 `BACKENDS` 와 다르다** (사용자 결정 2026-09-06).
+#    소비자는 `review_gen.commercial_chat`(리뷰 응답·계획·레시피·게시판 채팅)이고, 거기엔
+#    **교차 계열 조건이 없다**(작성물을 검사하는 자리가 아니라 새로 쓰는 자리다). 그래서
+#    codex 를 1순위로 둔다 — 클로드의 한도는 마스터 작업에 남긴다.
+#    [주의] **검증(`BACKENDS`)에는 codex 를 넣지 않는다.** 작성 레인이 codex 가 된 지금
+#    거기 codex 를 넣으면 **자기가 쓴 것을 자기가 통과시킨다**. 그 자리를 제대로 푸는 것은
+#    「작성 레인을 검증에 알려 주고 같은 계열을 배제」이고 별도 일감이다.
+WHY_BACKENDS = [("codex", call_codex_text_why), ("agy", call_agy_why),
+                ("claude", call_claude_why)]
 
 
 # [중요] **순서를 실측으로 확인했다** (2026-08-12, 소 2.2.1 · `bench_layer2.py`).
@@ -331,6 +346,9 @@ WHY_BACKENDS = [("agy", call_agy_why), ("claude", call_claude_why)]
 #   로컬은 층2 에 못 쓴다는 것이 실측으로 확인됐다 — *"검증에만 상용 토큰"* 모토가 추측이
 #   아니라 근거를 갖게 됐다. [주의] 35B 처럼 **정상 작업을 막는 게이트는 통과시키는 게이트보다
 #   나쁘다** — 그 판단은 사실 게이트에서 이미 내렸다.
+# 🔴 [중요] **검증 체인 — codex 를 넣지 않는다** (2026-09-06). 머리말의 *"작성자가 BC-250
+#    로컬 LLM 일 때 교차 계열이 자동 만족된다"* 는 전제가 **작성 레인이 codex 로 바뀌며 약해졌다**.
+#    지금은 `agy` 가 1순위라 대부분 교차가 유지되지만, **codex 를 여기 올리면 깨진다.**
 BACKENDS = [("agy", call_agy), ("claude", call_claude)]
 
 

@@ -229,9 +229,11 @@ def call_llm(prompt: str, *, timeout: int = 300) -> str | None:
 
     원전 `_call_llm_for_chat` 등가. 실패는 `None` — 호출자가 사유를 화면에 보인다.
     """
+    # [중요] **생성 체인을 쓴다** — 선언은 `layer2_verify.WHY_BACKENDS` 한 곳이다
+    #    (2026-09-06: codex → agy → claude). 여기 이름을 다시 적으면 선언이 두 벌이 된다.
     from .. import layer2_verify as L2
-    for fn in (L2.call_agy, L2.call_claude):
-        out = fn(prompt, timeout=timeout)
+    for _name, fn in L2.WHY_BACKENDS:
+        out, _why = fn(prompt, timeout=timeout)
         if out and out.strip():
             return out
     return None
