@@ -68,6 +68,7 @@ class ProjectResult:
     error: str = ""
     # ── 트윈 성장 (중 1.1 · 중 1.2) ──
     graph_notes: list[str] = field(default_factory=list)
+    mirror_note: str = ""       # 미러를 되돌렸으면 무엇을 버렸는지 (`#376` ⑷)
     synth_written: int = 0
     synth_lost: int = 0         # [중요] 문서가 안 생긴 그룹 수 = 그 커밋의 영구 유실
     synth_note: str = ""
@@ -97,6 +98,9 @@ class ProjectResult:
             parts.append(f"소스 {self.source_changed}")
         if self.graph_notes:
             parts.append("그래프 " + "·".join(self.graph_notes))
+        if self.mirror_note:
+            # [중요] 되돌린 것은 **반드시 보인다** — 조용한 파괴적 명령을 만들지 않는다
+            parts.append(self.mirror_note)
         if self.review_written:
             parts.append("리뷰 1")
         if self.synth_note:
@@ -183,6 +187,34 @@ def _git(repo: Path, *args: str, group: bool | None = None) -> tuple[int, str]:
 from ..canary import (  # noqa: E402,F401
     KIND_CONTEXT_MD_LOST, KIND_DOMAIN_INDEX_GAP, append_canary,
 )
+
+
+def _recover_mirror(repo: Path, run) -> str:
+    """더러워진 미러를 원격 상태로 되돌린다 — **되돌렸으면 사유 문자열**, 아니면 빈 문자열.
+
+    🔴 [중요] **조건을 재고 건다** (`#376` ⑷). 되돌리는 것은 `reset --hard` 라 파괴적이다:
+
+        미러에만 있는 커밋 0 · 워킹트리가 더럽다   → 되돌린다 (파생물이므로 잃을 것이 없다)
+        미러에만 있는 커밋 ≥ 1                    → **되돌리지 않는다.** 알아야 할 사고다
+        워킹트리가 깨끗하다                        → 할 일이 없다 (실패 사유가 다른 것이다)
+
+    [중요] **무엇을 버렸는지 센다** — 조용히 지우면 다음 사람이 무슨 일이 있었는지 모른다.
+    [주의] `git clean` 은 하지 않는다 — 추적 안 되는 파일까지 지우는 것은 이 사고를 푸는 데
+    필요하지 않았고(실측: 그 파일들은 들어오는 커밋의 것이라 reset 이 흡수했다) 범위가 넓다.
+    """
+    rc, dirty = run(repo, "status", "--porcelain")
+    if rc != 0 or not dirty.strip():
+        return ""
+    rc2, cnt = run(repo, "rev-list", "--count", "FETCH_HEAD..HEAD")
+    ahead = int(cnt.strip()) if rc2 == 0 and cnt.strip().isdigit() else -1
+    if ahead != 0:
+        return ""                       # 모르거나(-1) 앞서 있으면 손대지 않는다
+    lines = [ln for ln in dirty.splitlines() if ln.strip()]
+    rc3, out3 = run(repo, "reset", "--hard", "FETCH_HEAD")
+    if rc3 != 0:
+        return f"[주의] 미러 복구 실패 — {out3[:200]}"
+    return (f"[중요] 반쯤 적용된 미러를 되돌렸다 (`#376`) — 버린 워킹트리 변경 {len(lines)}건 "
+            f"(미러에만 있는 커밋 0 을 확인하고 실행): " + ", ".join(x.strip()[:40] for x in lines[:3]))
 
 
 def _ff_reason(repo: Path, out: str, run) -> str:
@@ -535,6 +567,18 @@ def process_event(ev: Event, *, registry: Registry | None = None,
     # [중요] `reset --hard` 가 아니라 `merge --ff-only` 다. 마스터는 이 클론에 커밋하지 않으므로
     #    항상 fast-forward 여야 하고, **아니라면 그건 알아야 할 사고**다. 조용히 덮어쓰지 않는다.
     rc, out = run(paths.repo, "merge", "--ff-only", "FETCH_HEAD")
+    if rc != 0 and "Already up to date" not in out:
+        # 🔴 [중요] **반쯤 적용된 미러를 되돌린다** (`#376` ⑷, 사용자 승인 2026-09-07).
+        #    실측 2026-09-06: pull 이 체크아웃 도중 LFS 에서 죽어 워킹트리에 삭제 2건·수정 6건이
+        #    남았고, 그 상태로는 다음 실행도 같은 자리에서 실패했다 — **사람이 `reset --hard`
+        #    로 풀어야 했다.**
+        #    [중요] **파괴적 명령이라 조건을 재고 건다** — 미러에만 있는 커밋이 **0** 일 때만.
+        #    미러는 파생물이고 push 가 센티넬로 막혀 있어 그 값은 정상적으로 0 이다. 0 이 아니면
+        #    그것은 **알아야 할 사고**이므로 되돌리지 않고 사유를 낸다.
+        recovered = _recover_mirror(paths.repo, run)
+        if recovered:
+            r.mirror_note = recovered
+            rc, out = run(paths.repo, "merge", "--ff-only", "FETCH_HEAD")
     if rc != 0 and "Already up to date" not in out:
         # 🔴 [중요] **사유를 라벨로 덮지 않는다** (`#376` ⑶). 종전에는 무조건
         #    *"미러가 갈라졌다"* 로 적었는데, 2026-09-06 의 실패는 **갈라짐이 아니라 LFS

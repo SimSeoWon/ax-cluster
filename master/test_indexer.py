@@ -136,10 +136,60 @@ def ev(pid="Sim/Demo", subject="feat: x"):
                  subject=subject)
 
 
+
+# ── `#376` ⑷ 반쯤 적용된 미러를 되돌린다 (조건을 재고) ─────────────────────────
+def test_mirror_recovery_is_measured_not_assumed() -> None:
+    """🔴 **파괴적 명령이라 조건을 잰다.** 미러에만 있는 커밋이 0 일 때만 되돌린다.
+
+    실측 2026-09-06: pull 이 체크아웃 도중 LFS 에서 죽어 워킹트리에 삭제·수정이 남았고,
+    그 상태로는 다음 실행도 같은 자리에서 실패해 **사람이 `reset --hard` 로 풀어야 했다**.
+    """
+    print("\n[9] `#376` ⑷ — 되돌리되, 재고 되돌린다")
+    from master.events.consumer import _recover_mirror
+
+    calls = []
+
+    def git(state_dirty: str, ahead: str, reset_rc: int = 0):
+        def _g(repo, *args):
+            calls.append(args[0])
+            if args[0] == "status":
+                return 0, state_dirty
+            if args[0] == "rev-list":
+                return 0, ahead
+            if args[0] == "reset":
+                return reset_rc, "" if reset_rc == 0 else "reset 실패"
+            return 0, ""
+        return _g
+
+    note = _recover_mirror(Path("/tmp/x"), git(" D a.uasset\n M b.cpp\n", "0"))
+    check("되돌렸다고 말한다", "되돌렸다" in note, note)
+    check("  버린 개수를 센다 (조용히 지우지 않는다)", "2건" in note, note)
+    check("  reset 을 실제로 불렀다", "reset" in calls, str(calls))
+
+    calls.clear()
+    note2 = _recover_mirror(Path("/tmp/x"), git(" M b.cpp\n", "3"))
+    check("🔴 미러에만 있는 커밋이 있으면 **되돌리지 않는다** (알아야 할 사고다)",
+          note2 == "" and "reset" not in calls, f"{note2!r} {calls}")
+
+    calls.clear()
+    note3 = _recover_mirror(Path("/tmp/x"), git("", "0"))
+    check("워킹트리가 깨끗하면 할 일이 없다", note3 == "" and "reset" not in calls, note3)
+
+    calls.clear()
+    note4 = _recover_mirror(Path("/tmp/x"), git(" M b.cpp\n", "쓰레기"))
+    check("[중요] 앞선 정도를 **모르면** 손대지 않는다", note4 == "" and "reset" not in calls,
+          f"{note4!r} {calls}")
+
+    note5 = _recover_mirror(Path("/tmp/x"), git(" M b.cpp\n", "0", reset_rc=1))
+    check("복구가 실패하면 사유를 낸다", "복구 실패" in note5, note5)
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="ax-idx-test-"))
     paths = make_project(tmp)
     reg = FakeReg(tmp)
+
+    test_mirror_recovery_is_measured_not_assumed()
 
     print("\n[1] [중요] 미러를 덮어쓰지 않는다 — ff-only")
     log = []
