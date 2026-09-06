@@ -256,13 +256,27 @@ class WebUI:
                     data = {}
             q = parse_qs(scope.get("query_string", b"").decode("utf-8", "replace"))
             query = str(data.get("query") or (q.get("query") or q.get("q") or [""])[0])
+            # 🔴 [중요] **개수 필드는 `n_results` 다** (`#378`). 원전 모델이 그렇고
+            #    (`search_routes.py:32,51` `n_results: int = 5`) 원전 화면도 그것을 보낸다.
+            #    우리는 **우리 클라이언트가 쓰는 `n` 만** 읽고 있었다 — 화면이 48을 보내도
+            #    조용히 5로 떨어졌다. 둘 다 받는다: 원전 이름이 먼저, 우리 이름이 폴백.
             try:
-                n = int(data.get("n") or (q.get("n") or ["5"])[0])
+                n = int(data.get("n_results") or data.get("n")
+                        or (q.get("n_results") or q.get("n") or ["5"])[0])
             except (ValueError, TypeError):
                 n = 5
+            # 🔴 [중요] **빈 질의를 거절하지 않는다** (`#378`). 원전 서버는 질의를 검사하지 않고
+            #    (`search_routes.py:66,132`), 원전 화면은 **문서 전체 목록을 빈 질의로** 가져온다
+            #    (`loadDocs`: `query: ' '`, `n_results = indexed_documents`). 그 방어를 여기 넣은
+            #    탓에 **모든 프로젝트에서 문서 목록이 처음부터 비어 있었다** — 에러가 아니라 빈
+            #    목록이라 아무도 몰랐다.
+            #    [주의] 같은 규칙이 **클라이언트에는 남는다**(`client_mcp.tool_search_context`).
+            #    MCP 도구 호출의 빈 질의는 호출자 실수이고 **거기가 옳은 자리다** — 서버는
+            #    원전 화면이라는 다른 호출자도 받는 자리라 규칙을 옮겨 심으면 안 됐다.
             if not query.strip():
-                return await _send(send, 200, _j({"results": [], "count": 0,
-                                                  "note": "query 가 비었다"}))
+                # 원전 계약: 빈 질의는 **문서 목록**이다 (`loadDocs`). 아래 검색은 융합이라
+                # 공백이면 0건이 나온다 — 계약을 지키려면 목록으로 답해야 한다.
+                return await _send(send, 200, _j(routes.api_documents(paths, n)))
             return await _send(send, 200, _j(routes.api_search(paths, query, n)))
         # [중요] 게시판은 `_domains/*.md` 다 — 온톨로지 YAML 이 아니다(`board.py` 머리말)
         from . import board

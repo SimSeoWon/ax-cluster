@@ -341,9 +341,38 @@ def test_index_status_reveals_mismatch() -> None:
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ── ④ 빈 질의 = 문서 목록 (`#378`) ──────────────────────────────────────────────
+
+def test_blank_query_lists_documents() -> None:
+    """🔴 원전 화면은 **문서 목록을 빈 질의로** 가져온다 (`loadDocs`).
+
+    우리 포팅이 서버에 *"query 가 비었다"* 거절을 넣어 **모든 프로젝트에서 목록이 처음부터
+    비어 있었다** — 에러가 아니라 빈 목록이라 아무도 몰랐다(실측 2026-09-06).
+    [주의] 같은 규칙이 **클라이언트에는 남는다** — MCP 도구의 빈 질의는 호출자 실수다.
+    """
+    print("\n[④] 빈 질의는 목록이다 (`#378`)")
+    from master.webui import routes as R
+    paths, root = tmp_paths()
+    try:
+        got = R.api_documents(paths, 100)
+        files = [r["file"] for r in got["results"]]
+        check("소스 문서가 목록에 나온다", "Source/A/Foo.md" in files, str(files))
+        check("[중요] 게시판(`_domains/*.md`)은 문서 목록이 아니다",
+              not any(f.startswith("_domains/") for f in files), str(files))
+        r0 = got["results"][0]
+        check("화면이 읽는 필드 넷이 있다 (file·tags·category·content_preview)",
+              all(k in r0 for k in ("file", "tags", "category", "content_preview")), str(r0.keys()))
+        check("태그는 프론트매터에서 온다", isinstance(r0["tags"], list) and r0["tags"], str(r0["tags"]))
+        check("limit 이 듣는다", R.api_documents(paths, 1)["count"] == 1)
+        check("문서가 없으면 빈 목록 (예외가 아니다)",
+              R.api_documents(tmp_paths(with_src=False)[0], 10)["count"] == 0)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (test_board_lists_md_not_ontology, test_detail_carries_source_contents,
-               test_korean_names_allowed_traversal_blocked,
+               test_korean_names_allowed_traversal_blocked, test_blank_query_lists_documents,
                test_management_docs_are_never_written, test_update_refuses_empty,
                test_activate_flips_status_and_inherits_tags,
                test_delete_archives_instead_of_removing, test_writes_are_atomic,

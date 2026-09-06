@@ -410,6 +410,44 @@ def api_index_status(paths) -> dict:
     return out
 
 
+def api_documents(paths, limit: int = 100) -> dict:
+    """**빈 질의 = 문서 목록** (`#378`). 원전 화면 `loadDocs` 가 그 계약으로 서 있다.
+
+    원전 서버는 이것을 *공백 임베딩의 최근접 이웃*으로 흉내낸다(`search_routes.py:66`,
+    Chroma 에 `query_texts=[" "]`). 우리 검색은 융합(벡터+BM25)이라 공백이면 **0건**이 나온다 —
+    같은 계약을 **결정적으로** 세운다. 화면이 읽는 필드는 넷뿐이다(`file`·`tags`·`category`·
+    `content_preview`), 그래서 순위가 아니라 **목록**이면 충분하다.
+
+    [중요] 파서는 `api_tags` 와 **같은 것**을 쓴다 — `documents.parse_frontmatter`.
+    화면과 색인이 다른 태그를 보면 안 된다.
+    [주의] 스코프는 호출자가 준 `paths` 다 — 웹 UI 는 **매 요청 마운트를 다시 푼다**.
+    """
+    ctx = paths.context
+    out = []
+    if ctx.is_dir():
+        for md in sorted(ctx.rglob("*.md")):
+            rel = md.relative_to(ctx).as_posix()
+            if documents.is_excluded(rel):
+                continue
+            try:
+                text = md.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            meta = documents.parse_frontmatter(text) or {}
+            out.append({
+                "file": rel,
+                "similarity": None,          # 목록이다 — 순위가 아니다
+                "category": str(meta.get("category") or ""),
+                "tags": [str(t) for t in (meta.get("tags") or [])],
+                "related_classes": meta.get("related_classes") or {},
+                "content_preview": text[:500],
+            })
+            if len(out) >= max(1, int(limit)):
+                break
+    return {"query": "", "count": len(out), "results": out,
+            "note": "빈 질의 — 문서 목록을 낸다 (`#378`)"}
+
+
 def api_tags(root: Path, paths=None) -> dict:
     """[중요] 태그 클라우드.
 
