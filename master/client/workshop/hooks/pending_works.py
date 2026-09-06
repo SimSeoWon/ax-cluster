@@ -1,5 +1,9 @@
 """SessionStart 훅 — **승인을 기다리는 분산 작업이 있으면 세션 시작에 고지한다** (`#337`).
 
+[주의] 이 훅은 **고지를 둘** 낸다. 두 번째는 에디터(Unreal MCP) 접근 가능 여부(`#374`)이고
+판정은 `editor_mcp.py` 에 있다 — 훅을 하나 더 등록하지 않은 이유는 이미 세션 시작과 매 턴에
+도는 자리가 여기라서다(같은 이벤트에 두 번째 프로세스를 띄우면 사람의 턴만 더 붙잡는다).
+
 ## 왜 훅인가 (사용자 결정 ⓑ, 2026-08-30)
 
 파이프라인은 일부러 휴먼 인 루프다 — `finalize_work` 의 기본값이 `confirm=False` 라 **승인이
@@ -77,12 +81,34 @@ def _line(w: dict, detail: dict | None) -> str:
     return out
 
 
+def _editor_notice(data: dict) -> None:
+    """에디터(Unreal MCP) 접근 가능 여부 한 줄 (`#374`).
+
+    [중요] **맨 앞에서, 아래 어떤 `return` 보다 먼저 낸다.** 이 함수 아래로는 마스터를 못
+    물어봤을 때 빠져나가는 길이 셋인데, 그 뒤에 두면 마스터가 죽은 날 이 고지도 같이 죽는다.
+    두 점검은 서로 독립이다 — 하나가 실패해도 다른 하나는 사실을 낸다.
+    """
+    try:
+        # [주의] **사람의 `.claude/hooks/` 에 `__pycache__` 를 남기지 않는다** — 배달 표면이라
+        #    다음 배달의 비교 대상에 쓰레기가 낀다. 훅은 한 번 돌고 끝이라 캐시 이득도 없다.
+        sys.dont_write_bytecode = True
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import editor_mcp                                    # noqa: PLC0415
+        out = editor_mcp.notice(data)
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[에디터 MCP] [주의] 점검 못 함 — {str(e).splitlines()[0]}")
+        return
+    if out:
+        print(out)
+
+
 def main() -> None:
     try:
         data = json.load(sys.stdin)
     except ValueError:
         return
     cwd = Path(str(data.get("cwd") or "."))
+    _editor_notice(data)
 
     try:
         client_mcp = _load_client(cwd)
