@@ -133,7 +133,11 @@ def test_verdict_table():
     check("세션 시작엔 있었는데 지금 닫힘 → gone", EM.verdict(False, True) == "gone")
     check("MCP 응답이 아니다 → not_mcp", EM.verdict(None, True) == "not_mcp")
     check("모르면 단정하지 않는다 → unknown", EM.verdict(True, None) == "unknown")
-    check("stale 문구가 **세션 재시작**을 말한다", "세션을 다시 열어" in EM.line("stale", "h", 1))
+    # [중요] 처방이 바뀌었다 — 세션 재시작이 아니라 `/mcp reconnect` 가 먼저다 (2026-09-06)
+    check("stale 문구가 **재연결 명령**을 말한다", EM.RECONNECT in EM.line("stale", "h", 1))
+    check("세션 재시작은 **차선**으로만 나온다", "그래도 도구가 안 보이면" in EM.line("stale", "h", 1))
+    check("gone 문구가 리빌드 흐름을 말한다 — 켜는 것만으로는 안 붙는다",
+          EM.RECONNECT in EM.line("gone", "h", 1) and "에디터만 켜면 붙지 않는다" in EM.line("gone", "h", 1))
     check("off 문구가 **임의 기동 금지**를 말한다", "임의로 켜지 않는다" in EM.line("off", "h", 1))
 
 
@@ -188,8 +192,8 @@ def test_stale_is_the_trap():
             got = EM.notice(_payload(cwd, "UserPromptSubmit"))
             check("🔴 이 세션은 못 붙었다고 말한다",
                   got is not None and "이 세션은 못 붙었다" in got, str(got))
-            check("🔴 그리고 **세션 재시작**을 요청하라고 말한다",
-                  got is not None and "세션을 다시 열어" in got, str(got))
+            check("🔴 그리고 **재연결 명령**을 준다 (세션 재시작은 차선)",
+                  got is not None and EM.RECONNECT in got, str(got))
         finally:
             lis.close()
 
