@@ -48,17 +48,17 @@ def both(marker: str = "") -> str:
 
 # ── ① 순서 ──────────────────────────────────────────────────────────────────────
 
-def test_default_order_is_agy_then_codex_then_local() -> None:
-    """🔴 **사용자 지시 2026-09-04**: *"agy, 그다음 로컬로 배선하고, 클로드는 나중에 사용해"*.
+def test_default_order_is_codex_then_agy_then_local() -> None:
+    """🔴 **사용자 결정 2026-09-06**: *"지금까지 클로드가 하던 작업들 대부분을 1차로 코덱스에게
+    대신 요청하고, 코덱스 모두 소진하면 안티그래비티로 가자. 클로드와 동급으로."*
 
-    [중요] `claude` 를 뺀 것은 품질 판정이 아니다 — 한도가 **공용 자원**이라 먼저 쓰면 라운드
-    전체가 그 한도에 묶인다. 실측 00:16: `429 session limit` 하나로 4조각 중 3이 동시에 죽었다.
+    [중요] **근거는 품질이 아니라 한도 배분이다.** 셋 다 층1 을 통과했고 실측은 agy 32.9초 ·
+    codex 98.6초 · 로컬 117.6초라 이 순서는 **속도 손해**다. 그 손해를 받는 이유는 클로드의
+    한도가 마스터 세션과 **공용 자원**이기 때문이다 — 쓰는 일을 코덱스가 받아야 마스터 쪽이 산다.
+    [주의] 종전 순서(`agy → codex`, 2026-09-04·09-05)는 **빠른 순**이었다. 바뀐 것은 축이다.
     """
-    check("[중요] 첫 레인이 agy", LN.DEFAULT_LANES[0] == "agy", str(LN.DEFAULT_LANES))
-    # 🔴 **codex 가 2순위** (사용자 결정 2026-09-05). A/B 실측: 같은 골조로 본문 작성에
-    #    agy 32.9초 · codex 98.6초 · 로컬 117.6초 — **셋 다 층1 통과**이고 두 레인의 헤더가
-    #    바이트 단위로 같았다(동결 보존). 품질이 같으니 **빠른 순**으로 세운다.
-    check("  둘째가 codex (원격 `.33` CLI)", LN.DEFAULT_LANES[1] == "codex",
+    check("🔴 첫 레인이 codex", LN.DEFAULT_LANES[0] == "codex", str(LN.DEFAULT_LANES))
+    check("  둘째가 agy — 코덱스가 소진되면 여기다", LN.DEFAULT_LANES[1] == "agy",
           str(LN.DEFAULT_LANES))
     check("  마지막이 로컬 모델 — 상용이 다 막혔을 때 남는 자리",
           ":" in LN.DEFAULT_LANES[-1] and "claude" not in LN.DEFAULT_LANES[-1],
@@ -87,9 +87,12 @@ def test_chain_moves_on_when_a_lane_fails() -> None:
     """🔴 **이 배선의 목적이다.** 종전에는 레인이 하나뿐이라 그 하나가 죽으면 조각이 죽었다."""
     seen, wrote = [], {}
 
+    # [주의] **순서에 묶지 않는다** — 종전엔 `if lane == "agy"` 로 첫 레인을 이름으로 박아 둬서,
+    #    2026-09-06 에 순서가 `codex → agy` 로 바뀌자 의도와 무관하게 깨졌다. 이 테스트가 재는
+    #    것은 「첫 레인이 죽으면 다음으로 간다」이지 **누가 첫 레인인가**가 아니다.
     def gen(prompt, lane):
         seen.append(lane)
-        if lane == "agy":
+        if lane == LN.DEFAULT_LANES[0]:
             raise RuntimeError("429 You've hit your session limit")
         return both()
 
@@ -159,7 +162,7 @@ def test_unknown_paths_are_ignored() -> None:
 
 
 def main() -> int:
-    for fn in (test_default_order_is_agy_then_codex_then_local,
+    for fn in (test_default_order_is_codex_then_agy_then_local,
                test_prompt_names_every_file,
                test_chain_moves_on_when_a_lane_fails,
                test_all_lanes_failing_is_blocked_not_silent,
