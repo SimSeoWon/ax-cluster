@@ -1309,15 +1309,22 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
         # [중요] config·부산물·CLAUDE.md 는 **체크아웃 안**, 스킬만 홈 (모듈 독스트링 참조)
         "config": _remote_write(facts, CONFIG_REL, cfg, base="checkout"),
         "claude_md": _remote_write(facts, "CLAUDE.md", merged, base="checkout"),
-        "skills": [_remote_write(facts, f".claude/skills/{n}/SKILL.md", skill_text(n))
-                   for n in skills_for(facts.role, pinit)],
+        # 🔴 [중요] **도구마다 자동 로드 경로가 다르다** — 선언은 `spec.SKILL_HOMES` 하나다
+        #    (`#385`, 실측 2026-09-08: codex 는 `~/.claude/skills/` 를 안 본다. 읽기는 되지만
+        #    스킬로 안 잡혀서 지시문의 *"Follow the ax-work skill"* 이 빈 참조가 됐고,
+        #    계약 없이 진행해 `[PSEUDO]` 가 남아 층1 이 막았다). **내용은 한 벌이다.**
+        "skills": [_remote_write(facts, rel, skill_text(n))
+                   for n in skills_for(facts.role, pinit) for rel in spec.skill_rels(n)],
         # [중요] **폐지분을 지운다** (`#232` 완결, 2026-09-02). 목록의 유일한 출처는
         #    `spec.removals_for` 다 — `plan`·`check` 가 부르는 그 함수여서 셋이 갈라지지 않는다.
         #    `keep_skills` 를 이미 존중하므로 프로젝트가 오버레이로 되살린 이름은 지우지 않는다.
         # [주의] 사용자가 손으로 만든 스킬은 목록에 없으므로 **영향받지 않는다**
-        #    (원전 `DEPRECATED_SKILL_NAMES` 와 같은 계약).
-        "removed": [_remote_rm_dir(facts, f".claude/skills/{n}")
-                    for n in spec.removals_for(facts.role, pinit)["skills"]],
+        #    (원전 `DEPRECATED_SKILL_NAMES` 와 같은 계약). 도구별 자리를 **둘 다** 지운다.
+        "removed": [_remote_rm_dir(facts, d)
+                    for n in spec.removals_for(facts.role, pinit)["skills"]
+                    for d in spec.skill_dirs(n)],
+        "removed_codex": [_remote_rm_dir(facts, f".codex/skills/{n}")
+                          for n in spec.removals_for(facts.role, pinit)["skills"]],
         # [중요] 파이썬 페이로드 — 패키지로 둬야 모듈의 **상대 임포트가 그대로** 산다.
         #    `__init__.py` 를 먼저 쓰지 않으면 나머지는 임포트되지 않는 파일 더미가 된다.
         # [중요] 파이썬 페이로드 — 저장소 배치를 미러링한다(상대 임포트가 그대로 산다).

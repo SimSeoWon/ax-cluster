@@ -99,8 +99,11 @@ def cmd_plan(project: str) -> int:
               + f" caps={cfg['capabilities']}")
         print(f"     backends={json.dumps(cfg['backends'], ensure_ascii=False)}")
         for n in bundle.skills_for(f.role, init):
-            print(f"   → {f.home}/.claude/skills/{n}/SKILL.md "
-                  f"({len(bundle.skill_text(n))}자)  [role={f.role}]")
+            # [주의] 도구별 자리를 **전부** 찍는다 — 선언은 `spec.SKILL_HOMES` 하나다(`#385`).
+            #    계획에 안 보이면 사람이 배달 내용을 눈으로 확인할 수 없다.
+            for rel in spec.skill_rels(n):
+                print(f"   → {f.home}/{rel} "
+                      f"({len(bundle.skill_text(n))}자)  [role={f.role}]")
         # [중요] **MCP 엔트리를 계획에 찍는다** — 워커가 못 받는다는 판단이 조건문 한 줄에
         #    숨어 있으면 아무도 그것을 보지 못한다 (#261).
         mcp = spec.mcp_for(f.role, init)
@@ -258,12 +261,14 @@ def cmd_check(project: str) -> int:
         names = bundle.skills_for(f.role, init)
         for n in names:
             want = hashlib.sha256(bundle.skill_text(n).encode("utf-8")).hexdigest()
-            target = (f"{f.home}\\.claude\\skills\\{n}\\SKILL.md" if f.windows
-                      else f"{f.home}/.claude/skills/{n}/SKILL.md")
-            cmd = (f'powershell -Command "(Get-FileHash -LiteralPath \'{target}\' -Algorithm SHA256).Hash"'
-                   if f.windows else f"sha256sum '{target}' 2>/dev/null | cut -d' ' -f1")
-            rc, got = bundle._ssh(f.host, f.user, cmd)
-            ok_skill = ok_skill and (got or "").strip().lower() == want
+            # [중요] 도구별 자리를 **전부** 검사한다 — 한 곳만 보면 codex 쪽 누락이 안 보인다.
+            for rel in spec.skill_rels(n):
+                target = (f"{f.home}\\" + rel.replace("/", chr(92)) if f.windows
+                          else f"{f.home}/{rel}")
+                cmd = (f'powershell -Command "(Get-FileHash -LiteralPath \'{target}\' -Algorithm SHA256).Hash"'
+                       if f.windows else f"sha256sum '{target}' 2>/dev/null | cut -d' ' -f1")
+                rc, got = bundle._ssh(f.host, f.user, cmd)
+                ok_skill = ok_skill and (got or "").strip().lower() == want
         cfg_path = (f"{f.path}\\{bundle.CONFIG_REL.replace('/', chr(92))}" if f.windows
                     else f"{f.path}/{bundle.CONFIG_REL}")
         rc2, _ = bundle._ssh(f.host, f.user,

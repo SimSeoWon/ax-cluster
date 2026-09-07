@@ -351,6 +351,42 @@ MANAGED_HOOKS = (
 SETTINGS_REL = ".claude/settings.json"
 
 
+# ── 스킬이 놓이는 자리 — **도구마다 자동 로드 경로가 다르다** (`#385`, 실측 2026-09-08) ──
+#
+# 🔴 [중요] **codex 는 `~/.claude/skills/` 를 안 본다.** 실증에서 지휘자 모드가 `codex` 일 때
+# `ax-work` 가 스킬로 안 잡혔고, 지시문의 *"Follow the ax-work skill"* 이 아무것도 가리키지
+# 못해 계약 없이 진행했다 — `[PSEUDO]` 가 남아 층1 이 막았다(2026-09-08 01:48:39).
+#
+# 실측(지휘자와 같은 조건 — `-C <체크아웃>` · `workspace-write`):
+#
+#     head -c 40 ~/.claude/skills/ax-work/SKILL.md        rc=0  — **읽기는 된다**
+#     "ax-work is not listed among my available skills"         — **스킬로는 안 보인다**
+#     ~/.codex/skills/<이름>/SKILL.md 를 두면 새 세션이 지시 없이 집는다 (마스터에서 먼저 측정)
+#
+# [중요] **배달 누락이 아니었다** — 파일은 정상 배달돼 있었다. 도구마다 경로가 다를 뿐이라
+# **각 도구의 자기 경로에 같은 한 벌**을 둔다. 내용은 `skill_text(n)` 하나여서 갈라지지 않는다.
+#
+# [주의] **선언은 여기 하나다.** `plan`·`deliver`·`check`·`probe` 가 각자 경로를 박고 있었고,
+# 이 저장소는 그 병을 이미 한 번 치렀다(2026-08-23 — 선언을 바꿨는데 배달이 안 따라와
+# 워커에 `.mcp.json` 이 안 갔다). 새 경로를 더하려면 **이 튜플만** 고친다.
+SKILL_HOMES = (".claude", ".codex")
+
+
+def skill_rel(name: str, home: str = ".claude") -> str:
+    """홈 기준 스킬 상대경로 하나."""
+    return f"{home}/skills/{name}/SKILL.md"
+
+
+def skill_rels(name: str) -> tuple:
+    """이 스킬이 놓일 **모든** 자리 (도구별). 배달·검사·제거가 같은 목록을 쓴다."""
+    return tuple(skill_rel(name, h) for h in SKILL_HOMES)
+
+
+def skill_dirs(name: str) -> tuple:
+    """이 스킬의 디렉토리 자리 (제거·존재 검사용)."""
+    return tuple(f"{h}/skills/{name}" for h in SKILL_HOMES)
+
+
 def managed_hooks_for(role: str) -> tuple:
     """이 역할이 등록받을 관리 훅. 훅 스크립트는 작업장 자산이라 요청자만 받는다."""
     return MANAGED_HOOKS if role == "requester" else ()
