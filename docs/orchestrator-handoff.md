@@ -6,11 +6,11 @@
 > 🔴 **여기 적힌 「완료」를 그대로 믿지 않는다.** 받는 쪽은 HEAD·dirty diff·이슈·프로세스를
 > 직접 대조한다 (근거: `orchestrator-rules.md` §5).
 
-- **갱신 시각**: 2026-09-08 00:0x KST (UTC+9)
+- **갱신 시각**: 2026-09-08 00:15 KST (UTC+9)
 - **지휘 도구 / 세션 식별자**: Claude Opus 5 (1M) · `session_01L77g9My6GzoA6T9bwjkFRf`
-- **상태**: **작업 중** — `#384` ②(공용 문서·진입점 배선) 진행
+- **상태**: **작업 중** — `#384` ②(공용 문서·진입점 배선) **완료**, 다음은 자동 로드 검증
 - **관련 Redmine 일감 / 목표**: [`#384`](http://192.168.0.57:8080/issues/384) [AX] Claude ↔ Codex
-  마스터 지휘 교대 (마일스톤 6, 상태 **신규**, 노트 있음 — Codex 가 ① 실측 결과를 남김).
+  마스터 지휘 교대 (마일스톤 6, 상태 **진행**, 노트 2건 — Codex 의 ① 실측, Claude 의 ② 완료).
   아이디어 상위 일감 [`#368`](http://192.168.0.57:8080/issues/368)(자동 선택 실행기)은 **이번 범위 밖**.
 
 ## 사용자 결정 · 승인 범위 · 근거 / 미결 질문
@@ -20,28 +20,32 @@
   않는 기능까지 공통 규칙으로 적게 된다.
 - **② 진행 승인** (사용자 2026-09-08): *"리포트 55를 반영해 ② 공용 문서·진입점 배선을
   진행하고, 자동 로드는 새 세션에서 검증하자"*.
-- **미결 ①**: `machines/sim-desktop.md`(=`~/CLAUDE.md`) 편집 — **동의 대기 중**.
-  그 파일은 매 세션 자동 로드되므로 사용자 결정 2026-08-14 에 따라 **계획을 말하고 동의를
-  받아야** 고칠 수 있다. 삽입할 블록은 제안 완료, 아직 적용 안 함.
-- **미결 ②**: 리포트 54·55 커밋 — **승인 대기** (커밋·푸시는 매번 승인, 사용자 2026-08-14).
-- **미결 ③**: `#384` 를 「진행」으로 옮길지 — 지금은 **신규** 유지 중.
+- **승인 셋** (사용자 2026-09-08, *"세 개 다 승인, CLAUDE.md 삽입하고 커밋해"*):
+  ⑴ 자동 로드 문서 두 곳(`machines/sim-desktop.md` · `ax-cluster/CLAUDE.md`) 삽입 —
+     **적용됨** ⑵ 커밋 — **`8a7b3c6`** ⑶ `#384` → 「진행」 — **적용됨**.
+  [주의] 이 승인은 **그 셋에 대한 것**이다. **푸시는 포함되지 않는다.**
+- **미결**: 푸시 — GitHub(`SimSeoWon/ax-cluster`, private)와 `.43` 동기화가 **밀려 있다**.
 
 ## 저장소 · 브랜치 · HEAD / 미커밋 파일
 
-    저장소   ~/ax-cluster   브랜치 main   HEAD a694168
-             ("docs: 리포트 53 §5.7 — 남은 결정 셋을 닫았다 (#379·#366·#376⑷)")
+    저장소   ~/ax-cluster   브랜치 main   HEAD 8a7b3c6
+             ("docs: 지휘 교대 #384 ①조사 + ②공용 문서·진입점 배선")
+             [주의] **커밋만 했고 푸시는 안 했다** — origin 보다 앞서 있다
 
-| 파일 | 상태 | 의도 |
-|---|---|---|
-| `PLAN.md` | **M** | 색인 89행에 `15 Orchestrator handoff` 추가 (이전 세션) |
-| `docs/15-orchestrator-handoff.md` | **??** | 교대 설계·검증 방법 (계획 본체) |
-| `docs/orchestrator-rules.md` | **??** | **이번 ②** — 공용 규칙 |
-| `docs/orchestrator-handoff.md` | **??** | **이번 ②** — 이 파일 |
-| `AGENTS.md` · `ax-cluster/AGENTS.md` | **??** | **이번 ②** — Codex 진입점 후보 2곳 |
-| `reports/54-...claude-side-survey.md` | **??** | Claude 쪽 ① 조사 |
-| `reports/55-...codex-side-probes.md` | **??** | Codex 쪽 ① 실측 |
+`8a7b3c6` 에 담긴 것 (10개):
 
-**전부 미커밋이다.** 어느 쪽도 커밋·푸시하지 않았다.
+    A  AGENTS.md                              Codex 진입점 (저장소)  AX-ENTRY-MARK: repo
+    A  machines/sim-desktop-agents.md         Codex 진입점 (홈) ← ~/AGENTS.md 심볼릭 링크
+    A  docs/orchestrator-rules.md             공용 규칙
+    A  docs/orchestrator-handoff.md           이 파일
+    A  docs/15-orchestrator-handoff.md        계획 본체
+    A  reports/54-...claude-side-survey.md    ① Claude 쪽 조사
+    A  reports/55-...codex-side-probes.md     ① Codex 쪽 실측
+    M  machines/sim-desktop.md                진입 블록 + AX-ENTRY-MARK: home
+    M  CLAUDE.md                              진입 블록 + AX-ENTRY-MARK: repo
+    M  PLAN.md                                색인 15r·15h
+
+**미커밋 없음.** [주의] **푸시는 안 했다** — 세 곳 동기화가 밀려 있다.
 
 ## 완료한 작업 / 검증 명령·결과
 
@@ -52,6 +56,7 @@
 - **정정**: 리포트 54 의 「MCP 35종」 → **33종**. Codex `tools/list` 실측과 일치.
 - **②-1** `docs/orchestrator-rules.md` 작성 (공통 규칙 · 도구별 차이 · 미실증 · 근거).
 - **②-2** `docs/orchestrator-handoff.md` 작성 (이 파일).
+- **②-3** 진입점 4곳에 표식 삽입 · `PLAN.md` 색인 · 커밋 `8a7b3c6` · `#384` → 「진행」+노트.
 
 현재 상태 실측 (2026-09-08 조회):
 
@@ -97,9 +102,9 @@
        저장소에서 시작   → `AX-ENTRY-MARK: repo` 를 말하는가
 
    Codex 는 `AGENTS.md`, Claude 는 `~/CLAUDE.md` 경유. **네 조합(도구 2 × 위치 2)을 각각.**
-2. `machines/sim-desktop.md` 링크 블록 — **사용자 동의를 받은 뒤** 적용.
-3. 결과에 따라 `orchestrator-rules.md` §4 의 미실증 줄을 갱신.
-4. 그다음이 §15.6 ③ **Claude → Codex 실증** (작고 되돌릴 수 있는 AX 작업 하나).
+2. 결과에 따라 `orchestrator-rules.md` §4 의 미실증 줄을 갱신한다.
+3. 그다음이 §15.6 ③ **Claude → Codex 실증** (작고 되돌릴 수 있는 AX 작업 하나).
+4. 푸시 — 승인을 따로 받는다 (GitHub private + `.43`).
 
 ## 관련 문서 링크
 
