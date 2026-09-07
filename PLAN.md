@@ -89,7 +89,7 @@ missing halves. That movement is normal — record it, don't hide it.
 | 15 | [Orchestrator handoff](docs/15-orchestrator-handoff.md) | Claude ↔ Codex 마스터 지휘 교대 계획 — 공용 지침·인수인계·서브 에이전트 결과 회수 | 사용자 2026-09-07: 토큰/사용량 한도에 따라 교대. 수동 교대와 양방향 실증부터, 자동 선택 실행기는 #368 후속 검토 |
 | 15r | [Orchestrator rules](docs/orchestrator-rules.md) | **공용 규칙** — Claude·Codex 두 지휘자가 함께 지키는 사용자 결정 + 도구별로 다른 것 + 미실증 | [중요] **여기엔 사용자 결정만.** 도구 하나에서만 되는 기능은 「도구별」로 따로 적고 공통 규칙으로 쓰지 않는다 · §5 는 **기록의 「완료」를 믿지 않는 이유**(Claude 기억 안의 실제 모순) |
 | 15h | [Orchestrator handoff record](docs/orchestrator-handoff.md) | **지금 무엇이 진행 중인가** — 한 벌만 유지하는 인수인계 기록 | [주의] **새 파일을 만들지 말고 덮어 쓴다** · 받는 쪽은 HEAD·dirty diff·이슈·프로세스를 **직접 대조**한다 · 이 기록은 **잠금이 아니다** |
-| 16 | [Worker orchestrator mode](docs/16-worker-orchestrator-mode.md) | **변경안** — SSH 파견 실행 주체(워커 지휘자)를 Claude/Codex 로 고른다 · 계측 파서 · 레인과의 관계 | [중요] `#384`(마스터 **대화 세션** 인수인계)와 **별개 축** · 🔴 §16.2 E 가 결정 자리(대체/병존/폴백만) · [주의] **정상 파견에는 지금 지휘자가 없다**(레인이 기본, 지휘자는 폴백) · 실측 리포트 `56` |
+| 16 | [Worker orchestrator mode](docs/16-worker-orchestrator-mode.md) | **구현됨** — SSH 파견 실행 주체(워커 지휘자)를 Claude/Codex 로 고른다 · 계측 파서 · 레인과의 관계 | [중요] `#384`(마스터 **대화 세션** 인수인계)와 **별개 축** · E 는 **② 병존으로 결정**(사용자 2026-09-08) · [완료] 실증에서 모드가 실제 파견에 실렸다 · 🔴 **층1 차단에서 멈춤**(§16.4) · **계측이 사라지는 별도 결함 `#387`**(§16.5) · [주의] **기본값은 미결정** · 실측 리포트 `56` |
 
 ---
 
