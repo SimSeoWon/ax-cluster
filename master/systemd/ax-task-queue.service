@@ -68,6 +68,11 @@ ReadOnlyPaths=/home/sim/ax-cluster/.git
 ReadOnlyPaths=/home/sim/ax-cluster/PLAN.md
 ReadOnlyPaths=/home/sim/ax-cluster/README.md
 ReadOnlyPaths=/home/sim/ax-cluster/CLAUDE.md
+# [중요] 2026-09-08 신설 — Codex 진입점(`#385`·`#384`). `CLAUDE.md` 와 같은 취급이다.
+#    [주의] 이 줄을 빼먹어 `test_sandbox` 가 잡았다: *"…전부 읽기 전용 목록에 있다 —
+#    ['AGENTS.md']"*. **최상위에 파일을 만들면 여기에도 같이 넣는다** — 루트가
+#    `ReadWritePaths` 로 열려 있어서, 목록에 없는 새 항목은 **조용히 쓰기 가능**이 된다.
+ReadOnlyPaths=/home/sim/ax-cluster/AGENTS.md
 ReadOnlyPaths=/home/sim/ax-cluster/projects.yaml
 # [주의] `-` 접두사 = **없으면 무시**. 이 파일은 벤치 산출물이라 지워질 수 있고,
 #    그때 유닛이 뜨지 못하면 안 된다(`ReadOnlyPaths` 는 없는 경로에 기동을 실패한다).

@@ -106,7 +106,14 @@ class Outcome:
     usage: dict = field(default_factory=dict)
 
     @property
+    def cost_known(self) -> bool:
+        """비용을 **아는가**. 🔴 [중요] codex 는 usage 를 주면서 **비용만 안 준다** —
+        `cost_usd` 의 0.0 을 「공짜」로 읽으면 안 된다. 집계는 이 값으로 미상을 따로 센다."""
+        return bool(self.usage) and not self.usage.get("cost_unknown")
+
+    @property
     def cost_usd(self) -> float:
+        """[주의] 모르면 0.0 이다 — **아는 0 과 구분하려면 `cost_known` 을 함께 본다.**"""
         return float(self.usage.get("total_cost_usd") or 0.0)
 
     @property
@@ -136,6 +143,15 @@ class Outcome:
         return s + (f" — {self.reason}" if self.reason else "")
 
 
+def _codex(stdout: str):
+    """codex 이벤트면 `(본문, 계측)`, 아니면 `None`. 형식 지식은 `usage` 모듈이 갖는다."""
+    try:
+        from .usage import parse_codex_jsonl
+    except ImportError:                                          # noqa: BLE001
+        return None
+    return parse_codex_jsonl(stdout)
+
+
 def _unwrap(stdout: str) -> tuple:
     """`(본문, 계측)`. `--output-format json` 이면 `result` 를 꺼내고 나머지를 계측으로 쥔다.
 
@@ -144,13 +160,18 @@ def _unwrap(stdout: str) -> tuple:
     """
     t = (stdout or "").strip()
     if not t.startswith("{"):
-        return stdout, {}
+        # [중요] `codex exec --json` 은 **JSONL 이벤트**라 첫 글자가 `{` 여도 단일 JSON 이
+        #    아니고, 앞에 다른 줄이 붙기도 한다. 형식 지식은 `usage` 가 갖는다.
+        got = _codex(stdout)
+        return got if got is not None else (stdout, {})
     try:
         d = json.loads(t)
     except ValueError:
-        return stdout, {}
+        got = _codex(stdout)
+        return got if got is not None else (stdout, {})
     if not isinstance(d, dict) or "result" not in d:
-        return stdout, {}
+        got = _codex(stdout)
+        return got if got is not None else (stdout, {})
     return str(d.get("result") or ""), {k: v for k, v in d.items() if k != "result"}
 
 
@@ -270,7 +291,48 @@ def pick_worker(facts: list, requires=(), *, clean=None) -> Pick:
     return p
 
 
-def worker_command(facts, task_id: str, files=()) -> str:
+def agent_command(facts, path: str, instr: str, *, mode: str) -> str:
+    """워커에서 도는 **지휘자** 한 줄 (`#385`). `mode` 는 `claude` 또는 `codex`.
+
+    [중요] 지시문은 **갈래를 만들지 않는다** — 실측 2026-09-08(리포트 56 ⓒ): codex 가
+    `.claude/skills/ax-work/SKILL.md` 를 찾아 읽고, config 가 없자 그 스킬의 한글 규칙을
+    인용하며 `RESULT: BLOCKED` 로 멈췄다. 설정을 주니 층1 기준(`[PSEUDO]` 0 · `[DOC]` 보존 ·
+    선언 동결)을 만족하며 구현했다. 같은 계약이 양쪽에 선다.
+    [주의] 다만 **자동 로드가 아니라 탐색**이다 — 스킬 파일이 체크아웃에 있어야 한다.
+
+    [완료] **권한 범위를 좁혔다** (실측 2026-09-08, `#385` 완료 조건 3). `.43` 에서 같은 작업을
+    샌드박스만 바꿔 재봤다 — 판정은 브로커(8102) `curl` 의 rc 다:
+
+        -s workspace-write                            파일 수정 O · 네트워크 **X** (curl rc=7)
+        -s workspace-write + network_access=true      파일 수정 O · 네트워크 **O** (HTTP 401)
+        -s danger-full-access                         둘 다 O — 그러나 **디스크 전체가 열린다**
+        --dangerously-bypass-approvals-and-sandbox    둘 다 O — 샌드박스 자체가 없다
+
+    🔴 [중요] **네트워크가 필요한 이유는 위임이다.** `ax-work` §0④ 가 *"대량 생성은
+    `codex`→`agy`→로컬에 위임하고 너는 검증한다"* 고 지시하고, 로컬 위임은 브로커 HTTP 다.
+    네트워크를 막으면 지휘자가 그 지시를 못 따른다. 그래서 **쓰기는 작업공간으로 묶고
+    네트워크만 여는** 가운데 값을 쓴다 — 디스크 전체를 열 이유가 없다.
+    [주의] `401` 은 서버가 죽은 것이 아니라 **인증 거절**이다(리포트 55 와 같은 판정).
+    """
+    cd = f'cd /d "{path}"' if facts.windows else f'cd "{path}"'
+    if mode == "claude":
+        # `--output-format json` — 판정 마커는 `result` 안에 들어오고, 그 대신
+        # **토큰·비용·턴 수**를 함께 받는다. 계측 없이 "분산이 이득인가" 를 논할 수 없다.
+        return (f'{cd} && claude -p --output-format json '
+                f'--dangerously-skip-permissions "{instr}"')
+    if mode == "codex":
+        # [중요] `--json` 은 **JSONL 이벤트**다 — 단일 JSON 이 아니다. `usage.parse_codex_jsonl`
+        #    이 본문과 토큰을 뽑는다. **비용은 codex 가 주지 않는다**(0 이 아니라 미상).
+        # [주의] stdin 을 막지 않으면 *"Reading additional input from stdin"* 으로 멈춘다
+        #    (실측 2026-09-07 — SSH 는 tty 가 아니다).
+        nul = "NUL" if facts.windows else "/dev/null"
+        return (f'{cd} && codex exec --json -s workspace-write '
+                f'-c sandbox_workspace_write.network_access=true '
+                f'-C "{path}" "{instr}" < {nul}')
+    raise ValueError(f"모르는 지휘자 모드: {mode!r}")
+
+
+def worker_command(facts, task_id: str, files=(), *, mode: str = "claude") -> str:
     """워커에서 실제로 도는 한 줄. [중요] **경로는 레지스트리에서 온 값**(`facts.path`)이다.
 
     [중요] `files` 는 **판정에 쓰는 그 목록**이다 (`infer_command` 와 같은 계약) — 지시와
@@ -279,17 +341,13 @@ def worker_command(facts, task_id: str, files=()) -> str:
     """
     shown = ", ".join(str(f) for f in (files or [])) or "(none given)"
     instr = INSTRUCTION.format(files=shown)
-    cd = f'cd /d "{facts.path}"' if facts.windows else f'cd "{facts.path}"'
-    # [중요] `--output-format json` — 판정 마커는 `result` 안에 들어오고, 그 대신
-    # **토큰·비용·턴 수**를 함께 받는다. 계측 없이 "분산이 이득인가" 를 논할 수 없다.
-    return (f'{cd} && claude -p --output-format json '
-            f'--dangerously-skip-permissions "{instr}"')
+    return agent_command(facts, facts.path, instr, mode=mode)
 
 
-def run_worker(facts, task_id: str, *, files=(), runner=None,
+def run_worker(facts, task_id: str, *, files=(), runner=None, mode: str = "claude",
                timeout: int = DEFAULT_TIMEOUT) -> tuple:
-    """워커에서 Claude 를 한 번 돌린다. `(rc, stdout)`. **예외를 던지지 않는다.**"""
-    cmd = worker_command(facts, task_id, files)
+    """워커에서 **지휘자**를 한 번 돌린다. `(rc, stdout)`. **예외를 던지지 않는다.**"""
+    cmd = worker_command(facts, task_id, files, mode=mode)
     if runner is not None:
         return runner(facts, cmd, timeout)
     return bundle._ssh(facts.host, facts.user, cmd, timeout=timeout)

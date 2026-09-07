@@ -692,6 +692,53 @@ def list_log_tags_tool(domain: str) -> str:
 
 
 @mcp.tool()
+def get_worker_mode_tool() -> str:
+    """**워커 지휘자 모드**를 조회한다 (`#385`) — `lane` · `claude` · `codex`.
+
+    [중요] 이것은 **워커에서 서브태스크를 수행·지휘하는 주체**를 고르는 값이고, 본문 작성
+    레인(`codex`→`agy`→로컬)과는 **다른 층**이다. 지휘자가 그 레인에 위임하는 것이 아래 층이다.
+
+    [주의] 마스터 **기계 전역** 값이라 프로젝트 태그가 없다 — 프로젝트별로 갈리는 값이 아니다.
+    """
+    try:
+        from ..work import mode as wm
+        m, src = wm.current()
+        return json.dumps({"ok": True, "mode": m, "source": src,
+                           "modes": list(wm.MODES), "describe": wm.describe(),
+                           "state": wm.read_state()}, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def set_worker_mode_tool(mode: str, why: str = "", by: str = "") -> str:
+    """워커 지휘자 모드를 바꾼다 (`#385`). `mode` 는 `lane` · `claude` · `codex`.
+
+    [중요] **기록이지 잠금이 아니다** — 호출부가 명시한 인자와 `AX_WORKER_MODE` 가 여전히
+    이긴다. 재부팅은 넘는다(`~/.cache/ax-dispatch/mode.json`).
+
+    [중요] **표면은 이 한 벌이다** — Claude 스킬과 Codex 스킬이 **같은 이 도구를 부른다**
+    (사용자 정정 2026-09-08: *"MCP와 스킬은 양자택일이 아니야"*). 도구마다 로직을 따로
+    구현하면 두 벌이 갈라진다.
+
+    [주의] 모르는 값은 **거절한다** — 조용히 기본값으로 접지 않는다.
+    """
+    try:
+        from ..work import mode as wm
+        saved = wm.set_mode(mode, why=why, by=by)
+        m, src = wm.current()
+        return json.dumps({"ok": True, "saved": saved, "mode": m, "source": src,
+                           "describe": wm.describe()}, ensure_ascii=False)
+    except ValueError as e:
+        return json.dumps({"ok": False, "reason": str(e),
+                           "modes": list(__import__("master.work.mode",
+                                                    fromlist=["MODES"]).MODES)},
+                          ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
 def set_log_tag_tool(domain: str, tag: str, cvar: str,
                      related_invariants: list = None) -> str:
     """로그 태그/CVar 매핑 확정 기입 — tag 기준 upsert (#169).

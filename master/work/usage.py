@@ -145,6 +145,55 @@ def call_agy(prompt: str, *, timeout: int = TIMEOUT) -> Call:
     return Call(text=text, usage=u)
 
 
+def parse_codex_jsonl(stdout: str) -> tuple | None:
+    """`codex exec --json` 의 이벤트 스트림 → `(본문, 계측)`. 이벤트가 없으면 `None`.
+
+    [중요] **형식 지식은 이 모듈이 갖는다** — `call_codex` 가 이미 같은 이벤트를 읽고 있어서
+    파서를 또 만들지 않는다(`#385` 검증 ⓒ). 지휘자 경로(`runner._unwrap`)가 이걸 부른다.
+
+        item.completed  → {"item": {"type": "agent_message", "text": …}}   본문
+        turn.completed  → {"usage": {input_tokens, cached_input_tokens,
+                                     cache_write_input_tokens, output_tokens,
+                                     reasoning_output_tokens}}             토큰
+
+    계측은 **`Outcome` 이 읽는 이름으로** 옮긴다(`runner.py:113-118`):
+
+        cache_creation_input_tokens  ← cache_write_input_tokens
+        cache_read_input_tokens      ← cached_input_tokens
+
+    🔴 [중요] **비용은 codex 가 주지 않는다.** `total_cost_usd` 키를 **만들지 않고**
+    `cost_unknown=True` 를 싣는다 — 0 으로 적으면 「공짜」로 읽히고, 그것이 이 저장소가
+    반복해 치른 「조용한 0」이다(이 모듈 머리말과 같은 규칙).
+    """
+    text, raw = "", None
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if d.get("type") == "item.completed":
+            item = d.get("item") or {}
+            if item.get("type") == "agent_message" and item.get("text"):
+                text = str(item["text"])          # 마지막 것이 남는다
+        elif d.get("type") == "turn.completed" and isinstance(d.get("usage"), dict):
+            raw = d["usage"]
+    if not text and raw is None:
+        return None                                # codex 이벤트가 아니다
+    meta = {"source": "codex", "cost_unknown": True}
+    if raw is not None:
+        meta["usage"] = {
+            "input_tokens": raw.get("input_tokens"),
+            "output_tokens": raw.get("output_tokens"),
+            "cache_creation_input_tokens": raw.get("cache_write_input_tokens"),
+            "cache_read_input_tokens": raw.get("cached_input_tokens"),
+            "reasoning_output_tokens": raw.get("reasoning_output_tokens"),
+        }
+    return text, meta
+
+
 def call_codex(prompt: str, *, timeout: int = TIMEOUT, reasoning: str = "") -> Call:
     """`.33` 원격 CLI. **`--json` 이벤트에서 항목별 사용량**을 읽는다 (2026-09-05 실측).
 

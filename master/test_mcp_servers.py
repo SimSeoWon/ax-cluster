@@ -82,7 +82,14 @@ from master.projects import mcp_server as pj  # noqa: E402
 check("모듈 import", True)
 check("MCPServer 인스턴스", type(pj.mcp).__name__ == "MCPServer", type(pj.mcp).__name__)
 _pj = tool_names(pj.mcp)
-check("도구 33종 등록 (get_manifest 철거 2026-09-02)", len(_pj) == 33, f"실제 {len(_pj)}종: {_pj}")
+check("도구 35종 등록 (get_manifest 철거 2026-09-02 · 지휘자 모드 2종 신설 2026-09-08)",
+      len(_pj) == 35, f"실제 {len(_pj)}종: {_pj}")
+# [중요] **워커 지휘자 모드 창구 둘** (`#385`, 2026-09-08) — 모드를 고르는 표면은 **서버의
+#   이 한 벌**이고 Claude 스킬·Codex 스킬이 **같은 것**을 부른다(`ax-mode`). 도구마다 로직을
+#   따로 두면 두 벌이 갈라진다. [주의] 개수만 세면 「하나 빠지고 하나 늘어난」 것을 못 잡으므로
+#   이름으로도 확인한다.
+for _t in ("get_worker_mode_tool", "set_worker_mode_tool"):
+    check(f"  [중요] 지휘자 모드 창구: {_t}", _t in _pj, str(_pj))
 check("  [중요] 도메인 필드 편집: edit_domain_field_tool", "edit_domain_field_tool" in _pj)
 # [중요] **서술 조회 창구** (소 3.1.4, 원전 η.7.4) — 서술을 만들어 두고 읽는 곳이 없으면
 #   그 산출물은 없는 것과 같다. 원전은 라우트·도구 둘 다 갖고 있었다(리포트 14 §7.5).

@@ -156,7 +156,10 @@ class Response:
         return " — ".join(bits)
 
 
-def infer_command(facts, task_id: str, files=()) -> str:
+from . import mode as _MODE
+
+
+def infer_command(facts, task_id: str, files=(), *, mode: str = "claude") -> str:
     """워커에서 실제로 도는 한 줄. [중요] 경로는 레지스트리에서 온 값(`facts.path`)이다.
 
     [중요] `files` 는 **판정에 쓰는 그 목록**이다 — 지시와 판정이 갈라지지 않게 하나만 돈다.
@@ -165,11 +168,9 @@ def infer_command(facts, task_id: str, files=()) -> str:
     shown = ", ".join(str(f) for f in (files or [])) or "(none given)"
     instr = INFER_INSTRUCTION.format(work=bundle.WORK_REL, task=task_id, resp=RESPONSE_NAME,
                                      files=shown)
-    cd = f'cd /d "{facts.path}"' if facts.windows else f'cd "{facts.path}"'
-    # `--output-format json` — 마커는 `result` 안으로 오고, 대신 토큰·비용을 함께 받는다.
-    # 계측 없이 "분산이 이득인가" 를 논할 수 없다(실측이 두 번 결론을 뒤집었다).
-    return (f'{cd} && claude -p --output-format json '
-            f'--dangerously-skip-permissions "{instr}"')
+    # [중요] 명령 조립은 `runner.agent_command` 한 자리다 (`#385`) — 두 군데에 같은 문자열을
+    #    두면 갈래를 넣을 때 한쪽만 바뀐다.
+    return runner.agent_command(facts, facts.path, instr, mode=mode)
 
 
 def response_path(facts, task_id: str) -> str:
@@ -360,9 +361,10 @@ def infer_task(facts, task_id: str, *, want, beat=None, runner_=None,
     return res
 
 
-def _default_runner(facts, task_id: str, timeout: int, files=()) -> tuple:
-    return bundle._ssh(facts.host, facts.user, infer_command(facts, task_id, files),
-                       timeout=timeout)
+def _default_runner(facts, task_id: str, timeout: int, files=(), *,
+                    mode: str = "claude") -> tuple:
+    return bundle._ssh(facts.host, facts.user,
+                       infer_command(facts, task_id, files, mode=mode), timeout=timeout)
 
 
 # ── 스풀 — [중요] **돈을 낸 출력이고, 진행 상황의 유일한 사본이다** (소 1.3.2·1.3.3) ──────
@@ -595,7 +597,7 @@ def prescreen_nowork(paths, work_id: str, *, api=runner._api) -> list:
 
 
 def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", order: int = 0,
-                 runner_=None, reader=None, ssh=None,
+                 runner_=None, reader=None, ssh=None, mode: str = "",
                  timeout: int = runner.DEFAULT_TIMEOUT) -> Response:
     """집어 둔 태스크 하나를 워커에서 추론시키고 **스풀에 남긴다.**
 
@@ -739,7 +741,7 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
 
     res = commit_task(paths, facts, task, work_id=work_id, base=base, want=want,
                       branch=sub_name, api=api, runner_=runner_, reader=reader, ssh=ssh,
-                      timeout=timeout)
+                      mode=mode, timeout=timeout)
     res.subbranch, res.subbranch_error = sub_name, sub_err
     spool(paths, res, work_id=work_id, order=order)
     return res
@@ -769,7 +771,7 @@ def _skeleton_at(paths, commit: str, files) -> dict:
         return {}
 
 def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: str,
-                api=runner._api, runner_=None, reader=None, ssh=None,
+                api=runner._api, runner_=None, reader=None, ssh=None, mode: str = "",
                 timeout: int = runner.DEFAULT_TIMEOUT) -> Response:
     """정본 ⑸ 한 바퀴: 워커가 본문을 쓰고 **마스터가 검증해 그 브랜치에 커밋**한다.
 
@@ -801,13 +803,24 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         with runner._Beater(lambda: runner.heartbeat(tid, f.host, api=api)):
             if runner_ is not None:
                 return runner_(f, tid, timeout)
+            # 🔴 [중요] **지휘자 모드** (`#385`, 사용자 결정 2026-09-08 — ② 병존).
+            #    `lane` 이면 종전 그대로 마스터가 텍스트를 만들어 써 넣고, `claude`/`codex` 면
+            #    **워커에서 지휘자가 돈다**. [주의] 출처를 함께 찍는다 — 경로가 둘 이상인데
+            #    「왜 이 모드로 돌았나」를 안 밝히는 로그는 나중에 아무 도움이 안 된다.
+            _m, _src = _MODE.current(mode)
+            if _m != "lane":
+                _log(f"[mode] {tid} 지휘자={_m} (출처 {_src}) — 워커에서 실행한다")
+                return runner.run_worker(f, tid, files=files, runner=None,
+                                         mode=_m, timeout=timeout)
             from . import lanes as _LN
             skel = _skeleton_at(paths, base, files)
             if not skel:
                 # [중요] 골조를 못 읽으면 레인이 쓸 재료가 없다 — 워커 CLI 로 되돌린다
                 #    (그 경로는 자기 체크아웃을 직접 읽는다). 조용히 실패하지 않는다.
-                _log(f"[lane] {tid} 골조를 못 읽었다 — 워커 CLI 로 되돌린다")
-                return runner.run_worker(f, tid, files=files, runner=None, timeout=timeout)
+                #    [주의] 폴백의 주체도 모드를 따른다 — `lane` 일 때의 기본은 `claude` 다.
+                _log(f"[lane] {tid} 골조를 못 읽었다 — 워커 CLI 로 되돌린다 (지휘자=claude)")
+                return runner.run_worker(f, tid, files=files, runner=None,
+                                         mode="claude", timeout=timeout)
             got, tried = _LN.run_chain(f, skel, timeout=timeout, logf=_log)
             if got is None:
                 why = " / ".join(t.summary for t in tried) or "레인이 없다"
@@ -876,7 +889,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
 
 def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner._api,
              clean=runner.AUTO, parallel: bool = True, work_id: str = "",
-             runner_=None, reader=None, ssh=None,
+             runner_=None, reader=None, ssh=None, mode: str = "",
              timeout: int = runner.DEFAULT_TIMEOUT) -> Handoff:
     """큐에서 최대 `limit` 건을 집어 추론시키고, **인계 묶음**을 돌려준다 (소 1.3.1).
 
@@ -984,7 +997,7 @@ def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner
             try:
                 res = dispatch_task(paths, f, task, api=api, work_id=work_id, order=order,
                                    runner_=runner_, reader=reader, ssh=ssh,
-                                   timeout=timeout)
+                                   timeout=timeout, mode=mode)
             except Exception as e:                       # noqa: BLE001
                 # [중요] 집은 태스크를 붙잡은 채 죽지 않는다. 반납이 실패해도 사유를 남긴다.
                 res = Response(task_id=task_id, worker=f.host,
