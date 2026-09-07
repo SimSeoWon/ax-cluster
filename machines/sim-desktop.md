@@ -25,6 +25,27 @@ broker · index/ontology · integration · the cluster's own code in `~/ax-clust
 does not start a game-source task; it serves one.**
 → [`win-main-33.md`](win-main-33.md) § 요청자 콘솔
 
+## Orchestrator handoff — read before anything else
+
+    AX-ENTRY-MARK: home
+
+[중요] **Two orchestrators take turns here — Claude and Codex** (사용자 2026-09-07, token/usage
+limits decide which). So **this file is no longer the only entry point.** Before planning:
+
+1. 🔴 **`~/ax-cluster/docs/orchestrator-handoff.md`** — what is in flight *right now*.
+   **One copy only** — overwrite it, never add a second. It is **not a lock**; it does not block
+   execution. [주의] **Do not trust its "완료" claims** — check HEAD, dirty diff, the issue and
+   running processes yourself (근거: `orchestrator-rules.md` §5).
+2. 🔴 **`~/ax-cluster/docs/orchestrator-rules.md`** — the rules both orchestrators keep, with
+   원문 근거. What only one tool can do is listed there as **도구별**, not as a common rule.
+
+[주의] **The master has no auto-notice layer** — the `SessionStart`/`UserPromptSubmit` hooks go to
+the requester `.33` only (`master/client/spec.py:354`). Nothing will surface the handoff record
+for you. Reading it at session start is the wiring.
+
+→ Design and verification method: `~/ax-cluster/docs/15-orchestrator-handoff.md` ·
+일감 [`#384`](http://192.168.0.57:8080/issues/384)
+
 ## Where the project stands — read this before planning
 
 **M1–M5 all closed (M3·M4·M5 closed 2026-08-17, user decisions). M6 (개선·확장)

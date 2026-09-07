@@ -86,6 +86,9 @@ missing halves. That movement is normal — record it, don't hide it.
 | 12 | [Multi-project](docs/12-multi-project.md) | 다중 프로젝트 운영 — 갈린 축과 안 갈린 축, 네 부모 일감의 지도 | [중요] **항목·진행은 레드마인만** (사용자 2026-08-22) · §12.4 가 「안 된 것을 됐다고 적은」 거짓 서술 네 곳을 정정한다 · 마운트 강제는 [완료] **2026-08-22 배선**(3단계 전부) |
 | 13 | [Request tagging](docs/13-request-tagging.md) | **기능 정본** — 요청 태그: 네 정책 · 필수 표면 · 거절 사유 셋 · 발신자 · 순서 규칙 | [중요] `MOUNT`(마운트 대조, **태그 없음도 거절**) vs `STAMP`(work 스탬프로 판정 — 마운트를 강제하면 `#210` 이 깨진다) · [주의] **발신자 배달이 서버 조임보다 먼저다**(어겨서 사고 §13.6) |
 | 14 | [Onboarding runbook](docs/14-onboarding-runbook.md) | **실행용** — 신규 프로젝트를 붙이는 절차를 **명령 단위로** | [중요] 각 단계에 **「안 됐으면 무엇이 안 보이나」**가 붙는다 · 산문만 있거나 「어느 문서를 보라」로 넘기면 미완(`#256`) · [주의] 런북이 실물과 어긋나면 `test_runbook` 이 깨진다 |
+| 15 | [Orchestrator handoff](docs/15-orchestrator-handoff.md) | Claude ↔ Codex 마스터 지휘 교대 계획 — 공용 지침·인수인계·서브 에이전트 결과 회수 | 사용자 2026-09-07: 토큰/사용량 한도에 따라 교대. 수동 교대와 양방향 실증부터, 자동 선택 실행기는 #368 후속 검토 |
+| 15r | [Orchestrator rules](docs/orchestrator-rules.md) | **공용 규칙** — Claude·Codex 두 지휘자가 함께 지키는 사용자 결정 + 도구별로 다른 것 + 미실증 | [중요] **여기엔 사용자 결정만.** 도구 하나에서만 되는 기능은 「도구별」로 따로 적고 공통 규칙으로 쓰지 않는다 · §5 는 **기록의 「완료」를 믿지 않는 이유**(Claude 기억 안의 실제 모순) |
+| 15h | [Orchestrator handoff record](docs/orchestrator-handoff.md) | **지금 무엇이 진행 중인가** — 한 벌만 유지하는 인수인계 기록 | [주의] **새 파일을 만들지 말고 덮어 쓴다** · 받는 쪽은 HEAD·dirty diff·이슈·프로세스를 **직접 대조**한다 · 이 기록은 **잠금이 아니다** |
 
 ---
 

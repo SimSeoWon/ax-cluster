@@ -9,6 +9,18 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
 
 ## Hard rules — inline on purpose
 
+- 🔴 [중요] **지휘자는 둘이다 — Claude 와 Codex 가 교대한다** (사용자 2026-09-07, 한도가 정한다).
+  세션 시작에 **먼저 읽는다**:
+  **① [`docs/orchestrator-handoff.md`](docs/orchestrator-handoff.md)** — 지금 무엇이 진행 중인가.
+  **한 벌만 유지한다**(새 파일을 만들지 말고 덮어 쓴다) · **잠금이 아니다**(실행을 막지 않는다) ·
+  [주의] **거기 적힌 「완료」를 그대로 믿지 않는다** — HEAD·dirty diff·이슈·프로세스를 직접 대조한다.
+  **② [`docs/orchestrator-rules.md`](docs/orchestrator-rules.md)** — 두 지휘자의 공용 규칙과 원문 근거.
+  도구 하나에서만 되는 것은 거기 **「도구별」**로 적혀 있고 공통 규칙이 아니다.
+  [주의] **마스터에는 자동 고지 층이 없다** — 훅은 요청자 `.33` 에만 간다(`master/client/spec.py:354`).
+  읽는 것 자체가 배선이다. → 설계 `docs/15-orchestrator-handoff.md` · 일감 `#384`
+
+      AX-ENTRY-MARK: repo
+
 - [중요] **세션 시작에 이 둘을 먼저 읽는다 — 조건부가 아니다** (사용자 2026-08-22):
   **① 열린 마일스톤** [`docs/milestones/6-improvements.md`](docs/milestones/6-improvements.md)
   · **② 지금 열린 축의 지도** [`docs/12-multi-project.md`](docs/12-multi-project.md).
