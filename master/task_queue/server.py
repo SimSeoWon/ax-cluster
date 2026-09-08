@@ -313,7 +313,8 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
     @app.post("/api/v1/tasks/{task_id}/submit-fail")
     def submit_fail_ep(task_id: str, req: SubmitFailReq):
         r = submit_fail(idx, task_id, req.reason, req.detail,
-                        epoch=req.epoch, worker_id=req.worker_id)
+                        epoch=req.epoch, worker_id=req.worker_id,
+                        result=req.result, new_base_commit=req.new_base_commit)
         if not r.get("ok"):
             raise HTTPException(409, r.get("error"))
         return r

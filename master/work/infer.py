@@ -786,6 +786,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
     [주의] 실패도 **반납한다**(`submit_fail`) — 집은 채로 죽으면 리스 1200초를 태운다.
     """
     from . import wcommit
+    from . import revise as _RV
 
     task_id = str(task.get("task_id") or task.get("id") or "")
     epoch = task.get("epoch")
@@ -879,9 +880,46 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         res.reason = c.summary
         res.notes.extend(f"[중요] {v}" for v in c.layer1_violations[:5])
         _log(f"[wcommit] {task_id} {c.summary}")
+        # 🔴 **상한 있는 재시도** (`#388`, 원전 `_classify_verify_issues` 이식).
+        #
+        # [중요] **종전에는 여기서 곧바로 terminal `failed` 이었다.** 원전 독스트링이 그
+        #    상태를 그대로 서술한다: *"이전엔 … 만나자마자 reject(=terminal failed) 로 즉시
+        #    종료 → 워커가 feedback 받아 고칠 기회조차 없었음."* 원전은 2026-05-10 에 고쳤고
+        #    우리는 그 고침 **이전** 상태를 이식했다. 배관(`needs_revision`)은 이미 있었는데
+        #    **그것을 만드는 코드가 0건**이었다.
+        #
+        # [중요] **피드백을 실어 보내지 못하면 revise 로 보내지 않는다.** 피드백 없는 재시도는
+        #    같은 실수를 반복할 뿐이라 상한만 태운다 — 그때는 종전대로 terminal 이다.
+        #    (원전이 `_embed_feedback_in_worker_branch` 를 만든 이유가 정확히 그것이다.)
+        issues = list(c.layer1_violations) or [c.summary]
+        attempt = int(task.get("attempt_count") or 1)
+        verdict = _RV.classify(issues, attempt)
+        r_result = r_base = ""
+        if verdict == _RV.REVISE:
+            try:
+                emb = _RV.embed(paths, work_id, task_id, issues=issues, attempt=attempt + 1,
+                                targets=c.want, round_no=int(task.get("round") or 0), logf=_log)
+            except Exception as e:                           # noqa: BLE001
+                emb = _RV.Embedded(task_id=task_id, error=f"{type(e).__name__}: {e}")
+            if emb.ok:
+                r_result, r_base = _RV.REVISE, emb.head
+                res.notes.append(f"[주의] 층1 이 막았지만 **고칠 수 있는 실패**다 — "
+                                 f"attempt {attempt}/{_RV.MAX_ATTEMPTS} · 피드백을 "
+                                 f"{emb.branch} 에 실었다({emb.head[:8]})")
+                _log(f"[revise] {task_id} {attempt}/{_RV.MAX_ATTEMPTS} — 재시도로 보낸다")
+            else:
+                # [주의] 조용히 접지 않는다 — 왜 revise 로 못 갔는지 남긴다.
+                res.notes.append(f"[중요] 재시도로 보내려 했으나 피드백을 못 실었다 — "
+                                 f"{emb.error} · terminal 로 종결한다")
+                _log(f"[revise] [중요] {task_id} 피드백 실패 — {emb.error}")
+        else:
+            res.notes.append(f"[중요] 재시도 상한 — attempt {attempt} ≥ {_RV.MAX_ATTEMPTS}, "
+                             f"종결한다(원전 `reject`)")
+            _log(f"[revise] {task_id} 상한 도달 attempt={attempt} → 종결")
         try:
             runner.submit_fail(task_id, runner.BLOCKED, c.summary,
-                               epoch=epoch, worker_id=facts.host, api=api)
+                               epoch=epoch, worker_id=facts.host, api=api,
+                               result=r_result, new_base_commit=r_base)
         except Exception as e:                               # noqa: BLE001
             res.notes.append(f"[주의] 반납도 실패했다 — {type(e).__name__}: {e}")
     return res

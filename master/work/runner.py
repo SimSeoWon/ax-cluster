@@ -571,11 +571,20 @@ def cancel(task_id: str, *, reason: str = "", no_work: bool = False, api=_api):
 
 
 def submit_fail(task_id: str, reason: str, detail: str = "", *, epoch=None,
-                worker_id: str = "", api=_api):
-    """실패 고지. [중요] **submit 과 같은 두 게이트**를 통과해야 한다 (`#318`)."""
+                worker_id: str = "", result: str = "", new_base_commit: str = "",
+                api=_api):
+    """실패 고지. [중요] **submit 과 같은 두 게이트**를 통과해야 한다 (`#318`).
+
+    🔴 `result="revise"` 면 terminal `failed` 이 아니라 **`needs_revision`** 으로 간다
+    (`#388` · 원전 `_classify_verify_issues` 이식). 그때 `new_base_commit` 은 **피드백
+    주석이 박힌 커밋**이고, 다음 시도가 거기서 출발한다.
+
+    [중요] **분류는 여기서 하지 않는다** — 호출자가 `work/revise.classify` 로 정한다.
+    """
     return api("POST", f"/api/v1/tasks/{task_id}/submit-fail",
                {"reason": reason[:200], "detail": detail[-2000:],
-                "epoch": epoch, "worker_id": worker_id})
+                "epoch": epoch, "worker_id": worker_id,
+                "result": result, "new_base_commit": new_base_commit})
 
 
 AUTO = "auto"          # [중요] 기본은 **재는 것**이다. 끄려면 호출자가 명시적으로 None 을 준다.

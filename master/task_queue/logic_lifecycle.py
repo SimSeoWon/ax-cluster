@@ -127,7 +127,8 @@ def submit_result(idx: TaskIndex, task_id: str, *,
 
 
 def submit_fail(idx: TaskIndex, task_id: str, reason: str, detail: str = "", *,
-                epoch: Optional[int] = None, worker_id: Optional[str] = None) -> dict:
+                epoch: Optional[int] = None, worker_id: Optional[str] = None,
+                result: str = "", new_base_commit: str = "") -> dict:
     """실패 고지. [중요] **submit 과 같은 두 게이트를 건다** (`#318` 완료 조건 2).
 
     [중요] 종전에는 이 경로에 **epoch 게이트조차 없었다.** 만기돼 회수당한 워커가 뒤늦게
@@ -149,6 +150,40 @@ def submit_fail(idx: TaskIndex, task_id: str, reason: str, detail: str = "", *,
             return bad
         if t.get("status") not in ("claimed", "submitted"):
             return {"ok": False, "error": f"not in claim/submit state (current={t.get('status')})"}
+        # 🔴 **상한 있는 재시도** (`#388`, 원전 `_classify_verify_issues` 이식) — 층1 이 막았지만
+        #    **명시하면 고칠 수 있는** 실패다. 호출자가 `result="revise"` 로 분류해 오면
+        #    terminal `failed` 대신 `needs_revision` 으로 보낸다 → `logic_claim` 후보 풀 복귀.
+        #
+        # [중요] **분류는 큐가 하지 않는다.** 원전도 그렇다 — verify 경로에서 마스터
+        #    오케스트레이터가 `_classify_verify_issues` 로 정하고 큐는 받은 `result` 를 집행한다.
+        #    큐가 분류하면 「무엇이 고칠 수 있는 실패인가」가 두 곳에 생긴다.
+        #
+        # [주의] **`new_base_commit` 이 핵심이다.** 피드백 주석이 박힌 커밋을 base 로 삼아야
+        #    다음 시도가 그것을 **읽는다**. 없으면 재시도가 같은 실수를 반복한다 —
+        #    원전이 `_embed_feedback_in_worker_branch` 를 만든 이유가 정확히 그것이다.
+        if result == "revise":
+            t["status"] = "needs_revision"
+            t["last_result"] = "revise"
+            t["last_feedback"] = str(detail or reason)[:600]
+            t["verdict"] = "revise"
+            t["worker_id"] = None
+            t["claimed_at"] = None
+            t["last_heartbeat"] = None
+            if new_base_commit:
+                t["base_commit"] = new_base_commit
+            path = idx.task_paths[task_id]
+            _, body = _read_md(path)
+            body += (f"\n## revise\nreason: {reason}\nat: {_now_iso()}\n"
+                     f"attempt: {int(t.get('attempt_count', 0) or 0)}\n"
+                     f"new_base_commit: {new_base_commit}\n"
+                     f"note: 층1 이 막았지만 고칠 수 있는 실패 — needs_revision 으로 후보 풀 복귀\n")
+            if detail:
+                body += f"\n## feedback\n{detail}\n"
+            _save_task(idx, task_id, body_override=body)
+            _tq_log(f"[revise] {task_id} → needs_revision "
+                    f"(attempt={t.get('attempt_count')} base={new_base_commit[:8] or '(유지)'})", idx.root)
+            _git_commit_tasks(idx.root, f"[revise] {task_id} → needs_revision", [path])
+            return {"ok": True, "revised": True, "status": "needs_revision"}
         # Phase 3 lite — quota_exhausted 는 task 결과물이 아닌 워커 환경 문제이므로
         # task 를 죽이지 않고 pending 으로 되돌려 다른 워커가 잡게 함. 같은 워커는
         # 5h 동안 이 task 재할당 차단 (quota_blocked_workers).

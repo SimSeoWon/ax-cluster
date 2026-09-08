@@ -134,6 +134,13 @@ class SubmitFailReq(BaseModel):
     #    회수당한 zombie 가 **살아 있는 작업을 죽일 수 있었다.**
     epoch: Optional[int] = None
     worker_id: str = ""
+    # 🔴 **상한 있는 재시도** (`#388`) — 층1 이 막았지만 **고칠 수 있는** 실패다.
+    #    `result="revise"` 면 terminal `failed` 대신 `needs_revision` 으로 보낸다.
+    #    [중요] 판정은 호출자가 한다 (`work/revise.classify` — 원전 `_classify_verify_issues`).
+    #    큐는 **분류하지 않고 받은 값을 집행**한다 — 원전 verify 경로와 같은 역할 분담이다.
+    result: str = ""
+    # 피드백 주석이 박힌 새 커밋 — 재시도는 여기서 출발한다 (원전 `new_base_commit` 과 같다).
+    new_base_commit: str = ""
 
 
 class VerifyReq(BaseModel):
