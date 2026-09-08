@@ -112,6 +112,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
             max_extensions_per_work=req.max_extensions_per_work, slug=req.slug,
             review_scheduled=req.review_scheduled,
             distribution_mode=req.distribution_mode,
+            worker_mode=req.worker_mode,
             force_duplicate=req.force_duplicate)
 
     @app.get("/api/v1/works/duplicates")

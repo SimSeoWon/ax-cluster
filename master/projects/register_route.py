@@ -185,6 +185,10 @@ def _run(payload: dict, *, improve: bool = False) -> dict:
                 target_repo=str(payload.get("target_repo") or project),
                 original_request=str(payload.get("original_request") or ""),
                 target_branch=str(payload.get("target_branch") or ""),
+                # 🔴 **요청자가 지휘자를 지정할 수 있다** (`#389`) — 안 주면 등재 시점의
+                #    전역값이 박힌다. [중요] 개선요청에는 없다: 라운드 간 비교가 성립하려면
+                #    같은 work 은 같은 지휘자로 돌아야 한다.
+                worker_mode=str(payload.get("worker_mode") or ""),
             )
     except RegisterError as e:
         # [중요] **거절은 200 + `ok:false`** 다 — 큐가 낸 사유(라운드 불일치 · 상태 불가)를

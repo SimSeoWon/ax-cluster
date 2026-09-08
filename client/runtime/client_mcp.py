@@ -780,6 +780,15 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["title", "specs"],
                      "properties": {
                          "title": {"type": "string", "description": "한국어 그대로 좋다"},
+                         # 🔴 **지휘자를 이 work 에 못박는다** (`#389`). 안 주면 등재 시점의
+                         #    전역값(`get_orchestration` 이 보여 주는 그것)이 박힌다.
+                         "worker_mode": {
+                             "type": "string", "enum": ["lane", "claude", "codex"],
+                             "description": (
+                                 "이 분산 작업의 **지휘자**. 안 주면 지금 전역 설정값이 "
+                                 "박힌다. [중요] 한 번 박히면 그 work 의 조각은 전부 이 모드로 "
+                                 "돈다 — 도중에 전역을 바꿔도 흔들리지 않는다. "
+                                 "라운드가 올라가도 유지된다(비교가 성립해야 하므로).")},
                          # [중요] **필드를 정확히 적는다.** 실측 2026-08-30: 첫 실전 등재가
                          #    `summary` 라는 없는 필드를 실어 거절됐다 — 설명이 "항목마다
                          #    stem·classes·…" 식이라 목록이 닫혀 있는지 열려 있는지 알 수 없었다.

@@ -56,6 +56,10 @@ class WorkRegisterReq(BaseModel):
     slug: str = ""
     review_scheduled: str = ""
     distribution_mode: str = "pull"   # Plan v5 C.6 — pull(기본)/push. 마스터가 config 따라 설정. (전환기 플래그)
+    # 🔴 **지휘자 모드를 work 에 박는다** (`#389`) — `lane`/`claude`/`codex`.
+    #    [중요] `distribution_mode` 와 **같은 결**이다: per-work 스탬프이고, 전역 스위치를
+    #    바꿔도 **도는 work 은 시작 모드로 완주**한다. 비면 등재 쪽이 그때의 전역값을 스탬프한다.
+    worker_mode: str = ""
     # 동일 slug + target_repo 의 active work (merge 안 된 상태) 가 있으면
     # 기본은 거절하고 duplicates 정보 반환. 사용자가 confirm 후 True 로 재호출.
     force_duplicate: bool = False

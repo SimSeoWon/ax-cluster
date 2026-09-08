@@ -344,6 +344,7 @@ def register_work(
     gate=None,
     require_base: bool | None = None,
     heuristics=None,
+    worker_mode: str = "",
 ) -> Registered:
     """work 를 만들고 태스크를 등록한다.
 
@@ -403,6 +404,7 @@ def register_work(
 
     work_id = create_work(title, paths=paths, target_repo=target_repo,
                           original_request=original_request, target_branch=target_branch,
+                          worker_mode=worker_mode,
                           queue_url=queue_url, token=token, poster=post)
 
     # ── [중요] 여기부터는 **보상 취소**가 붙는다 (`#336` ③, 실측 2026-08-30) ──────────
@@ -439,6 +441,7 @@ def improve_work(
     gate=None,
     require_base: bool | None = None,
     heuristics=None,
+    worker_mode: str = "",
 ) -> Registered:
     """🔴 **분산작업 개선요청 — 이미 있는 work 을 다음 라운드로 연다** (사용자 결정 2026-09-05).
 
@@ -570,6 +573,7 @@ def _register_after_create(work_id, specs, *, paths, target_branch, queue_url, t
 
 def create_work(title: str, *, paths: ProjectPaths, target_repo: str,
                 original_request: str = "", target_branch: str = "",
+                worker_mode: str = "",
                 queue_url: str = DEFAULT_QUEUE, token: str | None = None,
                 poster=None) -> str:
     """work 하나를 만들고 **work_id 를 돌려준다** — `#317` 미결 ① 순서의 0번.
@@ -579,6 +583,20 @@ def create_work(title: str, *, paths: ProjectPaths, target_repo: str,
     없다. 순서는 0) work 등재 → 1) 브랜치 생성 → 2) 골조 커밋·UHT·push → 3) 태스크 등재다.
     """
     post = poster or (lambda u, p: _post(u, p, token=token))
+    # 🔴 **지휘자 모드를 등재 시점에 스탬프한다** (`#389`, 사용자 결정 2026-09-09).
+    #
+    # [중요] 종전에는 파견이 **조각마다** 전역 파일을 읽었다. 그래서 파견 도중에 모드를 바꾸면
+    #    한 work 안에서 조각마다 지휘자가 갈렸고, 「이 work 은 무엇이 만들었나」를 레코드가
+    #    답하지 못했다. `distribution_mode` 가 이미 per-work 스탬프인 것과 같은 자리다.
+    # [주의] 호출자가 명시하면 그것이 이긴다. 안 주면 **지금의 전역값**이 박힌다 —
+    #    그 뒤 전역을 바꿔도 이 work 은 흔들리지 않는다.
+    if not (worker_mode or "").strip():
+        try:
+            from . import mode as _MODE
+            worker_mode = _MODE.current()[0]
+        except Exception:                                    # noqa: BLE001
+            # [주의] 조용히 넘기지 않는다 — 빈 값이면 파견이 종전대로 전역을 읽는다.
+            worker_mode = ""
     work = post(f"{queue_url}/api/v1/works", {
         "title": title,
         # [중요] 프로젝트 귀속 스탬프 (#210) — 종결 기록·신호가 활성이 아니라 이 값으로 푼다
@@ -588,6 +606,7 @@ def create_work(title: str, *, paths: ProjectPaths, target_repo: str,
         "original_request": original_request or title,
         # [중요] 3-tier 브랜치를 쓴다. 원본의 pull 레거시 경로는 우리에게 없다 (`branch_names.py`).
         "distribution_mode": "push",
+        "worker_mode": worker_mode,
     })
     work_id = str(work.get("work_id") or work.get("id") or "")
     if not work_id:

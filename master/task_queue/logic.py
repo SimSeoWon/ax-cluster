@@ -97,6 +97,7 @@ def register_work(idx: TaskIndex, *, title: str, target_repo: str,
                   max_extensions_per_work: int = 5, slug: str = "",
                   review_scheduled: str = "",
                   distribution_mode: str = "pull",
+                  worker_mode: str = "",
                   force_duplicate: bool = False) -> dict:
     work_slug = slug or _slugify(title)
     if not force_duplicate:
@@ -133,6 +134,12 @@ def register_work(idx: TaskIndex, *, title: str, target_repo: str,
             "verified": 0,
             "extensions_used": 0,
             "max_extensions_per_work": max_extensions_per_work,
+            # 🔴 **지휘자 모드 스탬프** (`#389`) — 이 work 의 조각은 전부 이 모드로 돈다.
+            #    [중요] 큐는 **분류하지 않고 받은 값을 보관**한다. 빈 값이면 등재 쪽
+            #    (`work/register.py`)이 그때의 전역값을 채워 보낸다 — 「이 work 은 무엇이
+            #    만들었나」에 레코드가 답할 수 있어야 하기 때문이다.
+            #    [주의] **라운드가 올라가도 유지된다** — 라운드 간 비교가 성립해야 한다.
+            "worker_mode": (worker_mode or "").strip() or None,
             # Plan v5 C.6 — pull(기본)/push 모드 per-work 스탬프. 플래그 flip 은 신규 work 만,
             # in-flight 는 시작 모드로 완주(가역·안전). 워커/verifier 는 이 값(또는 task 의 복사본)으로 분기.
             "distribution_mode": distribution_mode if distribution_mode in ("pull", "push") else "pull",

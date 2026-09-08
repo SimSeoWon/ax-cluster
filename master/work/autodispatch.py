@@ -234,6 +234,17 @@ def pending_tasks(work_id: str, *, api=None) -> list:
     return [t for t in tasks if str(t.get("status") or "") == "pending"]
 
 
+def work_meta(work_id: str, *, api=None) -> dict:
+    """work 레코드. [주의] 실패하면 **빈 dict** 다 — 호출자가 「모른다」로 처리한다."""
+    from . import runner
+    call = api or runner._api
+    try:
+        got = call("GET", f"/api/v1/works/{work_id}")
+    except Exception:                                        # noqa: BLE001
+        return {}
+    return (got or {}).get("work") or {}
+
+
 def should_dispatch(paths, work_id: str, *, api=None) -> tuple:
     """`(걸까, 사유)`. **안 거는 이유도 문장으로 낸다** — 조용히 넘기지 않는다."""
     from . import runner, twin_base
@@ -384,7 +395,15 @@ def dispatch(paths, work_id: str, *, limit: int = 0, api=None, runner_many=None)
         # 🔴 [중요] **병렬을 명시로 넘긴다** (사용자 확정 2026-09-03). 종전에는 넘기지 않아
         #    `run_many` 의 옛 기본값(`False`)이 그대로 먹었고, **자동 파견 경로에는 병렬을
         #    켤 자리가 아예 없었다.** 기본값에 의존하면 그 기본값이 바뀐 줄도 모른다.
-        hand = fn(paths, limit=n, project=paths.name, work_id=work_id, parallel=True)
+        # 🔴 [중요] **지휘자 모드도 명시로 넘긴다** (`#389`) — 병렬과 **같은 이유**다.
+        #    종전에는 안 넘겨서 `infer` 가 **조각마다** 전역 파일을 읽었고, 파견 도중 모드를
+        #    바꾸면 한 work 안에서 지휘자가 갈렸다. work 레코드의 스탬프가 정본이다.
+        #    [주의] 스탬프가 없는 옛 work 은 빈 값이고, 그때는 종전대로 전역을 읽는다.
+        _wm = str(work_meta(work_id, api=api).get("worker_mode") or "")
+        if _wm:
+            _log(f"{work_id} 지휘자={_wm} (work 스탬프) — 이 파견 전체에 고정한다")
+        hand = fn(paths, limit=n, project=paths.name, work_id=work_id, parallel=True,
+                  mode=_wm)
         # [중요] **필드 이름을 확인하고 읽는다** (`#342`, 실측 2026-08-30). 처음에
         #    `hand.responses` 를 읽어 **성공을 「응답 0건」으로 보고**했다 — 실제로는
         #    `Handoff.items` 다(`[(order, Response), …]`). 만들고 확인하지 않은 자리다.
