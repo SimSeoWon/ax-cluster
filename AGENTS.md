@@ -29,3 +29,15 @@
   한다** — 한쪽에만 규칙을 추가하지 않는다.
 - 이 저장소의 작업 지침 전문은 [`CLAUDE.md`](CLAUDE.md) — **도구 이름이 붙어 있을 뿐
   내용은 도구 무관**이다. Codex 도 그 규칙을 따른다.
+
+## 마스터 실행 환경 · 지휘자 교대
+
+- AX 도구 실행 전 작업 위치를 `/home/sim/ax-cluster` 로 맞춘다. Python 은 `.venv/bin/python` 을 쓴다.
+- 프로젝트 CLI 는 환경변수가 필수다. 조회 예:
+  `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client plan NS`
+  (`NS` 는 예시다. 대상 프로젝트를 명시한다.) `deliver`·`check` 도 같은 접두를 쓴다.
+- 마스터의 공용 호출 창구는 `ax-projects` MCP 다. Codex 설정은 `~/.codex/config.toml`,
+  Claude 설정은 `~/.claude.json` 에 있다. 설정 추가만으로 현재 세션에 도구가 생겼다고 판단하지 않는다.
+- 워커 지휘자 선택은 `ax-mode` 스킬 → `get_worker_mode_tool` / `set_worker_mode_tool` 이다.
+  마스터 대화 세션의 교대와 워커 모드 선택은 별개다. 선택 가능한 값은 `lane`·`claude`·`codex`.
+- 배달은 커밋된 깨끗한 트리에서 한다. 문서만 미커밋이어도 `delivered_by.dirty=true` 로 기록된다.

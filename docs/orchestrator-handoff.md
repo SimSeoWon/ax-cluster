@@ -1,134 +1,194 @@
 # 현재 AX 작업 인수인계
 
+## 최신 체크포인트 — Codex, 2026-09-08 마스터·워커 교대 준비
+
+이 절이 아래 Claude 인계 당시 상태보다 최신이다. 사용자 지시:
+"마스터 컴퓨터와 워커 2대를 먼저 클로드와 코덱스를 스왑할 수 있도록 진행하자!"
+
+- 마스터 `~/.codex/config.toml` 에 기존 Claude와 같은 `ax-projects` HTTP MCP를 연결했다.
+  기존 인증 헤더를 로컬에서만 복사했고 파일 권한은 0600이다. 인증값은 보고서·저장소에 없다.
+  이전 설정 백업: `/tmp/ax-codex-config-before-mcp.toml` (0600).
+- **네이티브 연결·조회 실증 완료**: 새 `codex exec --strict-config --ephemeral -s read-only`
+  세션에서 `list_projects_tool` → active=NS, problems=[];
+  `get_worker_mode_tool` → ok=true, mode=codex, source=state. 변경 도구도 목록에 보인다.
+  이 대화 세션 자체에 MCP 도구가 동적으로 추가됐다는 뜻은 아니다.
+- 첫 네이티브 조회는 비대화형 `approval_policy=never`로 차단됐다. 사용자 도구 승인 후
+  **검증 호출에만** 조회 두 도구의 `approval_mode=approve`를 지정해 성공했다.
+  저장 설정의 도구 승인 정책은 넓히지 않았다. 운영 모드는 변경하지 않았다.
+- `AGENTS.md`와 `machines/sim-desktop-agents.md`에 동일한 실행 환경·MCP·ax-mode·dirty 배달
+  주의 블록을 보강했다. 홈 심볼릭 링크 보존. **미커밋**이며 커밋·푸시 승인 없음.
+- 앞선 `plan NS`는 `AX_PROJECTS_ROOT=/home/sim/ax-cluster`를 명시하고 샌드박스 밖에서
+  정상 종료했다. 세 기계 SSH·체크아웃과 도구별 스킬 배달 계획을 확인했다. 배달은 안 했다.
+- **해소된 검증 스크립트 실패**: `/tmp/ax-swap-worker-audit.py`가 원본 스킬 경로를
+  `master/skills/ax-work/SKILL.md`로 잘못 지정해 FileNotFoundError(rc=1).
+  실제 경로는 `master/client/skills/{ax-work,ax-infer}/SKILL.md`다.
+  첫 실행은 SSH 전에 실패했다. 사용자 "응!" 승인 후 경로만 정정해 재실행했고 정상 종료했다.
+- **워커 조회 실측 완료**: `.2` Claude 2.1.258 / Codex 0.153.4,
+  `.43` Claude 2.1.222 / Codex 0.153.4. CLI 버전 조회 4건 모두 rc=0.
+  두 워커의 `.claude`·`.codex` 아래 `ax-work`·`ax-infer` 총 8개 해시가
+  `master/client/skills/` 원본과 전부 일치했다. 원격 변경은 없다.
+  이것은 설치·배달본 대조이며, 오늘 새로 수행한 LLM 작업 실행 검증은 아니다.
+- 다음: 진입 지침 두 파일과 이 인계 문서의 커밋 승인을 받은 뒤 깨끗한 트리에서 재배달·check.
+  커밋 승인 전에는 dirty 배달을 하지 않는다. 재파견 경로 선택·실제 작업 검증은 남아 있다.
+- 아래의 "Codex MCP 미배선"은 **인계 당시 기록**으로, 위 네이티브 실측으로 해소됐다.
+  재기동은 실행하지 않았으며, 모드 도구가 현재 서버에서 응답하므로 과거의 재기동 필요 주장도
+  실제 서비스 신선도를 재측정하고 판단해야 한다.
+
 > [중요] **한 벌만 유지한다.** 새 파일을 만들지 말고 이 파일을 덮어 쓴다.
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5 · 공용 규칙은 `docs/orchestrator-rules.md`.
 > 모르는 상태는 **`미확인`** 으로 적는다. **이 기록은 잠금이 아니다** — 실행을 막지 않는다.
 > 🔴 **여기 적힌 「완료」를 그대로 믿지 않는다.** 받는 쪽은 HEAD·dirty diff·이슈·프로세스를
 > 직접 대조한다 (근거: `orchestrator-rules.md` §5).
 
-- **갱신 시각**: 2026-09-08 02:30 KST (UTC+9) — 하루 마감
-- **지휘 도구 / 세션 식별자**: Claude Opus 5 (1M) · `session_01L77g9My6GzoA6T9bwjkFRf`
-- **상태**: **하루 마감** — `#384` 는 진입점·자동 로드까지 완료, 이후는 `#385` 로 옮겨갔다
-- **관련 Redmine 일감 / 목표**: [`#384`](http://192.168.0.57:8080/issues/384) [AX] Claude ↔ Codex
-  마스터 지휘 교대 (마일스톤 6, 상태 **진행**, 노트 2건 — Codex 의 ① 실측, Claude 의 ② 완료).
-  아이디어 상위 일감 [`#368`](http://192.168.0.57:8080/issues/368)(자동 선택 실행기)은 **이번 범위 밖**.
+- **갱신 시각**: 2026-09-08 23:10 KST (UTC+9)
+- **지휘 도구 / 세션 식별자**: Claude Opus 5 (1M) · `session_01FxSaHM9KL43bGRDj2r9cHX`
+- **상태**: **교대 진행 중 — Claude → Codex.** 사용자 지시 2026-09-08:
+  *"코덱스쪽에서 주도해서 진행해볼게. 클로드는 기존에 잘 진행되었으니까 말이야"*
+  = `#384` §15.6 ③(Claude → Codex 실증)을 **실제로 도는 것**이다. 모사가 아니다.
+  [완료] **축은 정해졌다** — Codex 가 물었고 사용자가 *"오 맞는거 같아!"* 로 **`#385`** 를 골랐다.
+  Codex 가 지휘 중이고, 이 Claude 세션은 **대조·자문 역할**이다(사용자가 대화를 옮겨 왔다).
+- **관련 Redmine 일감**: [`#384`](http://192.168.0.57:8080/issues/384) 지휘 교대(진행) ·
+  [`#385`](http://192.168.0.57:8080/issues/385) 워커 지휘자 모드(진행) ·
+  [`#386`](http://192.168.0.57:8080/issues/386) `#385` 실증 work ·
+  [`#387`](http://192.168.0.57:8080/issues/387) 파견 계측이 사라진다(신규)
 
 ## 사용자 결정 · 승인 범위 · 근거 / 미결 질문
 
-- **역할 분담** (사용자 2026-09-07): 지휘자는 **Claude**, **Codex 는 자기 쪽 실측 담당**.
-- **순서** (사용자 2026-09-07): **① 조사 → ② 공용 문서**. 문서를 먼저 만들면 실제로 지원되지
-  않는 기능까지 공통 규칙으로 적게 된다.
-- **② 진행 승인** (사용자 2026-09-08): *"리포트 55를 반영해 ② 공용 문서·진입점 배선을
-  진행하고, 자동 로드는 새 세션에서 검증하자"*.
-- **승인 셋** (사용자 2026-09-08, *"세 개 다 승인, CLAUDE.md 삽입하고 커밋해"*):
-  ⑴ 자동 로드 문서 두 곳(`machines/sim-desktop.md` · `ax-cluster/CLAUDE.md`) 삽입 —
-     **적용됨** ⑵ 커밋 — **`8a7b3c6`** ⑶ `#384` → 「진행」 — **적용됨**.
-  [주의] 이 승인은 **그 셋에 대한 것**이다. **푸시는 포함되지 않는다.**
-- **푸시 승인** (사용자 2026-09-08, *"커밋하고 푸시해!"*): **적용됨.** 세 곳 동기화 완료.
-  [주의] Codex 는 이 승인을 **자기가 대신 준 것으로 취급하지 않겠다**고 했다 — 옳다.
-  승인은 사용자에게서 직접 나왔다.
+- [완료] **축 = `#385`** (사용자 2026-09-08 *"오 맞는거 같아!"* → Codex 질문에 대한 답).
+  용어 정리: 사용자가 말한 **「코덱스 폴백」 = `#385` 워커 지휘자를 Codex 로 전환하는 것**이다.
+- **미결 — 래퍼(RHI 식 어댑터) 도입 여부.** 사용자 질문 2026-09-08:
+  *"언리얼에 RHI 처럼 코덱스, 클로드 이런식으로 래핑하는게 좋을가?"* → §래퍼 참조. **결정 안 났다.**
+- **승인 없음 — 이 세션은 커밋·푸시를 하지 않았다.** 아래 「미커밋」의 이 파일이 전부다.
+- **기본값 미결** (사용자 2026-09-08): 워커 지휘자 모드의 기본값은 아직 사람이 안 정했다.
+  코드 상수는 `_UNDECIDED_DEFAULT`, 값은 현재 동작(`lane`) 유지.
+  [주의] **저장 상태는 지금 `codex` 다**(실증용으로 켠 채) — 되돌릴지도 미결이다.
+- **유효한 금지** (사용자 지시 2026-09-08, 아직 안 풀렸다): **새 work 생성 금지 ·
+  미병합 브랜치 삭제 금지.**
 
 ## 저장소 · 브랜치 · HEAD / 미커밋 파일
 
-    저장소   ~/ax-cluster   브랜치 main   HEAD d7e3e88 (확인 당시 기준)
-             [완료] **세 곳 동기화** — 로컬 · origin(GitHub private) · `.43` 모두 d7e3e88
-             [주의] `.43` 은 main 이 체크아웃돼 있어 push 가 거절된다 — **그쪽에서 pull** 한다
-             [주의] 기록된 해시는 **확인 당시 기준**이다 (사용자 2026-09-08).
-                    자기 갱신 커밋까지 맞추려고 커밋을 더 하지 않는다 — 이후 변경을 대조한다
-             미커밋   docs/orchestrator-handoff.md (이 파일 — 푸시 완료 반영분,
-                      커밋 승인 대기. 내용은 working tree 에서 이미 읽을 수 있다)
-
-`8a7b3c6` 에 담긴 것 (10개):
-
-    A  AGENTS.md                              Codex 진입점 (저장소)  AX-ENTRY-MARK: repo
-    A  machines/sim-desktop-agents.md         Codex 진입점 (홈) ← ~/AGENTS.md 심볼릭 링크
-    A  docs/orchestrator-rules.md             공용 규칙
-    A  docs/orchestrator-handoff.md           이 파일
-    A  docs/15-orchestrator-handoff.md        계획 본체
-    A  reports/54-...claude-side-survey.md    ① Claude 쪽 조사
-    A  reports/55-...codex-side-probes.md     ① Codex 쪽 실측
-    M  machines/sim-desktop.md                진입 블록 + AX-ENTRY-MARK: home
-    M  CLAUDE.md                              진입 블록 + AX-ENTRY-MARK: repo
-    M  PLAN.md                                색인 15r·15h
-
-**미커밋 없음.** [주의] **푸시는 안 했다** — 세 곳 동기화가 밀려 있다.
+    저장소   ~/ax-cluster   브랜치 main   HEAD 403f6ef (2026-09-08 23:05 확인)
+             [주의] 종전 기록은 d7e3e88 이었다 — 그 뒤 커밋 3건이 더 있다:
+                f2cd6a2  feat: 워커 지휘자 모드 (`#385`) — lane / claude / codex
+                3b7c536  fix: 스킬 배달 경로를 도구별로 (codex 는 `~/.claude/skills/` 를 안 본다)
+                403f6ef  docs: `#385` 실증 결과와 하루 마감 기록
+             [미확인] origin·`.43` 동기화 여부는 이 세션에서 안 쟀다
+             미커밋   docs/orchestrator-handoff.md (이 파일 · 커밋 승인 대기)
+             워크트리 없음 (`git worktree list` = main 하나)
+             [주의] 종전 기록의 로컬 워크트리 `scratchpad/ns-base` 는 **지금 없다**
 
 ## 완료한 작업 / 검증 명령·결과
 
-- **①-A Claude 쪽 목록화** — 리포트 54. 지침·기억 29건·스킬 2종·훅 0개·MCP 33종을 실측.
-- **①-B Codex 쪽 실측** — 리포트 55. 12항목 중 승인 후 성공 6(SSH 3대·서비스·큐·브로커·HTTP
-  4포트·MCP `tools/call`), 성공 3(서브에이전트 위임·회수 · Python 실행 · 실행 중 출력 회수),
-  정책만 확인 2(`sudo -n -l` 재시작·훅 설치 — **실제 실행 안 함**), 미실증은 §미검증.
-- **정정**: 리포트 54 의 「MCP 35종」 → **33종**. Codex `tools/list` 실측과 일치.
-- **②-1** `docs/orchestrator-rules.md` 작성 (공통 규칙 · 도구별 차이 · 미실증 · 근거).
-- **②-2** `docs/orchestrator-handoff.md` 작성 (이 파일).
-- **②-3** 진입점 4곳에 표식 삽입 · `PLAN.md` 색인 · 커밋 `8a7b3c6` · `#384` → 「진행」+노트.
-- **③ 자동 로드 검증 — 완료 (실측 2026-09-08)**. `claude -p` · `codex exec` 로 각 시작
-  위치에서 새 세션을 띄웠다. 표식 결과:
+이 세션은 **대조만** 했다. 코드·설정 변경 0건.
 
-      시작 위치        Claude          Codex
-      /home/sim        home            home
-      ~/ax-cluster     home, repo      repo
+    mode.json     {"mode":"codex","at":"2026-09-08T01:45:15+09:00","why":"#385 실증"}
+    hold.json     없음 → 재개 대기 없음
+    서비스        ax-task-queue · ax-broker · ax-projects · ax-indexer.path ·
+                  ax-dispatch.path · ax-status.timer  → 전부 active
+    work          20260908_0146_ax_385_codex_452cc503  merge_status=ready_for_review
+                  round 1 · total 1 · verified 0 · redmine 386
+    조각          f4db3ad4  status=failed  worker=192.168.0.2  attempt=1  epoch=1
+                  fail_reason  BLOCKED
+                  fail_detail  층1 위반 1: Source/NS/AxModeProbe.cpp `[PSEUDO]` 잔재
+                  failed_at    2026-09-08T01:48:39+09:00
+    보존 work     20260905_1705_..._2f005681 (7/7 verified · merged) — 실증과 무관
 
-  🔴 **계층 로드가 다르다** — Claude 는 부모의 홈 지침까지 싣고 Codex 는 저장소 것만 싣는다.
-  → 두 진입 파일은 **각각 자족적**이어야 한다. `AGENTS.md`(저장소)에 홈에만 있던 항목을 채웠다.
-  [완료] **심볼릭 링크는 원인이 아니었다** — Codex 가 홈에서 링크 너머의 `home` 을 읽었다.
-  **맥락 복원도 확인** — 두 도구 다 공용 문서를 따라가 진행 작업·승인 범위·다음 작업을
-  복원했고, **각자 독립적으로** 기록 HEAD(`8a7b3c6`)와 실제 HEAD(`9e2b9de`)의 차이를 보고했다.
-  = §15.4 ④ 「대조부터 한다」가 실제로 돌았다.
+## 🔴 종전 기록의 정정 — 재시도 경로는 **있는데 이 실패엔 못 쓴다**
 
-현재 상태 실측 (2026-09-08 조회):
+종전 기록: *"지원되는 재시도 경로를 아직 못 찾았다."* → **절반만 맞다.**
 
-    서비스   ax-task-queue · ax-broker · ax-projects · ax-indexer.path
-             ax-dispatch.path · ax-status.timer   →  전부 active
-    파견 보류  ~/.cache/ax-dispatch/hold.json 없음 → 재개 대기 없음
-    열린 [AX] 일감 29건 (#384 포함)
+    있다   POST /api/v1/tasks/{task_id}/reverify   (server.py:392)
+    구현   logic_lifecycle.py:291 reverify_task — status 를 failed → **submitted** 로만 뒤집는다
+    전제   "커밋이 이미 올라가 있고 verify-loop 가 다시 본다"
+
+🔴 **우리 실패는 커밋 *전*이다** — 층1 이 `wcommit` 에서 막았고 조각 브랜치는 base 그대로다.
+`submitted` 로 만들면 **없는 산출물을 있다고 적는 것**이다. `failed → pending`(재파견) 경로는
+큐에 **없다**(`logic_lifecycle.py` 의 failed 전이는 `reverify` 하나뿐).
+
+→ **필요한 상태 변경**은 둘 중 하나이고, 고르는 것은 사람이다:
+  ⓐ 조각 `f4db3ad4` 를 `pending` 으로 되돌리는 경로를 **새로 만든다**(큐 API 추가 = 코드 변경)
+  ⓑ 그 조각을 `cancel` 하고 **같은 work 에 라운드를 더한다**(`improve_work`, round=2)
+     [주의] ⓑ 는 「새 work 생성 금지」에 걸리지 않는다 — 같은 work 이다. 다만 브랜치가
+     `task/<work>/r2/<조각>` 으로 새로 나므로 r1 잔재 2건은 그대로 남는다
+
+## 🔴 래퍼(RHI 식) 질문 — 원전 대조 결과 (Claude 세션 2026-09-08 실측)
+
+「만들기 전 3문」 ①(원전에 있나) → **있다. 다만 클래스 계층이 아니다.**
+
+    ~/AgentTest/worker/worker.py:78        _VALID_WRITE_BACKENDS = ("", "local_llm", "agy", "claude")
+                                           문자열 enum · 모르는 값은 경고 후 거절
+    ~/AgentTest/worker/claude_spawn.py:243 call_llm(prompt, cfg, cwd, ..., force_kind)
+                                           함수 하나가 라우팅 · `_call_cli_llm` 안에서 kind 분기
+                                           폴백은 **한 겹만** (로컬 LLM → claude)
+
+🔴 **판정은 어댑터에 넣지 않는다** — 원전 주석: *"출력의 `TASK_COMPLETE` 는 보조 신호,
+최종 판정은 `_validate_disk_after_agent`"*. 우리 `wcommit` 되읽기·층1 이 그 자리다.
+→ 우리 `agent_command(mode=...)` + 갈래 파서가 **이미 그 모양**이다. Codex 의 결론
+(*"얇게 감싸는 것"*)과 원전이 일치한다.
+
+## 🔴 `AX_PROJECTS_ROOT` 실패 — 도구 차이가 아니라 **진입 문서 결함의 재발**
+
+Codex 가 `.venv/bin/python -m master.client plan NS` 에서 `ConfigError` 로 멈췄다(§1.1 준수).
+원인을 쟀다:
+
+    셸 프로파일   ~/.bashrc · ~/.profile · 현재 셸 → **0건**. 클로드도 안 주면 똑같이 실패한다
+    클로드가 안 걸린 이유   ~/.claude/settings.local.json 의 허용 규칙 ~10건이
+                            `AX_PROJECTS_ROOT=/home/sim/ax-cluster` 를 **명령 접두에 박아** 뒀다
+    문서            ax-cluster/CLAUDE.md:321 이 그 형태로 적는다
+    🔴 AGENTS.md   `master.client`·`venv/bin/python`·`AX_PROJECTS_ROOT` **전부 0건**
+
+→ **2026-09-08 에 이미 잡았던 결함의 재발**이다(*"두 진입 파일은 각각 자족적이어야 한다"*).
+`AGENTS.md` 를 **홈 지침** 기준으로만 채우고 **저장소 `CLAUDE.md` 의 명령 블록**은 안 옮겼다.
+[중요] **래퍼로 감싸면 이 구멍을 가린다** — 고치는 게 아니다. 보강은 **별건**이고 승인 대상이다.
+
+## 🔴 코덱스의 「마스터 호출 경계」 — 새로 만들 것이 아니라 **MCP 미배선**이다
+
+    ~/.codex/config.toml   93바이트 · `[mcp_servers]` **0건** (리포트 55 서술과 일치)
+
+마스터 호출 경계는 이미 **MCP** 이고 그 서버는 systemd 아래에서 환경을 갖춘 채 돈다.
+Claude 는 `mcp__ax-projects__*` 로 불러서 환경변수를 만질 일이 없고, Codex 는 MCP 가 없어
+**생 셸로 내려가서** 그 전제에 걸렸다. → 할 일은 새 계층이 아니라 **연결**이다.
 
 ## 미검증 / 실패·보류 사유
 
-- [완료] **`AGENTS.md` 자동 로드 — 실측됨** (위 ③). 
-- **대화형 세션의 자동 로드 — 미실증.** ③ 은 비대화형(`claude -p`·`codex exec`) 값이다.
-- 🔴 **시작 자동 고지 — 양쪽 다 없다.** 마스터 `.57` 에는 고지 층 자체가 없다
-  (Claude 훅은 `role=="requester"` 인 `.33` 에만 간다 — `master/client/spec.py:354`).
-  지금 배선은 **「진입 지침 첫머리에 읽으라고 박는」 수동 수단 하나뿐**이다.
-- **Codex 네이티브 MCP 연결 — 미배선.** `~/.codex/config.toml` 에 `[mcp_servers]` 없음.
-  리포트 55 의 성공은 셸 HTTP 호출이고 네이티브 연결이 아니다.
-- **`sudo` 실제 실행 — 미실증.** 정책 조회(`sudo -n -l`)만 통과. 다른 유닛으로 일반화 금지.
-- **양방향 교대(§15.6 ③④) · 중단 복구(⑤) — 미착수.**
-- **세션을 넘는 프로세스 생존·재접속 — 미실증** (같은 세션 안의 출력 회수만 확인).
-- **실패한 것 없음.** 이번 구간에서 rc≠0·차단·예외로 멈춘 자리는 없다.
+- 🔴 **`#385` 실증의 인과가 아직 안 섰다.** 스킬 배달 경로를 고쳤지만(`3b7c536`),
+  **그것이 층1 차단의 원인이었는지는 재시도로만 확인된다** (사용자 정정 2026-09-08:
+  *"스킬이 안 보였다는 사실과, 그것이 그 실패를 일으켰다는 판정은 다르다"*).
+- **재배달·check 미실행** — 종전 기록의 ①②③(재배달 → `check` → `ax-projects` 재기동)은
+  이 세션에서 **안 돌렸다.** ③은 승인 사항이다(`docs/11` §11.5).
+- **`#387` 계측 결함 미착수** — `wcommit.py:267` 이 `llm()` 의 `out` 을 rc≠0 일 때만 쓰고
+  버린다. 정본 ⑸ 경로는 **성공해도** usage 를 회수 안 한다(실측: 스풀 `f4db3ad4.json`
+  `usage:{}` · `tail:""` — codex 가 85초 돌았는데 0). 레인 모드도 같다.
+- **`#384` ④(Codex → Claude) · ⑤(중단 복구) 미착수.**
+- **죽은 `AX_LANES` 주석** (`lanes.py:75`) 정리 안 됨 — 읽는 코드 0건.
+- **실패한 것 없음.** 이 세션에서 rc≠0·차단·예외로 멈춘 자리는 없다.
 
-## 실행 중인 서비스 작업 · 프로세스 · 원격 작업 / 로그 위치
+## 실행 중인 서비스 작업·프로세스 / 로그 위치
 
-- **지휘자가 띄운 백그라운드 프로세스 없음.** 회수할 것이 없다.
-- **원격 작업 없음.** `.2`·`.33`·`.43` 에 이번 건으로 보낸 작업 없음.
-- 도는 것은 systemd 뿐이며 **대화 세션과 무관하다** — 로그는 `journalctl -u <unit>`.
-- **큐에 돌고 있는 분산 작업 없음** (파견 보류 파일 없음).
-
-## 서브 에이전트별 담당 파일 · 진행 · 산출물 · 종료 여부
-
-- **Claude 쪽: 띄운 서브 에이전트 없음** — 전부 이 세션이 직접 수행.
-- **Codex 쪽: `handoff_read_probe` 1건** — 지정 문서 읽기, 결과 회수 완료, **종료됨**.
-  프로브 임시 파일 `/tmp/ax-codex-access-probe.py` · `/tmp/ax-codex-mcp-probe.py` 는
-  **배포 도구가 아니고 커밋 대상도 아니다.**
+    상시    systemd 6종 (위 목록) — 세션과 무관하게 돈다
+    파견    `ax-dispatch.path` 가 골조 push 를 감시한다. 보류 없음
+    로그    파견 로그가 정본. `~/.cache/ax-dispatch/` · 큐 로그는 `~/ax-state`
+    서브에이전트  없음 — 이 세션은 하나도 안 띄웠다
 
 ## 바로 다음 작업
 
-🔴 **내일은 `#385`(워커 지휘자 모드)부터다** — 그쪽이 어제 층1 차단에서 멈춰 있다.
-순서와 금지사항은 [`#385`](http://192.168.0.57:8080/issues/385) 노트와 기억
-`worker-orchestrator-mode` 에 있다: 재배달 → `check` → `ax-projects` 재기동(승인) → 재시도.
+**축은 `#385` 로 정해졌다. Codex 가 지휘한다.** 멈춘 자리와 다음 갈래:
 
-`#384` 자체의 남은 것:
+    지금 막힌 곳   `.venv/bin/python -m master.client plan NS` → AX_PROJECTS_ROOT 미설정
+                   문서화된 형태는 `AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client ...`
+                   (ax-cluster/CLAUDE.md:321). Claude 세션 권고: **그대로 치는 것은 「수정」이
+                   아니다**(§1.1 이 막는 것은 실패를 코드·설정 변경으로 덮는 것이다) → 진행 가능.
+                   [주의] 결정은 사용자 몫이다 — 이 줄은 권고이지 승인이 아니다
 
-1. **§15.6 ③④ 양방향 교대 실증** — 지금까지 잰 것은 **읽기**뿐이다. 실제 교대는 작업이 오간다.
-2. **§15.6 ⑤ 중단 복구 실증** — 미착수.
-3. [주의] **대화형 세션의 자동 로드는 미실증** — §3.1 은 `claude -p`·`codex exec` 값이다.
-4. **양방향·중단 복구 전에는 닫지 않는다** (§15.6 ⑥).
+    그 뒤          재배달 → `check` rc=0 → `ax-projects` 재기동(**승인 사항**) →
+                   조각 `f4db3ad4` 상태 변경 결정(위 ⓐ/ⓑ) → 재시도로 인과 확인
+
+    별건(승인 필요)  `AGENTS.md` 에 저장소 명령 블록 보강 (위 §AX_PROJECTS_ROOT)
+                   `~/.codex/config.toml` MCP 연결 (위 §MCP 미배선)
+    미착수          `#387` 계측 결함 · 워커 지휘자 기본값 결정(지금 저장값 `codex`)
 
 ## 관련 문서 링크
 
-- 계획 본체 `docs/15-orchestrator-handoff.md` · 공용 규칙 `docs/orchestrator-rules.md`
-- 조사 `reports/54-orchestrator-handoff-claude-side-survey.md` ·
-  `reports/55-orchestrator-handoff-codex-side-probes.md`
-- 일감 [`#384`](http://192.168.0.57:8080/issues/384) · 아이디어 [`#368`](http://192.168.0.57:8080/issues/368)
-- 열린 마일스톤 `docs/milestones/6-improvements.md`
+- `docs/orchestrator-rules.md` (공용 규칙) · `docs/15-orchestrator-handoff.md` (계획 본체)
+- `docs/16-worker-orchestrator-mode.md` (`#385` 변경안 · §16.4 실증 · §16.5 계측 결함)
+- `reports/54`(Claude 쪽 조사) · `55`(Codex 쪽 실측) · `56`(codex 를 워커 지휘자로)
