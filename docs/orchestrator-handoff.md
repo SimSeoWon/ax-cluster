@@ -6,47 +6,54 @@
 > 🔴 **여기 적힌 「완료」를 그대로 믿지 않는다.** 받는 쪽은 HEAD·dirty diff·이슈·프로세스를
 > 직접 대조한다 (근거: `orchestrator-rules.md` §5).
 
-- **갱신 시각**: 2026-09-09 00:10 KST (UTC+9)
+- **갱신 시각**: 2026-09-08 23:55 KST (UTC+9)
 - **지휘 도구 / 세션 식별자**: Claude Opus 5 (1M) · `session_01FxSaHM9KL43bGRDj2r9cHX`
-- **상태**: 🔴 **Codex → Claude 인계 — 예고 없는 종료에서 복구했다.**
-  Codex 가 **작업 중 한도 소진**으로 끊겼다(*"You've hit your usage limit … try again at Sep 9th
-  3:58 AM"*). 사용자가 미리 지시해 둔 대로 Claude 가 이어받았다 (2026-09-08:
-  *"코덱스 토큰 거의 없으니 이거 작업 끝나면 클로드에서 이어받아 처리하면 될 것같아"*).
-  [중요] 이것은 `#384` §15.6 **④(Codex → Claude)와 ⑤(중단 복구)를 실제로 돈 것**이다 — 모사가 아니다.
-  🔴 **잃은 변경 0 · 중복 작업 0 · 재설명 0** — 받는 쪽이 HEAD·dirty·프로세스·운영 상태를
-  대조하고 테스트를 **직접 재실행**해서 확인했다(아래 §대조).
-- **관련 Redmine 일감**: [`#384`](http://192.168.0.57:8080/issues/384) 지휘 교대(진행) ·
-  [`#385`](http://192.168.0.57:8080/issues/385) 워커 지휘자 모드(진행) ·
-  [`#386`](http://192.168.0.57:8080/issues/386) `#385` 실증 work ·
-  [`#387`](http://192.168.0.57:8080/issues/387) 파견 계측이 사라진다(신규)
+  [완료] **담당이 기록됐다** — `conductor.json` `agent=claude` (2026-09-08T23:48:06+09:00,
+  사용자 승인). `/cluster` 화면과 `get_orchestration` 이 그것을 보여 준다.
+  [주의] **잠금이 아니다** — 코덱스 한도가 풀리면(09-09 03:58) 그쪽에서 `codex` 로 바꾸면 된다.
+- **상태**: 🔴 **Codex → Claude 인계 완료 — 예고 없는 종료에서 복구했고, 그 자리를 마감했다.**
+  Codex 가 **작업 중 한도 소진**으로 끊겼고(*"You've hit your usage limit … Sep 9th 3:58 AM"*),
+  사용자가 미리 지시해 둔 대로 Claude 가 이어받아 **커밋·배달·재기동까지 끝냈다**.
+  [중요] `#384` §15.6 **④(Codex → Claude)와 ⑤(중단 복구)를 실제로 돈 것**이다 — 모사가 아니다.
+  🔴 **잃은 변경 0 · 중복 작업 0 · 재설명 0.**
 
-## 🔴 대조 — 받는 쪽(Claude)이 직접 잰 것 (2026-09-09 00:05)
+## 🔴 이번 구간에서 끝난 것 (2026-09-08 23:10~23:55)
 
-기록을 믿지 않고 실물을 봤다. **Codex 의 보고는 전부 사실과 일치했다.**
+    커밋   54a0669  feat: 지휘 상태 표면 — `.33` 에서 워커 모드 변경 · 웹에 담당 표시
+           신규 4  master/work/conductor.py · projects/control_route.py ·
+                   webui/orchestration.py · test_orchestration_control.py
+           수정 5  auth.py(REQUESTER_SCOPE 3줄) · projects/__main__.py · mcp_server.py ·
+                   webui/routes.py · client/runtime/client_mcp.py
+    동기화  로컬 · origin(GitHub private) · `.43` **모두 54a0669** (사용자 승인 후 푸시)
+    배달   `deliver NS` → `check NS` **3대 전부 OK · 마스터 HEAD 와 같다**
+           (직전에는 3커밋 뒤처짐 + 배달 시점 트리가 dirty 였다)
+    재기동  `sudo -n /usr/bin/systemctl restart ax-projects` — **승인 사항이었고 승인받았다**
+           판정은 exit code 가 아니라 `ExecMainStartTimestamp` 22:37:21 → 23:46:26
 
-    HEAD          1d2ab49  docs: 마스터 Codex 연결과 워커 교대 준비 기록
-    미커밋         M client/runtime/client_mcp.py  M master/auth.py
-                  M master/projects/__main__.py   M master/projects/mcp_server.py
-                  M master/webui/routes.py
-                  ?? master/projects/control_route.py      (31줄)
-                  ?? master/webui/orchestration.py         (22줄)
-                  ?? master/work/conductor.py              (56줄)
-                  ?? master/test_orchestration_control.py  (96줄)
-    테스트 재실행   test_orchestration_control 8/8 · test_auth 60/60 · test_client_mcp 147/147
-    운영 상태      mode.json **안 바뀜**(2026-09-08T01:45:15 그대로) · 서비스 6종 active
-                  임시 HTTP 서버 잔재 **없음** · 열린 포트에 흔적 없음
-    인증 층위      BearerAuthMiddleware 가 ControlApp 을 **바깥에서** 감싼다 ·
-                  `/control/*` 는 public_prefixes·OPEN_PATHS 에 없고 REQUESTER_SCOPE 에만 있다
+**운영 서비스에서 실물로 잰 것** (유닛 테스트가 아니다):
 
-## 🔴 Claude 가 새로 잰 것 — `check NS` (승인 없이 가능한 읽기)
+    GET  /control/orchestration  요청자 토큰   200 + 상태 JSON
+    GET  /control/orchestration  무인증        **401**
+    POST /control/worker-mode    워커 토큰     **403**
+    /cluster (무인증 공개)        「지휘 상태」 카드 렌더 · `/home/sim` **0건**
+    MCP                          재기동 뒤 `get_orchestration_tool`·
+                                 `record_master_conductor_tool` 이 실제로 등장했다
 
-    세 기계 전부   출처 f2cd6a2 — **HEAD 보다 3 커밋 뒤** · 재배달 필요
-                  payload 불일치 1개: clientside/client_mcp.py (Codex 가 방금 고친 파일)
-                  [중요] **배달 시점 트리가 dirty 였다** — 그 커밋이 배달 내용을 다 말하지 못한다
-    마스터 서비스   ax-projects **옛 코드로 돈다** — 기동 뒤 `master/projects/__main__.py` 가 바뀌었다
-                  → 재기동 필요 (**승인 사항** · `docs/11` §11.5)
+**Claude 가 고친 것 하나** (사용자 승인 *"지금 같이 고침"*): `webui/orchestration.py` 가
+`str(OSError)`·`note` 를 무인증 화면에 그대로 실었다 → 절대 경로가 찍힌다(`api_history` 가
+본문·절대 경로를 빼는 것과 **같은 자리**). 고정 문구로 바꾸고 **두 경로를 주입 실증**했다.
 
-## 사용자 결정 · 승인 범위 · 근거 / 미결 질문
+**테스트 (Claude 가 직접 재실행)**: `test_orchestration_control` 8/8 · `test_auth` 60/60 ·
+`test_client_mcp` 147/147 · `test_viewer` 79/79.
+
+## 🔴 두 상태를 섞지 않는다 — 이 기능이 지키는 구분
+
+    마스터 담당   claude / codex   **마지막으로 기록된** 지휘자.
+                                  프로세스 생존 판정도, 잠금도, 세션 실행·종료도 아니다
+    워커 실행 모드 lane/claude/codex  다음 **조각**부터 적용되는 전역 설정.
+                                  실행 중인 조각에는 소급되지 않는다 · 프로젝트별·워커별 선택은 없다
+
+## 사용자 결정## 사용자 결정 · 승인 범위 · 근거 / 미결 질문
 
 - [완료] **축 = `#385`** (사용자 2026-09-08 *"오 맞는거 같아!"* → Codex 질문에 대한 답).
   용어 정리: 사용자가 말한 **「코덱스 폴백」 = `#385` 워커 지휘자를 Codex 로 전환하는 것**이다.
