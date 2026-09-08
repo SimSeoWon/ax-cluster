@@ -184,6 +184,8 @@ def cluster_page(paths) -> tuple:
                                 at=_dt.now().strftime("%H:%M:%S"),
                                 recent=got.get("recent"),
                                 activity=_status.read_activity(paths.root))
+    from .orchestration import section as orchestration_section
+    live = orchestration_section() + live
     # work 중심 층 (#222) — 화면의 주어를 등록 단위로 올린다. 실시간 층 **아래**에 둔다:
     #    「지금 무엇이 도는가」가 먼저고, 「내 작업이 어디까지 왔나」가 그 다음이다.
     #    실시간 층을 못 읽었으면(토큰·큐 장애) work 도 재료가 없으므로 그리지 않는다.

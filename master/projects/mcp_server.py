@@ -947,3 +947,23 @@ def infer_domain_tool(query: str) -> str:
         }, ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
+
+
+@mcp.tool()
+def get_orchestration_tool() -> str:
+    """마스터 마지막 담당 기록과 워커 모드를 조회한다. 실행 생존 판정은 아니다."""
+    from ..work import conductor
+    try:
+        return json.dumps(conductor.snapshot(), ensure_ascii=False)
+    except (ValueError, OSError) as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def record_master_conductor_tool(agent: str, why: str, by: str = "") -> str:
+    """실제 인수 후 claude/codex 담당을 기록한다. 세션 실행·종료·잠금이 아니다."""
+    from ..work import conductor
+    try:
+        return json.dumps(conductor.record_master(agent, why, by), ensure_ascii=False)
+    except (ValueError, OSError) as exc:
+        return _fail(exc)

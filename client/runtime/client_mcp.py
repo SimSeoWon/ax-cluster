@@ -750,6 +750,16 @@ def tool_get_domain_layer(papi, domain: str, layer: int = 0, *, cache=None) -> d
 
 
 TOOLS = [
+    {"name": "get_orchestration", "description": "마스터 담당 기록과 워커 실행 모드를 조회한다. 담당 기록은 프로세스 생존 확인이 아니다.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "set_worker_mode", "description": "사용자 요청으로 워커 전역 모드를 변경한다. 다음 조각부터 적용되며 명시 인자·환경변수가 우선한다.",
+     "inputSchema": {"type": "object", "required": ["mode", "why"], "properties": {
+         "mode": {"type": "string", "enum": ["lane", "claude", "codex"]},
+         "why": {"type": "string"}, "by": {"type": "string"}}}},
+    {"name": "record_master_conductor", "description": "마스터 인수 확인 후 담당을 기록한다. 세션을 실행·종료하거나 잠그지 않는다. 예정된 교대를 완료로 기록하지 않는다.",
+     "inputSchema": {"type": "object", "required": ["agent", "why"], "properties": {
+         "agent": {"type": "string", "enum": ["claude", "codex"]},
+         "why": {"type": "string"}, "by": {"type": "string"}}}},
     {"name": "register_work",
      "description": (
          "분산 작업을 마스터에 등재한다 (work + 태스크 N개) → `work_id` 를 돌려준다. "
@@ -1096,6 +1106,12 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                   root: Path | None = None) -> dict:
     """도구 실행. `api`/`papi`/`cache` 주입은 테스트 자리 — 실전은 config·token 에서 만든다."""
     args = args or {}
+    controls = {"get_orchestration": ("GET", "/control/orchestration"),
+                "set_worker_mode": ("POST", "/control/worker-mode"),
+                "record_master_conductor": ("POST", "/control/master-conductor")}
+    if name in controls:
+        method, path = controls[name]
+        return (papi or projects_write_api(root))(method, path, args if method == "POST" else None)
     # [중요] **표면이 다르다** — 등재는 8103 의 토큰 잠긴 `/work/register` 로 간다 (`#336` ④).
     #    큐(8101)도 아니고 8103 의 공개 `/api/v1/*` 도 아니다. 그래서 큐 호출자를 만들기 전에
     #    여기서 가른다 — 섞으면 다음에 추가되는 도구가 어느 표면인지 호출부가 판단하게 된다.

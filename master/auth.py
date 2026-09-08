@@ -170,6 +170,9 @@ def load_view_token(path: Path | None = None) -> str | None:
 #              범용어 가드(#213)가 `thesaurus.register` 안에 있어 이 경로도 그것을 탄다.
 #              [중요] 8103 의 `/api/v1/*` 는 무인증 공개라 쓰기를 둘 자리가 아니다)
 REQUESTER_SCOPE: tuple = (
+    ("GET", "/control/orchestration"),
+    ("POST", "/control/worker-mode"),
+    ("POST", "/control/master-conductor"),
     ("GET", "/api/v1/works"),
     ("GET", "/api/v1/tasks"),
     ("PATCH", "/api/v1/works/"),

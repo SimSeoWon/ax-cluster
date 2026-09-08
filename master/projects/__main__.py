@@ -86,6 +86,8 @@ def main() -> None:
     #    (`public_prefixes`) 등재를 두면 토큰 없이 열린다. 여기 감싸면 인증을 정면으로 탄다.
     from .register_route import RegisterApp
     served = RegisterApp(served)
+    from .control_route import ControlApp
+    served = ControlApp(served)
     # [중요] **역할 스코프를 이 포트에도 배선한다.** 종전에는 큐(8101)에만 있어서 `.33` 이
     #    `config.json` 의 `mcp: …:8103/mcp` 를 부르면 401 이었다(실측 2026-08-29, 여섯 번).
     #    [주의] 스코프가 여는 것은 `REQUESTER_SCOPE` 의 **경로들**뿐이다 — `/mcp` 는 그 목록에

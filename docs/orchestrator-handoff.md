@@ -1,56 +1,50 @@
 # 현재 AX 작업 인수인계
 
-## 최신 체크포인트 — Codex, 2026-09-08 마스터·워커 교대 준비
-
-이 절이 아래 Claude 인계 당시 상태보다 최신이다. 사용자 지시:
-"마스터 컴퓨터와 워커 2대를 먼저 클로드와 코덱스를 스왑할 수 있도록 진행하자!"
-
-- 마스터 `~/.codex/config.toml` 에 기존 Claude와 같은 `ax-projects` HTTP MCP를 연결했다.
-  기존 인증 헤더를 로컬에서만 복사했고 파일 권한은 0600이다. 인증값은 보고서·저장소에 없다.
-  이전 설정 백업: `/tmp/ax-codex-config-before-mcp.toml` (0600).
-- **네이티브 연결·조회 실증 완료**: 새 `codex exec --strict-config --ephemeral -s read-only`
-  세션에서 `list_projects_tool` → active=NS, problems=[];
-  `get_worker_mode_tool` → ok=true, mode=codex, source=state. 변경 도구도 목록에 보인다.
-  이 대화 세션 자체에 MCP 도구가 동적으로 추가됐다는 뜻은 아니다.
-- 첫 네이티브 조회는 비대화형 `approval_policy=never`로 차단됐다. 사용자 도구 승인 후
-  **검증 호출에만** 조회 두 도구의 `approval_mode=approve`를 지정해 성공했다.
-  저장 설정의 도구 승인 정책은 넓히지 않았다. 운영 모드는 변경하지 않았다.
-- `AGENTS.md`와 `machines/sim-desktop-agents.md`에 동일한 실행 환경·MCP·ax-mode·dirty 배달
-  주의 블록을 보강했다. 홈 심볼릭 링크 보존. **미커밋**이며 커밋·푸시 승인 없음.
-- 앞선 `plan NS`는 `AX_PROJECTS_ROOT=/home/sim/ax-cluster`를 명시하고 샌드박스 밖에서
-  정상 종료했다. 세 기계 SSH·체크아웃과 도구별 스킬 배달 계획을 확인했다. 배달은 안 했다.
-- **해소된 검증 스크립트 실패**: `/tmp/ax-swap-worker-audit.py`가 원본 스킬 경로를
-  `master/skills/ax-work/SKILL.md`로 잘못 지정해 FileNotFoundError(rc=1).
-  실제 경로는 `master/client/skills/{ax-work,ax-infer}/SKILL.md`다.
-  첫 실행은 SSH 전에 실패했다. 사용자 "응!" 승인 후 경로만 정정해 재실행했고 정상 종료했다.
-- **워커 조회 실측 완료**: `.2` Claude 2.1.258 / Codex 0.153.4,
-  `.43` Claude 2.1.222 / Codex 0.153.4. CLI 버전 조회 4건 모두 rc=0.
-  두 워커의 `.claude`·`.codex` 아래 `ax-work`·`ax-infer` 총 8개 해시가
-  `master/client/skills/` 원본과 전부 일치했다. 원격 변경은 없다.
-  이것은 설치·배달본 대조이며, 오늘 새로 수행한 LLM 작업 실행 검증은 아니다.
-- 다음: 진입 지침 두 파일과 이 인계 문서의 커밋 승인을 받은 뒤 깨끗한 트리에서 재배달·check.
-  커밋 승인 전에는 dirty 배달을 하지 않는다. 재파견 경로 선택·실제 작업 검증은 남아 있다.
-- 아래의 "Codex MCP 미배선"은 **인계 당시 기록**으로, 위 네이티브 실측으로 해소됐다.
-  재기동은 실행하지 않았으며, 모드 도구가 현재 서버에서 응답하므로 과거의 재기동 필요 주장도
-  실제 서비스 신선도를 재측정하고 판단해야 한다.
-
 > [중요] **한 벌만 유지한다.** 새 파일을 만들지 말고 이 파일을 덮어 쓴다.
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5 · 공용 규칙은 `docs/orchestrator-rules.md`.
 > 모르는 상태는 **`미확인`** 으로 적는다. **이 기록은 잠금이 아니다** — 실행을 막지 않는다.
 > 🔴 **여기 적힌 「완료」를 그대로 믿지 않는다.** 받는 쪽은 HEAD·dirty diff·이슈·프로세스를
 > 직접 대조한다 (근거: `orchestrator-rules.md` §5).
 
-- **갱신 시각**: 2026-09-08 23:10 KST (UTC+9)
+- **갱신 시각**: 2026-09-09 00:10 KST (UTC+9)
 - **지휘 도구 / 세션 식별자**: Claude Opus 5 (1M) · `session_01FxSaHM9KL43bGRDj2r9cHX`
-- **상태**: **교대 진행 중 — Claude → Codex.** 사용자 지시 2026-09-08:
-  *"코덱스쪽에서 주도해서 진행해볼게. 클로드는 기존에 잘 진행되었으니까 말이야"*
-  = `#384` §15.6 ③(Claude → Codex 실증)을 **실제로 도는 것**이다. 모사가 아니다.
-  [완료] **축은 정해졌다** — Codex 가 물었고 사용자가 *"오 맞는거 같아!"* 로 **`#385`** 를 골랐다.
-  Codex 가 지휘 중이고, 이 Claude 세션은 **대조·자문 역할**이다(사용자가 대화를 옮겨 왔다).
+- **상태**: 🔴 **Codex → Claude 인계 — 예고 없는 종료에서 복구했다.**
+  Codex 가 **작업 중 한도 소진**으로 끊겼다(*"You've hit your usage limit … try again at Sep 9th
+  3:58 AM"*). 사용자가 미리 지시해 둔 대로 Claude 가 이어받았다 (2026-09-08:
+  *"코덱스 토큰 거의 없으니 이거 작업 끝나면 클로드에서 이어받아 처리하면 될 것같아"*).
+  [중요] 이것은 `#384` §15.6 **④(Codex → Claude)와 ⑤(중단 복구)를 실제로 돈 것**이다 — 모사가 아니다.
+  🔴 **잃은 변경 0 · 중복 작업 0 · 재설명 0** — 받는 쪽이 HEAD·dirty·프로세스·운영 상태를
+  대조하고 테스트를 **직접 재실행**해서 확인했다(아래 §대조).
 - **관련 Redmine 일감**: [`#384`](http://192.168.0.57:8080/issues/384) 지휘 교대(진행) ·
   [`#385`](http://192.168.0.57:8080/issues/385) 워커 지휘자 모드(진행) ·
   [`#386`](http://192.168.0.57:8080/issues/386) `#385` 실증 work ·
   [`#387`](http://192.168.0.57:8080/issues/387) 파견 계측이 사라진다(신규)
+
+## 🔴 대조 — 받는 쪽(Claude)이 직접 잰 것 (2026-09-09 00:05)
+
+기록을 믿지 않고 실물을 봤다. **Codex 의 보고는 전부 사실과 일치했다.**
+
+    HEAD          1d2ab49  docs: 마스터 Codex 연결과 워커 교대 준비 기록
+    미커밋         M client/runtime/client_mcp.py  M master/auth.py
+                  M master/projects/__main__.py   M master/projects/mcp_server.py
+                  M master/webui/routes.py
+                  ?? master/projects/control_route.py      (31줄)
+                  ?? master/webui/orchestration.py         (22줄)
+                  ?? master/work/conductor.py              (56줄)
+                  ?? master/test_orchestration_control.py  (96줄)
+    테스트 재실행   test_orchestration_control 8/8 · test_auth 60/60 · test_client_mcp 147/147
+    운영 상태      mode.json **안 바뀜**(2026-09-08T01:45:15 그대로) · 서비스 6종 active
+                  임시 HTTP 서버 잔재 **없음** · 열린 포트에 흔적 없음
+    인증 층위      BearerAuthMiddleware 가 ControlApp 을 **바깥에서** 감싼다 ·
+                  `/control/*` 는 public_prefixes·OPEN_PATHS 에 없고 REQUESTER_SCOPE 에만 있다
+
+## 🔴 Claude 가 새로 잰 것 — `check NS` (승인 없이 가능한 읽기)
+
+    세 기계 전부   출처 f2cd6a2 — **HEAD 보다 3 커밋 뒤** · 재배달 필요
+                  payload 불일치 1개: clientside/client_mcp.py (Codex 가 방금 고친 파일)
+                  [중요] **배달 시점 트리가 dirty 였다** — 그 커밋이 배달 내용을 다 말하지 못한다
+    마스터 서비스   ax-projects **옛 코드로 돈다** — 기동 뒤 `master/projects/__main__.py` 가 바뀌었다
+                  → 재기동 필요 (**승인 사항** · `docs/11` §11.5)
 
 ## 사용자 결정 · 승인 범위 · 근거 / 미결 질문
 
