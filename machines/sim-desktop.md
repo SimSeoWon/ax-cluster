@@ -115,6 +115,13 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
            본문 A/B: agy 32.9초 · codex 98.6초 · 로컬 117.6초 — **셋 다 층1 통과**.
            [주의] 순서를 바꾼 값은 **속도 손해**다, 근거는 품질이 아니라 한도 배분이다)
           (한도가 공용 자원 — 429 하나로 4조각 중 3이 죽었다. 사용자 지시 2026-09-04)
+          🔴 [중요] **누가 그 일을 지휘하는지도 고른다** — `lane`/`claude`/`codex` (`#385`)
+             `lane` = 마스터가 텍스트만 만들어 워커에 써 넣는다(지금까지의 동작) ·
+             `claude`/`codex` = 워커에서 그 에이전트가 돌며 체크아웃을 읽고 고친다
+             표면은 `ax-mode` 스킬 · `get/set_worker_mode` · `.33` 의 요청자 MCP
+             [주의] **다음 조각부터** 적용된다 — 이미 SSH 가 나간 조각엔 소급되지 않는다
+             [주의] **기본값은 아직 사람이 안 정했다**(상수 `_UNDECIDED_DEFAULT`, 값은 `lane`).
+                    지금 저장 상태는 **실증용 `codex`** 다 — 되돌릴지는 미결이다
           **자기 서브 브랜치에 커밋**하고                            [완료] 라이브 2026-09-03
           (끝나면 `main` 복귀 — 체크아웃된 브랜치는 정리에서 빠진다)  [완료] 실측
           🔴 **끝내고 다음 작업을 요청한다**                          [미구현 — 마스터 SSH push]
@@ -219,6 +226,17 @@ purpose** (one screen flipping to light on its own reads as a different app). `/
 **last generated** hardware snapshot — a browser refresh never triggers SSH polling (that would
 defeat the 120s guard). [중요] **`ax-status.timer` refreshes it every 5 min**; because 5 min < the
 15-min staleness threshold, **the red age banner appearing means the timer is actually broken.**
+
+[중요] **The write surface on this port is `/control/*`, and it is NOT public** (added 2026-09-08,
+`54a0669`). It sits in `REQUESTER_SCOPE` only — measured on the live service: requester token 200,
+**no token 401, worker token 403**. Writes were deliberately kept out of `/api/v1`, which is the
+auth-less half. `/cluster` now opens with a **지휘 상태** card. 🔴 [중요] **It shows two different
+things and they must not be conflated**: **마스터 담당** (`claude`/`codex`) is *the last recorded*
+conductor — **not a liveness check, not a lock, and it neither starts nor stops a session**;
+**워커 실행 모드** (`lane`/`claude`/`codex`) is the global setting that applies **from the next
+piece onward**. [주의] Never render an exception string on this page — `str(OSError)` carries an
+absolute path, which is exactly what `api_history` withholds (that defect shipped and was caught by
+drawing the page for real, with 8 unit tests passing).
 
 [중요] **The gates paid for themselves — and the live runs, not the unit tests, found the defects.**
 Five real ones this session-and-the-last, each behind an injected seam while 63–96 unit checks

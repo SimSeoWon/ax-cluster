@@ -5,11 +5,24 @@
 
 **플랫폼**: 리눅스 마스터(Ubuntu 22.04) + 윈도우 2대(작업장 1 · 요청자 1) + BC-250 1대
 
-> **지금 어디까지 왔나** (2026-08-23): **마일스톤 5 까지 닫혔다** — M2 는 2026-08-10,
+> **지금 어디까지 왔나** (2026-09-08): **마일스톤 5 까지 닫혔다** — M2 는 2026-08-10,
 > **M3·M4·M5 는 2026-08-17 사용자 결정으로** 마감됐다. 트윈이 자라고·색인되고·코드 작성에
 > 전달되며(M2), 분해 → 골조 → 워커 추론 → **3층 결정적 게이트** 파이프라인은 실 게임 코드로
-> 전 주기를 완주했다(M3 · 리포트 23). **마일스톤 6(개선·확장) 진행 중** — 지금 열린 축은
-> **다중 프로젝트**이고 착수 순서는 [`docs/12-multi-project.md`](docs/12-multi-project.md) §12.3-a 다.
+> 전 주기를 완주했다(M3 · 리포트 23). **마일스톤 6(개선·확장) 진행 중.**
+>
+> 🔴 **파이프라인의 정본은 사용자의 7단계다** (확정 2026-09-02) — 요청자 `.33` 이 골조를 만들고,
+> 마스터가 조각내 파견하고, **워커가 자기 서브 브랜치에 커밋**하고, **통합은 다시 `.33`** 이 한다.
+> 「통합자」는 2026-09-04 에 **삭제**됐다(약 1,000줄). 사람 게이트는 **둘** — ⑺ 전진과 finalize.
+> 자세히: [`docs/16-worker-orchestrator-mode.md`](docs/16-worker-orchestrator-mode.md) ·
+> [`machines/sim-desktop.md`](machines/sim-desktop.md).
+>
+> **지휘자는 둘이다** (사용자 2026-09-07) — 마스터 대화 세션을 **Claude ↔ Codex** 가 한도에 따라
+> 교대한다. 공용 규칙 [`docs/orchestrator-rules.md`](docs/orchestrator-rules.md),
+> 진행 중인 것 한 벌 [`docs/orchestrator-handoff.md`](docs/orchestrator-handoff.md).
+> **SSH 파견의 실행 주체(워커 지휘자)도 `lane`/`claude`/`codex` 중에 고른다.**
+>
+> 열린 축 하나는 **다중 프로젝트**이고 착수 순서는
+> [`docs/12-multi-project.md`](docs/12-multi-project.md) §12.3-a 다.
 > [중요] **분자는 여기 적지 않는다** — 레드마인(version *마일스톤 6*)이 계산한다.
 > [주의] 버전 *아이디어 — 추후 검토 수집* 은 **일감이 아니다**(집계 금지).
 >
@@ -201,6 +214,7 @@ ax-cluster/
 | 작업 큐 | 8101 | `ax-task-queue.service` |
 | 추론 브로커 | 8102 | `ax-broker.service` |
 | 프로젝트 레지스트리 (MCP) + **웹 UI** | 8103 | `ax-projects.service` (`/`·`/ontology`·`/cluster`) |
+| ↳ 지휘 제어 표면 | 8103 | `/control/*` — **요청자 토큰 전용** (무인증 401 · 워커 403) |
 | 색인기 | — | `ax-indexer.path`(inotify) → `ax-indexer.service` |
 
 [중요] 셋 다 **베어러 토큰 필수**(`~/.config/ax-cluster/token`, 0600) — 토큰이 없으면 **서비스가
@@ -257,6 +271,8 @@ ax-cluster/
 .venv/bin/python -m master.status html                   # → <프로젝트>/cluster.html 한 장
 #   [중요] 다른 머신에서 보기: http://192.168.0.57:8103  ← 인증 없음 (원전 웹 UI)
 #      / = Context Server · /ontology = 도메인 뷰어+그래프 · /cluster = 클러스터 상태
+#      [중요] /cluster 상단 「지휘 상태」 = 마스터 담당(claude/codex) + 워커 실행 모드
+#         마스터 담당은 **마지막으로 기록된** 지휘자다 — 생존 판정도 잠금도 아니다
 #   [중요] 최소 간격 120초 — BC-250 을 자주 두드리지 않는다 (넘기려면 --force)
 curl -s localhost:8102/health | python3 -m json.tool     # 노드별 상주 모델
 systemctl status ax-task-queue ax-broker ax-projects ax-indexer.path
@@ -268,7 +284,9 @@ journalctl -u ax-indexer -n 30 --no-pager                # push → 트윈 성�
 
 ## MCP 도구 (작업장 Claude 가 쓰는 창구)
 
-`ax-projects`(8103) 하나가 작업장의 단일 창구다. **26종.**
+`ax-projects`(8103) 하나가 작업장의 단일 창구다. **37종** (실측 2026-09-08 — 데코레이터
+수와 실제 붙은 도구 목록 두 방법이 일치). [주의] 리포트 `54`·`55` 의 **33종**은 워커 지휘자
+모드 도구 2종과 지휘 상태 도구 2종이 들어오기 **전** 값이다 — 33 + 2 + 2 = 37 로 맞는다.
 
 | 도구 | 하는 일 |
 |---|---|
@@ -281,6 +299,8 @@ journalctl -u ax-indexer -n 30 --no-pager                # push → 트윈 성�
 | `sync_ontology` · `drift_audit` · `unassigned_classes` | 경로·선언 동기화 · 어긋남 감사 · 미배정 노출 |
 | `register_project` · `set_active` · `list_projects` | 트윈 프로젝트 등록·전환 |
 | `set_workshop` · `check_workshops_clean` 외 | 작업장 등록·더티 체크 |
+| `get_worker_mode` · `set_worker_mode` | SSH 파견의 실행 주체를 `lane`/`claude`/`codex` 로 — [주의] **다음 조각부터** 적용 (실행 중인 조각엔 소급 안 됨) |
+| `get_orchestration` · `record_master_conductor` | 마스터 담당 + 워커 모드 조회 / 담당 기록 — [중요] 기록일 뿐 **세션 실행·종료·잠금이 아니다** |
 
 **규약**: `[대괄호]`는 **클래스에만** 쓴다. 미등록이면 마스터가 후보를 돌려주고, 작업장
 Claude 가 사용자에게 물어 등록한다 — 다음 검색부터 자동 확장된다.
