@@ -241,6 +241,45 @@ def test_layer1_blocks_commit():
               f"task/{WORK}/{TASK}" not in _heads(bare), f"{_heads(bare)}")
 
 
+def test_layer1_block_records_what_the_conductor_said():
+    """🔴 **층1 이 막았을 때 지휘자의 말이 기록에 남는다** (`#391` · 실측 stdout).
+
+    아래 `REAL` 은 2026-09-09 에 `.2` 에서 **실제로 나온 출력**이다. codex 는 파일 쓰기 도구가
+    죽었다고 자기 입으로 말했는데 그 말이 어디에도 안 남아, 마스터에는 층1 의 `[PSEUDO]` 한
+    줄만 보였다 ⇒ **환경 실패가 코드 실패로 위장**돼 재시도 3회를 태웠다.
+
+    [중요] **`rc=0` 이다** — 이 사고의 핵심이 그것이라 그대로 재현한다.
+    [주의] 이 못은 `#385` 회귀를 막는다: 레인 경로는 처음부터 시도마다 남기고 있었다.
+    """
+    REAL = (
+        '{"type":"thread.started","thread_id":"01a0868f"}\n'
+        '2026-09-09T14:26:13Z ERROR codex_core::tools::router: error=exec_command failed: '
+        'CreateProcess { message: "Rejected(\\"Failed to create unified exec process: '
+        'timed out after 15000ms connecting runner pipe-in\\")" }\n'
+        '{"type":"item.completed","item":{"id":"item_2","type":"agent_message",'
+        '"text":"Unable to create probe.txt because the file-writing tools failed."}}\n'
+        '{"type":"turn.completed","usage":{"input_tokens":127154,"output_tokens":314}}\n'
+    )
+
+    def _llm_writes_nothing(facts, task_id, want):
+        return 0, REAL          # 🔴 아무것도 안 쓰고 rc=0 — 그날의 상태 그대로
+
+    with tempfile.TemporaryDirectory() as td:
+        facts, bare, base, _w = _world(Path(td))
+        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+                        want=[SRC], llm=_llm_writes_nothing, ssh=_shell, reader=_reader)
+        check("막힌다 (골조가 그대로라 층1 이 잡는다)",
+              not c.ok and c.layer1_violations, c.summary)
+        notes = " | ".join(c.notes)
+        check("🔴 지휘자가 한 말이 기록에 남는다",
+              "file-writing tools failed" in notes, notes[:200])
+        check("🔴 실패 원인 줄이 남는다 — 진짜 원인은 여기 있다",
+              "pipe-in" in notes or "Rejected(" in notes, notes[:200])
+        check("  누가 말했는지 표시한다", "[지휘자]" in notes, notes[:80])
+        check("[중요] 커밋은 여전히 안 생긴다 (로그를 남긴다고 통과시키지 않는다)",
+              not c.head, c.head)
+
+
 def test_empty_body_blocks():
     with tempfile.TemporaryDirectory() as td:
         facts, bare, base, _w = _world(Path(td))
@@ -328,6 +367,7 @@ def main() -> int:
     for fn in (test_no_pseudo_and_no_change_is_a_no_op_not_a_failure,
                test_commands, test_returns_to_main, test_worker_keeps_nothing,
                test_happy_path, test_layer1_blocks_commit,
+               test_layer1_block_records_what_the_conductor_said,
                test_empty_body_blocks, test_no_change_is_not_success,
                test_refusals, test_llm_failure_does_not_commit):
         fn()
