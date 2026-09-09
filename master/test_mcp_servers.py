@@ -82,8 +82,11 @@ from master.projects import mcp_server as pj  # noqa: E402
 check("모듈 import", True)
 check("MCPServer 인스턴스", type(pj.mcp).__name__ == "MCPServer", type(pj.mcp).__name__)
 _pj = tool_names(pj.mcp)
-check("도구 35종 등록 (get_manifest 철거 2026-09-02 · 지휘자 모드 2종 신설 2026-09-08)",
-      len(_pj) == 35, f"실제 {len(_pj)}종: {_pj}")
+# [주의] **이 숫자는 도구를 더할 때 같이 고친다.** 실측 2026-09-10: `54a0669` 가 지휘 상태
+#   2종(`get_orchestration_tool`·`record_master_conductor_tool`)을 더하고 이 값을 안 고쳐
+#   **회귀가 이틀 내내 빨간 채로 있었다.** 상시 빨간 회귀는 진짜 실패를 묻는다.
+check("도구 37종 등록 (get_manifest 철거 2026-09-02 · 지휘자 모드 2종 09-08 · 지휘 상태 2종 09-08)",
+      len(_pj) == 37, f"실제 {len(_pj)}종: {_pj}")
 # [중요] **워커 지휘자 모드 창구 둘** (`#385`, 2026-09-08) — 모드를 고르는 표면은 **서버의
 #   이 한 벌**이고 Claude 스킬·Codex 스킬이 **같은 것**을 부른다(`ax-mode`). 도구마다 로직을
 #   따로 두면 두 벌이 갈라진다. [주의] 개수만 세면 「하나 빠지고 하나 늘어난」 것을 못 잡으므로
