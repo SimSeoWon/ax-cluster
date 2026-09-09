@@ -326,8 +326,29 @@ def agent_command(facts, path: str, instr: str, *, mode: str) -> str:
         # [주의] stdin 을 막지 않으면 *"Reading additional input from stdin"* 으로 멈춘다
         #    (실측 2026-09-07 — SSH 는 tty 가 아니다).
         nul = "NUL" if facts.windows else "/dev/null"
+        # 🔴 [중요] **Windows 워커는 샌드박스를 `unelevated` 로 못 박는다** (실측 2026-09-09).
+        #    `.2` 의 `~/.codex/config.toml` 은 **데스크톱 앱이 관리**해서 `[windows]
+        #    sandbox = "elevated"` 가 들어 있는데, 그 러너는 세션 9(대화형 데스크톱)의 네이티브
+        #    파이프를 쓴다. SSH 는 세션 0 이라 파이프가 안 닿고 **파일 쓰기 도구가 통째로 죽는다** —
+        #    그런데 `codex exec` 는 **rc=0 으로 정상 종료한다**:
+        #
+        #        exec_command failed: CreateProcess { message: "Rejected(\"Failed to create
+        #            unified exec process: timed out after 15000ms connecting runner pipe-in\")" }
+        #        agent_message: "Unable to create probe.txt because the file-writing tools failed."
+        #
+        #    그래서 마스터에는 「골조가 그대로」로만 보이고 층1 이 `[PSEUDO]` 로 막는다. 라이브
+        #    2026-09-09 에 `.2` 조각 2건이 이렇게 죽었다(재시도 3회 포함) — 같은 파견에서 `.43` 은
+        #    2/2 성공했다. **모델이 아니라 실행 환경이 원인이다.**
+        #
+        #    [중요] **앱이 관리하는 파일을 고치지 않는다** — 앱이 언제든 다시 쓴다. 명령줄로
+        #    못 박는다(`network_access` 를 같은 이유로 같은 자리에서 준다).
+        #    [주의] 값은 `elevated`/`unelevated` **둘뿐**이고 다른 값이면 codex 가 **설정 로드
+        #    단계에서 거절**한다(실측). Linux 도 같은 스키마로 파싱하지만 **쓰지는 않으므로**
+        #    Windows 일 때만 싣는다 — 안 쓰는 손잡이를 보낼 이유가 없다.
+        win = '-c windows.sandbox="unelevated" ' if facts.windows else ""
         return (f'{cd} && codex exec --json -s workspace-write '
                 f'-c sandbox_workspace_write.network_access=true '
+                f'{win}'
                 f'-C "{path}" "{instr}" < {nul}')
     raise ValueError(f"모르는 지휘자 모드: {mode!r}")
 

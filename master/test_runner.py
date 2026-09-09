@@ -127,6 +127,28 @@ def test_command() -> None:
     check("[중요] 경로는 레지스트리 값이다", "C:\\Users\\janus\\ModularStage" in cw, cw[:60])
 
 
+def test_codex_windows_sandbox() -> None:
+    """🔴 **Windows 워커의 codex 는 `unelevated` 샌드박스로 돈다** (실측 2026-09-09).
+
+    `elevated` 러너는 세션 9 의 네이티브 파이프를 쓰는데 SSH 는 세션 0 이라 안 닿는다 —
+    파일 쓰기 도구가 죽는데 **`codex exec` 는 rc=0 으로 끝나서** 마스터에는 「골조가 그대로」
+    로만 보인다. 라이브에서 `.2` 조각 2건이 그렇게 죽었다(`.43` 은 같은 파견에서 2/2).
+    """
+    win = R.worker_command(_facts("192.168.0.2", os_="windows",
+                                  path="C:\\trunk\\NS"), "t1", mode="codex")
+    check("🔴 윈도우 워커는 샌드박스를 못 박는다",
+          'windows.sandbox="unelevated"' in win, win[:160])
+    check("  stdin 을 막는다 (tty 가 없다)", "< NUL" in win, win[-40:])
+    check("  쓰기는 작업공간으로 묶는다", "-s workspace-write" in win, win[:160])
+    check("  네트워크는 연다 (레인 위임이 브로커 HTTP 다)",
+          "sandbox_workspace_write.network_access=true" in win, win[:160])
+
+    lin = R.worker_command(_facts("192.168.0.43"), "t1", mode="codex")
+    # [주의] Linux 도 같은 스키마로 파싱은 하지만 **쓰지 않는다** — 안 쓰는 손잡이는 안 보낸다
+    check("[주의] 리눅스 워커에는 안 싣는다", "windows.sandbox" not in lin, lin[:160])
+    check("  리눅스는 /dev/null 로 막는다", "< /dev/null" in lin, lin[-40:])
+
+
 # ── 배달 ─────────────────────────────────────────────────────────────────────
 
 # ── 하트비트 ─────────────────────────────────────────────────────────────────
@@ -342,7 +364,8 @@ def test_json_usage() -> None:
 
 
 def main() -> int:
-    for fn in (test_parse, test_pick, test_command, test_beater, test_run_task,
+    for fn in (test_parse, test_pick, test_command, test_codex_windows_sandbox,
+               test_beater, test_run_task,
                test_queue_calls, test_run_once_happy, test_run_once_returns_the_task,
                test_run_once_guards, test_result_asymmetry, test_pick_skips_dirty,
                test_json_usage):
