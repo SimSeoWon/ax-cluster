@@ -109,7 +109,46 @@ def test_pending_blocks_first():
             tasks = [{"task_id": "t0", "status": "pending"},
                      {"task_id": "t1", "status": "claimed"}]
             need, why = A.needs_integration(p, WORK, api=_api(tasks))
-            check("pending 이 있으면 파견이 먼저다", not need and "pending" in why, why)
+            check("pending 이 있으면 파견이 먼저다", not need and "파견할 조각" in why, why)
+    finally:
+        A.hold_active = orig
+
+
+def test_needs_revision_is_dispatchable():
+    """🔴 **`needs_revision` 도 파견 대상이다** (실측 2026-09-09 라이브 · 결함 ③).
+
+    `#388` 이 만든 상태를 파견 게이트가 몰라서, 재시도로 돌려보낸 조각을 아무도 다시
+    안 집었다. work 은 terminal 3/4 에서 멈췄고 `.33` 은 **끝을 영영 못 들었다.**
+    유닛 39/39 가 통과한 채 라이브에서만 드러난 결함이라 여기 못을 박는다.
+    """
+    orig = _no_hold()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            p = _Paths(Path(td))
+            # ⓐ 파견 게이트 — 남은 것이 `needs_revision` 뿐이어도 파견한다
+            tasks = [{"task_id": "t0", "status": "verified"},
+                     {"task_id": "t1", "status": "needs_revision"}]
+            import master.work.twin_base as TB
+            saved = TB.resolve
+
+            class _Base:
+                checked, exists, commit, branch, error = True, True, "abc1234def", "task/W/base", ""
+
+            TB.resolve = lambda paths, w: _Base()
+            try:
+                ok, why = A.should_dispatch(p, WORK, api=_api(tasks))
+                check("🔴 needs_revision 만 남아도 파견한다 (막히면 work 이 멈춘다)",
+                      ok and "파견 대상 1건" in why, f"{ok} {why}")
+            finally:
+                TB.resolve = saved
+            # ⓑ 통합 판정 — 재시도가 남았으면 통합이 아니라 파견이 먼저다
+            need, why2 = A.needs_integration(p, WORK, api=_api(tasks))
+            check("  통합보다 파견이 먼저다", not need and "파견할 조각" in why2, why2)
+            # ⓒ 후보 풀과 같은 기준을 쓴다 (`logic_claim` 과 갈라지면 조각이 낀다)
+            from master.task_queue import logic_claim as LC
+            src = Path(LC.__file__).read_text(encoding="utf-8")
+            check("  후보 풀도 두 상태를 본다",
+                  '"pending", "needs_revision"' in src, "logic_claim 후보 풀이 갈라졌다")
     finally:
         A.hold_active = orig
 
@@ -215,7 +254,8 @@ def test_dispatch_reason_is_written_where_the_requester_can_read_it() -> None:
 
 def main() -> int:
     for fn in (test_dispatch_reason_is_written_where_the_requester_can_read_it,test_submitted_means_worker_committed, test_failed_is_its_own_reason,
-               test_pending_blocks_first, test_claimed_with_full_spool_integrates,
+               test_pending_blocks_first, test_needs_revision_is_dispatchable,
+               test_claimed_with_full_spool_integrates,
                test_partial_spool_waits, test_all_failed_spool_has_nothing_to_apply,
                test_hold_blocks_integration_too, test_merge_status_gate):
         fn()

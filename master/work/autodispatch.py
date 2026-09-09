@@ -56,7 +56,7 @@ claim 하고 `done()` 으로 **버린 뒤 `return`** 한다. 그리고 **골조 
 
 ## [주의] 가드 넷 — 돈이 나가는 자리다
 
-    멱등     pending 태스크가 있는 work 만. 이미 파견 중이면 물러난다
+    멱등     파견 대상(`pending`·`needs_revision`)이 있는 work 만. 이미 파견 중이면 물러난다
     base     `twin_base.resolve().exists` 가 참일 때만 (`#331` 과 같은 판정)
     동시성    파일 잠금 — 같은 work 을 두 프로세스가 밀지 않는다
     보고     걸었는지·왜 안 걸었는지를 **둘 다** 저널에 남긴다
@@ -225,13 +225,33 @@ class _Lock:
             os.close(self.fd)
 
 
-def pending_tasks(work_id: str, *, api=None) -> list:
-    """아직 아무도 안 집은 태스크. [중요] **이것이 비면 파견하지 않는다** (멱등)."""
+# 🔴 [중요] **파견 대상은 `pending` 만이 아니다** (실측 2026-09-09 라이브).
+#
+# `#388` 이 층1 차단에 재시도를 주면서 **`needs_revision`** 이라는 상태를 새로 만들었는데,
+# 후보 풀에만 알리고 **파견 게이트에는 안 알렸다** — `logic_claim.py` 는
+# *"pending + needs_revision (re-attempt) 둘 다 후보"* 인데 여기는 `pending` 만 셌다.
+# 그래서 재시도는 **이미 도는 파견 안에서만** 흘렀다.
+#
+#     23:20:34  [revise] c1e3d128 1/3 — 재시도로 보낸다        → needs_revision
+#     23:29:07  안 건다 — pending 태스크가 없다 (멱등)         → 아무도 안 집는다
+#
+# work 은 terminal 3/4 에서 멈췄고 `_flip_if_all_terminal` 이 안 돌아 `merge_status` 가
+# `ready_for_review` 로 안 뒤집혔다 ⇒ **`.33` 은 끝났는지 실패했는지 영영 모른다.**
+# [주의] 같은 날 `267f22a6` 의 2·3차 시도가 이어진 것은 배관이 아니라 **우연**이다 —
+# 마침 `.33` 이 `[SKELETON-FIX]` 를 push 해 새 파견이 걸렸다. 그 우연이 결함을 가렸다.
+DISPATCHABLE = ("pending", "needs_revision")
+
+
+def dispatchable_tasks(work_id: str, *, api=None) -> list:
+    """워커가 아직 끝내지 않아 **집게 해야 할** 태스크. 비면 파견하지 않는다 (멱등).
+
+    [중요] 판정 기준은 `DISPATCHABLE` **하나**다 — 후보 풀과 갈라지면 조각이 낀다.
+    """
     from . import runner
     call = api or runner._api
     got = call("GET", f"/api/v1/works/{work_id}")
     tasks = (got or {}).get("tasks") or []
-    return [t for t in tasks if str(t.get("status") or "") == "pending"]
+    return [t for t in tasks if str(t.get("status") or "") in DISPATCHABLE]
 
 
 def work_meta(work_id: str, *, api=None) -> dict:
@@ -264,9 +284,9 @@ def should_dispatch(paths, work_id: str, *, api=None) -> tuple:
     if status not in ("in_progress", ""):
         return False, f"merge_status={status!r} — 진행 중인 work 만 민다"
 
-    pend = [t for t in (got.get("tasks") or []) if str(t.get("status") or "") == "pending"]
+    pend = [t for t in (got.get("tasks") or []) if str(t.get("status") or "") in DISPATCHABLE]
     if not pend:
-        return False, "pending 태스크가 없다 — 이미 파견됐거나 끝났다 (멱등)"
+        return False, "파견할 태스크가 없다 — 이미 파견됐거나 끝났다 (멱등)"
 
     # [중요] `#331` 과 같은 판정 — base 가 없으면 조각이 갈라질 자리가 없다
     b = twin_base.resolve(paths, work_id)
@@ -274,13 +294,13 @@ def should_dispatch(paths, work_id: str, *, api=None) -> tuple:
         return False, f"base 확인 실패 — {b.error} (확인 실패는 통과가 아니다)"
     if not b.exists:
         return False, f"base 가 원격에 없다 — {b.branch}. 요청자가 먼저 올려야 한다"
-    return True, f"pending {len(pend)}건 · base {b.commit[:8]}"
+    return True, f"파견 대상 {len(pend)}건 · base {b.commit[:8]}"
 
 
 def needs_integration(paths, work_id: str, *, api=None) -> tuple:
     """추론은 끝났는데 통합이 안 된 work 인가. `(그런가, 사유)`.
 
-    [중요] **이 자리가 비면 아무도 못 꺼낸다.** `dispatch()` 는 `pending > 0` 일 때만 시작하므로,
+    [중요] **이 자리가 비면 아무도 못 꺼낸다.** `dispatch()` 는 `DISPATCHABLE > 0` 일 때만 시작하므로,
     추론이 다 끝난 뒤 통합이 안 걸린 work 은 **파견 경로로 영원히 다시 안 잡힌다**
     (실측 2026-09-01: 4/4 추론 성공 · pending 0 · `submitted_at=None` 인 work 이 그렇게 떴다).
     `ax-indexer.timer` 가 게이트로 넘긴 분을 되찾는 것과 **같은 역할**이다.
@@ -303,8 +323,10 @@ def needs_integration(paths, work_id: str, *, api=None) -> tuple:
     tasks = got.get("tasks") or []
     if not tasks:
         return False, "태스크가 없다"
-    if any(str(t.get("status") or "") == "pending" for t in tasks):
-        return False, "pending 이 남았다 — 파견이 먼저다"
+    # [주의] **`needs_revision` 도 여기서 막는다** — 재시도가 남았는데 통합으로 넘어가면
+    #    그 조각은 영영 안 돌아온다. 사유 문구도 상태를 그대로 말한다(거짓말 금지).
+    if any(str(t.get("status") or "") in DISPATCHABLE for t in tasks):
+        return False, "파견할 조각이 남았다 — 파견이 먼저다"
     # 🔴 [중요] 정본 ⑸ 이후 `submitted` 의 뜻이 바뀌었다 (2026-09-02): **워커가 자기 서브
     #    브랜치에 커밋하고 제출한 것**이다(종전에는 통합자가 제출했다). 그래서 여기서 멈추는
     #    것이 옳고, 다음 칸은 **⑺ 사람 승인**이다 — 자동 통합이 아니다.
@@ -387,7 +409,7 @@ def dispatch(paths, work_id: str, *, limit: int = 0, api=None, runner_many=None)
         if lk is None:
             _log(f"{work_id} 안 건다 — 이미 파견이 돌고 있다 (잠금)")
             return {"dispatched": False, "reason": "이미 파견 중"}
-        n = limit or len(pending_tasks(work_id, api=api))
+        n = limit or len(dispatchable_tasks(work_id, api=api))
         _log(f"{work_id} 파견 시작 — {why} · limit={n}")
         fn = runner_many
         if fn is None:
