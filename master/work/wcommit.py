@@ -292,6 +292,16 @@ def _cycle(facts, task_id: str, c: "Committed", base: str, llm, do_ssh, do_read,
     if not l1.ok:
         c.layer1_violations = list(l1.problems)
         c.reason = "층1 이 막았다 — 커밋하지 않는다"
+        # 🔴 [중요] **층1 이 막았을 때가 지휘자의 말이 가장 필요한 순간이다** (`#391`).
+        #    「`[PSEUDO]` 가 남아 있다」는 **증상**이고, 왜 안 채웠는지는 지휘자만 안다.
+        #    실측 2026-09-09: codex 가 *"파일 쓰기 도구가 실패했다"* 고 말했는데 그 말이
+        #    어디에도 안 남아, 환경 실패가 **코드 실패로 위장**됐다(재시도 3회 낭비).
+        #    [주의] 기록(task md)에 남긴다 — 저널만으로는 `.33` 이 못 본다.
+        try:
+            from . import runner as _R                       # noqa: PLC0415
+            c.notes.extend(f"[지휘자] {ln}" for ln in _R.agent_report(out, rc=rc))
+        except Exception as e:                                # noqa: BLE001
+            c.notes.append(f"[주의] 지휘자 출력을 못 뽑았다 — {type(e).__name__}: {e}")
         return c
 
     # ⑤ 커밋 + push

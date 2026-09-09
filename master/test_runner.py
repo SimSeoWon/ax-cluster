@@ -153,6 +153,41 @@ def test_codex_windows_sandbox() -> None:
 
 # ── 하트비트 ─────────────────────────────────────────────────────────────────
 
+def test_agent_report() -> None:
+    """🔴 **지휘자가 자기 입으로 한 말을 남긴다** (`#391` · 실측 2026-09-09 `.2`).
+
+    이 stdout 은 실제로 `.2` 에서 나온 것이다. 종전에는 통째로 버려져서 마스터에는 층1 의
+    `[PSEUDO]` 한 줄만 남았고, **환경 실패가 코드 실패로 위장돼** 재시도 3회를 태웠다.
+    """
+    real = (
+        '{"type":"thread.started","thread_id":"01a0868f"}\n'
+        '2026-09-09T14:26:13Z ERROR codex_core::tools::router: error=exec_command failed: '
+        'CreateProcess { message: "Rejected(\\"Failed to create unified exec process: '
+        'timed out after 15000ms connecting runner pipe-in\\")" }\n'
+        '{"type":"item.completed","item":{"id":"item_2","type":"agent_message",'
+        '"text":"Unable to create probe.txt because the file-writing tools failed."}}\n'
+        '{"type":"turn.completed","usage":{"input_tokens":127154,"output_tokens":314}}\n'
+    )
+    got = R.agent_report(real, rc=0)
+    joined = " | ".join(got)
+    check("🔴 rc=0 이어도 남긴다 (이번 사고가 정확히 rc=0 이었다)", bool(got), joined)
+    check("  지휘자의 마지막 말을 뽑는다",
+          "file-writing tools failed" in joined, joined)
+    check("  실패 원인 줄을 뽑는다 — 여기에 진짜 원인이 있다",
+          "runner pipe-in" in joined or "Rejected(" in joined, joined)
+    check("[주의] 전문을 찍지 않는다 (JSONL 수백 줄이 로그를 삼킨다)",
+          len(joined) < 1200, f"{len(joined)}자")
+
+    # [중요] **침묵을 「문제 없음」으로 읽지 않는다** — 빈 목록을 돌려주면 안 된다
+    empty = R.agent_report("", rc=0)
+    check("🔴 출력이 없으면 **없다고 말한다** (조용한 빈 결과 금지)",
+          bool(empty) and "출력이 없다" in empty[0], str(empty))
+
+    # claude 갈래 — `--output-format json` 의 `result`
+    cj = R.agent_report('{"result":"RESULT: DONE 작업 완료","total_cost_usd":0.1}', rc=0)
+    check("  claude 출력 형식도 읽는다", "RESULT: DONE" in " ".join(cj), str(cj))
+
+
 def test_beater() -> None:
     n = []
     with R._Beater(lambda: n.append(1), interval=0.02):
@@ -365,7 +400,7 @@ def test_json_usage() -> None:
 
 def main() -> int:
     for fn in (test_parse, test_pick, test_command, test_codex_windows_sandbox,
-               test_beater, test_run_task,
+               test_agent_report, test_beater, test_run_task,
                test_queue_calls, test_run_once_happy, test_run_once_returns_the_task,
                test_run_once_guards, test_result_asymmetry, test_pick_skips_dirty,
                test_json_usage):

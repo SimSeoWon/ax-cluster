@@ -353,6 +353,88 @@ def agent_command(facts, path: str, instr: str, *, mode: str) -> str:
     raise ValueError(f"모르는 지휘자 모드: {mode!r}")
 
 
+# ── 🔴 지휘자가 **자기 입으로 한 말**을 남긴다 (`#391`, 실측 2026-09-09·09-10) ───────
+#
+# [중요] **버린 것이 이틀을 태웠다.** `.2` 의 codex 가 파일 쓰기 도구 실패로 아무것도 못 썼는데,
+# 자기 출력에는 정확히 말하고 있었다:
+#
+#     exec_command failed: CreateProcess { message: "Rejected(\"Failed to create unified exec
+#         process: timed out after 15000ms connecting runner pipe-in\")" }
+#     agent_message: "Unable to create probe.txt because the file-writing tools failed."
+#
+# 그런데 `run_worker` 의 `(rc, stdout)` 중 **stdout 은 rc==0 경로에서 아무 데도 안 남았고**,
+# 마스터 기록에는 층1 의 `[PSEUDO]` 한 줄만 남았다 ⇒ **「codex 가 코드를 덜 썼다」로 보였다.**
+# 그 오독으로 재시도 3회를 태웠고(환경 실패엔 재시도가 무의미하다), 원인은 사람이 워커에
+# 직접 프로브를 쏘고 나서야 나왔다.
+#
+# 🔴 [중요] **이것은 `#385` 가 낸 회귀다 — 없던 기능이 아니라 잃은 기능이다** (사용자 지적
+# 2026-09-10: *"기존 lane 모드에서는 근데 받았잖아"*). 레인 경로는 처음부터 시도마다 남긴다:
+#
+#     lanes.run_chain(..., logf=_log)  →  [lane] [완료] codex · 98초 · 파일 2 · 3,397자 · 토큰 …
+#                                         [lane] [중요] agy — 429 session limit → 다음 레인
+#
+# 생성이 마스터에서 돌아 출력이 손안에 있었기 때문이다. 워커 지휘자 경로는 그 출력이 **SSH 저편**
+# 이라 `(rc, stdout)` 으로 돌아오는데, `#385` 는 그것을 **받아만 놓고 아무 데도 안 썼다.**
+# 새 경로를 낼 때 **옛 경로가 이미 하던 일**을 확인하지 않은 자리다.
+#
+# [중요] **추론하지 말고 남긴다.** 이 저장소가 이미 두 번 적은 규칙이다 — 사용자:
+# *"이거 보려고 로그 심는거잖아"* (리포트 48 §7).
+#
+# [주의] 전문을 찍지 않는다 — codex 는 JSONL 이라 수백 줄이다. **사람이 판단에 쓰는 것만**:
+# 지휘자의 마지막 말 · 실패한 명령 · 오류 줄. 형식 지식은 `usage` 가 갖는다(파서를 또 만들지
+# 않는다 — `#385` 검증 ⓒ 와 같은 규칙).
+
+_ERR_MARKS = ("ERROR", "error=", "Rejected(", "failed:", "Traceback", "Permission denied")
+AGENT_LOG_MAX = 3          # 오류 줄은 최대 3개까지만 (로그가 본문이 되면 안 읽힌다)
+AGENT_TEXT_MAX = 400       # 지휘자의 말 한 토막
+
+
+def agent_report(stdout: str, *, rc: int = 0) -> list:
+    """지휘자 출력에서 **사람이 읽을 몇 줄**을 뽑는다. 못 뽑으면 그 사실을 말한다.
+
+    [중요] **빈 목록을 돌려주지 않는다** — 침묵은 「문제 없음」으로 읽힌다. 뽑을 것이 없으면
+    「출력이 없었다」고 말하는 것이 정보다(그 자체가 이상 신호다).
+    """
+    out = (stdout or "").strip()
+    if not out:
+        return [f"출력이 없다 (rc={rc}) — [주의] 지휘자가 아무 말도 안 했다"]
+
+    lines: list = []
+    text = ""
+    try:                                                     # codex JSONL
+        from .usage import parse_codex_jsonl                 # noqa: PLC0415
+        got = parse_codex_jsonl(out)
+        if got:
+            text = str(got[0] or "")
+    except Exception:                                        # noqa: BLE001
+        pass
+    if not text:                                             # claude --output-format json
+        try:
+            import json as _json                             # noqa: PLC0415
+            d = _json.loads(out)
+            if isinstance(d, dict):
+                text = str(d.get("result") or "")
+        except Exception:                                    # noqa: BLE001
+            pass
+    if text:
+        one = " ".join(text.split())[:AGENT_TEXT_MAX]
+        lines.append(f"말: {one}")
+
+    # [중요] 실패한 도구 호출과 오류 줄 — **원인은 거의 항상 여기 있다.**
+    errs: list = []
+    for ln in out.splitlines():
+        ln = ln.strip()
+        if not ln or len(errs) >= AGENT_LOG_MAX:
+            continue
+        if any(m in ln for m in _ERR_MARKS) or '"status":"failed"' in ln.replace(" ", ""):
+            errs.append(" ".join(ln.split())[:AGENT_TEXT_MAX])
+    lines.extend(f"오류: {e}" for e in errs)
+
+    if not lines:
+        lines.append(f"뽑을 것이 없다 (rc={rc} · {len(out)}자) — 원문은 이 로그에 없다")
+    return lines
+
+
 def worker_command(facts, task_id: str, files=(), *, mode: str = "claude") -> str:
     """워커에서 실제로 도는 한 줄. [중요] **경로는 레지스트리에서 온 값**(`facts.path`)이다.
 

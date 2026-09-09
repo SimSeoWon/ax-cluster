@@ -811,8 +811,16 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
             _m, _src = _MODE.current(mode)
             if _m != "lane":
                 _log(f"[mode] {tid} 지휘자={_m} (출처 {_src}) — 워커에서 실행한다")
-                return runner.run_worker(f, tid, files=files, runner=None,
-                                         mode=_m, timeout=timeout)
+                _rc, _out = runner.run_worker(f, tid, files=files, runner=None,
+                                              mode=_m, timeout=timeout)
+                # 🔴 [중요] **지휘자가 자기 입으로 한 말을 남긴다** (`#391`). 종전에는 이
+                #    `_out` 을 아무도 안 받아서, 워커에서 무슨 일이 있었는지가 통째로 사라졌다.
+                #    `.2` 의 codex 가 *"파일 쓰기 도구가 실패했다"* 고 말하고 있었는데 마스터에는
+                #    층1 의 `[PSEUDO]` 한 줄만 남았고, 그 오독이 이틀을 태웠다.
+                #    [주의] **rc==0 일 때도 찍는다** — 이번 사고가 정확히 `rc=0` 이었다.
+                for _ln in runner.agent_report(_out, rc=_rc):
+                    _log(f"[agent] {tid} @{f.host} {_ln}")
+                return _rc, _out
             from . import lanes as _LN
             skel = _skeleton_at(paths, base, files)
             if not skel:
@@ -879,6 +887,9 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         res.status = runner.BLOCKED
         res.reason = c.summary
         res.notes.extend(f"[중요] {v}" for v in c.layer1_violations[:5])
+        # [중요] **`c.notes` 를 흘리지 않는다** (`#391`) — 지휘자의 말이 여기 담겨 오고,
+        #    이것이 task 레코드에 남아야 `.33` 과 다음 세션이 「왜 못 채웠나」를 안다.
+        res.notes.extend(c.notes)
         _log(f"[wcommit] {task_id} {c.summary}")
         # 🔴 **상한 있는 재시도** (`#388`, 원전 `_classify_verify_issues` 이식).
         #
