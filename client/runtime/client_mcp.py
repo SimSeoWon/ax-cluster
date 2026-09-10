@@ -303,7 +303,7 @@ def tool_register_work(_unused, args: dict, *, root=None) -> dict:
         raise ClientError(
             "등재에 work_id 를 실을 수 없다 — 이미 있는 분산 작업의 다음 라운드는 "
             "`improve_work(work_id=…, round=현재+1, specs=[…])` 다")
-    for k in ("target_repo", "original_request", "target_branch"):
+    for k in ("target_repo", "original_request", "target_branch", "worker_mode"):
         v = args.get(k)
         if v not in (None, ""):
             body[k] = v
@@ -340,6 +340,8 @@ def tool_improve_work(_unused, args: dict, *, root=None) -> dict:
     v = args.get("target_branch")
     if v not in (None, ""):
         body["target_branch"] = v
+    if args.get("worker_mode") not in (None, ""):
+        body["worker_mode"] = args["worker_mode"]
     return projects_write_api(root)("POST", "/work/improve", body)
 
 
@@ -1106,6 +1108,8 @@ TOOLS.append(
                                    "description": ("🔴 이번에 여는 라운드 = **현재 + 1** (2 이상). "
                                                    "확인용이라 어긋나면 거절된다")},
                          "specs": _register_specs_schema(),
+                         "worker_mode": {"type": "string", "enum": ["lane", "claude", "codex"],
+                                         "description": "이번 라운드의 실행 모드. 생략하면 기존 값을 유지한다"},
                          "target_branch": {"type": "string",
                                            "description": "보통 비운다 — 저장된 작업 브랜치를 쓴다"}}}})
 

@@ -496,7 +496,7 @@ def improve_work(
 
     # ── ① 승격 (큐가 판정한다) ──────────────────────────────────────────────
     got = post(f"{queue_url}/api/v1/works/{wid}/reopen",
-               {"project": paths.name, "round": int(round)})
+               {"project": paths.name, "round": int(round), "worker_mode": worker_mode})
     if isinstance(got, dict) and got.get("ok") is False:
         raise RegisterError(str(got.get("error") or got))
     opened = int((got or {}).get("round") or round)
@@ -736,5 +736,4 @@ def register_tasks(work_id: str, specs: list[TaskSpec], *, paths: ProjectPaths,
 
         results.append(r)
     return results
-
 

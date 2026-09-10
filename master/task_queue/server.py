@@ -257,7 +257,8 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         맞추지 않는다. 승격이 여기 하나로 모였으므로 `register_task` 는 이제 **거절만** 한다.
         """
         r = reopen_work(idx, work_id=work_id,
-                        expected_round=int((payload or {}).get("round") or 0))
+                        expected_round=int((payload or {}).get("round") or 0),
+                        worker_mode=str((payload or {}).get("worker_mode") or ""))
         if not r.get("ok"):
             # [중요] 409 다 — 요청은 멀쩡하고 **상태가 안 맞는 것**이다(400 이 아니다).
             raise HTTPException(409, r)

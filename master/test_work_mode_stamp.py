@@ -133,6 +133,21 @@ finally:
 check("🔴 스탬프 없는 옛 work 은 빈 값 — 종전 동작(전역 읽기) 유지",
       got.get("mode") == "", repr(got.get("mode")))
 
+from master.task_queue.logic import reopen_work
+wid = w["work_id"]
+meta["merge_status"] = "ready_for_review"
+changed = reopen_work(idx, work_id=wid, expected_round=2, worker_mode="claude")
+check("다음 라운드 명시 스왑이 저장된다", changed.get("ok") and meta["worker_mode"] == "claude")
+check("진행 중 다른 모드로 덮지 않는다",
+      not reopen_work(idx, work_id=wid, expected_round=2, worker_mode="codex").get("ok"))
+meta["merge_status"] = "ready_for_review"
+check("모드 생략 시 기존 값 유지", reopen_work(idx, work_id=wid, expected_round=3).get("ok")
+      and meta["worker_mode"] == "claude")
+meta["merge_status"] = "ready_for_review"
+check("잘못된 모드로 라운드를 열지 않는다",
+      not reopen_work(idx, work_id=wid, expected_round=4, worker_mode="typo").get("ok")
+      and meta["round"] == 3)
+
 print()
 print("=" * 46)
 print(f"통과 {PASS} · 실패 {FAIL}")

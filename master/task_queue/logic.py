@@ -166,7 +166,8 @@ def register_work(idx: TaskIndex, *, title: str, target_repo: str,
         return result
 
 
-def reopen_work(idx: TaskIndex, *, work_id: str, expected_round: int = 0) -> dict:
+def reopen_work(idx: TaskIndex, *, work_id: str, expected_round: int = 0,
+                worker_mode: str = "") -> dict:
     """🔴 **개선요청 — 끝난 라운드의 work 을 다음 라운드로 연다** (사용자 결정 2026-09-05).
 
     사용자: *"분산작업 등록과 라운드 값을 받는 분산작업 개선 요청으로 말이야"* ·
@@ -186,6 +187,10 @@ def reopen_work(idx: TaskIndex, *, work_id: str, expected_round: int = 0) -> dic
     **자기가 가진 큐 상태**까지다 — `ready_for_review` 는 조각이 다 끝났다는 큐 자신의 사실이고,
     그 다음 판단은 요청자 몫이다. 여기에 「머지했나」 게이트를 더하면 원전에 없는 계층이 된다.
     """
+    from ..work.mode import MODES
+    worker_mode = (worker_mode or "").strip()
+    if worker_mode and worker_mode not in MODES:
+        return {"ok": False, "reason": "invalid_worker_mode", "error": "알 수 없는 worker_mode"}
     if work_id not in idx.works:
         return {"ok": False, "reason": "unknown_work", "error": f"unknown work_id: {work_id}"}
     with idx.lock:
@@ -202,6 +207,9 @@ def reopen_work(idx: TaskIndex, *, work_id: str, expected_round: int = 0) -> dic
             n_cur = sum(1 for t in idx.tasks.values()
                         if t.get("work_id") == work_id and int(t.get("round") or 0) == cur)
             if st == "in_progress" and int(expected_round or 0) == cur and n_cur == 0:
+                if worker_mode and worker_mode != w.get("worker_mode"):
+                    return {"ok": False, "reason": "mode_mismatch",
+                            "error": "이미 열린 라운드의 모드와 다르다 — 같은 모드로 재시도한다"}
                 return {"ok": True, "work_id": work_id, "round": cur, "previous_round": cur,
                         "reopened": False,
                         "note": (f"이미 라운드 {cur} 로 열려 있고 그 라운드 조각이 0건이다 — "
@@ -228,11 +236,14 @@ def reopen_work(idx: TaskIndex, *, work_id: str, expected_round: int = 0) -> dic
                     "round": cur, "next_round": nxt}
         w["merge_status"] = "in_progress"
         w["round"] = nxt
+        previous_mode = w.get("worker_mode")
+        if worker_mode:
+            w["worker_mode"] = worker_mode
         # [중요] **이슈 id 는 그대로 둔다** — work 하나에 이슈 하나이고, 라운드는 그 이슈의
         #    노트로 쌓인다 (사용자 2026-09-04). 여기서 버리면 라운드마다 새 이슈가 난다.
         _save_work(idx, work_id)
         _tq_log(f"[work-reopen] {work_id} ready_for_review → in_progress · "
-                f"라운드 {cur} → {nxt} (개선요청)"
+                f"라운드 {cur} → {nxt} (개선요청) · 모드 {previous_mode} → {w.get('worker_mode')}"
                 + (f" (이슈 #{w['redmine_issue_id']})" if w.get("redmine_issue_id") else ""),
                 idx.root)
         return {"ok": True, "work_id": work_id, "round": nxt, "previous_round": cur,

@@ -490,6 +490,11 @@ def dispatch(paths, work_id: str, *, limit: int = 0, api=None, runner_many=None)
         #    요청자(`.33`)에 완료를 공지하고, 통합 여부는 거기서 사람이 정하는 것**이다.
         #    공지는 큐가 낸다 — 조각이 전부 terminal 이 되면 `merge_status` 가
         #    `ready_for_review` 로 뒤집히고 `logic_cleanup` 이 Redmine [리뷰 요청] 이슈를 만든다.
+        current = work_meta(work_id, api=api)
+        if current.get("merge_status") == "ready_for_review":
+            out["all_pieces_done"] = True
+            _log(f"{work_id} 조각 전부 종결 — ready_for_review (통합 검사는 요청자)")
+            return out
         need, why_i = needs_integration(paths, work_id, api=api)
         out["all_pieces_done"] = bool(need)
         _log(f"{work_id} " + ("조각 전부 완료 — 요청자(.33) 공지 대기 (통합은 .33 에서)"
