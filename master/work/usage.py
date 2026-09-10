@@ -34,6 +34,8 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from pathlib import Path
 
 TIMEOUT = 1800
 _CODEX_TOKENS = re.compile(r"tokens used\s*\n\s*([\d,]+)")
@@ -253,3 +255,224 @@ CLI_LANES = ("claude", "agy", "codex")
 
 def is_cli_lane(lane: str) -> bool:
     return (lane or "").partition(":")[0] in CLI_LANES
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 계측 기록·집계 (`#387`) — 원전 `watcher/common.py:607` `_record_token_usage` 이식
+#
+# 원전은 호출마다 한 줄 남기고(`token_usage.jsonl`) `get_token_summary(days=N)` 이
+# 기간·제공자별로 합산했다. 그 두 겹을 그대로 옮긴다. **바꾼 것은 둘이다**:
+#   ⑴ 저장 위치 — 트윈마다(`paths.usage_log`). 다중 프로젝트 축이라 「누가 태웠나」가
+#      합계만큼 중요하고, 파견 유닛이 큐 루트를 모른다. 합계는 읽기에서 모은다.
+#   ⑵ 🔴 **`cost_known`** — 원전에 없던 칸이다. 원전은 claude 하나만 셌지만 우리는 codex 도
+#      쓰고, codex 는 **토큰은 주고 USD 는 안 준다**. 0 으로 적으면 「공짜」가 된다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import threading as _threading
+
+_LOG_LOCK = _threading.Lock()
+
+
+def meta_from_usage(u) -> dict:
+    """`Usage`(레인) → `runner.Outcome` 이 읽는 meta 모양.
+
+    [중요] **레인과 지휘자를 같은 모양으로 만든다.** 형태가 둘이면 집계가 둘이 되고, 그때
+    「lane 이 싼가 codex 가 싼가」를 못 잰다 — 이 일감이 서는 이유가 그 비교다.
+    [주의] 모르는 값은 **키를 만들지 않는다.** `None` 을 0 으로 적으면 「안 썼다」가 된다.
+    """
+    if u is None:
+        return {}
+    inner, meta = {}, {"source": getattr(u, "lane", "") or "lane"}
+    for key, attr in (("input_tokens", "input_tokens"), ("output_tokens", "output_tokens"),
+                      ("cache_read_input_tokens", "cache_read")):
+        v = getattr(u, attr, None)
+        if v is not None:
+            inner[key] = int(v)
+    total = getattr(u, "total_tokens", None)
+    if total is not None:
+        inner["total_tokens"] = int(total)
+    if inner:
+        meta["usage"] = inner
+    cost = getattr(u, "cost_usd", None)
+    if cost is None:
+        meta["cost_unknown"] = True                 # 🔴 0 으로 접지 않는다
+    else:
+        meta["total_cost_usd"] = float(cost)
+    if getattr(u, "note", ""):
+        meta["note"] = u.note
+    return meta
+
+
+def envelope(body: str, meta: dict) -> str:
+    """`runner._unwrap` 이 되읽는 봉투 — `claude --output-format json` 과 **같은 모양**.
+
+    🔴 [중요] **이것이 파싱 경로를 하나로 만든다.** 레인 갈래는 종전에
+    `"RESULT: DONE (lane=agy)"` 라는 **합성 문자열**만 돌려줘서 계측이 그 자리에서 사라졌다
+    (`#387` 증상). 봉투에 실어 보내면 지휘자 갈래와 **같은 `_unwrap` 한 번**으로 풀린다 —
+    받는 쪽(`wcommit`)에 갈래를 만들지 않는다.
+    """
+    return json.dumps({"result": body, **(meta or {})}, ensure_ascii=False)
+
+
+def normalize(meta: dict, *, lane: str = "", seconds: float = 0.0) -> dict:
+    """meta → 집계 레코드 필드. 원전 record 모양 + `cost_known`.
+
+    [주의] `cost_known=False` 와 `cost_usd=0.0` 은 **다른 사실**이다 — 전자는 모른다,
+    후자는 안 썼다. 집계가 둘을 섞으면 codex 가 공짜로 보인다.
+    """
+    meta = meta or {}
+    inner = meta.get("usage") or {}
+    known = bool(meta) and not meta.get("cost_unknown")
+    return {
+        "lane": lane or str(meta.get("source") or ""),
+        "input_tokens": int(inner.get("input_tokens") or 0),
+        "output_tokens": int(inner.get("output_tokens") or 0),
+        "cache_read": int(inner.get("cache_read_input_tokens") or 0),
+        "cache_create": int(inner.get("cache_creation_input_tokens") or 0),
+        "reasoning_tokens": int(inner.get("reasoning_output_tokens") or 0),
+        "cost_usd": float(meta.get("total_cost_usd") or 0.0),
+        "cost_known": known,
+        "measured": bool(inner),                    # 토큰을 실제로 읽었나
+        "seconds": round(float(seconds or 0.0), 1),
+    }
+
+
+def record(path, meta: dict, *, lane: str = "", task_id: str = "", work_id: str = "",
+           worker: str = "", rc: int = 0, seconds: float = 0.0, mode: str = "") -> dict:
+    """한 줄 추가하고 그 레코드를 돌려준다. [중요] **실패해도 파이프라인을 막지 않는다.**
+
+    원전도 `except: pass` 다 — 계측이 작업을 죽이면 안 된다. 다만 원전과 달리 **무엇을
+    못 썼는지는 돌려준다**(`{"error": …}`), 부르는 쪽이 로그에 남길 수 있게.
+    [중요] **rc≠0 도 기록한다** — 실패한 실행도 토큰은 태웠다(사용자 지적 2026-09-08).
+    """
+    rec = {"ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+           "work_id": work_id, "task_id": task_id, "worker": worker,
+           "mode": mode, "rc": int(rc), **normalize(meta, lane=lane, seconds=seconds)}
+    try:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with _LOG_LOCK:
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception as e:                                       # noqa: BLE001
+        return {**rec, "error": f"{type(e).__name__}: {e}"}
+    return rec
+
+
+def summarize(paths_or_files, *, days: int = 1) -> dict:
+    """기간 합계 — 원전 `get_token_summary` 와 같은 결. 트윈 하나 또는 여러 개를 받는다.
+
+    🔴 [중요] **미상을 따로 센다.** `cost_usd` 합계는 **`cost_known` 인 것만** 더하고,
+    모르는 호출 수를 `cost_unknown_calls` 로 함께 낸다 — 그래야 *"codex 가 얼마나 비싼가"* 에
+    「USD 는 모른다, 토큰은 이만큼」이라고 정확히 답할 수 있다.
+    [주의] 토큰 합계는 미상 여부와 무관하다 — codex 도 토큰은 준다.
+    """
+    files = paths_or_files if isinstance(paths_or_files, (list, tuple)) else [paths_or_files]
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    out = {"period_days": days, "calls": 0, "input_tokens": 0, "output_tokens": 0,
+           "cache_read": 0, "cache_create": 0, "reasoning_tokens": 0,
+           "cost_usd": 0.0, "cost_unknown_calls": 0, "unmeasured_calls": 0,
+           "seconds": 0.0, "failed_calls": 0, "by_lane": {}, "by_mode": {}, "files": 0}
+    for f in files:
+        p = Path(f)
+        if not p.exists():
+            continue
+        out["files"] += 1
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue                                 # [주의] 깨진 줄은 건너뛴다 — 세지 않는다
+            if str(r.get("ts") or "") < cutoff:
+                continue
+            out["calls"] += 1
+            for k in ("input_tokens", "output_tokens", "cache_read", "cache_create",
+                      "reasoning_tokens"):
+                out[k] += int(r.get(k) or 0)
+            out["seconds"] += float(r.get("seconds") or 0.0)
+            if int(r.get("rc") or 0) != 0:
+                out["failed_calls"] += 1
+            if not r.get("measured"):
+                out["unmeasured_calls"] += 1
+            if r.get("cost_known"):
+                out["cost_usd"] += float(r.get("cost_usd") or 0.0)
+            else:
+                out["cost_unknown_calls"] += 1
+            for axis, key in (("by_lane", "lane"), ("by_mode", "mode")):
+                name = str(r.get(key) or "?")
+                b = out[axis].setdefault(name, {"calls": 0, "tokens": 0, "cost_usd": 0.0,
+                                                "cost_unknown_calls": 0})
+                b["calls"] += 1
+                b["tokens"] += int(r.get("input_tokens") or 0) + int(r.get("output_tokens") or 0)
+                if r.get("cost_known"):
+                    b["cost_usd"] += float(r.get("cost_usd") or 0.0)
+                else:
+                    b["cost_unknown_calls"] += 1
+    out["seconds"] = round(out["seconds"], 1)
+    out["cost_usd"] = round(out["cost_usd"], 4)
+    return out
+
+
+def render(s: dict) -> str:
+    """집계 → 사람이 읽는 블록. 🔴 [중요] **미상을 숨기지 않는다.**
+
+    이 표면이 답해야 할 질문은 *"codex 가 얼마나 비싼가"* 이고, 정직한 답은 종종
+    「USD 는 모른다, 토큰은 이만큼」이다. 모르는 것을 0 으로 적으면 그 답이 **거짓**이 된다.
+    """
+    L = [f"[계측] 최근 {s['period_days']}일 · 호출 {s['calls']}건"
+         + (f" (실패 {s['failed_calls']})" if s.get("failed_calls") else "")
+         + (f" · 로그 {s['files']}개" if s.get("files", 0) > 1 else "")]
+    if not s["calls"]:
+        return L[0] + " — 기록이 없다"
+    L.append(f"  토큰  입력 {s['input_tokens']:,} · 출력 {s['output_tokens']:,}"
+             + (f" · 추론 {s['reasoning_tokens']:,}" if s.get("reasoning_tokens") else "")
+             + (f" · 캐시읽기 {s['cache_read']:,}" if s.get("cache_read") else ""))
+    cost = f"  비용  ${s['cost_usd']:.4f}"
+    if s["cost_unknown_calls"]:
+        cost += (f"  [주의] **{s['cost_unknown_calls']}건은 비용 미상** — 합계에 안 들어갔다"
+                 f" (0 이 아니라 모른다)")
+    L.append(cost)
+    if s.get("unmeasured_calls"):
+        L.append(f"  [주의] 토큰조차 못 읽은 호출 {s['unmeasured_calls']}건")
+    for axis, label in (("by_mode", "지휘자"), ("by_lane", "레인")):
+        rows = sorted((s.get(axis) or {}).items(), key=lambda kv: -kv[1]["tokens"])
+        if not rows:
+            continue
+        L.append(f"  {label}별")
+        for name, b in rows:
+            line = f"    {name or '?':10} 호출 {b['calls']:3}  토큰 {b['tokens']:>9,}"
+            line += (f"  ${b['cost_usd']:.4f}" if not b["cost_unknown_calls"]
+                     else f"  비용 미상 {b['cost_unknown_calls']}건")
+            L.append(line)
+    return "\n".join(L)
+
+
+def logs_for(root) -> list:
+    """`AX_PROJECTS_ROOT` 아래 모든 트윈의 계측 로그. [주의] 없는 것은 조용히 빠진다."""
+    try:
+        return sorted(p for p in Path(root).glob("*/usage_log.jsonl") if p.is_file())
+    except Exception:                                            # noqa: BLE001
+        return []
+
+
+def main(argv=None) -> int:
+    """`python -m master.work.usage [--days N] [프로젝트]` — 사람이 부르는 자리."""
+    import argparse, os                                          # noqa: PLC0415
+    ap = argparse.ArgumentParser(description="파견 계측 집계 (#387)")
+    ap.add_argument("project", nargs="?", default="", help="생략하면 트윈 전부")
+    ap.add_argument("--days", type=int, default=1)
+    a = ap.parse_args(argv)
+    root = os.environ.get("AX_PROJECTS_ROOT")
+    if not root:
+        print("[중요] AX_PROJECTS_ROOT 미설정 — 폴백은 없다 (명시하라)")
+        return 2
+    files = ([Path(root) / a.project / "usage_log.jsonl"] if a.project else logs_for(root))
+    print(render(summarize(files, days=a.days)))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

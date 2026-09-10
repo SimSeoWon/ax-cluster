@@ -44,6 +44,7 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 
 from . import branch_names, layer1
@@ -78,6 +79,11 @@ class Committed:
     #    골조에 `[PSEUDO]` 가 하나도 없으면 그것은 **완성된 파일**이고(`skeleton.py` 머리말),
     #    워커가 그대로 돌려준 것이 정답이다. 그때 커밋은 생기지 않는다 — **실패가 아니다.**
     no_op: bool = False
+    # 🔴 **파견 계측** (`#387`) — 본문 작성 호출이 쓴 것. `runner.Outcome.usage` 와 **같은 모양**.
+    #    [중요] **rc≠0 일 때도 채운다** — 실패한 실행도 토큰은 태웠다(사용자 지적 2026-09-08).
+    #    비어 있으면 **모른다**는 뜻이고, 0 이 아니다.
+    usage: dict = field(default_factory=dict)
+    seconds: float = 0.0                            # 본문 작성에 걸린 시간
 
     @property
     def missing(self) -> list:
@@ -263,13 +269,27 @@ def _cycle(facts, task_id: str, c: "Committed", base: str, llm, do_ssh, do_read,
     """체크아웃이 선 뒤의 사이클 — ② 본문 → ③ 되읽기 → ④ 층1 → ⑤ 커밋·push."""
     # ② LLM — [중요] **본문만 쓴다.** git 은 만지지 않는다
     c.stage = "본문 작성"
+    _t0 = time.time()
     try:
         rc, out = llm(facts, task_id, c.want)
     except Exception as e:                                   # noqa: BLE001
+        c.seconds = time.time() - _t0
         c.reason = f"{type(e).__name__}: {e}"
         return c
+    c.seconds = time.time() - _t0
+    # 🔴 **계측을 여기서 받는다** (`#387`). 종전에는 `out` 을 rc≠0 일 때 **사유 문자열로만**
+    #    쓰고 버렸다 — 성공해도 계측이 사라졌다. `_unwrap` 이 claude JSON·codex JSONL·레인
+    #    봉투를 **한 경로로** 푼다(형식 지식은 `usage` 모듈이 갖는다).
+    #    [주의] 계측 파싱이 실패해도 본문 작성 판정을 바꾸지 않는다 — 모르면 빈 dict 다.
+    try:
+        from .runner import _unwrap                          # noqa: PLC0415
+        _body, c.usage = _unwrap(out or "")
+    except Exception as e:                                   # noqa: BLE001
+        c.notes.append(f"[주의] 계측을 못 읽었다 — {type(e).__name__}: {e}")
+        _body = out
     if rc != 0:
-        c.reason = f"본문 작성이 실패했다 (rc={rc}) — {(out or '').strip()[-300:]}"
+        # [중요] 실패 사유는 **푼 본문**으로 적는다 — 봉투 JSON 을 그대로 보이면 못 읽는다.
+        c.reason = f"본문 작성이 실패했다 (rc={rc}) — {(_body or '').strip()[-300:]}"
         return c
 
     # ③ 되읽기 — [중요] **판정은 디스크 상태로 한다** (원전 `_validate_disk_after_agent` 와 같은 논지)

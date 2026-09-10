@@ -831,10 +831,20 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                 return runner.run_worker(f, tid, files=files, runner=None,
                                          mode="claude", timeout=timeout)
             got, tried = _LN.run_chain(f, skel, timeout=timeout, logf=_log)
+            # 🔴 **계측을 봉투에 실어 보낸다** (`#387`). 종전에는 합성 문자열만 돌려줘서
+            #    `LaneRun.usage` 가 이 자리에서 **버려졌다** — 레인 비용을 영영 못 쟀다.
+            #    봉투는 `claude --output-format json` 과 같은 모양이라 받는 쪽(`wcommit`)이
+            #    지휘자 갈래와 **같은 `_unwrap` 한 번**으로 푼다. 갈래를 만들지 않는다.
+            from . import usage as _U
             if got is None:
                 why = " / ".join(t.summary for t in tried) or "레인이 없다"
-                return 1, f"RESULT: BLOCKED - all lanes failed: {why}"
-            return 0, f"RESULT: DONE (lane={got.lane})"
+                # [중요] 실패해도 계측을 싣는다 — 태운 토큰은 실패해도 태운 것이다.
+                #    시도한 레인 중 **마지막으로 계측이 잡힌 것**을 남긴다.
+                last = next((t.usage for t in reversed(tried) if t.usage is not None), None)
+                return 1, _U.envelope(f"RESULT: BLOCKED - all lanes failed: {why}",
+                                      _U.meta_from_usage(last))
+            return 0, _U.envelope(f"RESULT: DONE (lane={got.lane})",
+                                  _U.meta_from_usage(got.usage))
 
     # 동결 대조 원본 — 마스터의 색인 클론이 같은 커밋이면 그것을 쓴다(왕복 0).
     # [주의] 없으면 `None` 이라 층1 이 **동결 미검사로 기록**한다 — 통과로 접지 않는다.
@@ -850,6 +860,27 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
 
     res = Response(task_id=task_id, worker=facts.host, want=list(c.want),
                    files=dict(c.files), base_commit=base, epoch=epoch)
+    # 🔴 **계측을 스풀까지 옮기고 집계 로그에 한 줄 남긴다** (`#387`).
+    #    [중요] **성공·실패 갈래보다 위에 둔다** — 실패한 실행도 토큰은 태웠고, 갈래 안에
+    #    두면 한쪽이 빠진다(그것이 이 일감의 증상이었다: 계측이 조용히 사라졌다).
+    res.usage = dict(c.usage)
+    try:
+        from . import usage as _U                            # noqa: PLC0415
+        _m, _src = _MODE.current(mode)
+        _rec = _U.record(paths.usage_log, c.usage, task_id=task_id, work_id=work_id,
+                         worker=facts.host, mode=_m, rc=0 if c.ok else 1, seconds=c.seconds)
+        if _rec.get("error"):
+            # [중요] 조용히 넘기지 않는다 — 계측이 안 남는 것 자체가 이 일감의 증상이었다.
+            res.notes.append(f"[주의] 계측 기록 실패 — {_rec['error']}")
+            _log(f"[usage] [주의] {task_id} 기록 실패 — {_rec['error']}")
+        else:
+            _log(f"[usage] {task_id} lane={_rec['lane'] or '?'} mode={_m} "
+                 f"입력 {_rec['input_tokens']:,} · 출력 {_rec['output_tokens']:,} · "
+                 + (f"${_rec['cost_usd']:.4f}" if _rec["cost_known"] else "비용 미상")
+                 + ("" if _rec["measured"] else " · [주의] 토큰 미측정"))
+    except Exception as e:                                   # noqa: BLE001
+        # [주의] 계측이 파이프라인을 죽이지 않는다 (원전도 `except: pass`). 사유는 남긴다.
+        _log(f"[usage] [주의] {task_id} 계측 예외 — {type(e).__name__}: {e}")
     if c.ok:
         res.status = runner.DONE
         _log(f"[wcommit] {task_id} {c.summary}")

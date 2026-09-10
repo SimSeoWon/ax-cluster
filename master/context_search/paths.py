@@ -102,6 +102,19 @@ class ProjectPaths:
         return self.root / "search_log.jsonl"
 
     @property
+    def usage_log(self) -> Path:
+        """파견 계측 로그 (`#387`). [중요] **`search_log` 와 같은 결의 관측 기록**이라 지우면
+        복구되지 않는다 — 청소 대상에 넣지 말 것.
+
+        원전은 `.claude/logs/token_usage.jsonl` 한 벌에 모았다(`watcher/common.py:607`
+        `_record_token_usage`). 우리는 **트윈마다** 둔다 — 이 저장소는 다중 프로젝트 축이라
+        「어느 프로젝트가 태웠나」가 합계만큼 중요하고, 파견 유닛에는 `AX_PROJECTS_ROOT` 만
+        있어 큐 루트를 못 찾는다(`ax-dispatch.service` 에 `AX_TASK_QUEUE_ROOT` 가 없다).
+        [주의] 합계는 `usage.summarize()` 가 트윈을 훑어 낸다 — 저장을 나눈 대신 읽기에서 모은다.
+        """
+        return self.root / "usage_log.jsonl"
+
+    @property
     def canary(self) -> Path:
         """[중요] **영구 유실 카나리 누적** (소 3.5.6). 원전 `permanent_loss_canary.jsonl` 이식.
 
