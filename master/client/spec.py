@@ -345,7 +345,12 @@ MANAGED_HOOKS = (
     # [주의] `UserPromptSubmit` 은 stdout 이 **컨텍스트로 들어간다**(SessionStart 와 같은 계약).
     # timeout 을 짧게 둔다 — 사람의 매 턴을 붙잡지 않기 위해서다.
     ("UserPromptSubmit", "", ".claude/hooks/pending_works.py", 8),
+    ("PostToolUse", "mcp__.*__(register_work|improve_work)$",
+     ".claude/hooks/work_completion.py", 7260),
 )
+
+# Claude's asyncRewake wakes an idle session on exit 2; ordinary async waits for another turn.
+HOOK_OPTIONS = {".claude/hooks/work_completion.py": {"asyncRewake": True}}
 
 # 관리 훅이 실리는 파일. [주의] `settings.local.json` 이 **아니다** — 위 분담 참조.
 SETTINGS_REL = ".claude/settings.json"

@@ -992,7 +992,8 @@ def merge_settings_json(prev_text: str, facts: HostFacts) -> str:
         kept.append({"matcher": matcher,
                      "hooks": [{"type": "command",
                                 "command": hook_command_for(rel, facts),
-                                "timeout": timeout}]})
+                                "timeout": timeout,
+                                **spec.HOOK_OPTIONS.get(rel, {})}]})
         hooks[event] = kept
     if not hooks:
         data.pop("hooks", None)          # 빈 키를 남기지 않는다 (역할에 훅이 없을 때)

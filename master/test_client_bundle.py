@@ -1013,7 +1013,11 @@ def test_hook_registration() -> None:
     # 빈 상태 → 관리 훅이 등록된다
     got = _json.loads(bundle.merge_settings_json("", r))
     ev = got["hooks"]["PostToolUse"]
-    check("[중요] 빈 settings 에 관리 훅이 등록된다", len(ev) == 1, str(got))
+    check("[중요] 빈 settings 에 관리 훅이 등록된다", len(ev) == 2, str(got))
+    completion = [e for e in ev if "register_work" in e.get("matcher", "")]
+    check("등록·개선요청 뒤 완료 훅이 세션을 깨운다",
+          len(completion) == 1 and completion[0]["hooks"][0].get("asyncRewake") is True,
+          str(completion))
     cmd = ev[0]["hooks"][0]["command"]
     check("[중요] 윈도우 인터프리터는 `py` — 마스터의 sys.executable 이 아니다",
           cmd.startswith("py "), cmd)
