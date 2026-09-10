@@ -935,6 +935,22 @@ def merge_mcp_json(prev_text: str, facts: HostFacts) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
 
+def hook_entry(matcher: str, rel: str, timeout: int, facts: HostFacts) -> dict:
+    """`settings.json` 에 들어갈 훅 항목 한 벌. 🔴 [중요] **만드는 자리는 여기 하나다.**
+
+    쓰는 쪽(`merge_settings_json`)과 검사하는 쪽(`client/__main__.py check`)이 **각자**
+    같은 dict 를 조립하고 있었다. `spec.HOOK_OPTIONS`(=`asyncRewake`)가 붙었을 때 쓰는 쪽만
+    갱신됐고, 검사기는 정확 일치 비교라 **정상 배달을 「훅 미등록」으로 답했다**(실측
+    2026-09-10 `.33`). 선언이 하나면 조립도 하나여야 한다 — 그래야 다음에 필드가 늘어도
+    한쪽만 낡지 않는다.
+    """
+    return {"matcher": matcher,
+            "hooks": [{"type": "command",
+                       "command": hook_command_for(rel, facts),
+                       "timeout": timeout,
+                       **spec.HOOK_OPTIONS.get(rel, {})}]}
+
+
 def hook_command_for(rel: str, facts: HostFacts) -> str:
     """훅 스크립트를 부르는 명령. [중요] **인터프리터는 원격 기준**이다.
 
@@ -989,11 +1005,7 @@ def merge_settings_json(prev_text: str, facts: HostFacts) -> str:
         kept = [e for e in entries
                 if not any(rel in str(h.get("command", ""))
                            for h in (e.get("hooks") or []) if isinstance(h, dict))]
-        kept.append({"matcher": matcher,
-                     "hooks": [{"type": "command",
-                                "command": hook_command_for(rel, facts),
-                                "timeout": timeout,
-                                **spec.HOOK_OPTIONS.get(rel, {})}]})
+        kept.append(hook_entry(matcher, rel, timeout, facts))
         hooks[event] = kept
     if not hooks:
         data.pop("hooks", None)          # 빈 키를 남기지 않는다 (역할에 훅이 없을 때)

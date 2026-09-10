@@ -1018,6 +1018,16 @@ def test_hook_registration() -> None:
     check("등록·개선요청 뒤 완료 훅이 세션을 깨운다",
           len(completion) == 1 and completion[0]["hooks"][0].get("asyncRewake") is True,
           str(completion))
+    # 🔴 [중요] **쓰는 쪽과 검사하는 쪽이 같은 dict 를 만든다** — `check` 는 정확 일치로 비교하는데
+    #    조립이 두 자리에 있었고, `asyncRewake` 가 붙었을 때 쓰는 쪽만 갱신돼 **정상 배달을
+    #    「훅 미등록」으로 답했다**(실측 2026-09-10 `.33`). 이 못이 그 어긋남을 잡는다.
+    for _f in (r, lin):
+        _got = _json.loads(bundle.merge_settings_json("", _f))
+        for _ev, _m, _rel, _t in spec.managed_hooks_for(_f.role):
+            check(f"검사기 기대값이 배달 결과와 같다 ({_f.os} · {_rel})",
+                  bundle.hook_entry(_m, _rel, _t, _f) in _got["hooks"][_ev],
+                  f"{bundle.hook_entry(_m, _rel, _t, _f)} not in {_got['hooks'][_ev]}")
+
     cmd = ev[0]["hooks"][0]["command"]
     check("[중요] 윈도우 인터프리터는 `py` — 마스터의 sys.executable 이 아니다",
           cmd.startswith("py "), cmd)

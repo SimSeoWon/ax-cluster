@@ -324,10 +324,9 @@ def cmd_check(project: str) -> int:
                     client_note += f" · [실패] {spec.SETTINGS_REL} 이 깨진 JSON 이다"
                 else:
                     for ev, matcher, rel, timeout in want_hooks:
-                        want_e = {"matcher": matcher,
-                                  "hooks": [{"type": "command",
-                                             "command": bundle.hook_command_for(rel, f),
-                                             "timeout": timeout}]}
+                        # [중요] 조립은 `bundle.hook_entry` 한 자리다 — 여기서 다시 만들면
+                        #    필드가 늘 때 검사기만 낡아 **정상 배달을 실패로 답한다**(실측).
+                        want_e = bundle.hook_entry(matcher, rel, timeout, f)
                         if want_e not in (hooks_got.get(ev) or []):
                             ok_client = False
                             client_note += (f" · [실패] 훅 미등록 — {ev}: "
