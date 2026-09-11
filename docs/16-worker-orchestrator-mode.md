@@ -1,4 +1,4 @@
-# 16 — 워커 지휘자 모드 (Claude / Codex) — 변경안
+# 16 — 워커 지휘자 모드 (Lane / Claude / Codex)
 
 일감 [`#385`](http://192.168.0.57:8080/issues/385) · 실측 리포트 `56` ·
 [중요] `#384`(마스터 **대화 세션** 인수인계)와 **별개 축**이다. 연결만 하고 묶지 않는다.
@@ -147,7 +147,8 @@
 
     [완료] 권한 범위 좁히기 · B 계측 파서 · A 명령 갈래 · E 결정(②) · F 표면(도구+스킬)
     [완료] 종단 검증 — `.43`·`.2` 양쪽에서 모드 → 명령 → SSH → `parse_result` 까지
-    [남음] 운영 유닛 반영 · **실제 큐 파견 검증** · 기본값 결정(사람)
+    [완료] 운영 반영 · 실제 큐 파견(`claude`·`codex`) · work별 모드 스탬프
+    [남음] 기본값 결정(사람) · `.2` Codex Session 0 셸 결함(`#401`)
 
 [주의] 죽은 `AX_LANES` 주석 정리는 **아직 안 했다** — `lanes.py:75` 가 여전히 없는 환경변수를
 약속한다. 지휘자 모드(`AX_WORKER_MODE`)는 세 경로를 **전부 실제로 읽는 코드**로 넣었다.
@@ -174,6 +175,33 @@
 *"ax-work is not listed among my available skills"*. → `spec.SKILL_HOMES` 로 각 도구 경로에
 같은 한 벌을 배달하게 고쳤다(`3b7c536`).
 [주의] **그것이 그 실패의 직접 원인인지는 재시도로 확인해야 한다.**
+
+## 16.10 🔴 Claude → Codex 전환은 상태 기록이 아니라 준비 절차다 (2026-09-12)
+
+라이브 `#398`에서 `.43` Codex는 정상 작업했지만 `.2` Windows Codex는 SSH Session 0에서
+셸을 띄우지 못했다. `windows.sandbox="elevated"` 경로는 upstream `openai/codex#37722`와
+같은 Window Station/Desktop ACE 누락으로 `0xC0000142`가 났다. `unelevated`로 바꾸면 파일
+편집·커밋은 됐지만 PowerShell 자식 실행은 여전히 죽어 `ax-work`와 소스를 셸로 읽지 못했다.
+따라서 “CLI가 설치됐다”만으로 Codex 준비 완료라 판정할 수 없다.
+
+`b326cba`는 이 초기화·갱신 절차를 Python 한 경로로 구조화했다:
+
+    worker_mode_readiness(mode)
+      활성 프로젝트의 SSH 워커 목록
+      → 선택 CLI 버전
+      → ~/.<도구>/skills/ax-work/SKILL.md
+      → Windows Codex이면 실제 Session 0 sandbox 셸 probe
+
+    set_worker(mode)
+      readiness 전부 통과 → mode.json 저장
+      하나라도 실패      → 저장하지 않고 워커별 사유 반환
+
+MCP와 제어 API는 모두 `master.work.conductor.set_worker`를 거친다. NS 실물 결과는
+`claude: .2/.43 OK`, `codex: .43 OK · .2 shell probe exit 1`이었다. 그래서 현재 전역 모드는
+`claude`이고, 불능 상태에서 `codex`로 바꾸려 하면 거절해야 한다.
+
+[주의] 이것은 **운영 완화책**이지 `#401`의 Windows 결함 수정이 아니다. 커밋은 로컬
+`b326cba`에 있고, origin push·배달·서비스 재시작 전이라 운영 MCP는 아직 이 가드를 쓰지 않는다.
 
 ## 16.5 🔴 발견한 별도 결함 — 계측이 사라진다
 

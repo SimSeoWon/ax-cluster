@@ -6,17 +6,19 @@
 > 🔴 **여기 적힌 「완료」를 그대로 믿지 않는다.** 받는 쪽은 HEAD·dirty diff·이슈·프로세스를
 > 직접 대조한다 (근거: `orchestrator-rules.md` §5).
 
-- **갱신 시각**: 2026-09-12 00:45 KST (UTC+9) — **지휘자 전환 readiness 구현·실물 확인**
+- **갱신 시각**: 2026-09-12 00:52 KST (UTC+9) — **BC-250 종료 · 문서/레드마인 마감 정리**
 - **지휘 도구 / 세션 식별자**: Claude Opus 5 (1M) · `session_01J3364LAVADSB4ZtwxbD5KK`
-- **상태**: 워커 지휘자는 사용자 지시로 **`claude` 폴백**. `#398` ⑺ 전진·통합 빌드 완료,
-  후속 `#400` 이 등재됐다. `#401` 지휘자 전환 준비·`.2` Codex 셸 결함을 기록했다.
+- **상태**: 워커 지휘자는 사용자 지시로 **`claude` 폴백**. `#398`·`#400` 은 통합 빌드와
+  `main` 반영까지 끝나 **완료**됐다. `#401` 은 전환 전 readiness 완화책만 구현됐고,
+  `.2` Codex의 Session 0 셸 결함 자체는 **미해결**이다. `.43` BC-250은 종료했다.
 
 ## 🔴 바로 다음 작업
 
-`#400`(work `20260911_2353_staggered_exhausted_2_5ea47a93`) 골조·파견 흐름을 이어간다.
-전역 워커 지휘자는 `claude`이며 **다음 파견부터 적용**된다.
+전역 워커 지휘자는 `claude`다. 다음 AX 작업은 `#399`(활성 실행 0·종결 아님인데 요청자가
+모르는 공지 결함) 또는 `#401`의 upstream/Windows 보안 객체 수정 여부를 사람이 고르는 자리다.
+`.43`은 꺼져 있으므로 다시 켜기 전에는 `.2` 한 대만 파견 가능하다.
 
-### 지휘자 전환 준비 — 구현·실물 확인, 커밋 승인 대기
+### 지휘자 전환 준비 — 구현·커밋 완료, 배포 승인 대기
 
 `set_worker_mode`가 더는 `mode.json`만 쓰지 않는다. 활성 프로젝트의 SSH 워커마다 선택한
 지휘자의 CLI 버전·`ax-work` 스킬을 확인하고, Windows Codex는 실제 Session 0 sandbox 셸
@@ -31,7 +33,8 @@ probe까지 통과해야 상태를 저장한다. 하나라도 실패하면 **모
 관련 회귀: `test_orchestration_control` 11/11 · `test_client_bundle` 308/308 ·
 `test_mcp_servers` 48/48 · `test_work_mode_stamp` 15/15 · `git diff --check` 통과.
 
-Redmine `#401`. 변경 파일은 `master/client/bundle.py` · `master/work/conductor.py` ·
+Redmine `#401`. 코드 커밋은 `b326cba`다. **origin push·배달·서비스 재시작은 하지 않았다.**
+변경 파일은 `master/client/bundle.py` · `master/work/conductor.py` ·
 `master/projects/mcp_server.py` · `master/test_orchestration_control.py` · 이 핸드오프다.
 
 ## 이전 순서 기록 — **(가) → (나) → (다)** (사용자 확정 2026-09-11)
@@ -103,16 +106,17 @@ Redmine `#401`. 변경 파일은 `master/client/bundle.py` · `master/work/condu
 ## 저장소 · 브랜치 · HEAD / 미커밋 파일
 
     저장소   ~/ax-cluster   브랜치 main   HEAD (아래 커밋 목록의 마지막)
-             [완료] **세 곳 동기** — 로컬 · origin(GitHub private) · `.43`
-             미커밋   docs/orchestrator-handoff.md (이 파일 · 커밋 승인 대기)
+             로컬 HEAD `b326cba` · **origin/main 보다 1커밋 앞섬**
+             미커밋   문서 최신화(이 파일 · docs/16 · report 61 · reports/README)
 
-이 세션 커밋 3개:
+최근 관련 커밋:
 
     0b9fc62  feat(notice)  완료를 사람의 타이핑 없이 요청자에게 전달 — asyncRewake (정본 ⑹)
     97aae61  fix(mode)     요청자가 고른 지휘자가 서버까지 간다 (`#392`)
     962ec86  fix(check)    훅 항목 조립을 한 자리로 — 검사기가 정상 배달을 「미등록」이라 답했다
     a140d5e  docs          ⑹ 라이브 완주 기록
     933a8df  feat(usage)   파견 계측을 스풀·집계까지 잇는다 — 실패한 실행도 센다 (`#387`)
+    b326cba  fix(mode)     지휘자 전환 전에 워커 readiness를 검증한다 (`#401` 완화책)
 
 ## 완료한 작업 / 검증 명령·결과
 
@@ -248,22 +252,20 @@ Redmine `#401`. 변경 파일은 `master/client/bundle.py` · `master/work/condu
 ## 실행 중인 서비스 작업·프로세스 / 로그 위치
 
     상시    systemd 6종 active · `ax-dispatch.path` 보류 없음
-    큐      works `20260911_2238_ai_groggypanicked_a8879051` = **ready_for_review 4/4**
-            (Redmine `#398` · `.33` 의 ⑺ 대기) · 활성 조각 0 · 파견 프로세스 없음
-    모드    `~/.cache/ax-dispatch/mode.json` = **codex** (2026-09-11 21:59 사용자 전환)
+    큐      `#398`·`#400` 모두 main 반영·Redmine 완료 · 파견 프로세스 없음
+    모드    `~/.cache/ax-dispatch/mode.json` = **claude** (2026-09-12 00:08 사용자 전환)
     `.2`    🔴 `~/.codex/config.toml` **`sandbox = "unelevated"`** · 모델 `gpt-5.6-sol`
             · codex-cli **0.153.4** (마스터는 0.154.0 — 어긋나 있다)
     로그    파견   `journalctl -u ax-dispatch.service` / `-catchup`
             큐     `~/ax-state/.claude/logs/task_queue_*.log`
             🔴 완료 훅  `.33` 의 `<체크아웃>/.ax/work_completion.jsonl`  ← 이번에 새로 생긴 자리
     서브에이전트  없음
-    🔴 `.43`  **켜져 있다** (2026-09-11 21:30 실측 — SSH·`codex doctor` 응답). 00:10 인계의
-              「정지됨」은 낡았다 — 워커가 `.2`·`.43` 둘이라 **병렬이 실제로 병렬이다**.
-              한 대만 살아 있을 때는 파견 로그가 그 사실을 찍는다
-              (`병렬이지만 파견 가능한 워커가 1대`)
+    🔴 `.43`  **꺼져 있다** (2026-09-12 00:50 `sudo systemctl poweroff`, 이후 SSH timeout).
+              다시 켜기 전에는 `.2` 한 대만 파견 가능하다.
 
 ## 관련 문서 링크
 
 - `docs/orchestrator-rules.md` · `docs/15-orchestrator-handoff.md`
 - `docs/16-worker-orchestrator-mode.md`
-- 리포트 `59`(codex 워커 지휘자 라이브) · **`60`(asyncRewake 실측 · 주입 경계)**
+- 리포트 `59`(codex 워커 지휘자 라이브) · `60`(asyncRewake 실측 · 주입 경계) ·
+  **`61`(Session 0 원인 · readiness 완화 · Claude 폴백)**
