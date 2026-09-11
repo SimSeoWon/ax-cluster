@@ -163,6 +163,7 @@ class HostFacts:
     os: str = ""
     home: str = ""
     claude: str = ""
+    codex: str = ""
     agy: bool = False
     ollama_models: int = 0
     ue5: str = ""                       # UnrealEditor-Cmd 경로. 없으면 빈 문자열
@@ -198,6 +199,7 @@ class HostFacts:
     @property
     def summary(self) -> str:
         s = (f"{self.host} ({self.user}) {self.os or '?'} · claude {self.claude or '[실패]'}"
+             f" · codex {self.codex or '[실패]'}"
              f" · agy {'OK' if self.agy else 'FAIL'} · ollama {self.ollama_models}종"
              f" · ue5 {'OK' if self.ue5 else 'FAIL'}")
         if self.checkout_ok:
@@ -283,6 +285,8 @@ def probe(host: str, user: str, path: str, driven: str, role: str = "worker",
         f.home = home.strip()
         rc, v = _ssh(host, user, r'"%USERPROFILE%\.local\bin\claude.exe" --version')
         f.claude = v.splitlines()[0].strip() if rc == 0 and v else ""
+        rc, v = _ssh(host, user, "codex --version")
+        f.codex = v.splitlines()[0].strip() if rc == 0 and v else ""
         rc, a = _ssh(host, user, r'if exist "%LOCALAPPDATA%\agy\bin\agy.exe" (echo YES) else (echo NO)')
         f.agy = "YES" in a
         f.ue5 = _find_ue5(host, user)
@@ -292,6 +296,8 @@ def probe(host: str, user: str, path: str, driven: str, role: str = "worker",
         f.home = home.strip()
         rc, v = _ssh(host, user, "claude --version 2>/dev/null || true")
         f.claude = v.splitlines()[0].strip() if v else ""
+        rc, v = _ssh(host, user, "codex --version 2>/dev/null || true")
+        f.codex = v.splitlines()[0].strip() if rc == 0 and v else ""
         rc, a = _ssh(host, user, "command -v agy >/dev/null && echo YES || echo NO")
         f.agy = "YES" in a
         f.ue5 = ""                      # 리눅스 노드에 UE5 툴체인은 없다
@@ -352,6 +358,7 @@ def config_for(project: str, facts: HostFacts) -> dict:
         "capabilities": facts.capabilities,
         "backends": {
             "claude": facts.claude or None,
+            "codex": facts.codex or None,
             "agy": facts.agy,
             "ollama": f"http://{facts.host}:11434" if facts.ollama_models else None,
             "ollama_models": facts.ollama_models,

@@ -9,10 +9,13 @@ from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from master.work import conductor as C
+from master.client import bundle as B
 from master.projects.control_route import ControlApp
 from master.auth import BearerAuthMiddleware, REQUESTER_SCOPE, WORKER_SCOPE
 from master.webui.orchestration import section
 from client.runtime import client_mcp as M
+
+REAL_WORKER_MODE_READINESS = C.worker_mode_readiness
 
 class ControlTests(unittest.TestCase):
     def setUp(self):
@@ -24,6 +27,9 @@ class ControlTests(unittest.TestCase):
                                   (C.mode, 'STATE_DIR', root)):
             p = patch.object(obj, field, value); p.start(); self.addCleanup(p.stop)
         p = patch.dict(os.environ, {}, clear=True); p.start(); self.addCleanup(p.stop)
+        p = patch.object(C, 'worker_mode_readiness',
+                         lambda selected: {'ok': True, 'mode': selected, 'hosts': []})
+        p.start(); self.addCleanup(p.stop)
 
     def request(self, method, path, data=None, token='requester'):
         async def fallback(scope, receive, send):
@@ -58,6 +64,42 @@ class ControlTests(unittest.TestCase):
         for payload in ({'mode':'typo','why':'x'}, {'mode':'codex','why':''}, [], {'mode':[],'why':'x'}):
             self.assertEqual(self.request('POST','/control/worker-mode',payload)[0],400)
         self.assertFalse(C.mode.STATE.exists())
+
+    def test_failed_readiness_does_not_change_mode(self):
+        with self.assertRaisesRegex(ValueError, '준비되지 않은 워커'):
+            C.set_worker('codex', 'test', readiness={
+                'ok': False, 'reason': '준비되지 않은 워커: 192.168.0.2'})
+        self.assertFalse(C.mode.STATE.exists())
+
+    def test_codex_readiness_checks_real_windows_shell_path(self):
+        class Reg:
+            active = 'NS'
+        facts = B.HostFacts(host='192.168.0.2', user='janus', path=r'E:\\trunk\\NS',
+                            driven='ssh', role='worker', os='windows',
+                            home=r'C:\\Users\\janus', codex='codex-cli 0.153.4',
+                            checkout_ok=True)
+        with patch.object(B, 'workshops', return_value=[
+                ('192.168.0.2', 'janus', r'E:\\trunk\\NS', 'ssh', 'worker', '')]):
+            got = REAL_WORKER_MODE_READINESS(
+                'codex', registry=Reg(), prober=lambda *a: facts,
+                reader=lambda *_a: 'skill body',
+                shell_probe=lambda *_a, **_k: (1, '0xC0000142'))
+        self.assertFalse(got['ok'])
+        self.assertIn('192.168.0.2', got['reason'])
+        self.assertIn('0xC0000142', got['hosts'][0]['problems'][0])
+
+    def test_codex_readiness_passes_only_after_shell_probe(self):
+        class Reg:
+            active = 'NS'
+        facts = B.HostFacts(host='192.168.0.43', user='sim', path='/home/sim/trunk/NS',
+                            driven='ssh', role='worker', os='linux', home='/home/sim',
+                            codex='codex-cli 0.154.0', checkout_ok=True)
+        with patch.object(B, 'workshops', return_value=[
+                ('192.168.0.43', 'sim', '/home/sim/trunk/NS', 'ssh', 'worker', '')]):
+            got = REAL_WORKER_MODE_READINESS('codex', registry=Reg(),
+                prober=lambda *a: facts, reader=lambda *_a: 'skill body',
+                shell_probe=lambda *_a, **_k: self.fail('Linux는 Windows sandbox probe 대상 아님'))
+        self.assertTrue(got['ok'])
 
     def test_record_is_distinct_from_worker(self):
         C.set_worker('codex','test')

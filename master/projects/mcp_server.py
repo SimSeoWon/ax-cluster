@@ -724,11 +724,9 @@ def set_worker_mode_tool(mode: str, why: str = "", by: str = "") -> str:
     [주의] 모르는 값은 **거절한다** — 조용히 기본값으로 접지 않는다.
     """
     try:
-        from ..work import mode as wm
-        saved = wm.set_mode(mode, why=why, by=by)
-        m, src = wm.current()
-        return json.dumps({"ok": True, "saved": saved, "mode": m, "source": src,
-                           "describe": wm.describe()}, ensure_ascii=False)
+        from ..work import conductor as wc
+        got = wc.set_worker(mode, why=why, by=by)
+        return json.dumps(got, ensure_ascii=False)
     except ValueError as e:
         return json.dumps({"ok": False, "reason": str(e),
                            "modes": list(__import__("master.work.mode",

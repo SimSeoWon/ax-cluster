@@ -6,12 +6,35 @@
 > 🔴 **여기 적힌 「완료」를 그대로 믿지 않는다.** 받는 쪽은 HEAD·dirty diff·이슈·프로세스를
 > 직접 대조한다 (근거: `orchestrator-rules.md` §5).
 
-- **갱신 시각**: 2026-09-11 23:31 KST (UTC+9) — **`.2` codex 부분 성공 · `#398` ⑺ 대기**
+- **갱신 시각**: 2026-09-12 00:45 KST (UTC+9) — **지휘자 전환 readiness 구현·실물 확인**
 - **지휘 도구 / 세션 식별자**: Claude Opus 5 (1M) · `session_01J3364LAVADSB4ZtwxbD5KK`
-- **상태**: 🔴 **`#398` 이 `ready_for_review` 4/4 — `.33` 의 ⑺ 차례.** `#387` 실물 계측은
-  이 파견이 **네 조건 전부** 잡았다(아래 §완료). 파견 프로세스 없음 · 활성 조각 0.
+- **상태**: 워커 지휘자는 사용자 지시로 **`claude` 폴백**. `#398` ⑺ 전진·통합 빌드 완료,
+  후속 `#400` 이 등재됐다. `#401` 지휘자 전환 준비·`.2` Codex 셸 결함을 기록했다.
 
-## 🔴 바로 다음 작업 — 순서는 **(가) → (나) → (다)** (사용자 확정 2026-09-11)
+## 🔴 바로 다음 작업
+
+`#400`(work `20260911_2353_staggered_exhausted_2_5ea47a93`) 골조·파견 흐름을 이어간다.
+전역 워커 지휘자는 `claude`이며 **다음 파견부터 적용**된다.
+
+### 지휘자 전환 준비 — 구현·실물 확인, 커밋 승인 대기
+
+`set_worker_mode`가 더는 `mode.json`만 쓰지 않는다. 활성 프로젝트의 SSH 워커마다 선택한
+지휘자의 CLI 버전·`ax-work` 스킬을 확인하고, Windows Codex는 실제 Session 0 sandbox 셸
+probe까지 통과해야 상태를 저장한다. 하나라도 실패하면 **모드 상태를 바꾸지 않는다.**
+
+2026-09-12 NS 실물:
+
+    claude  .2 2.1.266 OK · .43 2.1.222 OK      → 전환 가능
+    codex   .2 0.153.4 셸 probe exit 1          → 전환 거절
+            .43 0.153.4 OK
+
+관련 회귀: `test_orchestration_control` 11/11 · `test_client_bundle` 308/308 ·
+`test_mcp_servers` 48/48 · `test_work_mode_stamp` 15/15 · `git diff --check` 통과.
+
+Redmine `#401`. 변경 파일은 `master/client/bundle.py` · `master/work/conductor.py` ·
+`master/projects/mcp_server.py` · `master/test_orchestration_control.py` · 이 핸드오프다.
+
+## 이전 순서 기록 — **(가) → (나) → (다)** (사용자 확정 2026-09-11)
 
 **(가) `.33` 에서 `#398` 의 ⑺ 전진.** work `20260911_2238_ai_groggypanicked_a8879051` 은
 **`ready_for_review` · 4/4 verified** 로 서 있다(Redmine `#398` · 브랜치
