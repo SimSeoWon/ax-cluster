@@ -120,8 +120,18 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
              `claude`/`codex` = 워커에서 그 에이전트가 돌며 체크아웃을 읽고 고친다
              표면은 `ax-mode` 스킬 · `get/set_worker_mode` · `.33` 의 요청자 MCP
              [주의] **다음 조각부터** 적용된다 — 이미 SSH 가 나간 조각엔 소급되지 않는다
-             [주의] **기본값은 아직 사람이 안 정했다**(상수 `_UNDECIDED_DEFAULT`, 값은 `lane`).
-                    지금 저장 상태는 **실증용 `codex`** 다 — 되돌릴지는 미결이다
+             [주의] **기본값 상수는 아직 사람이 안 정했다**(`_UNDECIDED_DEFAULT`, 값 `lane`).
+             🔴 [중요] **워커·오케스트레이션은 `claude` 다** (사용자 결정 2026-09-12) —
+                    `codex` 는 **이 클러스터 코드 보수**로 돌린다. 저장 상태도 `claude`.
+             🔴 [주의] **`.2` 에 `codex` 모드를 보내지 않는다 — 셸 실행이 죽는다.** 윈도우
+                    비대화형(SSH Session 0)에서 codex 샌드박스 runner 가 `0xC0000142` 로
+                    죽는다 (upstream `openai/codex#37722` open · A-B-A 로 확정 · 원인은
+                    Session 0 Window Station/Desktop 에 샌드박스 계정 ACE 가 없는 것).
+                    [중요] **고장은 「SSH + 윈도우 비대화형」 교집합 하나다** — `.43`(리눅스,
+                    SSH) · 마스터 로컬 레인(`call_codex_why`) · `.33` 대화형은 **멀쩡하다**.
+                    완화로 `.2` 를 `sandbox = "unelevated"` 로 뒀지만 **부분 성공**이다:
+                    편집·커밋은 되고 셸은 여전히 죽고 **네트워크 격리를 잃는다**(`#35940`).
+                    백업 `config.toml.bak-20260911-elevated`
           **자기 서브 브랜치에 커밋**하고                            [완료] 라이브 2026-09-03
           (끝나면 `main` 복귀 — 체크아웃된 브랜치는 정리에서 빠진다)  [완료] 실측
           🔴 **끝내고 다음 작업을 요청한다**                          [미구현 — 마스터 SSH push]
