@@ -426,6 +426,32 @@ def test_probe_tells_what_it_could_not_read() -> None:
 
 
 
+def test_submit_carries_identity() -> None:
+    """🔴 **고지자 신원이 없으면 빌드가 PASS 여도 거절된다** (`#318` · 실측 2026-09-12).
+
+    `.2` 첫 실물에서 UE5 빌드를 96초에 통과하고 **submit 이 409 로 튕겼다** —
+    *"worker_id 가 없다 — 고지자를 확인할 수 없다. 미확인은 통과가 아니다"*.
+    `#318` 이 `#320`(상주 철거) **뒤에** 생긴 계약이라 되살린 데몬이 그 필드를 몰랐다.
+    [주의] `metrics.worker` 와 다른 것이다 — 그쪽은 계측, 이쪽은 신원 게이트다.
+    """
+    from master.work import worker_daemon as C
+
+    sent = {}
+
+    class _C(C.Client):
+        def __init__(self):
+            self.worker_id = "192.168.0.2"
+        def _call(self, method, path, payload=None):
+            sent[path] = payload
+            return 200, {}
+
+    c = _C()
+    c.submit("t1", head_commit="abc", build={"passed": True}, seconds=1.0)
+    c.submit_fail("t1", "why", "detail")
+    for path, body in sent.items():
+        assert body.get("worker_id") == "192.168.0.2", f"{path} 에 신원이 없다: {body}"
+    assert sent["/api/v1/tasks/t1/submit"]["metrics"]["worker"] == "192.168.0.2"
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = 0
@@ -438,3 +464,5 @@ if __name__ == "__main__":
             print(f"  FAIL  {name}: {e}")
     print(f"\n{len(fns) - failed}/{len(fns)} 통과")
     sys.exit(1 if failed else 0)
+
+

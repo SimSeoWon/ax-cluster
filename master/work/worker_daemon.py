@@ -180,16 +180,25 @@ class Client:
 
     def submit(self, task_id: str, *, head_commit: str, build: dict, seconds: float,
                epoch=None):
+        # 🔴 [중요] **고지자 신원을 싣는다** (`#318`). 실측 2026-09-12: 이게 없어서 빌드가
+        #    PASS 인데 submit 이 **409 로 거절**됐다 — *"worker_id 가 없다 — 고지자를 확인할 수
+        #    없다. 미확인은 통과가 아니다"*. `#318` 은 `#320`(상주 철거) **뒤에** 생긴 계약이라
+        #    되살린 데몬이 그 필드를 몰랐다. 서버 주석의 전제(*"큐를 두드리는 주체는 전부
+        #    마스터 코드다 — 상주 claimer 는 철거됐다"*)가 `#404` 로 죽었다.
+        #    [주의] `metrics.worker` 와 **다른 것이다** — 그쪽은 계측용이고 이쪽은 신원 게이트다.
         payload = {"branch": "", "head_commit": head_commit,
                    "self_check": {"build": build},
                    "metrics": {"seconds": round(seconds, 1),
                                "worker": self.worker_id},
+                   "worker_id": self.worker_id,
                    "epoch": epoch}
         return self._call("POST", f"/api/v1/tasks/{task_id}/submit", payload)
 
     def submit_fail(self, task_id: str, reason: str, detail: str = ""):
+        # [중요] submit-fail 도 같은 신원 게이트를 탄다 (`logic_lifecycle.py:147`)
         return self._call("POST", f"/api/v1/tasks/{task_id}/submit-fail",
-                          {"reason": reason[:200], "detail": detail[:2000]})
+                          {"reason": reason[:200], "detail": detail[:2000],
+                           "worker_id": self.worker_id})
 
 
 def _log_dir(root: Path) -> Path:
