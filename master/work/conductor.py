@@ -48,7 +48,15 @@ def worker_mode_readiness(selected, project="", *, registry=None, prober=None,
         if not (read(facts, skill) or "").strip():
             problems.append(f"필수 스킬을 읽지 못했다: {skill}")
         if selected == "codex" and facts.windows and not problems:
-            cmd = 'codex sandbox windows cmd /d /c echo AX_CODEX_SHELL_READY'
+            # 🔴 [중요] **`sandbox` 다음은 실행할 명령이다 — 서브커맨드가 아니다** (실측
+            #    2026-09-12). 종전 `codex sandbox **windows** cmd /d /c …` 는 `windows` 를
+            #    **실행 파일 이름으로** 먹어 `CreateProcessAsUserW failed: 2 (지정된 파일을
+            #    찾을 수 없습니다)` 로 죽었다. 그래서 이 probe 는 **환경이 멀쩡해도 늘 실패**
+            #    했고, `.2` 를 codex 지휘자에서 빼 둔 판정의 근거가 됐다.
+            #    [주의] 같은 기계에서 `codex sandbox cmd.exe /d /c echo …` 는 **세션 0 에서도
+            #    통과한다** — 제한 토큰 샌드박스의 단순 경로는 원래 되고, 죽는 것은
+            #    `codex exec` 의 셸 도구(unified exec)다(`#401` · 리포트 62·63).
+            cmd = 'codex sandbox cmd.exe /d /c echo AX_CODEX_SHELL_READY'
             rc, out = run_shell(host, user, cmd, timeout=30)
             if rc != 0 or "AX_CODEX_SHELL_READY" not in (out or ""):
                 problems.append("SSH Session 0 Codex sandbox 셸 probe 실패: "
