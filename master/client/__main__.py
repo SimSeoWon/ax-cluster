@@ -30,18 +30,33 @@ from . import bundle, spec
 
 
 
-def _facts(project: str) -> list:
+def _facts(project: str, *, only: str = "") -> list:
+    """이 프로젝트의 작업장 실측. `only` 가 있으면 **그 호스트 하나만**.
+
+    🔴 [중요] **`--host` 가 없어서 일회용 스크립트를 쓰게 됐다** (`#407`, 2026-09-12).
+    `.33`(사람 기계)을 빼거나 한 대만 먼저 재보려면 방법이 없어서 스크래치패드에 배달
+    스크립트를 따로 썼는데, 그건 저장소에 없어 **다음 사람이 못 쓴다.** 손으로 하는 일을
+    선언으로 옮기는 것이 이 옵션의 축이다.
+    [주의] 모르는 호스트를 주면 **조용히 0대에 배달하지 않는다** — 아래에서 거절한다.
+    """
     out = []
+    known = []
     for host, user, path, driven, role, dispatch in bundle.workshops(project):
+        known.append(host)
+        if only and host != only:
+            continue
         if not user or not path:
             print(f"  [주의] {host}: user/path 미등록 — 건너뜀 (레지스트리를 고칠 것)")
             continue
         out.append(bundle.probe(host, user, path, driven, role, dispatch))
+    if only and not out:
+        raise SystemExit(f"[중요] `--host {only}` 가 {project} 의 작업장에 없다 — "
+                         f"있는 것: {', '.join(known) or '(없음)'}")
     return out
 
 
-def cmd_probe(project: str) -> int:
-    facts = _facts(project)
+def cmd_probe(project: str, *, only: str = "") -> int:
+    facts = _facts(project, only=only)
     for f in facts:
         print(f"  {f.summary}")
     return 0 if facts else 1
@@ -60,7 +75,7 @@ def _print_spec(project: str, init) -> None:
         print(f"   프로젝트 추가: skills={init.extra_skills or '{}'} mcp={init.extra_mcp or '{}'}")
 
 
-def cmd_plan(project: str) -> int:
+def cmd_plan(project: str, *, only: str = "") -> int:
     init = spec.load_init(project)
     _print_spec(project, init)
     # [중요] **호스트를 프로브하기 전에 선언을 검증한다.** 없는 스킬을 선언했을 때 생
@@ -72,7 +87,7 @@ def cmd_plan(project: str) -> int:
             print(f"   ✕ {b}")
         print("   → config.yaml 의 `init:` 을 고치거나 그 스킬을 저장소에 놓을 것")
         return 2
-    for f in _facts(project):
+    for f in _facts(project, only=only):
         print(f"\n── {f.summary}")
         if not f.checkout_ok:
             # [중요] **배달 항목으로 낸다** (`#254` 완료 조건 1) — 종전에는 *"배달 대상이 아니다"*
@@ -196,7 +211,7 @@ def cmd_plan(project: str) -> int:
     return 0
 
 
-def cmd_deliver(project: str, *, init: bool = False) -> int:
+def cmd_deliver(project: str, *, init: bool = False, only: str = "") -> int:
     # [중요] 사양은 **한 번만** 읽어 호스트마다 넘긴다 — 호스트별로 다시 읽으면 배달 도중
     #    `config.yaml` 이 바뀌었을 때 기계마다 다른 선언이 실린다.
     # [주의] `init`(= `--init`, 원격 `/init` 플래그)과 `project_init`(사양)은 **다른 것**이다.
@@ -208,7 +223,7 @@ def cmd_deliver(project: str, *, init: bool = False) -> int:
             print(f"   ✕ {b}")
         return 2
     bad = 0
-    for f in _facts(project):
+    for f in _facts(project, only=only):
         if not f.checkout_ok:
             # [중요] **먼저 놓는다** (`#254`). 종전에는 사유만 적고 건너뛰어서, 새 기계는
             #    사람이 손으로 클론해야 했다 — 자동화 전제와 어긋난다.
@@ -281,12 +296,12 @@ def cmd_deliver(project: str, *, init: bool = False) -> int:
     return 1 if bad else 0
 
 
-def cmd_check(project: str) -> int:
+def cmd_check(project: str, *, only: str = "") -> int:
     """배달본이 정본과 같은가. [중요] 사본은 갈라진다 — 그래서 잰다."""
     bad = 0
     behind_hosts: list = []
     init = spec.load_init(project)
-    for f in _facts(project):
+    for f in _facts(project, only=only):
         if not f.checkout_ok:
             print(f"  [주의] {f.host}: 체크아웃 없음")
             bad += 1
@@ -595,11 +610,18 @@ def main(argv: list) -> int:
     project = rest[0]
     # [중요] `--init` 은 **명시할 때만**. 실측으로 값을 못 했다(22턴 $1.68 대 payload 0원,
     #    미상 목록이 글자까지 같았다) — payload 가 저장소 대비 낡았을 때만 쓴다.
+    # [중요] `--host <ip>` — 한 대만. 값은 레지스트리의 호스트와 **정확히 일치**해야 한다.
+    only = ""
+    for a in argv[1:]:
+        if a.startswith("--host="):
+            only = a.split("=", 1)[1].strip()
     if argv[0] == "deliver":
-        return cmd_deliver(project, init="--init" in argv)
+        return cmd_deliver(project, init="--init" in argv, only=only)
     if argv[0] == "uproject":
         # [중요] 관례대로 `plan` 이 기본 — 쓰려면 `--confirm` 을 명시한다
         return cmd_uproject(project, confirm="--confirm" in argv)
+    if argv[0] in ("probe", "plan", "check"):
+        return _CMDS[argv[0]](project, only=only)
     return _CMDS[argv[0]](project)
 
 
