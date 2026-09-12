@@ -204,6 +204,25 @@ def conductor_register_commands(project: str, facts, *, python_path: str = "") -
              f'/sc once /st 23:59 /it /rl LIMITED /tr "{run}"')]
 
 
+def crash_dialog_commands(facts) -> list:
+    """🔴 **크래시 대화상자를 끈다** (`#401`, 실측 2026-09-12). **Windows 전용.**
+
+    세션 1 은 데스크톱이 있어서 크래시가 **모달 대화상자**로 뜬다 — 그러면 프로세스가
+    **무한 대기**한다. 세션 0 에서는 데스크톱이 없어 조용히 죽던 것이 여기서는 매달린다.
+    실물: `dotnet`(UBT) 둘이 CPU 0 으로 남아 **사람이 창을 닫아 줘야** 풀렸다.
+
+    [중요] **세션 1 로 옮긴 것의 부작용이라 같이 배선한다** — 안 하면 새 워커에서 그대로
+    재현된다(이 저장소가 「문서에만 있으면 재현되지 않는다」로 여러 번 겪은 부류다).
+    [주의] `HKCU` 다 — 사용자 범위라 **관리자 권한이 필요 없고** 되돌리기 쉽다.
+    되돌리려면 값을 0 으로 두거나 지운다.
+    """
+    if not facts.windows:
+        return []
+    return [("crash-dialog-off",
+             'reg add "HKCU\\Software\\Microsoft\\Windows\\Windows Error Reporting" '
+             '/v DontShowUI /t REG_DWORD /d 1 /f')]
+
+
 def conductor_run_command(project: str, facts) -> str:
     """등록된 런처를 **지금 한 번** 돌린다. 윈도우 전용."""
     return f"schtasks /run /tn {conductor_task_name(project)}"

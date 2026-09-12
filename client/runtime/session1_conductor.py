@@ -79,16 +79,53 @@ def build_argv(root: Path, files, approvals=()) -> list:
     return argv
 
 
+def _kill_tree(proc) -> None:
+    """프로세스 **트리**를 죽인다. [중요] 직계만 죽이면 손자(codex → dotnet)가 남는다."""
+    try:
+        if sys.platform.startswith("win"):
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                           capture_output=True, timeout=30)
+        else:
+            import os
+            import signal
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:                                        # noqa: BLE001
+        try:
+            proc.kill()
+        except Exception:                                    # noqa: BLE001
+            pass
+
+
 def run_job(root: Path, d: Path) -> int:
     """job 하나를 돌리고 결과를 남긴다. 반환은 rc."""
     job = json.loads((d / JOB).read_text(encoding="utf-8"))
     files = job.get("files") or []
     argv = build_argv(root, files, job.get("approvals") or ())
+    # 🔴 [중요] **자식까지 죽여야 한다** (실측 2026-09-12). 세션 1 은 데스크톱이 있어서
+    #    크래시가 **모달 대화상자**로 뜨고, 그러면 프로세스가 무한 대기한다 — 세션 0 에서는
+    #    데스크톱이 없어 조용히 죽던 것이 여기서는 매달린다. 실제로 `dotnet`(UBT) 둘이
+    #    CPU 0 으로 남아 사람이 창을 닫아 줘야 했다.
+    #    `subprocess.run` 의 timeout 은 **직계만** 죽이므로 손자(codex → dotnet)가 남는다.
+    #    [주의] Windows 는 `taskkill /T`, POSIX 는 프로세스 그룹으로 — 같은 뜻의 두 방법이다.
+    kw = {}
+    if sys.platform.startswith("win"):
+        kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        import os
+        kw["start_new_session"] = True
     try:
-        p = subprocess.run(argv, cwd=str(root), capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
-                           timeout=int(job.get("timeout") or 3600))
-        out, rc = (p.stdout or "") + (p.stderr or ""), p.returncode
+        proc = subprocess.Popen(argv, cwd=str(root), stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                text=True, encoding="utf-8", errors="replace", **kw)
+        try:
+            out = proc.communicate(timeout=int(job.get("timeout") or 3600))[0] or ""
+            rc = proc.returncode
+        except subprocess.TimeoutExpired:
+            _kill_tree(proc)
+            out = proc.communicate(timeout=30)[0] or ""
+            out += ("\n[런처] 시간 초과 — 프로세스 트리를 죽였다. 세션 1 은 크래시가 모달로 "
+                    "뜰 수 있고 그러면 자식이 무한 대기한다(`DontShowUI` 로 완화).")
+            rc = 1
     except Exception as e:                                   # noqa: BLE001
         out, rc = f"[런처] 실행 실패 — {type(e).__name__}: {e}", 1
     (d / OUT).write_text(out, encoding="utf-8")

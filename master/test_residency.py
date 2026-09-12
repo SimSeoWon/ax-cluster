@@ -505,6 +505,32 @@ def test_ensure_starts_only_when_down() -> None:
     check("  기동 명령을 내지 않았다", not any("/run" in c for c in calls), str(calls))
 
 
+def test_session1_side_effects() -> None:
+    """🔴 **세션 1 로 옮긴 것의 부작용을 같이 막는다** (`#401`, 실측 2026-09-12).
+
+    세션 1 은 데스크톱이 있어서 크래시가 **모달 대화상자**로 뜬다 — 그러면 프로세스가
+    무한 대기한다. 세션 0 에서는 데스크톱이 없어 조용히 죽던 것이 여기서는 매달린다.
+    실물: `dotnet`(UBT) 둘이 CPU 0 으로 남아 **사람이 창을 닫아 줘야** 풀렸다.
+    [중요] 배선에 넣지 않으면 새 워커에서 그대로 재현된다 — 문서에만 있으면 재현되지 않는다.
+    """
+    from client.init import residency as _R
+
+    cmds = dict(_R.crash_dialog_commands(_f(windows=True)))
+    check("🔴 [중요] 윈도우 배달이 크래시 대화상자를 끈다 (프로세스가 안 매달린다)",
+          "DontShowUI" in cmds.get("crash-dialog-off", ""), str(cmds))
+    check("  사용자 범위다 — 관리자 권한이 필요 없다",
+          "HKCU" in cmds["crash-dialog-off"] and "HKLM" not in cmds["crash-dialog-off"])
+    check("[주의] 리눅스에는 걸지 않는다 (데스크톱 크래시 모달이 없다)",
+          _R.crash_dialog_commands(_f(windows=False)) == [])
+
+    # 런처가 **트리째** 죽이는지 — 직계만 죽이면 손자(codex → dotnet)가 남는다
+    src = (Path(__file__).resolve().parent.parent
+           / "client" / "runtime" / "session1_conductor.py").read_text(encoding="utf-8")
+    check("🔴 [중요] 런처가 프로세스 **트리**를 죽인다 (손자가 남지 않는다)",
+          "_kill_tree" in src and "/T" in src and "killpg" in src)
+    check("  시간 초과에서 그것을 부른다", "TimeoutExpired" in src and "_kill_tree(proc)" in src)
+
+
 if __name__ == "__main__":
     for fn in (test_types_from_probe,
                test_task_name_per_project,
@@ -523,7 +549,8 @@ if __name__ == "__main__":
                test_claimer_state_is_process_based,
                test_stale_flag_is_not_eaten_by_the_new_process,
                test_deliver_refreshes_residency,
-               test_ensure_starts_only_when_down):
+               test_ensure_starts_only_when_down,
+               test_session1_side_effects):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_residency: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

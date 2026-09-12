@@ -1797,6 +1797,8 @@ def _register_residency(project: str, facts: HostFacts) -> dict:
     #    상주는 큐를 물어가고(build), 런처는 마스터가 조각을 보낼 때 **세션 1** 을 빌려준다.
     cmds = list(R.commands(project, facts, python_path=py))
     cmds += list(R.conductor_register_commands(project, facts, python_path=py))
+    # 🔴 세션 1 의 부작용을 같이 막는다 — 크래시 모달이 뜨면 프로세스가 무한 대기한다
+    cmds += list(R.crash_dialog_commands(facts))
     for label, cmd in cmds:
         rc, got = _ssh(facts.host, facts.user, cmd)
         out.append(f"{label} {'[완료]' if rc == 0 else f'[주의] rc={rc} {(got or 0)[:80]}'}")
