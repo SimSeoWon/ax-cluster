@@ -6,23 +6,65 @@
 > 🔴 **여기 적힌 「완료」를 그대로 믿지 않는다.** 받는 쪽은 HEAD·dirty diff·이슈·프로세스를
 > 직접 대조한다 (근거: `orchestrator-rules.md` §5).
 
-- **갱신 시각**: 2026-09-12 00:52 KST (UTC+9) — **BC-250 종료 · 문서/레드마인 마감 정리**
-- **지휘 도구 / 세션 식별자**: Claude Opus 5 (1M) · `session_01J3364LAVADSB4ZtwxbD5KK`
-- **상태**: 워커 지휘자는 사용자 지시로 **`claude` 폴백**. `#398`·`#400` 은 통합 빌드와
-  `main` 반영까지 끝나 **완료**됐다. `#401` 은 전환 전 readiness 완화책만 구현됐고,
-  `.2` Codex의 Session 0 셸 결함 자체는 **미해결**이다. `.43` BC-250은 종료했다.
+- **갱신 시각**: 2026-09-12 12:16 KST (UTC+9) — **`#402` 코덱스 배달 경로**
+- **지휘 도구 / 세션 식별자**: Claude Opus 5 (1M) · `session_01NR2NV3oLKrz4BKtP2AdEvW`
+- **HEAD**: `b8dab4a` (그 앞 `c70bb63`) · 워킹트리 **깨끗** · **origin push 안 했다**
+- **상태**: `#402`(신규) 소1~4 완료. 배달 경로가 이제 codex 몫을 싣는다 —
+  `AGENTS.md` 와 `codex mcp add ax-client`. `.2`(NS) 실물 배달 2회 통과.
+  🔴 **`ax-client` 의 codex 실물 확인은 아직 못 했다** — 아래 §미결.
 
 ## 🔴 바로 다음 작업
 
-전역 워커 지휘자는 `claude`다. 다음 AX 작업은 `#399`(활성 실행 0·종결 아님인데 요청자가
-모르는 공지 결함) 또는 `#401`의 upstream/Windows 보안 객체 수정 여부를 사람이 고르는 자리다.
-`.43`은 꺼져 있으므로 다시 켜기 전에는 `.2` 한 대만 파견 가능하다.
+`#402` 의 남은 한 칸: **piped stdio 가 사는 기계에서 `ax-client` 실물 확인.**
+`.43`(리눅스, **지금 꺼져 있다**)을 켜거나 `.33`(사람 기계, 범위 밖 — 승인 필요) 중
+사람이 고르는 자리다. 그 전까지 `#402` 는 「배선 완료·실증 미완」이다.
 
-### 지휘자 전환 준비 — 구현·커밋 완료, 배포 승인 대기
+그 밖에 열린 것: `#399`(활성 실행 0·종결 아님인데 요청자가 모르는 공지 결함) ·
+`#401`(`.2` Codex Session 0 — upstream/Windows 보안 객체 수정 여부) ·
+`#401` 의 지휘자 전환 readiness 는 **커밋 `b326cba` 로 있고 배포 승인 대기**다(아래).
 
-`set_worker_mode`가 더는 `mode.json`만 쓰지 않는다. 활성 프로젝트의 SSH 워커마다 선택한
-지휘자의 CLI 버전·`ax-work` 스킬을 확인하고, Windows Codex는 실제 Session 0 sandbox 셸
-probe까지 통과해야 상태를 저장한다. 하나라도 실패하면 **모드 상태를 바꾸지 않는다.**
+## `#402` — 배달 경로에 코덱스 몫 (2026-09-12, 커밋 `c70bb63`·`b8dab4a`)
+
+**왜**: codex 는 계층 로드를 안 하고 `~/.claude/skills/` 도 안 본다(`#385`). 스킬은 이미
+도구별로 갈라 배달하는데 **진입 문서와 MCP 는 사람 손**이었다.
+
+**실측으로 정한 설계** (전부 임시 `CODEX_HOME`·프로브로 쟀다):
+
+    codex mcp add           기존 config.toml 의 주석·[windows]·[projects]·[plugins] 보존 ·
+                            멱등 · 단 [mcp_servers.*] 영역은 **재직렬화**한다(의미 손실 0)
+    codex mcp get --json    codex 자신의 뷰. 🔴 **rc 로 판정 금지** — 없는 이름도 rc=0
+    MCP 자식의 cwd          codex 가 **workdir 를 준다**(실측) → 상대경로 배선이 맞다
+    [projects.<경로>.mcp_servers]   **인정 안 됨** — MCP 는 전역 하나뿐
+    approval                🔴 **서버 단위 키 안 먹는다.** `tools.<도구>.approval_mode` 만 통과
+
+**한 것**: `spec.ENTRY_DOCS`·`CODEX_ENTRY_SUBS`·`codex_mcp_for` · `bundle` 의
+`codex_entry_text`·`apply_codex_identity`·`client_tool_names`·`codex_approval_flags`·
+`codex_mcp_add/get/matches` · `runner.py` 가 도구 29종 승인 플래그를 싣는다 ·
+`plan`/`deliver`/`check` 세 표면 동기화 · `GIT_EXCLUDES`/`AMBIENT_MANAGED` 에 `AGENTS.md`.
+
+**정체성 교정** (사용자 결정 ①): 시드한 `AGENTS.md` 가 자기를 `CLAUDE.md` 라고 소개했다.
+세 줄만 고치고 본문은 무변경 · 멱등 · 시드일 때만 · 못 찾으면 보고.
+
+**회귀**: client_bundle 339 · runner 95 · client_spec 196 · client_mcp 147 · cache 24 ·
+editor_mcp 45 · conventions 16 · onboard 50 · mcp_servers 48 · work_mode_stamp 15 ·
+orchestration_control 11 · `git diff --check` 통과.
+
+### 🔴 미결 — `.2` 는 codex 로 `ax-client` 를 못 쓴다 (`#401` 의 같은 뿌리)
+
+`.2` 에서 **사용자 구성 stdio MCP 가 하나도 안 뜬다.** 명령·경로를 세 가지로 바꿔 전부
+`[도구없음]`(상대·런처 / 절대·런처 / 절대·실제 exe). HTTP 인 `ax-projects` 는 붙는다.
+upstream `#35940` 의 *"kills child processes created with piped stdio"* 와 맞는다.
+[주의] `node_repl` 이 살아 있는 것은 반례가 아니다 — 그 항목은 `SKY_CUA_NATIVE_PIPE=1` 로
+**네이티브 named pipe** 를 쓴다. **우리 배선의 결함이 아니다.**
+
+[중요] **계측기 주의** — 세션에게 「무슨 MCP 가 붙었나」 묻지 않는다. 마스터 세션이
+`ax-projects` 를 실제로 호출해 결과를 받아오면서도 「없음」이라 답했다. **도구를 부르게 한다.**
+
+## 지휘자 전환 준비 — 구현·커밋 완료, 배포 승인 대기 (`#401`)
+
+`set_worker_mode` 가 더는 `mode.json` 만 쓰지 않는다. 활성 프로젝트의 SSH 워커마다 선택한
+지휘자의 CLI 버전·`ax-work` 스킬을 확인하고, Windows Codex 는 실제 Session 0 sandbox 셸
+probe 까지 통과해야 상태를 저장한다. 하나라도 실패하면 **모드 상태를 바꾸지 않는다.**
 
 2026-09-12 NS 실물:
 
@@ -30,12 +72,7 @@ probe까지 통과해야 상태를 저장한다. 하나라도 실패하면 **모
     codex   .2 0.153.4 셸 probe exit 1          → 전환 거절
             .43 0.153.4 OK
 
-관련 회귀: `test_orchestration_control` 11/11 · `test_client_bundle` 308/308 ·
-`test_mcp_servers` 48/48 · `test_work_mode_stamp` 15/15 · `git diff --check` 통과.
-
-Redmine `#401`. 코드 커밋은 `b326cba`다. **origin push·배달·서비스 재시작은 하지 않았다.**
-변경 파일은 `master/client/bundle.py` · `master/work/conductor.py` ·
-`master/projects/mcp_server.py` · `master/test_orchestration_control.py` · 이 핸드오프다.
+코드 커밋은 `b326cba` 다. **origin push·배달·서비스 재시작은 하지 않았다.**
 
 ## 이전 순서 기록 — **(가) → (나) → (다)** (사용자 확정 2026-09-11)
 
