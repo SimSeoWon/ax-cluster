@@ -223,6 +223,7 @@ GIT_EXCLUDES = (
     ("/.ax/", ()),                 # 부산물·config·토큰·페이로드 (역할 무관)
     ("/.mcp.json", ()),            # 요청자만 받지만, 있어도 해가 없고 목록이 갈리는 것이 더 나쁘다
     ("/CLAUDE.md", ()),            # 마스터가 관리 블록을 넣는다 — 모든 역할이 받는다
+    ("/AGENTS.md", ()),            # 같은 블록의 codex 판 (`#402`) — 빠뜨리면 워킹트리가 더러워진다
     ("/.claude/", ("requester",)),  # 작업장 자산 29개 (요청자 전용)
 )
 
@@ -292,7 +293,8 @@ def gitignore_block() -> str:
 # 그때 index 에서 빼고 디스크를 보존했다(`git rm --cached`). [주의] 그것은 **사람의 저장소
 # 인덱스를 고치는 일**이라, 우리는 지금 **찾아서 이름으로 보고**만 한다 — 자동 untrack 여부는
 # 사람 결정 자리다(#259 onboard 의 확인 단계).
-AMBIENT_MANAGED = ("CLAUDE.md", ".mcp.json", ".claude/CLAUDE.md", ".claude/settings.json")
+AMBIENT_MANAGED = ("CLAUDE.md", "AGENTS.md", ".mcp.json", ".claude/CLAUDE.md",
+                   ".claude/settings.json")
 
 
 # ── 관리 훅 — **배달만으로는 안 돈다** (`#337`, 원전 `setup._merge_managed_hooks` 이식) ──
@@ -392,6 +394,43 @@ def skill_dirs(name: str) -> tuple:
     return tuple(f"{h}/skills/{name}" for h in SKILL_HOMES)
 
 
+# ── 진입 문서가 놓이는 자리 — **도구마다 파일 이름이 다르다** (`#402`) ──────────────
+#
+# 🔴 [중요] **codex 는 계층 로드를 하지 않는다** (실측 2026-09-08, `docs/orchestrator-rules.md`
+# §3.1): Claude 는 저장소에서 시작해도 부모의 홈 지침까지 싣지만 codex 는 **그 저장소 것만**
+# 싣는다. 그래서 **두 진입 파일은 각각 자족적이어야 한다** — 한쪽에만 규칙을 적지 않는다.
+#
+# [중요] **`SKILL_HOMES` 와 같은 모양이고, 같은 이유다.** 도구마다 자기 경로에 **같은 한 벌**을
+# 둔다. 내용은 `bundle.managed_block()` 하나여서 갈라지지 않는다.
+#
+# [주의] **두 번째 `/init` 을 돌리지 않는다** — codex CLI 에는 `/init` 서브커맨드가 없고(실측
+# 2026-09-12), 있더라도 Claude 의 `/init` 산출물($1.68짜리)을 이미 `CLAUDE.md` 로 갖고 있다.
+# `AGENTS.md` 가 비어 있으면 **그 병합 결과를 시드로 쓴다** (사용자 결정 2026-09-12).
+ENTRY_DOCS = (("claude", "CLAUDE.md"), ("codex", "AGENTS.md"))
+
+CODEX_ENTRY_REL = ENTRY_DOCS[1][1]
+
+
+# ── codex MCP 등록 — **파일을 쓰지 않고 `codex mcp add` 를 부른다** (`#402`) ──────────
+#
+# [중요] **쓰는 쪽과 읽는 쪽이 codex 자신의 뷰**라 「파일은 맞는데 codex 는 못 본다」가
+# 원천적으로 안 생긴다. 실측(2026-09-12, 임시 `CODEX_HOME`): `codex mcp add` 는 기존
+# `config.toml` 의 주석·`[windows] sandbox`·`[projects]`·`[plugins]` 를 **보존**하고
+# `[mcp_servers.<이름>]` 만 덧붙인다 — 그래서 **TOML 병합기를 우리가 쓰지 않는다**
+# (`.2` 의 `sandbox = "unelevated"`(`#401` 완화)를 날릴 위험이 사라진다).
+#
+# [주의] **`ax-projects` 는 여기 없다.** `codex mcp add --url` 이 리터럴 `http_headers` 를
+# 못 받아(`--bearer-token-env-var` 뿐) 토큰 배달과 엮인 별도 설계가 필요하다 — 지금의
+# 손배선(`.57`·`.2`)을 유지한다 (사용자 결정 2026-09-12).
+def codex_mcp_for(role: str, init: "ProjectInit | None" = None) -> tuple:
+    """이 역할의 codex 에 등록할 MCP 이름. **stdio 인 것만** — 헤더가 필요 없는 것들이다."""
+    return tuple(n for n in mcp_for(role, init) if n in STDIO_MCP)
+
+
+# `codex mcp add -- <명령>` 으로 등록할 수 있는 것 = 토큰 헤더가 필요 없는 stdio 서버
+STDIO_MCP = ("ax-client",)
+
+
 def managed_hooks_for(role: str) -> tuple:
     """이 역할이 등록받을 관리 훅. 훅 스크립트는 작업장 자산이라 요청자만 받는다."""
     return MANAGED_HOOKS if role == "requester" else ()
@@ -419,6 +458,10 @@ MD_BLOCKS = (
             "<!-- AX:Begin — 마스터가 생성한다. 이 블록만 덮인다 -->", "<!-- AX:End -->"),
     MdBlock("workshop", ".claude/CLAUDE.md",
             "<!-- AgentWatch:Start -->", "<!-- AgentWatch:End -->", roles=("requester",)),
+    # [중요] **마커가 `ax` 와 같은 글자인 것은 의도다** (`#402`) — 파일이 다르므로 충돌하지
+    #    않고, 병합 규칙을 한 벌로 쓸 수 있다. 내용도 같은 `managed_block()` 한 벌이다.
+    MdBlock("ax-codex", "AGENTS.md",
+            "<!-- AX:Begin — 마스터가 생성한다. 이 블록만 덮인다 -->", "<!-- AX:End -->"),
 )
 
 

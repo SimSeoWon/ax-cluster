@@ -267,9 +267,12 @@ def test_mcp_roles() -> None:
 # ── ⑥ 관리 구역은 역할로 갈린다 ──────────────────────────────────
 
 def test_md_blocks() -> None:
-    check("워커는 AX 블록만", tuple(b.key for b in spec.md_blocks_for("worker")) == ("ax",))
-    check("요청자는 둘 다",
-          tuple(b.key for b in spec.md_blocks_for("requester")) == ("ax", "workshop"))
+    # [중요] `ax-codex` 는 **역할 무관**이다 (`#402`) — `AGENTS.md` 는 codex 가 읽는 진입
+    #    문서이고, codex 는 워커에도 요청자에도 앉을 수 있다(`#385` 지휘자 모드).
+    check("워커는 AX 블록 두 도구분",
+          tuple(b.key for b in spec.md_blocks_for("worker")) == ("ax", "ax-codex"))
+    check("요청자는 거기에 작업장까지",
+          tuple(b.key for b in spec.md_blocks_for("requester")) == ("ax", "workshop", "ax-codex"))
     # 배달되는 작업장 자산이 요청자 전용인 것과 같은 축이어야 한다
     check("작업장 역할과 어긋나지 않는다",
           ("workshop" in [b.key for b in spec.md_blocks_for("requester")])

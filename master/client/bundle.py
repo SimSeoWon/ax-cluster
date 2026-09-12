@@ -799,6 +799,23 @@ def merge_claude_md(existing: str, project: str, facts: HostFacts) -> str:
     return existing.rstrip() + "\n\n" + block + "\n"
 
 
+def codex_entry_text(agents_prev: str, claude_merged: str, project: str,
+                     facts: HostFacts) -> str:
+    """`AGENTS.md` 에 넣을 글. **비어 있으면 `CLAUDE.md` 병합 결과를 시드로 쓴다** (`#402`).
+
+    [중요] **규칙을 `deliver` 안에 묻지 않는다** — 묻으면 유닛이 못 잡고, 이 저장소는 그렇게
+    비어 있던 구현을 이미 한 번 겪었다(`#232`: 주석은 *"deliver 가 지운다"* 인데 코드가 없었다).
+
+    셋으로 갈린다 — `merge_claude_md` 와 같은 규약이다:
+      - 없다      → `CLAUDE.md` 병합 결과 **그대로** (codex 는 계층 로드를 안 하므로 자족해야 한다)
+      - 마커 있다 → 마커 사이만 교체. 사람이 쓴 나머지는 그대로
+      - 마커 없다 → 맨 뒤에 블록만 덧붙인다
+    """
+    if not (agents_prev or "").strip():
+        return claude_merged
+    return merge_claude_md(agents_prev, project, facts)
+
+
 def _remote_rm_dir(facts: HostFacts, rel: str) -> str:
     """홈 기준 디렉토리를 **재귀 삭제**하고 사라졌는지 되확인한다. `"<rel> [완료]"` 또는 사유.
 
@@ -940,6 +957,69 @@ def merge_mcp_json(prev_text: str, facts: HostFacts) -> str:
     servers = data.setdefault("mcpServers", {})
     servers[MCP_SERVER_NAME] = mcp_entry_for(facts)
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def codex_mcp_cmd(facts: HostFacts, name: str) -> str:
+    """원격에서 부를 `codex mcp add` 한 줄. [중요] **조립하는 자리는 여기 하나다.**
+
+    `.mcp.json` 항목과 **같은 `mcp_entry_for` 에서** 나온다 — 두 도구에 다른 명령이 등록되면
+    한쪽만 도는 상태가 조용히 생긴다(`hook_entry` 가 같은 이유로 한 자리로 모였다).
+    """
+    e = mcp_entry_for(facts)
+    return f"codex mcp add {name} -- {e['command']} " + " ".join(e["args"])
+
+
+def codex_mcp_get(facts: HostFacts, name: str) -> dict:
+    """codex 가 **실제로 보는** MCP 항목. 없으면 빈 dict.
+
+    🔴 [중요] **rc 로 판정하지 않는다** — 실측 2026-09-12: 없는 이름에도 `codex mcp get` 은
+    **rc=0** 을 내고 본문에 `Error: No MCP server named …` 를 찍는다. 그래서 **JSON 파싱
+    성공 여부**가 판정이다. (마스터는 py3.10 이라 `tomllib` 이 없어 config.toml 직접 파싱은
+    선택지가 아니었다 — 이 경로가 그것도 같이 푼다.)
+    """
+    rc, out = _ssh(facts.host, facts.user, f"codex mcp get {name} --json")
+    if rc != 0:
+        return {}
+    try:
+        got = json.loads(out or "")
+    except ValueError:
+        return {}                      # `Error: No MCP server named …` 가 여기로 온다
+    return got if isinstance(got, dict) else {}
+
+
+def codex_mcp_matches(got: dict, facts: HostFacts) -> bool:
+    """codex 가 보는 항목이 우리가 등록하려던 것과 같은가. **비교 자리도 하나다.**"""
+    tr = (got or {}).get("transport") or {}
+    want = mcp_entry_for(facts)
+    return (tr.get("type") == "stdio" and tr.get("command") == want["command"]
+            and list(tr.get("args") or []) == list(want["args"]))
+
+
+def codex_mcp_add(facts: HostFacts, name: str) -> str:
+    """codex 에 MCP 하나를 등록하고 **되읽어 대조**한다. 사람이 읽을 한 줄을 돌려준다.
+
+    [중요] **fail-open** — 실패가 배달을 막지 않는다(`_remote_rm_dir` 과 같은 판단). 배달의
+    본업은 놓는 것이고, 못 붙은 것은 `check` 가 다음에 이름으로 잡는다.
+    [중요] **멱등** — 실측 2026-09-12: 같은 이름으로 다시 부르면 **덮어쓴다**(중복 항목이
+    생기지 않는다). 그리고 기존 `config.toml` 의 주석·`[windows]`·`[projects]`·`[plugins]` 는
+    보존된다 — 그래서 우리가 TOML 을 편집하지 않는다(`.2` 의 `sandbox = "unelevated"` 를
+    날릴 위험이 없다, `#401`).
+    [주의] **침묵하지 않는다** — 걸었는지와 왜 안 걸었는지를 둘 다 찍는다. 그 침묵이
+    2026-08-29~31 이틀을 태웠다(리포트 44).
+    """
+    if not facts.codex:
+        return f"{name} [주의] 건너뜀 — 이 기계에 codex 가 없다 (probe 의 `codex --version` 실패)"
+    rc, out = _ssh(facts.host, facts.user, codex_mcp_cmd(facts, name))
+    if rc != 0:
+        return f"{name} [주의] 등록 실패 (rc={rc}) — {(out or '').strip()[:120]}"
+    got = codex_mcp_get(facts, name)
+    if not got:
+        return f"{name} [주의] 등록했다는데 `codex mcp get` 이 못 찾는다 — 사람이 확인할 것"
+    if not codex_mcp_matches(got, facts):
+        tr = got.get("transport") or {}
+        return (f"{name} [주의] 등록됐지만 내용이 다르다 — "
+                f"codex 가 보는 것: {tr.get('command')} {' '.join(tr.get('args') or [])}")
+    return f"{name} [완료] codex mcp get 대조 통과"
 
 
 def hook_entry(matcher: str, rel: str, timeout: int, facts: HostFacts) -> dict:
@@ -1359,6 +1439,19 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
                     ) if payload_pairs(facts.role) else [],
         "excluded": _ensure_ignored(facts),
     }
+    # ── 진입 문서의 codex 판 (`#402`) ────────────────────────────────
+    # 🔴 [중요] **codex 는 계층 로드를 하지 않는다** (실측 2026-09-08) — 그래서 두 진입 파일은
+    #    각각 자족적이어야 한다. `AGENTS.md` 가 **비어 있으면 `CLAUDE.md` 병합 결과를 시드**로
+    #    쓴다(사용자 결정 2026-09-12): codex 에 `/init` 서브커맨드가 없기도 하지만, 있더라도
+    #    Claude 의 `/init` 산출물을 이미 갖고 있어 **두 번 태울 이유가 없다**(`#64` 의 비용).
+    # [중요] **`facts.codex` 로 막지 않는다** — 스킬 배달과 같은 판단이다. probe 시점의 값으로
+    #    막으면 나중에 codex 를 깐 기계에서 배달과 `check` 가 조용히 갈린다. 파일은 codex 가
+    #    없으면 그냥 안 읽힐 뿐이고, `spec.GIT_EXCLUDES` 가 워킹트리 오염을 막는다.
+    agents_prev = _remote_read(facts, (f"{facts.path}\\{spec.CODEX_ENTRY_REL}" if facts.windows
+                                       else f"{facts.path}/{spec.CODEX_ENTRY_REL}"))
+    written["agents_md"] = _remote_write(
+        facts, spec.CODEX_ENTRY_REL,
+        codex_entry_text(agents_prev, merged, project, facts), base="checkout")
     # ── 작업장 자산 (#226 4번) — 원전 watch.exe 가 생성하던 `.claude/` 구조 ─────────
     # [중요] **손으로 맞추던 것을 배달 경로에 넣는다.** 3번 재배선까지 저장소와 `.33` 을 scp 로
     #    맞췄고, 그 상태로는 조용히 갈린다(리포트 27 §13). 배달은 되읽어 해시 대조까지 한다.
@@ -1390,6 +1483,13 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
                                         else f"{facts.path}/.mcp.json"))
         written["mcp_json"] = _remote_write(facts, ".mcp.json",
                                             merge_mcp_json(prev_mcp, facts), base="checkout")
+    # ── codex MCP 등록 (`#402`) — **파일을 쓰지 않는다** ──────────────
+    #    `.mcp.json` 은 Claude 만 읽는다. codex 는 `~/.codex/config.toml` 인데, 거기에 우리가
+    #    TOML 을 써 넣는 대신 **`codex mcp add` 를 부른다** — 쓰는 쪽과 읽는 쪽이 codex 자신의
+    #    뷰라 「파일은 맞는데 codex 는 못 본다」가 안 생긴다(`#385` 에서 스킬이 정확히 그랬다).
+    if spec.codex_mcp_for(facts.role, pinit):
+        written["codex_mcp"] = [codex_mcp_add(facts, n)
+                                for n in spec.codex_mcp_for(facts.role, pinit)]
     # ── 훅 등록: **파일을 놓는 것으로 끝나지 않는다** (`#337`) ──────────
     #    작업장 자산이 `.claude/hooks/` 를 보내지만 훅은 `settings.json` 의 `hooks` 키에
     #    등록돼야 돈다. 그 등록이 없어 `domain_hint.py` 가 배달된 채 죽어 있었다(실측
@@ -1424,6 +1524,9 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     return {"host": facts.host, **written,
             "claude_md_mode": ("생성" if not (prev or "").strip()
                                else "블록 교체" if MD_BEGIN in (prev or "") else "블록 추가"),
+            "agents_md_mode": ("CLAUDE.md 시드" if not (agents_prev or "").strip()
+                               else "블록 교체" if MD_BEGIN in (agents_prev or "")
+                               else "블록 추가"),
             # [주의] 일회성 프로비저닝 비용 — **작업 비용과 섞지 않는다** (#64)
             "init": init_info,
             "verified": True}

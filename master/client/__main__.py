@@ -108,6 +108,16 @@ def cmd_plan(project: str) -> int:
         #    숨어 있으면 아무도 그것을 보지 못한다 (#261).
         mcp = spec.mcp_for(f.role, init)
         print(f"   → {f.path}/.mcp.json — 엔트리 {', '.join(mcp) or '(없음 — 이 역할은 받지 않는다)'}")
+        # [중요] **codex 몫도 계획에 찍는다** (`#402`). 선언은 `spec.ENTRY_DOCS` ·
+        #    `spec.codex_mcp_for` 하나씩이고, 안 찍으면 스킬 때(`#385`)와 같은 일이 난다 —
+        #    배달은 정상인데 도구가 그것을 못 보는 상태가 **아무 표면에도 안 나타난다.**
+        print(f"   → {f.path}/{spec.CODEX_ENTRY_REL} — codex 진입 문서 "
+              f"[블록만 교체 · 없으면 CLAUDE.md 시드]")
+        cmcp = spec.codex_mcp_for(f.role, init)
+        if cmcp:
+            for n in cmcp:
+                print(f"   → {f.host}: `{bundle.codex_mcp_cmd(f, n)}`"
+                      + ("" if f.codex else "  ← [주의] codex 없음 — 건너뛴다"))
         # [중요] **훅 「등록」을 계획에 찍는다** (`#337`) — 파일 배달과 다른 자리다. 종전에는
         #    `.claude/hooks/domain_hint.py` 가 배달 목록에만 있어서, 그것이 **등록되지 않아
         #    한 번도 안 돈다**는 사실이 계획에도 보고에도 나타나지 않았다.
@@ -235,6 +245,11 @@ def cmd_deliver(project: str, *, init: bool = False) -> int:
             print(f"     workshop_md={r['workshop_md']}")
         if "mcp_json" in r:
             print(f"     mcp_json={r['mcp_json']}")
+        if "agents_md" in r:
+            print(f"     agents_md={r['agents_md']}  [{r.get('agents_md_mode', '?')}]")
+        for cm in r.get("codex_mcp") or []:
+            # [중요] 걸었는지와 **왜 안 걸었는지**를 둘 다 찍는다 (리포트 44 의 교훈)
+            print(f"     codex_mcp={cm}")
         if "settings_json" in r:
             # [중요] 훅 **등록** 자리 — 파일 배달과 다른 것이다 (`#337`)
             print(f"     settings_json={r['settings_json']}  [훅 등록]")
@@ -402,6 +417,37 @@ def cmd_check(project: str) -> int:
         rm_note = (f" · [중요] 폐지 스킬이 남아 있다: {', '.join(left)}" if left else
                    f" · 폐지 {len(rm['skills'])}종 없음(정리됨)" if rm["skills"] else "")
 
+        # ── codex 몫 (`#402`) — **역할 무관** ────────────────────────────
+        #    [중요] `AGENTS.md` 는 「있나」가 아니라 **관리 블록이 최신인가**를 본다. 전문은
+        #    사람이 고칠 수 있으므로 해시 전체 대조는 정상을 실패로 답한다 — `check` 가
+        #    정상 배달을 실패로 답한 전례가 이미 있다(`#337` 훅, 정확 일치 비교).
+        ok_codex = True
+        codex_note = ""
+        _csep = chr(92) if f.windows else "/"
+        raw_a = bundle._remote_read(f, f"{f.path}{_csep}{spec.CODEX_ENTRY_REL}")
+        want_block = bundle.managed_block(project, f)
+        if not (raw_a or "").strip():
+            ok_codex = False
+            codex_note = f" · [실패] {spec.CODEX_ENTRY_REL} 이 없다 (codex 는 CLAUDE.md 를 안 읽는다)"
+        elif want_block not in raw_a:
+            ok_codex = False
+            codex_note = f" · [실패] {spec.CODEX_ENTRY_REL} 의 AX 블록이 낡았다"
+        # [중요] **codex 가 실제로 보는 것**을 묻는다 — 파일을 보는 것이 아니다.
+        #    🔴 rc 로 판정하지 않는다: 없는 이름에도 `codex mcp get` 은 rc=0 이다(실측).
+        for n in spec.codex_mcp_for(f.role, init):
+            if not f.codex:
+                codex_note += f" · [주의] codex 없음 — {n} 등록 검사 건너뜀"
+                continue
+            got = bundle.codex_mcp_get(f, n)
+            if not got:
+                ok_codex = False
+                codex_note += f" · [실패] codex 가 {n} 을 모른다 (`codex mcp get` 못 찾음)"
+            elif not bundle.codex_mcp_matches(got, f):
+                ok_codex = False
+                _tr = got.get("transport") or {}
+                codex_note += (f" · [실패] codex 의 {n} 이 다르다 — "
+                               f"{_tr.get('command')} {' '.join(_tr.get('args') or [])}")
+
         # [중요] **배달본의 출처 커밋을 마스터 HEAD 와 댄다** (#266, 사용자 2026-08-22:
         #    *"커밋한 해시키 등을 이용해 각 워커들과 인프라 서버간 비교하는게 있어야"* +
         #    *"config 파일 문서에 명기하면 이것만 비교하면 되는거잖아"*). 값은 이미
@@ -420,15 +466,15 @@ def cmd_check(project: str) -> int:
         tag_note = f" · {tag['reason']}"
 
         mark = ("OK" if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws
-                         and ok_ver and ok_tag) else "FAIL")
+                         and ok_ver and ok_tag and ok_codex) else "FAIL")
         pay_note = (f" · payload {len(pay)}개 일치" if pay and ok_pay
                     else f" · [중요] payload 불일치/없음 {len(stale)}개: {', '.join(stale[:3])}"
                     if pay else "")
         print(f"  {mark} {f.host} [{f.role}]: 스킬 {len(names)}종 "
               f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}"
-              f"{pay_note}{ws_note}{client_note}{rm_note}{tag_note}{ver_note}")
+              f"{pay_note}{ws_note}{client_note}{codex_note}{rm_note}{tag_note}{ver_note}")
         bad += 0 if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws
-                     and ok_ver and ok_tag) else 1
+                     and ok_ver and ok_tag and ok_codex) else 1
         if not ver["ok"]:
             behind_hosts.append((f.host, ver.get("behind"), ver.get("stamp_dirty")))
     # [중요] **끝에 한 줄로 모아 말한다** — 호스트별 줄에 섞이면 「몇 대가 낡았나」가 안 보인다.

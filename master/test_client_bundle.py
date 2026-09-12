@@ -1096,6 +1096,128 @@ def test_hook_registration() -> None:
           and "local" not in spec.SETTINGS_REL, spec.SETTINGS_REL)
 
 
+# ── codex 몫 (`#402`) — 진입 문서와 MCP 등록 ─────────────────────
+
+def test_codex_entry_doc() -> None:
+    """🔴 [중요] **codex 는 계층 로드를 하지 않는다** — `AGENTS.md` 는 자족해야 한다.
+
+    실측 2026-09-08(`docs/orchestrator-rules.md` §3.1): Claude 는 저장소에서 시작해도 부모의
+    홈 지침까지 싣는데 codex 는 그 저장소 것만 싣는다. 그래서 `CLAUDE.md` 만 배달하면 codex
+    세션은 **명령 블록을 못 본다** — 마일스톤 6 에 그 실패가 적혀 있다(`AGENTS.md` 에
+    `master.client`·`AX_PROJECTS_ROOT` **0건** → codex 가 환경 전제에 걸려 멈췄다).
+    """
+    f = _facts(role="worker", codex="0.153.4")
+    merged = bundle.merge_claude_md("", "ModularStage", f)
+
+    # ⑴ 없으면 CLAUDE.md 병합 결과를 **그대로** 시드로 쓴다 (두 번째 `/init` 을 안 태운다)
+    got = bundle.codex_entry_text("", merged, "ModularStage", f)
+    check("[중요] AGENTS.md 가 없으면 CLAUDE.md 병합 결과를 시드로 쓴다", got == merged)
+    check("  그래서 자족적이다 — AX 블록이 들어 있다", bundle.MD_BEGIN in got)
+
+    # ⑵ 사람이 쓴 AGENTS.md 가 있으면 **블록만** 얹는다
+    human = "# 내 코덱스 지침\n\n이 줄은 사람이 썼다.\n"
+    got2 = bundle.codex_entry_text(human, merged, "ModularStage", f)
+    check("[중요] 사람이 쓴 AGENTS.md 를 덮지 않는다", "이 줄은 사람이 썼다." in got2)
+    check("  그 위에 AX 블록을 얹는다", bundle.MD_BEGIN in got2 and bundle.MD_END in got2)
+    check("  CLAUDE.md 전문을 다시 밀어넣지 않는다 (사람 문서를 밀어내지 않는다)",
+          got2.startswith("# 내 코덱스 지침"))
+
+    # ⑶ 마커가 있으면 그 사이만 교체 — 블록이 두 번 붙지 않는다 (`.2` 전례, 2026-08-09)
+    stale = human + "\n" + bundle.MD_BEGIN + "\n낡은 내용\n" + bundle.MD_END + "\n꼬리\n"
+    got3 = bundle.codex_entry_text(stale, merged, "ModularStage", f)
+    check("[중요] 블록이 두 번 붙지 않는다", got3.count(bundle.MD_BEGIN) == 1, str(got3.count(bundle.MD_BEGIN)))
+    check("  낡은 내용은 사라진다", "낡은 내용" not in got3)
+    check("  블록 뒤의 사람 글은 남는다", "꼬리" in got3)
+
+    # ⑷ 선언 — 워킹트리 오염을 막는 자리에 들어 있어야 한다
+    check("🔴 [중요] AGENTS.md 가 git 제외 목록에 있다 (더티 체크가 파견을 막는다)",
+          "/AGENTS.md" in spec.git_excludes_for("worker")
+          and "/AGENTS.md" in spec.git_excludes_for("requester"))
+    check("  ambient 관리 목록에도 있다 (추적 중이면 이름으로 보고된다)",
+          "AGENTS.md" in spec.AMBIENT_MANAGED)
+    check("  진입 문서 선언은 한 곳이다", spec.ENTRY_DOCS[1] == ("codex", "AGENTS.md"))
+
+
+def test_codex_mcp_registration() -> None:
+    """[중요] **파일을 쓰지 않고 `codex mcp add` 를 부른다** — 쓰는 쪽과 읽는 쪽을 codex 로 맞춘다.
+
+    `#385` 에서 정확히 그 병을 앓았다: 스킬 파일은 **정상 배달돼 있었는데** codex 가 그 경로를
+    안 봐서 `ax-work` 가 빈 참조가 됐다. 파일이 맞는 것과 도구가 그것을 보는 것은 다른 사실이다.
+    """
+    calls: list = []
+    entry_json = ('{"name":"ax-client","enabled":true,"transport":'
+                  '{"type":"stdio","command":"python3",'
+                  '"args":[".ax/lib/axmaster/clientside/client_mcp.py"]}}')
+
+    def fake_ssh(host, user, cmd, *, timeout=None):
+        calls.append(cmd)
+        if "codex mcp get" in cmd:
+            return 0, entry_json
+        return 0, ""
+
+    saved = bundle._ssh
+    bundle._ssh = fake_ssh
+    try:
+        f = _facts(role="worker", codex="0.153.4")
+        got = bundle.codex_mcp_add(f, "ax-client")
+        check("[중요] 등록하고 **되읽어 대조**한다 (「썼다」는 보고를 믿지 않는다)",
+              "[완료]" in got, got)
+        check("  add 와 get 을 둘 다 부른다",
+              any("codex mcp add" in c for c in calls)
+              and any("codex mcp get ax-client --json" in c for c in calls), str(calls))
+        check("[중요] 명령은 `.mcp.json` 항목과 같은 출처다 (두 도구에 다른 명령이 가지 않는다)",
+              bundle.mcp_entry_for(f)["command"] in bundle.codex_mcp_cmd(f, "ax-client"))
+
+        # 윈도우는 `py` 다 — 맨 `python` 은 스토어 스텁이라 버전도 안 찍는다 (실측된 함정)
+        win = _facts(role="requester", os="windows", home=r"C:\Users\USER",
+                     path=r"C:\Users\USER\Documents\ModularStage", codex="0.153.4")
+        check("[주의] 윈도우는 `py` 로 등록한다",
+              " -- py " in bundle.codex_mcp_cmd(win, "ax-client"),
+              bundle.codex_mcp_cmd(win, "ax-client"))
+
+        # 🔴 rc 로 판정하지 않는다 — 없는 이름에도 `codex mcp get` 은 rc=0 이다 (실측 2026-09-12)
+        calls.clear()
+
+        def ssh_missing(host, user, cmd, *, timeout=None):
+            calls.append(cmd)
+            if "codex mcp get" in cmd:
+                return 0, "Error: No MCP server named 'ax-client' found."
+            return 0, ""
+
+        bundle._ssh = ssh_missing
+        check("🔴 [중요] rc=0 + 비-JSON 을 「못 찾음」으로 읽는다",
+              bundle.codex_mcp_get(f, "ax-client") == {})
+        bad = bundle.codex_mcp_add(f, "ax-client")
+        check("  그래서 등록 실패를 [완료] 로 답하지 않는다", "[완료]" not in bad, bad)
+
+        # 내용이 다르면 **무엇이 다른지** 말한다
+        def ssh_other(host, user, cmd, *, timeout=None):
+            if "codex mcp get" in cmd:
+                return 0, ('{"name":"ax-client","transport":{"type":"stdio",'
+                           '"command":"python2","args":["/wrong.py"]}}')
+            return 0, ""
+
+        bundle._ssh = ssh_other
+        diff = bundle.codex_mcp_add(f, "ax-client")
+        check("[중요] 다르면 codex 가 보는 값을 말한다 (합계만 찍지 않는다)",
+              "python2" in diff, diff)
+    finally:
+        bundle._ssh = saved
+
+    # codex 가 없으면 **건너뛰되 사유를 말한다** — 침묵이 이틀을 태웠다 (리포트 44)
+    nocodex = _facts(role="worker", codex="")
+    skipped = bundle.codex_mcp_add(nocodex, "ax-client")
+    check("[중요] codex 가 없으면 건너뛴다 (fail-open — 배달을 막지 않는다)",
+          "건너뜀" in skipped, skipped)
+    check("  그리고 **왜** 건너뛰었는지 찍는다", "codex" in skipped and "[주의]" in skipped, skipped)
+
+    # 🔴 토큰 헤더가 필요한 것은 이 경로로 보내지 않는다 (사용자 결정 2026-09-12)
+    check("🔴 [중요] codex 에 등록하는 것은 stdio 뿐이다 — ax-projects 는 빠진다",
+          "ax-projects" not in spec.codex_mcp_for("requester")
+          and "ax-client" in spec.codex_mcp_for("requester"),
+          str(spec.codex_mcp_for("requester")))
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
@@ -1109,7 +1231,9 @@ def main() -> int:
                test_workshop_assets_reference_only_live_skills,
                test_consent_rule_reaches_the_requester,
                test_registration_doc_matches_reality,
-               test_hook_registration):
+               test_hook_registration,
+               test_codex_entry_doc,
+               test_codex_mcp_registration):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_bundle: {PASS}/{total} 통과")
