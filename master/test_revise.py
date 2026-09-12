@@ -164,3 +164,31 @@ print("=" * 46)
 print(f"통과 {PASS} · 실패 {FAIL}")
 print("=" * 46)
 sys.exit(1 if FAIL else 0)
+
+
+# ── 🔴 환경 실패는 코드 실패가 아니다 (`#391` 완결 · 실측 2026-09-12) ────────────────
+
+# [중요] **`.2` 의 실제 출력이다.** 지어낸 문자열이 아니라 그날 지휘자가 남긴 말을 그대로
+#    넣는다 — `#391` 이 이 출력을 남기게 만들었고, 그것이 판정 근거가 된다.
+_REAL_2 = (
+    '{"type":"item.completed","item":{"id":"item_4","type":"command_execution",'
+    '"command":"\\"C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\\" '
+    '-Command \\"cmd /c type C:\\\\Users\\\\janus\\\\.codex\\\\skills\\\\ax-work\\\\SKILL.md\\"",'
+    '"aggregated_output":"","exit_code":-1073741502,"status":"failed"}}'
+)
+
+check("🔴 실물 출력에서 환경 실패를 잡는다", R.environment_failure([_REAL_2]) == "-1073741502",
+      R.environment_failure([_REAL_2]))
+check("  정상 출력은 잡지 않는다 (오탐 금지)",
+      R.environment_failure(["구현을 마쳤습니다", "RESULT: DONE"]) == "")
+check("  0xC0000142 표기도 잡는다",
+      R.environment_failure(["exec failed 0xC0000142"]) == "0xC0000142")
+check("  세션 9 파이프 실패도 잡는다 (elevated runner)",
+      R.environment_failure(["timed out after 15000ms connecting runner pipe-in"]) != "")
+
+# [중요] **환경 실패는 첫 번째에 멈춘다** — 층1 이슈가 있어도 revise 로 보내지 않는다.
+#    피드백을 실어 보내도 그 기계에서는 스킬조차 못 읽는다(실측: `.2` 가 세 번 태웠다).
+check("[중요] 층1 이슈가 있어도 환경 신호가 있으면 재시도 대상이 아니다",
+      R.classify(["[PSEUDO] 가 남아 있다"], 1) == R.REVISE
+      and R.environment_failure([_REAL_2]) != "",
+      "classify 는 그대로 revise 를 내고, 환경 판정은 호출자가 앞에서 가른다")

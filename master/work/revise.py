@@ -89,6 +89,42 @@ FEEDBACK_OPEN = "/* AUTO-VERIFY FEEDBACK"
 FEEDBACK_CLOSE = "*/"
 
 
+# 🔴 **실행 환경이 죽은 신호** (`#391` 완결 · 실측 2026-09-12) ─────────────────────────
+#
+# [중요] **환경 실패를 코드 실패로 읽으면 상한을 태운다.** `#391` 이 이미 적어 둔 것이
+# 그대로 재현됐다 — *"실패의 「받을 곳」이 셋인데 갈래가 둘뿐이라 환경 실패가 코드 실패로
+# 위장돼 상한 3회를 태웠다"*. 2026-09-12 실물: `.2` 의 codex 가 SSH(세션 0)에서
+# `ax-work` SKILL.md 조차 못 읽고(`0xC0000142`) 계약 없이 본문을 썼고, 층1 이 `[PSEUDO]`
+# 잔재로 막았다. 시스템은 그것을 「코드를 덜 썼다」로 읽고 **세 번 더 태웠다.**
+#
+# [중요] **피드백으로 고칠 수 없는 실패다.** 워커에게 *"[PSEUDO] 를 채워라"* 를 다시 보내도
+# 그 기계에서는 스킬을 읽을 수 없다. 재시도는 토큰만 쓴다 — 그래서 **첫 번째에 멈춘다.**
+# [주의] 판정 근거는 **지휘자가 자기 입으로 한 말**이다(`#391` 이 남기게 만든 그 출력).
+#    새 신호를 지어내지 않는다.
+ENV_MARKERS = (
+    "0xC0000142",          # DLL 초기화 실패 — Windows Session 0 에서 샌드박스 자식이 죽는다
+    "-1073741502",         # 같은 값의 10진 표현 (`exit_code` 필드에 이렇게 찍힌다)
+    "CreateProcessAsUserW failed",
+    "connecting runner pipe-in",   # elevated runner 가 세션 9 파이프를 못 잡을 때
+)
+
+ENV = "environment"        # `pass`/`revise`/`reject` 와 나란한 네 번째 갈래
+
+
+def environment_failure(texts) -> str:
+    """지휘자 출력에서 **실행 환경이 죽은 증거**를 찾는다. 없으면 빈 문자열.
+
+    [중요] **텍스트 매칭이다** — 이 값들은 OS·codex 가 내는 고정 문자열이고, 우리가 만드는
+    것이 아니다. 다른 신호를 지어내지 않는다.
+    """
+    for t in texts or ():
+        s = str(t or "")
+        for m in ENV_MARKERS:
+            if m in s:
+                return m
+    return ""
+
+
 def classify(issues, attempt_count: int = 1, max_attempts: int = MAX_ATTEMPTS) -> str:
     """이슈 목록 → `pass` / `revise` / `reject`. **원전 `_classify_verify_issues` 이식.**
 
