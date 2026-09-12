@@ -13,6 +13,15 @@
   (`AGENTS.md` + `codex mcp add ax-client`), `.43` 에서 codex 세션이 `ax-client` 도구를
   **실제로 호출**했다. `.2`·`.43` 둘 다 배달 통과.
 
+### 🔴 `.2` Session 0 조사 보고서
+
+정본: [`reports/62-codex-session0-root-cause-and-scope.md`](../reports/62-codex-session0-root-cause-and-scope.md)
+
+실제 Codex 모델 A/B에서 설치본은 `0xC0000142`로 셸 자식이 실패했고, 진단용 패치판은
+동일 Session 0에서 성공했다. 이것은 로그인 문제가 아니라 Windows sandbox의
+Window Station/Desktop ACL 문제다. [중요] 진단용 Rust 빌드·특정 PC artifact를 운영
+온보딩에 넣지 않는다. 정식 upstream 릴리스 전에는 `codex` 워커 전환을 금지한다.
+
 ## 🔴 바로 다음 작업
 
 `#402` 는 닫을 수 있다(실증 완료, 아래 §실증). **남은 선택은 `.33` 배달 여부다** —
