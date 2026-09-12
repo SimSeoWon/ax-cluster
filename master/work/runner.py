@@ -462,13 +462,110 @@ def worker_command(facts, task_id: str, files=(), *, mode: str = "claude") -> st
     return agent_command(facts, facts.path, instr, mode=mode)
 
 
+def uses_session1(facts, mode: str) -> bool:
+    """이 파견이 **세션 1 경유**여야 하나 (`#401`).
+
+    🔴 [중요] **Windows + codex 조합 하나다.** SSH 는 세션 0 이고 거기서는 codex 의 제한 토큰
+    샌드박스 자식이 `0xC0000142` 로 죽는다 — 실측 2026-09-12 에 조각 2건이 `ax-work` SKILL.md
+    조차 못 읽고 죽었다. `/IT` 로 등록된 작업을 `schtasks /run` 으로 부르면 스케줄러가
+    프로세스를 **세션 1** 에 만들고 거기서는 산다.
+    [주의] 리눅스는 이 문제가 **없다**(`.43` 은 SSH 로 4조각을 완주했다) · `claude` 모드도
+    이 경로를 안 탄다(셸 도구를 그렇게 쓰지 않는다). **좁게 건다.**
+    """
+    return bool(getattr(facts, "windows", False)) and mode == "codex"
+
+
 def run_worker(facts, task_id: str, *, files=(), runner=None, mode: str = "claude",
                timeout: int = DEFAULT_TIMEOUT) -> tuple:
-    """워커에서 **지휘자**를 한 번 돌린다. `(rc, stdout)`. **예외를 던지지 않는다.**"""
+    """워커에서 **지휘자**를 한 번 돌린다. `(rc, stdout)`. **예외를 던지지 않는다.**
+
+    [중요] Windows+codex 는 **세션 1 경유**다(`uses_session1`) — 전송만 다르고 판정·커밋
+    흐름은 그대로다.
+    """
+    if runner is None and uses_session1(facts, mode):
+        return run_worker_session1(facts, task_id, files=files, timeout=timeout)
     cmd = worker_command(facts, task_id, files, mode=mode)
     if runner is not None:
         return runner(facts, cmd, timeout)
     return bundle._ssh(facts.host, facts.user, cmd, timeout=timeout)
+
+
+SESSION1_POLL_SEC = 10
+
+
+def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT_TIMEOUT,
+                        sleeper=None) -> tuple:
+    """세션 1 런처를 거쳐 지휘자를 돌린다. `(rc, stdout)` (`#401`).
+
+    🔴 [중요] **마스터가 보내는 것은 데이터뿐이다** — `job.json` 의 `task_id`·`files`.
+    실행 파일과 플래그는 **워커의 런처가 소유한다**(`clientside/session1_conductor.py`).
+    2026-09-12 에 「마스터가 임의 셸 문자열을 파일로 떨구는」 구조를 만들었다가 폐기했다 —
+    인증도 계약도 없는 **로컬 원격실행 면**이었다. 그 차이가 이 함수의 요점이다.
+
+    [중요] 완료 판정은 **`done.flag`** 다 — 런처가 그것을 맨 마지막에 쓰므로 반쯤 쓰인
+    `out.txt` 를 읽지 않는다.
+    [주의] 실패해도 예외를 던지지 않는다 — `(rc, stdout)` 계약은 그대로다.
+    """
+    import json as _json
+    import time as _t
+    from ..client import bundle as _b
+    from client.init import residency as _R
+
+    nap = sleeper or _t.sleep
+    rel = f".ax/session1/{task_id}"
+    job = _json.dumps({"task_id": task_id, "files": [str(f) for f in (files or [])],
+                       "approvals": _approval_overrides(), "timeout": timeout},
+                      ensure_ascii=False)
+    try:
+        _b._remote_write(facts, f"{rel}/job.json", job + "\n", base="checkout")
+    except Exception as e:                                   # noqa: BLE001
+        return 1, f"[세션1] job 을 못 보냈다 — {type(e).__name__}: {e}"
+
+    rc0, out0 = bundle._ssh(facts.host, facts.user,
+                            _R.conductor_run_command(_project_of(facts), facts))
+    if rc0 != 0:
+        return 1, (f"[세션1] 런처를 못 깨웠다 (rc={rc0}) — {(out0 or '')[:200]}\n"
+                   f"[중요] `{_R.conductor_task_name(_project_of(facts))}` 작업이 등록돼 "
+                   f"있는지 본다(`master.client deliver` 가 등록한다)")
+
+    sep = chr(92) if facts.windows else "/"
+    base = f"{facts.path}{sep}{rel.replace('/', sep)}"
+    waited = 0
+    while waited < timeout:
+        rc, _o = bundle._ssh(facts.host, facts.user,
+                             (f'if exist "{base}{sep}done.flag" (echo DONE) else (echo WAIT)'
+                              if facts.windows
+                              else f'test -e "{base}/done.flag" && echo DONE || echo WAIT'))
+        if "DONE" in (_o or ""):
+            out = _b._remote_read(facts, f"{base}{sep}out.txt") or ""
+            rct = (_b._remote_read(facts, f"{base}{sep}rc.txt") or "1").strip()
+            try:
+                return int(rct), out
+            except ValueError:
+                return 1, out
+        nap(SESSION1_POLL_SEC)
+        waited += SESSION1_POLL_SEC
+    return 1, (f"[세션1] {timeout}초 안에 끝나지 않았다 — 런처가 돌지 않았을 수 있다"
+               f"(로그온 세션이 없으면 `/IT` 작업은 뜨지 않는다)")
+
+
+def _project_of(facts) -> str:
+    """이 체크아웃의 프로젝트 태그. [중요] 경로가 아니라 **배달된 config** 에서 읽는다."""
+    try:
+        from ..client import bundle as _b
+        return (_b.stored_project(facts) or {}).get("project") or ""
+    except Exception:                                        # noqa: BLE001
+        return ""
+
+
+def _approval_overrides() -> list:
+    """MCP 도구별 승인 `-c` 값들 (`#402`). 런처가 그대로 codex 에 싣는다."""
+    try:
+        from ..client import bundle as _b
+        return [f'mcp_servers.{_b.MCP_SERVER_NAME}.tools.{t}.approval_mode="approve"'
+                for t in _b.client_tool_names()]
+    except Exception:                                        # noqa: BLE001
+        return []
 
 
 class _Beater:

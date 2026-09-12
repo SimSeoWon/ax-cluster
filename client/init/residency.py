@@ -178,6 +178,37 @@ def ensure_commands(project: str, facts) -> list:
     return [("ensure", f"nohup sh -c {q(run)} >/dev/null 2>&1 &")]
 
 
+CONDUCTOR_TASK = "AxConductor"
+CONDUCTOR_REL = ".ax/lib/axmaster/clientside/session1_conductor.py"
+
+
+def conductor_task_name(project: str) -> str:
+    return CONDUCTOR_TASK if project == "ModularStage" else f"{CONDUCTOR_TASK}_{project}"
+
+
+def conductor_register_commands(project: str, facts, *, python_path: str = "") -> list:
+    """세션 1 지휘자 런처를 `/IT` 작업으로 등록 (`#401`). **윈도우 전용.**
+
+    🔴 [중요] **`/it` 가 이 등록의 전부다** — 그것이 프로세스를 세션 1 에 만들고, 거기서는
+    codex 샌드박스 자식이 산다(실측 2026-09-12: 세션 0 `0xC0000142` / 세션 1 `exit_code 0`).
+    [주의] 리눅스는 이 문제가 없다 — SSH 로 그냥 돌린다. 그래서 빈 목록을 돌려준다.
+    [주의] `/sc once` 다 — 주기 실행이 아니라 **마스터가 `/run` 으로 부를 때만** 돈다.
+    """
+    if not facts.windows:
+        return []
+    py = python_path or python_for(facts)
+    script = f'{facts.path}\\{CONDUCTOR_REL.replace("/", chr(92))}'
+    run = f'\\"{py}\\" \\"{script}\\"'
+    return [("conductor-register",
+             f'schtasks /create /f /tn {conductor_task_name(project)} '
+             f'/sc once /st 23:59 /it /rl LIMITED /tr "{run}"')]
+
+
+def conductor_run_command(project: str, facts) -> str:
+    """등록된 런처를 **지금 한 번** 돌린다. 윈도우 전용."""
+    return f"schtasks /run /tn {conductor_task_name(project)}"
+
+
 def cron_marker(facts) -> str:
     """`.43` 류의 crontab 에서 **우리 줄을 찾는 표식**. [중요] 등록과 해제가 같은 값을 써야
     한다 — 두 벌로 쓰면 해제가 남의 줄을 지우거나 우리 줄을 못 지운다."""

@@ -134,6 +134,11 @@ PAYLOAD_BY_ROLE = {
     "worker": (_pair("clientside/client_mcp.py", "client/runtime/client_mcp.py"),
                _pair("clientside/ontology_cache.py", "client/runtime/ontology_cache.py"),
                _pair("work/worker_daemon.py"), _pair("work/ax_safety.py"),
+               # 🔴 세션 1 지휘자 런처 (`#401`) — Windows 는 SSH(세션 0)에서 codex 샌드박스
+               #    자식이 죽는다. 이 런처가 `/IT` 작업으로 **세션 1** 에서 돈다.
+               #    [중요] 마스터는 `job.json` 의 task_id·files 만 준다 — **플래그는 런처 소유**.
+               _pair("clientside/session1_conductor.py",
+                     "client/runtime/session1_conductor.py"),
                _pair("work/build_local.py"), _pair("work/skeleton_gate.py"),
                _pair("layer3_verify.py"),
                _pair("source_text.py"), _pair("utf8.py")),
@@ -1786,8 +1791,13 @@ def _register_residency(project: str, facts: HostFacts) -> dict:
     if why:
         return {"skipped": f"지금 켜지 않는다 — {why}"}
 
+    py = _probe_python(facts)
     out = []
-    for label, cmd in R.commands(project, facts, python_path=_probe_python(facts)):
+    # [중요] 상주(주기) + 세션 1 지휘자 런처(`/run` 전용) 둘 다 등록한다 — 목적이 다르다.
+    #    상주는 큐를 물어가고(build), 런처는 마스터가 조각을 보낼 때 **세션 1** 을 빌려준다.
+    cmds = list(R.commands(project, facts, python_path=py))
+    cmds += list(R.conductor_register_commands(project, facts, python_path=py))
+    for label, cmd in cmds:
         rc, got = _ssh(facts.host, facts.user, cmd)
         out.append(f"{label} {'[완료]' if rc == 0 else f'[주의] rc={rc} {(got or 0)[:80]}'}")
     return {"registered": R.task_name(project) if facts.windows else "cron", "results": out}

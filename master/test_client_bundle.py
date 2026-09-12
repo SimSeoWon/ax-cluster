@@ -248,6 +248,7 @@ def test_role_payload() -> None:
           set(bundle.payloads_for("worker")) == {
               "clientside/client_mcp.py", "clientside/ontology_cache.py",
               "work/worker_daemon.py", "work/ax_safety.py",
+              "clientside/session1_conductor.py",
               "work/build_local.py",
               "work/skeleton_gate.py", "layer3_verify.py", "source_text.py", "utf8.py"},
           str(bundle.payloads_for("worker")))
@@ -344,8 +345,11 @@ def test_payload_split() -> None:
     # 🔴 동결값도 `#404` 로 움직였다 — 상주 폐포 둘이 **build_local 앞**에 들어간다.
     #    [중요] 순서까지 동결하는 이유는 배달 순서가 계약이기 때문이다(`__init__.py` 가 먼저
     #    가야 나머지가 임포트된다는 것과 같은 결).
+    # 🔴 `#401`: 세션 1 지휘자 런처가 더해졌다 — Windows 는 SSH(세션 0)에서 codex 샌드박스
+    #    자식이 죽으므로, `/IT` 작업으로 **세션 1** 에서 지휘자를 돌린다.
     FROZEN["worker"] = ("clientside/client_mcp.py", "clientside/ontology_cache.py",
                         "work/worker_daemon.py", "work/ax_safety.py",
+                        "clientside/session1_conductor.py",
                         "work/build_local.py", "work/skeleton_gate.py",
                         "layer3_verify.py", "source_text.py", "utf8.py")
     for role, want in FROZEN.items():
@@ -364,7 +368,8 @@ def test_payload_split() -> None:
     # [중요] **저장소 위치도 동결한다** (#263 이후). 갈린 곳은 `client/runtime/` 둘뿐이고
     #    나머지는 `master/<배달경로>` 미러링이다 — 사용자 결정 ⓒ(빌드 사슬은 `master/` 에
     #    남는다, `layer3_verify` 를 상대경로로 올려다보기 때문). 의도하지 않은 갈림도 여기서 죽는다.
-    SPLIT = {"clientside/client_mcp.py": "client/runtime/client_mcp.py",
+    SPLIT = {"clientside/session1_conductor.py": "client/runtime/session1_conductor.py",
+             "clientside/client_mcp.py": "client/runtime/client_mcp.py",
              "clientside/ontology_cache.py": "client/runtime/ontology_cache.py"}
     for role in FROZEN:
         for dest, src in bundle.payload_pairs(role):
