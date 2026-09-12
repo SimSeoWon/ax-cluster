@@ -1286,6 +1286,36 @@ def test_codex_identity() -> None:
     check("  시드일 때는 교정한다", seeded.lstrip().startswith("# AGENTS.md"))
 
 
+def test_dispatched_work_needs_no_consent() -> None:
+    """🔴 **파견된 조각에는 「고치기 전 동의」가 이미 나 있다** (실측 2026-09-12).
+
+    `.2` 의 codex 가 구현 계획까지 정확히 세워 놓고 *"AGENTS.md 규약상 … 승인해 주세요"* 로
+    멈춰 **같은 조각이 4번 실패**했다. 비대화형이라 승인해 줄 사람이 없어 `RESULT: BLOCKED`
+    로 끝난다. **모델이 규칙을 어긴 것이 아니라 정직하게 따른 것**이고, 규칙에 예외가 없던
+    것이 결함이었다.
+
+    [중요] 이 조항은 **관리 블록 안**에 있어야 한다 — 본문은 사람 글이라 재배달이 덮지
+    않는다(`merge_claude_md`). 이미 배달된 기계에 닿으려면 블록이어야 한다.
+    """
+    f = _facts(role="worker")
+    b = bundle.managed_block("ModularStage", f)
+    check("🔴 [중요] 파견 조각은 묻지 말고 진행한다고 적혀 있다",
+          "묻지 말고 진행한다" in b, b[-400:])
+    check("  등재가 곧 승인이라는 근거를 적는다", "등재한 것 자체가 승인" in b)
+    check("  실측 근거를 남긴다 (왜 이 예외가 생겼나)", "4번 실패" in b)
+    check("[주의] 예외는 **지정된 파일**까지다 — `.uproject`·`Config` 는 그대로 동의가 필요",
+          "목록 밖 파일" in b and "#298" in b)
+    check("🔴 [중요] **관리 블록 안**이다 (본문이면 기존 기계에 안 닿는다)",
+          b.startswith(bundle.MD_BEGIN) and b.rstrip().endswith(bundle.MD_END))
+
+    # 🔴 [중요] **요청자에게는 주지 않는다** — 그 트리는 사람이 편집 중이고, 거기서
+    #    에이전트가 묻지 않고 고치는 것이 더티 체크가 막던 사고다. 기존 가드
+    #    (*"요청자 블록은 ax-work 를 가리키지 않는다"*)가 내 첫 배선을 잡아 세웠다.
+    r = bundle.managed_block("ModularStage", _facts(role="requester"))
+    check("🔴 [중요] 요청자에게는 이 예외를 주지 않는다 (사람이 편집 중인 트리다)",
+          "묻지 말고 진행한다" not in r)
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
