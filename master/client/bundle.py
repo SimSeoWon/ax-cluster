@@ -125,8 +125,15 @@ PAYLOAD_BY_ROLE = {
     #    `client_mcp.py` 와 **옆 파일로 로드되는** `ontology_cache.py`(`_load_cache` 가
     #    `Path(__file__).with_name` 으로 찾는다 — 빠지면 조회 도구가 조용히 죽는다).
     #    [주의] 권한은 이 표가 아니라 **토큰 스코프**가 정한다(`auth.WORKER_SCOPE` — 쓰기는 403).
+    # 🔴 **상주 폐포** (`#404`, `#320` 철거분 복원 — 추론 경로는 뺐다). `worker_daemon.py` 가
+    #    여기 들어오는 것이 `#405` 의 등록 게이트를 푸는 값이다: `_register_residency` 가
+    #    이 목록에서 데몬을 찾고, 없으면 **등록하지 않는다**(없는 파일을 가리키는 작업을 걸면
+    #    5분마다 실패만 쌓인다). `ax_safety` 는 데몬이 `from . import ax_safety` 로 부르므로
+    #    **같이 가야 한다** — 빠지면 상주 진입에서 죽는다(`clientside/ontology_cache.py` 가
+    #    옆 파일로 로드되는 것과 같은 부류의 함정).
     "worker": (_pair("clientside/client_mcp.py", "client/runtime/client_mcp.py"),
                _pair("clientside/ontology_cache.py", "client/runtime/ontology_cache.py"),
+               _pair("work/worker_daemon.py"), _pair("work/ax_safety.py"),
                _pair("work/build_local.py"), _pair("work/skeleton_gate.py"),
                _pair("layer3_verify.py"),
                _pair("source_text.py"), _pair("utf8.py")),

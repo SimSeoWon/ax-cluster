@@ -238,15 +238,24 @@ def test_role_payload() -> None:
     # [주의] 이 칸은 세 번 움직였다: 옛 계약("워커에는 안 간다") → `#204` 로 claimer 폐포 추가
     #    → 2026-08-23 클라 MCP 추가(`#267`·`#261`) → **2026-08-27 claimer 폐포 제거**(`#320`,
     #    상주 전폐). 워커는 이제 마스터의 SSH push 로 돈다.
-    check("[중요] 워커에는 클라 MCP + 빌드 사슬이 간다 · **claimer 폐포는 없다** (#320)",
+    # 🔴 **네 번째 움직임 — 상주 폐포가 돌아왔다** (`#404`, 사용자 결정 2026-09-12).
+    #    `#320` 의 가드가 *"되살리려면 **결정이 먼저다**"* 라고 조건을 걸어 뒀고, 그 조건이
+    #    성립했다(기계 5~6대 확장 전제 · `#401` 의 세션 0 이 상주로 풀린다). 그 가드는
+    #    제 일을 했다 — 오늘 이 배선을 정확히 잡아 세웠다.
+    #    [주의] **`claimer.py` 가 아니라 `worker_daemon.py` 다** — 추론(code) 경로는 들어냈다.
+    #    그쪽이 폐기된 `carry`/`manifest` 운송 규약 위에 서 있었기 때문이다(2026-09-02 철거).
+    check("[중요] 워커에는 클라 MCP + 빌드 사슬 + **상주 폐포**가 간다 (#404)",
           set(bundle.payloads_for("worker")) == {
               "clientside/client_mcp.py", "clientside/ontology_cache.py",
+              "work/worker_daemon.py", "work/ax_safety.py",
               "work/build_local.py",
               "work/skeleton_gate.py", "layer3_verify.py", "source_text.py", "utf8.py"},
           str(bundle.payloads_for("worker")))
-    check("[중요] 상주 폐포가 워커 payload 에 되살아나지 않는다 (#320 — 되살리려면 결정이 먼저다)",
-          not {"work/claimer.py", "work/ax_safety.py"} & set(bundle.payloads_for("worker")),
+    check("🔴 [중요] 옛 `claimer.py` 는 돌아오지 않는다 — 추론 경로째 폐기했다",
+          "work/claimer.py" not in set(bundle.payloads_for("worker")),
           str(bundle.payloads_for("worker")))
+    check("[중요] `ax_safety` 가 데몬과 **함께** 간다 (빠지면 상주 진입에서 죽는다)",
+          {"work/worker_daemon.py", "work/ax_safety.py"} <= set(bundle.payloads_for("worker")))
     check("[중요] MCP 폐포가 함께 간다 (옆 파일이 빠지면 조회 도구가 조용히 죽는다)",
           {"clientside/client_mcp.py", "clientside/ontology_cache.py"}
           <= set(bundle.payloads_for("worker")))
@@ -332,6 +341,13 @@ def test_payload_split() -> None:
                    "work/skeleton_gate.py", "layer3_verify.py", "source_text.py",
                    "utf8.py"),
     }
+    # 🔴 동결값도 `#404` 로 움직였다 — 상주 폐포 둘이 **build_local 앞**에 들어간다.
+    #    [중요] 순서까지 동결하는 이유는 배달 순서가 계약이기 때문이다(`__init__.py` 가 먼저
+    #    가야 나머지가 임포트된다는 것과 같은 결).
+    FROZEN["worker"] = ("clientside/client_mcp.py", "clientside/ontology_cache.py",
+                        "work/worker_daemon.py", "work/ax_safety.py",
+                        "work/build_local.py", "work/skeleton_gate.py",
+                        "layer3_verify.py", "source_text.py", "utf8.py")
     for role, want in FROZEN.items():
         got = bundle.payloads_for(role)
         check(f"[중요] {role} 의 **배달 위치**가 동결값과 순서까지 같다",
