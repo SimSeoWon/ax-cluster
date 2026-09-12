@@ -1,6 +1,0 @@
-# Git-managed source and build contract. Do not edit generated manifests here.
-repository = "https://github.com/bekelly/codex.git"
-commit = "31bfc5fc879456ea8a74bc18c2b280ce38ad106a"
-rust_toolchain = "1.95.0-x86_64-pc-windows-msvc"
-codex_version = "0.153.0"
-artifact_files = ["codex.exe", "codex-code-mode-host.exe"]
