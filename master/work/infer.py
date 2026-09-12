@@ -748,8 +748,8 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
 
 
 
-def _notify_environment_failure(task_id: str, task: dict, marker: str, summary: str,
-                                *, api=runner._api) -> None:
+def _notify_blocked(task_id: str, task: dict, marker: str, summary: str,
+                    *, kind: str = "env", api=runner._api) -> None:
     """환경 실패를 **그 자리에서** work 의 레드마인 이슈에 적는다 (`#391`·`#399`).
 
     [중요] **조각 실패는 종전에 이슈로 가지 않았다** — 라운드가 전부 끝나야 공지가 났다.
@@ -764,26 +764,39 @@ def _notify_environment_failure(task_id: str, task: dict, marker: str, summary: 
         meta = (api("GET", f"/api/v1/works/{wid}") or {}) if wid else {}
         iid = (meta.get("work") or meta).get("redmine_issue_id")
         if not iid:
-            _log(f"[env] {task_id} 알림 못 보냄 — work 에 redmine_issue_id 가 없다")
+            _log(f"[{kind}] {task_id} 알림 못 보냄 — work 에 redmine_issue_id 가 없다")
             return
         from .. import redmine as _rm
-        note = "\n".join([
-            f"## 🔴 조각 `{task_id}` — **실행 환경 실패** (재시도하지 않음)",
-            "",
-            f"- 워커: `{task.get('assignee') or '?'}`",
-            f"- 신호: `{marker}`",
-            f"- 층1 판정: {summary}",
-            "",
-            "**코드 실패가 아니라 그 기계의 실행 환경 문제다.** 같은 기계에 다시 보내도 같은",
-            "이유로 죽으므로 재시도하지 않았다 — 재시도는 토큰만 태운다. 남은 조각은 계속 돈다.",
-            "",
-            "[중요] Windows 워커는 SSH(**세션 0**)에서 codex 샌드박스 자식이 죽는다 —",
-            "**세션 1 경유면 산다**(`#401` · 리포트 63).",
-        ])
+        if kind == "quota":
+            note = "\n".join([
+                f"## 🔴 조각 `{task_id}` — **한도 소진** (재시도하지 않음 · 다른 워커가 집는다)",
+                "",
+                f"- 워커: `{task.get('assignee') or '?'}` — **5시간 차단**",
+                f"- 신호: `{marker}`",
+                "",
+                "**코드 실패가 아니라 자원 문제다.** 한도는 **공용 자원**이라 다시 부르면 더",
+                "태운다(실측 2026-09-04: `429` 하나로 4조각 중 3이 동시에 죽었다). 이 조각은",
+                "`pending` 으로 돌아갔고 **다른 워커가 집으면 그대로 진행된다** — 사람이 할 일은",
+                "없을 수 있다. 남은 워커가 전부 막히면 그때는 라운드가 멈춘다.",
+            ])
+        else:
+            note = "\n".join([
+                f"## 🔴 조각 `{task_id}` — **실행 환경 실패** (재시도하지 않음)",
+                "",
+                f"- 워커: `{task.get('assignee') or '?'}`",
+                f"- 신호: `{marker}`",
+                f"- 층1 판정: {summary}",
+                "",
+                "**코드 실패가 아니라 그 기계의 실행 환경 문제다.** 같은 기계에 다시 보내도 같은",
+                "이유로 죽으므로 재시도하지 않았다 — 재시도는 토큰만 태운다. 남은 조각은 계속 돈다.",
+                "",
+                "[중요] Windows 워커는 SSH(**세션 0**)에서 codex 샌드박스 자식이 죽는다 —",
+                "**세션 1 경유면 산다**(`#401` · 리포트 63).",
+            ])
         _rm.update_issue(int(iid), notes=note)
-        _log(f"[env] {task_id} 요청자에게 알렸다 — 레드마인 #{iid}")
+        _log(f"[{kind}] {task_id} 요청자에게 알렸다 — 레드마인 #{iid}")
     except Exception as e:                                 # noqa: BLE001
-        _log(f"[env] {task_id} 알림 실패 — {type(e).__name__}: {e}")
+        _log(f"[{kind}] {task_id} 알림 실패 — {type(e).__name__}: {e}")
 
 
 def _skeleton_at(paths, commit: str, files) -> dict:
@@ -977,8 +990,24 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         #    피드백을 실어 보내도 그 기계에서는 스킬조차 못 읽는다 — 상한만 태운다.
         #    판정 근거는 **지휘자가 자기 입으로 한 말**(`c.notes`)이고, 그것을 남기게 만든
         #    것이 `#391` 이다. 여기서 새 신호를 지어내지 않는다.
-        env_hit = _RV.environment_failure(list(c.notes) + [c.summary])
-        if env_hit:
+        # 🔴 **한도 소진은 조각을 죽이지 않는다 — 다른 워커에게 넘긴다** (사용자 지적
+        #    2026-09-12). 환경 실패와 같은 부류(코드 실패가 아니고 재시도가 더 태운다)지만
+        #    **처분이 다르다**: 그 기계만 못 하는 것이므로 `pending` 으로 되돌린다.
+        #    큐가 그 동작을 이미 갖고 있다(`logic_lifecycle.py:196` — `quota_exhausted` 면
+        #    `pending` 복귀 + 그 워커 **5시간 차단**). 🔴 그런데 **그 사유를 아무도 보내지
+        #    않고 있었다** — 배관은 있고 만드는 코드가 0건이었다(`#388` 과 같은 병).
+        quota_hit = _RV.quota_exhausted(list(c.notes) + [c.summary])
+        env_hit = "" if quota_hit else _RV.environment_failure(list(c.notes) + [c.summary])
+        if quota_hit:
+            verdict = _RV.REJECT                              # revise 로 보내지 않는다
+            res.notes.append(
+                f"🔴 [중요] **한도 소진이다 — 코드 실패가 아니다** (`{quota_hit}`). "
+                f"재시도하지 않는다 — 한도는 **공용 자원**이라 다시 부르면 더 태운다. "
+                f"이 조각은 `pending` 으로 돌아가고 이 워커는 5시간 차단된다(다른 워커가 집는다).")
+            _log(f"[quota] {task_id} 🔴 한도 소진 ({quota_hit}) — pending 복귀, "
+                 f"워커={facts.host} 5h 차단")
+            _notify_blocked(task_id, task, quota_hit, c.summary, kind="quota", api=api)
+        elif env_hit:
             verdict = _RV.REJECT
             res.notes.append(
                 f"🔴 [중요] **실행 환경 실패다 — 코드 실패가 아니다** (`{env_hit}`). "
@@ -989,7 +1018,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                  f"워커={task.get('assignee') or '?'}")
             # 🔴 **즉시 요청자에게 알린다** — 라운드 끝까지 기다리면 그동안 요청자는
             #    아무것도 못 듣는다(`#399` · 2026-09-12 소프트 프리징의 그 자리).
-            _notify_environment_failure(task_id, task, env_hit, c.summary, api=api)
+            _notify_blocked(task_id, task, env_hit, c.summary, kind="env", api=api)
         else:
             verdict = _RV.classify(issues, attempt)
         r_result = r_base = ""
@@ -1015,7 +1044,9 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                              f"종결한다(원전 `reject`)")
             _log(f"[revise] {task_id} 상한 도달 attempt={attempt} → 종결")
         try:
-            runner.submit_fail(task_id, runner.BLOCKED, c.summary,
+            # [중요] 사유가 처분을 정한다 — `quota_exhausted` 는 큐가 **pending 복귀**로 받는다
+            _reason = "quota_exhausted" if quota_hit else runner.BLOCKED
+            runner.submit_fail(task_id, _reason, c.summary,
                                epoch=epoch, worker_id=facts.host, api=api,
                                result=r_result, new_base_commit=r_base)
         except Exception as e:                               # noqa: BLE001

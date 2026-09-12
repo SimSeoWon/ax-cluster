@@ -160,10 +160,6 @@ check("🔴 result 를 안 주면 종전대로 terminal 이다", _idx.tasks[_tid
       _idx.tasks[_tid]["status"])
 
 print()
-print("=" * 46)
-print(f"통과 {PASS} · 실패 {FAIL}")
-print("=" * 46)
-sys.exit(1 if FAIL else 0)
 
 
 # ── 🔴 환경 실패는 코드 실패가 아니다 (`#391` 완결 · 실측 2026-09-12) ────────────────
@@ -192,3 +188,29 @@ check("[중요] 층1 이슈가 있어도 환경 신호가 있으면 재시도 �
       R.classify(["[PSEUDO] 가 남아 있다"], 1) == R.REVISE
       and R.environment_failure([_REAL_2]) != "",
       "classify 는 그대로 revise 를 내고, 환경 판정은 호출자가 앞에서 가른다")
+
+
+# ── 🔴 한도 소진도 코드 실패가 아니다 (사용자 지적 2026-09-12) ────────────────────────
+
+# [중요] **실측 문구다** — `lanes.py` 머리말이 기록한 그것: *"429 You've hit your session
+#    limit 을 맞자 4조각 중 3이 동시에 죽고 라운드가 02:30 까지 보류됐다"*(2026-09-04).
+check("🔴 실물 429 문구를 잡는다",
+      R.quota_exhausted(["429 You've hit your session limit"]) == "429")
+check("  usage limit 도 잡는다", R.quota_exhausted(["Error: usage limit reached"]) != "")
+check("[주의] 오탐 금지 — 그냥 숫자 429 는 아니다",
+      R.quota_exhausted(["코드 429줄을 읽었다", "line 429"]) == "")
+check("  정상 출력은 잡지 않는다", R.quota_exhausted(["RESULT: DONE", "구현 완료"]) == "")
+
+# 🔴 환경 실패와 **처분이 다르다** — 죽이지 않고 다른 워커에게 넘긴다
+check("[중요] 한도와 환경은 다른 갈래다", R.QUOTA != R.ENV)
+_src = (Path(__file__).resolve().parent / "work" / "infer.py").read_text(encoding="utf-8")
+check("🔴 [중요] 한도면 `quota_exhausted` 로 신고한다 (큐가 pending 복귀로 받는다)",
+      '"quota_exhausted" if quota_hit' in _src, "infer.py 의 사유 분기")
+check("  한도가 환경보다 **먼저** 판정된다 (둘 다 걸리면 처분이 다르므로)",
+      '_RV.environment_failure' in _src and 'if quota_hit else' in _src)
+check("  요청자에게도 알린다", 'kind="quota"' in _src)
+
+print("=" * 46)
+print(f"통과 {PASS} · 실패 {FAIL}")
+print("=" * 46)
+sys.exit(1 if FAIL else 0)

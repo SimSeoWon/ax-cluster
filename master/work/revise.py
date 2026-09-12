@@ -108,6 +108,52 @@ ENV_MARKERS = (
     "connecting runner pipe-in",   # elevated runner 가 세션 9 파이프를 못 잡을 때
 )
 
+# 🔴 **자원이 떨어진 신호** (사용자 지적 2026-09-12: *"토큰 부족이라던지 하는 상황에도
+# 동일한 배선이 필요해보여"*) ────────────────────────────────────────────────────
+#
+# [중요] **환경 실패와 같은 부류다** — 코드 실패가 아니고, 재시도하면 **한도를 더 태운다.**
+# 실측 2026-09-04(`lanes.py` 머리말): *"`429 You've hit your session limit` 을 맞자 4조각 중
+# 3이 동시에 죽고 라운드가 02:30 까지 보류됐다"* — 한도가 **공용 자원**이라 그렇다.
+#
+# 🔴 [중요] **환경 실패와 다른 점 하나: 조각을 죽이지 않는다.** 다른 워커는 멀쩡할 수 있으므로
+# `pending` 으로 되돌려 남이 집게 한다. 큐가 이미 그 동작을 갖고 있다 —
+# `logic_lifecycle.py:196` 이 `reason == "quota_exhausted"` 를 받으면 `pending` 으로 되돌리고
+# 그 워커를 **5시간 차단**한다(`quota_blocked_workers`).
+#
+# 🔴 [주의] **그런데 그 사유를 아무도 보내지 않고 있었다** — 배관은 있는데 만드는 코드가
+# 0건이었다. `#388` 이 `needs_revision` 에서 겪은 것과 **같은 병**이고, `revise.py` 주석이
+# 그 사실을 적어 두기까지 했다. 이 상수가 그 빈 칸을 메운다.
+QUOTA_MARKERS = (
+    "429",                          # HTTP 상태 — claude/codex 공통
+    "session limit",                # `You've hit your session limit`
+    "usage limit",
+    "rate limit",
+    "quota",
+    "insufficient_quota",
+)
+
+QUOTA = "quota"            # 다섯 번째 갈래 — 죽이지 않고 **다른 워커에게 넘긴다**
+
+
+def quota_exhausted(texts) -> str:
+    """지휘자 출력에서 **자원이 떨어진 증거**를 찾는다. 없으면 빈 문자열.
+
+    [주의] `429` 는 흔한 숫자라 오탐이 날 수 있다 — 그래서 **`\"429\"` 로 굳어진 형태**나
+    상태 코드 문맥만 본다. 나머지 표지는 문구 자체가 충분히 특정적이다.
+    """
+    for t in texts or ():
+        s = str(t or "")
+        low = s.lower()
+        for m in QUOTA_MARKERS:
+            if m == "429":
+                if "429" in s and any(k in low for k in ("limit", "quota", "too many", "retry")):
+                    return "429"
+                continue
+            if m in low:
+                return m
+    return ""
+
+
 ENV = "environment"        # `pass`/`revise`/`reject` 와 나란한 네 번째 갈래
 
 
