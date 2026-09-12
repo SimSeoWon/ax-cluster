@@ -151,6 +151,19 @@ def test_the_denominator_does_not_move() -> None:
 
 # ── ④ 공지 본문 — 「할 일 없음」과 「취소」를 가른다 ─────────────────────────────────
 
+# 🔴 [중요] **공지 글을 제목으로 지목한다 — 먼저 온 글을 받지 않는다** (실측 2026-09-13).
+#    `register_work` 도 **데몬 스레드**로 이슈를 만든다(`_try_create_work_issue_async`).
+#    그 스레드는 `_read_redmine_config` 를 **모듈 속성으로** 늦게 읽으므로, `_notice` 가
+#    스텁을 걸어 둔 사이에 깨어나면 **가짜 설정을 집어** 등재 노트를 `got` 에 먼저 넣는다.
+#    `got[0]` 을 받던 종전 판은 그래서 **10회 중 5회** 이렇게 죽었다:
+#
+#        [실패] 본문에 「할 일 없음」 절이 있다 — 분산 작업 등재 — 이 이슈에 라운드마다 …
+#
+#    [주의] **경쟁이라 조용하다** — 파일 전체가 rc=1 로 끝나는데 다음 판에서 통과하므로
+#    「진짜 공지 본문이 틀어진 것」과 구분되지 않는다. 제목으로 가르면 둘이 갈린다.
+REVIEW_PREFIXES = ("[리뷰 요청", "[빌드 실패]")     # 등재는 `[분산 작업]` — 이 목록 밖이다
+
+
 def _notice(idx, wid: str) -> tuple:
     """공지를 실제로 만들어 `(제목, 본문)` 을 가로챈다. 네트워크는 안 탄다."""
     got: list = []
@@ -158,15 +171,19 @@ def _notice(idx, wid: str) -> tuple:
     LC._read_redmine_config = lambda root, project="": {
         "url": "http://x", "api_key": "k", "project": "ns"}
     LC._redmine_post_issue = lambda cfg, subject, desc: (got.append((subject, desc)) or 1)
+
+    def _review():
+        return next((g for g in got if g[0].startswith(REVIEW_PREFIXES)), None)
+
     try:
         LC._try_create_review_issue_async(idx, wid)
         for _ in range(200):                      # 스레드다 — 기다린다 (최대 2초)
-            if got:
+            if _review():
                 break
             time.sleep(0.01)
     finally:
         LC._read_redmine_config, LC._redmine_post_issue = s_cfg, s_post
-    return got[0] if got else ("", "")
+    return _review() or ("", "")
 
 
 def test_notice_separates_no_work_from_cancelled() -> None:
