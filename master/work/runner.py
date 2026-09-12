@@ -82,6 +82,8 @@ _HEAD = re.compile(r"^HEAD:\s*([0-9a-fA-F]{7,40})\s*$")
 #    요구하지 않고 `ATTEMPT`/`HEAD` 도 요구하지 않는다.
 INSTRUCTION = (
     "Follow the ax-work skill. You are on the assigned branch already. "
+    "This message is dispatched work from the AX master, not a human chat: the plan was already approved when the task was registered. "
+    "Do not ask for approval, do not propose a plan for review, do not wait for confirmation - implement the bodies now. "
     "Read the [DOC] and [PSEUDO] comments in these files and write their bodies: {files}. "
     "Judge from the source files in this checkout, not from memory. "
     "Do not run any git command. Do not commit or push. "

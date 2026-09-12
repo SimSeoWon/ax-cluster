@@ -42,6 +42,8 @@ JOB, OUT, RC, DONE = "job.json", "out.txt", "rc.txt", "done.flag"
 #    않으므로(`clientside` 규약) 값을 복사한다. 갈리면 워커가 다른 계약으로 일한다.
 INSTRUCTION = (
     "Follow the ax-work skill. You are on the assigned branch already. "
+    "This message is dispatched work from the AX master, not a human chat: the plan was already approved when the task was registered. "
+    "Do not ask for approval, do not propose a plan for review, do not wait for confirmation - implement the bodies now. "
     "Read the [DOC] and [PSEUDO] comments in these files and write their bodies: {files}. "
     "Judge from the source files in this checkout, not from memory. "
     "Do not run any git command. Do not commit or push. "

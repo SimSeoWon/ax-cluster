@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import ast
 import sys
 import time
 from pathlib import Path
@@ -431,13 +432,64 @@ def test_codex_mcp_approval() -> None:
     check("[중요] claude 모드에는 codex 승인 플래그가 안 붙는다", "approval_mode" not in cl)
 
 
+def test_dispatch_is_not_a_consent_prompt() -> None:
+    """🔴 파견은 **묻는 자리가 아니다** — 지시문이 그것을 말한다 (실측 2026-09-13).
+
+    [중요] **`AGENTS.md` 로는 못 막는다.** `#402` 가 심은 동의 규칙(*"게임 소스 수정은 계획
+    승인 후에만"*)을 `.2` 의 codex 가 **따랐고**, `melee_hit_notify` 가 4회 연속 이렇게 죽었다:
+
+        "AGENTS.md 규약상 게임 소스 수정과 빌드는 계획 승인 후에만 진행합니다."
+        "이 계획대로 진행해도 되는지 승인해 주세요."
+        RESULT: BLOCKED
+
+    문서에 예외를 넣는 것으로 끝내지 않는 이유 셋 — 모두 실측이다:
+      ⑴ `AGENTS.md` 는 **배달물**이라 사람이 본문을 고치면 날아가고, 배달이 밀린 기계는 옛 문구를 본다
+      ⑵ `role: worker` 는 **마스터 레지스트리에만** 있다 — 워커 `config.json` 의 `this_host` 는
+         `host`/`user`/`os` 뿐이라 워커 안에서는 자기가 워커인지 읽을 수 없다
+      ⑶ 설령 읽어도 「이 기계가 워커다」이지 「이 프롬프트가 파견이다」가 아니다 — 같은
+         체크아웃에서 사람이 직접 codex 를 열 수도 있다
+      ⑷ 🔴 **승인 플래그로도 못 막는다** — codex 는 도구 승인 채널이 아니라 **산문으로** 물었다.
+         `approval_mode="approve"` 29개도 `--dangerously-skip-permissions` 도 텍스트 질문은 못 막는다
+
+    🔴 그래서 원천은 **지시문 하나뿐이다** — 마스터가 만들고, 파견마다 나가고, 모델이 무조건 읽는다.
+    """
+    check("[중요] 파견임을 지시문이 선언한다", "dispatched work" in R.INSTRUCTION, R.INSTRUCTION)
+    check("[중요] 승인이 이미 났다고 말한다", "already approved" in R.INSTRUCTION)
+    check("[중요] 묻지 말라고 말한다", "Do not ask for approval" in R.INSTRUCTION)
+    check("계획 제출도 막는다", "do not propose a plan" in R.INSTRUCTION)
+
+    c = R.worker_command(_facts(), "t1")
+    check("실제 명령줄에 실린다", "Do not ask for approval" in c, c[:120])
+
+
+def test_session1_instruction_matches() -> None:
+    """🔴 **배달물의 지시문이 마스터와 같은 글자인가.** 주석으로만 적혀 있던 계약을 잰다.
+
+    `client/runtime/session1_conductor.py` 는 `clientside` 규약상 마스터를 import 하지 않아
+    값을 **복사**한다. 갈리면 세션1 경로(윈도우 워커)만 **다른 계약으로** 일하는데, 그 차이는
+    마스터 로그에 안 보인다 — 산출물이 조금 다를 뿐이라 층1 이 잡지도 못한다.
+    """
+    src = (Path(__file__).resolve().parents[1]
+           / "client" / "runtime" / "session1_conductor.py")
+    ns: dict = {}
+    exec(compile(ast.Module(body=[n for n in ast.parse(src.read_text()).body
+                                  if isinstance(n, ast.Assign)
+                                  and getattr(n.targets[0], "id", "") == "INSTRUCTION"],
+                            type_ignores=[]), str(src), "exec"), ns)
+    check("[중요] 세션1 런처가 지시문을 갖는다", "INSTRUCTION" in ns, sorted(ns))
+    check("🔴 [중요] 마스터 지시문과 글자까지 같다", ns.get("INSTRUCTION") == R.INSTRUCTION,
+          f"launcher={ns.get('INSTRUCTION', '')[:80]!r}\nmaster={R.INSTRUCTION[:80]!r}")
+
+
 def main() -> int:
     for fn in (test_parse, test_pick, test_command, test_codex_windows_sandbox,
                test_agent_report, test_beater, test_run_task,
                test_queue_calls, test_run_once_happy, test_run_once_returns_the_task,
                test_run_once_guards, test_result_asymmetry, test_pick_skips_dirty,
                test_json_usage,
-               test_codex_mcp_approval):
+               test_codex_mcp_approval,
+               test_dispatch_is_not_a_consent_prompt,
+               test_session1_instruction_matches):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_runner: {PASS}/{total} 통과")
