@@ -216,6 +216,17 @@ def cmd_deliver(project: str, *, init: bool = False) -> int:
             print(f"  [중요] {f.host}: {e}")
             bad += 1
             continue
+        # Optional but auditable: when AX_CODEX_RUNTIME_PACKAGE is configured,
+        # onboarding installs and verifies the Git-managed Session 0 runtime.
+        if f.role == "worker" and f.windows:
+            try:
+                from .codex_runtime import install as install_codex_runtime
+                runtime = install_codex_runtime(f)
+                r["codex_runtime"] = runtime
+            except Exception as e:  # noqa: BLE001
+                print(f"  [중요] {f.host}: codex_runtime 실패 — {e}")
+                bad += 1
+                continue
         print(f"  [완료] {f.host} [{f.role}]: config={r['config']} · CLAUDE.md {r['claude_md_mode']}")
         ini = r.get("init") or {}
         if ini.get("ran"):
@@ -250,6 +261,8 @@ def cmd_deliver(project: str, *, init: bool = False) -> int:
         for cm in r.get("codex_mcp") or []:
             # [중요] 걸었는지와 **왜 안 걸었는지**를 둘 다 찍는다 (리포트 44 의 교훈)
             print(f"     codex_mcp={cm}")
+        if r.get("codex_runtime"):
+            print(f"     codex_runtime={r['codex_runtime']}")
         if "settings_json" in r:
             # [중요] 훅 **등록** 자리 — 파일 배달과 다른 것이다 (`#337`)
             print(f"     settings_json={r['settings_json']}  [훅 등록]")

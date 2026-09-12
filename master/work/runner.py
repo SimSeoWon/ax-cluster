@@ -346,6 +346,11 @@ def agent_command(facts, path: str, instr: str, *, mode: str) -> str:
         #    단계에서 거절**한다(실측). Linux 도 같은 스키마로 파싱하지만 **쓰지는 않으므로**
         #    Windows 일 때만 싣는다 — 안 쓰는 손잡이를 보낼 이유가 없다.
         win = '-c windows.sandbox="unelevated" ' if facts.windows else ""
+        # Git-managed Session 0 runtime is preferred when onboarding installed it.
+        # Existing workers transparently fall back to their regular `codex` command.
+        codex_bin = ("set \"AX_CODEX=%USERPROFILE%\\.ax\\codex-session0\\codex.exe\" && "
+                     "if not exist \"%AX_CODEX%\" set \"AX_CODEX=codex\" && "
+                     "%AX_CODEX%") if facts.windows else "codex"
         # 🔴 [중요] **MCP 도구는 승인 없이는 안 불린다** (`#402`, 실측 2026-09-12).
         #    비대화형은 `approval: never` 라 호출이 이렇게 거절된다:
         #
@@ -360,7 +365,7 @@ def agent_command(facts, path: str, instr: str, *, mode: str) -> str:
         #    [주의] 파일이 아니라 **명령줄**인 것은 바로 위 `windows.sandbox` 와 같은 근거다
         #    (*"앱이 관리하는 파일을 고치지 않는다"*) — `codex mcp add` 로는 쓸 수도 없다.
         appr = bundle.codex_approval_flags()
-        return (f'{cd} && codex exec --json -s workspace-write '
+        return (f'{cd} && {codex_bin} exec --json -s workspace-write '
                 f'-c sandbox_workspace_write.network_access=true '
                 f'{win}'
                 f'{appr} '
