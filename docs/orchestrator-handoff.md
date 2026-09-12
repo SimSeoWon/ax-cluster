@@ -6,18 +6,20 @@
 > 🔴 **여기 적힌 「완료」를 그대로 믿지 않는다.** 받는 쪽은 HEAD·dirty diff·이슈·프로세스를
 > 직접 대조한다 (근거: `orchestrator-rules.md` §5).
 
-- **갱신 시각**: 2026-09-12 12:16 KST (UTC+9) — **`#402` 코덱스 배달 경로**
+- **갱신 시각**: 2026-09-12 12:21 KST (UTC+9) — **`#402` 코덱스 배달 경로**
 - **지휘 도구 / 세션 식별자**: Claude Opus 5 (1M) · `session_01NR2NV3oLKrz4BKtP2AdEvW`
-- **HEAD**: `b8dab4a` (그 앞 `c70bb63`) · 워킹트리 **깨끗** · **origin push 안 했다**
-- **상태**: `#402`(신규) 소1~4 완료. 배달 경로가 이제 codex 몫을 싣는다 —
-  `AGENTS.md` 와 `codex mcp add ax-client`. `.2`(NS) 실물 배달 2회 통과.
-  🔴 **`ax-client` 의 codex 실물 확인은 아직 못 했다** — 아래 §미결.
+- **HEAD**: `942bf42` · 워킹트리 **깨끗** · **origin push 완료** · `.43` 클론도 같은 커밋
+- **상태**: 🔴 **`#402` 소1~5 전부 완료 — 실증까지 닫혔다.** 배달 경로가 codex 몫을 싣고
+  (`AGENTS.md` + `codex mcp add ax-client`), `.43` 에서 codex 세션이 `ax-client` 도구를
+  **실제로 호출**했다. `.2`·`.43` 둘 다 배달 통과.
 
 ## 🔴 바로 다음 작업
 
-`#402` 의 남은 한 칸: **piped stdio 가 사는 기계에서 `ax-client` 실물 확인.**
-`.43`(리눅스, **지금 꺼져 있다**)을 켜거나 `.33`(사람 기계, 범위 밖 — 승인 필요) 중
-사람이 고르는 자리다. 그 전까지 `#402` 는 「배선 완료·실증 미완」이다.
+`#402` 는 닫을 수 있다(실증 완료, 아래 §실증). **남은 선택은 `.33` 배달 여부다** —
+요청자 기계라 범위 밖으로 두었고 **사람 승인이 필요하다**. 지금 `.33` 의 codex 에는
+`ax-client` MCP 가 **0건**이고 `AGENTS.md` 도 없다.
+
+[주의] **`.43` 은 켜져 있다** (2026-09-12 확인, up 2:05). 종전 기록의 「BC-250 종료」는 낡았다.
 
 그 밖에 열린 것: `#399`(활성 실행 0·종결 아님인데 요청자가 모르는 공지 결함) ·
 `#401`(`.2` Codex Session 0 — upstream/Windows 보안 객체 수정 여부) ·
@@ -48,6 +50,16 @@
 **회귀**: client_bundle 339 · runner 95 · client_spec 196 · client_mcp 147 · cache 24 ·
 editor_mcp 45 · conventions 16 · onboard 50 · mcp_servers 48 · work_mode_stamp 15 ·
 orchestration_control 11 · `git diff --check` 통과.
+
+### [완료] 실증 — `.43` 에서 codex 가 `ax-client` 를 실제로 불렀다 (2026-09-12)
+
+    mcp: ax-client/list_works started → (failed)   403 — 워커 토큰 스코프가 막았다 (설계대로)
+    mcp: ax-client/get_anti_patterns started → (completed)   "0건"
+
+두 번째가 전 구간을 증명한다: 등록 → **stdio 서버 기동** → **승인 플래그 통과** → 워커
+토큰으로 마스터 HTTP 성공. `0건` 은 진짜다 — 마스터에 직접 물어도 `exists:false` 다.
+첫 번째의 403 도 결함이 아니라 **κ.0 경계를 토큰이 강제한 것**(`WORKER_SCOPE` 에 `list_works`
+가 없다).
 
 ### 🔴 미결 — `.2` 는 codex 로 `ax-client` 를 못 쓴다 (`#401` 의 같은 뿌리)
 
