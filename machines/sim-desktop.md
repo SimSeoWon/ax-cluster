@@ -123,8 +123,10 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
              [주의] **기본값 상수는 아직 사람이 안 정했다**(`_UNDECIDED_DEFAULT`, 값 `lane`).
              🔴 [중요] **워커·오케스트레이션은 `claude` 다** (사용자 결정 2026-09-12) —
                     `codex` 는 **이 클러스터 코드 보수**로 돌린다. 저장 상태도 `claude`.
-             🔴 [주의] **`.2` 에 `codex` 모드를 보내지 않는다 — 셸 실행이 죽는다.** 윈도우
-                    비대화형(SSH Session 0)에서 codex 샌드박스 runner 가 `0xC0000142` 로
+             🔴 [완료] **`.2` 에 `codex` 모드를 보낸다 — 세션 1 경유로 라이브 완주했다**
+                    (2026-09-13). **죽는 것은 「SSH 가 직접 미는」 경로뿐이고, 파견은 더 이상
+                    그 경로로 가지 않는다.** 아래는 그 경로가 왜 죽는지의 기록이다 —
+                    윈도우 비대화형(SSH Session 0)에서 codex 샌드박스 runner 가 `0xC0000142` 로
                     죽는다 (upstream `openai/codex#37722` open · A-B-A 로 확정 · 원인은
                     Session 0 Window Station/Desktop 에 샌드박스 계정 ACE 가 없는 것).
                     [중요] **고장은 「SSH + 윈도우 비대화형」 교집합 하나다** — `.43`(리눅스,
@@ -141,8 +143,13 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
                        실패**했고, 고친 뒤 `.2` 는 통과한다(`fc23a47`). 다만 그 probe 가 재는
                        것은 **제한 토큰 샌드박스의 단순 경로**이고 — 그건 세션 0 에서도 원래
                        된다 — 죽는 것은 `codex exec` 의 **셸 도구(unified exec)** 다.
-                       **probe 통과 = `.2` codex 지휘자 정상 이 아니다.** 파견이 SSH push 인
-                       한 그 축은 미해결이고, 판정은 실물 파견이 한다.
+                       **probe 통과 = `.2` codex 지휘자 정상 이 아니다** — 판정은 실물 파견이
+                       한다. [완료] 그 판정이 났다: 파견은 `runner.uses_session1`(윈도우 AND
+                       codex)이 `schtasks /run` 으로 돌리고, 마스터는 `job.json`(데이터만)을
+                       쓴다. 🔴 [주의] **그래서 재부팅 뒤 `janus` 로그인이 필수다** —
+                       `/IT` 과제는 대화형 로그온이 있어야 돌고 `.2` 엔 자동 로그온이 없다
+                       (`AutoAdminLogon` 키 부재, 실측). 안 하면 세션 1 이 없어 `.2` 가
+                       **조용히 파견에서 빠진다.** RDP(3389)로도 된다. 리포트 64
           **자기 서브 브랜치에 커밋**하고                            [완료] 라이브 2026-09-03
           (끝나면 `main` 복귀 — 체크아웃된 브랜치는 정리에서 빠진다)  [완료] 실측
           🔴 **끝내고 다음 작업을 요청한다**   [완료] 라이브 2026-09-12 — `.2` 상주가
