@@ -346,9 +346,24 @@ def agent_command(facts, path: str, instr: str, *, mode: str) -> str:
         #    단계에서 거절**한다(실측). Linux 도 같은 스키마로 파싱하지만 **쓰지는 않으므로**
         #    Windows 일 때만 싣는다 — 안 쓰는 손잡이를 보낼 이유가 없다.
         win = '-c windows.sandbox="unelevated" ' if facts.windows else ""
+        # 🔴 [중요] **MCP 도구는 승인 없이는 안 불린다** (`#402`, 실측 2026-09-12).
+        #    비대화형은 `approval: never` 라 호출이 이렇게 거절된다:
+        #
+        #        MCP tool call requires approval, but approval policy is never
+        #
+        #    🔴 **서버 단위 키는 안 먹는다** — `-c mcp_servers.<서버>.approval_mode` 로는 그대로
+        #    거절당했고, `tools.<도구>.approval_mode` 만 통과했다(실측). 그래서 도구마다 하나씩
+        #    싣는다. 목록은 `bundle.client_tool_names()` 가 **클라 MCP 의 `TOOLS` 에서** 읽는다 —
+        #    여기 이름을 베껴 두면 도구가 늘 때 조용히 낡는다.
+        #    [주의] **`--approve-for-me` 를 쓰지 않는다** — 승인 경로에 LLM 자동 검토가 들어간다.
+        #    결정론 게이트가 LLM 판단보다 앞선다는 원칙과 어긋난다.
+        #    [주의] 파일이 아니라 **명령줄**인 것은 바로 위 `windows.sandbox` 와 같은 근거다
+        #    (*"앱이 관리하는 파일을 고치지 않는다"*) — `codex mcp add` 로는 쓸 수도 없다.
+        appr = bundle.codex_approval_flags()
         return (f'{cd} && codex exec --json -s workspace-write '
                 f'-c sandbox_workspace_write.network_access=true '
                 f'{win}'
+                f'{appr} '
                 f'-C "{path}" "{instr}" < {nul}')
     raise ValueError(f"모르는 지휘자 모드: {mode!r}")
 

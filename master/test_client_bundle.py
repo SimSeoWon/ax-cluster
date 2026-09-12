@@ -1111,7 +1111,11 @@ def test_codex_entry_doc() -> None:
 
     # ⑴ 없으면 CLAUDE.md 병합 결과를 **그대로** 시드로 쓴다 (두 번째 `/init` 을 안 태운다)
     got = bundle.codex_entry_text("", merged, "ModularStage", f)
-    check("[중요] AGENTS.md 가 없으면 CLAUDE.md 병합 결과를 시드로 쓴다", got == merged)
+    # [주의] **글자까지 같지는 않다** — 정체성 세 줄만 codex 의 것으로 고친다(`test_codex_identity`).
+    #    본문은 그대로여야 한다: 길이 차이가 교정분을 넘으면 산문을 건드린 것이다.
+    check("[중요] AGENTS.md 가 없으면 CLAUDE.md 병합 결과를 시드로 쓴다",
+          abs(len(got) - len(merged)) < 300 and got.count("\n") == merged.count("\n"),
+          f"{len(got)} vs {len(merged)}")
     check("  그래서 자족적이다 — AX 블록이 들어 있다", bundle.MD_BEGIN in got)
 
     # ⑵ 사람이 쓴 AGENTS.md 가 있으면 **블록만** 얹는다
@@ -1218,6 +1222,49 @@ def test_codex_mcp_registration() -> None:
           str(spec.codex_mcp_for("requester")))
 
 
+def test_codex_identity() -> None:
+    """🔴 [중요] **시드한 `AGENTS.md` 가 자기를 `CLAUDE.md` 라고 소개했다** (`#402`, `.2` 실물).
+
+    1행 `# CLAUDE.md` · 3행 *"guidance to **Claude Code** (claude.ai/code)"*. codex 가 읽으면
+    「남의 문서」로 읽을 여지가 그대로 있고, 마일스톤 6 에 적힌 실패(진입 문서가 자족하지
+    못해 codex 가 멈췄다)와 같은 종류다.
+    """
+    f = _facts(role="worker", codex="0.153.4")
+    merged = bundle.merge_claude_md("", "ModularStage", f)
+    got, missed = bundle.apply_codex_identity(merged)
+
+    check("[중요] 제목이 AGENTS.md 다", got.lstrip().startswith("# AGENTS.md"),
+          got.lstrip()[:30])
+    check("  더는 Claude Code 전용이라 말하지 않는다",
+          "provides guidance to Claude Code" not in got)
+    check("  codex 가 계층 로드를 안 한다는 사실을 스스로 적는다",
+          "does not load parent directories" in got)
+    check("[주의] gitignore 문장이 /AGENTS.md 를 포함한다",
+          "`/AGENTS.md`" in got, str([l for l in got.splitlines() if "gitignored" in l][:1]))
+    check("[중요] 정본 머리글이 그대로면 못 찾은 것이 없다", missed == (), str(missed))
+
+    # 본문 산문은 건드리지 않는다 — 「정본은 payload/claude_md/<P>.md」는 **맞는 설명**이다
+    body = bundle.claude_md_body("ModularStage")
+    tail = body.splitlines()[4].strip()          # 머리 3줄 아래 = 교정 대상이 아닌 산문
+    check("[중요] 본문 산문은 그대로다 (정체성 세 줄만 고친다)", tail and tail in got, tail[:60])
+
+    # 멱등 — 나중에 정본이 도구 중립으로 바뀌어도 시끄러워지지 않는다
+    again, missed2 = bundle.apply_codex_identity(got)
+    check("[주의] 멱등이다", again == got and missed2 == (), str(missed2))
+
+    # 못 찾으면 **조용히 넘기지 않는다**
+    _, missed3 = bundle.apply_codex_identity("아무 관계 없는 글")
+    check("[중요] 정본 머리글이 바뀌면 못 찾았다고 말한다", len(missed3) == 3, str(missed3))
+
+    # 시드일 때만 교정한다 — 사람이 쓴 AGENTS.md 는 제목까지 사람 것이다
+    human = "# 내 코덱스 지침\n\n사람이 썼다.\n"
+    kept = bundle.codex_entry_text(human, merged, "ModularStage", f)
+    check("[중요] 사람이 쓴 AGENTS.md 의 제목은 안 건드린다",
+          kept.startswith("# 내 코덱스 지침"), kept[:30])
+    seeded = bundle.codex_entry_text("", merged, "ModularStage", f)
+    check("  시드일 때는 교정한다", seeded.lstrip().startswith("# AGENTS.md"))
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
@@ -1233,7 +1280,8 @@ def main() -> int:
                test_registration_doc_matches_reality,
                test_hook_registration,
                test_codex_entry_doc,
-               test_codex_mcp_registration):
+               test_codex_mcp_registration,
+               test_codex_identity):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_bundle: {PASS}/{total} 통과")

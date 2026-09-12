@@ -398,12 +398,46 @@ def test_json_usage() -> None:
     check("[중요] 명령에 --output-format json 이 있다", "--output-format json" in cmd, cmd[:90])
 
 
+def test_codex_mcp_approval() -> None:
+    """🔴 **MCP 도구는 승인 없이는 안 불린다** (`#402`, 실측 2026-09-12).
+
+    비대화형 `codex exec` 는 `approval: never` 라 호출이 거절된다 —
+    *"MCP tool call requires approval, but approval policy is never"*. 🔴 **서버 단위 키는
+    안 먹는다**(`-c mcp_servers.<서버>.approval_mode` 로 그대로 거절당했다). 도구 단위만 통과다.
+    """
+    from master.client import bundle as B
+    names = B.client_tool_names()
+    check("[중요] 도구 이름을 클라 MCP 의 TOOLS 에서 읽는다 (여기 베끼지 않는다)",
+          len(names) > 20 and "list_works" in names and "search_context" in names,
+          f"{len(names)}종")
+
+    for host, win in (("192.168.0.2", True), ("192.168.0.43", False)):
+        cmd = R.worker_command(_facts(host, os_=("windows" if win else "linux"),
+                                      path=("C:\\trunk\\NS" if win else "/t/NS")),
+                               "t1", mode="codex")
+        check(f"  {host}: 도구마다 승인 플래그가 실린다",
+              cmd.count("approval_mode") == len(names), str(cmd.count("approval_mode")))
+        check(f"  {host}: 종전 플래그가 살아 있다 (network_access)",
+              "network_access=true" in cmd)
+        # [주의] `--approve-for-me` 는 승인 경로에 LLM 자동 검토를 넣는다 — 결정론 원칙과 어긋난다
+        check(f"  {host}: `--approve-for-me` 를 쓰지 않는다", "--approve-for-me" not in cmd)
+
+    win_cmd = R.worker_command(_facts("192.168.0.2", os_="windows", path="C:\\trunk\\NS"),
+                               "t1", mode="codex")
+    check("🔴 [주의] Windows 의 `unelevated` 못박기가 승인 플래그에 밀려나지 않았다",
+          'windows.sandbox="unelevated"' in win_cmd)
+    # lane/claude 모드는 MCP 승인과 무관하다 — 섞이면 안 된다
+    cl = R.worker_command(_facts("192.168.0.43", path="/t/NS"), "t1", mode="claude")
+    check("[중요] claude 모드에는 codex 승인 플래그가 안 붙는다", "approval_mode" not in cl)
+
+
 def main() -> int:
     for fn in (test_parse, test_pick, test_command, test_codex_windows_sandbox,
                test_agent_report, test_beater, test_run_task,
                test_queue_calls, test_run_once_happy, test_run_once_returns_the_task,
                test_run_once_guards, test_result_asymmetry, test_pick_skips_dirty,
-               test_json_usage):
+               test_json_usage,
+               test_codex_mcp_approval):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_runner: {PASS}/{total} 통과")

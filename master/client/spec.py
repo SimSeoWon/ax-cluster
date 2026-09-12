@@ -411,6 +411,32 @@ ENTRY_DOCS = (("claude", "CLAUDE.md"), ("codex", "AGENTS.md"))
 CODEX_ENTRY_REL = ENTRY_DOCS[1][1]
 
 
+# ── 진입 문서의 **정체성 교정** (`#402`, 실측 2026-09-12) ────────────────────────
+#
+# 🔴 [중요] **시드한 `AGENTS.md` 가 자기를 `CLAUDE.md` 라고 소개하고 있었다.** `.2` 배달본
+# 실물: 1행 `# CLAUDE.md` · 3행 *"This file provides guidance to **Claude Code**
+# (claude.ai/code) …"*. codex 가 읽으면 「이건 남의 문서」로 읽을 여지가 그대로 있고, 그것이
+# 마일스톤 6 에 적힌 실패(진입 문서가 자족하지 못해 codex 가 전제에 걸려 멈춤)와 같은 종류다.
+#
+# [중요] **본문 산문은 건드리지 않는다** — 정체성 세 줄만 고친다. 정본 3종
+# (`ModularStage.md`·`NS.md`·`_skeleton.md`)의 머리 2줄이 **글자까지 같아서**(실측) 치환이
+# 결정적이다. 본문 안의 다른 `CLAUDE.md` 언급은 *"정본은 `payload/claude_md/<P>.md` 다"* 라는
+# **맞는 설명**이라 그대로 둔다.
+#
+# [주의] **멱등이다** — 바꾼 글이 이미 있으면 「못 찾았다」로 치지 않는다. 나중에 정본 자체가
+# 도구 중립으로 바뀌어도 이 치환이 시끄러워지지 않는다.
+CODEX_ENTRY_SUBS = (
+    ("# CLAUDE.md", "# AGENTS.md"),
+    ("This file provides guidance to Claude Code (claude.ai/code) when working with code in"
+     " this repository.",
+     "This file provides guidance to coding agents (Codex, Claude Code) working with code in"
+     " this repository. The same content is delivered as `CLAUDE.md`; Codex does not load"
+     " parent directories, so this file is self-contained."),
+    ("- `/CLAUDE.md` and `/.claude/` are **gitignored**",
+     "- `/CLAUDE.md`, `/AGENTS.md` and `/.claude/` are **gitignored**"),
+)
+
+
 # ── codex MCP 등록 — **파일을 쓰지 않고 `codex mcp add` 를 부른다** (`#402`) ──────────
 #
 # [중요] **쓰는 쪽과 읽는 쪽이 codex 자신의 뷰**라 「파일은 맞는데 codex 는 못 본다」가

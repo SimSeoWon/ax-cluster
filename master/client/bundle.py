@@ -799,6 +799,24 @@ def merge_claude_md(existing: str, project: str, facts: HostFacts) -> str:
     return existing.rstrip() + "\n\n" + block + "\n"
 
 
+def apply_codex_identity(text: str) -> tuple:
+    """진입 문서를 **codex 의 것으로** 고친다. `(고친 글, 못 찾은 원문들)` (`#402`).
+
+    [중요] **멱등** — 바꾼 글이 이미 있으면 「못 찾았다」가 아니다. 정본이 나중에 도구 중립으로
+    바뀌어도 이 함수가 시끄러워지지 않는다.
+    [주의] 못 찾은 것은 **조용히 넘기지 않는다** — 호출자가 배달 출력에 싣는다. 정본 머리글이
+    바뀌면 그 사실이 사람 눈에 닿아야 한다(안 보이는 산출물은 없는 것으로 읽힌다).
+    """
+    out = text
+    missed = []
+    for src, dst in spec.CODEX_ENTRY_SUBS:
+        if src in out:
+            out = out.replace(src, dst)
+        elif dst not in out:
+            missed.append(src)
+    return out, tuple(missed)
+
+
 def codex_entry_text(agents_prev: str, claude_merged: str, project: str,
                      facts: HostFacts) -> str:
     """`AGENTS.md` 에 넣을 글. **비어 있으면 `CLAUDE.md` 병합 결과를 시드로 쓴다** (`#402`).
@@ -812,7 +830,7 @@ def codex_entry_text(agents_prev: str, claude_merged: str, project: str,
       - 마커 없다 → 맨 뒤에 블록만 덧붙인다
     """
     if not (agents_prev or "").strip():
-        return claude_merged
+        return apply_codex_identity(claude_merged)[0]
     return merge_claude_md(agents_prev, project, facts)
 
 
@@ -957,6 +975,49 @@ def merge_mcp_json(prev_text: str, facts: HostFacts) -> str:
     servers = data.setdefault("mcpServers", {})
     servers[MCP_SERVER_NAME] = mcp_entry_for(facts)
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def client_tool_names() -> tuple:
+    """배달되는 클라 MCP 가 **실제로 노출하는** 도구 이름. 선언은 `TOOLS` 하나다 (`#402`).
+
+    ## [중요] 왜 여기서 읽나 — 목록이 두 벌이 되면 안 된다
+
+    비대화형 `codex exec` 는 `approval: never` 라 MCP 도구 호출을 거절한다(실측 2026-09-12:
+    *"MCP tool call requires approval, but approval policy is never"*). 도구마다
+    `approval_mode = "approve"` 가 있어야 통과하고 — 🔴 **서버 단위 키는 안 먹는다**(실측) —
+    마스터가 그 목록을 알아야 한다. 여기에 이름을 베껴 두면 도구가 늘 때 조용히 낡는다.
+
+    [중요] **import 가 안전하다** — 이 파일에는 `if __name__ == "__main__"` 가드가 있어
+    모듈로 읽어도 stdio 루프가 돌지 않는다(확인하고 고른 경로다). 단일 파일이고 패키지
+    내부 import 가 없다는 그쪽 제약이 여기서는 이점이 된다.
+    [주의] **실패하면 빈 튜플이 아니라 예외다** — 승인 플래그가 조용히 비면 워커가 도구를
+    못 부르는데 아무 표면에도 안 나타난다(`#385` 와 같은 침묵).
+    """
+    import importlib.util
+    src = Path(__file__).resolve().parents[2] / "client" / "runtime" / "client_mcp.py"
+    if not src.is_file():
+        raise BundleError(f"클라 MCP 원본이 없다: {src}")
+    spec_ = importlib.util.spec_from_file_location("_ax_client_mcp_probe", src)
+    mod = importlib.util.module_from_spec(spec_)
+    spec_.loader.exec_module(mod)
+    names = tuple(t["name"] for t in getattr(mod, "TOOLS", []) if isinstance(t, dict) and t.get("name"))
+    if not names:
+        raise BundleError(f"{src} 에서 TOOLS 이름을 읽지 못했다 — 승인 플래그를 만들 수 없다")
+    return names
+
+
+def codex_approval_flags(server: str = "") -> str:
+    """`codex exec` 에 실을 **도구별 승인** `-c` 플래그들. 없으면 빈 문자열.
+
+    [중요] **파일이 아니라 명령줄이다** — `runner.py` 가 `windows.sandbox`·`network_access` 를
+    같은 방식으로 못 박는 것과 같은 근거다(*"앱이 관리하는 파일을 고치지 않는다"*).
+    `codex mcp add` 로는 이 키를 쓸 수 없기도 하다(실측).
+    [주의] `--approve-for-me` 를 쓰지 않는다 — 승인 경로에 **LLM 자동 검토**가 들어간다.
+    결정론 게이트가 LLM 판단보다 앞선다는 이 저장소의 원칙과 어긋난다.
+    """
+    srv = server or MCP_SERVER_NAME
+    return " ".join(f'-c mcp_servers.{srv}.tools.{t}.approval_mode="approve"'
+                    for t in client_tool_names())
 
 
 def codex_mcp_cmd(facts: HostFacts, name: str) -> str:
@@ -1452,6 +1513,12 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     written["agents_md"] = _remote_write(
         facts, spec.CODEX_ENTRY_REL,
         codex_entry_text(agents_prev, merged, project, facts), base="checkout")
+    if not (agents_prev or "").strip():
+        _missed = apply_codex_identity(merged)[1]
+        if _missed:
+            # [중요] 조용한 생략 금지 — 정본 머리글이 바뀌면 사람이 알아야 한다
+            written["agents_md_subs"] = ("[주의] 정체성 교정 " + str(len(_missed))
+                                         + "건을 못 찾았다: " + " · ".join(m[:40] for m in _missed))
     # ── 작업장 자산 (#226 4번) — 원전 watch.exe 가 생성하던 `.claude/` 구조 ─────────
     # [중요] **손으로 맞추던 것을 배달 경로에 넣는다.** 3번 재배선까지 저장소와 `.33` 을 scp 로
     #    맞췄고, 그 상태로는 조용히 갈린다(리포트 27 §13). 배달은 되읽어 해시 대조까지 한다.
