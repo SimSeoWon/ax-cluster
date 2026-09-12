@@ -6,16 +6,28 @@
 > 🔴 **여기 적힌 「완료」를 그대로 믿지 않는다.** 받는 쪽은 HEAD·dirty diff·이슈·프로세스를
 > 직접 대조한다 (근거: `orchestrator-rules.md` §5).
 
-- **갱신 시각**: 2026-09-12 12:21 KST (UTC+9) — **`#402` 코덱스 배달 경로**
+- **갱신 시각**: 2026-09-12 16:47 KST (UTC+9) — **`#402` 코덱스 배달 경로**
 - **지휘 도구 / 세션 식별자**: Claude Opus 5 (1M) · `session_01NR2NV3oLKrz4BKtP2AdEvW`
-- **HEAD**: `942bf42` · 워킹트리 **깨끗** · **origin push 완료** · `.43` 클론도 같은 커밋
+- **HEAD**: `e950b57` · 워킹트리 **깨끗** · **origin push 완료** · `.43` 클론도 같은 커밋
 - **상태**: 🔴 **`#402` 소1~5 전부 완료 — 실증까지 닫혔다.** 배달 경로가 codex 몫을 싣고
   (`AGENTS.md` + `codex mcp add ax-client`), `.43` 에서 codex 세션이 `ax-client` 도구를
   **실제로 호출**했다. `.2`·`.43` 둘 다 배달 통과.
 
+### 🔴 `.2` 의 처분 — **ⓒ 로 확정** (사용자 2026-09-12)
+
+`.2` 의 `~/.codex/config.toml` 은 `sandbox = "unelevated"` **그대로 둔다**(`elevated` 로
+되돌리면 편집·커밋이 다시 죽는다 — 4전 4패). 대신 **`.2` 를 codex 지휘자로 쓰지 않는 것**으로
+막는다. upstream `openai/codex#37722` 의 정식 릴리스가 나오면 그때 재검토한다.
+[중요] 이 판정은 **코드가 강제한다** — `conductor.worker_mode_readiness` 가 전환 전에 셸
+probe 를 돌려 실패하면 모드를 저장하지 않는다. 전역 워커 지휘자는 `claude` 다.
+
 ### 🔴 `.2` Session 0 조사 보고서
 
 정본: [`reports/62-codex-session0-root-cause-and-scope.md`](../reports/62-codex-session0-root-cause-and-scope.md)
+
+[주의] 초판의 「범위 통제」가 *"다음 작업에서 커밋을 되돌린다"* 로 낡아 있어 `e950b57` 에서
+정정했다 — revert 는 이미 끝나 있었다(`3495d93`·`9aa2467`·`71e82fd`). 같은 커밋에서 `#402`
+연결과 `.2` 처분 결정도 보고서에 넣었다.
 
 실제 Codex 모델 A/B에서 설치본은 `0xC0000142`로 셸 자식이 실패했고, 진단용 패치판은
 동일 Session 0에서 성공했다. 이것은 로그인 문제가 아니라 Windows sandbox의
@@ -32,7 +44,9 @@ Window Station/Desktop ACL 문제다. [중요] 진단용 Rust 빌드·특정 PC 
 
 그 밖에 열린 것: `#399`(활성 실행 0·종결 아님인데 요청자가 모르는 공지 결함) ·
 `#401`(`.2` Codex Session 0 — upstream/Windows 보안 객체 수정 여부) ·
-`#401` 의 지휘자 전환 readiness 는 **커밋 `b326cba` 로 있고 배포 승인 대기**다(아래).
+`#401` 의 지휘자 전환 readiness 는 **배포됐다** — origin push 완료, `.2`·`.43`·`.33` 배달 완료,
+`service_freshness` 가 「전부 지금 코드」로 답한다(실측 2026-09-12). 즉 `.2` 를 `codex` 로
+전환하려 하면 셸 probe 가 **거절**한다.
 
 ## `#402` — 배달 경로에 코덱스 몫 (2026-09-12, 커밋 `c70bb63`·`b8dab4a`)
 
@@ -81,7 +95,7 @@ upstream `#35940` 의 *"kills child processes created with piped stdio"* 와 맞
 [중요] **계측기 주의** — 세션에게 「무슨 MCP 가 붙었나」 묻지 않는다. 마스터 세션이
 `ax-projects` 를 실제로 호출해 결과를 받아오면서도 「없음」이라 답했다. **도구를 부르게 한다.**
 
-## 지휘자 전환 준비 — 구현·커밋 완료, 배포 승인 대기 (`#401`)
+## [완료] 지휘자 전환 readiness — 배포됨 (`#401`)
 
 `set_worker_mode` 가 더는 `mode.json` 만 쓰지 않는다. 활성 프로젝트의 SSH 워커마다 선택한
 지휘자의 CLI 버전·`ax-work` 스킬을 확인하고, Windows Codex 는 실제 Session 0 sandbox 셸
@@ -93,7 +107,8 @@ probe 까지 통과해야 상태를 저장한다. 하나라도 실패하면 **�
     codex   .2 0.153.4 셸 probe exit 1          → 전환 거절
             .43 0.153.4 OK
 
-코드 커밋은 `b326cba` 다. **origin push·배달·서비스 재시작은 하지 않았다.**
+코드 커밋은 `b326cba` 다. [완료] **origin push·배달·서비스 반영 전부 확인됨** (2026-09-12) —
+종전의 *"하지 않았다"* 는 낡은 서술이다.
 
 ## 이전 순서 기록 — **(가) → (나) → (다)** (사용자 확정 2026-09-11)
 
