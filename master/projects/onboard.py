@@ -13,7 +13,7 @@
     [실패] 소스 클론               클론 코드 **0건** (`spec.py` 의 단계 *문자열*이 유일한 히트였다)
     [실패] 그래프·합성·색인         부품은 다 있는데 **이어 주는 것이 없다**
     [실패] 워커에 레포 놓기         `probe` 는 `checkout_ok` 를 **재기만** 한다
-    [완료] 배달(deliver)           단, **등록이 부르지 않는다** — 사람이 CLI 를 실행했다
+    [완료] 배달(deliver)           종전엔 등록이 부르지 않았다 → 이제 전체 `onboard --confirm`이 잇는다
     [실패] claimer 상주 등록        `schtasks`/`crontab` 을 **실행하는** 코드 0건 (주석만 있었다)
 
 ModularStage 가 도는 이유는 일회성 경로였다 — `#227` 본문: *"`cp -a` + `infra_state_20260808.zip`
@@ -664,10 +664,14 @@ RUNNERS = {"hook": do_hook, "clone": do_clone, "guard": do_guard,
 
 
 def run(name: str, *, confirm: bool = False, only=None, registry: Registry | None = None,
-        limit: int = 0) -> dict:
-    """서버 절을 이어서 실행한다. [중요] **`confirm=False` 는 계획만 낸다.**
+        limit: int = 0, client_deliverer=None, client_checker=None) -> dict:
+    """서버 절 뒤 **클라이언트 배달·대조까지** 이어서 실행한다 (`#259`).
 
     `only` — 실행할 단계 이름들. 없으면 남은 것 전부. `synth` 는 LLM 을 태우므로 끊을 수 있게 뒀다.
+
+    [중요] 클라이언트 절은 **전체 온보딩**(`only is None`)에서만 돈다. `--only hook` 같은
+    서버 복구가 사람의 작업장까지 다시 쓰면 `only`의 경계가 거짓이 된다.
+    `client_deliverer`/`client_checker`는 SSH 없는 회귀 검사용 주입 자리다.
     """
     reg = registry or Registry.load()
     from ..context_search.paths import resolve
@@ -677,7 +681,7 @@ def run(name: str, *, confirm: bool = False, only=None, registry: Registry | Non
     remaining = [s.key for s in steps if not s.done and s.key in RUNNERS]
     todo = [k for k in remaining if not only or k in set(only)]
     out = {"project": name, "confirm": confirm, "remaining": remaining, "todo": todo,
-           "done": [], "results": {}, "error": ""}
+           "done": [], "results": {}, "error": "", "client": {"ran": False}}
     blockers = [s.key for s in steps if not s.done and s.key not in RUNNERS]
     if blockers:
         out["error"] = (f"이 흐름이 만들 수 없는 단계가 남았다: {', '.join(blockers)} "
@@ -690,8 +694,8 @@ def run(name: str, *, confirm: bool = False, only=None, registry: Registry | Non
                        else f"실행할 단계: {', '.join(todo)} — confirm=True 가 이어서 한다")
         return out
 
-    paths = resolve(name, registry=reg)
-    cfg = ProjectConfig.load(paths.config)
+    paths = resolve(name, registry=reg) if todo else None
+    cfg = ProjectConfig.load(paths.config) if paths is not None else None
     for key in todo:
         fn = RUNNERS[key]
         try:
@@ -714,6 +718,28 @@ def run(name: str, *, confirm: bool = False, only=None, registry: Registry | Non
         out["results"][key] = detail
         if key == "clone":
             paths = resolve(name, registry=Registry.load())   # local_clone 재해석
+    # 🔴 등록 한 번으로 끝나야 한다 — 종전에는 여기서 서버 절만 끝내고 사람이 별도로
+    # `master.client deliver|check`를 쳤다. 그 결과 #402의 `.33` AGENTS.md 누락처럼
+    # 버전 스탬프는 같지만 배달물 하나가 없는 상태도 온보딩 완료처럼 보였다.
+    if only is None:
+        if client_deliverer is None or client_checker is None:
+            from ..client.__main__ import cmd_check, cmd_deliver
+            client_deliverer = client_deliverer or cmd_deliver
+            client_checker = client_checker or cmd_check
+        try:
+            delivered_rc = int(client_deliverer(name))
+            checked_rc = int(client_checker(name))
+        except Exception as e:                               # noqa: BLE001
+            out["client"] = {"ran": True, "error": f"{type(e).__name__}: {e}"}
+            out["error"] = f"클라이언트 초기화 실패: {type(e).__name__}: {e}"
+            return out
+        out["client"] = {"ran": True, "deliver_rc": delivered_rc, "check_rc": checked_rc}
+        out["results"]["client"] = (f"deliver rc={delivered_rc} · check rc={checked_rc}")
+        if delivered_rc or checked_rc:
+            out["error"] = ("클라이언트 초기화 실패: "
+                            f"deliver rc={delivered_rc}, check rc={checked_rc}")
+            return out
+        out["done"].append("client")
     out["note"] = f"완료: {', '.join(out['done']) or '(없음)'}"
     return out
 

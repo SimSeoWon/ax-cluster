@@ -51,8 +51,8 @@ def _print_spec(project: str, init) -> None:
     """[중요] **사양을 계획 맨 위에 찍는다** (#266). 오버레이가 배선됐는지는 `config.yaml` 을
     고쳐 이 줄이 달라지는지로 확인한다 — 안 달라지면 선언이 안 먹는 것이다."""
     print(f"\n══ 초기화 사양 — {project} (선언: master/client/spec.py + config.yaml 의 `init:`)")
-    print("   서버 절: " + " → ".join(s.key for s in spec.SERVER_STEPS)
-          + "   [주의] 아직 실행기가 없다 (#259)")
+    print("   서버 절: " + " → ".join(s.key for s in spec.SERVER_STEPS))
+    print("   클라 절: 전체 onboard --confirm 시 checkout → deliver → check (#259)")
     print(f"   도메인: {', '.join(init.domains) or '(선언 없음)'}")
     print(f"   컨벤션 절: {', '.join(init.convention_sections)}  "
           f"← 프로젝트 repo/CLAUDE.md 에서 읽는다 (work/conventions.py)")

@@ -1,4 +1,4 @@
-"""온보딩 판정기 (`#259` 1차) — **읽기 전용 판정만.** 실행기는 아직 없다.
+"""온보딩 판정·실행기 (`#259`) — 계획은 읽기 전용, 실행은 승인 뒤 서버→클라를 잇는다.
 
 [중요] **판정기부터 검증하는 순서다.** 새 프로젝트에 처음 돌리기 전에, 이미 초기화된 프로젝트
 (ModularStage)에서 여섯 단계가 **전부 참**으로 나오는지 · 아무것도 없는 프로젝트에서 **남은 것을
@@ -343,10 +343,46 @@ def test_lfs_skip_persists_in_config() -> None:
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_full_run_delivers_and_checks_clients() -> None:
+    """`#259`: 전체 온보딩은 서버에서 끝나지 않고 클라이언트 대조까지 간다."""
+    from master.projects import onboard as O
+
+    calls = []
+    # 서버 단계가 전부 완료된 모양만 주입한다. 이 검사의 축은 그 **다음** 클라 절이다.
+    old_probe = O.probe_server
+    try:
+        O.probe_server = lambda _name, registry=None: []
+        out = O.run("Fresh", confirm=True, registry=object(),
+                    client_deliverer=lambda n: calls.append(("deliver", n)) or 0,
+                    client_checker=lambda n: calls.append(("check", n)) or 0)
+        check("전체 실행이 deliver → check 순서로 잇는다",
+              calls == [("deliver", "Fresh"), ("check", "Fresh")], str(calls))
+        check("클라 절도 완료 목록에 남는다",
+              out["client"] == {"ran": True, "deliver_rc": 0, "check_rc": 0}
+              and "client" in out["done"], str(out))
+
+        calls.clear()
+        partial = O.run("Fresh", confirm=True, only=["hook"], registry=object(),
+                        client_deliverer=lambda n: calls.append(("deliver", n)) or 0,
+                        client_checker=lambda n: calls.append(("check", n)) or 0)
+        check("--only 서버 복구는 사람 작업장을 건드리지 않는다",
+              calls == [] and not partial["client"]["ran"], str(partial))
+
+        failed = O.run("Fresh", confirm=True, registry=object(),
+                       client_deliverer=lambda _n: 0,
+                       client_checker=lambda _n: 1)
+        check("전체 check 실패는 온보딩 실패다",
+              "클라이언트 초기화 실패" in failed["error"]
+              and "client" not in failed["done"], str(failed))
+    finally:
+        O.probe_server = old_probe
+
+
 if __name__ == "__main__":
     for fn in (test_step_source_is_spec, test_uninitialized, test_registered_only,
                test_guard_step_is_the_write_surface, test_synth_stamps_commit, test_live_modularstage,
-               test_conventions_step_is_the_manifest_source, test_lfs_skip_persists_in_config):
+               test_conventions_step_is_the_manifest_source, test_lfs_skip_persists_in_config,
+               test_full_run_delivers_and_checks_clients):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_onboard: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

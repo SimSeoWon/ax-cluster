@@ -11,13 +11,17 @@
 
 ## 14.0 한 줄 요약
 
-    서버 절  python -m master.projects.onboard <프로젝트>            ← 계획(읽기 전용)
-             python -m master.projects.onboard <프로젝트> --confirm   ← 실행
-    클라 절  python -m master.client plan|deliver|check <프로젝트>
+    전체     python -m master.projects.onboard <프로젝트>            ← 서버·클라 계획(읽기 전용)
+             python -m master.projects.onboard <프로젝트> --confirm   ← 서버 실행 → 전 작업장 배달·대조
+    진단     python -m master.client plan|check <프로젝트>            ← 클라만 읽기 전용으로 확인
     마운트   set_active_tool(<프로젝트>)                              ← 사람 승인 자리
 
 [중요] **`--confirm` 없이는 아무것도 쓰지 않는다.** 이 저장소의 관례다(`cleanup plan|apply` ·
 `finalize_work(confirm=False)` · `handover apply --confirm`).
+
+[중요] 전체 실행은 서버 절이 끝난 뒤 등록된 모든 SSH 작업장에 `deliver`하고 곧바로 **전체
+`check`**를 돈다. 버전 스탬프만 같아도 `AGENTS.md`·스킬·페이로드·MCP 중 하나가 빠지면
+온보딩은 실패다. `--only hook,clone`처럼 서버 단계만 지정한 복구 실행은 클라를 건드리지 않는다.
 
 ## 14.1 서버 절 — 아홉 단계
 
@@ -76,7 +80,7 @@ register_project_tool(name="NS", project_id="Sim/NS",
 [중요] `project_id` 는 **훅이 보내는 이름**과 같아야 한다(`Sim/NS` — 대소문자는 무시되지만
 **형식은 `소유자/저장소`**). 다르면 훅이 와도 어느 프로젝트인지 못 찾고 **조용히 건너뛴다**.
 
-### 3~9 · 나머지는 한 명령
+### 3~9 + 클라 배달·대조 · 나머지는 한 명령
 
 ```bash
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트> --confirm
@@ -84,6 +88,9 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트>
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트> --confirm --only hook,clone,conventions,graph
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트> --confirm --only synth --limit 5
 ```
+
+첫 명령은 서버 9단계 뒤 §14.2의 등록된 작업장 전부를 `checkout → deliver → check`까지
+이어 간다. 따라서 신규 프로젝트에서 별도의 `master.client deliver`는 정상 절차가 아니다.
 
 [중요] **`hook` 은 무인으로 돈다** — `sudo -n /usr/local/bin/ax-install-hook --apply` 가
 NOPASSWD 로 등록돼 있다(`#273`). 사람이 인증창을 누르는 단계는 없다.
