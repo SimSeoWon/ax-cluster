@@ -1711,6 +1711,55 @@ def refresh_residency(facts: HostFacts, *, runner=None, sleeper=None) -> dict:
                      else "여전히 stale — 사람이 봐야 한다")}
 
 
+def ensure_worker_daemon(project: str, facts: HostFacts, *, runner=None) -> dict:
+    """상주가 **꺼져 있으면 켠다** (`#407`). 관측 → (필요할 때만) 기동 → 재관측.
+
+    사용자 설계 2026-09-12: *"워커들 한정으로 데몬이 상주한다 or SSH 를 활용해 데몬이
+    꺼져있다면 키자"*. SSH 의 역할을 「일을 시킨다」에서 **「데몬이 떠 있게 한다」**로 내린다.
+
+    [중요] **판정은 OS 가 이미 갖고 있다** — 새 프로토콜을 만들지 않는다. 도는지는
+    `worker_daemon.py --probe` 가 답하고(부팅 시 코드 mtime·pid·busy), 그 값을 그대로 쓴다.
+    [중요] **등록이 없으면 켜지 않고 크게 말한다** — 그것은 온보딩 누락이지 기동 문제가
+    아니다(`#406`). 조용히 등록해 버리면 「왜 상주가 생겼나」를 아무도 모른다.
+    [주의] **못 읽으면 아무것도 하지 않는다** — `refresh_residency` 와 같은 판단이다.
+    모르는 상태에서 켜면 이미 도는 것 위에 하나를 더 얹는다(잠금이 흡수하지만 로그가 더러워진다).
+    """
+    from client.init import residency as R
+    if facts.role != "requester" and not R.types_for(facts):
+        return {"skipped": "이 기계가 집을 유형이 없다 — 상주가 없는 것이 정상이다"}
+    if facts.role == "requester":
+        return {"skipped": "요청자는 상주가 없다"}
+    run = runner or (lambda cmd, timeout=60: _ssh(facts.host, facts.user, cmd, timeout=timeout))
+    py = ""
+    if facts.windows:
+        _rc, out = run(R.PYTHONW_PROBE)
+        py = R.parse_python_probe(out)
+    _rc, out = run(R.probe_command(facts, python_path=py))
+    state = R.parse_probe(out)
+    if state.get("running"):
+        return {"ok": True, "already": True, "pid": state.get("pid"),
+                "why": "이미 돌고 있다"}
+    if state.get("no_stamp") and not state.get("locked"):
+        # 등록 여부는 OS 에 묻는다 — 우리 파일이 아니라 감시자의 존재가 판정이다
+        chk = (f"schtasks /query /tn {R.task_name(project)}" if facts.windows
+               else "crontab -l 2>/dev/null")
+        rc2, out2 = run(chk)
+        listed = (rc2 == 0) if facts.windows else (R.cron_marker(facts) in (out2 or ""))
+        if not listed:
+            return {"ok": False, "not_registered": True,
+                    "why": "감시자가 등록돼 있지 않다 — 기동이 아니라 **온보딩**의 문제다 "
+                           "(`master.client deliver` 가 등록한다)"}
+    for _label, cmd in R.ensure_commands(project, facts):
+        run(cmd)
+    _rc, out3 = run(R.probe_command(facts, python_path=py))
+    after = R.parse_probe(out3)
+    return {"ok": bool(after.get("running")), "started": True,
+            "pid": after.get("pid"),
+            "why": ("켰다" if after.get("running")
+                    else "켜라고 했는데 아직 안 보인다 — 로그온 세션이 없을 수 있다"
+                          "(`/IT` 는 세션 전용이다)")}
+
+
 def _register_residency(project: str, facts: HostFacts) -> dict:
     """워커에 상주를 등록한다. 반환은 사람이 읽을 dict — **fail-open**(배달을 막지 않는다).
 

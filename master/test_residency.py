@@ -440,6 +440,71 @@ def test_deliver_refreshes_residency() -> None:
     check("requester 는 건너뛴다", "skipped" in r, str(r))
 
 
+def _facts_w():
+    f = HostFacts(host="h", user="u", path=r"E:\t\NS", driven="ssh", role="worker")
+    f.os, f.ue5 = "windows", "x"
+    return f
+
+
+def test_ensure_starts_only_when_down() -> None:
+    """🔴 **꺼져 있으면 켠다 — 이미 돌면 건드리지 않는다** (`#407`).
+
+    사용자 설계 2026-09-12: *"데몬이 상주한다 or SSH 를 활용해 데몬이 꺼져있다면 키자"*.
+    SSH 의 역할이 「일을 시킨다」에서 **「떠 있게 한다」**로 내려간 자리다.
+    """
+    from client.init import residency as _R
+    from master.client import bundle
+
+    cmds = dict(_R.ensure_commands("NS", _f(windows=True, path=r"E:\t\NS", ue5="x")))
+    # 🔴 세션 0(SSH)에서 부탁해도 스케줄러가 `/IT` 덕에 세션 1 에 만든다 — `#401` 이 이것으로 풀렸다
+    check("[중요] 윈도우는 `schtasks /run` — SSH 가 직접 프로세스를 만들지 않는다",
+          cmds["ensure"] == "schtasks /run /tn AxWorker_NS", cmds["ensure"])
+    lin = dict(_R.ensure_commands("NS", _f(windows=False, path="/t/NS", ue5="x")))
+    check("[주의] cron 엔 「지금 실행」이 없다 — 직접 띄우되 `nohup` 으로 수명을 끊는다",
+          "nohup" in lin["ensure"] and lin["ensure"].rstrip().endswith("&"), lin["ensure"])
+    check("  등록과 **다른 동사**다 (만들기가 아니라 지금 한 번 돌리기)",
+          "/create" not in cmds["ensure"] and "crontab -" not in lin["ensure"])
+
+    calls = []
+
+    def run_running(cmd, timeout=60):
+        calls.append(cmd)
+        return (0, "running=1\nstale=0\nbusy=0\npid=42\n") if "--probe" in cmd else (0, "")
+
+    r = bundle.ensure_worker_daemon("NS", _facts_w(), runner=run_running)
+    check("[중요] 이미 돌면 켜지 않는다", r.get("already") and not r.get("started"), str(r))
+    check("  그래서 기동 명령이 안 나갔다", not any("/run" in c for c in calls), str(calls))
+
+    calls.clear()
+    seq = {"n": 0}
+
+    def run_down(cmd, timeout=60):
+        calls.append(cmd)
+        if "--probe" in cmd:
+            seq["n"] += 1
+            if seq["n"] == 1:
+                return 0, "running=0\nno_stamp=1\nlocked=0\n"
+            return 0, "running=1\npid=99\n"
+        return 0, ""                     # schtasks /query rc=0 = 등록돼 있다
+
+    r2 = bundle.ensure_worker_daemon("NS", _facts_w(), runner=run_down)
+    check("🔴 [중요] 꺼져 있으면 켠다", bool(r2.get("started") and r2.get("ok")), str(r2))
+    check("  기동 명령이 나갔다", any("schtasks /run" in c for c in calls), str(calls))
+
+    calls.clear()
+
+    def run_unregistered(cmd, timeout=60):
+        calls.append(cmd)
+        if "--probe" in cmd:
+            return 0, "running=0\nno_stamp=1\nlocked=0\n"
+        return 1, ""                     # rc≠0 = 등록이 없다
+
+    r3 = bundle.ensure_worker_daemon("NS", _facts_w(), runner=run_unregistered)
+    check("🔴 [중요] 등록이 없으면 켜지 않고 **크게 말한다** (온보딩 누락이다)",
+          bool(r3.get("not_registered") and not r3.get("ok")), str(r3))
+    check("  기동 명령을 내지 않았다", not any("/run" in c for c in calls), str(calls))
+
+
 if __name__ == "__main__":
     for fn in (test_types_from_probe,
                test_task_name_per_project,
@@ -457,7 +522,8 @@ if __name__ == "__main__":
                #    보존 · 배달이 도는 것을 본다).
                test_claimer_state_is_process_based,
                test_stale_flag_is_not_eaten_by_the_new_process,
-               test_deliver_refreshes_residency):
+               test_deliver_refreshes_residency,
+               test_ensure_starts_only_when_down):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_residency: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

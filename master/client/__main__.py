@@ -597,8 +597,33 @@ def cmd_uproject(project: str, *, confirm: bool = False) -> int:
     return 0
 
 
+def cmd_ensure(project: str, *, only: str = "") -> int:
+    """상주가 **꺼져 있으면 켠다** (`#407`). 파견 직전에 부르는 자리다.
+
+    [중요] **아무것도 설치하지 않는다** — 등록은 `deliver` 가 한다. 여기는 「살아있나 / 켜기」
+    두 동사뿐이고, 등록이 없으면 **그 사실을 크게 말하고 멈춘다**(온보딩 누락은 기동 문제가
+    아니다).
+    """
+    bad = 0
+    for f in _facts(project, only=only):
+        r = bundle.ensure_worker_daemon(project, f)
+        if r.get("skipped"):
+            print(f"  ―  {f.host}: {r['skipped']}")
+        elif r.get("already"):
+            print(f"  OK {f.host}: 이미 돌고 있다 (pid {r.get('pid')})")
+        elif r.get("not_registered"):
+            print(f"  FAIL {f.host}: {r['why']}")
+            bad += 1
+        elif r.get("ok"):
+            print(f"  OK {f.host}: {r['why']} (pid {r.get('pid')})")
+        else:
+            print(f"  FAIL {f.host}: {r.get('why', '알 수 없다')}")
+            bad += 1
+    return 1 if bad else 0
+
+
 _CMDS = {"probe": cmd_probe, "plan": cmd_plan, "deliver": cmd_deliver, "check": cmd_check,
-         "uproject": cmd_uproject}
+         "ensure": cmd_ensure, "uproject": cmd_uproject}
 
 
 def main(argv: list) -> int:
@@ -631,7 +656,7 @@ def main(argv: list) -> int:
     if argv[0] == "uproject":
         # [중요] 관례대로 `plan` 이 기본 — 쓰려면 `--confirm` 을 명시한다
         return cmd_uproject(project, confirm="--confirm" in argv)
-    if argv[0] in ("probe", "plan", "check"):
+    if argv[0] in ("probe", "plan", "check", "ensure"):
         return _CMDS[argv[0]](project, only=only)
     return _CMDS[argv[0]](project)
 

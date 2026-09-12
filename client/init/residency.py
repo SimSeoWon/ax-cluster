@@ -157,6 +157,27 @@ def commands(project: str, facts, *, python_path: str = "") -> list:
              + "; echo " + q(line) + " ) | crontab -")]
 
 
+def ensure_commands(project: str, facts) -> list:
+    """**꺼져 있으면 켜는** 명령 `(라벨, 명령)` (`#407`, 사용자 설계 2026-09-12:
+    *"워커들 한정으로 데몬이 상주한다 or SSH 를 활용해 데몬이 꺼져있다면 키자"*).
+
+    [중요] **등록과 다른 동사다.** `commands()` 는 감시자를 **만들고**, 이것은 이미 등록된
+    감시자를 **지금 한 번 돌린다.** 감시자가 5분 주기라 가만 둬도 곧 뜨지만, 파견 직전에
+    기다릴 이유가 없다.
+    [중요] **윈도우는 `schtasks /run` 이다** — 세션 0(SSH)에서 부탁해도 스케줄러가 `/IT` 등록
+    덕에 **세션 1** 에 만든다(실측 2026-09-12, `#401` 이 이것으로 풀렸다). SSH 가 직접
+    프로세스를 만들지 않는다는 것이 요점이다.
+    [주의] **리눅스 cron 에는 「지금 실행」이 없다** — 그래서 명령을 직접 띄운다. `nohup` +
+    `&` 로 SSH 세션과 수명을 끊지 않으면 연결이 닫힐 때 같이 죽는다.
+    """
+    if facts.windows:
+        return [("ensure", f"schtasks /run /tn {task_name(project)}")]
+    q = shlex.quote
+    run = (f"cd {q(facts.path)} && {python_for(facts)} {DAEMON_REL} "
+           f"--types={types_for(facts)}")
+    return [("ensure", f"nohup sh -c {q(run)} >/dev/null 2>&1 &")]
+
+
 def cron_marker(facts) -> str:
     """`.43` 류의 crontab 에서 **우리 줄을 찾는 표식**. [중요] 등록과 해제가 같은 값을 써야
     한다 — 두 벌로 쓰면 해제가 남의 줄을 지우거나 우리 줄을 못 지운다."""
