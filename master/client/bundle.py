@@ -1500,6 +1500,16 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
                     ) if payload_pairs(facts.role) else [],
         "excluded": _ensure_ignored(facts),
     }
+    # ── 상주 등록 (`#405`, `#255` 복원) ──────────────────────────────
+    #    🔴 [중요] **`onboard.py` 가 적어둔 빈 칸이 여기다** — *"claimer 상주 등록:
+    #    `schtasks`/`crontab` 을 **실행하는** 코드 0건 (주석만 있었다)"*. `commands()` 는
+    #    있었는데 아무도 부르지 않았다. 그래서 새 기계에서 재현되지 않았고 사람이 손으로 했다.
+    #    [중요] **데몬이 없으면 등록하지 않는다** — 없는 파일을 가리키는 작업을 걸면 5분마다
+    #    실패만 쌓인다. `worker_daemon.py` 가 payload 에 들어오는 `#404` 뒤에 저절로 풀린다.
+    #    [주의] **마운트를 따른다** — 비마운트 프로젝트의 상주는 5분마다 `not_mounted` 거절만
+    #    받으며 헛돈다(`residency.blocked_reason`). 사유를 찍고 건너뛴다.
+    written["residency"] = _register_residency(project, facts)
+
     # ── 진입 문서의 codex 판 (`#402`) ────────────────────────────────
     # 🔴 [중요] **codex 는 계층 로드를 하지 않는다** (실측 2026-09-08) — 그래서 두 진입 파일은
     #    각각 자족적이어야 한다. `AGENTS.md` 가 **비어 있으면 `CLAUDE.md` 병합 결과를 시드**로
@@ -1597,6 +1607,53 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
             # [주의] 일회성 프로비저닝 비용 — **작업 비용과 섞지 않는다** (#64)
             "init": init_info,
             "verified": True}
+
+
+def _register_residency(project: str, facts: HostFacts) -> dict:
+    """워커에 상주를 등록한다. 반환은 사람이 읽을 dict — **fail-open**(배달을 막지 않는다).
+
+    [중요] **조용히 건너뛰지 않는다.** 왜 안 걸었는지를 반드시 담는다 — 등록이 빠진 채
+    「배달 완료」로 보이면 `#255` 이전 상태로 돌아간다(등록이 문서에만 있던 그 상태).
+    """
+    if facts.role == "requester":
+        return {"skipped": "요청자는 상주를 받지 않는다"}
+    try:
+        from client.init import residency as R
+    except Exception as e:                                   # noqa: BLE001
+        return {"error": f"상주 모듈을 못 읽었다 — {type(e).__name__}: {e}"}
+
+    # [중요] 데몬이 배달 대상에 없으면 등록하지 않는다 (`#404` 전)
+    if not any(dest.endswith("worker_daemon.py") for dest, _src in payload_pairs(facts.role)):
+        return {"skipped": "데몬(`worker_daemon.py`)이 아직 배달 대상이 아니다 — `#404` 뒤에 켠다"}
+
+    mounted = ""
+    try:
+        mounted = (Registry.load().active or "").strip()
+    except Exception:                                        # noqa: BLE001
+        pass                                                 # 마운트를 못 읽으면 게이트를 못 본다
+    why = R.blocked_reason(project, mounted)
+    if why:
+        return {"skipped": f"지금 켜지 않는다 — {why}"}
+
+    out = []
+    for label, cmd in R.commands(project, facts, python_path=_probe_python(facts)):
+        rc, got = _ssh(facts.host, facts.user, cmd)
+        out.append(f"{label} {'[완료]' if rc == 0 else f'[주의] rc={rc} {(got or 0)[:80]}'}")
+    return {"registered": R.task_name(project) if facts.windows else "cron", "results": out}
+
+
+def _probe_python(facts: HostFacts) -> str:
+    """윈도우 `pythonw` 절대경로를 **잰다**. 리눅스는 빈 문자열(선언값을 쓴다).
+
+    [중요] **박지 않고 재는 이유**는 `residency.PYTHONW_PROBE` 주석에 있다 — 경로에 버전
+    디렉토리(`Python310`)가 들어가므로 박으면 다음 업그레이드에 조용히 깨진다. 그리고
+    `pythonw` 는 **PATH 에 없다**(실측 2026-08-22 `.2`).
+    """
+    if not facts.windows:
+        return ""
+    from client.init import residency as R
+    _rc, out = _ssh(facts.host, facts.user, R.PYTHONW_PROBE)
+    return R.parse_python_probe(out or "")
 
 
 def _ensure_ignored(facts: HostFacts) -> bool:

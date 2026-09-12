@@ -151,6 +151,17 @@ def cmd_plan(project: str) -> int:
         #    찍었고 목록도 두 줄이었다 — `.33` 이 안 더러운 이유가 **그 프로젝트 `.gitignore` 의
         #    세 줄**(실측 `:36 .claude/` `:40 /.mcp.json` `:41 /CLAUDE.md`)이었지 우리 목록이
         #    아니었다. 새 프로젝트엔 그 줄이 없고 우리는 `.gitignore` 를 고칠 수 없다(§2.1).
+        # [중요] **상주 등록을 계획에 낸다** (`#255` 완료 조건 1 · `#405` 복원) — 종전에는 두
+        #    기계의 등록 방식이 **문서에만** 있어 새 기계에서 재현되지 않았다. 켜면 안 되는
+        #    경우의 사유도 찍는다(마운트를 따른다).
+        if f.role != "requester":
+            try:
+                from client.init import residency as _R
+                mounted = (bundle.Registry.load().active or "").strip()
+                for line in _R.plan_lines(project, f, mounted=mounted):
+                    print(line)
+            except Exception as e:                           # noqa: BLE001
+                print(f"   [주의] 상주 등록 계획을 못 냈다: {e}")
         exc = ", ".join(f"`{x}`" for x in spec.git_excludes_for(f.role))
         print(f"   → {f.path}/.git/info/exclude 에 {exc} (커밋 안 됨)")
         # [주의] 추적 중인 파일은 exclude 로 못 막는다 — 이름으로 보고한다(고치지는 않는다).
@@ -245,6 +256,14 @@ def cmd_deliver(project: str, *, init: bool = False) -> int:
             print(f"     workshop_md={r['workshop_md']}")
         if "mcp_json" in r:
             print(f"     mcp_json={r['mcp_json']}")
+        res = r.get("residency") or {}
+        if res.get("registered"):
+            print(f"     residency={res['registered']} · " + " · ".join(res.get("results") or []))
+        elif res.get("skipped"):
+            # [중요] **왜 안 걸었는지를 찍는다** — 빠진 채 「완료」로 보이면 `#255` 이전이다
+            print(f"     residency=[건너뜀] {res['skipped']}")
+        elif res.get("error"):
+            print(f"     residency=[주의] {res['error']}")
         if "agents_md" in r:
             print(f"     agents_md={r['agents_md']}  [{r.get('agents_md_mode', '?')}]")
         for cm in r.get("codex_mcp") or []:
@@ -417,6 +436,25 @@ def cmd_check(project: str) -> int:
         rm_note = (f" · [중요] 폐지 스킬이 남아 있다: {', '.join(left)}" if left else
                    f" · 폐지 {len(rm['skills'])}종 없음(정리됨)" if rm["skills"] else "")
 
+        # ── 상주 등록 (`#405`) — **파일이 아니라 「등록됐나」를 본다** ────────
+        #    `#337` 의 훅과 같은 교훈이다: 파일 해시가 3자 일치해도 **등록이 없으면 안 돈다.**
+        ok_res = True
+        res_note = ""
+        if f.role != "requester":
+            from client.init import residency as _R
+            _have_daemon = any(d.endswith("worker_daemon.py")
+                               for d, _s in bundle.payload_pairs(f.role))
+            if not _have_daemon:
+                res_note = " · 상주 [건너뜀] 데몬 미배달 (`#404`)"
+            else:
+                _cmd = (f"schtasks /query /tn {_R.task_name(project)}" if f.windows
+                        else "crontab -l 2>/dev/null")
+                _rc, _out = bundle._ssh(f.host, f.user, _cmd)
+                _hit = (_rc == 0) if f.windows else (_R.cron_marker(f) in (_out or ""))
+                if not _hit:
+                    ok_res = False
+                    res_note = " · [실패] 상주 미등록 (배달만 되고 안 돈다)"
+
         # ── codex 몫 (`#402`) — **역할 무관** ────────────────────────────
         #    [중요] `AGENTS.md` 는 「있나」가 아니라 **관리 블록이 최신인가**를 본다. 전문은
         #    사람이 고칠 수 있으므로 해시 전체 대조는 정상을 실패로 답한다 — `check` 가
@@ -466,15 +504,15 @@ def cmd_check(project: str) -> int:
         tag_note = f" · {tag['reason']}"
 
         mark = ("OK" if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws
-                         and ok_ver and ok_tag and ok_codex) else "FAIL")
+                         and ok_ver and ok_tag and ok_codex and ok_res) else "FAIL")
         pay_note = (f" · payload {len(pay)}개 일치" if pay and ok_pay
                     else f" · [중요] payload 불일치/없음 {len(stale)}개: {', '.join(stale[:3])}"
                     if pay else "")
         print(f"  {mark} {f.host} [{f.role}]: 스킬 {len(names)}종 "
               f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}"
-              f"{pay_note}{ws_note}{client_note}{codex_note}{rm_note}{tag_note}{ver_note}")
+              f"{pay_note}{ws_note}{client_note}{codex_note}{res_note}{rm_note}{tag_note}{ver_note}")
         bad += 0 if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws
-                     and ok_ver and ok_tag and ok_codex) else 1
+                     and ok_ver and ok_tag and ok_codex and ok_res) else 1
         if not ver["ok"]:
             behind_hosts.append((f.host, ver.get("behind"), ver.get("stamp_dirty")))
     # [중요] **끝에 한 줄로 모아 말한다** — 호스트별 줄에 섞이면 「몇 대가 낡았나」가 안 보인다.
