@@ -1638,7 +1638,7 @@ def _register_residency(project: str, facts: HostFacts) -> dict:
         mounted = (Registry.load().active or "").strip()
     except Exception:                                        # noqa: BLE001
         pass                                                 # 마운트를 못 읽으면 게이트를 못 본다
-    why = R.blocked_reason(project, mounted)
+    why = R.blocked_reason(project, mounted, facts)
     if why:
         return {"skipped": f"지금 켜지 않는다 — {why}"}
 

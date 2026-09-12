@@ -74,8 +74,18 @@ RESTART_FILE = "worker_daemon.restart"   # 데몬의 같은 상수와 짝 (배�
 
 
 def types_for(facts) -> str:
-    """이 기계가 집을 유형. [중요] **probe 실측(`ue5`)에서 나온다** — 표로 들지 않는다."""
-    return "build,code" if getattr(facts, "ue5", "") else "code"
+    """이 기계가 집을 유형. [중요] **probe 실측(`ue5`)에서 나온다** — 표로 들지 않는다.
+
+    🔴 [중요] **`code` 를 더는 신고하지 않는다** (`#404`, 2026-09-12). 데몬의 추론 경로는
+    폐기된 `carry`/`manifest` 운송 규약 위에 있어서 들어냈고, 지금 추론 파견은 마스터
+    push(`work/infer.py`)가 맡는다. 그런데 종전 값은 UE5 없는 기계에 `code` 를 신고했다 —
+    그러면 데몬이 **마스터가 맡아야 할 태스크를 집어서 `unsupported-type` 으로 튕긴다.**
+    실측으로 잡았다: `.43` 에 걸린 cron 이 `--types=code` 였다(2026-09-12 첫 실물 등록).
+
+    [주의] 그래서 **UE5 가 없으면 집을 것이 없다** — 빈 문자열을 돌려주고, 호출자
+    (`blocked_reason`)가 「지금 켜지 않는다」로 막는다. 조용히 헛도는 상주를 만들지 않는다.
+    """
+    return "build" if getattr(facts, "ue5", "") else ""
 
 
 def task_name(project: str) -> str:
@@ -179,7 +189,7 @@ def plan_lines(project: str, facts, *, mounted: str = "") -> list:
                    "정상이다. 사람 PC 에 백그라운드 상주를 심지 않는다")
     # [중요] **사유를 여기 다시 쓰지 않는다** (`#311`) — 종전에는 여기와 `blocked_reason` 이
     #    각자 적어 두 벌이었고, `#248` 이 닫힌 뒤 **둘 다** 낡은 채로 남았다.
-    why = blocked_reason(project, mounted)
+    why = blocked_reason(project, mounted, facts)
     if why:
         out.append(f"     [중요] **지금 켜지 않는다** — {why}")
     return out
@@ -190,7 +200,7 @@ def plan_lines(project: str, facts, *, mounted: str = "") -> list:
 #    **가리킨다**. 종전에는 같은 규칙이 **네 곳**에 각자 적혀 있었고 넷 다 낡은 전제였다:
 #    *"claim 에 프로젝트 축이 없다(#248)"* — 축은 **있다**(`#248` 닫힘 · `ClaimReq.project` ·
 #    `claimer.py` 가 `#258` 로 태그를 붙인다).
-def blocked_reason(project: str, mounted: str) -> str:
+def blocked_reason(project: str, mounted: str, facts=None) -> str:
     """켜면 안 되는 사유. 빈 문자열이면 켜도 된다.
 
     [중요] **막는 이유는 프로젝트 축의 부재가 아니라 마운트의 단일성이다** (§5.5.2 *"동시에
@@ -209,6 +219,13 @@ def blocked_reason(project: str, mounted: str) -> str:
     프로젝트의 상주를 켠다. 한 기계가 두 프로젝트를 **동시에** 맡는 길은 ⓐ 에서 없다
     (그것을 원하면 claim 을 스탬프 축으로 내려야 하고, 그건 마운트의 뜻을 바꾸는 별 결정이다).
     """
+    # 🔴 [중요] **집을 유형이 없으면 켜지 않는다** (`#404`). UE5 가 없는 기계는 build 를 못
+    #    하고 추론(code)은 마스터 push 가 맡으므로 **할 일이 없다.** 켜 두면 5분마다 깨어나
+    #    「집을 잡이 없다」만 찍는다 — 「도는데 아무 일도 안 한다」는 아래 마운트 사유와
+    #    같은 부류의 헛돎이고, 그래서 같은 자리에서 막는다.
+    if facts is not None and not types_for(facts):
+        return ("이 기계가 집을 유형이 없다 — UE5 가 없어 build 를 못 하고, 추론(code)은 "
+                "마스터 push 가 맡는다(`#404`). 상주를 켜면 5분마다 헛돈다")
     if mounted and project != mounted:
         # [주의] 호출자가 *"지금 켜지 않는다 — "* 를 앞에 붙인다. 여기서 다시 「켜지 않는다」를
         #    말하면 한 줄에 두 번 나온다(실측). **이 문장은 사유만 담는다.**

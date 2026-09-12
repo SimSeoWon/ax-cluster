@@ -41,8 +41,12 @@ def _f(*, windows, ue5="", path="/p/M"):
 
 def test_types_from_probe() -> None:
     """[중요] 유형은 **probe 실측(`ue5`)** 에서 나온다 — 표로 들지 않는다."""
-    check("UE5 있으면 build,code", R.types_for(_f(windows=True, ue5="x")) == "build,code")
-    check("없으면 code", R.types_for(_f(windows=False)) == "code")
+    # 🔴 `#404`: 데몬에서 추론(code) 경로를 들어냈다 — 폐기된 carry/manifest 위에 있었다.
+    #    종전 값은 UE5 없는 기계에 `code` 를 신고했고, 그러면 **마스터 push 가 맡아야 할
+    #    태스크를 집어서 `unsupported-type` 으로 튕긴다.** 실물 등록에서 잡았다(`.43` cron 이
+    #    `--types=code` 였다). 그래서 집을 유형은 build 뿐이고, UE5 가 없으면 **없다.**
+    check("UE5 있으면 build", R.types_for(_f(windows=True, ue5="x")) == "build")
+    check("🔴 UE5 없으면 집을 유형이 없다 (켜면 헛돈다)", R.types_for(_f(windows=False)) == "")
 
 
 def test_task_name_per_project() -> None:
@@ -65,7 +69,7 @@ def test_windows_command_shape() -> None:
     check("권한 상승 없음(/rl LIMITED)", "/rl LIMITED" in c, c)
     check("[중요] 안쪽 인용을 이스케이프한다", '\\"C:\\Py\\pythonw.exe\\"' in c, c)
     check("스크립트도 이스케이프", "worker_daemon.py" in c and c.count('\\"') == 4, c)
-    check("유형이 붙는다", "--types=build,code" in c, c)
+    check("유형이 붙는다", "--types=build" in c, c)
     check("pythonw 를 쓴다 (콘솔 창 없음)", "pythonw" in c, c)
 
 
@@ -98,11 +102,11 @@ def test_gate_is_mount_singularity_not_a_missing_axis() -> None:
           "#248" not in why and "축이 없" not in why, why)
     check("주기를 말해 「헛돈다」가 구체적이다", str(R.INTERVAL_MIN) in why, why)
 
-    lines = R.plan_lines("NS", _f(windows=False), mounted="ModularStage")
+    lines = R.plan_lines("NS", _f(windows=False, ue5="x"), mounted="ModularStage")
     check("계획에 그 사유가 찍힌다", any("지금 켜지 않는다" in l for l in lines), str(lines))
     check("[중요] 계획이 **정본 문장 그대로**를 쓴다 (두 벌 금지)",
           any(why in l for l in lines), str(lines))
-    ok = R.plan_lines("ModularStage", _f(windows=False), mounted="ModularStage")
+    ok = R.plan_lines("ModularStage", _f(windows=False, ue5="x"), mounted="ModularStage")
     check("같은 프로젝트면 그 줄이 없다", not any("지금 켜지 않는다" in l for l in ok), str(ok))
 
 
