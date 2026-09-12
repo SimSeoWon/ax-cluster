@@ -279,6 +279,17 @@ def cmd_deliver(project: str, *, init: bool = False, only: str = "") -> int:
             print(f"     residency=[건너뜀] {res['skipped']}")
         elif res.get("error"):
             print(f"     residency=[주의] {res['error']}")
+        # [중요] **갱신 결과를 찍는다** (`#277`) — 판정을 했는데 안 보이면 「안 한 것」과
+        #    구분되지 않는다. 이 줄이 없어서 종전에 갱신이 화면에 안 보였다.
+        rr = r.get("residency_refresh") or {}
+        if rr.get("refreshed"):
+            extra = f" · pid {rr['pid_killed']} 종료" if rr.get("pid_killed") else ""
+            print(f"     residency_refresh=[완료] {rr['refreshed']}{extra}"
+                  + (f" · {rr['note']}" if rr.get("note") else ""))
+        elif rr.get("pending"):
+            print(f"     residency_refresh=[주의] {rr['pending']} (pid {rr.get('pid')})")
+        elif rr:
+            print(f"     residency_refresh={rr.get('why', '이상 없음')}")
         if "agents_md" in r:
             print(f"     agents_md={r['agents_md']}  [{r.get('agents_md_mode', '?')}]")
         for cm in r.get("codex_mcp") or []:

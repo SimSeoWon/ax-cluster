@@ -233,7 +233,7 @@ def test_claimer_state_is_process_based() -> None:
     import os
     import tempfile
     import time as _t
-    from master.work import claimer as C
+    from master.work import worker_daemon as C
 
     root = Path(tempfile.mkdtemp())
     (root / ".ax" / "lib" / "axmaster").mkdir(parents=True)
@@ -245,7 +245,7 @@ def test_claimer_state_is_process_based() -> None:
     check("안 돌고 있으면 running=False", not st["running"])
     check("[중요] 안 도는 것은 stale 이 아니다 (감시자가 새 코드로 띄운다)", not st["stale"])
 
-    # [중요] **실물처럼 잠금을 쥔다** — 도는 상주는 `claimer.lock` 을 배타적으로 잡고 있다.
+    # [중요] **실물처럼 잠금을 쥔다** — 도는 상주는 `worker_daemon.lock` 을 배타적으로 잡고 있다.
     #    (종전 테스트는 스탬프만 쓰고 「돈다」로 가정했다. 그 계약은 2026-08-23 에 바뀌었다:
     #    죽인 직후 신선한 `alive` 에 속지 않으려고 **잠금을 권위로** 삼았다.)
     _held = C.acquire_singleton(root)
@@ -286,7 +286,7 @@ def test_claimer_state_is_process_based() -> None:
           not st["running"], str(st))
     check("[중요] 그래서 죽인 직후는 stale 이 아니다 (감시자가 새 코드로 띄운다)",
           not st["stale"], str(st))
-    src_probe = (Path(__file__).resolve().parent / "work" / "claimer.py").read_text(
+    src_probe = (Path(__file__).resolve().parent / "work" / "worker_daemon.py").read_text(
         encoding="utf-8")
     check("`fresh or locked` 로 되돌아가지 않았다", "running = locked" in src_probe)
     check("그 이유가 주석에 남아 있다", "죽인 직후" in src_probe)
@@ -298,7 +298,7 @@ def test_claimer_state_is_process_based() -> None:
     check("먹통을 갱신과 갈라 보고한다", any("먹통" in l for l in lines), str(lines))
 
     # ── 트리 전체를 본다 (claimer.py 만 보지 않는다)
-    src = (Path(__file__).resolve().parent / "work" / "claimer.py").read_text(encoding="utf-8")
+    src = (Path(__file__).resolve().parent / "work" / "worker_daemon.py").read_text(encoding="utf-8")
     check("[중요] lib 트리 전체의 mtime 을 본다", "rglob" in src and "lib_mtime" in src)
     check("[중요] 루프가 claim **전에** 깃발을 본다",
           src.index("restart_requested(root)") < src.index("task = c.claim(types)"))
@@ -328,7 +328,7 @@ def test_stale_flag_is_not_eaten_by_the_new_process() -> None:
     """
     import tempfile
     import time as _t
-    from master.work import claimer as C
+    from master.work import worker_daemon as C
     root = Path(tempfile.mkdtemp())
     (root / ".ax").mkdir(parents=True)
     flag = root / ".ax" / C.RESTART_FILE
@@ -342,7 +342,7 @@ def test_stale_flag_is_not_eaten_by_the_new_process() -> None:
     # 마스터도 치운다 — 놓은 쪽이 치우는 것이 옳다
     from client.init import residency as _R
     cmds = dict(_R.clear_flag_commands(_f(windows=False, path="/p/NS")))
-    check("리눅스 제거 명령", cmds["clear"] == "rm -f /p/NS/.ax/claimer.restart", cmds["clear"])
+    check("리눅스 제거 명령", cmds["clear"] == "rm -f /p/NS/.ax/worker_daemon.restart", cmds["clear"])
     cmds = dict(_R.clear_flag_commands(_f(windows=True, ue5="x", path=r"E:\t\NS")))
     check("윈도우 제거 명령은 조용히 실패한다(2>nul)", "2>nul" in cmds["clear"], cmds["clear"])
     import inspect
@@ -379,7 +379,7 @@ def test_deliver_refreshes_residency() -> None:
     r = bundle.refresh_residency(f, runner=fake_run)
     check("깃발을 무시하는 코드는 강제 종료된다", r.get("pid_killed") == 777, str(r))
     check("kill 이 pid 로 나갔다", any(c == "kill 777" for c in calls), str(calls))
-    check("깃발도 먼저 나갔다", any("claimer.restart" in c for c in calls))
+    check("깃발도 먼저 나갔다", any("worker_daemon.restart" in c for c in calls))
 
     # [중요] **깃발을 볼 시간을 준다** — 실측 2026-08-23: 즉시 재확인했더니 새 코드도
     #    「깃발을 모르는 코드」로 판정돼 매번 강제 종료했다(우아한 경로가 죽은 코드였다).
@@ -452,17 +452,12 @@ if __name__ == "__main__":
                test_probe_command_never_uses_pythonw,
                test_probe_parse_distinguishes_unknown_from_false,
                test_kill_is_pid_targeted,
-               # 🔴 [주의] 아래 둘은 **데몬 본체를 import 한다** — `#404` 의 자리다.
-               #    `#320` 이 `master/work/claimer.py` 를 지웠고 후속이 `worker_daemon.py` 다.
-               #    `#405` 는 **등록**만 되살린다. 데몬이 서면 이 두 줄을 다시 켠다:
-               #      test_claimer_state_is_process_based · test_stale_flag_is_not_eaten_by_the_new_process
-               #    [중요] 지우지 않고 주석으로 남기는 이유 — 지우면 `#404` 가 이 계약을
-               #    다시 발명한다(프로세스 기반 판정 · stale 플래그 보존).
-               # 🔴 [주의] 이것은 **배달 뒤 갱신**(`bundle.refresh_residency`, `#277`)이라
-               #    `#407`(ensure_worker_daemon) 의 자리다. 갱신할 대상(데몬)이 `#404` 로
-               #    서야 의미가 있다. `#320` 이 `refresh_residency` 72줄 + FLAG 상수도 같이
-               #    지웠으므로 그때 함께 되살린다:  test_deliver_refreshes_residency
-               ):
+               # [완료] 아래 셋은 `#404`(데몬)·`#407`(배달 뒤 갱신)로 되살아났다 —
+               #    미뤄 둘 때 주석으로 남긴 그 계약들이다(프로세스 기반 판정 · stale 플래그
+               #    보존 · 배달이 도는 것을 본다).
+               test_claimer_state_is_process_based,
+               test_stale_flag_is_not_eaten_by_the_new_process,
+               test_deliver_refreshes_residency):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_residency: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)
