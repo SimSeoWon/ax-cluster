@@ -195,21 +195,74 @@ def project_symbols(paths) -> set:
 
     [중요] **게이트를 무디게 하는 것이 아니라 판정 근거를 넓히는 것이다.** 지어낸 이름은
     클래스 그래프에도 없으므로 그대로 잡힌다(2026-08-12 의 「없는 enum 멤버」가 그 부류).
-    [주의] **그래프가 없으면 빈 집합**이다 — 그때는 종전과 똑같이 판정한다(조용히 통과시키지
-    않는다). 그래프는 색인기가 매 커밋 갱신한다.
+    [주의] 그래프가 없으면 그래프 몫은 빈 집합이다. 그래프는 색인기가 **커서가 걸은 커밋만**
+    갱신하므로 뒤처질 수 있다 — 실측 2026-09-12 NS: 커서가 갇혀 `ANSCharacterBase` 가 그래프에
+    없었고 실재 클래스가 유령으로 거부됐다. 그래서 아래 `project_live_identifiers` 를 더한다.
     """
+    names: set = set()
     try:
         from ..graph import db as gdb
-        if not gdb.exists(paths):
-            return set()
-        with gdb.lock():
-            con = gdb.connect(paths)
-            names = {r[0] for r in con.execute("SELECT name FROM classes") if r and r[0]}
-            names |= {r[0] for r in con.execute("SELECT method_name FROM methods") if r and r[0]}
-        return {n for n in names if isinstance(n, str) and len(n) > 2}
+        if gdb.exists(paths):
+            with gdb.lock():
+                con = gdb.connect(paths)
+                names = {r[0] for r in con.execute("SELECT name FROM classes") if r and r[0]}
+                names |= {r[0] for r in con.execute("SELECT method_name FROM methods")
+                          if r and r[0]}
     except Exception:                                        # noqa: BLE001
         # [주의] 판정 근거를 못 얻은 것이지 통과가 아니다 — 빈 집합이면 종전 판정 그대로다
+        names = set()
+    names = {n for n in names if isinstance(n, str) and len(n) > 2}
+    try:
+        names |= project_live_identifiers(paths)
+    except Exception:                                        # noqa: BLE001
+        pass                            # 근거를 못 넓힌 것이지 통과가 아니다 — 그래프 몫만 쓴다
+    return names
+
+
+# 저장소 소스 디렉토리 → (파일 서명, 식별자 집합). 배치 하나가 그룹마다 부르므로 캐시한다.
+_LIVE_CACHE: dict = {}
+
+
+def project_live_identifiers(paths) -> set:
+    """🔴 **프로젝트 전체 소스의 살아 있는 코드**에 등장하는 식별자 (2026-09-13).
+
+    [중요] **그래프는 클래스·메서드 이름만 안다** — 그래서 실재하는 이름이 유령으로 잡혔다.
+    실측 2026-09-13 NS (재시도마다 운에 따라 거부·통과가 갈렸고, 한 그룹은 포기됐다):
+
+        IGenericTeamAgentInterface   엔진 인터페이스 — `NSPlayerController.h:28` 이 상속한다
+        CurrentVulnerableState       멤버 변수 — `NSCharacterBase.h:233` · `.cpp` 에서 쓴다
+
+    [중요] **게이트의 계약은 그대로다** — `verify` 의 주석 제거·식별자 규칙을 그대로 쓴다.
+    프로젝트 어디에서도 코드에 없고 주석에만 있는 이름, 아예 없는 이름은 여전히 잡힌다.
+    [주의] **대가**: 한 파일에서 주석 처리됐지만 다른 파일 코드에 살아 있는 이름은 통과한다 —
+    `#367` 과 같은 판단이다(프로젝트에 실재하면 유령이 아니다).
+    [주의] **디스크 기준이다** (`git ls-files` 가 아니다) — 합성이 소스를 디스크에서 읽으므로
+    판정 근거도 같은 곳에서 온다. 파일 서명(경로·mtime·크기)이 같으면 다시 읽지 않는다.
+    """
+    src = paths.source
+    if not src.is_dir():
         return set()
+    sig = []
+    for f in sorted(src.rglob("*")):
+        if not f.is_file() or f.suffix.lower() not in gparse.PARSE_EXTS:
+            continue
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        sig.append((str(f), st.st_mtime_ns, st.st_size))
+    key = tuple(sig)
+    hit = _LIVE_CACHE.get(str(src))
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    out: set = set()
+    for name, _mtime, _size in sig:
+        d = source_text.read(Path(name))
+        if d is None:
+            continue
+        out |= verify_mod.identifiers(verify_mod.strip_comments(d.text)[0])
+    _LIVE_CACHE[str(src)] = (key, out)
+    return out
 
 
 def complete_group(repo_root, key: str, files: list[str]) -> list[str]:

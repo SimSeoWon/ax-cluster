@@ -406,6 +406,36 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
           synth.collect_grounding(make_project(tmp / "nograph"),
                                   ["Source/Game/Monster.h"]).dependents == [])
 
+    print("\n[live] 🔴 실재 심볼은 프로젝트 전체의 살아 있는 코드에서도 온다 (실측 2026-09-13 NS)")
+    pl = make_project(tmp / "live")
+    (pl.source / "Game" / "PC.h").write_text(
+        "// 세력 판정\n"
+        "class APC : public APlayerController, public IGenericTeamAgentInterface {\n"
+        "  int CurrentVulnerableState = 0;\n};\n", encoding="utf-8")
+    (pl.source / "Game" / "Ctrl.h").write_text(
+        "// IGenericTeamAgentInterface 는 AAIController 가 이미 구현한다\n"
+        "// CurrentVulnerableState 는 캐릭터가 들고 있다\n"
+        "// UNSGhostOnly 는 주석에만 있다\n"
+        "class ACtrl : public AAIController { void Run(); };\n", encoding="utf-8")
+    known = synth.project_symbols(pl)                   # 그래프 없음 — 살아 있는 코드만 근거
+    check("다른 파일 코드의 엔진 인터페이스를 안다", "IGenericTeamAgentInterface" in known)
+    check("다른 파일 코드의 멤버 변수를 안다", "CurrentVulnerableState" in known)
+    check("[중요] 프로젝트 어디에도 코드로 없는 이름은 모른다 (게이트가 무뎌지지 않았다)",
+          "UNSGhostOnly" not in known)
+    ctrl_src = {"Source/Game/Ctrl.h": (pl.source / "Game" / "Ctrl.h").read_text(encoding="utf-8")}
+    ok_doc = ("## 요약\n\nACtrl 은 IGenericTeamAgentInterface 로 세력을 답하고 "
+              "CurrentVulnerableState 를 본다\n\n## 끝\n")
+    r_ok = verify.verify(ok_doc, sources=ctrl_src, declared=["ACtrl"], known=known)
+    check("🔴 실재하는 두 이름을 서술한 문서가 통과한다 (NS 에서 운에 따라 거부되던 것)",
+          r_ok.ok, str(r_ok.ghosts))
+    ghost_doc = "## 요약\n\nACtrl 은 UNSGhostOnly 를 쓴다\n\n## 끝\n"
+    r_gh = verify.verify(ghost_doc, sources=ctrl_src, declared=["ACtrl"], known=known)
+    check("[중요] 주석에만 있는 이름은 여전히 거부한다",
+          not r_gh.ok and "UNSGhostOnly" in r_gh.ghosts, str(r_gh.ghosts))
+    (pl.source / "Game" / "PC.h").write_text("// 비웠다\nclass APC {};\n", encoding="utf-8")
+    check("  파일이 바뀌면 캐시를 쓰지 않는다",
+          "CurrentVulnerableState" not in synth.project_symbols(pl))
+
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
