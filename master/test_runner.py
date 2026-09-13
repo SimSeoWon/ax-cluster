@@ -481,6 +481,143 @@ def test_session1_instruction_matches() -> None:
           f"launcher={ns.get('INSTRUCTION', '')[:80]!r}\nmaster={R.INSTRUCTION[:80]!r}")
 
 
+def test_session1_master_logs() -> None:
+    """🔴 **세션 1 경로는 기다리는 동안에도, 끝난 뒤에도 로그를 남긴다** (실측 2026-09-13).
+
+    실증 7분(18:54~19:02) 동안 마스터 저널이 비어 있었고, 워커에서 UnrealBuildTool 이 두 번 죽어
+    오류 창이 뜬 것을 사람이 SSH 로 들어가서야 찾았다. 이 테스트는 **실 SSH·실 codex 없이**
+    그 로그 줄들이 실제로 나오는지 잰다.
+    """
+    from types import SimpleNamespace
+    from master.client import bundle as B
+
+    facts = SimpleNamespace(host="192.168.0.2", user="janus", windows=True,
+                            path="E:\\trunk\\NS", os="windows")
+    POPUP = ("18:55:34 Application popup: dotnet.exe - 응용 프로그램 오류 : 예외 알 수 없는 "
+             "소프트웨어 예외 (0xe0434352)")
+    saved = (B._ssh, B._remote_write, B._remote_read)
+    ticks = iter(range(0, 100000, 7))
+
+    def run(*, done_after: int, launcher_log, timeout: int = 600):
+        polls = {"n": 0}
+        lines: list = []
+
+        def fake_ssh(host, user, cmd, timeout=None, **kw):
+            if "done.flag" in cmd:
+                polls["n"] += 1
+                return 0, ("DONE" if polls["n"] > done_after else "WAIT")
+            return 0, ""
+
+        def fake_read(f, p):
+            if p.endswith("out.txt"):
+                return "RESULT: DONE"
+            if p.endswith("rc.txt"):
+                return "0"
+            if p.endswith("launcher.log") and launcher_log is not None:
+                return launcher_log
+            raise FileNotFoundError(p)
+
+        B._ssh, B._remote_write, B._remote_read = fake_ssh, (lambda *a, **k: ""), fake_read
+        try:
+            rc, out = R.run_worker_session1(
+                facts, "t1", files=["Source/A.cpp"], timeout=timeout,
+                sleeper=lambda s: None, logf=lines.append, now=lambda: next(ticks),
+                popup=lambda f, since: [POPUP])
+        finally:
+            B._ssh, B._remote_write, B._remote_read = saved
+        return rc, out, lines
+
+    rc, out, lines = run(done_after=14, launcher_log=(
+        "2026-09-13 18:54:58 job 집음 — task=t1 · 파일 1 · 제한 600초\n"
+        "2026-09-13 19:02:14 codex 종료 — rc=0 · 436초 · 출력 42706자\n"))
+    joined = "\n".join(lines)
+    check("job 전송을 찍는다", "t1 @192.168.0.2 job 전송" in joined, joined[:300])
+    check("런처를 깨웠다고 찍는다", "런처를 깨웠다" in joined)
+    check("🔴 [중요] 기다리는 동안에도 찍는다 (7분 침묵의 자리)", "초째 대기" in joined, joined)
+    check("결과 회수 줄에 rc 와 걸린 시간이 있다",
+          any("결과 회수 — rc=0" in l and "초 · 출력" in l for l in lines), joined)
+    check("🔴 [중요] 런처 로그가 저널로 온다", "런처: 2026-09-13 18:54:58 job 집음" in joined, joined)
+    check("🔴 [중요] 오류 창이 저널에 찍힌다", "오류 창 감지 — 18:55:34" in joined, joined)
+    check("  결과 rc 는 그대로다 (로그가 판정을 바꾸지 않는다)", rc == 0, str(rc))
+    check("🔴 오류 창이 결과에도 붙는다 — 조각 기록까지 가야 한다",
+          "ERROR [세션1] 오류 창 감지" in out, out)
+    rep = R.agent_report(out, rc=rc)
+    check("  `agent_report` 가 그것을 오류 줄로 뽑는다 (c.notes 로 간다)",
+          any("오류 창 감지" in l for l in rep), str(rep))
+
+    _rc2, _out2, lines2 = run(done_after=0, launcher_log=None)
+    check("[주의] 런처 로그가 없으면 그 사실을 말한다 (옛 배달본 · job 을 안 집음)",
+          any("launcher.log 를 못 읽었다" in l for l in lines2), "\n".join(lines2))
+
+    rc3, out3, lines3 = run(done_after=10**6, launcher_log="", timeout=30)
+    check("🔴 시간 초과를 찍는다", any("시간 초과 — 결과를 못 받았다" in l for l in lines3),
+          "\n".join(lines3))
+    check("  시간 초과 뒤에도 오류 창을 가져온다 (멈춘 이유가 거기 있다)",
+          rc3 == 1 and "오류 창 감지" in out3, out3)
+
+
+def _load_launcher():
+    import importlib.util
+    src = Path(__file__).resolve().parents[1] / "client" / "runtime" / "session1_conductor.py"
+    spec = importlib.util.spec_from_file_location("_s1_launcher_under_test", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_session1_launcher_logs() -> None:
+    """🔴 **런처가 사건마다 `launcher.log` 에 남긴다** (실측 2026-09-13 — 종전 런처는 로그 0줄).
+
+    [주의] 실 codex 를 부르지 않는다 — `build_argv` 를 파이썬 한 줄로 바꿔 끼운다.
+    """
+    import json as _json
+    import os
+    import sys as _sys
+    import tempfile
+    import time as _time
+
+    L = _load_launcher()
+    root = Path(tempfile.mkdtemp(prefix="ax-s1-"))
+    d = root / ".ax" / "session1" / "t1"
+    d.mkdir(parents=True)
+    (d / "job.json").write_text(_json.dumps({"task_id": "t1", "files": ["Source/A.cpp"],
+                                             "timeout": 60}), encoding="utf-8")
+    saved = (L.build_argv, L.find_root)
+    L.build_argv = lambda r, files, approvals=(): [_sys.executable, "-c", "print('RESULT: DONE')"]
+    try:
+        rc = L.run_job(root, d)
+        log = (d / "launcher.log").read_text(encoding="utf-8")
+        check("런처가 job 을 돌렸다", rc == 0 and "RESULT: DONE" in (d / "out.txt").read_text())
+        for want in ("job 집음 — task=t1", "codex 시작 — pid=", "codex 종료 — rc=0", "결과 기록 — rc=0"):
+            check(f"🔴 launcher.log 에 「{want}」", want in log, log)
+        check("  done.flag 는 여전히 쓴다", (d / "done.flag").exists())
+
+        # 🔴 관찰 로그 — 완료 뒤 job.json 이 다시 쓰이면 **돌리지 않고** 그 사실을 남긴다
+        later = (d / "done.flag").stat().st_mtime + 10
+        os.utime(d / "job.json", (later, later))
+        L.find_root = lambda: root
+        L.main()
+        log2 = (d / "launcher.log").read_text(encoding="utf-8")
+        check("🔴 [중요] 재시도 job 을 건너뛸 때 그 사실이 남는다 (가설 확인용)",
+              "job.json 이 done.flag 보다 새롭다" in log2, log2)
+        check("  동작은 그대로 — 다시 돌리지 않았다 (관찰만 더했다)",
+              log2.count("codex 시작") == 1, log2)
+
+        # 시간 초과
+        d3 = root / ".ax" / "session1" / "t3"
+        d3.mkdir(parents=True)
+        (d3 / "job.json").write_text(_json.dumps({"task_id": "t3", "timeout": 1}), encoding="utf-8")
+        L.build_argv = lambda r, files, approvals=(): [_sys.executable, "-c",
+                                                       "import time; time.sleep(30)"]
+        t0 = _time.monotonic()
+        L.run_job(root, d3)
+        log3 = (d3 / "launcher.log").read_text(encoding="utf-8")
+        check("🔴 시간 초과가 launcher.log 에 남는다", "시간 초과 1초" in log3, log3)
+        check("  그리고 오래 매달리지 않는다", _time.monotonic() - t0 < 20)
+    finally:
+        L.build_argv, L.find_root = saved
+
+
 def main() -> int:
     for fn in (test_parse, test_pick, test_command, test_codex_windows_sandbox,
                test_agent_report, test_beater, test_run_task,
@@ -489,7 +626,9 @@ def main() -> int:
                test_json_usage,
                test_codex_mcp_approval,
                test_dispatch_is_not_a_consent_prompt,
-               test_session1_instruction_matches):
+               test_session1_instruction_matches,
+               test_session1_master_logs,
+               test_session1_launcher_logs):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_runner: {PASS}/{total} 통과")

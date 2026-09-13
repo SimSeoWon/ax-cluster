@@ -493,10 +493,85 @@ def run_worker(facts, task_id: str, *, files=(), runner=None, mode: str = "claud
 
 
 SESSION1_POLL_SEC = 10
+# 🔴 **기다리는 동안에도 찍는다** (실측 2026-09-13). 끝나야 찍히는 로그는 멈춤을 못 보여 준다 —
+#    실증 7분(18:54~19:02) 동안 저널이 비어 있었고, 그사이 워커에서 UnrealBuildTool 이 두 번
+#    죽어 오류 창이 떴다는 것을 사람이 SSH 로 들어가서야 찾았다.
+SESSION1_NOTE_SEC = 120
+SESSION1_LAUNCHER_LOG = "launcher.log"
+SESSION1_LAUNCHER_TAIL = 20             # 저널로 옮기는 런처 로그 줄 수 (최근 것부터)
+
+
+def _s1_log(msg: str) -> None:
+    """세션 1 경로 로그. [중요] `infer._log`·`autodispatch._log` 와 같은 `[dispatch]` 줄기다 —
+    journalctl 에서 한 흐름으로 읽혀야 한다."""
+    print(f"[dispatch] [세션1] {msg}", flush=True)
+
+
+def _popup_events(facts, since: str, *, ssh=None) -> list:
+    """🔴 워커에 뜬 **오류 창** — System 로그 `Application Popup`(ID 26), `since` 이후.
+
+    [중요] 실측 2026-09-13: `dotnet.exe - 응용 프로그램 오류 : 알 수 없는 소프트웨어 예외
+    (0xe0434352)` 가 18:55·19:00 두 번 떴는데 **Application 로그에는 없고 System 로그 ID 26
+    에만** 있었다. 창이 뜨면 프로세스가 매달리므로 이것이 「왜 멈췄나」의 직접 증거다.
+    [주의] `since` 는 워커 **로컬 시각** 문자열이다 — 마스터와 워커 시계가 같은 시간대라는
+    전제(실측 일치)이고, 호출자가 여유를 두고 앞당긴다. 윈도우가 아니면 빈 목록이다.
+    [주의] 실패해도 예외를 던지지 않는다 — 판정 보조이지 판정이 아니다.
+    """
+    if not getattr(facts, "windows", False):
+        return []
+    import base64 as _b64
+    ps = ("$ProgressPreference='SilentlyContinue';"
+          "[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
+          f"Get-WinEvent -FilterHashtable @{{LogName='System';Id=26;StartTime=[datetime]'{since}'}}"
+          " -ErrorAction SilentlyContinue | Sort-Object TimeCreated | ForEach-Object "
+          "{ '{0:HH:mm:ss} {1}' -f $_.TimeCreated, ($_.Message -replace '\\s+',' ') }")
+    enc = _b64.b64encode(ps.encode("utf-16-le")).decode("ascii")
+    try:
+        rc, out = (ssh or bundle._ssh)(facts.host, facts.user,
+                                       f"powershell -NoProfile -EncodedCommand {enc}")
+    except Exception:                                        # noqa: BLE001
+        return []
+    if rc != 0:
+        return []
+    return [ln.strip() for ln in (out or "").splitlines()
+            if ln.strip() and not ln.lstrip().startswith(("#<", "<Objs"))]
+
+
+def _session1_after(facts, task_id: str, base: str, sep: str, since: str, out: str, *,
+                    log, popup) -> str:
+    """결과를 받은 뒤(또는 시간 초과 뒤) **런처 로그와 오류 창**을 저널로 가져온다.
+
+    [중요] 오류 창은 **결과 문자열에도 붙인다** — `ERROR` 로 시작하므로 `agent_report` 가 오류 줄로
+    뽑아 조각 기록(`c.notes`)까지 간다. 저널에만 있으면 `.33` 이 못 본다(`#391` 과 같은 결).
+    """
+    from ..client import bundle as _b
+    try:
+        ll = _b._remote_read(facts, f"{base}{sep}{SESSION1_LAUNCHER_LOG}") or ""
+    except Exception as e:                                   # noqa: BLE001
+        ll = ""
+        log(f"{task_id} [주의] launcher.log 를 못 읽었다 — {type(e).__name__}: {e} "
+            f"(런처가 옛 배달본이거나 job 을 집지 않았다)")
+    else:
+        if not ll.strip():
+            log(f"{task_id} [주의] launcher.log 가 비었다 — 런처가 job 을 집지 않았을 수 있다")
+    for ln in ll.strip().splitlines()[-SESSION1_LAUNCHER_TAIL:]:
+        if ln.strip():
+            log(f"{task_id} 런처: {ln.strip()[:300]}")
+    try:
+        pops = (popup or _popup_events)(facts, since)
+    except Exception as e:                                   # noqa: BLE001
+        pops = []
+        log(f"{task_id} [주의] 오류 창 기록을 못 읽었다 — {type(e).__name__}: {e}")
+    for p in pops:
+        log(f"{task_id} @{facts.host} 🔴 오류 창 감지 — {p[:300]}")
+    if pops:
+        out = (out or "") + "\n" + "\n".join(
+            f"ERROR [세션1] 오류 창 감지 — {p[:300]}" for p in pops)
+    return out
 
 
 def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT_TIMEOUT,
-                        sleeper=None) -> tuple:
+                        sleeper=None, logf=None, now=None, popup=None) -> tuple:
     """세션 1 런처를 거쳐 지휘자를 돌린다. `(rc, stdout)` (`#401`).
 
     🔴 [중요] **마스터가 보내는 것은 데이터뿐이다** — `job.json` 의 `task_id`·`files`.
@@ -514,6 +589,12 @@ def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT
     from client.init import residency as _R
 
     nap = sleeper or _t.sleep
+    clock = now or _t.time
+    log = logf or _s1_log
+    t0 = clock()
+    # [주의] 오류 창 조회 기준 — 워커 로컬 시각 · 1분 여유를 두고 앞당긴다(`_popup_events` 참조)
+    since = _t.strftime("%Y-%m-%d %H:%M:%S", _t.localtime(t0 - 60))
+    who = f"{task_id} @{facts.host}"
     rel = f".ax/session1/{task_id}"
     job = _json.dumps({"task_id": task_id, "files": [str(f) for f in (files or [])],
                        "approvals": _approval_overrides(), "timeout": timeout},
@@ -521,18 +602,24 @@ def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT
     try:
         _b._remote_write(facts, f"{rel}/job.json", job + "\n", base="checkout")
     except Exception as e:                                   # noqa: BLE001
+        log(f"{who} 🔴 job 전송 실패 — {type(e).__name__}: {e}")
         return 1, f"[세션1] job 을 못 보냈다 — {type(e).__name__}: {e}"
+    log(f"{who} job 전송 — 파일 {len(files or [])} · 제한 {timeout}초")
 
+    task_name = _R.conductor_task_name(_project_of(facts))
     rc0, out0 = bundle._ssh(facts.host, facts.user,
                             _R.conductor_run_command(_project_of(facts), facts))
     if rc0 != 0:
+        log(f"{who} 🔴 런처를 못 깨웠다 (rc={rc0}) — {(out0 or '').strip()[:200]}")
         return 1, (f"[세션1] 런처를 못 깨웠다 (rc={rc0}) — {(out0 or '')[:200]}\n"
-                   f"[중요] `{_R.conductor_task_name(_project_of(facts))}` 작업이 등록돼 "
+                   f"[중요] `{task_name}` 작업이 등록돼 "
                    f"있는지 본다(`master.client deliver` 가 등록한다)")
+    log(f"{who} 런처를 깨웠다 (`{task_name}`) — done.flag 를 기다린다")
 
     sep = chr(92) if facts.windows else "/"
     base = f"{facts.path}{sep}{rel.replace('/', sep)}"
     waited = 0
+    next_note = SESSION1_NOTE_SEC
     while waited < timeout:
         rc, _o = bundle._ssh(facts.host, facts.user,
                              (f'if exist "{base}{sep}done.flag" (echo DONE) else (echo WAIT)'
@@ -542,13 +629,21 @@ def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT
             out = _b._remote_read(facts, f"{base}{sep}out.txt") or ""
             rct = (_b._remote_read(facts, f"{base}{sep}rc.txt") or "1").strip()
             try:
-                return int(rct), out
+                rc_i = int(rct)
             except ValueError:
-                return 1, out
+                rc_i = 1
+            log(f"{who} 결과 회수 — rc={rc_i} · {int(clock() - t0)}초 · 출력 {len(out)}자")
+            out = _session1_after(facts, task_id, base, sep, since, out, log=log, popup=popup)
+            return rc_i, out
+        if waited >= next_note:
+            log(f"{who} {waited}초째 대기 — 아직 결과 없음 (done.flag 없음)")
+            next_note += SESSION1_NOTE_SEC
         nap(SESSION1_POLL_SEC)
         waited += SESSION1_POLL_SEC
-    return 1, (f"[세션1] {timeout}초 안에 끝나지 않았다 — 런처가 돌지 않았을 수 있다"
-               f"(로그온 세션이 없으면 `/IT` 작업은 뜨지 않는다)")
+    log(f"{who} 🔴 {timeout}초 시간 초과 — 결과를 못 받았다")
+    msg = (f"[세션1] {timeout}초 안에 끝나지 않았다 — 런처가 돌지 않았을 수 있다"
+           f"(로그온 세션이 없으면 `/IT` 작업은 뜨지 않는다)")
+    return 1, _session1_after(facts, task_id, base, sep, since, msg, log=log, popup=popup)
 
 
 def _project_of(facts) -> str:

@@ -24,19 +24,30 @@ Windows OpenSSH 는 **세션 0** 에서 프로세스를 만들고, 거기서는 
 
     입력   <checkout>/.ax/session1/<task_id>/job.json   {"task_id","files","mode"}
     출력   같은 디렉토리의 out.txt · rc.txt · done.flag  (done.flag 를 **맨 마지막에** 쓴다)
+    로그   같은 디렉토리의 launcher.log                  (사건마다 한 줄 · 덧붙인다)
 
 [중요] `done.flag` 가 마지막인 것은 마스터가 그것으로 완료를 판정하기 때문이다 —
 반쯤 쓰인 `out.txt` 를 읽으면 안 된다.
+
+## 🔴 [중요] 로그를 남긴다 (실측 2026-09-13)
+
+종전 런처는 **로그를 하나도 남기지 않았다.** 실증 7분 동안(18:54~19:02) 마스터 저널에는
+아무것도 없었고, codex 가 UE5 빌드를 돌리다 UnrealBuildTool 이 두 번 죽어 **오류 창이 떴다는
+사실**을 사람이 워커에 SSH 로 들어가서야 찾았다. 그래서 사건마다 `launcher.log` 에 한 줄씩
+남기고, 마스터가 결과를 회수할 때 그것을 저널로 가져간다(`runner.run_worker_session1`).
+[주의] 로그 쓰기 실패는 작업을 막지 않는다 — 조용히 넘기되 작업 결과 파일은 그대로 쓴다.
 """
 from __future__ import annotations
 
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 JOB_DIR = ".ax/session1"
 JOB, OUT, RC, DONE = "job.json", "out.txt", "rc.txt", "done.flag"
+LOG = "launcher.log"
 
 # [중요] 마스터 `runner.INSTRUCTION` 과 **같은 글자**여야 한다 — 배달물은 마스터를 import 하지
 #    않으므로(`clientside` 규약) 값을 복사한다. 갈리면 워커가 다른 계약으로 일한다.
@@ -50,6 +61,15 @@ INSTRUCTION = (
     "The last non-empty line of your output must be exactly RESULT: DONE "
     "(use RESULT: BLOCKED if you could not finish, and say why above it)."
 )
+
+
+def _log(d: Path, msg: str) -> None:
+    """`<job 디렉토리>/launcher.log` 에 시각과 함께 한 줄 덧붙인다. **예외를 던지지 않는다.**"""
+    try:
+        with open(d / LOG, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except Exception:                                        # noqa: BLE001
+        pass
 
 
 def _codex_exe() -> str:
@@ -100,8 +120,17 @@ def _kill_tree(proc) -> None:
 
 def run_job(root: Path, d: Path) -> int:
     """job 하나를 돌리고 결과를 남긴다. 반환은 rc."""
-    job = json.loads((d / JOB).read_text(encoding="utf-8"))
+    t0 = time.monotonic()
+    rc = 1
+    out = ""
+    try:
+        job = json.loads((d / JOB).read_text(encoding="utf-8"))
+    except Exception as e:                                   # noqa: BLE001
+        _log(d, f"🔴 job.json 을 못 읽었다 — {type(e).__name__}: {e}")
+        job = {}
     files = job.get("files") or []
+    limit = int(job.get("timeout") or 3600)
+    _log(d, f"job 집음 — task={job.get('task_id', d.name)} · 파일 {len(files)} · 제한 {limit}초")
     argv = build_argv(root, files, job.get("approvals") or ())
     # 🔴 [중요] **자식까지 죽여야 한다** (실측 2026-09-12). 세션 1 은 데스크톱이 있어서
     #    크래시가 **모달 대화상자**로 뜨고, 그러면 프로세스가 무한 대기한다 — 세션 0 에서는
@@ -113,25 +142,30 @@ def run_job(root: Path, d: Path) -> int:
     if sys.platform.startswith("win"):
         kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
-        import os
         kw["start_new_session"] = True
     try:
         proc = subprocess.Popen(argv, cwd=str(root), stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                 text=True, encoding="utf-8", errors="replace", **kw)
+        _log(d, f"codex 시작 — pid={proc.pid} · 실행 파일 {argv[0]}")
         try:
-            out = proc.communicate(timeout=int(job.get("timeout") or 3600))[0] or ""
+            out = proc.communicate(timeout=limit)[0] or ""
             rc = proc.returncode
+            _log(d, f"codex 종료 — rc={rc} · {int(time.monotonic() - t0)}초 · 출력 {len(out)}자")
         except subprocess.TimeoutExpired:
             _kill_tree(proc)
+            _log(d, f"🔴 시간 초과 {limit}초 — 프로세스 트리를 죽였다 (pid={proc.pid})")
             out = proc.communicate(timeout=30)[0] or ""
             out += ("\n[런처] 시간 초과 — 프로세스 트리를 죽였다. 세션 1 은 크래시가 모달로 "
                     "뜰 수 있고 그러면 자식이 무한 대기한다(`DontShowUI` 로 완화).")
             rc = 1
     except Exception as e:                                   # noqa: BLE001
         out, rc = f"[런처] 실행 실패 — {type(e).__name__}: {e}", 1
+        _log(d, f"🔴 실행 실패 — {type(e).__name__}: {e}")
     (d / OUT).write_text(out, encoding="utf-8")
     (d / RC).write_text(str(rc), encoding="utf-8")
+    # [주의] 로그를 **done.flag 보다 먼저** 쓴다 — 마스터는 done.flag 를 보자마자 로그를 읽는다
+    _log(d, f"결과 기록 — rc={rc} · 전체 {int(time.monotonic() - t0)}초 · done.flag 를 쓴다")
     (d / DONE).write_text("done", encoding="utf-8")          # [중요] 맨 마지막
     return rc
 
@@ -164,8 +198,22 @@ def main(argv=None) -> int:
     if not base.is_dir():
         return 0
     for d in sorted(base.iterdir()):
-        if d.is_dir() and (d / JOB).is_file() and not (d / DONE).exists():
+        if not (d.is_dir() and (d / JOB).is_file()):
+            continue
+        done = d / DONE
+        if not done.exists():
             run_job(root, d)
+            continue
+        # 🔴 [주의] **관찰 로그 — 동작은 바꾸지 않는다** (가설 확인용, 2026-09-13).
+        #    완료 뒤에 `job.json` 이 다시 쓰였다면 마스터가 **재시도**를 보낸 것인데, `done.flag` 가
+        #    남아 있어 이 런처는 그 job 을 돌리지 않는다. 그러면 마스터가 **이전 시도의 결과**를
+        #    다시 읽을 수 있다 — 09-12 로그의 「재시도 출력이 글자까지 같다」가 그것인지 가린다.
+        try:
+            if (d / JOB).stat().st_mtime > done.stat().st_mtime:
+                _log(d, "🔴 [주의] job.json 이 done.flag 보다 새롭다 — 이전 결과가 남아 이 job 을 "
+                        "돌리지 않았다 (재시도가 옛 결과를 읽을 수 있다)")
+        except OSError:
+            pass
     return 0
 
 
