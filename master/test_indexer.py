@@ -79,6 +79,11 @@ class FakeReg:
 def make_project(root: Path) -> ProjectPaths:
     p = ProjectPaths(name="Demo", root=root / "Demo")
     (p.repo / SOURCE_SUBDIR).mkdir(parents=True, exist_ok=True)
+    # [중요] **소스 파일이 클론에 실제로 있어야 한다** — 커서 판정은 지금 클론에 남은 파일만
+    #    센다(원전 `_group_files` 의 `exists()`). 없으면 「문서 없음 → 멈춤」 칸이 아무것도 안
+    #    재고 통과한다. 가짜 git 의 기본 diff 가 `Source/A.cpp`·`Source/B.cpp` 다.
+    for stem in ("A", "B"):
+        (p.repo / SOURCE_SUBDIR / f"{stem}.cpp").write_text("// fixture\n", encoding="utf-8")
     p.context.mkdir(parents=True, exist_ok=True)
     # [중요] **문서 경로는 그룹 키를 따른다** (`synth.doc_path`) — 그룹 `Source/A` 의 문서는
     #    `context/Source/A.md` 다. 평면으로 두면 `#274` 게이트가 「미합성」으로 판정한다
@@ -497,6 +502,48 @@ def main() -> int:
     check("  커서는 직전 완료 커밋", cursor_of(pc) == C1, cursor_of(pc))
     check("  멈춘 사유를 남긴다", "문서 없음" in r.halted, r.halted)
     check("  세 번째 커밋을 건드리지 않았다", hit["n"] == 2, str(hit["n"]))
+    check("  [중요] 멈춘 사유가 저널 줄에 보인다 (사흘간 안 보였다)", "멈춤" in r.line(), r.line())
+
+    print("\n[12-3b] [중요] 뒤 커밋이 지운 그룹은 커서를 막지 않는다 (실측 NS `0b33810`)")
+    rewind(pc)
+
+    def synth_like_real(paths_, *, changed=None, commit="", **kw):
+        """실제 `synth.run` 처럼 **클론에 없는 파일의 문서는 만들지 않는다**(`synth.py:461`)."""
+        alive = [f for f in (changed or []) if (paths_.repo / f).is_file()]
+        return synth_writes(paths_, changed=alive, commit=commit)
+
+    r = process_event(ev(), registry=FakeReg(tmp / "cur"),
+                      git=git_walk([C1, C2], diffs={C1: "Source/A.cpp\nSource/Gone.cpp",
+                                                   C2: "Source/B.cpp"}),
+                      reindex=lambda p: 1, synth_run=synth_like_real)
+    check("[중요] 지워진 그룹 때문에 멈추지 않는다",
+          r.commits_done == 2 and not r.halted, r.summary)
+    check("  커서가 끝까지 간다", cursor_of(pc) == C2, cursor_of(pc))
+    check("  지워진 그룹의 문서를 지어내지 않았다",
+          not (pc.context / "Source" / "Gone.md").exists())
+
+    print("\n[12-3c] [중요] 같은 커밋의 리뷰는 한 번만 만든다 (실측 NS 같은 커밋 리뷰 150개)")
+    from master.events import consumer as _C
+    rdir = pc.root / "reviews" / "사람"
+    rdir.mkdir(parents=True, exist_ok=True)
+    (rdir / f"2026-09-13_1600_{C1[:8]}.md").write_text("# 기존 리뷰\n", encoding="utf-8")
+
+    class _RR:
+        to_commit, review_written, review_note, canary_write_failed = C1, "", "", 0
+
+    rv_calls = []
+
+    def rv_count(*a):
+        rv_calls.append(a[1])
+        return type("RV", (), {"written": "", "skipped": "trivial", "error": ""})()
+
+    r1 = _RR()
+    _C._auto_review(pc, ["Source/A.cpp"], r1, commit=C1, review_run=rv_count)
+    check("[중요] 리뷰가 이미 있으면 다시 만들지 않는다",
+          rv_calls == [] and "이미 있다" in r1.review_note, r1.review_note)
+    r2 = _RR()
+    _C._auto_review(pc, ["Source/A.cpp"], r2, commit=C2, review_run=rv_count)
+    check("  다른 커밋은 그대로 리뷰한다", rv_calls == [C2], str(rv_calls))
 
     print("\n[12-4] [중요] 소스 밖 변경만 있는 커밋 — 합성 없이 커서만 전진 (`#281`)")
     rewind(pc)

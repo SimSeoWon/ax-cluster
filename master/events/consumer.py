@@ -140,6 +140,13 @@ class ProjectResult:
             bits.append(f"재색인 {self.docs}건")
         elif self.skipped:
             bits.append(f"재색인 건너뜀 ({self.skipped})")
+        # [중요] **멈춘 사유와 합성 사유를 저널 줄에 싣는다** — `summary` 에만 있으면 서비스 로그에
+        #    안 나온다. 실측 2026-09-13 NS: 사흘간 「합성 0건」만 찍혔고 「위 사유 참조」가 가리키는
+        #    줄이 없었다(사유는 `SynthError` 였고 커서가 한 커밋에 갇혀 있었다).
+        if self.synth_note and not self.synth_written:
+            bits.append(f"합성 사유: {self.synth_note[:160]}")
+        if self.halted:
+            bits.append(f"[중요] 멈춤: {self.halted}")
         return f"  [완료] {self.project_id}: " + " · ".join(bits)
 
 
@@ -490,9 +497,18 @@ def _auto_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
     누적한다(kind=review-lost). 스킵(trivial·작성자 제외)은 유실이 아니라 설계다 — 카나리 없음.
     """
     from ..context_synth import review_gen as rg
+    # [중요] **커밋당 리뷰는 한 번이다** — 원전은 커밋을 한 번만 걸어서(`watch.py:668`) 저절로
+    #    그랬다. 우리는 문서가 안 끝난 커밋을 다시 걷기 때문에(`#280`), 막지 않으면 같은 커밋의
+    #    리뷰가 회차마다 쌓인다(실측 2026-09-13 NS: 같은 커밋 리뷰 150개, 내용 동일).
+    #    작성자 디렉토리는 커밋 작성자로 정해지므로 모든 작성자 아래를 본다.
+    c = commit or r.to_commit
+    done = sorted((Path(paths.root) / rg.REVIEWS_DIRNAME).glob(f"*/*_{c[:8]}.md")) if c else []
+    if done:
+        r.review_note = f"리뷰 스킵: 이 커밋의 리뷰가 이미 있다 ({done[0].name})"
+        return
     fn = review_run or rg.review_commit
     try:
-        rv = fn(paths, (commit or r.to_commit), changed)
+        rv = fn(paths, c, changed)
     except Exception as e:                              # noqa: BLE001
         r.review_note = f"[중요] 리뷰 생성 예외: {type(e).__name__}: {e}"
         if not append_canary(paths, kind="review-lost",
@@ -698,8 +714,14 @@ def process_event(ev: Event, *, registry: Registry | None = None,
             #    「완료」로 세면 커서가 그 위를 넘어가고, 그 커밋의 변경은 영구 유실이다
             #    (원전이 가진 구멍 — `process_commit` 은 예외를 안 던지고 호출부가 그대로
             #    `save_state` 를 부른다. 우리는 멈춘다).
+            # [중요] **지금 클론에 남은 파일만 센다** — 원전 `_group_files` 가 `exists()` 로
+            #    거르는 것과 같고, `synth.run` 도 같은 식으로 거른다(`synth.py:461`). 안 거르면
+            #    **뒤 커밋이 지운 그룹**의 문서를 영원히 요구해 커서가 그 커밋에 갇힌다
+            #    (실측 2026-09-13 NS: `0b33810` 이 만든 `NSCombatCharacterBase` 를 `4773dce` 가
+            #    지웠고, 사흘간 10분마다 같은 커밋을 다시 걸었다).
             from ..context_synth import synth as _cs
-            missing = [k for k in _cs.group(changed)
+            alive = [f for f in changed if (paths.repo / f).is_file()]
+            missing = [k for k in _cs.group(alive)
                        if not _cs.doc_path(paths, k).is_file()]
             if missing:
                 r.halted = (f"{c[:8]} 의 그룹 {len(missing)}개가 문서 없음 — 커서를 "
