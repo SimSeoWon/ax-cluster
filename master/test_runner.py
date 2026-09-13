@@ -618,6 +618,35 @@ def test_session1_launcher_logs() -> None:
         L.build_argv, L.find_root = saved
 
 
+def test_worker_does_not_build() -> None:
+    """🔴 **워커는 UE5 빌드를 돌리지 않는다** — 지시문이 말하고, 돌렸는지는 따로 잰다 (실측 2026-09-13).
+
+    `.2` 의 codex 지휘자가 본문을 채운 직후 스스로 `Build.bat NSEditor …` 를 돌렸고, 샌드박스 안에서
+    UnrealBuildTool 이 시작하자마자 두 번 죽어 오류 창이 7분을 붙잡았다. 원전 워커는 빌드하지 않는다.
+    """
+    check("🔴 [중요] 지시문이 빌드를 금지한다", "Do not run UE5 builds" in R.INSTRUCTION, R.INSTRUCTION)
+    check("  빌드 판정이 누구 몫인지 말한다", "done later by the requester" in R.INSTRUCTION)
+    check("  [중요] ASCII 만이다 (워커 콘솔에서 깨지지 않는다)", R.INSTRUCTION.isascii())
+    c = R.worker_command(_facts(), "t1")
+    check("실제 명령줄에 실린다", "Do not run UE5 builds" in c, c[:160])
+
+    # [중요] **`.2` 의 실제 출력이다** (조각 ed833ab2 · out.txt). 지어낸 문자열이 아니다.
+    agent_msg = r'''{"type":"item.completed","item":{"id":"item_8","type":"agent_message","text":"빌드는 아직 진행 중이며 추가 오류 출력은 없습니다. 완료 코드와 UnrealBuildTool 최종 문구까지 확인하겠습니다."}}'''
+    build1 = r'''{"type":"item.completed","item":{"id":"item_6","type":"command_execution","command":"\"C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command \"rg -n \\\"\\\\[PSEUDO\\\\]|\\\\[FEEDBACK\\\\]\\\" Source/NS/NSCharacterBase.cpp Source/NS/NSCharacterBase.h; \"'$build = '\"'C:\\\\Program Files\\\\UE_5.8\\\\Engine\\\\Build\\\\BatchFiles\\\\Build.bat'; & \"'$build NSEditor Win64 Development '\"'E:\\\\trunk\\\\NS\\\\NS.uproject' -WaitMutex -FromMsBuild\"","aggregated_output":"Using bundled DotNet SDK version: 10.0 win-x64\r\nRunning UnrealBuildTool: dotnet \"..\\..\\Engine\\Binaries\\DotNET\\UnrealBuildTool\\UnrealBuildTool.dll\" NSEditor Win64 Development E:\\trunk\\NS\\NS.uproject -WaitMutex -FromMsBuild\r\n","exit_code":1,"status":"failed"}}'''
+    log_read = r'''{"type":"item.started","item":{"id":"item_10","type":"command_execution","command":"\"C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command '$logs = @('\"'C:\\\\Users\\\\janus\\\\AppData\\\\Local\\\\UnrealBuildTool\\\\Log.txt','C:\\\\Users\\\\janus\\\\AppData\\\\Local\\\\UnrealBuildTool\\\\Log.json','C:\\\\Users\\\\janus\\\\AppData\\\\Local\\\\UnrealBuildTool\\\\Log.xml'); foreach (\"'$log in $logs) { if (Test-Path $log) { Write-Output \"=== $log ===\"; Get-Content -Tail 160 $log } }'","aggregated_output":"","exit_code":null,"status":"in_progress"}}'''
+    build2 = r'''{"type":"item.completed","item":{"id":"item_13","type":"command_execution","command":"\"C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command \"& 'C:\\\\Program Files\\\\UE_5.8\\\\Engine\\\\Build\\\\BatchFiles\\\\Build.bat' NSEditor Win64 Development 'E:\\\\trunk\\\\NS\\\\NS.uproject' -WaitMutex -FromMsBuild\"","aggregated_output":"Using bundled DotNet SDK version: 10.0 win-x64\r\nRunning UnrealBuildTool: dotnet \"..\\..\\Engine\\Binaries\\DotNET\\UnrealBuildTool\\UnrealBuildTool.dll\" NSEditor Win64 Development E:\\trunk\\NS\\NS.uproject -WaitMutex -FromMsBuild\r\n","exit_code":1,"status":"failed"}}'''
+    got = R.build_attempts("\n".join([agent_msg, build1, log_read, build2, build2]))
+    check("🔴 [중요] 실측 출력에서 실제 빌드 실행 두 번을 잡는다", len(got) == 2, str(got))
+    check("  각 줄에 최종 상태와 종료 코드가 있다",
+          all("상태 failed" in g and "종료 코드 1" in g for g in got), str(got))
+    check("[중요] 로그를 **읽는** 명령은 빌드가 아니다 (오탐 금지)",
+          R.build_attempts(log_read) == [], str(R.build_attempts(log_read)))
+    check("[중요] 지휘자가 **말로** UnrealBuildTool 을 언급한 것은 빌드가 아니다",
+          R.build_attempts(agent_msg) == [])
+    check("  빈 출력·비 JSON 은 빈 목록이다 (예외 없음)",
+          R.build_attempts("") == [] and R.build_attempts("RESULT: DONE\nBuild.bat") == [])
+
+
 def main() -> int:
     for fn in (test_parse, test_pick, test_command, test_codex_windows_sandbox,
                test_agent_report, test_beater, test_run_task,
@@ -628,7 +657,8 @@ def main() -> int:
                test_dispatch_is_not_a_consent_prompt,
                test_session1_instruction_matches,
                test_session1_master_logs,
-               test_session1_launcher_logs):
+               test_session1_launcher_logs,
+               test_worker_does_not_build):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_runner: {PASS}/{total} 통과")

@@ -87,9 +87,52 @@ INSTRUCTION = (
     "Read the [DOC] and [PSEUDO] comments in these files and write their bodies: {files}. "
     "Judge from the source files in this checkout, not from memory. "
     "Do not run any git command. Do not commit or push. "
+    "Do not run UE5 builds, UnrealBuildTool, UnrealEditor or automation tests - "
+    "build verification is done later by the requester, not on this worker. "
     "The last non-empty line of your output must be exactly RESULT: DONE "
     "(use RESULT: BLOCKED if you could not finish, and say why above it)."
 )
+
+# 🔴 **워커는 UE5 빌드를 돌리지 않는다** (실측 2026-09-13 · 원전 대조).
+#
+# [중요] 원전 워커는 빌드하지 않는다 — `worker/` 에 `Build.bat` 이 없고 조각 검증은 정적 검사다.
+#    빌드는 마스터 게이트와 `.33` 의 ⑺ 통합에서 한 번이다. 그런데 `.2` 의 codex 지휘자가 본문을
+#    채운 직후 **스스로** `Build.bat NSEditor …` 를 돌렸고, 샌드박스 안에서 UnrealBuildTool 이
+#    시작하자마자 두 번 죽어(`0xe0434352`) 오류 창이 프로세스를 붙잡았다 — 사람이 창을 닫기까지
+#    7분 · 입력 113만 토큰(`.43` 은 19만). 명시 지시는 없었고, 배달 블록의 「할 수 있는 것: UE5
+#    C++ 빌드」와 스킬의 「너는 검증한다」가 그렇게 읽혔다.
+# [주의] 지시문으로 막아도 **실제로 안 돌렸는지는 따로 잰다** — `build_attempts` 가 그 로그다.
+# [중요] **실행 모양만** 표식으로 쓴다 — `UnrealBuildTool` 낱말만으로는 오탐이다. 실측 출력에서
+#    `…\UnrealBuildTool\Log.txt` 를 **읽는** 명령과 `Get-Process -match 'UnrealBuildTool'` 가
+#    같이 걸렸다. 실제 빌드 실행은 `Build.bat` 이었다.
+_BUILD_MARKS = ("Build.bat", "RunUAT", "UnrealEditor-Cmd", "UnrealBuildTool.exe",
+                "UnrealBuildTool.dll", "UnrealEditor.exe")
+
+
+def build_attempts(stdout: str) -> list:
+    """지휘자 출력에서 **실제로 실행된 UE5 빌드·에디터 명령**을 뽑는다. 없으면 빈 목록.
+
+    [중요] **명령 실행 이벤트만 본다**(codex JSONL 의 `item.type == "command_execution"`) — 지휘자가
+    말로 *"UnrealBuildTool 최종 문구까지 확인하겠다"* 고 쓴 것까지 세면 오탐이다(실측 문구).
+    [주의] 같은 명령이 `item.started`(in_progress)와 `item.completed` 로 두 번 온다 — **명령당 한 줄**,
+    마지막 상태로 적는다. 판정을 바꾸지 않는다 — 기록용이다. 예외를 던지지 않는다.
+    """
+    found: dict = {}
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{") or not any(m in line for m in _BUILD_MARKS):
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        item = d.get("item") if isinstance(d, dict) else None
+        if not isinstance(item, dict) or item.get("type") != "command_execution":
+            continue
+        cmd = " ".join(str(item.get("command") or "").split())
+        if any(m in cmd for m in _BUILD_MARKS):
+            found[cmd] = (item.get("status") or "?", item.get("exit_code"))
+    return [f"{c[:200]} (상태 {s} · 종료 코드 {code})" for c, (s, code) in found.items()]
 
 
 class DispatchError(RuntimeError):

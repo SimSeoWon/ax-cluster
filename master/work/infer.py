@@ -871,6 +871,11 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                 #    [주의] **rc==0 일 때도 찍는다** — 이번 사고가 정확히 `rc=0` 이었다.
                 for _ln in runner.agent_report(_out, rc=_rc):
                     _log(f"[agent] {tid} @{f.host} {_ln}")
+                # 🔴 **워커가 UE5 빌드를 돌렸는지 남긴다** (실측 2026-09-13) — 지시문이 막지만
+                #    실제로 안 돌렸는지는 따로 잰다. `.2` 에서 샌드박스 빌드가 오류 창을 띄워 7분을 붙잡았다.
+                for _bd in runner.build_attempts(_out):
+                    _log(f"[agent] {tid} @{f.host} 🔴 워커가 UE5 빌드를 돌렸다 — {_bd} "
+                         f"(지시문이 금지한다 · 빌드 판정은 요청자 몫)")
                 return _rc, _out
             from . import lanes as _LN
             skel = _skeleton_at(paths, base, files)

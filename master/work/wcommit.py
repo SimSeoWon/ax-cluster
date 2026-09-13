@@ -287,6 +287,14 @@ def _cycle(facts, task_id: str, c: "Committed", base: str, llm, do_ssh, do_read,
     except Exception as e:                                   # noqa: BLE001
         c.notes.append(f"[주의] 계측을 못 읽었다 — {type(e).__name__}: {e}")
         _body = out
+    # 🔴 **워커가 UE5 빌드를 돌렸으면 조각 기록에 남긴다** (실측 2026-09-13). 저널만으로는 `.33` 이
+    #    못 본다(`#391` 과 같은 결). 판정은 바꾸지 않는다 — 빌드 판정은 요청자의 통합 빌드다.
+    try:
+        from .runner import build_attempts as _ba             # noqa: PLC0415
+        c.notes.extend(f"[주의] [지휘자] 워커가 UE5 빌드를 돌렸다(지시문 위반) — {b}"
+                       for b in _ba(out or ""))
+    except Exception as e:                                   # noqa: BLE001
+        c.notes.append(f"[주의] 빌드 흔적을 못 읽었다 — {type(e).__name__}: {e}")
     if rc != 0:
         # [중요] 실패 사유는 **푼 본문**으로 적는다 — 봉투 JSON 을 그대로 보이면 못 읽는다.
         c.reason = f"본문 작성이 실패했다 (rc={rc}) — {(_body or '').strip()[-300:]}"

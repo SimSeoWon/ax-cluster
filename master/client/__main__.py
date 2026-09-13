@@ -520,6 +520,12 @@ def cmd_check(project: str, *, only: str = "") -> int:
         #    실패가 아니다」로 짰다가 사용자 정정으로 되돌렸다: 클러스터는 **버전이 하나**이고,
         #    통신 규칙(`CONTRACT`)과 `config.json` 생성기가 모두 마스터에 있다. 배달물 해시가
         #    같은 것은 *그 커밋들이 배달물을 안 바꿨다*는 뜻일 뿐 **같은 버전이라는 뜻이 아니다.**
+        # 🔴 **옛 스킬 사본이 codex 스킬 루트에 남아 있나** (실측 2026-09-13 `.2`) — 배달본이
+        #    일치해도 codex 가 **옛 사본을 골라 읽으면** 정본은 안 쓰인다. 파일 해시 대조로는 안 보인다.
+        shadows = bundle.shadow_skills(f, names)
+        ok_shadow = not shadows
+        shadow_note = (f" · [실패] 옛 스킬 사본 {len(shadows)}개가 codex 스킬 루트에 있다 "
+                       f"(codex 가 배달본 대신 읽는다): {', '.join(shadows[:3])}" if shadows else "")
         ver = bundle.compare_version(f)
         ok_ver = ver["ok"]
         ver_note = f" · 출처 {ver['reason']}"
@@ -530,15 +536,16 @@ def cmd_check(project: str, *, only: str = "") -> int:
         tag_note = f" · {tag['reason']}"
 
         mark = ("OK" if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws
-                         and ok_ver and ok_tag and ok_codex and ok_res) else "FAIL")
+                         and ok_ver and ok_tag and ok_codex and ok_res and ok_shadow) else "FAIL")
         pay_note = (f" · payload {len(pay)}개 일치" if pay and ok_pay
                     else f" · [중요] payload 불일치/없음 {len(stale)}개: {', '.join(stale[:3])}"
                     if pay else "")
         print(f"  {mark} {f.host} [{f.role}]: 스킬 {len(names)}종 "
               f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}"
-              f"{pay_note}{ws_note}{client_note}{codex_note}{res_note}{rm_note}{tag_note}{ver_note}")
+              f"{pay_note}{ws_note}{client_note}{codex_note}{shadow_note}{res_note}{rm_note}"
+              f"{tag_note}{ver_note}")
         bad += 0 if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws
-                     and ok_ver and ok_tag and ok_codex and ok_res) else 1
+                     and ok_ver and ok_tag and ok_codex and ok_res and ok_shadow) else 1
         if not ver["ok"]:
             behind_hosts.append((f.host, ver.get("behind"), ver.get("stamp_dirty")))
     # [중요] **끝에 한 줄로 모아 말한다** — 호스트별 줄에 섞이면 「몇 대가 낡았나」가 안 보인다.

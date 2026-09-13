@@ -387,6 +387,47 @@ def test_payload_split() -> None:
         check("[중요] 모르는 역할은 예외 (payload_pairs)", True)
 
 
+def test_shadow_skills_are_reported() -> None:
+    """🔴 **codex 가 읽는 옛 스킬 사본을 `check` 가 잡는다** (실측 2026-09-13 `.2`).
+
+    `~/.agents/skills/ax-work` 가 09-05 부터 남아 있었고 codex 는 목록에 `ax-work` 를 두 번 올린 뒤
+    **옛 사본을 읽었다.** 배달본(`~/.codex/skills`) 해시는 일치했으므로 종전 `check` 로는 안 보였다.
+    """
+    check("[중요] 배달하지 않는 codex 스킬 루트가 선언돼 있다",
+          ".agents" in spec.SKILL_SHADOW_HOMES, str(spec.SKILL_SHADOW_HOMES))
+    check("  그 자리는 배달 대상이 아니다 (한 벌을 더 두지 않는다)",
+          not set(spec.SKILL_SHADOW_HOMES) & set(spec.SKILL_HOMES))
+
+    calls: list = []
+
+    def win_ssh(host, user, cmd, *, timeout=None):
+        calls.append(cmd)
+        return 0, ("PRESENT" if "ax-work" in cmd else "ABSENT")
+
+    win = _facts(os="windows", home=r"C:\Users\janus", host="192.168.0.2", user="janus")
+    got = bundle.shadow_skills(win, ("ax-work", "ax-infer"), ssh=win_ssh)
+    check("🔴 [중요] 남은 옛 사본을 이름으로 잡는다", got == ["~/.agents/skills/ax-work"], str(got))
+    check("  윈도우 경로를 쓴다", any(r"C:\Users\janus\.agents\skills\ax-work\SKILL.md" in c
+                                     for c in calls), str(calls))
+
+    lin = bundle.shadow_skills(_facts(), ("ax-work",),
+                               ssh=lambda h, u, c, *, timeout=None: (0, "PRESENT"))
+    check("리눅스에서도 같은 판정이다", lin == ["~/.agents/skills/ax-work"], str(lin))
+    clean = bundle.shadow_skills(_facts(), ("ax-work",),
+                                 ssh=lambda h, u, c, *, timeout=None: (0, "ABSENT"))
+    check("깨끗하면 빈 목록이다", clean == [], str(clean))
+
+    def boom(h, u, c, *, timeout=None):
+        raise OSError("ssh 끊김")
+
+    unknown = bundle.shadow_skills(_facts(), ("ax-work",), ssh=boom)
+    check("[중요] **fail-closed** — 재지 못하면 통과로 접지 않는다",
+          len(unknown) == 1 and "측정 실패" in unknown[0], str(unknown))
+    silent = bundle.shadow_skills(_facts(), ("ax-work",),
+                                  ssh=lambda h, u, c, *, timeout=None: (255, ""))
+    check("  답이 비어도 측정 실패로 적는다", len(silent) == 1 and "rc=255" in silent[0], str(silent))
+
+
 def test_deliver_removes_deprecated_skills() -> None:
     """[중요] **`#232` 완결 — `deliver` 가 폐지 스킬을 지운다** (2026-09-02).
 
@@ -1332,7 +1373,8 @@ def main() -> int:
                test_hook_registration,
                test_codex_entry_doc,
                test_codex_mcp_registration,
-               test_codex_identity):
+               test_codex_identity,
+               test_shadow_skills_are_reported):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_bundle: {PASS}/{total} 통과")

@@ -1902,6 +1902,39 @@ def stored_project(facts: HostFacts) -> dict:
         return {"error": f"config JSON 파싱 실패: {e}"}
 
 
+def shadow_skills(facts: HostFacts, names, *, ssh=None) -> list:
+    """🔴 **배달하지 않는 codex 스킬 루트**에 우리 이름의 스킬이 남아 있나 (`spec.SKILL_SHADOW_HOMES`).
+
+    [중요] 실측 2026-09-13 `.2`: `~/.agents/skills/ax-work` 가 09-05 부터 남아 있었고, codex 는 스킬
+    목록에 `ax-work` 를 **두 번** 올린 뒤 **옛 사본을 골라 읽었다.** 배달본 해시는 일치했으므로
+    기존 `check` 로는 안 보였다.
+    반환은 남아 있는 자리 목록(`~/.agents/skills/ax-work` 모양)이다. 비면 깨끗하다.
+    [주의] **fail-closed** — 재지 못하면 그 사실을 목록에 넣는다(모르면 통과시키지 않는다).
+    """
+    run = ssh or _ssh
+    left: list = []
+    for home in spec.SKILL_SHADOW_HOMES:
+        for n in names or ():
+            if facts.windows:
+                target = f"{facts.home}\\{home}\\skills\\{n}\\SKILL.md"
+                cmd = f'if exist "{target}" (echo PRESENT) else (echo ABSENT)'
+            else:
+                target = f"{facts.home}/{home}/skills/{n}/SKILL.md"
+                cmd = f"test -e '{target}' && echo PRESENT || echo ABSENT"
+            show = f"~/{home}/skills/{n}"
+            try:
+                rc, out = run(facts.host, facts.user, cmd)
+            except Exception as e:                           # noqa: BLE001
+                left.append(f"{show} (측정 실패: {type(e).__name__})")
+                continue
+            text = out or ""
+            if "PRESENT" in text:
+                left.append(show)
+            elif "ABSENT" not in text:
+                left.append(f"{show} (측정 실패: rc={rc})")
+    return left
+
+
 def compare_tag(facts: HostFacts, expected: str) -> dict:
     """저장된 태그가 기대값과 같은가. **fail-closed** — 모르면 통과시키지 않는다."""
     got = stored_project(facts)

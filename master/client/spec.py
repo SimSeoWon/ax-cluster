@@ -378,6 +378,17 @@ SETTINGS_REL = ".claude/settings.json"
 # 워커에 `.mcp.json` 이 안 갔다). 새 경로를 더하려면 **이 튜플만** 고친다.
 SKILL_HOMES = (".claude", ".codex")
 
+# 🔴 **배달하지 않지만 codex 가 스킬 루트로 읽는 자리** (실측 2026-09-13 `.2`).
+#
+# codex 는 `~/.agents/skills` 가 **있으면** 그것도 스킬 루트로 올린다. `.2` 의 세션 스킬 표:
+#     r0 = C:/Users/janus/.codex/skills     ← 우리가 배달한 정본
+#     r1 = C:/Users/janus/.agents/skills    ← 09-05 에 남은 옛 사본
+# 목록에 `ax-work` 가 **두 번** 올라왔고 지휘자는 **옛 사본을 골라 읽었다**(레인 순서·표기가 낡은 판).
+# `.43` 은 그 폴더가 없어 루트에 안 올라왔다.
+# [중요] 여기에 배달하지 않는다 — 한 벌을 더 두면 갈라질 자리가 하나 는다. 대신 `check` 가
+#    **여기에 우리 이름의 스킬이 남아 있으면 실패로 말한다**(`bundle.shadow_skills`).
+SKILL_SHADOW_HOMES = (".agents",)
+
 
 def skill_rel(name: str, home: str = ".claude") -> str:
     """홈 기준 스킬 상대경로 하나."""

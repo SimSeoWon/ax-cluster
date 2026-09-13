@@ -58,6 +58,8 @@ INSTRUCTION = (
     "Read the [DOC] and [PSEUDO] comments in these files and write their bodies: {files}. "
     "Judge from the source files in this checkout, not from memory. "
     "Do not run any git command. Do not commit or push. "
+    "Do not run UE5 builds, UnrealBuildTool, UnrealEditor or automation tests - "
+    "build verification is done later by the requester, not on this worker. "
     "The last non-empty line of your output must be exactly RESULT: DONE "
     "(use RESULT: BLOCKED if you could not finish, and say why above it)."
 )
