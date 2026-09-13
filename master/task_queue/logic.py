@@ -14,7 +14,7 @@ from .models import (
 from .persistence import (
     TaskIndex, _tasks_dir, _archive_dir, _tq_log, _now_iso, _gen_task_id,
     _slugify, _gen_work_id, _build_md, _atomic_write, _read_md,
-    _git, _git_commit_tasks
+    _git, _git_commit_tasks, is_live_queue_root
 )
 
 
@@ -369,9 +369,9 @@ def register_task(idx: TaskIndex, *, work_id: str, type: str, task_data: dict,
             #    트리거가 파견 유닛을 15초에 다섯 번 깨워 `start-limit-hit` 으로 `.service` 와
             #    `.path` 를 둘 다 죽였고, 그 복구(`reset-failed`)는 NOPASSWD 밖이라 사람 몫이 됐다.
             #    `#345`(테스트가 라이브 큐에 결합)와 **같은 뿌리**다 — 실행 경로가 파일 밖에 있다.
-            from pathlib import Path as _P                    # noqa: PLC0415
-            _live = _P(os.environ.get("AX_TASK_QUEUE_ROOT") or (_P.home() / "ax-state"))
-            if _P(idx.root).resolve() != _live.resolve():
+            #    [중요] 판정은 `persistence.is_live_queue_root` 하나다 — 레드마인 폴백도 같은 것을
+            #    쓴다(2026-09-13, 같은 뿌리로 NS 이슈 198건).
+            if not is_live_queue_root(idx.root):
                 raise _NotLiveQueue(f"임시 큐 루트({idx.root}) — 신호를 쓰지 않는다")
             from ..work.autodispatch import note_trigger      # noqa: PLC0415
             note_trigger(work_id, str(idx.works[work_id].get("project") or ""),

@@ -9,7 +9,7 @@ import urllib.error
 from pathlib import Path
 from typing import Optional
 from .persistence import (
-    TaskIndex, _tq_log, _git_repo, _git
+    TaskIndex, _tq_log, _git_repo, _git, is_live_queue_root
 )
 from .logic_persist import update_work_meta
 
@@ -42,6 +42,12 @@ def _read_redmine_config(root: Path, project: str = "") -> dict:
     key = cfg.get("redmine_api_key") or ""
     proj = cfg.get("redmine_project") or ""
     if not (url and key and proj):
+        # 🔴 [중요] **폴백은 라이브 큐 루트에서만** (실측 2026-09-13). 이 폴백은 `~/ax-state` 에
+        #    `config.json` 이 없어서 넣은 것인데 **모든 루트**에 걸려 있었다 — 테스트가 임시 루트로
+        #    `register_work` 를 부르면, 셸에 `AX_PROJECTS_ROOT` 가 있을 때 진짜 키로 **진짜 이슈**가
+        #    났다(NS 에 198건). 임시 루트는 원전과 같이 `config.json` 만 본다 — 없으면 건너뛴다.
+        if not is_live_queue_root(root):
+            return {"url": url, "api_key": key, "project": proj}
         try:
             from ..redmine import base_url, api_key, project_of
             url = url or base_url()

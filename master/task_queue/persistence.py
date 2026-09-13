@@ -23,6 +23,24 @@ _log_lock = threading.Lock()
 STATE_ROOT_ENV = "AX_TASK_QUEUE_ROOT"
 
 
+def is_live_queue_root(root) -> bool:
+    """🔴 이 루트가 **라이브 큐**인가 — 테스트 임시 루트가 라이브 부수효과를 내지 않게 가른다.
+
+    판정: `AX_TASK_QUEUE_ROOT`(없으면 `~/ax-state`)와 경로가 같다. 서비스 유닛이 그 값을 주입한다.
+
+    [중요] **같은 뿌리의 사고가 둘이다** — 테스트는 `TaskIndex` 를 임시 루트로 만드는데, 라이브
+    자원으로 가는 경로가 그 루트를 보지 않았다:
+        ① 2026-09-05  등재 경로가 라이브 파견 스풀에 신호를 써서 파견 유닛을 죽였다 (`logic.py`)
+        ② 2026-09-13  `_read_redmine_config` 폴백이 진짜 레드마인에 NS 이슈 198건을 만들었다
+    두 자리가 이 한 판정을 쓴다 — 규칙이 둘로 갈라지지 않게.
+    """
+    live = Path(os.environ.get(STATE_ROOT_ENV) or (Path.home() / "ax-state"))
+    try:
+        return Path(root).resolve() == live.resolve()
+    except (OSError, TypeError):
+        return False
+
+
 def _project_root() -> Path:
     """큐 상태(`<root>/.claude/tasks/`)가 놓일 루트. **명시적 설정만 받는다.**
 
