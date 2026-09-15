@@ -110,7 +110,14 @@ _CLUSTER_LINK = (
     'text-decoration:none;margin-right:8px;">클러스터 상태 →</a>')
 _CLUSTER_LINK_SMALL = (
     '<a href="/cluster" class="back" style="margin:0;color:#d7ba7d;">/ 클러스터 상태</a>'
-    '<a href="/onboarding" class="back" style="margin:0;color:#d7ba7d;">/ 온보딩</a>')
+    '<a href="/onboarding" class="back" style="margin:0;color:#d7ba7d;">/ 온보딩</a>'
+    '<a href="/reviews" class="back" style="margin:0;color:#d7ba7d;">/ 리뷰·플랜</a>')
+# 🔴 리뷰·플랜 (`#629`) — 입구가 `/cluster` 한 곳뿐이라 사용자가 **못 찾았다** (2026-09-16:
+#    *"웹 UX에 리뷰나 개선플랜 목록이 안보이는데?"*). 온보딩과 같은 자리에 같은 방식으로 끼운다.
+_REVIEWS_LINK = (
+    '<a href="/reviews" style="font-size:0.7em;font-weight:500;color:#d7ba7d;'
+    'background:#252526;border:1px solid #d7ba7d;border-radius:6px;padding:6px 14px;'
+    'text-decoration:none;margin-right:8px;">리뷰·플랜 →</a>')
 # 🔴 온보딩 — **처음 보는 사람이 여기가 무엇인지 알 자리** (사용자 요청 2026-09-05).
 #    [중요] 링크도 **같은 자리에 끼운다** — 새 내비게이션을 발명하지 않는다(위 규약 그대로).
 _ONBOARD_LINK = (
@@ -125,7 +132,8 @@ def context_server_html() -> bytes:
     anchor = '<a href="/ontology"'
     html_text = WEB_UI_HTML
     if anchor in html_text:
-        html_text = html_text.replace(anchor, _ONBOARD_LINK + _CLUSTER_LINK + anchor, 1)
+        html_text = html_text.replace(anchor, _ONBOARD_LINK + _CLUSTER_LINK + _REVIEWS_LINK
+                                      + anchor, 1)
     return html_text.encode("utf-8")
 
 
@@ -133,8 +141,19 @@ def inject_cluster_link(body: bytes) -> bytes:
     """`/ontology` 페이지들의 `Context Search` 링크 옆에 클러스터 상태를 끼운다."""
     text = body.decode("utf-8", "replace")
     anchor = '<a href="/" class="back"'
+    # [주의] `task.html` 은 앞의 두 앵커가 없고 `← 게시판` 하나뿐이다 — 그래서 **클러스터 상태
+    #    링크도 원래 없었다**(2026-09-16 리뷰·플랜 링크 테스트가 잡았다). 그 링크 뒤에 끼운다.
+    anchor3 = '<a href="/ontology" class="back-link">← 게시판</a>'
     if anchor in text:
         text = text.replace(anchor, _CLUSTER_LINK_SMALL + anchor)
+    elif anchor3 in text:
+        text = text.replace(
+            anchor3,
+            anchor3
+            + '<a href="/cluster" class="back-link" style="margin-left:12px;color:#d7ba7d;">클러스터 상태</a>'
+            + '<a href="/onboarding" class="back-link" style="margin-left:12px;color:#d7ba7d;">온보딩</a>'
+            + '<a href="/reviews" class="back-link" style="margin-left:12px;color:#d7ba7d;">리뷰·플랜</a>',
+            1)
     else:
         anchor2 = '<a href="/" style="font-size:13px'
         if anchor2 in text:
@@ -143,6 +162,9 @@ def inject_cluster_link(body: bytes) -> bytes:
                 '<a href="/cluster" style="font-size:13px;color:#d7ba7d;background:#252526;'
                 'border:1px solid #d7ba7d;border-radius:6px;padding:6px 14px;'
                 'text-decoration:none;white-space:nowrap;margin-right:8px;">클러스터 상태</a>'
+                '<a href="/reviews" style="font-size:13px;color:#d7ba7d;background:#252526;'
+                'border:1px solid #d7ba7d;border-radius:6px;padding:6px 14px;'
+                'text-decoration:none;white-space:nowrap;margin-right:8px;">리뷰·플랜</a>'
                 + anchor2, 1)
     return text.encode("utf-8")
 

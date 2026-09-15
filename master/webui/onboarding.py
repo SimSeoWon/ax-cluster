@@ -306,6 +306,7 @@ def render() -> str:
 <div class="nav">
   <a class="on" href="/onboarding">온보딩</a>
   <a href="/cluster">클러스터 상태 →</a>
+  <a href="/reviews">리뷰·플랜 →</a>
   <a href="/ontology">온톨로지 뷰어 →</a>
   <a href="/">컨텍스트 검색 →</a>
 </div>

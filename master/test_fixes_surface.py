@@ -94,6 +94,16 @@ def test_public_prefix_and_policy():
         check(f"② 서버 라우트가 정책 키와 같은 글자다: {deco}", deco in src)
 
 
+def test_nav_links_everywhere():
+    """② [중요] 입구가 `/cluster` 한 곳뿐이라 사용자가 못 찾았다 (2026-09-16) — 모든 화면에서 간다."""
+    from master.webui import onboarding, routes
+    check("② 첫 화면(/) 메뉴에 리뷰·플랜", b'href="/reviews"' in routes.context_server_html())
+    for name in ("index.html", "domain.html", "task.html"):
+        body = routes.inject_cluster_link(routes.page(name))
+        check(f"② 온톨로지 {name} 메뉴에 리뷰·플랜", b'href="/reviews"' in body)
+    check("② 온보딩 메뉴에 리뷰·플랜", b'href="/reviews"' in onboarding.page())
+
+
 # ── ③ 공개 화면 ─────────────────────────────────────────────────────────────
 
 class FakeRegistry:
@@ -393,7 +403,8 @@ def test_delivery():
 
 
 if __name__ == "__main__":
-    for fn in (test_scope, test_public_prefix_and_policy, test_public_page_has_no_body,
+    for fn in (test_scope, test_public_prefix_and_policy, test_nav_links_everywhere,
+               test_public_page_has_no_body,
                test_client_tools, test_flow_check_real_git,
                test_flow_worktree_leaves_checkout_alone, test_flow_diff_and_commit,
                test_flow_fetch_and_status_with_fake_api,
