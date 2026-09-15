@@ -390,8 +390,42 @@ def test_generation_chain_is_codex_first_but_verification_is_not() -> None:
     check("  그리고 작성 레인 1순위는 codex 다 — 그래서 검증에 넣으면 안 된다",
           LN.DEFAULT_LANES[0] == "codex", str(LN.DEFAULT_LANES))
 
+def test_serial_travels_to_journal():
+    """[중요] 번호(`#627`)는 **결과 필드로** 소비자 요약 줄까지 간다 — `review_commit` 의 `log` 는
+    소비자가 `logf` 를 안 넘겨 빈 함수라, 로그로만 넣으면 저널에 안 보인다(실측 2026-09-16)."""
+    from master.events import consumer as C
+    from master.context_synth import fix_index as FX
+    root, p = fixture()
+    c = commit_change(p, "int S() { return 1; }\n", msg="번호")
+    r = RG.review_commit(p, c, ["Source/M/A.cpp"], chat=lambda pr: CANNED)
+    check("[중요] 리뷰 결과가 번호를 들고 나온다",
+          bool(r.written) and r.serial == "R1" and not r.serial_error, f"{r.serial} {r.serial_error}")
+
+    class RR:
+        to_commit = c
+        review_written = ""
+        review_note = ""
+        canary_write_failed = 0
+        review_serial = ""
+    rr = RR()
+    C._auto_review(p, ["Source/M/A.cpp"], rr, commit="deadbeef", review_run=lambda *a: r)
+    check("[중요] 소비자가 번호를 받는다", rr.review_serial == "R1", rr.review_serial)
+    s = C.ProjectResult(project_id="NS", review_written="x", review_serial="R1").summary
+    check("[중요] 요약 줄에 「리뷰 1 (R1)」", "리뷰 1 (R1)" in s, s)
+    s2 = C.ProjectResult(project_id="NS", review_written="x").summary
+    check("번호가 없으면 없다고 찍는다", "번호 없음" in s2, s2)
+
+    FX.index_path(p.root).write_text("{깨짐", encoding="utf-8")
+    c2 = commit_change(p, "int S() { return 2; }\n", msg="번호2")
+    r2 = RG.review_commit(p, c2, ["Source/M/A.cpp"], chat=lambda pr: CANNED)
+    check("[중요] 색인이 깨져도 리뷰는 저장된다", bool(r2.written), str(r2))
+    check("  번호 실패 사유가 남는다", r2.serial == "" and r2.serial_error == "FixIndexError",
+          r2.serial_error)
+
+
 def main() -> int:
-    for fn in (test_trivial_detection, test_author_exclusion_skips_before_llm,
+    for fn in (test_serial_travels_to_journal,
+               test_trivial_detection, test_author_exclusion_skips_before_llm,
                test_format_validation_and_retry, test_consumer_canaries_format_invalid,
                test_report_is_parseable_by_origin_collector, test_prompt_carries_the_contract,
                test_consumer_wiring_failure_goes_to_canary,

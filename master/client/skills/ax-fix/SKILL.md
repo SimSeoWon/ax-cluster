@@ -27,13 +27,14 @@ description: 자동 리뷰·주간 플랜을 **번호(R12 · P3)** 로 받아 �
     ② 내려받기      fix_flow.py fetch R12   → .ax/fixes/R12/doc.md · doc.json
     ③ 대조          fix_flow.py check R12   → .ax/fixes/R12/check.md  (지금 origin/main 기준 사실)
     ④ 판정·질의     항목마다 「합당 / 해당 없음 / 의도된 동작 의심」 + 근거 → 사용자에게 묻는다   ← 사람
-    ⑤ 적용          fix_flow.py worktree R12 → 수락분만 서브 에이전트가 고친다 → diff 확인 → 커밋 여부 묻는다  ← 사람
+    ⑤ 적용          fix_flow.py worktree R12 → 수락분만 서브 에이전트가 고친다
+                    → fix_flow.py diff R12 로 확인 → 커밋 여부 묻는다 ← 사람 → fix_flow.py commit
     ⑥ 기록          update_fix_status (항목마다) · 플랜이면 레드마인 노트
 
 도구:
 
     MCP      mcp__ax-client__list_fixes · get_fix · update_fix_status
-    스크립트  py .ax/lib/axmaster/clientside/fix_flow.py list|fetch|check|worktree|status
+    스크립트  py .ax/lib/axmaster/clientside/fix_flow.py list|fetch|check|worktree|diff|commit|status
 
 [중요] **`python` 이 아니라 `py` 다** — 이 PC 의 `python` 은 스토어 스텁이다.
 [중요] 스크립트는 **체크아웃 루트(cwd)** 에서 부른다 — `.ax/config.json`·`.ax/token` 을 거기서 읽는다.
@@ -97,11 +98,19 @@ worktree. 이 체크아웃의 작업 트리는 사람이 고치던 중일 수 �
 - 먼저 RAG: `search_context`(대상 클래스·도메인) · `find_recipes` · `get_anti_patterns` · `find_history`
 - 금지(원전): 클래스·함수·UPROPERTY 이름 바꾸기 · 상속 구조 변경 · 모듈 간 이동 · 수락하지 않은 항목 손대기
 
-서브 에이전트가 끝나면 **결과를 믿지 말고 확인한다** — `git -C <worktree> diff` 를 읽어 각 항목이 실제로
-해소됐는지 본다. 그 diff 요지를 사용자에게 보여 주고 **커밋할지 묻는다.** UE5 빌드로 확인할지도 묻는다
+서브 에이전트가 끝나면 **결과를 믿지 말고 확인한다**:
+
+    py .ax/lib/axmaster/clientside/fix_flow.py diff R12
+
+`.ax/fixes/R12/diff.patch` 를 Read 로 읽어 각 항목이 실제로 해소됐는지 본다(파일 수·증감은 `flow.log`
+에 남는다). 그 요지를 사용자에게 보여 주고 **커밋할지 묻는다.** UE5 빌드로 확인할지도 묻는다
 (이 PC 에서 돌릴 수 있지만 사람에게 묻지 않고 돌리지 않는다).
 
-승인되면 `fix/R12` 에만 커밋한다 — 메시지에 항목 번호를 넣는다(`fix(R12-1,R12-4): …`).
+승인되면 **스크립트로** 커밋한다 — `git commit` 을 직접 치지 않는다(해시·항목이 로그에 남아야 한다):
+
+    py .ax/lib/axmaster/clientside/fix_flow.py commit R12 --items R12-1,R12-4 --message "<한 줄 요지>"
+
+`fix/R12` 가 아니면 거절하고, 메시지는 `fix(R12-1,R12-4): …` 가 된다. 출력의 `commit` 을 ⑥에 쓴다.
 [중요] **push 하지 않고 `main` 에 머지하지 않는다** — 그건 사람이 한다.
 
 ### ⑥ 기록

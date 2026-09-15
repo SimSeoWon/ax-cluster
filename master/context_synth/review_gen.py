@@ -239,6 +239,8 @@ class ReviewResult:
     error: str = ""             # [중요] 실패 — 이 커밋의 리뷰는 다시 생기지 않는다 (카나리 대상)
     format_ok: bool = True      # [중요] False = 사람은 읽어도 **소비자는 0건으로 읽는다** (카나리)
     retried: bool = False
+    serial: str = ""            # 수정 항목 번호 (`#627` — R35). 비면 부여 실패 → `serial_error`
+    serial_error: str = ""
 
     @property
     def ok(self) -> bool:
@@ -336,13 +338,17 @@ def review_commit(paths, commit: str, files: list, *,
         log("review", f"[중요] {path.name} 형식 위반 — 소비자 파서 기준 이슈 0건")
     else:
         log("review", f"{r.author} {commit[:8]} → {path.name} (행 {parseable_rows(body)})")
-    # 번호(`#627`)는 여기서 바로 준다 — 목록을 부를 때도 붙지만, 저널에 「이 커밋 = R35」가
-    #    남아야 사람이 번호로 찾는다. 실패해도 리뷰는 이미 저장됐다 — 다음 조회가 다시 붙인다.
+    # 번호(`#627`)는 여기서 바로 준다 — 저널에 「이 커밋 = R35」가 남아야 사람이 번호로 찾는다.
+    #    [주의] **로그가 아니라 결과 필드로 올린다.** 소비자가 이 함수를 `logf` 없이 불러 위의
+    #    `log` 는 빈 함수다(실측 2026-09-16 — 처음엔 로그로 넣었고 저널에 한 줄도 안 찍혔다).
+    #    소비자가 `rv.serial` 을 요약 줄에 싣는다. 실패해도 리뷰는 저장됐다 — 다음 목록 조회가 붙인다.
     try:
-        from .fix_index import sweep
-        got = sweep(paths.root)
-        if got["assigned"]:
-            log("review", f"[fix] 번호 {', '.join(got['assigned'])} ← {path.name}")
+        from .fix_index import serial_for_commit, sweep
+        sweep(paths.root)
+        r.serial = serial_for_commit(paths.root, commit)
+        if not r.serial:
+            r.serial_error = "색인에서 이 커밋을 찾지 못했다"
     except Exception as e:                                   # noqa: BLE001
-        log("review", f"[주의] 번호 부여 실패 — 다음 목록 조회가 다시 붙인다: {type(e).__name__}")
+        r.serial_error = type(e).__name__
+    log("review", f"[fix] 번호 {r.serial or '없음(' + r.serial_error + ')'} ← {path.name}")
     return r

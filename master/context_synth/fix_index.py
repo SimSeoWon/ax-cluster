@@ -66,6 +66,17 @@ def parse_id(text: str) -> tuple:
     return m.group(1).upper(), int(m.group(2)), (int(m.group(3)) if m.group(3) else None)
 
 
+def serial_for_commit(root, commit: str) -> str:
+    """이 커밋의 리뷰 번호. 없으면 빈 문자열 — 색인기 저널이 「리뷰 1 (R35)」로 찍는 재료다."""
+    if not commit:
+        return ""
+    for serial, d in load(root)["docs"].items():
+        c = d.get("commit") or ""
+        if d.get("kind") == "review" and c and (c.startswith(commit) or commit.startswith(c)):
+            return serial
+    return ""
+
+
 def _empty() -> dict:
     return {"schema": SCHEMA, "next": {"R": 1, "P": 1}, "docs": {}, "status": {}}
 

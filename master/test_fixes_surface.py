@@ -281,6 +281,58 @@ def test_flow_worktree_leaves_checkout_alone():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_flow_diff_and_commit():
+    """⑤ 확인·커밋 — 결과를 로그와 파일로 남기고, fix 브랜치에만 커밋한다 (2026-09-16 로그 점검)."""
+    tmp = Path(tempfile.mkdtemp(prefix="fixcommit-"))
+    try:
+        work, _ = _repo(tmp)
+        head = _git(work, "rev-parse", "HEAD")
+        try:
+            FF.cmd_diff(work, "R1")
+            check("⑤ worktree 없으면 diff 거절", False)
+        except FF.FlowError:
+            check("⑤ worktree 없으면 diff 거절", True)
+        wt = Path(FF.cmd_worktree(work, "R1")["path"])
+        try:
+            FF.cmd_commit(work, "R1", ["R1-1"], "x")
+            check("⑤ 변경이 없으면 커밋 거절", False)
+        except FF.FlowError:
+            check("⑤ 변경이 없으면 커밋 거절", True)
+        (wt / "Source" / "A.cpp").write_text("void A() {\n  auto* P = Get();\n  if (P) P->Run();\n}\n",
+                                             encoding="utf-8")
+        (wt / "Source" / "New.cpp").write_text("int N = 0;\n", encoding="utf-8")
+        d = FF.cmd_diff(work, "R1")
+        check("⑤ diff 가 수정·새 파일을 모두 본다",
+              set(d["files"]) == {"Source/A.cpp", "Source/New.cpp"}, str(d))
+        patch = (work / ".ax/fixes/R1/diff.patch").read_text(encoding="utf-8")
+        check("⑤ diff.patch 에 실제 변경", "if (P) P->Run();" in patch, patch[:300])
+        for bad in ((["R2-1"], "다른 번호"), (["R1"], "행 번호")):
+            try:
+                FF.cmd_commit(work, "R1", bad[0], "x")
+                check(f"⑤ 커밋 거절: {bad[1]}", False)
+            except FF.FlowError as e:
+                check(f"⑤ 커밋 거절: {bad[1]}", True)
+        got = FF.cmd_commit(work, "r1", ["R1-1", "R1-1", "r1-3"], "널 가드\n둘째 줄")
+        check("⑤ 항목은 중복 없이 정규화", got["items"] == ["R1-1", "R1-3"], str(got))
+        check("⑤ fix/R1 에 커밋됐다", _git(wt, "rev-parse", "HEAD") == got["commit"]
+              and _git(wt, "log", "-1", "--format=%s") == "fix(R1-1,R1-3): 널 가드",
+              _git(wt, "log", "-1", "--format=%s"))
+        check("⑤ [중요] 사람 체크아웃의 main 은 그대로", _git(work, "rev-parse", "HEAD") == head)
+        log = (work / ".ax/fixes/R1/flow.log").read_text(encoding="utf-8")
+        check("⑤ [중요] diff 요지가 flow.log 에 남는다", "diff — 파일 2개" in log, log)
+        check("⑤ [중요] 커밋 해시·항목이 flow.log 에 남는다",
+              f"커밋 {got['commit'][:12]} on fix/R1 · 항목 R1-1,R1-3" in log, log)
+        _git(wt, "checkout", "-q", "-b", "other")
+        (wt / "Source" / "E.cpp").write_text("int E = 9;\n", encoding="utf-8")
+        try:
+            FF.cmd_commit(work, "R1", ["R1-4"], "x")
+            check("⑤ fix/R1 이 아니면 커밋 거절", False)
+        except FF.FlowError as e:
+            check("⑤ fix/R1 이 아니면 커밋 거절", "fix/R1" in str(e), str(e))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_flow_fetch_and_status_with_fake_api():
     tmp = Path(tempfile.mkdtemp(prefix="fixapi-"))
     try:
@@ -343,7 +395,8 @@ def test_delivery():
 if __name__ == "__main__":
     for fn in (test_scope, test_public_prefix_and_policy, test_public_page_has_no_body,
                test_client_tools, test_flow_check_real_git,
-               test_flow_worktree_leaves_checkout_alone, test_flow_fetch_and_status_with_fake_api,
+               test_flow_worktree_leaves_checkout_alone, test_flow_diff_and_commit,
+               test_flow_fetch_and_status_with_fake_api,
                test_delivery):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")

@@ -76,6 +76,7 @@ class ProjectResult:
     canary_write_failed: int = 0   # [주의] 카나리 기록 자체가 실패한 횟수 (조용히 넘기지 않는다)
     review_written: str = ""       # 자동 코드리뷰 리포트 경로 (소 3.3.5)
     review_note: str = ""          # 리뷰 스킵/실패 사유
+    review_serial: str = ""        # 리뷰 번호 (`#627` — R35). 요약 줄에 싣는다
     # ── 분석 커서 (`#278` — 커밋 하나씩) ──
     cursor_from: str = ""          # 이 회차가 시작한 커서 (config.yaml 의 analyzed_commit)
     cursor_note: str = ""          # 커서를 어디서 얻었는지 (이행: 워터마크 폴백)
@@ -102,7 +103,9 @@ class ProjectResult:
             # [중요] 되돌린 것은 **반드시 보인다** — 조용한 파괴적 명령을 만들지 않는다
             parts.append(self.mirror_note)
         if self.review_written:
-            parts.append("리뷰 1")
+            # 번호가 저널에 남아야 「이 커밋 = R35」를 찾는다 (`#627`). 없으면 없다고 찍는다
+            parts.append("리뷰 1" + (f" ({self.review_serial})" if self.review_serial
+                                     else " (번호 없음 — 목록 조회 때 붙는다)"))
         if self.synth_note:
             parts.append(f"합성 {self.synth_written}" +
                          (f" [중요]유실 {self.synth_lost}" if self.synth_lost else ""))
@@ -517,6 +520,7 @@ def _auto_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
         return
     if rv.written:
         r.review_written = rv.written
+        r.review_serial = getattr(rv, "serial", "") or ""
         if not getattr(rv, "format_ok", True):
             # [중요] 저장은 됐지만 소비자는 0건으로 읽는다 — 되먹임 기준 유실이다
             r.review_note = "[중요] 리뷰 형식 위반 — 소비자 파서 기준 이슈 0건 (사람만 읽을 수 있다)"

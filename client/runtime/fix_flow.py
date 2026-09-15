@@ -4,6 +4,8 @@
     py .ax/lib/axmaster/clientside/fix_flow.py fetch R12       ① 내려받기 → .ax/fixes/R12/doc.md·doc.json
     py .ax/lib/axmaster/clientside/fix_flow.py check R12       ② 지금 origin/main 과 대조 → check.md·check.json
     py .ax/lib/axmaster/clientside/fix_flow.py worktree R12    ④ 적용 자리 — 옆 디렉토리 worktree · fix/R12
+    py .ax/lib/axmaster/clientside/fix_flow.py diff R12        ⑤ 고친 것 확인 → diff.patch · 요지는 flow.log
+    py .ax/lib/axmaster/clientside/fix_flow.py commit R12 --items R12-1,R12-3 --message "…"   ⑤ fix/R12 에만
     py .ax/lib/axmaster/clientside/fix_flow.py status R12-3 applied --branch fix/R12 --commit <sha> --note "…"
 
 [중요] **판단은 여기서 하지 않는다** — 「합당한가」·「고칠까」는 세션과 사람이 한다(`ax-fix` 스킬).
@@ -257,14 +259,22 @@ def cmd_check(root: Path, serial: str, *, fetch: bool = True, base: str = BASE, 
 
 # ── ④ 적용 자리 ─────────────────────────────────────────────────────────────
 
-def cmd_worktree(root: Path, serial: str, *, base: str = BASE) -> dict:
-    s = doc_serial(serial)
-    branch = f"fix/{s}"
-    path = (root.parent / f"ax-fix-{s}").resolve()
+def _worktree_path(root: Path, s: str) -> Path:
+    return (root.parent / f"ax-fix-{s}").resolve()
+
+
+def _is_worktree(root: Path, path: Path) -> bool:
     _, listing = git(root, "worktree", "list", "--porcelain")
     known = {Path(l[len("worktree "):].strip()).resolve().as_posix().lower()
              for l in listing.splitlines() if l.startswith("worktree ")}
-    if path.as_posix().lower() in known:
+    return path.as_posix().lower() in known
+
+
+def cmd_worktree(root: Path, serial: str, *, base: str = BASE) -> dict:
+    s = doc_serial(serial)
+    branch = f"fix/{s}"
+    path = _worktree_path(root, s)
+    if _is_worktree(root, path):
         log(root, s, f"worktree 재사용 — {path.as_posix()} (리셋하지 않는다)")
         return {"path": str(path), "branch": branch, "reused": True}
     if path.exists():
@@ -276,6 +286,69 @@ def cmd_worktree(root: Path, serial: str, *, base: str = BASE) -> dict:
         git(root, "worktree", "add", "-b", branch, str(path), base, check=True)
     log(root, s, f"worktree {'기존 브랜치' if has_branch else base + ' 에서 새 브랜치'} {branch} → {path.as_posix()}")
     return {"path": str(path), "branch": branch, "reused": False}
+
+
+# ── ⑤ 확인·커밋 ─────────────────────────────────────────────────────────────
+#    [중요] 서브 에이전트의 「끝났다」를 믿지 않는다 — `diff` 가 실제 변경을 파일과 로그로 남기고,
+#    `commit` 이 해시·항목을 로그에 남긴다. 둘 다 없던 때는 「고쳤는데 기록 전에 멈춘」 자리가
+#    어디에도 안 보였다(2026-09-16 로그 점검).
+
+def _existing_worktree(root: Path, s: str) -> Path:
+    path = _worktree_path(root, s)
+    if not _is_worktree(root, path):
+        raise FlowError(f"{s} 의 worktree 가 없다 — 먼저 `worktree {s}`")
+    return path
+
+
+def cmd_diff(root: Path, serial: str) -> dict:
+    s = doc_serial(serial)
+    wt = _existing_worktree(root, s)
+    git(wt, "add", "-N", ".")                 # 새 파일도 diff 에 보이게 — 내용은 스테이징하지 않는다
+    _, names = git(wt, "diff", "--name-only")
+    files = [n for n in names.splitlines() if n.strip()]
+    _, short = git(wt, "diff", "--shortstat")
+    _, patch = git(wt, "diff")
+    out = work_dir(root, s) / "diff.patch"
+    out.write_text(patch, encoding="utf-8")
+    log(root, s, f"diff — 파일 {len(files)}개 · {short.strip() or '변경 없음'} → "
+                 f"{out.relative_to(root).as_posix()}"
+                 + (f" ({', '.join(files[:5])})" if files else ""))
+    return {"files": files, "shortstat": short.strip(), "patch": str(out)}
+
+
+def cmd_commit(root: Path, serial: str, items: list, message: str = "") -> dict:
+    """`fix/<번호>` 에만 커밋한다 — 스킬이 사용자에게 물은 뒤에만 부른다. push 하지 않는다."""
+    s = doc_serial(serial)
+    ids = []
+    for it in items:
+        kind, num, row = parse_serial(it)
+        if f"{kind}{num}" != s:
+            raise FlowError(f"{it} 는 {s} 의 항목이 아니다 — 한 번에 한 번호만 커밋한다")
+        if kind == "R" and row is None:
+            raise FlowError(f"리뷰 항목은 행 번호까지 준다 (예: {s}-1)")
+        iid = f"{kind}{num}" + (f"-{row}" if row else "")
+        if iid not in ids:
+            ids.append(iid)
+    if not ids:
+        raise FlowError(f"커밋할 항목이 없다 — --items {s}-1,{s}-3")
+    wt = _existing_worktree(root, s)
+    _, head = git(wt, "rev-parse", "--abbrev-ref", "HEAD")
+    if head.strip() != f"fix/{s}":
+        raise FlowError(f"worktree 가 fix/{s} 가 아니다 ({head.strip()}) — 커밋하지 않는다")
+    _, porcelain = git(wt, "status", "--porcelain")
+    if not porcelain.strip():
+        log(root, s, "커밋 거절 — 변경이 없다")
+        raise FlowError("커밋할 변경이 없다")
+    git(wt, "add", "-A", check=True)
+    text = (message or "").strip()
+    subject = text.splitlines()[0] if text else "리뷰 지적 수정"
+    git(wt, "commit", "-q", "-m", f"fix({','.join(ids)}): {subject}",
+        "-m", f"자동 리뷰·플랜 {s} — ax-fix", check=True)
+    _, sha = git(wt, "rev-parse", "HEAD")
+    _, stat = git(wt, "show", "--shortstat", "--format=", "HEAD")
+    sha = sha.strip()
+    log(root, s, f"커밋 {sha[:12]} on fix/{s} · 항목 {','.join(ids)} · {stat.strip()}")
+    return {"commit": sha, "branch": f"fix/{s}", "items": ids}
 
 
 # ── ⑥ 기록 ──────────────────────────────────────────────────────────────────
@@ -305,11 +378,15 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="fix_flow", description="수정 항목 검토·적용 (#630)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list")
-    for name in ("fetch", "check", "worktree"):
+    for name in ("fetch", "check", "worktree", "diff"):
         sp = sub.add_parser(name)
         sp.add_argument("serial")
         if name == "check":
             sp.add_argument("--no-fetch", action="store_true")
+    sp = sub.add_parser("commit")
+    sp.add_argument("serial")
+    sp.add_argument("--items", required=True, help="R12-1,R12-3")
+    sp.add_argument("--message", default="")
     sp = sub.add_parser("status")
     sp.add_argument("item")
     sp.add_argument("state", choices=STATES)
@@ -326,6 +403,12 @@ def main(argv=None) -> int:
             cmd_check(root, args.serial, fetch=not args.no_fetch)
         elif args.cmd == "worktree":
             got = cmd_worktree(root, args.serial)
+            print(json.dumps(got, ensure_ascii=False))
+        elif args.cmd == "diff":
+            cmd_diff(root, args.serial)
+        elif args.cmd == "commit":
+            got = cmd_commit(root, args.serial,
+                             [x for x in args.items.split(",") if x.strip()], args.message)
             print(json.dumps(got, ensure_ascii=False))
         else:
             cmd_status(root, args.item, args.state, note=args.note, branch=args.branch,
