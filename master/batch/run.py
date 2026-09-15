@@ -54,6 +54,8 @@ class BatchDef:
     label: str
     count_input: object                  # (paths) -> int
     execute: object                      # (paths) -> dict {ok, reason, ...}
+    # 게이트가 `Schedule` 다섯 조건과 모양이 다른 배치만 준다 (`gates.should_run` 과 같은 시그니처)
+    gate: object = None
 
 
 @dataclass
@@ -80,6 +82,8 @@ class Outcome:
             extra = f" · 엔트리 {r['entries']}건"
         if r.get("files"):
             extra += f" · 파일 {len(r['files'])}개"
+        if r.get("assigned"):
+            extra += f" · 번호 {len(r['assigned'])}건"
         return f"  ▶ {self.key}: 실행{extra}"
 
 
@@ -95,12 +99,41 @@ def _rag_run(paths) -> dict:
     return A.run_for_project(paths)
 
 
+def _plan_count(paths) -> int:
+    """입력 = 작성자 디렉토리에 남은 리뷰 수 (`_archive/` 로 옮겨진 것은 이미 플랜에 반영됐다)."""
+    from ..context_synth.planner import REVIEWS_DIRNAME, list_author_dirs
+    return sum(1 for a in list_author_dirs(Path(paths.root) / REVIEWS_DIRNAME)
+               for f in a.glob("*.md") if not f.name.startswith("_"))
+
+
+def _plan_run(paths) -> dict:
+    """주간 플랜 생성 → 새 플랜에 번호 (`#628` · `#627`).
+
+    [중요] **레드마인 등록은 끈다** (사용자 결정 2026-09-16) — `plan_register` 가 프로젝트를 안
+    넘겨 NS 플랜이 ModularStage 레드마인으로 떨어진다(`#632`). 그것을 고치기 전에는 켜지 않는다.
+    """
+    from ..context_synth import fix_index, planner
+    say = lambda m: print(f"    {m}", flush=True)                    # noqa: E731
+    generated = planner.run_weekly_plans(paths, redmine=False, logf=say)
+    swept = fix_index.sweep(paths.root, logf=say)
+    return {"ok": True, "generated": bool(generated), "assigned": swept["assigned"]}
+
+
 BATCHES = [
     BatchDef(schedule=gates.RAG_ANALYSIS,
              label="RAG 채널 분석 (stdlib·LLM 0)",
              count_input=_rag_count,
              execute=_rag_run),
+    BatchDef(schedule=gates.WEEKLY_PLAN,
+             label="주간 개선 플랜 (상용 LLM · 레드마인 등록 끔)",
+             count_input=_plan_count,
+             execute=_plan_run,
+             gate=gates.should_run_weekly_plan),
 ]
+
+
+def _verdict(b: BatchDef, cfg: dict, paths, n: int, now) -> "gates.Verdict":
+    return (b.gate or gates.should_run)(b.schedule, cfg, paths.root, input_count=n, now=now)
 
 
 # ── 구동 ─────────────────────────────────────────────────────────────────────
@@ -116,7 +149,7 @@ def plan(paths, cfg: dict, *, now: datetime | None = None) -> list:
             o.error = f"입력을 세지 못했다: {type(e).__name__}: {e}"
             out.append(o)
             continue
-        v = gates.should_run(b.schedule, cfg, paths.root, input_count=n, now=now)
+        v = _verdict(b, cfg, paths, n, now)
         o.verdict = v.reason
         o.ran = False
         o.result = {"would_run": v.run, "input": n}
@@ -145,7 +178,7 @@ def run(paths, cfg: dict, *, now: datetime | None = None, force: bool = False) -
             out.append(o)
             continue
 
-        v = gates.should_run(b.schedule, cfg, paths.root, input_count=n, now=now)
+        v = _verdict(b, cfg, paths, n, now)
         o.verdict = v.reason
         # [중요] `force` 도 **활성 플래그는 못 넘는다** — 운영자가 끈 것을 도구가 되살리지 않는다.
         may_force = force and gates.enabled(cfg, b.schedule.key)

@@ -33,9 +33,10 @@
 [중요] **원전 자신이 같은 이유로 `attempt_branch(ts=…)` 를 인자로 뒀다**(*"테스트에서 시간을
 고정할 수 있어야 한다"*). 시간이 박히면 이 게이트는 검증할 수 없다.
 
-[주의] **지금 이식한 것은 `rag_analysis` 게이트뿐이다.** `weekly_plan`·`recipe_synthesis` 는
-그 배치(`#155`·`#157`)가 아직 없다 — 게이트만 옮기면 **입력 없는 배치**를 만드는 것과 같은
-실수다(소 3.4.5 에서 같은 함정을 한 번 피했다). 구조는 여기 있으니 배치가 올 때 값만 준다.
+[주의] **이식한 게이트는 `rag_analysis` · `weekly_plan` 둘이다.** `recipe_synthesis` 는 그
+배치(`#157`)가 아직 없다 — 게이트만 옮기면 **입력 없는 배치**를 만드는 것과 같은 실수다(소 3.4.5
+에서 같은 함정을 한 번 피했다). `weekly_plan` 은 `#628`(2026-09-16)에서 배치와 함께 왔고,
+**원전 게이트가 위 조건 다섯과 모양이 달라** `Schedule` 로 접지 않고 따로 뒀다(`should_run_weekly_plan`).
 """
 from __future__ import annotations
 
@@ -166,3 +167,39 @@ def should_run(sched: Schedule, cfg: dict, root: Path, *, input_count: int,
 # (hour 23 · weekly · sunday · min_entries 10).
 RAG_ANALYSIS = Schedule(key="rag_analysis", hour=23, schedule="weekly", day="sunday",
                         min_entries=10)
+
+
+# [중요] 주간 플랜 (`#628`, 2026-09-16) — 원전 `watch_state._should_run_weekly_plan` 을 글자대로.
+#    시각·마커가 없고 **작성자별 이번 주 `_summary.md` 부재**가 간격 노릇을 한다 — 플래너가 요약을
+#    쓰면 그 주에는 다시 안 돈다. 원전 기본값: `weekly_plan_day` saturday(+ 일요일은 늘 허용) ·
+#    `weekly_plan_min_reviews` 1.
+#    [주의] 리뷰가 플래너 최소치(3건) 미만인 작성자는 요약이 안 생겨 **주말 동안 매 회차 다시 온다** —
+#    원전도 같다. 플래너가 LLM 전에 스킵하므로 비용은 로그 한 줄이다.
+WEEKLY_PLAN = Schedule(key="weekly_plan", hour=0, schedule="weekly", day="saturday",
+                       min_entries=1)
+
+
+def should_run_weekly_plan(sched: Schedule, cfg: dict, root: Path, *, input_count: int,
+                           now: datetime | None = None) -> Verdict:
+    """① 활성 ② 입력(작성자 디렉토리의 리뷰) ③ 요일(지정일 또는 일요일) ④ 이번 주 요약이 없는 작성자."""
+    now = now or datetime.now()
+    s = sched.from_config(cfg)
+    if not enabled(cfg, s.key):
+        return Verdict(False, f"config 에서 꺼져 있다 (batch.{s.key}=false)", s.key)
+    if input_count < s.min_entries:
+        return Verdict(False, f"입력 부족 {input_count} < {s.min_entries}건", s.key)
+    today = now.strftime("%A").lower()
+    if today not in (s.day, "sunday"):
+        return Verdict(False, f"요일 불일치 — 오늘 {today}, 지정 {s.day}·sunday", s.key)
+    week = now.strftime("%Y-W%W")
+    reviews = Path(root) / "reviews"
+    authors = (sorted(d.name for d in reviews.iterdir()
+                      if d.is_dir() and not d.name.startswith("_"))
+               if reviews.is_dir() else [])
+    if not authors:
+        return Verdict(False, "작성자 디렉토리 없음", s.key)
+    todo = [a for a in authors if not (Path(root) / "plans" / a / week / "_summary.md").exists()]
+    if not todo:
+        return Verdict(False, f"이번 주차({week}) 플랜이 작성자 {len(authors)}명 모두 있다", s.key)
+    return Verdict(True, f"조건 충족 — {week} 플랜 없는 작성자 {len(todo)}명 "
+                         f"({', '.join(todo[:5])})", s.key)

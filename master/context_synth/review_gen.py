@@ -336,4 +336,13 @@ def review_commit(paths, commit: str, files: list, *,
         log("review", f"[중요] {path.name} 형식 위반 — 소비자 파서 기준 이슈 0건")
     else:
         log("review", f"{r.author} {commit[:8]} → {path.name} (행 {parseable_rows(body)})")
+    # 번호(`#627`)는 여기서 바로 준다 — 목록을 부를 때도 붙지만, 저널에 「이 커밋 = R35」가
+    #    남아야 사람이 번호로 찾는다. 실패해도 리뷰는 이미 저장됐다 — 다음 조회가 다시 붙인다.
+    try:
+        from .fix_index import sweep
+        got = sweep(paths.root)
+        if got["assigned"]:
+            log("review", f"[fix] 번호 {', '.join(got['assigned'])} ← {path.name}")
+    except Exception as e:                                   # noqa: BLE001
+        log("review", f"[주의] 번호 부여 실패 — 다음 목록 조회가 다시 붙인다: {type(e).__name__}")
     return r

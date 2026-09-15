@@ -159,7 +159,10 @@ SKILLS_BY_ROLE = {
     #   [주의] 그 둘을 섞어 **오지시를 냈다** — 라운드가 끝났는데 공지가 `main` 머지를 권했다.
     #   사용자: *"리뷰 요청은 왜한건데? 전혀 다른 스킬을 요청한거 같은데"*. 두 SKILL.md 에
     #   서로를 가리키는 경계 문장을 넣었다(`ax-infer`/`ax-work` 가 갈린 방식과 같다).
-    "requester": ("ax-request", "ax-ontology", "ax-advance", "ax-review"),
+    # 🔴 `ax-fix` (`#630`, 사용자 요청 2026-09-16) — 자동 리뷰·주간 플랜을 번호(R12·P3)로 받아
+    #   지금 main 기준으로 검토하고, 사람이 고른 항목만 `fix/<번호>` 브랜치에 고친다.
+    #   [주의] `ax-review` 와 발화가 겹친다(「리뷰」) — SKILL.md §0 이 `R`/`P` 번호로 가른다.
+    "requester": ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-fix"),
 }
 
 # 폐지된 스킬 — 배달 대상에서 지우는 것만으로는 **이미 놓인 기계가 정리되지 않는다**.

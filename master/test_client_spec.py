@@ -81,9 +81,10 @@ def test_unchanged() -> None:
           bundle.skills_for("worker") == ("ax-work", "ax-infer"),
           str(bundle.skills_for("worker")))
     # 🔴 2026-09-04 — `ax-advance` 추가 (정본 ⑺ 라운드 종결 · `ax-review` 와 다른 단계)
+    # 🔴 2026-09-16 — `ax-fix` 추가 (`#630` · 리뷰·플랜 수정 항목)
     check("요청자 스킬 불변",
           bundle.skills_for("requester")
-          == ("ax-request", "ax-ontology", "ax-advance", "ax-review"),
+          == ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-fix"),
           str(bundle.skills_for("requester")))
     check("오버레이 없음 == 종전",
           bundle.skills_for("requester") == bundle.skills_for("requester", spec.EMPTY_INIT))

@@ -30,7 +30,7 @@ from .models import (
     WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq,
     RedmineIssueReq, RedmineLinkCommitReq,
     WriterSignalReq, HistoryReq, AliasReq, NotAClassReq, RecipeSearchReq, \
-    HistorySearchReq
+    HistorySearchReq, FixStatusReq
 )
 from . import tagging                      # 라우트별 태그 정책 (#257)
 from .persistence import (
@@ -737,6 +737,68 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
                     "project": project}
         out = RR.anti_patterns(paths)
         _tq_log(f"[anti-pattern] 카탈로그 조회 exists={out.get('exists')} ({paths.name})", root)
+        return {**out, "project": paths.name}
+
+    # ── 수정 항목 (`#629`, 사용자 요청 2026-09-16) ────────────────────────────
+    #    `.33` 이 번호(`R12`·`P3`)로 리뷰·플랜을 받아 가고 검토 결과를 되돌린다.
+    #    [중요] 경로가 `/api/v1` 밖이다 — 본문·수정 행이 실린다(`auth.REQUESTER_SCOPE` 주석).
+    #    [중요] 거부는 다른 대행과 같이 **200 + `ok:false` + 사유**다(§12.5-c).
+    @app.get("/fixes")
+    def fixes_list_ep(project: str = ""):
+        """번호 붙은 리뷰·플랜 요약 — 최신 번호가 먼저. 부르는 순간 새 문서에 번호가 붙는다."""
+        from ..context_synth import fix_index as FX
+        from ..projects.config import ConfigError
+        try:
+            paths = _mounted_paths(project)
+        except ConfigError as e:
+            _tq_log(f"[fix] 목록 거부 — {e}", root)
+            return {"ok": False, "status": "not_mounted", "reason": str(e), "project": project}
+        try:
+            out = FX.list_docs(paths.root, logf=lambda m: _tq_log(f"{m} ({paths.name})", root))
+        except FX.FixIndexError as e:
+            _tq_log(f"[fix] [중요] 목록 실패 — {e} ({paths.name})", root)
+            return {"ok": False, "status": "index_error", "reason": str(e), "project": paths.name}
+        _tq_log(f"[fix] 목록 {len(out['docs'])}건 ({paths.name})", root)
+        return {"ok": True, **out, "project": paths.name}
+
+    @app.get("/fixes/{serial}")
+    def fixes_get_ep(serial: str, project: str = ""):
+        """문서 하나 — 항목(파일·라인·설명·권장 수정)과 본문 전체. `.33` 이 내려받는 자리."""
+        from ..context_synth import fix_index as FX
+        from ..projects.config import ConfigError
+        try:
+            paths = _mounted_paths(project)
+        except ConfigError as e:
+            _tq_log(f"[fix] 내려받기 거부 {serial} — {e}", root)
+            return {"ok": False, "status": "not_mounted", "reason": str(e), "project": project}
+        try:
+            out = FX.get_doc(paths.root, serial)
+        except FX.FixIndexError as e:
+            _tq_log(f"[fix] [중요] 내려받기 실패 {serial} — {e} ({paths.name})", root)
+            return {"ok": False, "status": "index_error", "reason": str(e), "project": paths.name}
+        _tq_log(f"[fix] 내려받기 {serial} → "
+                f"{'항목 ' + str(out.get('items')) + '건' if out.get('ok') else out.get('reason')} "
+                f"({paths.name})", root)
+        return {**out, "project": paths.name}
+
+    @app.post("/fixes/{item}/status")
+    def fixes_status_ep(item: str, req: FixStatusReq):
+        """항목 결정 기록 — 사람이 정한 뒤에만 온다. 태그 없음도 거절(쓰기 대행 공통)."""
+        from ..context_synth import fix_index as FX
+        bad = _mount_gate(req.project, require=True)
+        if bad:
+            _tq_log(f"[fix] 상태 거부 {item} — {bad.get('reason')}", root)
+            return bad
+        paths = _mounted_paths(req.project)
+        try:
+            out = FX.set_status(paths.root, item, req.state, note=req.note, by=req.by,
+                                branch=req.branch, commit=req.commit,
+                                logf=lambda m: _tq_log(f"{m} ({paths.name})", root))
+        except FX.FixIndexError as e:
+            _tq_log(f"[fix] [중요] 상태 기록 실패 {item} — {e} ({paths.name})", root)
+            return {"ok": False, "status": "index_error", "reason": str(e), "project": paths.name}
+        if not out.get("ok"):
+            _tq_log(f"[fix] 상태 거절 {item} {req.state} — {out.get('reason')} ({paths.name})", root)
         return {**out, "project": paths.name}
 
     @app.post("/api/v1/anti_patterns/notify")

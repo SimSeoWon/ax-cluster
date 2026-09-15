@@ -167,7 +167,10 @@ def cluster_page(paths) -> tuple:
         '<div class="sub">',
         '<div class="sub" style="margin-bottom:.35rem">'
         '<a href="/onboarding" style="color:#58a6ff;text-decoration:none">'
-        '온보딩 — 에이전트가 무엇이고 누가 무엇을 하나 →</a></div><div class="sub">', 1)
+        '온보딩 — 에이전트가 무엇이고 누가 무엇을 하나 →</a>'
+        # 리뷰·플랜 목록 (`#629`) — 같은 이유로 서빙 시점에 끼운다
+        ' · <a href="/reviews" style="color:#58a6ff;text-decoration:none">'
+        '리뷰·플랜 — 번호로 부르는 수정 항목 →</a></div><div class="sub">', 1)
     sec, _ = _age(p)
     if sec is not None and sec > STALE_SEC:
         body = inject(body, stale_banner(sec, "python -m master.status html"))

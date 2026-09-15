@@ -111,6 +111,12 @@ POLICY = {
     "POST /api/v1/history/search":                  MOUNT,
     "POST /api/v1/recipes/search":                  MOUNT,
     "GET /api/v1/anti_patterns":                    MOUNT,
+
+    # 🔴 수정 항목 (`#629`) — 리뷰·플랜은 트윈에 있다. 읽기도 `MOUNT` 다(레시피와 같은 이유 —
+    #    남의 프로젝트 리뷰를 이 체크아웃의 것으로 읽으면 빈 결과보다 나쁘다). 상태 기록은 트윈 쓰기다.
+    "GET /fixes":                                   MOUNT,
+    "GET /fixes/{serial}":                          MOUNT,
+    "POST /fixes/{item}/status":                    MOUNT,
 }
 
 # [중요] 태그를 **받아야** 하는 정책 — `OPEN` 만 예외다.
@@ -134,6 +140,7 @@ REQUIRE_TAG = (
     "POST /api/v1/workers/{worker_id}/poll",
     "POST /api/v1/thesaurus/alias",
     "POST /api/v1/thesaurus/not-a-class",
+    "POST /fixes/{item}/status",                # 수정 항목 결정 — 트윈의 fixes/index.json 에 쓴다 (#629)
 )
 
 

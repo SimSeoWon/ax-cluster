@@ -292,8 +292,78 @@ def test_thesaurus_candidates_need_repetition():
           A.thesaurus_alias_candidates(en)["candidates"] == [])
 
 
+# ── ⑨ 주간 플랜 (#628) ──────────────────────────────────────────────────────
+
+SATURDAY_10 = datetime(2026, 9, 12, 10, 0)     # 토요일 오전 — 원전 게이트는 시각 조건이 없다
+
+
+def test_weekly_plan_gate_is_origin_shape():
+    with tempfile.TemporaryDirectory() as tmp:
+        p = _paths(tmp)
+        S = gates.WEEKLY_PLAN
+        run = lambda cfg=None, n=3, now=SATURDAY_10: gates.should_run_weekly_plan(   # noqa: E731
+            S, cfg or {}, p.root, input_count=n, now=now)
+
+        v = run()
+        check("⑨ 작성자 디렉토리가 없으면 안 돈다", not v.run and "작성자" in v.reason, v.reason)
+        (p.root / "reviews" / "Simkung").mkdir(parents=True)
+        (p.root / "reviews" / "_archive").mkdir(parents=True)
+        v = run()
+        check("⑨ 토요일 오전 · 요약 없음이면 돈다 (시각 조건 없음)",
+              v.run and "Simkung" in v.reason and "_archive" not in v.reason, v.reason)
+        check("⑨ 일요일은 늘 허용", run(now=SATURDAY_10 + timedelta(days=1)).run)
+        v = run(now=SATURDAY_10 - timedelta(days=1))
+        check("⑨ 금요일은 막는다", not v.run and "요일 불일치" in v.reason, v.reason)
+        check("⑨ weekly_plan_day 로 지정일을 바꾼다",
+              run({"batch": {"weekly_plan_day": "friday"}},
+                  now=SATURDAY_10 - timedelta(days=1)).run)
+        v = run(n=0)
+        check("⑨ 리뷰가 없으면 안 돈다", not v.run and "입력 부족" in v.reason, v.reason)
+        v = run({"batch": {"weekly_plan": False}})
+        check("⑨ 끄면 안 돈다", not v.run and "꺼져" in v.reason, v.reason)
+
+        week = SATURDAY_10.strftime("%Y-W%W")
+        s = p.root / "plans" / "Simkung" / week
+        s.mkdir(parents=True)
+        (s / "_summary.md").write_text("요약", encoding="utf-8")
+        v = run()
+        check("⑨ [중요] 이번 주 요약이 있으면 안 돈다 (간격 노릇)",
+              not v.run and week in v.reason, v.reason)
+        check("⑨ 다음 주에는 다시 돈다", run(now=SATURDAY_10 + timedelta(days=7)).run)
+
+
+def test_weekly_plan_batch_is_wired_without_redmine():
+    b = next((x for x in R.BATCHES if x.schedule.key == "weekly_plan"), None)
+    check("⑨ 주간 플랜이 BATCHES 에 있다", b is not None)
+    if b is None:
+        return
+    check("⑨ 전용 게이트를 쓴다", b.gate is gates.should_run_weekly_plan)
+    with tempfile.TemporaryDirectory() as tmp:
+        p = _paths(tmp)
+        d = p.root / "reviews" / "Simkung"
+        d.mkdir(parents=True)
+        (d / "2026-09-12_1000_aaaaaaaa.md").write_text(
+            "# 자동 코드 리뷰\n\n- 커밋: `" + "a" * 40 + "`\n", encoding="utf-8")
+        (d / "_note.md").write_text("리뷰 아님", encoding="utf-8")
+        check("⑨ 입력은 작성자 디렉토리의 리뷰 수", R._plan_count(p) == 1, str(R._plan_count(p)))
+
+        from master.context_synth import planner
+        seen = {}
+        orig = planner.run_weekly_plans
+        planner.run_weekly_plans = lambda paths, **kw: seen.update(kw) or True
+        try:
+            res = R._plan_run(p)
+        finally:
+            planner.run_weekly_plans = orig
+        check("⑨ [중요] 레드마인 등록을 끄고 부른다 (#632 전까지)",
+              seen.get("redmine") is False, str(seen))
+        check("⑨ 실행 뒤 번호가 붙는다", res["ok"] and res["assigned"] == ["R1"], str(res))
+
+
 def main() -> int:
-    for fn in (test_each_condition_blocks_alone, test_config_overrides_use_origin_key_names,
+    for fn in (test_weekly_plan_gate_is_origin_shape,
+               test_weekly_plan_batch_is_wired_without_redmine,
+               test_each_condition_blocks_alone, test_config_overrides_use_origin_key_names,
                test_marker_gap_blocks, test_broken_marker_is_treated_as_absent,
                test_marker_only_on_success, test_exception_is_not_swallowed,
                test_force_skips_time_gate_only, test_plan_has_no_side_effects,

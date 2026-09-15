@@ -183,9 +183,10 @@ def test_role_skills() -> None:
     #    한다(사용자 확정 2026-08-16). 검수는 **판단**이지 구현이 아니라 이 역할에 맞는다.
     # 🔴 `ax-advance` 는 ⑺ 라운드 종결(작업 브랜치 전진) · `ax-review` 는 main 반영 —
     #    **다른 단계**다. 그 둘을 섞어 오지시를 낸 것이 2026-09-04 의 결함이었다.
-    check("[중요] 요청자는 request·ontology·advance·review (ax-work 아님)",
+    # 🔴 2026-09-16 `ax-fix` 추가 (`#630` — 리뷰·플랜 수정 항목 검토·적용)
+    check("[중요] 요청자는 request·ontology·advance·review·fix (ax-work 아님)",
           set(bundle.skills_for("requester"))
-          == {"ax-request", "ax-ontology", "ax-advance", "ax-review"},
+          == {"ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-fix"},
           str(bundle.skills_for("requester")))
     check("[중요] 요청자 스킬에 ax-work 가 섞이지 않는다",
           "ax-work" not in bundle.skills_for("requester"))
@@ -231,6 +232,7 @@ def test_role_payload() -> None:
           "clientside/client_mcp.py" in pay, str(pay))
     check("요청자에게 review·build 의 의존 폐포가 간다",
           set(pay) == {"clientside/client_mcp.py", "clientside/ontology_cache.py",
+                       "clientside/fix_flow.py",
                        "layer3_verify.py", "source_text.py", "utf8.py",
                        "work/branch_names.py", "work/coordinator.py",
                        "work/review.py", "work/skeleton_gate.py", "work/build_local.py"},
@@ -352,6 +354,12 @@ def test_payload_split() -> None:
                         "clientside/session1_conductor.py",
                         "work/build_local.py", "work/skeleton_gate.py",
                         "layer3_verify.py", "source_text.py", "utf8.py")
+    # 🔴 `#630`: 요청자에게 `fix_flow.py` 가 MCP 폐포 **바로 뒤**에 들어간다 (결정된 변경 — 기준선 이동)
+    FROZEN["requester"] = ("clientside/client_mcp.py", "clientside/ontology_cache.py",
+                           "clientside/fix_flow.py",
+                           "layer3_verify.py", "source_text.py", "utf8.py",
+                           "work/branch_names.py", "work/coordinator.py", "work/review.py",
+                           "work/skeleton_gate.py", "work/build_local.py")
     for role, want in FROZEN.items():
         got = bundle.payloads_for(role)
         check(f"[중요] {role} 의 **배달 위치**가 동결값과 순서까지 같다",
@@ -369,6 +377,7 @@ def test_payload_split() -> None:
     #    나머지는 `master/<배달경로>` 미러링이다 — 사용자 결정 ⓒ(빌드 사슬은 `master/` 에
     #    남는다, `layer3_verify` 를 상대경로로 올려다보기 때문). 의도하지 않은 갈림도 여기서 죽는다.
     SPLIT = {"clientside/session1_conductor.py": "client/runtime/session1_conductor.py",
+             "clientside/fix_flow.py": "client/runtime/fix_flow.py",
              "clientside/client_mcp.py": "client/runtime/client_mcp.py",
              "clientside/ontology_cache.py": "client/runtime/ontology_cache.py"}
     for role in FROZEN:

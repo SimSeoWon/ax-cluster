@@ -17,6 +17,8 @@
 기본·push 후에만 merged)로 한다. MCP 에 decide 도구를 또 만들면 **로직이 두 벌**이 되고,
 MCP 쪽이 절차(예: push 전에 merged 로 찍기)를 우회하는 길이 된다. 대신 `queue_api()` 를
 내보낸다 — 스킬이 `review.reject_work(api=queue_api())` 식으로 주입한다.
+[주의] 쓰는 도구가 하나 있다 — `update_fix_status` (`#630`). 수정 항목(R12-3·P3)에 **사람이 정한
+결정을 기록**만 한다. 큐 상태(`merge_status`)와 무관하고 따르는 절차가 없어 두 벌이 될 로직이 없다.
 
 ## [중요] 캐시는 참조 지식에만 — 큐 상태에는 없다
 
@@ -542,6 +544,38 @@ def tool_log_history(api, args: dict) -> dict:
     return api("POST", "/api/v1/history", payload)
 
 
+FIX_STATES = ("open", "accepted", "dismissed", "stale", "applied", "failed")
+
+
+def tool_list_fixes(api) -> dict:
+    """번호 붙은 리뷰·플랜 요약 (`#630`) — 본문 없음. 사람이 번호를 고르는 자리다."""
+    return api("GET", "/fixes")
+
+
+def tool_get_fix(api, serial: str) -> dict:
+    """번호 하나의 본문·항목 전체. [중요] 리뷰 시점의 지적이다 — 지금 main 대조는 `fix_flow check`."""
+    s = (serial or "").strip()
+    if not s:
+        raise ClientError("serial 이 비었다 — 예: R12 · P3")
+    return api("GET", "/fixes/" + urllib.parse.quote(s, safe=""))
+
+
+def tool_update_fix_status(api, args: dict) -> dict:
+    """항목 결정 기록 — **사용자가 정한 뒤에만** 부른다."""
+    item = str(args.get("item") or "").strip()
+    state = str(args.get("state") or "").strip()
+    if not item:
+        raise ClientError("item 이 비었다 — 리뷰는 행까지 R12-3, 플랜은 P3")
+    if state not in FIX_STATES:
+        raise ClientError(f"state 는 {' · '.join(FIX_STATES)} 중 하나다 (받은 값 {state!r})")
+    payload = {"state": state}
+    for k in ("note", "by", "branch", "commit"):
+        v = str(args.get(k) or "").strip()
+        if v:
+            payload[k] = v
+    return api("POST", "/fixes/" + urllib.parse.quote(item, safe="") + "/status", payload)
+
+
 def _bare(name: str) -> str:
     """UE 접두 한 글자를 뗀 이름. 파일 stem 은 접두가 없다 (`UActorComponent_X` →
     `ActorComponent_X.cpp`), 그래서 evidence(파일:줄) 대조에는 이쪽이 필요하다."""
@@ -996,6 +1030,31 @@ TOOLS = [
                          "session_id": {"type": "string"},
                          "work_id": {"type": "string",
                                      "description": "분산 작업이면 work_id"}}}},
+    {"name": "list_fixes",
+     "description": "자동 리뷰·주간 플랜의 **번호 목록**(R12 · P3)을 본다 — 번호·날짜·작성자·항목 수·"
+                    "심각도 건수·결정 상태. 본문은 없다. 사용자가 번호를 고르면 `get_fix` 로 받는다. "
+                    "[중요] 적용 여부는 사람이 정한다 — 리뷰·플랜은 제안이지 지시가 아니다(원전 원칙). "
+                    "레드마인 `#N` 과 다른 번호다.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "get_fix",
+     "description": "번호 하나(R12 · P3)의 리뷰·플랜을 **본문과 항목 전체**로 받는다 — 리뷰는 행마다 "
+                    "파일·라인·설명·권장 수정과 항목 번호(R12-3), 플랜은 대상 파일과 개선안. "
+                    "[주의] 리뷰 시점의 지적이다 — 지금 main 에 그대로 맞는지는 `ax-fix` 스킬의 "
+                    "대조 단계(`fix_flow.py check`)가 확인한다.",
+     "inputSchema": {"type": "object", "required": ["serial"], "properties": {
+         "serial": {"type": "string", "description": "R12 · P3"}}}},
+    {"name": "update_fix_status",
+     "description": "수정 항목 하나의 결정을 마스터에 기록한다 — accepted(적용하기로) · dismissed(기각) · "
+                    "stale(지금 main 에 해당 없음) · applied(fix 브랜치에 커밋함) · failed · open(되돌리기). "
+                    "[중요] **사용자가 정한 뒤에만** 부른다. 플랜(P3)은 applied/dismissed 가 플랜 MD 의 "
+                    "status 도 acted/dismissed 로 맞춘다. 코드·브랜치는 건드리지 않는다.",
+     "inputSchema": {"type": "object", "required": ["item", "state"], "properties": {
+         "item": {"type": "string", "description": "리뷰는 행까지 R12-3 · 플랜은 P3"},
+         "state": {"type": "string", "enum": list(FIX_STATES)},
+         "note": {"type": "string", "description": "왜 — 판단 근거 1~3줄"},
+         "by": {"type": "string"},
+         "branch": {"type": "string", "description": "적용했으면 fix/R12"},
+         "commit": {"type": "string"}}}},
     {"name": "find_history",
      "description": "이 프로젝트의 **과거 결정 기록**을 찾는다 (원전 α′ history — 온톨로지 시드의 "
                     "1순위 원천). 작업 시작 직후에 `find_recipes`·`get_anti_patterns` 와 함께 "
@@ -1139,7 +1198,9 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                 # 레시피·안티패턴 읽기 — 큐 대행이므로 같은 자리다 (`#267`)
                 "find_recipes", "get_anti_patterns",
                 # history 읽기 (`#306`) — 쓰기(`log_history`)와 같은 대행 자리
-                "find_history"):
+                "find_history",
+                # 수정 항목 (`#630`) — 8101 `/fixes` 대행
+                "list_fixes", "get_fix", "update_fix_status"):
         a = api or queue_api(root)
         if name in ("add_object_alias", "mark_not_a_class"):
             # 프로젝트는 배달된 config 가 안다 — #210(활성 스위치)에 흔들리지 않게 실어 보낸다
@@ -1166,6 +1227,12 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
             return tool_find_history(a, args)
         if name == "log_history":
             return tool_log_history(a, args)
+        if name == "list_fixes":
+            return tool_list_fixes(a)
+        if name == "get_fix":
+            return tool_get_fix(a, str(args.get("serial") or ""))
+        if name == "update_fix_status":
+            return tool_update_fix_status(a, args)
         if name == "redmine_list_issues":
             return tool_redmine_list_issues(a, status=str(args.get("status") or "open"),
                                             tracker=str(args.get("tracker") or ""),

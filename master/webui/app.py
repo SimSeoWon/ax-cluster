@@ -30,7 +30,7 @@ from . import routes
 #    라우트를 추가할 때 손대야 하는 곳이 셋(핸들러 · 라우터 분기 · 인증 공개 목록)이었고,
 #    매번 하나를 빠뜨려 401/404 가 났다. **목록을 하나로 모으면 그 부류가 사라진다** —
 #    `viewer.Router` 와 `projects/__main__` 이 이 상수를 import 해서 쓴다.
-PREFIXES = ("/ontology", "/ontology-static", "/api/v1", "/cluster", "/onboarding")
+PREFIXES = ("/ontology", "/ontology-static", "/api/v1", "/cluster", "/onboarding", "/reviews")
 # 정확히 이 경로만(접두어가 아니라 완전 일치) 이 앱이 가져간다
 EXACT = ("/", "", "/cluster.html")
 
@@ -190,6 +190,13 @@ class WebUI:
         if path in ("/onboarding", "/onboarding/", "/onboarding.html"):
             from . import onboarding
             return await _send(send, 200, onboarding.page(), HTML)
+        # 🔴 리뷰·플랜 목록 (`#629`, 사용자 요청 2026-09-16) — 번호로 부르는 수정 항목의 입구.
+        #    [중요] 요약만 그린다 — 본문은 8101(토큰)이다. `?project=` 로 등록된 프로젝트를 고른다.
+        if path in ("/reviews", "/reviews/"):
+            from . import fixes_page
+            qs = parse_qs((scope.get("query_string") or b"").decode("utf-8", "replace"))
+            st, body = fixes_page.page((qs.get("project") or [""])[0])
+            return await _send(send, st, body, HTML)
         # [중요] 클러스터 상태 — `/view` 를 없애고 여기로 모았다 (사용자 지시)
         if path in ("/cluster", "/cluster/", "/cluster.html"):
             st, body = routes.cluster_page(paths)

@@ -317,6 +317,20 @@ class NotAClassReq(BaseModel):
     project: str = ""
 
 
+class FixStatusReq(BaseModel):
+    """수정 항목 하나의 결정 (`#629`) — `.33` 이 번호(`R12-3`·`P3`)로 검토·적용한 뒤 되돌린다.
+
+    [중요] **사람이 정한 것만 온다** — 스킬이 적용 여부를 사용자에게 물은 뒤에 부른다.
+    이 요청은 기록만 한다 — 코드·브랜치를 건드리지 않는다.
+    """
+    project: str = ""
+    state: str                 # open · accepted · dismissed · stale · applied · failed
+    note: str = ""
+    by: str = ""
+    branch: str = ""           # 적용했으면 `fix/R12`
+    commit: str = ""
+
+
 class AntiPatternNotifyReq(BaseModel):
     """리더가 머지한 새 안티패턴 엔트리 알림.
 

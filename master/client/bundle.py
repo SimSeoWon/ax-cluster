@@ -112,6 +112,8 @@ PAYLOAD_BY_ROLE = {
     #    사용자 결정 ⓒ, 2026-08-22.
     "requester": (_pair("clientside/client_mcp.py", "client/runtime/client_mcp.py"),
                   _pair("clientside/ontology_cache.py", "client/runtime/ontology_cache.py"),
+                  # `#630` — `ax-fix` 의 결정론 부분. 옆 파일 `client_mcp.py` 를 경로로 로드한다
+                  _pair("clientside/fix_flow.py", "client/runtime/fix_flow.py"),
                   _pair("layer3_verify.py"), _pair("source_text.py"), _pair("utf8.py"),
                   _pair("work/branch_names.py"), _pair("work/coordinator.py"),
                   _pair("work/review.py"),
