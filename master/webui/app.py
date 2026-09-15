@@ -40,6 +40,7 @@ NO_STORE = b"no-store, must-revalidate"
 
 _DOMAIN_PAGE = re.compile(r"^/ontology/domain/(.+)$")
 _TASK_PAGE = re.compile(r"^/ontology/task/(.+)$")
+_REVIEW_DETAIL = re.compile(r"^/reviews/([^/]+)/?$")
 _API_DOMAIN = re.compile(r"^/api/v1/ontology/domain/(.+)$")
 _API_OBJECT = re.compile(r"^/api/v1/ontology/object/([^/]+)/(.+)$")
 _API_ACTION = re.compile(r"^/api/v1/ontology/action/([^/]+)/(.+)$")
@@ -196,6 +197,14 @@ class WebUI:
             from . import fixes_page
             qs = parse_qs((scope.get("query_string") or b"").decode("utf-8", "replace"))
             st, body = fixes_page.page((qs.get("project") or [""])[0])
+            return await _send(send, st, body, HTML)
+        #    상세 — 게시판처럼 번호를 누르면 뜬다 (사용자 요청 2026-09-16). [중요] **LAN 공개다** —
+        #    본문이 실리지만 사용자가 공개 범위를 골랐다(`fixes_page` 머리말).
+        m = _REVIEW_DETAIL.match(path)
+        if m:
+            from . import fixes_page
+            qs = parse_qs((scope.get("query_string") or b"").decode("utf-8", "replace"))
+            st, body = fixes_page.page_detail(unquote(m.group(1)), (qs.get("project") or [""])[0])
             return await _send(send, st, body, HTML)
         # [중요] 클러스터 상태 — `/view` 를 없애고 여기로 모았다 (사용자 지시)
         if path in ("/cluster", "/cluster/", "/cluster.html"):

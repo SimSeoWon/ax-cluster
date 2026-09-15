@@ -4,7 +4,9 @@
 
     ① 스코프 — 요청자만 `/fixes` 를 연다 (토큰 없음 401 · 워커 403) · `/api/v1` 밖이다
     ② 8103 — `/reviews` 는 공개 접두에 있고 `/fixes` 는 없다 · 태그 정책이 선언돼 있다
-    ③ [중요] 공개 화면에 본문·지적 설명·소스 경로가 없다 · 작성자 이름은 이스케이프된다
+    ③ [중요] 공개 목록에 본문·지적 설명·소스 경로가 없다 · 작성자 이름은 이스케이프된다
+       · 상세(`/reviews/R12`)는 **LAN 공개**(사용자 결정 2026-09-16)라 본문이 실린다 —
+         [중요] 대신 본문의 태그는 전부 이스케이프한다 · 번호·요청 문구를 복사할 수 있다
     ④ 클라 도구 — 경로·인코딩·상태 검증 · 결정 도구 금지어에 걸리지 않는다
     ⑤ fix_flow 대조 — **실제 git 저장소**에서 단서 넷(unchanged·line_present·line_missing·gone)
        · [중요] fetch 가 실패하면 낡은 main 으로 대조하지 않고 멈춘다
@@ -28,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master.auth import BearerAuthMiddleware, REQUESTER_SCOPE, WORKER_SCOPE   # noqa: E402
 from master.context_synth import fix_index as FX                             # noqa: E402
-from master.test_fix_index import SECRET_DESC, SECRET_PATH, make_root         # noqa: E402
+from master.test_fix_index import SECRET_DESC, SECRET_PATH, make_root, review_text   # noqa: E402
 from client.runtime import client_mcp as M                                    # noqa: E402
 from client.runtime import fix_flow as FF                                     # noqa: E402
 
@@ -143,6 +145,82 @@ def test_public_page_has_no_body():
     st, text = fixes_page.render("NS", registry=reg, list_docs=boom)
     check("③ [중요] 실패해도 예외 문자열(절대 경로)을 싣지 않는다",
           st == 500 and str(root) not in text, text[-300:])
+    shutil.rmtree(root)
+
+
+def test_detail_page_and_copy():
+    """③ 게시판 상세 — 번호를 누르면 뜨고, 번호·요청 문구를 복사해 .33 에 붙여넣는다 (사용자 2026-09-16)."""
+    from master.webui import fixes_page
+    root = make_root()
+    FX.set_status(root, "R1-1", "applied", branch="fix/R1", commit="c" * 40, by="ax-fix", note="널 가드")
+    reg = FakeRegistry({"NS": root}, "NS")
+
+    st, lst = fixes_page.render("", registry=reg)
+    check("③ 목록 번호가 상세로 링크된다", 'href="/reviews/R1?project=NS"' in lst, lst[-2000:])
+    check("③ 목록 [복사]는 요청 문구", 'data-copy="R1 검토해볼까?"' in lst)
+    check("③ [중요] http(비보안 문맥)에서도 복사되게 execCommand 폴백", "execCommand('copy')" in lst)
+    check("③ 목록에는 여전히 지적 설명이 없다", SECRET_DESC not in lst)
+
+    st, det = fixes_page.render_detail("r1", "NS", registry=reg)
+    check("③ 상세 200 (번호 대소문자 무관)", st == 200, det[:300])
+    check("③ 상세 복사 상자 — 요청 문구·번호",
+          'data-copy="R1 검토해볼까?"' in det and 'data-copy="R1"' in det)
+    check("③ 항목 번호도 복사", 'data-copy="R1-3"' in det)
+    check("③ 상세에는 지적·경로·권장 수정이 실린다 (LAN 공개 결정)",
+          SECRET_DESC in det and SECRET_PATH in det and "IsValid 추가" in det)
+    check("③ 결정이 누구·브랜치·커밋·메모와 함께",
+          "적용됨" in det and "fix/R1" in det and "c" * 12 in det and "널 가드" in det and "ax-fix" in det)
+    check("③ 원문이 렌더링된다 (제목·표)", "<h4>Source/NS/AI</h4>" in det and "<h3>" in det
+          and "원문 전체" in det)
+    check("③ 목록으로 돌아가는 링크", 'href="/reviews?project=NS"' in det)
+
+    evil = root / "reviews" / "Simkung" / "2026-09-14_0000_eeeeeeee.md"
+    evil.write_text(review_text("e" * 40, "Simkung").replace(SECRET_DESC, "<img src=x onerror=alert(1)>")
+                    + "\n# <script>alert(1)</script>\n본문 `<b>코드</b>`\n", encoding="utf-8")
+    FX.sweep(root)
+    serial = FX.serial_for_commit(root, "e" * 40)
+    st, det = fixes_page.render_detail(serial, "NS", registry=reg)
+    check("③ [중요] 본문·항목의 태그를 이스케이프한다 (공개 상세)",
+          st == 200 and "<script>alert(1)</script>" not in det and "<img src=x" not in det
+          and "&lt;script&gt;" in det and "&lt;img src=x" in det, det[-800:])
+    check("③ [중요] 인라인 코드 안의 태그도 이스케이프", "<code>&lt;b&gt;코드&lt;/b&gt;</code>" in det)
+
+    st, det = fixes_page.render_detail("R99", "NS", registry=reg)
+    check("③ 없는 번호는 404", st == 404 and "없는 번호" in det, det[-300:])
+    st, det = fixes_page.render_detail("../etc", "NS", registry=reg)
+    check("③ 형식이 아니면 404", st == 404)
+    st, det = fixes_page.render_detail("P1", "NS", registry=reg)
+    check("③ 플랜 상세 — 대상 파일·플랜 상태·복사",
+          st == 200 and SECRET_PATH in det and "pending" in det and 'data-copy="P1 검토해볼까?"' in det,
+          det[-800:])
+
+    def boom(r, s):
+        raise OSError(f"{root}/fixes/index.json 권한 없음")
+    st, det = fixes_page.render_detail("R1", "NS", registry=reg, get_doc=boom)
+    check("③ [중요] 상세 실패도 예외 문자열(절대 경로)을 싣지 않는다",
+          st == 500 and str(root) not in det, det[-300:])
+
+    import types
+    from master.projects import config as PC
+    from master.webui.app import WebUI
+    orig = PC.Registry.load
+    PC.Registry.load = classmethod(lambda cls, root_=None: reg)
+    try:
+        app = WebUI(lambda: types.SimpleNamespace(root=root, name="NS"))
+        out = []
+
+        async def rcv():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def snd(ev):
+            out.append(ev)
+        asyncio.run(app({"type": "http", "method": "GET", "path": "/reviews/R1",
+                         "query_string": b"project=NS", "headers": []}, rcv, snd))
+        text = b"".join(e.get("body", b"") for e in out[1:]).decode("utf-8")
+        check("③ 실제 라우트 /reviews/R1 → 상세", out[0]["status"] == 200 and "R1 — 자동 리뷰" in text,
+              str(out[0].get("status")))
+    finally:
+        PC.Registry.load = orig
     shutil.rmtree(root)
 
 
@@ -404,7 +482,7 @@ def test_delivery():
 
 if __name__ == "__main__":
     for fn in (test_scope, test_public_prefix_and_policy, test_nav_links_everywhere,
-               test_public_page_has_no_body,
+               test_public_page_has_no_body, test_detail_page_and_copy,
                test_client_tools, test_flow_check_real_git,
                test_flow_worktree_leaves_checkout_alone, test_flow_diff_and_commit,
                test_flow_fetch_and_status_with_fake_api,
