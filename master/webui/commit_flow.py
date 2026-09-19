@@ -61,10 +61,11 @@ _NODES = [
     (1, 1, "② 색인기가 집는다", "푸시 이벤트 → 미러 갱신 · 변경 파일 산출", False),
     (2, 2, "③ 컨텍스트 문서 합성", f"클래스별 `.md` — 로컬 `{SYNTH_MODEL}`", False),
     (3, 1, "④ 리뷰 큐에 등재", "커밋 하나 = 항목 하나 · 색인은 **기다리지 않는다**", False),
-    (4, 2, "⑤ 리뷰 초고", f"형식 자유 — 로컬 `{DRAFT_MODEL}`", False),
-    (5, 1, "⑥ 게시판에 번호", "`R33` 「미검증」 · 표가 없으니 **항목은 아직 없다**", False),
-    (6, 0, "⑦ 사람이 부른다", "*\"R33 확인해보자\"* — 여기서 처음 **상용 모델**", True),
-    (7, 0, "⑧ 판정 · 적용", "합당한가 → 수정 / 오탐이면 기각", True),
+    (4, 2, "⑤ 로컬 1차 초고", f"형식 자유 — `{DRAFT_MODEL}` · 중간 산출물", False),
+    (5, 1, "⑥ Antigravity 2차", "원본 diff · 선언부와 대조해 정형 리뷰로 퇴고", False),
+    (6, 1, "⑦ 최종 리뷰 · R번호", "표가 있는 리뷰 게시 · 성공한 초고 제거", False),
+    (7, 0, "⑧ 사람이 검토", "*\"R33 검토해볼까?\"* — 지금 main에 합당한가", True),
+    (8, 0, "⑨ 판정 · 적용", "수정 / 이미 반영 / 오탐이면 기각", True),
 ]
 
 _EDGES = [
@@ -73,6 +74,7 @@ _EDGES = [
     "마스터 내부 (색인 경로)",
     "마스터 내부 (큐 파일)",
     "브로커 8102",
+    "`.57` Antigravity CLI",
     "파일 → `fix_index` 번호",
     "HTTP 8101 · `ax-fix`",
 ]
@@ -97,7 +99,7 @@ def flow_svg() -> str:
     h = _row_y(len(_NODES) - 1) + _BOX_H + 52
     p = [f'<svg viewBox="0 0 {w} {h}" width="100%" height="auto" role="img" '
          f'preserveAspectRatio="xMidYMin meet" '
-         f'aria-label="손 커밋 흐름 — 커밋에서 컨텍스트 문서·리뷰 초고를 거쳐 사람 검증까지">',
+         f'aria-label="손 커밋 흐름 — 로컬 초고와 Antigravity 2차 퇴고를 거쳐 최종 리뷰까지">',
          '<defs><marker id="cah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
          'markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker>'
          '</defs>']
@@ -158,7 +160,7 @@ def flow_svg() -> str:
 
     p.append(f'<text x="{_lane_x(0) + 12}" y="{h - 16}" fill="#8b949e" font-size="11.5">'
              f'<tspan fill="#3fb950">■</tspan> 로컬 LLM — 무료 · 한도를 안 먹는다   '
-             f'<tspan fill="#d29922">■</tspan> 사람이 정하는 자리 — ①⑦⑧</text>')
+             f'<tspan fill="#d29922">■</tspan> 사람이 정하는 자리 — ①⑧⑨</text>')
     p.append("</svg>")
     return "".join(p)
 
@@ -170,12 +172,12 @@ def render() -> str:
 <title>AX 클러스터 — 커밋 흐름</title><style>{_CSS}{_EXTRA}</style></head><body>
 <div class="shell">{nav_html("/commit-flow")}<main>
 <h1>손으로 커밋하면 무슨 일이 벌어지나</h1>
-<div class="sub">컨텍스트 문서 · 리뷰 초고 — 자동 구간은 전부 로컬 LLM</div>
+<div class="sub">컨텍스트 문서 · 로컬 1차 초고 · Antigravity 2차 퇴고 · 최종 리뷰</div>
 
 <p class="lede"><code>.33</code> 에서 코드를 고쳐 커밋하면, 마스터가 그것을 집어
-<b>클래스별 컨텍스트 문서</b>와 <b>리뷰 초고</b>를 만든다. 이 구간은
-<b class="ok">전부 로컬 LLM</b>이라 상용 한도를 쓰지 않는다. 상용 모델은
-<b>사람이 번호로 부를 때</b> 비로소 등장한다.</p>
+<b>클래스별 컨텍스트 문서</b>와 <b>로컬 리뷰 초고</b>를 만든다. 이어 마스터의
+<b>Antigravity가 원본 diff와 초고를 대조</b>해 표가 있는 최종 리뷰로 퇴고한다.
+사람이 번호로 부르는 단계는 리뷰 생성이 아니라 <b>지금 main에 적용할지 판단</b>하는 자리다.</p>
 
 <div class="note"><b>분산 작업(<code>/onboarding</code>)과 겹치지 않는다.</b>
 그쪽은 <b>일감을 쪼개 워커에게 맡기는</b> 흐름이고, 여기는 <b>그냥 커밋했을 때</b>
@@ -187,7 +189,7 @@ def render() -> str:
 <div class="legend">
   <span><b class="ok">■</b> 로컬 LLM — 무료</span>
   <span><b>■</b> 사람이 정하는 자리</span>
-  <span>자동 구간(②~⑥)에 상용 모델이 없다</span>
+  <span>자동 구간: 로컬 1차 → Antigravity 2차 · Claude 자동 폴백 없음</span>
 </div>
 
 <h2>어느 기계가 받나 — 브로커가 모델로 고른다</h2>
@@ -201,19 +203,18 @@ def render() -> str:
     <b><code>.43</code> 이 죽으면 받는다</b> — 재적재를 물지만 응답은 된다</span>
 </div></div>
 
-<h2>왜 자동 구간에 상용을 안 쓰나</h2>
-<div class="note warn"><b>상용 백엔드는 API 가 아니라 CLI 에이전트 호출이다.</b>
-매번 새 세션이라 호출 하나마다 지침이 통째로 실린다 — 실측으로
-<b>리뷰 본문의 13배</b>다. 커밋마다 그게 돌면 요금제가 버티지 못한다.
-<br><b>표를 로컬이 대신 만드는 것도 재봤고, 접었다.</b> 형식은 스키마 강제로 지켜지지만
+<h2>왜 로컬 1차와 Antigravity 2차로 나누나</h2>
+<div class="note warn"><b>로컬 모델이 표까지 만드는 길은 실측 뒤 접었다.</b>
+형식은 스키마 강제로 지켜지지만
 칸이 밀리고 <b>과생성이 2~6배</b>라 유령 항목이 진짜 지적의 4배가 된다 — 그 비용은
-사람이 훑으며 치른다. 그래서 <b>초고까지만</b> 만들고 표는 사람이 부를 때 만든다.</div>
+사람이 훑으며 치른다. 그래서 로컬 출력은 <b>중간 초고</b>로만 두고, Antigravity가
+원본 diff·선언부를 다시 확인해 정형 리뷰를 만든다. <b>Claude 자동 폴백은 없다.</b></div>
 
-<h2>초고는 「제안」이지 「지시」가 아니다</h2>
-<div class="note"><b>초고에는 표가 없다.</b> 그래서 수집기가 0건으로 읽고
-<b>수정 항목이 생기지 않는다</b> — 검증 전의 글이 항목 번호를 받아 돌아다니는 일을 막는다.
-사람이 <code>R33</code> 으로 검증을 걸면 그때 표와 항목이 만들어지고,
-<b>합당한가 / 해당 없음 / 의도된 동작</b>을 사람이 답한다.</div>
+<h2>초고는 게시하지 않고 최종 리뷰만 번호를 받는다</h2>
+<div class="note"><b>초고에는 표도 R번호도 없다.</b> Antigravity 퇴고가 성공하면
+최종 리뷰만 게시판에 올라가고 초고는 제거된다. 사람이 <code>R33</code>을 부르면 새 리뷰를
+만드는 것이 아니라, 그 지적이 <b>현재 main에도 합당한가 / 이미 반영됐나 / 의도된 동작인가</b>를
+검토해 수락분만 적용한다.</div>
 </main></div></body></html>"""
 
 

@@ -192,7 +192,7 @@ def _plan_rows(docs: list, project: str) -> str:
 
 
 def _shell(body: str, *, title: str = "리뷰·플랜", heading: str = "리뷰·플랜 — 번호로 부르는 수정 항목",
-           sub: str = "메인 커밋마다 자동 리뷰 · 주말마다 주간 플랜 · 번호를 골라 .33 에서 검토한다") -> str:
+           sub: str = "로컬 초고를 Antigravity가 퇴고한 자동 리뷰 · 주말 플랜 · 번호로 적용 여부 검토") -> str:
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AX 클러스터 — {html.escape(title)}</title><style>{_CSS}{_EXTRA}</style>{_COPY_JS}</head><body>
@@ -255,8 +255,9 @@ def render(project: str = "", *, registry=None, list_docs=None) -> tuple:
   <div class="stat"><b>{open_items}</b><span>미결 항목</span></div>
   <div class="stat"><b>{applied}</b><span>적용됨</span></div>
 </div>
-<div class="note">번호를 누르면 상세가 열린다. <b>[복사]</b>는 <code>R12 검토해볼까?</code> 를 복사한다 —
-.33 의 claude 에 붙여넣으면 <code>ax-fix</code> 가 받아 지금 main 기준으로 검토한다.</div>
+<div class="note">자동 리뷰는 <b>로컬 1차 초고 → Antigravity 2차 퇴고</b>를 거친 최종본이다.
+번호를 누르면 상세가 열린다. <b>[복사]</b>는 <code>R12 검토해볼까?</code>를 복사하며,
+.33 의 <code>ax-fix</code>는 새 리뷰를 만들지 않고 지금 main 기준의 적용 여부를 검토한다.</div>
 <h2>자동 리뷰</h2>
 <div class="wrap"><table class="fx">
 <tr><th>번호</th><th>생성</th><th>작성자</th><th>커밋</th><th>파일</th><th>항목</th>
