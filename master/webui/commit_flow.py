@@ -1,0 +1,221 @@
+"""커밋 흐름 화면 — **손으로 커밋한 코드가 어떻게 문서·리뷰가 되나** (`/commit-flow`).
+
+사용자 요청 2026-09-19: *"사용자가 .33 메인 컴퓨터에서 작업하고 코드를 커밋하면 1차로
+큐에서 .2번이나 BC250을 활용해 로컬LLM으로 컨텍스트 문서를 생성하고, 리뷰 큐에서 역시
+동일하게 리뷰 초안을 생성하는걸 … 다이어그램으로"*.
+
+## 이 화면이 `/onboarding` 과 다른 점
+
+    /onboarding    **분산 작업** — 사람이 일감을 나눠 워커에게 맡기는 흐름 (7단계)
+    /commit-flow   **손 커밋** — 사람이 그냥 커밋했을 때 자동으로 도는 흐름
+
+둘은 **겹치지 않는다.** 분산 작업 커밋은 3층 게이트를 지나지만, `.33` 에서 손으로 한 커밋은
+**어느 게이트도 안 지난다** — 이 화면의 흐름이 그 구멍을 덮는 장치다(`review_gen` 머리말).
+
+## [중요] 사실은 코드에서 가져온다 — 여기서 지어내지 않는다
+
+    SYNTH_MODEL         context_synth/synth.py        컨텍스트 합성 모델
+    DRAFT_MODEL         context_synth/review_runner.py 초고 모델
+    broker.choose()     broker/routing.py             어느 노드가 받는지의 규칙
+
+🔴 [주의] **노드를 「BC250 전용」으로 그리지 않는다.** 브로커는 ①상주 → ②`prefer` →
+③폴백 순으로 고르고(`routing.py:45`), `.2`·`.43` **둘 다 `gemma4:e4b` 를 갖고 있다**(실측
+2026-09-19). 평소엔 `.43` 이 상주라 거기로 가고, `.43` 이 죽으면 `.2` 가 받는다. 그림이
+그걸 말하지 않으면 다음 사람은 「BC250 전용」으로 읽는다.
+
+[주의] **토큰·경로·본문은 싣지 않는다** — 이 포트의 `/api/v1` 은 무인증 공개이고 이 화면도
+같은 층이다(`onboarding` 과 같은 규약).
+"""
+from __future__ import annotations
+
+import html
+
+from ..status import _CSS
+from .onboarding import _EXTRA as _BASE_EXTRA
+from .nav import nav_html, SIDE_CSS
+
+# 🔴 사실은 코드에서 읽는다 — 이 화면이 자기 값을 따로 적으면 모델이 바뀔 때 화면만 낡는다.
+from ..context_synth.synth import SYNTH_MODEL
+from ..context_synth.review_runner import DRAFT_MODEL
+
+_EXTRA = _BASE_EXTRA + SIDE_CSS + """
+.badge{display:inline-block;border:1px solid var(--line);border-radius:999px;
+ padding:.1rem .5rem;font-size:.72rem;font-family:ui-monospace,Menlo,monospace;color:var(--dim)}
+.badge.local{border-color:#3fb950;color:#3fb950}
+.badge.human{border-color:var(--warning);color:var(--warning)}
+"""
+
+# ── 다이어그램 값 ───────────────────────────────────────────────────────────
+#
+# [중요] **세로 · 3열 스윔레인** — `/onboarding` 의 flow_svg 와 같은 규약이다.
+#   레인을 가로로 눕히면 화면 밖으로 나가고, 세로 스크롤은 페이지가 원래 하는 일이다.
+_LANES = [
+    ("`.33` 요청자", "사람의 작업 PC"),
+    ("`.57` 마스터", "큐 · 색인 · 게시판"),
+    ("`.43` · `.2` 워커", "로컬 LLM (무료)"),
+]
+
+# (행, 레인, 제목, 부제, 사람인가)
+_NODES = [
+    (0, 0, "① 커밋 · push", "손으로 고친 코드 — **어느 게이트도 안 지난다**", True),
+    (1, 1, "② 색인기가 집는다", "푸시 이벤트 → 미러 갱신 · 변경 파일 산출", False),
+    (2, 2, "③ 컨텍스트 문서 합성", f"클래스별 `.md` — 로컬 `{SYNTH_MODEL}`", False),
+    (3, 1, "④ 리뷰 큐에 등재", "커밋 하나 = 항목 하나 · 색인은 **기다리지 않는다**", False),
+    (4, 2, "⑤ 리뷰 초고", f"형식 자유 — 로컬 `{DRAFT_MODEL}`", False),
+    (5, 1, "⑥ 게시판에 번호", "`R33` 「미검증」 · 표가 없으니 **항목은 아직 없다**", False),
+    (6, 0, "⑦ 사람이 부른다", "*\"R33 확인해보자\"* — 여기서 처음 **상용 모델**", True),
+    (7, 0, "⑧ 판정 · 적용", "합당한가 → 수정 / 오탐이면 기각", True),
+]
+
+_EDGES = [
+    "git SSH push → Gitea",
+    "브로커 8102 (모델로 라우팅)",
+    "마스터 내부 (색인 경로)",
+    "마스터 내부 (큐 파일)",
+    "브로커 8102",
+    "파일 → `fix_index` 번호",
+    "HTTP 8101 · `ax-fix`",
+]
+
+_LANE_X0, _LANE_W, _LANE_GAP = 18, 300, 22
+_HEAD_H, _ROW_H, _BOX_H = 46, 92, 66
+_CHANNEL = 34
+
+
+def _lane_x(l: int) -> int:
+    return _LANE_X0 + l * (_LANE_W + _LANE_GAP)
+
+
+def _row_y(r: int) -> int:
+    return _HEAD_H + r * _ROW_H
+
+
+def flow_svg() -> str:
+    """자립형 인라인 SVG — `/onboarding` 의 flow_svg 와 같은 규약(세로 3열 스윔레인)."""
+    e = html.escape
+    w = _lane_x(2) + _LANE_W + _CHANNEL
+    h = _row_y(len(_NODES) - 1) + _BOX_H + 52
+    p = [f'<svg viewBox="0 0 {w} {h}" width="100%" height="auto" role="img" '
+         f'preserveAspectRatio="xMidYMin meet" '
+         f'aria-label="손 커밋 흐름 — 커밋에서 컨텍스트 문서·리뷰 초고를 거쳐 사람 검증까지">',
+         '<defs><marker id="cah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
+         'markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker>'
+         '</defs>']
+
+    for i, (name, sub) in enumerate(_LANES):
+        x = _lane_x(i)
+        fill = "#161b22" if i % 2 == 0 else "#12171e"
+        p.append(f'<rect x="{x}" y="0" width="{_LANE_W}" height="{h}" rx="10" fill="{fill}" '
+                 f'stroke="#30363d"/>')
+        p.append(f'<text x="{x + 14}" y="24" fill="#e6edf3" font-size="13.5" font-weight="650" '
+                 f'font-family="ui-monospace,Menlo,monospace">{e(name.replace("`", ""))}</text>')
+        p.append(f'<text x="{x + 14}" y="39" fill="#8b949e" font-size="11">{e(sub)}</text>')
+
+    for idx, (_r, l, title, sub, human) in enumerate(_NODES):
+        x, y = _lane_x(l) + 12, _row_y(idx)
+        bw = _LANE_W - 24
+        local = l == 2
+        edge = "#d29922" if human else ("#3fb950" if local else "#30363d")
+        p.append(f'<rect x="{x}" y="{y}" width="{bw}" height="{_BOX_H}" rx="9" fill="#0d1117" '
+                 f'stroke="{edge}" stroke-width="{2 if (human or local) else 1}"/>')
+        if human:
+            p.append(f'<rect x="{x}" y="{y}" width="4" height="{_BOX_H}" rx="2" fill="#d29922"/>')
+        elif local:
+            # 🔴 로컬 LLM 자리는 색 말고 표식으로도 말한다 — 「공짜로 도는 구간」이 이 흐름의 요점이다.
+            p.append(f'<rect x="{x}" y="{y}" width="4" height="{_BOX_H}" rx="2" fill="#3fb950"/>')
+        p.append(f'<text x="{x + 14}" y="{y + 25}" fill="#e6edf3" font-size="13.5" '
+                 f'font-weight="650">{e(title)}</text>')
+        words = e(sub.replace("**", "").replace("*", "").replace("`", "")).split()
+        line, lines = "", []
+        for word in words:
+            trial = (line + " " + word).strip()
+            if len(trial) > 34 and line:
+                lines.append(line); line = word
+            else:
+                line = trial
+        lines.append(line)
+        for k, ln in enumerate(lines[:2]):
+            p.append(f'<text x="{x + 14}" y="{y + 44 + k * 15}" fill="#8b949e" '
+                     f'font-size="11.5">{ln}</text>')
+
+    for idx, ((_r1, l1, *_), (_r2, l2, *_)) in enumerate(zip(_NODES, _NODES[1:])):
+        y1, y2 = _row_y(idx) + _BOX_H, _row_y(idx + 1)
+        x1, x2 = _lane_x(l1) + _LANE_W // 2, _lane_x(l2) + _LANE_W // 2
+        mid = y1 + (y2 - y1) // 2
+        d = f"M{x1},{y1} V{mid} H{x2} V{y2}" if l1 != l2 else f"M{x1},{y1} V{y2}"
+        p.append(f'<path d="{d}" fill="none" stroke="#8b949e" stroke-width="1.5" '
+                 f'marker-end="url(#cah)"/>')
+        lab = _EDGES[idx] if idx < len(_EDGES) else ""
+        if lab:
+            # [주의] 라벨을 세로로 쓰지 않는다 (사용자 2026-09-05) — 90도 돌린 글자는 안 읽힌다.
+            if l1 != l2:
+                p.append(f'<text x="{(x1 + x2) // 2}" y="{mid - 6}" fill="#8b949e" '
+                         f'font-size="10.5" text-anchor="middle" '
+                         f'font-family="ui-monospace,Menlo,monospace">{e(lab)}</text>')
+            else:
+                p.append(f'<text x="{x1 + 10}" y="{mid + 4}" fill="#8b949e" font-size="10.5" '
+                         f'font-family="ui-monospace,Menlo,monospace">{e(lab)}</text>')
+
+    p.append(f'<text x="{_lane_x(0) + 12}" y="{h - 16}" fill="#8b949e" font-size="11.5">'
+             f'<tspan fill="#3fb950">■</tspan> 로컬 LLM — 무료 · 한도를 안 먹는다   '
+             f'<tspan fill="#d29922">■</tspan> 사람이 정하는 자리 — ①⑦⑧</text>')
+    p.append("</svg>")
+    return "".join(p)
+
+
+def render() -> str:
+    """자립형 HTML — 외부 자원 0 (온보딩·상태 화면과 같은 규약)."""
+    return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AX 클러스터 — 커밋 흐름</title><style>{_CSS}{_EXTRA}</style></head><body>
+<div class="shell">{nav_html("/commit-flow")}<main>
+<h1>손으로 커밋하면 무슨 일이 벌어지나</h1>
+<div class="sub">컨텍스트 문서 · 리뷰 초고 — 자동 구간은 전부 로컬 LLM</div>
+
+<p class="lede"><code>.33</code> 에서 코드를 고쳐 커밋하면, 마스터가 그것을 집어
+<b>클래스별 컨텍스트 문서</b>와 <b>리뷰 초고</b>를 만든다. 이 구간은
+<b class="ok">전부 로컬 LLM</b>이라 상용 한도를 쓰지 않는다. 상용 모델은
+<b>사람이 번호로 부를 때</b> 비로소 등장한다.</p>
+
+<div class="note"><b>분산 작업(<code>/onboarding</code>)과 겹치지 않는다.</b>
+그쪽은 <b>일감을 쪼개 워커에게 맡기는</b> 흐름이고, 여기는 <b>그냥 커밋했을 때</b>
+자동으로 도는 흐름이다. 🔴 분산 작업 커밋은 3층 게이트를 지나지만
+<b>손 커밋은 어느 게이트도 안 지난다</b> — 이 흐름이 그 구멍을 덮는 장치다.</div>
+
+<h2>흐름</h2>
+<div class="flow">{flow_svg()}</div>
+<div class="legend">
+  <span><b class="ok">■</b> 로컬 LLM — 무료</span>
+  <span><b>■</b> 사람이 정하는 자리</span>
+  <span>자동 구간(②~⑥)에 상용 모델이 없다</span>
+</div>
+
+<h2>어느 기계가 받나 — 브로커가 모델로 고른다</h2>
+<div class="note"><b>노드를 지정하지 않는다.</b> 마스터는 <b>모델 이름</b>으로
+브로커(<code>8102</code>)에 청하고, 브로커가 ①<b>상주 중</b> → ②<code>prefer</code> 지정 →
+③폴백 순으로 노드를 고른다.
+<div class="callrow" style="margin-top:.5rem">
+  <code>.43</code><span><span class="badge local">{html.escape(SYNTH_MODEL)} 상주</span>
+    평소 여기로 간다 — 이미 올라가 있어 <b>적재 0초</b></span>
+  <code>.2</code><span><span class="badge">{html.escape(SYNTH_MODEL)} 보유</span>
+    <b><code>.43</code> 이 죽으면 받는다</b> — 재적재를 물지만 응답은 된다</span>
+</div></div>
+
+<h2>왜 자동 구간에 상용을 안 쓰나</h2>
+<div class="note warn"><b>상용 백엔드는 API 가 아니라 CLI 에이전트 호출이다.</b>
+매번 새 세션이라 호출 하나마다 지침이 통째로 실린다 — 실측으로
+<b>리뷰 본문의 13배</b>다. 커밋마다 그게 돌면 요금제가 버티지 못한다.
+<br><b>표를 로컬이 대신 만드는 것도 재봤고, 접었다.</b> 형식은 스키마 강제로 지켜지지만
+칸이 밀리고 <b>과생성이 2~6배</b>라 유령 항목이 진짜 지적의 4배가 된다 — 그 비용은
+사람이 훑으며 치른다. 그래서 <b>초고까지만</b> 만들고 표는 사람이 부를 때 만든다.</div>
+
+<h2>초고는 「제안」이지 「지시」가 아니다</h2>
+<div class="note"><b>초고에는 표가 없다.</b> 그래서 수집기가 0건으로 읽고
+<b>수정 항목이 생기지 않는다</b> — 검증 전의 글이 항목 번호를 받아 돌아다니는 일을 막는다.
+사람이 <code>R33</code> 으로 검증을 걸면 그때 표와 항목이 만들어지고,
+<b>합당한가 / 해당 없음 / 의도된 동작</b>을 사람이 답한다.</div>
+</main></div></body></html>"""
+
+
+def page() -> bytes:
+    return render().encode("utf-8")

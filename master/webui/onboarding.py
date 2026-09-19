@@ -22,6 +22,7 @@ from __future__ import annotations
 import html
 
 from ..status import _CSS
+from .nav import nav_html, SIDE_CSS
 
 _EXTRA = """
 .nav{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0 1.4rem}
@@ -300,16 +301,13 @@ def render() -> str:
     flow = flow_svg()
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AX 클러스터 — 온보딩</title><style>{_CSS}{_EXTRA}</style></head><body>
-<h1>AX 클러스터 — 여기서 무슨 일이 벌어지나</h1>
+<title>AX 클러스터 — 분산 작업</title>
+<style>{_CSS}{_EXTRA}{SIDE_CSS}</style></head><body>
+<div class="shell">{nav_html("/onboarding")}<main>
+<h1>분산 작업 — 일감 하나가 세 기계를 어떻게 도나</h1>
 <div class="sub">에이전트 역할 · 파이프라인 7단계 · 사람이 개입하는 자리</div>
-<div class="nav">
-  <a class="on" href="/onboarding">온보딩</a>
-  <a href="/cluster">클러스터 상태 →</a>
-  <a href="/reviews">리뷰·플랜 →</a>
-  <a href="/ontology">온톨로지 뷰어 →</a>
-  <a href="/">컨텍스트 검색 →</a>
-</div>
+<div class="note">🔴 <b>손으로 그냥 커밋했을 때</b>의 흐름은 다른 화면이다 →
+<a href="/commit-flow"><b>커밋 흐름</b></a> (컨텍스트 문서 · 리뷰 초고 · 전부 로컬 LLM)</div>
 
 <p class="lede">언리얼 프로젝트 한 덩어리의 작업을 <b>클래스 단위 조각</b>으로 쪼개
 여러 기계의 에이전트에게 나눠 맡기고, 결과를 한 브랜치에 모아 <b>사람이 판단</b>하는
@@ -376,7 +374,7 @@ def render() -> str:
 <div class="foot">이 화면은 <b>무엇인가</b>를 설명한다 — <b>지금 어떤가</b>는
 <a href="/cluster">클러스터 상태</a>에 있다. 사실이 바뀌면 이 페이지가 아니라
 파이프라인 정본(<code>~/CLAUDE.md</code> 7단계)이 먼저 바뀐다.</div>
-</body></html>"""
+</main></div></body></html>"""
 
 
 def page() -> bytes:

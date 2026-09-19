@@ -30,7 +30,8 @@ from . import routes
 #    라우트를 추가할 때 손대야 하는 곳이 셋(핸들러 · 라우터 분기 · 인증 공개 목록)이었고,
 #    매번 하나를 빠뜨려 401/404 가 났다. **목록을 하나로 모으면 그 부류가 사라진다** —
 #    `viewer.Router` 와 `projects/__main__` 이 이 상수를 import 해서 쓴다.
-PREFIXES = ("/ontology", "/ontology-static", "/api/v1", "/cluster", "/onboarding", "/reviews")
+PREFIXES = ("/ontology", "/ontology-static", "/api/v1", "/cluster", "/onboarding",
+            "/commit-flow", "/reviews")
 # 정확히 이 경로만(접두어가 아니라 완전 일치) 이 앱이 가져간다
 EXACT = ("/", "", "/cluster.html")
 
@@ -191,6 +192,11 @@ class WebUI:
         if path in ("/onboarding", "/onboarding/", "/onboarding.html"):
             from . import onboarding
             return await _send(send, 200, onboarding.page(), HTML)
+
+        # 손 커밋 흐름 (`#633` 축) — 분산 작업(`/onboarding`)과 **다른 흐름**이다.
+        if path in ("/commit-flow", "/commit-flow/"):
+            from . import commit_flow
+            return await _send(send, 200, commit_flow.page(), HTML)
         # 🔴 리뷰·플랜 목록 (`#629`, 사용자 요청 2026-09-16) — 번호로 부르는 수정 항목의 입구.
         #    [중요] 요약만 그린다 — 본문은 8101(토큰)이다. `?project=` 로 등록된 프로젝트를 고른다.
         if path in ("/reviews", "/reviews/"):
