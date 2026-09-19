@@ -1,0 +1,36 @@
+[Unit]
+Description=AX 클러스터 리뷰 큐 소비자 (#636 — 색인이 등재한 커밋을 리뷰한다)
+Documentation=https://github.com/SimSeoWon/ax-cluster
+# 🔴 폴링 데몬이 아니다. 타이머가 깨우고 한 번 돌고 끝난다 (색인기·배치와 같은 형태).
+#
+# 🔴 [중요] **이 유닛이 존재하는 이유가 색인과의 분리다** (#633, 사용자 확정 2026-09-19:
+#    *"단일 쓰레드에서 컨텍스트 생성과 리뷰를 동시에 하다 보니 리뷰의 퀄리티가 떨어진다"*).
+#    종전에는 REVIEW_TIMEOUT=240 초가 색인 경로 안에 있었다.
+After=network-online.target local-fs.target ax-broker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sim
+Group=sim
+
+WorkingDirectory=/home/sim/ax-cluster
+Environment=AX_PROJECTS_ROOT=/home/sim/ax-cluster
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/home/sim/ax-cluster/.venv/bin/python -m master.context_synth.review_runner
+
+# 🔴 이 유닛은 **상용 모델을 부르지 않는다** (사용자 결정 2026-09-19 — 요금제).
+#    한 건은 초고(로컬) 하나뿐이고 실측 5~19초다(gemma4:e4b × 실제 커밋 3건).
+#    기본 5건 × 여유 → 600초.
+TimeoutStartSec=600
+
+# 🔴 리뷰 실패는 **큐에 남는다** — 종료코드로 올리지 않는다.
+#    (늘 빨간 유닛은 유닛이 아니다 — ax-batch.service 와 같은 규약)
+
+# 사람 작업·파이프라인보다 뒤로 물러난다.
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+[Unit]
+Description=AX 클러스터 리뷰 큐 소비 주기 (큐가 비어 있으면 즉시 물러난다)
+
+[Timer]
+# 10분을 고른 근거:
+#   ① 초고는 급하지 않다 — 사람이 게시판에서 번호를 보고 검증을 걸 때까지 여유가 있다.
+#   ② 🔴 **색인 타이머(2~3분)와 겹치는 빈도를 낮춘다.** 둘 다 로컬 추론을 쓰는데
+#      (색인=합성, 여기=초고) 같은 모델·같은 노드(.43)를 본다. 브로커는 inflight 를
+#      세기만 하고 직렬화하지 않으므로(broker/server.py:153), 동시 요청이 KV 를 곱절로
+#      잡으면 2026-08-08 에 BC-250 커널을 멈춘 그 경로다.
+#      [주의] 이 타이머 간격은 **완화일 뿐 보장이 아니다.** 보장은 노드의
+#      OLLAMA_NUM_PARALLEL=1 이고, 그건 아직 안 박혀 있다 (docs/17 §3.3 열린 것).
+#   ③ 큐가 비면 즉시 끝난다 — 헛기동 비용이 거의 0 이다.
+OnBootSec=10min
+OnUnitActiveSec=10min
+RandomizedDelaySec=2min
+AccuracySec=30s
+# 놓친 회차를 몰아서 돌리지 않는다 — 큐는 남아 있고 다음 회차가 집는다.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

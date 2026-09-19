@@ -271,10 +271,17 @@ class ReviewChatError(RuntimeError):
 
 def review_commit(paths, commit: str, files: list, *,
                   exclude_authors: tuple = DEFAULT_EXCLUDE_AUTHORS,
-                  chat=None, logf=None) -> ReviewResult:
+                  chat=None, logf=None, grounding: str = "") -> ReviewResult:
     """커밋 하나의 변경분을 리뷰해 `reviews/<작성자>/` 에 쓴다.
 
-    `chat(prompt) -> str` 주입은 테스트 자리 — 실전은 상용 체인(agy → claude)이다.
+    `chat(prompt) -> str` 주입은 테스트 자리 — 실전은 상용 체인이다.
+
+    [중요] **`grounding` 은 프롬프트에 자리만 있고 실전에서 비어 있었다** (`#636` 이 채운다).
+    리뷰 큐 소비자가 **로컬 초고 + 선언부**를 여기로 넘긴다. 층2 실측(2026-08-12)이 잰 것이
+    바로 이 축이다 — 선언부가 없으면 후보 5개 중 4개가 지어낸 enum 을 못 잡았고, 넣으면
+    전부 잡았다.
+    🔴 [주의] **초고는 사실 게이트를 안 받은 글이다.** 그대로 받아 적히면 「참조」가 아니라
+    「지시」가 된다 — 호출자가 미검증임을 명시해서 넘긴다(`review_runner.GROUNDING_HEADER`).
     """
     log = logf or (lambda s, m: None)
     r = ReviewResult(commit=commit)
@@ -299,7 +306,7 @@ def review_commit(paths, commit: str, files: list, *,
         return r
 
     prompt = build_prompt(diff=diff, files=src_files, commit=commit,
-                          domains=domain_hint(paths, src_files))
+                          domains=domain_hint(paths, src_files), grounding=grounding)
     _ask = chat if chat is not None else commercial_chat
 
     try:
