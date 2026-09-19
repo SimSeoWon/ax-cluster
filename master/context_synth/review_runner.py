@@ -1,12 +1,13 @@
-"""리뷰 큐 소비자 (`#636` · 설계안 `docs/17-review-queue.md` §3.3).
+"""리뷰 큐 소비자 (`#636`·`#638` · 설계안 `docs/17-review-queue.md` §3.3).
 
 색인이 큐에 등재만 하고(`#635`), **초고는 여기서 난다.** 별도 유닛
 (`ax-review-queue.timer`)이 깨운다 — 색인은 더 이상 상용 콜 240초를 기다리지 않는다.
 
-## 🔴 [중요] 이 소비자는 상용 모델을 부르지 않는다 (사용자 결정 2026-09-19)
+## [중요] 두 단계 리뷰 — 로컬 초안 → Antigravity 퇴고 (사용자 결정 2026-09-19)
 
-사용자: *"자동으로 초고를 기반으로 리뷰 파일을 상용 모델로 돌리면 프로 요금제인 나는
-못버틸껄?"* · *"리뷰창에서 등록된 아이디를 사용자가 수동으로 검증"*.
+로컬 `gemma4:e4b`가 변경분을 자유 형식으로 먼저 읽고, **Antigravity만** 원본 diff·선언부와
+그 초안을 함께 받아 정형 리뷰로 퇴고한다. Claude 자동 폴백은 없다. 최종 정형 리뷰는 기존
+`review_collector`가 그대로 읽으므로 주말 플랜 경로도 바꾸지 않는다.
 
 근거가 실측이다. 상용 백엔드는 API 가 아니라 **CLI 에이전트 호출**이다
 (`layer2_verify.call_claude_why` → `[exe, "-p", prompt]`). 매번 새 세션이라 호출 하나마다
@@ -45,17 +46,14 @@ JSON 스키마 강제로 로컬이 형식을 지킬 수 있는지 쟀다(`gemma4
     ① 큐에서 pending 하나를 꺼내 running 으로      review_queue.claim
     ② 재료 — 커밋 diff + **변경 파일의 선언부(.h)**
     ③ 초고 — 브로커(8102) 경유 로컬 모델 · **형식 자유**
-    ④ 초고를 `reviews/<작성자>/` 에 **「미검증」으로** 쓴다 → `fix_index` 가 R번호를 준다
-    ⑤ done
+    ④ 초안을 `reviews/_drafts/<작성자>/` 에 임시 보존 (플랜·R번호 대상 아님)
+    ⑤ Antigravity가 원본 diff와 대조해 정형 리뷰로 퇴고
+    ⑥ `reviews/<작성자>/` 에 최종 리뷰 저장 + R번호
+    ⑦ 성공한 초안 제거 → done (실패한 초안만 재시도·조사용으로 남긴다)
 
-    그 다음은 **사람이다** — 게시판에서 번호를 보고 *"R25 확인해보자"* 하면 `.33` 의
-    `ax-fix` 가 상용으로 판정·표 작성·수정/기각을 한다. 사람이 앉아 있는 대화형 세션이라
-    지침을 **한 번 싣고 여러 건**을 처리한다 — 무인 배치 호출과 비용 구조가 다르다.
-
-[중요] **초고에 지적이 없으면 문서를 쓰지 않는다.** 12/20 이 지적 0건인 프로젝트에서
-「없음」 문서를 쌓으면 게시판이 그걸로 덮인다. 큐는 `done` 으로 종결한다.
-[주의] **초고 문서에는 표가 없다** — 그래서 `review_collector` 가 0건으로 읽고 유령 항목이
-생기지 않는다. 표는 사람이 검증을 걸 때 비로소 만들어진다.
+[중요] **초고에 지적이 없어도 최종 검증을 생략하지 않는다.** 12/20 이 지적 0건인 프로젝트지만
+「없음」 초안이어도 Antigravity는 원본 diff를 직접 본다 — 로컬의 거짓 음성이 최종 리뷰를
+막으면 안 된다. 중간 초안은 `_drafts` 아래라 `review_collector`와 게시판이 읽지 않는다.
 [중요] **`num_ctx` 를 반드시 준다** — 안 주면 BC-250 이 KV 할당으로 죽는다
 (`work/generate.py:159`, 실측 2026-08-08).
 """
@@ -74,14 +72,13 @@ DRAFT_TIMEOUT = 180
 DRAFT_MAX_CHARS = 4000          # 초고가 길어지면 리뷰 프롬프트를 밀어낸다
 DECL_MAX_CHARS = 6000
 
-# [중요] 이 표시가 「검증 전」을 뜻한다 — 게시판·스킬이 이걸 보고 「미검증」으로 그린다.
+# [중요] 이 표시는 「아직 최종 리뷰가 아니다」를 뜻한다. 성공하면 파일 자체를 제거한다.
 DRAFT_STATUS = "초고 (미검증 — 로컬 모델)"
 DRAFT_NOTE = (
     "> [주의] **이 문서는 초고다.** 로컬 모델이 형식 자유로 쓴 것이고 사실 게이트를 받지 "
-    "않았다. 표(파서 계약)가 없으므로 **수정 항목이 아직 없다** — `.33` 에서 이 번호로 "
-    "검증을 걸면 그때 항목이 생긴다.\n")
+    "않았다. Antigravity가 원본 diff와 대조해 최종 정형 리뷰를 만들면 이 중간 파일은 제거된다.\n")
 
-# 🔴 [중요] 초고를 **사람 검증 단계**에 넘길 때 붙이는 머리말이다 (자동 경로에서는 안 쓴다).
+# 🔴 [중요] 초고를 **Antigravity 검증 단계**에 넘길 때 붙이는 머리말이다.
 #    초고는 사실 게이트를 안 받은 글이라, 그대로 받아 적히면 「참조」가 아니라 「지시」가 된다.
 GROUNDING_HEADER = (
     "[아래는 **로컬 모델의 미검증 관찰**이다. 근거를 위 DIFF 에서 직접 확인하고, "
@@ -108,7 +105,8 @@ class RunnerResult:
         self.claimed = ""
         self.drafted = False
         self.draft_why = ""
-        self.written = ""
+        self.draft_written = ""
+        self.written = ""          # Antigravity가 만든 최종 정형 리뷰
         self.serial = ""
         self.state = ""
         self.why = ""
@@ -198,38 +196,87 @@ def grounding_text(draft_body: str, decls: str) -> str:
     return "\n\n".join(parts)
 
 
+def agy_only(prompt: str, *, timeout: int = rg.REVIEW_TIMEOUT) -> str:
+    """Antigravity 단독 호출 — 실패해도 Claude·Codex·로컬로 폴백하지 않는다."""
+    from .. import layer2_verify as l2
+    out, why = l2.call_agy_why(prompt, timeout=timeout)
+    if not (out or "").strip():
+        raise rg.ReviewChatError("Antigravity 실패 — " + (why or "사유 미기록"))
+    return out
+
+
 # ── 한 회차 ─────────────────────────────────────────────────────────────────
 
 def write_draft(paths, commit: str, files: list, body: str, *, logf=None) -> str:
-    """초고를 `reviews/<작성자>/` 에 쓴다. 반환은 경로.
+    """1차 초안을 `reviews/_drafts/<작성자>/` 에 쓴다. 반환은 경로.
 
-    [중요] **형식이 리뷰 파일과 같은 자리·같은 이름 규칙**이라 `fix_index` 가 그대로 R번호를
-    준다(번호는 커밋에 묶인다 — 리포트 68 §4). 다만 **표가 없다** — 그래서
-    `review_collector` 가 0건으로 읽고 유령 항목이 생기지 않는다.
+    `_` 접두 디렉토리는 작성자가 아니므로 게시판·플랜 수집·R번호 대상에서 제외된다.
     """
     from datetime import datetime
     log = logf or (lambda m: None)
     author = rg.commit_author(Path(paths.repo), commit) or "unknown"
     safe = rg._SAFE_AUTHOR.sub("_", author).strip("_") or "unknown"
-    out_dir = Path(paths.root) / rg.REVIEWS_DIRNAME / safe
+    out_dir = Path(paths.root) / rg.REVIEWS_DIRNAME / "_drafts" / safe
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now()
     path = out_dir / f"{ts.strftime('%Y-%m-%d_%H%M')}_{commit[:8]}.md"
     head = (f"# 자동 코드 리뷰 초고 — {commit[:12]}\n\n"
             f"- 커밋: `{commit}`\n- 작성자: {author}\n"
             f"- 파일: {len(files)}개\n- 생성: {ts.strftime('%Y-%m-%d %H:%M')}\n"
-            f"- 상태: {DRAFT_STATUS}\n\n" + DRAFT_NOTE + "\n")
+            f"- 상태: {DRAFT_STATUS}\n\n" + DRAFT_NOTE + "\n## 로컬 초고\n\n")
     path.write_text(head + body.strip() + "\n", encoding="utf-8")
     log(f"[리뷰큐] 초고 저장 {path.name}")
     return str(path)
 
 
-def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
-             write=None) -> RunnerResult | None:
-    """큐에서 하나를 꺼내 **초고까지** 만든다. 큐가 비면 `None`.
+def draft_body(path: Path) -> str:
+    """현재 `_drafts` 형식과 2026-09-19 이전 일반 경로 초안에서 본문만 읽는다."""
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    marker = "## 로컬 초고\n"
+    if marker in raw:
+        return raw.split(marker, 1)[1].strip()
+    # 첫 라이브 초안은 본문 표제가 없었다. 상태 다음의 주의 인용문 한 문단을 걷어낸다.
+    if "- 상태:" in raw:
+        tail = raw.split("- 상태:", 1)[1].split("\n", 1)[-1].lstrip()
+        if tail.startswith(">"):
+            tail = tail.split("\n\n", 1)[1] if "\n\n" in tail else ""
+        return tail.strip()
+    return raw.strip()
 
-    🔴 [중요] **상용 모델을 부르지 않는다.** 그 다음은 사람이 번호로 건다 (머리말 참조).
-    """
+
+def find_draft(paths, commit: str) -> Path | None:
+    """커밋의 미완료 초안. `_drafts`와 첫 배포 때의 일반 경로 오배치를 함께 찾는다."""
+    root = Path(paths.root) / rg.REVIEWS_DIRNAME
+    if not root.is_dir():
+        return None
+    for path in sorted(root.rglob(f"*_{commit[:8]}.md"), reverse=True):
+        try:
+            head = path.read_text(encoding="utf-8", errors="replace")[:500]
+        except OSError:
+            continue
+        if head.startswith("# 자동 코드 리뷰 초고") and f"`{commit}`" in head:
+            return path
+    return None
+
+
+def find_final_review(paths, commit: str) -> Path | None:
+    """재시도 때 이미 원자적으로 게시된 최종 리뷰를 찾아 모델 중복 호출을 막는다."""
+    root = Path(paths.root) / rg.REVIEWS_DIRNAME
+    if not root.is_dir():
+        return None
+    for path in sorted(root.glob(f"*/*_{commit[:8]}.md"), reverse=True):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if text.startswith("# 자동 코드 리뷰 —") and f"`{commit}`" in text and rg.format_ok(text):
+            return path
+    return None
+
+
+def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
+             write=None, review_call=None) -> RunnerResult | None:
+    """큐에서 하나를 꺼내 로컬 초안 → Antigravity 최종 리뷰까지 만든다."""
     log = logf or (lambda m: None)
     res = RunnerResult()
     item = rq.claim(paths.root, logf=log)
@@ -267,43 +314,78 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
         return res
 
     decls = declarations(repo, src, commit)
-    body, why = draft(diff, decls, model=model, call=draft_call, logf=log)
-    res.drafted, res.draft_why = bool(body), why
+    existing = find_draft(paths, commit)
+    final = find_final_review(paths, commit)
+    if final:
+        try:
+            if existing:
+                existing.unlink()
+        except OSError as e:
+            rq.finish(paths.root, item["id"], ok=False,
+                      why=f"게시된 최종 리뷰의 초안 정리 실패: {type(e).__name__}: {e}", logf=log)
+            res.state, res.why = "failed", str(e)
+            return res
+        res.written = str(final)
+        rq.finish(paths.root, item["id"], ok=True, note=final.name + " (기존 최종 리뷰)", logf=log)
+        res.state = "done"
+        return res
 
-    if why:
-        # 로컬 호출 자체가 실패했다 — 재시도 대상이다 (초고가 곧 산출물이므로).
+    if existing:
+        try:
+            body = draft_body(existing)
+        except OSError as e:
+            rq.finish(paths.root, item["id"], ok=False,
+                      why=f"기존 초안 읽기 실패: {type(e).__name__}: {e}", logf=log)
+            res.state, res.why = "failed", str(e)
+            return res
+        res.drafted, res.draft_written = bool(body and body not in ("없음", "없음.")), str(existing)
+        res.draft_why = "기존 초안 재사용"
+        log(f"[리뷰큐] 기존 초안 재사용 {existing.name}")
+    else:
+        body, why = draft(diff, decls, model=model, call=draft_call, logf=log)
+        res.drafted, res.draft_why = bool(body), why
+        fn = write or write_draft
+        try:
+            res.draft_written = fn(paths, commit, src, body or "없음", logf=log)
+        except OSError as e:
+            rq.finish(paths.root, item["id"], ok=False,
+                      why=f"초고 저장 실패: {type(e).__name__}: {e}", logf=log)
+            res.state, res.why = "failed", str(e)
+            return res
+
+    ask = review_call or agy_only
+    reviewed = rg.review_commit(
+        paths, commit, src, chat=ask, grounding=grounding_text(body, decls),
+        provenance={"draft_model": model, "review_model": "Antigravity"},
+        logf=lambda _kind, msg: log(f"[리뷰큐] Antigravity {msg}"))
+    if reviewed.error or not reviewed.written or not reviewed.format_ok:
+        if reviewed.written and not reviewed.format_ok:
+            # 파서가 일부 행만 읽는 일을 막되, 실패 산출물은 조사할 수 있게 보존한다.
+            bad = Path(paths.root) / rg.REVIEWS_DIRNAME / "_rejected"
+            bad.mkdir(parents=True, exist_ok=True)
+            Path(reviewed.written).replace(bad / Path(reviewed.written).name)
+        why = reviewed.error or "Antigravity 정형 리뷰 형식 위반"
         rq.finish(paths.root, item["id"], ok=False, why=why, logf=log)
-        res.state = "failed"
-        return res
-    if not body:
-        # [중요] 지적 없음 — 문서를 쓰지 않는다. 12/20 이 지적 0건인 프로젝트다.
-        rq.finish(paths.root, item["id"], ok=True, note="초고: 지적 없음", logf=log)
-        res.state, res.why = "done", "지적 없음"
+        res.state, res.why = "failed", why
         return res
 
-    fn = write or write_draft
+    res.written, res.serial = reviewed.written, reviewed.serial
+
     try:
-        res.written = fn(paths, commit, src, body, logf=log)
+        Path(res.draft_written).unlink()
     except OSError as e:
         rq.finish(paths.root, item["id"], ok=False,
-                  why=f"초고 저장 실패: {type(e).__name__}: {e}", logf=log)
+                  why=f"최종 리뷰 게시 후 초안 정리 실패: {type(e).__name__}: {e}", logf=log)
         res.state, res.why = "failed", str(e)
         return res
-
-    # 번호는 다음 목록 조회가 붙인다 (`fix_index` — 리포트 68 §4). 실패해도 초고는 남았다.
-    try:
-        from . import fix_index as fx
-        fx.sweep(paths.root)
-        res.serial = fx.serial_for_commit(paths.root, commit)
-    except Exception as e:                                       # noqa: BLE001
-        log(f"[리뷰큐] 번호 부여 보류 — {type(e).__name__}: {e} (목록 조회가 붙인다)")
+    res.draft_written = ""
 
     rq.finish(paths.root, item["id"], ok=True,
               note=Path(res.written).name + (f" ({res.serial})" if res.serial else ""),
               logf=log)
     res.state = "done"
-    log(f"[리뷰큐] 저장 {Path(res.written).name}"
-        + (f" ({res.serial})" if res.serial else "") + " — 검증은 사람이 번호로 건다")
+    log(f"[리뷰큐] Antigravity 퇴고 저장 {Path(res.written).name}"
+        + (f" ({res.serial})" if res.serial else "") + " — 주간 플랜 입력")
     return res
 
 

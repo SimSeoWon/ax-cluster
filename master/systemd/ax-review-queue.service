@@ -17,11 +17,14 @@ Group=sim
 WorkingDirectory=/home/sim/ax-cluster
 Environment=AX_PROJECTS_ROOT=/home/sim/ax-cluster
 Environment=PYTHONUNBUFFERED=1
+# 🔴 리뷰 소비자는 마스터(.57)에서만 돈다. systemd는 사용자 셸 초기화를 읽지 않으므로
+#    `.57`의 Antigravity CLI 설치 위치를 명시한다 (`which agy`에 기대지 않는다).
+Environment=PATH=/home/sim/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 ExecStart=/home/sim/ax-cluster/.venv/bin/python -m master.context_synth.review_runner
 
-# 🔴 이 유닛은 **상용 모델을 부르지 않는다** (사용자 결정 2026-09-19 — 요금제).
-#    한 건은 초고(로컬) 하나뿐이고 실측 5~19초다(gemma4:e4b × 실제 커밋 3건).
+# 🔴 한 건은 로컬 1차 초안 뒤 Antigravity 2차 검증·퇴고를 한다. Claude 자동 폴백은 없다.
+#    Antigravity는 이 유닛이 도는 마스터(.57)의 CLI만 사용하며 워커 설치 여부와 무관하다.
 #    기본 5건 × 여유 → 600초.
 TimeoutStartSec=600
 

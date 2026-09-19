@@ -37,7 +37,8 @@ from pathlib import Path
 from . import synth
 
 REVIEWS_DIRNAME = "reviews"
-# [중요] 리뷰 백엔드는 상용 체인(agy → claude) — 원전 기본값의 이식이다.
+# [주의] 아래 상용 체인은 `review_commit()` 직접 호출의 하위 호환 기본값이다.
+# 커밋 리뷰 큐(`#638`)는 `review_runner.agy_only`를 주입하므로 Claude로 폴백하지 않는다.
 #   원전 context.py:373 은 task_type="context_review" 로 _call_llm 을 부르고, 로컬 화이트리스트
 #   (config.local_llm_tasks)가 없으면 **기본 Claude** 다 — 저장소엔 그 화이트리스트가 없다.
 #   처음엔 qwen2.5-coder:14b 로 임의 대체했다가 라이브 실측(2026-08-17, 실 유저 커밋 9efbfc1)에서
@@ -248,7 +249,7 @@ class ReviewResult:
 
 
 def commercial_chat(prompt: str, *, timeout: int = REVIEW_TIMEOUT) -> str:
-    """상용 체인 agy → claude (층2와 같은 체인·같은 순서). 둘 다 실패하면 예외.
+    """직접 호출 하위 호환용 상용 체인. 리뷰 큐는 이 함수를 쓰지 않는다.
 
     [중요] **실패 사유를 예외에 싣는다** (`#285`, 사용자 지적 2026-08-23). 종전 메시지는
     *"둘 다 응답 없음"* 이었는데, 실측된 진짜 원인은 **systemd 유닛에 PATH 가 없어 `which` 가
@@ -271,10 +272,12 @@ class ReviewChatError(RuntimeError):
 
 def review_commit(paths, commit: str, files: list, *,
                   exclude_authors: tuple = DEFAULT_EXCLUDE_AUTHORS,
-                  chat=None, logf=None, grounding: str = "") -> ReviewResult:
+                  chat=None, logf=None, grounding: str = "",
+                  provenance: dict | None = None) -> ReviewResult:
     """커밋 하나의 변경분을 리뷰해 `reviews/<작성자>/` 에 쓴다.
 
-    `chat(prompt) -> str` 주입은 테스트 자리 — 실전은 상용 체인이다.
+    `chat(prompt) -> str` 주입은 테스트와 리뷰 큐의 백엔드 선택 자리다. 리뷰 큐는
+    `review_runner.agy_only`를 주입해 Antigravity만 호출한다.
 
     [중요] **`grounding` 은 프롬프트에 자리만 있고 실전에서 비어 있었다** (`#636` 이 채운다).
     리뷰 큐 소비자가 **로컬 초고 + 선언부**를 여기로 넘긴다. 층2 실측(2026-08-12)이 잰 것이
@@ -311,7 +314,7 @@ def review_commit(paths, commit: str, files: list, *,
 
     try:
         body = _ask(prompt)
-        # [중요] 형식 검증은 상용 체인에도 그대로 둔다 — 첫 라이브 런(2026-08-17)의 교훈은
+        # [중요] 형식 검증은 어떤 백엔드에도 그대로 둔다 — 첫 라이브 런(2026-08-17)의 교훈은
         #    "형식은 지시가 아니라 검증이 지킨다"였고, 그 결은 모델과 무관하다.
         #    grounding 과 같은 자리: 계약 위반은 조용히 통과시키지 않는다.
         if not format_ok(body or ""):
@@ -334,11 +337,23 @@ def review_commit(paths, commit: str, files: list, *,
     out_dir = Path(paths.root) / REVIEWS_DIRNAME / safe
     out_dir.mkdir(parents=True, exist_ok=True)
     fname = f"{ts.strftime('%Y-%m-%d_%H%M')}_{commit[:8]}.md"
+    trace = ""
+    if provenance:
+        if provenance.get("draft_model"):
+            trace += f"- 초안 모델: {provenance['draft_model']}\n"
+        if provenance.get("review_model"):
+            trace += f"- 검증 모델: {provenance['review_model']}\n"
     head = (f"# 자동 코드 리뷰 — {commit[:12]}\n\n"
             f"- 커밋: `{commit}`\n- 작성자: {r.author}\n"
             f"- 파일: {len(src_files)}개\n- 생성: {ts.strftime('%Y-%m-%d %H:%M')}\n\n")
+    if trace:
+        head = head.rstrip() + "\n" + trace + "\n"
     path = out_dir / fname
-    path.write_text(head + body.strip() + "\n", encoding="utf-8")
+    # 같은 디렉토리의 임시 파일을 원자적으로 교체한다. 중간 종료 때 반쪽 리뷰가 게시판과
+    # 주말 플랜에 보이는 일을 막는다.
+    tmp = path.with_name("_writing_" + path.name)
+    tmp.write_text(head + body.strip() + "\n", encoding="utf-8")
+    tmp.replace(path)
     r.written = str(path)
     if not r.format_ok:
         # 사람은 읽을 수 있으니 버리지 않는다 — 다만 소비자에겐 0건이므로 시끄럽게 남긴다

@@ -5,7 +5,7 @@
 
 **플랫폼**: 리눅스 마스터(Ubuntu 22.04) + 윈도우 2대(작업장 1 · 요청자 1) + BC-250 1대
 
-> **지금 어디까지 왔나** (2026-09-08): **마일스톤 5 까지 닫혔다** — M2 는 2026-08-10,
+> **지금 어디까지 왔나** (2026-09-19): **마일스톤 5 까지 닫혔다** — M2 는 2026-08-10,
 > **M3·M4·M5 는 2026-08-17 사용자 결정으로** 마감됐다. 트윈이 자라고·색인되고·코드 작성에
 > 전달되며(M2), 분해 → 골조 → 워커 추론 → **3층 결정적 게이트** 파이프라인은 실 게임 코드로
 > 전 주기를 완주했다(M3 · 리포트 23). **마일스톤 6(개선·확장) 진행 중.**
@@ -20,6 +20,11 @@
 > 교대한다. 공용 규칙 [`docs/orchestrator-rules.md`](docs/orchestrator-rules.md),
 > 진행 중인 것 한 벌 [`docs/orchestrator-handoff.md`](docs/orchestrator-handoff.md).
 > **SSH 파견의 실행 주체(워커 지휘자)도 `lane`/`claude`/`codex` 중에 고른다.**
+>
+> M6의 최근 변화는 **리뷰를 색인 스레드에서 분리한 커밋 단위 큐**다. 색인은 기다리지 않고
+> 등재만 하며, 별도 타이머가 로컬 LLM 1차 초안을 만든 뒤 Antigravity가 원본 diff와 대조해
+> 정형 리뷰로 퇴고한다. 이 소비자는 **마스터 `.57`에서만** 돌며 Claude는 자동 경로에 없다.
+> 설계: [`docs/17-review-queue.md`](docs/17-review-queue.md).
 >
 > 열린 축 하나는 **다중 프로젝트**이고 착수 순서는
 > [`docs/12-multi-project.md`](docs/12-multi-project.md) §12.3-a 다.
@@ -50,6 +55,9 @@ Gitea push → post-receive 훅 → 스풀 → inotify → 색인기
                                  · σ.7 펜스 제거 + 저장 전 형식 게이트
                                  · [중요] 사실 게이트 — 주석에만 있는 식별자 주장은 거부
                               → 벡터(다국어) + BM25 재색인, A/B 세대 무중단 교체
+                              → 리뷰 큐에 커밋 등재 (색인은 기다리지 않는다)
+별도 타이머                   → 로컬 LLM 1차 초안 → Antigravity 퇴고
+                              → 정형 리뷰 + R번호 → 성공한 초안 제거 → 주말 개선 플랜의 기존 입력
 
 [트윈을 쓰는 길 — 작업 요청]  [주의] 아래는 **지금 도는 것**(M3 가 만든 모양). 원전의 모양은 그 밑에
 요청자(.33) → search_context → "이런 기능이 필요하다" → register_work + durable `task/<id>`
@@ -132,7 +140,9 @@ ax-cluster/
 │   │   ├── prompt.py           프롬프트 + grounding 3채널(관련문서 3·도메인 1·관계그래프)
 │   │   ├── md.py               σ.7 펜스 제거 · 저장 전 게이트 · content_hash/source_commit
 │   │   ├── verify.py           [중요] 사실 게이트 — 주석에만 있는 식별자를 결정적으로 적발
-│   │   └── synth.py            배치·서킷브레이커·모델 회수
+│   │   ├── synth.py            배치·서킷브레이커·모델 회수
+│   │   ├── review_queue.py     커밋 단위 리뷰 큐 — 상태·잠금·갈래별 재시도
+│   │   └── review_runner.py    별도 소비자 — 로컬 초안 → Antigravity 정형 리뷰·R번호
 │   ├── ontology/               ← 온톨로지 문서 (중 1.3) — PyYAML 의존 0
 │   │   ├── yaml_io.py          우리가 쓴 것만 우리가 읽는다. 안 바뀌면 안 쓴다
 │   │   ├── stale.py            워터마크 2개 비교 — 어느 도메인을 재합성할지
@@ -183,7 +193,7 @@ ax-cluster/
 │   ├── projects/               ← 프로젝트 레지스트리 + **작업장의 MCP 단일 창구**
 │   ├── status.py               클러스터 상태 수집·렌더 — [중요] 읽기 전용·주기 가드 120초
 │   ├── viewer.py               [주의] 옛 `/view` (→ `/cluster` 302). 서빙은 `webui/` 가 한다
-│   ├── webui/                  [중요] **원전 웹 UI 복각** — Context Server·온톨로지 뷰어·게시판
+│   ├── webui/                  [중요] **원전 웹 UI 복각** — Context Server·온톨로지·게시판·`/commit-flow`
 │   ├── source_text.py          [중요] CP949 대응 — 소스의 44%가 CP949 다
 │   ├── sqlite_util.py          [중요] **동시 접근 공통 설정** — `busy_timeout` 10초·WAL. 색인기와
 │   │                              검색이 같은 DB 를 만지므로 이걸 안 걸면 `database is locked`
@@ -213,9 +223,10 @@ ax-cluster/
 |---|---|---|
 | 작업 큐 | 8101 | `ax-task-queue.service` |
 | 추론 브로커 | 8102 | `ax-broker.service` |
-| 프로젝트 레지스트리 (MCP) + **웹 UI** | 8103 | `ax-projects.service` (`/`·`/ontology`·`/cluster`) |
+| 프로젝트 레지스트리 (MCP) + **웹 UI** | 8103 | `ax-projects.service` (`/`·`/ontology`·`/cluster`·`/commit-flow`) |
 | ↳ 지휘 제어 표면 | 8103 | `/control/*` — **요청자 토큰 전용** (무인증 401 · 워커 403) |
 | 색인기 | — | `ax-indexer.path`(inotify) → `ax-indexer.service` |
+| 리뷰 큐 소비자 | — | `ax-review-queue.timer`(10분) → `ax-review-queue.service` |
 
 [중요] 셋 다 **베어러 토큰 필수**(`~/.config/ax-cluster/token`, 0600) — 토큰이 없으면 **서비스가
 뜨지 않는다**(fail-closed). 방화벽 LAN 한정은 **별개의 두 번째 층**이다. `Anywhere` 로 넓히지 말 것.
