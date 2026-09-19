@@ -77,6 +77,7 @@ class ProjectResult:
     review_written: str = ""       # 자동 코드리뷰 리포트 경로 (소 3.3.5)
     review_note: str = ""          # 리뷰 스킵/실패 사유
     review_serial: str = ""        # 리뷰 번호 (`#627` — R35). 요약 줄에 싣는다
+    review_queued: str = ""        # 리뷰 큐에 등재한 커밋 (`#635`)
     # ── 분석 커서 (`#278` — 커밋 하나씩) ──
     cursor_from: str = ""          # 이 회차가 시작한 커서 (config.yaml 의 analyzed_commit)
     cursor_note: str = ""          # 커서를 어디서 얻었는지 (이행: 워터마크 폴백)
@@ -106,6 +107,10 @@ class ProjectResult:
             # 번호가 저널에 남아야 「이 커밋 = R35」를 찾는다 (`#627`). 없으면 없다고 찍는다
             parts.append("리뷰 1" + (f" ({self.review_serial})" if self.review_serial
                                      else " (번호 없음 — 목록 조회 때 붙는다)"))
+        if self.review_queued:
+            # [중요] **색인은 리뷰 등재로 위임한다** (`#635`) — 여기서 기다리지 않는다.
+            #    이 줄이 없으면 「리뷰가 어디로 갔나」가 저널에서 사라진다.
+            parts.append(f"리뷰 등재로 위임 {self.review_queued[:8]}")
         if self.synth_note:
             parts.append(f"합성 {self.synth_written}" +
                          (f" [중요]유실 {self.synth_lost}" if self.synth_lost else ""))
@@ -490,20 +495,74 @@ def _synthesize(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
                     r.canary_write_failed += 1
 
 
-def _auto_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
-                 *, commit: str = "", review_run=None) -> None:
-    """자동 코드리뷰 생산자 (소 3.3.5 · `#205`) — 유저 커밋의 변경분을 리뷰해 되먹임의
-    원료(`reviews/<작성자>/`)를 만든다.
+def _enqueue_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
+                    *, commit: str = "", enqueue=None) -> None:
+    """리뷰를 **큐에 등재만** 한다 (`#635` · 설계안 `docs/17-review-queue.md` §3.2).
 
-    [중요] fail-soft 지만 조용하지 않다 — 이 함수 뒤에서 워터마크가 전진하므로 여기서 리뷰를
-    못 만들면 **그 커밋의 리뷰는 다시 생기지 않는다**. 합성 유실과 같은 기준으로 카나리에
-    누적한다(kind=review-lost). 스킵(trivial·작성자 제외)은 유실이 아니라 설계다 — 카나리 없음.
+    [중요] **색인은 여기서 LLM 을 기다리지 않는다.** 등재는 파일 쓰기 한 번이고, 리뷰는
+    별도 유닛(`ax-review-queue`)이 소비한다. 종전에는 `REVIEW_TIMEOUT = 240` 초가 이
+    경로 안에 있었다(결함 ⓑ).
+
+    ## [중요] 이 함수가 닫는 결함 둘 — 종전 호출부가 갖고 있던 것
+
+        ⓒ 형식 위반 파일이 재리뷰를 영구 차단했다. 가드가 *"파일이 있으면 스킵"* 이었는데
+          `format_ok=False` 여도 파일은 써지고 `rv.written` 이 세팅된다. 소비자는 0건으로
+          읽는데 다시 만들 길이 없었다.
+        ⓓ `todo`(미스탬프 파일)가 비면 리뷰가 아예 안 돌았고, 재시도 회차에는 커밋 전체가
+          아닌 **부분 파일 목록**만 봤다. → 호출부가 `if todo:` 밖으로 나오고 `changed` 를 넘긴다.
+
+    [중요] **커밋당 리뷰는 한 번이다** (실측 2026-09-13 NS: 같은 커밋 리뷰 150개). 그 보장은
+    이제 파일 존재가 아니라 **큐의 커밋 키**가 한다 — `enqueue` 가 `pending`/`running`/`done`
+    인 같은 키를 다시 넣지 않는다.
+
+    [주의] **이미 리뷰 파일이 있는 커밋**(큐 도입 전에 인라인으로 만들어진 것)은 그 파일의
+    형식을 보고 가른다 — 정상이면 등재하지 않고, **형식 위반이면 등재한다**. 후자가 곧 ⓒ 다.
     """
     from ..context_synth import review_gen as rg
-    # [중요] **커밋당 리뷰는 한 번이다** — 원전은 커밋을 한 번만 걸어서(`watch.py:668`) 저절로
-    #    그랬다. 우리는 문서가 안 끝난 커밋을 다시 걷기 때문에(`#280`), 막지 않으면 같은 커밋의
-    #    리뷰가 회차마다 쌓인다(실측 2026-09-13 NS: 같은 커밋 리뷰 150개, 내용 동일).
-    #    작성자 디렉토리는 커밋 작성자로 정해지므로 모든 작성자 아래를 본다.
+    from ..context_synth import review_queue as rq
+
+    c = commit or r.to_commit
+    if not c:
+        r.review_note = "리뷰 등재 생략: 커밋이 없다"
+        return
+
+    # [주의] 큐 도입 전 인라인 경로가 남긴 리뷰 — 형식이 정상이면 다시 만들지 않는다.
+    #    형식 위반이면 등재한다(소비자 기준 0건인 채로 굳는 것이 ⓒ 였다).
+    prior = sorted((Path(paths.root) / rg.REVIEWS_DIRNAME).glob(f"*/*_{c[:8]}.md"))
+    if prior:
+        try:
+            ok = rg.format_ok(prior[0].read_text(encoding="utf-8"))
+        except OSError:
+            ok = False
+        if ok:
+            r.review_note = f"리뷰 등재 생략: 정상 리뷰가 이미 있다 ({prior[0].name})"
+            return
+        r.review_note = f"[중요] 기존 리뷰가 형식 위반 — 다시 등재한다 ({prior[0].name})"
+
+    fn = enqueue or rq.enqueue
+    try:
+        item = fn(paths.root, kind="commit", key=c, files=list(changed or []))
+    except Exception as e:                              # noqa: BLE001
+        # [중요] 등재 실패는 리뷰 유실이다 — 워터마크가 이 뒤에서 전진한다.
+        r.review_note = f"[중요] 리뷰 등재 실패: {type(e).__name__}: {e}"
+        if not append_canary(paths, kind="review-lost",
+                             detail=r.review_note, commit=r.to_commit):
+            r.canary_write_failed += 1
+        return
+    r.review_queued = c
+    note = f"리뷰 큐 등재 {c[:8]} (파일 {len(changed or [])}건 · {item.get('state')})"
+    r.review_note = (r.review_note + " · " + note) if r.review_note else note
+
+
+def _auto_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
+                 *, commit: str = "", review_run=None) -> None:
+    """[폐기 예정] 인라인 자동 코드리뷰 — `#635` 로 큐 위임(`_enqueue_review`)으로 바뀌었다.
+
+    [주의] **호출부는 없다.** 큐 소비자(`#636`)가 서는 동안 되돌릴 자리로만 남겨 둔다.
+    이 경로의 결함 넷(ⓐ 영구 유실 · ⓑ 색인이 240초 대기 · ⓒ 형식 위반이 재리뷰 차단 ·
+    ⓓ `todo` 가 비면 안 돎)은 `docs/17-review-queue.md` §2 에 있다.
+    """
+    from ..context_synth import review_gen as rg
     c = commit or r.to_commit
     done = sorted((Path(paths.root) / rg.REVIEWS_DIRNAME).glob(f"*/*_{c[:8]}.md")) if c else []
     if done:
@@ -538,7 +597,7 @@ def _auto_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
 
 def process_event(ev: Event, *, registry: Registry | None = None,
                   reindex=None, git=None, synthesize: bool = True,
-                  synth_run=None, review_run=None) -> ProjectResult:
+                  synth_run=None, review_run=None, enqueue_review=None) -> ProjectResult:
     """이벤트 하나(=프로젝트 하나)를 처리한다.
 
     `synthesize=False` 로 합성을 끌 수 있다 — 노드가 죽었거나 품질을 재보는 중일 때.
@@ -711,9 +770,15 @@ def process_event(ev: Event, *, registry: Registry | None = None,
                 r.retry_skipped += len(changed) - len(todo)
             if todo:
                 _synthesize(paths, todo, r, commit=c, synth_run=synth_run)
-            # ④ 자동 코드리뷰 (소 3.3.5) — 합성과 같은 게이트(synthesize) 아래 둔다:
-            #    노드가 죽어 합성을 껐다면 리뷰도 돌 수 없는 상태다.
-                _auto_review(paths, todo, r, commit=c, review_run=review_run)
+            # ④ 자동 코드리뷰 — **큐에 등재만 한다** (`#635`).
+            #    🔴 [중요] `if todo:` **밖**이고 `changed` 를 넘긴다 — 둘 다 결함 ⓓ 였다.
+            #      ⑴ 합성이 이미 끝난 커밋(`todo` 가 빈 재시도 회차)은 종전에 리뷰가 아예
+            #         호출되지 않았다 → 합성 성공 + 리뷰 실패 커밋은 영구 유실이었다.
+            #      ⑵ 종전엔 `todo`(미스탬프분)를 넘겨 재시도 회차에 **부분 파일 목록**만 봤다.
+            #         리뷰 대상은 커밋 전체다.
+            #    [주의] 합성 게이트(`synthesize`) 아래 두지 않는다 — 등재는 LLM 을 쓰지 않으므로
+            #      노드가 죽어도 할 수 있고, 오히려 그때 쌓아 둬야 나중에 소비된다.
+            _enqueue_review(paths, changed, r, commit=c, enqueue=enqueue_review)
             # [중요] **그 커밋의 문서가 실제로 생겼는지 본다.** 합성 실패·게이트 거부를
             #    「완료」로 세면 커서가 그 위를 넘어가고, 그 커밋의 변경은 영구 유실이다
             #    (원전이 가진 구멍 — `process_commit` 은 예외를 안 던지고 호출부가 그대로
