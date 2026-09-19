@@ -349,7 +349,10 @@ def main(argv=None) -> int:
         print(f"[중요] 레지스트리를 읽지 못했다: {e}", flush=True)
         return 1
 
-    names = [a.project] if a.project else [p.name for p in reg.projects]
+    # [주의] `Registry` 의 프로젝트 이름은 `.names` 다 (`projects/config.py:346`).
+    #    `.projects` 로 썼다가 첫 배포 회차가 AttributeError 로 죽었다 — 유닛 21건은
+    #    `run_once` 만 탔고 `main()` 은 한 줄도 안 탔다. 그래서 아래 테스트를 붙였다.
+    names = [a.project] if a.project else list(reg.names)
     total = done = failed = 0
     for name in names:
         try:

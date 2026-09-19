@@ -12,6 +12,11 @@
     ⑧ `kind=scope` 는 이 소비자가 처리하지 않는다 (`#639` 의 몫)
     ⑨ 선언부는 커밋에 `.h` 가 없어도 짝 헤더에서 긁는다
     ⑩ grounding 머리말이 「미검증·버려라」를 먼저 말한다 (사람 검증 단계용)
+    ⑪ 🔴 **`main()` 이 실제로 돈다** — 유닛이 부르는 진입점이다
+
+[중요] ⑪ 은 값을 치르고 얻었다. 첫 배포 회차가 @reg.projects@ AttributeError 로 죽었는데
+(`Registry` 의 필드는 `.names` 다), **유닛 21건이 전부 통과한 상태였다** — `run_once` 만 탔고
+`main()` 은 한 줄도 안 탔기 때문이다. 유닛이 부르는 경로는 유닛 테스트도 타야 한다.
 
 `.venv/bin/python master/test_review_runner.py`
 """
@@ -152,6 +157,46 @@ def test_선언부():
     shutil.rmtree(root)
 
 
+def test_main_이_실제로_돈다():
+    """🔴 ⑪ 유닛이 부르는 진입점. 레지스트리·경로 해석까지 진짜로 탄다.
+
+    [중요] 여기서 모의하는 것은 **로컬 모델 호출 하나뿐**이다 — 나머지(레지스트리 로드,
+    프로젝트 이름 해석, 트윈 경로, 큐 읽기)는 실물로 돈다. 첫 배포가 죽은 자리가 바로
+    그 「나머지」였다.
+    """
+    import os
+    root, head = make_repo()
+    projects = Path(tempfile.mkdtemp(prefix="ax-reg-"))
+    (projects / "projects.yaml").write_text(
+        "version: 1\nactive: T\nprojects:\n  - T\n", encoding="utf-8")
+    twin = projects / "T"
+    twin.mkdir()
+    (twin / "config.yaml").write_text(
+        f"version: 1\nname: T\nrepo:\n  local_clone: repo\n", encoding="utf-8")
+    shutil.copytree(Path(root) / "repo", twin / "repo")
+
+    old_env = os.environ.get("AX_PROJECTS_ROOT")
+    os.environ["AX_PROJECTS_ROOT"] = str(projects)
+    calls = []
+    orig_draft = R.draft
+    R.draft = lambda *a, **kw: (calls.append(1), ("나눗셈이 0 이다.", ""))[1]
+    try:
+        Q.enqueue(twin, key=head, files=["Source/M/A.cpp"])
+        rc = R.main(["--limit", "1"])
+        check("🔴 ⑪ main() 이 rc=0 으로 끝난다", rc == 0, f"rc={rc}")
+        check("⑪ 큐를 실제로 비웠다", Q.counts(twin)["done"] == 1, str(Q.counts(twin)))
+        check("⑪ 초고 호출이 일어났다", len(calls) == 1, str(calls))
+        rc2 = R.main(["--limit", "1"])
+        check("⑪ 큐가 비면 조용히 끝난다", rc2 == 0 and len(calls) == 1, f"rc={rc2}")
+    finally:
+        R.draft = orig_draft
+        if old_env is None:
+            os.environ.pop("AX_PROJECTS_ROOT", None)
+        else:
+            os.environ["AX_PROJECTS_ROOT"] = old_env
+    shutil.rmtree(root); shutil.rmtree(projects)
+
+
 def test_grounding_머리말():
     g = R.grounding_text("초고다", "class AFoo;")
     check("⑩ 미검증이라고 먼저 말한다", "미검증" in g and "버려라" in g, g[:90])
@@ -162,7 +207,8 @@ def test_grounding_머리말():
 if __name__ == "__main__":
     for fn in (test_초고까지만_만든다, test_지적_없으면_문서를_안_쓴다,
                test_초고_실패는_재시도된다, test_diff를_못_읽으면_결정적이다,
-               test_설계된_스킵, test_선언부, test_grounding_머리말):
+               test_설계된_스킵, test_선언부, test_main_이_실제로_돈다,
+               test_grounding_머리말):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)
