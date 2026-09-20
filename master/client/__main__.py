@@ -29,6 +29,16 @@ from pathlib import Path
 from . import bundle, spec
 
 
+def _mounted_project_for_check() -> str:
+    """검증이 사용할 마운트.
+
+    [중요] 조회 실패를 빈 값으로 접지 않는다. 빈 값은 ``desired_state`` 에서
+    "이 프로젝트가 마운트됐다"와 같은 쪽으로 판정되므로, 실패를 숨기면 비마운트
+    프로젝트의 정상적인 미등록을 장애로 오판한다.
+    """
+    return (bundle.Registry.load().active or "").strip()
+
+
 
 def _facts(project: str, *, only: str = "") -> list:
     """이 프로젝트의 작업장 실측. `only` 가 있으면 **그 호스트 하나만**.
@@ -474,11 +484,7 @@ def cmd_check(project: str, *, only: str = "") -> int:
         from client.init import residency as _R
         _have_daemon = any(d.endswith("worker_daemon.py")
                            for d, _s in bundle.payload_pairs(f.role))
-        _mounted = ""
-        try:
-            _mounted = (Registry.load().active or "").strip()
-        except Exception:                                    # noqa: BLE001
-            pass
+        _mounted = _mounted_project_for_check()
         _decision = _R.desired_state(project, _mounted, f, daemon_available=_have_daemon)
         _cmd = _R.registration_query_command(project, f)
         _rc, _out = bundle._ssh(f.host, f.user, _cmd)

@@ -27,7 +27,7 @@ sys.path.insert(0, str(_REPO))
 # 라이브 큐에 결합). **실행 조건을 파일 안에 박으면 「어떻게 돌렸나」가 결과를 바꾸지 않는다.**
 os.environ.setdefault("AX_PROJECTS_ROOT", str(_REPO))
 
-from master.client import bundle, spec                              # noqa: E402
+from master.client import __main__ as client_cli, bundle, spec      # noqa: E402
 from master.projects.config import ROLE_REQUESTER, ROLE_WORKER, Workshop, ConfigError  # noqa: E402
 
 PASS = FAIL = 0
@@ -1419,6 +1419,39 @@ def test_residency_reconcile_removes_forbidden_registration() -> None:
           calls.count("crontab -l 2>/dev/null") == 2, str(calls))
 
 
+def test_check_mount_lookup_is_fail_closed() -> None:
+    """check가 레지스트리 오류를 빈 마운트로 바꾸지 않고 실제 active를 쓴다."""
+    class MountedNS:
+        @staticmethod
+        def load():
+            return type("R", (), {"active": "NS"})()
+
+    class BrokenRegistry:
+        @staticmethod
+        def load():
+            raise RuntimeError("registry unavailable")
+
+    old_registry = bundle.Registry
+    try:
+        bundle.Registry = MountedNS
+        mounted = client_cli._mounted_project_for_check()
+        check("check는 bundle.Registry의 실제 마운트를 읽는다", mounted == "NS", mounted)
+        decision = __import__("client.init.residency", fromlist=["desired_state"]).desired_state(
+            "ModularStage", mounted, _facts(role="worker", ue5="ue5"))
+        check("NS 마운트에서는 ModularStage 미등록이 정상", not decision.required,
+              decision.reason)
+
+        bundle.Registry = BrokenRegistry
+        try:
+            client_cli._mounted_project_for_check()
+            check("[중요] 레지스트리 조회 실패를 숨기지 않는다", False)
+        except RuntimeError as exc:
+            check("[중요] 레지스트리 조회 실패를 숨기지 않는다",
+                  str(exc) == "registry unavailable", str(exc))
+    finally:
+        bundle.Registry = old_registry
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
@@ -1437,6 +1470,7 @@ def main() -> int:
                test_codex_mcp_registration,
                test_codex_identity,
                test_residency_reconcile_removes_forbidden_registration,
+               test_check_mount_lookup_is_fail_closed,
                test_shadow_skills_are_reported):
         fn()
     total = PASS + FAIL
