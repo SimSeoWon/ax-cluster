@@ -144,11 +144,20 @@ def test_api_key_never_returned_from_logs():
 class VerSender(Sender):
     """버전 카탈로그까지 답하는 전송. `versions.json` 이 프로젝트별 경로인 것이 요점이다."""
 
-    def __init__(self, versions=("마일스톤 6 — 개선·확장",), **kw):
+    def __init__(self, versions=("마일스톤 6 — 개선·확장",), issue_count=0, **kw):
         super().__init__(**kw)
         self.versions = versions
+        self.issue_count = issue_count      # `#652` — 삭제 판정이 쓰는 수
 
     def __call__(self, method, url, payload=None):
+        if "/issues.json?" in url and method == "GET":
+            self.calls.append((method, url, payload))
+            n = getattr(self, "issue_count", 0)
+            return {"total_count": n,
+                    "issues": [{"id": 900 + j} for j in range(min(n, 10))]}
+        if "/versions/" in url and method == "DELETE":
+            self.calls.append((method, url, payload))
+            return {}
         if "/versions/" in url and method == "PUT":
             self.calls.append((method, url, payload))
             return {}
@@ -394,6 +403,81 @@ def test_update_version_gates_are_the_same_as_create():
     check("🔴 거절되면 PUT 이 0회다", not _puts(s), str(_puts(s)))
 
 
+# ── 🔴 마일스톤 삭제 (`#652` 후속) — 되돌릴 수 없는 유일한 조작 ────────────────────
+
+def _dels(sender):
+    return [u for m, u, _ in sender.calls if m == "DELETE"]
+
+
+def test_delete_version_needs_confirm():
+    """🔴 **`confirm=False` 가 기본이다** — `finalize_work`·`advance_work` 와 같은 관례.
+    버전에는 변경 이력이 없어 지우고 나면 무엇이었는지 남는 곳이 로그뿐이다."""
+    s = VerSender(versions=("버릴 것",), issue_count=0)
+    out = RM.delete_version("버릴 것", project="ns", sender=s)
+    check("[중요] 승인을 요구한다", out.get("confirm_required") is True, str(out))
+    check("  무엇이 지워지는지 말한다", out.get("id") == 70 and out.get("issue_count") == 0,
+          str(out))
+    check("🔴 DELETE 가 안 나간다", not _dels(s), str(_dels(s)))
+
+    s2 = VerSender(versions=("버릴 것",), issue_count=0)
+    out2 = RM.delete_version("버릴 것", project="ns", confirm=True, sender=s2)
+    check("승인하면 지운다", out2.get("deleted") is True, str(out2))
+    check("  그 버전 id 로 DELETE 한다", _dels(s2) and _dels(s2)[0].endswith("/versions/70.json"),
+          str(_dels(s2)))
+
+
+def test_delete_version_refuses_when_issues_attached():
+    """🔴 **붙은 이슈가 있으면 거절한다.** 레드마인도 422 로 막지만 그 응답은 **본문이
+    비어 있다**(실측 2026-09-20) — 사유를 여기서 만든다. [주의] **대신 떼어 주지 않는다.**"""
+    s = VerSender(versions=("쓰는 것",), issue_count=17)
+    out = RM.delete_version("쓰는 것", project="ns", confirm=True, sender=s)
+    check("[중요] 건수를 말한다", out.get("issue_count") == 17 and "17건" in out.get("error", ""),
+          str(out))
+    check("  어느 이슈인지 표본을 준다", len(out.get("sample_issue_ids") or []) == 10, str(out))
+    check("🔴 승인했어도 DELETE 가 안 나간다", not _dels(s), str(_dels(s)))
+
+
+def test_delete_version_unknown_count_is_not_zero():
+    """🔴 **미확인은 통과가 아니다** — 못 센 것을 0 으로 접으면 「붙은 게 없다」로 읽혀 지운다."""
+    class NoCount(VerSender):
+        def __call__(self, method, url, payload=None):
+            if "/issues.json?" in url:
+                raise OSError("네트워크")
+            return super().__call__(method, url, payload)
+
+    s = NoCount(versions=("버릴 것",))
+    out = RM.delete_version("버릴 것", project="ns", confirm=True, sender=s)
+    check("[중요] 세지 못하면 거절한다", "세지 못했다" in out.get("error", ""), str(out))
+    check("🔴 DELETE 가 안 나간다", not _dels(s), str(_dels(s)))
+
+
+def test_delete_version_exact_match_only():
+    """[주의] 지우는 자리에서 부분 일치를 허용하면 「마일스톤 1」을 지우려다 「마일스톤 10」을 지운다."""
+    s = VerSender(versions=("마일스톤 10 — 나중",))
+    out = RM.delete_version("마일스톤 1", project="ns", confirm=True, sender=s)
+    check("부분 일치로 안 잡힌다", "없다" in out.get("error", ""), str(out))
+    check("  있는 이름을 알려 준다", out.get("available") == ["마일스톤 10 — 나중"], str(out))
+    check("🔴 DELETE 가 안 나간다", not _dels(s), str(_dels(s)))
+
+
+def test_delete_version_empty_422_still_says_something():
+    """[주의] 실측: 붙은 이슈가 있을 때의 422 는 **본문이 비어 있다.** 세는 사이에 누가
+    붙이면(경합) 여기로 오는데, 그때도 빈 사유를 내보내지 않는다."""
+    import urllib.error
+    import io
+
+    class Race(VerSender):
+        def __call__(self, method, url, payload=None):
+            if "/versions/" in url and method == "DELETE":
+                raise urllib.error.HTTPError(url, 422, "", {}, io.BytesIO(b""))
+            return super().__call__(method, url, payload)
+
+    out = RM.delete_version("버릴 것", project="ns", confirm=True,
+                            sender=Race(versions=("버릴 것",), issue_count=0))
+    check("코드를 유지한다", "422" in out.get("error", ""), str(out))
+    check("[중요] 빈 본문에도 사유를 만든다", "이슈가 붙었다" in out.get("error", ""), str(out))
+
+
 def main() -> int:
     for fn in (test_updates_notes_only, test_status_name_resolved_dynamically,
                test_unknown_status_keeps_notes_and_says_so, test_default_status_names_are_ours,
@@ -416,7 +500,12 @@ def main() -> int:
                test_update_version_refuses_partial_match,
                test_update_version_refuses_name_clash,
                test_update_version_none_keeps_empty_clears,
-               test_update_version_gates_are_the_same_as_create):
+               test_update_version_gates_are_the_same_as_create,
+               test_delete_version_needs_confirm,
+               test_delete_version_refuses_when_issues_attached,
+               test_delete_version_unknown_count_is_not_zero,
+               test_delete_version_exact_match_only,
+               test_delete_version_empty_422_still_says_something):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_redmine: {PASS}/{total} 통과")

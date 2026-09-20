@@ -601,6 +601,95 @@ def update_version(name: str, *, project: str = PROJECT_ID, new_name: str = "",
     return {"id": int(target["id"]), "name": nn or cur, "project": project, "changed": changed}
 
 
+def count_issues_in_version(version_id, *, project: str = PROJECT_ID, key: str = "",
+                            url: str = "", sender=None) -> int:
+    """그 마일스톤에 붙은 이슈 수 (**닫힌 것 포함**). 못 세면 `-1`.
+
+    [중요] **`-1` 은 0 이 아니다.** 삭제 판정이 이 값을 쓰는데, 못 센 것을 0 으로 접으면
+    **「붙은 게 없다」로 읽혀 지운다.** 미확인은 통과가 아니다(이 저장소의 관례).
+    """
+    try:
+        got = _request("GET",
+                       f"{(url or base_url()).rstrip('/')}/issues.json?project_id={project}"
+                       f"&status_id=*&fixed_version_id={int(version_id)}&limit=1",
+                       key or api_key(), sender=sender)
+    except Exception:                                        # noqa: BLE001
+        return -1
+    n = (got or {}).get("total_count")
+    return int(n) if isinstance(n, int) else -1
+
+
+def delete_version(name: str, *, project: str = PROJECT_ID, confirm: bool = False,
+                   key: str = "", url: str = "", sender=None) -> dict:
+    """마일스톤(버전)을 지운다. **되돌릴 수 없다.**
+
+    🔴 [중요] **`confirm=False` 가 기본이다** — 안 주면 **무엇이 지워질지만** 돌려주고
+    지우지 않는다. `finalize_work`·`advance_work` 와 같은 관례다(사용자 결정 2026-09-04:
+    승인 발화가 곧 트리거). 버전에는 이슈 같은 변경 이력이 **없어서** 지우고 나면 그것이
+    무엇이었는지 남는 곳이 로그뿐이다.
+
+    🔴 [중요] **붙은 이슈가 있으면 거절한다 — 레드마인이 이미 그런다(실측 2026-09-20).**
+    그런데 그쪽의 `422` 는 **본문이 비어 있다.** 사유를 하나도 안 주므로 여기서 **먼저 세고
+    먼저 말한다**: 몇 건이 걸려 있고 어떤 번호인지. [주의] 붙은 것을 **대신 떼어 주지
+    않는다** — 어느 마일스톤으로 옮길지는 사람의 판단이고, 17건을 말없이 무버전으로
+    떨구는 것이 이 일에서 가장 비싼 실수다.
+
+    [주의] 대상 해석은 `update_version` 과 같은 **정확 일치**다. 지우는 자리에서 부분
+    일치를 허용하면 「마일스톤 1」을 지우려다 「마일스톤 10」을 지운다.
+    """
+    cur = (name or "").strip()
+    if not cur:
+        return {"error": "지울 마일스톤 이름이 비었다"}
+    base = (url or base_url()).rstrip("/")
+    k = key or api_key()
+    if sender is None and not k:
+        return {"error": "API 키가 없다 (`AX_REDMINE_API_KEY` 또는 컨테이너 DB, §10.1)"}
+    if not (project or "").strip():
+        return {"error": "project 가 비었다 — 버전은 프로젝트에 속한다"}
+
+    vs = list_versions(project=project, key=k, url=base, sender=sender)
+    target = next((v for v in vs if str(v.get("name", "")).strip() == cur), None)
+    if target is None:
+        return {"error": f"`{project}` 에 마일스톤 `{cur}` 이 없다 (정확히 일치해야 한다)",
+                "available": [str(v.get("name", "")) for v in vs]}
+    vid = int(target["id"])
+
+    n = count_issues_in_version(vid, project=project, key=k, url=base, sender=sender)
+    if n < 0:
+        return {"error": f"마일스톤 `{cur}` 에 붙은 이슈 수를 세지 못했다 — 세기 전에는 "
+                         "지우지 않는다 (미확인은 통과가 아니다)", "id": vid}
+    if n > 0:
+        ids = []
+        try:
+            got = _request("GET", f"{base}/issues.json?project_id={project}&status_id=*"
+                                  f"&fixed_version_id={vid}&limit=10", k, sender=sender)
+            ids = [x.get("id") for x in (got or {}).get("issues") or []]
+        except Exception:                                    # noqa: BLE001
+            pass
+        return {"error": f"마일스톤 `{cur}` 에 이슈 {n}건이 붙어 있어 지울 수 없다 "
+                         "— 먼저 다른 마일스톤으로 옮기거나 떼어라 (여기서 대신 떼지 않는다)",
+                "id": vid, "issue_count": n, "sample_issue_ids": ids}
+
+    if not confirm:
+        return {"id": vid, "name": cur, "project": project, "issue_count": 0,
+                "confirm_required": True,
+                "note": f"`{project}` 의 마일스톤 `{cur}` 을 지운다. 붙은 이슈 0건. "
+                        "되돌릴 수 없다 — 지우려면 `confirm=true` 로 다시 불러라"}
+
+    try:
+        _request("DELETE", f"{base}/versions/{vid}.json", k, sender=sender)
+    except urllib.error.HTTPError as e:
+        # [주의] 실측: 붙은 이슈가 있을 때의 422 는 **본문이 비어 있다.** 위에서 세어 걸렀지만
+        #    경합(세는 사이에 누가 붙임)이면 여기로 온다 — 그때도 빈 사유를 내보내지 않는다.
+        hint = _http_error_reasons(e) or (
+            "레드마인이 거절했다 (사유 본문이 비어 있다) — 보통 그 사이에 이슈가 붙었다는 뜻이다"
+            if e.code == 422 else "")
+        return {"error": f"HTTP {e.code}" + (f" — {hint}" if hint else ""), "id": vid}
+    except Exception as e:                                   # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}", "id": vid}
+    return {"id": vid, "name": cur, "project": project, "deleted": True}
+
+
 def resolve_version_id(name: str, *, project: str = PROJECT_ID, key: str = "",
                        url: str = "", sender=None):
     """마일스톤(버전) **이름 → id**. 부분 일치를 허용한다 — 우리 버전명은

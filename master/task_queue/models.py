@@ -287,6 +287,20 @@ class RedmineVersionPatchReq(BaseModel):
     status: str = ""
 
 
+class RedmineVersionDeleteReq(BaseModel):
+    """마일스톤(버전) **삭제** 대행 (`#652` 후속, 사용자 요청 2026-09-20).
+
+    🔴 [중요] **`confirm` 기본은 False 다** — 안 주면 무엇이 지워질지만 돌려준다.
+    `finalize_work`·`advance_work` 와 같은 관례다: 승인 발화가 곧 트리거이고, 버전에는
+    변경 이력이 없어 지우고 나면 무엇이었는지 남는 곳이 로그뿐이다.
+    """
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
+    name: str                          # 지울 마일스톤 이름 (정확 일치)
+    confirm: bool = False
+
+
 class RedmineLinkCommitReq(BaseModel):
     """커밋 해시 연결 (#226 — 원전과 같은 노트 문구 형식을 서버가 만든다)."""
     # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은

@@ -480,6 +480,23 @@ def tool_redmine_update_version(api, name: str, *, new_name: str = "",
     return api("PATCH", "/api/v1/redmine/version", payload)
 
 
+def tool_redmine_delete_version(api, name: str, *, confirm: bool = False) -> dict:
+    """마일스톤(버전)을 지운다 — **되돌릴 수 없다** (`#652` 후속).
+
+    🔴 [중요] **`confirm` 없이 부르면 지우지 않고 무엇이 지워질지만 알려 준다.** 그것을
+    사람에게 보이고 승인을 받은 뒤 `confirm=true` 로 다시 부른다 — 이 저장소에서 되돌릴 수
+    없는 조작의 관례다(`finalize_work`·`advance_work`).
+
+    [중요] 붙은 이슈가 있으면 **거절한다.** 몇 건이 걸렸고 어떤 번호인지 응답이 말해 준다 —
+    **대신 떼어 주지 않는다.** 어느 마일스톤으로 옮길지는 사람의 판단이다.
+    """
+    nm = (name or "").strip()
+    if not nm:
+        raise ClientError("name 이 비었다 — 어느 마일스톤을 지울지 말해야 한다")
+    return api("DELETE", "/api/v1/redmine/version",
+               {"name": nm, "confirm": bool(confirm)})
+
+
 def tool_redmine_link_commit(api, issue_id, commit_hash: str, message: str = "") -> dict:
     if not (commit_hash or "").strip():
         raise ClientError("commit_hash 가 비었다")
@@ -1089,6 +1106,17 @@ TOOLS = [
                                                  "description": "`YYYY-MM-DD`. 빈 문자열이면 비운다"},
                                     "status": {"type": "string",
                                                "description": "open · locked · closed. 생략하면 안 바꾼다"}}}},
+    {"name": "redmine_delete_version",
+     "description": "마일스톤(레드마인 버전)을 지운다 (마스터 경유). **되돌릴 수 없다.** "
+                    "🔴 confirm 없이 부르면 **지우지 않고** 무엇이 지워질지만 알려 준다 — "
+                    "그것을 사람에게 보이고 승인을 받은 뒤 confirm=true 로 다시 불러라. "
+                    "붙은 이슈가 있으면 몇 건인지 말하고 거절한다(대신 떼어 주지 않는다). "
+                    "대상은 지금 이름으로 고르고 **정확히 일치해야 한다**.",
+     "inputSchema": {"type": "object", "required": ["name"],
+                     "properties": {"name": {"type": "string",
+                                             "description": "지울 마일스톤 이름 (정확 일치)"},
+                                    "confirm": {"type": "boolean",
+                                                "description": "🔴 사람의 승인을 받은 뒤에만 true"}}}},
     {"name": "redmine_link_commit",
      "description": "커밋 해시를 이슈에 노트로 연결한다 (원전과 같은 「커밋 연결: `<해시>`」 형식 — "
                     "형식이 같아야 이력을 한 규칙으로 훑을 수 있다).",
@@ -1295,7 +1323,8 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
     if name in ("list_works", "get_work", "redmine_note", "log_writer_signal", "log_history",
                 "add_object_alias", "mark_not_a_class", "redmine_list_issues",
                 "redmine_get_issue", "redmine_meta", "redmine_create_issue",
-                "redmine_create_version", "redmine_update_version", "redmine_link_commit",
+                "redmine_create_version", "redmine_update_version",
+                "redmine_delete_version", "redmine_link_commit",
                 # 레시피·안티패턴 읽기 — 큐 대행이므로 같은 자리다 (`#267`)
                 "find_recipes", "get_anti_patterns",
                 # history 읽기 (`#306`) — 쓰기(`log_history`)와 같은 대행 자리
@@ -1363,6 +1392,9 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                 description=args.get("description"),
                 due_date=args.get("due_date"),
                 status=str(args.get("status") or ""))
+        if name == "redmine_delete_version":
+            return tool_redmine_delete_version(a, str(args.get("name") or ""),
+                                               confirm=bool(args.get("confirm")))
         if name == "redmine_link_commit":
             return tool_redmine_link_commit(a, args.get("issue_id"),
                                             str(args.get("commit_hash") or ""),

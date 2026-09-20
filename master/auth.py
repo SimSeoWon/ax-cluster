@@ -188,6 +188,10 @@ REQUESTER_SCOPE: tuple = (
     #    나눈 것이 의도다: 이 표는 **접두어**로 맞추므로 POST 아래 하위 경로를 만들면
     #    위 줄이 조용히 그것까지 연다. PATCH 는 여기 한 줄을 더해야만 열린다.
     ("PATCH", "/api/v1/redmine/version"),
+    # 🔴 **마일스톤 삭제** (사용자 요청 2026-09-20). [중요] 메서드를 또 나눈 것은 같은
+    #    이유다 — 이 표는 접두어로 맞으므로 기존 줄 아래 하위 경로를 만들면 조용히 열린다.
+    #    [주의] 되돌릴 수 없는 유일한 마일스톤 조작이라 서버가 `confirm` 게이트를 건다.
+    ("DELETE", "/api/v1/redmine/version"),
     ("POST", "/api/v1/redmine/link-commit"),
     ("POST", "/api/v1/signals"),
     ("POST", "/api/v1/history"),

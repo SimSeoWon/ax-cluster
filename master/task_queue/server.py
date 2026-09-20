@@ -29,7 +29,7 @@ from .models import (
     AdminResetReq,
     WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq,
     RedmineIssueReq, RedmineLinkCommitReq, RedmineVersionReq,
-    RedmineVersionPatchReq,
+    RedmineVersionPatchReq, RedmineVersionDeleteReq,
     WriterSignalReq, HistoryReq, AliasReq, NotAClassReq, RecipeSearchReq, \
     HistorySearchReq, FixStatusReq
 )
@@ -566,6 +566,27 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         # [중요] **무엇을 바꿨는지 찍는다** — 이름 변경은 되돌릴 근거가 로그밖에 없다
         #    (레드마인 버전에는 이슈 같은 변경 이력이 없다).
         _tq_log(f"[redmine] 마일스톤 수정 project={target} name={req.name!r} → {r}", root)
+        return r
+
+    @app.delete("/api/v1/redmine/version")
+    def redmine_delete_version_ep(req: RedmineVersionDeleteReq):
+        """마일스톤(버전) 삭제 (`#652` 후속, 사용자 요청 2026-09-20). **되돌릴 수 없다.**
+
+        🔴 [중요] **`confirm=false`(기본)면 지우지 않고 무엇이 지워질지만 말한다.**
+        [중요] 붙은 이슈가 있으면 **세어서 거절한다** — 레드마인도 422 로 막지만 그 응답은
+        **본문이 비어 있어**(실측 2026-09-20) 사유를 하나도 주지 않는다.
+        [주의] 메서드를 `DELETE` 로 나눈 것은 `PATCH` 와 같은 이유다 — 스코프가
+        `(METHOD, 접두어)` 매칭이라 POST 하위 경로를 만들면 기존 스코프가 조용히 딸려 온다.
+        """
+        from ..redmine import delete_version, project_of
+        target = project_of(req.project or "")
+        if not target:
+            return {"error": f"`{req.project or '(태그 없음)'}` 의 config.yaml 에 "
+                             "`redmine.project` 가 없다 — 폴백하지 않는다"}
+        r = delete_version(req.name, project=target, confirm=req.confirm)
+        # 🔴 [중요] **삭제는 로그가 유일한 기록이다** — 레드마인 버전에는 이력이 없다.
+        _tq_log(f"[redmine] 마일스톤 삭제 project={target} name={req.name!r} "
+                f"confirm={req.confirm} → {r}", root)
         return r
 
     @app.post("/api/v1/redmine/link-commit")
