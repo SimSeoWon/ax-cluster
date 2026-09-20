@@ -179,6 +179,11 @@ REQUESTER_SCOPE: tuple = (
     ("POST", "/api/v1/redmine/note"),
     ("GET", "/api/v1/redmine/"),         # 조회 (#226 — 원전 redmine_tracker 이식)
     ("POST", "/api/v1/redmine/issue"),   # 이슈 생성 (원전 code-validator 의 리뷰 등록)
+    # 🔴 **마일스톤(버전) 생성** (`#652`, 사용자 지적 2026-09-20) — 요청자는 마일스톤을 이슈에
+    #    **붙일** 수는 있었는데(`#303`) **만들** 수가 없었다. 키가 마스터에만 있으니 유일한
+    #    길이 「사람이 웹 UI 를 연다」였고, 그래서 `ns` 는 이슈 24건 전부가 무버전이었다.
+    #    [주의] 여는 것은 **생성뿐**이다 — 잠그기·닫기는 사람의 결정이라 웹 UI 에 남긴다.
+    ("POST", "/api/v1/redmine/version"),
     ("POST", "/api/v1/redmine/link-commit"),
     ("POST", "/api/v1/signals"),
     ("POST", "/api/v1/history"),

@@ -58,17 +58,37 @@ def _read_redmine_config(root: Path, project: str = "") -> dict:
     return {"url": url, "api_key": key, "project": proj}
 
 
-def _redmine_post_issue(rm_cfg: dict, subject: str, description: str) -> Optional[int]:
+def _redmine_post_issue(rm_cfg: dict, subject: str, description: str,
+                        fixed_version: str = "") -> Optional[int]:
     """Redmine 이슈 생성 — 성공 시 issue_id, 실패 시 None.
-    redmine_tracker MCP 와 같은 REST 호출 패턴, 단 stdio MCP 우회해 직접 호출."""
+    redmine_tracker MCP 와 같은 REST 호출 패턴, 단 stdio MCP 우회해 직접 호출.
+
+    🔴 [중요] **`fixed_version` 이 없어서 등재 이슈는 구조적으로 무버전이었다** (`#652`,
+    사용자 지적 2026-09-20). `redmine.create_issue` 는 `#303` 에서 마일스톤을 받게 됐는데
+    이 경로는 **그 함수를 안 쓴다**(stdio MCP 우회 · 직접 REST) — 그래서 한쪽만 고쳐졌고,
+    파이프라인이 만드는 `[분산 작업]` 이슈는 **붙일 방법 자체가 없었다.** 실측: `ns` 이슈
+    24건 중 마일스톤이 붙은 것 0건.
+    [주의] **이름→id 해석은 `redmine.resolve_version_id` 하나를 쓴다** — 여기에 두 번째
+    해석기를 두면 부분 일치 규칙이 조용히 갈린다(`_stamp_fields` 주석과 같은 판단).
+    """
     if not (rm_cfg.get("url") and rm_cfg.get("api_key") and rm_cfg.get("project")):
         return None
     url = f"{rm_cfg['url']}/issues.json"
-    payload = {"issue": {
+    issue = {
         "project_id": rm_cfg["project"],
         "subject": subject,
         "description": description,
-    }}
+    }
+    if (fixed_version or "").strip():
+        from ..redmine import resolve_version_id
+        vid = resolve_version_id(fixed_version.strip(), project=rm_cfg["project"],
+                                 key=rm_cfg["api_key"], url=rm_cfg["url"])
+        if vid:
+            issue["fixed_version_id"] = vid
+        # [주의] 못 찾아도 **이슈 생성을 막지 않는다** — 사유는 호출자가 찍는다
+        #    (`create_work_issue_async`). 조용한 생략은 안 되지만, 기록 하나 때문에
+        #    등재를 죽이지도 않는다(큐가 정본이라는 이 모듈의 관례).
+    payload = {"issue": issue}
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url, data=body, method="POST",
@@ -126,6 +146,8 @@ def create_work_issue_async(idx: TaskIndex, work_id: str):
                 title = wmeta.get("title", work_id)
                 target_branch = wmeta.get("target_branch") or "(unknown)"
                 project = wmeta.get("project") or ""
+                # 🔴 등재가 스탬프한 마일스톤 (`#652`). 빈 값이면 종전과 같이 무버전이다
+                fixed_version = str(wmeta.get("fixed_version") or "")
             rm_cfg = _read_redmine_config(idx.root, project)
             missing = [n for n, v in (("url", rm_cfg.get("url")),
                                       ("api_key", rm_cfg.get("api_key")),
@@ -149,13 +171,23 @@ def create_work_issue_async(idx: TaskIndex, work_id: str):
                 "4. 더 고칠 것이 있으면 그 내용을 여기 적고 다음 라운드를 등재한다",
                 "5. 마감하면 `main` 머지 뒤 이 이슈를 닫는다",
             ])
-            iid = _redmine_post_issue(rm_cfg, f"[분산 작업] {title}", desc)
+            iid = _redmine_post_issue(rm_cfg, f"[분산 작업] {title}", desc, fixed_version)
             if not iid:
                 _tq_log(f"[redmine] {work_id} 이슈 생성 실패 (네트워크/인증/필수필드 확인)",
                         idx.root)
                 return
             update_work_meta(idx, work_id, redmine_issue_id=iid)
-            _tq_log(f"[redmine] {work_id} 등재 이슈 생성: #{iid}", idx.root)
+            # [중요] **마일스톤이 붙었는지도 찍는다** (`#652`) — 「붙인 줄 알았는데 무버전」이
+            #    바로 이 프로젝트가 한 달을 보낸 상태다. 조용한 생략을 로그로 깬다.
+            if (fixed_version or "").strip():
+                from ..redmine import resolve_version_id
+                ok = bool(resolve_version_id(fixed_version.strip(), project=rm_cfg["project"],
+                                             key=rm_cfg["api_key"], url=rm_cfg["url"]))
+                _tq_log(f"[redmine] {work_id} 등재 이슈 생성: #{iid} · 마일스톤 "
+                        f"{fixed_version!r} → {'붙었다' if ok else '못 찾아 생략'}", idx.root)
+            else:
+                _tq_log(f"[redmine] {work_id} 등재 이슈 생성: #{iid} · 마일스톤 없음 "
+                        f"(등재가 fixed_version 을 안 실었다)", idx.root)
         except Exception as e:                               # noqa: BLE001
             _tq_log(f"[redmine] {work_id} 등재 이슈 예외: {e}", idx.root)
 

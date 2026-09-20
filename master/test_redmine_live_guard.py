@@ -60,7 +60,7 @@ class _Fakes:
         RM.api_key = lambda: "fake-key"
         RM.project_of = lambda project: "ns"
         self.posts: list = []
-        LC._redmine_post_issue = lambda cfg, subject, desc: (self.posts.append(subject) or 777)
+        LC._redmine_post_issue = lambda cfg, subject, desc, fv="": (self.posts.append(subject) or 777)
         return self
 
     def __exit__(self, *exc):

@@ -189,6 +189,8 @@ def _run(payload: dict, *, improve: bool = False) -> dict:
                 # 🔴 **요청자가 지휘자를 지정할 수 있다** (`#389`) — 안 주면 등재 시점의
                 #    전역값이 박힌다. 개선요청은 명시할 때만 다음 라운드의 값을 바꾼다.
                 worker_mode=str(payload.get("worker_mode") or ""),
+                # 🔴 **마일스톤** (`#652`) — 안 주면 등재 이슈가 무버전으로 떨어진다.
+                fixed_version=str(payload.get("fixed_version") or ""),
             )
     except RegisterError as e:
         # [중요] **거절은 200 + `ok:false`** 다 — 큐가 낸 사유(라운드 불일치 · 상태 불가)를

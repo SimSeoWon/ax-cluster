@@ -92,7 +92,13 @@ POLICY = {
     "POST /api/v1/redmine/issue":                   TAG,
     "POST /api/v1/redmine/link-commit":             TAG,
     "GET /api/v1/redmine/issues":                   TAG,
-    "GET /api/v1/redmine/meta":                     OPEN,
+    # 🔴 **마일스톤 생성** (`#652`) — 이슈 생성과 같은 등급이다: 트윈에 쓰지 않으므로 마운트를
+    #    강제하지 않고, 태그가 **어느 레드마인 프로젝트에 만드는가**를 정한다(폴백 없음).
+    "POST /api/v1/redmine/version":                 TAG,
+    # [중요] 종전 `OPEN` 은 **버전 목록이 프로젝트 축을 탄다는 것을 놓친 선언**이었다
+    #    (`#652`). 상태·트래커·우선순위는 전역이 맞지만 버전은 프로젝트에 속한다 —
+    #    그래서 이 표면에도 축이 있다. 거부하지는 않는다(읽기).
+    "GET /api/v1/redmine/meta":                     TAG,
     "GET /api/v1/redmine/issue/{issue_id}":         TAG,
 
     # 감사 로그 — ax-state 에 쓴다(트윈이 아니다) → 귀속만

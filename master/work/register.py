@@ -351,6 +351,10 @@ def register_work(
     require_base: bool | None = None,
     heuristics=None,
     worker_mode: str = "",
+    # 🔴 **마일스톤** (`#652`) — 등재가 만드는 레드마인 이슈가 들어갈 버전 이름.
+    #    [중요] 안 주면 **무버전**으로 떨어진다. 그 상태로 쌓인 것이 `ns` 24건 전부다
+    #    (실측 2026-09-20). 없는 마일스톤이면 `redmine_create_version` 으로 먼저 만든다.
+    fixed_version: str = "",
     # [주의] **주입 자리를 둔 이유는 테스트다** — `poster`·`gate` 와 같은 관례다. 가짜
     #    프로젝트 이름으로 등록 규칙을 검증하는 유닛이 여럿 있고, 그것들이 실물 프로필을
     #    요구하면 저장소의 **정본 디렉토리에 파일을 써야 한다**(그게 더 나쁘다).
@@ -439,7 +443,7 @@ def register_work(
 
     work_id = create_work(title, paths=paths, target_repo=target_repo,
                           original_request=original_request, target_branch=target_branch,
-                          worker_mode=worker_mode,
+                          worker_mode=worker_mode, fixed_version=fixed_version,
                           queue_url=queue_url, token=token, poster=post)
 
     # ── [중요] 여기부터는 **보상 취소**가 붙는다 (`#336` ③, 실측 2026-08-30) ──────────
@@ -608,7 +612,7 @@ def _register_after_create(work_id, specs, *, paths, target_branch, queue_url, t
 
 def create_work(title: str, *, paths: ProjectPaths, target_repo: str,
                 original_request: str = "", target_branch: str = "",
-                worker_mode: str = "",
+                worker_mode: str = "", fixed_version: str = "",
                 queue_url: str = DEFAULT_QUEUE, token: str | None = None,
                 poster=None) -> str:
     """work 하나를 만들고 **work_id 를 돌려준다** — `#317` 미결 ① 순서의 0번.
@@ -642,6 +646,11 @@ def create_work(title: str, *, paths: ProjectPaths, target_repo: str,
         # [중요] 3-tier 브랜치를 쓴다. 원본의 pull 레거시 경로는 우리에게 없다 (`branch_names.py`).
         "distribution_mode": "push",
         "worker_mode": worker_mode,
+        # 🔴 **마일스톤 스탬프** (`#652`) — 큐가 이 값으로 등재 이슈를 버전에 넣는다.
+        #    [주의] 여기서 **추론하지 않는다.** `worker_mode` 는 안 주면 전역값을 박지만
+        #    마일스톤에는 그런 「지금의 값」이 없다 — 어느 마일스톤인지는 사람의 판단이고,
+        #    지어내면 남의 마일스톤에 조용히 들어간다.
+        "fixed_version": (fixed_version or "").strip(),
     })
     work_id = str(work.get("work_id") or work.get("id") or "")
     if not work_id:

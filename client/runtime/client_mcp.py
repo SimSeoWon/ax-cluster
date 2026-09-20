@@ -305,7 +305,10 @@ def tool_register_work(_unused, args: dict, *, root=None) -> dict:
         raise ClientError(
             "등재에 work_id 를 실을 수 없다 — 이미 있는 분산 작업의 다음 라운드는 "
             "`improve_work(work_id=…, round=현재+1, specs=[…])` 다")
-    for k in ("target_repo", "original_request", "target_branch", "worker_mode"):
+    # [중요] `fixed_version` 이 여기 있는 것이 `#652` 다 — 등재가 만드는 레드마인 이슈는
+    #    이 값으로만 마일스톤에 들어간다. 빼면 무버전이고, 그 상태로 24건이 쌓였다.
+    for k in ("target_repo", "original_request", "target_branch", "worker_mode",
+              "fixed_version"):
         v = args.get(k)
         if v not in (None, ""):
             body[k] = v
@@ -420,6 +423,31 @@ def tool_redmine_create_issue(api, subject: str, description: str = "",
     if parent_issue_id not in (None, "", 0):
         payload["parent_issue_id"] = int(parent_issue_id)
     return api("POST", "/api/v1/redmine/issue", payload)
+
+
+def tool_redmine_create_version(api, name: str, *, due_date: str = "",
+                                description: str = "", status: str = "open") -> dict:
+    """🔴 **마일스톤(버전)을 만든다** (`#652`, 사용자 지적 2026-09-20).
+
+    [중요] **이 도구가 없어서 마일스톤 관리가 멈춰 있었다.** 요청자는 이슈에 마일스톤을
+    **붙일** 수는 있었지만(`fixed_version`) **만들** 수가 없었다 — 레드마인 키는 마스터에만
+    있으니 유일한 길이 「사람이 웹 UI 를 연다」였고, 실측으로 `ns` 는 이슈 24건 전부가
+    무버전이었다. `redmine_create_issue` 가 *"fixed_version 을 같이 줄 것"* 이라고 지시하면서
+    **그 값을 만들 방법이 없던** 자리다(`#297` 부류 — 절차서가 못 하는 것을 지시한다).
+
+    [주의] 어느 레드마인 프로젝트에 만드는지는 **이 체크아웃의 프로젝트 태그**가 정한다 —
+    고를 수 없고, 고를 필요도 없다(`.ax/config.json` 이 안다).
+    [주의] 같은 이름이 이미 있으면 **만들지 않고 그 id 를 돌려준다**(`existing: true`).
+    """
+    nm = (name or "").strip()
+    if not nm:
+        raise ClientError("name 이 비었다 — 이름 없는 마일스톤은 만들지 않는다")
+    payload = {"name": nm, "status": status or "open"}
+    if due_date:
+        payload["due_date"] = due_date
+    if description:
+        payload["description"] = description
+    return api("POST", "/api/v1/redmine/version", payload)
 
 
 def tool_redmine_link_commit(api, issue_id, commit_hash: str, message: str = "") -> dict:
@@ -873,6 +901,16 @@ TOOLS = [
                          "original_request": {"type": "string",
                                               "description": "[중요] 사용자 원문 그대로"},
                          "target_repo": {"type": "string"},
+                         # 🔴 **마일스톤** (`#652`) — 등재가 만드는 레드마인 이슈가 여기로
+                         #    들어간다. 빼면 무버전이고, 그 상태로 24건이 쌓였다(실측).
+                         "fixed_version": {
+                             "type": "string",
+                             "description": ("이 분산 작업의 레드마인 **마일스톤** 이름 "
+                                             "(부분 일치 허용). `redmine_meta` 로 이 "
+                                             "프로젝트의 목록을 보고 고르고, 맞는 것이 "
+                                             "없으면 `redmine_create_version` 으로 먼저 "
+                                             "만든다. [주의] 생략하면 이슈가 **무버전**으로 "
+                                             "떨어진다 — 마스터가 대신 골라 주지 않는다")},
                          "target_branch": {"type": "string"}}}},
     {"name": "list_works",
      "description": "큐의 work 목록 (검수 대상 파악). status 로 거를 수 있다 — "
@@ -972,8 +1010,23 @@ TOOLS = [
                      "properties": {"issue_id": {"type": "integer"}}}},
     {"name": "redmine_meta",
      "description": "이 레드마인의 상태·트래커·우선순위·마일스톤 카탈로그. 상태 이름을 추측하지 "
-                    "말고 여기서 확인한다 — 이 환경은 한국어이고 「반려」에 해당하는 상태가 없다.",
+                    "말고 여기서 확인한다 — 이 환경은 한국어이고 「반려」에 해당하는 상태가 없다. "
+                    "마일스톤 목록은 **이 체크아웃의 프로젝트 것**이다(응답의 versions_project "
+                    "가 무엇을 봤는지 말한다).",
      "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "redmine_create_version",
+     "description": "마일스톤(레드마인 버전)을 새로 만든다 (마스터 경유). 만들 프로젝트는 이 "
+                    "체크아웃의 프로젝트 태그가 정한다 — 고를 수 없다. redmine_create_issue 의 "
+                    "fixed_version 에 줄 값이 아직 없을 때 여기서 먼저 만든다. "
+                    "[주의] 같은 이름이 있으면 만들지 않고 그 id 를 돌려준다(existing: true).",
+     "inputSchema": {"type": "object", "required": ["name"],
+                     "properties": {"name": {"type": "string",
+                                             "description": "마일스톤 이름 (예: `마일스톤 2 — 전투 재설계`)"},
+                                    "due_date": {"type": "string",
+                                                 "description": "`YYYY-MM-DD` 또는 생략"},
+                                    "description": {"type": "string"},
+                                    "status": {"type": "string",
+                                               "description": "open(기본) · locked · closed"}}}},
     {"name": "redmine_create_issue",
      "description": "레드마인 이슈를 새로 만든다 (마스터 경유). 등재될 레드마인 프로젝트는 "
                     "요청의 프로젝트 태그가 정한다 (#293 — 게임 프로젝트가 늘면 자리도 늘어난다). "
@@ -1194,7 +1247,7 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
     if name in ("list_works", "get_work", "redmine_note", "log_writer_signal", "log_history",
                 "add_object_alias", "mark_not_a_class", "redmine_list_issues",
                 "redmine_get_issue", "redmine_meta", "redmine_create_issue",
-                "redmine_link_commit",
+                "redmine_create_version", "redmine_link_commit",
                 # 레시피·안티패턴 읽기 — 큐 대행이므로 같은 자리다 (`#267`)
                 "find_recipes", "get_anti_patterns",
                 # history 읽기 (`#306`) — 쓰기(`log_history`)와 같은 대행 자리
@@ -1243,6 +1296,11 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
             return tool_redmine_get_issue(a, args.get("issue_id"))
         if name == "redmine_meta":
             return tool_redmine_meta(a)
+        if name == "redmine_create_version":
+            return tool_redmine_create_version(a, str(args.get("name") or ""),
+                                               due_date=str(args.get("due_date") or ""),
+                                               description=str(args.get("description") or ""),
+                                               status=str(args.get("status") or "open"))
         if name == "redmine_create_issue":
             return tool_redmine_create_issue(a, str(args.get("subject") or ""),
                                              str(args.get("description") or ""),

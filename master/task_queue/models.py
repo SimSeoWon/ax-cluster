@@ -60,6 +60,11 @@ class WorkRegisterReq(BaseModel):
     #    [중요] `distribution_mode` 와 **같은 결**이다: per-work 스탬프이고, 전역 스위치를
     #    바꿔도 **도는 work 은 시작 모드로 완주**한다. 비면 등재 쪽이 그때의 전역값을 스탬프한다.
     worker_mode: str = ""
+    # 🔴 **마일스톤 스탬프** (`#652`) — 등재 때 만드는 `[분산 작업]` 이슈가 이 값으로 버전에
+    #    들어간다. 빈 값이면 종전과 같이 무버전이다(하위호환).
+    #    [중요] `worker_mode` 와 같은 **per-work 스탬프**다: 라운드가 올라가도 이슈는 하나이고,
+    #    그 이슈의 마일스톤은 등재 시점에 정해진다.
+    fixed_version: str = ""
     # 동일 slug + target_repo 의 active work (merge 안 된 상태) 가 있으면
     # 기본은 거절하고 duplicates 정보 반환. 사용자가 confirm 후 True 로 재호출.
     force_duplicate: bool = False
@@ -235,6 +240,29 @@ class RedmineIssueReq(BaseModel):
     #    그 상태가 실제로 13건 쌓였다. 이름 해석 실패는 응답의 `skipped` 에 사유가 온다.
     fixed_version: str = ""            # 마일스톤 이름. 부분 일치 허용 (`마일스톤 6`)
     parent_issue_id: Optional[int] = None
+
+
+class RedmineVersionReq(BaseModel):
+    """마일스톤(버전) 생성 대행 (`#652`).
+
+    🔴 [중요] **`.33` 에 이 경로가 없어서 마일스톤 관리가 통째로 멈춰 있었다** (사용자 지적
+    2026-09-20). 요청자는 이슈를 만들고 마일스톤을 **붙일** 수는 있었는데(`fixed_version`,
+    `#303`) **만들** 수가 없었다 — 레드마인 키는 마스터에만 있으니 웹 UI 를 사람이 여는 것이
+    유일한 길이었고, 그래서 `ns` 는 이슈 24건 전부가 무버전이었다(실측).
+
+    [중요] **레드마인 프로젝트를 직접 받지 않는다** — 아래 `project` **태그**(`#257`)가 정하고,
+    변환은 `<트윈>/config.yaml` 의 `redmine.project` 가 한다(`#293`). 이슈 생성과 같은 규칙이다:
+    폴백하면 **남의 프로젝트에 마일스톤을 만든다.**
+    """
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
+    name: str
+    due_date: str = ""         # `YYYY-MM-DD` 또는 빈 값. 형식 오류는 서버가 먼저 말한다
+    description: str = ""
+    # [주의] 기본은 `open` 이다 — 만들자마자 잠그는 일은 없다. 우리 규약에서 마일스톤을
+    #    닫는 것은 사람의 결정이고, 그 자리는 웹 UI 다(생성만 여는 이유: `#652`).
+    status: str = "open"
 
 
 class RedmineLinkCommitReq(BaseModel):

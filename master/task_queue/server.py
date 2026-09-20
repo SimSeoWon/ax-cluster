@@ -28,7 +28,7 @@ from .models import (
     ClaimReq, HeartbeatReq, SubmitReq, SubmitFailReq, VerifyReq, CancelReq,
     AdminResetReq,
     WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq,
-    RedmineIssueReq, RedmineLinkCommitReq,
+    RedmineIssueReq, RedmineLinkCommitReq, RedmineVersionReq,
     WriterSignalReq, HistoryReq, AliasReq, NotAClassReq, RecipeSearchReq, \
     HistorySearchReq, FixStatusReq
 )
@@ -113,6 +113,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
             review_scheduled=req.review_scheduled,
             distribution_mode=req.distribution_mode,
             worker_mode=req.worker_mode,
+            fixed_version=req.fixed_version,
             force_duplicate=req.force_duplicate)
 
     @app.get("/api/v1/works/duplicates")
@@ -476,10 +477,21 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         return out
 
     @app.get("/api/v1/redmine/meta")
-    def redmine_meta_ep():
-        """상태·트래커·우선순위·버전 카탈로그 (원전 `list_statuses`+`list_trackers` 를 한 번에)."""
-        from ..redmine import meta
-        return meta()
+    def redmine_meta_ep(project: str = ""):
+        """상태·트래커·우선순위·버전 카탈로그 (원전 `list_statuses`+`list_trackers` 를 한 번에).
+
+        🔴 [중요] **버전은 프로젝트에 속한다** (`#652`). 종전에는 이 함수가 인자를 아예 안 받아
+        늘 AX 인프라 프로젝트의 마일스톤을 돌려줬다 — `ns` 작업장의 `.33` 이 「마일스톤이 뭐가
+        있나」를 물으면 **남의 것 6개**가 오고 자기 것 1개는 안 보였다(실측 2026-09-20).
+        [주의] **클라이언트는 그때도 `project=` 를 보내고 있었다** (`queue_api` 가 모든 GET 에
+        붙인다) — 고장은 받는 쪽 한 줄이었다. 읽기라 폴백해도 오염은 아니지만(`redmine/issues`
+        와 같은 판단) **무엇을 봤는지는 응답이 말한다**(`versions_project`).
+        """
+        from ..redmine import AX_PROJECT_ID, meta, project_of
+        target = project_of(project) if (project or "").strip() else AX_PROJECT_ID
+        if (project or "").strip() and not target:
+            return {"error": f"`{project}` 의 config.yaml 에 `redmine.project` 가 없다"}
+        return meta(project=target)
 
     @app.get("/api/v1/redmine/issue/{issue_id}")
     def redmine_issue_ep(issue_id: int):
@@ -508,6 +520,29 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
                          fixed_version=req.fixed_version,
                          parent_issue_id=req.parent_issue_id)
         _tq_log(f"[redmine] 이슈 생성 project={target} → {r}", root)
+        return r
+
+    @app.post("/api/v1/redmine/version")
+    def redmine_create_version_ep(req: RedmineVersionReq):
+        """마일스톤(버전) 생성 대행 (`#652`).
+
+        🔴 [중요] **이 경로가 없어서 `.33` 이 마일스톤을 만들 수 없었다** (사용자 지적
+        2026-09-20). 이슈 생성(`#226`)·사후 스탬프(`#303`)는 이미 있었는데 **붙일 대상을
+        만드는 자리**만 비어 있었고, 그래서 마일스톤 관리가 통째로 멈췄다.
+        [주의] **폴백하지 않는다** — `config.yaml` 에 `redmine.project` 가 없으면 거부한다.
+        이슈 생성과 같은 판단이다: 조용히 남의 프로젝트에 만들면 그것이 오염이다(`#257`).
+        """
+        from ..redmine import create_version, project_of
+        target = project_of(req.project or "")
+        if not target:
+            return {"error": f"`{req.project or '(태그 없음)'}` 의 config.yaml 에 "
+                             "`redmine.project` 가 없다 — 폴백하지 않는다"}
+        r = create_version(req.name, project=target, due_date=req.due_date,
+                           description=req.description, status=req.status)
+        # [중요] **성공도 찍는다** — 「만들었다는데 왜 없나」를 쫓을 수 있어야 한다
+        #    (사용자 요구: 작업마다 로그). `existing` 은 실패가 아니라 **중복 방지**다.
+        _tq_log(f"[redmine] 마일스톤 생성 project={target} name={req.name!r} "
+                f"due={req.due_date or '-'} → {r}", root)
         return r
 
     @app.post("/api/v1/redmine/link-commit")

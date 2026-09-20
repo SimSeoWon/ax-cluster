@@ -149,6 +149,10 @@ class VerSender(Sender):
         self.versions = versions
 
     def __call__(self, method, url, payload=None):
+        if "/versions.json" in url and method == "POST":
+            # `#652` — 버전 생성. 실 Redmine 과 같은 모양으로 답한다
+            self.calls.append((method, url, payload))
+            return {"version": {"id": 88, "name": (payload or {}).get("version", {}).get("name")}}
         if "/versions.json" in url:
             self.calls.append((method, url, payload))
             return {"versions": [{"id": 70 + i, "name": n}
@@ -213,6 +217,68 @@ def test_update_version_needs_right_project():
     check("[중요] 못 찾았다고 말한다", "찾지 못해 생략" in out, out)
 
 
+# ── 🔴 마일스톤 생성 (`#652`) — `.33` 에 이 경로가 없어 관리가 통째로 멈췄다 ──────────
+
+def test_create_version_posts_to_that_project():
+    """[중요] **버전은 프로젝트에 속한다** — POST 경로에 프로젝트가 들어가야 한다."""
+    s = VerSender()
+    out = RM.create_version("마일스톤 2 — 전투 재설계", project="ns",
+                            due_date="2026-12-01", sender=s)
+    check("id 를 돌려준다", out.get("id") == 88, str(out))
+    check("새로 만들었다고 말한다", out.get("existing") is False, str(out))
+    posts = [(u, p) for u, p in s.posts if "/versions.json" in u]
+    check("[중요] 그 프로젝트 경로로 간다", posts and "/projects/ns/versions.json" in posts[0][0],
+          str(posts)[:140])
+    ver = posts[0][1]["version"] if posts else {}
+    check("이름·마감일·상태가 실린다",
+          ver.get("name") == "마일스톤 2 — 전투 재설계" and ver.get("due_date") == "2026-12-01"
+          and ver.get("status") == "open", str(ver))
+
+
+def test_create_version_does_not_duplicate():
+    """🔴 **동명은 만들지 않는다** — 버전은 이름으로 참조되고, 둘이면 어디 붙었는지 모른다."""
+    s = VerSender(versions=("마일스톤 6 — 개선·확장",))
+    out = RM.create_version("마일스톤 6 — 개선·확장", project="modularstage", sender=s)
+    check("있는 것의 id 를 돌려준다", out.get("id") == 70, str(out))
+    check("[중요] 이미 있다고 말한다", out.get("existing") is True, str(out))
+    check("🔴 POST 는 0회다", not [u for u, _ in s.posts if "/versions.json" in u],
+          str(s.posts)[:140])
+
+
+def test_create_version_partial_name_is_not_a_duplicate():
+    """[주의] 충돌 판정은 **정확 일치**다 — 부분 일치를 쓰면 「마일스톤 1」이 「마일스톤 10」에
+    막힌다. `resolve_version_id` 의 규칙을 여기 끌어오지 않는 이유가 이것이다."""
+    s = VerSender(versions=("마일스톤 10 — 나중",))
+    out = RM.create_version("마일스톤 1", project="ns", sender=s)
+    check("막히지 않고 만들어진다", out.get("existing") is False, str(out))
+
+
+def test_create_version_bad_input_is_loud():
+    """[중요] 422 를 받기 전에 **여기서** 말한다 — 깊은 곳의 HTTP 코드는 고칠 근거가 없다."""
+    s = VerSender()
+    check("이름이 비면 거절", "비었다" in RM.create_version("", project="ns", sender=s).get("error", ""))
+    check("프로젝트가 비면 거절",
+          "project" in RM.create_version("M", project="", sender=s).get("error", ""))
+    bad = RM.create_version("M", project="ns", due_date="2026/12/01", sender=s)
+    check("마감일 형식을 먼저 잡는다", "YYYY-MM-DD" in bad.get("error", ""), str(bad))
+    st = RM.create_version("M", project="ns", status="열림", sender=s)
+    check("모르는 status 를 잡는다", "open" in st.get("error", ""), str(st))
+    check("🔴 거절되면 POST 가 0회다", not [u for u, _ in s.posts if "/versions.json" in u],
+          str(s.posts)[:140])
+
+
+def test_meta_versions_follow_the_project():
+    """🔴 **`#652` 의 뿌리** — `meta` 가 늘 AX 프로젝트의 버전을 돌려줬다. `ns` 작업장이
+    마일스톤을 물으면 남의 것 6개가 오고 자기 것은 안 보였다(실측 2026-09-20)."""
+    s = VerSender(versions=("마일스톤 1 — 입력·UI 토대 (게임패드)",))
+    out = RM.meta(project="ns", sender=s)
+    names = [v["name"] for v in out.get("versions") or []]
+    check("그 프로젝트의 버전이 온다", names == ["마일스톤 1 — 입력·UI 토대 (게임패드)"], str(names))
+    check("[중요] 무엇을 봤는지 말한다", out.get("versions_project") == "ns", str(out.get("versions_project")))
+    gets = [u for m, u, _ in s.calls if m == "GET" and "/versions.json" in u]
+    check("🔴 조회 경로가 그 프로젝트다", gets and "/projects/ns/versions.json" in gets[0], str(gets))
+
+
 def main() -> int:
     for fn in (test_updates_notes_only, test_status_name_resolved_dynamically,
                test_unknown_status_keeps_notes_and_says_so, test_default_status_names_are_ours,
@@ -223,7 +289,12 @@ def main() -> int:
                test_create_unknown_version_is_skipped_loudly,
                test_create_bad_parent_is_skipped_loudly,
                test_update_can_stamp_without_notes,
-               test_update_version_needs_right_project):
+               test_update_version_needs_right_project,
+               test_create_version_posts_to_that_project,
+               test_create_version_does_not_duplicate,
+               test_create_version_partial_name_is_not_a_duplicate,
+               test_create_version_bad_input_is_loud,
+               test_meta_versions_follow_the_project):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_redmine: {PASS}/{total} 통과")

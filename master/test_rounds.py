@@ -56,11 +56,11 @@ def _round(idx, wid: str, n: int = 1) -> list:
     return tids
 
 
-def _work():
+def _work(fixed_version: str = ""):
     root = Path(tempfile.mkdtemp(prefix="ax-rounds-"))
     idx = TaskIndex(root)
     w = register_work(idx, title="상호작용", target_repo="/tmp/repo", project="NS",
-                      target_branch="task/W/base")
+                      target_branch="task/W/base", fixed_version=fixed_version)
     return idx, w["work_id"]
 
 
@@ -172,9 +172,9 @@ def test_issue_is_created_at_registration() -> None:
     s_cfg, s_new = LC._read_redmine_config, LC._redmine_post_issue
     LC._read_redmine_config = lambda root, project="": {"url": "http://x", "api_key": "k",
                                                         "project": "ns"}
-    LC._redmine_post_issue = lambda cfg, subj, desc: (made.append((subj, desc)) or 901)
+    LC._redmine_post_issue = lambda cfg, subj, desc, fv="": (made.append((subj, desc, fv)) or 901)
     try:
-        idx, wid = _work()
+        idx, wid = _work(fixed_version="마일스톤 1")
         for _ in range(200):
             if made:
                 break
@@ -184,6 +184,12 @@ def test_issue_is_created_at_registration() -> None:
               str(made)[:120])
         check("  work 에 id 가 기록된다", idx.works[wid].get("redmine_issue_id") == 901,
               str(idx.works[wid].get("redmine_issue_id")))
+        # 🔴 `#652` — 등재가 실은 마일스톤이 **이슈 생성까지 간다**. 종전에는 이 인자가
+        #    아예 없어서 `[분산 작업]` 이슈가 구조적으로 무버전이었다(실측 `ns` 24/24).
+        check("  🔴 마일스톤이 이슈 생성까지 간다", made and made[0][2] == "마일스톤 1",
+              str(made and made[0][2]))
+        check("  work 에도 스탬프가 남는다", idx.works[wid].get("fixed_version") == "마일스톤 1",
+              str(idx.works[wid].get("fixed_version")))
     finally:
         LC._read_redmine_config, LC._redmine_post_issue = s_cfg, s_new
 
@@ -202,7 +208,7 @@ def test_completion_is_a_note_not_a_new_issue() -> None:
                             LC._redmine_add_note)
     LC._read_redmine_config = lambda root, project="": {"url": "http://x", "api_key": "k",
                                                         "project": "ns"}
-    LC._redmine_post_issue = lambda cfg, subj, desc: (made.append(subj) or 900)
+    LC._redmine_post_issue = lambda cfg, subj, desc, fv="": (made.append(subj) or 900)
     LC._redmine_add_note = lambda cfg, iid, notes_, status_name="": (
         notes.append((iid, notes_)) or True)
     try:

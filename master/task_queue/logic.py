@@ -98,6 +98,7 @@ def register_work(idx: TaskIndex, *, title: str, target_repo: str,
                   review_scheduled: str = "",
                   distribution_mode: str = "pull",
                   worker_mode: str = "",
+                  fixed_version: str = "",
                   force_duplicate: bool = False) -> dict:
     work_slug = slug or _slugify(title)
     if not force_duplicate:
@@ -140,6 +141,10 @@ def register_work(idx: TaskIndex, *, title: str, target_repo: str,
             #    만들었나」에 레코드가 답할 수 있어야 하기 때문이다.
             #    [주의] **라운드가 올라가도 유지된다** — 라운드 간 비교가 성립해야 한다.
             "worker_mode": (worker_mode or "").strip() or None,
+            # 🔴 **마일스톤 스탬프** (`#652`) — 곧 뒤의 `_create_work_issue_async` 가 이 값으로
+            #    등재 이슈를 버전에 넣는다. [주의] 큐는 **이름을 해석하지 않는다** — 받은
+            #    문자열을 보관만 하고, 이름→id 는 레드마인 경로 한 곳에서 푼다.
+            "fixed_version": (fixed_version or "").strip() or None,
             # Plan v5 C.6 — pull(기본)/push 모드 per-work 스탬프. 플래그 flip 은 신규 work 만,
             # in-flight 는 시작 모드로 완주(가역·안전). 워커/verifier 는 이 값(또는 task 의 복사본)으로 분기.
             "distribution_mode": distribution_mode if distribution_mode in ("pull", "push") else "pull",

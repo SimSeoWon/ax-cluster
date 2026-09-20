@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import urllib.error
 import urllib.request
@@ -401,18 +402,92 @@ def get_issue(issue_id, *, key: str = "", url: str = "", sender=None) -> dict:
     return out
 
 
+def list_versions(*, project: str = PROJECT_ID, key: str = "", url: str = "",
+                  sender=None) -> list:
+    """그 프로젝트의 마일스톤(버전) 원본 목록. 실패하면 **빈 목록**이다.
+
+    [중요] **버전은 프로젝트에 속한다** (`#652`) — 이 함수를 부르는 쪽은 언제나 어느
+    프로젝트인지 말해야 한다. 종전에는 `meta` 가 이 조회를 `PROJECT_ID` 로 박아 두어,
+    `ns` 작업장이 물으면 **`modularstage` 의 마일스톤 6개**가 돌아왔다(실측 2026-09-20).
+    """
+    try:
+        got = _request("GET",
+                       f"{(url or base_url()).rstrip('/')}/projects/{project}/versions.json",
+                       key or api_key(), sender=sender)
+    except Exception:                                        # noqa: BLE001
+        return []
+    return list((got or {}).get("versions") or [])
+
+
+def create_version(name: str, *, project: str = PROJECT_ID, due_date: str = "",
+                   description: str = "", status: str = "open", sharing: str = "none",
+                   key: str = "", url: str = "", sender=None) -> dict:
+    """마일스톤(버전)을 만든다. 반환: `{"id": int, "name": str}` 또는 `{"error": 사유}`.
+
+    [중요] **원전에 없던 능력이다** (`#652`). 원전 `redmine_tracker` 는 버전을 **읽기만** 했고
+    (`create_issue` 도 버전을 안 받았다) 사람이 웹 UI 에서 만드는 방식이었다. 우리가 여는 근거는
+    `#303` 이 `fixed_version` 을 연 것과 **같다**: 요청자(`.33`)에게는 레드마인 키가 없고
+    (키는 마스터의 컨테이너 DB 에만 있다) 마일스톤을 만들 유일한 길이 **웹 UI 를 사람이 여는
+    것**뿐이면, 「항목·진행은 레드마인만」 규약이 사실상 지켜지지 않는다 — 실측이 그랬다:
+    `ns` 이슈 24건 중 마일스톤이 붙은 것 **0건**.
+
+    [중요] **같은 이름이 이미 있으면 만들지 않고 그 id 를 돌려준다** (`existing: True`).
+    버전은 이름으로 참조되는데(`resolve_version_id` 가 부분 일치까지 허용한다) 동명이 둘이면
+    **어느 것에 붙었는지 아무도 모른다.** 조용히 중복을 만드는 것이 여기서는 가장 비싸다.
+    [주의] 이름 충돌 판정은 **정확 일치**다 — `resolve_version_id` 의 부분 일치를 쓰면
+    「마일스톤 1」을 만들려는데 「마일스톤 10」이 있다고 거절한다.
+    """
+    nm = (name or "").strip()
+    if not nm:
+        return {"error": "마일스톤 이름이 비었다"}
+    base = (url or base_url()).rstrip("/")
+    k = key or api_key()
+    if sender is None and not k:
+        return {"error": "API 키가 없다 (`AX_REDMINE_API_KEY` 또는 컨테이너 DB, §10.1)"}
+    if not (project or "").strip():
+        return {"error": "project 가 비었다 — 버전은 프로젝트에 속한다"}
+    if status not in ("open", "locked", "closed"):
+        return {"error": f"status 는 open·locked·closed 중 하나다 — `{status}` 가 왔다"}
+
+    for v in list_versions(project=project, key=k, url=base, sender=sender):
+        if str(v.get("name", "")).strip() == nm:
+            return {"id": v.get("id"), "name": nm, "existing": True,
+                    "note": f"이미 있다 — `{project}` 의 마일스톤 `{nm}`. 새로 만들지 않았다"}
+
+    ver: dict = {"name": nm[:60], "status": status, "sharing": sharing}
+    if description:
+        ver["description"] = description
+    if (due_date or "").strip():
+        # [주의] 형식이 틀리면 레드마인이 422 로 거절한다 — 여기서 **먼저** 말한다.
+        #    깊은 곳의 `HTTP 422` 는 무엇이 틀렸는지 알려 주지 않는다(이 저장소 관례).
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", due_date.strip()):
+            return {"error": f"due_date 는 `YYYY-MM-DD` 다 — `{due_date}` 가 왔다"}
+        ver["due_date"] = due_date.strip()
+
+    try:
+        got = _request("POST", f"{base}/projects/{project}/versions.json", k,
+                       {"version": ver}, sender=sender)
+    except urllib.error.HTTPError as e:
+        # [주의] 404 는 「그 프로젝트가 없다」이고 403 은 「그 키에 권한이 없다」다 — 둘은
+        #    사람이 할 일이 다르다. 코드만 흘리면 요청자가 고칠 근거가 없다.
+        hint = {404: f"레드마인에 `{project}` 프로젝트가 없다",
+                403: "이 API 키에 버전 관리 권한이 없다"}.get(e.code, "")
+        return {"error": f"HTTP {e.code}" + (f" — {hint}" if hint else "")}
+    except Exception as e:                                   # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}"}
+    new_id = ((got or {}).get("version") or {}).get("id")
+    if not new_id:
+        return {"error": "생성 응답에 id 없음", "raw": got}
+    return {"id": int(new_id), "name": nm, "project": project, "existing": False}
+
+
 def resolve_version_id(name: str, *, project: str = PROJECT_ID, key: str = "",
                        url: str = "", sender=None):
     """마일스톤(버전) **이름 → id**. 부분 일치를 허용한다 — 우리 버전명은
     *"마일스톤 6 — 개선·확장"* 처럼 길어서 사람이 `마일스톤 6` 만 쓴다(실측)."""
     if not name:
         return None
-    try:
-        got = _request("GET", f"{(url or base_url()).rstrip('/')}/projects/{project}/versions.json",
-                       key or api_key(), sender=sender)
-    except Exception:                                        # noqa: BLE001
-        return None
-    vs = (got or {}).get("versions") or []
+    vs = list_versions(project=project, key=key, url=url, sender=sender)
     for v in vs:                                             # 정확 일치 우선
         if str(v.get("name", "")).strip() == name.strip():
             return v.get("id")
@@ -422,11 +497,19 @@ def resolve_version_id(name: str, *, project: str = PROJECT_ID, key: str = "",
     return None
 
 
-def meta(*, key: str = "", url: str = "", sender=None) -> dict:
+def meta(*, project: str = PROJECT_ID, key: str = "", url: str = "", sender=None) -> dict:
     """상태·트래커·우선순위·버전 카탈로그 (원전 `list_statuses`·`list_trackers` 자리).
 
     [중요] **한 번에 준다** — 원전은 도구 두 개였지만 절차는 늘 둘을 같이 쓴다
     (`update_issue` 전에 상태 이름을 확인하는 흐름). 나누면 왕복만 는다.
+
+    🔴 [중요] **버전만 프로젝트 축을 탄다** (`#652`). 상태·트래커·우선순위는 레드마인 전역
+    설정이라 프로젝트와 무관하지만 **버전은 프로젝트에 속한다.** 종전에는 이 한 줄이
+    `PROJECT_ID` 로 박혀 있어서, `ns` 작업장의 `.33` 이 마일스톤을 물으면 **`modularstage` 의
+    것 6개**가 왔고 자기 프로젝트의 1개는 안 보였다(실측 2026-09-20). 클라이언트는 그때도
+    `project=` 를 보내고 있었다(`queue_api` 가 모든 GET 에 붙인다) — **받는 쪽이 없었다.**
+    [주의] 그래서 응답에 `versions_project` 를 같이 싣는다: 「무엇을 봤는지 말한다」는
+    `redmine/issues` 와 같은 관례다. 빈 목록이 「없다」인지 「남의 것을 봤다」인지 갈린다.
     """
     base = (url or base_url()).rstrip("/")
     k = key or api_key()
@@ -443,13 +526,11 @@ def meta(*, key: str = "", url: str = "", sender=None) -> dict:
         except Exception as e:                               # noqa: BLE001
             out[field] = []
             out.setdefault("errors", []).append(f"{field}: {type(e).__name__}")
-    try:
-        got = _request("GET", f"{base}/projects/{PROJECT_ID}/versions.json", k, sender=sender)
-        out["versions"] = [{"name": v.get("name"), "status": v.get("status")}
-                           for v in (got or {}).get("versions") or []]
-    except Exception as e:                                   # noqa: BLE001
-        out["versions"] = []
-        out.setdefault("errors", []).append(f"versions: {type(e).__name__}")
+    target = (project or "").strip() or PROJECT_ID
+    out["versions_project"] = target          # [중요] 무엇을 봤는지 말한다
+    out["versions"] = [{"name": v.get("name"), "status": v.get("status"),
+                        "due_date": v.get("due_date")}
+                       for v in list_versions(project=target, key=k, url=base, sender=sender)]
     # [중요] 닫힌 상태가 무엇인지 **말해 준다** — 우리 규약(「완료」만 닫힘, 「해결」은 열림)을
     #    도구 응답이 스스로 실어야 작업장 세션이 상태를 잘못 고르지 않는다.
     out["note"] = "닫힌 상태는 「완료」뿐이다 — 「해결」은 아직 열린 것으로 센다"
