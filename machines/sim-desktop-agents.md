@@ -56,6 +56,8 @@
 - 프로젝트 CLI 는 환경변수가 필수다. 조회 예:
   `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client plan NS`
   (`NS` 는 예시다. 대상 프로젝트를 명시한다.) `deliver`·`check` 도 같은 접두를 쓴다.
+- 모든 등록 프로젝트·작업장을 현재 HEAD로 맞출 때는 프로젝트를 고르지 않고
+  `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client update`를 쓴다.
 - 마스터의 공용 호출 창구는 `ax-projects` MCP 다. Codex 설정은 `~/.codex/config.toml`,
   Claude 설정은 `~/.claude.json` 에 있다. 설정 추가만으로 현재 세션에 도구가 생겼다고 판단하지 않는다.
 - 워커 지휘자 선택은 `ax-mode` 스킬 → `get_worker_mode_tool` / `set_worker_mode_tool` 이다.

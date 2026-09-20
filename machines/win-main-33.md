@@ -42,15 +42,15 @@ Cluster-wide rules live in [`sim-desktop.md`](sim-desktop.md); repo rules in
 | 도구 (2026-08-20 확장) | `ax-client` **21종** — 조회 11: 온톨로지 9(`search_context`·`list_domains`·`get_domain`·`get_domain_layer`·`get_object_spec`·`get_action_spec`·`find_invariants_by_class`·`list_works`·`get_work`) + 태스크 템플릿 2(`list_task_templates`·`get_task_template` — 8103) / 쓰기·대행 10: 시소러스 2(`add_object_alias`·`mark_not_a_class`) · Redmine 6(`redmine_note`·`redmine_list_issues`·`redmine_get_issue`·`redmine_meta`·`redmine_create_issue`·`redmine_link_commit`) · 되먹임 2(`log_writer_signal`·`log_history`). [중요] **읽기 중 Redmine 은 큐(8101)** — 8103 의 `/api/v1/*` 는 무인증 공개라(실측: 토큰 없이 200) 일감 본문·검수 이력을 둘 자리가 아니다. 온톨로지·템플릿 조회는 공개 뷰와 같은 데이터라 8103 |
 | 은퇴한 것 | **원전 폴링 데몬 `watch.exe` + `config.json` 삭제**(2026-08-20 · 백업 `~/claude-workspace/backups/legacy-watcher-20260820/`). 로컬 `context-search` 는 정본이 아니다 — 온톨로지가 마스터로 옮겨진 뒤 objects/actions 를 **0/0 으로 답한다**(실측: 로컬 240항목 전부 서버에 있고 서버가 54항목 앞섬). [완료] **`.mcp.json` 원전 exe 등록 5종 제거**(2026-08-20 · #226 4단계 · 16→11종): `context-search`·`task-queue`·`master-orchestrator`·`local-llm-runner`·`redmine-tracker`. [중요] **실측하니 이미 무장 해제였다** — 5종 전부 루트 `config.json` 에서 키·URL 을 읽는데 그 파일은 와처 정리 때 삭제됐다. 백업 `~/claude-workspace/backups/33-mcp-json-20260820/` |
 | 갱신된 사람 문서 | `.claude/CLAUDE.md`(14곳) · `.claude/skills/manage-domain`(5곳+머리말) · `manage-task`(1곳) — 도구 이름을 `mcp__ax-client__*` 로. 백업 `~/claude-workspace/backups/33-claude-docs-20260820/`. [중요] **고칠 파일은 루트 `CLAUDE.md` 가 아니라 `.claude/CLAUDE.md`** 였다 |
-| 클라 MCP | 체크아웃 루트 `.mcp.json` 의 `ax-client` = `py .ax/lib/axmaster/clientside/client_mcp.py` → 마스터 `8103/mcp` 위임. [완료] 사람이 쓰는 `gemini-cli`·`unreal-mission-editor`·`uelog-analyzer` **항목과 공존**(배달은 `ax-client` 항목만 건드린다) |
+| 클라 MCP | 체크아웃 루트 `.mcp.json`의 `ax-client` = config `backends.python`에 기록된 **실측 절대경로** + `.ax/lib/axmaster/clientside/client_mcp.py` → 마스터 `8103/mcp` 위임. bare `py` PATH에 기대지 않는다. [완료] 사람이 쓰는 `gemini-cli`·`unreal-mission-editor`·`uelog-analyzer` 항목과 공존(배달은 `ax-client`만 건드린다) |
 | [중요] 남은 참조 | **등록을 지워도 참조는 남는다** — `.claude/agents/` **9종 전부**의 `tools:` 허용목록이 `mcp__context-search__combined_search` 를(둘은 `mcp__redmine-tracker__*` 도) 아직 가리킨다. [주의] **서버가 없으면 오류가 아니라 그 도구 없이 그냥 돈다** — 리포트 27 §9-3 의 「조용히 0」과 같은 계열. 매핑: `combined_search`→`search_context` · `get_domain_manifest`→`get_domain_layer`. **위임 구멍 2개**: Redmine 읽기(`get_issue`·`list_issues`·`update_issue`·`list_statuses`·`list_trackers` — `ax-client` 에는 `redmine_note` 만) · `get_task_template`. 결정 대기(#226) |
 | 배달물 | `.ax/config.json`(경로·능력 `ue5,windows`·UE5 5.8 실측) · `.ax/token`(**requester 역할** 토큰) · `.ax/lib` · `.ax/tasks` · `.ax/work` |
 | 프로젝트 `CLAUDE.md` | `AX:Begin`~`AX:End` 관리 블록에 역할 계약이 이미 적혀 있다 — *"요청하는 쪽"*, *"여기서 소스를 고치지 않는다"* |
-| 배달 시점 | 커밋 `8d55de9`. 저장소 HEAD 가 앞서가도 **번들 경로(`master/client`·**`client/runtime`**(2026-08-22 이동, #263)·`master/work/review.py`·`coordinator.py`·`layer3_verify.py`)에 변경이 없으면 재배달 불필요** — 2026-08-20 확인(HEAD `44274dc`, 해당 경로 무변경) |
+| 배달 시점 | `delivered_by.commit`과 dirty를 `check`가 현재 마스터 HEAD와 대조한다. 저장소 갱신 뒤에는 `python -m master.client update` 한 번으로 등록 프로젝트 전부를 배달·검사한다 |
 
-[주의] **낡은 번들은 조용히 돈다** (`master/client/__main__.py` 의 경고) — `.33` 이 옛 review 로직으로
-검수하면 그 판정 자체가 낡는다. 위 경로에 변경이 생기면 마스터에서
-`python -m master.client deliver` 를 다시 돌린다.
+[주의] **낡은 번들은 조용히 돈다** (`master/client/__main__.py`의 경고) — `.33`이 옛 review
+로직으로 검수하면 판정 자체가 낡는다. 마스터 변경 뒤에는 프로젝트별 필요성을 추론하지 말고
+`AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client update`를 실행한다.
 
 🔴 [중요] **분산 작업의 갈래를 이 기계가 고른다 — 마스터는 추론하지 않는다**
 (사용자 결정 2026-09-05: *"당연히 .33 메인 작업 컴퓨터에서 스스로 분리해서 요청해야 하니까"*).

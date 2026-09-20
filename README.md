@@ -266,8 +266,11 @@ ax-cluster/
 .venv/bin/python -m master.work.porting  pairs      # 포팅 원본↔대상 대응 (실측 9 → 정규화 21쌍)
 
 # 워커에 일 시키기
-.venv/bin/python -m master.client probe            # 머신 실측 — 경로·능력·체크아웃
-.venv/bin/python -m master.client deliver          # config·스킬·CLAUDE.md 배달 (해시 대조)
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client probe <프로젝트>    # 머신 실측
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client plan <프로젝트>     # 쓰기 전 계획
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client deliver <프로젝트>  # 한 프로젝트 배달
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check <프로젝트>    # 한 프로젝트 대조
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update              # 등록 프로젝트 전부 배달→대조
 .venv/bin/python -m master.work.infer probe        # 누가 추론을 받을 수 있나 (큐 무접촉)
 .venv/bin/python -m master.work.infer run          # [중요] 추론 파견 (직렬 기본) — 커밋하지 않는다
 .venv/bin/python -m master.work.infer spool <work> # 응답 스풀 — 어디까지 진행됐나

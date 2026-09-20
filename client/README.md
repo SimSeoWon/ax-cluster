@@ -27,7 +27,7 @@
 | `master/client/bundle.py` | 머신 프로브 · config 생성 · CLAUDE.md 병합 · SSH 배달 + **해시 대조** |
 | `master/client/skills/ax-work/` | 워커가 받는 **작업 절차 스킬** (정본) |
 | `master/client/payload/CLAUDE.md` | 체크아웃용 프로젝트 가이드 정본 (`/init` 산출, **머신 중립**) |
-| `master/client/__main__.py` | `python -m master.client probe\|plan\|deliver\|check` |
+| `master/client/__main__.py` | `probe\|plan\|deliver\|check <프로젝트>` · `update`(등록 프로젝트 전체 배달→대조) |
 | **`master/client/workshop/`** | [완료] **작업장 자산의 정본** (2026-08-20 · #226) — 에이전트 12종+`SKILL_INDEX` · 작업장 스킬 12종 · `rules/` 5 · `hooks/` · `.claude/CLAUDE.md` · `mcp.json`. 33파일 400KB. **요청자에게만** 배달된다 |
 | `master/client/skills/ax-request`·`ax-ontology`·`ax-review` | 요청자가 받는 절차 스킬 (정본) |
 
@@ -42,6 +42,13 @@
     <체크아웃>/.ax/work/<task_id>/        작업 부산물 — `.git/info/exclude` 로 무시
     <체크아웃>/CLAUDE.md                  정본 본문 + [중요] **머신별 AX 관리 블록**
     <홈>/.claude/skills/ax-work/SKILL.md  작업 절차
+
+[중요] Windows의 `backends.python`은 초기화 프로브가 찾은 **절대경로**다. 프로젝트의
+`.mcp.json` `ax-client.command`와 `ax-fix`가 이 값을 사용하며 bare `py`/`python` PATH에 기대지 않는다.
+
+[중요] 상주 등록 여부는 `client/init/residency.py::desired_state()` 한 곳이 정한다. 역할·daemon
+배달 여부·실측 능력·현재 마운트를 함께 보고 plan/deliver/check가 같은 결정을 소비하며,
+deliver는 켜면 안 되는 과거 등록도 제거한 뒤 부재를 되읽는다.
 
 ## 요청자(`.33`)에 배달되는 것 — 워커보다 많다
 

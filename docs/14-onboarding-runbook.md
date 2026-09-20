@@ -153,9 +153,16 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client deliver <프로젝트>
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check   <프로젝트>
 ```
 
-[주의] **`#277`(배달이 상주를 갱신하지 않는다)의 자리는 비었다** — `#320` 이 상주를 걷어
-갱신할 프로세스가 없다. 배달은 이제 **파일을 놓는 것으로 끝난다.** 상주가 부활하면
-「도는 것이 새 코드인가」가 다시 배달의 일부가 된다(그 사고: 옛 코드가 거절을 태스크로 읽고 폭주).
+저장소 변경 뒤 이미 등록된 **모든 프로젝트와 작업장**을 같은 HEAD로 맞출 때는 프로젝트를
+사람이 다시 고르지 않는다:
+
+```bash
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update
+```
+
+`update`는 `Registry.names` 전체에 `deliver → check`를 실행한다. 신규 프로젝트도 등재되는 순간
+자동 포함되며, 하나라도 실패하면 전체 rc=1이다. 신규 프로젝트 최초 구성은 위 §14.1의
+`onboard --confirm`이 checkout→deliver→check까지 수행하므로 별도 수동 배달을 끼우지 않는다.
 
 [주의] **마스터 트리가 dirty 면 `check` 가 통과하지 않는다** — 커밋이 같아도 그 커밋이 배달
 내용을 다 말하지 못한다(`dirty_master`). **커밋이 먼저다.**
@@ -176,28 +183,27 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check   <프로젝트>
 실패를 삼켜 *"`.uproject` 를 찾지 못했다"* 로 렌더했다(`#309` 에서 고쳐 지금은 사유가 표에
 찍힌다). 위 명령줄에 그 변수가 붙어 있는 것이 우연이 아니다.
 
-### 4 · 상주 등록 — **없다** (`#320`, 2026-08-27)
+### 4 · 상주 등록 — 원하는 상태를 배달이 맞춘다 (`#405`)
 
-🔴 [중요] **이 단계는 사라졌다. 워커에 켤 것이 없다.** `.2` 의 schtasks `AxClaimer_NS` 와 `.43`
-의 `*/5` cron 감시자를 **둘 다 걷었고**, 선언이던 `client/init/residency.py` 도 지웠다. 지금
-**큐를 폴링하는 프로세스는 어느 워커에도 없다.**
+상주는 다시 살아 있다. 별도 수동 등록 단계는 없고 `deliver`/`onboard`가
+`client/init/residency.py::desired_state()`의 판정에 맞춰 등록 또는 해제한다.
 
-    빌드   마스터가 `run_build_on_workshop` 으로 `Build.bat` 를 직접 부른다
-           → 워커에 **파이썬 페이로드가 필요 없다**
-    추론   마스터가 `infer run` 으로 민다
+    requester                  미등록 — 사람의 기계는 상주를 받지 않는다
+    worker + UE5 + 현재 마운트  등록 — Windows `AxWorker[_프로젝트]`, 5분 주기
+    worker + 집을 유형 없음     미등록 — 헛도는 상주를 만들지 않는다
+    비마운트 프로젝트           미등록 — claim이 not_mounted로 거절되므로 상주는 마운트를 따른다
 
-[주의] **온보딩이 끝나도 워커는 조용하다 — 정상이다.** 큐를 폴링하는 프로세스는 없다.
-종전 이 자리엔 *"태스크를 등록해도 아무도 집지 않으면 상주의 체크아웃을 보라"* 가 있었는데,
-지금은 **집는 주체 자체가 없는 것이 설계**다. 버그로 오진하지 않는다.
+`plan`·`deliver`·`check`가 같은 판정을 소비한다. `deliver`는 “건너뜀”으로 끝내지 않고 과거의
+불필요한 등록을 제거한 뒤 다시 조회하며, `check`는 원하는 상태와 실물 등록 여부를 비교한다.
+현재 실측은 NS 마운트라 `.2`의 `AxWorker_NS`만 등록되고 ModularStage 상주는 미등록이다.
 
 🔴 [중요] **다만 「등재해도 아무도 집지 않는다」는 2026-09-01 부터 틀리다** (`#340`, `c33316e`).
 파견은 **자동**이다 — 요청자가 `task/<work_id>/base` 를 push 하면 그 이벤트가
 `ax-dispatch.path` 를 깨우고, 파견이 끝나면 **통합까지 이어진다**(`9cc73d9`).
 🔴 [주의] **사람 게이트는 둘이다 — ⑺ 통합 앞과 finalize** (정본 7단계, 사용자 확정 2026-09-02).
 종전의 「finalize 한 곳」은 폐기됐고, **⑺ 게이트는 아직 미구현**이다.
-[주의] 정본 ⑸ 는 **워커가 다음 작업을 요청**하는 것이므로 「집는 주체」는 되살릴 대상이다 —
-아래 확인 항목은 「지금 도는 것」의 점검이다. 온보딩 뒤 확인할 것은
-**「트리거 유닛이 무장돼 있나」**다:
+[주의] 자동 파견 트리거도 별도 축으로 살아 있다. 온보딩 뒤에는 상주 등록뿐 아니라
+**「트리거 유닛이 무장돼 있나」**도 확인한다:
 
     systemctl is-enabled ax-dispatch.path ax-dispatch.timer     둘 다 enabled 여야 한다
     journalctl -u ax-dispatch -u ax-dispatch-catchup -n 30      「안 건 이유」도 찍힌다
@@ -208,18 +214,15 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check   <프로젝트>
 `.33` 세션 시작 훅이 「재개 대기」를 고지하고, 푸는 것은
 `python -m master.work.autodispatch --resume <프로젝트> <work_id>` 뿐이다.
 
-[중요] **부활하면 같이 부활하는 것이 넷이다** — `#312`(사람이 끊는 구간을 없앤다) ·
-`#314`(일시정지·재개) · `#315`(감시자 생존 확인) · `#316`(한 기계 상주 2개). 넷 다 **고쳐서**
-닫힌 것이 아니라 대상이 사라져 **소멸**로 닫혔다. 되살릴 때 그 노트부터 읽는다.
-그리고 `#311` 의 ⓐ 규칙(**상주는 마운트를 따른다 — 한 기계에 두 프로젝트를 동시에 켜지
-않는다**)은 결정으로 살아 있다. 근거: claim 정책이 `MOUNT` 라 비마운트 claim 은 거르는 것이
-아니라 **거절**된다(실측 2026-08-25 · 마운트 NS).
+[중요] `#311`의 ⓐ 규칙(**상주는 마운트를 따른다 — 한 기계에 두 프로젝트를 동시에 켜지
+않는다**)이 현재 구현의 정본이다. claim 정책이 `MOUNT`라 비마운트 claim은 거르는 것이 아니라
+**거절**된다(실측 2026-08-25 · 마운트 NS).
 
     project="NS"            → 204            정상 (큐가 비었다)
     project="ModularStage"  → 200 ok:false   status=not_mounted
     project=""              → 200 ok:false   status=no_project_tag
 
-부활 조건과 철거 실측은 `#320` 노트에 있다.
+철거 당시의 근거는 `#320`, 부활 구현과 실증은 `#401`·`#405` 및 리포트 63에 있다.
 
 ### 5 · 요청자 에디터 — Unreal MCP (UE5 프로젝트만)
 
@@ -330,6 +333,7 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.work.handover apply  <프로젝
 ```bash
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트>   # 서버 9단계 + 3대
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check <프로젝트>       # 배달본 해시 대조
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update                  # 기존 등록 전체를 현재 HEAD로
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.ontology status               # 도메인·stale 판정
 ```
 

@@ -318,8 +318,9 @@ journalctl -u ax-indexer -n 30 --no-pager              # push → 트윈 성장 
 .venv/bin/python -m master.work.integrate plan|run     # 통합 (조각별 빌드 → 커밋 → durable push)
 .venv/bin/python -m master.work.cleanup plan|apply     # 찌꺼기 (plan 은 안 지움 · verified·cancelled 만)
 .venv/bin/python -m master.work.cleanup remote --apply # 병합 확인된 원격 attempt/task 삭제 (#219)
-AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client probe|plan|deliver|check
-                                                       # 배달 — check 가 스킬·payload·작업장 자산 31개를 해시로 잰다
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client probe|plan|deliver|check <프로젝트>
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update
+                                                       # 레지스트리 전체 배달→대조; 프로젝트를 다시 고르지 않는다
 .venv/bin/python -m master.ontology plan|dry|refresh   # 이 순서로
 .venv/bin/python -m master.ontology log-candidates     # 태깅 권장 리포트 (#169, LLM 0)
 ```
