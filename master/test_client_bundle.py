@@ -847,6 +847,18 @@ def test_workshop_assets_have_a_project_axis() -> None:
                         7개 헥스 타일·`FMissionTaskInfo[]` → **NS 에 없는 것을 사실로 서술**
 
     하나만 옮겼다. **부류를 가르지 않고 전부 옮기면** 공통 자산이 프로젝트마다 갈린다.
+
+    🔴 [중요] **2026-09-20 에 하나가 더 나왔다 — `rules/session-management.md`.** 그때는
+    `#292` 가 `rules/` 를 「프로젝트 언급」으로만 훑어서 안 걸렸다. 이 문서는 ModularStage 를
+    이름으로 부르지 않고 **전제로** 깐다:
+
+        "how Claude should implement session lifecycle … for **this Listen Server project**.
+         The architecture assumes a private gathering platform where clients are trusted."
+
+    NS 는 Third Person 템플릿 기반이라 그 전제가 **거짓**이다. 같은 세션에서 나온 더 큰
+    건(정본 `.claude/CLAUDE.md` 의 머리 175줄이 통째로 ModularStage 문서였던 것)과 **같은
+    부류**이고, 사용자 결정으로 함께 갈랐다.
+    [주의] 그래서 판정 기준은 「이름을 부르나」가 아니라 **「다른 프로젝트에서 거짓이 되나」**다.
     """
     print("\n[자산] 프로젝트 고유만 갈라 보낸다 (#292)")
     ms = bundle.workshop_files("requester", "ModularStage")
@@ -859,7 +871,8 @@ def test_workshop_assets_have_a_project_axis() -> None:
     ms_rels, ns_rels = {r for r, _ in ms}, {r for r, _ in ns}
     own = ms_rels - ns_rels
     check("[중요] MS 전용 규칙은 MS 에만 간다",
-          own == {".claude/rules/mission-editor-mcp.md"}, str(own))
+          own == {".claude/rules/mission-editor-mcp.md",
+                  ".claude/rules/session-management.md"}, str(own))
     check("[중요] NS 는 그것을 받지 않는다 (없는 클래스를 사실로 서술하는 문서)",
           not any("mission-editor" in r for r in ns_rels), str(sorted(ns_rels)[:3]))
     check("공통은 둘 다 받는다", len(ns_rels) >= 20 and ns_rels < ms_rels,

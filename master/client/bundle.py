@@ -1425,7 +1425,68 @@ def with_newlines(text: str, *, windows: bool) -> str:
     return flat.replace("\n", "\r\n") if windows else flat
 
 
-def merge_workshop_md(existing: str, role: str) -> str:
+def domain_map_section(project: str) -> str:
+    """AgentWatch 블록 끝에 끼우는 **동적 절** — 이 프로젝트의 도메인 맵 (원전 이식).
+
+    🔴 [중요] **이건 원전에 있던 조각인데 이식 때 빠졌다.** 원전은
+    `watcher/setup.py:480~521` 이 프로젝트의 도메인 문서를 훑어 표를 **만들고**,
+    `:534` 가 `PROJECT_CLAUDE_MD_SECTION.replace(END, dynamic_section + END)` 로 끼운다.
+    우리는 생성기를 안 가져오고 **ModularStage 로 렌더된 표를 정적 템플릿에 박았다.**
+
+    그래서 모든 프로젝트의 요청자가 **남의 도메인 맵을 자기 것으로** 읽었다 —
+    실측 2026-09-20 `.33`: NS 세션이 `AlphaCoreGameFramework`·`ProjectAlpha_UiViewManagement`
+    를 자기 도메인으로 읽는 동안 `list_domains()` 는 **빈 목록**을 돌려줬다. 두 사실이
+    한 세션 안에서 정면으로 어긋났고, 사람이 그것을 「서버 초기화 문제」로 의심했다.
+
+    [중요] **도메인이 없으면 빈 문자열이다** — 원전도 `if not entries: return ""` 다.
+    빈 표를 내보내는 게 아니라 **절 자체를 안 만든다.** NS 가 지금 그 경우다.
+
+    [주의] **컬럼은 원전을 베끼지 않았다.** 원전은 컨텍스트 도메인 `.md` frontmatter 의
+    `tags` 를 실었지만 우리 정본은 `ontology/domains/<D>/domain.yaml` 이고 **거기엔 tags 가
+    없다.** 없는 것을 지어내느니 우리가 가진 것(tier·층 분포·객체 수)을 싣는다.
+    """
+    # [주의] 지연 임포트 — 배달 경로는 여태 yaml 도 레지스트리 경로도 필요로 하지 않았다.
+    import yaml                                             # noqa: PLC0415
+    from ..projects.config import projects_root             # noqa: PLC0415
+
+    droot = projects_root() / project / "ontology" / "domains"
+    if not droot.is_dir():
+        return ""
+    rows = []
+    for d in sorted(x for x in droot.iterdir() if x.is_dir()):
+        meta = d / "domain.yaml"
+        if not meta.is_file():
+            continue
+        try:
+            got = yaml.safe_load(meta.read_text(encoding="utf-8")) or {}
+        except Exception:                                   # noqa: BLE001
+            continue                                        # 깨진 한 건이 표 전체를 막지 않는다
+        if not isinstance(got, dict):
+            continue
+        counts = got.get("layer_counts") or {}
+        layers = " · ".join(f"{k} {v}" for k, v in sorted(counts.items()) if v) or "—"
+        summary = " ".join(str(got.get("summary") or "").split())[:80]
+        rows.append(f"| {got.get('domain') or d.name} | {got.get('tier', '—')} | "
+                    f"{layers} | {len(got.get('objects') or [])}개 | {summary} |")
+    if not rows:
+        return ""                                           # 원전과 같다 — 절을 안 만든다
+    return (
+        "\n### 도메인 맵 (자동 생성 — 이 프로젝트의 온톨로지)\n\n"
+        "| 도메인 | tier | 층 | 객체 | 개요 |\n"
+        "|--------|------|----|------|------|\n"
+        + "\n".join(rows)
+        + "\n\n"
+        "[주의] **이 표는 배달 시점의 스냅샷이다** — 확정은 `mcp__ax-client__list_domains()` 다.\n\n"
+        "**기능 추가/변경 요청 시 워크플로우:**\n"
+        "1. `mcp__ax-client__find_recipes` + `mcp__ax-client__get_anti_patterns` — "
+        "작업 단위 가이드·회피 카탈로그 먼저\n"
+        "2. `mcp__ax-client__search_context` — 관련 도메인 문서 검색 "
+        "(도메인은 **시스템 수준 큰 그림**만 담당)\n"
+        "3. `source_documents` 목록의 실제 코드를 읽고 작업 시작\n"
+    )
+
+
+def merge_workshop_md(existing: str, role: str, project: str = "") -> str:
     """`.claude/CLAUDE.md` — **마커 블록만** 정본으로 갈아끼운다.
 
     원전 `project_claude_md.py` 가 쓰던 `AgentWatch:Start/End` 마커를 그대로 쓴다.
@@ -1440,6 +1501,12 @@ def merge_workshop_md(existing: str, role: str) -> str:
     canon = workshop_text(src)
     if WS_BEGIN not in canon or WS_END not in canon:
         raise BundleError(f"정본 {WORKSHOP_MD_REL} 에 관리 마커가 없다 — 배달 대상이 아니다")
+    # [중요] **동적 절을 End 마커 직전에 끼운다** — 원전 `setup.py:534` 와 같은 방식이다.
+    #    `project` 를 안 주면(순수 유닛) 정적 정본 그대로다.
+    if project:
+        dyn = domain_map_section(project)
+        if dyn:
+            canon = canon.replace(WS_END, dyn + WS_END, 1)
     block = canon[canon.index(WS_BEGIN):canon.index(WS_END) + len(WS_END)]
     if not (existing or "").strip():
         return canon
@@ -1627,7 +1694,7 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
         # [주의] `.claude/CLAUDE.md` 는 **마커 블록만** — 사람이 쓴 나머지를 날리지 않는다.
         prev_ws = _remote_read(facts, (f"{facts.path}\.claude\CLAUDE.md" if facts.windows
                                        else f"{facts.path}/.claude/CLAUDE.md"))
-        merged_ws = merge_workshop_md(prev_ws, facts.role)
+        merged_ws = merge_workshop_md(prev_ws, facts.role, project)
         if merged_ws:
             # [중요] 개행 통일 — 병합이 섞기 때문이다 (`with_newlines` 독스트링 참조)
             written["workshop_md"] = _remote_write(

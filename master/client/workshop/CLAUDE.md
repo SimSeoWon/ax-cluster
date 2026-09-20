@@ -1,179 +1,18 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
----
-
-## Project Overview
-
-This project is a multiplayer game built on **Unreal Engine 5** using a **Listen Server** network architecture.
-In a listen server setup, the host machine acts as both server and client simultaneously.
-All gameplay logic must account for this dual-role context.
-
----
-
-## Gameplay Framework & Architecture
-
-The codebase strictly follows the Unreal Engine native Gameplay Framework.
-Full details: `.claude/rules/unreal-architecture.md`
-
-| Class | Role |
-|---|---|
-| `AGameModeBase` | Server-only game rules, match state, and authoritative logic. Never replicated. |
-| `AGameStateBase` | Replicated game state shared across all clients, including the host. |
-| `APlayerState` | Per-player replicated data (score, ping, custom stats). Do **not** store per-player state in `PlayerController` or `Pawn`. |
-| `APlayerController` | Input handling, HUD management, and client-to-server RPC entry points. |
-| `APawn` / `ACharacter` | Visual representation and movement. Delegate complex logic to components. |
-| `UActorComponent` | Encapsulate reusable business logic. Required for any logic that needs network replication. |
-
-### Subsystems (No Singletons)
-
-Do **not** create custom Singleton classes. Use Unreal's Subsystem framework instead.
-
-| Subsystem | Use Case |
-|---|---|
-| `UGameInstanceSubsystem` | Persists across entire app lifecycle (e.g., UserProfileService, session management) |
-| `UWorldSubsystem` | Tied to a specific level (e.g., MatchmakingService, EnvironmentManager) |
-| `ULocalPlayerSubsystem` | Local player-specific data (e.g., LocalInputSettings, UIState) |
-
-> **Rule:** Subsystems cannot replicate. Do **not** add RPCs or `Replicated` properties to subsystems.
-
-### Data & Decoupling
-
-- Static game data (item stats, configs) → `UDataTable` or custom `UPrimaryDataAsset`
-- Do **not** hardcode magic numbers or strings in C++. Expose via `UPROPERTY(EditDefaultsOnly)`.
-- Cross-class communication without tight coupling → `UINTERFACE`
-- Blueprint-bindable events → `DECLARE_DYNAMIC_MULTICAST_DELEGATE` (e.g., `OnHealthChanged`)
-
----
-
-## Listen Server — Special Considerations
-
-Because the host is simultaneously a server and a client, the following rules are critical.
-
-### Host Dual-Role Awareness
-- The host's `APlayerController` runs in **both** server and client contexts.
-- Use `IsLocalController()` to gate UI/HUD logic.
-- Use `HasAuthority()` to gate gameplay state mutations.
-- Do **not** conflate the two — they serve different purposes.
-
-### RPC Behavior on the Host
-- `Client_` RPCs targeting the host execute **immediately** (no network round-trip).
-- `Server_` RPCs called from the host execute directly without serialization overhead.
-- Avoid redundant state updates triggered by both direct logic and RPC on the host.
-
-### Session Management
-- Session lifecycle (`CreateSession`, `FindSessions`, `JoinSession`, `DestroySession`) must be managed in a dedicated `UGameInstanceSubsystem`.
-- Do **not** handle session logic inside `AGameModeBase` or `APlayerController` directly.
-- When the host player leaves, the session must be explicitly destroyed.
-
-### Host Migration
-- Configure `bUseSeamlessTravel` explicitly.
-- If host migration is unsupported, ensure clients receive a clean disconnect notice when the host exits.
-- Document the host-migration policy in `.claude/rules/session-management.md`.
-
----
-
-## Networking & Replication
-
-- All gameplay state mutations must guard with `HasAuthority()`
-- RPC naming conventions (see `.claude/rules/code-style.md`):
-
-| Prefix | Direction | Execution |
-|---|---|---|
-| `Server_` | Client → Server | Server only |
-| `Client_` | Server → Client | Owning client only |
-| `Multicast_` | Server → All | Server + all clients |
-| `OnRep_` | — | RepNotify callback on clients |
-
-- Server RPCs handling critical game state or client input **must** include `WithValidation` in the `UFUNCTION` macro.
-- Variables requiring replication must be explicitly marked with `UPROPERTY(Replicated)` or `UPROPERTY(ReplicatedUsing=OnRep_FunctionName)` and registered in `GetLifetimeReplicatedProps`.
-- Replicated subobject components must call `SetIsReplicatedByDefault(true)` in their constructor.
-- Set `NetUpdateFrequency` and `MinNetUpdateFrequency` explicitly on performance-sensitive Actors. Do **not** rely on defaults.
-- Group high-frequency replicated variables into a dedicated `UActorComponent` for fine-grained frequency control.
-
----
-
-## Asset Loading
-
-Full details: `.claude/rules/async-loading.md`
-
-- Use `TSoftObjectPtr<T>` for asset instances (textures, meshes, sound cues).
-- Use `TSoftClassPtr<T>` for Blueprint classes to be spawned.
-- Do **not** use hard pointers (`T*` or `TObjectPtr<T>`) in `UPROPERTY` for heavy assets unless strictly required.
-- Do **not** use `LoadObject<T>()`, `LoadClass<T>()`, or `ConstructorHelpers::FObjectFinder` during gameplay.
-- Always load via `UAssetManager::GetStreamableManager().RequestAsyncLoad()`.
-- Callback safety: validate the requesting object with `TWeakObjectPtr` or `IsValid()` before using the loaded asset.
-- Call `SpawnActor` / `NewObject` **only after** the async load callback confirms the asset is fully loaded, and always on the **GameThread**.
-- Cache frequently reused assets (UI widgets, common VFX) in `UGameInstanceSubsystem` or `UWorldSubsystem`.
-
----
-
-## Pointers & Memory Management
-
-Full details: `.claude/rules/code-style.md`
-
-- Use `TObjectPtr<T>` instead of raw `T*` for all `UPROPERTY` object references in header files.
-  - ✅ `UPROPERTY() TObjectPtr<AActor> TargetActor;`
-  - Raw pointers are acceptable for local variables inside function bodies.
-- Always check `IsValid(Object)` instead of `Object != nullptr`, especially before broadcasting delegates or calling RPCs.
-- Any class-level UObject reference must be marked with `UPROPERTY()` to prevent accidental garbage collection.
-
----
-
-## Casting & Type Checking
-
-- Use `Cast<T>(Object)` and check the result directly with a `nullptr` check only.
-  - ✅ `if (UMyComponent* Comp = Cast<UMyComponent>(Actor)) { ... }`
-  - ❌ `if (Actor->IsA(...)) { Cast<...>(Actor)->... }` — never double-check with `IsA()`
-
----
-
-## Include Style (IWYU)
-
-- Keep header includes to an absolute minimum.
-- Use forward declarations (`class UMyComponent;`) in `.h` files whenever possible.
-- Include specific headers in `.cpp` files only.
-
----
-
-## Code Rules Summary
-
-- **All comments must be in Korean** (system purpose, important logic, networking behavior)
-- Do not build monolithic Actors — delegate complex state and behavior to `UActorComponent`
-- `FTimerHandle` must be a **member variable**, never a local variable inside a function
-- Replicated components must be created in the constructor via `CreateDefaultSubobject` — never `NewObject` in `BeginPlay`
-- `APlayerState` is the correct location for per-player replicated data
-
----
-
-## Class Prefix Reference
-
-| Prefix | Meaning |
-|---|---|
-| `A` | Actor |
-| `U` | UObject / Component / Subsystem |
-| `F` | Struct |
-| `E` | Enum |
-| `I` | Interface |
-
----
-
-## Rule Files Reference
-
-| File | Covers |
-|---|---|
-| `.claude/rules/unreal-architecture.md` | Subsystems, components, data assets, delegates |
-| `.claude/rules/code-style.md` | Pointers, casting, RPC naming, IWYU |
-| `.claude/rules/async-loading.md` | Soft references, async streaming, caching |
-| `.claude/rules/session-management.md` | Listen server session lifecycle, host migration policy |
-
-[주의] **프로젝트 고유 규칙은 이 표에 없다** (`#292`) — `master/client/workshop_by_project/<프로젝트>/`
-에 있고 그 프로젝트에만 배달된다. **실제로 무엇을 받았는지는 AX 관리 블록의 실측 목록**을 본다.
-(전수 실측 2026-08-24: `rules/mission-editor-mcp.md` 가 `AMissionPrefab`·헥스 타일 구조를 사실로
-서술해 NS 에 가면 거짓이었다. 나머지 자산의 프로젝트 언급 5건은 **발화 예시**라 그대로 둔다.)
-
 <!-- AgentWatch:Start -->
+<!-- 🔴 [중요] **이 파일은 AX 배달물이고, 담는 것은 이 블록뿐이다.**
+
+     프로젝트 서술(무슨 게임인가·아키텍처·코딩 규약)은 **그 프로젝트의 `<체크아웃>/CLAUDE.md`**
+     가 담는다 — `/init` 이 만들고 사람이 채우며, 배달은 거기에 기계별 AX 블록만 얹는다.
+
+     [주의] **종전에는 이 파일이 프로젝트 문서 전체였다** (2026-09-20 에 걷어냈다). 정본에
+     ModularStage 의 머리 175줄(`Project Overview` · `Listen Server — Special Considerations`
+     · `Networking & Replication` …)이 붙어 있었고, `merge_workshop_md` 가 *"원격이 비었으면
+     정본을 그대로 놓는다"* 라서 **새 프로젝트는 예외 없이 남의 프로젝트 설명을 받았다.**
+     실측: `.33` 의 `NS` 와 `ModularStage` 의 이 파일이 **해시까지 같았다**(F815917012D9CD33)
+     — NS 는 Third Person 템플릿 기반인데 첫 문단이 *"multiplayer … Listen Server"* 였다.
+
+     원전도 이 모양이다 — `watcher/setup.py _merge_claude_md_section` 은 파일이 없을 때도
+     **section 만** 만든다. 머리를 배달한 적이 없다. -->
 ## AgentWatch — 자동화 컨텍스트 시스템
 
 Git 커밋 감지 → RAG 컨텍스트 자동 갱신 → 다중 에이전트 분석이 자동으로 동작합니다.
@@ -557,20 +396,18 @@ user_quote: |
 **라이선스**: SQLite Public Domain, jq MIT (`.claude/tools/LICENSES/` 에 사본). 외부 네트워크 호출 없음, 운영 데이터는 PC 내부에서만 분석.
 
 
-### 도메인 맵 (자동 생성)
 
-| 도메인 | 개요 | 태그 | 소스 |
-|--------|------|------|------|
-| AlphaCoreGameFramework | 프로젝트 알파의 핵심 게임 프레임워크는 단일 메인 모듈(`Project_Alpha`) 내에서 언리얼 엔진의 다양한 시스템(네트워크, UI, AI | Build, ModuleRules, UBT, IncludePath, Dependencies, asset-loading, character, dialog, event, skeletal-mesh, async, animation | 2개 |
-| GlobalEventSystem | 전역 이벤트 시스템은 언리얼 엔진 환경에서 모듈 간의 결합도를 최소화하기 위해 설계된 인터페이스 기반의 메시지 디스패처입니다. `UGlobalE | GlobalEventSystem, Interface, Mission, EventListener, UE5, global-event, event-dispatcher, interface, decoupling, listener-map | 2개 |
-| MissionEditor | `AMissionPrefab` CDO 의 `TaskList`(`FMissionTaskInfo[]`)를 에디터 위젯으로 시각·편집·직렬화하는 시스 | mission-editor, editor-utility-widget, task-list, instanced-struct, prefab-cdo, blutility, mission-task-data, list-view | 8개 |
-| MissionRuntime | 본 시스템은 언리얼 엔진 환경에서 미션의 생명주기와 실행 로직을 관리하는 계층형 프레임워크입니다. `UMissionTaskExecutor`를 중 | MissionSystem, PhaseB, TaskSystem, mission-task, multi-task, composite, executor, state-machine, TaskExecutor, Client-Side, Component, Mission, Sync, state-synchronization, mission | 5개 |
-| MissionSystemTools | 미션 및 시스템 관리 도구는 언리얼 엔진의 에디터 유틸리티 위젯(EUW)을 활용하여 인게임 태스크와 미션 데이터를 시각적으로 편집할 수 있는 환 | UI, dialog, manager, singleton, table-driven, speech-bubble, sequential-playback, 에디터, 미션, 태스크, 위젯, SpawnObject, logging, json, debug | 4개 |
-| ProjectAlpha_UiViewManagement | Project_Alpha의 UI 시스템은 `WNDUIViewManager`와 `WNDUIViewLayer`를 중심으로 뷰의 생명주기와 계층(La | UI, Project_Alpha, Dialog, Page, Popup, Widget, ProjectAlpha, Manager, ViewManagement, UMG, Lobby, BaseClass, UE5, Quest, SubQuest | 20개 |
-| UiManagement | UI 관리 시스템은 CommonUI 프레임워크를 기반으로 게임 인스턴스 단위의 로컬 화면 레이아웃과 위젯의 동적 활성화를 제어하는 중앙 집중형  | UI, Subsystem, GameInstance, Manager, ModularStage, CommonUI, gameplay-tags, ui-layer, native-tags, commonui, layer-key | 2개 |
+## Rule Files Reference
 
-**기능 추가/변경 요청 시 워크플로우:**
-1. `mcp__code-recipes__find_recipes` + `mcp__code-recipes__get_anti_patterns` 로 작업 단위 가이드·회피 카탈로그 먼저 조회
-2. `combined_search`로 관련 도메인 문서 검색 — 도메인은 **시스템 수준 큰 그림** 만 담당 (시스템 개요·핵심 구현 패턴·확장 포인트)
-3. `source_documents` 목록의 실제 코드를 읽고 작업 시작
+| File | Covers |
+|---|---|
+| `.claude/rules/unreal-architecture.md` | Subsystems, components, data assets, delegates |
+| `.claude/rules/code-style.md` | Pointers, casting, RPC naming, IWYU |
+| `.claude/rules/async-loading.md` | Soft references, async streaming, caching |
+
+[주의] **프로젝트 고유 규칙은 이 표에 없다** (`#292`) — `master/client/workshop_by_project/<프로젝트>/`
+에 있고 그 프로젝트에만 배달된다. **실제로 무엇을 받았는지는 AX 관리 블록의 실측 목록**을 본다.
+(전수 실측 2026-08-24: `rules/mission-editor-mcp.md` 가 `AMissionPrefab`·헥스 타일 구조를 사실로
+서술해 NS 에 가면 거짓이었다. 나머지 자산의 프로젝트 언급 5건은 **발화 예시**라 그대로 둔다.)
+
 <!-- AgentWatch:End -->
