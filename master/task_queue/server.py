@@ -29,6 +29,7 @@ from .models import (
     AdminResetReq,
     WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq,
     RedmineIssueReq, RedmineLinkCommitReq, RedmineVersionReq,
+    RedmineVersionPatchReq,
     WriterSignalReq, HistoryReq, AliasReq, NotAClassReq, RecipeSearchReq, \
     HistorySearchReq, FixStatusReq
 )
@@ -543,6 +544,28 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         #    (사용자 요구: 작업마다 로그). `existing` 은 실패가 아니라 **중복 방지**다.
         _tq_log(f"[redmine] 마일스톤 생성 project={target} name={req.name!r} "
                 f"due={req.due_date or '-'} → {r}", root)
+        return r
+
+    @app.patch("/api/v1/redmine/version")
+    def redmine_update_version_ep(req: RedmineVersionPatchReq):
+        """마일스톤(버전) 수정 — 이름·설명·마감일 (`#652` 후속, 사용자 요청 2026-09-20).
+
+        🔴 [중요] **`PATCH` 인 것이 의도다.** 스코프 판정은 `(METHOD, 접두어)` 라
+        `POST /api/v1/redmine/version/...` 같은 하위 경로를 만들면 기존 POST 스코프가
+        **조용히 딸려 온다.** 메서드를 나누면 스코프를 새로 고르지 않고는 열 수 없다.
+        [주의] 생성과 같이 **폴백하지 않는다** — 태그가 없으면 거부한다.
+        """
+        from ..redmine import project_of, update_version
+        target = project_of(req.project or "")
+        if not target:
+            return {"error": f"`{req.project or '(태그 없음)'}` 의 config.yaml 에 "
+                             "`redmine.project` 가 없다 — 폴백하지 않는다"}
+        r = update_version(req.name, project=target, new_name=req.new_name,
+                           description=req.description, due_date=req.due_date,
+                           status=req.status)
+        # [중요] **무엇을 바꿨는지 찍는다** — 이름 변경은 되돌릴 근거가 로그밖에 없다
+        #    (레드마인 버전에는 이슈 같은 변경 이력이 없다).
+        _tq_log(f"[redmine] 마일스톤 수정 project={target} name={req.name!r} → {r}", root)
         return r
 
     @app.post("/api/v1/redmine/link-commit")

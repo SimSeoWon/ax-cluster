@@ -81,6 +81,9 @@ def fake_api(calls, works=None, work=None):
         if path == "/api/v1/redmine/issue":
             return {"id": 999}
         if path == "/api/v1/redmine/version":
+            if method == "PATCH":
+                return {"id": 88, "name": payload.get("new_name") or payload["name"],
+                        "changed": ["name"]}
             return {"id": 88, "name": payload["name"], "existing": False}
         if path == "/api/v1/redmine/link-commit":
             return {"ok": True, "result": "레드마인 #%s 갱신 (notes)" % payload["issue_id"],
@@ -166,6 +169,10 @@ def test_redmine_delegation_goes_to_queue():
             # 🔴 `#652` — 마일스톤 생성. 이 도구가 없어서 관리가 통째로 멈춰 있었다
             ("redmine_create_version", {"name": "마일스톤 2 — 전투"},
              "/api/v1/redmine/version"),
+            # 🔴 `#652` 후속 — 마일스톤 수정. **PATCH 다**(스코프가 접두어 매칭이라
+            #    POST 하위 경로를 만들면 기존 스코프가 조용히 딸려 온다)
+            ("redmine_update_version", {"name": "마일스톤 1", "new_name": "마일스톤 1 — 전투"},
+             "/api/v1/redmine/version"),
             ("redmine_link_commit", {"issue_id": 226, "commit_hash": "abc1234"},
              "/api/v1/redmine/link-commit")):
         r = M.handle_message({"jsonrpc": "2.0", "id": 90, "method": "tools/call",
@@ -177,15 +184,21 @@ def test_redmine_delegation_goes_to_queue():
     # 🔴 `#652` — 마일스톤도 같다: 어느 프로젝트에 만드는지는 **체크아웃의 태그**가 정한다.
     #    고를 수 있게 하면 `.33` 이 남의 프로젝트에 마일스톤을 만들 수 있다.
     check("🔴 마일스톤 생성도 프로젝트를 인자로 받지 않는다",
-          "project" not in (calls[-2][2] or {}), str(calls[-2]))
+          "project" not in (calls[-3][2] or {}), str(calls[-3]))
     check("  상태 기본값은 open 이다 (만들자마자 잠그지 않는다)",
-          (calls[-2][2] or {}).get("status") == "open", str(calls[-2]))
+          (calls[-3][2] or {}).get("status") == "open", str(calls[-3]))
+    # 🔴 수정은 **PATCH** 여야 한다 — 메서드가 곧 스코프 경계다
+    check("🔴 마일스톤 수정은 PATCH 로 나간다", calls[-2][0] == "PATCH", str(calls[-2]))
+    check("  안 준 필드는 본문에 없다 (status 를 지어내지 않는다)",
+          "status" not in (calls[-2][2] or {}), str(calls[-2]))
     check("커밋 연결 본문은 해시를 그대로 싣는다", calls[-1][2]["commit_hash"] == "abc1234")
 
     # 빈 인자는 호출 전에 막는다 — 조용히 전체를 긁어 오거나 제목 없는 이슈를 만들지 않는다
     for name, args in (("redmine_get_issue", {}),
                        ("redmine_create_issue", {"subject": "  "}),
                        ("redmine_create_version", {"name": "  "}),
+                       ("redmine_update_version", {"name": "  "}),
+                       ("redmine_update_version", {"name": "마일스톤 1"}),
                        ("redmine_link_commit", {"issue_id": 1, "commit_hash": ""})):
         r = M.handle_message({"jsonrpc": "2.0", "id": 91, "method": "tools/call",
                               "params": {"name": name, "arguments": args}}, api=api)

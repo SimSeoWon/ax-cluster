@@ -265,6 +265,28 @@ class RedmineVersionReq(BaseModel):
     status: str = "open"
 
 
+class RedmineVersionPatchReq(BaseModel):
+    """마일스톤(버전) **수정** 대행 (`#652` 후속, 사용자 요청 2026-09-20).
+
+    [중요] **대상은 `name` 으로 고르고 정확 일치다** — id 를 쓰지 않는 이유는 요청자가
+    보는 것이 `redmine_meta` 의 **이름 목록**이기 때문이고, 부분 일치를 안 쓰는 이유는
+    이름을 바꾸는 자리라서다(「마일스톤 1」을 고치려다 「마일스톤 10」을 고친다).
+
+    [주의] `description`·`due_date` 는 **`None` 이면 안 바꾸고 `""` 이면 비운다.** 그래서
+    `Optional[str]` 이고 기본이 `None` 이다 — 빈 문자열을 「안 바꿈」으로 접으면 지울
+    방법이 없어진다.
+    """
+    # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
+    #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
+    project: str = ""
+    name: str                          # 지금 이름 (정확 일치)
+    new_name: str = ""                 # 빈 값이면 이름은 안 바꾼다
+    description: Optional[str] = None
+    due_date: Optional[str] = None
+    # [주의] 기본은 안 바꿈이다 — 잠그기·닫기는 사람의 결정이라 명시해야만 움직인다
+    status: str = ""
+
+
 class RedmineLinkCommitReq(BaseModel):
     """커밋 해시 연결 (#226 — 원전과 같은 노트 문구 형식을 서버가 만든다)."""
     # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은

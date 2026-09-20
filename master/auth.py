@@ -184,6 +184,10 @@ REQUESTER_SCOPE: tuple = (
     #    길이 「사람이 웹 UI 를 연다」였고, 그래서 `ns` 는 이슈 24건 전부가 무버전이었다.
     #    [주의] 여는 것은 **생성뿐**이다 — 잠그기·닫기는 사람의 결정이라 웹 UI 에 남긴다.
     ("POST", "/api/v1/redmine/version"),
+    # 🔴 **마일스톤 수정** (사용자 요청 2026-09-20) — 이름·설명·마감일. [중요] 메서드를
+    #    나눈 것이 의도다: 이 표는 **접두어**로 맞추므로 POST 아래 하위 경로를 만들면
+    #    위 줄이 조용히 그것까지 연다. PATCH 는 여기 한 줄을 더해야만 열린다.
+    ("PATCH", "/api/v1/redmine/version"),
     ("POST", "/api/v1/redmine/link-commit"),
     ("POST", "/api/v1/signals"),
     ("POST", "/api/v1/history"),

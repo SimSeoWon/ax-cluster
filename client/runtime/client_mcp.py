@@ -450,6 +450,36 @@ def tool_redmine_create_version(api, name: str, *, due_date: str = "",
     return api("POST", "/api/v1/redmine/version", payload)
 
 
+def tool_redmine_update_version(api, name: str, *, new_name: str = "",
+                                description=None, due_date=None,
+                                status: str = "") -> dict:
+    """마일스톤(버전)의 **이름·설명·마감일**을 고친다 (`#652` 후속, 사용자 요청 2026-09-20).
+
+    [중요] **대상은 지금 이름으로 고르고, 정확히 일치해야 한다.** 부분 일치를 허용하면
+    「마일스톤 1」을 고치려다 「마일스톤 10」을 고친다 — 잘못 붙은 마일스톤은 떼면 되지만
+    **잘못 바뀐 이름은 무엇이었는지 아무도 모른다.** 못 찾으면 있는 이름을 같이 준다.
+
+    [주의] `description`·`due_date` 는 **안 주면 안 바뀌고, 빈 문자열을 주면 비운다.**
+    [주의] `status` 는 안 주면 안 바뀐다 — 마일스톤을 잠그거나 닫는 것은 사람의 결정이다.
+    """
+    nm = (name or "").strip()
+    if not nm:
+        raise ClientError("name 이 비었다 — 어느 마일스톤을 고칠지 말해야 한다")
+    payload: dict = {"name": nm}
+    if (new_name or "").strip():
+        payload["new_name"] = new_name.strip()
+    if description is not None:
+        payload["description"] = description
+    if due_date is not None:
+        payload["due_date"] = due_date
+    if status:
+        payload["status"] = status
+    if len(payload) == 1:
+        raise ClientError("바꿀 것이 없다 — new_name·description·due_date·status 중 "
+                          "하나는 줘야 한다")
+    return api("PATCH", "/api/v1/redmine/version", payload)
+
+
 def tool_redmine_link_commit(api, issue_id, commit_hash: str, message: str = "") -> dict:
     if not (commit_hash or "").strip():
         raise ClientError("commit_hash 가 비었다")
@@ -1041,6 +1071,24 @@ TOOLS = [
                                                       "description": "마일스톤 이름 (부분 일치 허용)"},
                                     "parent_issue_id": {"type": "integer",
                                                         "description": "부모 이슈 번호 — 소분류를 낼 때"}}}},
+    {"name": "redmine_update_version",
+     "description": "마일스톤(레드마인 버전)의 이름·설명·마감일을 고친다 (마스터 경유). "
+                    "대상은 **지금 이름**으로 고르고 **정확히 일치해야 한다** — 부분 일치를 "
+                    "허용하면 「마일스톤 1」을 고치려다 「마일스톤 10」을 고친다. "
+                    "redmine_meta 로 정확한 이름을 먼저 확인하라. "
+                    "[주의] description·due_date 는 안 주면 안 바뀌고, 빈 문자열이면 비운다. "
+                    "status 도 안 주면 안 바뀐다 — 잠그기·닫기는 사람의 결정이다.",
+     "inputSchema": {"type": "object", "required": ["name"],
+                     "properties": {"name": {"type": "string",
+                                             "description": "지금 이름 (정확 일치)"},
+                                    "new_name": {"type": "string",
+                                                 "description": "새 이름. 생략하면 안 바꾼다"},
+                                    "description": {"type": "string",
+                                                    "description": "설명 (최대 255자). 빈 문자열이면 비운다"},
+                                    "due_date": {"type": "string",
+                                                 "description": "`YYYY-MM-DD`. 빈 문자열이면 비운다"},
+                                    "status": {"type": "string",
+                                               "description": "open · locked · closed. 생략하면 안 바꾼다"}}}},
     {"name": "redmine_link_commit",
      "description": "커밋 해시를 이슈에 노트로 연결한다 (원전과 같은 「커밋 연결: `<해시>`」 형식 — "
                     "형식이 같아야 이력을 한 규칙으로 훑을 수 있다).",
@@ -1247,7 +1295,7 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
     if name in ("list_works", "get_work", "redmine_note", "log_writer_signal", "log_history",
                 "add_object_alias", "mark_not_a_class", "redmine_list_issues",
                 "redmine_get_issue", "redmine_meta", "redmine_create_issue",
-                "redmine_create_version", "redmine_link_commit",
+                "redmine_create_version", "redmine_update_version", "redmine_link_commit",
                 # 레시피·안티패턴 읽기 — 큐 대행이므로 같은 자리다 (`#267`)
                 "find_recipes", "get_anti_patterns",
                 # history 읽기 (`#306`) — 쓰기(`log_history`)와 같은 대행 자리
@@ -1308,6 +1356,13 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                                              str(args.get("priority_name") or ""),
                                              str(args.get("fixed_version") or ""),
                                              args.get("parent_issue_id"))
+        if name == "redmine_update_version":
+            return tool_redmine_update_version(
+                a, str(args.get("name") or ""),
+                new_name=str(args.get("new_name") or ""),
+                description=args.get("description"),
+                due_date=args.get("due_date"),
+                status=str(args.get("status") or ""))
         if name == "redmine_link_commit":
             return tool_redmine_link_commit(a, args.get("issue_id"),
                                             str(args.get("commit_hash") or ""),

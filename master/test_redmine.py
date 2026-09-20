@@ -149,6 +149,9 @@ class VerSender(Sender):
         self.versions = versions
 
     def __call__(self, method, url, payload=None):
+        if "/versions/" in url and method == "PUT":
+            self.calls.append((method, url, payload))
+            return {}
         if "/versions.json" in url and method == "POST":
             # `#652` — 버전 생성. 실 Redmine 과 같은 모양으로 답한다
             self.calls.append((method, url, payload))
@@ -327,6 +330,70 @@ def test_meta_versions_follow_the_project():
     check("🔴 조회 경로가 그 프로젝트다", gets and "/projects/ns/versions.json" in gets[0], str(gets))
 
 
+# ── 🔴 마일스톤 수정 (`#652` 후속) — 이름을 바꾸는 자리라 판정이 더 엄하다 ──────────
+
+def _puts(sender):
+    return [(u, p) for m, u, p in sender.calls if m == "PUT"]
+
+
+def test_update_version_renames_by_exact_name():
+    s = VerSender(versions=("마일스톤 1 — 기본 전투 구조",))
+    out = RM.update_version("마일스톤 1 — 기본 전투 구조", project="ns",
+                            new_name="마일스톤 1 — 전투 토대", sender=s)
+    check("바뀐 것을 말한다", out.get("changed") and "name" in out["changed"][0], str(out))
+    check("새 이름을 돌려준다", out.get("name") == "마일스톤 1 — 전투 토대", str(out))
+    u, pay = _puts(s)[0]
+    check("[중요] 그 버전 id 로 PUT 한다", u.endswith("/versions/70.json"), u)
+    check("이름만 싣는다 (안 준 필드는 안 건드린다)",
+          pay["version"] == {"name": "마일스톤 1 — 전투 토대"}, str(pay))
+
+
+def test_update_version_refuses_partial_match():
+    """🔴 **이름을 바꾸는 자리에서 부분 일치는 안 된다** — 「마일스톤 1」로 「마일스톤 10」을
+    고치면 무엇이었는지 아무도 모른다. `resolve_version_id` 의 규칙을 여기 끌어오지 않는다."""
+    s = VerSender(versions=("마일스톤 10 — 나중",))
+    out = RM.update_version("마일스톤 1", project="ns", new_name="X", sender=s)
+    check("[중요] 부분 일치로 안 잡힌다", "없다" in out.get("error", ""), str(out))
+    check("  있는 이름을 알려 준다", out.get("available") == ["마일스톤 10 — 나중"], str(out))
+    check("🔴 PUT 이 안 나간다", not _puts(s), str(_puts(s)))
+
+
+def test_update_version_refuses_name_clash():
+    s = VerSender(versions=("A", "B"))
+    out = RM.update_version("A", project="ns", new_name="B", sender=s)
+    check("[중요] 이미 있는 이름으로 못 바꾼다", "이미 있다" in out.get("error", ""), str(out))
+    check("🔴 PUT 이 안 나간다", not _puts(s), str(_puts(s)))
+
+
+def test_update_version_none_keeps_empty_clears():
+    """[주의] **빈 문자열을 「안 바꿈」으로 접으면 지울 방법이 없어진다.**"""
+    s = VerSender(versions=("A",))
+    RM.update_version("A", project="ns", description="새 설명", sender=s)
+    check("설명을 준 대로 싣는다", _puts(s)[0][1]["version"] == {"description": "새 설명"},
+          str(_puts(s)[0][1]))
+    s2 = VerSender(versions=("A",))
+    RM.update_version("A", project="ns", due_date="", sender=s2)
+    check("[중요] 빈 문자열은 **비운다**(null)",
+          _puts(s2)[0][1]["version"] == {"due_date": None}, str(_puts(s2)[0][1]))
+    s3 = VerSender(versions=("A",))
+    out = RM.update_version("A", project="ns", sender=s3)
+    check("아무것도 안 주면 거절한다", "바꿀 것이 없다" in out.get("error", ""), str(out))
+    check("🔴 그때 PUT 이 안 나간다", not _puts(s3), str(_puts(s3)))
+
+
+def test_update_version_gates_are_the_same_as_create():
+    """[중요] 생성과 **같은 게이트**를 쓴다 — 두 벌로 쓰면 한쪽만 느슨해진다."""
+    s = VerSender(versions=("A",))
+    bad = RM.update_version("A", project="ns", due_date="2026/12/01", sender=s)
+    check("마감일 형식", "YYYY-MM-DD" in bad.get("error", ""), str(bad))
+    long = RM.update_version("A", project="ns", description="가" * (RM.DESCRIPTION_MAX + 1),
+                             sender=s)
+    check("설명 길이", "255" in long.get("error", ""), str(long))
+    st = RM.update_version("A", project="ns", status="열림", sender=s)
+    check("status 값", "open" in st.get("error", ""), str(st))
+    check("🔴 거절되면 PUT 이 0회다", not _puts(s), str(_puts(s)))
+
+
 def main() -> int:
     for fn in (test_updates_notes_only, test_status_name_resolved_dynamically,
                test_unknown_status_keeps_notes_and_says_so, test_default_status_names_are_ours,
@@ -344,7 +411,12 @@ def main() -> int:
                test_create_version_bad_input_is_loud,
                test_create_version_description_limit_is_measured,
                test_http_error_carries_redmine_reason,
-               test_meta_versions_follow_the_project):
+               test_meta_versions_follow_the_project,
+               test_update_version_renames_by_exact_name,
+               test_update_version_refuses_partial_match,
+               test_update_version_refuses_name_clash,
+               test_update_version_none_keeps_empty_clears,
+               test_update_version_gates_are_the_same_as_create):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_redmine: {PASS}/{total} 통과")

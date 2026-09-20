@@ -519,6 +519,88 @@ def create_version(name: str, *, project: str = PROJECT_ID, due_date: str = "",
     return {"id": int(new_id), "name": nm, "project": project, "existing": False}
 
 
+def update_version(name: str, *, project: str = PROJECT_ID, new_name: str = "",
+                   description=None, due_date=None, status: str = "",
+                   key: str = "", url: str = "", sender=None) -> dict:
+    """마일스톤(버전)의 이름·설명·마감일을 고친다. 반환: `{"id", "name", "changed"}` 또는 error.
+
+    🔴 [중요] **대상 해석은 `resolve_version_id` 를 쓰지 않는다 — 정확 일치다** (`#652`).
+    그쪽은 부분 일치를 허용하는데(사람이 「마일스톤 6」만 친다) 그것은 **읽기·부착**의 편의다.
+    이름을 **바꾸는** 자리에서 부분 일치를 허용하면 「마일스톤 1」을 고치려다 「마일스톤 10」을
+    고친다. 잘못 붙은 것은 떼면 되지만 **잘못 바뀐 이름은 무엇이었는지 아무도 모른다.**
+    같은 이유로 `create_version` 의 중복 판정도 정확 일치다.
+
+    [중요] **못 찾으면 있는 이름을 같이 준다** — 요청자는 `redmine_meta` 로 목록을 보지만,
+    거절 응답이 스스로 고칠 근거를 실어야 왕복이 준다(이 저장소의 거절 관례).
+
+    [주의] `description`·`due_date` 는 **`None` 이면 안 바꾸고 `""` 이면 비운다.** 빈 문자열을
+    「안 바꿈」으로 접으면 **지울 방법이 없어진다.**
+    [주의] `status` 는 받되 기본은 빈 값(안 바꿈)이다 — 마일스톤을 잠그거나 닫는 것은
+    사람의 결정이라 **호출자가 명시해야만** 움직인다.
+    """
+    cur = (name or "").strip()
+    if not cur:
+        return {"error": "고칠 마일스톤 이름이 비었다"}
+    base = (url or base_url()).rstrip("/")
+    k = key or api_key()
+    if sender is None and not k:
+        return {"error": "API 키가 없다 (`AX_REDMINE_API_KEY` 또는 컨테이너 DB, §10.1)"}
+    if not (project or "").strip():
+        return {"error": "project 가 비었다 — 버전은 프로젝트에 속한다"}
+
+    vs = list_versions(project=project, key=k, url=base, sender=sender)
+    target = next((v for v in vs if str(v.get("name", "")).strip() == cur), None)
+    if target is None:
+        names = [str(v.get("name", "")) for v in vs]
+        return {"error": f"`{project}` 에 마일스톤 `{cur}` 이 없다 (정확히 일치해야 한다)",
+                "available": names}
+
+    ver: dict = {}
+    changed = []
+    nn = (new_name or "").strip()
+    if nn and nn != cur:
+        # [중요] 같은 이름이 이미 있으면 **바꾸지 않는다** — 레드마인도 422 로 막지만,
+        #    여기서 먼저 말해야 호출자가 무엇과 부딪혔는지 안다.
+        clash = next((v for v in vs if str(v.get("name", "")).strip() == nn), None)
+        if clash is not None:
+            return {"error": f"`{project}` 에 마일스톤 `{nn}` 이 이미 있다 (id {clash.get('id')}) "
+                             "— 이름은 겹칠 수 없다"}
+        ver["name"] = nn
+        changed.append(f"name `{cur}` → `{nn}`")
+    if description is not None:
+        if len(description) > DESCRIPTION_MAX:
+            return {"error": f"description 이 {len(description)}자다 — 레드마인 한계는 "
+                             f"{DESCRIPTION_MAX}자다 (실측). 줄여서 다시 보내라"}
+        ver["description"] = description
+        changed.append("description" + (" 비움" if not description else ""))
+    if due_date is not None:
+        d = (due_date or "").strip()
+        if d and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
+            return {"error": f"due_date 는 `YYYY-MM-DD` 다 — `{due_date}` 가 왔다"}
+        ver["due_date"] = d or None
+        changed.append("due_date " + (d or "비움"))
+    if status:
+        if status not in ("open", "locked", "closed"):
+            return {"error": f"status 는 open·locked·closed 중 하나다 — `{status}` 가 왔다"}
+        ver["status"] = status
+        changed.append(f"status → {status}")
+
+    if not ver:
+        return {"error": "바꿀 것이 없다 — new_name·description·due_date·status 중 하나는 줘야 한다",
+                "id": target.get("id"), "name": cur}
+
+    try:
+        _request("PUT", f"{base}/versions/{int(target['id'])}.json", k, {"version": ver},
+                 sender=sender)
+    except urllib.error.HTTPError as e:
+        hint = {404: f"버전 {target.get('id')} 가 없다 (경합?)",
+                403: "이 API 키에 버전 관리 권한이 없다"}.get(e.code, "") or _http_error_reasons(e)
+        return {"error": f"HTTP {e.code}" + (f" — {hint}" if hint else "")}
+    except Exception as e:                                   # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}"}
+    return {"id": int(target["id"]), "name": nn or cur, "project": project, "changed": changed}
+
+
 def resolve_version_id(name: str, *, project: str = PROJECT_ID, key: str = "",
                        url: str = "", sender=None):
     """마일스톤(버전) **이름 → id**. 부분 일치를 허용한다 — 우리 버전명은
