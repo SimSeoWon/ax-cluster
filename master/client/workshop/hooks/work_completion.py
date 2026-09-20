@@ -44,6 +44,8 @@ import sys
 import time
 from pathlib import Path
 
+from hook_paths import checkout_root
+
 sys.dont_write_bytecode = True
 INTERVAL = 15
 TIMEOUT = 7200
@@ -203,7 +205,10 @@ def main():
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     try:
         data = json.load(sys.stdin)
-        cwd = Path(data["cwd"])
+        # 🔴 [중요] 고지·로그가 놓일 자리는 **체크아웃 루트**다 — 하위 폴더에서 연
+        #    세션의 cwd 를 그대로 쓰면 `Source/NS/.ax/work-notices` 에 써서
+        #    ⑹ 깨우기가 그 자리를 안 본다 (실측 2026-09-20 `.33`).
+        cwd = checkout_root(data["cwd"])
     except Exception as exc:                                # noqa: BLE001
         # [주의] cwd 를 모르면 남길 자리가 없다 — stderr 로만 말하고 **exit 0** 이다
         #    (2 로 끝내면 「할 말이 생겼다」가 돼 세션을 깨운다).

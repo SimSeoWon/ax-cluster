@@ -1134,17 +1134,58 @@ def hook_entry(matcher: str, rel: str, timeout: int, facts: HostFacts) -> dict:
 
 
 def hook_command_for(rel: str, facts: HostFacts) -> str:
-    """훅 스크립트를 부르는 명령. [중요] **인터프리터는 원격 기준**이다.
+    """훅 스크립트를 부르는 명령. [중요] **인터프리터도 경로도 원격 기준**이다.
 
     원전은 `sys.executable` 을 박았지만(`setup.py:325`) 그건 훅을 **설치하는 기계와 도는 기계가
     같았기** 때문이다. 우리는 마스터(리눅스)가 `.33`(윈도우)에 배달하므로 마스터의
     `sys.executable` 을 박으면 **없는 경로**가 등록된다. `mcp_entry_for` 와 같은 판단을 쓴다 —
     윈도우는 `py`(맨 `python` 은 스토어 스텁이라 버전도 안 찍는다, 실측된 함정).
 
-    [주의] 경로는 **상대·슬래시**다 — `.mcp.json` args 와 같은 근거로, 훅의 cwd 는 체크아웃
-    루트다. 절대경로를 박으면 체크아웃이 옮겨질 때 조용히 죽는다.
+    🔴 [중요] **경로는 절대경로다** (2026-09-20 에 뒤집혔다). 종전에는 상대경로였고 근거는
+    주석에 *"훅의 cwd 는 체크아웃 루트다"* 라고 적혀 있었다 — **그 전제가 틀렸다.** 훅의
+    cwd 는 **그 세션의 현재 작업 디렉터리**이고, 그것은 세션 도중에도 움직인다.
+
+    [중요] 실제로 움직인 것은 사람이 아니라 **모델**이었다 (`.33` 트랜스크립트):
+    세션이 Bash 로 `cd …\\NS\\Source\\NS` 를 돌린 11:22:55 에 `workingDirectory` 가 바뀌고,
+    **32초 뒤 11:23:24 에 첫 차단**이 났다 — 그 전에는 실패가 0이다. 그 뒤
+    `py .claude/hooks/pending_works.py` 가 파일을 못 찾아 **파이썬 인터프리터가 exit 2** 를
+    냈고, `UserPromptSubmit` 에서 exit 2 는 「프롬프트 차단」이라 **사람의 질문 5회가 막히고
+    사라졌다**(11:23~11:25). 입구는 둘이다 — 하위 폴더에서 **여는** 것도 같은 자리를 밟는다
+    (마스터에서 그 입구로 재현함, 2026-09-20).
+
+    [중요] **스크립트는 죄가 없다** — `pending_works.py` 에 `sys.exit` 는 0건이고 실패해도
+    한 줄 찍고 정상 종료한다. 즉 「훅을 fail-open 으로 고친다」는 이 고장을 못 고친다.
+    고장난 자리는 **부르는 명령**이다.
+
+    [주의] `$CLAUDE_PROJECT_DIR` 은 대안이 **아니다.** 같은 조건에서 재 봤다
+    (2026-09-20, `claude -p` + 프로브 훅):
+
+        PROJDIR='C:/Users/USER/Documents/NS/Source/NS'  ← 체크아웃 루트가 아니다
+        CWD='…\\Source\\NS'  PAYLOAD_CWD='…\\Source\\NS'
+
+    셋이 전부 같은 하위 폴더였다. 그래서 cwd 에 기대지 않는 값은 **레지스트리가 아는
+    체크아웃 경로**(`facts.path`) 하나뿐이다.
+
+    [주의] 종전 주석이 걱정한 *"체크아웃이 옮겨지면 조용히 죽는다"* 는 남는다 — 다만
+    **조용하지 않다.** 경로의 정본은 레지스트리이고, 옮기면 등록을 고쳐 재배달해야 하며
+    그 전에 `check` 가 훅 불일치로 먼저 운다(`hook_entry` 를 양쪽이 같이 쓴다).
+    [중요] 짝이 있다 — 훅 **안쪽**의 cwd 의존은 `hooks/hook_paths.checkout_root` 가 끊는다.
     """
-    return f"{'py' if facts.windows else 'python3'} {rel}"
+    root = str(facts.path or "").replace("\\", "/").rstrip("/")
+    if not root:
+        # [주의] 경로를 모르면 **조용히 상대경로로 물러나지 않는다** — 그게 이 고장이었다.
+        raise BundleError(f"{facts.host}: 체크아웃 경로가 비어 훅 명령을 못 만든다 "
+                          f"(레지스트리의 workshop path 를 확인할 것)")
+    return f"{'py' if facts.windows else 'python3'} {_hook_path_arg(f'{root}/{rel}')}"
+
+
+def _hook_path_arg(path: str) -> str:
+    """공백이 있으면 따옴표로 감싼다 — 없으면 그대로 둔다.
+
+    [주의] 늘 감싸지 않는 이유는 **기존 등록과 모양을 바꾸지 않기** 위해서다. `check` 는
+    문자열 정확 일치로 보므로 모양이 바뀌면 멀쩡한 배달이 「미등록」으로 잡힌다.
+    """
+    return f'"{path}"' if " " in path else path
 
 
 def merge_settings_json(prev_text: str, facts: HostFacts) -> str:

@@ -46,6 +46,8 @@ import json
 import sys
 from pathlib import Path
 
+from hook_paths import checkout_root, cwd_notice
+
 # [중요] `master/status.py` `WORK_OPEN` 과 같은 정의다. 여기서 새로 정하지 않는다.
 OPEN_STATUSES = ("ready_for_review", "in_progress", "", None)
 DETAIL_MAX = 3          # get_work 로 task 내역까지 볼 work 수 (세션 시작 지연을 묶는다)
@@ -107,7 +109,14 @@ def main() -> None:
         data = json.load(sys.stdin)
     except ValueError:
         return
-    cwd = Path(str(data.get("cwd") or "."))
+    session_cwd = Path(str(data.get("cwd") or "."))
+    # 🔴 [중요] 체크아웃 루트는 **훅이 놓인 자리**가 안다 — 세션 cwd 가 아니다 (`hook_paths`).
+    #    사람이 하위 폴더에서 세션을 열면 그 둘이 갈라지고, 종전에는 갈라진 채로
+    #    `.ax/lib` 를 찾다 「점검 못 함」만 찍었다 (실측 2026-09-20 `.33`).
+    cwd = checkout_root(session_cwd)
+    notice = cwd_notice(session_cwd, cwd)
+    if notice:
+        print(notice)
     _editor_notice(data)
 
     try:

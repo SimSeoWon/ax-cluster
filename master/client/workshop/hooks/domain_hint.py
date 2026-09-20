@@ -43,6 +43,8 @@ import json
 import sys
 from pathlib import Path
 
+from hook_paths import checkout_root
+
 N_RESULTS = 3
 BODY_CHARS = 300
 
@@ -71,7 +73,8 @@ def main() -> None:
     file_path = str((data.get("tool_input") or {}).get("file_path") or "")
     if not file_path:
         return
-    cwd = Path(str(data.get("cwd") or "."))
+    # [중요] 세션 cwd 가 아니라 **훅이 놓인 자리**가 체크아웃 루트다 (`hook_paths`).
+    cwd = checkout_root(data.get("cwd"))
 
     try:
         client_mcp = _load_client(cwd)
