@@ -335,6 +335,11 @@ def cmd_check(project: str, *, only: str = "") -> int:
                              (f'if exist "{cfg_path}" (echo OK)' if f.windows
                               else f"test -f '{cfg_path}' && echo OK"))
         ok_cfg = rc2 == 0
+        # Windows의 프로젝트 로컬 도구는 `py` 런처에 기대지 않는다. 초기화 프로브가
+        # 절대경로를 못 찾았으면 파일 배달이 끝났어도 Codex가 fix_flow/client_mcp를 못 돈다.
+        ok_python = (not f.windows) or bool(f.python)
+        python_note = ("" if ok_python else
+                       " · [실패] Python 절대경로를 못 찾았다 (Codex 로컬 도구 실행 불가)")
         # [중요] **페이로드도 잰다.** 스킬은 문서라 낡아도 사람이 읽다 눈치채지만, 파이썬 모듈은
         #    낡은 채로 **조용히 돈다** — `.33` 이 옛 review 로직으로 검수하면 그 판정은
         #    거짓말이다. 사본이 갈라지는 것이 이 명령의 존재 이유다.
@@ -535,16 +540,16 @@ def cmd_check(project: str, *, only: str = "") -> int:
         ok_tag = tag["ok"]
         tag_note = f" · {tag['reason']}"
 
-        mark = ("OK" if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws
+        mark = ("OK" if (ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
                          and ok_ver and ok_tag and ok_codex and ok_res and ok_shadow) else "FAIL")
         pay_note = (f" · payload {len(pay)}개 일치" if pay and ok_pay
                     else f" · [중요] payload 불일치/없음 {len(stale)}개: {', '.join(stale[:3])}"
                     if pay else "")
         print(f"  {mark} {f.host} [{f.role}]: 스킬 {len(names)}종 "
               f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}"
-              f"{pay_note}{ws_note}{client_note}{codex_note}{shadow_note}{res_note}{rm_note}"
+              f"{python_note}{pay_note}{ws_note}{client_note}{codex_note}{shadow_note}{res_note}{rm_note}"
               f"{tag_note}{ver_note}")
-        bad += 0 if (ok_skill and ok_cfg and ok_pay and ok_client and ok_ws
+        bad += 0 if (ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
                      and ok_ver and ok_tag and ok_codex and ok_res and ok_shadow) else 1
         if not ver["ok"]:
             behind_hosts.append((f.host, ver.get("behind"), ver.get("stamp_dirty")))

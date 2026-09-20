@@ -34,9 +34,13 @@ description: 자동 리뷰·주간 플랜을 **번호(R12 · P3)** 로 받아 �
 도구:
 
     MCP      mcp__ax-client__list_fixes · get_fix · update_fix_status
-    스크립트  py .ax/lib/axmaster/clientside/fix_flow.py list|fetch|check|worktree|diff|commit|status
+    스크립트  <프로젝트 Python> .ax/lib/axmaster/clientside/fix_flow.py list|fetch|check|worktree|diff|commit|status
 
-[중요] **`python` 이 아니라 `py` 다** — 이 PC 의 `python` 은 스토어 스텁이다.
+[중요] **맨 `py`나 `python`을 쓰지 않는다.** 먼저 `.ax/config.json`의
+`backends.python`을 읽고 그 **절대경로**를 실행한다. 같은 값이 `.mcp.json`의
+`mcpServers.ax-client.command`에도 있다. 둘이 다르거나 값이 없으면 초기화가 어긋난 것이므로
+실패를 보고하고 멈춘다. Windows Codex 샌드박스에서는 사용자 세션의 `py`가 Python을
+열거해도 에이전트 셸에서는 `No installed Python found!`가 날 수 있다(2026-09-20 실측).
 [중요] 스크립트는 **체크아웃 루트(cwd)** 에서 부른다 — `.ax/config.json`·`.ax/token` 을 거기서 읽는다.
 
 ## 2. 단계
@@ -49,14 +53,14 @@ description: 자동 리뷰·주간 플랜을 **번호(R12 · P3)** 로 받아 �
 
 ### ② 내려받기
 
-    py .ax/lib/axmaster/clientside/fix_flow.py fetch R12
+    "<backends.python>" .ax/lib/axmaster/clientside/fix_flow.py fetch R12
 
 `[fix] [실패]` 가 찍히면 사유를 그대로 보고하고 멈춘다(`not_mounted` 면 마스터의 마운트가 이 체크아웃의
 프로젝트와 다른 것이다 — 우회하지 않는다).
 
 ### ③ 대조 — 사실만
 
-    py .ax/lib/axmaster/clientside/fix_flow.py check R12
+    "<backends.python>" .ax/lib/axmaster/clientside/fix_flow.py check R12
 
 `check.md` 를 **Read 로** 읽는다(콘솔은 요지만 찍힌다). 단서의 뜻:
 
@@ -88,7 +92,7 @@ worktree. 이 체크아웃의 작업 트리는 사람이 고치던 중일 수 �
 
 ### ⑤ 적용 — 수락한 항목만
 
-    py .ax/lib/axmaster/clientside/fix_flow.py worktree R12
+    "<backends.python>" .ax/lib/axmaster/clientside/fix_flow.py worktree R12
 
 체크아웃 **옆에** `ax-fix-R12` worktree 와 `fix/R12` 브랜치가 생긴다(있으면 재사용 · 리셋하지 않는다).
 서브 에이전트(`code-writer`)에게 넘기는 것:
@@ -100,7 +104,7 @@ worktree. 이 체크아웃의 작업 트리는 사람이 고치던 중일 수 �
 
 서브 에이전트가 끝나면 **결과를 믿지 말고 확인한다**:
 
-    py .ax/lib/axmaster/clientside/fix_flow.py diff R12
+    "<backends.python>" .ax/lib/axmaster/clientside/fix_flow.py diff R12
 
 `.ax/fixes/R12/diff.patch` 를 Read 로 읽어 각 항목이 실제로 해소됐는지 본다(파일 수·증감은 `flow.log`
 에 남는다). 그 요지를 사용자에게 보여 주고 **커밋할지 묻는다.** UE5 빌드로 확인할지도 묻는다
@@ -108,7 +112,7 @@ worktree. 이 체크아웃의 작업 트리는 사람이 고치던 중일 수 �
 
 승인되면 **스크립트로** 커밋한다 — `git commit` 을 직접 치지 않는다(해시·항목이 로그에 남아야 한다):
 
-    py .ax/lib/axmaster/clientside/fix_flow.py commit R12 --items R12-1,R12-4 --message "<한 줄 요지>"
+    "<backends.python>" .ax/lib/axmaster/clientside/fix_flow.py commit R12 --items R12-1,R12-4 --message "<한 줄 요지>"
 
 `fix/R12` 가 아니면 거절하고, 메시지는 `fix(R12-1,R12-4): …` 가 된다. 출력의 `commit` 을 ⑥에 쓴다.
 [중요] **push 하지 않고 `main` 에 머지하지 않는다** — 그건 사람이 한다.

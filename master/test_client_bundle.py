@@ -80,7 +80,7 @@ def _facts(**over):
 
 
 def test_config() -> None:
-    cfg = bundle.config_for("ModularStage", _facts())
+    cfg = bundle.config_for("ModularStage", _facts(python="/usr/bin/python3"))
     # [중요] 비밀이 들어가면 이 파일이 유출 경로가 된다
     blob = str(cfg).lower()
     check("[중요] config 에 비밀이 없다",
@@ -88,12 +88,17 @@ def test_config() -> None:
     check("체크아웃 경로가 실린다", cfg["checkout"]["path"] == "/home/sim/trunk/ModularStage")
     check("UE5 없으면 능력이 비어 있다", cfg["capabilities"] == [], str(cfg["capabilities"]))
     check("백엔드는 실측값", cfg["backends"]["ollama_models"] == 4 and cfg["backends"]["agy"] is False)
+    check("프로젝트 로컬 도구가 쓸 Python 경로를 저장한다",
+          cfg["backends"]["python"] == "/usr/bin/python3", str(cfg["backends"]))
     check("부산물 경로를 알려준다", ".ax/work" in cfg["_layout"]["work"])
 
     win = bundle.config_for("ModularStage", _facts(
-        os="windows", ue5=r"C:\UE\UnrealEditor-Cmd.exe", agy=True, ollama_models=7))
+        os="windows", ue5=r"C:\UE\UnrealEditor-Cmd.exe", agy=True, ollama_models=7,
+        python=r"C:\Py\python.exe"))
     check("UE5 있으면 ue5 능력", "ue5" in win["capabilities"], str(win["capabilities"]))
     check("윈도우면 windows 능력", "windows" in win["capabilities"])
+    check("Windows Python 절대경로도 왕복한다",
+          win["backends"]["python"] == r"C:\Py\python.exe")
 
 
 def test_managed_block() -> None:
@@ -198,9 +203,10 @@ def test_role_skills() -> None:
 def test_mcp_json_merge() -> None:
     """소 3.8.4 — .mcp.json 은 사람 항목을 보존하고, 깨진 파일은 덮지 않는다."""
     import json as _json
-    f = _facts(os="windows")
+    f = _facts(os="windows", python=r"C:\Users\USER\AppData\Local\Programs\Python\Python312\python.exe")
     e = bundle.mcp_entry_for(f)
-    check("[중요] 윈도우는 py 다 (스토어 스텁 함정)", e["command"] == "py", str(e))
+    check("[중요] 윈도우는 프로브한 절대경로다 (Codex py 탐지 격리)",
+          e["command"] == f.python, str(e))
     check("경로는 상대·슬래시 (cwd=체크아웃)", e["args"][0].startswith(".ax/lib/"), str(e))
     check("리눅스는 python3", bundle.mcp_entry_for(_facts())["command"] == "python3")
 
@@ -1256,11 +1262,12 @@ def test_codex_mcp_registration() -> None:
         check("[중요] 명령은 `.mcp.json` 항목과 같은 출처다 (두 도구에 다른 명령이 가지 않는다)",
               bundle.mcp_entry_for(f)["command"] in bundle.codex_mcp_cmd(f, "ax-client"))
 
-        # 윈도우는 `py` 다 — 맨 `python` 은 스토어 스텁이라 버전도 안 찍는다 (실측된 함정)
+        # Windows Codex 샌드박스는 사용자별 `py`가 설치본을 못 찾을 수 있어 프로브한 절대경로다.
         win = _facts(role="requester", os="windows", home=r"C:\Users\USER",
-                     path=r"C:\Users\USER\Documents\ModularStage", codex="0.153.4")
-        check("[주의] 윈도우는 `py` 로 등록한다",
-              " -- py " in bundle.codex_mcp_cmd(win, "ax-client"),
+                     path=r"C:\Users\USER\Documents\ModularStage", codex="0.153.4",
+                     python=r"C:\Users\USER\AppData\Local\Programs\Python\Python312\python.exe")
+        check("[중요] codex MCP도 같은 Python 절대경로로 등록한다",
+              win.python in bundle.codex_mcp_cmd(win, "ax-client"),
               bundle.codex_mcp_cmd(win, "ax-client"))
 
         # 🔴 rc 로 판정하지 않는다 — 없는 이름에도 `codex mcp get` 은 rc=0 이다 (실측 2026-09-12)

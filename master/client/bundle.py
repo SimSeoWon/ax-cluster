@@ -178,6 +178,10 @@ class HostFacts:
     home: str = ""
     claude: str = ""
     codex: str = ""
+    # Windows Codex 샌드박스에서는 사용자별 Python Launcher(`py`)가 설치된 인터프리터를
+    # 못 보는 경우가 있다. 배달 프로브가 찾은 콘솔 Python 절대경로를 프로젝트 로컬 계약에
+    # 싣는다. 버전 디렉토리를 코드에 박지 않고 기계마다 다시 잰 값이다.
+    python: str = ""
     agy: bool = False
     ollama_models: int = 0
     ue5: str = ""                       # UnrealEditor-Cmd 경로. 없으면 빈 문자열
@@ -303,6 +307,8 @@ def probe(host: str, user: str, path: str, driven: str, role: str = "worker",
         f.codex = v.splitlines()[0].strip() if rc == 0 and v else ""
         rc, a = _ssh(host, user, r'if exist "%LOCALAPPDATA%\agy\bin\agy.exe" (echo YES) else (echo NO)')
         f.agy = "YES" in a
+        from client.init import residency as _R
+        f.python = _R.console_python(_probe_python(f))
         f.ue5 = _find_ue5(host, user)
         rc, g = _ssh(host, user, f'cd /d {path} && git rev-parse --short HEAD')
     else:
@@ -312,6 +318,7 @@ def probe(host: str, user: str, path: str, driven: str, role: str = "worker",
         f.claude = v.splitlines()[0].strip() if v else ""
         rc, v = _ssh(host, user, "codex --version 2>/dev/null || true")
         f.codex = v.splitlines()[0].strip() if rc == 0 and v else ""
+        f.python = "/usr/bin/python3"
         rc, a = _ssh(host, user, "command -v agy >/dev/null && echo YES || echo NO")
         f.agy = "YES" in a
         f.ue5 = ""                      # 리눅스 노드에 UE5 툴체인은 없다
@@ -373,6 +380,8 @@ def config_for(project: str, facts: HostFacts) -> dict:
         "backends": {
             "claude": facts.claude or None,
             "codex": facts.codex or None,
+            # 프로젝트 안의 스킬도 이 값을 쓴다. 전역 PATH·런처 탐지에 다시 의존하지 않는다.
+            "python": facts.python or None,
             "agy": facts.agy,
             "ollama": f"http://{facts.host}:11434" if facts.ollama_models else None,
             "ollama_models": facts.ollama_models,
@@ -995,9 +1004,11 @@ MCP_SERVER_NAME = spec.MCP_BY_ROLE["requester"][0]
 def mcp_entry_for(facts: HostFacts) -> dict:
     """`.mcp.json` 의 ax-client 항목. [중요] 경로는 상대·슬래시 — cwd 가 체크아웃 루트다.
 
-    윈도우는 `py` 다 — 맨 `python` 은 스토어 스텁이라 버전도 안 찍는다(실측된 함정).
+    Windows는 프로브한 Python 절대경로를 쓴다. Codex 샌드박스에서 사용자별 `py` 런처가
+    ``No installed Python found!`` 로 실패한 실측(2026-09-20) 때문이다. 경로를 코드에
+    박는 것이 아니라 초기화 때 기계에서 재며, 옛 호출자만 호환 폴백 `py`를 쓴다.
     """
-    return {"command": "py" if facts.windows else "python3",
+    return {"command": (facts.python or "py") if facts.windows else (facts.python or "python3"),
             "args": [f"{AX_DIR}/lib/{PAYLOAD_PKG}/clientside/client_mcp.py"]}
 
 
