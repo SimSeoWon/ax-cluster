@@ -136,6 +136,11 @@ def check_360():
         for suf in ("", ".service", ".path", ".timer"):
             say(f"sudoers: reset-failed {base}{suf}",
                 f"ax-service-restart-root reset-failed {base}{suf}" in sudoers)
+    # 🔴 [주의] **2인자 restart 는 sudoers 에 없다** — helper 는 대칭으로 받지만 권한은
+    #    안 열려 있다(실측 2026-09-20: 암호를 묻는다). 이 칸은 그 비대칭이 **의도**임을
+    #    못으로 박는다. 열려면 여기가 먼저 빨개진다.
+    say("🔴 sudoers 에 2인자 restart 는 없다",
+        "ax-service-restart-root restart " not in sudoers, "2인자 restart 가 열렸다")
     for base in S.ALLOWED:
         # [주의] 종전 1인자 형태가 **그대로 남아 있어야** 한다 — 새 sudoers 가 깔리기 전에
         #    형태를 갈아엎으면 기존 재시작이 통째로 죽는다.
