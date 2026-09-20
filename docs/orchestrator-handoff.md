@@ -8,113 +8,156 @@
 > 🔴 [주의] **「완료」만 대조하면 부족하다** — 이 문서의 **관측 서술**(무엇이 어떻게 보였다)도
 > 대조 대상이다. 2026-09-20 에 그걸 안 해서 틀린 관측을 이슈에 적립했다.
 
-- **갱신 시각**: 2026-09-20 20:42 KST
-- **지휘 도구 / 세션 식별자**: **Codex** (Claude에서 인수 완료)
-- **상태**: `#360` 재설치·검증·리포트 75 작성 완료 — **커밋·푸시 승인 및 Redmine 종결 대기**
-- **관련 일감 / 목표**: `#652`(완료) · 🔴 **`#360`(진행 90%, 종결 기록 대기)** ·
-  `#396`(마일스톤 6, 미착수) · `#648`·`#649`·`#650`(종전 기록 유지)
-- **저장소·브랜치·HEAD**: `~/ax-cluster` `main` **`98127e8`** · origin과 일치 ·
-  **미커밋 3파일(리포트 75·색인·이 인계서) · 미푸시 0**
-- **실행 중인 작업·프로세스**: 없음 · `hold.json` 없음 · 서브 에이전트 없음
-- **서비스**: `ax-task-queue` active/running(20:04) · `ax-projects` active/running(20:20) ·
-  `ax-status.service` inactive/dead + Result=success(20:35, oneshot 정상). 8101/8102 401(정상) · 8103 200
+- **갱신 시각**: 2026-09-21 01:28 KST
+- **지휘 도구 / 세션 식별자**: **Codex**
+- **상태**: **교대 준비** — Windows Python 경로·상주 원하는 상태·전체 작업장 업데이트
+  플로우 구현 및 운영 배포 완료. 이 인계서만 미커밋.
+- **관련 일감 / 목표**: 이번 수정에 연결된 신규 Redmine 일감 없음 · `#652`, `#360` 완료.
+  다음 AX 항목은 Redmine에서 사용자가 고른다.
+- **저장소·브랜치·HEAD**: `~/ax-cluster` `main` **`3a310ed`** · origin과 일치 · 미푸시 0.
+- **현재 dirty**: `docs/orchestrator-handoff.md` 한 파일 — 이 인계 기록.
+- **실행 중인 작업·프로세스**: 없음 · `hold.json` 없음 · 서브 에이전트 없음.
+- **서비스**: `ax-task-queue` active/running(2026-09-20 20:04 KST) ·
+  `ax-projects` active/running(20:20 KST) · `ax-status` inactive/dead + Result=success
+  (oneshot 정상, 2026-09-21 01:23 KST).
 
 ---
 
-## 🔴 1. 바로 다음 작업 — 승인 뒤 이것부터
+## 🔴 1. 바로 다음 작업
 
-### ⑴ `#360` 기록 커밋·푸시
+### ⑴ 이 인계서 커밋·푸시 승인 받기
 
-재설치와 공식 verify는 완료했다. 미커밋 대상은 정확히 셋이다.
+커밋·푸시는 매번 사용자 승인이 필요하다. 대상은 이 파일 한 개다.
 
-    reports/75-dispatch-unit-recovery.md
-    reports/README.md
-    docs/orchestrator-handoff.md
+    docs: 전체 작업장 업데이트 플로우를 인계한다
 
-커밋·푸시는 매번 사람 승인 뒤 실행한다.
+### ⑵ 문서 커밋 뒤 전체 업데이트를 마지막에 한 번 실행
 
-### ⑵ `#360` 기재와 종결
+현재 클라이언트는 `3a310ed`와 일치한다. 이 문서를 커밋하면 HEAD가 다시 전진하므로 커밋·푸시
+**뒤에** 아래 명령을 실행해야 모든 등록 작업장의 출처 리비전이 새 HEAD와 다시 같아진다.
 
-커밋 해시를 포함한 완료 노트를 파일 입력 경로로 추가하고 완료 100%로 닫는다. `[AX]` 일감은
-마스터가 닫는다. 백틱 본문을 셸 인자로 직접 싣지 않는다.
+    AX_PROJECTS_ROOT=/home/sim/ax-cluster \
+      .venv/bin/python -m master.client update
 
-### ⑶ 완료된 운영 재설치 근거
+이 명령은 프로젝트별 배포 여부를 사람이 다시 판단하는 자리가 아니다. 레지스트리의 모든
+프로젝트와 작업장을 배달·검사하며, 하나라도 실패하면 rc=1이다.
 
-`./scripts/install-ax-service-restart install`과 `verify` 모두 rc=0, 설치본 sudoers는
-`visudo -cf`를 통과했다. 샌드박스 해제 상태에서 설치본은 `root:root`·`0755/0440`, helper
-해시는 저장소와 일치했다. 전문은 리포트 75다.
+### ⑶ 다음 AX 항목은 사용자가 고른다
 
-### ⑷ 그다음 후보
-
-    #396  pre-push 삭제 가드가 낡은 추적 참조로 판정한다 (마일스톤 6, 열림, 미착수)
-          코드 대조 완료: master/work/pre_push_hook.sh 가 여전히 fetch 없이 판정한다
-          (72행 tracking=… · 안내는 「참조가 **없을** 때」에만 나온다)
-    NS 마일스톤 2번  「기본 전투 구조」가 끝나면 **사람이 정한다** — 지어내지 말 것
+종전 후보 `#396`도 Redmine 현재 상태를 다시 확인한 뒤 사용자 선택을 받는다.
 
 ---
 
-## 2. 이번 세션이 한 것 (커밋 11개)
+## 2. 이번 교대에서 완료한 것
 
-    e0b0e5c  #652 마일스톤 생성·조회·부착 (A~E)
-    89a6327  #652 422 본문을 버리지 않는다 + 설명 255자 게이트
-    31e52da  #652 이름·설명·마감일 수정 (PATCH)
-    4cadcfe  #652 삭제 (DELETE) — confirm 게이트 + 귀속 보호
-    4a8b64c  CLAUDE.md 백틱 셸 치환 함정
-    ebe5e6a  #360 파견 유닛 복구 경로 (reset-failed · .path)
-    de79ad4  #360 2인자 restart 비대칭을 못으로 박음
-    de5253f · 28f5bb0 · 196d448 · a46a286   리포트 74·인계서
+### 2.1 `.33` Codex의 Python 경로를 초기화 산출물로 만들었다
 
-**`#652` 는 완료다** — `.33` 이 마일스톤을 만들고·보고·붙이고·고치고·지울 수 있고,
-`ns`·`modularstage` 둘 다 **열린 무버전 0건**이다. 전문: **리포트 74**.
+Codex 세션의 PATH가 대화형 SSH와 달랐는데 `.mcp.json`과 `ax-fix`가 bare `py`에 의존했다.
 
----
+- `HostFacts.python`과 config `backends.python`에 실측 절대경로 저장
+- `.mcp.json`의 `ax-client.command`와 `ax-fix`가 같은 절대경로 사용
+- Windows에서 경로를 못 찾으면 `check` 실패
+- 신규 프로젝트 온보딩도 같은 bundle/config/skill 경로를 쓰므로 자동 적용
 
-## 3. `#360` 의 상태 — [중요] **증명의 경계를 그대로 옮긴다**
+커밋 `78f7578`.
 
-| 조각 | 어떻게 쟀나 |
-|---|---|
-| `reset-failed` 가 failed 를 지운다 | **실측** — 사용자 유닛을 진짜 실패시켜 `failed` → `inactive/success` |
-| 우리 도구의 판정 로직 | **유닛** — failed 주입 11갈래 + 「rc=0 이어도 failed 면 실패」 |
-| 권한 경로(helper·sudoers) | **라이브** — `--recover ax-dispatch` 3유닛 · 종전 재시작 · 차단 5갈래 |
-| **권한 경로 × 진짜 죽은 운영 유닛** | ❌ **안 쟀다** — 운영 유닛을 일부러 죽일 수 없다 |
+### 2.2 상주 등록의 원하는 상태를 한 함수로 통합했다
 
-🔴 [주의] **`start-limit-hit` 재현에 실패했다.** 사용자 유닛으로 두 번 시도했으나
-`exit-code` 까지만 갔다. 그래서 *"restart 로는 start-limit 이 안 풀린다"* 는 **Claude 의
-실측이 아니고** `#360` 에 적힌 2026-09-05 사고 기록이다. **설계는 거기 의존하지 않는다** —
-helper 가 `.path` 를 못 건드린다는 것은 소스를 읽어 확실하다.
+`deliver`와 `check`가 같은 기계를 반대로 판정하던 중복 규칙을 없앴다.
 
-🔴 [중요] **1인자 형태를 남긴 것이 설계의 핵심이다.** sudoers 는 명령줄을 글자로 맞추므로
-형태를 갈아엎으면 새 sudoers 가 깔리기 전까지 **기존 재시작이 통째로 죽는다.**
-[주의] helper 는 대칭으로 `restart <unit>` 2인자도 받지만 **sudoers 에 그 줄은 없다**
-(암호를 묻는다). 테스트가 그 비대칭을 못으로 박아 뒀다 — 열면 빨개진다.
+- `client/init/residency.py::desired_state()`가 requester·daemon·작업 유형·현재 마운트를 판정
+- `plan`·`deliver`·`check`가 같은 결정을 소비
+- 원하는 상태가 미등록이면 과거 등록도 제거하고 부재를 되읽음
+- NS 마운트 중 ModularStage 상주는 `.2`에서도 미등록이 정상
 
----
+커밋 `6d1ea50`.
 
-## 4. 🔴 이 세션이 헛디딘 것 — 같은 데 빠지지 말 것
+### 2.3 검사기의 마운트 조회 오류를 숨기지 않게 했다
 
-**⑴ 백틱을 셸에 흘리면 그 구절이 조용히 사라진다.** 레드마인 노트 8건이 상했고
-`PUT /journals/{id}` 로 복구했다. **리포트 73 이 이미 적어 둔 사고를 반복했다** —
-막은 것은 「조심한다」가 아니라 **경로를 바꾼 것**(노트·JSON 은 파일에 써서 실행).
-`~/CLAUDE.md` 의 `systemctl` 블록 다음에 4줄로 올라가 있다(`4a8b64c`).
+`master/client/__main__.py`가 import하지 않은 `Registry`를 호출하고 `except Exception: pass`로
+`NameError`를 숨겨 마운트를 빈 문자열로 바꾸고 있었다.
 
-**⑵ 운영 유닛을 「통과하는 경우」의 테스트 대상으로 쓰지 말 것.** 「판정만 통과하고
-systemctl 권한에서 막히겠지」라고 보고 helper 를 쳤는데 **`ax-projects` 가 실제로
-재시작됐다**(20:20:00 · 서비스는 정상). 지금은 테스트가 **가짜 systemctl** 을 꽂는다.
+- `bundle.Registry`를 명시적으로 사용
+- 조회 실패를 빈 마운트로 접지 않고 전파
+- NS 마운트에서 ModularStage 미등록이 정상이라는 회귀 테스트 추가
 
-**⑶ 테스트를 부정 인덱스(`calls[-3]`)로 짚지 말 것.** 목록에 한 줄만 끼면 다른 호출을
-가리키는데, **없는 키를 확인하는 검사는 대상이 틀려도 안 깨진다** — 「이슈 생성은
-프로젝트를 안 받는다」가 PATCH 본문을 보며 통과하고 있었다. 경로+메서드로 찾는다.
+커밋 `2ca5a12`.
 
-**⑷ `update_issue(project=…)` 는 레드마인 식별자**(`modularstage`)지 태그(`ModularStage`)가
-아니다. 틀리면 마일스톤이 안 붙고, `#303` 의 `skipped` 사유가 그 사실을 말해 준다.
+### 2.4 전체 등록 작업장을 맞추는 단일 `update` 플로우를 만들었다
 
-**⑸ 저널을 `grep -r … | tail` 로 보지 말 것.** `grep -r` 은 파일순이라 `tail` 이
-**최근이 아니라 마지막 파일의 끝**이다. 하마터면 멀쩡한 로그 배선을 고장으로 보고할 뻔했다.
+    AX_PROJECTS_ROOT=/home/sim/ax-cluster \
+      .venv/bin/python -m master.client update
+
+- 프로젝트 인자를 받지 않고 `Registry.names` 전체 사용
+- 신규 프로젝트는 레지스트리에 등록되는 순간 자동 포함
+- 프로젝트별 `deliver → check`
+- 일부 실패를 전체 성공으로 접지 않으며 나머지 등록 프로젝트도 계속 시도
+- 깨진/빈 레지스트리는 시작 전에 fail-closed
+
+커밋 `3a310ed`.
 
 ---
 
-## 5. 관련 문서
+## 3. 운영 배포와 검증
 
-    reports/74-redmine-milestone-management.md   `#652` 전문 (§1~§10)
-    docs/orchestrator-rules.md                   공용 규칙
-    ~/CLAUDE.md                                  백틱 함정이 새로 올라갔다
+`3a310ed` 푸시 뒤 새 `update` 명령을 실제 실행했다.
+
+| 프로젝트 | `.2` worker | `.33` requester | `.43` worker |
+|---|---|---|---|
+| ModularStage | OK | OK | OK |
+| NS | OK | OK | OK |
+
+- 두 프로젝트 모두 config·스킬·payload·AGENTS.md·Codex MCP·역할 토큰 대조 통과
+- 모든 작업장의 `delivered_by.commit`이 당시 마스터 HEAD `3a310ed`와 일치
+- `.2`: NS 상주 `AxWorker_NS` 등록 정상
+- `.2`: ModularStage는 현재 마운트가 NS이므로 상주 미등록 정상
+- `.33`: requester이므로 두 프로젝트 모두 상주 미등록 정상
+- `.43`: 집을 작업 유형이 없어 두 프로젝트 모두 상주 미등록 정상
+- 전체 명령 rc=0: `등록 프로젝트 2개를 현재 HEAD로 배달·검사했다`
+
+### 테스트
+
+- 검사 마운트 수정까지: 5753/5753
+- 전체 `update` 플로우 추가 뒤: **5757/5757 · 실패 파일 0개**
+
+기본 Codex 샌드박스의 첫 전수 테스트는 소켓 생성 EPERM과 Docker 기반 Redmine 키 조회 차단으로
+실패했다. 같은 테스트를 샌드박스 해제 상태로 재실행해 전부 통과했다. 코드 회귀로 기록하지 않는다.
+
+---
+
+## 4. 제거한 옛 스킬 사본
+
+`.2`에 Codex가 배달본 대신 읽을 수 있는 shadow copy가 있었다. 삭제 전 각 경로에
+`SKILL.md` 한 파일만 있음을 확인하고 사용자 승인 뒤 정확히 두 디렉터리만 삭제했다.
+
+    C:\Users\janus\.agents\skills\ax-work
+    C:\Users\janus\.agents\skills\ax-infer
+
+삭제 직후 부재를 확인했고 이후 두 프로젝트 전체 검사에서 재발하지 않았다. 삭제 사본 자체는
+복구 불가지만 정본은 저장소와 `.claude`/`.codex` 배달 위치에 남아 있다.
+
+---
+
+## 5. 실패와 교훈
+
+1. 같은 날 마운트 오판과 리비전 불일치를 반복했다. 전자는 실제 마운트 대신 예외로 생긴 빈
+   문자열을 썼고, 후자는 사람이 기억해야 하는 프로젝트별 배포 순서를 남겨 둔 것이 문제였다.
+2. 새 고정 동사는 `update`다. “모든 컴퓨터를 현재 리비전으로 맞춘다”에서 지휘자가 프로젝트별
+   `deliver` 필요성을 다시 추론하지 않는다.
+3. `update`는 HEAD를 배포 출처로 기록한다. **마지막 문서 커밋 뒤에 실행**해야 한다.
+   업데이트 뒤 다시 커밋하면 작업장은 다시 한 커밋 뒤가 된다.
+4. 인계서 첫 교체 시도는 `apply_patch`에서 같은 파일을 Delete+Add 대상으로 동시에 지정해
+   원자적으로 거절됐다. 파일 변화는 없었고, 두 번째 시도는 `Update File`로 정상 적용했다.
+
+---
+
+## 6. 관련 파일
+
+    master/client/__main__.py
+    master/client/bundle.py
+    client/init/residency.py
+    master/client/skills/ax-fix/SKILL.md
+    master/test_client_bundle.py
+    master/test_residency.py
+    docs/orchestrator-rules.md
+    docs/15-orchestrator-handoff.md
