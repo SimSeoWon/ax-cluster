@@ -48,6 +48,11 @@
 ## 마스터 실행 환경 · 지휘자 교대
 
 - AX 도구 실행 전 작업 위치를 `/home/sim/ax-cluster` 로 맞춘다. Python 은 `.venv/bin/python` 을 쓴다.
+- **Codex 에서 레드마인 키 조회가 빈 문자열이면 키 부재로 단정하지 않는다.** `master.redmine.api_key()`는
+  `AX_REDMINE_API_KEY` 다음에 `docker exec redmine-db-1 psql ...`로 컨테이너 DB를 읽는데, 기본
+  샌드박스가 Docker 접근을 막으면 예외 대신 빈 문자열이 된다. 비밀값을 출력하지 않는 좁은
+  `.venv/bin/python` 조회 명령을 샌드박스 해제 승인으로 다시 실행한다. 존재 확인은
+  `print(bool(r.api_key()))`처럼 하고, 키 자체는 로그에 출력하지 않는다.
 - 프로젝트 CLI 는 환경변수가 필수다. 조회 예:
   `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client plan NS`
   (`NS` 는 예시다. 대상 프로젝트를 명시한다.) `deliver`·`check` 도 같은 접두를 쓴다.

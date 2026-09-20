@@ -54,7 +54,7 @@ def main() -> int:
     check("stale 로 판정한다", v.stale, f"{v.started} vs {v.newest}")
     check("무엇이 바뀌었는지 파일로 말한다", v.newest_file.endswith(".py"), v.newest_file)
     check("[중요] 재기동 명령을 그대로 준다",
-          "systemctl restart ax-task-queue" in v.line, v.line)
+          "scripts/ax-service-restart ax-task-queue" in v.line, v.line)
 
     print("\n[2] 기동이 코드보다 새로우면 조용하다")
     v = F.check("ax-task-queue", runner=fake(epoch="99999999999"))[0]

@@ -81,7 +81,7 @@
 | **`~/CLAUDE.md` 는 심볼릭 링크다** (→ `machines/sim-desktop.md`). 일반 파일로 덮지 않는다 | 기억 `cluster-work-journal` |
 | **사용자와의 대화는 한국어.** 지휘자만 읽는 지침은 영문(토큰 2.7배 — Claude 측 실측) | `machines/sim-desktop.md` · 기억 `claude-docs-in-english` |
 | **권한이 필요한 일은 지휘자가 직접 처리한다** — 못 한다고 단정하거나 사용자에게 명령을 대신 치라고 넘기지 않는다 | 기억 `sudo-privilege-handling` |
-| **AX 서비스 재시작은 `sudo -n /usr/bin/systemctl restart <unit>`**, 성공 판정은 exit code 가 아니라 `ExecMainStartTimestamp` | `machines/sim-desktop.md` |
+| **AX 서비스 재시작은 `scripts/ax-service-restart <unit>`** (`#647` allowlist 영구 도구). 성공 판정은 exit code 가 아니라 `ExecMainStartTimestamp` 변화와 최종 상태다 | `machines/sim-desktop.md` |
 | `192.168.0.57:8103` 은 **`/api/v1` 까지 인증이 없다.** 민감한 본문을 그 포트에 올리지 않는다 | 실측 2026-08-25 |
 | **저확률 운영 리스크는 한 번 적고 넘어간다** — 반복해 꺼내 결정 흐름을 붙들지 않는다 | 기억 `risk-flag-once-dont-block` |
 | 이 클러스터는 **팀 인프라가 아니라 1인이 집의 여러 컴퓨터를 묶는 것**이다 | 기억 `ax-cluster-solo-direction` |

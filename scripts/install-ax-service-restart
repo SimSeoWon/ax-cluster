@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+HELPER=/usr/local/sbin/ax-service-restart-root
+SUDOERS=/etc/sudoers.d/ax-service-restart
+case "${1:-install}" in
+  install)
+    /usr/sbin/visudo -cf "$ROOT/scripts/ax-service-restart.sudoers"
+    pkexec /usr/bin/install -o root -g root -m 0755 "$ROOT/scripts/ax-service-restart-root" "$HELPER"
+    pkexec /usr/bin/install -o root -g root -m 0440 "$ROOT/scripts/ax-service-restart.sudoers" "$SUDOERS"
+    pkexec /usr/sbin/visudo -cf "$SUDOERS"
+    ;;
+  verify) pkexec /usr/sbin/visudo -cf "$SUDOERS"; test -x "$HELPER" ;;
+  remove) pkexec /usr/bin/rm -f "$SUDOERS" "$HELPER" ;;
+  *) echo "usage: $0 [install|verify|remove]" >&2; exit 2 ;;
+esac

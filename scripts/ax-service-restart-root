@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+[ "$#" -eq 1 ] || { echo "exactly one unit is required" >&2; exit 2; }
+case "$1" in
+  ax-task-queue|ax-projects|ax-broker|ax-indexer|ax-batch|ax-status|ax-dispatch|ax-review-queue) ;;
+  *) echo "unit is not allowed: $1" >&2; exit 2 ;;
+esac
+exec /usr/bin/systemctl restart "$1"

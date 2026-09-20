@@ -61,7 +61,7 @@ class Verdict:
         if self.stale:
             return (f"{self.unit}: [중요] **옛 코드로 돈다** — 기동 뒤에 "
                     f"`{self.newest_file}` 가 바뀌었다. 재기동이 필요하다 "
-                    f"(`sudo -n /usr/bin/systemctl restart {self.unit}`)")
+                    f"(`scripts/ax-service-restart {self.unit}`)")
         return f"{self.unit}: 도는 것이 지금 코드다"
 
 
