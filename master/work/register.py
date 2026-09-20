@@ -35,6 +35,12 @@ DEFAULT_QUEUE = "http://localhost:8101"
 TIMEOUT = 30
 
 
+def _profile_blockers(project: str) -> list:
+    """`#650` 의 집행이 읽는 값. **기본 경로는 이 이름 하나다** — 주입은 테스트 자리다."""
+    from ..projects import profile as _profile                       # noqa: PLC0415
+    return _profile.blockers(project)
+
+
 class RegisterError(Exception):
     pass
 
@@ -345,6 +351,11 @@ def register_work(
     require_base: bool | None = None,
     heuristics=None,
     worker_mode: str = "",
+    # [주의] **주입 자리를 둔 이유는 테스트다** — `poster`·`gate` 와 같은 관례다. 가짜
+    #    프로젝트 이름으로 등록 규칙을 검증하는 유닛이 여럿 있고, 그것들이 실물 프로필을
+    #    요구하면 저장소의 **정본 디렉토리에 파일을 써야 한다**(그게 더 나쁘다).
+    #    [중요] **기본은 실물이다** — 주입하지 않으면 실전 경로는 언제나 이 게이트를 탄다.
+    profile_blockers=None,
 ) -> Registered:
     """work 를 만들고 태스크를 등록한다.
 
@@ -370,6 +381,30 @@ def register_work(
             f"등재에 work_id 를 실을 수 없다 ({work_id}) — 이미 있는 분산 작업의 다음 라운드는 "
             f"**개선요청**이다: `improve_work(work_id=…, round=현재+1, specs=[…])`. "
             f"등재(`register_work`)는 **새 분산 작업**만 만든다(round=1)")
+    # 🔴 [중요] **프로필이 없으면 등재하지 않는다** (사용자 결정 2026-09-20, `#650`).
+    #
+    #    워커는 프로젝트 문서를 **계약으로** 받는다. 그 문서의 첫 문단이 비면 지휘자와 워커는
+    #    **다른 문서에서 추론**하고, 그 문서가 남의 프로젝트 것이면 조용히 틀린다 — 2026-09-20
+    #    에 실제로 그랬다(`.33` 의 NS 콘솔이 ModularStage 의 *"multiplayer · Listen Server"* 를
+    #    NS 의 사실로 읽었다, `#649`). **비어 있는 것보다 오염된 것이 더 비싸다.**
+    #
+    #    [중요] 집행 자리를 여기로 잡은 것은 **가장 아픈 자리**이기 때문이다(사용자 결정).
+    #    온보딩 판정기는 종전에도 `[남음]` 을 찍었지만 **그 판정을 소비하는 곳이 0개**여서
+    #    NS 가 한 달간 빈 채로 돌았다. 찍기만 하는 판정은 집행이 아니다.
+    #    [주의] `deliver` 를 막지 않는다 — 배달은 온보딩의 일부라 자기 발목을 잡는다.
+    #    [주의] **개선요청(`improve_work`)은 일부러 안 막는다** — 등재가 막히므로 새 분산
+    #    작업은 못 생기고, 이미 도는 라운드를 소급해 막으면 진행 중인 작업이 죽는다.
+    _check = profile_blockers or _profile_blockers
+    # [주의] `paths` 가 없으면 **판정할 프로젝트가 없다.** 실전 경로는 언제나 준다 —
+    #    바로 뒤 `_prepare_specs(paths=paths)` 가 곧장 쓴다. 여기서 막으면 유닛만 죽는다.
+    _blocked = _check(paths.name) if getattr(paths, "name", "") else []
+    if _blocked:
+        raise RegisterError(
+            f"`{paths.name}` 의 프로젝트 프로필이 준비되지 않아 등재하지 않는다 — "
+            + " · ".join(_blocked)
+            + ". 사람에게 물어 `set_project_profile` 로 적립한 뒤 다시 등재한다 "
+              "(물을 문장은 `project_profile` 이 준다). "
+              "[주의] 모델의 추측을 답으로 적립하지 않는다 — 골조 `questions` 와 같은 규약이다")
     if not (title or "").strip():
         raise RegisterError("title 이 비었다")
     if not specs:

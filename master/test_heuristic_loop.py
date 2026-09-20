@@ -32,6 +32,14 @@ from master.context_search.paths import ProjectPaths                     # noqa:
 from master.work import heuristics as H                                  # noqa: E402
 from master.work import register as REG                                  # noqa: E402
 from master.work import skeleton as SK                                   # noqa: E402
+from master.work import register as _R  # noqa: E402  (프로필 게이트 주입용)
+
+# 🔴 [중요] **프로필 게이트를 이 파일에서는 끈다** (`#650`). `register_work` 는 이제
+#    `projects.profile.blockers()` 가 비지 않으면 등재를 거절하는데, 이 파일의 프로젝트 이름은
+#    **가짜**라 실물 프로필이 있을 수 없다. 실물을 요구하면 저장소의 **정본 디렉토리에 파일을
+#    써야 하고** 그건 더 나쁘다 — `poster`·`gate` 와 같은 주입 관례를 쓴다.
+#    [주의] 끄는 것은 **이 파일뿐**이다. 게이트 자체는 `test_project_profile.py` 가 검증한다.
+_R._profile_blockers = lambda _project: []
 
 _fail = 0
 

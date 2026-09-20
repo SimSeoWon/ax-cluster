@@ -560,7 +560,15 @@ def claude_md_body(project: str) -> str:
     d = Path(__file__).with_name("payload") / "claude_md"
     kind, src = claude_md_source(project)
     if src is not None:
-        return src.read_text(encoding="utf-8")
+        # 🔴 [중요] **정본에도 `{PROJECT_LINE}` 이음매가 있다** (`payload/claude_md/_skeleton.md`).
+        #    2026-09-20 까지 **코드 참조가 0건**이라 자리만 있고 아무도 채우지 않았다 — 그래서
+        #    NS 정본의 첫 문단이 *"프로젝트 서술은 비어 있다"* 인 채로 한 달을 갔다(`#650`).
+        #    이 치환으로 그 자리가 **프로필(사람의 답)에서** 채워진다. 자리가 없는 정본
+        #    (ModularStage 처럼 사람이 직접 쓴 것)은 **그대로 둔다** — 치환할 곳이 없으면
+        #    아무 일도 일어나지 않는다.
+        from ..projects import profile as _profile
+        return src.read_text(encoding="utf-8").replace(
+            "{PROJECT_LINE}", _profile.project_line(project))
 
     f = _uproject_facts(project)
     up = f["uproject"] or "(찾지 못했다)"
@@ -578,10 +586,16 @@ def claude_md_body(project: str) -> str:
             f"| `.uproject` | `{up}` |",
             f"| Targets | {', '.join(f'`{t}`' for t in f['targets']) or '(없음)'} |",
             f"| Modules | {', '.join(f'`{m}`' for m in f['modules']) or '(없음)'} |"]
-    line = (f"`{project}` — Unreal Engine 프로젝트. 아래 값은 소스 트리 **실측**이다."
-            if f["uproject"] else
-            f"`{project}` — [주의] 소스 트리에서 `.uproject` 를 찾지 못했다. "
-            "클론이 비었거나 아직 UE 프로젝트가 아니다.")
+    # 🔴 [중요] **첫 문단은 사람의 답에서 온다** (`#650`). 종전에는 *"Unreal Engine 프로젝트"*
+    #    한 줄이 전부였고, 「무슨 게임인가·왜 존재하는가」는 **어디에도 없었다**. 그 공백을
+    #    지휘자가 다른 문서로 메우다 남의 프로젝트 설명을 NS 의 사실로 읽었다(`#649`).
+    #    [주의] 프로필이 비면 여기서 **지어내지 않는다** — `project_line` 이 「비어 있다」고
+    #    말하고 채우는 길을 가리킨다(③ *"지어내지 않고 「비어 있다」고 적는다"* 와 같은 규약).
+    from ..projects import profile as _profile
+    line = _profile.project_line(project)
+    if not f["uproject"]:
+        line += ("\n\n[주의] 소스 트리에서 `.uproject` 를 찾지 못했다 — "
+                 "클론이 비었거나 아직 UE 프로젝트가 아니다.")
     # [중요] 빌드·타깃 표는 **본문이 아니라 관리 블록**에 있다 (`_project_facts_rows`) —
     #    본문은 병합이 건드리지 않으므로 거기 적은 사실은 늙는다. 여기서는 한 줄만 만든다.
     # [중요] **절 이름이 계약이다** (`#294`) — `work/conventions.WANTED_SECTIONS` 가 이 이름으로

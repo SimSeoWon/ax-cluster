@@ -178,6 +178,64 @@ def list_workshops_tool(name: str = "") -> str:
 
 
 @mcp.tool()
+def project_profile_tool(name: str = "") -> str:
+    """이 프로젝트의 **프로필**과 아직 안 채워진 칸, 그리고 **사람에게 물을 문장**을 돌려준다.
+
+    🔴 [중요] **여기 나오는 질문은 사람에게 그대로 묻는다.** 모델이 소스를 보고 추론해 답을
+    만들어 적립하지 않는다 — 골조 `questions` 와 같은 규약이다(*"모델의 제안을 답으로
+    적립하지 않는다"*). 초안을 **보여 주는 것**은 되지만, 저장되는 문장은 사람이 확정한 것이다.
+
+    [중요] 응답의 `measured` 는 **소스 트리 실측**이다(EngineAssociation · 모듈 · 확장자 분포).
+    질문할 때 근거로 보여 주라고 싣는 것이고 **저장되지 않는다** — 측정을 결정 자리에 적립하면
+    `#294` 가 치른 값을 다시 치른다(*"규약은 결정이지 측정이 아니다"*).
+
+    `blockers` 가 비어 있지 않으면 그 프로젝트는 **분산 작업 등재가 거절된다**.
+    """
+    from . import profile as PF
+
+    try:
+        n = (name or "").strip() or Registry.load().active
+        return json.dumps({"project": n, "profile": PF.load(n),
+                           "missing": PF.missing(n), "blockers": PF.blockers(n),
+                           "measured": PF.measure(n), "questions": PF.questions(n),
+                           "path": str(PF.profile_path(n))}, ensure_ascii=False)
+    except (ConfigError, OSError) as e:
+        return _fail(e)
+
+
+@mcp.tool()
+def set_project_profile_tool(name: str = "", engine_decided: bool | None = None,
+                             engine: str = "", engine_version: str = "",
+                             language: str = "", purpose: str = "",
+                             genre: str = "", overview: str = "",
+                             notes: str = "") -> str:
+    """사람이 답한 프로필을 적립한다. **부분 저장을 허용**하고, 미완은 미완이라고 계속 말한다.
+
+    🔴 [중요] **사람이 말한 문장만 싣는다.** 이 도구를 모델의 추론으로 채우면 이 단계가
+    존재하는 이유가 사라진다 — 2026-09-20 에 지휘자가 남의 프로젝트 설명을 NS 의 사실로
+    읽은 것이 그 값이다(`#649`).
+
+    `purpose` 는 game / tool / rnd / demo 중 하나이고, `game` 이면 `genre` 도 필수다.
+    `overview` 는 **왜 존재하는가**를 한 문단으로 적는다 (핵심 시스템·설계 의도).
+    """
+    from . import profile as PF
+
+    try:
+        n = (name or "").strip() or Registry.load().active
+        fields = {k: v for k, v in (
+            ("engine_decided", engine_decided), ("engine", engine),
+            ("engine_version", engine_version), ("language", language),
+            ("purpose", purpose), ("genre", genre), ("overview", overview),
+            ("notes", notes)) if v not in ("", None)}
+        if not fields:
+            return json.dumps({"ok": False, "error": "적립할 값이 없다 — 사람의 답을 실어라",
+                               "questions": PF.questions(n)}, ensure_ascii=False)
+        return json.dumps(PF.save(n, **fields), ensure_ascii=False)
+    except (ValueError, ConfigError, OSError) as e:
+        return _fail(e)
+
+
+@mcp.tool()
 def check_workshops_clean_tool(name: str = "") -> str:
     """작업을 보내기 전에 워크숍 체크아웃이 안전한지 확인한다 (PLAN §5.5.4-⑥-1).
 

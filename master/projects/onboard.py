@@ -294,6 +294,27 @@ def _probe_index(paths) -> tuple:
     return True, f"{c[:7]} @ {cfg.last_indexed_at or '?'}"
 
 
+def _probe_profile(paths) -> tuple:
+    """프로필이 **사람의 답으로** 다 찼는가 (`#650`).
+
+    [중요] 이 판정은 파일 존재가 아니라 **칸이 찼는가**를 본다 — 빈 파일을 놓아 통과시키는
+    길을 만들지 않는다. 그리고 `blockers` 가 아니라 `missing` 으로 판정한다:
+    `engine_decided: false` 는 **정상적으로 기록된 답**이라 온보딩 단계로는 완료이고,
+    분산 작업 등재를 막는 것은 별개의 자리(`blockers`)다.
+    """
+    from . import profile as PF
+
+    miss = PF.missing(paths.name)
+    if miss:
+        return False, (f"프로필이 비었다 — 안 채워진 칸: {', '.join(miss)}. "
+                       f"[중요] 이건 측정으로 못 채운다(사람만 아는 값이다). "
+                       f"`set_project_profile` 로 답하면 채워진다: {PF.profile_path(paths.name)}")
+    got = PF.load(paths.name)
+    tail = " · [주의] 엔진 미확정으로 기록됨 — 등재는 막힌다" if got.get("engine_decided") is False else ""
+    return True, (f"엔진 {got.get('engine')} {got.get('engine_version')} · "
+                  f"용도 {got.get('purpose')} · 서술 {len(str(got.get('overview') or ''))}자{tail}")
+
+
 def _probe_conventions(paths) -> tuple:
     """미러의 `CLAUDE.md` 에 컨벤션 절이 있는가 (`#294`).
 
@@ -346,6 +367,7 @@ PROBES = {
     "hook": _probe_hook,
     "clone": _probe_clone,
     "guard": _probe_guard,
+    "profile": _probe_profile,
     "conventions": _probe_conventions,
     "graph": _probe_graph,
     "synth": _probe_synth,

@@ -1,0 +1,207 @@
+"""프로젝트 프로필 — **사람만 아는 것**을 받아 적립하는 자리 (사용자 결정 2026-09-20).
+
+## 왜 이것이 필요한가 — 오염이 공백보다 비쌌다
+
+2026-09-20: `.33` 의 NS 콘솔이 자기 프로젝트 문서로 *"This project is a multiplayer game …
+**Listen Server** …"* 를 읽고 있었다. **NS 는 Third Person 템플릿 기반**이고 그 문장은 거짓이다
+(출처는 ModularStage 문서가 통째로 배달된 것 — `#649`). 지휘자인 나도 그것을 NS 의 사실로 읽었다.
+
+[중요] **비어 있는 것보다 오염된 것이 더 나쁘다.** 그리고 공백일 때 나는 **다른 문서에서
+추론한다** — 그 문서가 남의 프로젝트 것이면 조용히 틀린다. 그러니 답은 「비워 두기」가 아니라
+**사람에게 받아서 채우기**다.
+
+## 두 부류를 섞지 않는다 — 이게 이 모듈의 설계 전부다
+
+    A. 기계가 재는 것   엔진 association · 모듈 · 타깃 · 소스 확장자 분포
+                        → `measure()`. **사실로만 싣고 규약으로 굳히지 않는다**
+    B. 사람만 아는 것   엔진이 확정인가 · 용도 · 언어 정책 · 장르 · 왜 존재하는가
+                        → `REQUIRED`. 파일에 없고 측정으로도 안 나온다
+
+🔴 [중요] **A 를 B 자리에 적립하지 않는다.** `#294` 가 그 값을 이미 치렀다 — NS 의 규약 절에
+*"한글 주석 0개 → 주석은 영문이다"* 가 **측정으로** 적립됐고(main 이 에픽 템플릿이니 당연했다)
+그것이 워커 매니페스트로 가서 **골조 계약(한국어 주석)과 정면으로 충돌**했다.
+*"규약은 결정이지 측정이 아니다."* 그래서 `measure()` 의 결과는 **질문할 때 근거로 보여 줄 뿐**
+저장되지 않는다.
+
+## 적립처가 git 관리인 이유
+
+`<트윈>/` 은 **gitignore** 다(`.gitignore:17` `/NS/`). 거기 두면 이 결정이 **이력 없이** 산다.
+프로필은 사람의 결정이므로 리뷰·되돌리기가 가능해야 한다 → `master/client/payload/profile/<P>.yaml`.
+
+[주의] **이건 원전에 없던 단계다.** 원전은 프로젝트가 하나였고 팀이 자기 `CLAUDE.md` 를 들고
+있었다. 우리는 다중 프로젝트이고 **워커가 그 문서를 계약으로 받으므로** 필요해졌다 —
+이식이 아니라 우리 고유 추가이고, 근거는 사용자 결정(2026-09-20)이다.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import yaml
+
+# [중요] **집행되는 자리는 `blockers()` 하나다.** 목록을 늘리려면 여기만 고친다 —
+#    두 곳에 적으면 판정기와 게이트가 갈린다(`hook_entry` 가 치른 값과 같은 부류).
+PURPOSES = ("game", "tool", "rnd", "demo")
+
+# 사람이 답해야 채워지는 칸. `genre` 는 `purpose == "game"` 일 때만 필수다.
+REQUIRED = ("engine_decided", "engine", "engine_version", "language", "purpose", "overview")
+
+OVERVIEW_MIN = 40          # 한 문단. [주의] 길이는 품질이 아니지만 **한 단어 회피**는 막는다
+
+
+def profile_dir() -> Path:
+    return Path(__file__).resolve().parents[1] / "client" / "payload" / "profile"
+
+
+def profile_path(project: str) -> Path:
+    return profile_dir() / f"{project}.yaml"
+
+
+def load(project: str) -> dict:
+    """적립된 프로필. 없으면 빈 dict — **없다는 것을 0 으로 위장하지 않는다.**"""
+    p = profile_path(project)
+    if not p.is_file():
+        return {}
+    try:
+        got = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except Exception:                                           # noqa: BLE001
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
+def measure(project: str) -> dict:
+    """A — 소스 트리에서 재는 값. **저장하지 않는다**, 질문할 때 근거로 보여 준다.
+
+    [주의] 실패를 빈 값으로 위장하지 않는다 — `why` 에 사유를 싣는다(`#285`·`#309` 축).
+    """
+    out = {"uproject": "", "engine_association": "", "targets": [], "modules": [],
+           "sources": {}, "twin_engine": "", "why": ""}
+    try:
+        from ..client.bundle import _uproject_facts               # noqa: PLC0415
+        f = _uproject_facts(project)
+        out["uproject"], out["targets"], out["modules"] = f["uproject"], f["targets"], f["modules"]
+        out["why"] = f.get("why") or ""
+    except Exception as e:                                        # noqa: BLE001
+        out["why"] = f"소스 실측 실패 — {type(e).__name__}: {e}"
+    try:
+        from ..context_search.paths import resolve                # noqa: PLC0415
+        repo = resolve(project).repo
+        if out["uproject"]:
+            import json                                           # noqa: PLC0415
+            up = repo / out["uproject"]
+            if up.is_file():
+                out["engine_association"] = str(
+                    (json.loads(up.read_text(encoding="utf-8")) or {}).get("EngineAssociation") or "")
+        src = repo / "Source"
+        if src.is_dir():
+            for ext in ("cpp", "h", "cs", "py"):
+                out["sources"][ext] = sum(1 for _ in src.rglob(f"*.{ext}"))
+    except Exception as e:                                        # noqa: BLE001
+        out["why"] = (out["why"] + " · " if out["why"] else "") + \
+            f"트리 실측 실패 — {type(e).__name__}: {e}"
+    try:
+        from .config import Registry                              # noqa: PLC0415
+        out["twin_engine"] = Registry.load().config_of(project).engine or ""
+    except Exception:                                             # noqa: BLE001
+        pass
+    return out
+
+
+def missing(project: str) -> list:
+    """**안 채워진 칸**의 이름들. 빈 목록이면 사람이 전부 답했다는 뜻이다."""
+    got = load(project)
+    out = [k for k in REQUIRED
+           if got.get(k) is None or (isinstance(got.get(k), str) and not got[k].strip())]
+    if str(got.get("purpose") or "") == "game" and not str(got.get("genre") or "").strip():
+        out.append("genre")
+    return out
+
+
+def blockers(project: str) -> list:
+    """🔴 **집행이 읽는 목록.** 비어 있지 않으면 그 프로젝트에 분산 작업을 등재하지 않는다.
+
+    [중요] `missing` 과 다르다 — 답을 **받았는데도** 막아야 하는 경우가 있다:
+    `engine_decided: false` 는 정상적으로 기록된 답이지만, 엔진이 안 정해졌는데 워커에게
+    소스 작업을 계약으로 내보내는 것은 순서가 거꾸로다.
+    """
+    miss = missing(project)
+    out = [f"프로필 미수집: {', '.join(miss)}"] if miss else []
+    got = load(project)
+    if got and got.get("engine_decided") is False:
+        out.append("엔진이 아직 확정되지 않았다 (`engine_decided: false`) — "
+                   "엔진이 정해져야 소스 작업을 계약으로 내보낼 수 있다")
+    return out
+
+
+def questions(project: str) -> list:
+    """사람에게 **그대로 물을 문장들**. 표면이 문구를 지어내지 않게 여기서 준다.
+
+    [중요] **모델의 제안을 답으로 적립하지 않는다** — 골조 `questions` 와 같은 규약이다.
+    초안을 보여 주는 것은 되지만, 저장되는 문장은 사람이 확정한 것이어야 한다.
+    """
+    m = measure(project)
+    ext = " · ".join(f"{k} {v}" for k, v in (m.get("sources") or {}).items() if v) or "(못 셌다)"
+    ev = (f"[실측] `.uproject`={m['uproject'] or '없음'} · "
+          f"EngineAssociation={m['engine_association'] or '없음'} · "
+          f"트윈 engine={m['twin_engine'] or '없음'} · 소스 {ext}")
+    miss = set(missing(project))
+    ask = [
+        ("engine_decided", "사용할 게임 엔진이 **확정**됐습니까? (예/아니오)"),
+        ("engine", "엔진 이름은 무엇입니까? (예: Unreal Engine)"),
+        ("engine_version", "엔진 버전은 무엇입니까? "
+                           "[주의] association 과 설치 버전이 다를 수 있습니다"),
+        ("language", "주 언어·정책은 무엇입니까? (예: C++ 중심 · 블루프린트는 조립만)"),
+        ("purpose", f"무슨 용도입니까? ({' / '.join(PURPOSES)})"),
+        ("genre", "게임이라면 장르는 무엇입니까?"),
+        ("overview", "이 프로젝트가 **왜 존재하는지** 한 문단으로 적어 주세요 "
+                     "(핵심 시스템·설계 의도)."),
+    ]
+    return [ev] + [f"- ({k}) {q}" for k, q in ask if k in miss or not miss]
+
+
+def save(project: str, **fields) -> dict:
+    """사람의 답을 적립한다. 돌려주는 것: `{"ok", "path", "missing", "blockers"}`.
+
+    [중요] **부분 저장을 허용한다** — 한 번에 다 못 받을 수 있고, 받은 것을 버리면 사람이
+    같은 말을 두 번 한다. 대신 **미완은 미완이라고 계속 말한다**(`missing`).
+    [중요] 검증은 fail-closed 다 — 모르는 칸·모르는 용도는 **거절**한다. 조용히 무시하면
+    사람은 적립됐다고 믿는다.
+    """
+    known = set(REQUIRED) | {"genre", "notes"}
+    bad = sorted(set(fields) - known)
+    if bad:
+        raise ValueError(f"모르는 칸: {', '.join(bad)} (가능: {', '.join(sorted(known))})")
+    if "purpose" in fields and str(fields["purpose"]) not in PURPOSES:
+        raise ValueError(f"purpose 는 {PURPOSES} 중 하나다 — 받은 값: {fields['purpose']!r}")
+    if "overview" in fields and len(str(fields["overview"]).strip()) < OVERVIEW_MIN:
+        raise ValueError(f"overview 가 너무 짧다({len(str(fields['overview']).strip())}자) — "
+                         f"{OVERVIEW_MIN}자 이상으로 적는다. 한 단어는 서술이 아니다")
+    if "engine_decided" in fields and not isinstance(fields["engine_decided"], bool):
+        raise ValueError("engine_decided 는 true/false 다 (문자열이 아니다)")
+
+    got = load(project)
+    got.update(fields)
+    d = profile_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    p = profile_path(project)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(yaml.safe_dump(got, allow_unicode=True, sort_keys=True), encoding="utf-8")
+    tmp.replace(p)
+    return {"ok": True, "path": str(p), "missing": missing(project),
+            "blockers": blockers(project)}
+
+
+def project_line(project: str) -> str:
+    """생성 본문의 **첫 문단**. 프로필이 없으면 「비어 있다」를 그대로 말한다.
+
+    [중요] 여기서 지어내지 않는다 — `claude_md_body` ③ 의 규약(*"지어내지 않고 「비어 있다」고
+    적는다"*)을 그대로 따른다. 다만 **채우는 길**을 한 줄로 가리킨다.
+    """
+    g = load(project)
+    if missing(project):
+        return (f"`{project}` — [주의] **프로젝트 서술이 비어 있다.** 이것은 사실이고, "
+                f"추측으로 채우지 않는다. 사람이 `set_project_profile` 로 답하면 이 문단이 "
+                f"채워진다 (안 채워진 칸: {', '.join(missing(project))}).")
+    kind = {"game": "게임", "tool": "툴", "rnd": "R&D", "demo": "데모"}.get(g.get("purpose"), g.get("purpose"))
+    genre = f" · 장르 **{g['genre']}**" if g.get("genre") else ""
+    return (f"`{project}` — **{g['engine']} {g['engine_version']}** {kind} 프로젝트{genre}. "
+            f"주 언어·정책: {g['language']}.\n\n{str(g['overview']).strip()}")

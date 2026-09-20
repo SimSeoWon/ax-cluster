@@ -214,7 +214,12 @@ def test_live_modularstage() -> None:
     try:
         os.environ["AX_PROJECTS_ROOT"] = str(root)
         d = plan("ModularStage", hosts=False).to_dict()
-        check("[중요] 라이브: 남은 단계가 없다", d["remaining"] == [], str(d["remaining"]))
+        # 🔴 [중요] **`profile` 은 사람이 답해야 끝나는 단계다** (`#650`) — 자동으로 채워질
+        #    수 없으므로 「남음」이 정상이다. 나머지가 남으면 그건 진짜 미초기화다.
+        #    [주의] 이 예외를 넓히지 않는다. `profile` **하나만** 허용한다 — 목록을 느슨하게
+        #    두면 다음에 진짜로 빠진 단계가 이 구멍으로 조용히 통과한다.
+        check("[중요] 라이브: 남은 단계가 `profile` 말고는 없다",
+              set(d["remaining"]) <= {"profile"}, str(d["remaining"]))
         by = {s["step"]: s for s in d["steps"]}
         check("근거가 실물이다 (그래프 건수)", "classes=" in by["graph"]["detail"],
               by["graph"]["detail"])

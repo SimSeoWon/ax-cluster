@@ -2,8 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-`NS` is an Unreal Engine 5.8 project. [주의] **왜 존재하는가는 아직 이 문서에 없다** — 아래
-「What this file does **not** say yet」 절을 볼 것. 규약은 확정됐고, 프로젝트 서술은 비어 있다.
+{PROJECT_LINE}
 
 ## Where you are, and what you can do here
 
