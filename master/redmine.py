@@ -402,6 +402,30 @@ def get_issue(issue_id, *, key: str = "", url: str = "", sender=None) -> dict:
     return out
 
 
+# [중요] **실측값이다** (2026-09-20 `#652`) — 추측이 아니다. 255 는 통과하고 256 은
+#    `422 {"errors":["설명 은 너무 깁니다 (최대 255자 까지)"]}` 로 거절된다.
+DESCRIPTION_MAX = 255
+
+
+def _http_error_reasons(err) -> str:
+    """레드마인 오류 본문의 `errors` 배열을 한 줄로. 못 읽으면 빈 문자열.
+
+    [중요] **읽기 실패가 원래 오류를 덮지 않는다** — 호출자는 이미 `HTTP <code>` 를 쥐고
+    있고, 이 함수는 거기에 **사유를 더하기만** 한다.
+    """
+    try:
+        body = err.read().decode("utf-8", "replace")
+    except Exception:                                        # noqa: BLE001
+        return ""
+    try:
+        errs = (json.loads(body) or {}).get("errors")
+    except ValueError:
+        return body.strip()[:200]
+    if isinstance(errs, list) and errs:
+        return " · ".join(str(x) for x in errs)[:300]
+    return body.strip()[:200]
+
+
 def list_versions(*, project: str = PROJECT_ID, key: str = "", url: str = "",
                   sender=None) -> list:
     """그 프로젝트의 마일스톤(버전) 원본 목록. 실패하면 **빈 목록**이다.
@@ -448,6 +472,13 @@ def create_version(name: str, *, project: str = PROJECT_ID, due_date: str = "",
         return {"error": "project 가 비었다 — 버전은 프로젝트에 속한다"}
     if status not in ("open", "locked", "closed"):
         return {"error": f"status 는 open·locked·closed 중 하나다 — `{status}` 가 왔다"}
+    # [중요] **설명 255자는 실측값이다** (2026-09-20, `#652`): 256자를 보내면 레드마인이
+    #    `{"errors":["설명 은 너무 깁니다 (최대 255자 까지)"]}` 로 거절한다. 자르지 않고
+    #    **거절한다** — 마일스톤 설명은 규약을 적는 자리라 조용히 잘리면 규약이 반쪽이 된다.
+    #    [주의] 이름(60자)은 레드마인이 자르지 않고 받으므로 여기서도 건드리지 않는다.
+    if len(description or "") > DESCRIPTION_MAX:
+        return {"error": f"description 이 {len(description)}자다 — 레드마인 한계는 "
+                         f"{DESCRIPTION_MAX}자다 (실측). 줄여서 다시 보내라"}
 
     for v in list_versions(project=project, key=k, url=base, sender=sender):
         if str(v.get("name", "")).strip() == nm:
@@ -470,8 +501,15 @@ def create_version(name: str, *, project: str = PROJECT_ID, due_date: str = "",
     except urllib.error.HTTPError as e:
         # [주의] 404 는 「그 프로젝트가 없다」이고 403 은 「그 키에 권한이 없다」다 — 둘은
         #    사람이 할 일이 다르다. 코드만 흘리면 요청자가 고칠 근거가 없다.
+        # 🔴 [중요] **422 는 레드마인이 사유를 본문에 담아 준다 — 버리지 않는다.**
+        #    실측 2026-09-20: 설명 256자를 보냈더니 `HTTP 422` 만 돌려받아 무엇이 틀렸는지
+        #    알 수 없었다. 본문에는 `{"errors":["설명 은 너무 깁니다 (최대 255자 까지)"]}`
+        #    가 그대로 있었다. 이 함수의 독스트링이 *"깊은 곳의 HTTP 422 는 무엇이 틀렸는지
+        #    알려 주지 않는다"* 고 적어 놓고 **정작 이 자리가 그러고 있었다.**
         hint = {404: f"레드마인에 `{project}` 프로젝트가 없다",
                 403: "이 API 키에 버전 관리 권한이 없다"}.get(e.code, "")
+        if not hint:
+            hint = _http_error_reasons(e)
         return {"error": f"HTTP {e.code}" + (f" — {hint}" if hint else "")}
     except Exception as e:                                   # noqa: BLE001
         return {"error": f"{type(e).__name__}: {e}"}

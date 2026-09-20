@@ -267,6 +267,54 @@ def test_create_version_bad_input_is_loud():
           str(s.posts)[:140])
 
 
+def test_create_version_description_limit_is_measured():
+    """🔴 **255 는 실측값이다** (`#652`, 2026-09-20) — 256 을 보내면 레드마인이 422 로
+    거절한다. 자르지 않고 **거절한다**: 마일스톤 설명은 규약을 적는 자리라 조용히 잘리면
+    규약이 반쪽이 된다."""
+    s = VerSender()
+    ok = RM.create_version("M", project="ns", description="가" * RM.DESCRIPTION_MAX, sender=s)
+    check("한계까지는 통과한다", ok.get("id") == 88, str(ok))
+    over = RM.create_version("M2", project="ns", description="가" * (RM.DESCRIPTION_MAX + 1),
+                             sender=s)
+    check("[중요] 넘으면 거절하고 길이를 말한다",
+          "256자" in over.get("error", "") and "255" in over.get("error", ""), str(over))
+    posts = [u for u, _ in s.posts if "/versions.json" in u]
+    check("🔴 거절된 쪽은 POST 가 안 나간다", len(posts) == 1, str(posts))
+
+
+def test_http_error_carries_redmine_reason():
+    """🔴 **422 본문을 버리지 않는다** (`#652`). 종전에는 `HTTP 422` 만 돌려줘서 무엇이
+    틀렸는지 알 수 없었다 — 이 함수의 독스트링이 *"깊은 곳의 HTTP 422 는 무엇이 틀렸는지
+    알려 주지 않는다"* 고 적어 놓고 정작 그러고 있었다."""
+    import urllib.error
+    import io
+
+    class Boom(Sender):
+        def __call__(self, method, url, payload=None):
+            if "/versions.json" in url and method == "POST":
+                raise urllib.error.HTTPError(
+                    url, 422, "Unprocessable", {},
+                    io.BytesIO('{"errors":["설명 은 너무 깁니다 (최대 255자 까지)"]}'
+                               .encode("utf-8")))
+            if "/versions.json" in url:
+                return {"versions": []}
+            return super().__call__(method, url, payload)
+
+    out = RM.create_version("M", project="ns", sender=Boom())
+    check("코드를 유지한다", "422" in out.get("error", ""), str(out))
+    check("[중요] 레드마인이 준 사유가 실린다", "너무 깁니다" in out.get("error", ""), str(out))
+
+    class Weird(Boom):
+        def __call__(self, method, url, payload=None):
+            if "/versions.json" in url and method == "POST":
+                raise urllib.error.HTTPError(url, 500, "boom", {}, io.BytesIO(b"<html>nope"))
+            return Sender.__call__(self, method, url, payload) if "/versions.json" not in url \
+                else {"versions": []}
+
+    w = RM.create_version("M", project="ns", sender=Weird())
+    check("[주의] JSON 이 아니어도 원래 코드를 잃지 않는다", "500" in w.get("error", ""), str(w))
+
+
 def test_meta_versions_follow_the_project():
     """🔴 **`#652` 의 뿌리** — `meta` 가 늘 AX 프로젝트의 버전을 돌려줬다. `ns` 작업장이
     마일스톤을 물으면 남의 것 6개가 오고 자기 것은 안 보였다(실측 2026-09-20)."""
@@ -294,6 +342,8 @@ def main() -> int:
                test_create_version_does_not_duplicate,
                test_create_version_partial_name_is_not_a_duplicate,
                test_create_version_bad_input_is_loud,
+               test_create_version_description_limit_is_measured,
+               test_http_error_carries_redmine_reason,
                test_meta_versions_follow_the_project):
         fn()
     total = PASS + FAIL
