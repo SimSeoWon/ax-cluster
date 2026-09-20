@@ -471,20 +471,26 @@ def cmd_check(project: str, *, only: str = "") -> int:
         #    `#337` 의 훅과 같은 교훈이다: 파일 해시가 3자 일치해도 **등록이 없으면 안 돈다.**
         ok_res = True
         res_note = ""
-        if f.role != "requester":
-            from client.init import residency as _R
-            _have_daemon = any(d.endswith("worker_daemon.py")
-                               for d, _s in bundle.payload_pairs(f.role))
-            if not _have_daemon:
-                res_note = " · 상주 [건너뜀] 데몬 미배달 (`#404`)"
-            else:
-                _cmd = (f"schtasks /query /tn {_R.task_name(project)}" if f.windows
-                        else "crontab -l 2>/dev/null")
-                _rc, _out = bundle._ssh(f.host, f.user, _cmd)
-                _hit = (_rc == 0) if f.windows else (_R.cron_marker(f) in (_out or ""))
-                if not _hit:
-                    ok_res = False
-                    res_note = " · [실패] 상주 미등록 (배달만 되고 안 돈다)"
+        from client.init import residency as _R
+        _have_daemon = any(d.endswith("worker_daemon.py")
+                           for d, _s in bundle.payload_pairs(f.role))
+        _mounted = ""
+        try:
+            _mounted = (Registry.load().active or "").strip()
+        except Exception:                                    # noqa: BLE001
+            pass
+        _decision = _R.desired_state(project, _mounted, f, daemon_available=_have_daemon)
+        _cmd = _R.registration_query_command(project, f)
+        _rc, _out = bundle._ssh(f.host, f.user, _cmd)
+        _hit = _R.registration_present(_rc, _out, f)
+        if _decision.required and not _hit:
+            ok_res = False
+            res_note = " · [실패] 상주 미등록 (배달만 되고 안 돈다)"
+        elif not _decision.required and _hit:
+            ok_res = False
+            res_note = f" · [실패] 켜면 안 되는 상주가 등록돼 있다 — {_decision.reason}"
+        elif not _decision.required:
+            res_note = f" · 상주 미등록 정상 — {_decision.reason}"
 
         # ── codex 몫 (`#402`) — **역할 무관** ────────────────────────────
         #    [중요] `AGENTS.md` 는 「있나」가 아니라 **관리 블록이 최신인가**를 본다. 전문은

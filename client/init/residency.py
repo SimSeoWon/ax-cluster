@@ -66,6 +66,7 @@ claim 에 프로젝트 축이 없어(`#248`) 서로의 태스크를 집는다.
 from __future__ import annotations
 
 import shlex
+from dataclasses import dataclass
 
 TASK_NAME = "AxWorker"           # 🔴 개명 (`#405`) — 근거는 아래 「개명」 절
 INTERVAL_MIN = 5                 # 감시자 주기. 잠금 싱글턴이 겹침을 흡수한다
@@ -234,6 +235,17 @@ def cron_marker(facts) -> str:
     return f"cd {facts.path} &&"
 
 
+def registration_query_command(project: str, facts) -> str:
+    """상주 등록 여부를 묻는 명령. 배달과 검사가 같은 실제 상태를 보게 한다."""
+    return (f"schtasks /query /tn {task_name(project)}" if facts.windows
+            else "crontab -l 2>/dev/null")
+
+
+def registration_present(rc: int, out: str, facts) -> bool:
+    """등록 조회 결과를 한 자리에서 판정한다."""
+    return (rc == 0) if facts.windows else (cron_marker(facts) in (out or ""))
+
+
 def unregister_commands(project: str, facts) -> list:
     """상주 **해제** 명령 `(라벨, 명령)` (`#311`).
 
@@ -260,9 +272,9 @@ def plan_lines(project: str, facts, *, mounted: str = "") -> list:
                    "정상이다. 사람 PC 에 백그라운드 상주를 심지 않는다")
     # [중요] **사유를 여기 다시 쓰지 않는다** (`#311`) — 종전에는 여기와 `blocked_reason` 이
     #    각자 적어 두 벌이었고, `#248` 이 닫힌 뒤 **둘 다** 낡은 채로 남았다.
-    why = blocked_reason(project, mounted, facts)
-    if why:
-        out.append(f"     [중요] **지금 켜지 않는다** — {why}")
+    decision = desired_state(project, mounted, facts)
+    if not decision.required:
+        out.append(f"     [중요] **지금 켜지 않는다** — {decision.reason}")
     return out
 
 
@@ -271,6 +283,37 @@ def plan_lines(project: str, facts, *, mounted: str = "") -> list:
 #    **가리킨다**. 종전에는 같은 규칙이 **네 곳**에 각자 적혀 있었고 넷 다 낡은 전제였다:
 #    *"claim 에 프로젝트 축이 없다(#248)"* — 축은 **있다**(`#248` 닫힘 · `ClaimReq.project` ·
 #    `claimer.py` 가 `#258` 로 태그를 붙인다).
+@dataclass(frozen=True)
+class ResidencyDecision:
+    """상주의 원하는 상태. plan·deliver·check가 이 값 하나를 소비한다."""
+
+    required: bool
+    reason: str = ""
+
+
+def desired_state(project: str, mounted: str, facts=None, *, daemon_available: bool = True
+                  ) -> ResidencyDecision:
+    """이 프로젝트·기계에 상주 등록이 있어야 하는가."""
+    if facts is not None and getattr(facts, "role", "worker") == "requester":
+        return ResidencyDecision(False, "요청자는 상주를 받지 않는다")
+    if not daemon_available:
+        return ResidencyDecision(False, "데몬(`worker_daemon.py`)이 배달 대상이 아니다")
+    if facts is not None and not types_for(facts):
+        return ResidencyDecision(
+            False,
+            "이 기계가 집을 유형이 없다 — UE5가 없어 build를 못 하고, 추론(code)은 "
+            "마스터 push가 맡는다(`#404`). 상주를 켜면 5분마다 헛돈다",
+        )
+    if mounted and project != mounted:
+        return ResidencyDecision(
+            False,
+            f"{project} 는 마운트되지 않았다(마운트: {mounted}). claim 이 `MOUNT` 정책이라 "
+            f"200 + `not_mounted` 로 **거절**되고, 상주는 {INTERVAL_MIN}분마다 그 거절만 "
+            "받는다 — 상주는 마운트를 따른다(§5.5.2)",
+        )
+    return ResidencyDecision(True)
+
+
 def blocked_reason(project: str, mounted: str, facts=None) -> str:
     """켜면 안 되는 사유. 빈 문자열이면 켜도 된다.
 
@@ -290,20 +333,7 @@ def blocked_reason(project: str, mounted: str, facts=None) -> str:
     프로젝트의 상주를 켠다. 한 기계가 두 프로젝트를 **동시에** 맡는 길은 ⓐ 에서 없다
     (그것을 원하면 claim 을 스탬프 축으로 내려야 하고, 그건 마운트의 뜻을 바꾸는 별 결정이다).
     """
-    # 🔴 [중요] **집을 유형이 없으면 켜지 않는다** (`#404`). UE5 가 없는 기계는 build 를 못
-    #    하고 추론(code)은 마스터 push 가 맡으므로 **할 일이 없다.** 켜 두면 5분마다 깨어나
-    #    「집을 잡이 없다」만 찍는다 — 「도는데 아무 일도 안 한다」는 아래 마운트 사유와
-    #    같은 부류의 헛돎이고, 그래서 같은 자리에서 막는다.
-    if facts is not None and not types_for(facts):
-        return ("이 기계가 집을 유형이 없다 — UE5 가 없어 build 를 못 하고, 추론(code)은 "
-                "마스터 push 가 맡는다(`#404`). 상주를 켜면 5분마다 헛돈다")
-    if mounted and project != mounted:
-        # [주의] 호출자가 *"지금 켜지 않는다 — "* 를 앞에 붙인다. 여기서 다시 「켜지 않는다」를
-        #    말하면 한 줄에 두 번 나온다(실측). **이 문장은 사유만 담는다.**
-        return (f"{project} 는 마운트되지 않았다(마운트: {mounted}). claim 이 `MOUNT` 정책이라 "
-                f"200 + `not_mounted` 로 **거절**되고, 상주는 {INTERVAL_MIN}분마다 그 거절만 "
-                f"받는다 — 상주는 마운트를 따른다(§5.5.2)")
-    return ""
+    return desired_state(project, mounted, facts).reason
 
 
 # ── 배달 뒤 갱신 (`#277`) ──────────────────────────────────────────────────────

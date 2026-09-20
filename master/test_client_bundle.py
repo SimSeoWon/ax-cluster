@@ -1386,6 +1386,39 @@ def test_dispatched_work_needs_no_consent() -> None:
           "묻지 말고 진행한다" not in r)
 
 
+def test_residency_reconcile_removes_forbidden_registration() -> None:
+    """원하는 상태가 없음이면 deliver가 과거 등록도 걷고 부재를 되읽는다."""
+    f = _facts(role="worker", os="linux", ue5="", path="/home/sim/trunk/NS")
+    state = {"registered": True}
+    calls = []
+
+    class FakeRegistry:
+        @staticmethod
+        def load():
+            return type("R", (), {"active": "NS"})()
+
+    def fake_ssh(host, user, cmd, *, timeout=None):
+        calls.append(cmd)
+        if "| crontab -" in cmd:
+            state["registered"] = False
+            return 0, ""
+        if cmd == "crontab -l 2>/dev/null":
+            return 0, (f"*/5 * * * * cd {f.path} && /usr/bin/python3 x\n"
+                       if state["registered"] else "")
+        return 0, ""
+
+    old_ssh, old_registry = bundle._ssh, bundle.Registry
+    bundle._ssh, bundle.Registry = fake_ssh, FakeRegistry
+    try:
+        got = bundle._register_residency("NS", f)
+    finally:
+        bundle._ssh, bundle.Registry = old_ssh, old_registry
+    check("[중요] 등록 불필요 상태를 skipped로 말한다", "skipped" in got, str(got))
+    check("[중요] 남아 있던 등록을 제거한다", not state["registered"], str(calls))
+    check("[중요] 제거 뒤 다시 조회한다",
+          calls.count("crontab -l 2>/dev/null") == 2, str(calls))
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
@@ -1403,6 +1436,7 @@ def main() -> int:
                test_codex_entry_doc,
                test_codex_mcp_registration,
                test_codex_identity,
+               test_residency_reconcile_removes_forbidden_registration,
                test_shadow_skills_are_reported):
         fn()
     total = PASS + FAIL

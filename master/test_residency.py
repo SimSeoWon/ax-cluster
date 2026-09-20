@@ -531,6 +531,28 @@ def test_session1_side_effects() -> None:
     check("  시간 초과에서 그것을 부른다", "TimeoutExpired" in src and "_kill_tree(proc)" in src)
 
 
+def test_desired_registration_matrix() -> None:
+    """plan·deliver·check가 공유할 원하는 상태와 실제 상태의 4칸."""
+    from client.init import residency as R
+
+    need = _f(windows=True, path=r"E:\t\NS", ue5="x")
+    skip = _f(windows=False, path="/t/NS", ue5="")
+    d_need = R.desired_state("NS", "NS", need, daemon_available=True)
+    d_skip = R.desired_state("NS", "NS", skip, daemon_available=True)
+    check("required 판정", d_need.required and not d_need.reason, str(d_need))
+    check("skipped 판정", not d_skip.required and "집을 유형" in d_skip.reason, str(d_skip))
+
+    expected = {
+        (True, True): True,
+        (True, False): False,
+        (False, False): True,
+        (False, True): False,
+    }
+    for (required, present), ok in expected.items():
+        check(f"상태 행렬 required={required} present={present}",
+              (required == present) is ok)
+
+
 if __name__ == "__main__":
     for fn in (test_types_from_probe,
                test_task_name_per_project,
@@ -550,6 +572,7 @@ if __name__ == "__main__":
                test_stale_flag_is_not_eaten_by_the_new_process,
                test_deliver_refreshes_residency,
                test_ensure_starts_only_when_down,
+               test_desired_registration_matrix,
                test_session1_side_effects):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_residency: {PASS}/{PASS + FAIL} 통과")

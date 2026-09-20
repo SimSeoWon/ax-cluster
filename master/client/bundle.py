@@ -1931,25 +1931,36 @@ def _register_residency(project: str, facts: HostFacts) -> dict:
     [중요] **조용히 건너뛰지 않는다.** 왜 안 걸었는지를 반드시 담는다 — 등록이 빠진 채
     「배달 완료」로 보이면 `#255` 이전 상태로 돌아간다(등록이 문서에만 있던 그 상태).
     """
-    if facts.role == "requester":
-        return {"skipped": "요청자는 상주를 받지 않는다"}
     try:
         from client.init import residency as R
     except Exception as e:                                   # noqa: BLE001
         return {"error": f"상주 모듈을 못 읽었다 — {type(e).__name__}: {e}"}
-
-    # [중요] 데몬이 배달 대상에 없으면 등록하지 않는다 (`#404` 전)
-    if not any(dest.endswith("worker_daemon.py") for dest, _src in payload_pairs(facts.role)):
-        return {"skipped": "데몬(`worker_daemon.py`)이 아직 배달 대상이 아니다 — `#404` 뒤에 켠다"}
 
     mounted = ""
     try:
         mounted = (Registry.load().active or "").strip()
     except Exception:                                        # noqa: BLE001
         pass                                                 # 마운트를 못 읽으면 게이트를 못 본다
-    why = R.blocked_reason(project, mounted, facts)
-    if why:
-        return {"skipped": f"지금 켜지 않는다 — {why}"}
+    have_daemon = any(dest.endswith("worker_daemon.py")
+                      for dest, _src in payload_pairs(facts.role))
+    decision = R.desired_state(project, mounted, facts, daemon_available=have_daemon)
+    if not decision.required:
+        # 원하는 상태가 '없음'이면 단순 skip이 아니라 과거 등록까지 걷는다. 그렇지 않으면
+        # 마운트/능력이 바뀐 뒤에도 5분마다 죽은 상주가 계속 돈다.
+        qcmd = R.registration_query_command(project, facts)
+        qrc, qout = _ssh(facts.host, facts.user, qcmd)
+        removed = []
+        if R.registration_present(qrc, qout, facts):
+            for label, cmd in R.unregister_commands(project, facts):
+                rc, got = _ssh(facts.host, facts.user, cmd)
+                result = "[완료]" if rc == 0 else f"[주의] rc={rc} {(got or '')[:80]}"
+                removed.append(f"{label} {result}")
+            qrc, qout = _ssh(facts.host, facts.user, qcmd)
+            if R.registration_present(qrc, qout, facts):
+                return {"error": f"상주를 해제했지만 등록이 남았다 — {decision.reason}",
+                        "results": removed}
+        return {"skipped": f"지금 켜지 않는다 — {decision.reason}",
+                **({"results": removed} if removed else {})}
 
     py = _probe_python(facts)
     out = []
