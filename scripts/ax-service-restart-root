@@ -1,8 +1,48 @@
 #!/bin/sh
+# AX 유닛 조작 helper (root). sudoers 가 명령줄을 열거하지만, **판정은 여기가 한다.**
+#
+# 두 형태를 받는다:
+#   ax-service-restart-root <unit>                재시작 (`#647` 종전 형태 — 그대로 둔다)
+#   ax-service-restart-root <verb> <unit>         verb = restart | reset-failed  (`#360`)
+#
+# [중요] 1인자 형태를 **없애지 않은 것이 의도다.** sudoers 는 명령줄을 글자로 맞추므로,
+#   형태를 갈아엎으면 새 sudoers 가 깔리기 전까지 **기존 재시작이 통째로 죽는다.** 더하는
+#   방향이면 최악이라도 「새 기능만 안 된다」로 끝난다.
+# [주의] `reset-failed` 는 상태만 지운다 — 무엇도 기동하지 않는다. 그래서 `restart` 보다
+#   좁은 권한이고, `.path`·`.timer` 까지 여는 근거가 된다 (`#360`: 죽은 것은 `.service` 와
+#   `.path` **둘 다**였다).
 set -eu
-[ "$#" -eq 1 ] || { echo "exactly one unit is required" >&2; exit 2; }
-case "$1" in
-  ax-task-queue|ax-projects|ax-broker|ax-indexer|ax-batch|ax-status|ax-dispatch|ax-review-queue) ;;
-  *) echo "unit is not allowed: $1" >&2; exit 2 ;;
+
+case "$#" in
+  1) verb=restart; unit=$1 ;;
+  2) verb=$1;      unit=$2 ;;
+  *) echo "usage: $0 [restart|reset-failed] <unit>" >&2; exit 2 ;;
 esac
-exec /usr/bin/systemctl restart "$1"
+
+case "$verb" in
+  restart|reset-failed) ;;
+  *) echo "verb is not allowed: $verb" >&2; exit 2 ;;
+esac
+
+# 접미어를 떼고 기반 이름을 본다 — `.service`/`.path`/`.timer` 만 허용한다
+base=${unit%.service}; base=${base%.path}; base=${base%.timer}
+case "$unit" in
+  "$base"|"$base".service|"$base".path|"$base".timer) ;;
+  *) echo "unit suffix is not allowed: $unit" >&2; exit 2 ;;
+esac
+case "$base" in
+  ax-task-queue|ax-projects|ax-broker|ax-indexer|ax-batch|ax-status|ax-dispatch|\
+  ax-dispatch-catchup|ax-review-queue) ;;
+  *) echo "unit is not allowed: $unit" >&2; exit 2 ;;
+esac
+
+# [중요] **재시작은 `.service` 에만 연다.** `.path`/`.timer` 를 restart 로 열면 트리거를
+#   마스터가 임의로 껐다 켤 수 있게 되는데, `#360` 이 요구한 것은 **복구**이지 트리거 조작이
+#   아니다. 그쪽은 `reset-failed` 로 충분하다.
+if [ "$verb" = restart ]; then
+  case "$unit" in
+    *.path|*.timer) echo "restart is limited to .service: $unit" >&2; exit 2 ;;
+  esac
+fi
+
+exec /usr/bin/systemctl "$verb" "$unit"
