@@ -440,6 +440,11 @@ the failing command left the old process running, so `is-active` still said `act
 구성중"*). [주의] 그 규칙은 실질적으로 `sim`→root 경로다 — 근거·완화는
 `sim-desktop.d/environment.md` § Registered NOPASSWD commands.
 
+🔴 [중요] **백틱이 든 글은 셸을 거치지 않는다 — 파일에 써서 실행한다.** `python -c "… \`x\` …"`
+에서 셸이 백틱을 **명령으로 실행**해 그 구절이 **조용히 사라진다** (표적: 레드마인 노트·커밋
+메시지·리포트). **두 번 당했다** — 리포트 `73`(완료 노트 4구절) · `74`(종결 노트 8건).
+[주의] 두 번 다 「조심한다」가 못 막았다. **막은 것은 경로를 바꾼 것이다.**
+
 ## Detail documents
 
 | What you need | File |
