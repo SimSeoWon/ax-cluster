@@ -4,6 +4,7 @@
     python -m master.client plan  <프로젝트>     배달할 내용만 보여준다 (쓰지 않는다)
     python -m master.client deliver <프로젝트>   config + 스킬 배달 → 되읽어 대조
     python -m master.client check <프로젝트>     배달된 것이 정본과 같은지 검사
+    python -m master.client update               등록된 모든 프로젝트를 현재 HEAD로 배달·검사
     python -m master.client uproject <프로젝트>  에디터 플러그인 계획 (`--confirm` 으로 적용)
 
 [중요] **`probe` → `plan` → `deliver` 순서로 쓴다.** 남의 기계에 쓰는 작업이므로, 무엇을 어디에
@@ -646,8 +647,43 @@ def cmd_ensure(project: str, *, only: str = "") -> int:
     return 1 if bad else 0
 
 
+def cmd_update(*, init: bool = False) -> int:
+    """등록된 모든 프로젝트 작업장을 현재 리비전으로 맞추고 즉시 검사한다.
+
+    [중요] 업데이트할 프로젝트를 호출자가 고르지 않는다. 레지스트리가 대상의 정본이며,
+    신규 프로젝트도 등록되는 순간 이 흐름에 자동으로 들어온다. 한 프로젝트가 실패해도
+    나머지 등록 프로젝트까지 시도하되, 하나라도 실패하면 전체 명령은 실패다.
+    """
+    registry = bundle.Registry.load()
+    problems = registry.check()
+    if problems:
+        print("[중요] 프로젝트 레지스트리가 깨져 있어 전체 업데이트를 시작하지 않는다")
+        for problem in problems:
+            print(f"  FAIL {problem}")
+        return 1
+    if not registry.names:
+        print("[중요] 등록된 프로젝트가 없다")
+        return 1
+
+    failed: list[str] = []
+    for project in registry.names:
+        print(f"\n══ {project}: 현재 HEAD 배달")
+        if cmd_deliver(project, init=init):
+            failed.append(f"{project}: deliver")
+            continue
+        print(f"══ {project}: 배달 결과 검사")
+        if cmd_check(project):
+            failed.append(f"{project}: check")
+
+    if failed:
+        print("\n[중요] 전체 업데이트 실패: " + ", ".join(failed))
+        return 1
+    print(f"\n[완료] 등록 프로젝트 {len(registry.names)}개를 현재 HEAD로 배달·검사했다")
+    return 0
+
+
 _CMDS = {"probe": cmd_probe, "plan": cmd_plan, "deliver": cmd_deliver, "check": cmd_check,
-         "ensure": cmd_ensure, "uproject": cmd_uproject}
+         "ensure": cmd_ensure, "uproject": cmd_uproject, "update": cmd_update}
 
 
 def main(argv: list) -> int:
@@ -657,6 +693,8 @@ def main(argv: list) -> int:
     if not argv or argv[0] not in _CMDS:
         print(__doc__)
         return 2
+    if argv[0] == "update":
+        return cmd_update(init="--init" in argv)
     rest = [a for a in argv[1:] if not a.startswith("-")]
     # [중요] **fail-closed** — 주워 쓰지 않는다 (`#227` 소 1.2, 모듈 머리말 참조).
     if not rest:

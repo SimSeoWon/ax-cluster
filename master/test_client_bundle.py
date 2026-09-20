@@ -1452,6 +1452,85 @@ def test_check_mount_lookup_is_fail_closed() -> None:
         bundle.Registry = old_registry
 
 
+def test_update_covers_every_registered_project() -> None:
+    """update는 프로젝트 선택 없이 레지스트리 전체를 deliver→check 한다."""
+    calls = []
+
+    class AllProjects:
+        names = ["NS", "ModularStage"]
+
+        @staticmethod
+        def check():
+            return []
+
+    class FakeRegistry:
+        @staticmethod
+        def load():
+            return AllProjects()
+
+    def fake_deliver(project, *, init=False, only=""):
+        calls.append(("deliver", project, init, only))
+        return 0
+
+    def fake_check(project, *, only=""):
+        calls.append(("check", project, only))
+        return 0
+
+    old_registry = bundle.Registry
+    old_deliver, old_check = client_cli.cmd_deliver, client_cli.cmd_check
+    bundle.Registry = FakeRegistry
+    client_cli.cmd_deliver, client_cli.cmd_check = fake_deliver, fake_check
+    try:
+        rc = client_cli.main(["update", "--init"])
+    finally:
+        bundle.Registry = old_registry
+        client_cli.cmd_deliver, client_cli.cmd_check = old_deliver, old_check
+    check("전체 업데이트가 성공한다", rc == 0, str(rc))
+    check("등록 프로젝트를 순서대로 배달·검사한다", calls == [
+        ("deliver", "NS", True, ""), ("check", "NS", ""),
+        ("deliver", "ModularStage", True, ""), ("check", "ModularStage", ""),
+    ], str(calls))
+
+
+def test_update_reports_partial_failure() -> None:
+    """한 프로젝트 실패가 전체 성공으로 접히지 않고, 나머지 업데이트는 계속된다."""
+    calls = []
+
+    class AllProjects:
+        names = ["NS", "ModularStage"]
+
+        @staticmethod
+        def check():
+            return []
+
+    class FakeRegistry:
+        @staticmethod
+        def load():
+            return AllProjects()
+
+    def fake_deliver(project, *, init=False, only=""):
+        calls.append(("deliver", project))
+        return 1 if project == "NS" else 0
+
+    def fake_check(project, *, only=""):
+        calls.append(("check", project))
+        return 0
+
+    old_registry = bundle.Registry
+    old_deliver, old_check = client_cli.cmd_deliver, client_cli.cmd_check
+    bundle.Registry = FakeRegistry
+    client_cli.cmd_deliver, client_cli.cmd_check = fake_deliver, fake_check
+    try:
+        rc = client_cli.cmd_update()
+    finally:
+        bundle.Registry = old_registry
+        client_cli.cmd_deliver, client_cli.cmd_check = old_deliver, old_check
+    check("부분 실패면 전체 명령도 실패한다", rc == 1, str(rc))
+    check("실패한 프로젝트는 검사하지 않고 다음 등록 프로젝트를 계속한다", calls == [
+        ("deliver", "NS"), ("deliver", "ModularStage"), ("check", "ModularStage"),
+    ], str(calls))
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
@@ -1471,6 +1550,8 @@ def main() -> int:
                test_codex_identity,
                test_residency_reconcile_removes_forbidden_registration,
                test_check_mount_lookup_is_fail_closed,
+               test_update_covers_every_registered_project,
+               test_update_reports_partial_failure,
                test_shadow_skills_are_reported):
         fn()
     total = PASS + FAIL
