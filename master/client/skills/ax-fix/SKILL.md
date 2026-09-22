@@ -27,14 +27,15 @@ description: 자동 리뷰·주간 플랜을 **번호(R12 · P3)** 로 받아 �
     ② 내려받기      fix_flow.py fetch R12   → .ax/fixes/R12/doc.md · doc.json
     ③ 대조          fix_flow.py check R12   → .ax/fixes/R12/check.md  (지금 origin/main 기준 사실)
     ④ 판정·질의     항목마다 「합당 / 해당 없음 / 의도된 동작 의심」 + 근거 → 사용자에게 묻는다   ← 사람
-    ⑤ 적용          fix_flow.py worktree R12 → 수락분만 서브 에이전트가 고친다
+    ⑤ 적용          fix_flow.py prepare R12  → **고칠 자리를 사람에게 먼저 말하고** 수락분만 고친다
                     → fix_flow.py diff R12 로 확인 → 커밋 여부 묻는다 ← 사람 → fix_flow.py commit
+                    → worktree 모드였으면 fix_flow.py release R12 로 브랜치 점유를 푼다
     ⑥ 기록          update_fix_status (항목마다) · 플랜이면 레드마인 노트
 
 도구:
 
     MCP      mcp__ax-client__list_fixes · get_fix · update_fix_status
-    스크립트  <프로젝트 Python> .ax/lib/axmaster/clientside/fix_flow.py list|fetch|check|worktree|diff|commit|status
+    스크립트  <프로젝트 Python> .ax/lib/axmaster/clientside/fix_flow.py list|fetch|check|prepare|diff|commit|release|status
 
 [중요] **맨 `py`나 `python`을 쓰지 않는다.** 먼저 `.ax/config.json`의
 `backends.python`을 읽고 그 **절대경로**를 실행한다. 같은 값이 `.mcp.json`의
@@ -92,9 +93,23 @@ worktree. 이 체크아웃의 작업 트리는 사람이 고치던 중일 수 �
 
 ### ⑤ 적용 — 수락한 항목만
 
-    "<backends.python>" .ax/lib/axmaster/clientside/fix_flow.py worktree R12
+    "<backends.python>" .ax/lib/axmaster/clientside/fix_flow.py prepare R12
 
-체크아웃 **옆에** `ax-fix-R12` worktree 와 `fix/R12` 브랜치가 생긴다(있으면 재사용 · 리셋하지 않는다).
+🔴 [중요] **기본은 이 체크아웃 그 자리다** — 여기에 `fix/R12` 브랜치를 만들어 붙인다. 그래야 사람이
+소스트리에서 바로 보고, `Intermediate`/`Binaries` 가 그대로라 **증분 빌드**로 확인할 수 있다.
+
+[중요] **커밋 안 한 변경이 있으면 거절한다** — 그때만 갈래를 사람에게 묻는다:
+
+    ⓐ 커밋하거나 stash 한 뒤 다시 부른다                     ← 기본 권장
+    ⓑ `prepare R12 --mode worktree` 로 옆 디렉토리에서 고친다
+
+[주의] **ⓑ 를 고르면 수정이 이 폴더에서 안 보인다** — 고르기 전에 그 대가를 말한다. worktree 는
+사람이 고치던 중일 때의 **피난처**지 기본이 아니다.
+
+🔴 [중요] **서브 에이전트를 보내기 전에 출력의 `path`·`branch`·`mode` 를 사람에게 말한다.**
+안 말하면 사람은 자기 화면에서 아무것도 못 보면서 이유도 모른다 — 그것이 `#660` 사고다
+(2026-09-22: 사람이 소스트리를 보며 *"수정한거 맞니?"* 를 물어야 했다).
+
 서브 에이전트(`code-writer`)에게 넘기는 것:
 
 - worktree 경로 — **그 안의 파일만** 고친다
@@ -117,6 +132,16 @@ worktree. 이 체크아웃의 작업 트리는 사람이 고치던 중일 수 �
 `fix/R12` 가 아니면 거절하고, 메시지는 `fix(R12-1,R12-4): …` 가 된다. 출력의 `commit` 을 ⑥에 쓴다.
 [중요] **push 하지 않고 `main` 에 머지하지 않는다** — 그건 사람이 한다.
 
+커밋 뒤 자리를 반납한다:
+
+    "<backends.python>" .ax/lib/axmaster/clientside/fix_flow.py release R12
+
+[중요] **worktree 모드였으면 이것을 반드시 부른다.** git 은 같은 브랜치를 두 작업 폴더에 동시에
+붙이지 못하므로, 점유를 풀기 전에는 사람이 자기 폴더에서 `fix/R12` 를 **열 수 없다**(소스트리가
+`fatal: 'fix/R12' is already used by worktree at …` 로 거절한다 — 실측 2026-09-22).
+그 자리에서 고쳤다면(`inplace`) 반납할 것이 없다. 원래 브랜치로 돌아가려면 `release R12 --to main`
+을 쓰고, 그래도 **수정은 `fix/R12` 에 남는다**고 사람에게 말한다.
+
 ### ⑥ 기록
 
 항목마다 결정을 되돌린다(MCP `update_fix_status` 또는 스크립트 `status`):
@@ -133,6 +158,8 @@ worktree. 이 체크아웃의 작업 트리는 사람이 고치던 중일 수 �
 ## 3. 멈추는 자리
 
 - 명령·스크립트가 실패하면(rc≠0 · `[fix] [실패]` · 거절) **사유와 갈래를 보고하고 멈춘다.** 코드·설정을 고쳐 우회하지 않는다.
-- 사람의 체크아웃에서 브랜치를 바꾸지 않는다 — worktree 만 쓴다.
+- 사람의 체크아웃이 **더러우면** 거기에 브랜치를 붙이지 않는다 — 갈래(ⓐⓑ)를 묻고 멈춘다.
+- 🔴 **손으로 파일을 복사해 우회하지 않는다.** 스크립트가 거절하면 그것이 보고할 자리다. 손으로
+  옮긴 수정은 `commit` 이 기록할 수 없는 자리에 남아 항목 추적이 통째로 깨진다 (2026-09-22 실제 발생).
 - 한 번에 한 번호만 다룬다. 다른 번호의 항목을 섞지 않는다.
 - 진행 기록은 `.ax/fixes/<번호>/flow.log` 에 쌓인다 — 보고할 때는 요지만 말한다.

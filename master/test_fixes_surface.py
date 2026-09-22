@@ -10,7 +10,9 @@
     ④ 클라 도구 — 경로·인코딩·상태 검증 · 결정 도구 금지어에 걸리지 않는다
     ⑤ fix_flow 대조 — **실제 git 저장소**에서 단서 넷(unchanged·line_present·line_missing·gone)
        · [중요] fetch 가 실패하면 낡은 main 으로 대조하지 않고 멈춘다
-    ⑥ fix_flow worktree — [중요] 사람 체크아웃의 브랜치를 바꾸지 않는다 · 재사용은 리셋하지 않는다
+    ⑥ fix_flow prepare — [중요] **깨끗하면 사람 체크아웃 그 자리**(`#660`) · 더러우면 **거절**
+       · `--mode worktree` 는 사람의 미커밋 작업을 그대로 둔다 · 재사용은 리셋하지 않는다
+       · `release` 가 브랜치 점유를 풀어 사람이 자기 폴더에서 연다
     ⑦ 배달 — 스킬·payload 가 요청자에게 가고 fix_flow 는 stdlib 만 쓴다
 
 `.venv/bin/python master/test_fixes_surface.py`
@@ -339,13 +341,72 @@ def test_flow_check_real_git():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_flow_prepare_inplace_is_the_default():
+    """⑥ [중요] 깨끗한 체크아웃이면 **그 자리에** 붙인다 (`#660`, 사용자 결정 2026-09-22).
+
+    종전 기본(옆 worktree)은 ⑴ 소스트리에 안 보이고 ⑵ git 이 같은 브랜치를 두 폴더에 못 붙여
+    사람이 열 수도 없고 ⑶ Intermediate/Binaries 가 없어 증분 빌드도 못 하는 자리였다.
+    """
+    tmp = Path(tempfile.mkdtemp(prefix="fixinplace-"))
+    try:
+        work, _ = _repo(tmp)
+        got = FF.cmd_prepare(work, "R1")
+        check("⑥ [중요] 기본은 사람 체크아웃 그 자리",
+              got["mode"] == "inplace" and Path(got["path"]) == work, str(got))
+        check("⑥ 그 자리의 브랜치가 fix/R1",
+              _git(work, "rev-parse", "--abbrev-ref", "HEAD") == "fix/R1")
+        check("⑥ 돌아갈 곳을 말한다", got["previous_branch"] == "main", str(got))
+        check("⑥ 옆에 worktree 를 만들지 않는다", not (tmp / "ax-fix-R1").exists())
+        again = FF.cmd_prepare(work, "R1")
+        check("⑥ 이미 그 브랜치면 재사용", again["reused"] is True, str(again))
+
+        (work / "Source" / "A.cpp").write_text("void A() {\n  auto* P = Get();\n"
+                                               "  if (P) P->Run();\n}\n", encoding="utf-8")
+        d = FF.cmd_diff(work, "R1")
+        check("⑥ 그 자리에서 diff 가 돈다", d["files"] == ["Source/A.cpp"], str(d))
+        got = FF.cmd_commit(work, "R1", ["R1-1"], "그 자리 커밋")
+        check("⑥ 그 자리에서 커밋된다", got["branch"] == "fix/R1" and got["commit"], str(got))
+
+        rel = FF.cmd_release(work, "R1", to="main")
+        check("⑥ release --to 가 체크아웃을 되돌린다",
+              rel["branch"] == "main" and _git(work, "rev-parse", "--abbrev-ref", "HEAD") == "main",
+              str(rel))
+        check("⑥ [중요] 되돌려도 수정은 fix/R1 에 남는다",
+              "R1-1" in _git(work, "log", "-1", "--format=%s", "fix/R1"))
+
+        # 옆 worktree 가 그 브랜치를 물고 있으면 — git 제약을 **사유로** 말한다
+        FF.cmd_prepare(work, "R2", mode="worktree")
+        try:
+            FF.cmd_prepare(work, "R2", mode="inplace")
+            check("⑥ [중요] worktree 점유 중이면 거절하고 release 를 가리킨다", False)
+        except FF.FlowError as e:
+            check("⑥ [중요] worktree 점유 중이면 거절하고 release 를 가리킨다",
+                  "점유" in str(e) and "release" in str(e), str(e))
+        rel = FF.cmd_release(work, "R2")
+        check("⑥ release 가 점유를 푼다",
+              rel["removed"] and not (tmp / "ax-fix-R2").exists(), str(rel))
+        got = FF.cmd_prepare(work, "R2", mode="inplace")
+        check("⑥ 풀린 뒤에는 그 자리에서 열린다", got["mode"] == "inplace", str(got))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_flow_worktree_leaves_checkout_alone():
+    """⑥ 사람이 고치던 중이면 — auto 는 **거절**하고, 명시한 worktree 만 옆으로 간다."""
     tmp = Path(tempfile.mkdtemp(prefix="fixwt-"))
     try:
         work, _ = _repo(tmp)
         (work / "Source" / "E.cpp").write_text("// 사람이 고치던 중\n", encoding="utf-8")
         head = _git(work, "rev-parse", "HEAD")
-        got = FF.cmd_worktree(work, "R1")
+        try:
+            FF.cmd_prepare(work, "R1")
+            check("⑥ [중요] 더러운 체크아웃에는 붙지 않는다 — 몰래 옆으로 도망가지도 않는다", False)
+        except FF.FlowError as e:
+            check("⑥ [중요] 더러운 체크아웃에는 붙지 않는다 — 몰래 옆으로 도망가지도 않는다",
+                  "worktree" in str(e) and "E.cpp" in str(e), str(e))
+        check("⑥ 거절은 브랜치를 안 바꾼다",
+              _git(work, "rev-parse", "--abbrev-ref", "HEAD") == "main")
+        got = FF.cmd_prepare(work, "R1", mode="worktree")
         wt = Path(got["path"])
         check("⑥ 체크아웃 옆에 worktree", wt == (tmp / "ax-fix-R1").resolve() and wt.is_dir(), str(got))
         check("⑥ fix/R1 브랜치", _git(wt, "rev-parse", "--abbrev-ref", "HEAD") == "fix/R1")
@@ -355,13 +416,18 @@ def test_flow_worktree_leaves_checkout_alone():
         check("⑥ [중요] 사람의 미커밋 변경 그대로",
               (work / "Source" / "E.cpp").read_text(encoding="utf-8") == "// 사람이 고치던 중\n")
         (wt / "Source" / "A.cpp").write_text("// 고침\n", encoding="utf-8")
-        again = FF.cmd_worktree(work, "R1")
+        again = FF.cmd_prepare(work, "R1", mode="worktree")
         check("⑥ 두 번째는 재사용", again["reused"] is True, str(again))
         check("⑥ [중요] 재사용은 리셋하지 않는다",
               (wt / "Source" / "A.cpp").read_text(encoding="utf-8") == "// 고침\n")
+        try:
+            FF.cmd_release(work, "R1")
+            check("⑥ [중요] 미커밋 worktree 는 지우지 않는다", False)
+        except FF.FlowError as e:
+            check("⑥ [중요] 미커밋 worktree 는 지우지 않는다", "커밋" in str(e), str(e))
         (tmp / "ax-fix-R2").mkdir()
         try:
-            FF.cmd_worktree(work, "R2")
+            FF.cmd_prepare(work, "R2", mode="worktree")
             check("⑥ worktree 아닌 디렉토리는 덮지 않는다", False)
         except FF.FlowError:
             check("⑥ worktree 아닌 디렉토리는 덮지 않는다", True)
@@ -380,7 +446,7 @@ def test_flow_diff_and_commit():
             check("⑤ worktree 없으면 diff 거절", False)
         except FF.FlowError:
             check("⑤ worktree 없으면 diff 거절", True)
-        wt = Path(FF.cmd_worktree(work, "R1")["path"])
+        wt = Path(FF.cmd_prepare(work, "R1", mode="worktree")["path"])
         try:
             FF.cmd_commit(work, "R1", ["R1-1"], "x")
             check("⑤ 변경이 없으면 커밋 거절", False)
@@ -394,6 +460,14 @@ def test_flow_diff_and_commit():
               set(d["files"]) == {"Source/A.cpp", "Source/New.cpp"}, str(d))
         patch = (work / ".ax/fixes/R1/diff.patch").read_text(encoding="utf-8")
         check("⑤ diff.patch 에 실제 변경", "if (P) P->Run();" in patch, patch[:300])
+        check("⑤ diff.patch 에 CRLF 가 없다",
+              b"\r\n" not in (work / ".ax/fixes/R1/diff.patch").read_bytes())
+        # [중요] 바로 위 한 줄은 **리눅스에서 늘 통과한다** — 번역은 윈도우에서만 일어난다.
+        #        그래서 원천을 막는다: 텍스트 모드로 되돌리면 `#660` 이 그대로 재발한다.
+        ff_src = Path(FF.__file__).read_text(encoding="utf-8")
+        check("⑤ [중요] diff.patch 는 바이트로 쓴다 (#660 윈도우 CRLF 재발 방지)",
+              'out.write_bytes(patch.encode("utf-8"))' in ff_src
+              and "out.write_text" not in ff_src)
         for bad in ((["R2-1"], "다른 번호"), (["R1"], "행 번호")):
             try:
                 FF.cmd_commit(work, "R1", bad[0], "x")
@@ -484,6 +558,7 @@ if __name__ == "__main__":
     for fn in (test_scope, test_public_prefix_and_policy, test_nav_links_everywhere,
                test_public_page_has_no_body, test_detail_page_and_copy,
                test_client_tools, test_flow_check_real_git,
+               test_flow_prepare_inplace_is_the_default,
                test_flow_worktree_leaves_checkout_alone, test_flow_diff_and_commit,
                test_flow_fetch_and_status_with_fake_api,
                test_delivery):
