@@ -2056,9 +2056,11 @@ def stored_project(facts: HostFacts) -> dict:
 def shadow_skills(facts: HostFacts, names, *, ssh=None) -> list:
     """🔴 **배달하지 않는 codex 스킬 루트**에 우리 이름의 스킬이 남아 있나 (`spec.SKILL_SHADOW_HOMES`).
 
-    [중요] 실측 2026-09-13 `.2`: `~/.agents/skills/ax-work` 가 09-05 부터 남아 있었고, codex 는 스킬
-    목록에 `ax-work` 를 **두 번** 올린 뒤 **옛 사본을 골라 읽었다.** 배달본 해시는 일치했으므로
-    기존 `check` 로는 안 보였다.
+    [중요] 실측 2026-09-13 `.2`: 그림자 사본이 있으면 codex 는 스킬 목록에 `ax-work` 를 **두 번**
+    올린 뒤 **옛 사본을 골라 읽는다.** 배달본 해시는 일치했으므로 기존 `check` 로는 안 보였다.
+    🔴 [중요] **이것은 한 번 남은 잔재가 아니라 재발한다** — 지워도 돌아온다
+    (`#661` · 2026-09-21 삭제 → 09-22 12:23 재생성). 원인은 미확정이고, 근거와 좁혀 둔 것은
+    `spec.SKILL_SHADOW_HOMES` 주석에 있다. 그래서 이 검사는 청소 한 번이 아니라 **상시 게이트**다.
     반환은 남아 있는 자리 목록(`~/.agents/skills/ax-work` 모양)이다. 비면 깨끗하다.
     [주의] **fail-closed** — 재지 못하면 그 사실을 목록에 넣는다(모르면 통과시키지 않는다).
     """

@@ -405,8 +405,10 @@ def test_payload_split() -> None:
 def test_shadow_skills_are_reported() -> None:
     """🔴 **codex 가 읽는 옛 스킬 사본을 `check` 가 잡는다** (실측 2026-09-13 `.2`).
 
-    `~/.agents/skills/ax-work` 가 09-05 부터 남아 있었고 codex 는 목록에 `ax-work` 를 두 번 올린 뒤
-    **옛 사본을 읽었다.** 배달본(`~/.codex/skills`) 해시는 일치했으므로 종전 `check` 로는 안 보였다.
+    그림자 사본이 있으면 codex 는 목록에 `ax-work` 를 두 번 올린 뒤 **옛 사본을 읽는다.**
+    배달본(`~/.codex/skills`) 해시는 일치했으므로 종전 `check` 로는 안 보였다.
+    🔴 지워도 **돌아온다** — `#661`(2026-09-21 삭제 → 09-22 12:23 재생성). 그래서 이 검사는
+    일회성 청소가 아니라 상시 게이트다.
     """
     check("[중요] 배달하지 않는 codex 스킬 루트가 선언돼 있다",
           ".agents" in spec.SKILL_SHADOW_HOMES, str(spec.SKILL_SHADOW_HOMES))
