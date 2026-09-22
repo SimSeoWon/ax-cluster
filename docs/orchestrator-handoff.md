@@ -10,11 +10,11 @@
 > [완료] **이번 교대가 그 규칙으로 건졌다** — 지난 인계서 §4 의 *"이후 재발하지 않았다"* 를
 > 대조했더니 **하루 만에 재발해 있었다**(아래 §4).
 
-- **갱신 시각**: 2026-09-22 22:56 KST
+- **갱신 시각**: 2026-09-22 23:10 KST
 - **지휘 도구 / 세션 식별자**: **Claude** (Opus 5, 1M)
 - **상태**: **교대 준비** — 이 인계서만 미커밋
 - **관련 일감 / 목표**: **`#660` 완료(닫음)** · **`#661` 신규(재발 관찰 → 원인 규명 필요)**
-- **저장소·브랜치·HEAD**: `~/ax-cluster` `main` **`7db00ae`** · origin·`.43` 과 일치 · 미푸시 0
+- **저장소·브랜치·HEAD**: `~/ax-cluster` `main` **`9eed663`** · 이 파일 커밋 뒤 origin·`.43` 동기화
 - **현재 dirty**: `docs/orchestrator-handoff.md` 한 파일 — 이 인계 기록
 - **실행 중인 작업·프로세스**: 없음 · `hold.json` 없음 · 서브 에이전트 없음
 - **서비스**: 이번 교대에서 서비스 재시작·설정 변경 **없음**
@@ -31,8 +31,9 @@
 
 ### ⑵ 커밋 뒤 전체 업데이트를 한 번 실행
 
-지금 모든 작업장의 출처가 `7db00ae` 로 HEAD 와 **같다**(실측 6/6 OK). 이 문서를 커밋하면
-HEAD 가 전진하므로 **커밋 뒤에** 아래를 돌려야 다시 맞는다 (지난 교대의 교훈 3 과 같다).
+[중요] **이 문서를 커밋할 때마다 HEAD 가 전진하므로 작업장 출처가 한 칸 뒤로 밀린다.**
+그래서 `update` 는 **세션의 마지막 커밋 뒤에** 돌린다 (지난 교대의 교훈 3 과 같다).
+이번 교대는 `5762152` 시점에 한 번 돌려 6/6 OK 를 확인했고, 이 문서 커밋 뒤 한 번 더 돌린다.
 
     AX_PROJECTS_ROOT=/home/sim/ax-cluster \
       .venv/bin/python -m master.client update
@@ -131,7 +132,9 @@ HEAD 가 전진하므로 **커밋 뒤에** 아래를 돌려야 다시 맞는다 
 남은 것은 **codex 세션이 실제로 돌 때**의 동작이다. 갈래 셋은 `#661` 에 있고,
 ③(검사로 잡고 사람이 지운다)은 **하루 주기로 사람 손이 드는 것이 실측됐으므로** 죽은 갈래다.
 
-[주의] `master/client/spec.py:396` 의 *"09-05 에 남은 옛 사본"* 주석은 **틀렸다.** 고쳐야 한다.
+[완료] **틀린 서술 세 곳을 고쳤다** (`9eed663`). `spec.py` 가 근거의 정본이고 나머지 둘은
+거기를 가리킨다 — 같은 사실을 세 번 적으면 또 갈라진다. 핵심 문구도 바꿨다:
+*"한 번 남은 잔재"* → **"상시 게이트"**.
 
 ---
 
@@ -154,6 +157,8 @@ HEAD 가 전진하므로 **커밋 뒤에** 아래를 돌려야 다시 맞는다 
     client/runtime/fix_flow.py
     master/client/skills/ax-fix/SKILL.md
     master/test_fixes_surface.py
-    master/client/spec.py           ← §4 의 틀린 주석(396행)
+    master/client/spec.py           ← §4 의 근거 정본 (`SKILL_SHADOW_HOMES` 주석)
+    master/client/bundle.py         ← `shadow_skills`
+    master/test_client_bundle.py
     docs/orchestrator-rules.md
     docs/15-orchestrator-handoff.md
