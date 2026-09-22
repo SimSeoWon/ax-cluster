@@ -275,6 +275,9 @@ def _repo(tmp: Path) -> tuple:
     _git(tmp, "init", "-b", "main", str(work))
     _git(work, "config", "user.email", "t@t")
     _git(work, "config", "user.name", "t")
+    # 🔴 [중요] **요청자 체크아웃과 같은 조건으로 만든다** — 온보딩이 `.ax/` 를 여기에 넣는다.
+    #    이 한 줄이 없어서 `#662`(in-place 커밋이 **항상** 실패)가 테스트를 통과했다.
+    (work / ".git" / "info" / "exclude").write_text("/.ax/\n", encoding="utf-8")
     src = work / "Source"
     src.mkdir()
     (src / "A.cpp").write_text("void A() {\n  auto* P = Get();\n  P->Run();\n}\n", encoding="utf-8")

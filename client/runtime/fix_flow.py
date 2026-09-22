@@ -37,10 +37,6 @@ from datetime import datetime
 from pathlib import Path
 
 FIXES_REL = Path(".ax/fixes")
-# 🔴 [중요] **스테이징에서 `.ax/` 를 뺀다** — 이 도구 자신의 산출물이다(`doc`·`check`·`diff`·로그).
-# worktree 모드에선 `.ax/` 가 사람 체크아웃에만 있어 안 보였지만, inplace 모드에서는 같은 트리라
-# `add -A` 가 **사람 저장소에 도구 산출물을 커밋**한다 (실측 2026-09-22, 테스트가 잡았다).
-AX_PATHSPEC = (".", ":(exclude).ax", ":(exclude).ax/*")
 BASE = "origin/main"
 STATES = ("open", "accepted", "dismissed", "stale", "applied", "failed")
 _SERIAL = re.compile(r"^\s*([RrPp])(\d+)(?:-(\d+))?\s*$")
@@ -393,13 +389,30 @@ def _fix_tree(root: Path, s: str) -> Path:
                     f"(이 체크아웃은 {cur} 에 있고 옆 worktree 도 없다)")
 
 
+def _stage(tree: Path, *args: str) -> None:
+    """`.ax/` 를 뺀 채 담는다 — 🔴 [중요] **pathspec 으로 빼지 않는다.**
+
+    `:(exclude).ax` 는 git 이 그 경로를 **명시한 것**으로 세어, `.ax` 가 ignore 돼 있으면
+    *"The following paths are ignored"* 로 **거절한다**(rc=1). 요청자 체크아웃은 온보딩이
+    `.git/info/exclude` 에 `/.ax/` 를 넣어 두므로 **항상** 걸렸다 — in-place 커밋이 통째로
+    막혔다 (`#662`, 실측 2026-09-22 `.33` R33). 그래서 **담고 나서 되돌린다.**
+
+    [주의] `.ax` 가 ignore 안 된 체크아웃에서도, 아예 없는 worktree 에서도 같은 결과다
+    (셋 다 실측). `reset` 은 담긴 것이 없어도 rc=0 이다.
+    """
+    git(tree, *args, "--", ".", check=True)
+    git(tree, "reset", "-q", "--", FIXES_REL.parts[0])
+
+
 def cmd_diff(root: Path, serial: str) -> dict:
     s = doc_serial(serial)
     wt = _fix_tree(root, s)
     # 새 파일도 diff 에 보이게 — 내용은 스테이징하지 않는다.
     # [주의] inplace 모드면 이것이 **사람 트리의 인덱스**를 건드린다(intent-to-add). `prepare` 가
     #        깨끗한 트리에서만 붙었으므로 여기 잡히는 새 파일은 이 수정의 산물이다.
-    git(wt, "add", "-N", "--", *AX_PATHSPEC)
+    # 🔴 [중요] **여기는 조용히 실패하면 안 된다** — 실패하면 새 파일이 diff 에서 통째로
+    #    빠지는데 아무도 모른다. `#662` 때 실제로 그러고 있었다(`check=True` 가 없었다).
+    _stage(wt, "add", "-N")
     _, names = git(wt, "diff", "--name-only")
     files = [n for n in names.splitlines() if n.strip()]
     _, short = git(wt, "diff", "--shortstat")
@@ -438,7 +451,7 @@ def cmd_commit(root: Path, serial: str, items: list, message: str = "") -> dict:
     if not porcelain.strip():
         log(root, s, "커밋 거절 — 변경이 없다")
         raise FlowError("커밋할 변경이 없다")
-    git(wt, "add", "-A", "--", *AX_PATHSPEC, check=True)
+    _stage(wt, "add", "-A")
     text = (message or "").strip()
     subject = text.splitlines()[0] if text else "리뷰 지적 수정"
     git(wt, "commit", "-q", "-m", f"fix({','.join(ids)}): {subject}",
