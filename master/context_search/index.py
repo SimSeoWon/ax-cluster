@@ -23,6 +23,12 @@ from . import embedding, generation
 from .documents import Document, iter_documents
 from .paths import ProjectPaths
 
+def _is_stale_segment(e: Exception) -> bool:
+    """낡은 세그먼트 캐시 증상인가 — **문구로만** 판정한다(Chroma 가 전용 예외를 안 준다)."""
+    t = str(e)
+    return "Nothing found on disk" in t or "hnsw segment reader" in t
+
+
 LIVE_A = "context_a"
 LIVE_B = "context_b"
 # 코사인 — 원본과 동일. 바꾸면 기존 색인과 점수가 어긋난다.
@@ -115,9 +121,51 @@ class ContextIndex:
         return self._live.count()
 
     def search(self, query: str, limit: int = 8, *, excerpt: int = 400) -> list[dict]:
-        """Live 컬렉션에서 검색한다. **갱신 중에도 막히지 않는다.**"""
+        """Live 컬렉션에서 검색한다. **갱신 중에도 막히지 않는다.**
+
+        🔴 [중요] **낡은 Chroma 핸들을 한 번 복구한다** (`#693`, 재현 2026-09-29). 오래 사는
+        프로세스(8103)가 **색인이 비어 있을 때** 한 번 검색하면, 그 뒤 **다른 프로세스**(온보딩·
+        색인기)가 첫 색인을 만들어도 이 프로세스는 빈 상태의 캐시를 계속 쓴다 →
+        `Error creating hnsw segment reader: Nothing found on disk`. 재현 셋: 빈 색인 선검색 → 실패 ·
+        검색 없이 첫 색인 → 정상 · 색인 있는 상태의 재색인(세대 교체) → 정상. 즉 **새 프로젝트
+        첫 색인 전 검색** 한 경우다(실측: 웹 UI 문서 탭이 재시작 전까지 전부 실패했다).
+        [주의] 한 번만 재시도한다 — 두 번째도 실패하면 그 오류가 진짜다(삼키지 않는다).
+        """
         if not query.strip():
             return []
+        try:
+            return self._search_once(query, limit, excerpt)
+        except Exception as e:                                   # noqa: BLE001
+            if not _is_stale_segment(e):
+                raise
+            import sys
+            print(f"[index] {self.paths.name}: 낡은 Chroma 핸들 — 다시 열고 한 번 재시도한다 "
+                  f"({type(e).__name__}: {str(e)[:80]})", file=sys.stderr, flush=True)
+            self._reopen()
+            return self._search_once(query, limit, excerpt)
+
+    def _reopen(self) -> None:
+        """이 경로의 Chroma 시스템 캐시만 버리고 다시 연다 — **다른 프로젝트의 핸들은 그대로다.**
+
+        Chroma 는 `persist_directory` 문자열을 키로 시스템을 프로세스 전역 캐시에 둔다
+        (`SharedSystemClient._identifier_to_system`). 공개 API `clear_system_cache()` 는 **전부**
+        지워 다른 프로젝트 검색까지 다시 열게 하므로, 이 경로 키 하나만 뺀다.
+        """
+        import chromadb
+        from chromadb.api.client import SharedSystemClient as _S
+        key = str(self.paths.vector_db)
+        _S._identifier_to_system.pop(key, None)
+        _S._identifier_to_refcount.pop(key, None)
+        self._client = chromadb.PersistentClient(path=key)
+        self._a = self._collection(LIVE_A)
+        self._b = self._collection(LIVE_B)
+        # 외부 재색인이 세대를 뒤집었을 수 있다 — 마커를 다시 읽는다
+        self._live_name = generation.read(self.paths.root) or self._live_name
+        with self._swap:
+            self._live, self._work = ((self._a, self._b) if self._live_name == generation.A
+                                      else (self._b, self._a))
+
+    def _search_once(self, query: str, limit: int, excerpt: int) -> list[dict]:
         with self._swap:
             coll = self._live
         n = min(max(1, limit), max(1, coll.count()))
