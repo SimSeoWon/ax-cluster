@@ -6,136 +6,53 @@
 > 🔴 **여기 적힌 「완료」를 그대로 믿지 않는다.** 받는 쪽은 HEAD·dirty diff·이슈·프로세스를
 > 직접 대조한다 (근거: `orchestrator-rules.md` §5).
 > 🔴 [주의] **「완료」만 대조하면 부족하다** — 이 문서의 **관측 서술**도 대조 대상이다.
-> [완료] **이번 교대가 그 규칙으로 두 번 건졌다** — §4(재발)와 §3(고친 줄 알았던 것).
 
-- **갱신 시각**: 2026-09-23 00:23 KST
-- **지휘 도구 / 세션 식별자**: **Claude** (Opus 5, 1M)
-- **상태**: **교대 준비** — 이 인계서만 미커밋
-- **관련 일감**: **`#660` 완료** · **`#662` 완료** · **`#661` 신규(원인 규명 대기)**
-- **저장소·브랜치·HEAD**: `~/ax-cluster` `main` **`dbc2dc5`** · 이 파일 커밋 뒤 origin·`.43` 동기화
-- **현재 dirty**: `docs/orchestrator-handoff.md` 한 파일
-- **실행 중인 작업·프로세스**: 없음 · `hold.json` 없음 · 서브 에이전트 없음
-- 🔴 **`.33` 과 `.43` 이 꺼져 있다** — 사용자 취침 (2026-09-23 00:2x). 아래 §5
-- 🔴 **이번 세션은 `master.client update` 를 돌리지 않았다** — 사용자 지시(*"업데이트도 기록만해둬"*)
+- **갱신 시각**: 2026-09-29 01:05 KST
+- **지휘 도구 / 세션 식별자**: **Claude** (Opus 5.5, 1M)
+- **상태**: **세션 종료** — 사용자 *"오늘은 일단 여기까지"*
+- **관련 일감**: **`#693`**(AX · index_only · 열림) · **`#694`**(kimodo · 따라가기 스크립트, 미착수)
+- **저장소·브랜치·HEAD**: `~/ax-cluster` `main` **`02519ef`** + 이 인계서·리포트 76 후속 (커밋 승인 대기)
+- **실행 중인 작업·프로세스**: 없음 · 합성·모니터 전부 종료
+- 🔴 **마운트가 바뀌었다: `NS` → `KimodoMotion_WebUI`** (사용자 결정 2026-09-28)
 
 ---
 
-## 🔴 1. 바로 다음 작업
+## 🔴 0. 먼저 읽을 것 — 내가 깬 규칙
 
-### ⑴ 이 인계서 커밋·푸시 승인 받기
+**검색·갱신은 마운트된 프로젝트만 한다.** `#693` 초판(`7db807b`)이 index_only 를 예외로 빼서 NS 마운트
+상태로 BC-250 에서 Kimodo 를 합성했다 — 사용자 격노. 되돌림 `43e6319`. 메모리
+`mount-only-rule-no-exceptions`. **새 프로젝트는 마운트를 먼저 옮기고 돌린다.**
 
-### 🔴 ⑵ 전체 업데이트가 **밀려 있다** — 기계를 켠 뒤 먼저 돌린다
+## 1. 오늘 한 것 (전부 커밋·푸시·`.43` 동기화)
 
-    AX_PROJECTS_ROOT=/home/sim/ax-cluster \
-      .venv/bin/python -m master.client update
+| 커밋 | 무엇 |
+|---|---|
+| `292b7be` | 레드마인 분리 — `ax-cluster`(id 3)·`kimodo`(id 4) · 열린 `[AX]` 69 + `[아이디어]` 7 이전 · `AX_PROJECT_ID="ax-cluster"` |
+| `7db807b` | 프로필 `kind: unreal\|index_only` · 배달 축소(스킬 ax-ontology · 커밋된 CLAUDE.md/AGENTS.md/.mcp.json 안 씀 · MCP 로컬 스코프) · `SourceScope`(`config.yaml source:`) · 서브모듈 한 단계 + gitlink 펼치기 |
+| `01c6b2b` | 온보딩 교착(새 프로젝트에서 profile 이 clone 에 막힘) · Kimodo 프로필 |
+| `43e6319` | 🔴 마운트 예외 두 곳 되돌림 |
+| `44c4b44` | 로컬 스코프 MCP 대조 PowerShell 파싱 결함 · 리포트 76 |
+| `3fcbf27` | 낡은 Chroma 핸들 복구(빈 색인 선검색 → 외부 첫 색인) |
+| `02519ef` | 웹 UI 「전문 보기」 — `GET /api/v1/context/doc`(공개, context/*.md 한정) |
 
-[중요] **작업장은 `dbc2dc5` 까지 맞아 있다** — `#662` 수정은 그 커밋 직후 배달했고 6/6 OK 였다
-(실측). 밀린 것은 **이 인계서 커밋 한 칸뿐**이다. 그래서 `check` 는 「출처가 HEAD 와 다르다」고
-말하게 되는데, **기능 결손이 아니라 기재 불일치**다 — 켜고 한 번 돌리면 맞는다.
+실물: Gitea `Sim/KimodoMotion_WebUI`(private) · `.33` `C:\Users\USER\Documents\KimodoMotion_WebUI` ·
+합성 86/89 · 색인 86 · `.33` check **OK** · `.33` 클라 MCP `search_context` 실측 · 브라우저 전문 보기 사용자 확인.
+서비스 재시작: `ax-task-queue` 23:39 · `ax-projects` 00:57(마지막).
 
-[주의] 지금은 **`.33`·`.43` 이 꺼져 있어 돌릴 수 없다.** 사용자 지시로 기록만 남긴다.
+## 2. 남은 것 — 전부 사람 결정 (손대지 않았다)
 
-### ⑶ `#661` — 관찰이 아니라 원인 규명이다 (§4)
+1. Kimodo 사실 게이트 거부 3(`src/sequence`·`tests/multiprompt_fixture_parity`·`tests/root_parity`) — 파서 오인 추정
+2. 합성 86/89 인데 워터마크가 찍혔다 — `#274` 와 맞는지 미확인
+3. NS 고아 문서 9(`Source/NS/Combat/` 컴포넌트 9종 — 소스는 09-19·22 GAS 이전에서 삭제)
+4. NS 스풀 6 정리(`handover apply NS --confirm`) · `.2` `AxWorker_NS` 해제(NS 재배달) — 지금 5분마다 `not_mounted` 헛돎
+5. CLAUDE.md 두 곳(`ax-cluster/CLAUDE.md:190` · `machines/sim-desktop.md:479`) 「AX 는 ModularStage」 문구
+6. `#694` kimodo 따라가기 · GitHub `Test_KimodoMotion` 과 Gitea 가 갈라질 수 있다(어느 쪽에서 커밋할지)
+7. 🔴 밀린 것(09-23 인계에서 이월): `#661` `.2` 그림자 스킬 재발 원인 · 전체 `master.client update` 는 이번에도 안 돌렸다(Kimodo 만 배달)
 
-### ⑷ 다음 AX 항목은 사용자가 고른다
+## 3. 관련 파일
 
----
-
-## 2. `#660` — ax-fix 수정이 요청자에게 안 보이던 것 (완료)
-
-사용자 보고: *"와처쪽에서 리뷰 검토할때 문제가 있나봐"*. 원인 셋을 실측으로 확정하고 넷을 고쳤다.
-커밋 `7db00ae`.
-
-| | 무엇 | 확정 방법 |
-|---|---|---|
-| ① | `diff.patch` 가 윈도우에서 CRLF 로 오염 (`write_text` 텍스트 모드) | `.33` 실측 CR 16→0 · `git apply` 실패→OK |
-| ② | 적용 자리의 기본을 옆 worktree → **사람 체크아웃**으로 | `prepare` · 더러우면 **거절** |
-| ③ | `release` — worktree 모드의 브랜치 점유를 푼다 | R36 실전 |
-| ④ | 스킬 ⑤ 가 서브에이전트 보내기 **전에** 자리를 말한다 | — |
-
-🔴 [중요] **①의 회귀 방지는 소스 자체에 걸었다** — 리눅스 테스트는 CRLF 번역을 영원히 못 본다.
-
----
-
-## 3. 🔴 `#662` — 그 「완료」가 **반쪽이었다** (완료)
-
-`#660` 이 넣은 `:(exclude).ax` 가 **요청자 체크아웃의 in-place 커밋을 항상 막았다.**
-git 은 그 경로를 *명시한 것*으로 세므로 `.ax` 가 ignore 돼 있으면 rc=1 로 거절한다.
-온보딩이 `.git/info/exclude` 에 `/.ax/` 를 넣으므로 **실전에서는 예외 없이** 걸린다.
-
-### 왜 유닛 120건이 통과했나
-
-- 테스트 저장소가 `.ax` 를 **ignore 하지 않았다** → 같은 명령이 통과했다
-- R36 커밋이 통과한 것은 **worktree 모드**였기 때문이다 — 거기엔 `.ax` 가 아예 없다
-- 즉 **in-place + ignore** 라는 실제 조합이 한 번도 안 돌았다
-
-딸려 나온 조용한 실패도 닫았다: `cmd_diff` 의 `add -N` 에 `check` 가 없어 같은 rc=1 을
-삼키고 있었다 — 결과는 **새 파일이 diff 에서 통째로 빠지는 것**이었다.
-
-고친 방식은 **담고 나서 되돌리기**다(`_stage()`): `git add -A -- .` → `git reset -q -- .ax`.
-세 조건 전부 실측했다(ignore 됨 / 안 됨 / 아예 없음). 커밋 `dbc2dc5`.
-
-### 🔴 교훈 — 이번 교대에서 가장 비싼 것
-
-**테스트 픽스처가 프로덕션과 다르면 그 테스트는 아무것도 지키지 않는다.**
-그래서 `_repo()` 가 이제 `.git/info/exclude` 를 넣고, **옛 배선으로 되돌리면 프로덕션과
-똑같은 에러로 실패하는 것을 확인했다.** 실패하지 않는 회귀 테스트는 회귀 테스트가 아니다.
-
-[중요] 이 결함을 드러낸 것은 **사용자의 제안**이었다 — *"그냥 한번 더 리뷰 요청하는건 어때?"* ·
-*"고쳤는데 고쳐졌는지 모르겠다는거 아니야?"*. **「고쳤다」와 「고쳐진 것을 봤다」는 다르다.**
-
-### 실증 — R33 이 in-place 경로를 처음으로 완주했다
-
-    prepare(inplace) → 수정 → diff → commit → status → main 머지·푸시 → 브랜치 -d 삭제
-
-`ax-fix-R33` 같은 별도 폴더가 **생기지 않았고** `release` 도 필요 없었다. 사용자가 자기 NS
-폴더에서 증분 빌드로 확인했다. R36 도 같은 경로로 닫혔다(`8c286d8` → main).
-
----
-
-## 4. `#661` — `.2` 그림자 스킬은 **재발**이다 (열림)
-
-`~/.agents/skills/{ax-work,ax-infer}` 를 2026-09-21 에 지웠는데 **09-22 12:23 에 다시 생겼다.**
-오늘이 두 번째 삭제다(백업 `~/claude-workspace/backups/2-agents-skills-20260922/`).
-
-### 좁혀 둔 것 (전부 실측)
-
-- 내용이 배달 정본과 다르다 — 차이는 한 줄, *"너(Codex)"* vs *"너(Claude)"*
-- 12:23 전후 두 시간 `.2` 의 `~/.codex`·`~/.claude` 에 쓰인 파일이 **하나도 없다** → 배달이 아니다
-- `codex --version`(`0.153.4`) 만으로는 **되살아나지 않는다**
-- `.agents` 는 **한 번도 배달 대상이었던 적이 없다**(`git log -S` · `SKILL_HOMES` 변천 확인)
-
-### 🔴 파다 멈춘 자리 — 다음 사람이 여기서 이어받는다
-
-**`skill_text()` 는 파일을 그대로 읽기만 하고 지휘자 이름을 치환하지 않는다**(코드 확인).
-그런데 그 사본엔 *"너(Codex)"* 가 들어 있다. 그렇다면 그 텍스트는 **우리 배달이 만든 것이
-아닐 수 있다.** [주의] **미확정이다** — 단정해서 이슈에 적지 않았다.
-다음 확인: `.2` 에서 그 문자열을 가진 다른 파일을 찾는 것(무엇이 복사원인가).
-
-관찰 지점은 **다음 `.2` codex 파견 뒤 `client check`** 다. 갈래 ③(검사로 잡고 사람이 지운다)은
-하루 주기로 사람 손이 드는 것이 실측됐으므로 **죽은 갈래다.**
-
----
-
-## 5. 🔴 운영 상태 — `.33` 과 `.43` 이 꺼져 있다
-
-사용자 취침으로 내려갔다 (2026-09-23 00:2x). `.43` 은 이 세션이 껐고(진행 중 작업 0 확인 후),
-`.33` 은 사용자가 껐다. **`.2` 만 살아 있다.**
-
-**켜기 전에는 그 둘이 잡히지 않는다** — `client check`/`update`·파견·요청자 콘솔이 거기서
-실패한다. 그것은 고장이 아니라 이 상태의 결과다.
-
-[중요] **진행 중이던 작업은 없다.** R33·R36 은 둘 다 `main` 에 들어가 푸시까지 끝났고,
-`.33` NS 는 `main` 에서 깨끗한 상태로 껐다. 잃은 변경 0.
-
----
-
-## 6. 관련 파일
-
-    client/runtime/fix_flow.py
-    master/client/skills/ax-fix/SKILL.md
-    master/test_fixes_surface.py       ← `_repo()` 가 프로덕션과 같은 조건을 만든다
-    master/client/spec.py              ← §4 의 근거 정본 (`SKILL_SHADOW_HOMES` 주석)
-    master/client/bundle.py            ← `shadow_skills`
-    docs/orchestrator-rules.md
-    docs/15-orchestrator-handoff.md
+    master/projects/profile.py · master/client/spec.py · master/client/bundle.py
+    master/context_search/paths.py (SourceScope) · master/context_search/index.py (핸들 복구)
+    master/events/consumer.py · master/webui/{app,routes,web_ui_original}.py
+    KimodoMotion_WebUI/config.yaml (git 밖) · master/client/payload/profile/KimodoMotion_WebUI.yaml
+    reports/76-index-only-kimodo-onboarding.md

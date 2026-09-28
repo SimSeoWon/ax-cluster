@@ -94,3 +94,13 @@ kimodo 경로 언급 0 · `source_commit` 31종 전부 NS 커밋 · BM25·벡터
 - CLAUDE.md 두 곳(`ax-cluster/CLAUDE.md:190` · `machines/sim-desktop.md:479`)의 「AX 는 ModularStage」
   문구 — 수정안 제시만, **승인 대기**
 - GitHub `Test_KimodoMotion` 과 Gitea 가 이제 갈라질 수 있다 — 어느 쪽에서 커밋할지는 사람 결정
+
+## 7. 후속 (2026-09-29 00:35~01:00)
+
+- **웹 UI 문서 탭 검색 실패** (사용자 보고): 8103 이 빈 색인을 한 번 검색한 뒤 다른 프로세스가 첫 색인을
+  만들면 빈 Chroma 캐시를 계속 써서 `hnsw segment reader: Nothing found on disk`. 임시 트윈으로 재현
+  (빈 색인 선검색 → 실패 · 검색 없이 첫 색인 → 정상 · 색인 있는 상태의 재색인 → 정상). **이번엔 내
+  확인용 검색(00:04)이 그 순서를 만들었다.** → `3fcbf27`: 그 경로의 캐시 키만 빼고 다시 열어 한 번
+  재시도 · 실물 테스트 `test_stale_index`(옛 코드에서 실패 확인)
+- **웹 UI 「전문 보기」** (사용자 요청 · 공개로 결정): `02519ef` — `GET /api/v1/context/doc`(context/*.md 한정 ·
+  탈출 400 실측) + 검색 결과·문서 목록 버튼 → 모달. 사용자 브라우저 확인 완료
