@@ -1178,6 +1178,9 @@ def claude_mcp_local_cmd(facts: HostFacts, name: str) -> str:
 def claude_mcp_local_get(facts: HostFacts, name: str) -> dict:
     """로컬 스코프에 **실제로 적힌** 항목. 없으면 빈 dict.
 
+    🔴 [중요] **속성 이름은 따옴표로 감싼다** — `mcpServers.ax-client` 는 PowerShell 이 `-client`
+    를 빼기로 읽어 **파싱 오류로 통째로 죽고** 빈 출력 → 「없다」로 판정됐다(실측 2026-09-29 `.33`,
+    등록은 돼 있었다). 가짜 SSH 유닛은 이 파싱을 못 본다 — 명령 문자열 자체를 테스트가 고정한다.
     [중요] `claude mcp get` 을 쓰지 않는다 — 그 명령은 서버에 **접속을 시도**해 느리고, 접속
     실패도 출력에 섞인다(실측). 판정할 것은 「등록됐나」이지 「지금 붙나」가 아니다 — 그래서
     Claude 가 읽는 파일의 그 항목만 뽑는다(파일 전체를 가져오지 않는다 — 사람의 기록이 있다).
@@ -1186,7 +1189,7 @@ def claude_mcp_local_get(facts: HostFacts, name: str) -> dict:
     if facts.windows:
         ps = ("$j=Get-Content -Raw $env:USERPROFILE\\.claude.json | ConvertFrom-Json; "
               "$p=$j.projects.PSObject.Properties | Where-Object { $_.Name -eq '" + key + "' }; "
-              "if ($p) { $p.Value.mcpServers." + name + " | ConvertTo-Json -Compress }")
+              "if ($p) { $p.Value.mcpServers.'" + name + "' | ConvertTo-Json -Compress }")
         cmd = 'powershell -NoProfile -Command "' + ps + '"'
     else:
         cmd = ("python3 -c \"import json,os;d=json.load(open(os.path.expanduser('~/.claude.json')));"

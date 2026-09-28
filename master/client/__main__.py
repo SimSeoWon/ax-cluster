@@ -312,6 +312,9 @@ def cmd_deliver(project: str, *, init: bool = False, only: str = "") -> int:
             print(f"     residency_refresh={rr.get('why', '이상 없음')}")
         if "agents_md" in r:
             print(f"     agents_md={r['agents_md']}  [{r.get('agents_md_mode', '?')}]")
+        for cl in r.get("claude_mcp_local") or []:
+            # 로컬 스코프 등록 결과 (`#693`) — 배달 요약에서 빠져 FAIL 원인을 가렸다
+            print(f"     claude_mcp_local={cl}")
         for cm in r.get("codex_mcp") or []:
             # [중요] 걸었는지와 **왜 안 걸었는지**를 둘 다 찍는다 (리포트 44 의 교훈)
             print(f"     codex_mcp={cm}")
