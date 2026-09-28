@@ -277,6 +277,11 @@ class WebUI:
             return await _send(send, 200, _j(routes.api_index_status(paths)))
         if path == "/api/v1/tags":
             return await _send(send, 200, _j(routes.api_tags(root, paths)))
+        if path == "/api/v1/context/doc":
+            # 검색 결과 「전문 보기」 — 마운트된 프로젝트의 context/*.md 만 (`routes.api_context_doc`)
+            q = parse_qs(scope.get("query_string", b"").decode("utf-8", "replace"))
+            status, got = routes.api_context_doc(paths, (q.get("file") or [""])[0])
+            return await _send(send, status, _j(got))
         if path in READ_POST:
             # 원전은 **본문 JSON** 으로 보낸다(`{query, n, category, tags}`). 편의로 쿼리스트링도 받는다.
             body = await _read_body(receive)

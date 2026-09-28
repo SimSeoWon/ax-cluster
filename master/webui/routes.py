@@ -636,6 +636,41 @@ def api_search(paths, query: str, limit: int = 5) -> dict:
             "results": [_search_row(paths, h) for h in hits]}
 
 
+def api_context_doc(paths, file: str) -> tuple:
+    """컨텍스트 문서 **전문** — 검색 결과의 「전문 보기」 (사용자 요청 2026-09-29 · 공개로 결정).
+
+    [중요] 이 포트는 **인증이 없다**(ufw LAN 한정 한 겹). 그래서 공개로 붙이되 좁힌다:
+      · 트윈의 `context/` 아래 `.md` 만 — 절대경로·`..`·역슬래시는 거절, 실경로로 한 번 더 대조
+      · 응답에 **절대경로를 싣지 않는다** (`api_history` 가 지키는 것과 같은 판단)
+      · 마운트된 프로젝트만 — 호출자가 넘기는 `paths` 가 곧 마운트다(검색과 같은 규칙)
+    [주의] 같은 부류의 전문이 이미 이 포트에 있다 — 도메인 게시판의 `_domains/*.md`. 검색 결과도
+    400자 발췌를 이미 낸다. 그래서 **컨텍스트 문서는 민감 본문(히스토리 인용·절대경로)과 다른 부류**로
+    봤고, 그 판단은 사용자가 했다.
+    돌려주는 것: `(status, dict)` — 거절은 400/404 + 사유.
+    """
+    f = str(file or "").strip()
+    if (not f or not f.endswith(".md") or f.startswith("/") or "\\" in f
+            or ".." in Path(f).parts or ":" in f):
+        return 400, {"error": "file 은 context/ 기준 상대 경로의 .md 여야 한다", "file": f}
+    base = paths.context.resolve()
+    target = (paths.context / f).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError:
+        return 400, {"error": "context/ 밖이다", "file": f}
+    if not target.is_file():
+        return 404, {"error": "그 문서가 없다", "file": f}
+    text = target.read_text(encoding="utf-8", errors="replace")
+    front, body = "", text
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            front = text[3:end].strip("\n")
+            body = text[end + 4:].lstrip("\n")
+    return 200, {"file": f, "project": getattr(paths, "name", ""), "frontmatter": front,
+                 "body": body, "chars": len(text)}
+
+
 def api_rebuild() -> dict:
     # [중요] 웹이 재색인을 트리거하지 않는다 (머리말 § ④)
     return {"status": "refused", "note": NOTES["rebuild"]}

@@ -117,6 +117,19 @@ WEB_UI_HTML = r"""<!DOCTYPE html>
   .clear-btn { background: var(--surface); color: var(--dim); border: 1px solid var(--border) !important; }
   .delete-btn { background: #a1260d; color: #fff; border: none; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 0.85rem; }
   .delete-btn:hover { opacity: 0.9; }
+  /* 컨텍스트 문서 전문 보기 (사용자 요청 2026-09-29) */
+  .doc-view-btn { background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 2px 10px; font-size: 0.78rem; cursor: pointer; margin-left: 10px; white-space: nowrap; }
+  .doc-view-btn:hover { background: var(--accent); color: #fff; }
+  #docModal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 1000; }
+  #docModal.open { display: flex; align-items: center; justify-content: center; }
+  #docModal .dm-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; width: min(1000px, 94vw); max-height: 90vh; display: flex; flex-direction: column; }
+  #docModal .dm-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  #docModal .dm-title { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9rem; color: var(--accent); flex: 1; overflow-wrap: anywhere; }
+  #docModal .dm-meta { color: var(--dim); font-size: 0.78rem; }
+  #docModal .dm-close { background: transparent; color: var(--dim); border: 1px solid var(--border); border-radius: 4px; padding: 2px 10px; cursor: pointer; font-size: 1rem; }
+  #docModal .dm-body { overflow: auto; padding: 16px; }
+  #docModal pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; line-height: 1.55; }
+  #docModal .dm-front { color: var(--dim); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-bottom: 14px; }
 </style>
 </head>
 <body>
@@ -323,7 +336,8 @@ function renderResults(data) {
     const coCh = (r.co_changed || []);
     const coHtml = coCh.length ? '<div style="color:var(--green);font-size:0.8rem;margin-top:4px;">\u25B6 co-changed: ' + coCh.map(e => '<span style="color:var(--dim)">' + escHtml(e.file) + ' (' + e.count + ')</span>').join(', ') + '</div>' : '';
     return '<div class="result">' +
-      '<div class="result-header"><span class="result-file">' + (r.file || r.id || '?') + '</span><span class="result-score">' + score + '</span></div>' +
+      '<div class="result-header"><span class="result-file">' + escHtml(r.file || r.id || '?') + '</span><span class="result-score">' + score +
+        (r.file ? '<button class="doc-view-btn" onclick="viewDoc(\'' + escAttr(r.file) + '\')">전문 보기</button>' : '') + '</span></div>' +
       (r.category ? '<div class="result-category">' + r.category + '</div>' : '') +
       (tags ? '<div class="result-tags">' + tags + '</div>' : '') +
       '<div class="result-body">' + escHtml(preview) + '</div>' +
@@ -372,7 +386,8 @@ function renderDocs(docs) {
     const tags = d.tags.slice(0, 5).map(t => '<span class="tag" onclick="searchByTag(\'' + t + '\')">' + t + '</span>').join('');
     return '<div class="doc-item" onclick="searchDoc(\'' + escAttr(d.file) + '\')">' +
       '<span class="doc-name">' + escHtml(d.file) + '</span>' +
-      '<span class="doc-tags">' + tags + '</span>' +
+      '<span class="doc-tags">' + tags +
+        '<button class="doc-view-btn" onclick="event.stopPropagation(); viewDoc(\'' + escAttr(d.file) + '\')">전문 보기</button></span>' +
     '</div>';
   }).join('');
 }
@@ -652,6 +667,29 @@ async function clearChat() {
 }
 
 // ── Utils ──
+// ── 컨텍스트 문서 전문 보기 — `GET /api/v1/context/doc?file=` (마운트된 프로젝트의 context/*.md) ──
+async function viewDoc(file) {
+  const m = document.getElementById('docModal');
+  document.getElementById('dmTitle').textContent = file;
+  document.getElementById('dmMeta').textContent = '불러오는 중…';
+  document.getElementById('dmFront').style.display = 'none';
+  document.getElementById('dmText').textContent = '';
+  m.classList.add('open');
+  try {
+    const resp = await fetch(API + '/api/v1/context/doc?file=' + encodeURIComponent(file));
+    const d = await resp.json();
+    if (!resp.ok) { document.getElementById('dmMeta').textContent = ''; document.getElementById('dmText').textContent = '[실패] ' + (d.error || resp.status); return; }
+    document.getElementById('dmMeta').textContent = (d.project ? d.project + ' · ' : '') + d.chars + '자';
+    if (d.frontmatter) { const f = document.getElementById('dmFront'); f.textContent = d.frontmatter; f.style.display = 'block'; }
+    document.getElementById('dmText').textContent = d.body || '(본문 없음)';
+  } catch (e) {
+    document.getElementById('dmMeta').textContent = '';
+    document.getElementById('dmText').textContent = '[실패] ' + e.message;
+  }
+}
+function closeDoc() { document.getElementById('docModal').classList.remove('open'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDoc(); });
+
 function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function escAttr(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
 
@@ -659,6 +697,12 @@ function escAttr(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
 loadStatus();
 loadDocs();
 </script>
+<div id="docModal" onclick="if (event.target === this) closeDoc()">
+  <div class="dm-box">
+    <div class="dm-head"><span class="dm-title" id="dmTitle"></span><span class="dm-meta" id="dmMeta"></span><button class="dm-close" onclick="closeDoc()" title="닫기 (Esc)">&times;</button></div>
+    <div class="dm-body"><pre class="dm-front" id="dmFront"></pre><pre id="dmText"></pre></div>
+  </div>
+</div>
 </body>
 </html>
 """
