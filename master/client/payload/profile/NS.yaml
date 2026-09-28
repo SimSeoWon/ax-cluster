@@ -2,6 +2,7 @@ engine: Unreal Engine
 engine_decided: true
 engine_version: 5.8.1
 genre: 액션 RPG (소울라이크)
+kind: unreal
 language: C++ 중심 · 블루프린트 로직도 허용
 notes: EngineAssociation 은 5.8 · 설치/정본 버전은 5.8.1 (사용자 확정 2026-09-20)
 overview: 1인이 냉병기를 활용해 근접에서 1:1 결투를 벌이는 보스 러시 게임으로, 엘든링·블러드본·고스트 오브 쓰시마·검은 신화 오공 등에

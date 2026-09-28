@@ -291,11 +291,19 @@ class ResidencyDecision:
     reason: str = ""
 
 
-def desired_state(project: str, mounted: str, facts=None, *, daemon_available: bool = True
-                  ) -> ResidencyDecision:
-    """이 프로젝트·기계에 상주 등록이 있어야 하는가."""
+def desired_state(project: str, mounted: str, facts=None, *, daemon_available: bool = True,
+                  index_only: bool = False) -> ResidencyDecision:
+    """이 프로젝트·기계에 상주 등록이 있어야 하는가.
+
+    `index_only` — 프로필의 `kind` 가 색인 전용인가(`#693`). 이 모듈은 클라에서 도므로
+    마스터 프로필을 읽지 않는다 — **마스터 호출자가 판정해 넘긴다.**
+    """
     if facts is not None and getattr(facts, "role", "worker") == "requester":
         return ResidencyDecision(False, "요청자는 상주를 받지 않는다")
+    if index_only:
+        return ResidencyDecision(
+            False, "색인 전용 프로젝트다(`kind: index_only`, `#693`) — 분산 작업이 없으니 "
+                   "집을 일감도 없다. 상주를 켜면 5분마다 헛돈다")
     if not daemon_available:
         return ResidencyDecision(False, "데몬(`worker_daemon.py`)이 배달 대상이 아니다")
     if facts is not None and not types_for(facts):

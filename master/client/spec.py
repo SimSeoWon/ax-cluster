@@ -44,7 +44,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 # ─────────────────────────────────────────────────────────────────────
 # 서버 절 — `#259` 가 구현하는 단계들
@@ -125,7 +125,8 @@ SERVER_STEPS = (
     #    `Content/` 는 워킹트리의 93%(uasset 바이너리)이고 합성 대상이 아니다. 경계는 세 겹으로
     #    지킨다: `list_source_files` 의 pathspec + 접두 검사, 그리고 `synth.run` 이 **넘겨받은
     #    목록도 거부**한다(호출자가 한 번 잘못 넘기면 조용히 들어오던 자리였다).
-    Step("synth", "컨텍스트 MD 최초 합성 — **Source/ 한정** (누락분만, 중단 후 재실행 가능)",
+    Step("synth", "컨텍스트 MD 최초 합성 — **경계 한정**(기본 `Source/` · 비UE 는 `config.yaml` 의 "
+                  "`source:`, `#693`) (누락분만, 중단 후 재실행 가능)",
          "<트윈>/context/ 에 MD 가 있다"),
     Step("index", "벡터·BM25 색인 전체 구축 + 워터마크 기입",
          "config.yaml 의 index.last_indexed_commit 이 비어 있지 않다"),
@@ -172,6 +173,14 @@ SKILLS_BY_ROLE = {
     #   [주의] `ax-review` 와 발화가 겹친다(「리뷰」) — SKILL.md §0 이 `R`/`P` 번호로 가른다.
     "requester": ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-fix"),
 }
+
+# 🔴 [중요] **색인 전용 프로젝트의 배달** (`#693`, 사용자 확정 2026-09-28). 분산 작업이 없으니
+#    등재·전진·리뷰·수정 스킬은 **빈 참조**가 된다 — 받은 세션이 없는 경로를 부르려 한다.
+#    남는 것은 검색·온톨로지 하나다. 워커는 파견이 없으므로 아무것도 받지 않는다.
+INDEX_ONLY_SKILLS = {"worker": (), "requester": ("ax-ontology",)}
+# 작업장 자산 중 색인 전용이 받는 것 — 검색 힌트 훅과 그 경로 도우미뿐이다. 에이전트·룰은
+#    UE 전제(`ue-editor-operator`·`unreal-architecture`)이고, 작업 알림 훅은 알릴 작업이 없다.
+INDEX_ONLY_WORKSHOP = (".claude/hooks/domain_hint.py", ".claude/hooks/hook_paths.py")
 
 # 폐지된 스킬 — 배달 대상에서 지우는 것만으로는 **이미 놓인 기계가 정리되지 않는다**.
 # `plan` 이 제거 항목으로 들고, `deliver` 가 지운다.
@@ -486,9 +495,31 @@ def codex_mcp_for(role: str, init: "ProjectInit | None" = None) -> tuple:
 STDIO_MCP = ("ax-client",)
 
 
-def managed_hooks_for(role: str) -> tuple:
-    """이 역할이 등록받을 관리 훅. 훅 스크립트는 작업장 자산이라 요청자만 받는다."""
-    return MANAGED_HOOKS if role == "requester" else ()
+def managed_hooks_for(role: str, init: "ProjectInit | None" = None) -> tuple:
+    """이 역할이 등록받을 관리 훅. 훅 스크립트는 작업장 자산이라 요청자만 받는다.
+
+    색인 전용(`#693`)은 **배달되는 훅 스크립트만** 등록한다 — 없는 스크립트를 등록하면
+    `UserPromptSubmit` 에서 exit 2 가 사람의 프롬프트를 막는다(2026-09-20 실측과 같은 부류).
+    """
+    if role != "requester":
+        return ()
+    if (init or EMPTY_INIT).index_only:
+        return tuple(h for h in MANAGED_HOOKS if h[2] in INDEX_ONLY_WORKSHOP)
+    return MANAGED_HOOKS
+
+
+def entry_docs_for(init: "ProjectInit | None" = None) -> bool:
+    """루트 `CLAUDE.md`·`AGENTS.md` 에 관리 블록을 쓰는가. 색인 전용이면 **아니다** (`#693`)."""
+    return not (init or EMPTY_INIT).index_only
+
+
+def mcp_scope_for(init: "ProjectInit | None" = None) -> str:
+    """ax-client MCP 의 자리 — `project`(`.mcp.json`) 또는 `local`(`claude mcp add -s local`).
+
+    [중요] local 은 `~/.claude.json` 의 그 체크아웃 항목에 들어가 **추적 파일이 안 바뀐다**
+    (실측 2026-09-28 `.33`: add → `git status` 빈 출력, 키는 `C:/Users/USER/Documents/<폴더>`).
+    """
+    return "local" if (init or EMPTY_INIT).index_only else "project"
 
 
 @dataclass(frozen=True)
@@ -550,6 +581,12 @@ class ProjectInit:
     # [주의] `AllToolsets` 를 여기 넣지 말 것 — Experimental 25종을 프로젝트에 영구히 끌어온다
     #    (`#335` 주의). 최소는 `EditorToolset` 이고 늘리는 것은 프로젝트 결정이다.
     uproject_plugins: tuple = ()                          # ({"name":…, "targets":[…]}, …)
+    # 🔴 **색인 전용** (`#693`) — `config.yaml` 이 아니라 **프로필 `kind`** 에서 온다(사람 결정은
+    #    git 관리 파일에 산다, `profile.py` 머리말). `load_init` 이 채운다.
+    #    [중요] 이 값이 True 면 **커밋된 진입 파일을 건드리지 않는다** — 루트 `CLAUDE.md`·
+    #    `AGENTS.md` 블록을 쓰지 않고, MCP 는 `.mcp.json` 대신 **로컬 스코프**로 등록한다
+    #    (kimodo 레포는 셋 다 커밋해 두고 쓴다 — 쓰면 사람의 작업 트리가 더러워진다).
+    index_only: bool = False
 
     @classmethod
     def from_config(cls, cfg) -> "ProjectInit":
@@ -632,7 +669,8 @@ EMPTY_INIT = ProjectInit()
 
 def skills_for(role: str, init: ProjectInit | None = None) -> tuple:
     """이 역할이 받을 스킬. 기본 표 + 프로젝트 오버레이, **순서 보존 · 중복 제거**."""
-    base = SKILLS_BY_ROLE.get(role, ())
+    table = INDEX_ONLY_SKILLS if (init or EMPTY_INIT).index_only else SKILLS_BY_ROLE
+    base = table.get(role, ())
     extra = (init or EMPTY_INIT).extra_skills.get(role, ())
     return _dedup(base + tuple(extra))
 
@@ -698,6 +736,7 @@ def load_init(project: str = "", *, registry=None) -> ProjectInit:
         paths = resolve(project, registry=registry)
     except ConfigError:
         return EMPTY_INIT               # 미등록·미마운트 = 부재. 사양을 안 쓴 것과 같다
-    if not paths.config.is_file():
-        return EMPTY_INIT
-    return ProjectInit.from_config(ProjectConfig.load(paths.config))
+    base = (ProjectInit.from_config(ProjectConfig.load(paths.config))
+            if paths.config.is_file() else EMPTY_INIT)
+    from ..projects import profile as _pf
+    return replace(base, index_only=True) if _pf.is_index_only(paths.name) else base

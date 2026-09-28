@@ -134,12 +134,13 @@ def list_source_files(paths: ProjectPaths, *, git=None) -> list[str]:
     run = git or _git
     if not paths.repo.is_dir():
         raise GraphError(f"소스 클론이 없다: {paths.repo}")
-    rc, out = run(paths.repo, "ls-files", "--", SOURCE_SUBDIR)
+    from .class_graph import ls_files_args
+    rc, out = run(paths.repo, *ls_files_args(paths))
     if rc != 0:
         raise GraphError(f"git ls-files 실패 (rc={rc}): {out[:200]}")
-    prefix = f"{SOURCE_SUBDIR}/"
+    # 판정은 `SourceScope.contains` 한 자리 + 이 그래프가 읽는 확장자 (`#693`)
     return [f for f in (ln.strip().replace("\\", "/") for ln in out.splitlines())
-            if f.startswith(prefix) and Path(f).suffix.lower() in TARGET_EXTS]
+            if paths.scope.contains(f, TARGET_EXTS) and Path(f).suffix.lower() in TARGET_EXTS]
 
 
 def _count_ambiguous(files: list[str]) -> int:
@@ -157,7 +158,7 @@ def build_full(paths: ProjectPaths, *, git=None, progress=None) -> BuildStats:
     files = list_source_files(paths, git=git)
     if not files:
         raise GraphError(
-            f"`{SOURCE_SUBDIR}/` 에 추적 대상 파일이 없다 — 클론이 비었거나 경계가 틀렸다. "
+            f"`{paths.scope.label()}` 에 추적 대상 파일이 없다 — 클론이 비었거나 경계가 틀렸다. "
             "빈 그래프로 덮지 않고 멈춘다."
         )
     stats = BuildStats(files=len(files), ambiguous_basenames=_count_ambiguous(files))

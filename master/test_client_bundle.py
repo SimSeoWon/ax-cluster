@@ -1533,6 +1533,61 @@ def test_update_reports_partial_failure() -> None:
     ], str(calls))
 
 
+def test_index_only_delivery() -> None:
+    """🔴 색인 전용 배달 (`#693`) — **커밋된 사람 파일을 쓰지 않는다.**
+
+    kimodo 레포는 `CLAUDE.md`·`AGENTS.md`·`.mcp.json` 을 커밋해 두고 쓴다. 배달이 그 셋을 쓰면
+    사람의 작업 트리가 더러워진다(사용자 확정 2026-09-28: MCP 는 로컬 스코프, 블록은
+    `.claude/CLAUDE.md` 에만).
+    """
+    idx = spec.ProjectInit(index_only=True)
+    ws = [r for r, _ in bundle.workshop_files("requester", "", idx)]
+    check("작업장 자산은 검색 힌트 훅 둘뿐", set(ws) <= set(spec.INDEX_ONLY_WORKSHOP) and ws, str(ws))
+    check("  기본(unreal)은 그대로 전부", len(bundle.workshop_files("requester")) > len(ws))
+    md = bundle.merge_workshop_md("", "requester", "", idx)
+    check("[중요] `.claude/CLAUDE.md` 는 색인 전용 정본", "색인 전용" in md and bundle.WS_BEGIN in md, md[:80])
+    check("  분산 작업 안내가 섞이지 않는다", "register_work" not in md or "거절" in md)
+    f = _facts(role="requester", os="windows", path=r"C:\Users\USER\Documents\K", home=r"C:\Users\USER",
+               python=r"C:\Py\python.exe")
+    import json
+    hooks = json.loads(bundle.merge_settings_json("", f, idx)).get("hooks") or {}
+    rels = [h["hooks"][0]["command"] for evs in hooks.values() for h in evs]
+    check("[중요] 등록되는 훅은 배달되는 스크립트뿐 (없는 훅이 프롬프트를 막는다)",
+          rels and all("domain_hint" in c for c in rels), str(rels))
+    cmd = bundle.claude_mcp_local_cmd(f, "ax-client")
+    check("로컬 스코프 명령 — 체크아웃에서 remove 뒤 add (멱등)",
+          "--scope local" in cmd and cmd.index("remove") < cmd.index(" add ") and "K" in cmd, cmd)
+    check("  같은 mcp_entry_for 에서 나온다", r"C:\Py\python.exe" in cmd and "client_mcp.py" in cmd, cmd)
+    check("  ~/.claude.json 키는 슬래시 경로 (실측)",
+          bundle.claude_local_key(f) == "C:/Users/USER/Documents/K", bundle.claude_local_key(f))
+
+    wrote: list = []
+    saved = {k: getattr(bundle, k) for k in ("_remote_write", "_remote_read", "config_for",
+             "_register_residency", "_ensure_ignored", "claude_mcp_local_add", "codex_mcp_add")}
+    bundle._remote_write = lambda facts, rel, content, base="home": (wrote.append(rel), f"[완료] {rel}")[1]
+    bundle._remote_read = lambda facts, path: ""
+    bundle.config_for = lambda project, facts: {}
+    bundle._register_residency = lambda project, facts: {"registered": False}
+    bundle._ensure_ignored = lambda facts: True
+    bundle.claude_mcp_local_add = lambda facts, n: f"{n} [완료] local"
+    bundle.codex_mcp_add = lambda facts, n: f"{n} [완료] codex"
+    try:
+        got = bundle.deliver("K", f, project_init=idx)
+    finally:
+        for k, v in saved.items():
+            setattr(bundle, k, v)
+    check("🔴 루트 CLAUDE.md 를 쓰지 않는다", "CLAUDE.md" not in wrote, str(wrote))
+    check("🔴 AGENTS.md 를 쓰지 않는다", spec.CODEX_ENTRY_REL not in wrote, str(wrote))
+    check("🔴 .mcp.json 을 쓰지 않는다", ".mcp.json" not in wrote, str(wrote))
+    check("  대신 로컬 스코프로 등록한다", "local" in str(got.get("claude_mcp_local")), str(got.get("claude_mcp_local")))
+    check("  `.claude/CLAUDE.md` 블록은 쓴다", bundle.WORKSHOP_MD_REL in wrote, str(wrote))
+    check("  스킬은 ax-ontology 뿐", [r for r in wrote if "skills/" in r]
+          and all("ax-ontology" in r for r in wrote if "skills/" in r),
+          str([r for r in wrote if "skills/" in r]))
+    check("  config·토큰 자리는 그대로 (태그가 있어야 검색이 자기 프로젝트를 본다)",
+          bundle.CONFIG_REL in wrote, str(wrote))
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
@@ -1554,7 +1609,8 @@ def main() -> int:
                test_check_mount_lookup_is_fail_closed,
                test_update_covers_every_registered_project,
                test_update_reports_partial_failure,
-               test_shadow_skills_are_reported):
+               test_shadow_skills_are_reported,
+               test_index_only_delivery):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_bundle: {PASS}/{total} 통과")

@@ -553,6 +553,15 @@ def test_desired_registration_matrix() -> None:
               (required == present) is ok)
 
 
+def test_index_only_never_registers() -> None:
+    print("\n🔴 색인 전용 프로젝트는 상주를 받지 않는다 (`#693`)")
+    f = _f(windows=True, ue5="x")
+    d = R.desired_state("K", "K", f, index_only=True)
+    check("UE5 워커 + 마운트여도 등록하지 않는다", d.required is False, d.reason)
+    check("  사유가 index_only 를 말한다", "index_only" in d.reason, d.reason)
+    check("  기본값(False)은 종전 판정 그대로", R.desired_state("K", "K", f).required is True)
+
+
 if __name__ == "__main__":
     for fn in (test_types_from_probe,
                test_task_name_per_project,
@@ -573,7 +582,8 @@ if __name__ == "__main__":
                test_deliver_refreshes_residency,
                test_ensure_starts_only_when_down,
                test_desired_registration_matrix,
-               test_session1_side_effects):
+               test_session1_side_effects,
+               test_index_only_never_registers):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_residency: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

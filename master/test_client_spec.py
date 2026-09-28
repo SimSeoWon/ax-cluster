@@ -491,7 +491,11 @@ def test_synth_source_only() -> None:
 
     src = (Path(__file__).resolve().parent / "context_synth" / "synth.py").read_text(
         encoding="utf-8")
-    check("synth 가 SOURCE_SUBDIR 로 검사한다", "SOURCE_SUBDIR}/" in src)
+    # `#693` — 경계 판정이 `SourceScope.contains` 한 자리로 모였다(기본 경계는 여전히 `Source/`)
+    check("synth 가 경계(`paths.scope.contains`)로 검사한다", "paths.scope.contains(f)" in src)
+    from master.context_search.paths import DEFAULT_SCOPE
+    check("  기본 경계는 여전히 Source/ 뿐", DEFAULT_SCOPE.roots == ("Source",)
+          and DEFAULT_SCOPE.contains("Source/A/B.h") and not DEFAULT_SCOPE.contains("Content/A.h"))
 
     tmp = Path(tempfile.mkdtemp(prefix="ax-synth-scope-"))
     (tmp / "repo" / "Source").mkdir(parents=True)

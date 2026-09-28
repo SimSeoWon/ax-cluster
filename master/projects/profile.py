@@ -42,8 +42,18 @@ import yaml
 #    두 곳에 적으면 판정기와 게이트가 갈린다(`hook_entry` 가 치른 값과 같은 부류).
 PURPOSES = ("game", "tool", "rnd", "demo")
 
+# 🔴 [중요] **프로젝트 타입** (`#693`, 사용자 결정 2026-09-28) — 파이프라인이 어디까지 받는가.
+#    unreal       정본 7단계 전부 (골조 UHT · 조각별 UE5 빌드 · 상주)
+#    index_only   색인·검색·요청자 콘솔까지. **분산 작업은 받지 않는다** — 골조 계약·게이트가
+#                 UE5 전제라 등재하면 엉뚱한 자리에서 실패한다(`KimodoMotion_WebUI` 실측)
+#    [주의] **측정으로 추론하지 않는다** — `.uproject` 유무로 가르면 「엔진 미확정 UE」와 「엔진
+#    없는 유틸」이 섞인다. 사람이 적는 칸이고, 없으면 등재를 **거절**한다(fail-closed).
+KINDS = ("unreal", "index_only")
+
 # 사람이 답해야 채워지는 칸. `genre` 는 `purpose == "game"` 일 때만 필수다.
-REQUIRED = ("engine_decided", "engine", "engine_version", "language", "purpose", "overview")
+# [주의] 엔진 세 칸은 `kind == unreal` 일 때만 필수다 — 엔진이 없는 프로젝트에 엔진을 묻지 않는다.
+REQUIRED = ("kind", "engine_decided", "engine", "engine_version", "language", "purpose", "overview")
+ENGINE_FIELDS = ("engine_decided", "engine", "engine_version")
 
 OVERVIEW_MIN = 40          # 한 문단. [주의] 길이는 품질이 아니지만 **한 단어 회피**는 막는다
 
@@ -109,7 +119,9 @@ def measure(project: str) -> dict:
 def missing(project: str) -> list:
     """**안 채워진 칸**의 이름들. 빈 목록이면 사람이 전부 답했다는 뜻이다."""
     got = load(project)
-    out = [k for k in REQUIRED
+    need = REQUIRED if kind_of(project) != "index_only" else \
+        tuple(k for k in REQUIRED if k not in ENGINE_FIELDS)
+    out = [k for k in need
            if got.get(k) is None or (isinstance(got.get(k), str) and not got[k].strip())]
     if str(got.get("purpose") or "") == "game" and not str(got.get("genre") or "").strip():
         out.append("genre")
@@ -126,10 +138,27 @@ def blockers(project: str) -> list:
     miss = missing(project)
     out = [f"프로필 미수집: {', '.join(miss)}"] if miss else []
     got = load(project)
-    if got and got.get("engine_decided") is False:
+    if got.get("kind") == "index_only":
+        out.append("색인 전용 프로젝트다 (`kind: index_only`, `#693`) — 분산 작업은 받지 않는다. "
+                   "골조 계약·UHT·조각별 UE5 빌드가 UE5 전제라 등재하면 엉뚱한 자리에서 실패한다")
+    elif got and got.get("engine_decided") is False:
         out.append("엔진이 아직 확정되지 않았다 (`engine_decided: false`) — "
                    "엔진이 정해져야 소스 작업을 계약으로 내보낼 수 있다")
     return out
+
+
+def kind_of(project: str) -> str:
+    """프로젝트 타입. **없거나 모르는 값이면 빈 문자열** — 호출자가 그것을 unreal 로 읽지 않는다.
+
+    [주의] 빈 값의 뜻은 자리마다 다르다: 등재는 `missing` 으로 **거절**하고, 배달·상주처럼
+    종전 동작이 곧 unreal 인 자리는 종전 동작을 유지한다(기존 두 프로젝트를 깨지 않는다).
+    """
+    k = str(load(project).get("kind") or "").strip()
+    return k if k in KINDS else ""
+
+
+def is_index_only(project: str) -> bool:
+    return kind_of(project) == "index_only"
 
 
 def questions(project: str) -> list:
@@ -145,6 +174,8 @@ def questions(project: str) -> list:
           f"트윈 engine={m['twin_engine'] or '없음'} · 소스 {ext}")
     miss = set(missing(project))
     ask = [
+        ("kind", f"프로젝트 타입은 무엇입니까? ({' / '.join(KINDS)}) — "
+                 "index_only 는 색인·검색까지만 받고 분산 작업은 받지 않습니다"),
         ("engine_decided", "사용할 게임 엔진이 **확정**됐습니까? (예/아니오)"),
         ("engine", "엔진 이름은 무엇입니까? (예: Unreal Engine)"),
         ("engine_version", "엔진 버전은 무엇입니까? "
@@ -175,6 +206,8 @@ def save(project: str, **fields) -> dict:
     if "overview" in fields and len(str(fields["overview"]).strip()) < OVERVIEW_MIN:
         raise ValueError(f"overview 가 너무 짧다({len(str(fields['overview']).strip())}자) — "
                          f"{OVERVIEW_MIN}자 이상으로 적는다. 한 단어는 서술이 아니다")
+    if "kind" in fields and str(fields["kind"]) not in KINDS:
+        raise ValueError(f"kind 는 {KINDS} 중 하나다 — 받은 값: {fields['kind']!r}")
     if "engine_decided" in fields and not isinstance(fields["engine_decided"], bool):
         raise ValueError("engine_decided 는 true/false 다 (문자열이 아니다)")
 
@@ -203,5 +236,8 @@ def project_line(project: str) -> str:
                 f"채워진다 (안 채워진 칸: {', '.join(missing(project))}).")
     kind = {"game": "게임", "tool": "툴", "rnd": "R&D", "demo": "데모"}.get(g.get("purpose"), g.get("purpose"))
     genre = f" · 장르 **{g['genre']}**" if g.get("genre") else ""
+    if g.get("kind") == "index_only":
+        return (f"`{project}` — **색인 전용** {kind} 프로젝트 (UE5 아님 · 분산 작업 없음). "
+                f"주 언어·정책: {g['language']}.\n\n{str(g['overview']).strip()}")
     return (f"`{project}` — **{g['engine']} {g['engine_version']}** {kind} 프로젝트{genre}. "
             f"주 언어·정책: {g['language']}.\n\n{str(g['overview']).strip()}")

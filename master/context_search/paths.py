@@ -50,6 +50,50 @@ DEPENDENCY_GRAPH_DB = "dependency_graph.db"
 # 소스 클론 안에서 색인할 하위 경로. §5.2-E — 소스 한정.
 SOURCE_SUBDIR = "Source"
 
+
+@dataclass(frozen=True)
+class SourceScope:
+    """🔴 **색인·합성 경계** (`#693`). 기본값이 곧 종전 동작이다 — `Source/` · C++ 확장자.
+
+    비UE 프로젝트는 `config.yaml` 의 `source:` 절로 선언한다:
+
+        source:
+          roots: [webui, scripts, vendor/kimodo.cpp]
+          exclude: [vendor/kimodo.cpp/ggml]
+          exts: [.py, .h, .hpp, .cpp, .cc]
+          submodules: [vendor/kimodo.cpp]
+
+    [중요] **판정은 `contains` 하나다** — 목록·diff·합성 입구가 각자 접두 검사를 하면 언젠가
+    갈라진다(`consumer._source_only` 가 이미 그 이유로 `class_graph` 를 따라 한 벌로 맞췄다).
+    [주의] `exts` 가 비면 호출자의 기본(그래프 파서 확장자)을 쓴다 — 여기서 목록을 복제하지 않는다.
+    [주의] `submodules` 는 **한 단계만** 받는다 — 서브모듈 안의 서브모듈(예: `ggml`)은 받지 않는다.
+    """
+    roots: tuple = (SOURCE_SUBDIR,)
+    exclude: tuple = ()
+    exts: tuple = ()
+    submodules: tuple = ()
+
+    @property
+    def is_default(self) -> bool:
+        return self == SourceScope()
+
+    def contains(self, rel: str, exts=None) -> bool:
+        f = str(rel).strip().replace("\\", "/")
+        if not any(f == r or f.startswith(r.rstrip("/") + "/") for r in self.roots):
+            return False
+        if any(f == x or f.startswith(x.rstrip("/") + "/") for x in self.exclude):
+            return False
+        allowed = tuple(e.lower() for e in (self.exts or exts or ()))
+        return (not allowed) or Path(f).suffix.lower() in allowed
+
+    def label(self) -> str:
+        """사람이 읽을 경계 — 오류 문구에 쓴다(`Source/` 하드코딩 문구를 대신한다)."""
+        s = ", ".join(f"{r}/" for r in self.roots)
+        return s + (f" (제외 {', '.join(self.exclude)})" if self.exclude else "")
+
+
+DEFAULT_SCOPE = SourceScope()
+
 # 트윈 안의 소스 클론 디렉토리 **기본값**. 실제 값은 `config.yaml` 의 `track.local_clone` 이다
 # (#266 완료 조건 5): 저장하면서 안 읽는 값을 남기지 않는다 — `#260`(branch 하드코딩)과 같은 부류였다.
 DEFAULT_CLONE_DIR = "repo"
@@ -64,6 +108,8 @@ class ProjectPaths:
     # [중요] `config.yaml` 의 `track.local_clone`. `resolve()` 가 채운다 — 직접 만들 때는
     #    기본값이 곧 종전 동작이다(하드코딩이던 `"repo"`).
     clone_dir: str = DEFAULT_CLONE_DIR
+    # 🔴 색인·합성 경계 (`#693`). `resolve()` 가 `config.yaml` 의 `source:` 에서 채운다.
+    scope: SourceScope = DEFAULT_SCOPE
 
     @property
     def config(self) -> Path: return self.root / "config.yaml"
@@ -76,7 +122,12 @@ class ProjectPaths:
     @property
     def source(self) -> Path:
         """[중요] 색인 대상. `Content/`(uasset, 워킹트리의 93%)는 여기 들어오지 않는다 (§5.2-E)."""
-        return self.repo / SOURCE_SUBDIR
+        return self.repo / self.scope.roots[0]
+
+    @property
+    def source_dirs(self) -> list:
+        """경계의 루트 디렉토리 전부 (`#693`). 기본은 `[repo/Source]` 하나다."""
+        return [self.repo / r for r in self.scope.roots]
 
     @property
     def manifests(self) -> Path:
@@ -154,8 +205,8 @@ class ProjectPaths:
             out.append(f"컨텍스트 원본 없음: {self.context}")
         if not self.repo.is_dir():
             out.append(f"소스 클론 없음: {self.repo}")
-        elif not self.source.is_dir():
-            out.append(f"`{SOURCE_SUBDIR}/` 없음: {self.source} — 색인할 소스가 없다")
+        elif not any(d.is_dir() for d in self.source_dirs):
+            out.append(f"`{self.scope.label()}` 없음: {self.source} — 색인할 소스가 없다")
         return out
 
     def to_dict(self) -> dict:
@@ -182,7 +233,39 @@ def resolve(name: str = "", *, registry: Registry | None = None) -> ProjectPaths
             f"등록되지 않은 프로젝트다: {target}. 등록된 것: {', '.join(reg.names) or '(없음)'}"
         )
     root = reg.dir_of(target)
-    return ProjectPaths(name=target, root=root, clone_dir=clone_dir_of(root))
+    return ProjectPaths(name=target, root=root, clone_dir=clone_dir_of(root),
+                        scope=scope_of(root))
+
+
+def scope_of(root: Path) -> SourceScope:
+    """`config.yaml` 의 `source:` 절 → `SourceScope`. **절이 없으면 기본값**(종전 동작).
+
+    [주의] 깨진 절은 **예외**다 — 조용히 기본값으로 접히면 비UE 프로젝트가 `Source/` 를 찾다
+    「소스 없음」으로 멈추고, 그 사유가 선언 오류를 가린다(`clone_dir_of` 와 같은 판단).
+    """
+    cfg = root / "config.yaml"
+    if not cfg.is_file():
+        return DEFAULT_SCOPE
+    raw = (ProjectConfig.load(cfg).raw or {}).get("source")
+    if not raw:
+        return DEFAULT_SCOPE
+    if not isinstance(raw, dict):
+        raise ConfigError(f"config.yaml 의 `source:` 는 매핑이어야 한다: {type(raw).__name__}")
+    bad = sorted(set(raw) - {"roots", "exclude", "exts", "submodules"})
+    if bad:
+        raise ConfigError(f"config.yaml `source:` 에 모르는 키: {', '.join(bad)}")
+
+    def _t(k):
+        v = raw.get(k) or ()
+        if isinstance(v, str) or not all(isinstance(x, str) and x.strip() for x in v):
+            raise ConfigError(f"config.yaml `source.{k}` 는 문자열 목록이어야 한다: {v!r}")
+        return tuple(x.strip().strip("/") if k != "exts" else x.strip() for x in v)
+
+    roots = _t("roots")
+    if not roots:
+        raise ConfigError("config.yaml `source.roots` 가 비었다 — 경계 없이 색인하지 않는다")
+    return SourceScope(roots=roots, exclude=_t("exclude"), exts=_t("exts"),
+                       submodules=_t("submodules"))
 
 
 def clone_dir_of(root: Path) -> str:

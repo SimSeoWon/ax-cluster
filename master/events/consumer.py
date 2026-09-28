@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import gitea_group
-from ..context_search.paths import SOURCE_SUBDIR, ProjectPaths, resolve
+from ..context_search.paths import ProjectPaths, resolve
 from ..projects.config import ConfigError, Registry, normalize_project_id
 from .spool import Batch, Event, Spool
 
@@ -424,19 +424,67 @@ def _commits_between(repo: Path, old: str, new: str, run) -> tuple:
     return hs, ""
 
 
-def _source_only(files: list[str]) -> list[str]:
+def _source_only(files: list[str], paths: "ProjectPaths | None" = None) -> list[str]:
     """소스 디렉토리 밖은 버린다 (사용자 지시 2026-08-23 · §5.2-E).
 
     [중요] **판정식을 새로 만들지 않는다** — `class_graph.list_source_files` 와 같은 두 겹
     (`Source/` 접두 + 파서 확장자)이다. `config.yaml` 의 `include` 글롭으로 따로 짜면 매처가
     둘이 되고, 그 둘은 언젠가 갈라진다(원전 대조에서 반복 확인된 부류).
     """
-    from ..context_search.paths import SOURCE_SUBDIR
+    from ..context_search.paths import DEFAULT_SCOPE
     from ..graph import parse
 
-    prefix = f"{SOURCE_SUBDIR}/"
-    return [f for f in files
-            if f.startswith(prefix) and Path(f).suffix.lower() in parse.PARSE_EXTS]
+    # 판정은 `SourceScope.contains` 한 자리다 (`#693`) — 기본 경계는 종전과 같다
+    scope = paths.scope if paths is not None else DEFAULT_SCOPE
+    return [f for f in files if scope.contains(f, parse.PARSE_EXTS)]
+
+
+def _sync_submodules(paths: ProjectPaths, run) -> str:
+    """선언된 서브모듈을 미러 HEAD 가 가리키는 커밋으로 맞춘다 (`#693`). 빈 문자열이면 정상.
+
+    [중요] **한 단계만** — `--recursive` 를 붙이지 않는다. 서브모듈 안의 서브모듈(`ggml`)은 경계
+    밖이고, 받으면 클론만 무거워진다. 서브모듈을 선언하지 않은 프로젝트는 git 을 부르지 않는다.
+    """
+    subs = paths.scope.submodules
+    if not subs:
+        return ""
+    rc, out = run(paths.repo, "submodule", "update", "--init", "--", *subs)
+    return "" if rc == 0 else f"submodule update 실패 (rc={rc}): {out[:200]}"
+
+
+def _expand_gitlinks(paths: ProjectPaths, prev: str, cur: str, touched: list, run) -> tuple:
+    """diff 에 **서브모듈 경로 자체**가 나오면 그 안의 변경 파일로 펼친다 (`#693`).
+
+    [중요] 루트 diff 는 포인터가 바뀐 것만 안다(`vendor/kimodo.cpp` 한 줄). 펼치지 않으면
+    원본을 따라간 커밋(kimodo `#694`)이 **소스 밖 변경으로 접혀** 문서가 영영 안 갱신된다.
+    돌려주는 것: `(펼친 목록, 사유)` — 사유가 있으면 펼치지 못한 것이다(조용히 버리지 않는다).
+    """
+    subs = set(paths.scope.submodules)
+    out, why = [], []
+    for f in touched:
+        if f not in subs:
+            out.append(f)
+            continue
+        olds = []
+        for rev in (prev, cur):
+            if rev == EMPTY_TREE:
+                olds.append("")
+                continue
+            rc, o = run(paths.repo, "rev-parse", f"{rev}:{f}")
+            olds.append(o.strip() if rc == 0 else "")
+        old, new = olds
+        if not new:
+            why.append(f"{f}: {cur[:8]} 에 서브모듈 포인터가 없다(삭제?)")
+            continue
+        sub = paths.repo / f
+        args = (["diff", "--name-only", old, new] if old
+                else ["ls-tree", "-r", "--name-only", new])
+        rc, o = run(sub, *args)
+        if rc != 0:
+            why.append(f"{f}: {old[:8] or '(처음)'}..{new[:8]} 펼치기 실패 — {o[:120]}")
+            continue
+        out.extend(f"{f}/{x.strip()}" for x in o.splitlines() if x.strip())
+    return out, " · ".join(why)
 
 
 def _update_graphs(paths: ProjectPaths, changed: list[str], r: "ProjectResult") -> None:
@@ -518,6 +566,14 @@ def _enqueue_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
     [주의] **이미 리뷰 파일이 있는 커밋**(큐 도입 전에 인라인으로 만들어진 것)은 그 파일의
     형식을 보고 가른다 — 정상이면 등재하지 않고, **형식 위반이면 등재한다**. 후자가 곧 ⓒ 다.
     """
+    # 색인 전용(`#693`)은 **자동 리뷰를 쌓지 않는다** — 사용자 결정 범위가 「색인까지」이고,
+    #    리뷰 경로는 UE 전제(`Source/`·`.h/.cpp/.cs`)에 레드마인 이슈까지 낸다.
+    #    [주의] 호출부가 아니라 여기서 막는다 — 호출부 형태는 결함 ⓓ 의 회귀 테스트가 고정한다.
+    from ..projects import profile as _pf
+    if _pf.is_index_only(getattr(paths, "name", "")):
+        r.review_note = "색인 전용 프로젝트 — 자동 리뷰를 쌓지 않는다 (#693)"
+        return
+
     from ..context_synth import review_gen as rg
     from ..context_synth import review_queue as rq
 
@@ -626,7 +682,15 @@ def process_event(ev: Event, *, registry: Registry | None = None,
     #    구멍(빈 active 면 통과)을 가졌다. 「모르면 통과」는 게이트가 아니다.
     # [주의] 건너뜀은 **에러가 아니다** — 유닛을 빨갛게 만들지 않고 사유만 남긴다.
     mounted = (reg.active or "").strip()
-    if name != mounted:
+    # 🔴 **색인 전용 프로젝트는 마운트와 무관하게 자란다** (`#693`, 사용자 확정 2026-09-28 —
+    #    「검색은 마운트 전환 없이 자기 프로젝트를 본다」). 그 결정이 성립하려면 색인도 마운트를
+    #    기다리면 안 된다: NS 가 마운트된 동안 kimodo 에 push 해도 문서가 안 자란다.
+    #    [주의] 위 `#242` 의 근거(비용·워터마크 오염)는 **등록만 된** 프로젝트였다. 색인 전용은
+    #    사람이 색인을 원한다고 적은 프로젝트이고, 분산 작업이 없어 마운트가 지키는 쓰기도 없다.
+    #    [중요] 판정은 **명시된 `kind: index_only`** 하나다 — kind 가 비면 종전대로 막는다.
+    from ..projects import profile as _pf
+    index_only = _pf.is_index_only(name)
+    if name != mounted and not index_only:
         r.skipped = (f"마운트되지 않았다 (활성: {mounted or '(없음)'}) — "
                      f"git 을 부르지 않고 건너뛴다 (§5.5.2 단일 마운트)")
         return r
@@ -668,6 +732,10 @@ def process_event(ev: Event, *, registry: Registry | None = None,
 
     rc, out = run(paths.repo, "rev-parse", "HEAD")
     r.to_commit = out.strip() if rc == 0 else ""
+    sub_err = _sync_submodules(paths, run)
+    if sub_err:
+        r.error = sub_err
+        return r
 
     # ── [중요] 여기가 트윈이 자라는 지점이다 (중 1.1 · 중 1.2) ──────────
     #
@@ -735,12 +803,18 @@ def process_event(ev: Event, *, registry: Registry | None = None,
             #    `_source_only` 가 확장자로 한 번 더 자른다. 한 겹이면 인자를 한 번 잘못
             #    넘길 때 `Content/`(워킹트리의 93%)가 조용히 들어온다.
             rc, out = run(paths.repo, "diff", "--name-only", prev, c,
-                          "--", SOURCE_SUBDIR)
+                          "--", *paths.scope.roots)
             if rc != 0:
                 r.halted = f"{c[:8]} diff 실패 — 커서를 전진시키지 않는다: {out[:120]}"
                 break
             touched = [x.strip() for x in out.splitlines() if x.strip()]
-            changed = _source_only(touched)
+            if paths.scope.submodules:
+                touched, why = _expand_gitlinks(paths, prev, c, touched, run)
+                if why:
+                    # [중요] 커서를 전진시키지 않는다 — 전진하면 그 포인터 변경의 문서가 영영 안 생긴다
+                    r.halted = f"{c[:8]} 서브모듈 펼치기 실패 — 커서를 전진시키지 않는다: {why}"
+                    break
+            changed = _source_only(touched, paths)
             if not changed:
                 # 사용자 지시: **분석 대상이 소스 디렉토리 밖이면 스킵한다.**
                 # [중요] 그때 **커서는 전진시킨다** — 안 그러면 매 회차가 같은 커밋을 다시

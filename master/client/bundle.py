@@ -88,6 +88,19 @@ PAYLOAD_PKG = "axmaster"
 #    배달 위치가 한 글자라도 달라지면 그것은 이 변경의 실패다(`test_payload_split`).
 
 
+def index_only(project: str) -> bool:
+    """프로필 `kind` 가 색인 전용인가 (`#693`). **읽기 실패는 False** — 종전 동작(unreal)을 지킨다.
+
+    [주의] 등재 거절은 여기가 아니라 `profile.blockers` 가 맡는다(없는 kind 도 거절). 배달은
+    kind 가 비었다고 기존 두 프로젝트의 배달물을 줄이면 안 되므로 **명시된 index_only 만** 줄인다.
+    """
+    try:
+        from ..projects import profile as _pf                        # noqa: PLC0415
+        return _pf.is_index_only(project)
+    except Exception:                                                # noqa: BLE001
+        return False
+
+
 def _pair(dest: str, src: str = "") -> tuple:
     """`(배달 상대경로, 저장소 경로 — **저장소 루트 기준**)`.
 
@@ -1142,6 +1155,72 @@ def codex_mcp_add(facts: HostFacts, name: str) -> str:
     return f"{name} [완료] codex mcp get 대조 통과"
 
 
+def claude_local_key(facts: HostFacts) -> str:
+    """`~/.claude.json` 의 `projects` 키 — 실측 2026-09-28 `.33`: 슬래시로 쓴 체크아웃 경로."""
+    return facts.path.replace("\\", "/") if facts.windows else facts.path
+
+
+def claude_mcp_local_cmd(facts: HostFacts, name: str) -> str:
+    """체크아웃에서 부를 `claude mcp add --scope local` 한 줄. **조립 자리는 여기 하나다.**
+
+    `.mcp.json` 항목·codex 등록과 **같은 `mcp_entry_for`** 에서 나온다. `remove` 를 먼저 부르는
+    이유: `add` 는 같은 이름이 있으면 거절한다 — 재배달이 멱등이어야 한다(없으면 remove 가
+    실패하지만 `&`/`;` 로 이어 add 는 그대로 돈다).
+    """
+    e = mcp_entry_for(facts)
+    add = f"claude mcp add --scope local {name} -- {e['command']} " + " ".join(e["args"])
+    rm = f"claude mcp remove --scope local {name}"
+    if facts.windows:
+        return f'cd /d "{facts.path}" && ({rm} >nul 2>&1 & {add})'
+    return f"cd '{facts.path}' && {{ {rm} >/dev/null 2>&1; {add}; }}"
+
+
+def claude_mcp_local_get(facts: HostFacts, name: str) -> dict:
+    """로컬 스코프에 **실제로 적힌** 항목. 없으면 빈 dict.
+
+    [중요] `claude mcp get` 을 쓰지 않는다 — 그 명령은 서버에 **접속을 시도**해 느리고, 접속
+    실패도 출력에 섞인다(실측). 판정할 것은 「등록됐나」이지 「지금 붙나」가 아니다 — 그래서
+    Claude 가 읽는 파일의 그 항목만 뽑는다(파일 전체를 가져오지 않는다 — 사람의 기록이 있다).
+    """
+    key = claude_local_key(facts)
+    if facts.windows:
+        ps = ("$j=Get-Content -Raw $env:USERPROFILE\\.claude.json | ConvertFrom-Json; "
+              "$p=$j.projects.PSObject.Properties | Where-Object { $_.Name -eq '" + key + "' }; "
+              "if ($p) { $p.Value.mcpServers." + name + " | ConvertTo-Json -Compress }")
+        cmd = 'powershell -NoProfile -Command "' + ps + '"'
+    else:
+        cmd = ("python3 -c \"import json,os;d=json.load(open(os.path.expanduser('~/.claude.json')));"
+               f"print(json.dumps(((d.get('projects') or {{}}).get('{key}') or {{}})"
+               f".get('mcpServers',{{}}).get('{name}') or {{}}))\"")
+    _rc, out = _ssh(facts.host, facts.user, cmd)
+    try:
+        got = json.loads((out or "").strip() or "{}")
+    except ValueError:
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
+def claude_mcp_local_matches(got: dict, facts: HostFacts) -> bool:
+    want = mcp_entry_for(facts)
+    return (got.get("command") == want["command"]
+            and list(got.get("args") or []) == list(want["args"]))
+
+
+def claude_mcp_local_add(facts: HostFacts, name: str) -> str:
+    """로컬 스코프 등록 + **되읽어 대조** (`#693`). fail-open — `codex_mcp_add` 와 같은 판단."""
+    if not facts.claude:
+        return f"{name} [주의] 건너뜀 — 이 기계에 claude 가 없다"
+    rc, out = _ssh(facts.host, facts.user, claude_mcp_local_cmd(facts, name))
+    if rc != 0:
+        return f"{name} [주의] 로컬 등록 실패 (rc={rc}) — {(out or '').strip()[:120]}"
+    got = claude_mcp_local_get(facts, name)
+    if not got:
+        return f"{name} [주의] 등록했다는데 ~/.claude.json 에 없다 — 사람이 확인할 것"
+    if not claude_mcp_local_matches(got, facts):
+        return f"{name} [주의] 등록됐지만 내용이 다르다 — {got.get('command')} {got.get('args')}"
+    return f"{name} [완료] 로컬 스코프 등록 · ~/.claude.json 대조 통과 (.mcp.json 은 안 건드림)"
+
+
 def hook_entry(matcher: str, rel: str, timeout: int, facts: HostFacts) -> dict:
     """`settings.json` 에 들어갈 훅 항목 한 벌. 🔴 [중요] **만드는 자리는 여기 하나다.**
 
@@ -1218,7 +1297,7 @@ def _hook_path_arg(path: str) -> str:
     return f'"{path}"' if " " in path else path
 
 
-def merge_settings_json(prev_text: str, facts: HostFacts) -> str:
+def merge_settings_json(prev_text: str, facts: HostFacts, init=None) -> str:
     """기존 `.claude/settings.json` 에 **관리 훅만** 넣는다 — 사람 것은 보존한다 (`#337`).
 
     원전 `watcher/setup.py:315 _merge_managed_hooks` 이식. 그쪽과 같은 규약이다:
@@ -1244,7 +1323,7 @@ def merge_settings_json(prev_text: str, facts: HostFacts) -> str:
     else:
         data = {}
 
-    wanted = spec.managed_hooks_for(facts.role)
+    wanted = spec.managed_hooks_for(facts.role, init)
     hooks = data.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise BundleError(f"{facts.host}: {spec.SETTINGS_REL} 의 `hooks` 가 객체가 아니다 — 덮지 않는다")
@@ -1383,7 +1462,7 @@ def workshop_by_project_dir(project: str) -> Path:
     return Path(__file__).with_name("workshop_by_project") / project
 
 
-def workshop_files(role: str, project: str = "") -> tuple:
+def workshop_files(role: str, project: str = "", init=None) -> tuple:
     """이 역할이 받을 작업장 자산 — `(체크아웃 기준 상대경로, 저장소 절대경로)` 목록.
 
     [중요] `CLAUDE.md` 는 여기서 **제외**한다 — 병합 대상이라 쓰는 방식이 다르다.
@@ -1404,6 +1483,9 @@ def workshop_files(role: str, project: str = "") -> tuple:
             for f in sorted(d.rglob("*")):
                 if f.is_file() and not is_build_residue(f):
                     out[f".claude/{f.relative_to(root).as_posix()}"] = f
+    if init is not None and getattr(init, "index_only", False):
+        # 색인 전용(`#693`)은 검색 힌트 훅만 — 선언은 `spec.INDEX_ONLY_WORKSHOP` 하나다
+        out = {k: v for k, v in out.items() if k in spec.INDEX_ONLY_WORKSHOP}
     return tuple(sorted(out.items()))
 
 
@@ -1511,7 +1593,7 @@ def domain_map_section(project: str) -> str:
     )
 
 
-def merge_workshop_md(existing: str, role: str, project: str = "") -> str:
+def merge_workshop_md(existing: str, role: str, project: str = "", init=None) -> str:
     """`.claude/CLAUDE.md` — **마커 블록만** 정본으로 갈아끼운다.
 
     원전 `project_claude_md.py` 가 쓰던 `AgentWatch:Start/End` 마커를 그대로 쓴다.
@@ -1520,7 +1602,10 @@ def merge_workshop_md(existing: str, role: str, project: str = "") -> str:
       사람의 문서를 날린다. 대신 사유를 돌려준다(호출자가 사람에게 보여 준다)
     · 원격이 비었으면 정본을 그대로 놓는다
     """
-    src = workshop_dir() / "CLAUDE.md"
+    # 색인 전용(`#693`)은 짧은 정본을 쓴다 — 기본 정본은 분산 작업·UE 에이전트 안내라
+    #    받은 세션이 없는 경로를 따라가게 된다. 마커는 같다(병합 규칙 한 벌).
+    idx = init is not None and getattr(init, "index_only", False)
+    src = workshop_dir() / ("CLAUDE.index_only.md" if idx else "CLAUDE.md")
     if role not in WORKSHOP_ROLES or not src.is_file():
         return ""
     canon = workshop_text(src)
@@ -1528,7 +1613,7 @@ def merge_workshop_md(existing: str, role: str, project: str = "") -> str:
         raise BundleError(f"정본 {WORKSHOP_MD_REL} 에 관리 마커가 없다 — 배달 대상이 아니다")
     # [중요] **동적 절을 End 마커 직전에 끼운다** — 원전 `setup.py:534` 와 같은 방식이다.
     #    `project` 를 안 주면(순수 유닛) 정적 정본 그대로다.
-    if project:
+    if project and not idx:
         dyn = domain_map_section(project)
         if dyn:
             canon = canon.replace(WS_END, dyn + WS_END, 1)
@@ -1620,7 +1705,9 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
                 "skills": list(skills_for(facts.role, pinit)),
                 "removed": list(spec.removals_for(facts.role, pinit)["skills"]),
                 "payload": list(payloads_for(facts.role)),
-                "workshop": [rel for rel, _src in workshop_files(facts.role, project)]}
+                "workshop": [rel for rel, _src in workshop_files(facts.role, project, pinit)],
+                "entry_docs": spec.entry_docs_for(pinit),
+                "mcp_scope": spec.mcp_scope_for(pinit)}
     # [중요] CLAUDE.md 는 **읽어서 병합**한다 — 덮어쓰면 사람이 쓴 것을 날린다
     md_path = (f"{facts.path}\\CLAUDE.md" if facts.windows else f"{facts.path}/CLAUDE.md")
     prev = _remote_read(facts, md_path)
@@ -1641,7 +1728,10 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     written = {
         # [중요] config·부산물·CLAUDE.md 는 **체크아웃 안**, 스킬만 홈 (모듈 독스트링 참조)
         "config": _remote_write(facts, CONFIG_REL, cfg, base="checkout"),
-        "claude_md": _remote_write(facts, "CLAUDE.md", merged, base="checkout"),
+        # 🔴 색인 전용(`#693`)은 **커밋된 진입 파일을 쓰지 않는다** — 사람의 작업 트리가 더러워진다
+        "claude_md": (_remote_write(facts, "CLAUDE.md", merged, base="checkout")
+                      if spec.entry_docs_for(pinit)
+                      else "건너뜀 — 색인 전용: 루트 CLAUDE.md 는 사람 것(커밋된 파일)"),
         # 🔴 [중요] **도구마다 자동 로드 경로가 다르다** — 선언은 `spec.SKILL_HOMES` 하나다
         #    (`#385`, 실측 2026-09-08: codex 는 `~/.claude/skills/` 를 안 본다. 읽기는 되지만
         #    스킬로 안 잡혀서 지시문의 *"Follow the ax-work skill"* 이 빈 참조가 됐고,
@@ -1700,10 +1790,13 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     #    없으면 그냥 안 읽힐 뿐이고, `spec.GIT_EXCLUDES` 가 워킹트리 오염을 막는다.
     agents_prev = _remote_read(facts, (f"{facts.path}\\{spec.CODEX_ENTRY_REL}" if facts.windows
                                        else f"{facts.path}/{spec.CODEX_ENTRY_REL}"))
-    written["agents_md"] = _remote_write(
-        facts, spec.CODEX_ENTRY_REL,
-        codex_entry_text(agents_prev, merged, project, facts), base="checkout")
-    if not (agents_prev or "").strip():
+    if not spec.entry_docs_for(pinit):
+        written["agents_md"] = "건너뜀 — 색인 전용: AGENTS.md 는 사람 것(커밋된 파일)"
+    else:
+        written["agents_md"] = _remote_write(
+            facts, spec.CODEX_ENTRY_REL,
+            codex_entry_text(agents_prev, merged, project, facts), base="checkout")
+    if spec.entry_docs_for(pinit) and not (agents_prev or "").strip():
         _missed = apply_codex_identity(merged)[1]
         if _missed:
             # [중요] 조용한 생략 금지 — 정본 머리글이 바뀌면 사람이 알아야 한다
@@ -1712,14 +1805,14 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     # ── 작업장 자산 (#226 4번) — 원전 watch.exe 가 생성하던 `.claude/` 구조 ─────────
     # [중요] **손으로 맞추던 것을 배달 경로에 넣는다.** 3번 재배선까지 저장소와 `.33` 을 scp 로
     #    맞췄고, 그 상태로는 조용히 갈린다(리포트 27 §13). 배달은 되읽어 해시 대조까지 한다.
-    ws = workshop_files(facts.role, project)
+    ws = workshop_files(facts.role, project, pinit)
     if ws:
         written["workshop"] = [_remote_write(facts, rel, workshop_text(src), base="checkout")
                                for rel, src in ws]
         # [주의] `.claude/CLAUDE.md` 는 **마커 블록만** — 사람이 쓴 나머지를 날리지 않는다.
         prev_ws = _remote_read(facts, (f"{facts.path}\.claude\CLAUDE.md" if facts.windows
                                        else f"{facts.path}/.claude/CLAUDE.md"))
-        merged_ws = merge_workshop_md(prev_ws, facts.role, project)
+        merged_ws = merge_workshop_md(prev_ws, facts.role, project, pinit)
         if merged_ws:
             # [중요] 개행 통일 — 병합이 섞기 때문이다 (`with_newlines` 독스트링 참조)
             written["workshop_md"] = _remote_write(
@@ -1735,7 +1828,12 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     #    `MCP_BY_ROLE["worker"]` 를 열어도 배달이 따라오지 않았다(실측 2026-08-23: 선언을
     #    바꾸고 배달했는데 워커에 `.mcp.json` 이 안 갔다). 선언과 배선이 **두 벌**이면 이런 일이
     #    조용히 난다 — 이제 한 곳(`mcp_for`)이 정한다.
-    if spec.mcp_for(facts.role, pinit):
+    if spec.mcp_for(facts.role, pinit) and spec.mcp_scope_for(pinit) == "local":
+        # 🔴 색인 전용(`#693`): `.mcp.json` 은 커밋된 사람 파일 → **로컬 스코프**로 등록한다
+        written["mcp_json"] = "건너뜀 — 로컬 스코프로 등록 (.mcp.json 은 사람 것)"
+        written["claude_mcp_local"] = [claude_mcp_local_add(facts, n)
+                                       for n in spec.mcp_for(facts.role, pinit)]
+    elif spec.mcp_for(facts.role, pinit):
         prev_mcp = _remote_read(facts, (f"{facts.path}\\.mcp.json" if facts.windows
                                         else f"{facts.path}/.mcp.json"))
         written["mcp_json"] = _remote_write(facts, ".mcp.json",
@@ -1752,13 +1850,13 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     #    등록돼야 돈다. 그 등록이 없어 `domain_hint.py` 가 배달된 채 죽어 있었다(실측
     #    2026-08-30). 선언은 `spec.MANAGED_HOOKS` 하나다.
     #    [주의] `settings.local.json` 은 건드리지 않는다 — 사람 것이다 (원전 분담).
-    if spec.managed_hooks_for(facts.role):
+    if spec.managed_hooks_for(facts.role, pinit):
         _set_rel = (spec.SETTINGS_REL.replace("/", chr(92)) if facts.windows
                     else spec.SETTINGS_REL)
         _sep = chr(92) if facts.windows else "/"
         prev_set = _remote_read(facts, f"{facts.path}{_sep}{_set_rel}")
         written["settings_json"] = _remote_write(facts, spec.SETTINGS_REL,
-                                                 merge_settings_json(prev_set, facts),
+                                                 merge_settings_json(prev_set, facts, pinit),
                                                  base="checkout")
     # ── 역할 토큰 (#204 에서 requester 전용 → 역할 인식으로) ─────────────
     #    requester·worker 둘 다 **클라 MCP** 가 `.ax/token` 을 읽는다 (worker 의 claimer 는
@@ -1943,7 +2041,8 @@ def _register_residency(project: str, facts: HostFacts) -> dict:
         pass                                                 # 마운트를 못 읽으면 게이트를 못 본다
     have_daemon = any(dest.endswith("worker_daemon.py")
                       for dest, _src in payload_pairs(facts.role))
-    decision = R.desired_state(project, mounted, facts, daemon_available=have_daemon)
+    decision = R.desired_state(project, mounted, facts, daemon_available=have_daemon,
+                               index_only=index_only(project))
     if not decision.required:
         # 원하는 상태가 '없음'이면 단순 skip이 아니라 과거 등록까지 걷는다. 그렇지 않으면
         # 마운트/능력이 바뀐 뒤에도 5분마다 죽은 상주가 계속 돈다.

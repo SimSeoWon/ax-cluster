@@ -78,8 +78,22 @@ def _git(repo: Path, *args: str) -> tuple[int, str]:
     return p.returncode, (p.stdout or p.stderr).strip()
 
 
+def ls_files_args(paths: ProjectPaths) -> list:
+    """경계 안 파일을 나열하는 `git ls-files` 인자. **조립 자리는 여기 하나다** (`#693`).
+
+    서브모듈을 선언한 프로젝트만 `--recurse-submodules` 를 붙인다 — 기본 경계의 인자는 종전과
+    글자까지 같다(`ls-files -- Source`).
+    """
+    sc = paths.scope
+    return (["ls-files"] + (["--recurse-submodules"] if sc.submodules else [])
+            + ["--", *sc.roots])
+
+
 def list_source_files(paths: ProjectPaths, *, git=None) -> list[str]:
-    """색인 대상 C++ 파일 — `repo/` 기준 상대 경로. **`Source/` 하위만** (§5.2-E).
+    """색인·합성 대상 파일 — `repo/` 기준 상대 경로. **경계(`paths.scope`) 안만** (§5.2-E).
+
+    기본 경계는 `Source/` · 그래프 파서 확장자(C++)다. 비UE 프로젝트는 `config.yaml` 의
+    `source:` 로 루트·제외·확장자·서브모듈을 선언한다(`#693`).
 
     [중요] `git ls-files` 가 실패하면 예외다. 빈 리스트를 돌려주면 "소스가 없는 저장소" 와
     구분이 안 되고, 그 상태로 `build_full` 이 그래프를 0건으로 덮어쓴다.
@@ -87,17 +101,22 @@ def list_source_files(paths: ProjectPaths, *, git=None) -> list[str]:
     run = git or _git
     if not paths.repo.is_dir():
         raise GraphError(f"소스 클론이 없다: {paths.repo}")
-    rc, out = run(paths.repo, "ls-files", "--", SOURCE_SUBDIR)
+    rc, out = run(paths.repo, *ls_files_args(paths))
     if rc != 0:
         raise GraphError(f"git ls-files 실패 (rc={rc}): {out[:200]}")
     # [중요] 경계를 **두 겹**으로 둔다. pathspec 하나에만 의존하면 §5.2-E 가 호출 방식에
     # 딸려 다니게 된다 — 인자를 한 번 잘못 넘기면 `Content/`(워킹트리의 93%)가 조용히
-    # 들어온다. 접두 검사는 공짜다. (토큰 인증도 같은 이유로 ufw 와 두 겹이다)
-    prefix = f"{SOURCE_SUBDIR}/"
+    # 들어온다. 판정은 `SourceScope.contains` 한 자리다. (토큰 인증도 같은 이유로 ufw 와 두 겹이다)
     return [
         f for f in (line.strip().replace("\\", "/") for line in out.splitlines())
-        if f.startswith(prefix) and Path(f).suffix.lower() in parse.PARSE_EXTS
+        if paths.scope.contains(f, parse.PARSE_EXTS)
     ]
+
+
+def graph_files(paths: ProjectPaths, *, git=None) -> list[str]:
+    """그래프가 파싱할 파일 — 경계 안의 **C++ 만**. 합성 대상(`.py` 포함 가능)과 갈린다."""
+    return [f for f in list_source_files(paths, git=git)
+            if Path(f).suffix.lower() in parse.PARSE_EXTS]
 
 
 def _entries_for(rel: str, paths: ProjectPaths,
@@ -145,10 +164,10 @@ def build_full(paths: ProjectPaths, *, git=None, progress=None) -> BuildStats:
     """
     parse.require()
     t0 = time.monotonic()
-    files = list_source_files(paths, git=git)
+    files = graph_files(paths, git=git)
     if not files:
         raise GraphError(
-            f"`{SOURCE_SUBDIR}/` 에 C++ 파일이 없다 — 클론이 비었거나 경계가 틀렸다. "
+            f"`{paths.scope.label()}` 에 C++ 파일이 없다 — 클론이 비었거나 경계가 틀렸다. "
             "빈 그래프로 덮지 않고 멈춘다."
         )
     stats = BuildStats(files=len(files))

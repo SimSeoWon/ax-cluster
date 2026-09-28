@@ -208,8 +208,14 @@ def projects_api(root: Path | None = None):
     (사용자 결정 2026-08-13: *"그냥 있는거 보여주는 뷰어"* — 조작 경로가 아니다.)"""
     cfg = load_config(root)
     base = projects_url(cfg)
+    project = str(cfg.get("project") or "").strip()
 
     def api(method: str, path: str, payload=None):
+        # 🔴 프로젝트 태그를 싣는다 (`#693`) — 검색은 이 태그로 **자기 프로젝트**를 본다.
+        #    종전엔 이 호출자만 태그를 안 실어 NS 체크아웃도 늘 마운트를 검색했다.
+        #    [주의] 이미 실린 값은 덮지 않는다 — 다른 두 호출자(`queue_api`)와 같은 규약이다.
+        if project and isinstance(payload, dict) and not str(payload.get("project") or "").strip():
+            payload = {**payload, "project": project}
         return _call(method, base + path, "", payload)
 
     return api

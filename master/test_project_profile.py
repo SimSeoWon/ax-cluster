@@ -67,7 +67,7 @@ def test_required_fields(tmp):
     print("\n② 필수 칸 · `game` 이면 장르도 필수")
     with _Tmp(tmp):
         check("빈 프로필은 필수 칸 전부가 미수집", set(PF.missing("NS")) == set(PF.REQUIRED))
-        PF.save("NS", engine_decided=True, engine="Unreal Engine", engine_version="5.8",
+        PF.save("NS", kind="unreal", engine_decided=True, engine="Unreal Engine", engine_version="5.8",
                 language="C++", purpose="game", overview="이 프로젝트는 " + "가" * 50)
         check("[중요] purpose=game 이면 genre 가 남는다", PF.missing("NS") == ["genre"], str(PF.missing("NS")))
         PF.save("NS", genre="액션")
@@ -77,7 +77,7 @@ def test_required_fields(tmp):
 def test_blockers_are_not_missing(tmp):
     print("\n④ `blockers` 는 `missing` 과 다르다")
     with _Tmp(tmp):
-        PF.save("NS", engine_decided=False, engine="미정", engine_version="미정",
+        PF.save("NS", kind="unreal", engine_decided=False, engine="미정", engine_version="미정",
                 language="C++", purpose="rnd", overview="엔진을 아직 고르는 중인 " + "탐색" * 20)
         check("[중요] 답을 다 받았으므로 미수집은 없다", PF.missing("NS") == [], str(PF.missing("NS")))
         check("🔴 그래도 등재는 막힌다 (engine_decided=false)",
@@ -113,7 +113,7 @@ def test_project_line_seam(tmp):
         empty = PF.project_line("NS")
         check("[중요] 비면 「비어 있다」고 말하고 지어내지 않는다", "비어 있다" in empty, empty[:80])
         check("  채우는 길을 가리킨다", "set_project_profile" in empty)
-        PF.save("NS", engine_decided=True, engine="Unreal Engine", engine_version="5.8",
+        PF.save("NS", kind="unreal", engine_decided=True, engine="Unreal Engine", engine_version="5.8",
                 language="C++ 중심", purpose="game", genre="소울라이크",
                 overview="근접 전투의 방어 판정을 " + "다루는 " * 12)
         line = PF.project_line("NS")
@@ -146,10 +146,36 @@ def test_register_refuses(tmp):
             check("등재가 거절된다", True)
             check("  사유에 미수집 칸이 실린다", "프로필" in str(e), str(e)[:140])
             check("[중요] 추측 금지를 명시한다", "추측" in str(e), str(e)[-160:])
-        PF.save("NS", engine_decided=True, engine="Unreal Engine", engine_version="5.8",
+        PF.save("NS", kind="unreal", engine_decided=True, engine="Unreal Engine", engine_version="5.8",
                 language="C++", purpose="tool", overview="사내 툴이다 " + "설명 " * 20)
         check("  프로필이 차면 이 게이트는 통과한다 (다음 검증으로 넘어간다)",
               PF.blockers("NS") == [], str(PF.blockers("NS")))
+
+
+def test_index_only_kind(tmp):
+    print("\n⑨ 🔴 `kind` — index_only 는 색인까지만 (`#693`)")
+    with _Tmp(tmp):
+        check("kind 가 없으면 미수집에 kind 가 있다", "kind" in PF.missing("K"), str(PF.missing("K")))
+        check("  kind 가 없으면 kind_of 는 빈 값 (unreal 로 읽지 않는다)", PF.kind_of("K") == "")
+        try:
+            PF.save("K", kind="python")
+            check("모르는 kind 는 거절한다", False, "예외가 안 났다")
+        except ValueError as e:
+            check("모르는 kind 는 거절한다", "kind" in str(e), str(e))
+        PF.save("K", kind="index_only", language="Python · C++ 서브모듈", purpose="tool",
+                overview="텍스트로 애니메이션 모션을 만드는 WebUI 래퍼다 " + "설명 " * 10)
+        check("[중요] index_only 는 엔진 세 칸을 요구하지 않는다", PF.missing("K") == [],
+              str(PF.missing("K")))
+        check("🔴 그래도 등재는 막힌다 (분산 작업 없음)",
+              any("index_only" in b for b in PF.blockers("K")), str(PF.blockers("K")))
+        check("  is_index_only", PF.is_index_only("K"))
+        check("  project_line 이 엔진을 지어내지 않는다",
+              "색인 전용" in PF.project_line("K") and "None" not in PF.project_line("K"),
+              PF.project_line("K")[:120])
+        PF.save("U", kind="unreal", language="C++", purpose="tool",
+                overview="엔진 칸을 아직 안 채운 언리얼 프로젝트 " + "설명 " * 10)
+        check("unreal 은 엔진 세 칸이 여전히 필수",
+              set(PF.ENGINE_FIELDS) <= set(PF.missing("U")), str(PF.missing("U")))
 
 
 def main() -> int:
@@ -159,7 +185,8 @@ def main() -> int:
         for fn in (test_two_kinds_are_not_mixed, test_required_fields,
                    test_blockers_are_not_missing, test_validation_is_fail_closed,
                    test_partial_save, test_project_line_seam,
-                   test_onboarding_sees_it, test_register_refuses):
+                   test_onboarding_sees_it, test_register_refuses,
+                   test_index_only_kind):
             sub = Path(d) / fn.__name__
             sub.mkdir()
             fn(sub)

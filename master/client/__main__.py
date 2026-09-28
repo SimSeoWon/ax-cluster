@@ -133,12 +133,21 @@ def cmd_plan(project: str, *, only: str = "") -> int:
         # [중요] **MCP 엔트리를 계획에 찍는다** — 워커가 못 받는다는 판단이 조건문 한 줄에
         #    숨어 있으면 아무도 그것을 보지 못한다 (#261).
         mcp = spec.mcp_for(f.role, init)
-        print(f"   → {f.path}/.mcp.json — 엔트리 {', '.join(mcp) or '(없음 — 이 역할은 받지 않는다)'}")
+        if mcp and spec.mcp_scope_for(init) == "local":
+            for n in mcp:
+                print(f"   → {f.host}: `{bundle.claude_mcp_local_cmd(f, n)}`  "
+                      "[로컬 스코프 — .mcp.json 은 안 건드림 · #693]")
+        else:
+            print(f"   → {f.path}/.mcp.json — 엔트리 {', '.join(mcp) or '(없음 — 이 역할은 받지 않는다)'}")
+        if not spec.entry_docs_for(init):
+            print(f"   → {f.path}/CLAUDE.md · {spec.CODEX_ENTRY_REL} — [건너뜀] 색인 전용: "
+                  "커밋된 사람 파일이라 관리 블록을 쓰지 않는다 (#693)")
         # [중요] **codex 몫도 계획에 찍는다** (`#402`). 선언은 `spec.ENTRY_DOCS` ·
         #    `spec.codex_mcp_for` 하나씩이고, 안 찍으면 스킬 때(`#385`)와 같은 일이 난다 —
         #    배달은 정상인데 도구가 그것을 못 보는 상태가 **아무 표면에도 안 나타난다.**
-        print(f"   → {f.path}/{spec.CODEX_ENTRY_REL} — codex 진입 문서 "
-              f"[블록만 교체 · 없으면 CLAUDE.md 시드]")
+        if spec.entry_docs_for(init):
+            print(f"   → {f.path}/{spec.CODEX_ENTRY_REL} — codex 진입 문서 "
+                  f"[블록만 교체 · 없으면 CLAUDE.md 시드]")
         cmcp = spec.codex_mcp_for(f.role, init)
         if cmcp:
             for n in cmcp:
@@ -147,7 +156,7 @@ def cmd_plan(project: str, *, only: str = "") -> int:
         # [중요] **훅 「등록」을 계획에 찍는다** (`#337`) — 파일 배달과 다른 자리다. 종전에는
         #    `.claude/hooks/domain_hint.py` 가 배달 목록에만 있어서, 그것이 **등록되지 않아
         #    한 번도 안 돈다**는 사실이 계획에도 보고에도 나타나지 않았다.
-        hk = spec.managed_hooks_for(f.role)
+        hk = spec.managed_hooks_for(f.role, init)
         if hk:
             print(f"   → {f.path}/{spec.SETTINGS_REL} — 훅 등록 "
                   + ", ".join(f"{ev}({rel.rsplit('/', 1)[-1]})" for ev, _m, rel, _t in hk)
@@ -163,7 +172,7 @@ def cmd_plan(project: str, *, only: str = "") -> int:
                 print(f"   → {base}/{d + '/' if d else ''}__init__.py  (패키지 표식)")
             for dest, src in pay:
                 print(f"   → {base}/{dest} ({len(bundle.payload_text(src))}자)  [payload]")
-        ws = bundle.workshop_files(f.role, project)
+        ws = bundle.workshop_files(f.role, project, init)
         if ws:
             # [중요] **자산은 개수로 찍는다** — 33개를 한 줄씩 찍으면 계획이 안 읽힌다.
             #    다만 어느 묶음이 몇 개인지는 말한다(안 보이는 산출물은 없는 것으로 읽힌다).
@@ -372,20 +381,33 @@ def cmd_check(project: str, *, only: str = "") -> int:
         ok_client = True
         client_note = ""
         if f.role == "requester":
-            raw = bundle._remote_read(f, (f"{f.path}\\.mcp.json" if f.windows
-                                          else f"{f.path}/.mcp.json"))
-            try:
-                entry = (json.loads(raw or "{}").get("mcpServers") or {}).get(
-                    bundle.MCP_SERVER_NAME)
-            except ValueError:
-                entry = None
-            if entry != bundle.mcp_entry_for(f):
-                ok_client = False
-                client_note = " · [실패] .mcp.json 의 ax-client 항목이 없거나 다르다"
+            if spec.mcp_scope_for(init) == "local":
+                # 🔴 색인 전용(`#693`) — 배달이 쓴 자리(로컬 스코프)를 본다. `.mcp.json` 을 보면
+                #    정상 배달을 실패로 답한다(`#337` 과 같은 부류: 쓰는 자리와 재는 자리가 갈림).
+                got_l = bundle.claude_mcp_local_get(f, bundle.MCP_SERVER_NAME)
+                if not got_l:
+                    ok_client = False
+                    client_note = " · [실패] 로컬 스코프에 ax-client 가 없다 (~/.claude.json)"
+                elif not bundle.claude_mcp_local_matches(got_l, f):
+                    ok_client = False
+                    client_note = " · [실패] 로컬 스코프 ax-client 항목이 다르다"
+                else:
+                    client_note = " · ax-client 로컬 스코프 일치"
+            else:
+                raw = bundle._remote_read(f, (f"{f.path}\\.mcp.json" if f.windows
+                                              else f"{f.path}/.mcp.json"))
+                try:
+                    entry = (json.loads(raw or "{}").get("mcpServers") or {}).get(
+                        bundle.MCP_SERVER_NAME)
+                except ValueError:
+                    entry = None
+                if entry != bundle.mcp_entry_for(f):
+                    ok_client = False
+                    client_note = " · [실패] .mcp.json 의 ax-client 항목이 없거나 다르다"
             # [중요] **훅이 「등록」됐는지 잰다** (`#337`). 이 검사가 없어서 배달은 계속
             #    [완료] 를 보고했고 `domain_hint.py` 는 배달된 채 죽어 있었다 — 파일 해시는
             #    3자 일치였다. **파일이 있다 ≠ 훅이 돈다.**
-            want_hooks = spec.managed_hooks_for(f.role)
+            want_hooks = spec.managed_hooks_for(f.role, init)
             if want_hooks:
                 _sr = (spec.SETTINGS_REL.replace("/", chr(92)) if f.windows
                        else spec.SETTINGS_REL)
@@ -425,7 +447,7 @@ def cmd_check(project: str, *, only: str = "") -> int:
         # [중요] **작업장 자산도 잰다** (#226 4번). 에이전트·스킬은 사람이 읽는 문서지만
         #    `tools:` 허용목록이 낡으면 **오류 없이 능력만 사라진다**(리포트 27 §13) — 페이로드가
         #    조용히 낡는 것과 같은 부류다. 33개를 한 번의 ssh 로 해시 뜬다.
-        ws = bundle.workshop_files(f.role, project)
+        ws = bundle.workshop_files(f.role, project, init)
         ws_stale: list = []
         if ws:
             base = (f.path + chr(92) + ".claude") if f.windows else (f.path + "/.claude")
@@ -486,7 +508,8 @@ def cmd_check(project: str, *, only: str = "") -> int:
         _have_daemon = any(d.endswith("worker_daemon.py")
                            for d, _s in bundle.payload_pairs(f.role))
         _mounted = _mounted_project_for_check()
-        _decision = _R.desired_state(project, _mounted, f, daemon_available=_have_daemon)
+        _decision = _R.desired_state(project, _mounted, f, daemon_available=_have_daemon,
+                                     index_only=bundle.index_only(project))
         _cmd = _R.registration_query_command(project, f)
         _rc, _out = bundle._ssh(f.host, f.user, _cmd)
         _hit = _R.registration_present(_rc, _out, f)
@@ -508,7 +531,9 @@ def cmd_check(project: str, *, only: str = "") -> int:
         _csep = chr(92) if f.windows else "/"
         raw_a = bundle._remote_read(f, f"{f.path}{_csep}{spec.CODEX_ENTRY_REL}")
         want_block = bundle.managed_block(project, f)
-        if not (raw_a or "").strip():
+        if not spec.entry_docs_for(init):
+            codex_note = f" · {spec.CODEX_ENTRY_REL} 건너뜀(색인 전용 — 사람 파일)"
+        elif not (raw_a or "").strip():
             ok_codex = False
             codex_note = f" · [실패] {spec.CODEX_ENTRY_REL} 이 없다 (codex 는 CLAUDE.md 를 안 읽는다)"
         elif want_block not in raw_a:

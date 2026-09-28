@@ -57,6 +57,9 @@ class StepState:
     done: bool
     detail: str = ""
     blocked: str = ""          # 비어 있지 않으면 이 단계를 지금 할 수 없다 (선결 미충족)
+    # 🔴 **해당 없음** (`#693`) — 이 프로젝트 타입에는 그 단계가 없다. `done=True` 로 두되
+    #    「했다」와 섞지 않도록 사유를 따로 싣는다(`[완료]` 가 아니라 `[해당 없음]` 으로 찍힌다).
+    not_applicable: str = ""
 
     def to_dict(self) -> dict:
         out = {"step": self.key, "what": self.what, "done": self.done}
@@ -64,7 +67,14 @@ class StepState:
             out["detail"] = self.detail
         if self.blocked:
             out["blocked"] = self.blocked
+        if self.not_applicable:
+            out["not_applicable"] = self.not_applicable
         return out
+
+
+# 색인 전용 프로젝트(`#693`)에 **없는** 서버 단계 — 선언은 여기 하나다.
+#    conventions: 워커 매니페스트의 규약 원천이다. 파견이 없으니 읽을 워커가 없다.
+INDEX_ONLY_NA = {"conventions": "색인 전용 — 워커 매니페스트가 없어 규약 원천이 필요 없다"}
 
 
 @dataclass
@@ -181,8 +191,14 @@ def _probe_clone(paths) -> tuple:
         return False, f"소스 클론이 없다: {paths.repo}"
     if not (paths.repo / ".git").exists():
         return False, f"git 저장소가 아니다: {paths.repo}"
-    if not paths.source.is_dir():
-        return False, f"`{SOURCE_SUBDIR}/` 가 없다: {paths.source} — 색인할 소스가 없다"
+    if not any(d.is_dir() for d in paths.source_dirs):
+        return False, f"`{paths.scope.label()}` 가 없다: {paths.source} — 색인할 소스가 없다"
+    # 🔴 선언된 서브모듈이 **받아졌는가** (`#693`) — 빈 디렉토리면 그 안은 「소스 없음」으로 접힌다
+    empty = [sm for sm in paths.scope.submodules
+             if not (paths.repo / sm).is_dir() or not any((paths.repo / sm).iterdir())]
+    if empty:
+        return False, (f"서브모듈이 비었다: {', '.join(empty)} — "
+                       "`git submodule update --init -- <경로>` (clone 단계가 한다)")
     # [중요] **탐지가 아니라 선언 확인이다** (`#376` ⑵). 「LFS 를 받으려 했나」를 잡으면 이미
     #    늦다 — 워킹트리가 반쯤 적용된 뒤다. 있어야 할 config 가 있는지만 본다.
     miss = lfs_skip_missing(paths.repo)
@@ -242,7 +258,7 @@ def _probe_synth(paths) -> tuple:
     except Exception as e:                                   # noqa: BLE001
         return False, f"그룹을 세지 못했다: {type(e).__name__}: {e}"
     if not groups:
-        return False, "합성할 그룹이 없다 (Source/ 경계를 확인하라)"
+        return False, f"합성할 그룹이 없다 (`{paths.scope.label()}` 경계를 확인하라)"
     missing = [k for k in groups if not synth.doc_path(paths, k).is_file()]
     have = len(groups) - len(missing)
     unk = unstamped(paths)
@@ -311,7 +327,10 @@ def _probe_profile(paths) -> tuple:
                        f"`set_project_profile` 로 답하면 채워진다: {PF.profile_path(paths.name)}")
     got = PF.load(paths.name)
     tail = " · [주의] 엔진 미확정으로 기록됨 — 등재는 막힌다" if got.get("engine_decided") is False else ""
-    return True, (f"엔진 {got.get('engine')} {got.get('engine_version')} · "
+    if got.get("kind") == "index_only":
+        return True, (f"타입 index_only (분산 작업 없음) · 용도 {got.get('purpose')} · "
+                      f"서술 {len(str(got.get('overview') or ''))}자")
+    return True, (f"타입 {got.get('kind')} · 엔진 {got.get('engine')} {got.get('engine_version')} · "
                   f"용도 {got.get('purpose')} · 서술 {len(str(got.get('overview') or ''))}자{tail}")
 
 
@@ -409,6 +428,11 @@ def probe_server(name: str, *, registry: Registry | None = None) -> list:
         if step.key != "clone" and not _clone_done:
             out.append(StepState(step.key, step.what, False, "",
                                  blocked="clone 이 아직이다 — 이 단계는 잴 수 없다"))
+            continue
+        from . import profile as _pf
+        if step.key in INDEX_ONLY_NA and _pf.is_index_only(name):
+            out.append(StepState(step.key, step.what, True, "",
+                                 not_applicable=INDEX_ONLY_NA[step.key]))
             continue
         done, detail = fn(paths)
         out.append(StepState(step.key, step.what, done, detail))
@@ -510,9 +534,14 @@ def do_clone(paths, cfg) -> str:
     if paths.repo.exists() and any(paths.repo.iterdir()):
         # [중요] **이미 클론된 트윈은 보정만 한다** (`#376` ⑵). 다시 클론하지 않는다 —
         #    빠진 것이 설정 하나뿐인데 137MB 를 다시 받을 이유가 없고, 덮는 것은 위험하다.
+        fixed = []
         if (paths.repo / ".git").exists() and lfs_skip_missing(paths.repo):
             apply_lfs_skip(paths.repo)
-            return f"LFS skip 설정 보정(멱등) — 클론은 그대로 둔다: {paths.repo}"
+            fixed.append("LFS skip 설정 보정(멱등)")
+        if (paths.repo / ".git").exists() and paths.scope.submodules:
+            fixed.append(_init_submodules(paths))
+        if fixed:
+            return " · ".join(fixed) + f" — 클론은 그대로 둔다: {paths.repo}"
         raise ConfigError(f"이미 무언가 있다: {paths.repo} — 덮지 않는다")
     # [중요] **LFS smudge 를 끈다** (실측 2026-08-22, NS 라이브 런에서 잡혔다).
     #    NS 의 `.gitattributes` 가 `*.uasset filter=lfs` 라, 로컬 bare 경로에서 클론하면 LFS
@@ -538,8 +567,23 @@ def do_clone(paths, cfg) -> str:
         notes.append(f"{WRITE_REMOTE} 추가" if rc == 0 else f"{WRITE_REMOTE} 실패: {out[:80]}")
     else:
         notes.append(f"[주의] clone_url 이 비어 {WRITE_REMOTE} 를 못 만들었다 — attempt push 불가")
+    if paths.scope.submodules:
+        notes.append(_init_submodules(paths))
     rc, head = _git(paths.repo, "rev-parse", "--short", "HEAD")
     return f"{head} · " + " · ".join(notes)
+
+
+def _init_submodules(paths) -> str:
+    """선언된 서브모듈을 **한 단계만** 받는다 (`#693`) — 서브모듈 안의 서브모듈(`ggml`)은 경계 밖.
+
+    [중요] 실패는 예외다 — 서브모듈 없이 다음 단계로 가면 그래프·합성이 그 안을 「소스 없음」으로
+    접고, 그 사유가 이 실패를 가린다.
+    """
+    subs = list(paths.scope.submodules)
+    rc, out = _git(paths.repo, "submodule", "update", "--init", "--", *subs, timeout=1800)
+    if rc != 0:
+        raise ConfigError(f"서브모듈 받기 실패 ({', '.join(subs)}): {out[:300]}")
+    return f"서브모듈 {', '.join(subs)} 받음(한 단계 — 안쪽 서브모듈은 받지 않는다)"
 
 
 def do_guard(paths) -> str:
@@ -780,8 +824,9 @@ def render(plan_or_run) -> str:
     d = plan_or_run.to_dict() if hasattr(plan_or_run, "to_dict") else plan_or_run
     lines = [f"온보딩 — {d.get('project')}"]
     for s in d.get("steps", []):
-        mark = "[완료]" if s.get("done") else ("[막힘]" if s.get("blocked") else "[남음]")
-        why = s.get("detail") or s.get("blocked") or ""
+        mark = ("[해당 없음]" if s.get("not_applicable") else "[완료]" if s.get("done")
+                else ("[막힘]" if s.get("blocked") else "[남음]"))
+        why = s.get("detail") or s.get("blocked") or s.get("not_applicable") or ""
         # [주의] 실물 키는 `step` 이다 — `key` 로 추측했다가 `None` 서식 오류가 났다.
         #    `to_dict` 를 확인해서 쓴다(이번 세션 세 번째 「추측한 이름」이다).
         lines.append(f"  {mark} {s.get('step', '?'):9} {s.get('what', '')}"

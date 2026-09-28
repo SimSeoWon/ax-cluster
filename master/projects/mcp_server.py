@@ -204,7 +204,7 @@ def project_profile_tool(name: str = "") -> str:
 
 
 @mcp.tool()
-def set_project_profile_tool(name: str = "", engine_decided: bool | None = None,
+def set_project_profile_tool(name: str = "", kind: str = "", engine_decided: bool | None = None,
                              engine: str = "", engine_version: str = "",
                              language: str = "", purpose: str = "",
                              genre: str = "", overview: str = "",
@@ -215,6 +215,8 @@ def set_project_profile_tool(name: str = "", engine_decided: bool | None = None,
     존재하는 이유가 사라진다 — 2026-09-20 에 지휘자가 남의 프로젝트 설명을 NS 의 사실로
     읽은 것이 그 값이다(`#649`).
 
+    `kind` 는 unreal / index_only 중 하나다(`#693`) — index_only 는 색인·검색까지만 받고
+    분산 작업은 거절된다. 엔진 세 칸은 unreal 일 때만 필수다.
     `purpose` 는 game / tool / rnd / demo 중 하나이고, `game` 이면 `genre` 도 필수다.
     `overview` 는 **왜 존재하는가**를 한 문단으로 적는다 (핵심 시스템·설계 의도).
     """
@@ -223,7 +225,7 @@ def set_project_profile_tool(name: str = "", engine_decided: bool | None = None,
     try:
         n = (name or "").strip() or Registry.load().active
         fields = {k: v for k, v in (
-            ("engine_decided", engine_decided), ("engine", engine),
+            ("kind", kind), ("engine_decided", engine_decided), ("engine", engine),
             ("engine_version", engine_version), ("language", language),
             ("purpose", purpose), ("genre", genre), ("overview", overview),
             ("notes", notes)) if v not in ("", None)}

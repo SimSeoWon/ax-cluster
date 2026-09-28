@@ -239,12 +239,20 @@ def project_live_identifiers(paths) -> set:
     [주의] **디스크 기준이다** (`git ls-files` 가 아니다) — 합성이 소스를 디스크에서 읽으므로
     판정 근거도 같은 곳에서 온다. 파일 서명(경로·mtime·크기)이 같으면 다시 읽지 않는다.
     """
+    # [중요] 경계는 `paths.scope` 다 (`#693`) — 루트가 여럿일 수 있고 제외가 있다(`ggml/`).
     src = paths.source
-    if not src.is_dir():
+    roots = [d for d in paths.source_dirs if d.is_dir()]
+    if not roots:
         return set()
     sig = []
-    for f in sorted(src.rglob("*")):
-        if not f.is_file() or f.suffix.lower() not in gparse.PARSE_EXTS:
+    for f in sorted(p for d in roots for p in d.rglob("*")):
+        if not f.is_file():
+            continue
+        try:
+            rel = f.relative_to(paths.repo).as_posix()
+        except ValueError:
+            continue
+        if not paths.scope.contains(rel, gparse.PARSE_EXTS):
             continue
         try:
             st = f.stat()
@@ -252,7 +260,8 @@ def project_live_identifiers(paths) -> set:
             continue
         sig.append((str(f), st.st_mtime_ns, st.st_size))
     key = tuple(sig)
-    hit = _LIVE_CACHE.get(str(src))
+    ckey = f"{paths.repo}|{paths.scope!r}"
+    hit = _LIVE_CACHE.get(ckey)
     if hit is not None and hit[0] == key:
         return hit[1]
     out: set = set()
@@ -261,7 +270,7 @@ def project_live_identifiers(paths) -> set:
         if d is None:
             continue
         out |= verify_mod.identifiers(verify_mod.strip_comments(d.text)[0])
-    _LIVE_CACHE[str(src)] = (key, out)
+    _LIVE_CACHE[ckey] = (key, out)
     return out
 
 
@@ -490,14 +499,14 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
         model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
         content_limit: int = prompt_mod.CONTENT_LIMIT, unload_every: int = UNLOAD_EVERY,
         git=None, progress=None) -> Stats:
-    """배치 합성. `changed` 를 주면 그 파일들만, 없으면 `Source/` 전체.
+    """배치 합성. `changed` 를 주면 그 파일들만, 없으면 경계(`paths.scope`, 기본 `Source/`) 전체.
 
     `skip_existing` — 이미 문서가 있는 그룹을 건너뛴다(최초 전체 빌드에서 누락분만 보충).
     `limit` — 그룹 수 상한. 0 이면 무제한. [중요] 상한에 걸려 남긴 것은 `Stats.aborted` 에 적는다.
     """
     files = changed if changed is not None else cg.list_source_files(paths, git=git)
     if not files:
-        raise SynthError("합성할 소스가 없다 — `Source/` 경계나 변경 목록을 확인하라. "
+        raise SynthError(f"합성할 소스가 없다 — `{paths.scope.label()}` 경계나 변경 목록을 확인하라. "
                          "빈 배치를 성공으로 보고하지 않는다")
     # [중요] **컨텍스트 문서 생성은 `Source/` 한정이다** (§5.2-E, 사용자 재확인 2026-08-22).
     #    `changed=None` 경로는 `list_source_files` 가 경계를 **두 겹**으로 지키는데(pathspec +
@@ -505,10 +514,11 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
     #    `Content/`(워킹트리의 93%, uasset 바이너리)가 그대로 합성 대상이 된다.
     #    [주의] 조용히 걸러내지 않고 **거부한다.** 걸러내면 호출자는 그것도 합성된 줄 안다.
     files = [str(f).strip().replace("\\", "/") for f in files]
-    outside = [f for f in files if not f.startswith(f"{cg.SOURCE_SUBDIR}/")]
+    #    [중요] 판정은 `SourceScope.contains` 한 자리다 (`#693`) — 기본 경계는 종전과 같다.
+    outside = [f for f in files if not paths.scope.contains(f)]
     if outside:
         raise SynthError(
-            f"`{cg.SOURCE_SUBDIR}/` 밖의 파일이 합성 목록에 있다 ({len(outside)}건) — "
+            f"`{paths.scope.label()}` 밖의 파일이 합성 목록에 있다 ({len(outside)}건) — "
             f"컨텍스트 문서는 소스 한정이다(§5.2-E): "
             + ", ".join(outside[:5]) + (" ..." if len(outside) > 5 else ""))
     groups = group([f for f in files if (paths.repo / f).is_file()])
