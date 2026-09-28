@@ -153,28 +153,25 @@ def test_real_git_listing_and_gitlink_expansion(tmp: Path):
           "vendor/eng/src/a.cpp" in out0 and "webui/server.py" in out0, f"{out0} {why0}")
 
 
-def test_mount_gate_exempts_only_index_only():
-    print("\n⑤ 🔴 마운트 게이트 — 색인 전용만 예외")
+def test_mount_gate_has_no_exception():
+    print("\n⑤ 🔴 마운트 게이트 — 예외 없음 (사용자: 마운트 된것만 갱신)")
     src = Path(C.__file__).read_text(encoding="utf-8")
-    check("판정이 명시된 kind 하나다", "index_only = _pf.is_index_only(name)" in src)
-    check("비마운트 + kind 없음은 종전대로 막는다", "if name != mounted and not index_only:" in src)
+    check("비마운트는 타입과 무관하게 막는다", "    if name != mounted:\n" in src)
+    check("  index_only 예외가 없다", "not index_only" not in src)
 
 
-def test_search_routes_by_tag():
-    print("\n⑥ 🔴 검색은 자기 프로젝트 태그로 본다")
+def test_search_routes_only_mounted():
+    print("\n⑥ 🔴 검색은 마운트된 것만")
     from master.webui.app import search_paths
 
     class P:
         def __init__(self, n): self.name = n
     ns = P("NS")
-    res = lambda n: P(n)
-    idx = lambda n: n == "K"
-    check("태그 없음 → 마운트", search_paths(ns, "", resolver=res, is_index_only=idx)[0] is ns)
-    check("태그 == 마운트 → 마운트", search_paths(ns, "NS", resolver=res, is_index_only=idx)[0] is ns)
-    got, why = search_paths(ns, "K", resolver=res, is_index_only=idx)
-    check("[중요] 색인 전용 태그 → 그 프로젝트", got is not None and got.name == "K", why)
-    got, why = search_paths(ns, "ModularStage", resolver=res, is_index_only=idx)
-    check("🔴 비마운트 UE 태그 → 거절 (남의 결과로 답하지 않는다)", got is None and "not_mounted" in why, why)
+    check("태그 없음 → 마운트", search_paths(ns, "")[0] is ns)
+    check("태그 == 마운트 → 마운트", search_paths(ns, "NS")[0] is ns)
+    for tag in ("KimodoMotion_WebUI", "ModularStage"):
+        got, why = search_paths(ns, tag)
+        check(f"🔴 비마운트 태그({tag}) → 거절 (색인 전용도 예외 없음)", got is None and "not_mounted" in why, why)
     src = (Path(__file__).resolve().parents[1] / "client" / "runtime" / "client_mcp.py").read_text(encoding="utf-8")
     i = src.index("def projects_api(")
     check("클라 8103 호출자가 태그를 싣는다", '"project": project' in src[i:i + 1400])
@@ -191,8 +188,8 @@ def main() -> int:
         test_real_git_listing_and_gitlink_expansion(d / "b")
     finally:
         shutil.rmtree(d)
-    test_mount_gate_exempts_only_index_only()
-    test_search_routes_by_tag()
+    test_mount_gate_has_no_exception()
+    test_search_routes_only_mounted()
     print(f"{'OK' if not FAIL else 'FAIL'} test_source_scope: {PASS}/{PASS + FAIL} 통과")
     return 1 if FAIL else 0
 

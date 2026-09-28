@@ -53,44 +53,24 @@ _API_BOARD_ONE = re.compile(r"^/api/v1/domains/(.+)$")
 READ_POST = frozenset({"/api/v1/search/combined", "/api/v1/search/vector"})
 
 
-def search_paths(mounted_paths, tag: str, *, resolver=None, is_index_only=None):
-    """🔴 검색이 볼 프로젝트 (`#693`, 사용자 확정 2026-09-28 — 「자기 프로젝트 태그로 본다」).
+def search_paths(mounted_paths, tag: str):
+    """검색이 볼 프로젝트 — **마운트된 것뿐이다** (사용자 2026-09-28 — *"마운트 된것만 검색"*).
 
-        태그 없음 · 태그 == 마운트     → 마운트 (종전 동작 그대로)
-        태그 = 색인 전용 프로젝트      → **그 프로젝트** (마운트와 무관)
-        태그 = 그 밖의 비마운트 프로젝트 → `(None, 사유)` — **거절**
+        태그 없음 · 태그 == 마운트  → 마운트
+        그 밖의 태그                → `(None, 사유)` — **거절**
 
-    [중요] 마지막 줄이 요점이다: 남의 프로젝트 결과를 돌려주는 것은 빈 결과보다 나쁘다
-    (`tagging.py` 의 레시피 읽기가 `MOUNT` 인 것과 같은 판단 — 남의 관습을 이 프로젝트의 것으로
-    읽는다). 종전에는 태그를 안 봐서 NS 체크아웃도 늘 마운트를 검색했다.
-    [주의] 범위는 **검색 하나**다 — 온톨로지·게시판은 여전히 마운트 기준이다(사용자 확정 ②).
+    [중요] 거절이 요점이다: 남의 프로젝트 결과를 돌려주는 것은 빈 결과보다 나쁘다
+    (`tagging.py` 의 레시피 읽기가 `MOUNT` 인 것과 같은 판단). 종전에는 태그를 안 봐서
+    다른 체크아웃도 늘 마운트를 검색했다.
+    [주의] `#693` 초판은 색인 전용 태그를 마운트와 무관하게 받았다 — 규칙 위반이라 되돌렸다.
     돌려주는 것: `(paths, "")` 또는 `(None, 사유)`.
     """
     tag = (tag or "").strip()
     if not tag or tag == getattr(mounted_paths, "name", ""):
         return mounted_paths, ""
-    if is_index_only is None:
-        from ..projects.profile import is_index_only                  # noqa: PLC0415
-    if not is_index_only(tag):
-        return None, (f"not_mounted — `{tag}` 는 마운트되지 않았다(마운트: "
-                      f"{getattr(mounted_paths, 'name', '') or '(없음)'}). 남의 프로젝트 결과로 "
-                      "답하지 않는다")
-    if resolver is None:
-        from ..context_search.paths import resolve as resolver         # noqa: PLC0415
-    try:
-        return resolver(tag), ""
-    except Exception as e:                                             # noqa: BLE001
-        return None, f"`{tag}` 를 해석하지 못했다 — {type(e).__name__}: {e}"
-
-# [중요] **쓰기 경로** (사용자 결정 2026-08-13: *"생성·삭제·채팅까지 원전대로 살려"*).
-#    대상은 `context/_domains/*.md` — **사람이 읽고 쓰는 도메인 문서**다.
-#    [주의] 온톨로지 YAML(`ontology/domains/…`)은 여기서 절대 건드리지 않는다 — 그쪽은 편집이 곧
-#    잠금이고 대화형으로만 바뀐다. 두 층을 헷갈리지 말 것(`board.py` 머리말 참조).
-_W_CREATE = "/api/v1/domains"
-_W_CHAT = re.compile(r"^/api/v1/domains/([^/]+)/chat$")
-_W_UPDATE = re.compile(r"^/api/v1/domains/([^/]+)/update$")
-_W_ACTIVATE = re.compile(r"^/api/v1/domains/([^/]+)/activate$")
-_W_DELETE_DOMAIN = "/api/v1/ontology/delete_domain"
+    return None, (f"not_mounted — `{tag}` 는 마운트되지 않았다(마운트: "
+                  f"{getattr(mounted_paths, 'name', '') or '(없음)'}). 남의 프로젝트 결과로 "
+                  "답하지 않는다")
 
 
 async def _send(send, status: int, body: bytes, ctype: bytes = JSON) -> None:
@@ -325,7 +305,7 @@ class WebUI:
             #    [주의] 같은 규칙이 **클라이언트에는 남는다**(`client_mcp.tool_search_context`).
             #    MCP 도구 호출의 빈 질의는 호출자 실수이고 **거기가 옳은 자리다** — 서버는
             #    원전 화면이라는 다른 호출자도 받는 자리라 규칙을 옮겨 심으면 안 됐다.
-            # 🔴 프로젝트 태그 (`#693`) — 색인 전용 프로젝트는 마운트 없이 자기 색인을 본다
+            # 🔴 프로젝트 태그 — 마운트와 다르면 거절한다 (남의 결과로 답하지 않는다)
             sp, why = search_paths(paths, str(data.get("project") or ""))
             if sp is None:
                 # [주의] 200 + 사유 — `tagging` 의 「거부도 200 + ok:false 로 말한다」와 같은 결
