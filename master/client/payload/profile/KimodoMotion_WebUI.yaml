@@ -1,0 +1,6 @@
+kind: index_only
+language: Python WebUI · C++ 엔진은 포크 서브모듈
+notes: overview 는 사용자 발화 원문(2026-09-28) · purpose=tool 사용자 확정
+overview: 엔비디아가 애니메이션 모션을 만드는 Kimodo 라는 프로젝트를 스테이블 디퓨전 WebUI 처럼 래퍼를 만드는 프로젝트야. 그래픽
+  카드와 cpu를 활용해 텍스트를 입력받아서 애니메이션 모션을 만들어!
+purpose: tool

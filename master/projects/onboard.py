@@ -425,7 +425,11 @@ def probe_server(name: str, *, registry: Registry | None = None) -> list:
             continue
         # [주의] clone 의 인덱스가 밀렸다 — 이름으로 찾는다(위치로 세면 단계가 늘 때 조용히 깨진다)
         _clone_done = next((s.done for s in out if s.key == "clone"), False)
-        if step.key != "clone" and not _clone_done:
+        # 🔴 `profile` 은 클론을 기다리지 않는다 (`#693` 에서 드러남) — 판정은 git 관리 파일
+        #    (`payload/profile/<P>.yaml`)만 읽는다. 종전엔 새 프로젝트에서 이 단계가 「막힘」이
+        #    됐고, 러너가 없는 단계라 `run` 이 **시작부터 거절**했다 → 클론 못 함 → 판정 못 함
+        #    (교착). 이미 클론된 NS 에 `#650` 이 들어와서 아무도 못 봤다.
+        if step.key not in ("clone", "profile") and not _clone_done:
             out.append(StepState(step.key, step.what, False, "",
                                  blocked="clone 이 아직이다 — 이 단계는 잴 수 없다"))
             continue

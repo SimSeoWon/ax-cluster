@@ -119,6 +119,10 @@ def test_registered_only() -> None:
         check("[중요] clone 미완이 뒤 셋을 blocked 로 만든다",
               all(by[k].get("blocked") for k in ("graph", "synth", "index")),
               str({k: by[k].get("blocked") for k in ("graph", "synth", "index")}))
+        # 🔴 `profile` 은 클론을 기다리지 않는다 (`#693`) — 막힘이면 러너 없는 단계라 `run` 이
+        #    시작부터 거절하고, 클론을 못 하니 판정도 못 한다(교착). 새 프로젝트에서만 보인다.
+        check("🔴 profile 은 clone 미완에도 blocked 가 아니다 (교착 방지)",
+              not by["profile"].get("blocked"), str(by["profile"]))
 
         # 빈 디렉토리를 통과시키지 않는다
         (tmp / "root" / "Fresh" / "repo").mkdir()
