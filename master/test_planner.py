@@ -252,8 +252,8 @@ def test_create_issue():
                           sender=sender)
     check("create_issue 가 id 를 돌려준다", got == {"id": 901}, str(got))
     post = [s for s in sent if s[0] == "POST"][0]
-    check("[중요] 같은 프로젝트로 간다 (modularstage — 새 프로젝트 금지)",
-          post[2]["issue"]["project_id"] == "modularstage"
+    check("[중요] 프로젝트 미지정은 AX 인프라 자리로 간다 (ax-cluster — 사용자 결정 2026-09-28)",
+          post[2]["issue"]["project_id"] == RM.AX_PROJECT_ID == "ax-cluster"
           and post[2]["issue"]["tracker_id"] == 1
           and post[2]["issue"]["priority_id"] == 3, str(post[2]))
     check("빈 제목은 error", "error" in RM.create_issue(" ", sender=sender))
