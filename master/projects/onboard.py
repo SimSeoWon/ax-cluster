@@ -716,16 +716,30 @@ def do_synth(paths, *, limit: int = 0) -> str:
             + (f" · [중요] {s.aborted}" if s.aborted else ""))
 
 
-def do_index(paths) -> str:
-    """색인 전체 구축 + 워터마크 기입. [중요] 워터마크가 이 흐름의 완료 지표다."""
-    from ..context_search.rebuild import rebuild_all
-    from ..events.consumer import _update_watermark
-    st = rebuild_all(paths)
+def do_index(paths, *, rebuild=None, complete=None) -> str:
+    """색인 전체 구축 + 워터마크 기입. [중요] 워터마크가 이 흐름의 완료 지표다.
+
+    🔴 [중요] **워터마크는 합성이 끝났을 때만 찍는다 — 푸시 경로와 같은 판정이다** (`#274` ④,
+    `#693` 에서 드러남). `#274` 는 `consumer` 에만 `synth_complete()` 를 걸었고 이 단계는 확인 없이
+    HEAD 를 찍었다. 실측 2026-09-29 Kimodo: 합성이 86/89 에서 포기로 끝난 2분 뒤(00:23→00:25)
+    워터마크가 찍혀 **부분 완료가 「완료」로 보고됐다** — `#274` 가 닫은 바로 그 거짓 보고다.
+    [주의] 색인은 그대로 만든다 — 부분 색인도 검색에는 쓸모가 있다. 막는 것은 「완료」 주장뿐이다.
+    `rebuild`·`complete` 는 회귀 검사용 주입 자리다.
+    """
+    from ..events.consumer import _update_watermark, synth_complete
+    if rebuild is None:
+        from ..context_search.rebuild import rebuild_all as rebuild
+    st = rebuild(paths)
+    vec = f"vector {getattr(st, 'vector_docs', '?')}"
+    ok, why = (complete or synth_complete)(paths)
+    if not ok:
+        return (f"{vec} · [중요] 워터마크 미기입 — 합성이 안 끝났다({why}). "
+                f"기준을 전진시키면 남은 그룹이 「완료」로 보고된다")
     rc, head = _git(paths.repo, "rev-parse", "HEAD")
     if rc != 0 or not head:
         raise ConfigError("HEAD 를 읽지 못해 워터마크를 찍지 않는다 — 색인만 됐다")
     _update_watermark(paths, head.strip())
-    return f"vector {getattr(st, 'vector_docs', '?')} · 워터마크 {head.strip()[:7]}"
+    return f"{vec} · 워터마크 {head.strip()[:7]} ({why})"
 
 
 RUNNERS = {"hook": do_hook, "clone": do_clone, "guard": do_guard,

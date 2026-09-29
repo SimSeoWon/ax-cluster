@@ -387,11 +387,59 @@ def test_full_run_delivers_and_checks_clients() -> None:
         O.probe_server = old_probe
 
 
+def test_index_watermark_waits_for_synth() -> None:
+    """🔴 **온보딩 색인도 합성이 끝났을 때만 워터마크를 찍는다** (`#274` ④ · `#693`).
+
+    실측 2026-09-29 Kimodo: 합성 86/89 포기 2분 뒤 `do_index` 가 확인 없이 HEAD 를 찍었다.
+    푸시 경로(`consumer`)에만 게이트가 있었다. [주의] **진짜 git** 으로 잰다 — HEAD 를 읽는
+    자리를 흉내 내면 「찍었다」가 계약이 아니라 픽스처의 값이 된다.
+    """
+    import subprocess
+    from master.context_search.paths import ProjectPaths
+    from master.projects import onboard as O
+
+    print("\n[색인] 워터마크는 합성이 끝났을 때만 (#274 ④)")
+    tmp = _sandbox()
+    p = ProjectPaths(name="X", root=tmp / "T")
+    p.repo.mkdir(parents=True)
+    g = lambda *a: subprocess.run(["git", "-C", str(p.repo), *a], check=True,
+                                  capture_output=True)
+    g("init", "-q")
+    (p.repo / "a.txt").write_text("a", encoding="utf-8")
+    g("add", "a.txt")
+    g("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "a")
+    head = subprocess.run(["git", "-C", str(p.repo), "rev-parse", "HEAD"],
+                          capture_output=True, text=True).stdout.strip()
+    p.config.write_text("index:\n  last_indexed_commit: ''\n  last_indexed_at: ''\n",
+                        encoding="utf-8")
+
+    class St:
+        vector_docs = 86
+    built = []
+    rebuild = lambda paths: built.append(1) or St()
+
+    out = O.do_index(p, rebuild=rebuild, complete=lambda paths: (False, "86/89 그룹 — 3개 미합성"))
+    cfg = p.config.read_text(encoding="utf-8")
+    check("🔴 86/89 면 워터마크를 찍지 않는다", head not in cfg, cfg)
+    check("  그래도 색인은 만든다", built == [1], str(built))
+    check("  사유에 분모가 보인다", "86/89" in out and "워터마크 미기입" in out, out)
+
+    out = O.do_index(p, rebuild=rebuild, complete=lambda paths: (True, "89/89 그룹"))
+    cfg = p.config.read_text(encoding="utf-8")
+    check("89/89 면 HEAD 를 찍는다", f"last_indexed_commit: {head}" in cfg, cfg)
+    check("  완료 사유를 싣는다", "89/89" in out and head[:7] in out, out)
+
+    import inspect
+    check("기본 판정은 푸시 경로와 같은 함수다",
+          "synth_complete" in inspect.getsource(O.do_index))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     for fn in (test_step_source_is_spec, test_uninitialized, test_registered_only,
                test_guard_step_is_the_write_surface, test_synth_stamps_commit, test_live_modularstage,
                test_conventions_step_is_the_manifest_source, test_lfs_skip_persists_in_config,
-               test_full_run_delivers_and_checks_clients):
+               test_full_run_delivers_and_checks_clients, test_index_watermark_waits_for_synth):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_onboard: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)
