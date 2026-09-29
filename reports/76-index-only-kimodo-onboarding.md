@@ -85,15 +85,15 @@ kimodo 경로 언급 0 · `source_commit` 31종 전부 NS 커밋 · BM25·벡터
   `-client` 가 빼기로 파싱돼 통째로 죽었다(등록은 돼 있었다). 가짜 SSH 유닛은 못 봤다 → 따옴표 +
   명령 문자열을 고정하는 테스트. 배달 요약에 등록 줄이 빠진 것도 고쳤다
 
-## 6. 남은 것
+## 6. 남은 것 — 🔴 2026-09-30 에 처리했다 → [리포트 77](77-kimodo-followups-and-shadow-skill.md)
 
-- Kimodo 사실 게이트 거부 3건 · 워터마크 판정(`#274`) 확인
-- NS 고아 문서 9건 정리 여부 · NS 스풀 6건 정리(`handover apply`) · `.2` 의 `AxWorker_NS` 헛돎(NS 재배달 시 해제)
+- ~~Kimodo 사실 게이트 거부 3건~~ — 4건이었고 파서 오인이 아니었다 · `d628aef`
+- ~~워터마크 판정(`#274`)~~ — 위반이었다(온보딩 경로) · `a168340`
+- ~~NS 고아 문서 9건 · NS 스풀 6건 · `.2` `AxWorker_NS` 헛돎~~ — 아카이브 · 삭제 · 재마운트로 해소
 - 따라잡기(주기) 경로의 비마운트 처리는 이제 규칙과 일치(마운트만) — 추가 작업 없음
-- `#694` kimodo 따라가기 스크립트+스킬 — 미착수
-- CLAUDE.md 두 곳(`ax-cluster/CLAUDE.md:190` · `machines/sim-desktop.md:479`)의 「AX 는 ModularStage」
-  문구 — 수정안 제시만, **승인 대기**
-- GitHub `Test_KimodoMotion` 과 Gitea 가 이제 갈라질 수 있다 — 어느 쪽에서 커밋할지는 사람 결정
+- `#694` kimodo 따라가기 스크립트+스킬 — **미착수**(커밋 기준 사람 결정 대기)
+- ~~CLAUDE.md 두 곳 「AX 는 ModularStage」~~ — `a7241c6`
+- GitHub `Test_KimodoMotion` 과 Gitea 가 갈라질 수 있다 — 어느 쪽에서 커밋할지는 **사람 결정**
 
 ## 7. 후속 (2026-09-29 00:35~01:00)
 
