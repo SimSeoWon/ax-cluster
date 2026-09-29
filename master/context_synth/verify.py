@@ -211,7 +211,7 @@ class Report:
 
 
 def verify(doc: str, *, sources: dict[str, str], declared: list[str] | None = None,
-           known: set | None = None) -> Report:
+           known: set | None = None, live_counts: bool = False) -> Report:
     """문서 vs 소스 실측. `sources` 는 `{경로: 원문}`, `declared` 는 tree-sitter 실측 클래스.
 
     `declared` 를 주면 "실측 클래스를 하나도 안 쓴 문서" 도 잡는다 — 그룹을 잘못 묶었거나
@@ -265,11 +265,31 @@ def verify(doc: str, *, sources: dict[str, str], declared: list[str] | None = No
     # [중요] 그리고 **부분열도 언급으로 센다** — 문서의 `GameMode` 는 코드의 `ANSGameMode` 를
     #    가리킨다(그 판단은 `#270` 이 이미 내렸다). 판정 하나가 그 규약을 따르고 다른 하나가
     #    안 따르면, 규약이 둘이 된다.
+    # 🔴 [중요] **선언 이름은 모양 규칙 없이 요약 본문에서 직접 찾는다** (`#693`, 실측
+    #    2026-09-29). `identifiers()` 는 산문을 거르려고 밑줄·내부 대문자가 있는 이름만 보는데,
+    #    비UE 코드의 보조 구조체(`struct mat`·`struct error`·`struct weights`·`struct loaded`)는
+    #    소문자 한 단어라 **문서가 정확히 써도 언급으로 세지지 않았다** — Kimodo 4그룹이 재시도
+    #    끝에 영구 거부. 재현: 같은 문장에서 `mat` 거부 / `RotMat` 통과.
+    #    [주의] 유령 판정은 그대로 모양 규칙을 쓴다 — 여기 이름은 파서가 실측한 선언뿐이라
+    #    산문 오탐의 대가는 「다른 파일 서술」 검사가 그 파일에서 느슨해지는 것 하나다.
     mentioned = True
     if declared:
         decl = set(declared)
         mentioned = bool(said_all & decl) or any(
             s != d and s in d for s in said_all for d in decl)
+        if not mentioned:
+            m = _SUMMARY_RE.search(doc or "")
+            body = m.group(1) if m else ""
+            mentioned = any(
+                re.search(rf"(?<![A-Za-z0-9_]){re.escape(d)}(?![A-Za-z0-9_])", body)
+                for d in decl)
+        # 🔴 **`index_only` 는 그 파일의 살아 있는 식별자도 언급으로 센다** (`#693`, 사용자
+        #    결정 2026-09-30 — 타입으로 가른다). 함수가 중심인 C++ 에서 선언 클래스는 계산용
+        #    보조 구조체일 뿐이라 요약에 나올 이유가 없다. 실측: `sequence.cpp` 요약은
+        #    `condition_row`·`prepare_sequence_transition` 을 정확히 서술했는데 `struct mat` 을
+        #    안 써서 세 번 거부. [주의] `unreal` 은 종전 판정 그대로다 — 호출자가 켤 때만 돈다.
+        if not mentioned and live_counts:
+            mentioned = bool(said_all & live_pool)
 
     return Report(ok=(not ghosts and mentioned), ghosts=ghosts,
                   declared=list(declared or []), mentioned_declared=mentioned)

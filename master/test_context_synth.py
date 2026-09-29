@@ -372,6 +372,32 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
     check("declared 가 비면 그 검사는 건너뛴다",
           verify.verify(HONEST, sources={"T.h": SRC}, declared=[]).ok)
 
+    # 🔴 `#693` — 비UE 소문자 선언(`struct mat`)은 모양 규칙에 안 걸려 언급으로 안 세졌다
+    LOWER_SRC = "struct mat { double v[9]; };\nmat mul(const mat&a){return a;}\n"
+    LOWER = "## 요약\n3x3 회전 행렬 mat 구조체로 시퀀스를 디코딩한다.\n"
+    check("🔴 소문자 선언 이름을 요약에 쓰면 언급으로 센다 (Kimodo `mat`)",
+          verify.verify(LOWER, sources={"s.cpp": LOWER_SRC}, declared=["mat"]).ok)
+    check("  한국어 조사가 붙어도 센다",
+          verify.verify(LOWER.replace("mat 구조체로", "mat로"),
+                        sources={"s.cpp": LOWER_SRC}, declared=["mat"]).ok)
+    check("  다른 낱말의 일부는 세지 않는다 (format ≠ mat)",
+          not verify.verify(LOWER.replace("mat 구조체로", "format 으로"),
+                            sources={"s.cpp": LOWER_SRC}, declared=["mat"]).ok)
+    FUNC = "## 요약\n`condition_row` 함수가 골격 조건을 계산한다.\n"
+    FUNC_SRC = LOWER_SRC + "float condition_row(const float*r){return r[0];}\n"
+    check("🔴 index_only: 파일의 살아 있는 함수를 서술하면 통과 (Kimodo `sequence`)",
+          verify.verify(FUNC, sources={"s.cpp": FUNC_SRC}, declared=["mat"],
+                        live_counts=True).ok)
+    check("  unreal(기본): 같은 문서는 종전대로 거부",
+          not verify.verify(FUNC, sources={"s.cpp": FUNC_SRC}, declared=["mat"]).ok)
+    check("  index_only 라도 파일에 없는 이름만 쓰면 거부",
+          not verify.verify(FUNC.replace("condition_row", "other_func"),
+                            sources={"s.cpp": FUNC_SRC}, declared=["mat"],
+                            live_counts=True).ok)
+    check("  요약 밖에만 있으면 세지 않는다",
+          not verify.verify("## 요약\n행렬로 디코딩한다.\n\n## 개선 필요 사항\nmat 이름이 짧다\n",
+                            sources={"s.cpp": LOWER_SRC}, declared=["mat"]).ok)
+
     print("\n[16-2] 사실 게이트가 합성에 물려 있다")
     p6 = make_project(tmp / "factual")
     (p6.source / "Game" / "T.h").write_text(SRC, encoding="utf-8")

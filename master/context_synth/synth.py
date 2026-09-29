@@ -185,6 +185,15 @@ def _log(msg: str) -> None:
 _PAIR_EXTS = (".h", ".hpp", ".inl", ".cpp", ".cc", ".c")
 
 
+def _index_only(paths) -> bool:
+    """프로필 `kind` 가 `index_only` 인가 (`#693`). 모르면 False — 종전(unreal) 판정을 쓴다."""
+    try:
+        from ..projects import profile                        # noqa: PLC0415
+        return profile.is_index_only(paths.name)
+    except Exception:                                         # noqa: BLE001
+        return False
+
+
 def project_symbols(paths) -> set:
     """🔴 **프로젝트 전체의 실재 심볼** — 클래스 이름 + 메서드 이름 (`#367`, 2026-09-06).
 
@@ -467,7 +476,8 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
     # 거부하면 기존 파일이 남고 다음 사이클에 재시도된다.
     report = verify_mod.verify(doc, sources=bodies,
                                declared=grounding.declared_classes,
-                               known=project_symbols(paths))
+                               known=project_symbols(paths),
+                               live_counts=_index_only(paths))
     res.verify = report
     if not report.ok:
         res.reason = f"사실 게이트 거부 — {report.reason}"
