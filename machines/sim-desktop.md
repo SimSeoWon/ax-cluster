@@ -476,9 +476,8 @@ Numbered work reports accumulate in `~/claude-workspace/reports/` (mirroring the
   the file is the only surviving record of what was attempted.
 - Afterwards, also update the preceding report's "remaining" list with what got done.
 - [중요] **Reports are not the task list.** Work items live in **Redmine** (`:8080`).
-  [중요] **AX 인프라 일감은 `ModularStage` 에 둔다** — the AX cluster is *the same project*
-  (user decision 2026-08-09); use the `[AX]` title prefix to tell them apart. [주의] That is
-  **not** "one Redmine project only" — a game project's own issues go where its
-  `<twin>/config.yaml` `redmine.project` says (`ModularStage`→`modularstage` · `NS`→`ns`).
+  [중요] **AX 인프라 일감은 전용 프로젝트 `ax-cluster`(id 3) 에 둔다** (user decision 2026-09-28,
+  supersedes 2026-08-09's "same as `ModularStage`"). A game/tool project's own issues go where its
+  `<twin>/config.yaml` `redmine.project` says (`modularstage` · `ns` · `kimodo`).
   No fallback: unset means refuse (`#293`). Progress lives in the open milestone doc.
   Three places, three jobs — see `~/ax-cluster/CLAUDE.md` § Work flow.

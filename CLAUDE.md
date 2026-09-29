@@ -184,13 +184,14 @@ milestone doc grew stale numbers before.
 | **`reports/`** | *Why did we decide that?* — decisions, measurements, traps | One report per session, Korean. Not a task list |
 | **Redmine 위키 [[아이디어수집]]** | *What might we build someday?* — 미정 아이디어의 본문 | [중요] **일감이 아니다** (사용자 개설 2026-08-17). 항목 = 위키 절 + 버전 「아이디어 — 추후 검토 수집」의 이슈. 진행·집계 금지, 착수 결정 시 실 마일스톤으로 이동 |
 
-**At session start**: read the open milestone, then `GET /issues.json?status_id=open` for `[AX]`
-items. **At session end**: update the issues you moved, then write the report.
+**At session start**: read the open milestone, then `GET /issues.json?project_id=ax-cluster&status_id=open`. **At session end**: update the issues you moved, then write the report.
 
-[중요] **Redmine is the *same* project as the game — `ModularStage` (id 1), tracker `코드리뷰`
-(user-confirmed: *"동일한 프로젝트네"*).** The AX cluster is tooling **for** that R&D, not a
-separate deliverable. **Never create a new project or tracker**; distinguish with an `[AX]` subject
-prefix only. Read is public; writing needs the admin API key, which is **not on disk** — pull it
+[중요] **AX infra issues live in their own Redmine project `ax-cluster` (id 3)** (user decision
+2026-09-28 — supersedes 2026-08-09's "same project as `ModularStage`", since the non-UE `kimodo`
+made AX no longer one game's tooling). Game/tool issues go where `<twin>/config.yaml`
+`redmine.project` says (`modularstage` · `ns` · `kimodo`); unset means refuse (`#293`).
+Closed `[AX]` issues stay in `modularstage` as record; milestone versions are shared system-wide.
+Tracker `코드리뷰` only — **never create a project or tracker without the user.** Read is public; writing needs the admin API key, which is **not on disk** — pull it
 from the master's own container DB. [중요] **Never write the key value into a doc or commit.**
 → [`docs/10-references.md`](docs/10-references.md) §10.1
 
