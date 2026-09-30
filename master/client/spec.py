@@ -255,6 +255,8 @@ DEPRECATED_MCP: tuple = ()
 # untrack — 새 .gitignore 가 효력 발휘하려면 index 에서 제거 필요. 디스크 보존"*).
 GIT_EXCLUDES = (
     ("/.ax/", ()),                 # 부산물·config·토큰·페이로드 (역할 무관)
+    ("/.agents/", ()),             # 프로젝트 로컬 Codex 스킬 정본 (`#699`)
+    ("/.codex/", ()),              # 프로젝트 로컬 Codex MCP 설정 (`#699`)
     ("/.mcp.json", ()),            # 요청자만 받지만, 있어도 해가 없고 목록이 갈리는 것이 더 나쁘다
     ("/CLAUDE.md", ()),            # 마스터가 관리 블록을 넣는다 — 모든 역할이 받는다
     ("/AGENTS.md", ()),            # 같은 블록의 codex 판 (`#402`) — 빠뜨리면 워킹트리가 더러워진다
@@ -411,6 +413,7 @@ SETTINGS_REL = ".claude/settings.json"
 # 이 저장소는 그 병을 이미 한 번 치렀다(2026-08-23 — 선언을 바꿨는데 배달이 안 따라와
 # 워커에 `.mcp.json` 이 안 갔다). 새 경로를 더하려면 **이 튜플만** 고친다.
 SKILL_HOMES = (".claude", ".codex")
+PROJECT_SKILL_HOME = ".agents"     # 체크아웃 로컬 Codex 정본 (`#699`)
 
 # 🔴 **배달하지 않지만 codex 가 스킬 루트로 읽는 자리** (실측 2026-09-13 `.2`).
 #
@@ -444,6 +447,14 @@ def skill_rels(name: str) -> tuple:
 def skill_dirs(name: str) -> tuple:
     """이 스킬의 디렉토리 자리 (제거·존재 검사용)."""
     return tuple(f"{h}/skills/{name}" for h in SKILL_HOMES)
+
+
+def project_skill_rel(name: str) -> str:
+    return f"{PROJECT_SKILL_HOME}/skills/{name}/SKILL.md"
+
+
+def project_skill_dir(name: str) -> str:
+    return f"{PROJECT_SKILL_HOME}/skills/{name}"
 
 
 # ── 진입 문서가 놓이는 자리 — **도구마다 파일 이름이 다르다** (`#402`) ──────────────

@@ -1128,7 +1128,31 @@ def codex_mcp_cmd(facts: HostFacts, name: str) -> str:
     return f"codex mcp add {name} -- {e['command']} " + " ".join(e["args"])
 
 
-def codex_mcp_get(facts: HostFacts, name: str) -> dict:
+CODEX_PROJECT_CONFIG_REL = ".codex/config.toml"
+CODEX_MCP_BEGIN = "# BEGIN AX MANAGED MCP"
+CODEX_MCP_END = "# END AX MANAGED MCP"
+
+
+def codex_project_mcp_text(existing: str, facts: HostFacts, name: str) -> str:
+    """프로젝트 `.codex/config.toml` 의 AX 관리 MCP 블록 (`#699`)."""
+    text = existing or ""
+    if CODEX_MCP_BEGIN in text and CODEX_MCP_END in text:
+        before = text.split(CODEX_MCP_BEGIN, 1)[0].rstrip()
+        after = text.split(CODEX_MCP_END, 1)[1].lstrip()
+        text = (before + "\n\n" + after).strip()
+    table = f"[mcp_servers.{name}]"
+    if table in text:
+        raise BundleError(f"{CODEX_PROJECT_CONFIG_REL} 에 사람이 관리하는 `{table}` 가 "
+                          "있어 AX 블록을 넣지 않는다")
+    entry = mcp_entry_for(facts)
+    block = (f"{CODEX_MCP_BEGIN}\n{table}\n"
+             f"command = {json.dumps(entry['command'], ensure_ascii=False)}\n"
+             f"args = {json.dumps(list(entry['args']), ensure_ascii=False)}\n"
+             f"{CODEX_MCP_END}\n")
+    return ((text + "\n\n") if text else "") + block
+
+
+def codex_mcp_get(facts: HostFacts, name: str, *, project: bool = False) -> dict:
     """codex 가 **실제로 보는** MCP 항목. 없으면 빈 dict.
 
     🔴 [중요] **rc 로 판정하지 않는다** — 실측 2026-09-12: 없는 이름에도 `codex mcp get` 은
@@ -1136,7 +1160,9 @@ def codex_mcp_get(facts: HostFacts, name: str) -> dict:
     성공 여부**가 판정이다. (마스터는 py3.10 이라 `tomllib` 이 없어 config.toml 직접 파싱은
     선택지가 아니었다 — 이 경로가 그것도 같이 푼다.)
     """
-    rc, out = _ssh(facts.host, facts.user, f"codex mcp get {name} --json")
+    prefix = ((f'cd /d "{facts.path}" && ') if facts.windows else
+              (f"cd {shlex.quote(facts.path)} && ")) if project else ""
+    rc, out = _ssh(facts.host, facts.user, f"{prefix}codex mcp get {name} --json")
     if rc != 0:
         return {}
     try:
@@ -1179,6 +1205,25 @@ def codex_mcp_add(facts: HostFacts, name: str) -> str:
         return (f"{name} [주의] 등록됐지만 내용이 다르다 — "
                 f"codex 가 보는 것: {tr.get('command')} {' '.join(tr.get('args') or [])}")
     return f"{name} [완료] codex mcp get 대조 통과"
+
+
+def codex_project_mcp_add(facts: HostFacts, name: str) -> str:
+    """프로젝트 로컬 Codex MCP를 쓰고 그 체크아웃에서 되읽는다 (`#699`)."""
+    if not facts.codex:
+        return f"{name} [주의] 건너뜀 — 이 기계에 codex 가 없다"
+    sep = chr(92) if facts.windows else "/"
+    path = f"{facts.path}{sep}{CODEX_PROJECT_CONFIG_REL.replace('/', sep)}"
+    prev = _remote_read(facts, path)
+    _remote_write(facts, CODEX_PROJECT_CONFIG_REL,
+                  codex_project_mcp_text(prev, facts, name), base="checkout")
+    got = codex_mcp_get(facts, name, project=True)
+    if not got:
+        return f"{name} [주의] 프로젝트 설정을 썼는데 codex 가 못 찾는다"
+    if not codex_mcp_matches(got, facts):
+        tr = got.get("transport") or {}
+        return (f"{name} [주의] 프로젝트 설정과 다르다 — "
+                f"{tr.get('command')} {' '.join(tr.get('args') or [])}")
+    return f"{name} [완료] 프로젝트 `.codex/config.toml` 대조 통과"
 
 
 def claude_local_key(facts: HostFacts) -> str:
@@ -1774,6 +1819,9 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
         #    계약 없이 진행해 `[PSEUDO]` 가 남아 층1 이 막았다). **내용은 한 벌이다.**
         "skills": [_remote_write(facts, rel, skill_text(n))
                    for n in skills_for(facts.role, pinit) for rel in spec.skill_rels(n)],
+        "project_skills": [
+            _remote_write(facts, spec.project_skill_rel(n), skill_text(n), base="checkout")
+            for n in skills_for(facts.role, pinit)],
         # [중요] **폐지분을 지운다** (`#232` 완결, 2026-09-02). 목록의 유일한 출처는
         #    `spec.removals_for` 다 — `plan`·`check` 가 부르는 그 함수여서 셋이 갈라지지 않는다.
         #    `keep_skills` 를 이미 존중하므로 프로젝트가 오버레이로 되살린 이름은 지우지 않는다.
@@ -1874,12 +1922,11 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
                                         else f"{facts.path}/.mcp.json"))
         written["mcp_json"] = _remote_write(facts, ".mcp.json",
                                             merge_mcp_json(prev_mcp, facts), base="checkout")
-    # ── codex MCP 등록 (`#402`) — **파일을 쓰지 않는다** ──────────────
-    #    `.mcp.json` 은 Claude 만 읽는다. codex 는 `~/.codex/config.toml` 인데, 거기에 우리가
-    #    TOML 을 써 넣는 대신 **`codex mcp add` 를 부른다** — 쓰는 쪽과 읽는 쪽이 codex 자신의
-    #    뷰라 「파일은 맞는데 codex 는 못 본다」가 안 생긴다(`#385` 에서 스킬이 정확히 그랬다).
+    # ── codex MCP 등록 (`#699`) — 프로젝트 로컬 설정 ──────────────────
+    #    홈 전역 `codex mcp add ax-client`는 다음 프로젝트 배달이 같은 이름을
+    #    덮어써서 직전 프로젝트를 깨뜨렸다. 체크아웃의 `.codex/config.toml`을 쓴다.
     if spec.codex_mcp_for(facts.role, pinit):
-        written["codex_mcp"] = [codex_mcp_add(facts, n)
+        written["codex_mcp"] = [codex_project_mcp_add(facts, n)
                                 for n in spec.codex_mcp_for(facts.role, pinit)]
     # ── 훅 등록: **파일을 놓는 것으로 끝나지 않는다** (`#337`) ──────────
     #    작업장 자산이 `.claude/hooks/` 를 보내지만 훅은 `settings.json` 의 `hooks` 키에

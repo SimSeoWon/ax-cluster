@@ -1315,6 +1315,33 @@ def test_codex_mcp_registration() -> None:
           str(spec.codex_mcp_for("requester")))
 
 
+def test_project_local_codex_surfaces() -> None:
+    """`#699` — 스킬과 MCP 모두 체크아웃 로컬 정본을 갖는다."""
+    f = _facts(role="worker", codex="0.153.4")
+    check("프로젝트 스킬은 `.agents/skills`",
+          spec.project_skill_rel("ax-work") == ".agents/skills/ax-work/SKILL.md")
+    excludes = spec.git_excludes_for("worker")
+    check("프로젝트 Codex 관리 영역을 Git 에서 뺀",
+          "/.agents/" in excludes and "/.codex/" in excludes, str(excludes))
+    merged = bundle.codex_project_mcp_text("# human\n", f, "ax-client")
+    check("프로젝트 MCP 블록이 사람 설정을 보존",
+          "# human" in merged and "[mcp_servers.ax-client]" in merged, merged)
+    merged2 = bundle.codex_project_mcp_text(merged, f, "ax-client")
+    check("MCP 관리 블록은 멱등",
+          merged2.count(bundle.CODEX_MCP_BEGIN) == 1, merged2)
+    calls = []
+    saved = bundle._ssh
+    bundle._ssh = lambda host, user, cmd, timeout=None: (
+        calls.append(cmd),
+        (0, '{"transport":{"type":"stdio","command":"python3","args":[]}}'))[1]
+    try:
+        bundle.codex_mcp_get(f, "ax-client", project=True)
+    finally:
+        bundle._ssh = saved
+    check("실제 MCP 검사는 체크아웃에서 실행",
+          f.path in calls[0] and "codex mcp get" in calls[0], calls[0])
+
+
 def test_codex_identity() -> None:
     """🔴 [중요] **시드한 `AGENTS.md` 가 자기를 `CLAUDE.md` 라고 소개했다** (`#402`, `.2` 실물).
 
@@ -1488,9 +1515,9 @@ def test_update_covers_every_registered_project() -> None:
         bundle.Registry = old_registry
         client_cli.cmd_deliver, client_cli.cmd_check = old_deliver, old_check
     check("전체 업데이트가 성공한다", rc == 0, str(rc))
-    check("등록 프로젝트를 순서대로 배달·검사한다", calls == [
-        ("deliver", "NS", True, ""), ("check", "NS", ""),
-        ("deliver", "ModularStage", True, ""), ("check", "ModularStage", ""),
+    check("전체를 배달한 뒤 전체를 검사해 마지막 덮어쓰기를 잡는다", calls == [
+        ("deliver", "NS", True, ""), ("deliver", "ModularStage", True, ""),
+        ("check", "NS", ""), ("check", "ModularStage", ""),
     ], str(calls))
 
 
@@ -1572,14 +1599,15 @@ def test_index_only_delivery() -> None:
 
     wrote: list = []
     saved = {k: getattr(bundle, k) for k in ("_remote_write", "_remote_read", "config_for",
-             "_register_residency", "_ensure_ignored", "claude_mcp_local_add", "codex_mcp_add")}
+             "_register_residency", "_ensure_ignored", "claude_mcp_local_add",
+             "codex_project_mcp_add")}
     bundle._remote_write = lambda facts, rel, content, base="home": (wrote.append(rel), f"[완료] {rel}")[1]
     bundle._remote_read = lambda facts, path: ""
     bundle.config_for = lambda project, facts: {}
     bundle._register_residency = lambda project, facts: {"registered": False}
     bundle._ensure_ignored = lambda facts: True
     bundle.claude_mcp_local_add = lambda facts, n: f"{n} [완료] local"
-    bundle.codex_mcp_add = lambda facts, n: f"{n} [완료] codex"
+    bundle.codex_project_mcp_add = lambda facts, n: f"{n} [완료] codex"
     try:
         got = bundle.deliver("K", f, project_init=idx)
     finally:
@@ -1613,6 +1641,7 @@ def main() -> int:
                test_hook_registration,
                test_codex_entry_doc,
                test_codex_mcp_registration,
+               test_project_local_codex_surfaces,
                test_codex_identity,
                test_residency_reconcile_removes_forbidden_registration,
                test_check_mount_lookup_is_fail_closed,

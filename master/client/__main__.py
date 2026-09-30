@@ -130,6 +130,8 @@ def cmd_plan(project: str, *, only: str = "") -> int:
             for rel in spec.skill_rels(n):
                 print(f"   → {f.home}/{rel} "
                       f"({len(bundle.skill_text(n))}자)  [role={f.role}]")
+            print(f"   → {f.path}/{spec.project_skill_rel(n)} "
+                  f"({len(bundle.skill_text(n))}자)  [프로젝트 로컬 정본 · #699]")
         # [중요] **MCP 엔트리를 계획에 찍는다** — 워커가 못 받는다는 판단이 조건문 한 줄에
         #    숨어 있으면 아무도 그것을 보지 못한다 (#261).
         mcp = spec.mcp_for(f.role, init)
@@ -352,6 +354,13 @@ def cmd_check(project: str, *, only: str = "") -> int:
                        if f.windows else f"sha256sum '{target}' 2>/dev/null | cut -d' ' -f1")
                 rc, got = bundle._ssh(f.host, f.user, cmd)
                 ok_skill = ok_skill and (got or "").strip().lower() == want
+            rel = spec.project_skill_rel(n)
+            target = (f"{f.path}\\" + rel.replace("/", chr(92)) if f.windows
+                      else f"{f.path}/{rel}")
+            cmd = (f'powershell -Command "(Get-FileHash -LiteralPath \'{target}\' -Algorithm SHA256).Hash"'
+                   if f.windows else f"sha256sum '{target}' 2>/dev/null | cut -d' ' -f1")
+            _rc, got = bundle._ssh(f.host, f.user, cmd)
+            ok_skill = ok_skill and (got or "").strip().lower() == want
         cfg_path = (f"{f.path}\\{bundle.CONFIG_REL.replace('/', chr(92))}" if f.windows
                     else f"{f.path}/{bundle.CONFIG_REL}")
         rc2, _ = bundle._ssh(f.host, f.user,
@@ -549,7 +558,7 @@ def cmd_check(project: str, *, only: str = "") -> int:
             if not f.codex:
                 codex_note += f" · [주의] codex 없음 — {n} 등록 검사 건너뜀"
                 continue
-            got = bundle.codex_mcp_get(f, n)
+            got = bundle.codex_mcp_get(f, n, project=True)
             if not got:
                 ok_codex = False
                 codex_note += f" · [실패] codex 가 {n} 을 모른다 (`codex mcp get` 못 찾음)"
@@ -570,9 +579,9 @@ def cmd_check(project: str, *, only: str = "") -> int:
         # 🔴 **옛 스킬 사본이 codex 스킬 루트에 남아 있나** (실측 2026-09-13 `.2`) — 배달본이
         #    일치해도 codex 가 **옛 사본을 골라 읽으면** 정본은 안 쓰인다. 파일 해시 대조로는 안 보인다.
         shadows = bundle.shadow_skills(f, names)
-        ok_shadow = not shadows
-        shadow_note = (f" · [실패] 옛 스킬 사본 {len(shadows)}개가 codex 스킬 루트에 있다 "
-                       f"(codex 가 배달본 대신 읽는다): {', '.join(shadows[:3])}" if shadows else "")
+        ok_shadow = True  # `#699`: 체크아웃 `.agents/skills` 정본이 홈 사본보다 앞선다.
+        shadow_note = (f" · [주의] 홈 중복 스킬 {len(shadows)}개 — "
+                       f"프로젝트 로컬 정본 우선: {', '.join(shadows[:3])}" if shadows else "")
         ver = bundle.compare_version(f)
         ok_ver = ver["ok"]
         ver_note = f" · 출처 {ver['reason']}"
@@ -695,11 +704,17 @@ def cmd_update(*, init: bool = False) -> int:
         return 1
 
     failed: list[str] = []
+    delivered: list[str] = []
     for project in registry.names:
         print(f"\n══ {project}: 현재 HEAD 배달")
         if cmd_deliver(project, init=init):
             failed.append(f"{project}: deliver")
             continue
+        delivered.append(project)
+
+    # `#699` — 프로젝트별 전역 설정이 다음 배달에 덮어써지는 결함을
+    # 즉시 검사가 놓쳤다. 전부 배달한 **뒤** 전부를 다시 재서 종료 상태를 본다.
+    for project in delivered:
         print(f"══ {project}: 배달 결과 검사")
         if cmd_check(project):
             failed.append(f"{project}: check")
