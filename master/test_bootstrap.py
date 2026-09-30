@@ -37,9 +37,10 @@ def _cfg(branch="main", url="gitea@h:Sim/NS.git", name="NS"):
     return types.SimpleNamespace(branch=branch, clone_url=url, name=name)
 
 
-def _facts(*, windows, ue5="", path="/p/NS", ok=False):
+def _facts(*, windows, ue5="", codex="", path="/p/NS", ok=False):
     return HostFacts(host="h", user="u", path=path, driven="ssh", role="worker",
-                     os="windows" if windows else "linux", ue5=ue5, checkout_ok=ok)
+                     os="windows" if windows else "linux", ue5=ue5, codex=codex,
+                     checkout_ok=ok)
 
 
 def test_needs_and_plan() -> None:
@@ -82,6 +83,25 @@ def test_windows_ownership() -> None:
 
     lin = dict(B.commands(_facts(windows=False), _cfg()))
     check("[주의] 리눅스엔 owner 단계가 없다", "owner" not in lin, str(list(lin)))
+
+
+def test_windows_codex_acl() -> None:
+    """`#695` — codex 가 있는 Windows 클론은 샌드박스 수정 ACE 를 받는다."""
+    win = dict(B.commands(_facts(windows=True, codex="codex-cli 0.test",
+                                 path=r"E:\t\NS"), _cfg()))
+    check("codex Windows엔 ACL 단계가 있다", "codex_acl" in win, str(list(win)))
+    acl = win.get("codex_acl", "")
+    check("CodexSandboxUsers 로컬 그룹에 주고 기계 이름은 원격 평가",
+          "%COMPUTERNAME%\CodexSandboxUsers" in acl, acl)
+    check("하위 파일·디렉터리에 수정 권한 상속",
+          "(OI)(CI)(M)" in acl and "/T" in acl and "/C" in acl, acl)
+    check("codex 없는 Windows엔 없는 로컬 그룹을 요구하지 않는다",
+          "codex_acl" not in dict(B.commands(_facts(windows=True, path=r"E:\t\NS"), _cfg())))
+    check("리눅스에는 codex 가 있어도 Windows ACL 단계가 없다",
+          "codex_acl" not in dict(B.commands(_facts(windows=False, codex="codex"), _cfg())))
+    lines = B.plan_lines(_facts(windows=True, codex="codex", path=r"E:\t\NS"), _cfg())
+    check("계획에 Codex 쓰기 권한이 보인다",
+          any("CodexSandboxUsers" in line for line in lines), str(lines))
 
 
 def test_empty_repo_branch() -> None:
@@ -164,10 +184,47 @@ def test_owner_failure_is_a_failure() -> None:
         bundle._ssh, B.needs_bootstrap, bundle.probe = saved
 
 
+def test_codex_acl_failure_is_a_failure() -> None:
+    """`#695` — ACL grant 실패를 성공으로 접지 않는다."""
+    from master.client import bundle
+    saved = bundle._ssh, B.needs_bootstrap, bundle.probe
+    calls = []
+
+    def fake_ssh(host, user, cmd, timeout=0):
+        calls.append((cmd, timeout))
+        if "CodexSandboxUsers" in cmd:
+            return 5, "Access is denied"
+        return 0, ""
+
+    class _After:
+        checkout_ok, commit, errors = True, "abc1234", []
+
+    bundle._ssh, B.needs_bootstrap = fake_ssh, (lambda f: True)
+    bundle.probe = lambda *a, **k: _After()
+    facts = _facts(windows=True, ue5="x", codex="codex-cli 0.test", path=r"E:\t\X")
+    try:
+        try:
+            bundle.bootstrap_checkout("X", facts, cfg=_cfg())
+            check("codex ACL rc≠0 → BundleError", False, "예외가 안 났다")
+        except bundle.BundleError as e:
+            check("codex ACL rc≠0 → BundleError",
+                  "Codex 샌드박스 쓰기 권한 설정 실패" in str(e) and "rc=5" in str(e),
+                  str(e))
+        acl_calls = [(cmd, timeout) for cmd, timeout in calls if "CodexSandboxUsers" in cmd]
+        check("ACL 단계는 소유권 교정과 같은 긴 timeout",
+              bool(acl_calls) and acl_calls[0][1] == B.OWNER_TIMEOUT, str(acl_calls))
+        check("ACL 실패 뒤 branch·probe로 진행하지 않는다",
+              not any("symbolic-ref" in cmd for cmd, _timeout in calls), str(calls))
+    finally:
+        bundle._ssh, B.needs_bootstrap, bundle.probe = saved
+
+
 if __name__ == "__main__":
     for fn in (test_needs_and_plan, test_lfs_is_role_based, test_windows_ownership,
+               test_windows_codex_acl,
                test_empty_repo_branch, test_path_split, test_clone_url_required,
-               test_probe_stays_read_only, test_owner_failure_is_a_failure):
+               test_probe_stays_read_only, test_owner_failure_is_a_failure,
+               test_codex_acl_failure_is_a_failure):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_bootstrap: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

@@ -53,6 +53,9 @@
   샌드박스가 Docker 접근을 막으면 예외 대신 빈 문자열이 된다. 비밀값을 출력하지 않는 좁은
   `.venv/bin/python` 조회 명령을 샌드박스 해제 승인으로 다시 실행한다. 존재 확인은
   `print(bool(r.api_key()))`처럼 하고, 키 자체는 로그에 출력하지 않는다.
+- Redmine 스크립트를 `/tmp`에 둘 때는 `sys.path.insert(0, "/home/sim/ax-cluster")`를 넣어
+  `from master import redmine`이 스크립트 위치와 무관하게 성공하게 한다. `cd`만으로는 `/tmp`
+  스크립트의 Python import 경로가 바뀌지 않는다.
 - 프로젝트 CLI 는 환경변수가 필수다. 조회 예:
   `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client plan NS`
   (`NS` 는 예시다. 대상 프로젝트를 명시한다.) `deliver`·`check` 도 같은 접두를 쓴다.

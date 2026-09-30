@@ -62,6 +62,9 @@ def plan_lines(facts, cfg) -> list:
     if facts.windows:
         out.append(f"     · 클론 뒤 소유자를 `{facts.user}` 로 맞춘다 (icacls /setowner) — "
                    f"마스터 SSH 세션이 관리자라 그대로 두면 사람 세션에서 git 이 거부한다")
+        if getattr(facts, "codex", ""):
+            out.append("     · `CodexSandboxUsers`에 하위 파일 수정 권한을 준다 "
+                       "(icacls /grant) — 없으면 codex는 읽지만 쓰지 못한다")
     out.append("     · 커밋 0개면 HEAD 를 `refs/heads/"
                f"{cfg.branch or 'main'}` 로 맞춘다 (빈 저장소는 `master` 로 잡힌다)")
     return out
@@ -105,6 +108,14 @@ def commands(facts, cfg) -> list:
         #    [주의] 로컬 계정 전제다 — 도메인 계정 기계가 생기면 다시 잰다.
         out.append(("owner",
                     f'icacls "{facts.path}" /setowner "%COMPUTERNAME%\%USERNAME%" /T /C /Q'))
+        # `codex exec` 의 Windows sandbox 계정은 이 로컬 그룹을 통해 쓴다.
+        # 소유자를 사용자로 맞춰도 이 ACE 가 없으면 샌드박스는 읽기만 가능하다
+        # (`#695`, 2026-10-01 `.2` Kimodo 실증). codex 가 실제로 있는 기계에서만
+        # 요구하며, 그룹 부재·grant 실패는 반쪽 초기화이므로 상위가 멈춘다.
+        if getattr(facts, "codex", ""):
+            out.append(("codex_acl",
+                        f'icacls "{facts.path}" /grant '
+                        f'"%COMPUTERNAME%\CodexSandboxUsers:(OI)(CI)(M)" /T /C /Q'))
     else:
         out.append(("mkdir", f"mkdir -p {_q(facts, parent)}"))
         out.append(("clone", f"cd {_q(facts, parent)} && {env}git clone -b {branch} "

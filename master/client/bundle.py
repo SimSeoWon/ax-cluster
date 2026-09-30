@@ -2347,7 +2347,7 @@ def bootstrap_checkout(project: str, facts: HostFacts, cfg=None) -> dict:
     done = []
     for label, cmd in B.commands(facts, cfg):
         timeout = (B.CLONE_TIMEOUT if label == "clone"
-                   else B.OWNER_TIMEOUT if label == "owner" else SSH_TIMEOUT)
+                   else B.OWNER_TIMEOUT if label in ("owner", "codex_acl") else SSH_TIMEOUT)
         rc, out = _ssh(facts.host, facts.user, cmd, timeout=timeout)
         # [주의] `symbolic-ref` 는 이미 그 브랜치면 rc=0 이고, `mkdir` 은 있으면 rc≠0 일 수 있다.
         #    그래서 **클론 성공을 최종 판정으로** 삼는다 — 중간 rc 를 사유로만 남긴다.
@@ -2360,6 +2360,10 @@ def bootstrap_checkout(project: str, facts: HostFacts, cfg=None) -> dict:
         if label == "owner" and rc != 0:
             raise BundleError(f"{facts.host}: 소유권 교정 실패(rc={rc}) — 클론은 됐지만 `.git` 이 "
                               f"관리자 소유로 남았다. 사람 세션에서 git 이 거부된다: "
+                              f"{(out or '').strip()[:200]}")
+        if label == "codex_acl" and rc != 0:
+            raise BundleError(f"{facts.host}: Codex 샌드박스 쓰기 권한 설정 실패(rc={rc}) — "
+                              f"클론은 됐지만 codex가 파일을 수정할 수 없다: "
                               f"{(out or '').strip()[:200]}")
     # 놓은 뒤 **다시 재서** 확인한다 — 「했다」를 믿지 않는다(저장소 하드룰)
     after = probe(facts.host, facts.user, facts.path, facts.driven, facts.role)
