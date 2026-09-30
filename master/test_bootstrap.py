@@ -75,7 +75,9 @@ def test_windows_ownership() -> None:
     check("[중요] icacls /setowner 를 쓴다 (safe.directory 로 덮지 않는다)",
           "/setowner" in win["owner"] and "safe.directory" not in win["owner"], win["owner"])
     check("[중요] 소유자를 원격에서 평가한다 (컴퓨터 이름을 표로 들지 않는다)",
-          "%USERDOMAIN%" in win["owner"] and "%USERNAME%" in win["owner"], win["owner"])
+          "%COMPUTERNAME%" in win["owner"] and "%USERNAME%" in win["owner"], win["owner"])
+    check("🔴 `%USERDOMAIN%` 을 쓰지 않는다 — SSH 에선 WORKGROUP 으로 풀린다 (`#695` 실측)",
+          "%USERDOMAIN%" not in win["owner"], win["owner"])
     check("재귀·계속 플래그", "/T" in win["owner"] and "/C" in win["owner"], win["owner"])
 
     lin = dict(B.commands(_facts(windows=False), _cfg()))
@@ -133,10 +135,39 @@ def test_probe_stays_read_only() -> None:
     check("클론 실패를 삼키지 않는다", "클론 실패" in bsrc)
 
 
+def test_owner_failure_is_a_failure() -> None:
+    """🔴 `#695` — 소유권 교정이 rc≠0 이면 **실패로 올린다**(종전: 사유만 남기고 aligned)."""
+    from master.client import bundle
+    saved = bundle._ssh, B.needs_bootstrap, bundle.probe
+    calls = []
+
+    def fake_ssh(host, user, cmd, timeout=0):
+        calls.append(cmd)
+        return (52, "0 files processed; 0 failed") if "/setowner" in cmd else (0, "")
+
+    class _After:
+        checkout_ok, commit, errors = True, "abc1234", []
+
+    bundle._ssh, B.needs_bootstrap = fake_ssh, (lambda f: True)
+    bundle.probe = lambda *a, **k: _After()
+    try:
+        try:
+            bundle.bootstrap_checkout("X", _facts(windows=True, ue5="x", path=r"E:\t\X"), cfg=_cfg())
+            check("🔴 owner rc≠0 → BundleError", False, "예외가 안 났다")
+        except bundle.BundleError as e:
+            check("🔴 owner rc≠0 → BundleError", "소유권 교정 실패" in str(e) and "rc=52" in str(e), str(e))
+        check("  클론은 그 전에 돌았다 (클론을 되돌리지 않는다)", any("git clone" in c for c in calls))
+        bundle._ssh = lambda h, u, c, timeout=0: (0, "")
+        r = bundle.bootstrap_checkout("X", _facts(windows=True, ue5="x", path=r"E:\t\X"), cfg=_cfg())
+        check("  owner rc=0 이면 종전 그대로 통과", r.get("commit") == "abc1234", str(r))
+    finally:
+        bundle._ssh, B.needs_bootstrap, bundle.probe = saved
+
+
 if __name__ == "__main__":
     for fn in (test_needs_and_plan, test_lfs_is_role_based, test_windows_ownership,
                test_empty_repo_branch, test_path_split, test_clone_url_required,
-               test_probe_stays_read_only):
+               test_probe_stays_read_only, test_owner_failure_is_a_failure):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_bootstrap: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

@@ -95,10 +95,16 @@ def commands(facts, cfg) -> list:
         out.append(("clone", f'cd /d "{parent}" && {env}git clone -b {branch} '
                              f'{cfg.clone_url} "{name}"'))
         # [중요] 소유권 교정 — 없으면 사람 세션에서 git 이 전부 거부한다(실측 rc=128)
-        # [중요] 소유자를 **원격에서 평가**한다 — `%USERDOMAIN%\%USERNAME%` 이라 마스터가
-        #    그 기계의 컴퓨터 이름을 알 필요가 없다(`DESKTOP-FU2GNGL` 같은 값을 표로 들면 낡는다).
+        # [중요] 소유자를 **원격에서 평가**한다 — 마스터가 그 기계의 컴퓨터 이름을 알 필요가
+        #    없다(`DESKTOP-FU2GNGL` 같은 값을 표로 들면 낡는다).
+        # 🔴 [중요] **`%COMPUTERNAME%` 이다 — `%USERDOMAIN%` 이 아니다** (`#695`, 실측 2026-09-30).
+        #    SSH 세션에서 `%USERDOMAIN%` 은 **`WORKGROUP`** 으로 풀린다(`.2`: `[WORKGROUP\janus]`).
+        #    없는 계정이라 `icacls` 가 `rc=52` · 처리 0건으로 끝났고 `.git` 이 `Administrators`
+        #    소유로 남았다. `%COMPUTERNAME%` 은 두 기계에서 실제 계정과 같았다
+        #    (`.2` `DESKTOP-HV0I6DL\janus` · `.33` `DESKTOP-FU2GNGL\user` = `whoami`).
+        #    [주의] 로컬 계정 전제다 — 도메인 계정 기계가 생기면 다시 잰다.
         out.append(("owner",
-                    f'icacls "{facts.path}" /setowner "%USERDOMAIN%\%USERNAME%" /T /C'))
+                    f'icacls "{facts.path}" /setowner "%COMPUTERNAME%\%USERNAME%" /T /C /Q'))
     else:
         out.append(("mkdir", f"mkdir -p {_q(facts, parent)}"))
         out.append(("clone", f"cd {_q(facts, parent)} && {env}git clone -b {branch} "
