@@ -570,7 +570,7 @@ def _enqueue_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
     #    리뷰 경로는 UE 전제(`Source/`·`.h/.cpp/.cs`)에 레드마인 이슈까지 낸다.
     #    [주의] 호출부가 아니라 여기서 막는다 — 호출부 형태는 결함 ⓓ 의 회귀 테스트가 고정한다.
     from ..projects import profile as _pf
-    if _pf.is_index_only(getattr(paths, "name", "")):
+    if _pf.is_non_unreal(getattr(paths, "name", "")):      # `#695` — `code` 도 리뷰 경로는 UE 전제
         r.review_note = "색인 전용 프로젝트 — 자동 리뷰를 쌓지 않는다 (#693)"
         return
 

@@ -739,4 +739,5 @@ def load_init(project: str = "", *, registry=None) -> ProjectInit:
     base = (ProjectInit.from_config(ProjectConfig.load(paths.config))
             if paths.config.is_file() else EMPTY_INIT)
     from ..projects import profile as _pf
-    return replace(base, index_only=True) if _pf.is_index_only(paths.name) else base
+    # [주의] 플래그 이름은 `#693` 그대로다 — 뜻은 「UE 가 아닌 배달」(`#695`: `code` 도 같은 배달)
+    return replace(base, index_only=True) if _pf.is_non_unreal(paths.name) else base

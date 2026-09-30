@@ -45,6 +45,43 @@ class RegisterError(Exception):
     pass
 
 
+def _profile_target_violations(project: str, files: list) -> list:
+    """`#695` 확장자 게이트의 기본 경로. 주입은 테스트 자리다(`_profile_blockers` 와 같은 관례)."""
+    from ..projects import profile as _profile                       # noqa: PLC0415
+    return _profile.target_violations(project, files)
+
+
+def _spec_files(specs) -> list:
+    """조각들이 맡는 파일 전부 — `target_files` · `target_file` · `header_file`."""
+    out: list = []
+    for s in specs or []:
+        for f in list(getattr(s, "target_files", None) or []) + \
+                [getattr(s, "target_file", ""), getattr(s, "header_file", "")]:
+            if f and f not in out:
+                out.append(f)
+    return out
+
+
+def _check_targets(paths, specs, target_check=None) -> None:
+    """🔴 `kind: code` 의 확장자 게이트 (`#695`). 등록과 개선요청 **둘 다** 부른다.
+
+    [중요] 개선요청은 프로필 게이트를 일부러 건너뛰지만(도는 라운드를 소급해 죽이지 않으려고)
+    이 게이트는 건너뛰지 않는다 — **새 조각**이 받지 않는 언어를 가리키는 것은 소급이 아니다.
+    [중요] 판정은 **로그 한 줄**로 남긴다(stderr — 등재는 stdio MCP 안에서도 돈다).
+    """
+    name = getattr(paths, "name", "")
+    if not name:
+        return
+    files = _spec_files(specs)
+    bad = (target_check or _profile_target_violations)(name, files)
+    import sys                                                        # noqa: PLC0415
+    print(f"[kind] {name} · 대상 {len(files)} · 거절 {len(bad)}"
+          + (f" — {bad[0]}" if bad else ""), file=sys.stderr, flush=True)
+    if bad:
+        raise RegisterError(" · ".join(bad))
+
+
+
 @dataclass
 class TaskSpec:
     """등록할 태스크 하나. **이미 클래스 단위로 쪼개진 것**이 들어온다 (§4.5)."""
@@ -360,6 +397,8 @@ def register_work(
     #    요구하면 저장소의 **정본 디렉토리에 파일을 써야 한다**(그게 더 나쁘다).
     #    [중요] **기본은 실물이다** — 주입하지 않으면 실전 경로는 언제나 이 게이트를 탄다.
     profile_blockers=None,
+    # `#695` 확장자 게이트 — 주입 관례는 `profile_blockers` 와 같다. 기본은 실물.
+    target_check=None,
 ) -> Registered:
     """work 를 만들고 태스크를 등록한다.
 
@@ -413,6 +452,7 @@ def register_work(
         raise RegisterError("title 이 비었다")
     if not specs:
         raise RegisterError("등록할 태스크가 없다")
+    _check_targets(paths, specs, target_check)
     _prep = _prepare_specs(specs, paths=paths, make_skeleton=make_skeleton,
                            gate=gate, heuristics=heuristics)
     post = poster or (lambda u, p: _post(u, p, token=token))
@@ -481,6 +521,7 @@ def improve_work(
     require_base: bool | None = None,
     heuristics=None,
     worker_mode: str = "",
+    target_check=None,                  # `#695` — `register_work` 와 같은 게이트
 ) -> Registered:
     """🔴 **분산작업 개선요청 — 이미 있는 work 을 다음 라운드로 연다** (사용자 결정 2026-09-05).
 
@@ -518,6 +559,7 @@ def improve_work(
         raise RegisterError(
             f"round={round!r} — 개선요청의 라운드는 2 이상이다(라운드 1은 **등록**이다). "
             f"큐가 아는 현재 라운드 + 1 을 실어라")
+    _check_targets(paths, specs, target_check)
     _prep = _prepare_specs(specs, paths=paths, make_skeleton=make_skeleton,
                            gate=gate, heuristics=heuristics)
     post = poster or (lambda u, p: _post(u, p, token=token))

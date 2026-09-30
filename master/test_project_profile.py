@@ -178,6 +178,72 @@ def test_index_only_kind(tmp):
               set(PF.ENGINE_FIELDS) <= set(PF.missing("U")), str(PF.missing("U")))
 
 
+def test_code_kind(tmp):
+    print("\n⑩ 🔴 `kind: code` — UE 가 아닌 소스에 분산 작업 (`#695`)")
+    from master.work.register import RegisterError, TaskSpec, improve_work, register_work
+
+    class _Paths:
+        name = "C"
+
+    ov = "텍스트로 애니메이션 모션을 만드는 WebUI 래퍼다 " + "설명 " * 10
+    with _Tmp(tmp):
+        PF.save("C", kind="code", language="Python WebUI", purpose="tool", overview=ov)
+        check("code 는 엔진 칸을 안 묻고 work_exts 를 묻는다",
+              PF.missing("C") == ["work_exts"], str(PF.missing("C")))
+        check("  work_exts 가 없으면 등재가 막힌다 (미수집)",
+              any("work_exts" in b for b in PF.blockers("C")), str(PF.blockers("C")))
+        for bad in (".cpp", ["cpp"], [".rs"], []):
+            try:
+                PF.save("C", work_exts=bad if isinstance(bad, list) else [bad])
+                check(f"[중요] 게이트가 모르는 확장자는 저장 거절 {bad!r}", False, "예외가 안 났다")
+            except ValueError as e:
+                check(f"[중요] 게이트가 모르는 확장자는 저장 거절 {bad!r}", "work_exts" in str(e), str(e))
+        PF.save("C", work_exts=[".PY"])
+        check("  저장은 소문자로 맞춘다", PF.work_exts("C") == (".py",), str(PF.work_exts("C")))
+        check("🔴 code 는 등재를 막지 않는다", PF.blockers("C") == [], str(PF.blockers("C")))
+        check("  is_index_only 는 False (분산 작업을 받는다)", not PF.is_index_only("C"))
+        check("  is_non_unreal 은 True (UE 가 아니다)", PF.is_non_unreal("C"))
+        PF.save("K", kind="index_only", language="x", purpose="tool", overview=ov)
+        check("  index_only 도 is_non_unreal", PF.is_non_unreal("K"))
+        PF.save("U", kind="unreal", engine_decided=True, engine="UE", engine_version="5.8",
+                language="C++", purpose="tool", overview=ov)
+        check("  unreal 은 is_non_unreal 이 아니다", not PF.is_non_unreal("U"))
+        check("  모르는 kind 도 is_non_unreal 이 아니다 (종전 동작)", not PF.is_non_unreal("없음"))
+        check("project_line 이 받는 확장자를 말한다",
+              "UE 가 아닌" in PF.project_line("C") and ".py" in PF.project_line("C"),
+              PF.project_line("C")[:120])
+
+        check("target_violations — .py 만이면 통과", PF.target_violations("C", ["webui/a.py", ""]) == [])
+        v = PF.target_violations("C", ["webui/a.py", "src/b.cpp", "src/b.hpp"])
+        check("🔴 target_violations — .py 밖은 이름을 실어 거절",
+              len(v) == 1 and "src/b.cpp" in v[0] and "src/b.hpp" in v[0], str(v))
+        check("  unreal 은 확장자 게이트가 없다 (종전 그대로)",
+              PF.target_violations("U", ["Source/A.cpp"]) == [])
+
+        ok_spec = TaskSpec(stem="a", target_files=["webui/a.py"])
+        bad_spec = TaskSpec(stem="b", target_file="src/b.cpp", header_file="src/b.hpp")
+        try:
+            register_work("제목", [ok_spec, bad_spec], paths=_Paths(), target_repo="x")
+            check("🔴 등록 — .py 밖 조각이 섞이면 거절", False, "예외가 안 났다")
+        except RegisterError as e:
+            check("🔴 등록 — .py 밖 조각이 섞이면 거절", "src/b.cpp" in str(e), str(e)[:160])
+        try:
+            improve_work("w1", [bad_spec], round=2, paths=_Paths())
+            check("🔴 개선요청도 같은 게이트를 탄다", False, "예외가 안 났다")
+        except RegisterError as e:
+            check("🔴 개선요청도 같은 게이트를 탄다", "kind: code" in str(e), str(e)[:160])
+        # `.py` 만이면 이 게이트는 통과하고 다음 단계로 넘어간다 — 다음 단계의 거절은 이 게이트가 아니다
+        try:
+            register_work("제목", [ok_spec], paths=_Paths(), target_repo="x",
+                          make_skeleton=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("다음 단계")))
+        except RegisterError as e:
+            check("  .py 만이면 확장자 게이트는 통과한다", "kind: code" not in str(e), str(e)[:160])
+        except Exception:                                            # noqa: BLE001
+            check("  .py 만이면 확장자 게이트는 통과한다", True)
+        else:
+            check("  .py 만이면 확장자 게이트는 통과한다", True)
+
+
 def main() -> int:
     import tempfile
 
@@ -186,7 +252,7 @@ def main() -> int:
                    test_blockers_are_not_missing, test_validation_is_fail_closed,
                    test_partial_save, test_project_line_seam,
                    test_onboarding_sees_it, test_register_refuses,
-                   test_index_only_kind):
+                   test_index_only_kind, test_code_kind):
             sub = Path(d) / fn.__name__
             sub.mkdir()
             fn(sub)

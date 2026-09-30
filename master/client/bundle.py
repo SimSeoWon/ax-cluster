@@ -96,7 +96,7 @@ def index_only(project: str) -> bool:
     """
     try:
         from ..projects import profile as _pf                        # noqa: PLC0415
-        return _pf.is_index_only(project)
+        return _pf.is_non_unreal(project)          # `#695` — `code` 도 UE 가 아닌 배달
     except Exception:                                                # noqa: BLE001
         return False
 

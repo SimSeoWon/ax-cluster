@@ -46,12 +46,23 @@ PURPOSES = ("game", "tool", "rnd", "demo")
 #    unreal       정본 7단계 전부 (골조 UHT · 조각별 UE5 빌드 · 상주)
 #    index_only   색인·검색·요청자 콘솔까지. **분산 작업은 받지 않는다** — 골조 계약·게이트가
 #                 UE5 전제라 등재하면 엉뚱한 자리에서 실패한다(`KimodoMotion_WebUI` 실측)
+#    code         UE 가 아닌 소스 프로젝트에 **분산 작업을 연다** (`#695`, 사용자 결정 2026-09-30
+#                 D1). 받는 파일은 프로필 `work_exts` 가 정한다 — 1단계는 `.py` 만. 그 밖의
+#                 대상은 등재를 **거절**한다(`target_violations`). C++ 는 `work_exts` 를 늘려 연다
 #    [주의] **측정으로 추론하지 않는다** — `.uproject` 유무로 가르면 「엔진 미확정 UE」와 「엔진
 #    없는 유틸」이 섞인다. 사람이 적는 칸이고, 없으면 등재를 **거절**한다(fail-closed).
-KINDS = ("unreal", "index_only")
+KINDS = ("unreal", "index_only", "code")
+# 🔴 [중요] **「UE 가 아니다」와 「분산 작업이 없다」는 다른 질문이다** (`#695`). `#693` 때는 둘이
+#    같은 값(index_only)이라 호출부가 섞여 있었다 — 합성 사실 게이트·배달 축소·자동 리뷰 생략은
+#    앞의 질문이고(`is_non_unreal`), 등재 거절만 뒤의 질문이다(`blockers`).
+NON_UNREAL_KINDS = ("index_only", "code")
+# `code` 가 받을 수 있는 확장자. [주의] 목록에 없는 값은 **저장을 거절**한다 — 게이트가 모르는
+#    언어를 열어 두면 층1·골조 게이트가 그 파일을 C++ 로 읽는다.
+WORK_EXTS = (".py",)
 
 # 사람이 답해야 채워지는 칸. `genre` 는 `purpose == "game"` 일 때만 필수다.
 # [주의] 엔진 세 칸은 `kind == unreal` 일 때만 필수다 — 엔진이 없는 프로젝트에 엔진을 묻지 않는다.
+# [주의] `work_exts` 는 `kind == code` 일 때만 필수다.
 REQUIRED = ("kind", "engine_decided", "engine", "engine_version", "language", "purpose", "overview")
 ENGINE_FIELDS = ("engine_decided", "engine", "engine_version")
 
@@ -119,12 +130,14 @@ def measure(project: str) -> dict:
 def missing(project: str) -> list:
     """**안 채워진 칸**의 이름들. 빈 목록이면 사람이 전부 답했다는 뜻이다."""
     got = load(project)
-    need = REQUIRED if kind_of(project) != "index_only" else \
+    need = REQUIRED if kind_of(project) not in NON_UNREAL_KINDS else \
         tuple(k for k in REQUIRED if k not in ENGINE_FIELDS)
     out = [k for k in need
            if got.get(k) is None or (isinstance(got.get(k), str) and not got[k].strip())]
     if str(got.get("purpose") or "") == "game" and not str(got.get("genre") or "").strip():
         out.append("genre")
+    if kind_of(project) == "code" and not work_exts(project):
+        out.append("work_exts")
     return out
 
 
@@ -141,6 +154,8 @@ def blockers(project: str) -> list:
     if got.get("kind") == "index_only":
         out.append("색인 전용 프로젝트다 (`kind: index_only`, `#693`) — 분산 작업은 받지 않는다. "
                    "골조 계약·UHT·조각별 UE5 빌드가 UE5 전제라 등재하면 엉뚱한 자리에서 실패한다")
+    elif got.get("kind") == "code":
+        pass                    # 받을 확장자는 `target_violations` 가 조각마다 본다
     elif got and got.get("engine_decided") is False:
         out.append("엔진이 아직 확정되지 않았다 (`engine_decided: false`) — "
                    "엔진이 정해져야 소스 작업을 계약으로 내보낼 수 있다")
@@ -158,7 +173,47 @@ def kind_of(project: str) -> str:
 
 
 def is_index_only(project: str) -> bool:
+    """**분산 작업을 받지 않는** 타입인가. 「UE 가 아닌가」는 `is_non_unreal` 이다."""
     return kind_of(project) == "index_only"
+
+
+def is_non_unreal(project: str) -> bool:
+    """**UE 가 아닌** 타입인가 (`index_only`·`code`). 모르는 값은 False — 종전(unreal) 동작."""
+    return kind_of(project) in NON_UNREAL_KINDS
+
+
+def work_exts(project: str) -> tuple:
+    """`code` 가 받는 확장자. **적립된 값 중 `WORK_EXTS` 안의 것만** — 모르는 값은 버리지 않고
+    `save` 가 애초에 거절한다. 소문자·점 포함으로 맞춘다."""
+    raw = load(project).get("work_exts") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    out = []
+    for e in raw:
+        e = str(e).strip().lower()
+        e = e if e.startswith(".") else "." + e
+        if e in WORK_EXTS and e not in out:
+            out.append(e)
+    return tuple(out)
+
+
+def target_violations(project: str, files) -> list:
+    """🔴 등재·개선요청이 읽는 **확장자 게이트** (`#695`). 비어 있지 않으면 거절한다.
+
+    `unreal` 은 종전 그대로 아무것도 막지 않는다. `code` 는 `work_exts` 밖의 파일을 막는다 —
+    1단계에서 C++ 가 섞여 들어오면 층1·골조 게이트가 `.py` 판으로 그 파일을 읽는다.
+    [주의] 빈 이름은 무시한다(스펙의 선택 칸). 파일이 **하나도 없는** 조각은 여기서 막지 않는다 —
+    그건 `_prepare_specs` 의 몫이다.
+    """
+    if kind_of(project) != "code":
+        return []
+    allow = work_exts(project)
+    bad = sorted({str(f) for f in (files or [])
+                  if str(f or "").strip() and Path(str(f)).suffix.lower() not in allow})
+    if not bad:
+        return []
+    return [f"`{project}` 는 `kind: code` 이고 받는 확장자는 {', '.join(allow) or '(없음)'} 뿐이다 "
+            f"(`#695` 1단계) — 대상 밖: {', '.join(bad)}"]
 
 
 def questions(project: str) -> list:
@@ -175,7 +230,10 @@ def questions(project: str) -> list:
     miss = set(missing(project))
     ask = [
         ("kind", f"프로젝트 타입은 무엇입니까? ({' / '.join(KINDS)}) — "
-                 "index_only 는 색인·검색까지만 받고 분산 작업은 받지 않습니다"),
+                 "index_only 는 색인·검색까지만 받고 분산 작업은 받지 않습니다 · "
+                 "code 는 UE 가 아닌 소스에 분산 작업을 받습니다"),
+        ("work_exts", f"(code 일 때) 분산 작업을 받을 확장자는 무엇입니까? "
+                      f"(지금 열린 것: {' / '.join(WORK_EXTS)})"),
         ("engine_decided", "사용할 게임 엔진이 **확정**됐습니까? (예/아니오)"),
         ("engine", "엔진 이름은 무엇입니까? (예: Unreal Engine)"),
         ("engine_version", "엔진 버전은 무엇입니까? "
@@ -197,7 +255,7 @@ def save(project: str, **fields) -> dict:
     [중요] 검증은 fail-closed 다 — 모르는 칸·모르는 용도는 **거절**한다. 조용히 무시하면
     사람은 적립됐다고 믿는다.
     """
-    known = set(REQUIRED) | {"genre", "notes"}
+    known = set(REQUIRED) | {"genre", "notes", "work_exts"}
     bad = sorted(set(fields) - known)
     if bad:
         raise ValueError(f"모르는 칸: {', '.join(bad)} (가능: {', '.join(sorted(known))})")
@@ -210,6 +268,15 @@ def save(project: str, **fields) -> dict:
         raise ValueError(f"kind 는 {KINDS} 중 하나다 — 받은 값: {fields['kind']!r}")
     if "engine_decided" in fields and not isinstance(fields["engine_decided"], bool):
         raise ValueError("engine_decided 는 true/false 다 (문자열이 아니다)")
+    if "work_exts" in fields:
+        we = fields["work_exts"]
+        if not isinstance(we, (list, tuple)) or not we:
+            raise ValueError(f"work_exts 는 확장자 목록이다 (예: ['.py']) — 받은 값: {we!r}")
+        unknown = [e for e in we if str(e).strip().lower() not in WORK_EXTS]
+        if unknown:
+            raise ValueError(f"work_exts 는 {WORK_EXTS} 안에서만 고른다 — 게이트가 모르는 언어: "
+                             f"{unknown} (`#695`: 새 언어는 게이트를 먼저 연다)")
+        fields = {**fields, "work_exts": [str(e).strip().lower() for e in we]}
 
     got = load(project)
     got.update(fields)
@@ -238,6 +305,10 @@ def project_line(project: str) -> str:
     genre = f" · 장르 **{g['genre']}**" if g.get("genre") else ""
     if g.get("kind") == "index_only":
         return (f"`{project}` — **색인 전용** {kind} 프로젝트 (UE5 아님 · 분산 작업 없음). "
+                f"주 언어·정책: {g['language']}.\n\n{str(g['overview']).strip()}")
+    if g.get("kind") == "code":
+        return (f"`{project}` — **UE 가 아닌** {kind} 프로젝트 · 분산 작업은 "
+                f"{', '.join(work_exts(project))} 만 받는다. "
                 f"주 언어·정책: {g['language']}.\n\n{str(g['overview']).strip()}")
     return (f"`{project}` — **{g['engine']} {g['engine_version']}** {kind} 프로젝트{genre}. "
             f"주 언어·정책: {g['language']}.\n\n{str(g['overview']).strip()}")

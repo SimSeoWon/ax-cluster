@@ -330,6 +330,9 @@ def _probe_profile(paths) -> tuple:
     if got.get("kind") == "index_only":
         return True, (f"타입 index_only (분산 작업 없음) · 용도 {got.get('purpose')} · "
                       f"서술 {len(str(got.get('overview') or ''))}자")
+    if got.get("kind") == "code":
+        return True, (f"타입 code (분산 작업 {', '.join(PF.work_exts(paths.name)) or '확장자 미정'}) · "
+                      f"용도 {got.get('purpose')} · 서술 {len(str(got.get('overview') or ''))}자")
     return True, (f"타입 {got.get('kind')} · 엔진 {got.get('engine')} {got.get('engine_version')} · "
                   f"용도 {got.get('purpose')} · 서술 {len(str(got.get('overview') or ''))}자{tail}")
 
@@ -434,7 +437,7 @@ def probe_server(name: str, *, registry: Registry | None = None) -> list:
                                  blocked="clone 이 아직이다 — 이 단계는 잴 수 없다"))
             continue
         from . import profile as _pf
-        if step.key in INDEX_ONLY_NA and _pf.is_index_only(name):
+        if step.key in INDEX_ONLY_NA and _pf.is_non_unreal(name):      # `#695` — `code` 포함
             out.append(StepState(step.key, step.what, True, "",
                                  not_applicable=INDEX_ONLY_NA[step.key]))
             continue

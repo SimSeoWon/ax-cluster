@@ -186,10 +186,11 @@ _PAIR_EXTS = (".h", ".hpp", ".inl", ".cpp", ".cc", ".c")
 
 
 def _index_only(paths) -> bool:
-    """프로필 `kind` 가 `index_only` 인가 (`#693`). 모르면 False — 종전(unreal) 판정을 쓴다."""
+    """프로필 `kind` 가 **UE 가 아닌** 타입인가 (`#693` · `#695` — `index_only`·`code`).
+    모르면 False — 종전(unreal) 판정을 쓴다. [주의] 이름은 역사적이다: 묻는 것은 「UE 아님」이다."""
     try:
         from ..projects import profile                        # noqa: PLC0415
-        return profile.is_index_only(paths.name)
+        return profile.is_non_unreal(paths.name)
     except Exception:                                         # noqa: BLE001
         return False
 
