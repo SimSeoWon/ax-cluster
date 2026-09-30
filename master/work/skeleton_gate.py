@@ -343,3 +343,53 @@ def build_bat_from_editor(ue5_cmd: str) -> str:
 def _build_bat_from(facts) -> str:
     """`facts.ue5` 판 — 기존 호출자(`skeleton_gate`·`integrate`)가 쓰는 이름. 규칙은 위 하나다."""
     return build_bat_from_editor(getattr(facts, "ue5", "") or "")
+
+
+def check_head(files: list, *, cwd: str = ".") -> GateResult:
+    """`.py` 골조를 **HEAD 커밋에서** 읽어 `run_python` 에 넣는다 (`#695` P6 ⓐ).
+
+    요청자(`.33`)가 push **전에** 부르는 입구다 — 마스터가 파견 전에 강제로 돌리는 것(ⓑ,
+    `decompose.python_skeleton_gate`)과 **같은** 판정이다. push 되는 것이 HEAD 이므로 HEAD 를 잰다.
+    [주의] `client_mcp` 에 두지 않은 이유: 그 파일은 표준 라이브러리 단일 파일 계약이다(테스트가 막는다).
+    """
+    import subprocess
+
+    got: dict = {}
+    missing: list = []
+    for rel in files or []:
+        rel = str(rel).replace("\\", "/")
+        r = subprocess.run(["git", "-C", cwd, "show", f"HEAD:{rel}"], capture_output=True, timeout=60)
+        if r.returncode != 0:
+            missing.append(rel)
+            continue
+        got[rel] = r.stdout.decode("utf-8", "replace")
+    if missing:
+        g = GateResult(stem=str((files or ["?"])[0]), mode=MODE_PY)
+        g.error = "HEAD 에 없는 파일이 있다 — 골조를 커밋한 뒤 부른다: " + ", ".join(missing)
+        return g
+
+    class _Sk:
+        pass
+    _Sk.stem, _Sk.files = str((files or ["?"])[0]), got
+    return run_python(_Sk)
+
+
+def main(argv=None) -> int:
+    """`py -m axmaster.work.skeleton_gate --py <골조.py> …` — 통과 0 · 차단 1 · 사용법 2."""
+    import sys
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args or args[0] != "--py" or len(args) < 2:
+        print("사용법: -m <패키지>.work.skeleton_gate --py <골조.py> [...]  (HEAD 커밋을 잰다)")
+        return 2
+    g = check_head(args[1:])
+    print(g.summary)
+    if g.error and g.error not in g.summary:
+        print(g.error)                  # [주의] 안 돌린 경우 요약은 「미확인」뿐이다 — 사유를 말한다
+    tail = (g.build.raw_tail if g.build is not None else "") or ""
+    if tail and not g.ok:
+        print(tail)
+    return 0 if g.ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

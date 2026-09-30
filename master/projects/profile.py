@@ -136,8 +136,13 @@ def missing(project: str) -> list:
            if got.get(k) is None or (isinstance(got.get(k), str) and not got[k].strip())]
     if str(got.get("purpose") or "") == "game" and not str(got.get("genre") or "").strip():
         out.append("genre")
-    if kind_of(project) == "code" and not work_exts(project):
-        out.append("work_exts")
+    if kind_of(project) == "code":
+        if not work_exts(project):
+            out.append("work_exts")
+        # ⑦ 통합 검사가 돌릴 테스트 — 없으면 전진 게이트가 「무엇을 돌릴지 모른다」로 막힌다
+        for k in ("test_start_dir", "test_pattern"):
+            if not str(got.get(k) or "").strip():
+                out.append(k)
     return out
 
 
@@ -234,6 +239,9 @@ def questions(project: str) -> list:
                  "code 는 UE 가 아닌 소스에 분산 작업을 받습니다"),
         ("work_exts", f"(code 일 때) 분산 작업을 받을 확장자는 무엇입니까? "
                       f"(지금 열린 것: {' / '.join(WORK_EXTS)})"),
+        ("test_start_dir", "(code 일 때) 통합 검사로 돌릴 테스트 디렉토리는 어디입니까? "
+                           "(저장소 루트 기준, 예: webui/tests)"),
+        ("test_pattern", "(code 일 때) 테스트 파일 이름 패턴은 무엇입니까? (예: *_test.py)"),
         ("engine_decided", "사용할 게임 엔진이 **확정**됐습니까? (예/아니오)"),
         ("engine", "엔진 이름은 무엇입니까? (예: Unreal Engine)"),
         ("engine_version", "엔진 버전은 무엇입니까? "
@@ -255,7 +263,7 @@ def save(project: str, **fields) -> dict:
     [중요] 검증은 fail-closed 다 — 모르는 칸·모르는 용도는 **거절**한다. 조용히 무시하면
     사람은 적립됐다고 믿는다.
     """
-    known = set(REQUIRED) | {"genre", "notes", "work_exts"}
+    known = set(REQUIRED) | {"genre", "notes", "work_exts", "test_start_dir", "test_pattern"}
     bad = sorted(set(fields) - known)
     if bad:
         raise ValueError(f"모르는 칸: {', '.join(bad)} (가능: {', '.join(sorted(known))})")

@@ -88,6 +88,15 @@ PAYLOAD_PKG = "axmaster"
 #    배달 위치가 한 글자라도 달라지면 그것은 이 변경의 실패다(`test_payload_split`).
 
 
+def is_code(project: str) -> bool:
+    """프로필 `kind` 가 `code` 인가 (`#695`). **읽기 실패는 False** — 종전 동작을 지킨다."""
+    try:
+        from ..projects import profile as _pf                        # noqa: PLC0415
+        return _pf.kind_of(project) == "code"
+    except Exception:                                                # noqa: BLE001
+        return False
+
+
 def index_only(project: str) -> bool:
     """프로필 `kind` 가 색인 전용인가 (`#693`). **읽기 실패는 False** — 종전 동작(unreal)을 지킨다.
 
@@ -400,7 +409,24 @@ def config_for(project: str, facts: HostFacts) -> dict:
             "ollama_models": facts.ollama_models,
             "ue5_cmd": facts.ue5 or None,
         },
+        # 🔴 `#695` P6 — `kind: code` 의 ⑦ 통합 검사(`build_local.local_test_fn`)가 읽는 값.
+        #    프로필(사람 결정)에서 온다. [주의] 없으면 키를 **넣지 않는다** — `ax-advance` 가
+        #    「무엇을 돌릴지 모른다」로 거절한다(빈 값을 넣으면 그 거절이 흐려진다).
+        **({"tests": _tests} if (_tests := _tests_for(project)) else {}),
     }
+
+
+def _tests_for(project: str) -> dict:
+    """`code` 프로젝트의 테스트 위치 `{start_dir, pattern}`. 아니거나 비었으면 빈 dict."""
+    try:
+        from ..projects import profile as _pf                        # noqa: PLC0415
+        if _pf.kind_of(project) != "code":
+            return {}
+        g = _pf.load(project)
+        sd, pt = str(g.get("test_start_dir") or "").strip(), str(g.get("test_pattern") or "").strip()
+        return {"start_dir": sd, "pattern": pt} if sd and pt else {}
+    except Exception:                                                # noqa: BLE001
+        return {}
 
 
 def scp_source(facts: HostFacts, abs_path: str) -> str:
@@ -1486,7 +1512,10 @@ def workshop_files(role: str, project: str = "", init=None) -> tuple:
             for f in sorted(d.rglob("*")):
                 if f.is_file() and not is_build_residue(f):
                     out[f".claude/{f.relative_to(root).as_posix()}"] = f
-    if init is not None and getattr(init, "index_only", False):
+    if init is not None and getattr(init, "code", False):
+        # `kind: code`(`#695` P6)는 훅 스크립트 전부 — 선언은 `spec.CODE_WORKSHOP` 하나다
+        out = {k: v for k, v in out.items() if k in spec.CODE_WORKSHOP}
+    elif init is not None and getattr(init, "index_only", False):
         # 색인 전용(`#693`)은 검색 힌트 훅만 — 선언은 `spec.INDEX_ONLY_WORKSHOP` 하나다
         out = {k: v for k, v in out.items() if k in spec.INDEX_ONLY_WORKSHOP}
     return tuple(sorted(out.items()))
@@ -2044,8 +2073,9 @@ def _register_residency(project: str, facts: HostFacts) -> dict:
         pass                                                 # 마운트를 못 읽으면 게이트를 못 본다
     have_daemon = any(dest.endswith("worker_daemon.py")
                       for dest, _src in payload_pairs(facts.role))
+    _code = is_code(project)
     decision = R.desired_state(project, mounted, facts, daemon_available=have_daemon,
-                               index_only=index_only(project))
+                               index_only=index_only(project), code=_code)
     if not decision.required:
         # 원하는 상태가 '없음'이면 단순 skip이 아니라 과거 등록까지 걷는다. 그렇지 않으면
         # 마운트/능력이 바뀐 뒤에도 5분마다 죽은 상주가 계속 돈다.
@@ -2061,6 +2091,16 @@ def _register_residency(project: str, facts: HostFacts) -> dict:
             if R.registration_present(qrc, qout, facts):
                 return {"error": f"상주를 해제했지만 등록이 남았다 — {decision.reason}",
                         "results": removed}
+        # 🔴 `#695` P6 — `code` 는 빌드 상주 없이 **세션 1 지휘자 런처만** 건다(윈도우 워커).
+        #    [중요] 없으면 `.2` 의 codex 지휘자가 SSH(세션 0)에서 샌드박스째 죽는다(`#401`).
+        if _code and facts.windows and getattr(facts, "role", "worker") == "worker":
+            py = _probe_python(facts)
+            for label, cmd in (list(R.conductor_register_commands(project, facts, python_path=py))
+                               + list(R.crash_dialog_commands(facts))):
+                rc, got = _ssh(facts.host, facts.user, cmd)
+                removed.append(f"{label} {'[완료]' if rc == 0 else f'[주의] rc={rc} {(got or 0)[:80]}'}")
+            return {"skipped": f"빌드 상주는 켜지 않는다 — {decision.reason}",
+                    "conductor": R.conductor_task_name(project), "results": removed}
         return {"skipped": f"지금 켜지 않는다 — {decision.reason}",
                 **({"results": removed} if removed else {})}
 

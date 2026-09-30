@@ -188,8 +188,8 @@ def test_code_kind(tmp):
     ov = "텍스트로 애니메이션 모션을 만드는 WebUI 래퍼다 " + "설명 " * 10
     with _Tmp(tmp):
         PF.save("C", kind="code", language="Python WebUI", purpose="tool", overview=ov)
-        check("code 는 엔진 칸을 안 묻고 work_exts 를 묻는다",
-              PF.missing("C") == ["work_exts"], str(PF.missing("C")))
+        check("code 는 엔진 칸을 안 묻고 work_exts · 테스트 두 칸을 묻는다 (`#695` P6)",
+              PF.missing("C") == ["work_exts", "test_start_dir", "test_pattern"], str(PF.missing("C")))
         check("  work_exts 가 없으면 등재가 막힌다 (미수집)",
               any("work_exts" in b for b in PF.blockers("C")), str(PF.blockers("C")))
         for bad in (".cpp", ["cpp"], [".rs"], []):
@@ -200,6 +200,9 @@ def test_code_kind(tmp):
                 check(f"[중요] 게이트가 모르는 확장자는 저장 거절 {bad!r}", "work_exts" in str(e), str(e))
         PF.save("C", work_exts=[".PY"])
         check("  저장은 소문자로 맞춘다", PF.work_exts("C") == (".py",), str(PF.work_exts("C")))
+        check("  테스트 칸이 비면 여전히 막힌다 (⑦ 이 무엇을 돌릴지 모른다)",
+              any("test_start_dir" in b for b in PF.blockers("C")), str(PF.blockers("C")))
+        PF.save("C", test_start_dir="webui/tests", test_pattern="*_test.py")
         check("🔴 code 는 등재를 막지 않는다", PF.blockers("C") == [], str(PF.blockers("C")))
         check("  is_index_only 는 False (분산 작업을 받는다)", not PF.is_index_only("C"))
         check("  is_non_unreal 은 True (UE 가 아니다)", PF.is_non_unreal("C"))

@@ -562,6 +562,19 @@ def test_index_only_never_registers() -> None:
     check("  기본값(False)은 종전 판정 그대로", R.desired_state("K", "K", f).required is True)
 
 
+def test_code_kind_gets_no_build_residency() -> None:
+    print("\n🔴 `kind: code` — 빌드 상주 없음 · 지휘자 런처는 따로 (`#695` P6)")
+    f = _f(windows=True, ue5="x")
+    d = R.desired_state("K", "K", f, index_only=True, code=True)
+    check("UE5 워커 + 마운트여도 빌드 상주는 등록하지 않는다", d.required is False, d.reason)
+    check("  사유가 code 와 지휘자 런처를 말한다", "code" in d.reason and "지휘자" in d.reason, d.reason)
+    check("  지휘자 런처 등록 명령은 윈도우에서 나온다 (`/it`)",
+          any("/it" in c for _l, c in R.conductor_register_commands("K", f)))
+    check("  요청자는 여전히 아무것도 안 받는다",
+          "요청자" in R.desired_state("K", "K", __import__("dataclasses").replace(
+              _f(windows=True), role="requester"), code=True).reason)
+
+
 if __name__ == "__main__":
     for fn in (test_types_from_probe,
                test_task_name_per_project,
@@ -583,7 +596,8 @@ if __name__ == "__main__":
                test_ensure_starts_only_when_down,
                test_desired_registration_matrix,
                test_session1_side_effects,
-               test_index_only_never_registers):
+               test_index_only_never_registers,
+               test_code_kind_gets_no_build_residency):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_residency: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

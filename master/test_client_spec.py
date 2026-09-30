@@ -979,6 +979,46 @@ def test_clone_dir() -> None:
         check("깨진 config.yaml 은 예외", True)
 
 
+def test_code_kind_delivery():
+    print("\n🔴 `kind: code` 배달 — 스킬·훅·config tests (`#695` P6)")
+    code = spec.ProjectInit(index_only=True, code=True)
+    idx = spec.ProjectInit(index_only=True)
+    check("워커는 ax-work 를 받는다 (색인 전용은 0개)",
+          spec.skills_for("worker", code) == ("ax-work",) and spec.skills_for("worker", idx) == (),
+          str(spec.skills_for("worker", code)))
+    req = spec.skills_for("requester", code)
+    check("요청자는 등재·전진·검수·온톨로지", set(req) == {"ax-request", "ax-ontology", "ax-advance", "ax-review"},
+          str(req))
+    check("  ax-fix · ax-infer 는 뺐다 (사용자 결정)",
+          "ax-fix" not in req and "ax-infer" not in spec.skills_for("worker", code))
+    hooks = {h[2] for h in spec.managed_hooks_for("requester", code)}
+    check("🔴 완료 알림·대기 고지 훅을 받는다",
+          {".claude/hooks/work_completion.py", ".claude/hooks/pending_works.py"} <= hooks, str(hooks))
+    check("  등록 훅의 스크립트는 전부 배달 목록 안이다 (없는 스크립트 등록 금지)",
+          hooks <= set(spec.CODE_WORKSHOP), str(hooks - set(spec.CODE_WORKSHOP)))
+    assets = {k for k, _ in bundle.workshop_files("requester", project="", init=code)}
+    check("  작업장 자산은 훅 스크립트만 (UE 에이전트·룰 없음)", assets <= set(spec.CODE_WORKSHOP), str(assets))
+    check("  pending_works 가 import 하는 editor_mcp 도 간다", ".claude/hooks/editor_mcp.py" in assets, str(assets))
+    check("[중요] 「UE 가 아닌 배달」 규약은 그대로 — 진입 파일 안 씀 · MCP 로컬",
+          spec.entry_docs_for(code) is False and spec.mcp_scope_for(code) == "local")
+    check("  UE(기본)는 종전 그대로",
+          spec.skills_for("worker") == spec.SKILLS_BY_ROLE["worker"]
+          and spec.managed_hooks_for("requester") == spec.MANAGED_HOOKS)
+    import master.projects.profile as PF
+    saved = PF.kind_of, PF.load
+    try:
+        PF.kind_of = lambda p: "code"
+        PF.load = lambda p: {"test_start_dir": "webui/tests", "test_pattern": "*_test.py"}
+        check("🔴 config.json 에 tests 가 실린다",
+              bundle._tests_for("X") == {"start_dir": "webui/tests", "pattern": "*_test.py"})
+        PF.load = lambda p: {"test_start_dir": "webui/tests"}
+        check("  반쪽이면 싣지 않는다 (거절이 흐려지지 않게)", bundle._tests_for("X") == {})
+        PF.kind_of = lambda p: "unreal"
+        check("  code 가 아니면 싣지 않는다", bundle._tests_for("X") == {})
+    finally:
+        PF.kind_of, PF.load = saved
+
+
 if __name__ == "__main__":
     for fn in (test_single_table, test_unchanged, test_project_overlay,
                test_overlay_from_config, test_overlay_rejects_garbage, test_removals,
@@ -993,7 +1033,7 @@ if __name__ == "__main__":
                test_server_steps,
                test_load_init_env,
                test_delivered_skills_do_not_contradict_the_command_line,
-               test_clone_dir):
+               test_clone_dir, test_code_kind_delivery):
         fn()
     # [중요] 형식 A(`N/M 통과`)로 찍는다 — 러너가 읽는 두 형식 중 하나여야 합계에
     #    들어간다. 안 맞으면 "수치 못 읽음"으로 **조용히 분모에서 빠진다**.

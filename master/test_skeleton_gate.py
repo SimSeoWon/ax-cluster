@@ -251,6 +251,40 @@ def test_python_skeleton_gate():
           set(os.listdir(Path(__file__).resolve().parent)) == before)
 
 
+
+def test_check_head_cli():
+    """🔴 `#695` P6 ⓐ — 요청자가 push 전에 부르는 입구. **HEAD 커밋**을 잰다, 실제 `-m` 실행."""
+    import os
+    import subprocess
+    import sys as _s
+    import tempfile
+    print("\n🔴 `.py` 골조 — push 전 검사 입구 (`-m …skeleton_gate --py`)")
+    repo_root = Path(__file__).resolve().parents[1]
+    good = "# [DOC] 무엇을 왜\ndef f(a):\n    # [PSEUDO] 채워라\n    raise NotImplementedError\n"
+    with tempfile.TemporaryDirectory() as d:
+        g = lambda *a: subprocess.run(["git", "-C", d, *a], check=True, capture_output=True)  # noqa: E731
+        g("init", "-q", "-b", "main"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        Path(d, "a.py").write_text(good, encoding="utf-8")
+        g("add", "-A"); g("commit", "-q", "-m", "skel")
+        env = {**os.environ, "PYTHONPATH": str(repo_root)}
+        run = lambda *files: subprocess.run(  # noqa: E731
+            [_s.executable, "-m", "master.work.skeleton_gate", "--py", *files],
+            cwd=d, env=env, capture_output=True, text=True)
+        r = run("a.py")
+        check("정상 골조 — rc 0", r.returncode == 0, r.stdout + r.stderr)
+        Path(d, "a.py").write_text(good.replace("raise NotImplementedError", "raise ("), encoding="utf-8")
+        r = run("a.py")
+        check("[중요] 작업 트리가 아니라 HEAD 를 잰다 (커밋 안 한 깨짐은 안 보인다)", r.returncode == 0,
+              r.stdout)
+        g("commit", "-qam", "broken")
+        r = run("a.py")
+        check("🔴 커밋된 깨짐은 rc 1 + 파일:행", r.returncode == 1 and "a.py:" in r.stdout, r.stdout)
+        r = run("nope.py")
+        check("  HEAD 에 없는 파일은 rc 1 + 사유", r.returncode == 1 and "HEAD 에 없는" in r.stdout, r.stdout)
+        r = subprocess.run([_s.executable, "-m", "master.work.skeleton_gate"], cwd=d, env=env,
+                           capture_output=True, text=True)
+        check("  인자가 없으면 rc 2 + 사용법", r.returncode == 2 and "사용법" in r.stdout, r.stdout)
+
 def main() -> int:
     for fn in (test_build_bat_is_derived_not_guessed, test_target_name,
                test_place_writes_into_the_isolated_tree,
@@ -258,7 +292,7 @@ def main() -> int:
                test_gate_refuses_feedback_in_a_skeleton,
                test_gate_is_fail_closed_on_every_uncertainty,
                test_gate_passes_only_on_a_real_verdict, test_not_run_is_not_a_pass,
-               test_python_skeleton_gate):
+               test_python_skeleton_gate, test_check_head_cli):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_skeleton_gate: {PASS}/{total} 통과")

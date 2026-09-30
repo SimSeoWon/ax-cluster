@@ -512,7 +512,8 @@ def cmd_check(project: str, *, only: str = "") -> int:
                            for d, _s in bundle.payload_pairs(f.role))
         _mounted = _mounted_project_for_check()
         _decision = _R.desired_state(project, _mounted, f, daemon_available=_have_daemon,
-                                     index_only=bundle.index_only(project))
+                                     index_only=bundle.index_only(project),
+                                     code=bundle.is_code(project))
         _cmd = _R.registration_query_command(project, f)
         _rc, _out = bundle._ssh(f.host, f.user, _cmd)
         _hit = _R.registration_present(_rc, _out, f)

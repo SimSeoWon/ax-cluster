@@ -182,6 +182,20 @@ INDEX_ONLY_SKILLS = {"worker": (), "requester": ("ax-ontology",)}
 #    UE 전제(`ue-editor-operator`·`unreal-architecture`)이고, 작업 알림 훅은 알릴 작업이 없다.
 INDEX_ONLY_WORKSHOP = (".claude/hooks/domain_hint.py", ".claude/hooks/hook_paths.py")
 
+# 🔴 **`kind: code` 의 배달** (`#695` P6 · 사용자 결정 2026-09-30). 분산 작업이 **있으므로**
+#    등재·전진·검수 스킬과 워커의 `ax-work` 가 필요하다. 색인 전용과 같은 것은 「UE 가 아닌
+#    배달」 규약이다 — 커밋된 진입 파일을 안 쓰고 MCP 는 로컬 스코프(`index_only` 플래그가 그 뜻).
+#    [주의] 뺀 것 둘(사용자 결정): `ax-fix` — 자동 리뷰가 UE 전제라 비UE 에선 꺼 뒀다(`consumer`) ·
+#    `ax-infer` — 추론만 하는 옛 경로다. 워커 파견은 `ax-work` 가 계약이다.
+CODE_SKILLS = {"worker": ("ax-work",),
+               "requester": ("ax-request", "ax-ontology", "ax-advance", "ax-review")}
+# 훅은 **스크립트 전부** — 완료 알림(`work_completion`)·대기 고지(`pending_works`)가 분산 작업의
+#    배선이다. `editor_mcp` 는 `pending_works` 가 import 하고, 옵트인이 없으면 조용하다(`notice`
+#    가 `endpoint()` None 에서 빠진다). 에이전트·룰은 UE 전제라 여전히 안 보낸다.
+CODE_WORKSHOP = INDEX_ONLY_WORKSHOP + (".claude/hooks/pending_works.py",
+                                       ".claude/hooks/editor_mcp.py",
+                                       ".claude/hooks/work_completion.py")
+
 # 폐지된 스킬 — 배달 대상에서 지우는 것만으로는 **이미 놓인 기계가 정리되지 않는다**.
 # `plan` 이 제거 항목으로 들고, `deliver` 가 지운다.
 # [주의] 사용자가 손으로 만든 스킬은 이 목록에도 위 표에도 없으므로 **영향받지 않는다**
@@ -503,7 +517,10 @@ def managed_hooks_for(role: str, init: "ProjectInit | None" = None) -> tuple:
     """
     if role != "requester":
         return ()
-    if (init or EMPTY_INIT).index_only:
+    _i = init or EMPTY_INIT
+    if getattr(_i, "code", False):
+        return tuple(h for h in MANAGED_HOOKS if h[2] in CODE_WORKSHOP)       # `#695` P6
+    if _i.index_only:
         return tuple(h for h in MANAGED_HOOKS if h[2] in INDEX_ONLY_WORKSHOP)
     return MANAGED_HOOKS
 
@@ -587,6 +604,9 @@ class ProjectInit:
     #    `AGENTS.md` 블록을 쓰지 않고, MCP 는 `.mcp.json` 대신 **로컬 스코프**로 등록한다
     #    (kimodo 레포는 셋 다 커밋해 두고 쓴다 — 쓰면 사람의 작업 트리가 더러워진다).
     index_only: bool = False
+    # 🔴 `kind: code` (`#695` P6) — `index_only` 와 **함께** 선다(「UE 가 아닌 배달」 규약은 같다).
+    #    다른 것은 분산 작업이 있다는 것 하나 — 스킬·훅 표가 `CODE_*` 로 간다.
+    code: bool = False
 
     @classmethod
     def from_config(cls, cfg) -> "ProjectInit":
@@ -669,7 +689,9 @@ EMPTY_INIT = ProjectInit()
 
 def skills_for(role: str, init: ProjectInit | None = None) -> tuple:
     """이 역할이 받을 스킬. 기본 표 + 프로젝트 오버레이, **순서 보존 · 중복 제거**."""
-    table = INDEX_ONLY_SKILLS if (init or EMPTY_INIT).index_only else SKILLS_BY_ROLE
+    _i = init or EMPTY_INIT
+    table = (CODE_SKILLS if getattr(_i, "code", False)
+             else INDEX_ONLY_SKILLS if _i.index_only else SKILLS_BY_ROLE)
     base = table.get(role, ())
     extra = (init or EMPTY_INIT).extra_skills.get(role, ())
     return _dedup(base + tuple(extra))
@@ -740,4 +762,6 @@ def load_init(project: str = "", *, registry=None) -> ProjectInit:
             if paths.config.is_file() else EMPTY_INIT)
     from ..projects import profile as _pf
     # [주의] 플래그 이름은 `#693` 그대로다 — 뜻은 「UE 가 아닌 배달」(`#695`: `code` 도 같은 배달)
-    return replace(base, index_only=True) if _pf.is_non_unreal(paths.name) else base
+    if not _pf.is_non_unreal(paths.name):
+        return base
+    return replace(base, index_only=True, code=(_pf.kind_of(paths.name) == "code"))

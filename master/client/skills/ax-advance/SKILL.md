@@ -73,6 +73,16 @@ work·tasks 는 큐에서 읽어 넘긴다(이 모듈은 HTTP 를 모른다 — 
     bfn = build_local.local_build_fn(project=cfg["project"],
                                      ue5_cmd=cfg["backends"]["ue5_cmd"])
 
+🔴 **`cfg` 에 `tests` 가 있으면 `kind: code` 프로젝트다** (`#695`) — UE 빌드 대신 **테스트 스위트**가
+통합 검사다. 같은 자리에 꽂힌다(판정 계약이 같다):
+
+    bfn = build_local.local_test_fn(start_dir=cfg["tests"]["start_dir"],
+                                    pattern=cfg["tests"]["pattern"],
+                                    python=cfg["backends"]["python"] or "")
+
+[중요] **0개 실행은 통과가 아니다** · `Ran` 줄이 없으면(발견 단계 사망) 실패다 · 서버·실행파일을
+띄우는 테스트는 없다(실측 2026-09-30: Kimodo `webui/tests` 78개 · 2.8초 · 트리 깨끗).
+
 [중요] **통합 빌드는 한 번이다.** 조각별로 나눠 세우지 않는다 — 교차 파일 정합성은 전부
 모아 놓고 세워야 드러난다(사용자 지적: *"베리파이는 각자 미시적인 한 부분들인데 그거 검증해서
 얼마나 잘나오겠냐"*).

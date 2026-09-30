@@ -292,7 +292,7 @@ class ResidencyDecision:
 
 
 def desired_state(project: str, mounted: str, facts=None, *, daemon_available: bool = True,
-                  index_only: bool = False) -> ResidencyDecision:
+                  index_only: bool = False, code: bool = False) -> ResidencyDecision:
     """이 프로젝트·기계에 상주 등록이 있어야 하는가.
 
     `index_only` — 프로필의 `kind` 가 색인 전용인가(`#693`). 이 모듈은 클라에서 도므로
@@ -300,6 +300,13 @@ def desired_state(project: str, mounted: str, facts=None, *, daemon_available: b
     """
     if facts is not None and getattr(facts, "role", "worker") == "requester":
         return ResidencyDecision(False, "요청자는 상주를 받지 않는다")
+    if code:
+        # 🔴 `#695` P6 — 분산 작업은 **있지만** 상주가 집을 유형(build)이 없다. 추론(code)은
+        #    마스터가 민다(`#404`). [중요] 세션 1 지휘자 런처는 **따로** 등록한다(`bundle`) —
+        #    상주와 목적이 다르다: 런처는 마스터가 조각을 보낼 때 세션 1 을 빌려줄 뿐이다.
+        return ResidencyDecision(
+            False, "`kind: code` 프로젝트다(`#695`) — 빌드 상주가 집을 유형이 없다(추론은 마스터가 "
+                   "민다). 세션 1 지휘자 런처만 등록한다")
     if index_only:
         return ResidencyDecision(
             False, "색인 전용 프로젝트다(`kind: index_only`, `#693`) — 분산 작업이 없으니 "
