@@ -1004,6 +1004,11 @@ def test_code_kind_delivery():
     check("  UE(기본)는 종전 그대로",
           spec.skills_for("worker") == spec.SKILLS_BY_ROLE["worker"]
           and spec.managed_hooks_for("requester") == spec.MANAGED_HOOKS)
+    md = bundle.merge_workshop_md("", "requester", init=code)
+    check("🔴 관리 블록이 code 판이다 — 「등재가 거절된다」가 아니다 (`.33` 실측이 그것을 사실로 읽었다)",
+          "kind: code" in md and "등재가 거절된다" not in md and "index_only" in md, md[:160])
+    check("  색인 전용은 종전 판 그대로", "색인 전용" in bundle.merge_workshop_md("", "requester", init=idx))
+    check("  워커는 관리 블록을 받지 않는다", bundle.merge_workshop_md("", "worker", init=code) == "")
     import master.projects.profile as PF
     saved = PF.kind_of, PF.load
     try:

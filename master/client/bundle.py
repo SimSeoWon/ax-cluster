@@ -1637,7 +1637,11 @@ def merge_workshop_md(existing: str, role: str, project: str = "", init=None) ->
     # 색인 전용(`#693`)은 짧은 정본을 쓴다 — 기본 정본은 분산 작업·UE 에이전트 안내라
     #    받은 세션이 없는 경로를 따라가게 된다. 마커는 같다(병합 규칙 한 벌).
     idx = init is not None and getattr(init, "index_only", False)
-    src = workshop_dir() / ("CLAUDE.index_only.md" if idx else "CLAUDE.md")
+    # 🔴 `kind: code`(`#695`)는 **분산 작업이 있다** — 색인 전용 정본(「등재가 거절된다」)을 받으면
+    #    요청자 세션이 그것을 사실로 읽고 등재를 멈춘다(실측 2026-09-30 `.33`: *"kind: index_only 로
+    #    등록돼 있어 등재가 거절됩니다"*). 스킬·훅 표를 가를 때 이 정본 선택을 놓쳤다.
+    code = init is not None and getattr(init, "code", False)
+    src = workshop_dir() / ("CLAUDE.code.md" if code else "CLAUDE.index_only.md" if idx else "CLAUDE.md")
     if role not in WORKSHOP_ROLES or not src.is_file():
         return ""
     canon = workshop_text(src)
