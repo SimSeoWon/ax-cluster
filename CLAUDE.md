@@ -87,6 +87,14 @@ Guidance for Claude Code when working **in this repository**. Machine-level guid
   → `reports/17-*.md` §4·§14
 - [중요] **자동 로드 문서(`CLAUDE.md` 전부)와 게임 소스는 고치기 전에 계획을 말하고 동의를 받는다**
   (원전 1조, **범위는 사용자 결정 2026-08-14**). 도구 코드는 커밋 승인 게이트가 그 역할을 한다.
+- [중요] **Codex 스킬·MCP의 프로젝트 정본도 초기화 산출물이다** (`#699`, 2026-10-01).
+  `<checkout>/.agents/skills`와 `<checkout>/.codex/config.toml`이 없으면 홈 자산이 있더라도
+  정상으로 보지 않는다. `master.client update`가 모든 등록 프로젝트·작업장에 배달하고 `check`가
+  해시와 `ax-client` 등록을 대조한다. Windows 신규 워커는 부트스트랩이 체크아웃 ACL에
+  `CodexSandboxUsers` 수정 권한을 함께 부여해야 한다(`#698`).
+- [주의] **워커 실패의 판정과 요청자 통보·상위 work 종결은 별개다.** 2026-10-01 첫 `kind: code`
+  실증에서 스킬 실패가 `.33`에 통보되지 않았고 `ready_for_review` work가 남았다(`#700`·`#701`).
+  통보를 확인하지 못한 work를 성공으로 해석하지 말고, terminal 여부를 큐에서 직접 대조한다.
 - [중요] **승인을 구할 때 검토 비용을 사용자에게 넘기지 않는다** (원전 4조) — **무엇을·어디를·왜**와
   **측정 결과**를 함께 낸다. *"커밋할까요?"* 만 던지면 그건 승인이 아니라 전가다.
 

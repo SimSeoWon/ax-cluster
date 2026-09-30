@@ -1,97 +1,93 @@
 # 현재 AX 작업 인수인계
 
-> [중요] **한 벌만 유지한다.** 새 파일을 만들지 말고 이 파일을 덮어 쓴다.
-> 양식은 `docs/15-orchestrator-handoff.md` §15.5 · 공용 규칙은 `docs/orchestrator-rules.md`.
-> 모르는 상태는 **`미확인`** 으로 적는다. **이 기록은 잠금이 아니다** — 실행을 막지 않는다.
-> 🔴 **여기 적힌 「완료」를 그대로 믿지 않는다.** 받는 쪽은 HEAD·dirty diff·이슈·프로세스를
-> 직접 대조한다 (근거: `orchestrator-rules.md` §5).
-> 🔴 [주의] **「완료」만 대조하면 부족하다** — 이 문서의 **관측 서술**도 대조 대상이다.
+> [중요] **한 벌만 유지한다.** 새 인계 파일을 만들지 않고 이 파일을 덮어 쓴다.
+> 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
+> 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **갱신 시각**: 2026-09-30 21:45 KST
-- **지휘 도구 / 세션 식별자**: **Claude** (Opus 5.5, 1M) — 저녁 세션(21:18 재부팅 뒤)
-- **상태**: **대기** — `#694` 기준선 결정·반영 완료(§1-2). 남은 것은 전부 사람 결정(§2)
-- **관련 일감**: **`#693`**(AX · index_only · 열림) · **`#661`**(`.2` 그림자 스킬 · 재발 관찰) · **`#694`**(kimodo · 열림 — 원본이 움직일 때 첫 전체 실물)
-- **저장소·브랜치·HEAD**: `~/ax-cluster` `main` **`a0d1d83`** (GitHub·`.43` 동일, 21:20 대조) + 이 인계서 — 이 세션은 ax-cluster 코드를 **바꾸지 않았다**
-  · Kimodo Gitea `main` **`4e89435`** + 인계 커밋 (`~/claude-workspace/kimodo-work` · `.33` 클론 동일)
-- **실행 중인 작업·프로세스**: 없음 (파견·codex 0 · `hold.json` 없음)
-- 🔴 **마스터가 09-30 21:18:38 재부팅됐다** — `ax-task-queue`·`ax-broker`·`ax-projects` 21:18:48 기동 · `ax-indexer` 21:21:59 1회 실행 뒤 종료(Kimodo 워터마크 `6cf1488`).
-  `.2` `janus` 세션 1 로그온 확인(콘솔, 21:19) — 세션 1 파견 경로 살아 있음
-- 🔴 **워커 모드는 `codex` 다**(`~/.cache/ax-dispatch/mode.json`, 09-12 사용자 지시) — 그래서 `.2` 그림자가 실제로 읽힌다
-- 🔴 **마운트는 `KimodoMotion_WebUI` 다** (사용자 지시 2026-09-30 — `#694` 착수 준비). NS 로 돌아갈 때 남은 것은
-  보존 결정분 3건뿐(고아 태스크 2 · 스풀 1). [주의] 그래서 `.2` `AxWorker_NS` 는 다시 5분마다 `not_mounted` 를 받는다 — 정상
-- 기록: [리포트 77](../reports/77-kimodo-followups-and-shadow-skill.md)(새벽 세션) · 저녁 세션은 Kimodo `history/2026-09-30_follow-upstream-baseline.md` + `#694` 노트 2건
+- **갱신 시각**: 2026-10-01 KST
+- **지휘 도구 / 세션**: Codex
+- **상태**: 문서·Redmine 최신화 완료. 코드·배포 작업도 완료, 문서는 아직 미커밋
+- **관련 일감**: `#695`(비UE 분산 작업) · `#698`(Windows Codex ACL, 구현 완료) ·
+  `#699`(프로젝트 로컬 Codex 스킬·MCP, 구현 완료) · `#700`(실패 통보 누락, 열림) ·
+  `#701`(실패 work 자동 종결 누락, 열림)
+- **저장소·브랜치·HEAD**: `~/ax-cluster` `main` `63ea616`; `origin/main`과 일치.
+  이 인계서 및 관련 문서는 그 뒤의 미커밋 변경
+- **실행 중인 분산 work**: 없음. Kimodo 실증 work
+  `20260930_2348_api_anatomy_report_post_apiposesanatomy_44e1a015`는 사용자 지시로
+  `ready_for_review → cancelled`; 하위 태스크 2개의 `verified` 이력은 보존
+- **워커 지휘자 모드**: `codex` (모드는 문서가 아니라 `~/.cache/ax-dispatch/mode.json` 재조회)
+- **마운트**: `KimodoMotion_WebUI`
 
 ---
 
-## 🔴 0. 먼저 읽을 것 — 내가 깬 규칙
+## 1. 2026-09-30~10-01에 완료한 것
 
-**검색·갱신은 마운트된 프로젝트만 한다.** `#693` 초판(`7db807b`)이 index_only 를 예외로 빼서 NS 마운트
-상태로 BC-250 에서 Kimodo 를 합성했다 — 사용자 격노. 되돌림 `43e6319`. 메모리
-`mount-only-rule-no-exceptions`. **새 프로젝트는 마운트를 먼저 옮기고 돌린다.**
+### 1-1. 비UE `kind: code` 첫 실증 (`#695`)
 
-## 1. 오늘 한 것 (전부 커밋·푸시·`.43` 동기화)
+KimodoMotion_WebUI의 두 조각을 `.2`와 `.43`에 파견해 워커 커밋까지 만들었다. 이 실증에서
+설치·재시도·통보 경계의 실제 결함을 확인했다.
 
-| 커밋 | 무엇 |
-|---|---|
-| `292b7be` | 레드마인 분리 — `ax-cluster`(id 3)·`kimodo`(id 4) · 열린 `[AX]` 69 + `[아이디어]` 7 이전 · `AX_PROJECT_ID="ax-cluster"` |
-| `7db807b` | 프로필 `kind: unreal\|index_only` · 배달 축소(스킬 ax-ontology · 커밋된 CLAUDE.md/AGENTS.md/.mcp.json 안 씀 · MCP 로컬 스코프) · `SourceScope`(`config.yaml source:`) · 서브모듈 한 단계 + gitlink 펼치기 |
-| `01c6b2b` | 온보딩 교착(새 프로젝트에서 profile 이 clone 에 막힘) · Kimodo 프로필 |
-| `43e6319` | 🔴 마운트 예외 두 곳 되돌림 |
-| `44c4b44` | 로컬 스코프 MCP 대조 PowerShell 파싱 결함 · 리포트 76 |
-| `3fcbf27` | 낡은 Chroma 핸들 복구(빈 색인 선검색 → 외부 첫 색인) |
-| `02519ef` | 웹 UI 「전문 보기」 — `GET /api/v1/context/doc`(공개, context/*.md 한정) |
+- `.2`의 새 체크아웃에 Codex 샌드박스 쓰기 권한이 없어 첫 시도가 실패
+- 재시도가 옛 결과 파일을 다시 읽어 한 번 헛돎 — `#695` 기록, 별도 수정은 아직 없음
+- 프로젝트 로컬 관리 스킬·MCP가 초기화되지 않아 실행 문맥이 홈 자산에 의존
+- 워커 실패가 `.33` 완료 훅에 통보되지 않음(`#700`)
+- 통보가 끊긴 work가 `ready_for_review`에 남아 프로젝트 전환 테스트를 막음(`#701`)
 
-실물: Gitea `Sim/KimodoMotion_WebUI`(private) · `.33` `C:\Users\USER\Documents\KimodoMotion_WebUI` ·
-합성 86/89 · 색인 86 · `.33` check **OK** · `.33` 클라 MCP `search_context` 실측 · 브라우저 전문 보기 사용자 확인.
-서비스 재시작: `ax-task-queue` 23:39 · `ax-projects` 00:57(마지막).
+실증 work는 정상 결과로 전진시키지 않고 `cancelled`로 강제 종결했다. 두 하위 태스크의
+`verified`는 감사 이력으로 남겼다. 취소 뒤 `master/test_projects.py` 63/63 통과.
 
-### 1-1. 2026-09-30 — §2 의 1번 완료 (`d628aef`)
+### 1-2. Windows Codex 쓰기 권한 (`#698`, `906fe60`)
 
-거부는 **4건**이었다(`llm_final_norm_parity` 누락). 🔴 **파서 오인 추정은 틀렸다** — 보조 구조체가
-실재했고, 게이트가 ① 소문자 한 단어를 언급으로 못 셌고 ② 함수 중심 파일에 클래스 언급을 요구했다.
-① 전 프로젝트 수정 · ② `kind: index_only` 만(사용자 「타입으로 가른다」). Kimodo 89/89 · 재색인 89 ·
-NS 회귀 104건 판정 동일 · 테스트 5872/5872 · `#693` 노트.
+Windows 부트스트랩이 새 체크아웃 ACL에 `CodexSandboxUsers` 수정 권한을 부여하도록 수정했다.
+특정 PC의 임시 ACL 수정을 정본으로 삼지 않고, 신규 프로젝트 초기화가 재현 가능하게 만든 변경이다.
 
-### 1-2. 2026-09-30 저녁 — `#694` 기준선 (Kimodo 저장소만 바뀜)
+### 1-3. 프로젝트 로컬 Codex 스킬·MCP (`#699`, `63ea616`)
 
-기준선 빌드(`.33` Gitea 클론, 서브모듈 `88cbfbc`): 빌드 통과 · ctest **16건 중 4건**. 실패는 DLL 경로(`0xc0000135` 11건 —
-exe 는 `build/Release`, ggml DLL 은 `build/bin/Release`) + 저장소에 없는 입력(SMPL-X GGUF 8 · llm2vec fixture 2 · smplx fixture 1).
-🔴 **내 첫 추정 「DLL 만 고치면 11건이 산다」는 틀렸다** — 실제로 돌려 보니 1건만 살았다. `Test_KimodoMotion` 에도 SMPL-X·fixture 는 없다.
-사용자 결정: **기준선 = 입력 없이 도는 5건 + SOMA 생성 스모크(30 관절)** · 스모크 모델은 **파라미터 + 없으면 거절**.
-Kimodo `4e89435` · 시나리오 36/36(PATH 보정 뺀 사본 25/37) · 실물 ctest 5/5 · 스모크 rc=0 · `.33` 클론 ff + SOMA 모델 복사(SHA256 일치) ·
-스크립트 실행 「Already up to date」 exit 0. `.33` 에 `vendor\kimodo.cpp\build\` 가 남아 있다(gitignore).
+초기화·배달·검사가 다음을 관리한다.
 
-## 2. 남은 것 — 전부 사람 결정 (손대지 않았다)
+- `<checkout>/.agents/skills/...`
+- `<checkout>/.codex/config.toml`의 `ax-client`
+- 위 관리 산출물의 `.git/info/exclude`
+- 프로젝트 cwd에서의 MCP 대조
 
-1. ~~Kimodo 사실 게이트 거부~~ — **완료** (§1-1)
-2. ~~합성 86/89 인데 워터마크가 찍혔다~~ — **`#274` 위반이었다**: 온보딩 `do_index` 가 `synth_complete()`
-   없이 HEAD 를 찍었다(게이트는 푸시 경로에만). 사용자 A 결정 — 색인은 만들고 워터마크만 막는다 · `a168340`
-   · NS 복사본 드라이런으로 옛 코드 재현/새 코드 차단 확인
-3. ~~NS 고아 문서 9~~ — **완료**(09-30, 사용자 「옮기기」): 기존 `context_audit` 아카이브로
-   `NS/_archive/orphan_md/2026-09-30/` 이동 · NS 재색인 113→104 · 104/104 · `#693` 노트
-4. ~~NS 스풀 6 정리 · `.2` `AxWorker_NS` 헛돎~~ — **완료**(09-30): 스풀 6 삭제(`handover apply`, 보존 3) ·
-   워커는 NS 재마운트로 정상 복귀(해제 불필요) · `#693` 노트
-5. ~~CLAUDE.md 두 곳 「AX 는 ModularStage」~~ — **완료** `a7241c6`(사용자 동의 · `ax-cluster`(id 3))
-6. `#694` — **기준선까지 완료**(§1-2). 남은 것: ① 원본 `upstream/main`(아직 `5679ff1`)이 움직이면 병합→빌드→5건→스모크→push 가
-   **처음으로 한 번에** 돈다 — 그 실행이 첫 전체 실물 · ② [사람 결정] SMPL-X 모델·fixture 로 기준선을 넓힐지(NVIDIA 내부 R&D 라이선스) ·
-   ③ [사람 결정] Kimodo `CLAUDE.md` 의 `KIMODO_BUILD_TESTS=OFF` 와 스크립트 ON 불일치. 마스터 작업 클론 `~/claude-workspace/kimodo-work`(Gitea)
-7. **전체 배달 완료**(09-30 01:00~, `master.client update`) — 3프로젝트 전부 **출처 = 마스터 HEAD** ·
-   `.33`·`.43` OK · `.33` AGENTS.md 블록 교체 · `client_mcp.py` 불일치 해소. **FAIL 은 `.2` 그림자 하나뿐**(rc=1).
-   🔴 `#661` **원인이 좁혀졌다 — Codex 데스크톱 앱 기동**: 09-26 15:34:24 앱 기동 → 15:34:31 그림자 ·
-   09-30 00:52:42 앱 런타임(`AppData\Local\OpenAI\Codex\bin\…`) 기동 → **00:52:49 그림자**(내가 00:50 경 지운
-   직후, 배달이 `.2` 에 쓴 01:03 보다 10분 앞). 두 번 다 **7초**. CLI 파견·배달은 원인이 아니다.
-   [미확정] 옛 「너(Codex)」 판을 **어디서** 가져오나 — 디스크 전체 동일 해시 없음 · 앱 DB 에서도 못 찾음(WAL 미복사).
-   백업 `~/claude-workspace/backups/2-agents-skills-20260930/`.
-   🔴 **사용자 결정 (a) 2026-09-30: `.2` 에서는 Codex 데스크톱 앱을 쓰지 않는다** — 파견은 CLI 라 영향 없음.
-   다섯 번째 삭제(해시가 백업과 같음) 뒤 `client check NS` **3/3 OK**. 앱을 다시 열면 재발한다 — 재발 신호는 check 의 `.2` FAIL
-8. ~~NS 고아 태스크 2건~~ — **그대로 둔다**(사용자 결정 A 2026-09-30 · 08-23 「`failed` 는 증거로 보존」과 같은 판단).
-   `5c9f33b6`(r1)·`6831331b`(r2) 는 머지된 work `…_198821b8` 의 `NSAnimNotify_MeleeHitCheck.h` 조각 — 각 3회 `revise` 실패,
-   대상 파일은 `4baeb22`(F5)에서 재작성됐다. 인계 조사에 「보존」으로 계속 뜨는 것은 **정상**이다
+홈에 같은 이름의 스킬이 있어도 프로젝트 로컬 정본이 우선한다. 관련 회귀는
+`test_projects` 63/63, `test_client_bundle` 393/393, `test_bootstrap` 48/48 — 합계 504/504.
 
-## 3. 관련 파일
+`63ea616`은 `origin/main`에 push했다. 이후 `master.client update`로 ModularStage·NS·
+KimodoMotion_WebUI의 등록 작업장 9개 조합을 배달·검사했고 전부 최종 `OK`였다.
 
-    master/projects/profile.py · master/client/spec.py · master/client/bundle.py
-    master/context_search/paths.py (SourceScope) · master/context_search/index.py (핸들 복구)
-    master/events/consumer.py · master/webui/{app,routes,web_ui_original}.py
-    KimodoMotion_WebUI/config.yaml (git 밖) · master/client/payload/profile/KimodoMotion_WebUI.yaml
-    reports/76-index-only-kimodo-onboarding.md
+[주의] Kimodo `.2` 배달 중 Claude 로컬 MCP가 등록 직후 `~/.claude.json`에 없다는 경고가
+1회 있었으나 최종 프로젝트 검사는 `OK`; Codex MCP 검사는 통과했다. 재발하면 별도 결함으로 분리한다.
+
+## 2. 열려 있는 결함과 다음 작업
+
+1. `#700` — 워커 실행·스킬 실패를 요청자 `.33`에 확실히 통보하는 경로를 재현하고 수정한다.
+2. `#701` — 통보 실패나 실행 실패 뒤 상위 work가 비종결로 남지 않도록 terminal 정리 계약을 만든다.
+3. `#695` — 재시도 전에 이전 결과 파일을 지우지 않아 옛 결과를 읽는 결함이 남아 있다.
+4. `#695`의 ⑦ 통합·전진은 이번 실증 work를 취소했으므로 이어서 실행하지 않는다. 새 실증은
+   프로젝트 로컬 스킬·MCP가 배포된 새 work로 시작한다.
+5. Kimodo 테스트가 `vendor/kimodo.cpp` 서브모듈을 요구한다. `ax-advance` 검수 worktree의
+   서브모듈 처리 방식은 아직 결정·구현되지 않았다.
+
+## 3. 받는 세션의 첫 확인
+
+```bash
+cd /home/sim/ax-cluster
+git status --short --branch
+git rev-parse HEAD
+git rev-parse origin/main
+```
+
+- Redmine `#698`·`#699`는 구현·검증·배포 완료 상태인지 확인한다.
+- `#700`·`#701`은 열린 결함으로 남아 있어야 한다.
+- 큐에서 위 Kimodo work의 `merge_status=cancelled`를 확인한다.
+- 문서 변경은 아직 커밋 전이므로 사용자 승인 없이 커밋·push하지 않는다.
+
+## 4. 관련 근거
+
+- `reports/77-kimodo-followups-and-shadow-skill.md` — 직전 Kimodo 온보딩과 그림자 스킬 조사
+- `reports/78-kimodo-code-worker-skill-and-cleanup.md` — 이번 실증·수정·배포
+- `master/client/{bundle.py,spec.py,__main__.py}`
+- `master/client/init/windows.py`
+- `docs/12-multi-project.md`
+- Redmine `#695`, `#698`, `#699`, `#700`, `#701`
