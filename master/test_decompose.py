@@ -134,7 +134,8 @@ def test_ungraphed_files_are_flagged_not_dropped() -> None:
         real.dependencies, real.exists = saved
     check("그래프에 없는 것을 센다", "M/New.h" in p.ungraphed, str(p.ungraphed))
     check("버리지는 않는다", len(p.pieces) == 3, str([x.stem for x in p.pieces]))
-    check("미리보기가 말한다", "그래프에 없는 파일" in p.preview())
+    check("미리보기가 말한다", "의존을 못 찾은 파일" in p.preview())
+    check("  [중요] 「신규면 정상」이라고 단정하지 않는다 (`#695`)", "신규 파일이면 정상" not in p.preview())
 
 
 def test_depth_split_is_sequential_not_concurrent() -> None:

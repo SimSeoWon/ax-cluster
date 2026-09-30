@@ -43,7 +43,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from . import skeleton
+from . import pyskel, skeleton
+
+
+def _is_py(path: str) -> bool:
+    return str(path or "").lower().endswith(".py")
 
 # [중요] 소스에 남아 있으면 안 되는 것들. 보존 태그(`skeleton.PERMANENT_TAGS`)는 여기 없다.
 FEEDBACK_TAG = "[FEEDBACK]"
@@ -118,20 +122,38 @@ def check(files: dict, *, baseline=None) -> Layer1:
         if skeleton._FENCE_ANY.search(text):
             L.problems.append(f"{path}: 마크다운 펜스가 남아 있다")
 
+        # 🔴 `#695` P3 — `.py` 는 선언과 정의가 한 몸이다. 구문은 **원본 없이도** 본다.
+        if _is_py(path):
+            _tree, _why = pyskel.parse(text)
+            if _tree is None:
+                L.problems.append(f"{path}: 구문 오류 — {_why}")
+                continue
         if baseline is None:
             continue
-        if not skeleton.is_header(path):
+        if not (skeleton.is_header(path) or _is_py(path)):
             continue                        # 동결은 **선언**의 문제다 — `.cpp` 는 대상 아님
         old = baseline(path)
         if old is None:
             continue                        # 신규 파일 — 동결할 원본이 없다
+        if _is_py(path):
+            why = pyskel.violation(old, text)
+            if why:
+                L.problems.append(f"{path}: 동결 위반 — {why}")
+            # [중요] 마커 주석만 지우고 스텁을 남긴 경우 — 마커 검사는 주석만 본다
+            left = pyskel.unfilled(old, text)
+            if left:
+                L.problems.append(f"{path}: 본문이 안 채워졌다 (스텁 그대로) — "
+                                  + ", ".join(left[:5]))
+            continue
         why = skeleton.violation(old, text)
         if why:
             L.problems.append(f"{path}: 동결 위반 — {why}")
 
+    # 🔴 [중요] **동결을 못 본 파일은 `.py` 도 여기 든다** (`#695` P3 — 종전에는 헤더만 들어서
+    #    `.py` 는 동결을 안 보고도 요약이 「통과」라고만 말했다. 조용한 통과였다).
     if baseline is None:
         L.skipped = sorted(files)
     else:
         L.skipped = sorted(p for p in files
-                           if skeleton.is_header(p) and baseline(p) is None)
+                           if (skeleton.is_header(p) or _is_py(p)) and baseline(p) is None)
     return L

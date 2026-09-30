@@ -165,12 +165,83 @@ def test_a_citation_is_not_a_marker() -> None:
               any("휘발 태그" in p for p in L2.problems), L2.summary)
 
 
+_KIMODO = Path(__file__).resolve().parents[1] / "KimodoMotion_WebUI/repo"
+
+
+def _py_pair():
+    """Kimodo 실물 `pose_ops.py` → (구현본, 골조, 함수명). 실물이 없으면 작은 대역."""
+    import ast
+    f = _KIMODO / "webui/pose_ops.py"
+    real = f.read_text(encoding="utf-8") if f.is_file() else \
+        "def joint_names():\n    return ['a']\n\n\ndef other(x):\n    return x\n"
+    tree = ast.parse(real)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef))
+    lines = real.splitlines()
+    ind = " " * (fn.col_offset + 4)
+    skel = "\n".join(lines[:fn.body[0].lineno - 1]
+                     + [f"{ind}# [DOC] 무엇을 왜", f"{ind}# [PSEUDO] 여기를 채워라",
+                        f"{ind}raise NotImplementedError"]
+                     + lines[fn.end_lineno:]) + "\n"
+    return real, skel, fn.name, lines[fn.lineno - 1]
+
+
+def test_python_freeze_stub_and_syntax():
+    print("\n🔴 `.py` — 동결 · 스텁 잔존 · 구문 (`#695` P3)")
+    real, skel, name, defline = _py_pair()
+    path = "webui/pose_ops.py"
+    base = lambda p: skel if p == path else None                      # noqa: E731
+
+    L = L1.check({path: real}, baseline=base)
+    check(f"실물 구현({name})은 골조 대비 통과", L.ok, L.summary)
+    check("  동결을 실제로 봤다 (skipped 아님)", path not in L.skipped, str(L.skipped))
+
+    stub = skel.replace("# [PSEUDO] 여기를 채워라\n", "")
+    L = L1.check({path: stub}, baseline=base)
+    check("🔴 마커만 지우고 스텁을 남기면 위반", not L.ok and any("스텁" in x for x in L.problems),
+          str(L.problems))
+
+    changed = real.replace(defline, defline.replace("(", "(extra_arg, ", 1), 1)
+    L = L1.check({path: changed}, baseline=base)
+    check("🔴 시그니처 변경은 동결 위반", not L.ok and any("동결" in x for x in L.problems), str(L.problems))
+
+    import ast
+    tree = ast.parse(real)
+    last = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))][-1]
+    rl = real.splitlines()
+    deleted = "\n".join(rl[:last.lineno - 1 - len(last.decorator_list)] + rl[last.end_lineno:]) + "\n"
+    L = L1.check({path: deleted}, baseline=lambda p: real)
+    check(f"🔴 정의 삭제({last.name})는 동결 위반", not L.ok and any("동결" in x for x in L.problems),
+          str(L.problems)[:200])
+
+    L = L1.check({path: real + "\n\ndef brand_new_helper(a, b=1):\n    return a + b\n"},
+                     baseline=lambda p: real)
+    check("  추가는 허용", L.ok, L.summary)
+
+    L = L1.check({path: real.replace("def ", "def (", 1)})
+    check("🔴 구문 오류는 원본 없이도 위반", not L.ok and any("구문" in x for x in L.problems),
+          str(L.problems)[:160])
+
+    L = L1.check({path: real})
+    check("[중요] 원본이 없으면 `.py` 도 skipped 에 든다", path in L.skipped, str(L.skipped))
+    check("  요약이 동결 미검사를 말한다 (조용한 통과 아님)", "동결 미검사" in L.summary, L.summary)
+    L = L1.check({path: real, "webui/new.py": "x = 1\n"}, baseline=base)
+    check("  신규 .py 도 skipped 로 표시된다", L.skipped == ["webui/new.py"], str(L.skipped))
+
+    # 실물 전수 — 자기 자신을 원본으로 두면 위반 0 이어야 한다 (오탐 측정)
+    files = {str(f.relative_to(_KIMODO)): f.read_text(encoding="utf-8", errors="replace")
+             for d in ("webui", "scripts") for f in sorted((_KIMODO / d).rglob("*.py"))}
+    if files:
+        L = L1.check(files, baseline=lambda p: files.get(p))
+        check(f"🔴 Kimodo 실물 {len(files)}개 — 자기 대조 오탐 0", L.ok, str(L.problems)[:200])
+
+
 def main() -> int:
     for fn in (test_a_citation_is_not_a_marker,test_volatile_tags_are_caught, test_permanent_tags_and_plain_comments_pass,
                test_feedback_left_in_source_is_a_violation, test_fence_residue_is_a_violation,
                test_freeze_semantics, test_cpp_is_not_a_freeze_target,
                test_new_file_has_nothing_to_freeze, test_fail_closed_directions,
-               test_residue_response_is_rejected_at_acceptance_not_at_apply):
+               test_residue_response_is_rejected_at_acceptance_not_at_apply,
+               test_python_freeze_stub_and_syntax):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_layer1: {PASS}/{total} 통과")

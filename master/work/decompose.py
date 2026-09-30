@@ -72,7 +72,7 @@ class Plan:
     pieces: list = field(default_factory=list)
     cycles: list = field(default_factory=list)      # [주의] 순환 — 보고만 한다
     notes: list = field(default_factory=list)
-    ungraphed: list = field(default_factory=list)   # 그래프에 없는 파일 (신규 파일이면 정상)
+    ungraphed: list = field(default_factory=list)   # 프로젝트 안 의존을 못 찾은 파일 (신규 · 무의존 · `.py`)
 
     @property
     def ok(self) -> bool:
@@ -133,8 +133,12 @@ class Plan:
                         "(막지 않는다: include 역추적이 근사라 가짜일 수 있다):"]
             out += [f"    {' → '.join(c)}" for c in self.cycles[:5]]
         if self.ungraphed:
-            out.append(f"  [주의] 그래프에 없는 파일 {len(self.ungraphed)} — 신규 파일이면 정상 "
-                       f"(예: {', '.join(self.ungraphed[:3])})")
+            # [중요] 문구를 고쳤다 (`#695` 실측 2026-09-30) — 종전 「그래프에 없는 파일 — 신규면
+            #    정상」은 틀린 말이었다: Kimodo 에서 **그래프에 있는** 세 파일이 여기 들었다.
+            #    이 목록의 실제 뜻은 「프로젝트 안 의존을 못 찾았다」이고, `.py` 는 import 를 세지 않는다.
+            out.append(f"  [주의] 프로젝트 안 의존을 못 찾은 파일 {len(self.ungraphed)} — "
+                       f"신규 파일이거나, 프로젝트 파일을 include 하지 않는 파일이다 "
+                       f"(`.py` 는 import 를 세지 않는다 · 예: {', '.join(self.ungraphed[:3])})")
         for n in self.notes:
             out.append(f"  {n}")
         return "\n".join(out)
