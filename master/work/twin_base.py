@@ -268,3 +268,48 @@ def local_baseline(paths, base_commit: str):
             return None
         return d.text
     return read
+
+
+def commit_baseline(paths, base_commit: str):
+    """🔴 동결 원본을 **기준 커밋에서** 읽는다 — `local_baseline` 이 `None` 일 때의 경로 (`#695` P3).
+
+    [중요] **왜 필요한가 (실측 2026-09-30).** `local_baseline` 은 색인 커밋 == 기준 커밋일 때만
+    원본을 준다. 그런데 조각의 기준 커밋은 **골조 커밋**(`task/<work>/base` tip)이고 색인은
+    `main` 이라 **늘 다르다** — 그래서 동결 대조가 실전에서 사실상 한 번도 돌지 않았다. 위
+    docstring 은 *"다르면 None 을 돌려 호출자가 원격에서 읽게 한다"* 였는데 **호출자가 읽지
+    않았다.** 이 함수가 그 「원격에서 읽기」다 — 파견 전 골조 게이트(`python_skeleton_gate`)와
+    같은 미러·같은 커밋을 읽는다.
+
+    규약은 `local_baseline` 과 같다:
+      - 그 커밋에 없는 파일 → `None` (신규 파일 — 동결할 원본이 없다)
+      - 못 읽음 · 인코딩 손상 → `None` — 층1 이 **동결 미검사**로 기록한다(통과로 접지 않는다)
+    [주의] 같은 파일을 두 번 읽지 않는다 — 층1 은 판정과 `skipped` 계산에서 두 번 부른다.
+    """
+    if not (base_commit or "").strip():
+        return None
+    try:
+        from . import declarations as D
+        D.ensure_commit(paths, base_commit)
+    except Exception as e:                                   # noqa: BLE001
+        _log(f"기준 커밋을 미러에 못 들였다 ({base_commit[:10]}) — 동결 판정을 못 한다: "
+             f"{type(e).__name__}: {e}")
+        return None
+    cache: dict = {}
+
+    def read(path: str):
+        rel = str(path).replace("\\", "/")
+        if rel in cache:
+            return cache[rel]
+        out = None
+        try:
+            r = subprocess.run(["git", "-C", str(paths.repo), "show", f"{base_commit}:{rel}"],
+                               capture_output=True, timeout=120)
+            if r.returncode == 0:
+                from ..source_text import decode
+                d = decode(r.stdout)
+                out = None if d.degraded else d.text     # 손상 사본으로 판정하지 않는다
+        except Exception as e:                               # noqa: BLE001
+            _log(f"동결 원본을 못 읽었다 ({rel} @ {base_commit[:10]}) — {type(e).__name__}: {e}")
+        cache[rel] = out
+        return out
+    return read

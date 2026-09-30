@@ -125,8 +125,45 @@ def test_manifest_section() -> None:
               "확인하지 못했다" in txt3 and "원격에 아직 없다" not in txt3, txt3[:120])
 
 
+def test_commit_baseline_reads_the_base_commit():
+    """🔴 `#695` P3 — 동결 원본을 **기준 커밋에서** 읽는다(색인 클론이 달라도)."""
+    import subprocess
+    import tempfile
+    from master.work import twin_base as TBm
+    print("\n🔴 commit_baseline — 기준 커밋에서 읽는다 (`#695` P3)")
+    with tempfile.TemporaryDirectory() as d:
+        repo = Path(d)
+        g = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True,  # noqa: E731
+                                      capture_output=True, text=True).stdout.strip()
+        g("init", "-q", "-b", "main")
+        g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        (repo / "webui").mkdir()
+        (repo / "webui/a.py").write_text("# [DOC] x\ndef f(a):\n    # [PSEUDO] y\n    raise NotImplementedError\n",
+                                         encoding="utf-8")
+        (repo / "Foo.h").write_text("class Foo { void Go(); };\n", encoding="utf-8")
+        g("add", "-A"); g("commit", "-q", "-m", "skeleton")
+        base = g("rev-parse", "HEAD")
+        (repo / "webui/a.py").write_text("def f(a):\n    return a\n", encoding="utf-8")   # 워킹트리는 다르다
+        g("commit", "-qam", "later")
+
+        class _P:
+            pass
+        P_ = _P(); P_.repo = repo
+        read = TBm.commit_baseline(P_, base)
+        check("원본 함수가 생긴다", read is not None)
+        check("[중요] 워킹트리가 아니라 기준 커밋의 내용이다",
+              read is not None and "[PSEUDO]" in (read("webui/a.py") or ""), str(read and read("webui/a.py")))
+        check("  헤더도 읽는다", read is not None and "Go" in (read("Foo.h") or ""))
+        check("  역슬래시 경로도 같은 파일", read is not None and read("webui\\a.py") == read("webui/a.py"))
+        check("  그 커밋에 없는 파일은 None (신규 파일)", read is not None and read("webui/new.py") is None)
+        check("  기준 커밋이 비면 None", TBm.commit_baseline(P_, "") is None)
+        check("  모르는 커밋이면 None (미러로 못 들임 — 통과로 접지 않는다)",
+              TBm.commit_baseline(P_, "0" * 40) is None)
+
+
 def main() -> int:
-    for fn in (test_twin_commit, test_resolve, test_manifest_section):
+    for fn in (test_twin_commit, test_resolve, test_manifest_section,
+               test_commit_baseline_reads_the_base_commit):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_twin_base: {PASS}/{total} 통과")

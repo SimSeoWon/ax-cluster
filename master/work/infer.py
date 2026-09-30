@@ -945,12 +945,19 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
 
     # 동결 대조 원본 — 마스터의 색인 클론이 같은 커밋이면 그것을 쓴다(왕복 0).
     # [주의] 없으면 `None` 이라 층1 이 **동결 미검사로 기록**한다 — 통과로 접지 않는다.
+    # 🔴 `#695` P3 — 색인 클론이 기준 커밋과 다르면(골조 커밋이라 **늘** 다르다) 미러에서
+    #    기준 커밋을 읽는다. 종전에는 여기서 `None` 이 되어 동결 대조가 실전에서 돌지 않았다.
+    _src = "색인 클론"
     try:
-        from .twin_base import local_baseline
+        from .twin_base import commit_baseline, local_baseline
         baseline = local_baseline(paths, base)
+        if baseline is None:
+            baseline, _src = commit_baseline(paths, base), "기준 커밋(미러)"
     except Exception as e:                                   # noqa: BLE001
         _log(f"[wcommit] {task_id} 동결 원본을 못 잡았다 — {type(e).__name__}: {e}")
         baseline = None
+    _log(f"[layer1] {task_id} 동결 원본 — "
+         + (f"{_src} @ {str(base)[:10]}" if baseline is not None else "없음 (동결 미검사로 기록된다)"))
 
     c = wcommit.run(facts, task, work_id=work_id, base_commit=base, want=want,
                     llm=llm, ssh=ssh, reader=reader, baseline=baseline, branch=branch)

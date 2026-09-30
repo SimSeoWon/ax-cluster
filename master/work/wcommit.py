@@ -317,6 +317,10 @@ def _cycle(facts, task_id: str, c: "Committed", base: str, llm, do_ssh, do_read,
     # ④ 층1 — [중요] **verify-then-commit.** 위반이면 커밋하지 않는다
     c.stage = "층1"
     l1 = layer1.check(c.files, baseline=baseline)
+    # 🔴 [중요] **통과도 기록한다** (`#695` P3) — 종전에는 위반만 남아서, 동결을 못 본 통과가
+    #    「통과」와 구분되지 않았다(파견 로그에 층1 통과·동결 미검사 0건 — 안 본 것이 안 보였다).
+    c.notes.append(f"[층1] {l1.summary}"
+                   + (f" — 동결 미검사: {', '.join(l1.skipped[:5])}" if l1.skipped else ""))
     if not l1.ok:
         c.layer1_violations = list(l1.problems)
         c.reason = "층1 이 막았다 — 커밋하지 않는다"
