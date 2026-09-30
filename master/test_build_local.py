@@ -167,11 +167,57 @@ def test_adapter_passes_verdict_through():
     check("사람이 읽을 요약이 실린다", "BUILD" in out2.get("summary", ""), str(out2))
 
 
+
+def test_unittest_parser():
+    print("\n🔴 `kind: code` 통합 검사 — unittest 판정 (`#695` P5)")
+    ok = B.parse_unittest("..\n------\nRan 78 tests in 0.679s\n\nOK\n", 0)
+    check(".33 실측 모양(78 · OK)은 통과", ok["passed"] and ok["ok"] and "78" in ok["summary"], str(ok))
+    bad = B.parse_unittest("F.\nRan 2 tests in 0.1s\n\nFAILED (failures=1)\n", 1)
+    check("FAILED 는 실패 + 사유", not bad["passed"] and "failures=1" in bad["detail"], str(bad))
+    zero = B.parse_unittest("\nRan 0 tests in 0.000s\n\nOK\n", 0)
+    check("🔴 0개 실행은 통과가 아니다", not zero["passed"] and zero["detail"] == "NoTests", str(zero))
+    dead = B.parse_unittest("ImportError: Start directory is not importable: 'x'\n", 1)
+    check("🔴 `Ran` 줄이 없으면(발견 단계 사망) 통과가 아니다 — `-t .` 실측 모양",
+          not dead["passed"] and dead["detail"] == "NoRun", str(dead))
+    lie = B.parse_unittest("Ran 3 tests in 0.1s\n\nOK\n", 1)
+    check("  OK 여도 rc≠0 이면 통과가 아니다", not lie["passed"], str(lie))
+
+
+def test_local_test_fn_runs_real_unittest():
+    """실제 하위 프로세스로 돈다 — 대역이 아니라 `unittest` 자체의 출력을 잰다."""
+    import sys as _s
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "pkg").mkdir()
+        (root / "pkg" / "mod.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+        (root / "pkg" / "tests").mkdir()
+        (root / "pkg" / "tests" / "add_test.py").write_text(
+            "import unittest\nfrom pkg import mod\n\nclass T(unittest.TestCase):\n"
+            "    def test_add(self):\n        self.assertEqual(mod.add(1, 2), 3)\n", encoding="utf-8")
+        fn = B.local_test_fn(start_dir="pkg/tests", pattern="*_test.py", python=_s.executable)
+        r = fn(root)
+        check("실제 unittest — 통과", r["passed"] and "1" in r["summary"], str(r))
+        check("  판정은 review.build_verdict 가 그대로 읽는다",
+              __import__("master.work.review", fromlist=["x"]).build_verdict(r)[0] is True)
+        (root / "pkg" / "mod.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+        r = fn(root)
+        check("🔴 실제 unittest — 실패를 실패로", not r["passed"] and "failures=1" in r["detail"], str(r))
+        r = B.local_test_fn(start_dir="pkg/tests", pattern="*_nomatch.py", python=_s.executable)(root)
+        check("🔴 패턴이 아무것도 안 잡으면(0개) 실패", not r["passed"], str(r))
+        r = B.local_test_fn(start_dir="nope", pattern="*_test.py")(root)
+        check("  시작 디렉토리가 없으면 BLOCKED", not r["passed"] and "없다" in r["failure"], str(r))
+    try:
+        B.local_test_fn(start_dir="", pattern="*_test.py")
+        check("  무엇을 돌릴지 모르면 만들 때 죽는다", False, "예외가 안 났다")
+    except B.BuildSetupError:
+        check("  무엇을 돌릴지 모르면 만들 때 죽는다", True)
+
 def main() -> int:
     for fn in (test_build_bat_derivation_is_one_rule, test_command_is_shared_with_workshop_path,
                test_verdict_ignores_exit_code, test_unconfirmed_is_not_a_pass,
                test_adapter_blocks_when_engine_missing, test_adapter_reports_missing_uproject,
-               test_adapter_passes_verdict_through):
+               test_adapter_passes_verdict_through, test_unittest_parser,
+               test_local_test_fn_runs_real_unittest):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_build_local: {PASS}/{total} 통과")

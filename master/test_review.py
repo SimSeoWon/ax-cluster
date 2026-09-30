@@ -826,6 +826,41 @@ def test_advance_pushes_on_confirm():
         shutil.rmtree(root, ignore_errors=True)
 
 
+
+def test_advance_reads_the_real_build_fn_dict():
+    """🔴 `#695` P5 — **실제 `.33` 빌드 함수는 dict 를 돌려준다.** 대역(`_Build`)이 아니라 그 모양으로 잰다.
+
+    종전 `bool(getattr(res, "passed", res))` 는 dict 를 늘 통과로 읽었다(실측 2026-09-30).
+    """
+    from master.layer3_verify import BuildResult
+    from master.work import build_local as BL
+    failed = BL.result_to_dict(BuildResult(passed=False, failure=None, result="Failed",
+                                           detail="CompilerError"))
+    ok = BL.result_to_dict(BuildResult(passed=True, failure=None, result="Succeeded", seconds=1.0))
+    check("  build_verdict — 실패 dict 는 실패", R.build_verdict(failed)[0] is False, str(failed))
+    check("  build_verdict — 통과 dict 는 통과", R.build_verdict(ok)[0] is True)
+    check("  build_verdict — 요약 문장을 쓴다 (dict 원문이 아니다)",
+          R.build_verdict(failed)[1] == failed["summary"], R.build_verdict(failed)[1])
+    check("  [중요] 판정 키가 없는 dict 는 통과가 아니다", R.build_verdict({"x": 1})[0] is False)
+    check("  uproject 없음(BLOCKED) dict 도 실패",
+          R.build_verdict({"ok": False, "passed": False, "summary": "BLOCKED(uproject 없음)"})[0] is False)
+    check("  객체(대역) 모양도 그대로 읽는다", R.build_verdict(_Build(True))[0] is True)
+    root, repo, work, tasks = fixture()
+    try:
+        a = R.advance_work(repo, work_id="w1", work=work, tasks=tasks,
+                           build_fn=lambda t: dict(failed), confirm=True)
+        check("🔴 실제 모양의 실패 dict 로는 전진하지 않는다", not a.pushed, a.summary)
+        check("  build_passed 가 False 다", a.build_passed is False, str(a.build_passed))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    root, repo, work, tasks = fixture()
+    try:
+        b = R.advance_work(repo, work_id="w1", work=work, tasks=tasks,
+                           build_fn=lambda t: dict(ok), confirm=True)
+        check("  실제 모양의 통과 dict 로는 전진한다", b.pushed and b.ok, b.summary)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
 def test_advance_refuses_when_build_failed_or_unmeasured():
     """[중요] **확인 못 한 것은 통과가 아니다** — `build_fn` 미주입도 거절한다."""
     root, repo, work, tasks = fixture()
@@ -881,6 +916,7 @@ def main() -> int:
                test_advance_records_the_decision_in_redmine,
                test_advance_does_not_push_without_confirm,
                test_advance_pushes_on_confirm,
+               test_advance_reads_the_real_build_fn_dict,
                test_advance_refuses_when_build_failed_or_unmeasured,
                test_advance_asks_the_canonical_question,
                test_advance_stops_whole_on_conflict,

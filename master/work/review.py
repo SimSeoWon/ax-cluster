@@ -866,6 +866,28 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
 ADVANCE_TREE_PREFIX = "ax-advance"
 
 
+def build_verdict(res) -> tuple:
+    """빌드 결과 → `(통과, 요약)`. **dict 와 객체 둘 다** 읽는다 (`#695` P5 · 실측 2026-09-30).
+
+    🔴 [중요] 종전 `bool(getattr(res, "passed", res))` 는 **dict 를 늘 통과로 읽었다** — dict 에는
+    `passed` **속성**이 없어 dict 자체가 돌아오고, 비어 있지 않은 dict 는 참이다. `.33` 의 실제
+    `build_local.local_build_fn` 은 dict 를 돌려주므로 **실패한 빌드가 전진을 통과했다**(UE 포함).
+    테스트는 `.passed` 속성이 있는 대역을 주입해서 이 경로를 한 번도 안 밟았다.
+    [중요] 판정 키가 없으면 **통과가 아니다** — `passed` 도 `ok` 도 없는 dict 는 False 다.
+    """
+    if isinstance(res, dict):
+        if "passed" in res:
+            passed = res.get("passed") is True
+        else:
+            passed = res.get("ok") is True
+        note = str(res.get("summary") or res.get("failure") or "") or str(res)[:300]
+        return passed, note
+    passed = getattr(res, "passed", None) is True
+    s = getattr(res, "summary", None)
+    note = s() if callable(s) else (str(s) if s else str(res))
+    return passed, note
+
+
 def advance_tree_path(repo: Path, work_id: str) -> Path:
     """정본 **옆**. `review_work` 트리와도 이름이 갈린다 — 둘이 동시에 있어도 안 부딪힌다."""
     return Path(repo).parent / f"{ADVANCE_TREE_PREFIX}-{work_id}"
@@ -999,9 +1021,7 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
         else:
             try:
                 res = build_fn(tree)
-                a.build_passed = bool(getattr(res, "passed", res))
-                a.build_note = getattr(res, "summary", lambda: str(res))() \
-                    if callable(getattr(res, "summary", None)) else str(res)
+                a.build_passed, a.build_note = build_verdict(res)
             except Exception as e:                           # noqa: BLE001
                 a.build_note = f"빌드 호출이 실패했다 — {type(e).__name__}: {e}"
                 logf("advance", f"[중요] {a.build_note}")
