@@ -7,16 +7,19 @@
 > 직접 대조한다 (근거: `orchestrator-rules.md` §5).
 > 🔴 [주의] **「완료」만 대조하면 부족하다** — 이 문서의 **관측 서술**도 대조 대상이다.
 
-- **갱신 시각**: 2026-09-30 01:40 KST
-- **지휘 도구 / 세션 식별자**: **Claude** (Opus 5.5, 1M)
-- **상태**: **세션 종료** — 사용자 *"#694는 열어두고 오늘은 여기까지"* (2026-09-30). 1~8번 처리 · 6번(`#694`)은 빌드 경로 실측만 남음(사람 결정)
-- **관련 일감**: **`#693`**(AX · index_only · 열림) · **`#661`**(`.2` 그림자 스킬 · 열림) · **`#694`**(kimodo, 미착수)
-- **저장소·브랜치·HEAD**: `~/ax-cluster` `main` **`c344b4d`** (GitHub 푸시 · `.43` 동기화 완료) + 이 인계서
-- **실행 중인 작업·프로세스**: 없음 · `ax-projects` 재시작 09-30 00:59:37(사용자 승인 — `a168340` 적용)
+- **갱신 시각**: 2026-09-30 21:45 KST
+- **지휘 도구 / 세션 식별자**: **Claude** (Opus 5.5, 1M) — 저녁 세션(21:18 재부팅 뒤)
+- **상태**: **대기** — `#694` 기준선 결정·반영 완료(§1-2). 남은 것은 전부 사람 결정(§2)
+- **관련 일감**: **`#693`**(AX · index_only · 열림) · **`#661`**(`.2` 그림자 스킬 · 재발 관찰) · **`#694`**(kimodo · 열림 — 원본이 움직일 때 첫 전체 실물)
+- **저장소·브랜치·HEAD**: `~/ax-cluster` `main` **`a0d1d83`** (GitHub·`.43` 동일, 21:20 대조) + 이 인계서 — 이 세션은 ax-cluster 코드를 **바꾸지 않았다**
+  · Kimodo Gitea `main` **`4e89435`** + 인계 커밋 (`~/claude-workspace/kimodo-work` · `.33` 클론 동일)
+- **실행 중인 작업·프로세스**: 없음 (파견·codex 0 · `hold.json` 없음)
+- 🔴 **마스터가 09-30 21:18:38 재부팅됐다** — `ax-task-queue`·`ax-broker`·`ax-projects` 21:18:48 기동 · `ax-indexer` 21:21:59 1회 실행 뒤 종료(Kimodo 워터마크 `6cf1488`).
+  `.2` `janus` 세션 1 로그온 확인(콘솔, 21:19) — 세션 1 파견 경로 살아 있음
 - 🔴 **워커 모드는 `codex` 다**(`~/.cache/ax-dispatch/mode.json`, 09-12 사용자 지시) — 그래서 `.2` 그림자가 실제로 읽힌다
 - 🔴 **마운트는 `KimodoMotion_WebUI` 다** (사용자 지시 2026-09-30 — `#694` 착수 준비). NS 로 돌아갈 때 남은 것은
   보존 결정분 3건뿐(고아 태스크 2 · 스풀 1). [주의] 그래서 `.2` `AxWorker_NS` 는 다시 5분마다 `not_mounted` 를 받는다 — 정상
-- 이 세션의 기록: [리포트 77](../reports/77-kimodo-followups-and-shadow-skill.md)
+- 기록: [리포트 77](../reports/77-kimodo-followups-and-shadow-skill.md)(새벽 세션) · 저녁 세션은 Kimodo `history/2026-09-30_follow-upstream-baseline.md` + `#694` 노트 2건
 
 ---
 
@@ -49,6 +52,15 @@
 ① 전 프로젝트 수정 · ② `kind: index_only` 만(사용자 「타입으로 가른다」). Kimodo 89/89 · 재색인 89 ·
 NS 회귀 104건 판정 동일 · 테스트 5872/5872 · `#693` 노트.
 
+### 1-2. 2026-09-30 저녁 — `#694` 기준선 (Kimodo 저장소만 바뀜)
+
+기준선 빌드(`.33` Gitea 클론, 서브모듈 `88cbfbc`): 빌드 통과 · ctest **16건 중 4건**. 실패는 DLL 경로(`0xc0000135` 11건 —
+exe 는 `build/Release`, ggml DLL 은 `build/bin/Release`) + 저장소에 없는 입력(SMPL-X GGUF 8 · llm2vec fixture 2 · smplx fixture 1).
+🔴 **내 첫 추정 「DLL 만 고치면 11건이 산다」는 틀렸다** — 실제로 돌려 보니 1건만 살았다. `Test_KimodoMotion` 에도 SMPL-X·fixture 는 없다.
+사용자 결정: **기준선 = 입력 없이 도는 5건 + SOMA 생성 스모크(30 관절)** · 스모크 모델은 **파라미터 + 없으면 거절**.
+Kimodo `4e89435` · 시나리오 36/36(PATH 보정 뺀 사본 25/37) · 실물 ctest 5/5 · 스모크 rc=0 · `.33` 클론 ff + SOMA 모델 복사(SHA256 일치) ·
+스크립트 실행 「Already up to date」 exit 0. `.33` 에 `vendor\kimodo.cpp\build\` 가 남아 있다(gitignore).
+
 ## 2. 남은 것 — 전부 사람 결정 (손대지 않았다)
 
 1. ~~Kimodo 사실 게이트 거부~~ — **완료** (§1-1)
@@ -60,10 +72,9 @@ NS 회귀 104건 판정 동일 · 테스트 5872/5872 · `#693` 노트.
 4. ~~NS 스풀 6 정리 · `.2` `AxWorker_NS` 헛돎~~ — **완료**(09-30): 스풀 6 삭제(`handover apply`, 보존 3) ·
    워커는 NS 재마운트로 정상 복귀(해제 불필요) · `#693` 노트
 5. ~~CLAUDE.md 두 곳 「AX 는 ModularStage」~~ — **완료** `a7241c6`(사용자 동의 · `ax-cluster`(id 3))
-6. `#694` — **스크립트·스킬 완성**(사용자: 커밋 기준 **Gitea**). Kimodo Gitea `637c09b`·`bdfa6f2`·`6cf1488` ·
-   `scripts/follow-upstream.ps1` + 시나리오 테스트 `.33` 24/24 · `.33` Gitea 클론 서브모듈 초기화 · 실물 실행 「이미 최신」
-   (`upstream/main` `5679ff1`). [미실측] 빌드·ctest 경로는 원본이 움직여야 돈다 — 기준선 빌드 여부 사람 결정.
-   마스터 작업 클론 `~/claude-workspace/kimodo-work`(Gitea). 원래 클론 `Test_KimodoMotion`(GitHub)과 갈라질 수 있다
+6. `#694` — **기준선까지 완료**(§1-2). 남은 것: ① 원본 `upstream/main`(아직 `5679ff1`)이 움직이면 병합→빌드→5건→스모크→push 가
+   **처음으로 한 번에** 돈다 — 그 실행이 첫 전체 실물 · ② [사람 결정] SMPL-X 모델·fixture 로 기준선을 넓힐지(NVIDIA 내부 R&D 라이선스) ·
+   ③ [사람 결정] Kimodo `CLAUDE.md` 의 `KIMODO_BUILD_TESTS=OFF` 와 스크립트 ON 불일치. 마스터 작업 클론 `~/claude-workspace/kimodo-work`(Gitea)
 7. **전체 배달 완료**(09-30 01:00~, `master.client update`) — 3프로젝트 전부 **출처 = 마스터 HEAD** ·
    `.33`·`.43` OK · `.33` AGENTS.md 블록 교체 · `client_mcp.py` 불일치 해소. **FAIL 은 `.2` 그림자 하나뿐**(rc=1).
    🔴 `#661` **원인이 좁혀졌다 — Codex 데스크톱 앱 기동**: 09-26 15:34:24 앱 기동 → 15:34:31 그림자 ·
