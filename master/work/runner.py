@@ -87,13 +87,17 @@ INSTRUCTION = (
     "Read the [DOC] and [PSEUDO] comments in these files and write their bodies: {files}. "
     "Judge from the source files in this checkout, not from memory. "
     "Do not run any git command. Do not commit or push. "
-    "Do not run UE5 builds, UnrealBuildTool, UnrealEditor or automation tests - "
-    "build verification is done later by the requester, not on this worker. "
+    "Do not run UE5 builds, UnrealBuildTool, UnrealEditor or automation tests, "
+    "and for Python files do not start servers, run the program or run tests - "
+    "verification is done later by the requester, not on this worker. "
     "The last non-empty line of your output must be exactly RESULT: DONE "
     "(use RESULT: BLOCKED if you could not finish, and say why above it)."
 )
 
 # 🔴 **워커는 UE5 빌드를 돌리지 않는다** (실측 2026-09-13 · 원전 대조).
+# 🔴 `#695` P4 — **Python 조각도 같은 원칙이다**: 서버 기동·프로그램 실행·테스트 금지를
+#    같은 문장에 넣었다(언어별로 두 벌을 두면 `.2` 세션 1 사본도 두 벌이 된다). Kimodo 는
+#    WebUI 서버를 띄우는 프로젝트라 금지가 없으면 워커가 「확인」하러 서버를 띄운다.
 #
 # [중요] 원전 워커는 빌드하지 않는다 — `worker/` 에 `Build.bat` 이 없고 조각 검증은 정적 검사다.
 #    빌드는 마스터 게이트와 `.33` 의 ⑺ 통합에서 한 번이다. 그런데 `.2` 의 codex 지휘자가 본문을

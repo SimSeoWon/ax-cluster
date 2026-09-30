@@ -462,6 +462,12 @@ def test_dispatch_is_not_a_consent_prompt() -> None:
     check("실제 명령줄에 실린다", "Do not ask for approval" in c, c[:120])
 
 
+def test_instruction_forbids_python_runs() -> None:
+    """🔴 `#695` P4 — Python 조각도 서버·프로그램·테스트를 돌리지 않는다(UE 빌드 금지와 같은 문장)."""
+    for s in ("do not start servers", "run the program or run tests", "Do not run UE5 builds"):
+        check(f"지시문이 말한다: {s}", s in R.INSTRUCTION, R.INSTRUCTION[:80])
+
+
 def test_session1_instruction_matches() -> None:
     """🔴 **배달물의 지시문이 마스터와 같은 글자인가.** 주석으로만 적혀 있던 계약을 잰다.
 
@@ -655,6 +661,7 @@ def main() -> int:
                test_json_usage,
                test_codex_mcp_approval,
                test_dispatch_is_not_a_consent_prompt,
+               test_instruction_forbids_python_runs,
                test_session1_instruction_matches,
                test_session1_master_logs,
                test_session1_launcher_logs,

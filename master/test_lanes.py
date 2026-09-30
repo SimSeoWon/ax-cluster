@@ -161,6 +161,23 @@ def test_unknown_paths_are_ignored() -> None:
     check("빠진 것 없다", not miss)
 
 
+def test_python_pieces_get_the_python_instruction():
+    """🔴 `#695` P4 — `.py` 조각은 Python 판 지시문, 섞이면 거절."""
+    py = LN.build_prompt({"webui/a.py": "# [DOC] x\ndef f():\n    # [PSEUDO] y\n    raise NotImplementedError\n"})
+    check("`.py` 조각은 Python 지시문", py.startswith(LN.INSTRUCTION_PY), py[:60])
+    check("  UE 문구가 섞이지 않는다", "UE5" not in py.split("Files to implement")[0])
+    for rule in ("raise NotImplementedError", "frozen contract", "Do NOT start servers",
+                 "third-party imports"):
+        check(f"  층1 이 재는 계약 · 금지를 말한다: {rule}", rule in LN.INSTRUCTION_PY)
+    ue = LN.build_prompt({"Source/A/Foo.h": "x", "Source/A/Foo.cpp": "y"})
+    check("[중요] UE 조각은 종전 지시문 그대로", ue.startswith(LN.INSTRUCTION))
+    try:
+        LN.build_prompt({"webui/a.py": "x", "src/b.cpp": "y"})
+        check("🔴 섞인 조각은 거절한다", False, "예외가 안 났다")
+    except LN.LaneError as e:
+        check("🔴 섞인 조각은 거절한다", "섞였다" in str(e), str(e))
+
+
 def main() -> int:
     for fn in (test_default_order_is_codex_then_agy_then_local,
                test_prompt_names_every_file,
@@ -169,7 +186,8 @@ def main() -> int:
                test_missing_file_is_not_success,
                test_write_failure_falls_through,
                test_markdown_fence_is_stripped,
-               test_unknown_paths_are_ignored):
+               test_unknown_paths_are_ignored,
+               test_python_pieces_get_the_python_instruction):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_lanes: {PASS}/{total} 통과")

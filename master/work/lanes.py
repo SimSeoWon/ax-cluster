@@ -88,6 +88,42 @@ INSTRUCTION = (
 )
 
 
+# 🔴 `#695` P4 — `kind: code` 의 `.py` 조각. [중요] 규칙은 **층1 Python 판이 실제로 재는 것**과
+#    맞춘다(`pyskel`): 마커 줄 삭제 · 스텁(`raise NotImplementedError`) 교체 · 이름/인자/반환 동결.
+#    [중요] 금지를 명시한다 — 「할 수 있다」 정보는 「해라」로 읽힌다(2026-09-13 워커가 스스로
+#    UE5 빌드를 돌렸다). Kimodo 는 서버(WebUI)를 띄우는 프로젝트라 그 금지가 특히 필요하다.
+INSTRUCTION_PY = (
+    "You are implementing Python from a skeleton. The skeleton comments are your spec.\n"
+    "\n"
+    "RULES:\n"
+    "- Fill in every '# [PSEUDO]' marker and DELETE that marker line.\n"
+    "- Replace the 'raise NotImplementedError' placeholder of every function you fill.\n"
+    "- Keep '# [DOC]' comments verbatim.\n"
+    "- Do NOT rename or re-sign any function, method or class: names, parameters, defaults and\n"
+    "  return annotations are a frozen contract. You MAY add new private helper functions.\n"
+    "- Do NOT add new third-party imports. Use the standard library or modules the file\n"
+    "  already imports.\n"
+    "- Do NOT start servers, run the program, or run tests.\n"
+    "- Output EVERY file listed below, each block starting with a line: === FILE: <path> ===\n"
+    "- Output nothing else. No prose, no markdown fences.\n"
+)
+
+
+def instruction_for(files) -> str:
+    """조각 파일로 지시문을 고른다. **전부 `.py` 면 Python 판**, 하나도 없으면 UE 판.
+
+    [중요] 섞이면 거절한다 — 한 지시문이 두 언어의 규칙을 동시에 말하면 모델이 둘 다 어긴다.
+    `kind: code` 는 등재에서 `.py` 밖을 막으므로(`profile.target_violations`) 정상 경로에선
+    섞이지 않는다. 여기는 그물이다.
+    """
+    names = [str(f).lower() for f in (files or [])]
+    py = [n for n in names if n.endswith(".py")]
+    if py and len(py) != len(names):
+        raise LaneError("`.py` 와 다른 언어가 한 조각에 섞였다 — 지시문을 고를 수 없다: "
+                        + ", ".join(sorted(files)))
+    return INSTRUCTION_PY if py else INSTRUCTION
+
+
 class LaneError(RuntimeError):
     """레인 자체가 불가능하다 — 다음 레인으로 넘긴다."""
 
@@ -132,7 +168,7 @@ def build_prompt(skeleton: dict) -> str:
     """`{경로: 골조 본문}` → 프롬프트. [중요] 골조 주석이 지시서다(매니페스트 없음)."""
     if not skeleton:
         raise LaneError("골조가 비었다 — 무엇을 채울지 모른다")
-    parts = [INSTRUCTION, "Files to implement: " + ", ".join(sorted(skeleton)), ""]
+    parts = [instruction_for(skeleton), "Files to implement: " + ", ".join(sorted(skeleton)), ""]
     for rel in sorted(skeleton):
         parts += [f"=== FILE: {rel} ===", skeleton[rel], ""]
     return "\n".join(parts)
