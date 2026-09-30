@@ -184,13 +184,81 @@ def test_not_run_is_not_a_pass() -> None:
     check("요약이 '미확인' 이라고 말한다", "미확인" in g.summary, g.summary)
 
 
+def _kimodo_py_skeleton():
+    """Kimodo 실물 `webui/pose_ops.py` 의 첫 최상위 함수를 D2 모양 골조로 바꾼다.
+
+    실물이 없으면(다른 기계) 같은 모양의 작은 파일로 대신한다 — 판정 규칙은 같다.
+    """
+    import ast
+    src_p = Path(__file__).resolve().parents[1] / "KimodoMotion_WebUI/repo/webui/pose_ops.py"
+    if src_p.is_file():
+        src = src_p.read_text(encoding="utf-8")
+    else:
+        src = "def joint_names():\n    return ['a']\n"
+    tree = ast.parse(src)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef))
+    lines = src.splitlines()
+    head = lines[:fn.body[0].lineno - 1]
+    tail = lines[fn.end_lineno:]
+    ind = " " * (fn.col_offset + 4)
+    body = [f"{ind}# [DOC] 이 함수가 무엇을 왜 하는가 — 계약은 여기 남는다",
+            f"{ind}# [PSEUDO] 여기를 채워라",
+            f"{ind}raise NotImplementedError"]
+    return "\n".join(head + body + tail) + "\n", fn.name
+
+
+def test_python_skeleton_gate():
+    print("\n🔴 `kind: code` — `.py` 골조 게이트 (`#695` P2)")
+    text, name = _kimodo_py_skeleton()
+
+    @dataclass
+    class _Sk:
+        stem: str
+        files: dict
+        ok: bool = False          # [중요] Python 골조는 동결 헤더가 없다 — `ok` 에 기대지 않는다
+
+    good = _Sk("pose_ops", {"webui/pose_ops.py": text})
+    g = G.run_python(good)
+    check(f"실물 골조({name})는 통과한다", g.ok, g.summary)
+    check("  mode 는 py_compile", g.mode == G.MODE_PY, g.mode)
+    check("  판정을 실제로 냈다 (checked)", g.checked)
+    g2 = G.run(None, good, tree="", project="x")
+    check("[중요] run() 이 `.py` 를 Python 판으로 보낸다 (SSH·UHT 없이)", g2.ok and g2.mode == G.MODE_PY,
+          g2.summary)
+
+    broken = _Sk("b", {"webui/pose_ops.py": text.replace("raise NotImplementedError", "raise (", 1)})
+    g = G.run_python(broken)
+    check("🔴 구문이 깨진 골조는 막는다", not g.ok and g.checked, g.summary)
+    check("  사유에 파일:행 이 있다", "webui/pose_ops.py:" in (g.build.raw_tail if g.build else ""),
+          g.build.raw_tail if g.build else "")
+
+    for label, files, want in (
+        ("`.py` 가 아닌 파일이 섞이면 막는다", {"a.py": text, "b.cpp": "// [DOC] x"}, "`.py` 가 아닌"),
+        ("`# [PSEUDO]` 0개면 완성 파일이다", {"a.py": text.replace("# [PSEUDO] 여기를 채워라", "")}, "[PSEUDO]"),
+        ("`[DOC]` 0개면 계약이 안 남는다", {"a.py": text.replace("[DOC]", "설명")}, "[DOC]"),
+        ("`[FEEDBACK]` 이 있으면 막는다", {"a.py": text + "# [FEEDBACK] 고쳐라\n"}, "[FEEDBACK]"),
+        ("파일이 없으면 막는다", {}, "파일이 없다"),
+    ):
+        g = G.run_python(_Sk("x", files))
+        check(label, not g.ok and want in g.error, g.error[:120])
+    check("  문장 중간의 [PSEUDO] 는 마커가 아니다 (층1 과 같은 모양)",
+          not G.run_python(_Sk("x", {"a.py": "# [DOC] 아래 [PSEUDO] 참고\nx = 1\n"})).ok)
+
+    import os
+    before = set(os.listdir(Path(__file__).resolve().parent))
+    G.run_python(good)
+    check("[중요] 바이트코드를 쓰지 않는다 (트리를 안 더럽힌다)",
+          set(os.listdir(Path(__file__).resolve().parent)) == before)
+
+
 def main() -> int:
     for fn in (test_build_bat_is_derived_not_guessed, test_target_name,
                test_place_writes_into_the_isolated_tree,
                test_gate_blocks_before_building_when_not_a_skeleton,
                test_gate_refuses_feedback_in_a_skeleton,
                test_gate_is_fail_closed_on_every_uncertainty,
-               test_gate_passes_only_on_a_real_verdict, test_not_run_is_not_a_pass):
+               test_gate_passes_only_on_a_real_verdict, test_not_run_is_not_a_pass,
+               test_python_skeleton_gate):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_skeleton_gate: {PASS}/{total} 통과")

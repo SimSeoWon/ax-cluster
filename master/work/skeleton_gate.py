@@ -139,6 +139,97 @@ def place(facts, tree: str, files: dict, *, writer=None) -> list:
 
 MODE_UHT = "uht"        # [중요] 기본 — 헤더 계약만 본다 (`#317` 미결 ② 결정)
 MODE_FULL = "full"      # 링크까지 — [주의] 골조 단계에는 성립하지 않는다 (아래 참조)
+MODE_PY = "py_compile"  # `#695` — `kind: code` 의 `.py` 골조. UHT 자리의 Python 판
+
+# `.py` 골조의 채울 자리 — **주석의 시작**만 센다(`layer1._VOLATILE` 과 같은 모양, `#` 판).
+#    [주의] 리터럴이다 — `skeleton.py` 를 임포트하지 않는 이유는 `DOC_TAG` 와 같다(배달본).
+_PY_PSEUDO = re.compile(r"(?m)^[ \t]*#[ \t]*\[PSEUDO(?::\d+)?\]")
+
+
+def _cheap_checks(files: dict) -> str:
+    """UHT 든 `py_compile` 이든 **판정 전에** 보는 것. 사유가 있으면 그 문장, 없으면 빈 값.
+
+    [중요] 두 판이 같은 검사를 쓴다 — 갈라 두면 한쪽만 고치는 사고가 난다(`_prepare_specs` 와
+    같은 이유). 사유 문장은 종전 그대로다.
+    """
+    if not _has_doc(files):
+        return ("계약이 보존 태그로 남지 않았다 (`[DOC]` 0개) — 빌드 전에 막는다. "
+                "「무엇을 왜」는 `[DOC]`, 「여기를 채워라」만 `[PSEUDO]` "
+                "(사용자 결정 2026-08-27) — `[PSEUDO]` 는 구현하면 지워지므로 "
+                "계약을 거기 두면 `main` 에 남지 않는다")
+    _fb = sorted(p for p, t in files.items() if "[FEEDBACK]" in (t or ""))
+    if _fb:
+        return ("골조에 `[FEEDBACK]` 이 있다 — 빌드 전에 막는다: "
+                + ", ".join(_fb[:5])
+                + ". 「여기를 고쳐라」도 **`[PSEUDO]` 로 쓴다**. `[FEEDBACK]` 은 "
+                  "⑴ 층1 이 소스 잔재를 위반으로 잡고 ⑵ 사전 훑기가 그것을 「할 일」로 "
+                  "세지 않아 조각이 조용히 파견되지 않는다")
+    return ""
+
+
+def is_python_skeleton(files: dict) -> bool:
+    """골조 파일이 **전부** `.py` 인가. 섞이면 False — 호출자가 거절한다(`run_python`)."""
+    return bool(files) and all(str(p).lower().endswith(".py") for p in files)
+
+
+def run_python(skeleton) -> GateResult:
+    """🔴 `kind: code` 의 골조 게이트 — **UHT 자리의 Python 판** (`#695` P2 · 사용자 결정 D2).
+
+    원전 Step 6 은 「등재 전에 골조를 세운다」이고 그 판정은 **컴파일러**다. Python 에서 그
+    자리는 `compile()` 이다 — 구문이 깨진 골조는 워커 N명을 전부 헛일로 만든다(UE 와 같은 값).
+
+    보는 것:
+        ① 파일이 **전부** `.py` 인가 (섞이면 이 판으로 못 잰다 — 막는다)
+        ② `[DOC]` ≥1 · `[FEEDBACK]` 0 — UHT 판과 **같은** 싼 검사(`_cheap_checks`)
+        ③ `# [PSEUDO]` ≥1 — 0 이면 골조가 아니라 완성 파일이다
+        ④ 파일마다 `compile(…, "exec")` — **바이트코드를 쓰지 않는다**(트리를 안 더럽힌다)
+
+    [중요] **본문 모양은 보지 않는다** — D2 의 `raise NotImplementedError` 는 **권장 모양**이지
+    게이트가 아니다. 2026-09-03 에 「골조에 본문이 있다」를 파견 전에 막는 계층을 만들었다가
+    정상 골조 5조각을 차단하고 걷었다(원전에 없던 계층). 안 채운 자리는 **구현 뒤** 층1 이 잡는다.
+    [중요] **LLM 0 · 네트워크 0 · 표준 라이브러리만** — `.33` 에서도, 마스터에서도 같은 판정이다.
+    """
+    import time
+
+    g = GateResult(stem=getattr(skeleton, "stem", "?"), mode=MODE_PY)
+    files = getattr(skeleton, "files", None) or {}
+    if not files:
+        g.error = "골조에 파일이 없다 — 세울 것이 없다"
+        return g
+    if not is_python_skeleton(files):
+        other = sorted(p for p in files if not str(p).lower().endswith(".py"))
+        g.error = (f"`.py` 가 아닌 파일이 섞였다 — 이 판(py_compile)으로 못 잰다: "
+                   f"{', '.join(other[:5])}")
+        return g
+    why = _cheap_checks(files)
+    if why:
+        g.error = why
+        return g
+    n = sum(len(_PY_PSEUDO.findall(t or "")) for t in files.values())
+    if n == 0:
+        g.error = ("`# [PSEUDO]` 가 0개다 — 골조가 아니라 완성 파일이다. "
+                   "채울 자리마다 `# [PSEUDO] …` 주석을 둔다")
+        return g
+    t0 = time.monotonic()
+    g.checked = True
+    errs: list = []
+    for rel, text in sorted(files.items()):
+        try:
+            compile(text or "", str(rel), "exec", dont_inherit=True)
+        except SyntaxError as e:
+            errs.append(f"{rel}:{e.lineno}: {e.msg}")
+        except ValueError as e:                              # NUL 바이트 등
+            errs.append(f"{rel}: {e}")
+    secs = time.monotonic() - t0
+    g.seconds = secs
+    if errs:
+        g.build = BuildResult(passed=False, failure=None, result="Failed",
+                              detail="SyntaxError", seconds=secs,
+                              raw_tail="\n".join(errs[:15]))
+    else:
+        g.build = BuildResult(passed=True, failure=None, result="Succeeded", seconds=secs,
+                              raw_tail=f"py_compile {len(files)} 파일 · [PSEUDO] {n}")
+    return g
 
 
 def run(facts, skeleton, *, tree: str, project: str, uproject: str = "",
@@ -167,8 +258,12 @@ def run(facts, skeleton, *, tree: str, project: str, uproject: str = "",
     """
     if mode not in (MODE_UHT, MODE_FULL):
         raise ValueError(f"mode 는 {MODE_UHT}|{MODE_FULL} 여야 한다: {mode!r}")
-    g = GateResult(stem=getattr(skeleton, "stem", "?"))
     files = getattr(skeleton, "files", None) or {}
+    # `#695` — `.py` 가 하나라도 있으면 Python 판이다. 전부가 아니면 거기서 거절된다.
+    #    [주의] UE 골조에는 `.py` 가 없으므로 종전 경로는 그대로다.
+    if any(str(p).lower().endswith(".py") for p in files):
+        return run_python(skeleton)
+    g = GateResult(stem=getattr(skeleton, "stem", "?"))
     if not files:
         g.error = "골조에 파일이 없다 — 세울 것이 없다"
         return g
@@ -185,13 +280,6 @@ def run(facts, skeleton, *, tree: str, project: str, uproject: str = "",
     #    없어서** 손으로 쓴 골조가 UHT 빌드만 통과하고 지나갔다.
     # [주의] 세는 것은 `[DOC]` 뿐이다 — `[STATE]`/`[BIND]`/`[REPLICATED]` 는 성질 표시라
     #    조각에 따라 없는 게 정상이다. 「계약이 하나도 보존되지 않았다」만 결정적으로 잡는다.
-    if not _has_doc(files):
-        g.error = ("계약이 보존 태그로 남지 않았다 (`[DOC]` 0개) — 빌드 전에 막는다. "
-                   "「무엇을 왜」는 `[DOC]`, 「여기를 채워라」만 `[PSEUDO]` "
-                   "(사용자 결정 2026-08-27) — `[PSEUDO]` 는 구현하면 지워지므로 "
-                   "계약을 거기 두면 `main` 에 남지 않는다")
-        return g
-
     # 🔴 [중요] **`[FEEDBACK]` 은 골조에 쓸 수 없다** (2026-09-05, `.33` 이 라운드 2 골조에
     #    쓰려다 잡혔다). 두 곳에서 부딪힌다:
     #      ① 층1(`layer1.py:96`)이 **소스에 남은 `[FEEDBACK]` 을 위반**으로 잡는다 —
@@ -199,13 +287,10 @@ def run(facts, skeleton, *, tree: str, project: str, uproject: str = "",
     #      ② 사전 훑기(`decompose.pseudo_in_skeleton`)는 **`[PSEUDO]` 개수로만** 「할 일
     #         있음」을 판정한다 — `[FEEDBACK]` 만 든 파일은 *"골조가 완성본"* 으로 걷힌다
     #    즉 **할 일이 있는데 조용히 파견되지 않는다.** 기존 코드 수정 지시도 `[PSEUDO]` 로 쓴다.
-    _fb = sorted(p for p, t in files.items() if "[FEEDBACK]" in (t or ""))
-    if _fb:
-        g.error = ("골조에 `[FEEDBACK]` 이 있다 — 빌드 전에 막는다: "
-                   + ", ".join(_fb[:5])
-                   + ". 「여기를 고쳐라」도 **`[PSEUDO]` 로 쓴다**. `[FEEDBACK]` 은 "
-                     "⑴ 층1 이 소스 잔재를 위반으로 잡고 ⑵ 사전 훑기가 그것을 「할 일」로 "
-                     "세지 않아 조각이 조용히 파견되지 않는다")
+    #    [중요] `[DOC]` 0 과 함께 `_cheap_checks` 로 옮겼다(`#695`) — Python 판도 같은 검사를 쓴다.
+    why = _cheap_checks(files)
+    if why:
+        g.error = why
         return g
 
     try:

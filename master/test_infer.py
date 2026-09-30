@@ -742,8 +742,111 @@ def test_unreadable_skeleton_still_dispatches() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_py_skeleton_gate_blocks_before_the_claim() -> None:
+    """🔴 `#695` P2 ⓑ — 깨진 `.py` 골조는 **claim 앞에서** 종결된다(할 일 없음이 아니다)."""
+    from master.work import decompose as DC
+    paths, root = tmp_paths()
+    saved = DC.pseudo_in_skeleton, DC.python_skeleton_gate
+    DC.pseudo_in_skeleton = lambda p, c, f: (2, "")
+    DC.python_skeleton_gate = lambda p, c, f: ((True, False, "구문 오류 — webui/bar.py:3")
+                                               if any(x.endswith(".py") for x in f)
+                                               else (False, True, ""))
+    calls: list = []
+    try:
+        q = FakeQueue([_t("t1", epoch=1),
+                       _t("t2", epoch=1, target_file="webui/bar.py", header_file="")])
+        _run(paths, q, runner_calls=calls)
+        ids = [tid for tid, _ in q.cancelled]
+        check("🔴 깨진 .py 조각만 종결됐다", ids == ["t2"], str(q.cancelled))
+        pay = dict(q.cancelled[0][1]) if q.cancelled else {}
+        check("[중요] 「할 일 없음」이 아니다 (no_work=False)", pay.get("no_work") is False, str(pay))
+        check("  사유가 게이트와 파일을 말한다",
+              "골조 게이트" in str(pay.get("reason")) and "bar.py" in str(pay.get("reason")), str(pay))
+        check("🔴 워커에 건네지지 않았다 (claim 앞)", q.handed == ["t1"], str(q.handed))
+        check("  UE 조각은 그대로 파견된다", len(calls) == 1, str(calls))
+    finally:
+        DC.pseudo_in_skeleton, DC.python_skeleton_gate = saved
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_py_skeleton_gate_unreadable_is_not_a_block() -> None:
+    """[주의] 「못 봤다」는 「깨졌다」가 아니다 — `pseudo_in_skeleton` 과 같은 규약(로그만)."""
+    from master.work import decompose as DC
+    paths, root = tmp_paths()
+    saved = DC.pseudo_in_skeleton, DC.python_skeleton_gate
+    DC.pseudo_in_skeleton = lambda p, c, f: (2, "")
+    DC.python_skeleton_gate = lambda p, c, f: (True, True, "골조를 못 읽었다")
+    calls: list = []
+    try:
+        q = FakeQueue([_t("t2", epoch=1, target_file="webui/bar.py", header_file="")])
+        _run(paths, q, runner_calls=calls)
+        check("못 읽었으면 걷지 않는다", not q.cancelled, str(q.cancelled))
+        check("  파견된다", len(calls) == 1, str(calls))
+    finally:
+        DC.pseudo_in_skeleton, DC.python_skeleton_gate = saved
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_py_skeleton_gate_net_after_claim() -> None:
+    """🔴 그물 — 사전 훑기가 못 봤어도(`못 읽었다`) claim 뒤에서 깨진 골조를 잡는다."""
+    from master.work import decompose as DC
+    paths, root = tmp_paths()
+    saved = DC.pseudo_in_skeleton, DC.python_skeleton_gate
+    seen = {"n": 0}
+
+    def gate(p, c, f):
+        seen["n"] += 1
+        return (True, True, "못 읽었다") if seen["n"] == 1 else (True, False, "구문 오류")
+
+    DC.pseudo_in_skeleton = lambda p, c, f: (2, "")
+    DC.python_skeleton_gate = gate
+    calls: list = []
+    try:
+        q = FakeQueue([_t("t2", epoch=1, target_file="webui/bar.py", header_file="")])
+        hand = _run(paths, q, runner_calls=calls)
+        check("🔴 그물이 잡으면 워커 추론을 사지 않는다", len(calls) == 0, str(calls))
+        check("  큐에 사유와 함께 종결했다",
+              [tid for tid, _ in q.cancelled] == ["t2"]
+              and q.cancelled[0][1].get("no_work") is False, str(q.cancelled))
+    finally:
+        DC.pseudo_in_skeleton, DC.python_skeleton_gate = saved
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_python_skeleton_gate_reads_the_base_commit() -> None:
+    """`decompose.python_skeleton_gate` — 기준 커밋에서 읽어 `run_python` 에 넘긴다."""
+    from master.work import declarations as D, decompose as DC
+    saved = D.ensure_commit, D._mirror_git
+    good = "# [DOC] 무엇을 왜\ndef f():\n    # [PSEUDO] 채워라\n    raise NotImplementedError\n"
+    store = {"C1:webui/a.py": good, "C1:webui/b.py": "# [DOC] x\ndef g(:\n    # [PSEUDO] y\n"}
+
+    def mg(paths, *args, check=True):
+        key = args[-1]
+        if key not in store:
+            raise RuntimeError("없다")
+        return store[key]
+
+    D.ensure_commit, D._mirror_git = (lambda p, c: None), mg
+    try:
+        check("  .py 가 없으면 대상이 아니다",
+              DC.python_skeleton_gate(None, "C1", ["Source/A.cpp"]) == (False, True, ""))
+        check("  정상 골조는 통과", DC.python_skeleton_gate(None, "C1", ["webui/a.py"]) == (True, True, ""))
+        ap, ok, why = DC.python_skeleton_gate(None, "C1", ["webui/b.py"])
+        check("🔴 구문이 깨지면 차단 + 파일:행", ap and not ok and "webui/b.py:" in why, why)
+        ap, ok, why = DC.python_skeleton_gate(None, "C1", ["webui/new.py"])
+        check("  기준 커밋에 없으면 「못 돌렸다」(차단 아님)", ap and ok and "없다" in why, why)
+        ap, ok, why = DC.python_skeleton_gate(None, "", ["webui/a.py"])
+        check("  기준 커밋을 모르면 「못 읽는다」(차단 아님)", ap and ok and why, why)
+    finally:
+        D.ensure_commit, D._mirror_git = saved
+
+
 def main() -> int:
     for fn in (
+               test_py_skeleton_gate_blocks_before_the_claim,
+               test_py_skeleton_gate_unreadable_is_not_a_block,
+               test_py_skeleton_gate_net_after_claim,
+               test_python_skeleton_gate_reads_the_base_commit,
                test_no_target_list_is_blocked_not_passed,
                test_marker_and_file_must_both_hold,
                test_missing_file_is_not_partial_success,

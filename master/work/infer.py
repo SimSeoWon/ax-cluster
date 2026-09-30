@@ -578,6 +578,26 @@ def prescreen_nowork(paths, work_id: str, *, api=runner._api) -> list:
         if n != 0:
             if why:
                 _log(f"[nowork] [주의] {tid} `[PSEUDO]` 를 못 셌다 — {why} (그대로 파견한다)")
+            # 🔴 `#695` P2 ⓑ — `.py` 골조는 여기서 **코드가** 골조 게이트를 돌린다.
+            #    [중요] 깨졌으면 claim 전에 종결한다(`no_work=False` — 「할 일 없음」이 아니다).
+            #    라운드가 terminal 이 되면 완료 공지가 사유를 싣고 `.33` 으로 간다.
+            try:
+                _ap, _ok, _gw = _DC.python_skeleton_gate(paths, base, want)
+            except Exception as e:                           # noqa: BLE001
+                _ap, _ok, _gw = True, True, f"{type(e).__name__}: {e}"
+            if _ap and _ok and _gw:
+                _log(f"[skelgate] [주의] {tid} 골조 게이트를 못 돌렸다 — {_gw} (그대로 파견한다)")
+            elif _ap and _ok:
+                _log(f"[skelgate] {tid} 통과 · {', '.join(w for w in want if w.endswith('.py'))}")
+            elif _ap:
+                _reason = f"골조 게이트(Python) 차단 — {_gw} ({', '.join(want)})"
+                _log(f"[skelgate] {tid} 파견하지 않는다 (claim 전) — {_reason}")
+                try:
+                    runner.cancel(tid, reason=_reason, no_work=False, api=api)
+                    out.append((tid, list(want), _reason))
+                except Exception as e:                       # noqa: BLE001
+                    # [중요] 못 걷었으면 **뒤의 그물**(`dispatch_task`)이 한 번 더 잡는다
+                    _log(f"[skelgate] [중요] {tid} 종결 기록 실패 — {type(e).__name__}: {e}")
             continue
         reason = ("골조에 `[PSEUDO]` 가 0개다 — 이미 완성된 파일이라 채울 본문이 없다 "
                   f"({', '.join(want)})")
@@ -715,6 +735,27 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
             return res
         if _why2:
             _log(f"[nowork] [주의] {task_id} `[PSEUDO]` 를 못 셌다 — {_why2} (그대로 파견한다)")
+        # 🔴 `#695` P2 ⓑ 의 **그물** — 정상 경로는 `prescreen_nowork` 가 claim 앞에서 잡는다.
+        #    여기까지 왔다면 사전 훑기가 기준 커밋을 못 봤거나 사람이 손으로 claim 한 것이다.
+        _ap, _ok, _gw = _DC2.python_skeleton_gate(paths, base, want)
+        if _ap and not _ok:
+            _reason = f"골조 게이트(Python) 차단 — {_gw} ({', '.join(want)})"
+            _log(f"[skelgate] {task_id} 파견하지 않는다 (claim 뒤 그물) — {_reason}")
+            res = Response(task_id=task_id, worker="(파견 안 함)", want=list(want),
+                           status=runner.BLOCKED, base_commit=base, epoch=task.get("epoch"),
+                           subbranch=sub_name, subbranch_error=sub_err)
+            res.files = {w: "" for w in want}
+            res.notes.append(f"[중요] {_reason} — 골조를 고쳐 개선요청으로 다시 돌린다. 추론 비용 0")
+            try:
+                runner.cancel(task_id, reason=_reason, no_work=False, api=api)
+                _log(f"[skelgate] {task_id} 조각 종결 — 큐에 사유 기록")
+            except Exception as e:                           # noqa: BLE001
+                res.notes.append(f"[중요] 종결을 큐에 못 알렸다 — {type(e).__name__}: {e}")
+                _log(f"[skelgate] [중요] {task_id} 큐 기록 실패 — {e}")
+            spool(paths, res, work_id=work_id, order=order)
+            return res
+        if _ap and _gw:
+            _log(f"[skelgate] [주의] {task_id} 골조 게이트를 못 돌렸다 — {_gw} (그대로 파견한다)")
     except Exception as e:                                   # noqa: BLE001
         _log(f"[nowork] [주의] {task_id} 마커 계수 예외 — {type(e).__name__}: {e} (파견한다)")
 

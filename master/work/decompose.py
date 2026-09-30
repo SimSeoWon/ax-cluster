@@ -383,3 +383,46 @@ def pseudo_in_skeleton(paths, commit: str, files: list) -> tuple:
         return n, ""
     except Exception as e:                                   # noqa: BLE001
         return -1, f"골조를 못 읽었다 — {type(e).__name__}: {e}"
+
+
+def python_skeleton_gate(paths, commit: str, files: list) -> tuple:
+    """`(적용됨, 통과, 사유)` — 그 조각의 `.py` 골조에 **골조 게이트 Python 판**을 돌린다 (`#695` P2 ⓑ).
+
+    🔴 [중요] **UE 의 UHT 게이트는 `.33` 의 절차가 지킨다 — Python 판은 여기서 코드가 지킨다**
+    (사용자 결정 2026-09-30 「A+B」). 원전 Step 6 의 목적 그대로다: *깨진 골조 위에서 워커 N명이
+    일하지 않게* 한다. 판정 함수는 `.33` 이 push 전에 부르는 것(ⓐ)과 **같은** `run_python` 이다 —
+    새 검사 층이 아니다.
+
+    - `.py` 가 하나도 없으면 `(False, True, "")` — 이 게이트의 대상이 아니다(UE 조각은 종전 그대로)
+    - 골조를 **못 읽으면** `(True, True, 사유)` — [주의] 「깨졌다」와 「못 봤다」는 다르다.
+      `pseudo_in_skeleton` 과 같은 규약으로 막지 않고, 호출자가 사유를 로그에 남긴다
+    - 없는 파일은 건너뛴다(신규 파일) — 그 조각의 할 일 유무는 `pseudo_in_skeleton` 이 판정한다
+    """
+    py = [str(f).replace("\\", "/") for f in (files or []) if str(f).lower().endswith(".py")]
+    if not py:
+        return False, True, ""
+    if not (commit or "").strip():
+        return True, True, "기준 커밋이 없다 — 골조를 못 읽는다"
+    try:
+        from . import declarations as D
+        from .skeleton_gate import run_python
+        D.ensure_commit(paths, commit)
+        got: dict = {}
+        for rel in py:
+            try:
+                got[rel] = D._mirror_git(paths, "show", f"{commit}:{rel}")
+            except Exception:                                # noqa: BLE001
+                continue                                     # 신규 파일 — 골조가 아직 없다
+        if not got:
+            return True, True, "골조 파일이 기준 커밋에 없다 — 게이트를 못 돌렸다"
+
+        class _Sk:
+            stem, files = (py[0], got)
+
+        g = run_python(_Sk)
+        if g.ok:
+            return True, True, ""
+        tail = (g.build.raw_tail if g.build is not None else "") or ""
+        return True, False, (g.error or f"구문 오류 — {tail.splitlines()[0] if tail else '판정 실패'}")
+    except Exception as e:                                   # noqa: BLE001
+        return True, True, f"골조를 못 읽었다 — {type(e).__name__}: {e}"
