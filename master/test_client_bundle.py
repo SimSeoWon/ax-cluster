@@ -1106,10 +1106,13 @@ def test_hook_registration() -> None:
     got = _json.loads(bundle.merge_settings_json("", r))
     ev = got["hooks"]["PostToolUse"]
     check("[중요] 빈 settings 에 관리 훅이 등록된다", len(ev) == 2, str(got))
-    completion = [e for e in ev if "register_work" in e.get("matcher", "")]
-    check("등록·개선요청 뒤 완료 훅이 세션을 깨운다",
+    completion = [e for e in ev if any("work_completion.py" in h.get("command", "")
+                                      for h in e.get("hooks", []))]
+    check("등록·개선요청 및 실패 후 감시 재개 훅이 세션을 깨운다",
           len(completion) == 1 and completion[0]["hooks"][0].get("asyncRewake") is True,
           str(completion))
+    check("실패 고지 뒤 일반 도구 호출에도 감시가 재개된다",
+          len(completion) == 1 and completion[0].get("matcher") == "", str(completion))
     # 🔴 [중요] **쓰는 쪽과 검사하는 쪽이 같은 dict 를 만든다** — `check` 는 정확 일치로 비교하는데
     #    조립이 두 자리에 있었고, `asyncRewake` 가 붙었을 때 쓰는 쪽만 갱신돼 **정상 배달을
     #    「훅 미등록」으로 답했다**(실측 2026-09-10 `.33`). 이 못이 그 어긋남을 잡는다.

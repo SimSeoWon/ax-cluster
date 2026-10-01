@@ -6,12 +6,13 @@
 
 - **갱신 시각**: 2026-10-01 KST
 - **지휘 도구 / 세션**: Codex
-- **상태**: 문서·Redmine 최신화 완료. 코드·배포 작업도 완료, 문서는 아직 미커밋
+- **상태**: `#700` 실패 고지 수정·회귀 검증 완료. 사용자 커밋·push·배포 승인 후 진행.
+  배포 결과와 실제 수신 검증의 최신 상태는 Redmine `#700`에서 확인
 - **관련 일감**: `#695`(비UE 분산 작업) · `#698`(Windows Codex ACL, 구현 완료) ·
   `#699`(프로젝트 로컬 Codex 스킬·MCP, 구현 완료) · `#700`(실패 통보 누락, 열림) ·
   `#701`(실패 work 자동 종결 누락, 열림)
-- **저장소·브랜치·HEAD**: `~/ax-cluster` `main` `63ea616`; `origin/main`과 일치.
-  이 인계서 및 관련 문서는 그 뒤의 미커밋 변경
+- **저장소·브랜치**: `~/ax-cluster` `main`. `#700` 수정 기준 HEAD는 `b01ea6e`.
+  수정 커밋과 배포 기록은 Redmine `#700`, 현재 HEAD·dirty는 아래 명령으로 직접 대조
 - **실행 중인 분산 work**: 없음. Kimodo 실증 work
   `20260930_2348_api_anatomy_report_post_apiposesanatomy_44e1a015`는 사용자 지시로
   `ready_for_review → cancelled`; 하위 태스크 2개의 `verified` 이력은 보존
@@ -61,7 +62,10 @@ KimodoMotion_WebUI의 등록 작업장 9개 조합을 배달·검사했고 전�
 
 ## 2. 열려 있는 결함과 다음 작업
 
-1. `#700` — 워커 실행·스킬 실패를 요청자 `.33`에 확실히 통보하는 경로를 재현하고 수정한다.
+1. `#700` — 요청자 로그에서 `needs_revision` 관측 뒤 고지 누락을 확인했다. 로컬 수정은
+   조각 실패 즉시 고지·실패 사유 필드·최종 완료 감시 재개를 포함한다. 완료 훅 13개와 배달
+   검사 394/394, 프로젝트 검사 63/63 통과. 사용자 커밋·push·배포 승인 후 진행 중이며
+   최신 결과는 Redmine `#700`으로 대조한다. 실제 `.33` 세션 수신 증거와 훅 발행은 구분한다.
 2. `#701` — 통보 실패나 실행 실패 뒤 상위 work가 비종결로 남지 않도록 terminal 정리 계약을 만든다.
 3. `#695` — 재시도 전에 이전 결과 파일을 지우지 않아 옛 결과를 읽는 결함이 남아 있다.
 4. `#695`의 ⑦ 통합·전진은 이번 실증 work를 취소했으므로 이어서 실행하지 않는다. 새 실증은
@@ -81,13 +85,14 @@ git rev-parse origin/main
 - Redmine `#698`·`#699`는 구현·검증·배포 완료 상태인지 확인한다.
 - `#700`·`#701`은 열린 결함으로 남아 있어야 한다.
 - 큐에서 위 Kimodo work의 `merge_status=cancelled`를 확인한다.
-- 문서 변경은 아직 커밋 전이므로 사용자 승인 없이 커밋·push하지 않는다.
+- 미커밋 변경이 있다면 보존한다. 후속 커밋·push에는 별도 사용자 승인이 필요하다.
 
 ## 4. 관련 근거
 
 - `reports/77-kimodo-followups-and-shadow-skill.md` — 직전 Kimodo 온보딩과 그림자 스킬 조사
 - `reports/78-kimodo-code-worker-skill-and-cleanup.md` — 이번 실증·수정·배포
+- `reports/79-worker-failure-notice.md` — `#700` 원인·로컬 수정·워커 설정 현황
 - `master/client/{bundle.py,spec.py,__main__.py}`
-- `master/client/init/windows.py`
+- `client/init/bootstrap.py`
 - `docs/12-multi-project.md`
 - Redmine `#695`, `#698`, `#699`, `#700`, `#701`

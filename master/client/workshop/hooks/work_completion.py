@@ -100,9 +100,23 @@ def log(cwd, event, work_id, round_no, session, **fields):
 def already_noticed(cwd, session, work_id, round_no):
     p = notice_path(cwd, session, work_id, round_no)
     try:
-        return json.loads(p.read_text(encoding="utf-8")).get("event") == "signal_emitted"
+        value = json.loads(p.read_text(encoding="utf-8"))
+        return value.get("event") == "signal_emitted" and value.get("kind") != "failure"
     except (OSError, ValueError):
         return False
+
+
+def pending_failure_watch(cwd, session):
+    """A failure wakes the session; its next tool call resumes completion monitoring."""
+    folder = Path(cwd) / ".ax" / "work-notices"
+    for path in sorted(folder.glob("*.json")):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            if value.get("kind") == "failure" and value.get("session") == session:
+                return value
+        except (OSError, ValueError):
+            continue
+    return {}
 
 
 def render_result(work, tasks, counts):
@@ -138,9 +152,11 @@ def render_result(work, tasks, counts):
     if work.get("redmine_issue_id"):
         head.append(f"Redmine #{work['redmine_issue_id']}")
     for t in tasks:
-        if t.get("status") == "failed":
-            why = str(t.get("last_feedback") or t.get("verdict_feedback") or "사유 없음")[:500]
-            head.append(f"실패 {t.get('task_id')}: {why}")
+        if t.get("status") in ("failed", "needs_revision"):
+            why = str(t.get("fail_detail") or t.get("last_feedback") or
+                      t.get("verdict_feedback") or t.get("fail_reason") or "사유 없음")[:500]
+            label = "실패" if t.get("status") == "failed" else "실패 후 재시도 대기"
+            head.append(f"{label} {t.get('task_id')}: {why}")
     return "\n".join(head)
 
 
@@ -163,6 +179,10 @@ def wait_for_work(cwd, session, work_id, round_no, get_work, *, timeout=TIMEOUT,
         if already_noticed(cwd, session, work_id, round_no):
             log(cwd, "already_noticed", work_id, round_no, session)
             return ""
+        try:
+            noticed_failures = json.loads(path.read_text(encoding="utf-8")).get("failures", [])
+        except (OSError, ValueError):
+            noticed_failures = []
         log(cwd, "watch_started", work_id, round_no, session)
         deadline, previous = clock() + timeout, None
         while clock() < deadline:
@@ -186,6 +206,20 @@ def wait_for_work(cwd, session, work_id, round_no, get_work, *, timeout=TIMEOUT,
                 message = render_result(work, tasks, counts)
                 write_state(path, {"event": "signal_emitted", "at": time.time()})
                 log(cwd, "signal_emitted", work_id, round_no, session, status=status)
+                return message
+            failures = [[t.get("task_id"), t.get("status"), t.get("attempt_count"),
+                         t.get("fail_detail"), t.get("last_feedback"),
+                         t.get("verdict_feedback"), t.get("fail_reason")]
+                        for t in tasks if t.get("status") in ("failed", "needs_revision")]
+            new_failures = [failure for failure in failures if failure not in noticed_failures]
+            if new_failures:
+                message = render_result(work, tasks, counts)
+                write_state(path, {"event": "signal_emitted", "kind": "failure",
+                                   "at": time.time(), "session": session,
+                                   "work_id": work_id, "round": round_no,
+                                   "failures": noticed_failures + new_failures})
+                log(cwd, "signal_emitted", work_id, round_no, session,
+                    status=status, kind="failure", counts=counts)
                 return message
             sleep(interval)
         raise TimeoutError("완료 대기 시간이 지났습니다. 완료로 처리하지 않았습니다")
@@ -224,7 +258,11 @@ def main():
         #    그래도 찍는다: 침묵과 구분되어야 「훅은 살아 있다」를 로그로 말할 수 있다.
         log(cwd, "not_a_registration", wid or None, None, session,
             tool=tool, ok=result.get("ok"))
-        return 0
+        result = pending_failure_watch(cwd, session)
+        wid = str(result.get("work_id") or "")
+        if not wid:
+            return 0
+        log(cwd, "watch_resumed", wid, result.get("round"), session, tool=tool)
     try:
         round_no = int(result["round"])
     except (KeyError, TypeError, ValueError) as exc:

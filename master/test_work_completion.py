@@ -50,6 +50,54 @@ class CompletionTests(unittest.TestCase):
         msg = W.wait_for_work(self.root, "S", "W", 1, lambda _: self.detail(failed=True))
         self.assertIn("OAuth expired", msg)
 
+    def test_failure_before_round_completion_uses_queue_fields(self):
+        detail = self.detail("in_progress", failed=True)
+        detail["tasks"] = [
+            {"task_id": "broken", "round": 1, "status": "failed",
+             "fail_reason": "BLOCKED", "fail_detail": "Access denied reading SKILL.md"},
+            {"task_id": "busy", "round": 1, "status": "claimed"},
+        ]
+        msg = W.wait_for_work(self.root, "S", "W", 1, lambda _: detail)
+        self.assertIn("Access denied reading SKILL.md", msg)
+        self.assertIn("in_progress", msg)
+        self.assertFalse(W.already_noticed(self.root, "S", "W", 1))
+        self.assertEqual(W.pending_failure_watch(self.root, "S")["work_id"], "W")
+        self.assertFalse(W.pending_failure_watch(self.root, "other"))
+        self.assertIn("Access denied reading SKILL.md", P._line(detail["work"], detail))
+
+    def test_revision_signal_does_not_suppress_completion(self):
+        revision = self.detail("in_progress")
+        revision["tasks"][0].update(status="needs_revision", attempt_count=1)
+        first = W.wait_for_work(self.root, "S", "W", 1, lambda _: revision)
+        self.assertIn("실패 후 재시도 대기", first)
+        self.assertIn("OAuth expired", first)
+        states = iter([revision, self.detail()])
+        final = W.wait_for_work(self.root, "S", "W", 1, lambda _: next(states), sleep=lambda _: None)
+        self.assertIn("ready_for_review", final)
+        self.assertTrue(W.already_noticed(self.root, "S", "W", 1))
+        self.assertFalse(W.pending_failure_watch(self.root, "S"))
+
+    def test_next_tool_call_resumes_after_failure(self):
+        detail = self.detail("in_progress", failed=True)
+        W.wait_for_work(self.root, "S", "W", 1, lambda _: detail)
+        class Client:
+            HTTP_TIMEOUT = 0
+            def queue_api(self, cwd):
+                return None
+            def tool_get_work(self, api, wid):
+                return self_detail
+        self_detail = self.detail()
+        old_load, old_stdin = P._load_client, sys.stdin
+        P._load_client = lambda _: Client()
+        sys.stdin = io.StringIO(json.dumps({"cwd": str(self.root), "session_id": "S",
+                                            "tool_name": "Bash", "tool_response": "reading status"}))
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as output:
+                self.assertEqual(W.main(), 2)
+            self.assertIn("ready_for_review", output.getvalue())
+        finally:
+            P._load_client, sys.stdin = old_load, old_stdin
+
     def test_every_invocation_leaves_a_line(self):
         """🔴 **침묵을 만들지 않는다** — 「훅이 안 붙었다」와 「이 호출은 대상이 아니었다」가
         로그에서 갈려야 한다. 파견 트리거가 그 침묵으로 이틀을 태웠다(2026-08-29~31).

@@ -78,6 +78,11 @@ def _line(w: dict, detail: dict | None) -> str:
             by[t.get("status") or "?"] = by.get(t.get("status") or "?", 0) + 1
         if by:
             out += "\n    태스크 " + " · ".join(f"{k} {v}" for k, v in sorted(by.items()))
+        for task in tasks:
+            if task.get("status") in ("failed", "needs_revision"):
+                why = str(task.get("fail_detail") or task.get("last_feedback") or
+                          task.get("verdict_feedback") or task.get("fail_reason") or "사유 없음")[:500]
+                out += f"\n    {task.get('status')} {task.get('task_id')}: {why}"
     elif w.get("total"):
         out += f"\n    태스크 {w['total']}건"
     return out

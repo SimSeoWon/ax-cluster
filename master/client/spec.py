@@ -383,7 +383,9 @@ MANAGED_HOOKS = (
     # [주의] `UserPromptSubmit` 은 stdout 이 **컨텍스트로 들어간다**(SessionStart 와 같은 계약).
     # timeout 을 짧게 둔다 — 사람의 매 턴을 붙잡지 않기 위해서다.
     ("UserPromptSubmit", "", ".claude/hooks/pending_works.py", 8),
-    ("PostToolUse", "mcp__.*__(register_work|improve_work)$",
+    # #700: after a failure signal, the next tool call resumes the completion watch.
+    # The hook itself ignores unrelated calls unless that session has a pending watch.
+    ("PostToolUse", "",
      ".claude/hooks/work_completion.py", 7260),
 )
 
