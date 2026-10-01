@@ -71,6 +71,10 @@ def _line(w: dict, detail: dict | None) -> str:
     out = f"  · {wid}\n    {w.get('title') or '(제목 없음)'}"
     if w.get("target_branch"):
         out += f"\n    브랜치 {w['target_branch']}"
+    if w.get("notification_error"):
+        out += f"\n    통보 실패: {w['notification_error']}"
+        if w.get("termination_required"):
+            out += "\n    통보 복구 또는 강제 종결에 사람 판단이 필요한 상태"
     if detail is not None:
         tasks = detail.get("tasks") or []
         by = {}

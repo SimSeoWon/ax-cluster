@@ -151,6 +151,12 @@ def render_result(work, tasks, counts):
         head.append(f"  · 조각 {json.dumps(counts, ensure_ascii=False)}")
     if work.get("redmine_issue_id"):
         head.append(f"Redmine #{work['redmine_issue_id']}")
+    if work.get("merge_status") in ("rejected", "cancelled"):
+        head.append("작업 종결 상태이며 통합·전진 대기 대상이 아닙니다.")
+    if work.get("notification_error"):
+        head.append(f"통보 실패: {work['notification_error']}")
+        if work.get("termination_required"):
+            head.append("통보 복구 또는 강제 종결에 사람 판단이 필요한 상태입니다.")
     for t in tasks:
         if t.get("status") in ("failed", "needs_revision"):
             why = str(t.get("fail_detail") or t.get("last_feedback") or
@@ -202,7 +208,7 @@ def wait_for_work(cwd, session, work_id, round_no, get_work, *, timeout=TIMEOUT,
                 log(cwd, "state_observed", work_id, round_no, session,
                     status=status, counts=counts, worker_mode=work.get("worker_mode"))
                 previous = state
-            if status in ("ready_for_review", "merged", "cancelled"):
+            if status in ("ready_for_review", "merged", "cancelled", "rejected"):
                 message = render_result(work, tasks, counts)
                 write_state(path, {"event": "signal_emitted", "at": time.time()})
                 log(cwd, "signal_emitted", work_id, round_no, session, status=status)
@@ -279,7 +285,9 @@ def main():
     except Exception as exc:
         log(cwd, "watch_error", wid, round_no, session,
             error=f"{type(exc).__name__}: {exc}"[:500])
-        message = f"[분산 작업 수신 오류] {wid} · 라운드 {round_no}: {exc}"
+        message = (f"[분산 작업 수신 오류] {wid} · 라운드 {round_no}: {exc}\n"
+                   "작업 종결 여부를 확인하지 못했습니다. 통보 복구 또는 강제 종결에 "
+                   "사람 판단이 필요한 상태입니다.")
     # [중요] 나가는 코드를 남긴다 — `2` 만이 세션을 깨운다. `0` 으로 끝난 판을 나중에
     #    「고지가 안 왔다」로 조사할 때, 훅이 조용히 넘긴 것인지가 여기서 갈린다.
     code = 2 if message else 0

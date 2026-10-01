@@ -6,13 +6,14 @@
 
 - **갱신 시각**: 2026-10-01 KST
 - **지휘 도구 / 세션**: Codex
-- **상태**: `#700` 실패 고지 수정·회귀 검증 완료. 사용자 커밋·push·배포 승인 후 진행.
-  배포 결과와 실제 수신 검증의 최신 상태는 Redmine `#700`에서 확인
+- **상태**: `#700`은 `6001207` 커밋·push·9작업장 배포·ax-projects 재시작 완료.
+  실제 대화 수신은 미검증. `#701`·`#695` 수정·최종 회귀 10개 파일 통과.
+  사용자 승인에 따라 커밋·push·배포 진행; 최신 결과는 Redmine `#701`·`#695` 확인(리포트 80)
 - **관련 일감**: `#695`(비UE 분산 작업) · `#698`(Windows Codex ACL, 구현 완료) ·
   `#699`(프로젝트 로컬 Codex 스킬·MCP, 구현 완료) · `#700`(실패 통보 누락, 열림) ·
   `#701`(실패 work 자동 종결 누락, 열림)
-- **저장소·브랜치**: `~/ax-cluster` `main`. `#700` 수정 기준 HEAD는 `b01ea6e`.
-  수정 커밋과 배포 기록은 Redmine `#700`, 현재 HEAD·dirty는 아래 명령으로 직접 대조
+- **저장소·브랜치**: `~/ax-cluster` `main`, 기준 HEAD `6001207`(origin/main 동일).
+  `#701`·`#695` 수정·테스트·리포트가 미커밋. 현재 HEAD·dirty는 아래 명령으로 직접 대조
 - **실행 중인 분산 work**: 없음. Kimodo 실증 work
   `20260930_2348_api_anatomy_report_post_apiposesanatomy_44e1a015`는 사용자 지시로
   `ready_for_review → cancelled`; 하위 태스크 2개의 `verified` 이력은 보존
@@ -66,8 +67,10 @@ KimodoMotion_WebUI의 등록 작업장 9개 조합을 배달·검사했고 전�
    조각 실패 즉시 고지·실패 사유 필드·최종 완료 감시 재개를 포함한다. 완료 훅 13개와 배달
    검사 394/394, 프로젝트 검사 63/63 통과. 사용자 커밋·push·배포 승인 후 진행 중이며
    최신 결과는 Redmine `#700`으로 대조한다. 실제 `.33` 세션 수신 증거와 훅 발행은 구분한다.
-2. `#701` — 통보 실패나 실행 실패 뒤 상위 work가 비종결로 남지 않도록 terminal 정리 계약을 만든다.
-3. `#695` — 재시도 전에 이전 결과 파일을 지우지 않아 옛 결과를 읽는 결함이 남아 있다.
+2. `#701` — 실패 라운드 terminal 분류·통보 오류 영속화·훅 표시·취소 파일과 사유 보존 수정.
+3. `#695` — 옛 결과를 지우는 대신 시도별 결과 디렉터리와 request_id 대조 수정.
+   검증 중단 두 차례는 사용자 승인 후 수정했고 최종 회귀 10개 파일 통과(리포트 80).
+   이번 변경 커밋·push·배포는 승인됐으나 운영 새 work 등록·전진·finalize는 자동 실행하지 않는다.
 4. `#695`의 ⑦ 통합·전진은 이번 실증 work를 취소했으므로 이어서 실행하지 않는다. 새 실증은
    프로젝트 로컬 스킬·MCP가 배포된 새 work로 시작한다.
 5. Kimodo 테스트가 `vendor/kimodo.cpp` 서브모듈을 요구한다. `ax-advance` 검수 worktree의
@@ -92,6 +95,7 @@ git rev-parse origin/main
 - `reports/77-kimodo-followups-and-shadow-skill.md` — 직전 Kimodo 온보딩과 그림자 스킬 조사
 - `reports/78-kimodo-code-worker-skill-and-cleanup.md` — 이번 실증·수정·배포
 - `reports/79-worker-failure-notice.md` — `#700` 원인·로컬 수정·워커 설정 현황
+- `reports/80-failed-work-and-session1-retry.md` — `#701`·`#695` 변경 범위와 검증 중단 원인
 - `master/client/{bundle.py,spec.py,__main__.py}`
 - `client/init/bootstrap.py`
 - `docs/12-multi-project.md`

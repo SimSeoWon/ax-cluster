@@ -507,6 +507,11 @@ def test_session1_master_logs() -> None:
     def run(*, done_after: int, launcher_log, timeout: int = 600):
         polls = {"n": 0}
         lines: list = []
+        sent = {}
+
+        def fake_write(facts, path, content, **kwargs):
+            import json
+            sent.update(json.loads(content))
 
         def fake_ssh(host, user, cmd, timeout=None, **kw):
             if "done.flag" in cmd:
@@ -515,6 +520,8 @@ def test_session1_master_logs() -> None:
             return 0, ""
 
         def fake_read(f, p):
+            if p.endswith("done.flag"):
+                return sent["request_id"]
             if p.endswith("out.txt"):
                 return "RESULT: DONE"
             if p.endswith("rc.txt"):
@@ -523,7 +530,7 @@ def test_session1_master_logs() -> None:
                 return launcher_log
             raise FileNotFoundError(p)
 
-        B._ssh, B._remote_write, B._remote_read = fake_ssh, (lambda *a, **k: ""), fake_read
+        B._ssh, B._remote_write, B._remote_read = fake_ssh, fake_write, fake_read
         try:
             rc, out = R.run_worker_session1(
                 facts, "t1", files=["Source/A.cpp"], timeout=timeout,
@@ -653,6 +660,68 @@ def test_worker_does_not_build() -> None:
           R.build_attempts("") == [] and R.build_attempts("RESULT: DONE\nBuild.bat") == [])
 
 
+def test_session1_attempt_isolation() -> None:
+    """#695: retry must run a fresh subprocess without removing old evidence."""
+    import json
+    import tempfile
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from master.client import bundle as B
+
+    L = _load_launcher()
+    with tempfile.TemporaryDirectory(prefix="ax-s1-retry-") as temp:
+        root = Path(temp)
+        legacy = root / ".ax/session1/t1"
+        legacy.mkdir(parents=True)
+        (legacy / "job.json").write_text('{"task_id":"t1"}')
+        (legacy / "done.flag").write_text("done")
+        (legacy / "out.txt").write_text("OLD FAILURE")
+        paths, jobs, executions = [], [], []
+        facts = SimpleNamespace(host="192.168.0.2", user="janus", windows=True,
+                                path="C:\\trunk\\NS", os="windows")
+
+        def write(f, rel, content, **kw):
+            p = root / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
+            paths.append(p.parent)
+            jobs.append(json.loads(content))
+
+        def argv(r, files, approvals=()):
+            executions.append(1)
+            return [sys.executable, "-c", f"print('FRESH {len(executions)}')"]
+
+        def ssh(host, user, cmd, **kw):
+            if "done.flag" in cmd:
+                return 0, "DONE" if (paths[-1] / "done.flag").exists() else "WAIT"
+            L.main()
+            return 0, ""
+
+        def read(f, rel):
+            relative = rel.removeprefix(f.path + "\\").replace("\\", "/")
+            return (root / relative).read_text()
+
+        with patch.object(L, "find_root", lambda: root), patch.object(L, "build_argv", argv), \
+                patch.object(B, "_remote_write", write), patch.object(B, "_ssh", ssh), \
+                patch.object(B, "_remote_read", read):
+            results = [R.run_worker_session1(facts, "t1", files=[], popup=lambda *a: [])
+                       for _ in range(2)]
+            check("#695 같은 task 재시도도 새 프로세스 둘", len(executions) == 2)
+            check("#695 옛 출력 대신 각 시도의 새 결과", results == [(0, "FRESH 1\n"), (0, "FRESH 2\n")], str(results))
+            check("#695 job 경로와 request_id 모두 다름", paths[0] != paths[1]
+                  and jobs[0]["request_id"] != jobs[1]["request_id"])
+            check("#695 완료 마커도 해당 request_id", all(
+                (p / "done.flag").read_text() == j["request_id"] for p, j in zip(paths, jobs)))
+            check("#695 옛 실패 증거 보존", (legacy / "out.txt").read_text() == "OLD FAILURE")
+            L.main()
+            check("#695 완료 시도를 다시 실행하지 않음", len(executions) == 2)
+            original = B._remote_read
+            with patch.object(B, "_remote_read", lambda f, rel:
+                              "old-request" if rel.endswith("done.flag") else original(f, rel)):
+                rc, out = R.run_worker_session1(facts, "t1", files=[], popup=lambda *a: [])
+            check("#695 다른 request 결과는 성공으로 회수하지 않음", rc == 1 and "request_id" in out, out)
+
+
 def main() -> int:
     for fn in (test_parse, test_pick, test_command, test_codex_windows_sandbox,
                test_agent_report, test_beater, test_run_task,
@@ -665,6 +734,7 @@ def main() -> int:
                test_session1_instruction_matches,
                test_session1_master_logs,
                test_session1_launcher_logs,
+               test_session1_attempt_isolation,
                test_worker_does_not_build):
         fn()
     total = PASS + FAIL

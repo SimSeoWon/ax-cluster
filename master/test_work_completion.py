@@ -50,6 +50,22 @@ class CompletionTests(unittest.TestCase):
         msg = W.wait_for_work(self.root, "S", "W", 1, lambda _: self.detail(failed=True))
         self.assertIn("OAuth expired", msg)
 
+    def test_rejected_round_emits_terminal_notice(self):
+        msg = W.wait_for_work(self.root, "S", "W", 1,
+                              lambda _: self.detail("rejected", failed=True))
+        self.assertIn("rejected", msg)
+        self.assertIn("통합·전진 대기 대상이 아닙니다", msg)
+        self.assertTrue(W.already_noticed(self.root, "S", "W", 1))
+
+    def test_notification_failure_is_visible_without_cancelling_success(self):
+        detail = self.detail()
+        detail["work"].update(notification_error="Redmine unavailable", termination_required=True)
+        msg = W.wait_for_work(self.root, "S", "W", 1, lambda _: detail)
+        self.assertIn("ready_for_review", msg)
+        self.assertIn("Redmine unavailable", msg)
+        self.assertIn("사람 판단", msg)
+        self.assertIn("Redmine unavailable", P._line(detail["work"], detail))
+
     def test_failure_before_round_completion_uses_queue_fields(self):
         detail = self.detail("in_progress", failed=True)
         detail["tasks"] = [

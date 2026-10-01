@@ -161,7 +161,7 @@ def test_the_denominator_does_not_move() -> None:
 #
 #    [주의] **경쟁이라 조용하다** — 파일 전체가 rc=1 로 끝나는데 다음 판에서 통과하므로
 #    「진짜 공지 본문이 틀어진 것」과 구분되지 않는다. 제목으로 가르면 둘이 갈린다.
-REVIEW_PREFIXES = ("[리뷰 요청", "[빌드 실패]")     # 등재는 `[분산 작업]` — 이 목록 밖이다
+REVIEW_PREFIXES = ("[리뷰 요청", "[빌드 실패]", "[분산 작업 종결")
 
 
 def _notice(idx, wid: str) -> tuple:
@@ -203,15 +203,18 @@ def test_notice_separates_no_work_from_cancelled() -> None:
           "취소된 파일" not in body, body[:400])
 
 
-def test_real_cancel_is_still_called_partial() -> None:
-    print("\n[6] 진짜 취소는 종전대로 「일부 미완성」이다")
+def test_real_cancel_is_terminal_and_keeps_reason() -> None:
+    print("\n[6] 진짜 취소는 종결하고 파일·사유를 보존한다 (#701)")
     idx, wid, (t1, t2) = _work()
     _finish_one(idx, t1)
     LL.cancel_task(idx, t2, reason="사람이 접었다")
     subject, body = _notice(idx, wid)
-    check("제목이 「일부 미완성」", "미완성" in subject, subject)
+    check("제목이 취소 종결", "종결 — cancelled" in subject, subject)
+    check("work도 cancelled", idx.works[wid]["merge_status"] == "cancelled")
     check("「취소된 파일」 절이 있다", "취소된 파일" in body, body[:400])
-    check("  「할 일 없음」 절은 없다", "할 일 없음" not in body, body[:400])
+    check("취소 파일과 사유 보존", "Source/A/F1.cpp: 사람이 접었다" in body, body)
+    check("전진 대기 대상 아님", "통합·전진 대기 대상이 아니다" in body, body)
+    check("  「할 일 없음」 절은 없다", "## 할 일 없음" not in body, body[:400])
 
 
 def main() -> int:
@@ -221,7 +224,7 @@ def main() -> int:
                test_all_pieces_nowork_still_notifies,
                test_the_denominator_does_not_move,
                test_notice_separates_no_work_from_cancelled,
-               test_real_cancel_is_still_called_partial):
+               test_real_cancel_is_terminal_and_keeps_reason):
         fn()
     print(("\nFAIL" if _fail else "\nOK") + f" test_nowork: 실패 {_fail}건")
     return 1 if _fail else 0

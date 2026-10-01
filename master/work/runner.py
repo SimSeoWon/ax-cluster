@@ -632,6 +632,7 @@ def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT
     """
     import json as _json
     import time as _t
+    import uuid as _uuid
     from ..client import bundle as _b
     from client.init import residency as _R
 
@@ -642,8 +643,12 @@ def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT
     # [주의] 오류 창 조회 기준 — 워커 로컬 시각 · 1분 여유를 두고 앞당긴다(`_popup_events` 참조)
     since = _t.strftime("%Y-%m-%d %H:%M:%S", _t.localtime(t0 - 60))
     who = f"{task_id} @{facts.host}"
-    rel = f".ax/session1/{task_id}"
+    # #695: results belong to one invocation, not merely to the task being retried.
+    # Keep old attempts for audit; a fresh directory cannot contain their done.flag.
+    request_id = _uuid.uuid4().hex
+    rel = f".ax/session1/{task_id}/{request_id}"
     job = _json.dumps({"task_id": task_id, "files": [str(f) for f in (files or [])],
+                       "request_id": request_id,
                        "approvals": _approval_overrides(), "timeout": timeout},
                       ensure_ascii=False)
     try:
@@ -673,6 +678,10 @@ def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT
                               if facts.windows
                               else f'test -e "{base}/done.flag" && echo DONE || echo WAIT'))
         if "DONE" in (_o or ""):
+            marker = (_b._remote_read(facts, f"{base}{sep}done.flag") or "").strip()
+            if marker != request_id:
+                log(f"{who} 🔴 결과 시도 불일치 — 현재 job 의 결과가 아니다")
+                return 1, "[세션1] 결과 request_id가 현재 job과 다르다 — 옛 결과 회수 거부"
             out = _b._remote_read(facts, f"{base}{sep}out.txt") or ""
             rct = (_b._remote_read(facts, f"{base}{sep}rc.txt") or "1").strip()
             try:

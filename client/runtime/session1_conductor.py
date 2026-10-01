@@ -22,7 +22,8 @@ Windows OpenSSH 는 **세션 0** 에서 프로세스를 만들고, 거기서는 
 
 ## 규약
 
-    입력   <checkout>/.ax/session1/<task_id>/job.json   {"task_id","files","mode"}
+    입력   <checkout>/.ax/session1/<task_id>/<request_id>/job.json
+           {"task_id","files","request_id"}; 옛 단일 task 디렉터리도 읽는다
     출력   같은 디렉토리의 out.txt · rc.txt · done.flag  (done.flag 를 **맨 마지막에** 쓴다)
     로그   같은 디렉토리의 launcher.log                  (사건마다 한 줄 · 덧붙인다)
 
@@ -169,7 +170,7 @@ def run_job(root: Path, d: Path) -> int:
     (d / RC).write_text(str(rc), encoding="utf-8")
     # [주의] 로그를 **done.flag 보다 먼저** 쓴다 — 마스터는 done.flag 를 보자마자 로그를 읽는다
     _log(d, f"결과 기록 — rc={rc} · 전체 {int(time.monotonic() - t0)}초 · done.flag 를 쓴다")
-    (d / DONE).write_text("done", encoding="utf-8")          # [중요] 맨 마지막
+    (d / DONE).write_text(str(job.get("request_id") or "done"), encoding="utf-8")  # 맨 마지막
     return rc
 
 
@@ -200,7 +201,10 @@ def main(argv=None) -> int:
     base = root / JOB_DIR
     if not base.is_dir():
         return 0
-    for d in sorted(base.iterdir()):
+    # #695: every retry has a separate result directory. Legacy jobs remain readable.
+    jobs = list(base.glob("*/job.json")) + list(base.glob("*/*/job.json"))
+    for job_path in sorted(jobs):
+        d = job_path.parent
         if not (d.is_dir() and (d / JOB).is_file()):
             continue
         done = d / DONE

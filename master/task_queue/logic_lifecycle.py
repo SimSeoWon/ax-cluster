@@ -12,14 +12,14 @@ from .persistence import (
     TaskIndex, _tq_log, _now_iso, _read_md, _git_commit_tasks
 )
 from .logic_persist import (
-    _save_task, _save_work, _update_index_md, _count_terminal_in_work
+    _save_task, _save_work, _update_index_md, _count_terminal_in_work, completed_work_status
 )
 from .logic_claim import _mark_worker_quota_blocked
 from .logic_cleanup import _auto_cleanup_work_async
 
 
 def _flip_if_all_terminal(idx: TaskIndex, wid: str, *, why: str) -> bool:
-    """조각이 **전부 terminal** 이면 work 을 `ready_for_review` 로 뒤집는다. lock 보유 가정.
+    """All terminal: success awaits review, failed/cancelled rounds end (#701). Lock held.
 
     🔴 [중요] `#332` — **이 전이가 `cancel` 경로에 없었다.** 그래서 마지막으로 상태가 바뀌는
     조각이 취소분이면 work 이 `in_progress` 로 영원히 남고, 여기에 달린 완료 공지(⑹)가
@@ -34,14 +34,18 @@ def _flip_if_all_terminal(idx: TaskIndex, wid: str, *, why: str) -> bool:
     wmeta = idx.works.get(wid)
     if not wmeta:
         return False
-    terminal = _count_terminal_in_work(idx, wid)
-    total = int(wmeta.get("total", 0))
-    if not (terminal >= total and total > 0 and wmeta.get("merge_status") == "in_progress"):
+    status = completed_work_status(idx, wid)
+    if not status or wmeta.get("merge_status") not in ("in_progress", "ready_for_review"):
         return False
-    wmeta["merge_status"] = "ready_for_review"
+    if wmeta.get("merge_status") == status:
+        return False
+    wmeta["merge_status"] = status
+    if status in ("rejected", "cancelled"):
+        wmeta["terminal_at"] = _now_iso()
+        wmeta["terminal_reason"] = "조각 실행 실패" if status == "rejected" else "조각 취소"
     v = int(wmeta.get("verified", 0))
-    f = total - v
-    _tq_log(f"[work-ready] {wid} all tasks done ({why}) → ready_for_review "
+    f = int(wmeta.get("total", 0)) - v
+    _tq_log(f"[work-ready] {wid} all tasks done ({why}) → {status} "
             f"(verified={v}, 나머지={f})", idx.root)
     _save_work(idx, wid)
     return True

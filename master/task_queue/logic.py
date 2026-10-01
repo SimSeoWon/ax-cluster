@@ -520,32 +520,22 @@ def recover_stuck_works(idx: TaskIndex) -> list[str]:
     daemon 재기동만으로 자동 회복 가능.
 
     동작:
-      - in_progress 인 work 들을 스캔
-      - 각 work 의 terminal task 수가 total 과 같으면 → ready_for_review 로 flip
-        + auto_cleanup 트리거
+      - in_progress / ready_for_review 인 work 들을 스캔
+      - 전 조각 종결 시 현재 라운드 실패는 rejected, 실제 취소는 cancelled,
+        성공·no_work는 ready_for_review로 분류하고 상태가 바뀌면 통보 트리거 (#701)
       - 아직 진행 중인 work (pending/claimed/submitted 가 남음) 는 손대지 않음
 
     반환: 복구된 work_id 목록.
     """
     recovered: list[str] = []
+    from .logic_lifecycle import _flip_if_all_terminal
     with idx.lock:
         for wid, wmeta in list(idx.works.items()):
-            if wmeta.get("merge_status") != "in_progress":
+            if wmeta.get("merge_status") not in ("in_progress", "ready_for_review"):
                 continue
-            total = int(wmeta.get("total", 0))
-            if total <= 0:
-                continue
-            terminal = _count_terminal_in_work(idx, wid)
-            if terminal < total:
-                continue
-            wmeta["merge_status"] = "ready_for_review"
-            verified = int(wmeta.get("verified", 0))
-            failed = total - verified
-            _tq_log(f"[boot-recover] {wid} stuck work 복구 → ready_for_review "
-                    f"(total={total}, verified={verified}, failed/cancelled={failed})", idx.root)
-            _save_work(idx, wid)
-            recovered.append(wid)
-    # auto_cleanup 은 lock 밖에서 비동기로 (각 work 의 git 작업이 시간 걸림)
+            if _flip_if_all_terminal(idx, wid, why="boot-recover"):
+                recovered.append(wid)
+    # 종결 통보는 lock 밖에서 비동기로
     for wid in recovered:
         _auto_cleanup_work_async(idx, wid)
     return recovered

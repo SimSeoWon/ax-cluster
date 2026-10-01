@@ -106,3 +106,19 @@ def _count_terminal_in_work(idx: TaskIndex, work_id: str) -> int:
     return sum(1 for t in idx.tasks.values()
                if t.get("work_id") == work_id
                and t.get("status") in ("verified", "failed", "cancelled"))
+
+
+def completed_work_status(idx: TaskIndex, work_id: str) -> str:
+    """Classify a completed round; no-work cancellations are successful skips (#701)."""
+    work = idx.works.get(work_id) or {}
+    total = int(work.get("total") or 0)
+    if total <= 0 or _count_terminal_in_work(idx, work_id) < total:
+        return ""
+    round_no = int(work.get("round") or 1)
+    tasks = [task for task in idx.tasks.values() if task.get("work_id") == work_id
+             and int(task.get("round") or 0) in (0, round_no)]
+    if any(task.get("status") == "failed" for task in tasks):
+        return "rejected"
+    if any(task.get("status") == "cancelled" and not task.get("no_work") for task in tasks):
+        return "cancelled"
+    return "ready_for_review"

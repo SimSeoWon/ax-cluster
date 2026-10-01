@@ -11,7 +11,24 @@ from typing import Optional
 from .persistence import (
     TaskIndex, _tq_log, _git_repo, _git, is_live_queue_root
 )
-from .logic_persist import update_work_meta
+from .logic_persist import update_work_meta, _save_work
+from .persistence import _now_iso
+
+
+def _record_notification_outcome(idx: TaskIndex, work_id: str, round_no: int,
+                                 *, error: str = "", status: str = ""):
+    """Persist notification failure for requester hooks; never discard successful work."""
+    with idx.lock:
+        work = idx.works.get(work_id)
+        if not work or int(work.get("round") or 1) != round_no:
+            return
+        work["notification_error"] = str(error)[:500]
+        work["notification_at"] = _now_iso()
+        work["termination_required"] = bool(error) and work.get("merge_status") not in (
+            "merged", "rejected", "cancelled")
+        if not error:
+            work["noticed_status"] = status
+        _save_work(idx, work_id)
 
 
 def _read_redmine_config(root: Path, project: str = "") -> dict:
@@ -198,8 +215,8 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                                     build_status: str = "passed",
                                     build_log_tail: str = "",
                                     build_error: str = ""):
-    """ready_for_review (또는 build_failed) flip 시 Redmine 이슈 자동 생성 (백그라운드).
-    실패는 silent — Redmine 미연동 환경에서도 cleanup 흐름 무중단.
+    """라운드 완료·실패 종결·build_failed 통보 (백그라운드).
+    전송 실패는 work에 기록하고 cleanup 흐름은 중단하지 않는다 (#701).
 
     Args:
         build_status: "passed" (default) 또는 "failed" — 통합 빌드 결과
@@ -207,6 +224,7 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
         build_error: 빌드 실패 시 짧은 에러 요약
     """
     def _job():
+        _r = 0
         try:
             with idx.lock:
                 wmeta = idx.works.get(work_id)
@@ -217,7 +235,9 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 issue_id = wmeta.get("redmine_issue_id")
                 # 멱등 — 같은 라운드의 완료를 두 번 적지 않는다
                 _r = int(wmeta.get("round", 1) or 1)
-                if int(wmeta.get("noticed_round", 0) or 0) >= _r:
+                merge_status = wmeta.get("merge_status") or "ready_for_review"
+                if (int(wmeta.get("noticed_round", 0) or 0) >= _r
+                        and (wmeta.get("noticed_status") or "ready_for_review") == merge_status):
                     return
                 title = wmeta.get("title", work_id)
                 target_branch = wmeta.get("target_branch") or "(unknown)"
@@ -251,7 +271,8 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 fail_details = []
                 for t in tasks_f:
                     rf = t.get("target_file", "?")
-                    last_fb = t.get("last_feedback") or t.get("last_result") or ""
+                    last_fb = (t.get("fail_detail") or t.get("last_feedback") or
+                               t.get("verdict_feedback") or t.get("fail_reason") or "")
                     fail_details.append((rf, str(last_fb)[:200]))
 
             rm_cfg = _read_redmine_config(idx.root, work_project)
@@ -261,6 +282,8 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                                       ("api_key", rm_cfg.get("api_key")),
                                       ("project", rm_cfg.get("project"))) if not v]
             if missing:
+                _record_notification_outcome(idx, work_id, _r,
+                    error="Redmine 통보 설정 누락: " + ", ".join(missing))
                 _tq_log(f"[redmine] {work_id} 스킵 — 없는 것: {', '.join(missing)} "
                         f"(work.project={work_project!r})", idx.root)
                 return
@@ -400,24 +423,48 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 "[중요] `main` 을 옮기는 것은 사람의 자리다.",
             ]
             description = "\n".join(lines)
+            if merge_status in ("rejected", "cancelled"):
+                subject = f"[분산 작업 종결 — {merge_status}] {title}"
+                description = "\n".join([
+                    f"라운드 {_r} 종결 — {merge_status}",
+                    f"- work_id: {work_id}",
+                    f"- 완료 {len(tasks_v)} / 실패 {len(tasks_f)} / 취소 {len(tasks_c)} / 할 일 없음 {len(tasks_nw)}",
+                    "작업은 실패·취소로 종결됐으며 통합·전진 대기 대상이 아니다.",
+                    "하위 태스크의 verified 이력과 워커 브랜치는 감사 자료로 보존한다.",
+                    "사람의 워킹트리·main은 변경하지 않았다.",
+                    "", "## 실패 사유",
+                    *[f"- {name}: {feedback or '사유 없음'}" for name, feedback in fail_details],
+                    "", "## 취소된 파일",
+                    *[f"- {t.get('target_file') or '?'}: {t.get('cancel_reason') or '사유 없음'}"
+                      for t in tasks_c],
+                ])
 
             if issue_id:
                 if not _redmine_add_note(rm_cfg, int(issue_id), description):
+                    _record_notification_outcome(idx, work_id, _r,
+                        error=f"Redmine #{issue_id} 라운드 {_r} 노트 전송 실패")
                     _tq_log(f"[redmine] {work_id} 라운드 {_r} 노트 실패 — #{issue_id}", idx.root)
                     return
+                _record_notification_outcome(idx, work_id, _r, status=merge_status)
                 update_work_meta(idx, work_id, noticed_round=_r)
                 _tq_log(f"[redmine] {work_id} 라운드 {_r} 완료 노트 → #{issue_id}", idx.root)
             else:
                 # 등재 때 못 만들었다 — 여기서 만든다 (제목은 등재분과 같은 규약)
                 issue_id = _redmine_post_issue(rm_cfg, subject, description)
                 if not issue_id:
+                    _record_notification_outcome(idx, work_id, _r,
+                        error="Redmine 종결 통보 이슈 생성 실패")
                     _tq_log(f"[redmine] {work_id} 이슈 생성 실패 (네트워크/인증/필수필드 확인)",
                             idx.root)
                     return
+                _record_notification_outcome(idx, work_id, _r, status=merge_status)
                 update_work_meta(idx, work_id, redmine_issue_id=issue_id, noticed_round=_r)
                 _tq_log(f"[redmine] {work_id} 이슈 생성: #{issue_id} "
                         f"[주의] 등재 때 만들어졌어야 한다", idx.root)
         except Exception as e:
+            if _r:
+                _record_notification_outcome(idx, work_id, _r,
+                    error=f"종결 통보 예외: {type(e).__name__}: {e}")
             _tq_log(f"[redmine] {work_id} 예외: {e}", idx.root)
 
     threading.Thread(target=_job, daemon=True).start()
