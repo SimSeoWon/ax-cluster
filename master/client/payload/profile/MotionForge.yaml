@@ -1,0 +1,9 @@
+engine: Unreal Engine
+engine_decided: true
+engine_version: '5.8'
+kind: unreal
+language: UE C++ 에디터 플러그인 · Python 웹 UI · C++ 엔진(kimodo.cpp 포크 서브모듈)
+notes: overview는 2026-10-03 사용자 확인 초안 · KimodoMotion_WebUI를 흡수(플러그인 안 Kimodo/)
+overview: 텍스트(Kimodo)와 영상(MetaHuman 마커리스)으로 UE5 애니메이션을 만드는 에디터 플러그인. Kimodo 웹 UI를
+  포함해 에디터 없이도 돌고, 결과를 AnimSequence로 가져와 ModularStage 등에서 쓴다.
+purpose: tool
