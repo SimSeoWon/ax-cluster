@@ -223,6 +223,23 @@ def main() -> int:
     st, _b, _ = asyncio.run(call(napp, "/api/v1/works", headers=H, method="GET"))
     check("[중요] 토큰 파일이 없으면(None) 그 역할은 닫힌다 — 401", st == 401, str(st))
 
+    print("\n[9] 브로커 요청자 스코프 (#705) — 대화·목록만 연다")
+    from master.auth import BROKER_REQUESTER_SCOPE
+    bapp = BearerAuthMiddleware(inner8, tok, scoped=((req_tok, BROKER_REQUESTER_SCOPE),))
+    st, _b, _ = asyncio.run(call(bapp, "/api/chat", headers=H, method="POST"))
+    check("POST /api/chat → 통과", st == 200, str(st))
+    st, _b, _ = asyncio.run(call(bapp, "/api/tags", headers=H, method="GET"))
+    check("GET /api/tags → 통과", st == 200, str(st))
+    for m9, p9 in (("POST", "/api/generate"), ("POST", "/api/show"), ("GET", "/health"),
+                   ("GET", "/api/ps"), ("GET", "/api/chat")):
+        st, _b, _ = asyncio.run(call(bapp, p9, headers=H, method=m9))
+        check(f"[중요] {m9} {p9} → 403 (전권 토큰 몫)", st == 403, str(st))
+    st, _b, _ = asyncio.run(call(bapp, "/api/generate",
+                                 headers={"authorization": f"Bearer {tok}"}, method="POST"))
+    check("전권 토큰은 /api/generate 통과", st == 200, str(st))
+    check("[중요] 요청자 스코프와 섞지 않았다 — REQUESTER_SCOPE 에 /api/chat 없음",
+          not any(r[1].startswith("/api/chat") for r in REQUESTER_SCOPE))
+
     check("난수성", len({generate_token() for _ in range(20)}) == 20)
 
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")

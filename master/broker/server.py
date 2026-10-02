@@ -203,4 +203,12 @@ def create_app():
         return await _proxy(request, "/api/show", inject=False)
 
     # [중요] 라우트를 전부 등록한 **뒤** 감싼다. 미들웨어는 바깥이므로 순서가 중요하다.
-    return BearerAuthMiddleware(app, _auth_token)
+    # 요청자 토큰은 `BROKER_REQUESTER_SCOPE` 만 연다(`#705`). 파일이 없으면 닫힌다(fail-closed).
+    from ..auth import BROKER_REQUESTER_SCOPE, load_role_token
+    _scoped = []
+    _req_tok = load_role_token("requester")
+    if _req_tok:
+        _scoped.append((_req_tok, BROKER_REQUESTER_SCOPE))
+    log.info("[auth] 역할 스코프 토큰 %d개 배선 (requester=%s)", len(_scoped),
+             "on" if _req_tok else "off")
+    return BearerAuthMiddleware(app, _auth_token, scoped=tuple(_scoped))

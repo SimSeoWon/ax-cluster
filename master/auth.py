@@ -259,6 +259,19 @@ WORKER_SCOPE: tuple = (
 )
 
 
+# 브로커(8102) 의 요청자 스코프 (`#705`, 사용자 결정 2026-10-02).
+#   MotionForge(UE5 에디터 플러그인)가 `.33` 에서 한국어 프롬프트를 영어로 옮길 때 로컬 모델을
+#   쓴다. `.2` Ollama 를 직접 부르면 상주 모델을 밀어낼 수 있어 **브로커가 고르게** 한다.
+# [중요] `REQUESTER_SCOPE` 와 **따로** 둔다 — 그 표는 8101·8103 에도 배선되므로 섞으면
+#    거기에 쓸모없는 추론 경로가 늘어난다. 여기는 브로커만 읽는다.
+# [주의] 여는 것은 대화(`/api/chat`)와 모델 목록(`/api/tags`)뿐이다. `/api/generate` 는
+#    마스터 자신의 경로, `/health`·`/api/ps` 는 노드 주소·상주 상태라 전권 토큰에 남긴다.
+BROKER_REQUESTER_SCOPE: tuple = (
+    ("POST", "/api/chat"),
+    ("GET", "/api/tags"),
+)
+
+
 def role_token_file(role: str) -> Path:
     raw = os.environ.get(f"AX_{role.upper()}_TOKEN_FILE", "").strip()
     return Path(raw).expanduser() if raw else (DEFAULT_TOKEN_FILE.parent / f"{role}-token")
