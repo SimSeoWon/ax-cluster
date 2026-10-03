@@ -427,10 +427,12 @@ def _branch_for(project: str, *, registry=None) -> str:
     [DOC] 미등록 프로젝트이거나 레지스트리를 못 읽으면 `"main"` — 종전 동작이다. 이 변경이
        종전보다 나빠지는 경우를 만들지 않는다(사용자 결정 2026-10-03). 값이 비면 역시 `"main"`.
     """
-    # [PSEUDO] registry 가 None 이면 Registry.load() 로 얻는다 — 실패(예외)하면 "main"
-    # [PSEUDO] config_of(project) 로 설정을 얻는다 — 미등록·예외면 "main"
-    # [PSEUDO] 그 설정의 branch 를 strip 해서 돌려준다 — 비면 "main"
-    raise NotImplementedError
+    try:
+        reg = registry if registry is not None else Registry.load()
+        branch = str(reg.config_of(project).branch or "").strip()
+        return branch or "main"
+    except Exception:                                                # noqa: BLE001
+        return "main"
 
 
 def _tests_for(project: str) -> dict:
