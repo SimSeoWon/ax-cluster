@@ -355,8 +355,11 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update
 (사용자 결정). 재개는 `--resume`, 고지는 `.33` 세션 시작 훅.
 [주의] `#320` 의 부활 조건은 그 노트에 그대로 있다 — 지금 없는 것은 **상주 claimer** 뿐이다.
 
-## Three clones — keep them in sync
+## Clones and remotes — keep them in sync
 
-Master (`sim@192.168.0.57:~/ax-cluster`), BC-250 #1 (`sim@192.168.0.43:~/ax-cluster`), and GitHub.
+Master (`sim@192.168.0.57:~/ax-cluster`) and BC-250 #1 (`sim@192.168.0.43:~/ax-cluster`) both use
+Gitea (`gitea@192.168.0.57:Sim/ax-cluster.git`, private) as `origin` — that is the canonical remote.
+GitHub (`SimSeoWon/ax-cluster`, private) is a **push mirror driven by Gitea** — never push to GitHub
+directly: the mirror overwrites it and prunes anything Gitea does not have.
 The board has `main` checked out, so **pushing to it is rejected — `git pull` there instead.**
 Check sync before working.

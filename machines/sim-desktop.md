@@ -370,9 +370,12 @@ next task yourself** — milestone 1 failed exactly that way.
 
 ## Role in the AX cluster — this box is the **master**
 
-The project repo is cloned **here** at `~/ax-cluster` (`PLAN.md` is the index, content in `docs/`),
-with copies on BC-250 #1 (`sim@192.168.0.43:~/ax-cluster`) and GitHub (`SimSeoWon/ax-cluster`,
-**private — keep it that way**, it holds LAN addresses and firewall rules). Keep all three in sync.
+The project repo is cloned **here** at `~/ax-cluster` (`PLAN.md` is the index, content in `docs/`)
+and on BC-250 #1 (`sim@192.168.0.43:~/ax-cluster`). The canonical remote is Gitea
+(`gitea@192.168.0.57:Sim/ax-cluster.git`, private); master and BC-250 #1 both use it as `origin`.
+GitHub (`SimSeoWon/ax-cluster`, **private — keep it that way**, it holds LAN addresses and firewall
+rules) is a **push mirror driven by Gitea** — never push to GitHub directly: the mirror overwrites
+it and prunes anything Gitea does not have (the master's `github` remote has its push URL disabled).
 The board has `main` checked out so pushing there is rejected — **`git pull` on that side instead.**
 `~/AgentTest` is the predecessor clone — **reference only. Never modify or push to it.**
 
