@@ -167,6 +167,23 @@ def test_verify_reject_records_verdict():
     assert rec["fail_reason"] == "verify:reject" and "환각" in rec["fail_detail"]
 
 
+# ── `#719` 다중 파일 조각 ─────────────────────────────────────
+
+def test_target_files_reach_the_queue_record():
+    """[DOC] `#719` — 등재가 보낸 `target_files` 전부가 큐 레코드에 남고 재기동을 넘는다.
+    [DOC] 두 경로를 잰다: ① 큐 쪽 `register_task(target_files=…)` 가 레코드에 저장 ② 마스터 쪽
+       `master.work.register.register_tasks` 가 POST 본문에 `target_files` 를 싣는다(poster 주입 —
+       실제 HTTP 를 쓰지 않는다. 이 파일의 `register_work` 는 큐 쪽 함수라 이름이 겹치니 모듈로 부른다).
+    """
+    # [PSEUDO] ① _idx() 로 큐를 세우고 register_task(target_files=["a.py", " b.py ", "a.py", ""]) 등재 →
+    #          레코드의 target_files == ["a.py", "b.py"] (정규화) · TaskIndex(root) 재적재 뒤에도 같다
+    # [PSEUDO] ①' target_files 를 안 주면 레코드 값은 [] 다
+    # [PSEUDO] ② from master.work import register as WR · WR.TaskSpec(stem="s", target_files=["x.py","y.py"])
+    #          를 validate 하고 WR.register_tasks(…, poster=기록하는 가짜, paths=가짜 paths) 로 보낸 본문의
+    #          target_files == ["x.py", "y.py"] 를 확인한다 (가짜 paths 는 name 속성만 있으면 된다)
+    pass
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = 0

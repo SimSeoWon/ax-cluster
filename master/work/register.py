@@ -799,6 +799,10 @@ def register_tasks(work_id: str, specs: list[TaskSpec], *, paths: ProjectPaths,
                 "stem": spec.stem,
                 "target_file": spec.target_file,
                 "header_file": spec.header_file,
+                # [DOC] `#719` — 조각이 맡는 파일 **전부**를 싣는다. 종전에는 단수 두 필드만 보내
+                #    `kind: code` 다중 파일 조각의 둘째 파일부터가 큐에 닿지 않았다(실측 2026-10-03).
+                #    `TaskSpec.validate()` 가 `target_file` 을 목록 맨 앞에 이미 넣어 둔다.
+                # [PSEUDO] "target_files": spec.target_files 를 list 로 복사해 싣는다
                 "depends_on": deps,          # [중요] stem → task_id 로 바뀐 값 (`#343`)
                 "requires": spec.requires,
                 "priority": spec.priority,

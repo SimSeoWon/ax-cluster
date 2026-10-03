@@ -845,8 +845,20 @@ def test_python_skeleton_gate_reads_the_base_commit() -> None:
         D.ensure_commit, D._mirror_git = saved
 
 
+def test_task_targets_reads_the_whole_list() -> None:
+    """[DOC] `#719` — `infer.task_targets` 가 레코드의 `target_files` 전부를 내고, 옛 레코드는 종전과 같다.
+    [DOC] 두 호출 자리(`prescreen_nowork` 와 파견)가 이 함수를 쓰는지는 소스 문자열로 확인한다.
+    """
+    # [PSEUDO] {"target_files": ["a.py", "b.py", "c.py"], "target_file": "a.py"} → ["a.py", "b.py", "c.py"]
+    # [PSEUDO] 옛 레코드 {"target_file": "X.h", "header_file": "X.cpp"} → ["X.h", "X.cpp"] (target_files 없음·None·[])
+    # [PSEUDO] 공백·빈 값·중복 정규화 · target_files 가 리스트가 아니면(문자열 등) 무시 · 아무것도 없으면 []
+    # [PSEUDO] infer.py 소스에 "task_targets(t)" 와 "task_targets(task)" 가 있고 종전 want 한 줄 조립이 없는지 check
+    pass
+
+
 def main() -> int:
     for fn in (
+               test_task_targets_reads_the_whole_list,
                test_py_skeleton_gate_blocks_before_the_claim,
                test_py_skeleton_gate_unreadable_is_not_a_block,
                test_py_skeleton_gate_net_after_claim,
