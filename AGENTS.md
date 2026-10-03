@@ -55,8 +55,15 @@
 - 워커 지휘자 선택은 `ax-mode` 스킬 → `get_worker_mode_tool` / `set_worker_mode_tool` 이다.
   마스터 대화 세션의 교대와 워커 모드 선택은 별개다. 선택 가능한 값은 `lane`·`claude`·`codex`.
 - 배달은 커밋된 깨끗한 트리에서 한다. 문서만 미커밋이어도 `delivered_by.dirty=true` 로 기록된다.
+- **AX 인프라 일감은 레드마인 `ax-cluster`(id 3)에 둔다.** 게임·도구 일감은 각 프로젝트의
+  `redmine.project`를 따른다. 리뷰 상태는 `<twin>/fixes/index.json`이 정본이며, 오래된 골조
+  리뷰를 처리할 때 현재 소스·후속 구현 커밋·회귀 검사를 대조한다.
+- **AXCluster 통합 검사는 `tests/integration/checks.json`이 명시 목록이다.** 실행은
+  `.venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v`.
+  색인기 단위 검사는 가짜 합성기를 주입하며 실제 브로커 성공에 기대지 않는다.
 - **Windows Codex 원격 실행**: `workspace-write` + `windows.sandbox="unelevated"` +
   `sandbox_workspace_write.network_access=true`, `/IT /RL LIMITED` 런처로 **로그인 사용자 세션**에서
   실행한다. “세션 1”은 고정 SessionId가 아니다. SSH 직접 실행·예약 작업 요청 성공을 실증으로
   대신하지 않는다. 실제 셸 읽기·apply_patch 쓰기·결과 회수를 확인한다.
+  readiness는 예약 런처의 등록 계약 검사이며 로그인·인증·실행 성공을 보증하지 않는다.
   정본·진단·기억은 [`docs/windows-codex-remote.md`](docs/windows-codex-remote.md).

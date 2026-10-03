@@ -5,7 +5,7 @@
 
 **플랫폼**: 리눅스 마스터(Ubuntu 22.04) + 윈도우 2대(작업장 1 · 요청자 1) + BC-250 1대
 
-> **지금 어디까지 왔나** (2026-10-01): **마일스톤 5 까지 닫혔다** — M2 는 2026-08-10,
+> **지금 어디까지 왔나** (2026-10-04): **마일스톤 5 까지 닫혔다** — M2 는 2026-08-10,
 > **M3·M4·M5 는 2026-08-17 사용자 결정으로** 마감됐다. 트윈이 자라고·색인되고·코드 작성에
 > 전달되며(M2), 분해 → 골조 → 워커 추론 → **3층 결정적 게이트** 파이프라인은 실 게임 코드로
 > 전 주기를 완주했다(M3 · 리포트 23). **마일스톤 6(개선·확장) 진행 중.**
@@ -15,6 +15,8 @@
 > 「통합자」는 2026-09-04 에 **삭제**됐다(약 1,000줄). 사람 게이트는 **둘** — ⑺ 전진과 finalize.
 > 자세히: [`docs/16-worker-orchestrator-mode.md`](docs/16-worker-orchestrator-mode.md) ·
 > [`machines/sim-desktop.md`](machines/sim-desktop.md).
+> 요청자·통합 위치는 프로젝트별이다. 게임은 `.33`, **AXCluster는 마스터 `.57`이 요청자**이며
+> `.2`·`.33`·`.43`이 워커다(`.33`은 `C:\trunk\AXCluster`에서 작업).
 >
 > 🔴 **비UE `kind: code` 프로젝트도 같은 7단계 경로를 쓴다** (`#695`, 첫 실증
 > KimodoMotion_WebUI). 프로젝트 초기화·배달은 체크아웃 안에 `.agents/skills`와
@@ -22,12 +24,18 @@
 > Codex 샌드박스 계정의 체크아웃 수정 권한도 함께 건다(`#698`, `906fe60`). 2026-10-01에
 > ModularStage·NS·KimodoMotion_WebUI의 등록 작업장 9개 조합을 현재 HEAD로 배달·검사했다.
 > [주의] 첫 실증은 스킬 실패가 요청자에게 통보되지 않고 work가 미종결로 남는 결함을 잡았다
-> (`#700`·`#701`); 해당 work는 `cancelled`로 강제 종결했고 두 결함은 열려 있다.
+> (`#700`·`#701`); 해당 work는 `cancelled`로 강제 종결했다. 이후 수정·배포와 현재 이슈 상태는
+> 레드마인과 [`docs/orchestrator-handoff.md`](docs/orchestrator-handoff.md)에서 확인한다.
 >
 > **지휘자는 둘이다** (사용자 2026-09-07) — 마스터 대화 세션을 **Claude ↔ Codex** 가 한도에 따라
 > 교대한다. 공용 규칙 [`docs/orchestrator-rules.md`](docs/orchestrator-rules.md),
 > 진행 중인 것 한 벌 [`docs/orchestrator-handoff.md`](docs/orchestrator-handoff.md).
 > **SSH 파견의 실행 주체(워커 지휘자)도 `lane`/`claude`/`codex` 중에 고른다.**
+> Windows readiness는 SSH Session 0의 샌드박스 실행 대신 `/IT /RL LIMITED` 예약 런처의
+> 등록 계약을 검사한다(`00f8532`). 등록 통과 뒤에도 로그인·인증과 실제 읽기·apply_patch·결과
+> 회수를 별도로 확인한다. 실증·배포 기록: [리포트 89](reports/89-codex-worker-readiness-and-write-probes.md).
+> R5 골조 리뷰의 후속 구현 검증과 색인기 검사 격리(`b53fd84`), AXCluster 세 워커 배포 기록은
+> [리포트 90](reports/90-r5-indexer-test-isolation-and-deployment.md)에 있다.
 >
 > M6의 최근 변화는 **리뷰를 색인 스레드에서 분리한 커밋 단위 큐**다. 색인은 기다리지 않고
 > 등재만 하며, 별도 타이머가 로컬 LLM 1차 초안을 만든 뒤 Antigravity가 원본 diff와 대조해
@@ -68,18 +76,19 @@ Gitea push → post-receive 훅 → 스풀 → inotify → 색인기
                               → 정형 리뷰 + R번호 → 성공한 초안 제거 → 주말 개선 플랜의 기존 입력
 
 [트윈을 쓰는 길 — 사용자 확정 7단계]
-요청자(.33) → 컨텍스트 검색 → 모든 대상의 동작 계획 → 주석 작업지시서가 든 골조 작성
+요청자       → 컨텍스트 검색 → 모든 대상의 동작 계획 → 주석 작업지시서가 든 골조 작성
              → `task/<work>/base`에 골조 커밋·push → work 등재
 마스터       → 골조 파일 기준으로 조각 분해 → 작업 브랜치에서 조각별 서브 브랜치 생성
              → 워커 모드(`lane`/`claude`/`codex`)에 따라 `.2`·`.43`로 병렬 파견
                (AXCluster 마운트 시 `.33`도 워커, 요청자는 마스터)
 워커         → 자기 서브 브랜치에서 본문 구현 → 결정적 게이트 → 커밋·push
 마스터       → 모든 조각 완료를 요청자에게 통보
-요청자(.33) → 조각 브랜치를 작업 브랜치에 머지 → 프로젝트별 검사 한 번
+요청자       → 조각 브랜치를 작업 브랜치에 머지 → 프로젝트별 검사 한 번
              → ⑺ 사람 게이트에서 「버그냐 구조 수정이냐」 결정 → 다음 라운드 또는 finalize
 
 [주의] UE 프로젝트의 빌드는 `.2`가 맡고, `kind: code` 프로젝트는 프로필의 빌드·테스트 계약을
-쓴다. 워커 실패 통보와 상위 work 종결은 아직 열린 결함(`#700`·`#701`)이다.
+쓴다. 요청자는 게임 `.33`, AXCluster `.57`이며, 실패 통보와 work의 terminal 상태는
+각각 확인한다(`#700`·`#701`의 현재 상태는 레드마인 정본).
 ```
 
 [중요] **「durable 단일 writer」는 서버 한 명만 쓴다는 뜻이 아니다.** 원전
@@ -182,13 +191,13 @@ ax-cluster/
 │   │   ├── skeleton_gate.py    [중요] **등재 전에 세워 본다** — 빌드 통과해야 등재
 │   │   ├── decompose.py        분해 — 의존 순서·파일 불가분·`[PSEUDO:N]` 뎁스
 │   │   ├── heuristics.py       [중요] 대화형 휴리스틱 — **사람이 답한 것만**, 범위(project/domain/once)
-│   │   ├── infer.py            [중요] **추론 파견** — 워커는 커밋 안 한다. 응답은 **파일로** 온다
+│   │   ├── infer.py            [중요] **추론 파견** — 워커 지휘자 실행·조각 커밋·결과 회수
 │   │   ├── layer1.py           [중요] **층1** — 동결·잔재·`[FEEDBACK]`. 수락·적용 **양쪽**에서 돈다
-│   │   ├── integrate.py        [중요] **통합자** — 층1→층2→적용→빌드→커밋. 실패는 되돌린다
+│   │   ├── review.py           요청자의 전진·finalize — 사람 게이트를 거쳐 통합·검사
 │   │   ├── failures.py         실패 카탈로그 — 판정 원문을 다음 골조로 되먹인다
 │   │   ├── porting.py          포팅 원본 대응 — [중요] 경로만·읽기 전용. 실측 동명 9 → 정규화 21쌍
 │   │   ├── distribute.py       `/distribute` 입구 — [중요] plan→register→dispatch, 단계마다 사람이 끊는다
-│   │   ├── runner.py           [주의] **구 토폴로지**(워커가 커밋) — 되돌릴 수 있게 남겨 둔다
+│   │   ├── runner.py           워커 선택·파견·응답 회수와 조각 커밋 주기
 │   │   ├── batching.py         [중요] 파일 불가분 묶음 — 열쇠는 **모듈+경로+stem**(basename 아님)
 │   │   ├── declarations.py     헤더 선언 주입 — 실측 환각 2 → 0
 │   │   ├── norms.py            도메인 규범(invariants 중심) 부착
@@ -267,7 +276,7 @@ ax-cluster/
 .venv/bin/python -m master.work.distribute plan     <프로젝트> <슬러그> <클래스:파일…>
 #   → 계획 JSON 이 나온다. [중요] **사람이 그 파일에서 조각을 지운다** (눈으로는 자를 수 없다)
 .venv/bin/python -m master.work.distribute register <프로젝트> <슬러그> "<제목>" <저장소>
-#   → 골조는 claude:opus 로 만들고(계약이라 값을 쓴다), 통합자 `.2` 에서 세워 본 뒤 등재한다
+#   → 프로젝트 kind의 골조·검사 계약을 확인하고 등재한다
 .venv/bin/python -m master.work.distribute dispatch <프로젝트> <work_id> 4
 .venv/bin/python -m master.work.porting  pairs      # 포팅 원본↔대상 대응 (실측 9 → 정규화 21쌍)
 
@@ -278,11 +287,10 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client deliver <프로젝트>  
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check <프로젝트>    # 한 프로젝트 대조
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update              # 등록 프로젝트 전부 배달→대조
 .venv/bin/python -m master.work.infer probe        # 누가 추론을 받을 수 있나 (큐 무접촉)
-.venv/bin/python -m master.work.infer run          # [중요] 추론 파견 (직렬 기본) — 커밋하지 않는다
+.venv/bin/python -m master.work.infer run-p <프로젝트> 4 # 병렬 파견; 워커가 자기 조각을 커밋
 .venv/bin/python -m master.work.infer spool <work> # 응답 스풀 — 어디까지 진행됐나
-.venv/bin/python -m master.work.integrate plan <프로젝트> <work>   # [중요] 먼저 본다 (안 쓴다)
-.venv/bin/python -m master.work.integrate run  <프로젝트> <work> [durable]
-.venv/bin/python -m master.work.runner once        # [주의] 구 토폴로지: 워커가 커밋한다
+# 전진·finalize는 요청자의 ax-advance 스킬과 ax-projects MCP; 승인 게이트를 따른다
+.venv/bin/python -m master.work.runner once <프로젝트> # 워커 한 조각의 실행 주기
 .venv/bin/python -m master.work.cleanup plan       # [중요] 먼저 본다 — 아무것도 안 지운다
 .venv/bin/python -m master.work.cleanup apply      # 병합된 브랜치·끝난 부산물만 삭제
 
@@ -329,14 +337,15 @@ Claude 가 사용자에게 물어 등록한다 — 다음 검색부터 자동 �
 
 ## 테스트
 
-**전부 통과. pytest 없음** — 각 파일이 단독 실행된다.
+pytest는 쓰지 않는다. 스크립트형 검사와 unittest 검사가 함께 있으며,
+AXCluster 통합 검사의 명시 목록은 `tests/integration/checks.json`이다.
 
 [중요] **여기에 개수를 적지 않는다.** 하루에 여섯 번 고쳤고, 마일스톤 분자를 레드마인으로 옮긴
 것과 **같은 이유**다 — 수치가 아니라 **세는 법**을 적는다.
 
 ```bash
-# 실패만 본다 — [중요] **판정은 종료코드로** 한다
-for f in master/test_*.py; do .venv/bin/python "$f" >/dev/null 2>&1 || echo "[중요] 실패 $f"; done
+# AXCluster 통합 검사 — 첫 실패에서 멈추고 출력·종료코드·완료 신호를 대조한다
+.venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v
 ```
 
 [중요] **합계를 세는 명령은 [`CLAUDE.md`](CLAUDE.md) 에 한 벌만 둔다** — 두 곳에 적으면 어긋난다.
@@ -353,7 +362,7 @@ for f in master/test_*.py; do .venv/bin/python "$f" >/dev/null 2>&1 || echo "[�
 | `test_decompose.py` | 의존 순서 · [중요] **묶음(동시) vs 뎁스(순차)** 구분 |
 | `test_heuristics.py` | [중요] 사람이 답한 것만 · **범위**(project/domain/once) |
 | `test_infer.py` | [중요] **fail-closed 파견 판정** — 마커+응답파일 둘 다 · 스풀 재사용 · 선행 실패 차단 |
-| `test_integrate.py` | [중요] **실패는 커밋하지 않는다** · 격리는 형제 트리 · push 는 ff-only(force 금지) |
+| `test_no_integrator.py` | 삭제된 통합자 코드와 호출 경로의 부활을 차단 |
 | `test_viewer.py` | [중요] **자격증명 분리 양방향** · 경로 화이트리스트 · 읽기 전용 · 낡음 배너 |
 | `test_status.py` | [중요] 읽기 전용 명령만 · 주기 가드 · 상태는 색만으로 전달하지 않는다 |
 | `test_layer1.py` | [중요] 휘발 태그·`[FEEDBACK]` 잔재 · 동결 의미(추가 허용/변경 위반) · fail-closed |
@@ -364,7 +373,7 @@ for f in master/test_*.py; do .venv/bin/python "$f" >/dev/null 2>&1 || echo "[�
 | `test_context_synth.py` | σ.7 게이트 · 사실 게이트 · 서킷브레이커 |
 | `test_context_search.py` | 마운트 라우팅 · RRF · 대괄호 · 시소러스 확장 |
 | `test_graph.py` | `Source/` 한정 · fail-closed · 유령 행 방지 |
-| `test_indexer.py` | ff-only 미러 · 다이제스트 · 트윈 성장 |
+| `test_indexer.py` | ff-only 미러 · 다이제스트 · 트윈 성장 · 문서 스탬프와 커서. 합성 성공 케이스는 가짜 합성기를 주입해 브로커 없이 검사 |
 | `test_coordinator.py` | [중요] **2단 브랜치** — 낡은 epoch 은 **부작용 없이** 거부(durable 안 움직임·좀비 attempt 는 증거로 보존). [중요] **주입이 아니라 실제 git**(임시 bare + 클론)으로 잰다 |
 | `test_selftest.py` | [중요] 매니페스트가 **git 으로만** 도착하는지 · NONCE 왕복 · 잔재 0(로컬 ref 까지) |
 | `test_gate.py` | [중요] 일시정지 조건은 `in_progress` **하나뿐** · HTTP 실패 시 디스크 대체 · **모르면 진행** |

@@ -4,22 +4,70 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **갱신 시각**: 2026-10-04 00:11 KST — Codex, 사용자 「진행해줘」로 운영 반영
-- **지휘 도구 / 세션**: Claude → **Codex** 로 넘긴다(Claude 토큰 소진). 마스터 담당 기록(`record_master_conductor_tool`)은
-  Codex가 23:37 실제 인수 기록을 남겼다(`agent=codex`).
-- **상태**: 신규 분산 작업 등재 없음. Codex 전환 수정 `00f8532` 커밋·Gitea push·운영 반영 완료.
-  이 문서·리포트89의 운영 결과 기록은 사용자 「커밋해줘!」 승인으로 별도 문서 커밋한다. 푸시 승인 없음.
-- **관련 일감**: 완료 — #718 · #719 · #722 · #260 · #375 · #615 (+확인용 #723·#724). **열림 — #720 · #721 · #716.**
+- **갱신 시각**: 2026-10-04 00:47 KST — Codex, R5 마감·문서 최신화·인계 준비
+- **지휘 도구 / 세션**: **Codex** 마스터. 2026-10-03 23:37 담당 인수 기록이 있으며
+  새 지휘자는 실제 HEAD·dirty·모드·Redmine부터 대조한다. 담당 기록은 세션 잠금이 아니다.
+- **상태**: 코드 수정·검사·커밋·Gitea push·AXCluster 배포·R5 상태 반영 완료.
+  사용자 문서·레드마인 최신화와 인수인계 요청 뒤 「커밋해줘!」로 이번 문서13개 커밋을 승인했다.
+  문서 커밋의 푸시·재배달 승인은 없으며 배달 출처는 b53fd84다.
+- **관련 일감**: 완료 — #718 · #719 · #722 · #260 · #375 · #615 (+확인용 #723·#724). **열림 — #700 · #701 · #720 · #721 · #716.**
 - **워커 지휘자 모드**: **`codex`** — 공용 MCP로 00:10:33 전환·재조회. 수정한 운영 준비 검사3/3 ok.
   실제 Codex shell read·apply_patch·결과 회수는 세 워커에서 성공했다(리포트89).
   이전 Session0 probe 거절은 아래 이력이다. #720 한도 분류는 여전히 미수정이며 신규 파견은 사용자 선택 후.
 - **마운트**: `AXCluster` — `.57` 요청자, `.2`·`.33`·`.43` worker.
-- **운영 코드 / 배달 출처**: `00f8532` (Gitea origin/main·AXCluster 워커 소스3대 일치).
-  마스터에는 위 커밋 뒤 마감 기록 문서 커밋이 추가된다. 해당 문서 커밋은 푸시·재배달하지 않았다.
+- **소스 / 배달 출처**: main `b53fd8469f4ddc8528959db13c6087eeb0ca077a`.
+  Gitea main·AXCluster 워커 소스3대 일치, 배달3/3 OK, 마스터·워커 source clean을 문서 편집 전에 확인했다.
+  마감 문서 커밋 `3e01ea9`도 push와 워커 동기화에 포함됐다.
+  서비스에 반영된 준비 검사 코드는 `00f8532`; b53fd84는 테스트 변경이라 서비스 재시작은 없었다.
   `ax-projects` 2026-10-04 00:09:13 재기동·active/running·Result=success.
   이번에 `.43 ~/ax-cluster` 관리 사본은 갱신하지 않았다(워커 `/home/sim/trunk/AXCluster`와 별개).
 
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
+
+### 최신 — R5 재검토·색인기 테스트 배포·문서 정리
+
+**사용자 결정**: R5 검토→원인 조사→수정 승인→로컬 서브 에이전트 선택→드라이런→
+「커밋 푸시 배포하자」→R5 재검토→「수정해줘」로 applied 처리→문서 최신화·인수인계 요청.
+같은 작업의 로컬 방식을 문서 정리에도 유지했다. 이후 사용자 「커밋해줘!」로 문서 커밋 승인.
+줄 끝 공백4곳을 정리하고 문서13개를 커밋한다. 푸시·재배달 승인은 받지 않았다.
+
+**완료와 근거** ([리포트 90](../reports/90-r5-indexer-test-isolation-and-deployment.md)):
+
+- R5는 골조493601d7 리뷰로, 지적10건은 후속 구현에 모두 반영돼 있다. 구현 커밋은 리포트90 표.
+- 관련 첫 검사 indexer101/103의 원인은 초반 테스트가 실제 합성 브로커에 의존한 것.
+  환경변수 설정+외부 호출 차단에서도 같은2건 실패, 성공 fixture 주입으로103/103 대조 실증.
+- `master/test_indexer.py`만 코드 수정: 기존 synth_writes를 공용화, 성공 호출6곳에 명시적 주입.
+  실패·NoChange·맞춤 합성·비활성화 검사는 보존. 운영 consumer의 스탬프 가드는 정상이다.
+- 외부 연결 차단 직접 실행·manifest run_check 각각103/103, 연결 시도0.
+  전체 통합12모듈560건 OK. 첫 실행 source_scope 실패는 sg gitea의 sandbox audit 제한;
+  승인된 `/tmp/ax-r5-integration-dryrun.sh` 동일 검사 재실행으로 통과했다.
+- b53fd84 커밋·Gitea push·ls-remote 확인. AXCluster3워커 main/clean 확인 후 ff-only 동기화,
+  plan/deliver/check3/3 OK, payload10개·프로젝트 스킬·출처일치, 워크숍 소스clean3/3.
+  `.2`의 기존 Claude MCP 대조 경고와 홈 중복 스킬 주의는 별개이며 Codex 프로젝트 설정은 통과했다.
+- 배포 후 관련194/194 재검사. 사용자 승인으로 R5-1~10 모두applied 기록, 재조회10/10.
+  `<twin>/fixes/index.json`은 런타임 정본, 다른 status 불변, 원본 리뷰 보존.
+- Redmine #716에 종합 근거 노트를 기록·재조회 확인했고 상태는 신규로 유지했다.
+  실조회 #718/#719/#722 완료, #716/#700/#701/#720/#721 신규.
+
+**이번 문서 커밋 대상**: README.md, CLAUDE.md, AGENTS.md, machines/sim-desktop.md,
+machines/sim-desktop-agents.md, master/README.md, docs/14-onboarding-runbook.md,
+docs/windows-codex-remote.md, docs/orchestrator-rules.md, 이 인계서, reports/README.md,
+reports/89-codex-worker-readiness-and-write-probes.md, 새 reports/90-r5-indexer-test-isolation-and-deployment.md.
+홈 CLAUDE/AGENTS의 심볼릭 링크는 보존했다. 코드파일은 추가 변경하지 않았다.
+
+**다음 세션**:
+
+1. 위 main HEAD·문서 diff·R5 applied10건·Redmine 노트를 실제로 대조한다.
+2. 이번 문서 커밋을 실제 git log로 확인하고, 푸시·재배달은 사용자 요청이 오면 실행한다.
+3. #720 한도 이벤트 파싱, #721 Claude 인증 만료 검사, #716 완료 판단은 사용자가 선택한다.
+   #700/#701은 코드 반영 기록과 별개로 Redmine이 신규라 완료로 단정하지 않는다.
+4. `.ax` 쓰기 실패 근본 원인은 미확정. 세 워커 도구 실증을 새로운 Codex 분산 work의
+   큐 등재~통합~finalize 완주로 확대하지 않는다. #719 다중 파일 조각 워커 완주도 미검증이다.
+
+**진행 프로세스·에이전트**: 이번 진단·드라이런·배포 명령은 모두 종료했다.
+indexer_fixture와 docs_entrypoints 로컬 에이전트는 담당 산출물을 반환했고 편집 중인 에이전트는 없다.
+기존 AX 서비스는 계속 동작한다. 과거 failed/cancelled work나 운영 큐는 이 마감에서 정리하지 않았다.
+문서 마감으로 현재 AX 큐가 비었다고 주장하지 않는다.
 
 ### 최신 (00:11) — 운영 반영과 Codex 전환 완료
 

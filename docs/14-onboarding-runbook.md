@@ -23,7 +23,7 @@
 `check`**를 돈다. 버전 스탬프만 같아도 `AGENTS.md`·스킬·페이로드·MCP 중 하나가 빠지면
 온보딩은 실패다. `--only hook,clone`처럼 서버 단계만 지정한 복구 실행은 클라를 건드리지 않는다.
 
-## 14.1 서버 절 — 아홉 단계
+## 14.1 서버 절 — 열 단계
 
 `onboard` 가 **실측으로** 무엇이 남았는지 답한다. 순서는 코드가 강제한다(선결이 깨진 단계는
 `[막힘]` 으로 나오고 **판정을 시도하지 않는다** — *"안 만들었다"* 와 *"만들 수 없었다"* 를
@@ -39,7 +39,7 @@
 | 6 | `profile` | 🔴 **사람만 아는 것**을 받아 적립한다 (`#650`) — 엔진 확정 여부·엔진·버전·언어 정책·용도·장르·**왜 존재하는가** 한 문단. 적립처는 `payload/profile/<P>.yaml`(git 관리). 물을 문장은 `project_profile` 이 주고, 답은 `set_project_profile` 로 적립한다. [중요] **이 단계는 자동으로 안 끝난다** — 측정으로 안 나오는 값이라 사람이 답해야 한다. [주의] 측정 가능한 것(EngineAssociation·모듈·확장자 분포)은 **질문할 때 근거로만** 보여 주고 저장하지 않는다 (`#294`: 규약은 결정이지 측정이 아니다) | 🔴 **그 프로젝트에 분산 작업을 등재할 수 없다** — `register_work` 가 거절한다. 그리고 배달되는 `CLAUDE.md` 의 첫 문단이 *"프로젝트 서술이 비어 있다"* 로 남는다. [중요] 그 공백을 지휘자가 **다른 문서로 메우다** 남의 프로젝트 설명을 사실로 읽는다 (실측 2026-09-20: `.33` 의 NS 콘솔이 ModularStage 의 *"multiplayer · Listen Server"* 를 NS 의 사실로 읽었다, `#649`) |
 | 7 | `conventions` | 미러의 `CLAUDE.md` — **컨벤션의 원천**. [중요] **정본에서 와야 한다** (`payload/claude_md/<P>.md` 또는 `<트윈>/claude_md.md`) — 정본이 없으면 이 단계는 `[남음]` 이다 | 워커 매니페스트의 컨벤션이 **영구히 빈다.** 에러가 아니라 침묵이다 — 워커가 관례 없이 코드를 쓴다. [중요] **더 나쁜 경우**: 정본 없이 통과하면 골격+실측이 규약 자리에 굳어 워커가 그것을 계약으로 받는다 (NS 실측 2026-09-01: *"한글 주석 0개 → 주석은 영문"* 이 골조 계약과 충돌) |
 | 8 | `graph` | 클래스·의존 그래프 | 검색이 클래스를 못 찾는다 (`classes=0`) |
-| 9 | `synth` | 컨텍스트 MD (**`Source/` 한정**) | `N/M 그룹` 이 안 채워진다. [주의] 문서 **개수**가 아니라 **문서 없는 그룹 수**로 판정한다(`#274`) |
+| 9 | `synth` | 등록된 `source` 경계의 컨텍스트 MD (UE 기본값 `Source/`) | `N/M 그룹` 이 안 채워진다. [주의] 문서 **개수**가 아니라 **문서 없는 그룹 수**로 판정한다(`#274`) |
 | 10 | `index` | 벡터·BM25 + 워터마크 | `last_indexed_commit` 이 빈 값 → 훅이 와도 **따라잡을 기준이 없다** |
 
 > [중요] **`hook`(3)과 `guard`(5)는 다른 것이다.** 이름이 비슷해 **있는 줄 알았고, 그래서 NS 가
@@ -81,7 +81,7 @@ register_project_tool(name="NS", project_id="Sim/NS",
 [중요] `project_id` 는 **훅이 보내는 이름**과 같아야 한다(`Sim/NS` — 대소문자는 무시되지만
 **형식은 `소유자/저장소`**). 다르면 훅이 와도 어느 프로젝트인지 못 찾고 **조용히 건너뛴다**.
 
-### 3~9 + 클라 배달·대조 · 나머지는 한 명령
+### 3~10 + 클라 배달·대조 · 나머지는 한 명령
 
 ```bash
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트> --confirm
@@ -90,7 +90,7 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트>
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트> --confirm --only synth --limit 5
 ```
 
-첫 명령은 서버 9단계 뒤 §14.2의 등록된 작업장 전부를 `checkout → deliver → check`까지
+첫 명령은 서버 10단계 뒤 §14.2의 등록된 작업장 전부를 `checkout → deliver → check`까지
 이어 간다. 따라서 신규 프로젝트에서 별도의 `master.client deliver`는 정상 절차가 아니다.
 
 [중요] **`hook` 은 무인으로 돈다** — `sudo -n /usr/local/bin/ax-install-hook --apply` 가
@@ -122,7 +122,9 @@ set_workshop_tool(name="NS", host="192.168.0.33", driven="ssh", user="user",
 ```
 
 [중요] **`role` 을 빼면 기본값 `worker` 가 붙어 사람의 기계에 작업이 파견된다.**
-`.33` 은 `requester` 다 — `drivable_hosts` 에서 제외되는 근거가 이 값이다.
+위 게임 프로젝트 예에서 `.33`은 `requester`다 — `drivable_hosts`에서 제외되는 근거가 이 값이다.
+역할은 프로젝트별이다. AXCluster에서는 `.57`이 요청자이고 `.2`·`.33`·`.43`이 워커다.
+`.33`은 게임 트리 대신 `C:\trunk\AXCluster`를 사용한다.
 안 됐으면: `deliver` 가 그 기계에 **워커 payload·스킬을 배달**하고, 파견이 그 기계로 간다.
 
 ### 2 · 체크아웃이 없는 기계 → 클론
@@ -167,6 +169,12 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update
 [주의] **마스터 트리가 dirty 면 `check` 가 통과하지 않는다** — 커밋이 같아도 그 커밋이 배달
 내용을 다 말하지 못한다(`dirty_master`). **커밋이 먼저다.**
 
+`config.json`의 `checkout.branch`는 해당 프로젝트 레지스트리의 기본 브랜치를 따른다(`#260`).
+배달은 체크아웃 안의 `.agents/skills`와 `.codex/config.toml`도 구성·대조한다(`#699`).
+홈의 동명 스킬만 있는 상태를 정상 배달로 판단하지 않는다.
+소스 동기화와 payload 배달은 별도다. 작업장 소스가 `main`·clean인지 확인하고
+`fetch → merge --ff-only`로 승인된 커밋을 맞춘 뒤 배달 출처와 함께 대조한다.
+
 [중요] **여기서 규약이 같이 간다 — 사람이 옮겨 적을 것은 없다** (`#309`, 사용자 지시
 2026-08-24: *"워커쪽에 기입되는 내용은 하나의 프로젝트에 디펜던시가 되지 않고, 신규 프로젝트를
 등록한다고 할 때 셋업시 처리할 수 있도록 관리되어야 해"*). 이 명령 하나가 두 축을 같이 놓는다:
@@ -195,13 +203,14 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update
 
 `plan`·`deliver`·`check`가 같은 판정을 소비한다. `deliver`는 “건너뜀”으로 끝내지 않고 과거의
 불필요한 등록을 제거한 뒤 다시 조회하며, `check`는 원하는 상태와 실물 등록 여부를 비교한다.
-현재 실측은 NS 마운트라 `.2`의 `AxWorker_NS`만 등록되고 ModularStage 상주는 미등록이다.
+`kind: code`는 빌드 상주를 등록하지 않고, Windows의 세션 1 지휘자 런처만 등록한다(`#695`).
+현재 마운트와 역할은 실행 시 조회한다. 과거 NS 상주 실측을 AXCluster의 상태로 읽지 않는다.
 
 🔴 [중요] **다만 「등재해도 아무도 집지 않는다」는 2026-09-01 부터 틀리다** (`#340`, `c33316e`).
-파견은 **자동**이다 — 요청자가 `task/<work_id>/base` 를 push 하면 그 이벤트가
-`ax-dispatch.path` 를 깨우고, 파견이 끝나면 **통합까지 이어진다**(`9cc73d9`).
-🔴 [주의] **사람 게이트는 둘이다 — ⑺ 통합 앞과 finalize** (정본 7단계, 사용자 확정 2026-09-02).
-종전의 「finalize 한 곳」은 폐기됐고, **⑺ 게이트는 아직 미구현**이다.
+파견은 **자동**이다 — 요청자가 `task/<work_id>/base`를 push하면 그 이벤트가
+`ax-dispatch.path`를 깨운다. 조각 완료 뒤 요청자가 `ax-advance`로 통합·검사하고,
+**사람 승인 뒤 ⑺ 전진**한다. `main` 반영은 별도의 **finalize 승인**이다.
+게임 요청자는 `.33`, AXCluster 요청자는 `.57`이며 통합자를 따로 두지 않는다.
 [주의] 자동 파견 트리거도 별도 축으로 살아 있다. 온보딩 뒤에는 상주 등록뿐 아니라
 **「트리거 유닛이 무장돼 있나」**도 확인한다:
 
@@ -223,6 +232,21 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update
     project=""              → 200 ok:false   status=no_project_tag
 
 철거 당시의 근거는 `#320`, 부활 구현과 실증은 `#401`·`#405` 및 리포트 63에 있다.
+
+#### Codex 준비 검사와 실제 실행
+
+Windows Codex 준비 검사는 SSH Session 0에서 `codex sandbox`를 실행하지 않는다.
+`AxConductor_<project>` XML의 InteractiveToken·LeastPrivilege·활성화·계정/SID·
+Python 절대경로·배달 런처 경로를 확인한다. 이 등록 검사는 인증·현재 로그인·실제 도구 실행을
+보장하지 않는다. `/IT /RL LIMITED` 로그인 사용자 세션에서 셸 읽기·`apply_patch` 수정·
+내용 재독해·결과 회수를 별도로 확인한다. 고정 SessionId=1을 요구하지 않는다.
+실행 계약과 `.ax` 쓰기 실패의 미확정 범위는
+[Windows Codex 원격 실행](windows-codex-remote.md)·[리포트 89](../reports/89-codex-worker-readiness-and-write-probes.md).
+모드는 `ax-mode`의 공용 조회/변경 도구를 사용하며 기존 work의 모드 스탬프에는 소급되지 않는다.
+
+`code` 통합 검사는 프로젝트 프로필의 검사 계약을 읽는다. AXCluster는
+`tests/integration/checks.json`에 명시된 스크립트를 별도 프로세스로 실행한다.
+검사 방법과 최신 배포 실측은 [리포트 90](../reports/90-r5-indexer-test-isolation-and-deployment.md).
 
 ### 5 · 요청자 에디터 — Unreal MCP (UE5 프로젝트만)
 
@@ -328,10 +352,10 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.work.handover apply  <프로젝
 지우면 왜 실패했는지 다시 물을 수 없다. 그것들은 사람이 종결시킨다.
 안 됐으면: 전환은 되는데 그 work 의 기록·신호가 **새 프로젝트 트윈에 착지**한다.
 
-## 14.4 전체 확인 — 세 줄
+## 14.4 전체 확인
 
 ```bash
-AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트>   # 서버 9단계 + 3대
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트>   # 서버 10단계 + 등록 작업장
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check <프로젝트>       # 배달본 해시 대조
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update                  # 기존 등록 전체를 현재 HEAD로
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.ontology status               # 도메인·stale 판정

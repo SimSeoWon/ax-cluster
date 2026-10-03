@@ -2,6 +2,14 @@
 
 192.168.0.57(리눅스 인프라 컴퓨터)에서 돌아갈 오케스트레이션 코드가 여기 들어간다.
 
+AXCluster의 통합 검사는 `tests/integration/checks.json`의 명시 목록을
+`master/integration_checks.py`로 별도 프로세스에서 실행하고 종료 코드·실행 건수를 대조한다.
+실행: `.venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v`.
+`test_indexer.py`는 Git·색인·문서 합성기를 주입해 실제 브로커에 의존하지 않는다.
+Windows Codex 준비 검사는 예약 작업의 정적 등록을 검증하며 실제 도구 실행은 별도 실증이다.
+변경·검사·배포 근거: [리포트 89](../reports/89-codex-worker-readiness-and-write-probes.md)·
+[리포트 90](../reports/90-r5-indexer-test-isolation-and-deployment.md).
+
 ## 지금 있는 것
 
 [중요] **이 표가 모듈 설명의 SSOT 다** — 저장소 루트 `CLAUDE.md` 가 *"표는 여기 두지 않는다"* 며

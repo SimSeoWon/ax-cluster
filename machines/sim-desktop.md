@@ -129,9 +129,9 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
              표면은 `ax-mode` 스킬 · `get/set_worker_mode` · `.33` 의 요청자 MCP
              [주의] **다음 조각부터** 적용된다 — 이미 SSH 가 나간 조각엔 소급되지 않는다
              [주의] **기본값 상수는 아직 사람이 안 정했다**(`_UNDECIDED_DEFAULT`, 값 `lane`).
-             🔴 [중요] **워커 지휘자 모드는 `codex` 다** (사용자 확인 2026-09-30 · `mode.json`
-                    2026-09-12 22:20 사용자 지시로 되돌린 값). 종전 서술 「`claude` · 저장 상태도
-                    `claude`」는 그 전 상태였다. [주의] **모드는 `mode.json` 을 읽고 말한다** —
+             🔴 [중요] **워커 지휘자 모드는 `codex` 다** (2026-10-04 사용자 승인 뒤 전환·재조회).
+                    `ax-projects` 재기동 뒤 세 워커 readiness를 확인했다. 이전 전환의 시각은
+                    역사 기록이며 현재 값은 **모드 도구와 `mode.json`을 읽고 말한다** —
                     그래서 `.2` 그림자 스킬이 실제로 읽힌다(`#661` · `.2` 에서 Codex 데스크톱 앱 금지).
              🔴 [완료] **`.2` 에 `codex` 모드를 보낸다 — 세션 1 경유로 라이브 완주했다**
                     (2026-09-13). **죽는 것은 「SSH 가 직접 미는」 경로뿐이고, 파견은 더 이상
@@ -148,13 +148,12 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
                        `/IT` 로 등록하면 SSH(세션 0)는 스케줄러에게 **부탁만** 하고 프로세스는
                        **세션 1** 에 생겨 **설치본 `0.153.4` 가 그대로 돈다.** 그래서
                        **패치 codex·Rust 빌드·아티팩트 배포는 불필요하다.** 리포트 63
-                    🔴 [주의] **readiness probe 가 재는 것과 이 문제는 다르다.** 종전 probe 는
-                       명령이 틀려(`sandbox` 다음에 `windows` 를 끼웠다) **환경이 멀쩡해도 늘
-                       실패**했고, 고친 뒤 `.2` 는 통과한다(`fc23a47`). 다만 그 probe 가 재는
-                       것은 **제한 토큰 샌드박스의 단순 경로**이고 — 그건 세션 0 에서도 원래
-                       된다 — 죽는 것은 `codex exec` 의 **셸 도구(unified exec)** 다.
-                       **probe 통과 = `.2` codex 지휘자 정상 이 아니다** — 판정은 실물 파견이
-                       한다. [완료] 그 판정이 났다: 파견은 `runner.uses_session1`(윈도우 AND
+                    🔴 [중요] **현재 readiness는 실제 파견 런처의 등록 계약을 검사한다**
+                       (`00f8532`, 2026-10-04). SSH Session 0에서 `codex sandbox`를 실행하던
+                       검사는 제거했다. XML의 InteractiveToken·LeastPrivilege·Enabled·계정/SID와
+                       절대 Python·배달된 런처 경로를 대조한다. 등록 통과는 로그인·인증·실행
+                       성공을 보증하지 않는다. 실제 셸 읽기·apply_patch·결과 회수가 별도 근거다.
+                       예전 `fc23a47` probe 수정은 역사 기록이다. 파견은 `runner.uses_session1`(윈도우 AND
                        codex)이 `schtasks /run` 으로 돌리고, 마스터는 `job.json`(데이터만)을
                        쓴다. 🔴 [주의] **그래서 재부팅 뒤 `janus` 로그인이 필수다** —
                        `/IT` 과제는 대화형 로그온이 있어야 돌고 `.2` 엔 자동 로그온이 없다
@@ -387,14 +386,20 @@ it and prunes anything Gitea does not have (the master's `github` remote has its
 The board has `main` checked out so pushing there is rejected — **`git pull` on that side instead.**
 `~/AgentTest` is the predecessor clone — **reference only. Never modify or push to it.**
 
-### Windows remote Codex — operational memory (2026-10-03)
+### Windows remote Codex — operational memory (2026-10-04)
 
 Use `workspace-write`, `windows.sandbox="unelevated"`, and
 `sandbox_workspace_write.network_access=true` through the `/IT /RL LIMITED` conductor.
 SSH sends job data and starts the task; Codex runs in the logged-in user's interactive session.
 “Session 1” is a launcher name, **not a fixed SessionId** (`.33`: USER SessionId 18 measured).
 Verify actual shell reads, **apply_patch writes**, and result recovery; task-start success alone
-is insufficient. `.33` official CLI 0.159.3 passed this probe on 2026-10-03.
+is insufficient. Official CLI 0.159.3 was used on all three AXCluster workers. `.2` and `.33`
+passed source reads, apply_patch writes and result recovery late on 2026-10-03; the separate `.ax`
+write failures remain unexplained. Do not turn this path comparison into an ACL root-cause claim.
+AXCluster source was aligned and delivered through `b53fd84`; deployment evidence and scope
+are in [report 89](../reports/89-codex-worker-readiness-and-write-probes.md) and
+[report 90](../reports/90-r5-indexer-test-isolation-and-deployment.md). `.43:~/ax-cluster` is a
+separate management clone; AXCluster worker delivery does not align that clone or other projects.
 Shared details and evidence: [`../docs/windows-codex-remote.md`](../docs/windows-codex-remote.md).
 
 ### Machine inventory (initially probed 2026-08-08; AXCluster roles updated 2026-10-03)
@@ -412,7 +417,9 @@ Shared details and evidence: [`../docs/windows-codex-remote.md`](../docs/windows
 SSH and Ollama came up 2026-08-08; **the account is `user`**. On 2026-10-03 the user authorized
 AXCluster worker use and resident inference: current `gemma4:e4b` was pulled and loaded,
 `AX_READY` and `/api/ps` verified. `AX_Ollama33` is S4U/Limited/AtStartup (reboot untested).
-Broker node is active after restart; concurrent inference across all three nodes was verified. Source changes remain uncommitted.
+Broker node is active after restart; concurrent inference across all three nodes was verified.
+The AXCluster source changes recorded for that work were subsequently committed and deployed;
+check current HEAD and dirty state instead of treating this historical probe as live state.
 
 **Its role is `requester`** (2026-08-09): it registers work, verifies (UE5 is here, so compile
 errors surface fastest), and writes `[FEEDBACK]` blocks. **For AXCluster only, its role is worker**

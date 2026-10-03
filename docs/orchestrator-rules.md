@@ -58,7 +58,7 @@
 | **레드마인(`:8080`)이 항목의 정본.** 진행·완료 판정은 거기서 한다 | 기억 `cluster-work-journal` |
 | **리포트는 저장소 안 `ax-cluster/reports/`**, 번호를 이어 붙이고 **한국어로** 쓴다 | 같음 |
 | **마일스톤 문서에 항목별 산문을 반복하지 않는다.** `[중요]`/`[주의]` 남발은 노이즈 | 기억 `docs-stay-concise` |
-| AX 인프라 일감은 `ModularStage` 프로젝트에 **`[AX]` 제목 접두**로 둔다. 게임 프로젝트 일감은 그 트윈의 `config.yaml` `redmine.project` 가 정하는 곳으로 | `machines/sim-desktop.md` |
+| AX 인프라 일감은 전용 `ax-cluster`(id 3)에 **`[AX]` 제목 접두**로 둔다. 2026-09-28 이전에 닫힌 것은 `ModularStage`에 기록으로 남긴다. 게임·유틸 일감은 트윈의 `config.yaml` `redmine.project`가 정하는 곳으로 | 사용자 2026-09-28 · `machines/sim-desktop.md` · `master/redmine.py` |
 | **레드마인 상태 전이** — 분산 작업은 `.33` 의 자리, **`[AX]` 인프라 일감은 마스터가 닫는다** | 기억 `redmine-status-belongs-to-33` |
 | 세션 시작에 **리포트를 전문으로** 읽는다 — grep 은 대체가 아니다 | `machines/sim-desktop.md` |
 
@@ -126,6 +126,11 @@
 ---
 
 ## 3. 도구별 — 공통 규칙으로 쓰지 않는 것
+
+아래 비교표는 2026-09-08 조사 당시 기록이다. 현재 Codex 세션에는 네이티브
+`ax-projects`가 노출돼 있으며 `get_worker_mode_tool`·`set_worker_mode_tool`·
+`search_context_tool`·`check_workshops_clean_tool` 호출을 실증했다(리포트 89·90).
+홈과 프로젝트 로컬 자산은 모두 사용하며, 실제 노출 도구와 배달본을 확인한다.
 
 리포트 54 §54.2 Ⓑ · 리포트 55 §55.2.
 
@@ -198,8 +203,8 @@ sudo:      The "no new privileges" flag is set
 | 홈/저장소 **양쪽** 시작 위치의 지침 로드 | [완료] **실측 2026-09-08** — 다만 **계층 로드가 도구마다 다르다** (§3.1) |
 | 대화형 세션의 자동 로드 | **미실증.** §3.1 은 `claude -p`·`codex exec` 비대화형 값이다 |
 | 시작 시 자동 고지 | **양쪽 다 없다.** 마스터에는 고지 층 자체가 없고, 지금 수단은 **진입 지침에 박아 둔 「먼저 읽어라」 하나뿐**이다 |
-| Codex 네이티브 MCP 연결 | **미배선.** 셸 HTTP 호출로 대신 적지 않는다 |
-| `sudo` 실제 실행(재시작·훅 설치) | **정책 조회만 통과.** 실제 실행은 안 했고 다른 유닛으로 일반화하지 않는다 |
+| Codex 네이티브 MCP 연결 | `ax-projects` 호출 실증 완료(리포트 89·90). 설정 파일 존재만으로 새 세션 연결을 보장하지 않는다 |
+| 서비스 재시작 | 전용 `scripts/ax-service-restart ax-projects` 실행·기동 시각·active/running 확인 완료(리포트 89). 다른 sudo 명령에 일반화하지 않는다 |
 | 양방향 교대 · 중단 복구 | **미실증.** §15.6 ③④⑤ |
 | 세션을 넘는 프로세스 생존·재접속 | **미실증.** 같은 세션 안의 출력 회수만 확인 |
 

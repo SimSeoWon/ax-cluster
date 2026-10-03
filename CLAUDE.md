@@ -9,6 +9,10 @@ with `workspace-write`, `windows.sandbox="unelevated"`, and
 SessionId. Verify shell reads, **apply_patch writes**, and recovered results separately.
 For AXCluster, `.33` is also a worker in `C:\trunk\AXCluster` (user 2026-10-03); game requester
 roles stay project-specific. Shared operational memory: [`docs/windows-codex-remote.md`](docs/windows-codex-remote.md).
+Readiness validates the scheduled launcher's registration, account and delivered paths; it does
+not prove login, authentication or a completed Codex run. Verify those with actual source reads,
+apply_patch writes and result recovery. A Windows `.ax` write failure alone does not establish
+failure to edit source; compare paths and retain the evidence ([report 89](reports/89-codex-worker-readiness-and-write-probes.md)).
 
 > [중요] **This file is an index.** It holds only the rules that must never be missed plus pointers.
 > Detail lives in [`PLAN.md`](PLAN.md) → [`docs/`](docs/). Add depth *there*, not here —
@@ -301,7 +305,21 @@ isolated tree (nothing is lost) and a human decides — the pipeline does not re
 ## Tests — [중요] **수를 여기 적지 않는다**
 
 하루에 여섯 번 고쳤다. 마일스톤 분자를 레드마인으로 옮긴 것과 **같은 이유**로, 수치가 아니라
-**세는 법**을 적는다. pytest 는 없다 — 각 파일이 그대로 실행된다.
+**세는 법**을 적는다. pytest는 쓰지 않으며 스크립트형 검사와 unittest 검사가 함께 있다.
+
+AXCluster의 통합 검사 정본 목록은 `tests/integration/checks.json`이다. 각 검사를 별도
+프로세스·임시 프로젝트 루트에서 실행하고 종료코드·수치·완료 신호를 함께 확인한다.
+
+```bash
+.venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v
+```
+
+`test_indexer.py`의 합성 성공 케이스는 가짜 합성기를 명시적으로 주입한다. 브로커·LLM·네트워크
+성공을 단위 검사 전제로 두지 않는다. R5와 해당 격리·배포 근거는
+[리포트 90](reports/90-r5-indexer-test-isolation-and-deployment.md).
+샌드박스에서 `sg gitea`·audit 권한이 차단되면 검사 결함으로 단정하지 않는다. 실패 원문을
+보고하고 같은 검사만 담은 좁은 스크립트의 샌드박스 해제 승인을 요청한다.
+아래 전수 집계는 조사용이다. 작업의 필수 검사는 위 명시 목록과 변경 대상의 회귀 검사로 고른다.
 
 ```bash
 # 전부 돌리고 합계를 센다 — **판정은 종료코드로, 수치는 두 형식 모두 읽는다**
@@ -339,7 +357,7 @@ curl -s localhost:8102/health | python3 -m json.tool   # 노드별 상주 모델
 systemctl status ax-task-queue ax-broker ax-projects ax-indexer.path
 journalctl -u ax-indexer -n 30 --no-pager              # push → 트윈 성장 이력
 .venv/bin/python -m master.work.infer collect          # pull 데몬 응답 회수 → 스풀 (#204)
-.venv/bin/python -m master.work.integrate plan|run     # 통합 (조각별 빌드 → 커밋 → durable push)
+# 전진·finalize: 요청자의 ax-advance 스킬과 ax-projects MCP; 사람 승인 게이트를 따른다
 .venv/bin/python -m master.work.cleanup plan|apply     # 찌꺼기 (plan 은 안 지움 · verified·cancelled 만)
 .venv/bin/python -m master.work.cleanup remote --apply # 병합 확인된 원격 attempt/task 삭제 (#219)
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client probe|plan|deliver|check <프로젝트>

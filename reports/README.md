@@ -107,4 +107,5 @@
 | `86` | **.57 RAG·분산 준비 정비 #716** — 지침·kind별 소스 더티 검사 반영 · 77+32 검사 통과 · 실제 타이머 이름 정정 · 스킬/운영 실증 미완료·조회 오류 중단 · [리포트](86-master-rag-distributed-readiness.md) |
 | `87` | **AXCluster 통합 검사 보완 #716** — 프로필이 스크립트형 검사를 못 돌리던 구멍 · 명시 목록 7개를 검사별 프로세스로 실행·건수 증거 검사 · 실제 `local_test_fn` 경로 `TESTS OK (7)`(232건) · 실패 주입 9/9 차단 · 자기 요약 신뢰·배달 전 무효·요약 숫자 표시 한계 · 미커밋 · [리포트](87-axcluster-integration-checks.md) |
 | `88` | **AXCluster 첫 분산 작업 완주 #718** — #260·#375·#615 를 2라운드(3/3 · 4/4)로 워커 3대 병렬 · claude 지휘 · finalize `f22f741` · 검사 목록 7→10(부작용 격리 실측) · 드러난 결함 #719(첫 파일만 전달)·#720(codex 한도 미감지)·#721(인증 만료 미검사) · [리포트](88-axcluster-first-distributed-work.md) |
-| `89` | **Codex 워커 준비 검사·쓰기 검증** — Session0 probe 대신 실제 예약 런처 XML·계정·프로젝트 스킬 대조 · 회귀18/18·실준비3/3 · Windows `.ax` 쓰기 실패 후 소스 경로 apply_patch 2/2 성공·Git clean 복원 · 미커밋·운영 전환 대기 · [리포트](89-codex-worker-readiness-and-write-probes.md) |
+| `89` | **Codex 워커 준비 검사·쓰기 검증** — Session0 probe 대신 예약 런처 XML·계정·프로젝트 스킬 대조 · 회귀18/18·실준비3/3 · 실제3대 도구 실행·결과 회수 · 00f8532 운영 반영·codex 전환 완료 · Windows `.ax` 실패 원인은 미확정 · [리포트](89-codex-worker-readiness-and-write-probes.md) |
+| `90` | **R5 재검토·색인기 테스트 격리·배포** — 실제 합성 의존 제거 b53fd84 · 외부 연결0·103/103 · 통합12모듈560건 · AXCluster 워커3대 동기화·배달3/3 · R5 applied10/10 · 문서·Redmine·인계 갱신 · [리포트](90-r5-indexer-test-isolation-and-deployment.md) |

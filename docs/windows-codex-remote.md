@@ -1,7 +1,8 @@
 # Windows Codex 원격 실행 — AX 운영 설정
 
 2026-10-03 사용자 지시로 기록. `.2`와 `.33`의 AXCluster 작업에 적용한다.
-실증과 버전별 결과는 [리포트 82](../reports/82-axcluster-workers-and-codex-remote.md).
+실증과 버전별 결과는 [리포트 82](../reports/82-axcluster-workers-and-codex-remote.md)와
+[리포트 89](../reports/89-codex-worker-readiness-and-write-probes.md).
 
 ## 실행 계약
 
@@ -36,6 +37,11 @@ Windows에서는 SSH로 `codex exec`를 직접 실행하지 않는다. SSH는 �
 
 ## 성공 판정과 진단
 
+`00f8532`부터 Windows Codex 준비 검사는 예약 작업 XML과 SSH 계정/SID, Python 및
+체크아웃 런처 경로, 프로젝트 로컬 `ax-work` 배달물을 검증한다. SSH Session 0의
+`codex sandbox cmd.exe` probe는 사용하지 않는다. 정적 등록 검사는 인증·로그인·
+실제 셸/apply_patch 성공과 구분한다(`#721`의 인증 만료 검사는 별도 일감).
+
 정상 판정에는 실제 `codex exec`의 셸 읽기와 **apply_patch 파일 수정**, 수정 결과 재독해,
 worker rc, `done.flag`·`rc.txt`·출력 회수, 대상 밖 변경 없음이 필요하다.
 일반 `cmd.exe` 실행, CLI 버전 출력, task 생성, `check` 통과만으로 파일 수정이 된다고 말하지 않는다.
@@ -53,6 +59,12 @@ worker rc, `done.flag`·`rc.txt`·출력 회수, 대상 밖 변경 없음이 필
 종결됐고 `RESULT: DONE`, rc=0, 반환값 일치, 대상 밖 변경 없음, 진단 파일 정리 뒤 clean을 확인했다.
 결과 회수 53초. 종전 0.157.1에서는 apply_patch가 실패하고 PowerShell 쓰기로 우회했으므로
 이번 결과와 구분한다. 버전 변경 뒤 성공했지만 실패의 근본 원인은 확정하지 않았다.
+
+2026-10-03 23시대 공식 0.159.3 재검증에서 `.2`·`.33` 모두 `master/` 소스 진단 파일의
+셸 읽기·apply_patch completed·정확한 수정 내용·결과 회수에 성공했다. 먼저 시도한
+`.ax/work` 파일 수정은 두 대 모두 실패했고, ACL 차이를 관측했지만 근본 원인은 미확정이다.
+ACL·샌드박스·바이너리 변경 없이 얻은 소스 경로 성공을 `.ax` 쓰기 성공으로 확대하지 않는다.
+이는 큐 파견부터 finalize까지의 새 Codex 분산 완주 실증은 아니다(리포트 89).
 
 공식 참고: [Codex CLI 설치](https://learn.chatgpt.com/docs/codex/cli),
 [Windows sandbox](https://learn.chatgpt.com/docs/windows/windows-sandbox).
@@ -73,4 +85,5 @@ Ollama의 S4U 작업은 서로 다르다.
 2026-10-03 사용자 승인으로 브로커를 재시작하여 `.33`을 운영 반영했다. `.43`·`.2`·`.33`
 모두 healthy·e4b resident이며 동시 진단3건이 각 노드로 분배·완료된 것을 확인했다.
 새 합성 배치는 상주 노드 수로 자동 동시3을 선택한다. 이미 시작한 배치는 시작 시의 동시 수를
-유지한다. 소스 변경은 미커밋·미푸시다. 최신 상태는 인수인계서에서 확인한다.
+유지한다. 당시 소스와 후속 Codex 준비 수정은 커밋·푸시·운영 반영됐으며,
+현재 배달 커밋과 미커밋 문서 상태는 [인수인계서](orchestrator-handoff.md)에서 확인한다.
