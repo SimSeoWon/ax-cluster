@@ -4,16 +4,88 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **갱신 시각**: 2026-10-03 21:20 KST — Claude
-- **지휘 도구 / 세션**: Claude (Codex 는 사용 한도 소진 · 21:56 리셋 예고).
-- **상태**: AXCluster 첫 분산 작업(#718)을 2라운드로 완주하고 `f22f741` 로 main 마감했다. 리포트 88.
-  리포트 88·README·이 문서는 사용자 승인으로 커밋·push 했다. #716 은 아직 열려 있다(완료 판정은 사용자).
-- **관련 일감**: #718(완료) · #260·#375·#615(완료) · 신규 결함 #719·#720·#721 · #716.
-- **워커 지휘자 모드**: **`claude`** (사용자 지시 2026-10-03 20:44 「모두 클로드를 바탕으로 작동하게 바꿔줘」).
+- **갱신 시각**: 2026-10-03 23:59 KST — Codex, 사용자 워커 Codex 전환 준비 수정·로컬 선택·실패 후 재개
+- **지휘 도구 / 세션**: Claude → **Codex** 로 넘긴다(Claude 토큰 소진). 마스터 담당 기록(`record_master_conductor_tool`)은
+  Codex가 23:37 실제 인수 기록을 남겼다(`agent=codex`).
+- **상태**: 신규 분산 작업 등재 없음. #719 완주·main `90a65a5`. 현재 미커밋은 이 문서,
+  conductor.py·test_orchestration_control.py·리포트89·reports/README (커밋·푸시 승인 필요).
+- **관련 일감**: 완료 — #718 · #719 · #722 · #260 · #375 · #615 (+확인용 #723·#724). **열림 — #720 · #721 · #716.**
+- **워커 지휘자 모드**: 🔴 **아직 `claude`** — 23:25 `codex` 로 되돌리려 했으나 **거절됐다**(사용자 지시였음).
+  `worker_mode_readiness('codex')`: `.43` ok · `.2` ok · **`.33` `SSH Session 0 Codex sandbox 셸 probe 실패: exit 1`**.
+  실패=보고 규칙으로 고치지 않았다. [주의] 지금 파견하면 워커가 **claude**(마스터와 같은 계정 한도)로 돈다.
+  갈래(사용자가 고른다): ① `.33` probe 원인 조사·복구 뒤 다시 `set_worker_mode_tool("codex")`
+  ② `.33` 을 AXCluster 파견에서 잠시 빼고 바꾼다 ③ 그대로 둔다. 실제 파견은 세션 1 런처라 probe 와 경로가 다르다(리포트 63·64).
+  [주의] codex 한도는 같은 날 20:42 소진 · 21:56 리셋 예고였다 — 파견 전 `.43` 에서 무해한 `codex exec --json` 한 번으로 확인할 것(#720: 한도 소진이 일반 재시도로 오분류된다).
 - **마운트**: `AXCluster` — `.57` 요청자, `.2`·`.33`·`.43` worker.
-- **HEAD / origin/main**: `f22f741` (마스터 · `.43 ~/ax-cluster` 일치). `ax-projects` 21:15:54 재기동.
+- **HEAD / origin/main**: `90a65a5` (마스터 · `.43 ~/ax-cluster` 일치). `ax-task-queue` 23:20:50 · `ax-projects` 23:22:20 재기동.
 
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
+
+### 최신 (23:59) — Codex 워커 전환 준비 수정·검증 완료, 운영 반영 대기
+
+사용자 로컬 방식 및 재개 승인으로 구현/독립검토. 리포트 [89](../reports/89-codex-worker-readiness-and-write-probes.md).
+`master/work/conductor.py`와 `master/test_orchestration_control.py`만 코드 수정:
+Session0 Codex 실행 probe → 실제 /IT LIMITED 예약 런처 XML·SSH 계정/SID·경로·배달 런처 검증,
+프로젝트 로컬 `.agents/skills/ax-work` 확인. 정적 등록 검사와 실제 도구 실행은 별도로 표시한다.
+루트 회귀18/18 OK·diff check OK, 수정 준비 검사 실측3/3 ok.
+
+실제 Codex shell read·apply_patch completed·정확한 수정 결과·회수:
+`.43` 성공, Windows 소스 경로 `.2`55초/`.33`43초 성공. Windows 진단 원본은 `.ax`에 보관 후
+생성 파일만 제거해 두 트리 clean 복원. 첫 Windows `.ax` 대상 apply_patch는 실패했으며,
+권한/런처/바이너리를 바꾸지 않은 소스 경로 비교는 성공했다. 실패 원인은 확정하지 않았다.
+없는 경로·접근 거부 읽기 조회는 이번 작업에서만 계속 조사하도록 사용자 예외 승인.
+첫 fixture SyntaxError는 재개 승인 후 고쳤다. 실제 실행 실패 중단 규칙은 유지.
+
+아직 미실행: 커밋·Gitea push·서비스 재기동·운영 codex 모드 전환·소스 동기화·재배달.
+워커 source HEAD 세 대 `a3eb788`(clean), 마스터90a65a5와 다름. 준비3/3를 전체 배달 버전 일치로 보지 않는다.
+운영 워커 모드는 여전히 claude이며, 승인 뒤 서비스 반영과 공용 MCP codex 전환을 확인한다.
+#720/#721 수정과 #716 완료 판정은 범위 밖. 아래23:25 기록은 수정 전 상태다.
+
+### 최신 (23:25) — Codex 가 이어받을 자리
+
+**오늘 끝난 것** (근거: 리포트 88 · Redmine 노트)
+1. AXCluster 첫 분산 작업 #718 — #260·#375·#615 를 2라운드(3/3·4/4)로 → `f22f741`.
+2. #719(조각의 `target_files` 중 첫 파일만 전달) — 분산 작업 #722, 한 파일짜리 조각 5/5 → `90a65a5`.
+   `models.TaskRegisterReq.target_files` · `logic.register_task` 정규화 저장 · `register_tasks` POST ·
+   `infer.task_targets()`. 재기동 뒤 실경로 확인: 다중 파일 조각 등재 → 큐 레코드 `target_files` 두 파일 →
+   즉시 취소(파견 없음). [주의] **워커가 다중 파일 조각을 끝까지 채우는 완주는 아직** — 다음 실전 work 에서 본다.
+3. 통합 검사 목록 7→12: broker_routing·workshop_check·source_scope·python_commit_review·build_local·
+   skeleton_gate·revise·indexer·version·task_data·infer·integration_checks. 넣기 전 격리 실행(`unshare -rn`·
+   가짜 ssh/scp/curl·임시 HOME)으로 부작용 0 확인. `test_client_spec`(실토큰·`.ax/` 캐시 쓰기)·`test_nowork`
+   (요약에 건수 없음)은 제외.
+
+**다음 후보 (사용자가 고른다 — 지휘자가 고르지 않는다)**
+- **#720** codex 사용 한도가 한도 갈래로 안 잡힘 — JSON `error`/`turn.failed` 문구가 판정 입력 `c.notes` 에 없다.
+  고칠 자리 후보: `usage.py`/`runner.py` 의 codex 이벤트 파싱. **codex 지휘로 돌릴 때 가장 먼저 아프다.**
+- **#721** 지휘자 준비 검사가 인증 만료를 못 잡음 — `claude auth status`(JSON `loggedIn`) 추가 검토.
+- #716 종결 판단(사용자).
+
+**분산 작업 절차 — 오늘 실측한 순서** (`master/skills/distribute` + 아래 스크립트 형태)
+1. RAG(`search_context_tool`) → 소스 대조 → 분해안 제시 → 사용자 승인.
+2. 대상 모듈의 테스트가 `tests/integration/checks.json` 에 있는지 본다. 없으면 격리 실행으로 부작용을 확인하고 먼저 넣어 커밋.
+3. `register_work(…, fixed_version="마일스톤 6 — 개선·확장")` 를 **Python 으로** 부른다 — MCP `register_work_tool` 은
+   마일스톤을 못 넘겨 무버전 이슈가 된다. 등재 직후 파견은 「base 없음」으로 기다린다(정상).
+4. `git worktree add -b task/<work>/base <옆 경로> origin/main` → `[DOC]`/`[PSEUDO]` 골조 → 커밋 →
+   `skeleton_gate.check_head([조각 파일])` 조각별 → `git push origin task/<work>/base` 가 파견을 깨운다.
+   지금도 **조각은 한 파일씩**이 안전하다(#719 는 고쳤지만 워커 완주 미확인).
+5. 끝나면 `review.advance_work(confirm=False, build_fn=local_test_fn(start_dir="tests/integration",
+   pattern="test_axcluster.py", python="/home/sim/ax-cluster/.venv/bin/python"))` → 실제 diff·`[PSEUDO]` 잔존·
+   검사 건수 증가를 직접 보고 「버그냐 구조냐」를 사용자에게 → 승인 뒤 `confirm=True, decision_note=…`.
+6. 더 고칠 것은 `improve_work(work_id, round=현재+1, specs)` · 끝이면 `review.finalize_work(confirm=True)`
+   (main 머지·브랜치 정리·이슈 완료) → 마스터·`.43` `git pull` → 바뀐 코드가 서비스 안이면 재기동 승인.
+
+**함정 (오늘 실측)**
+- work 는 등재 시점 지휘자 모드로 **스탬프**되고 바꿀 표면이 없다(#392). 모드를 바꾸려면 조각 취소 → 재등재.
+- `sudo -n systemctl restart ax-projects` 는 종료가 1분+ 걸려 명령이 늦게 돌아온다 — **기동 시각으로 판정**.
+- `.43` 은 헤드리스 — 인증 복구는 사람이 별도 터미널에서 `ssh sim@192.168.0.43` → `claude auth login`
+  (또는 codex 로그인). 마스터 세션의 원격 로그인 기동은 자동 권한 판정이 거부했다.
+- 마감 뒤 색인·리뷰 큐가 워커 Ollama 를 수십 분 쓴다. 리뷰 큐는 `[ADVANCE]` 머지 커밋을 「diff 없음」으로 포기한다(정상 판정, 실패로 집계).
+- 원격 노트·커밋 메시지는 **파일로 써서** 넘긴다(백틱 셸 치환 사고 2회 기록).
+
+**남은 정리**
+- 로컬 브랜치 `task/20261003_2315_719_target_files_316d6d14/base` — main 에 포함, 삭제 승인 대기.
+- 이번 #719 경과는 리포트로 아직 안 썼다(리포트 88 은 #718 까지). 필요하면 89 로.
+
 
 ### 최신 — AXCluster 분산 작업 완주 (리포트 88)
 
