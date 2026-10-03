@@ -10,7 +10,7 @@
    5. **등록되지 않은 project_id 는 거부** (§5.5.4-④)
    6. **fetch 가 실패하면 재색인하지 않는다** — 낡은 소스로 색인하면 조용히 틀린다
 
-git 은 주입한다 — 실제 저장소 없이 규칙을 검증한다.
+git·문서 합성기는 주입한다 — 실제 저장소·브로커 없이 규칙을 검증한다.
 """
 from __future__ import annotations
 
@@ -141,6 +141,20 @@ def ev(pid="Sim/Demo", subject="feat: x"):
                  subject=subject)
 
 
+def synth_writes(paths_, *, changed=None, commit="", **kw):
+    """실제로 그 그룹의 문서를 만든다 — 커서 전진의 전제다."""
+    for k in {str(Path(f).parent / Path(f).stem) for f in (changed or [])}:
+        d = paths_.context / f"{k}.md"
+        d.parent.mkdir(parents=True, exist_ok=True)
+        d.write_text(f"---\nsource_commit: {commit}\n---\n본문", encoding="utf-8")
+
+    class S:
+        written, lost, aborted = 1, 0, ""
+        summary = "그룹 1 → 통과 1"
+        results: list = []
+    return S()
+
+
 
 # ── `#376` ⑷ 반쯤 적용된 미러를 되돌린다 (조건을 재고) ─────────────────────────
 def test_mirror_recovery_is_measured_not_assumed() -> None:
@@ -198,7 +212,8 @@ def main() -> int:
 
     print("\n[1] [중요] 미러를 덮어쓰지 않는다 — ff-only")
     log = []
-    r = process_event(ev(), registry=reg, git=git_ok(log), reindex=lambda p: 7)
+    r = process_event(ev(), registry=reg, git=git_ok(log), reindex=lambda p: 7,
+                      synth_run=synth_writes)
     cmds = [" ".join(c) for c in log]
     check("fetch 한다", any(c.startswith("fetch") for c in cmds), str(cmds))
     check("[중요] merge --ff-only 를 쓴다",
@@ -217,7 +232,7 @@ def main() -> int:
     print("\n[3] [중요] 컨텍스트가 그대로면 재색인하지 않는다")
     calls = []
     r2 = process_event(ev(), registry=reg, git=git_ok([]),
-                       reindex=lambda p: calls.append(1) or 7)
+                       reindex=lambda p: calls.append(1) or 7, synth_run=synth_writes)
     check("[중요] 재색인을 부르지 않는다", calls == [], str(calls))
     check("건너뛴 사유를 남긴다", "변화 없음" in r2.skipped, r2.skipped)
     check("[중요] 커서가 최신이면 같은 커밋을 다시 걷지 않는다 (`#280`)",
@@ -244,7 +259,7 @@ def main() -> int:
     (paths.context / "B.md").write_text("---\ntags: [y]\n---\n새 문서", encoding="utf-8")
     calls.clear()
     r3 = process_event(ev(), registry=reg, git=git_ok([]),
-                       reindex=lambda p: calls.append(1) or 9)
+                       reindex=lambda p: calls.append(1) or 9, synth_run=synth_writes)
     check("재색인함", r3.reindexed and len(calls) == 1, f"{r3.reindexed} {calls}")
     check("문서 수", r3.docs == 9)
     check("다이제스트 갱신", read_digest(paths) == context_digest(paths))
@@ -263,7 +278,7 @@ def main() -> int:
     check("거부", not r4.ok and "등록되지 않은" in r4.error, r4.error)
     check("대소문자는 접어서 매칭",
           process_event(ev(pid="sim/DEMO"), registry=reg, git=git_ok([]),
-                        reindex=lambda p: 1).ok)
+                        reindex=lambda p: 1, synth_run=synth_writes).ok)
 
     print("\n[7] [중요] fetch 가 실패하면 재색인하지 않는다")
     calls.clear()
@@ -309,7 +324,8 @@ def main() -> int:
         return 0, "b" * 40
 
     check("'Already up to date' 는 실패가 아니다",
-          process_event(ev(), registry=reg, git=git_uptodate, reindex=lambda p: 1).ok)
+          process_event(ev(), registry=reg, git=git_uptodate, reindex=lambda p: 1,
+                        synth_run=synth_writes).ok)
 
     print("\n[9] 재색인이 터져도 소비자가 죽지 않는다")
 
@@ -318,7 +334,8 @@ def main() -> int:
     def boom(p):
         raise RuntimeError("chromadb 죽음")
 
-    r7 = process_event(ev(), registry=reg, git=git_ok([]), reindex=boom)
+    r7 = process_event(ev(), registry=reg, git=git_ok([]), reindex=boom,
+                       synth_run=synth_writes)
     check("오류로 보고", not r7.ok and "재색인 실패" in r7.error, r7.error)
     check("  원인이 남는다", "chromadb 죽음" in r7.error)
     check("[중요] 다이제스트를 갱신하지 않는다 (다음에 다시 시도한다)",
@@ -444,19 +461,6 @@ def main() -> int:
                 return 0, "Source/A.cpp\nSource/A.h\nSource/B.cpp\nSource/B.h"
             return 0, ""
         return run
-
-    def synth_writes(paths_, *, changed=None, commit="", **kw):
-        """실제로 그 그룹의 문서를 만든다 — 커서 전진의 전제다."""
-        for k in {str(Path(f).parent / Path(f).stem) for f in (changed or [])}:
-            d = paths_.context / f"{k}.md"
-            d.parent.mkdir(parents=True, exist_ok=True)
-            d.write_text(f"---\nsource_commit: {commit}\n---\n본문", encoding="utf-8")
-
-        class S:
-            written, lost, aborted = 1, 0, ""
-            summary = "그룹 1 → 통과 1"
-            results: list = []
-        return S()
 
     print("\n[12-1] [중요] 기준은 클론 HEAD 가 아니라 커서다 (`#279` — NS 의 상태)")
     pc = make_project(tmp / "cur")
