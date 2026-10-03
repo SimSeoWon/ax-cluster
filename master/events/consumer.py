@@ -872,13 +872,13 @@ def process_event(ev: Event, *, registry: Registry | None = None,
             # [DOC] [주의] 합성이 「내용이 같아 다시 쓰지 않는」 경로로 성공 그룹의 스탬프를 안
             #    올리는 경우가 있으면 커서가 영원히 멈춘다. 그 경로를 확인하고, 있으면 **고치지 말고**
             #    결과 노트로 보고한다(범위 밖 파일 — 사용자 규칙).
-            # [PSEUDO] missing 을 「alive 의 그룹 중 그 커밋 c 로 스탬프되지 않은 그룹」으로 바꾼다 —
-            #          `_unstamped_files(paths, alive, c)` 가 돌려준 파일들의 그룹(`_cs.group`)이다
-            missing = [k for k in _cs.group(alive)
-                       if not _cs.doc_path(paths, k).is_file()]
+            #    확인 결과(이 조각): `synthesize_group` 은 게이트를 통과하면 언제나
+            #    `md.finalize(commit=c)` → `stamp` → `write_text` 를 거치고, `_synthesize` 는
+            #    `skip_existing` 을 넘기지 않는다 — 「같은 내용이라 안 쓴다」 경로는 없다.
+            missing = list(_cs.group(_unstamped_files(paths, alive, c)))
             if missing:
-                r.halted = (f"{c[:8]} 의 그룹 {len(missing)}개가 문서 없음 — 커서를 "
-                            f"전진시키지 않는다(다음 회차가 이 커밋을 다시 한다)")
+                r.halted = (f"{c[:8]} 의 그룹 {len(missing)}개가 이 커밋으로 스탬프된 문서 "
+                            f"없음 — 커서를 전진시키지 않는다(다음 회차가 이 커밋을 다시 한다)")
                 break
             if not _update_cursor(paths, c):
                 r.halted = f"{c[:8]} 커서 기록 실패 — config 에 `index:` 절이 없다"
