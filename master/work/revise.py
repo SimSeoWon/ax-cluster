@@ -70,6 +70,7 @@ revise, max 이상이면 reject."*
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -191,9 +192,11 @@ def output_fingerprint(texts) -> str:
        버리고 줄바꿈으로 잇는다. 남은 것이 없으면 `""` — **빈 출력은 비교하지 않는다**(지문 없음 =
        판정 안 함). 같은 글자의 출력은 언제나 같은 지문이어야 한다.
     """
-    # [PSEUDO] texts 의 각 항목을 공백 정규화하고 빈 것은 버린다
-    # [PSEUDO] 남은 게 없으면 "" · 있으면 "\n".join 의 utf-8 sha256 hexdigest 앞 12자리
-    raise NotImplementedError
+    parts = [" ".join(str(t if t is not None else "").split()) for t in (texts or ())]
+    parts = [p for p in parts if p]
+    if not parts:
+        return ""
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:12]
 
 
 def repeated_output(prev_feedback: str, fp: str) -> bool:
@@ -203,9 +206,11 @@ def repeated_output(prev_feedback: str, fp: str) -> bool:
        `fp` 와 같을 때만 True. 지문이 없는 옛 피드백·형식이 다른 문자열은 False — 모르는 것을
        반복으로 접지 않는다.
     """
-    # [PSEUDO] fp 가 비었거나 prev_feedback 이 FP_PREFIX 로 시작하지 않으면 False
-    # [PSEUDO] FP_PREFIX 뒤 12자 == fp 이고 바로 다음 글자가 "]" 이면 True
-    raise NotImplementedError
+    prev = str(prev_feedback or "")
+    if not fp or not prev.startswith(FP_PREFIX):
+        return False
+    start = len(FP_PREFIX)
+    return prev[start:start + 12] == fp and prev[start + 12:start + 13] == "]"
 
 
 def tag_detail(detail: str, fp: str, limit: int = 500) -> str:
@@ -215,9 +220,9 @@ def tag_detail(detail: str, fp: str, limit: int = 500) -> str:
        요약을 `limit`(500) 자로 잘라 둘 다에서 지문이 살아남게 한다. `fp` 가 비면 detail 을
        그대로 돌려준다(자르지도 않는다 — 종전 동작).
     """
-    # [PSEUDO] fp 가 비면 detail 그대로
-    # [PSEUDO] 아니면 f"{FP_PREFIX}{fp}] " + (detail 앞 limit 자)
-    raise NotImplementedError
+    if not fp:
+        return detail
+    return f"{FP_PREFIX}{fp}] " + str(detail or "")[:limit]
 
 
 def classify(issues, attempt_count: int = 1, max_attempts: int = MAX_ATTEMPTS) -> str:
