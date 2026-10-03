@@ -28,7 +28,7 @@ from pathlib import Path
 
 from .. import source_text
 from ..context_search.paths import ProjectPaths, SOURCE_SUBDIR
-from . import db, parse
+from . import db, parse, pyparse
 
 GIT_TIMEOUT = 60
 
@@ -54,6 +54,7 @@ class BuildStats:
     methods: int = 0
     dropped_rows: int = 0
     elapsed_ms: int = 0
+    qualified: list = field(default_factory=list)   # 모듈명을 붙인 파이썬 이름 (`#712`)
     encodings: source_text.EncodingTally = field(default_factory=source_text.EncodingTally)
 
     @property
@@ -69,6 +70,8 @@ class BuildStats:
             s += f" · [중요] 이름 중복 {self.duplicate_names}"
         if self.dropped_rows:
             s += f" (지운 행 {self.dropped_rows})"
+        if self.qualified:
+            s += f" · 파이썬 이름 겹침 {len(self.qualified)}개 → 모듈명 붙임"
         return f"{s} · {self.encodings.summary}"
 
 
@@ -113,17 +116,33 @@ def list_source_files(paths: ProjectPaths, *, git=None) -> list[str]:
     ]
 
 
+def _parse_exts(paths: ProjectPaths) -> set:
+    """이 프로젝트의 그래프 파서 확장자. 🔴 **`.py` 는 경계가 선언했을 때만** (`#712`) — UE 의
+    기본 경계(확장자 미선언)는 종전 그대로 C++ 만이다."""
+    declared = {e.lower() for e in (paths.scope.exts or ())}
+    return set(parse.PARSE_EXTS) | (pyparse.PY_EXTS & declared)
+
+
 def graph_files(paths: ProjectPaths, *, git=None) -> list[str]:
-    """그래프가 파싱할 파일 — 경계 안의 **C++ 만**. 합성 대상(`.py` 포함 가능)과 갈린다."""
+    """그래프가 파싱할 파일 — 경계 안의 C++ (+ 선언된 `.py`). 합성 대상과 갈린다.
+
+    [중요] 파이썬 **테스트 파일은 뺀다** (사용자 결정 2026-10-03, `#712`) — 보조 클래스가 잡음이다.
+    """
+    exts = _parse_exts(paths)
     return [f for f in list_source_files(paths, git=git)
-            if Path(f).suffix.lower() in parse.PARSE_EXTS]
+            if Path(f).suffix.lower() in exts
+            and not (f.endswith(".py") and pyparse.is_test_file(f))]
 
 
 def _entries_for(rel: str, paths: ProjectPaths,
                  tally: source_text.EncodingTally | None = None) -> dict[str, dict]:
     """한 파일 → `{클래스명: 정보}`. `file` 은 `repo/` 기준 상대 경로로 저장한다."""
     entries: dict[str, dict] = {}
-    classes, decoded = parse.parse_file(paths.repo / rel)
+    if rel.endswith(".py"):                                      # `#712` — ast 갈래
+        decoded = source_text.read(paths.repo / rel)
+        classes = pyparse.parse_source(decoded.text) if decoded else []
+    else:
+        classes, decoded = parse.parse_file(paths.repo / rel)
     if tally is not None:
         tally.add(decoded)
     for c in classes:
@@ -162,14 +181,15 @@ def build_full(paths: ProjectPaths, *, git=None, progress=None) -> BuildStats:
     적어 둔 그 풀 스캔이다. **한 트랜잭션**에서 지우고 다시 넣으므로, 중간에 실패하면
     이전 그래프가 그대로 남는다(세대 포인터와 같은 원칙 — 실패가 자산을 깨지 않는다).
     """
-    parse.require()
     t0 = time.monotonic()
     files = graph_files(paths, git=git)
     if not files:
         raise GraphError(
-            f"`{paths.scope.label()}` 에 C++ 파일이 없다 — 클론이 비었거나 경계가 틀렸다. "
-            "빈 그래프로 덮지 않고 멈춘다."
+            f"`{paths.scope.label()}` 에 그래프로 읽을 파일(C++·선언된 .py)이 없다 — 클론이 비었거나 "
+            "경계가 틀렸다. 빈 그래프로 덮지 않고 멈춘다."
         )
+    if any(not f.endswith(".py") for f in files):
+        parse.require()                  # C++ 가 있을 때만 tree-sitter 가 필요하다
     stats = BuildStats(files=len(files))
     conn = db.connect(paths)
     try:
@@ -177,13 +197,16 @@ def build_full(paths: ProjectPaths, *, git=None, progress=None) -> BuildStats:
             conn.execute("BEGIN")
             try:
                 conn.execute("DELETE FROM classes")       # methods 는 CASCADE 로 함께 지워진다
+                collected: list = []
                 for i, rel in enumerate(files, 1):
-                    entries = _entries_for(rel, paths, stats.encodings)
-                    for name, info in entries.items():
-                        stats.methods += _upsert(conn, name, info)
-                        stats.parsed += 1
+                    collected.extend(_entries_for(rel, paths, stats.encodings).items())
                     if progress and i % 200 == 0:
-                        progress(f"  {i}/{len(files)} — 클래스 {stats.parsed}")
+                        progress(f"  {i}/{len(files)} — 클래스 {len(collected)}")
+                # 🔴 `#712` — 파이썬끼리 겹치는 이름만 모듈명을 붙인다. 짧은 이름으로 고르지 않는다
+                collected, stats.qualified = pyparse.disambiguate(collected)
+                for name, info in collected:
+                    stats.methods += _upsert(conn, name, info)
+                    stats.parsed += 1
                 # 커밋 전에 실제 건수를 읽는다 — 파싱 건수와 다를 수 있다(위 docstring).
                 stats.classes = int(conn.execute("SELECT COUNT(*) FROM classes").fetchone()[0])
                 stats.methods = int(conn.execute("SELECT COUNT(*) FROM methods").fetchone()[0])
@@ -204,11 +227,16 @@ def update_incremental(paths: ProjectPaths, changed: list[str]) -> BuildStats:
     로 얻는 것과 같은 형태). 파싱 대상 확장자가 아니면 통째로 무시한다 — 빈 통계를
     돌려주므로 호출자가 "아무것도 안 했다" 를 볼 수 있다.
     """
-    parse.require()
-    relevant = [f for f in changed if Path(f).suffix.lower() in parse.PARSE_EXTS]
+    exts = _parse_exts(paths)
+    relevant = [f for f in changed if Path(f).suffix.lower() in exts]
     stats = BuildStats(files=len(relevant))
     if not relevant:
         return stats
+    if any(f.endswith(".py") for f in relevant):
+        # 🔴 `#712` — 파이썬 이름 겹침은 **전체를 봐야** 판정된다. 한 파일만 보고 넣으면 짧은
+        #    이름이 다른 모듈의 같은 이름을 덮는다. 파이썬 파싱은 싸다(ax-cluster 209파일) — 전체로 간다
+        return build_full(paths)
+    parse.require()
     t0 = time.monotonic()
     alive = [f for f in relevant if (paths.repo / f).is_file()]
     conn = db.connect(paths)

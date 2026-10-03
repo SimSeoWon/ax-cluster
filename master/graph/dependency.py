@@ -129,6 +129,26 @@ def parse_includes(file_path: Path) -> list[str]:
     return [inc.replace("\\", "/") for inc in _INCLUDE_RE.findall(d.text)]
 
 
+def _edge_base(rel: str, inc: str) -> str:
+    """역질의 키. C++ 은 basename(원문 include 가 부분 경로라서), 🔴 **파이썬은 경로 전체**(`#712`) —
+    `__init__.py` 가 패키지마다 있어서 basename 으로 묶으면 한 간선이 모든 패키지에 걸린다
+    (실측: `synth.py` 의 의존에 `client/init/__init__.py` 가 끼었다)."""
+    return inc if rel.endswith(".py") else _base(inc)
+
+
+def _edges_for(paths: ProjectPaths, rel: str, known: set) -> list[str]:
+    """한 파일의 간선 대상. C++ 은 `#include "..."` 원문, 🔴 **파이썬은 import 를 푼 실재 경로**
+    (`#712`) — 종전엔 `.py` 를 추적만 하고 `#include` 정규식을 돌려 간선이 늘 0 이었다.
+    [주의] `dst_base` 역질의가 basename 으로 묶는 것은 C++ 과 같다(`__init__.py` 처럼 겹치는
+    이름은 그만큼 넓게 잡힌다 — `ambiguous_basenames` 가 센다).
+    """
+    if not rel.endswith(".py"):
+        return parse_includes(paths.repo / rel)
+    from . import pyparse                                    # noqa: PLC0415
+    d = source_text.read(paths.repo / rel)
+    return pyparse.resolve_imports(rel, d.text, known) if d else []
+
+
 def list_source_files(paths: ProjectPaths, *, git=None) -> list[str]:
     """추적 대상 — `repo/Source/**` 의 `TARGET_EXTS`. 경계는 두 겹이다 (§5.2-E)."""
     run = git or _git
@@ -169,12 +189,13 @@ def build_full(paths: ProjectPaths, *, git=None, progress=None) -> BuildStats:
             try:
                 conn.execute("DELETE FROM includes")
                 conn.execute("DELETE FROM files")
+                known = set(files)
                 for i, rel in enumerate(files, 1):
                     conn.execute("INSERT OR IGNORE INTO files (name) VALUES (?)", (rel,))
-                    for inc in parse_includes(paths.repo / rel):
+                    for inc in _edges_for(paths, rel, known):
                         conn.execute(
                             "INSERT OR IGNORE INTO includes (src_file, dst_file, dst_base) "
-                            "VALUES (?,?,?)", (rel, inc, _base(inc)))
+                            "VALUES (?,?,?)", (rel, inc, _edge_base(rel, inc)))
                     if progress and i % 400 == 0:
                         progress(f"  {i}/{len(files)}")
                 stats.edges = int(conn.execute("SELECT COUNT(*) FROM includes").fetchone()[0])
@@ -201,15 +222,18 @@ def update_incremental(paths: ProjectPaths, changed: list[str]) -> BuildStats:
         with _LOCK:
             conn.execute("BEGIN")
             try:
+                # 파이썬 import 해석은 「그 파일이 저장소에 있나」로 판정한다 — 등록된 파일 + 이번 변경분
+                known = {r[0] for r in conn.execute("SELECT name FROM files")}
+                known |= {r for r in relevant if (paths.repo / r).is_file()}
                 for rel in relevant:
                     cur = conn.execute("DELETE FROM includes WHERE src_file = ?", (rel,))
                     stats.dropped_edges += cur.rowcount or 0
                     if (paths.repo / rel).is_file():
                         conn.execute("INSERT OR IGNORE INTO files (name) VALUES (?)", (rel,))
-                        for inc in parse_includes(paths.repo / rel):
+                        for inc in _edges_for(paths, rel, known):
                             conn.execute(
                                 "INSERT OR IGNORE INTO includes (src_file, dst_file, dst_base) "
-                                "VALUES (?,?,?)", (rel, inc, _base(inc)))
+                                "VALUES (?,?,?)", (rel, inc, _edge_base(rel, inc)))
                             stats.edges += 1
                     else:
                         conn.execute("DELETE FROM files WHERE name = ?", (rel,))
@@ -241,8 +265,9 @@ def dependents(paths: ProjectPaths, file_path: str, depth: int = 2) -> list[str]
                 break
             marks = ",".join("?" * len(frontier))
             rows = conn.execute(
-                f"SELECT DISTINCT src_file FROM includes WHERE dst_base IN ({marks})",
-                tuple(_base(f) for f in frontier)).fetchall()
+                f"SELECT DISTINCT src_file FROM includes WHERE dst_base IN ({marks}) "
+                f"OR dst_file IN ({marks})",                       # `#712` 파이썬 = 경로 전체
+                tuple(_base(f) for f in frontier) + tuple(frontier)).fetchall()
             nxt = [r["src_file"] for r in rows if r["src_file"] not in visited]
             visited.update(nxt)
             result.extend(nxt)

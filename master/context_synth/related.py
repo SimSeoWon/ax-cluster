@@ -61,8 +61,30 @@ def file_to_class(paths) -> dict:
     return out
 
 
-def normalize(text: str, mapping: dict) -> tuple:
-    """`(새 본문, 고친 줄 수, 못 푼 줄들)`. 프론트매터 밖은 건드리지 않는다."""
+def class_to_file(paths) -> dict:
+    """`클래스명 → 파일경로` (`#712`). 그래프의 `classes` 그대로 — 파이썬에서 겹친 이름은 이미
+    모듈명이 붙어 있어(`master.verdict.Verdict`) 짧은 이름으로는 **안 걸린다**(고르지 않는다)."""
+    from ..graph import db as gdb
+    if not gdb.exists(paths):
+        return {}
+    conn = gdb.connect(paths)
+    try:
+        return {str(r["name"]): str(r["file"] or "").replace("\\", "/")
+                for r in conn.execute("SELECT name, file FROM classes") if r["file"]}
+    finally:
+        conn.close()
+
+
+_UNKNOWN = re.compile(r"^([ \t]*-[ \t]+)<?([A-Za-z_][\w.]*)>?:[ \t]+\?[ \t]*$")
+
+
+def normalize(text: str, mapping: dict, names: dict | None = None) -> tuple:
+    """`(새 본문, 고친 줄 수, 못 푼 줄들)`. 프론트매터 밖은 건드리지 않는다.
+
+    🔴 `names`(`클래스명 → 경로`, `#712` · 사용자 결정 2026-10-03 「전체 적용」): 모델이 경로를 몰라
+    `이름: ?` 로 쓴 줄을 **그래프에 그 이름이 정확히 있을 때만** 채운다. 이름을 지어내지 않는 원칙은
+    그대로다 — 없는 이름·겹친 짧은 이름은 `?` 로 남는다.
+    """
     fm = _FM.match(text or "")
     if not fm:
         return text, 0, []
@@ -73,6 +95,11 @@ def normalize(text: str, mapping: dict) -> tuple:
         nonlocal fixed
         lines_out = []
         for ln in m.group(2).splitlines():
+            qm = _UNKNOWN.match(ln) if names else None
+            if qm and qm.group(2) in names:
+                lines_out.append(f"{qm.group(1)}{qm.group(2)}: {names[qm.group(2)]}")
+                fixed += 1
+                continue
             if not ln.strip() or _MAPPED.match(ln):
                 lines_out.append(ln)
                 continue
@@ -110,7 +137,7 @@ def normalize(text: str, mapping: dict) -> tuple:
 
 def normalize_doc(text: str, paths) -> tuple:
     """편의 — 매핑을 그래프에서 만들어 `normalize` 를 부른다."""
-    return normalize(text, file_to_class(paths))
+    return normalize(text, file_to_class(paths), class_to_file(paths))
 
 
 # ── 기존 문서 보수 (`#382` 완료 조건 3) ─────────────────────────────────
@@ -122,7 +149,7 @@ def repair(paths, *, confirm: bool = False) -> dict:
     다시 만들 계기가 없다. 그래서 보수 경로가 따로 필요하다.
     """
     from ..context_search import documents
-    mapping = file_to_class(paths)
+    mapping, names = file_to_class(paths), class_to_file(paths)       # `#712` — `이름: ?` 도 채운다
     plan, unresolved_all = [], []
     for md in sorted(paths.context.rglob("*.md")):
         rel = md.relative_to(paths.context).as_posix()
@@ -132,7 +159,7 @@ def repair(paths, *, confirm: bool = False) -> dict:
             text = md.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        new, fixed, unresolved = normalize(text, mapping)
+        new, fixed, unresolved = normalize(text, mapping, names)
         unresolved_all += [f"{rel}: {u}" for u in unresolved]
         if fixed:
             plan.append((rel, fixed))

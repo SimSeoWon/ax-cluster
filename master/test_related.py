@@ -115,6 +115,7 @@ def test_repair_plans_before_writing() -> None:
         P.root, P.context = tmp, tmp / "context"
         paths = P()
         RL.file_to_class = lambda _p: MAP                    # 그래프 대신 고정 매핑
+        RL.class_to_file = lambda _p: {}                     # `#712` 이름→경로 갈래도 고정 (빈 그래프)
 
         plan = RL.repair(paths)
         check("계획은 쓰지 않는다", plan["files"] == 1 and not plan["applied"]
@@ -127,10 +128,25 @@ def test_repair_plans_before_writing() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_unknown_filled_only_by_exact_name() -> None:
+    print("⑦ 🔴 `이름: ?` — 그래프에 **정확히 있는 이름만** 채운다 (#712)")
+    names = {"TaskIndex": "master/task_queue/logic.py",
+             "master.verdict.Verdict": "master/verdict.py"}
+    src = doc("  - TaskIndex: ?\n  - Verdict: ?\n  - _tq_log: ?\n  - <TaskIndex>: ?\n")
+    out, fixed, unres = RL.normalize(src, {}, names)
+    check("정확히 있는 이름은 경로로", "- TaskIndex: master/task_queue/logic.py" in out, out)
+    check("꺾쇠 변형도 같은 규칙", out.count("TaskIndex: master/task_queue/logic.py") == 2, out)
+    check("[중요] 겹쳐서 모듈명이 붙은 짧은 이름은 **고르지 않는다**", "- Verdict: ?" in out, out)
+    check("그래프에 없는 이름(함수)은 그대로", "- _tq_log: ?" in out, out)
+    check("고친 줄 수", fixed == 2, str(fixed))
+    out2, fixed2, _ = RL.normalize(src, {})
+    check("names 를 안 주면 종전 그대로 (호환)", fixed2 == 0 and "- TaskIndex: ?" in out2, str(fixed2))
+
+
 def main() -> int:
     for fn in (test_names_come_from_the_graph_only, test_angle_brackets_are_a_format_problem,
                test_untouched_surfaces, test_junk_is_reported_not_invented,
-               test_repair_plans_before_writing):
+               test_repair_plans_before_writing, test_unknown_filled_only_by_exact_name):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_related: {PASS}/{total} 통과")

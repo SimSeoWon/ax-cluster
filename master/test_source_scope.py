@@ -128,7 +128,10 @@ def test_real_git_listing_and_gitlink_expansion(tmp: Path):
     check("[중요] 서브모듈 안 파일이 나온다 (--recurse-submodules)", "vendor/eng/src/a.cpp" in files, str(files))
     check("[중요] 제외(ggml)는 안 나온다", not any("ggml" in f for f in files), str(files))
     check("루트 밖(docs/)은 안 나온다", "docs/n.py" not in files, str(files))
-    check("graph_files 는 C++ 만", cg.graph_files(p) == ["vendor/eng/src/a.cpp"], str(cg.graph_files(p)))
+    # 🔴 `#712`(사용자 결정 2026-10-03) — 그래프는 **경계가 선언한 `.py` 도** 읽는다(종전 `#693`: C++ 만).
+    #    테스트 파일은 뺀다. 선언 안 한 기본 경계(UE)는 종전 그대로 C++ 만이다.
+    check("graph_files 는 C++ + 선언된 .py", sorted(cg.graph_files(p)) == ["vendor/eng/src/a.cpp", "webui/server.py"],
+          str(cg.graph_files(p)))
 
     # 원본을 따라간 것처럼 서브모듈을 한 칸 전진시키고 루트에서 포인터를 커밋한다
     (eng / "src" / "b.cpp").write_text("int b;\n")
