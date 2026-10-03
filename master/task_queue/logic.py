@@ -258,13 +258,35 @@ def reopen_work(idx: TaskIndex, *, work_id: str, expected_round: int = 0,
                 "title": w.get("title") or ""}
 
 
+def _normalize_target_files(target_files: Optional[list]) -> list:
+    """`#719` — 문자열화·앞뒤 공백 제거·빈 값 버림·첫 등장 순서 유지 중복 제거."""
+    out: list = []
+    seen: set = set()
+    for f in target_files or []:
+        if f is None:
+            continue
+        s = str(f).strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
 def register_task(idx: TaskIndex, *, work_id: str, type: str, task_data: dict,
                   base_commit: str = "", target_file: str = "",
                   header_file: str = "", depends_on: Optional[list] = None,
                   hierarchy_level: int = 0, priority: int = 0,
                   stem: str = "", origin: str = "master",
                   parent_attempt: Optional[str] = None,
-                  requires: Optional[list] = None) -> dict:
+                  requires: Optional[list] = None,
+                  target_files: Optional[list] = None) -> dict:
+    # [DOC] `#719` — `target_files` 는 조각이 맡는 파일 **전부**다. 레코드(`meta`)에
+    #    `"target_files"` 키로 저장한다 — 파견(`infer.task_targets`)이 그 값을 읽는다.
+    #    정규화: 문자열로 바꿔 앞뒤 공백을 걷고, 빈 값은 버리고, 처음 나온 순서를 지켜 중복을 없앤다.
+    #    `None`·빈 목록이면 **빈 목록**을 저장한다(종전 레코드와 같은 의미 — 파견이 두 단수 필드로 푼다).
+    #    [주의] `target_file`·`header_file` 은 그대로 저장한다 — 목록에 합치지 않는다(합치는 것은
+    #    읽는 쪽 `task_targets` 한 곳이다).
     if work_id not in idx.works:
         return {"ok": False, "error": f"unknown work_id: {work_id}"}
     # PLAN §5.2-C — 능력 태그는 **등록 시점에** 검증한다. 미지의 태그를 통과시키면 어떤 워커도
@@ -314,6 +336,7 @@ def register_task(idx: TaskIndex, *, work_id: str, type: str, task_data: dict,
             "base_commit": base_commit,
             "target_file": target_file,
             "header_file": header_file,
+            "target_files": _normalize_target_files(target_files),
             "depends_on": depends_on or [],
             # PLAN §5.2-C — 능력 요구. 빈 리스트면 아무 워커나 집을 수 있다(기존 동작).
             "requires": req_caps,

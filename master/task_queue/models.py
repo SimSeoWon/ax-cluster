@@ -80,6 +80,9 @@ class TaskRegisterReq(BaseModel):
     base_commit: str = ""
     target_file: str = ""
     header_file: str = ""
+    # [DOC] `#719` — 조각이 맡는 파일 **전부**. `target_file`·`header_file` 은 UE 짝(.h/.cpp) 전제의
+    #    단수 필드라 `kind: code` 다중 파일 조각을 못 싣는다. 비면 종전 두 필드로 해석한다(하위 호환).
+    target_files: list = []
     depends_on: list = []
     hierarchy_level: int = 0
     priority: int = 0

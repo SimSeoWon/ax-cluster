@@ -519,6 +519,28 @@ def _log(msg: str) -> None:
     print(f"[dispatch] {msg}", flush=True)
 
 
+def task_targets(task: dict) -> list[str]:
+    """큐 레코드 → 이 조각이 맡는 파일 전부 (`#719`). 판정(`want=`)과 워커 지시가 이 하나에서 나온다.
+
+    [DOC] 순서: 레코드의 `target_files` 를 먼저, 그 뒤에 `target_file`·`header_file` 을 붙인다.
+       각 값은 문자열로 바꿔 앞뒤 공백을 걷고, 빈 값은 버리고, 처음 나온 순서를 지켜 중복을 없앤다.
+    [DOC] `target_files` 가 없거나 비거나 리스트가 아닌 옛 레코드는 종전과 **같은 결과**여야 한다 —
+       `[target_file, header_file]` 중 있는 것. 아무것도 없으면 빈 목록(호출자가 거절한다).
+    [DOC] UE 의 짝 채우기(`decompose.complete_pairs`)는 호출자가 이 결과 위에 그대로 한다.
+    """
+    many = task.get("target_files")
+    raw = list(many) if isinstance(many, list) else []
+    raw += [task.get("target_file"), task.get("header_file")]
+    out: list[str] = []
+    for f in raw:
+        if f is None:
+            continue
+        s = str(f).strip()
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
 def prescreen_nowork(paths, work_id: str, *, api=runner._api) -> list:
     """🔴 **claim 하기 전에** 할 일이 없는 조각을 걷어낸다 (사용자 결정 ⓑ, 2026-09-04).
 
@@ -563,7 +585,8 @@ def prescreen_nowork(paths, work_id: str, *, api=runner._api) -> list:
     from . import decompose as _DC
     for t in pend:
         tid = str(t.get("task_id") or t.get("id") or "")
-        want = [str(f) for f in (t.get("target_file"), t.get("header_file")) if f]
+        # [DOC] `#719` — 대상은 `task_targets` 하나가 정한다(아래 파견 자리와 같은 함수).
+        want = task_targets(t)
         if not tid or not want:
             continue
         try:
@@ -641,9 +664,12 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
     #    "원격에 없다"), 관례도 `main` 실측으로 계약과 반대로 실었다. 지시서는 골조 주석이다.
     # [중요] 대상 파일은 **큐 레코드**에서 만든다 — 등재가 만든 그 목록이고, 판정(`want=`)과
     #    워커 지시가 **같은 하나**에서 나온다(그 등가성이 실측 2026-08-09 의 요구였다).
-    want = [str(f) for f in (task.get("target_file"), task.get("header_file")) if f]
+    # [DOC] `#719` — 종전에는 단수 두 필드만 읽어 다중 파일 조각의 첫 파일만 워커에 갔다(실측
+    #    2026-10-03: `revise_repeat` 3파일 중 `revise.py` 만 채워짐). 목록 전체를 쓴다.
+    want = task_targets(task)
     if not want:
-        raise DispatchError(f"큐 레코드에 target_file·header_file 이 없다 (task={task_id}) — "
+        raise DispatchError(f"큐 레코드에 target_files·target_file·header_file 이 없다 "
+                            f"(task={task_id}) — "
                             f"무엇을 만들지 모르므로 파견하지 않는다")
     body = ""
     base = ""

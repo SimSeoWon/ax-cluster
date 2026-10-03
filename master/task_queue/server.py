@@ -272,6 +272,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
             work_id=req.work_id, type=req.type, task_data=req.task_data,
             base_commit=req.base_commit, target_file=req.target_file,
             header_file=req.header_file, depends_on=req.depends_on,
+            target_files=req.target_files,           # `#719`
             hierarchy_level=req.hierarchy_level, priority=req.priority,
             stem=req.stem, origin=req.origin, parent_attempt=req.parent_attempt,
             requires=req.requires)
