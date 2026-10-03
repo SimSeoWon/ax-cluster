@@ -30,6 +30,21 @@
     "timeout": 180
   },
   {
+    "path": "master/test_revise.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_indexer.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_version.py",
+    "count_pattern": "(?m)^OK test_version: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
     "path": "master/test_integration_checks.py",
     "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
     "timeout": 180
