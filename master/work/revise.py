@@ -171,6 +171,55 @@ def environment_failure(texts) -> str:
     return ""
 
 
+# 🔴 **출력이 직전 시도와 같으면 재시도는 무의미하다** (`#615` · 사용자 결정 2026-10-03 (가)) ──
+#
+# [DOC] 실측 2026-09-12(`#401` 라운드 1·2): 지휘자가 승인을 요구하며 `RESULT: BLOCKED` 했고,
+#    **세 시도의 출력이 글자도 토큰 수도 동일**했다 — 조각 2건 × 3시도 = 6회를 같은 거절에 썼다.
+#    한도(QUOTA)·환경(ENV) 어느 갈래에도 안 걸려 `classify` 로 떨어졌기 때문이다.
+# [DOC] 원인 표지 목록을 두지 않는다(그건 (나)안 — 기각). 원인과 무관하게 「직전과 같은 출력」
+#    하나로 멈춘다. 다음에 올 다른 종류의 거절에도 같은 규칙이 듣는다.
+# [DOC] 지문은 큐가 이미 저장하는 `last_feedback`(submit_fail detail 의 앞 600자, revise 일 때만)
+#    에 실려 다음 시도로 넘어간다 — 큐 스키마를 바꾸지 않는다. 형식은 `FP_PREFIX` + 12 hex + `]`.
+FP_PREFIX = "[fp:"
+REPEAT = "repeat"          # 여섯 번째 갈래 — 같은 출력의 반복이다. 재시도하지 않고 종결한다
+
+
+def output_fingerprint(texts) -> str:
+    """지휘자 출력의 지문 — 정규화한 본문의 sha256 앞 12자리. 출력이 비면 빈 문자열.
+
+    [DOC] 정규화: 각 항목을 str 로 바꾸고 공백 연속을 한 칸으로 접어 앞뒤를 다듬은 뒤, 빈 항목을
+       버리고 줄바꿈으로 잇는다. 남은 것이 없으면 `""` — **빈 출력은 비교하지 않는다**(지문 없음 =
+       판정 안 함). 같은 글자의 출력은 언제나 같은 지문이어야 한다.
+    """
+    # [PSEUDO] texts 의 각 항목을 공백 정규화하고 빈 것은 버린다
+    # [PSEUDO] 남은 게 없으면 "" · 있으면 "\n".join 의 utf-8 sha256 hexdigest 앞 12자리
+    raise NotImplementedError
+
+
+def repeated_output(prev_feedback: str, fp: str) -> bool:
+    """직전 시도의 `last_feedback` 에 **같은 지문**이 실려 있는가.
+
+    [DOC] `fp` 가 비면 False(판정 안 함). `prev_feedback` 이 `FP_PREFIX` 로 시작하고 그 뒤 12자가
+       `fp` 와 같을 때만 True. 지문이 없는 옛 피드백·형식이 다른 문자열은 False — 모르는 것을
+       반복으로 접지 않는다.
+    """
+    # [PSEUDO] fp 가 비었거나 prev_feedback 이 FP_PREFIX 로 시작하지 않으면 False
+    # [PSEUDO] FP_PREFIX 뒤 12자 == fp 이고 바로 다음 글자가 "]" 이면 True
+    raise NotImplementedError
+
+
+def tag_detail(detail: str, fp: str, limit: int = 500) -> str:
+    """submit_fail detail 앞에 지문을 붙인다 — `[fp:<12hex>] ` + 요약(최대 `limit` 자).
+
+    [DOC] 서버는 detail 의 **앞 600자**를 `last_feedback` 으로, 러너는 **뒤 2000자**를 보낸다.
+       요약을 `limit`(500) 자로 잘라 둘 다에서 지문이 살아남게 한다. `fp` 가 비면 detail 을
+       그대로 돌려준다(자르지도 않는다 — 종전 동작).
+    """
+    # [PSEUDO] fp 가 비면 detail 그대로
+    # [PSEUDO] 아니면 f"{FP_PREFIX}{fp}] " + (detail 앞 limit 자)
+    raise NotImplementedError
+
+
 def classify(issues, attempt_count: int = 1, max_attempts: int = MAX_ATTEMPTS) -> str:
     """이슈 목록 → `pass` / `revise` / `reject`. **원전 `_classify_verify_issues` 이식.**
 

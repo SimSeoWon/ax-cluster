@@ -864,6 +864,16 @@ def process_event(ev: Event, *, registry: Registry | None = None,
             #    지웠고, 사흘간 10분마다 같은 커밋을 다시 걸었다).
             from ..context_synth import synth as _cs
             alive = [f for f in changed if (paths.repo / f).is_file()]
+            # [DOC] `#375` — **존재 ≠ 그 커밋을 반영함.** 손으로 만든 문서(스탬프 -1)·레거시 문서·
+            #    부분 실패가 남긴 옛 문서도 파일은 있다. 파일 존재만 보면 그 위로 커서가 넘어가
+            #    가드가 지키려던 「영구 유실 방지」가 뚫린다. 판정은 `_unstamped_files` 와 **같은
+            #    값** — 문서 프론트매터의 `source_commit` 이 이 커밋 `c` 인가 — 를 쓴다.
+            # [DOC] 범위는 이 커서 판정 하나다. `synth_complete`(워터마크)는 건드리지 않는다.
+            # [DOC] [주의] 합성이 「내용이 같아 다시 쓰지 않는」 경로로 성공 그룹의 스탬프를 안
+            #    올리는 경우가 있으면 커서가 영원히 멈춘다. 그 경로를 확인하고, 있으면 **고치지 말고**
+            #    결과 노트로 보고한다(범위 밖 파일 — 사용자 규칙).
+            # [PSEUDO] missing 을 「alive 의 그룹 중 그 커밋 c 로 스탬프되지 않은 그룹」으로 바꾼다 —
+            #          `_unstamped_files(paths, alive, c)` 가 돌려준 파일들의 그룹(`_cs.group`)이다
             missing = [k for k in _cs.group(alive)
                        if not _cs.doc_path(paths, k).is_file()]
             if missing:

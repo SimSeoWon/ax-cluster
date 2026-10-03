@@ -128,10 +128,26 @@ def test_delivered_config_is_stamped():
     check("⑥ 비밀은 없다", "token" not in str(cfg).lower(), "토큰이 실렸다")
 
 
+def test_delivered_branch_follows_registry():
+    """[DOC] `#260` 완료 조건 — 배달된 `checkout.branch` 가 그 프로젝트 `config.yaml` 의 `branch` 와
+    같다. `main` 만으로 통과하는 테스트는 이 결함을 못 잡으므로 **`main` 이 아닌** 브랜치로 잰다.
+    [DOC] 실제 레지스트리·네트워크를 쓰지 않는다 — 가짜 레지스트리를 `_branch_for(registry=)` 로
+       주입하고, `config_for` 경로는 `bundle.Registry` 를 잠시 가짜로 바꿔 잰 뒤 **반드시 되돌린다.**
+    """
+    from master.client import bundle  # noqa: F401
+    # [PSEUDO] config_of(name) 이 branch="develop" 설정을 주는 가짜 레지스트리를 만든다(미등록 이름은 예외)
+    # [PSEUDO] _branch_for("P", registry=가짜) == "develop" 을 check 한다
+    # [PSEUDO] 미등록 이름 · 레지스트리 load 실패 · 빈 branch 는 "main" 인지 check 한다
+    # [PSEUDO] bundle.Registry 를 가짜(load() → 가짜 레지스트리)로 잠시 바꿔 config_for("P", HostFacts)
+    #          의 checkout.branch == "develop" 을 check 하고, try/finally 로 원래 Registry 를 되돌린다
+    pass
+
+
 def main() -> int:
     for fn in (test_identity_carries_commit_and_contract, test_twin_identity_is_separate,
                test_verdict_is_three_way, test_unknown_is_not_a_version_string,
-               test_contract_mismatch_is_named, test_delivered_config_is_stamped):
+               test_contract_mismatch_is_named, test_delivered_config_is_stamped,
+               test_delivered_branch_follows_registry):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_version: {PASS}/{total} 통과")

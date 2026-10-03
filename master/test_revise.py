@@ -210,6 +210,15 @@ check("  한도가 환경보다 **먼저** 판정된다 (둘 다 걸리면 처�
       '_RV.environment_failure' in _src and 'if quota_hit else' in _src)
 check("  요청자에게도 알린다", 'kind="quota"' in _src)
 
+# ── `#615` (가) 출력 반복 ─────────────────────────────────────────────────────
+# [DOC] 실측 출력(같은 글자의 `RESULT: BLOCKED` 3회)이 같은 지문을 내고, 지문이 큐의 저장 한도
+#    (detail 앞 600자)를 넘어 살아남는지를 잰다. infer 의 배선은 소스 문자열로 확인한다(위 `_src` 관례).
+# [PSEUDO] 같은 출력 → 같은 지문(12 hex) · 공백만 다른 출력도 같은 지문 · 다른 출력 → 다른 지문
+# [PSEUDO] 빈 출력([], ["", "  "]) → "" 이고 repeated_output(아무거나, "") 는 False
+# [PSEUDO] tag_detail 결과를 [:600] 로 잘라도 repeated_output 이 True — 긴 요약(3000자)으로 잰다
+# [PSEUDO] 지문 없는 옛 피드백("층1 — [PSEUDO] 잔존") 은 False
+# [PSEUDO] infer 소스에 repeated_output 호출과 tag_detail 호출이 있는지 check 한다
+
 print("=" * 46)
 print(f"통과 {PASS} · 실패 {FAIL}")
 print("=" * 46)

@@ -638,6 +638,16 @@ def main() -> int:
     check("[중요] 폴백을 조용히 하지 않는다", "워터마크" in r.cursor_note, r.cursor_note)
     check("  그리고 커서를 적는다", cursor_of(pm) == C1, cursor_of(pm))
 
+    print("\n[12-10] `#375` 파일은 있어도 그 커밋으로 스탬프되지 않았으면 커서를 안 올린다")
+    # [DOC] 재현 대상: 합성이 그 커밋의 문서를 새로 쓰지 못했는데(실패·게이트 거부) **옛 스탬프의
+    #    문서 파일이 이미 있는** 상태. 종전 판정(파일 존재)은 커서를 넘겼다 — 이제는 멈춰야 한다.
+    # [DOC] 위 절들의 도구(`make_project` · `FakeReg` · `git_walk` · `process_event` · `cursor_of`)를
+    #    그대로 쓴다. 실제 git·네트워크·LLM 을 쓰지 않는다.
+    # [PSEUDO] 새 프로젝트를 만들고, 바뀔 파일의 그룹 문서를 **옛 커밋 스탬프**로 미리 써 둔다
+    # [PSEUDO] 그 문서를 새로 쓰지 않는(=실패한) 합성 주입으로 process_event 를 돌린다
+    # [PSEUDO] 커서가 그대로인지 · r.halted 에 사유가 남는지 check 한다
+    # [PSEUDO] 대조: 합성이 그 커밋으로 스탬프해 쓰면 커서가 전진하는지 check 한다
+
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0

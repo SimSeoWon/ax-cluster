@@ -1074,6 +1074,14 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
             _notify_blocked(task_id, task, env_hit, c.summary, kind="env", api=api)
         else:
             verdict = _RV.classify(issues, attempt)
+        # [DOC] 🔴 `#615` (가) — **직전 시도와 출력이 같으면 재시도는 무의미하다.** 판정 순서는
+        #    한도 → 환경 → **출력 반복** → `classify` 다(앞 두 갈래는 처분이 달라 먼저 본다).
+        #    지문은 지휘자의 말(`c.notes`)로 만들고, 직전 지문은 `task["last_feedback"]` 에 있다
+        #    (`revise.tag_detail` 이 앞서 실어 둔 것). 출력이 비면 지문이 없어 이 갈래를 타지 않는다.
+        # [PSEUDO] fp = _RV.output_fingerprint(list(c.notes)) — quota_hit·env_hit 가 없을 때만 계산, 그 외엔 fp = ""
+        # [PSEUDO] _RV.repeated_output(task.get("last_feedback") or "", fp) 이면 verdict = _RV.REJECT,
+        #          res.notes 에 「🔴 직전 시도와 출력이 같다(fp=…) — 재시도 무의미, 종결」을 남기고
+        #          _log(f"[repeat] {task_id} …") 를 찍는다. 아래 「재시도 상한」 노트와 겹치지 않게 한다
         r_result = r_base = ""
         if verdict == _RV.REVISE:
             try:
@@ -1099,6 +1107,8 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         try:
             # [중요] 사유가 처분을 정한다 — `quota_exhausted` 는 큐가 **pending 복귀**로 받는다
             _reason = "quota_exhausted" if quota_hit else runner.BLOCKED
+            # [PSEUDO] detail 을 _RV.tag_detail(c.summary, fp) 로 바꾼다 — 다음 시도가 last_feedback
+            #          에서 지문을 읽는다(revise 로 갈 때 의미가 있지만 모든 판정에 붙여도 무해하다)
             runner.submit_fail(task_id, _reason, c.summary,
                                epoch=epoch, worker_id=facts.host, api=api,
                                result=r_result, new_base_commit=r_base)
