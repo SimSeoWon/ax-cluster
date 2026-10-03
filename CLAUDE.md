@@ -3,11 +3,26 @@
 Guidance for Claude Code when working **in this repository**. Machine-level guides live in
 [`machines/`](machines/README.md) — different purpose, don't confuse the two.
 
+Windows remote Codex: use the `/IT /RL LIMITED` conductor in the logged-in user's session,
+with `workspace-write`, `windows.sandbox="unelevated"`, and
+`sandbox_workspace_write.network_access=true`. “Session 1” is a launcher name, not a fixed
+SessionId. Verify shell reads, **apply_patch writes**, and recovered results separately.
+For AXCluster, `.33` is also a worker in `C:\trunk\AXCluster` (user 2026-10-03); game requester
+roles stay project-specific. Shared operational memory: [`docs/windows-codex-remote.md`](docs/windows-codex-remote.md).
+
 > [중요] **This file is an index.** It holds only the rules that must never be missed plus pointers.
 > Detail lives in [`PLAN.md`](PLAN.md) → [`docs/`](docs/). Add depth *there*, not here —
 > this file is auto-loaded into every session, so length here is a tax on every task.
 
 ## Hard rules — inline on purpose
+
+- **Infrastructure changes start with RAG** (user 2026-10-03, #716): query
+  `ax-projects.search_context_tool`, cross-check current source, then show scope, evidence and
+  decomposition and ask for **local subagents or AX worker distribution**. Reuse the user's
+  choice for the same task. Delegate accordingly; verify actual outputs and record results.
+  Explain missing prerequisites before offering dispatch; an unready path needs preparation.
+  Select skeletons, source boundaries and checks from registered `kind` (`unreal`/`code`/`index_only`).
+  Details: [`master/skills/distribute/SKILL.md`](master/skills/distribute/SKILL.md).
 
 - 🔴 [중요] **지휘자는 둘이다 — Claude 와 Codex 가 교대한다** (사용자 2026-09-07, 한도가 정한다).
   세션 시작에 **먼저 읽는다**:

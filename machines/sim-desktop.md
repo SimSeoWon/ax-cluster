@@ -48,6 +48,14 @@ for you. Reading it at session start is the wiring.
 
 ## Where the project stands — read this before planning
 
+**Infrastructure changes start with RAG** (user 2026-10-03, #716): query
+`ax-projects.search_context_tool`, cross-check current source, then show scope, evidence and
+decomposition and ask for **local subagents or AX worker distribution**. Reuse the user's choice
+for the same task. Delegate accordingly; verify actual outputs and record results. Explain missing
+prerequisites before offering dispatch; an unready path needs preparation. Select skeletons,
+source boundaries and checks from registered `kind` (`unreal`/`code`/`index_only`).
+Details: [`../master/skills/distribute/SKILL.md`](../master/skills/distribute/SKILL.md).
+
 **M1–M5 all closed (M3·M4·M5 closed 2026-08-17, user decisions). M6 (개선·확장)
 is open — numbers live in Redmine (version *마일스톤 6*). A separate dateless bucket
 *아이디어 — 추후 검토 수집* holds not-yet-decided ideas (wiki [[아이디어수집]]) — items there
@@ -379,25 +387,37 @@ it and prunes anything Gitea does not have (the master's `github` remote has its
 The board has `main` checked out so pushing there is rejected — **`git pull` on that side instead.**
 `~/AgentTest` is the predecessor clone — **reference only. Never modify or push to it.**
 
-### Machine inventory (probed 2026-08-08)
+### Windows remote Codex — operational memory (2026-10-03)
+
+Use `workspace-write`, `windows.sandbox="unelevated"`, and
+`sandbox_workspace_write.network_access=true` through the `/IT /RL LIMITED` conductor.
+SSH sends job data and starts the task; Codex runs in the logged-in user's interactive session.
+“Session 1” is a launcher name, **not a fixed SessionId** (`.33`: USER SessionId 18 measured).
+Verify actual shell reads, **apply_patch writes**, and result recovery; task-start success alone
+is insufficient. `.33` official CLI 0.159.3 passed this probe on 2026-10-03.
+Shared details and evidence: [`../docs/windows-codex-remote.md`](../docs/windows-codex-remote.md).
+
+### Machine inventory (initially probed 2026-08-08; AXCluster roles updated 2026-10-03)
 
 | IP | Machine | Login | Role | Reachable from here |
 |---|---|---|---|---|
 | **.57** | **sim-desktop** — this box | `sim` | **Master**: orchestration, RAG index, ontology/graph, task queue, broker, project registry | — |
-| **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) |  **Worker** *and* inference endpoint #2 (14b pinned). **The only machine that can run the layer-3 verdict unattended** (UE5 5.8). 🔴 **정본 ⑸: this box commits its piece to its own sub-branch and then asks for the next task** (사용자 확정 2026-09-02). The master drives builds over SSH (`run_build_on_workshop` calls `Build.bat` directly, so **no Python payload is needed to build**). [주의] **No resident claimer today** — torn down 2026-08-27 (`#320`); that teardown is **on the restoration list**, since ⑸ requires the worker to pull its next task | **`ssh janus@192.168.0.2`** [완료] passwordless · RDP 3389 · Ollama 11434 |
-| **.33** | Windows 10.0.26200, **the user's main work PC**<br>host `DESKTOP-FU2GNGL` | **`user`** | [중요] **`requester`, not a worker — and the entry point for all Unreal work** (사용자 2026-08-20): the user works in `ModularStage` here, opens `claude`, and the **already delivered requester console** registers it (home skills `ax-request`·`ax-ontology`·`ax-review` · `ax-client` MCP in the checkout's `.mcp.json` · `.ax/token`). Registration from the master is only ever standing in for this. Verifies (it has UE5), gives feedback. **Never dispatched to** (`drivable_hosts` excludes it) — [중요] the `dispatch` field (`#321`) does **not** change this: it is **narrowing-only**, meaning it can pull a *worker* out of rotation (maintenance, low resources) but cannot switch a requester on. `role` is the *right* to be sent work; `dispatch` is *availability right now*. Not an inference endpoint | **`ssh user@192.168.0.33`** [완료] passwordless (2026-08-08) · RDP 3389 · Ollama 11434 |
+| **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) |  **Worker** *and* inference endpoint #2 (gemma4:e4b pinned; user 2026-10-03). **The only machine that can run the layer-3 verdict unattended** (UE5 5.8). 🔴 **정본 ⑸: this box commits its piece to its own sub-branch and then asks for the next task** (사용자 확정 2026-09-02). The master drives builds over SSH (`run_build_on_workshop` calls `Build.bat` directly, so **no Python payload is needed to build**). [주의] **No resident claimer today** — torn down 2026-08-27 (`#320`); that teardown is **on the restoration list**, since ⑸ requires the worker to pull its next task | **`ssh janus@192.168.0.2`** [완료] passwordless · RDP 3389 · Ollama 11434 |
+| **.33** | Windows 10.0.26200, RTX 3080 10GB, **user main work PC**<br>host `DESKTOP-FU2GNGL` | **`user`** | **Game requester** and Unreal entry point. **AXCluster worker** in `C:\trunk\AXCluster` while mounted (user 2026-10-03); master is AXCluster requester. Roles are per project; `dispatch` only narrows availability. `gemma4:e4b` resident verified; third broker endpoint active; three concurrent inference requests verified (2026-10-03). Dirty check before writes, keep game trees separate. | **`ssh user@192.168.0.33`** passwordless · RDP 3389 · Ollama 11434 |
 | **.43** | **BC-250 #1** — Fedora, headless | `sim` |  **Worker** *and* inference endpoint #1. **35B residency was REMOVED 2026-08-17 (user decision ⓐ, measured #105)** — plain sequential inference grew GPU(GTT) allocations ~120MB/cycle and collapsed the node in 4 minutes; idle did not release it; only `systemctl restart ollama` did (NOPASSWD exists for it). Now pins **gemma4:e4b (~5GB, ~10GB headroom)** — the synth model, which also kills the old fallback-OOM hazard. The 35B stays on disk, unpinned. **e4b also fills the agentic-driver seat (#106 closed 2026-08-17)** — tool-calling gates 4/4 ×3 runs + Korean 3/3, 30-cycle sustained 30/30 with no #105-style accumulation (~-5MB/cycle vs 35B's -120). Fallback: `qwen3:8b` (4/4, lives on `.2`). Has the project clone at `~/trunk/ModularStage` — no longer stateless. 🔴 [중요] **This box is a committing worker too, exactly like `.2`** (사용자 정정 2026-09-02): **the memory limit decides only *which model* it may run locally, never whether it may commit**, and **building was never the worker's job** (the origin's per-task verify is static-only; UE5 belongs to the integration gate). I had blocked its commits on the strength of the "one writer" misquote and then re-justified it with memory/UE5 — neither reason holds. Inference it cannot host locally goes through the broker (8102). [주의] **No resident claimer today** — cron watchdog removed 2026-08-27 (`#320`); on the restoration list, since ⑸ requires the worker to pull its next task. Caps still come measured from `.ax/config.json` | `ssh sim@192.168.0.43` [완료] passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
 | — | BC-250 #2 | — |  **Bazzite gaming machine — NOT an inference node.** Converting it means giving up that machine. **Never assume a 2nd board exists.** | n/a |
 
 ### `.33` — the main work PC has its own guide
 
-SSH and Ollama came up 2026-08-08; **the account is `user`**. But **it is not an inference
-endpoint** — measured free VRAM **7651 MiB** is smaller than its own only model (8.95 GiB) and
-than the coder model (9.0 GB), and opening UE5 takes more (`resident=False`).
+SSH and Ollama came up 2026-08-08; **the account is `user`**. On 2026-10-03 the user authorized
+AXCluster worker use and resident inference: current `gemma4:e4b` was pulled and loaded,
+`AX_READY` and `/api/ps` verified. `AX_Ollama33` is S4U/Limited/AtStartup (reboot untested).
+Broker node is active after restart; concurrent inference across all three nodes was verified. Source changes remain uncommitted.
 
 **Its role is `requester`** (2026-08-09): it registers work, verifies (UE5 is here, so compile
-errors surface fastest), and writes `[FEEDBACK]` blocks. It is **excluded from `drivable_hosts`** —
-never dispatched to. [주의] When it verifies, use **`git worktree`**, never a branch switch in the
+errors surface fastest), and writes `[FEEDBACK]` blocks. **For AXCluster only, its role is worker**
+in `C:\trunk\AXCluster` (user 2026-10-03), with the master as requester. Roles are per project;
+game requester entries remain excluded from dispatch. [주의] When it verifies, use **`git worktree`**, never a branch switch in the
 human's main tree: uncommitted `.uasset` work cannot be recovered.
 
 [중요] **This is the human's machine** — the master is a guest here: read-only by preference, dirty
@@ -417,8 +437,8 @@ SSH PATH trap — lives in **[`win-worker-2.md`](win-worker-2.md)**, which is al
 
 ### Roles — `driven` (can we reach it) ≠ `role` (may we dispatch to it)
 
-    worker      claims from the queue and implements   .2 · .43
-    requester   registers, verifies, gives feedback    .33  [중요] never dispatched to
+    worker      claims from the queue and implements   .2 · .43 · .33 (AXCluster only)
+    requester   registers, verifies, gives feedback    .33 (games); master (AXCluster)
 
 **Every worker holds the project clone and judges from source** — that is the point, and all
 workers are equal in it. UE5 only decides *who can run the layer-3 verdict*. The per-machine

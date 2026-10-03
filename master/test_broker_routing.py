@@ -70,6 +70,16 @@ def test_tie_keeps_list_order():
     assert choose(eps, SYNTH, {"bc250": 1, "rtx3060": 1})[0].name == "bc250"
 
 
+def test_three_resident_nodes_use_idle_3080():
+    eps = [_bc250(models=[SYNTH], resident=SYNTH),
+           _rtx(models=[SYNTH], resident=SYNTH),
+           Endpoint(name="rtx3080", host="192.168.0.33:11434", prefer=[SYNTH],
+                    models=[SYNTH], resident=SYNTH, healthy=True)]
+    assert choose(eps, SYNTH, {"bc250": 1, "rtx3060": 1, "rtx3080": 0})[0].name == "rtx3080"
+    eps[2].healthy = False
+    assert choose(eps, SYNTH, {"bc250": 2, "rtx3060": 1, "rtx3080": 0})[0].name == "rtx3060"
+
+
 def test_no_inflight_given_is_the_old_behaviour():
     """`inflight` 를 안 주는 호출자는 종전 그대로 — 첫 상주 노드."""
     eps = [_bc250(models=[SYNTH], resident=SYNTH), _rtx(models=[SYNTH], resident=SYNTH)]

@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
@@ -26,9 +27,13 @@ _TMP = Path(tempfile.mkdtemp(prefix="ax-wscheck-test-"))
 os.environ["AX_PROJECTS_ROOT"] = str(_TMP / "root")
 os.environ["AX_GITEA_REPO_ROOT"] = str(_TMP / "gitea")
 
-from master.projects.config import DRIVEN_INTERACTIVE, DRIVEN_SSH, Workshop  # noqa: E402
+from master.projects.config import (ConfigError, DRIVEN_INTERACTIVE, DRIVEN_SSH,
+                                    Registry, Workshop)  # noqa: E402
+from master.context_search.paths import SourceScope  # noqa: E402
+from master.projects import profile  # noqa: E402
 from master.projects.workshop_check import (  # noqa: E402
     check_workshop,
+    check_project_workshops,
     parse_porcelain,
 )
 
@@ -96,6 +101,93 @@ def test_scope() -> None:
     wide = check_workshop(SSH_SHOP, runner=fake(" M Content/A.uasset\n"),
                           scope=("Source/", "Content/"))
     check("범위를 넓히면 다시 막는다", not wide.ok, wide.reason)
+
+
+def test_project_kind() -> None:
+    print("\n[10] 등록된 프로젝트 타입과 소스 경계")
+    root = _TMP / "projects"
+    twin = root / "P"
+    twin.mkdir(parents=True)
+    config = ("name: P\nworkshops:\n  h:\n    driven: ssh\n    role: worker\n"
+              "    user: u\n    path: /repo\nsource:\n  roots: [master, client]\n"
+              "  exclude: [master/generated]\n  exts: [.py]\n")
+    (twin / "config.yaml").write_text(config, encoding="utf-8")
+    reg = Registry(root=root, active="P", names=["P"])
+
+    with patch.object(profile, "load", return_value={"kind": "code", "work_exts": [".py"]}):
+        status = (" M master/a.py\n D client/b.py\n M master/generated/a.py\n"
+                  " M master_old/a.py\n M master/a.cpp\n M Source/foo.cpp\n?? master/new.py\n")
+        result = check_project_workshops(registry=reg, runner=fake(status))
+        r = result["results"][0]
+        check("code 루트 안 추적 소스 변경 차단", len(r["blocking"]) == 2 and not r["ok"], str(r))
+        check("제외·접두만 같음·확장자·UE폴더는 범위 밖", len(r["out_of_scope"]) == 4, str(r))
+        check("소스 안 미추적도 통과 목록", r["untracked"] == ["master/new.py"])
+        check("code 설정 경계를 결과에 남김", r["scope"] == ["master/", "client/"])
+        check("code 확장자와 제외 설명", ".py" in r["reason"] and "제외" in r["reason"])
+        check("소스 더티 워커는 파견 목록에서 제외", result["dispatchable"] == [])
+        clean = check_project_workshops(registry=reg, runner=fake(" M docs/a.md\n"))
+        check("code 범위 밖만 더티면 파견 가능", clean["dispatchable"] == ["h"])
+        failed = check_project_workshops(registry=reg, runner=fake(rc=255))
+        check("code SSH 실패는 여전히 차단", failed["dispatchable"] == []
+              and not failed["results"][0]["checked"])
+
+        (twin / "config.yaml").write_text(config.replace("  exts: [.py]\n", ""), encoding="utf-8")
+        r = check_project_workshops(registry=reg, runner=fake(" M client/a.py\n M client/a.cpp\n"))
+        check("source.exts 없으면 work_exts 경계 사용", len(r["results"][0]["blocking"]) == 1)
+        with patch.object(profile, "load", return_value={"kind": "code"}):
+            f = fake("")
+            try:
+                check_project_workshops(registry=reg, runner=f)
+            except ConfigError:
+                check("code 확장자도 없으면 원격 검사 전 거절", not f.cmd)
+            else:
+                check("code 확장자도 없으면 원격 검사 전 거절", False)
+
+    for kind in ("unreal", "", "invalid"):
+        with patch.object(profile, "load", return_value={"kind": kind}):
+            r = check_project_workshops(registry=reg, runner=fake(" M master/a.py\n M Source/a.cpp\n"))
+            check(f"{kind!r} 검사에서 기존 Source/ 유지",
+                  r["results"][0]["blocking"] == [" M Source/a.cpp"])
+    with patch.object(profile, "load", return_value={"kind": "index_only"}):
+        f = fake("")
+        r = check_project_workshops(registry=reg, runner=f)
+        check("index_only는 파견 안함", r["dispatchable"] == [])
+        check("index_only는 SSH 검사도 안함", not f.cmd and not r["results"][0]["checked"])
+        check("index_only 제외 사유 명시", "index_only" in r["results"][0]["reason"])
+
+
+def test_real_git_paths() -> None:
+    print("\n[11] 실제 Git 한글·공백·화살표 경로·경계 이동")
+    repo = _TMP / "git-paths"
+    repo.mkdir()
+
+    def git(*args):
+        proc = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True,
+                              check=True)
+        return proc.stdout
+
+    git("init", "--quiet")
+    paths = ["master/한글.py", "master/제외/a.py", "master/arrow -> x.py",
+             "master/out.py", "docs/in.py"]
+    for rel in paths:
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x = 1\n", encoding="utf-8")
+    git("add", ".")
+    git("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base")
+    for rel in paths[:3]:
+        (repo / rel).write_text("x = 2\n", encoding="utf-8")
+    (repo / "client").mkdir()
+    git("mv", "master/out.py", "docs/out.py")
+    git("mv", "docs/in.py", "client/in.py")
+    status = git("-c", "core.quotePath=true", "status", "--porcelain")
+    sc = SourceScope(roots=("master", "client"), exclude=("master/제외",), exts=(".py",))
+    r = check_workshop(SSH_SHOP, source_scope=sc, runner=fake(status))
+    check("실제 한글 파일·화살표 이름·양방향 rename 4건 차단", len(r.blocking) == 4, status)
+    check("Git octal 한글 제외 경로도 정확히 제외", len(r.out_of_scope) == 1
+          and "a.py" in r.out_of_scope[0], str(r.out_of_scope))
+    check("rename으로 code 밖 이동해도 소스 변경 보호", any("docs/out.py" in x for x in r.blocking))
+    check("rename으로 code 안 이동도 보호", any("client/in.py" in x for x in r.blocking))
 
 
 def main() -> int:
@@ -208,6 +300,8 @@ def main() -> int:
         check(f"  '{label}' → 읽기 전용 1회만", ok, f"{len(calls)}회: {joined_all}")
 
     test_scope()
+    test_project_kind()
+    test_real_git_paths()
 
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0

@@ -42,10 +42,18 @@
 
     .57  sim-desktop  이 기계 · 마스터            (서비스 8080·8101·8102·8103)
     .2   Windows      워커 + 추론 · 계정 janus    (UE5 5.8 — 층3 판정 가능)
-    .33  Windows      요청자 · 계정 user          [중요] 파견 대상이 아니다 · 사람의 기계
+    .33  Windows      게임 요청자 · 계정 user     AXCluster 마운트 시 워커 · 사람의 기계
     .43  BC-250 #1    워커 + 추론 · 계정 sim      (Fedora, headless)
 
 ## 마스터 실행 환경 · 지휘자 교대
+
+**인프라 변경 요청도 RAG부터 시작한다**(사용자 2026-10-03, #716).
+`ax-projects.search_context_tool`로 검색하고 현재 소스와 대조한 뒤 대상·근거·분해안을 보여
+**단독(로컬 서브 에이전트) / AX 워커 분산**을 사용자에게 묻는다. 같은 작업에서 이미 정한
+방식은 다시 묻지 않는다. 결정한 방식에 맞춰 서브 에이전트를 구성하고 산출물을 직접 검증·기록한다.
+분산 준비가 부족하면 선행 정비를 알려 결정받으며, 즉시 파견 가능한 것으로 제시하지 않는다.
+골조·소스 경계·검사는 등록 프로필 `kind`(`unreal`/`code`/`index_only`)로 분기한다.
+세부 절차: [`../master/skills/distribute/SKILL.md`](../master/skills/distribute/SKILL.md).
 
 - AX 도구 실행 전 작업 위치를 `/home/sim/ax-cluster` 로 맞춘다. Python 은 `.venv/bin/python` 을 쓴다.
 - **Codex 에서 레드마인 키 조회가 빈 문자열이면 키 부재로 단정하지 않는다.** `master.redmine.api_key()`는
@@ -69,3 +77,9 @@
 - 워커 지휘자 선택은 `ax-mode` 스킬 → `get_worker_mode_tool` / `set_worker_mode_tool` 이다.
   마스터 대화 세션의 교대와 워커 모드 선택은 별개다. 선택 가능한 값은 `lane`·`claude`·`codex`.
 - 배달은 커밋된 깨끗한 트리에서 한다. 문서만 미커밋이어도 `delivered_by.dirty=true` 로 기록된다.
+- **AXCluster 마운트 시 `.2`·`.33`·`.43`을 워커로 사용한다**(사용자 2026-10-03).
+  요청자는 마스터이며 `.33`은 `C:\trunk\AXCluster`에서만 작업한다. 게임 requester 역할은 별개다.
+- **Windows Codex 원격 실행**: `workspace-write` + `windows.sandbox="unelevated"` +
+  `sandbox_workspace_write.network_access=true`, `/IT /RL LIMITED` 런처로 **로그인 사용자 세션**에서
+  실행한다. “세션 1”은 고정 SessionId가 아니다. 실제 셸 읽기·apply_patch 쓰기·결과 회수를 확인한다.
+  정본·진단·기억: [`~/ax-cluster/docs/windows-codex-remote.md`](../docs/windows-codex-remote.md).

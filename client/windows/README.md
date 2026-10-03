@@ -1,5 +1,9 @@
 # `client/windows/` — 윈도우에서만 의미 있는 **스크립트**
 
+Windows Codex 원격 실행: [`docs/windows-codex-remote.md`](../../docs/windows-codex-remote.md).
+`workspace-write`·`windows.sandbox="unelevated"`·네트워크 허용과 `/IT /RL LIMITED` 런처를 함께 쓴다.
+“세션 1”은 로그인 사용자 세션이지 고정 SessionId가 아니다. 실제 apply_patch 수정과 결과 회수까지 확인한다.
+
     client/runtime/            OS 무관 파이썬 (데몬 본체 등) — 로직은 전부 여기
     client/windows/            윈도우에서만 의미 있는 스크립트 (빌드 등)
     client/init/residency.py   등록 **명령 조립** — 파이썬이라 윈도우 없이 테스트된다

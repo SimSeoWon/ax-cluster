@@ -35,6 +35,7 @@ DRIVER = "hf.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M"
 _DEFAULT = [
     {"name": "bc250",   "host": "192.168.0.43:11434", "prefer": [SYNTH], "pin": SYNTH},
     {"name": "rtx3060", "host": "192.168.0.2:11434",  "prefer": [CODER, SYNTH], "pin": SYNTH},
+    {"name": "rtx3080", "host": "192.168.0.33:11434", "prefer": [SYNTH], "pin": SYNTH},
 ]
 
 

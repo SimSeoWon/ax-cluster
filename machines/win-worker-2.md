@@ -13,7 +13,7 @@
 
 ## Codex CLI (2026-09-05 설치)
 
-`codex-cli 0.153.4` · npm 전역 `C:\Users\janus\AppData\Roaming\npm\codex.ps1` ·
+`codex-cli 0.159.3`(2026-10-03 실측) · npm 전역 `C:\Users\janus\AppData\Roaming\npm\codex.ps1` ·
 `codex login status` → **Logged in using ChatGPT**(설치 시점에 이미 인증돼 있었다).
 
 🔴 [중요] **이 기계는 PowerShell 경로로 불러야 한다** — `cmd /c` 로 부르면
@@ -57,11 +57,11 @@
 This box is **two things at once**, which is the thing to keep straight:
 
 1. **A workshop** — it owns UE5 project files, runs the engine, builds, `RunTests`, registers code.
-2. **Inference endpoint #2** — Ollama on `:11434`, `qwen2.5-coder:14b` pinned, serving the master's
-   broker (`:8102`). Runs 14b ~23% faster than the BC-250 board.
+2. **Inference endpoint #2** — Ollama on `:11434`, `gemma4:e4b` pinned (user 2026-10-03),
+   serving the master broker (`:8102`). The 14b performance figures below are historical.
 
-It is also **the only Windows machine the master can reach non-interactively** (SSH). The user's
-main work PC (`.33`) is RDP-only. Full cluster inventory: `machines/sim-desktop.md`.
+Both Windows PCs are reachable over SSH; Codex worker execution uses the interactive `/IT` conductor.
+See [`../docs/windows-codex-remote.md`](../docs/windows-codex-remote.md) for required flags and verification. Full cluster inventory: `machines/sim-desktop.md`.
 
 ## Can / cannot — the session-0 boundary
 
@@ -148,7 +148,7 @@ exists here (`LyraStarterGame`, unrelated to us) — new checkouts default there
 
 | Model | Size | Quant |
 |---|---|---|
-| **`qwen2.5-coder:14b`** | 8.37 GiB | Q4_K_M | ← **pinned**; what the master's broker routes here |
+| **`qwen2.5-coder:14b`** | 8.37 GiB | Q4_K_M | ← historical pin (2026-08-08); current pin is gemma4:e4b |
 | `gemma4:e4b` | 8.95 GiB | Q4_K_M |
 | `gemma3:12b` | 7.59 GiB | Q4_K_M |
 | `qwen3:8b` | 4.87 GiB | Q4_K_M |
@@ -158,7 +158,7 @@ exists here (`LyraStarterGame`, unrelated to us) — new checkouts default there
 
 [중요] **`MAX_LOADED_MODELS=1`** — one resident model at a time. Swapping costs ~36s for 14b.
 Anything premised on several models resident here at once does not hold.
-[중요] **Don't repin the endpoint casually** — the master's broker assumes 14b is resident
+[중요] **Don't repin the endpoint casually** — the master's broker pins gemma4:e4b (2026-10-03)
 (`master/broker/config.py`).
 
 ### Commercial CLIs

@@ -22,8 +22,9 @@
 - **`~/AgentTest` 는 참조 전용** — 수정·푸시 금지. 만들기 전에 거기부터 읽는다.
 - **사용자와의 대화는 한국어.**
 - **작업장은 `.33` 이다** — Unreal 작업은 거기로 들어온다. 여기서 다루는 것은 클러스터 자체다.
-  기계: `.57` 마스터(이 저장소) · `.2` 워커+추론(계정 `janus`, UE5) · `.33` **요청자 · 사람의
-  기계, 파견 대상 아님**(계정 `user`) · `.43` 워커+추론(계정 `sim`).
+  기계: `.57` 마스터(이 저장소) · `.2` 워커+추론(계정 `janus`, UE5) · `.33` **게임 요청자 · 사람의
+  기계**(계정 `user`) · `.43` 워커+추론(계정 `sim`). **AXCluster 마운트 시 `.33`도 워커**로
+  사용한다(사용자 2026-10-03); 마스터가 요청하며 게임 트리와 분리한 `C:\trunk\AXCluster`만 쓴다.
   [주의] **이 줄은 홈 진입 문서와 중복이다 — 일부러 그렇다.** Codex 는 저장소에서 시작하면
   홈 지침을 싣지 않는다(`docs/orchestrator-rules.md` §3.1). **두 진입 파일은 각각 자족적이어야
   한다** — 한쪽에만 규칙을 추가하지 않는다.
@@ -31,6 +32,14 @@
   내용은 도구 무관**이다. Codex 도 그 규칙을 따른다.
 
 ## 마스터 실행 환경 · 지휘자 교대
+
+**인프라 변경 요청도 RAG부터 시작한다**(사용자 2026-10-03, #716).
+`ax-projects.search_context_tool`로 검색하고 현재 소스와 대조한 뒤 대상·근거·분해안을 보여
+**단독(로컬 서브 에이전트) / AX 워커 분산**을 사용자에게 묻는다. 같은 작업에서 이미 정한
+방식은 다시 묻지 않는다. 결정한 방식에 맞춰 서브 에이전트를 구성하고 산출물을 직접 검증·기록한다.
+분산 준비가 부족하면 선행 정비를 알려 결정받으며, 즉시 파견 가능한 것으로 제시하지 않는다.
+골조·소스 경계·검사는 등록 프로필 `kind`(`unreal`/`code`/`index_only`)로 분기한다.
+세부 절차: [`master/skills/distribute/SKILL.md`](master/skills/distribute/SKILL.md).
 
 - AX 도구 실행 전 작업 위치를 `/home/sim/ax-cluster` 로 맞춘다. Python 은 `.venv/bin/python` 을 쓴다.
 - 프로젝트 CLI 는 환경변수가 필수다. 조회 예:
@@ -46,3 +55,8 @@
 - 워커 지휘자 선택은 `ax-mode` 스킬 → `get_worker_mode_tool` / `set_worker_mode_tool` 이다.
   마스터 대화 세션의 교대와 워커 모드 선택은 별개다. 선택 가능한 값은 `lane`·`claude`·`codex`.
 - 배달은 커밋된 깨끗한 트리에서 한다. 문서만 미커밋이어도 `delivered_by.dirty=true` 로 기록된다.
+- **Windows Codex 원격 실행**: `workspace-write` + `windows.sandbox="unelevated"` +
+  `sandbox_workspace_write.network_access=true`, `/IT /RL LIMITED` 런처로 **로그인 사용자 세션**에서
+  실행한다. “세션 1”은 고정 SessionId가 아니다. SSH 직접 실행·예약 작업 요청 성공을 실증으로
+  대신하지 않는다. 실제 셸 읽기·apply_patch 쓰기·결과 회수를 확인한다.
+  정본·진단·기억은 [`docs/windows-codex-remote.md`](docs/windows-codex-remote.md).

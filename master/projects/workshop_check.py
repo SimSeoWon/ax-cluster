@@ -37,20 +37,55 @@
 
 [중요] **그래서 범위 밖도 세어서 보고한다.** 차단하지 않는 것과 못 본 것은 다르다 — 판정문에
 "범위 밖 N건" 이 남지 않으면 다음 세션이 "깨끗하다" 를 저장소 전체로 오해한다.
+
+## 등록된 프로젝트 타입 (`#716`)
+
+프로젝트 검사 입구는 `profile.kind`로 분기한다. unreal은 위의 기존 `Source/` 검사,
+code는 설정된 `SourceScope`의 roots·exclude·exts 경계, index_only는 파견 제외다.
+code의 rename은 옛 경로도 검사한다 — 범위 밖으로 이동해도 소스 삭제가 남는다.
+파일 배치나 `.uproject` 유무로 프로젝트 타입을 추측하지 않는다.
 """
 from __future__ import annotations
 
+import codecs
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, Sequence
 
 from .config import DRIVEN_SSH, ConfigError, ProjectConfig, Registry, Workshop
+from . import profile
+from ..context_search.paths import SourceScope, scope_of
 
 # SSH 가 응답하지 않는 경우를 위한 상한. 여기 걸리면 fail-closed 다.
 DEFAULT_TIMEOUT = 20
 
 # [중요] 차단 판정의 범위. 색인·그래프와 **같은 경계**여야 한다 (§5.2-E). 위 § 참조.
 SOURCE_SCOPE: tuple = ("Source/",)
+
+
+def _source_paths(line: str) -> list[str]:
+    """code 검사용 경로. Git C quoting을 풀고 rename의 양쪽 경계를 지킨다."""
+    text = line[3:]
+    parts = [text]
+    if any(c in line[:2] for c in "RC"):
+        quoted = escaped = False
+        for i, c in enumerate(text):
+            if escaped:
+                escaped = False
+            elif c == "\\" and quoted:
+                escaped = True
+            elif c == '"':
+                quoted = not quoted
+            elif not quoted and text.startswith(" -> ", i):
+                parts = [text[:i], text[i + 4:]]
+                break
+    out = []
+    for p in parts:
+        if p.startswith('"') and p.endswith('"'):
+            p = codecs.escape_decode(p[1:-1].encode("utf-8"))[0].decode(
+                "utf-8", errors="surrogateescape")
+        out.append(p)
+    return out
 
 
 def _porcelain_path(line: str) -> str:
@@ -132,8 +167,11 @@ def check_workshop(
     runner: Runner = _run,
     timeout: int = DEFAULT_TIMEOUT,
     scope: tuple = SOURCE_SCOPE,
+    source_scope: SourceScope | None = None,
 ) -> Cleanliness:
     """워크숍 한 대를 판정한다. **판정만 하고 아무것도 고치지 않는다.**"""
+    if source_scope is not None:
+        scope = tuple(r.rstrip("/") + "/" for r in source_scope.roots)
     res = Cleanliness(host=shop.host, path=shop.path, ok=False, checked=False, scope=scope)
 
     if not shop.drivable:
@@ -172,12 +210,23 @@ def check_workshop(
 
     tracked, untracked = parse_porcelain(proc.stdout or "")
     # [중요] 한 번의 SSH 로 둘 다 얻는다 — 범위를 pathspec 으로 좁히면 밖을 **세지도 못한다.**
-    blocking, outside = split_scope(tracked, scope)
+    if source_scope is None:
+        blocking, outside = split_scope(tracked, scope)
+    else:
+        blocking, outside = [], []
+        for line in tracked:
+            # 밖으로 이동한 rename도 소스 삭제다. 새 경로만 보면 작업을 잃는다.
+            (blocking if any(source_scope.contains(p) for p in _source_paths(line))
+             else outside).append(line)
     res.checked = True
     res.untracked = untracked
     res.blocking = blocking
     res.out_of_scope = outside
     where = "|".join(scope)
+    if source_scope is not None:
+        where = source_scope.label()
+        if source_scope.exts:
+            where += f" (확장자 {', '.join(source_scope.exts)})"
     if blocking:
         res.ok = False
         res.reason = (
@@ -191,7 +240,8 @@ def check_workshop(
         if outside:
             res.reason += (
                 f" [주의] 범위 밖 추적 변경 {len(outside)}건은 **차단하지 않는다**"
-                f"(리소스·엔진·에디터 메타데이터는 열기만 해도 바뀐다): "
+                + ("(리소스·엔진·에디터 메타데이터는 열기만 해도 바뀐다): "
+                   if source_scope is None else "(설정된 소스 경계 밖): ")
                 + ", ".join(_porcelain_path(x) for x in outside[:3])
                 + (" 외" if len(outside) > 3 else "")
             )
@@ -222,13 +272,27 @@ def check_project_workshops(
         raise ConfigError(f"등록되지 않은 프로젝트다: {target}")
 
     cfg: ProjectConfig = reg.config_of(target)
-    results = [
-        check_workshop(shop, runner=runner, timeout=timeout)
-        for shop in cfg.workshops.values()
-    ]
+    kind = profile.kind_of(target)
+    if kind == "index_only":
+        results = [Cleanliness(host=s.host, path=s.path, ok=False, checked=False,
+                              reason="kind=index_only: 색인 전용이므로 분산 파견 대상이 아니다.",
+                              scope=()) for s in cfg.workshops.values()]
+    else:
+        source_scope = None
+        if kind == "code":
+            source_scope = scope_of(reg.dir_of(target))
+            if not source_scope.exts:
+                exts = profile.work_exts(target)
+                if not exts:
+                    raise ConfigError(f"{target}: code 소스 확장자 경계가 비었다.")
+                source_scope = replace(source_scope, exts=exts)
+        # 타입 미수집은 기존 검사와 같은 unreal 경계. 등재 허용은 profile.blockers가 판정한다.
+        results = [check_workshop(s, runner=runner, timeout=timeout, source_scope=source_scope)
+                   for s in cfg.workshops.values()]
     dispatchable = [r.host for r in results if r.ok]
     return {
         "project": target,
+        "kind": kind,
         "dispatchable": dispatchable,
         "results": [r.to_dict() for r in results],
         "note": (

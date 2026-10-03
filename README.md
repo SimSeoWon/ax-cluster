@@ -72,6 +72,7 @@ Gitea push → post-receive 훅 → 스풀 → inotify → 색인기
              → `task/<work>/base`에 골조 커밋·push → work 등재
 마스터       → 골조 파일 기준으로 조각 분해 → 작업 브랜치에서 조각별 서브 브랜치 생성
              → 워커 모드(`lane`/`claude`/`codex`)에 따라 `.2`·`.43`로 병렬 파견
+               (AXCluster 마운트 시 `.33`도 워커, 요청자는 마스터)
 워커         → 자기 서브 브랜치에서 본문 구현 → 결정적 게이트 → 커밋·push
 마스터       → 모든 조각 완료를 요청자에게 통보
 요청자(.33) → 조각 브랜치를 작업 브랜치에 머지 → 프로젝트별 검사 한 번
@@ -385,5 +386,15 @@ GitHub(**private — 유지할 것.** LAN 주소와 방화벽 규칙이 들어 �
 
 ## 관련
 
+- Windows Codex 원격 실행 — [`docs/windows-codex-remote.md`](docs/windows-codex-remote.md).
+  `workspace-write`·`windows.sandbox="unelevated"`·네트워크 허용과 `/IT /RL LIMITED` 런처를 함께 쓴다.
+  로그인 사용자 세션이 필요하며 “세션 1”은 고정 SessionId가 아니다. 파일 수정까지 실행해 확인한다.
+
 - 전신 프로젝트 — `~/AgentTest` ([중요] **참조 전용. 수정·push 금지**)
 - 저장소에서 일할 때의 규칙 — [`CLAUDE.md`](CLAUDE.md)
+
+
+커밋 자동 리뷰는 등록된 프로젝트 타입을 따른다: `unreal`은 UE, `code`는 Python,
+`index_only`는 제외. Gitea push 감지→리뷰 큐 등재→로컬 초안·Antigravity 검증으로 실행한다.
+운영 계약과 실증: [리뷰 큐](docs/17-review-queue.md#9-python-커밋-자동-리뷰-사용자-2026-10-03),
+[리포트83](reports/83-python-commit-review.md).

@@ -7,14 +7,15 @@ Cluster-wide rules live in [`sim-desktop.md`](sim-desktop.md); repo rules in
 > [중요] **This is the human's machine.** Everything below follows from that one fact. `.2` is a
 > workshop the master may drive freely; `.33` is where the user actually works, so the master
 > is a **guest** here — it checks before acting and never takes resources the user needs.
-> Probed 2026-08-08.
+> Probed 2026-08-08; AXCluster and inference authorization updated 2026-10-03.
+> AXCluster uses this PC as a worker in `C:\trunk\AXCluster` while mounted; game requester roles are separate.
+> Remote Codex settings and live evidence: [`../docs/windows-codex-remote.md`](../docs/windows-codex-remote.md).
 >
 > [중요] **`dispatch` cannot override this** (`#321`, 2026-08-27). The workshop schema now has a
 > third axis — `role` = what may be asked of a machine, `dispatch` = whether to send work *right
 > now*. It is **narrowing-only**: writing `dispatch: always` on a `requester` is **rejected by
-> `validate()`**, not silently ignored. The only way to dispatch here would be to change `role`,
-> and that costs the requester payload (`review`·`coordinator`) and makes the token 403 on
-> writes — which is exactly why the axis was split.
+> `validate()`**, not silently ignored. Roles are project-specific: AXCluster now has `role=worker` in its separate checkout;
+> game projects retain their requester payload and token. Do not change a game role to enable AXCluster work.
 
 ## Identity
 
@@ -64,14 +65,14 @@ Cluster-wide rules live in [`sim-desktop.md`](sim-desktop.md); repo rules in
 추론**했고, 상태가 예상 밖이면(도는 중 · 마감됨) 조각이 지난 라운드에 섞이거나 pending 에 박혀
 조용히 죽었다. 지금은 ①에 `work_id` 를 실으면 **거절**한다.
 
-**Codex CLI** 가 있다 (2026-09-05 설치 · `codex-cli 0.153.4` · npm 전역
+**Codex CLI** 가 있다 (2026-09-05 설치 · `codex-cli 0.159.3`(공식 npm 업데이트·실증 2026-10-03) · npm 전역
 `C:\Users\USER\AppData\Roaming\npm\codex.ps1` · ChatGPT 구독 로그인 완료).
 
-    ssh 로 부를 때   cmd /c "cd %TEMP% && type p.txt | codex exec --skip-git-repo-check --json -o last.txt"
-    ① 프롬프트는 **파일로** — 인용부호가 SSH→PowerShell→cmd 를 거치며 깨진다
-    ② `codex exec` 는 **stdin 을 읽는다** · ③ `--skip-git-repo-check` 없으면 거절
-    ④ PowerShell 은 `< NUL` 을 못 쓴다 → `cmd /c`
-    ⑤ **`--json -o`** — 텍스트 출력엔 세션 머리말·추론 요약이 섞인다(본문을 3배로 오독했다)
+Remote worker execution goes through `AxConductor_AXCluster` registered with `/IT /RL LIMITED`.
+SSH sends job data and requests execution; **do not run worker Codex directly in SSH session 0**.
+Use `workspace-write`, `windows.sandbox="unelevated"`, `sandbox_workspace_write.network_access=true`.
+“Session 1” means the logged-in interactive session (USER SessionId 18 measured), not ID 1.
+Official 0.159.3 completed actual apply_patch, readback and result recovery; see the linked runbook.
 
 [주의] **추론 기본값이 `none` 이다** — `-c model_reasoning_effort="medium"` 처럼 명시한다.
 [중요] **레인은 마스터에서 돈다** — `.57` 에도 codex 가 있으므로 이 기계가 꺼져 있어도 파이프라인은
@@ -80,26 +81,19 @@ Cluster-wide rules live in [`sim-desktop.md`](sim-desktop.md); repo rules in
 검색은 이 머신에서 **`ax-client` MCP 의 `search_context`** 한 입구로만 간다 (시소러스 경유).
 다른 경로로 돌면 한국어 질의가 조용히 나빠진다 — 절차 본문은 `ax-request` 스킬에 있다.
 
-## Not an inference endpoint — the VRAM does not allow it
+## Resident inference — user authorization 2026-10-03
 
-Measured with **only the Windows desktop running** (UE5 editor not open):
+The old 2026-08-08 measurements and prohibition were superseded by the user's request to
+install/configure a resident model. Current official `gemma4:e4b` was pulled (6,583,656,505 bytes
+on disk), loaded with context 8192 and `keep_alive=-1`; response `AX_READY` and `/api/ps` verified.
+Do not infer exact VRAM use from disk size or aggregate nvidia-smi measurements.
 
-| | |
-|---|---|
-| VRAM total / in use / free | 10240 MiB / 2401 MiB / **7651 MiB** |
-| `gemma4:e4b` (its only model) | **8.95 GiB** — does not fit the free VRAM |
-| `qwen2.5-coder:14b` (the coder model) | 9.0 GB — does not fit either |
-| `/api/ps` | empty — nothing resident |
-
-Opening the editor takes more still. Pinning a model here would spill Ollama onto CPU **and**
-compete with the user for VRAM on the machine they are using. The §4.4 model-switch cost is
-~100 s round trip, so "load while they're away, unload when they return" thrashes.
-
-**→ Checks and remote installs only** (user's decision, 2026-08-08). `master/provision.py`
-lists this host with `resident=False` and **flags it if a model is ever loaded**. Pulls go over
-plain HTTP (`POST /api/pull`) — no SSH, no file access, so *only text crosses the wire* holds.
-
-Inference stays on **`.43`** (BC-250, 35B pinned) and **`.2`** (RTX 3060, 14b pinned).
+`AX_Ollama33` runs the installed Ollama server using S4U/Limited/AtStartup, independent of
+interactive login. Current listener and LAN API were verified; reboot persistence is untested.
+This task is separate from the Codex `/IT` conductor. Third broker endpoint was activated by broker restart on 2026-10-03; three simultaneous requests
+were routed to three distinct nodes and completed. Source changes remain uncommitted.
+Historical provisioning flags (`resident=False`) are not evidence of today's live residency.
+This remains the human's machine: workload competes with UE5 and must respect available resources.
 
 ## Can / cannot — same session-0 boundary as `.2`
 
