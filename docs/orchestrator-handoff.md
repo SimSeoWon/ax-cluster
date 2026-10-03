@@ -4,66 +4,74 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **갱신 시각**: 2026-10-03 KST (마운트 전환 직전)
-- **지휘 도구 / 세션**: Claude
-- **상태**: 작업 중 — ax-cluster 자신을 분산 파이프라인에 태우는 온보딩(`#711`)
-- **관련 일감**: `#711`(이 축) · `#706`(MotionForge 마운트, ax-cluster 뒤로 밀림) ·
-  `#700`·`#701`·`#695`(열림, 아래 §3)
-- **워커 지휘자 모드**: `codex` (말하기 전에 `~/.cache/ax-dispatch/mode.json` 재조회)
-- **마운트**: `KimodoMotion_WebUI` → **ax-cluster 로 전환 예정**(사용자 지시 2026-10-03)
+- **갱신 시각**: 2026-10-03 11:50 KST — Claude 토큰 소진 직전, **Codex 로 넘긴다**(사용자 지시)
+- **지휘 도구 / 세션**: Claude → Codex
+- **상태**: 교대 준비. **진행 중인 무인 작업 1건**(아래 §2 재합성)
+- **관련 일감**: `#711`(ax-cluster 자신을 파이프라인에 태운다) · `#712`(파이썬 그래프, 구현됨) ·
+  `#713`(LLM 사용량 통합 + 웹 UI) · `#714`(스풀 고아 배치) · `#715`(병렬 합성·브로커 분배, 구현됨)
+- **워커 지휘자 모드**: `codex` (`~/.cache/ax-dispatch/mode.json` 재조회)
+- **마운트**: `AXCluster` (트윈 `~/ax-cluster/AXCluster/`, project_id `Sim/ax-cluster`)
+- **HEAD**: `c657a7a` (`origin` = Gitea). 이 인계 파일만 미커밋
 
-## 1. 사용자 결정 (2026-10-03)
+## 1. 오늘의 사용자 결정 (2026-10-03)
 
-- 클러스터 정비도 워커(BC-250)를 쓴다 → ax-cluster 를 **등록·마운트 대상**으로 삼는다.
-  마운트 규칙(§12.5-a)에 예외를 두지 않는다.
-- 원격: **Gitea 정본**(`gitea@192.168.0.57:Sim/ax-cluster.git`) + **GitHub 푸시 미러**
-  (HTTPS 세분화 토큰, 커밋 시 동기화). 🔴 **GitHub 직접 push 금지** — 미러가 덮어쓰고 지운다.
-  마스터 `github` 원격은 push URL 비활성. 마스터·`.43` 의 `origin` = Gitea.
-- AX 작업의 요청자(골조·⑦ 전진·finalize) = **마스터 세션**. 작업장은 **`.43` 만**(worker).
-- profile: kind `code`(`.py`) · purpose `rnd` · language·overview·테스트 위치는 사용자가 초안을
-  「그대로」 확정(`master/client/payload/profile/ax-cluster.yaml`).
-- 순서: claim 범위 수정 마무리 → Gitea → 등록 → **ax-cluster 로 바로 마운트**(MotionForge 보다 먼저).
+- 원격: **Gitea 정본**(`origin`) + **GitHub 푸시 미러**(Gitea 가 커밋 시 동기화). 🔴 **GitHub 직접 push 금지** —
+  마스터 `github` 원격은 push 비활성. `.43` 도 `origin` = Gitea
+- ax-cluster 를 프로젝트로 등록 — 트윈 이름 **`AXCluster`**(ax-cluster 는 저장소 루트와 겹쳐 `test_sandbox` 오탐)
+- AXCluster profile: kind `code`(`.py`) · purpose `rnd` · AX 작업 요청자 = **마스터 세션**
+- 합성 프롬프트: 비UE 의 긴 `.py` 는 **ast 요약본**(함수 본문 생략, 독스트링·주석 유지)
+- 파이썬 그래프: 겹치는 클래스 이름만 모듈명(`master.verdict.Verdict`) · 테스트 파일은 클래스 그래프 제외 ·
+  `related_classes` 의 `이름: ?` 는 그래프에 정확한 이름이 있을 때만 채움(**전 프로젝트**)
+- 🔴 **컨텍스트 문서는 검색 보조다 — 작업 판단 근거는 실제 코드**
+- 사용량 표시는 **토큰만**. `.33` 등 세션 기록은 로컬에 두고 마스터가 가져온다
+- `.2` 상주 모델 = `gemma4:e4b`(종전 `qwen2.5-coder:14b`) — 합성을 두 노드에 나누려고
+- 🔴 **AX 클러스터 기능 작업(AXCluster)에서는 `.33` 도 워커로 쓴다** — 아래 §3, 아직 안 함
 
-## 2. 완료 (검증 포함)
+## 2. 진행 중 — AXCluster 재합성 (무인)
 
-- `183f32a` work 혼입 방지 — push 파견이 자기 work 만 claim. 신규 회귀 11/11(기대값 정정:
-  verifier_id 는 부재가 아니라 None) · `master/test_*.py` 139파일 전부 통과 ·
-  `ax-task-queue` 재시작 09:55:06(진행 태스크 0 확인 후). 실제 claim 실물은 아직 없다.
-- Gitea `Sim/ax-cluster` 생성(private) · 푸시 미러 동기화 오류 없음 ·
-  `ef239fb` push 후 5초 안에 GitHub 반영(자동 동기화 실물 확인).
-- `ef239fb` 문서: `machines/sim-desktop.md`·`CLAUDE.md` 의 원격 서술을 Gitea 정본으로.
-- 트윈 `ax-cluster` 등록 · hook · clone · guard · profile 완료. source 경계 = `master`·`client`
-  의 `.py`(트윈 `config.yaml`, 저장소 밖). conventions 는 비UE라 설계상 해당 없음
-  (`onboard.py:440`, 문구 「색인 전용」은 code 타입엔 부정확 — 동작 결함 아님).
+- 색인기(`ax-indexer`) 따라잡기가 **11:43:38 새 코드로 재시작**돼 전체 347그룹을 합성 중.
+  동시 2 · 브로커가 `bc250`(.43)·`rtx3060`(.2)로 나눈다(실측 11:44~: 20 / 14건)
+- 끝나면 색인기가 index·워터마크(`last_indexed_commit`)까지 기록한다. 확인:
+  `grep last_indexed ~/ax-cluster/AXCluster/config.yaml` · 문서 수 `find AXCluster/context -name '*.md' | wc -l`
+- 확인할 것: `related_classes` 가 전부 `?` 인 문서 비율 — 그래프 전 **69%** 였다(89개 중 61)
+- [주의] 색인기 타이머(10분)는 마운트된 프로젝트의 워터마크가 비면 전체 합성을 다시 띄운다.
+  멈추려면 마운트를 옮겨야 한다(`systemctl stop` 은 NOPASSWD 밖)
+- 브로커 재시작 스크립트가 `systemctl restart ax-indexer.service`(oneshot)에서 끝까지 기다리는 중 —
+  백그라운드 셸 하나가 남아 있을 수 있다(해롭지 않다)
 
-## 3. 열린 것
+## 3. 다음 작업 (순서)
 
-- **남은 온보딩**: 마운트 전환 → graph · index · synth → `.43` 작업장 등재·배달·대조 →
-  작은 AX 일감으로 첫 실증(⑦ 전진·finalize 는 사람 승인).
-- **미결**: 마스터 세션이 요청자가 되는 등재·통합 표면이 `.33` 없이 성립하는지 확인 필요.
-- `#700`·`#701`·`#695` 는 코드 배포됨(`6001207`·`0d22882`)이나 Redmine 상 신규 — 실물 확인 전.
-  `#695` 시도 격리 수정은 실제 재시도로 아직 확인 못 함(다음 `.2` 재시도의 `[세션1]` request_id 로 판정).
-- 취소된 Kimodo work 3개의 미병합 durable 브랜치 9개·스풀 3건 — **보존**(사람 몫, 사용자 결정 2026-08-23).
+1. **재합성 완료 확인** — 위 §2. 사용량은 이제 트윈 `AXCluster/usage_log.jsonl` 에 `source=synth` 로 남는다(`#713` ①)
+2. **`.33` 을 AXCluster 워커로 등재** (사용자 지시, 미착수):
+   - `set_workshop_tool(name="AXCluster", host="192.168.0.33", driven="ssh", user="user",
+     path="C:\\trunk\\AXCluster", role="worker")` → `python -m master.client deliver AXCluster` → `check`
+   - 🔴 Windows 라 codex 는 **세션 1 런처**(`schtasks /IT`) 경유여야 한다 — SSH 직접은 `0xC0000142`.
+     사람이 쓰는 데스크톱 세션에서 codex 가 돈다는 점을 사용자에게 한 번 알린다
+   - 손님 규칙: 게임 작업 트리와 분리(`C:\trunk\AXCluster`) · 쓰기 전 dirty 확인
+   - 🔴 **자동 로드 문서 수정 필요** — `machines/sim-desktop.md` 의 「`.33` never dispatched to」를
+     「AXCluster 에서는 worker」로. **문구를 보여 주고 동의를 받은 뒤** 고친다
+   - 합성 추론에 `.33` 을 쓰는 것은 별개 질문(사용자: *".33은 왜 안써?"* — 답 미전달). 실측: `.33` 여유 VRAM
+     7.6GB 였고 e4b 실측 3.0GiB 라 **들어간다**. 다만 사람의 작업 PC(UE5·게임과 경합) — 브로커 엔드포인트
+     추가 여부를 사용자에게 묻는다
+3. **`.2` 문서 갱신** — 자동 로드 문서의 「`.2` 14b pinned」 → e4b (동의 후)
+4. **`#713` ③ 웹 UI** — `8103` 에 사용량 그래프(토큰만, 수치만). 원천: 트윈 `usage_log.jsonl`(파견·합성·온톨로지·리뷰) +
+   `~/ax-state/usage/sessions/<host>/<tool>/*.json`(대화 세션, crontab 04:17 수집)
+5. AXCluster 첫 실증 — 작은 AX 일감 하나 등재 → `.43` 파견 → ⑦ 전진(사람 승인)
 
-## 4. Windows Codex 실행 시 구분할 세션 (계속 유효)
+## 4. 오늘 커밋 (모두 Gitea push · GitHub 미러 · `.43` pull 완료)
 
-`.2` 에서 SSH 직접 실행(세션 0)은 Codex 셸이 `0xC0000142` 로 죽는다. **SSH 는 데이터 전송·런처
-깨우기에만 쓰고, Codex 는 `/IT·LIMITED` 사용자 런처(세션 1)로 돌린다.** 정본 경로는
-`master/work/runner.py` → `client/init/residency.py` → `client/runtime/session1_conductor.py`.
-재부팅 뒤 `janus` 로그온이 없으면 `.2` 는 조용히 파견에서 빠진다. `.43`(리눅스)은 SSH 직접 성공.
+`183f32a` claim 범위(work 혼입 방지, 큐 재시작) · `ef239fb` 원격 문서 · `c595c01` 온보딩 ·
+`4c0823f` 합성 요약본+토큰 로그 · `a0cbf42` 트윈 이름 AXCluster · `c237a93` 파이썬 그래프(#712) ·
+`6a18918` 세션 수집기(#713 ②) · `306576e` 브로커 호출 사용량(#713 ①) · `c657a7a` 병렬 합성·분배(#715)
 
-## 5. 받는 세션의 첫 확인
+## 5. 남은 결함·주의
 
-```bash
-cd /home/sim/ax-cluster
-git status --short --branch && git rev-parse HEAD origin/main
-```
-
-- 마운트가 무엇인지(`list_projects_tool`의 `active`)와 트윈 `ax-cluster` 의 onboard 상태
-  (`AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard ax-cluster`).
-- `.43` 전원(2026-10-03 사용자가 켬).
+- `#714` 스풀 고아 배치를 아무도 재처리하지 않는다(`claimed/` 에 3건 남음 — 실손 없음)
+- Kimodo 작업장 3대가 마스터보다 뒤다(재배달 필요, 범위 밖이라 안 함)
+- `onboard` 의 conventions 문구 「색인 전용」은 code 타입엔 부정확(동작 결함 아님)
+- 요약본 뒤에도 4,000자를 넘는 파이썬 파일 125개는 앞에서 잘린다
+- 세션 수집기 `master/work/session_usage.py` 는 유닛 테스트가 없다
 
 ## 6. 관련 근거
 
-- 리포트 64·66(`.2` 재시도 원인) · 78·80·81(Kimodo 실증·`#695`·세션 0/1)
-- `docs/14-onboarding-runbook.md` · `docs/12-multi-project.md` · Redmine `#711`
+Redmine `#711`~`#715` 노트 · `docs/14-onboarding-runbook.md` · 메모리 `context-docs-are-search-aid`
