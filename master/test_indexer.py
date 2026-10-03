@@ -638,6 +638,47 @@ def main() -> int:
     check("[중요] 폴백을 조용히 하지 않는다", "워터마크" in r.cursor_note, r.cursor_note)
     check("  그리고 커서를 적는다", cursor_of(pm) == C1, cursor_of(pm))
 
+    print("\n[12-10] `#375` 파일은 있어도 그 커밋으로 스탬프되지 않았으면 커서를 안 올린다")
+    # [DOC] 재현 대상: 합성이 그 커밋의 문서를 새로 쓰지 못했는데(실패·게이트 거부) **옛 스탬프의
+    #    문서 파일이 이미 있는** 상태. 종전 판정(파일 존재)은 커서를 넘겼다 — 이제는 멈춰야 한다.
+    # [DOC] 위 절들의 도구(`make_project` · `FakeReg` · `git_walk` · `process_event` · `cursor_of`)를
+    #    그대로 쓴다. 실제 git·네트워크·LLM 을 쓰지 않는다.
+    ps = make_project(tmp / "stale")
+    rewind(ps)
+    OLD = "0" * 40
+    for stem in ("A", "B"):                             # 파일은 있다 — 스탬프만 옛 커밋
+        (ps.context / "Source" / f"{stem}.md").write_text(
+            f"---\nsource_commit: {OLD}\n---\n옛 본문", encoding="utf-8")
+    tried = []
+
+    def synth_fails(paths_, *, changed=None, commit="", **kw):
+        """문서를 새로 쓰지 않는다 — 게이트 거부·LLM 실패와 같은 결과."""
+        tried.append(commit)
+
+        class L:
+            written, lost, aborted = 0, 2, ""
+            summary = "그룹 2 → 통과 0 · 사실 거부 2"
+            results: list = []
+        return L()
+
+    r = process_event(ev(), registry=FakeReg(tmp / "stale"), git=git_walk([C1]),
+                      reindex=lambda p: 1, synth_run=synth_fails)
+    check("합성은 시도했다", tried == [C1], str(tried))
+    check("  옛 문서 파일은 그대로 있다 (존재만으로는 판정이 안 된다)",
+          (ps.context / "Source" / "A.md").is_file())
+    check("[중요] 옛 스탬프 문서 위로 커서를 넘기지 않는다",
+          cursor_of(ps) == "a" * 40 and r.commits_done == 0,
+          f"{cursor_of(ps)} {r.summary}")
+    check("  멈춘 사유를 남긴다 (스탬프 부재)",
+          "스탬프" in r.halted and C1[:8] in r.halted, r.halted)
+
+    print("\n[12-10b] 대조 — 그 커밋으로 스탬프해 쓰면 커서가 전진한다")
+    rewind(ps)
+    r = process_event(ev(), registry=FakeReg(tmp / "stale"), git=git_walk([C1]),
+                      reindex=lambda p: 1, synth_run=synth_writes)
+    check("커서가 그 커밋으로 전진한다", cursor_of(ps) == C1, cursor_of(ps))
+    check("  멈춤이 없다", r.commits_done == 1 and not r.halted, r.halted or r.summary)
+
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0

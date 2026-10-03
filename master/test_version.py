@@ -128,10 +128,65 @@ def test_delivered_config_is_stamped():
     check("⑥ 비밀은 없다", "token" not in str(cfg).lower(), "토큰이 실렸다")
 
 
+def test_delivered_branch_follows_registry():
+    """[DOC] `#260` 완료 조건 — 배달된 `checkout.branch` 가 그 프로젝트 `config.yaml` 의 `branch` 와
+    같다. `main` 만으로 통과하는 테스트는 이 결함을 못 잡으므로 **`main` 이 아닌** 브랜치로 잰다.
+    [DOC] 실제 레지스트리·네트워크를 쓰지 않는다 — 가짜 레지스트리를 `_branch_for(registry=)` 로
+       주입하고, `config_for` 경로는 `bundle.Registry` 를 잠시 가짜로 바꿔 잰 뒤 **반드시 되돌린다.**
+    """
+    from master.client import bundle  # noqa: F401
+
+    class _FakeProjectConfig:
+        def __init__(self, branch):
+            self.branch = branch
+
+    class _FakeRegistry:
+        def __init__(self, branches):
+            self._branches = branches
+
+        def config_of(self, name):
+            if name not in self._branches:
+                raise KeyError(name)
+            return _FakeProjectConfig(self._branches[name])
+
+    fake = _FakeRegistry({"P": "develop"})
+    check("[DOC] 등록된 프로젝트는 레지스트리의 branch",
+          bundle._branch_for("P", registry=fake) == "develop",
+          bundle._branch_for("P", registry=fake))
+    check("[DOC] 미등록 이름은 main",
+          bundle._branch_for("Q", registry=fake) == "main",
+          bundle._branch_for("Q", registry=fake))
+    check("[DOC] 빈 branch 도 main",
+          bundle._branch_for("P", registry=_FakeRegistry({"P": ""})) == "main")
+
+    class _BrokenRegistry:
+        def config_of(self, name):
+            raise RuntimeError("load 실패")
+
+    check("[DOC] 레지스트리 조회 실패는 main",
+          bundle._branch_for("P", registry=_BrokenRegistry()) == "main")
+
+    class _LoadingRegistry(_FakeRegistry):
+        @classmethod
+        def load(cls):
+            return cls({"P": "develop"})
+
+    orig_registry = bundle.Registry
+    try:
+        bundle.Registry = _LoadingRegistry
+        facts = bundle.HostFacts(host="h", user="u", path="/repo", driven="ssh", role="worker")
+        cfg = bundle.config_for("P", facts)
+        check("[DOC] config_for 의 checkout.branch 가 레지스트리 값을 따른다",
+              cfg.get("checkout", {}).get("branch") == "develop", str(cfg.get("checkout")))
+    finally:
+        bundle.Registry = orig_registry
+
+
 def main() -> int:
     for fn in (test_identity_carries_commit_and_contract, test_twin_identity_is_separate,
                test_verdict_is_three_way, test_unknown_is_not_a_version_string,
-               test_contract_mismatch_is_named, test_delivered_config_is_stamped):
+               test_contract_mismatch_is_named, test_delivered_config_is_stamped,
+               test_delivered_branch_follows_registry):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_version: {PASS}/{total} 통과")

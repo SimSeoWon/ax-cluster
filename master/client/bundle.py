@@ -397,7 +397,9 @@ def config_for(project: str, facts: HostFacts) -> dict:
                    "mcp": f"http://{MASTER_HOST}:{SERVICES['projects']}/mcp"},
         "this_host": {"host": facts.host, "user": facts.user, "os": facts.os},
         "project": project,
-        "checkout": {"path": facts.path, "branch": "main"},
+        # [DOC] `#260` — 브랜치는 레지스트리(`config.yaml` 의 `branch`)가 아는 값이다. 상수로 두면
+        #    `main` 이 아닌 프로젝트에 **틀린 값**이 배달된다. 해석은 `_branch_for` 하나가 한다.
+        "checkout": {"path": facts.path, "branch": _branch_for(project)},
         "capabilities": facts.capabilities,
         "backends": {
             "claude": facts.claude or None,
@@ -414,6 +416,23 @@ def config_for(project: str, facts: HostFacts) -> dict:
         #    「무엇을 돌릴지 모른다」로 거절한다(빈 값을 넣으면 그 거절이 흐려진다).
         **({"tests": _tests} if (_tests := _tests_for(project)) else {}),
     }
+
+
+def _branch_for(project: str, *, registry=None) -> str:
+    """배달할 `checkout.branch` — 레지스트리가 아는 그 프로젝트의 기본 브랜치 (`#260`).
+
+    [DOC] 등록된 프로젝트면 `registry.config_of(project).branch` 를 돌려준다(`config.yaml` 의
+       `branch` · `register_project(..., branch=)` 가 저장한 값). `registry` 를 안 주면
+       `Registry.load()` 를 쓴다 — 주입 자리는 테스트용이다(관례: `_tests_for` 와 같은 모듈).
+    [DOC] 미등록 프로젝트이거나 레지스트리를 못 읽으면 `"main"` — 종전 동작이다. 이 변경이
+       종전보다 나빠지는 경우를 만들지 않는다(사용자 결정 2026-10-03). 값이 비면 역시 `"main"`.
+    """
+    try:
+        reg = registry if registry is not None else Registry.load()
+        branch = str(reg.config_of(project).branch or "").strip()
+        return branch or "main"
+    except Exception:                                                # noqa: BLE001
+        return "main"
 
 
 def _tests_for(project: str) -> dict:
