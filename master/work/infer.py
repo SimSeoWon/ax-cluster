@@ -528,10 +528,17 @@ def task_targets(task: dict) -> list[str]:
        `[target_file, header_file]` 중 있는 것. 아무것도 없으면 빈 목록(호출자가 거절한다).
     [DOC] UE 의 짝 채우기(`decompose.complete_pairs`)는 호출자가 이 결과 위에 그대로 한다.
     """
-    # [PSEUDO] task.get("target_files") 가 list 면 그 항목들, 아니면 빈 것으로 시작한다
-    # [PSEUDO] 그 뒤에 target_file · header_file 을 이어 붙인다
-    # [PSEUDO] str 변환 · strip · 빈 값 제거 · 순서 보존 중복 제거 후 돌려준다
-    raise NotImplementedError
+    many = task.get("target_files")
+    raw = list(many) if isinstance(many, list) else []
+    raw += [task.get("target_file"), task.get("header_file")]
+    out: list[str] = []
+    for f in raw:
+        if f is None:
+            continue
+        s = str(f).strip()
+        if s and s not in out:
+            out.append(s)
+    return out
 
 
 def prescreen_nowork(paths, work_id: str, *, api=runner._api) -> list:
@@ -579,8 +586,7 @@ def prescreen_nowork(paths, work_id: str, *, api=runner._api) -> list:
     for t in pend:
         tid = str(t.get("task_id") or t.get("id") or "")
         # [DOC] `#719` — 대상은 `task_targets` 하나가 정한다(아래 파견 자리와 같은 함수).
-        # [PSEUDO] 아래 want 를 task_targets(t) 로 바꾼다
-        want = [str(f) for f in (t.get("target_file"), t.get("header_file")) if f]
+        want = task_targets(t)
         if not tid or not want:
             continue
         try:
@@ -660,10 +666,10 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
     #    워커 지시가 **같은 하나**에서 나온다(그 등가성이 실측 2026-08-09 의 요구였다).
     # [DOC] `#719` — 종전에는 단수 두 필드만 읽어 다중 파일 조각의 첫 파일만 워커에 갔다(실측
     #    2026-10-03: `revise_repeat` 3파일 중 `revise.py` 만 채워짐). 목록 전체를 쓴다.
-    # [PSEUDO] 아래 want 를 task_targets(task) 로 바꾼다 — 거절 문구도 target_files 를 언급하게 고친다
-    want = [str(f) for f in (task.get("target_file"), task.get("header_file")) if f]
+    want = task_targets(task)
     if not want:
-        raise DispatchError(f"큐 레코드에 target_file·header_file 이 없다 (task={task_id}) — "
+        raise DispatchError(f"큐 레코드에 target_files·target_file·header_file 이 없다 "
+                            f"(task={task_id}) — "
                             f"무엇을 만들지 모르므로 파견하지 않는다")
     body = ""
     base = ""
