@@ -135,12 +135,51 @@ def test_delivered_branch_follows_registry():
        주입하고, `config_for` 경로는 `bundle.Registry` 를 잠시 가짜로 바꿔 잰 뒤 **반드시 되돌린다.**
     """
     from master.client import bundle  # noqa: F401
-    # [PSEUDO] config_of(name) 이 branch="develop" 설정을 주는 가짜 레지스트리를 만든다(미등록 이름은 예외)
-    # [PSEUDO] _branch_for("P", registry=가짜) == "develop" 을 check 한다
-    # [PSEUDO] 미등록 이름 · 레지스트리 load 실패 · 빈 branch 는 "main" 인지 check 한다
-    # [PSEUDO] bundle.Registry 를 가짜(load() → 가짜 레지스트리)로 잠시 바꿔 config_for("P", HostFacts)
-    #          의 checkout.branch == "develop" 을 check 하고, try/finally 로 원래 Registry 를 되돌린다
-    pass
+
+    class _FakeProjectConfig:
+        def __init__(self, branch):
+            self.branch = branch
+
+    class _FakeRegistry:
+        def __init__(self, branches):
+            self._branches = branches
+
+        def config_of(self, name):
+            if name not in self._branches:
+                raise KeyError(name)
+            return _FakeProjectConfig(self._branches[name])
+
+    fake = _FakeRegistry({"P": "develop"})
+    check("[DOC] 등록된 프로젝트는 레지스트리의 branch",
+          bundle._branch_for("P", registry=fake) == "develop",
+          bundle._branch_for("P", registry=fake))
+    check("[DOC] 미등록 이름은 main",
+          bundle._branch_for("Q", registry=fake) == "main",
+          bundle._branch_for("Q", registry=fake))
+    check("[DOC] 빈 branch 도 main",
+          bundle._branch_for("P", registry=_FakeRegistry({"P": ""})) == "main")
+
+    class _BrokenRegistry:
+        def config_of(self, name):
+            raise RuntimeError("load 실패")
+
+    check("[DOC] 레지스트리 조회 실패는 main",
+          bundle._branch_for("P", registry=_BrokenRegistry()) == "main")
+
+    class _LoadingRegistry(_FakeRegistry):
+        @classmethod
+        def load(cls):
+            return cls({"P": "develop"})
+
+    orig_registry = bundle.Registry
+    try:
+        bundle.Registry = _LoadingRegistry
+        facts = bundle.HostFacts(host="h", user="u", path="/repo", driven="ssh", role="worker")
+        cfg = bundle.config_for("P", facts)
+        check("[DOC] config_for 의 checkout.branch 가 레지스트리 값을 따른다",
+              cfg.get("checkout", {}).get("branch") == "develop", str(cfg.get("checkout")))
+    finally:
+        bundle.Registry = orig_registry
 
 
 def main() -> int:
