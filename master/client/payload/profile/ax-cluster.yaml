@@ -1,0 +1,12 @@
+kind: code
+language: Python 중심 — 마스터 서비스(큐·브로커·프로젝트 레지스트리)·워커 클라이언트·CLI. 셸·PowerShell은 배포·부트스트랩
+  보조만
+overview: Windows+UE5 기반 원전(AgentTest)의 분산 AI 개발 파이프라인을 Linux+Gitea로 옮긴 홈랩 클러스터. 마스터(.57)가
+  큐·브로커·색인/온톨로지·프로젝트 레지스트리를 맡고, 워커(.2·.43)가 서브 브랜치에서 조각을 구현·커밋하며, 요청자(.33)가 골조를 만들고
+  통합한다. 결정적 게이트(층1·층2 grounding·UE5 빌드·RunTests)가 LLM 판단보다 우선한다. 목적은 ROI가 아니라 AI 오케스트레이션
+  구조를 직접 만들며 배우는 것이다.
+purpose: rnd
+test_pattern: test_*.py
+test_start_dir: master
+work_exts:
+- .py
