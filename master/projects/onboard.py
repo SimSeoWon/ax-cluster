@@ -716,6 +716,8 @@ def do_synth(paths, *, limit: int = 0) -> str:
                   commit=head.strip())
     return (f"{head.strip()[:7]} · 그룹 {s.groups} · 작성 {s.written} · 건너뜀 {s.skipped} "
             f"· 거부 {s.refused} · 사실게이트 {s.unfactual} · 실패 {s.failed}"
+            f" · 토큰 입력 {s.tokens_in} · 출력 {s.tokens_out}"           # `#713`
+            + (f" · 요약본 {s.digested}" if s.digested else "")         # `#711`
             + (f" · [중요] {s.aborted}" if s.aborted else ""))
 
 

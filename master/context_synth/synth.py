@@ -102,6 +102,9 @@ class GroupResult:
     dry_ok: bool = False      # dry-run 에서 검증까지 통과했나
     related_fixed: int = 0            # `related_classes` 를 스키마 형태로 고친 줄 수 (`#382`)
     related_unresolved: list = field(default_factory=list)   # 못 푼 항목 — 지어내지 않는다
+    tokens_in: int = 0        # 브로커가 준 사용량 (`#713`) — 노드가 안 주면 0
+    tokens_out: int = 0
+    digest: str = ""          # 프롬프트에 요약본을 썼으면 그 요약 (`pydigest`, `#711`)
 
     @property
     def passed(self) -> bool:
@@ -125,6 +128,9 @@ class Stats:
     aborted: str = ""           # 서킷브레이커가 끊었으면 사유
     unloads: int = 0            # 캐시 회수를 위해 모델을 내린 횟수
     retried: int = 0            # 보류에서 다시 끌어온 그룹 수 (`#377`)
+    tokens_in: int = 0          # 이 배치가 쓴 입력·출력 토큰 합 (`#713`)
+    tokens_out: int = 0
+    digested: int = 0           # 프롬프트에 요약본을 쓴 그룹 수 (`#711`)
     elapsed_ms: int = 0
     encodings: source_text.EncodingTally = field(default_factory=source_text.EncodingTally)
     results: list[GroupResult] = field(default_factory=list)
@@ -143,7 +149,10 @@ class Stats:
     @property
     def summary(self) -> str:
         s = (f"그룹 {self.groups} → 통과 {self.written}"
-             f" · 건너뜀 {self.skipped} · {self.elapsed_ms}ms")
+             f" · 건너뜀 {self.skipped} · {self.elapsed_ms}ms"
+             f" · 토큰 입력 {self.tokens_in} · 출력 {self.tokens_out}")
+        if self.digested:
+            s += f" · 요약본 {self.digested}"
         if self.refused:
             s += f" · [중요] 형식 거부 {self.refused}"
         if self.unfactual:
@@ -419,6 +428,32 @@ def _remember(paths, key: str, files: list, res, commit: str, dry_run: bool):
     return res
 
 
+def _prompt_bodies(paths, bodies: dict, limit: int) -> tuple[dict, str]:
+    """프롬프트에 넣을 본문. 🔴 **비UE 프로젝트의 긴 `.py` 는 요약본**으로 바꾼다 (`#711`).
+
+    [중요] 사용자 결정 2026-10-03: 비UE 에만 · 함수 본문을 덜고 구조·독스트링·주석을 남긴다
+       (`pydigest`). UE 프로젝트는 **종전 그대로**(앞에서 자르기) — 재합성 비용·결과를 바꾸지 않는다.
+    [주의] 사실 게이트는 호출자가 **원본 `bodies`** 로 돌린다. 여기 결과는 프롬프트에만 쓴다.
+    """
+    if not _index_only(paths) or sum(len(b) for b in bodies.values()) <= limit:
+        return bodies, ""
+    from . import pydigest                                    # noqa: PLC0415
+    out, notes = dict(bodies), []
+    for f, body in bodies.items():
+        if not f.endswith(".py"):
+            continue
+        d = pydigest.digest(body)
+        if d is None:
+            notes.append(f"{f} 파싱 실패 — 앞에서 자른다")
+            continue
+        out[f] = d.text
+        notes.append(f"{f} {d.summary}")
+    total = sum(len(b) for b in out.values())
+    if notes and total > limit:
+        notes.append(f"요약 뒤에도 {total}자 > 상한 {limit} — 넘는 부분은 잘린다")
+    return out, " · ".join(notes)
+
+
 def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                      commit: str = "", broker: str = DEFAULT_BROKER,
                      model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
@@ -455,16 +490,25 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
 
     grounding = collect_grounding(paths, files)
     grounding.related = collect_related(paths, key, files, existing)
-    p = prompt_mod.build(files=files, bodies=bodies, grounding=grounding, existing=existing,
-                         limit=content_limit)
+    prompt_bodies, res.digest = _prompt_bodies(paths, bodies, content_limit)
+    if res.digest:
+        _log(f"{key} — {res.digest}")
+    p = prompt_mod.build(files=files, bodies=prompt_bodies, grounding=grounding,
+                         existing=existing, limit=content_limit)
     res.prompt_chars = len(p)
 
+    usage: dict = {}
+    t_call = time.monotonic()
     try:
         raw = call_broker(p, model=model, broker=broker, timeout=SYNTH_TIMEOUT,
-                          num_ctx=SYNTH_NUM_CTX, caller=caller)
+                          num_ctx=SYNTH_NUM_CTX, caller=caller, usage=usage)
     except GenerateError as e:
         res.reason = f"LLM 실패: {e}"
+        _log(f"{key} — LLM 실패 · {int(time.monotonic() - t_call)}초 · 프롬프트 {len(p)}자")
         return _remember(paths, key, files, res, commit, dry_run)
+    res.tokens_in, res.tokens_out = usage.get("in", 0), usage.get("out", 0)
+    _log(f"{key} — {model} · 토큰 입력 {usage.get('in', '미상')} · 출력 {usage.get('out', '미상')}"
+         f" · {int(time.monotonic() - t_call)}초 · 프롬프트 {len(p)}자")
 
     doc, verdict = md_mod.finalize(raw, existing=existing, commit=commit)
     if not verdict.ok:
@@ -565,6 +609,10 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
                              caller=caller, dry_run=dry_run, content_limit=content_limit,
                              tally=stats.encodings)
         stats.results.append(r)
+        stats.tokens_in += r.tokens_in
+        stats.tokens_out += r.tokens_out
+        if r.digest:
+            stats.digested += 1
         if r.passed:
             stats.written += 1
             consecutive = 0

@@ -153,8 +153,11 @@ def build_prompt(*, context: str, instruction: str, target_file: str = "",
 
 def call_broker(prompt: str, *, model: str = CODER, broker: str = DEFAULT_BROKER,
                 token: str | None = None, timeout: int = GEN_TIMEOUT,
-                num_ctx: int | None = None, caller=None) -> str:
+                num_ctx: int | None = None, caller=None, usage: dict | None = None) -> str:
     """브로커에 생성을 요청한다. **stateless** — `context` 를 주지도 받지도 않는다.
+
+    `usage` 에 dict 를 주면 응답의 사용량을 채운다(`#713`) — `in`(prompt_eval_count) ·
+    `out`(eval_count) · `ms`(total_duration). 노드가 값을 안 주면 그 키는 비운다(지어내지 않는다).
 
     [중요] **`num_ctx` 를 주라 — 안 주면 노드가 죽는다.** 실측 2026-08-08: BC-250 이 컨텍스트
     합성 배치 중 커널까지 멈췄다. 원인은 프롬프트 길이 자체가 아니라 **KV 할당 규모**였다:
@@ -203,6 +206,12 @@ def call_broker(prompt: str, *, model: str = CODER, broker: str = DEFAULT_BROKER
         raise GenerateError(f"브로커 응답을 해석할 수 없다: {e}") from e
     if res.get("error"):
         raise GenerateError(f"브로커 오류: {res['error']}")
+    if usage is not None:
+        for key, src in (("in", "prompt_eval_count"), ("out", "eval_count")):
+            if isinstance(res.get(src), int):
+                usage[key] = res[src]
+        if isinstance(res.get("total_duration"), int):
+            usage["ms"] = res["total_duration"] // 1_000_000
     return res.get("response") or ""
 
 
