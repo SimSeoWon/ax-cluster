@@ -4,14 +4,191 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **갱신 시각**: 2026-10-03 12:45 KST — Codex, AXCluster 워커·원격 Codex 실증과 기억 기록
-- **지휘 도구 / 세션**: Codex (Claude 인계 수령)
-- **상태**: 원격 파일 수정 실증 통과. §2 재합성 **미완** 정정은 보존. 브로커 .33 운영 반영·3노드 동시 추론 확인
-- **관련 일감**: `#711`(ax-cluster 자신을 파이프라인에 태운다) · `#712`(파이썬 그래프, 구현됨) ·
-  `#713`(LLM 사용량 통합 + 웹 UI) · `#714`(스풀 고아 배치) · `#715`(병렬 합성·브로커 분배, 구현됨)
-- **워커 지휘자 모드**: `codex` (`~/.cache/ax-dispatch/mode.json` 재조회)
-- **마운트**: `AXCluster` (트윈 `~/ax-cluster/AXCluster/`, project_id `Sim/ax-cluster`)
-- **HEAD**: `7ec14f5` (사용자 커밋 승인으로 Python 자동 리뷰 7파일 커밋). Gitea origin/main push 완료; 브로커·원격 설정 문서 변경은 미커밋
+- **갱신 시각**: 2026-10-03 KST — Claude, 인계 후 1~4번(코드 대조·7개 통합 실행·실패 주입 리뷰·기록) 완료
+- **지휘 도구 / 세션**: Claude (Codex 세션은 사용자가 멈춤).
+- **상태**: 앞선 변경은4fb7915로 커밋·푸시·일부 동기화 완료. **통합 검사 보완5개 파일은 검증을 마쳤으나
+  미커밋**이다(리포트87·README·이 문서 포함). 다음은 사용자 커밋·푸시 승인. 워커 소스 동기화·
+  전체 작업장 재배달/검사도 남음. #716 완료 아님.
+- **관련 일감**: [#716](http://192.168.0.57:8080/issues/716), journal1480(NS 근거)·1481(준비)·1482(푸시/서비스 결과).
+  기존 #711~#715 및 §2 재합성 미완 기록도 보존한다. 진행 판정 정본은 Redmine.
+- **워커 지휘자 모드**: 마지막 조회 `codex`. 이번 인수인계에서는 재조회·변경하지 않음.
+- **마운트**: `AXCluster` — `.57` 요청자, `.2`·`.33`·`.43`는 별도 AXCluster 체크아웃의 worker.
+- **HEAD / origin/main**: `4fb791550179aa3302d12e8c88782723883ec0c8` (`4fb7915`).
+  origin/main은 앞선 원격 실측으로 일치 확인. `.43 ~/ax-cluster`도 같은 해시.
+  아래 인수인계 갱신 자체는 **미커밋**이다. 이전 커밋·푸시 승인은 이 새 문서 커밋으로 확대하지 않는다.
+
+## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
+
+### 검증 완료 — Claude 인계 후 (최신, 아래 Codex 서술의 「미완료」를 대체)
+
+리포트 [`87`](../reports/87-axcluster-integration-checks.md). 요지:
+
+1. 5개 파일이 아래 서술과 일치. 회귀 직접 실행 15/15 OK.
+2. 프로필 값으로 실제 `build_local.local_test_fn` 호출 → `TESTS OK (7)` · 3.4초 · 트리 불변.
+   건수 broker14 · workshop77 · source_scope32 · python_commit_review7 · build_local36 ·
+   skeleton_gate51 · integration_checks15. (샌드박스 밖 Claude 세션이라 source_scope 제약 없음.)
+3. 저장소 밖 사본에 실패 주입 9/9 차단(rc1 · 0건 · 전부 skip · unittest 실패 · 파일 없음 ·
+   빈 목록 · 깨진 JSON · 경계 밖 · 타임아웃). 한계: 자기 요약만 찍고 rc0 인 스크립트는 통과한다.
+4. 연결: `payload/profile` → `bundle._tests_for` → 배달 `.ax/config.json` `tests` → `ax-advance`.
+   **작업장 배달 전에는 효과 없음**(현 배달본 `384a07a`).
+5. 공용 `parse_unittest` 가 첫 `Ran` 줄을 집어 실패 시 요약 숫자가 틀릴 수 있다(판정은 맞음).
+   사용자 결정: #716 노트에만 남기고 고치지 않는다.
+
+이어갈 것: 사용자 커밋·푸시 승인 → 아래 「남은 일」 1~4(워커 동기화 · 5프로젝트 `update`).
+
+### 바로 다음 작업 — AXCluster 통합 검사 보완 (Codex 기록)
+
+사용자 “보완작업은 어떻게 진행할거야?”→“진행해봐”로 구현을 승인했다. RAG와 기존 검사 계약을
+조사한 뒤, 선택된 로컬 서브 에이전트 방식으로 구현·분류를 나눴다. 마지막 요청은 인수인계이므로
+추가 검증·수정·배포를 멈췄다. **이번 변경에 대한 커밋·푸시 승인은 받지 않았다.**
+
+문제: 기존 AXCluster 프로필의 `unittest discover -s master -p test_*.py`는
+스크립트의 `__main__`/순수 함수 검사를 실행하지 않는다. 일부 TestCase만 실행돼 N>0을 만족해도
+다른 검사의 누락이 감춰진다. 공용 `master/work/build_local.py`는 수정하지 않았다.
+
+현재 구현 파일(새 파일4개 + 기존 프로필1개):
+
+- `master/integration_checks.py`: 명시 JSON 검사 목록 검증, 각 스크립트 별도 Python 프로세스,
+  rc·실행 건수·전체/실패/skip 증거 검사. 누락/0건/타임아웃/전부 skip/잘못된 목록은 차단.
+  각 자식에 임시 AX_PROJECTS_ROOT·AX_GITEA_REPO_ROOT 및 -B를 적용한다.
+  **환경 분리는 완전한 보안 샌드박스가 아니다. 검토된 목록만 실행해야 한다.**
+- `master/test_integration_checks.py`: 실제 임시 자식 프로세스를 사용하는 회귀 TestCase15개.
+- `tests/integration/checks.json`: 필수 검사7개를 명시. broker_routing, workshop_check,
+  source_scope, python_commit_review, build_local, skeleton_gate 및 새 integration_checks.
+  검사별180초 제한·출력 형식별 건수 정규식.
+- `tests/integration/test_axcluster.py`: 목록을 읽어7개 unittest를 만들고 각 스크립트를 실제 실행.
+- `master/client/payload/profile/AXCluster.yaml`: `test_start_dir: tests/integration`,
+  `test_pattern: test_axcluster.py`로 변경. 나머지 프로필 값은 그대로다.
+
+실행/검토 근거:
+
+- 구현 에이전트 `/root/716_type_scope`가 새 회귀 검사 **직접 실행15/15 및
+  `-m unittest master.test_integration_checks`15/15**, 당시 diff --check 통과를 보고했다.
+  rc1·타임아웃·파일 없음·요약 누락/0건·total 불일치·failed>0·allskip·환경 비전파를 검증했다.
+- 분류 에이전트 `/root/716_test_inventory`: 기존144파일 중 TestCase7파일을 AST로 식별했고
+  후보9개만 전문 검토했다. **나머지135개 안전성은 미검토**, 전체144 검사 커버리지 아님.
+  `test_client_bundle.py`는 실제 .33 SSH 및 기존 hooks/__pycache__ 삭제가 있어 목록에서 제외.
+  layer1/project_profile은 실제 등록 프로젝트/소스 읽기 의존성이 있어 초기 목록에서 제외했다.
+- 루트는 생성된 목록7개와 wrapper/프로필을 확인했고 broker·unittest 요약 샘플 정규식 매칭을
+  확인했다. **전체7개 통합 실행과 실제 local_test_fn→wrapper 연결은 아직 실행하지 않았다.**
+- `/root/716_independent_review`에 위5파일과 build_local 읽기 전용 리뷰를 요청했으나,
+  인계 요청으로 중단을 통보했다. 반환된 부분 리뷰에서 주요 결함은 발견하지 않았고,
+  프로필/discovery 호환·프로세스 분리·실패 차단·경로 검증을 확인했다.
+  **검사 재실행, 7개 원본의 출력/부작용 전수 대조, 실제 어댑터 결과 검토는 미완료다.**
+
+이어갈 순서:
+
+1. `git status --short`와 위5파일 diff/신규 파일을 읽고, 회귀15개 보고와 구현을 대조한다.
+   기존 dirty `docs/orchestrator-handoff.md`도 보존한다. 변경을 stash/reset/clean하지 않는다.
+2. 프로필의 새 start_dir/pattern을 이용한 **실제 local_test_fn 통합 호출** 또는 아래 discovery를
+   실행해 필수7개 모두 자식에서 실행되고 건수 증거가 통과하는지 확인한다:
+   `.venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py`.
+   source_scope는 임시 Git·sg gitea를 쓰므로 알려진 샌드박스 제약에는 좁은 실행 승인을 사용한다.
+   실패 시 공용 실패중단 규칙을 따른다. fixture의 예상 실패는 테스트 성공과 구분한다.
+3. 실제 프로필→공용 어댑터 연결 및 wrapper/manifest의 실패 차단을 독립 리뷰한다.
+   범위 밖135검사를 자동으로 목록에 넣지 않는다. `/tmp` 전체 탐색도 금지한다.
+4. 결과를 `reports/87-axcluster-integration-checks.md`(아직 생성 안 함), reports/README,
+   이 인수인계 및 Redmine #716에 기록한다. **이번 보완 내용은 아직 Redmine에 반영하지 않았다.**
+   스킬의 AXCluster 검사 경로 예시도 새 프로필과 일치하는지 확인한다.
+5. 검증이 끝난 구체적 결과로 사용자에게 이번 변경의 커밋·푸시 승인을 받는다.
+   승인 후 깨끗한 커밋에서 아래 기존 워커 동기화·재배달 과제를 이어간다.
+
+현재 작업은 로컬 구현뿐이다. 새 운영 큐/Redmine 일감·브랜치·원격 파견·서비스 재기동·배달·
+커밋·푸시는 하지 않았다. 아래15/15 드라이런 및 fixture6/6을 이7개 통합 실행 성공으로 읽지 않는다.
+
+### 완료와 근거
+
+- 사용자 “모두 커밋 푸시하고 동기화해” 승인으로 이전 미커밋20파일 전체를 커밋·Gitea push했다.
+  Windows Codex 지침/워커 예외/브로커3노드 설정, NS 분석, #716 지침·검사·스킬이 포함됐다.
+  GitHub는 Gitea 푸시 미러이며 직접 push하지 않았다. 미러 도착 자체는 이번에 따로 재조회하지 않았다.
+- `distribute` 정본을 RAG→소스 대조→사용자 단독/분산 선택→서브 에이전트→실물 검증 흐름으로
+  재작성했다. 등록 `kind`로 분기하며 정본7단계·병렬 기본·요청자 통합·별도 전진/finalize 승인을 유지한다.
+  현재 노출되지 않은 improve/advance/finalize MCP 도구를 가정하지 않고 실제 모듈 계약으로 안내한다.
+- `~/.codex/skills/distribute`와 공식 사용자 경로 `~/.agents/skills/distribute`는 모두
+  `~/ax-cluster/master/skills/distribute` 링크다. 둘 다 정본/파일 존재를 재확인했다.
+  **이번 인수인계 요청 직전 현재 세션의 제공 스킬 목록에 distribute가 실제 추가됐다.**
+  따라서 앞선 “현재 세션 미노출” 기록은 갱신한다. 등록을 위해 반드시 세션을 닫아야 하는 것은 아니다.
+  새 세션은 갱신된 진입 지침·인수인계를 다시 받는 데 유용하다.
+- 타입별 더티 검사는 code SourceScope와 rename 양쪽/quoted 경로를 보호하고 index_only는 파견 제외.
+  workshop77/77 + SourceScope32/32 + broker routing14/14 = 관련 검사123개 통과.
+  스킬 형식 검사·독립 코드/forward 검토도 통과. code 서브모듈 내부 더티 검사는 일반화 한계가 있으나
+  AXCluster는 submodules=[]다.
+- `.43 ~/ax-cluster`는 ff-only 동기화 후 해시 일치. 이것은 `.43 ~/trunk/AXCluster` 워커 트리와 다르다.
+- `ax-projects`는 19:24:55, `ax-broker`는 19:23:42 KST로 재기동됐다. 19:33 재조회 모두
+  active/running·Result=success. 큐도 active/running이며 앞선 권한 승인 최신성 검사3서비스 모두
+  stale=False·why 빈값이다. `ax-dispatch.path`·실제 따라잡기 타이머 `ax-dispatch.timer`는 active/waiting.
+
+### 남은 일과 시작 조건
+
+1. **작업장 동기화 재개 범위를 확인한다.** 기존 전체 동기화 지시가 있었지만, 목록 조회 오류 후
+   공용 실패중단 규칙에 따른 재개 질문에 별도 답을 받지 않은 채 사용자 요청으로 인수인계를 작성했다.
+   실패는 필수 AX_PROJECTS_ROOT 누락 조회였으며 루트 명시 재조회가 성공했다. 코드/서비스 장애 아님.
+   없는 경로를 추정해 읽거나 동일 방식을 재질문하는 반복을 만들지 않는다.
+2. **배달 출처를 깨끗한 커밋으로 준비한다.** 이 문서가 미커밋인 채로 배달하면 dirty=true다.
+   이 문서 커밋·푸시는 별도 승인 후 처리하거나, 승인된 동기화에서 검증된 깨끗한 체크아웃을 사용한다.
+   임의 stash/reset/clean으로 현재 변경을 숨기지 않는다.
+3. **AXCluster 워커 소스 Git 동기화**: Windows `.2 E:\trunk\AXCluster`, `.33 C:\trunk\AXCluster`는
+   마지막 preflight에서0ffd74b·더티없음. `.43 ~/trunk/AXCluster` 현재 HEAD는 이번에 재조회하지 않았다.
+   등록 config의 경로·역할, 브랜치·더티 상태를 먼저 읽고 ff-only로 맞춘 뒤 실제 해시를 확인한다.
+   사람의 게임 트리나 작업 브랜치를 강제로 바꾸지 않는다.
+4. **등록 전체5프로젝트 작업장 배달·최종 검사**: `ModularStage`, `NS`, `KimodoMotion_WebUI`,
+   `MotionForge`, `AXCluster`. 프로젝트를 임의로 골라 일부만 갱신하지 않는다.
+   배달 계획을 읽고, 준비된 깨끗한 트리에서 아래 정식 명령을 실행한다:
+   `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client update`.
+   종료 결과·전 프로젝트 검사·출처 해시·프로젝트 로컬 skills/config·서비스 최신성을 대조한다.
+   **현재까지 이 전체 update는 실행하지 않았다.**
+5. **분산 전체 실증은 별도**: AXCluster의 Python 통합 실행기/기존 스크립트 검사 호환성을 확인하고
+   실제 큐→골조→조각 브랜치→워커 구현/커밋→회수→요청자 통합을 실증한다. 0개 테스트는 통과 아님.
+   이번 사용자는 전체 커밋·푸시·동기화를 지시했으며 신규 분산 작업을 고르거나 전진/finalize를
+   승인한 것은 아니다. 이전 직접 apply_patch 프로브를 이 전체 흐름의 완주로 대체하지 않는다.
+
+### 후속 테스트 — 현재 세션에서 실제 스킬 사용
+
+사용자 “그럼 테스트해볼까?”로 distribute를 읽고 실제 MCP를 호출했다.
+RAG 검색 성공·logged=true, AXCluster kind=code·blockers=[] 확인.
+운영 check_workshops_clean_tool은 kind=code·master/client .py 경계로 세 워커 모두
+checked/ok=true·blocking=[]·dispatchable3대를 반환했다. 스킬 quick_validate도 통과.
+client check AXCluster는 세 워커 모두 배달 출처384a07a가 HEAD4fb7915보다3커밋 뒤여서
+rc1이다. 스킬1종·payload10개는 일치하지만 출처 버전 검사는 실패다.
+현재 마스터의 인수인계 문서는 여전히 미커밋. 실제 분산은 파견하지 않았다.
+스킬 흐름/준비 검사와 동기화 후 실제 분산 중 테스트 범위를 사용자에게 물었으며 아직 미응답.
+
+### 로컬 격리 드라이런 — 사용자 후속 요청
+
+사용자 “드라이런 해볼까?” 승인으로 운영 큐/Git/워커를 변경하지 않는 하니스를 실행했다.
+스크립트 `/tmp/ax-master-workflow-dryrun.py`, 산출물 `/tmp/ax-master-dryrun-y55d21bm/`의
+`result.json`·`specs.json`·`queue_requests.json`·골조3개·격리 통합 fixture에 근거가 있다.
+하니스15/15와 실제 local_test_fn으로 실행한 fixture unittest6/6 통과.
+register_work에 모의 POST/PATCH 큐를 주입하고 실제 _post와 socket 연결은 금지했다.
+실제 AXCluster 프로필의 Python 확장자 검사를 통과했으며, 3골조의 run_python·층1 동결 검사를
+실행했다. 시그니처 변경·스텁 잔존·비Python 골조·구문 오류·테스트0개는 예상대로 거절했다.
+등재 결과의 gate_checked=False도 확인했다: 등록 함수가 별도 골조 게이트 실행을 통과로
+꾸며 기록하지 않는다. 골조 검사는 하니스에서 별도로3/3 실행한 것이다.
+세 호스트별 서로 다른 브랜치 이름과 대상 파일을 산출했지만 **배정·병렬 실행은 모의 계획**이다.
+Git HEAD·refs·status는 하니스 전후 동일. 실제 브랜치/커밋/push, 원격 워커·LLM층2·Git통합·
+전진/finalize·Redmine 큐 등재는 실행하지 않았다. 후속 문서 기록만 이 dirty 파일에 추가했다.
+
+읽기 전용 독립 관측에서 실제 호출 순서를 확인했다: work 등재로 ID 발급→base 이름 기록·
+태스크 등재→요청자의 골조 브랜치 준비/검사/승인 커밋·push→원격 base 존재를 확인한 자동 파견.
+**실제 등재와 골조 push는 자동 파견을 발동할 수 있어 드라이런으로 실행하면 안 된다.**
+또 AXCluster의 unittest discovery는 순수 함수·__main__ 스크립트 검사를 누락할 수 있다.
+test_broker_routing/test_workshop_check/test_source_scope 등은 실제 실행계약을 별도로 검토해야 한다.
+이 fixture6개 통과를 AXCluster 전체 통합 검사 또는 실제 분산 완주로 확대하지 않는다.
+하니스 산출물의 후속 독립 검토는 에이전트가 /tmp 전체 목록을 조회하다 접근 제한 디렉토리의
+Permission denied를 만나 중단했다. 앞선 호출순서/테스트 계약 독립 관측은 완료됐지만,
+산출물 독립 검토는 미완료다. 루트는 지정 result/queue JSON만 읽어15/15·TESTS OK(6)·
+모의 큐 호출5개·실제 파견/Git 브랜치 생성 없음 기록을 직접 대조했다.
+
+### 조회와 권한의 함정
+
+- AX CLI는 작업 위치 `~/ax-cluster`, `.venv/bin/python`, AX_PROJECTS_ROOT 명시가 필요하다.
+  조회에서 레지스트리를 직접 읽으면 `Registry.load(Path('/home/sim/ax-cluster'))`도 가능하다.
+- Windows 옛 클론 조회 스크립트는 `.2` 출력 UTF8 decode오류를 냈다. 기존
+  `/tmp/ax-axcluster-worker-deploy.py preflight`에서는 두대 rc0·클론/HEAD/깨끗함을 확인했다.
+  출력 처리 오류를 워커 장애로 기록하지 않는다.
+- 기본 샌드박스의 systemctl·sg gitea·Docker 조회 실패는 진단 결과로 남기고 좁은 승인 경로로
+  재조회한다. 권한 승인은 OS sudo 비밀번호를 대신하지 않는다. 비밀값 출력 금지.
+- 홈 AGENTS/CLAUDE 링크를 덮지 않는다. git 현재 트리와 Redmine journal을 함께 대조한다.
 
 ## 1. 오늘의 사용자 결정 (2026-10-03)
 
@@ -39,34 +216,12 @@
 - [주의] 색인기 타이머(10분)·push 이벤트도 합성을 띄운다 — 잠금이 없어 겹칠 수 있다.
   멈추려면 마운트를 옮겨야 한다(`systemctl stop` 은 NOPASSWD 밖)
 
-## 3. 다음 작업 (순서)
+## 3. 다음 작업
 
-1. **재합성 완료 확인** — 위 §2. 사용량은 이제 트윈 `AXCluster/usage_log.jsonl` 에 `source=synth` 로 남는다(`#713` ①)
-2. **AXCluster 워커·원격 Codex 실증 확인** (등록·배달·단일 파일 실증 완료, 전체 파이프라인 미검증):
-   - `.2` `E:\trunk\AXCluster`, `.33` `C:\trunk\AXCluster` 정식 클론0ffd74b·worker 등록,
-     `.43` 포함 deliver/check OK. 마스터 최신 HEAD와 워커 소스 동기화는 별개로 남음.
-   - `.2`·`.43` 실제 소스 읽기/쓰기 확인. `.33` 공식 npm Codex0.159.3 업데이트 뒤
-     **apply_patch completed·rc0·DONE·반환값 일치·대상 밖 변경 없음·회수53초·정리 뒤 clean** 확인.
-   - **필수 설정**: workspace-write + windows.sandbox="unelevated" + network_access=true,
-     `/IT /RL LIMITED` 런처. “세션1”은 경로 이름이지 고정 SessionId 아님(.33 USER SessionId18).
-     SSH 직접 Codex의 셸0xC0000142는 재현됨. 로그인 부재·쓰기 도구 실패·결과 회수를 구분한다.
-   - `.33` 게임 requester·사람 트리는 별개. 대기하던 진단 요청은 해당 요청만 취소·정리했음.
-3. **상주 추론·문서 반영**:
-   - `.33` 현재 공식 gemma4:e4b pull·keep_alive=-1/context8192 로드, AX_READY·/api/ps 확인.
-     AX_Ollama33은 S4U/Limited/AtStartup, Codex /IT와 별개. 재부팅·상주 복원 미검증.
-   - 사용자 “브로커 반영해줘” 승인으로 rtx3080(.33:11434, SYNTH pin)을 **운영 반영**.
-     routing14/14·health11/11 통과. `scripts/ax-service-restart ax-broker`로 재시작,
-     12:43:44 KST 기동·active/running·Result=success. 3노드 healthy/resident 확인.
-     동시 진단3건이 bc250·rtx3060·rtx3080 각각으로 분배되어 done=true, eval_count64로 응답.
-     3노드 동시 inflight 확인. 소스는 **미커밋·미푸시**이며 재시작으로 로컬 변경을 적용한 상태.
-   - 사용자 “진행해…메모리와 문서들” 승인으로 AGENTS·CLAUDE 정본·README·기계 문서·
-     Claude 메모리·공용 기억 갱신. 홈 symlink 보존. .2 상주 e4b·.33 AXCluster worker 예외 반영.
-   - 근거: `reports/82-axcluster-workers-and-codex-remote.md`, `docs/windows-codex-remote.md`.
-     다음 기록 확정: 검토된 변경 commit/push 승인 → 깨끗한 커밋에서 재배달.
-     새 합성은 상주 노드 수로 동시3을 선택하며 이미 시작한 배치는 시작 시 정한 동시 수를 유지한다. 자동 로드 문서 수정 승인을 커밋 승인으로 넓히지 않음.
-4. **`#713` ③ 웹 UI** — `8103` 에 사용량 그래프(토큰만, 수치만). 원천: 트윈 `usage_log.jsonl`(파견·합성·온톨로지·리뷰) +
-   `~/ax-state/usage/sessions/<host>/<tool>/*.json`(대화 세션, crontab 04:17 수집)
-5. AXCluster 첫 실증 — 작은 AX 일감 하나 등재 → `.43` 파견 → ⑦ 전진(사람 승인)
+**최신 우선순위는 §0의 남은 일이다.** 워커 동기화·등록 전체 배달·검사부터 인계한다.
+기존 별도 항목인 §2 재합성 미완, #713 웹 UI·토큰 사용량, AXCluster 분산 첫 전체 실증은
+사용자가 고르는 다음 작업으로 남아 있다. 이전 §3의 브로커·문서 미커밋/스킬 미완 기록은
+4fb7915와 §0 상태로 갱신한다. 과거 실측은 아래 이력과 reports/82·85·86에 보존했다.
 
 ## 4. 오늘 커밋 (모두 Gitea push · GitHub 미러 · `.43` pull 완료)
 

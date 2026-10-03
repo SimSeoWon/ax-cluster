@@ -6,7 +6,7 @@ overview: Windows+UE5 기반 원전(AgentTest)의 분산 AI 개발 파이프라�
   통합한다. 결정적 게이트(층1·층2 grounding·UE5 빌드·RunTests)가 LLM 판단보다 우선한다. 목적은 ROI가 아니라 AI 오케스트레이션
   구조를 직접 만들며 배우는 것이다.
 purpose: rnd
-test_pattern: test_*.py
-test_start_dir: master
+test_pattern: test_axcluster.py
+test_start_dir: tests/integration
 work_exts:
 - .py

@@ -1,0 +1,37 @@
+[
+  {
+    "path": "master/test_broker_routing.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_workshop_check.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_source_scope.py",
+    "count_pattern": "(?m)^OK test_source_scope: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_python_commit_review.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_build_local.py",
+    "count_pattern": "(?m)^OK test_build_local: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_skeleton_gate.py",
+    "count_pattern": "(?m)^OK test_skeleton_gate: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_integration_checks.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
+  }
+]

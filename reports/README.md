@@ -105,3 +105,4 @@
 | `84` | **AXCluster R1 검토·수정** — 널 바이트 AST ValueError 지적1/1 재현 · 큐 고착 방지·관련141건 통과 · 커밋95906c8 · R1-1 applied · [리포트](84-r1-python-review-validation.md) |
 | `85` | **.33 NS 요청자 흐름 분석** — 실제 지침·스킬·에이전트·MCP·훅 대조 · 컨텍스트→선택→위임/분산→회수·검증·기록 · .57 적용 근거 · [리포트](85-ns-requester-workflow-reference.md) |
 | `86` | **.57 RAG·분산 준비 정비 #716** — 지침·kind별 소스 더티 검사 반영 · 77+32 검사 통과 · 실제 타이머 이름 정정 · 스킬/운영 실증 미완료·조회 오류 중단 · [리포트](86-master-rag-distributed-readiness.md) |
+| `87` | **AXCluster 통합 검사 보완 #716** — 프로필이 스크립트형 검사를 못 돌리던 구멍 · 명시 목록 7개를 검사별 프로세스로 실행·건수 증거 검사 · 실제 `local_test_fn` 경로 `TESTS OK (7)`(232건) · 실패 주입 9/9 차단 · 자기 요약 신뢰·배달 전 무효·요약 숫자 표시 한계 · 미커밋 · [리포트](87-axcluster-integration-checks.md) |
