@@ -204,14 +204,17 @@ def domain_hint(paths, files: list) -> str:
 
 
 def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
-                 grounding: str = "") -> str:
+                 grounding: str = "", kind: str = "unreal") -> str:
     """리뷰 프롬프트. [중요] 표 형식은 소비자의 파싱 계약이다 — 열 순서를 바꾸지 말 것."""
+    python = kind == "code"
+    role = "Python" if python else "Unreal Engine 5 C++"
+    example = format_example(kind)
     return (
-        "당신은 Unreal Engine 5 C++ 코드 리뷰어다. 아래 커밋의 **변경분만** 리뷰하라.\n\n"
+        f"당신은 {role} 코드 리뷰어다. 아래 커밋의 **변경분만** 리뷰하라.\n\n"
         "규칙 (어기면 리포트가 못 쓰게 된다):\n"
         "- 리뷰 범위는 변경된 라인과 그 직접 영향뿐이다. 변경되지 않은 기존 코드의 무관한 "
         "이슈는 보고 금지.\n"
-        "- 지적할 것이 없는 섹션은 표에 `| (없음) | - | - | - | - |` 한 줄만 쓴다.\n"
+        "- 지적할 것이 없는 섹션은 표 헤더만 두고 데이터 행은 비운다. 자리표시 행은 쓰지 않는다.\n"
         "- 심각도/위험도는 높음·중간·낮음 셋 중 하나.\n"
         "- 모듈(디렉토리) 단위로 `### <모듈>` 절을 만들고, 각 절 안에 아래 두 표를 쓴다.\n"
         "- 표 형식(열 순서 고정 — 파서가 읽는다):\n"
@@ -220,15 +223,49 @@ def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
         "  ## 2. 변경분 버그·안전성\n"
         "  | 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n"
         "  ## 3. 영향 분석\n"
-        "  (자유 서술 — 이 변경이 의존 파일·Blueprint 에 줄 수 있는 영향)\n"
+        + ("  (자유 서술 — 호출자·모듈·CLI·서비스에 줄 수 있는 영향)\n"
+           "- Python 검토: 예외 처리·반환값·자원 수명·동시성·입력 검증을 diff 근거로 확인한다.\n"
+           "- 프로젝트 규약을 지어내거나 UE·Blueprint 규칙을 적용하지 않는다.\n" if python else
+           "  (자유 서술 — 이 변경이 의존 파일·Blueprint 에 줄 수 있는 영향)\n")
+        +
         "- [중요] 출력은 반드시 `### ` 로 시작한다. 표 밖의 산문은 ## 3 절에만 쓴다.\n"
         "- 출력 예시 (이 골격 그대로):\n"
-        + _FORMAT_EXAMPLE + "\n"
+        + example + "\n"
         + (f"## 도메인 컨텍스트 (참고)\n{domains}\n\n" if domains else "")
         + (f"## 실측 근거 (참고)\n{grounding}\n\n" if grounding else "")
         + f"## 커밋 {commit[:12]} 의 변경 파일\n" + "\n".join(f"- {f}" for f in files)
         + f"\n\n## DIFF (unified=3)\n```diff\n{diff}\n```\n"
     )
+
+
+def format_example(kind: str = "unreal") -> str:
+    """언어 예시는 바꾸되 소비자의 표 계약은 유지한다."""
+    if kind == "code":
+        return (_FORMAT_EXAMPLE.replace("Source/ModularStage/Mission", "master/module")
+                .replace("X.cpp", "example.py").replace("bFlag 접두 누락", "프로젝트 명명 규약 위반"))
+    return _FORMAT_EXAMPLE
+
+
+def review_kind(paths) -> str:
+    """사람이 등록한 kind가 기준. 프로필 없는 기존 UE 프로젝트는 종전 동작을 유지한다."""
+    from ..projects import profile
+    return profile.kind_of(getattr(paths, "name", "")) or "unreal"
+
+
+def review_source_files(paths, files: list) -> list:
+    """등재·소비·직접 리뷰가 공유하는 프로젝트별 소스 경계."""
+    from ..projects import profile
+    name = getattr(paths, "name", "")
+    kind = review_kind(paths)
+    if kind == "index_only":
+        return []
+    if kind == "code":
+        from ..context_search.paths import scope_of
+        scope = getattr(paths, "scope", None) or scope_of(Path(paths.root))
+        allow = profile.work_exts(name)
+        return [f for f in files if Path(f).suffix.lower() in allow
+                and scope.contains(f)]
+    return [f for f in files if f.startswith("Source/") or f.endswith((".h", ".cpp", ".cs"))]
 
 
 @dataclass
@@ -288,7 +325,7 @@ def review_commit(paths, commit: str, files: list, *,
     """
     log = logf or (lambda s, m: None)
     r = ReviewResult(commit=commit)
-    src_files = [f for f in files if f.startswith("Source/") or f.endswith((".h", ".cpp", ".cs"))]
+    src_files = review_source_files(paths, files)
     if not src_files:
         r.skipped = "소스 변경 없음"
         return r
@@ -309,7 +346,8 @@ def review_commit(paths, commit: str, files: list, *,
         return r
 
     prompt = build_prompt(diff=diff, files=src_files, commit=commit,
-                          domains=domain_hint(paths, src_files), grounding=grounding)
+                          domains=domain_hint(paths, src_files), grounding=grounding,
+                          kind=review_kind(paths))
     _ask = chat if chat is not None else commercial_chat
 
     try:
@@ -322,7 +360,7 @@ def review_commit(paths, commit: str, files: list, *,
             log("review", f"{commit[:8]} 형식 위반 — 예시를 앞세워 1회 재시도")
             body = _ask("직전 응답이 형식을 어겼다. 아래 골격 **그대로**, `### ` 로 시작해 "
                         "표만으로 다시 써라. 표 밖 산문은 ## 3 에만.\n\n"
-                        + _FORMAT_EXAMPLE + "\n\n" + prompt)
+                        + format_example(review_kind(paths)) + "\n\n" + prompt)
     except ReviewChatError as e:
         r.error = f"리뷰 생성 실패: {e}"
         return r

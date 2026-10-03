@@ -59,6 +59,7 @@ JSON 스키마 강제로 로컬이 형식을 지킬 수 있는지 쟀다(`gemma4
 """
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 from pathlib import Path
@@ -131,6 +132,35 @@ def declarations(repo: Path, files: list, commit: str, *,
     """
     seen, out, total = set(), [], 0
     for f in files or []:
+        if Path(f).suffix.lower() == ".py":
+            rc, source = rg._git(repo, "show", f"{commit}:{f}")
+            if rc:
+                continue                 # 삭제 파일은 선언부가 없지만 diff는 검토한다
+            try:
+                tree = ast.parse(source)
+                keep = []
+                def declarations_of(nodes, indent=""):
+                    for node in nodes:
+                        if isinstance(node, ast.ClassDef):
+                            bases = ", ".join(ast.unparse(b) for b in node.bases)
+                            keep.append(f"{indent}L{node.lineno}: class {node.name}({bases})")
+                            declarations_of(node.body, indent + "  ")
+                        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
+                            ret = " -> " + ast.unparse(node.returns) if node.returns else ""
+                            keep.append(f"{indent}L{node.lineno}: {prefix} {node.name}({ast.unparse(node.args)}){ret}")
+                declarations_of(tree.body)
+                block = f"### {f} (commit {commit[:12]})\n" + "\n".join(keep)
+            except SyntaxError as e:
+                block = f"### {f}\n선언부 AST 파싱 실패: {e.msg} (라인 {e.lineno}); DIFF를 확인한다."
+            remaining = limit - total
+            if remaining <= 0:
+                break
+            if len(block) > remaining:
+                block = block[:max(0, remaining - 30)] + "\n…(선언부가 잘림)"
+            out.append(block)
+            total += len(block)
+            continue
         h = Path(f).with_suffix(".h").as_posix()
         if h in seen:
             continue
@@ -156,7 +186,7 @@ def declarations(repo: Path, files: list, commit: str, *,
 # ── ③ 초고 ──────────────────────────────────────────────────────────────────
 
 def draft(diff: str, decls: str = "", *, model: str = DRAFT_MODEL,
-          call=None, timeout: int = DRAFT_TIMEOUT, logf=None) -> tuple:
+          call=None, timeout: int = DRAFT_TIMEOUT, logf=None, kind: str = "unreal") -> tuple:
     """로컬 모델에 초고를 청한다. 반환 `(초고, 사유)` — 실패해도 예외를 올리지 않는다.
 
     🔴 [중요] **실패가 리뷰를 막지 않는다.** 호출자는 빈 초고로 ④ 를 계속한다.
@@ -171,7 +201,11 @@ def draft(diff: str, decls: str = "", *, model: str = DRAFT_MODEL,
     import time
     t0 = time.monotonic()
     try:
-        out = (fn(DRAFT_PROMPT.format(decls=head, diff=diff)) or "").strip()
+        template = DRAFT_PROMPT
+        if kind == "code":
+            template = template.replace("Unreal Engine 5 C++", "Python")
+            template += "\nPython 예외·반환값·자원 수명·동시성·입력을 검토하되 diff에 근거하고 UE 규칙을 적용하지 마라.\n"
+        out = (fn(template.format(decls=head, diff=diff)) or "").strip()
     except Exception as e:                                       # noqa: BLE001
         why = f"{type(e).__name__}: {e}"
         log(f"[리뷰큐] 초고 실패 {why[:90]} — 초고 없이 진행")
@@ -294,7 +328,7 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
 
     commit, files = item["key"], list(item.get("files") or [])
     repo = Path(paths.repo)
-    src = [f for f in files if f.startswith("Source/") or f.endswith((".h", ".cpp", ".cs"))]
+    src = rg.review_source_files(paths, files)
     if not src:
         rq.finish(paths.root, item["id"], ok=True, note="스킵: 소스 변경 없음", logf=log)
         res.state, res.why = "done", "소스 변경 없음"
@@ -345,7 +379,8 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
         from ..work import usage as usage_mod                     # noqa: PLC0415
         # `#713` ① — 초고의 브로커 호출을 트윈의 `usage_log.jsonl` 에 `review` 로 남긴다
         with usage_mod.sink(paths.usage_log, source="review", task_id=str(commit)[:12]):
-            body, why = draft(diff, decls, model=model, call=draft_call, logf=log)
+            body, why = draft(diff, decls, model=model, call=draft_call, logf=log,
+                              kind=rg.review_kind(paths))
         res.drafted, res.draft_why = bool(body), why
         fn = write or write_draft
         try:

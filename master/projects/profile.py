@@ -53,8 +53,8 @@ PURPOSES = ("game", "tool", "rnd", "demo")
 #    없는 유틸」이 섞인다. 사람이 적는 칸이고, 없으면 등재를 **거절**한다(fail-closed).
 KINDS = ("unreal", "index_only", "code")
 # 🔴 [중요] **「UE 가 아니다」와 「분산 작업이 없다」는 다른 질문이다** (`#695`). `#693` 때는 둘이
-#    같은 값(index_only)이라 호출부가 섞여 있었다 — 합성 사실 게이트·배달 축소·자동 리뷰 생략은
-#    앞의 질문이고(`is_non_unreal`), 등재 거절만 뒤의 질문이다(`blockers`).
+#    같은 값(index_only)이라 호출부가 섞여 있었다 — 합성 사실 게이트·배달 축소는 앞의 질문이고
+#    (`is_non_unreal`), 자동 리뷰 제외는 `is_index_only`, 등재 거절은 `blockers`다.
 NON_UNREAL_KINDS = ("index_only", "code")
 # `code` 가 받을 수 있는 확장자. [주의] 목록에 없는 값은 **저장을 거절**한다 — 게이트가 모르는
 #    언어를 열어 두면 층1·골조 게이트가 그 파일을 C++ 로 읽는다.
