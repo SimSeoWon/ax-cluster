@@ -342,7 +342,10 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
         res.draft_why = "기존 초안 재사용"
         log(f"[리뷰큐] 기존 초안 재사용 {existing.name}")
     else:
-        body, why = draft(diff, decls, model=model, call=draft_call, logf=log)
+        from ..work import usage as usage_mod                     # noqa: PLC0415
+        # `#713` ① — 초고의 브로커 호출을 트윈의 `usage_log.jsonl` 에 `review` 로 남긴다
+        with usage_mod.sink(paths.usage_log, source="review", task_id=str(commit)[:12]):
+            body, why = draft(diff, decls, model=model, call=draft_call, logf=log)
         res.drafted, res.draft_why = bool(body), why
         fn = write or write_draft
         try:

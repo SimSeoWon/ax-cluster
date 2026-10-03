@@ -1,0 +1,126 @@
+"""브로커 사용량 기록 지점 테스트 (`#713` ①). pytest 없이 그대로 실행한다.
+
+    .venv/bin/python master/test_usage_sink.py
+
+[중요] 지키는 불변식:
+   1. **감싼 구간만 기록한다** — 감싸지 않은 `call_broker` 는 남지 않는다(워커 파견을 두 번 세지 않는다)
+   2. **로컬 모델은 비용 0 이 확정**(`cost_known=True`) — CLI 의 「모름」과 다르다
+   3. **노드가 안 준 토큰은 0 으로 지어내지 않는다** — `measured=False`
+   4. **스레드 풀로 넘길 때 문맥을 복사하면 따라간다** — 온톨로지 레인이 그렇게 넘긴다
+   5. **옛 기록(source 없음)은 집계에서 dispatch 로 묶인다**
+"""
+from __future__ import annotations
+
+import contextvars
+import importlib
+import io
+import json
+import shutil
+import sys
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
+
+from master.work import usage                                      # noqa: E402
+
+# [주의] `master.work` 는 같은 이름의 **함수** `generate` 를 내보낸다 — 모듈을 직접 잡는다
+generate = importlib.import_module("master.work.generate")
+
+PASS = FAIL = 0
+
+
+def check(label: str, cond: bool, detail: str = "") -> None:
+    global PASS, FAIL
+    if cond:
+        PASS += 1
+        print(f"  [완료] {label}")
+    else:
+        FAIL += 1
+        print(f"  [실패] {label}" + (f" — {detail}" if detail else ""))
+
+
+def lines(p: Path) -> list:
+    return [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines()] if p.is_file() else []
+
+
+class _Resp(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def main() -> int:
+    tmp = Path(tempfile.mkdtemp(prefix="ax-usage-sink-"))
+    log = tmp / "usage_log.jsonl"
+    real = generate.urllib.request.urlopen
+    try:
+        print("① 감싼 구간만")
+        check("감싸지 않으면 아무것도 안 한다", usage.emit_broker("m", {"in": 1, "out": 1}) is None)
+        check("  파일도 안 생긴다", not log.exists())
+        with usage.sink(log, source="synth", task_id="g/a"):
+            rec = usage.emit_broker("gemma4:e4b", {"in": 3500, "out": 300, "ms": 17000}, seconds=17.2)
+        got = lines(log)
+        check("감싸면 한 줄", len(got) == 1, str(got))
+        r = got[0] if got else {}
+        check("출처·모델·레인", (r.get("source"), r.get("model"), r.get("lane"))
+              == ("synth", "gemma4:e4b", "local:gemma4:e4b"), str(r))
+        check("토큰", (r.get("input_tokens"), r.get("output_tokens")) == (3500, 300))
+        check("[중요] 로컬은 비용 0 확정", r.get("cost_known") is True and r.get("cost_usd") == 0.0, str(r))
+        check("task_id 가 실린다", r.get("task_id") == "g/a")
+        check("반환값이 기록과 같다", rec is not None and rec.get("source") == "synth")
+
+        print("② 노드가 안 준 값은 지어내지 않는다")
+        with usage.sink(log, source="review"):
+            usage.emit_broker("m", {})
+        r2 = lines(log)[-1]
+        check("measured=False", r2.get("measured") is False and r2.get("input_tokens") == 0, str(r2))
+
+        print("③ 스레드 풀 — 문맥을 복사하면 따라간다")
+        n0 = len(lines(log))
+        with usage.sink(log, source="ontology", task_id="dom"):
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                ex.submit(contextvars.copy_context().run, usage.emit_broker, "m", {"in": 1}).result()
+                plain = ex.submit(usage.emit_broker, "m", {"in": 1}).result()
+        after = lines(log)
+        check("복사한 문맥은 기록된다", len(after) == n0 + 1 and after[-1]["source"] == "ontology",
+              str(after[-1:]))
+        check("[주의] 복사하지 않으면 안 따라간다 (그래서 온톨로지가 복사한다)", plain is None)
+
+        print("④ call_broker 가 기록 지점을 부른다")
+        generate.urllib.request.urlopen = lambda req, timeout=0: _Resp(json.dumps(
+            {"response": "ok", "prompt_eval_count": 11, "eval_count": 5,
+             "total_duration": 2_000_000_000}).encode())
+        n1 = len(lines(log))
+        generate.call_broker("p", model="gemma4:e4b", token="t")
+        check("감싸지 않은 호출은 안 남는다", len(lines(log)) == n1)
+        with usage.sink(log, source="synth", task_id="g/b"):
+            out = generate.call_broker("p", model="gemma4:e4b", token="t")
+        last = lines(log)[-1]
+        check("응답은 그대로", out == "ok")
+        check("감싼 호출은 남는다", len(lines(log)) == n1 + 1 and last["task_id"] == "g/b"
+              and last["input_tokens"] == 11 and last["output_tokens"] == 5, str(last))
+
+        print("⑤ 집계 — 출처 축")
+        log.open("a", encoding="utf-8").write(json.dumps(
+            {"ts": "2099-01-01 00:00:00", "lane": "codex", "input_tokens": 7, "output_tokens": 1,
+             "cost_known": False, "measured": True}) + "\n")
+        s = usage.summarize([log], days=100000)
+        by = s.get("by_source", {})
+        check("출처별로 묶인다", {"synth", "review", "ontology"} <= set(by), str(set(by)))
+        check("[중요] 옛 기록(source 없음)은 dispatch", "dispatch" in by, str(set(by)))
+    finally:
+        generate.urllib.request.urlopen = real
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    total = PASS + FAIL
+    print(f"{'OK' if not FAIL else 'FAIL'} test_usage_sink: {PASS}/{total} 통과")
+    return 1 if FAIL else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

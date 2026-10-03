@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -184,6 +185,8 @@ def call_broker(prompt: str, *, model: str = CODER, broker: str = DEFAULT_BROKER
     }
     if caller:
         return caller(f"{broker}/api/generate", payload)
+    import time as _time
+    _t0 = _time.monotonic()
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         f"{broker}/api/generate", data=body, method="POST",
@@ -206,12 +209,24 @@ def call_broker(prompt: str, *, model: str = CODER, broker: str = DEFAULT_BROKER
         raise GenerateError(f"브로커 응답을 해석할 수 없다: {e}") from e
     if res.get("error"):
         raise GenerateError(f"브로커 오류: {res['error']}")
+    used: dict = {}
+    for key, src in (("in", "prompt_eval_count"), ("out", "eval_count")):
+        if isinstance(res.get(src), int):
+            used[key] = res[src]
+    if isinstance(res.get("total_duration"), int):
+        used["ms"] = res["total_duration"] // 1_000_000
     if usage is not None:
-        for key, src in (("in", "prompt_eval_count"), ("out", "eval_count")):
-            if isinstance(res.get(src), int):
-                usage[key] = res[src]
-        if isinstance(res.get("total_duration"), int):
-            usage["ms"] = res["total_duration"] // 1_000_000
+        usage.update(used)
+    # `#713` ① — `usage.sink(...)` 로 감싼 구간이면 그 트윈에 한 줄 남긴다. 기록 실패는 막지 않는다
+    try:
+        from . import usage as _usage                          # noqa: PLC0415
+        rec = _usage.emit_broker(model, used, seconds=_time.monotonic() - _t0)
+        if rec and rec.get("error"):
+            print(f"[usage] [주의] 브로커 사용량 기록 실패 — {rec['error']}", file=sys.stderr, flush=True)
+    except Exception as e:                                     # noqa: BLE001
+        # [중요] 조용히 넘기지 않는다 — 계측이 안 남는 것 자체가 `#387`·`#713` 의 증상이었다
+        print(f"[usage] [주의] 브로커 사용량 기록 실패 — {type(e).__name__}: {e}",
+              file=sys.stderr, flush=True)
     return res.get("response") or ""
 
 

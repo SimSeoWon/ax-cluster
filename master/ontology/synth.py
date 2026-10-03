@@ -36,6 +36,7 @@ Ollama 가 **`n_ctx = 4096`** 으로 올린다(`n_ctx_train = 262144` 는 모델
 from __future__ import annotations
 
 import time
+import contextvars
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
@@ -359,11 +360,19 @@ def _manifest_extra(paths: ProjectPaths, domain: str, doc):
 
 
 
-def refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT_MODELS,
-                   broker: str = DEFAULT_BROKER, num_ctx: int = NUM_CTX,
-                   timeout: int = TIMEOUT, dry_run: bool = False,
-                   caller=None, with_objects: bool = False,
-                   changed_classes: set | None = None) -> DomainResult:
+def refresh_domain(paths: ProjectPaths, domain: str, **kw) -> DomainResult:
+    """도메인 하나를 재합성한다 — 본문은 `_refresh_domain`. 🔴 `#713` ①: 이 도메인의 브로커 호출을
+    트윈의 `usage_log.jsonl` 에 `ontology` 로 남기도록 **구간을 감싼다**(레인 스레드에도 넘어간다)."""
+    from ..work import usage as usage_mod                     # noqa: PLC0415
+    with usage_mod.sink(paths.usage_log, source="ontology", task_id=domain):
+        return _refresh_domain(paths, domain, **kw)
+
+
+def _refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT_MODELS,
+                    broker: str = DEFAULT_BROKER, num_ctx: int = NUM_CTX,
+                    timeout: int = TIMEOUT, dry_run: bool = False,
+                    caller=None, with_objects: bool = False,
+                    changed_classes: set | None = None) -> DomainResult:
     """도메인 하나를 재합성한다. **실패는 결과로 돌려준다 — 예외를 던지지 않는다.**
 
     도메인을 응집 순서로 **조각내어 여러 노드에 나눠 던지고**(사용자 지시 2026-08-09)
@@ -418,8 +427,11 @@ def refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT_
 
     for kind in ("actions", "invariants"):
         with ThreadPoolExecutor(max_workers=len(lanes)) as ex:
-            futures = [ex.submit(_lane, cs, m, doc, kind, broker=broker, num_ctx=num_ctx,
-                                 timeout=timeout, caller=caller, res=res)
+            # `#713` ① — 레인 스레드에도 사용량 기록 지점(`usage.sink`)을 같이 넘긴다.
+            #    `contextvars` 는 스레드 풀로 저절로 넘어가지 않는다 — 레인마다 문맥을 복사한다
+            futures = [ex.submit(contextvars.copy_context().run, _lane, cs, m, doc, kind,
+                                 broker=broker, num_ctx=num_ctx, timeout=timeout,
+                                 caller=caller, res=res)
                        for m, cs in lanes.items()]
             batches: list = []
             for f in futures:

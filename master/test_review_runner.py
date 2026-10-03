@@ -53,6 +53,7 @@ class Paths:
         self.repo = str(Path(root) / "repo")
         self.ontology = str(Path(root) / "ontology")
         self.canary = Path(root) / "canary" / "permanent_loss.jsonl"
+        self.usage_log = Path(root) / "usage_log.jsonl"          # `#713` ① 기록 지점
 
 
 def git(root, *a):

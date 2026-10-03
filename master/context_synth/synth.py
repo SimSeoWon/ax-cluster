@@ -500,8 +500,11 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
     usage: dict = {}
     t_call = time.monotonic()
     try:
-        raw = call_broker(p, model=model, broker=broker, timeout=SYNTH_TIMEOUT,
-                          num_ctx=SYNTH_NUM_CTX, caller=caller, usage=usage)
+        from ..work import usage as usage_mod                     # noqa: PLC0415
+        # `#713` ① — 이 그룹의 브로커 호출을 트윈의 `usage_log.jsonl` 에 `synth` 로 남긴다
+        with usage_mod.sink(paths.usage_log, source="synth", task_id=key):
+            raw = call_broker(p, model=model, broker=broker, timeout=SYNTH_TIMEOUT,
+                              num_ctx=SYNTH_NUM_CTX, caller=caller, usage=usage)
     except GenerateError as e:
         res.reason = f"LLM 실패: {e}"
         _log(f"{key} — LLM 실패 · {int(time.monotonic() - t_call)}초 · 프롬프트 {len(p)}자")

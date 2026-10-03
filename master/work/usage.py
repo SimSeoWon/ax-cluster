@@ -338,7 +338,8 @@ def normalize(meta: dict, *, lane: str = "", seconds: float = 0.0) -> dict:
 
 
 def record(path, meta: dict, *, lane: str = "", task_id: str = "", work_id: str = "",
-           worker: str = "", rc: int = 0, seconds: float = 0.0, mode: str = "") -> dict:
+           worker: str = "", rc: int = 0, seconds: float = 0.0, mode: str = "",
+           source: str = "dispatch", model: str = "") -> dict:
     """한 줄 추가하고 그 레코드를 돌려준다. [중요] **실패해도 파이프라인을 막지 않는다.**
 
     원전도 `except: pass` 다 — 계측이 작업을 죽이면 안 된다. 다만 원전과 달리 **무엇을
@@ -347,7 +348,8 @@ def record(path, meta: dict, *, lane: str = "", task_id: str = "", work_id: str 
     """
     rec = {"ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
            "work_id": work_id, "task_id": task_id, "worker": worker,
-           "mode": mode, "rc": int(rc), **normalize(meta, lane=lane, seconds=seconds)}
+           "mode": mode, "rc": int(rc), "source": source, "model": model,
+           **normalize(meta, lane=lane, seconds=seconds)}
     try:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -357,6 +359,55 @@ def record(path, meta: dict, *, lane: str = "", task_id: str = "", work_id: str 
     except Exception as e:                                       # noqa: BLE001
         return {**rec, "error": f"{type(e).__name__}: {e}"}
     return rec
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 브로커 호출 기록 지점 (`#713` ①, 2026-10-03)
+#
+# 🔴 [중요] **감싼 구간만 기록한다.** `with sink(paths.usage_log, source="synth"):` 안에서 일어난
+#    `call_broker` 는 그 트윈의 `usage_log.jsonl` 에 한 줄씩 남는다. 감싸지 않은 호출은 남지 않는다 —
+#    워커 파견(`infer.py`)처럼 **이미 따로 세는 경로**를 두 번 세지 않기 위해서다.
+#    경로를 함수 인자로 끝까지 내리지 않는 이유: 온톨로지는 `refresh_domain → _lane → generate →
+#    call_broker` 로 네 겹이다. 스레드 풀로 넘길 때는 `contextvars.copy_context()` 로 같이 넘긴다.
+# [중요] 로컬 모델은 **비용 0 이 확정**이다(`cost_known=True`) — CLI 의 「모름」과 다르다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import contextvars as _cv
+from contextlib import contextmanager as _contextmanager
+
+_SINK: "_cv.ContextVar[dict | None]" = _cv.ContextVar("ax_usage_sink", default=None)
+
+
+@_contextmanager
+def sink(log_path, *, source: str, work_id: str = "", task_id: str = ""):
+    """이 구간의 브로커 호출을 `log_path` 에 `source` 로 기록한다."""
+    tok = _SINK.set({"path": Path(log_path), "source": source,
+                     "work_id": work_id, "task_id": task_id})
+    try:
+        yield
+    finally:
+        _SINK.reset(tok)
+
+
+def emit_broker(model: str, used: dict, *, seconds: float = 0.0, rc: int = 0) -> dict | None:
+    """`call_broker` 가 부른다. 감싼 구간이 아니면 아무것도 안 한다(`None`).
+
+    `used` 는 `call_broker(usage=…)` 모양(`in`·`out`·`ms`). 노드가 안 준 값은 키가 없다 —
+    그러면 `measured=False` 로 남는다(0 을 지어내지 않는다).
+    """
+    s = _SINK.get()
+    if s is None:
+        return None
+    inner = {}
+    if "in" in used:
+        inner["input_tokens"] = int(used["in"])
+    if "out" in used:
+        inner["output_tokens"] = int(used["out"])
+    meta = {"source": "local", "total_cost_usd": 0.0}
+    if inner:
+        meta["usage"] = inner
+    return record(s["path"], meta, lane=f"local:{model}", work_id=s["work_id"],
+                  task_id=s["task_id"], rc=rc, seconds=seconds, source=s["source"], model=model)
 
 
 def summarize(paths_or_files, *, days: int = 1) -> dict:
@@ -372,7 +423,8 @@ def summarize(paths_or_files, *, days: int = 1) -> dict:
     out = {"period_days": days, "calls": 0, "input_tokens": 0, "output_tokens": 0,
            "cache_read": 0, "cache_create": 0, "reasoning_tokens": 0,
            "cost_usd": 0.0, "cost_unknown_calls": 0, "unmeasured_calls": 0,
-           "seconds": 0.0, "failed_calls": 0, "by_lane": {}, "by_mode": {}, "files": 0}
+           "seconds": 0.0, "failed_calls": 0, "by_lane": {}, "by_mode": {}, "by_source": {},
+           "files": 0}
     for f in files:
         p = Path(f)
         if not p.exists():
@@ -401,8 +453,9 @@ def summarize(paths_or_files, *, days: int = 1) -> dict:
                 out["cost_usd"] += float(r.get("cost_usd") or 0.0)
             else:
                 out["cost_unknown_calls"] += 1
-            for axis, key in (("by_lane", "lane"), ("by_mode", "mode")):
-                name = str(r.get(key) or "?")
+            for axis, key in (("by_lane", "lane"), ("by_mode", "mode"), ("by_source", "source")):
+                # 옛 기록(`#713` ① 전)은 `source` 칸이 없다 — 그때는 워커 파견만 기록했다
+                name = str(r.get(key) or ("dispatch" if key == "source" else "?"))
                 b = out[axis].setdefault(name, {"calls": 0, "tokens": 0, "cost_usd": 0.0,
                                                 "cost_unknown_calls": 0})
                 b["calls"] += 1
