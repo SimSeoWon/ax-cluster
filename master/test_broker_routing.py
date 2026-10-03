@@ -51,6 +51,37 @@ def test_resident_latest_alias_matches():
     assert ep is not None and "상주" in why
 
 
+# ── 🔴 `#715` 같은 모델이 여러 노드에 상주 — 처리 중 요청이 적은 쪽 ──────────────────
+
+SYNTH = "gemma4:e4b"
+
+
+def test_two_resident_nodes_split_by_inflight():
+    """설계 규칙 *"마스터가 요청을 나눈다"* — 종전엔 목록의 첫 노드만 골랐다."""
+    eps = [_bc250(models=[SYNTH], resident=SYNTH), _rtx(models=[SYNTH], resident=SYNTH)]
+    ep, why = choose(eps, SYNTH, {"bc250": 1, "rtx3060": 0})
+    assert ep.name == "rtx3060" and "최소" in why, why
+    ep, _ = choose(eps, SYNTH, {"bc250": 0, "rtx3060": 2})
+    assert ep.name == "bc250"
+
+
+def test_tie_keeps_list_order():
+    eps = [_bc250(models=[SYNTH], resident=SYNTH), _rtx(models=[SYNTH], resident=SYNTH)]
+    assert choose(eps, SYNTH, {"bc250": 1, "rtx3060": 1})[0].name == "bc250"
+
+
+def test_no_inflight_given_is_the_old_behaviour():
+    """`inflight` 를 안 주는 호출자는 종전 그대로 — 첫 상주 노드."""
+    eps = [_bc250(models=[SYNTH], resident=SYNTH), _rtx(models=[SYNTH], resident=SYNTH)]
+    assert choose(eps, SYNTH)[0].name == "bc250"
+
+
+def test_inflight_never_beats_residency():
+    """[중요] 한가해도 상주가 아니면 고르지 않는다 — 재적재(최대 45s)가 대기보다 비싸다."""
+    eps = [_bc250(models=[SYNTH], resident=SYNTH), _rtx(models=[SYNTH, CODER], resident=CODER)]
+    assert choose(eps, SYNTH, {"bc250": 5, "rtx3060": 0})[0].name == "bc250"
+
+
 # ── [중요] 폴백·실패 ─────────────────────────────────────────────
 
 def test_falls_back_when_prefer_node_is_down():

@@ -30,6 +30,7 @@ from __future__ import annotations
 import sys
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -131,6 +132,7 @@ class Stats:
     tokens_in: int = 0          # 이 배치가 쓴 입력·출력 토큰 합 (`#713`)
     tokens_out: int = 0
     digested: int = 0           # 프롬프트에 요약본을 쓴 그룹 수 (`#711`)
+    workers: int = 1            # 동시 합성 수 (`#715`)
     elapsed_ms: int = 0
     encodings: source_text.EncodingTally = field(default_factory=source_text.EncodingTally)
     results: list[GroupResult] = field(default_factory=list)
@@ -153,6 +155,8 @@ class Stats:
              f" · 토큰 입력 {self.tokens_in} · 출력 {self.tokens_out}")
         if self.digested:
             s += f" · 요약본 {self.digested}"
+        if self.workers > 1:
+            s += f" · 동시 {self.workers}"
         if self.refused:
             s += f" · [중요] 형식 거부 {self.refused}"
         if self.unfactual:
@@ -552,15 +556,45 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
     return _remember(paths, key, files, res, commit, dry_run)
 
 
+MAX_WORKERS = 6        # 원전 `watcher/common.py:42` 와 같은 상한 — 노드가 늘어도 이 이상 띄우지 않는다
+
+
+def _workers(parallel: int | None, *, model: str, broker: str, caller) -> tuple[int, str]:
+    """동시 합성 수와 그 사유. 🔴 `#715` — 원전은 병렬(`MAX_WORKERS = 6`)이었는데 이식이 직렬이었다.
+
+    로컬 노드는 한 번에 한 요청을 처리하므로 **그 모델이 상주한 노드 수**만큼 띄운다 — 더 띄우면
+    한 노드에 쌓여 기다릴 뿐이다(브로커는 처리 중 요청이 적은 노드로 보낸다). 브로커를 못 읽으면
+    1 — 종전 동작이다. 주입된 호출자(테스트)는 명시하지 않으면 1.
+    """
+    if parallel is not None:
+        return max(1, min(int(parallel), MAX_WORKERS)), "지정"
+    if caller is not None:
+        return 1, "주입된 호출자"
+    try:
+        import json as _json
+        import urllib.request as _ur
+        from ..auth import auth_headers, load_token          # noqa: PLC0415
+        req = _ur.Request(f"{broker}/health", headers=auth_headers(load_token()))
+        with _ur.urlopen(req, timeout=5) as r:
+            eps = _json.loads(r.read().decode("utf-8")).get("endpoints") or []
+        hot = [e["name"] for e in eps if e.get("healthy") and e.get("resident") == model]
+    except Exception as e:                                    # noqa: BLE001
+        return 1, f"브로커 상태를 못 읽었다 — 직렬 ({type(e).__name__})"
+    if not hot:
+        return 1, "상주 노드 없음 — 직렬"
+    return max(1, min(len(hot), MAX_WORKERS)), "상주 " + "·".join(hot)
+
+
 def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = "",
         skip_existing: bool = False, limit: int = 0, broker: str = DEFAULT_BROKER,
         model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
         content_limit: int = prompt_mod.CONTENT_LIMIT, unload_every: int = UNLOAD_EVERY,
-        git=None, progress=None) -> Stats:
+        git=None, progress=None, parallel: int | None = None) -> Stats:
     """배치 합성. `changed` 를 주면 그 파일들만, 없으면 경계(`paths.scope`, 기본 `Source/`) 전체.
 
     `skip_existing` — 이미 문서가 있는 그룹을 건너뛴다(최초 전체 빌드에서 누락분만 보충).
     `limit` — 그룹 수 상한. 0 이면 무제한. [중요] 상한에 걸려 남긴 것은 `Stats.aborted` 에 적는다.
+    `parallel` — 동시 합성 수. `None` 이면 **그 모델이 상주한 노드 수**(`_workers`, `#715`).
     """
     files = changed if changed is not None else cg.list_source_files(paths, git=git)
     if not files:
@@ -600,47 +634,80 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
     stats.retried = retried
     t0 = time.monotonic()
     consecutive = 0
-    for i, (key, fs) in enumerate(sorted(groups.items()), 1):
-        if limit and stats.written + stats.refused + stats.unfactual + stats.failed >= limit:
-            stats.aborted = f"상한 {limit} 도달 — 남은 {len(groups) - i + 1} 그룹 미처리"
-            break
-        if skip_existing and doc_path(paths, key).is_file():
-            stats.skipped += 1
-            stats.results.append(GroupResult(key=key, files=fs, reason="변화 없음"))
-            continue
-        r = synthesize_group(paths, key, fs, commit=commit, broker=broker, model=model,
-                             caller=caller, dry_run=dry_run, content_limit=content_limit,
-                             tally=stats.encodings)
-        stats.results.append(r)
-        stats.tokens_in += r.tokens_in
-        stats.tokens_out += r.tokens_out
-        if r.digest:
-            stats.digested += 1
-        if r.passed:
-            stats.written += 1
-            consecutive = 0
-        else:
-            if r.reason.startswith("LLM 실패"):
-                stats.failed += 1
-                consecutive += 1
-            else:
-                # 게이트 거부는 모델 응답이 온 것이라 서킷 차단 사유가 아니다.
-                if r.reason.startswith("사실 게이트"):
-                    stats.unfactual += 1
-                else:
-                    stats.refused += 1
-                consecutive = 0
-            if consecutive >= CIRCUIT_THRESHOLD:
-                stats.aborted = (f"LLM 연속 실패 {consecutive}회 — 남은 "
-                                 f"{len(groups) - i} 그룹을 태우지 않는다. 마지막 사유: "
-                                 f"{r.reason[:120]}")
+    n, why = _workers(parallel, model=model, broker=broker, caller=caller)
+    stats.workers = n
+    _log(f"{paths.name} — 그룹 {len(groups)} · 동시 {n} ({why})")
+    order = sorted(groups.items())
+    i = 0                                    # 다음에 볼 그룹 (0 부터)
+    stop = False
+    while i < len(order) and not stop:
+        # ① 묶음을 짠다 — 상한·건너뜀은 **묶기 전에** 판정한다(종전 직렬과 같은 규칙)
+        batch: list = []
+        while i < len(order) and len(batch) < n:
+            attempted = stats.written + stats.refused + stats.unfactual + stats.failed
+            if limit and attempted + len(batch) >= limit:
+                stats.aborted = f"상한 {limit} 도달 — 남은 {len(order) - i} 그룹 미처리"
+                stop = True
                 break
-        if progress:
-            progress(f"  {i}/{len(groups)} {key} — {'통과' if r.passed else r.reason[:60]}")
+            key, fs = order[i]
+            i += 1
+            if skip_existing and doc_path(paths, key).is_file():
+                stats.skipped += 1
+                stats.results.append(GroupResult(key=key, files=fs, reason="변화 없음"))
+                continue
+            batch.append((i, key, fs))
+        if not batch:
+            continue
+        # ② 동시에 합성한다 — 🔴 `#715`: 원전은 `MAX_WORKERS` 병렬이었다. 인코딩 집계는 작업마다
+        #    따로 세고 합친다(`+=` 는 스레드 사이에서 유실될 수 있다)
+        tallies = [source_text.EncodingTally() for _ in batch]
+
+        def _one(j):
+            _idx, key, fs = batch[j]
+            return synthesize_group(paths, key, fs, commit=commit, broker=broker, model=model,
+                                    caller=caller, dry_run=dry_run,
+                                    content_limit=content_limit, tally=tallies[j])
+        if len(batch) == 1:
+            results = [_one(0)]
+        else:
+            with ThreadPoolExecutor(max_workers=len(batch)) as ex:
+                results = list(ex.map(_one, range(len(batch))))
+        for t in tallies:
+            for f in ("utf8", "cp949", "degraded", "unreadable"):
+                setattr(stats.encodings, f, getattr(stats.encodings, f) + getattr(t, f))
+        # ③ 결과는 **그룹 순서대로** 센다 — 연속 실패 판정이 직렬과 같은 뜻을 갖게
+        for (idx, key, fs), r in zip(batch, results):
+            stats.results.append(r)
+            stats.tokens_in += r.tokens_in
+            stats.tokens_out += r.tokens_out
+            if r.digest:
+                stats.digested += 1
+            if r.passed:
+                stats.written += 1
+                consecutive = 0
+            else:
+                if r.reason.startswith("LLM 실패"):
+                    stats.failed += 1
+                    consecutive += 1
+                else:
+                    # 게이트 거부는 모델 응답이 온 것이라 서킷 차단 사유가 아니다.
+                    if r.reason.startswith("사실 게이트"):
+                        stats.unfactual += 1
+                    else:
+                        stats.refused += 1
+                    consecutive = 0
+                if consecutive >= CIRCUIT_THRESHOLD and not stop:
+                    # [주의] 같은 묶음의 나머지는 이미 돌았다 — 세기는 다 하고, **다음 묶음을 안 띄운다**
+                    stats.aborted = (f"LLM 연속 실패 {consecutive}회 — 남은 "
+                                     f"{len(order) - i} 그룹을 태우지 않는다. 마지막 사유: "
+                                     f"{r.reason[:120]}")
+                    stop = True
+            if progress:
+                progress(f"  {idx}/{len(order)} {key} — {'통과' if r.passed else r.reason[:60]}")
         # [중요] 주기적으로 모델을 내려 누적된 캐시를 회수한다 (위 UNLOAD_EVERY 참조).
-        # 다음 요청이 자동으로 다시 적재한다 — 우리가 올릴 필요는 없다.
+        # 다음 요청이 자동으로 다시 적재한다 — 우리가 올릴 필요는 없다. 묶음 사이에서만 한다.
         done = stats.written + stats.refused + stats.unfactual + stats.failed
-        if unload_every and done and done % unload_every == 0 and caller is None:
+        if unload_every and done and done % unload_every < len(batch) and caller is None:
             try:
                 unload_model(model, broker=broker)
                 stats.unloads += 1

@@ -42,11 +42,15 @@ def _has_model(ep: Endpoint, model: str) -> bool:
     return bool(want & set(ep.models))
 
 
-def choose(endpoints: list[Endpoint], model: str) -> tuple[Optional[Endpoint], str]:
+def choose(endpoints: list[Endpoint], model: str,
+           inflight: Optional[dict] = None) -> tuple[Optional[Endpoint], str]:
     """모델을 처리할 엔드포인트 선택. (선택, 사유) 반환. 없으면 (None, 사유).
 
     우선순위 — 재적재 비용을 피하는 순서다:
       1. 건강 + 보유 + **이미 상주 중**       → 적재 0초
+         🔴 그런 노드가 **여럿이면 처리 중 요청(`inflight`)이 적은 쪽** (`#715`). 설계 규칙
+         *"모델은 보드에 쪼개지 않고 마스터가 요청을 나눈다"* 의 이행이다 — 종전엔 목록의 첫
+         노드만 골라, 같은 모델이 둘에 상주해도 한쪽만 일했다. 같으면 목록 순서(종전과 같다)
       2. 건강 + 보유 + `prefer` 에 지정됨     → 설계상 그 모델의 집
       3. 건강 + 보유                          → 폴백 (재적재를 물지만 응답은 된다)
     """
@@ -57,9 +61,14 @@ def choose(endpoints: list[Endpoint], model: str) -> tuple[Optional[Endpoint], s
     if not owners:
         return None, f"'{model}' 을 가진 건강한 엔드포인트가 없다"
 
-    for e in owners:
-        if e.resident and _has_model(Endpoint(e.name, e.host, models=[e.resident]), model):
-            return e, f"{e.name}: 이미 상주 중 (적재 0)"
+    hot = [e for e in owners
+           if e.resident and _has_model(Endpoint(e.name, e.host, models=[e.resident]), model)]
+    if hot:
+        load = inflight or {}
+        e = min(hot, key=lambda x: load.get(x.name, 0))     # min 은 같으면 앞의 것 — 목록 순서
+        return e, (f"{e.name}: 이미 상주 중 (적재 0)"
+                   + (f" · 처리 중 {load.get(e.name, 0)} (상주 {len(hot)}곳 중 최소)"
+                      if len(hot) > 1 else ""))
     for e in owners:
         if model in e.prefer:
             return e, f"{e.name}: prefer 지정 (재적재 필요)"

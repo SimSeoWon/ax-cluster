@@ -129,7 +129,7 @@ def create_app():
         model = (body.get("model") or "").strip()
         if not model:
             return JSONResponse({"error": "model 필드가 필요하다"}, status_code=400)
-        ep, why = choose(endpoints, model)
+        ep, why = choose(endpoints, model, state["inflight"])     # `#715` 처리 중 요청이 적은 쪽
         if ep is None:
             # [중요] fail-closed — 아무 노드에나 보내면 그쪽에서 pull 이 터진다.
             log.warning("[route] 거부 model=%s — %s", model, why)
