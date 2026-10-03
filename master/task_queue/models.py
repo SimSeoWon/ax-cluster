@@ -95,6 +95,9 @@ class ClaimReq(BaseModel):
     # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — 정책은
     #    `tagging.POLICY` 가 라우트별로 선언한다(MOUNT 는 거부, STAMP 는 대조).
     project: str = ""
+    # A push dispatch must not claim another work from the same project.
+    # Empty retains the legacy project-wide pull contract.
+    work_id: str = ""
     worker_id: str
     # Plan v5 C.3 — 워커가 상용 모델 검증 자격(verifier_model 설정됨)을 신고. True 면 claim 이
     # verify job(submitted && author≠me && push)도 후보에 넣음. 빈값 워커는 write 전용.

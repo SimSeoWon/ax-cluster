@@ -374,6 +374,7 @@ class FakeQueue:
         self.verified: list = []       # 🔴 정본 ⑹ — 판정이 나야 `.33` 공지가 나간다
         self.cancelled: list = []      # 🔴 「할 일 없음」 종결 (claim 앞에서 걷어낸 것)
         self.claims = 0                # claim 호출 횟수
+        self.claim_payloads: list = []
         # 🔴 [중요] **실제로 워커에 건네진 조각**. ⓐ(claim 뒤 판정)와 ⓑ(claim 앞 판정)를
         #    가르는 것은 이것 하나다 — 폴백이 뒤에서 같은 결과를 내므로 `cancelled` 만
         #    보면 두 설계가 구분되지 않는다(실측: 사전 훑기를 꺼도 테스트가 통과했다).
@@ -393,6 +394,7 @@ class FakeQueue:
             return {"ok": True}
         if path.endswith("/claim"):
             self.claims += 1
+            self.claim_payloads.append(dict(payload or {}))
             if not self.tasks:
                 return None
             t = self.tasks.pop(0)
@@ -459,6 +461,8 @@ def test_run_many_takes_several_and_orders_them() -> None:
         ids = [r.task_id for r in hand.ordered()]
         check("적용 순서는 파견 순서", ids == ["t1", "t2"], str(ids))
         check("큐가 비면 멈춘다", not q.tasks)
+        check("모든 claim 은 파견 work 로 제한한다",
+              bool(q.claim_payloads) and all(p.get("work_id") == "W1" for p in q.claim_payloads))
         # 🔴 정본 ⑸ — **커밋이 생긴 시점이 태스크가 끝난 시점**이므로 여기서 제출한다
         #    (원전 `... commit·push → submit_result → 다시 claim`). 종전에는 통합자에 뒀고,
         #    그래서 리스가 붙잡힌 채 만료돼 **같은 추론을 다시 사는** 자리가 됐다.

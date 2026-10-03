@@ -1183,7 +1183,7 @@ def run_many(paths, *, limit: int = 4, facts=None, project: str = "", api=runner
                     return
                 state["taken"] += 1
                 order = state["taken"]
-            task = runner.claim(f.host, f.capabilities, api=api)
+            task = runner.claim(f.host, f.capabilities, work_id=work_id, api=api)
             if not task:
                 # [중요] **빈 claim 은 「큐가 비었다」가 아니다** (`#342`, 실측 2026-08-30).
                 #    능력 라우팅이 있으면 *"나에게 줄 게 없다"* 일 수 있다. 실측: `.43`(ue5 없음)

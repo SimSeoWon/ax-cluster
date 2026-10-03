@@ -270,6 +270,9 @@ def test_queue_calls() -> None:
     api = _Api()
     R.claim("w1", ["ue5"], api=api)
     check("claim 은 능력을 실어 보낸다", api.calls[0][2]["capabilities"] == ["ue5"], str(api.calls[0]))
+    check("기존 claim 은 work 범위를 생략한다", "work_id" not in api.calls[0][2])
+    R.claim("w1", ["ue5"], work_id="W1", api=api)
+    check("지정 work 를 claim 에 전달한다", api.calls[-1][2]["work_id"] == "W1")
 
     out = R.parse_result(f"ATTEMPT: a/b\nHEAD: {SHA}\nRESULT: DONE\n")
     R.submit("t1", out, epoch=7, api=api)

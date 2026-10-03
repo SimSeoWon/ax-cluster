@@ -292,7 +292,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         eff_project = (req.project or "").strip() or getattr(_mount_gate, "last", "")
         t = claim_task(idx, req.worker_id, verify_capable=req.verify_capable,
                        capabilities=req.capabilities, types=req.types,
-                       project=eff_project)
+                       project=eff_project, work_id=req.work_id)
         if t is None:
             raise HTTPException(204, "no available task")
         return t

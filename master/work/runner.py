@@ -835,10 +835,12 @@ def _api(method: str, path: str, payload=None, *, timeout: int = HTTP_TIMEOUT):
         raise QueueError(f"{method} {path} → {type(e).__name__}: {e}") from e
 
 
-def claim(worker_id: str, capabilities, *, api=_api):
+def claim(worker_id: str, capabilities, *, work_id: str = "", api=_api):
     """태스크 하나를 집는다. 없으면 `None`. [중요] **능력은 실측값**(`facts.capabilities`)이다."""
-    return api("POST", "/api/v1/tasks/claim",
-               {"worker_id": worker_id, "capabilities": list(capabilities)})
+    payload = {"worker_id": worker_id, "capabilities": list(capabilities)}
+    if work_id:
+        payload["work_id"] = work_id
+    return api("POST", "/api/v1/tasks/claim", payload)
 
 
 def waiting_summary(project: str = "", *, api=_api) -> dict:

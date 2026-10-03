@@ -75,7 +75,8 @@ def _worker_meets_requires(t: dict, caps: set) -> bool:
     return set(need) <= caps
 
 
-def _claim_verify_job(idx: TaskIndex, worker_id: str, caps: Optional[set] = None) -> Optional[dict]:
+def _claim_verify_job(idx: TaskIndex, worker_id: str, caps: Optional[set] = None, *,
+                      project: str = "", work_id: str = "") -> Optional[dict]:
     """Plan v5 C.3 — 검증 워커가 집을 verify job 선택 (lock 보유 가정).
 
     후보 = submitted && distribution_mode==push && active 검증 lease 없음. **write job 보다
@@ -94,6 +95,8 @@ def _claim_verify_job(idx: TaskIndex, worker_id: str, caps: Optional[set] = None
     caps = caps or set()
     cands = []
     for t in idx.tasks.values():
+        if not _matches_claim_scope(idx, t, project, work_id):
+            continue
         if t.get("status") != "submitted":
             continue
         if t.get("distribution_mode") != "push":
@@ -133,15 +136,28 @@ def _work_project(idx: TaskIndex, t: dict) -> str:
     return ((idx.works.get(t.get("work_id") or "") or {}).get("project") or "").strip()
 
 
+def _matches_claim_scope(idx: TaskIndex, t: dict, project: str, work_id: str) -> bool:
+    """Exact work scope for push; preserve unstamped project compatibility for pull."""
+    if work_id:
+        if t.get("work_id") != work_id:
+            return False
+        work = idx.works.get(work_id)
+        if not work or work.get("merge_status") in ("merged", "rejected", "cancelled"):
+            return False
+    actual_project = _work_project(idx, t)
+    return not (project and actual_project and actual_project != project)
+
+
 def claim_task(idx: TaskIndex, worker_id: str, verify_capable: bool = False,
                capabilities: Optional[list] = None,
                types: Optional[list] = None,
-               project: str = "") -> Optional[dict]:
+               project: str = "", work_id: str = "") -> Optional[dict]:
     caps = set(normalize_capabilities(capabilities))
     # [중요] **프로젝트 축** (`#248`) — 잠금은 체크아웃 단위인데 큐는 공유다. 필터가 없으면
     #    한 기계의 두 claimer 가 같은 큐를 빨며 **남의 프로젝트 태스크를 집는다.**
     #    [주의] 빈 값이면 거르지 않는다(하위 호환) — 스탬프 없는 옛 work 도 계속 후보다.
     want_project = (project or "").strip()
+    want_work = (work_id or "").strip()
     # [중요] #204 — 유형 필터 (모양 정규화만, 판정은 후보 루프에서)
     type_set = {str(x).strip() for x in (types or []) if str(x).strip()} or None
     with idx.lock:
@@ -170,6 +186,8 @@ def claim_task(idx: TaskIndex, worker_id: str, verify_capable: bool = False,
         skipped_project = 0
         skipped_capability = 0
         for t in candidates:
+            if not _matches_claim_scope(idx, t, "", want_work):
+                continue
             # [중요] #204 — 유형 필터: 신고한 유형이 아니면 이 워커의 후보가 아니다.
             #    능력(requires)과 별개 축 — 빌드 claimer 가 infer 일감을 훔치지 않게.
             if type_set is not None and str(t.get("type") or "") not in type_set:
@@ -197,7 +215,8 @@ def claim_task(idx: TaskIndex, worker_id: str, verify_capable: bool = False,
         if chosen is None:
             # write 없음 → verify 우선순위 2 (verify_capable 워커만; 빈 verifier_model = write 전용)
             if verify_capable:
-                vjob = _claim_verify_job(idx, worker_id, caps)
+                vjob = _claim_verify_job(idx, worker_id, caps,
+                                        project=want_project, work_id=want_work)
                 if vjob is not None:
                     return vjob
             if skipped_capability > 0:
