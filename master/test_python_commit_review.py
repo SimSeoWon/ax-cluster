@@ -129,6 +129,43 @@ class PythonCommitReview(unittest.TestCase):
         self.assertIn("파싱 실패", R.declarations(self.repo, ["src/divide.py"], commit))
         self.assertIn("def broken", G.commit_diff(self.repo, ["src/divide.py"], commit))
 
+    def test_parse_failures_do_not_strand_review_in_running(self):
+        for source in ("def broken(:\n", "def broken(): pass\n\x00"):
+            with self.subTest(source=repr(source)):
+                self.file.write_text(source)
+                self.git("add", ".")
+                self.git("commit", "-qm", "unparseable Python input")
+                self.commit = self.git("rev-parse", "HEAD").strip()
+                self.enqueue()
+                local, final = [], []
+                def review(prompt):
+                    final.append(prompt)
+                    return """### src
+## 1. 변경분 코딩 컨벤션
+| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |
+|---|---|---|---|---|
+## 2. 변경분 버그·안전성
+| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |
+|---|---|---|---|---|
+## 3. 영향 분석
+소스 구문을 확인한다.
+"""
+                result = R.run_once(self.paths,
+                                    draft_call=lambda p: local.append(p) or "파싱 실패를 확인한다.",
+                                    review_call=review)
+                self.assertEqual(result.state, "done")
+                self.assertTrue(Path(result.written).is_file())
+                self.assertEqual(Q.counts(self.root)["running"], 0)
+                self.assertEqual(Q.counts(self.root)["pending"], 0)
+                self.assertEqual(len(local), 1)
+                self.assertEqual(len(final), 1)
+                for prompt in (local[0], final[0]):
+                    self.assertIn("선언부 AST 파싱 실패", prompt)
+                    self.assertIn("DIFF", prompt)
+                if "\x00" in source:
+                    self.assertIn("null bytes", final[0])
+                self.assertFalse(list((self.root / "reviews" / "_drafts").rglob("*.md")))
+
 
 if __name__ == "__main__":
     unittest.main()

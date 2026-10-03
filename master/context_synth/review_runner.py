@@ -151,8 +151,10 @@ def declarations(repo: Path, files: list, commit: str, *,
                             keep.append(f"{indent}L{node.lineno}: {prefix} {node.name}({ast.unparse(node.args)}){ret}")
                 declarations_of(tree.body)
                 block = f"### {f} (commit {commit[:12]})\n" + "\n".join(keep)
-            except SyntaxError as e:
-                block = f"### {f}\n선언부 AST 파싱 실패: {e.msg} (라인 {e.lineno}); DIFF를 확인한다."
+            except (SyntaxError, ValueError) as e:
+                message = getattr(e, "msg", str(e))
+                line = getattr(e, "lineno", None) or "알 수 없음"
+                block = f"### {f}\n선언부 AST 파싱 실패: {message} (라인 {line}); DIFF를 확인한다."
             remaining = limit - total
             if remaining <= 0:
                 break
