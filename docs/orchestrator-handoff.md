@@ -4,22 +4,35 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **갱신 시각**: 2026-10-03 23:59 KST — Codex, 사용자 워커 Codex 전환 준비 수정·로컬 선택·실패 후 재개
+- **갱신 시각**: 2026-10-04 00:11 KST — Codex, 사용자 「진행해줘」로 운영 반영
 - **지휘 도구 / 세션**: Claude → **Codex** 로 넘긴다(Claude 토큰 소진). 마스터 담당 기록(`record_master_conductor_tool`)은
   Codex가 23:37 실제 인수 기록을 남겼다(`agent=codex`).
-- **상태**: 신규 분산 작업 등재 없음. #719 완주·main `90a65a5`. 현재 미커밋은 이 문서,
-  conductor.py·test_orchestration_control.py·리포트89·reports/README (커밋·푸시 승인 필요).
+- **상태**: 신규 분산 작업 등재 없음. Codex 전환 수정 `00f8532` 커밋·Gitea push·운영 반영 완료.
+  이 문서·리포트89의 운영 결과 기록은 사용자 「커밋해줘!」 승인으로 별도 문서 커밋한다. 푸시 승인 없음.
 - **관련 일감**: 완료 — #718 · #719 · #722 · #260 · #375 · #615 (+확인용 #723·#724). **열림 — #720 · #721 · #716.**
-- **워커 지휘자 모드**: 🔴 **아직 `claude`** — 23:25 `codex` 로 되돌리려 했으나 **거절됐다**(사용자 지시였음).
-  `worker_mode_readiness('codex')`: `.43` ok · `.2` ok · **`.33` `SSH Session 0 Codex sandbox 셸 probe 실패: exit 1`**.
-  실패=보고 규칙으로 고치지 않았다. [주의] 지금 파견하면 워커가 **claude**(마스터와 같은 계정 한도)로 돈다.
-  갈래(사용자가 고른다): ① `.33` probe 원인 조사·복구 뒤 다시 `set_worker_mode_tool("codex")`
-  ② `.33` 을 AXCluster 파견에서 잠시 빼고 바꾼다 ③ 그대로 둔다. 실제 파견은 세션 1 런처라 probe 와 경로가 다르다(리포트 63·64).
-  [주의] codex 한도는 같은 날 20:42 소진 · 21:56 리셋 예고였다 — 파견 전 `.43` 에서 무해한 `codex exec --json` 한 번으로 확인할 것(#720: 한도 소진이 일반 재시도로 오분류된다).
+- **워커 지휘자 모드**: **`codex`** — 공용 MCP로 00:10:33 전환·재조회. 수정한 운영 준비 검사3/3 ok.
+  실제 Codex shell read·apply_patch·결과 회수는 세 워커에서 성공했다(리포트89).
+  이전 Session0 probe 거절은 아래 이력이다. #720 한도 분류는 여전히 미수정이며 신규 파견은 사용자 선택 후.
 - **마운트**: `AXCluster` — `.57` 요청자, `.2`·`.33`·`.43` worker.
-- **HEAD / origin/main**: `90a65a5` (마스터 · `.43 ~/ax-cluster` 일치). `ax-task-queue` 23:20:50 · `ax-projects` 23:22:20 재기동.
+- **운영 코드 / 배달 출처**: `00f8532` (Gitea origin/main·AXCluster 워커 소스3대 일치).
+  마스터에는 위 커밋 뒤 마감 기록 문서 커밋이 추가된다. 해당 문서 커밋은 푸시·재배달하지 않았다.
+  `ax-projects` 2026-10-04 00:09:13 재기동·active/running·Result=success.
+  이번에 `.43 ~/ax-cluster` 관리 사본은 갱신하지 않았다(워커 `/home/sim/trunk/AXCluster`와 별개).
 
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
+
+### 최신 (00:11) — 운영 반영과 Codex 전환 완료
+
+사용자 「진행해줘」 승인으로 검증된5파일을 `00f8532` 커밋·Gitea push했다.
+AXCluster 워커3대는 main/clean 확인 후 ff-only → 00f8532, 깨끗한 마스터에서 plan/deliver 실행.
+`check AXCluster` **3/3 OK**, payload10개·프로젝트 스킬·태그·출처 HEAD 일치.
+`.2` Claude 로컬 MCP 대조 주의는 기존과 같이 재현됐으나 Codex 프로젝트 설정 대조는 통과했다.
+`ax-projects` 전용 도구 재기동 → 00:09:13 active/running·Result success.
+공용 `set_worker_mode_tool('codex')` 00:10:33 성공(운영 readiness3/3), get 도구 재조회 source=state/codex 확인.
+기존 등재 work의 모드 스탬프를 바꾸거나 신규 work를 파견하지 않았다.
+Redmine #716의 이전 검증 노트는 중복 작성 없이 재조회 확인. 기록 스크립트의 str 반환값 오독은 고쳤다.
+운영 결과 기록을 이 문서·리포트89에 추가했다. 사용자 「커밋해줘!」로 두 문서 커밋 승인.
+푸시·재배달 승인은 없으며 운영 코드·배달 출처는00f8532 그대로다.
 
 ### 최신 (23:59) — Codex 워커 전환 준비 수정·검증 완료, 운영 반영 대기
 

@@ -68,10 +68,25 @@ ACL·sandbox 설정·런처·바이너리를 바꾸지 않고 소스 경로에�
 따라서 `.ax` 이름 자체가 보호돼 실패했다고 단정하지 않는다. `sandbox.log` 필터 조회에는
 해당 진단 요청의 원인을 확정할 오류 줄이 없었다. 공식 문서를 현재 AX 실측의 보장으로 인용하지 않는다.
 
-## 운영 반영 대기
+## 운영 반영 — 2026-10-04 00:11 KST 완료
 
-코드·문서 미커밋. 서비스 재기동·워커 모드 변경·소스 Git 동기화·재배달은 하지 않았다.
-운영 ax-projects는 이전 conductor를 이미 import한 상태이므로 로컬 검사 성공이 운영 반영은 아니다.
-승인 후 Gitea 커밋·푸시, 필요한 소스/배달 정합화와 ax-projects 재기동,
-공용 `set_worker_mode_tool('codex')` 변경 및 실제 조회로 확인한다.
+사용자 「진행해줘」로 남은 운영 반영 승인. 코드·테스트·인계·보고서·색인5파일을
+`00f85324bc3c56fc935d3eeedd20cf997b988619` 커밋하고 Gitea origin/main push 완료.
+AXCluster 워커3대의 main/clean 확인 후 ff-only 동기화, 전부 source HEAD 일치·clean.
+배달 계획을 읽고 깨끗한 마스터 커밋에서 `deliver AXCluster` rc0,
+`check AXCluster` **3/3 OK**(프로젝트 스킬·payload10개·태그·출처 HEAD 일치).
+`.2`의 Claude 로컬 MCP 대조 주의는 기존 현상이 재현됐고 Codex 프로젝트 설정 대조는 통과했다.
+다른 프로젝트와 `.43 ~/ax-cluster` 관리 사본은 이번에 갱신하지 않았다.
+
+`scripts/ax-service-restart ax-projects` 성공:
+2026-10-03 23:22:20 → 2026-10-04 00:09:13, active/running·Result=success.
+운영 공용 MCP `set_worker_mode_tool('codex')` 00:10:33 성공, readiness3/3.
+`get_worker_mode_tool` 재조회 mode=codex/source=state 확인.
+이전 work 스탬프 변경·신규 분산 work 등재/파견은 하지 않았다.
+
+Redmine 기록 스크립트가 update_issue의 문자열 반환값을 dict로 오독해 마지막 확인에서
+AttributeError를 냈다. 노트 자체는 정상 저장됐으며 사용자 재개 뒤 반환값 계약을 읽고
+중복 노트 없이 재조회하여 확인했다. #716 상태는 신규로 유지했다.
+운영 마감 후 이 보고서와 인계서의 기록만 추가했다. 사용자 「커밋해줘!」 승인으로 두 문서를
+별도 커밋한다. 이 문서 커밋의 푸시·재배달은 승인받지 않았으며 운영 배달 출처는00f8532다.
 `#720` 한도 분류와 `#721` Claude 인증 검사는 범위 밖이며 수정하지 않았다. #716 완료 판정도 남아 있다.
