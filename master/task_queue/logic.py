@@ -258,6 +258,21 @@ def reopen_work(idx: TaskIndex, *, work_id: str, expected_round: int = 0,
                 "title": w.get("title") or ""}
 
 
+def _normalize_target_files(target_files: Optional[list]) -> list:
+    """`#719` — 문자열화·앞뒤 공백 제거·빈 값 버림·첫 등장 순서 유지 중복 제거."""
+    out: list = []
+    seen: set = set()
+    for f in target_files or []:
+        if f is None:
+            continue
+        s = str(f).strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
 def register_task(idx: TaskIndex, *, work_id: str, type: str, task_data: dict,
                   base_commit: str = "", target_file: str = "",
                   header_file: str = "", depends_on: Optional[list] = None,
@@ -321,7 +336,7 @@ def register_task(idx: TaskIndex, *, work_id: str, type: str, task_data: dict,
             "base_commit": base_commit,
             "target_file": target_file,
             "header_file": header_file,
-            # [PSEUDO] "target_files": 위 [DOC] 규칙으로 정규화한 target_files 목록(없으면 [])
+            "target_files": _normalize_target_files(target_files),
             "depends_on": depends_on or [],
             # PLAN §5.2-C — 능력 요구. 빈 리스트면 아무 워커나 집을 수 있다(기존 동작).
             "requires": req_caps,
