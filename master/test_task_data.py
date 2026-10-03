@@ -175,13 +175,42 @@ def test_target_files_reach_the_queue_record():
        `master.work.register.register_tasks` 가 POST 본문에 `target_files` 를 싣는다(poster 주입 —
        실제 HTTP 를 쓰지 않는다. 이 파일의 `register_work` 는 큐 쪽 함수라 이름이 겹치니 모듈로 부른다).
     """
-    # [PSEUDO] ① _idx() 로 큐를 세우고 register_task(target_files=["a.py", " b.py ", "a.py", ""]) 등재 →
-    #          레코드의 target_files == ["a.py", "b.py"] (정규화) · TaskIndex(root) 재적재 뒤에도 같다
-    # [PSEUDO] ①' target_files 를 안 주면 레코드 값은 [] 다
-    # [PSEUDO] ② from master.work import register as WR · WR.TaskSpec(stem="s", target_files=["x.py","y.py"])
-    #          를 validate 하고 WR.register_tasks(…, poster=기록하는 가짜, paths=가짜 paths) 로 보낸 본문의
-    #          target_files == ["x.py", "y.py"] 를 확인한다 (가짜 paths 는 name 속성만 있으면 된다)
-    pass
+    # ① 큐 쪽 — 정규화해 저장하고 재기동을 넘는다
+    idx, root, wid = _idx()
+    r = register_task(idx, work_id=wid, type="code", stem="multi", task_data={},
+                      target_files=["a.py", " b.py ", "a.py", ""])
+    assert r.get("ok"), r
+    tid = r["task_id"]
+    assert idx.tasks[tid].get("target_files") == ["a.py", "b.py"], idx.tasks[tid].get("target_files")
+    fresh = TaskIndex(root)
+    fresh.rebuild()
+    assert fresh.tasks[tid].get("target_files") == ["a.py", "b.py"], \
+        f"재기동 뒤 target_files 가 달라졌다: {fresh.tasks[tid].get('target_files')}"
+
+    # ①' 안 주면 빈 목록이다
+    r2 = register_task(idx, work_id=wid, type="code", stem="single", task_data={},
+                       target_file="c.py")
+    assert r2.get("ok"), r2
+    assert idx.tasks[r2["task_id"]].get("target_files") == [], idx.tasks[r2["task_id"]]
+
+    # ② 마스터 쪽 — POST 본문에 target_files 가 실린다 (실제 HTTP 없이 poster 주입)
+    from types import SimpleNamespace
+    from master.work import register as WR
+    spec = WR.TaskSpec(stem="s", target_files=["x.py", "y.py"])
+    spec.validate()
+    sent: list = []
+
+    def _poster(url, payload):
+        sent.append((url, payload))
+        return {"task_id": "task_fake_0001"}
+
+    results = WR.register_tasks(wid, [spec], paths=SimpleNamespace(name="AXCluster"),
+                                poster=_poster)
+    assert results and not results[0].error, [x.error for x in results]
+    assert len(sent) == 1, sent
+    url, body = sent[0]
+    assert url.endswith("/api/v1/tasks"), url
+    assert body.get("target_files") == ["x.py", "y.py"], body.get("target_files")
 
 
 if __name__ == "__main__":
