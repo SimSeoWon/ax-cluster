@@ -849,11 +849,33 @@ def test_task_targets_reads_the_whole_list() -> None:
     """[DOC] `#719` — `infer.task_targets` 가 레코드의 `target_files` 전부를 내고, 옛 레코드는 종전과 같다.
     [DOC] 두 호출 자리(`prescreen_nowork` 와 파견)가 이 함수를 쓰는지는 소스 문자열로 확인한다.
     """
-    # [PSEUDO] {"target_files": ["a.py", "b.py", "c.py"], "target_file": "a.py"} → ["a.py", "b.py", "c.py"]
-    # [PSEUDO] 옛 레코드 {"target_file": "X.h", "header_file": "X.cpp"} → ["X.h", "X.cpp"] (target_files 없음·None·[])
-    # [PSEUDO] 공백·빈 값·중복 정규화 · target_files 가 리스트가 아니면(문자열 등) 무시 · 아무것도 없으면 []
-    # [PSEUDO] infer.py 소스에 "task_targets(t)" 와 "task_targets(task)" 가 있고 종전 want 한 줄 조립이 없는지 check
-    pass
+    got = I.task_targets({"target_files": ["a.py", "b.py", "c.py"], "target_file": "a.py"})
+    check("🔴 target_files 전부를 낸다", got == ["a.py", "b.py", "c.py"], str(got))
+
+    old = {"target_file": "X.h", "header_file": "X.cpp"}
+    for extra in ({}, {"target_files": None}, {"target_files": []}):
+        rec = dict(old, **extra)
+        got = I.task_targets(rec)
+        check(f"  옛 레코드는 종전과 같다 {extra or '(target_files 없음)'}",
+              got == ["X.h", "X.cpp"], str(got))
+
+    got = I.task_targets({"target_files": [" a.py ", "", None, "b.py", "a.py"],
+                          "target_file": "b.py", "header_file": "  "})
+    check("  공백·빈 값·중복을 정규화한다 (순서 보존)", got == ["a.py", "b.py"], str(got))
+    got = I.task_targets({"target_files": "a.py", "target_file": "X.h", "header_file": "X.cpp"})
+    check("  target_files 가 리스트가 아니면 무시한다", got == ["X.h", "X.cpp"], str(got))
+    got = I.task_targets({"target_files": ("a.py",), "target_file": "X.h"})
+    check("  튜플도 리스트가 아니다", got == ["X.h"], str(got))
+    for rec in ({}, {"target_files": [], "target_file": "", "header_file": None}):
+        got = I.task_targets(rec)
+        check(f"  아무것도 없으면 빈 목록 {rec}", got == [], str(got))
+
+    src = Path(I.__file__).read_text(encoding="utf-8")
+    check("🔴 사전 훑기가 task_targets 를 쓴다", "task_targets(t)" in src)
+    check("🔴 파견이 task_targets 를 쓴다", "task_targets(task)" in src)
+    for line in ('want = [str(f) for f in (t.get("target_file"), t.get("header_file")) if f]',
+                 'want = [str(f) for f in (task.get("target_file"), task.get("header_file")) if f]'):
+        check("  종전 want 한 줄 조립이 남지 않았다", line not in src, line)
 
 
 def main() -> int:
