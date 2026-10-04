@@ -26,12 +26,9 @@ import sys
 from urllib.parse import quote
 
 from ..status import _CSS
+from .nav import SIDE_CSS, nav_html
 
 _EXTRA = """
-.nav{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0 1.2rem}
-.nav a{border:1px solid var(--line);border-radius:999px;padding:.35rem .85rem;
- font-size:.82rem;text-decoration:none;background:var(--card);color:var(--fg)}
-.nav a.on{border-color:var(--accent);color:var(--accent)}
 .tabs{display:flex;gap:.4rem;flex-wrap:wrap;margin:0 0 1rem}
 .tabs a{font-size:.8rem;padding:.2rem .7rem;border-radius:6px;border:1px solid var(--line);
  color:var(--dim);text-decoration:none}
@@ -195,17 +192,13 @@ def _shell(body: str, *, title: str = "리뷰·플랜", heading: str = "리뷰·
            sub: str = "로컬 초고를 Antigravity가 퇴고한 자동 리뷰 · 주말 플랜 · 번호로 적용 여부 검토") -> str:
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AX 클러스터 — {html.escape(title)}</title><style>{_CSS}{_EXTRA}</style>{_COPY_JS}</head><body>
+<title>AX 클러스터 — {html.escape(title)}</title><style>{_CSS}{_EXTRA}{SIDE_CSS}</style>{_COPY_JS}</head><body>
+<!-- 좌측 목록은 공용(nav.py) — 종전의 화면별 .nav 줄을 대신한다 (사용자 결정 2026-10-04) -->
+<div class="shell">{nav_html("/reviews")}<main>
 <h1>{html.escape(heading)}</h1>
-<div class="sub">{html.escape(sub)}</div>
-<div class="nav">
-  <a href="/onboarding">온보딩 →</a>
-  <a href="/cluster">클러스터 상태 →</a>
-  <a class="on" href="/reviews">리뷰·플랜</a>
-  <a href="/ontology">온톨로지 뷰어 →</a>
-  <a href="/">컨텍스트 검색 →</a>
-</div>
+<div class="sub" style="margin-bottom:1.2rem">{html.escape(sub)}</div>
 {body}
+</main></div>
 </body></html>"""
 
 

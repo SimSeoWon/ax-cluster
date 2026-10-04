@@ -95,78 +95,60 @@ def page(name: str) -> bytes:
     return body or b"<p>page missing</p>"
 
 
-# [중요] 원전 헤더의 상호 링크 자리에 **클러스터 상태**를 끼운다 (사용자 지시 2026-08-13:
-#    *"복각한 페이지에서 연결하고 View를 제거해"*).
+# 🔴 [중요] 좌측 목록은 **모든 화면에 한 벌** (사용자 결정 2026-10-04, 「a-1」) — 정본은
+#    `nav.py` 다. 종전에는 화면마다 링크 버튼을 따로 끼웠고(`온보딩 →`·`클러스터 상태 →`·
+#    `리뷰·플랜 →`), 새 화면(`/usage`)이 생길 때마다 **원전 화면에만 입구가 빠졌다.**
 #
-#    원전은 `/` 에 `Ontology Viewer →`, `/ontology` 에 `← Context Search` 를 두는 방식으로
-#    화면을 서로 잇는다. **그 자리를 그대로 쓴다** — 새 내비게이션을 발명하지 않는다.
+#    [주의] 원전 파일(`web_ui_original.py`·`static/*.html`)은 **바이트 그대로 둔다** (2026-08-13
+#    규약). 목록은 **서빙 시점에 감싸서** 넣는다 — 원전과의 diff 는 이 함수들에만 남는다.
+#    원전 바이트에 들어 있는 상호 링크(`Ontology Viewer →`·`← Context Search`·`← 도메인 목록`)는
+#    원전의 것이라 그대로 둔다.
 #
-#    [주의] 원전 파일(`web_ui_original.py`·`*.html`)은 **바이트 그대로 둔다.** 링크는 **서빙 시점에
-#    주입**한다 — 그래야 원전과의 diff 가 이 함수 하나에만 남고, 다음 사람이 "원전이 이랬나?"
-#    를 헷갈리지 않는다.
-_CLUSTER_LINK = (
-    '<a href="/cluster" style="font-size:0.7em;font-weight:500;color:#d7ba7d;'
-    'background:#252526;border:1px solid #d7ba7d;border-radius:6px;padding:6px 14px;'
-    'text-decoration:none;margin-right:8px;">클러스터 상태 →</a>')
-_CLUSTER_LINK_SMALL = (
-    '<a href="/cluster" class="back" style="margin:0;color:#d7ba7d;">/ 클러스터 상태</a>'
-    '<a href="/onboarding" class="back" style="margin:0;color:#d7ba7d;">/ 온보딩</a>'
-    '<a href="/reviews" class="back" style="margin:0;color:#d7ba7d;">/ 리뷰·플랜</a>')
-# 🔴 리뷰·플랜 (`#629`) — 입구가 `/cluster` 한 곳뿐이라 사용자가 **못 찾았다** (2026-09-16:
-#    *"웹 UX에 리뷰나 개선플랜 목록이 안보이는데?"*). 온보딩과 같은 자리에 같은 방식으로 끼운다.
-_REVIEWS_LINK = (
-    '<a href="/reviews" style="font-size:0.7em;font-weight:500;color:#d7ba7d;'
-    'background:#252526;border:1px solid #d7ba7d;border-radius:6px;padding:6px 14px;'
-    'text-decoration:none;margin-right:8px;">리뷰·플랜 →</a>')
-# 🔴 온보딩 — **처음 보는 사람이 여기가 무엇인지 알 자리** (사용자 요청 2026-09-05).
-#    [중요] 링크도 **같은 자리에 끼운다** — 새 내비게이션을 발명하지 않는다(위 규약 그대로).
-_ONBOARD_LINK = (
-    '<a href="/onboarding" style="font-size:0.7em;font-weight:500;color:#d7ba7d;'
-    'background:#252526;border:1px solid #d7ba7d;border-radius:6px;padding:6px 14px;'
-    'text-decoration:none;margin-right:8px;">온보딩 →</a>')
+#    원전 팔레트에는 `--line`·`--card`·`--fg` 가 없다 → **목록 안에서만** 정의한다.
+#    값은 `status._CSS` 의 `:root` 와 같다(같은 다크 팔레트 — 화면마다 색이 달라 보이지 않게).
+_SIDE_VARS = (".side{--line:#30363d;--card:#161b22;--fg:#e6edf3;--dim:#8b949e;"
+              "--accent:#58a6ff}"
+              # 원전 `app.css` 의 `a:hover{text-decoration:underline}` 가 목록까지 번진다
+              ".side a:hover{text-decoration:none}")
+# 컨텍스트 검색(`/`) — 원전 `.container` 가 자기 여백(24px)을 들고 있으므로 간격은 그것에 맡긴다.
+_CONTEXT_SHELL_CSS = ".ax-shell{gap:0;padding:16px 16px 0}"
+# 🔴 온톨로지 — `.board-shell`·`.layout` 이 `height:100vh` 의 전면 레이아웃이다. 바깥 여백을
+#    두면 그만큼 세로 스크롤이 생기므로 **여백 0** 으로 붙이고, 목록 쪽에만 띄움을 준다.
+_ONTOLOGY_SHELL_CSS = (".ax-shell{gap:0;padding:0}"
+                       ".ax-shell>.side{margin:12px;top:12px}")
+
+
+def wrap_side_nav(text: str, current: str, extra_css: str = "") -> str:
+    """완성된 HTML 문서의 본문을 `<div class="shell">목록<main>…</main></div>` 로 감싼다.
+
+    [주의] 표지(`</head>`·`<body>`·`</body>`)를 못 찾으면 앞뒤에 붙인다 — 조용히 빠뜨리지 않는다.
+    """
+    from .nav import SIDE_CSS, nav_html
+    style = "<style>" + _SIDE_VARS + SIDE_CSS + extra_css + "</style>"
+    i = text.find("</head>")
+    text = text[:i] + style + text[i:] if i >= 0 else style + text
+    head = f'<div class="shell ax-shell">{nav_html(current)}<main>'
+    m = re.search(r"<body[^>]*>", text, re.IGNORECASE)
+    text = text[:m.end()] + head + text[m.end():] if m else head + text
+    j = text.lower().rfind("</body>")
+    tail = "</main></div>"
+    return text[:j] + tail + text[j:] if j >= 0 else text + tail
 
 
 def context_server_html() -> bytes:
-    """원전 `web_ui.py` 의 HTML. [중요] 파일은 손대지 않고 **링크만 주입**한다."""
+    """원전 `web_ui.py` 의 HTML. [중요] 파일은 손대지 않고 **좌측 목록으로 감싼다**."""
     from .web_ui_original import WEB_UI_HTML
-    anchor = '<a href="/ontology"'
-    html_text = WEB_UI_HTML
-    if anchor in html_text:
-        html_text = html_text.replace(anchor, _ONBOARD_LINK + _CLUSTER_LINK + _REVIEWS_LINK
-                                      + anchor, 1)
-    return html_text.encode("utf-8")
+    return wrap_side_nav(WEB_UI_HTML, "/", _CONTEXT_SHELL_CSS).encode("utf-8")
 
 
 def inject_cluster_link(body: bytes) -> bytes:
-    """`/ontology` 페이지들의 `Context Search` 링크 옆에 클러스터 상태를 끼운다."""
+    """`/ontology` 페이지들(목록·도메인 상세·태스크)을 좌측 목록으로 감싼다.
+
+    [주의] 이름은 옛 동작(링크 주입)의 것이다 — 호출자(`app.py`)를 바꾸지 않으려고 남겼다.
+    세 화면 모두 목록에서는 `/ontology` 한 항목이 켜진다.
+    """
     text = body.decode("utf-8", "replace")
-    anchor = '<a href="/" class="back"'
-    # [주의] `task.html` 은 앞의 두 앵커가 없고 `← 게시판` 하나뿐이다 — 그래서 **클러스터 상태
-    #    링크도 원래 없었다**(2026-09-16 리뷰·플랜 링크 테스트가 잡았다). 그 링크 뒤에 끼운다.
-    anchor3 = '<a href="/ontology" class="back-link">← 게시판</a>'
-    if anchor in text:
-        text = text.replace(anchor, _CLUSTER_LINK_SMALL + anchor)
-    elif anchor3 in text:
-        text = text.replace(
-            anchor3,
-            anchor3
-            + '<a href="/cluster" class="back-link" style="margin-left:12px;color:#d7ba7d;">클러스터 상태</a>'
-            + '<a href="/onboarding" class="back-link" style="margin-left:12px;color:#d7ba7d;">온보딩</a>'
-            + '<a href="/reviews" class="back-link" style="margin-left:12px;color:#d7ba7d;">리뷰·플랜</a>',
-            1)
-    else:
-        anchor2 = '<a href="/" style="font-size:13px'
-        if anchor2 in text:
-            text = text.replace(
-                anchor2,
-                '<a href="/cluster" style="font-size:13px;color:#d7ba7d;background:#252526;'
-                'border:1px solid #d7ba7d;border-radius:6px;padding:6px 14px;'
-                'text-decoration:none;white-space:nowrap;margin-right:8px;">클러스터 상태</a>'
-                '<a href="/reviews" style="font-size:13px;color:#d7ba7d;background:#252526;'
-                'border:1px solid #d7ba7d;border-radius:6px;padding:6px 14px;'
-                'text-decoration:none;white-space:nowrap;margin-right:8px;">리뷰·플랜</a>'
-                + anchor2, 1)
-    return text.encode("utf-8")
+    return wrap_side_nav(text, "/ontology", _ONTOLOGY_SHELL_CSS).encode("utf-8")
 
 
 def cluster_page(paths) -> tuple:
@@ -177,22 +159,18 @@ def cluster_page(paths) -> tuple:
     from ..viewer import STALE_SEC, _age, inject, stale_banner
     p = paths.root / "cluster.html"
     if not p.is_file():
-        return 503, ("<p>[중요] 클러스터 상태 화면이 아직 만들어지지 않았다.</p>"
-                     "<p>마스터에서: <code>python -m master.status html</code></p>"
-                     '<p><a href="/">← Context Search</a></p>').encode("utf-8")
+        from ..status import _CSS
+        miss = ("<!doctype html><html lang=ko><head><meta charset=utf-8>"
+                "<title>AX 클러스터 상태</title><style>" + _CSS + "</style></head><body>"
+                "<p>[중요] 클러스터 상태 화면이 아직 만들어지지 않았다.</p>"
+                "<p>마스터에서: <code>python -m master.status html</code></p>"
+                "</body></html>")
+        return 503, wrap_side_nav(miss, "/cluster").encode("utf-8")
     body = p.read_text(encoding="utf-8", errors="replace")
-    # 🔴 온보딩 링크는 **서빙 시점에 끼운다** (사용자 요청 2026-09-05).
+    # [주의] 좌측 목록도 **서빙 시점에 감싼다** (맨 끝 `wrap_side_nav`).
     #    [중요] `cluster.html` 은 파일로도 열리는 자립형 HTML 이라(`status.write`·`deliver`)
     #    절대 경로 링크를 본문에 박으면 `file://` 로 열었을 때 죽는다 — `test_status` 의
-    #    *"외부 자원 0"* 계약이 그것을 잡는다. 원전 페이지 링크를 주입으로 처리한 것과 같은 판단.
-    body = body.replace(
-        '<div class="sub">',
-        '<div class="sub" style="margin-bottom:.35rem">'
-        '<a href="/onboarding" style="color:#58a6ff;text-decoration:none">'
-        '온보딩 — 에이전트가 무엇이고 누가 무엇을 하나 →</a>'
-        # 리뷰·플랜 목록 (`#629`) — 같은 이유로 서빙 시점에 끼운다
-        ' · <a href="/reviews" style="color:#58a6ff;text-decoration:none">'
-        '리뷰·플랜 — 번호로 부르는 수정 항목 →</a></div><div class="sub">', 1)
+    #    *"외부 자원 0"* 계약이 그것을 잡는다. 그래서 `status.render` 가 아니라 여기서 넣는다.
     sec, _ = _age(p)
     if sec is not None and sec > STALE_SEC:
         body = inject(body, stale_banner(sec, "python -m master.status html"))
@@ -238,17 +216,11 @@ def cluster_page(paths) -> tuple:
         body = body.replace(_status.LIVE_MARK, live, 1)
     else:
         body = inject(body, live)      # 옛 스냅샷(마커 없음) 폴백
-    # [중요] 원전 화면으로 돌아가는 링크 — 고아 페이지로 두지 않는다.
-    #    색은 **원전 헤더와 같은 `#4ec9b0`**, 경계선은 `status.py` 의 `--line`(#30363d) 이다.
-    #    [주의] 전에는 경계선을 `#2f2f2c` 로 박아 뒀는데, 그건 내가 만든 옛 팔레트의 값이었다 —
-    #    화면 색을 원전에 맞추면서 **여기 하드코딩도 같이 옮겨야** 한다(사용자 지적 2026-08-13).
-    body = inject(body, (
-        '<div style="margin:-1.5rem -1.5rem 1rem;padding:.5rem .9rem;'
-        'border-bottom:1px solid #30363d;font:13px/1.6 -apple-system,sans-serif">'
-        '<a href="/" style="color:#4ec9b0;text-decoration:none">← Context Search</a>'
-        '<span style="opacity:.4"> · </span>'
-        '<a href="/ontology" style="color:#4ec9b0;text-decoration:none">Ontology Viewer</a>'
-        '</div>'))
+    # 🔴 좌측 목록 (사용자 결정 2026-10-04) — 종전의 상단 링크 줄(`← Context Search ·
+    #    Ontology Viewer`)과 부제 줄의 `온보딩 →`·`리뷰·플랜 →` 은 목록이 대신한다.
+    #    [주의] **맨 마지막에** 감싼다 — 위의 `inject` 가 `<body>` 바로 뒤를 표지로 쓰므로,
+    #    먼저 감싸면 배너가 목록 바깥으로 나간다.
+    body = wrap_side_nav(body, "/cluster")
     return 200, body.encode("utf-8")
 
 

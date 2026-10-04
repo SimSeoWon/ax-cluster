@@ -99,13 +99,23 @@ def test_public_prefix_and_policy():
 
 
 def test_nav_links_everywhere():
-    """② [중요] 입구가 `/cluster` 한 곳뿐이라 사용자가 못 찾았다 (2026-09-16) — 모든 화면에서 간다."""
+    """② [중요] 입구가 `/cluster` 한 곳뿐이라 사용자가 못 찾았다 (2026-09-16) — 모든 화면에서 간다.
+
+    2026-10-04 (사용자 결정 「a-1」) — 화면마다 끼우던 링크 버튼을 걷고 **공용 좌측 목록**
+    (`nav.py`) 하나로 모았다. 그래서 리뷰·플랜 입구는 목록의 한 항목이다.
+    """
     from master.webui import onboarding, routes
     check("② 첫 화면(/) 메뉴에 리뷰·플랜", b'href="/reviews"' in routes.context_server_html())
     for name in ("index.html", "domain.html", "task.html"):
         body = routes.inject_cluster_link(routes.page(name))
         check(f"② 온톨로지 {name} 메뉴에 리뷰·플랜", b'href="/reviews"' in body)
+        check(f"② 온톨로지 {name} 은 공용 좌측 목록이다",
+              b'<nav class="side">' in body and body.count(b'class="item on"') == 1
+              and b'class="item on" href="/ontology"' in body)
     check("② 온보딩 메뉴에 리뷰·플랜", b'href="/reviews"' in onboarding.page())
+    ctx = routes.context_server_html()
+    check("② [중요] 첫 화면의 옛 주입 버튼(온보딩 →·리뷰·플랜 →)은 걷혔다",
+          "온보딩 →".encode() not in ctx and "리뷰·플랜 →".encode() not in ctx)
 
 
 # ── ③ 공개 화면 ─────────────────────────────────────────────────────────────
@@ -162,9 +172,17 @@ def test_detail_page_and_copy():
     check("③ 목록 [복사]는 요청 문구", 'data-copy="R1 검토해볼까?"' in lst)
     check("③ [중요] http(비보안 문맥)에서도 복사되게 execCommand 폴백", "execCommand('copy')" in lst)
     check("③ 목록에는 여전히 지적 설명이 없다", SECRET_DESC not in lst)
+    for label, text in (("목록", lst),):
+        check(f"③ {label}은 공용 좌측 목록 — /reviews 하나만 켜진다",
+              '<nav class="side">' in text and text.count('class="item on"') == 1
+              and 'class="item on" href="/reviews"' in text and 'href="/usage"' in text)
+        check(f"③ {label}에 옛 `.nav` 줄이 없다", 'class="nav"' not in text)
 
     st, det = fixes_page.render_detail("r1", "NS", registry=reg)
     check("③ 상세 200 (번호 대소문자 무관)", st == 200, det[:300])
+    check("③ 상세도 공용 좌측 목록 — /reviews 가 켜진다",
+          '<nav class="side">' in det and det.count('class="item on"') == 1
+          and 'class="item on" href="/reviews"' in det and 'href="/usage"' in det)
     check("③ 상세 복사 상자 — 요청 문구·번호",
           'data-copy="R1 검토해볼까?"' in det and 'data-copy="R1"' in det)
     check("③ 항목 번호도 복사", 'data-copy="R1-3"' in det)
