@@ -13,7 +13,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -187,6 +187,24 @@ class CollectTests(unittest.TestCase):
         self.assertEqual(su.attribute("/home/sim/trunk/ns", "192.168.0.43", SHOPS), (None, None))
         self.assertEqual(su.attribute("/home/sim/ax-cluster", "local", SHOPS), (None, None))
         self.assertEqual(su.attribute("", "192.168.0.33", SHOPS), (None, None))
+
+    def test_master_checkout_maps_to_axcluster(self):
+        # 사용자 결정 2026-10-04: 마스터 세션은 cwd 가 ~/ax-cluster 면 AXCluster
+        home = str(Path.home())
+        shop = Mock(path="/home/sim/trunk/AXCluster")
+        reg = Mock(names=["AXCluster", "NS"])
+        reg.config_of.side_effect = lambda n: Mock(
+            workshops={"192.168.0.43": shop} if n == "AXCluster" else {})
+        with patch("master.projects.config.Registry.load", return_value=reg):
+            shops = su.workshop_paths()
+        self.assertEqual(shops["local"], [(home + "/ax-cluster", "AXCluster")])
+        self.assertEqual(su.attribute(home + "/ax-cluster/master", "local", shops),
+                         ("AXCluster", None))
+        self.assertEqual(su.attribute(home, "local", shops), (None, None))
+        self.assertEqual(su.attribute(home + "/ax-cluster-old", "local", shops), (None, None))
+        reg.names = ["NS"]
+        with patch("master.projects.config.Registry.load", return_value=reg):
+            self.assertNotIn("local", su.workshop_paths())
 
     def test_parse_listing_both_formats(self):
         text = ("claude\t12\t1791037097.5\tprojects/a/b.jsonl\r\n"

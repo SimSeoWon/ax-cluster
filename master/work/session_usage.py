@@ -17,8 +17,9 @@
    `<원래 상대 경로>` 는 `~/.claude` · `~/.codex` 기준이다(`projects/…` · `sessions/…`).
    [중요] **프로젝트는 세션의 cwd 로만 정한다** — 그 기계의 등록 작업장 체크아웃 경로
    (`<프로젝트>/config.yaml` `workshops.<host>.path`) 아래면 그 프로젝트, 아니면 `_unassigned`.
-   **활성 프로젝트로 떨어뜨리지 않는다.** [주의] 마스터(`local`)는 등록 작업장이 아니므로
-   지금은 전부 `_unassigned` 다. task_id 는 cwd 가 `<체크아웃>/.ax/work/<task_id>` 아래일 때만,
+   **활성 프로젝트로 떨어뜨리지 않는다.** [주의] 마스터(`local`)는 등록 작업장이 아니라서
+   `MASTER_CHECKOUTS` 로 따로 잇는다(사용자 결정 2026-10-04: cwd `~/ax-cluster` → AXCluster).
+   그 밖의 마스터 세션(`~` 등)은 `_unassigned` 다. task_id 는 cwd 가 `<체크아웃>/.ax/work/<task_id>` 아래일 때만,
    work_id 는 그 task_id 를 큐 파일에서 찾았을 때만 채운다.
 [중요] **원격에는 아무것도 쓰지 않는다** — 목록(크기·mtime)을 읽고 `tar` 스트림으로 읽기만 한다.
    지우지도 옮기지도 않는다(`.33` 은 사람의 메인 PC — 손님 규칙: 읽기 전용). 원격 삭제는
@@ -66,6 +67,10 @@ HOSTS = {
     "192.168.0.2": ("janus@192.168.0.2", True),
     "192.168.0.43": ("sim@192.168.0.43", False),
 }
+# 마스터(`local`) 체크아웃 → 프로젝트. 레지스트리의 workshops 에는 마스터가 없다(작업장이 아니다).
+# [중요] 사용자 결정 2026-10-04: *"마스터 세션은 ~/ax-cluster 면 AXCluster 로 귀속해"*.
+#    레지스트리에 그 프로젝트가 없으면 잇지 않는다 — 없는 프로젝트를 만들어 넣지 않는다.
+MASTER_CHECKOUTS = ((str(Path.home() / "ax-cluster"), "AXCluster"),)
 SOURCES = (("claude", ".claude", "projects"), ("codex", ".codex", "sessions"))
 _BASE = {tool: base for tool, base, _ in SOURCES}
 _SSH = ("ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes")
@@ -191,6 +196,11 @@ def workshop_paths(projects_root: Path | None = None) -> dict[str, list[tuple[st
         for host, shop in shops.items():
             if shop.path:
                 out.setdefault(host, []).append((shop.path, name))
+    for checkout, name in MASTER_CHECKOUTS:
+        if name in reg.names:
+            out.setdefault("local", []).append((checkout, name))
+        else:
+            _log(f"[주의] 마스터 귀속 대상 {name} 이 레지스트리에 없다 — {checkout} 세션은 _unassigned")
     for rows in out.values():
         rows.sort(key=lambda row: len(row[0]), reverse=True)
     return out
