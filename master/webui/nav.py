@@ -21,6 +21,7 @@ ITEMS = [
     ("/commit-flow", "커밋 흐름", "손 커밋 → 로컬 초고 · Antigravity 리뷰"),
     ("/cluster", "클러스터 상태", "기계 · 서비스 · 지휘 상태"),
     ("/reviews", "리뷰 · 플랜", "번호가 붙은 수정 항목"),
+    ("/usage", "LLM 사용량", "기간별 작업 · 토큰"),
     ("/ontology", "온톨로지 뷰어", "도메인 · 클래스 · 액션"),
     ("/", "컨텍스트 검색", "문서를 찾는다"),
 ]
@@ -50,7 +51,6 @@ def nav_html(current: str = "") -> str:
     """좌측 목록. `current` 는 지금 화면의 경로 — 그 항목만 `on` 이 붙는다."""
     # [DOC] 이 조각은 이 파일과 master/test_usage_nav.py만 변경한다. 기존 선언·여섯 메뉴 유지.
     # [DOC] ITEMS에 ('/usage','LLM 사용량','기간별 작업 · 토큰')을 하나 추가한다.
-    # [PSEUDO] 공용 메뉴에 /usage 링크를 연결하고 유일성·활성 표시·기존 메뉴 유지 검사한다.
     e = html.escape
     out = ['<nav class="side"><h2>화면</h2>']
     for path, name, desc in ITEMS:
