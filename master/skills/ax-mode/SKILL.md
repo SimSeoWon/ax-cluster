@@ -28,10 +28,20 @@ description: AX 워커 **지휘자 모드**를 보고 바꾼다 — 마스터가
     조회   get_worker_mode_tool()
     변경   set_worker_mode_tool(mode, why="왜 바꾸는지", by="누가")
 
-MCP 가 안 붙어 있으면 마스터에서 같은 함수를 직접 부른다 (**같은 정본**이다):
+실행 전 스킬 경로와 실제 호출을 알린다. 작업 위치는 `/home/sim/ax-cluster`이며 Python은
+`.venv/bin/python`을 쓴다. MCP 가 안 붙어 있으면 같은 정본을 직접 부른다:
 
-    .venv/bin/python -c "from master.work import mode as m; print(m.describe())"
-    .venv/bin/python -c "from master.work import mode as m; print(m.set_mode('codex', why='...', by='...'))"
+    AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -c "import json; from master.work import conductor as c; print(json.dumps(c.snapshot(), ensure_ascii=False))"
+    AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -c "import json; from master.work import conductor as c; print(json.dumps(c.set_worker('codex', why='사용자가 선택한 변경 사유', by='현재 지휘자'), ensure_ascii=False))"
+
+변경 명령의 모드·사유·기록자는 실제 사용자 선택에 맞춘다. **사용자가 모드를 선택했을 때만**
+변경하고, 기존 선택을 다시 묻지 않는다. 마스터 세션 교대만으로 워커 모드를 바꾸지 않는다.
+`set_worker()`는 활성 프로젝트의 SSH 워커 준비 검사 후 상태를 저장한다. `mode.set_mode()`나
+상태 파일 직접 쓰기로 이 검사를 우회하지 않는다. 실패하면 사유를 보고하고 중단한다.
+성공하면 다시 조회해 저장값과 실제 모드·출처를 확인한다.
+
+준비 검사는 배달물과 Windows 예약 런처 등록 계약을 확인한다. 실제 로그인·인증·Codex 셸 읽기·
+`apply_patch`·결과 회수 성공은 별도 실행 검증이며, 모드 전환만으로 완료했다고 말하지 않는다.
 
 ## 2. [중요] 이것은 기록이지 잠금이 아니다
 
@@ -45,9 +55,12 @@ MCP 가 안 붙어 있으면 마스터에서 같은 함수를 직접 부른다 (
 
 - **기본값은 아직 사람이 정하지 않았다** (2026-09-08). 저장된 값이 없으면 **현재 동작(레인)**
   으로 돈다. 「기본값이 lane 으로 결정됐다」고 말하지 않는다
-- **돌고 있는 파견에는 소급되지 않는다** — 다음 파견부터 적용된다
+- **전역 모드는 새 work 등재의 기본값이다.** 기존 `work.worker_mode` 스탬프와 실행 중 조각에
+  소급되지 않는다. 스탬프 없는 옛 work은 전역을 읽을 수 있으므로 구분해 보고한다
 - **왜 바꾸는지(`why`)를 반드시 적는다.** 나중에 「왜 이 모드였나」를 그것으로만 알 수 있다
 - 지휘자 모드에서는 조각마다 **지휘자 토큰이 든다.** `lane` 은 마스터에서 텍스트만 만들어 싸다
+
+마스터 담당 기록과 인수인계는 [`../ax-handoff/SKILL.md`](../ax-handoff/SKILL.md)에서 처리한다.
 
 ## 4. [주의] 계측을 0 으로 읽지 않는다
 

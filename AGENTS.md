@@ -7,11 +7,12 @@
 
 ## 세션 시작에 읽을 것
 
-1. 🔴 **`docs/orchestrator-handoff.md`** — 지금 무엇이 진행 중인가. **한 벌만 있다.**
-2. 🔴 **`docs/orchestrator-rules.md`** — 두 지휘자(Claude · Codex)가 함께 지키는 규칙.
-3. `docs/milestones/6-improvements.md`(열린 마일스톤) · `docs/12-multi-project.md`(열린 축).
+1. **[`ax-handoff`](master/skills/ax-handoff/SKILL.md) 스킬**로 인수인계를 복원한다.
+   `docs/orchestrator-handoff.md`와 `docs/orchestrator-rules.md`를 읽고 실제 상태를 대조하며,
+   마스터 담당과 워커 지휘자 모드를 각각 확인한다. 모드 변경은 사용자 선택에 따른다.
+2. `docs/milestones/6-improvements.md`(열린 마일스톤) · `docs/12-multi-project.md`(열린 축).
    [주의] **항목·진행은 레드마인(`:8080`)만** 본다.
-4. `reports/` 를 **전문으로** 읽는다 — grep 은 대체가 아니다.
+3. `reports/` 를 **전문으로** 읽는다 — grep 은 대체가 아니다.
 
 ## 절대 놓치면 안 되는 것 (전문은 `docs/orchestrator-rules.md`)
 

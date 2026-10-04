@@ -14,11 +14,13 @@
 
 ## 세션 시작에 읽을 것
 
-1. 🔴 **`~/ax-cluster/docs/orchestrator-handoff.md`** — 지금 무엇이 진행 중인가. **한 벌.**
-2. 🔴 **`~/ax-cluster/docs/orchestrator-rules.md`** — 두 지휘자의 공용 규칙.
-3. `~/ax-cluster/docs/milestones/6-improvements.md` · `~/ax-cluster/docs/12-multi-project.md`.
+1. **[`ax-handoff`](../master/skills/ax-handoff/SKILL.md) 스킬**로 인수인계를 복원한다.
+   `~/ax-cluster/docs/orchestrator-handoff.md`와 `~/ax-cluster/docs/orchestrator-rules.md`를 읽고
+   실제 상태를 대조하며, 마스터 담당과 워커 지휘자 모드를 각각 확인한다.
+   모드 변경은 사용자 선택에 따른다.
+2. `~/ax-cluster/docs/milestones/6-improvements.md` · `~/ax-cluster/docs/12-multi-project.md`.
    [주의] **항목·진행은 레드마인(`:8080`)만.**
-4. `~/ax-cluster/reports/` 를 **전문으로** 읽는다.
+3. `~/ax-cluster/reports/` 를 **전문으로** 읽는다.
 
 ## 절대 놓치면 안 되는 것 (전문은 `docs/orchestrator-rules.md`)
 

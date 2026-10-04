@@ -29,14 +29,9 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   Details: [`master/skills/distribute/SKILL.md`](master/skills/distribute/SKILL.md).
 
 - 🔴 [중요] **지휘자는 둘이다 — Claude 와 Codex 가 교대한다** (사용자 2026-09-07, 한도가 정한다).
-  세션 시작에 **먼저 읽는다**:
-  **① [`docs/orchestrator-handoff.md`](docs/orchestrator-handoff.md)** — 지금 무엇이 진행 중인가.
-  **한 벌만 유지한다**(새 파일을 만들지 말고 덮어 쓴다) · **잠금이 아니다**(실행을 막지 않는다) ·
-  [주의] **거기 적힌 「완료」를 그대로 믿지 않는다** — HEAD·dirty diff·이슈·프로세스를 직접 대조한다.
-  **② [`docs/orchestrator-rules.md`](docs/orchestrator-rules.md)** — 두 지휘자의 공용 규칙과 원문 근거.
-  도구 하나에서만 되는 것은 거기 **「도구별」**로 적혀 있고 공통 규칙이 아니다.
-  [주의] **마스터에는 자동 고지 층이 없다** — 훅은 요청자 `.33` 에만 간다(`master/client/spec.py:354`).
-  읽는 것 자체가 배선이다. → 설계 `docs/15-orchestrator-handoff.md` · 일감 `#384`
+  세션 시작에 **[`ax-handoff`](master/skills/ax-handoff/SKILL.md) 스킬**을 읽고 실행한다.
+  인수인계·공용 규칙과 실제 상태를 대조하고, 마스터 담당과 워커 지휘자 모드를 각각 확인한다.
+  모드 변경은 사용자 선택에 따른다. 마스터의 세션 시작 훅은 없으므로 이 지침이 진입점이다.
 
       AX-ENTRY-MARK: repo
 

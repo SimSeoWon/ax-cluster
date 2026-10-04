@@ -29,22 +29,11 @@ does not start a game-source task; it serves one.**
 
     AX-ENTRY-MARK: home
 
-[중요] **Two orchestrators take turns here — Claude and Codex** (사용자 2026-09-07, token/usage
-limits decide which). So **this file is no longer the only entry point.** Before planning:
-
-1. 🔴 **`~/ax-cluster/docs/orchestrator-handoff.md`** — what is in flight *right now*.
-   **One copy only** — overwrite it, never add a second. It is **not a lock**; it does not block
-   execution. [주의] **Do not trust its "완료" claims** — check HEAD, dirty diff, the issue and
-   running processes yourself (근거: `orchestrator-rules.md` §5).
-2. 🔴 **`~/ax-cluster/docs/orchestrator-rules.md`** — the rules both orchestrators keep, with
-   원문 근거. What only one tool can do is listed there as **도구별**, not as a common rule.
-
-[주의] **The master has no auto-notice layer** — the `SessionStart`/`UserPromptSubmit` hooks go to
-the requester `.33` only (`master/client/spec.py:354`). Nothing will surface the handoff record
-for you. Reading it at session start is the wiring.
-
-→ Design and verification method: `~/ax-cluster/docs/15-orchestrator-handoff.md` ·
-일감 [`#384`](http://192.168.0.57:8080/issues/384)
+[중요] **Claude and Codex take turns here.** Before planning, use
+[`ax-handoff`](../master/skills/ax-handoff/SKILL.md) to read the handoff and shared rules,
+cross-check actual state, and inspect master ownership and worker conductor mode separately.
+Change worker mode only when the user chooses it. The master has no session-start hook;
+this instruction is the entry point.
 
 ## Where the project stands — read this before planning
 

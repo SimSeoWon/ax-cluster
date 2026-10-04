@@ -4,7 +4,14 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **갱신 시각**: 2026-10-04 20:25 KST — Claude · #725 마감·후속 배포 · 색인기 막힘 해소(#732 완료) · 워커 동기화 ·
+- **현재 인수**: Codex · 2026-10-04 20:43 KST · HEAD `d020132`, 문서/스킬 미커밋 7파일.
+  워커 Codex 전환·새 스킬 검증/등록 완료. 최신 상태는 §0 첫 절이다.
+  후속 사용자 「커밋하고 푸시한 뒤 모든 워커 Codex로 작동하도록 스킬 호출」 승인으로
+  검증한 7파일을 커밋·Gitea push하고 ax-mode 정본을 재호출한다. 배달·실제 신규 파견은 범위 밖이다.
+
+아래 메타데이터는 이전 Claude 인계 시점의 기록이며 현재 상태는 §0 첫 절을 따른다.
+
+- **이전 갱신 시각**: 2026-10-04 20:25 KST — Claude · #725 마감·후속 배포 · 색인기 막힘 해소(#732 완료) · 워커 동기화 ·
   `.2` MCP 경고 수정 · `/ontology` 브라우저 확인 · 통합 검사 등록 · agy 사용량 기록(#728 완료)
 - **지휘 도구 / 세션**: **Claude** 마스터. Codex 는 이 문서를 갱신하기 전에 한도가 소진됐다
   (마지막 Codex 갱신은 00:47 헤더 + §0 R9·R19 후속). 17:02:34 `record_master_conductor('claude')`.
@@ -39,6 +46,49 @@
   (`3e46078` 은 마스터 측 배달 코드라 워커 동기화 불필요). 홈 중복 스킬 `~/.agents/skills/ax-work` 주의는 무해.
 
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
+
+### 최신 — Codex 인수 · 워커 Codex 전환 · 인수인계 스킬 추출 (2026-10-04, Codex)
+
+- 사용자 보충으로 #733 후속을 인수했다. 실제 `HEAD=origin/main=d020132`, 편집 전 clean 확인.
+  `master/test_usage_cli_paths.py`의 checks.json 등록·출력 패턴 확인. **통합 19/19(신규 40건),
+  Redmine #733 노트·열림 및 #734 신규 등록은 사용자 인계 내용이며 이번 세션에서 재조회하지 않았다.**
+- #728은 앞 절의 실제 Antigravity 리뷰 기록(입력 29,589·출력 11,598, 합 41,187) 확인으로 완료.
+  #733은 실제 Claude JSON 호출·게시판·층2 기록 확인이 남았다. #734는 현재
+  `master/projects/mcp_server.py`의 `get_code()`가 `generate.dispatch()`의 필수 `context`를
+  빠뜨리는 것을 소스로 확인했다. 경로 사용 여부와 유지/제거 판단은 미착수.
+- `ax-projects` 실조회: MainPID 139669, 20:33:53 기동, active/running, Result=success.
+  이번 세션에서 재시작하지 않았다. HTTP 화면 200은 사용자 인계 내용이며 재조회하지 않았다.
+- 사용자 「클로드 토큰을 모두 사용했으니 워커들도 모두 코덱스」 지시.
+  현재 세션에 AX MCP 없음; ax-mode의 직접 fallback와 실제 MCP 호출 경로 차이를 보고했고,
+  사용자 승인으로 정본 `conductor.set_worker('codex', why=…, by='codex')` 사용.
+  첫 sandbox 호출은 scp 읽기 실패(BundleError); 승인된 동일 명령을 sandbox 밖에서 실행해
+  **20:42:28 Codex 전환**, AXCluster `.43`·`.2`·`.33` readiness **3/3**, Codex 0.159.3.
+  readiness는 배달물·예약 런처 등록 검사이며 실제 로그인/셸/편집 실행 성공 검사는 아니다.
+- `conductor.record_master('codex', …)` 20:43:36 실행 후 snapshot 재조회:
+  master=codex, worker=codex, source=state. 담당 기록은 잠금/프로세스 판정이 아니다.
+  **새 work 등재부터 Codex 스탬프**. 기존 work의 모드를 소급 변경하거나 새 파견을 하지 않았다.
+- 사용자 「인수인계와 워커 지휘자 선택을 스킬로」 요청. 이번 작업에 한해 RAG MCP 부재를
+  실제 소스 대조로 대신하고 **로컬 서브 에이전트 방식** 승인.
+  `master/skills/ax-handoff/SKILL.md` 신규·`ax-mode` fallback 정정·홈/저장소 진입 지침 연결 완료.
+  두 스킬 quick_validate rc0, git diff --check rc0. Claude 홈·Codex legacy/공식 홈 경로의
+  ax-handoff 심볼릭 링크가 같은 저장소 정본을 가리킴을 확인했다. 홈 AGENTS/CLAUDE 링크 보존.
+  Codex 홈 등록 첫 시도는 sandbox read-only로 실패해 승인된 좁은 등록 스크립트로 완료했다.
+  독립 검토: 인수인계만 확인할 때 쓰기 없음·Codex 선택 시 준비 검사·실제 호출 이름 일치 확인.
+  추가 조회에 없는 경로를 넣어 rc2가 된 에이전트 조회 실수가 있어 그 추가 조사는 중단했다.
+  기존 machines/sim-desktop.md의 「다음 조각부터」 설명은 옛 설명으로 남아 있으며 이번에
+  바꾸지 않았다. 새 스킬은 work 스탬프 계약을 명시한다. 전체 통합 검사는 이번에 재실행하지 않았다.
+  드라이런 시점에는 커밋·푸시 승인이 없었다. 후속 사용자 요청으로 이 7파일의 커밋·Gitea push와
+  ax-mode Codex 설정 재호출을 승인받았다. 서비스 재기동·워커 재배달·신규 파견은 요청하지 않았다.
+- 사용자 「드라이런 먼저」 요청 후 기존 정본 검사만 격리 실행:
+  `.venv/bin/python -B -m unittest master.test_orchestration_control master.test_worker_mode_transport -v`
+  **21/21**(control 18·transport 3), `.venv/bin/python -B master/test_work_mode_stamp.py` **15/15**.
+  실제 준비 검사에는 가짜 워커/런처 응답을 주입하고 상태·큐는 임시 환경을 사용한다.
+  준비 실패 저장 차단·마스터/워커 분리·환경 우선순위·모드 전달·기존 work 스탬프 유지 확인.
+  검사 전후 운영 conductor.json/mode.json SHA256, snapshot, git status 및 diff SHA256 모두 동일.
+  이후 이 결과 기록만 인계서에 추가했다. 실제 원격 작업·파견·서비스 변경은 실행하지 않았다.
+  독립 스킬 판단 드라이런 4상황 확인: 인계 조회만/명시 Codex 선택/.2 준비 실패/
+  전역 Codex+기존 Claude round 2. 형식 검사뿐 아니라 호출 선택·승인/중단·스탬프 경계를 검토했다.
+  실제 새 Claude/Codex 세션의 자동 스킬 선택·원격 셸 실행까지 검증한 것은 아니다.
 
 ### 최신 — 색인기 막힘 해소 · #732 완료 (2026-10-04 18:12, Claude)
 
