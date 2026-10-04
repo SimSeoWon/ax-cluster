@@ -117,6 +117,23 @@ def _family(model: str, lane: str, tool: str = "") -> str:
     return "unknown"
 
 
+_CONDUCTOR_FAMILIES = {"claude": "claude", "codex": "codex"}
+
+
+def _conductor_family(raw: dict, model: str, lane: str) -> str:
+    """dispatch 레코드의 mode(워커 지휘자 lane|claude|codex)로 계열을 보충한다.
+
+    model·lane 이 둘 다 비었을 때만 쓴다 — 명시 증거가 있으면 그쪽이 이긴다.
+    mode=lane 은 지휘 에이전트가 없다는 뜻이라 계열을 정하지 않는다.
+    """
+    if model or lane:
+        return "unknown"
+    mode = raw.get("mode") or ""
+    if not isinstance(mode, str):
+        raise ValueError("모드 형식")
+    return _CONDUCTOR_FAMILIES.get(mode.strip().casefold(), "unknown")
+
+
 def _number(record: dict, key: str) -> int:
     value = record.get(key, 0)
     if value is None:
@@ -156,6 +173,8 @@ def _normal_record(raw: dict, *, session: bool, tool: str = "") -> dict:
     if not isinstance(model, str) or not isinstance(lane, str):
         raise ValueError("모델 형식")
     family = _family(model, lane, tool)
+    if family == "unknown" and not session:
+        family = _conductor_family(raw, model, lane)
     if not model:
         model = lane.split(":", 1)[1] if lane.startswith("local:") and ":" in lane else "모델 미상"
     if session:

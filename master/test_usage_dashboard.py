@@ -36,10 +36,10 @@ class UsageDashboardTests(unittest.TestCase):
     def add_call(self, project, ts, *, work_id="", model="claude-sonnet-4-5",
                  lane="claude", source="dispatch", measured=True, rc=0,
                  input_tokens=1, output_tokens=2, cache_read=0,
-                 cache_create=0, reasoning_tokens=0):
+                 cache_create=0, reasoning_tokens=0, mode=""):
         record = {
             "ts": ts, "work_id": work_id, "task_id": "", "worker": "",
-            "mode": "", "rc": rc, "source": source, "model": model,
+            "mode": mode, "rc": rc, "source": source, "model": model,
             "lane": lane, "measured": measured,
             "input_tokens": input_tokens, "output_tokens": output_tokens,
             "cache_read": cache_read, "cache_create": cache_create,
@@ -154,6 +154,38 @@ class UsageDashboardTests(unittest.TestCase):
         self.assertEqual(unknown["totals"]["calls"], 1)
         self.assertIsNone(unknown["totals"]["tokens"])
         self.assertIsNone(unknown["models"][0]["tokens"])
+
+    def test_conductor_mode_fills_family_when_model_and_lane_empty(self):
+        # 2026-10-04 실측: claude 지휘자 레코드는 model·lane 이 비어 unknown 으로 샜다.
+        self.add_call("Alpha", "2026-10-10 10:00:00", model="", lane="", mode="claude",
+                      input_tokens=14, output_tokens=2652,
+                      cache_read=310548, cache_create=42710, rc=1)
+        self.add_call("Alpha", "2026-10-10 11:00:00", model="", lane="", mode="codex",
+                      input_tokens=100, output_tokens=50, cache_read=60)
+        self.add_call("Alpha", "2026-10-10 12:00:00", model="", lane="", mode="lane",
+                      input_tokens=7, output_tokens=3, cache_read=1000)
+        # 명시 증거(lane·model)가 mode 를 이긴다.
+        self.add_call("Alpha", "2026-10-10 13:00:00", model="", lane="local:gemma4:e4b",
+                      mode="claude", input_tokens=5, output_tokens=5, cache_read=900)
+        self.add_call("Alpha", "2026-10-10 14:00:00", model="gpt-5-codex", lane="",
+                      mode="claude", input_tokens=1, output_tokens=1, cache_read=800)
+        data = self.report(start="2026-10-10", end="2026-10-10")
+        rows = {(r["family"], r["model"]): r for r in data["models"]}
+        self.assertEqual(set(rows), {("claude", "모델 미상"), ("codex", "모델 미상"),
+                                     ("codex", "gpt-5-codex"), ("unknown", "모델 미상"),
+                                     ("local", "gemma4:e4b")})
+        claude = rows[("claude", "모델 미상")]
+        self.assertEqual((claude["calls"], claude["failed_calls"], claude["tokens"]),
+                         (1, 1, 14 + 2652 + 310548 + 42710))
+        self.assertEqual(rows[("codex", "모델 미상")]["tokens"], 150)
+        self.assertEqual(rows[("unknown", "모델 미상")]["tokens"], 10)
+        self.assertEqual(rows[("local", "gemma4:e4b")]["tokens"], 10)
+        self.assertEqual(rows[("codex", "gpt-5-codex")]["tokens"], 2)
+        only_claude = self.report(family="claude", start="2026-10-10", end="2026-10-10")
+        self.assertEqual(only_claude["totals"]["calls"], 1)
+        self.assertEqual(only_claude["totals"]["tokens"], 355924)
+        self.assertEqual(sum(r["tokens"] or 0 for r in data["buckets"]),
+                         data["totals"]["tokens"])
 
     def test_session_source_is_separate(self):
         self.add_call("Alpha", "2026-10-10 10:00:00", input_tokens=999)
