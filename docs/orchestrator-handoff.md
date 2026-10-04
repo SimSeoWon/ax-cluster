@@ -4,18 +4,14 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 인수**: Codex · 마스터 담당 기록 2026-10-04 20:43:36 KST.
-  버그 수정 게시 직전 기준 main = origin/main `15f620f`. #714·#666 구현·검증 완료.
-  `d061598`의 스킬 검증·등록·push와 ax-mode Codex 재호출 완료.
-  워커 선택 `codex` / `source=state`, 20:52:56 저장, AXCluster 3대 readiness 3/3.
-  #385·#715 완료 100% 재조회 확인. `f215837`과 후속 문서 커밋 `15f620f` push 완료·배포 미실행.
-  사용자 「문서 최신화 다시 진행해」로 README·AGENTS·CLAUDE·인수인계서 7파일 수정·검증 완료.
-  후속 「올려」로 문서 커밋·Gitea push 승인, 실제 원격 main 일치·clean 확인 후 버그 수정 시작.
-  #714·#666은 로컬 서브 에이전트 구현·회귀·통합19/19·독립 리뷰・드라이런312/312 완료.
-  사용자 「커밋하고 푸시해」로 수정·검사·기록 6파일의 커밋·Gitea push 승인. 운영 배포는 미실행.
-  최신 상태는 §0 첫 절이다. 신규 파견은 실행하지 않는다.
+- **현재 인수**: **Claude** · 마스터 담당 기록 2026-10-04 22:27:47 KST (사용자 지시로 Codex 에서 인수).
+  **현재 갱신: 2026-10-04 23:10 KST**. main = origin/main `ecb395b` 실제 재조회, 이 문서만 미커밋(커밋 승인됨).
+  워커 지휘자 모드 `codex` / `source=state`(20:52:56) — 이번 인수에서 바꾸지 않았다.
+  Codex 대화 세션(pid 139370)은 사용자가 닫았다. `codex app-server` 데몬 3개는 남아 있다(대화 세션 아님).
+  **#735 세션 원본 로그 증분 수집**: 로컬 서브 에이전트 구현 → `8c1c93e`·`ecb395b` 커밋·push·`ax-projects` 재기동·라이브 확인 완료.
+  남은 결정 둘(미승인): 마스터 local 세션 귀속 규칙 · 원본 보존 정책. 최신 상태는 §0 첫 절이다. 신규 파견은 없다.
 
-아래 메타데이터는 이전 Claude 인계 시점의 기록이며 현재 상태는 §0 첫 절을 따른다.
+아래 메타데이터는 이전 Claude 인계(20:25) 시점의 기록이며 현재 상태는 §0 첫 절을 따른다.
 
 - **이전 갱신 시각**: 2026-10-04 20:25 KST — Claude · #725 마감·후속 배포 · 색인기 막힘 해소(#732 완료) · 워커 동기화 ·
   `.2` MCP 경고 수정 · `/ontology` 브라우저 확인 · 통합 검사 등록 · agy 사용량 기록(#728 완료)
@@ -53,6 +49,89 @@
 
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
 
+### 최신 — #735 세션 원본 로그 증분 수집 완료·배포 (2026-10-04 23:10, Claude)
+
+**사용자 결정 (이 세션)**:
+
+- Claude 인수(「응 클로드로 인수하고 로컬 서브 에이전트로 진행해」) → `record_master_conductor('claude')` 22:27:47.
+- 보관 구조 **프로젝트/워커IP/도구** 선택: `~/ax-state/usage/raw/<프로젝트|_unassigned>/<IP|local>/<claude|codex>/<원본 상대경로>`
+  + `raw/index.jsonl`(project·work_id·task_id·host·tool·origin·cwd·size·mtime·sha256). work 는 디렉토리 단계가 아니다.
+- 진행 중 파일: **크기·mtime 이 바뀌면 통째로 재복사**(원자적 교체). 원격은 읽기 전용, 워커 원본 삭제는 범위 밖.
+- Redmine 일감 **#735** 생성(ax-cluster · 코드리뷰 · 마일스톤 6). 노트 3건(구현·배포·후속).
+
+**구현 (`8c1c93e`)**: `master/work/session_usage.py`(원본 증분 복사 · cwd↔`workshops.<host>.path` 최장 접두 귀속 ·
+`.ax/work/<task_id>` 일 때만 task/work · 원본에서 숫자 스냅샷 재생성 · flock · `--reparse` · `refresh_in_background`) ·
+`usage_dashboard.py`(session 프로젝트 필터) · `webui/app.py`(/usage 진입 시 배경 수집, 잠금 · 최소 5분) · 테스트 `test_session_usage.py` 12건 신규.
+CLI: `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.work.session_usage all [--reparse]` — rc 2 = 레지스트리 못 읽음.
+
+**실측에서 찾은 결함**: `.33` Windows tar 에 stdin 파일 목록 22.7KB 를 주면 0바이트로 멈춘다 → 묶음당 8KB(`STDIN_BUDGET`) + 마스터 쪽 ssh 감시 타이머.
+측정 중 `.33` 에 남은 `tar.exe` 2개는 사용자 승인으로 `taskkill`, 재조회 0개.
+
+**배포·검증**:
+- crontab 04:17 수집 줄에 `AX_PROJECTS_ROOT=/home/sim/ax-cluster` 추가(없으면 새 코드에서 rc 2).
+- `ax-projects` 재기동 22:55:53 → 23:03:44(후속 `ecb395b` 반영). 8103 은 ax-projects 가 서비스하며 `AX_PROJECTS_ROOT` 가 있다.
+- 라이브: `/api/v1/usage` 응답 0.72초, 배경 수집 15.2초 · 4대·2도구 669파일 ≈526MB · 오류 0 · 실 저장소에 AXCluster·KimodoMotion_WebUI·ModularStage·NS·_unassigned 생성.
+  session·codex·2026-10-04 집계 **calls 0 → 831 · tokens 92,847,955**. 45초 뒤 재진입은 「간격 < 300초」로 건너뜀.
+- 후속 `ecb395b`: `usage_page.py` session 안내 문구 정정 · `tests/integration/checks.json` 에 `test_session_usage.py` 등록(20개). 통합 20/20.
+
+**남은 것 (미승인 — 인계만으로 진행하지 않는다)**:
+- 마스터 local 세션은 등록 작업장이 아니라 전부 `_unassigned`. 귀속 규칙(예: cwd `~/ax-cluster` → AXCluster)은 사용자 결정.
+- 원본 사본 보존 정책 없음(무기한 누적). `.33` codex 235건 중 226건은 cwd 가 `AppData\Local\Temp` 라 `_unassigned`.
+- #714·#666 운영 검증, #726·#727·#733 등 이전 열린 일감은 그대로.
+
+### 최신 — Codex 사용량 미표시 진단 · 원본 로그 캐싱 요청 (2026-10-04 22:19, Codex)
+
+**사용자 목표·결정**:
+
+- 사용자가 「왜 코덱스 작업한 토큰양 웹UI에 적용 안되고 있어」 → 「페이지가 열릴 때 갱신」 제안.
+- 모든 워커 로그를 마스터에 캐싱, 이미 다운로드한 파일은 스킵하고 없는 파일만 가져오라는 지시.
+  기록 중인 파일의 변경 갱신은 지휘자가 제안한 방식이며 세부 계약은 아직 구현 전이다.
+- 사용자는 토큰 숫자뿐 아니라 **대화 내역을 분석할 수 있도록 원본 전체 수집**을 요청했고,
+  마지막 지시는 「다 내 컴퓨터니 … 그대로 복사해와. 프로젝트/작업 워커의 IP 기준으로 디렉토리 정리해서 수집」.
+  원본 내용은 그대로 복사한다. 추가 비밀값 마스킹 정책을 사용자에게 다시 요구하지 않는다.
+- 워커 수집 후 원본 제거도 사용자가 아이디어로 언급했으나 이번에는 복사·수집만 범위로 안내했다.
+  원격 원본 삭제는 실행하지 않았고 삭제 조건도 확정되지 않았다. 인계만으로 삭제하지 않는다.
+
+**실제 진단 결과**:
+
+- 기존 `master/work/session_usage.py`: Claude/Codex 홈 jsonl을 로컬 또는 원격 tar 스트림으로
+  전부 읽고, `~/ax-state/usage/sessions/<host>/<tool>/*.json`에 **토큰 숫자만** 적립한다.
+  원본 파일 캐시·이미 받은 파일 다운로드 생략·프로젝트/work 귀속 기능은 없다.
+  기존 CLI는 `.venv/bin/python -m master.work.session_usage [local|IP ...]`지만 현재 요구의
+  원본 복사·증분 수집을 수행하지 못하므로 아직 실행하지 않았다. 임시 대체 스크립트도 만들지 않았다.
+- `master/work/usage_dashboard.py`는 위 숫자 스냅샷만 읽으며 수집을 호출하지 않는다.
+  `master/webui/app.py`의 `/usage`·`/api/v1/usage` 역시 조회만 한다.
+  기본 source=dispatch(작업 실행 기록), source=session(대화 세션 기록)은 별도이며 중복 합산 금지.
+  현재 session 자료는 프로젝트·일감 귀속이 없고 project 필터를 걸면 해당 자료가 없다.
+- 마스터 Codex 원본 오늘 로그는 존재. 기존 `parse_codex`로 숫자만 출력해 20:33 시작 마스터
+  세션의 레코드202건, 입력25,604,440·출력54,677 확인(13:05:47Z 시점, 이후 계속 자람).
+  21:48 서브 에이전트 세션도19건 확인. 대화 본문은 진단 로그에 출력하지 않았다.
+- 적립 저장소의 Codex 스냅샷 검색은 매칭0. 실제 웹UI API
+  `/api/v1/usage?source=session&family=codex&start=2026-10-04&end=2026-10-04`
+  응답200, calls0·tokens=null·buckets/models비어 있음·read_errors0 확인.
+- 등록된 systemd 타이머22개에 세션 수집 타이머 없음. timer/API 첫 샌드박스 조회는 막혔고
+  승인된 **동일 읽기 명령**으로 sandbox 밖에서 재조회해 확인했다. 서비스 장애로 단정하지 않는다.
+
+**조사·실행 방식 및 바로 다음 작업**:
+
+- `master/skills/distribute/SKILL.md`와 실제 소스 대조. 현재 AX RAG MCP 도구가 노출되지 않음.
+  새 기능 작업의 실제 소스 대조 사용과 **로컬 서브 에이전트 / AX 워커 분산** 선택을 질문했고
+  아직 사용자 답변이 없다. 사용자는 대신 이 인계 작성을 요청했다. 선택 답변 전에는 구현·위임하지 않는다.
+- 등록 정보 조회는 기존 `Registry.load()`로 완료: 프로젝트 ModularStage·NS·KimodoMotion_WebUI·
+  MotionForge·AXCluster, active=AXCluster. 워커 IP `.2`(janus)·`.33`(user)·`.43`(sim).
+  게임 프로젝트의 `.33`은 requester이기도 하므로 역할을 전역으로 추정하지 않는다.
+- 지휘자 제안은 `프로젝트/작업/워커 IP/도구/원본 경로` 순서 보관, 실제 귀속을 확인할 수 없는
+  로그는 미분류 보관, 동일 파일 스킵·변경 중 파일 갱신·캐시로부터 토큰 집계 및 페이지 진입 갱신 연결.
+  이 세부 배치와 갱신 계약은 **제안**이며 실제 확정·구현은 다음 단계다. 모든 세션을 active프로젝트에
+  임의 배정하지 않는다. 중복다운로드·중복집계·부분복사·진행중파일을 검증할 필요가 있다.
+- 확장 대상 후보는 기존 session_usage.py·usage_dashboard.py·webui/app.py·usage_page.py와
+  관련 검사다. 새 등록 일감·코드 변경·원본 복사·웹UI 수집 연결 모두 아직 없음.
+- 모든 로컬 구현/리뷰 에이전트는 앞선 버그 작업을 완료했다. 이 새 작업에 배정된 에이전트는 없다.
+  새 AX 파견·워커 재배달·원격 삭제·강제 종료를 실행하지 않았다. 큐 실행 상태는 이번 인계에서 미조회.
+- 다음 지휘자는 세션 시작 AGENTS와 ax-handoff를 먼저 읽고 실제 경로 목록과 소스를 대조한다.
+  등록 스킬 기존 도구를 사용한다. 호출 계약이 불명확하면 사용자에게 묻고 임시 스크립트로 우회하지 않는다.
+  커밋·push는 매번 승인. 문서 한 벌만 유지하고 홈 AGENTS/CLAUDE 심볼릭 링크를 보존한다.
+
 ### 최신 — #715 종결 · #714/#666 로컬 수정 (2026-10-04, Codex)
 
 - 실제 분류는 트래커 `코드리뷰`, 버전 `버그·개선`이다. AX 열린 3건, ModularStage 열린 0건 확인.
@@ -68,7 +147,9 @@
   검사 후 이 문서·리포트93에 결과만 추가했다.
 - 기록: [리포트93](../reports/93-spool-recovery-and-frontmatter-repair.md).
   #714·#666은 운영 검증이 남아 열어 둔다. 드라이런 후 사용자 커밋·push 승인.
-  게시 결과는 실제 HEAD·origin/main과 작업 트리 상태로 대조한다.
+  **게시 완료**: `d2c0619` 커밋·Gitea push, 로컬·원격 HEAD 일치·clean 확인.
+  Redmine #714·#666에는 구현·검사·미배포 노트 기록, 마지막 재조회 상태 신규0%.
+  이후 운영 검증·종결·Redmine 재조회는 하지 않았다. #715는 완료100% 확인.
   운영 스풀 정리·서비스 재시작·새 AX 파견은 하지 않았다.
 
 ### 최신 — Codex 인수 · 워커 Codex 전환 · 인수인계 스킬 추출 (2026-10-04, Codex)
