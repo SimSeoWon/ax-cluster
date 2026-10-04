@@ -221,7 +221,7 @@ def render(report: dict) -> bytes:
                        for w in (report.get("warnings") or []))
     source = str(report.get("source") or "dispatch")
     session_note = ('<div class="note">작업 실행 기록과 대화 세션 기록은 서로 겹칠 수 있어 합산하지 않는다. '
-                    '대화 세션의 호출은 일감·프로젝트에 연결되지 않는다.</div>' if source == "session"
+                    '대화 세션은 작업 디렉토리로 프로젝트를 판정하며, 판정되지 않은 세션은 미분류로 모인다. 일감에는 연결되지 않는다.</div>' if source == "session"
                     else '<div class="note">작업 실행 기록과 대화 세션 기록은 서로 겹칠 수 있어 합산하지 않는다.</div>')
     body = f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>AX 클러스터 — LLM 사용량</title>
