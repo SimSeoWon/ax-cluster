@@ -235,6 +235,133 @@ class CollectTests(unittest.TestCase):
         self.assertIn("tar -cf - -C", remote)
 
 
+class RetentionTests(unittest.TestCase):
+    """보존 기간 (사용자 결정 2026-10-04) — 마스터 사본·색인만 지우고 스냅샷·워커는 그대로."""
+
+    NOW = 2_000_000_000.0                        # 고정 시계
+    OLD = int(NOW - 31 * 86400)
+    NEW = int(NOW - 2 * 86400)
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.raw = self.root / "raw"
+        self.store = self.root / "sessions"
+        self.remote = FakeRemote()
+        self.old_o = "sessions/2026/09/01/old.jsonl"
+        self.new_o = "sessions/2026/10/03/new.jsonl"
+        self.remote.put("codex", self.old_o, _blob(_codex_lines("/home/sim/trunk/NS")), self.OLD)
+        self.remote.put("codex", self.new_o, _blob(_codex_lines("/home/sim/trunk/NS")), self.NEW)
+
+    def collect(self, cutoff=None):
+        return su.collect("192.168.0.43", raw_root=self.raw, store=self.store, shops=SHOPS,
+                          lister=self.remote.lister, fetcher=self.remote.fetcher, cutoff=cutoff)
+
+    def collect_all(self, retention):
+        return su.collect_all(["192.168.0.43"], raw_root=self.raw, store=self.store, shops=SHOPS,
+                              lister=self.remote.lister, fetcher=self.remote.fetcher,
+                              retention=retention, now=self.NOW)
+
+    def snap(self, origin):
+        return self.store / "192.168.0.43/codex" / (origin.removesuffix(".jsonl").replace("/", "__")
+                                                    + ".json")
+
+    def test_prune_removes_old_copy_and_index_line_but_keeps_snapshot(self):
+        self.collect()                                          # 기준 없이 둘 다 받아 둔다
+        old_raw = self.raw / "NS/192.168.0.43/codex" / self.old_o
+        self.assertTrue(old_raw.is_file())
+        size = old_raw.stat().st_size
+        dry = su.prune_raw(self.raw, 30, now=self.NOW, dry_run=True)
+        self.assertEqual((dry["pruned"], dry["bytes"]), (1, size))
+        self.assertTrue(old_raw.is_file())                     # 시험은 지우지 않는다
+        st = su.prune_raw(self.raw, 30, now=self.NOW)
+        self.assertEqual((st["pruned"], st["bytes"], st["errors"]), (1, size, 0))
+        self.assertFalse(old_raw.exists())
+        self.assertFalse(old_raw.parent.exists())              # 빈 디렉토리도 치운다
+        index = su.load_index(self.raw)
+        self.assertNotIn(su._key("192.168.0.43", "codex", self.old_o), index)
+        self.assertIn(su._key("192.168.0.43", "codex", self.new_o), index)
+        self.assertTrue((self.raw / "NS/192.168.0.43/codex" / self.new_o).is_file())
+        self.assertTrue(self.snap(self.old_o).is_file())       # 숫자 스냅샷은 남는다
+        self.assertTrue(self.snap(self.new_o).is_file())
+        self.assertEqual(self.remote.files.keys(), {("codex", self.old_o), ("codex", self.new_o)})
+        self.assertEqual(su.prune_raw(self.raw, 30, now=self.NOW)["pruned"], 0)   # 멱등
+
+    def test_old_remote_files_are_not_refetched_and_snapshot_not_rebuilt(self):
+        self.collect()
+        before = '{"sentinel": "다시 만들면 사라진다"}'            # 다시 만들었는지 보이게
+        self.snap(self.old_o).write_text(before, encoding="utf-8")
+        self.remote.fetched.clear()
+        res = self.collect_all(30)["192.168.0.43"]["codex"]
+        self.assertEqual((res["old"], res["skipped"], res["copied"]), (1, 1, 0))
+        self.assertEqual(self.remote.fetched, [])              # 지운 사본을 다시 받지 않는다
+        self.assertFalse((self.raw / "NS/192.168.0.43/codex" / self.old_o).exists())
+        self.assertEqual(self.snap(self.old_o).read_text(encoding="utf-8"), before)
+        # 원격의 오래된 파일이 자라서(재개된 세션) mtime 이 기준 안으로 들어오면 다시 받는다
+        self.remote.put("codex", self.old_o, _blob(_codex_lines("/x") * 2), self.NEW + 5)
+        again = self.collect_all(30)["192.168.0.43"]["codex"]
+        self.assertEqual((again["old"], again["copied"]), (0, 1))
+
+    def test_retention_none_disables_prune_and_filter(self):
+        self.collect()
+        res = self.collect_all(None)["192.168.0.43"]["codex"]
+        self.assertEqual((res["old"], res["skipped"]), (0, 2))
+        self.assertTrue((self.raw / "NS/192.168.0.43/codex" / self.old_o).is_file())
+
+    def test_unknown_mtime_and_escaping_raw_are_kept(self):
+        self.collect()
+        index = su.load_index(self.raw)
+        k = su._key("192.168.0.43", "codex", self.old_o)
+        index[k]["mtime"] = "x"
+        outside = self.root / "outside.jsonl"
+        outside.write_text("keep", encoding="utf-8")
+        index["evil"] = {"host": "h", "tool": "codex", "origin": "o", "raw": "../outside.jsonl",
+                         "mtime": 1}
+        su.save_index(self.raw, index)
+        st = su.prune_raw(self.raw, 30, now=self.NOW)
+        self.assertEqual((st["pruned"], st["errors"]), (0, 1))
+        self.assertTrue(outside.is_file())
+        self.assertTrue((self.raw / "NS/192.168.0.43/codex" / self.old_o).is_file())
+        with self.assertRaises(ValueError):
+            su.prune_raw(self.raw, 0)
+
+    def test_retention_days_reads_registry_and_fails_closed(self):
+        reg = self.root / "reg"
+        reg.mkdir()
+        cfg = reg / "projects.yaml"
+        cfg.write_text("version: 1\nactive: ''\nprojects: []\n", encoding="utf-8")
+        self.assertEqual(su.retention_days(reg), 30)             # 없으면 30
+        cfg.write_text("version: 1\nprojects: []\nusage:\n  raw_retention_days: 7\n",
+                       encoding="utf-8")
+        self.assertEqual(su.retention_days(reg), 7)
+        for bad in ("0", "-3", "abc", "true", "1.5"):
+            cfg.write_text(f"projects: []\nusage:\n  raw_retention_days: {bad}\n", encoding="utf-8")
+            self.assertIsNone(su.retention_days(reg), bad)      # 잘못되면 지우지 않는다(None)
+        self.assertIsNone(su.retention_days(self.root / "nope"))
+        # 잘못된 설정에서도 수집은 돌고 오래된 사본은 남는다
+        self.collect()
+        res = su.collect_all(["192.168.0.43"], raw_root=self.raw, store=self.store, shops=SHOPS,
+                             projects_root=reg, lister=self.remote.lister,
+                             fetcher=self.remote.fetcher, now=self.NOW)
+        self.assertEqual(res["192.168.0.43"]["codex"]["old"], 0)
+        self.assertTrue((self.raw / "NS/192.168.0.43/codex" / self.old_o).is_file())
+
+    def test_cli_prune_dry_run(self):
+        self.collect()
+        old_raw = self.raw / "NS/192.168.0.43/codex" / self.old_o
+        with patch.object(su, "retention_days", return_value=30), \
+                patch.object(su, "_cutoff_of", return_value=self.NOW - 30 * 86400):
+            self.assertEqual(su.main(["--prune", "--dry-run", "--raw-root", str(self.raw)]), 0)
+            self.assertTrue(old_raw.is_file())
+            self.assertEqual(su.main(["--prune", "--raw-root", str(self.raw)]), 0)
+            self.assertFalse(old_raw.exists())
+        with patch.object(su, "retention_days", return_value=None):
+            self.assertEqual(su.main(["--prune", "--raw-root", str(self.raw)]), 2)
+        with self.assertRaises(SystemExit):
+            su.main(["--dry-run"])
+
+
 class LockAndTriggerTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

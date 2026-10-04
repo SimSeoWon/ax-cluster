@@ -190,5 +190,77 @@ class UsagePageTests(unittest.TestCase):
         self.assertNotIn("OSError", text)
 
 
+
+def _models(*rows):
+    return [{"family": f, "model": m, "calls": 1, "measured_calls": 1, "unmeasured_calls": 0,
+             "failed_calls": 0, "tokens": t} for f, m, t in rows]
+
+
+class UsagePieTests(unittest.TestCase):
+    """모델 계열별 토큰 비율 도넛 — 언제나 모두 보기 기준 (사용자 결정 2026-10-04)."""
+
+    def test_slices_percent_and_tokens(self):
+        pie = _report(source="all", models=_models(("claude", "a", 300), ("claude", "b", 100),
+                                                   ("codex", "c", 600), ("gemini", "g", None)))
+        body = _text(pie)                               # all·전체 계열이면 같은 보고서를 다시 쓴다
+        self.assertIn("모델 계열별 토큰 비율 — 모두 보기 기준", body)
+        self.assertIn("도넛 대체 표", body)
+        self.assertIn(">40.0%<", body)                  # claude 400/1000
+        self.assertIn(">60.0%<", body)
+        self.assertIn(">400<", body)
+        self.assertIn(">1,000<", body)
+        self.assertIn("#d2a8ff", body)                  # 기존 계열 색 그대로
+        self.assertEqual(body.count("stroke-dasharray"), 2)   # 미계측 gemini 는 조각이 없다
+
+    def test_single_family_full_circle_and_empty(self):
+        one = _text(_report(source="all", models=_models(("codex", "c", 5))))
+        self.assertIn(">100.0%<", one)
+        self.assertIn('stroke-dasharray="439.82 439.82"', one)   # 틈 없이 온전한 원(2πr, r=70)
+        for models in ([], _models(("claude", "a", None)), _models(("claude", "a", 0))):
+            body = _text(_report(source="all", models=models))
+            self.assertIn("측정 토큰 기록이 없어", body)
+            self.assertNotIn("stroke-dasharray", body)
+        body = _text(_report())                         # dispatch 보고서만 주면 자료 없음
+        self.assertIn("비율 자료를 읽지 못했다", body)
+
+    def test_page_reloads_with_source_all_and_reuses_when_already_all(self):
+        calls = []
+
+        def loader(**kwargs):
+            calls.append(("main", kwargs))
+            return _report(**kwargs)
+
+        def pie_loader(**kwargs):
+            calls.append(("pie", kwargs))
+            return _report(**kwargs, models=_models(("local", "qwen", 9)))
+
+        query = {"project": "AXCluster", "period": "weekly", "start": "2026-08-01",
+                 "end": "2026-09-01", "family": "codex", "source": "session"}
+        status, raw = usage_page.page(query, loader=loader, pie_loader=pie_loader)
+        self.assertEqual(200, status)
+        self.assertEqual([c[0] for c in calls], ["main", "pie"])
+        self.assertEqual(calls[1][1], {**query, "source": "all", "family": ""})
+        self.assertIn(">100.0%<", raw.decode("utf-8"))
+        calls.clear()
+        usage_page.page({**query, "source": "all", "family": ""}, loader=loader,
+                        pie_loader=pie_loader)
+        self.assertEqual([c[0] for c in calls], ["main"])          # 이미 모두 보기 — 재사용
+
+        def broken(**_kwargs):
+            raise OSError("/home/sim/secret")
+        status, raw = usage_page.page(query, loader=loader, pie_loader=broken)
+        text = raw.decode("utf-8")
+        self.assertEqual(200, status)                   # 도넛 실패는 화면을 막지 않는다
+        self.assertIn("비율 자료를 읽지 못했다", text)
+        self.assertNotIn("/home/sim/secret", text)
+
+    def test_pie_strings_escaped(self):
+        attack = '<script>alert("x")</script>'
+        pie = _report(source="all", models=_models((attack, attack, 3)))
+        body = _text(pie)
+        self.assertNotIn(attack, body)
+        self.assertIn(">100.0%<", body)                 # 모르는 계열은 미상으로 접힌다
+        self.assertIn("미상", body)
+
 if __name__ == "__main__":
     unittest.main()

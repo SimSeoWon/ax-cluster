@@ -23,7 +23,14 @@
    work_id 는 그 task_id 를 큐 파일에서 찾았을 때만 채운다.
 [중요] **원격에는 아무것도 쓰지 않는다** — 목록(크기·mtime)을 읽고 `tar` 스트림으로 읽기만 한다.
    지우지도 옮기지도 않는다(`.33` 은 사람의 메인 PC — 손님 규칙: 읽기 전용). 원격 삭제는
-   **구현하지 않는다.** 원격에서 사라진 파일(30일 정리)의 사본과 색인 줄은 그대로 남는다 — 적립이 목적이다.
+   **구현하지 않는다.** 원격에서 사라진 파일(30일 정리)의 사본과 색인 줄은 보존 기간까지 남는다.
+🔴 [중요] **마스터 사본에도 보존 기간이 있다** (사용자 결정 2026-10-04). 루트 `projects.yaml` 의
+   `usage.raw_retention_days`(없으면 30). 색인 `mtime`(세션 파일의 마지막 수정)이 그보다 오래된
+   **마스터의 원본 사본과 그 색인 줄만** 지운다(`prune_raw`). **숫자 스냅샷은 남긴다** — 화면의 지난
+   기록은 그대로다. **워커는 건드리지 않는다.** 그리고 기준보다 오래된 원격 파일은 **다시 받지 않고
+   스냅샷도 다시 만들지 않는다** — 목록을 색인과 비교하기 전에 mtime 으로 거른다. 정리는 수집마다
+   (`collect_all` — CLI·화면 열기 트리거 둘 다) 잠금 아래에서 먼저 돈다. 설정이 잘못됐으면 그 실행의
+   정리와 거름을 건너뛰고 수집은 계속한다(삭제는 되돌릴 수 없다 — 기본값으로 지우지 않는다).
 [중요] **증분이다.** 원격 목록의 크기+mtime 이 색인과 같으면 건너뛰고, 다르면(자라는 세션) 그 파일을
    **통째로** 다시 받아 tmp→replace 로 바꾼다. 받을 파일만 이름 목록으로 `tar -T -` 에 stdin 으로 준다
    (윈도우 bsdtar·리눅스 GNU tar 모두 실측 2026-10-04 — 명령줄 길이 한계를 피한다).
@@ -72,6 +79,8 @@ HOSTS = {
 #    레지스트리에 그 프로젝트가 없으면 잇지 않는다 — 없는 프로젝트를 만들어 넣지 않는다.
 MASTER_CHECKOUTS = ((str(Path.home() / "ax-cluster"), "AXCluster"),)
 SOURCES = (("claude", ".claude", "projects"), ("codex", ".codex", "sessions"))
+_DAY = 86400
+_FROM_REGISTRY = object()           # collect_all: 보존 기간을 레지스트리에서 읽는다(기본)
 _BASE = {tool: base for tool, base, _ in SOURCES}
 _SSH = ("ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes")
 
@@ -530,16 +539,19 @@ def _stream(host: str, tool: str, want: dict, fetcher):
 
 def collect(host: str, *, raw_root: Path = DEFAULT_RAW, store: Path = DEFAULT_STORE,
             projects_root: Path | None = None, queue_root: Path | None = None,
-            shops: dict | None = None, lister=None, fetcher=None) -> dict:
+            shops: dict | None = None, lister=None, fetcher=None,
+            cutoff: float | None = None) -> dict:
     """한 기계의 두 도구 세션 원본을 증분 복사한다. 반환: 도구별 통계.
 
     `lister(host)->[Entry]` · `fetcher(host, tool, origins)->iter((origin, fh, mtime))` 는
     검사 주입용이다. 기본은 local 파일 / SSH 목록·tar.
+    `cutoff`(epoch 초)가 있으면 mtime 이 그보다 오래된 목록 항목은 **색인과 비교하기 전에** 거른다 —
+    보존 기간이 지나 지운 사본을 다시 받지 않고, 남은 스냅샷도 다시 만들지 않는다(`old` 로 센다).
     """
     raw_root, store = Path(raw_root), Path(store)
     if shops is None:
         shops = workshop_paths(projects_root)
-    stats = {tool: {"listed": 0, "skipped": 0, "copied": 0, "bytes": 0, "errors": 0,
+    stats = {tool: {"listed": 0, "skipped": 0, "old": 0, "copied": 0, "bytes": 0, "errors": 0,
                     "error": "", "seconds": 0.0} for tool, _, _ in SOURCES}
     t0 = time.monotonic()
     try:
@@ -569,6 +581,9 @@ def collect(host: str, *, raw_root: Path = DEFAULT_RAW, store: Path = DEFAULT_ST
                 _log(f"[주의] {host} {tool} 이상한 경로를 건너뛴다")
                 continue
             st["listed"] += 1
+            if cutoff is not None and mtime < cutoff:
+                st["old"] += 1                   # 보존 기간 밖 — 받지 않는다(원격은 그대로 둔다)
+                continue
             old = index.get(_key(host, tool, origin))
             if (old and old.get("size") == size and old.get("mtime") == mtime
                     and (raw_root / old.get("raw", "")).is_file()):
@@ -611,10 +626,91 @@ def collect(host: str, *, raw_root: Path = DEFAULT_RAW, store: Path = DEFAULT_ST
             shutil.rmtree(raw_root / ".staging" / host, ignore_errors=True)
             save_index(raw_root, index)          # 도구마다 저장 — 중간에 죽어도 받은 만큼은 남는다
         st["seconds"] = round(time.monotonic() - t1 + list_secs / len(SOURCES), 1)
-        _log(f"{host} {tool} — 목록 {st['listed']} · 건너뜀 {st['skipped']} · 복사 {st['copied']}"
+        _log(f"{host} {tool} — 목록 {st['listed']} · 건너뜀 {st['skipped']}"
+             f" · 기간 지남 {st['old']} · 복사 {st['copied']}"
              f" · {st['bytes']}바이트 · 오류 {st['errors']} · {st['seconds']}초"
              + (f" · [주의] {st['error']}" if st["error"] else ""))
     return stats
+
+
+def _cutoff_of(days: int, now: float | None = None) -> float:
+    return (time.time() if now is None else now) - days * _DAY
+
+
+def prune_raw(raw_root: Path = DEFAULT_RAW, days: int = 30, *, now: float | None = None,
+              dry_run: bool = False) -> dict:
+    """보존 기간이 지난 **마스터의 원본 사본과 색인 줄**을 지운다. 반환: 통계.
+
+    [중요] 기준은 색인 `mtime`(세션 파일의 마지막 수정, 원격 목록 값)이다 — 받은 시각이 아니다.
+    숫자 스냅샷(`DEFAULT_STORE`)은 건드리지 않는다. 원격은 건드리지 않는다(원격 삭제는 없다).
+    mtime 이 없거나 숫자가 아닌 줄은 **지우지 않는다** — 모르면 남긴다.
+    `dry_run` 이면 세기만 하고 파일·색인을 바꾸지 않는다.
+    """
+    raw_root = Path(raw_root)
+    if isinstance(days, bool) or not isinstance(days, int) or days <= 0:
+        raise ValueError(f"보존 기간은 양의 정수여야 한다: {days!r}")
+    cutoff = _cutoff_of(days, now)
+    index = load_index(raw_root)
+    stats = {"days": days, "cutoff": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(cutoff)),
+             "indexed": len(index), "pruned": 0, "bytes": 0, "missing": 0, "errors": 0,
+             "dry_run": dry_run}
+    root = raw_root.resolve()
+    for key, e in list(index.items()):
+        mtime = e.get("mtime")
+        if isinstance(mtime, bool) or not isinstance(mtime, (int, float)) or mtime >= cutoff:
+            continue
+        rel = e.get("raw") or ""
+        path = (raw_root / rel) if rel else None
+        # [주의] 색인 값으로 경로를 만들므로 raw 루트 밖은 지우지 않는다
+        if path is not None and root not in path.resolve().parents:
+            stats["errors"] += 1
+            _log("[주의] 보존 정리 — raw 루트 밖을 가리키는 색인 줄을 건너뛴다")
+            continue
+        try:
+            size = path.stat().st_size if path is not None and path.is_file() else None
+        except OSError:
+            size = None
+        if size is None:
+            stats["missing"] += 1
+        if not dry_run:
+            if size is not None:
+                try:
+                    path.unlink()
+                except OSError as e2:
+                    stats["errors"] += 1
+                    _log(f"[주의] 보존 정리 — 사본 삭제 실패: {type(e2).__name__}")
+                    continue
+                _prune_empty_dirs(path.parent, root)
+            del index[key]
+        stats["pruned"] += 1
+        stats["bytes"] += size or 0
+    if stats["pruned"] and not dry_run:
+        save_index(raw_root, index)
+    _log(f"보존 정리{' (시험 — 지우지 않음)' if dry_run else ''} — 기준 {days}일 · 기준일 {stats['cutoff']}"
+         f" · 색인 {stats['indexed']} · 정리 {stats['pruned']} · {stats['bytes']}바이트"
+         f" · 사본 없던 줄 {stats['missing']} · 오류 {stats['errors']}")
+    return stats
+
+
+def _prune_empty_dirs(start: Path, root: Path) -> None:
+    """지운 사본의 빈 상위 디렉토리를 raw 루트 직전까지 치운다."""
+    d = start
+    while d.resolve() != root and root in d.resolve().parents:
+        try:
+            d.rmdir()
+        except OSError:
+            break                                # 비어 있지 않다 — 거기서 멈춘다
+        d = d.parent
+
+
+def retention_days(projects_root: Path | None = None) -> int | None:
+    """레지스트리의 보존 기간(일). 설정이 잘못됐으면 None — **그 실행은 지우지도 거르지도 않는다**."""
+    from ..projects.config import ConfigError, Registry
+    try:
+        return Registry.load(projects_root).raw_retention_days()
+    except ConfigError as e:
+        _log(f"[주의] 보존 기간을 정하지 못했다 — 이번 실행은 사본을 지우지 않는다: {e}"[:300])
+        return None
 
 
 def reparse(*, raw_root: Path = DEFAULT_RAW, store: Path = DEFAULT_STORE,
@@ -664,16 +760,29 @@ def _acquire(raw_root: Path):
 
 def collect_all(hosts, *, raw_root: Path = DEFAULT_RAW, store: Path = DEFAULT_STORE,
                 projects_root: Path | None = None, queue_root: Path | None = None,
-                **inject) -> dict:
-    """여러 기계를 차례로 — 프로세스 간 잠금(`<raw>/.lock`) 아래에서 한 번에 하나."""
+                retention=_FROM_REGISTRY, now: float | None = None, **inject) -> dict:
+    """여러 기계를 차례로 — 프로세스 간 잠금(`<raw>/.lock`) 아래에서 한 번에 하나.
+
+    [중요] 수집 전에 보존 정리(`prune_raw`)를 먼저 돌리고, 같은 기준으로 오래된 목록 항목을 거른다.
+    `retention` 은 기본이 레지스트리 값이고, 검사는 일수(int)나 None(정리·거름 끔)을 준다.
+    """
     raw_root = Path(raw_root)
     fd = _acquire(raw_root)
     try:
         shops = inject.pop("shops", None)
         if shops is None:
             shops = workshop_paths(projects_root)
-        return {h: collect(h, raw_root=raw_root, store=store, queue_root=queue_root,
-                           shops=shops, **inject) for h in hosts}
+        days = retention_days(projects_root) if retention is _FROM_REGISTRY else retention
+        cutoff = None
+        if days is not None:
+            prune_raw(raw_root, days, now=now)
+            cutoff = _cutoff_of(days, now)
+        res = {h: collect(h, raw_root=raw_root, store=store, queue_root=queue_root,
+                          shops=shops, cutoff=cutoff, **inject) for h in hosts}
+        if cutoff is not None:
+            old = sum(v.get("old", 0) for r in res.values() for v in r.values())
+            _log(f"보존 기간 지난 목록 항목 {old}개는 받지 않았다(기준 {days}일)")
+        return res
     finally:
         os.close(fd)
 
@@ -747,13 +856,32 @@ def main(argv=None) -> int:
     ap.add_argument("--store", default=str(DEFAULT_STORE))
     ap.add_argument("--reparse", action="store_true",
                     help="전송 없이 색인의 사본을 다시 귀속하고 스냅샷을 다시 만든다")
+    ap.add_argument("--prune", action="store_true",
+                    help="전송 없이 보존 기간(projects.yaml usage.raw_retention_days)이 지난 "
+                         "마스터 사본·색인 줄만 지운다. 스냅샷·워커는 그대로")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="--prune 과 함께 — 지울 것만 세고 지우지 않는다")
     a = ap.parse_args(argv)
+    if a.dry_run and not a.prune:
+        ap.error("--dry-run 은 --prune 과 함께만 쓴다")
+    if a.prune and a.reparse:
+        ap.error("--prune 과 --reparse 는 따로 실행한다")
     hosts = ["local", *HOSTS] if a.hosts == ["all"] else a.hosts
     bad = [h for h in hosts if h != "local" and h not in HOSTS]
     if bad:
         ap.error(f"모르는 기계: {bad}")
     raw_root, store = Path(a.raw_root), Path(a.store)
     try:
+        if a.prune:
+            days = retention_days()
+            if days is None:
+                return 2                         # 설정이 잘못됐다 — 기본값으로 지우지 않는다
+            fd = _acquire(raw_root)
+            try:
+                st = prune_raw(raw_root, days, dry_run=a.dry_run)
+            finally:
+                os.close(fd)
+            return 1 if st["errors"] else 0
         if a.reparse:
             fd = _acquire(raw_root)
             try:

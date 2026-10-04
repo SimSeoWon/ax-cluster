@@ -267,6 +267,33 @@ def main() -> int:
     check("없는 저장소는 빈 문자열", reg3.find_by_project_id("Sim/Other") == "")
     check("빈 입력은 빈 문자열", reg3.find_by_project_id("") == "")
 
+    print("\n[17] [중요] usage.raw_retention_days — 기본 30 · 잘못되면 거절 · 다시 써도 남는다 (2026-10-04)")
+    check("절이 없으면 30", cfgmod.raw_retention_days({}) == 30)
+    check("값이 없으면 30", cfgmod.raw_retention_days({"usage": {}}) == 30)
+    check("정수 그대로", cfgmod.raw_retention_days({"usage": {"raw_retention_days": 7}}) == 7)
+    for bad in (0, -1, "30", 1.5, True, None):
+        if bad is None:
+            raises("usage 가 매핑이 아니면 거절", cfgmod.raw_retention_days, {"usage": [30]})
+            continue
+        raises(f"{bad!r} 거절(기본값으로 지우지 않는다)", cfgmod.raw_retention_days,
+               {"usage": {"raw_retention_days": bad}})
+    root4 = _TMP / "root4"
+    root4.mkdir()
+    (root4 / ".gitignore").write_text("# test\n", encoding="utf-8")
+    (root4 / "projects.yaml").write_text(
+        "version: 1\nactive: ''\nprojects: []\nusage:\n  raw_retention_days: 45\n",
+        encoding="utf-8")
+    os.environ["AX_PROJECTS_ROOT"] = str(root4)
+    check("Registry 가 읽는다", Registry.load(root4).raw_retention_days() == 45)
+    register_project("ModularStage", "sim/modularstage")        # save() 1회
+    register_project("Other", "sim/other")                      # save() 2회
+    set_active("Other")                                         # save() 3회
+    reg4 = Registry.load(root4)
+    check("등록·전환 뒤에도 usage 절이 남는다", reg4.raw.get("usage") == {"raw_retention_days": 45},
+          str(reg4.raw))
+    check("값도 그대로 읽힌다", reg4.raw_retention_days() == 45)
+    check("전환은 반영됐다", reg4.active == "Other" and reg4.names == ["ModularStage", "Other"])
+
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 

@@ -337,9 +337,45 @@ class ProjectConfig:
         )
 
 
+# [중요] **세션 원본 사본 보존 기간** (사용자 결정 2026-10-04). 루트 `projects.yaml` 에 둔다:
+#
+#     usage:
+#       raw_retention_days: 30
+#
+#    빠지면 30일이다. 지우는 대상은 **마스터의 원본 사본과 그 색인 줄뿐**이고 숫자 스냅샷·워커는
+#    건드리지 않는다(`master/work/session_usage.py` `prune_raw`).
+#    🔴 [주의] **값이 잘못됐으면 기본값으로 지우지 않고 `ConfigError` 를 올린다** — 삭제는 되돌릴 수
+#    없다. `3O` 같은 오타를 30 으로 읽어 지우는 것보다 그 실행에서 지우지 않는 쪽이 싸다
+#    (이 모듈의 원칙: 추측해서 진행하지 않는다). 호출자(수집기)는 그 실행의 정리만 건너뛰고
+#    수집은 계속한다 — 화면 열기 트리거가 죽지 않는다.
+USAGE_KEY = "usage"
+DEFAULT_RAW_RETENTION_DAYS = 30
+
+
+def raw_retention_days(data: dict[str, Any] | None) -> int:
+    """루트 설정 매핑에서 `usage.raw_retention_days`. 없으면 30, 잘못됐으면 ConfigError."""
+    usage = (data or {}).get(USAGE_KEY)
+    if usage is None:
+        return DEFAULT_RAW_RETENTION_DAYS
+    if not isinstance(usage, dict):
+        raise ConfigError(f"{USAGE_KEY} 는 매핑이어야 한다: {type(usage).__name__}")
+    value = usage.get("raw_retention_days")
+    if value is None:
+        return DEFAULT_RAW_RETENTION_DAYS
+    # [주의] YAML `true` 는 파이썬 bool = int 의 하위형이다 — 1일로 읽히지 않게 따로 막는다
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ConfigError(
+            f"{USAGE_KEY}.raw_retention_days 는 양의 정수(일)여야 한다: {value!r}")
+    return value
+
+
 @dataclass
 class Registry:
-    """`projects.yaml` — 관리 중인 목록과 지금 가리키는 프로젝트."""
+    """`projects.yaml` — 관리 중인 목록과 지금 가리키는 프로젝트.
+
+    [중요] **모르는 키는 `raw` 로 통과시킨다** — `save()` 가 `dict(self.raw)` 에서 시작하므로
+    `usage:` 같은 절이 `set_active`·등록으로 다시 쓰여도 남는다(test_projects.py 가 검사한다).
+    """
 
     root: Path
     active: str = ""
@@ -371,6 +407,10 @@ class Registry:
         data["projects"] = list(self.names)
         self.raw = data
         _atomic_write(self.path, yaml.safe_dump(data, allow_unicode=True, sort_keys=False))
+
+    def raw_retention_days(self) -> int:
+        """세션 원본 사본 보존 기간(일) — 위 `raw_retention_days()` 규칙."""
+        return raw_retention_days(self.raw)
 
     def dir_of(self, name: str) -> Path:
         return self.root / validate_name(name)
