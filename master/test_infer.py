@@ -15,8 +15,11 @@ import json
 import shutil
 import sys
 import tempfile
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -878,8 +881,72 @@ def test_task_targets_reads_the_whole_list() -> None:
         check("  종전 want 한 줄 조립이 남지 않았다", line not in src, line)
 
 
+def test_commit_task_failure_notices_match_disposition() -> None:
+    """[DOC] R9 — 한도 소진의 pending 안내에 재시도 상한 종결 안내를 섞지 않는다.
+
+    실제 commit_task/submit_fail을 실행하되 외부 실행·계측·고지·큐 API는 격리한다.
+    일반 상한 종결과 환경 실패·출력 반복도 비교해 기존 분기를 보존한다.
+    """
+    from master.work import revise as RV, wcommit
+
+    cases = (
+        ("한도 첫 시도", 1, ["usage limit reached"], "", "quota"),
+        ("한도 상한 시도", RV.MAX_ATTEMPTS, ["usage limit reached"], "", "quota"),
+        ("일반 실패 상한", RV.MAX_ATTEMPTS, ["RESULT: BLOCKED"], "", "limit"),
+        ("환경 실패 상한", RV.MAX_ATTEMPTS, ["0xC0000142"], "", "env"),
+        ("출력 반복 상한", RV.MAX_ATTEMPTS, ["RESULT: BLOCKED"],
+         RV.tag_detail("previous", RV.output_fingerprint(["RESULT: BLOCKED"])), "repeat"),
+    )
+    for label, attempt, notes, previous, kind in cases:
+        calls, logs = [], []
+        committed = wcommit.Committed(task_id="isolated", notes=notes,
+                                      stage="llm", reason="RESULT: BLOCKED")
+
+        def api(method, path, body=None):
+            calls.append((method, path, body))
+            return {"ok": True}
+
+        usage = {"lane": "", "input_tokens": 0, "output_tokens": 0,
+                 "cost_known": False, "measured": False}
+        with ExitStack() as stack:
+            stack.enter_context(patch("master.work.twin_base.local_baseline", return_value={}))
+            stack.enter_context(patch("master.work.wcommit.run", return_value=committed))
+            stack.enter_context(patch("master.work.usage.record", return_value=usage))
+            stack.enter_context(patch.object(I._MODE, "current", return_value=("codex", "test")))
+            notice = stack.enter_context(patch.object(I, "_notify_blocked"))
+            stack.enter_context(patch.object(I, "_log", side_effect=logs.append))
+            result = I.commit_task(
+                SimpleNamespace(usage_log=Path("/unused")), FakeFacts(),
+                {"task_id": "isolated", "epoch": 7, "attempt_count": attempt,
+                 "last_feedback": previous},
+                work_id="isolated-work", base=SUB_TIP, want=[], branch="isolated", api=api)
+
+        check(f"{label}: BLOCKED 상태 보존", result.status == R.BLOCKED)
+        check(f"{label}: submit_fail만 1회 전송",
+              len(calls) == 1 and calls[0][:2] == ("POST", "/api/v1/tasks/isolated/submit-fail"), str(calls))
+        body = calls[0][2] if calls else {}
+        check(f"{label}: 제출 사유 보존",
+              body.get("reason") == ("quota_exhausted" if kind == "quota" else R.BLOCKED), str(body))
+        check(f"{label}: 상한 안내는 일반 상한에만",
+              any("재시도 상한" in n for n in result.notes) == (kind == "limit"), str(result.notes))
+        check(f"{label}: 상한 로그는 일반 상한에만",
+              any("상한 도달" in line for line in logs) == (kind == "limit"), str(logs))
+        if kind == "quota":
+            check(f"{label}: pending 복귀와 5시간 차단 안내",
+                  any("pending" in n and "5시간 차단" in n for n in result.notes))
+            check(f"{label}: quota 고지 1회 전송",
+                  notice.call_count == 1 and notice.call_args.kwargs.get("kind") == "quota")
+        elif kind == "env":
+            check(f"{label}: 환경 고지 보존",
+                  notice.call_count == 1 and notice.call_args.kwargs.get("kind") == "env")
+        elif kind == "repeat":
+            check(f"{label}: 출력 반복 종결 안내 보존",
+                  any("직전 시도와 출력이 같다" in n for n in result.notes))
+
+
 def main() -> int:
     for fn in (
+               test_commit_task_failure_notices_match_disposition,
                test_task_targets_reads_the_whole_list,
                test_py_skeleton_gate_blocks_before_the_claim,
                test_py_skeleton_gate_unreadable_is_not_a_block,

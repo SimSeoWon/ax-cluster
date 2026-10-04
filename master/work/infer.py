@@ -1128,7 +1128,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                 res.notes.append(f"[중요] 재시도로 보내려 했으나 피드백을 못 실었다 — "
                                  f"{emb.error} · terminal 로 종결한다")
                 _log(f"[revise] [중요] {task_id} 피드백 실패 — {emb.error}")
-        elif not env_hit and not repeat_hit:
+        elif not quota_hit and not env_hit and not repeat_hit:
             res.notes.append(f"[중요] 재시도 상한 — attempt {attempt} ≥ {_RV.MAX_ATTEMPTS}, "
                              f"종결한다(원전 `reject`)")
             _log(f"[revise] {task_id} 상한 도달 attempt={attempt} → 종결")
