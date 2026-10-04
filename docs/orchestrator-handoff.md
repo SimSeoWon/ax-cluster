@@ -4,15 +4,16 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **갱신 시각**: 2026-10-04 17:20 KST — Claude, Codex 토큰 소진 뒤 인수 · #725 마감·배포
+- **갱신 시각**: 2026-10-04 17:46 KST — Claude, Codex 토큰 소진 뒤 인수 · #725 마감·배포 · 사이드 메뉴·분류 수정 배포
 - **지휘 도구 / 세션**: **Claude** 마스터. Codex 는 이 문서를 갱신하기 전에 한도가 소진됐다
   (마지막 Codex 갱신은 00:47 헤더 + §0 R9·R19 후속). 17:02:34 `record_master_conductor('claude')`.
   마스터의 Codex 프로세스(pid 20028)는 17:02 에 살아 있었고 17:20 재조회 시 없었다(내가 종료하지 않았다).
   담당 기록은 세션 잠금이 아니다.
-- **상태**: `#725` **마감 완료**(main 머지 `99147c4` · 이슈 「완료」 · 큐 `merged`) · `/usage` 배포 완료.
+- **상태**: `#725` 마감 완료 · 후속 2커밋(`d548b40` 분류 · `a8b033b` 사이드 메뉴) 배포 완료.
+  🔴 **색인기 막힘 해소 루프가 돌고 있다**(아래 §0 「색인기」) — 끝났는지 프로세스·로그로 먼저 확인한다.
   진행 중인 work 없음. 미커밋은 이 문서뿐.
-- **관련 일감**: 완료 — **#725**(사용량 웹페이지 분산 작업) · 신규 — **#726**(토큰 구성 측정 로그, 미착수).
-  열림(이전부터) — #700 · #701 · #716 · #720 · #721.
+- **관련 일감**: 완료 — **#725** · 신규(미착수) — **#726**(토큰 구성 측정) · **#727**(색인기 frontmatter 멈춤) ·
+  **#728**(agy 사용량 미기록). 열림(이전부터) — #700 · #701 · #716 · #720 · #721.
 - **워커 지휘자 모드**: **`claude`** — 사용자 지시 「모든 워커들 클로드가 작업하도록」,
   17:02:28 `set_worker_mode_tool('claude')`, readiness 3/3 ok
   (`.43` 2.1.222 · `.2` 2.1.285 · `.33` 2.1.286). 말하기 전에 모드 도구로 재조회한다.
@@ -22,11 +23,56 @@
   열 때는 **`worker_mode="claude"` 를 명시**한다. 새 등재는 전역값 `claude` 를 따른다.
 - **마운트**: `AXCluster` — `.57` 요청자, `.2`·`.33`·`.43` worker. `.43` 은 어젯밤 poweroff 기록이
   있으나 17:02 readiness 에 응답했다(켜져 있다).
-- **소스**: 마스터 main = Gitea main `99147c4` 위에 이 문서 커밋(17:16 ff-only pull) · 작업 트리 clean.
-  `ax-projects` 17:16:22 재기동(MainPID 66611 · Result=success) — `/usage`·`/api/v1/usage` 200.
-  AXCluster 워커 소스·배달 재동기화는 **하지 않았다** — 워커가 `99147c4` 와 일치하는지 미확인.
+- **소스**: 마스터 main = Gitea main `a8b033b` 위에 이 문서 커밋 · 작업 트리 clean.
+  `ax-projects` 17:37:50 재기동(MainPID 79173 · Result=success) — 7화면 200 · 사이드 메뉴·`/usage` 링크 확인.
+  AXCluster 워커 소스·배달 재동기화는 **하지 않았다** — 워커 3대는 `3d54637`(실측 `.2`·`.43`, `.33` 미확인).
 
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
+
+### 최신 — #725 후속: 분류·사이드 메뉴 배포 · 색인기 막힘 · 일감 3건 (2026-10-04 17:46, Claude)
+
+**배포 (사용자 「a-1로 하고 ① 같이 고쳐줘, 로컬 서브 에이전트로」 → 「커밋하고 푸시하고 배포해줘」)**:
+
+- 로컬 서브 에이전트 2개(파일 비중첩) → 제가 합친 상태로 재검사: 웹UI 6파일 rc=0 · 사용량+새 메뉴 23/23 · 통합 12/12.
+- `d548b40 fix(usage): classify dispatch records by conductor mode` — `mode`(claude/codex)를 model·lane 이 둘 다 빌 때만
+  쓴다. 실데이터 9/1~10/4: unknown 16 → **claude 16**(캐시 포함 5,642,553 토큰).
+- `a8b033b feat(webui): shared side nav on every page` — `/`·`/ontology*`·`/cluster` 는 `routes.wrap_side_nav` 로
+  **서빙 시점** 감싼다(원전 `web_ui_original.py`·`static/` 바이트 불변, 2026-08-13 지시 유지) · `/reviews` 는 공용 셸.
+  `status.py` 미수정(`cluster.html` 자족·외부 자원 0 테스트). 예전 주입 링크 버튼은 제거, 원전 바이트 속 링크는 남김.
+  새 테스트 `master/test_webui_side_nav.py`.
+- [주의] **브라우저 확인 안 했다** — `/ontology` 그래프(100vh)가 230px 좁아진 열에서 적응하는지, 760px 미만에서
+  메뉴가 위로 쌓여 스크롤이 생기는 것, 메뉴 배경 `#161b22` vs 원전 `#1e1e1e`.
+
+**`.2`·`.43` 동기화 질문 (사용자 「리뷰 작업 시작할 때 풀 받는거야?」)**: 두 워커 체크아웃 모두 `3d54637`(origin 추적도
+같음, fetch 이후 없음). 파견은 `wcommit.py:135` 가 `fetch --all` 뒤 base 커밋에서 새로 가르므로 무관. `ax-fix` 는
+`check` 가 `fetch origin main` 후 `origin/main` 대조(`fix_flow.py:233`) — 그러나 **`prepare` 는 스스로 fetch 하지
+않는다**(`fix_flow.py:350`) · 순서를 코드가 강제하지 않는다. 고칠지·일감화 **미결**. `.43 .ax/work` 에 조각 아닌
+잔재 2개(`ax_smoke_…` 10/3 12:14 · `ax_codex_readiness_…` 10/3 23:51) — 원인 미조사.
+
+**색인기 막힘 (`#727`)**: `master/webui/app` 합성이 gemma4:e4b 에서 형식 게이트(frontmatter 누락)로 5회 중 4회 거부 →
+커밋 단위 트랜잭션이라 커서가 멈춰 뒤 커밋의 합성·**자동 리뷰 등재**가 막혔다. 사용자 「2번」 → 「가로 진행」:
+멈출 때마다 그 그룹만 `synth.run(changed=[app.py], commit=<멈춘 커밋>, model=FALLBACK_MODEL gemma3:12b)` 로
+수동 재합성. 루프 스크립트 `scratchpad/unstick.sh`(색인 실행 → 형식 거부면 재합성 → 반복; 같은 커밋 재정지·비형식
+사유·15회면 중단). 17:44 시점 커서 `e3b1513` · 리뷰 큐 pending 5 · running 1 · done 26 · abandoned 10.
+수동 문서는 품질이 낮다(태그 줄에 `영문태그:` 잔재 · `UViewApp` 실재 미확인).
+[주의] `3abcdb1a` 는 `app.py` 를 안 바꿨는데 `app` 그룹이 대상이 됐다 — 형제 커밋 순회 시 비교 기준 문제로 보이나 미검증.
+
+**자동 리뷰 (질문 「분산 작업 끝내고 커밋했는데 자동 리뷰 시작해?」)**: 색인기가 커밋을 걸으며 리뷰 큐에 등재 →
+`ax-review-queue` 가 로컬 초고 + **Antigravity 퇴고**. 작성자 `ax-cluster`(ADVANCE·머지)는 제외(abandoned)가 정상.
+`f6f5aecb` 리뷰는 「행 0」(지적 0건)으로 저장됐다.
+
+**토큰·agy (`#728`)**: 대시보드 gemini 0건은 화면이 아니라 기록 부재 — `review_runner.py:383` 의 `usage.sink` 가
+초고만 감싸고 agy 퇴고(:396)·층2(`layer2_verify.py:128`)는 기록 경로가 없다.
+마스터 대화 세션의 Claude 사용량은 `/usage?source=session` 에만 보인다(두 소스는 겹칠 수 있어 합산 안 함).
+
+**미결 / 다음 (이 절)**:
+
+1. 색인기 루프 결과 확인 → 리뷰 큐 상태 보고(사용자 요청 대기 중).
+2. `/ontology` 등 사이드 메뉴 화면 브라우저 확인.
+3. `fix_flow prepare` fetch 미강제 — 수정/일감화 미결.
+4. 워커 3대 `master.client update`(ff-only + 재배달) 미실행 — 사용자 승인 필요.
+5. #726 · #727 · #728 미착수 · `checks.json` 에 `test_usage_*`·`test_webui_side_nav` 미등록 ·
+   `advance_work(confirm=True)` 트리 수정 소실 문제 미결 · 옛 로컬 브랜치 `task/20261003_2315_719…/base` 잔존.
 
 ### 최신 — #725 사용량 웹페이지 라운드 1 전진·마감·배포 · 지휘자 claude 전환 (2026-10-04 17:20, Claude)
 
