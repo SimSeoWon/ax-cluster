@@ -36,7 +36,8 @@ def _windows_codex_registration(facts, project, read, run_shell):
     if len(principals) != 1 or len(actions) != 1 or actions[0].tag.split('}')[-1] != 'Exec':
         return ["Codex 예약 런처 principal/Exec 구성이 계약과 다르다"]
     principal, action = principals[0], actions[0]
-    value = lambda element, field: (element.findtext('{*}' + field) or '').strip()
+    def value(element, field):
+        return (element.findtext('{*}' + field) or '').strip()
     problems = []
     if value(principal, 'LogonType') != 'InteractiveToken':
         problems.append("Codex 예약 런처가 로그인 사용자 세션 전용(InteractiveToken)이 아니다")
