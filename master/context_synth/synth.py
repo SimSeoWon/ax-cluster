@@ -292,7 +292,9 @@ def project_live_identifiers(paths) -> set:
         d = source_text.read(Path(name))
         if d is None:
             continue
-        out |= verify_mod.identifiers(verify_mod.strip_comments(d.text)[0])
+        # `#732` — 주석 규칙은 확장자가 정한다(경로 없이 부르면 C++ 규칙으로 `.py` 를 읽는다)
+        out |= verify_mod.identifiers(
+            verify_mod.strip_comments(d.text, lang=verify_mod.lang_for(name))[0])
     _LIVE_CACHE[ckey] = (key, out)
     return out
 

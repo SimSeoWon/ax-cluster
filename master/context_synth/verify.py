@@ -11,7 +11,8 @@
 
 그래서 이 모듈은 **소스를 직접 읽어** 판정한다:
 
-1. C++ 주석을 벗겨 **살아 있는 본문**을 만든다 (문자열 리터럴을 주석으로 오인하지 않는다)
+1. 주석을 벗겨 **살아 있는 본문**을 만든다 (문자열 리터럴을 주석으로 오인하지 않는다).
+   주석 규칙은 파일 형식이 정한다 — C/C++·C#·자바·파이썬·HTML·XML·INI·JSON, 모르는 형식은 판정 안 함(`#732`)
 2. **주석 안에만 등장하는 식별자** 집합을 만든다
 3. 문서가 그중 하나를 언급하면 **위반** — 없는 기능을 있다고 안내하는 문서다
 
@@ -57,19 +58,91 @@ _NOISE = {
 }
 
 
-def strip_comments(src: str) -> tuple[str, str]:
-    """C++ 소스 → (살아 있는 본문, 주석만 모은 본문).
+# 🔴 [중요] **주석 규칙은 파일 형식이 정한다** (`#732`, 사용자 결정 2026-10-04).
+#    종전에는 모든 파일을 C++ 규칙으로 벗겼다. 실측: `master/webui/routes.py:102` 의 파이썬
+#    주석 `# … static/*.html …` 안의 `/*` 를 블록 주석 시작으로 읽어 **다음 `*/` 까지의 실제
+#    코드를 삼켰고**, 진짜 상수(`_SIDE_VARS`·`_CONTEXT_SHELL_CSS`·`_ONTOLOGY_SHELL_CSS`)가
+#    「주석에만 있다」로 분류돼 **정상 문서가 거부**됐다 — 인덱서가 거기서 멈췄다.
+#    [중요] **모르는 확장자는 판정하지 않는다** (사용자 결정 ⓐ) — 언어를 짐작하지 않는다.
+#    그 파일은 유령 풀에 아무것도 보태지 않고, 원문 전체를 live 로 본다. live 는 유령을
+#    **빼기만** 하므로 이 선택은 오탐 거부를 만들 수 없다. 대가는 그 파일 주석에만 있는
+#    이름이 같은 그룹의 다른 파일에서 유령이 되지 못하는 것 하나다(게이트가 덜 잡는 쪽).
+_LANG_BY_EXT = {
+    ".h": "cpp", ".hpp": "cpp", ".inl": "cpp", ".c": "cpp", ".cc": "cpp", ".cpp": "cpp",
+    ".cs": "cs",                    # UE `*.Build.cs`·`*.Target.cs`
+    ".java": "java",                # UE 안드로이드 플러그인
+    ".xml": "xml",                  # UE 안드로이드 UPL(`*_UPL.xml`)
+    ".py": "python",
+    ".html": "html", ".htm": "html",
+    ".ini": "ini",                  # UE `Config/*.ini`
+    ".json": "json", ".uplugin": "json", ".uproject": "json",   # UE 디스크립터는 JSON 이다
+}
 
-    문자열·문자 리터럴 안의 `//`·`/*` 는 주석으로 보지 않는다. 이걸 틀리면 **살아 있는
-    코드가 주석으로 분류돼 오탐 위반**이 난다 — 게이트가 정상 문서를 거부하는 쪽이
-    통과시키는 쪽보다 더 나쁘다(작업이 멈춘다).
+
+def lang_for(path: str) -> str | None:
+    """경로의 확장자 → 주석 규칙 이름. 모르는 확장자는 `None` (판정하지 않는다)."""
+    p = str(path or "")
+    dot = p.rfind(".")
+    if dot < 0 or "/" in p[dot:] or "\\" in p[dot:]:
+        return None
+    return _LANG_BY_EXT.get(p[dot:].lower())
+
+
+def _is_ident(ch: str) -> bool:
+    return ch.isalnum() or ch == "_"
+
+
+def _strip_clike(src: str, *, line_comments: bool = True, quotes: str = "\"'",
+                 cpp_raw: bool = False, cs_verbatim: bool = False,
+                 text_block: bool = False, template: bool = False) -> tuple[list[str], list[str]]:
+    """C 계열 스캐너 — `//`·`/* */` 와 문자열 리터럴. (live 조각, dead 조각) 을 돌려준다.
+
+    [중요] 기본 인자가 **종전 C++ 동작 그대로**다 — 옵션은 켤 때만 갈래가 생긴다.
+    `cpp_raw` = C++ `R"delim(…)delim"` · `cs_verbatim` = C# `@"…"`·`$@"…"`·`@$"…"`(`""` 가
+    따옴표 — `$"…"` 는 보통 문자열로 처리된다) · `text_block` = 자바 텍스트 블록(큰따옴표 셋) ·
+    `template` = JS 백틱 템플릿. [주의] 보간(`{…}`·`${…}`) 안까지 통째로 문자열로 본다 — 단순화.
     """
     live: list[str] = []
     dead: list[str] = []
     i, n = 0, len(src)
     while i < n:
         c = src[i]
-        if c == '"' or c == "'":
+        if cpp_raw and c == '"' and i > 0 and src[i - 1] == "R":
+            # 접두: R · u8R · LR · uR · UR. 그 앞이 식별자 문자면 그냥 이름 끝의 R 이다.
+            k = i - 1
+            for pre in ("u8", "L", "u", "U"):
+                if src[max(0, k - len(pre)):k] == pre:
+                    k -= len(pre)
+                    break
+            if k == 0 or not _is_ident(src[k - 1]):
+                op = src.find("(", i + 1, i + 18)
+                delim = src[i + 1:op] if op != -1 else None
+                if delim is not None and not any(ch in delim for ch in ' ()\\\t\n"'):
+                    end = src.find(")" + delim + '"', op + 1)
+                    j = n if end == -1 else end + len(delim) + 2
+                    live.append(src[i:j])
+                    i = j
+                    continue
+        if text_block and src.startswith('"""', i):
+            end = src.find('"""', i + 3)
+            j = n if end == -1 else end + 3
+            live.append(src[i:j])
+            i = j
+            continue
+        if cs_verbatim and c == '"' and (src[i - 1:i] == "@" or src[i - 2:i] == "@$"):
+            j = i + 1
+            while j < n:
+                if src[j] == '"':
+                    if src[j + 1:j + 2] == '"':
+                        j += 2
+                        continue
+                    j += 1
+                    break
+                j += 1
+            live.append(src[i:j])
+            i = j
+            continue
+        if c in quotes or (template and c == "`"):
             quote = c
             live.append(c)
             i += 1
@@ -85,7 +158,7 @@ def strip_comments(src: str) -> tuple[str, str]:
                 i += 1
             continue
         if c == "/" and i + 1 < n:
-            if src[i + 1] == "/":
+            if line_comments and src[i + 1] == "/":
                 j = src.find("\n", i)
                 j = n if j == -1 else j
                 dead.append(src[i + 2:j])
@@ -101,6 +174,170 @@ def strip_comments(src: str) -> tuple[str, str]:
                 continue
         live.append(c)
         i += 1
+    return live, dead
+
+
+def _strip_python(src: str) -> tuple[list[str], list[str]]:
+    """파이썬 — `#` 주석. 문자열(`'…'`·`"…"`·`'''…'''`·큰따옴표 셋, docstring 포함)은 주석이 아니다.
+
+    [중요] 문자열 내용은 **live 에 남긴다** — C++ 경로가 문자열 리터럴을 live 로 두는 것과
+    같은 판단이다. 문자열 안의 `#`·`/*`·`//` 는 아무 뜻이 없다.
+    접두(`r`·`b`·`f`·`u`)는 따옴표 앞의 평범한 글자로 live 에 들어간다. 역슬래시 다음 글자를
+    건너뛰는 것은 raw 문자열에서도 맞다(`r"\\""` 는 따옴표에서 끝나지 않는다).
+    [주의] 3.12 의 f-string 안 같은 종류 따옴표 중첩은 단순화했다 — 문자열이 일찍 닫혀도
+    나머지가 live 로 남을 뿐이라 유령을 만들지 않는다.
+    """
+    live: list[str] = []
+    dead: list[str] = []
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if c == '"' or c == "'":
+            q = src[i:i + 3] if src[i:i + 3] in ('"""', "'''") else c
+            j = i + len(q)
+            while j < n:
+                if src[j] == "\\":
+                    j += 2
+                    continue
+                if src.startswith(q, j):
+                    j += len(q)
+                    break
+                if len(q) == 1 and src[j] == "\n":      # 닫히지 않은 한 줄 문자열
+                    break
+                j += 1
+            live.append(src[i:min(j, n)])
+            i = min(j, n)
+            continue
+        if c == "#":
+            j = src.find("\n", i)
+            j = n if j == -1 else j
+            dead.append(src[i + 1:j])
+            live.append("\n")
+            i = j
+            continue
+        live.append(c)
+        i += 1
+    return live, dead
+
+
+_TAG_OPEN_RE = re.compile(r"<(script|style)\b[^>]*>", re.IGNORECASE)
+
+
+def _strip_html(src: str) -> tuple[list[str], list[str]]:
+    """HTML — `<!-- -->` 주석 · `<script>` 안은 JS 규칙 · `<style>` 안은 CSS(`/* */` 만).
+
+    [주의] **규칙만 있다** — 지금 어느 프로젝트의 합성 대상에도 HTML 은 없다(사용자 2026-10-04).
+    속성값(`href="http://…"`)은 주석이 아니다 — 태그 밖에서는 `<!--` 만 주석으로 본다.
+    CSS 에는 `//` 주석이 없다 — `url(http://x)` 를 삼키지 않게 줄 주석을 끈다.
+    """
+    live: list[str] = []
+    dead: list[str] = []
+    i, n = 0, len(src)
+    while i < n:
+        com = src.find("<!--", i)
+        tag = _TAG_OPEN_RE.search(src, i)
+        if com == -1 and tag is None:
+            live.append(src[i:])
+            break
+        if com != -1 and (tag is None or com < tag.start()):
+            live.append(src[i:com])
+            j = src.find("-->", com + 4)
+            j = n if j == -1 else j + 3
+            dead.append(src[com + 4:max(com + 4, j - 3)])
+            live.append("\n")
+            i = j
+            continue
+        live.append(src[i:tag.end()])
+        name = tag.group(1).lower()
+        close = re.compile(rf"</{name}\s*>", re.IGNORECASE).search(src, tag.end())
+        end = n if close is None else close.start()
+        body = src[tag.end():end]
+        if name == "script":
+            l2, d2 = _strip_clike(body, template=True)
+        else:
+            l2, d2 = _strip_clike(body, line_comments=False)
+        live.extend(l2)
+        dead.extend(d2)
+        i = end
+    return live, dead
+
+
+def _strip_xml(src: str) -> tuple[list[str], list[str]]:
+    """XML — `<!-- -->` 만 주석이다. `<![CDATA[…]]>` 는 **내용**이다(안의 `<!--` 도 글자일 뿐).
+
+    속성값은 주석이 아니다 — 태그 밖에서 `<!--`·`<![CDATA[` 두 표지만 본다.
+    """
+    live: list[str] = []
+    dead: list[str] = []
+    i, n = 0, len(src)
+    while i < n:
+        com = src.find("<!--", i)
+        cd = src.find("<![CDATA[", i)
+        if com == -1 and cd == -1:
+            live.append(src[i:])
+            break
+        if cd != -1 and (com == -1 or cd < com):
+            end = src.find("]]>", cd + 9)
+            j = n if end == -1 else end + 3
+            live.append(src[i:j])
+            i = j
+            continue
+        live.append(src[i:com])
+        end = src.find("-->", com + 4)
+        j = n if end == -1 else end + 3
+        dead.append(src[com + 4:max(com + 4, j - 3)])
+        live.append("\n")
+        i = j
+    return live, dead
+
+
+def _strip_ini(src: str) -> tuple[list[str], list[str]]:
+    """INI — **줄 전체가 `;` 로 시작하는 줄만** 주석이다(앞 공백 허용).
+
+    [중요] 값 뒤의 `;` 는 주석이 아니다 — UE 설정 값은 `;` 를 담을 수 있으므로 줄 중간에서
+    자르지 않는다. 값의 `/Game/…`·`http://…` 도 그대로 live 다.
+    [주의] `#` 줄은 주석으로 보지 않는다 — UE 설정 규약에서 근거를 확인하지 못했다. 짐작으로
+    주석에 넣으면 그 줄의 이름이 유령이 될 수 있고, live 로 두면 덜 잡을 뿐이다.
+    """
+    live: list[str] = []
+    dead: list[str] = []
+    for line in src.splitlines(keepends=True):
+        if line.lstrip().startswith(";"):
+            dead.append(line.lstrip()[1:].rstrip("\r\n"))
+            live.append("\n")
+        else:
+            live.append(line)
+    return live, dead
+
+
+def strip_comments(src: str, *, lang: str | None = "cpp") -> tuple[str, str]:
+    """소스 → (살아 있는 본문, 주석만 모은 본문). `lang` 은 `lang_for(경로)` 의 값.
+
+    문자열·문자 리터럴 안의 `//`·`/*`·`#` 는 주석으로 보지 않는다. 이걸 틀리면 **살아 있는
+    코드가 주석으로 분류돼 오탐 위반**이 난다 — 게이트가 정상 문서를 거부하는 쪽이
+    통과시키는 쪽보다 더 나쁘다(작업이 멈춘다).
+    [주의] 기본값 `cpp` 는 **종전 호출자 호환**이다(경로 없이 부르던 자리). `lang=None`
+    (모르는 형식)은 원문 전체를 live, 주석은 빈 문자열로 돌려준다 — 위 `_LANG_BY_EXT` 참조.
+    """
+    # 표준 JSON 에는 주석이 없다 — 전부 live 다(문자열 안 `//`·`/*` 도 글자일 뿐). JSONC 는 넣지 않았다.
+    if lang is None or lang == "json":
+        return src, ""
+    if lang == "cpp":
+        live, dead = _strip_clike(src, cpp_raw=True)
+    elif lang == "cs":
+        live, dead = _strip_clike(src, cs_verbatim=True)
+    elif lang == "java":
+        live, dead = _strip_clike(src, text_block=True)
+    elif lang == "xml":
+        live, dead = _strip_xml(src)
+    elif lang == "ini":
+        live, dead = _strip_ini(src)
+    elif lang == "python":
+        live, dead = _strip_python(src)
+    elif lang == "html":
+        live, dead = _strip_html(src)
+    else:
+        raise ValueError(f"모르는 주석 규칙: {lang!r}")
     return "".join(live), "\n".join(dead)
 
 
@@ -159,12 +396,13 @@ def _drop_license_header(dead: str) -> str:
     return "\n".join(l for l in lines if not _LICENSE_HINT.search(l))
 
 
-def comment_only(src: str) -> set[str]:
+def comment_only(src: str, *, lang: str | None = "cpp") -> set[str]:
     """주석 안에만 등장하는 식별자. **이것이 게이트의 판정 근거다.**
 
-    [주의] 저작권 머리말은 제외한다(`_drop_license_header`) — `#270`.
+    [주의] 저작권 머리말은 제외한다(`_drop_license_header`) — `#270`. 모든 형식에 같다.
+    `lang=None`(모르는 형식)이면 주석이 비므로 늘 빈 집합이다 — `#732` ⓐ.
     """
-    live, dead = strip_comments(src)
+    live, dead = strip_comments(src, lang=lang)
     return identifiers(_drop_license_header(dead)) - identifiers(live)
 
 
@@ -232,9 +470,11 @@ def verify(doc: str, *, sources: dict[str, str], declared: list[str] | None = No
     #    다른 파일·다른 그룹의 코드는 여전히 근거가 아니고, 주석에만 있는 것은 그대로 잡힌다.
     ghost_pool: set[str] = set()
     live_pool: set[str] = set()
-    for src in sources.values():
-        ghost_pool |= comment_only(src)
-        live_pool |= identifiers(strip_comments(src)[0])
+    # 🔴 **주석 규칙은 경로의 확장자로 고른다** (`#732`) — 모르는 형식은 유령 0 · 원문 전체 live.
+    for path, src in sources.items():
+        lang = lang_for(path)
+        ghost_pool |= comment_only(src, lang=lang)
+        live_pool |= identifiers(strip_comments(src, lang=lang)[0])
     ghost_pool -= live_pool
     said = claimed(doc)
     # [중요] **살아 있는 식별자의 부분열은 유령이 아니다** (`#270`). UE 규약 때문에 문서가
