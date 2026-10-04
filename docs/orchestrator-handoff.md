@@ -4,25 +4,75 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **갱신 시각**: 2026-10-04 00:47 KST — Codex, R5 마감·문서 최신화·인계 준비
-- **지휘 도구 / 세션**: **Codex** 마스터. 2026-10-03 23:37 담당 인수 기록이 있으며
-  새 지휘자는 실제 HEAD·dirty·모드·Redmine부터 대조한다. 담당 기록은 세션 잠금이 아니다.
-- **상태**: 코드 수정·검사·커밋·Gitea push·AXCluster 배포·R5 상태 반영 완료.
-  사용자 문서·레드마인 최신화와 인수인계 요청 뒤 「커밋해줘!」로 이번 문서13개 커밋을 승인했다.
-  문서 커밋의 푸시·재배달 승인은 없으며 배달 출처는 b53fd84다.
-- **관련 일감**: 완료 — #718 · #719 · #722 · #260 · #375 · #615 (+확인용 #723·#724). **열림 — #700 · #701 · #720 · #721 · #716.**
-- **워커 지휘자 모드**: **`codex`** — 공용 MCP로 00:10:33 전환·재조회. 수정한 운영 준비 검사3/3 ok.
-  실제 Codex shell read·apply_patch·결과 회수는 세 워커에서 성공했다(리포트89).
-  이전 Session0 probe 거절은 아래 이력이다. #720 한도 분류는 여전히 미수정이며 신규 파견은 사용자 선택 후.
-- **마운트**: `AXCluster` — `.57` 요청자, `.2`·`.33`·`.43` worker.
-- **소스 / 배달 출처**: main `b53fd8469f4ddc8528959db13c6087eeb0ca077a`.
-  Gitea main·AXCluster 워커 소스3대 일치, 배달3/3 OK, 마스터·워커 source clean을 문서 편집 전에 확인했다.
-  마감 문서 커밋 `3e01ea9`도 push와 워커 동기화에 포함됐다.
-  서비스에 반영된 준비 검사 코드는 `00f8532`; b53fd84는 테스트 변경이라 서비스 재시작은 없었다.
-  `ax-projects` 2026-10-04 00:09:13 재기동·active/running·Result=success.
-  이번에 `.43 ~/ax-cluster` 관리 사본은 갱신하지 않았다(워커 `/home/sim/trunk/AXCluster`와 별개).
+- **갱신 시각**: 2026-10-04 17:11 KST — Claude, Codex 토큰 소진 뒤 인수
+- **지휘 도구 / 세션**: **Claude** 마스터. Codex 는 이 문서를 갱신하기 전에 한도가 소진됐다
+  (마지막 Codex 갱신은 00:47 헤더 + §0 R9·R19 후속). 17:02:34 `record_master_conductor('claude')`.
+  마스터의 Codex 프로세스(pid 20028)는 살아 있었다 — 한도 소진 상태로 남은 것으로 보이며 종료하지 않았다.
+  담당 기록은 세션 잠금이 아니다.
+- **상태**: `#725` 라운드 1 전진 완료 · 마감(finalize) 대기. 미커밋은 이 문서뿐.
+- **관련 일감**: 진행 — **#725**(사용량 웹페이지 분산 작업) · 신규 — **#726**(토큰 구성 측정 로그).
+  열림(이전부터) — #700 · #701 · #716 · #720 · #721.
+- **워커 지휘자 모드**: **`claude`** — 사용자 지시 「모든 워커들 클로드가 작업하도록」,
+  17:02:28 `set_worker_mode_tool('claude')`, readiness 3/3 ok
+  (`.43` 2.1.222 · `.2` 2.1.285 · `.33` 2.1.286). 말하기 전에 모드 도구로 재조회한다.
+  🔴 [주의] **work 스탬프가 전역보다 우선한다** — `#725` work 는 `worker_mode: codex` 로 찍혀 있고
+  (`autodispatch.py:424`), `improve_work` 에서 `worker_mode` 를 비우면 큐가 기존 값을 유지한다
+  (`task_queue/logic.py:245`). round 2 를 열면 **`worker_mode="claude"` 를 명시**해야 Claude 로 돈다.
+- **마운트**: `AXCluster` — `.57` 요청자, `.2`·`.33`·`.43` worker. `.43` 은 어젯밤 poweroff 기록이
+  있으나 17:02 readiness 에 응답했다(켜져 있다).
+- **소스**: main `3d54637` = Gitea main (17:11 ls-remote 일치) · 작업 트리는 이 문서 외 clean.
+  워커 소스·배달이 `3d54637` 과 일치하는지는 **미확인**(R9·R19 배포 결과는 #716 노트로 대조).
 
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
+
+### 최신 — #725 사용량 웹페이지 라운드 1 전진 · 지휘자 claude 전환 (2026-10-04 17:11, Claude)
+
+**경위**: Codex 가 `#725`(「[AX] LLM 모델별 기간별 작업·토큰 사용량 웹페이지」)를 등재·파견한 뒤
+이 문서를 갱신하기 전에 토큰이 소진됐다. 원요청: 레드마인 일감 기준 LLM(클로드·코덱스·제미나이·로컬)의
+일간·주간·월간 작업과 토큰을 웹UI 신규 페이지로 시각화.
+
+**work**: `20261004_1645_ax_llm_e6a404f5` · round 1 · 조각 4(codex 지휘) · 파견 4/4 · 실패 0 · 16:58:30 `ready_for_review`.
+
+| 조각 | 워커 | 파일 |
+|---|---|---|
+| 0747b703 | .33 | `master/work/usage_dashboard.py` + `master/test_usage_dashboard.py` |
+| d74ea13e | .43 | `master/webui/usage_page.py` + `master/test_usage_page.py` |
+| 84fe23ff | .2 | `master/webui/app.py` + `master/test_usage_routes.py` |
+| adb7d5fb | .2 | `master/webui/nav.py` + `master/test_usage_nav.py` |
+
+**⑺ 전진 (사용자 「머지하고 검사 진행해줘」 → 「a로 고치고 재검사해줘」 → 「커밋하고 전진해줘」)**:
+
+- `advance_work(confirm=False)` 로 4조각 머지 — 충돌 0, `610fdf4 → 75f70cc`.
+- 사용량 테스트 13/15 — 실패 2, 둘 다 테스트 쪽 버그:
+  ① 주간 9/28 기대값 4 → 3 (골조 계약 start/end 양끝 포함상 9/30 호출은 범위 밖 — 구현이 맞다)
+  ② 400 안내 문구 검사 「잘못」 → 「올바르지」 (같은 조각의 테스트·구현 불일치).
+- 수정 커밋 `e3b1513` · 재검사: 사용량 15/15 · `tests/integration` 12/12 · 웹UI 관련 회귀 18파일 통과.
+- `task/20261004_1645_ax_llm_e6a404f5/base` **`610fdf4 → e3b1513` push**(fast-forward, force 없음) ·
+  레드마인 #725 전진 노트(서버 ok:true). 검수 트리 `~/ax-advance-…` 는 지웠다.
+- [주의] 테스트 실행법: `master` 는 패키지가 아니다. `unittest discover -s master` 는 상대 import 를
+  깨뜨려 가짜 오류 3건을 낸다 — 저장소 루트에서 `python -B -m unittest master.test_usage_…` 로 돈다.
+
+🔴 [주의] **`advance_work(confirm=True)` 는 트리 안 수정 커밋을 잃는다** — 재호출 시 검수 트리를
+`worktree remove --force` 하고 origin 에서 재머지한다. `ax-advance` 스킬의 「버그면 이 트리에서 고쳐
+커밋 → confirm=True」 순서는 현 코드로 성립하지 않는다. 이번엔 그 함수가 내준 push 명령을 손으로
+실행했다. **고칠지·일감화할지는 사용자 미결.**
+
+**토큰 (usage_log.jsonl, codex 지휘)**: 입력 합 4,054,512 중 캐시 3,814,144(94%) · 비캐시 약 24만
+(조각당 5~7만) · 출력 약 1.7만. 누적 재전송은 에이전트 루프 공통(claude 도 같다). 원본 실행 기록은
+남지 않아 사후 분해 불가 → **#726** 등록(측정 로그: 첫 턴 입력·턴 수·턴별 비캐시·읽은 파일,
+codex·claude 비교표가 완료 조건). 착수 안 함.
+
+**미결 / 다음**:
+
+1. `#725` 다음 갈래는 사용자 선택 — 마감(`review_work` → `finalize_work`, 별도 승인) 또는 round 2
+   (`improve_work`, `worker_mode="claude"` 명시).
+2. `test_usage_*` 4개는 `tests/integration/checks.json` 에 미등록.
+3. Codex 골조 worktree `~/ax-usage-20261004_1645_ax_llm_e6a404f5`(로컬 브랜치 `610fdf4`, 원격보다 뒤)가
+   남아 있다 — 삭제는 사용자 확인 뒤.
+4. 파견 로그의 `rmcp … 127.0.0.1:8000/mcp` 연결 오류(결과엔 영향 없음) — 원인 미조사.
+5. 웹UI 서비스에 `/usage` 는 아직 없다 — `main` 반영·배포 전이다.
+
+**진행 프로세스**: 파견 끝, 서브 에이전트 없음. 마스터 Codex 프로세스 잔존(위).
 
 ### R19 함수 정리·업로드/배포 승인 — 2026-10-04 후속
 
