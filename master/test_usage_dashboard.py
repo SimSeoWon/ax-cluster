@@ -1,0 +1,213 @@
+"""[DOC] 집계 조각의 결정적 검사 골조. 임시 숫자 로그·큐 일감만 사용, 실 LLM/Redmine 0.
+공개 API 동결. 아래 사례는 실제 fixture와 기대 수치로 검사, 구현을 그대로 복제하지 않는다.
+"""
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import unittest
+
+from master.work.usage_dashboard import build_report
+
+
+class UsageDashboardTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.projects_root = root / "projects"
+        self.queue_root = root / "queue"
+        self.session_store = root / "sessions"
+        self.projects_root.mkdir()
+        (self.projects_root / "projects.yaml").write_text(
+            "version: 1\nactive: Alpha\nprojects:\n  - Alpha\n  - Beta\n",
+            encoding="utf-8",
+        )
+        for name in ("Alpha", "Beta"):
+            (self.projects_root / name).mkdir()
+        self.now = datetime(2026, 10, 15, 12, tzinfo=timezone.utc)
+
+    def report(self, **kwargs):
+        return build_report(
+            projects_root=self.projects_root, queue_root=self.queue_root,
+            session_store=self.session_store, now=self.now, **kwargs,
+        )
+
+    def add_call(self, project, ts, *, work_id="", model="claude-sonnet-4-5",
+                 lane="claude", source="dispatch", measured=True, rc=0,
+                 input_tokens=1, output_tokens=2, cache_read=0,
+                 cache_create=0, reasoning_tokens=0):
+        record = {
+            "ts": ts, "work_id": work_id, "task_id": "", "worker": "",
+            "mode": "", "rc": rc, "source": source, "model": model,
+            "lane": lane, "measured": measured,
+            "input_tokens": input_tokens, "output_tokens": output_tokens,
+            "cache_read": cache_read, "cache_create": cache_create,
+            "reasoning_tokens": reasoning_tokens,
+        }
+        with (self.projects_root / project / "usage_log.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    def add_work(self, work_id, project, issue_id, title, *, archived=False):
+        parent = self.queue_root / ".claude" / "tasks"
+        if archived:
+            parent /= "_archive"
+        path = parent / work_id / "_request.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "---\n"
+            f"work_id: {work_id}\nproject: {project}\n"
+            f"title: {title}\nredmine_issue_id: {issue_id}\n"
+            "---\n",
+            encoding="utf-8",
+        )
+
+    def add_session(self, host, tool, records):
+        path = self.session_store / host / tool / "sample.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "host": host, "tool": tool, "session_id": "sample",
+            "origin": "sample.jsonl", "collected_at": "2026-10-15T00:00:00",
+            "records": records,
+        }), encoding="utf-8")
+
+    def test_calendar_buckets_and_timezone(self):
+        self.add_call("Alpha", "2026-10-03T14:59:00Z", input_tokens=1, output_tokens=0)
+        self.add_call("Alpha", "2026-10-03T15:01:00Z", input_tokens=2, output_tokens=0)
+        self.add_call("Alpha", "2026-10-04 23:59:00", input_tokens=3, output_tokens=0)
+        self.add_call("Alpha", "2026-10-05T00:00:00+09:00", input_tokens=4, output_tokens=0)
+        self.add_call("Alpha", "2026-09-30T14:59:00Z", input_tokens=5, output_tokens=0)
+        daily = self.report(start="2026-10-04", end="2026-10-05")
+        self.assertEqual(daily["timezone"], "Asia/Seoul")
+        self.assertEqual(daily["totals"]["calls"], 3)
+        self.assertEqual(daily["totals"]["tokens"], 9)
+        self.assertEqual(
+            {(b["date"], b["calls"]) for b in daily["buckets"]},
+            {("2026-10-04", 2), ("2026-10-05", 1)},
+        )
+        weekly = self.report(period="weekly", start="2026-10-01", end="2026-10-05")
+        self.assertEqual(
+            {(b["date"], b["calls"]) for b in weekly["buckets"]},
+            {("2026-09-28", 3), ("2026-10-05", 1)},
+        )
+        monthly = self.report(period="monthly", start="2026-09-30", end="2026-10-05")
+        self.assertEqual(
+            {(b["date"], b["calls"]) for b in monthly["buckets"]},
+            {("2026-09-01", 1), ("2026-10-01", 4)},
+        )
+
+    def test_issue_linkage_and_filters(self):
+        self.add_work("active-alpha", "Alpha", 101, "Alpha queue title")
+        self.add_work("archived-beta", "Beta", 202, "Beta archived title", archived=True)
+        self.add_call("Alpha", "2026-10-10 10:00:00", work_id="active-alpha",
+                      model="claude-sonnet-4-5", lane="claude", input_tokens=4)
+        self.add_call("Beta", "2026-10-11 10:00:00", work_id="archived-beta",
+                      model="gpt-5-codex", lane="codex", input_tokens=5)
+        self.add_call("Alpha", "2026-10-12 10:00:00", work_id="missing",
+                      model="claude-sonnet-4-5", lane="claude", input_tokens=6)
+        all_data = self.report(start="2026-10-10", end="2026-10-12")
+        self.assertEqual(all_data["totals"]["calls"], 3)
+        self.assertEqual(all_data["totals"]["issues"], 2)
+        self.assertEqual(all_data["totals"]["unlinked_calls"], 1)
+        issues = {row["issue_id"]: row for row in all_data["issues"]}
+        self.assertEqual(set(issues), {101, 202})
+        self.assertEqual((issues[101]["title"], issues[101]["project"],
+                          issues[101]["work_ids"]),
+                         ("Alpha queue title", "Alpha", ["active-alpha"]))
+        self.assertEqual((issues[202]["title"], issues[202]["project"]),
+                         ("Beta archived title", "Beta"))
+        filtered = self.report(project="Alpha", family="claude",
+                               start="2026-10-10", end="2026-10-11")
+        self.assertEqual(filtered["totals"]["calls"], 1)
+        self.assertEqual(filtered["totals"]["tokens"], 6)
+        self.assertEqual([r["issue_id"] for r in filtered["issues"]], [101])
+        self.assertEqual(filtered["totals"]["unlinked_calls"], 0)
+        self.assertEqual(sum(r["tokens"] for r in filtered["models"]), 6)
+        self.assertEqual(sum(r["tokens"] for r in filtered["buckets"]), 6)
+
+    def test_token_accounting_and_unmeasured(self):
+        self.add_call("Alpha", "2026-10-10 10:00:00", model="claude-sonnet-4-5",
+                      lane="claude", input_tokens=10, output_tokens=20,
+                      cache_read=30, cache_create=40, reasoning_tokens=5)
+        self.add_call("Alpha", "2026-10-10 11:00:00", model="gpt-5-codex",
+                      lane="codex", input_tokens=100, output_tokens=50,
+                      cache_read=60, reasoning_tokens=10, rc=1)
+        self.add_call("Alpha", "2026-10-10 12:00:00", model="local-model",
+                      lane="local:local-model", input_tokens=0, output_tokens=0)
+        self.add_call("Alpha", "2026-10-10 13:00:00", model="",
+                      lane="agy", measured=False, input_tokens=0, output_tokens=0)
+        data = self.report(start="2026-10-10", end="2026-10-10")
+        totals = data["totals"]
+        self.assertEqual((totals["calls"], totals["measured_calls"],
+                          totals["unmeasured_calls"], totals["failed_calls"]),
+                         (4, 3, 1, 1))
+        self.assertEqual((totals["input_tokens"], totals["output_tokens"],
+                          totals["cache_read"], totals["cache_create"],
+                          totals["reasoning_tokens"], totals["tokens"]),
+                         (110, 70, 90, 40, 15, 250))
+        self.assertEqual(sum(r["tokens"] or 0 for r in data["models"]), 250)
+        self.assertEqual(sum(r["tokens"] or 0 for r in data["buckets"]), 250)
+        self.assertTrue(any(r["model"] == "모델 미상" for r in data["models"]))
+        zero = self.report(family="local", start="2026-10-10", end="2026-10-10")
+        self.assertEqual(zero["totals"]["tokens"], 0)
+        unknown = self.report(family="unknown", start="2026-10-10", end="2026-10-10")
+        self.assertEqual(unknown["totals"]["calls"], 1)
+        self.assertIsNone(unknown["totals"]["tokens"])
+        self.assertIsNone(unknown["models"][0]["tokens"])
+
+    def test_session_source_is_separate(self):
+        self.add_call("Alpha", "2026-10-10 10:00:00", input_tokens=999)
+        self.add_session("local", "claude", [{
+            "ts": "2026-10-10T01:00:00Z", "model": "claude-sonnet-4-5",
+            "input": 2, "output": 3, "cache_read": 4,
+            "cache_create": 5, "reasoning": 1,
+        }])
+        session = self.report(source="session", start="2026-10-10", end="2026-10-10")
+        self.assertEqual(session["totals"]["calls"], 1)
+        self.assertEqual(session["totals"]["tokens"], 14)
+        self.assertEqual(session["issues"], [])
+        self.assertEqual(session["totals"]["issues"], 0)
+        self.assertEqual(session["totals"]["unlinked_calls"], 0)
+        dispatch = self.report(source="dispatch", start="2026-10-10", end="2026-10-10")
+        self.assertEqual(dispatch["totals"]["calls"], 1)
+        self.assertEqual(dispatch["totals"]["tokens"], 1001)
+        restricted = self.report(source="session", project="Alpha",
+                                 start="2026-10-10", end="2026-10-10")
+        self.assertEqual(restricted["totals"]["calls"], 0)
+        self.assertEqual(restricted["issues"], [])
+        self.assertTrue(restricted["warnings"])
+
+    def test_validation_and_malformed_records(self):
+        invalid = (
+            {"start": "2026-02-30"}, {"end": "yesterday"},
+            {"start": "2026-10-11", "end": "2026-10-10"},
+            {"start": "2025-01-01", "end": "2026-10-10"},
+            {"period": "hourly"}, {"family": "other"},
+            {"source": "all"}, {"project": "Unregistered"},
+        )
+        for options in invalid:
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                self.report(**options)
+        secret = "SECRET-TOKEN-DO-NOT-SHOW"
+        path = self.projects_root / "Alpha" / "usage_log.jsonl"
+        path.write_text(
+            "{" + secret + "\n"
+            + json.dumps({"ts": "invalid", "lane": "claude", "measured": True,
+                          "input_tokens": 3, "output_tokens": 2, "secret": secret}) + "\n"
+            + json.dumps({"ts": "2026-10-10 10:00:00", "lane": "claude",
+                          "model": "claude-sonnet-4-5", "measured": True,
+                          "input_tokens": 2, "output_tokens": 3, "rc": 0}) + "\n",
+            encoding="utf-8",
+        )
+        data = self.report(start="2026-10-10", end="2026-10-10")
+        self.assertEqual(data["totals"]["calls"], 1)
+        self.assertEqual(data["totals"]["tokens"], 5)
+        self.assertGreaterEqual(data["totals"]["invalid_records"], 2)
+        self.assertTrue(data["warnings"])
+        visible = json.dumps(data, ensure_ascii=False)
+        self.assertNotIn(secret, visible)
+        self.assertNotIn(str(self.projects_root), visible)
+
+
+if __name__ == "__main__":
+    unittest.main()
