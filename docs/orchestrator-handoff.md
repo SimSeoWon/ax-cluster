@@ -4,10 +4,13 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 인수**: Codex · 2026-10-04 20:43 KST · HEAD `d020132`, 문서/스킬 미커밋 7파일.
-  워커 Codex 전환·새 스킬 검증/등록 완료. 최신 상태는 §0 첫 절이다.
-  후속 사용자 「커밋하고 푸시한 뒤 모든 워커 Codex로 작동하도록 스킬 호출」 승인으로
-  검증한 7파일을 커밋·Gitea push하고 ax-mode 정본을 재호출한다. 배달·실제 신규 파견은 범위 밖이다.
+- **현재 인수**: Codex · 마스터 담당 기록 2026-10-04 20:43:36 KST.
+  main·Gitea main `d061598`. 스킬 검증·등록·push와 ax-mode Codex 재호출 완료.
+  워커 선택 `codex` / `source=state`, 20:52:56 저장, AXCluster 3대 readiness 3/3.
+  #385 완료 100% 재조회 확인. 사용자 문서 최신화 요청으로 문서 편집 중·미커밋.
+  후속 「커밋하고 배포해」 승인으로 문서 5파일 커밋·Gitea push,
+  AXCluster 워커 소스 ff-only 동기화와 정본 `master.client update` 배달·검사를 진행한다.
+  최신 상태는 §0 첫 절이다. 신규 파견은 실행하지 않는다.
 
 아래 메타데이터는 이전 Claude 인계 시점의 기록이며 현재 상태는 §0 첫 절을 따른다.
 
@@ -49,6 +52,14 @@
 
 ### 최신 — Codex 인수 · 워커 Codex 전환 · 인수인계 스킬 추출 (2026-10-04, Codex)
 
+- 문서 최신화 후 경로 재발 방지 절차를 홈/저장소 AGENTS 정본에 추가:
+  확인된 작업 위치에서 `rg --files -g 패턴` 목록 조회 → 별도 호출에서 반환된 실제 경로만 읽기.
+  미확인 디렉터리를 목록 조회 인자로 넣지 않으며, 같은 절차를 서브 에이전트 지시에 명시한다.
+  사용자 커밋·배포 승인 대상은 AGENTS.md, machines/sim-desktop-agents.md,
+  README.md, master/README.md, 이 인수인계서의 5파일이다. 홈 AGENTS 심볼릭 링크를 보존한다.
+  인계서에 남은 `/tmp/ax-axcluster-worker-deploy.py`는 과거 임시 산출물이고 현재 없다.
+  임시 파일 부재를 정본 기능 부재나 필수 도구 장애로 판단하지 않는다.
+  배포는 docs/14-onboarding-runbook.md §3과 distribute 스킬의 기존 절차를 따른다.
 - 사용자 보충으로 #733 후속을 인수했다. 실제 `HEAD=origin/main=d020132`, 편집 전 clean 확인.
   `master/test_usage_cli_paths.py`의 checks.json 등록·출력 패턴 확인. **통합 19/19(신규 40건),
   Redmine #733 노트·열림 및 #734 신규 등록은 사용자 인계 내용이며 이번 세션에서 재조회하지 않았다.**

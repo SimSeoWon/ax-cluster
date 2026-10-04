@@ -28,9 +28,13 @@
 > 레드마인과 [`docs/orchestrator-handoff.md`](docs/orchestrator-handoff.md)에서 확인한다.
 >
 > **지휘자는 둘이다** (사용자 2026-09-07) — 마스터 대화 세션을 **Claude ↔ Codex** 가 한도에 따라
-> 교대한다. 공용 규칙 [`docs/orchestrator-rules.md`](docs/orchestrator-rules.md),
-> 진행 중인 것 한 벌 [`docs/orchestrator-handoff.md`](docs/orchestrator-handoff.md).
-> **SSH 파견의 실행 주체(워커 지휘자)도 `lane`/`claude`/`codex` 중에 고른다.**
+> 교대한다. [`ax-handoff`](master/skills/ax-handoff/SKILL.md)로 인수인계·사용자 보충·실제 상태와
+> 승인 범위를 대조한다. 공용 규칙은 [`docs/orchestrator-rules.md`](docs/orchestrator-rules.md),
+> 현재 담당·운영 모드·검증 결과는 한 벌 [`docs/orchestrator-handoff.md`](docs/orchestrator-handoff.md)에 둔다.
+> **워커 지휘자는 [`ax-mode`](master/skills/ax-mode/SKILL.md)로 `lane`/`claude`/`codex` 중 선택한다.**
+> 사용자 선택 후 준비 검사를 통과해야 저장한다. 전역 선택은 **새 work 등재의 기본값**이며,
+> 기존 work의 `worker_mode` 스탬프와 후속 라운드는 소급 변경하지 않는다.
+> 두 마스터 스킬은 Claude·Codex 홈에서 같은 저장소 정본을 가리킨다(`d061598`).
 > Windows readiness는 SSH Session 0의 샌드박스 실행 대신 `/IT /RL LIMITED` 예약 런처의
 > 등록 계약을 검사한다(`00f8532`). 등록 통과 뒤에도 로그인·인증과 실제 읽기·apply_patch·결과
 > 회수를 별도로 확인한다. 실증·배포 기록: [리포트 89](reports/89-codex-worker-readiness-and-write-probes.md).
@@ -192,6 +196,8 @@ ax-cluster/
 │   │   ├── decompose.py        분해 — 의존 순서·파일 불가분·`[PSEUDO:N]` 뎁스
 │   │   ├── heuristics.py       [중요] 대화형 휴리스틱 — **사람이 답한 것만**, 범위(project/domain/once)
 │   │   ├── infer.py            [중요] **추론 파견** — 워커 지휘자 실행·조각 커밋·결과 회수
+│   │   ├── mode.py             워커 모드·출처·영속 상태 — 기존 work 스탬프가 전역보다 우선
+│   │   ├── conductor.py        마스터 담당 기록·워커 준비 검사·모드 전환의 정본
 │   │   ├── layer1.py           [중요] **층1** — 동결·잔재·`[FEEDBACK]`. 수락·적용 **양쪽**에서 돈다
 │   │   ├── review.py           요청자의 전진·finalize — 사람 게이트를 거쳐 통합·검사
 │   │   ├── failures.py         실패 카탈로그 — 판정 원문을 다음 골조로 되먹인다
@@ -310,7 +316,7 @@ journalctl -u ax-indexer -n 30 --no-pager                # push → 트윈 성�
 
 ---
 
-## MCP 도구 (작업장 Claude 가 쓰는 창구)
+## MCP 도구 (Claude·Codex가 쓰는 창구)
 
 `ax-projects`(8103) 하나가 작업장의 단일 창구다. **37종** (실측 2026-09-08 — 데코레이터
 수와 실제 붙은 도구 목록 두 방법이 일치). [주의] 리포트 `54`·`55` 의 **33종**은 워커 지휘자
@@ -327,7 +333,7 @@ journalctl -u ax-indexer -n 30 --no-pager                # push → 트윈 성�
 | `sync_ontology` · `drift_audit` · `unassigned_classes` | 경로·선언 동기화 · 어긋남 감사 · 미배정 노출 |
 | `register_project` · `set_active` · `list_projects` | 트윈 프로젝트 등록·전환 |
 | `set_workshop` · `check_workshops_clean` 외 | 작업장 등록·더티 체크 |
-| `get_worker_mode` · `set_worker_mode` | SSH 파견의 실행 주체를 `lane`/`claude`/`codex` 로 — [주의] **다음 조각부터** 적용 (실행 중인 조각엔 소급 안 됨) |
+| `get_worker_mode` · `set_worker_mode` | `ax-mode`의 워커 지휘자 조회·선택. 준비 검사 후 저장하며 **새 work 등재부터 기본값**으로 사용. 기존 work 스탬프·진행 조각에 소급하지 않음 |
 | `get_orchestration` · `record_master_conductor` | 마스터 담당 + 워커 모드 조회 / 담당 기록 — [중요] 기록일 뿐 **세션 실행·종료·잠금이 아니다** |
 
 **규약**: `[대괄호]`는 **클래스에만** 쓴다. 미등록이면 마스터가 후보를 돌려주고, 작업장

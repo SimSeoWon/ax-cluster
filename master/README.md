@@ -10,6 +10,13 @@ Windows Codex 준비 검사는 예약 작업의 정적 등록을 검증하며 �
 변경·검사·배포 근거: [리포트 89](../reports/89-codex-worker-readiness-and-write-probes.md)·
 [리포트 90](../reports/90-r5-indexer-test-isolation-and-deployment.md).
 
+마스터 세션을 이어받을 때는 [`ax-handoff`](skills/ax-handoff/SKILL.md)로 인수인계와 실제 상태,
+기존 승인 범위를 대조한다. 워커 지휘자 선택은 [`ax-mode`](skills/ax-mode/SKILL.md)를 사용한다.
+MCP가 없으면 같은 정본 `work.conductor.snapshot()`·`set_worker()`를 호출하며, 준비 검사를
+건너뛰는 `mode.set_mode()` 직접 호출은 운영 전환에 쓰지 않는다. 전역 모드는 새 work 등재의
+기본값이고 기존 work와 후속 라운드는 저장된 `worker_mode`를 유지한다.
+현재 담당·모드·검증·관련 일감 상태는 [인수인계서](../docs/orchestrator-handoff.md)에서 확인한다.
+
 ## 지금 있는 것
 
 [중요] **이 표가 모듈 설명의 SSOT 다** — 저장소 루트 `CLAUDE.md` 가 *"표는 여기 두지 않는다"* 며
@@ -19,6 +26,10 @@ Windows Codex 준비 검사는 예약 작업의 정적 등록을 검증하며 �
 
 | 파일 | 내용 |
 |---|---|
+| `skills/ax-handoff/SKILL.md` | 마스터 인수인계 복원·실제 상태/승인 대조·마스터 담당과 워커 모드 구분. Claude/Codex 홈은 같은 정본을 참조 |
+| `skills/ax-mode/SKILL.md` | 워커 지휘자 선택. MCP와 동일한 준비 검사·저장·재조회 호출을 사용 |
+| `work/mode.py` | `lane`/`claude`/`codex` 저장값과 실제 선택 출처 관리. 명시 인자·환경변수가 저장값보다 우선 |
+| `work/conductor.py` | 담당 기록·상태 조회·워커 준비 검사 후 모드 저장. 담당 기록은 프로세스 생존 판정이나 잠금이 아님 |
 | `verdict.py` | **층2 판정 계약 (fail-closed).** `contract_text()` 로 프롬프트에 계약을 붙이고 `parse_verdict()` 로 읽는다. **모든 실패 경로가 차단으로 떨어진다** |
 | `layer2_verify.py` | 층2 검증기 — UE5/C++ 문법 프롬프트 + 백엔드 체인(`agy` → `claude`). `verify_files([(경로, 내용)])` |
 | `test_*.py` | **테스트는 저장소 루트 `CLAUDE.md` 의 세는 법을 따른다.** pytest 불필요 — 각 파일을 그대로 실행한다. 목록은 저장소 루트 `CLAUDE.md` 참조 |
