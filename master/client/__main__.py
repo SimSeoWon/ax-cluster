@@ -332,9 +332,17 @@ def cmd_deliver(project: str, *, init: bool = False, only: str = "") -> int:
     return 1 if bad else 0
 
 
-def cmd_check(project: str, *, only: str = "") -> int:
-    """배달본이 정본과 같은가. [중요] 사본은 갈라진다 — 그래서 잰다."""
+def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int:
+    """배달본이 정본과 같은가. [중요] 사본은 갈라진다 — 그래서 잰다.
+
+    ``stats`` 를 넘기면 판정 내역을 채운다 (`#737`, 사용자 2026-10-05) — ``update`` 가
+    「실행 중 HEAD 이동」 때문인 실패와 진짜 실패를 갈라 말하기 위해서다.
+      ``bad``          실패 호스트 수 (+ 마스터 서비스 신선도 실패 1)
+      ``behind_only``  **출처가 HEAD 보다 커밋 뒤처졌다는 것만** 실패 사유인 호스트 수
+    [주의] 판정 자체는 바꾸지 않는다 — 뒤처짐은 여전히 FAIL 이다.
+    """
     bad = 0
+    behind_only = 0
     behind_hosts: list = []
     init = spec.load_init(project)
     for f in _facts(project, only=only):
@@ -602,6 +610,12 @@ def cmd_check(project: str, *, only: str = "") -> int:
               f"{tag_note}{ver_note}")
         bad += 0 if (ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
                      and ok_ver and ok_tag and ok_codex and ok_res and ok_shadow) else 1
+        # `#737` — 다른 검사는 모두 통과했고 출처만 「N 커밋 뒤」(dirty 아님)인 호스트.
+        #    실행 중 마스터에 커밋이 들어오면 정확히 이 모양으로 실패한다.
+        if (not ok_ver and ver.get("behind") and not ver.get("stamp_dirty")
+                and ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
+                and ok_tag and ok_codex and ok_res and ok_shadow):
+            behind_only += 1
         if not ver["ok"]:
             behind_hosts.append((f.host, ver.get("behind"), ver.get("stamp_dirty")))
     # [중요] **끝에 한 줄로 모아 말한다** — 호스트별 줄에 섞이면 「몇 대가 낡았나」가 안 보인다.
@@ -638,7 +652,9 @@ def cmd_check(project: str, *, only: str = "") -> int:
         for ln in lines:
             print(f"        · {ln}")
         print("        [주의] 자동 재기동은 하지 않는다 — 승인 사항이다 (`docs/11` §11.5)")
-        bad = 1
+        bad += 1
+    if stats is not None:
+        stats.update(bad=bad, behind_only=behind_only)
     return 1 if bad else 0
 
 
@@ -685,12 +701,25 @@ def cmd_ensure(project: str, *, only: str = "") -> int:
     return 1 if bad else 0
 
 
+def _master_head() -> str:
+    """마스터 저장소 HEAD 전체 해시. 읽지 못하면 빈 문자열 (`#737` — 테스트가 주입한다)."""
+    return bundle._run_local("rev-parse", "HEAD")
+
+
 def cmd_update(*, init: bool = False) -> int:
     """등록된 모든 프로젝트 작업장을 현재 리비전으로 맞추고 즉시 검사한다.
 
     [중요] 업데이트할 프로젝트를 호출자가 고르지 않는다. 레지스트리가 대상의 정본이며,
     신규 프로젝트도 등록되는 순간 이 흐름에 자동으로 들어온다. 한 프로젝트가 실패해도
     나머지 등록 프로젝트까지 시도하되, 하나라도 실패하면 전체 명령은 실패다.
+
+    🔴 [중요] **실행 중 마스터 HEAD 이동을 따로 말한다** (`#737`, 사용자 결정 2026-10-05).
+    배달은 그 순간의 HEAD 로 스탬프를 찍고 검사는 HEAD 를 다시 읽는다 — 그 사이 커밋이
+    들어오면 검사가 「1 커밋 뒤」로 실패하고 요약은 「check」 한 단어뿐이었다(실측
+    2026-10-04: 5fc6786 에서 시작 · 문서 커밋 4ac3099 가 중간에 들어와 ModularStage 2대 FAIL).
+    그래서 시작·검사 직전·끝에서 HEAD 를 읽고, 움직였으면 그 사실과 그 탓인 실패를 갈라 적는다.
+    [주의] **초록불로 바꾸지 않는다** — 배달물은 배달 시점의 작업 트리에서 읽혔으므로 새 HEAD 와
+    다를 수 있다. 자동 재실행·커밋 잠금은 하지 않는다(사람이 다시 돌린다).
     """
     registry = bundle.Registry.load()
     problems = registry.check()
@@ -703,6 +732,12 @@ def cmd_update(*, init: bool = False) -> int:
         print("[중요] 등록된 프로젝트가 없다")
         return 1
 
+    head_start = _master_head()
+    if head_start:
+        print(f"[update] 시작 마스터 HEAD {head_start[:7]} — 실행 중에는 마스터에 커밋하지 말 것")
+    else:
+        print("[주의] 시작 마스터 HEAD 를 읽지 못했다 — 실행 중 HEAD 이동을 감지할 수 없다")
+
     failed: list[str] = []
     delivered: list[str] = []
     for project in registry.names:
@@ -712,15 +747,43 @@ def cmd_update(*, init: bool = False) -> int:
             continue
         delivered.append(project)
 
+    head_pre_check = _master_head()
+    if head_start and head_pre_check and head_pre_check != head_start:
+        print(f"\n[중요] 배달 중 마스터 HEAD 가 움직였다: {head_start[:7]} → {head_pre_check[:7]}")
+
     # `#699` — 프로젝트별 전역 설정이 다음 배달에 덮어써지는 결함을
     # 즉시 검사가 놓쳤다. 전부 배달한 **뒤** 전부를 다시 재서 종료 상태를 본다.
+    checked: list[tuple[str, dict]] = []
     for project in delivered:
         print(f"══ {project}: 배달 결과 검사")
-        if cmd_check(project):
+        stats: dict = {}
+        if cmd_check(project, stats=stats):
+            checked.append((project, stats))
+
+    head_end = _master_head()
+    seen = [h for h in (head_start, head_pre_check, head_end) if h]
+    moved = bool(head_start) and any(h != head_start for h in seen)
+    for project, stats in checked:
+        bad, behind_only = stats.get("bad"), stats.get("behind_only")
+        # 실행 중 HEAD 가 움직였고, 실패 호스트 **전부**가 「출처 뒤처짐만」이면 이동 탓이다.
+        #    하나라도 다른 사유가 섞이면(또는 내역을 모르면) 진짜 실패로 그대로 둔다.
+        if moved and bad and behind_only == bad:
+            failed.append(f"{project}: check (실행 중 HEAD 이동 탓 — 출처 뒤처짐 {bad}대)")
+        else:
             failed.append(f"{project}: check")
 
-    if failed:
-        print("\n[중요] 전체 업데이트 실패: " + ", ".join(failed))
+    if moved:
+        last = head_end or head_pre_check
+        print(f"\n[중요] 실행 중 마스터 HEAD 가 움직였다: {head_start[:7]} → {last[:7]}"
+              " — 배달물이 새 HEAD 와 다를 수 있다, 다시 실행하라")
+        print("        [주의] update 실행 중에는 마스터에 커밋하지 말 것 "
+              "(배달은 그 순간의 작업 트리를 읽는다)")
+    elif head_start and not head_end:
+        print("\n[주의] 끝 마스터 HEAD 를 읽지 못했다 — 실행 중 HEAD 이동을 확인하지 못했다")
+
+    if failed or moved:
+        why = ", ".join(failed) if failed else "검사는 통과했으나 HEAD 가 움직였다"
+        print("\n[중요] 전체 업데이트 실패: " + why)
         return 1
     print(f"\n[완료] 등록 프로젝트 {len(registry.names)}개를 현재 HEAD로 배달·검사했다")
     return 0

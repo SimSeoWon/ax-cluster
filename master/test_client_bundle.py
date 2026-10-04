@@ -1504,19 +1504,22 @@ def test_update_covers_every_registered_project() -> None:
         calls.append(("deliver", project, init, only))
         return 0
 
-    def fake_check(project, *, only=""):
+    def fake_check(project, *, only="", stats=None):
         calls.append(("check", project, only))
         return 0
 
     old_registry = bundle.Registry
     old_deliver, old_check = client_cli.cmd_deliver, client_cli.cmd_check
+    old_head = client_cli._master_head
     bundle.Registry = FakeRegistry
     client_cli.cmd_deliver, client_cli.cmd_check = fake_deliver, fake_check
+    client_cli._master_head = lambda: "a" * 40
     try:
         rc = client_cli.main(["update", "--init"])
     finally:
         bundle.Registry = old_registry
         client_cli.cmd_deliver, client_cli.cmd_check = old_deliver, old_check
+        client_cli._master_head = old_head
     check("전체 업데이트가 성공한다", rc == 0, str(rc))
     check("전체를 배달한 뒤 전체를 검사해 마지막 덮어쓰기를 잡는다", calls == [
         ("deliver", "NS", True, ""), ("deliver", "ModularStage", True, ""),
@@ -1544,23 +1547,114 @@ def test_update_reports_partial_failure() -> None:
         calls.append(("deliver", project))
         return 1 if project == "NS" else 0
 
-    def fake_check(project, *, only=""):
+    def fake_check(project, *, only="", stats=None):
         calls.append(("check", project))
         return 0
 
     old_registry = bundle.Registry
     old_deliver, old_check = client_cli.cmd_deliver, client_cli.cmd_check
+    old_head = client_cli._master_head
     bundle.Registry = FakeRegistry
     client_cli.cmd_deliver, client_cli.cmd_check = fake_deliver, fake_check
+    client_cli._master_head = lambda: "a" * 40
     try:
         rc = client_cli.cmd_update()
     finally:
         bundle.Registry = old_registry
         client_cli.cmd_deliver, client_cli.cmd_check = old_deliver, old_check
+        client_cli._master_head = old_head
     check("부분 실패면 전체 명령도 실패한다", rc == 1, str(rc))
     check("실패한 프로젝트는 검사하지 않고 다음 등록 프로젝트를 계속한다", calls == [
         ("deliver", "NS"), ("deliver", "ModularStage"), ("check", "ModularStage"),
     ], str(calls))
+
+
+def _run_update_with_heads(heads, check_results):
+    """`#737` 하네스 — HEAD 리더와 deliver/check 를 주입하고 출력을 잡는다 (SSH·배달 없음).
+
+    ``heads``: `_master_head` 가 차례로 돌려줄 값(시작 → 검사 직전 → 끝).
+    ``check_results``: 프로젝트 → (rc, stats).
+    """
+    import contextlib
+    import io
+
+    class AllProjects:
+        names = list(check_results)
+
+        @staticmethod
+        def check():
+            return []
+
+    class FakeRegistry:
+        @staticmethod
+        def load():
+            return AllProjects()
+
+    seq = list(heads)
+
+    def fake_check(project, *, only="", stats=None):
+        rc, st = check_results[project]
+        if stats is not None:
+            stats.update(st)
+        return rc
+
+    saved = (bundle.Registry, client_cli.cmd_deliver, client_cli.cmd_check, client_cli._master_head)
+    bundle.Registry = FakeRegistry
+    client_cli.cmd_deliver = lambda project, *, init=False, only="": 0
+    client_cli.cmd_check = fake_check
+    client_cli._master_head = lambda: seq.pop(0) if len(seq) > 1 else seq[0]
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            rc = client_cli.cmd_update()
+    finally:
+        (bundle.Registry, client_cli.cmd_deliver, client_cli.cmd_check,
+         client_cli._master_head) = saved
+    return rc, out.getvalue()
+
+
+def test_update_reports_head_movement() -> None:
+    """🔴 `#737` (사용자 결정 2026-10-05) — 실행 중 HEAD 이동을 따로 말하고 초록불로 바꾸지 않는다."""
+    A, B = "5fc6786" + "0" * 33, "4ac3099" + "0" * 33
+    ok, behind = (0, {"bad": 0, "behind_only": 0}), (1, {"bad": 2, "behind_only": 2})
+
+    rc, out = _run_update_with_heads([A, A, A], {"NS": ok, "ModularStage": ok})
+    check("이동 없음 + 검사 통과 → 종전대로 성공", rc == 0 and "[완료]" in out, out[-200:])
+    check("  시작 HEAD 를 고정해 찍는다", "[update] 시작 마스터 HEAD 5fc6786" in out, out[:200])
+    check("  이동 문구가 없다", "움직였다" not in out, out)
+
+    rc, out = _run_update_with_heads([A, A, A], {"NS": ok, "ModularStage": behind})
+    check("이동 없음 + 뒤처짐 → 종전 그대로 「check」 실패", rc == 1
+          and "전체 업데이트 실패: ModularStage: check\n" in out and "이동 탓" not in out, out[-300:])
+
+    rc, out = _run_update_with_heads([A, B, B], {"NS": ok, "ModularStage": behind})
+    check("[중요] 배달 중 이동 → rc 는 여전히 1 (초록불 금지)", rc == 1, str(rc))
+    check("  이동 사실을 따로 한 줄로 말한다",
+          "[중요] 실행 중 마스터 HEAD 가 움직였다: 5fc6786 → 4ac3099" in out
+          and "다시 실행하라" in out and "커밋하지 말 것" in out, out[-500:])
+    check("  배달 중 이동도 검사 전에 말한다", "배달 중 마스터 HEAD 가 움직였다" in out, out)
+    check("  뒤처짐만인 실패는 이동 탓으로 표시한다",
+          "ModularStage: check (실행 중 HEAD 이동 탓 — 출처 뒤처짐 2대)" in out, out[-300:])
+
+    genuine = (1, {"bad": 2, "behind_only": 1})
+    rc, out = _run_update_with_heads([A, B, B], {"NS": genuine, "ModularStage": behind})
+    check("[주의] 다른 사유가 섞인 실패는 진짜 실패 그대로 둔다",
+          "NS: check," in out and "NS: check (" not in out
+          and "ModularStage: check (실행 중 HEAD 이동 탓" in out, out[-300:])
+
+    unknown = (1, {})
+    rc, out = _run_update_with_heads([A, B, B], {"NS": unknown})
+    check("  내역을 모르는 실패도 이동 탓으로 접지 않는다",
+          "NS: check\n" in out and rc == 1, out[-300:])
+
+    rc, out = _run_update_with_heads([A, A, B], {"NS": ok})
+    check("[중요] 검사 뒤 이동이어도 rc 1 — 배달물이 새 HEAD 와 다를 수 있다",
+          rc == 1 and "5fc6786 → 4ac3099" in out
+          and "검사는 통과했으나 HEAD 가 움직였다" in out, out[-300:])
+
+    rc, out = _run_update_with_heads([""], {"NS": ok})
+    check("HEAD 를 못 읽으면 감지 불가를 말하고 판정은 종전대로",
+          rc == 0 and "감지할 수 없다" in out, out[:200])
 
 
 def test_index_only_delivery() -> None:
@@ -1652,6 +1746,7 @@ def main() -> int:
                test_check_mount_lookup_is_fail_closed,
                test_update_covers_every_registered_project,
                test_update_reports_partial_failure,
+               test_update_reports_head_movement,
                test_shadow_skills_are_reported,
                test_index_only_delivery):
         fn()
