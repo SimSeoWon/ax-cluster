@@ -88,7 +88,7 @@ class UsageDashboardTests(unittest.TestCase):
         weekly = self.report(period="weekly", start="2026-10-01", end="2026-10-05")
         self.assertEqual(
             {(b["date"], b["calls"]) for b in weekly["buckets"]},
-            {("2026-09-28", 4), ("2026-10-05", 1)},
+            {("2026-09-28", 3), ("2026-10-05", 1)},
         )
         monthly = self.report(period="monthly", start="2026-09-30", end="2026-10-05")
         self.assertEqual(

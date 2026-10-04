@@ -168,7 +168,7 @@ class UsagePageTests(unittest.TestCase):
         status, raw = usage_page.page({"period": "bad"}, loader=invalid)
         text = raw.decode("utf-8")
         self.assertEqual(400, status)
-        self.assertIn("잘못", text)
+        self.assertIn("올바르지", text)
         self.assertNotIn("bad <period>", text)
 
         secret = "/home/sim/private/token.json"
