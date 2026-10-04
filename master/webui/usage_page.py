@@ -43,7 +43,7 @@ _FAMILY_COLOR = {
     "local": "#e3b341", "unknown": "#8b949e",
 }
 _PERIOD_LABEL = {"daily": "일간", "weekly": "주간", "monthly": "월간"}
-_SOURCE_LABEL = {"dispatch": "작업 실행 기록", "session": "대화 세션 기록"}
+_SOURCE_LABEL = {"dispatch": "작업 실행 기록", "session": "대화 세션 기록", "all": "모두 보기"}
 
 _EXTRA = """
 .filters{display:flex;gap:.7rem;flex-wrap:wrap;align-items:end;margin:1rem 0;
@@ -222,6 +222,8 @@ def render(report: dict) -> bytes:
     source = str(report.get("source") or "dispatch")
     session_note = ('<div class="note">작업 실행 기록과 대화 세션 기록은 서로 겹칠 수 있어 합산하지 않는다. '
                     '대화 세션은 작업 디렉토리로 프로젝트를 판정하며, 판정되지 않은 세션은 미분류로 모인다. 일감에는 연결되지 않는다.</div>' if source == "session"
+                    else '<div class="note">모두 보기는 Claude·Codex를 대화 세션 기록에서, 그 밖의 계열을 작업 실행 기록에서 센다 — '
+                    '같은 호출을 두 번 세지 않는다. 일감별 표는 작업 실행 기록에서 본다.</div>' if source == "all"
                     else '<div class="note">작업 실행 기록과 대화 세션 기록은 서로 겹칠 수 있어 합산하지 않는다.</div>')
     body = f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>AX 클러스터 — LLM 사용량</title>

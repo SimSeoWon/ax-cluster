@@ -18,7 +18,11 @@ UI 조각 master/webui/usage_page.py, 라우트 조각 master/webui/app.py가 �
   "제미나이(안티그래비티)"라고 부르고(2026-10-04), agy JSON에는 모델 키가 없어(실측
   2026-10-04) 'agy=unknown'이면 실사용이 대시보드에서 사라진다(#728). 그 밖에 model이
   없으면 '모델 미상'.
-- source=dispatch|session. 서로 겹칠 수 있어 두 소스의 합산 기능은 제공하지 않는다.
+- source=dispatch|session|all. 두 소스는 서로 겹친다 — 워커의 `codex exec`·`claude -p` 파견은
+  usage_log 에도, 그 기계의 세션 jsonl 에도 남는다(실측 2026-10-04: 16:55 파견 4건이 워커 세션
+  파일로도 잡혔다). 그래서 단순 합산은 하지 않는다. [중요] **all 은 계열별로 출처 하나만 쓴다**
+  (사용자 결정 2026-10-04): claude·codex 는 session, 그 밖의 계열(gemini·local·unknown)은
+  dispatch. all 은 일감 귀속이 반쪽(claude·codex 가 빠진다)이므로 issues=[] 이다.
 - dispatch: 등록 프로젝트별 usage_log.jsonl, work_id로 큐 _request.md의 project,
   title, redmine_issue_id와 연결. 활성·보관 일감 모두 고려. 연결 실패는 unlinked_calls.
 - session: 기존 session_usage.DEFAULT_STORE 숫자 스냅샷만 읽는다. SSH/수집 실행 금지.
@@ -73,7 +77,8 @@ _KST = ZoneInfo("Asia/Seoul")
 _FAMILIES = ("claude", "codex", "gemini", "local", "unknown")
 _AGY_UNKNOWN_MODEL = "Antigravity(모델 미상)"
 _PERIODS = ("daily", "weekly", "monthly")
-_SOURCES = ("dispatch", "session")
+_SOURCES = ("dispatch", "session", "all")
+_SESSION_FAMILIES = ("claude", "codex")     # all 에서 세션 기록이 맡는 계열 — 나머지는 작업 실행 기록
 _TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read", "cache_create",
                  "reasoning_tokens")
 _ACCOUNTING = ("토큰 합계: Claude 입력+출력+캐시 읽기+캐시 생성, "
@@ -306,6 +311,16 @@ def _read_sessions(root: Path, warnings: list[str], errors: dict):
             errors["invalid_records" if isinstance(exc, (ValueError, TypeError)) else "read_errors"] += 1
             _warn(warnings, "세션 스냅샷을 읽지 못했습니다.")
 
+def _read_all(root: Path, names: list[str], store: Path, warnings: list[str], errors: dict):
+    """source=all — 계열별로 출처 하나. claude·codex 는 세션, 그 밖은 작업 실행 기록."""
+    for origin, rec in _read_sessions(store, warnings, errors):
+        if rec["family"] in _SESSION_FAMILIES:
+            yield origin, rec
+    for origin, rec in _read_dispatch(root, names, warnings, errors):
+        if rec["family"] not in _SESSION_FAMILIES:
+            yield origin, rec
+
+
 def build_report(project: str = "", period: str = "daily", start: str = "",
                  end: str = "", family: str = "", source: str = "dispatch", *,
                  projects_root=None, queue_root=None, session_store=None, now=None) -> dict:
@@ -329,7 +344,10 @@ def build_report(project: str = "", period: str = "daily", start: str = "",
         raise ValueError("등록되지 않은 프로젝트입니다.")
     names = [project] if project else list(registry.names)
     warnings = [_ACCOUNTING, "일감 제목은 큐에 저장된 제목입니다."]
-    if source == "session":
+    if source == "all":
+        _warn(warnings, "모두 보기: Claude·Codex는 대화 세션 기록, 그 밖의 계열은 작업 실행 기록에서 셉니다"
+                        "(같은 호출을 두 번 세지 않습니다). 일감별 표는 작업 실행 기록에서 봅니다.")
+    if source in ("session", "all"):
         _warn(warnings, "세션 사용량에는 일감 귀속이 없습니다. 프로젝트는 세션 작업 경로로만 정합니다.")
         if project:
             _warn(warnings, "프로젝트 필터는 작업 경로가 등록 작업장에 속한 세션만 포함합니다.")
@@ -343,11 +361,12 @@ def build_report(project: str = "", period: str = "daily", start: str = "",
     links = (_request_map(Path(queue_root) if queue_root is not None else
                           Path(os.environ.get("AX_TASK_QUEUE_ROOT") or Path.home() / "ax-state"), warnings, errors)
              if source == "dispatch" else {})
+    store = Path(session_store) if session_store is not None else DEFAULT_STORE
     records = (_read_dispatch(registry.root, names, warnings, errors) if source == "dispatch" else
-               _read_sessions(
-                   Path(session_store) if session_store is not None else DEFAULT_STORE, warnings, errors))
+               _read_sessions(store, warnings, errors) if source == "session" else
+               _read_all(registry.root, names, store, warnings, errors))
     for origin, rec in records:
-        if project and source == "session" and origin != project:
+        if project and source != "dispatch" and origin != project:
             continue
         day = rec["at"].date()
         if day < first or day > last or (family and rec["family"] != family):
@@ -364,7 +383,7 @@ def build_report(project: str = "", period: str = "daily", start: str = "",
         model_row = models.setdefault(model_key, {"family": rec["family"], "model": rec["model"],
                                                   **_empty_counts()})
         _add_counts(model_row, rec)
-        if source == "session":
+        if source != "dispatch":
             continue
         link = links.get(rec["work_id"])
         if (not link or link["project"] != origin or not link["issue_id"]

@@ -254,13 +254,41 @@ class UsageDashboardTests(unittest.TestCase):
                                start="2026-10-10", end="2026-10-10")
         self.assertEqual(dispatch["totals"]["tokens"], 1001)       # 두 소스는 합산하지 않는다
 
+    def test_all_source_takes_one_origin_per_family(self):
+        # 사용자 결정 2026-10-04: 모두 보기 = claude·codex 는 세션, 그 밖은 작업 실행 기록
+        codex = {"ts": "2026-10-10T01:00:00Z", "model": "gpt-5-codex", "input": 10, "output": 5}
+        claude = {"ts": "2026-10-10T01:00:00Z", "model": "claude-sonnet-4-5",
+                  "input": 1, "output": 1, "cache_read": 1, "cache_create": 1}
+        self.add_session("192.168.0.2", "codex", [codex], project="Alpha", name="a")
+        self.add_session("local", "claude", [claude], name="unassigned")
+        self.add_work("w1", "Alpha", 7, "일감")
+        self.add_call("Alpha", "2026-10-10 10:00:00", work_id="w1", input_tokens=999)  # claude 파견 — 세션과 겹친다
+        self.add_call("Alpha", "2026-10-10 10:00:00", work_id="w1", model="", lane="codex",
+                      input_tokens=888)                                              # codex 파견 — 겹친다
+        self.add_call("Alpha", "2026-10-10 10:00:00", work_id="w1", model="", lane="agy",
+                      input_tokens=30, output_tokens=0)
+        self.add_call("Beta", "2026-10-10 10:00:00", model="", lane="local:gemma4:e4b",
+                      input_tokens=20, output_tokens=0)
+        every = self.report(source="all", start="2026-10-10", end="2026-10-10")
+        self.assertEqual(every["source"], "all")
+        self.assertEqual(every["totals"]["calls"], 4)
+        self.assertEqual(every["totals"]["tokens"], 15 + 4 + 30 + 20)   # 999·888 은 세지 않는다
+        self.assertEqual(sorted({m["family"] for m in every["models"]}),
+                         ["claude", "codex", "gemini", "local"])
+        self.assertEqual(every["issues"], [])
+        self.assertTrue(any("모두 보기" in w for w in every["warnings"]))
+        alpha = self.report(source="all", project="Alpha", start="2026-10-10", end="2026-10-10")
+        self.assertEqual(alpha["totals"]["tokens"], 15 + 30)           # 미분류 세션·Beta 제외
+        only = self.report(source="all", family="codex", start="2026-10-10", end="2026-10-10")
+        self.assertEqual(only["totals"]["tokens"], 15)
+
     def test_validation_and_malformed_records(self):
         invalid = (
             {"start": "2026-02-30"}, {"end": "yesterday"},
             {"start": "2026-10-11", "end": "2026-10-10"},
             {"start": "2025-01-01", "end": "2026-10-10"},
             {"period": "hourly"}, {"family": "other"},
-            {"source": "all"}, {"project": "Unregistered"},
+            {"source": "both"}, {"project": "Unregistered"},
         )
         for options in invalid:
             with self.subTest(options=options), self.assertRaises(ValueError):
