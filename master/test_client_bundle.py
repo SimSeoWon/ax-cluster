@@ -1597,6 +1597,8 @@ def test_index_only_delivery() -> None:
         bundle._ssh = saved_ssh
     check("🔴 PowerShell 속성 이름을 따옴표로 감싼다 (`ax-client` 의 `-` 가 빼기로 파싱돼 죽었다)",
           "mcpServers.'ax-client'" in sent[0] and "mcpServers.ax-client " not in sent[0], sent[0][-120:])
+    check("🔴 ~/.claude.json 을 UTF-8 로 읽는다 (CP949 로 읽어 한글 기록이 JSON 을 깨뜨렸다 · `.2` 실측)",
+          "Get-Content -Raw -Encoding UTF8" in sent[0], sent[0][:120])
     check("  ~/.claude.json 키는 슬래시 경로 (실측)",
           bundle.claude_local_key(f) == "C:/Users/USER/Documents/K", bundle.claude_local_key(f))
 

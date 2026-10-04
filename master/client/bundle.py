@@ -1277,7 +1277,11 @@ def claude_mcp_local_get(facts: HostFacts, name: str) -> dict:
     """
     key = claude_local_key(facts)
     if facts.windows:
-        ps = ("$j=Get-Content -Raw $env:USERPROFILE\\.claude.json | ConvertFrom-Json; "
+        # 🔴 [중요] `-Encoding UTF8` — Windows PowerShell 5.1 은 지정이 없으면 UTF-8 파일을 시스템
+        #    코드페이지(CP949)로 읽는다. 한글 대화 기록이 깨지며 따옴표까지 먹어 `ConvertFrom-Json` 이
+        #    죽고, 빈 출력이 「등록 안 됨」으로 판정됐다(실측 2026-10-04 `.2`: 60,855자 근처 파싱 실패 ·
+        #    `claude mcp get` 은 Connected · 파이썬으로 읽으면 항목이 있다).
+        ps = ("$j=Get-Content -Raw -Encoding UTF8 $env:USERPROFILE\\.claude.json | ConvertFrom-Json; "
               "$p=$j.projects.PSObject.Properties | Where-Object { $_.Name -eq '" + key + "' }; "
               "if ($p) { $p.Value.mcpServers.'" + name + "' | ConvertTo-Json -Compress }")
         cmd = 'powershell -NoProfile -Command "' + ps + '"'
