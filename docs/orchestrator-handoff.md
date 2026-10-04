@@ -4,7 +4,7 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **갱신 시각**: 2026-10-04 18:12 KST — Claude · #725 마감·후속 배포 · 색인기 막힘 해소(#732 완료)
+- **갱신 시각**: 2026-10-04 18:20 KST — Claude · #725 마감·후속 배포 · 색인기 막힘 해소(#732 완료) · 워커 동기화
 - **지휘 도구 / 세션**: **Claude** 마스터. Codex 는 이 문서를 갱신하기 전에 한도가 소진됐다
   (마지막 Codex 갱신은 00:47 헤더 + §0 R9·R19 후속). 17:02:34 `record_master_conductor('claude')`.
   마스터의 Codex 프로세스(pid 20028)는 17:02 에 살아 있었고 17:20 재조회 시 없었다(내가 종료하지 않았다).
@@ -24,10 +24,14 @@
   열 때는 **`worker_mode="claude"` 를 명시**한다. 새 등재는 전역값 `claude` 를 따른다.
 - **마운트**: `AXCluster` — `.57` 요청자, `.2`·`.33`·`.43` worker. `.43` 은 어젯밤 poweroff 기록이
   있으나 17:02 readiness 에 응답했다(켜져 있다).
-- **소스**: 마스터 main = Gitea main `fc9c4de` 위에 이 문서 커밋 · 작업 트리 clean.
+- **소스**: 마스터 main = Gitea main `66a7a1f` 위에 이 문서 커밋 · 작업 트리 clean.
   `ax-projects` 17:37:50 재기동(MainPID 79173) — 7화면 200 · 사이드 메뉴 확인. `fc9c4de`(verify/synth)는 색인기가
   실행마다 새로 읽으므로 재기동 불필요(라이브 통과로 확인).
-  AXCluster 워커 소스·배달 재동기화는 **하지 않았다** — 워커 3대는 `3d54637`(실측 `.2`·`.43`, `.33` 미확인).
+  **AXCluster 워커 3대 + `.43 ~/ax-cluster` 관리 클론 = `66a7a1f`** (18:1x, 사용자 「워커 모두 동기화」·「관리 클론도」):
+  main·clean 확인 → `fetch origin main` → `merge --ff-only` → `plan → deliver → check AXCluster` **3/3 OK**
+  (스킬·config·payload 10·태그·출처 HEAD 일치 · 배달 뒤 source clean 3/3). 다른 프로젝트 워커는 손대지 않았다.
+  [주의] `.2` 기존 경고 2건 지속 — `claude_mcp_local=ax-client` 「등록했다는데 ~/.claude.json 에 없다」(지휘자가
+  `claude` 라 파견 영향 가능 — 미확인) · 홈 중복 스킬 `~/.agents/skills/ax-work`(프로젝트 로컬 우선이라 무해).
 
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
 
@@ -48,7 +52,8 @@
 
 1. 사이드 메뉴 화면(특히 `/ontology` 그래프) 브라우저 확인 — 아직 아무도 안 봤다.
 2. `fix_flow prepare` fetch 미강제 — 수정/일감화 미결.
-3. 워커 3대 `master.client update`(ff-only + 재배달) 미실행 — 사용자 승인 필요.
+3. [완료 18:1x] 워커 3대·`.43` 관리 클론 `66a7a1f` 동기화 + 배달 3/3. 남은 것: `.2` `ax-client` Claude MCP 등록 경고가
+   `claude` 지휘 파견에 영향 있는지 확인.
 4. #726 · #727 · #728 미착수. `checks.json` 에 `test_usage_*`·`test_webui_side_nav`·`test_verify_filetypes` 미등록.
 5. `advance_work(confirm=True)` 트리 수정 소실 문제 미결 · 옛 로컬 브랜치 `task/20261003_2315_719…/base` 잔존 ·
    `.43 .ax/work` 잔재 2개 · 위키 [[아이디어수집]] 에 #729~#731 절 미기재(쓰기 경로 없음 · API 401).
