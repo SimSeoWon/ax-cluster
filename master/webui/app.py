@@ -31,7 +31,7 @@ from . import routes
 #    매번 하나를 빠뜨려 401/404 가 났다. **목록을 하나로 모으면 그 부류가 사라진다** —
 #    `viewer.Router` 와 `projects/__main__` 이 이 상수를 import 해서 쓴다.
 PREFIXES = ("/ontology", "/ontology-static", "/api/v1", "/cluster", "/onboarding",
-            "/commit-flow", "/reviews")
+            "/commit-flow", "/reviews", "/usage")
 # 정확히 이 경로만(접두어가 아니라 완전 일치) 이 앱이 가져간다
 EXACT = ("/", "", "/cluster.html")
 
@@ -156,11 +156,33 @@ class WebUI:
         # [DOC] 기존 라우트·선언 유지. PREFIXES에 /usage 추가(상위 라우터/공개 목록 공유).
         # [DOC] 조회 전용 GET. 여섯 쿼리만 전달하며 서버 파일 경로 쿼리는 받지 않는다.
         # [DOC] ValueError400·예외 고정503, 예외 경로/비밀값 노출 금지. 불필요한 lambda 금지.
-        # [PSEUDO] 위 두 경로와 안전한 오류 처리를 기존 분기 구조에 연결하고 회귀 검사한다.
         if scope.get("type") != "http":
             return await _send(send, 400, b'{"error":"http only"}')
         method = scope.get("method", "GET").upper()
         path = scope.get("path", "")
+
+        if path in ("/usage", "/usage/", "/api/v1/usage"):
+            if method != "GET":
+                return await _send(send, 405, _j({"error": "read-only method"}))
+            try:
+                query = parse_qs(
+                    (scope.get("query_string") or b"").decode("utf-8", "replace"),
+                    keep_blank_values=True)
+                filters = {key: query[key][0]
+                           for key in ("project", "period", "start", "end", "family", "source")
+                           if key in query}
+                if path == "/api/v1/usage":
+                    from ..work import usage_dashboard
+                    status, body, ctype = 200, _j(usage_dashboard.build_report(**filters)), JSON
+                else:
+                    from . import usage_page
+                    status, body = usage_page.page(filters)
+                    ctype = HTML
+            except ValueError:
+                return await _send(send, 400, _j({"error": "invalid usage filters"}))
+            except Exception:                               # noqa: BLE001
+                return await _send(send, 503, _j({"error": "usage unavailable"}))
+            return await _send(send, status, body, ctype)
 
         # [중요] **읽기 POST 와 쓰기 POST 를 가른다** (실측 2026-08-13).
         #    원전은 검색을 `POST /api/v1/search/*` 로 부른다 — HTTP 메서드만 보고 막으면
