@@ -4,7 +4,7 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **갱신 시각**: 2026-10-04 18:40 KST — Claude · #725 마감·후속 배포 · 색인기 막힘 해소(#732 완료) · 워커 동기화 · `.2` MCP 경고 수정 · `/ontology` 브라우저 확인
+- **갱신 시각**: 2026-10-04 18:50 KST — Claude · #725 마감·후속 배포 · 색인기 막힘 해소(#732 완료) · 워커 동기화 · `.2` MCP 경고 수정 · `/ontology` 브라우저 확인 · 통합 검사 등록
 - **지휘 도구 / 세션**: **Claude** 마스터. Codex 는 이 문서를 갱신하기 전에 한도가 소진됐다
   (마지막 Codex 갱신은 00:47 헤더 + §0 R9·R19 후속). 17:02:34 `record_master_conductor('claude')`.
   마스터의 Codex 프로세스(pid 20028)는 17:02 에 살아 있었고 17:20 재조회 시 없었다(내가 종료하지 않았다).
@@ -59,7 +59,11 @@
    760px 미만 배치(창 크기 변경 요청이 적용되지 않음 — 최대화 추정).
 2. `fix_flow prepare` fetch 미강제 — 수정/일감화 미결.
 3. [완료] 워커 3대·`.43` 관리 클론 `66a7a1f` 동기화 + 배달 3/3 · `.2` MCP 경고는 오탐 — `3e46078` 수정(다음 배달에서 소멸 확인).
-4. #726 · #727 · #728 미착수. `checks.json` 에 `test_usage_*`·`test_webui_side_nav`·`test_verify_filetypes` 미등록.
+4. #726 · #727 · #728 미착수. [완료] `d189f21` — `checks.json` 에 `test_usage_*` 4·`test_webui_side_nav`·`test_verify_filetypes`
+   등록, 통합 검사 **18/18**. 그 5개 unittest 모듈은 스크립트 단독 실행 시 `No module named 'master'` 로 죽었다 — 다른
+   테스트와 같은 `sys.path.insert(…parents[1])` 를 넣었다(`-m unittest` 23/23 유지).
+   [주의] **Antigravity(Gemini) 토큰은 지금도 기록되지 않는다**(#728 미착수) — usage_log 의 agy 일치 4건은 파일명이
+   `agy_probe` 인 로컬 합성 레코드였다(실제 agy 0건). 같은 시각 리뷰 큐는 18:00 이후 Antigravity 퇴고 3건을 냈다.
 5. `advance_work(confirm=True)` 트리 수정 소실 문제 미결 · 옛 로컬 브랜치 `task/20261003_2315_719…/base` 잔존 ·
    `.43 .ax/work` 잔재 2개 · 위키 [[아이디어수집]] 에 #729~#731 절 미기재(쓰기 경로 없음 · API 401).
 
