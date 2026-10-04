@@ -89,8 +89,13 @@
   프로젝트 로컬 정본이 우선이다. 초기화·배달 뒤 이 둘이 없으면 정상 상태가 아니다.
 - 마스터의 공용 호출 창구는 `ax-projects` MCP 다. Codex 설정은 `~/.codex/config.toml`,
   Claude 설정은 `~/.claude.json` 에 있다. 설정 추가만으로 현재 세션에 도구가 생겼다고 판단하지 않는다.
-- 워커 지휘자 선택은 `ax-mode` 스킬 → `get_worker_mode_tool` / `set_worker_mode_tool` 이다.
+- 워커 지휘자 선택은 [`ax-mode`](master/skills/ax-mode/SKILL.md) 스킬 →
+  `get_worker_mode_tool` / `set_worker_mode_tool` 이다. 변경은 준비 검사를 수행하는
+  `conductor.set_worker()`를 거치며, MCP가 없을 때도 스킬의 같은 정본 호출을 따른다.
   마스터 대화 세션의 교대와 워커 모드 선택은 별개다. 선택 가능한 값은 `lane`·`claude`·`codex`.
+  전역 모드는 새 work 등재의 기본값이며 기존 `work.worker_mode` 스탬프가 우선한다.
+  전역 변경은 진행 조각·후속 라운드에 소급되지 않는다. 현재 모드·출처는 도구로 재조회하며
+  최근 전환 근거는 [`인수인계서`](docs/orchestrator-handoff.md)에서 확인한다.
 - 배달은 커밋된 깨끗한 트리에서 한다. 문서만 미커밋이어도 `delivered_by.dirty=true` 로 기록된다.
 - **AX 인프라 일감은 레드마인 `ax-cluster`(id 3)에 둔다.** 게임·도구 일감은 각 프로젝트의
   `redmine.project`를 따른다. 리뷰 상태는 `<twin>/fixes/index.json`이 정본이며, 오래된 골조

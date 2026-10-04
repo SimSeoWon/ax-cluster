@@ -5,11 +5,13 @@
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
 - **현재 인수**: Codex · 마스터 담당 기록 2026-10-04 20:43:36 KST.
-  main·Gitea main `d061598`. 스킬 검증·등록·push와 ax-mode Codex 재호출 완료.
+  게시 직전 기준: 로컬 main `f215837` · Gitea 추적 `origin/main=d061598` (로컬 1커밋 앞섬).
+  `d061598`의 스킬 검증·등록·push와 ax-mode Codex 재호출 완료.
   워커 선택 `codex` / `source=state`, 20:52:56 저장, AXCluster 3대 readiness 3/3.
-  #385 완료 100% 재조회 확인. 사용자 문서 최신화 요청으로 문서 편집 중·미커밋.
-  후속 「커밋하고 배포해」 승인으로 문서 5파일 커밋·Gitea push,
-  AXCluster 워커 소스 ff-only 동기화와 정본 `master.client update` 배달·검사를 진행한다.
+  #385 완료 100% 재조회 확인. 문서 5파일은 `f215837`로 로컬 커밋됐으나 push·배포는 미실행.
+  사용자 「문서 최신화 다시 진행해」로 README·AGENTS·CLAUDE·인수인계서 7파일 수정·검증 완료.
+  후속 「올려」로 문서 커밋·Gitea push 승인. 기존 `f215837`과 이번 문서 커밋을 함께 올린다.
+  게시 결과는 실제 HEAD·origin/main으로 대조한다. 워커 배달·서비스 배포는 이번 범위에 없다.
   최신 상태는 §0 첫 절이다. 신규 파견은 실행하지 않는다.
 
 아래 메타데이터는 이전 Claude 인계 시점의 기록이며 현재 상태는 §0 첫 절을 따른다.
@@ -55,11 +57,24 @@
 - 문서 최신화 후 경로 재발 방지 절차를 홈/저장소 AGENTS 정본에 추가:
   확인된 작업 위치에서 `rg --files -g 패턴` 목록 조회 → 별도 호출에서 반환된 실제 경로만 읽기.
   미확인 디렉터리를 목록 조회 인자로 넣지 않으며, 같은 절차를 서브 에이전트 지시에 명시한다.
-  사용자 커밋·배포 승인 대상은 AGENTS.md, machines/sim-desktop-agents.md,
-  README.md, master/README.md, 이 인수인계서의 5파일이다. 홈 AGENTS 심볼릭 링크를 보존한다.
-  인계서에 남은 `/tmp/ax-axcluster-worker-deploy.py`는 과거 임시 산출물이고 현재 없다.
-  임시 파일 부재를 정본 기능 부재나 필수 도구 장애로 판단하지 않는다.
-  배포는 docs/14-onboarding-runbook.md §3과 distribute 스킬의 기존 절차를 따른다.
+  AGENTS.md, machines/sim-desktop-agents.md, README.md, master/README.md,
+  이 인수인계서의 5파일을 `f215837`로 로컬 커밋했다. push·배포는 중단된 상태다.
+  홈 AGENTS/CLAUDE 심볼릭 링크를 보존한다. 인수인계는
+  `master/skills/ax-handoff/SKILL.md`의 절차로 이 파일 한 벌을 갱신한다.
+  기존 스킬 기능을 과거 임시 산출물에 의존하는 실행 절차로 바꾸지 않는다.
+  배달이 다시 요청되면 `master/skills/distribute/SKILL.md`와
+  `docs/14-onboarding-runbook.md` §3을 따른다. 소스 동기화와 배달은 별도 단계이며
+  등록 전체 배달·검사 명령은 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client update`다.
+- 이번 문서 재개: 앞서 승인한 실제 소스 대조·로컬 서브 에이전트 방식을 유지한다.
+  README·master/README·홈/저장소 AGENTS·CLAUDE 진입 문서와 이 파일만 대상으로 한다.
+  7파일 최신화 완료·미커밋. 인수인계/모드 선택의 정본 스킬 연결, 새 work 기본값과
+  기존 스탬프 유지, 로컬/원격 커밋 차이와 미배포 상태를 바로잡았다.
+  서브 에이전트는 진입 문서 4파일을 담당했고 종료했다. 지휘자가 실제 diff를 재검토했다.
+  검증: `git diff --check` rc0, 지휘자 확인 문서 링크 7/7·에이전트 확인 관련 링크 12/12,
+  홈 AGENTS/CLAUDE 심볼릭 링크 보존 확인. 문서 변경이라 코드 검사는 추가 실행하지 않았다.
+  상태 조회 `conductor.snapshot()`에서 master=codex, worker=codex/source=state,
+  마지막 저장 20:52:56을 재확인했다. readiness 3/3은 앞선 전환 당시 결과이며
+  이번 문서 작업에서 새 원격 실행·readiness·서비스 검사·Redmine 변경은 하지 않았다.
 - 사용자 보충으로 #733 후속을 인수했다. 실제 `HEAD=origin/main=d020132`, 편집 전 clean 확인.
   `master/test_usage_cli_paths.py`의 checks.json 등록·출력 패턴 확인. **통합 19/19(신규 40건),
   Redmine #733 노트·열림 및 #734 신규 등록은 사용자 인계 내용이며 이번 세션에서 재조회하지 않았다.**
@@ -86,8 +101,8 @@
   Codex 홈 등록 첫 시도는 sandbox read-only로 실패해 승인된 좁은 등록 스크립트로 완료했다.
   독립 검토: 인수인계만 확인할 때 쓰기 없음·Codex 선택 시 준비 검사·실제 호출 이름 일치 확인.
   추가 조회에 없는 경로를 넣어 rc2가 된 에이전트 조회 실수가 있어 그 추가 조사는 중단했다.
-  기존 machines/sim-desktop.md의 「다음 조각부터」 설명은 옛 설명으로 남아 있으며 이번에
-  바꾸지 않았다. 새 스킬은 work 스탬프 계약을 명시한다. 전체 통합 검사는 이번에 재실행하지 않았다.
+  새 스킬은 work 스탬프 계약을 명시한다. machines/sim-desktop.md의 옛 「다음 조각부터」
+  설명 두 곳도 이번 문서 최신화에서 실제 계약에 맞게 고쳤다. 전체 통합 검사는 이번에 재실행하지 않았다.
   드라이런 시점에는 커밋·푸시 승인이 없었다. 후속 사용자 요청으로 이 7파일의 커밋·Gitea push와
   ax-mode Codex 설정 재호출을 승인받았다. 서비스 재기동·워커 재배달·신규 파견은 요청하지 않았다.
 - 사용자 「드라이런 먼저」 요청 후 기존 정본 검사만 격리 실행:

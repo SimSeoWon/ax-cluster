@@ -32,6 +32,10 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   세션 시작에 **[`ax-handoff`](master/skills/ax-handoff/SKILL.md) 스킬**을 읽고 실행한다.
   인수인계·공용 규칙과 실제 상태를 대조하고, 마스터 담당과 워커 지휘자 모드를 각각 확인한다.
   모드 변경은 사용자 선택에 따른다. 마스터의 세션 시작 훅은 없으므로 이 지침이 진입점이다.
+  워커 조회·전환은 [`ax-mode`](master/skills/ax-mode/SKILL.md)의 기존 호출을 따른다.
+  변경은 준비 검사를 거치는 `conductor.set_worker()`이며 전역값은 새 work 등재의 기본값이다.
+  기존 `work.worker_mode` 스탬프는 진행 조각·후속 라운드에도 유지된다. 현재 모드·출처는
+  도구로 재조회하고 최근 전환 근거는 [`인수인계서`](docs/orchestrator-handoff.md)를 확인한다.
 
       AX-ENTRY-MARK: repo
 

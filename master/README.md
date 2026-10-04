@@ -16,6 +16,8 @@ MCP가 없으면 같은 정본 `work.conductor.snapshot()`·`set_worker()`를 �
 건너뛰는 `mode.set_mode()` 직접 호출은 운영 전환에 쓰지 않는다. 전역 모드는 새 work 등재의
 기본값이고 기존 work와 후속 라운드는 저장된 `worker_mode`를 유지한다.
 현재 담당·모드·검증·관련 일감 상태는 [인수인계서](../docs/orchestrator-handoff.md)에서 확인한다.
+인수인계서 갱신도 `ax-handoff`의 기존 절차를 따른다. 인프라 조사·위임·배달은
+[`distribute`](skills/distribute/SKILL.md)를 사용하며, 호출 방법이 불명확하면 먼저 사용자에게 묻는다.
 
 ## 지금 있는 것
 

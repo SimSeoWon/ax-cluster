@@ -34,6 +34,10 @@ does not start a game-source task; it serves one.**
 cross-check actual state, and inspect master ownership and worker conductor mode separately.
 Change worker mode only when the user chooses it. The master has no session-start hook;
 this instruction is the entry point.
+Use [`ax-mode`](../master/skills/ax-mode/SKILL.md) for worker queries and changes, including its
+canonical fallback when MCP is unavailable. Changes go through `conductor.set_worker()` readiness
+checks. Query the current mode and source rather than treating an old state record as live;
+recent transition evidence lives in the [handoff](../docs/orchestrator-handoff.md).
 
 ## Where the project stands — read this before planning
 
@@ -116,7 +120,9 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
              `lane` = 마스터가 텍스트만 만들어 워커에 써 넣는다(지금까지의 동작) ·
              `claude`/`codex` = 워커에서 그 에이전트가 돌며 체크아웃을 읽고 고친다
              표면은 `ax-mode` 스킬 · `get/set_worker_mode` · `.33` 의 요청자 MCP
-             [주의] **다음 조각부터** 적용된다 — 이미 SSH 가 나간 조각엔 소급되지 않는다
+             [주의] **전역 모드는 새 work 등재의 기본값**이다. 기존 `work.worker_mode`
+                    스탬프가 우선하며 진행 조각·후속 라운드에 전역 변경을 소급하지 않는다.
+                    스탬프 없는 옛 work은 전역을 읽을 수 있으므로 구분한다.
              [주의] **기본값 상수는 아직 사람이 안 정했다**(`_UNDECIDED_DEFAULT`, 값 `lane`).
              🔴 [중요] **워커 지휘자 모드는 `codex` 다** (2026-10-04 사용자 승인 뒤 전환·재조회).
                     `ax-projects` 재기동 뒤 세 워커 readiness를 확인했다. 이전 전환의 시각은
@@ -284,8 +290,10 @@ defeat the 120s guard). [중요] **`ax-status.timer` refreshes it every 5 min**;
 auth-less half. `/cluster` now opens with a **지휘 상태** card. 🔴 [중요] **It shows two different
 things and they must not be conflated**: **마스터 담당** (`claude`/`codex`) is *the last recorded*
 conductor — **not a liveness check, not a lock, and it neither starts nor stops a session**;
-**워커 실행 모드** (`lane`/`claude`/`codex`) is the global setting that applies **from the next
-piece onward**. [주의] Never render an exception string on this page — `str(OSError)` carries an
+**워커 실행 모드** (`lane`/`claude`/`codex`) is the global default **for newly registered works**.
+Existing `work.worker_mode` stamps take precedence and remain across later rounds; global
+changes do not rewrite them or running pieces. Legacy unstamped works may still read the global
+mode. [주의] Never render an exception string on this page — `str(OSError)` carries an
 absolute path, which is exactly what `api_history` withholds (that defect shipped and was caught by
 drawing the page for real, with 8 unit tests passing).
 

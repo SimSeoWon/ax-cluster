@@ -35,6 +35,8 @@
 > 사용자 선택 후 준비 검사를 통과해야 저장한다. 전역 선택은 **새 work 등재의 기본값**이며,
 > 기존 work의 `worker_mode` 스탬프와 후속 라운드는 소급 변경하지 않는다.
 > 두 마스터 스킬은 Claude·Codex 홈에서 같은 저장소 정본을 가리킨다(`d061598`).
+> 세션 시작 지침은 홈과 저장소의 AGENTS·CLAUDE에 연결돼 있다. 홈의 두 파일은
+> `machines/sim-desktop-agents.md`·`machines/sim-desktop.md`를 가리키는 심볼릭 링크로 유지한다.
 > Windows readiness는 SSH Session 0의 샌드박스 실행 대신 `/IT /RL LIMITED` 예약 런처의
 > 등록 계약을 검사한다(`00f8532`). 등록 통과 뒤에도 로그인·인증과 실제 읽기·apply_patch·결과
 > 회수를 별도로 확인한다. 실증·배포 기록: [리포트 89](reports/89-codex-worker-readiness-and-write-probes.md).
