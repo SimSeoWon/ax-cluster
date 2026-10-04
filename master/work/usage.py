@@ -56,6 +56,7 @@ class Usage:
     cost_usd: float | None = None
     note: str = ""                      # 왜 못 읽었나
     reasoning_tokens: int | None = None  # agy `thinking_tokens` (출력의 부분집합으로 보인다)
+    cache_create: int | None = None     # claude `cache_creation_input_tokens` (`#733`)
 
     @property
     def known(self) -> bool:
@@ -112,20 +113,52 @@ def call_claude(prompt: str, *, model: str = "", timeout: int = TIMEOUT) -> Call
     out, why = _run(cmd + [prompt], timeout=timeout)
     if out is None:
         return Call(error=why)
-    u = Usage(lane="claude")
-    try:
-        d = json.loads(out)
-        text = d.get("result") or ""
-        raw = d.get("usage") or {}
-        u.input_tokens = raw.get("input_tokens")
-        u.output_tokens = raw.get("output_tokens")
-        u.cache_read = raw.get("cache_read_input_tokens")
-        u.cost_usd = d.get("total_cost_usd")
-        # [주의] claude 는 합계를 안 준다 — **더해서 만들지 않는다**(캐시 읽기를 어떻게 셀지는
-        #    과금 정책이라 우리가 정할 값이 아니다). 필요한 쪽이 항목으로 계산한다.
-    except ValueError as e:                                      # noqa: BLE001
-        return Call(text=out, usage=Usage(lane="claude", note=f"JSON 파싱 실패: {e}"))
+    parsed = parse_claude_json(out)
+    if parsed is None:
+        return Call(text=out, usage=Usage(lane="claude", note="JSON 파싱 실패(claude 봉투 아님)"))
+    text, u, _is_error, _model = parsed
     return Call(text=text, usage=u)
+
+
+def parse_claude_json(stdout: str) -> tuple | None:
+    """`claude -p --output-format json` 봉투 → `(본문, Usage, is_error, model)`. 아니면 `None`.
+
+    [중요] **형식 지식은 이 모듈 한 곳이 갖는다** — 레인(`call_claude`)과 층2·게시판·리뷰 공용
+    진입(`layer2_verify.call_claude_why`)이 같은 파서를 쓴다(`#733`, agy 의 `parse_agy_json` 과 같은 결).
+    [주의] **`result` 키(또는 `type: result`)가 있는 dict 만 봉투로 본다** — 플래그가 안 먹어 모델 답
+    자체가 JSON 이면 그것을 봉투로 오인해 본문을 버리게 된다.
+    [주의] claude 는 합계를 안 준다 — **더해서 만들지 않는다**(캐시 읽기를 어떻게 셀지는 과금
+    정책이라 우리가 정할 값이 아니다). 필요한 쪽이 항목으로 계산한다.
+    """
+    try:
+        d = json.loads(stdout)
+    except ValueError:
+        return None
+    if not isinstance(d, dict) or not ("result" in d or d.get("type") == "result"):
+        return None
+    text = d.get("result")
+    text = text if isinstance(text, str) else ""
+    raw = d.get("usage") if isinstance(d.get("usage"), dict) else {}
+
+    def _int(key):
+        v = raw.get(key)
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+    cost = d.get("total_cost_usd")
+    u = Usage(lane="claude", input_tokens=_int("input_tokens"),
+              output_tokens=_int("output_tokens"), cache_read=_int("cache_read_input_tokens"),
+              cache_create=_int("cache_creation_input_tokens"),
+              cost_usd=(float(cost) if isinstance(cost, (int, float))
+                        and not isinstance(cost, bool) else None))
+    if not u.known:
+        u.note = "usage 키 없음"
+    # `modelUsage` 는 모델별 dict 다 — 보조 모델이 섞이면 출력이 가장 많은 쪽을 쓴다
+    model = ""
+    mu = d.get("modelUsage")
+    if isinstance(mu, dict) and mu:
+        model = max(mu, key=lambda k: (mu[k] or {}).get("outputTokens") or 0
+                    if isinstance(mu[k], dict) else 0)
+    return text, u, bool(d.get("is_error")), str(model or "")
 
 
 def call_agy(prompt: str, *, timeout: int = TIMEOUT) -> Call:
@@ -235,12 +268,26 @@ def call_codex(prompt: str, *, timeout: int = TIMEOUT, reasoning: str = "") -> C
 
     [주의] 종전에는 텍스트의 `tokens used` 한 줄(합계)만 읽었다 — 항목이 없어 agy/claude 와
     같은 축으로 비교할 수 없었다.
+
+    🔴 [중요] **여기서는 공용 진입의 기록을 끈다**(`#733`). 이 함수의 소비자는 레인(`lanes.run_one`)
+    이고, 그 `Call.usage` 는 파견이 `record(paths.usage_log, …)` 로 **직접** 남긴다(`infer.py`).
+    `call_codex_why` 가 감싼 구간에서 한 줄을 더 쓰면 같은 호출이 두 번 세진다.
     """
     from .. import layer2_verify as L2
-    text, events, why = L2.call_codex_why(
-        prompt, timeout=timeout, reasoning=(reasoning or L2.CODEX_REASONING))
+    with _suppressed():
+        text, events, why = L2.call_codex_why(
+            prompt, timeout=timeout, reasoning=(reasoning or L2.CODEX_REASONING))
     if text is None:
         return Call(error=why)
+    return Call(text=text, usage=usage_from_codex_events(events, text))
+
+
+def usage_from_codex_events(events: str, text: str = "") -> Usage:
+    """`codex exec --json` 이벤트 → `Usage` (`turn.completed` 의 마지막 usage).
+
+    [중요] 레인(`call_codex`)과 공용 진입(`layer2_verify.call_codex_why`)이 **같은 해석**을 쓴다
+    (`#733`). 이벤트가 없으면 본문의 `tokens used` 합계로 물러서고, 그것도 없으면 미상이다.
+    """
     u = Usage(lane="codex")
     last = None
     for line in (events or "").splitlines():
@@ -265,7 +312,7 @@ def call_codex(prompt: str, *, timeout: int = TIMEOUT, reasoning: str = "") -> C
             u.note = "이벤트가 없어 텍스트 합계를 읽었다(항목 미상)"
         else:
             u.note = "`turn.completed` 이벤트를 못 찾았다"
-    return Call(text=text, usage=u)
+    return u
 
 
 def call(lane: str, prompt: str, *, timeout: int = TIMEOUT) -> Call:
@@ -324,6 +371,9 @@ def meta_from_usage(u) -> dict:
     reasoning = getattr(u, "reasoning_tokens", None)
     if reasoning is not None:
         inner["reasoning_output_tokens"] = int(reasoning)
+    create = getattr(u, "cache_create", None)
+    if create is not None:
+        inner["cache_creation_input_tokens"] = int(create)
     if inner:
         meta["usage"] = inner
     cost = getattr(u, "cost_usd", None)
@@ -422,6 +472,16 @@ def sink(log_path, *, source: str, work_id: str = "", task_id: str = ""):
         _SINK.reset(tok)
 
 
+@_contextmanager
+def _suppressed():
+    """이 구간의 공용 진입 기록을 끈다 — **호출자가 따로 세는 경로**에서만 쓴다(`call_codex`)."""
+    tok = _SINK.set(None)
+    try:
+        yield
+    finally:
+        _SINK.reset(tok)
+
+
 def emit_broker(model: str, used: dict, *, seconds: float = 0.0, rc: int = 0) -> dict | None:
     """`call_broker` 가 부른다. 감싼 구간이 아니면 아무것도 안 한다(`None`).
 
@@ -445,7 +505,8 @@ def emit_broker(model: str, used: dict, *, seconds: float = 0.0, rc: int = 0) ->
 
 def emit_cli(lane: str, u=None, *, seconds: float = 0.0, rc: int = 0,
              model: str = "") -> dict | None:
-    """상용 CLI 공용 진입(`layer2_verify.call_agy_why`)이 부른다 (`#728`). `emit_broker` 와 같은
+    """상용 CLI 공용 진입(`layer2_verify.call_agy_why` · `#733` 부터 `call_claude_why` ·
+    `call_codex_why`)이 부른다 (`#728`). `emit_broker` 와 같은
     계약 — **감싼 구간이 아니면 아무것도 안 한다**(`None`).
 
     🔴 [중요] 실패한 호출도 한 줄 남긴다(rc≠0) — 토큰을 못 읽었으면 `measured=False` 다.

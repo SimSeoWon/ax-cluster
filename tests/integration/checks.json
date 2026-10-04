@@ -88,5 +88,10 @@
     "path": "master/test_verify_filetypes.py",
     "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
+  },
+  {
+    "path": "master/test_usage_cli_paths.py",
+    "count_pattern": "(?m)^OK test_usage_cli_paths: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
   }
 ]

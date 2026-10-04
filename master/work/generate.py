@@ -308,8 +308,13 @@ def dispatch(paths: ProjectPaths, task_id: str, *, instruction: str, context: st
     # [중요] **누가 썼는지 검증에 넘긴다** (`#379`) — 같은 계열이 자기 산출물을 통과시키지
     #    않게. 이 경로의 작성자는 로컬 모델이라 지금은 아무것도 빠지지 않지만, 그 보장이
     #    **우연이 아니라 구조**여야 한다(작성 레인은 2026-09-06 에 이미 한 번 바뀌었다).
-    try:
-        d.verdict = verify([(name, d.generated.code)], author_lane=model)
-    except TypeError:
-        d.verdict = verify([(name, d.generated.code)])    # 주입된 테스트 더블 호환
+    # 🔴 `#733` — 층2 의 상용 호출(agy·claude)을 그 트윈의 `usage_log.jsonl` 에 `layer2` 로 남긴다.
+    #    [주의] **검증만 감싼다** — 위의 생성(브로커)까지 감싸면 로컬 생성이 `layer2` 로 잘못 묶인다.
+    #    이 진입(`mcp_server.dispatch_tool`)에는 work_id 가 없다 — task_id 만 싣는다.
+    from . import usage as _usage                                # noqa: PLC0415
+    with _usage.sink(paths.usage_log, source="layer2", task_id=task_id):
+        try:
+            d.verdict = verify([(name, d.generated.code)], author_lane=model)
+        except TypeError:
+            d.verdict = verify([(name, d.generated.code)])    # 주입된 테스트 더블 호환
     return d

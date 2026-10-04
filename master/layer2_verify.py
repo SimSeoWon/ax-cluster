@@ -117,19 +117,30 @@ RC_NO_EXIT = -1
 
 def _run_rc(cmd: list[str], *, timeout: int) -> tuple:
     """`_run` 과 같되 **종료 코드까지** `(출력, 사유, rc)` 로 돌려준다 — 사용량 기록용(`#728`)."""
+    out, why, rc, _raw = _run_raw(cmd, timeout=timeout)
+    return out, why, rc
+
+
+def _run_raw(cmd: list[str], *, timeout: int) -> tuple:
+    """`_run_rc` + **실패했을 때의 stdout** — `(출력, 사유, rc, stdout)` (`#733`).
+
+    [중요] `claude --output-format json` 은 실패해도 stdout 에 봉투를 싣는다 — 실패한 호출의
+    토큰·사유를 거기서 읽어야 해서 버리지 않고 함께 돌려준다.
+    """
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", stdin=subprocess.DEVNULL, timeout=timeout)
     except subprocess.TimeoutExpired:
-        return None, f"타임아웃 {timeout}초", RC_NO_EXIT
+        return None, f"타임아웃 {timeout}초", RC_NO_EXIT, ""
     except OSError as e:
-        return None, f"실행 실패 — {type(e).__name__}: {e}", RC_NO_EXIT
+        return None, f"실행 실패 — {type(e).__name__}: {e}", RC_NO_EXIT, ""
     if r.returncode != 0:
         err = (r.stderr or r.stdout or "").strip().replace("\n", " ")
-        return None, f"rc={r.returncode}: {err[:200] or '(출력 없음)'}", r.returncode
+        return (None, f"rc={r.returncode}: {err[:200] or '(출력 없음)'}", r.returncode,
+                r.stdout or "")
     if not (r.stdout and r.stdout.strip()):
-        return None, "빈 출력 (rc=0)", 0
-    return r.stdout, "", 0
+        return None, "빈 출력 (rc=0)", 0, r.stdout or ""
+    return r.stdout, "", 0, r.stdout
 
 
 def call_agy(prompt: str, *, timeout: int = TIMEOUT_SEC) -> str | None:
@@ -237,7 +248,33 @@ def call_codex(prompt: str, *, timeout: int = TIMEOUT_SEC,
 
 def call_codex_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
                    reasoning: str = CODEX_REASONING) -> tuple:
-    """`(본문, 이벤트 JSONL, 사유)`.
+    """`(본문, 이벤트 JSONL, 사유)`. 실행은 `_codex_run` 이 하고 여기서는 **사용량을 잰다**.
+
+    🔴 [중요] `#733` — `usage.sink(...)` 로 감싼 구간이면 호출 하나당 한 줄을 남긴다(agy 와 같은
+    계약). 토큰은 이벤트의 `turn.completed` 에서 읽는다(`usage.usage_from_codex_events`).
+    [주의] codex 가 **실제로 돌지 않은 실패**(실행파일·ssh 부재 · 프롬프트 scp 실패)는 기록하지
+    않는다 — 호출이 일어나지 않았다. 타임아웃·rc≠0 은 토큰을 태웠을 수 있어 `measured=False` 로 남긴다.
+    [주의] 레인(`usage.call_codex`)은 이 기록을 끄고 부른다 — 그쪽은 파견이 따로 센다.
+    """
+    t0 = time.monotonic()
+    text, events, why, rc, ran = _codex_run(prompt, timeout=timeout, reasoning=reasoning)
+    if ran:
+        # `ran` 이 문자열이면 실패한 실행의 이벤트다 — 호출자에게는 종전처럼 `""` 를 돌려준다
+        seen = ran if isinstance(ran, str) else (events or "")
+        U = _usage_mod()
+        u = None
+        if U is not None:
+            try:
+                u = U.usage_from_codex_events(seen, text or "")
+            except Exception as e:                            # noqa: BLE001
+                u = U.Usage(lane="codex", note=f"이벤트 해석 실패: {type(e).__name__}")
+        _emit_usage("codex", u, seconds=time.monotonic() - t0, rc=rc)
+    return text, events, why
+
+
+def _codex_run(prompt: str, *, timeout: int, reasoning: str) -> tuple:
+    """`(본문, 이벤트 JSONL, 사유, rc, 실행됐나)`. 「실행됐나」는 bool, 또는 rc≠0 으로 끝난 로컬
+    실행이면 **그 stdout(이벤트)** 이다 — 사용량은 읽되 반환 계약(실패 시 이벤트 `""`)은 지킨다.
 
     🔴 [중요] **로컬이 먼저다** (2026-09-05 — 마스터에 codex 를 깔았다). 종전에는 `.33` 을 SSH 로
     거쳤는데, 그러면 **사용자 PC 가 켜져 있어야 파이프라인이 돈다.** 마스터에 있으면 그 의존도,
@@ -269,26 +306,28 @@ def call_codex_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
                     capture_output=True, text=True, timeout=timeout, cwd=td)
             except subprocess.TimeoutExpired:
                 _log(f"[codex] 시간 초과 ({timeout}초)")
-                return None, "", "timeout"
+                return None, "", "timeout", RC_NO_EXIT, True
             except OSError as e:                             # noqa: BLE001
+                # 실행 자체가 안 됐다 — 토큰을 태운 호출이 아니다
                 _log(f"[codex] 호출 실패 — {type(e).__name__}: {e}")
-                return None, "", f"{type(e).__name__}: {e}"
+                return None, "", f"{type(e).__name__}: {e}", RC_NO_EXIT, False
             if r.returncode != 0:
                 why = ((r.stderr or "") + (r.stdout or ""))[-200:]
                 _log(f"[codex] 실패 — {why}")
-                return None, "", why
+                # [주의] 실패해도 이벤트(stdout)는 사용량 해석에 넘긴다 — 반환 계약(`""`)은 종전 그대로
+                return None, "", why, r.returncode, r.stdout or True
             # [주의] `-o` 파일이 비면 **성공으로 접지 않는다** — 모델이 답을 안 낸 것이다
             text = last.read_text(encoding="utf-8", errors="replace") if last.is_file() else ""
             if not text.strip():
                 _log("[codex] 최종 메시지가 비었다")
-                return None, r.stdout or "", "최종 메시지 없음"
-            return text.strip(), r.stdout or "", ""
+                return None, r.stdout or "", "최종 메시지 없음", 0, True
+            return text.strip(), r.stdout or "", "", 0, True
 
     # ── 폴백: `.33` 원격 (마스터에 codex 가 없을 때) ────────────────────────────────
     ssh, scp = shutil.which("ssh"), shutil.which("scp")
     if not (ssh and scp):
         _log("[codex] 로컬에도 없고 ssh/scp 도 없다")
-        return None, "", MISSING_EXE
+        return None, "", MISSING_EXE, RC_NO_EXIT, False
     _log("[codex] 로컬에 없다 — `.33` 원격으로 간다")
     try:
         with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8",
@@ -301,7 +340,7 @@ def call_codex_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
         if r.returncode != 0:
             why = f"프롬프트 전달 실패: {(r.stderr or '')[:160]}"
             _log(f"[codex] {why}")
-            return None, "", why
+            return None, "", why, r.returncode, False
         eff_s = f' -c model_reasoning_effort="{reasoning}"' if reasoning else ""
         cmd = ('cmd /c "cd %TEMP% && type ax_codex_lane.txt | '
                f'codex exec --skip-git-repo-check{eff_s} --json -o ax_codex_last.txt '
@@ -311,20 +350,21 @@ def call_codex_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
         r = subprocess.run([ssh, "-o", "ConnectTimeout=15", CODEX_HOST, cmd],
                            capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
+        # [주의] scp 단계의 타임아웃도 여기로 온다 — 원격 codex 가 돌았는지 가를 수 없어 남긴다
         _log(f"[codex] 시간 초과 ({timeout}초)")
-        return None, "", "timeout"
+        return None, "", "timeout", RC_NO_EXIT, True
     except OSError as e:                                     # noqa: BLE001
         _log(f"[codex] 호출 실패 — {type(e).__name__}: {e}")
-        return None, "", f"{type(e).__name__}: {e}"
+        return None, "", f"{type(e).__name__}: {e}", RC_NO_EXIT, False
     if r.returncode != 0:
         why = ((r.stdout or "") + (r.stderr or ""))[-200:]
         _log(f"[codex] 실패 — {why}")
-        return None, "", why
+        return None, "", why, r.returncode, True
     parts = (r.stdout or "").split(CODEX_SPLIT)
     if len(parts) < 3:
         _log("[codex] 출력 형식이 예상과 다르다 — 구분자를 못 찾았다")
-        return None, "", "출력 구분자 없음(형식 변화 의심)"
-    return parts[1].strip(), parts[2], ""
+        return None, "", "출력 구분자 없음(형식 변화 의심)", 0, True
+    return parts[1].strip(), parts[2], "", 0, True
 
 
 def call_claude(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "") -> str | None:
@@ -338,16 +378,48 @@ def call_claude(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "") -> 
 
 
 def call_claude_why(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "") -> tuple:
-    """`(출력, 사유)`."""
+    """`(출력, 사유)`.
+
+    🔴 [중요] **사용량을 여기서 잰다** (`#733`, agy 의 `#728` 과 같은 계약). `--output-format json`
+    으로 불러 봉투의 `result` 만 꺼내 **종전과 같은 평문**을 돌려주고, `usage.sink(...)` 로 감싼
+    구간이면 호출 하나당 한 줄을 남긴다. 레인(`usage.call_claude`)이 이미 같은 플래그로 돌고 있어
+    형식은 실측된 것이다 — 파서도 그것(`usage.parse_claude_json`)을 쓴다.
+    [주의] 봉투가 아니면(플래그 미지원·가짜 실행파일) **출력 전체를 종전처럼 본문으로** 쓰고
+    `measured=False` 로 남긴다. [주의] 실패(rc≠0)의 사유는 봉투의 `result`(한도 문구 등)를
+    읽어 **평문 시절과 같은 글**로 싣는다 — 사유에 JSON 이 섞이면 사람이 못 읽는다.
+    [주의] 본문 끝 개행은 평문 출력과 다를 수 있다(봉투의 `result` 는 개행 없이 온다).
+    """
     exe = shutil.which("claude")
     if not exe:
         why = MISSING_EXE
         _log(f"[claude] {missing_exe_hint('claude')}")
         return None, why
-    cmd = [exe, "-p"]
+    cmd = [exe, "-p", "--output-format", "json"]
     if (model or "").strip():
         cmd += ["--model", model.strip()]
-    out, why = _run(cmd + [prompt], timeout=timeout)
+    t0 = time.monotonic()
+    out, why, rc, raw = _run_raw(cmd + [prompt], timeout=timeout)
+    U = _usage_mod()
+    parsed = None
+    if U is not None and raw:
+        try:
+            parsed = U.parse_claude_json(raw)
+        except Exception:                                     # noqa: BLE001
+            parsed = None
+    u, got_model = None, ""
+    if parsed is not None:
+        text, u, _is_error, got_model = parsed
+        if out is not None:
+            if text.strip():
+                out = text
+            else:
+                out, why = None, "빈 출력 (rc=0)"
+        elif rc not in (0, RC_NO_EXIT) and text.strip():
+            why = f"rc={rc}: {text.strip().replace(chr(10), ' ')[:200]}"
+    elif U is not None and rc != RC_NO_EXIT:
+        u = U.Usage(lane="claude", note="JSON 봉투 아님")
+    _emit_usage("claude", u, seconds=time.monotonic() - t0, rc=rc,
+                model=got_model or (model or "").strip())
     if out is None:
         _log(f"[claude] 실패 — {why}")
     return out, why

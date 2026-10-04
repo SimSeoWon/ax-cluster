@@ -224,18 +224,31 @@ def clear_chat(paths, name: str) -> dict:
 
 # ── LLM (우리 레인) ─────────────────────────────────────────────────────────────
 
-def call_llm(prompt: str, *, timeout: int = 300) -> str | None:
+def call_llm(prompt: str, *, timeout: int = 300, paths=None, task_id: str = "") -> str | None:
     """[중요] 우리 레인을 쓴다 — `agy` → `claude` 폴백(`layer2_verify` 의 호출부 재사용).
 
     원전 `_call_llm_for_chat` 등가. 실패는 `None` — 호출자가 사유를 화면에 보인다.
+
+    🔴 `#733` — `paths` 를 주면 그 트윈의 `usage_log.jsonl` 에 `board` 로 남긴다(체인이 넘어가면
+    시도한 백엔드마다 한 줄). 게시판의 프로젝트는 웹이 요청마다 고른 `paths`(마운트된 트윈)다 —
+    여기서 따로 고르지 않는다. [주의] `paths` 가 없으면 **기록하지 않는다** — 어느 트윈에 적을지
+    모르는 채로 아무 데나 적으면 다른 프로젝트의 사용량이 된다.
     """
     # [중요] **생성 체인을 쓴다** — 선언은 `layer2_verify.WHY_BACKENDS` 한 곳이다
     #    (2026-09-06: codex → agy → claude). 여기 이름을 다시 적으면 선언이 두 벌이 된다.
+    from contextlib import nullcontext
     from .. import layer2_verify as L2
-    for _name, fn in L2.WHY_BACKENDS:
-        out, _why = fn(prompt, timeout=timeout)
-        if out and out.strip():
-            return out
+    log = getattr(paths, "usage_log", None) if paths is not None else None
+    if log is not None:
+        from ..work import usage as usage_mod                    # noqa: PLC0415
+        scope = usage_mod.sink(log, source="board", task_id=task_id)
+    else:
+        scope = nullcontext()
+    with scope:
+        for _name, fn in L2.WHY_BACKENDS:
+            out, _why = fn(prompt, timeout=timeout)
+            if out and out.strip():
+                return out
     return None
 
 
@@ -279,7 +292,7 @@ def create_domain(paths, topic: str) -> dict:
 
     display = topic[:20]
     summary = ""
-    raw = call_llm(prompt)
+    raw = call_llm(prompt, paths=paths, task_id="create")
     if raw:
         m = re.search(r"\{.*?\}", raw, re.DOTALL)
         if m:
@@ -375,7 +388,7 @@ def chat(paths, name: str, message: str) -> dict:
         prompt += f"=== 지금까지의 대화 ===\n{convo}\n\n"
     prompt += f"=== 사용자 ===\n{message}\n"
 
-    raw = call_llm(prompt)
+    raw = call_llm(prompt, paths=paths, task_id=name)
     if not raw:
         raise BoardError("LLM 을 부르지 못했다 (agy·claude 둘 다 실패) — 마스터에서 CLI 확인 필요")
     ts = datetime.now().isoformat()

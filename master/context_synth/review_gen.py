@@ -307,6 +307,25 @@ class ReviewChatError(RuntimeError):
     pass
 
 
+def _recorded_chat(paths, commit: str):
+    """기본 체인(`commercial_chat`)을 그 트윈의 `usage_log.jsonl` 에 `review` 로 남기며 부른다 (`#733`).
+
+    [중요] `commercial_chat` 자체에는 트윈도 커밋도 없다 — 그래서 커밋이 보이는 이 자리에서 감싼다.
+    task_id 는 리뷰 큐와 같은 `commit[:12]` 다. [주의] `chat` 을 주입한 경로(리뷰 큐의 `agy_only`)는
+    여기를 타지 않는다 — 그쪽은 `review_runner` 가 같은 모양으로 이미 감싼다.
+    [주의] 계획·레시피(`plan_generator`·`recipes_synthesizer`)의 직접 호출은 트윈을 모르므로 남지 않는다.
+    """
+    log = getattr(paths, "usage_log", None)
+    if log is None:
+        return commercial_chat
+
+    def _ask(prompt: str) -> str:
+        from ..work import usage as usage_mod                    # noqa: PLC0415
+        with usage_mod.sink(log, source="review", task_id=str(commit)[:12]):
+            return commercial_chat(prompt)
+    return _ask
+
+
 def review_commit(paths, commit: str, files: list, *,
                   exclude_authors: tuple = DEFAULT_EXCLUDE_AUTHORS,
                   chat=None, logf=None, grounding: str = "",
@@ -348,7 +367,7 @@ def review_commit(paths, commit: str, files: list, *,
     prompt = build_prompt(diff=diff, files=src_files, commit=commit,
                           domains=domain_hint(paths, src_files), grounding=grounding,
                           kind=review_kind(paths))
-    _ask = chat if chat is not None else commercial_chat
+    _ask = chat if chat is not None else _recorded_chat(paths, commit)
 
     try:
         body = _ask(prompt)
