@@ -150,6 +150,13 @@ class WebUI:
         return None
 
     async def __call__(self, scope, receive, send):
+        # [DOC] LLM 사용량 조각: 이 파일과 master/test_usage_routes.py만 변경한다.
+        # [DOC] /usage(/) -> usage_page.page(q:scalar dict), /api/v1/usage ->
+        # [DOC] usage_dashboard.build_report(project,period,start,end,family,source 키워드).
+        # [DOC] 기존 라우트·선언 유지. PREFIXES에 /usage 추가(상위 라우터/공개 목록 공유).
+        # [DOC] 조회 전용 GET. 여섯 쿼리만 전달하며 서버 파일 경로 쿼리는 받지 않는다.
+        # [DOC] ValueError400·예외 고정503, 예외 경로/비밀값 노출 금지. 불필요한 lambda 금지.
+        # [PSEUDO] 위 두 경로와 안전한 오류 처리를 기존 분기 구조에 연결하고 회귀 검사한다.
         if scope.get("type") != "http":
             return await _send(send, 400, b'{"error":"http only"}')
         method = scope.get("method", "GET").upper()
