@@ -67,13 +67,13 @@ class UsageDashboardTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def add_session(self, host, tool, records):
-        path = self.session_store / host / tool / "sample.json"
+    def add_session(self, host, tool, records, *, project=None, name="sample"):
+        path = self.session_store / host / tool / f"{name}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({
-            "host": host, "tool": tool, "session_id": "sample",
-            "origin": "sample.jsonl", "collected_at": "2026-10-15T00:00:00",
-            "records": records,
+            "host": host, "tool": tool, "session_id": name,
+            "origin": f"{name}.jsonl", "collected_at": "2026-10-15T00:00:00",
+            "project": project, "records": records,
         }), encoding="utf-8")
 
     def test_calendar_buckets_and_timezone(self):
@@ -233,6 +233,26 @@ class UsageDashboardTests(unittest.TestCase):
         self.assertEqual(restricted["totals"]["calls"], 0)
         self.assertEqual(restricted["issues"], [])
         self.assertTrue(restricted["warnings"])
+
+    def test_session_project_filter_uses_snapshot_project(self):
+        codex = {"ts": "2026-10-10T01:00:00Z", "model": "gpt-5-codex",
+                 "input": 10, "output": 5, "cache_read": 8, "reasoning": 2}
+        self.add_session("192.168.0.2", "codex", [codex], project="Alpha", name="a")
+        self.add_session("192.168.0.2", "codex", [codex], project="Beta", name="b")
+        self.add_session("local", "codex", [codex], name="unassigned")
+        self.add_call("Alpha", "2026-10-10 10:00:00", input_tokens=999)
+        every = self.report(source="session", start="2026-10-10", end="2026-10-10")
+        self.assertEqual(every["totals"]["calls"], 3)
+        self.assertEqual(every["totals"]["tokens"], 45)          # Codex 입력은 캐시 포함
+        alpha = self.report(source="session", project="Alpha",
+                            start="2026-10-10", end="2026-10-10")
+        self.assertEqual(alpha["totals"]["calls"], 1)
+        self.assertEqual(alpha["totals"]["tokens"], 15)
+        self.assertEqual(alpha["issues"], [])
+        self.assertEqual(alpha["models"][0]["family"], "codex")
+        dispatch = self.report(source="dispatch", project="Alpha",
+                               start="2026-10-10", end="2026-10-10")
+        self.assertEqual(dispatch["totals"]["tokens"], 1001)       # 두 소스는 합산하지 않는다
 
     def test_validation_and_malformed_records(self):
         invalid = (

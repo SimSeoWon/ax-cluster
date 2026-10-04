@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from master.webui import app, fixes_page, onboarding, usage_page
-from master.work import usage_dashboard
+from master.work import session_usage, usage_dashboard
 
 
 def _request(webui, path, query=b"", method="GET"):
@@ -34,6 +34,28 @@ def _request(webui, path, query=b"", method="GET"):
 
 
 class UsageRouteTests(unittest.TestCase):
+    def setUp(self):
+        # [중요] 화면 열기 수집 트리거는 실 SSH·실 저장소를 건드린다 — 모든 검사에서 막는다
+        patcher = patch.object(session_usage, "refresh_in_background", return_value="started")
+        self.refresh = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_open_triggers_background_refresh_without_blocking(self):
+        paths = Mock(side_effect=AssertionError("usage must not resolve mounted paths"))
+        webui = app.WebUI(paths)
+        with patch.object(usage_page, "page", return_value=(200, b"page")), \
+                patch.object(usage_dashboard, "build_report", return_value={}):
+            for path in ("/usage", "/usage/", "/api/v1/usage"):
+                self.assertEqual(_request(webui, path)[0], 200)
+            self.assertEqual(self.refresh.call_count, 3)
+            self.refresh.assert_called_with()
+            _request(webui, "/usage", method="POST")
+            self.assertEqual(self.refresh.call_count, 3)      # 405 는 트리거하지 않는다
+            self.refresh.side_effect = RuntimeError("/secret/path")
+            status, _, body = _request(webui, "/usage")
+            self.assertEqual((status, body), (200, b"page"))  # 트리거 실패가 화면을 막지 않는다
+        paths.assert_not_called()
+
     def test_page_and_api_get_routes(self):
         paths = Mock(side_effect=AssertionError("usage must not resolve mounted paths"))
         webui = app.WebUI(paths)

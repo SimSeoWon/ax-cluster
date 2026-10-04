@@ -164,6 +164,15 @@ class WebUI:
         if path in ("/usage", "/usage/", "/api/v1/usage"):
             if method != "GET":
                 return await _send(send, 405, _j({"error": "read-only method"}))
+            # [중요] **화면 열기 = 세션 기록 수집 트리거** (사용자 제안 2026-10-04). `/cluster` 의
+            #    「새로고침은 SSH 를 부르지 않는다」 규칙의 **명시적 예외**라 조여 둔다 — 배경 스레드 ·
+            #    한 번에 하나(잠금) · 최소 간격 5분. 응답은 SSH 를 기다리지 않고, 트리거의 어떤
+            #    실패도 화면을 막지 않는다(`session_usage.refresh_in_background` 는 예외를 올리지 않는다).
+            try:
+                from ..work import session_usage
+                session_usage.refresh_in_background()
+            except Exception:                               # noqa: BLE001 — 가져오기 실패도 화면은 연다
+                pass
             try:
                 query = parse_qs(
                     (scope.get("query_string") or b"").decode("utf-8", "replace"),

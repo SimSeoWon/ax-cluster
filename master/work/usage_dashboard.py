@@ -22,7 +22,8 @@ UI 조각 master/webui/usage_page.py, 라우트 조각 master/webui/app.py가 �
 - dispatch: 등록 프로젝트별 usage_log.jsonl, work_id로 큐 _request.md의 project,
   title, redmine_issue_id와 연결. 활성·보관 일감 모두 고려. 연결 실패는 unlinked_calls.
 - session: 기존 session_usage.DEFAULT_STORE 숫자 스냅샷만 읽는다. SSH/수집 실행 금지.
-  일감·프로젝트 귀속이 없으므로 issues=[]이며 project 필터가 있으면 자료 없음과 경고.
+  일감 귀속이 없으므로 issues=[]. 스냅샷의 project(세션 cwd 가 등록 작업장 체크아웃 아래일 때만,
+  2026-10-04 원본 복사와 함께)로 project 필터를 적용한다 — project 없는 스냅샷은 전체 보기에만 든다.
 - projects_root/queue_root/session_store는 서버·검사 주입 전용. 웹 쿼리로 경로를 받지 않는다.
   기본 Registry/AX_TASK_QUEUE_ROOT(또는 ~/ax-state)/DEFAULT_STORE를 사용한다.
 - 등록되지 않은 project, 잘못된 period/family/source는 ValueError. project=""는 전체.
@@ -290,9 +291,12 @@ def _read_sessions(root: Path, warnings: list[str], errors: dict):
             tool = data.get("tool") or ""
             if tool not in ("claude", "codex"):
                 raise ValueError("세션 도구")
+            owner = data.get("project") or ""
+            if not isinstance(owner, str):
+                raise ValueError("세션 프로젝트")
             for raw in data["records"]:
                 try:
-                    yield _normal_record(raw, session=True, tool=tool)
+                    yield owner, _normal_record(raw, session=True, tool=tool)
                 except (ValueError, TypeError) as exc:
                     _error("세션 레코드", exc)
                     errors["invalid_records"] += 1
@@ -326,9 +330,9 @@ def build_report(project: str = "", period: str = "daily", start: str = "",
     names = [project] if project else list(registry.names)
     warnings = [_ACCOUNTING, "일감 제목은 큐에 저장된 제목입니다."]
     if source == "session":
-        _warn(warnings, "세션 사용량에는 일감·프로젝트 귀속이 없습니다.")
+        _warn(warnings, "세션 사용량에는 일감 귀속이 없습니다. 프로젝트는 세션 작업 경로로만 정합니다.")
         if project:
-            _warn(warnings, "프로젝트 필터에는 세션 자료가 없습니다.")
+            _warn(warnings, "프로젝트 필터는 작업 경로가 등록 작업장에 속한 세션만 포함합니다.")
     totals = {**_empty_counts(), "input_tokens": 0, "output_tokens": 0,
               "cache_read": 0, "cache_create": 0, "reasoning_tokens": 0,
               "issues": 0, "unlinked_calls": 0, "invalid_records": 0, "read_errors": 0}
@@ -340,10 +344,10 @@ def build_report(project: str = "", period: str = "daily", start: str = "",
                           Path(os.environ.get("AX_TASK_QUEUE_ROOT") or Path.home() / "ax-state"), warnings, errors)
              if source == "dispatch" else {})
     records = (_read_dispatch(registry.root, names, warnings, errors) if source == "dispatch" else
-               (("", rec) for rec in _read_sessions(
-                   Path(session_store) if session_store is not None else DEFAULT_STORE, warnings, errors)))
+               _read_sessions(
+                   Path(session_store) if session_store is not None else DEFAULT_STORE, warnings, errors))
     for origin, rec in records:
-        if project and source == "session":
+        if project and source == "session" and origin != project:
             continue
         day = rec["at"].date()
         if day < first or day > last or (family and rec["family"] != family):
