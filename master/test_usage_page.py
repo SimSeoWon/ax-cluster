@@ -1,6 +1,12 @@
 """[DOC] 화면 조각 검사 골조. 주입 보고서만 사용하며 집계 조각을 구현하지 않는다."""
 import unittest
 
+import sys
+from pathlib import Path
+
+# 통합 검사는 스크립트로 단독 실행한다(`tests/integration/checks.json`) — 저장소 루트를 경로에 둔다
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from master.webui import usage_page
 
 

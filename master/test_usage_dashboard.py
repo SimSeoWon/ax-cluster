@@ -7,6 +7,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+import sys
+
+# 통합 검사는 스크립트로 단독 실행한다(`tests/integration/checks.json`) — 저장소 루트를 경로에 둔다
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from master.work.usage_dashboard import build_report
 
 

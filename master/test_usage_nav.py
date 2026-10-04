@@ -4,6 +4,12 @@ nav_html 기존 선언·메뉴·반응형 스타일을 유지한다. 다른 조�
 """
 import unittest
 
+import sys
+from pathlib import Path
+
+# 통합 검사는 스크립트로 단독 실행한다(`tests/integration/checks.json`) — 저장소 루트를 경로에 둔다
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from master.webui.nav import ITEMS, nav_html
 
 

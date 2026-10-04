@@ -8,6 +8,12 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import sys
+from pathlib import Path
+
+# 통합 검사는 스크립트로 단독 실행한다(`tests/integration/checks.json`) — 저장소 루트를 경로에 둔다
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from master.webui import app, fixes_page, onboarding, usage_page
 from master.work import usage_dashboard
 
