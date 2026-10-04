@@ -4,7 +4,7 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **갱신 시각**: 2026-10-04 18:20 KST — Claude · #725 마감·후속 배포 · 색인기 막힘 해소(#732 완료) · 워커 동기화
+- **갱신 시각**: 2026-10-04 18:30 KST — Claude · #725 마감·후속 배포 · 색인기 막힘 해소(#732 완료) · 워커 동기화 · `.2` MCP 경고 수정
 - **지휘 도구 / 세션**: **Claude** 마스터. Codex 는 이 문서를 갱신하기 전에 한도가 소진됐다
   (마지막 Codex 갱신은 00:47 헤더 + §0 R9·R19 후속). 17:02:34 `record_master_conductor('claude')`.
   마스터의 Codex 프로세스(pid 20028)는 17:02 에 살아 있었고 17:20 재조회 시 없었다(내가 종료하지 않았다).
@@ -30,8 +30,11 @@
   **AXCluster 워커 3대 + `.43 ~/ax-cluster` 관리 클론 = `66a7a1f`** (18:1x, 사용자 「워커 모두 동기화」·「관리 클론도」):
   main·clean 확인 → `fetch origin main` → `merge --ff-only` → `plan → deliver → check AXCluster` **3/3 OK**
   (스킬·config·payload 10·태그·출처 HEAD 일치 · 배달 뒤 source clean 3/3). 다른 프로젝트 워커는 손대지 않았다.
-  [주의] `.2` 기존 경고 2건 지속 — `claude_mcp_local=ax-client` 「등록했다는데 ~/.claude.json 에 없다」(지휘자가
-  `claude` 라 파견 영향 가능 — 미확인) · 홈 중복 스킬 `~/.agents/skills/ax-work`(프로젝트 로컬 우선이라 무해).
+  `.2` `claude_mcp_local=ax-client` 「등록했다는데 ~/.claude.json 에 없다」 경고는 **검사 오탐이었다** — 등록·연결은
+  정상(`claude mcp get` Connected). 원인: PowerShell 5.1 `Get-Content -Raw` 가 UTF-8 을 CP949 로 읽어 한글 기록이
+  JSON 을 깨뜨림(60,855자 근처 파싱 실패). `3e46078` 에서 `-Encoding UTF8` + 테스트(395/395) · 고친 함수를 `.2`·`.33`
+  에 읽기 전용으로 돌려 둘 다 항목 확인. 재배달은 안 했다(다음 배포에서 경고 소멸 확인). 워커 소스는 `66a7a1f`
+  (`3e46078` 은 마스터 측 배달 코드라 워커 동기화 불필요). 홈 중복 스킬 `~/.agents/skills/ax-work` 주의는 무해.
 
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
 
@@ -52,8 +55,7 @@
 
 1. 사이드 메뉴 화면(특히 `/ontology` 그래프) 브라우저 확인 — 아직 아무도 안 봤다.
 2. `fix_flow prepare` fetch 미강제 — 수정/일감화 미결.
-3. [완료 18:1x] 워커 3대·`.43` 관리 클론 `66a7a1f` 동기화 + 배달 3/3. 남은 것: `.2` `ax-client` Claude MCP 등록 경고가
-   `claude` 지휘 파견에 영향 있는지 확인.
+3. [완료] 워커 3대·`.43` 관리 클론 `66a7a1f` 동기화 + 배달 3/3 · `.2` MCP 경고는 오탐 — `3e46078` 수정(다음 배달에서 소멸 확인).
 4. #726 · #727 · #728 미착수. `checks.json` 에 `test_usage_*`·`test_webui_side_nav`·`test_verify_filetypes` 미등록.
 5. `advance_work(confirm=True)` 트리 수정 소실 문제 미결 · 옛 로컬 브랜치 `task/20261003_2315_719…/base` 잔존 ·
    `.43 .ax/work` 잔재 2개 · 위키 [[아이디어수집]] 에 #729~#731 절 미기재(쓰기 경로 없음 · API 401).
