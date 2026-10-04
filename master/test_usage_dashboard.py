@@ -152,13 +152,33 @@ class UsageDashboardTests(unittest.TestCase):
                          (110, 70, 90, 40, 15, 250))
         self.assertEqual(sum(r["tokens"] or 0 for r in data["models"]), 250)
         self.assertEqual(sum(r["tokens"] or 0 for r in data["buckets"]), 250)
-        self.assertTrue(any(r["model"] == "모델 미상" for r in data["models"]))
+        # #728: 모델 키가 없는 agy 는 gemini 계열 · 'Antigravity(모델 미상)' 표기 (사용자 2026-10-04)
+        self.assertTrue(any(r["model"] == "Antigravity(모델 미상)" for r in data["models"]))
         zero = self.report(family="local", start="2026-10-10", end="2026-10-10")
         self.assertEqual(zero["totals"]["tokens"], 0)
+        gemini = self.report(family="gemini", start="2026-10-10", end="2026-10-10")
+        self.assertEqual(gemini["totals"]["calls"], 1)
+        self.assertIsNone(gemini["totals"]["tokens"])
+        self.assertIsNone(gemini["models"][0]["tokens"])
         unknown = self.report(family="unknown", start="2026-10-10", end="2026-10-10")
-        self.assertEqual(unknown["totals"]["calls"], 1)
-        self.assertIsNone(unknown["totals"]["tokens"])
-        self.assertIsNone(unknown["models"][0]["tokens"])
+        self.assertEqual(unknown["totals"]["calls"], 0)
+
+    def test_agy_lane_is_gemini(self):
+        # #728: agy 실측 행(모델 키 없음) · 모델이 생긴 행 · 브로커 행이 서로 갈린다.
+        self.add_call("Alpha", "2026-10-10 10:00:00", model="", lane="agy",
+                      input_tokens=4869, output_tokens=26, cache_read=8136, reasoning_tokens=25)
+        self.add_call("Alpha", "2026-10-10 11:00:00", model="gemini-2.5-pro", lane="agy",
+                      input_tokens=10, output_tokens=5)
+        self.add_call("Alpha", "2026-10-10 12:00:00", model="gemma4:e4b",
+                      lane="local:gemma4:e4b", input_tokens=7, output_tokens=3)
+        data = self.report(start="2026-10-10", end="2026-10-10")
+        rows = {(r["family"], r["model"]): r for r in data["models"]}
+        self.assertEqual(set(rows), {("gemini", "Antigravity(모델 미상)"),
+                                     ("gemini", "gemini-2.5-pro"), ("local", "gemma4:e4b")})
+        # agy 의 total_tokens 는 input+output(캐시 제외) — 실측 4869+26=4895
+        self.assertEqual(rows[("gemini", "Antigravity(모델 미상)")]["tokens"], 4895)
+        only = self.report(family="gemini", start="2026-10-10", end="2026-10-10")
+        self.assertEqual((only["totals"]["calls"], only["totals"]["tokens"]), (2, 4910))
 
     def test_conductor_mode_fills_family_when_model_and_lane_empty(self):
         # 2026-10-04 실측: claude 지휘자 레코드는 model·lane 이 비어 unknown 으로 샜다.

@@ -247,6 +247,51 @@ def test_main_이_실제로_돈다():
     shutil.rmtree(root); shutil.rmtree(projects)
 
 
+def test_퇴고도_사용량에_남는다():
+    """⑬ `#728` — 퇴고(agy)가 초고와 **같은 task_id** 로 트윈 `usage_log.jsonl` 에 남는다.
+
+    [중요] 퇴고는 **기본 경로(`agy_only` → `call_agy_why`)를 그대로 탄다** — PATH 앞에 둔
+    가짜 `agy` 가 실측 봉투(2026-10-04)를 낸다. 초고는 브로커 대신 기록 지점을 직접 부른다.
+    """
+    import json
+    import os
+    from master.work import usage as U
+    root, head = make_repo()
+    paths = Paths(root)
+    Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
+    bindir = Path(root) / "bin"
+    bindir.mkdir()
+    env = bindir / "envelope.json"
+    env.write_text(json.dumps({"status": "SUCCESS", "response": _review_body(),
+                               "usage": {"input_tokens": 900, "output_tokens": 120,
+                                         "cache_read_tokens": 50, "total_tokens": 1020}},
+                              ensure_ascii=False), encoding="utf-8")
+    exe = bindir / "agy"
+    exe.write_text(f"#!/bin/sh\ncat '{env}'\n", encoding="utf-8")
+    exe.chmod(0o755)
+
+    def draft_call(p):
+        U.emit_broker("gemma4:e4b", {"in": 300, "out": 40})
+        return "나눗셈이 0 이다."
+
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = f"{bindir}{os.pathsep}{old_path}"
+    try:
+        r = R.run_once(paths, draft_call=draft_call)
+    finally:
+        os.environ["PATH"] = old_path
+    check("⑬ 기본 퇴고 경로로 done", r.state == "done" and bool(r.written), f"{r.state} {r.why}")
+    rows = [json.loads(x) for x in paths.usage_log.read_text(encoding="utf-8").splitlines()] \
+        if paths.usage_log.is_file() else []
+    lanes = [(x.get("lane"), x.get("source"), x.get("task_id")) for x in rows]
+    check("⑬ 초고·퇴고 두 줄", lanes == [("local:gemma4:e4b", "review", head[:12]),
+                                       ("agy", "review", head[:12])], str(lanes))
+    fin = rows[-1] if rows else {}
+    check("⑬ 퇴고 토큰이 실린다", fin.get("measured") is True and
+          (fin.get("input_tokens"), fin.get("output_tokens")) == (900, 120), str(fin))
+    shutil.rmtree(root)
+
+
 def test_grounding_머리말():
     g = R.grounding_text("초고다", "class AFoo;")
     check("⑩ 미검증이라고 먼저 말한다", "미검증" in g and "버려라" in g, g[:90])
@@ -261,7 +306,7 @@ if __name__ == "__main__":
                test_기존_초안_재사용과_실패_보존,
                test_diff를_못_읽으면_결정적이다,
                test_설계된_스킵, test_선언부, test_main_이_실제로_돈다,
-               test_grounding_머리말):
+               test_퇴고도_사용량에_남는다, test_grounding_머리말):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

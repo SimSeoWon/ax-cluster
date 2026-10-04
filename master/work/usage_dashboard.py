@@ -12,8 +12,12 @@ UI 조각 master/webui/usage_page.py, 라우트 조각 master/webui/app.py가 �
   ISO/UTC 시각은 KST로 변환. usage_log의 naive 시각은 기존 마스터 KST로 해석.
 - start/end=YYYY-MM-DD, 양끝 포함. 기본 최근 30일, 최대 366일. 역전·잘못된 값은
   ValueError. now 주입으로 날짜를 결정적으로 검사한다.
-- family=""|claude|codex|gemini|local|unknown. 실제 model/lane/tool로 분류하고
-  agy라는 이름만으로 Gemini라고 단정하지 않는다. model이 없으면 '모델 미상'.
+- family=""|claude|codex|gemini|local|unknown. 실제 model/lane/tool로 분류한다.
+  lane=agy(Antigravity)는 model이 있으면 그 이름으로(gemini-* → gemini) 분류하고, 없으면
+  gemini로 분류하며 model 표기는 'Antigravity(모델 미상)'이다. 사용자는 이 레인을 일관되게
+  "제미나이(안티그래비티)"라고 부르고(2026-10-04), agy JSON에는 모델 키가 없어(실측
+  2026-10-04) 'agy=unknown'이면 실사용이 대시보드에서 사라진다(#728). 그 밖에 model이
+  없으면 '모델 미상'.
 - source=dispatch|session. 서로 겹칠 수 있어 두 소스의 합산 기능은 제공하지 않는다.
 - dispatch: 등록 프로젝트별 usage_log.jsonl, work_id로 큐 _request.md의 project,
   title, redmine_issue_id와 연결. 활성·보관 일감 모두 고려. 연결 실패는 unlinked_calls.
@@ -66,6 +70,7 @@ from .session_usage import DEFAULT_STORE
 
 _KST = ZoneInfo("Asia/Seoul")
 _FAMILIES = ("claude", "codex", "gemini", "local", "unknown")
+_AGY_UNKNOWN_MODEL = "Antigravity(모델 미상)"
 _PERIODS = ("daily", "weekly", "monthly")
 _SOURCES = ("dispatch", "session")
 _TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read", "cache_create",
@@ -112,6 +117,8 @@ def _family(model: str, lane: str, tool: str = "") -> str:
         return "codex"
     if "gemini" in value or name == "gemini" or tool == "gemini":
         return "gemini"
+    if name == "agy" and not value:
+        return "gemini"                 # 머리말 계약: Antigravity 는 모델 미상이어도 gemini
     if name == "local" or tool == "local" or value.startswith(("qwen", "llama", "deepseek", "mistral")):
         return "local"
     return "unknown"
@@ -176,7 +183,12 @@ def _normal_record(raw: dict, *, session: bool, tool: str = "") -> dict:
     if family == "unknown" and not session:
         family = _conductor_family(raw, model, lane)
     if not model:
-        model = lane.split(":", 1)[1] if lane.startswith("local:") and ":" in lane else "모델 미상"
+        if lane.startswith("local:") and ":" in lane:
+            model = lane.split(":", 1)[1]
+        elif lane.casefold().split(":", 1)[0] == "agy":
+            model = _AGY_UNKNOWN_MODEL
+        else:
+            model = "모델 미상"
     if session:
         amounts = {key: _number(raw, key.replace("_tokens", "") if key.endswith("_tokens") else key)
                    for key in _TOKEN_FIELDS}

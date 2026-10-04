@@ -394,10 +394,14 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
             return res
 
     ask = review_call or agy_only
-    reviewed = rg.review_commit(
-        paths, commit, src, chat=ask, grounding=grounding_text(body, decls),
-        provenance={"draft_model": model, "review_model": "Antigravity"},
-        logf=lambda _kind, msg: log(f"[리뷰큐] Antigravity {msg}"))
+    from ..work import usage as usage_mod                         # noqa: PLC0415
+    # `#728` — 퇴고(agy)도 초고와 **같은 task_id** 로 트윈의 `usage_log.jsonl` 에 남긴다.
+    #    초고는 `local:<모델>`, 퇴고는 `agy` 레인으로 갈린다(기록은 `layer2_verify.call_agy_why`).
+    with usage_mod.sink(paths.usage_log, source="review", task_id=str(commit)[:12]):
+        reviewed = rg.review_commit(
+            paths, commit, src, chat=ask, grounding=grounding_text(body, decls),
+            provenance={"draft_model": model, "review_model": "Antigravity"},
+            logf=lambda _kind, msg: log(f"[리뷰큐] Antigravity {msg}"))
     if reviewed.error or not reviewed.written or not reviewed.format_ok:
         if reviewed.written and not reviewed.format_ok:
             # 파서가 일부 행만 읽는 일을 막되, 실패 산출물은 조사할 수 있게 보존한다.

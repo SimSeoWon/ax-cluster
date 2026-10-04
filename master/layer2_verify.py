@@ -107,19 +107,29 @@ def _run(cmd: list[str], *, timeout: int) -> tuple:
     [중요] 네 갈래를 **가른다** — 종전에는 전부 `None` 이었다. 특히 `rc != 0` 에서 **stderr 를
     버렸다**: CLI 가 무엇이라 말했는지가 사라져 원인 추적이 불가능했다(원전은 앞 200자를 싣는다).
     """
+    out, why, _rc = _run_rc(cmd, timeout=timeout)
+    return out, why
+
+
+# 종료 코드가 없는 실패(타임아웃·실행 불가)를 사용량 기록에 싣는 값. 0 이면 「성공」으로 읽힌다.
+RC_NO_EXIT = -1
+
+
+def _run_rc(cmd: list[str], *, timeout: int) -> tuple:
+    """`_run` 과 같되 **종료 코드까지** `(출력, 사유, rc)` 로 돌려준다 — 사용량 기록용(`#728`)."""
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", stdin=subprocess.DEVNULL, timeout=timeout)
     except subprocess.TimeoutExpired:
-        return None, f"타임아웃 {timeout}초"
+        return None, f"타임아웃 {timeout}초", RC_NO_EXIT
     except OSError as e:
-        return None, f"실행 실패 — {type(e).__name__}: {e}"
+        return None, f"실행 실패 — {type(e).__name__}: {e}", RC_NO_EXIT
     if r.returncode != 0:
         err = (r.stderr or r.stdout or "").strip().replace("\n", " ")
-        return None, f"rc={r.returncode}: {err[:200] or '(출력 없음)'}"
+        return None, f"rc={r.returncode}: {err[:200] or '(출력 없음)'}", r.returncode
     if not (r.stdout and r.stdout.strip()):
-        return None, "빈 출력 (rc=0)"
-    return r.stdout, ""
+        return None, "빈 출력 (rc=0)", 0
+    return r.stdout, "", 0
 
 
 def call_agy(prompt: str, *, timeout: int = TIMEOUT_SEC) -> str | None:
@@ -130,16 +140,69 @@ def call_agy(prompt: str, *, timeout: int = TIMEOUT_SEC) -> str | None:
 
 
 def call_agy_why(prompt: str, *, timeout: int = TIMEOUT_SEC) -> tuple:
-    """`(출력, 사유)`. 사유는 실패했을 때만 채워진다."""
+    """`(출력, 사유)`. 사유는 실패했을 때만 채워진다.
+
+    🔴 [중요] **사용량을 여기서 잰다** (`#728`, 2026-10-04 실측: 트윈 `usage_log.jsonl` 에 agy 행이
+    0건이었다 — 리뷰 퇴고·층2·게시판이 모두 이 진입을 타는데 아무도 세지 않았다).
+    `--output-format json` 으로 불러 봉투에서 본문만 꺼내 **종전과 같은 평문**을 돌려주고,
+    `usage.sink(...)` 로 감싼 구간이면 호출 하나당 한 줄을 남긴다(감싸지 않으면 안 남는다).
+    [주의] 봉투가 아니면(플래그 미지원 등) **출력 전체를 종전처럼 본문으로** 쓰고
+    `measured=False` 로 남긴다 — 토큰을 0 으로 지어내지 않는다.
+    [주의] 실행파일 부재는 호출이 일어나지 않은 것이라 기록하지 않는다.
+    """
     exe = shutil.which("agy")
     if not exe:
         why = MISSING_EXE                      # [중요] 쿨다운 대상이 아니다 — 설정 오류다
         _log(f"[agy] {missing_exe_hint('agy')}")
         return None, why
-    out, why = _run([exe, "--dangerously-skip-permissions", "-p", prompt], timeout=timeout)
+    t0 = time.monotonic()
+    # [주의] `-p` 는 **반드시 프롬프트 직전**이다 — 출력 형식 플래그는 그 앞에 둔다
+    out, why, rc = _run_rc([exe, "--dangerously-skip-permissions", "--output-format", "json",
+                            "-p", prompt], timeout=timeout)
+    u = model = None
+    if out is not None:
+        out, u, why, model = _unwrap_agy(out)
+    _emit_usage("agy", u, seconds=time.monotonic() - t0, rc=rc, model=model or "")
     if out is None:
         _log(f"[agy] 실패 — {why}")
     return out, why
+
+
+def _usage_mod():
+    """`master.work.usage` — 이 모듈이 최상위(`layer2_verify`)로 읽혀 패키지가 없으면 `None`."""
+    try:
+        from master.work import usage                         # noqa: PLC0415
+    except ImportError:
+        return None
+    return usage
+
+
+def _unwrap_agy(out: str) -> tuple:
+    """agy 출력 → `(본문|None, Usage|None, 사유, 모델)`. 봉투면 본문만, 아니면 종전 그대로."""
+    U = _usage_mod()
+    parsed = U.parse_agy_json(out) if U is not None else None
+    if parsed is None:
+        u = U.Usage(lane="agy", note="JSON 봉투 아님") if U is not None else None
+        return out, u, "", ""
+    text, u, status, model = parsed
+    if not text.strip():
+        # 평문 시절의 「빈 출력」과 같은 사유를 낸다 — 성공 표시가 아니면 status 를 덧붙인다
+        why = "빈 출력 (rc=0)" + (f" status={status}" if status and status != "SUCCESS" else "")
+        return None, u, why, model
+    return text, u, "", model
+
+
+def _emit_usage(lane: str, u, *, seconds: float, rc: int, model: str = "") -> None:
+    """감싼 구간이면 한 줄 남긴다. [중요] **기록 실패가 호출을 죽이지 않는다.**"""
+    U = _usage_mod()
+    if U is None:
+        return
+    try:
+        rec = U.emit_cli(lane, u, seconds=seconds, rc=rc, model=model)
+    except Exception as e:                                    # noqa: BLE001
+        rec = {"error": f"{type(e).__name__}: {e}"}
+    if rec and rec.get("error"):
+        _log(f"[{lane}] 사용량 기록 실패 — {rec['error']}")
 
 
 # ── 🔴 Codex CLI — **요청자(`.33`)에만 있다** (2026-09-05) ──────────────────────────────

@@ -22,6 +22,9 @@
              cache_read_input_tokens, …}, "total_cost_usd": 0.0215}
     agy      `--output-format json` → {"response": 본문, "usage": {input_tokens, output_tokens,
              cache_read_tokens, total_tokens}}   ← 키 이름이 claude 와 다르다
+             (재실측 2026-10-04, agy 1.2.16: 최상위 `conversation_id`·`status`·`response`·
+              `duration_seconds`·`num_turns`·`usage` + usage 에 `thinking_tokens` 추가.
+              [주의] **모델 이름 키가 없다** — 그래서 기록의 model 은 비운다)
     codex    텍스트 안에 `tokens used\\n5,022` 로 찍힌다 (JSON 출력 없음)
 
 [중요] **못 읽으면 0 이 아니라 `None` 이다.** 0 으로 적으면 「안 썼다」로 읽히고, 그것이
@@ -52,6 +55,7 @@ class Usage:
     total_tokens: int | None = None
     cost_usd: float | None = None
     note: str = ""                      # 왜 못 읽었나
+    reasoning_tokens: int | None = None  # agy `thinking_tokens` (출력의 부분집합으로 보인다)
 
     @property
     def known(self) -> bool:
@@ -133,18 +137,44 @@ def call_agy(prompt: str, *, timeout: int = TIMEOUT) -> Call:
                      "-p", prompt], timeout=timeout)
     if out is None:
         return Call(error=why)
-    u = Usage(lane="agy")
-    try:
-        d = json.loads(out)
-        text = d.get("response") or ""
-        raw = d.get("usage") or {}
-        u.input_tokens = raw.get("input_tokens")
-        u.output_tokens = raw.get("output_tokens")
-        u.cache_read = raw.get("cache_read_tokens")
-        u.total_tokens = raw.get("total_tokens")
-    except ValueError as e:                                      # noqa: BLE001
-        return Call(text=out, usage=Usage(lane="agy", note=f"JSON 파싱 실패: {e}"))
+    parsed = parse_agy_json(out)
+    if parsed is None:
+        return Call(text=out, usage=Usage(lane="agy", note="JSON 파싱 실패(agy 봉투 아님)"))
+    text, u, _status, _model = parsed
     return Call(text=text, usage=u)
+
+
+def parse_agy_json(stdout: str) -> tuple | None:
+    """`agy --output-format json` 봉투 → `(본문, Usage, status, model)`. 봉투가 아니면 `None`.
+
+    [중요] **형식 지식은 이 모듈 한 곳이 갖는다** — 레인(`call_agy`)과 층2·리뷰 공용 진입
+    (`layer2_verify.call_agy_why`)이 같은 파서를 쓴다(`#728`).
+    [주의] **`response` 키가 있는 dict 만 봉투로 본다.** 플래그가 먹지 않아 모델 답 자체가
+    JSON 이면(예: `{"ok": true}`) 그것을 봉투로 오인해 본문을 버리게 된다.
+    [주의] 못 읽은 토큰은 `None` 이다 — 0 을 지어내지 않는다.
+    """
+    try:
+        d = json.loads(stdout)
+    except ValueError:
+        return None
+    if not isinstance(d, dict) or "response" not in d:
+        return None
+    text = d.get("response")
+    text = text if isinstance(text, str) else ""
+    raw = d.get("usage") if isinstance(d.get("usage"), dict) else {}
+
+    def _int(key):
+        v = raw.get(key)
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+    u = Usage(lane="agy", input_tokens=_int("input_tokens"), output_tokens=_int("output_tokens"),
+              cache_read=_int("cache_read_tokens"), total_tokens=_int("total_tokens"),
+              reasoning_tokens=_int("thinking_tokens"))
+    if not u.known:
+        u.note = "usage 키 없음"
+    # 2026-10-04 실측에는 모델 키가 없다 — 생기면 쓴다(대시보드가 gemini-* 로 분류한다)
+    model = d.get("model")
+    return text, u, str(d.get("status") or ""), (model if isinstance(model, str) else "")
 
 
 def parse_codex_jsonl(stdout: str) -> tuple | None:
@@ -291,6 +321,9 @@ def meta_from_usage(u) -> dict:
     total = getattr(u, "total_tokens", None)
     if total is not None:
         inner["total_tokens"] = int(total)
+    reasoning = getattr(u, "reasoning_tokens", None)
+    if reasoning is not None:
+        inner["reasoning_output_tokens"] = int(reasoning)
     if inner:
         meta["usage"] = inner
     cost = getattr(u, "cost_usd", None)
@@ -408,6 +441,25 @@ def emit_broker(model: str, used: dict, *, seconds: float = 0.0, rc: int = 0) ->
         meta["usage"] = inner
     return record(s["path"], meta, lane=f"local:{model}", work_id=s["work_id"],
                   task_id=s["task_id"], rc=rc, seconds=seconds, source=s["source"], model=model)
+
+
+def emit_cli(lane: str, u=None, *, seconds: float = 0.0, rc: int = 0,
+             model: str = "") -> dict | None:
+    """상용 CLI 공용 진입(`layer2_verify.call_agy_why`)이 부른다 (`#728`). `emit_broker` 와 같은
+    계약 — **감싼 구간이 아니면 아무것도 안 한다**(`None`).
+
+    🔴 [중요] 실패한 호출도 한 줄 남긴다(rc≠0) — 토큰을 못 읽었으면 `measured=False` 다.
+    [주의] **기록 실패가 호출을 죽이지 않는다** — 예외를 삼키고 `{"error": …}` 로 돌려준다.
+    """
+    s = _SINK.get()
+    if s is None:
+        return None
+    try:
+        meta = meta_from_usage(u if u is not None else Usage(lane=lane))
+        return record(s["path"], meta, lane=lane, work_id=s["work_id"], task_id=s["task_id"],
+                      rc=rc, seconds=seconds, source=s["source"], model=model or "")
+    except Exception as e:                                       # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}"}
 
 
 def summarize(paths_or_files, *, days: int = 1) -> dict:
