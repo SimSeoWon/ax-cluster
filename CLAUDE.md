@@ -216,7 +216,8 @@ milestone doc grew stale numbers before.
 2026-09-28 — supersedes 2026-08-09's "same project as `ModularStage`", since the non-UE `kimodo`
 made AX no longer one game's tooling). Game/tool issues go where `<twin>/config.yaml`
 `redmine.project` says (`modularstage` · `ns` · `kimodo`); unset means refuse (`#293`).
-Closed `[AX]` issues stay in `modularstage` as record; milestone versions are shared system-wide.
+Closed `[AX]` issues that lived in `modularstage` were moved to `ax-cluster` (user decision
+2026-10-05, 107 issues); milestone versions are shared system-wide.
 Tracker `코드리뷰` only — **never create a project or tracker without the user.** Read is public; writing needs the admin API key, which is **not on disk** — pull it
 from the master's own container DB. [중요] **Never write the key value into a doc or commit.**
 → [`docs/10-references.md`](docs/10-references.md) §10.1
