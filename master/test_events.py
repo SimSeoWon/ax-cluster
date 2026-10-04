@@ -48,6 +48,117 @@ def _hold_lock(root, ready, release):
     s.release()
 
 
+def test_consumer_recovery(root):
+    """실제 consume_once가 고아→신규를 처리하며 실패 배치를 보존한다 (#714)."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from master.events import consumer as c
+    from master.events.gate import Verdict
+
+    reg = SimpleNamespace(names=[], active="", find_by_project_id=lambda pid:
+                          "Demo" if pid.casefold() == "sim/modularstage" else "")
+
+    def successful(event, **kw):
+        return c.ProjectResult(project_id=event.project_id)
+
+    with patch("master.events.gate.check", return_value=Verdict()), \
+            patch.object(c, "_note_dispatch_triggers") as trigger:
+        recovered = Spool(root / "recover")
+        recovered.enqueue(ev(new="orphan"))
+        orphan = recovered.claim_batch()
+        recovered.enqueue(ev(new="new"))
+        seen = []
+
+        def process(event, **kw):
+            seen.append(event.new)
+            return successful(event)
+        with patch.object(c, "process_event", side_effect=process):
+            result = c.consume_once(recovered, registry=reg)
+        check("소비자가 고아를 신규보다 먼저 처리", seen == ["orphan", "new"], str(seen))
+        check("고아와 신규 계수를 합산", result.claimed == 2 and result.polled == 0)
+        check("성공 배치만 정리", not orphan.dir.exists() and not recovered.orphan_batches())
+        check("트리거는 두 배치 모두 처리", trigger.call_count == 2)
+        check("정상 종료 뒤 락 해제", recovered._lock_fd is None)
+
+        failed = Spool(root / "failed")
+        failed.enqueue(ev(new="retry"))
+        orphan = failed.claim_batch()
+        failed.enqueue(ev(new="waiting"))
+        with patch.object(c, "process_event", return_value=c.ProjectResult(
+                project_id="Sim/ModularStage", error="fetch failed")):
+            result = c.consume_once(failed, registry=reg)
+        check("실패 결과는 배치 보존", not result.ok and orphan.dir.exists())
+        check("복구 실패 뒤 신규를 claim하지 않음", failed.pending_count() == 1)
+        check("실패 종료 뒤 락 해제", failed._lock_fd is None)
+        with patch.object(c, "process_event", side_effect=successful):
+            result = c.consume_once(failed, registry=reg)
+        check("다음 호출에서 실패 배치와 신규 재처리", result.ok and result.claimed == 2
+              and not failed.orphan_batches() and failed.pending_count() == 0)
+
+        crashed = Spool(root / "exception")
+        crashed.enqueue(ev())
+        orphan = crashed.claim_batch()
+        raised = False
+        with patch.object(c, "process_event", side_effect=RuntimeError("fixture crash")):
+            try:
+                c.consume_once(crashed, registry=reg)
+            except RuntimeError:
+                raised = True
+        check("예외는 호출자에게 전달", raised)
+        check("예외 뒤 배치 보존과 락 해제", orphan.dir.exists() and crashed._lock_fd is None)
+
+        rejected = Spool(root / "reject")
+        rejected.enqueue(ev(pid="Sim/Unknown"))
+        rejected.claim_batch()  # 이전 소비자가 등록 검사 전에 죽은 상황
+        with patch.object(c, "process_event") as process:
+            result = c.consume_once(rejected, registry=reg)
+        reasons = list(rejected.rejected.glob("*.why"))
+        check("고아의 미등록 프로젝트도 거부 증거 유지", result.rejected == 1 and reasons
+              and "등록되지 않은" in reasons[0].read_text(encoding="utf-8"))
+        check("거부된 고아는 process_event를 호출하지 않음", process.call_count == 0)
+
+        paused = Spool(root / "paused")
+        paused.enqueue(ev())
+        paused.claim_batch()
+        paused.enqueue(ev())
+        trigger.reset_mock()
+        with patch("master.events.gate.check", return_value=Verdict(paused=True)), \
+                patch.object(c, "process_event") as process:
+            result = c.consume_once(paused, registry=reg)
+        check("게이트는 고아·신규 모두 defer", bool(result.paused) and result.deferred == 2
+              and result.claimed == 2 and not paused.orphan_batches())
+        check("일시 중지에도 파견 트리거 보존", trigger.call_count == 2 and process.call_count == 0)
+
+        locked = Spool(root / "locked")
+        locked.enqueue(ev())
+        holder = Spool(locked.root)
+        holder.acquire()
+        try:
+            result = c.consume_once(locked, registry=reg)
+            check("락 충돌시 소비하지 않음", bool(result.note) and locked.pending_count() == 1)
+        finally:
+            holder.release()
+
+        unmounted = Spool(root / "unmounted")
+        unmounted.enqueue(ev())
+        unmounted.claim_batch()
+        with patch.object(c, "resolve", return_value=SimpleNamespace()), \
+                patch.object(c, "_git") as git:
+            result = c.consume_once(unmounted, registry=reg)
+        check("비마운트 고아도 실제 process_event에서 skip 기록", result.ok
+              and len(result.results) == 1 and "마운트되지" in result.results[0].skipped)
+        check("비마운트 고아는 git 호출 없이 정리", git.call_count == 0
+              and not unmounted.orphan_batches())
+
+        empty = Spool(root / "empty")
+        empty.claim_batch()  # 빈 고아와 신규 빈 배치가 함께 있어도 poll 한 번
+        reg.names, reg.active = ["Demo"], "Demo"
+        reg.config_of = lambda name: SimpleNamespace(project_id="Sim/ModularStage")
+        with patch.object(c, "process_event", side_effect=successful) as process:
+            result = c.consume_once(empty, registry=reg)
+        check("빈 고아와 빈 신규는 마운트 poll 한 번", result.polled == 1 and process.call_count == 1)
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="ax-events-test-"))
     s = Spool(tmp)
@@ -190,6 +301,8 @@ def main() -> int:
         except SpoolError:
             check(f"  {bad!r} 거부", True)
 
+    print("\n[12] 소비자의 실제 고아 복구 경로 (#714)")
+    test_consumer_recovery(tmp / "consumer")
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0

@@ -46,7 +46,7 @@ from pathlib import Path
 from .. import gitea_group
 from ..context_search.paths import ProjectPaths, resolve
 from ..projects.config import ConfigError, Registry, normalize_project_id
-from .spool import Batch, Event, Spool
+from .spool import Event, Spool
 
 DIGEST_FILE = "context_digest.json"
 # git 의 **빈 트리** 오브젝트 — 모든 저장소에서 같은 값이다. 첫 커밋의 diff 기준으로 쓴다
@@ -994,6 +994,16 @@ def consume_once(spool: Spool | None = None, *, registry: Registry | None = None
         res.note = "다른 소비자가 돌고 있다 — 물러난다"
         return res
 
+    try:
+        return _consume_locked(sp, res, registry=registry, reindex=reindex,
+                               git=git, progress=progress)
+    finally:
+        sp.release()
+
+
+def _consume_locked(sp, res, *, registry=None, reindex=None, git=None,
+                    progress=None) -> RunResult:
+    """단일 소비자 락 안에서 고아 배치부터 복구한다 (`#714`)."""
     reg = registry or Registry.load()
 
     def known(pid: str) -> bool:
@@ -1011,23 +1021,32 @@ def consume_once(spool: Spool | None = None, *, registry: Registry | None = None
     # 주체가 없다 — 리포트 13 §19.3 이 상태 화면에서 똑같이 물린 자리).
     from .gate import check as _gate_check
     g = _gate_check(spool_root=sp.root if hasattr(sp, "root") else None)
-    if g.paused:
-        batch = sp.claim_batch(is_registered=known)
-        # [중요] 게이트가 버리기 **전에** 파견 트리거를 뽑는다 (`#340`) — 위 helper 참조.
-        _note_dispatch_triggers(batch, reg)
-        res.paused = g.line()
-        res.deferred = len(batch.events)
-        res.claimed = res.deferred + batch.coalesced_away + batch.rejected + batch.skipped_index_output
-        sp.done(batch)
-        return res
     if g.degraded:
         res.note = (res.note + " · " if res.note else "") + g.degraded
 
-    batch: Batch = sp.claim_batch(is_registered=known)
-    # 게이트에 안 걸린 경우에도 골조 push 는 올 수 있다 (진행 중 work 이 없던 순간의 재-push 등).
-    _note_dispatch_triggers(batch, reg)
-    res.coalesced = batch.coalesced_away
-    res.rejected = batch.rejected
+    for batch in sp.iter_all_pending(is_registered=known):
+        # 고아에도 같은 검증·게이트·트리거 경로를 적용한다. 신규 claim은 복구 뒤다.
+        _note_dispatch_triggers(batch, reg)
+        res.coalesced += batch.coalesced_away
+        res.rejected += batch.rejected
+        res.blocked_recursion += batch.skipped_index_output
+        res.claimed += (len(batch.events) + batch.coalesced_away + batch.rejected
+                        + batch.skipped_index_output)
+        if g.paused:
+            res.paused = g.line()
+            res.deferred += len(batch.events)
+        else:
+            for ev in batch.events:
+                if progress:
+                    progress(f"{ev.project_id} {ev.old[:8]}→{ev.new[:8]}")
+                result = process_event(ev, registry=reg, reindex=reindex, git=git)
+                res.results.append(result)
+                if not result.ok:
+                    # 배치 전체를 남겨 다음 기동에서 다시 시도한다 (at-least-once).
+                    return res
+        sp.done(batch)
+    if g.paused:
+        return res
     # [중요] **이벤트가 없어도 한 바퀴 돈다** (소 3.5.1 과 짝).
     #
     # 이 소비자는 state-based 다 — 무엇을 색인할지는 이벤트 내용이 아니라 **미러 HEAD 대조**가
@@ -1039,7 +1058,7 @@ def consume_once(spool: Spool | None = None, *, registry: Registry | None = None
     # → 스풀이 비었으면 **등록된 프로젝트마다 합성 이벤트 한 건**으로 상태 대조를 돌린다.
     #   미러 fetch 는 로컬 bare 라 ms 단위이므로 매 기동에 돌려도 싸다. 이렇게 두면
     #   `ax-indexer.timer` 가 별도 모드 없이 그대로 따라잡기 역할을 한다.
-    if not batch.events:
+    if not res.results:
         # project_id 는 각 프로젝트의 `config.yaml` 이 SSOT 다(`track.project_id`).
         # [주의] 못 읽는 프로젝트는 조용히 건너뛰지 않고 **세어서** 결과에 남긴다.
         # [중요] **마운트된 것만 돈다** (`#242`). 종전에는 `reg.names` 전부를 돌아, 등록만 된
@@ -1065,19 +1084,6 @@ def consume_once(spool: Spool | None = None, *, registry: Registry | None = None
         res.polled = len(synth)
         for ev in synth:
             res.results.append(process_event(ev, registry=reg, reindex=reindex, git=git))
-        sp.done(batch)
-        return res
-    # 재귀 차단은 **스풀이 claim 단계에서** 이미 한다 — 여기서 다시 세지 않고 그 수를 받는다.
-    res.blocked_recursion = batch.skipped_index_output
-    res.claimed = (len(batch.events) + res.coalesced + res.rejected
-                   + res.blocked_recursion)
-
-    for ev in batch.events:
-        if progress:
-            progress(f"{ev.project_id} {ev.old[:8]}→{ev.new[:8]}")
-        res.results.append(process_event(ev, registry=reg, reindex=reindex, git=git))
-
-    sp.done(batch)
     return res
 
 

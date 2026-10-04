@@ -32,6 +32,9 @@ COMMENTS_HEADING = "## 코멘트"
 _COMMENTS_RE = re.compile(r"(## 코멘트\s*\n.*)", re.DOTALL)
 _FRONTMATTER_RE = re.compile(r"^(---\s*\n)(.*?)(\n---\s*\n)", re.DOTALL)
 _FENCE_RE = re.compile(r"^```(?:markdown|md)?\s*\n(.*?)\n```\s*$", re.DOTALL | re.IGNORECASE)
+_METADATA_LINE_RE = re.compile(
+    r"^(tags|category|related_classes|content_hash|source_commit):(?:[ \t]*(.*))?$"
+)
 
 # 게이트 임계값. 원본과 같은 50자 — frontmatter 껍데기조차 안 되는 길이다.
 MIN_CHARS = 50
@@ -51,14 +54,18 @@ def strip_wrapper(md: str) -> str:
     """σ.7 — 펜스와 자연어 도입부를 벗긴다.
 
     ⑴ 전체를 감싼 ```` ```markdown … ``` ```` 제거
-    ⑵ 그래도 `---` 로 시작하지 않으면 **첫 `---` 줄부터** 잘라낸다 ("아래에 MD 를
+    ⑵ 메타데이터로 시작하면 누락된 여는 구분선을 먼저 복구한다. 복구할 수 없는
+      메타데이터는 그대로 게이트로 보내며, 닫는 줄부터 잘라 필드를 버리지 않는다.
+    ⑶ 그래도 `---` 로 시작하지 않으면 **첫 `---` 줄부터** 잘라낸다 ("아래에 MD 를
       작성했습니다" 같은 도입부가 붙는 경우)
-    ⑶ frontmatter 를 닫는 `---` 가 빠졌으면 넣는다 (`repair_frontmatter`)
+    ⑷ frontmatter 를 닫는 `---` 가 빠졌으면 넣는다 (`repair_frontmatter`)
     """
     s = (md or "").strip()
     fence = _FENCE_RE.match(s)
     if fence:
         s = fence.group(1).strip()
+    if _METADATA_LINE_RE.fullmatch(s.splitlines()[0] if s else ""):
+        return repair_frontmatter(s)
     if not s.startswith("---"):
         m = re.search(r"^---\s*$", s, re.MULTILINE)
         if m:
@@ -67,7 +74,7 @@ def strip_wrapper(md: str) -> str:
 
 
 def repair_frontmatter(md: str) -> str:
-    """frontmatter 를 닫는 두 번째 `---` 가 빠진 경우만 **결정적으로** 복구한다.
+    """명확한 메타데이터 경계에서 누락된 구분선을 **결정적으로** 복구한다.
 
     [중요] 실측(2026-08-08): `qwen2.5-coder:14b` 가 여는 `---` 와 필드는 쓰고 닫는 `---` 없이
     바로 `## 요약` 으로 넘어간다. 사실 오류가 아니라 형식 슬립인데, 닫히지 않으면 스탬프
@@ -75,11 +82,12 @@ def repair_frontmatter(md: str) -> str:
 
     **좁게 고친다** — ⑴ `---` 로 시작하고 ⑵ 닫는 `---` 가 **없고** ⑶ 뒤에 `## ` 제목이
     있을 때만, 그 제목 **직전에** 닫는 줄을 넣는다. 이 셋이 다 맞으면 경계가 모호하지 않다.
-    조건을 넓히면 진짜 손상을 정상으로 위장하게 되므로 넓히지 않는다.
+    여는 줄이 없으면 알려진 필드로만 구성되고 tags/category가 있는 블록이
+    `## ` 제목 직전에 끝나는 경우만 복구한다. 설명·손상·경계 불명확 응답은 그대로 둔다.
     """
     s = (md or "").strip()
     if not s.startswith("---"):
-        return s
+        return _repair_missing_open(s)
     if _FRONTMATTER_RE.match(s):
         return s                      # 이미 닫혀 있다
     m = re.search(r"^##\s", s, re.MULTILINE)
@@ -89,6 +97,48 @@ def repair_frontmatter(md: str) -> str:
     if head.count("\n---") > 0:       # 닫는 표시가 있는데 정규식이 안 맞았다 = 이상하다
         return s
     return f"{head}\n---\n\n{rest}"
+
+
+def _repair_missing_open(s: str) -> str:
+    heading = re.search(r"^##\s+\S", s, re.MULTILINE)
+    if not heading:
+        return s
+    prefix = s[:heading.start()].rstrip()
+    lines = prefix.splitlines()
+    has_close = bool(lines and lines[-1] == "---")
+    if has_close:
+        lines.pop()
+    seen: set[str] = set()
+    current = ""
+    for line in lines:
+        if not line.strip():
+            continue
+        field = _METADATA_LINE_RE.fullmatch(line)
+        if field:
+            current, value = field.group(1), field.group(2) or ""
+            if current in seen:
+                return s
+            seen.add(current)
+            if current == "tags":
+                tag = r'''(?:[^\s,\[\]{}:'"]+|'[^'\n]*'|"[^"\n]*")'''
+                if not re.fullmatch(rf"\[[ \t]*(?:{tag}(?:[ \t]*,[ \t]*{tag})*)?[ \t]*\]", value):
+                    return s
+            if current == "category" and not re.fullmatch(r"[^\s\[\]{}:#]+", value):
+                return s
+            if current == "related_classes" and value not in ("", "[]"):
+                return s
+            if current in ("content_hash", "source_commit") and not re.fullmatch(
+                    r"[A-Za-z0-9_-]+", value):
+                return s
+        elif current == "related_classes" and re.fullmatch(
+                r"[ \t]+-[ \t]+[A-Za-z_][A-Za-z0-9_]*:[ \t]+\S+", line):
+            continue
+        else:
+            return s
+    if not {"tags", "category"} <= seen:
+        return s
+    closing = "" if has_close else "\n---"
+    return f"---\n{prefix}{closing}\n\n{s[heading.start():]}"
 
 
 @dataclass(frozen=True)

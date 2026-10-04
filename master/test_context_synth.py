@@ -149,6 +149,44 @@ def main() -> int:
     check("finalize 도 통과시키고 스탬프한다",
           v_u.ok and "source_commit: zz99" in doc_u, v_u.reason)
 
+    print("\n[3-2] #666 — 여는 구분선·양쪽 구분선 누락은 필드를 지키며 복구한다")
+    existing_comments = GOOD + "\n## 코멘트\n- 사람이 남긴 설계 근거\n"
+    reference, reference_v = md.finalize(GOOD, existing=existing_comments, commit="c666")
+    for label, raw in (("여는 줄만 누락", GOOD.removeprefix("---\n")),
+                       ("양쪽 줄 누락", UNCLOSED.removeprefix("---\n"))):
+        check(f"{label}: 원문은 게이트 거부", not md.check(raw).ok)
+        repaired = md.repair_frontmatter(raw)
+        check(f"{label}: 메타데이터·본문 전체 보존",
+              repaired == GOOD.strip(), repaired)
+        document, verdict = md.finalize(raw, existing=existing_comments, commit="c666")
+        check(f"{label}: 저장 가능한 정상 문서와 동일",
+              reference_v.ok and verdict.ok and document == reference, verdict.reason)
+        check(f"{label}: 해시·리비전·개발자 코멘트 보존",
+              md.content_hash(document) == md.content_hash(reference)
+              and md.read_source_commit(document) == "c666"
+              and "사람이 남긴 설계 근거" in document)
+        fenced, fenced_verdict = md.finalize("```markdown\n" + raw.strip() + "\n```",
+                                             existing=existing_comments, commit="c666")
+        check(f"{label}: 펜스 응답도 필드 유실 없이 복구",
+              fenced_verdict.ok and fenced == reference)
+
+    MISSING_OPEN = GOOD.removeprefix("---\n")
+    for label, raw in (
+            ("깨진 태그 배열", MISSING_OPEN.replace("[mission, runtime]", "[mission, runtime")),
+            ("깨진 태그 따옴표", MISSING_OPEN.replace("[mission, runtime]", "['mission, runtime]")),
+            ("메타데이터 사이 설명", MISSING_OPEN.replace("category:", "여기는 설명이다.\ncategory:")),
+            ("중복 필드", MISSING_OPEN.replace("category:", "tags: [other]\ncategory:")),
+            ("경계 제목 없음", MISSING_OPEN.split("## 요약")[0] + "설명 본문 " * 10),
+            ("메타데이터처럼 보이는 설명", "tags: 설명\ncategory: 예시\n\n## 요약\n" + "설명 " * 30),
+            ("중간 구분선", MISSING_OPEN.replace("category:", "---\ncategory:"))):
+        refused_doc, refused_verdict = md.finalize(raw, existing=existing_comments, commit="c666")
+        check(f"{label}: 손상을 정상으로 위장하지 않는다",
+              refused_doc == "" and not refused_verdict.ok, refused_verdict.reason)
+
+    check("정상 문서와 자연어 도입부는 기존 결과 유지",
+          md.strip_wrapper(GOOD) == GOOD.strip()
+          and md.strip_wrapper("아래에 MD 를 작성했습니다.\n\n" + GOOD) == GOOD.strip())
+
     print("\n[4] [중요] 게이트가 스탬프보다 앞 (원본 사고의 핵심)")
     doc, v = md.finalize("```markdown\n" + GOOD.strip() + "\n```", commit="abc123")
     check("펜스 벗기고 통과", v.ok and doc.startswith("---"))
