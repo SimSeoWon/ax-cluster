@@ -113,5 +113,15 @@
     "path": "master/test_usage_cli_paths.py",
     "count_pattern": "(?m)^OK test_usage_cli_paths: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
+  },
+  {
+    "path": "master/test_runner.py",
+    "count_pattern": "(?m)^OK test_runner: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_orchestration_control.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
   }
 ]

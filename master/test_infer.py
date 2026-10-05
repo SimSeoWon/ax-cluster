@@ -904,13 +904,19 @@ def test_commit_task_failure_notices_match_disposition() -> None:
         ("한도 상한 시도", RV.MAX_ATTEMPTS, ["usage limit reached"], "", "quota"),
         ("일반 실패 상한", RV.MAX_ATTEMPTS, ["RESULT: BLOCKED"], "", "limit"),
         ("환경 실패 상한", RV.MAX_ATTEMPTS, ["0xC0000142"], "", "env"),
+        ("OAuth 만료 첫 시도", 1,
+         ["Failed to authenticate: OAuth session expired and could not be refreshed"], "", "auth"),
+        ("인증 실패 한도보다 우선", 1,
+         ["AX_CLAUDE_AUTH_FAILED: 인증 검사 실패", "usage limit reached"], "", "auth"),
+        ("인증 summary 원인 보존", 1, [], "", "auth"),
         ("출력 반복 상한", RV.MAX_ATTEMPTS, ["RESULT: BLOCKED"],
          RV.tag_detail("previous", RV.output_fingerprint(["RESULT: BLOCKED"])), "repeat"),
     )
     for label, attempt, notes, previous, kind in cases:
         calls, logs = [], []
         committed = wcommit.Committed(task_id="isolated", notes=notes,
-                                      stage="llm", reason="RESULT: BLOCKED")
+                                      stage="llm", reason=("AX_CLAUDE_AUTH_FAILED: 캐시 저장 실패"
+                                          if label == "인증 summary 원인 보존" else "RESULT: BLOCKED"))
 
         def api(method, path, body=None):
             calls.append((method, path, body))
@@ -949,9 +955,31 @@ def test_commit_task_failure_notices_match_disposition() -> None:
         elif kind == "env":
             check(f"{label}: 환경 고지 보존",
                   notice.call_count == 1 and notice.call_args.kwargs.get("kind") == "env")
+        elif kind == "auth":
+            check(f"{label}: 인증 고지 즉시 1회 전송",
+                  notice.call_count == 1 and notice.call_args.kwargs.get("kind") == "auth")
+            check(f"{label}: 코드 재시도 없음", body.get("result") != RV.REVISE)
+            check(f"{label}: 요청자 실패 상세에 인증 원인 보존",
+                  "인증" in body.get("detail", "") and RV.authentication_failure([body.get("detail")]))
+            if label == "인증 summary 원인 보존":
+                check("실제 rc 실패 notes 비어도 저장 실패 원인이 유지",
+                      "캐시 저장 실패" in body.get("detail", "") and "캐시 저장 실패" in result.reason)
         elif kind == "repeat":
             check(f"{label}: 출력 반복 종결 안내 보존",
                   any("직전 시도와 출력이 같다" in n for n in result.notes))
+
+
+def test_auth_notice_content():
+    with patch("master.redmine.update_issue") as update:
+        I._notify_blocked("auth-task", {"work_id": "w", "assignee": "192.168.0.43"},
+                          "AX_CLAUDE_AUTH_FAILED", "캐시 저장 실패", kind="auth",
+                          api=lambda *a: {"work": {"redmine_issue_id": 721}})
+    note = update.call_args.kwargs["notes"]
+    check("인증 알림은 해당 워커와 구체 원인을 고지",
+          "192.168.0.43" in note and "캐시 저장 실패" in note)
+    check("인증 알림에 로그인 복구 설명과 자동 실행 제외",
+          "claude auth login" in note and "자동 로그인은 실행하지 않았다" in note)
+    check("인증 알림에 Windows 실행 환경 설명 섞지 않음", "Windows" not in note)
 
 
 def test_commit_layer2_usage_and_author():
@@ -1056,6 +1084,7 @@ def test_commit_layer2_grounding_gate():
 def main() -> int:
     for fn in (
                test_commit_task_failure_notices_match_disposition,
+               test_auth_notice_content,
                test_task_targets_reads_the_whole_list,
                test_py_skeleton_gate_blocks_before_the_claim,
                test_py_skeleton_gate_unreadable_is_not_a_block,

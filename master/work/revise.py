@@ -158,6 +158,21 @@ def quota_exhausted(texts) -> str:
 ENV = "environment"        # `pass`/`revise`/`reject` 와 나란한 네 번째 갈래
 
 
+AUTH_MARKERS = (
+    "AX_CLAUDE_AUTH_FAILED",
+    "Failed to authenticate: OAuth session expired and could not be refreshed",
+)
+
+
+def authentication_failure(texts) -> str:
+    """AX 사전 검사 표식과 실제 Claude OAuth 만료 오류만 판정한다."""
+    for text in texts or ():
+        for marker in AUTH_MARKERS:
+            if marker in str(text or ""):
+                return marker
+    return ""
+
+
 def environment_failure(texts) -> str:
     """지휘자 출력에서 **실행 환경이 죽은 증거**를 찾는다. 없으면 빈 문자열.
 

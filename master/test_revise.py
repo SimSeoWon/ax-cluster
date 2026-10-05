@@ -181,6 +181,12 @@ check("  0xC0000142 표기도 잡는다",
       R.environment_failure(["exec failed 0xC0000142"]) == "0xC0000142")
 check("  세션 9 파이프 실패도 잡는다 (elevated runner)",
       R.environment_failure(["timed out after 15000ms connecting runner pipe-in"]) != "")
+check("#721 실측 OAuth 만료는 인증 실패",
+      R.authentication_failure(["Failed to authenticate: OAuth session expired and could not be refreshed"]) != "")
+check("#721 사전 검사 고정 표식도 인증 확인 실패",
+      R.authentication_failure(["AX_CLAUDE_AUTH_FAILED: 검사 실패"]) != "")
+check("#721 일반 인증 코드 언급은 오탐 없음",
+      R.authentication_failure(["authenticate 함수를 구현했다", "로그인 테스트 성공"]) == "")
 
 # [중요] **환경 실패는 첫 번째에 멈춘다** — 층1 이슈가 있어도 revise 로 보내지 않는다.
 #    피드백을 실어 보내도 그 기계에서는 스킬조차 못 읽는다(실측: `.2` 가 세 번 태웠다).

@@ -448,7 +448,9 @@ def agent_command(facts, path: str, instr: str, *, mode: str) -> str:
 # 지휘자의 마지막 말 · 실패한 명령 · 오류 줄. 형식 지식은 `usage` 가 갖는다(파서를 또 만들지
 # 않는다 — `#385` 검증 ⓒ 와 같은 규칙).
 
-_ERR_MARKS = ("ERROR", "error=", "Rejected(", "failed:", "Traceback", "Permission denied")
+_ERR_MARKS = ("ERROR", "error=", "Rejected(", "failed:", "Traceback", "Permission denied",
+              "AX_CLAUDE_AUTH_FAILED",
+              "Failed to authenticate: OAuth session expired and could not be refreshed")
 AGENT_LOG_MAX = 3          # 오류 줄은 최대 3개까지만 (로그가 본문이 되면 안 읽힌다)
 AGENT_TEXT_MAX = 400       # 지휘자의 말 한 토막
 
@@ -536,6 +538,28 @@ def run_worker(facts, task_id: str, *, files=(), runner=None, mode: str = "claud
     cmd = worker_command(facts, task_id, files, mode=mode)
     if runner is not None:
         return runner(facts, cmd, timeout)
+    if mode == "claude":
+        from .conductor_auth import check_claude_auth, invalidate_claude_auth
+        from .revise import authentication_failure
+        checked = check_claude_auth(facts)
+        if not checked["ok"]:
+            return 1, f"AX_CLAUDE_AUTH_FAILED: {checked['reason']}\nRESULT: BLOCKED"
+        # bundle._ssh 회수 대상은 stdout뿐이다. Claude의 인증 stderr도 회수한다.
+        rc, out = bundle._ssh(facts.host, facts.user, cmd + " 2>&1", timeout=timeout)
+        json_failed = False
+        try:
+            payload = json.loads(out)
+            json_failed = isinstance(payload, dict) and payload.get("is_error") is True
+        except (ValueError, TypeError):
+            pass
+        if (rc != 0 or json_failed) and authentication_failure([out]):
+            invalidated = invalidate_claude_auth(facts)
+            detail = "Claude OAuth session expired; claude auth login 후 강제 재검사 필요"
+            if invalidated.get("failure_type") == "storage":
+                detail += "; 인증 캐시 저장 실패"
+            # wcommit은 rc 실패의 마지막 300자를 보관하므로 원문 길이와 무관하게 남긴다.
+            return rc or 1, f"AX_CLAUDE_AUTH_FAILED: {detail}\nRESULT: BLOCKED"
+        return rc, out
     return bundle._ssh(facts.host, facts.user, cmd, timeout=timeout)
 
 

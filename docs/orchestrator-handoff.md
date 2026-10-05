@@ -4,14 +4,19 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 인수**: **Claude** 가 16:5x~20:50 작업했다(새 세션 — 인수인계 확인 후 이어받음). 마스터 담당 **기록**은 여전히
-  Codex 14:37:58 이다 (사용자가 교대 기록을 지시하지 않아 바꾸지 않았다 — 기록은 잠금이 아니다).
-  **현재 갱신: 2026-10-05 20:50 KST** — #751 합성 로그의 상용 토큰 표시 수정·종결 반영.
-  main = origin/main `626477b` · 작업 트리 clean(이 문서만 갱신).
-  **워커 지휘자 모드 `claude`**(출처 state, 16:14:07 사용자 지시 전환 · readiness 3/3).
-  서비스: `ax-projects` **19:20:03**(R57 반영) · `ax-task-queue`·`ax-broker` 15:30 — active, `/livez` 3/3 ok.
-  **워커 재배달 완료**(17:0x, `decb048` 기준 15/15 OK). **진행 중인 수동 명령·원격 파견·서브 에이전트 없음**.
-  #748 은 마스터가 재구현해 완료했다(`accd72a`) — 아래 §0 최신 절의 후속.
+- **현재 갱신: 2026-10-06 00:07 KST · Codex → Claude 인계 준비 완료.** 사용자: 「토큰양이 아슬아슬하니까
+  인수인계서 작성해줘 클로드에서 진행할게」. Claude의 실제 인수는 새 세션에서 확인할 것.
+- **실제 소스 재조회**: `main...origin/main`, HEAD `40ea0ab66c1f0b84902fa57ec9097571f4f84e00`.
+  #721 관련 **13파일 미커밋**(tracked 수정11 + 신규2). Git clean 상태가 아니다. 목록·승인 범위는 §0 첫 절.
+- **담당·모드 재조회**: `get_orchestration_tool` / `get_worker_mode_tool` 성공.
+  마스터 마지막 기록 Codex 2026-10-05 14:37:58, 워커 `claude` / source=`state`(16:14:07).
+  새 Claude는 실제 인수 뒤 담당만 기록한다. 교대를 이유로 워커 모드를 바꾸지 않는다.
+- **검증 완료**: #721 통합25모듈1,137건 통과(10-05 22:2x~22:3x), 인계 직전 `git diff --check` rc0.
+  #721 Redmine 재조회 「진행」, 마지막 노트의 구현·검사·운영 미검증 상태와 일치.
+- **운영 마지막 확인**: #696 `40ea0ab` push/클론 동기화·등록전체15작업장 배달/검사 완료,
+  ax-projects 10-05 21:25:29 재기동. 인계 작성 시 서비스·워커 HEAD·큐·색인기 상태는 새로 조회하지 않았다.
+- **이 세션 실행 상태**: auth_cache_core/auth_runtime_failure 완료, twin_archive_core interrupted.
+  진행 중인 이 세션의 검사·수동 원격 명령 없음. 다른 서비스/세션의 활동까지 없다고 단정하지 않는다.
 
 아래 메타데이터는 이전 Claude 인계(20:25) 시점의 기록이며 현재 상태는 §0 첫 절을 따른다.
 
@@ -50,6 +55,79 @@
   (`3e46078` 은 마스터 측 배달 코드라 워커 동기화 불필요). 홈 중복 스킬 `~/.agents/skills/ax-work` 주의는 무해.
 
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
+
+### Claude가 바로 이어받을 것 — #721 마감 준비 (2026-10-06 00:07 KST)
+
+**사용자 확정과 승인 경계**
+
+- #721 진행 지시, 기존 **로컬 서브 에이전트** 방식. 워커별 마지막 검사 시각·결과를 워커에 저장하고
+  **경과 24시간 미만이면 재사용**, 기록 없거나 24시간 경과 시 검사. 세션마다/매 파견마다 auth status를 다시 돌리지 않는다.
+- 실제 인증 실패 시 정상 캐시 무효화·즉시 고지·코드 재작성 재시도 제외. 자동 `claude auth login` 금지.
+- 추가 검토 에이전트 생성 thread limit 실패 뒤 사용자 「응 로컬 서브에이전트를 이야기하는거니?」로 재개,
+  기존 구현2개 + 메인 직접 최종 검토로 완료했다. 해결되지 않은 검사 실패나 재개 대기 게이트는 없다.
+- **#721 커밋·푸시·동기화·서비스 재시작은 아직 승인받지 않았다.** #696의 「푸시하고 동기화해줘」는
+  #696에만 적용된다. 인계 요청은 #721 배포 승인으로 확대하지 않는다.
+
+**미커밋 실물 — 13파일 전부 #721 변경**
+
+```text
+M  master/work/conductor.py
+M  master/work/runner.py
+M  master/work/revise.py
+M  master/work/infer.py
+M  master/test_orchestration_control.py
+M  master/test_runner.py
+M  master/test_revise.py
+M  master/test_infer.py
+M  tests/integration/checks.json
+M  reports/README.md
+M  docs/orchestrator-handoff.md
+?? master/work/conductor_auth.py
+?? reports/96-worker-claude-auth-cache.md
+```
+
+`conductor_auth`는 기존 bundle의 remote_read/remote_write/ssh를 사용한다. 캐시 상대 경로
+`.cache/ax-dispatch/claude-auth.json`, host/user/home 대조, JSON loggedIn+종료코드 확인, 동시 첫 검사 잠금.
+API `check_claude_auth(facts, force=True)`로 재로그인 뒤 강제 검사 가능. 실패 결과도 TTL 내 재사용한다.
+runtime은 stderr도 회수하고, 실측 OAuth 실패를 짧은 표식으로 보존한다. rc0이라도 오류 JSON이면 실패 처리.
+infer는 즉시 Redmine 노트·큐 fail_detail에 호스트/원인을 남긴다. 기존 요청자 훅을 재사용하며 훅 소스는 수정하지 않았다.
+준비 실패 시 모드 변경 차단과 Codex 계약은 기존대로다. 보고서96에 상세·force 검사 함수 조합이 있다.
+
+**검사 증거와 다음 순서**
+
+1. 홈/저장소 지침과 이 문서의 최신 절, [보고서96](../reports/96-worker-claude-auth-cache.md), Redmine #721을 읽고
+   HEAD/dirty를 대조한다. 경로 목록 조회와 본문 읽기는 별도 호출로 수행한다. 기존 서브 에이전트 실행 ID를 이전하지 않는다.
+2. 실제 인수 후 ax-handoff 정본 `record_master_conductor_tool(agent="claude", why="사용자 지시로 #721 실제 인수 완료", by="claude")`
+   호출·재조회. 워커 모드는 조회만 한다.
+3. 검사 완료: orchestration27 · runner156 · revise67 · infer218. 정본 전체검사 **25모듈1,137건**, rc0, 16.943초.
+   명령 `.venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v`.
+   새 소스 변경이나 미해결 우려 없이 동일 검사를 반복할 필요는 없다. 인계 직전 whitespace 검사도 통과했다.
+4. 다음 남은 것은 **실제 워커 auth status/캐시 저장 왕복·24시간 내 재사용과 실패 고지 수신 검증, 승인 후 커밋·운영 반영**.
+   현재 #721은 구현·격리 검사 완료/운영 미검증이라 진행이다. 실제 워커 검사가 CLI/API 인증 성공 전체를 보장한다고 쓰지 않는다.
+   커밋/배포 승인은 구체 변경·검증 결과를 보여 받은 뒤 실행한다. 배달은 깨끗한 커밋에서 등록전체 update 정본을 사용한다.
+5. 레드마인 조회·쓰기는 ax-redmine의 **ax-client MCP만**. 누락/실패면 물으며 Python/curl/임시 파일로 우회하지 않는다.
+   사용자가 선택한 분산 방식도 불명확한 호출 때문에 바꾸지 않는다.
+
+**다른 작업은 다시 시작하지 말 것**
+
+- #326은 취소했고 그 구현 변경은 모두 정리했다. AXCluster의 Gitea→제한 접근 토큰 기반 GitHub 미러 사례만 #326에 기록했다.
+  신규 private 저장소 생성/미러 설정 능력·권한은 검증하지 않았다. 기존 Gitea push 경로는 정상이다.
+- #696은 배포 완료, 실제 상용 층2 운영 라운드 미검증이라 진행. `/tmp/ax-696-update.log`는 이전 등록전체 배달 검사 로그다.
+- #750(12b 합성 품질)은 사용자가 Gemini 대체 경로 때문에 뒤로 미뤘다. 새로운 다음 일감은 사용자 선택을 따른다.
+
+### 최신 — #721 워커 Claude 인증 캐시·실패 고지 (2026-10-05 22:30 KST, Codex)
+
+- 사용자 지정: 워커에 마지막 검사 시각·결과 저장, 경과 24시간 미만 재사용. 실행 중 인증 실패는 즉시 고지·재시도 제외.
+- 기존 선택인 로컬 서브 에이전트 2개로 구현, 메인 직접 검토. 추가 검토 에이전트 생성은 thread limit로 중단했다가
+  사용자 재개 확인 후 진행했다. 기준 HEAD `40ea0ab`, #721 소스·검사·통합 목록·보고서·이 인계 미커밋.
+- `conductor_auth`의 워커 홈 캐시를 준비 검사와 실제 Claude 실행이 공유한다. 만료 오류 때 실패 기록으로 갱신,
+  즉시 Redmine 및 큐 실패 상세에 원인 보존. 자동 로그인 없음. Codex·준비 실패 시 모드 유지 계약은 기존대로.
+- 통합 **25모듈 1,137건 통과**, diff whitespace 통과. 실제 워커 캐시 왕복·요청자 수신 및 운영 반영은 아직.
+  #721 진행 유지. [보고서96](../reports/96-worker-claude-auth-cache.md).
+- #696은 아래 커밋 전 기록 이후 사용자 승인으로 `40ea0ab` 커밋·Gitea push·클론 동기화·전체 15작업장 배달/검사 완료.
+  ax-projects 21:25:29 재기동. 실제 상용 층2 운영 라운드는 미검증이라 #696 진행 유지(Redmine 배포 노트 정본).
+- #326은 사용자 취소로 구현 변경을 모두 정리했다. AXCluster의 Gitea→제한 토큰 기반 GitHub 미러 사례만
+  #326에 기록했다. 새 저장소 생성·미러 구축은 하지 않았다.
 
 ### 최신 — #696 커밋 전 층2 복원 (2026-10-05 21:14 KST, Codex)
 

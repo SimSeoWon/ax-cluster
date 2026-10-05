@@ -4,11 +4,13 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from master.work import conductor as C
+from master.work import conductor_auth as A
 from master.client import bundle as B
 from master.projects.control_route import ControlApp
 from master.auth import BearerAuthMiddleware, REQUESTER_SCOPE, WORKER_SCOPE
@@ -235,5 +237,148 @@ class ControlTests(unittest.TestCase):
     def test_get_cannot_mutate(self):
         self.assertEqual(self.request('GET','/control/worker-mode',token='admin')[0],405)
         self.assertFalse(C.mode.STATE.exists())
+
+class ClaudeAuthTests(unittest.TestCase):
+    def setUp(self):
+        self.facts = B.HostFacts(host='auth-test-worker', user='sim', path='/work/a project',
+                                 home='/home/sim', os='linux', driven='ssh', role='worker',
+                                 claude='2.1.222', checkout_ok=True)
+        self.raw = ''
+        self.calls = []
+        self.writes = []
+        self.response = (0, '{"loggedIn": true, "email": "secret@example.com", "token": "secret-token"}')
+        A._revoked.discard(A._key(self.facts))
+        self.addCleanup(lambda: A._revoked.discard(A._key(self.facts)))
+
+    def read(self, facts, path):
+        self.assertEqual(path, A.cache_path(facts))
+        return self.raw
+
+    def write(self, facts, rel, text, *, base):
+        self.assertEqual(rel, A.CACHE_REL)
+        self.assertEqual(base, 'home')
+        self.writes.append(text)
+        self.raw = text
+
+    def shell(self, host, user, command, **kwargs):
+        self.calls.append(command)
+        self.assertEqual(kwargs, {'timeout': 30})
+        return self.response
+
+    def check(self, stamp=100000, **kwargs):
+        return A.check_claude_auth(self.facts, reader=self.read, writer=self.write,
+                                   shell_probe=self.shell, now=stamp, **kwargs)
+
+    def test_missing_record_and_ttl_boundary(self):
+        got = self.check()
+        self.assertTrue(got['ok'])
+        self.assertFalse(got['cached'])
+        self.assertTrue(self.check(100000)['cached'])
+        self.assertTrue(self.check(100000 + A.TTL - 1)['cached'])
+        self.assertFalse(self.check(100000 + A.TTL)['cached'])
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(self.calls[0], "cd '/work/a project' && claude auth status 2>&1")
+        self.assertNotIn('secret', ''.join(self.writes))
+
+    def test_bad_future_or_wrong_worker_records_recheck(self):
+        self.check()
+        good = json.loads(self.raw)
+        variants = ['broken', '[]', json.dumps({**good, 'checked_at': 100001}),
+                    json.dumps({**good, 'checked_at': float('nan')}),
+                    json.dumps({**good, 'checked_at': True}),
+                    json.dumps({**good, 'user': 'other'}),
+                    json.dumps({**good, 'host': 'other'}),
+                    json.dumps({**good, 'ok': 'true'}),
+                    json.dumps({**good, 'schema': 2})]
+        for raw in variants:
+            with self.subTest(raw=raw):
+                self.raw = raw
+                self.assertFalse(self.check()['cached'])
+
+    def test_failures_reuse_only_normalized_reason_and_force_rechecks(self):
+        for response, code in [((1, '{"loggedIn":false,"email":"secret"}'), 'auth'),
+                               ((0, '{"loggedIn":false}'), 'auth'),
+                               ((0, '{"loggedIn":"true"}'), 'json'),
+                               ((0, 'secret token non-json'), 'json'),
+                               ((1, 'secret CLI error'), 'exit')]:
+            with self.subTest(code=code, response=response):
+                self.response = response
+                got = self.check(force=True)
+                self.assertFalse(got['ok'])
+                self.assertEqual(got['failure_type'], code)
+                self.assertTrue(self.check()['cached'])
+                self.assertNotIn('secret', self.raw + got['reason'])
+        self.response = (0, '{"loggedIn":true}')
+        self.assertTrue(self.check(force=True)['ok'])
+
+    def test_probe_exception_does_not_expose_error(self):
+        def shell(*args, **kwargs):
+            raise TimeoutError('secret token')
+        got = A.check_claude_auth(self.facts, reader=self.read, writer=self.write,
+                                   shell_probe=shell, now=100000)
+        self.assertEqual(got['failure_type'], 'probe')
+        self.assertNotIn('secret', self.raw + got['reason'])
+
+    def test_remote_read_or_write_failure_is_fail_closed(self):
+        def fail(*args, **kwargs):
+            raise OSError('secret')
+        got = A.check_claude_auth(self.facts, reader=fail, writer=self.write,
+                                   shell_probe=self.shell, now=100000)
+        self.assertFalse(got['ok'])
+        self.assertEqual(self.calls, [])
+        self.check()
+        got = A.invalidate_claude_auth(self.facts, writer=fail, now=100000)
+        self.assertEqual(got['failure_type'], 'storage')
+        self.assertNotIn('secret', got['reason'])
+        # A failed invalidation write must not reuse the old healthy remote record.
+        self.response = (1, '{"loggedIn":false}')
+        self.assertFalse(self.check()['ok'])
+        self.assertEqual(len(self.calls), 2)
+
+    def test_runtime_invalidation_and_force_after_login(self):
+        self.check()
+        A.invalidate_claude_auth(self.facts, writer=self.write, now=100001)
+        got = self.check(100002)
+        self.assertFalse(got['ok'])
+        self.assertTrue(got['cached'])
+        self.assertEqual(len(self.calls), 1)
+        self.assertTrue(self.check(100002, force=True)['ok'])
+
+    def test_windows_path_and_command(self):
+        self.facts.os = 'windows'
+        self.facts.home = r'C:\Users\sim'
+        self.facts.path = r'C:\trunk\A Project'
+        got = self.check()
+        self.assertTrue(got['ok'])
+        self.assertEqual(A.cache_path(self.facts), r'C:\Users\sim\.cache\ax-dispatch\claude-auth.json')
+        self.assertEqual(self.calls[0], 'cd /d "C:\\trunk\\A Project" && claude auth status 2>&1')
+
+    def test_concurrent_first_commands_share_one_probe(self):
+        barrier = threading.Barrier(4)
+        results = []
+        def worker():
+            barrier.wait()
+            results.append(self.check())
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(len(results), 4)
+        self.assertTrue(all(result['ok'] for result in results))
+        self.assertEqual(len(self.calls), 1)
+
+    def test_readiness_reports_auth_failure_without_changing_mode_policy(self):
+        class Reg:
+            active = 'AXCluster'
+        with patch.object(B, 'workshops', return_value=[
+                (self.facts.host, self.facts.user, self.facts.path, 'ssh', 'worker', '')]):
+            got = REAL_WORKER_MODE_READINESS('claude', registry=Reg(),
+                prober=lambda *args: self.facts, reader=lambda *args: 'skill',
+                auth_checker=lambda *args, **kwargs: {'ok': False, 'reason': A.AUTH_FAILED})
+        self.assertFalse(got['ok'])
+        self.assertIn(A.AUTH_FAILED, got['hosts'][0]['problems'])
+
 
 if __name__=='__main__': unittest.main()

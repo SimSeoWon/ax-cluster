@@ -725,6 +725,34 @@ def test_session1_attempt_isolation() -> None:
             check("#695 다른 request 결과는 성공으로 회수하지 않음", rc == 1 and "request_id" in out, out)
 
 
+def test_claude_auth_runtime() -> None:
+    from unittest.mock import patch
+    raw = "Failed to authenticate: OAuth session expired and could not be refreshed"
+    with patch("master.work.conductor_auth.check_claude_auth", return_value={"ok": False, "reason": "검사 저장 경로 확인 필요"}), \
+         patch.object(R.bundle, "_ssh") as ssh:
+        rc, out = R.run_worker(_facts(), "t1")
+        check("인증 사전 검사 실패는 실제 실행을 막는다", rc == 1 and not ssh.called)
+        check("검사 실패 원인과 고정 표식 보존", "AX_CLAUDE_AUTH_FAILED" in out and "저장 경로" in out)
+    for process_rc, output in ((1, raw), (1, '{"result":"' + raw + '"}' + "x" * 500),
+                               (0, '{"is_error":true,"result":"' + raw + '"}')):
+        with patch("master.work.conductor_auth.check_claude_auth", return_value={"ok": True}), \
+             patch("master.work.conductor_auth.invalidate_claude_auth", return_value={"ok": False}) as invalidate, \
+             patch.object(R.bundle, "_ssh", return_value=(process_rc, output)) as ssh:
+            rc, out = R.run_worker(_facts(), "t1")
+            check("실제 OAuth 실패는 정상 캐시를 무효화", rc == 1 and invalidate.call_count == 1)
+            check("stderr 회수와 마지막300자 인증 표식 보존",
+                  ssh.call_args.args[2].endswith(" 2>&1") and "AX_CLAUDE_AUTH_FAILED" in out[-300:])
+    with patch("master.work.conductor_auth.check_claude_auth", return_value={"ok": True}), \
+         patch("master.work.conductor_auth.invalidate_claude_auth") as invalidate, \
+         patch.object(R.bundle, "_ssh", return_value=(0, "authenticate 기능 구현\nRESULT: DONE")):
+        rc, out = R.run_worker(_facts(), "t1")
+        check("일반 인증 코드 설명은 오탐 없음", rc == 0 and not invalidate.called)
+    with patch("master.work.conductor_auth.check_claude_auth") as check_auth:
+        R.run_worker(_facts(), "t1", runner=lambda *a: (0, "RESULT: DONE"))
+        check("주입 runner는 실 워커 인증 경로 호출 없음", not check_auth.called)
+    check("실측 OAuth 오류는 agent notes에 추출", any(raw in note for note in R.agent_report(raw, rc=1)))
+
+
 def main() -> int:
     for fn in (test_parse, test_pick, test_command, test_codex_windows_sandbox,
                test_agent_report, test_beater, test_run_task,
@@ -738,7 +766,7 @@ def main() -> int:
                test_session1_master_logs,
                test_session1_launcher_logs,
                test_session1_attempt_isolation,
-               test_worker_does_not_build):
+               test_worker_does_not_build, test_claude_auth_runtime):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_runner: {PASS}/{total} 통과")

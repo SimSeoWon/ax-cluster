@@ -81,7 +81,7 @@ def _windows_codex_registration(facts, project, read, run_shell):
 
 
 def worker_mode_readiness(selected, project="", *, registry=None, prober=None,
-                          reader=None, shell_probe=None):
+                          reader=None, shell_probe=None, writer=None, auth_checker=None):
     """선택한 지휘자의 배달물과 실제 파견 경로 등록을 호스트별로 확인한다.
 
     파일 존재만으로 통과시키지 않는다. 2026-09-11 `.2`에는 `ax-work`가 있었지만
@@ -122,8 +122,15 @@ def worker_mode_readiness(selected, project="", *, registry=None, prober=None,
             # SSH Session 0에서 Codex를 실행하면 실제 /IT 파견과 다른 경로를 잰다.
             # 조회만 한다. 셸 읽기·apply_patch·결과 회수는 실제 런처에서 별도 검증한다.
             problems.extend(_windows_codex_registration(facts, target, read, run_shell))
+        auth = None
+        if selected == "claude" and not problems:
+            from .conductor_auth import check_claude_auth
+            auth = (auth_checker or check_claude_auth)(
+                facts, reader=read, writer=writer, shell_probe=run_shell)
+            if not auth["ok"]:
+                problems.append(auth["reason"])
         rows.append({"host": host, "ok": not problems, "version": version,
-                     "problems": problems})
+                     "problems": problems, **({"auth": auth} if auth is not None else {})})
     if not rows:
         return {"ok": False, "mode": selected, "project": target,
                 "reason": "검사할 SSH 워커가 없다", "hosts": []}

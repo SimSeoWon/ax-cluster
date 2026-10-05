@@ -847,6 +847,17 @@ def _notify_blocked(task_id: str, task: dict, marker: str, summary: str,
                 "`pending` 으로 돌아갔고 **다른 워커가 집으면 그대로 진행된다** — 사람이 할 일은",
                 "없을 수 있다. 남은 워커가 전부 막히면 그때는 라운드가 멈춘다.",
             ])
+        elif kind == "auth":
+            note = "\n".join([
+                f"## 🔴 조각 `{task_id}` — **Claude 인증 확인 실패** (재시도하지 않음)",
+                "",
+                f"- 워커: `{task.get('assignee') or '?'}`",
+                f"- 신호: `{marker}`",
+                f"- 원인: {summary}",
+                "",
+                "워커의 인증 검사와 저장 경로를 확인하고, 로그아웃·만료이면 해당 워커에서",
+                "`claude auth login` 후 강제로 다시 검사해야 한다. 자동 로그인은 실행하지 않았다.",
+            ])
         else:
             note = "\n".join([
                 f"## 🔴 조각 `{task_id}` — **실행 환경 실패** (재시도하지 않음)",
@@ -1116,9 +1127,17 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         #    큐가 그 동작을 이미 갖고 있다(`logic_lifecycle.py:196` — `quota_exhausted` 면
         #    `pending` 복귀 + 그 워커 **5시간 차단**). 🔴 그런데 **그 사유를 아무도 보내지
         #    않고 있었다** — 배관은 있고 만드는 코드가 0건이었다(`#388` 과 같은 병).
-        quota_hit = "" if c.stage == "층2" else _RV.quota_exhausted(list(c.notes) + [c.summary])
+        auth_hit = "" if c.stage == "층2" else _RV.authentication_failure(list(c.notes) + [c.summary])
+        quota_hit = "" if auth_hit or c.stage == "층2" else _RV.quota_exhausted(list(c.notes) + [c.summary])
         env_hit = "" if quota_hit or c.stage == "층2" else _RV.environment_failure(list(c.notes) + [c.summary])
-        if quota_hit:
+        if auth_hit:
+            verdict = _RV.REJECT
+            auth_detail = next((n for n in c.notes if _RV.authentication_failure([n])), c.summary)
+            res.reason = f"Claude 인증 확인 실패 @{facts.host}: {auth_detail}"
+            res.notes.append(f"[중요] {res.reason} — 코드 재작성 재시도 제외")
+            _log(f"[auth] {task_id} {res.reason} — 재시도 없이 종결")
+            _notify_blocked(task_id, task, auth_hit, res.reason, kind="auth", api=api)
+        elif quota_hit:
             verdict = _RV.REJECT                              # revise 로 보내지 않는다
             res.notes.append(
                 f"🔴 [중요] **한도 소진이다 — 코드 실패가 아니다** (`{quota_hit}`). "
@@ -1149,7 +1168,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         #    한도 → 환경 → **출력 반복** → `classify` 다(앞 두 갈래는 처분이 달라 먼저 본다).
         #    지문은 지휘자의 말(`c.notes`)로 만들고, 직전 지문은 `task["last_feedback"]` 에 있다
         #    (`revise.tag_detail` 이 앞서 실어 둔 것). 출력이 비면 지문이 없어 이 갈래를 타지 않는다.
-        fp = "" if (quota_hit or env_hit) else _RV.output_fingerprint(list(c.notes))
+        fp = "" if (auth_hit or quota_hit or env_hit) else _RV.output_fingerprint(list(c.notes))
         repeat_hit = _RV.repeated_output(task.get("last_feedback") or "", fp)
         if repeat_hit:
             verdict = _RV.REJECT
@@ -1173,14 +1192,14 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                 res.notes.append(f"[중요] 재시도로 보내려 했으나 피드백을 못 실었다 — "
                                  f"{emb.error} · terminal 로 종결한다")
                 _log(f"[revise] [중요] {task_id} 피드백 실패 — {emb.error}")
-        elif not quota_hit and not env_hit and not repeat_hit and not c.layer2_failure:
+        elif not auth_hit and not quota_hit and not env_hit and not repeat_hit and not c.layer2_failure:
             res.notes.append(f"[중요] 재시도 상한 — attempt {attempt} ≥ {_RV.MAX_ATTEMPTS}, "
                              f"종결한다(원전 `reject`)")
             _log(f"[revise] {task_id} 상한 도달 attempt={attempt} → 종결")
         try:
             # [중요] 사유가 처분을 정한다 — `quota_exhausted` 는 큐가 **pending 복귀**로 받는다
             _reason = "quota_exhausted" if quota_hit else runner.BLOCKED
-            runner.submit_fail(task_id, _reason, _RV.tag_detail(c.summary, fp),
+            runner.submit_fail(task_id, _reason, _RV.tag_detail(res.reason if auth_hit else c.summary, fp),
                                epoch=epoch, worker_id=facts.host, api=api,
                                result=r_result, new_base_commit=r_base)
         except Exception as e:                               # noqa: BLE001
