@@ -500,6 +500,170 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
     check("  파일이 바뀌면 캐시를 쓰지 않는다",
           "CurrentVulnerableState" not in synth.project_symbols(pl))
 
+    print("\n[#727-1] e4b 실측 모양 — 펜스 · 여는/닫는 줄 누락 · 공백 든 category 를 복구한다")
+    REVIEW_GEN_RAW = (
+        "```markdown\n"
+        "tags: [코드리뷰생성, 코드분석, 컨벤션검증, 커밋리포트]\n"
+        "category: Context Synthesis/Review Generation/Code Review\n\n"
+        "## 요약\nAMonster 는 리뷰를 만든다.\n\n## 개선 필요 사항\n- 없음\n"
+        "```")
+    check("  재현: 종전 게이트는 이 원문을 거부했다(벗긴 뒤에도 `---` 없음)",
+          not md.check(md._FENCE_RE.match(REVIEW_GEN_RAW).group(1)).ok)
+    d727, v727 = md.finalize(REVIEW_GEN_RAW, commit="93dea06")
+    check("복구된 문서가 **바뀌지 않은 게이트**를 통과한다", v727.ok and md.check(d727).ok,
+          v727.reason)
+    check("  category 의 공백이 보존된다",
+          "category: Context Synthesis/Review Generation/Code Review" in d727, d727[:200])
+    check("  스탬프가 들어간다", md.read_source_commit(d727) == "93dea06")
+    REL_PATHS = ("tags: [a, b]\ncategory: X Y/Z\nrelated_classes:\n"
+                 "  - context_synth/synth.py: master/context_synth/synth.py\n\n## 요약\n" + "본문 " * 20)
+    check("related_classes 이름 자리의 경로 모양도 복구한다",
+          md.finalize(REL_PATHS, commit="c1")[1].ok)
+    for label, raw in (
+            ("category 에 콜론", REVIEW_GEN_RAW.replace("Code Review", "Code: Review")),
+            ("category 가 YAML 목록", REVIEW_GEN_RAW.replace(
+                "Context Synthesis/Review Generation/Code Review", "[a, b]")),
+            ("category 가 비었다", REVIEW_GEN_RAW.replace(
+                "Context Synthesis/Review Generation/Code Review", "")),
+            ("related 항목이 문장", REL_PATHS.replace(
+                "context_synth/synth.py: master", "이건 설명: master"))):
+        dd, vv = md.finalize(raw, commit="c1")
+        check(f"{label}: 여전히 거부한다(게이트를 무디게 하지 않았다)", dd == "" and not vv.ok,
+              dd[:120])
+
+    print("\n[#727-2] 형식 거부 대체 사슬 — e4b → 12b → codex → agy, claude 는 없다")
+    check("사슬이 상수 한 곳이다",
+          synth.SYNTH_CHAIN == (synth.SYNTH_MODEL, synth.FALLBACK_MODEL, "codex", "agy"),
+          str(synth.SYNTH_CHAIN))
+    check("[중요] claude 는 사슬에 없다", not any(m.startswith("claude") for m in synth.SYNTH_CHAIN))
+    check("claude 를 넣어도 뺀다 · 로컬을 상용 앞으로 모은다",
+          synth._chain_for(synth.SYNTH_MODEL, ("codex", "claude:opus", "gemma4:e4b", "agy"))
+          == ["gemma4:e4b", "codex", "agy"])
+    check("명시한 다른 모델은 그 하나만 (수동 경로 종전 그대로)",
+          synth._chain_for("gemma3:12b", None) == ["gemma3:12b"])
+    BAD = "설명만 있고 frontmatter 가 없다. " * 6
+
+    def routed(table, seen):
+        def caller(url, payload):
+            seen.append(payload["model"])
+            v = table[payload["model"]]
+            return v(url, payload) if callable(v) else v
+        return caller
+
+    def cli_rec(table, seen):
+        def cli(lane, prompt, timeout):
+            seen.append(lane)
+            v = table.get(lane)
+            return v(None, {"prompt": prompt}) if callable(v) else v
+        return cli
+
+    pc = make_project(tmp / "chain")
+    K = "Source/Game/Monster"
+    seen, cseen = [], []
+    r = synth.synthesize_group(pc, K, FILES, commit="c727", dry_run=True,
+                               caller=routed({"gemma4:e4b": BAD, "gemma3:12b": honest_llm}, seen),
+                               cli=cli_rec({}, cseen))
+    check("e4b 형식 거부 → 12b 통과", r.passed and r.model == "gemma3:12b", r.reason)
+    check("  상용은 부르지 않았다", cseen == [] and seen == ["gemma4:e4b", "gemma3:12b"],
+          f"{seen} {cseen}")
+    check("  시도 기록이 남는다", r.attempts == ["gemma4:e4b 형식 거부", "gemma3:12b 형식 통과"],
+          str(r.attempts))
+
+    seen, cseen = [], []
+    r = synth.synthesize_group(pc, K, FILES, commit="c727", dry_run=True,
+                               caller=routed({"gemma4:e4b": BAD, "gemma3:12b": BAD}, seen),
+                               cli=cli_rec({"codex": honest_llm, "agy": BAD,
+                                            "claude": honest_llm}, cseen))
+    check("로컬 둘 다 거부 → codex 통과", r.passed and r.model == "codex", r.reason)
+    check("  agy·claude 는 부르지 않았다", cseen == ["codex"], str(cseen))
+
+    seen, cseen = [], []
+    pc2 = make_project(tmp / "chain2")
+    synth.doc_path(pc2, K).parent.mkdir(parents=True, exist_ok=True)
+    synth.doc_path(pc2, K).write_text(GOOD, encoding="utf-8")
+    r = synth.synthesize_group(pc2, K, FILES, commit="c727",
+                               caller=routed({"gemma4:e4b": BAD, "gemma3:12b": BAD}, seen),
+                               cli=cli_rec({"codex": BAD, "agy": None}, cseen))
+    check("전부 실패 → 쓰지 않는다 · 유실로 남는다", not r.written and r.lost, r.reason)
+    check("  [중요] 형식 거부로 센다 (서킷 사유가 아니다)", r.reason.startswith("형식 게이트"),
+          r.reason[:80])
+    check("  사유에 사슬이 실린다", "사슬:" in r.reason and "agy LLM 실패" in r.reason, r.reason)
+    check("  레인마다 한 번 · claude 없음", cseen == ["codex", "agy"]
+          and seen == ["gemma4:e4b", "gemma3:12b"], f"{seen} {cseen}")
+    check("  기존 문서를 지킨다", synth.doc_path(pc2, K).read_text(encoding="utf-8") == GOOD)
+    from master.context_synth import pending as pending_mod
+    check("  보류로 남는다 (다음 실행이 다시 시도)", any(k == K for k, _ in pending_mod.due(pc2))
+          or K in (pending_mod.summary(pc2) or ""), pending_mod.summary(pc2))
+
+    seen, cseen = [], []
+    r = synth.synthesize_group(pc, K, FILES, dry_run=True,
+                               caller=routed({"gemma4:e4b": boom, "gemma3:12b": honest_llm}, seen),
+                               cli=cli_rec({"codex": honest_llm}, cseen))
+    check("[중요] 첫 모델의 LLM 실패는 사슬을 타지 않는다 (장애에 상용을 태우지 않는다)",
+          not r.passed and r.reason.startswith("LLM 실패") and seen == ["gemma4:e4b"]
+          and cseen == [], f"{r.reason} {seen} {cseen}")
+
+    seen = []
+    r = synth.synthesize_group(pc, K, FILES, dry_run=True,
+                               caller=routed({"gemma4:e4b": BAD, "gemma3:12b": BAD}, seen))
+    check("주입된 브로커 호출자뿐이면 진짜 상용 CLI 를 부르지 않는다",
+          not r.passed and "codex 건너뜀(주입된 호출자)" in r.attempts, str(r.attempts))
+
+    seen, cseen = [], []
+    stc = synth.run(pc, changed=FILES, commit="c727", dry_run=True,
+                    caller=routed({"gemma4:e4b": BAD, "gemma3:12b": honest_llm}, seen),
+                    cli=cli_rec({}, cseen))
+    check("배치 통계가 대체 통과를 센다", stc.fallback_passed == 1
+          and "대체 모델 통과 1" in stc.summary, stc.summary)
+
+    print("\n[#727-3] 사용량 — 로컬·상용 시도가 트윈 usage_log 에 `synth` 로 남는다")
+    import json as _json
+    import urllib.request as _ur
+    from master import layer2_verify as _l2
+    import importlib as _il
+    _gen = _il.import_module("master.work.generate")
+
+    class _Resp:
+        def __init__(self, body):
+            self._b = body
+
+        def read(self):
+            return self._b
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=0):
+        return _Resp(_json.dumps({"response": BAD, "prompt_eval_count": 11,
+                                  "eval_count": 7}).encode("utf-8"))
+
+    good_txt = honest_llm(None, {"prompt": ""})
+    ev = _json.dumps({"type": "turn.completed",
+                      "usage": {"input_tokens": 100, "output_tokens": 20}})
+    saved = (_ur.urlopen, _gen.auth_headers, _l2._codex_run)
+    pu = make_project(tmp / "usage")
+    try:
+        _ur.urlopen = fake_urlopen
+        _gen.auth_headers = lambda t=None: {}
+        _l2._codex_run = lambda prompt, *, timeout, reasoning: (good_txt, ev, "", 0, True)
+        r = synth.synthesize_group(pu, K, FILES, commit="c727", dry_run=True)
+    finally:
+        _ur.urlopen, _gen.auth_headers, _l2._codex_run = saved
+    rows = [_json.loads(x) for x in pu.usage_log.read_text(encoding="utf-8").splitlines()] \
+        if pu.usage_log.is_file() else []
+    check("codex 가 통과시킨다 (주입 없이 실제 진입점)", r.passed and r.model == "codex", r.reason)
+    check("사용량 3행 — e4b · 12b · codex", [x["lane"] for x in rows]
+          == ["local:gemma4:e4b", "local:gemma3:12b", "codex"], str([x.get("lane") for x in rows]))
+    check("  전부 source=synth · task_id=그룹", all(x["source"] == "synth" and x["task_id"] == K
+                                                for x in rows), str(rows)[:300])
+    check("  토큰이 실린다", rows and rows[0]["input_tokens"] == 11
+          and rows[-1]["input_tokens"] == 100, str(rows)[:300])
+    check("  GroupResult 는 로컬 토큰 합을 든다", r.tokens_in == 22 and r.tokens_out == 14,
+          f"{r.tokens_in}/{r.tokens_out}")
+
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0

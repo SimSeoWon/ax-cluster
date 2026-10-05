@@ -58,6 +58,22 @@ FALLBACK_MODEL = "gemma3:12b"            # .2 전용 VRAM. E4B 가 얕을 때
 HEAVY_MODEL = "hf.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M"   # 되돌릴 때만
 SYNTH_TIMEOUT = 600
 
+# 🔴 **형식 게이트 거부 시의 대체 사슬** (`#727`, 사용자 결정 2026-10-05). 순서를 바꿀 자리는
+#    **여기 한 곳**이다. 실측: `master/webui/app`·`master/context_synth/review_gen` 이 e4b 로
+#    연달아 형식 거부됐고(요약 뒤에도 상한 초과인 큰 파일), gemma3:12b 수동 재합성은 매번 통과했다.
+#
+#    [중요] **게이트는 그대로다** — 사슬의 어느 모델 결과든 같은 `md.finalize` → 사실 게이트를 탄다.
+#    [중요] 쓰는 일의 레인 정책(`codex → agy → 로컬`, `claude` 는 마스터 작업용으로 남긴다)을
+#       따라 **`claude` 는 넣지 않는다** — 넣어도 `_chain_for` 가 빼고 로그를 남긴다.
+#    [중요] **비용 상한**: 상용 레인은 사슬의 로컬 모델이 그 그룹에서 **모두** 실패한 뒤에만,
+#       레인마다 그룹당 실행당 **한 번**만 돈다(`_chain_for` 가 로컬을 앞으로 모은다).
+#    [주의] 사슬은 **형식 거부**에서만 다음으로 넘어간다. 첫 모델의 LLM 실패(브로커·노드 장애)는
+#       종전처럼 서킷브레이커 몫이다 — 장애마다 상용 호출을 태우지 않는다. 사실 게이트 거부도
+#       종전처럼 그 자리에서 끝난다(형식이 아니라 내용의 문제다).
+SYNTH_CHAIN = (SYNTH_MODEL, FALLBACK_MODEL, "codex", "agy")
+_CLI_LANES = ("claude", "agy", "codex")          # `ontology.synth.CLI_MODELS` 와 같은 레인 이름
+_CHAIN_EXCLUDED = ("claude",)
+
 # [중요] KV 컨텍스트 상한. **이것이 BC-250 정지 사고의 진짜 원인이었다** — 모델 기본
 # `context_length` 가 **262144(256K)** 라, 안 주면 그 전제로 KV 와 컨텍스트 체크포인트를
 # 잡는다(실측 `checkpoint 1 of 32 ... 62.813 MiB` → 32개면 ~2.0GB, 보드 여유는 2.2GB).
@@ -106,6 +122,8 @@ class GroupResult:
     tokens_in: int = 0        # 브로커가 준 사용량 (`#713`) — 노드가 안 주면 0
     tokens_out: int = 0
     digest: str = ""          # 프롬프트에 요약본을 썼으면 그 요약 (`pydigest`, `#711`)
+    model: str = ""           # 형식 게이트를 통과한 결과를 낸 모델 (`#727`)
+    attempts: list = field(default_factory=list)   # 사슬 시도 기록 — `모델 결과` 문자열들
 
     @property
     def passed(self) -> bool:
@@ -133,6 +151,7 @@ class Stats:
     tokens_out: int = 0
     digested: int = 0           # 프롬프트에 요약본을 쓴 그룹 수 (`#711`)
     workers: int = 1            # 동시 합성 수 (`#715`)
+    fallback_passed: int = 0    # 대체 사슬의 다음 모델이 통과시킨 그룹 수 (`#727`)
     elapsed_ms: int = 0
     encodings: source_text.EncodingTally = field(default_factory=source_text.EncodingTally)
     results: list[GroupResult] = field(default_factory=list)
@@ -157,6 +176,8 @@ class Stats:
             s += f" · 요약본 {self.digested}"
         if self.workers > 1:
             s += f" · 동시 {self.workers}"
+        if self.fallback_passed:
+            s += f" · 대체 모델 통과 {self.fallback_passed}"
         if self.refused:
             s += f" · [중요] 형식 거부 {self.refused}"
         if self.unfactual:
@@ -460,11 +481,63 @@ def _prompt_bodies(paths, bodies: dict, limit: int) -> tuple[dict, str]:
     return out, " · ".join(notes)
 
 
+def _is_cli(model: str) -> bool:
+    return model.partition(":")[0] in _CLI_LANES
+
+
+def _chain_for(model: str, chain) -> list[str]:
+    """이 그룹이 탈 모델 순서 (`#727`).
+
+    `chain` 이 없으면 — 기본 모델이면 `SYNTH_CHAIN`, **명시한 다른 모델이면 그 하나**(종전의
+    수동 `--model`·`--fallback` 동작 그대로). 어느 경우든 `claude` 는 빼고, 로컬을 상용보다
+    **앞으로 모은다** — 상수 순서가 바뀌어도 「상용은 로컬이 다 실패한 뒤」가 깨지지 않게.
+    """
+    if chain is None:
+        chain = SYNTH_CHAIN if model == SYNTH_MODEL else (model,)
+    out: list[str] = []
+    for m in chain:
+        if m.partition(":")[0] in _CHAIN_EXCLUDED:
+            _log(f"[사슬] {m} 는 합성 사슬에서 뺀다 — 쓰는 일의 레인 정책 (#727)")
+            continue
+        if m not in out:
+            out.append(m)
+    return [m for m in out if not _is_cli(m)] + [m for m in out if _is_cli(m)]
+
+
+def _generate(prompt: str, model: str, *, broker: str, caller, cli, usage: dict) -> str:
+    """한 번의 생성. 로컬 → 브로커, `codex`/`agy` → 마스터의 상용 CLI (`#727`).
+
+    [중요] 상용 호출은 `layer2_verify.call_*_why` 공용 진입을 탄다 — 그 진입이 `usage.sink` 로
+    감싼 구간에서 사용량 한 줄을 남긴다(`#728`·`#733`). 실패는 `GenerateError` 로 통일한다.
+    `cli` 는 테스트 주입(`(lane, prompt, timeout) -> str | None`).
+    """
+    if not _is_cli(model):
+        return call_broker(prompt, model=model, broker=broker, timeout=SYNTH_TIMEOUT,
+                           num_ctx=SYNTH_NUM_CTX, caller=caller, usage=usage)
+    lane, _, sub = model.partition(":")
+    if sub:
+        raise GenerateError(f"{lane} 는 모델 지정을 받지 않는다: {model}")
+    if cli is not None:
+        out, why = cli(lane, prompt, SYNTH_TIMEOUT), ""
+    else:
+        from .. import layer2_verify as l2                        # noqa: PLC0415
+        if lane == "codex":
+            out, _events, why = l2.call_codex_why(prompt, timeout=SYNTH_TIMEOUT)
+        elif lane == "agy":
+            out, why = l2.call_agy_why(prompt, timeout=SYNTH_TIMEOUT)
+        else:                       # `_chain_for` 가 이미 뺐다 — 여기 오면 배선 결함이다
+            raise GenerateError(f"{lane} 는 합성 사슬 레인이 아니다 (#727)")
+    if not out or not str(out).strip():
+        raise GenerateError(f"{lane} CLI 가 응답하지 않았다 — {why or '빈 출력'}")
+    return out
+
+
 def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                      commit: str = "", broker: str = DEFAULT_BROKER,
                      model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
                      content_limit: int = prompt_mod.CONTENT_LIMIT,
-                     tally: source_text.EncodingTally | None = None) -> GroupResult:
+                     tally: source_text.EncodingTally | None = None,
+                     chain=None, cli=None) -> GroupResult:
     """한 그룹 → 컨텍스트 MD 한 개.
 
     실패는 **예외가 아니라 결과**다 — 한 그룹이 죽었다고 배치를 멈추지 않는다. 대신
@@ -503,26 +576,52 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                          existing=existing, limit=content_limit)
     res.prompt_chars = len(p)
 
-    usage: dict = {}
-    t_call = time.monotonic()
-    try:
-        from ..work import usage as usage_mod                     # noqa: PLC0415
-        # `#713` ① — 이 그룹의 브로커 호출을 트윈의 `usage_log.jsonl` 에 `synth` 로 남긴다
-        with usage_mod.sink(paths.usage_log, source="synth", task_id=key):
-            raw = call_broker(p, model=model, broker=broker, timeout=SYNTH_TIMEOUT,
-                              num_ctx=SYNTH_NUM_CTX, caller=caller, usage=usage)
-    except GenerateError as e:
-        res.reason = f"LLM 실패: {e}"
-        _log(f"{key} — LLM 실패 · {int(time.monotonic() - t_call)}초 · 프롬프트 {len(p)}자")
-        return _remember(paths, key, files, res, commit, dry_run)
-    res.tokens_in, res.tokens_out = usage.get("in", 0), usage.get("out", 0)
-    _log(f"{key} — {model} · 토큰 입력 {usage.get('in', '미상')} · 출력 {usage.get('out', '미상')}"
-         f" · {int(time.monotonic() - t_call)}초 · 프롬프트 {len(p)}자")
-
-    doc, verdict = md_mod.finalize(raw, existing=existing, commit=commit)
-    if not verdict.ok:
-        # σ.7-B — [중요] 기존 파일을 남긴다. 다음 사이클에 다시 시도된다.
-        res.reason = f"형식 게이트 {verdict.summary} · preview={verdict.preview!r}"
+    # 🔴 `#727` — 형식 게이트가 거부하면 사슬의 다음 모델로 간다. 결과마다 **같은 게이트**를 탄다.
+    from ..work import usage as usage_mod                         # noqa: PLC0415
+    models = _chain_for(model, chain)
+    doc = ""
+    format_reason = llm_reason = ""
+    for n, m in enumerate(models):
+        if n and _is_cli(m) and caller is not None and cli is None:
+            # 주입된 브로커 호출자(테스트)에서 진짜 상용 CLI 를 부르지 않는다
+            res.attempts.append(f"{m} 건너뜀(주입된 호출자)")
+            continue
+        usage: dict = {}
+        t_call = time.monotonic()
+        try:
+            # `#713` ① — 이 그룹의 호출을 트윈의 `usage_log.jsonl` 에 `synth` 로 남긴다.
+            #    상용 CLI 도 같은 sink 를 읽는다(`#728`·`#733`)
+            with usage_mod.sink(paths.usage_log, source="synth", task_id=key):
+                raw = _generate(p, m, broker=broker, caller=caller, cli=cli, usage=usage)
+        except GenerateError as e:
+            llm_reason = f"LLM 실패: {e}"
+            res.attempts.append(f"{m} LLM 실패")
+            _log(f"{key} — {m} LLM 실패 · {int(time.monotonic() - t_call)}초 · 프롬프트 {len(p)}자"
+                 f" · {str(e)[:120]}")
+            if n == 0:
+                break               # 첫 모델의 장애는 서킷브레이커 몫 — 사슬을 태우지 않는다
+            continue
+        res.tokens_in += usage.get("in", 0)
+        res.tokens_out += usage.get("out", 0)
+        _log(f"{key} — {m} · 토큰 입력 {usage.get('in', '미상')} · 출력 {usage.get('out', '미상')}"
+             f" · {int(time.monotonic() - t_call)}초 · 프롬프트 {len(p)}자")
+        doc, verdict = md_mod.finalize(raw, existing=existing, commit=commit)
+        if verdict.ok:
+            res.model = m
+            res.attempts.append(f"{m} 형식 통과")
+            break
+        # σ.7-B — [중요] 기존 파일을 남긴다. 사슬이 다 실패하면 다음 사이클에 다시 시도된다.
+        format_reason = f"형식 게이트 {verdict.summary} · preview={verdict.preview!r}"
+        res.attempts.append(f"{m} 형식 거부")
+        _log(f"{key} — {m} 형식 거부 · preview={verdict.preview!r}")
+    if len(res.attempts) > 1 or (res.model and res.model != models[0]):
+        _log(f"{key} — 사슬 {' → '.join(res.attempts)}"
+             + (f" · 통과 모델 {res.model}" if res.model else " · 전부 실패"))
+    if not res.model:
+        # 응답이 한 번이라도 왔으면 형식 거부로 센다 — 모델은 살아 있다(서킷 사유가 아니다)
+        res.reason = format_reason or llm_reason or "LLM 실패: 사슬에 시도할 모델이 없다"
+        if len(res.attempts) > 1:
+            res.reason += f" · 사슬: {' → '.join(res.attempts)}"
         return _remember(paths, key, files, res, commit, dry_run)
 
     # [중요] **사실 게이트** — 소스 실측과 대조한다. LLM 에게 자기 검증을 맡기지 않는다
@@ -591,12 +690,14 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
         skip_existing: bool = False, limit: int = 0, broker: str = DEFAULT_BROKER,
         model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
         content_limit: int = prompt_mod.CONTENT_LIMIT, unload_every: int = UNLOAD_EVERY,
-        git=None, progress=None, parallel: int | None = None) -> Stats:
+        git=None, progress=None, parallel: int | None = None,
+        chain=None, cli=None) -> Stats:
     """배치 합성. `changed` 를 주면 그 파일들만, 없으면 경계(`paths.scope`, 기본 `Source/`) 전체.
 
     `skip_existing` — 이미 문서가 있는 그룹을 건너뛴다(최초 전체 빌드에서 누락분만 보충).
     `limit` — 그룹 수 상한. 0 이면 무제한. [중요] 상한에 걸려 남긴 것은 `Stats.aborted` 에 적는다.
     `parallel` — 동시 합성 수. `None` 이면 **그 모델이 상주한 노드 수**(`_workers`, `#715`).
+    `chain` — 형식 거부 시의 모델 순서. `None` 이면 `_chain_for` 규칙(`#727`). `cli` 는 테스트 주입.
     """
     files = changed if changed is not None else cg.list_source_files(paths, git=git)
     if not files:
@@ -668,7 +769,8 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
             _idx, key, fs = batch[j]
             return synthesize_group(paths, key, fs, commit=commit, broker=broker, model=model,
                                     caller=caller, dry_run=dry_run,
-                                    content_limit=content_limit, tally=tallies[j])
+                                    content_limit=content_limit, tally=tallies[j],
+                                    chain=chain, cli=cli)
         if len(batch) == 1:
             results = [_one(0)]
         else:
@@ -684,6 +786,8 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
             stats.tokens_out += r.tokens_out
             if r.digest:
                 stats.digested += 1
+            if r.passed and r.model and r.model != model:
+                stats.fallback_passed += 1
             if r.passed:
                 stats.written += 1
                 consecutive = 0

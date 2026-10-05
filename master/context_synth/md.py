@@ -123,7 +123,11 @@ def _repair_missing_open(s: str) -> str:
                 tag = r'''(?:[^\s,\[\]{}:'"]+|'[^'\n]*'|"[^"\n]*")'''
                 if not re.fullmatch(rf"\[[ \t]*(?:{tag}(?:[ \t]*,[ \t]*{tag})*)?[ \t]*\]", value):
                     return s
-            if current == "category" and not re.fullmatch(r"[^\s\[\]{}:#]+", value):
+            # `#727` — 단어 사이 공백은 허용한다(실측 2026-10-05 `review_gen`: e4b 가
+            #    `category: Context Synthesis/Review Generation/…` 을 냈고, 트윈의 통과 문서
+            #    108개가 같은 모양이다). YAML 특수문자·앞뒤 공백·빈 값은 여전히 거부한다.
+            if current == "category" and not re.fullmatch(
+                    r"[^\s\[\]{}:#](?:[^\[\]{}:#\n]*[^\s\[\]{}:#])?", value):
                 return s
             if current == "related_classes" and value not in ("", "[]"):
                 return s
@@ -131,7 +135,9 @@ def _repair_missing_open(s: str) -> str:
                     r"[A-Za-z0-9_-]+", value):
                 return s
         elif current == "related_classes" and re.fullmatch(
-                r"[ \t]+-[ \t]+[A-Za-z_][A-Za-z0-9_]*:[ \t]+\S+", line):
+                r"[ \t]+-[ \t]+[A-Za-z_][A-Za-z0-9_./-]*:[ \t]+\S+", line):
+            # `#727` — 이름 자리에 경로(`context_synth/synth.py: master/…`)가 오는 모양도
+            #    트윈 통과 문서에 있다. 정규화(`related.normalize_doc`)가 쓰기 직전에 맞춘다.
             continue
         else:
             return s
