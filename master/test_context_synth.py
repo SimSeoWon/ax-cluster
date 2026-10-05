@@ -233,6 +233,11 @@ def main() -> int:
     check("범용어 태그 금지를 지시한다", "범용어는 태그가 아니다" in p_txt)
     check("[중요] 펜스로 감싸지 말라고 지시한다", "펜스로" in p_txt)
     check("코멘트를 만들지 말라고 지시한다", "## 코멘트\" 섹션은 절대 생성하지 마" in p_txt)
+    check("🔴 #637 「개선 필요 사항」 절을 요구하지 않는다", "개선 필요 사항" not in p_txt)
+    p_dev = prompt.build(files=FILES, bodies={f: "code" for f in FILES}, grounding=gr,
+                         existing="## 요약\nx\n\n## 코멘트\n사람이 쓴 메모\n")
+    check("#637 개발자 코멘트 안내에도 그 절이 없다",
+          "사람이 쓴 메모" in p_dev and "개선 필요 사항" not in p_dev)
     check("본문 상한을 적용한다",
           len(prompt.build(files=FILES, bodies={FILES[0]: "x" * 20000}, grounding=gr,
                            limit=100)) < 12000)
