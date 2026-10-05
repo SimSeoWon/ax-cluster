@@ -104,6 +104,10 @@ class UsagePageTests(unittest.TestCase):
         self.assertIn("미연결", body)
         self.assertIn("기록 없음", body)
         self.assertIn("합산", body)
+        model_table = usage_page._model_table(zero)
+        self.assertEqual(model_table.count("기록 없음"), 1)
+        self.assertIn('<td>Gemini</td><td colspan="6" class="dim">기록 없음', model_table)
+        self.assertNotIn("기록 없음", usage_page._model_table(_report()))
 
         empty = _report(
             source="session", project="", projects=[], warnings=[],
@@ -115,6 +119,9 @@ class UsagePageTests(unittest.TestCase):
         )
         empty_body = _text(empty)
         self.assertIn("기록 없음", empty_body)
+        empty_model_table = usage_page._model_table(empty)
+        self.assertEqual(empty_model_table.count("기록 없음"), 1)
+        self.assertNotIn("Gemini", empty_model_table)
         self.assertIn("일감", empty_body)
         self.assertIn("연결", empty_body)
 
