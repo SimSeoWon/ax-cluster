@@ -4,19 +4,15 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 갱신: 2026-10-06 00:07 KST · Codex → Claude 인계 준비 완료.** 사용자: 「토큰양이 아슬아슬하니까
-  인수인계서 작성해줘 클로드에서 진행할게」. Claude의 실제 인수는 새 세션에서 확인할 것.
-- **실제 소스 재조회**: `main...origin/main`, HEAD `40ea0ab66c1f0b84902fa57ec9097571f4f84e00`.
-  #721 관련 **13파일 미커밋**(tracked 수정11 + 신규2). Git clean 상태가 아니다. 목록·승인 범위는 §0 첫 절.
-- **담당·모드 재조회**: `get_orchestration_tool` / `get_worker_mode_tool` 성공.
-  마스터 마지막 기록 Codex 2026-10-05 14:37:58, 워커 `claude` / source=`state`(16:14:07).
-  새 Claude는 실제 인수 뒤 담당만 기록한다. 교대를 이유로 워커 모드를 바꾸지 않는다.
-- **검증 완료**: #721 통합25모듈1,137건 통과(10-05 22:2x~22:3x), 인계 직전 `git diff --check` rc0.
-  #721 Redmine 재조회 「진행」, 마지막 노트의 구현·검사·운영 미검증 상태와 일치.
-- **운영 마지막 확인**: #696 `40ea0ab` push/클론 동기화·등록전체15작업장 배달/검사 완료,
-  ax-projects 10-05 21:25:29 재기동. 인계 작성 시 서비스·워커 HEAD·큐·색인기 상태는 새로 조회하지 않았다.
-- **이 세션 실행 상태**: auth_cache_core/auth_runtime_failure 완료, twin_archive_core interrupted.
-  진행 중인 이 세션의 검사·수동 원격 명령 없음. 다른 서비스/세션의 활동까지 없다고 단정하지 않는다.
+- **현재 갱신: 2026-10-06 00:4x KST · Claude 인수 완료.** 사용자 「인수인계서 확인해」→「응 클로드로 기록하고
+  워커모드도 변경해. 그리고 실검증 진행해」(워커 모드는 확인 질문에 「claude 유지」 선택).
+  00:11:55 `record_master_conductor_tool('claude')`. 인수 시점 Codex 프로세스(pid 218108, 10-05 20:53 시작,
+  cwd `/home/sim`)가 살아 있었다 — 종료하지 않았다. 담당 기록은 세션 잠금이 아니다.
+- **소스**: `main...origin/main`, HEAD = 이 문서 커밋(바로 앞 #721 `cf9e268`). 작업 트리 clean.
+- **담당·모드**: 마스터 `claude`(00:11:55). 워커 `claude` / source=`state`(10-05 16:14:07) — 변경 없음.
+- **운영**: #721 `cf9e268` push · `.43 ~/ax-cluster` ff 동기화 · `master.client update` 5프로젝트 15작업장 OK ·
+  ax-projects 00:37:02 재기동 · `get_master_version` = `cf9e268` dirty=false · 색인 커서 `cf9e268`.
+- **진행 중**: 이 세션의 원격 명령·검사 없음. 진행 중 work 는 조회하지 않았다.
 
 아래 메타데이터는 이전 Claude 인계(20:25) 시점의 기록이며 현재 상태는 §0 첫 절을 따른다.
 
@@ -56,7 +52,33 @@
 
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
 
-### Claude가 바로 이어받을 것 — #721 마감 준비 (2026-10-06 00:07 KST)
+### #721 운영 반영 완료 · 실워커 검증 (2026-10-06 00:4x KST, Claude)
+
+**사용자 승인과 경계**
+
+- 「실검증 진행해」에서 방식은 확인 질문으로 **마스터에서 바로**(미커밋 작업 트리 + SSH) 선택.
+- 「커밋하고 배포해줘」로 `cf9e268` 커밋·Gitea push·`.43` 관리 클론 동기화·등록 전체 배달·ax-projects 재기동.
+- 「인수인계서 갱신하고 커밋 푸시해줘」로 이 문서 커밋.
+
+**실워커 검증 (00:13~00:17) — `worker_mode_readiness("claude", "AXCluster")`**
+
+1. 사전: 세 워커 홈에 `claude-auth.json` 없음 확인.
+2. 첫 검사: `.2` 2.1.285 ok · `.33` 2.1.286 ok · **`.43` 2.1.222 failure_type=auth** — 캐시 3곳 저장(정규화 필드만).
+   `.43` 직접 `claude auth status`: loggedIn=false · authMethod=none · rc 1 · credentials expiresAt=0 → 오판 아님.
+3. 새 프로세스 재검사: 세 워커 cached=True, checked_at 동일 → 24시간 내 재사용(성공·실패 모두).
+4. `.2` `invalidate_claude_auth` → 다음 검사 cached 실패 → `force=True` 로 ok 복구.
+5. 사용자가 `.43` 에서 `claude auth login` → force 재검사 **3/3 ok**, `.43` 캐시 실패→성공 기록.
+
+커밋 직전 정본 통합 25모듈 재실행 OK(16.6초) · `git diff --check` 통과. Redmine #721 노트 3건(검증·재로그인·배포).
+
+**남은 것**
+
+- #721 「진행」 유지: 실제 파견 중 OAuth 실패 → runner 분류·즉시 Redmine 노트·큐 `fail_detail`·요청자 수신은
+  미검증. 다음 자연 발생 때 확인하고 닫는다. 일부러 로그아웃시켜 재현하지 않았다.
+- #696 실제 상용 층2 운영 라운드 미검증(진행). #750 은 사용자가 뒤로 미뤘다. 다음 일감은 사용자 선택.
+- 검증 스크립트는 세션 scratchpad 의 임시 파일이다(저장소 밖). 같은 확인은 보고서96의 정본 함수 조합으로 한다.
+
+### (이력) Codex → Claude 인계 준비 — #721 마감 준비 (2026-10-06 00:07 KST)
 
 **사용자 확정과 승인 경계**
 
