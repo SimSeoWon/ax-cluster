@@ -74,6 +74,17 @@ def test_자동_2단_리뷰를_말한다():
     check("④ 초고는 번호를 받지 않는다고 말한다", "초고에는 표도 R번호도 없다" in h)
 
 
+def test_대체_사슬과_머지_처리를_말한다():
+    # `#727`·`#744` (2026-10-05) — 사슬 순서는 상수에서 온다(화면이 따로 적으면 낡는다)
+    from master.context_synth.synth import SYNTH_CHAIN
+    h = CF.render()
+    check("⑤ 사슬 순서가 SYNTH_CHAIN 에서 온다", CF._CHAIN_TEXT in h and len(SYNTH_CHAIN) >= 2,
+          CF._CHAIN_TEXT)
+    check("⑤ 사슬에 Claude 가 없다고 말한다", "Claude 는 사슬에 없다" in h)
+    check("⑤ 머지는 첫 부모 기준·충돌 해소분만이라고 말한다",
+          "첫 부모" in h and "스킵: 머지" in h)
+
+
 def test_민감정보_없음():
     h = CF.render()
     check("🔴 ⑤ 토큰이 없다", "token" not in h.lower() and "Bearer" not in h)
@@ -112,7 +123,7 @@ def test_두_흐름이_서로를_가리킨다():
 
 if __name__ == "__main__":
     for fn in (test_자립형, test_사실은_코드에서_온다, test_노드를_전용으로_말하지_않는다,
-               test_자동_2단_리뷰를_말한다, test_민감정보_없음, test_좌측_목록,
+               test_자동_2단_리뷰를_말한다, test_대체_사슬과_머지_처리를_말한다, test_민감정보_없음, test_좌측_목록,
                test_죽은_링크가_없다, test_두_흐름이_서로를_가리킨다):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
