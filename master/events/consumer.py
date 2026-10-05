@@ -49,6 +49,8 @@ from ..projects.config import ConfigError, Registry, normalize_project_id
 from .spool import Event, Spool
 
 DIGEST_FILE = "context_digest.json"
+# `#744` — 커서 밖에서 끝낸 커밋 목록 (`_Frontier`). 커서 값에 묶인다.
+BEYOND_FILE = "analyzed_beyond.json"
 # git 의 **빈 트리** 오브젝트 — 모든 저장소에서 같은 값이다. 첫 커밋의 diff 기준으로 쓴다
 # (저장 해시가 없으면 「이력 처음부터 하나씩」이 기본 동작이므로 그 시작점이 필요하다).
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -81,10 +83,16 @@ class ProjectResult:
     # ── 분석 커서 (`#278` — 커밋 하나씩) ──
     cursor_from: str = ""          # 이 회차가 시작한 커서 (config.yaml 의 analyzed_commit)
     cursor_note: str = ""          # 커서를 어디서 얻었는지 (이행: 워터마크 폴백)
-    cursor_to: str = ""            # 이 회차가 적어 둔 커서. 비면 **한 커밋도 못 끝냈다**
+    # 이 회차가 적어 둔 커서. 비면 커서는 그대로다 — 끝낸 커밋이 있어도 그 조상 집합을 한
+    #    커밋으로 못 나타내면(갈라진 이력) 커서 대신 `beyond_cursor` 에 적힌다 (`#744`)
+    cursor_to: str = ""
     commits_total: int = 0         # 커서 → 현재 커밋 사이의 커밋 수
-    commits_done: int = 0          # 문서까지 끝나 커서를 전진시킨 커밋 수
-    commits_nonsource: int = 0     # 소스 밖 변경만 있어 합성 없이 전진시킨 커밋 수
+    commits_done: int = 0          # 문서까지 끝낸 커밋 수 (커서 전진 여부와 무관)
+    commits_nonsource: int = 0     # 소스 밖 변경만 있어 합성 없이 끝낸 커밋 수
+    # `#744` — 커서 앞에서 끝냈다고 기록된 커밋. `prewalked` 는 앞 회차가 끝내 이번에 다시
+    #    걷지 않은 수, `beyond_cursor` 는 회차가 끝날 때 커서 밖에 남은 완료 커밋 수다.
+    commits_prewalked: int = 0
+    beyond_cursor: int = 0
     nonsource_notes: list = field(default_factory=list)
     # `#744` ② — 머지 커밋을 어느 갈래로 걸었는지 (사용자 결정 2026-10-05). 갈래가 안 보이면
     #    「머지라서 건너뛰었다」와 「변경을 못 읽었다」가 저널에서 구분되지 않는다.
@@ -126,6 +134,10 @@ class ProjectResult:
                          + (f"(머지 {self.commits_merge})" if self.commits_merge else ""))
         if self.cursor_to:
             parts.append(f"커서 {self.cursor_to[:8]}")
+        if self.commits_prewalked:
+            parts.append(f"앞 회차 완료 생략 {self.commits_prewalked}")
+        if self.beyond_cursor:
+            parts.append(f"커서 밖 완료 {self.beyond_cursor}")
         if self.cursor_note:
             parts.append(f"[주의] {self.cursor_note[:70]}")
         if self.retry_skipped:
@@ -419,18 +431,166 @@ def _update_cursor(paths: ProjectPaths, commit: str) -> bool:
 
 
 def _commits_between(repo: Path, old: str, new: str, run) -> tuple:
-    """`old..new` 커밋 해시를 **오래된 순**으로. 반환 `(목록, 오류사유)`.
+    """`old..new` 커밋 해시를 **부모가 자식보다 먼저 오는 순서**로. 반환 `(목록, 오류사유)`.
 
     원전 `watcher/git_ops.get_commits_between` 과 같은 계약이다(그쪽도 `reverse()` 한다).
+    🔴 [중요] `--topo-order` 다 (`#744`). 기본 순서(커밋 날짜)는 시계가 어긋나면 자식이 부모보다
+       앞에 올 수 있고, 그러면 `_Frontier` 의 「앞서 걸은 것 = 범위 안의 조상 전부」가 깨진다.
+       뒤집은 `--topo-order` 는 범위 안의 모든 조상이 그 커밋보다 먼저 온다(git 보장).
     [주의] 실패를 빈 목록으로 접지 않는다 — 「걸을 커밋이 없다」와 구분되지 않는다.
     """
     rng = f"{old}..{new}" if old else new
-    rc, out = run(repo, "log", "--format=%H", rng)
+    rc, out = run(repo, "log", "--topo-order", "--format=%H", rng)
     if rc != 0:
         return [], f"git log {rng[:20]} 실패 (rc={rc}): {out[:200]}"
     hs = [x.strip() for x in out.splitlines() if x.strip()]
     hs.reverse()
     return hs, ""
+
+
+def _merge_bases(repo: Path, old: str, new: str, run) -> tuple:
+    """`old` 와 `new` 의 머지 베이스 전부. 반환 `(목록, 오류사유)` (`#744`).
+
+    보통은 `[old]` 다(커서가 HEAD 의 조상). 이력이 다시 쓰였으면 갈라진 지점들이다.
+    rc=1 + 빈 출력은 「공통 조상 없음」이라 빈 목록이다.
+    """
+    if not old:
+        return [], ""
+    rc, out = run(repo, "merge-base", "--all", old, new)
+    hs = [x.strip() for x in out.splitlines() if x.strip()]
+    if rc == 1 and not hs:
+        return [], ""
+    if rc != 0:
+        return [], f"merge-base {old[:8]} {new[:8]} 실패 (rc={rc}): {out[:200]}"
+    return hs, ""
+
+
+class _Frontier:
+    """「어디까지 끝났나」를 커서 하나 + 커서 밖 완료 목록으로 판정한다 (`#744`).
+
+    🔴 [중요] **왜 커서 하나로는 안 되나.** 커서 `p` 는 `p..HEAD` 로 다음 범위를 정하므로
+       「끝난 집합 = p 의 조상 전부」일 때만 정확하다. 갈라진 이력에서는 그런 `p` 가 없을 수
+       있다 — 커서 `o` 에서 `A`(main)·`B`(옆)가 갈라져 `M` 으로 합쳐질 때 `A`·`B` 를 끝내고
+       `M` 에서 멈추면, `A` 로 적으면 `B` 를, `B` 로 적으면 `A` 를 다시 걷는다(종전 결함:
+       「마지막에 끝낸 커밋」을 적어 옆 브랜치 커밋이 커서가 되면 이미 걸은 main 쪽을
+       다시 합성했다). 어떤 걷기 순서로도 못 피한다 — `A`·`B` 둘 다 끝난 순간이 반드시 있다.
+
+    설계 — 커서 `cur`, 커서 밖 완료 `X`(커서 값에 묶어 `BEYOND_FILE` 에 둔다), 범위 `R = cur..HEAD`
+       를 뒤집은 `--topo-order` 로 걷되 `X` 는 처리하지 않고 지나간다. 끝낸 커밋을 `D` 라 하자.
+       ⑴ `X` 에는 **성공한 커밋만** 들어가고, 실패한 커밋에서 걷기를 멈춘다(종전 그대로).
+       ⑵ 커서는 `p` 의 조상 집합이 「끝난 집합 전부」를 덮을 때만 `p` 로 옮긴다:
+          `R` 안에서 끝난 커밋 전부 ⊆ anc(p) **이고** `cur` 와 HEAD 의 머지 베이스 전부 ⊆ anc(p).
+          그 순간 `X` 는 비므로(끝난 것이 모두 anc(p)) 커서와 목록이 한 번에 맞는다.
+       ⑶ 그렇지 않으면 커서는 그대로 두고 `X = D ∩ R − anc(cur)` 를 적는다.
+    증명 개요 —
+       [불변식 1: 건너뛰지 않는다] 걷기에서 빠지는 것은 anc(커서) 와 `X` 뿐이다. `X` 는 ⑴로
+          끝난 것만이다. 커서를 `p` 로 옮길 때 anc(p) 의 범위 안 원소는 위상 순서상 `p` 보다
+          앞이고, 걷기는 첫 실패에서 멈추므로 전부 끝났다(이번 회차 또는 `X`). 범위 밖 원소는
+          anc(cur) 이고 귀납적으로 끝났다. 그러므로 anc(p) ⊆ 끝난 것.
+       [불변식 2: 다시 걷지 않는다] 끝난 커밋은 ⑵면 anc(새 커서) 안, ⑶이면 `X` 안에 있다 —
+          둘 다 다음 범위에서 빠진다. ⑵의 머지 베이스 조건이 anc(cur) ∩ anc(HEAD) ⊆ anc(p) 를
+          보장해, 커서가 옆 브랜치로 옮겨 가며 앞 회차들이 끝낸 이력이 범위로 되돌아오는 일을 막는다.
+    판정 계산 — 범위 안 커밋마다 비트를 주고 `mask(c) = bit(c) | 부모들의 mask`(범위 밖 부모는
+       머지 베이스일 때만 그 비트)로 조상 집합을 만든다. 범위 안 조상으로 가는 경로는 범위를
+       벗어나지 않고(벗어나면 그 조상이 anc(cur) 가 된다), 머지 베이스 `m` 으로 가는 경로가
+       처음 범위를 벗어나는 커밋은 `m` 자신이다(`m` 이 anc(cur) ∩ anc(HEAD) 의 극대라서) — 그래서
+       범위 안 부모 관계와 머지 베이스만으로 정확하다.
+    """
+
+    def __init__(self, commits: list, merge_bases: list, done: set):
+        self.bit = {c: 1 << i for i, c in enumerate(commits)}
+        n = len(commits)
+        self.mb_bit = {m: 1 << (n + j) for j, m in enumerate(merge_bases) if m not in self.bit}
+        self.commits = list(commits)
+        self.prior = {c for c in done if c in self.bit}
+        self.done = 0
+        for c in self.prior:
+            self.done |= self.bit[c]
+        self.need_mb = 0
+        for b in self.mb_bit.values():
+            self.need_mb |= b
+        self.mask: dict = {}
+
+    def place(self, c: str, parents: list) -> None:
+        """`c` 의 조상 집합을 만든다 — 위상 순서라 범위 안 부모는 이미 놓였다."""
+        m = self.bit[c]
+        for p in parents:
+            if p in self.bit:
+                m |= self.mask.get(p, self.bit[p])
+            else:
+                m |= self.mb_bit.get(p, 0)
+        self.mask[c] = m
+
+    def finish(self, c: str) -> bool:
+        """`c` 를 끝났다고 적는다. 커서를 `c` 로 옮겨도 되면 참."""
+        self.done |= self.bit[c]
+        need = self.done | self.need_mb
+        return (need & ~self.mask[c]) == 0
+
+    def beyond(self, cursor: str) -> list:
+        """끝났지만 `cursor` 의 조상이 아닌 커밋 (걷기 순서대로)."""
+        rest = self.done & ~self.mask.get(cursor, 0)
+        return [c for c in self.commits if rest & self.bit[c]]
+
+
+def _beyond_path(paths: ProjectPaths) -> Path:
+    return paths.root / BEYOND_FILE
+
+
+def _read_beyond(paths: ProjectPaths, cursor: str) -> tuple:
+    """커서 밖 완료 목록. 반환 `(집합, 주의)`.
+
+    [중요] **적힌 커서가 지금 커서와 같을 때만** 쓴다. 다르면(사람이 커서를 되감음 · 커서 기록
+       뒤 목록 정리 전에 죽음) 버린다 — 버리면 다시 걷기만 하고(비용), 쓰면 되감은 범위를
+       건너뛸 수 있다(유실). 유실 쪽으로 틀리지 않는다.
+    """
+    p = _beyond_path(paths)
+    if not p.is_file():
+        return set(), ""
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        at, walked = str(data.get("cursor") or ""), [str(x) for x in data.get("walked") or []]
+    except Exception as e:                                  # noqa: BLE001
+        return set(), f"{BEYOND_FILE} 를 읽지 못해 버린다({type(e).__name__}) — 그 커밋들은 다시 걷는다"
+    if at != cursor:
+        return set(), (f"{BEYOND_FILE} 이 다른 커서({at[:8] or '(없음)'})에 묶여 버린다"
+                       if walked else "")
+    return set(walked), ""
+
+
+def _write_beyond(paths: ProjectPaths, cursor: str, walked: list) -> str:
+    """커서 밖 완료 목록을 적는다(비면 지운다). 반환 오류사유."""
+    p = _beyond_path(paths)
+    try:
+        if not walked:
+            p.unlink(missing_ok=True)
+            return ""
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"cursor": cursor, "walked": walked}, indent=1),
+                       encoding="utf-8")
+        tmp.replace(p)
+        return ""
+    except OSError as e:
+        return f"{type(e).__name__}: {e}"
+
+
+def _finish_commit(paths: ProjectPaths, fr: "_Frontier", c: str, cur: str,
+                   r: "ProjectResult") -> tuple:
+    """끝낸 커밋 `c` 를 커서 또는 커서 밖 목록에 적는다. 반환 `(커서, 멈춤사유)`.
+
+    [주의] 순서 — 커서를 먼저 적고 목록을 지운다. 그 사이에 죽으면 남은 목록은 옛 커서에 묶여
+       다음 회차가 버린다(그 원소는 전부 새 커서의 조상이라 버려도 다시 걷지 않는다).
+    """
+    if fr.finish(c):
+        if not _update_cursor(paths, c):
+            return cur, f"{c[:8]} 커서 기록 실패 — config 에 `index:` 절이 없다"
+        r.cursor_to = c
+        _write_beyond(paths, c, [])
+        return c, ""
+    why = _write_beyond(paths, cur, fr.beyond(cur))
+    if why:
+        return cur, f"{c[:8]} 커서 밖 완료 기록 실패 — 다음 회차가 이 커밋을 다시 한다: {why}"
+    return cur, ""
 
 
 def _commit_parents(repo: Path, commit: str, run) -> tuple:
@@ -447,7 +607,7 @@ def _commit_parents(repo: Path, commit: str, run) -> tuple:
     return toks[1:], ""
 
 
-def _commit_changes(paths: ProjectPaths, commit: str, run) -> tuple:
+def _commit_changes(paths: ProjectPaths, commit: str, run, parents=None) -> tuple:
     """**그 커밋 자신이** 바꾼 파일 (`#744` ② · 사용자 결정 2026-10-05).
 
     반환 `(기준, 파일들, 머지인가, 오류사유)`. `기준` 은 서브모듈 펼치기가 같은 비교를 하도록
@@ -473,9 +633,10 @@ def _commit_changes(paths: ProjectPaths, commit: str, run) -> tuple:
     [주의] 머지의 서브모듈 펼치기는 첫 부모의 포인터와 비교한다(모든 부모와 다른 포인터일 때만
        여기까지 온다).
     """
-    parents, why = _commit_parents(paths.repo, commit, run)
-    if why:
-        return "", [], False, why
+    if parents is None:                     # 걷기는 `_Frontier` 때문에 먼저 읽어 넘긴다
+        parents, why = _commit_parents(paths.repo, commit, run)
+        if why:
+            return "", [], False, why
     roots = paths.scope.roots
     merge = len(parents) >= 2
     base = parents[0] if parents else EMPTY_TREE
@@ -856,6 +1017,17 @@ def process_event(ev: Event, *, registry: Registry | None = None,
             r.error = err
             return r
         r.commits_total = len(commits)
+        # `#744` — 커서 밖 완료 목록과 머지 베이스. 설계·증명은 `_Frontier`.
+        mbs, err = _merge_bases(paths.repo, cursor, r.to_commit, run) if commits else ([], "")
+        if err:
+            r.error = err
+            return r
+        prior, warn = _read_beyond(paths, cursor)
+        if warn:
+            r.cursor_note = (r.cursor_note + " · " + warn) if r.cursor_note else warn
+        fr = _Frontier(commits, mbs, prior)
+        r.commits_prewalked = len(fr.prior)
+        cur = cursor
         if not commits:
             # [주의] 커서가 이 이력의 조상이 아니다 — 되감김·강제 푸시·잘못 적힌 값.
             #    조용히 「최신」으로 접으면 그 프로젝트는 영원히 안 자란다.
@@ -868,9 +1040,23 @@ def process_event(ev: Event, *, registry: Registry | None = None,
             # 🔴 [중요] 비교 기준은 **그 커밋의 첫 부모**다 (`#744` ②, 사용자 결정 2026-10-05).
             #    종전에는 직전에 걸은 커밋과 비교해 갈라진 이력에서 옆 브랜치 변경을 이 커밋에
             #    붙였다. 루트는 빈 트리 · 머지는 모든 부모와 다른 파일만 — `_commit_changes`.
-            #    커서는 종전 그대로 「끝낸 마지막 커밋」이다 — 기준이 커서에서 오지 않으므로
-            #    커서 없이 처음부터 걸을 때도 루트만 빈 트리와 비교된다.
-            base, touched, merge, why = _commit_changes(paths, c, run)
+            #    기준이 커서에서 오지 않으므로 커서 없이 처음부터 걸을 때도 루트만 빈 트리와
+            #    비교된다.
+            # 🔴 [중요] 커서는 「끝낸 마지막 커밋」이 **아니다** (`#744`) — 끝난 집합 전부를 조상으로
+            #    가진 커밋일 때만 옮기고, 아니면 커서 밖 목록에 적는다(`_Frontier`·`_finish_commit`).
+            parents, why = _commit_parents(paths.repo, c, run)
+            if why:
+                r.halted = f"{c[:8]} {why} — 커서를 전진시키지 않는다"
+                break
+            fr.place(c, parents)
+            if c in fr.prior:
+                # 앞 회차가 끝낸 커밋 — 다시 걷지 않는다. 커서는 여기서도 옮길 수 있다.
+                cur, why = _finish_commit(paths, fr, c, cur, r)
+                if why:
+                    r.halted = why
+                    break
+                continue
+            base, touched, merge, why = _commit_changes(paths, c, run, parents=parents)
             if why:
                 r.halted = f"{c[:8]} {why} — 커서를 전진시키지 않는다"
                 break
@@ -888,12 +1074,12 @@ def process_event(ev: Event, *, registry: Registry | None = None,
                     f"{c[:8]}: 조각 커밋이 걸었다 — 모든 부모와 다른 소스 없음")
             if not changed:
                 # 사용자 지시: **분석 대상이 소스 디렉토리 밖이면 스킵한다.**
-                # [중요] 그때 **커서는 전진시킨다** — 안 그러면 매 회차가 같은 커밋을 다시
+                # [중요] 그때 **끝냈다고 적는다**(커서 또는 커서 밖 목록 — `#744`) — 안 그러면 매 회차가 같은 커밋을 다시
                 #    걷는다(사용자 확인 2026-08-23: *"안 그럼 무한히 재시도할테니"*).
-                if not _update_cursor(paths, c):
-                    r.halted = f"{c[:8]} 커서 기록 실패 — config 에 `index:` 절이 없다"
+                cur, why = _finish_commit(paths, fr, c, cur, r)
+                if why:
+                    r.halted = why
                     break
-                r.cursor_to = c
                 r.commits_nonsource += 1
                 r.nonsource_notes.append(
                     f"{c[:8]}: " + ("머지 — 조각 커밋이 이미 걸었다 · 합성 없음" if merge
@@ -953,11 +1139,12 @@ def process_event(ev: Event, *, registry: Registry | None = None,
                 r.halted = (f"{c[:8]} 의 그룹 {len(missing)}개가 이 커밋으로 스탬프된 문서 "
                             f"없음 — 커서를 전진시키지 않는다(다음 회차가 이 커밋을 다시 한다)")
                 break
-            if not _update_cursor(paths, c):
-                r.halted = f"{c[:8]} 커서 기록 실패 — config 에 `index:` 절이 없다"
+            cur, why = _finish_commit(paths, fr, c, cur, r)
+            if why:
+                r.halted = why
                 break
-            r.cursor_to = c
             r.commits_done += 1
+        r.beyond_cursor = len(fr.beyond(cur))
 
     # ── 재색인은 컨텍스트가 실제로 바뀐 경우에만 ──────────────
     #

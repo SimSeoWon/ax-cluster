@@ -383,6 +383,268 @@ def test_walk_merge_paths(tmp: Path) -> None:
     check("  요약에 머지 수가 보인다", "(머지 2)" in r.summary, r.summary)
 
 
+# ── `#744` 잔여 — 걷기가 멈춰도 다시 걷지 않고, 건너뛰지 않는다 (사용자 결정 2026-10-05) ──────
+def test_frontier_unit() -> None:
+    """🔴 커서 하나로는 못 나타내는 상태 — `o` 에서 `A`·`B` 가 갈라져 `M` 으로 합쳐진다."""
+    print("\n[15] `#744` — _Frontier: 끝난 집합을 한 커밋으로 못 덮으면 커서를 옮기지 않는다")
+    from master.events.consumer import _Frontier
+    O, A, B, M = "o" * 40, "a1" * 20, "b1" * 20, "m1" * 20
+    fr = _Frontier([A, B, M], [O], set())
+    fr.place(A, [O])
+    check("A 를 끝내면 커서를 A 로 옮겨도 된다 (anc(A) ⊇ {O, A})", fr.finish(A))
+    fr.place(B, [O])
+    check("🔴 B 를 끝내면 옮기지 못한다 — B 로 적으면 A 를 다시 걷는다", not fr.finish(B))
+    check("  커서(A) 밖 완료는 B 하나", fr.beyond(A) == [B], str(fr.beyond(A)))
+    fr.place(M, [A, B])
+    check("M 을 끝내면 M 이 전부를 덮는다", fr.finish(M) and fr.beyond(M) == [])
+    # 앞 회차가 B 를 끝냈다면 B 의 비트가 처음부터 요구된다 — A 에서 커서를 옮기지 않는다
+    fr2 = _Frontier([A, B, M], [O], {B})
+    fr2.place(A, [O])
+    check("🔴 앞 회차의 커서 밖 완료(B)가 있으면 A 로 옮기지 않는다 (B 를 다시 걷게 된다)",
+          not fr2.finish(A) and fr2.beyond(O) == [A, B], str(fr2.beyond(O)))
+    # 옆 브랜치가 커서보다 **앞**에서 갈라졌다 — 그 커밋은 커서의 후손이 아니다
+    P = "p0" * 20
+    fr3 = _Frontier([B, A], [O], set())
+    fr3.place(B, [P])                                     # P 는 O 의 조상(범위 밖, 머지 베이스 아님)
+    check("🔴 커서의 후손이 아닌 커밋으로는 옮기지 않는다 (옮기면 O 쪽 이력이 범위로 되돌아온다)",
+          not fr3.finish(B))
+    fr4 = _Frontier([A], [], set())                        # 커서 없음 — 루트부터
+    fr4.place(A, [])
+    check("커서가 없으면 루트에서 바로 옮긴다", fr4.finish(A))
+
+
+def test_walk_halt_no_rewalk_no_skip_real_git() -> None:
+    """🔴 **실제 git** 의 가지·머지 이력에서 멈춤 위치를 전부 돌려 본다 — 두 회차로 나눠 걸어도
+    각 커밋은 성공할 때까지 걸리고(건너뜀 0), 성공한 커밋은 다시 걸리지 않는다(재걷기 0).
+
+    종전 결함(실측 위험): 날짜순으로 걷다 옆 브랜치 커밋에서 커서가 멈추면 다음 회차의
+    `cursor..HEAD` 가 이미 걸은 main 쪽 커밋을 다시 넣었다 — 재합성·재등재.
+    """
+    print("\n[16] `#744` — 실제 git: 멈춤 위치마다 두 회차 — 재걷기 0 · 건너뜀 0")
+    import re as _re
+    import subprocess
+    from master.events import consumer as C
+
+    def build(root: Path):
+        p = make_project(root)
+        repo = p.repo
+
+        def g(*a):
+            pr = subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True)
+            return pr.returncode, (pr.stdout + pr.stderr).strip()
+
+        def commit(rel, text, msg):
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).write_text(text, encoding="utf-8")
+            g("add", "-A")
+            g("commit", "-qm", msg)
+            return g("rev-parse", "HEAD")[1]
+
+        g("init", "-q", "-b", "main")
+        g("config", "user.email", "t@e.st")
+        g("config", "user.name", "t")
+        R = commit("README.md", "r\n", "root")                # A.cpp·B.cpp 픽스처 포함
+        S0 = commit("Source/S.cpp", "s\n", "side fork point") # 옆 브랜치가 여기서 갈라진다
+        O = commit("Source/O.cpp", "o\n", "cursor")           # 커서 — 옆 브랜치는 이 커밋의 후손이 아니다
+        g("checkout", "-qb", "side", S0)
+        B1 = commit("Source/B1.cpp", "b1\n", "side 1")
+        B2 = commit("docs.md", "d\n", "side 2 (non-source)")
+        B3 = commit("Source/B3.cpp", "b3\n", "side 3")
+        g("checkout", "-q", "main")
+        A1 = commit("Source/A1.cpp", "a1\n", "main 1")
+        A2 = commit("Source/A2.cpp", "a2\n", "main 2")
+        g("merge", "-q", "--no-ff", "--no-edit", "side")
+        M = g("rev-parse", "HEAD")[1]
+        H = commit("Source/H.cpp", "h\n", "after merge")
+        return p, g, {"R": R, "S0": S0, "O": O, "B1": B1, "B2": B2, "B3": B3,
+                      "A1": A1, "A2": A2, "M": M, "H": H}
+
+    def wrap(g):
+        def run(repo, *args):
+            if args[0] == "fetch":
+                return 0, ""
+            if args[0] == "merge" and "--ff-only" in args:
+                return 0, "Already up to date."
+            return g(*args)
+        return run
+
+    def cursor_of(p):
+        m = _re.search(r"^\s*analyzed_commit:\s*(\S*)\s*$",
+                       p.config.read_text(encoding="utf-8"), _re.MULTILINE)
+        return m.group(1) if m else ""
+
+    def run_once(p, g, fail_at=""):
+        walked, synthed = [], []
+        orig = C._commit_changes
+
+        def spy(paths_, c, run_, parents=None):
+            walked.append(c)
+            return orig(paths_, c, run_, parents=parents)
+
+        def synth(paths_, *, changed=None, commit="", **kw):
+            synthed.append(commit)
+            if commit == fail_at:                            # 합성 실패 — 문서를 안 쓴다
+                class S:
+                    written, lost, aborted = 0, 1, ""
+                    summary = "실패"
+                    results: list = []
+                return S()
+            return synth_writes(paths_, changed=changed, commit=commit)
+
+        C._commit_changes = spy
+        try:
+            r = process_event(ev(), registry=FakeReg(p.root.parent), git=wrap(g),
+                              reindex=lambda _p: 1, synth_run=synth,
+                              enqueue_review=lambda root, **k: {"state": "pending"})
+        finally:
+            C._commit_changes = orig
+        return r, walked
+
+    # 범위 안 커밋 (커서 O 이후) — 걷기 순서를 먼저 잰다
+    tmp0 = Path(tempfile.mkdtemp(prefix="ax-idx-744h-"))
+    p0, g0, h0 = build(tmp0)
+    order, _ = C._commits_between(p0.repo, h0["O"], h0["H"], wrap(g0))
+    names = {v: k for k, v in h0.items()}
+    check("범위는 커서 밖 전부 (옆 브랜치 3 + main 2 + 머지 + 끝)",
+          sorted(names[c] for c in order) == sorted(["B1", "B2", "B3", "A1", "A2", "M", "H"]),
+          str([names.get(c) for c in order]))
+    pos = {c: i for i, c in enumerate(order)}
+    check("위상 순서 — 부모가 자식보다 먼저",
+          pos[h0["B1"]] < pos[h0["B3"]] < pos[h0["M"]] and pos[h0["A1"]] < pos[h0["A2"]]
+          < pos[h0["M"]] < pos[h0["H"]], str([names[c] for c in order]))
+    shutil.rmtree(tmp0, ignore_errors=True)
+
+    # 시계가 어긋난 이력 — 기본(날짜) 순서는 부모를 자식보다 먼저 내지 않을 수 있다
+    import os as _os
+    tmpk = Path(tempfile.mkdtemp(prefix="ax-idx-744k-"))
+    rk = tmpk / "repo"
+    rk.mkdir()
+
+    def gk(*a, date=""):
+        env = dict(_os.environ)
+        if date:
+            env.update(GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
+        pr = subprocess.run(["git", "-C", str(rk), *a], capture_output=True, text=True, env=env)
+        return pr.returncode, (pr.stdout + pr.stderr).strip()
+
+    def ck(name, date):
+        (rk / name).write_text(name, encoding="utf-8")
+        gk("add", "-A")
+        gk("commit", "-qm", name, date=date)
+        return gk("rev-parse", "HEAD")[1]
+
+    gk("init", "-q", "-b", "main"); gk("config", "user.email", "t@e.st"); gk("config", "user.name", "t")
+    KR = ck("r", "2026-01-01T00:00:00")
+    gk("checkout", "-qb", "side")
+    KX = ck("x", "2026-01-01T00:00:50")
+    KY = ck("y", "2025-12-01T00:00:00")                   # 부모보다 이른 시각 (시계 어긋남)
+    gk("checkout", "-q", "main")
+    KZ = ck("z", "2026-01-01T00:01:00")
+    gk("merge", "-q", "--no-ff", "--no-edit", "side", date="2026-01-01T00:01:10")
+    KM = gk("rev-parse", "HEAD")[1]
+    plain = list(reversed(gk("log", "--format=%H", KM)[1].split()))
+    topo, _ = C._commits_between(rk, "", KM, lambda repo_, *a: gk(*a))
+    check("  대조 — 시계가 어긋나면 날짜순은 부모(R)를 자식(X)보다 뒤에 둔다",
+          plain.index(KX) < plain.index(KR), str([plain.index(c) for c in (KR, KX, KY)]))
+    check("🔴 걷기 순서는 위상 순서 — 시계가 어긋나도 부모가 먼저",
+          topo.index(KR) < topo.index(KX) < topo.index(KY) < topo.index(KM)
+          and topo.index(KZ) < topo.index(KM), str([topo.index(c) for c in (KR, KX, KY, KZ, KM)]))
+    shutil.rmtree(tmpk, ignore_errors=True)
+
+    fails_rewalk, fails_skip, fails_cursor = [], [], []
+    for fail_name in ["B1", "B3", "A1", "A2", "H"]:
+        tmp = Path(tempfile.mkdtemp(prefix="ax-idx-744h-"))
+        p, g, h = build(tmp)
+        rewind(p, h["O"])
+        nm = {v: k for k, v in h.items()}
+        F = h[fail_name]
+        r1, w1 = run_once(p, g, fail_at=F)
+        r2, w2 = run_once(p, g)
+        r3, w3 = run_once(p, g)
+        expect = {h[k] for k in ["B1", "B2", "B3", "A1", "A2", "M", "H"]}
+        # 성공한 걷기 = 1회차에서 F 앞까지 + 2회차 전부
+        ok1 = [c for c in w1 if c != F]
+        both = ok1 + w2
+        dup = sorted({nm[c] for c in both if both.count(c) > 1})
+        missing = sorted(nm[c] for c in expect - set(both))
+        if dup:
+            fails_rewalk.append(f"{fail_name}: 다시 걸음 {dup} (1회 {[nm[c] for c in w1]} · "
+                                f"2회 {[nm[c] for c in w2]})")
+        if missing or F not in w2 or w3:
+            fails_skip.append(f"{fail_name}: 빠짐 {missing} · 2회에 F {F in w2} · 3회 {len(w3)}")
+        if not (r1.halted and cursor_of(p) == h["H"] and not C._beyond_path(p).exists()):
+            fails_cursor.append(f"{fail_name}: 1회 멈춤 {bool(r1.halted)} · 커서 "
+                                f"{nm.get(cursor_of(p), cursor_of(p)[:8])} · 목록 "
+                                f"{C._beyond_path(p).exists()}")
+        if fail_name == "B3":
+            # 옆 브랜치에서 멈춘 경우 — 커서는 옆 브랜치로 가지 않는다 (O 의 후손이 아니다)
+            c1 = [x for x in r1.summary.split(" · ") if x.startswith("커서")]
+            check("🔴 옆 브랜치에서 멈춰도 커서를 옆 브랜치 커밋으로 옮기지 않는다",
+                  all(nm.get(x, "") not in ("B1", "B2") for x in [r1.cursor_to]),
+                  f"{nm.get(r1.cursor_to, r1.cursor_to[:8])} {c1}")
+            check("  2회차 요약에 앞 회차 완료 생략이 보인다",
+                  r2.commits_prewalked > 0 and "앞 회차 완료 생략" in r2.summary, r2.summary)
+        shutil.rmtree(tmp, ignore_errors=True)
+    check("🔴 어느 위치에서 멈춰도 성공한 커밋을 다시 걷지 않는다", not fails_rewalk,
+          " | ".join(fails_rewalk))
+    check("🔴 어느 위치에서 멈춰도 건너뛰지 않는다 · 실패 커밋은 다음 회차에 걷는다 · 3회차 0",
+          not fails_skip, " | ".join(fails_skip))
+    check("  끝나면 커서 = HEAD · 커서 밖 목록 파일은 지워진다", not fails_cursor,
+          " | ".join(fails_cursor))
+
+    # 대조 — 종전 걷기(날짜순 + 「마지막에 끝낸 커밋」을 커서로)는 실제로 다시 걷는다
+    tmp = Path(tempfile.mkdtemp(prefix="ax-idx-744h-"))
+    p, g, h = build(tmp)
+    nm = {v: k for k, v in h.items()}
+    walked1 = [h["B1"], h["B2"], h["B3"], h["A1"], h["A2"]]   # 어떤 순서로 걸었든
+    last = h["B3"] if g("merge-base", "--is-ancestor", h["A2"], h["B3"])[0] else h["A2"]
+    rng = g("log", "--format=%H", f"{last}..{h['H']}")[1].split()
+    again = sorted(nm[c] for c in rng if c in walked1)
+    check("  대조 — 단일 커서(마지막 완료 커밋)면 다음 범위가 이미 걸은 커밋을 다시 넣는다",
+          bool(again), f"커서 {nm[last]} → 다시 {again}")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # 커서 밖 목록이 **다른 커서**에 묶여 있으면 버린다 — 되감은 범위를 건너뛰지 않는다
+    tmp = Path(tempfile.mkdtemp(prefix="ax-idx-744h-"))
+    p, g, h = build(tmp)
+    rewind(p, h["O"])
+    C._write_beyond(p, h["R"], [h["A1"], h["B1"]])
+    r, w = run_once(p, g)
+    check("🔴 다른 커서에 묶인 목록은 버리고 전부 걷는다 (건너뛰지 않는다)",
+          h["A1"] in w and h["B1"] in w and r.commits_prewalked == 0
+          and "다른 커서" in r.cursor_note, f"{r.cursor_note} {[nm[c] for c in w]}")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # 루트·직선 — 종전 그대로
+    tmp = Path(tempfile.mkdtemp(prefix="ax-idx-744h-"))
+    p, g, h = build(tmp)
+    p.config.write_text("project_id: Sim/Demo\nindex:\n  last_indexed_commit: ''\n"
+                        "  analyzed_commit: ''\n", encoding="utf-8")
+    r, w = run_once(p, g)
+    check("루트부터(커서 없음) — 전부 한 번씩 걷고 커서 = HEAD",
+          len(w) == len(set(w)) == 10 and cursor_of(p) == h["H"] and not r.halted
+          and not C._beyond_path(p).exists(), f"{len(w)} {r.summary}")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    tmp = Path(tempfile.mkdtemp(prefix="ax-idx-744h-"))
+    p, g, h = build(tmp)
+    rewind(p, h["S0"])
+    g("checkout", "-q", "-b", "lin", h["O"])               # 직선: S0 → O → L1 → L2
+    def lc(rel, msg):
+        (p.repo / rel).write_text(msg, encoding="utf-8")
+        g("add", "-A"); g("commit", "-qm", msg)
+        return g("rev-parse", "HEAD")[1]
+    L1, L2 = lc("Source/L1.cpp", "l1"), lc("Source/L2.cpp", "l2")
+    g("checkout", "-q", "main"); g("reset", "-q", "--hard", L2)
+    r1, w1 = run_once(p, g, fail_at=L2)
+    check("직선 — 멈추면 커서는 멈춘 커밋 바로 앞 (종전 그대로) · 목록 없음",
+          cursor_of(p) == L1 and r1.halted and not C._beyond_path(p).exists(),
+          f"{cursor_of(p)[:8]} {r1.summary}")
+    r2, w2 = run_once(p, g)
+    check("  다음 회차는 멈춘 커밋부터", w2 == [L2] and cursor_of(p) == L2, str(w2))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="ax-idx-test-"))
     paths = make_project(tmp)
@@ -870,6 +1132,8 @@ def main() -> int:
 
     test_commit_changes_first_parent_real_git()
     test_walk_merge_paths(tmp)
+    test_frontier_unit()
+    test_walk_halt_no_rewalk_no_skip_real_git()
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
