@@ -418,6 +418,58 @@ def test_머지는_결합_diff로_가른다():
     shutil.rmtree(root)
 
 
+def test_시간예산과_주인없는_running_회수():
+    """🔴 #749 — 남은 시간이 한 건 최악보다 적으면 꺼내지 않고, main 은 죽은 회차의 running 을 회수한다."""
+    import os
+    root, head = make_repo()
+    Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
+    logs, calls = [], []
+    now = [1000.0]
+    out = R.drain(Paths(root), limit=5, logf=logs.append, deadline=now[0] + R.ITEM_WORST - 1,
+                  clock=lambda: now[0], draft_call=lambda p: calls.append(p) or "초안")
+    check("#749 예산이 모자라면 꺼내지 않는다", out == [] and Q.counts(root)["pending"] == 1
+          and not calls, str(Q.counts(root)))
+    check("#749 예산 판단을 로그에 남긴다", any("시간 예산" in m for m in logs), str(logs))
+    shutil.rmtree(root)
+
+    # main(): 지난 회차가 죽어 running 이 남았다 → 회수 → 같은 회차에서 리뷰
+    root, head = make_repo()
+    projects = Path(tempfile.mkdtemp(prefix="ax-reg-"))
+    (projects / "projects.yaml").write_text(
+        "version: 1\nactive: T\nprojects:\n  - T\n", encoding="utf-8")
+    twin = projects / "T"
+    twin.mkdir()
+    (twin / "config.yaml").write_text(
+        "version: 1\nname: T\nrepo:\n  local_clone: repo\n", encoding="utf-8")
+    shutil.copytree(Path(root) / "repo", twin / "repo")
+    Q.enqueue(twin, key=head, files=["Source/M/A.cpp"])
+    Q.claim(twin)                                              # 지난 회차가 꺼낸 뒤 죽었다
+    old_env = os.environ.get("AX_PROJECTS_ROOT")
+    os.environ["AX_PROJECTS_ROOT"] = str(projects)
+    orig_draft, orig_agy = R.draft, R.agy_only
+    R.draft = lambda *a, **kw: ("나눗셈이 0 이다.", "")
+    R.agy_only = lambda _p, **_kw: _review_body()
+    try:
+        rc = R.main(["--limit", "1"])
+        it = Q.items(twin)[0]
+        check("🔴 #749 main 이 주인 없는 running 을 회수해 끝낸다",
+              rc == 0 and it["state"] == "done" and it["attempts"] == 2, str(it["state"]))
+        check("#749 회수 이력이 남는다",
+              any(h.get("why") == Q.ORPHAN_WHY for h in it["history"]), str(it["history"]))
+        Q.enqueue(twin, key="f" * 40, files=["Source/M/A.cpp"])
+        with Q.consumer_lock(twin) as held:                    # 살아 있는 소비자가 있다
+            rc = R.main(["--limit", "1"])
+        check("#749 다른 소비자가 돌면 건너뛴다(건드리지 않는다)",
+              held and rc == 0 and Q.counts(twin)["pending"] == 1, str(Q.counts(twin)))
+    finally:
+        R.draft, R.agy_only = orig_draft, orig_agy
+        if old_env is None:
+            os.environ.pop("AX_PROJECTS_ROOT", None)
+        else:
+            os.environ["AX_PROJECTS_ROOT"] = old_env
+    shutil.rmtree(root); shutil.rmtree(projects)
+
+
 if __name__ == "__main__":
     for fn in (test_로컬뒤_antigravity가_퇴고한다,
                test_로컬_없음이어도_antigravity가_본다,
@@ -426,7 +478,7 @@ if __name__ == "__main__":
                test_diff를_못_읽으면_결정적이다,
                test_설계된_스킵, test_선언부, test_main_이_실제로_돈다,
                test_퇴고도_사용량에_남는다, test_grounding_머리말,
-               test_머지는_결합_diff로_가른다):
+               test_머지는_결합_diff로_가른다, test_시간예산과_주인없는_running_회수):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

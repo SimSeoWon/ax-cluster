@@ -221,10 +221,55 @@ def test_concurrent_claim():
     shutil.rmtree(root)
 
 
+def test_orphan_running_is_reclaimed():
+    """🔴 #749 — 소비자가 죽어 남은 running 을 잠금을 쥔 소비자가 회수한다."""
+    import subprocess
+    root = make_root()
+    Q.enqueue(root, key="dead1")
+    Q.claim(root)                                               # 소비자가 꺼낸 뒤 죽었다
+    check("#749 claim 은 pending 만 집는다 — 회수 없이는 영구 누락",
+          Q.claim(root) is None and Q.counts(root)["running"] == 1)
+    logs = []
+    with Q.consumer_lock(root) as held:
+        check("#749 잠금을 얻는다", held is True)
+        got = Q.reclaim_orphans(root, logf=logs.append)
+    it = Q.items(root)[0]
+    check("#749 회수 → pending (일시적 실패 한 번)",
+          [g["key"] for g in got] == ["dead1"] and it["state"] == "pending"
+          and it["last_kind"] == Q.TRANSIENT and it["attempts"] == 1, str(it))
+    check("#749 회수 사유가 이력에 남는다", it["history"][-1]["why"] == Q.ORPHAN_WHY)
+    check("#749 회수를 로그에 남긴다", any("회수 dead1" in m for m in logs), str(logs))
+    check("#749 회수 뒤 다시 꺼낼 수 있다", Q.claim(root)["key"] == "dead1")
+
+    # 매번 죽는 항목은 상한(3)에서 멈춘다 — 무한 반복 없음
+    for _ in range(2):
+        with Q.consumer_lock(root):
+            Q.reclaim_orphans(root)
+        if Q.items(root)[0]["state"] == "pending":
+            Q.claim(root)
+    check("🔴 #749 세 번 죽으면 abandoned", Q.items(root)[0]["state"] == "abandoned",
+          str(Q.items(root)[0]["state"]))
+    shutil.rmtree(root)
+
+    # 다른 프로세스가 잠금을 쥐면 못 얻는다 — 살아 있는 소비자의 running 은 건드리지 않는다
+    root = make_root()
+    code = ("import sys,time; sys.path.insert(0, %r); from master.context_synth import review_queue as Q\n"
+            "with Q.consumer_lock(%r) as h:\n print('held' if h else 'no', flush=True); time.sleep(3)")
+    proc = subprocess.Popen([sys.executable, "-c", code % (str(Path(__file__).resolve().parents[1]), str(root))],
+                            stdout=subprocess.PIPE, text=True)
+    first = proc.stdout.readline().strip()
+    with Q.consumer_lock(root) as held:
+        check("#749 다른 소비자가 쥐고 있으면 False", first == "held" and held is False, first)
+    proc.wait()
+    with Q.consumer_lock(root) as held:
+        check("#749 그 프로세스가 끝나면 다시 얻는다(스테일 잠금 없음)", held is True)
+    shutil.rmtree(root)
+
+
 if __name__ == "__main__":
     for fn in (test_classify, test_caps, test_enqueue_and_claim, test_outcomes,
                test_format_violation_does_not_block, test_broken_queue_and_location,
-               test_concurrent_claim):
+               test_concurrent_claim, test_orphan_running_is_reclaimed):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

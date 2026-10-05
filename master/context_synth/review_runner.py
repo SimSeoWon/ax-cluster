@@ -62,6 +62,7 @@ from __future__ import annotations
 import ast
 import re
 import subprocess
+import time
 from pathlib import Path
 
 from . import review_gen as rg
@@ -70,6 +71,12 @@ from . import review_queue as rq
 DRAFT_MODEL = "gemma4:e4b"      # 잠정 (`#640` 이 확정한다)
 DRAFT_NUM_CTX = 8192            # 합성과 같은 값 — 다르면 모델을 통째로 다시 올린다(61.6초 실측)
 DRAFT_TIMEOUT = 180
+# 🔴 [중요] 한 회차의 시간 예산 (`#749`) — `master/systemd/ax-review-queue.service` 의
+#    `TimeoutStartSec=600` 과 같은 값이다. 넘기면 systemd 가 소비자를 죽인다(실측 2026-10-05
+#    15:45 — 한 회차 최대 5건이 600초를 넘었다). 한 건의 최악은 초고 + 퇴고 상한에 여유 60초다.
+#    남은 시간이 그보다 적으면 새 항목을 꺼내지 않고 다음 회차(타이머)에 넘긴다.
+RUN_BUDGET = 600
+ITEM_WORST = DRAFT_TIMEOUT + rg.REVIEW_TIMEOUT + 60
 DRAFT_MAX_CHARS = 4000          # 초고가 길어지면 리뷰 프롬프트를 밀어낸다
 DECL_MAX_CHARS = 6000
 
@@ -452,10 +459,21 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
     return res
 
 
-def drain(paths, *, limit: int = 5, logf=None, **kw) -> list:
-    """한 회차에 최대 `limit` 건. [주의] 무한히 돌지 않는다 — 유닛이 다시 깨운다."""
+def drain(paths, *, limit: int = 5, logf=None, deadline: float | None = None,
+          clock=time.monotonic, **kw) -> list:
+    """한 회차에 최대 `limit` 건. [주의] 무한히 돌지 않는다 — 유닛이 다시 깨운다.
+
+    `deadline`(clock 기준)이 있으면 남은 시간이 `ITEM_WORST` 보다 적을 때 새 항목을 꺼내지
+    않는다(`#749`) — 꺼낸 뒤 죽으면 회수까지 한 회차를 잃는다.
+    """
+    log = logf or (lambda m: None)
     out = []
     for _ in range(max(1, limit)):
+        if deadline is not None:
+            left = deadline - clock()
+            if left < ITEM_WORST:
+                log(f"[리뷰큐] 시간 예산 — 남은 {int(left)}초 < 한 건 최악 {ITEM_WORST}초 · 다음 회차로 넘긴다")
+                break
         r = run_once(paths, logf=logf, **kw)
         if r is None:
             break
@@ -483,7 +501,10 @@ def main(argv=None) -> int:
     ap.add_argument("--project", default="", help="하나만 처리 (기본: 등록된 전부)")
     ap.add_argument("--limit", type=int, default=5, help="회차당 최대 건수")
     ap.add_argument("--model", default=DRAFT_MODEL, help="초고 모델")
+    ap.add_argument("--budget", type=int, default=RUN_BUDGET,
+                    help="회차 시간 예산(초) — 유닛 TimeoutStartSec 과 맞춘다 (#749)")
     a = ap.parse_args(argv)
+    deadline = time.monotonic() + a.budget
 
     def log(m):
         print(m, flush=True)
@@ -505,22 +526,28 @@ def main(argv=None) -> int:
         except ConfigError as e:
             log(f"[리뷰큐] {name} 건너뜀 — {e}")
             continue
-        try:
-            before = rq.counts(paths.root)
-        except rq.ReviewQueueError as e:
-            # [중요] 깨진 큐는 덮지 않는다 — 사람에게 보고하고 그 프로젝트만 건너뛴다.
-            log(f"[중요] [리뷰큐] {name} 큐가 깨졌다 — 덮지 않는다: {e}")
-            continue
-        if not before.get("pending"):
-            continue
-        log(f"[리뷰큐] {name} 대기 {before['pending']}건 — 최대 {a.limit}건 처리")
-        for r in drain(paths, limit=a.limit, logf=log, model=a.model):
-            total += 1
-            done += 1 if r.state == "done" else 0
-            failed += 1 if r.state == "failed" else 0
-        after = rq.counts(paths.root)
-        log(f"[리뷰큐] {name} 완료 — 대기 {after['pending']} · 종결 {after['done']} "
-            f"· 포기 {after['abandoned']}")
+        # 🔴 `#749` — 실행 내내 소비자 잠금을 쥔다. 못 얻으면 다른 소비자가 돈다(수동 실행 등).
+        with rq.consumer_lock(paths.root) as held:
+            if not held:
+                log(f"[리뷰큐] {name} 건너뜀 — 다른 소비자가 이 큐를 처리 중이다")
+                continue
+            try:
+                rq.reclaim_orphans(paths.root, logf=log)   # 잠금을 쥔 지금 running 은 주인이 없다
+                before = rq.counts(paths.root)
+            except rq.ReviewQueueError as e:
+                # [중요] 깨진 큐는 덮지 않는다 — 사람에게 보고하고 그 프로젝트만 건너뛴다.
+                log(f"[중요] [리뷰큐] {name} 큐가 깨졌다 — 덮지 않는다: {e}")
+                continue
+            if not before.get("pending"):
+                continue
+            log(f"[리뷰큐] {name} 대기 {before['pending']}건 — 최대 {a.limit}건 처리")
+            for r in drain(paths, limit=a.limit, logf=log, model=a.model, deadline=deadline):
+                total += 1
+                done += 1 if r.state == "done" else 0
+                failed += 1 if r.state == "failed" else 0
+            after = rq.counts(paths.root)
+            log(f"[리뷰큐] {name} 완료 — 대기 {after['pending']} · 종결 {after['done']} "
+                f"· 포기 {after['abandoned']}")
     if total:
         log(f"[리뷰큐] 회차 종료 — 처리 {total} · 성공 {done} · 실패 {failed}")
     return 0

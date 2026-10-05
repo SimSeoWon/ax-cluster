@@ -28,6 +28,14 @@
 [주의] 쓰는 쪽이 여럿이다(색인기·큐 소비자·8101) — 쓰기는 전부 `review_queue/.lock` 을 잡는다.
 [중요] **깨진 큐를 빈 것으로 덮지 않는다** — 덮으면 대기 중인 항목이 조용히 사라진다.
 못 읽으면 `ReviewQueueError` 로 멈춘다 (`fix_index` 와 같은 규약).
+
+🔴 [중요] **주인 없는 `running` 은 회수한다** (`#749`, 사용자 결정 2026-10-05). 소비자가 끝나지
+   못하면(systemd `TimeoutStartSec` · 재부팅 · OOM) 항목이 `running` 으로 남고, `claim` 은 `pending`
+   만 집으므로 그 커밋 리뷰가 **조용히 영구 누락**됐다(실측 `075bbba2`, 15:45 시간 제한 종료).
+   판정은 시간(리스)이 아니라 **사실**로 한다 — 소비자는 실행 내내 `.consumer.lock` 을 잡고,
+   그 잠금을 얻은 소비자가 보는 `running` 은 살아 있는 주인이 없다(죽은 프로세스의 `flock` 은
+   커널이 놓는다 — 이벤트 스풀 `consumer.lock` 과 같은 규약). 회수는 일시적 실패 한 번으로 센다 —
+   매번 시간 제한에 걸리는 항목이 무한히 돌지 않고 상한(3)에서 `abandoned` 로 멈춘다.
 """
 from __future__ import annotations
 
@@ -156,6 +164,50 @@ def _write(root, data: dict) -> None:
     tmp = f.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(tmp, f)
+
+
+@contextmanager
+def consumer_lock(root):
+    """소비자 단일 실행 잠금(비차단). 얻으면 True, 다른 소비자가 돌고 있으면 False 를 내준다.
+
+    [주의] 쓰기 잠금(`.lock`)과 다르다 — 그것은 한 번의 읽고-쓰기만 감싸고, 이것은 소비자
+    **실행 전체**를 감싼다. 프로세스가 죽으면 커널이 놓으므로 스테일 잠금이 남지 않는다.
+    """
+    d = queue_dir(root)
+    d.mkdir(parents=True, exist_ok=True)
+    fd = os.open(d / ".consumer.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+ORPHAN_WHY = "소비자가 끝나지 못했다 — 주인 없는 running 회수 (시간 제한·재부팅 등)"
+
+
+def reclaim_orphans(root, *, logf=None) -> list:
+    """주인 없는 `running` 을 일시적 실패 한 번으로 돌린다. 반환: 회수한 항목들.
+
+    [중요] **`consumer_lock` 을 쥔 소비자만 부른다** — 그래야 `running` 의 주인이 없다는 것이
+    사실이 된다. 판정·상한은 `finish` 의 것을 그대로 쓴다(같은 판정을 두 벌 두지 않는다).
+    """
+    log = logf or (lambda m: None)
+    orphans = [it["id"] for it in items(root, state="running")]
+    out = []
+    for iid in orphans:
+        it = finish(root, iid, ok=False, why=ORPHAN_WHY, logf=log)
+        log(f"[리뷰큐] 회수 {it['key'][:12]} running → {it['state']} "
+            f"(시도 {it.get('attempts')}/{cap(it.get('last_kind') or TRANSIENT)})")
+        out.append(it)
+    return out
 
 
 def _item_id(kind: str, key: str) -> str:
