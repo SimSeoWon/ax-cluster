@@ -94,6 +94,18 @@ def main() -> int:
         check("task_id 가 실린다", r.get("task_id") == "g/a")
         check("반환값이 기록과 같다", rec is not None and rec.get("source") == "synth")
 
+        print("①-b #751 구간의 상용 CLI 토큰을 돌려준다")
+        check("감싸지 않으면 빈 dict", usage.sink_cli_tokens() == {})
+        with usage.sink(log, source="synth", task_id="g/b"):
+            check("  호출 전엔 빈 dict", usage.sink_cli_tokens() == {})
+            usage.emit_cli("agy", usage.Usage(lane="agy", input_tokens=50, output_tokens=9))
+            usage.emit_cli("codex", usage.Usage(lane="codex", note="못 읽음"))   # 미측정 — 더하지 않는다
+            got_t = usage.sink_cli_tokens()
+        check("  측정된 호출만 합친다", got_t == {"in": 50, "out": 9}, str(got_t))
+        with usage.sink(log, source="synth"):
+            usage.emit_cli("agy", usage.Usage(lane="agy", note="봉투 아님"))
+            check("  측정이 하나도 없으면 빈 dict(0 을 지어내지 않는다)", usage.sink_cli_tokens() == {})
+
         print("② 노드가 안 준 값은 지어내지 않는다")
         with usage.sink(log, source="review"):
             usage.emit_broker("m", {})

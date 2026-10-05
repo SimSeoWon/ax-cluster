@@ -698,8 +698,16 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
             if pu.usage_log.is_file() else []
         return rr, rws
 
-    r, rows = usage_run("usage", good_txt)
+    logged, real_log = [], synth._log
+    synth._log = lambda m: (logged.append(m), real_log(m))
+    try:
+        r, rows = usage_run("usage", good_txt)
+    finally:
+        synth._log = real_log
     check("agy 가 통과시킨다 (주입 없이 실제 진입점)", r.passed and r.model == "agy", r.reason)
+    check("🔴 #751 상용 레인 로그 줄에 실제 토큰이 찍힌다 (「미상」 아님)",
+          any("— agy · 토큰 입력 50 · 출력 9" in m for m in logged),
+          str([m for m in logged if "agy ·" in m]))
     check("사용량 2행 — e4b · agy", [x["lane"] for x in rows]
           == ["local:gemma4:e4b", "agy"], str([x.get("lane") for x in rows]))
     check("  전부 source=synth · task_id=그룹", rows and all(

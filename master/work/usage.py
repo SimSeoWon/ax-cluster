@@ -465,7 +465,7 @@ _SINK: "_cv.ContextVar[dict | None]" = _cv.ContextVar("ax_usage_sink", default=N
 def sink(log_path, *, source: str, work_id: str = "", task_id: str = ""):
     """이 구간의 브로커 호출을 `log_path` 에 `source` 로 기록한다."""
     tok = _SINK.set({"path": Path(log_path), "source": source,
-                     "work_id": work_id, "task_id": task_id})
+                     "work_id": work_id, "task_id": task_id, "cli": []})
     try:
         yield
     finally:
@@ -517,10 +517,25 @@ def emit_cli(lane: str, u=None, *, seconds: float = 0.0, rc: int = 0,
         return None
     try:
         meta = meta_from_usage(u if u is not None else Usage(lane=lane))
-        return record(s["path"], meta, lane=lane, work_id=s["work_id"], task_id=s["task_id"],
-                      rc=rc, seconds=seconds, source=s["source"], model=model or "")
+        rec = record(s["path"], meta, lane=lane, work_id=s["work_id"], task_id=s["task_id"],
+                     rc=rc, seconds=seconds, source=s["source"], model=model or "")
+        s.setdefault("cli", []).append(rec)
+        return rec
     except Exception as e:                                       # noqa: BLE001
         return {"error": f"{type(e).__name__}: {e}"}
+
+
+def sink_cli_tokens() -> dict:
+    """이 구간에서 기록한 상용 CLI 호출의 토큰 — `{"in": …, "out": …}`, 못 쟀으면 빈 dict (`#751`).
+
+    호출자가 로그 줄에 쓰는 값이다. [중요] 0 을 지어내지 않는다 — 측정된 줄이 없으면 비운다.
+    """
+    s = _SINK.get()
+    recs = [r for r in (s or {}).get("cli", []) if r.get("measured") and not r.get("error")]
+    if not recs:
+        return {}
+    return {"in": sum(int(r.get("input_tokens") or 0) for r in recs),
+            "out": sum(int(r.get("output_tokens") or 0) for r in recs)}
 
 
 def summarize(paths_or_files, *, days: int = 1) -> dict:

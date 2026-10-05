@@ -609,6 +609,9 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
             #    상용 CLI 도 같은 sink 를 읽는다(`#728`·`#733`)
             with usage_mod.sink(paths.usage_log, source="synth", task_id=key):
                 raw = _generate(p, m, broker=broker, caller=caller, cli=cli, usage=usage)
+                # `#751` — 상용 CLI 의 토큰은 공용 진입이 사용량 행으로 남긴다. 로그 줄도 그 값을
+                #    보여 준다(종전엔 「미상」). [주의] GroupResult 합계는 **로컬만** — 계약 그대로다.
+                shown = usage or (usage_mod.sink_cli_tokens() if _is_cli(m) else {})
         except GenerateError as e:
             llm_reason = f"LLM 실패: {e}"
             res.attempts.append(f"{m} LLM 실패")
@@ -619,7 +622,7 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
             continue
         res.tokens_in += usage.get("in", 0)
         res.tokens_out += usage.get("out", 0)
-        _log(f"{key} — {m} · 토큰 입력 {usage.get('in', '미상')} · 출력 {usage.get('out', '미상')}"
+        _log(f"{key} — {m} · 토큰 입력 {shown.get('in', '미상')} · 출력 {shown.get('out', '미상')}"
              f" · {int(time.monotonic() - t_call)}초 · 프롬프트 {len(p)}자")
         doc, verdict = md_mod.finalize(raw, existing=existing, commit=commit)
         if verdict.ok:
