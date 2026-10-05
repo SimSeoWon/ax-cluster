@@ -218,122 +218,122 @@ def test_commit_changes_first_parent_real_git() -> None:
     from types import SimpleNamespace
     from master.events import consumer as C
 
-    tmp = Path(tempfile.mkdtemp(prefix="ax-idx-744-"))
-    repo = tmp / "repo"
-    (repo / "Source").mkdir(parents=True)
+    with tempfile.TemporaryDirectory(prefix="ax-idx-744-") as tmp_name:
+        tmp = Path(tmp_name)
+        repo = tmp / "repo"
+        (repo / "Source").mkdir(parents=True)
 
-    def g(*a):
-        p = subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True)
-        return p.returncode, (p.stdout + p.stderr).strip()
+        def g(*a):
+            p = subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True)
+            return p.returncode, (p.stdout + p.stderr).strip()
 
-    def head():
-        return g("rev-parse", "HEAD")[1]
+        def head():
+            return g("rev-parse", "HEAD")[1]
 
-    def write(rel, text):
-        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
-        (repo / rel).write_text(text, encoding="utf-8")
+        def write(rel, text):
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).write_text(text, encoding="utf-8")
 
-    def commit(msg):
-        g("add", "-A")
-        g("commit", "-qm", msg)
-        return head()
+        def commit(msg):
+            g("add", "-A")
+            g("commit", "-qm", msg)
+            return head()
 
-    g("init", "-q", "-b", "main")
-    g("config", "user.email", "t@e.st")
-    g("config", "user.name", "t")
-    lines = "".join(f"line{i}\n" for i in range(1, 21))
-    write("Source/A.cpp", lines)
-    write("Source/B.cpp", lines)
-    write("README.md", "r\n")
-    R = commit("root")
-    g("checkout", "-qb", "side")
-    write("Source/B.cpp", lines.replace("line10", "side10"))
-    S1 = commit("side: B")
-    write("Source/C.cpp", "new\n")
-    S2 = commit("side: C")
-    g("checkout", "-q", "main")
-    write("Source/A.cpp", lines.replace("line20", "main20"))
-    M1 = commit("main: A")
-    write("Source/notes.md", "doc\n")
-    M2 = commit("main: doc only")
-    g("merge", "-q", "--no-ff", "--no-edit", "side")
-    X1 = head()                                             # 깨끗한 머지
+        g("init", "-q", "-b", "main")
+        g("config", "user.email", "t@e.st")
+        g("config", "user.name", "t")
+        lines = "".join(f"line{i}\n" for i in range(1, 21))
+        write("Source/A.cpp", lines)
+        write("Source/B.cpp", lines)
+        write("README.md", "r\n")
+        R = commit("root")
+        g("checkout", "-qb", "side")
+        write("Source/B.cpp", lines.replace("line10", "side10"))
+        S1 = commit("side: B")
+        write("Source/C.cpp", "new\n")
+        S2 = commit("side: C")
+        g("checkout", "-q", "main")
+        write("Source/A.cpp", lines.replace("line20", "main20"))
+        M1 = commit("main: A")
+        write("Source/notes.md", "doc\n")
+        M2 = commit("main: doc only")
+        g("merge", "-q", "--no-ff", "--no-edit", "side")
+        X1 = head()                                             # 깨끗한 머지
 
-    # 양쪽이 같은 파일의 겹치지 않는 자리를 고쳐 자동 병합 — 어느 부모에도 없던 내용
-    g("checkout", "-qb", "side2")
-    write("Source/A.cpp", (repo / "Source/A.cpp").read_text().replace("line1\n", "side1\n"))
-    commit("side2: A top")
-    g("checkout", "-q", "main")
-    write("Source/A.cpp", (repo / "Source/A.cpp").read_text().replace("line5\n", "main5\n"))
-    commit("main: A mid")
-    g("merge", "-q", "--no-ff", "--no-edit", "side2")
-    X2 = head()
+        # 양쪽이 같은 파일의 겹치지 않는 자리를 고쳐 자동 병합 — 어느 부모에도 없던 내용
+        g("checkout", "-qb", "side2")
+        write("Source/A.cpp", (repo / "Source/A.cpp").read_text().replace("line1\n", "side1\n"))
+        commit("side2: A top")
+        g("checkout", "-q", "main")
+        write("Source/A.cpp", (repo / "Source/A.cpp").read_text().replace("line5\n", "main5\n"))
+        commit("main: A mid")
+        g("merge", "-q", "--no-ff", "--no-edit", "side2")
+        X2 = head()
 
-    # 충돌 해소 머지 — 해소한 줄은 어느 부모에도 없다
-    g("checkout", "-qb", "side3")
-    write("Source/B.cpp", (repo / "Source/B.cpp").read_text().replace("line3\n", "s3\n"))
-    commit("side3: B")
-    g("checkout", "-q", "main")
-    write("Source/B.cpp", (repo / "Source/B.cpp").read_text().replace("line3\n", "m3\n"))
-    commit("main: B")
-    rc_m, _ = g("merge", "-q", "--no-edit", "side3")
-    write("Source/B.cpp", (repo / "Source/B.cpp").read_text().split("<<<<<<<")[0]
-          + "resolved3\n" + (repo / "Source/B.cpp").read_text().split(">>>>>>> side3\n")[1])
-    X3 = commit("merge side3 (resolved)")
+        # 충돌 해소 머지 — 해소한 줄은 어느 부모에도 없다
+        g("checkout", "-qb", "side3")
+        write("Source/B.cpp", (repo / "Source/B.cpp").read_text().replace("line3\n", "s3\n"))
+        commit("side3: B")
+        g("checkout", "-q", "main")
+        write("Source/B.cpp", (repo / "Source/B.cpp").read_text().replace("line3\n", "m3\n"))
+        commit("main: B")
+        rc_m, _ = g("merge", "-q", "--no-edit", "side3")
+        write("Source/B.cpp", (repo / "Source/B.cpp").read_text().split("<<<<<<<")[0]
+              + "resolved3\n" + (repo / "Source/B.cpp").read_text().split(">>>>>>> side3\n")[1])
+        X3 = commit("merge side3 (resolved)")
 
-    # 머지 안에서 고친 것(evil merge) — 깨끗한 머지 + 아무 부모도 안 만진 파일 수정
-    g("checkout", "-qb", "side4")
-    write("Source/E.cpp", "e\n")
-    commit("side4: E")
-    g("checkout", "-q", "main")
-    write("README.md", "r2\n")
-    commit("main: readme")
-    g("merge", "-q", "--no-ff", "--no-commit", "side4")
-    write("Source/A.cpp", (repo / "Source/A.cpp").read_text() + "evil\n")
-    X4 = commit("merge side4 + edit")
+        # 머지 안에서 고친 것(evil merge) — 깨끗한 머지 + 아무 부모도 안 만진 파일 수정
+        g("checkout", "-qb", "side4")
+        write("Source/E.cpp", "e\n")
+        commit("side4: E")
+        g("checkout", "-q", "main")
+        write("README.md", "r2\n")
+        commit("main: readme")
+        g("merge", "-q", "--no-ff", "--no-commit", "side4")
+        write("Source/A.cpp", (repo / "Source/A.cpp").read_text() + "evil\n")
+        X4 = commit("merge side4 + edit")
 
-    paths = SimpleNamespace(repo=repo, scope=SimpleNamespace(roots=("Source",), submodules=()))
+        paths = SimpleNamespace(repo=repo, scope=SimpleNamespace(roots=("Source",), submodules=()))
 
-    def ch(c):
-        return C._commit_changes(paths, c, lambda repo_, *a: g(*a))
+        def ch(c):
+            return C._commit_changes(paths, c, lambda repo_, *a: g(*a))
 
-    base, files, merge, why = ch(R)
-    check("루트 — 빈 트리와 비교해 그 커밋의 소스가 전부 들어온다",
-          base == C.EMPTY_TREE and files == ["Source/A.cpp", "Source/B.cpp"] and not merge,
-          f"{base} {files} {why}")
-    base, files, merge, why = ch(S2)
-    check("일반 커밋 — 첫 부모 기준", base == S1 and files == ["Source/C.cpp"], f"{files} {why}")
-    base, files, merge, why = ch(M1)
-    check("🔴 옆 브랜치 뒤에 걸려도 자기 변경만 (종전 `prev` 기준이면 B·C 가 붙었다)",
-          files == ["Source/A.cpp"] and base == R, f"{base[:8]} {files}")
-    old = g("diff", "--name-only", S2, M1, "--", "Source")[1].split()
-    check("  대조 — 종전 기준(직전에 걸은 커밋)은 실제로 옆 브랜치를 붙인다",
-          "Source/B.cpp" in old and "Source/C.cpp" in old, str(old))
-    base, files, merge, why = ch(M2)
-    check("문서만 바꾼 커밋 — 소스 확장자 밖이라 _source_only 가 비운다",
-          files == ["Source/notes.md"] and C._source_only(files) == [], str(files))
-    base, files, merge, why = ch(X1)
-    check("🔴 깨끗한 머지 — 머지로 판정 · 모든 부모와 다른 파일 없음",
-          merge and files == [] and base == M2 and not why, f"{merge} {files} {why}")
-    base, files, merge, why = ch(X2)
-    check("양쪽 자동 병합 — 어느 부모와도 다른 내용이라 합성 대상에 센다",
-          merge and files == ["Source/A.cpp"], f"{files} {why}")
-    cc = g("show", "--pretty=format:", "--cc", X2, "--", "Source/A.cpp")[1]
-    check("  대조 — 리뷰가 쓰는 --cc 패치는 비어 있다 (각 hunk 는 조각 커밋이 리뷰했다)",
-          cc.strip() == "", repr(cc))
-    base, files, merge, why = ch(X3)
-    check("충돌 해소 머지 — 해소한 파일을 센다", merge and files == ["Source/B.cpp"] and rc_m != 0,
-          f"{files} rc={rc_m}")
-    base, files, merge, why = ch(X4)
-    check("머지 안 수정 — 그 파일만 센다 (옆 브랜치의 E 는 빠진다)",
-          merge and files == ["Source/A.cpp"], f"{files} {why}")
+        base, files, merge, why = ch(R)
+        check("루트 — 빈 트리와 비교해 그 커밋의 소스가 전부 들어온다",
+              base == C.EMPTY_TREE and files == ["Source/A.cpp", "Source/B.cpp"] and not merge,
+              f"{base} {files} {why}")
+        base, files, merge, why = ch(S2)
+        check("일반 커밋 — 첫 부모 기준", base == S1 and files == ["Source/C.cpp"], f"{files} {why}")
+        base, files, merge, why = ch(M1)
+        check("🔴 옆 브랜치 뒤에 걸려도 자기 변경만 (종전 `prev` 기준이면 B·C 가 붙었다)",
+              files == ["Source/A.cpp"] and base == R, f"{base[:8]} {files}")
+        old = g("diff", "--name-only", S2, M1, "--", "Source")[1].split()
+        check("  대조 — 종전 기준(직전에 걸은 커밋)은 실제로 옆 브랜치를 붙인다",
+              "Source/B.cpp" in old and "Source/C.cpp" in old, str(old))
+        base, files, merge, why = ch(M2)
+        check("문서만 바꾼 커밋 — 소스 확장자 밖이라 _source_only 가 비운다",
+              files == ["Source/notes.md"] and C._source_only(files) == [], str(files))
+        base, files, merge, why = ch(X1)
+        check("🔴 깨끗한 머지 — 머지로 판정 · 모든 부모와 다른 파일 없음",
+              merge and files == [] and base == M2 and not why, f"{merge} {files} {why}")
+        base, files, merge, why = ch(X2)
+        check("양쪽 자동 병합 — 어느 부모와도 다른 내용이라 합성 대상에 센다",
+              merge and files == ["Source/A.cpp"], f"{files} {why}")
+        cc = g("show", "--pretty=format:", "--cc", X2, "--", "Source/A.cpp")[1]
+        check("  대조 — 리뷰가 쓰는 --cc 패치는 비어 있다 (각 hunk 는 조각 커밋이 리뷰했다)",
+              cc.strip() == "", repr(cc))
+        base, files, merge, why = ch(X3)
+        check("충돌 해소 머지 — 해소한 파일을 센다", merge and files == ["Source/B.cpp"] and rc_m != 0,
+              f"{files} rc={rc_m}")
+        base, files, merge, why = ch(X4)
+        check("머지 안 수정 — 그 파일만 센다 (옆 브랜치의 E 는 빠진다)",
+              merge and files == ["Source/A.cpp"], f"{files} {why}")
 
-    def broken(repo_, *a):
-        return (128, "fatal: bad object") if a[0] == "rev-list" else g(*a)
-    base, files, merge, why = C._commit_changes(paths, M1, broken)
-    check("[주의] 부모를 못 읽으면 루트로 접지 않고 사유를 낸다",
-          files == [] and "부모를 읽지 못했다" in why, why)
-    shutil.rmtree(tmp, ignore_errors=True)
+        def broken(repo_, *a):
+            return (128, "fatal: bad object") if a[0] == "rev-list" else g(*a)
+        base, files, merge, why = C._commit_changes(paths, M1, broken)
+        check("[주의] 부모를 못 읽으면 루트로 접지 않고 사유를 낸다",
+              files == [] and "부모를 읽지 못했다" in why, why)
 
 
 def test_walk_merge_paths(tmp: Path) -> None:
