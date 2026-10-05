@@ -288,6 +288,12 @@ class UsagePieTests(unittest.TestCase):
         tail = (100 - n) + (100 - n - 1)
         self.assertIn(f">{tail:,}<", body)
 
+    def test_tiny_share_title_is_not_double_escaped(self):
+        # R57-1: 0.1% 미만 조각의 툴팁이 「&amp;lt;0.1%」로 이중 escape 되지 않는다
+        body = _text(_report(source="all", models=_models(("claude", "a", 100000), ("codex", "c", 1))))
+        self.assertIn("<title>Codex · &lt;0.1% · 1 토큰</title>", body)
+        self.assertNotIn("&amp;lt;", body)
+
     def test_pie_strings_escaped(self):
         attack = '<script>alert("x")</script>'
         pie = _report(source="all", models=_models((attack, attack, 3)))

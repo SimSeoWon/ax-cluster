@@ -260,7 +260,8 @@ def _pie(pie_report, family: str = "") -> str:
     for label, color, value in rows:
         share = value / total
         length = max(0.5, share * circ - gap)
-        title = html.escape(f"{label} · {_pct(value, total)} · {value:,} 토큰")   # 모델 이름은 기록에서 온다
+        # 모델 이름은 기록에서 오므로 escape 한다 — `_pct` 는 이미 HTML(`&lt;0.1%`)이라 다시 감싸지 않는다(R57-1)
+        title = f"{html.escape(label)} · {_pct(value, total)} · {value:,} 토큰"
         parts.append(
             f'<circle cx="{size/2}" cy="{size/2}" r="{r}" fill="none" stroke="{color}" '
             f'stroke-width="{width}" stroke-dasharray="{length:.2f} {circ:.2f}" '
