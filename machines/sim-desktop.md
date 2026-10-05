@@ -84,8 +84,7 @@ branch; push mode pushes ephemeral `attempt/…` and the verifying worker merges
 
 [완료] **코드가 정본으로 왔다** (2026-09-04). 「통합자」는 **삭제**됐다 — `integrate.py`
 약 1,000줄과 테스트 131건을 지웠고, `master/test_no_integrator.py` 가 부활을 막는다.
-⑷⑸⑹ 은 라이브 완주했다(01:28→01:30 · **4/4 · 실패 0 · 1분 38초**). 남은 것은 ⑺ 실증
-하나다(`#355`). `#327` 이 attempt 계층을 걷은 근거(*"0 production callers"*)는 여전히
+⑷⑸⑹ 은 라이브 완주했다(01:28→01:30 · **4/4 · 실패 0 · 1분 38초**). `#327` 이 attempt 계층을 걷은 근거(*"0 production callers"*)는 여전히
 순환이었다 — 그 경로를 배선한 적이 없었으니 당연하다.
 
 This project is an **OS/environment port** (Windows+UE5
@@ -97,7 +96,7 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
 `origin/main`, and workers return to **`main`**.
 
 🔴 **The pipeline — 정본 7단계 (사용자 확정 2026-09-02).** This is the shape to build toward;
-`[미구현]` marks where today's code differs (that difference is a defect, not a variant):
+where today's code differs, that difference is a defect, not a variant:
 
     1 요청(`.33`) → 마스터에 **컨텍스트 문서 요청**
     2 `.33` 이 **모든 클래스의 동작을 계획**하고 **골조**를 만든다
@@ -124,10 +123,13 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
                     스탬프가 우선하며 진행 조각·후속 라운드에 전역 변경을 소급하지 않는다.
                     스탬프 없는 옛 work은 전역을 읽을 수 있으므로 구분한다.
              [주의] **기본값 상수는 아직 사람이 안 정했다**(`_UNDECIDED_DEFAULT`, 값 `lane`).
-             🔴 [중요] **워커 지휘자 모드는 `codex` 다** (2026-10-04 사용자 승인 뒤 전환·재조회).
-                    `ax-projects` 재기동 뒤 세 워커 readiness를 확인했다. 이전 전환의 시각은
-                    역사 기록이며 현재 값은 **모드 도구와 `mode.json`을 읽고 말한다** —
-                    그래서 `.2` 그림자 스킬이 실제로 읽힌다(`#661` · `.2` 에서 Codex 데스크톱 앱 금지).
+             🔴 [중요] **현재 워커 지휘자 모드는 문서에 적지 않는다** — 바뀔 때마다 이 줄이
+                    낡았다. 말하기 전에 `get_orchestration_tool`(또는 `mode.json`)로 값·출처를
+                    재조회한다. `.2` 에서 Codex 데스크톱 앱 금지(`#661` 그림자 스킬).
+                    `claude` 모드 readiness는 워커마다 `claude auth status` 를 24시간 캐시한다
+                    (워커 홈 `.cache/ax-dispatch/claude-auth.json`, `#721`). 실행 중 OAuth 실패는
+                    재시도 없이 즉시 보고된다 — 재로그인은 사람 몫, 그 뒤 강제 재검사.
+                    절차: `docs/14-onboarding-runbook.md`
              🔴 [완료] **`.2` 에 `codex` 모드를 보낸다 — 세션 1 경유로 라이브 완주했다**
                     (2026-09-13). **죽는 것은 「SSH 가 직접 미는」 경로뿐이고, 파견은 더 이상
                     그 경로로 가지 않는다.** 아래는 그 경로가 왜 죽는지의 기록이다 —
@@ -141,7 +143,7 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
                     백업 `config.toml.bak-20260911-elevated`
                     🔴 [완료] **고치는 길이 확정됐다 — 세션 1 이다** (실측 2026-09-12).
                        `/IT` 로 등록하면 SSH(세션 0)는 스케줄러에게 **부탁만** 하고 프로세스는
-                       **세션 1** 에 생겨 **설치본 `0.153.4` 가 그대로 돈다.** 그래서
+                       **세션 1** 에 생겨 **공식 설치본이 그대로 돈다.** 그래서
                        **패치 codex·Rust 빌드·아티팩트 배포는 불필요하다.** 리포트 63
                     🔴 [중요] **현재 readiness는 실제 파견 런처의 등록 계약을 검사한다**
                        (`00f8532`, 2026-10-04). SSH Session 0에서 `codex sandbox`를 실행하던
@@ -169,11 +171,10 @@ bare as a choice. **소 1.1 (read the origin's design docs) is upstream of every
                  `#404`·`#405`·`#407` · 리포트 63
     6 모든 서브태스크가 끝나면 **요청한 `.33` 에 전달**               [완료] Redmine `[리뷰 요청]`
           이슈가 실제로 발행된다 (`#350`·`#352`·`#354`) · `.33` 훅이 **세션 시작과 매 턴** 고지
-          [주의] **알림 채널이 없다** — Redmine SMTP 미설정 (`#356`). 이슈는 나는데 부르지 않는다
           🔴 [완료] **라이브 완주 2026-09-10 23:12** — `work_completion.py` 훅(`asyncRewake`)이
                  `.33` 세션을 **사람 입력 없이 깨웠고 결과가 닿았다**. 등재→완주 7분 16초 ·
                  3/3 · 재시도 0 · 개입 0. 훅이 7분간 백그라운드로 큐를 따라간다 (리포트 60)
-                 [주의] Redmine SMTP 는 여전히 미설정(`#356`) — 부르는 것은 **이 훅뿐이다**
+                 알림 채널은 **이 훅 하나로 확정**(`#356` 종결, 사용자 2026-10-05 — SMTP·n8n 안 씀)
     7 🔴 **`.33` 이 서브 브랜치를 전부 「작업 브랜치」에 머지하고 한 번 검사한 뒤,
           「버그냐 구조 수정이냐」를 묻고 그 브랜치를 한 칸 전진시킨다**  [완료] 라이브 2026-09-05
           (8db9826→7c3e472 · 통합 빌드가 워커 산출물 버그 4건을 잡았다 · 결정은 이슈 노트로)
@@ -404,9 +405,9 @@ Shared details and evidence: [`../docs/windows-codex-remote.md`](../docs/windows
 | IP | Machine | Login | Role | Reachable from here |
 |---|---|---|---|---|
 | **.57** | **sim-desktop** — this box | `sim` | **Master**: orchestration, RAG index, ontology/graph, task queue, broker, project registry | — |
-| **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) |  **Worker** *and* inference endpoint #2 (gemma4:e4b pinned; user 2026-10-03). **The only machine that can run the layer-3 verdict unattended** (UE5 5.8). 🔴 **정본 ⑸: this box commits its piece to its own sub-branch and then asks for the next task** (사용자 확정 2026-09-02). The master drives builds over SSH (`run_build_on_workshop` calls `Build.bat` directly, so **no Python payload is needed to build**). [주의] **No resident claimer today** — torn down 2026-08-27 (`#320`); that teardown is **on the restoration list**, since ⑸ requires the worker to pull its next task | **`ssh janus@192.168.0.2`** [완료] passwordless · RDP 3389 · Ollama 11434 |
+| **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) |  **Worker** *and* inference endpoint #2 (gemma4:e4b pinned; user 2026-10-03). **The only machine that can run the layer-3 verdict unattended** (UE5 5.8). 🔴 **정본 ⑸: this box commits its piece to its own sub-branch and then asks for the next task** (사용자 확정 2026-09-02). The master drives builds over SSH (`run_build_on_workshop` calls `Build.bat` directly, so **no Python payload is needed to build**). Resident `worker_daemon` restored for **build only** (`#404`, live 2026-09-12 in session 1); inference (code) is still master push | **`ssh janus@192.168.0.2`** [완료] passwordless · RDP 3389 · Ollama 11434 |
 | **.33** | Windows 10.0.26200, RTX 3080 10GB, **user main work PC**<br>host `DESKTOP-FU2GNGL` | **`user`** | **Game requester** and Unreal entry point. **AXCluster worker** in `C:\trunk\AXCluster` while mounted (user 2026-10-03); master is AXCluster requester. Roles are per project; `dispatch` only narrows availability. `gemma4:e4b` resident verified; third broker endpoint active; three concurrent inference requests verified (2026-10-03). Dirty check before writes, keep game trees separate. | **`ssh user@192.168.0.33`** passwordless · RDP 3389 · Ollama 11434 |
-| **.43** | **BC-250 #1** — Fedora, headless | `sim` |  **Worker** *and* inference endpoint #1. **35B residency was REMOVED 2026-08-17 (user decision ⓐ, measured #105)** — plain sequential inference grew GPU(GTT) allocations ~120MB/cycle and collapsed the node in 4 minutes; idle did not release it; only `systemctl restart ollama` did (NOPASSWD exists for it). Now pins **gemma4:e4b (~5GB, ~10GB headroom)** — the synth model, which also kills the old fallback-OOM hazard. The 35B stays on disk, unpinned. **e4b also fills the agentic-driver seat (#106 closed 2026-08-17)** — tool-calling gates 4/4 ×3 runs + Korean 3/3, 30-cycle sustained 30/30 with no #105-style accumulation (~-5MB/cycle vs 35B's -120). Fallback: `qwen3:8b` (4/4, lives on `.2`). Has the project clone at `~/trunk/ModularStage` — no longer stateless. 🔴 [중요] **This box is a committing worker too, exactly like `.2`** (사용자 정정 2026-09-02): **the memory limit decides only *which model* it may run locally, never whether it may commit**, and **building was never the worker's job** (the origin's per-task verify is static-only; UE5 belongs to the integration gate). I had blocked its commits on the strength of the "one writer" misquote and then re-justified it with memory/UE5 — neither reason holds. Inference it cannot host locally goes through the broker (8102). [주의] **No resident claimer today** — cron watchdog removed 2026-08-27 (`#320`); on the restoration list, since ⑸ requires the worker to pull its next task. Caps still come measured from `.ax/config.json` | `ssh sim@192.168.0.43` [완료] passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
+| **.43** | **BC-250 #1** — Fedora, headless | `sim` |  **Worker** *and* inference endpoint #1. **35B residency was REMOVED 2026-08-17 (user decision ⓐ, measured #105)** — plain sequential inference grew GPU(GTT) allocations ~120MB/cycle and collapsed the node in 4 minutes; idle did not release it; only `systemctl restart ollama` did (NOPASSWD exists for it). Now pins **gemma4:e4b (~5GB, ~10GB headroom)** — the synth model, which also kills the old fallback-OOM hazard. The 35B stays on disk, unpinned. **e4b also fills the agentic-driver seat (#106 closed 2026-08-17)** — tool-calling gates 4/4 ×3 runs + Korean 3/3, 30-cycle sustained 30/30 with no #105-style accumulation (~-5MB/cycle vs 35B's -120). Fallback: `qwen3:8b` (4/4, lives on `.2`). Has the project clone at `~/trunk/ModularStage` — no longer stateless. 🔴 [중요] **This box is a committing worker too, exactly like `.2`** (사용자 정정 2026-09-02): **the memory limit decides only *which model* it may run locally, never whether it may commit**, and **building was never the worker's job** (the origin's per-task verify is static-only; UE5 belongs to the integration gate). I had blocked its commits on the strength of the "one writer" misquote and then re-justified it with memory/UE5 — neither reason holds. Inference it cannot host locally goes through the broker (8102). `worker_daemon` was restored by `#404` (build only; without UE5 this box has no type to claim — `types_for`), so code pieces still arrive by master push. Caps still come measured from `.ax/config.json` | `ssh sim@192.168.0.43` [완료] passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
 | — | BC-250 #2 | — |  **Bazzite gaming machine — NOT an inference node.** Converting it means giving up that machine. **Never assume a 2nd board exists.** | n/a |
 
 ### `.33` — the main work PC has its own guide
@@ -451,6 +452,8 @@ workers are equal in it. UE5 only decides *who can run the layer-3 verdict*. The
 config was once found pointing at *another machine's* path.
 For a repository-wide rollout, use `python -m master.client update`: it enumerates every registered
 project, runs deliver→check for every workshop, and fails the whole command if any project fails.
+[중요] **Run it after every commit** — `check` fails when the delivered source commit is behind
+`HEAD`, even when every file hash matches.
 On Windows the same probe writes an absolute Python path into `backends.python`; client MCP and
 `ax-fix` consume it instead of relying on the session's `py` PATH.
 → [`../docs/8-git-authority.md`](../docs/8-git-authority.md) §8.4
@@ -501,8 +504,8 @@ the failing command left the old process running, so `is-active` still said `act
 
 ## Work journal
 
-Numbered work reports accumulate in `~/claude-workspace/reports/` (mirroring the BC-250's
-`~/bc250-backup-staging/reports/` convention). Reports are written in Korean — the user reads them.
+Numbered work reports accumulate in `~/ax-cluster/reports/` (in the repo; the older
+`~/claude-workspace/reports/` stopped at 36). Reports are written in Korean — the user reads them.
 
 - **Read the reports in full at session start** — grep is not a substitute. There is an incident
   where near-miss wording was filtered out and already-recorded work got re-investigated.

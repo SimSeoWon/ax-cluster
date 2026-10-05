@@ -36,6 +36,9 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   변경은 준비 검사를 거치는 `conductor.set_worker()`이며 전역값은 새 work 등재의 기본값이다.
   기존 `work.worker_mode` 스탬프는 진행 조각·후속 라운드에도 유지된다. 현재 모드·출처는
   도구로 재조회하고 최근 전환 근거는 [`인수인계서`](docs/orchestrator-handoff.md)를 확인한다.
+  `claude` 워커 인증 readiness는 `claude auth status` 24시간 캐시(워커 홈
+  `.cache/ax-dispatch/claude-auth.json`, `#721`)다. 실행 중 OAuth 실패는 재시도 없이 즉시 보고되며
+  재로그인은 사람 몫이다 → [`docs/14-onboarding-runbook.md`](docs/14-onboarding-runbook.md).
 
       AX-ENTRY-MARK: repo
 
@@ -64,7 +67,7 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   pull mode pushes `worker/<host>/<task_id>` → server squash-merges into feature; push mode
   pushes ephemeral `attempt/…` → verifying worker merges into durable.
   [중요] **Do not argue the topology from M3's docs** — its label *"사용자 확정 2026-08-11"* is wrong
-  (it was *"그래 해"* after I pushed it), and `settled-decisions.md` §214 carries the same bad label.
+  (it was *"그래 해"* after I pushed it), and `settled-decisions.md:251` carries the same bad label.
   [중요] **Before building anything, read the origin and leave a citation.** Must-reads (M4 때
   인용 0이었던 넷 — 2026-08-17 census 로 전부 인용 확인):
   `local_llm_distributed_workers_plan_v5.0.md` (463, user-confirmed C.1–C.7/κ.0),
@@ -149,7 +152,7 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   registration (with only push, "push first, register second" waited for the 10-min catchup).
   [주의] Workers keep nothing: after commit+push the cycle deletes the piece branch, prunes
   remote-tracking refs and removes `.ax/work/<task>`.
-  [진행] ⑺ mechanics: `review.advance_work()` + the `ax-advance` skill
+  [완료] ⑺ mechanics: `review.advance_work()` + the `ax-advance` skill
   merge every sub-branch into the **work branch** (not `main`), build once on `.33`, ask *"bug or
   structural change?"*, and push the advance only on `confirm=True`. Flow Y
   (2026-08-14, *"master commits inferred diffs to the durable branch"*) and the `#327` teardown of
@@ -164,9 +167,11 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   [주의] `attempt/*` stays in that allowlist only for **legacy debris cleanup**
   (`attempt.plan_remote_cleanup`). The 정본 clone's `origin` push stays sealed as a loud guard.
   → [`docs/2-architecture.md`](docs/2-architecture.md) §2.2-1 · `reports/16-master-write-surface.md`
-- [중요] **All three services require a bearer token** (`task_queue` 8101, broker 8102, projects 8103).
+- [중요] **Services use a bearer token** (`task_queue` 8101, broker 8102, projects 8103).
   Token: `~/.config/ax-cluster/token`, 0600, **fail-closed — a service will not start without it**.
-  Send `Authorization: Bearer <token>`; only `/livez` is open. They are *also* ufw LAN-only —
+  Send `Authorization: Bearer <token>`. [주의] **8103's web UI and `/api/v1` are public** (the
+  `PREFIXES` in `master/webui/app.py`; revert with `AX_VIEW_REQUIRE_TOKEN=1`) — never put a
+  sensitive body there; its write surface `/control/*` needs the requester token. All are *also* ufw LAN-only —
   **never widen those rules to `Anywhere`.** Two layers, not one instead of the other.
   → `master/auth.py`, PLAN §9.5.6
 - [중요] **`/home/sim/AgentTest` is reference-only — never modify or push to it.** Port code *out* of it.
@@ -187,8 +192,8 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   커밋·에셋)은 그 자리에서 표시한다 — 사람이 모르고 지우게 두지 않는다.
   [주의] **일인칭 서술("커밋하고 올게")을 지시로 읽지 않는다.** 그 오독이 AgentTest 에서 사고를
   냈다(*"다 지워진 줄 알고 깜짝 놀랐다"*). 앞선 지시가 있어도 **삭제 직전에 한 번 더 확인한다.**
-  [주의] **Pipeline code committing is a different thing** — the integration step writing to the durable
-  `task/<work>/<task>` branch is designed behavior; these rules bind the *interactive session*.
+  [주의] **Pipeline code committing is a different thing** — workers committing to their
+  `task/<work>/…` sub-branches and the ⑺ advance pushing the work branch are designed behavior; these rules bind the *interactive session*.
   → [`docs/8-git-authority.md`](docs/8-git-authority.md)
 - [중요] **Never trust a delegated backend's "done".** Measured 2026-08-07: `agy` returned
   `status:"SUCCESS"` while writing no file. Verify the artifact, not the status.
@@ -205,7 +210,7 @@ milestone doc grew stale numbers before.
 
 | | Answers | Rule |
 |---|---|---|
-| **Milestone doc** `docs/milestones/2-*.md` | *Why this order?* — chains, traps, measured evidence | [중요] **No numerators here.** They drifted twice (중 1.3 counted 7/10 against a 13-item list; 대 1 stayed at 15 after 중 1.3 went 5→8). Keep the reasoning an issue cannot hold |
+| **Milestone doc** `docs/milestones/6-improvements.md` (open) | *Why this order?* — chains, traps, measured evidence | [중요] **No numerators here.** They drifted twice (중 1.3 counted 7/10 against a 13-item list; 대 1 stayed at 15 after 중 1.3 went 5→8). Keep the reasoning an issue cannot hold |
 | **Redmine** `http://192.168.0.57:8080` | *Where are we, and what is open?* — **the milestone itself** | [중요] **Version = 마일스톤 · parent issue = 중분류 · subtask = 소분류** (user-confirmed 2026-08-09). Progress is **computed**, never typed. Only **완료(4)** is a closing status — 해결(3) still counts as open. Put the commit hash in the note |
 | **`reports/`** | *Why did we decide that?* — decisions, measurements, traps | One report per session, Korean. Not a task list |
 | **Redmine 위키 [[아이디어수집]]** | *What might we build someday?* — 미정 아이디어의 본문 | [중요] **일감이 아니다** (사용자 개설 2026-08-17). 항목 = 위키 절 + 버전 「아이디어 — 추후 검토 수집」의 이슈. 진행·집계 금지, 착수 결정 시 실 마일스톤으로 이동 |
@@ -248,15 +253,16 @@ from the master's own container DB. [중요] **Never write the key value into a 
 source vs delivered are two fields now (#262). Detail: [`client/README.md`](client/README.md).
 [중요] **Say "done" only for a whole area** — and when reporting status, give the denominator (read it
 from Redmine), never a scope narrowed to what got built.
-The pipeline runs end to end with **four gates**: skeleton build (`claude:opus`, built on `.2` before
-registration) → 층1 (deterministic, at *both* response-acceptance and apply time) → 층2 (commercial
+The pipeline runs end to end with **four gates**: skeleton (written by the requester, UHT-gated before
+registration — the master never builds skeletons, `#339`) → 층1 (deterministic, at *both* response-acceptance and apply time) → 층2 (commercial
 model with **declaration grounding**) → 층3 (per-piece UE5 build + one work-level RunTests).
 **It builds per piece, not once at the end** — §4.5's "apply everything then build once" was
 overturned by the measured 35–65s incremental build, because a single build can't say *which*
 piece broke it. [주의] The gates are **not** what 정본 7단계 changes; they stay.
 [완료] **Bodies are written through a lane chain, not a hardcoded `claude -p`** (`#346`,
 2026-09-04 · user's order: *"agy, 그다음 로컬로 배선하고, 클로드는 나중에 사용해"*).
-`work/lanes.py` tries **`agy` → local `qwen2.5-coder:14b`**, fail-forward; `claude` is off the
+`work/lanes.py` `DEFAULT_LANES` tries **`codex` → `agy` → local `qwen2.5-coder:14b`**
+(reordered 2026-09-06 to spend Codex quota first), fail-forward; `claude` is off the
 default chain because its session limit is a **shared** resource — one 429 killed 3 of 4 pieces
 (measured 00:16). The lane convention is **not new**: `ontology/synth.generate` already picks the
 backend from the model string. Measured on one skeleton, same prompt, same 층1 verdict:
@@ -295,8 +301,8 @@ Each SKILL.md now points at the other so that utterance never lands in the wrong
 [중요] **Content travels as files in both directions, never on the command line or stdout.** `.2`'s
 console is CP949: the master→worker rule ("instructions ASCII, content by file") applies to
 worker→master too — responses land in `.ax/work/<task>/response.txt` and come back by `scp`.
-[중요] **The integration worktree is pipeline-owned; a human's tree never is.** `ax-wt-<work_id>` sits
-**beside** the checkout (never inside it) and `ensure_worktree` resets it to the base commit on
+[중요] **The integration worktree is pipeline-owned; a human's tree never is.** `ax-review-<work_id>` sits
+**beside** the checkout (never inside it) and `review.py` removes and re-adds it (detached) on
 reuse. That reset is safe *only* because nobody edits that tree by hand — never apply the same
 reasoning to `.33`'s or a worker's main checkout.
 [중요] **Never `push --force` from the integration step.** If a push is rejected, the commits stay in the
@@ -357,37 +363,32 @@ python3 master/test_verdict.py               # venv 없이 도는 순수 로직
 curl -s localhost:8102/health | python3 -m json.tool   # 노드별 상주 모델
 systemctl status ax-task-queue ax-broker ax-projects ax-indexer.path
 journalctl -u ax-indexer -n 30 --no-pager              # push → 트윈 성장 이력
-.venv/bin/python -m master.work.infer collect          # pull 데몬 응답 회수 → 스풀 (#204)
 # 전진·finalize: 요청자의 ax-advance 스킬과 ax-projects MCP; 사람 승인 게이트를 따른다
 .venv/bin/python -m master.work.cleanup plan|apply     # 찌꺼기 (plan 은 안 지움 · verified·cancelled 만)
 .venv/bin/python -m master.work.cleanup remote --apply # 병합 확인된 원격 attempt/task 삭제 (#219)
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client probe|plan|deliver|check <프로젝트>
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update
                                                        # 레지스트리 전체 배달→대조; 프로젝트를 다시 고르지 않는다
+                                                       # [중요] 커밋마다 실행 — 배달 출처 커밋이 HEAD 보다
+                                                       # 뒤처지면 해시가 같아도 check 가 실패한다
 .venv/bin/python -m master.ontology plan|dry|refresh   # 이 순서로
 .venv/bin/python -m master.ontology log-candidates     # 태깅 권장 리포트 (#169, LLM 0)
 ```
 
 [중요] **승인 뒤는 한 호출이다** (원전 6단계 동등, 2026-08-21): `review.finalize_work(confirm=True)` 가 ①`main` `--no-ff` 머지+push ②Redmine 기재 + **이슈를 「완료」로 닫는다**(머지 커밋 해시 · 사용자 2026-09-04 *"레드마인 닫고 메인에 머지해야지"* — 이 호출 자체가 승인으로만 도는 자리라 자동으로 닫히는 것이 아니다) ③**도달 가능한 브랜치 삭제** ⑤`merge_status`→`merged` 를 이어서 한다. `confirm=False`(기본)는 **통합만 하고 멈추고** 사람이 실행할 명령을 돌려준다. [주의] 순서가 계약이다 — 정리는 **머지 뒤**여야 도달 가능 판정이 참이 된다.
 
-🔴 [주의] **아래는 「지금 도는 것」이고 정본이 아니다.** 정본 ⑸ 는 **워커가 끝내고 다음 작업을
-요청**하는 것(= 상주 폴링)이므로, `#320` 의 상주 철거는 **되돌릴 목록**에 있다. 원전도 워커
-데몬이 `poll → claim → LLM → commit·push → submit → 다시 claim` 을 돈다.
-
-[중요] **상주 데몬은 없다 — 마스터가 SSH 로 민다** (`#320` 철거 2026-08-27, `#317` 미결 ⑤).
-`.2` 의 `AxClaimer_NS` schtasks 와 `.43` 의 cron 감시자를 **둘 다 걷었다.** 지금 큐를 폴링하는
-프로세스는 어느 워커에도 없다 — 파견은 전부 마스터가 건다(`run_build_on_workshop` 이
-`Build.bat` 를 직접 부르므로 **빌드에는 워커에 파이썬 페이로드가 필요 없다**).
-[완료] **그러나 「등재해도 아무도 집지 않는다」는 2026-09-01 부터 틀리다** (`#340`,
-`c33316e`·`9cc73d9`). 상주가 없는 것은 그대로이고, 그 자리를 **마스터의 유닛이 잇는다**:
-골조 push 이벤트 → `ax-dispatch.path` → 파견 → **통합까지 연속**.
+[중요] **상주 데몬은 build 만 집는다** (`#404`, 2026-09-12). `#320`(2026-08-27)이 걷은 claimer 를
+`master/work/worker_daemon.py` 로 되살려 `.2` 세션 1 에서 claim → UE5 빌드 → submit 을 사람 개입
+없이 완주했다. **추론(code) 조각은 여전히 마스터가 SSH 로 민다** — 데몬의 추론 경로는 폐기된
+`carry`/`manifest` 위에 있어 들어냈다.
+[완료] **파견은 마스터 유닛이 잇는다** (`#340`, `c33316e`·`9cc73d9`): 골조 push 이벤트·등재 →
+`ax-dispatch.path` → 파견 → 조각 종결 → `.33` 공지.
 🔴 [중요] **사람 게이트는 둘이다 — ⑺ 통합 앞과 finalize(`main` 머지)** (정본 7단계, 사용자 확정
 2026-09-02). [주의] **종전 서술 「finalize 한 곳뿐 · 통합 앞에 만들지 않는다」는 폐기됐다** —
 2026-09-01 에 내가 만든 게이트를 정정받은 것은 맞지만, 그것을 「통합 승인은 없다」로 넓혀 적은
-것이 틀렸다. **지금 코드에 ⑺ 게이트가 없는 것은 미구현이다.**
+것이 틀렸다. ⑺ 게이트는 `review.advance_work(confirm=False)` 기본값으로 코드에 있다.
 [주의] **세션 한도만 예외다** — 멈추고 보류하며, 시각이 지나도 자동 재개하지 않는다
 (사용자 결정). 재개는 `--resume`, 고지는 `.33` 세션 시작 훅.
-[주의] `#320` 의 부활 조건은 그 노트에 그대로 있다 — 지금 없는 것은 **상주 claimer** 뿐이다.
 
 ## Clones and remotes — keep them in sync
 

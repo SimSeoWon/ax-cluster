@@ -7,7 +7,8 @@
 > scp ~/ax-cluster/machines/win-worker-2.md janus@192.168.0.2:C:/Users/janus/CLAUDE.md
 > ```
 >
-> The other two machines symlink into a local `ax-cluster` clone; this box has no clone, so it
+> The other two machines symlink into a local `ax-cluster` clone; this box's only ax-cluster tree
+> is the pipeline-owned worker checkout `E:\trunk\AXCluster` (not a place to symlink from), so it
 > gets a copy. **Copies drift** — change the canonical file first. Structure: [`README.md`](README.md).
 
 
@@ -22,9 +23,11 @@
     powershell -NoProfile -Command "Set-Location $env:TEMP; Get-Content p.txt |
       codex exec --skip-git-repo-check --json -o last.txt"
 
-[주의] **구독 한도는 네 대 공용이다** — 워커가 자기 세션으로 codex 를 돌리기 시작하면
-`claude` 를 레인에서 뺀 것과 같은 위험이 살아난다(2026-09-04: 429 하나로 4조각 중 3 사망).
-지금 레인은 **마스터 한 곳에서만** 부른다.
+[주의] **구독 한도는 네 대 공용이다**(2026-09-04: 429 하나로 4조각 중 3 사망).
+본문 작성 **레인**(`lane` 모드)은 마스터에서 돈다. 그러나 워커 지휘자 모드가 `claude`/`codex`
+이면 **이 기계에서** 그 에이전트가 체크아웃을 읽고 고친다 — codex 는 SSH 세션 0 에서 직접
+돌리지 않고 `AxConductor_<프로젝트>`(`/IT /RL LIMITED`) 런처로 로그인 세션에서 돈다.
+현재 모드는 `ax-mode` 로 조회한다.
 
 ## 원전 로컬 함대 — 정리됨, 다만 **설치본이 둘이다** (2026-08-20 · #226)
 
@@ -40,8 +43,9 @@
 세션의 MCP 를 끊었을 것이다 — 그것도 남의 기계에서. 정리 스크립트는 *"이 경로 아래 도는
 프로세스"* 를 먼저 세고 있으면 중단한다.
 
-[완료] 정리 후 배선 무손상 확인: `.ax/`(config·lib·token·claimer.lock) · `AxClaimer` 실행 중 ·
-마스터 `client check` OK.
+[완료] 정리 후 배선 무손상 확인(2026-08-20 당시): `.ax/`(config·lib·token·claimer.lock) ·
+당시 `AxClaimer` 실행 중 · 마스터 `client check` OK. (`AxClaimer` 는 이후 철거·개명됐다 — 아래
+§ Resident tasks.)
 
 ## Identity
 
@@ -52,7 +56,7 @@
 | **Account** | **`janus`** — a local **Administrator**. *Not* `sim`; `ssh sim@…` fails |
 | **SSH** | `ssh janus@192.168.0.2` — passwordless. Master's key is in `C:\ProgramData\ssh\administrators_authorized_keys` (admin path, not `~/.ssh/`) |
 | **GPU** | **NVIDIA GeForce RTX 3060 (12GB)** |
-| **UE5 project** | **`E:\trunk\ModularStage`** — see § Unreal projects |
+| **Checkouts** | `E:\trunk\` — ModularStage · NS · MotionForge (UE5) · KimodoMotion_WebUI · AXCluster (code) — see § Unreal projects |
 
 This box is **two things at once**, which is the thing to keep straight:
 
@@ -67,8 +71,11 @@ See [`../docs/windows-codex-remote.md`](../docs/windows-codex-remote.md) for req
 
 ```
 SSH login     → SessionId 0   (services session — NO desktop access)
-console janus → SessionId 9   (the interactive desktop)
+console janus → the interactive desktop session (measured 9 once; the ID is NOT fixed)
 ```
+
+"Session 1" in this repo is a **launcher name** for the logged-in interactive session, not a
+SessionId.
 
 Windows session-0 isolation is an OS boundary, not a setting. Everything below follows from it.
 
@@ -76,7 +83,7 @@ Windows session-0 isolation is an OS boundary, not a setting. Everything below f
 
 | | Notes |
 |---|---|
-| `UnrealEditor-Cmd` — commandlets, **build, `RunTests`** | Headless, session 0 is fine. This opens layer-3 verification to master control. [주의] Session placement confirmed; **an actual remote build has not been run yet** |
+| `UnrealEditor-Cmd` — commandlets, **build, `RunTests`** | Headless, session 0 is fine. This opens layer-3 verification to master control. [완료] Remote builds run here (`run_build_on_workshop` → `Build.bat`); the resident completed claim → UE5 build → `submit 200` with no human input on 2026-09-12 (report 63) |
 | `git` operations in the checkout | On PATH |
 | `gjc`, `node`, any CLI | Once `gjc` is installed |
 | Read/write files, inspect state | |
@@ -87,7 +94,7 @@ Windows session-0 isolation is an OS boundary, not a setting. Everything below f
 | | Why |
 |---|---|
 | **Start the UE5 GUI editor** | Session 0 has no desktop. Launching it there is useless |
-| **Start / stop Unreal MCP** | Its lifetime *is* the editor's lifetime → session 9 only. **Don't design a remote procedure — there isn't one.** Whoever is at the desktop owns it |
+| **Start / stop Unreal MCP** | Its lifetime *is* the editor's lifetime → the interactive session only. **Don't design a remote procedure — there isn't one.** Whoever is at the desktop owns it |
 | Anything needing a visible window | Same boundary |
 
 ### Process ownership rule
@@ -99,28 +106,43 @@ a supervisor. (Same call the master made discarding `process_lifecycle.py` for s
 
 Detail: `~/ax-cluster/docs/5_5-project-isolation.md` §5.5.4-⑥.
 
-### AxClaimer — removed 2026-08-27 (#320)
+### Resident tasks — `AxClaimer` removed (#320), `AxWorker` / `AxConductor` now (#405)
 
 A Scheduled Task (`AxClaimer_NS`) used to wake a resident claimer every 5 min (#204,
-2026-08-18). It is **gone** — both the watchdog and the running `pythonw` process
-(measured after teardown: 341 scheduled tasks, 0 matching; 0 python processes).
-Work now arrives as a **master-driven SSH push** (`layer3_verify.run_build_on_workshop`),
-which needs no payload code on this box. [주의] `.ax\logs\claimer_*.log` from the
-resident era is still on disk — historical, nothing writes it now.
+2026-08-18); it was torn down 2026-08-27 (#320). Since `#405` residency is not a manual step:
+`master.client deliver`/`update` registers or removes it per
+`client/init/residency.py::desired_state()` —
+
+    AxWorker[_<프로젝트>]      worker + UE5 + mounted unreal project · 5 min · build jobs
+    AxConductor_<프로젝트>     codex conductor launcher (/IT /RL LIMITED) — also for kind: code
+                               projects, which get no build resident
+
+Code(infer) work still arrives as a **master-driven SSH push**; builds go through
+`layer3_verify.run_build_on_workshop`. [주의] `.ax\logs\claimer_*.log` from the old resident
+era is historical.
+
+🔴 [중요] **After a reboot `janus` must log in** (console or RDP 3389). `/IT` tasks need an
+interactive logon and this box has no auto-logon (`AutoAdminLogon` absent) — without it the
+conductor launcher has no session and `.2` **silently drops out of dispatch**. Readiness checks
+the task registration only, not that a session exists.
 
 ## Unreal projects
 
 Convention on this box — **already established, don't invent a new one:**
 
 ```
-E:\trunk\  ├─ ModularStage\    ← the AX project. origin = Gitea Sim/ModularStage, branch main
+E:\trunk\  ├─ ModularStage\    ← AX project. origin = Gitea Sim/ModularStage, branch main
+           ├─ NS\              ← AX project (worker)
+           ├─ MotionForge\     ← AX project (worker, UE5 plugin)
+           ├─ KimodoMotion_WebUI\  ← AX project (worker, kind code)
+           ├─ AXCluster\       ← AX project (worker, kind code) — pipeline-owned checkout
            ├─ Monster\
            ├─ PanoramaTest\
            └─ Project_Alpha\
 ```
 
-`E:` has ~499GB free. Registered as this project's workshop path in the master's `ax-projects`
-registry (`:8103`).
+`E:` had ~499GB free (2026-08-08). Each AX checkout is registered as that project's workshop
+path in the master's `ax-projects` registry (`:8103`).
 
 [중요] **Automation reuses this checkout — so it must not destroy work in it.**
 
@@ -165,7 +187,7 @@ Anything premised on several models resident here at once does not hold.
 
 | | Status | Notes |
 |---|---|---|
-| **Claude Code** | [완료] **2.1.225** | `C:\Users\janus\.local\bin\claude.exe`. `.claude.json` + a credential file present → looks authenticated (not verified by running it) |
+| **Claude Code** | [완료] **2.1.225** (version as of probe) | `C:\Users\janus\.local\bin\claude.exe`. Auth is checked by the master with `claude auth status` and cached 24h at `%USERPROFILE%\.cache\ax-dispatch\claude-auth.json` (`#721`; passed 2026-10-06). If it fails, log in again as `janus` (`claude auth login`) and force a recheck — procedure: `docs/14-onboarding-runbook.md` §14.2-4 「Claude 준비 검사와 재로그인」 |
 | **Gemini CLI** | [완료] installed | `%APPDATA%\npm\gemini.cmd`, `~/.gemini` present |
 | **`agy` (Antigravity)** | [실패] **not installed** | Only on the master. If research delegation is wanted here, install it first |
 | `gjc` (gajae-code) | ⬜ **not installed** | Prerequisite for PLAN §9. `node` is present, so nothing blocks it |
@@ -201,16 +223,19 @@ ssh janus@192.168.0.2 'powershell -NoProfile -Command "Invoke-Expression ([Conso
 | project registry (MCP) | `http://192.168.0.57:8103/mcp` |
 | Gitea | `http://192.168.0.57:3000` |
 
-[중요] **All of them require `Authorization: Bearer <token>`** (since 2026-08-08). The token lives on
-the master at `~/.config/ax-cluster/token`; ask for it rather than inventing one. Only `/livez` is
-open. They are *also* LAN-only by firewall — don't expose them further.
+[중요] **8101 · 8102 · the MCP at 8103 require `Authorization: Bearer <token>`** (since
+2026-08-08). The token lives on the master at `~/.config/ax-cluster/token`; ask for it rather
+than inventing one. [주의] **8103's web UI and `/api/v1` are public (no login)** — never send a
+sensitive body there; its `/control/*` write surface needs the requester token. All are *also*
+LAN-only by firewall — don't expose them further.
 
 ## Hard rules
 
 - [중요] **This machine owns files; the master does not.** The master assembles context and hands it
   over — applying code, building, testing, and committing happen *here*.
-- **Two workshops share this UE5 project** (`.2` and `.33`, same repo, same `task/<id>`
-  branches). Claim/lease/fencing in the master's task queue is a **correctness requirement**, not
-  overhead — don't work around it.
+- **Several workers share each project** (`.2`·`.43`, plus `.33` for AXCluster; `.33` is the
+  requester for the game projects), on the same repo and the same `task/<work>/…` branches.
+  Claim/lease/fencing in the master's task queue is a **correctness requirement**, not overhead —
+  don't work around it.
 - [중요] **Never `push --force`, `reset --hard`, delete branches, or rewrite history** in a human
   session — describe the command instead.

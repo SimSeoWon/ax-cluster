@@ -168,6 +168,9 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update
 
 [주의] **마스터 트리가 dirty 면 `check` 가 통과하지 않는다** — 커밋이 같아도 그 커밋이 배달
 내용을 다 말하지 못한다(`dirty_master`). **커밋이 먼저다.**
+[주의] **배달본의 출처 커밋이 마스터 HEAD 보다 뒤처져도 `check` 는 실패한다** — 파일 해시가
+모두 같아도 그렇다(`master/client/__main__.py` 의 `behind` 판정). 저장소가 전진했으면 `update` 로
+다시 배달한다.
 
 `config.json`의 `checkout.branch`는 해당 프로젝트 레지스트리의 기본 브랜치를 따른다(`#260`).
 배달은 체크아웃 안의 `.agents/skills`와 `.codex/config.toml`도 구성·대조한다(`#699`).
@@ -243,6 +246,36 @@ Python 절대경로·배달 런처 경로를 확인한다. 이 등록 검사는 
 실행 계약과 `.ax` 쓰기 실패의 미확정 범위는
 [Windows Codex 원격 실행](windows-codex-remote.md)·[리포트 89](../reports/89-codex-worker-readiness-and-write-probes.md).
 모드는 `ax-mode`의 공용 조회/변경 도구를 사용하며 기존 work의 모드 스탬프에는 소급되지 않는다.
+
+#### Claude 준비 검사와 재로그인 (`#721`)
+
+지휘자 모드가 `claude`이면 준비 검사와 실제 실행 직전에 워커에서 `claude auth status`를 확인한다
+(`master/work/conductor_auth.py`). 결과는 워커 계정 홈의 `.cache/ax-dispatch/claude-auth.json`에
+시각·성공 여부·정규화한 사유로 남고, **검사 후 24시간 미만이면 성공·실패를 그대로 재사용한다**
+(달력 날짜 기준이 아니다). Windows도 해당 계정 홈의 같은 상대 경로다. 기록 누락·손상·미래 시각·
+계정 불일치는 재검사한다. 인증 복구 로그인은 **자동으로 하지 않는다**.
+
+실패하면 사람이 그 워커에서 다시 로그인한다:
+
+    .43(헤드리스)  ssh sim@192.168.0.43 → claude auth login
+                   인증 페이지는 사람의 PC 브라우저에서 연다(TTY 는 사용자 터미널)
+    Windows       해당 계정(janus / user)으로 claude auth login
+
+로그인 뒤 실패 캐시가 남아 있으므로 **강제 재검사**로 캐시를 갱신한다:
+
+```python
+from functools import partial
+from master.work.conductor import worker_mode_readiness
+from master.work.conductor_auth import check_claude_auth
+worker_mode_readiness("claude", "<프로젝트>",
+                      auth_checker=partial(check_claude_auth, force=True))
+```
+
+실측 2026-10-06 00:13–00:17 (`cf9e268` 배포 후 `.2`·`.33`·`.43`): 첫 검사가 캐시를 저장했고
+`.43` 이 로그아웃 상태(`loggedIn=false`, `expiresAt=0`)로 발견됐다. 캐시 재사용을 확인한 뒤
+사용자가 `ssh sim@192.168.0.43` 에서 `claude auth login` 을 실행했고(브라우저는 PC), 강제 재검사
+3/3 통과. [주의] **실행 중 인증 실패의 즉시 고지 경로는 아직 라이브로 검증하지 않았다.**
+근거·구현: [리포트 96](../reports/96-worker-claude-auth-cache.md).
 
 `code` 통합 검사는 프로젝트 프로필의 검사 계약을 읽는다. AXCluster는
 `tests/integration/checks.json`에 명시된 스크립트를 별도 프로세스로 실행한다.

@@ -3,7 +3,7 @@
 집의 여러 컴퓨터를 묶어 **UE5 프로젝트의 디지털 트윈을 만들고, 그 트윈으로 코드 작성을
 돕는** 오케스트레이션 저장소.
 
-**플랫폼**: 리눅스 마스터(Ubuntu 22.04) + 윈도우 2대(작업장 1 · 요청자 1) + BC-250 1대
+**플랫폼**: 리눅스 마스터(Ubuntu 22.04) + 윈도우 2대(작업장 `.2` · 게임 요청자 `.33` — AXCluster 에서는 `.33` 도 워커) + BC-250 1대
 
 > **지금 어디까지 왔나** (2026-10-04): **마일스톤 5 까지 닫혔다** — M2 는 2026-08-10,
 > **M3·M4·M5 는 2026-08-17 사용자 결정으로** 마감됐다. 트윈이 자라고·색인되고·코드 작성에
@@ -127,8 +127,9 @@ round N   task/<work_id>/r<N>/<task_id>             ← 전진 뒤 개선 라운
 [중요] **워커에 큐 토큰을 주지 않는다 — 마스터가 중개한다**(실측: 워커는 8101 에 401). 하트비트도
 마스터가 대신 친다. 요청자→워커 한 바퀴 **1분 29초** 실측.
 
-추론은 **마스터 브로커(8102)** 를 거쳐 노드로 간다 — 컨텍스트 합성은 `gemma4:e4b`,
-코드 생성은 `qwen2.5-coder:14b`. 모델별 적합도·환각 실측은
+추론은 **마스터 브로커(8102)** 를 거쳐 노드로 간다 — 컨텍스트 합성은 `gemma4:e4b`.
+본문 작성 레인은 `codex → agy → 로컬` 순이고(`master/work/lanes.py`), `qwen2.5-coder:14b` 는
+그 로컬 폴백 자리다. 모델별 적합도·환각 실측은
 [`machines/llm-fitness.md`](machines/llm-fitness.md).
 
 [중요] **문서는 지도지 정답이 아니다.** 모든 문서는 **소스코드라는 원천**을 바탕으로 찾고
@@ -184,7 +185,7 @@ ax-cluster/
 │   │                              테스트의 push 가 색인기를 15번 깨웠고 14번은 할 일이 없었다).
 │   │                              [주의] 조건은 `in_progress` **하나뿐**(원전 Phase 2) · 모르면 진행
 │   ├── work/                   ← 작업 루프 — 골조·분해·**추론 파견**·검증
-│   │   ├── coordinator.py      [중요] **2단 브랜치 조율 (원전 이식)** — durable 은 **서버만** 쓴다.
+│   │   ├── coordinator.py      [중요] **2단 브랜치 조율 (원전 이식)** — `selftest` 드라이런용. 「단일 writer」= epoch 펜싱.
 │   │   │                          `assign_attempt`(git 접촉 0) · `push_attempt`(ephemeral, force 허용)
 │   │   │                          · `verify_and_merge`(**epoch 펜싱** — 낡은 좀비는 병합 거부)
 │   │   │                          · `cleanup_attempts`([중요] **기본은 세기만** — 잔재는 증거다)
@@ -209,7 +210,7 @@ ax-cluster/
 │   │   ├── batching.py         [중요] 파일 불가분 묶음 — 열쇠는 **모듈+경로+stem**(basename 아님)
 │   │   ├── declarations.py     헤더 선언 주입 — 실측 환각 2 → 0
 │   │   ├── norms.py            도메인 규범(invariants 중심) 부착
-│   │   └── cleanup.py          찌꺼기 정리 — [중요] 병합된 것만, 원격은 안 건드린다
+│   │   └── cleanup.py          찌꺼기 정리 — [중요] 병합된 것만. 원격은 `remote` 서브커맨드만(병합 확인분)
 │   ├── transfer.py             상태 익스포트/임포트 — [중요] 두 벌(compat·full) · 임포트는 **병합**
 │   ├── broker/                 ← 추론 브로커 (Ollama 호환, 노드 라우팅·핀 유지)
 │   ├── task_queue/             ← 작업 큐 (claim·lease·epoch fencing·능력 라우팅)
@@ -251,8 +252,10 @@ ax-cluster/
 | 색인기 | — | `ax-indexer.path`(inotify) → `ax-indexer.service` |
 | 리뷰 큐 소비자 | — | `ax-review-queue.timer`(10분) → `ax-review-queue.service` |
 
-[중요] 셋 다 **베어러 토큰 필수**(`~/.config/ax-cluster/token`, 0600) — 토큰이 없으면 **서비스가
-뜨지 않는다**(fail-closed). 방화벽 LAN 한정은 **별개의 두 번째 층**이다. `Anywhere` 로 넓히지 말 것.
+[중요] 세 서비스는 **베어러 토큰**(`~/.config/ax-cluster/token`, 0600)으로 뜬다 — 토큰이 없으면
+**서비스가 뜨지 않는다**(fail-closed). [주의] **8103 의 웹 UI 와 `/api/v1` 은 공개**다(`master/webui/app.py`
+`PREFIXES`; 되돌리려면 `AX_VIEW_REQUIRE_TOKEN=1`) — 그쪽에 민감한 본문을 두지 않는다. 쓰기 표면
+`/control/*` 은 요청자 토큰 전용이다. 방화벽 LAN 한정은 **별개의 두 번째 층**이다. `Anywhere` 로 넓히지 말 것.
 
 ---
 
@@ -320,20 +323,20 @@ journalctl -u ax-indexer -n 30 --no-pager                # push → 트윈 성�
 
 ## MCP 도구 (Claude·Codex가 쓰는 창구)
 
-`ax-projects`(8103) 하나가 작업장의 단일 창구다. **37종** (실측 2026-09-08 — 데코레이터
-수와 실제 붙은 도구 목록 두 방법이 일치). [주의] 리포트 `54`·`55` 의 **33종**은 워커 지휘자
-모드 도구 2종과 지휘 상태 도구 2종이 들어오기 **전** 값이다 — 33 + 2 + 2 = 37 로 맞는다.
+`ax-projects`(8103) 하나가 작업장의 단일 창구다. [중요] **개수는 여기 적지 않는다** —
+`master/test_mcp_servers.py` 가 실제 등록 목록으로 개수를 고정한다(그 파일이 정본). 아래 표는
+**주요 도구**만 적는다.
 
 | 도구 | 하는 일 |
 |---|---|
 | `search_context` | [중요] **검색 입구는 이것 하나** — 대괄호 해석 → 시소러스 확장 → 융합 검색 |
 | `infer_domain` | 질의가 말하는 도메인을 **결정적으로** 판단 — [중요] 모르면 비운다(추측 안 함) |
 | `resolve_terms` · `add_alias` · `mark_not_a_class` | 별칭 조회·등록. 마스터는 묻지 않고 **물을 재료**를 준다 |
-| `register_work` · `get_manifest` · `get_code` | 작업 등록 → 매니페스트 수령 → 생성+층2 거친 코드 수령 |
+| `register_work` · `get_code` | 작업 등록 · 생성+층2 거친 코드 수령 |
 | `create_domain` · `edit_ontology_item` · `remove_ontology_item` | 온톨로지 편집 — [중요] **편집이 곧 잠금** |
 | `lock`·`list_locked` · `protect`·`list_protected` | 사람 검수 잠금 / [중요] **일괄 보호**(재생성이 못 덮는다) |
 | `sync_ontology` · `drift_audit` · `unassigned_classes` | 경로·선언 동기화 · 어긋남 감사 · 미배정 노출 |
-| `register_project` · `set_active` · `list_projects` | 트윈 프로젝트 등록·전환 |
+| `register_project` · `set_active` · `list_projects` | 트윈 프로젝트 등록·전환. 등록 뒤 다음 단계는 `python -m master.projects.onboard <이름>`(계획 → `--confirm`, `#227`) |
 | `set_workshop` · `check_workshops_clean` 외 | 작업장 등록·더티 체크 |
 | `get_worker_mode` · `set_worker_mode` | `ax-mode`의 워커 지휘자 조회·선택. 준비 검사 후 저장하며 **새 work 등재부터 기본값**으로 사용. 기존 work 스탬프·진행 조각에 소급하지 않음 |
 | `get_orchestration` · `record_master_conductor` | 마스터 담당 + 워커 모드 조회 / 담당 기록 — [중요] 기록일 뿐 **세션 실행·종료·잠금이 아니다** |
@@ -395,10 +398,12 @@ AXCluster 통합 검사의 명시 목록은 `tests/integration/checks.json`이�
 
 ---
 
-## 세 클론을 동기 상태로 유지할 것
+## 클론과 원격을 동기 상태로 유지할 것
 
-마스터(`sim@192.168.0.57:~/ax-cluster`) · BC-250 #1(`sim@192.168.0.43:~/ax-cluster`) ·
-GitHub(**private — 유지할 것.** LAN 주소와 방화벽 규칙이 들어 있다).
+정본 원격은 **Gitea**(`gitea@192.168.0.57:Sim/ax-cluster.git`)이고, 마스터(`~/ax-cluster`)와
+BC-250 #1(`sim@192.168.0.43:~/ax-cluster`)이 둘 다 그것을 `origin` 으로 쓴다.
+GitHub(**private — 유지할 것.** LAN 주소와 방화벽 규칙이 들어 있다)는 **Gitea 가 미는 푸시 미러**다 —
+[중요] **GitHub 에 직접 push 하지 않는다**(미러가 덮어쓰고 Gitea 에 없는 것을 지운다).
 보드는 `main` 이 체크아웃돼 있어 **push 가 거부된다 — 그쪽에서는 `git pull`** 을 쓴다.
 
 ## 관련

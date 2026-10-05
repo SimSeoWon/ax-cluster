@@ -8,12 +8,13 @@ Each machine's `~/CLAUDE.md` (the file Claude Code auto-loads at session start) 
 | [`sim-desktop.md`](sim-desktop.md) + [`sim-desktop.d/`](sim-desktop.d/) | master `sim-desktop` (192.168.0.57) | **symlink** → `/home/sim/CLAUDE.md` |
 | [`bc250-1.md`](bc250-1.md) | BC-250 #1 (192.168.0.43) | **symlink** → `sim@192.168.0.43:/home/sim/CLAUDE.md` |
 | [`win-worker-2.md`](win-worker-2.md) | Windows worker (192.168.0.2, account `janus`) | [중요] **copy** → `C:\Users\janus\CLAUDE.md` (no repo clone there — see below) |
-| [`win-main-33.md`](win-main-33.md) | Windows **main work PC** (192.168.0.33, account `user`) | [중요] **copy** → `C:\Users\USER\CLAUDE.md` [완료] refreshed 2026-08-20 (12,034 B, MD5 identical — § 요청자 콘솔 · 도구 14종 · 은퇴분 포함) |
+| [`win-main-33.md`](win-main-33.md) | Windows **main work PC** (192.168.0.33, account `user`) | [중요] **copy** → `C:\Users\USER\CLAUDE.md` — verify by hash, like `.2` |
 
 **192.168.0.33** now has its own guide — [`win-main-33.md`](win-main-33.md) — because SSH
 (account **`user`**) and Ollama came up on 2026-08-08 and there is real operating detail to carry:
-the Store-stub Python trap, the UE5 checkout path, and [중요] **why it must never host a resident
-model** (7.6 GiB free VRAM < 9.0 GB for the coder model). It is a **copy**, like `.2`.
+the Store-stub Python trap, the UE5 checkout path, and its model limits: the coder model does not
+fit (7.6 GiB free VRAM < 9.0 GB), while `gemma4:e4b` is resident since the user approved it on
+2026-10-03. It is a **copy**, like `.2`.
 
 [중요] **`.2` and `.33` are not interchangeable.** `.2` is a workshop the master may drive freely;
 `.33` is the human's own machine, so the master is a guest — read-only by preference, dirty check
@@ -59,13 +60,13 @@ Same principle as [`../PLAN.md`](../PLAN.md) → `docs/`.
 
 They are written in **English on purpose**: only Claude reads them, and Korean costs roughly
 2.7× the tokens for the same content (measured 2026-08-08). Work reports under
-`~/claude-workspace/reports/` stay in Korean — the user reads those.
+`~/ax-cluster/reports/` stay in Korean — the user reads those.
 
 ## Update procedure
 
 After editing a machine guide, commit and **`git pull` on the other machine** for its
-`~/CLAUDE.md` to catch up. The repo lives in three places (master, BC-250 #1, GitHub) — check
-they're in sync.
+`~/CLAUDE.md` to catch up. The repo lives in the master and BC-250 #1 clones plus the canonical
+Gitea `origin` (GitHub is only Gitea's push mirror) — check they're in sync.
 
 ```bash
 # on the master

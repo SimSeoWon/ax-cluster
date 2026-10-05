@@ -9,17 +9,17 @@
 
 | # | 산출물 | 자리 | 이식본의 대응물 |
 |---|---|---|---|
-| 1 | `watch.exe` | 루트 | **은퇴** — 마스터 큐(8101) + 기계별 claimer (#204). 2026-08-20 삭제 |
+| 1 | `watch.exe` | 루트 | **은퇴** — 마스터 큐(8101) + 파견(`ax-dispatch`) · 워커 상주 `AxWorker`/`worker_daemon.py`(#405, 옛 claimer #204 는 #320 철거). 2026-08-20 삭제 |
 | 2 | `context_search.exe` | `.claude/mcp/` | 마스터 `ax-projects`(8103) + `ax-client` 조회 9종 |
 | 3 | `log_analyzer.exe` | `.claude/mcp/` | **로컬 유지** — UE5 로그는 그 기계 것 · 설치: `AgentWatch.zip` 의 exe 를 UE5 프로젝트 `.claude/mcp/` 에 둔다(`#236`) |
 | 4 | `crash_analyzer.exe` | `.claude/mcp/` | **로컬 유지** · 설치: `AgentWatch.zip` 의 exe 를 UE5 프로젝트 `.claude/mcp/` 에 둔다(`#236`) |
 | 5 | `commandlet_runner.exe` | `.claude/mcp/` | **로컬 유지** (UE5 커맨드릿) · 설치: `AgentWatch.zip` 의 exe 를 UE5 프로젝트 `.claude/mcp/` 에 둔다(`#236`) |
 | 6 | `agy_query.exe` | `.claude/mcp/` | **폐기**(`#236`, 2026-10-05) — 로컬 `agy` CLI 로 대체. `mcp.json` 항목 제거 |
-| 7 | `redmine_tracker.exe` | `.claude/mcp/` | [주의] **미이식** — `ax-client` 에 `redmine_note` 하나뿐 |
+| 7 | `redmine_tracker.exe` | `.claude/mcp/` | [완료] **`ax-client` 로 이식** — `redmine_note`·`redmine_list_issues`·`redmine_get_issue`·`redmine_meta`·`redmine_create_issue`·`redmine_link_commit`·`redmine_create/update/delete_version` (§4 2단계 · 읽기도 토큰 잠긴 큐 8101 경유) |
 | 8 | `code_recipes.exe` | `.claude/mcp/` | [완료] **`ax-client` 가 흡수**(`#267`, 2026-08-23) — `log_writer_signal` · `find_recipes` · `get_anti_patterns`. 별 서버를 만들지 않았다: 레시피는 **마스터 트윈**에 있고 요청자 기계엔 그 디렉토리가 없어 큐가 대행한다. [주의] 그 전까지 `code-writer` 에이전트가 **없는 서버**를 부르도록 적혀 있었다. **폐기**(`#236`) — `mcp.json` 항목 제거 |
-| 9 | `task_queue.exe` | `.claude/mcp/` | 마스터 큐 8101 (단일 writer) |
-| 10 | `worker.exe` | `.claude/daemons/` | 마스터 claimer + `ax-work` 스킬. **2026-08-20 삭제**(재빌드 가능한 산출물이라 백업 없이) |
-| 11 | `master_orchestrator.exe` | `.claude/mcp/` | 마스터 통합자·파이프라인 |
+| 9 | `task_queue.exe` | `.claude/mcp/` | 마스터 큐 8101 |
+| 10 | `worker.exe` | `.claude/daemons/` | 워커 상주 `worker_daemon.py`(#405) · 마스터 SSH push + `ax-work`/`ax-infer` 스킬. **2026-08-20 삭제**(재빌드 가능한 산출물이라 백업 없이) |
+| 11 | `master_orchestrator.exe` | `.claude/mcp/` | 마스터 파이프라인 — `autodispatch`(분해·파견) · 요청자 `ax-advance`(`review.advance_work`, ⑺) · `ax-review`(`finalize_work`). [주의] 「통합자」(`integrate.py`)는 2026-09-04 삭제됐다 |
 | 12 | `local_llm_runner.exe` | `.claude/mcp/` | 마스터 브로커 8102 |
 | + | `onnx_model/`(임베딩) | `.claude/mcp/` | 마스터 벡터 색인 |
 | + | `tools/{sqlite3,jq}.exe` | `.claude/tools/` | **로컬 유지** (세션이 db·jsonl 을 직접 질의) |
@@ -53,10 +53,10 @@
 |---|---|---|
 | `agents/` 12종 + `SKILL_INDEX.md` | `.33` 디스크 | **생성기 산출물** — 원전 `agent_defs.py` 와 드리프트했을 수 있다(미대조) |
 | `skills/` 11종 + `debate` | `.33` 디스크 | **생성기 산출물** — 원전 `skill_defs_*.py` 와 미대조 |
-| `CLAUDE.md` 534줄 | `.33` 디스크 | **생성기 산출물**(`project_claude_md.py`) + 사람 편집이 섞였다 |
+| `CLAUDE.md` (반입 당시 534줄 · 2026-09-20 프로젝트 머리를 걷어 지금은 `AgentWatch` 블록만) | `.33` 디스크 | **생성기 산출물**(`project_claude_md.py`) + 사람 편집이 섞였다 |
 | `rules/` 5종 | `.33` 디스크 | [중요] **생성기가 없다** — 사람이 쓴 UE5 코딩·아키텍처 지식이다. 성격이 다르며, 게임 저장소가 `.gitignore` 로 빼 왔으니 **어디에도 버전 관리되지 않던 사람의 지식**이다 |
 | `hooks/domain_hint.py` | `.33` 디스크 | 생성기 산출물 |
-| `mcp.json` | `.33` 디스크 | 등록 11종 (원전 exe 5종 제거 후 · #226 4단계) |
+| `mcp.json` | `.33` 디스크 | 반입 당시 등록 11종(원전 exe 5종 제거 후 · #226 4단계) → 지금 9종(`code-recipes`·`agy-query` 제거, #236) |
 
 ## §4 대조 결과 (2026-08-20 실측 · 원전 템플릿을 직접 렌더해서 비교)
 
@@ -86,19 +86,22 @@
    `/api/v1/*` 는 무인증 공개라 일감 본문이 LAN 에 열린다(라이브: 요청자 200 · **워커 403** ·
    무토큰 401 · 8103 에는 404). 기준은 「읽기냐 쓰기냐」가 아니라 **「그 데이터가 공개 표면에
    있어도 되냐」**다 — 온톨로지·템플릿은 공개 뷰와 같은 데이터라 8103 이 맞다.
-   [주의] **`code_recipes` 2종은 이식하지 않았다 — 입력이 0이다.** 실측: 신호 1건 < 합성 문턱 5,
-   합성물 0건. `#152`(`@ms-contract` 0건 → 재범위)와 같은 판단. `code-recipes` MCP 등록은
-   `.mcp.json` 에 남아 있어 `code-writer` 참조는 깨지지 않는다
+   [주의] 이날(2026-08-20)은 **`code_recipes` 2종을 이식하지 않았다 — 입력이 0이었다**(신호 1건 <
+   합성 문턱 5). 이후 `#267`(2026-08-23)이 `ax-client` 로 흡수했고(`find_recipes`·`get_anti_patterns`
+   ·`log_writer_signal`), `code-recipes` 등록은 `#236`(13201f4)에서 `mcp.json` 에서 제거됐다 — §1 7·8행
 3. **재배선** — `agents/` 9종의 `tools:` 를 `mcp__ax-client__*` 로. 2 가 선행 조건
 4. [완료] **배달 경로** (2026-08-20) — `python -m master.client deliver` 가 이 디렉토리를 보낸다.
    `plan` 이 개수·묶음을 먼저 찍고, `check` 가 **해시로 드리프트를 잰다**(요청자 행에
    *"작업장 자산 31개 일치"*). [중요] **역할 게이팅** — 워커에게는 안 보낸다(실측: `.2`·`.43` 에
-   `agents`·`skills` 0건. 이 자산은 사람이 대화로 쓰는 절차이고 워커는 claimer·`ax-work` 로 돈다).
+   `agents`·`skills` 0건. 이 자산은 사람이 대화로 쓰는 절차이고 워커는 마스터 파견·`ax-work`/`ax-infer`
+   로 돈다).
    [주의] `agents`·`skills`·`rules`·`hooks` 는 **파일째** 관리하고(원전도 매 실행 재생성했다),
    `.claude/CLAUDE.md` 는 **`AgentWatch:Start/End` 블록만** 바꾼다 — 마커가 없으면 **안 쓴다**
    (어디가 관리 블록인지 모른 채 덮으면 사람 문서를 날린다)
-5. **템플릿화** — 프로젝트 고유 문자열 실측 `ModularStage` 13 · `MissionRuntime` 7 ·
-   절대경로 6 · `Project_Alpha` 3. 두 번째 프로젝트가 실제로 생길 때 치환한다
+5. **템플릿화** — 반입 당시 프로젝트 고유 문자열 실측 `ModularStage` 13 · `MissionRuntime` 7 ·
+   절대경로 6 · `Project_Alpha` 3. [완료] 두 번째 프로젝트(NS) 이후 갈라졌다 — 프로젝트 고유 규칙은
+   `../workshop_by_project/<프로젝트>/`(`#292`), 프로젝트 서술은 각 체크아웃의 `CLAUDE.md`(2026-09-20),
+   kind 별 정본은 `CLAUDE.code.md`·`CLAUDE.index_only.md`
 
 ## §5 은퇴시킨 스킬 — 파일은 지우고 절차는 남긴다 (2026-08-22)
 
@@ -110,7 +113,7 @@
 | 지운 스킬 | 무엇을 했나 | 대응물 | 부를 수 있나 |
 |---|---|---|---|
 | `skills/review-work/` | `mcp__master-orchestrator__review_work`·`integration_build`·`finalize_work`·`reject_work` 를 부르는 검수 절차 | `master/client/skills/ax-review/SKILL.md` — `review.review_work`/`reject_work`/`finalize_work` 를 호출자로 명시 | [완료] **예** (감사 확인) |
-| `skills/distribute/` | 원전 로컬 오케스트레이션 — `prepare_work_branch`·`generate_skeletons`·`register_skeletons`·`build_project` 등 8종 + `mcp__context-search__list_task_templates`·`get_task_template` | 마스터측 `/distribute` 스킬 + `ax-request`(요청자) | [완료] **예** ([주의] 태스크 템플릿 2종 위임 구멍은 #226 「남은 것」) |
+| `skills/distribute/` | 원전 로컬 오케스트레이션 — `prepare_work_branch`·`generate_skeletons`·`register_skeletons`·`build_project` 등 8종 + `mcp__context-search__list_task_templates`·`get_task_template` | 요청자 `ax-request`(등재·골조 커밋) + 마스터 `autodispatch`(분해·파견) | [완료] **예** (태스크 템플릿 2종도 `ax-client` 로 이식됨 — §4 2단계) |
 
 [중요] **왜 지금 지웠나.** 둘 다 `.33` 으로 **배달되는** 자산인데, 부르라고 적힌 MCP 서버
 (`master-orchestrator`·`context-search`·`task-queue`)가 #226 에서 `.mcp.json` 에서 제거됐다.

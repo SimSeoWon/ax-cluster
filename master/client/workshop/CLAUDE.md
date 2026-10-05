@@ -147,7 +147,7 @@ ontology 에 없거나 보강이 필요할 때:
 | "프로젝트 구조 설명", "아키텍처 맵" | `project-analyzer` | 구조·의존·영향 리포트 |
 | "네이밍 체크", "컨벤션 위반 찾아줘" | `code-convention` | 위반 테이블 |
 | "X 기능 구현해줘", "이 코드 리팩터링" (단일 클래스·기존 클래스 미세 수정) | `code-writer` | 코드 초안 + 설명 |
-| "X 시스템 추가", "Y 기능 만들어줘" — **신규 파일 3개 이상 + 클래스 간 상속/포함/import 관계** 또는 **여러 클래스가 묶이는 신규 시스템** | **`ax-request` 로 마스터에 등재** | 마스터가 골조·분해·파견·게이트를 한다 |
+| "X 시스템 추가", "Y 기능 만들어줘" — **신규 파일 3개 이상 + 클래스 간 상속/포함/import 관계** 또는 **여러 클래스가 묶이는 신규 시스템** | **`ax-request` 로 마스터에 등재** | 이 기계가 골조를 작업 브랜치에 커밋하고, 마스터가 분해·파견·게이트를 한다 |
 | "빌드 실패 분석", "의존성 변경 영향" | `build-integration` | 빌드 위험 리포트 |
 | "전체 리뷰", "통합 리포트" | `code-manager` | 최종 리뷰 리포트 |
 | "UE 로그 분석", ".log 봐줘" | `log-reviewer` | 에러 요약 + 원인 추정 |
@@ -178,7 +178,7 @@ ontology 에 없거나 보강이 필요할 때:
 
 질문 형식 (Plan 표시 직후):
 > "이 작업은 신규 파일 N개 + 클래스 간 의존 관계가 있어 분산 워커로 클러스터링 가능합니다.
-> - a) **`ax-request` 로 마스터에 등재**해 분산 처리 (마스터가 골조 + 인터페이스 동결 + 분해 + 워커 파견 + 3층 게이트를 한다)
+> - a) **`ax-request` 로 마스터에 등재**해 분산 처리 (이 기계가 골조를 작업 브랜치에 커밋하고, 마스터가 분해 + 워커 파견 + 게이트를 한다)
 > - b) 메인 세션이 직접 작성 (브랜치 격리 없이 즉시 진행, main 또는 사용자 지정 브랜치)
 > - c) 작은 단위로 쪼개서 `code-writer` 위임"
 
@@ -190,8 +190,8 @@ ontology 에 없거나 보강이 필요할 때:
 이유: `code-writer` 는 단일 클래스·기존 코드 수정용. 다중 클래스 생성을 시키면 의사코드 단계 없이 본문까지 한 번에 써버려 분산 시스템이 무의미해진다. 반대로 모든 다중 클래스 작업을 자동으로 등재하면 빠른 일회성 작업까지 큐에 박히는 오버헤드. **결정은 사용자**.
 
 **등재 후 브랜치 격리 거부 시**: 마스터가 등재를 거부한다 (main 보호가 양보 불가 안전장치 —
-워커는 `attempt/<task_id>/<workshop>/<ts>` 에서만 작업한다). 격리 없이 진행하려면 a 가 아니라
-b 를 고른다.
+골조는 `task/<work_id>/base`, 워커는 거기서 갈라진 자기 서브 브랜치 `task/<work_id>/…` 에만
+커밋한다). 격리 없이 진행하려면 a 가 아니라 b 를 고른다.
 
 #### 옵션 a/b/c 모두 항상 제시 (BLOCKING — 환경 상태로 자동 거름 금지)
 
@@ -199,14 +199,12 @@ b 를 고른다.
 
 - `mcp__ax-client__*` 가 **disconnected** 표시 (또는 응답에 `_stale: true`)
 - 마스터의 큐(`ax-task-queue`)·프로젝트 서비스(`ax-projects`) 미동작
-- `master_orchestrator` MCP 미연결
-- 직전에 `task_queue --reset` 을 한 직후
 
 **이유**: MCP 연결 상태는 환경 마찰이지 영구 제약 아님. [중요] **복구는 마스터에서 한다** — `systemctl status ax-task-queue ax-projects` 확인 후 필요하면 `sudo -n /usr/bin/systemctl restart <유닛>` ([주의] 성공 판정은 종료코드가 아니라 `ExecMainStartTimestamp` 로). 읽기 조회는 마스터가 죽어도 `_stale` 표기로 답하니 화면이 멈추지는 않지만 **`_stale` 값으로 결정하지 않는다.** ~~watch.exe 재기동~~ 은 이제 없다 — 원전 폴링 데몬은 2026-08-20 에 제거됐다. 분산 적합성 판단은 **작업 성격** (워커 가용성·표준화 가치 등) 기준이지 시스템 상태 기준 아님 — 결정은 사용자.
 
 **올바른 처리**:
 - 옵션 a/b/c 모두 제시
-- 사용자가 a 선택 시: 미연결 MCP 재연결 절차를 사전 작업으로 안내 (예: "watch.exe 재기동 후 task_queue daemon 재연결 필요")
+- 사용자가 a 선택 시: 마스터 서비스 복구(위 문단)를 사전 작업으로 안내
 - 옵션 자체를 제외하지 말 것
 
 **금지된 처리** (메인 세션이 옵션 가로채는 케이스):
@@ -217,20 +215,11 @@ b 를 고른다.
 #### 분산 등재 — 이 기계는 **요청자**다 (BLOCKING)
 
 [중요] **분해·파견은 마스터가 한다** — 이 기계에는 그 스킬이 없다(`#297`). 등재는 `ax-request`
-한 곳으로만 가고, 그 뒤 절차(골조·동결·분해·게이트)는 마스터의 일이다. 아래 표는 **옛
-`/distribute` 발동 조건**의 기록이다 — 지금은 `.ax/config.json` 의 `role` 이 그 자리를 대신한다:
-
-| 상태 | 분산 등재 |
-|---|---|
-| `server_mode: true` (서버 PC) | ✅ 사용 가능 |
-| `context_server_url` 설정됨 + `server_mode: false` (클라이언트 PC, 팀원) | ❌ 발동 금지 |
-| 둘 다 미설정 (단독 모드, 개인 개발용) | ✅ 사용 가능 |
-
-클라이언트 PC 에서 위 큰 작업 트리거가 들어오면:
-> "이 PC 는 클라이언트 모드입니다. 분산 작업 등재는 서버 PC 에서만 수행하세요.
->  큰 작업이 필요하면 리더에게 요청하시거나, 작은 단위 수정은 `code-writer` 로 직접 진행 가능합니다."
-
-이유: 워커 PC 가 work 를 등재하면 동일 task_queue 가 여러 곳에 생겨 진실의 원천이 깨짐. 분산 워커 게이트는 리더 PC 가 일원화하여 관리해야 한다.
+한 곳으로만 간다. 골조는 이 기계가 만들어 `task/<work_id>/base` 에 커밋하고(`#339` — 마스터는
+골조를 만들지 않는다), 분해·파견·게이트는 마스터의 일이다.
+[주의] 옛 `server_mode`·`context_server_url` 발동 조건표는 **은퇴했다** — 그 설정 키는 지금 코드에
+없고, 등재 가능 여부는 `.ax/config.json` 의 `role`(requester)이 정한다. 워커 역할 체크아웃에서는
+등재하지 않는다(진실의 원천은 마스터 큐 하나다).
 
 #### 의도 기반 위임 (메타 규칙 — 키워드보다 우선)
 
@@ -304,7 +293,7 @@ Plan 형식: 영향 파일 목록, 핵심 변경 요약(3~5줄), 위험 요소(�
 | **직접 처리** | 이 세션이 스스로 코드를 고쳤다 | **너** — `log_history` MCP (마스터 대행) | 🔴 **부른다.** 안 부르면 기록이 없다 |
 | **분산 작업** | 마스터에 등재해 워커가 처리했다 | **큐가 자동** — work 이 `merged`/`rejected` 로 종결될 때 | ❌ 아무것도 안 한다 (두 번 쓰면 중복이다) |
 
-[중요] **쓰는 것은 서버 하나다** (「단일 writer」). `log_history` 는 이 기계가 파일을 만드는 것이 아니라 **마스터에게 쓰라고 시키는 것**이고, 그래서 이 기계에는 결과 파일이 안 생긴다. 확인하고 싶으면 마스터 트윈의 `history/` 를 본다 — 파일명은 마스터가 `YYYY-MM-DD_HHMM_<작업요약>.md` 로 짓는다.
+[중요] **히스토리 파일은 마스터가 쓴다.** `log_history` 는 이 기계가 파일을 만드는 것이 아니라 **마스터에게 쓰라고 시키는 것**이고, 그래서 이 기계에는 결과 파일이 안 생긴다. 확인하고 싶으면 마스터 트윈의 `history/` 를 본다 — 파일명은 마스터가 `YYYY-MM-DD_HHMM_<작업요약>.md` 로 짓는다.
 
 [주의] **`work_id` 를 아는 경우엔 반드시 실어라.** 그 값이 어느 프로젝트의 트윈에 쓸지를 푸는 스탬프다. 없으면 마운트된 프로젝트로 간다 — 마운트가 내가 작업한 프로젝트와 다르면 **남의 트윈에 쌓인다.**
 
@@ -346,54 +335,31 @@ user_quote: |
 ### 등록된 MCP 서버
 | 서버 | 실행 파일 | 주요 툴 |
 |------|-----------|---------|
-| `ax-client` | `py .ax/lib/axmaster/clientside/client_mcp.py` (마스터가 배달·손대지 말 것) | 조회 12: `search_context`, `list_domains`, `get_domain`, `get_domain_layer`, `get_object_spec`, `get_action_spec`, `find_invariants_by_class`, `list_works`, `get_work`, **`find_recipes`**, **`get_anti_patterns`**, **`find_history`** · 쓰기 대행 5: `add_object_alias`, `mark_not_a_class`, `redmine_note`, `log_writer_signal`, `log_history` · 조회 6(레드마인·템플릿): `redmine_list_issues`, `redmine_get_issue`, `redmine_meta`, `redmine_create_issue`, `redmine_link_commit`, `list_task_templates`/`get_task_template` |
+| `ax-client` | `.ax/config.json` 의 `backends.python`(실측 절대경로) + `.ax/lib/axmaster/clientside/client_mcp.py` (마스터가 배달·손대지 말 것 — bare `py` 에 기대지 않는다) | 35종(2026-10-06). 조회: `search_context`, `list_domains`, `get_domain`, `get_domain_layer`, `get_object_spec`, `get_action_spec`, `find_invariants_by_class`, `list_works`, `get_work`, **`find_recipes`**, **`get_anti_patterns`**, **`find_history`**, `get_orchestration`, `list_task_templates`/`get_task_template`, `list_fixes`/`get_fix` · 분산 작업: `register_work`, `improve_work`, `set_worker_mode`, `record_master_conductor` · 쓰기 대행: `add_object_alias`, `mark_not_a_class`, `log_writer_signal`, `log_history`, `update_fix_status` · 레드마인: `redmine_note`, `redmine_list_issues`, `redmine_get_issue`, `redmine_meta`, `redmine_create_issue`, `redmine_link_commit`, `redmine_create_version`/`redmine_update_version`/`redmine_delete_version` |
 | ~~`context-search`~~ | ~~`.claude/mcp/context_search.exe`~~ | **은퇴 (2026-08-20)** — 온톨로지가 마스터로 옮겨져 이 인덱스는 낡았고 0/0 으로 답한다. 색인 갱신(`rebuild_index`·`index_status`)은 마스터가 push 훅으로 자동 처리한다(`ax-indexer`) |
 | `log-analyzer` | `.claude/mcp/log_analyzer.exe` | `analyze_log`, `search_log` |
 | `crash-analyzer` | `.claude/mcp/crash_analyzer.exe` | `analyze_crash`, `analyze_crash_log` |
 | `commandlet-runner` | `.claude/mcp/commandlet_runner.exe` | `find_unreal_editor`, `run_data_validation`, `run_commandlet` |
-| `agy-query` | `.claude/mcp/agy_query.exe` | `agy_analyze`, `agy_status` (Antigravity CLI 미설치 시 안내 반환) |
-| `redmine-tracker` | `.claude/mcp/redmine_tracker.exe` | `list_projects`, `list_issues`, `get_issue`, `create_issue`, `update_issue`, `list_trackers`, `list_statuses`, `create_review_issue`, `link_commit` (+ CLI: `--register-plan`) |
-| `code-recipes` | — | [완료] **`ax-client` 가 흡수했다** (`#267`, 2026-08-23). 별 서버를 만들지 않았다: 레시피는 **마스터 트윈**에 있고 이 기계엔 그 디렉토리가 없어 큐가 대행한다. [주의] 그 전까지 이 표와 `code-writer` 에이전트가 **없는 서버**를 부르라고 적어 뒀다 |
+| ~~`agy-query`~~ | — | **은퇴 (2026-10-05, `#236`)** — 로컬 `agy` CLI 로 대체 |
+| ~~`redmine-tracker`~~ | — | **은퇴 (2026-08-20, `#226`)** — 레드마인은 위 `ax-client` 의 `redmine_*` 로 |
+| ~~`code-recipes`~~ | — | **은퇴 — `ax-client` 가 흡수했다** (`#267`, 2026-08-23 · 등록 제거 `#236`). 레시피는 **마스터 트윈**에 있고 큐가 대행한다: `find_recipes`·`get_anti_patterns`·`log_writer_signal` |
 
 [중요] **작업을 시작하기 직전에 `find_recipes` · `get_anti_patterns` · `find_history` 를 부른다** (`#267`, 원전 규약: *"code-writer 는 작업 시작 직후에 호출해 step-by-step 가이드를 컨텍스트로 받는다"*). **도구가 있어도 안 부르면 컨벤션 루프는 한 방향이다** — 합성은 돌지만 아무도 읽지 않는다. 같은 일을 앞서 한 기록이 있으면 **그 관습이 이 프로젝트의 컨벤션**이고, 거절된 접근 카탈로그는 이번 작업과 무관해 보여도 끝까지 훑는다.
 [주의] **한글로 물어도 된다** — 태그에 한글이 함께 들어간다. 안 걸리면 레시피 목록이 사유와 함께 오고, *"아직 없습니다"* 는 고장이 아니라 신호가 덜 쌓인 것이다.
 
-### 인프라 컴퓨터 이전 — 발화 규약 (BLOCKING, 2026-07-18)
+### 인프라 컴퓨터 이전 — 은퇴 (`watch.exe` 삭제 2026-08-20)
 
-"익스포트"/"백업"/"이전" 같은 단어만 보고 **절대 UE5 프로젝트 폴더(`Source/`, `Content/`,
-`Binaries/`, `Intermediate/`, `Saved/`, `.git/` 등)를 zip으로 압축하지 말 것** — 실제로 이
-오해석 때문에 GB 단위 백업을 셸에서 직접 시도한 사고가 있었다. 서버/클라이언트 모드의
-인프라 컴퓨터(RAG 중앙 관리 PC)를 다른 하드웨어로 옮기는 요청은 아래 두 MCP 도구
-(`export_infra_state`/`import_infra_state`)로만 처리한다 — Bash 로 `zip`/`Compress-Archive`
-등을 직접 짜지 않는다.
+원전의 `export_infra_state`/`import_infra_state` 도구와 `watch.exe` 는 **은퇴했다** — 컨텍스트·
+온톨로지·색인이 마스터(`192.168.0.57`)의 디지털 트윈으로 옮겨져 이 기계에는 옮길 인프라 상태가
+없다. [중요] 규약 하나는 남는다: **"익스포트"/"백업"/"이전" 같은 단어만 보고 UE5 프로젝트 폴더
+(`Source/`·`Content/`·`.git/` 등)를 zip 으로 압축하지 말 것** — GB 단위 백업을 셸에서 직접 시도한
+사고가 있었다.
 
-| 발화 패턴 | 의미 | 호출할 도구 |
-|----------|-----|------------|
-| "익스포트해줘", "이 컴퓨터 상태 내보내줘", "인프라 컴퓨터 이전 준비" | `.claude/context/`+`.claude/ontology/domains/` 만 zip으로 압축 | `export_infra_state(output_zip, project_root=".")` |
-| "이 zip 임포트해줘", "상태 복원해줘", "익스포트한 거 여기로 가져와줘" | 위 zip 복원 + 도메인 검색 인덱스 자동 동기화 | `import_infra_state(input_zip, project_root=".", force=False)` |
+### 운영 데이터 조회 도구 (σ.11) — 은퇴 (색인의 마스터 이전과 함께)
 
-두 도구 모두 `.claude/vector_db/`(임베딩·BM25·class_graph.db·dependency_graph.db)는 건드리지
-않는다 — 로컬 재계산 가능한 파생 자산이라 옮길 필요가 없기 때문(대상은 오직 LLM 합성
-산출물인 컨텍스트 MD·온톨로지 YAML 두 가지). 임포트 후에는 `watch.exe` 재기동이 필요하다
-(응답의 `next_step` 필드 참조).
-
-### 운영 데이터 조회 도구 (σ.11)
-
-`.claude/tools/sqlite3.exe` 와 `.claude/tools/jq.exe` 가 함께 배포된다. **운영 데이터를 자연어 분석할 때 즉석 PowerShell 스크립트를 짜는 대신 이 도구를 우선 사용**한다 — 2026-05-22 도메인 자동 승급 침묵 발견 경위에서 도구 부재가 silent failure 일제 감사의 1차 장벽으로 드러났던 사건의 대응.
-
-| 데이터 | 위치 | 도구 | 예시 |
-|---|---|---|---|
-| BM25 인덱스 | `.claude/vector_db/bm25.db` | `sqlite3.exe` | `.claude/tools/sqlite3.exe .claude/vector_db/bm25.db ".schema"` |
-| 클래스 상속 그래프 | `.claude/vector_db/class_graph.db` | `sqlite3.exe` | `.claude/tools/sqlite3.exe .claude/vector_db/class_graph.db "SELECT * FROM classes LIMIT 5"` |
-| `#include` 의존 그래프 | `.claude/vector_db/dependency_graph.db` | `sqlite3.exe` | `.claude/tools/sqlite3.exe .claude/vector_db/dependency_graph.db ".tables"` |
-| ChromaDB 메타 | `.claude/vector_db/chroma.sqlite3` | `sqlite3.exe` | 위와 동상 (raw 임베딩은 별도 컬렉션 디렉토리) |
-| 검색 로그 | `.claude/search_log.jsonl` | `jq.exe` | `Get-Content search_log.jsonl \| .claude/tools/jq.exe -s 'group_by(.lang) \| map({lang: .[0].lang, count: length})'` |
-| code-writer 신호 | `.claude/recipes/_signals.jsonl` | `jq.exe` | 위와 동상 |
-| 토큰 사용량 | `.claude/logs/token_usage.jsonl` | `jq.exe` | 위와 동상 |
-
-**호출 정신**: Glob/Grep 으로 SQLite 파일을 raw 로 읽지 말 것 — frontmatter·인덱스·외래키 정보가 가려져 분석 정확도 떨어진다. 항상 `sqlite3.exe` / `jq.exe` 로 구조화 쿼리.
-
-**라이선스**: SQLite Public Domain, jq MIT (`.claude/tools/LICENSES/` 에 사본). 외부 네트워크 호출 없음, 운영 데이터는 PC 내부에서만 분석.
+로컬 `.claude/vector_db/`(BM25·class_graph·ChromaDB)를 `.claude/tools/sqlite3.exe`·`jq.exe` 로
+질의하던 절차는 **은퇴했다** — 색인·그래프는 마스터로 옮겨졌고(`ax-indexer`), 로컬 사본은 낡았다.
+검색·클래스 조회는 위 `ax-client` 의 `search_context`·온톨로지 도구로 한다.
 
 
 

@@ -107,6 +107,7 @@
   (`NS` 는 예시다. 대상 프로젝트를 명시한다.) `deliver`·`check` 도 같은 접두를 쓴다.
 - 모든 등록 프로젝트·작업장을 현재 HEAD로 맞출 때는 프로젝트를 고르지 않고
   `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client update`를 쓴다.
+  **커밋마다 실행한다** — 배달 출처 커밋이 HEAD보다 뒤처지면 해시가 같아도 `check`가 실패한다.
 - **관리되는 Codex 자산은 프로젝트 체크아웃 안에도 있다.** 배달은 `<checkout>/.agents/skills`
   와 `<checkout>/.codex/config.toml`을 만들고 `check`가 대조한다(`#699`). 홈의 동명 스킬보다
   프로젝트 로컬 정본이 우선이다. 초기화·배달 뒤 이 둘이 없으면 정상 상태가 아니다.
@@ -119,6 +120,9 @@
   전역 모드는 새 work 등재의 기본값이며 기존 `work.worker_mode` 스탬프가 우선한다.
   전역 변경은 진행 조각·후속 라운드에 소급되지 않는다. 현재 모드·출처는 도구로 재조회하며
   최근 전환 근거는 [`인수인계서`](../docs/orchestrator-handoff.md)에서 확인한다.
+  `claude` 워커 인증 readiness는 `claude auth status` 24시간 캐시(워커 홈
+  `.cache/ax-dispatch/claude-auth.json`, `#721`)이며, 실행 중 OAuth 실패는 재시도 없이 즉시
+  보고된다. 재로그인은 사람 몫이다 → [`docs/14-onboarding-runbook.md`](../docs/14-onboarding-runbook.md).
 - 배달은 커밋된 깨끗한 트리에서 한다. 문서만 미커밋이어도 `delivered_by.dirty=true` 로 기록된다.
 - **AX 인프라 일감은 레드마인 `ax-cluster`(id 3)에 둔다.** 게임·도구 일감은 각 프로젝트의
   `redmine.project`를 따른다. 리뷰 상태는 `<twin>/fixes/index.json`이 정본이며, 오래된 골조

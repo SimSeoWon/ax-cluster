@@ -19,19 +19,19 @@
 `.ax/lib/axmaster/clientside/` 로 놓인다. `.33` 의 `.mcp.json` args 와 `.2`·`.43` 상주가 그 값을
 가리키기 때문이다. 그 두 값을 가른 것이 `#262` 이고 `test_payload_split` 이 동결해 둔다.
 
-[주의] **아래 표는 이동 전 기준이 섞여 있다 — 전면 개편은 `#265`.**
-
-**배달하는 쪽**은 마스터에서 돈다(venv·레지스트리·SSH 키가 거기 있다) — 아래 표가 그것이다.
-[주의] 표에 `client/runtime/` 이 빠져 있다: 이 표는 이동 전에 쓰였다(#265 가 다시 쓴다).
+**배달하는 쪽**은 마스터에서 돈다(venv·레지스트리·SSH 키가 거기 있다) — 아래 표가 그것과,
+배달되는 클라 코드(`client/`)다.
 
 | | |
 |---|---|
 | `master/client/bundle.py` | 머신 프로브 · config 생성 · CLAUDE.md 병합 · SSH 배달 + **해시 대조** |
-| `master/client/skills/ax-work/` | 워커가 받는 **작업 절차 스킬** (정본) |
+| `master/client/skills/ax-work/`·`ax-infer/` | 워커가 받는 **작업 절차 스킬** (정본) — `ax-work` 는 서브 브랜치 커밋, `ax-infer` 는 추론만 |
 | `master/client/payload/CLAUDE.md` | 체크아웃용 프로젝트 가이드 정본 (`/init` 산출, **머신 중립**) |
 | `master/client/__main__.py` | `probe\|plan\|deliver\|check <프로젝트>` · `update`(등록 프로젝트 전체 배달→대조) |
-| **`master/client/workshop/`** | [완료] **작업장 자산의 정본** (2026-08-20 · #226) — 에이전트 12종+`SKILL_INDEX` · 작업장 스킬 12종 · `rules/` 5 · `hooks/` · `.claude/CLAUDE.md` · `mcp.json`. 33파일 400KB. **요청자에게만** 배달된다 |
-| `master/client/skills/ax-request`·`ax-ontology`·`ax-review` | 요청자가 받는 절차 스킬 (정본) |
+| **`master/client/workshop/`** | [완료] **작업장 자산의 정본** (2026-08-20 · #226) — `agents/`·`skills/`·`rules/`·`hooks/` · `.claude/CLAUDE.md`(kind 별 변형 `CLAUDE.code.md`·`CLAUDE.index_only.md`). **요청자에게만** 배달된다(`bundle.WORKSHOP_ROLES`). [주의] 같은 디렉토리의 `README.md`·`mcp.json` 은 **배달물이 아니다**(`test_client_bundle.py` 가 지킨다). 개수는 `find master/client/workshop -type f` 로 센다 |
+| `master/client/skills/ax-request`·`ax-ontology`·`ax-advance`·`ax-review`·`ax-fix` | 요청자가 받는 절차 스킬 (정본). 역할·kind 별 목록의 정본은 `master/client/spec.py`(`kind: code` 는 `ax-fix` 제외, `index_only` 는 `ax-ontology` 만) |
+| `client/runtime/` | 클라 기계에서 도는 코드 — `client_mcp.py`·`ontology_cache.py`·`fix_flow.py`·`session1_conductor.py`. 배달 위치는 `.ax/lib/axmaster/clientside/` |
+| `client/init/` | `bootstrap.py` · `residency.py`(상주 등록 명령 조립과 `desired_state()`) |
 
 [중요] **왜 저장소가 정본인가** (사용자 지적 2026-08-20): *"다른 프로젝트 세팅할때 그럼 너 뭘 보고
 설정하려고?"* — 그전까지 작업장 자산은 게임 저장소(`.gitignore` 가 `.claude/` 를 뺀다)·이 저장소·
@@ -43,7 +43,9 @@
     <체크아웃>/.ax/config.json            경로·능력·백엔드의 **유일한 출처** (마스터 생성)
     <체크아웃>/.ax/work/<task_id>/        작업 부산물 — `.git/info/exclude` 로 무시
     <체크아웃>/CLAUDE.md                  정본 본문 + [중요] **머신별 AX 관리 블록**
-    <홈>/.claude/skills/ax-work/SKILL.md  작업 절차
+    <체크아웃>/.agents/skills/<스킬>/SKILL.md   프로젝트 로컬 Codex 정본 (`#699`) — `ax-work`·`ax-infer`
+    <체크아웃>/.codex/config.toml          프로젝트 Codex MCP 블록 (`#699`)
+    <홈>/{.claude,.codex}/skills/<스킬>/  같은 스킬 한 벌을 도구별 자리에 (`spec.SKILL_HOMES`)
 
 [중요] Windows의 `backends.python`은 초기화 프로브가 찾은 **절대경로**다. 프로젝트의
 `.mcp.json` `ax-client.command`와 `ax-fix`가 이 값을 사용하며 bare `py`/`python` PATH에 기대지 않는다.
@@ -59,10 +61,11 @@ deliver는 켜면 안 되는 과거 등록도 제거한 뒤 부재를 되읽는�
     <체크아웃>/.claude/{agents,skills,rules,hooks}/       작업장 자산 31개 — 파일째 관리
     <체크아웃>/.claude/CLAUDE.md          [주의] **`AgentWatch:Start/End` 블록만** 교체.
                                           마커가 없으면 **안 쓴다** (사람 문서를 날리지 않는다)
-    <홈>/.claude/skills/ax-{request,ontology,review}/     요청 절차
+    <체크아웃>/.agents/skills/ · <홈>/{.claude,.codex}/skills/   요청 절차 — ax-{request,ontology,advance,review,fix}
 
 [중요] **역할 게이팅** — 작업장 자산은 워커에게 보내지 않는다(실측 2026-08-20: `.2`·`.43` 에
-`.claude/agents`·`skills` **0건**). 사람이 대화로 쓰는 절차이고, 워커는 claimer·`ax-work` 로 돈다.
+`.claude/agents`·`skills` **0건**). 사람이 대화로 쓰는 절차이고, 워커는 마스터의 SSH 파견과 `ax-work` 로 돈다(상주 claimer 는
+`#320` 으로 철거됐고, 남은 상주는 build 한정 `work/worker_daemon.py` — `#404`).
 
 [주의] **병합은 개행을 섞는다** — `_remote_read` 는 `read_text()` 로 읽어 CRLF 를 LF 로 번역하고
 정본 파일은 CRLF 다. 해시 대조는 *보낸 것과 도착한 것*만 재므로 이걸 못 잡는다. 그래서 쓰기 직전
@@ -80,5 +83,6 @@ deliver는 켜면 안 되는 과거 등록도 제거한 뒤 부재를 되읽는�
     driven   닿을 수 있나        ssh | interactive
     role     시켜도 되나         worker | requester
 
-[중요] `.33` 은 SSH 가 열려 있어도 **`requester`** 라 `drivable_hosts` 에서 빠진다 — 사람이
-편집 중인 트리에 일감을 파견하지 않는다.
+[중요] 역할은 **프로젝트별**이다. 게임 프로젝트에서 `.33` 은 SSH 가 열려 있어도 **`requester`** 라
+`drivable_hosts` 에서 빠진다 — 사람이 편집 중인 트리에 일감을 파견하지 않는다. AXCluster 에서는
+`.33` 이 `C:\trunk\AXCluster` 의 **worker** 이고 요청자는 마스터다(사용자 2026-10-03).

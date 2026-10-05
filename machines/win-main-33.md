@@ -27,7 +27,7 @@ Cluster-wide rules live in [`sim-desktop.md`](sim-desktop.md); repo rules in
 | **SSH** | `ssh user@192.168.0.33` — passwordless since 2026-08-08. Master's key is in `C:\ProgramData\ssh\administrators_authorized_keys` (admin path, same as `.2`) |
 | **GPU** | **NVIDIA GeForce RTX 3080 (10 GB)**, driver 610.47 |
 | **UE5** | **5.8.1** at `C:\Program Files\Epic Games\UE_5.8` — same version as `.2` |
-| **UE5 project** | **`C:\Users\USER\Documents\ModularStage`** — see § Unreal projects |
+| **AX checkouts** | `C:\Users\USER\Documents\{ModularStage,NS,KimodoMotion_WebUI}` · `C:\trunk\MotionForge` (requester) · `C:\trunk\AXCluster` (**worker**) — see § Unreal projects |
 | **git** | 2.53.0.windows.1 |
 
 ## 요청자 콘솔 — [중요] **여기가 언리얼 작업의 창구다** (사용자 2026-08-20)
@@ -40,12 +40,12 @@ Cluster-wide rules live in [`sim-desktop.md`](sim-desktop.md); repo rules in
 | 무엇 | 어디 (실측) |
 |---|---|
 | 스킬 3종 | `C:\Users\USER\.claude\skills\` — `ax-request`(등재) · `ax-ontology` · `ax-review`(`/review-work`). **홈에 두는 것이 계약** — 절차는 프로젝트가 아니라 머신의 능력 |
-| 도구 (2026-08-20 확장) | `ax-client` **21종** — 조회 11: 온톨로지 9(`search_context`·`list_domains`·`get_domain`·`get_domain_layer`·`get_object_spec`·`get_action_spec`·`find_invariants_by_class`·`list_works`·`get_work`) + 태스크 템플릿 2(`list_task_templates`·`get_task_template` — 8103) / 쓰기·대행 10: 시소러스 2(`add_object_alias`·`mark_not_a_class`) · Redmine 6(`redmine_note`·`redmine_list_issues`·`redmine_get_issue`·`redmine_meta`·`redmine_create_issue`·`redmine_link_commit`) · 되먹임 2(`log_writer_signal`·`log_history`). [중요] **읽기 중 Redmine 은 큐(8101)** — 8103 의 `/api/v1/*` 는 무인증 공개라(실측: 토큰 없이 200) 일감 본문·검수 이력을 둘 자리가 아니다. 온톨로지·템플릿 조회는 공개 뷰와 같은 데이터라 8103 |
+| 도구 (2026-08-20 확장 — 아래 내역은 그날 기준) | `ax-client` 현재 **35종**(2026-10-06 조회 — 정본은 `client/runtime/client_mcp.py` 의 `TOOLS`; 이후 `register_work`·`improve_work`·`set_worker_mode`·fix 계열·Redmine 버전 계열 등이 늘었다). 2026-08-20 당시 21종 — 조회 11: 온톨로지 9(`search_context`·`list_domains`·`get_domain`·`get_domain_layer`·`get_object_spec`·`get_action_spec`·`find_invariants_by_class`·`list_works`·`get_work`) + 태스크 템플릿 2(`list_task_templates`·`get_task_template` — 8103) / 쓰기·대행 10: 시소러스 2(`add_object_alias`·`mark_not_a_class`) · Redmine 6(`redmine_note`·`redmine_list_issues`·`redmine_get_issue`·`redmine_meta`·`redmine_create_issue`·`redmine_link_commit`) · 되먹임 2(`log_writer_signal`·`log_history`). [중요] **읽기 중 Redmine 은 큐(8101)** — 8103 의 `/api/v1/*` 는 무인증 공개라(실측: 토큰 없이 200) 일감 본문·검수 이력을 둘 자리가 아니다. 온톨로지·템플릿 조회는 공개 뷰와 같은 데이터라 8103 |
 | 은퇴한 것 | **원전 폴링 데몬 `watch.exe` + `config.json` 삭제**(2026-08-20 · 백업 `~/claude-workspace/backups/legacy-watcher-20260820/`). 로컬 `context-search` 는 정본이 아니다 — 온톨로지가 마스터로 옮겨진 뒤 objects/actions 를 **0/0 으로 답한다**(실측: 로컬 240항목 전부 서버에 있고 서버가 54항목 앞섬). [완료] **`.mcp.json` 원전 exe 등록 5종 제거**(2026-08-20 · #226 4단계 · 16→11종): `context-search`·`task-queue`·`master-orchestrator`·`local-llm-runner`·`redmine-tracker`. [중요] **실측하니 이미 무장 해제였다** — 5종 전부 루트 `config.json` 에서 키·URL 을 읽는데 그 파일은 와처 정리 때 삭제됐다. 백업 `~/claude-workspace/backups/33-mcp-json-20260820/` |
 | 갱신된 사람 문서 | `.claude/CLAUDE.md`(14곳) · `.claude/skills/manage-domain`(5곳+머리말) · `manage-task`(1곳) — 도구 이름을 `mcp__ax-client__*` 로. 백업 `~/claude-workspace/backups/33-claude-docs-20260820/`. [중요] **고칠 파일은 루트 `CLAUDE.md` 가 아니라 `.claude/CLAUDE.md`** 였다 |
 | 클라 MCP | 체크아웃 루트 `.mcp.json`의 `ax-client` = config `backends.python`에 기록된 **실측 절대경로** + `.ax/lib/axmaster/clientside/client_mcp.py` → 마스터 `8103/mcp` 위임. bare `py` PATH에 기대지 않는다. [완료] 사람이 쓰는 `gemini-cli`·`unreal-mission-editor`·`uelog-analyzer` 항목과 공존(배달은 `ax-client`만 건드린다) |
 | [중요] 남은 참조 | **등록을 지워도 참조는 남는다** — `.claude/agents/` **9종 전부**의 `tools:` 허용목록이 `mcp__context-search__combined_search` 를(둘은 `mcp__redmine-tracker__*` 도) 아직 가리킨다. [주의] **서버가 없으면 오류가 아니라 그 도구 없이 그냥 돈다** — 리포트 27 §9-3 의 「조용히 0」과 같은 계열. 매핑: `combined_search`→`search_context` · `get_domain_manifest`→`get_domain_layer`. **위임 구멍 2개**: Redmine 읽기(`get_issue`·`list_issues`·`update_issue`·`list_statuses`·`list_trackers` — `ax-client` 에는 `redmine_note` 만) · `get_task_template`. 결정 대기(#226) |
-| 배달물 | `.ax/config.json`(경로·능력 `ue5,windows`·UE5 5.8 실측) · `.ax/token`(**requester 역할** 토큰) · `.ax/lib` · `.ax/tasks` · `.ax/work` |
+| 배달물 | `.ax/config.json`(경로·능력 `ue5,windows`·UE5 5.8 실측) · `.ax/token`(그 체크아웃의 역할 토큰 — 게임 프로젝트는 **requester**, `C:\trunk\AXCluster` 는 worker) · `.ax/lib` · `.ax/tasks` · `.ax/work` |
 | 프로젝트 `CLAUDE.md` | `AX:Begin`~`AX:End` 관리 블록에 역할 계약이 이미 적혀 있다 — *"요청하는 쪽"*, *"여기서 소스를 고치지 않는다"* |
 | 배달 시점 | `delivered_by.commit`과 dirty를 `check`가 현재 마스터 HEAD와 대조한다. 저장소 갱신 뒤에는 `python -m master.client update` 한 번으로 등록 프로젝트 전부를 배달·검사한다 |
 
@@ -75,8 +75,10 @@ Use `workspace-write`, `windows.sandbox="unelevated"`, `sandbox_workspace_write.
 Official 0.159.3 completed actual apply_patch, readback and result recovery; see the linked runbook.
 
 [주의] **추론 기본값이 `none` 이다** — `-c model_reasoning_effort="medium"` 처럼 명시한다.
-[중요] **레인은 마스터에서 돈다** — `.57` 에도 codex 가 있으므로 이 기계가 꺼져 있어도 파이프라인은
-돈다(2026-09-05 이전에는 `.33` 을 SSH 로 거쳤다). 여기 있는 것은 **사람이 쓰는 자리**와 폴백용이다.
+[중요] **본문 작성 레인(`lane` 모드)은 마스터에서 돈다** — `.57` 에도 codex 가 있으므로 이 기계가
+꺼져 있어도 레인은 돈다(2026-09-05 이전에는 `.33` 을 SSH 로 거쳤다). [주의] 다만 AXCluster 에서는
+이 기계가 **워커**이기도 하다(2026-10-03) — 지휘자 모드가 `claude`/`codex` 이면 `C:\trunk\AXCluster`
+에서 그 에이전트가 돈다. Claude 인증 검사·재로그인은 `docs/14-onboarding-runbook.md` §14.2-4.
 
 검색은 이 머신에서 **`ax-client` MCP 의 `search_context`** 한 입구로만 간다 (시소러스 경유).
 다른 경로로 돌면 한국어 질의가 조용히 나빠진다 — 절차 본문은 `ax-request` 스킬에 있다.
@@ -91,7 +93,8 @@ Do not infer exact VRAM use from disk size or aggregate nvidia-smi measurements.
 `AX_Ollama33` runs the installed Ollama server using S4U/Limited/AtStartup, independent of
 interactive login. Current listener and LAN API were verified; reboot persistence is untested.
 This task is separate from the Codex `/IT` conductor. Third broker endpoint was activated by broker restart on 2026-10-03; three simultaneous requests
-were routed to three distinct nodes and completed. Source changes remain uncommitted.
+were routed to three distinct nodes and completed. The source changes for that work were later
+committed and deployed — check current HEAD rather than this note.
 Historical provisioning flags (`resident=False`) are not evidence of today's live residency.
 This remains the human's machine: workload competes with UE5 and must respect available resources.
 
@@ -126,11 +129,16 @@ for anything that writes, go through the dirty check first and let it say no.
 
 ## Unreal projects
 
-`.uproject` files under `C:\Users\USER\Documents` (targeted search, 2026-08-08):
+AX-registered checkouts (registry, 2026-10-06) plus `.uproject` files found under
+`C:\Users\USER\Documents` (targeted search, 2026-08-08):
 
 | Project | Path | |
 |---|---|---|
-| **ModularStage** | `C:\Users\USER\Documents\ModularStage` | **the mounted project** — see below |
+| **ModularStage** | `C:\Users\USER\Documents\ModularStage` | AX game project (requester) — see below. [주의] Not the mounted project: the mount moves (2026-10-06: AXCluster); query `list_projects_tool` |
+| **NS** | `C:\Users\USER\Documents\NS` | AX game project (requester) |
+| **KimodoMotion_WebUI** | `C:\Users\USER\Documents\KimodoMotion_WebUI` | AX project (requester, index only) |
+| **MotionForge** | `C:\trunk\MotionForge` | AX project (requester) — short path for MAX_PATH (moved 2026-10-03) |
+| **AXCluster** | `C:\trunk\AXCluster` | AX infra repo — this PC is a **worker** here; requester is the master |
 | Project_Alpha | `C:\Users\USER\Documents\Project_Alpha` | The predecessor; its docs survive as `_archive/project_alpha_md/` in the twin's context |
 | ServerTest | `C:\Users\USER\Documents\ServerTest` | |
 | ListViewTest | `C:\Users\USER\Documents\Unreal Projects\ListViewTest` | |
@@ -174,14 +182,15 @@ in-progress work — and correctly refused to dispatch. That is the behaviour we
 
 | Model | Size | Quant | |
 |---|---|---|---|
-| `gemma4:e4b` | 8.95 GiB | Q4_K_M | |
-| `qwen2.5-coder:14b` | 9.0 GB | Q4_K_M | ← installed remotely by the master, 2026-08-08 |
+| `gemma4:e4b` | (re-pulled 2026-10-03) | Q4_K_M | **resident** — broker pin (`master/broker/config.py`), see § Resident inference |
+| `qwen2.5-coder:14b` | 9.0 GB | Q4_K_M | ← installed remotely by the master, 2026-08-08; on disk, not pinned |
 
-**Both are on disk; neither fits the free VRAM, and neither is pinned.** That combination is
-deliberate, not an oversight — `master/provision.py` declares this host `want=[CODER]` *and*
-`resident=False`: **keep it on disk, never load it.** `/api/tags` answers "do we have it",
-`/api/ps` answers "is it loaded" — different questions, and the check flags the second one
-turning true. `/api/ps` was empty right after the install, as intended.
+[주의] **Superseded 2026-10-03:** the old rule "neither is pinned — keep on disk, never load"
+was replaced by the user's authorization of a resident `gemma4:e4b` (§ Resident inference).
+`master/provision.py` still declares this host `want=[CODER]`, `resident=False` — that code
+**disagrees with the live state and the broker pin**; the mismatch is tracked as Redmine
+**#753**. Until it is resolved, do not read a provisioning "should not be loaded" flag as a fault
+on this host. `/api/tags` answers "do we have it", `/api/ps` answers "is it loaded".
 
 ### Commercial CLIs
 
