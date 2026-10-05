@@ -4,13 +4,13 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 인수**: **Codex** · 마스터 담당 기록 2026-10-05 14:37:58 KST.
-  **현재 갱신: 2026-10-05 15:58 KST** — 사용자: “토큰 얼마 없으니까 인수인계서 작성해!”.
-  main = origin/main `98c98a8a6f77c3f4abefa57b4b5bab03575b0df1`.이 문서만 미커밋으로 남긴다.
-  워커 지휘자 모드 `codex`(출처 state, 마지막 전환 14:37:51).마스터 담당 기록의 Redmine 미조회 문구는 초기 기록이며 현재 제약이 아니다.
-  서비스 3종 재기동과 등록 5프로젝트·15작업장 배달/검사 완료.배달 출처는 모두 `98c98a8`.
-  **진행 중인 수동 명령·원격 파견·서브 에이전트 없음**.운영 데몬/타이머는 정상 운영 중.
-  다음 작업은 리뷰 상세의 구분·접기 UI.모듈별/파일별 범위 확인이 남았다(§0 최신 절).
+- **현재 인수**: **Claude** 가 16:1x~16:49 작업했다. 마스터 담당 **기록**은 여전히 Codex 14:37:58 이다
+  (사용자가 교대 기록을 지시하지 않아 바꾸지 않았다 — 기록은 잠금이 아니다).
+  **현재 갱신: 2026-10-05 16:49 KST** — 사용자: “인수인계서 작성해 그럼 세션 끄고 다시 시작할게”.
+  main = origin/main `ff17826921dd3db173c98ba2e954eb1704501dbb` · 작업 트리 clean(이 문서만 갱신).
+  **워커 지휘자 모드 `claude`**(출처 state, 16:14:07 사용자 지시 전환 · readiness 3/3).
+  서비스: `ax-projects` 16:21:38 재기동(리뷰 UI 반영). **워커 재배달은 미실행** — 아래 §0 최신 절.
+  **진행 중인 수동 명령·원격 파견·서브 에이전트 없음**. 큐 pending/claimed 조각 0.
 
 아래 메타데이터는 이전 Claude 인계(20:25) 시점의 기록이며 현재 상태는 §0 첫 절을 따른다.
 
@@ -49,6 +49,68 @@
   (`3e46078` 은 마스터 측 배달 코드라 워커 동기화 불필요). 홈 중복 스킬 `~/.agents/skills/ax-work` 주의는 무해.
 
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
+
+### 최신 — 워커 claude 전환 · 리뷰 UI 모듈 카드 · 마스터 LLM 3종 레드마인 경로 통일 (2026-10-05 16:49, Claude)
+
+#### 새 세션이 먼저 할 것
+
+1. **재시작 뒤 확인**: 이 Claude 세션은 `ax-client` 등록 **전에** 시작돼 도구가 안 보였다. 새 세션에서
+   `mcp__ax-client__redmine_*` 도구와 `ax-redmine` 스킬이 보이는지 확인한다. 안 보이면
+   `AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client master-local --check` 로 원인을 본다.
+2. **워커 재배달 — 사용자 실행 또는 허용 대기**: `client/runtime/client_mcp.py`(닫기 문구) 변경이 워커에 아직 없다.
+   `master.client update` 를 Claude 가 돌리려 하자 **자동 권한 검사가 「공유 자원 변경」으로 거부**했다.
+   우회하지 않았다. 사용자가 `! cd ~/ax-cluster && AX_PROJECTS_ROOT=$PWD .venv/bin/python -B -m master.client update`
+   로 직접 돌리거나 허용해야 한다. 실행 중에는 작업 트리를 건드리지 않는다(#737).
+3. **결정 대기**: `redmine_create_issue` 도구 설명에 「AX 인프라 건이면 … ModularStage 에 둔다」가 남아 있다
+   (2026-09-28 결정 = `ax-cluster` id 3 과 불일치). 고칠지 사용자에게 묻는다 — 고치면 재배달 **전에** 같이 반영.
+
+#### 사용자 결정 (이번 세션)
+
+- 워커 지휘자 모드 `codex → claude` (16:14:07, `set_worker_mode_tool`). 기존 work 20개는 `worker_mode: codex`
+  스탬프 — 그 work 의 개선요청 라운드는 `worker_mode="claude"` 를 명시해야 한다.
+- 리뷰 UI: 사용자가 원한 것은 접기가 아니라 **원문 안 모듈 절 구분**. 원인은 `### 모듈` 이 `<h4>`, 하위 `## N.` 이
+  `<h3>` 로 역전 렌더링된 것. 모듈 카드로 해결 — 사용자 화면 확인 “내가 원하는 모습이야”.
+- **모든 LLM(Claude·Codex·Antigravity)이 레드마인을 조작할 수 있어야 한다.** 방식은 로컬 서브 에이전트.
+- **닫기 규칙 ①**: AX 인프라(ax-cluster) 일감은 마스터가 검증 뒤 「완료」로 닫는다 · 게임·분산 작업 일감은 사람(.33).
+- 쓰기 도구 자동 승인은 열지 않는다(Codex·agy 모두 읽기 3종만 자동 허용). agy 헤드리스 읽기 허용은 승인.
+- 손 루트 `~/.codex/ax-client`, `/tmp` 즉석 레드마인 스크립트 4개(`check_redmine.py`·`update_redmine.py`·
+  `ax-usage-redmine-readonly/register-20261005.py`)와 agy 허용 2줄 **삭제 승인·완료**.
+
+#### 커밋 (모두 Gitea push · 사용자 승인)
+
+- `ae5fc0a` 이전 Codex 인계 문서(로컬에만 있던 것을 함께 push).
+- `2e7e7c3` 리뷰 상세 원문을 `### 모듈` 마다 카드(`section.mod`)로 — `master/webui/fixes_page.py`·`test_fixes_surface.py`.
+- `ff17826` `master/client/master_local.py` + `python -m master.client master-local [--apply|--check]` ·
+  `master/skills/ax-redmine/SKILL.md` · `client_mcp.py` redmine_note 닫기 문구 · `test_client_master_local.py`.
+
+#### 실측·검증
+
+- 테스트: `test_fixes_surface` 140/140 · `test_client_master_local` 79/79 · `test_client_mcp` 163/163 ·
+  `test_client_spec` 213/213 · `test_client_bundle` 440/440(서브 에이전트 실행) · `test_mcp_servers` 48/0.
+- `master-local --check` **OK 10/10** (루트 0700 · config project=AXCluster · token 해시 일치 0600 · claude(user) ·
+  codex · codex approvals · agy · agy approvals · agy mcp list · stdio `redmine_meta` 35도구).
+- 세 CLI 실측: `claude -p` · `codex exec` · `agy -p` 각각 `redmine_meta` → `versions_project=ax-cluster · versions 3`.
+  스킬 가시성: codex·agy 모두 `ax-redmine` 포함 5개 확인.
+- 레드마인 첫 실사용(새 경로, `claude -p` + ax-client 4도구만 허용): **#746** 등록→근거 노트→「완료」100% ·
+  **#747**(agy 대화 사용량 수집) 「신규」. 둘 다 ax-cluster · 버그·개선 · 코드리뷰. 공개 읽기로 되읽어 확인.
+- 리뷰 UI: `ax-projects` 16:21:38 재기동 → R48 HTML 에 카드 2개·건수 확인 → 사용자 브라우저 확인.
+
+#### 홈 설정 변경 (백업 있음)
+
+- 루트 `~/.local/share/ax-client/.ax/{config.json,token}` (설치기 생성).
+- `~/.claude.json` user 스코프 `ax-client` · 백업 `~/.claude.json.bak-master-local-20261005-163724`.
+- `~/.codex/config.toml` 관리 블록(`# BEGIN/END AX MANAGED MCP (master-local)`) · `enabled_tools` 제거 · 백업 `…-163724`.
+- `~/.gemini/config/mcp_config.json` · 백업(0바이트) `…-163724`.
+- `~/.gemini/antigravity-cli/settings.json` 허용 읽기 3종 추가(백업 `…-164224`) · 즉석 스크립트 허용 2줄 제거(백업 `.bak-rm-tmp-redmine-*`).
+- 스킬 링크: `~/.claude/skills`·`~/.codex/skills`·`~/.gemini/config/skills` 모두 `ax-handoff·ax-mode·distribute·debate·ax-redmine`
+  → `master/skills/*` (Codex `debate`·agy 전역 폴더는 신규).
+
+#### 미확인·주의
+
+- 마운트를 바꾸면 `~/.local/share/ax-client/.ax/config.json` 의 project 가 낡는다 → `--check` FAIL → `--apply` 재실행.
+- agy 대화 세션 사용량은 집계에 없다(#747). `session_usage.SOURCES` 는 claude·codex 뿐.
+- 서브 에이전트 위임 1건(스킬·도구 설명 작성)이 자동 권한 검사에 「Instruction Poisoning」으로 거부됐다 →
+  사용자에게 초안을 대화로 보여 동의받은 뒤 루트가 직접 반영했다.
 
 ### 최신 — 리뷰 수정 5건 통합·운영 반영 완료 / 리뷰 UI 범위 확인 대기 (2026-10-05 15:58, Codex)
 
