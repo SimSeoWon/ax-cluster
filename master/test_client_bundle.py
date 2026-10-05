@@ -1510,16 +1510,17 @@ def test_update_covers_every_registered_project() -> None:
 
     old_registry = bundle.Registry
     old_deliver, old_check = client_cli.cmd_deliver, client_cli.cmd_check
-    old_head = client_cli._master_head
+    old_head, old_dirty = client_cli._master_head, client_cli._master_dirty
     bundle.Registry = FakeRegistry
     client_cli.cmd_deliver, client_cli.cmd_check = fake_deliver, fake_check
     client_cli._master_head = lambda: "a" * 40
+    client_cli._master_dirty = lambda: False
     try:
         rc = client_cli.main(["update", "--init"])
     finally:
         bundle.Registry = old_registry
         client_cli.cmd_deliver, client_cli.cmd_check = old_deliver, old_check
-        client_cli._master_head = old_head
+        client_cli._master_head, client_cli._master_dirty = old_head, old_dirty
     check("전체 업데이트가 성공한다", rc == 0, str(rc))
     check("전체를 배달한 뒤 전체를 검사해 마지막 덮어쓰기를 잡는다", calls == [
         ("deliver", "NS", True, ""), ("deliver", "ModularStage", True, ""),
@@ -1553,26 +1554,28 @@ def test_update_reports_partial_failure() -> None:
 
     old_registry = bundle.Registry
     old_deliver, old_check = client_cli.cmd_deliver, client_cli.cmd_check
-    old_head = client_cli._master_head
+    old_head, old_dirty = client_cli._master_head, client_cli._master_dirty
     bundle.Registry = FakeRegistry
     client_cli.cmd_deliver, client_cli.cmd_check = fake_deliver, fake_check
     client_cli._master_head = lambda: "a" * 40
+    client_cli._master_dirty = lambda: False
     try:
         rc = client_cli.cmd_update()
     finally:
         bundle.Registry = old_registry
         client_cli.cmd_deliver, client_cli.cmd_check = old_deliver, old_check
-        client_cli._master_head = old_head
+        client_cli._master_head, client_cli._master_dirty = old_head, old_dirty
     check("부분 실패면 전체 명령도 실패한다", rc == 1, str(rc))
     check("실패한 프로젝트는 검사하지 않고 다음 등록 프로젝트를 계속한다", calls == [
         ("deliver", "NS"), ("deliver", "ModularStage"), ("check", "ModularStage"),
     ], str(calls))
 
 
-def _run_update_with_heads(heads, check_results):
-    """`#737` 하네스 — HEAD 리더와 deliver/check 를 주입하고 출력을 잡는다 (SSH·배달 없음).
+def _run_update_with_heads(heads, check_results, dirties=(False,)):
+    """`#737` 하네스 — HEAD·dirty 리더와 deliver/check 를 주입하고 출력을 잡는다 (SSH·배달 없음).
 
     ``heads``: `_master_head` 가 차례로 돌려줄 값(시작 → 검사 직전 → 끝).
+    ``dirties``: `_master_dirty` 가 차례로 돌려줄 값(같은 세 시점, 마지막 값 반복).
     ``check_results``: 프로젝트 → (rc, stats).
     """
     import contextlib
@@ -1598,18 +1601,21 @@ def _run_update_with_heads(heads, check_results):
             stats.update(st)
         return rc
 
-    saved = (bundle.Registry, client_cli.cmd_deliver, client_cli.cmd_check, client_cli._master_head)
+    dseq = list(dirties)
+    saved = (bundle.Registry, client_cli.cmd_deliver, client_cli.cmd_check, client_cli._master_head,
+             client_cli._master_dirty)
     bundle.Registry = FakeRegistry
     client_cli.cmd_deliver = lambda project, *, init=False, only="": 0
     client_cli.cmd_check = fake_check
     client_cli._master_head = lambda: seq.pop(0) if len(seq) > 1 else seq[0]
+    client_cli._master_dirty = lambda: dseq.pop(0) if len(dseq) > 1 else dseq[0]
     out = io.StringIO()
     try:
         with contextlib.redirect_stdout(out):
             rc = client_cli.cmd_update()
     finally:
         (bundle.Registry, client_cli.cmd_deliver, client_cli.cmd_check,
-         client_cli._master_head) = saved
+         client_cli._master_head, client_cli._master_dirty) = saved
     return rc, out.getvalue()
 
 
@@ -1655,6 +1661,284 @@ def test_update_reports_head_movement() -> None:
     rc, out = _run_update_with_heads([""], {"NS": ok})
     check("HEAD 를 못 읽으면 감지 불가를 말하고 판정은 종전대로",
           rc == 0 and "감지할 수 없다" in out, out[:200])
+
+
+def test_update_reports_dirty_tree() -> None:
+    """🔴 `#737` (사용자 승인 2026-10-05) — 작업 트리 dirty 도 HEAD 이동과 같은 방식으로 말한다.
+
+    실측 2026-10-05: HEAD 그대로 · 실행 중 `commit_flow.py` 무커밋 수정 → 이후 도장 전부 dirty,
+    검사 11/15 FAIL + 서비스 신선도 실패 — 실행 중에는 아무 말도 없었다.
+    """
+    import time
+    A, B = "90ab208" + "0" * 33, "f5d7f77" + "0" * 33
+    ok = (0, {"bad": 0, "behind_only": 0, "dirty_only": 0, "behind_dirty": 0, "fresh_bad": 0})
+    dirty2 = (1, {"bad": 2, "behind_only": 0, "dirty_only": 2, "behind_dirty": 0, "fresh_bad": 0})
+
+    rc, out = _run_update_with_heads([A], {"NS": ok}, dirties=[False])
+    check("깨끗한 트리 + 통과 → 성공, dirty 문구 없음",
+          rc == 0 and "dirty 해졌다" not in out and "마스터 트리가 dirty 다" not in out, out)
+
+    rc, out = _run_update_with_heads([A], {"NS": ok, "MS": dirty2}, dirties=[True])
+    head = out.split("══", 1)[0]
+    check("[중요] 시작부터 dirty → 배달 **전에** 크게 경고한다",
+          "[중요] 마스터 트리가 dirty 다 — 배달 도장이 「추적 불가」로 찍힌다, 커밋 후 실행하라" in head,
+          head)
+    check("  그래도 계속한다(도장은 배달을 막지 않는다) — 두 프로젝트 모두 처리",
+          "NS: 배달 결과 검사" in out and "MS: 배달 결과 검사" in out, out)
+    check("  dirty 도장만인 실패는 「시작부터 트리 dirty 탓」으로 표기",
+          "MS: check (시작부터 트리 dirty 탓 — dirty 도장 2대)" in out and rc == 1, out[-400:])
+    check("  끝에 한 번 더 말한다", "[주의] 시작부터 마스터 트리가 dirty 였다" in out, out[-400:])
+    check("  「실행 중 dirty 해졌다」와는 섞지 않는다", "dirty 해졌다" not in out, out)
+
+    rc, out = _run_update_with_heads([A], {"NS": ok}, dirties=[False, True, True])
+    check("[중요] 실행 중 dirty 해짐 → 검사가 통과해도 rc 1",
+          rc == 1 and "검사는 통과했으나 트리가 dirty 해졌다" in out, out[-300:])
+    check("  배달 중 dirty 를 검사 전에 말한다",
+          "[중요] 배달 중 마스터 트리가 dirty 해졌다" in out.split("NS: 배달 결과 검사")[0], out)
+    check("  별도 줄 「실행 중 마스터 트리가 dirty 해졌다 … 다시 실행하라」 + 읽기 순서",
+          "[중요] 실행 중 마스터 트리가 dirty 해졌다 (깨끗 → dirty → dirty)" in out
+          and "다시 실행하라" in out, out[-500:])
+
+    now = int(time.time())
+    measured = (1, {"bad": 3, "behind_only": 0, "dirty_only": 2, "behind_dirty": 0,
+                    "fresh_bad": 1, "fresh_changed_at": now + 3600})
+    rc, out = _run_update_with_heads([A], {"MS": measured}, dirties=[False, True, True])
+    check("[중요] 실측 모양 — dirty 도장 + 실행 중 파일 변경의 신선도 실패를 함께 그 탓으로",
+          "MS: check (실행 중 트리 dirty 탓 — dirty 도장 2대 · 서비스 신선도(실행 중 파일 변경 — 재기동 필요))"
+          in out and rc == 1, out[-400:])
+
+    old_fresh = (1, {"bad": 3, "behind_only": 0, "dirty_only": 2, "behind_dirty": 0,
+                     "fresh_bad": 1, "fresh_changed_at": now - 3600})
+    rc, out = _run_update_with_heads([A], {"MS": old_fresh}, dirties=[False, True, True])
+    check("[주의] 실행 **전** 변경으로 생긴 신선도 실패는 진짜 실패 — 종전 표기",
+          "MS: check\n" in out, out[-300:])
+    unknown_fresh = (1, {"bad": 3, "behind_only": 0, "dirty_only": 2, "behind_dirty": 0,
+                         "fresh_bad": 1, "fresh_changed_at": None})
+    rc, out = _run_update_with_heads([A], {"MS": unknown_fresh}, dirties=[False, True, True])
+    check("  신선도를 판정 못 했으면(사유 섞임) 접지 않는다", "MS: check\n" in out, out[-300:])
+
+    genuine = (1, {"bad": 3, "behind_only": 0, "dirty_only": 2, "behind_dirty": 0, "fresh_bad": 0})
+    rc, out = _run_update_with_heads([A], {"MS": genuine}, dirties=[False, True, True])
+    check("  다른 사유가 섞인 실패는 종전 표기", "MS: check\n" in out and rc == 1, out[-300:])
+
+    rc, out = _run_update_with_heads([A], {"MS": dirty2}, dirties=[False])
+    check("  dirty 변화가 없는데 dirty 도장이면 이 실행 탓으로 접지 않는다",
+          "MS: check\n" in out, out[-300:])
+
+    both = (1, {"bad": 2, "behind_only": 1, "dirty_only": 0, "behind_dirty": 1, "fresh_bad": 0})
+    rc, out = _run_update_with_heads([A, B, B], {"MS": both}, dirties=[False, True, True])
+    check("  커밋+dirty 가 함께면 두 원인을 같이 적는다",
+          "MS: check (실행 중 HEAD 이동 · 실행 중 트리 dirty 탓 — 출처 뒤처짐 1대 · 뒤처짐+dirty 도장 1대)"
+          in out, out[-400:])
+
+    rc, out = _run_update_with_heads([A], {"NS": ok}, dirties=[None])
+    check("dirty 를 못 읽으면 감지 불가를 말하고 판정은 종전대로",
+          rc == 0 and "dirty 여부를 읽지 못했다" in out, out[:300])
+
+    check("_version_failure_kind — 사유 모양",
+          [client_cli._version_failure_kind(v) for v in (
+              {"ok": True, "behind": 0}, {"ok": False, "behind": 2, "stamp_dirty": False},
+              {"ok": False, "behind": 0, "stamp_dirty": True},
+              {"ok": False, "behind": 1, "stamp_dirty": True},
+              {"ok": False, "behind": None, "stamp_dirty": True},
+              {"ok": False, "behind": None, "stamp_dirty": None})]
+          == ["", "behind", "dirty", "behind_dirty", "", ""])
+
+
+def test_update_head_round_trip_is_reported() -> None:
+    """`#737` R42-1 — A→B→A 이면 끝 HEAD 가 시작과 같아도 관측된 이동을 그대로 말한다."""
+    A, B = "5fc6786" + "0" * 33, "4ac3099" + "0" * 33
+    ok = (0, {"bad": 0, "behind_only": 0})
+    rc, out = _run_update_with_heads([A, B, A], {"NS": ok})
+    check("[중요] A→B→A 를 그대로 보고한다",
+          "실행 중 마스터 HEAD 가 움직였다: 5fc6786 → 4ac3099 → 5fc6786" in out, out[-500:])
+    check("  끝이 시작과 같다는 주의를 덧붙인다", "끝 HEAD 는 시작과 같지만 중간에 달랐다" in out, out)
+    check("  rc 1", rc == 1, str(rc))
+    check("_head_trail — 연속 중복만 접고 빈 읽기는 뺀다",
+          client_cli._head_trail([A, "", A, B]) == "5fc6786 → 4ac3099"
+          and client_cli._head_trail([A, A, A]) == "5fc6786", client_cli._head_trail([A, "", A, B]))
+
+
+def _live_update_in_temp_repo(mutate):
+    """`#737` 실물 모양 하네스 — **진짜 `cmd_update` 흐름**을 임시 git 저장소에 돌린다.
+
+    실저장소·워커·SSH 를 건드리지 않는다. 바꾸는 것은 뿌리(`version.REPO_ROOT`) 하나와
+    배달/검사의 원격 부분뿐이다:
+      · HEAD·dirty 리더 — 실제 `_master_head`/`_master_dirty` 가 임시 저장소를 읽는다
+      · 배달 — 실제 `bundle._delivery_stamp()` 로 도장을 찍어 둔다(원격 쓰기 없음)
+      · 검사 — 실제 `bundle.compare_version` + `_version_failure_kind` 로 판정, 신선도는
+              `service_freshness` 와 같은 규칙(`newest > started`)을 임시 저장소 파일 mtime 에 댄다
+    ``mutate(repo, project, phase)`` 가 배달·검사 도중 임시 저장소에 실제 커밋·수정을 한다.
+    """
+    import contextlib
+    import io
+    import shutil
+    import subprocess
+    import tempfile
+    import time
+    from types import SimpleNamespace
+    from master import version as V
+
+    tmp = Path(tempfile.mkdtemp(prefix="ax737-"))
+    git = ["git", "-C", str(tmp), "-c", "user.name=t", "-c", "user.email=t@t", "-c",
+           "commit.gpgsign=false"]
+
+    def g(*a):
+        return subprocess.run([*git, *a], capture_output=True, text=True, check=True).stdout.strip()
+
+    code = tmp / "master" / "webui" / "commit_flow.py"
+    code.parent.mkdir(parents=True)
+    code.write_text("X = 1\n", encoding="utf-8")
+    g("init", "-q")
+    g("add", "-A")
+    g("commit", "-q", "-m", "init")
+    past = int(time.time()) - 100
+    os.utime(code, (past, past))
+    service_started = past + 50          # 서비스는 그 파일 뒤, update 전에 떴다
+
+    names = ["P1", "P2", "P3"]
+    stamps: dict = {}
+
+    class AllProjects:
+        @staticmethod
+        def check():
+            return []
+    AllProjects.names = names
+
+    class FakeRegistry:
+        @staticmethod
+        def load():
+            return AllProjects()
+
+    def fake_deliver(project, *, init=False, only=""):
+        mutate(tmp, g, project, "deliver")
+        stamps[project] = bundle._delivery_stamp()
+        print(f"  배달 도장 {stamps[project].get('commit_short')} dirty={stamps[project].get('dirty')}")
+        return 0
+
+    def fake_check(project, *, only="", stats=None):
+        mutate(tmp, g, project, "check")
+        ver = bundle.compare_version(SimpleNamespace(project=project),
+                                     runner=lambda c, h: subprocess.run(
+                                         [*git, "merge-base", "--is-ancestor", c, h]).returncode == 0)
+        kind = client_cli._version_failure_kind(ver)
+        print(f"  {'OK' if ver['ok'] else 'FAIL'} {project}-host: 출처 {ver['reason']}")
+        newest = int(code.stat().st_mtime)
+        fresh = 1 if newest > service_started else 0
+        if stats is not None:
+            stats.update(bad=(0 if ver["ok"] else 1) + fresh, behind_only=int(kind == "behind"),
+                         dirty_only=int(kind == "dirty"), behind_dirty=int(kind == "behind_dirty"),
+                         fresh_bad=fresh, fresh_changed_at=newest if fresh else None)
+        return 0 if ver["ok"] and not fresh else 1
+
+    saved = (V.REPO_ROOT, bundle.Registry, bundle.delivered_stamp, bundle._run_local,
+             client_cli.cmd_deliver, client_cli.cmd_check)
+    V.REPO_ROOT = tmp
+    bundle.Registry = FakeRegistry
+    bundle.delivered_stamp = lambda f: stamps[f.project]
+    bundle._run_local = lambda *a: subprocess.run([*git, *a], capture_output=True,
+                                                  text=True).stdout.strip()
+    client_cli.cmd_deliver, client_cli.cmd_check = fake_deliver, fake_check
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            rc = client_cli.cmd_update()
+    finally:
+        (V.REPO_ROOT, bundle.Registry, bundle.delivered_stamp, bundle._run_local,
+         client_cli.cmd_deliver, client_cli.cmd_check) = saved
+        shutil.rmtree(tmp, ignore_errors=True)
+    return rc, out.getvalue()
+
+
+def test_update_live_shaped_in_temp_repo() -> None:
+    """🔴 `#737` — 가짜 리더가 아니라 **실제 git 상태 변화**로 이동·dirty 경로를 돌린다."""
+    def nothing(repo, g, project, phase):
+        pass
+
+    rc, out = _live_update_in_temp_repo(nothing)
+    check("[실물] 정상 — rc 0 · [완료] · 이동/dirty 문구 없음",
+          rc == 0 and "[완료]" in out and "움직였다" not in out and "dirty 해졌다" not in out, out)
+    check("  시작 줄이 임시 저장소 HEAD·깨끗을 말한다",
+          "[update] 시작 마스터 HEAD" in out and "시작 마스터 트리 깨끗" in out, out[:300])
+
+    def commit_mid(repo, g, project, phase):
+        if (project, phase) == ("P2", "deliver"):
+            (repo / "doc.md").write_text("handoff\n", encoding="utf-8")
+            g("add", "-A")
+            g("commit", "-q", "-m", "doc")
+
+    rc, out = _live_update_in_temp_repo(commit_mid)
+    check("[실물] 배달 중 실제 커밋 → rc 1 · 이동 보고",
+          rc == 1 and "배달 중 마스터 HEAD 가 움직였다" in out
+          and "실행 중 마스터 HEAD 가 움직였다" in out, out[-600:])
+    check("  P1 만 실제로 1 커밋 뒤 — 이동 탓으로 표기",
+          "P1: check (실행 중 HEAD 이동 탓 — 출처 뒤처짐 1대)" in out
+          and "HEAD 보다 1 커밋 뒤" in out and "P2: check" not in out, out[-600:])
+
+    def edit_mid(repo, g, project, phase):
+        if (project, phase) == ("P2", "deliver"):
+            f = repo / "master" / "webui" / "commit_flow.py"
+            f.write_text("X = 2\n", encoding="utf-8")
+
+    rc, out = _live_update_in_temp_repo(edit_mid)
+    check("[실물] 배달 중 실제 무커밋 수정 → rc 1 · 별도 줄",
+          rc == 1 and "[중요] 배달 중 마스터 트리가 dirty 해졌다" in out
+          and "[중요] 실행 중 마스터 트리가 dirty 해졌다 (깨끗 → dirty → dirty)" in out, out[-700:])
+    check("  P2·P3 는 실제 dirty 도장 — 신선도 실패까지 실행 중 dirty 탓으로",
+          "P2: check (실행 중 트리 dirty 탓 — dirty 도장 1대 · 서비스 신선도(실행 중 파일 변경 — 재기동 필요))"
+          in out and "P3: check (실행 중 트리 dirty 탓" in out
+          and "배달 시점 트리가 dirty 였다" in out, out[-900:])
+    check("  P1 은 도장이 깨끗해 출처는 통과 — 신선도만 실패해도 실행 중 변경 탓",
+          "OK P1-host: 출처 마스터 HEAD 와 같다" in out
+          and "P1: check (실행 중 파일 변경 탓 — 서비스 신선도(실행 중 파일 변경 — 재기동 필요))" in out,
+          out[-900:])
+    check("  HEAD 는 그대로라 이동 문구가 없다", "HEAD 가 움직였다" not in out, out)
+
+    rc, out = _live_update_with_dirty_start()
+    check("[실물] 시작부터 dirty → 첫 배달 전에 경고하고 계속 진행",
+          "[중요] 마스터 트리가 dirty 다 — 배달 도장이 「추적 불가」로 찍힌다, 커밋 후 실행하라"
+          in out.split("══", 1)[0] and "P3: 배달 결과 검사" in out, out[:600])
+    check("  dirty 도장 실패는 「시작부터 트리 dirty 탓」 · 「실행 중 dirty 해졌다」 문구 없음",
+          "P1: check (시작부터 트리 dirty 탓 — dirty 도장 1대)" in out
+          and "dirty 해졌다" not in out and rc == 1, out[-600:])
+
+    def round_trip(repo, g, project, phase):
+        if (project, phase) == ("P3", "deliver"):
+            (repo / "doc.md").write_text("b\n", encoding="utf-8")
+            g("add", "-A")
+            g("commit", "-q", "-m", "B")
+        if (project, phase) == ("P3", "check"):
+            g("reset", "-q", "--hard", "HEAD~1")
+
+    rc, out = _live_update_in_temp_repo(round_trip)
+    trail = [ln for ln in out.splitlines() if "실행 중 마스터 HEAD 가 움직였다" in ln]
+    hs = trail[0].split(": ", 1)[1].split(" — ")[0].split(" → ") if trail else []
+    check("[실물] R42-1 — 실제 commit 후 reset(A→B→A)을 A → B → A 로 보고",
+          len(hs) == 3 and hs[0] == hs[2] != hs[1] and rc == 1
+          and "끝 HEAD 는 시작과 같지만 중간에 달랐다" in out, out[-600:])
+
+
+def _live_update_with_dirty_start():
+    """시작부터 dirty — 첫 dirty 읽기 직전에 임시 저장소에 실제 미추적 파일을 만든다.
+
+    판정은 실제 `_master_dirty`(= `version.identity()["dirty"]`)가 한다. 서비스 코드가 아닌
+    파일이라 신선도 실패는 생기지 않는다(시작 전 변경은 이 실행 탓이 아니다).
+    """
+    from master import version as V
+    real_dirty = client_cli._master_dirty
+    state = {"done": False}
+
+    def dirty_then_read():
+        if not state["done"]:
+            (Path(V.REPO_ROOT) / "notes.txt").write_text("wip\n", encoding="utf-8")
+            state["done"] = True
+        return real_dirty()
+
+    client_cli._master_dirty = dirty_then_read
+    try:
+        return _live_update_in_temp_repo(lambda repo, g, project, phase: None)
+    finally:
+        client_cli._master_dirty = real_dirty
 
 
 def test_index_only_delivery() -> None:
@@ -1747,6 +2031,9 @@ def main() -> int:
                test_update_covers_every_registered_project,
                test_update_reports_partial_failure,
                test_update_reports_head_movement,
+               test_update_reports_dirty_tree,
+               test_update_head_round_trip_is_reported,
+               test_update_live_shaped_in_temp_repo,
                test_shadow_skills_are_reported,
                test_index_only_delivery):
         fn()

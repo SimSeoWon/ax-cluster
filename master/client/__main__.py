@@ -339,10 +339,17 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
     「실행 중 HEAD 이동」 때문인 실패와 진짜 실패를 갈라 말하기 위해서다.
       ``bad``          실패 호스트 수 (+ 마스터 서비스 신선도 실패 1)
       ``behind_only``  **출처가 HEAD 보다 커밋 뒤처졌다는 것만** 실패 사유인 호스트 수
-    [주의] 판정 자체는 바꾸지 않는다 — 뒤처짐은 여전히 FAIL 이다.
+      ``dirty_only``   **커밋은 같고 배달 도장이 dirty 라는 것만** 실패 사유인 호스트 수
+      ``behind_dirty`` 뒤처짐 + dirty 도장 **둘만** 실패 사유인 호스트 수
+      ``fresh_bad``    마스터 서비스 신선도 실패(0/1 — ``bad`` 에 포함)
+      ``fresh_changed_at``  그 실패가 **전부** 「기동 뒤 파일 변경」일 때 가장 이른 변경 mtime
+                       (판정 불가 사유가 섞이면 ``None``) — ``update`` 가 「실행 중 변경 탓」을 가른다
+    [주의] 판정 자체는 바꾸지 않는다 — 뒤처짐도 dirty 도장도 여전히 FAIL 이다.
     """
     bad = 0
     behind_only = 0
+    dirty_only = 0
+    behind_dirty = 0
     behind_hosts: list = []
     init = spec.load_init(project)
     for f in _facts(project, only=only):
@@ -610,12 +617,15 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
               f"{tag_note}{ver_note}")
         bad += 0 if (ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
                      and ok_ver and ok_tag and ok_codex and ok_res and ok_shadow) else 1
-        # `#737` — 다른 검사는 모두 통과했고 출처만 「N 커밋 뒤」(dirty 아님)인 호스트.
-        #    실행 중 마스터에 커밋이 들어오면 정확히 이 모양으로 실패한다.
-        if (not ok_ver and ver.get("behind") and not ver.get("stamp_dirty")
-                and ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
+        # `#737` — 다른 검사는 모두 통과했고 출처만 어긋난 호스트를 사유별로 센다.
+        #    실행 중 마스터에 커밋이 들어오면 「N 커밋 뒤」, 작업 트리를 고치면 「dirty 도장」
+        #    — 정확히 이 모양으로 실패한다.
+        if (ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
                 and ok_tag and ok_codex and ok_res and ok_shadow):
-            behind_only += 1
+            kind = _version_failure_kind(ver)
+            behind_only += kind == "behind"
+            dirty_only += kind == "dirty"
+            behind_dirty += kind == "behind_dirty"
         if not ver["ok"]:
             behind_hosts.append((f.host, ver.get("behind"), ver.get("stamp_dirty")))
     # [중요] **끝에 한 줄로 모아 말한다** — 호스트별 줄에 섞이면 「몇 대가 낡았나」가 안 보인다.
@@ -642,9 +652,15 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
     #    마스터 서비스는 아무도 안 봤다 — 실측 2026-08-24: `ax-task-queue` 가 하루 동안
     #    옛 코드로 돌아 `.33` 의 프로젝트 태그가 무시됐다(`#293` 이 안 먹었다).
     #    [주의] 판정하고 **말하는 것까지**다 — 자동 재기동은 `docs/11` §11.5 위반이다.
+    # `#737` — 줄은 `stale_lines()` 와 같은 규칙으로 만들되 판정(`check()`)을 직접 받는다:
+    #    「기동 뒤 언제 바뀌었나」(mtime)가 있어야 update 가 「실행 중 변경 탓」을 가른다.
+    fresh_changed_at = None
     try:
         from .. import service_freshness as _fresh
-        lines = _fresh.stale_lines()
+        verdicts = [v for v in _fresh.check() if v.stale or v.why]
+        lines = [v.line for v in verdicts]
+        if verdicts and not any(v.why for v in verdicts):
+            fresh_changed_at = min(v.newest for v in verdicts)
     except Exception as e:                                   # noqa: BLE001
         lines = [f"[주의] 서비스 신선도를 재지 못했다 — {type(e).__name__}: {e}"]
     if lines:
@@ -654,8 +670,27 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
         print("        [주의] 자동 재기동은 하지 않는다 — 승인 사항이다 (`docs/11` §11.5)")
         bad += 1
     if stats is not None:
-        stats.update(bad=bad, behind_only=behind_only)
+        stats.update(bad=bad, behind_only=behind_only, dirty_only=dirty_only,
+                     behind_dirty=behind_dirty, fresh_bad=1 if lines else 0,
+                     fresh_changed_at=fresh_changed_at)
     return 1 if bad else 0
+
+
+def _version_failure_kind(ver: dict) -> str:
+    """출처 대조 실패의 모양 (`#737`). `behind`·`dirty`·`behind_dirty`, 그 밖은 빈 문자열.
+
+    [주의] 판정 불가·계보 밖(`behind is None`)은 빈 문자열이다 — 실행 중 변경 탓으로 접지 않는다.
+    """
+    if ver.get("ok"):
+        return ""
+    behind, dirty = ver.get("behind"), ver.get("stamp_dirty")
+    if behind and not dirty:
+        return "behind"
+    if behind == 0 and dirty:
+        return "dirty"
+    if behind and dirty:
+        return "behind_dirty"
+    return ""
 
 
 def cmd_uproject(project: str, *, confirm: bool = False) -> int:
@@ -702,8 +737,42 @@ def cmd_ensure(project: str, *, only: str = "") -> int:
 
 
 def _master_head() -> str:
-    """마스터 저장소 HEAD 전체 해시. 읽지 못하면 빈 문자열 (`#737` — 테스트가 주입한다)."""
-    return bundle._run_local("rev-parse", "HEAD")
+    """마스터 저장소 HEAD 전체 해시. 읽지 못하면 빈 문자열 (`#737` — 테스트가 주입한다).
+
+    [중요] `version.identity()` 와 **같은 저장소 뿌리(`version.REPO_ROOT`)** 를 읽는다 — 배달
+    도장의 commit 과 같은 자리다. 실저장소 대신 임시 저장소로 돌리는 검사가 뿌리 하나만 바꾼다.
+    """
+    from .. import version as _version
+    out, err = _version._git("rev-parse", "HEAD")
+    return out if not err else ""
+
+
+def _master_dirty():
+    """마스터 작업 트리가 dirty 인가 — `True`/`False`, 읽지 못하면 `None` (`#737`).
+
+    🔴 [중요] **정의를 새로 만들지 않는다** — 배달 도장(`bundle._delivery_stamp`)이 찍는
+    `version.identity()["dirty"]`(= `git status --porcelain` 이 비었나) 그대로다. 정의가
+    갈리면 「시작은 깨끗했다」는 말과 검사의 「dirty 도장」이 서로 다른 것을 센다.
+    """
+    from .. import version as _version
+    return _version.identity().get("dirty")
+
+
+def _head_trail(reads) -> str:
+    """HEAD 읽기 값들을 관측 순서대로 `A → B → A` 로 (`#737` R42-1).
+
+    [중요] 연속 중복만 접는다 — 끝이 시작과 같아도 **중간에 다른 값이 있었으면 그대로 보인다.**
+    읽지 못한 값(빈 문자열)은 뺀다.
+    """
+    out: list = []
+    for h in reads:
+        if h and (not out or out[-1] != h):
+            out.append(h)
+    return " → ".join(h[:7] for h in out)
+
+
+def _dirty_word(d) -> str:
+    return "dirty" if d else "깨끗" if d is False else "모름"
 
 
 def cmd_update(*, init: bool = False) -> int:
@@ -718,9 +787,16 @@ def cmd_update(*, init: bool = False) -> int:
     들어오면 검사가 「1 커밋 뒤」로 실패하고 요약은 「check」 한 단어뿐이었다(실측
     2026-10-04: 5fc6786 에서 시작 · 문서 커밋 4ac3099 가 중간에 들어와 ModularStage 2대 FAIL).
     그래서 시작·검사 직전·끝에서 HEAD 를 읽고, 움직였으면 그 사실과 그 탓인 실패를 갈라 적는다.
+    🔴 [중요] **작업 트리 dirty 도 같은 방식으로 잰다** (`#737`, 사용자 승인 2026-10-05). 실측
+    2026-10-05: HEAD 는 그대로인데 실행 중 `commit_flow.py` 를 커밋 없이 고쳐 이후 배달 도장이
+    전부 `dirty=true` 로 찍혔고 검사 11/15 FAIL — 실행 중에는 아무 말도 없었다.
+    시작부터 dirty 면 크게 경고하고 **계속한다** — 배달 도장은 「배달을 막지 않는다」가 계약이다
+    (`bundle._delivery_stamp`). 실행 중 dirty 해지면 따로 말하고 rc 를 실패로 둔다.
     [주의] **초록불로 바꾸지 않는다** — 배달물은 배달 시점의 작업 트리에서 읽혔으므로 새 HEAD 와
     다를 수 있다. 자동 재실행·커밋 잠금은 하지 않는다(사람이 다시 돌린다).
     """
+    import time
+
     registry = bundle.Registry.load()
     problems = registry.check()
     if problems:
@@ -732,11 +808,22 @@ def cmd_update(*, init: bool = False) -> int:
         print("[중요] 등록된 프로젝트가 없다")
         return 1
 
+    # 서비스 신선도 실패가 「실행 중 파일 변경」 탓인지 가르는 기준 시각(파일 mtime 과 같은 축).
+    started_at = int(time.time())
     head_start = _master_head()
+    dirty_start = _master_dirty()
     if head_start:
         print(f"[update] 시작 마스터 HEAD {head_start[:7]} — 실행 중에는 마스터에 커밋하지 말 것")
     else:
         print("[주의] 시작 마스터 HEAD 를 읽지 못했다 — 실행 중 HEAD 이동을 감지할 수 없다")
+    if dirty_start:
+        print("[중요] 마스터 트리가 dirty 다 — 배달 도장이 「추적 불가」로 찍힌다, 커밋 후 실행하라")
+        print("        [주의] 배달은 막지 않고 계속한다 (도장은 배달을 막지 않는 것이 계약이다) — "
+              "검사의 dirty 실패는 이 탓이다")
+    elif dirty_start is None:
+        print("[주의] 시작 마스터 트리의 dirty 여부를 읽지 못했다 — 실행 중 dirty 변화를 감지할 수 없다")
+    else:
+        print("[update] 시작 마스터 트리 깨끗 — 실행 중에는 마스터 작업 트리도 고치지 말 것")
 
     failed: list[str] = []
     delivered: list[str] = []
@@ -748,8 +835,11 @@ def cmd_update(*, init: bool = False) -> int:
         delivered.append(project)
 
     head_pre_check = _master_head()
+    dirty_pre_check = _master_dirty()
     if head_start and head_pre_check and head_pre_check != head_start:
         print(f"\n[중요] 배달 중 마스터 HEAD 가 움직였다: {head_start[:7]} → {head_pre_check[:7]}")
+    if dirty_start is False and dirty_pre_check:
+        print("\n[중요] 배달 중 마스터 트리가 dirty 해졌다 — 이후 배달 도장은 「추적 불가」다")
 
     # `#699` — 프로젝트별 전역 설정이 다음 배달에 덮어써지는 결함을
     # 즉시 검사가 놓쳤다. 전부 배달한 **뒤** 전부를 다시 재서 종료 상태를 본다.
@@ -761,32 +851,95 @@ def cmd_update(*, init: bool = False) -> int:
             checked.append((project, stats))
 
     head_end = _master_head()
-    seen = [h for h in (head_start, head_pre_check, head_end) if h]
+    dirty_end = _master_dirty()
+    heads = (head_start, head_pre_check, head_end)
+    dirties = (dirty_start, dirty_pre_check, dirty_end)
+    seen = [h for h in heads if h]
+    # R42-1 — **어느 읽기든** 시작과 다르면 이동이다(A→B→A 도 이동이다).
     moved = bool(head_start) and any(h != head_start for h in seen)
+    became_dirty = dirty_start is False and any(d for d in dirties[1:])
     for project, stats in checked:
-        bad, behind_only = stats.get("bad"), stats.get("behind_only")
-        # 실행 중 HEAD 가 움직였고, 실패 호스트 **전부**가 「출처 뒤처짐만」이면 이동 탓이다.
-        #    하나라도 다른 사유가 섞이면(또는 내역을 모르면) 진짜 실패로 그대로 둔다.
-        if moved and bad and behind_only == bad:
-            failed.append(f"{project}: check (실행 중 HEAD 이동 탓 — 출처 뒤처짐 {bad}대)")
-        else:
-            failed.append(f"{project}: check")
+        failed.append(_label_check_failure(project, stats, moved=moved,
+                                           dirty_start=bool(dirty_start),
+                                           became_dirty=became_dirty, started_at=started_at))
 
     if moved:
-        last = head_end or head_pre_check
-        print(f"\n[중요] 실행 중 마스터 HEAD 가 움직였다: {head_start[:7]} → {last[:7]}"
+        trail = _head_trail(heads)
+        print(f"\n[중요] 실행 중 마스터 HEAD 가 움직였다: {trail}"
               " — 배달물이 새 HEAD 와 다를 수 있다, 다시 실행하라")
+        if head_end and head_end == head_start:
+            print("        [주의] 끝 HEAD 는 시작과 같지만 중간에 달랐다 — 그 사이 배달·검사는 "
+                  "다른 HEAD 를 봤을 수 있다")
         print("        [주의] update 실행 중에는 마스터에 커밋하지 말 것 "
               "(배달은 그 순간의 작업 트리를 읽는다)")
     elif head_start and not head_end:
         print("\n[주의] 끝 마스터 HEAD 를 읽지 못했다 — 실행 중 HEAD 이동을 확인하지 못했다")
+    if became_dirty:
+        trail = " → ".join(_dirty_word(d) for d in dirties)
+        print(f"\n[중요] 실행 중 마스터 트리가 dirty 해졌다 ({trail}) — 이후 배달 도장은 "
+              "「추적 불가」다, 커밋한 뒤 다시 실행하라")
+        print("        [주의] update 실행 중에는 마스터 작업 트리를 고치지 말 것 "
+              "(배달은 그 순간의 작업 트리를 읽는다)")
+    elif dirty_start:
+        print("\n[주의] 시작부터 마스터 트리가 dirty 였다 — 커밋한 뒤 다시 실행하라")
+    elif dirty_start is False and dirty_end is None:
+        print("\n[주의] 끝 마스터 트리의 dirty 여부를 읽지 못했다 — 실행 중 dirty 변화를 확인하지 못했다")
 
-    if failed or moved:
-        why = ", ".join(failed) if failed else "검사는 통과했으나 HEAD 가 움직였다"
+    if failed or moved or became_dirty:
+        why = ", ".join(failed) if failed else (
+            "검사는 통과했으나 " + " · ".join(w for w, on in (
+                ("HEAD 가 움직였다", moved), ("트리가 dirty 해졌다", became_dirty)) if on))
         print("\n[중요] 전체 업데이트 실패: " + why)
         return 1
     print(f"\n[완료] 등록 프로젝트 {len(registry.names)}개를 현재 HEAD로 배달·검사했다")
     return 0
+
+
+def _label_check_failure(project: str, stats: dict, *, moved: bool, dirty_start: bool,
+                         became_dirty: bool, started_at: int) -> str:
+    """검사 실패 한 건의 요약 표기 (`#737`).
+
+    실패 호스트 **전부**(+ 서비스 신선도)가 실행 중 변경으로 설명될 때만 그 탓으로 적는다.
+    하나라도 다른 사유가 섞이거나 내역을 모르면 종전 표기 `<프로젝트>: check` 그대로다.
+      · 「출처 N 커밋 뒤(dirty 아님)」      ← HEAD 이동
+      · 「커밋은 같고 dirty 도장」          ← 시작부터 dirty / 실행 중 dirty
+      · 「뒤처짐 + dirty 도장」             ← 둘 다
+      · 서비스 신선도 — 바뀐 파일의 mtime 이 실행 시작 뒤 **그리고** 실행 중 변경(이동·dirty)이 있었을 때
+    """
+    plain = f"{project}: check"
+    bad = stats.get("bad")
+    if not bad:
+        return plain
+    dirty_cause = dirty_start or became_dirty
+    bo, do, bd = (stats.get(k) or 0 for k in ("behind_only", "dirty_only", "behind_dirty"))
+    fresh = stats.get("fresh_bad") or 0
+    changed_at = stats.get("fresh_changed_at")
+    fresh_ok = bool(fresh and changed_at is not None and changed_at >= started_at
+                    and (moved or became_dirty))
+    parts: list = []
+    explained = 0
+    if moved and bo:
+        explained += bo
+        parts.append(f"출처 뒤처짐 {bo}대")
+    if dirty_cause and do:
+        explained += do
+        parts.append(f"dirty 도장 {do}대")
+    if moved and dirty_cause and bd:
+        explained += bd
+        parts.append(f"뒤처짐+dirty 도장 {bd}대")
+    if fresh_ok:
+        explained += fresh
+        parts.append("서비스 신선도(실행 중 파일 변경 — 재기동 필요)")
+    if not parts or explained != bad:
+        return plain
+    used_head = moved and (bo or bd)
+    used_dirty = dirty_cause and (do or bd)
+    causes = [c for c, on in (("실행 중 HEAD 이동", used_head),
+                              ("실행 중 트리 dirty", used_dirty and became_dirty),
+                              ("시작부터 트리 dirty", used_dirty and dirty_start and not became_dirty),
+                              ("실행 중 파일 변경", fresh_ok and not used_head and not used_dirty))
+              if on]
+    return f"{project}: check ({' · '.join(causes)} 탓 — {' · '.join(parts)})"
 
 
 _CMDS = {"probe": cmd_probe, "plan": cmd_plan, "deliver": cmd_deliver, "check": cmd_check,
