@@ -139,6 +139,16 @@ class OriginalsUntouchedTests(unittest.TestCase):
         self.assertIn('class="item on" href="/cluster"', out)
         self.assertTrue(out.endswith("</main></div>"))
 
+    def test_wrap_places_style_inside_head_regardless_of_case(self):
+        for closing in ("</HEAD>", "</HeAd>", "</head>"):
+            with self.subTest(closing=closing):
+                prefix = "<!doctype html><html><HEAD><title>İ 원문</title>"
+                original = prefix + closing + "<body><p>내용</p></body></html>"
+                out = routes.wrap_side_nav(original, "/cluster")
+                self.assertEqual(out[:out.index("<style>")], prefix)
+                self.assertIn("</style>" + closing + "<body>", out)
+                self.assertEqual(out.count("<style>"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

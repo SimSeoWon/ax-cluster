@@ -125,7 +125,8 @@ def wrap_side_nav(text: str, current: str, extra_css: str = "") -> str:
     """
     from .nav import SIDE_CSS, nav_html
     style = "<style>" + _SIDE_VARS + SIDE_CSS + extra_css + "</style>"
-    i = text.find("</head>")
+    end_head = re.search(r"</head>", text, re.IGNORECASE)
+    i = end_head.start() if end_head else -1
     text = text[:i] + style + text[i:] if i >= 0 else style + text
     head = f'<div class="shell ax-shell">{nav_html(current)}<main>'
     m = re.search(r"<body[^>]*>", text, re.IGNORECASE)
