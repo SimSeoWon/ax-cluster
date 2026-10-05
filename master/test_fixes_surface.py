@@ -190,8 +190,9 @@ def test_detail_page_and_copy():
           SECRET_DESC in det and SECRET_PATH in det and "IsValid 추가" in det)
     check("③ 결정이 누구·브랜치·커밋·메모와 함께",
           "적용됨" in det and "fix/R1" in det and "c" * 12 in det and "널 가드" in det and "ax-fix" in det)
-    check("③ 원문이 렌더링된다 (제목·표)", "<h4>Source/NS/AI</h4>" in det and "<h3>" in det
-          and "원문 전체" in det)
+    check("③ 원문이 렌더링된다 (모듈 카드·소제목·표)",
+          '<span class="mod-name">Source/NS/AI</span>' in det and '<h4 class="sub">' in det
+          and '<table class="fx">' in det and "원문 전체" in det)
     check("③ 목록으로 돌아가는 링크", 'href="/reviews?project=NS"' in det)
 
     evil = root / "reviews" / "Simkung" / "2026-09-14_0000_eeeeeeee.md"
@@ -241,6 +242,61 @@ def test_detail_page_and_copy():
               str(out[0].get("status")))
     finally:
         PC.Registry.load = orig
+    shutil.rmtree(root)
+
+
+def test_review_module_cards():
+    """③ 리뷰 원문 — `### 모듈` 절마다 카드 · 소제목은 모듈 머리보다 작다 · 개수 · 이스케이프 (사용자 2026-10-05)."""
+    import contextlib
+    import io
+    from master.webui import fixes_page as FP
+    conv = "## 1. 변경분 코딩 컨벤션\n| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n|---|---|---|---|---|\n"
+    safe = "## 2. 변경분 버그·안전성\n| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n|---|---|---|---|---|\n"
+    body = ("# 자동 코드 리뷰 — 5223cfbf9b2b\n- 커밋: `5223cfbf9b2b`\n- 파일: 2개\n"
+            "### master/client\n" + conv + "| master/client/__main__.py | 타입 힌팅 | 누락 | 750 | 낮음 |\n"
+            + safe + "## 3. 영향 분석\n자유 서술.\n"
+            "### master\n" + conv + safe + "## 3. 영향 분석\n없음.\n")
+    out = FP.render_review(body, "R7")
+    check("③ 모듈 둘 → 카드 둘", out.count('<section class="mod">') == 2, out)
+    a = out.find('<span class="mod-name">master/client</span>')
+    b = out.find('<span class="mod-name">master</span>')
+    check("③ 카드 순서와 모듈 이름", 0 <= a < b, out)
+    check("③ 첫 `###` 앞(제목·메타)은 카드 밖에서 종전대로",
+          out.startswith("<h2>자동 코드 리뷰") and out.find("<ul>") < out.find('<section class="mod">'), out[:300])
+    cards = out.split('<section class="mod">')[1:]
+    check("③ 카드 안 `##` 은 <h4 class=\"sub\"> 소제목 — 모듈 머리보다 큰 h2/h3 가 없다",
+          all('<h4 class="sub">1. 변경분 코딩 컨벤션</h4>' in c and "<h3>" not in c and "<h2>" not in c
+              for c in cards), out)
+    check("③ CSS — 소제목(.84rem)이 모듈 이름(1.08rem)보다 작다",
+          ".doc .mod-name{" in FP._EXTRA and "font-size:1.08rem" in FP._EXTRA
+          and ".doc .mod h4.sub{font-size:.84rem" in FP._EXTRA)
+    check("③ 개수 — 컨벤션 1 · 안전성 0", "컨벤션 <b>1</b> · 안전성 <b>0</b>" in cards[0], cards[0][:300])
+    check("③ 개수 — 빈 표 둘은 0 · 0", "컨벤션 <b>0</b> · 안전성 <b>0</b>" in cards[1], cards[1][:300])
+    bare = FP.render_review("### only\n자유 서술\n", "R8")
+    check("③ 표가 없으면 개수를 싣지 않는다", "mod-count" not in bare, bare)
+    evil = FP.render_review("### <script>alert(1)</script>\n" + conv, "R9")
+    check("③ [중요] 모듈 이름의 태그를 이스케이프한다",
+          "<script>" not in evil and '<span class="mod-name">&lt;script&gt;alert(1)&lt;/script&gt;</span>' in evil,
+          evil)
+
+    plain = "# 제목\n## 1. 절\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        got = FP.render_review(plain, "R10")
+    check("③ `###` 없는 리뷰는 종전 렌더링 그대로", got == FP.render_markdown(plain) and "mod" not in got, got)
+    check("③ 그 경우 로그 한 줄",
+          err.getvalue().strip() == "[fix] 웹 상세 — 리뷰 원문에 모듈 절(###) 없음 R10", err.getvalue())
+
+    check("③ render_markdown 기본값은 종전 제목 단계 (### → h4)",
+          FP.render_markdown("### m\n## s\n") == "<h4>m</h4>\n<h3>s</h3>")
+
+    root = make_root()
+    reg = FakeRegistry({"NS": root}, "NS")
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        st, det = FP.render_detail("P1", "NS", registry=reg)
+    check("③ 플랜 상세는 카드 없이 종전 렌더링", st == 200 and 'class="mod"' not in det
+          and "<h3>원본 리뷰 지적</h3>" in det and "모듈 절" not in err.getvalue(), det[-600:])
     shutil.rmtree(root)
 
 
@@ -578,6 +634,7 @@ def test_delivery():
 if __name__ == "__main__":
     for fn in (test_scope, test_public_prefix_and_policy, test_nav_links_everywhere,
                test_public_page_has_no_body, test_detail_page_and_copy,
+               test_review_module_cards,
                test_client_tools, test_flow_check_real_git,
                test_flow_prepare_inplace_is_the_default,
                test_flow_worktree_leaves_checkout_alone, test_flow_diff_and_commit,

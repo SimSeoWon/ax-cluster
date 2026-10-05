@@ -89,6 +89,15 @@ details.src summary{cursor:pointer;color:var(--dim);font-size:.85rem}
 .doc code{color:var(--accent)}
 .doc pre.fm{color:var(--dim);font-size:.8rem;white-space:pre-wrap}
 .doc .wrap{margin:.3rem 0 .6rem}
+.doc .mod{border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;
+ background:var(--bg);margin:1rem 0;padding:.2rem .9rem .7rem;min-width:0;max-width:100%}
+.doc .mod-head{display:flex;flex-wrap:wrap;gap:.3rem .8rem;align-items:baseline;
+ border-bottom:1px solid var(--line);padding:.55rem 0 .45rem;margin-bottom:.3rem}
+.doc .mod-name{font-family:ui-monospace,Menlo,monospace;font-size:1.08rem;font-weight:700;
+ color:var(--fg);overflow-wrap:anywhere;min-width:0}
+.doc .mod-count{font-size:.78rem;color:var(--dim);font-variant-numeric:tabular-nums}
+.doc .mod-count b{color:var(--fg);font-weight:650}
+.doc .mod h4.sub{font-size:.84rem;font-weight:600;color:var(--dim);margin:.8rem 0 .3rem}
 """
 
 _COPY_JS = """<script>
@@ -284,8 +293,11 @@ def _inline(text: str) -> str:
     return _BOLD.sub(lambda m: f"<b>{m.group(1)}</b>", s)
 
 
-def render_markdown(text: str) -> str:
-    """리뷰·플랜 MD 를 읽기 좋게 — 제목 · 표 · 목록 · 문단 · 인라인 코드만. [중요] 전부 이스케이프한다."""
+def render_markdown(text: str, *, sub_heads: bool = False) -> str:
+    """리뷰·플랜 MD 를 읽기 좋게 — 제목 · 표 · 목록 · 문단 · 인라인 코드만. [중요] 전부 이스케이프한다.
+
+    `sub_heads=True` 는 리뷰 모듈 카드 안쪽 자리다 — `#` 개수와 무관하게 제목을 모두
+    `<h4 class="sub">` 로 낮춰, 모듈 머리보다 작게 보이게 한다. 기본값은 종전 그대로다."""
     lines = (text or "").splitlines()
     out, para, i = [], [], 0
     if lines and lines[0].strip() == "---":
@@ -322,8 +334,11 @@ def render_markdown(text: str) -> str:
         m = _HEAD.match(s)
         if m:
             flush()
-            lvl = min(len(m.group(1)) + 1, 5)
-            out.append(f"<h{lvl}>{_inline(m.group(2))}</h{lvl}>")
+            if sub_heads:
+                out.append(f'<h4 class="sub">{_inline(m.group(2))}</h4>')
+            else:
+                lvl = min(len(m.group(1)) + 1, 5)
+                out.append(f"<h{lvl}>{_inline(m.group(2))}</h{lvl}>")
         elif s.startswith(("- ", "* ")):
             flush()
             items = []
@@ -338,6 +353,62 @@ def render_markdown(text: str) -> str:
             para.append(s)
         i += 1
     flush()
+    return "\n".join(out)
+
+
+_MOD = re.compile(r"^###\s+(.*)$")
+
+
+def _table_counts(lines: list) -> dict:
+    """모듈 절 안의 컨벤션·안전성 표 데이터 행 수 — 머리 행·구분 행은 빼고 센다.
+
+    표를 헤더 칸으로 알아본다(`review_gen` 계약: 컨벤션은 `위반 내용`, 안전성은 `위험도`).
+    알아본 표만 키가 생긴다 — 둘 다 없으면 빈 dict 이고 머리에 개수를 싣지 않는다."""
+    counts, kind, i = {}, None, 0
+    while i < len(lines):
+        s = lines[i].strip()
+        if not s.startswith("|"):
+            kind = None
+            i += 1
+            continue
+        cells = [c.strip() for c in s.strip("|").split("|")]
+        if kind is None:
+            kind = ("conv" if "위반 내용" in cells else "safety" if "위험도" in cells else "other")
+            if kind != "other":
+                counts.setdefault(kind, 0)
+        elif kind != "other" and not all(set(c) <= set("-: ") for c in cells):
+            counts[kind] += 1
+        i += 1
+    return counts
+
+
+def _mod_count_html(counts: dict) -> str:
+    bits = [f"{label} <b>{counts[k]}</b>" for k, label in (("conv", "컨벤션"), ("safety", "안전성"))
+            if k in counts]
+    return f'<span class="mod-count">{" · ".join(bits)}</span>' if bits else ""
+
+
+def render_review(text: str, serial: str = "") -> str:
+    """자동 리뷰 원문 — `### <모듈>` 절마다 테두리 카드로 나눈다 (모듈 경계가 안 보이던 문제).
+
+    첫 `###` 앞(제목·메타 목록)은 `render_markdown` 그대로다. 카드 안의 `## N.` 제목은
+    `<h4 class="sub">` 로 낮춘다. `###` 가 하나도 없으면 로그 한 줄을 남기고 평문 렌더링으로 떨어진다."""
+    lines = (text or "").splitlines()
+    starts = [k for k, ln in enumerate(lines) if _MOD.match(ln.strip())]
+    if not starts:
+        _log(f"[fix] 웹 상세 — 리뷰 원문에 모듈 절(###) 없음 {serial}")
+        return render_markdown(text)
+    out = []
+    pre = "\n".join(lines[:starts[0]])
+    if pre.strip():
+        out.append(render_markdown(pre))
+    for n, k in enumerate(starts):
+        end = starts[n + 1] if n + 1 < len(starts) else len(lines)
+        name = _MOD.match(lines[k].strip()).group(1)
+        inner = lines[k + 1:end]
+        out.append('<section class="mod"><div class="mod-head">'
+                   f'<span class="mod-name">{_inline(name)}</span>{_mod_count_html(_table_counts(inner))}'
+                   f'</div>{render_markdown(chr(10).join(inner), sub_heads=True)}</section>')
     return "\n".join(out)
 
 
@@ -433,8 +504,10 @@ def render_detail(serial: str, project: str = "", *, registry=None, get_doc=None
                  f'<td>{_decision(d.get("status"))}</td></tr></table></div>')
     missing = ('<div class="note">원본 파일이 없다 — 아카이브 보관 기간이 지났을 수 있다. '
                '번호와 결정 기록은 남아 있다.</div>') if d.get("missing") else ""
+    body_md = d.get("body") or ""
+    rendered = render_review(body_md, s) if kind == "review" else render_markdown(body_md)
     source = (f'<details class="src" open><summary>원문 전체</summary>'
-              f'<div class="doc">{render_markdown(d.get("body") or "")}</div></details>'
+              f'<div class="doc">{rendered}</div></details>'
               if d.get("body") else "")
     body = back + meta + copybox + missing + stats + table + source
     return 200, _shell(body, title=s, heading=heading,
