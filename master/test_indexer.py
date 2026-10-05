@@ -607,6 +607,7 @@ def test_walk_halt_no_rewalk_no_skip_real_git() -> None:
     # 커서 밖 목록이 **다른 커서**에 묶여 있으면 버린다 — 되감은 범위를 건너뛰지 않는다
     tmp = Path(tempfile.mkdtemp(prefix="ax-idx-744h-"))
     p, g, h = build(tmp)
+    nm = {v: k for k, v in h.items()}   # 이 저장소의 해시표 — 앞 블록 것을 쓰면 초 경계에서 KeyError
     rewind(p, h["O"])
     C._write_beyond(p, h["R"], [h["A1"], h["B1"]])
     r, w = run_once(p, g)
