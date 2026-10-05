@@ -41,6 +41,25 @@ def _codex_lines(cwd):
     ]
 
 
+def _agy_lines(cwd=""):
+    """agy `transcript.jsonl` 실측 모양(2026-10-05) — 모델 키·cwd 키가 없다."""
+    rows = [
+        {"type": "USER_INPUT", "created_at": "2026-10-05T07:48:06Z",
+         "content": "<USER_REQUEST>\n질문\n</USER_REQUEST>\n<USER_SETTINGS_CHANGE>\nThe user changed "
+                    "setting `Model Selection` from None to Gemini 3.6 Flash (High). No need to comment"},
+        {"type": "PLANNER_RESPONSE", "created_at": "2026-10-05T07:48:07Z",
+         "input_tokens": 5083, "cache_read_tokens": 16284, "output_tokens": 194,
+         "tool_calls": [{"name": "view_file", "args": {"AbsolutePath": '"/home/sim/.gemini/x.md"'}}]},
+        {"type": "GENERIC", "created_at": "2026-10-05T07:48:08Z"},
+        {"type": "PLANNER_RESPONSE", "created_at": "2026-10-05T07:48:09Z"},          # 사용량 없는 옛 형식
+    ]
+    if cwd:
+        rows.append({"type": "PLANNER_RESPONSE", "created_at": "2026-10-05T07:48:10Z",
+                     "input_tokens": 10, "cache_read_tokens": 0, "output_tokens": 2,
+                     "tool_calls": [{"name": "run_command", "args": {"Cwd": f'"{cwd}"'}}]})
+    return rows
+
+
 def _blob(rows):
     return ("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)).encode("utf-8")
 
@@ -205,6 +224,40 @@ class CollectTests(unittest.TestCase):
         reg.names = ["NS"]
         with patch("master.projects.config.Registry.load", return_value=reg):
             self.assertNotIn("local", su.workshop_paths())
+
+    def test_agy_parse_cwd_and_attribution(self):
+        # #748: PLANNER_RESPONSE 만 센다 · 모델은 Model Selection 문구에서 · cwd 는 첫 run_command 의 Cwd
+        s = su.parse_antigravity([json.dumps(r) for r in _agy_lines("/home/sim/trunk/NS/x")])
+        self.assertEqual(s.tool, "agy")
+        self.assertEqual([(r["input"], r["cache_read"], r["output"]) for r in s.records],
+                         [(5083, 16284, 194), (10, 0, 2)])
+        self.assertEqual({r["model"] for r in s.records}, {"Gemini 3.6 Flash (High)"})
+        self.assertIsNone(su.parse_antigravity([json.dumps(_agy_lines()[0])]))
+        o = "brain/c1/.system_generated/logs/transcript.jsonl"
+        self.remote.put("agy", o, _blob(_agy_lines("/home/sim/trunk/NS/x")), 1000)
+        self.remote.put("agy", "brain/c2/.system_generated/logs/transcript.jsonl",
+                        _blob(_agy_lines()), 1001)                   # 명령을 안 돌린 대화 — cwd 없음
+        res = self.run_collect("192.168.0.43")
+        self.assertEqual(res["agy"]["copied"], 2)
+        self.assertTrue((self.raw / "NS/192.168.0.43/agy" / o).is_file())
+        self.assertTrue((self.raw / "_unassigned/192.168.0.43/agy/brain/c2/.system_generated/logs/"
+                         "transcript.jsonl").is_file())
+        snap = json.loads((self.store / "192.168.0.43/agy/"
+                           "brain__c1__.system_generated__logs__transcript.json").read_text(encoding="utf-8"))
+        self.assertEqual((snap["tool"], snap["project"], len(snap["records"])), ("agy", "NS", 2))
+
+    def test_agy_lists_only_transcript(self):
+        # 같은 대화 폴더의 transcript_full.jsonl·chunks 는 중복 — 받지 않는다
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            logs = home / ".gemini/antigravity-cli/brain/c1/.system_generated/logs"
+            (logs / "chunks").mkdir(parents=True)
+            for name in ("transcript.jsonl", "transcript_full.jsonl", "chunks/0.jsonl"):
+                (logs / name).write_text("{}\n", encoding="utf-8")
+            got = [(t, o) for t, o, _, _ in su.list_local(home)]
+            self.assertEqual(got, [("agy", "brain/c1/.system_generated/logs/transcript.jsonl")])
+        self.assertIn("transcript.jsonl", su._PS_LIST)
+        self.assertIn("transcript.jsonl", su._SH_LIST)
 
     def test_parse_listing_both_formats(self):
         text = ("claude\t12\t1791037097.5\tprojects/a/b.jsonl\r\n"

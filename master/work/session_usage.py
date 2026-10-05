@@ -1,4 +1,5 @@
-"""대화 세션 수집기 (`#713` ②, 2026-10-03 · 원본 복사 2026-10-04) — Claude Code·Codex 세션 jsonl.
+"""대화 세션 수집기 (`#713` ②, 2026-10-03 · 원본 복사 2026-10-04 · agy `#748` 2026-10-05)
+— Claude Code·Codex 세션 jsonl · Antigravity(agy) 대화 `transcript.jsonl`.
 
 🔴 [중요] **왜 지금 있나.** 지휘 세션(마스터)·요청자 세션(`.33`)의 비용은 어디에도 집계되지 않는다.
    그런데 두 도구는 **이미 세션마다 사용량을 로컬에 남긴다** — 새 기록기를 심을 필요가 없다
@@ -10,11 +11,12 @@
    종전 규칙 「숫자만 남긴다」는 **폐기됐다** — 목적이 토큰 집계에서 **나중의 대화 분석**까지로
    넓어졌다. 마스킹하지 않고 바이트 그대로 둔다:
 
-       ~/ax-state/usage/raw/<프로젝트|_unassigned>/<host|local>/<claude|codex>/<원래 상대 경로>
+       ~/ax-state/usage/raw/<프로젝트|_unassigned>/<host|local>/<claude|codex|agy>/<원래 상대 경로>
        ~/ax-state/usage/raw/index.jsonl   파일마다 project·work_id·task_id·host·tool·origin·
                                           size·mtime·sha256·collected_at (원자적 통째 교체)
 
-   `<원래 상대 경로>` 는 `~/.claude` · `~/.codex` 기준이다(`projects/…` · `sessions/…`).
+   `<원래 상대 경로>` 는 `~/.claude` · `~/.codex` · `~/.gemini/antigravity-cli` 기준이다
+   (`projects/…` · `sessions/…` · `brain/<대화 id>/.system_generated/logs/transcript.jsonl`).
    [중요] **프로젝트는 세션의 cwd 로만 정한다** — 그 기계의 등록 작업장 체크아웃 경로
    (`<프로젝트>/config.yaml` `workshops.<host>.path`) 아래면 그 프로젝트, 아니면 `_unassigned`.
    **활성 프로젝트로 떨어뜨리지 않는다.** [주의] 마스터(`local`)는 등록 작업장이 아니라서
@@ -43,6 +45,12 @@
 - Claude: 한 응답이 콘텐츠 블록마다 **같은 `message.id`·같은 usage** 로 여러 줄 찍힌다 → id 로 한 번만
 - Codex: `token_count` 이벤트가 같은 누적값으로 **반복**될 수 있다 → `total_token_usage` 가 바뀔 때만
   그 턴의 `last_token_usage` 를 센다
+- agy: 대화 폴더에 `transcript.jsonl` 과 `transcript_full.jsonl`·`chunks/` 가 같이 있다 → **`transcript.jsonl`
+  하나만** 받는다. 사용량은 `PLANNER_RESPONSE` 줄의 `input_tokens`(캐시 제외)·`cache_read_tokens`·
+  `output_tokens` 다(실측 2026-10-05: 캐시 16,284 일 때 입력 5,083). 모델 키는 없고, 사용자가 모델을
+  고르면 본문에 ``The user changed setting `Model Selection` from X to Y.`` 가 찍힌다 → 그 Y 를 이후 턴에 쓴다.
+  cwd 키도 없다 → 첫 `run_command` 호출의 `Cwd` 인자를 쓴다. 명령을 안 돌린 대화(헤드리스 `agy -p` 대부분 —
+  실측 255 중 219)는 cwd 가 비어 `_unassigned` 다. 그 실행은 작업 실행 기록(`usage_log`)에도 남는다.
 """
 from __future__ import annotations
 
@@ -51,6 +59,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -78,7 +87,10 @@ HOSTS = {
 # [중요] 사용자 결정 2026-10-04: *"마스터 세션은 ~/ax-cluster 면 AXCluster 로 귀속해"*.
 #    레지스트리에 그 프로젝트가 없으면 잇지 않는다 — 없는 프로젝트를 만들어 넣지 않는다.
 MASTER_CHECKOUTS = ((str(Path.home() / "ax-cluster"), "AXCluster"),)
-SOURCES = (("claude", ".claude", "projects"), ("codex", ".codex", "sessions"))
+SOURCES = (("claude", ".claude", "projects"), ("codex", ".codex", "sessions"),
+           ("agy", ".gemini/antigravity-cli", "brain"))
+# 도구별로 받을 파일 이름 — agy 는 대화 폴더의 `transcript.jsonl` 만(같은 폴더의 `_full`·조각은 중복이다)
+_NAME = {"claude": "*.jsonl", "codex": "*.jsonl", "agy": "transcript.jsonl"}
 _DAY = 86400
 _FROM_REGISTRY = object()           # collect_all: 보존 기간을 레지스트리에서 읽는다(기본)
 _BASE = {tool: base for tool, base, _ in SOURCES}
@@ -156,7 +168,37 @@ def parse_codex(lines) -> Session | None:
     return Session("codex", sid, recs) if recs else None
 
 
-PARSERS = {"claude": parse_claude, "codex": parse_codex}
+_AGY_MODEL = re.compile(r"setting `Model Selection` from .*? to (.+?)\.(?:\s|$)")
+
+
+def parse_antigravity(lines) -> Session | None:
+    """agy `transcript.jsonl` → `PLANNER_RESPONSE` 마다 한 레코드. 세션 id 는 폴더 이름(원본 경로)이 맡는다."""
+    model, recs = "", []
+    for raw in lines:
+        try:
+            d = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(d, dict):
+            continue
+        content = d.get("content")
+        if isinstance(content, str) and "Model Selection" in content:
+            m = _AGY_MODEL.search(content)
+            if m:
+                model = m.group(1).strip()
+        if d.get("type") != "PLANNER_RESPONSE" or "input_tokens" not in d:
+            continue
+        recs.append({
+            "ts": d.get("created_at", ""), "model": model,
+            "input": int(d.get("input_tokens") or 0),
+            "output": int(d.get("output_tokens") or 0),
+            "cache_read": int(d.get("cache_read_tokens") or 0),
+            "cache_create": 0, "reasoning": 0,
+        })
+    return Session("agy", "", recs) if recs else None
+
+
+PARSERS = {"claude": parse_claude, "codex": parse_codex, "agy": parse_antigravity}
 
 
 def _now() -> str:
@@ -216,7 +258,8 @@ def workshop_paths(projects_root: Path | None = None) -> dict[str, list[tuple[st
 
 
 def session_cwd(path: Path, tool: str, max_lines: int = 5000) -> str:
-    """원본 사본에서 세션의 cwd — Codex 는 `session_meta.payload.cwd`, Claude 는 첫 `cwd` 필드."""
+    """원본 사본에서 세션의 cwd — Codex 는 `session_meta.payload.cwd`, Claude 는 첫 `cwd` 필드,
+    agy 는 첫 `run_command` 의 `Cwd` 인자(값이 따옴표째 실린다)."""
     try:
         with path.open("rb") as fh:
             for i, raw in enumerate(fh):
@@ -232,6 +275,13 @@ def session_cwd(path: Path, tool: str, max_lines: int = 5000) -> str:
                     if d.get("type") == "session_meta":
                         cwd = (d.get("payload") or {}).get("cwd")
                         return cwd if isinstance(cwd, str) else ""
+                elif tool == "agy":
+                    for tc in d.get("tool_calls") or ():
+                        if isinstance(tc, dict) and tc.get("name") == "run_command":
+                            cwd = (tc.get("args") or {}).get("Cwd")
+                            cwd = cwd.strip().strip("\"'") if isinstance(cwd, str) else ""
+                            if cwd:
+                                return cwd
                 elif isinstance(d.get("cwd"), str) and d["cwd"]:
                     return d["cwd"]
     except OSError as e:
@@ -319,7 +369,7 @@ def list_local(home: Path | None = None) -> list[Entry]:
         root = home / base / sub
         if not root.is_dir():
             continue
-        for p in sorted(root.rglob("*.jsonl")):
+        for p in sorted(root.rglob(_NAME[tool])):
             if p.is_file():
                 st = p.stat()
                 out.append((tool, f"{sub}/{p.relative_to(root).as_posix()}", st.st_size,
@@ -332,19 +382,20 @@ $ProgressPreference='SilentlyContinue'
 [Console]::OutputEncoding=[Text.Encoding]::UTF8
 $ic=[Globalization.CultureInfo]::InvariantCulture
 $ep=[datetime]'1970-01-01'
-foreach($s in @('claude|.claude|projects','codex|.codex|sessions')){
- $t,$b,$d=$s.Split('|')
+foreach($s in @('claude|.claude|projects|*.jsonl','codex|.codex|sessions|*.jsonl','agy|.gemini\antigravity-cli|brain|transcript.jsonl')){
+ $t,$b,$d,$n=$s.Split('|')
  $r=Join-Path $env:USERPROFILE "$b\$d"
  if(Test-Path -LiteralPath $r){
-  Get-ChildItem -LiteralPath $r -Recurse -File -Filter *.jsonl | ForEach-Object {
+  Get-ChildItem -LiteralPath $r -Recurse -File -Force -Filter $n | ForEach-Object {
    $rel=$_.FullName.Substring($r.Length+1).Replace('\','/')
    "$t`t$($_.Length)`t$((($_.LastWriteTimeUtc - $ep).TotalSeconds).ToString($ic))`t$d/$rel"
   }
  }
 }"""
-_SH_LIST = ("for s in claude:.claude:projects codex:.codex:sessions; do "
-            "t=${s%%:*}; r=${s#*:}; b=${r%%:*}; d=${r#*:}; "
-            '[ -d "$HOME/$b/$d" ] && find "$HOME/$b/$d" -type f -name "*.jsonl" '
+_SH_LIST = ("for s in 'claude:.claude:projects:*.jsonl' 'codex:.codex:sessions:*.jsonl' "
+            "'agy:.gemini/antigravity-cli:brain:transcript.jsonl'; do "
+            "t=${s%%:*}; r=${s#*:}; b=${r%%:*}; r=${r#*:}; d=${r%%:*}; n=${r#*:}; "
+            '[ -d "$HOME/$b/$d" ] && find "$HOME/$b/$d" -type f -name "$n" '
             '-printf "$t\\t%s\\t%T@\\t$d/%P\\n"; done; true')
 
 
@@ -391,7 +442,7 @@ def fetch_remote(host: str, tool: str, origins: list[str], *, timeout: float = 6
     """
     target, windows = HOSTS[host]
     base = _BASE[tool]
-    remote = (f'tar -cf - -C "%USERPROFILE%\\{base}" -T -' if windows
+    remote = (f'tar -cf - -C "%USERPROFILE%\\{base.replace("/", chr(92))}" -T -' if windows
               else f'tar -cf - -C "$HOME/{base}" -T -')
     proc = subprocess.Popen([*_SSH, target, remote], stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)

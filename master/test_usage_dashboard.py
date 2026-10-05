@@ -283,6 +283,23 @@ class UsageDashboardTests(unittest.TestCase):
         only = self.report(source="all", family="codex", start="2026-10-10", end="2026-10-10")
         self.assertEqual(only["totals"]["tokens"], 15)
 
+    def test_agy_session_is_gemini_and_all_keeps_dispatch(self):
+        # #748: agy 세션 스냅샷은 gemini · 합계는 #728 계약대로 입력+출력(캐시 제외)
+        #       모두 보기에서 gemini 는 여전히 작업 실행 기록이 맡는다(헤드리스 agy 는 양쪽에 남는다)
+        agy = {"ts": "2026-10-10T01:00:00Z", "model": "Gemini 3.6 Flash (High)",
+               "input": 5083, "output": 194, "cache_read": 16284}
+        self.add_session("local", "agy", [agy, {**agy, "model": ""}], project="Alpha", name="g")
+        self.add_call("Alpha", "2026-10-10 10:00:00", model="", lane="agy",
+                      input_tokens=30, output_tokens=0)
+        session = self.report(source="session", start="2026-10-10", end="2026-10-10")
+        self.assertEqual(session["totals"]["invalid_records"], 0)
+        rows = {(r["family"], r["model"]): r for r in session["models"]}
+        self.assertEqual(set(rows), {("gemini", "Gemini 3.6 Flash (High)"),
+                                     ("gemini", "Antigravity(모델 미상)")})
+        self.assertEqual(session["totals"]["tokens"], 2 * (5083 + 194))
+        every = self.report(source="all", start="2026-10-10", end="2026-10-10")
+        self.assertEqual((every["totals"]["calls"], every["totals"]["tokens"]), (1, 30))
+
     def test_request_read_errors_and_invalid_records_are_separate(self):
         self.add_work("work-1", "Alpha", 716, "사용량 검사")
         self.add_call("Alpha", "2026-10-10T10:00:00Z", work_id="work-1")

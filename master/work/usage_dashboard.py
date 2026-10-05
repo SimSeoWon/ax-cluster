@@ -123,7 +123,7 @@ def _family(model: str, lane: str, tool: str = "") -> str:
         return "codex"
     if "gemini" in value or name == "gemini" or tool == "gemini":
         return "gemini"
-    if name == "agy" and not value:
+    if (name == "agy" or tool == "agy") and not value:
         return "gemini"                 # 머리말 계약: Antigravity 는 모델 미상이어도 gemini
     if name == "local" or tool == "local" or value.startswith(("qwen", "llama", "deepseek", "mistral")):
         return "local"
@@ -191,7 +191,7 @@ def _normal_record(raw: dict, *, session: bool, tool: str = "") -> dict:
     if not model:
         if lane.startswith("local:") and ":" in lane:
             model = lane.split(":", 1)[1]
-        elif lane.casefold().split(":", 1)[0] == "agy":
+        elif lane.casefold().split(":", 1)[0] == "agy" or tool == "agy":
             model = _AGY_UNKNOWN_MODEL
         else:
             model = "모델 미상"
@@ -294,7 +294,7 @@ def _read_sessions(root: Path, warnings: list[str], errors: dict):
             if not isinstance(data, dict) or not isinstance(data.get("records"), list):
                 raise ValueError("스냅샷 형식")
             tool = data.get("tool") or ""
-            if tool not in ("claude", "codex"):
+            if tool not in ("claude", "codex", "agy"):
                 raise ValueError("세션 도구")
             owner = data.get("project") or ""
             if not isinstance(owner, str):
