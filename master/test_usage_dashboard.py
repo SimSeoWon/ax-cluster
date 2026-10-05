@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 import sys
 
@@ -281,6 +282,27 @@ class UsageDashboardTests(unittest.TestCase):
         self.assertEqual(alpha["totals"]["tokens"], 15 + 30)           # 미분류 세션·Beta 제외
         only = self.report(source="all", family="codex", start="2026-10-10", end="2026-10-10")
         self.assertEqual(only["totals"]["tokens"], 15)
+
+    def test_request_read_errors_and_invalid_records_are_separate(self):
+        self.add_work("work-1", "Alpha", 716, "사용량 검사")
+        self.add_call("Alpha", "2026-10-10T10:00:00Z", work_id="work-1")
+        secret = "SECRET-TOKEN-DO-NOT-SHOW"
+        detail = f"{secret} {self.queue_root}"
+        cases = ((PermissionError(detail), "read_errors", "invalid_records"),
+                 (ValueError(detail), "invalid_records", "read_errors"),
+                 (TypeError(detail), "invalid_records", "read_errors"))
+        for error, counted, other in cases:
+            with self.subTest(error=type(error).__name__):
+                with patch("master.work.usage_dashboard._read_md", side_effect=error):
+                    data = self.report(start="2026-10-10", end="2026-10-10")
+                self.assertEqual(data["totals"][counted], 1)
+                self.assertEqual(data["totals"][other], 0)
+                self.assertEqual(data["totals"]["calls"], 1)
+                self.assertEqual(data["totals"]["unlinked_calls"], 1)
+                self.assertIn("일감 연결 자료 중 읽지 못한 항목이 있습니다.", data["warnings"])
+                visible = json.dumps(data, ensure_ascii=False)
+                self.assertNotIn(secret, visible)
+                self.assertNotIn(str(self.queue_root), visible)
 
     def test_validation_and_malformed_records(self):
         invalid = (

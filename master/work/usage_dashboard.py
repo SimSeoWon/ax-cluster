@@ -251,7 +251,7 @@ def _request_map(root: Path, warnings: list[str], errors: dict) -> dict[str, dic
                            "title": str(meta.get("title") or "")}
         except (OSError, ValueError, TypeError) as exc:
             _error("일감 읽기", exc)
-            errors["invalid_records"] += 1
+            errors["invalid_records" if isinstance(exc, (ValueError, TypeError)) else "read_errors"] += 1
             _warn(warnings, "일감 연결 자료 중 읽지 못한 항목이 있습니다.")
     return result
 
