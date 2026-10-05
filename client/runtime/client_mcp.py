@@ -1037,7 +1037,8 @@ TOOLS = [
     {"name": "redmine_note",
      "description": "레드마인 이슈에 코멘트를 남긴다 (마스터 경유 — 키는 이 PC 에 없다). "
                     "상태 이름은 실재하는 것만: 신규·진행·해결·검토·완료. "
-                    "완료로 닫는 것은 사람의 판단이다.",
+                    "AX 인프라(ax-cluster) 일감은 마스터가 검증 뒤 완료로 닫을 수 있다. "
+                    "게임·분산 작업 일감의 완료는 사람(.33)의 판단이다.",
      "inputSchema": {"type": "object", "required": ["issue_id", "notes"],
                      "properties": {"issue_id": {"type": "integer"},
                                     "notes": {"type": "string"},

@@ -6,6 +6,8 @@
     python -m master.client check <프로젝트>     배달된 것이 정본과 같은지 검사
     python -m master.client update               등록된 모든 프로젝트를 현재 HEAD로 배달·검사
     python -m master.client uproject <프로젝트>  에디터 플러그인 계획 (`--confirm` 으로 적용)
+    python -m master.client master-local         마스터 Claude·Codex·agy 에 ax-client 등록 계획
+                                                 (`--apply` 로 적용 · `--check` 로 대조)
 
 [중요] **`probe` → `plan` → `deliver` 순서로 쓴다.** 남의 기계에 쓰는 작업이므로, 무엇을 어디에
 쓸지 먼저 눈으로 본다.
@@ -943,8 +945,42 @@ def _label_check_failure(project: str, stats: dict, *, moved: bool, dirty_start:
     return f"{project}: check ({' · '.join(causes)} 탓 — {' · '.join(parts)})"
 
 
+def cmd_master_local(*, apply: bool = False, check: bool = False) -> int:
+    """마스터 로컬 CLI 셋(Claude·Codex·agy)에 `ax-client` 등록 — 기본은 계획만.
+
+    [중요] 프로젝트 인자를 받지 않는다 — `config.json` 의 `project` 는 **마운트**다(`update` 처럼
+    프로젝트를 고르지 않는 명령). 마운트를 못 읽으면 폴백 없이 멈춘다.
+    """
+    from . import master_local as ml
+    if apply and check:
+        print("[master-local] --apply 와 --check 는 따로 돌린다")
+        return 2
+    try:
+        project = ml.mounted_project()
+    except Exception as e:                                           # noqa: BLE001
+        print(f"[master-local] [실패] 마운트를 못 읽는다 — {e}")
+        return 2
+    if not project:
+        print("[master-local] [실패] 마운트(projects.yaml 의 active)가 비어 있다 — 폴백은 없다")
+        return 2
+    p = ml.Paths.default()
+    try:
+        if check:
+            return ml.check(p, project)
+        if apply:
+            return ml.apply(p, project)
+        for line in ml.plan(p, project):
+            print(line)
+        print("[master-local] 계획만 출력했다 — 쓰려면 --apply")
+        return 0
+    except ml.MasterLocalError as e:
+        print(f"[master-local] [실패] {e}")
+        return 1
+
+
 _CMDS = {"probe": cmd_probe, "plan": cmd_plan, "deliver": cmd_deliver, "check": cmd_check,
-         "ensure": cmd_ensure, "uproject": cmd_uproject, "update": cmd_update}
+         "ensure": cmd_ensure, "uproject": cmd_uproject, "update": cmd_update,
+         "master-local": cmd_master_local}
 
 
 def main(argv: list) -> int:
@@ -956,7 +992,9 @@ def main(argv: list) -> int:
         return 2
     if argv[0] == "update":
         return cmd_update(init="--init" in argv)
-    rest = [a for a in argv[1:] if not a.startswith("-")]
+    if argv[0] == "master-local":
+        return cmd_master_local(apply="--apply" in argv, check="--check" in argv)
+    rest =[a for a in argv[1:] if not a.startswith("-")]
     # [중요] **fail-closed** — 주워 쓰지 않는다 (`#227` 소 1.2, 모듈 머리말 참조).
     if not rest:
         print(f"[중요] 프로젝트 인자가 없다 — 폴백은 없다.\n"
