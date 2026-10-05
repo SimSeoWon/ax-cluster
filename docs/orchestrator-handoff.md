@@ -4,10 +4,13 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 인수**: **Claude** · 마스터 담당 기록 2026-10-04 22:27:47 KST. **현재 갱신: 2026-10-05 14:45 KST** — 사용자: 토큰 잔량 부족으로 인계 작성.
-  main = origin/main `5223cfb` 실제 재조회, 이 문서만 미커밋. 워커 지휘자 모드 `codex`(바꾸지 않음).
-  워커 체크아웃 4곳·배달 도장 = `f5d7f77`(1커밋 뒤 — `5223cfb` 는 마스터에서 도는 `update` 코드라 배달물 영향 없음, 다음 배포 때 맞춘다).
-  **진행 중인 작업·백그라운드 프로세스 없음.** 신규 파견 없음. 다음 작업은 사용자가 고른다(§0 첫 두 절).
+- **현재 인수**: **Codex** · 마스터 담당 기록 2026-10-05 14:37:58 KST.
+  **현재 갱신: 2026-10-05 15:58 KST** — 사용자: “토큰 얼마 없으니까 인수인계서 작성해!”.
+  main = origin/main `98c98a8a6f77c3f4abefa57b4b5bab03575b0df1`.이 문서만 미커밋으로 남긴다.
+  워커 지휘자 모드 `codex`(출처 state, 마지막 전환 14:37:51).마스터 담당 기록의 Redmine 미조회 문구는 초기 기록이며 현재 제약이 아니다.
+  서비스 3종 재기동과 등록 5프로젝트·15작업장 배달/검사 완료.배달 출처는 모두 `98c98a8`.
+  **진행 중인 수동 명령·원격 파견·서브 에이전트 없음**.운영 데몬/타이머는 정상 운영 중.
+  다음 작업은 리뷰 상세의 구분·접기 UI.모듈별/파일별 범위 확인이 남았다(§0 최신 절).
 
 아래 메타데이터는 이전 Claude 인계(20:25) 시점의 기록이며 현재 상태는 §0 첫 절을 따른다.
 
@@ -46,6 +49,106 @@
   (`3e46078` 은 마스터 측 배달 코드라 워커 동기화 불필요). 홈 중복 스킬 `~/.agents/skills/ax-work` 주의는 무해.
 
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
+
+### 최신 — 리뷰 수정 5건 통합·운영 반영 완료 / 리뷰 UI 범위 확인 대기 (2026-10-05 15:58, Codex)
+
+#### 사용자 결정과 다음 작업
+
+- 작업 방식은 **로컬 서브 에이전트**로 선택했다. 같은 리뷰 작업에서 다시 분산 방식 질문을 하지 않는다.
+- 사용자 승인으로 자동 리뷰 5건 수정·각 커밋, 이후 “진행해줘!”로 main 통합·Gitea push를 완료했다.
+  이어 “서비스 재기동하고 워커 동기화 진행해”로 재기동과 등록 전체 배달을 완료했다.
+- **새 요청 원문**: “리뷰 페이지에 각 파일 - 변경분 코딩 컨벤션 - 변경분 버그. 안정성, - 영향 분석이 있는데,
+  파일 단위로 구분되도록 외곽선을 넣는다거나 열고 접는 기능이 있어야겠는데?”
+- 읽기 조사와 RAG까지 완료했으며 **UI 코드는 아직 수정하지 않았다**. 처음에는 펼친 테두리 블록과
+  native `<details>/<summary>`를 제안했다. 다만 현재 원문 `###` 제목은 **파일이 아닌 모듈(디렉터리)** 이다.
+  다음 두 선택지를 질문했다: ① 기존 원문 묶음에 테두리·접기 추가 ② 세 하위 절을 실제 파일별로 생성하도록 생성 계약도 변경.
+  마지막 “응 그리고 … 인수인계서 작성해!”는 두 선택지 중 번호를 특정하지 않았다. **범위를 결정했다고 간주하지 않는다**.
+- **바로 다음 작업**: 위 범위를 사용자에게 짧게 확인 → `distribute` 기존 절차, 로컬 서브 에이전트 구현·독립 검토 →
+  변경 파일/검사 결과 제시 → 새 커밋·push 승인. 이번 인계 문서의 커밋·push도 아직 승인되지 않았다.
+
+#### 저장소·완료한 수정
+
+- 작업 위치 `/home/sim/ax-cluster`, branch `main`, HEAD와 `origin/main` 모두
+  `98c98a8a6f77c3f4abefa57b4b5bab03575b0df1`.인계 작성 전 clean, 작성 뒤 변경은 이 문서뿐이다.
+- 수정은 `ax-fix` 정본 `client/runtime/fix_flow.py prepare/diff/commit/release`로 번호별 처리했다.
+  각 `fix/Rxx` 브랜치는 삭제하지 않았다. 사용자 승인으로 각각 `git merge --no-ff` 뒤 `git push origin main` 완료.
+
+| 항목 | 수정 커밋·브랜치 | 변경 |
+|---|---|---|
+| R48-2 | `5b45bad` · `fix/R48` | `stamp_dirty=None`을 뒤처짐으로 오분류하지 않음(`dirty is False`) |
+| R25-1 | `2ddface` · `fix/R25` | 빈 모델 표의 ‘기록 없음’ 중복 제거 |
+| R27-2 | `f2d76cf` · `fix/R27` | 일감 파일 OSError는 read_errors, ValueError/TypeError는 invalid_records |
+| R30-2 | `075bbba` · `fix/R30` | 대소문자 무관 HEAD 탐색, 원문 index로 CSS 삽입(Unicode 위치 보존) |
+| R43-1 | `df39ca3` · `fix/R43` | 실제 Git 검사 함수의 임시 저장소를 TemporaryDirectory로 정리 |
+
+- main 병합 커밋 순서: `27aebaa` → `dd50dbe` → `dac4c8d` → `ffdbc2f` → **`98c98a8`**.
+  GitHub 직접 push 없음. 정본은 Gitea `origin`; 원격 훅의 색인 이벤트 1건 큐잉 확인.
+- 정본 리뷰 상태 `master.context_synth.fix_index`에 위 5건 applied 및 병합·push·검증 결과 기록/재조회 완료.
+  기존 해결 R42-1은 `5223cfb`로 applied. 사용자 승인으로 R37-2와 R30-1은 dismissed.
+- 15:57 재조회: **미결 리뷰 4문서·5항목**, 모두 낮음 — R48-1/R48-3/R27-1/R37-1/R41-1.
+  각각 타입 힌트, 빈 dirties 호출 방어, 긴 줄, 테스트 내 import, pi 상수 지적이며 앞서 보류했다.
+  P1/P2 주간 플랜은 별도 미결, 검토하지 않았다. 새 R49~R52는 지적 0건.
+
+#### 검증·실패 기록
+
+- 병합 후 `.venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v`
+  **20/20 통과, 세부 판정 791건**(색인기 142, 사용량 집계 10, 사용량 페이지 8, 사이드 목록 8 포함).
+  Gitea 권한 검사 때문에 동일 명령을 샌드박스 해제 승인으로 실행했다.
+- 별도 클라이언트 회귀 `test_update_reports_dirty_tree`, `test_update_reports_head_movement`,
+  `test_update_head_round_trip_is_reported`: **PASS=34 FAIL=0**. 전체 test_client_bundle는 실 SSH/운영 영향이 있어 돌리지 않았다.
+- 번호별 검사와 독립 검토 통과: R48 34, R25 8, R27 10, R30 8, R43 대상 함수 11.
+  `git diff --check` 및 main 통합 diff 검사 통과.
+- **이번 실패**: 루트가 R27 추가 검증에서 존재하지 않는 함수 이름을 추측 입력해 AttributeError(rc1).
+  실제 `test_request_read_errors_and_invalid_records_are_separate` 선언을 확인하지 않은 실행 실수였다.
+  실패 보고 후 멈췄고 사용자 “응 다시 검증해” 승인으로 목록→선언 확인→정확한 함수 재실행 통과했다.
+  코드 결함이나 검사 실패로 기록하지 않는다. 다음에는 실제 검사명 확인 뒤 실행한다.
+
+#### 서비스 재기동·워커 배달 실측
+
+- 기존 `scripts/ax-service-restart <unit>`(report73, master/service_restart.py)으로 순차 재기동:
+  `ax-projects` **15:29:52**, `ax-task-queue` **15:30:02**, `ax-broker` **15:30:08 KST**.
+  기동 시각 변화 + active/running + Result=success 확인. `/livez`(8101/8102/8103) 모두 `{ok:true}`.
+  ax-projects는 기존 프로세스 stop-sigterm 종료를 기다린 뒤 정상 재기동했으며 강제 종료하지 않았다.
+- 기존 호출:
+  `AX_PROJECTS_ROOT=/home/sim/ax-cluster PYTHONUNBUFFERED=1 .venv/bin/python -B -m master.client update`
+  (네트워크/원격 쓰기를 위해 같은 명령의 샌드박스 해제 승인).**최종 rc0·완료 줄 확인**.
+- 등록 5프로젝트 **ModularStage, NS, KimodoMotion_WebUI, MotionForge, AXCluster** 각각
+  `.2/.33/.43` **15/15 배달 후 최종 검사 OK**.config, 프로젝트 로컬 스킬, MCP 등록, 페이로드 해시,
+  태그, 출처 마스터 HEAD 일치를 확인했다. 프로젝트별 원래 역할과 index_only 진입 문서 보존 계약을 유지했다.
+- 배달 중 HEAD/dirty 변동 없음. UI 요청은 배달 중 들어왔지만 읽기 분석만 해서 clean을 유지했다.
+- **위 동기화는 관리 자산 배달/검사다**.워커 Git 소스 체크아웃 HEAD나 `.43 ~/ax-cluster` 관리 클론을
+  이번에 fetch/pull로 맞추지 않았고 최신 소스라고 주장하지 않는다. 필요한 경우 기존 호출 계약부터 확인한다.
+  `scripts/sync-clones.sh`는 읽었지만 실행하지 않았다(옛 GitHub 라벨과 실제 origin=Gitea 구분 필요).
+- 최신 systemd 조회: 상주 3종 active/running; `ax-indexer` 15:56:31, `ax-review-queue` 15:46:51,
+  둘 다 oneshot inactive/dead·Result=success.별도 수동 작업/원격 파견 없음.
+
+#### 리뷰 UI 조사 결과 / 서브 에이전트
+
+- RAG `search_context_tool`에서 `master/webui/fixes_page.md` 검색 → 실제
+  `AXCluster/context/master/webui/fixes_page.md` 전문 → `master/webui/fixes_page.py` 대조 완료.
+- 현재 `render_detail`은 수정 항목 통합 표와 원문 전체를 보여 주고, `render_markdown`은 제목·표·본문을 escape한다.
+  `master/context_synth/review_gen.py`의 생성 계약상 `###`는 모듈 단위(조사 에이전트가 97/272행 확인).
+  제목만 접기 블록으로 감싸면 모듈 구분이 되며 실제 파일별 분석으로는 바뀌지 않는다.
+- UI만 변경할 후보는 `master/webui/fixes_page.py`, `master/test_fixes_surface.py`.
+  `items_detail[].file`로 수정 항목을 묶는 것은 가능하지만 원문 영향 분석은 모듈별이라 이를 임의로 파일에 귀속시키지 않는다.
+  검사 계약 `.venv/bin/python -B master/test_fixes_surface.py`(스크립트 PASS/FAIL, unittest discovery 아님).
+  범위 확정 뒤 테스트를 고른다. 아직 코드 변경·검사·브라우저 확인·새 Redmine 등록 없음.
+- 로컬 에이전트: r48_fix(R48 구현), remaining_review_prep(R25/R27/R30/R43 구현 및 UI 읽기 분석),
+  r48_review(독립 검토).모두 completed, 파일 쓰는 에이전트 없음. 새 세션에서 실행 ID 이전을 전제하지 않는다.
+
+#### 기존 기능 호출 관련 사용자 결정 — 재발 금지
+
+- MCP 목록에서 ax-client가 안 보이거나 역할 토큰이 없다고 Redmine 기능 부재로 판단하지 않는다.
+  기존 설정/문서/소스를 확인하며, **호출 방법이 불명확하면 사용자에게 먼저 묻는다**.
+  임시 Python 파일·스크립트·대체 경로를 만들지 않는다. 과거 /tmp 경로를 재사용해 우회하지 않는다.
+- ax-client는 이 프로젝트의 로컬 stdio MCP이며 OpenAI 제품이나 systemd 서비스가 아니다.
+  이번 초기 MCP 호출은 `/home/sim/.codex/ax-client/.ax/token` 역할 토큰 미구성으로 실패했다.
+  실제 Redmine은 기존 `master.redmine.get_issue`를 통해 조회 성공했다(#744/#727 진행, #737 완료, #745 아이디어 — 당시 조회).
+  기본 샌드박스에서 api_key가 빈 값이면 Docker 권한 차단 가능성: **동일한 좁은 기존 조회 명령**의
+  샌드박스 해제 승인으로 확인, 키 자체 출력 금지.해당 일감은 인계 시 새로 조회하지 않았으므로 현 상태 재확인 필요.
+- 홈 AGENTS.md/CLAUDE.md 링크 보존, 목록 확인과 읽기를 두 별도 도구 호출로 실행하며 에이전트에도 명시한다.
+  RAG 본문을 실제 코드와 대조한다. 실패면 보고 후 멈추고 사용자 재개 승인을 따른다.
+- UI는 미커밋 변경이 없으며 **이번 인계 문서 작성만 새 승인**이다. 인계를 커밋·push 승인으로 확대하지 않는다.
 
 ### 최신 — 자동 리뷰 점검 · #744 · #727 · #737 종결 · #745 (2026-10-05 14:45, Claude)
 
