@@ -994,7 +994,7 @@ def main(argv: list) -> int:
         return cmd_update(init="--init" in argv)
     if argv[0] == "master-local":
         return cmd_master_local(apply="--apply" in argv, check="--check" in argv)
-    rest =[a for a in argv[1:] if not a.startswith("-")]
+    rest = [a for a in argv[1:] if not a.startswith("-")]
     # [중요] **fail-closed** — 주워 쓰지 않는다 (`#227` 소 1.2, 모듈 머리말 참조).
     if not rest:
         print(f"[중요] 프로젝트 인자가 없다 — 폴백은 없다.\n"
