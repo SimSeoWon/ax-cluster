@@ -246,6 +246,7 @@ def create_issue(subject: str, description: str = "", *, tracker_name: str = "",
 
 def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio=None,
                  fixed_version: str = "", parent_issue_id=None,
+                 priority_name: str = "", subject: str = "", description: str = "",
                  project: str = PROJECT_ID, key: str = "", url: str = "",
                  sender=None) -> str:
     """기존 이슈에 코멘트·상태·완료율을 붙인다. **사람이 읽을 결과 문자열**을 돌려준다.
@@ -256,6 +257,10 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
     [주의] `fixed_version` 을 쓸 때는 `project` 도 줘야 한다 (`#303`) — 버전은 **프로젝트에
     속하므로** 기본값(AX 프로젝트)으로 `ns` 이슈의 마일스톤을 찾으면 못 찾는다. 못 찾으면
     그 필드만 생략하고 결과 문장에 사유가 붙는다.
+
+    `priority_name`·`subject`·`description` 은 비우면 안 바꾼다 (`#752`). 우선순위는 상태와
+    같은 결 — 이름으로 해석하고, 없으면 그 필드만 건너뛰고 말한다. `description` 은 본문
+    **전체 교체**다(차이는 Redmine 이 저널에 남긴다).
     """
     base = (url or base_url()).rstrip("/")
     k = key or api_key()
@@ -280,13 +285,24 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
             status_note = f" (상태 `{status_name}` 은 이 Redmine 에 없어 건너뜀)"
         else:
             issue["status_id"] = sid
+    priority_note = ""
+    if priority_name:
+        pid = resolve_priority_id(priority_name, key=k, url=base, sender=sender)
+        if pid is None:
+            priority_note = f" (우선순위 `{priority_name}` 은 이 Redmine 에 없어 건너뜀)"
+        else:
+            issue["priority_id"] = pid
+    if (subject or "").strip():
+        issue["subject"] = subject.strip()[:250]       # create_issue 와 같은 한도
+    if description:
+        issue["description"] = description
     stamp_note = ""
     sk = _stamp_fields(issue, fixed_version, parent_issue_id,
                        project=project, key=k, base=base, sender=sender)
     if sk:
         stamp_note = " (" + " · ".join(sk) + ")"
     if not issue:
-        return "[주의] 레드마인 갱신 건너뜀 — 바꿀 것이 없다" + stamp_note
+        return "[주의] 레드마인 갱신 건너뜀 — 바꿀 것이 없다" + priority_note + stamp_note
 
     try:
         _request("PUT", f"{base}/issues/{iid}.json", k, {"issue": issue}, sender=sender)
@@ -294,9 +310,10 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
         return f"[주의] 레드마인 #{iid} 갱신 실패 — HTTP {e.code}"
     except Exception as e:                                   # noqa: BLE001
         return f"[주의] 레드마인 #{iid} 갱신 실패 — {type(e).__name__}: {e}"
-    what = ", ".join(k2 for k2 in ("notes", "status_id", "done_ratio",
+    what = ", ".join(k2 for k2 in ("notes", "status_id", "done_ratio", "priority_id",
+                                   "subject", "description",
                                    "fixed_version_id", "parent_issue_id") if k2 in issue)
-    return f"레드마인 #{iid} 갱신 ({what}){status_note}{stamp_note}"
+    return f"레드마인 #{iid} 갱신 ({what}){status_note}{priority_note}{stamp_note}"
 
 
 # ─────────────────────────────────────────

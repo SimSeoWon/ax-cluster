@@ -224,6 +224,11 @@ class RedmineNoteReq(BaseModel):
     #    [주의] 버전은 프로젝트에 속하므로 위 `project` 태그가 그 조회 대상을 정한다.
     fixed_version: str = ""
     parent_issue_id: Optional[int] = None
+    # 기존 일감의 우선순위·제목·본문 (`#752`). 비우면 안 바꾼다 — 기존 호출자는 그대로다.
+    #    [주의] `description` 은 본문 **전체 교체**다. `notes` 가 비어도 이것들만으로 갱신된다.
+    priority_name: str = ""
+    subject: str = ""
+    description: str = ""
 
 
 class RedmineIssueReq(BaseModel):

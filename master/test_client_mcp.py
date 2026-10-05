@@ -155,6 +155,19 @@ def test_tools_call_through_protocol():
     check("redmine_note 가 마스터 경유 경로를 부른다",
           any(p == "/api/v1/redmine/note" for _m, p, _p2 in calls), str(calls[-1]))
     check("한글이 그대로 실린다", calls[-1][2]["notes"] == "확인")
+    check("[중요] 새 필드(#752)는 안 주면 페이로드에 없다 — 종전과 같다",
+          not ({"priority_name", "subject", "description"} & set(calls[-1][2])), str(calls[-1]))
+
+    r = M.handle_message({"jsonrpc": "2.0", "id": 8, "method": "tools/call",
+                          "params": {"name": "redmine_note",
+                                     "arguments": {"issue_id": 752, "notes": "",
+                                                   "priority_name": "높음",
+                                                   "subject": "새 제목",
+                                                   "description": "새 본문"}}}, api=api)
+    got = calls[-1][2]
+    check("우선순위·제목·본문을 줬으면 그대로 싣는다 (#752)",
+          got.get("priority_name") == "높음" and got.get("subject") == "새 제목"
+          and got.get("description") == "새 본문", str(got))
 
 
 def test_redmine_delegation_goes_to_queue():

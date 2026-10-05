@@ -368,10 +368,12 @@ def tool_get_work(api, work_id: str) -> dict:
 
 def tool_redmine_note(api, issue_id: int, notes: str, status_name: str = "",
                       done_ratio=None, fixed_version: str = "",
-                      parent_issue_id=None) -> dict:
-    """코멘트·상태·완료율 + **사후 스탬프**(마일스톤·부모, `#303`).
+                      parent_issue_id=None, priority_name: str = "",
+                      subject: str = "", description: str = "") -> dict:
+    """코멘트·상태·완료율 + **사후 스탬프**(마일스톤·부모, `#303`) + 우선순위·제목·본문(`#752`).
 
     [주의] 마일스톤이 안 붙어도 갱신 자체는 성공한다 — 사유가 `result` 문장에 붙어 온다.
+    새 세 필드는 **줬을 때만** 싣는다 — 안 주면 종전과 같은 페이로드다.
     """
     payload = {"issue_id": int(issue_id), "notes": notes or ""}
     if status_name:
@@ -382,6 +384,12 @@ def tool_redmine_note(api, issue_id: int, notes: str, status_name: str = "",
         payload["fixed_version"] = fixed_version
     if parent_issue_id not in (None, "", 0):
         payload["parent_issue_id"] = int(parent_issue_id)
+    if priority_name:
+        payload["priority_name"] = priority_name
+    if (subject or "").strip():
+        payload["subject"] = subject
+    if description:
+        payload["description"] = description
     return api("POST", "/api/v1/redmine/note", payload)
 
 
@@ -1036,6 +1044,7 @@ TOOLS = [
                      "properties": {"term": {"type": "string"}}}},
     {"name": "redmine_note",
      "description": "레드마인 이슈에 코멘트를 남긴다 (마스터 경유 — 키는 이 PC 에 없다). "
+                    "우선순위·제목·본문도 바꿀 수 있다(비우면 그대로). "
                     "상태 이름은 실재하는 것만: 신규·진행·해결·검토·완료. "
                     "AX 인프라(ax-cluster) 일감은 마스터가 검증 뒤 완료로 닫을 수 있다. "
                     "게임·분산 작업 일감의 완료는 사람(.33)의 판단이다.",
@@ -1047,7 +1056,13 @@ TOOLS = [
                                     "fixed_version": {"type": "string",
                                                       "description": "마일스톤 이름 (부분 일치). 사후 스탬프용"},
                                     "parent_issue_id": {"type": "integer",
-                                                        "description": "부모 이슈 번호"}}}},
+                                                        "description": "부모 이슈 번호"},
+                                    "priority_name": {"type": "string",
+                                                      "description": "낮음·보통·높음 — redmine_meta 로 확인"},
+                                    "subject": {"type": "string",
+                                                "description": "새 제목"},
+                                    "description": {"type": "string",
+                                                    "description": "본문 전체를 바꾼다"}}}},
     {"name": "redmine_list_issues",
      "description": "레드마인 이슈 목록 (마스터 경유 — 키는 이 PC 에 없다). status 는 open(기본)/"
                     "closed/*. [중요] 우리 규약에서 닫힌 상태는 「완료」뿐이라 「해결」은 open 에 "
@@ -1410,7 +1425,10 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                                  status_name=str(args.get("status_name") or ""),
                                  done_ratio=args.get("done_ratio"),
                                  fixed_version=str(args.get("fixed_version") or ""),
-                                 parent_issue_id=args.get("parent_issue_id"))
+                                 parent_issue_id=args.get("parent_issue_id"),
+                                 priority_name=str(args.get("priority_name") or ""),
+                                 subject=str(args.get("subject") or ""),
+                                 description=str(args.get("description") or ""))
     if name in ("search_context", "list_domains", "get_domain", "get_domain_layer",
                 "get_object_spec", "get_action_spec", "find_invariants_by_class",
                 "list_task_templates", "get_task_template"):

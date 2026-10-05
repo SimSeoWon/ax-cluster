@@ -138,6 +138,82 @@ def test_api_key_never_returned_from_logs():
     check("빈 값도 안전", RM.api_key(reader=lambda: None) == "")
 
 
+# ── 우선순위·제목·본문 (`#752`) ──────────────────────────────────
+# 비우면 안 바꾼다 — 기존 호출자의 페이로드가 그대로인 것까지 잰다.
+
+class PriSender(Sender):
+    """우선순위 카탈로그(enumerations)까지 답하는 전송."""
+
+    def __call__(self, method, url, payload=None):
+        if url.endswith("/enumerations/issue_priorities.json"):
+            self.calls.append((method, url, payload))
+            return {"issue_priorities": [{"id": 1, "name": "낮음"}, {"id": 2, "name": "보통"},
+                                         {"id": 3, "name": "높음"}]}
+        return super().__call__(method, url, payload)
+
+
+def test_update_priority_resolved():
+    s = PriSender()
+    out = RM.update_issue(752, notes="올림", priority_name="높음", sender=s)
+    _, payload = s.puts[0]
+    check("우선순위 이름을 id 로 바꿔 싣는다", payload["issue"].get("priority_id") == 3,
+          str(payload))
+    check("무엇을 바꿨는지 말한다 (priority_id)", "priority_id" in out, out)
+
+
+def test_update_unknown_priority_keeps_notes_and_says_so():
+    s = PriSender()
+    out = RM.update_issue(752, notes="코멘트", priority_name="긴급", sender=s)
+    check("PUT 은 나간다", len(s.puts) == 1, str(s.calls))
+    _, payload = s.puts[0]
+    check("코멘트는 그대로 남는다", payload["issue"].get("notes") == "코멘트", str(payload))
+    check("[중요] 없는 우선순위는 안 싣는다", "priority_id" not in payload["issue"], str(payload))
+    check("[중요] 건너뛴 사실을 문장에 남긴다", "건너뜀" in out and "긴급" in out, out)
+
+
+def test_update_unknown_priority_alone_is_nothing_to_change():
+    s = PriSender()
+    out = RM.update_issue(752, priority_name="긴급", sender=s)
+    check("바꿀 것이 없으면 PUT 하지 않는다", not s.puts, str(s.calls))
+    check("사유가 함께 보인다", "바꿀 것이 없다" in out and "긴급" in out, out)
+
+
+def test_update_subject_trimmed_and_limited():
+    s = Sender()
+    out = RM.update_issue(752, subject="  새 제목  ", sender=s)
+    _, payload = s.puts[0]
+    check("제목은 앞뒤 공백을 걷는다", payload["issue"].get("subject") == "새 제목", str(payload))
+    check("notes 없이도 제목만으로 갱신된다", "notes" not in payload["issue"], str(payload))
+    check("무엇을 바꿨는지 말한다 (subject)", "subject" in out, out)
+    s = Sender()
+    RM.update_issue(752, subject="가" * 300, sender=s)
+    check("제목은 250자에서 자른다 (create_issue 와 같다)",
+          len(s.puts[0][1]["issue"]["subject"]) == 250)
+    s = Sender()
+    out = RM.update_issue(752, subject="   ", sender=s)
+    check("공백뿐인 제목은 안 바꾼다", not s.puts and "바꿀 것이 없다" in out, out)
+
+
+def test_update_description_replaces_body():
+    s = Sender()
+    body = "## 목표\n본문 전체"
+    out = RM.update_issue(752, notes="본문 교체", description=body, sender=s)
+    _, payload = s.puts[0]
+    check("본문이 그대로 실린다", payload["issue"].get("description") == body, str(payload))
+    check("무엇을 바꿨는지 말한다 (description)", "description" in out, out)
+
+
+def test_update_omitted_new_fields_payload_unchanged():
+    """[중요] 기존 호출자 — 새 필드를 안 주면 페이로드가 종전과 같다."""
+    s = PriSender()
+    RM.update_issue(7, notes="완료", status_name="해결", done_ratio=100, sender=s)
+    _, payload = s.puts[0]
+    check("페이로드 키가 종전과 같다",
+          set(payload["issue"]) == {"notes", "status_id", "done_ratio"}, str(payload))
+    check("우선순위 조회를 하지 않는다",
+          not any("issue_priorities" in u for _m, u, _p in s.calls), str(s.calls))
+
+
 # ── 마일스톤·부모 스탬프 (`#303`) ────────────────────────────────
 # [중요] 원전에 없던 추가라 계약을 여기서 못박는다: **못 붙으면 사유가 보인다.**
 
@@ -484,6 +560,12 @@ def main() -> int:
                test_nothing_to_change, test_bad_issue_id,
                test_http_failure_is_reported_not_raised, test_missing_key_is_loud,
                test_api_key_never_returned_from_logs,
+               test_update_priority_resolved,
+               test_update_unknown_priority_keeps_notes_and_says_so,
+               test_update_unknown_priority_alone_is_nothing_to_change,
+               test_update_subject_trimmed_and_limited,
+               test_update_description_replaces_body,
+               test_update_omitted_new_fields_payload_unchanged,
                test_create_stamps_version_and_parent,
                test_create_unknown_version_is_skipped_loudly,
                test_create_bad_parent_is_skipped_loudly,
