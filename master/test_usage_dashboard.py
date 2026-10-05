@@ -164,6 +164,38 @@ class UsageDashboardTests(unittest.TestCase):
         unknown = self.report(family="unknown", start="2026-10-10", end="2026-10-10")
         self.assertEqual(unknown["totals"]["calls"], 0)
 
+    def test_layer2_sink_rows_link_to_issue_without_double_counting_all(self):
+        # #696: 실제 sink가 쓴 검증 호출을 집계까지 잇는다. CLI·운영 큐는 사용하지 않는다.
+        from master.work import usage
+
+        self.add_work("layer2-work", "Alpha", 696, "층2 검증 복구")
+        log = self.projects_root / "Alpha" / "usage_log.jsonl"
+        with patch("master.work.usage.datetime") as clock:
+            clock.now.return_value = datetime(2026, 10, 10, 12)
+            with usage.sink(log, source="layer2", work_id="layer2-work", task_id="piece"):
+                usage.emit_cli("agy", usage.Usage(lane="agy", input_tokens=10,
+                                                  output_tokens=2, cache_read=100),
+                               rc=1, seconds=2)
+                usage.emit_cli("claude", usage.Usage(lane="claude", input_tokens=20,
+                                                     output_tokens=3, cache_read=4),
+                               rc=0, seconds=3)
+        rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([(r["source"], r["work_id"], r["task_id"]) for r in rows],
+                         [("layer2", "layer2-work", "piece")] * 2)
+        dispatch = self.report(source="dispatch", project="Alpha",
+                               start="2026-10-10", end="2026-10-10")
+        self.assertEqual((dispatch["totals"]["calls"], dispatch["totals"]["tokens"],
+                          dispatch["totals"]["failed_calls"], dispatch["totals"]["unlinked_calls"]),
+                         (2, 39, 1, 0))
+        issue = dispatch["issues"][0]
+        self.assertEqual((issue["issue_id"], issue["project"], issue["calls"], issue["tokens"]),
+                         (696, "Alpha", 2, 39))
+        self.assertEqual(issue["families"], ["claude", "gemini"])
+        every = self.report(source="all", project="Alpha",
+                            start="2026-10-10", end="2026-10-10")
+        self.assertEqual((every["totals"]["calls"], every["totals"]["tokens"]), (1, 12))
+        self.assertEqual(every["issues"], [])
+
     def test_agy_lane_is_gemini(self):
         # #728: agy 실측 행(모델 키 없음) · 모델이 생긴 행 · 브로커 행이 서로 갈린다.
         self.add_call("Alpha", "2026-10-10 10:00:00", model="", lane="agy",

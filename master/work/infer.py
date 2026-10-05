@@ -48,6 +48,7 @@ import re
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 from ..client import bundle
 from . import runner
@@ -908,6 +909,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
 
     task_id = str(task.get("task_id") or task.get("id") or "")
     epoch = task.get("epoch")
+    author = {"lane": ""}
 
     def llm(f, tid, files):
         """본문을 쓴다. [중요] **git 은 안 만진다** — 커밋은 `wcommit` 이 결정적으로 한다.
@@ -921,13 +923,18 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         """
         with runner._Beater(lambda: runner.heartbeat(tid, f.host, api=api)):
             if runner_ is not None:
-                return runner_(f, tid, timeout)
+                rc, out = runner_(f, tid, timeout)
+                _body, meta = runner._unwrap(out or "")
+                author["lane"] = str(meta.get("source") or meta.get("lane") or
+                                      _MODE.current(mode)[0])
+                return rc, out
             # 🔴 [중요] **지휘자 모드** (`#385`, 사용자 결정 2026-09-08 — ② 병존).
             #    `lane` 이면 종전 그대로 마스터가 텍스트를 만들어 써 넣고, `claude`/`codex` 면
             #    **워커에서 지휘자가 돈다**. [주의] 출처를 함께 찍는다 — 경로가 둘 이상인데
             #    「왜 이 모드로 돌았나」를 안 밝히는 로그는 나중에 아무 도움이 안 된다.
             _m, _src = _MODE.current(mode)
             if _m != "lane":
+                author["lane"] = _m
                 _log(f"[mode] {tid} 지휘자={_m} (출처 {_src}) — 워커에서 실행한다")
                 _rc, _out = runner.run_worker(f, tid, files=files, runner=None,
                                               mode=_m, timeout=timeout)
@@ -951,6 +958,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                 #    (그 경로는 자기 체크아웃을 직접 읽는다). 조용히 실패하지 않는다.
                 #    [주의] 폴백의 주체도 모드를 따른다 — `lane` 일 때의 기본은 `claude` 다.
                 _log(f"[lane] {tid} 골조를 못 읽었다 — 워커 CLI 로 되돌린다 (지휘자=claude)")
+                author["lane"] = "claude"
                 return runner.run_worker(f, tid, files=files, runner=None,
                                          mode="claude", timeout=timeout)
             got, tried = _LN.run_chain(f, skel, timeout=timeout, logf=_log)
@@ -966,6 +974,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                 last = next((t.usage for t in reversed(tried) if t.usage is not None), None)
                 return 1, _U.envelope(f"RESULT: BLOCKED - all lanes failed: {why}",
                                       _U.meta_from_usage(last))
+            author["lane"] = got.lane
             return 0, _U.envelope(f"RESULT: DONE (lane={got.lane})",
                                   _U.meta_from_usage(got.usage))
 
@@ -985,8 +994,40 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
     _log(f"[layer1] {task_id} 동결 원본 — "
          + (f"{_src} @ {str(base)[:10]}" if baseline is not None else "없음 (동결 미검사로 기록된다)"))
 
+    def verifier(files):
+        from .. import layer2_verify as L2
+        from ..verdict import Verdict
+        from ..projects import profile
+        from . import declarations as D, usage as U
+        # 별도 상용 검증 시간에도 claim 리스를 살린다. 작성 계측과 구간을 섞지 않는다.
+        runner.heartbeat(task_id, facts.host, api=api)
+        with runner._Beater(lambda: runner.heartbeat(task_id, facts.host, api=api)):
+            prof = profile.load(paths.name)
+            kind = prof.get("kind")
+            if kind not in ("unreal", "code"):
+                return Verdict(False, "profile_unavailable", warnings=["검증 프로필 kind 미확정"])
+            if kind == "code" and (not prof.get("work_exts") or any(
+                    Path(rel).suffix.lower() not in prof["work_exts"] for rel in files)):
+                return Verdict(False, "unsupported_target", warnings=["프로필 work_exts 밖 검증 대상"])
+            decl = D.from_commit(paths, base, kind=kind, work_exts=prof.get("work_exts"),
+                                 target_files=list(files), per_class=16000, total=64000)
+            diag = [f"grounding @ {str(base)[:10]} — {decl.summary}"]
+            for key in ("missing", "truncated", "dropped"):
+                if getattr(decl, key):
+                    diag.append(f"grounding {key}: {', '.join(getattr(decl, key))}")
+            if not decl.complete:
+                return Verdict(False, "grounding_incomplete", warnings=diag)
+            if not author["lane"] or author["lane"] == "lane":
+                return Verdict(False, "author_unavailable", warnings=diag + ["작성 계열 미확정"])
+            with U.sink(paths.usage_log, source="layer2", work_id=work_id, task_id=task_id):
+                v = L2.verify_files(list(files.items()), declarations=decl.render(for_verification=True),
+                                    author_lane=author["lane"], kind=kind)
+            v.warnings.extend(diag + [f"author={author['lane']}"])
+            return v
+
     c = wcommit.run(facts, task, work_id=work_id, base_commit=base, want=want,
-                    llm=llm, ssh=ssh, reader=reader, baseline=baseline, branch=branch)
+                    llm=llm, ssh=ssh, reader=reader, baseline=baseline, branch=branch,
+                    verifier=verifier)
 
     res = Response(task_id=task_id, worker=facts.host, want=list(c.want),
                    files=dict(c.files), base_commit=base, epoch=epoch)
@@ -994,6 +1035,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
     #    [중요] **성공·실패 갈래보다 위에 둔다** — 실패한 실행도 토큰은 태웠고, 갈래 안에
     #    두면 한쪽이 빠진다(그것이 이 일감의 증상이었다: 계측이 조용히 사라졌다).
     res.usage = dict(c.usage)
+    res.notes.extend(c.notes)
     try:
         from . import usage as _U                            # noqa: PLC0415
         _m, _src = _MODE.current(mode)
@@ -1050,7 +1092,6 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         res.notes.extend(f"[중요] {v}" for v in c.layer1_violations[:5])
         # [중요] **`c.notes` 를 흘리지 않는다** (`#391`) — 지휘자의 말이 여기 담겨 오고,
         #    이것이 task 레코드에 남아야 `.33` 과 다음 세션이 「왜 못 채웠나」를 안다.
-        res.notes.extend(c.notes)
         _log(f"[wcommit] {task_id} {c.summary}")
         # 🔴 **상한 있는 재시도** (`#388`, 원전 `_classify_verify_issues` 이식).
         #
@@ -1063,7 +1104,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         # [중요] **피드백을 실어 보내지 못하면 revise 로 보내지 않는다.** 피드백 없는 재시도는
         #    같은 실수를 반복할 뿐이라 상한만 태운다 — 그때는 종전대로 terminal 이다.
         #    (원전이 `_embed_feedback_in_worker_branch` 를 만든 이유가 정확히 그것이다.)
-        issues = list(c.layer1_violations) or [c.summary]
+        issues = list(c.layer1_violations) or list(c.layer2_findings) or [c.summary]
         attempt = int(task.get("attempt_count") or 1)
         # 🔴 **환경이 죽었으면 재시도하지 않는다** (`#391` 완결 · 실측 2026-09-12).
         #    피드백을 실어 보내도 그 기계에서는 스킬조차 못 읽는다 — 상한만 태운다.
@@ -1075,8 +1116,8 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         #    큐가 그 동작을 이미 갖고 있다(`logic_lifecycle.py:196` — `quota_exhausted` 면
         #    `pending` 복귀 + 그 워커 **5시간 차단**). 🔴 그런데 **그 사유를 아무도 보내지
         #    않고 있었다** — 배관은 있고 만드는 코드가 0건이었다(`#388` 과 같은 병).
-        quota_hit = _RV.quota_exhausted(list(c.notes) + [c.summary])
-        env_hit = "" if quota_hit else _RV.environment_failure(list(c.notes) + [c.summary])
+        quota_hit = "" if c.stage == "층2" else _RV.quota_exhausted(list(c.notes) + [c.summary])
+        env_hit = "" if quota_hit or c.stage == "층2" else _RV.environment_failure(list(c.notes) + [c.summary])
         if quota_hit:
             verdict = _RV.REJECT                              # revise 로 보내지 않는다
             res.notes.append(
@@ -1100,6 +1141,10 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
             _notify_blocked(task_id, task, env_hit, c.summary, kind="env", api=api)
         else:
             verdict = _RV.classify(issues, attempt)
+        # 검증 인프라·판정 계약 실패는 작성 코드를 다시 사도 고쳐지지 않는다.
+        if c.layer2_failure:
+            verdict = _RV.REJECT
+            res.notes.append(f"[중요] 층2 검증 불가({c.layer2_failure}) — 코드 재작성 재시도 제외")
         # [DOC] 🔴 `#615` (가) — **직전 시도와 출력이 같으면 재시도는 무의미하다.** 판정 순서는
         #    한도 → 환경 → **출력 반복** → `classify` 다(앞 두 갈래는 처분이 달라 먼저 본다).
         #    지문은 지휘자의 말(`c.notes`)로 만들고, 직전 지문은 `task["last_feedback"]` 에 있다
@@ -1119,7 +1164,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                 emb = _RV.Embedded(task_id=task_id, error=f"{type(e).__name__}: {e}")
             if emb.ok:
                 r_result, r_base = _RV.REVISE, emb.head
-                res.notes.append(f"[주의] 층1 이 막았지만 **고칠 수 있는 실패**다 — "
+                res.notes.append(f"[주의] 검증이 막았지만 **고칠 수 있는 실패**다 — "
                                  f"attempt {attempt}/{_RV.MAX_ATTEMPTS} · 피드백을 "
                                  f"{emb.branch} 에 실었다({emb.head[:8]})")
                 _log(f"[revise] {task_id} {attempt}/{_RV.MAX_ATTEMPTS} — 재시도로 보낸다")
@@ -1128,7 +1173,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                 res.notes.append(f"[중요] 재시도로 보내려 했으나 피드백을 못 실었다 — "
                                  f"{emb.error} · terminal 로 종결한다")
                 _log(f"[revise] [중요] {task_id} 피드백 실패 — {emb.error}")
-        elif not quota_hit and not env_hit and not repeat_hit:
+        elif not quota_hit and not env_hit and not repeat_hit and not c.layer2_failure:
             res.notes.append(f"[중요] 재시도 상한 — attempt {attempt} ≥ {_RV.MAX_ATTEMPTS}, "
                              f"종결한다(원전 `reject`)")
             _log(f"[revise] {task_id} 상한 도달 attempt={attempt} → 종결")

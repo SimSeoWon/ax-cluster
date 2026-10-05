@@ -72,6 +72,8 @@ class Committed:
     files: dict = field(default_factory=dict)       # 되읽은 본문 {경로: 내용}
     want: list = field(default_factory=list)
     layer1_violations: list = field(default_factory=list)
+    layer2_findings: list = field(default_factory=list)
+    layer2_failure: str = ""
     notes: list = field(default_factory=list)       # [주의] 로 시작하는 것은 비치명 경고다
     stage: str = ""                                 # 어디까지 갔나 (실패 지점)
     reason: str = ""
@@ -219,12 +221,13 @@ def _last_sha(out: str) -> str:
 
 
 def run(facts, task, *, work_id: str, base_commit: str, want, llm,
-        ssh=None, reader=None, baseline=None, branch: str = "") -> Committed:
+        ssh=None, reader=None, baseline=None, branch: str = "", verifier=None) -> Committed:
     """워커 한 대에서 ⑸-a 사이클을 한 바퀴 돈다. **예외를 던지지 않고 사유를 담아 돌려준다.**
 
     `llm(facts, task_id, files)` — 본문을 쓰게 하는 호출(주입). 반환은 `(rc, stdout)`.
     `ssh(facts, cmd, timeout)` · `reader(facts, abs_path)` — 주입 자리(테스트·오프라인).
     `baseline(path)` — 동결 대조용 원본 본문(층1). 없으면 동결 검사는 **미검사로 기록**된다.
+    `verifier(files)` — 층2 Verdict. 누락·예외·승인되지 않은 판정이면 커밋하지 않는다.
     """
     task_id = str(task.get("task_id") or task.get("id") or "")
     c = Committed(task_id=task_id, want=[str(w) for w in (want or [])])
@@ -259,14 +262,14 @@ def run(facts, task, *, work_id: str, base_commit: str, want, llm,
     #    막힌 조각이 브랜치에 체크아웃된 채 남았고, 테스트가 그것을 잡았다. **잔재가 남는
     #    것은 성공/실패와 무관하다** — 체크아웃을 옮긴 쪽이 되돌릴 책임을 진다.
     try:
-        return _cycle(facts, task_id, c, base, llm, do_ssh, do_read, baseline)
+        return _cycle(facts, task_id, c, base, llm, do_ssh, do_read, baseline, verifier)
     finally:
         _return_home(facts, do_ssh, c)
 
 
 def _cycle(facts, task_id: str, c: "Committed", base: str, llm, do_ssh, do_read,
-           baseline) -> "Committed":
-    """체크아웃이 선 뒤의 사이클 — ② 본문 → ③ 되읽기 → ④ 층1 → ⑤ 커밋·push."""
+           baseline, verifier) -> "Committed":
+    """체크아웃이 선 뒤의 사이클 — 본문 → 되읽기 → 층1 → 층2 → 커밋·push."""
     # ② LLM — [중요] **본문만 쓴다.** git 은 만지지 않는다
     c.stage = "본문 작성"
     _t0 = time.time()
@@ -334,6 +337,32 @@ def _cycle(facts, task_id: str, c: "Committed", base: str, llm, do_ssh, do_read,
             c.notes.extend(f"[지휘자] {ln}" for ln in _R.agent_report(out, rc=rc))
         except Exception as e:                                # noqa: BLE001
             c.notes.append(f"[주의] 지휘자 출력을 못 뽑았다 — {type(e).__name__}: {e}")
+        return c
+
+    # 층2도 커밋 전에 마스터가 판정한다. 미가용·예외·계약 오류는 승인되지 않는다.
+    c.stage = "층2"
+    if verifier is None:
+        c.layer2_failure = "no_verifier"
+        c.reason = "층2 검증기가 없다 — 커밋하지 않는다"
+        return c
+    try:
+        from ..verdict import Verdict
+        verdict = verifier(c.files)
+        if not isinstance(verdict, Verdict):
+            raise TypeError("층2 검증 결과가 Verdict 계약이 아니다")
+        c.layer2_findings = list(verdict.findings)
+        c.layer2_failure = verdict.failure or ""
+        c.notes.append(f"[층2] {verdict.summary()}")
+        c.notes.extend(f"[층2] {s}" for s in verdict.warnings)
+        c.notes.extend(f"[층2 지적] {s}" for s in verdict.findings)
+        if verdict.raw_tail:
+            c.notes.append(f"[층2 판정 원문] {verdict.raw_tail}")
+        if not verdict.approved or verdict.failure is not None:
+            c.reason = f"층2 이 막았다 — {verdict.summary()} — 커밋하지 않는다"
+            return c
+    except Exception as e:                                   # noqa: BLE001
+        c.layer2_failure = "verifier_exception"
+        c.reason = f"층2 검증 실패 — {type(e).__name__}: {e} — 커밋하지 않는다"
         return c
 
     # ⑤ 커밋 + push

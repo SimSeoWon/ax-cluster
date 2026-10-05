@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master.work import wcommit                                     # noqa: E402
+from master.verdict import Verdict                                  # noqa: E402
 
 PASS = FAIL = 0
 WORK = "20260902_0035_ns_1_ea254ff3"
@@ -121,6 +122,14 @@ GOOD = {SRC: "// [DOC] 상호작용\nvoid NSInteract::Use() { DoTheThing(); }\n"
 KEEP_HDR = "// [DOC] 상호작용 인터페이스\nclass NSInteract { void Use(); };\n"
 
 
+def _approved(files):
+    return Verdict(True, None)
+
+
+def _verified_run(*args, **kwargs):
+    return wcommit.run(*args, verifier=_approved, **kwargs)
+
+
 def test_commands():
     f = _Facts(Path("/w/clone"))
     co = wcommit.checkout_command(f, f"task/{WORK}/{TASK}", "abc123")
@@ -150,7 +159,7 @@ def test_returns_to_main():
     """
     with tempfile.TemporaryDirectory() as td:
         facts, bare, base, worker = _world(Path(td))
-        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+        c = _verified_run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
                         want=[SRC], llm=_llm_writes(GOOD), ssh=_shell, reader=_reader,
                         baseline=lambda p: KEEP_HDR if p == HDR else None)
         check("통과한다", c.ok, c.summary)
@@ -159,7 +168,7 @@ def test_returns_to_main():
         check("  그래도 커밋은 원격에 있다",
               _heads(bare).get(f"task/{WORK}/{TASK}") == c.head, f"{_heads(bare)}")
         # 실패 경로도 돌아와야 한다 — 잔재가 남는 것은 성공/실패와 무관하다
-        c2 = wcommit.run(facts, {"task_id": "bad1"}, work_id=WORK, base_commit=base,
+        c2 = _verified_run(facts, {"task_id": "bad1"}, work_id=WORK, base_commit=base,
                          want=[SRC], llm=_llm_writes({SRC: "// [PSEUDO] 안 채웠다\n"}),
                          ssh=_shell, reader=_reader)
         check("막혔어도 돌아온다", not c2.ok and
@@ -183,7 +192,7 @@ def test_worker_keeps_nothing() -> None:
         art.mkdir(parents=True, exist_ok=True)
         (art / "response.txt").write_text("x\n", encoding="utf-8")
 
-        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+        c = _verified_run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
                         want=[SRC], llm=_llm_writes(GOOD), ssh=_shell, reader=_reader,
                         baseline=lambda p: KEEP_HDR if p == HDR else None)
         check("통과한다", c.ok, c.summary)
@@ -196,7 +205,7 @@ def test_worker_keeps_nothing() -> None:
         check("  부산물 디렉토리도 지운다", not art.exists(), str(art))
 
         # 실패 경로도 같다 — 잔재가 남는 것은 성공/실패와 무관하다
-        c2 = wcommit.run(facts, {"task_id": "bad9"}, work_id=WORK, base_commit=base,
+        c2 = _verified_run(facts, {"task_id": "bad9"}, work_id=WORK, base_commit=base,
                          want=[SRC], llm=_llm_writes({SRC: "// [PSEUDO] 안 채웠다\n"}),
                          ssh=_shell, reader=_reader)
         local2 = sh(worker, "git", "for-each-ref", "--format=%(refname:short)", "refs/heads")
@@ -207,7 +216,7 @@ def test_worker_keeps_nothing() -> None:
 def test_happy_path():
     with tempfile.TemporaryDirectory() as td:
         facts, bare, base, worker = _world(Path(td))
-        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+        c = _verified_run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
                         want=[SRC], llm=_llm_writes(GOOD),
                         ssh=_shell, reader=_reader,
                         baseline=lambda p: KEEP_HDR if p == HDR else None)
@@ -232,7 +241,7 @@ def test_layer1_blocks_commit():
     with tempfile.TemporaryDirectory() as td:
         facts, bare, base, worker = _world(Path(td))
         bad = {SRC: "// [PSEUDO] 아직 안 채웠다\nvoid NSInteract::Use() {}\n"}
-        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+        c = _verified_run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
                         want=[SRC], llm=_llm_writes(bad), ssh=_shell, reader=_reader)
         check("막힌다", not c.ok and c.layer1_violations, c.summary)
         check("  단계가 층1 로 남는다", c.stage == "층1", c.stage)
@@ -266,7 +275,7 @@ def test_layer1_block_records_what_the_conductor_said():
 
     with tempfile.TemporaryDirectory() as td:
         facts, bare, base, _w = _world(Path(td))
-        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+        c = _verified_run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
                         want=[SRC], llm=_llm_writes_nothing, ssh=_shell, reader=_reader)
         check("막힌다 (골조가 그대로라 층1 이 잡는다)",
               not c.ok and c.layer1_violations, c.summary)
@@ -283,7 +292,7 @@ def test_layer1_block_records_what_the_conductor_said():
 def test_empty_body_blocks():
     with tempfile.TemporaryDirectory() as td:
         facts, bare, base, _w = _world(Path(td))
-        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+        c = _verified_run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
                         want=[SRC], llm=_llm_writes({SRC: "   \n"}),
                         ssh=_shell, reader=_reader)
         check("빈 본문은 막힌다", not c.ok and c.missing, c.summary)
@@ -304,7 +313,7 @@ def test_no_change_is_not_success():
     """
     with tempfile.TemporaryDirectory() as td:
         facts, _bare, base, _w = _world(Path(td))
-        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+        c = _verified_run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
                         want=[SRC], llm=lambda f, t, w: (0, "아무것도 안 했다"),
                         ssh=_shell, reader=_reader, baseline=lambda p: None)
         check("변경 0 + `[PSEUDO]` 잔존 = 통과가 아니다", not c.ok, c.summary)
@@ -322,14 +331,14 @@ def test_refusals():
                 "ssh": boom, "reader": boom}
         args.update(kw)
         task = args.pop("task")
-        c = wcommit.run(f, task, **args)
+        c = _verified_run(f, task, **args)
         check(f"[중요] {name} → 아무것도 하지 않고 거절", not c.ok and c.stage == "입력", c.summary)
 
 
 def test_llm_failure_does_not_commit():
     with tempfile.TemporaryDirectory() as td:
         facts, bare, base, _w = _world(Path(td))
-        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+        c = _verified_run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
                         want=[SRC], llm=lambda f, t, w: (1, "세션 한도"),
                         ssh=_shell, reader=_reader)
         check("본문 작성 실패는 커밋으로 가지 않는다",
@@ -354,7 +363,7 @@ def test_no_pseudo_and_no_change_is_a_no_op_not_a_failure():
     """
     with tempfile.TemporaryDirectory() as td:
         facts, _bare, base, _w = _world(Path(td))
-        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+        c = _verified_run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
                         want=[HDR], llm=lambda f, t, w: (0, "채울 것이 없다"),
                         ssh=_shell, reader=_reader, baseline=lambda p: KEEP_HDR)
         check("[중요] 실패가 아니다", c.ok, c.summary)
@@ -363,13 +372,63 @@ def test_no_pseudo_and_no_change_is_a_no_op_not_a_failure():
         check("  무엇이었는지 말한다", "[PSEUDO]" in c.summary and "0개" in c.summary, c.summary)
 
 
+def test_layer2_commit_boundary():
+    from master import layer2_verify as L2
+    for label, verify in (
+            ("reject", lambda files: L2.verify_files(list(files.items()), backends=[
+                ("agy", lambda *a, **k: "- Unknown member\nVERDICT: REQUEST_CHANGES")], cooldown_sec=0)),
+            ("invalid", lambda files: L2.verify_files(list(files.items()), backends=[
+                ("agy", lambda *a, **k: "looks good")], cooldown_sec=0)),
+            ("no_backend", lambda files: L2.verify_files(list(files.items()), backends=[], cooldown_sec=0)),
+            ("exception", lambda files: (_ for _ in ()).throw(RuntimeError("backend failed"))),
+            ("missing", None)):
+        with tempfile.TemporaryDirectory() as td:
+            facts, bare, base, worker = _world(Path(td))
+            c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+                            want=[SRC], llm=_llm_writes(GOOD), ssh=_shell, reader=_reader,
+                            verifier=verify)
+            check(f"층2 {label}: 커밋·push 차단", not c.ok and not c.head and
+                  f"task/{WORK}/{TASK}" not in _heads(bare), c.summary)
+            check(f"층2 {label}: finally main 복귀", c.stage == "층2" and
+                  sh(worker, "git", "rev-parse", "--abbrev-ref", "HEAD") == "main", c.summary)
+            if label == "reject":
+                check("층2 지적·backend·원문 보존", c.layer2_findings == ["Unknown member"] and
+                      "backend=agy" in " ".join(c.notes) and
+                      "VERDICT: REQUEST_CHANGES" in " ".join(c.notes), str(c.notes))
+    with tempfile.TemporaryDirectory() as td:
+        facts, bare, base, worker = _world(Path(td))
+        calls = []
+        verify = lambda files: calls.append(files) or _approved(files)
+        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+                        want=[SRC], llm=_llm_writes({SRC: "// [PSEUDO] leftover\n"}),
+                        ssh=_shell, reader=_reader, verifier=verify)
+        check("층1 거절 때 층2 호출 0", not c.ok and calls == [], c.summary)
+    with tempfile.TemporaryDirectory() as td:
+        facts, bare, base, worker = _world(Path(td))
+        verify = lambda files: L2.verify_files(list(files.items()), backends=[
+            ("agy", lambda *a, **k: "VERDICT: APPROVE")], cooldown_sec=0)
+        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+                        want=[SRC], llm=_llm_writes(GOOD), ssh=_shell, reader=_reader,
+                        verifier=verify)
+        check("실제 verify_files Verdict 승인 뒤에만 원격 커밋", c.ok and
+              _heads(bare).get(f"task/{WORK}/{TASK}") == c.head, c.summary)
+    with tempfile.TemporaryDirectory() as td:
+        facts, bare, base, worker = _world(Path(td))
+        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+                        want=[HDR], llm=lambda *a: (0, "unchanged"),
+                        ssh=_shell, reader=_reader, baseline=lambda p: KEEP_HDR,
+                        verifier=lambda files: Verdict(False, "no_backend"))
+        check("no-op도 층2 우회 없음", not c.ok and not c.no_op and
+              f"task/{WORK}/{TASK}" not in _heads(bare), c.summary)
+
+
 def main() -> int:
     for fn in (test_no_pseudo_and_no_change_is_a_no_op_not_a_failure,
                test_commands, test_returns_to_main, test_worker_keeps_nothing,
                test_happy_path, test_layer1_blocks_commit,
                test_layer1_block_records_what_the_conductor_said,
                test_empty_body_blocks, test_no_change_is_not_success,
-               test_refusals, test_llm_failure_does_not_commit):
+               test_refusals, test_llm_failure_does_not_commit, test_layer2_commit_boundary):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_wcommit: {PASS}/{total} 통과")

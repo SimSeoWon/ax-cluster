@@ -109,3 +109,4 @@
 | `88` | **AXCluster 첫 분산 작업 완주 #718** — #260·#375·#615 를 2라운드(3/3 · 4/4)로 워커 3대 병렬 · claude 지휘 · finalize `f22f741` · 검사 목록 7→10(부작용 격리 실측) · 드러난 결함 #719(첫 파일만 전달)·#720(codex 한도 미감지)·#721(인증 만료 미검사) · [리포트](88-axcluster-first-distributed-work.md) |
 | `89` | **Codex 워커 준비 검사·쓰기 검증** — Session0 probe 대신 예약 런처 XML·계정·프로젝트 스킬 대조 · 회귀18/18·실준비3/3 · 실제3대 도구 실행·결과 회수 · 00f8532 운영 반영·codex 전환 완료 · Windows `.ax` 실패 원인은 미확정 · [리포트](89-codex-worker-readiness-and-write-probes.md) |
 | `90` | **R5 재검토·색인기 테스트 격리·배포** — 실제 합성 의존 제거 b53fd84 · 외부 연결0·103/103 · 통합12모듈560건 · AXCluster 워커3대 동기화·배달3/3 · R5 applied10/10 · 문서·Redmine·인계 갱신 · [리포트](90-r5-indexer-test-isolation-and-deployment.md) |
+| `95` | **#696 커밋 전 층2 검증 복원** — 로컬 서브 에이전트 · 동결 선언/작성 계열 제외/사용량 귀속 · 통합23모듈923건 통과 · 미커밋·운영 미실증 · [리포트](95-layer2-worker-verification-restoration.md) |

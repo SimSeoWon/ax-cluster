@@ -26,6 +26,8 @@
 """
 from __future__ import annotations
 
+import ast
+import copy
 import pathlib
 
 from dataclasses import dataclass, field
@@ -52,6 +54,11 @@ class Declarations:
         return bool(self.blocks)
 
     @property
+    def complete(self) -> bool:
+        """층2에서는 발췌의 존재와 전체 grounding의 완전성을 구분한다."""
+        return self.ok and not (self.missing or self.truncated or self.dropped)
+
+    @property
     def summary(self) -> str:
         s = f"선언부 {len(self.blocks)}개"
         for label, xs in (("헤더 없음", self.missing), ("잘림", self.truncated),
@@ -60,15 +67,21 @@ class Declarations:
                 s += f" · [중요] {label} {len(xs)}"
         return s
 
-    def render(self) -> str:
+    def render(self, *, for_verification: bool = False) -> str:
         """프롬프트에 넣을 블록. [중요] **결손을 본문에 적는다.**"""
         if not self.blocks and not (self.missing or self.dropped):
             return ""
         out = ["=== DECLARATIONS — COPY THESE NAMES EXACTLY ===",
-               "These are the real headers from this codebase. Member, method and enum "
+               "These are the real declarations from this codebase. Member, method and enum "
                "names below are the ONLY spellings that compile.",
                "[중요] If a name you need is not here, do NOT invent it — say so in a comment "
                "instead of guessing.", ""]
+        if for_verification:
+            out[1:3] = [
+                "Frozen declarations are authoritative for the listed modules/types only.",
+                "Compare their signatures and enum members. Unlisted external modules/types "
+                "are not evidence of an error. Function bodies were deliberately omitted.",
+            ]
         for cls, file, text in self.blocks:
             out += [f"--- {cls}  ({file}) ---", text.strip(), ""]
         # [중요] 빠진 것을 숨기지 않는다 — 숨기면 모델이 "없으니 지어내도 된다" 로 읽는다
@@ -125,7 +138,8 @@ def work_headers(paths, commit: str, *, main_branch: str = "main") -> list:
 
 
 def from_commit(paths: ProjectPaths, commit: str, *, main_branch: str = "main",
-                per_class: int = PER_CLASS, total: int = TOTAL) -> Declarations:
+                per_class: int = PER_CLASS, total: int = TOTAL,
+                kind: str = "unreal", work_exts=None, target_files=None) -> Declarations:
     """그 work 의 동결 계약 헤더를 **base 커밋에서** 읽는다. **읽기 전용.**
 
     ## 왜 커밋에서 읽나 — 실패가 두 겹이었다 (실측 2026-09-01)
@@ -146,7 +160,8 @@ def from_commit(paths: ProjectPaths, commit: str, *, main_branch: str = "main",
         raise DeclError("기준 커밋이 비었다 — 무엇의 선언부인지 모른다")
     ensure_commit(paths, commit)
     used = 0
-    for rel in work_headers(paths, commit, main_branch=main_branch):
+    for rel in work_declaration_files(paths, commit, main_branch=main_branch, kind=kind,
+                                      work_exts=work_exts, target_files=target_files):
         if used >= total:
             d.dropped.append(rel)                     # [중요] 조용히 빼지 않는다
             continue
@@ -155,6 +170,8 @@ def from_commit(paths: ProjectPaths, commit: str, *, main_branch: str = "main",
         if not (text or "").strip():
             d.missing.append(rel)
             continue
+        if rel.lower().endswith(".py"):
+            text = python_declarations(text, filename=rel)
         if len(text) > room:
             text = text[:room]
             d.truncated.append(rel)
@@ -163,6 +180,122 @@ def from_commit(paths: ProjectPaths, commit: str, *, main_branch: str = "main",
         d.blocks.append((pathlib.PurePosixPath(rel).stem, rel, text.rstrip()))
         used += len(text)
     return d
+
+
+def python_declarations(source: str, *, filename: str = "<module>") -> str:
+    """Python AST의 선언 계약만 싣는다. 함수 본문은 구현이므로 생략한다."""
+    try:
+        tree = ast.parse(source, filename=filename)
+    except SyntaxError as e:
+        raise DeclError(f"Python 기준 선언 파싱 실패: {filename}:{e.lineno}: {e.msg}") from e
+
+    def declarations(nodes, *, in_class=False):
+        out = []
+        for node in nodes:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                signature = copy.deepcopy(node)
+                signature.body = [ast.Expr(value=ast.Constant(value=Ellipsis))]
+                out.append(signature)
+            elif isinstance(node, ast.ClassDef):
+                cls = copy.deepcopy(node)
+                fields = {}
+                for method in node.body:
+                    if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        continue
+                    if any((isinstance(dec, ast.Name) and dec.id == "staticmethod")
+                           or (isinstance(dec, ast.Attribute) and dec.attr == "staticmethod")
+                           for dec in method.decorator_list):
+                        continue
+                    args = method.args.posonlyargs + method.args.args
+                    if not args or args[0].arg not in ("self", "cls"):
+                        continue
+                    receiver = args[0].arg
+                    for assignment in ast.walk(method):
+                        if isinstance(assignment, ast.Assign):
+                            targets = assignment.targets
+                        elif isinstance(assignment, ast.AnnAssign):
+                            targets = [assignment.target]
+                        else:
+                            continue
+                        for target in targets:
+                            if not (isinstance(target, ast.Attribute)
+                                    and isinstance(target.value, ast.Name)
+                                    and target.value.id == receiver):
+                                continue
+                            name = ast.Name(id=target.attr, ctx=ast.Store())
+                            if isinstance(assignment, ast.AnnAssign):
+                                fields[target.attr] = ast.AnnAssign(
+                                    target=name, annotation=assignment.annotation,
+                                    value=None, simple=1)
+                            elif target.attr not in fields:
+                                fields[target.attr] = ast.Assign(
+                                    targets=[name], value=ast.Constant(value=Ellipsis))
+                cls.body = list(fields.values()) + declarations(node.body, in_class=True)
+                cls.body = cls.body or [ast.Pass()]
+                out.append(cls)
+            elif isinstance(node, (ast.Import, ast.ImportFrom, ast.AnnAssign)):
+                out.append(node)
+            elif isinstance(node, ast.Assign):
+                names = [n.id for target in node.targets for n in ast.walk(target)
+                         if isinstance(n, ast.Name)]
+                if in_class or any(name.isupper() for name in names):
+                    out.append(node)
+        return out
+
+    tree.body = declarations(tree.body)
+    # 선언이 없는 유틸리티 모듈도 조회했다는 근거를 유지한다.
+    return ast.unparse(ast.fix_missing_locations(tree)) or "# No module-level declarations"
+
+
+def work_declaration_files(paths, commit: str, *, main_branch: str = "main",
+                           kind: str = "unreal", work_exts=None,
+                           target_files=None) -> list[str]:
+    """동결 변경 선언과 검증 대상의 기준 선언. 기본은 기존 헤더-only 계약."""
+    suffixes = HEADER_SUFFIXES + ((".py",) if kind == "code" else ())
+    if work_exts is not None:
+        allowed = {str(ext).lower() for ext in work_exts}
+        suffixes = tuple(ext for ext in suffixes if ext in allowed)
+    changed = _mirror_git(paths, "diff", "--name-only", f"{main_branch}...{commit}")
+    selected = {rel.strip() for rel in changed.splitlines()
+                if rel.strip().lower().endswith(suffixes)} if suffixes else set()
+    if target_files:
+        available = set(_mirror_git(paths, "ls-tree", "-r", "--name-only", commit).splitlines())
+        for target in target_files:
+            rel = str(target).replace("\\", "/")
+            if suffixes and rel.lower().endswith(suffixes):
+                selected.add(rel)
+            elif pathlib.PurePosixPath(rel).suffix.lower() in (".cpp", ".cc", ".cxx", ".c"):
+                for ext in HEADER_SUFFIXES:
+                    sibling = str(pathlib.PurePosixPath(rel).with_suffix(ext))
+                    if ext in suffixes and sibling in available:
+                        selected.add(sibling)
+        # 대상이 참조하는 기존 모듈도 동결 커밋에서 읽는다. 외부 패키지는 tree에 없으므로 제외.
+        for rel in tuple(selected):
+            if not rel.endswith(".py") or rel not in available:
+                continue
+            source = _mirror_git(paths, "show", f"{commit}:{rel}")
+            try:
+                imports = ast.walk(ast.parse(source, filename=rel))
+            except SyntaxError as e:
+                raise DeclError(f"Python 기준 선언 파싱 실패: {rel}:{e.lineno}: {e.msg}") from e
+            for node in imports:
+                candidates = []
+                if isinstance(node, ast.Import):
+                    candidates = [alias.name.replace(".", "/") for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    prefix = (node.module or "").replace(".", "/")
+                    if node.level:
+                        parent = pathlib.PurePosixPath(rel).parent
+                        for _ in range(node.level - 1):
+                            parent = parent.parent
+                        prefix = str(parent / prefix).strip("./")
+                    candidates = [prefix] + [f"{prefix}/{alias.name}".strip("/")
+                                             for alias in node.names if alias.name != "*"]
+                for module in candidates:
+                    for dependency in (module + ".py", module + "/__init__.py"):
+                        if ".py" in suffixes and dependency in available:
+                            selected.add(dependency)
+    return sorted(selected)
 
 
 def ensure_commit(paths: ProjectPaths, commit: str, *, remote: str = "gitea-write") -> None:

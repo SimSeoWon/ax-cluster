@@ -27,13 +27,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from verdict import Verdict, contract_text, parse_verdict  # noqa: E402
+if __package__:
+    from .verdict import Verdict, contract_text, parse_verdict  # noqa: E402
+else:
+    from verdict import Verdict, contract_text, parse_verdict  # noqa: E402
 
 TIMEOUT_SEC = int(os.environ.get("AX_LAYER2_TIMEOUT", "300"))
 MAX_FILE_CHARS = 16000
 
 
-def build_prompt(files: list[tuple[str, str]], *, declarations: str = "") -> str:
+def build_prompt(files: list[tuple[str, str]], *, declarations: str = "",
+                 kind: str = "unreal") -> str:
     """UE5/C++ 문법 검사 프롬프트 + 판정 계약.
 
     AgentTest 와 같은 범위를 본다 — **컴파일을 깨뜨리는 것만**. 로직·스타일·설계는 보지 않는다
@@ -59,17 +63,25 @@ def build_prompt(files: list[tuple[str, str]], *, declarations: str = "") -> str
         contract_text(),
         "",
     ]
+    if kind == "code":
+        parts[:4] = [
+            "You are a strict source-code SYNTAX and declaration checker (including Python).",
+            "Report ONLY syntax/import errors and definite references/signature mismatches "
+            "against the supplied frozen declarations that prevent the code from running.",
+            "- Python: indentation, syntax, missing declared imports/members, invalid call signatures",
+            "- Other languages: syntax, malformed declarations, definite type/member errors",
+        ]
     if (declarations or "").strip():
         # [중요] **선언부를 파일보다 앞에** 둔다 — 뒤에 둘 이유가 없다. 판정 대상(파일)이 지시에
         #    가까워야 하고, 선언부는 *대조표*라서 먼저 읽혀야 한다.
-        parts += ["=== DECLARATIONS FROM INCLUDED HEADERS (authoritative) ===",
-                  "These are the REAL definitions. Any member/enum value not listed here "
-                  "does not exist. Report it as a compile error.",
+        parts += ["=== FROZEN DECLARATIONS (authoritative for listed modules/types) ===",
+                  "These are REAL definitions from the work base commit. Check references "
+                  "to the listed modules/types against these signatures and enum members. "
+                  "Do not infer that external modules or unlisted types do not exist.",
                   declarations.strip(),
                   "=== END DECLARATIONS ===", ""]
     for rel, content in files:
-        body = content if len(content) <= MAX_FILE_CHARS else content[:MAX_FILE_CHARS] + "\n...(truncated)"
-        parts += [f"=== {rel} ===", body, ""]
+        parts += [f"=== {rel} ===", content, ""]
     return "\n".join(parts)
 
 
@@ -537,7 +549,7 @@ def exclude_author(backends, author_lane: str) -> tuple:
 
 def verify_files(files: list[tuple[str, str]], *, timeout: int = TIMEOUT_SEC,
                  backends=None, declarations: str = "", author_lane: str = "",
-                 cooldown_sec: int = COOLDOWN_SEC) -> Verdict:
+                 cooldown_sec: int = COOLDOWN_SEC, kind: str = "unreal") -> Verdict:
     """층2 검증 실행. `files=[(상대경로, 내용)]`.
 
     `author_lane` — **누가 썼는가**. 같은 계열은 백엔드에서 빠진다(`#379`). 남는 것이
@@ -547,7 +559,9 @@ def verify_files(files: list[tuple[str, str]], *, timeout: int = TIMEOUT_SEC,
     응답 자체가 없으면 다음 백엔드로 넘어가고, 응답은 왔는데 계약을 어겼으면 **거기서 차단**한다
     (계약을 어기는 검증기를 다음 백엔드로 덮어주면 fail-open 이 되살아난다).
     """
-    prompt = build_prompt(files, declarations=declarations)
+    if not files:
+        return Verdict(approved=False, failure="empty_input", warnings=["검증 대상 없음"])
+    prompt = build_prompt(files, declarations=declarations, kind=kind)
     attempted: list[str] = []
     skipped: list[str] = []
     now = time.time()

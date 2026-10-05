@@ -116,6 +116,10 @@ def tmp_paths():
         @property
         def responses(self):
             return root / "responses"
+
+        @property
+        def usage_log(self):
+            return root / "usage_log.jsonl"
     return P(), root
 
 
@@ -444,11 +448,17 @@ def _run(paths, q, *, body="void X::Go() { Do(); }\n", workers=1,
     TB.local_baseline = lambda p, b: None      # 동결 원본 없음 → 층1 이 미검사로 기록
     TB.resolve = lambda p, w: _Base()          # 작업 브랜치 tip (골조 커밋)
     try:
-        return I.run_many(paths, limit=limit, facts=facts, api=q, clean=lambda f: Clean(),
-                          parallel=parallel, work_id="W1",
-                          runner_=_counting_runner(stdout, runner_calls),
-                          ssh=_fake_shell(body),
-                          reader=lambda f, p: body)
+        from master.verdict import Verdict
+        from master.work.declarations import Declarations
+        with patch("master.projects.profile.load", return_value={"kind": "unreal"}), \
+             patch("master.work.declarations.from_commit", return_value=Declarations(
+                 blocks=[("X", "X.h", "class X { void Go(); };")])), \
+             patch("master.layer2_verify.verify_files", return_value=Verdict(True, None)):
+            return I.run_many(paths, limit=limit, facts=facts, api=q, clean=lambda f: Clean(),
+                              parallel=parallel, work_id="W1",
+                              runner_=_counting_runner(stdout, runner_calls),
+                              ssh=_fake_shell(body),
+                              reader=lambda f, p: body)
     finally:
         SB.create = orig
         TB.local_baseline, TB.resolve = saved_bl, saved_tb
@@ -944,6 +954,105 @@ def test_commit_task_failure_notices_match_disposition() -> None:
                   any("직전 시도와 출력이 같다" in n for n in result.notes))
 
 
+def test_commit_layer2_usage_and_author():
+    from master import layer2_verify as L2
+    from master.work import usage as U
+    from master.work.declarations import Declarations
+    paths, root = tmp_paths()
+    try:
+        for author_lane in ("codex", "claude", "agy", "local:model"):
+            paths.usage_log.unlink(missing_ok=True)
+            q = FakeQueue([])
+            called = []
+            shell_calls = []
+
+            def agy(prompt, **kwargs):
+                called.append("agy")
+                U.emit_cli("agy", None, rc=1)
+                return None
+
+            def claude(prompt, **kwargs):
+                called.append("claude")
+                U.emit_cli("claude", U.Usage(lane="claude", input_tokens=12,
+                                             output_tokens=3), rc=0)
+                return "VERDICT: APPROVE"
+
+            def shell(f, cmd, t):
+                shell_calls.append(cmd)
+                return _fake_shell("void X::Go() { Do(); }\n")(f, cmd, t)
+
+            def grounding(*args, **kwargs):
+                check("층2 grounding 시작에 즉시 heartbeat", q.beats >= 1, str(q.beats))
+                check("층2 기준 커밋·프로필 전달", args[1] == SUB_TIP and
+                      kwargs["kind"] == "unreal" and kwargs["target_files"] == ["A.cpp"], str(kwargs))
+                return Declarations(blocks=[("X", "X.h", "class X { void Go(); };")])
+
+            L2.clear_cooldown()
+            with patch("master.work.twin_base.local_baseline", return_value=lambda p: None), \
+                 patch("master.projects.profile.load", return_value={"kind": "unreal"}), \
+                 patch("master.work.declarations.from_commit", side_effect=grounding), \
+                 patch.object(L2, "BACKENDS", [("agy", agy), ("claude", claude)]), \
+                 patch.object(I._MODE, "current", return_value=("codex", "test")), \
+                 patch("master.work.revise.embed") as embed:
+                out = I.commit_task(paths, FakeFacts(), {"task_id": "l2", "attempt_count": 1},
+                                    work_id="W1", base=SUB_TIP, want=["A.cpp"], branch="task/W1/l2",
+                                    api=q, ssh=shell, reader=lambda f, p: "void X::Go() { Do(); }\n",
+                                    runner_=lambda *a: (0, U.envelope("done", {"source": author_lane})))
+            rows = [json.loads(s) for s in paths.usage_log.read_text().splitlines()]
+            l2_rows = [r for r in rows if r["source"] == "layer2"]
+            expected = ["claude"] if author_lane == "agy" else ["agy"] if author_lane == "claude" else ["agy", "claude"]
+            check("실제 작성자 계열 제외·fallback", called == expected, f"{author_lane}: {called}")
+            check("층2 호출별 usage·귀속", len(l2_rows) == len(expected) and all(
+                r["task_id"] == "l2" and r["work_id"] == "W1" for r in l2_rows), str(rows))
+            check("작성 사용량은 별도 한 줄", len(rows) == len(l2_rows) + 1, str(rows))
+            check("실패 agy 사용량 미측정 보존", all(not r["measured"] for r in l2_rows
+                if r["lane"] == "agy"), str(rows))
+            if author_lane == "claude":
+                check("자기 claude 검증 제외 뒤 backend 부재 commit/submit/revise 차단",
+                      not out.ok and not q.submitted and not embed.called and
+                      not any("git add" in c for c in shell_calls), out.summary)
+            else:
+                check("층2 통과 뒤에만 submit", out.ok and len(q.submitted) == 1 and
+                      any("[층2] APPROVE" in n for n in out.notes), out.summary)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_commit_layer2_grounding_gate():
+    from master.verdict import Verdict
+    from master.work.declarations import Declarations
+    paths, root = tmp_paths()
+    try:
+        for profile, decl, approved in (
+                ({"kind": "code", "work_exts": [".py"]}, Declarations(
+                    blocks=[("m", "m.py", "def f(): ...")]), True),
+                ({}, Declarations(), False),
+                ({"kind": "code", "work_exts": [".cpp"]}, Declarations(), False),
+                ({"kind": "code", "work_exts": [".py"]}, Declarations(
+                    blocks=[("m", "m.py", "def f(): ...")], missing=["absent.py"]), False)):
+            q = FakeQueue([])
+            with patch("master.work.twin_base.local_baseline", return_value=lambda p: None), \
+                 patch("master.projects.profile.load", return_value=profile), \
+                 patch("master.work.declarations.from_commit", return_value=decl) as gather, \
+                 patch("master.layer2_verify.verify_files", return_value=Verdict(True, None)) as verify, \
+                 patch.object(I._MODE, "current", return_value=("codex", "test")), \
+                 patch("master.work.revise.embed") as embed:
+                out = I.commit_task(paths, FakeFacts(), {"task_id": "py"},
+                                    work_id="W1", base=SUB_TIP, want=["m.py"], branch="task/W1/py",
+                                    api=q, ssh=_fake_shell("def f():\n    return 1\n"),
+                                    reader=lambda f, p: "def f():\n    return 1\n",
+                                    runner_=lambda *a: (0, "done"))
+            check("Python 프로필·grounding 게이트", out.ok == approved and
+                  bool(q.submitted) == approved and verify.called == approved, out.summary)
+            if approved:
+                check("Python 검증 prompt kind와 확장자 전달", verify.call_args.kwargs["kind"] == "code" and
+                      gather.call_args.kwargs["work_exts"] == [".py"], str(verify.call_args))
+            else:
+                check("grounding 불가 시 코드 재작성 없음", not embed.called, out.summary)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (
                test_commit_task_failure_notices_match_disposition,
@@ -979,7 +1088,8 @@ def main() -> int:
                test_parallel_is_the_default, test_serial_only_when_asked,
                test_parallel_uses_both_workers, test_limit_is_respected,
                test_handoff_states_that_nobody_applies_yet,
-               test_reuse_avoids_paying_twice):
+               test_reuse_avoids_paying_twice, test_commit_layer2_usage_and_author,
+               test_commit_layer2_grounding_gate):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_infer: {PASS}/{total} 통과")
