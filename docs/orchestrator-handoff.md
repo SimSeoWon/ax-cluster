@@ -4,12 +4,12 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 인수**: **Claude** 가 16:5x~19:13 작업했다(새 세션 — 인수인계 확인 후 이어받음). 마스터 담당 **기록**은 여전히
+- **현재 인수**: **Claude** 가 16:5x~19:20 작업했다(새 세션 — 인수인계 확인 후 이어받음). 마스터 담당 **기록**은 여전히
   Codex 14:37:58 이다 (사용자가 교대 기록을 지시하지 않아 바꾸지 않았다 — 기록은 잠금이 아니다).
-  **현재 갱신: 2026-10-05 19:13 KST** — 버그·개선 마일스톤 비움(#736·#749 수정 · #714·#666·#744 종결) 반영.
-  main = origin/main `f280038` · 작업 트리 clean(이 문서만 갱신).
+  **현재 갱신: 2026-10-05 19:20 KST** — 자동 리뷰 지적 6건 수정(R54·R56·R57) · agy 쓰기 허용 제거 반영.
+  main = origin/main `0d9e218` · 작업 트리 clean(이 문서만 갱신).
   **워커 지휘자 모드 `claude`**(출처 state, 16:14:07 사용자 지시 전환 · readiness 3/3).
-  서비스: `ax-projects` **18:54:20**(#736 반영) · `ax-task-queue`·`ax-broker` 15:30 — active, `/livez` 3/3 ok.
+  서비스: `ax-projects` **19:20:03**(R57 반영) · `ax-task-queue`·`ax-broker` 15:30 — active, `/livez` 3/3 ok.
   **워커 재배달 완료**(17:0x, `decb048` 기준 15/15 OK). **진행 중인 수동 명령·원격 파견·서브 에이전트 없음**.
   #748 은 마스터가 재구현해 완료했다(`accd72a`) — 아래 §0 최신 절의 후속.
 
@@ -52,6 +52,19 @@
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
 
 ### 최신 — agy 허용 정리 · 도구 설명 ax-cluster 정정 · 워커 재배달 완료 · #748 agy 작업 중 (2026-10-05 17:10, Claude)
+
+#### 후속 (19:20) — 자동 리뷰 지적 6건 수정 · agy 쓰기 자동 허용 제거
+
+- 새 미결 리뷰 R54(ff17826) 3 · R56(accd72a) 2 · R57(ef7022b) 1 — 코드 대조 6건 모두 유효. 사용자 「전부 고치고 푸시」.
+- `ax-fix` 흐름(`client/runtime/fix_flow.py` prepare→diff→commit→release; 마스터엔 `.ax/config.json` 이 없어
+  `fetch` 는 실패 — 지난번 Codex 와 같은 경로): `fix/R57` `3cab0b6`(도넛 툴팁 `<0.1%` 이중 escape) ·
+  `fix/R56` `b466897`(agy args 비dict · 비숫자 토큰 줄) · `fix/R54` `7aaef90`(빈 예외 메시지 · 관리 블록 표시
+  역순 거절 · 공백). main 머지 `dad2d07`·`2868129`·`0d9e218` → push. fix/ 브랜치는 남겼다.
+- 검사: usage_page 11 · session_usage · client_master_local 81/81 · usage_dashboard 통과. fix_index 6건 applied.
+- `master-local --check` 9/10 FAIL 발견 — 17:40 agy 「항상 허용」으로 쓰기 도구 `redmine_create_issue`·`redmine_note`
+  가 자동 허용에 들어가 있었다. 사용자 ① → 두 줄 삭제(백업 `settings.json.bak-rm-write-*`) → **10/10 OK**.
+  [주의] agy 에서 레드마인 쓰기를 「항상 허용」하면 재발한다.
+- 여전히 보류 중인 낮음 리뷰: R48-1·R48-3 · R27-1 · R37-1 · R41-1 · 주간 플랜 P1·P2.
 
 #### 후속 (19:13) — #744 종결 · #749 리뷰 큐 running 회수 (버그·개선 마일스톤 열린 일감 0)
 
