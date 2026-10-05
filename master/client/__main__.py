@@ -679,12 +679,13 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
 def _version_failure_kind(ver: dict) -> str:
     """출처 대조 실패의 모양 (`#737`). `behind`·`dirty`·`behind_dirty`, 그 밖은 빈 문자열.
 
-    [주의] 판정 불가·계보 밖(`behind is None`)은 빈 문자열이다 — 실행 중 변경 탓으로 접지 않는다.
+    [주의] 판정 불가·계보 밖(`behind is None`)이나 dirty 미상은 빈 문자열이다
+    — 실행 중 변경 탓으로 접지 않는다.
     """
     if ver.get("ok"):
         return ""
     behind, dirty = ver.get("behind"), ver.get("stamp_dirty")
-    if behind and not dirty:
+    if behind and dirty is False:
         return "behind"
     if behind == 0 and dirty:
         return "dirty"

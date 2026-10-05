@@ -1740,9 +1740,18 @@ def test_update_reports_dirty_tree() -> None:
               {"ok": True, "behind": 0}, {"ok": False, "behind": 2, "stamp_dirty": False},
               {"ok": False, "behind": 0, "stamp_dirty": True},
               {"ok": False, "behind": 1, "stamp_dirty": True},
+              {"ok": False, "behind": 2, "stamp_dirty": None},
               {"ok": False, "behind": None, "stamp_dirty": True},
               {"ok": False, "behind": None, "stamp_dirty": None})]
-          == ["", "behind", "dirty", "behind_dirty", "", ""])
+          == ["", "behind", "dirty", "behind_dirty", "", "", ""])
+
+    kind = client_cli._version_failure_kind({"ok": False, "behind": 2, "stamp_dirty": None})
+    unclassified = (1, {"bad": 1, "behind_only": int(kind == "behind"),
+                        "dirty_only": int(kind == "dirty"),
+                        "behind_dirty": int(kind == "behind_dirty"), "fresh_bad": 0})
+    rc, out = _run_update_with_heads([A, B, B], {"MS": unclassified})
+    check("[주의] dirty 미상의 뒤처짐은 HEAD 이동 중에도 종전 check 실패로 둔다",
+          rc == 1 and "MS: check\n" in out and "MS: check (" not in out, out[-400:])
 
 
 def test_update_head_round_trip_is_reported() -> None:
