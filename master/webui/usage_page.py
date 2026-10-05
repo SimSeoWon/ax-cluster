@@ -24,8 +24,9 @@ UI 계약:
 
 - [중요] 모델 계열별 토큰 비율 도넛 (사용자 결정 2026-10-04): 화면의 기간·프로젝트 필터를 따르되
   **언제나 source=all(모두 보기)로 센다** — 작업 실행 기록과 대화 세션 기록을 섞어 같은 호출을 두 번
-  세지 않기 위해서다. 계열 필터는 따르지 않는다(비율 그림이 한 조각이 되기 때문 — family=""). 화면이
-  이미 all·전체 계열이면 같은 보고서를 다시 쓴다. render(report, pie_report=None) 의 두 번째 인자로
+  세지 않기 위해서다. 계열 필터를 고르면 그 계열 **안의 모델별** 비율로 바꾼다(`#736`, 사용자 결정
+  2026-10-05 — 종전엔 계열 필터를 무시해 표·막대와 범위가 달랐다). 모델은 토큰 순 상위
+  `_PIE_MODELS` 개까지 조각을 주고 나머지는 「기타」로 접는다. 화면이 이미 all 이면 같은 보고서를 다시 쓴다. render(report, pie_report=None) 의 두 번째 인자로
   받고, page() 는 pie_loader(기본: loader 가 없을 때만 build_report)로 한 번 더 부른다. 주입 loader
   만 준 기존 호출은 두 번째 조회를 하지 않는다(그때 도넛은 「자료 없음」). 두 번째 조회가 실패해도
   화면은 200 이고 도넛 자리에 고정 안내만 둔다.
@@ -196,8 +197,29 @@ def _family_tokens(report) -> dict:
 
 
 _PIE_TITLE = "모델 계열별 토큰 비율 — 모두 보기 기준"
-_PIE_NOTE = ("이 그림은 화면의 기간·프로젝트 필터를 따르되, 선택한 기록·계열과 무관하게 언제나 "
+_PIE_NOTE = ("이 그림은 화면의 기간·프로젝트 필터를 따르되, 선택한 기록과 무관하게 언제나 "
              "모두 보기(Claude·Codex는 대화 세션 기록, 그 밖은 작업 실행 기록)로 센다 — 같은 호출을 두 번 세지 않는다.")
+_PIE_FAMILY_NOTE = ("계열 필터를 골랐으므로 그 계열 안의 모델별 비율을 그린다. 상위 {n}개 밖의 모델은 「기타」로 묶는다.")
+_PIE_MODELS = 6
+_MODEL_COLORS = ("#58a6ff", "#3fb950", "#d2a8ff", "#e3b341", "#f778ba", "#ff7b72")
+_OTHER_COLOR = "#8b949e"
+
+
+def _pie_title(family: str) -> str:
+    if not family:
+        return _PIE_TITLE
+    return f"{_FAMILY_LABEL[_family(family)]} 모델별 토큰 비율 — 모두 보기 기준"
+
+
+def _model_tokens(report, family: str) -> list[tuple[str, int]]:
+    """그 계열 안의 모델별 측정 토큰(큰 순). 미계측(None)은 빠진다."""
+    out: dict[str, int] = {}
+    for m in (report or {}).get("models") or []:
+        if not isinstance(m, dict) or m.get("tokens") is None or _family(m.get("family")) != family:
+            continue
+        name = str(m.get("model") or "모델 미상")
+        out[name] = out.get(name, 0) + _int(m.get("tokens"))
+    return sorted(((k, v) for k, v in out.items() if v > 0), key=lambda kv: (-kv[1], kv[0]))
 
 
 def _pct(value: int, total: int) -> str:
@@ -205,28 +227,42 @@ def _pct(value: int, total: int) -> str:
     return "&lt;0.1%" if 0 < share < 0.05 else f"{share:.1f}%"    # 0이 아닌데 0.0%로 읽히지 않게
 
 
-def _pie(pie_report) -> str:
-    """계열별 측정 토큰 도넛(인라인 SVG) + 백분율·토큰 범례 표. 자료가 없으면 빈 상태."""
+def _pie(pie_report, family: str = "") -> str:
+    """측정 토큰 도넛(인라인 SVG) + 백분율·토큰 범례 표. 자료가 없으면 빈 상태.
+
+    family 가 비면 계열별, 있으면 그 계열 안의 모델별(상위 `_PIE_MODELS` + 기타)."""
+    family = _family(family) if family else ""
     note = f'<div class="sub">{html.escape(_PIE_NOTE)}</div>'
+    if family:
+        note += f'<div class="sub">{html.escape(_PIE_FAMILY_NOTE.format(n=_PIE_MODELS))}</div>'
     if pie_report is None:
         return note + '<div class="note">모두 보기 기준 비율 자료를 읽지 못했다.</div>'
-    tokens = _family_tokens(pie_report)
-    total = sum(tokens.values())
+    if family:
+        models = _model_tokens(pie_report, family)
+        rows = [(name, _MODEL_COLORS[i], v) for i, (name, v) in enumerate(models[:_PIE_MODELS])]
+        rest = sum(v for _, v in models[_PIE_MODELS:])
+        if rest:
+            rows.append(("기타", _OTHER_COLOR, rest))
+        head = "모델"
+    else:
+        tokens = _family_tokens(pie_report)
+        rows = [(_FAMILY_LABEL[f], _FAMILY_COLOR[f], tokens[f]) for f in _FAMILIES if tokens.get(f, 0) > 0]
+        head = "계열"
+    total = sum(v for _, _, v in rows)
     if total <= 0:
         return note + '<div class="note">선택한 조건에 측정 토큰 기록이 없어 비율을 그리지 않는다.</div>'
-    rows = [(f, tokens[f]) for f in _FAMILIES if tokens.get(f, 0) > 0]
     size, r, width = 180, 70, 26
     circ = 2 * 3.141592653589793 * r
     gap = 2.0 if len(rows) > 1 else 0.0            # 조각 사이 2px 표면 틈 (한 계열이면 온전한 원)
-    parts = [f'<svg viewBox="0 0 {size} {size}" role="img" aria-label="{html.escape(_PIE_TITLE, quote=True)}">',
+    parts = [f'<svg viewBox="0 0 {size} {size}" role="img" aria-label="{html.escape(_pie_title(family), quote=True)}">',
              f'<circle cx="{size/2}" cy="{size/2}" r="{r}" fill="none" stroke="var(--line)" stroke-width="{width}"/>']
     offset = 0.0
-    for family, value in rows:
+    for label, color, value in rows:
         share = value / total
         length = max(0.5, share * circ - gap)
-        title = f"{_FAMILY_LABEL[family]} · {_pct(value, total)} · {value:,} 토큰"   # 고정 라벨·숫자뿐
+        title = html.escape(f"{label} · {_pct(value, total)} · {value:,} 토큰")   # 모델 이름은 기록에서 온다
         parts.append(
-            f'<circle cx="{size/2}" cy="{size/2}" r="{r}" fill="none" stroke="{_FAMILY_COLOR[family]}" '
+            f'<circle cx="{size/2}" cy="{size/2}" r="{r}" fill="none" stroke="{color}" '
             f'stroke-width="{width}" stroke-dasharray="{length:.2f} {circ:.2f}" '
             f'stroke-dashoffset="{-offset:.2f}" transform="rotate(-90 {size/2} {size/2})">'
             f'<title>{title}</title></circle>')
@@ -234,9 +270,9 @@ def _pie(pie_report) -> str:
     parts.append(f'<text x="{size/2}" y="{size/2}" text-anchor="middle">{total:,}</text>'
                  f'<text class="sub" x="{size/2}" y="{size/2 + 15}" text-anchor="middle">측정 토큰</text></svg>')
     legend = "".join(
-        f'<tr><td><i class="swatch" style="background:{_FAMILY_COLOR[f]}"></i>{_FAMILY_LABEL[f]}</td>'
-        f'<td class="num">{_pct(v, total)}</td><td class="num">{v:,}</td></tr>' for f, v in rows)
-    table = ('<table class="usage"><caption>도넛 대체 표</caption><tr><th>계열</th><th>비율</th>'
+        f'<tr><td><i class="swatch" style="background:{c}"></i>{html.escape(label)}</td>'
+        f'<td class="num">{_pct(v, total)}</td><td class="num">{v:,}</td></tr>' for label, c, v in rows)
+    table = (f'<table class="usage"><caption>도넛 대체 표</caption><tr><th>{head}</th><th>비율</th>'
              f'<th>측정 토큰</th></tr>{legend}</table>')
     return note + '<div class="pie">' + "".join(parts) + table + "</div>"
 
@@ -285,12 +321,18 @@ def _issue_table(report: dict) -> str:
 
 
 def _reusable_for_pie(report: dict) -> bool:
-    return str(report.get("source") or "") == "all" and not str(report.get("family") or "")
+    # 도넛은 화면과 같은 계열 필터를 쓴다(#736) — 모두 보기면 계열과 무관하게 같은 보고서다
+    return str(report.get("source") or "") == "all"
+
+
+def _pie_family(report: dict) -> str:
+    value = str(report.get("family") or "")
+    return _family(value) if value else ""
 
 
 def render(report: dict, pie_report: dict | None = None) -> bytes:
     # [DOC] 공용 nav.nav_html('/usage')와 SIDE_CSS 사용. 보고서의 숫자와 큐 제목만 표시.
-    #    pie_report 가 없고 report 자체가 모두 보기·전체 계열이면 그것으로 도넛을 그린다.
+    #    pie_report 가 없고 report 자체가 모두 보기면 그것으로 도넛을 그린다(계열 필터는 같다).
     if pie_report is None and _reusable_for_pie(report):
         pie_report = report
     totals = report.get("totals") or {}
@@ -314,7 +356,7 @@ def render(report: dict, pie_report: dict | None = None) -> bytes:
 <div class="stat"><b>{_int(totals.get('issues')):,}</b><span>연결 일감</span></div>
 <div class="stat"><b>{_int(totals.get('unlinked_calls')):,}</b><span>미연결 호출</span></div></div>
 <div class="note">토큰은 측정된 호출만 합산하며 부분 미계측 건수는 따로 표시한다. Claude 입력에는 캐시 읽기·생성을 더하고, Codex의 캐시 입력은 다시 더하지 않는다. reasoning은 output의 부분집합이므로 중복 합산하지 않는다. <b>미계측</b>은 실제 0과 다르다.</div>
-<h2>{html.escape(_PIE_TITLE)}</h2>{_pie(pie_report)}
+<h2>{html.escape(_pie_title(_pie_family(report)))}</h2>{_pie(pie_report, _pie_family(report))}
 <h2>기간별 측정 토큰</h2>{_legend()}{_chart(report)}{_bucket_table(report)}
 <h2>실제 모델별 요약</h2>{_model_table(report)}
 <h2>레드마인 일감별 작업</h2><div class="sub">제목은 작업 큐에 저장된 제목이다.</div>{_issue_table(report)}
@@ -324,7 +366,7 @@ def render(report: dict, pie_report: dict | None = None) -> bytes:
 
 def page(query=None, *, loader=None, pie_loader=None) -> tuple:
     # [DOC] build_report와 동결 키워드로 연결. ValueError/IO 오류를 안전한 HTTP 안내로 변환.
-    #    [중요] 도넛용 두 번째 조회(source=all·family="")는 pie_loader 로 한다. 기본은 loader 가
+    #    [중요] 도넛용 두 번째 조회(source=all·같은 family)는 pie_loader 로 한다. 기본은 loader 가
     #    없을 때만 build_report — 주입 loader 의 호출 계약(한 번, 같은 키워드)을 바꾸지 않는다.
     if loader is None:
         from ..work.usage_dashboard import build_report
@@ -353,7 +395,7 @@ def page(query=None, *, loader=None, pie_loader=None) -> tuple:
         pie_report = report                      # 이미 모두 보기 — 다시 세지 않는다
     elif pie_loader is not None:
         try:
-            pie_report = pie_loader(**{**params, "source": "all", "family": ""})
+            pie_report = pie_loader(**{**params, "source": "all"})
         except Exception as exc:  # noqa: BLE001 - 도넛 실패가 화면을 막지 않는다. 안내는 고정 문구다.
             print(f"[usage-page] 모두 보기 비율 조회 실패: {type(exc).__name__}", file=sys.stderr)
             pie_report = None

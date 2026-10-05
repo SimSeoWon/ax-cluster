@@ -239,19 +239,21 @@ class UsagePieTests(unittest.TestCase):
 
         def pie_loader(**kwargs):
             calls.append(("pie", kwargs))
-            return _report(**kwargs, models=_models(("local", "qwen", 9)))
+            return _report(**kwargs, models=_models(("codex", "gpt-5-codex", 9)))
 
         query = {"project": "AXCluster", "period": "weekly", "start": "2026-08-01",
                  "end": "2026-09-01", "family": "codex", "source": "session"}
         status, raw = usage_page.page(query, loader=loader, pie_loader=pie_loader)
         self.assertEqual(200, status)
         self.assertEqual([c[0] for c in calls], ["main", "pie"])
-        self.assertEqual(calls[1][1], {**query, "source": "all", "family": ""})
+        self.assertEqual(calls[1][1], {**query, "source": "all"})  # #736: 계열 필터는 그대로 따른다
         self.assertIn(">100.0%<", raw.decode("utf-8"))
         calls.clear()
-        usage_page.page({**query, "source": "all", "family": ""}, loader=loader,
-                        pie_loader=pie_loader)
-        self.assertEqual([c[0] for c in calls], ["main"])          # 이미 모두 보기 — 재사용
+        for family in ("", "codex"):
+            usage_page.page({**query, "source": "all", "family": family}, loader=loader,
+                            pie_loader=pie_loader)
+            self.assertEqual([c[0] for c in calls], ["main"])      # 이미 모두 보기 — 재사용
+            calls.clear()
 
         def broken(**_kwargs):
             raise OSError("/home/sim/secret")
@@ -261,6 +263,31 @@ class UsagePieTests(unittest.TestCase):
         self.assertIn("비율 자료를 읽지 못했다", text)
         self.assertNotIn("/home/sim/secret", text)
 
+    def test_family_filter_draws_models_within_family(self):
+        # #736: 계열 필터를 고르면 그 계열 안의 모델별 비율 — 다른 계열·미계측은 빠진다
+        models = _models(("codex", "gpt-5-codex", 300), ("codex", "gpt-5", 100),
+                         ("claude", "opus", 9999), ("codex", "o3", None))
+        body = _text(_report(source="all", family="codex", models=models))
+        self.assertIn("Codex 모델별 토큰 비율 — 모두 보기 기준", body)
+        self.assertIn("<th>모델</th>", body)
+        self.assertIn(">75.0%<", body)
+        self.assertIn(">25.0%<", body)
+        self.assertIn(">400<", body)                    # opus(claude) 는 세지 않는다
+        self.assertEqual(body.count("stroke-dasharray"), 2)
+        self.assertNotIn(">opus<", body.split("도넛 대체 표")[1].split("</table>")[0])
+        empty = _text(_report(source="all", family="gemini", models=models))
+        self.assertIn("측정 토큰 기록이 없어", empty)
+        self.assertIn("Gemini 모델별 토큰 비율", empty)
+
+    def test_family_filter_folds_tail_into_other(self):
+        n = usage_page._PIE_MODELS
+        models = _models(*[("local", f"m{i}", 100 - i) for i in range(n + 2)])
+        body = _text(_report(source="all", family="local", models=models))
+        self.assertEqual(body.count("stroke-dasharray"), n + 1)   # 상위 n + 기타
+        self.assertIn(">기타<", body.replace('</i>', '>'))
+        tail = (100 - n) + (100 - n - 1)
+        self.assertIn(f">{tail:,}<", body)
+
     def test_pie_strings_escaped(self):
         attack = '<script>alert("x")</script>'
         pie = _report(source="all", models=_models((attack, attack, 3)))
@@ -268,6 +295,9 @@ class UsagePieTests(unittest.TestCase):
         self.assertNotIn(attack, body)
         self.assertIn(">100.0%<", body)                 # 모르는 계열은 미상으로 접힌다
         self.assertIn("미상", body)
+        body = _text(_report(source="all", family="unknown", models=_models((attack, attack, 3))))
+        self.assertNotIn(attack, body)                  # 모델별 조각·제목에도 이름은 escape
+        self.assertIn("&lt;script&gt;", body)
 
 if __name__ == "__main__":
     unittest.main()
