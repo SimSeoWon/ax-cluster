@@ -65,12 +65,19 @@ SYNTH_TIMEOUT = 600
 #    [중요] **게이트는 그대로다** — 사슬의 어느 모델 결과든 같은 `md.finalize` → 사실 게이트를 탄다.
 #    [중요] 쓰는 일의 레인 정책(`codex → agy → 로컬`, `claude` 는 마스터 작업용으로 남긴다)을
 #       따라 **`claude` 는 넣지 않는다** — 넣어도 `_chain_for` 가 빼고 로그를 남긴다.
-#    [중요] **비용 상한**: 상용 레인은 사슬의 로컬 모델이 그 그룹에서 **모두** 실패한 뒤에만,
-#       레인마다 그룹당 실행당 **한 번**만 돈다(`_chain_for` 가 로컬을 앞으로 모은다).
+#    🔴 [중요] **순서는 이 상수가 정본이다** — e4b → agy → codex → 12b (사용자 결정 2026-10-05:
+#       *"제미나이를 좀더 적극적으로 사용해봐 … 제미나이 자체를 거의 사용하지 않고있어"* — 8일
+#       사용량 claude 3,710 · codex 2,088 · 로컬 2,038 · agy 11). 종전의 「상용은 로컬이 다
+#       실패한 뒤」는 폐기됐다. [주의] **12b 는 최후다** — 그 결과가 품질이 낮았다(프롬프트 예시
+#       태그 `[미션, 스폰, 대화창, 상태동기화]` 를 그대로 베꼈고, 없는 관련 클래스
+#       `UReviewGen`·`AReviewIssue` 를 지어내 사실 게이트를 통과했다).
+#    [중요] **비용 상한** (여전히 성립하는 것): 사슬의 **첫 모델은 언제나 로컬** `SYNTH_MODEL`
+#       이다(`_chain_for` 가 강제한다) — 상용 레인은 e4b 가 그 그룹에서 형식 거부된 뒤에만,
+#       레인마다 그룹당 실행당 **한 번**만 돈다.
 #    [주의] 사슬은 **형식 거부**에서만 다음으로 넘어간다. 첫 모델의 LLM 실패(브로커·노드 장애)는
 #       종전처럼 서킷브레이커 몫이다 — 장애마다 상용 호출을 태우지 않는다. 사실 게이트 거부도
 #       종전처럼 그 자리에서 끝난다(형식이 아니라 내용의 문제다).
-SYNTH_CHAIN = (SYNTH_MODEL, FALLBACK_MODEL, "codex", "agy")
+SYNTH_CHAIN = (SYNTH_MODEL, "agy", "codex", FALLBACK_MODEL)
 _CLI_LANES = ("claude", "agy", "codex")          # `ontology.synth.CLI_MODELS` 와 같은 레인 이름
 _CHAIN_EXCLUDED = ("claude",)
 
@@ -489,8 +496,11 @@ def _chain_for(model: str, chain) -> list[str]:
     """이 그룹이 탈 모델 순서 (`#727`).
 
     `chain` 이 없으면 — 기본 모델이면 `SYNTH_CHAIN`, **명시한 다른 모델이면 그 하나**(종전의
-    수동 `--model`·`--fallback` 동작 그대로). 어느 경우든 `claude` 는 빼고, 로컬을 상용보다
-    **앞으로 모은다** — 상수 순서가 바뀌어도 「상용은 로컬이 다 실패한 뒤」가 깨지지 않게.
+    수동 `--model`·`--fallback` 동작 그대로). 어느 경우든 `claude` 는 빼고, **순서는 받은
+    그대로**다(2026-10-05 — 상수가 정본이다, 종전의 「로컬을 앞으로 모은다」는 폐기).
+    [중요] 비용 상한 하나는 여기서 지킨다 — **상용 레인이 맨 앞에 오지 않는다.** 사슬에 로컬이
+    있는데 상용이 앞서면 첫 로컬 모델을 맨 앞으로 올린다(나머지 순서는 그대로). 그래야 상용은
+    언제나 로컬 첫 모델의 형식 거부 뒤에만 돌고, 첫 모델의 장애는 서킷브레이커로 간다.
     """
     if chain is None:
         chain = SYNTH_CHAIN if model == SYNTH_MODEL else (model,)
@@ -501,7 +511,13 @@ def _chain_for(model: str, chain) -> list[str]:
             continue
         if m not in out:
             out.append(m)
-    return [m for m in out if not _is_cli(m)] + [m for m in out if _is_cli(m)]
+    if out and _is_cli(out[0]):
+        local = next((m for m in out if not _is_cli(m)), None)
+        if local is not None:
+            _log(f"[사슬] 상용 {out[0]} 이 맨 앞이라 로컬 {local} 를 앞으로 올린다 (#727)")
+            out.remove(local)
+            out.insert(0, local)
+    return out
 
 
 def _generate(prompt: str, model: str, *, broker: str, caller, cli, usage: dict) -> str:
