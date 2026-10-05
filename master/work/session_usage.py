@@ -188,11 +188,15 @@ def parse_antigravity(lines) -> Session | None:
                 model = m.group(1).strip()
         if d.get("type") != "PLANNER_RESPONSE" or "input_tokens" not in d:
             continue
+        try:
+            inp, out, cache = (int(d.get(k) or 0) for k in
+                               ("input_tokens", "output_tokens", "cache_read_tokens"))
+        except (ValueError, TypeError):
+            # R56-2: 숫자가 아닌 값은 그 줄만 버린다 — 0 으로 적지 않고 세션 전체도 죽이지 않는다
+            continue
         recs.append({
             "ts": d.get("created_at", ""), "model": model,
-            "input": int(d.get("input_tokens") or 0),
-            "output": int(d.get("output_tokens") or 0),
-            "cache_read": int(d.get("cache_read_tokens") or 0),
+            "input": inp, "output": out, "cache_read": cache,
             "cache_create": 0, "reasoning": 0,
         })
     return Session("agy", "", recs) if recs else None
@@ -277,8 +281,9 @@ def session_cwd(path: Path, tool: str, max_lines: int = 5000) -> str:
                         return cwd if isinstance(cwd, str) else ""
                 elif tool == "agy":
                     for tc in d.get("tool_calls") or ():
-                        if isinstance(tc, dict) and tc.get("name") == "run_command":
-                            cwd = (tc.get("args") or {}).get("Cwd")
+                        args = tc.get("args") if isinstance(tc, dict) else None
+                        if isinstance(args, dict) and tc.get("name") == "run_command":  # R56-1
+                            cwd = args.get("Cwd")
                             cwd = cwd.strip().strip("\"'") if isinstance(cwd, str) else ""
                             if cwd:
                                 return cwd

@@ -246,6 +246,20 @@ class CollectTests(unittest.TestCase):
                            "brain__c1__.system_generated__logs__transcript.json").read_text(encoding="utf-8"))
         self.assertEqual((snap["tool"], snap["project"], len(snap["records"])), ("agy", "NS", 2))
 
+    def test_agy_malformed_lines_do_not_crash(self):
+        # R56-1: args 가 dict 가 아니어도 cwd 판정이 죽지 않는다 · R56-2: 숫자가 아닌 토큰은 그 줄만 버린다
+        rows = [{"type": "PLANNER_RESPONSE", "input_tokens": "많이", "output_tokens": 1},
+                {"type": "PLANNER_RESPONSE", "input_tokens": {"x": 1}, "output_tokens": 1},
+                {"type": "PLANNER_RESPONSE", "input_tokens": 7, "output_tokens": 3,
+                 "tool_calls": ["문자열", {"name": "run_command", "args": ["/x"]},
+                                {"name": "run_command", "args": {"Cwd": '"/home/sim/trunk/NS"'}}]}]
+        s = su.parse_antigravity([json.dumps(r, ensure_ascii=False) for r in rows])
+        self.assertEqual([(r["input"], r["output"]) for r in s.records], [(7, 3)])
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "transcript.jsonl"
+            f.write_bytes(_blob(rows))
+            self.assertEqual(su.session_cwd(f, "agy"), "/home/sim/trunk/NS")
+
     def test_agy_lists_only_transcript(self):
         # 같은 대화 폴더의 transcript_full.jsonl·chunks 는 중복 — 받지 않는다
         with tempfile.TemporaryDirectory() as td:
