@@ -262,7 +262,7 @@ def _model_table(report: dict) -> str:
                     f"<td class=\"num\">{_token(m.get('tokens'))}</td></tr>")
     if not rows:
         rows.append('<tr><td colspan="7" class="dim">기록 없음</td></tr>')
-    if not any(_family(m.get("family")) == "gemini" for m in models):
+    if models and not any(_family(m.get("family")) == "gemini" for m in models):
         rows.append('<tr><td>Gemini</td><td colspan="6" class="dim">기록 없음</td></tr>')
     return '<div class="wrap"><table class="usage"><tr><th>계열</th><th>실제 모델</th><th>호출</th><th>측정</th><th>미계측</th><th>실패</th><th>측정 토큰</th></tr>' + "".join(rows) + "</table></div>"
 
