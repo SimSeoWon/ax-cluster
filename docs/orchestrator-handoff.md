@@ -4,13 +4,14 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 인수**: **Claude** 가 16:1x~16:49 작업했다. 마스터 담당 **기록**은 여전히 Codex 14:37:58 이다
-  (사용자가 교대 기록을 지시하지 않아 바꾸지 않았다 — 기록은 잠금이 아니다).
-  **현재 갱신: 2026-10-05 16:49 KST** — 사용자: “인수인계서 작성해 그럼 세션 끄고 다시 시작할게”.
-  main = origin/main `ff17826921dd3db173c98ba2e954eb1704501dbb` · 작업 트리 clean(이 문서만 갱신).
+- **현재 인수**: **Claude** 가 16:5x~17:10 작업했다(새 세션 — 인수인계 확인 후 이어받음). 마스터 담당 **기록**은 여전히
+  Codex 14:37:58 이다 (사용자가 교대 기록을 지시하지 않아 바꾸지 않았다 — 기록은 잠금이 아니다).
+  **현재 갱신: 2026-10-05 17:10 KST** — 사용자: “끝나면 인수인계서 갱신해”.
+  main = origin/main `decb048` · 작업 트리 clean(이 문서만 갱신).
   **워커 지휘자 모드 `claude`**(출처 state, 16:14:07 사용자 지시 전환 · readiness 3/3).
-  서비스: `ax-projects` 16:21:38 재기동(리뷰 UI 반영). **워커 재배달은 미실행** — 아래 §0 최신 절.
-  **진행 중인 수동 명령·원격 파견·서브 에이전트 없음**. 큐 pending/claimed 조각 0.
+  서비스: `ax-projects` 16:21:38 · `ax-task-queue`·`ax-broker` 15:30 — active, `/livez` 3/3 ok.
+  **워커 재배달 완료**(17:0x, `decb048` 기준 15/15 OK). **진행 중인 수동 명령·원격 파견·서브 에이전트 없음**.
+  [주의] **사용자가 agy 에게 #748 을 맡겨 작업 중** — 마스터 작업 트리를 agy 가 고칠 수 있다. 아래 §0 최신 절.
 
 아래 메타데이터는 이전 Claude 인계(20:25) 시점의 기록이며 현재 상태는 §0 첫 절을 따른다.
 
@@ -49,6 +50,32 @@
   (`3e46078` 은 마스터 측 배달 코드라 워커 동기화 불필요). 홈 중복 스킬 `~/.agents/skills/ax-work` 주의는 무해.
 
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
+
+### 최신 — agy 허용 정리 · 도구 설명 ax-cluster 정정 · 워커 재배달 완료 · #748 agy 작업 중 (2026-10-05 17:10, Claude)
+
+#### 새 세션이 먼저 할 것
+
+1. **#748 검토 대기**: 사용자가 Antigravity 에 레드마인 **#748** 을 등록·작업 지시했다(Claude 가 시킨 것 아님,
+   일감 내용 미조회). 사용자: “파이썬 코드 작업이 끝나면 문제없는지 너에게 검토 요청할게”. 요청이 오면
+   `git status`·diff 로 agy 변경을 읽고 검토한다. 17:09 시점 마스터 작업 트리는 clean 이었다(agy 변경 없음).
+   커밋·push 는 별도 승인.
+2. agy 변경이 커밋되면 그 HEAD 로 **워커 재배달이 다시 필요할 수 있다**(변경이 배달 대상 파일이면).
+
+#### 이번 세션에서 한 것 (모두 사용자 지시)
+
+- 인수인계 대조: HEAD `2457ad6` clean · 서비스 3종 active · `ax-client`/`ax-redmine` 도구가 새 세션에서 보임(이전 「먼저 할 것」 1번 해소).
+- `master-local --check` 가 **9/10 FAIL**(agy approvals) — `~/.gemini/antigravity-cli/settings.json` 에 인계(16:50) 뒤
+  16:51 에 `mcp(ax-client/get_orchestration)` 허용이 추가돼 있었다(누가 넣었는지 미확인 — agy 「항상 허용」 추정).
+  사용자 선택 ①로 그 줄 삭제(백업 `settings.json.bak-rm-orch-<시각>`) → **10/10 OK**.
+- `client/runtime/client_mcp.py` `redmine_create_issue` 설명 「… ModularStage 에 둔다」 → 「… ax-cluster(id 3) 에 둔다」.
+  `test_client_mcp` 163/163. 커밋 **`decb048`** · Gitea push(사용자 「응 모두 푸시해」).
+- 워커 재배달 `AX_PROJECTS_ROOT=$PWD PYTHONUNBUFFERED=1 .venv/bin/python -B -m master.client update` — **rc0 ·
+  5프로젝트 × 3대 = 15/15 OK · FAIL 0** · 출처 HEAD `decb048` 일치 · 배달 중 마스터 트리·HEAD 변동 없음.
+  이로써 `ff17826` 닫기 문구 + `decb048` 설명 정정이 워커에 반영됐다. 워커 Git 소스 체크아웃(fetch/pull)은 하지 않았다.
+
+#### 미확인
+
+- #748 일감 내용·agy 작업 진행 상태 · 큐 pending/claimed 수 · `reports/` 전문 재독 — 이번 세션에서 조회하지 않았다.
 
 ### 최신 — 워커 claude 전환 · 리뷰 UI 모듈 카드 · 마스터 LLM 3종 레드마인 경로 통일 (2026-10-05 16:49, Claude)
 
