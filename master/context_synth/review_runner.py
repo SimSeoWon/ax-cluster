@@ -335,13 +335,32 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
         rq.finish(paths.root, item["id"], ok=True, note="스킵: 소스 변경 없음", logf=log)
         res.state, res.why = "done", "소스 변경 없음"
         return res
+    # 🔴 [중요] **머지는 결합 diff 로 가른다** (`#744` ①, 사용자 결정 2026-10-05).
+    #    머지의 `git show` 는 결합 diff 라 깨끗한 머지면 비어 있고, 종전에는 그것을 결정적
+    #    실패(「diff 를 읽지 못했다」)로 포기했다 — AXCluster 실측 14건. 머지로 들어온 일반
+    #    커밋은 각자 리뷰됐으므로 **빈 결합 diff 는 「스킵 = 완료」**다. 결합 diff 가 있으면
+    #    (⑺ 의 충돌 해소 · 머지 안에서 고친 것) **그 부분만** 리뷰한다 — 그 변경은 어느 조각
+    #    커밋의 리뷰에도 없다. 어느 갈래였는지는 반드시 로그에 남긴다.
+    merge = rg.parent_count(repo, commit) >= 2
+    diff = rg.commit_diff(repo, src, commit) if merge else ""
+    if merge and not diff and rg.is_clean_merge(repo, src, commit):
+        log(f"[리뷰큐] {commit[:8]} 머지 — 결합 diff 없음 → 스킵(조각 커밋이 리뷰했다)")
+        rq.finish(paths.root, item["id"], ok=True, note=rg.MERGE_SKIP_NOTE, logf=log)
+        res.state, res.why = "done", "머지 스킵"
+        return res
+    if merge and diff:
+        log(f"[리뷰큐] {commit[:8]} 머지 — 결합 diff {len(diff)}자 → 머지 안 변경만 리뷰")
+    elif merge:
+        # git 이 결합 diff 를 못 읽었다 — 스킵으로 접지 않고 아래 결정적 실패로 보낸다
+        log(f"[리뷰큐] [주의] {commit[:8]} 머지 — 결합 diff 를 읽지 못했다 → 실패로 기록")
+
     if rg.is_trivial_diff(repo, src, commit):
         # 원전 규약 — 주석/로그/include 만이면 리뷰하지 않는다. 유실이 아니라 설계다.
         rq.finish(paths.root, item["id"], ok=True, note="스킵: trivial", logf=log)
         res.state, res.why = "done", "trivial"
         return res
 
-    diff = rg.commit_diff(repo, src, commit)
+    diff = diff or rg.commit_diff(repo, src, commit)
     if not diff:
         # [주의] 결정적 실패다 — 큐가 갈래를 보고 1회에 멈춘다(`review_queue.classify`).
         rq.finish(paths.root, item["id"], ok=False,

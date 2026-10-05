@@ -14,6 +14,7 @@
     ⑩ grounding 머리말이 「미검증·버려라」를 먼저 말한다 (Antigravity 검증용)
     ⑫ 기존 초안을 재사용하고 성공 시 제거한다. 실패 시에는 보존한다
     ⑪ 🔴 **`main()` 이 실제로 돈다** — 유닛이 부르는 진입점이다
+    ⑬ 머지는 결합 diff(`--cc`)로 가른다 — 비면 스킵(done), 있으면 그것만 리뷰 (`#744` ①)
 
 [중요] ⑪ 은 값을 치르고 얻었다. 첫 배포 회차가 @reg.projects@ AttributeError 로 죽었는데
 (`Registry` 의 필드는 `.names` 다), **유닛 21건이 전부 통과한 상태였다** — `run_once` 만 탔고
@@ -299,6 +300,124 @@ def test_grounding_머리말():
     check("⑩ 둘 다 비면 빈 문자열", R.grounding_text("", "") == "")
 
 
+def make_merge_repo():
+    """`#744` ① — 실제 git 저장소에 깨끗한 머지 · 충돌 해소 머지 · 주석만 해소한 머지 · 루트."""
+    root = Path(tempfile.mkdtemp(prefix="ax-run-744-"))
+    repo = root / "repo"
+    (repo / "Source" / "M").mkdir(parents=True)
+    git(repo.parent, "init", "-q", "-b", "main", str(repo))
+    git(repo, "config", "user.email", "t@e.st")
+    git(repo, "config", "user.name", "테스터")
+    a, b = repo / "Source" / "M" / "A.cpp", repo / "Source" / "M" / "B.cpp"
+    body = "".join(f"int v{i} = {i};\n" for i in range(1, 11))
+    a.write_text(body, encoding="utf-8")
+    b.write_text(body + "// note\n", encoding="utf-8")
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "root")
+    rootc = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    def commit_on(branch, path, old, new, msg):
+        git(repo, "checkout", "-q", branch)
+        path.write_text(path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8")
+        git(repo, "commit", "-qam", msg)
+
+    git(repo, "branch", "side")
+    commit_on("side", b, "int v2 = 2;", "int v2 = 2 / 0;", "side: B")
+    commit_on("main", a, "int v9 = 9;", "int v9 = 99;", "main: A")
+    git(repo, "merge", "-q", "--no-ff", "--no-edit", "side")
+    clean = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    git(repo, "branch", "side2")
+    commit_on("side2", a, "int v5 = 5;", "int v5 = 50;", "side2: A")
+    commit_on("main", a, "int v5 = 5;", "int v5 = 500;", "main: A conflict")
+    git(repo, "merge", "-q", "--no-edit", "side2")            # 충돌 — 손으로 해소한다
+    text = a.read_text(encoding="utf-8")
+    head, rest = text.split("<<<<<<<", 1)
+    tail = rest.split(">>>>>>> side2\n", 1)[1]
+    a.write_text(head + "int v5 = 5 / 0;  // 해소\n" + tail, encoding="utf-8")
+    git(repo, "commit", "-qam", "merge side2 (resolved)")
+    conflict = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    git(repo, "branch", "side3")
+    commit_on("side3", b, "// note", "// side note", "side3: B 주석")
+    commit_on("main", b, "// note", "// main note", "main: B 주석 충돌")
+    git(repo, "merge", "-q", "--no-edit", "side3")
+    text = b.read_text(encoding="utf-8")
+    head, rest = text.split("<<<<<<<", 1)
+    tail = rest.split(">>>>>>> side3\n", 1)[1]
+    b.write_text(head + "// both note\n" + tail, encoding="utf-8")   # 주석끼리의 충돌을 주석으로 해소
+    git(repo, "commit", "-qam", "merge side3 (comment only)")
+    comment = git(repo, "rev-parse", "HEAD").stdout.strip()
+    return root, {"root": rootc, "clean": clean, "conflict": conflict, "comment": comment}
+
+
+def test_머지는_결합_diff로_가른다():
+    root, c = make_merge_repo()
+    repo = Path(root) / "repo"
+    files = ["Source/M/A.cpp", "Source/M/B.cpp"]
+    check("#744 부모 수 — 루트 0 · 머지 2", RG.parent_count(repo, c["root"]) == 0
+          and RG.parent_count(repo, c["clean"]) == 2)
+    check("#744 부모를 못 읽으면 -1 (머지로 새지 않는다)", RG.parent_count(repo, "0" * 40) == -1)
+    check("#744 루트 커밋은 일반 diff 로 리뷰 재료가 나온다",
+          "int v1 = 1;" in RG.commit_diff(repo, files, c["root"]))
+    check("#744 깨끗한 머지의 결합 diff 는 비어 있다", RG.commit_diff(repo, files, c["clean"]) == ""
+          and RG.is_clean_merge(repo, files, c["clean"]))
+    check("#744 충돌 해소 머지·루트는 깨끗한 머지가 아니다",
+          not RG.is_clean_merge(repo, files, c["conflict"])
+          and not RG.is_clean_merge(repo, files, c["root"]))
+    orig = RG._show_diff
+    RG._show_diff = lambda *a, **k: (128, "")
+    try:
+        check("[주의] #744 git 이 결합 diff 를 못 읽으면 깨끗한 머지로 접지 않는다",
+              not RG.is_clean_merge(repo, files, c["clean"]))
+    finally:
+        RG._show_diff = orig
+    d = RG.commit_diff(repo, files, c["conflict"])
+    check("#744 충돌 해소 머지는 해소분만 + 결합 diff 머리말",
+          d.startswith(RG.MERGE_DIFF_HEADER) and "5 / 0" in d and "v2 = 2 / 0" not in d, d[:300])
+    check("#744 주석만으로 해소한 머지는 trivial (줄 머리가 부모 수만큼의 열)",
+          RG.is_trivial_diff(repo, ["Source/M/B.cpp"], c["comment"]))
+    check("#744 코드로 해소한 머지는 trivial 이 아니다",
+          not RG.is_trivial_diff(repo, ["Source/M/A.cpp"], c["conflict"]))
+
+    # ── 큐 소비자: 깨끗한 머지 → done(스킵) · 모델 호출 0 ──
+    Q.enqueue(root, key=c["clean"], files=files)
+    logs, calls = [], []
+    r = R.run_once(Paths(root), draft_call=lambda p: calls.append(p) or "안 불린다",
+                   review_call=lambda p: calls.append(p) or _review_body(), logf=logs.append)
+    it = [x for x in Q.items(root) if x["key"] == c["clean"]][0]
+    check("🔴 #744 깨끗한 머지는 done — 「diff 를 읽지 못했다」로 포기하지 않는다",
+          r.state == "done" and it["state"] == "done", f"{r.state} {it['state']}")
+    check("#744 스킵 사유가 큐에 남는다", RG.MERGE_SKIP_NOTE in str(it.get("note", "")) or
+          RG.MERGE_SKIP_NOTE in str(it), str(it)[:300])
+    check("#744 모델을 부르지 않는다", calls == [], str(len(calls)))
+    check("#744 어느 갈래였는지 로그에 남긴다",
+          any("머지" in m and "스킵" in m for m in logs), str(logs))
+
+    # ── 충돌 해소 머지 → 해소분만 리뷰 ──
+    Q.enqueue(root, key=c["conflict"], files=files)
+    logs, drafts, finals = [], [], []
+    r = R.run_once(Paths(root), draft_call=lambda p: drafts.append(p) or "해소 줄이 0 으로 나눈다",
+                   review_call=lambda p: finals.append(p) or _review_body(), logf=logs.append)
+    check("🔴 #744 충돌 해소 머지는 리뷰한다", r.state == "done" and len(finals) == 1,
+          f"{r.state} {r.why} {len(finals)}")
+    check("#744 리뷰 재료는 해소분뿐이다 (옆 브랜치 변경은 조각 커밋의 몫)",
+          finals and "5 / 0" in finals[0] and "v2 = 2 / 0" not in finals[0]
+          and RG.MERGE_DIFF_HEADER in finals[0])
+    check("#744 초고도 같은 결합 diff 를 받는다", drafts and RG.MERGE_DIFF_HEADER in drafts[0])
+    check("#744 리뷰 갈래가 로그에 남는다", any("머지 안 변경만 리뷰" in m for m in logs), str(logs))
+
+    # ── 주석만 해소 → trivial 스킵 ──
+    Q.enqueue(root, key=c["comment"], files=["Source/M/B.cpp"])
+    r = R.run_once(Paths(root), draft_call=lambda p: "안 불린다")
+    check("#744 주석만 해소한 머지는 trivial 스킵", r.state == "done" and r.why == "trivial", r.why)
+
+    # ── review_gen 직접 경로도 같은 판정 ──
+    rv = RG.review_commit(Paths(root), c["clean"], files, chat=lambda p: "안 불린다")
+    check("#744 review_commit 도 깨끗한 머지를 스킵으로 돌려준다",
+          rv.skipped and not rv.error and "머지" in rv.skipped, f"{rv.skipped} {rv.error}")
+    shutil.rmtree(root)
+
+
 if __name__ == "__main__":
     for fn in (test_로컬뒤_antigravity가_퇴고한다,
                test_로컬_없음이어도_antigravity가_본다,
@@ -306,7 +425,8 @@ if __name__ == "__main__":
                test_기존_초안_재사용과_실패_보존,
                test_diff를_못_읽으면_결정적이다,
                test_설계된_스킵, test_선언부, test_main_이_실제로_돈다,
-               test_퇴고도_사용량에_남는다, test_grounding_머리말):
+               test_퇴고도_사용량에_남는다, test_grounding_머리말,
+               test_머지는_결합_diff로_가른다):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

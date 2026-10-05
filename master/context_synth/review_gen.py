@@ -121,15 +121,42 @@ def _git(repo: Path, *args: str) -> tuple:
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
+def parent_count(repo: Path, commit: str) -> int:
+    """커밋의 부모 수. 읽지 못하면 -1 (`#744` ①).
+
+    [주의] 실패를 0(루트)이나 1(일반)로 접지 않는다 — 호출자가 「머지가 아니다」로 읽고
+    결정적 실패 경로(diff 없음)로 가는 것이 맞다. 「머지라서 스킵」으로 새면 안 된다.
+    """
+    rc, out = _git(repo, "rev-list", "--parents", "-n", "1", commit)
+    toks = out.split() if rc == 0 else []
+    return len(toks) - 1 if toks else -1
+
+
+def _show_diff(repo: Path, files: list, commit: str, *, unified: int, merge: bool) -> tuple:
+    """`git show` 의 diff 부분. 머지는 **결합 diff(`--cc`)** 를 명시한다 (`#744` ①).
+
+    [중요] 머지의 `git show` 는 원래 결합 diff 다 — 어느 부모에서도 그대로 온 hunk 는 빠지고
+    **충돌 해소·머지 안에서 고친 것**만 남는다. 깨끗한 머지면 비어 있다. 명시하는 이유는
+    그 뜻을 코드에 남기기 위해서다(기본값에 기대면 「왜 비었나」가 안 보인다 — 15건이 그랬다).
+    """
+    args = ["show", "--pretty=format:", f"--unified={unified}", "--no-color"]
+    if merge:
+        args.append("--cc")
+    return _git(repo, *args, commit, "--", *files)
+
+
 def is_trivial_diff(repo: Path, files: list, commit: str) -> bool:
     """변경 라인이 전부 주석/로그/include/공백이면 True — 원전 로직 글자대로.
 
     새 파일·삭제·git 실패·빈 diff 는 보수적으로 False(정상 리뷰 진행).
+    [주의] 머지의 결합 diff 는 줄 머리가 **부모 수만큼의 열**이다(`++`·` +`·`- `) — 첫 글자만
+    보면 한쪽 부모 대비 변경을 문맥으로 읽어 판정이 틀어진다 (`#744` ①).
     """
     if not files:
         return False
-    rc, diff = _git(repo, "show", "--pretty=format:", "--unified=0", "--no-color",
-                    commit, "--", *files)
+    n = parent_count(repo, commit)
+    width = n if n >= 2 else 1
+    rc, diff = _show_diff(repo, files, commit, unified=0, merge=width >= 2)
     if rc != 0 or not diff.strip():
         return False
     for line in diff.split("\n"):
@@ -140,11 +167,12 @@ def is_trivial_diff(repo: Path, files: list, commit: str) -> bool:
         if not line:
             continue
         if line.startswith(("+++", "---", "@@", "diff ", "index ", "new file",
-                            "deleted file", "similarity ", "rename ")):
+                            "deleted file", "similarity ", "rename ", "mode ")):
             continue
-        if line[0] not in ("+", "-"):
+        head = line[:width]
+        if not any(ch in "+-" for ch in head):
             continue
-        content = line[1:]
+        content = line[width:]
         if not content.strip():
             continue
         found = True
@@ -163,15 +191,40 @@ def commit_author(repo: Path, commit: str) -> str:
     return out.strip() if rc == 0 else ""
 
 
+MERGE_DIFF_HEADER = ("(머지 커밋의 결합 diff(`--cc`) — 충돌 해소·머지 안에서 고친 부분만이다. "
+                     "줄 머리의 열 하나가 부모 하나다. 각 부모의 일반 변경은 조각 커밋이 따로 리뷰했다)")
+MERGE_SKIP_NOTE = "스킵: 머지 — 조각 커밋이 리뷰했다"
+
+
+def is_clean_merge(repo: Path, files: list, commit: str) -> bool:
+    """머지이고 그 파일들의 결합 diff 가 **읽혔는데 비었으면** True (`#744` ①).
+
+    [주의] git 실패는 False 다 — 실패를 「깨끗한 머지」로 읽으면 리뷰가 조용히 「완료」로
+    사라진다. 그때는 종전처럼 결정적 실패(「diff 를 읽지 못했다」)로 남아야 사람이 본다.
+    """
+    if parent_count(repo, commit) < 2:
+        return False
+    rc, out = _show_diff(repo, files, commit, unified=3, merge=True)
+    return rc == 0 and not out.strip()
+
+
 def commit_diff(repo: Path, files: list, commit: str, *, max_chars: int = 24000) -> str:
-    """리뷰 프롬프트에 실을 diff (unified=3). [중요] 상한을 두고 자르면 **잘렸다고 말한다**."""
-    rc, out = _git(repo, "show", "--pretty=format:", "--unified=3", "--no-color",
-                   commit, "--", *files)
+    """리뷰 프롬프트에 실을 diff (unified=3). [중요] 상한을 두고 자르면 **잘렸다고 말한다**.
+
+    머지(부모 둘 이상)는 결합 diff 만 돌려준다 — 비어 있으면 빈 문자열이고, 그것은 실패가
+    아니라 「깨끗한 머지」다(`#744` ①). 그 판정은 호출자가 `parent_count` 로 가른다. 비어 있지
+    않으면 머리에 `MERGE_DIFF_HEADER` 를 붙인다 — 초고·퇴고 모델이 결합 형식을 일반 diff 로
+    읽지 않게.
+    """
+    merge = parent_count(repo, commit) >= 2
+    rc, out = _show_diff(repo, files, commit, unified=3, merge=merge)
     if rc != 0:
         return ""
     d = out.strip()
     if len(d) > max_chars:
         d = d[:max_chars] + "\n... (diff 가 잘렸다 — 여기까지만 리뷰 대상이다)"
+    if merge and d:
+        d = MERGE_DIFF_HEADER + "\n\n" + d
     return d
 
 
@@ -360,6 +413,11 @@ def review_commit(paths, commit: str, files: list, *,
         return r
 
     diff = commit_diff(repo, src_files, commit)
+    if not diff and is_clean_merge(repo, src_files, commit):
+        # `#744` ① (사용자 결정 2026-10-05) — 깨끗한 머지. 들어온 변경은 조각 커밋이 리뷰했다.
+        r.skipped = MERGE_SKIP_NOTE.removeprefix("스킵: ")
+        log("review", f"{commit[:8]} 머지 — 결합 diff 없음, 스킵")
+        return r
     if not diff:
         r.error = "diff 를 읽지 못했다 — 리뷰 없이 넘기지 않고 기록한다"
         return r

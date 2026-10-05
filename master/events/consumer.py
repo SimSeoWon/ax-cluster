@@ -86,6 +86,10 @@ class ProjectResult:
     commits_done: int = 0          # 문서까지 끝나 커서를 전진시킨 커밋 수
     commits_nonsource: int = 0     # 소스 밖 변경만 있어 합성 없이 전진시킨 커밋 수
     nonsource_notes: list = field(default_factory=list)
+    # `#744` ② — 머지 커밋을 어느 갈래로 걸었는지 (사용자 결정 2026-10-05). 갈래가 안 보이면
+    #    「머지라서 건너뛰었다」와 「변경을 못 읽었다」가 저널에서 구분되지 않는다.
+    commits_merge: int = 0
+    merge_notes: list = field(default_factory=list)
     halted: str = ""               # [중요] 걷기를 멈춘 사유. 멈췄으면 커서는 그 앞에 있다
     retry_skipped: int = 0         # 재시도에서 **이미 이 커밋으로 스탬프된** 그룹의 파일 수
 
@@ -118,7 +122,8 @@ class ProjectResult:
             parts.append(f"색인 {self.docs}")
         if self.commits_total:
             parts.append(f"커밋 {self.commits_done}/{self.commits_total}"
-                         + (f"(소스밖 {self.commits_nonsource})" if self.commits_nonsource else ""))
+                         + (f"(소스밖 {self.commits_nonsource})" if self.commits_nonsource else "")
+                         + (f"(머지 {self.commits_merge})" if self.commits_merge else ""))
         if self.cursor_to:
             parts.append(f"커서 {self.cursor_to[:8]}")
         if self.cursor_note:
@@ -153,6 +158,10 @@ class ProjectResult:
         #    줄이 없었다(사유는 `SynthError` 였고 커서가 한 커밋에 갇혀 있었다).
         if self.synth_note and not self.synth_written:
             bits.append(f"합성 사유: {self.synth_note[:160]}")
+        if self.merge_notes:
+            # `#744` — 머지마다 어느 갈래였는지 저널에 남긴다(조각 커밋이 걸었다 / 머지 안 변경)
+            bits.append("머지 " + " · ".join(self.merge_notes[:5])
+                        + (f" 외 {len(self.merge_notes) - 5}" if len(self.merge_notes) > 5 else ""))
         if self.halted:
             bits.append(f"[중요] 멈춤: {self.halted}")
         return f"  [완료] {self.project_id}: " + " · ".join(bits)
@@ -422,6 +431,62 @@ def _commits_between(repo: Path, old: str, new: str, run) -> tuple:
     hs = [x.strip() for x in out.splitlines() if x.strip()]
     hs.reverse()
     return hs, ""
+
+
+def _commit_parents(repo: Path, commit: str, run) -> tuple:
+    """커밋의 부모 해시 목록. 반환 `(부모들, 오류사유)` — 루트 커밋이면 `([], "")`.
+
+    [주의] 실패를 「루트」로 접지 않는다 — 루트로 접으면 그 커밋의 **트리 전체**가 변경으로
+    잡혀 합성·리뷰가 통째로 오염된다(`#744` 가 고친 것과 같은 부류). 첫 토큰이 그 커밋
+    자신이 아니면 읽지 못한 것이다.
+    """
+    rc, out = run(repo, "rev-list", "--parents", "-n", "1", commit)
+    toks = out.split() if rc == 0 else []
+    if not toks or toks[0] != commit:
+        return [], f"부모를 읽지 못했다 (rc={rc}): {out[:120]}"
+    return toks[1:], ""
+
+
+def _commit_changes(paths: ProjectPaths, commit: str, run) -> tuple:
+    """**그 커밋 자신이** 바꾼 파일 (`#744` ② · 사용자 결정 2026-10-05).
+
+    반환 `(기준, 파일들, 머지인가, 오류사유)`. `기준` 은 서브모듈 펼치기가 같은 비교를 하도록
+    호출자에게 돌려준다.
+
+    🔴 [중요] **기준은 그 커밋의 첫 부모(`c^1`)다 — 「직전에 걸은 커밋」이 아니다.** 종전에는
+       `git log` 순서상 앞 커밋과 비교해서, 갈라졌다 합쳐지는 이력에서 **옆 브랜치의 변경이
+       이 커밋의 변경으로** 잡혔다(실측 AXCluster: `.md` 1파일 커밋 `6bb8a237` 이 `.py` 8개로
+       리뷰 큐에 올라 포기 · `3abcdb1a` 가 안 바꾼 `app.py` 를 합성 대상에 넣었다 — #727).
+       루트 커밋은 빈 트리와 비교한다(그 커밋의 파일이 전부 들어온다).
+
+    [중요] **머지는 「모든 부모와 다른 파일」만 센다** (`diff-tree -c`). 첫 부모 기준이면 머지의
+       변경 = 옆 브랜치에서 들어온 전부인데, 그 파일들은 옆 브랜치 커밋을 걸을 때 이미
+       합성·리뷰 등재됐다(같은 범위에서든 앞 회차에서든 — 커서에서 닿지 않는 커밋은 전부
+       걷는다). 다시 세면 `_unstamped_files` 가 스탬프(=머지 해시)가 달라 **전부 다시 합성**하고,
+       리뷰 큐에도 같은 파일을 한 번 더 올린다. 합성은 클론 워킹트리를 읽으므로 내용도 같다.
+       남는 것 — 양쪽이 고쳐 자동 병합된 파일 · 충돌 해소 · 머지 안에서 고친 파일 — 은 어느
+       부모에도 없던 내용이라 다시 만드는 것이 맞다.
+       [주의] 양쪽의 겹치지 않는 수정이 자동 병합된 파일도 여기 든다 — 그 파일의 새 내용은
+       합성돼야 한다. 리뷰는 다르다: `review_gen.commit_diff` 의 `--cc` **패치**는 hunk 마다 한
+       부모와 같으면 빼므로 그 파일이 비고(각 hunk 는 조각 커밋이 리뷰했다) 「머지 스킵」으로
+       끝난다. 이름 목록은 `-c`/`--cc` 가 같다(실측) — 뜻을 분명히 하려고 `-c` 를 쓴다.
+    [주의] 머지의 서브모듈 펼치기는 첫 부모의 포인터와 비교한다(모든 부모와 다른 포인터일 때만
+       여기까지 온다).
+    """
+    parents, why = _commit_parents(paths.repo, commit, run)
+    if why:
+        return "", [], False, why
+    roots = paths.scope.roots
+    merge = len(parents) >= 2
+    base = parents[0] if parents else EMPTY_TREE
+    if merge:
+        rc, out = run(paths.repo, "diff-tree", "-r", "-c", "--name-only", "--no-commit-id",
+                      commit, "--", *roots)
+    else:
+        rc, out = run(paths.repo, "diff", "--name-only", base, commit, "--", *roots)
+    if rc != 0:
+        return base, [], merge, f"diff 실패: {out[:120]}"
+    return base, [x.strip() for x in out.splitlines() if x.strip()], merge, ""
 
 
 def _source_only(files: list[str], paths: "ProjectPaths | None" = None) -> list[str]:
@@ -796,25 +861,31 @@ def process_event(ev: Event, *, registry: Registry | None = None,
             #    조용히 「최신」으로 접으면 그 프로젝트는 영원히 안 자란다.
             _note(r, (f"커서 {cursor[:8] or '(없음)'} → {r.to_commit[:8]} 사이에 커밋이 "
                       "없다 — 커서가 이 이력의 조상이 아니다(되감김/강제 푸시?). 사람이 봐야 한다"))
-        # 첫 커밋의 기준 — 커서가 없으면 **빈 트리**(그래야 그 커밋의 파일이 전부 들어온다)
-        prev = cursor or EMPTY_TREE
         for c in commits:
             # [중요] 경계는 **두 겹**이다 — pathspec 으로 좁히고(`class_graph` 관례),
             #    `_source_only` 가 확장자로 한 번 더 자른다. 한 겹이면 인자를 한 번 잘못
             #    넘길 때 `Content/`(워킹트리의 93%)가 조용히 들어온다.
-            rc, out = run(paths.repo, "diff", "--name-only", prev, c,
-                          "--", *paths.scope.roots)
-            if rc != 0:
-                r.halted = f"{c[:8]} diff 실패 — 커서를 전진시키지 않는다: {out[:120]}"
+            # 🔴 [중요] 비교 기준은 **그 커밋의 첫 부모**다 (`#744` ②, 사용자 결정 2026-10-05).
+            #    종전에는 직전에 걸은 커밋과 비교해 갈라진 이력에서 옆 브랜치 변경을 이 커밋에
+            #    붙였다. 루트는 빈 트리 · 머지는 모든 부모와 다른 파일만 — `_commit_changes`.
+            #    커서는 종전 그대로 「끝낸 마지막 커밋」이다 — 기준이 커서에서 오지 않으므로
+            #    커서 없이 처음부터 걸을 때도 루트만 빈 트리와 비교된다.
+            base, touched, merge, why = _commit_changes(paths, c, run)
+            if why:
+                r.halted = f"{c[:8]} {why} — 커서를 전진시키지 않는다"
                 break
-            touched = [x.strip() for x in out.splitlines() if x.strip()]
             if paths.scope.submodules:
-                touched, why = _expand_gitlinks(paths, prev, c, touched, run)
+                touched, why = _expand_gitlinks(paths, base, c, touched, run)
                 if why:
                     # [중요] 커서를 전진시키지 않는다 — 전진하면 그 포인터 변경의 문서가 영영 안 생긴다
                     r.halted = f"{c[:8]} 서브모듈 펼치기 실패 — 커서를 전진시키지 않는다: {why}"
                     break
             changed = _source_only(touched, paths)
+            if merge:
+                r.commits_merge += 1
+                r.merge_notes.append(
+                    f"{c[:8]}: 머지 안 변경 {len(changed)}건 — 합성·리뷰 등재" if changed else
+                    f"{c[:8]}: 조각 커밋이 걸었다 — 모든 부모와 다른 소스 없음")
             if not changed:
                 # 사용자 지시: **분석 대상이 소스 디렉토리 밖이면 스킵한다.**
                 # [중요] 그때 **커서는 전진시킨다** — 안 그러면 매 회차가 같은 커밋을 다시
@@ -822,9 +893,11 @@ def process_event(ev: Event, *, registry: Registry | None = None,
                 if not _update_cursor(paths, c):
                     r.halted = f"{c[:8]} 커서 기록 실패 — config 에 `index:` 절이 없다"
                     break
-                r.cursor_to, prev = c, c
+                r.cursor_to = c
                 r.commits_nonsource += 1
-                r.nonsource_notes.append(f"{c[:8]}: 소스 밖 변경만 — 합성 없음")
+                r.nonsource_notes.append(
+                    f"{c[:8]}: " + ("머지 — 조각 커밋이 이미 걸었다 · 합성 없음" if merge
+                                    else "소스 밖 변경만 — 합성 없음"))
                 continue
             r.source_changed += len(changed)
             _update_graphs(paths, changed, r)
@@ -883,7 +956,7 @@ def process_event(ev: Event, *, registry: Registry | None = None,
             if not _update_cursor(paths, c):
                 r.halted = f"{c[:8]} 커서 기록 실패 — config 에 `index:` 절이 없다"
                 break
-            r.cursor_to, prev = c, c
+            r.cursor_to = c
             r.commits_done += 1
 
     # ── 재색인은 컨텍스트가 실제로 바뀐 경우에만 ──────────────
