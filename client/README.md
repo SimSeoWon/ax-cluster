@@ -8,10 +8,12 @@
     client/runtime/     클라 기계에서 도는 코드 — client_mcp.py · ontology_cache.py
     master/client/      배달기 (SSH 를 쏘는 쪽이니 마스터가 맞다)
 
-[주의] **claimer 사슬은 `master/work/` 에 남았다** (사용자 결정 ⓒ, 2026-08-22):
-`claimer.py` → `build_local` → `layer3_verify` 인데 그 `layer3_verify` 를 **마스터도** 쓴다
-(`work/integrate.py:423,486` 의 `__import__("master.layer3_verify")` — 정적 grep 에 안 걸린다).
+[주의] **빌드 사슬은 `master/` 에 남았다** (사용자 결정 ⓒ, 2026-08-22):
+`work/build_local.py` → `layer3_verify` 인데 그 `layer3_verify` 를 **마스터도** 쓴다
+(`work/skeleton_gate.py` 가 `run_build_on_workshop` 으로 `.2` 에 SSH 빌드를 민다).
 옮기면 상대 임포트가 끊기거나 배달 때문에 저장소 코드를 고쳐야 한다.
+[주의] 종전 근거였던 `claimer.py`(상주 claimer)는 `#320`(`b28d889`)으로, `work/integrate.py` 는
+통합자 삭제(2026-09-04)로 **둘 다 없다** — 이 문단은 2026-10-06 그 사실에 맞춰 다시 썼다(`#265`).
 
 [주의] **배달 위치는 안 바뀌었다** — 저장소가 `client/runtime/` 이어도 클라에는 여전히
 `.ax/lib/axmaster/clientside/` 로 놓인다. `.33` 의 `.mcp.json` args 와 `.2`·`.43` 상주가 그 값을

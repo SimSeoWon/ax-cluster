@@ -11,12 +11,12 @@
 |---|---|---|---|
 | 1 | `watch.exe` | 루트 | **은퇴** — 마스터 큐(8101) + 기계별 claimer (#204). 2026-08-20 삭제 |
 | 2 | `context_search.exe` | `.claude/mcp/` | 마스터 `ax-projects`(8103) + `ax-client` 조회 9종 |
-| 3 | `log_analyzer.exe` | `.claude/mcp/` | **로컬 유지** — UE5 로그는 그 기계 것 |
-| 4 | `crash_analyzer.exe` | `.claude/mcp/` | **로컬 유지** |
-| 5 | `commandlet_runner.exe` | `.claude/mcp/` | **로컬 유지** (UE5 커맨드릿) |
-| 6 | `agy_query.exe` | `.claude/mcp/` | 로컬 `agy` CLI (마스터에도 있다) |
+| 3 | `log_analyzer.exe` | `.claude/mcp/` | **로컬 유지** — UE5 로그는 그 기계 것 · 설치: `AgentWatch.zip` 의 exe 를 UE5 프로젝트 `.claude/mcp/` 에 둔다(`#236`) |
+| 4 | `crash_analyzer.exe` | `.claude/mcp/` | **로컬 유지** · 설치: `AgentWatch.zip` 의 exe 를 UE5 프로젝트 `.claude/mcp/` 에 둔다(`#236`) |
+| 5 | `commandlet_runner.exe` | `.claude/mcp/` | **로컬 유지** (UE5 커맨드릿) · 설치: `AgentWatch.zip` 의 exe 를 UE5 프로젝트 `.claude/mcp/` 에 둔다(`#236`) |
+| 6 | `agy_query.exe` | `.claude/mcp/` | **폐기**(`#236`, 2026-10-05) — 로컬 `agy` CLI 로 대체. `mcp.json` 항목 제거 |
 | 7 | `redmine_tracker.exe` | `.claude/mcp/` | [주의] **미이식** — `ax-client` 에 `redmine_note` 하나뿐 |
-| 8 | `code_recipes.exe` | `.claude/mcp/` | [완료] **`ax-client` 가 흡수**(`#267`, 2026-08-23) — `log_writer_signal` · `find_recipes` · `get_anti_patterns`. 별 서버를 만들지 않았다: 레시피는 **마스터 트윈**에 있고 요청자 기계엔 그 디렉토리가 없어 큐가 대행한다. [주의] 그 전까지 `code-writer` 에이전트가 **없는 서버**를 부르도록 적혀 있었다 |
+| 8 | `code_recipes.exe` | `.claude/mcp/` | [완료] **`ax-client` 가 흡수**(`#267`, 2026-08-23) — `log_writer_signal` · `find_recipes` · `get_anti_patterns`. 별 서버를 만들지 않았다: 레시피는 **마스터 트윈**에 있고 요청자 기계엔 그 디렉토리가 없어 큐가 대행한다. [주의] 그 전까지 `code-writer` 에이전트가 **없는 서버**를 부르도록 적혀 있었다. **폐기**(`#236`) — `mcp.json` 항목 제거 |
 | 9 | `task_queue.exe` | `.claude/mcp/` | 마스터 큐 8101 (단일 writer) |
 | 10 | `worker.exe` | `.claude/daemons/` | 마스터 claimer + `ax-work` 스킬. **2026-08-20 삭제**(재빌드 가능한 산출물이라 백업 없이) |
 | 11 | `master_orchestrator.exe` | `.claude/mcp/` | 마스터 통합자·파이프라인 |
@@ -25,6 +25,8 @@
 | + | `tools/{sqlite3,jq}.exe` | `.claude/tools/` | **로컬 유지** (세션이 db·jsonl 을 직접 질의) |
 
 [주의] `.33` 에 있는 `gemini_query.exe`·`ontology_viewer.exe` 는 **이 12종에 없다** — 옛 버전 잔재다.
+`gemini_query` 는 **로컬 유지**(사람 도구, `#236`) — 설치는 위 로컬 유지 3종과 같다.
+[주의] 이 표와 `mcp.json` 은 **배달물이 아니다**(저장소 스냅샷 — §3) — 폐기한 항목을 지워도 기계에 놓인 exe 는 그대로다.
 
 ## §2 [중요] zip 에는 에이전트·스킬이 없다 — `watch.exe` 가 **생성**한다
 

@@ -148,7 +148,10 @@ def register_project(
         "gitignore_added": ignored,
         "git_locked": git_ok,
         "note": git_note,
+        # 남은 단계 목록은 onboard 한 곳이 낸다 — 여기서 다시 적으면 두 벌이 된다 (`#227`)
         "next": ("소스 클론과 최초 색인은 아직이다 — last_indexed_commit 이 비어 있다. "
+                 f"남은 단계는 `python -m master.projects.onboard {name}` 가 계획으로 보여 주고 "
+                 "`--confirm` 을 붙이면 이어서 한다. "
                  f"[중요] 레드마인 프로젝트 `{cfg.redmine_project}` 는 **사람이 만들어야** "
                  "일감 등재가 된다(없으면 등재가 거부된다 — 폴백하지 않는다, `#293`)."),
     }

@@ -49,20 +49,6 @@
         "PYTHONIOENCODING": "utf-8"
       }
     },
-    "code-recipes": {
-      "command": "./.claude/mcp/code_recipes.exe",
-      "args": [],
-      "env": {
-        "PYTHONIOENCODING": "utf-8"
-      }
-    },
-    "agy-query": {
-      "command": "./.claude/mcp/agy_query.exe",
-      "args": [],
-      "env": {
-        "PYTHONIOENCODING": "utf-8"
-      }
-    },
     "unreal-mcp": {
       "type": "http",
       "url": "http://127.0.0.1:8000/mcp"
