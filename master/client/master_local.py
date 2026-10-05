@@ -224,6 +224,9 @@ def _strip_codex_entry(text: str, name: str) -> tuple:
     removed = []
     if CODEX_BEGIN in text and CODEX_END in text:
         before, rest = text.split(CODEX_BEGIN, 1)
+        if CODEX_END not in rest:
+            # R54-3: 끝 표시가 시작보다 앞에 있다 — 어디까지가 관리 블록인지 모르니 덮지 않는다
+            raise MasterLocalError("config.toml 의 관리 블록 표시 순서가 어긋났다 — 덮지 않는다(사람이 확인할 것)")
         after = rest.split(CODEX_END, 1)[1]
         text = before.rstrip("\n") + "\n" + after.lstrip("\n")
         removed.append("관리 블록(이전 master-local 출력)")
@@ -443,7 +446,7 @@ def _token_state(p: Paths) -> tuple:
         src = token_digest(_auth.load_token(p.token_src))
         err = ""
     except Exception as e:                                             # noqa: BLE001
-        src, err = "", str(e).splitlines()[0]
+        src, err = "", (str(e).splitlines() or [type(e).__name__])[0]   # R54-2: 빈 메시지
     dst_p = p.root / ".ax" / "token"
     dst = token_digest(_read(dst_p)) if dst_p.is_file() else ""
     return src, dst, err

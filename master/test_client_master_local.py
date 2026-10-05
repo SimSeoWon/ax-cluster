@@ -131,6 +131,32 @@ def test_codex_text_refuses() -> None:
             check(f"{name} 은 거절", True)
 
 
+def test_review_r54_edges() -> None:
+    # R54-3: 관리 블록 끝 표시가 시작보다 앞이면 덮지 않고 거절한다
+    e = ml.entry_for(_paths(Path("/t")))
+    bad = f"{ml.CODEX_END}\n[x]\na = 1\n{ml.CODEX_BEGIN}\n"
+    try:
+        ml.codex_text(bad, e, ml.READ_APPROVE)
+        check("R54-3 순서 어긋난 관리 블록은 거절", False)
+    except ml.MasterLocalError:
+        check("R54-3 순서 어긋난 관리 블록은 거절", True)
+    except IndexError as ex:
+        check("R54-3 순서 어긋난 관리 블록은 거절", False, f"IndexError {ex}")
+    # R54-2: 원천 토큰 읽기 예외의 메시지가 비어도 죽지 않고 예외 이름을 남긴다
+    with tempfile.TemporaryDirectory() as td:
+        p = _paths(Path(td))
+        from master import auth as _auth
+        orig = _auth.load_token
+        _auth.load_token = lambda _p: (_ for _ in ()).throw(RuntimeError())
+        try:
+            src, _dst, err = ml._token_state(p)
+            check("R54-2 빈 메시지 예외도 사유를 남긴다", src == "" and err == "RuntimeError", err)
+        except IndexError as ex:
+            check("R54-2 빈 메시지 예외도 사유를 남긴다", False, f"IndexError {ex}")
+        finally:
+            _auth.load_token = orig
+
+
 def test_codex_get_matches() -> None:
     e = ml.entry_for(_paths(Path("/t")))
     good = {"name": "ax-client", "enabled": True,
@@ -306,7 +332,7 @@ def test_cli_wiring() -> None:
 
 def main() -> int:
     for fn in (test_entry_is_one_shape, test_redmine_tools, test_codex_text_replaces_hand_made,
-               test_codex_text_refuses, test_codex_get_matches, test_agy_text,
+               test_codex_text_refuses, test_review_r54_edges, test_codex_get_matches, test_agy_text,
                test_claude_user_get, test_config_same_shape_as_delivery,
                test_token_never_printed, test_apply_writes_root_and_files, test_agy_permissions,
                test_cli_wiring):
