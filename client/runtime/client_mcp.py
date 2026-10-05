@@ -1084,7 +1084,7 @@ TOOLS = [
     {"name": "redmine_create_issue",
      "description": "레드마인 이슈를 새로 만든다 (마스터 경유). 등재될 레드마인 프로젝트는 "
                     "요청의 프로젝트 태그가 정한다 (#293 — 게임 프로젝트가 늘면 자리도 늘어난다). "
-                    "AX 인프라 건이면 제목에 [AX] 접두어를 쓰고 ModularStage 에 둔다. "
+                    "AX 인프라 건이면 제목에 [AX] 접두어를 쓰고 ax-cluster(id 3) 에 둔다. "
                     "[중요] fixed_version(마일스톤)을 같이 줄 것 — 빼면 무버전으로 떨어진다.",
      "inputSchema": {"type": "object", "required": ["subject"],
                      "properties": {"subject": {"type": "string"},
