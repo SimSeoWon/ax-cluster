@@ -47,7 +47,7 @@ Cluster-wide rules live in [`sim-desktop.md`](sim-desktop.md); repo rules in
 | [중요] 남은 참조 | **등록을 지워도 참조는 남는다** — `.claude/agents/` **9종 전부**의 `tools:` 허용목록이 `mcp__context-search__combined_search` 를(둘은 `mcp__redmine-tracker__*` 도) 아직 가리킨다. [주의] **서버가 없으면 오류가 아니라 그 도구 없이 그냥 돈다** — 리포트 27 §9-3 의 「조용히 0」과 같은 계열. 매핑: `combined_search`→`search_context` · `get_domain_manifest`→`get_domain_layer`. **위임 구멍 2개**: Redmine 읽기(`get_issue`·`list_issues`·`update_issue`·`list_statuses`·`list_trackers` — `ax-client` 에는 `redmine_note` 만) · `get_task_template`. 결정 대기(#226) |
 | 배달물 | `.ax/config.json`(경로·능력 `ue5,windows`·UE5 5.8 실측) · `.ax/token`(그 체크아웃의 역할 토큰 — 게임 프로젝트는 **requester**, `C:\trunk\AXCluster` 는 worker) · `.ax/lib` · `.ax/tasks` · `.ax/work` |
 | 프로젝트 `CLAUDE.md` | `AX:Begin`~`AX:End` 관리 블록에 역할 계약이 이미 적혀 있다 — *"요청하는 쪽"*, *"여기서 소스를 고치지 않는다"* |
-| 배달 시점 | `delivered_by.commit`과 dirty를 `check`가 현재 마스터 HEAD와 대조한다. 저장소 갱신 뒤에는 `python -m master.client update` 한 번으로 등록 프로젝트 전부를 배달·검사한다 |
+| 배달 시점 | `delivered_by.commit`과 dirty를 `check`가 현재 마스터 HEAD와 대조한다. 저장소 갱신 뒤에는 `python -m master.client update` 가 마운트된 프로젝트를 배달·검사한다(`--all` = 등록 전체). 비마운트 프로젝트는 마운트 전환 때 맞춘다 |
 
 [주의] **낡은 번들은 조용히 돈다** (`master/client/__main__.py`의 경고) — `.33`이 옛 review
 로직으로 검수하면 판정 자체가 낡는다. 마스터 변경 뒤에는 프로젝트별 필요성을 추론하지 말고

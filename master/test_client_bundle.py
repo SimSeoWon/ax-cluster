@@ -1516,7 +1516,7 @@ def test_update_covers_every_registered_project() -> None:
     client_cli._master_head = lambda: "a" * 40
     client_cli._master_dirty = lambda: False
     try:
-        rc = client_cli.main(["update", "--init"])
+        rc = client_cli.main(["update", "--init", "--all"])
     finally:
         bundle.Registry = old_registry
         client_cli.cmd_deliver, client_cli.cmd_check = old_deliver, old_check
@@ -1526,6 +1526,66 @@ def test_update_covers_every_registered_project() -> None:
         ("deliver", "NS", True, ""), ("deliver", "ModularStage", True, ""),
         ("check", "NS", ""), ("check", "ModularStage", ""),
     ], str(calls))
+
+
+def _run_update_mount(active, *, argv=None, all_projects=False):
+    """`#655`·`#745` — 마운트 기준 update 하네스 (SSH·배달 없음)."""
+    import contextlib
+    import io
+    calls = []
+
+    class Projects:
+        names = ["NS", "ModularStage", "AXCluster"]
+
+        @staticmethod
+        def check():
+            return []
+    Projects.active = active
+
+    class FakeRegistry:
+        @staticmethod
+        def load():
+            return Projects()
+
+    saved = (bundle.Registry, client_cli.cmd_deliver, client_cli.cmd_check,
+             client_cli._master_head, client_cli._master_dirty)
+    bundle.Registry = FakeRegistry
+    client_cli.cmd_deliver = lambda project, *, init=False, only="": calls.append(("deliver", project)) or 0
+    client_cli.cmd_check = lambda project, *, only="", stats=None: calls.append(("check", project)) or 0
+    client_cli._master_head = lambda: "a" * 40
+    client_cli._master_dirty = lambda: False
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            rc = (client_cli.main(argv) if argv is not None
+                  else client_cli.cmd_update(all_projects=all_projects))
+    finally:
+        (bundle.Registry, client_cli.cmd_deliver, client_cli.cmd_check,
+         client_cli._master_head, client_cli._master_dirty) = saved
+    return rc, calls, out.getvalue()
+
+
+def test_update_defaults_to_mounted_project() -> None:
+    """🔴 `#655`·`#745` (사용자 결정 2026-10-06) — 기본은 마운트 하나, `--all` 은 등록 전체."""
+    rc, calls, out = _run_update_mount("AXCluster")
+    check("[중요] 기본은 마운트된 프로젝트만 배달·검사한다",
+          rc == 0 and calls == [("deliver", "AXCluster"), ("check", "AXCluster")], str(calls))
+    check("  대상과 --all 안내를 찍는다", "마운트된 AXCluster 만" in out and "--all" in out, out[:300])
+
+    rc, calls, _ = _run_update_mount("AXCluster", argv=["update"])
+    check("CLI 기본도 마운트만", rc == 0 and [c[1] for c in calls] == ["AXCluster", "AXCluster"],
+          str(calls))
+    rc, calls, out = _run_update_mount("AXCluster", argv=["update", "--all"])
+    check("[중요] --all 은 등록 전체 (종전 동작)",
+          rc == 0 and [c[1] for c in calls if c[0] == "deliver"] == ["NS", "ModularStage", "AXCluster"],
+          str(calls))
+    check("  --all 완료 문구는 개수를 말한다", "등록 프로젝트 3개" in out, out[-200:])
+
+    rc, calls, out = _run_update_mount("")
+    check("[중요] 마운트가 비면 폴백 없이 멈춘다 (rc 2, 아무것도 안 함)",
+          rc == 2 and calls == [] and "폴백은 없다" in out, out)
+    rc, calls, out = _run_update_mount("Ghost")
+    check("마운트가 등록에 없으면 멈춘다", rc == 1 and calls == [] and "Ghost" in out, out)
 
 
 def test_update_reports_partial_failure() -> None:
@@ -1560,7 +1620,7 @@ def test_update_reports_partial_failure() -> None:
     client_cli._master_head = lambda: "a" * 40
     client_cli._master_dirty = lambda: False
     try:
-        rc = client_cli.cmd_update()
+        rc = client_cli.cmd_update(all_projects=True)
     finally:
         bundle.Registry = old_registry
         client_cli.cmd_deliver, client_cli.cmd_check = old_deliver, old_check
@@ -1612,7 +1672,7 @@ def _run_update_with_heads(heads, check_results, dirties=(False,)):
     out = io.StringIO()
     try:
         with contextlib.redirect_stdout(out):
-            rc = client_cli.cmd_update()
+            rc = client_cli.cmd_update(all_projects=True)
     finally:
         (bundle.Registry, client_cli.cmd_deliver, client_cli.cmd_check,
          client_cli._master_head, client_cli._master_dirty) = saved
@@ -1851,7 +1911,7 @@ def _live_update_in_temp_repo(mutate):
     out = io.StringIO()
     try:
         with contextlib.redirect_stdout(out):
-            rc = client_cli.cmd_update()
+            rc = client_cli.cmd_update(all_projects=True)
     finally:
         (V.REPO_ROOT, bundle.Registry, bundle.delivered_stamp, bundle._run_local,
          client_cli.cmd_deliver, client_cli.cmd_check) = saved
@@ -2039,6 +2099,7 @@ def main() -> int:
                test_check_mount_lookup_is_fail_closed,
                test_update_covers_every_registered_project,
                test_update_reports_partial_failure,
+               test_update_defaults_to_mounted_project,
                test_update_reports_head_movement,
                test_update_reports_dirty_tree,
                test_update_head_round_trip_is_reported,

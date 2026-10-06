@@ -296,7 +296,7 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client probe <프로젝트>    
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client plan <프로젝트>     # 쓰기 전 계획
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client deliver <프로젝트>  # 한 프로젝트 배달
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check <프로젝트>    # 한 프로젝트 대조
-AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update              # 등록 프로젝트 전부 배달→대조
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update              # 마운트된 프로젝트 배달→대조 (--all = 등록 전체)
 .venv/bin/python -m master.work.infer probe        # 누가 추론을 받을 수 있나 (큐 무접촉)
 .venv/bin/python -m master.work.infer run-p <프로젝트> 4 # 병렬 파견; 워커가 자기 조각을 커밋
 .venv/bin/python -m master.work.infer spool <work> # 응답 스풀 — 어디까지 진행됐나

@@ -4,7 +4,8 @@
     python -m master.client plan  <프로젝트>     배달할 내용만 보여준다 (쓰지 않는다)
     python -m master.client deliver <프로젝트>   config + 스킬 배달 → 되읽어 대조
     python -m master.client check <프로젝트>     배달된 것이 정본과 같은지 검사
-    python -m master.client update               등록된 모든 프로젝트를 현재 HEAD로 배달·검사
+    python -m master.client update               **마운트된** 프로젝트를 현재 HEAD로 배달·검사
+    python -m master.client update --all         등록된 모든 프로젝트를 배달·검사 (종전 기본)
     python -m master.client uproject <프로젝트>  에디터 플러그인 계획 (`--confirm` 으로 적용)
     python -m master.client master-local         마스터 Claude·Codex·agy 에 ax-client 등록 계획
                                                  (`--apply` 로 적용 · `--check` 로 대조)
@@ -778,12 +779,18 @@ def _dirty_word(d) -> str:
     return "dirty" if d else "깨끗" if d is False else "모름"
 
 
-def cmd_update(*, init: bool = False) -> int:
-    """등록된 모든 프로젝트 작업장을 현재 리비전으로 맞추고 즉시 검사한다.
+def cmd_update(*, init: bool = False, all_projects: bool = False) -> int:
+    """**마운트된** 프로젝트 작업장을 현재 리비전으로 맞추고 즉시 검사한다. `--all` 은 등록 전체.
 
-    [중요] 업데이트할 프로젝트를 호출자가 고르지 않는다. 레지스트리가 대상의 정본이며,
-    신규 프로젝트도 등록되는 순간 이 흐름에 자동으로 들어온다. 한 프로젝트가 실패해도
-    나머지 등록 프로젝트까지 시도하되, 하나라도 실패하면 전체 명령은 실패다.
+    🔴 [중요] **기본 대상은 마운트 하나다** (`#655`·`#745`, 사용자 결정 2026-10-06). 종전에는
+    등록 프로젝트 전부(5개 × 3대)를 직렬로 돌아 한 번에 15~20분이 걸렸고, 「검색·갱신은 마운트된
+    것만」 원칙과도 어긋났다. 비마운트 프로젝트는 **마운트 전환 때** `set_active` 가 버전을
+    대조해 뒤처진 기계만 맞춘다(`sync_check(align=True)` 가 그 기본이다). 그래서 커밋마다 돌리는
+    이 명령이 다른 프로젝트까지 갈 이유가 없다.
+    [중요] 대상은 여전히 호출자가 고르지 않는다 — 마운트(`projects.yaml` 의 `active`)가 정한다.
+    마운트가 비었거나 등록에 없으면 **폴백 없이** 멈춘다. `all_projects=True`(`--all`)는 종전
+    동작 그대로다: 등록 전체, 신규 프로젝트 자동 포함. 한 프로젝트가 실패해도 나머지까지 시도하되,
+    하나라도 실패하면 전체 명령은 실패다.
 
     🔴 [중요] **실행 중 마스터 HEAD 이동을 따로 말한다** (`#737`, 사용자 결정 2026-10-05).
     배달은 그 순간의 HEAD 로 스탬프를 찍고 검사는 HEAD 를 다시 읽는다 — 그 사이 커밋이
@@ -810,6 +817,21 @@ def cmd_update(*, init: bool = False) -> int:
     if not registry.names:
         print("[중요] 등록된 프로젝트가 없다")
         return 1
+    if all_projects:
+        targets = list(registry.names)
+        print(f"[update] 대상: 등록 프로젝트 전체 {len(targets)}개 (--all)")
+    else:
+        mounted = (getattr(registry, "active", "") or "").strip()
+        if not mounted:
+            print("[중요] 마운트(projects.yaml 의 active)가 비어 있다 — 폴백은 없다. "
+                  "전체를 돌리려면 --all")
+            return 2
+        if mounted not in registry.names:
+            print(f"[중요] 마운트 `{mounted}` 가 등록 목록에 없다 — 레지스트리를 먼저 고쳐라")
+            return 1
+        targets = [mounted]
+        print(f"[update] 대상: 마운트된 {mounted} 만 — 비마운트 프로젝트는 전환 때 맞춘다 "
+              "(전체는 --all)")
 
     # 서비스 신선도 실패가 「실행 중 파일 변경」 탓인지 가르는 기준 시각(파일 mtime 과 같은 축).
     started_at = int(time.time())
@@ -830,8 +852,8 @@ def cmd_update(*, init: bool = False) -> int:
 
     failed: list[str] = []
     delivered: list[str] = []
-    for project in registry.names:
-        print(f"\n══ {project}: 현재 HEAD 배달")
+    for project in targets:
+        print(f"\n══ {project}: 현재 HEAD 배달", flush=True)
         if cmd_deliver(project, init=init):
             failed.append(f"{project}: deliver")
             continue
@@ -848,7 +870,7 @@ def cmd_update(*, init: bool = False) -> int:
     # 즉시 검사가 놓쳤다. 전부 배달한 **뒤** 전부를 다시 재서 종료 상태를 본다.
     checked: list[tuple[str, dict]] = []
     for project in delivered:
-        print(f"══ {project}: 배달 결과 검사")
+        print(f"══ {project}: 배달 결과 검사", flush=True)
         stats: dict = {}
         if cmd_check(project, stats=stats):
             checked.append((project, stats))
@@ -894,7 +916,8 @@ def cmd_update(*, init: bool = False) -> int:
                 ("HEAD 가 움직였다", moved), ("트리가 dirty 해졌다", became_dirty)) if on))
         print("\n[중요] 전체 업데이트 실패: " + why)
         return 1
-    print(f"\n[완료] 등록 프로젝트 {len(registry.names)}개를 현재 HEAD로 배달·검사했다")
+    what = f"등록 프로젝트 {len(targets)}개" if all_projects else f"마운트된 {targets[0]}"
+    print(f"\n[완료] {what}를 현재 HEAD로 배달·검사했다")
     return 0
 
 
@@ -991,7 +1014,7 @@ def main(argv: list) -> int:
         print(__doc__)
         return 2
     if argv[0] == "update":
-        return cmd_update(init="--init" in argv)
+        return cmd_update(init="--init" in argv, all_projects="--all" in argv)
     if argv[0] == "master-local":
         return cmd_master_local(apply="--apply" in argv, check="--check" in argv)
     rest = [a for a in argv[1:] if not a.startswith("-")]

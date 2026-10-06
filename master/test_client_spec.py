@@ -686,6 +686,22 @@ def test_switch_syncs() -> None:
         check("[주의] 동기 실패가 전환을 되돌리지 않는다",
               out4["ok"] and out4["active"] == "B", str(out4))
         check("실패 사유를 싣는다", "ssh 죽음" in out4["sync"]["reason"], str(out4["sync"]))
+
+        # 🔴 `#655` (사용자 결정 2026-10-06) — sync_fn 없이 부르면 기본으로 **맞춘다**(align=True).
+        #    `update` 가 마운트만 돌게 되어 비마운트 프로젝트를 최신으로 만드는 자리는 전환뿐이다.
+        seen = []
+        keep_sync = L.sync_check
+        try:
+            L.sync_check = lambda name, *, align=False, **k: seen.append((name, align)) or {"checked": True}
+            reg.active = "A"
+            L.set_active("B", registry=reg)
+            check("[중요] 전환 기본은 sync_check(align=True)", seen == [("B", True)], str(seen))
+            reg.active = "A"
+            seen.clear()
+            L.set_active("B", registry=reg, align=False)
+            check("align=False 면 보고만", seen == [("B", False)], str(seen))
+        finally:
+            L.sync_check = keep_sync
     finally:
         L._check_one, L.open_works_in_queue = keep_check, keep_open
 

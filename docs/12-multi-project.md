@@ -51,7 +51,8 @@
 | **클라이언트 설치물** | [완료] **프로젝트별 정본이 있다** | `client/spec.py`가 역할별 자산을 선언한다. Codex는 체크아웃의 `.agents/skills`·`.codex/config.toml`, Claude는 역할·프로필에 따른 로컬 스코프를 배달하며 `check`가 대조한다(`#699`) |
 
 [중요] **2026-10-01 현재 읽기·시키기·설치가 모두 프로젝트 축을 가진다.** 등록 프로젝트 전체를
-맞추는 운영 명령은 프로젝트를 고르지 않는 `master.client update`이며, ModularStage·NS·
+맞추는 운영 명령은 프로젝트를 고르지 않는 `master.client update --all`이며(2026-10-06부터 인자 없는
+`update` 는 마운트만, `#655`), ModularStage·NS·
 KimodoMotion_WebUI의 등록 작업장 9개 조합에서 프로젝트 로컬 Codex 자산 대조를 통과했다.
 
 ## 12.3 네 축과 순서 — 항목은 레드마인

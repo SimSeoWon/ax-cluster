@@ -110,7 +110,7 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   (원전 1조, **범위는 사용자 결정 2026-08-14**). 도구 코드는 커밋 승인 게이트가 그 역할을 한다.
 - [중요] **Codex 스킬·MCP의 프로젝트 정본도 초기화 산출물이다** (`#699`, 2026-10-01).
   `<checkout>/.agents/skills`와 `<checkout>/.codex/config.toml`이 없으면 홈 자산이 있더라도
-  정상으로 보지 않는다. `master.client update`가 모든 등록 프로젝트·작업장에 배달하고 `check`가
+  정상으로 보지 않는다. `master.client update`가 마운트된 프로젝트의 작업장에(`--all` 이면 등록 전체에) 배달하고 `check`가
   해시와 `ax-client` 등록을 대조한다. Windows 신규 워커는 부트스트랩이 체크아웃 ACL에
   `CodexSandboxUsers` 수정 권한을 함께 부여해야 한다(`#698`).
 - [주의] **워커 실패의 판정과 요청자 통보·상위 work 종결은 별개다.** 2026-10-01 첫 `kind: code`
@@ -368,7 +368,8 @@ journalctl -u ax-indexer -n 30 --no-pager              # push → 트윈 성장 
 .venv/bin/python -m master.work.cleanup remote --apply # 병합 확인된 원격 attempt/task 삭제 (#219)
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client probe|plan|deliver|check <프로젝트>
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update
-                                                       # 레지스트리 전체 배달→대조; 프로젝트를 다시 고르지 않는다
+                                                       # 마운트된 프로젝트만 배달→대조 (`--all` = 등록 전체, #655);
+                                                       # 비마운트는 set_active 전환 때 뒤처진 기계만 맞춘다
                                                        # [중요] 커밋마다 실행 — 배달 출처 커밋이 HEAD 보다
                                                        # 뒤처지면 해시가 같아도 check 가 실패한다
 .venv/bin/python -m master.ontology plan|dry|refresh   # 이 순서로

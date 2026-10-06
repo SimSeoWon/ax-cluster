@@ -185,8 +185,9 @@ def sync_check(name: str, *, align: bool = False, checker=None, deliverer=None,
     [중요] **경계가 그것이다** — 주기 동기도, 미마운트 프로젝트 순회도 하지 않는다. 전환이
     일어나는 그 한 번만 본다. 클러스터는 버전이 하나이므로(`version.compare`) 다르면 맞춘다.
 
-    `align=False`(기본)는 **보고만** 한다 — `finalize_work(confirm=False)` 와 같은 모양이다.
-    `align=True` 면 어긋난 기계에 재배달한다. [주의] 남의 기계에 쓰는 동작이라 기본이 아니다.
+    `align=False`(이 함수의 기본)는 **보고만** 한다. `align=True` 면 뒤처진 기계에만 재배달하고
+    같은 버전은 건너뛴다. [주의] 마운트 전환(`set_active`)은 `align=True` 로 부른다
+    (사용자 결정 2026-10-06 · `#655`) — 그 근거는 `set_active` 의 주석에 있다.
 
     `checker`/`deliverer` 는 주입 자리 — 테스트가 SSH 를 타지 않는다.
     """
@@ -295,7 +296,7 @@ def _handover_lines(rep: dict) -> str:
 
 def set_active(name: str, *, registry: Registry | None = None,
                force: bool = False, works_fetcher=None,
-               sync: bool = True, align: bool = False, sync_fn=None,
+               sync: bool = True, align: bool = True, sync_fn=None,
                handover_fn=None) -> dict:
     """가리키는 프로젝트를 바꾼다. 디렉토리는 전부 남고 마운트 대상만 바뀐다.
 
@@ -365,7 +366,11 @@ def set_active(name: str, *, registry: Registry | None = None,
                               "새 활성 트윈으로 간다"} if forced_over else {})
     # [중요] **전환이 동기화 지점이다** (사용자 2026-08-22). 마운트가 실제로 바뀔 때만 본다 —
     #    같은 프로젝트를 다시 가리키는 호출에 SSH 를 태우지 않고, 미마운트 프로젝트는 순회하지
-    #    않는다. 기본은 **보고**이고 `align=True` 가 맞춘다(남의 기계에 쓰는 동작이라 기본 아님).
+    #    않는다. 🔴 기본은 **맞춘다**(`align=True`, 사용자 결정 2026-10-06 · `#655`): `update` 가
+    #    마운트만 돌게 되면서 비마운트 프로젝트를 최신으로 만드는 자리는 여기 하나다. 종전 기본
+    #    「보고만」의 근거였던 *"남의 기계에 쓰는 동작"* 은 틀렸다 — 등재된 기계는 전부 사용자의
+    #    것이고(`.33` 작업 PC · `.57` 인프라 · `.2`·`.43` 워커), `update` 는 커밋마다 같은 기계에
+    #    같은 것을 써 왔다. 보고만 받으려면 `align=False`.
     handover_out: dict = {}
     if changed and leaving:
         # [중요] 넘어간 뒤에도 남은 것을 낸다 — 「전환됨」만 보고하면 잔재가 조용히 남는다.

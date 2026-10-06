@@ -155,15 +155,19 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client deliver <프로젝트>
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check   <프로젝트>
 ```
 
-저장소 변경 뒤 이미 등록된 **모든 프로젝트와 작업장**을 같은 HEAD로 맞출 때는 프로젝트를
-사람이 다시 고르지 않는다:
+저장소 변경 뒤에는 **마운트된 프로젝트**의 작업장을 같은 HEAD로 맞춘다. 프로젝트는 사람이 고르지
+않는다 — 마운트(`projects.yaml` 의 `active`)가 정한다:
 
 ```bash
-AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update         # 마운트된 프로젝트만
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update --all   # 등록 전체 (종전 기본)
 ```
 
-`update`는 `Registry.names` 전체에 `deliver → check`를 실행한다. 신규 프로젝트도 등재되는 순간
-자동 포함되며, 하나라도 실패하면 전체 rc=1이다. 신규 프로젝트 최초 구성은 위 §14.1의
+🔴 2026-10-06 부터 기본은 마운트 하나다(`#655`·`#745`, 사용자 결정) — 등록 전체가 5개 × 3대라 한 번에
+15~20분이 걸렸다. 비마운트 프로젝트는 **마운트 전환 때** 맞춘다: `set_active` 가 그 프로젝트의 기계를
+마스터 버전과 대조해 뒤처진 기계만 재배달한다(기본 `align=True`, 보고만 원하면 `align=False`).
+마운트가 비어 있으면 폴백 없이 멈춘다(rc 2). `--all` 은 `Registry.names` 전체에 `deliver → check`를
+실행하고, 신규 프로젝트도 등재되는 순간 자동 포함되며, 하나라도 실패하면 전체 rc=1이다. 신규 프로젝트 최초 구성은 위 §14.1의
 `onboard --confirm`이 checkout→deliver→check까지 수행하므로 별도 수동 배달을 끼우지 않는다.
 
 [주의] **마스터 트리가 dirty 면 `check` 가 통과하지 않는다** — 커밋이 같아도 그 커밋이 배달
@@ -390,7 +394,7 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.work.handover apply  <프로젝
 ```bash
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.projects.onboard <프로젝트>   # 서버 10단계 + 등록 작업장
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check <프로젝트>       # 배달본 해시 대조
-AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update                  # 기존 등록 전체를 현재 HEAD로
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update                  # 마운트된 프로젝트를 현재 HEAD로 (--all = 등록 전체)
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.ontology status               # 도메인·stale 판정
 ```
 

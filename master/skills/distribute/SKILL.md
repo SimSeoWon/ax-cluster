@@ -81,8 +81,9 @@ Claude에서는 제공된 위임 도구와 실제 등록 에이전트 역할을 
 - 현재 세션에 `ax-projects` 도구가 실제 노출돼 있는지 확인한다. 설정 파일만으로 판단하지 않는다.
 - `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client plan <프로젝트>`로
   배달 계획을 확인한다. `check <프로젝트>`의 버전·payload·프로젝트 로컬 스킬·MCP 상태를 읽는다.
-- 배달은 커밋된 깨끗한 트리에서 한다. 동기화 지시가 있으면 등록 전체를 대상으로
-  `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client update`를 쓴다.
+- 배달은 커밋된 깨끗한 트리에서 한다. 동기화 지시가 있으면
+  `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client update`(마운트된 프로젝트)를,
+  등록 전체가 필요하면 `update --all`을 쓴다.
 - `check_workshops_clean_tool(name)`의 `dispatchable`과 사유를 확인한다. 소스 더티·SSH 실패를
   무시하지 않는다. `git clean`, 강제 reset/push로 준비 상태를 만들지 않는다.
 - 큐·프로젝트 서비스와 `ax-dispatch.path`·`ax-dispatch.timer`를 확인한다.
