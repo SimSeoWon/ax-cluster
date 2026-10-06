@@ -155,8 +155,23 @@ def test_tools_call_through_protocol():
     check("redmine_note 가 마스터 경유 경로를 부른다",
           any(p == "/api/v1/redmine/note" for _m, p, _p2 in calls), str(calls[-1]))
     check("한글이 그대로 실린다", calls[-1][2]["notes"] == "확인")
-    check("[중요] 새 필드(#752)는 안 주면 페이로드에 없다 — 종전과 같다",
-          not ({"priority_name", "subject", "description"} & set(calls[-1][2])), str(calls[-1]))
+    check("[중요] 새 필드(#752·#754)는 안 주면 페이로드에 없다 — 종전과 같다",
+          not ({"priority_name", "subject", "description", "clear_parent"} & set(calls[-1][2])),
+          str(calls[-1]))
+
+    M.handle_message({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                      "params": {"name": "redmine_note",
+                                 "arguments": {"issue_id": 259, "notes": "",
+                                               "clear_parent": True}}}, api=api)
+    got = calls[-1][2]
+    check("clear_parent 를 줬으면 싣는다 (#754)",
+          got.get("clear_parent") is True and "parent_issue_id" not in got, str(got))
+    M.handle_message({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
+                      "params": {"name": "redmine_note",
+                                 "arguments": {"issue_id": 259, "notes": "x",
+                                               "clear_parent": "false"}}}, api=api)
+    check("[중요] true 가 아닌 값(문자열 \"false\")은 해제로 읽지 않는다",
+          "clear_parent" not in calls[-1][2], str(calls[-1]))
 
     r = M.handle_message({"jsonrpc": "2.0", "id": 8, "method": "tools/call",
                           "params": {"name": "redmine_note",

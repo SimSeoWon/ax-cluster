@@ -369,7 +369,8 @@ def tool_get_work(api, work_id: str) -> dict:
 def tool_redmine_note(api, issue_id: int, notes: str, status_name: str = "",
                       done_ratio=None, fixed_version: str = "",
                       parent_issue_id=None, priority_name: str = "",
-                      subject: str = "", description: str = "") -> dict:
+                      subject: str = "", description: str = "",
+                      clear_parent: bool = False) -> dict:
     """코멘트·상태·완료율 + **사후 스탬프**(마일스톤·부모, `#303`) + 우선순위·제목·본문(`#752`).
 
     [주의] 마일스톤이 안 붙어도 갱신 자체는 성공한다 — 사유가 `result` 문장에 붙어 온다.
@@ -390,6 +391,8 @@ def tool_redmine_note(api, issue_id: int, notes: str, status_name: str = "",
         payload["subject"] = subject
     if description:
         payload["description"] = description
+    if clear_parent:                                    # `#754` — 줬을 때만 싣는다
+        payload["clear_parent"] = True
     return api("POST", "/api/v1/redmine/note", payload)
 
 
@@ -1056,7 +1059,10 @@ TOOLS = [
                                     "fixed_version": {"type": "string",
                                                       "description": "마일스톤 이름 (부분 일치). 사후 스탬프용"},
                                     "parent_issue_id": {"type": "integer",
-                                                        "description": "부모 이슈 번호"},
+                                                        "description": "부모 이슈 번호 (바꾸기·붙이기)"},
+                                    "clear_parent": {"type": "boolean",
+                                                     "description": "true 면 부모를 떼어 낸다. "
+                                                                    "parent_issue_id 와 함께 주면 거절"},
                                     "priority_name": {"type": "string",
                                                       "description": "낮음·보통·높음 — redmine_meta 로 확인"},
                                     "subject": {"type": "string",
@@ -1428,7 +1434,8 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                                  parent_issue_id=args.get("parent_issue_id"),
                                  priority_name=str(args.get("priority_name") or ""),
                                  subject=str(args.get("subject") or ""),
-                                 description=str(args.get("description") or ""))
+                                 description=str(args.get("description") or ""),
+                                 clear_parent=args.get("clear_parent") is True)
     if name in ("search_context", "list_domains", "get_domain", "get_domain_layer",
                 "get_object_spec", "get_action_spec", "find_invariants_by_class",
                 "list_task_templates", "get_task_template"):

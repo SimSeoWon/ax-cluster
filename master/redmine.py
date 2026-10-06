@@ -247,6 +247,7 @@ def create_issue(subject: str, description: str = "", *, tracker_name: str = "",
 def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio=None,
                  fixed_version: str = "", parent_issue_id=None,
                  priority_name: str = "", subject: str = "", description: str = "",
+                 clear_parent: bool = False,
                  project: str = PROJECT_ID, key: str = "", url: str = "",
                  sender=None) -> str:
     """기존 이슈에 코멘트·상태·완료율을 붙인다. **사람이 읽을 결과 문자열**을 돌려준다.
@@ -261,6 +262,10 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
     `priority_name`·`subject`·`description` 은 비우면 안 바꾼다 (`#752`). 우선순위는 상태와
     같은 결 — 이름으로 해석하고, 없으면 그 필드만 건너뛰고 말한다. `description` 은 본문
     **전체 교체**다(차이는 Redmine 이 저널에 남긴다).
+
+    `clear_parent=True` 는 부모를 떼어 낸다 (`#754`). [주의] `parent_issue_id` 의 0·빈 값은
+    「안 줌」이라 해제를 겸하지 않는다 — 겸하면 기존 호출자의 「안 줌」이 해제로 바뀐다.
+    둘을 함께 주면 무엇을 원하는지 모르므로 갱신하지 않는다.
     """
     base = (url or base_url()).rstrip("/")
     k = key or api_key()
@@ -271,6 +276,9 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
     if sender is None and not k:
         return ("[주의] 레드마인 갱신 건너뜀 — API 키가 없다 "
                 "(`AX_REDMINE_API_KEY` 또는 컨테이너 DB, §10.1)")
+    if clear_parent and parent_issue_id not in (None, "", 0):
+        return ("[주의] 레드마인 갱신 건너뜀 — 부모 지정과 부모 해제를 함께 받았다 "
+                f"(parent_issue_id={parent_issue_id!r}, clear_parent=True)")
 
     issue: dict = {}
     if notes:
@@ -301,6 +309,8 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
                        project=project, key=k, base=base, sender=sender)
     if sk:
         stamp_note = " (" + " · ".join(sk) + ")"
+    if clear_parent:
+        issue["parent_issue_id"] = ""             # Redmine REST: 빈 값이 부모 해제다
     if not issue:
         return ("[주의] 레드마인 갱신 건너뜀 — 바꿀 것이 없다"
                 + status_note + priority_note + stamp_note)
@@ -314,6 +324,8 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
     what = ", ".join(k2 for k2 in ("notes", "status_id", "done_ratio", "priority_id",
                                    "subject", "description",
                                    "fixed_version_id", "parent_issue_id") if k2 in issue)
+    if clear_parent:
+        what = what.replace("parent_issue_id", "parent_issue_id 해제")
     return f"레드마인 #{iid} 갱신 ({what}){status_note}{priority_note}{stamp_note}"
 
 

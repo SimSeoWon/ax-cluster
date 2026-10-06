@@ -305,6 +305,39 @@ def test_update_can_stamp_without_notes():
     check("무엇을 바꿨는지 문장에 적는다", "fixed_version_id" in out, out)
 
 
+def test_update_clear_parent():
+    """`#754` — 부모 해제는 이름 붙은 플래그로만. 빈 값이 PUT 에 실려야 Redmine 이 뗀다."""
+    s = Sender()
+    out = RM.update_issue(259, notes="부모 해제", clear_parent=True, sender=s)
+    check("PUT 한 번", len(s.puts) == 1, str(s.calls))
+    iss = s.puts[0][1]["issue"]
+    check("[중요] parent_issue_id 가 빈 값으로 실린다",
+          "parent_issue_id" in iss and iss["parent_issue_id"] == "", str(iss))
+    check("코멘트도 함께", iss.get("notes") == "부모 해제", str(iss))
+    check("해제라고 말한다", "parent_issue_id 해제" in out, out)
+
+    s = Sender()
+    out = RM.update_issue(259, clear_parent=True, sender=s)
+    check("코멘트 없이 해제만으로도 갱신한다", len(s.puts) == 1
+          and s.puts[0][1]["issue"] == {"parent_issue_id": ""}, str(s.calls))
+
+
+def test_update_clear_parent_with_parent_is_refused():
+    s = Sender()
+    out = RM.update_issue(259, notes="x", parent_issue_id=300, clear_parent=True, sender=s)
+    check("[중요] 지정과 해제를 함께 주면 PUT 하지 않는다", not s.puts, str(s.calls))
+    check("사유를 말한다", "함께" in out and "건너뜀" in out, out)
+
+
+def test_update_zero_parent_is_not_clear():
+    """[중요] 0·None 은 종전대로 「안 줌」 — 해제를 겸하지 않는다."""
+    for v in (None, 0, ""):
+        s = Sender()
+        RM.update_issue(259, notes="x", parent_issue_id=v, sender=s)
+        check(f"parent_issue_id={v!r} 는 페이로드에 없다",
+              "parent_issue_id" not in s.puts[0][1]["issue"], str(s.calls))
+
+
 def test_update_version_needs_right_project():
     """[주의] 기본 프로젝트로 남의 프로젝트 버전을 찾으면 못 찾는다 — 그 사실이 보여야 한다."""
     s = VerSender(versions=("마일스톤 1 — 입력·UI 토대 (게임패드)",))
@@ -572,6 +605,9 @@ def main() -> int:
                test_update_unknown_priority_keeps_notes_and_says_so,
                test_update_unknown_priority_alone_is_nothing_to_change,
                test_update_unknown_status_alone_is_nothing_to_change,
+               test_update_clear_parent,
+               test_update_clear_parent_with_parent_is_refused,
+               test_update_zero_parent_is_not_clear,
                test_update_subject_trimmed_and_limited,
                test_update_description_replaces_body,
                test_update_omitted_new_fields_payload_unchanged,

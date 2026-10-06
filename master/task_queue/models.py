@@ -229,6 +229,8 @@ class RedmineNoteReq(BaseModel):
     priority_name: str = ""
     subject: str = ""
     description: str = ""
+    # 부모 해제 (`#754`). `parent_issue_id` 의 None·0 은 「안 줌」이라 해제를 겸하지 않는다.
+    clear_parent: bool = False
 
 
 class RedmineIssueReq(BaseModel):

@@ -447,7 +447,8 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
                               fixed_version=req.fixed_version,
                               parent_issue_id=req.parent_issue_id,
                               priority_name=req.priority_name, subject=req.subject,
-                              description=req.description, project=target)
+                              description=req.description,
+                              clear_parent=req.clear_parent, project=target)
         _tq_log(f"[redmine] #{req.issue_id} work={req.work_id or '-'} → {result}", root)
         # [주의] 실패해도 200 이다 — 검수 흐름을 막지 않는다. [중요] 다만 `ok` 로 **말은 한다**
         #    (조용한 실패 금지). 호출자가 사람에게 그대로 보여 준다.
