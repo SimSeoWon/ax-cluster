@@ -1528,6 +1528,75 @@ def test_update_covers_every_registered_project() -> None:
     ], str(calls))
 
 
+def test_remote_hashes_and_skip_unchanged() -> None:
+    """🔴 `#655` — 원격 해시를 한 번에 받고, 같은 파일은 디렉토리·scp·되읽기를 건너뛴다."""
+    import hashlib
+    calls = []
+    keep = bundle._ssh
+    try:
+        lin = _facts()
+        bundle._ssh = lambda h, u, cmd, **k: (calls.append(cmd) or (0,
+            "aa" * 32 + "  /home/sim/a.md\n" + "bb" * 32 + "  /home/sim/b md.py\n"))
+        got = bundle.remote_hashes(lin, ["/home/sim/a.md", "/home/sim/b md.py", "/home/sim/none"])
+        check("리눅스: 한 번의 ssh 로 받는다", len(calls) == 1 and calls[0].startswith("sha256sum -- "),
+              str(calls))
+        check("리눅스: 경로→해시 (공백 든 경로 포함, 없는 파일은 빠진다)",
+              got == {"/home/sim/a.md": "aa" * 32, "/home/sim/b md.py": "bb" * 32}, str(got))
+
+        calls.clear()
+        win = _facts(os="windows", path=r"E:\trunk\X", home=r"C:\Users\janus")
+        bundle._ssh = lambda h, u, cmd, **k: (calls.append(cmd) or (0,
+            "CC" * 32 + "|E:\\trunk\\X\\.ax\\config.json\r\n"))
+        got = bundle.remote_hashes(win, [r"E:\trunk\X\.ax\config.json", r"E:\it's.md"])
+        check("윈도우: PowerShell 한 번 · 작은따옴표는 두 겹으로",
+              len(calls) == 1 and "Get-FileHash" in calls[0] and "it''s" in calls[0], calls[0][:200])
+        check("윈도우: 해시는 소문자로", got == {r"E:\trunk\X\.ax\config.json": "cc" * 32}, str(got))
+
+        bundle._ssh = lambda h, u, cmd, **k: (255, "ssh 죽음")
+        check("[주의] 연결 실패는 빈 결과 (종전 경로로 쓰고 되읽는다)",
+              bundle.remote_hashes(lin, ["/x"]) == {})
+
+        # 같으면 쓰지 않는다 — ssh·scp 를 한 번도 부르지 않는다
+        calls.clear()
+        bundle._ssh = lambda h, u, cmd, **k: (calls.append(cmd) or (1, "불려선 안 된다"))
+        content = "본문\n"
+        target = bundle._write_target(lin, ".ax/config.json", "checkout")
+        bundle._KNOWN_HASHES[(lin.host, lin.user, target)] = hashlib.sha256(
+            content.encode("utf-8")).hexdigest()
+        out = bundle._remote_write(lin, ".ax/config.json", content, base="checkout")
+        check("[중요] 해시가 같으면 연결 없이 끝난다", out == target and calls == [], str(calls))
+        check("  건너뛴 수를 센다", bundle._UNCHANGED.get((lin.host, lin.user)) == 1,
+              str(bundle._UNCHANGED))
+    finally:
+        bundle._ssh = keep
+        bundle._KNOWN_HASHES.clear()
+        bundle._UNCHANGED.clear()
+
+
+def test_deliver_clears_hash_cache_even_on_error() -> None:
+    """`#655` — 받아 둔 해시는 배달 한 번만 산다. 예외여도 비운다(낡은 해시로 건너뛰지 않게)."""
+    f = _facts()
+    keep = (bundle.remote_hashes, bundle._deliver, bundle.delivery_targets)
+    try:
+        bundle.delivery_targets = lambda p, ff, pi: ["/t"]
+        bundle.remote_hashes = lambda ff, ts: {"/t": "ab" * 32}
+        seen = {}
+
+        def boom(*a, **k):
+            seen.update(bundle._KNOWN_HASHES)
+            raise bundle.BundleError("중간 실패")
+        bundle._deliver = boom
+        try:
+            bundle.deliver("X", f, project_init=object())
+        except bundle.BundleError:
+            pass
+        check("배달 중에는 받아 둔 해시가 있다", (f.host, f.user, "/t") in seen, str(seen))
+        check("[중요] 예외여도 끝나면 비운다", not bundle._KNOWN_HASHES, str(bundle._KNOWN_HASHES))
+    finally:
+        bundle.remote_hashes, bundle._deliver, bundle.delivery_targets = keep
+        bundle._KNOWN_HASHES.clear()
+
+
 def _run_update_mount(active, *, argv=None, all_projects=False):
     """`#655`·`#745` — 마운트 기준 update 하네스 (SSH·배달 없음)."""
     import contextlib
@@ -2100,6 +2169,8 @@ def main() -> int:
                test_update_covers_every_registered_project,
                test_update_reports_partial_failure,
                test_update_defaults_to_mounted_project,
+               test_remote_hashes_and_skip_unchanged,
+               test_deliver_clears_hash_cache_even_on_error,
                test_update_reports_head_movement,
                test_update_reports_dirty_tree,
                test_update_head_round_trip_is_reported,

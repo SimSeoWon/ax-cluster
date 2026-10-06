@@ -362,23 +362,26 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
             continue
         ok_skill = True
         names = bundle.skills_for(f.role, init)
+        # 🔴 `#655` — 아래에서 잴 고정 파일의 해시를 **연결 한 번에** 받는다. 종전에는 파일마다
+        #    ssh(Windows 는 PowerShell 기동)를 따로 열어 `.2` 한 대 검사에 13회·약 8초가 들었다.
+        #    [주의] 받지 못한 경로는 빈 값이라 「불일치」로 판정된다 — 실패는 실패 쪽으로 닫힌다.
+        _probe_targets = [bundle._write_target(f, r, "home")
+                          for n in names for r in spec.skill_rels(n)]
+        _probe_targets += [bundle._write_target(f, spec.project_skill_rel(n), "checkout")
+                           for n in names]
+        _probe_targets += [bundle._write_target(
+            f, f"{bundle.AX_DIR}/lib/{bundle.PAYLOAD_PKG}/{rel}", "checkout")
+            for rel, _src in bundle.payload_pairs(f.role)]
+        _probe_targets.append(bundle._write_target(f, f"{bundle.AX_DIR}/token", "checkout"))
+        known = bundle.remote_hashes(f, _probe_targets)
         for n in names:
             want = hashlib.sha256(bundle.skill_text(n).encode("utf-8")).hexdigest()
             # [중요] 도구별 자리를 **전부** 검사한다 — 한 곳만 보면 codex 쪽 누락이 안 보인다.
             for rel in spec.skill_rels(n):
-                target = (f"{f.home}\\" + rel.replace("/", chr(92)) if f.windows
-                          else f"{f.home}/{rel}")
-                cmd = (f'powershell -Command "(Get-FileHash -LiteralPath \'{target}\' -Algorithm SHA256).Hash"'
-                       if f.windows else f"sha256sum '{target}' 2>/dev/null | cut -d' ' -f1")
-                rc, got = bundle._ssh(f.host, f.user, cmd)
-                ok_skill = ok_skill and (got or "").strip().lower() == want
-            rel = spec.project_skill_rel(n)
-            target = (f"{f.path}\\" + rel.replace("/", chr(92)) if f.windows
-                      else f"{f.path}/{rel}")
-            cmd = (f'powershell -Command "(Get-FileHash -LiteralPath \'{target}\' -Algorithm SHA256).Hash"'
-                   if f.windows else f"sha256sum '{target}' 2>/dev/null | cut -d' ' -f1")
-            _rc, got = bundle._ssh(f.host, f.user, cmd)
-            ok_skill = ok_skill and (got or "").strip().lower() == want
+                target = bundle._write_target(f, rel, "home")
+                ok_skill = ok_skill and known.get(target, "") == want
+            target = bundle._write_target(f, spec.project_skill_rel(n), "checkout")
+            ok_skill = ok_skill and known.get(target, "") == want
         cfg_path = (f"{f.path}\\{bundle.CONFIG_REL.replace('/', chr(92))}" if f.windows
                     else f"{f.path}/{bundle.CONFIG_REL}")
         rc2, _ = bundle._ssh(f.host, f.user,
@@ -398,13 +401,9 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
         stale: list = []
         for rel, src in pay:
             want = hashlib.sha256(bundle.payload_text(src).encode("utf-8")).hexdigest()
-            rp = f"{bundle.AX_DIR}/lib/{bundle.PAYLOAD_PKG}/{rel}"
-            target = (f"{f.path}\\{rp.replace('/', chr(92))}" if f.windows
-                      else f"{f.path}/{rp}")
-            cmd = (f'powershell -Command "(Get-FileHash -LiteralPath \'{target}\' -Algorithm SHA256).Hash"'
-                   if f.windows else f"sha256sum '{target}' 2>/dev/null | cut -d' ' -f1")
-            _rc, got = bundle._ssh(f.host, f.user, cmd)
-            if (got or "").strip().lower() != want:
+            target = bundle._write_target(
+                f, f"{bundle.AX_DIR}/lib/{bundle.PAYLOAD_PKG}/{rel}", "checkout")
+            if known.get(target, "") != want:
                 stale.append(rel)
         ok_pay = not stale
         # 요청자 전용 (소 3.8.4): .mcp.json 항목 + 역할 토큰
@@ -463,12 +462,8 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
             _rt = _auth.load_role_token("requester")
             if _rt:
                 want_t = hashlib.sha256((_rt + "\n").encode("utf-8")).hexdigest()
-                tp = (f"{f.path}\\{bundle.AX_DIR}\\token" if f.windows
-                      else f"{f.path}/{bundle.AX_DIR}/token")
-                cmd = (f'powershell -Command "(Get-FileHash -LiteralPath \'{tp}\' -Algorithm SHA256).Hash"'
-                       if f.windows else f"sha256sum '{tp}' 2>/dev/null | cut -d' ' -f1")
-                _rc, got_t = bundle._ssh(f.host, f.user, cmd)
-                if (got_t or "").strip().lower() != want_t:
+                tp = bundle._write_target(f, f"{bundle.AX_DIR}/token", "checkout")
+                if known.get(tp, "") != want_t:
                     ok_client = False
                     client_note += " · [실패] 역할 토큰 불일치/없음 (재배달 필요)"
             else:

@@ -181,6 +181,24 @@ MD_END = _MD_AX.end
 SSH_TIMEOUT = 60
 
 
+def _mux_opts() -> list:
+    """SSH 연결 재사용 옵션 (`#655`, 사용자 2026-10-07 「655 해보자 시간도 체크해보고」).
+
+    배달은 파일 하나에 연결을 세 번 연다(디렉토리 · scp · 되읽기 해시) — 실측 2026-10-07 마운트
+    1개 `update` 가 ssh·scp **약 400회 · 160초**였다. ControlMaster 로 첫 연결을 열어 두고 뒤의
+    호출이 그 위에 채널만 열게 하면 호출당 지연이 줄어든다(실측: `.2` 420→82ms · `.33` 233→27ms
+    · `.43` 328→49ms, Windows OpenSSH 서버도 그대로 받는다).
+    [주의] 동작은 바뀌지 않는다 — 같은 명령이 같은 순서로 돈다. 소켓이 죽어 있으면 ssh 가 스스로
+    일반 연결로 간다. 끄려면 `AX_SSH_MUX=0`.
+    """
+    import os
+    if os.environ.get("AX_SSH_MUX", "1") == "0":
+        return []
+    d = Path.home() / ".ssh"
+    return ["-o", "ControlMaster=auto", "-o", f"ControlPath={d}/axmux-%C",
+            "-o", "ControlPersist=120"]
+
+
 class BundleError(RuntimeError):
     """배달할 수 없다. [중요] 조용히 건너뛰지 않는다."""
 
@@ -255,7 +273,8 @@ def _ssh(host: str, user: str, cmd: str, *, timeout: int = SSH_TIMEOUT) -> tuple
     """SSH 한 번. `(rc, stdout)`. **예외를 던지지 않는다** — 실패도 사실이다."""
     try:
         p = subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", f"{user}@{host}", cmd],
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", *_mux_opts(),
+             f"{user}@{host}", cmd],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout)
         return p.returncode, (p.stdout or "").strip()
@@ -482,7 +501,7 @@ def _remote_read(facts: HostFacts, abs_path: str) -> str:
     os.unlink(tmp)                          # [중요] 존재 자체가 성공의 증거가 되게 한다
     try:
         r = subprocess.run(
-            ["scp", "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+            ["scp", "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", *_mux_opts(),
              scp_source(facts, abs_path), tmp],
             capture_output=True, text=True, timeout=SSH_TIMEOUT)
         if Path(tmp).exists():
@@ -994,14 +1013,14 @@ def _remote_write(facts: HostFacts, rel: str, content: str, *, base: str = "home
     home 도 checkout 도 아닌 자리라서다.
     """
     want = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    if base == "abs":
-        # [중요] 절대경로는 그대로 쓴다. 해시 대조 전송은 그대로 재사용한다 — 그 검증이 실제로
-        #    두 번(BOM/CRLF · stdin 미종료) 조용한 배달 사고를 잡았다.
-        target = rel.replace("/", chr(92)) if facts.windows else rel
-    else:
-        root = facts.home if base == "home" else facts.path
-        target = (f"{root}\\{rel.replace('/', chr(92))}" if facts.windows
-                  else f"{root}/{rel}")
+    target = _write_target(facts, rel, base)
+    # 🔴 `#655` — 배달 시작 때 한 번에 받아 둔 원격 해시가 이미 같으면 쓰지 않는다. 그 해시가
+    #    곧 「되읽어 대조」의 증거다(같은 sha256 을 같은 자리에서 읽었다). 받아 둔 값이 없으면
+    #    종전 경로 그대로다.
+    key = (facts.host, facts.user, target)
+    if _KNOWN_HASHES.get(key) == want:
+        _UNCHANGED[(facts.host, facts.user)] = _UNCHANGED.get((facts.host, facts.user), 0) + 1
+        return target
     if facts.windows:
         parent = target.rsplit("\\", 1)[0]
         mk = f'if not exist "{parent}" mkdir "{parent}"'
@@ -1025,7 +1044,7 @@ def _remote_write(facts: HostFacts, rel: str, content: str, *, base: str = "home
         tmp = tf.name
     try:
         p = subprocess.run(
-            ["scp", "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+            ["scp", "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", *_mux_opts(),
              tmp, f"{facts.user}@{facts.host}:{target}"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=SSH_TIMEOUT)
@@ -1047,7 +1066,66 @@ def _remote_write(facts: HostFacts, rel: str, content: str, *, base: str = "home
     got = (got or "").strip().lower()
     if rc != 0 or got != want:
         raise BundleError(f"{facts.host}: 해시 불일치 — 기대 {want[:12]} 실측 {got[:12] or '없음'}")
+    if key in _KNOWN_HASHES:
+        _KNOWN_HASHES[key] = want              # 받아 둔 값이 낡지 않게 — 방금 쓴 것이 정본이다
     return target
+
+
+def _write_target(facts: HostFacts, rel: str, base: str = "home") -> str:
+    """`_remote_write` 가 쓰는 원격 절대경로. 미리 해시를 받을 목록도 이것으로 만든다(두 벌 금지)."""
+    if base == "abs":
+        # [중요] 절대경로는 그대로 쓴다. 해시 대조 전송은 그대로 재사용한다 — 그 검증이 실제로
+        #    두 번(BOM/CRLF · stdin 미종료) 조용한 배달 사고를 잡았다.
+        return rel.replace("/", chr(92)) if facts.windows else rel
+    root = facts.home if base == "home" else facts.path
+    return (f"{root}\\{rel.replace('/', chr(92))}" if facts.windows
+            else f"{root}/{rel}")
+
+
+# 🔴 `#655` — 배달 한 번 동안만 사는 원격 해시 표. `(host, user, 원격경로) → sha256`.
+#    `deliver()` 가 시작할 때 채우고 끝날 때(예외여도) 비운다. 프로세스를 넘겨 들고 다니지 않는다.
+_KNOWN_HASHES: dict = {}
+_UNCHANGED: dict = {}
+_PREFETCH_CHUNK = 6000                      # cmd.exe 명령 한도(8191자) 아래로 자른다
+
+
+def remote_hashes(facts: HostFacts, targets: list) -> dict:
+    """원격 파일들의 sha256 을 **연결 한 번에** 받는다 (`#655`). 없는 파일은 결과에 없다.
+
+    [주의] 실패는 빈 결과다 — 그러면 모든 파일이 종전처럼 쓰이고 되읽힌다(느려질 뿐 틀리지 않는다).
+    """
+    out: dict = {}
+    if not targets:
+        return out
+    chunks, cur, size = [], [], 0
+    for t in targets:
+        if cur and size + len(t) + 8 > _PREFETCH_CHUNK:
+            chunks.append(cur)
+            cur, size = [], 0
+        cur.append(t)
+        size += len(t) + 8
+    if cur:
+        chunks.append(cur)
+    for chunk in chunks:
+        if facts.windows:
+            lst = ",".join("'" + t.replace("'", "''") + "'" for t in chunk)
+            cmd = ('powershell -NoProfile -Command "$ErrorActionPreference=\'SilentlyContinue\'; '
+                   f"foreach($p in @({lst})){{if(Test-Path -LiteralPath $p -PathType Leaf)"
+                   "{(Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash+'|'+$p}}\"")
+        else:
+            cmd = "sha256sum -- " + " ".join(shlex.quote(t) for t in chunk) + " 2>/dev/null; true"
+        rc, text = _ssh(facts.host, facts.user, cmd)
+        if rc != 0:
+            continue
+        for line in (text or "").splitlines():
+            line = line.strip()
+            if facts.windows:
+                h, _, path = line.partition("|")
+            else:
+                h, _, path = line.partition("  ")
+            if len(h) == 64 and path:
+                out[path.strip()] = h.lower()
+    return out
 
 
 def write_file(facts: HostFacts, path: str, content: str, *, base: str = "abs") -> str:
@@ -1784,8 +1862,61 @@ def run_init(facts: HostFacts, *, runner=None) -> dict:
     return info
 
 
+def delivery_targets(project: str, facts: HostFacts, pinit) -> list:
+    """이번 배달이 쓸 **고정 경로** 목록 — 미리 해시를 받을 대상 (`#655`).
+
+    [주의] `deliver` 의 쓰기와 갈리면 **덜 건너뛸 뿐 틀리지 않는다** — 목록에 없는 파일은 종전대로
+    쓰고 되읽는다. 그래서 여기는 「빠르게」의 목록이지 「무엇을 배달하나」의 정본이 아니다.
+    """
+    rels = [(CONFIG_REL, "checkout"), ("CLAUDE.md", "checkout"),
+            (spec.CODEX_ENTRY_REL, "checkout"), (WORKSHOP_MD_REL, "checkout"),
+            (".mcp.json", "checkout"), (spec.SETTINGS_REL, "checkout"),
+            (f"{AX_DIR}/token", "checkout")]
+    for n in skills_for(facts.role, pinit):
+        rels += [(r, "home") for r in spec.skill_rels(n)]
+        rels.append((spec.project_skill_rel(n), "checkout"))
+    if payload_pairs(facts.role):
+        rels += [(f"{AX_DIR}/lib/{PAYLOAD_PKG}/{d + '/' if d else ''}__init__.py", "checkout")
+                 for d in payload_dirs(facts.role)]
+        rels += [(f"{AX_DIR}/lib/{PAYLOAD_PKG}/{dest}", "checkout")
+                 for dest, _src in payload_pairs(facts.role)]
+    rels += [(rel, "checkout") for rel, _src in workshop_files(facts.role, project, pinit)]
+    seen, out = set(), []
+    for rel, base in rels:
+        t = _write_target(facts, rel, base)
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
 def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
             init: bool = False, project_init=None) -> dict:
+    """`_deliver` 에 **바뀐 것만 쓰기**를 얹는다 (`#655`, 사용자 2026-10-07).
+
+    시작할 때 원격 해시를 연결 한 번에 받아 두고, 같은 파일은 디렉토리·scp·되읽기를 건너뛴다.
+    결과에 `unchanged`(건너뛴 수)를 싣는다. 끄려면 `AX_DELIVER_ALL=1`.
+    """
+    import os
+    key = (facts.host, facts.user)
+    if dry_run or os.environ.get("AX_DELIVER_ALL") == "1":
+        return _deliver(project, facts, dry_run=dry_run, init=init, project_init=project_init)
+    pinit = spec.load_init(project) if project_init is None else project_init
+    _UNCHANGED[key] = 0
+    try:
+        for t, h in remote_hashes(facts, delivery_targets(project, facts, pinit)).items():
+            _KNOWN_HASHES[(facts.host, facts.user, t)] = h
+        r = _deliver(project, facts, dry_run=False, init=init, project_init=pinit)
+        r["unchanged"] = _UNCHANGED.get(key, 0)
+        return r
+    finally:
+        for k in [k for k in _KNOWN_HASHES if k[:2] == key]:
+            del _KNOWN_HASHES[k]
+        _UNCHANGED.pop(key, None)
+
+
+def _deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
+             init: bool = False, project_init=None) -> dict:
     """한 머신에 config + 스킬을 배달한다. [중요] **되읽어 대조까지가 배달이다.**
 
     [주의] **이름이 둘이라 헷갈리는 자리다.** `init` 은 원격에서 클로드 `/init` 을 돌릴지의

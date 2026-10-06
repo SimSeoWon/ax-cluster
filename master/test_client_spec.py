@@ -332,7 +332,8 @@ def test_init_flag_not_shadowed() -> None:
           sig.parameters["project_init"].default is None)
 
     src = (Path(__file__).resolve().parent / "client" / "bundle.py").read_text(encoding="utf-8")
-    body = src[src.index("            init: bool = False, project_init=None) -> dict:"):]
+    # `#655` — 본문은 `_deliver` 에 있다(`deliver` 는 바뀐 것만 쓰기를 얹는 감싸개다)
+    body = src[src.index("def _deliver("):]
     body = body[:body.index("\ndef ", 1)]
     check("[중요] deliver 안에서 init 에 재대입하지 않는다",
           "\n    init = " not in body, "가림 재발")
