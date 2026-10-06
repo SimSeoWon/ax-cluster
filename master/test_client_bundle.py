@@ -1528,6 +1528,68 @@ def test_update_covers_every_registered_project() -> None:
     ], str(calls))
 
 
+def test_ensure_ignored_is_one_call_and_strict() -> None:
+    """`#655` — exclude 줄을 연결 한 번에 넣고, 확인되지 않은 줄이 하나라도 있으면 실패다."""
+    calls = []
+    keep = bundle._ssh
+    try:
+        lines = spec.git_excludes_for("worker")
+        for f in (_facts(), _facts(os="windows", path=r"E:\\trunk\\X")):
+            calls.clear()
+            bundle._ssh = lambda h, u, cmd, **k: (calls.append(cmd) or (0, "\n".join(
+                "OK " + ln for ln in lines)))
+            check(f"{f.os}: 한 번의 연결로 전부", bundle._ensure_ignored(f) is True
+                  and len(calls) == 1, str(len(calls)))
+            check(f"{f.os}: 모든 줄이 명령에 있다", all(ln in calls[0] for ln in lines), calls[0][:200])
+        bundle._ssh = lambda h, u, cmd, **k: (0, "\n".join("OK " + ln for ln in lines[:-1]))
+        raised = ""
+        try:
+            bundle._ensure_ignored(_facts())
+        except bundle.BundleError as e:
+            raised = str(e)
+        check("[중요] 확인 안 된 줄이 있으면 그 줄 이름으로 실패", lines[-1] in raised, raised)
+    finally:
+        bundle._ssh = keep
+
+
+def test_claude_mcp_local_add_skips_identical() -> None:
+    """`#655` — 이미 같은 항목이면 remove·add 를 부르지 않는다. 다르면 종전대로 다시 넣는다."""
+    f = _facts()
+    keep = (bundle._ssh, bundle.claude_mcp_local_get)
+    calls = []
+    try:
+        bundle._ssh = lambda h, u, cmd, **k: (calls.append(cmd) or (0, ""))
+        bundle.claude_mcp_local_get = lambda ff, n: bundle.mcp_entry_for(ff)
+        out = bundle.claude_mcp_local_add(f, "ax-client")
+        check("[중요] 같으면 등록 명령을 안 부른다", calls == [] and "재등록 생략" in out, out)
+        seq = [{"command": "old", "args": []}, bundle.mcp_entry_for(f)]
+        bundle.claude_mcp_local_get = lambda ff, n: seq.pop(0)
+        out = bundle.claude_mcp_local_add(f, "ax-client")
+        check("다르면 다시 등록하고 되읽어 대조한다",
+              len(calls) == 1 and "mcp add" in calls[0] and "[완료]" in out, out)
+    finally:
+        bundle._ssh, bundle.claude_mcp_local_get = keep
+
+
+def test_check_stats_counters_are_not_shadowed() -> None:
+    """`cmd_check` 의 `stats` 카운터가 출력용 목록으로 덮이지 않는다 (실측 2026-10-07).
+
+    `dirty_only` 를 호스트 목록으로 다시 대입해 `stats["dirty_only"]` 가 목록이 됐고, dirty 트리에서
+    `update` 가 실패 요약(`_label_check_failure`)을 만들다 TypeError 로 죽었다. 기존 #737 하네스는
+    `cmd_check` 를 가짜로 끼워 이 경로를 못 탔다 — 그래서 소스에서 대입 자리를 센다.
+    """
+    import inspect
+    import re
+    src = inspect.getsource(client_cli.cmd_check)
+    for name in ("behind_only", "dirty_only", "behind_dirty"):
+        assigns = re.findall(rf"^\s*{name} = ", src, flags=re.M)     # 키워드 인자(`x=`)는 제외
+        check(f"{name} 에 대입하는 곳은 초기화 한 곳뿐", len(assigns) == 1, str(assigns))
+    check("통계 단위 해석이 정수를 받는다",
+          client_cli._label_check_failure("P", {"bad": 1, "dirty_only": 1}, moved=False,
+                                          dirty_start=True, became_dirty=False,
+                                          started_at=0).startswith("P: check"))
+
+
 def test_remote_hashes_and_skip_unchanged() -> None:
     """🔴 `#655` — 원격 해시를 한 번에 받고, 같은 파일은 디렉토리·scp·되읽기를 건너뛴다."""
     import hashlib
@@ -2170,6 +2232,9 @@ def main() -> int:
                test_update_reports_partial_failure,
                test_update_defaults_to_mounted_project,
                test_remote_hashes_and_skip_unchanged,
+               test_check_stats_counters_are_not_shadowed,
+               test_ensure_ignored_is_one_call_and_strict,
+               test_claude_mcp_local_add_skips_identical,
                test_deliver_clears_hash_cache_even_on_error,
                test_update_reports_head_movement,
                test_update_reports_dirty_tree,

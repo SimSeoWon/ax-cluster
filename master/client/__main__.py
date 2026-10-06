@@ -632,15 +632,18 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
         #    고치는 방법이 다르다 — 전자는 재배달, 후자는 **마스터를 먼저 커밋**한 뒤 재배달이다.
         #    실측 2026-08-22: 재배달 직후 「최대 0 커밋 뒤」라고 찍혀 문구가 사실을 흐렸다.
         behind = [(h, n) for h, n, _d in behind_hosts if n]
-        dirty_only = [h for h, n, d in behind_hosts if d and not n]
+        # [주의] 위의 정수 카운터 `dirty_only` 와 이름이 같으면 그것을 목록으로 덮는다 — 그러면
+        #    `stats["dirty_only"]` 가 목록이 되어 `update` 의 실패 요약이 TypeError 로 죽었다
+        #    (실측 2026-10-07, dirty 트리에서 `update`). 출력용 목록은 이름을 가른다.
+        dirty_hosts = [h for h, n, d in behind_hosts if d and not n]
         other = [h for h, n, d in behind_hosts if not n and not d]
         print(f"\n  [중요] 마스터와 버전이 어긋난 기계 {len(behind_hosts)}대")
         print("        [중요] 클러스터는 버전이 하나다 — 배달물 해시가 같아도 같은 버전이 아니다.")
         if behind:
             print(f"        · 커밋이 뒤처짐 {len(behind)}대 (최대 {max(n for _h, n in behind)} "
                   f"커밋) → `python -m master.client deliver <프로젝트>`")
-        if dirty_only:
-            print(f"        · 커밋은 같지만 **dirty 트리에서 배달됨** {len(dirty_only)}대 — "
+        if dirty_hosts:
+            print(f"        · 커밋은 같지만 **dirty 트리에서 배달됨** {len(dirty_hosts)}대 — "
                   f"무엇이 갔는지 추적할 수 없다")
             print("          → 마스터를 **먼저 커밋**한 뒤 재배달한다 (순서가 계약이다)")
         if other:

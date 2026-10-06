@@ -1385,6 +1385,12 @@ def claude_mcp_local_add(facts: HostFacts, name: str) -> str:
     """로컬 스코프 등록 + **되읽어 대조** (`#693`). fail-open — `codex_mcp_add` 와 같은 판단."""
     if not facts.claude:
         return f"{name} [주의] 건너뜀 — 이 기계에 claude 가 없다"
+    # 🔴 `#655` — 이미 같은 항목이면 지우고 다시 넣지 않는다(실측 2026-10-07: `.2` 에서 매번 1.7초).
+    #    등록 내용은 `mcp_entry_for` 의 command·args 뿐이고 `claude_mcp_local_matches` 가 정확히 그
+    #    둘을 대조하므로, 「같다」는 판정은 재등록 뒤 되읽기와 같은 증거다.
+    pre = claude_mcp_local_get(facts, name)
+    if pre and claude_mcp_local_matches(pre, facts):
+        return f"{name} [완료] 이미 같다 — 재등록 생략 · ~/.claude.json 대조 통과 (.mcp.json 은 안 건드림)"
     rc, out = _ssh(facts.host, facts.user, claude_mcp_local_cmd(facts, name))
     if rc != 0:
         return f"{name} [주의] 로컬 등록 실패 (rc={rc}) — {(out or '').strip()[:120]}"
@@ -2347,19 +2353,30 @@ def _ensure_ignored(facts: HostFacts) -> bool:
     목록의 선언은 `spec.GIT_EXCLUDES` 다 (#266). 이미 들어 있으면 다시 넣지 않는다(멱등).
     """
     lines = spec.git_excludes_for(facts.role)
-    for line in lines:
-        if facts.windows:
-            cmd = (f'powershell -Command "$p=\'{facts.path}\\.git\\info\\exclude\'; '
-                   f'if (-not (Test-Path $p) -or -not (Select-String -Path $p -SimpleMatch \'{line}\' -Quiet)) '
-                   f'{{ Add-Content -LiteralPath $p -Value \'{line}\' }}; '
-                   f'if (Select-String -Path $p -SimpleMatch \'{line}\' -Quiet) {{ echo OK }}"')
-        else:
-            q = shlex.quote(f"{facts.path}/.git/info/exclude")
-            cmd = (f"grep -qxF {shlex.quote(line)} {q} 2>/dev/null || echo {shlex.quote(line)} >> {q}; "
-                   f"grep -qxF {shlex.quote(line)} {q} && echo OK")
-        rc, out = _ssh(facts.host, facts.user, cmd)
-        if rc != 0 or "OK" not in out:
-            raise BundleError(f"{facts.host}: .git/info/exclude 에 {line} 를 넣지 못했다 — {out[:120]}")
+    if not lines:
+        return True
+    # 🔴 `#655` — 줄마다 연결(Windows 는 PowerShell 기동)을 열던 것을 **한 번**으로 묶는다
+    #    (실측 2026-10-07: `.2` 한 대에 6회 · 약 4.6초). 판정은 그대로다 — 줄마다 넣은 뒤 다시
+    #    찾아 `OK <줄>` 을 찍고, 찍히지 않은 줄이 하나라도 있으면 실패다.
+    if facts.windows:
+        lst = ",".join("'" + ln.replace("'", "''") + "'" for ln in lines)
+        cmd = (f'powershell -Command "$p=\'{facts.path}\\.git\\info\\exclude\'; '
+               f'foreach($l in @({lst})){{ '
+               'if (-not (Test-Path $p) -or -not (Select-String -Path $p -SimpleMatch $l -Quiet)) '
+               '{ Add-Content -LiteralPath $p -Value $l }; '
+               "if (Select-String -Path $p -SimpleMatch $l -Quiet) { echo ('OK ' + $l) } }\"")
+    else:
+        q = shlex.quote(f"{facts.path}/.git/info/exclude")
+        cmd = "; ".join(
+            f"{{ grep -qxF {shlex.quote(ln)} {q} 2>/dev/null || echo {shlex.quote(ln)} >> {q}; }}; "
+            f"grep -qxF {shlex.quote(ln)} {q} && echo {shlex.quote('OK ' + ln)}"
+            for ln in lines)
+    rc, out = _ssh(facts.host, facts.user, cmd)
+    done = {x.strip()[3:] for x in (out or "").splitlines() if x.strip().startswith("OK ")}
+    missing = [ln for ln in lines if ln not in done]
+    if missing:
+        raise BundleError(f"{facts.host}: .git/info/exclude 에 {', '.join(missing)} 를 넣지 못했다 "
+                          f"(rc={rc}) — {(out or '')[:120]}")
     return True
 
 
