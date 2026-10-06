@@ -19,6 +19,26 @@
 `.ax/lib/axmaster/clientside/` 로 놓인다. `.33` 의 `.mcp.json` args 와 `.2`·`.43` 상주가 그 값을
 가리키기 때문이다. 그 두 값을 가른 것이 `#262` 이고 `test_payload_split` 이 동결해 둔다.
 
+## 지금은 반씩 나뉘어 있다 — 의도된 상태다 (2026-10-06)
+
+`client/` 를 「클라에 설치되는 것 전부」로 만드는 결정(사용자 2026-08-22)은 **절반만** 실행됐다.
+
+    client/runtime/ · client/init/          옮겼다 (#263) — 클라에서 도는 코드
+    master/client/{payload, skills,          아직 여기 있다 — 배달 **내용물**
+                   workshop, workshop_by_project}
+
+나머지 이동(`#264`)은 **아이디어 버킷으로 미뤘다** (사용자 2026-10-06): 동작상 얻는 것이 없고
+배달 해시·테스트·경로를 흔들며, 그 사이 `workshop_by_project`·kind 별 게이팅으로 대상이 커졌다.
+그래서 `master/client/` 의 내용물은 **빠뜨린 것이 아니다** — 옮기려면 `#264` 를 다시 연다.
+
+[중요] **공용 모듈은 이동 대상이 아니다** — `master/layer3_verify.py`·`source_text.py`·`utf8.py`·
+`work/*` 는 클라로도 배달되지만 **마스터도 쓴다**. 「클라로 가니 `client/` 로」라고 읽고 옮기면
+마스터 쪽 임포트가 끊긴다. → `docs/12-multi-project.md` §12.5-e
+
+[중요] **어느 파일이 어느 역할에 가는가의 정본은 `master/client/bundle.py` 의 `PAYLOAD_BY_ROLE`
+하나다** (스킬 목록은 `master/client/spec.py`). 디렉토리를 열어 보는 것으로는 알 수 없고,
+`client/` 로 옮겨도 그 사실은 안 바뀐다.
+
 **배달하는 쪽**은 마스터에서 돈다(venv·레지스트리·SSH 키가 거기 있다) — 아래 표가 그것과,
 배달되는 클라 코드(`client/`)다.
 
@@ -29,6 +49,7 @@
 | `master/client/payload/CLAUDE.md` | 체크아웃용 프로젝트 가이드 정본 (`/init` 산출, **머신 중립**) |
 | `master/client/__main__.py` | `probe\|plan\|deliver\|check <프로젝트>` · `update`(등록 프로젝트 전체 배달→대조) |
 | **`master/client/workshop/`** | [완료] **작업장 자산의 정본** (2026-08-20 · #226) — `agents/`·`skills/`·`rules/`·`hooks/` · `.claude/CLAUDE.md`(kind 별 변형 `CLAUDE.code.md`·`CLAUDE.index_only.md`). **요청자에게만** 배달된다(`bundle.WORKSHOP_ROLES`). [주의] 같은 디렉토리의 `README.md`·`mcp.json` 은 **배달물이 아니다**(`test_client_bundle.py` 가 지킨다). 개수는 `find master/client/workshop -type f` 로 센다 |
+| `master/client/workshop_by_project/<프로젝트>/` | 프로젝트별 작업장 자산 변형 (`#292`) — 지금은 `ModularStage` 하나 |
 | `master/client/skills/ax-request`·`ax-ontology`·`ax-advance`·`ax-review`·`ax-fix` | 요청자가 받는 절차 스킬 (정본). 역할·kind 별 목록의 정본은 `master/client/spec.py`(`kind: code` 는 `ax-fix` 제외, `index_only` 는 `ax-ontology` 만) |
 | `client/runtime/` | 클라 기계에서 도는 코드 — `client_mcp.py`·`ontology_cache.py`·`fix_flow.py`·`session1_conductor.py`. 배달 위치는 `.ax/lib/axmaster/clientside/` |
 | `client/init/` | `bootstrap.py` · `residency.py`(상주 등록 명령 조립과 `desired_state()`) |
@@ -58,7 +79,7 @@ deliver는 켜면 안 되는 과거 등록도 제거한 뒤 부재를 되읽는�
 
     <체크아웃>/.ax/{config.json,token,lib/axmaster/**}   설정 · 역할 토큰 · 클라 MCP·검수 모듈
     <체크아웃>/.mcp.json                  [중요] **`ax-client` 항목만** 건드린다 (사람 도구와 공존)
-    <체크아웃>/.claude/{agents,skills,rules,hooks}/       작업장 자산 31개 — 파일째 관리
+    <체크아웃>/.claude/{agents,skills,rules,hooks}/       작업장 자산 — 파일째 관리 (개수는 프로젝트·kind 별로 다르다, `check` 출력이 센다)
     <체크아웃>/.claude/CLAUDE.md          [주의] **`AgentWatch:Start/End` 블록만** 교체.
                                           마커가 없으면 **안 쓴다** (사람 문서를 날리지 않는다)
     <체크아웃>/.agents/skills/ · <홈>/{.claude,.codex}/skills/   요청 절차 — ax-{request,ontology,advance,review,fix}
