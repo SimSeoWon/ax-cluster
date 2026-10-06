@@ -36,6 +36,7 @@ UI 계약:
 from __future__ import annotations
 
 import html
+import math
 import sys
 from urllib.parse import urlencode
 
@@ -252,7 +253,7 @@ def _pie(pie_report, family: str = "") -> str:
     if total <= 0:
         return note + '<div class="note">선택한 조건에 측정 토큰 기록이 없어 비율을 그리지 않는다.</div>'
     size, r, width = 180, 70, 26
-    circ = 2 * 3.141592653589793 * r
+    circ = 2 * math.pi * r
     gap = 2.0 if len(rows) > 1 else 0.0            # 조각 사이 2px 표면 틈 (한 계열이면 온전한 원)
     parts = [f'<svg viewBox="0 0 {size} {size}" role="img" aria-label="{html.escape(_pie_title(family), quote=True)}">',
              f'<circle cx="{size/2}" cy="{size/2}" r="{r}" fill="none" stroke="var(--line)" stroke-width="{width}"/>']

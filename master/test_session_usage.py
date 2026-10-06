@@ -6,8 +6,10 @@
 ⑨ 화면 열기 트리거의 간격·잠금·비차단.
 """
 import hashlib
+import inspect
 import io
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -293,7 +295,6 @@ class CollectTests(unittest.TestCase):
         self.assertFalse((self.raw / "_unassigned/192.168.0.43/codex" / o).exists())
 
     def test_remote_commands_are_read_only(self):
-        import inspect
         remote = su._PS_LIST + "\n" + su._SH_LIST + "\n" + inspect.getsource(su.fetch_remote)
         for bad in ("Remove-Item", "rm -", " del ", "Move-Item", " mv ", "Set-Content",
                     "Out-File", "New-Item", "tar -x", "-delete"):
@@ -442,7 +443,6 @@ class LockAndTriggerTests(unittest.TestCase):
             with self.assertRaises(su.Busy):
                 su.collect_all(["local"], raw_root=self.raw, store=self.store, shops={})
         finally:
-            import os
             os.close(fd)
 
     def test_trigger_interval_busy_and_nonblocking(self):

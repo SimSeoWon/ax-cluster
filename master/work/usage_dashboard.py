@@ -358,9 +358,9 @@ def build_report(project: str = "", period: str = "daily", start: str = "",
     models: dict[tuple[str, str], dict] = {}
     issues: dict[int, dict] = {}
     errors = {"invalid_records": 0, "read_errors": 0}
-    links = (_request_map(Path(queue_root) if queue_root is not None else
-                          Path(os.environ.get("AX_TASK_QUEUE_ROOT") or Path.home() / "ax-state"), warnings, errors)
-             if source == "dispatch" else {})
+    qroot = (Path(queue_root) if queue_root is not None else
+             Path(os.environ.get("AX_TASK_QUEUE_ROOT") or Path.home() / "ax-state"))
+    links = _request_map(qroot, warnings, errors) if source == "dispatch" else {}
     store = Path(session_store) if session_store is not None else DEFAULT_STORE
     records = (_read_dispatch(registry.root, names, warnings, errors) if source == "dispatch" else
                _read_sessions(store, warnings, errors) if source == "session" else
