@@ -302,7 +302,8 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
     if sk:
         stamp_note = " (" + " · ".join(sk) + ")"
     if not issue:
-        return "[주의] 레드마인 갱신 건너뜀 — 바꿀 것이 없다" + priority_note + stamp_note
+        return ("[주의] 레드마인 갱신 건너뜀 — 바꿀 것이 없다"
+                + status_note + priority_note + stamp_note)
 
     try:
         _request("PUT", f"{base}/issues/{iid}.json", k, {"issue": issue}, sender=sender)

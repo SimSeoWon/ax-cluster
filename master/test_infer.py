@@ -969,7 +969,7 @@ def test_commit_task_failure_notices_match_disposition() -> None:
                   any("직전 시도와 출력이 같다" in n for n in result.notes))
 
 
-def test_auth_notice_content():
+def test_auth_notice_content() -> None:
     with patch("master.redmine.update_issue") as update:
         I._notify_blocked("auth-task", {"work_id": "w", "assignee": "192.168.0.43"},
                           "AX_CLAUDE_AUTH_FAILED", "캐시 저장 실패", kind="auth",
@@ -982,7 +982,7 @@ def test_auth_notice_content():
     check("인증 알림에 Windows 실행 환경 설명 섞지 않음", "Windows" not in note)
 
 
-def test_commit_layer2_usage_and_author():
+def test_commit_layer2_usage_and_author() -> None:
     from master import layer2_verify as L2
     from master.work import usage as U
     from master.work.declarations import Declarations
@@ -1046,7 +1046,7 @@ def test_commit_layer2_usage_and_author():
         shutil.rmtree(root, ignore_errors=True)
 
 
-def test_commit_layer2_grounding_gate():
+def test_commit_layer2_grounding_gate() -> None:
     from master.verdict import Verdict
     from master.work.declarations import Declarations
     paths, root = tmp_paths()

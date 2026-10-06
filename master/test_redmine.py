@@ -178,6 +178,14 @@ def test_update_unknown_priority_alone_is_nothing_to_change():
     check("사유가 함께 보인다", "바꿀 것이 없다" in out and "긴급" in out, out)
 
 
+def test_update_unknown_status_alone_is_nothing_to_change():
+    s = Sender()
+    out = RM.update_issue(752, status_name="없는상태", sender=s)
+    check("바꿀 것이 없으면 PUT 하지 않는다", not s.puts, str(s.calls))
+    check("[중요] 건너뛴 상태 사유가 함께 보인다 (R68-1)",
+          "바꿀 것이 없다" in out and "없는상태" in out, out)
+
+
 def test_update_subject_trimmed_and_limited():
     s = Sender()
     out = RM.update_issue(752, subject="  새 제목  ", sender=s)
@@ -563,6 +571,7 @@ def main() -> int:
                test_update_priority_resolved,
                test_update_unknown_priority_keeps_notes_and_says_so,
                test_update_unknown_priority_alone_is_nothing_to_change,
+               test_update_unknown_status_alone_is_nothing_to_change,
                test_update_subject_trimmed_and_limited,
                test_update_description_replaces_body,
                test_update_omitted_new_fields_payload_unchanged,
