@@ -969,6 +969,51 @@ def test_commit_task_failure_notices_match_disposition() -> None:
                   any("직전 시도와 출력이 같다" in n for n in result.notes))
 
 
+def test_codex_jsonl_quota_reaches_submit_fail() -> None:
+    """#720: 실제 이벤트→파서→wcommit→infer, 일반 재작성은 실행하지 않는다."""
+    from master.work import revise as RV
+    message = "You've hit your usage limit. Try again later."
+    cases = (
+        (1, 1, [{"type": "error", "message": message}]),
+        (1, 1, [{"type": "item.completed", "item": {
+            "type": "agent_message", "text": "본문 " * 1000}},
+             {"type": "error", "message": message},
+             {"type": "turn.failed", "error": {"message": message}}]),
+        (RV.MAX_ATTEMPTS, 1, [{"type": "turn.failed", "error": {
+            "message": "앞 " * 500 + message + " 뒤" * 500}}]),
+        (1, 0, [{"type": "item.completed", "item": {
+            "type": "agent_message", "text": "본문 " * 1000}},
+             {"type": "turn.failed", "error": {"message": "앞 " * 500 + message + " 뒤" * 500}}]),
+    )
+    for attempt, rc, events in cases:
+        raw = "\n".join(json.dumps(event) for event in events)
+        paths, root = tmp_paths()
+        calls = []
+        try:
+            def api(method, path, body=None):
+                calls.append((method, path, body))
+                return {"ok": True}
+            with patch("master.work.twin_base.local_baseline", return_value=lambda path: None), \
+                 patch.object(I._MODE, "current", return_value=("codex", "test")), \
+                 patch.object(I, "_notify_blocked") as notice, \
+                 patch("master.work.revise.embed") as embed:
+                result = I.commit_task(
+                    paths, FakeFacts(), {"task_id": "quota", "attempt_count": attempt},
+                    work_id="quota-work", base=SUB_TIP, want=["a.py"], branch="quota", api=api,
+                    ssh=_fake_shell(""), reader=lambda *a: "# [PSEUDO] fill\ndef f():\n    raise NotImplementedError\n",
+                    runner_=lambda *a: (rc, raw))
+            check("실제 Codex JSONL은 quota_exhausted 1회 신고",
+                  len(calls) == 1 and calls[0][1].endswith("/submit-fail") and
+                  calls[0][2].get("reason") == "quota_exhausted", str(calls))
+            check("한도 소진은 일반 revise와 embed 제외",
+                  not embed.called and calls[0][2].get("result") != RV.REVISE, str(calls))
+            check("실제 한도 소진은 pending/5시간 차단 고지",
+                  any("pending" in n and "5시간 차단" in n for n in result.notes) and
+                  notice.call_count == 1 and notice.call_args.kwargs.get("kind") == "quota")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+
 def test_auth_notice_content() -> None:
     with patch("master.redmine.update_issue") as update:
         I._notify_blocked("auth-task", {"work_id": "w", "assignee": "192.168.0.43"},
@@ -1083,6 +1128,7 @@ def test_commit_layer2_grounding_gate() -> None:
 
 def main() -> int:
     for fn in (
+               test_codex_jsonl_quota_reaches_submit_fail,
                test_commit_task_failure_notices_match_disposition,
                test_auth_notice_content,
                test_task_targets_reads_the_whole_list,

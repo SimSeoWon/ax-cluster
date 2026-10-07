@@ -467,11 +467,14 @@ def agent_report(stdout: str, *, rc: int = 0) -> list:
 
     lines: list = []
     text = ""
+    event_errors = []
+    event_error_lines = set()
     try:                                                     # codex JSONL
         from .usage import parse_codex_jsonl                 # noqa: PLC0415
-        got = parse_codex_jsonl(out)
+        got = parse_codex_jsonl(out, error_lines=event_error_lines)
         if got:
             text = str(got[0] or "")
+            event_errors = got[1].get("errors", [])
     except Exception:                                        # noqa: BLE001
         pass
     if not text:                                             # claude --output-format json
@@ -487,10 +490,12 @@ def agent_report(stdout: str, *, rc: int = 0) -> list:
         lines.append(f"말: {one}")
 
     # [중요] 실패한 도구 호출과 오류 줄 — **원인은 거의 항상 여기 있다.**
-    errs: list = []
+    # 구조화 오류를 먼저 요약하며 일반 오류 줄과 합쳐 최대 3개만 보인다.
+    # 판정 원문은 wcommit이 meta.errors에서 따로 보존한다 (#720).
+    errs = [" ".join(e.split())[:AGENT_TEXT_MAX] for e in event_errors[:AGENT_LOG_MAX]]
     for ln in out.splitlines():
         ln = ln.strip()
-        if not ln or len(errs) >= AGENT_LOG_MAX:
+        if not ln or ln in event_error_lines or len(errs) >= AGENT_LOG_MAX:
             continue
         if any(m in ln for m in _ERR_MARKS) or '"status":"failed"' in ln.replace(" ", ""):
             errs.append(" ".join(ln.split())[:AGENT_TEXT_MAX])

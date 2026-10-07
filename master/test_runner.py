@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import sys
 import time
 from pathlib import Path
@@ -187,6 +188,25 @@ def test_agent_report() -> None:
     # claude 갈래 — `--output-format json` 의 `result`
     cj = R.agent_report('{"result":"RESULT: DONE 작업 완료","total_cost_usd":0.1}', rc=0)
     check("  claude 출력 형식도 읽는다", "RESULT: DONE" in " ".join(cj), str(cj))
+
+
+def test_codex_error_report() -> None:
+    message = "You've hit your usage limit. Try again later."
+    out = "\n".join((json.dumps({"type": "item.completed", "item": {
+        "type": "agent_message", "text": "a" * 1000}}),
+        json.dumps({"type": "error", "message": message}),
+        json.dumps({"type": "turn.failed", "error": {"message": message}})))
+    notes = R.agent_report(out, rc=1)
+    check("긴 본문 뒤 Codex 오류를 별도로 요약", any(message in n for n in notes), str(notes))
+    check("같은 Codex 오류는 한번만 요약", sum(message in n for n in notes) == 1, str(notes))
+    message = "ERROR failed: Permission denied — usage limit"
+    raw = "\n".join((json.dumps({"type": "error", "message": message}),
+                     json.dumps({"type": "turn.failed", "error": {"message": message}}),
+                     "ERROR unrelated failure", "Traceback: unrelated failure"))
+    notes = R.agent_report(raw, rc=1)
+    check("구조화 오류는 raw scan과 중복 요약 안 함",
+          sum(message in n for n in notes) == 1, str(notes))
+    check("구조화와 일반 오류 합계는 3개 제한", len(notes) == R.AGENT_LOG_MAX, str(notes))
 
 
 def test_beater() -> None:
@@ -755,7 +775,7 @@ def test_claude_auth_runtime() -> None:
 
 def main() -> int:
     for fn in (test_parse, test_pick, test_command, test_codex_windows_sandbox,
-               test_agent_report, test_beater, test_run_task,
+               test_agent_report, test_codex_error_report, test_beater, test_run_task,
                test_queue_calls, test_run_once_happy, test_run_once_returns_the_task,
                test_run_once_guards, test_result_asymmetry, test_pick_skips_dirty,
                test_json_usage,

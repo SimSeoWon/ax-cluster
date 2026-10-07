@@ -210,7 +210,7 @@ def parse_agy_json(stdout: str) -> tuple | None:
     return text, u, str(d.get("status") or ""), (model if isinstance(model, str) else "")
 
 
-def parse_codex_jsonl(stdout: str) -> tuple | None:
+def parse_codex_jsonl(stdout: str, *, error_lines: set[str] | None = None) -> tuple | None:
     """`codex exec --json` 의 이벤트 스트림 → `(본문, 계측)`. 이벤트가 없으면 `None`.
 
     [중요] **형식 지식은 이 모듈이 갖는다** — `call_codex` 가 이미 같은 이벤트를 읽고 있어서
@@ -220,6 +220,10 @@ def parse_codex_jsonl(stdout: str) -> tuple | None:
         turn.completed  → {"usage": {input_tokens, cached_input_tokens,
                                      cache_write_input_tokens, output_tokens,
                                      reasoning_output_tokens}}             토큰
+        error / turn.failed → message / error.message                     실패 원인
+
+    `error_lines`가 주어지면 읽은 오류 이벤트의 원문 줄도 돌려준다. 사람 보고에서
+    같은 이벤트를 일반 오류 줄로 다시 요약하지 않기 위한 선택적 수집이다.
 
     계측은 **`Outcome` 이 읽는 이름으로** 옮긴다(`runner.py:113-118`):
 
@@ -230,7 +234,7 @@ def parse_codex_jsonl(stdout: str) -> tuple | None:
     `cost_unknown=True` 를 싣는다 — 0 으로 적으면 「공짜」로 읽히고, 그것이 이 저장소가
     반복해 치른 「조용한 0」이다(이 모듈 머리말과 같은 규칙).
     """
-    text, raw = "", None
+    text, raw, errors = "", None, []
     for line in (stdout or "").splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -239,15 +243,29 @@ def parse_codex_jsonl(stdout: str) -> tuple | None:
             d = json.loads(line)
         except ValueError:
             continue
+        if not isinstance(d, dict):
+            continue
         if d.get("type") == "item.completed":
-            item = d.get("item") or {}
+            item = d.get("item")
+            if not isinstance(item, dict):
+                continue
             if item.get("type") == "agent_message" and item.get("text"):
                 text = str(item["text"])          # 마지막 것이 남는다
         elif d.get("type") == "turn.completed" and isinstance(d.get("usage"), dict):
             raw = d["usage"]
-    if not text and raw is None:
+        elif d.get("type") in ("error", "turn.failed"):
+            error = d.get("error") if d.get("type") == "turn.failed" else d
+            message = error.get("message") if isinstance(error, dict) else None
+            if isinstance(message, str) and message.strip():
+                if error_lines is not None:
+                    error_lines.add(line)
+                if message not in errors:
+                    errors.append(message)
+    if not text and raw is None and not errors:
         return None                                # codex 이벤트가 아니다
     meta = {"source": "codex", "cost_unknown": True}
+    if errors:
+        meta["errors"] = errors
     if raw is not None:
         meta["usage"] = {
             "input_tokens": raw.get("input_tokens"),

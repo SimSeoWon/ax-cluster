@@ -73,10 +73,7 @@ class CycleCarriesUsage(unittest.TestCase):
             return rc, out
         def read(*_a, **_k):
             return "body"
-        try:
-            wcommit._cycle(facts, "t", c, "base", llm, lambda *a, **k: "", read, None)
-        except Exception:
-            pass                                  # 이후 단계 실패는 이 테스트의 관심이 아니다
+        wcommit._cycle(facts, "t", c, "base", llm, lambda *a, **k: "", read, None, None)
         return c
 
     def test_success_keeps_usage(self):
@@ -102,6 +99,42 @@ class CycleCarriesUsage(unittest.TestCase):
         c = self._run(1, "그냥 산문")
         self.assertEqual(c.usage, {})
         self.assertIn("그냥 산문", c.reason)
+
+
+class CodexErrors(unittest.TestCase):
+    def test_errors_survive_without_body_and_do_not_invent_usage(self):
+        message = "You've hit your usage limit. Try again later."
+        raw = json.dumps({"type": "error", "message": message})
+        body, meta = _unwrap(raw)
+        self.assertEqual(body, "")
+        self.assertEqual(meta["errors"], [message])
+        self.assertNotIn("usage", meta)
+        self.assertTrue(meta["cost_unknown"])
+
+    def test_last_body_usage_and_distinct_errors_are_preserved(self):
+        message = "You've hit your usage limit."
+        events = [CODEX_STDOUT,
+                  json.dumps({"type": "error", "message": message}),
+                  json.dumps({"type": "turn.failed", "error": {"message": message}}),
+                  json.dumps({"type": "error", "message": "another error"})]
+        body, meta = _unwrap("\n".join(events))
+        self.assertEqual(body, "RESULT: DONE")
+        self.assertEqual(meta["usage"]["input_tokens"], 9000)
+        self.assertEqual(meta["errors"], [message, "another error"])
+
+    def test_malformed_events_do_not_hide_following_error(self):
+        events = ['{"broken"', '{}',
+                  json.dumps({"type": "item.completed", "item": "bad"}),
+                  json.dumps({"type": "turn.failed", "error": []}),
+                  json.dumps({"type": "error", "message": 5}),
+                  json.dumps({"type": "turn.failed", "error": {"message": "usage limit"}})]
+        self.assertEqual(_unwrap("\n".join(events))[1]["errors"], ["usage limit"])
+
+    def test_long_error_is_retained_in_failure_notes(self):
+        message = "x" * 500 + " usage limit " + "y" * 500
+        out = CODEX_STDOUT + "\n" + json.dumps({"type": "error", "message": message})
+        c = CycleCarriesUsage()._run(1, out)
+        self.assertTrue(any(message in note for note in c.notes))
 
 
 class LogAndSummary(unittest.TestCase):
