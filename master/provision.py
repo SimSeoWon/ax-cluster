@@ -1,26 +1,11 @@
-"""Ollama 노드 점검·설치 — **상주시키지 않는다** (사용자 지시 2026-08-08).
-
-> **"상주시키지 말고 설치나 체크 등에 쓰라고"**
+"""Ollama 노드 점검·설치 — 이 모듈은 모델을 상주시키지 않는다.
 
 마스터가 각 기계의 Ollama 를 HTTP 로 점검하고 필요한 모델을 원격 설치한다.
-**모델을 올리지(load) 않는다** — 그건 브로커가 추론 요청을 보낼 때 알아서 일어난다.
+**모델을 올리지(load) 않는다** — 상주 관리는 브로커가 담당한다.
 
-[중요] **왜 `.33`(메인 작업 PC)을 추론 엔드포인트로 만들지 않는가** (실측 2026-08-08):
-
-    .33  RTX 3080 10240MiB · 사용 2401 · **여유 7651MiB**   ← 윈도우 바탕화면만 떠 있는 상태
-         보유 모델 gemma4:e4b = 8.9GiB  →  **자기 모델조차 안 들어간다**
-         qwen2.5-coder:14b = 9.0GB      →  더 안 들어간다
-
-UE5 에디터를 열면 여유는 더 줄어든다. 상주시키면 Ollama 가 CPU 로 흘러넘쳐 극도로 느려지고
-사용자 작업과 VRAM 을 두고 싸운다. 게다가 §4.4 의 모델 전환 비용이 **왕복 100초**라
-자리를 비웠다 돌아왔다 할 때마다 스래싱이 난다.
-
-**그래서 역할을 나눈다:**
-
-| 역할 | 기계 | 상주 |
-|---|---|---|
-| 추론 엔드포인트 | `.43`(BC-250) · `.2`(RTX 3060) | [완료] 핀 고정 |
-| 작업장 겸 점검 대상 | `.33`(RTX 3080, 메인 작업 PC) | [실패] **점검·설치만** |
+`.33`(메인 작업 PC)의 14b 상주 금지는 유지하되, 2026-10-03 승인된 합성 모델
+`gemma4:e4b` 상주는 허용한다 (#753). 보유 여부(`/api/tags`)와 상주 정책(`/api/ps`)은
+별도로 점검한다. 이 모듈은 위반을 보고할 뿐 모델을 올리거나 내리지 않는다.
 
 [중요] **"됐다" 를 믿지 않는다.** `~/CLAUDE.md` 하드룰이기도 하다 — pull 이 성공했다고 보고해도
 `/api/tags` 에 실제로 나타나는지 **다시 확인**한다. 상태가 아니라 산출물을 검증한다.
@@ -38,6 +23,7 @@ PULL_TIMEOUT = 3600
 
 # §4.4 가 확정한 모델 배정. 여기가 **의도**이고, `check()` 가 실제와 대조한다.
 CODER = "qwen2.5-coder:14b"          # UE5 C++ 생성
+SYNTH = "gemma4:e4b"                # .33 승인된 합성 모델
 DRIVER = "hf.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M"   # 컨텍스트 쿠킹
 
 
@@ -46,22 +32,23 @@ class Node:
     name: str
     host: str                        # "192.168.0.2:11434"
     want: list[str] = field(default_factory=list)   # 있어야 하는 모델
-    resident: bool = True            # False = 점검·설치만, 상주시키지 않는다
+    resident: bool = True            # 모델별 목록이 없을 때 전체 상주 허용/금지
     note: str = ""
+    resident_models: frozenset[str] | None = None  # 명시하면 이 모델들만 상주 허용
+
+    def __post_init__(self) -> None:
+        if self.resident_models is not None:
+            self.resident_models = frozenset(self.resident_models)
 
 
-# [중요] `.33` 은 `resident=False` 다. 이 플래그가 이 모듈의 존재 이유다.
 NODES: list[Node] = [
     Node("bc250", "192.168.0.43:11434", want=[DRIVER, CODER],
          note="추론 엔드포인트 #1 — 35B 핀"),
     Node("rtx3060", "192.168.0.2:11434", want=[CODER],
          note="추론 엔드포인트 #2 겸 작업장 — 14b 핀"),
-    # [중요] `want` 는 있는데 `resident=False` 다 — 모순이 아니라 **정확히 의도한 상태**다.
-    #    "디스크에는 둔다(설치) · VRAM 에는 안 올린다(상주 금지)" 를 그대로 표현한 것이고,
-    #    사용자 지시 "상주시키지 말고 설치나 체크 등에 쓰라고" 가 이 두 축으로 갈린다.
-    #    보유 여부는 `/api/tags`, 상주 여부는 `/api/ps` 가 답한다 — 서로 다른 질문이다.
-    Node("rtx3080", "192.168.0.33:11434", want=[CODER], resident=False,
-         note="[중요] 메인 작업 PC. 여유 VRAM 7.6GiB < 14b 9.0GB — 받아는 두되 상주 금지"),
+    Node("rtx3080", "192.168.0.33:11434", want=[CODER, SYNTH], resident=False,
+         note="[중요] 메인 작업 PC. e4b 상주 허용 · 14b는 보유만, 상주 금지",
+         resident_models=frozenset({SYNTH})),
 ]
 
 
@@ -92,15 +79,26 @@ class NodeStatus:
     loaded: list[str] = field(default_factory=list)      # 지금 VRAM 에 올라와 있는 것
     missing: list[str] = field(default_factory=list)     # want 중 없는 것
     resident_allowed: bool = True
+    resident_models: frozenset[str] | None = None
+
+    def __post_init__(self) -> None:
+        if self.resident_models is not None:
+            self.resident_models = frozenset(self.resident_models)
 
     @property
     def ok(self) -> bool:
         return self.reachable and not self.missing
 
     @property
+    def violating_models(self) -> list[str]:
+        """상주 정책에서 허용하지 않은 적재 모델만 반환한다."""
+        if self.resident_models is not None:
+            return [m for m in self.loaded if m not in self.resident_models]
+        return [] if self.resident_allowed else list(self.loaded)
+
+    @property
     def violating(self) -> bool:
-        """상주 금지인데 모델이 올라와 있다 — 사용자 작업과 VRAM 을 다투는 중이다."""
-        return not self.resident_allowed and bool(self.loaded)
+        return bool(self.violating_models)
 
     def line(self) -> str:
         if not self.reachable:
@@ -113,7 +111,7 @@ class NodeStatus:
         if self.missing:
             bits.append(f"[중요] 없음: {','.join(self.missing)}")
         if self.violating:
-            bits.append("[중요] 상주 금지인데 올라와 있다")
+            bits.append(f"[중요] 상주 금지인데 올라와 있다: {','.join(self.violating_models)}")
         mark = "[완료]" if self.ok and not self.violating else "[주의] "
         return f"  {mark} {self.name:<9} {self.host:<22} " + " · ".join(bits)
 
@@ -124,7 +122,8 @@ def check_node(node: Node, *, getter=None) -> NodeStatus:
     `getter` 를 주입할 수 있는 이유는 테스트다 (`workshop_check.runner` 와 같은 방식).
     """
     get = getter or _get
-    st = NodeStatus(name=node.name, host=node.host, resident_allowed=node.resident)
+    st = NodeStatus(name=node.name, host=node.host, resident_allowed=node.resident,
+                    resident_models=node.resident_models)
     base = f"http://{node.host}"
     try:
         tags = get(f"{base}/api/tags")

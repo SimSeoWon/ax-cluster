@@ -118,3 +118,4 @@
 | `95` | **#696 커밋 전 층2 검증 복원** — 로컬 서브 에이전트 · 동결 선언/작성 계열 제외/사용량 귀속 · 통합23모듈923건 통과 · 커밋 `40ea0ab` · 실제 상용 층2 운영 라운드는 미검증 · [리포트](95-layer2-worker-verification-restoration.md) |
 | `96` | **#721 워커 Claude 인증 검사·실패 고지** — 워커 저장 시각 기준 24시간 재사용 · OAuth 실패 즉시 고지·재시도 제외 · 통합25모듈1,137건 통과 · 커밋 `cf9e268` · 2026-10-06 운영 반영·실워커 검증(`docs/orchestrator-handoff.md`) · [리포트](96-worker-claude-auth-cache.md) |
 | `97` | **#720 Codex 한도 오류 보존** — 로컬 구현 6파일 · 정상 계측 유지·오류 중복 제거 · runner160/infer230/usage18 · 정본 통합25모듈1,153건 통과 · 사용자 커밋·푸시·배포 승인, 실제 반영 결과는 Redmine #720 · [리포트](97-codex-quota-event-preservation.md) |
+| `98` | **#753 provision 모델별 상주 허용** — .33 e4b 허용·14b 금지 · 회귀69건·통합25모듈1,153건 통과 · ps GET 정상 빈목록으로 비상주 확인 · 사용자 커밋·푸시 승인, 실제 결과는 Redmine #753 · [리포트](98-provision-model-residency-policy.md) |

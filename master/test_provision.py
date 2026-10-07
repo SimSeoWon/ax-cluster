@@ -5,7 +5,7 @@
 [중요] 지키는 불변식:
    1. **점검은 아무것도 올리지 않는다** — 읽기만 한다
    2. **"됐다" 를 믿지 않는다** — pull 후 `/api/tags` 로 산출물을 다시 확인한다
-   3. **상주 금지 노드에 모델이 올라와 있으면 잡아낸다** — 사용자 작업과 VRAM 을 다투는 중이다
+   3. **정책에서 금지한 모델이 상주하면 잡아낸다** — .33 e4b 허용과 14b 금지를 구분한다
    4. **reconcile 은 기본이 dry-run** — 수 GB 를 말없이 받지 않는다
    5. **한 노드가 죽어도 나머지 점검은 계속된다**
 """
@@ -13,13 +13,15 @@ from __future__ import annotations
 
 import sys
 import urllib.error
+from unittest.mock import patch
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
 from master.provision import (  # noqa: E402
-    CODER, Node, ProvisionError, check, check_node, pull, reconcile,
+    CODER, SYNTH, NODES, Node, NodeStatus, ProvisionError, check, check_node, main as cli_main,
+    pull, reconcile,
 )
 
 PASS = FAIL = 0
@@ -82,7 +84,7 @@ def main() -> int:
     st2 = check_node(N_INF, getter=fake_get(tags=[CODER], ps=[CODER]))
     check_("추론 노드는 상주해도 정상", not st2.violating)
 
-    print("\n[3b] [중요] '받아는 두되 상주 금지' 를 표현할 수 있다 (.33 의 실제 상태)")
+    print("\n[3b] [중요] '받아는 두되 상주 금지' 를 표현할 수 있다")
     n_disk = Node("disk", "10.0.0.3:11434", want=[CODER], resident=False)
     st = check_node(n_disk, getter=fake_get(tags=[CODER], ps=[]))
     check_("보유하면 ok", st.ok, str(st.missing))
@@ -92,6 +94,47 @@ def main() -> int:
     check_("  출력이 [주의] 다", st.line().strip().startswith("[주의]"), st.line())
     st = check_node(n_disk, getter=fake_get(tags=[], ps=[]))
     check_("아예 없으면 missing", st.missing == [CODER] and not st.ok)
+
+    print("\n[3c] .33 은 승인된 e4b만 상주 허용한다 (#753)")
+    ws = next(n for n in NODES if n.name == "rtx3080")
+    check_("14b 보유와 e4b 보유를 모두 요구", ws.want == [CODER, SYNTH])
+    check_("e4b만 명시 허용", ws.resident is False and ws.resident_models == frozenset({SYNTH}))
+    for loaded, violations in [([SYNTH], []), ([CODER], [CODER]),
+                               ([CODER, SYNTH], [CODER]), (["unknown:latest"], ["unknown:latest"])]:
+        g = fake_get(tags=ws.want, ps=loaded)
+        st = check_node(ws, getter=g)
+        check_(f"{loaded} 정책 판정", st.violating_models == violations and st.violating == bool(violations))
+        check_(f"{loaded} 검사도 tags/ps 읽기만", g.calls == [f"http://{ws.host}/api/tags", f"http://{ws.host}/api/ps"])
+        if violations:
+            warning = st.line().split("상주 금지인데 올라와 있다: ", 1)[-1]
+            check_(f"{loaded} 위반 출력은 금지 모델만", warning == ",".join(violations), st.line())
+        with patch("master.provision.check", return_value=[st]):
+            check_(f"{loaded} CLI 종료코드", cli_main(["check"]) == int(bool(violations)))
+    st = check_node(ws, getter=fake_get(tags=[CODER], ps=[]))
+    check_("e4b 미설치도 missing", st.missing == [SYNTH])
+
+    print("\n[3d] 기존 위치 인자와 전체 허용/금지 계약을 유지한다")
+    legacy = Node("legacy", "host", [], False, "note")
+    check_("Node 위치 인자 보존", legacy.note == "note" and legacy.resident_models is None)
+    legacy_st = NodeStatus("legacy", "host", True, "", [], [SYNTH], [], False)
+    check_("NodeStatus 위치 인자 전체금지 보존", legacy_st.violating_models == [SYNTH])
+    allowed_st = NodeStatus("legacy", "host", loaded=["unknown:latest"])
+    check_("기존 전체허용은 미지 모델도 허용", not allowed_st.violating)
+    empty_policy = NodeStatus("explicit", "host", loaded=[SYNTH], resident_models=frozenset())
+    check_("빈 명시 목록은 전부 금지", empty_policy.violating_models == [SYNTH])
+    policy = {SYNTH}
+    snapshot_node = Node("snapshot", "host", resident_models=policy)
+    snapshot_st = NodeStatus("snapshot", "host", loaded=[CODER], resident_models=policy)
+    policy.add(CODER)
+    check_("Node 입력목록 스냅샷", snapshot_node.resident_models == frozenset({SYNTH}))
+    check_("NodeStatus 입력목록 스냅샷", snapshot_st.violating_models == [CODER])
+    with patch.dict("os.environ", {"AX_BROKER_CONFIG": ""}):
+        from master.broker.config import load_endpoints
+        eps, pins = load_endpoints()
+    broker_ws = next(ep for ep in eps if ep.name == ws.name)
+    check_("브로커 기본 pin이 보유/상주 정책과 일치",
+           pins[ws.name] == SYNTH and pins[ws.name] in ws.want and pins[ws.name] in ws.resident_models)
+    check_("브로커 .33 prefer도 합성만", broker_ws.prefer == [SYNTH])
 
     print("\n[4] want 중 없는 것을 보고한다")
     st = check_node(N_INF, getter=fake_get(tags=["gemma4:e4b"], ps=[]))
