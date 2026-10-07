@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import sys
+import re
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -34,6 +35,7 @@ class Sender:
         self.calls: list = []
         self.statuses = statuses
         self.boom = boom
+        self.issues: dict = {}
 
     def __call__(self, method, url, payload=None):
         self.calls.append((method, url, payload))
@@ -42,6 +44,22 @@ class Sender:
         if url.endswith("/issue_statuses.json"):
             return {"issue_statuses": [{"id": i + 1, "name": n}
                                        for i, n in enumerate(self.statuses)]}
+        match = re.search(r"/issues/(\d+)\.json(?:\?|$)", url)
+        if match:
+            iid = int(match[1])
+            issue = self.issues.setdefault(iid, {"id": iid})
+            if method == "PUT":
+                nested = {"status_id": "status", "priority_id": "priority",
+                          "fixed_version_id": "fixed_version", "parent_issue_id": "parent"}
+                for field, value in payload["issue"].items():
+                    if field == "notes":
+                        continue
+                    if field in nested:
+                        issue[nested[field]] = {"id": value} if value != "" else None
+                    else:
+                        issue[field] = value
+            if method == "GET":
+                return {"issue": dict(issue)}
         return {}
 
     @property
@@ -58,6 +76,8 @@ def test_updates_notes_only():
     check("이슈 번호가 URL 에 들어간다", url.endswith("/issues/42.json"), url)
     check("코멘트가 실린다", payload["issue"]["notes"] == "반려합니다", str(payload))
     check("[중요] 상태를 안 줬으면 건드리지 않는다", "status_id" not in payload["issue"], str(payload))
+    check("코멘트만 갱신하면 되읽지 않는다", not any(m == "GET" for m, _, _ in s.calls),
+          str(s.calls))
 
 
 def test_status_name_resolved_dynamically():
@@ -68,6 +88,10 @@ def test_status_name_resolved_dynamically():
     check("이름을 id 로 바꿔 싣는다", payload["issue"].get("status_id") == 3, str(payload))
     check("완료율도 실린다", payload["issue"].get("done_ratio") == 100)
     check("무엇을 바꿨는지 말한다", "status_id" in out and "done_ratio" in out, out)
+    check("반영된 상태는 성공이다", not out.startswith("[주의]"), out)
+    check("PUT 뒤 실제 이슈·자식을 되읽는다",
+          s.calls[-1][:2] == ("GET", RM.base_url() + "/issues/7.json?include=children"),
+          str(s.calls))
 
 
 def test_unknown_status_keeps_notes_and_says_so():
@@ -346,6 +370,100 @@ def test_update_version_needs_right_project():
     check("[중요] 못 찾았다고 말한다", "찾지 못해 생략" in out, out)
 
 
+class ReadbackSender(VerSender):
+    """PUT 접수와 실제 GET 상태를 분리해 무시된 갱신·확인 실패를 재현한다."""
+
+    def __init__(self, response=None, get_boom=None):
+        super().__init__()
+        self.response = response
+        self.get_boom = get_boom
+
+    def __call__(self, method, url, payload=None):
+        if method == "GET" and re.search(r"/issues/\d+\.json\?", url):
+            self.calls.append((method, url, payload))
+            if self.get_boom:
+                raise self.get_boom
+            return self.response
+        if url.endswith("/enumerations/issue_priorities.json"):
+            self.calls.append((method, url, payload))
+            return {"issue_priorities": [{"id": 3, "name": "높음"}]}
+        return super().__call__(method, url, payload)
+
+
+def test_update_ignored_parent_status_is_not_success():
+    s = ReadbackSender({"issue": {"id": 227, "status": {"id": 2, "name": "진행"},
+                                  "done_ratio": 50, "subject": "바뀐 제목",
+                                  "children": [{"id": 259}]}})
+    out = RM.update_issue(227, notes="닫기 요청", status_name="완료", done_ratio=100,
+                          subject="바뀐 제목", sender=s)
+    check("미반영 상태·완료율은 성공으로 보고하지 않는다", out.startswith("[주의]"), out)
+    check("요청과 실제 상태를 모두 말한다", "status_id: 요청 5, 실제 2" in out, out)
+    check("요청과 실제 완료율을 모두 말한다", "done_ratio: 요청 100, 실제 50" in out, out)
+    check("반영된 제목은 미반영 목록에 넣지 않는다", "subject:" not in out, out)
+    check("자식 번호를 진단 근거로 주고 원인을 단정하지 않는다",
+          "#259" in out and "원인은 별도 확인" in out, out)
+    check("부분 반영 가능성과 재시도하지 않은 사실을 말한다",
+          "코멘트·일부 필드는 반영됐을 수" in out and "자동 재시도하지 않음" in out, out)
+    check("이미 실행된 PUT과 notes를 재전송하지 않는다",
+          len(s.puts) == 1 and s.puts[0][1]["issue"]["notes"] == "닫기 요청", str(s.calls))
+
+
+def test_update_every_field_is_verified():
+    cases = (
+        ({"status_name": "완료"}, {"status": {"id": 2}}, "status_id"),
+        ({"done_ratio": 100}, {"done_ratio": 50}, "done_ratio"),
+        ({"priority_name": "높음"}, {"priority": {"id": 2}}, "priority_id"),
+        ({"subject": "새 제목"}, {"subject": "원래 제목"}, "subject"),
+        ({"description": "새 본문"}, {"description": "원래 본문"}, "description"),
+        ({"fixed_version": "마일스톤 6"}, {"fixed_version": {"id": 71}}, "fixed_version_id"),
+        ({"fixed_version": "마일스톤 6"}, {}, "fixed_version_id"),
+        ({"parent_issue_id": 304}, {"parent": {"id": 300}}, "parent_issue_id"),
+        ({"parent_issue_id": 304}, {}, "parent_issue_id"),
+        ({"clear_parent": True}, {"parent": {"id": 300}}, "parent_issue_id"),
+    )
+    for args, fields, field in cases:
+        s = ReadbackSender({"issue": {"id": 42, **fields}})
+        out = RM.update_issue(42, sender=s, **args)
+        check(f"{field} 미반영은 성공이 아니다 ({args})",
+              out.startswith("[주의]") and f"{field}: 요청" in out and "실제" in out, out)
+        check(f"{field} 검사에도 PUT은 한 번뿐이다", len(s.puts) == 1, str(s.calls))
+
+
+def test_update_clear_parent_readback_shapes():
+    for fields in ({}, {"parent": None}):
+        s = ReadbackSender({"issue": {"id": 259, **fields}})
+        out = RM.update_issue(259, clear_parent=True, sender=s)
+        check(f"부모 해제 응답 {fields}는 성공", not out.startswith("[주의]"), out)
+    for parent in ({}, "", {"id": None}, {"id": True}):
+        s = ReadbackSender({"issue": {"id": 259, "parent": parent}})
+        out = RM.update_issue(259, clear_parent=True, sender=s)
+        check(f"잘못된 부모 응답 {parent!r}를 해제로 간주하지 않는다",
+              out.startswith("[주의]") and "확인 실패" in out, out)
+
+
+def test_update_readback_errors_are_not_success():
+    import urllib.error
+    for boom in (OSError("네트워크"),
+                 urllib.error.HTTPError("http://test", 403, "Forbidden", {}, None)):
+        s = ReadbackSender(get_boom=boom)
+        out = RM.update_issue(42, notes="이미 접수", done_ratio=100, sender=s)
+        check(f"GET {type(boom).__name__}는 확인 실패",
+              out.startswith("[주의]") and "확인 실패" in out and "PUT은 실행" in out, out)
+        check("GET 실패 후 PUT을 재시도하지 않는다", len(s.puts) == 1, str(s.calls))
+    malformed = (None, [], {}, {"issue": []}, {"issue": {}},
+                 {"issue": {"id": "42", "done_ratio": 100}},
+                 {"issue": {"id": True, "done_ratio": 100}},
+                 {"issue": {"id": 43, "done_ratio": 100}},
+                 {"issue": {"id": 42}},
+                 {"issue": {"id": 42, "done_ratio": "100"}})
+    for response in malformed:
+        s = ReadbackSender(response)
+        out = RM.update_issue(42, done_ratio=100, sender=s)
+        check(f"불완전한 응답 {response!r}는 성공 근거가 아니다",
+              out.startswith("[주의]") and "확인 실패" in out, out)
+        check("응답 오류 후에도 PUT은 한 번뿐이다", len(s.puts) == 1, str(s.calls))
+
+
 # ── 🔴 마일스톤 생성 (`#652`) — `.33` 에 이 경로가 없어 관리가 통째로 멈췄다 ──────────
 
 def test_create_version_posts_to_that_project():
@@ -448,7 +566,7 @@ def test_meta_versions_follow_the_project():
     """🔴 **`#652` 의 뿌리** — `meta` 가 늘 AX 프로젝트의 버전을 돌려줬다. `ns` 작업장이
     마일스톤을 물으면 남의 것 6개가 오고 자기 것은 안 보였다(실측 2026-09-20)."""
     s = VerSender(versions=("마일스톤 1 — 입력·UI 토대 (게임패드)",))
-    out = RM.meta(project="ns", sender=s)
+    out = RM.meta(project="ns", key="test", sender=s)
     names = [v["name"] for v in out.get("versions") or []]
     check("그 프로젝트의 버전이 온다", names == ["마일스톤 1 — 입력·UI 토대 (게임패드)"], str(names))
     check("[중요] 무엇을 봤는지 말한다", out.get("versions_project") == "ns", str(out.get("versions_project")))
@@ -616,6 +734,10 @@ def main() -> int:
                test_create_bad_parent_is_skipped_loudly,
                test_update_can_stamp_without_notes,
                test_update_version_needs_right_project,
+               test_update_ignored_parent_status_is_not_success,
+               test_update_every_field_is_verified,
+               test_update_clear_parent_readback_shapes,
+               test_update_readback_errors_are_not_success,
                test_create_version_posts_to_that_project,
                test_create_version_does_not_duplicate,
                test_create_version_partial_name_is_not_a_duplicate,

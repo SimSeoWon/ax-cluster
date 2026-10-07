@@ -244,6 +244,42 @@ def create_issue(subject: str, description: str = "", *, tracker_name: str = "",
     return out
 
 
+def _update_mismatches(iid: int, requested: dict, response) -> tuple[list[str], list[int]]:
+    """PUT 뒤 실제 이슈 필드와 비교한다 (`#754`). 불완전한 응답은 성공 근거가 아니다."""
+    actual = response.get("issue") if isinstance(response, dict) else None
+    if not isinstance(actual, dict) or type(actual.get("id")) is not int:
+        raise ValueError("응답에 유효한 issue/id가 없다")
+    if actual["id"] != iid:
+        raise ValueError(f"응답 이슈 번호 불일치: 요청 #{iid}, 실제 #{actual['id']}")
+    nested = {"status_id": "status", "priority_id": "priority",
+              "fixed_version_id": "fixed_version", "parent_issue_id": "parent"}
+    mismatches = []
+    for field, wanted in requested.items():
+        if field == "notes":
+            continue
+        if field in nested:
+            value = actual.get(nested[field])
+            if field == "parent_issue_id" and wanted == "":
+                wanted = None
+            if value is None and field in ("parent_issue_id", "fixed_version_id"):
+                pass                             # 없는 선택 필드는 Redmine이 생략하거나 null로 답한다
+            elif not isinstance(value, dict) or type(value.get("id")) is not int:
+                raise ValueError(f"응답의 {nested[field]}/id가 없거나 형식이 잘못됐다")
+            else:
+                value = value["id"]
+        else:
+            if field not in actual or type(actual[field]) is not type(wanted):
+                raise ValueError(f"응답의 {field}가 없거나 형식이 잘못됐다")
+            value = actual[field]
+        if value != wanted:
+            mismatches.append(f"{field}: 요청 {repr(wanted)[:180]}, 실제 {repr(value)[:180]}")
+    children = actual.get("children")
+    child_ids = [c["id"] for c in children
+                 if isinstance(c, dict) and type(c.get("id")) is int] \
+        if isinstance(children, list) else []
+    return mismatches, child_ids
+
+
 def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio=None,
                  fixed_version: str = "", parent_issue_id=None,
                  priority_name: str = "", subject: str = "", description: str = "",
@@ -266,6 +302,9 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
     `clear_parent=True` 는 부모를 떼어 낸다 (`#754`). [주의] `parent_issue_id` 의 0·빈 값은
     「안 줌」이라 해제를 겸하지 않는다 — 겸하면 기존 호출자의 「안 줌」이 해제로 바뀐다.
     둘을 함께 주면 무엇을 원하는지 모르므로 갱신하지 않는다.
+
+    코멘트 외 필드는 PUT 뒤 GET으로 반영을 확인한다 (`#754`). 미반영·확인 실패는
+    `[주의]`로 시작해 호출자가 성공으로 처리하지 않게 한다. PUT은 재시도하지 않는다.
     """
     base = (url or base_url()).rstrip("/")
     k = key or api_key()
@@ -326,6 +365,25 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
                                    "fixed_version_id", "parent_issue_id") if k2 in issue)
     if clear_parent:
         what = what.replace("parent_issue_id", "parent_issue_id 해제")
+    if any(field != "notes" for field in issue):
+        # PUT 204는 접수일 뿐이다. 부모 필드 등은 Redmine이 조용히 유지할 수 있다.
+        put_note = "PUT은 실행됐으며 코멘트·일부 필드는 반영됐을 수 있다. 자동 재시도하지 않음"
+        extra_notes = status_note + priority_note + stamp_note
+        try:
+            got = _request("GET", f"{base}/issues/{iid}.json?include=children", k,
+                           sender=sender)
+            mismatches, children = _update_mismatches(iid, issue, got)
+        except urllib.error.HTTPError as e:
+            return (f"[주의] 레드마인 #{iid} 갱신 후 확인 실패 — HTTP {e.code}. "
+                    f"{put_note}{extra_notes}")
+        except Exception as e:                               # noqa: BLE001
+            return (f"[주의] 레드마인 #{iid} 갱신 후 확인 실패 — {type(e).__name__}: {e}. "
+                    f"{put_note}{extra_notes}")
+        if mismatches:
+            child_note = (" · 자식 이슈: " + ", ".join(f"#{cid}" for cid in children)
+                          + " (미반영 원인은 별도 확인 필요)") if children else ""
+            return (f"[주의] 레드마인 #{iid} 요청했으나 반영 안 됨 — "
+                    + " · ".join(mismatches) + child_note + f". {put_note}{extra_notes}")
     return f"레드마인 #{iid} 갱신 ({what}){status_note}{priority_note}{stamp_note}"
 
 

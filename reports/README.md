@@ -119,3 +119,4 @@
 | `96` | **#721 워커 Claude 인증 검사·실패 고지** — 워커 저장 시각 기준 24시간 재사용 · OAuth 실패 즉시 고지·재시도 제외 · 통합25모듈1,137건 통과 · 커밋 `cf9e268` · 2026-10-06 운영 반영·실워커 검증(`docs/orchestrator-handoff.md`) · [리포트](96-worker-claude-auth-cache.md) |
 | `97` | **#720 Codex 한도 오류 보존** — 로컬 구현 6파일 · 정상 계측 유지·오류 중복 제거 · runner160/infer230/usage18 · 정본 통합25모듈1,153건 통과 · 사용자 커밋·푸시·배포 승인, 실제 반영 결과는 Redmine #720 · [리포트](97-codex-quota-event-preservation.md) |
 | `98` | **#753 provision 모델별 상주 허용** — .33 e4b 허용·14b 금지 · 회귀69건·통합25모듈1,153건 통과 · ps GET 정상 빈목록으로 비상주 확인 · 사용자 커밋·푸시 승인, 실제 결과는 Redmine #753 · [리포트](98-provision-model-residency-policy.md) |
+| `99` | **#754 레드마인 갱신 되읽기** — PUT 뒤 실제 필드 비교·거짓 성공 경고 · 기존 meta 검사 실패 뒤 승인 재개·테스트 키 주입 · 회귀184/184·통합25모듈1,153건 통과 · 미커밋·운영 미반영 · [리포트](99-redmine-update-readback.md) |
