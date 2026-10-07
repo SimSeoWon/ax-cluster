@@ -45,7 +45,20 @@
   차단 결함이 없음을 확인했다. 최초 실패와 중단 이력은 위에 보존한다.
 
 사용자 「진행해!」로 코드2파일·보고서99·색인·인계서 총5파일의 커밋·푸시를 승인했다.
-이 문서는 커밋 전 검증 기록이며 실제 커밋 해시·푸시 결과는 Redmine #754 후속 노트에서 확인한다.
-서비스 재시작·워커 배달 없음.
-운영 MCP는 이번 신코드 반영을 검증하지 않았으며 #754는 진행 상태를 유지한다.
+`75ff0c50d3f8b31bae2391203a66c54eb1a1ed38`로 커밋·origin/main 푸시 완료.
+
+## 운영 반영 (2026-10-08 00:08~00:09 KST)
+
+- 사용자 「반영해!」 승인. 기존 전용 `scripts/ax-service-restart ax-task-queue` 성공:
+  10월7일20:30:07 → 10월8일00:08:45 KST, active/running·result=success, PID63185.
+  실제 ExecStart와 WorkingDirectory가 이 저장소를 가리키는 것을 확인했다.
+- ax-deliver 정본 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client update`
+  rc0. 좁은 승인 래퍼 `/tmp/ax-754-deliver-approved.sh`는 이 명령만 실행한다.
+  마운트된 AXCluster .43/.2/.33 배달·검사 **3/3**, 출처75ff0c5·깨끗한 도장 확인.
+  비마운트 프로젝트, 워커 소스 git 동기화, 새 파견은 이번 범위에 포함하지 않는다.
+- 실제 ax-client MCP로 #754 완료/100 요청 → ok:true, 별도 get_issue에서
+  완료·done_ratio100과 노트 반영을 확인했다. 신코드의 상태·완료율 되읽기 정상 경로 실증.
+  무시된 부모 상태·부분 반영·조회 실패는 격리 회귀로 검증했으며 운영 실패를 새로 만들지 않았다.
+- #754 완료. 배달 이후 보고서·색인·인계서 3개에 결과를 기록했다.
+  사용자 「응」으로 기록3개 커밋·푸시 승인. 실제 기록 커밋 해시는 Redmine 후속 노트를 따른다.
 진행 정본은 [Redmine #754](http://192.168.0.57:8080/issues/754).
