@@ -234,6 +234,25 @@ def main() -> int:
     check("[중요] 펜스로 감싸지 말라고 지시한다", "펜스로" in p_txt)
     check("코멘트를 만들지 말라고 지시한다", "## 코멘트\" 섹션은 절대 생성하지 마" in p_txt)
     check("🔴 #637 「개선 필요 사항」 절을 요구하지 않는다", "개선 필요 사항" not in p_txt)
+    for name, src, role in (
+        ("mat", "struct mat { double v[9]; };", "회전 행렬을 담는다"),
+        ("loaded", "struct loaded { void *ctx; };", "로드한 컨텍스트를 보관한다"),
+        ("error", "struct error { float max_abs; double relative_l2; };", "오차 지표를 담는다"),
+    ):
+        path = f"vendor/{name}.cpp"
+        p_decl = prompt.build(files=[path], bodies={path: src},
+                              grounding=prompt.Grounding(declared_classes=[name]))
+        check(f"{name}: 실측 소문자 선언과 요약의 이름·역할 지시를 함께 제공",
+              f"  - {name}" in p_decl and "최소 하나의 실제 이름과 역할" in p_decl
+              and "`## 요약`에 명시" in p_decl and "소문자 보조 구조체" in p_decl)
+        doc = f"## 요약\n{name} 구조체는 {role}.\n"
+        check(f"{name}: 지시를 따른 실제 선언 요약은 기존 게이트 통과",
+              verify.verify(doc, sources={path: src}, declared=[name]).ok)
+        check(f"{name}: 역할만 설명하고 선언을 빠뜨린 요약은 기존 게이트 거부",
+              not verify.verify(f"## 요약\n구조체는 {role}.\n",
+                                sources={path: src}, declared=[name]).ok)
+    check("선언 없는 근거에는 선언 언급 지시를 붙이지 않음",
+          "[요약 작성 지시]" not in prompt.Grounding().render())
     p_dev = prompt.build(files=FILES, bodies={f: "code" for f in FILES}, grounding=gr,
                          existing="## 요약\nx\n\n## 코멘트\n사람이 쓴 메모\n")
     check("#637 개발자 코멘트 안내에도 그 절이 없다",

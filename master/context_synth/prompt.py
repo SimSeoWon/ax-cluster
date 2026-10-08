@@ -148,7 +148,10 @@ class Grounding:
         out: list[str] = []
         if self.declared_classes:
             out.append("[실측 — 이 파일이 정의하는 클래스 (tree-sitter 파싱 결과)]\n"
-                       + "\n".join(f"  - {c}" for c in self.declared_classes[:GROUNDING_LIMIT]))
+                       + "\n".join(f"  - {c}" for c in self.declared_classes[:GROUNDING_LIMIT])
+                       + "\n[요약 작성 지시] 위 실측 선언 중 최소 하나의 실제 이름과 역할을 "
+                         "`## 요약`에 명시한다. 소문자 보조 구조체도 선언이다. 이름만 나열하지 "
+                         "말고 소스에서 확인한 역할을 설명한다. 목록에 없는 선언을 지어내지 않는다.")
         anc = [f"  - {c} → {' → '.join(v[:4])}" for c, v in self.ancestors.items() if v]
         if anc:
             out.append("[실측 — 상속 사슬. `related_classes` 의 부모 쪽을 추측하지 말고 이 값을 쓸 것]\n"

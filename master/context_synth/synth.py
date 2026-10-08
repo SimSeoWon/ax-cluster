@@ -30,6 +30,7 @@ from __future__ import annotations
 import sys
 
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -361,6 +362,54 @@ def doc_path(paths: ProjectPaths, key: str) -> Path:
     return paths.context / f"{key}.md"
 
 
+_RELATED_OPEN_LOCK = threading.Lock()
+
+
+def _open_related(paths):
+    # Chroma 공유 시스템의 최초 초기화는 여러 합성 스레드에서 겹치지 않는다.
+    from ..context_search.search import open_search
+    with _RELATED_OPEN_LOCK:
+        return open_search(paths.name)
+
+
+def _close_related(searcher):
+    try:
+        searcher.close()
+    except Exception as e:                                  # noqa: BLE001
+        _log(f"[related] 검색기 해제 실패 — {type(e).__name__}: {e}")
+
+
+class _BatchRelated:
+    """배치 소유 검색기. coordinator에서만 열고 검색하며 worker에는 목록만 준다."""
+
+    def __init__(self, paths, *, searcher=None, enabled=True):
+        self.paths = paths
+        self.searcher = searcher
+        self.attempted = searcher is not None or not enabled
+        self.owned = False
+
+    def collect(self, key, files):
+        if not self.attempted:
+            self.attempted = True
+            try:
+                self.searcher = _open_related(self.paths)
+                self.owned = True
+            except Exception as e:                          # noqa: BLE001
+                _log(f"[related] 검색기를 열지 못했다 ({self.paths.name}) — "
+                     f"{type(e).__name__}: {e} · 이번 배치는 재초기화하지 않는다")
+        if self.searcher is None:
+            return []
+        out = doc_path(self.paths, key)
+        d = source_text.read(out) if out.is_file() else None
+        return collect_related(self.paths, key, files, d.text if d else "",
+                               searcher=self.searcher)
+
+    def close(self):
+        if self.owned:
+            _close_related(self.searcher)
+            self.owned = False
+
+
 def collect_related(paths: ProjectPaths, key: str, files: list[str], existing: str,
                     *, searcher=None) -> list:
     """관련 컨텍스트 문서 3개 (RAG 채널). **원본 `_build_related_context` 그대로.**
@@ -368,10 +417,10 @@ def collect_related(paths: ProjectPaths, key: str, files: list[str], existing: s
     질의는 `파일 stem + 기존 문서 본문 앞 200자` — 기존 문서가 없으면 stem 만으로 돈다.
     **자기 문서는 제외**한다(원본과 같다).
     """
-    if searcher is None:
+    owned = searcher is None
+    if owned:
         try:
-            from ..context_search.search import open_search
-            searcher = open_search(paths.name)
+            searcher = _open_related(paths)
         except Exception as e:                          # noqa: BLE001
             # [중요] **조용히 비우지 않는다** (`#285`). 관련 문서 0건은 프롬프트를 약하게
             #    만들고, 약한 프롬프트가 「다른 파일을 서술」로 이어진다(NS 실측). 그 인과를
@@ -402,6 +451,9 @@ def collect_related(paths: ProjectPaths, key: str, files: list[str], existing: s
         _log(f"[related] 검색 실패 ({key}) — {type(e).__name__}: {e} · "
              f"관련 문서 {len(out)}건으로 진행한다")
         return out
+    finally:
+        if owned:
+            _close_related(searcher)
     return out
 
 
@@ -553,7 +605,7 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                      model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
                      content_limit: int = prompt_mod.CONTENT_LIMIT,
                      tally: source_text.EncodingTally | None = None,
-                     chain=None, cli=None) -> GroupResult:
+                     chain=None, cli=None, related=None, searcher=None) -> GroupResult:
     """한 그룹 → 컨텍스트 MD 한 개.
 
     실패는 **예외가 아니라 결과**다 — 한 그룹이 죽었다고 배치를 멈추지 않는다. 대신
@@ -584,7 +636,12 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
         existing = e.text if e else ""
 
     grounding = collect_grounding(paths, files)
-    grounding.related = collect_related(paths, key, files, existing)
+    if related is not None:
+        grounding.related = related
+    elif caller is None or searcher is not None:
+        grounding.related = collect_related(paths, key, files, existing, searcher=searcher)
+    else:
+        grounding.related = []                 # 주입 caller는 실제 외부 검색도 하지 않는다
     prompt_bodies, res.digest = _prompt_bodies(paths, bodies, content_limit)
     if res.digest:
         _log(f"{key} — {res.digest}")
@@ -710,7 +767,31 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
         model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
         content_limit: int = prompt_mod.CONTENT_LIMIT, unload_every: int = UNLOAD_EVERY,
         git=None, progress=None, parallel: int | None = None,
-        chain=None, cli=None) -> Stats:
+        chain=None, cli=None, searcher=None) -> Stats:
+    """배치 합성. changed가 없으면 등록 소스 경계 전체를 대상으로 한다.
+
+    skip_existing은 기존 문서를 건너뛰고 limit은 시도 그룹 수를 제한한다.
+    parallel은 합성 동시 수이고 None이면 상주 노드 수를 사용한다.
+    검색기는 첫 실제 작업 묶음에서 열며 관련검색은 coordinator에서 직렬 수행한다.
+    주입 searcher는 호출자가 소유·해제한다. 주입 caller는 searcher 없으면 검색을 생략한다.
+    """
+    related = _BatchRelated(paths, searcher=searcher, enabled=caller is None)
+    try:
+        return _run(paths, changed=changed, commit=commit, skip_existing=skip_existing,
+                    limit=limit, broker=broker, model=model, caller=caller,
+                    dry_run=dry_run, content_limit=content_limit, unload_every=unload_every,
+                    git=git, progress=progress, parallel=parallel, chain=chain, cli=cli,
+                    related_resource=related)
+    finally:
+        related.close()
+
+
+def _run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = "",
+         skip_existing: bool = False, limit: int = 0, broker: str = DEFAULT_BROKER,
+         model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
+         content_limit: int = prompt_mod.CONTENT_LIMIT, unload_every: int = UNLOAD_EVERY,
+         git=None, progress=None, parallel: int | None = None,
+         chain=None, cli=None, related_resource) -> Stats:
     """배치 합성. `changed` 를 주면 그 파일들만, 없으면 경계(`paths.scope`, 기본 `Source/`) 전체.
 
     `skip_existing` — 이미 문서가 있는 그룹을 건너뛴다(최초 전체 빌드에서 누락분만 보충).
@@ -780,6 +861,8 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
             batch.append((i, key, fs))
         if not batch:
             continue
+        # 검색기 초기화·검색은 worker를 띄우기 전에 한 스레드에서 수행한다.
+        related = [related_resource.collect(key, fs) for _idx, key, fs in batch]
         # ② 동시에 합성한다 — 🔴 `#715`: 원전은 `MAX_WORKERS` 병렬이었다. 인코딩 집계는 작업마다
         #    따로 세고 합친다(`+=` 는 스레드 사이에서 유실될 수 있다)
         tallies = [source_text.EncodingTally() for _ in batch]
@@ -789,7 +872,7 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
             return synthesize_group(paths, key, fs, commit=commit, broker=broker, model=model,
                                     caller=caller, dry_run=dry_run,
                                     content_limit=content_limit, tally=tallies[j],
-                                    chain=chain, cli=cli)
+                                    chain=chain, cli=cli, related=related[j])
         if len(batch) == 1:
             results = [_one(0)]
         else:
