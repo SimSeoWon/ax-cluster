@@ -4,7 +4,18 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **갱신: 2026-10-08 00:26 KST · Codex `/root` · 사용자 당일 작업 종료**.
+- **현재 체크포인트: 2026-10-08 · Codex `/root`**. 사용자 선택으로 로컬 서브 에이전트
+  구현·독립 검토 완료. MotionForge 마운트·kind=unreal 유지, 워커 .2/.33/.43 배달 검사3/3.
+  HEAD/origin `354e751`. 아래 직전 세션 요약은 이력이며 현재 dirty는 구현5파일과
+  리포트100·reports/README·이 인계서다. 커밋·푸시·배포 승인은 아직 없다.
+  온보딩 consumer.lock 공유·최종 미완료 rc1·Unreal 등록 루트 dirty 보호를 구현했다.
+  개별218건과 정본 통합25모듈 통과, 독립 검토 추가 차단 없음.
+  최초 온보딩 rc0에도 synth/index가 남았으며 수정본 운영 재실행은 하지 않았다.
+  #745 정렬 분기 실증, same-version 생략 분기 미실증. #259/#706/#695 전체 완료 아님.
+  상세 근거·한계는 `reports/100-motionforge-onboarding-and-plugin-scope.md`.
+  마스터 담당·워커 전역 codex 모드는 변경하지 않았다.
+
+- **직전 갱신: 2026-10-08 00:26 KST · Codex `/root` · 사용자 당일 작업 종료**.
   인계서 작성 후 사용자 「BC250 종료하고 오늘은 이만 끝내자」 요청을 수행했다.
 - **저장소**: `/home/sim/ax-cluster`, main. 작성 직전 HEAD와 origin/main 모두
   `5b9ce99b209d9311ad53abf1655529b7a63caa8d`, 작업 트리 clean. 작성 후 미커밋은 이 문서만.

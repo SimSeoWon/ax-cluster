@@ -40,7 +40,8 @@
 
 ## 등록된 프로젝트 타입 (`#716`)
 
-프로젝트 검사 입구는 `profile.kind`로 분기한다. unreal은 위의 기존 `Source/` 검사,
+프로젝트 검사 입구는 `profile.kind`로 분기한다. unreal은 등록된 소스 루트·제외
+경계 안의 모든 추적 파일을 검사한다(설정이 없으면 위의 기존 `Source/` 검사).
 code는 설정된 `SourceScope`의 roots·exclude·exts 경계, index_only는 파견 제외다.
 code의 rename은 옛 경로도 검사한다 — 범위 밖으로 이동해도 소스 삭제가 남는다.
 파일 배치나 `.uproject` 유무로 프로젝트 타입을 추측하지 않는다.
@@ -279,6 +280,10 @@ def check_project_workshops(
                               scope=()) for s in cfg.workshops.values()]
     else:
         source_scope = None
+        if kind == "unreal":
+            # UE는 루트 안의 모든 추적 파일을 보호한다. 색인 확장자로 더티 검사를
+            # 좁히면 소스 루트의 에셋·빌드 입력 변경을 놓친다. 기본 루트는 Source/다.
+            source_scope = replace(scope_of(reg.dir_of(target)), exts=())
         if kind == "code":
             source_scope = scope_of(reg.dir_of(target))
             if not source_scope.exts:
@@ -286,7 +291,7 @@ def check_project_workshops(
                 if not exts:
                     raise ConfigError(f"{target}: code 소스 확장자 경계가 비었다.")
                 source_scope = replace(source_scope, exts=exts)
-        # 타입 미수집은 기존 검사와 같은 unreal 경계. 등재 허용은 profile.blockers가 판정한다.
+        # 타입 미수집은 기존 Source/ 경계. 등재 허용은 profile.blockers가 판정한다.
         results = [check_workshop(s, runner=runner, timeout=timeout, source_scope=source_scope)
                    for s in cfg.workshops.values()]
     dispatchable = [r.host for r in results if r.ok]

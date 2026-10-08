@@ -359,7 +359,10 @@ def test_full_run_delivers_and_checks_clients() -> None:
     calls = []
     # 서버 단계가 전부 완료된 모양만 주입한다. 이 검사의 축은 그 **다음** 클라 절이다.
     old_probe = O.probe_server
+    old_spool = os.environ.get("AX_EVENT_SPOOL")
+    spool_tmp = tempfile.TemporaryDirectory(prefix="ax-onboard-spool-")
     try:
+        os.environ["AX_EVENT_SPOOL"] = spool_tmp.name
         O.probe_server = lambda _name, registry=None: []
         out = O.run("Fresh", confirm=True, registry=object(),
                     client_deliverer=lambda n: calls.append(("deliver", n)) or 0,
@@ -385,6 +388,109 @@ def test_full_run_delivers_and_checks_clients() -> None:
               and "client" not in failed["done"], str(failed))
     finally:
         O.probe_server = old_probe
+        if old_spool is None:
+            os.environ.pop("AX_EVENT_SPOOL", None)
+        else:
+            os.environ["AX_EVENT_SPOOL"] = old_spool
+        spool_tmp.cleanup()
+
+
+def test_run_lock_and_final_verdict() -> None:
+    """실제 flock 경합·해제와 API/CLI 최종 판정의 실패·성공을 확인한다."""
+    import contextlib
+    import io
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from master.events import Event, Spool, consumer
+    from master.projects import onboard as O
+
+    with tempfile.TemporaryDirectory(prefix="ax-onboard-lock-") as tmp, \
+            patch.dict(os.environ, {"AX_EVENT_SPOOL": str(Path(tmp) / "spool")}):
+        holder = Spool()
+        check("별도 소비자 인스턴스가 락 획득", holder.acquire())
+        try:
+            with patch.object(O, "probe_server") as probe:
+                denied = O.run("Fresh", confirm=True, registry=object())
+            check("소비 중 온보딩은 초기 판정·쓰기 전에 거절",
+                  "consumer.lock" in denied["error"] and not probe.called)
+        finally:
+            holder.release()
+
+        with patch("master.events.spool.Spool") as factory, \
+                patch.object(O, "probe_server", return_value=[]):
+            O.run("Fresh", confirm=False, registry=object())
+        check("미승인 계획은 스풀 디렉토리도 만들지 않음", not factory.called)
+
+        sp = Spool()
+        sp.enqueue(Event(project_id="o/r", new="waiting"))
+        observed = []
+        def deliver(_name):
+            result = consumer.consume_once(Spool())
+            observed.append(bool(result.note) and sp.pending_count() == 1)
+            return 0
+        with patch.object(O, "probe_server", return_value=[]):
+            success = O.run("Fresh", confirm=True, registry=object(),
+                            client_deliverer=deliver, client_checker=lambda _: 0)
+        check("온보딩 중 소비자는 물러나며 이벤트 보존", observed == [True])
+        check("전체 완료는 최종 판정과 API 성공", not success["error"]
+              and success["remaining"] == [] and not success["partial"])
+        check("성공 후 같은 flock 재획득", sp.acquire())
+        sp.release()
+
+        with patch.object(O, "probe_server", side_effect=RuntimeError("probe fixture")):
+            try:
+                O.run("Fresh", confirm=True, registry=object())
+            except RuntimeError:
+                pass
+        check("판정 예외 후에도 flock 해제", sp.acquire())
+        sp.release()
+
+        states = [O.StepState("synth", "합성", False, "94/99 그룹 — 5개 미합성"),
+                  O.StepState("index", "색인", False, "last_indexed_commit 이 비어 있다")]
+        paths = SimpleNamespace(config=Path(tmp) / "config.yaml")
+        with patch.object(O, "probe_server", return_value=states), \
+                patch("master.context_search.paths.resolve", return_value=paths), \
+                patch("master.projects.config.ProjectConfig.load", return_value=object()), \
+                patch.dict(O.RUNNERS, {"synth": lambda *_a, **_kw: "합성 시도",
+                                       "index": lambda *_a: "워터마크 미기입"}):
+            result = O.run("Fresh", confirm=True, registry=object(),
+                           client_deliverer=lambda _: 0, client_checker=lambda _: 0)
+            check("러너 성공이어도 미합성·빈 워터마크는 미완료",
+                  "94/99" in result["error"] and result["remaining"] == ["synth", "index"]
+                  and "synth" not in result["done"] and "index" not in result["done"])
+            limited = O.run("Fresh", confirm=True, only=["synth"], limit=1,
+                            registry=object())
+            check("limit은 실행량만 제한하고 미합성 성공으로 위장하지 않음",
+                  bool(limited["error"]) and limited["partial"]
+                  and "부분 처리" in limited["note"])
+        check("미완료 반환 후 flock 해제", sp.acquire())
+        sp.release()
+
+        selected_states = [O.StepState("hook", "훅", True), *states]
+        with patch.object(O, "probe_server", return_value=selected_states):
+            selected = O.run("Fresh", confirm=True, only=["hook"], registry=object())
+        check("only는 선택 범위 완료를 성공으로, 전체 남음을 명시",
+              not selected["error"] and selected["partial"]
+              and "선택 단계 완료" in selected["note"] and not selected["client"]["ran"])
+
+        for blocker in ("register", "profile"):
+            blocked = [O.StepState(blocker, blocker, False, "선결 미충족"),
+                       O.StepState("synth", "합성", False, blocked="선결 미충족")]
+            with patch.object(O, "probe_server", return_value=blocked), \
+                    patch.dict(O.RUNNERS, {"synth": lambda *_a, **_kw: "실행"}), \
+                    patch("master.context_search.paths.resolve") as resolve:
+                stopped = O.run("Fresh", confirm=True, only=["synth"], registry=object())
+            check(f"only도 {blocker} 선결 미충족을 우회하지 않음",
+                  blocker in stopped["error"] and not stopped["results"]
+                  and not resolve.called)
+
+        for output, expected in ((result, 1), (success, 0), (selected, 0)):
+            with patch.object(O, "run", return_value=output), \
+                    patch.object(O, "plan") as unlocked_plan, \
+                    contextlib.redirect_stdout(io.StringIO()) as text:
+                rc = O.main(["Fresh", "--confirm"])
+            check(f"CLI 최종 판정 종료코드 {expected}", rc == expected, text.getvalue())
+            check("CLI는 잠금 밖 서버·SSH 재측정 안 함", not unlocked_plan.called)
 
 
 def test_index_watermark_waits_for_synth() -> None:
@@ -439,7 +545,8 @@ if __name__ == "__main__":
     for fn in (test_step_source_is_spec, test_uninitialized, test_registered_only,
                test_guard_step_is_the_write_surface, test_synth_stamps_commit, test_live_modularstage,
                test_conventions_step_is_the_manifest_source, test_lfs_skip_persists_in_config,
-               test_full_run_delivers_and_checks_clients, test_index_watermark_waits_for_synth):
+               test_full_run_delivers_and_checks_clients, test_index_watermark_waits_for_synth,
+               test_run_lock_and_final_verdict):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_onboard: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

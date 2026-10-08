@@ -754,6 +754,29 @@ RUNNERS = {"hook": do_hook, "clone": do_clone, "guard": do_guard,
 
 def run(name: str, *, confirm: bool = False, only=None, registry: Registry | None = None,
         limit: int = 0, client_deliverer=None, client_checker=None) -> dict:
+    """승인 실행은 색인 소비자의 기존 flock 안에서 판정·실행·재측정한다.
+
+    스풀 잠금은 전역이므로 온보딩 동안 다른 프로젝트의 소비도 기다린다.
+    계획은 Spool을 만들지 않는다(생성자도 디렉토리를 쓰기 때문이다).
+    """
+    kwargs = dict(confirm=confirm, only=only, registry=registry, limit=limit,
+                  client_deliverer=client_deliverer, client_checker=client_checker)
+    if not confirm:
+        return _run(name, **kwargs)
+    from ..events.spool import Spool
+    sp = Spool()
+    if not sp.acquire():
+        return {"project": name, "confirm": True, "remaining": [], "todo": [],
+                "done": [], "results": {}, "client": {"ran": False},
+                "error": "색인기 또는 온보딩이 실행 중이다 — consumer.lock 획득 실패; 실행하지 않았다"}
+    try:
+        return _run(name, **kwargs)
+    finally:
+        sp.release()
+
+
+def _run(name: str, *, confirm: bool = False, only=None, registry: Registry | None = None,
+         limit: int = 0, client_deliverer=None, client_checker=None) -> dict:
     """서버 절 뒤 **클라이언트 배달·대조까지** 이어서 실행한다 (`#259`).
 
     `only` — 실행할 단계 이름들. 없으면 남은 것 전부. `synth` 는 LLM 을 태우므로 끊을 수 있게 뒀다.
@@ -768,9 +791,11 @@ def run(name: str, *, confirm: bool = False, only=None, registry: Registry | Non
 
     steps = probe_server(name, registry=reg)
     remaining = [s.key for s in steps if not s.done and s.key in RUNNERS]
-    todo = [k for k in remaining if not only or k in set(only)]
+    selected = set(only) if only is not None else None
+    todo = [k for k in remaining if selected is None or k in selected]
     out = {"project": name, "confirm": confirm, "remaining": remaining, "todo": todo,
-           "done": [], "results": {}, "error": "", "client": {"ran": False}}
+           "initial_remaining": remaining[:], "done": [], "results": {}, "error": "",
+           "client": {"ran": False}}
     blockers = [s.key for s in steps if not s.done and s.key not in RUNNERS]
     if blockers:
         out["error"] = (f"이 흐름이 만들 수 없는 단계가 남았다: {', '.join(blockers)} "
@@ -829,7 +854,28 @@ def run(name: str, *, confirm: bool = False, only=None, registry: Registry | Non
                             f"deliver rc={delivered_rc}, check rc={checked_rc}")
             return out
         out["done"].append("client")
-    out["note"] = f"완료: {', '.join(out['done']) or '(없음)'}"
+    # 러너 반환은 실행의 증거일 뿐 완료 판정이 아니다. 같은 잠금 안에서 다시 잰다.
+    try:
+        final = probe_server(name, registry=reg)
+    except Exception as e:                                   # noqa: BLE001
+        out["error"] = f"최종 서버 절 판정 실패: {type(e).__name__}: {e}"
+        return out
+    out["steps"] = [s.to_dict() for s in final]
+    out["remaining"] = [s.key for s in final if not s.done]
+    incomplete = [s for s in final if not s.done
+                  and (selected is None or s.key in selected)]
+    completed = {s.key for s in final if s.done}
+    out["done"] = [k for k in out["done"] if k == "client" or k in completed]
+    out["partial"] = bool(out["remaining"])
+    if incomplete:
+        reasons = "; ".join(f"{s.key}: {s.detail or s.blocked}" for s in incomplete)
+        out["error"] = f"온보딩 미완료 — {reasons}"
+        out["note"] = (f"부분 처리 (--limit {limit})" if limit else "미완료")
+    elif out["remaining"]:
+        out["note"] = (f"선택 단계 완료: {', '.join(sorted(selected))}; "
+                       f"전체 남은 단계: {', '.join(out['remaining'])}")
+    else:
+        out["note"] = f"완료: {', '.join(out['done']) or '(없음)'}"
     return out
 
 
@@ -908,10 +954,10 @@ def main(argv) -> int:
         print(f"  [{k}] {str(v)[:160]}")
     if out.get("error"):
         print(f"  [주의] {out['error']}")
+        print(render(out))
         return 1
-    print(f"  → 완료 {out.get('done')}")
-    # [중요] **하고 나서 다시 잰다** — 「했다」를 믿지 않는다(저장소 하드룰)
-    print(render(plan(name)))
+    # run이 잠금 안에서 얻은 최종 판정을 표시한다. 여기서 락 밖 재측정하지 않는다.
+    print(render(out))
     return 0
 
 

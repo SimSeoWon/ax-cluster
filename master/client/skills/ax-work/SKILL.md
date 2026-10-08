@@ -127,15 +127,19 @@ invariant 도 지켰지만, `CurrentStep`(실제는 `Step`) · `EMissionTaskExec
 그것이다. 그리고 사람이 편집 중인 미커밋 파일이 있을 수 있다 — `.uasset` 은 바이너리라
 날리면 복구할 수 없다.
 
-### [중요] 더티 판정의 범위는 **`Source/` 하위**다 (사용자 결정 2026-08-09)
+### [중요] 더티 판정은 **등록된 소스 경계**를 따른다
 
-    git status --porcelain -- Source/     ← 여기가 더러우면 BLOCKED
-    범위 밖(Content/·루트의 .slnx·.uproject) → **막지 않는다**
+    Unreal: config.yaml의 source.roots/exclude (없으면 Source/), 확장자 제한 없음
+    code:   등록 소스 루트·제외·확장자 경계
+    index_only: 파견 대상 아님
+    경계 안 추적 변경 → BLOCKED (rename은 이전·새 경로 모두 검사)
+    경계 밖 추적 변경 → 막지 않는다
 
 이유: `.uproject`·`.slnx` 는 **UE5/VS 가 프로젝트를 열기만 해도 다시 쓰는 머신 지역 파일**이다
 (실측: `.uproject` 의 diff 는 `EngineAssociation` GUID → `"5.8"`). 그걸 감시하면 게이트가
-**항상 빨간불**이 되고, 항상 빨간 게이트는 게이트가 아니다. 색인·그래프도 이미 `Source/`
-한정이다 — **같은 경계를 쓴다.**
+**항상 빨간불**이 되고, 항상 빨간 게이트는 게이트가 아니다. 기존 Unreal 기본값은
+`Source/`다. 플러그인 프로젝트는 등록된 소스 루트를 쓴다. Unreal 더티 검사는 그 루트 안의
+모든 추적 파일을 보호하므로 색인 확장자로 범위를 좁히지 않는다.
 
 [주의] 대신 이것을 지킨다: 범위 밖 파일을 **네가 고치지 않는다.**
 

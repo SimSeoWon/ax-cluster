@@ -143,7 +143,30 @@ def test_project_kind() -> None:
             else:
                 check("code 확장자도 없으면 원격 검사 전 거절", False)
 
-    for kind in ("unreal", "", "invalid"):
+    with patch.object(profile, "load", return_value={"kind": "unreal"}):
+        plugin_config = config.replace("roots: [master, client]", "roots: [Plugins/P/Source]")
+        plugin_config = plugin_config.replace("exclude: [master/generated]",
+                                               "exclude: [Plugins/P/Source/generated]")
+        (twin / "config.yaml").write_text(plugin_config, encoding="utf-8")
+        status = (" M Plugins/P/Source/Foo.cpp\n M Plugins/P/Source/A.uasset\n"
+                  " M Plugins/P/Source/generated/Foo.cpp\n M Plugins/P/Source_old/Foo.cpp\n"
+                  "R  Plugins/P/Source/out.cpp -> docs/out.cpp\n"
+                  "R  docs/in.cpp -> Plugins/P/Source/in.cpp\n M Source/Foo.cpp\n")
+        r = check_project_workshops(registry=reg, runner=fake(status))["results"][0]
+        check("Unreal 플러그인 루트·에셋·양방향 rename 보호", len(r["blocking"]) == 4
+              and not r["ok"], str(r))
+        check("Unreal 제외·유사 접두·기존 Source는 등록 경계 밖", len(r["out_of_scope"]) == 3,
+              str(r))
+        check("Unreal 색인 확장자로 보호 범위를 좁히지 않음",
+              " M Plugins/P/Source/A.uasset" in r["blocking"] and "확장자" not in r["reason"])
+        check("Unreal 등록 루트를 결과에 남김", r["scope"] == ["Plugins/P/Source/"])
+        (twin / "config.yaml").write_text(config.split("source:")[0], encoding="utf-8")
+        r = check_project_workshops(registry=reg, runner=fake(" M Source/a.cpp\n M Source/A.uasset\n"
+                                                             " M Plugins/P/Source/a.cpp\n"))
+        check("source 없는 Unreal은 기존 Source 모든 추적 파일 보호",
+              len(r["results"][0]["blocking"]) == 2 and r["results"][0]["scope"] == ["Source/"])
+
+    for kind in ("", "invalid"):
         with patch.object(profile, "load", return_value={"kind": kind}):
             r = check_project_workshops(registry=reg, runner=fake(" M master/a.py\n M Source/a.cpp\n"))
             check(f"{kind!r} 검사에서 기존 Source/ 유지",
