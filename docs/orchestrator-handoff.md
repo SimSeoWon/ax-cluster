@@ -4,17 +4,24 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 갱신: 2026-10-07 00:2x KST · Claude 마스터 · 사용자 세션 종료.** 담당 기록 `claude`(10-06 00:11:55),
-  워커 모드 `claude`(10-05 16:14:07, 출처 state) — 이 세션에서 둘 다 바꾸지 않았다(00:2x 도구 재조회). 말하기 전에 다시 조회한다.
-- **소스**: `main...origin/main`, HEAD = 이 문서 커밋(미커밋이면 `f468176`). 이 세션 커밋 7개 —
-  `9b76b46` · `0a97643` · `0e43f11` · `ffaf877` · `f165ede` · `d0bf674` · `f468176` (모두 Gitea push).
-- **운영**: 🔴 `master.client update` **기본이 마운트된 프로젝트만**이다(`f165ede`) — 등록 전체는 `update --all`.
-  `f468176` 기준 update rc 0 · AXCluster 3대 OK · **20초**. 비마운트 4프로젝트(ModularStage·NS·KimodoMotion_WebUI·
-  MotionForge)의 작업장은 `ffaf877`(마지막 등록 전체 배달) 이후 배달되지 않았다 — 마운트 전환 때 `set_active`(기본 `align=True`)가 맞춘다.
-  재기동: ax-projects 23:51:33 · ax-task-queue 23:25:48. `.43 ~/ax-cluster` 관리 클론은 이 세션에 동기화하지 않았다.
-- **진행 중**: 서브 에이전트·원격 명령·백그라운드 update 없음(00:22 프로세스 확인). 큐의 진행 중 work 는 이 세션에 조회하지 않았다 — 미확인.
+- **갱신: 2026-10-08 00:26 KST · Codex `/root` · 사용자 당일 작업 종료**.
+  인계서 작성 후 사용자 「BC250 종료하고 오늘은 이만 끝내자」 요청을 수행했다.
+- **저장소**: `/home/sim/ax-cluster`, main. 작성 직전 HEAD와 origin/main 모두
+  `5b9ce99b209d9311ad53abf1655529b7a63caa8d`, 작업 트리 clean. 작성 후 미커밋은 이 문서만.
+- **지휘 상태 실측**: 마지막 마스터 담당 기록은 `claude`(2026-10-06 00:11:55 KST),
+  실제 이번 대화·작업은 Codex. 워커 전역 모드는 `codex`(2026-10-07 22:16:19 KST, 출처 state).
+  `get_orchestration_tool()`로 재조회했으며 담당·모드를 변경하지 않았다. 기록은 세션 잠금이 아니다.
+- **운영**: #754 코드75ff0c5 반영, ax-task-queue 00:08:45 KST 재기동·active/running.
+  마지막 AXCluster 워커 배달·검사3/3 출처75ff0c5. 이후 문서 커밋5b9ce99는 재배달하지 않았다.
+- **현재 일감**: #720·#700·#753·#754 모두 완료/100을 실제 Redmine에서 재조회.
+  다음 일감은 선택되지 않았다. 새 구현·파견·커밋·푸시·재배달 승인은 없다.
+- **진행 작업**: 조회된 큐 work5개 모두 merged3/cancelled2. 진행 중 로컬 테스트·update 없음,
+  제공된 서브 에이전트 모두 종료. 상주 서비스와 dispatch path/timer는 계속 실행 중.
 
-아래 메타데이터는 이전 Claude 인계(20:25) 시점의 기록이며 현재 상태는 §0 첫 절을 따른다.
+## 이전 세션 메타데이터 — 이력 전용
+
+아래는 2026-10-04 Claude 인계 기록이며 현재 상태·승인으로 사용하지 않는다.
+현재 체크포인트는 위 요약과 §0 첫 절을 따른다.
 
 - **이전 갱신 시각**: 2026-10-04 20:25 KST — Claude · #725 마감·후속 배포 · 색인기 막힘 해소(#732 완료) · 워커 동기화 ·
   `.2` MCP 경고 수정 · `/ontology` 브라우저 확인 · 통합 검사 등록 · agy 사용량 기록(#728 완료)
@@ -51,6 +58,70 @@
   (`3e46078` 은 마스터 측 배달 코드라 워커 동기화 불필요). 홈 중복 스킬 `~/.agents/skills/ax-work` 주의는 무해.
 
 ## 0. 지금 넘기는 상태 — 아래 이력보다 이 절이 최신
+
+### 세션 종료·BC250 전원 종료 (2026-10-08 00:26 KST)
+
+- 사용자 요청으로 BC250 #1 `.43`만 종료했다. 종료 직전 큐 work5개는 merged3/cancelled2,
+  기존 `master.status.fetch_live()`의 bc250 healthy=true·inflight0·오류 없음,
+  원격 Codex/Claude/Python/Node 작업 프로세스0을 확인했다.
+- 문서에 등록된 `ssh sim@192.168.0.43 'sudo -n /usr/bin/systemctl poweroff'` 실행 rc0.
+  좁은 승인 래퍼 `/tmp/ax-bc250-poweroff-20261008.sh`는 위 조회·프로세스 확인·종료만 수행했다.
+- 종료 뒤 SSH 읽기 재조회 rc255, Connection timed out. 정상 종료 명령 성공 이후 접속 중단을 확인했다.
+  다른 노드·마스터 서비스·워커 모드·담당 기록은 변경하지 않았다.
+- 다음 세션에는 `.43` 전원을 켠 뒤 SSH·브로커·작업장 상태를 확인한다.
+  이 인수인계서만 미커밋으로 남겼으며 추가 커밋·푸시는 승인받거나 실행하지 않았다.
+- 인계 작성 중 문장부호 정리로 생긴 끝 공백10곳 때문에 형식 검사 실패·중단,
+  사용자 「응」으로 공백 제거 승인 후 git diff --check rc0으로 회복했다.
+
+### 교대 체크포인트 (2026-10-08 00:20 KST, Codex)
+
+**이번 세션 결과** — 항목 정본은 Redmine, 상세 증거는 연결된 보고서.
+
+| 일감 | 결과·커밋 | 검증·한계 |
+|---|---|---|
+| [#720](http://192.168.0.57:8080/issues/720) | Codex 한도 오류 원문 보존1699701, 배포 스킬ffc830f, 완료/100 | runner160·infer230·usage18, 통합25모듈1,153건; 실제 한도 소진은 미재현. 보고서97 |
+| [#700](http://192.168.0.57:8080/issues/700) | 기존 실패 고지 수정의 실제 `.33` 수신 증거 확인, 문서f3ed507 푸시, 완료/100 | 실패1회·완료1회 알림과 사용자 보고를 수집 대화/해시로 대조. 새 실패 작업 없음. 보고서79 §4 |
+| [#753](http://192.168.0.57:8080/issues/753) | `.33` e4b 모델별 상주 허용152f2fb 푸시, 완료/100 | provision69건·통합1,153건; 실제 ps 응답은 빈 목록, e4b 상주 중 실측은 없음. 보고서98 |
+| [#754](http://192.168.0.57:8080/issues/754) | PUT 뒤 실제 필드 되읽기75ff0c5, 운영 반영·완료/100, 배포 기록5b9ce99 푸시 | redmine184건·통합1,153건, 실제 MCP 완료/100 되읽기, 워커 배달3/3. 보고서99 |
+
+**서비스·배포 대조** (00:19 KST 조회)
+
+- ax-task-queue PID63185, 10월8일00:08:45 KST 기동, active/running.
+  ax-projects PID1246·ax-broker PID1235, 10월7일20:30:07 KST 기동, 둘 다 active/running.
+- ax-dispatch.path·ax-dispatch.timer 모두 active/waiting.
+  큐 목록5개는 merged3/cancelled2이며 자동 리뷰 큐·색인 커서는 이번 교대 작성에서 조회하지 않았다.
+- 마지막 정본 배달은 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client update`.
+  AXCluster `.43/.2/.33` 출처75ff0c5·clean 도장·스킬/config/payload 검사3/3.
+  현재 마스터 HEAD5b9ce99와 출처가 다름을 숨기지 않는다. 새 HEAD에서 check/update는 이번에 재실행하지 않았다.
+- 워커 Git 체크아웃 HEAD와 관리 클론 HEAD는 현재 미조회.
+  배달물 일치와 Git 소스 동기화는 별개이며, #720 때 Windows SSH 인용 실패 뒤 정본 배달로 이어갔다.
+  임시 소스 동기화 스크립트를 재사용하거나 실패한 파견을 완료로 추정하지 않는다.
+
+**승인·실패·에이전트**
+
+- #720·#753·#754는 사용자 선택에 따라 로컬 구현/독립 검토로 처리했다. 새 작업은 기존 스킬 절차와
+  사용자 선택을 확인한다. 완료된 구현·검토 에이전트 산출물은 위 커밋에 회수됐다.
+- #754의 최초 redmine181/184 실패 뒤 중단, 사용자 「응!」으로 테스트 키 주입 재개,
+  최종184/184 통과. #753 상주 조건 미충족 중단 뒤 사용자 승인으로 GET 진단해 비상주 확인.
+  현재 미해결 검사 실패·awaiting_resume 작업은 없다. 실패 이력과 검증 한계는 보고서에 보존.
+- 사용자 승인으로 위 커밋들은 모두 origin/main에 푸시됐다. 이번 인계서 작성은 커밋·푸시 승인이 아니다.
+  이번 요청으로 문서만 갱신했으며 서비스·모드·큐·원격 파일은 변경하지 않는다.
+
+**바로 다음 작업**
+
+1. 이 문서의 미커밋 diff와 실제 HEAD·Redmine·지휘 상태를 대조한다. 실제 교대 지시가 있을 때만
+   ax-handoff의 `record_master_conductor_tool`로 인수를 기록한다. 현재 claude 기록을 생존 판정으로 읽지 않는다.
+2. 다음 일감은 사용자 선택을 받는다. 열린 일감 조회는 ax-redmine의 기존 MCP만 사용한다.
+3. 새 배포가 필요하면 깨끗한 승인 커밋에서 ax-deliver 정본 update를 사용한다.
+   현재 문서 커밋 뒤 배달 출처가 뒤처졌음을 먼저 설명하고, 재배달·서비스 재시작을 자동 실행하지 않는다.
+4. 보류: `.33` 머신 자동 로드 문서의 옛 provision 불일치 설명은 별도 갱신 동의가 필요하다.
+   실제 워커 한도 소진·e4b 상주·무시된 부모 상태의 운영 재현은 완료 증거로 주장하지 않는다.
+
+관련 문서: [공용 규칙](orchestrator-rules.md), [ax-handoff](../master/skills/ax-handoff/SKILL.md),
+[보고서97](../reports/97-codex-quota-event-preservation.md), [보고서98](../reports/98-provision-model-residency-policy.md),
+[보고서99](../reports/99-redmine-update-readback.md), [보고서79](../reports/79-worker-failure-notice.md).
+
+아래 절은 작업 당시 체크포인트 이력이다. 위 조회·최종 커밋·Redmine 상태가 우선한다.
 
 ### #754 운영 반영·완료 (2026-10-08, Codex)
 
