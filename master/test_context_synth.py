@@ -101,6 +101,104 @@ def boom(url, payload):
     raise GenerateError("브로커에 닿지 않는다: refused")
 
 
+def test_attempt_records(tmp):
+    """가짜 LLM의 실제 원문·판정 연결, 원자적 파일·병렬 고유성을 확인한다."""
+    import contextlib
+    import io
+    import json
+    from concurrent.futures import ThreadPoolExecutor
+    from unittest.mock import patch
+
+    files = ["Source/Game/Monster.h", "Source/Game/Monster.cpp"]
+    key = "Source/Game/Monster"
+    p = make_project(tmp / "attempt-success")
+    seen = []
+    raw = "```markdown\n" + GOOD + "```\n"
+    def caller(_url, payload):
+        seen.append(payload["prompt"])
+        return raw
+    real_finalize = md.finalize
+    before_finalize = []
+    def finalize(response, **kwargs):
+        rows = [json.loads(f.read_text(encoding="utf-8"))
+                for f in (p.root / "synth_attempts").glob("*.json")]
+        before_finalize.append(rows[0]["raw"] == response and rows[0]["status"] == "received")
+        return real_finalize(response, **kwargs)
+    with patch.object(md, "finalize", side_effect=finalize):
+        r = synth.synthesize_group(p, key, files, caller=caller, commit="capture123")
+    rows = [json.loads(f.read_text(encoding="utf-8"))
+            for f in (p.root / "synth_attempts").glob("*.json")]
+    row = rows[0]
+    check("응답 원문은 finalize 이전에 이미 기록", before_finalize == [True])
+    check("성공 기록의 prompt/raw는 실제 호출과 글자 그대로 동일",
+          r.written and row["prompt"] == seen[0] and row["raw"] == raw)
+    check("사실 검증 대상 정규화 문서도 원문과 구별해 보존",
+          row["normalized_doc"] == real_finalize(raw, commit="capture123")[0]
+          and row["normalized_doc"] != raw)
+    check("형식·사실·쓰기 결과가 동일 시도에 연결",
+          len(rows) == 1 and row["format"]["ok"] and row["facts"]["ok"]
+          and row["status"] == "written" and row["commit"] == "capture123"
+          and row["group"] == key and "AMonster" in row["declared"])
+    check("합성 결과에서 실제 기록 파일을 찾을 수 있음", len(r.attempt_records) == 1
+          and Path(r.attempt_records[0]).is_file())
+    check("기록은 인증헤더·브로커봉투를 저장하지 않음",
+          "headers" not in row and "Authorization" not in row and "broker" not in row)
+    check("임시 파일이 남지 않고 원문 기록 권한은 0600",
+          not list((p.root / "synth_attempts").glob("*.tmp"))
+          and next((p.root / "synth_attempts").glob("*.json")).stat().st_mode & 0o777 == 0o600)
+
+    p = make_project(tmp / "attempt-facts")
+    r = synth.synthesize_group(p, key, files, caller=llm(GOOD.replace("AMonster", "AOther")))
+    row = json.loads(next((p.root / "synth_attempts").glob("*.json")).read_text(encoding="utf-8"))
+    check("사실 거부에도 원문·거부근거 보존", not r.written
+          and row["status"] == "facts_rejected" and row["format"]["ok"]
+          and not row["facts"]["ok"] and row["facts"]["reason"])
+
+    p = make_project(tmp / "attempt-chain")
+    bad = "형식 없는 응답 그대로\n" * 10
+    r = synth.synthesize_group(p, key, files, caller=llm(bad, GOOD),
+                               chain=(synth.SYNTH_MODEL, synth.FALLBACK_MODEL))
+    rows = [json.loads(f.read_text(encoding="utf-8"))
+            for f in (p.root / "synth_attempts").glob("*.json")]
+    by_model = {row["model"]: row for row in rows}
+    check("형식 거부·대체 통과를 모델별 독립 원문으로 기록", r.written and len(rows) == 2
+          and by_model[synth.SYNTH_MODEL]["raw"] == bad
+          and by_model[synth.SYNTH_MODEL]["status"] == "format_rejected"
+          and by_model[synth.SYNTH_MODEL]["facts"] is None
+          and by_model[synth.FALLBACK_MODEL]["status"] == "written")
+
+    p = make_project(tmp / "attempt-error")
+    r = synth.synthesize_group(p, key, files, caller=boom)
+    row = json.loads(next((p.root / "synth_attempts").glob("*.json")).read_text(encoding="utf-8"))
+    check("생성 오류는 원문 없음과 transport_error를 명시", not r.written
+          and row["status"] == "transport_error" and row["raw"] is None
+          and not row["raw_received"] and "refused" in row["error"])
+    check("실패 종료시각을 기록", row["finished_at"] >= row["started_at"])
+
+    p = make_project(tmp / "attempt-dry")
+    before = sorted(str(f.relative_to(p.root)) for f in p.root.rglob("*") if f.is_file())
+    r = synth.synthesize_group(p, key, files, caller=llm(GOOD), dry_run=True)
+    after = sorted(str(f.relative_to(p.root)) for f in p.root.rglob("*") if f.is_file())
+    check("dry-run은 기록 디렉토리·파일도 쓰지 않음",
+          r.dry_ok and before == after and not (p.root / "synth_attempts").exists())
+
+    p = make_project(tmp / "attempt-parallel")
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda n: synth.synthesize_group(
+            p, f"Source/Game/parallel{n}", files, caller=llm(GOOD)), range(4)))
+    rows = [json.loads(f.read_text(encoding="utf-8"))
+            for f in (p.root / "synth_attempts").glob("*.json")]
+    check("병렬 시도도 고유파일로 서로 덮지 않음", all(r.written for r in results)
+          and len(rows) == 4 and len({row["attempt_id"] for row in rows}) == 4)
+
+    p = make_project(tmp / "attempt-write-error")
+    (p.root / "synth_attempts").write_text("cannot create directory", encoding="utf-8")
+    with contextlib.redirect_stderr(io.StringIO()) as logs:
+        r = synth.synthesize_group(p, key, files, caller=llm(GOOD))
+    check("기록 실패는 로그에 남고 합성 판정은 유지",
+          r.written and "[attempt] 기록 실패" in logs.getvalue())
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="ax-synth-test-"))
     FILES = ["Source/Game/Monster.h", "Source/Game/Monster.cpp"]
@@ -743,6 +841,8 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
     check("  전부 source=synth", rows and all(x["source"] == "synth" for x in rows),
           str(rows)[:300])
 
+    print("\n[원문기록] 실제 프롬프트·모델 응답·게이트 결과")
+    test_attempt_records(tmp)
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0

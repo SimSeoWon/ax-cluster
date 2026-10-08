@@ -31,6 +31,9 @@ import sys
 
 import time
 import threading
+import json
+import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -132,6 +135,7 @@ class GroupResult:
     digest: str = ""          # 프롬프트에 요약본을 썼으면 그 요약 (`pydigest`, `#711`)
     model: str = ""           # 형식 게이트를 통과한 결과를 낸 모델 (`#727`)
     attempts: list = field(default_factory=list)   # 사슬 시도 기록 — `모델 결과` 문자열들
+    attempt_records: list[str] = field(default_factory=list)  # 원문·판정 JSON 경로
 
     @property
     def passed(self) -> bool:
@@ -600,6 +604,48 @@ def _generate(prompt: str, model: str, *, broker: str, caller, cli, usage: dict)
     return out
 
 
+class _AttemptRecord:
+    """실제 모델 시도 원문과 판정의 원자적 스냅샷. 기록 실패는 합성 판정을 바꾸지 않는다."""
+
+    def __init__(self, paths, *, key, files, commit, model, prompt, declared, dry_run):
+        self.enabled = not dry_run
+        self.saved = False
+        self.path = paths.root / "synth_attempts" / f"{uuid.uuid4().hex}.json"
+        try:
+            from ..projects import profile
+            kind = profile.load(paths.name).get("kind") or "unknown"
+        except Exception:                                  # noqa: BLE001
+            kind = "unknown"
+        self.data = {"schema": 1, "attempt_id": self.path.stem, "project": paths.name,
+                     "group": key, "files": list(files), "commit": commit,
+                     "model": model, "project_kind": kind, "declared": list(declared),
+                     "prompt": prompt, "raw": None, "raw_received": False,
+                     "format": None, "facts": None, "status": "generating",
+                     "started_at": time.time()}
+        self.update()
+
+    def update(self, **fields):
+        self.data.update(fields)
+        if not self.enabled:
+            return
+        tmp = self.path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(self.data, stream, ensure_ascii=False, indent=2)
+                stream.write("\n")
+            os.replace(tmp, self.path)
+            self.saved = True
+        except Exception as e:                              # noqa: BLE001
+            _log(f"[attempt] 기록 실패 ({self.path}) — {type(e).__name__}: {e}")
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                      commit: str = "", broker: str = DEFAULT_BROKER,
                      model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
@@ -661,15 +707,23 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
             continue
         usage: dict = {}
         t_call = time.monotonic()
+        attempt = _AttemptRecord(paths, key=key, files=files, commit=commit, model=m,
+                                 prompt=p, declared=grounding.declared_classes, dry_run=dry_run)
+        if attempt.saved:
+            res.attempt_records.append(str(attempt.path))
+            _log(f"{key} — {m} · 원문 기록 {attempt.path}")
         try:
             # `#713` ① — 이 그룹의 호출을 트윈의 `usage_log.jsonl` 에 `synth` 로 남긴다.
             #    상용 CLI 도 같은 sink 를 읽는다(`#728`·`#733`)
             with usage_mod.sink(paths.usage_log, source="synth", task_id=key):
                 raw = _generate(p, m, broker=broker, caller=caller, cli=cli, usage=usage)
+                # 정규화가 원문을 바꾸거나 예외를 내기 전에 받은 응답 그대로 보존한다.
+                attempt.update(raw=raw, raw_received=True, status="received")
                 # `#751` — 상용 CLI 의 토큰은 공용 진입이 사용량 행으로 남긴다. 로그 줄도 그 값을
                 #    보여 준다(종전엔 「미상」). [주의] GroupResult 합계는 **로컬만** — 계약 그대로다.
                 shown = usage or (usage_mod.sink_cli_tokens() if _is_cli(m) else {})
         except GenerateError as e:
+            attempt.update(status="transport_error", error=str(e), finished_at=time.time())
             llm_reason = f"LLM 실패: {e}"
             res.attempts.append(f"{m} LLM 실패")
             _log(f"{key} — {m} LLM 실패 · {int(time.monotonic() - t_call)}초 · 프롬프트 {len(p)}자"
@@ -682,6 +736,12 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
         _log(f"{key} — {m} · 토큰 입력 {shown.get('in', '미상')} · 출력 {shown.get('out', '미상')}"
              f" · {int(time.monotonic() - t_call)}초 · 프롬프트 {len(p)}자")
         doc, verdict = md_mod.finalize(raw, existing=existing, commit=commit)
+        attempt.update(format={"ok": verdict.ok, "reason": verdict.reason,
+                               "summary": verdict.summary, "preview": verdict.preview},
+                       normalized_doc=doc,
+                       status="format_passed" if verdict.ok else "format_rejected")
+        if not verdict.ok:
+            attempt.update(finished_at=time.time())
         if verdict.ok:
             res.model = m
             res.attempts.append(f"{m} 형식 통과")
@@ -708,6 +768,12 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                                known=project_symbols(paths),
                                live_counts=_index_only(paths))
     res.verify = report
+    attempt.update(facts={"ok": report.ok, "reason": report.reason,
+                          "ghosts": report.ghosts, "declared": report.declared,
+                          "mentioned_declared": report.mentioned_declared},
+                   status="facts_passed" if report.ok else "facts_rejected")
+    if not report.ok:
+        attempt.update(finished_at=time.time())
     if not report.ok:
         res.reason = f"사실 게이트 거부 — {report.reason}"
         return _remember(paths, key, files, res, commit, dry_run)
@@ -729,6 +795,7 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(doc, encoding="utf-8")
     res.written = True
+    attempt.update(status="written", document=str(out), finished_at=time.time())
     res.elapsed_ms = int((time.monotonic() - t0) * 1000)
     return _remember(paths, key, files, res, commit, dry_run)
 
