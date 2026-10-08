@@ -42,7 +42,7 @@ def main(argv: list[str]) -> int:
     cmd = (argv[0] if argv else "status").lower()
     rest = argv[1:]
     limit = 0
-    model = synth.SYNTH_MODEL
+    model = None                         # 기본 사슬과 명시 --model 단독 실행을 구별한다
     climit = synth.prompt_mod.CONTENT_LIMIT
 
     def _flag(name, cast, cur):

@@ -157,14 +157,14 @@ def test_attempt_records(tmp):
     p = make_project(tmp / "attempt-chain")
     bad = "형식 없는 응답 그대로\n" * 10
     r = synth.synthesize_group(p, key, files, caller=llm(bad, GOOD),
-                               chain=(synth.SYNTH_MODEL, synth.FALLBACK_MODEL))
+                               chain=(synth.LOCAL_MODEL, synth.FALLBACK_MODEL))
     rows = [json.loads(f.read_text(encoding="utf-8"))
             for f in (p.root / "synth_attempts").glob("*.json")]
     by_model = {row["model"]: row for row in rows}
     check("형식 거부·대체 통과를 모델별 독립 원문으로 기록", r.written and len(rows) == 2
-          and by_model[synth.SYNTH_MODEL]["raw"] == bad
-          and by_model[synth.SYNTH_MODEL]["status"] == "format_rejected"
-          and by_model[synth.SYNTH_MODEL]["facts"] is None
+          and by_model[synth.LOCAL_MODEL]["raw"] == bad
+          and by_model[synth.LOCAL_MODEL]["status"] == "format_rejected"
+          and by_model[synth.LOCAL_MODEL]["facts"] is None
           and by_model[synth.FALLBACK_MODEL]["status"] == "written")
 
     p = make_project(tmp / "attempt-error")
@@ -197,6 +197,48 @@ def test_attempt_records(tmp):
         r = synth.synthesize_group(p, key, files, caller=llm(GOOD))
     check("기록 실패는 로그에 남고 합성 판정은 유지",
           r.written and "[attempt] 기록 실패" in logs.getvalue())
+
+
+def test_gemini_primary(tmp):
+    """기본 제미나이 1차와 호출·형식·사실 실패의 로컬 대체를 실제 게이트로 잰다."""
+    import json
+    files = ["Source/Game/Monster.h", "Source/Game/Monster.cpp"]
+    key = "Source/Game/Monster"
+    for name, primary in (("ok", GOOD), ("transport", None),
+                          ("format", "깨진 응답"),
+                          ("facts", GOOD.replace("AMonster", "AOther"))):
+        p = make_project(tmp / f"gemini-{name}")
+        called = []
+        def cli(lane, prompt, timeout):
+            called.append(lane)
+            return primary
+        def local(_url, payload):
+            called.append(payload["model"])
+            return GOOD
+        r = synth.synthesize_group(p, key, files, caller=local, cli=cli)
+        expected = ["agy"] if name == "ok" else ["agy", synth.LOCAL_MODEL]
+        check(f"제미나이 {name}: 지정 순서·동일 게이트로 통과",
+              r.written and called == expected
+              and r.model == ("agy" if name == "ok" else synth.LOCAL_MODEL), str(called))
+        rows = {row["model"]: row for row in (
+            json.loads(f.read_text(encoding="utf-8"))
+            for f in (p.root / "synth_attempts").glob("*.json"))}
+        check(f"제미나이 {name}: 모델마다 원문·판정 기록 연결",
+              len(rows) == len(expected) and rows[r.model]["facts"]["ok"])
+        if name == "facts":
+            check("제미나이 사실 거부가 로컬 통과 기록으로 덮이지 않음",
+                  rows["agy"]["status"] == "facts_rejected"
+                  and not rows["agy"]["facts"]["ok"])
+    p = make_project(tmp / "gemini-manual")
+    calls = []
+    r = synth.synthesize_group(p, key, files, model="agy", caller=llm(GOOD),
+                               cli=lambda lane, *_a: calls.append(lane))
+    check("명시 agy 호출 실패는 단독 실행이라 다른 모델을 부르지 않음",
+          not r.passed and calls == ["agy"] and len(r.attempt_records) == 1)
+    r = synth.synthesize_group(p, key, files, caller=llm(GOOD), dry_run=True)
+    check("기본 제미나이도 fake caller만 있으면 실제 상용을 부르지 않음",
+          r.passed and "agy 건너뜀(주입된 호출자)" in r.attempts
+          and r.model == synth.LOCAL_MODEL)
 
 
 def main() -> int:
@@ -436,12 +478,12 @@ def main() -> int:
     synth.unload_model = lambda m, **kw: calls.append(m)
     synth.call_broker = lambda pr, **kw: honest_llm("", {"prompt": pr})
     try:
-        st_u2 = synth.run(p2, changed=allf, unload_every=2)
+        st_u2 = synth.run(p2, changed=allf, unload_every=2, model=synth.LOCAL_MODEL)
         check("[중요] 노드 경로에서는 주기마다 회수한다", len(calls) == 2, str(len(calls)))
         check("  통계에 회수 횟수가 남는다", st_u2.unloads == 2, st_u2.summary)
         check("  요약에 나타난다", "모델 회수 2회" in st_u2.summary, st_u2.summary)
         calls.clear()
-        st_u3 = synth.run(p2, changed=allf, unload_every=0)
+        st_u3 = synth.run(p2, changed=allf, unload_every=0, model=synth.LOCAL_MODEL)
         check("unload_every=0 이면 회수하지 않는다 (전용 VRAM 노드)",
               not calls and st_u3.unloads == 0)
 
@@ -449,7 +491,7 @@ def main() -> int:
             raise synth.GenerateError("회수 실패")
 
         synth.unload_model = _boom_unload
-        st_u4 = synth.run(p2, changed=allf, unload_every=2)
+        st_u4 = synth.run(p2, changed=allf, unload_every=2, model=synth.LOCAL_MODEL)
         check("[중요] 회수 실패가 배치를 죽이지 않는다", st_u4.written == 5, st_u4.summary)
     finally:
         synth.unload_model = real_unload
@@ -653,25 +695,25 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
         check(f"{label}: 여전히 거부한다(게이트를 무디게 하지 않았다)", dd == "" and not vv.ok,
               dd[:120])
 
-    print("\n[#727-2] 형식 거부 대체 사슬 — e4b → agy → codex → 12b, claude 는 없다 (2026-10-05)")
-    check("사슬이 상수 한 곳이다 — e4b → agy → codex → 12b",
-          synth.SYNTH_CHAIN == (synth.SYNTH_MODEL, "agy", "codex", synth.FALLBACK_MODEL),
+    print("\n[기본 사슬] agy → e4b → codex → 12b, claude 는 없다")
+    check("사슬이 상수 한 곳이다 — agy → e4b → codex → 12b",
+          synth.SYNTH_CHAIN == ("agy", synth.LOCAL_MODEL, "codex", synth.FALLBACK_MODEL),
           str(synth.SYNTH_CHAIN))
     check("[중요] claude 는 사슬에 없다", not any(m.startswith("claude") for m in synth.SYNTH_CHAIN))
-    check("[중요] 첫 모델은 로컬 SYNTH_MODEL 이다 (비용 상한)",
-          synth._chain_for(synth.SYNTH_MODEL, None)[0] == synth.SYNTH_MODEL
-          and not synth._is_cli(synth._chain_for(synth.SYNTH_MODEL, None)[0]))
+    check("첫 모델은 제미나이 agy", synth.SYNTH_MODEL == "agy"
+          and synth._chain_for(None, None)[0] == "agy")
     check("기본 사슬은 상수 순서 그대로다 (로컬을 앞으로 모으지 않는다)",
-          synth._chain_for(synth.SYNTH_MODEL, None)
-          == ["gemma4:e4b", "agy", "codex", "gemma3:12b"],
-          str(synth._chain_for(synth.SYNTH_MODEL, None)))
+          synth._chain_for(None, None)
+          == ["agy", "gemma4:e4b", "codex", "gemma3:12b"],
+          str(synth._chain_for(None, None)))
     check("claude 를 넣어도 뺀다 · 받은 순서를 지킨다",
           synth._chain_for(synth.SYNTH_MODEL, ("gemma4:e4b", "agy", "claude:opus", "codex",
                                                "gemma3:12b"))
           == ["gemma4:e4b", "agy", "codex", "gemma3:12b"])
-    check("상용이 맨 앞이면 첫 로컬만 앞으로 올린다 (나머지 순서는 그대로)",
+    check("명시한 사슬의 상용 첫 순서도 그대로 유지한다",
           synth._chain_for(synth.SYNTH_MODEL, ("codex", "claude:opus", "gemma4:e4b", "agy"))
-          == ["gemma4:e4b", "codex", "agy"])
+          == ["codex", "gemma4:e4b", "agy"])
+    check("명시 --model agy는 그 하나만", synth._chain_for("agy", None) == ["agy"])
     check("명시한 다른 모델은 그 하나만 (수동 경로 종전 그대로)",
           synth._chain_for("gemma3:12b", None) == ["gemma3:12b"])
     BAD = "설명만 있고 frontmatter 가 없다. " * 6
@@ -692,8 +734,9 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
 
     pc = make_project(tmp / "chain")
     K = "Source/Game/Monster"
+    old_chain = (synth.LOCAL_MODEL, "agy", "codex", synth.FALLBACK_MODEL)
     seen, cseen = [], []
-    r = synth.synthesize_group(pc, K, FILES, commit="c727", dry_run=True,
+    r = synth.synthesize_group(pc, K, FILES, commit="c727", dry_run=True, chain=old_chain,
                                caller=routed({"gemma4:e4b": BAD, "gemma3:12b": honest_llm}, seen),
                                cli=cli_rec({"agy": honest_llm, "codex": honest_llm}, cseen))
     check("e4b 형식 거부 → agy 통과", r.passed and r.model == "agy", r.reason)
@@ -703,7 +746,7 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
           str(r.attempts))
 
     seen, cseen = [], []
-    r = synth.synthesize_group(pc, K, FILES, commit="c727", dry_run=True,
+    r = synth.synthesize_group(pc, K, FILES, commit="c727", dry_run=True, chain=old_chain,
                                caller=routed({"gemma4:e4b": BAD, "gemma3:12b": honest_llm}, seen),
                                cli=cli_rec({"agy": BAD, "codex": honest_llm,
                                             "claude": honest_llm}, cseen))
@@ -712,7 +755,7 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
           f"{seen} {cseen}")
 
     seen, cseen = [], []
-    r = synth.synthesize_group(pc, K, FILES, commit="c727", dry_run=True,
+    r = synth.synthesize_group(pc, K, FILES, commit="c727", dry_run=True, chain=old_chain,
                                caller=routed({"gemma4:e4b": BAD, "gemma3:12b": honest_llm}, seen),
                                cli=cli_rec({"agy": BAD, "codex": BAD}, cseen))
     check("e4b·agy·codex 거부 → 12b 통과 (최후)", r.passed and r.model == "gemma3:12b", r.reason)
@@ -726,7 +769,7 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
     pc2 = make_project(tmp / "chain2")
     synth.doc_path(pc2, K).parent.mkdir(parents=True, exist_ok=True)
     synth.doc_path(pc2, K).write_text(GOOD, encoding="utf-8")
-    r = synth.synthesize_group(pc2, K, FILES, commit="c727",
+    r = synth.synthesize_group(pc2, K, FILES, commit="c727", chain=old_chain,
                                caller=routed({"gemma4:e4b": BAD, "gemma3:12b": BAD}, seen),
                                cli=cli_rec({"codex": BAD, "agy": None}, cseen))
     check("전부 실패 → 쓰지 않는다 · 유실로 남는다", not r.written and r.lost, r.reason)
@@ -741,12 +784,12 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
           or K in (pending_mod.summary(pc2) or ""), pending_mod.summary(pc2))
 
     seen, cseen = [], []
-    r = synth.synthesize_group(pc, K, FILES, dry_run=True,
+    r = synth.synthesize_group(pc, K, FILES, dry_run=True, chain=old_chain,
                                caller=routed({"gemma4:e4b": boom, "gemma3:12b": honest_llm}, seen),
                                cli=cli_rec({"agy": honest_llm, "codex": honest_llm}, cseen))
-    check("[중요] 첫 모델의 LLM 실패는 사슬을 타지 않는다 (장애에 상용을 태우지 않는다)",
-          not r.passed and r.reason.startswith("LLM 실패") and seen == ["gemma4:e4b"]
-          and cseen == [], f"{r.reason} {seen} {cseen}")
+    check("첫 모델 호출 실패도 다음 모델로 대체한다",
+          r.passed and r.model == "agy" and seen == ["gemma4:e4b"]
+          and cseen == ["agy"], f"{r.reason} {seen} {cseen}")
 
     seen = []
     r = synth.synthesize_group(pc, K, FILES, dry_run=True,
@@ -758,6 +801,7 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
 
     seen, cseen = [], []
     stc = synth.run(pc, changed=FILES, commit="c727", dry_run=True,
+                    model=synth.LOCAL_MODEL, chain=old_chain,
                     caller=routed({"gemma4:e4b": BAD, "gemma3:12b": honest_llm}, seen),
                     cli=cli_rec({"agy": honest_llm}, cseen))
     check("배치 통계가 대체 통과를 센다", stc.fallback_passed == 1
@@ -807,7 +851,7 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
             _l2._run_rc = lambda cmd, *, timeout: (agy_env(agy_text), "", 0)
             _l2.shutil.which = lambda n, *a, **k: "/usr/bin/agy" if n == "agy" \
                 else real_which(n, *a, **k)
-            rr = synth.synthesize_group(pu, K, FILES, commit="c727", dry_run=True)
+            rr = synth.synthesize_group(pu, K, FILES, commit="c727", dry_run=True, chain=old_chain)
         finally:
             (_ur.urlopen, _gen.auth_headers, _l2._codex_run, _l2._run_rc,
              _l2.shutil.which) = saved
@@ -843,6 +887,8 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
 
     print("\n[원문기록] 실제 프롬프트·모델 응답·게이트 결과")
     test_attempt_records(tmp)
+    print("\n[제미나이 1차] 호출·형식·사실 실패는 로컬 LLM 대체")
+    test_gemini_primary(tmp)
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0

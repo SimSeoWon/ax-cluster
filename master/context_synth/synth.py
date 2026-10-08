@@ -57,31 +57,16 @@ from . import md as md_mod, prompt as prompt_mod, verify as verify_mod
 # 준수**다. 원본도 로컬 LLM 기본값으로 Gemma 4 E4B 를 골랐고, `context_review` 만 화이트
 # 리스트에서 뺐다(*"4B 가 컨텍스트+리뷰 **통합** 프롬프트를 일관되게 처리할지 미검증"*).
 # [중요] **우리는 리뷰를 붙이지 않으므로 그 제외 사유가 없다.**
-SYNTH_MODEL = "gemma4:e4b"
+SYNTH_MODEL = "agy"                  # 사용자 2026-10-08: 제미나이 1차, 로컬 LLM 폴백
+LOCAL_MODEL = "gemma4:e4b"
 FALLBACK_MODEL = "gemma3:12b"            # .2 전용 VRAM. E4B 가 얕을 때
 HEAVY_MODEL = "hf.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M"   # 되돌릴 때만
 SYNTH_TIMEOUT = 600
 
-# 🔴 **형식 게이트 거부 시의 대체 사슬** (`#727`, 사용자 결정 2026-10-05). 순서를 바꿀 자리는
-#    **여기 한 곳**이다. 실측: `master/webui/app`·`master/context_synth/review_gen` 이 e4b 로
-#    연달아 형식 거부됐고(요약 뒤에도 상한 초과인 큰 파일), gemma3:12b 수동 재합성은 매번 통과했다.
-#
-#    [중요] **게이트는 그대로다** — 사슬의 어느 모델 결과든 같은 `md.finalize` → 사실 게이트를 탄다.
-#    [중요] 쓰는 일의 레인 정책(`codex → agy → 로컬`, `claude` 는 마스터 작업용으로 남긴다)을
-#       따라 **`claude` 는 넣지 않는다** — 넣어도 `_chain_for` 가 빼고 로그를 남긴다.
-#    🔴 [중요] **순서는 이 상수가 정본이다** — e4b → agy → codex → 12b (사용자 결정 2026-10-05:
-#       *"제미나이를 좀더 적극적으로 사용해봐 … 제미나이 자체를 거의 사용하지 않고있어"* — 8일
-#       사용량 claude 3,710 · codex 2,088 · 로컬 2,038 · agy 11). 종전의 「상용은 로컬이 다
-#       실패한 뒤」는 폐기됐다. [주의] **12b 는 최후다** — 그 결과가 품질이 낮았다(프롬프트 예시
-#       태그 `[미션, 스폰, 대화창, 상태동기화]` 를 그대로 베꼈고, 없는 관련 클래스
-#       `UReviewGen`·`AReviewIssue` 를 지어내 사실 게이트를 통과했다).
-#    [중요] **비용 상한** (여전히 성립하는 것): 사슬의 **첫 모델은 언제나 로컬** `SYNTH_MODEL`
-#       이다(`_chain_for` 가 강제한다) — 상용 레인은 e4b 가 그 그룹에서 형식 거부된 뒤에만,
-#       레인마다 그룹당 실행당 **한 번**만 돈다.
-#    [주의] 사슬은 **형식 거부**에서만 다음으로 넘어간다. 첫 모델의 LLM 실패(브로커·노드 장애)는
-#       종전처럼 서킷브레이커 몫이다 — 장애마다 상용 호출을 태우지 않는다. 사실 게이트 거부도
-#       종전처럼 그 자리에서 끝난다(형식이 아니라 내용의 문제다).
-SYNTH_CHAIN = (SYNTH_MODEL, "agy", "codex", FALLBACK_MODEL)
+# 사용자 2026-10-08: 제미나이 1차, 로컬 LLM 폴백. 순서는 여기 한 곳이다.
+# 호출 오류·형식 거부·사실 거부 모두 다음 모델로 간다. 각 모델은 그룹당 한 번만 시도한다.
+# 모든 시도는 같은 md.finalize와 사실 게이트를 통과해야 하며 claude 제외는 유지한다.
+SYNTH_CHAIN = (SYNTH_MODEL, LOCAL_MODEL, "codex", FALLBACK_MODEL)
 _CLI_LANES = ("claude", "agy", "codex")          # `ontology.synth.CLI_MODELS` 와 같은 레인 이름
 _CHAIN_EXCLUDED = ("claude",)
 
@@ -548,18 +533,14 @@ def _is_cli(model: str) -> bool:
     return model.partition(":")[0] in _CLI_LANES
 
 
-def _chain_for(model: str, chain) -> list[str]:
+def _chain_for(model: str | None, chain) -> list[str]:
     """이 그룹이 탈 모델 순서 (`#727`).
 
-    `chain` 이 없으면 — 기본 모델이면 `SYNTH_CHAIN`, **명시한 다른 모델이면 그 하나**(종전의
-    수동 `--model`·`--fallback` 동작 그대로). 어느 경우든 `claude` 는 빼고, **순서는 받은
-    그대로**다(2026-10-05 — 상수가 정본이다, 종전의 「로컬을 앞으로 모은다」는 폐기).
-    [중요] 비용 상한 하나는 여기서 지킨다 — **상용 레인이 맨 앞에 오지 않는다.** 사슬에 로컬이
-    있는데 상용이 앞서면 첫 로컬 모델을 맨 앞으로 올린다(나머지 순서는 그대로). 그래야 상용은
-    언제나 로컬 첫 모델의 형식 거부 뒤에만 돌고, 첫 모델의 장애는 서킷브레이커로 간다.
+    model=None은 기본 SYNTH_CHAIN, 명시 모델은 그 하나다(수동 --model/--fallback).
+    claude는 빼고 중복 모델은 한 번만 남기며 받은 순서는 그대로 유지한다.
     """
     if chain is None:
-        chain = SYNTH_CHAIN if model == SYNTH_MODEL else (model,)
+        chain = SYNTH_CHAIN if model is None else (model,)
     out: list[str] = []
     for m in chain:
         if m.partition(":")[0] in _CHAIN_EXCLUDED:
@@ -567,12 +548,6 @@ def _chain_for(model: str, chain) -> list[str]:
             continue
         if m not in out:
             out.append(m)
-    if out and _is_cli(out[0]):
-        local = next((m for m in out if not _is_cli(m)), None)
-        if local is not None:
-            _log(f"[사슬] 상용 {out[0]} 이 맨 앞이라 로컬 {local} 를 앞으로 올린다 (#727)")
-            out.remove(local)
-            out.insert(0, local)
     return out
 
 
@@ -648,7 +623,7 @@ class _AttemptRecord:
 
 def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                      commit: str = "", broker: str = DEFAULT_BROKER,
-                     model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
+                     model: str | None = None, caller=None, dry_run: bool = False,
                      content_limit: int = prompt_mod.CONTENT_LIMIT,
                      tally: source_text.EncodingTally | None = None,
                      chain=None, cli=None, related=None, searcher=None) -> GroupResult:
@@ -695,13 +670,13 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                          existing=existing, limit=content_limit)
     res.prompt_chars = len(p)
 
-    # 🔴 `#727` — 형식 게이트가 거부하면 사슬의 다음 모델로 간다. 결과마다 **같은 게이트**를 탄다.
+    # 호출·형식·사실 실패는 다음 모델로 간다. 결과마다 같은 게이트를 탄다.
     from ..work import usage as usage_mod                         # noqa: PLC0415
     models = _chain_for(model, chain)
     doc = ""
     format_reason = llm_reason = ""
     for n, m in enumerate(models):
-        if n and _is_cli(m) and caller is not None and cli is None:
+        if _is_cli(m) and caller is not None and cli is None:
             # 주입된 브로커 호출자(테스트)에서 진짜 상용 CLI 를 부르지 않는다
             res.attempts.append(f"{m} 건너뜀(주입된 호출자)")
             continue
@@ -728,8 +703,7 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
             res.attempts.append(f"{m} LLM 실패")
             _log(f"{key} — {m} LLM 실패 · {int(time.monotonic() - t_call)}초 · 프롬프트 {len(p)}자"
                  f" · {str(e)[:120]}")
-            if n == 0:
-                break               # 첫 모델의 장애는 서킷브레이커 몫 — 사슬을 태우지 않는다
+            res.reason = llm_reason
             continue
         res.tokens_in += usage.get("in", 0)
         res.tokens_out += usage.get("out", 0)
@@ -743,39 +717,38 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
         if not verdict.ok:
             attempt.update(finished_at=time.time())
         if verdict.ok:
-            res.model = m
             res.attempts.append(f"{m} 형식 통과")
-            break
+            report = verify_mod.verify(doc, sources=bodies,
+                                       declared=grounding.declared_classes,
+                                       known=project_symbols(paths),
+                                       live_counts=_index_only(paths))
+            res.verify = report
+            attempt.update(facts={"ok": report.ok, "reason": report.reason,
+                                  "ghosts": report.ghosts, "declared": report.declared,
+                                  "mentioned_declared": report.mentioned_declared},
+                           status="facts_passed" if report.ok else "facts_rejected")
+            if report.ok:
+                res.model = m
+                res.reason = ""
+                break
+            attempt.update(finished_at=time.time())
+            res.reason = f"사실 게이트 거부 — {report.reason}"
+            res.attempts.append(f"{m} 사실 거부")
+            _log(f"{key} — {m} {res.reason}")
+            continue
         # σ.7-B — [중요] 기존 파일을 남긴다. 사슬이 다 실패하면 다음 사이클에 다시 시도된다.
         format_reason = f"형식 게이트 {verdict.summary} · preview={verdict.preview!r}"
+        res.reason = format_reason
         res.attempts.append(f"{m} 형식 거부")
         _log(f"{key} — {m} 형식 거부 · preview={verdict.preview!r}")
     if len(res.attempts) > 1 or (res.model and res.model != models[0]):
         _log(f"{key} — 사슬 {' → '.join(res.attempts)}"
              + (f" · 통과 모델 {res.model}" if res.model else " · 전부 실패"))
     if not res.model:
-        # 응답이 한 번이라도 왔으면 형식 거부로 센다 — 모델은 살아 있다(서킷 사유가 아니다)
-        res.reason = format_reason or llm_reason or "LLM 실패: 사슬에 시도할 모델이 없다"
+        # 마지막 실제 시도의 실패 종류로 집계한다. 모든 모델의 개별 결과는 원문 기록에 남는다.
+        res.reason = res.reason or "LLM 실패: 사슬에 시도할 모델이 없다"
         if len(res.attempts) > 1:
             res.reason += f" · 사슬: {' → '.join(res.attempts)}"
-        return _remember(paths, key, files, res, commit, dry_run)
-
-    # [중요] **사실 게이트** — 소스 실측과 대조한다. LLM 에게 자기 검증을 맡기지 않는다
-    # (설계 규칙: 결정적 게이트가 LLM 판단보다 우선). 형식 게이트와 같은 처리 —
-    # 거부하면 기존 파일이 남고 다음 사이클에 재시도된다.
-    report = verify_mod.verify(doc, sources=bodies,
-                               declared=grounding.declared_classes,
-                               known=project_symbols(paths),
-                               live_counts=_index_only(paths))
-    res.verify = report
-    attempt.update(facts={"ok": report.ok, "reason": report.reason,
-                          "ghosts": report.ghosts, "declared": report.declared,
-                          "mentioned_declared": report.mentioned_declared},
-                   status="facts_passed" if report.ok else "facts_rejected")
-    if not report.ok:
-        attempt.update(finished_at=time.time())
-    if not report.ok:
-        res.reason = f"사실 게이트 거부 — {report.reason}"
         return _remember(paths, key, files, res, commit, dry_run)
 
     # [중요] **쓰기 직전에 `related_classes` 를 스키마 형태로 맞춘다** (`#382`). 합성이 경로만
@@ -814,6 +787,8 @@ def _workers(parallel: int | None, *, model: str, broker: str, caller) -> tuple[
         return max(1, min(int(parallel), MAX_WORKERS)), "지정"
     if caller is not None:
         return 1, "주입된 호출자"
+    if _is_cli(model):
+        return 1, "상용 CLI — 직렬"
     try:
         import json as _json
         import urllib.request as _ur
@@ -831,7 +806,7 @@ def _workers(parallel: int | None, *, model: str, broker: str, caller) -> tuple[
 
 def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = "",
         skip_existing: bool = False, limit: int = 0, broker: str = DEFAULT_BROKER,
-        model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
+        model: str | None = None, caller=None, dry_run: bool = False,
         content_limit: int = prompt_mod.CONTENT_LIMIT, unload_every: int = UNLOAD_EVERY,
         git=None, progress=None, parallel: int | None = None,
         chain=None, cli=None, searcher=None) -> Stats:
@@ -855,7 +830,7 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
 
 def _run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = "",
          skip_existing: bool = False, limit: int = 0, broker: str = DEFAULT_BROKER,
-         model: str = SYNTH_MODEL, caller=None, dry_run: bool = False,
+         model: str | None = None, caller=None, dry_run: bool = False,
          content_limit: int = prompt_mod.CONTENT_LIMIT, unload_every: int = UNLOAD_EVERY,
          git=None, progress=None, parallel: int | None = None,
          chain=None, cli=None, related_resource) -> Stats:
@@ -904,7 +879,8 @@ def _run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str =
     stats.retried = retried
     t0 = time.monotonic()
     consecutive = 0
-    n, why = _workers(parallel, model=model, broker=broker, caller=caller)
+    primary = model or SYNTH_MODEL
+    n, why = _workers(parallel, model=primary, broker=broker, caller=caller)
     stats.workers = n
     _log(f"{paths.name} — 그룹 {len(groups)} · 동시 {n} ({why})")
     order = sorted(groups.items())
@@ -955,7 +931,7 @@ def _run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str =
             stats.tokens_out += r.tokens_out
             if r.digest:
                 stats.digested += 1
-            if r.passed and r.model and r.model != model:
+            if r.passed and r.model and r.model != primary:
                 stats.fallback_passed += 1
             if r.passed:
                 stats.written += 1
@@ -982,9 +958,10 @@ def _run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str =
         # [중요] 주기적으로 모델을 내려 누적된 캐시를 회수한다 (위 UNLOAD_EVERY 참조).
         # 다음 요청이 자동으로 다시 적재한다 — 우리가 올릴 필요는 없다. 묶음 사이에서만 한다.
         done = stats.written + stats.refused + stats.unfactual + stats.failed
-        if unload_every and done and done % unload_every < len(batch) and caller is None:
+        if (unload_every and done and done % unload_every < len(batch) and caller is None
+                and not _is_cli(primary)):
             try:
-                unload_model(model, broker=broker)
+                unload_model(primary, broker=broker)
                 stats.unloads += 1
             except GenerateError:
                 pass       # 회수 실패는 치명적이지 않다 — 다음 주기에 다시 시도된다
