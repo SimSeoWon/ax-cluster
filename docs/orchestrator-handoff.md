@@ -4,7 +4,16 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-08 · Codex `/root`**. 사용자 선택으로 로컬 서브 에이전트
+- **현재 체크포인트: 2026-10-08 23:45 · Claude** (Codex 한도 소진으로 인계서 없이 인수).
+  Codex 미커밋 「제미나이 1차·로컬 폴백」 합성 변경을 사용자 승인으로 `4a9fb87` 커밋·푸시,
+  `master.client update` 3/3. 사슬 agy→gemma4:e4b→codex→gemma3:12b, 호출·형식·사실 거부
+  모두 다음 모델로. 커밋 전 23:24 색인기 타이머가 작업 트리 코드로 이미 돌아 agy 10건 전부
+  통과(loaded/error 거부 해소)·synth_pending 비움·워터마크 f57b82b. 소스 경계(Kimodo
+  webui/scripts/vendor 포함)는 사용자 결정으로 유지. 토큰은 usage_log.jsonl 에 기록, agy
+  비용은 cost_known=false. 사용자 승인으로 /commit-flow 표기를 제미나이 1차·LOCAL_MODEL 폴백으로
+  수정(검사 39/39, 미커밋) · ax-projects 23:56:23 재기동(PID 48818, 페이지 200 확인).
+  마스터 담당·워커 모드 기록은 변경하지 않았다. 아래는 직전 Codex 체크포인트.
+- **직전 체크포인트: 2026-10-08 · Codex `/root`**. 사용자 선택으로 로컬 서브 에이전트
   구현·독립 검토 완료. MotionForge 마운트·kind=unreal 유지, 워커 .2/.33/.43 배달 검사3/3.
   HEAD/origin `60e7908`(사용자 승인 커밋·푸시·배포). 현재 dirty는 응답기록 구현2파일과
   리포트100·이 인계서다. 응답기록 수정의 커밋·푸시·배포 승인은 아직 없다.

@@ -15,7 +15,8 @@
 ## [중요] 사실은 코드에서 가져온다 — 여기서 지어내지 않는다
 
     SYNTH_MODEL         context_synth/synth.py        컨텍스트 합성 모델
-    SYNTH_CHAIN         context_synth/synth.py        형식 거부 시 대체 사슬 (`#727`)
+    SYNTH_CHAIN         context_synth/synth.py        합성 순서 — 1차와 실패 시 대체 사슬 (`#727`)
+    LOCAL_MODEL         context_synth/synth.py        사슬 안의 로컬 폴백 모델 (브로커 경유)
     DRAFT_MODEL         context_synth/review_runner.py 초고 모델
     broker.choose()     broker/routing.py             어느 노드가 받는지의 규칙
 
@@ -36,7 +37,7 @@ from .onboarding import _EXTRA as _BASE_EXTRA
 from .nav import nav_html, SIDE_CSS
 
 # 🔴 사실은 코드에서 읽는다 — 이 화면이 자기 값을 따로 적으면 모델이 바뀔 때 화면만 낡는다.
-from ..context_synth.synth import SYNTH_CHAIN, SYNTH_MODEL
+from ..context_synth.synth import LOCAL_MODEL, SYNTH_CHAIN, SYNTH_MODEL
 from ..context_synth.review_runner import DRAFT_MODEL
 
 _EXTRA = _BASE_EXTRA + SIDE_CSS + """
@@ -46,7 +47,7 @@ _EXTRA = _BASE_EXTRA + SIDE_CSS + """
 .badge.human{border-color:var(--warning);color:var(--warning)}
 """
 
-# 사슬 표기 — `e4b → agy → codex → 12b`. 상용 레인은 화면에서 이름을 알아보게 바꿔 적는다.
+# 사슬 표기 — `agy → e4b → codex → 12b`. 상용 레인은 화면에서 이름을 알아보게 바꿔 적는다.
 _LANE_LABEL = {"agy": "Antigravity", "codex": "Codex"}
 _CHAIN_TEXT = " → ".join(_LANE_LABEL.get(m, m) for m in SYNTH_CHAIN)
 
@@ -64,7 +65,7 @@ _LANES = [
 _NODES = [
     (0, 0, "① 커밋 · push", "손으로 고친 코드 — **어느 게이트도 안 지난다**", True),
     (1, 1, "② 색인기가 집는다", "커밋마다 **첫 부모 기준** 변경 파일 · 깨끗한 머지는 건너뜀", False),
-    (2, 2, "③ 컨텍스트 문서 합성", f"클래스별 `.md` — 로컬 `{SYNTH_MODEL}` · 형식 거부 시 대체 사슬", False),
+    (2, 1, "③ 컨텍스트 문서 합성", f"클래스별 `.md` — 1차 `{SYNTH_MODEL}`(제미나이) · 실패 시 로컬 `{LOCAL_MODEL}` 폴백", False),
     (3, 1, "④ 리뷰 큐에 등재", "커밋 하나 = 항목 하나 · 머지는 충돌 해소분만 · 색인은 **기다리지 않는다**", False),
     (4, 2, "⑤ 로컬 1차 초고", f"형식 자유 — `{DRAFT_MODEL}` · 중간 산출물", False),
     (5, 1, "⑥ Antigravity 2차", "원본 diff · 선언부와 대조해 정형 리뷰로 퇴고", False),
@@ -75,8 +76,8 @@ _NODES = [
 
 _EDGES = [
     "git SSH push → Gitea",
-    "브로커 8102 (모델로 라우팅)",
     "마스터 내부 (색인 경로)",
+    "마스터 내부 (큐 등재)",
     "마스터 내부 (큐 파일)",
     "브로커 8102",
     "`.57` Antigravity CLI",
@@ -197,22 +198,23 @@ def render() -> str:
   <span>자동 구간: 로컬 1차 → Antigravity 2차 · Claude 자동 폴백 없음</span>
 </div>
 
-<h2>어느 기계가 받나 — 브로커가 모델로 고른다</h2>
-<div class="note"><b>노드를 지정하지 않는다.</b> 마스터는 <b>모델 이름</b>으로
+<h2>로컬 모델은 어느 기계가 받나 — 브로커가 모델로 고른다</h2>
+<div class="note">합성의 로컬 폴백과 리뷰 초고는 브로커로 간다. <b>노드를 지정하지 않는다.</b> 마스터는 <b>모델 이름</b>으로
 브로커(<code>8102</code>)에 청하고, 브로커가 ①<b>상주 중</b> → ②<code>prefer</code> 지정 →
 ③폴백 순으로 노드를 고른다.
 <div class="callrow" style="margin-top:.5rem">
-  <code>.43</code><span><span class="badge local">{html.escape(SYNTH_MODEL)} 상주</span>
+  <code>.43</code><span><span class="badge local">{html.escape(LOCAL_MODEL)} 상주</span>
     평소 여기로 간다 — 이미 올라가 있어 <b>적재 0초</b></span>
-  <code>.2</code><span><span class="badge">{html.escape(SYNTH_MODEL)} 보유</span>
+  <code>.2</code><span><span class="badge">{html.escape(LOCAL_MODEL)} 보유</span>
     <b><code>.43</code> 이 죽으면 받는다</b> — 재적재를 물지만 응답은 된다</span>
 </div></div>
 
-<h2>합성이 형식 게이트에 걸리면 — 대체 사슬</h2>
+<h2>합성 순서 — 제미나이 1차, 실패하면 대체 사슬</h2>
 <div class="note"><b>순서: <code>{html.escape(_CHAIN_TEXT)}</code></b> (<code>SYNTH_CHAIN</code>, <code>#727</code>).
-첫 모델은 언제나 로컬이다 — 상용 레인은 로컬 1차가 <b>형식 게이트에서 거부된 그룹</b>에만,
-레인마다 한 번씩 돈다. 어느 모델의 결과든 <b>같은 형식·사실 게이트</b>를 통과해야 문서가 된다.
-노드 장애(응답 없음)는 사슬을 타지 않고 회로 차단기가 맡는다. <b>Claude 는 사슬에 없다.</b>
+1차는 마스터의 <b>Antigravity(제미나이)</b>다(사용자 결정 2026-10-08). 호출 실패·형식 거부·
+사실 거부 어느 것이든 다음 모델로 넘어가고, 모델마다 그룹당 한 번씩만 돈다. 상용 1차일 때 그룹은
+<b>직렬</b>로 합성된다. 어느 모델의 결과든 <b>같은 형식·사실 게이트</b>를 통과해야 문서가 된다.
+<b>Claude 는 사슬에 없다.</b>
 <code>gemma3:12b</code> 는 예시 태그를 베끼는 등 품질 문제가 실측돼 마지막 수단이다.</div>
 
 <h2>머지 커밋은 어떻게 되나</h2>

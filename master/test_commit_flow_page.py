@@ -53,6 +53,9 @@ def test_사실은_코드에서_온다():
     h = CF.render()
     check("🔴 ② 합성 모델명이 상수에서 온다", SYNTH_MODEL in h, SYNTH_MODEL)
     check("🔴 ② 초고 모델명이 상수에서 온다", DRAFT_MODEL in h, DRAFT_MODEL)
+    from master.context_synth.synth import LOCAL_MODEL
+    check("② 로컬 폴백 모델명이 상수에서 온다", LOCAL_MODEL in h and f"{LOCAL_MODEL} 상주" in h,
+          LOCAL_MODEL)
     # 상수를 바꾸면 화면도 바뀌어야 한다 — 하드코딩이면 이 검사가 잡는다
     check("② 모델명이 하드코딩돼 있지 않다",
           'gemma4:e4b"' not in Path(CF.__file__).read_text(encoding="utf-8"),
