@@ -47,6 +47,18 @@ def fake(started: str = "Sat 2026-08-23 02:19:20 KST", rc: int = 0, epoch: str =
     return run
 
 
+# [DOC] #772: 운영 서비스·원격 파일을 건드리지 않는 회귀 검사다.
+# 임시 저장소, 결정적 mtime, 가짜 runner로 판정하고 바꾼 F.REPO 등은 반드시 복원한다.
+# 새 테스트는 실제 F.RESIDENT 선언을 사용하여 register.py 감시 누락 회귀를 잡아야 한다.
+# 정상/오류 판정과 디렉터리 감시는 기존 정책을 보존한다.
+def test_project_dependencies() -> None:
+    # [PSEUDO] register.py만 기동 뒤 바뀐 경우 stale 및 newest_file을 검증한다.
+    # infer.py·autodispatch.py와 문서만 바뀌면 조용함을 검증한다.
+    # 단일 .py·기존 디렉터리 재귀·누락 및 비Python 경로를 검증한다.
+    # 기존 check() 도우미로 실제 실행 건수를 집계하며 상주 시스템에 접근하지 않는다.
+    raise NotImplementedError("#772 회귀 검사 구현은 워커 조각에서 수행")
+
+
 def main() -> int:
     print("\n[1] 기동 뒤 코드가 바뀌면 stale 이라고 말한다")
     # 기동 = 아주 옛날(epoch 0 근처) → 저장소 코드가 반드시 더 새롭다
@@ -92,6 +104,7 @@ def main() -> int:
           "재기동을 스스로 하는 코드가 있다")
     check("  그 이유를 문서로 적어 뒀다", "§11.5" in src)
 
+    # [PSEUDO] 요약 전에 test_project_dependencies()를 호출하여 새 검사가 실제로 실행되게 한다.
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 
