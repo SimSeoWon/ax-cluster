@@ -12,7 +12,9 @@
 """
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -52,11 +54,71 @@ def fake(started: str = "Sat 2026-08-23 02:19:20 KST", rc: int = 0, epoch: str =
 # 새 테스트는 실제 F.RESIDENT 선언을 사용하여 register.py 감시 누락 회귀를 잡아야 한다.
 # 정상/오류 판정과 디렉터리 감시는 기존 정책을 보존한다.
 def test_project_dependencies() -> None:
-    # [PSEUDO] register.py만 기동 뒤 바뀐 경우 stale 및 newest_file을 검증한다.
-    # infer.py·autodispatch.py와 문서만 바뀌면 조용함을 검증한다.
-    # 단일 .py·기존 디렉터리 재귀·누락 및 비Python 경로를 검증한다.
-    # 기존 check() 도우미로 실제 실행 건수를 집계하며 상주 시스템에 접근하지 않는다.
-    raise NotImplementedError("#772 회귀 검사 구현은 워커 조각에서 수행")
+    paths = F.RESIDENT["ax-projects"]
+    check("ax-projects가 register.py를 명시적으로 감시한다",
+          "master/work/register.py" in paths, str(paths))
+    check("master/work 전체와 워커 전용 파일은 감시하지 않는다",
+          "master/work" not in paths
+          and "master/work/infer.py" not in paths
+          and "master/work/autodispatch.py" not in paths, str(paths))
+
+    old_repo = F.REPO
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            F.REPO = root
+
+            for rel in paths:
+                target = root / rel
+                if target.suffix == ".py":
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text("# resident\n", encoding="utf-8")
+                    os.utime(target, (10, 10))
+                else:
+                    target.mkdir(parents=True, exist_ok=True)
+                    resident = target / "resident.py"
+                    resident.write_text("# resident\n", encoding="utf-8")
+                    os.utime(resident, (10, 10))
+
+            work = root / "master/work"
+            for name in ("infer.py", "autodispatch.py"):
+                ignored = work / name
+                ignored.write_text("# worker only\n", encoding="utf-8")
+                os.utime(ignored, (300, 300))
+            note = work / "README.md"
+            note.write_text("worker documentation\n", encoding="utf-8")
+            os.utime(note, (300, 300))
+
+            register = root / "master/work/register.py"
+            os.utime(register, (200, 200))
+            verdict = F.check("ax-projects", runner=fake(epoch="100"))[0]
+            check("register.py만 기동 뒤 바뀌어도 stale이다", verdict.stale, verdict.line)
+            check("newest_file이 register.py를 가리킨다",
+                  verdict.newest_file == "master/work/register.py", verdict.newest_file)
+
+            os.utime(register, (10, 10))
+            verdict = F.check("ax-projects", runner=fake(epoch="100"))[0]
+            check("워커 전용 파일과 문서 변경만으로는 조용하다",
+                  not verdict.stale and not verdict.why, verdict.line)
+
+            single = root / "single.py"
+            single.write_text("# single\n", encoding="utf-8")
+            os.utime(single, (30, 30))
+            nested = root / "tree/nested.py"
+            nested.parent.mkdir(parents=True)
+            nested.write_text("# nested\n", encoding="utf-8")
+            os.utime(nested, (40, 40))
+            non_python = root / "note.txt"
+            non_python.write_text("not code\n", encoding="utf-8")
+            os.utime(non_python, (90, 90))
+
+            newest, who = F._newest(("single.py", "tree", "missing.py", "note.txt"))
+            check("단일 .py와 디렉터리 재귀를 함께 탐색한다",
+                  newest == 40 and who == "tree/nested.py", f"{newest}, {who}")
+            check("누락 및 비Python 경로만 있으면 읽지 못한 것으로 남긴다",
+                  F._newest(("missing.py", "note.txt")) == (0, ""))
+    finally:
+        F.REPO = old_repo
 
 
 def main() -> int:
@@ -95,7 +157,9 @@ def main() -> int:
     print("\n[6] [주의] 코드 경로를 넓게 잡지 않는다")
     for unit, paths in F.RESIDENT.items():
         check(f"  `{unit}` 의 경로가 선언돼 있다", bool(paths) and all(
-            (F.REPO / p).is_dir() for p in paths), str(paths))
+            (F.REPO / p).is_dir()
+            or ((F.REPO / p).is_file() and (F.REPO / p).suffix == ".py")
+            for p in paths), str(paths))
 
     print("\n[7] [주의] 자동 재기동을 하지 않는다 (승인 사항)")
     src = (Path(F.__file__)).read_text(encoding="utf-8")
@@ -104,7 +168,8 @@ def main() -> int:
           "재기동을 스스로 하는 코드가 있다")
     check("  그 이유를 문서로 적어 뒀다", "§11.5" in src)
 
-    # [PSEUDO] 요약 전에 test_project_dependencies()를 호출하여 새 검사가 실제로 실행되게 한다.
+    print("\n[8] ax-projects 상주 의존 파일을 빠짐없이 판정한다")
+    test_project_dependencies()
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 
