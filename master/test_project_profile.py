@@ -247,6 +247,99 @@ def test_code_kind(tmp):
             check("  .py 만이면 확장자 게이트는 통과한다", True)
 
 
+def test_unreal_py_and_submodules(tmp):
+    print("\n⑪ 🔴 `#771` A0 — unreal 의 `.py` 거절 · 서브모듈 게이트 (사용자 결정 2026-10-09)")
+    import contextlib
+    import io
+    from types import SimpleNamespace
+
+    from master.context_search.paths import SourceScope
+    from master.work import register as R
+    from master.work.register import RegisterError, TaskSpec, improve_work, register_work
+
+    ov = "텍스트로 애니메이션 모션을 만드는 언리얼 플러그인이다 " + "설명 " * 10
+    with _Tmp(tmp):
+        PF.save("U", kind="unreal", engine_decided=True, engine="UE", engine_version="5.8",
+                language="C++", purpose="tool", overview=ov)
+        v = PF.target_violations("U", ["Source/A.cpp", "Plugins/X/webui/app.py", "Tools/b.PY"])
+        check("🔴 unreal — `.py` 는 이름을 실어 거절 (`#771` A 보류)",
+              len(v) == 1 and "kind: unreal" in v[0] and "Plugins/X/webui/app.py" in v[0]
+              and "Tools/b.PY" in v[0] and "Source/A.cpp" not in v[0], str(v))
+        check("  unreal — .h/.cpp/.cs 는 종전 그대로 받는다",
+              PF.target_violations("U", ["Source/A.h", "Source/A.cpp", "Source/A.Build.cs", ""]) == [])
+
+        repo = tmp / "repo"
+        repo.mkdir()
+        (repo / ".gitmodules").write_text(
+            '[submodule "vendor/kimodo.cpp"]\n\tpath = vendor/kimodo.cpp\n'
+            "\turl = https://example.invalid/k.git\n", encoding="utf-8")
+        P = SimpleNamespace(name="U", repo=repo, scope=SourceScope(submodules=("cfg/sub",)))
+        sms, note = R._submodule_paths(P)
+        check("config ∪ .gitmodules 를 합친다", set(sms) == {"cfg/sub", "vendor/kimodo.cpp"} and not note,
+              f"{sms} {note!r}")
+        sv = R.submodule_violations
+        check("  config 선언 서브모듈 안은 거절", len(sv(["cfg/sub/a.cpp"], sms)) == 1)
+        check("  .gitmodules 선언 서브모듈 안은 거절", len(sv(["vendor/kimodo.cpp/src/m.cpp"], sms)) == 1)
+        check("  서브모듈 경로 그 자체도 거절", len(sv(["vendor/kimodo.cpp"], sms)) == 1)
+        check("  🔴 이름만 닮은 형제는 통과 (성분 단위 비교)",
+              sv(["vendor/kimodo.cpp2/x.cpp", "vendor/kimodo.cppx", "cfg/subway.h"], sms) == [])
+        b = sv(["vendor\\kimodo.cpp\\src\\m.cpp", "./cfg/sub/b.h"], sms)
+        check("  `\\` 구분자·앞의 `./` 를 맞춰 비교한다",
+              len(b) == 2 and "서브모듈 `vendor/kimodo.cpp`" in b[0] and "`#771` B 보류" in b[0], str(b))
+
+        spec_sub = TaskSpec(stem="s", target_file="vendor/kimodo.cpp/src/m.cpp")
+        spec_ok = TaskSpec(stem="a", target_file="Source/A.cpp")
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                register_work("제목", [spec_ok, spec_sub], paths=P, target_repo="x",
+                              profile_blockers=lambda n: [])
+            check("🔴 등록 — 서브모듈 안 조각은 거절", False, "예외가 안 났다")
+        except RegisterError as e:
+            check("🔴 등록 — 서브모듈 안 조각은 거절", "서브모듈 `vendor/kimodo.cpp`" in str(e), str(e)[:160])
+        check("  [kind] 줄에 서브모듈 거절 수가 찍힌다",
+              "· 거절 0 · 서브모듈 거절 1" in err.getvalue(), err.getvalue()[:200])
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                improve_work("w1", [spec_sub], round=2, paths=P)
+            check("🔴 개선요청도 서브모듈 게이트를 탄다", False, "예외가 안 났다")
+        except RegisterError as e:
+            check("🔴 개선요청도 서브모듈 게이트를 탄다", "서브모듈" in str(e), str(e)[:160])
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                improve_work("w1", [TaskSpec(stem="p", target_file="Tools/t.py")], round=2, paths=P)
+            check("🔴 개선요청도 unreal `.py` 를 거절한다", False, "예외가 안 났다")
+        except RegisterError as e:
+            check("🔴 개선요청도 unreal `.py` 를 거절한다", "kind: unreal" in str(e), str(e)[:160])
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                register_work("제목", [spec_sub], paths=P, target_repo="x",
+                              profile_blockers=lambda n: [], target_check=lambda n, f: [])
+            check("  target_check 주입은 확장자 판정만 바꾼다 — 서브모듈 판정은 남는다", False, "예외 없음")
+        except RegisterError as e:
+            check("  target_check 주입은 확장자 판정만 바꾼다 — 서브모듈 판정은 남는다",
+                  "서브모듈" in str(e), str(e)[:160])
+
+        # 못 읽는 `.gitmodules` — 죽지 않고 config 만 적용, 메모를 남긴다
+        repo2 = tmp / "repo2"
+        (repo2 / ".gitmodules").mkdir(parents=True)
+        P2 = SimpleNamespace(name="U", repo=repo2, scope=SourceScope(submodules=("cfg/sub",)))
+        sms2, note2 = R._submodule_paths(P2)
+        check("못 읽는 .gitmodules → config 만 · 메모", sms2 == ("cfg/sub",) and "못 읽음" in note2,
+              f"{sms2} {note2!r}")
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                improve_work("w1", [TaskSpec(stem="c", target_file="cfg/sub/x.cpp")], round=2, paths=P2)
+            check("  못 읽어도 config 서브모듈은 거절", False, "예외가 안 났다")
+        except RegisterError as e:
+            check("  못 읽어도 config 서브모듈은 거절", "cfg/sub" in str(e), str(e)[:160])
+        check("  [kind] 줄에 못 읽은 사실이 찍힌다", ".gitmodules 못 읽음" in err.getvalue(),
+              err.getvalue()[:200])
+        P3 = SimpleNamespace(name="U", repo=tmp / "없음", scope=SourceScope())
+        check(".gitmodules 가 없으면 서브모듈 0", R._submodule_paths(P3) == ((), ""))
+
+
 def main() -> int:
     import tempfile
 
@@ -255,7 +348,8 @@ def main() -> int:
                    test_blockers_are_not_missing, test_validation_is_fail_closed,
                    test_partial_save, test_project_line_seam,
                    test_onboarding_sees_it, test_register_refuses,
-                   test_index_only_kind, test_code_kind):
+                   test_index_only_kind, test_code_kind,
+                   test_unreal_py_and_submodules):
             sub = Path(d) / fn.__name__
             sub.mkdir()
             fn(sub)

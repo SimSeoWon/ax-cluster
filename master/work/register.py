@@ -25,6 +25,7 @@ import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ..auth import auth_headers
 from ..context_search.paths import ProjectPaths
@@ -62,23 +63,93 @@ def _spec_files(specs) -> list:
     return out
 
 
+def _norm_rel(p) -> str:
+    """저장소 기준 상대 경로를 한 모양으로 — `\\` → `/` · 앞의 `./` · 끝의 `/` 를 걷는다."""
+    s = str(p or "").strip().replace("\\", "/")
+    while s.startswith("./"):
+        s = s[2:]
+    return s.strip("/")
+
+
+def _submodule_paths(paths) -> tuple:
+    """서브모듈 경로 = `config.yaml` `source.submodules` ∪ `<repo>/.gitmodules` 의 `path =`.
+
+    돌려주는 것: `(경로 목록, 메모)`. 메모는 `.gitmodules` 를 못 읽었을 때만 찬다.
+    [중요] **두 출처를 합친다** (`#771` A0, 사용자 결정 2026-10-09) — config 의 `submodules` 는
+    색인 경계용 선언이라 사람이 빠뜨릴 수 있고, 클론의 `.gitmodules` 는 git 이 실제로 쓰는 값이다.
+    config 만 믿으면 선언이 빠진 서브모듈 안을 가리키는 조각이 그대로 등재된다.
+    [주의] **워킹트리의 파일을 직접 읽는다** — git 을 부르지 않는다(등재 경로에 프로세스를
+    더하지 않는다). 없으면 서브모듈 없음, 못 읽으면 메모를 남기고 config 만 쓴다 — 죽지 않는다.
+    """
+    out: list = []
+    for sm in getattr(getattr(paths, "scope", None), "submodules", None) or ():
+        n = _norm_rel(sm)
+        if n and n not in out:
+            out.append(n)
+    note = ""
+    repo = getattr(paths, "repo", None)
+    gm = Path(repo) / ".gitmodules" if repo else None
+    if gm is not None and gm.exists():
+        try:
+            text = gm.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            note = f".gitmodules 못 읽음({type(e).__name__}) — config 만 적용"
+        else:
+            for line in text.splitlines():
+                k, sep, v = line.strip().partition("=")
+                if sep and k.strip() == "path":
+                    n = _norm_rel(v.strip().strip('"'))
+                    if n and n not in out:
+                        out.append(n)
+    return tuple(out), note
+
+
+def submodule_violations(files, submodules) -> list:
+    """🔴 서브모듈 게이트 (`#771` A0) — **모든 kind** 에 건다. 순수 함수다.
+
+    [중요] 비교는 **경로 성분 단위**다 — `a/kimodo.cpp` 와 그 아래는 막고 `a/kimodo.cpp2/…` 는
+    통과시킨다. 문자열 접두 검사는 이름이 닮은 형제 디렉토리를 같이 막는다.
+    """
+    sms = [s for s in (_norm_rel(x) for x in (submodules or ())) if s]
+    bad: list = []
+    for f in files or []:
+        rel = _norm_rel(f)
+        if not rel:
+            continue
+        for sm in sms:
+            if rel == sm or rel.startswith(sm + "/"):
+                bad.append(f"`{f}` 는 서브모듈 `{sm}` 안이다 — 분산 작업은 서브모듈 안을 "
+                           f"커밋하지 못한다 (`#771` B 보류)")
+                break
+    return bad
+
+
 def _check_targets(paths, specs, target_check=None) -> None:
     """🔴 `kind: code` 의 확장자 게이트 (`#695`). 등록과 개선요청 **둘 다** 부른다.
 
     [중요] 개선요청은 프로필 게이트를 일부러 건너뛰지만(도는 라운드를 소급해 죽이지 않으려고)
     이 게이트는 건너뛰지 않는다 — **새 조각**이 받지 않는 언어를 가리키는 것은 소급이 아니다.
     [중요] 판정은 **로그 한 줄**로 남긴다(stderr — 등재는 stdio MCP 안에서도 돈다).
+    🔴 [중요] **서브모듈 게이트도 여기서 같이 돈다** (`#771` A0, 사용자 결정 2026-10-09 — B 의
+    서브모듈 지원은 보류). 워커는 조각 브랜치를 상위 저장소에 커밋하므로 서브모듈 안의 변경은
+    커밋에 실리지 못한다. [주의] `target_check` 주입은 **프로필(확장자) 판정만** 바꾼다 —
+    서브모듈 판정은 `paths` 만 읽는 순수 판정이라 주입해도 그대로 돈다(`repo`·`scope` 가 없는
+    가짜 `paths` 면 서브모듈 0개로 읽혀 종전 동작과 같다).
     """
     name = getattr(paths, "name", "")
     if not name:
         return
     files = _spec_files(specs)
-    bad = (target_check or _profile_target_violations)(name, files)
+    bad = list((target_check or _profile_target_violations)(name, files))
+    sms, note = _submodule_paths(paths)
+    sub_bad = submodule_violations(files, sms)
     import sys                                                        # noqa: PLC0415
-    print(f"[kind] {name} · 대상 {len(files)} · 거절 {len(bad)}"
-          + (f" — {bad[0]}" if bad else ""), file=sys.stderr, flush=True)
-    if bad:
-        raise RegisterError(" · ".join(bad))
+    allbad = bad + sub_bad
+    print(f"[kind] {name} · 대상 {len(files)} · 거절 {len(bad)} · 서브모듈 거절 {len(sub_bad)}"
+          + (f" ({note})" if note else "")
+          + (f" — {allbad[0]}" if allbad else ""), file=sys.stderr, flush=True)
+    if allbad:
+        raise RegisterError(" · ".join(allbad))
 
 
 

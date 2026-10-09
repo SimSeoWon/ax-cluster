@@ -205,12 +205,24 @@ def work_exts(project: str) -> tuple:
 def target_violations(project: str, files) -> list:
     """🔴 등재·개선요청이 읽는 **확장자 게이트** (`#695`). 비어 있지 않으면 거절한다.
 
-    `unreal` 은 종전 그대로 아무것도 막지 않는다. `code` 는 `work_exts` 밖의 파일을 막는다 —
+    `unreal` 은 `.py` 만 막는다(`#771` A0) — 그 밖은 종전 그대로다. `code` 는 `work_exts` 밖의 파일을 막는다 —
     1단계에서 C++ 가 섞여 들어오면 층1·골조 게이트가 `.py` 판으로 그 파일을 읽는다.
     [주의] 빈 이름은 무시한다(스펙의 선택 칸). 파일이 **하나도 없는** 조각은 여기서 막지 않는다 —
     그건 `_prepare_specs` 의 몫이다.
     """
-    if kind_of(project) != "code":
+    kind = kind_of(project)
+    if kind == "unreal":
+        # 🔴 `#771` A0 (사용자 결정 2026-10-09) — `.py` 만 막고 나머지 확장자는 종전 그대로 받는다.
+        #    층2 grounding·⑦ 통합 검사가 C++ 판 하나뿐이라 `.py` 조각을 판정할 자리가 없다(A 보류).
+        #    [주의] `.py`+C++ 를 섞은 work 도 이 판정으로 거절된다. `code` 는 섞일 수 없다 —
+        #    `work_exts` 가 `.py` 만 열려 있어 C++ 가 위 확장자 게이트에서 먼저 막힌다.
+        py = sorted({str(f) for f in (files or [])
+                     if str(f or "").strip() and Path(str(f)).suffix.lower() == ".py"})
+        if not py:
+            return []
+        return [f"`{project}` 는 `kind: unreal` 이다 — `.py` 조각은 층2·⑦ 이 언어별 판정을 갖출 "
+                f"때까지 받지 않는다 (`#771` A 보류) — 대상: {', '.join(py)}"]
+    if kind != "code":
         return []
     allow = work_exts(project)
     bad = sorted({str(f) for f in (files or [])
