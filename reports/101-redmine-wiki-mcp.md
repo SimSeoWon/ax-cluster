@@ -71,3 +71,14 @@ RAG의 redmine/client_mcp 문서 본문과 실제 소스를 대조했다. 참조
   공식 API에는 생성 전용 조건이 명시돼 있지 않다. 기존 페이지 수정은 version으로 보호한다.
 - 오늘 이전 Claude 세션(#762·#764·#767·#740)의 별도 리포트 미작성 상태는 이번 보고서로
   완료했다고 처리하지 않는다. 마스터 담당·워커 모드는 변경하지 않았다.
+
+### 후속 (2026-10-09 20:20~, Claude 세션 · 사용자 승인)
+
+- 커밋 `40c1012` 푸시 뒤 `ax-task-queue` 재기동(20:22:55, 신선도 3/3 OK) · 마운트 AXCluster
+  배달 `update` rc=0 3/3 OK(출처 `ca395da`).
+- 실 조회: MCP `redmine_get_wiki_page("아이디어수집")` → 8101 `GET /api/v1/redmine/wiki … 200`,
+  응답 Redmine 404. 경로·`ax-cluster` 귀속은 동작했고, 페이지는 `modularstage` 위키에 있다
+  (`docs/10-references.md:36`, 문서 근거 — 익명 위키 조회 401 이라 직접 미확인).
+- 사용자 결정: 위키 페이지는 옮기지 않고 #768 은 일감 본문을 정본으로 둔다. #769 는
+  「조회 실증 완료 · 실 쓰기·되읽기는 첫 실사용 때 확인」으로 **완료** 처리.
+- 이전 Claude 세션 리포트는 [리포트 102](102-gemini-delegation-and-usage-dedupe.md)로 작성했다.
