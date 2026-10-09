@@ -152,6 +152,8 @@ def build_attempts(stdout: str) -> list:
 # [주의] agy 는 **실행 모양**만 — 뒤에 플래그(`-…`)가 오거나 명령이 거기서 끝난다. `grep -rn agy …` 처럼
 #    낱말을 찾는 명령은 위임이 아니다(정규식 시험에서 오탐으로 잡혔다).
 _DELEGATE_MARKS = (("agy", re.compile(r"(^|[\s\\/\"'&|;(])agy(\.exe)?[\"']?(\s+-|\s*$)")),
+                   # Windows 세션1 중계(`#764` ⓑ) — 지휘자는 agy 를 부르지 않고 요청 표시 `.agy-work/in/<n>.go` 를 만든다
+                   ("agy(중계)", re.compile(r"\.agy-work[\\/]+in[\\/]+[A-Za-z0-9_-]+\.go\b")),
                    ("codex", re.compile(r"(^|[\s\\/\"'&|;(])codex(\.exe)?\s+exec\b")),
                    ("local", re.compile(r":(8102|11434)\b")))
 

@@ -767,6 +767,13 @@ def test_delegation_calls() -> None:
     check("[중요] 낱말 검색·말은 위임이 아니다", len(calls) == 3, str(calls))
     notes = R.delegation_notes(out)
     check("  노트 — 건마다 한 줄", len(notes) == 3 and notes[0].startswith("[지휘자] 위임: agy"), str(notes))
+    relay = "\n".join([json.dumps({"type": "thread.started"}),
+                        ev('powershell.exe -Command "Set-Content .agy-work/in/1/BRIEF.md x '
+                           'New-Item -ItemType File .agy-work/in/1.go | Out-Null"'),
+                        ev("powershell.exe -Command 'while (-not (Test-Path .agy-work/out/1.done)) {}'")])
+    k3, c3 = R.delegation_calls(relay)
+    check("[중요] Windows 중계 요청(.go)도 위임으로 센다 · 대기 명령은 아니다",
+          k3 and [k for k, _ in c3] == ["agy(중계)"], str(c3))
     none = "\n".join([json.dumps({"type": "thread.started"}), ev("cat src/a.py")])
     check("  이벤트는 있는데 위임이 없으면 「없음」",
           R.delegation_notes(none) == ["[지휘자] 위임 없음 — 명령 이벤트에 agy·codex exec·브로커 호출이 없다"],
