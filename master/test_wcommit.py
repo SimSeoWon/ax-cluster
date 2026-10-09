@@ -236,6 +236,43 @@ def test_happy_path():
         check("[중요] 대상 파일만 들었다", names == [SRC], str(names))
 
 
+def test_collects_delegations():
+    """🔴 `#764` — 지휘자가 `.ax/work/agy-out/` 에 남긴 agy 응답을 **복귀 전에** 마스터로 회수하고,
+    복귀가 워커의 그 폴더를 지운다. 이름 규칙 밖 파일은 가져오지 않는다."""
+    import os as _os
+    with tempfile.TemporaryDirectory() as td:
+        facts, bare, base, worker = _world(Path(td))
+        root = Path(td) / "deleg"
+        _os.environ["AX_DELEGATIONS_ROOT"] = str(root)
+        inner = _llm_writes(GOOD)
+
+        def llm(f, task_id, want):
+            out = Path(f.path) / ".ax" / "work" / "agy-out"
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "1.json").write_text('{"status": "SUCCESS", "response": "조사 결과"}', encoding="utf-8")
+            (out / "2.json").write_text('{"status": "ERROR", "response": ""}', encoding="utf-8")
+            (out / "bad name.json").write_text("x", encoding="utf-8")
+            (Path(f.path) / ".ax" / "work" / "agy-in").mkdir(parents=True, exist_ok=True)
+            return inner(f, task_id, want)
+        try:
+            c = _verified_run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+                              want=[SRC], llm=llm, ssh=_shell, reader=_reader,
+                              baseline=lambda p: KEEP_HDR if p == HDR else None)
+        finally:
+            _os.environ.pop("AX_DELEGATIONS_ROOT", None)
+        dest = root / WORK / TASK
+        got = sorted(x.name for x in dest.iterdir()) if dest.is_dir() else []
+        check("[중요] 위임 결과가 마스터로 회수된다", got == ["1.json", "2.json"], str(got))
+        check("  내용 그대로", (dest / "1.json").read_text(encoding="utf-8").endswith('"조사 결과"}')
+              if dest.is_dir() else False)
+        check("  회수 노트", any("위임 결과 2개 회수" in n for n in c.notes), str(c.notes))
+        check("  판정은 그대로 (통과)", c.ok, c.summary)
+        w = Path(facts.path) / ".ax" / "work"
+        check("[중요] 워커에는 agy-out·agy-in 이 남지 않는다",
+              not (w / "agy-out").exists() and not (w / "agy-in").exists(),
+              str(list(w.iterdir()) if w.is_dir() else []))
+
+
 def test_layer1_blocks_commit():
     """[중요] 층1 위반이면 **커밋하지 않는다** — verify-then-commit."""
     with tempfile.TemporaryDirectory() as td:
@@ -287,6 +324,8 @@ def test_layer1_block_records_what_the_conductor_said():
         check("  누가 말했는지 표시한다", "[지휘자]" in notes, notes[:80])
         check("[중요] 커밋은 여전히 안 생긴다 (로그를 남긴다고 통과시키지 않는다)",
               not c.head, c.head)
+        # `#764` 3a — codex 이벤트가 있는데 위임 명령이 없으면 「위임 없음」이 조각 기록에 남는다
+        check("`#764` 위임 여부가 조각 기록에 남는다", "[지휘자] 위임 없음" in notes, notes[-200:])
 
 
 def test_empty_body_blocks():
@@ -425,7 +464,7 @@ def test_layer2_commit_boundary():
 def main() -> int:
     for fn in (test_no_pseudo_and_no_change_is_a_no_op_not_a_failure,
                test_commands, test_returns_to_main, test_worker_keeps_nothing,
-               test_happy_path, test_layer1_blocks_commit,
+               test_happy_path, test_collects_delegations, test_layer1_blocks_commit,
                test_layer1_block_records_what_the_conductor_said,
                test_empty_body_blocks, test_no_change_is_not_success,
                test_refusals, test_llm_failure_does_not_commit, test_layer2_commit_boundary):

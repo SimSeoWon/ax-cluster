@@ -961,6 +961,9 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                 for _bd in runner.build_attempts(_out):
                     _log(f"[agent] {tid} @{f.host} 🔴 워커가 UE5 빌드를 돌렸다 — {_bd} "
                          f"(지시문이 금지한다 · 빌드 판정은 요청자 몫)")
+                # `#764` 3a — 위임 여부(codex 는 명령 이벤트 · claude 는 미상)
+                for _dl in runner.delegation_notes(_out):
+                    _log(f"[agent] {tid} @{f.host} {_dl}")
                 return _rc, _out
             from . import lanes as _LN
             skel = _skeleton_at(paths, base, files)

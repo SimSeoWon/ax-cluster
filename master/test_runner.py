@@ -745,6 +745,47 @@ def test_session1_attempt_isolation() -> None:
             check("#695 다른 request 결과는 성공으로 회수하지 않음", rc == 1 and "request_id" in out, out)
 
 
+def test_delegation_calls() -> None:
+    """🔴 `#764` 3a — 지휘자의 위임을 **명령 실행 이벤트로만** 센다. claude 출력은 「미상」이다."""
+    def ev(cmd, status="completed", code=0, kind="item.completed"):
+        return json.dumps({"type": kind, "item": {"type": "command_execution", "command": cmd,
+                                                  "status": status, "exit_code": code}})
+    agy = "/bin/bash -lc 'agy --dangerously-skip-permissions --output-format json -p hi'"
+    out = "\n".join([
+        json.dumps({"type": "thread.started"}),
+        ev(agy, "in_progress", None, "item.started"), ev(agy),
+        ev("codex exec --json q"), ev("curl -s http://192.168.0.57:8102/generate"),
+        ev("grep -rn agy master/work/lanes.py"), ev("rg -n \"agy\" docs"),
+        json.dumps({"type": "item.completed", "item": {"type": "agent_message",
+                                                       "text": "agy -p 로 맡기겠다"}}),
+    ])
+    known, calls = R.delegation_calls(out)
+    kinds = [k for k, _ in calls]
+    check("[중요] codex 이벤트면 잴 수 있다", known)
+    check("  agy·codex·local 셋 · 명령당 한 줄", kinds == ["agy", "codex", "local"], str(calls))
+    check("  마지막 상태로 적는다", "상태 completed · 종료 코드 0" in calls[0][1], calls[0][1])
+    check("[중요] 낱말 검색·말은 위임이 아니다", len(calls) == 3, str(calls))
+    notes = R.delegation_notes(out)
+    check("  노트 — 건마다 한 줄", len(notes) == 3 and notes[0].startswith("[지휘자] 위임: agy"), str(notes))
+    none = "\n".join([json.dumps({"type": "thread.started"}), ev("cat src/a.py")])
+    check("  이벤트는 있는데 위임이 없으면 「없음」",
+          R.delegation_notes(none) == ["[지휘자] 위임 없음 — 명령 이벤트에 agy·codex exec·브로커 호출이 없다"],
+          str(R.delegation_notes(none)))
+    claude = json.dumps({"type": "result", "result": "RESULT: DONE", "usage": {}})
+    k2, c2 = R.delegation_calls(claude)
+    check("[중요] claude JSON 은 「미상」 — 0 으로 접지 않는다", not k2 and c2 == []
+          and R.delegation_notes(claude)[0].startswith("[지휘자] 위임 미상"), str(R.delegation_notes(claude)))
+    check("  빈 출력도 미상 · 예외 없음", R.delegation_notes("")[0].startswith("[지휘자] 위임 미상"))
+
+
+def test_instruction_asks_delegation() -> None:
+    """`#764` — 지시문이 위임과 그 보고를 말한다(ASCII 유지 · 세션1 사본과 같은 글자는 별도 검사)."""
+    for s_ in ("delegate source research and analysis to agy", "codex, agy or the local broker",
+               "list what you delegated", ".ax/work/agy-out/"):
+        check(f"지시문이 말한다: {s_}", s_ in R.INSTRUCTION, R.INSTRUCTION[:80])
+    check("  여전히 ASCII", R.INSTRUCTION.isascii())
+
+
 def test_claude_auth_runtime() -> None:
     from unittest.mock import patch
     raw = "Failed to authenticate: OAuth session expired and could not be refreshed"
@@ -786,7 +827,8 @@ def main() -> int:
                test_session1_master_logs,
                test_session1_launcher_logs,
                test_session1_attempt_isolation,
-               test_worker_does_not_build, test_claude_auth_runtime):
+               test_worker_does_not_build, test_claude_auth_runtime,
+               test_delegation_calls, test_instruction_asks_delegation):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_runner: {PASS}/{total} 통과")

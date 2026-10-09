@@ -43,9 +43,11 @@
 """
 from __future__ import annotations
 
+import os
 import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from . import branch_names, layer1
 from .runner import DispatchError
@@ -177,10 +179,12 @@ def return_home_command(facts, home: str = HOME_BRANCH, branch: str = "",
     # 원격추적 캐시도 남기지 않는다 — 원격에서 지워도 prune 전까지 남는다(실측 2026-09-01)
     steps.append(f'(git remote prune origin -q || {tolerate})')
     if task_id:
-        art = (f'{facts.path}\\.ax\\work\\{task_id}' if facts.windows
-               else f'{facts.path}/.ax/work/{task_id}')
-        steps.append(f'(rmdir /s /q "{art}" || {tolerate})' if facts.windows
-                     else f'(rm -rf "{art}" || {tolerate})')
+        # `#764` — 위임 자료·결과 폴더도 지운다(회수는 복귀 **전에** `collect_delegations` 가 했다)
+        for name in (task_id, AGY_IN, AGY_OUT):
+            art = (f'{facts.path}\\.ax\\work\\{name}' if facts.windows
+                   else f'{facts.path}/.ax/work/{name}')
+            steps.append(f'(rmdir /s /q "{art}" || {tolerate})' if facts.windows
+                         else f'(rm -rf "{art}" || {tolerate})')
     steps.append('git rev-parse --abbrev-ref HEAD')
     return f'{cd} && git reset --hard -q HEAD && git clean -fdq && ' + " && ".join(steps)
 
@@ -264,6 +268,7 @@ def run(facts, task, *, work_id: str, base_commit: str, want, llm,
     try:
         return _cycle(facts, task_id, c, base, llm, do_ssh, do_read, baseline, verifier)
     finally:
+        collect_delegations(facts, do_ssh, do_read, c, work_id)    # `#764` — 복귀가 지우기 전에
         _return_home(facts, do_ssh, c)
 
 
@@ -301,6 +306,12 @@ def _cycle(facts, task_id: str, c: "Committed", base: str, llm, do_ssh, do_read,
                        for b in _ba(out or ""))
     except Exception as e:                                   # noqa: BLE001
         c.notes.append(f"[주의] 빌드 흔적을 못 읽었다 — {type(e).__name__}: {e}")
+    # 🔴 **위임했는지 남긴다** (`#764` 3a) — codex 모드는 명령 이벤트로 세고, claude 모드는 「미상」.
+    try:
+        from .runner import delegation_notes as _dn          # noqa: PLC0415
+        c.notes.extend(_dn(out or ""))
+    except Exception as e:                                   # noqa: BLE001
+        c.notes.append(f"[주의] 위임 흔적을 못 읽었다 — {type(e).__name__}: {e}")
     if rc != 0:
         # [중요] 실패 사유는 **푼 본문**으로 적는다 — 봉투 JSON 을 그대로 보이면 못 읽는다.
         errors = c.usage.get("errors", [])
@@ -412,6 +423,47 @@ def _cycle(facts, task_id: str, c: "Committed", base: str, llm, do_ssh, do_read,
         return c
     c.head, c.stage = head, ""
     return c
+
+
+# 🔴 **위임 결과를 마스터로 회수한다** (`#764`, 사용자 결정 2026-10-09). 지휘자는 agy 응답 봉투를
+#    `.ax/work/agy-out/<번호>.json` 에 남기고(지시문·`ax-work` §4), 마스터가 **복귀 전에** 가져와
+#    `~/ax-state/delegations/<work_id>/<task_id>/` 에 둔다. 워커는 임시 저장소라 복귀가 그 폴더를 지운다 —
+#    회수가 없으면 「agy 가 무엇을 답했나」는 그 워커 홈의 agy 대화 기록에만 남는다.
+# [주의] 지휘자는 task_id 를 모른다(지시문은 대상 파일만 싣는다) — 그래서 **고정 폴더**다. 한 체크아웃은
+#    한 번에 한 조각만 돌고, 복귀가 매번 지우므로 조각끼리 섞이지 않는다.
+# [주의] 판정을 바꾸지 않는다 — 회수 실패는 `[주의]` 노트다.
+AGY_IN, AGY_OUT = "agy-in", "agy-out"
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,80}\.json$")
+MAX_COLLECT = 50
+
+
+def delegations_root() -> Path:
+    return Path(os.environ.get("AX_DELEGATIONS_ROOT") or (Path.home() / "ax-state" / "delegations"))
+
+
+def collect_delegations(facts, do_ssh, do_read, c: Committed, work_id: str) -> None:
+    """워커의 `.ax/work/agy-out/*.json` → `delegations_root()/<work_id>/<task_id>/`. 예외를 던지지 않는다."""
+    try:
+        sep = "\\" if facts.windows else "/"
+        src = f"{facts.path}{sep}.ax{sep}work{sep}{AGY_OUT}"
+        cmd = (f'(dir /b "{src}\\*.json" 2>nul || ver >nul)' if facts.windows
+               else f'(ls -1 "{src}" 2>/dev/null || true)')
+        rc, out = do_ssh(facts, cmd, GIT_TIMEOUT)
+        names = [n.strip() for n in (out or "").splitlines() if _SAFE_NAME.match(n.strip())]
+        if not names:
+            c.notes.append(f"[지휘자] 위임 결과 파일 0개 ({AGY_OUT}/)")
+            return
+        dest = delegations_root() / (work_id or "_no_work") / c.task_id
+        dest.mkdir(parents=True, exist_ok=True)
+        got = 0
+        for n in sorted(names)[:MAX_COLLECT]:
+            text = do_read(facts, f"{src}{sep}{n}")
+            (dest / n).write_text(text, encoding="utf-8")
+            got += 1
+        more = f" · {len(names) - MAX_COLLECT}개는 상한 초과로 버렸다" if len(names) > MAX_COLLECT else ""
+        c.notes.append(f"[지휘자] 위임 결과 {got}개 회수 → {dest}{more}")
+    except Exception as e:                                   # noqa: BLE001
+        c.notes.append(f"[주의] 위임 결과를 회수하지 못했다 — {type(e).__name__}: {e}")
 
 
 def _return_home(facts, do_ssh, c: Committed) -> None:

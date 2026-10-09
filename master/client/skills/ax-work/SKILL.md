@@ -94,11 +94,33 @@ invariant 도 지켰지만, `CurrentStep`(실제는 `Step`) · `EMissionTaskExec
 
 `./.ax/config.json` 의 `backends` 가 이 머신에서 쓸 수 있는 것을 말해 준다.
 
+순서는 §0④ 그대로다 — **본문 초안은 `codex` → `agy` → 로컬**, 앞이 소진·실패하면 다음이다.
+**조사·분석은 `agy` 가 먼저다** (사용자 결정 2026-10-09, `#764`).
+
 | 백엔드 | 쓰는 자리 |
 |---|---|
-| **로컬 LLM** (`backends.ollama`) | 반복적 본문 채우기, 대량 변환. 무료다 |
-| **`agy`** (`backends.agy` 가 true 일 때) | 큰 파일 조사·정리. [중요] **`--add-dir` 로 파일을 쥐여줄 것** — 웹에서 찾으라고 시키면 출처를 지어낸다(실측). `-p` 는 **프롬프트 직전**에 둔다 |
-| **너(Claude)** | 오케스트레이션 · 소스 대조 · 최종 검증 |
+| **`codex`** (`backends.codex`) | 본문 초안 1차. `codex exec` 로 대상 파일·골조 주석을 주고 초안을 받는다. [주의] 네가 codex 지휘자라면 이 줄은 건너뛰고 직접 쓴다 |
+| **`agy`** (`backends.agy` 가 true 일 때) | **소스 조사·분석·요약** — 관련 클래스·호출 관계·선언부 정리, 큰 파일 훑기. 본문 초안 2차(codex 소진 시). [중요] **`--add-dir` 로 파일을 쥐여줄 것** — 웹에서 찾으라고 시키면 출처를 지어낸다(실측). `-p` 는 **프롬프트 직전**에 둔다 |
+| **로컬 LLM** (`backends.ollama`, 브로커 8102) | 본문 초안 3차 · 반복적 채우기·대량 변환. 무료다 |
+| **너** | 오케스트레이션 · 소스 대조 · **위임 결과 검증** · 최종 파일 작성 |
+
+`agy` 호출 모양 — 자료 사본과 지시서는 **`.ax/work/agy-in/`**, 응답 봉투는 **`.ax/work/agy-out/<번호>.json`**
+(체크아웃 기준 상대 경로 · 저장소를 통째로 주지 않는다):
+
+    agy --dangerously-skip-permissions --output-format json --add-dir .ax/work/agy-in -p "Read BRIEF.md in the added directory and follow it exactly. Return the result as your response. Do not create or modify files." > .ax/work/agy-out/1.json
+
+🔴 [중요] **응답은 반드시 `agy-out/` 에 파일로 남긴다** (사용자 결정 2026-10-09, `#764`). 마스터가 조각을 마칠 때
+그 폴더를 `~/ax-state/delegations/<work_id>/<task_id>/` 로 회수하고, 워커의 `agy-in`·`agy-out` 은 지운다
+— 파일로 안 남기면 「agy 가 무엇을 답했나」를 아무도 다시 볼 수 없다. 두 번째 호출은 `2.json` 이다.
+
+- 지시 내용은 `BRIEF.md` **파일**에 쓴다 — 명령줄에 한글·백틱을 싣지 않는다(Windows 콘솔 CP949 · 셸 치환)
+- 지시서에 「주장마다 `src/경로:줄번호` 를 링크 없이 단다 · 확인 못 한 것은 「확인 불가」」를 넣는다
+- 응답은 JSON 봉투다 — `response` 가 본문. `status` 가 `ERROR` 여도 agy 가 스스로 재시도해 끝냈을 수 있다
+  (실측 2026-10-09, 503 용량 부족) — 본문이 비었는지·잘렸는지 네가 본다
+- 인용 몇 개를 원본과 대조한 뒤에만 그 결과로 판단한다
+
+🔴 [중요] **무엇을 위임했는지 제출물에 적는다** (§6) — 백엔드 · 무엇을 · 어떻게 검증했나. 마스터는
+codex 지휘자의 명령 실행 기록에서 `agy`·`codex exec`·브로커 호출을 따로 세어 조각 기록에 남긴다.
 
 [중요] **위임 결과의 "완료" 를 믿지 말고 산출물을 확인한다.** `agy` 가 `status:"SUCCESS"` 를
 반환하면서 파일을 안 쓴 사건이 있다. 파일이 생겼는지, 내용이 맞는지 **네가 본다.**

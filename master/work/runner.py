@@ -86,10 +86,14 @@ INSTRUCTION = (
     "Do not ask for approval, do not propose a plan for review, do not wait for confirmation - implement the bodies now. "
     "Read the [DOC] and [PSEUDO] comments in these files and write their bodies: {files}. "
     "Judge from the source files in this checkout, not from memory. "
+    "Per section 4 of the ax-work skill, delegate source research and analysis to agy "
+    "and bulk body drafts to codex, agy or the local broker, then verify the result yourself. "
     "Do not run any git command. Do not commit or push. "
     "Do not run UE5 builds, UnrealBuildTool, UnrealEditor or automation tests, "
     "and for Python files do not start servers, run the program or run tests - "
     "verification is done later by the requester, not on this worker. "
+    "Save each raw agy JSON response as a numbered file in .ax/work/agy-out/ - the master collects it. "
+    "Above the RESULT line, list what you delegated, to which backend, and how you checked it. "
     "The last non-empty line of your output must be exactly RESULT: DONE "
     "(use RESULT: BLOCKED if you could not finish, and say why above it)."
 )
@@ -137,6 +141,58 @@ def build_attempts(stdout: str) -> list:
         if any(m in cmd for m in _BUILD_MARKS):
             found[cmd] = (item.get("status") or "?", item.get("exit_code"))
     return [f"{c[:200]} (상태 {s} · 종료 코드 {code})" for c, (s, code) in found.items()]
+
+
+# 🔴 **지휘자가 실제로 위임했는지 잰다** (`#764` 3a, 사용자 결정 2026-10-09). 실측: 워커 3대의 agy 세션 0건 —
+#    위임은 `ax-work` §4 와 지시문이 시킬 뿐 강제하지 않는다. `build_attempts` 와 같은 결로 **명령 실행
+#    이벤트만** 센다(말로 「agy 에 맡기겠다」고 쓴 것은 세지 않는다). 판정을 바꾸지 않는다 — 기록용이다.
+# [주의] **codex 모드에서만 잴 수 있다.** claude 모드는 `--output-format json` 이 최종 결과 하나라
+#    명령 이벤트가 없다 → `known=False`(「없다」가 아니라 「모른다」). 0 으로 접지 않는다.
+# [주의] agy 는 **실행 모양**만 — 뒤에 플래그(`-…`)가 오거나 명령이 거기서 끝난다. `grep -rn agy …` 처럼
+#    낱말을 찾는 명령은 위임이 아니다(정규식 시험에서 오탐으로 잡혔다).
+_DELEGATE_MARKS = (("agy", re.compile(r"(^|[\s\\/\"'&|;(])agy(\.exe)?[\"']?(\s+-|\s*$)")),
+                   ("codex", re.compile(r"(^|[\s\\/\"'&|;(])codex(\.exe)?\s+exec\b")),
+                   ("local", re.compile(r":(8102|11434)\b")))
+
+
+def delegation_calls(stdout: str) -> tuple:
+    """지휘자 출력 → `(known, [(백엔드, "명령 (상태 · 종료 코드)")…])`. 예외를 던지지 않는다.
+
+    `known` 은 codex JSONL 이벤트가 하나라도 있었는가다 — 없으면 위임 여부를 **모른다**.
+    같은 명령이 `item.started`·`item.completed` 로 두 번 오므로 명령당 한 줄, 마지막 상태로 적는다.
+    """
+    known, found = False, {}
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(d, dict):
+            continue
+        if "item" in d or str(d.get("type") or "").startswith(("thread.", "turn.", "item.")):
+            known = True
+        item = d.get("item")
+        if not isinstance(item, dict) or item.get("type") != "command_execution":
+            continue
+        cmd = " ".join(str(item.get("command") or "").split())
+        for kind, rx in _DELEGATE_MARKS:
+            if rx.search(cmd):
+                found[cmd] = (kind, item.get("status") or "?", item.get("exit_code"))
+                break
+    return known, [(k, f"{c[:200]} (상태 {s} · 종료 코드 {code})") for c, (k, s, code) in found.items()]
+
+
+def delegation_notes(stdout: str) -> list:
+    """조각 기록·로그에 실을 줄. 위임이 있으면 건마다, 없으면 「없음」, 못 재면 「미상」 한 줄."""
+    known, calls = delegation_calls(stdout)
+    if calls:
+        return [f"[지휘자] 위임: {k} — {c}" for k, c in calls]
+    if known:
+        return ["[지휘자] 위임 없음 — 명령 이벤트에 agy·codex exec·브로커 호출이 없다"]
+    return ["[지휘자] 위임 미상 — 명령 이벤트가 없는 출력(claude 모드)이라 잴 수 없다"]
 
 
 class DispatchError(RuntimeError):
