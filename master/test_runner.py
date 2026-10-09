@@ -873,6 +873,26 @@ def test_instruction_asks_delegation() -> None:
     check("  여전히 ASCII", R.INSTRUCTION.isascii())
 
 
+def test_delegation_failure_blocks() -> None:
+    """`#774` D — 위임 실패는 다음 활성 레인으로 넘길 수 있고, 시도한 백엔드가 모두 실패하면
+    직접 하지 않고 `RESULT: BLOCKED` 로 멈춘다(10-09 `#764` 를 뒤집음 · 사용자 결정 2026-10-10)."""
+    for s_ in ("If a delegation you attempt fails", "non-zero exit, timeout, or an empty or unusable response",
+               "retry that work with the next enabled backend in the lane order",
+               "if every backend you tried fails, do not do that work yourself",
+               "keep the raw response files in .agy-work/out/", "state each backend, exit code and error",
+               "stop with RESULT: BLOCKED", "not enabled in .ax/config.json is not a failure"):
+        check(f"지시문이 말한다: {s_}", s_ in R.INSTRUCTION, R.INSTRUCTION[:80])
+    check("[중요] 옛 「직접 하라」 문구가 없다",
+          "do that work yourself - it is not a reason to stop" not in R.INSTRUCTION)
+    check("  여전히 ASCII", R.INSTRUCTION.isascii())
+    src = (Path(__file__).resolve().parents[1] / "client" / "runtime"
+           / "session1_conductor.py").read_text(encoding="utf-8")
+    check("[중요] 세션1 사본도 같은 문구다", "stop with RESULT: BLOCKED" in src
+          and "if every backend you tried fails" in src
+          and "next enabled backend in the lane order" in src
+          and "it is not a reason to stop" not in src)
+
+
 def test_session1_agy_relay() -> None:
     """🔴 `#764` ⓑ — 런처가 codex 가 도는 동안 `.agy-work/in/<n>.go` 를 받아 **샌드박스 밖에서** agy 를 돌린다.
 
@@ -990,6 +1010,7 @@ def main() -> int:
                test_session1_attempt_isolation,
                test_worker_does_not_build, test_claude_auth_runtime,
                test_delegation_calls, test_instruction_asks_delegation,
+               test_delegation_failure_blocks,
                test_session1_agy_relay, test_relay_events_are_authoritative,
                test_session1_after_appends_relay_events):
         fn()
