@@ -4,7 +4,31 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-08 23:45 · Claude** (Codex 한도 소진으로 인계서 없이 인수).
+- **현재 체크포인트: 2026-10-09 01:30 · Claude · 사용자 당일 작업 종료** (BC250 종료 요청).
+  - **저장소**: HEAD = origin/main `6b5e96e`, 미커밋은 이 문서뿐(커밋 승인 없음). 코드 변경 없음.
+  - **지휘 상태**: 마스터 담당 기록 `claude`(10-06, 변경 안 함). **워커 전역 모드 `claude`**
+    (10-09 00:49 사용자 지시 — Codex 사용 한도 소진, 02:40 해제 예고). `.43` Claude 로그아웃이었고
+    사용자가 재로그인 → 강제 재검사 2/2. 말하기 전에 `get_orchestration_tool` 로 재조회.
+  - **MotionForge 묶음**: #706 완료(합성 99/99·워터마크 f57b82b) · #259 onboard --confirm rc0
+    (완료 조건 3 판정은 사람 몫, 진행 유지) · #709 90%(AX 등록 해제·트윈·.2/.43/.33 클론·.2
+    예약작업·Gitea 저장소·Redmine kimodo 삭제. 남은 것 GitHub `SimSeoWon/Test_KimodoMotion` —
+    사용자 웹 삭제 대기, 비로그인 200). 백업 `~/claude-workspace/backups/kimodomotion_webui-20261009/`.
+    [주의] 프로젝트 등록 해제 명령이 없어 `projects.yaml` 손편집.
+  - **#695 분산 재실증 (Unreal 에디터 미리보기 · 사용자 요구 3: 에디터 전용 월드 재생 · 생성 창에
+    그 월드 · 캐릭터 모델 변경)**: 1차 work `20261009_0036…`(codex, #755) 4/4 한도 실패 → 취소.
+    재등재 `20261009_0051_motionforge_aac50fe6`(claude, **#756**): 3조각 verified(.2 641b365·06bd3a9,
+    .43 7d77bda), `0906d6fc`(MotionForgeEditorModule.cpp)는 층2 REQUEST_CHANGES 6건 **오탐**(#757)
+    → 사용자 결정으로 취소 → `.33` ⑦: 3조각 머지·본문 직접 채움, BUILD OK 32.9s/8.6s,
+    작업 브랜치 전진 `18492fe → e5c54b3`. 런타임 미확인(main 반영 뒤 확인 예정).
+  - 🔴 **다음 막힘**: 조각 하나 취소로 work `merge_status=cancelled` (`logic_lifecycle._flip_if_all_terminal`)
+    → `finalize_work` 는 ready_for_review/in_progress 만 받음(`review.py:677`) → **main 마감 거절 예상
+    (미실행·코드 판독)**. 갈래(사용자 미결정): ① 큐 규칙 수정(인프라 변경, RAG·승인) ② `.33` 수동 main
+    머지 ③ finalize 한 번 시도해 거절 확인. 근거 #757 노트.
+  - **.2 정리**: Codex 데스크톱 앱 재기동 발견 → 종료(sandbox 서비스는 남김), 홈 그림자 스킬 백업 후
+    삭제(`~/claude-workspace/backups/2-agents-skills-20261009/`), check 3/3 경고 없음 (#661 노트).
+  - **옛 브랜치**: `task/20261009_0036…/*`(취소 work) 미병합으로 Gitea 에 남음.
+  - **운영**: 진행 중 work 0. `ax-projects` 23:56:23 재기동. BC250(.43) 종료.
+- **직전 체크포인트: 2026-10-08 23:45 · Claude** (Codex 한도 소진으로 인계서 없이 인수).
   Codex 미커밋 「제미나이 1차·로컬 폴백」 합성 변경을 사용자 승인으로 `4a9fb87` 커밋·푸시,
   `master.client update` 3/3. 사슬 agy→gemma4:e4b→codex→gemma3:12b, 호출·형식·사실 거부
   모두 다음 모델로. 커밋 전 23:24 색인기 타이머가 작업 트리 코드로 이미 돌아 agy 10건 전부
