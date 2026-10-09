@@ -34,6 +34,7 @@ import re
 import subprocess
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 
 DEFAULT_URL = "http://192.168.0.57:8080"
 
@@ -492,6 +493,92 @@ def get_issue(issue_id, *, key: str = "", url: str = "", sender=None) -> dict:
 # [중요] **실측값이다** (2026-09-20 `#652`) — 추측이 아니다. 255 는 통과하고 256 은
 #    `422 {"errors":["설명 은 너무 깁니다 (최대 255자 까지)"]}` 로 거절된다.
 DESCRIPTION_MAX = 255
+
+
+def _wiki_result(got, project, endpoint):
+    page = got.get("wiki_page") if isinstance(got, dict) else None
+    if (not isinstance(page, dict) or not isinstance(page.get("text"), str)
+            or type(page.get("version")) is not int or page["version"] < 1
+            or not isinstance(page.get("title"), str) or not page["title"]):
+        raise ValueError("wiki_page 본문·제목·버전 응답이 올바르지 않다")
+    parent = page.get("parent")
+    if parent is not None and (not isinstance(parent, dict)
+                              or not isinstance(parent.get("title"), str) or not parent["title"]):
+        raise ValueError("위키 부모 응답이 올바르지 않다")
+    return {"ok": True, "wiki_page": page, "title": page["title"],
+            "version": page["version"], "redmine_project": project,
+            "url": endpoint.removesuffix(".json")}
+
+
+def get_wiki_page(title: str, *, project: str, key: str = "", url: str = "", sender=None) -> dict:
+    """REST WikiPages 조회. project는 라우터가 확인한 Redmine 식별자다."""
+    if not isinstance(title, str) or not title.strip() or not project:
+        return {"ok": False, "error": "위키 제목·프로젝트가 필요하다"}
+    k = key or api_key()
+    if not k:
+        return {"ok": False, "error": "레드마인 API 키를 찾지 못했다"}
+    endpoint = (f"{(url or base_url()).rstrip('/')}/projects/{quote(project, safe='')}"
+                f"/wiki/{quote(title.strip(), safe='')}.json")
+    try:
+        return _wiki_result(_request("GET", endpoint, k, sender=sender), project, endpoint)
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "error": f"위키 조회 실패 — HTTP {e.code}", "http_status": e.code}
+    except Exception as e:
+        return {"ok": False, "error": f"위키 조회 실패 — {type(e).__name__}: {e}"}
+
+
+def put_wiki_page(title: str, text: str, *, project: str, mode: str = "append",
+                  version=None, comments: str = "", key: str = "", url: str = "", sender=None) -> dict:
+    """본문·부모 보존, 버전 경합 방지, 저장 후 되읽기. 자동 재시도하지 않는다."""
+    if (not isinstance(title, str) or not title.strip()
+            or not isinstance(text, str) or not text.strip() or not project
+            or not isinstance(comments, str) or mode not in ("append", "replace")
+            or (version is not None and (type(version) is not int or version < 1))):
+        return {"ok": False, "error": "위키 제목·본문·mode·version·comments 입력이 올바르지 않다"}
+    k = key or api_key()
+    if not k:
+        return {"ok": False, "error": "레드마인 API 키를 찾지 못했다"}
+    endpoint = (f"{(url or base_url()).rstrip('/')}/projects/{quote(project, safe='')}"
+                f"/wiki/{quote(title.strip(), safe='')}.json")
+    current = get_wiki_page(title, project=project, key=k, url=url, sender=sender)
+    missing = current.get("http_status") == 404
+    if not current.get("ok") and not missing:
+        return current
+    payload = {"text": text, "comments": comments}
+    if missing:
+        if version is not None:
+            return {"ok": False, "error": "새 페이지에는 version을 지정할 수 없다"}
+    else:
+        actual_version = current["version"]
+        if (mode == "replace" and version is None) or (version is not None and version != actual_version):
+            return {"ok": False, "error": "조회한 현재 version과 일치하는 값을 지정해야 한다",
+                    "version": actual_version}
+        payload["version"] = actual_version
+        parent = current["wiki_page"].get("parent")
+        if parent is not None:
+            if not isinstance(parent, dict) or not isinstance(parent.get("title"), str) or not parent["title"]:
+                return {"ok": False, "error": "위키 부모 응답이 올바르지 않다"}
+            payload["parent_title"] = parent["title"]
+        if mode == "append":
+            old = current["wiki_page"]["text"]
+            payload["text"] = old + ("\n" if old and not old.endswith("\n") else "") + text
+    try:
+        _request("PUT", endpoint, k, {"wiki_page": payload}, sender=sender)
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "error": f"위키 저장 실패 — HTTP {e.code}: {_http_error_reasons(e)}",
+                "http_status": e.code, "retry_safe": False}
+    except Exception as e:
+        return {"ok": False, "error": f"위키 저장 결과 불명 — {type(e).__name__}: {e}",
+                "possibly_applied": True, "retry_safe": False}
+    out = get_wiki_page(title, project=project, key=k, url=url, sender=sender)
+    expected_parent = payload.get("parent_title")
+    actual_parent = ((out.get("wiki_page") or {}).get("parent") or {}).get("title")
+    if (not out.get("ok") or out["wiki_page"]["text"] != payload["text"]
+            or actual_parent != expected_parent):
+        return {"ok": False, "error": "위키 저장 후 본문·부모 확인 실패 — 반영됐을 수 있으므로 재조회 필요",
+                "possibly_applied": True, "retry_safe": False, "readback": out}
+    out.update(created=missing, mode=mode)
+    return out
 
 
 def _http_error_reasons(err) -> str:

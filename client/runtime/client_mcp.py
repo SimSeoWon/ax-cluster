@@ -423,6 +423,33 @@ def tool_redmine_meta(api) -> dict:
     return api("GET", "/api/v1/redmine/meta")
 
 
+def tool_redmine_get_wiki_page(api, title) -> dict:
+    if not isinstance(title, str) or not title.strip():
+        raise ClientError("title 은 비어 있지 않은 문자열이어야 한다")
+    return api("GET", "/api/v1/redmine/wiki?title=" +
+               urllib.parse.quote(title.strip(), safe=""))
+
+
+def tool_redmine_put_wiki_page(api, title, text, *, mode="append",
+                              version=None, comments="") -> dict:
+    """본문 보존·버전 검사·쓰기 후 되읽기는 마스터에 한 벌만 둔다 (#769)."""
+    if not isinstance(title, str) or not title.strip():
+        raise ClientError("title 은 비어 있지 않은 문자열이어야 한다")
+    if not isinstance(text, str) or not text.strip():
+        raise ClientError("text 는 비어 있지 않은 문자열이어야 한다")
+    if mode not in ("append", "replace"):
+        raise ClientError("mode 는 append 또는 replace 여야 한다")
+    if version is not None and (type(version) is not int or version < 1):
+        raise ClientError("version 은 양의 정수여야 한다")
+    if not isinstance(comments, str):
+        raise ClientError("comments 는 문자열이어야 한다")
+    payload = {"title": title.strip(), "text": text, "mode": mode,
+               "comments": comments}
+    if version is not None:
+        payload["version"] = version
+    return api("PUT", "/api/v1/redmine/wiki", payload)
+
+
 def tool_redmine_create_issue(api, subject: str, description: str = "",
                               tracker_name: str = "", priority_name: str = "",
                               fixed_version: str = "", parent_issue_id=None) -> dict:
@@ -1089,6 +1116,25 @@ TOOLS = [
                     "마일스톤 목록은 **이 체크아웃의 프로젝트 것**이다(응답의 versions_project "
                     "가 무엇을 봤는지 말한다).",
      "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "redmine_get_wiki_page",
+     "description": "이 체크아웃 프로젝트의 Redmine 위키 본문 전체와 version 을 조회한다. "
+                    "교체 전에 반드시 읽어 기존 내용을 보존한다. 마스터 경유이며 키는 필요 없다.",
+     "inputSchema": {"type": "object", "required": ["title"],
+                     "additionalProperties": False,
+                     "properties": {"title": {"type": "string", "minLength": 1}}}},
+    {"name": "redmine_put_wiki_page",
+     "description": "Redmine 위키를 작성·수정한다. 기본 append 는 기존 본문을 읽고 보존해 "
+                    "추가한다. replace 는 기존 페이지 조회에서 받은 version 과 전체 본문이 "
+                    "필수다. 없는 페이지는 생성한다. 마스터가 쓰기 후 되읽어 본문을 검증하며 "
+                    "충돌·검증 실패는 자동 재시도하지 않는다. 프로젝트는 체크아웃 태그로 고정된다.",
+     "inputSchema": {"type": "object", "required": ["title", "text"],
+                     "additionalProperties": False,
+                     "properties": {"title": {"type": "string", "minLength": 1},
+                                    "text": {"type": "string", "minLength": 1},
+                                    "mode": {"type": "string", "enum": ["append", "replace"],
+                                             "default": "append"},
+                                    "version": {"type": "integer", "minimum": 1},
+                                    "comments": {"type": "string"}}}},
     {"name": "redmine_create_version",
      "description": "마일스톤(레드마인 버전)을 새로 만든다 (마스터 경유). 만들 프로젝트는 이 "
                     "체크아웃의 프로젝트 태그가 정한다 — 고를 수 없다. redmine_create_issue 의 "
@@ -1353,6 +1399,7 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                 "redmine_get_issue", "redmine_meta", "redmine_create_issue",
                 "redmine_create_version", "redmine_update_version",
                 "redmine_delete_version", "redmine_link_commit",
+                "redmine_get_wiki_page", "redmine_put_wiki_page",
                 # 레시피·안티패턴 읽기 — 큐 대행이므로 같은 자리다 (`#267`)
                 "find_recipes", "get_anti_patterns",
                 # history 읽기 (`#306`) — 쓰기(`log_history`)와 같은 대행 자리
@@ -1401,6 +1448,16 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
             return tool_redmine_get_issue(a, args.get("issue_id"))
         if name == "redmine_meta":
             return tool_redmine_meta(a)
+        if name in ("redmine_get_wiki_page", "redmine_put_wiki_page"):
+            allowed = ({"title"} if name == "redmine_get_wiki_page" else
+                       {"title", "text", "mode", "version", "comments"})
+            if set(args) - allowed:
+                raise ClientError("위키 도구에 허용되지 않은 인자가 있다 — 프로젝트는 체크아웃 태그로 정한다")
+            if name == "redmine_get_wiki_page":
+                return tool_redmine_get_wiki_page(a, args.get("title"))
+            return tool_redmine_put_wiki_page(
+                a, args.get("title"), args.get("text"), mode=args.get("mode", "append"),
+                version=args.get("version"), comments=args.get("comments", ""))
         if name == "redmine_create_version":
             return tool_redmine_create_version(a, str(args.get("name") or ""),
                                                due_date=str(args.get("due_date") or ""),

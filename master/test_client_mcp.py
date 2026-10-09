@@ -254,6 +254,83 @@ def test_redmine_delegation_goes_to_queue():
         check(f"{name} 빈 인자 → isError", r["result"]["isError"] is True, str(r))
 
 
+def test_redmine_wiki_tools():
+    names = {t["name"]: t for t in M.TOOLS}
+    for name in ("redmine_get_wiki_page", "redmine_put_wiki_page"):
+        schema = names[name]["inputSchema"]
+        check(f"{name} 프로젝트 선택을 노출하지 않는다",
+              "project" not in schema["properties"] and schema["additionalProperties"] is False)
+    check("위키 쓰기 기본값·버전 스키마",
+          names["redmine_put_wiki_page"]["inputSchema"]["properties"]["mode"]["default"] == "append"
+          and names["redmine_put_wiki_page"]["inputSchema"]["properties"]["version"]["minimum"] == 1)
+    calls = []
+    response = {"ok": True, "wiki_page": {"text": "기존\n추가", "version": 3}}
+    def api(method, path, payload=None):
+        calls.append((method, path, payload))
+        return response
+    title = "아이디어 / 수집?&project=남의것"
+    got = M.dispatch_tool("redmine_get_wiki_page", {"title": title}, api=api)
+    check("위키 제목 전체 URL 인코딩",
+          calls[-1] == ("GET", "/api/v1/redmine/wiki?title=" +
+                         M.urllib.parse.quote(title, safe=""), None), str(calls[-1]))
+    check("위키 응답 전체 보존", got is response)
+    M.dispatch_tool("redmine_put_wiki_page", {"title": title, "text": "  추가\n"}, api=api)
+    check("위키 append 는 원문 추가분을 PUT JSON 으로 전달",
+          calls[-1] == ("PUT", "/api/v1/redmine/wiki",
+                        {"title": title, "text": "  추가\n", "mode": "append", "comments": ""}),
+          str(calls[-1]))
+    M.dispatch_tool("redmine_put_wiki_page", {"title": title, "text": "전체 본문",
+                    "mode": "replace", "version": 3, "comments": "기록"}, api=api)
+    check("교체 조회 버전·코멘트 전달", calls[-1][2]["version"] == 3
+          and calls[-1][2]["mode"] == "replace" and calls[-1][2]["comments"] == "기록")
+    invalid = [("redmine_get_wiki_page", {"title": v}) for v in (None, "  ", 1)]
+    base = {"title": "수집", "text": "추가"}
+    invalid += [("redmine_put_wiki_page", {**base, k: v}) for k, v in
+                (("title", ""), ("title", False), ("text", " \n"), ("text", 12),
+                 ("mode", "unknown"), ("mode", None), ("version", True),
+                 ("version", 0), ("version", -1), ("version", 1.5), ("version", "1"),
+                 ("comments", None), ("project", "다른 프로젝트"))]
+    for name, args in invalid:
+        before = len(calls)
+        result = M.handle_message({"id": 769, "method": "tools/call",
+                                   "params": {"name": name, "arguments": args}}, api=api)
+        check(f"위키 잘못된 인자 왕복 없이 거부 {args}",
+              result["result"]["isError"] is True and len(calls) == before)
+    failure = {"ok": False, "error": "검증 실패", "possibly_applied": True, "retry_safe": False}
+    check("위키 서버 실패·반영 가능성 그대로 전달",
+          M.dispatch_tool("redmine_put_wiki_page", base,
+                          api=lambda *a: failure) is failure)
+    def unavailable(*args):
+        raise M.ClientError("[미연결] 마스터 연결 실패")
+    result = M.handle_message({"id": 769, "method": "tools/call",
+                              "params": {"name": "redmine_get_wiki_page",
+                                         "arguments": {"title": "수집"}}}, api=unavailable)
+    check("위키 통신 실패 MCP isError 전달", result["result"]["isError"] is True)
+
+
+def test_redmine_wiki_project_injection():
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        ax = root / ".ax"
+        ax.mkdir()
+        (ax / "config.json").write_text(json.dumps({"project": "AXCluster",
+            "master": {"host": "192.168.0.57", "services": {"task_queue": 8101}}}), "utf-8")
+        (ax / "token").write_text("tok-abcdefghijklmnopqrstuvwxyz012345\n", "utf-8")
+        calls = []
+        old = M._call
+        try:
+            M._call = lambda method, url, token, payload=None, **kw: calls.append(
+                (method, url, payload)) or {"ok": True}
+            M.dispatch_tool("redmine_get_wiki_page", {"title": "아이디어"}, root=root)
+            M.dispatch_tool("redmine_put_wiki_page", {"title": "아이디어", "text": "추가"}, root=root)
+        finally:
+            M._call = old
+        check("위키 GET 큐 호출자 프로젝트 주입",
+              calls[0][1].endswith("&project=AXCluster") and "/api/v1/redmine/wiki?title=" in calls[0][1])
+        check("위키 PUT 큐 호출자 프로젝트 주입",
+              calls[1][0] == "PUT" and calls[1][2]["project"] == "AXCluster")
+
+
 def test_task_templates_read_surface():
     """태스크 템플릿은 **8103**(공개 읽기) 이다 — 도메인 조회와 같은 등급의 구조 자료.
 
@@ -763,6 +840,7 @@ def main() -> int:
                test_domain_layer_carries_manifest_and_navigation,
                test_find_invariants_sweeps_and_says_how_it_matched,
                test_redmine_delegation_goes_to_queue,
+               test_redmine_wiki_tools, test_redmine_wiki_project_injection,
                test_task_templates_read_surface):
         fn()
     total = PASS + FAIL

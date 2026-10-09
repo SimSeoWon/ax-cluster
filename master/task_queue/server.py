@@ -28,7 +28,7 @@ from .models import (
     ClaimReq, HeartbeatReq, SubmitReq, SubmitFailReq, VerifyReq, CancelReq,
     AdminResetReq,
     WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq,
-    RedmineIssueReq, RedmineLinkCommitReq, RedmineVersionReq,
+    RedmineIssueReq, RedmineLinkCommitReq, RedmineVersionReq, RedmineWikiReq,
     RedmineVersionPatchReq, RedmineVersionDeleteReq,
     WriterSignalReq, HistoryReq, AliasReq, NotAClassReq, RecipeSearchReq, \
     HistorySearchReq, FixStatusReq
@@ -461,6 +461,23 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
     #    리더 PC 가 키를 갖고 직접 읽었고, 우리는 키가 마스터에만 있으니 대행이 그 자리다.
     # [주의] 실패해도 200 + `error` 문장이다 — `redmine/note` 와 같은 관례(조용한 실패 금지,
     #    다만 흐름을 막지 않는다). 호출자가 사람에게 사유를 그대로 보여 준다.
+
+    @app.get("/api/v1/redmine/wiki")
+    def redmine_wiki_get_ep(title: str, project: str = ""):
+        from ..redmine import get_wiki_page, project_of
+        target = project_of(project)
+        if not target:
+            return {"ok": False, "error": f"`{project}` 의 redmine.project가 없다 — 폴백하지 않는다"}
+        return get_wiki_page(title, project=target)
+
+    @app.put("/api/v1/redmine/wiki")
+    def redmine_wiki_put_ep(req: RedmineWikiReq):
+        from ..redmine import put_wiki_page, project_of
+        target = project_of(req.project)
+        if not target:
+            return {"ok": False, "error": f"`{req.project}` 의 redmine.project가 없다 — 폴백하지 않는다"}
+        return put_wiki_page(req.title, req.text, project=target, mode=req.mode,
+                             version=req.version, comments=req.comments)
 
     @app.get("/api/v1/redmine/issues")
     def redmine_issues_ep(status: str = "open", tracker: str = "", fixed_version: str = "",

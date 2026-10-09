@@ -516,12 +516,19 @@ def test_synth_source_only() -> None:
         except synth.SynthError as e:
             check(f"{label} → 거부", "Source/" in str(e), str(e)[:80])
 
+    # dry_run도 모델을 호출한다. 경계 검사에서는 기존 caller 주입으로 외부 호출을 격리한다.
+    fake_calls = []
+    def fake_model(url, payload):
+        fake_calls.append(payload)
+        return "---\ntags: [source]\ncategory: Code/Source\nrelated_classes: []\n---\n\n## 요약\n소스 변수 선언.\n\n## 개선 필요 사항\n없음\n"
+    injected = {"caller": fake_model, "model": "fake", "chain": ["fake"], "parallel": 1}
     # 정상 경로는 그대로 돈다 (경계가 기능을 막지 않는다)
-    s = synth.run(paths, changed=["Source/A.cpp"], dry_run=True)
+    s = synth.run(paths, changed=["Source/A.cpp"], dry_run=True, **injected)
     check("Source/ 안은 통과한다", s.groups == 1, str(s.groups))
     # 윈도우 diff 출력(백슬래시)도 같은 판정을 받는다
-    s2 = synth.run(paths, changed=["Source\\A.cpp"], dry_run=True)
+    s2 = synth.run(paths, changed=["Source\\A.cpp"], dry_run=True, **injected)
     check("백슬래시도 정규화 후 통과", s2.groups == 1, str(s2.groups))
+    check("정상 경로 두 건은 fake 모델로 합성한다", len(fake_calls) == 2, str(len(fake_calls)))
 
 
 # ── ⑥-g 기계↔마스터 커밋 대조 (사용자 2026-08-22) ────────────────

@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictInt, StrictStr
 
 # ─────────────────────────────────────────
 # 상수
@@ -253,6 +253,15 @@ class RedmineIssueReq(BaseModel):
     #    그 상태가 실제로 13건 쌓였다. 이름 해석 실패는 응답의 `skipped` 에 사유가 온다.
     fixed_version: str = ""            # 마일스톤 이름. 부분 일치 허용 (`마일스톤 6`)
     parent_issue_id: Optional[int] = None
+
+
+class RedmineWikiReq(BaseModel):
+    project: StrictStr = ""
+    title: StrictStr
+    text: StrictStr
+    mode: StrictStr = "append"
+    version: Optional[StrictInt] = None
+    comments: StrictStr = ""
 
 
 class RedmineVersionReq(BaseModel):

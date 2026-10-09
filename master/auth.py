@@ -178,6 +178,7 @@ REQUESTER_SCOPE: tuple = (
     ("PATCH", "/api/v1/works/"),
     ("POST", "/api/v1/redmine/note"),
     ("GET", "/api/v1/redmine/"),         # 조회 (#226 — 원전 redmine_tracker 이식)
+    ("PUT", "/api/v1/redmine/wiki", "", "exact"),  # #769 정확한 경로만 쓰기 허용
     ("POST", "/api/v1/redmine/issue"),   # 이슈 생성 (원전 code-validator 의 리뷰 등록)
     # 🔴 **마일스톤(버전) 생성** (`#652`, 사용자 지적 2026-09-20) — 요청자는 마일스톤을 이슈에
     #    **붙일** 수는 있었는데(`#303`) **만들** 수가 없었다. 키가 마스터에만 있으니 유일한
@@ -391,7 +392,8 @@ class BearerAuthMiddleware:
             return await self.app(scope, receive, send)
         # 역할 스코프 토큰 — 신원이 맞으면 경로·메서드를 스코프에 대조한다.
         # [중요] 규칙은 (METHOD, 접두어[, 접미사]) — 접미사(#204, WORKER_SCOPE)는 task_id 가
-        #    경로 중간에 끼는 자리를 가른다. 2원소 규칙은 기존 그대로(접미사 무조건 통과).
+        #    경로 중간에 끼는 자리를 가른다. 4번째 "exact"는 경로 완전 일치(#769).
+        #    기존 2/3원소 규칙은 접두·접미 일치를 그대로 유지한다.
         method = (scope.get("method") or "").upper()
         for stok, rules in self._scoped:
             if not verify(provided, stok):
@@ -399,7 +401,9 @@ class BearerAuthMiddleware:
             for rule in rules:
                 m, pfx = rule[0], rule[1]
                 sfx = rule[2] if len(rule) > 2 else ""
-                if method == m and path.startswith(pfx) and (not sfx or path.endswith(sfx)):
+                exact = len(rule) > 3 and rule[3] == "exact"
+                matches = path == pfx if exact else path.startswith(pfx)
+                if method == m and matches and (not sfx or path.endswith(sfx)):
                     return await self.app(scope, receive, send)
             # [중요] 401 이 아니라 403 — 신원은 맞고 권한이 없다. 이 구분이 없으면
             # 배선이 깨졌을 때 "토큰이 틀렸나" 로 오진한다.

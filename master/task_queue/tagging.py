@@ -92,6 +92,8 @@ POLICY = {
     "POST /api/v1/redmine/issue":                   TAG,
     "POST /api/v1/redmine/link-commit":             TAG,
     "GET /api/v1/redmine/issues":                   TAG,
+    "GET /api/v1/redmine/wiki":                     TAG,
+    "PUT /api/v1/redmine/wiki":                     TAG,
     # 🔴 **마일스톤 생성** (`#652`) — 이슈 생성과 같은 등급이다: 트윈에 쓰지 않으므로 마운트를
     #    강제하지 않고, 태그가 **어느 레드마인 프로젝트에 만드는가**를 정한다(폴백 없음).
     "POST /api/v1/redmine/version":                 TAG,
