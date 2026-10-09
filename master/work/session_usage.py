@@ -129,8 +129,8 @@ def parse_claude(lines) -> Session | None:
         # [DOC] `#740` — 레코드에 응답 id(`mid`)를 남긴다. 파일 **안**의 중복은 위 `seen` 이 걸러내고,
         #       파일 **사이**의 중복은 `cross_file_duplicates`·`usage_dashboard._read_sessions` 가 이 값으로 가린다.
         #       기존 키(ts·model·input·output·cache_read·cache_create·reasoning)의 이름·값은 그대로 둔다.
-        # [PSEUDO] 아래 레코드 dict 에 "mid": mid 를 더한다 (mid 는 위에서 고른 message.id 또는 requestId).
         recs.append({
+            "mid": mid,
             "ts": d.get("timestamp", ""), "model": m.get("model", ""),
             "input": int(u.get("input_tokens") or 0),
             "output": int(u.get("output_tokens") or 0),
@@ -158,8 +158,9 @@ def same_usage(a: dict, b: dict) -> bool:
     # [DOC] 두 Claude 스냅샷 레코드가 「같음」인가 — `_SAME_KEYS` 의 값이 전부 같으면 참.
     #       ts 는 비교하지 않는다(재개 기록이 같은 응답을 다른 시각 줄로 다시 실을 수 있다).
     #       키가 없으면 그 키의 값은 None 으로 보고 비교한다. 예외를 던지지 않는다.
-    # [PSEUDO] _SAME_KEYS 의 각 키에 대해 a.get(k) 와 b.get(k) 가 모두 같은지 돌려준다.
-    raise NotImplementedError
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return False
+    return all(a.get(key) == b.get(key) for key in _SAME_KEYS)
 
 
 def cross_file_duplicates(store: Path = DEFAULT_STORE, *, sample: int = 20) -> dict:
@@ -174,9 +175,54 @@ def cross_file_duplicates(store: Path = DEFAULT_STORE, *, sample: int = 20) -> d
     #         conflicts       충돌 표본 [{"host", "mid", "origins": [스냅샷 파일 이름(경로 아님)…]}] 앞 `sample` 개
     #       깨진 스냅샷 파일은 건너뛰고 셀 수만 늘린다(`unreadable` 키도 항상 둔다). 절대 경로를 싣지 않는다.
     #       같은 파일 안의 반복은 파서가 이미 걸렀으므로 여기서는 **파일이 다를 때만** 추가 출현으로 센다.
-    # [PSEUDO] sorted(store.glob("*/claude/*.json")) 순서로 읽어 (host, mid) → 처음 레코드·처음 파일 이름을 기억하고,
-    #          다른 파일에서 다시 나오면 same_usage 로 같음/충돌을 세어 위 dict 를 만든다.
-    raise NotImplementedError
+    stats = {"files": 0, "records": 0, "no_mid": 0, "duplicate_ids": 0,
+             "extra_same": 0, "extra_conflict": 0, "conflicts": [], "unreadable": 0}
+    first = {}
+    origins = {}
+    duplicates = set()
+    conflict_samples = {}
+    limit = max(0, sample)
+    for path in sorted(Path(store).glob("*/claude/*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or not isinstance(data.get("records"), list):
+                raise ValueError("스냅샷 형식")
+            host = data.get("host") or path.parent.parent.name
+            if not isinstance(host, str) or any(not isinstance(rec, dict) or
+                    (rec.get("mid") and not isinstance(rec["mid"], str))
+                    for rec in data["records"]):
+                raise ValueError("스냅샷 레코드 형식")
+        except (OSError, ValueError, TypeError):
+            stats["unreadable"] += 1
+            continue
+        stats["files"] += 1
+        seen_in_file = set()
+        for rec in data["records"]:
+            stats["records"] += 1
+            mid = rec.get("mid")
+            if not mid:
+                stats["no_mid"] += 1
+                continue
+            key = (host, mid)
+            if key in seen_in_file:
+                continue
+            seen_in_file.add(key)
+            if key not in first:
+                first[key] = rec
+                origins[key] = [path.name]
+                continue
+            duplicates.add(key)
+            origins[key].append(path.name)
+            if same_usage(first[key], rec):
+                stats["extra_same"] += 1
+            else:
+                stats["extra_conflict"] += 1
+                if key not in conflict_samples and len(conflict_samples) < limit:
+                    entry = {"host": host, "mid": mid, "origins": origins[key]}
+                    conflict_samples[key] = entry
+                    stats["conflicts"].append(entry)
+    stats["duplicate_ids"] = len(duplicates)
+    return stats
 
 
 def parse_codex(lines) -> Session | None:
