@@ -37,8 +37,14 @@ REPO = Path(__file__).resolve().parent.parent
 RESIDENT: dict = {
     "ax-task-queue": ("master/task_queue",),
     "ax-broker": ("master/broker",),
-    "ax-projects": ("master/projects", "master/webui", "master/context_search"),
+    "ax-projects": ("master/projects", "master/webui", "master/context_search",
+                    "master/work/register.py"),
 }
+# [DOC] #772: ax-projects는 master.work.register 등 상주 의존 파일도 읽는다.
+# master/work 전체를 감시하면 oneshot 워커 코드의 변경도 재기동 경고로 섞인다.
+# 상주 의존 파일을 명시하고 기존 서비스 경로·공개 API·자동 재기동 금지 정책을 보존한다.
+# 허용 수정: 이 파일과 master/test_service_freshness.py. 다른 파일은 읽기 전용이다.
+# 파일을 읽기 전 별도 rg --files 호출로 실제 목록을 얻고 그 결과의 경로만 읽는다.
 # 발동형 — 판정 대상이 **아니다**(다음 발동이 새 코드다). 이름을 적어 두는 이유는
 # 「빠뜨린 것」과 「일부러 뺀 것」을 구분하기 위해서다.
 TRIGGERED = ("ax-indexer", "ax-status", "ax-batch")
@@ -87,12 +93,18 @@ def _started(unit: str, *, runner=None) -> tuple:
 
 def _newest(paths: tuple) -> tuple:
     """그 코드 경로들의 최신 `.py` mtime `(epoch, 파일)`."""
+    # [DOC] #772: 선언된 디렉터리의 재귀 .py와 단일 .py 파일을 모두 판정한다.
+    # 비Python 파일·존재하지 않는 경로는 건너뛰고 stat 실패의 기존 취급을 유지한다.
     best, who = 0, ""
     for rel in paths:
         d = REPO / rel
-        if not d.is_dir():
+        if d.is_file() and d.suffix == ".py":
+            files = (d,)
+        elif d.is_dir():
+            files = d.rglob("*.py")
+        else:
             continue
-        for f in d.rglob("*.py"):
+        for f in files:
             try:
                 m = int(f.stat().st_mtime)
             except OSError:

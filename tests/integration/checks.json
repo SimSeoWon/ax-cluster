@@ -130,6 +130,11 @@
     "timeout": 180
   },
   {
+    "path": "master/test_service_freshness.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
     "path": "master/test_conductor_metrics.py",
     "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
     "timeout": 180
