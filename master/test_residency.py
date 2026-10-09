@@ -235,89 +235,97 @@ def test_claimer_state_is_process_based() -> None:
     import time as _t
     from master.work import worker_daemon as C
 
+    import shutil
     root = Path(tempfile.mkdtemp())
-    (root / ".ax" / "lib" / "axmaster").mkdir(parents=True)
-    (root / ".ax" / "config.json").write_text("{}", encoding="utf-8")
-    lib = root / ".ax" / "lib" / "axmaster" / "x.py"
-    lib.write_text("# v1", encoding="utf-8")
+    # [주의] 쥔 잠금 핸들을 먼저 놓고 임시 루트를 지운다 — 실패·예외에도 (#776)
+    _held = None
+    try:
+        (root / ".ax" / "lib" / "axmaster").mkdir(parents=True)
+        (root / ".ax" / "config.json").write_text("{}", encoding="utf-8")
+        lib = root / ".ax" / "lib" / "axmaster" / "x.py"
+        lib.write_text("# v1", encoding="utf-8")
 
-    st = C.probe_state(root)
-    check("안 돌고 있으면 running=False", not st["running"])
-    check("[중요] 안 도는 것은 stale 이 아니다 (감시자가 새 코드로 띄운다)", not st["stale"])
+        st = C.probe_state(root)
+        check("안 돌고 있으면 running=False", not st["running"])
+        check("[중요] 안 도는 것은 stale 이 아니다 (감시자가 새 코드로 띄운다)", not st["stale"])
 
-    # [중요] **실물처럼 잠금을 쥔다** — 도는 상주는 `worker_daemon.lock` 을 배타적으로 잡고 있다.
-    #    (종전 테스트는 스탬프만 쓰고 「돈다」로 가정했다. 그 계약은 2026-08-23 에 바뀌었다:
-    #    죽인 직후 신선한 `alive` 에 속지 않으려고 **잠금을 권위로** 삼았다.)
-    _held = C.acquire_singleton(root)
-    check("잠금을 쥐었다 (테스트 전제)", _held is not None)
-    C.write_boot_stamp(root); C.touch_alive(root)
-    st = C.probe_state(root)
-    check("부팅 스탬프 뒤 running", st["running"])
-    check("갓 배달된 코드로 떴으면 stale 아님", not st["stale"])
-    check("pid 를 남긴다 (강제 종료가 pid 로만 돌 수 있게)", st["pid"] == os.getpid())
+        # [중요] **실물처럼 잠금을 쥔다** — 도는 상주는 `worker_daemon.lock` 을 배타적으로 잡고 있다.
+        #    (종전 테스트는 스탬프만 쓰고 「돈다」로 가정했다. 그 계약은 2026-08-23 에 바뀌었다:
+        #    죽인 직후 신선한 `alive` 에 속지 않으려고 **잠금을 권위로** 삼았다.)
+        _held = C.acquire_singleton(root)
+        check("잠금을 쥐었다 (테스트 전제)", _held is not None)
+        C.write_boot_stamp(root); C.touch_alive(root)
+        st = C.probe_state(root)
+        check("부팅 스탬프 뒤 running", st["running"])
+        check("갓 배달된 코드로 떴으면 stale 아님", not st["stale"])
+        check("pid 를 남긴다 (강제 종료가 pid 로만 돌 수 있게)", st["pid"] == os.getpid())
 
-    # ── 옛 코드가 도는 상태 재현: 코드만 새로 놓는다 (프로세스는 그대로)
-    os.utime(lib, (_t.time() + 5, _t.time() + 5))
-    st = C.probe_state(root)
-    check("[중요] **옛 코드로 돌고 있음을 잡는다**", st["stale"],
-          f"boot={st['boot_mtime']} code={st['code_mtime']}")
-    check("근거를 함께 낸다", st["code_mtime"] > st["boot_mtime"])
+        # ── 옛 코드가 도는 상태 재현: 코드만 새로 놓는다 (프로세스는 그대로)
+        os.utime(lib, (_t.time() + 5, _t.time() + 5))
+        st = C.probe_state(root)
+        check("[중요] **옛 코드로 돌고 있음을 잡는다**", st["stale"],
+              f"boot={st['boot_mtime']} code={st['code_mtime']}")
+        check("근거를 함께 낸다", st["code_mtime"] > st["boot_mtime"])
 
-    # ── 진행 중 태스크를 죽이지 않는다 (완료 조건 3)
-    (root / ".ax" / C.BUSY_FILE).write_text("T1", encoding="utf-8")
-    check("처리 중을 말한다", C.probe_state(root)["busy"])
-    (root / ".ax" / C.BUSY_FILE).unlink()
+        # ── 진행 중 태스크를 죽이지 않는다 (완료 조건 3)
+        (root / ".ax" / C.BUSY_FILE).write_text("T1", encoding="utf-8")
+        check("처리 중을 말한다", C.probe_state(root)["busy"])
+        (root / ".ax" / C.BUSY_FILE).unlink()
 
-    # ── 깃발 계약
-    check("깃발이 없으면 False", not C.restart_requested(root))
-    (root / ".ax" / C.RESTART_FILE).write_text("1", encoding="utf-8")
-    check("깃발을 본다", C.restart_requested(root))
-    check("probe 가 그것도 보고한다", C.probe_state(root)["restart_pending"])
-    C.clear_restart(root)
-    check("치우면 사라진다", not C.restart_requested(root))
+        # ── 깃발 계약
+        check("깃발이 없으면 False", not C.restart_requested(root))
+        (root / ".ax" / C.RESTART_FILE).write_text("1", encoding="utf-8")
+        check("깃발을 본다", C.restart_requested(root))
+        check("probe 가 그것도 보고한다", C.probe_state(root)["restart_pending"])
+        C.clear_restart(root)
+        check("치우면 사라진다", not C.restart_requested(root))
 
-    _held.close()                                  # 상주가 죽은 상태로 만든다
-    # ── [중요] **살아 있음의 권위는 잠금이다** (실측 2026-08-23 에 고친 자리)
-    #    처음엔 `fresh or locked` 였다 → 죽인 직후 60초 동안 「아직 돈다」로 읽혀 배달이
-    #    *"여전히 stale — 사람이 봐야 한다"* 를 냈다. 파일은 죽은 뒤에도 남는다.
-    C.touch_alive(root)                       # 신선한 alive, 그러나 잠금은 아무도 안 쥠
-    st = C.probe_state(root)
-    check("[중요] 잠금이 없으면 running=False (신선한 alive 에 속지 않는다)",
-          not st["running"], str(st))
-    check("[중요] 그래서 죽인 직후는 stale 이 아니다 (감시자가 새 코드로 띄운다)",
-          not st["stale"], str(st))
-    src_probe = (Path(__file__).resolve().parent / "work" / "worker_daemon.py").read_text(
-        encoding="utf-8")
-    check("`fresh or locked` 로 되돌아가지 않았다", "running = locked" in src_probe)
-    check("그 이유가 주석에 남아 있다", "죽인 직후" in src_probe)
-    # ── 먹통(잠금은 쥐었는데 루프가 멈췄다)은 **다른 병**이다
-    check("hung 을 낸다", "hung" in st)
-    from client.init import residency as _R
-    lines = _R.refresh_plan_lines(_f(windows=False), {"stale": 0, "running": 1, "hung": 1,
-                                                      "alive_age": 999})
-    check("먹통을 갱신과 갈라 보고한다", any("먹통" in l for l in lines), str(lines))
+        _held.close()                                  # 상주가 죽은 상태로 만든다
+        # ── [중요] **살아 있음의 권위는 잠금이다** (실측 2026-08-23 에 고친 자리)
+        #    처음엔 `fresh or locked` 였다 → 죽인 직후 60초 동안 「아직 돈다」로 읽혀 배달이
+        #    *"여전히 stale — 사람이 봐야 한다"* 를 냈다. 파일은 죽은 뒤에도 남는다.
+        C.touch_alive(root)                       # 신선한 alive, 그러나 잠금은 아무도 안 쥠
+        st = C.probe_state(root)
+        check("[중요] 잠금이 없으면 running=False (신선한 alive 에 속지 않는다)",
+              not st["running"], str(st))
+        check("[중요] 그래서 죽인 직후는 stale 이 아니다 (감시자가 새 코드로 띄운다)",
+              not st["stale"], str(st))
+        src_probe = (Path(__file__).resolve().parent / "work" / "worker_daemon.py").read_text(
+            encoding="utf-8")
+        check("`fresh or locked` 로 되돌아가지 않았다", "running = locked" in src_probe)
+        check("그 이유가 주석에 남아 있다", "죽인 직후" in src_probe)
+        # ── 먹통(잠금은 쥐었는데 루프가 멈췄다)은 **다른 병**이다
+        check("hung 을 낸다", "hung" in st)
+        from client.init import residency as _R
+        lines = _R.refresh_plan_lines(_f(windows=False), {"stale": 0, "running": 1, "hung": 1,
+                                                          "alive_age": 999})
+        check("먹통을 갱신과 갈라 보고한다", any("먹통" in l for l in lines), str(lines))
 
-    # ── 트리 전체를 본다 (claimer.py 만 보지 않는다)
-    src = (Path(__file__).resolve().parent / "work" / "worker_daemon.py").read_text(encoding="utf-8")
-    check("[중요] lib 트리 전체의 mtime 을 본다", "rglob" in src and "lib_mtime" in src)
-    check("[중요] 루프가 claim **전에** 깃발을 본다",
-          src.index("restart_requested(root)") < src.index("task = c.claim(types)"))
-    check("busy 마커를 finally 로 지운다", "finally:" in src and "busy.unlink()" in src)
-    # [중요] **관측이 부작용을 갖지 않는다** — probe 는 잠금을 *잡아 보고 즉시 놓는다*.
-    #    (잡히면 아무도 없다는 뜻이므로 그것이 판정이다. 쥐고 있으면 진짜 상주가 못 뜬다.)
-    lock_src = src[src.index("def someone_holds_lock"):src.index("def probe_state")]
-    check("잠금을 얻으면 즉시 닫는다", "f.close()" in lock_src, lock_src[:80])
-    check("[중요] 잠금 파일을 지우지 않는다 (지우면 싱글턴이 깨진다)",
-          "unlink" not in lock_src)
-    main_src = src[src.index("def main("):]
-    check("[중요] main 은 probe 를 상주 경로 **앞에서** 끝낸다",
-          main_src.index('"--probe" in argv')
-          < main_src.index("acquire_singleton(root)"), "관측이 상주를 띄운다")
-    # 옛 코드(스탬프 없음)를 잠금으로 잡는다 — 이것이 실물 사고의 상태다
-    check("[중요] 잠금 축이 있다 (스탬프만 보면 옛 코드를 「안 돈다」로 읽는다)",
-          "someone_holds_lock" in src and "no_stamp" in src)
-    check("깃발은 부팅 시각으로 거른다 (앞 프로세스에게 내려진 요구를 먹지 않는다)",
-          "booted_at" in src)
+        # ── 트리 전체를 본다 (claimer.py 만 보지 않는다)
+        src = (Path(__file__).resolve().parent / "work" / "worker_daemon.py").read_text(encoding="utf-8")
+        check("[중요] lib 트리 전체의 mtime 을 본다", "rglob" in src and "lib_mtime" in src)
+        check("[중요] 루프가 claim **전에** 깃발을 본다",
+              src.index("restart_requested(root)") < src.index("task = c.claim(types)"))
+        check("busy 마커를 finally 로 지운다", "finally:" in src and "busy.unlink()" in src)
+        # [중요] **관측이 부작용을 갖지 않는다** — probe 는 잠금을 *잡아 보고 즉시 놓는다*.
+        #    (잡히면 아무도 없다는 뜻이므로 그것이 판정이다. 쥐고 있으면 진짜 상주가 못 뜬다.)
+        lock_src = src[src.index("def someone_holds_lock"):src.index("def probe_state")]
+        check("잠금을 얻으면 즉시 닫는다", "f.close()" in lock_src, lock_src[:80])
+        check("[중요] 잠금 파일을 지우지 않는다 (지우면 싱글턴이 깨진다)",
+              "unlink" not in lock_src)
+        main_src = src[src.index("def main("):]
+        check("[중요] main 은 probe 를 상주 경로 **앞에서** 끝낸다",
+              main_src.index('"--probe" in argv')
+              < main_src.index("acquire_singleton(root)"), "관측이 상주를 띄운다")
+        # 옛 코드(스탬프 없음)를 잠금으로 잡는다 — 이것이 실물 사고의 상태다
+        check("[중요] 잠금 축이 있다 (스탬프만 보면 옛 코드를 「안 돈다」로 읽는다)",
+              "someone_holds_lock" in src and "no_stamp" in src)
+        check("깃발은 부팅 시각으로 거른다 (앞 프로세스에게 내려진 요구를 먹지 않는다)",
+              "booted_at" in src)
+    finally:
+        if _held is not None:
+            _held.close()                          # 이미 닫혔으면 아무 일도 없다
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def test_stale_flag_is_not_eaten_by_the_new_process() -> None:
@@ -329,27 +337,32 @@ def test_stale_flag_is_not_eaten_by_the_new_process() -> None:
     import tempfile
     import time as _t
     from master.work import worker_daemon as C
+    import shutil
     root = Path(tempfile.mkdtemp())
-    (root / ".ax").mkdir(parents=True)
-    flag = root / ".ax" / C.RESTART_FILE
-    flag.write_text("1", encoding="utf-8")
-    old_flag = int(flag.stat().st_mtime)
-    check("관측용 호출은 존재만 본다", C.restart_requested(root))
-    check("[중요] 내가 뜨기 전 깃발은 내 것이 아니다",
-          not C.restart_requested(root, booted_at=old_flag + 5))
-    check("내가 뜬 뒤 깃발은 내 것이다",
-          C.restart_requested(root, booted_at=old_flag - 5))
-    # 마스터도 치운다 — 놓은 쪽이 치우는 것이 옳다
-    from client.init import residency as _R
-    cmds = dict(_R.clear_flag_commands(_f(windows=False, path="/p/NS")))
-    check("리눅스 제거 명령", cmds["clear"] == "rm -f /p/NS/.ax/worker_daemon.restart", cmds["clear"])
-    cmds = dict(_R.clear_flag_commands(_f(windows=True, ue5="x", path=r"E:\t\NS")))
-    check("윈도우 제거 명령은 조용히 실패한다(2>nul)", "2>nul" in cmds["clear"], cmds["clear"])
-    import inspect
-    from master.client import bundle
-    rsrc = inspect.getsource(bundle.refresh_residency)
-    check("[중요] 강제 종료 뒤 깃발을 치운다",
-          rsrc.index("clear_flag_commands") > rsrc.index("force=True"), "치우지 않는다")
+    # [주의] 임시 루트를 끝에 지운다 — 남기면 실행마다 `/tmp/tmp*` 가 쌓였다 (#776)
+    try:
+        (root / ".ax").mkdir(parents=True)
+        flag = root / ".ax" / C.RESTART_FILE
+        flag.write_text("1", encoding="utf-8")
+        old_flag = int(flag.stat().st_mtime)
+        check("관측용 호출은 존재만 본다", C.restart_requested(root))
+        check("[중요] 내가 뜨기 전 깃발은 내 것이 아니다",
+              not C.restart_requested(root, booted_at=old_flag + 5))
+        check("내가 뜬 뒤 깃발은 내 것이다",
+              C.restart_requested(root, booted_at=old_flag - 5))
+        # 마스터도 치운다 — 놓은 쪽이 치우는 것이 옳다
+        from client.init import residency as _R
+        cmds = dict(_R.clear_flag_commands(_f(windows=False, path="/p/NS")))
+        check("리눅스 제거 명령", cmds["clear"] == "rm -f /p/NS/.ax/worker_daemon.restart", cmds["clear"])
+        cmds = dict(_R.clear_flag_commands(_f(windows=True, ue5="x", path=r"E:\t\NS")))
+        check("윈도우 제거 명령은 조용히 실패한다(2>nul)", "2>nul" in cmds["clear"], cmds["clear"])
+        import inspect
+        from master.client import bundle
+        rsrc = inspect.getsource(bundle.refresh_residency)
+        check("[중요] 강제 종료 뒤 깃발을 치운다",
+              rsrc.index("clear_flag_commands") > rsrc.index("force=True"), "치우지 않는다")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def _calls_named(src: str, name: str) -> list:
