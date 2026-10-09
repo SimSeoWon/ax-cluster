@@ -138,7 +138,26 @@ def checkout_command(facts, branch: str, base_commit: str) -> str:
     cd = f'cd /d "{facts.path}"' if facts.windows else f'cd "{facts.path}"'
     return (f'{cd} && git fetch --all --quiet && git reset --hard --quiet HEAD && '
             f'git clean -fd && git checkout -q -B "{branch}" "{base_commit}" && '
+            f'{delegation_dirs_command(facts)} && '
             f'git rev-parse HEAD')
+
+
+def delegation_dirs_command(facts) -> str:
+    """`.agy-work/in`·`out` 을 **비운 채로 세운다** (`#764`, 사용자 결정 2026-10-09 ① · 위치는 같은 날 `.ax` 밖으로).
+
+    🔴 실측 2026-10-09 `.2` 세션1: 지휘자가 `rg --files … .ax/work/agy-out` 으로 경로를 확인하다
+    폴더가 없어 rc=1 이 나자 *"저장소의 실패 시 중단 규칙에 따라 멈췄습니다"* 로 `BLOCKED` 했다
+    (AXCluster 체크아웃의 대화형 규칙을 워커가 따랐다). **폴더가 늘 있으면 그 갈림길이 없다** —
+    지휘자의 판단에 기대지 않고 막힌 원인을 없앤다. 비우는 이유: 죽은 지난 사이클의 응답을 이번
+    조각으로 회수하지 않기 위해서다. 실패해도 체크아웃을 실패로 만들지 않는다(관용).
+    """
+    root = _agy_dir(facts)
+    if facts.windows:
+        mk = " & ".join(f'mkdir "{_agy_dir(facts, n)}"' for n in (AGY_IN, AGY_OUT))
+        return f'((if exist "{root}" rmdir /s /q "{root}") & {mk} || ver >nul)'
+    ds = " ".join(f'"{_agy_dir(facts, n)}"' for n in (AGY_IN, AGY_OUT))
+    return f'(rm -rf "{root}" && mkdir -p {ds} || true)'
+
 
 
 def return_home_command(facts, home: str = HOME_BRANCH, branch: str = "",
@@ -179,12 +198,15 @@ def return_home_command(facts, home: str = HOME_BRANCH, branch: str = "",
     # 원격추적 캐시도 남기지 않는다 — 원격에서 지워도 prune 전까지 남는다(실측 2026-09-01)
     steps.append(f'(git remote prune origin -q || {tolerate})')
     if task_id:
-        # `#764` — 위임 자료·결과 폴더도 지운다(회수는 복귀 **전에** `collect_delegations` 가 했다)
-        for name in (task_id, AGY_IN, AGY_OUT):
-            art = (f'{facts.path}\\.ax\\work\\{name}' if facts.windows
-                   else f'{facts.path}/.ax/work/{name}')
-            steps.append(f'(rmdir /s /q "{art}" || {tolerate})' if facts.windows
-                         else f'(rm -rf "{art}" || {tolerate})')
+        art = (f'{facts.path}\\.ax\\work\\{task_id}' if facts.windows
+               else f'{facts.path}/.ax/work/{task_id}')
+        steps.append(f'(rmdir /s /q "{art}" || {tolerate})' if facts.windows
+                     else f'(rm -rf "{art}" || {tolerate})')
+        # `#764` — 위임 폴더도 지운다(회수는 복귀 **전에** `collect_delegations` 가 했다)
+        agy = _agy_dir(facts)
+        # [주의] 바깥 괄호가 필요하다 — cmd 에서 `&` 는 `&&` 보다 약해, 없으면 앞 단계 실패와 무관하게 뒤가 돈다
+        steps.append(f'((if exist "{agy}" rmdir /s /q "{agy}") & ver >nul)' if facts.windows
+                     else f'(rm -rf "{agy}" || {tolerate})')
     steps.append('git rev-parse --abbrev-ref HEAD')
     return f'{cd} && git reset --hard -q HEAD && git clean -fdq && ' + " && ".join(steps)
 
@@ -426,13 +448,21 @@ def _cycle(facts, task_id: str, c: "Committed", base: str, llm, do_ssh, do_read,
 
 
 # 🔴 **위임 결과를 마스터로 회수한다** (`#764`, 사용자 결정 2026-10-09). 지휘자는 agy 응답 봉투를
-#    `.ax/work/agy-out/<번호>.json` 에 남기고(지시문·`ax-work` §4), 마스터가 **복귀 전에** 가져와
+#    `.agy-work/out/<번호>.json` 에 남기고(지시문·`ax-work` §4), 마스터가 **복귀 전에** 가져와
 #    `~/ax-state/delegations/<work_id>/<task_id>/` 에 둔다. 워커는 임시 저장소라 복귀가 그 폴더를 지운다 —
 #    회수가 없으면 「agy 가 무엇을 답했나」는 그 워커 홈의 agy 대화 기록에만 남는다.
 # [주의] 지휘자는 task_id 를 모른다(지시문은 대상 파일만 싣는다) — 그래서 **고정 폴더**다. 한 체크아웃은
 #    한 번에 한 조각만 돌고, 복귀가 매번 지우므로 조각끼리 섞이지 않는다.
 # [주의] 판정을 바꾸지 않는다 — 회수 실패는 `[주의]` 노트다.
-AGY_IN, AGY_OUT = "agy-in", "agy-out"
+# 🔴 **`.ax` 밖, 체크아웃 루트의 `.agy-work/` 다** (사용자 결정 2026-10-09 — 저장소 작업 영역에서 처리).
+#    실측 `.2` 세션1: `.ax` 아래는 샌드박스 쓰기가 전부 거부됐고(루트의 샌드박스 SID ACE 가 그 아래에
+#    없다), 루트 바로 아래 새 폴더는 상속으로 써졌다. git 은 `spec.GIT_EXCLUDES` 의 `/.agy-work/` 가 가린다.
+AGY_ROOT, AGY_IN, AGY_OUT = ".agy-work", "in", "out"
+
+
+def _agy_dir(facts, sub: str = "") -> str:
+    sep = "\\" if facts.windows else "/"
+    return f"{facts.path}{sep}{AGY_ROOT}" + (f"{sep}{sub}" if sub else "")
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,80}\.json$")
 MAX_COLLECT = 50
 
@@ -442,16 +472,16 @@ def delegations_root() -> Path:
 
 
 def collect_delegations(facts, do_ssh, do_read, c: Committed, work_id: str) -> None:
-    """워커의 `.ax/work/agy-out/*.json` → `delegations_root()/<work_id>/<task_id>/`. 예외를 던지지 않는다."""
+    """워커의 `.agy-work/out/*.json` → `delegations_root()/<work_id>/<task_id>/`. 예외를 던지지 않는다."""
     try:
         sep = "\\" if facts.windows else "/"
-        src = f"{facts.path}{sep}.ax{sep}work{sep}{AGY_OUT}"
+        src = _agy_dir(facts, AGY_OUT)
         cmd = (f'(dir /b "{src}\\*.json" 2>nul || ver >nul)' if facts.windows
                else f'(ls -1 "{src}" 2>/dev/null || true)')
         rc, out = do_ssh(facts, cmd, GIT_TIMEOUT)
         names = [n.strip() for n in (out or "").splitlines() if _SAFE_NAME.match(n.strip())]
         if not names:
-            c.notes.append(f"[지휘자] 위임 결과 파일 0개 ({AGY_OUT}/)")
+            c.notes.append(f"[지휘자] 위임 결과 파일 0개 ({AGY_ROOT}/{AGY_OUT}/)")
             return
         dest = delegations_root() / (work_id or "_no_work") / c.task_id
         dest.mkdir(parents=True, exist_ok=True)

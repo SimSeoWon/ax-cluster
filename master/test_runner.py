@@ -781,7 +781,7 @@ def test_delegation_calls() -> None:
 def test_instruction_asks_delegation() -> None:
     """`#764` — 지시문이 위임과 그 보고를 말한다(ASCII 유지 · 세션1 사본과 같은 글자는 별도 검사)."""
     for s_ in ("delegate source research and analysis to agy", "codex, agy or the local broker",
-               "list what you delegated", ".ax/work/agy-out/"):
+               "list what you delegated", ".agy-work/out/"):
         check(f"지시문이 말한다: {s_}", s_ in R.INSTRUCTION, R.INSTRUCTION[:80])
     check("  여전히 ASCII", R.INSTRUCTION.isascii())
 

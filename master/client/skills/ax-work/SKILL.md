@@ -104,13 +104,16 @@ invariant 도 지켰지만, `CurrentStep`(실제는 `Step`) · `EMissionTaskExec
 | **로컬 LLM** (`backends.ollama`, 브로커 8102) | 본문 초안 3차 · 반복적 채우기·대량 변환. 무료다 |
 | **너** | 오케스트레이션 · 소스 대조 · **위임 결과 검증** · 최종 파일 작성 |
 
-`agy` 호출 모양 — 자료 사본과 지시서는 **`.ax/work/agy-in/`**, 응답 봉투는 **`.ax/work/agy-out/<번호>.json`**
-(체크아웃 기준 상대 경로 · 저장소를 통째로 주지 않는다):
+`agy` 호출 모양 — 자료 사본과 지시서는 **`.agy-work/in/`**, 응답 봉투는 **`.agy-work/out/<번호>.json`**
+(체크아웃 기준 상대 경로 · 마스터가 비운 채로 미리 세워 둔다 · 저장소를 통째로 주지 않는다):
 
-    agy --dangerously-skip-permissions --output-format json --add-dir .ax/work/agy-in -p "Read BRIEF.md in the added directory and follow it exactly. Return the result as your response. Do not create or modify files." > .ax/work/agy-out/1.json
+    agy --dangerously-skip-permissions --output-format json --add-dir .agy-work/in -p "Read BRIEF.md in the added directory and follow it exactly. Return the result as your response. Do not create or modify files." > .agy-work/out/1.json
 
-🔴 [중요] **응답은 반드시 `agy-out/` 에 파일로 남긴다** (사용자 결정 2026-10-09, `#764`). 마스터가 조각을 마칠 때
-그 폴더를 `~/ax-state/delegations/<work_id>/<task_id>/` 로 회수하고, 워커의 `agy-in`·`agy-out` 은 지운다
+[주의] **`.ax/` 아래에 쓰지 않는다** — Windows 샌드박스는 그 아래 쓰기를 거부한다(실측 2026-10-09). `.agy-work/` 는
+git 이 무시한다(`.git/info/exclude`).
+
+🔴 [중요] **응답은 반드시 `.agy-work/out/` 에 파일로 남긴다** (사용자 결정 2026-10-09, `#764`). 마스터가 조각을 마칠 때
+그 폴더를 `~/ax-state/delegations/<work_id>/<task_id>/` 로 회수하고, 워커의 `.agy-work/` 는 지운다
 — 파일로 안 남기면 「agy 가 무엇을 답했나」를 아무도 다시 볼 수 없다. 두 번째 호출은 `2.json` 이다.
 
 - 지시 내용은 `BRIEF.md` **파일**에 쓴다 — 명령줄에 한글·백틱을 싣지 않는다(Windows 콘솔 CP949 · 셸 치환)

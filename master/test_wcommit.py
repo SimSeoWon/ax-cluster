@@ -237,7 +237,7 @@ def test_happy_path():
 
 
 def test_collects_delegations():
-    """🔴 `#764` — 지휘자가 `.ax/work/agy-out/` 에 남긴 agy 응답을 **복귀 전에** 마스터로 회수하고,
+    """🔴 `#764` — 지휘자가 `.agy-work/out/` 에 남긴 agy 응답을 **복귀 전에** 마스터로 회수하고,
     복귀가 워커의 그 폴더를 지운다. 이름 규칙 밖 파일은 가져오지 않는다."""
     import os as _os
     with tempfile.TemporaryDirectory() as td:
@@ -245,14 +245,21 @@ def test_collects_delegations():
         root = Path(td) / "deleg"
         _os.environ["AX_DELEGATIONS_ROOT"] = str(root)
         inner = _llm_writes(GOOD)
+        stale = Path(facts.path) / ".agy-work" / "out"
+        stale.mkdir(parents=True, exist_ok=True)
+        (stale / "old.json").write_text("지난 사이클", encoding="utf-8")
+        seen = {}
 
         def llm(f, task_id, want):
-            out = Path(f.path) / ".ax" / "work" / "agy-out"
+            w0 = Path(f.path) / ".agy-work"
+            seen["dirs"] = (w0 / "in").is_dir() and (w0 / "out").is_dir()
+            seen["stale"] = (w0 / "out" / "old.json").exists()
+            out = w0 / "out"
             out.mkdir(parents=True, exist_ok=True)
             (out / "1.json").write_text('{"status": "SUCCESS", "response": "조사 결과"}', encoding="utf-8")
             (out / "2.json").write_text('{"status": "ERROR", "response": ""}', encoding="utf-8")
             (out / "bad name.json").write_text("x", encoding="utf-8")
-            (Path(f.path) / ".ax" / "work" / "agy-in").mkdir(parents=True, exist_ok=True)
+            (Path(f.path) / ".agy-work" / "in" / "src").mkdir(parents=True, exist_ok=True)
             return inner(f, task_id, want)
         try:
             c = _verified_run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
@@ -260,6 +267,9 @@ def test_collects_delegations():
                               baseline=lambda p: KEEP_HDR if p == HDR else None)
         finally:
             _os.environ.pop("AX_DELEGATIONS_ROOT", None)
+        check("[중요] 체크아웃이 .agy-work/in·out 을 미리 세운다 (`.2` 세션1 BLOCKED 재발 방지)",
+              seen.get("dirs") is True, str(seen))
+        check("  지난 사이클의 응답은 지운 채로 세운다", seen.get("stale") is False, str(seen))
         dest = root / WORK / TASK
         got = sorted(x.name for x in dest.iterdir()) if dest.is_dir() else []
         check("[중요] 위임 결과가 마스터로 회수된다", got == ["1.json", "2.json"], str(got))
@@ -267,10 +277,14 @@ def test_collects_delegations():
               if dest.is_dir() else False)
         check("  회수 노트", any("위임 결과 2개 회수" in n for n in c.notes), str(c.notes))
         check("  판정은 그대로 (통과)", c.ok, c.summary)
-        w = Path(facts.path) / ".ax" / "work"
-        check("[중요] 워커에는 agy-out·agy-in 이 남지 않는다",
-              not (w / "agy-out").exists() and not (w / "agy-in").exists(),
+        w = Path(facts.path) / ".agy-work"
+        check("[중요] 워커에는 .agy-work 가 남지 않는다", not w.exists(),
               str(list(w.iterdir()) if w.is_dir() else []))
+        from master.client import spec as _spec
+        check("[중요] 워커 체크아웃은 /.agy-work/ 를 git 에서 가린다 · 요청자는 아니다",
+              "/.agy-work/" in _spec.git_excludes_for("worker")
+              and "/.agy-work/" not in _spec.git_excludes_for("requester"))
+        check("  위치는 .ax 밖 (Windows 샌드박스가 .ax 쓰기를 거부한다)", not wcommit.AGY_ROOT.startswith(".ax"))
 
 
 def test_layer1_blocks_commit():

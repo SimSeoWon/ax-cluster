@@ -92,7 +92,7 @@ INSTRUCTION = (
     "Do not run UE5 builds, UnrealBuildTool, UnrealEditor or automation tests, "
     "and for Python files do not start servers, run the program or run tests - "
     "verification is done later by the requester, not on this worker. "
-    "Save each raw agy JSON response as a numbered file in .ax/work/agy-out/ - the master collects it. "
+    "Save each raw agy JSON response as a numbered file in .agy-work/out/ - the master collects it. "
     "Above the RESULT line, list what you delegated, to which backend, and how you checked it. "
     "The last non-empty line of your output must be exactly RESULT: DONE "
     "(use RESULT: BLOCKED if you could not finish, and say why above it)."
