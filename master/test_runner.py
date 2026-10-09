@@ -772,8 +772,8 @@ def test_delegation_calls() -> None:
                            'New-Item -ItemType File .agy-work/in/1.go | Out-Null"'),
                         ev("powershell.exe -Command 'while (-not (Test-Path .agy-work/out/1.done)) {}'")])
     k3, c3 = R.delegation_calls(relay)
-    check("[중요] Windows 중계 요청(.go)도 위임으로 센다 · 대기 명령은 아니다",
-          k3 and [k for k, _ in c3] == ["agy(중계)"], str(c3))
+    check("[중요] 런처 기록이 없으면 .go 경로로 「중계 추정」 · 대기 명령은 아니다",
+          k3 and [k for k, _ in c3] == ["agy(중계 추정)"], str(c3))
     none = "\n".join([json.dumps({"type": "thread.started"}), ev("cat src/a.py")])
     check("  이벤트는 있는데 위임이 없으면 「없음」",
           R.delegation_notes(none) == ["[지휘자] 위임 없음 — 명령 이벤트에 agy·codex exec·브로커 호출이 없다"],
@@ -783,6 +783,54 @@ def test_delegation_calls() -> None:
     check("[중요] claude JSON 은 「미상」 — 0 으로 접지 않는다", not k2 and c2 == []
           and R.delegation_notes(claude)[0].startswith("[지휘자] 위임 미상"), str(R.delegation_notes(claude)))
     check("  빈 출력도 미상 · 예외 없음", R.delegation_notes("")[0].startswith("[지휘자] 위임 미상"))
+
+
+def test_relay_events_are_authoritative() -> None:
+    """🔴 `#767` — 세션1 중계 위임은 **런처가 처리한 기록**으로 센다. 실측 b3deda91: 노트 3줄 · 실제 2건 —
+    `.go` 를 조회만 한 `Get-Item` 명령까지 셌다."""
+    def ev(cmd):
+        return json.dumps({"type": "item.completed", "item": {"type": "command_execution", "command": cmd,
+                                                              "status": "completed", "exit_code": 0}})
+    ll = ("2026-10-09 16:52:09 agy 중계 시작 — 요청 1 · 실행 파일 C:\\x\\agy.EXE\n"
+          "2026-10-09 16:54:24 agy 중계 끝 — 요청 1 · rc=0 · 135초 · 출력 9888자\n"
+          "2026-10-09 16:54:26 agy 중계 시작 — 요청 2 · 실행 파일 C:\\x\\agy.EXE\n"
+          "2026-10-09 17:01:39 agy 중계 끝 — 요청 2 · rc=0 · 432초 · 출력 20968자\n"
+          "2026-10-09 17:02:32 agy 중계 종료 — 처리 2건\n")
+    rel = R.relay_events(ll)
+    check("런처 로그 → ax.relay 이벤트 2건", len(rel) == 2
+          and json.loads(rel[1]) == {"type": "ax.relay", "request": "2", "rc": 0, "seconds": 432, "chars": 20968},
+          str(rel))
+    cmds = [json.dumps({"type": "thread.started"}),
+            ev('powershell.exe -Command "New-Item -ItemType File .agy-work\\in\\1.go"'),
+            ev('powershell.exe -Command "New-Item -ItemType File .agy-work\\in\\2.go"'),
+            ev("powershell.exe -Command \"Get-Item -LiteralPath '.agy-work\\in\\2.go','.agy-work\\out\\1.done'\"")]
+    out = "\n".join(cmds + rel)
+    known, calls = R.delegation_calls(out)
+    check("[중요] 런처 기록이 있으면 그것만 센다 — 2건 (조회 명령·추정은 버린다)",
+          known and [k for k, _ in calls] == ["agy(중계)", "agy(중계)"], str(calls))
+    check("  노트에 요청 번호·rc·초", "요청 2 · rc=0 · 432초" in R.delegation_notes(out)[1],
+          str(R.delegation_notes(out)))
+    k2, c2 = R.delegation_calls("\n".join(rel))
+    check("  명령 이벤트 없이 런처 기록만 있어도 잴 수 있다", k2 and len(c2) == 2, str(c2))
+    check("  빈 로그는 이벤트 0", R.relay_events("") == [] and R.relay_events("agy 중계 대기 — x") == [])
+
+
+def test_session1_after_appends_relay_events() -> None:
+    """`#767` — `_session1_after` 가 런처 로그의 중계 기록을 결과 끝에 싣는다(조각 기록까지 가게)."""
+    import types as _types
+    from master.client import bundle as _b
+    ll = "2026-10-09 16:54:24 agy 중계 끝 — 요청 1 · rc=0 · 135초 · 출력 9888자\n"
+    saved = _b._remote_read
+    _b._remote_read = lambda f, p: ll
+    try:
+        got = R._session1_after(_types.SimpleNamespace(host="h"), "t", "b", "/", "", "BODY",
+                                log=lambda m: None, popup=lambda f, since: [])
+    finally:
+        _b._remote_read = saved
+    check("[중요] 결과 끝에 ax.relay 줄이 붙는다", got.startswith("BODY")
+          and '"type": "ax.relay"' in got and '"request": "1"' in got, got)
+    check("  위임 노트가 그것을 센다", R.delegation_notes(got)[0].startswith("[지휘자] 위임: agy(중계) — 요청 1"),
+          str(R.delegation_notes(got)))
 
 
 def test_instruction_asks_delegation() -> None:
@@ -909,7 +957,8 @@ def main() -> int:
                test_session1_attempt_isolation,
                test_worker_does_not_build, test_claude_auth_runtime,
                test_delegation_calls, test_instruction_asks_delegation,
-               test_session1_agy_relay):
+               test_session1_agy_relay, test_relay_events_are_authoritative,
+               test_session1_after_appends_relay_events):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_runner: {PASS}/{total} 통과")

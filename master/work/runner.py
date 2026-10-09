@@ -152,10 +152,30 @@ def build_attempts(stdout: str) -> list:
 # [주의] agy 는 **실행 모양**만 — 뒤에 플래그(`-…`)가 오거나 명령이 거기서 끝난다. `grep -rn agy …` 처럼
 #    낱말을 찾는 명령은 위임이 아니다(정규식 시험에서 오탐으로 잡혔다).
 _DELEGATE_MARKS = (("agy", re.compile(r"(^|[\s\\/\"'&|;(])agy(\.exe)?[\"']?(\s+-|\s*$)")),
-                   # Windows 세션1 중계(`#764` ⓑ) — 지휘자는 agy 를 부르지 않고 요청 표시 `.agy-work/in/<n>.go` 를 만든다
-                   ("agy(중계)", re.compile(r"\.agy-work[\\/]+in[\\/]+[A-Za-z0-9_-]+\.go\b")),
+                   # Windows 세션1 중계(`#764` ⓑ) — **대신 세기**다. 정본은 런처 기록(`ax.relay` 이벤트, 아래)이고,
+                   # 그것이 없을 때(옛 런처·로그 못 읽음)만 이 경로 패턴으로 추정한다 — 조회 명령도 걸리므로(`#767`)
+                   ("agy(중계 추정)", re.compile(r"\.agy-work[\\/]+in[\\/]+[A-Za-z0-9_-]+\.go\b")),
                    ("codex", re.compile(r"(^|[\s\\/\"'&|;(])codex(\.exe)?\s+exec\b")),
                    ("local", re.compile(r":(8102|11434)\b")))
+
+
+# 🔴 `#767` — 세션1 중계의 **정본은 런처가 처리한 기록**이다. `_session1_after` 가 `launcher.log` 의
+#    「agy 중계 끝 — 요청 <n> · rc=<rc> · <s>초 · 출력 <k>자」 줄을 이 이벤트로 바꿔 결과 끝에 붙인다.
+#    명령 문자열 추정은 `.go` 를 **조회만** 한 명령(`Get-Item …2.go`)까지 셌다(실측 b3deda91: 노트 3줄 · 실제 2건).
+RELAY_EVENT = "ax.relay"
+_RELAY_DONE = re.compile(r"agy 중계 끝 — 요청 ([A-Za-z0-9_-]+) · rc=(-?\d+) · (\d+)초 · 출력 (\d+)자")
+
+
+def relay_events(launcher_log: str) -> list:
+    """런처 로그 → `ax.relay` 이벤트 줄(JSON 문자열) 목록. 예외를 던지지 않는다."""
+    out = []
+    for ln in (launcher_log or "").splitlines():
+        m = _RELAY_DONE.search(ln)
+        if m:
+            out.append(json.dumps({"type": RELAY_EVENT, "request": m.group(1), "rc": int(m.group(2)),
+                                   "seconds": int(m.group(3)), "chars": int(m.group(4))},
+                                  ensure_ascii=False))
+    return out
 
 
 def delegation_calls(stdout: str) -> tuple:
@@ -164,7 +184,7 @@ def delegation_calls(stdout: str) -> tuple:
     `known` 은 codex JSONL 이벤트가 하나라도 있었는가다 — 없으면 위임 여부를 **모른다**.
     같은 명령이 `item.started`·`item.completed` 로 두 번 오므로 명령당 한 줄, 마지막 상태로 적는다.
     """
-    known, found = False, {}
+    known, found, relays = False, {}, []
     for line in (stdout or "").splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -174,6 +194,9 @@ def delegation_calls(stdout: str) -> tuple:
         except ValueError:
             continue
         if not isinstance(d, dict):
+            continue
+        if d.get("type") == RELAY_EVENT:
+            relays.append(d)
             continue
         if "item" in d or str(d.get("type") or "").startswith(("thread.", "turn.", "item.")):
             known = True
@@ -185,7 +208,11 @@ def delegation_calls(stdout: str) -> tuple:
             if rx.search(cmd):
                 found[cmd] = (kind, item.get("status") or "?", item.get("exit_code"))
                 break
-    return known, [(k, f"{c[:200]} (상태 {s} · 종료 코드 {code})") for c, (k, s, code) in found.items()]
+    calls = [(k, f"{c[:200]} (상태 {s} · 종료 코드 {code})") for c, (k, s, code) in found.items()
+             if not (relays and k == "agy(중계 추정)")]       # 런처 기록이 있으면 추정은 버린다
+    calls += [("agy(중계)", f"요청 {r.get('request')} · rc={r.get('rc')} · {r.get('seconds')}초 · "
+                            f"출력 {r.get('chars')}자 (런처 기록)") for r in relays]
+    return known or bool(relays), calls
 
 
 def delegation_notes(stdout: str) -> list:
@@ -699,6 +726,10 @@ def _session1_after(facts, task_id: str, base: str, sep: str, since: str, out: s
         log(f"{task_id} [주의] 오류 창 기록을 못 읽었다 — {type(e).__name__}: {e}")
     for p in pops:
         log(f"{task_id} @{facts.host} 🔴 오류 창 감지 — {p[:300]}")
+    # `#767` — 중계 처리 기록을 위임 계측의 정본으로 결과 끝에 싣는다(조각 기록까지 간다)
+    rel = relay_events(ll)
+    if rel:
+        out = (out or "") + "\n" + "\n".join(rel)
     if pops:
         out = (out or "") + "\n" + "\n".join(
             f"ERROR [세션1] 오류 창 감지 — {p[:300]}" for p in pops)
