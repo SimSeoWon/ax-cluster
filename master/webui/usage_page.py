@@ -31,6 +31,11 @@ UI 계약:
   만 준 기존 호출은 두 번째 조회를 하지 않는다(그때 도넛은 「자료 없음」). 두 번째 조회가 실패해도
   화면은 200 이고 도넛 자리에 고정 안내만 둔다.
 
+- 🔴 `#726` (사용자 결정 2026-10-09 (가)): 입력을 비캐시·캐시로 나눠 보인다(타일·모델 표 두 칸 —
+  합계 정의는 그대로). 작업 실행 기록이면 「지휘 세션」 표를 붙인다 — session_id 가 있는 파견 기록에
+  수집된 rollout 사본의 지표(호출·첫/끝 입력·입력 합·비캐시 합·출력·도구 호출). 사본이 없으면
+  **「미수집」**이다(0 이 아니다). 세션 id 는 앞 8자만 보인다. 경로·예외 문자열은 그리지 않는다.
+
 검사: python -B -m unittest master.test_usage_page -v. 주입 보고서로 검증, 라이브 조회 0.
 """
 from __future__ import annotations
@@ -101,6 +106,11 @@ def _int(value) -> int:
 
 def _token(value) -> str:
     return "미계측" if value is None else f"{_int(value):,}"
+
+
+def _split(value) -> str:
+    """`#726` — 입력 나눔 칸. 나눌 수 없으면(None) 「—」 — 0 이 아니다."""
+    return "—" if value is None else f"{_int(value):,}"
 
 
 def _family(value) -> str:
@@ -297,12 +307,43 @@ def _model_table(report: dict) -> str:
         rows.append(f"<tr><td>{_label(m.get('family'))}</td><td>{html.escape(str(m.get('model') or '모델 미상'))}</td>"
                     f"<td class=\"num\">{_int(m.get('calls'))}</td><td class=\"num\">{_int(m.get('measured_calls'))}</td>"
                     f"<td class=\"num\">{_int(m.get('unmeasured_calls'))}</td><td class=\"num\">{_int(m.get('failed_calls'))}</td>"
-                    f"<td class=\"num\">{_token(m.get('tokens'))}</td></tr>")
+                    f"<td class=\"num\">{_token(m.get('tokens'))}</td>"
+                    f"<td class=\"num\">{_split(m.get('input_uncached'))}</td>"
+                    f"<td class=\"num\">{_split(m.get('input_cached'))}</td></tr>")
     if not rows:
-        rows.append('<tr><td colspan="7" class="dim">기록 없음</td></tr>')
+        rows.append('<tr><td colspan="9" class="dim">기록 없음</td></tr>')
     if models and not any(_family(m.get("family")) == "gemini" for m in models):
-        rows.append('<tr><td>Gemini</td><td colspan="6" class="dim">기록 없음</td></tr>')
-    return '<div class="wrap"><table class="usage"><tr><th>계열</th><th>실제 모델</th><th>호출</th><th>측정</th><th>미계측</th><th>실패</th><th>측정 토큰</th></tr>' + "".join(rows) + "</table></div>"
+        rows.append('<tr><td>Gemini</td><td colspan="8" class="dim">기록 없음</td></tr>')
+    return '<div class="wrap"><table class="usage"><tr><th>계열</th><th>실제 모델</th><th>호출</th><th>측정</th><th>미계측</th><th>실패</th><th>측정 토큰</th><th>비캐시 입력</th><th>캐시 입력</th></tr>' + "".join(rows) + "</table></div>"
+
+
+_CONDUCTOR_KEYS = ("calls", "first_input", "last_input", "input_sum", "uncached_sum",
+                   "output_sum", "tool_calls")
+
+
+def _conductor_table(report: dict) -> str:
+    """`#726` — 지휘 세션 표. 사본이 없으면 「미수집」, 읽기 실패면 「읽기 실패」(0 이 아니다)."""
+    rows = []
+    for row in report.get("conductor_sessions") or []:
+        if not isinstance(row, dict):
+            continue
+        sid = html.escape(str(row.get("session_id") or "")[:8])
+        head = (f'<tr><td>{html.escape(str(row.get("at") or ""))}</td>'
+                f'<td>{html.escape(str(row.get("task_id") or ""))}</td>'
+                f'<td>{html.escape(str(row.get("worker") or ""))}</td>'
+                f'<td>{html.escape(str(row.get("mode") or ""))}</td><td>{sid}</td>')
+        metrics = row.get("metrics")
+        if isinstance(metrics, dict):
+            cells = "".join(f'<td class="num">{_split(metrics.get(k))}</td>' for k in _CONDUCTOR_KEYS)
+        else:
+            label = "읽기 실패" if row.get("read_error") else "미수집"
+            cells = f'<td colspan="{len(_CONDUCTOR_KEYS)}" class="dim">{label}</td>'
+        rows.append(head + cells + "</tr>")
+    if not rows:
+        rows.append(f'<tr><td colspan="{5 + len(_CONDUCTOR_KEYS)}" class="dim">세션 id 가 있는 작업 실행 기록 없음</td></tr>')
+    return ('<div class="wrap"><table class="usage"><tr><th>시각</th><th>조각</th><th>워커</th><th>지휘</th>'
+            '<th>세션</th><th>호출</th><th>첫 입력</th><th>끝 입력</th><th>입력 합</th><th>비캐시 합</th>'
+            '<th>출력 합</th><th>도구 호출</th></tr>' + "".join(rows) + "</table></div>")
 
 
 def _issue_table(report: dict) -> str:
@@ -320,6 +361,14 @@ def _issue_table(report: dict) -> str:
     if not rows:
         rows.append('<tr><td colspan="9" class="dim">연결된 레드마인 일감 기록 없음</td></tr>')
     return '<div class="wrap"><table class="usage"><tr><th>번호</th><th>큐 제목</th><th>프로젝트</th><th>참여 모델 계열</th><th>호출</th><th>실패</th><th>미계측</th><th>측정 토큰</th><th>최근 작업 시각</th></tr>' + "".join(rows) + "</table></div>"
+
+
+def _conductor_section(report: dict, source: str) -> str:
+    if source != "dispatch":
+        return ""
+    return ('<h2>지휘 세션</h2><div class="sub">작업 실행 기록의 세션 id 로 수집된 워커 세션 사본을 읽어 붙인다. '
+            '입력은 캐시를 포함한 값이고, 비캐시 합은 입력에서 캐시 읽기를 뺀 합이다. '
+            '사본이 아직 없으면 미수집이다(0 이 아니다).</div>' + _conductor_table(report))
 
 
 def _reusable_for_pie(report: dict) -> bool:
@@ -355,6 +404,8 @@ def render(report: dict, pie_report: dict | None = None) -> bytes:
 <div class="stat"><b>{_int(totals.get('failed_calls')):,}</b><span>실패</span></div>
 <div class="stat"><b>{_int(totals.get('unmeasured_calls')):,}</b><span>미계측 호출</span></div>
 <div class="stat"><b>{_token(totals.get('tokens'))}</b><span>측정 토큰</span></div>
+<div class="stat"><b>{_split(totals.get('input_uncached'))}</b><span>비캐시 입력</span></div>
+<div class="stat"><b>{_split(totals.get('input_cached'))}</b><span>캐시 입력</span></div>
 <div class="stat"><b>{_int(totals.get('issues')):,}</b><span>연결 일감</span></div>
 <div class="stat"><b>{_int(totals.get('unlinked_calls')):,}</b><span>미연결 호출</span></div></div>
 <div class="note">토큰은 측정된 호출만 합산하며 부분 미계측 건수는 따로 표시한다. Claude 입력에는 캐시 읽기·생성을 더하고, Codex의 캐시 입력은 다시 더하지 않는다. reasoning은 output의 부분집합이므로 중복 합산하지 않는다. <b>미계측</b>은 실제 0과 다르다.</div>
@@ -362,6 +413,7 @@ def render(report: dict, pie_report: dict | None = None) -> bytes:
 <h2>기간별 측정 토큰</h2>{_legend()}{_chart(report)}{_bucket_table(report)}
 <h2>실제 모델별 요약</h2>{_model_table(report)}
 <h2>레드마인 일감별 작업</h2><div class="sub">제목은 작업 큐에 저장된 제목이다.</div>{_issue_table(report)}
+{_conductor_section(report, source)}
 </main></div></body></html>"""
     return body.encode("utf-8")
 

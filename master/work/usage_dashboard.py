@@ -68,6 +68,15 @@ RAG: AXCluster/context/master/work/usage.md 및 session_usage.md.
 - mid 가 없는 레코드(옛 스냅샷·codex·agy)는 지금처럼 그대로 센다.
 - totals 에 duplicate_records·duplicate_conflicts 키는 **항상** 있다(dispatch 소스면 0).
 검사: python -B -m unittest master.test_usage_dashboard -v (임시 숫자 로그, 실제 LLM 0).
+
+🔴 `#726` 입력 나눔과 지휘 세션 지표 (사용자 결정 2026-10-09 (가) 「읽을 때 잇는다」) — 추가 키만:
+- totals.input_uncached · totals.input_cached, models[].input_uncached · input_cached(나눌 수 없는
+  계열만 있으면 None). 나눔은 `usage.input_split` 하나 — Codex 입력은 캐시를 포함하므로
+  input−cache_read, Claude 는 input+cache_create(캐시 읽기는 따로). **합계(tokens) 정의는 그대로다.**
+- conductor_sessions:[{at,project,work_id,task_id,worker,mode,session_id,collected,read_error,metrics}]
+  — dispatch 소스에서 `session_id` 가 있는 기록만, 최근 `_CONDUCTOR_LIMIT` 건. metrics 는
+  `session_usage.conductor_metrics`, 사본은 `find_rollout`(raw 루트 = 세션 스냅샷 루트의 형제 `raw`).
+  사본이 없으면 collected=False·metrics=None(화면 「미수집」 — 0 이 아니다). 경로는 싣지 않는다.
 """
 from __future__ import annotations
 
@@ -80,7 +89,8 @@ from zoneinfo import ZoneInfo
 
 from ..projects.config import Registry
 from ..task_queue.persistence import _read_md, _tasks_dir
-from .session_usage import DEFAULT_STORE, same_usage
+from .session_usage import DEFAULT_STORE, conductor_metrics, find_rollout, same_usage
+from .usage import input_split
 
 
 _KST = ZoneInfo("Asia/Seoul")
@@ -94,6 +104,7 @@ _TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read", "cache_create",
 _ACCOUNTING = ("토큰 합계: Claude 입력+출력+캐시 읽기+캐시 생성, "
                "Codex 입력(캐시 포함)+출력. 추론은 출력에 포함됩니다. "
                "측정된 호출만 합산합니다.")
+_CONDUCTOR_LIMIT = 50               # `#726` — 화면에 붙일 지휘 세션 최근 건수(사본을 읽는 비용 상한)
 
 
 def _warn(warnings: list[str], message: str) -> None:
@@ -230,8 +241,59 @@ def _normal_record(raw: dict, *, session: bool, tool: str = "") -> dict:
                   amounts["cache_read"] + amounts["cache_create"])
     else:
         tokens = amounts["input_tokens"] + amounts["output_tokens"]
-    return {"at": at, "family": family, "model": model, "measured": measured,
-            "failed": failed, "work_id": work_id, "amounts": amounts, "tokens": tokens}
+    rec = {"at": at, "family": family, "model": model, "measured": measured,
+           "failed": failed, "work_id": work_id, "amounts": amounts, "tokens": tokens,
+           # `#726` — 입력 나눔(비캐시, 캐시). 미계측·계열 미상이면 None
+           "split": (input_split(family, amounts["input_tokens"], amounts["cache_read"],
+                                 amounts["cache_create"]) if measured else None)}
+    sid = raw.get("session_id") if not session else None
+    if isinstance(sid, str) and sid:
+        # `#726` — 지휘 세션 사본과 읽을 때 잇기 위한 칸들(dispatch 만)
+        rec.update(session_id=sid, task_id=str(raw.get("task_id") or ""),
+                   worker=str(raw.get("worker") or ""), mode=str(raw.get("mode") or ""))
+    return rec
+
+
+def _add_split(row: dict, record: dict) -> None:
+    """`#726` — 입력 나눔을 더한다. 나눌 수 없는 기록은 건너뛴다(0 으로 세지 않는다)."""
+    split = record.get("split")
+    if split is None:
+        return
+    row["input_uncached"] = (row.get("input_uncached") or 0) + split[0]
+    row["input_cached"] = (row.get("input_cached") or 0) + split[1]
+
+
+def _conductor_rows(found: list, raw_root: Path, warnings: list[str]) -> list[dict]:
+    """`#726` — session_id 가 있는 파견 기록에 수집된 rollout 사본의 지표를 붙인다(최근 순).
+
+    [주의] 사본이 없으면 collected=False·metrics=None — 화면은 「미수집」이다. 읽기 실패는
+    read_error=True 와 고정 경고만 남긴다(예외 문자열·경로는 싣지 않는다).
+    """
+    rows, memo = [], {}
+    found = sorted(found, key=lambda item: item[1]["at"], reverse=True)[:_CONDUCTOR_LIMIT]
+    for origin, rec in found:
+        # lane 모드의 codex 는 마스터에서 돈다 — 그 사본은 `local` 아래에 모인다
+        host = "local" if rec.get("mode") == "lane" else rec.get("worker", "")
+        key = (origin, host, rec["session_id"])
+        if key not in memo:
+            metrics, read_error = None, False
+            try:
+                path = find_rollout(rec["session_id"], origin, host, raw_root)
+                if path is not None:
+                    with path.open(encoding="utf-8", errors="replace") as stream:
+                        metrics = conductor_metrics(stream)
+            except OSError as exc:
+                _error("지휘 세션 사본 읽기", exc)
+                read_error = True
+                _warn(warnings, "지휘 세션 사본 일부를 읽지 못했습니다.")
+            memo[key] = (metrics, read_error)
+        metrics, read_error = memo[key]
+        rows.append({"at": rec["at"].isoformat(), "project": origin, "work_id": rec["work_id"],
+                     "task_id": rec.get("task_id", ""), "worker": rec.get("worker", ""),
+                     "mode": rec.get("mode", ""), "session_id": rec["session_id"],
+                     "collected": metrics is not None, "read_error": read_error,
+                     "metrics": metrics})
+    return rows
 
 
 def _request_map(root: Path, warnings: list[str], errors: dict) -> dict[str, dict]:
@@ -380,7 +442,9 @@ def build_report(project: str = "", period: str = "daily", start: str = "",
     totals = {**_empty_counts(), "input_tokens": 0, "output_tokens": 0,
               "cache_read": 0, "cache_create": 0, "reasoning_tokens": 0,
               "issues": 0, "unlinked_calls": 0, "invalid_records": 0, "read_errors": 0,
-              "duplicate_records": 0, "duplicate_conflicts": 0}
+              "duplicate_records": 0, "duplicate_conflicts": 0,
+              "input_uncached": 0, "input_cached": 0}
+    conductor: list = []                     # `#726` — session_id 가 있는 파견 기록
     buckets: dict[tuple[str, str], dict] = {}
     models: dict[tuple[str, str], dict] = {}
     issues: dict[int, dict] = {}
@@ -404,14 +468,19 @@ def build_report(project: str = "", period: str = "daily", start: str = "",
         if rec["measured"]:
             for key in _TOKEN_FIELDS:
                 totals[key] += rec["amounts"][key]
+        _add_split(totals, rec)
         bucket_key = (_bucket_start(day, period), rec["family"])
         bucket = buckets.setdefault(bucket_key, {"date": bucket_key[0], "family": rec["family"],
                                                  **_empty_counts()})
         _add_counts(bucket, rec)
         model_key = (rec["family"], rec["model"])
         model_row = models.setdefault(model_key, {"family": rec["family"], "model": rec["model"],
-                                                  **_empty_counts()})
+                                                  **_empty_counts(), "input_uncached": None,
+                                                  "input_cached": None})
         _add_counts(model_row, rec)
+        _add_split(model_row, rec)
+        if source == "dispatch" and rec.get("session_id"):
+            conductor.append((origin, rec))
         if source != "dispatch":
             continue
         link = links.get(rec["work_id"])
@@ -439,4 +508,5 @@ def build_report(project: str = "", period: str = "daily", start: str = "",
             "generated_at": clock.isoformat(), "projects": names, "warnings": warnings,
             "totals": totals, "buckets": [buckets[k] for k in sorted(buckets)],
             "models": [models[k] for k in sorted(models)],
-            "issues": sorted(issues.values(), key=lambda row: row["issue_id"])}
+            "issues": sorted(issues.values(), key=lambda row: row["issue_id"]),
+            "conductor_sessions": _conductor_rows(conductor, store.parent / "raw", warnings)}

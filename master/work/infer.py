@@ -900,6 +900,37 @@ def _skeleton_at(paths, commit: str, files) -> dict:
     except Exception:                                        # noqa: BLE001
         return {}
 
+
+def usage_line(task_id: str, rec: dict, mode: str, meta: dict | None = None) -> str:
+    """`[usage]` 로그 한 줄. 종전 문구는 그대로 두고 **뒤에만** 붙인다 (`#726`).
+
+    🔴 `#726` (사용자 결정 2026-10-09 (가)): 입력이 캐시인지 아닌지가 비용을 가른다 — 실측
+    `.43` 조각은 입력 870,003 중 비캐시가 72,691 이었다. 그래서 둘 다 알 때만
+    `비캐시 … · 캐시 …(…%)` 를, 세션 id 를 알 때만 `세션 <앞 8자>` 를 붙인다.
+    [주의] 나눔은 `usage.input_split` 이 계열별로 한다(codex 는 입력이 캐시를 포함한다).
+    모르는 값은 0 으로 적지 않고 붙이지 않는다.
+    """
+    from . import usage as _U                                # noqa: PLC0415
+    line = (f"[usage] {task_id} lane={rec['lane'] or '?'} mode={mode} "
+            f"입력 {rec['input_tokens']:,} · 출력 {rec['output_tokens']:,} · "
+            + (f"${rec['cost_usd']:.4f}" if rec["cost_known"] else "비용 미상")
+            + ("" if rec["measured"] else " · [주의] 토큰 미측정"))
+    inner = (meta or {}).get("usage") if isinstance(meta, dict) else None
+    inner = inner if isinstance(inner, dict) else {}
+    split = _U.input_split(rec.get("lane") or mode, inner.get("input_tokens"),
+                           inner.get("cache_read_input_tokens"),
+                           inner.get("cache_creation_input_tokens"))
+    if split is not None:
+        uncached, cached = split
+        whole = uncached + cached
+        pct = f"{cached / whole * 100:.1f}" if whole else "0.0"
+        line += f" · 비캐시 {uncached:,} · 캐시 {cached:,}({pct}%)"
+    sid = rec.get("session_id")
+    if isinstance(sid, str) and sid:
+        line += f" · 세션 {sid[:8]}"
+    return line
+
+
 def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: str,
                 api=runner._api, runner_=None, reader=None, ssh=None, mode: str = "",
                 timeout: int = runner.DEFAULT_TIMEOUT) -> Response:
@@ -1094,10 +1125,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
             res.notes.append(f"[주의] 계측 기록 실패 — {_rec['error']}")
             _log(f"[usage] [주의] {task_id} 기록 실패 — {_rec['error']}")
         else:
-            _log(f"[usage] {task_id} lane={_rec['lane'] or '?'} mode={_m} "
-                 f"입력 {_rec['input_tokens']:,} · 출력 {_rec['output_tokens']:,} · "
-                 + (f"${_rec['cost_usd']:.4f}" if _rec["cost_known"] else "비용 미상")
-                 + ("" if _rec["measured"] else " · [주의] 토큰 미측정"))
+            _log(usage_line(task_id, _rec, _m, c.usage))
     except Exception as e:                                   # noqa: BLE001
         # [주의] 계측이 파이프라인을 죽이지 않는다 (원전도 `except: pass`). 사유는 남긴다.
         _log(f"[usage] [주의] {task_id} 계측 예외 — {type(e).__name__}: {e}")

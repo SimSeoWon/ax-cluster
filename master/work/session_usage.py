@@ -256,6 +256,81 @@ def parse_codex(lines) -> Session | None:
     return Session("codex", sid, recs) if recs else None
 
 
+# 🔴 `#726` 지휘 세션 지표 (사용자 결정 2026-10-09 (가) 「읽을 때 잇는다」) ─────────────────────
+# [DOC] 파견 기록(`usage_log`)은 `turn.completed` 합계 한 줄뿐이라 「호출이 몇 번이었고 입력이 어떻게
+#       불어났나」를 못 본다. 그 답은 워커 rollout 에 있고, 수집기가 이미 사본을 가져온다. 파견 기록의
+#       `session_id`(= `thread.started.thread_id` = rollout 파일 이름의 uuid, 실측 2026-10-09)로 읽을 때 잇는다.
+#       [중요] 호출 수는 `parse_codex` 와 **같은 규칙**이다 — `total_token_usage` 가 바뀐 `token_count` 만.
+#       [주의] 수집 전이면 `None`(미수집)이다 — 0 을 지어내지 않는다.
+_TOOL_CALLS = ("function_call", "custom_tool_call", "local_shell_call")
+_SESSION_ID = re.compile(r"^[0-9A-Za-z][0-9A-Za-z-]{7,63}$")
+
+
+def conductor_metrics(lines) -> dict:
+    """Codex rollout 줄 → 지휘 세션 지표 (`#726`). 순수 함수.
+
+        calls        모델 호출 수 (누적값이 바뀐 `token_count` 수 — `parse_codex` 와 같다)
+        first_input  첫 호출 입력(캐시 포함) · last_input 마지막 호출 입력
+        input_sum    호출 입력 합(캐시 포함) · uncached_sum 합(입력 − 캐시 읽기)
+        output_sum   호출 출력 합 · tool_calls `response_item` 의 도구 호출 수
+    [주의] 호출이 없으면 first/last 는 `None` 이다(0 이 아니다).
+    """
+    prev, inputs = None, []
+    out = {"calls": 0, "first_input": None, "last_input": None, "input_sum": 0,
+           "uncached_sum": 0, "output_sum": 0, "tool_calls": 0}
+    for raw in lines:
+        try:
+            d = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(d, dict):
+            continue
+        p = d.get("payload") or {}
+        if not isinstance(p, dict):
+            continue
+        t = d.get("type")
+        if t == "response_item" and p.get("type") in _TOOL_CALLS:
+            out["tool_calls"] += 1
+        elif t == "event_msg" and p.get("type") == "token_count":
+            info = p.get("info") or {}
+            total, last = info.get("total_token_usage"), info.get("last_token_usage")
+            if not total or not last or total == prev:
+                continue
+            prev = total
+            n = int(last.get("input_tokens") or 0)
+            inputs.append(n)
+            out["input_sum"] += n
+            out["uncached_sum"] += max(0, n - int(last.get("cached_input_tokens") or 0))
+            out["output_sum"] += int(last.get("output_tokens") or 0)
+    out["calls"] = len(inputs)
+    if inputs:
+        out["first_input"], out["last_input"] = inputs[0], inputs[-1]
+    return out
+
+
+def find_rollout(session_id: str, project: str, host: str,
+                 raw_root: Path = DEFAULT_RAW) -> Path | None:
+    """수집된 codex rollout 사본 — `raw/<project>/<host>/codex/**/*-<uuid>.jsonl`. 없으면 `None`.
+
+    [주의] id·프로젝트·호스트는 기록에서 온 값이다 — 모양이 어긋나면(경로 구분자·`..`·glob 문자)
+    찾지 않고 `None` 이다. 여럿이면 이름 순 첫 것(같은 uuid 는 같은 세션이다).
+    """
+    if not isinstance(session_id, str) or not _SESSION_ID.match(session_id):
+        return None
+    for part in (project, host):
+        if (not isinstance(part, str) or not part or part in (".", "..")
+                or any(ch in part for ch in "/\\*?[]")):
+            return None
+    base = Path(raw_root) / project / host / "codex"
+    if not base.is_dir():
+        return None
+    try:
+        hits = sorted(p for p in base.rglob(f"*-{session_id}.jsonl") if p.is_file())
+    except OSError:
+        return None
+    return hits[0] if hits else None
+
+
 _AGY_MODEL = re.compile(r"setting `Model Selection` from .*? to (.+?)\.(?:\s|$)")
 
 

@@ -106,7 +106,7 @@ class UsagePageTests(unittest.TestCase):
         self.assertIn("합산", body)
         model_table = usage_page._model_table(zero)
         self.assertEqual(model_table.count("기록 없음"), 1)
-        self.assertIn('<td>Gemini</td><td colspan="6" class="dim">기록 없음', model_table)
+        self.assertIn('<td>Gemini</td><td colspan="8" class="dim">기록 없음', model_table)
         self.assertNotIn("기록 없음", usage_page._model_table(_report()))
 
         empty = _report(

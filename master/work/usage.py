@@ -57,6 +57,7 @@ class Usage:
     note: str = ""                      # 왜 못 읽었나
     reasoning_tokens: int | None = None  # agy `thinking_tokens` (출력의 부분집합으로 보인다)
     cache_create: int | None = None     # claude `cache_creation_input_tokens` (`#733`)
+    session_id: str = ""                # codex `thread.started.thread_id` (`#726`) — 모르면 빈 값
 
     @property
     def known(self) -> bool:
@@ -275,11 +276,17 @@ def parse_codex_jsonl(stdout: str, *, error_lines: set[str] | None = None) -> tu
     [중요] **형식 지식은 이 모듈이 갖는다** — `call_codex` 가 이미 같은 이벤트를 읽고 있어서
     파서를 또 만들지 않는다(`#385` 검증 ⓒ). 지휘자 경로(`runner._unwrap`)가 이걸 부른다.
 
+        thread.started  → {"thread_id": "<uuid>"}                         세션 id (`#726`)
         item.completed  → {"item": {"type": "agent_message", "text": …}}   본문
         turn.completed  → {"usage": {input_tokens, cached_input_tokens,
                                      cache_write_input_tokens, output_tokens,
                                      reasoning_output_tokens}}             토큰
         error / turn.failed → message / error.message                     실패 원인
+
+    🔴 `#726` (사용자 결정 2026-10-09 (가) 「읽을 때 잇는다」): `thread_id` 를 meta 의
+    `session_id` 로 싣는다. 실측 2026-10-09: 이 uuid 가 워커 rollout 파일 이름
+    `rollout-<ts>-<uuid>.jsonl` 의 uuid 와 같다 — 대시보드가 그것으로 수집된 사본을 찾는다.
+    [주의] 없으면 키를 만들지 않는다(옛 기록과 같은 모양).
 
     `error_lines`가 주어지면 읽은 오류 이벤트의 원문 줄도 돌려준다. 사람 보고에서
     같은 이벤트를 일반 오류 줄로 다시 요약하지 않기 위한 선택적 수집이다.
@@ -293,7 +300,7 @@ def parse_codex_jsonl(stdout: str, *, error_lines: set[str] | None = None) -> tu
     `cost_unknown=True` 를 싣는다 — 0 으로 적으면 「공짜」로 읽히고, 그것이 이 저장소가
     반복해 치른 「조용한 0」이다(이 모듈 머리말과 같은 규칙).
     """
-    text, raw, errors = "", None, []
+    text, raw, errors, sid = "", None, [], ""
     for line in (stdout or "").splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -304,7 +311,9 @@ def parse_codex_jsonl(stdout: str, *, error_lines: set[str] | None = None) -> tu
             continue
         if not isinstance(d, dict):
             continue
-        if d.get("type") == "item.completed":
+        if d.get("type") == "thread.started":
+            sid = sid or _thread_id(d)
+        elif d.get("type") == "item.completed":
             item = d.get("item")
             if not isinstance(item, dict):
                 continue
@@ -321,8 +330,12 @@ def parse_codex_jsonl(stdout: str, *, error_lines: set[str] | None = None) -> tu
                 if message not in errors:
                     errors.append(message)
     if not text and raw is None and not errors:
+        # [주의] `thread.started` 하나만으로는 codex 결과로 보지 않는다(`#726`) — 종전처럼 원문을
+        #    본문으로 돌려야 일찍 죽은 실행의 꼬리가 실패 사유에 남는다.
         return None                                # codex 이벤트가 아니다
     meta = {"source": "codex", "cost_unknown": True}
+    if sid:
+        meta["session_id"] = sid
     if errors:
         meta["errors"] = errors
     if raw is not None:
@@ -334,6 +347,34 @@ def parse_codex_jsonl(stdout: str, *, error_lines: set[str] | None = None) -> tu
             "reasoning_output_tokens": raw.get("reasoning_output_tokens"),
         }
     return text, meta
+
+
+def _thread_id(d: dict) -> str:
+    """`thread.started` 이벤트의 `thread_id`. 문자열이 아니면 빈 값(`#726`)."""
+    v = d.get("thread_id")
+    return v.strip() if isinstance(v, str) else ""
+
+
+def input_split(family: str, input_tokens, cache_read, cache_create=None) -> tuple | None:
+    """입력을 `(비캐시, 캐시 읽기)` 로 나눈다 (`#726`). 계열을 모르거나 값이 없으면 `None`.
+
+    🔴 [중요] **계열마다 `input` 의 뜻이 다르다** (`usage_dashboard._ACCOUNTING` 과 같은 결):
+        codex          input 이 **캐시를 포함**한다 → 비캐시 = input − cache_read
+        claude         input 이 캐시를 **뺀** 값이다 → 비캐시 = input + cache_create
+        agy·gemini·local  input 이 캐시를 뺀 값으로 본다 → 비캐시 = input
+                       (agy 실측: cache_read 81,518 > input 70,543 — 포함일 수 없다)
+    [주의] 합계 정의는 바꾸지 않는다 — 이것은 **나눠 보기**일 뿐이다.
+    """
+    name = (family or "").casefold().partition(":")[0]
+    if not isinstance(input_tokens, int) or not isinstance(cache_read, int):
+        return None
+    if name == "codex":
+        return max(0, input_tokens - cache_read), cache_read
+    if name == "claude":
+        return input_tokens + (cache_create if isinstance(cache_create, int) else 0), cache_read
+    if name in ("agy", "gemini", "local"):
+        return input_tokens, cache_read
+    return None
 
 
 def call_codex(prompt: str, *, timeout: int = TIMEOUT, reasoning: str = "") -> Call:
@@ -367,6 +408,7 @@ def usage_from_codex_events(events: str, text: str = "") -> Usage:
     """
     u = Usage(lane="codex")
     last = None
+    sid = ""
     for line in (events or "").splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -375,8 +417,13 @@ def usage_from_codex_events(events: str, text: str = "") -> Usage:
             d = json.loads(line)
         except ValueError:
             continue
+        if not isinstance(d, dict):
+            continue
+        if d.get("type") == "thread.started":
+            sid = sid or _thread_id(d)                # `#726` — 세션 사본과 잇는 열쇠
         if (d.get("type") == "turn.completed") and isinstance(d.get("usage"), dict):
             last = d["usage"]
+    u.session_id = sid
     if last:
         u.input_tokens = last.get("input_tokens")
         u.output_tokens = last.get("output_tokens")
@@ -460,6 +507,9 @@ def meta_from_usage(u) -> dict:
         meta["total_cost_usd"] = float(cost)
     if getattr(u, "note", ""):
         meta["note"] = u.note
+    sid = getattr(u, "session_id", "")
+    if isinstance(sid, str) and sid:
+        meta["session_id"] = sid                   # `#726` — 없으면 키를 만들지 않는다
     return meta
 
 
@@ -512,6 +562,11 @@ def record(path, meta: dict, *, lane: str = "", task_id: str = "", work_id: str 
            **normalize(meta, lane=lane, seconds=seconds)}
     if note:
         rec["note"] = note          # 값이 있을 때만 — 기존 레코드 모양은 그대로다 (ax-gemini 경고·실패 사유)
+    # 🔴 `#726` — codex 세션 id(`thread.started.thread_id`). 대시보드가 읽을 때 수집된 rollout
+    #    사본과 잇는다(사용자 결정 2026-10-09 (가)). [주의] 없으면 칸을 만들지 않는다.
+    sid = (meta or {}).get("session_id") if isinstance(meta, dict) else None
+    if isinstance(sid, str) and sid.strip():
+        rec["session_id"] = sid.strip()
     try:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
