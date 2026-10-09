@@ -261,12 +261,19 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 #    다른 말을 하는 것을 사용자가 「눈속임」이라 불렀다(2026-09-03).
                 tasks_cx = [t for t in tasks_all if t.get("status") == "cancelled"]
                 tasks_nw = [t for t in tasks_cx if t.get("no_work")]
-                tasks_c = [t for t in tasks_cx if not t.get("no_work")]
+                # [중요] 요청자 인계(`#757` · 사용자 결정 2026-10-09 ①)도 「취소」가 아니다 —
+                #    ⑦ 에서 사람이 채운다. 「취소된 파일」에 섞으면 접은 조각으로 읽힌다.
+                tasks_ho = [t for t in tasks_cx
+                            if not t.get("no_work") and t.get("requester_handoff")]
+                tasks_c = [t for t in tasks_cx
+                           if not t.get("no_work") and not t.get("requester_handoff")]
                 files_v = sorted({t.get("target_file", "") for t in tasks_v if t.get("target_file")})
                 files_f = sorted({t.get("target_file", "") for t in tasks_f if t.get("target_file")})
                 files_c = sorted({t.get("target_file", "") for t in tasks_c if t.get("target_file")})
                 nw_details = [(t.get("target_file", "?"),
                                str(t.get("cancel_reason") or "")[:200]) for t in tasks_nw]
+                ho_details = [(t.get("target_file", "?"),
+                               str(t.get("cancel_reason") or "")[:200]) for t in tasks_ho]
                 # failed task 의 reason 도 같이 — 사용자 진단용
                 fail_details = []
                 for t in tasks_f:
@@ -290,7 +297,8 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
 
             # [주의] **`no_work` 는 미완성이 아니다** — 제목에 「일부 미완성」을 붙이지
             #    않는다. 골조가 완성본이라 채울 것이 없었던 조각이고, 그것은 정상 결과다.
-            partial = bool(tasks_f or tasks_c)
+            #    [주의] 요청자 인계분은 **미완성이다** — 사람이 ⑦ 에서 채워야 한다(`#757`).
+            partial = bool(tasks_f or tasks_c or tasks_ho)
             build_failed = (build_status == "failed")
             if build_failed:
                 subject_prefix = "[빌드 실패] 통합 빌드 게이트 차단"
@@ -314,6 +322,7 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 f"- 완료된 조각: {len(tasks_v)}건"
                 + (f" / 실패: {len(tasks_f)}건" if tasks_f else "")
                 + (f" / 할 일 없음: {len(tasks_nw)}건" if tasks_nw else "")
+                + (f" / 요청자 인계: {len(tasks_ho)}건" if tasks_ho else "")
                 + (f" / 취소: {len(tasks_c)}건" if tasks_c else ""),
                 "",
                 "[중요] **아직 아무것도 검증되지 않았다.** 조각은 각자 자기 서브 브랜치에",
@@ -366,6 +375,17 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                     lines.append(f"- `{rf}`" + (f" — {why}" if why else ""))
                 if len(nw_details) > 30:
                     lines.append(f"- … 외 {len(nw_details) - 30}건")
+
+            if tasks_ho:
+                lines += ["", f"## 요청자가 맡은 조각 — ⑦ 통합에서 손으로 채운다 ({len(tasks_ho)}건)",
+                          "",
+                          "[중요] 서브 브랜치가 없으므로 머지 대상이 아니다. 통합 트리에서",
+                          "이 파일의 본문을 직접 채운 뒤 한 번 검사한다(`#757`).",
+                          ""]
+                for rf, why in ho_details[:30]:
+                    lines.append(f"- `{rf}`" + (f" — {why}" if why else ""))
+                if len(ho_details) > 30:
+                    lines.append(f"- … 외 {len(ho_details) - 30}건")
 
             if tasks_c:
                 lines += ["", "## 취소된 파일 (cancelled)"]
@@ -428,7 +448,8 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 description = "\n".join([
                     f"라운드 {_r} 종결 — {merge_status}",
                     f"- work_id: {work_id}",
-                    f"- 완료 {len(tasks_v)} / 실패 {len(tasks_f)} / 취소 {len(tasks_c)} / 할 일 없음 {len(tasks_nw)}",
+                    f"- 완료 {len(tasks_v)} / 실패 {len(tasks_f)} / 취소 {len(tasks_c)} / 할 일 없음 {len(tasks_nw)}"
+                    + (f" / 요청자 인계 {len(tasks_ho)}" if tasks_ho else ""),
                     "작업은 실패·취소로 종결됐으며 통합·전진 대기 대상이 아니다.",
                     "하위 태스크의 verified 이력과 워커 브랜치는 감사 자료로 보존한다.",
                     "사람의 워킹트리·main은 변경하지 않았다.",

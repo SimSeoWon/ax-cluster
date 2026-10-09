@@ -390,9 +390,12 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         #    새 필드 `no_work` 가 「취소」와 「할 일 없음(골조가 완성본)」을 가른다.
         r = cancel_task(idx, task_id,
                         reason=(req.reason if req else ""),
-                        no_work=bool(req.no_work) if req else False)
+                        no_work=bool(req.no_work) if req else False,
+                        requester_handoff=bool(req.requester_handoff) if req else False)
         if not r.get("ok"):
-            raise HTTPException(404, r.get("error"))
+            # [주의] 플래그 충돌(`no_work`+`requester_handoff`, `#757`)은 「없는 조각」이 아니다
+            raise HTTPException(400 if r.get("reason") == "conflicting_flags" else 404,
+                                r.get("error"))
         return r
 
     @app.post("/api/v1/tasks/{task_id}/reverify")

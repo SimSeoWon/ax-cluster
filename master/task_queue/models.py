@@ -180,12 +180,18 @@ class CancelReq(BaseModel):
     실패로 읽힌다 — 어제 사용자가 「눈속임」이라 부른 것이 공지 본문이 사실과 다른 말을 한
     경우였다. 분모(`total`)에는 **그대로 남는다**: 요청자가 「4조각 중 2는 골조가 이미
     완성본이었다」를 봐야 다음 라운드 골조가 달라진다.
+
+    [중요] `requester_handoff=True` 는 *"요청자(`.33`)가 ⑦ 통합에서 이 조각을 손으로 맡는다"*
+    (`#757` · 사용자 결정 2026-10-09 ①). 실패도 `no_work` 도 아니다 — 채울 본문은 **남아 있고**
+    사람이 채운다. 그래서 라운드를 `cancelled` 로 만들지 않고(전진·다음 라운드가 막힌다),
+    공지는 「일부 미완성」으로 남는다. 분모(`total`)는 그대로다. `no_work` 와 동시에 켜면 거절한다.
     """
     # [중요] 어느 프로젝트의 요청인가 (#257). 비면 마운트로 해석한다 — cancel 은 `STAMP` 라
     #    큐가 등재 때 찍은 값으로 풀고 태그는 대조만 한다.
     project: str = ""
     reason: str = ""
     no_work: bool = False
+    requester_handoff: bool = False
 
 
 class AdminResetReq(BaseModel):

@@ -356,7 +356,8 @@ def reverify_task(idx: TaskIndex, task_id: str) -> dict:
 
 
 def cancel_task(idx: TaskIndex, task_id: str, *,
-                reason: str = "", no_work: bool = False) -> dict:
+                reason: str = "", no_work: bool = False,
+                requester_handoff: bool = False) -> dict:
     """조각을 terminal 로 종결한다 — **취소**이거나 **할 일 없음**이다.
 
     🔴 [중요] `no_work=True` 는 *"골조에 `[PSEUDO]` 가 0개다"* 다. 실패도 취소도 아니고,
@@ -370,7 +371,17 @@ def cancel_task(idx: TaskIndex, task_id: str, *,
 
     [주의] **집계 전이가 여기 있어야 한다** (`#332`). 없으면 마지막에 상태가 바뀌는 조각이
     취소분일 때 work 이 `in_progress` 로 남아 완료 공지가 영원히 안 나간다.
+
+    🔴 [중요] `requester_handoff=True` 는 *"요청자가 ⑦ 통합에서 이 조각을 맡는다"* 다
+    (`#757` · 사용자 결정 2026-10-09 ①). 실측 2026-10-09: 층2 의 거짓 REQUEST_CHANGES 로
+    사람이 조각 하나를 접고 ⑦ 에서 손으로 채우려 했는데, 그냥 취소라 work 이 `cancelled` 로
+    뒤집혀 전진·다음 라운드가 막혔다. 이 표시가 있으면 집계는 `no_work` 처럼 다룬다.
+    [주의] `no_work` 와 **동시에 켜지 않는다** — 「채울 것이 없다」와 「사람이 채운다」는
+    반대말이다. 둘 다면 상태를 바꾸지 않고 거절한다.
     """
+    if no_work and requester_handoff:
+        return {"ok": False, "reason": "conflicting_flags",
+                "error": "no_work 와 requester_handoff 는 함께 켤 수 없다"}
     with idx.lock:
         t = idx.tasks.get(task_id)
         if not t:
@@ -379,16 +390,18 @@ def cancel_task(idx: TaskIndex, task_id: str, *,
         # [중요] 사유를 **레코드에** 적는다 — 본문에만 있으면 공지·화면이 「취소됐다」까지만
         #    알고 「할 일이 없었다」를 모른다(`#222` 와 같은 부류).
         t["no_work"] = bool(no_work)
+        t["requester_handoff"] = bool(requester_handoff)
         if reason:
             t["cancel_reason"] = str(reason)[:300]
         t["cancelled_at"] = _now_iso()
         _save_task(idx, task_id)
         path = idx.task_paths[task_id]
-        kind = "nowork" if no_work else "cancel"
+        kind = "nowork" if no_work else ("handoff" if requester_handoff else "cancel")
         _tq_log(f"[{kind}] {task_id}" + (f" — {str(reason)[:160]}" if reason else ""), idx.root)
         _git_commit_tasks(idx.root, f"[{kind}] {task_id}", [path])
         wid = t.get("work_id")
         flipped = bool(wid in idx.works and _flip_if_all_terminal(idx, wid, why=f"post-{kind}"))
     if flipped:
         _auto_cleanup_work_async(idx, wid)
-    return {"ok": True, "no_work": bool(no_work)}
+    return {"ok": True, "no_work": bool(no_work),
+            "requester_handoff": bool(requester_handoff)}

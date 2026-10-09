@@ -109,7 +109,11 @@ def _count_terminal_in_work(idx: TaskIndex, work_id: str) -> int:
 
 
 def completed_work_status(idx: TaskIndex, work_id: str) -> str:
-    """Classify a completed round; no-work cancellations are successful skips (#701)."""
+    """Classify a completed round; no-work cancellations are successful skips (#701).
+
+    [중요] 요청자 인계 취소(`requester_handoff`, `#757` · 사용자 결정 2026-10-09 ①)도
+    `no_work` 처럼 라운드를 `cancelled` 로 만들지 않는다 — ⑦ 에서 사람이 채운다.
+    """
     work = idx.works.get(work_id) or {}
     total = int(work.get("total") or 0)
     if total <= 0 or _count_terminal_in_work(idx, work_id) < total:
@@ -119,6 +123,7 @@ def completed_work_status(idx: TaskIndex, work_id: str) -> str:
              and int(task.get("round") or 0) in (0, round_no)]
     if any(task.get("status") == "failed" for task in tasks):
         return "rejected"
-    if any(task.get("status") == "cancelled" and not task.get("no_work") for task in tasks):
+    if any(task.get("status") == "cancelled" and not task.get("no_work")
+           and not task.get("requester_handoff") for task in tasks):
         return "cancelled"
     return "ready_for_review"

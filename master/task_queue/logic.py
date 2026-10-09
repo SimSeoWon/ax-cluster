@@ -545,7 +545,8 @@ def recover_stuck_works(idx: TaskIndex) -> list[str]:
     동작:
       - in_progress / ready_for_review 인 work 들을 스캔
       - 전 조각 종결 시 현재 라운드 실패는 rejected, 실제 취소는 cancelled,
-        성공·no_work는 ready_for_review로 분류하고 상태가 바뀌면 통보 트리거 (#701)
+        성공·no_work·요청자 인계(requester_handoff, #757)는 ready_for_review로 분류하고
+        상태가 바뀌면 통보 트리거 (#701)
       - 아직 진행 중인 work (pending/claimed/submitted 가 남음) 는 손대지 않음
 
     반환: 복구된 work_id 목록.

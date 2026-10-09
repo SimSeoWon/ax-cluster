@@ -1044,7 +1044,8 @@ def verify(task_id: str, *, passed: bool = True, feedback: str = "", api=_api):
     })
 
 
-def cancel(task_id: str, *, reason: str = "", no_work: bool = False, api=_api):
+def cancel(task_id: str, *, reason: str = "", no_work: bool = False,
+           requester_handoff: bool = False, api=_api):
     """조각을 **종결**한다 — 소유권 게이트가 없는 유일한 종결 경로다.
 
     🔴 [중요] `no_work=True` 는 *"골조에 `[PSEUDO]` 가 0개 = 채울 본문이 없다"* 다.
@@ -1054,9 +1055,13 @@ def cancel(task_id: str, *, reason: str = "", no_work: bool = False, api=_api):
     `#318` 신원 게이트가 있어 *"고지자 '(none)' 가 소유자 '192.168.0.2' 가 아니다"* 로
     **409** 를 냈고, 조각 2건이 `claimed` 로 남아 `terminal 2/4` 교착이 됐다. 파견하지 않은
     조각을 워커 이름으로 제출하는 것도 사실이 아니다 — 그 워커는 아무것도 안 했다.
+
+    [중요] `requester_handoff=True` 는 *"요청자가 ⑦ 통합에서 이 조각을 맡는다"* 다 (`#757`) —
+    work 을 `cancelled` 로 만들지 않는다. `no_work` 와 함께 켜면 큐가 400 으로 거절한다.
     """
     return api("POST", f"/api/v1/tasks/{task_id}/cancel",
-               {"reason": reason[:300], "no_work": bool(no_work)})
+               {"reason": reason[:300], "no_work": bool(no_work),
+                "requester_handoff": bool(requester_handoff)})
 
 
 def submit_fail(task_id: str, reason: str, detail: str = "", *, epoch=None,
