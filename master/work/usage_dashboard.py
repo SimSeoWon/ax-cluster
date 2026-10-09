@@ -43,7 +43,8 @@ UI 조각 master/webui/usage_page.py, 라우트 조각 master/webui/app.py가 �
 {period,start,end,project,family,source,timezone:'Asia/Seoul',generated_at,
  projects:[프로젝트명], warnings:[고정 문자열],
  totals:{calls,measured_calls,unmeasured_calls,failed_calls,tokens,input_tokens,
-         output_tokens,cache_read,cache_create,reasoning_tokens,issues,unlinked_calls},
+         output_tokens,cache_read,cache_create,reasoning_tokens,issues,unlinked_calls,
+         duplicate_records,duplicate_conflicts},
  buckets:[{date:'YYYY-MM-DD'(구간 첫날),family,calls,measured_calls,
            unmeasured_calls,failed_calls,tokens}],
  models:[{family,model,calls,measured_calls,unmeasured_calls,failed_calls,tokens}],
@@ -57,6 +58,15 @@ UI 조각 master/webui/usage_page.py, 라우트 조각 master/webui/app.py가 �
 master/task_queue/persistence.py, master/projects/config.py.
 RAG: AXCluster/context/master/work/usage.md 및 session_usage.md.
 허용 파일: 이 파일과 master/test_usage_dashboard.py만.
+
+🔴 `#740` 파일 간 응답 중복 (사용자 결정 2026-10-09 (가)) — 세션 소스에만 적용:
+- Claude 세션 레코드에 응답 id(`mid`)가 있으면 (스냅샷 host, mid) 로 파일 간 중복을 가린다.
+  판정은 `session_usage.same_usage` **하나**를 쓴다(규칙 두 벌 금지). 「처음」은 스냅샷 경로 정렬 순서.
+- 같음 → 뒤엣것은 집계에서 빼고 totals.duplicate_records 에 1 더한다.
+- 충돌(값이 다름) → 뒤엣것도 집계하고 totals.duplicate_conflicts 에 1 더하며, 고정 경고
+  "같은 응답 id 인데 값이 다른 세션 기록이 있습니다(둘 다 셉니다)." 를 한 번 싣는다.
+- mid 가 없는 레코드(옛 스냅샷·codex·agy)는 지금처럼 그대로 센다.
+- totals 에 duplicate_records·duplicate_conflicts 키는 **항상** 있다(dispatch 소스면 0).
 검사: python -B -m unittest master.test_usage_dashboard -v (임시 숫자 로그, 실제 LLM 0).
 """
 from __future__ import annotations
@@ -70,7 +80,7 @@ from zoneinfo import ZoneInfo
 
 from ..projects.config import Registry
 from ..task_queue.persistence import _read_md, _tasks_dir
-from .session_usage import DEFAULT_STORE
+from .session_usage import DEFAULT_STORE, same_usage
 
 
 _KST = ZoneInfo("Asia/Seoul")
@@ -279,6 +289,8 @@ def _read_dispatch(root: Path, names: list[str], warnings: list[str], errors: di
 
 
 def _read_sessions(root: Path, warnings: list[str], errors: dict):
+    # [DOC] `#740` — 위 머리말 「파일 간 응답 중복」 절이 계약이다. 판정은 `same_usage` 로만 한다.
+    #       errors 에 duplicate_records·duplicate_conflicts 를 더한다(키는 build_report 가 0 으로 만들어 둔다).
     if not root.is_dir():
         return
     try:
@@ -288,6 +300,7 @@ def _read_sessions(root: Path, warnings: list[str], errors: dict):
         errors["read_errors"] += 1
         _warn(warnings, "세션 스냅샷을 읽지 못했습니다.")
         return
+    seen: dict[tuple[object, object], dict] = {}
     for path in paths:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -301,7 +314,20 @@ def _read_sessions(root: Path, warnings: list[str], errors: dict):
                 raise ValueError("세션 프로젝트")
             for raw in data["records"]:
                 try:
-                    yield owner, _normal_record(raw, session=True, tool=tool)
+                    record = _normal_record(raw, session=True, tool=tool)
+                    mid = raw.get("mid") if tool == "claude" else None
+                    if mid:
+                        key = (data.get("host"), mid)
+                        first = seen.get(key)
+                        if first is None:
+                            seen[key] = raw
+                        elif same_usage(first, raw):
+                            errors["duplicate_records"] += 1
+                            continue
+                        else:
+                            errors["duplicate_conflicts"] += 1
+                            _warn(warnings, "같은 응답 id 인데 값이 다른 세션 기록이 있습니다(둘 다 셉니다).")
+                    yield owner, record
                 except (ValueError, TypeError) as exc:
                     _error("세션 레코드", exc)
                     errors["invalid_records"] += 1
@@ -353,11 +379,14 @@ def build_report(project: str = "", period: str = "daily", start: str = "",
             _warn(warnings, "프로젝트 필터는 작업 경로가 등록 작업장에 속한 세션만 포함합니다.")
     totals = {**_empty_counts(), "input_tokens": 0, "output_tokens": 0,
               "cache_read": 0, "cache_create": 0, "reasoning_tokens": 0,
-              "issues": 0, "unlinked_calls": 0, "invalid_records": 0, "read_errors": 0}
+              "issues": 0, "unlinked_calls": 0, "invalid_records": 0, "read_errors": 0,
+              "duplicate_records": 0, "duplicate_conflicts": 0}
     buckets: dict[tuple[str, str], dict] = {}
     models: dict[tuple[str, str], dict] = {}
     issues: dict[int, dict] = {}
-    errors = {"invalid_records": 0, "read_errors": 0}
+    # [DOC] `#740` — 중복 집계 두 칸도 여기서 0 으로 연다(totals.update(errors) 로 보고서에 실린다).
+    errors = {"invalid_records": 0, "read_errors": 0,
+              "duplicate_records": 0, "duplicate_conflicts": 0}
     qroot = (Path(queue_root) if queue_root is not None else
              Path(os.environ.get("AX_TASK_QUEUE_ROOT") or Path.home() / "ax-state"))
     links = _request_map(qroot, warnings, errors) if source == "dispatch" else {}
