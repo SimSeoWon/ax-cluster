@@ -24,6 +24,11 @@ from .mcp_server import mcp
 # LAN IP 는 CLAUDE.md 기준. 추가가 필요하면 AX_PROJECTS_ALLOWED_HOSTS 에 콤마로 나열한다.
 _DEFAULT_HOSTS = ["127.0.0.1", "localhost", "192.168.0.57", "sim-desktop"]
 
+# [중요] **종료 유예 상한** (#770). Claude Code 가 `subscriptions/listen` SSE 를 세션 내내 열어 두고
+#    SDK 는 종료 때 그 스트림을 끝내지 않아, 무한 대기 → systemd 90초 SIGKILL(재기동 65/70회)이었다.
+#    5초면 재현에서 5.2초에 끝났다. [주의] 상한일 뿐 지연이 아니다 — 정상 종료는 그대로 ~0.2초.
+GRACEFUL_SHUTDOWN_SECONDS = 5
+
 
 def allowed_hosts() -> list[str]:
     extra = [
@@ -99,6 +104,8 @@ def main() -> None:
         if _tok:
             _scoped.append((_tok, _scope))
     print(f"[auth] 역할 스코프 토큰 {len(_scoped)}개 배선")
+    print(f"[shutdown] 종료 유예 {GRACEFUL_SHUTDOWN_SECONDS}초 — 넘으면 남은 연결"
+          f"(subscriptions/listen 등)을 끊는다 (#770)")
     uvicorn.run(BearerAuthMiddleware(served, auth_token, scoped=tuple(_scoped),
                                      # [중요] 원전 UI 경로는 공개(읽기 전용) — `/mcp` 는 잠김
                                      open_paths=OPEN_PATHS | {"/", FAVICON},
@@ -109,7 +116,8 @@ def main() -> None:
                                      public_prefixes=WEB_PREFIXES + ("/view",),
                                      view_prefix=VIEW_PREFIX, view_token=view_token,
                                      view_public=not require),
-                host=host, port=port, log_level="info")
+                host=host, port=port, log_level="info",
+                timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS)
 
 
 if __name__ == "__main__":
