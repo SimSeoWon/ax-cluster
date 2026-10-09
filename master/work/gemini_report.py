@@ -11,12 +11,20 @@
 [주의] 형식 지식은 `usage.parse_agy_json` 한 곳이다 — 여기서 봉투를 따로 읽지 않는다.
 [주의] 보고서 본문은 **이 모듈이 쓴다** — agy 가 파일을 쓰게 하지 않는다(지시와 다른 경로에 쓴
 실측이 있다). 인용 대조는 세션의 몫이고, 머리말의 검증 줄은 「미검증」으로 시작한다.
+[중요] **세션이 보고서 본문을 읽지 않게 한다** (사용자 요청 2026-10-09, `#762` 후속 — 인바운드 토큰).
+본문은 이 프로세스 안에서 파일로 가고, 세션에는 로그 몇 줄과 결과 JSON 한 줄만 간다. 인용 대조
+재료도 여기서 만든다 — 보고서의 `src/경로:줄` 인용을 뽑아 **범위를 결정적으로 검사**하고 인용된
+원문 줄을 `<보고서>.run/citations.txt` 에 모은다. 세션은 그 파일에서 몇 개만 골라 내용을 대조한다.
+[중요] **종료 코드** — 0 성공 · 1 실패(보고서 없음) · 2 실행 전 거절 · **3 경고**: 보고서는 썼지만
+agy 봉투 `status` 가 `SUCCESS` 가 아니다(사용자 결정 2026-10-09 (나) — 본문을 버리지 않되 `ok:false`
+로 내서 세션이 사용자에게 보고하고 대조를 더 하게 한다).
 [주의] 마스터 전용이다 — 트윈 `usage_log` 는 마스터에 있다. `.33` 기록 경로는 별도 일감(사용자 결정 (가)).
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -32,6 +40,10 @@ PROMPT = ("Read BRIEF.md in the added directory and follow it exactly. "
           "Return the full report as your response. Do not create or modify files.")
 HEARTBEAT = 30
 SOURCE = "ax-gemini"
+# 보고서 인용 `src/경로:줄` 또는 `src/경로:시작-끝`. 경로에는 공백·백틱·괄호·쉼표가 없다
+_CITE = re.compile(r"(src/[^\s`:()\[\],]+):(\d+)(?:-(\d+))?")
+CITE_SHOW = 12          # 인용 하나당 citations.txt 에 싣는 최대 줄 수 (긴 범위는 앞부분만)
+SUMMARY_CHARS = 600     # 결과 JSON 에 싣는 요약 길이 — 세션이 본문을 안 열고 보고할 만큼만
 
 
 def log(msg: str) -> None:
@@ -87,7 +99,48 @@ def _text(b) -> str:
     return b.decode("utf-8", "replace") if isinstance(b, bytes) else str(b)
 
 
-def header(*, version: str, model: str, mats: list, seconds: float, u, project: str) -> str:
+def check_citations(text: str, brief_dir: Path) -> tuple:
+    """보고서 인용 → `(통계 dict, citations.txt 본문)`. [중요] **범위만 판정한다** — 줄이 그 주장을
+    하는지는 사람(세션)의 판단이다. 같은 인용은 한 번만 센다."""
+    seen, rows = [], []
+    for m in _CITE.finditer(text):
+        key = (m.group(1), int(m.group(2)), int(m.group(3) or m.group(2)))
+        if key not in seen:
+            seen.append(key)
+    bad_file = bad_range = 0
+    lines_cache: dict = {}
+    for rel, a, b in seen:
+        f = brief_dir / rel
+        if rel not in lines_cache:
+            lines_cache[rel] = (f.read_text(encoding="utf-8", errors="replace").splitlines()
+                                if f.is_file() else None)
+        lines = lines_cache[rel]
+        tag = f"{rel}:{a}" + (f"-{b}" if b != a else "")
+        if lines is None:
+            bad_file += 1
+            rows.append(f"### {tag}  [파일 없음]")
+            continue
+        if a < 1 or b < a or b > len(lines):
+            bad_range += 1
+            rows.append(f"### {tag}  [범위 밖 — 파일은 {len(lines)}줄]")
+            continue
+        shown = lines[a - 1:min(b, a - 1 + CITE_SHOW)]
+        more = f"  (… {b - a + 1 - len(shown)}줄 생략)" if b - a + 1 > len(shown) else ""
+        rows.append(f"### {tag}{more}\n" + "\n".join(f"{a + i:>5}  {t}" for i, t in enumerate(shown)))
+    stats = {"total": len(seen), "missing_file": bad_file, "out_of_range": bad_range,
+             "in_range": len(seen) - bad_file - bad_range}
+    return stats, "\n\n".join(rows) + ("\n" if rows else "")
+
+
+def summary_of(text: str) -> str:
+    """`## 요약` 절(없으면 첫 문단) — 앞 `SUMMARY_CHARS` 자."""
+    m = re.search(r"^##\s*요약\s*$\n(.*?)(?=^##\s|\Z)", text, re.M | re.S)
+    body = (m.group(1) if m else text.strip().split("\n\n", 1)[0]).strip()
+    return body if len(body) <= SUMMARY_CHARS else body[:SUMMARY_CHARS].rstrip() + " …"
+
+
+def header(*, version: str, model: str, mats: list, seconds: float, u, project: str,
+           cites: dict | None = None, warn: str = "") -> str:
     tok = ("미상" if u is None or not u.known else
            f"입력 {u.input_tokens if u.input_tokens is not None else '미상'} / "
            f"출력 {u.output_tokens if u.output_tokens is not None else '미상'}"
@@ -96,8 +149,11 @@ def header(*, version: str, model: str, mats: list, seconds: float, u, project: 
         f"> 작성: Gemini (agy {version}{' · ' + model if model else ''}) · 실행: `master.work.gemini_report` · "
         f"{datetime.now():%Y-%m-%d %H:%M} · 프로젝트 {project}",
         f"> 자료: {', '.join(mats) if mats else '(없음)'}",
-        "> 검증: 미검증 — 위임한 세션이 인용을 원본과 대조한 뒤 이 줄을 갱신한다",
+        "> 검증: 미검증 — 위임한 세션이 인용 내용을 원본과 대조한 뒤 이 줄을 갱신한다"
+        + (f" · 범위 검사(자동): 인용 {cites['total']}개 — 범위 안 {cites['in_range']} · "
+           f"범위 밖 {cites['out_of_range']} · 파일 없음 {cites['missing_file']}" if cites else ""),
         f"> 소요 {seconds:.0f}초 · 토큰 {tok}",
+        *([f"> [주의] {warn} — 본문이 불완전할 수 있다"] if warn else []),
         "", ""])
 
 
@@ -132,8 +188,8 @@ def main(argv=None) -> int:
 
     if not exe:
         log("실패 — agy 가 없다")
-        U.record(paths.usage_log, {"cost_unknown": True, "note": "agy 없음"}, lane="agy",
-                 rc=127, source=SOURCE)
+        U.record(paths.usage_log, {"cost_unknown": True}, lane="agy",
+                 rc=127, source=SOURCE, note="agy 없음")
         return 1
 
     version = agy_version(exe)
@@ -149,15 +205,20 @@ def main(argv=None) -> int:
     text, u, status, model = parsed if parsed else ("", None, "", "")
     why = ("" if rc == 0 and parsed and text.strip() else
            f"rc={rc}" if rc != 0 else "봉투 아님" if not parsed else "response 비었음")
+    err_text = U.agy_envelope_error(stdout) if parsed else ""
+    warn = ("" if why or not status or status == "SUCCESS" else
+            f"agy status={status}" + (f": {err_text}" if err_text else ""))
     meta = U.meta_from_usage(u) if u is not None else {"cost_unknown": True}
-    if why:
-        meta["note"] = why if not meta.get("note") else f"{why} · {meta['note']}"
+    for msg in (why, warn):
+        if msg:
+            meta["note"] = msg if not meta.get("note") else f"{msg} · {meta['note']}"
     rec = U.record(paths.usage_log, meta, lane="agy", rc=rc if rc else (0 if not why else 1),
-                   seconds=secs, source=SOURCE, model=model)
+                   seconds=secs, source=SOURCE, model=model, note=meta.get("note", ""))
     if rec.get("error"):
         log(f"[주의] 사용량 기록 실패 — {rec['error']}")
-    summary = {"ok": not why, "why": why, "rc": rc, "seconds": round(secs, 1),
-               "status": status, "model": model, "tokens": (u.as_dict() if u else None),
+    summary = {"ok": not why and not warn, "why": why or warn, "rc": rc, "seconds": round(secs, 1),
+               "status": status, "error": err_text, "model": model,
+               "tokens": (u.as_dict() if u else None),
                "usage_log": str(paths.usage_log), "run_dir": str(run_dir),
                "report": "" if why else str(out)}
     (run_dir / "run.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1),
@@ -167,12 +228,22 @@ def main(argv=None) -> int:
         print(json.dumps(summary, ensure_ascii=False))
         return 1
 
+    cites, cite_text = check_citations(text, brief_dir)
+    (run_dir / "citations.txt").write_text(cite_text, encoding="utf-8")
+    summary.update({"citations": cites, "citations_file": str(run_dir / "citations.txt"),
+                    "summary": summary_of(text)})
+    (run_dir / "run.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1),
+                                      encoding="utf-8")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(header(version=version, model=model, mats=mats, seconds=secs, u=u,
-                          project=a.project) + text.strip() + "\n", encoding="utf-8")
-    log(f"완료 — {secs:.0f}초 · {u.summary() if u else '토큰 미상'} · 보고서 {out}")
+                          project=a.project, cites=cites, warn=warn) + text.strip() + "\n",
+                   encoding="utf-8")
+    log(f"완료 — {secs:.0f}초 · {u.summary() if u else '토큰 미상'} · 인용 {cites['total']}개 "
+        f"(범위 밖 {cites['out_of_range']} · 파일 없음 {cites['missing_file']}) · 보고서 {out}")
+    if warn:
+        log(f"[주의] 경고 — {warn} · 보고서는 썼다, 사용자에게 보고하고 대조를 더 할 것")
     print(json.dumps(summary, ensure_ascii=False))
-    return 0
+    return 3 if warn else 0
 
 
 if __name__ == "__main__":

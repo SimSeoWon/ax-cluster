@@ -210,6 +210,22 @@ def parse_agy_json(stdout: str) -> tuple | None:
     return text, u, str(d.get("status") or ""), (model if isinstance(model, str) else "")
 
 
+def agy_envelope_error(stdout: str) -> str:
+    """`agy --output-format json` 봉투의 `error` 문자열. 봉투가 아니거나 없으면 `""`.
+
+    [주의] `status` 가 `ERROR` 여도 `response` 가 차 있을 수 있다 — 실측 2026-10-09:
+    *"API error (attempt 1): UNAVAILABLE (code 503): No capacity available for model …"* 와 함께
+    본문 5,401자가 왔다. 판정은 부르는 쪽이 한다 — 여기서는 사실만 꺼낸다(`parse_agy_json` 의
+    4-튜플 계약은 레인·층2 가 쓰므로 바꾸지 않는다).
+    """
+    try:
+        d = json.loads(stdout)
+    except ValueError:
+        return ""
+    err = d.get("error") if isinstance(d, dict) else None
+    return err if isinstance(err, str) else ""
+
+
 def parse_codex_jsonl(stdout: str, *, error_lines: set[str] | None = None) -> tuple | None:
     """`codex exec --json` 의 이벤트 스트림 → `(본문, 계측)`. 이벤트가 없으면 `None`.
 
@@ -440,7 +456,7 @@ def normalize(meta: dict, *, lane: str = "", seconds: float = 0.0) -> dict:
 
 def record(path, meta: dict, *, lane: str = "", task_id: str = "", work_id: str = "",
            worker: str = "", rc: int = 0, seconds: float = 0.0, mode: str = "",
-           source: str = "dispatch", model: str = "") -> dict:
+           source: str = "dispatch", model: str = "", note: str = "") -> dict:
     """한 줄 추가하고 그 레코드를 돌려준다. [중요] **실패해도 파이프라인을 막지 않는다.**
 
     원전도 `except: pass` 다 — 계측이 작업을 죽이면 안 된다. 다만 원전과 달리 **무엇을
@@ -451,6 +467,8 @@ def record(path, meta: dict, *, lane: str = "", task_id: str = "", work_id: str 
            "work_id": work_id, "task_id": task_id, "worker": worker,
            "mode": mode, "rc": int(rc), "source": source, "model": model,
            **normalize(meta, lane=lane, seconds=seconds)}
+    if note:
+        rec["note"] = note          # 값이 있을 때만 — 기존 레코드 모양은 그대로다 (ax-gemini 경고·실패 사유)
     try:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)

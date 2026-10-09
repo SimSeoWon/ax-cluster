@@ -9,6 +9,10 @@
    4. **원본은 `.run/` 에 남는다** · 실패면 보고서를 만들지 않는다 · 있는 파일은 덮지 않는다
    5. **토큰을 못 읽으면 0 을 지어내지 않는다** — `measured=False`
    6. 마운트 밖 프로젝트·경로 규약 위반은 실행 전에 거절(agy 를 부르지 않는다)
+   8. **봉투 status 가 SUCCESS 가 아니면 경고(종료 3)** — 보고서는 쓰되 `ok:false` · 머리말·기록에
+      오류 문구 (사용자 결정 2026-10-09 (나))
+   7. **세션이 본문을 안 읽어도 되게** — 인용 범위를 결정적으로 검사해 `citations.txt` 에 원문 줄을
+      모으고, 결과 JSON 에 `summary`(요약 절)·`citations` 통계를 싣는다(`#762` 후속)
 """
 from __future__ import annotations
 
@@ -50,9 +54,13 @@ if mode == "fail":
     print("429 quota", file=sys.stderr); sys.exit(3)
 if mode == "notjson":
     print("plain text"); sys.exit(0)
+if mode == "statuserror":
+    print(json.dumps({"response": "# 보고서\\n## 요약\\n요약", "status": "ERROR",
+                      "error": "API error (attempt 1): UNAVAILABLE (code 503): No capacity",
+                      "usage": {"input_tokens": 5, "output_tokens": 2}})); sys.exit(0)
 if mode == "nousage":
     print(json.dumps({"response": "# 보고서\\n본문", "status": "SUCCESS"})); sys.exit(0)
-print(json.dumps({"response": "# 보고서\\n본문 `src/a.py:1`", "status": "SUCCESS",
+print(json.dumps({"response": "# 보고서\\n\\n## 요약\\n요약 한 줄\\n\\n## 1\\n본문 `src/a.py:1` 재인용 `src/a.py:1` 범위밖 `src/a.py:9` 없음 (`src/b.py:2`)", "status": "SUCCESS",
                   "usage": {"input_tokens": 120, "output_tokens": 45, "cache_read_tokens": 7}}))
 """
 
@@ -89,6 +97,7 @@ def main() -> int:
         check("  --add-dir 는 자료 폴더", argv[argv.index("--add-dir") + 1] == str(brief.resolve()), str(argv))
         body = out.read_text(encoding="utf-8") if out.is_file() else ""
         check("보고서 본문", "본문 `src/a.py:1`" in body, body[:200])
+        check("  머리말 — 범위 검사(자동)", "인용 3개 — 범위 안 1 · 범위 밖 1 · 파일 없음 1" in body, body[:400])
         check("  머리말 — 작성·버전", "Gemini (agy 9.9.9" in body, body[:200])
         check("  머리말 — 자료 목록", "src/a.py" in body.split("\n")[1], body[:300])
         check("  머리말 — 검증은 미검증으로 시작", "> 검증: 미검증" in body, body[:300])
@@ -102,6 +111,15 @@ def main() -> int:
                   and r[0]["output_tokens"] == 45 and r[0]["cache_read"] == 7, str(r[0]))
             check("  비용은 미상(0 아님)", r[0]["cost_known"] is False, str(r[0]))
         run = out.with_suffix(".run")
+        res = json.loads((run / "run.json").read_text(encoding="utf-8")) if (run / "run.json").is_file() else {}
+        check("[중요] 인용 통계 — 중복 1회 · 범위 밖 · 파일 없음",
+              res.get("citations") == {"total": 3, "missing_file": 1, "out_of_range": 1, "in_range": 1},
+              str(res.get("citations")))
+        check("  결과 JSON 에 요약 절만", res.get("summary") == "요약 한 줄", repr(res.get("summary")))
+        ct = (run / "citations.txt").read_text(encoding="utf-8") if (run / "citations.txt").is_file() else ""
+        check("  citations.txt — 원문 줄", "### src/a.py:1\n    1  x = 1" in ct, ct)
+        check("  citations.txt — 범위 밖·파일 없음 표시",
+              "src/a.py:9  [범위 밖 — 파일은 1줄]" in ct and "src/b.py:2  [파일 없음]" in ct, ct)
         check("원본 보관 — out.json·err.log·BRIEF.md·run.json",
               all((run / n).is_file() for n in ("out.json", "err.log", "BRIEF.md", "run.json")),
               str(list(run.iterdir()) if run.is_dir() else run))
@@ -119,6 +137,7 @@ def main() -> int:
         check("rc 1 · 보고서 없음", rc == 1 and not out3.exists(), str(rc))
         check("[중요] 실패도 기록 — rc≠0", r["rc"] == 3 and r["source"] == "ax-gemini", str(r))
         check("  토큰 미측정(0 을 지어내지 않음)", r["measured"] is False, str(r))
+        check("  실패 사유도 기록 비고에", "rc=3" in r.get("note", ""), str(r))
         check("  stderr 보관", "429" in (out3.with_suffix(".run") / "err.log").read_text(), "")
 
         print("\n[4] 봉투 아님 · usage 없음")
@@ -133,6 +152,18 @@ def main() -> int:
         r = rows(log)[-1]
         check("usage 없음 → 보고서는 쓰고 토큰은 미상", rc == 0 and r["measured"] is False
               and "토큰 미상" in out5.read_text(encoding="utf-8"), str(r))
+
+        print("\n[4b] status=ERROR + 본문 — 경고(종료 3)")
+        os.environ["FAKE_AGY_MODE"] = "statuserror"
+        out6 = research / "2026-10-09-statuserror.md"
+        rc = G.main(["--project", "AXCluster", "--brief-dir", str(brief), "--out", str(out6)])
+        r = rows(log)[-1]
+        res = json.loads((out6.with_suffix(".run") / "run.json").read_text(encoding="utf-8"))
+        check("[중요] 종료 3 · 보고서는 썼다", rc == 3 and out6.is_file(), str(rc))
+        check("  ok:false · why 에 status·error", res["ok"] is False and "status=ERROR" in res["why"]
+              and "503" in res["why"] and res["error"].startswith("API error"), str(res))
+        check("  머리말 경고", "> [주의] agy status=ERROR: API error" in out6.read_text(encoding="utf-8"), "")
+        check("  기록 — 토큰 측정 · 비고에 오류", r["measured"] and "status=ERROR" in r.get("note", ""), str(r))
 
         print("\n[5] 실행 전 거절 — agy 를 부르지 않는다")
         argv_file.unlink(missing_ok=True); n0 = len(rows(log))
