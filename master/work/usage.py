@@ -226,6 +226,49 @@ def agy_envelope_error(stdout: str) -> str:
     return err if isinstance(err, str) else ""
 
 
+_AGY_RETRY = re.compile(r"Run: attempt (\d+) failed \((.*)\), retrying in (\S+)")
+_AGY_FAIL = re.compile(r"Run: attempt (\d+) failed \((.*)\)(?!, retrying)")
+_AGY_LABEL = re.compile(r'Propagating selected model override to backend: label="([^"]+)"')
+_AGY_GENERATE = "streamGenerateContent"
+
+
+def agy_model_id(label: str) -> str:
+    """`Gemini 3.6 Flash (High)` → `gemini-3.6-flash-high` (`agy models` 의 id 모양)."""
+    return re.sub(r"\s+", "-", re.sub(r"[()]", "", label).strip()).lower()
+
+
+def parse_agy_log(text: str) -> dict:
+    """agy `--log-file` 로그 → `{model, retries, last_error, recovered, final_failure}`.
+
+    🔴 [중요] **재시도 판정은 로그로만 한다** (사용자 결정 2026-10-09 A). 실측 2026-10-09: 봉투
+    `status=ERROR` · `error="API error (attempt 1): UNAVAILABLE (code 503) …"` 인데 로그에는
+    `Run: attempt 1 failed (…), retrying in 4s` 뒤 `streamGenerateContent` 요청이 2번 더 이어지고
+    정상 종료했다 — 봉투의 status 는 **첫 시도의 기록**이었다.
+    `recovered` = 재시도 줄이 있고 · 마지막 재시도 **뒤에** 생성 요청이 있고 · 「재시도 없는 실패」 줄이
+    없다. 하나라도 어긋나면 `False` — 모르면 회복으로 보지 않는다.
+    [주의] 모델은 로그의 마지막 label 이다(봉투에는 모델 키가 없다).
+    """
+    lines = (text or "").splitlines()
+    retries, last_retry_at, final_failure, labels = [], -1, "", []
+    for i, line in enumerate(lines):
+        m = _AGY_RETRY.search(line)
+        if m:
+            retries.append(m.group(2))
+            last_retry_at = i
+            continue
+        m = _AGY_FAIL.search(line)
+        if m:
+            final_failure = m.group(2)
+        m = _AGY_LABEL.search(line)
+        if m:
+            labels.append(m.group(1))
+    after = any(_AGY_GENERATE in l for l in lines[last_retry_at + 1:]) if last_retry_at >= 0 else False
+    return {"model": agy_model_id(labels[-1]) if labels else "",
+            "retries": len(retries), "last_error": retries[-1] if retries else "",
+            "recovered": bool(retries) and after and not final_failure,
+            "final_failure": final_failure}
+
+
 def parse_codex_jsonl(stdout: str, *, error_lines: set[str] | None = None) -> tuple | None:
     """`codex exec --json` 의 이벤트 스트림 → `(본문, 계측)`. 이벤트가 없으면 `None`.
 

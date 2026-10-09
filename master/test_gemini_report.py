@@ -9,6 +9,8 @@
    4. **원본은 `.run/` 에 남는다** · 실패면 보고서를 만들지 않는다 · 있는 파일은 덮지 않는다
    5. **토큰을 못 읽으면 0 을 지어내지 않는다** — `measured=False`
    6. 마운트 밖 프로젝트·경로 규약 위반은 실행 전에 거절(agy 를 부르지 않는다)
+   9. **agy 가 스스로 재시도해 회복했으면 성공(종료 0)** — `--log-file` 로그로만 판정 · 재시도 뒤 생성
+      요청이 없거나 로그가 없으면 경고 3 · 모델은 로그 label 에서 (사용자 결정 2026-10-09 A)
    8. **봉투 status 가 SUCCESS 가 아니면 경고(종료 3)** — 보고서는 쓰되 `ok:false` · 머리말·기록에
       오류 문구 (사용자 결정 2026-10-09 (나))
    7. **세션이 본문을 안 읽어도 되게** — 인용 범위를 결정적으로 검사해 `citations.txt` 에 원문 줄을
@@ -50,6 +52,17 @@ if sys.argv[1:] == ["--version"]:
     print("9.9.9"); sys.exit(0)
 open(os.environ["FAKE_AGY_ARGV"], "w").write(json.dumps(sys.argv[1:]))
 mode = os.environ.get("FAKE_AGY_MODE", "ok")
+LABEL = 'I1009 model_config_manager.go:327] Propagating selected model override to backend: label="Gemini 3.6 Flash (High)"'
+GEN = "I1009 http_helpers.go:315] URL: https://x/v1internal:streamGenerateContent?alt=sse"
+RETRY = "I1009 run.go:395] Run: attempt 1 failed (UNAVAILABLE (code 503): No capacity), retrying in 4s"
+logs = {"ok": [LABEL, GEN], "retryok": [LABEL, GEN, RETRY, GEN, GEN],
+        "retrytail": [LABEL, GEN, RETRY], "statuserror": [LABEL, GEN]}
+if "--log-file" in sys.argv and mode in logs and not os.environ.get("FAKE_AGY_NOLOG"):
+    open(sys.argv[sys.argv.index("--log-file") + 1], "w").write("\\n".join(logs[mode]) + "\\n")
+if mode in ("retryok", "retrytail"):
+    print(json.dumps({"response": "# 보고서\\n## 요약\\n요약", "status": "ERROR",
+                      "error": "API error (attempt 1): UNAVAILABLE (code 503): No capacity",
+                      "usage": {"input_tokens": 5, "output_tokens": 2}})); sys.exit(0)
 if mode == "fail":
     print("429 quota", file=sys.stderr); sys.exit(3)
 if mode == "notjson":
@@ -95,10 +108,12 @@ def main() -> int:
         check("[중요] -p 가 프롬프트 바로 앞", argv[-2] == "-p" and argv[-1] == G.PROMPT, str(argv))
         check("  프롬프트는 ASCII", G.PROMPT.isascii())
         check("  --add-dir 는 자료 폴더", argv[argv.index("--add-dir") + 1] == str(brief.resolve()), str(argv))
+        check("  --log-file 은 .run/agy.log", "--log-file" in argv
+              and argv[argv.index("--log-file") + 1] == str(out.with_suffix(".run") / "agy.log"), str(argv))
         body = out.read_text(encoding="utf-8") if out.is_file() else ""
         check("보고서 본문", "본문 `src/a.py:1`" in body, body[:200])
         check("  머리말 — 범위 검사(자동)", "인용 3개 — 범위 안 1 · 범위 밖 1 · 파일 없음 1" in body, body[:400])
-        check("  머리말 — 작성·버전", "Gemini (agy 9.9.9" in body, body[:200])
+        check("  머리말 — 작성·버전·모델(로그 label)", "Gemini (agy 9.9.9 · gemini-3.6-flash-high)" in body, body[:200])
         check("  머리말 — 자료 목록", "src/a.py" in body.split("\n")[1], body[:300])
         check("  머리말 — 검증은 미검증으로 시작", "> 검증: 미검증" in body, body[:300])
         check("  머리말 — 토큰", "입력 120 / 출력 45" in body, body[:300])
@@ -164,6 +179,31 @@ def main() -> int:
               and "503" in res["why"] and res["error"].startswith("API error"), str(res))
         check("  머리말 경고", "> [주의] agy status=ERROR: API error" in out6.read_text(encoding="utf-8"), "")
         check("  기록 — 토큰 측정 · 비고에 오류", r["measured"] and "status=ERROR" in r.get("note", ""), str(r))
+
+        print("\n[4c] status=ERROR + 로그에 재시도 회복 — 성공(종료 0)")
+        os.environ["FAKE_AGY_MODE"] = "retryok"
+        out7 = research / "2026-10-09-retryok.md"
+        rc = G.main(["--project", "AXCluster", "--brief-dir", str(brief), "--out", str(out7)])
+        r = rows(log)[-1]
+        res = json.loads((out7.with_suffix(".run") / "run.json").read_text(encoding="utf-8"))
+        b7 = out7.read_text(encoding="utf-8")
+        check("[중요] 종료 0 · ok · recovered · 재시도 1", rc == 0 and res["ok"] and res["recovered"]
+              and res["retries"] == 1, str(res))
+        check("  머리말 참고 줄 · 경고 줄 없음", "> 참고: agy 재시도 1회 후 완료" in b7 and "[주의] agy" not in b7, b7[:500])
+        check("  기록 비고에 재시도 · 모델", "재시도 1회" in r.get("note", "")
+              and r["model"] == "gemini-3.6-flash-high", str(r))
+        for mode, extra, label in (("retrytail", {}, "재시도 뒤 생성 요청 없음"),
+                                   ("retryok", {"FAKE_AGY_NOLOG": "1"}, "로그 없음")):
+            os.environ["FAKE_AGY_MODE"] = mode
+            os.environ.update(extra)
+            o = research / f"2026-10-09-{mode}-{len(extra)}.md"
+            rc = G.main(["--project", "AXCluster", "--brief-dir", str(brief), "--out", str(o)])
+            os.environ.pop("FAKE_AGY_NOLOG", None)
+            res = json.loads((o.with_suffix(".run") / "run.json").read_text(encoding="utf-8"))
+            check(f"  {label} → 경고 3 (모르면 회복으로 보지 않는다)",
+                  rc == 3 and not res["recovered"] and res["ok"] is False, str(res))
+        o = research / "2026-10-09-retryok-1.md"
+        check("  로그 없음 경고에 사유", "agy 로그 없음" in o.read_text(encoding="utf-8"), "")
 
         print("\n[5] 실행 전 거절 — agy 를 부르지 않는다")
         argv_file.unlink(missing_ok=True); n0 = len(rows(log))

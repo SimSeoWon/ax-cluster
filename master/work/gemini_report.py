@@ -18,6 +18,10 @@
 [중요] **종료 코드** — 0 성공 · 1 실패(보고서 없음) · 2 실행 전 거절 · **3 경고**: 보고서는 썼지만
 agy 봉투 `status` 가 `SUCCESS` 가 아니다(사용자 결정 2026-10-09 (나) — 본문을 버리지 않되 `ok:false`
 로 내서 세션이 사용자에게 보고하고 대조를 더 하게 한다).
+[중요] **단, agy 가 스스로 재시도해 회복했으면 성공이다** (사용자 결정 2026-10-09 A). 실행마다
+`--log-file <보고서>.run/agy.log` 를 받아 `usage.parse_agy_log` 로 판정한다 — 「attempt N 실패 →
+재시도 → 이후 생성 요청」이 로그에 있으면 종료 0 · 비고에 재시도 횟수. 로그가 없거나 회복 근거가
+모자라면 종전대로 경고 3이다(모르면 회복으로 보지 않는다). 모델 이름도 그 로그에서 읽는다.
 [주의] 마스터 전용이다 — 트윈 `usage_log` 는 마스터에 있다. `.33` 기록 경로는 별도 일감(사용자 결정 (가)).
 """
 from __future__ import annotations
@@ -64,14 +68,17 @@ def agy_version(exe: str) -> str:
         return "미상"
 
 
-def run_agy(exe: str, brief_dir: Path, *, timeout: int) -> tuple:
+def run_agy(exe: str, brief_dir: Path, *, timeout: int, log_file: Path | None = None) -> tuple:
     """agy 를 돌린다 → `(rc, stdout, stderr, seconds)`. 도는 동안 하트비트를 찍는다.
 
     [중요] **`-p` 는 프롬프트 바로 앞이다** (실측 2026-08-08). 프롬프트는 ASCII 한 문장 —
     내용은 `BRIEF.md` 파일이 나른다(백틱·CP949 회피).
     """
     cmd = [exe, "--dangerously-skip-permissions", "--output-format", "json",
-           "--add-dir", str(brief_dir), "-p", PROMPT]
+           "--add-dir", str(brief_dir)]
+    if log_file is not None:
+        cmd += ["--log-file", str(log_file)]
+    cmd += ["-p", PROMPT]
     t0 = time.monotonic()
     done = threading.Event()
 
@@ -140,7 +147,7 @@ def summary_of(text: str) -> str:
 
 
 def header(*, version: str, model: str, mats: list, seconds: float, u, project: str,
-           cites: dict | None = None, warn: str = "") -> str:
+           cites: dict | None = None, warn: str = "", info: str = "") -> str:
     tok = ("미상" if u is None or not u.known else
            f"입력 {u.input_tokens if u.input_tokens is not None else '미상'} / "
            f"출력 {u.output_tokens if u.output_tokens is not None else '미상'}"
@@ -154,6 +161,7 @@ def header(*, version: str, model: str, mats: list, seconds: float, u, project: 
            f"범위 밖 {cites['out_of_range']} · 파일 없음 {cites['missing_file']}" if cites else ""),
         f"> 소요 {seconds:.0f}초 · 토큰 {tok}",
         *([f"> [주의] {warn} — 본문이 불완전할 수 있다"] if warn else []),
+        *([f"> 참고: {info}"] if info else []),
         "", ""])
 
 
@@ -193,10 +201,11 @@ def main(argv=None) -> int:
         return 1
 
     version = agy_version(exe)
-    log(f"시작 — agy {version} · 자료 {len(mats)}개 · 지시서 {brief_dir / BRIEF}")
-    rc, stdout, stderr, secs = run_agy(exe, brief_dir, timeout=a.timeout)
-
     run_dir.mkdir(parents=True, exist_ok=True)
+    agy_log = run_dir / "agy.log"
+    log(f"시작 — agy {version} · 자료 {len(mats)}개 · 지시서 {brief_dir / BRIEF} · agy 로그 {agy_log}")
+    rc, stdout, stderr, secs = run_agy(exe, brief_dir, timeout=a.timeout, log_file=agy_log)
+
     (run_dir / "out.json").write_text(stdout, encoding="utf-8")
     (run_dir / "err.log").write_text(stderr, encoding="utf-8")
     shutil.copy2(brief_dir / BRIEF, run_dir / BRIEF)
@@ -206,10 +215,18 @@ def main(argv=None) -> int:
     why = ("" if rc == 0 and parsed and text.strip() else
            f"rc={rc}" if rc != 0 else "봉투 아님" if not parsed else "response 비었음")
     err_text = U.agy_envelope_error(stdout) if parsed else ""
-    warn = ("" if why or not status or status == "SUCCESS" else
-            f"agy status={status}" + (f": {err_text}" if err_text else ""))
+    lg = U.parse_agy_log(agy_log.read_text(encoding="utf-8", errors="replace")
+                         if agy_log.is_file() else "")
+    model = model or lg["model"]
+    bad_status = not why and status and status != "SUCCESS"
+    recovered = bool(bad_status and lg["recovered"])
+    info = (f"agy 재시도 {lg['retries']}회 후 완료 (마지막 실패: {lg['last_error']}) — "
+            f"봉투 status={status} 는 첫 시도의 기록" if recovered else "")
+    warn = ("" if not bad_status or recovered else
+            f"agy status={status}" + (f": {err_text}" if err_text else "")
+            + ("" if agy_log.is_file() else " · agy 로그 없음(회복 판정 불가)"))
     meta = U.meta_from_usage(u) if u is not None else {"cost_unknown": True}
-    for msg in (why, warn):
+    for msg in (why, warn, info):
         if msg:
             meta["note"] = msg if not meta.get("note") else f"{msg} · {meta['note']}"
     rec = U.record(paths.usage_log, meta, lane="agy", rc=rc if rc else (0 if not why else 1),
@@ -218,6 +235,7 @@ def main(argv=None) -> int:
         log(f"[주의] 사용량 기록 실패 — {rec['error']}")
     summary = {"ok": not why and not warn, "why": why or warn, "rc": rc, "seconds": round(secs, 1),
                "status": status, "error": err_text, "model": model,
+               "retries": lg["retries"], "recovered": recovered,
                "tokens": (u.as_dict() if u else None),
                "usage_log": str(paths.usage_log), "run_dir": str(run_dir),
                "report": "" if why else str(out)}
@@ -236,10 +254,12 @@ def main(argv=None) -> int:
                                       encoding="utf-8")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(header(version=version, model=model, mats=mats, seconds=secs, u=u,
-                          project=a.project, cites=cites, warn=warn) + text.strip() + "\n",
+                          project=a.project, cites=cites, warn=warn, info=info) + text.strip() + "\n",
                    encoding="utf-8")
     log(f"완료 — {secs:.0f}초 · {u.summary() if u else '토큰 미상'} · 인용 {cites['total']}개 "
         f"(범위 밖 {cites['out_of_range']} · 파일 없음 {cites['missing_file']}) · 보고서 {out}")
+    if info:
+        log(f"참고 — {info}")
     if warn:
         log(f"[주의] 경고 — {warn} · 보고서는 썼다, 사용자에게 보고하고 대조를 더 할 것")
     print(json.dumps(summary, ensure_ascii=False))
