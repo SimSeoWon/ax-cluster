@@ -151,6 +151,38 @@ def test_codex_windows_sandbox() -> None:
     check("  리눅스는 /dev/null 로 막는다", "< /dev/null" in lin, lin[-40:])
 
 
+def test_codex_linux_agy_writable_root() -> None:
+    """🔴 **Linux 워커 codex 는 agy 상태 폴더 하나만 쓰기로 연다** (`#774`).
+
+    실측 2026-10-09: `.43` 에서 `workspace-write` 안의 agy 가 홈 읽기 전용으로
+    `~/.gemini/antigravity-cli` 쓰기에 실패(3/3). 2026-10-10: `writable_roots` 하나로 SUCCESS.
+    """
+    root = 'sandbox_workspace_write.writable_roots=["/home/sim/.gemini/antigravity-cli"]'
+    f = _facts("192.168.0.43", path="/t/NS")
+    f.home = "/home/sim/"
+    lin = R.worker_command(f, "t1", mode="codex")
+    check("🔴 리눅스 + home → agy 상태 폴더를 writable_roots 로 연다 (끝 / 정리)",
+          f"-c '{root}'" in lin, lin[:400])
+    check("  쓰기는 여전히 작업공간으로 묶는다", "-s workspace-write" in lin, lin[:160])
+    check("  네트워크 손잡이가 살아 있다",
+          "sandbox_workspace_write.network_access=true" in lin, lin[:200])
+    check("[주의] danger-full-access 로 넓히지 않는다", "danger-full-access" not in lin)
+
+    fw = _facts("192.168.0.2", os_="windows", path="C:\\trunk\\NS")
+    fw.home = "C:\\Users\\janus"
+    win = R.worker_command(fw, "t1", mode="codex")
+    check("[주의] 윈도우는 싣지 않는다 (#764 세션 1 중계)", "writable_roots" not in win, win[:300])
+    check("  윈도우 unelevated 못박기는 그대로", 'windows.sandbox="unelevated"' in win)
+
+    f0 = _facts("192.168.0.43", path="/t/NS")
+    f0.home = ""
+    lin0 = R.worker_command(f0, "t1", mode="codex")
+    check("[주의] home 을 모르면 경로를 지어내지 않는다", "writable_roots" not in lin0, lin0[:300])
+
+    cl = R.worker_command(f, "t1", mode="claude")
+    check("[중요] claude 모드에는 영향이 없다", "writable_roots" not in cl, cl[:200])
+
+
 # ── 배달 ─────────────────────────────────────────────────────────────────────
 
 # ── 하트비트 ─────────────────────────────────────────────────────────────────
@@ -944,6 +976,7 @@ def test_claude_auth_runtime() -> None:
 
 def main() -> int:
     for fn in (test_parse, test_pick, test_command, test_codex_windows_sandbox,
+               test_codex_linux_agy_writable_root,
                test_agent_report, test_codex_error_report, test_beater, test_run_task,
                test_queue_calls, test_run_once_happy, test_run_once_returns_the_task,
                test_run_once_guards, test_result_asymmetry, test_pick_skips_dirty,

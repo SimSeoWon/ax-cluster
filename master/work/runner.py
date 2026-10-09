@@ -448,6 +448,8 @@ def agent_command(facts, path: str, instr: str, *, mode: str) -> str:
     네트워크를 막으면 지휘자가 그 지시를 못 따른다. 그래서 **쓰기는 작업공간으로 묶고
     네트워크만 여는** 가운데 값을 쓴다 — 디스크 전체를 열 이유가 없다.
     [주의] `401` 은 서버가 죽은 것이 아니라 **인증 거절**이다(리포트 55 와 같은 판정).
+    [주의] **좁은 예외 하나** (`#774`): Linux 워커는 agy 상태 폴더
+    `~/.gemini/antigravity-cli` 만 `writable_roots` 로 더 연다 — 디스크 전체가 아니다.
     """
     cd = f'cd /d "{path}"' if facts.windows else f'cd "{path}"'
     if mode == "claude":
@@ -481,6 +483,19 @@ def agent_command(facts, path: str, instr: str, *, mode: str) -> str:
         #    단계에서 거절**한다(실측). Linux 도 같은 스키마로 파싱하지만 **쓰지는 않으므로**
         #    Windows 일 때만 싣는다 — 안 쓰는 손잡이를 보낼 이유가 없다.
         win = '-c windows.sandbox="unelevated" ' if facts.windows else ""
+        # 🔴 [중요] **Linux 워커는 agy 상태 폴더 하나만 쓰기로 연다** (`#774`).
+        #    실측 2026-10-09: `.43` 지휘자 codex 가 `workspace-write` 안에서 agy 를 부르면 홈이
+        #    읽기 전용이라 `~/.gemini/antigravity-cli/{log,brain,conversations}` 쓰기가
+        #    `read-only file system` 으로 죽고 응답이 안 나온다(3/3 실패: rc130 ×2 · rc124).
+        #    실측 2026-10-10: 이 `writable_roots` 하나만 더하자 `status: SUCCESS`(12.5초 · rc0) ·
+        #    read-only 오류 0 · 「not logged into Antigravity」 도 사라졌다.
+        #    [주의] `danger-full-access` 가 아니다 — 위 「쓰기는 작업공간으로」의 좁은 예외다.
+        #    [주의] Windows 는 싣지 않는다 — `#764` 세션 1 중계(VIA_LAUNCHER)가 샌드박스 밖에서
+        #    agy 를 돈다. `home` 을 모르면 경로를 지어내지 않고 뺀다.
+        home = (facts.home or "").rstrip("/")
+        agy = (f"-c 'sandbox_workspace_write.writable_roots="
+               f"[\"{home}/.gemini/antigravity-cli\"]' "
+               if not facts.windows and home else "")
         # 🔴 [중요] **MCP 도구는 승인 없이는 안 불린다** (`#402`, 실측 2026-09-12).
         #    비대화형은 `approval: never` 라 호출이 이렇게 거절된다:
         #
@@ -498,6 +513,7 @@ def agent_command(facts, path: str, instr: str, *, mode: str) -> str:
         return (f'{cd} && codex exec --json -s workspace-write '
                 f'-c sandbox_workspace_write.network_access=true '
                 f'{win}'
+                f'{agy}'
                 f'{appr} '
                 f'-C "{path}" "{instr}" < {nul}')
     raise ValueError(f"모르는 지휘자 모드: {mode!r}")
