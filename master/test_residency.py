@@ -352,12 +352,26 @@ def test_stale_flag_is_not_eaten_by_the_new_process() -> None:
           rsrc.index("clear_flag_commands") > rsrc.index("force=True"), "치우지 않는다")
 
 
+def _calls_named(src: str, name: str) -> list:
+    """소스에서 `name(...)` 호출 노드만 고른다 — 주석·문자열 속 같은 글자는 세지 않는다."""
+    import ast
+    import textwrap
+    return [n for n in ast.walk(ast.parse(textwrap.dedent(src)))
+            if isinstance(n, ast.Call) and getattr(n.func, "id", None) == name]
+
+
 def test_deliver_refreshes_residency() -> None:
     """[중요] **완료 조건 1** — 배달 절차 자체가 확인한다(사람 눈이 아니다)."""
     import inspect
     from master.client import bundle
-    src = inspect.getsource(bundle.deliver)
-    check("배달이 갱신을 부른다", "refresh_residency(facts)" in src, "배달이 파일만 놓고 끝난다")
+    # [중요] `#655`(`d0bf674`) 이후 `deliver` 는 해시 캐시만 얹는 래퍼이고 본체는 `_deliver` 다 —
+    #    `deliver` 소스만 보던 검사가 낡아 거짓 실패했다(`#775`). 호출 고리를 두 단계로 따로 잰다.
+    dcalls = _calls_named(inspect.getsource(bundle.deliver), "_deliver")
+    check("배달이 본체를 부른다", bool(dcalls), "deliver 가 _deliver 를 부르지 않는다")
+    rcalls = _calls_named(inspect.getsource(bundle._deliver), "refresh_residency")
+    check("배달이 갱신을 부른다",
+          any(c.args and getattr(c.args[0], "id", None) == "facts" for c in rcalls),
+          "배달이 파일만 놓고 끝난다")
     rsrc = inspect.getsource(bundle.refresh_residency)
     check("관측 → 요구 → 재관측", rsrc.count("probe_command") >= 2, "재관측이 없다")
     check("[중요] 못 읽으면 아무것도 안 한다", "건드리지 않는다" in rsrc)
