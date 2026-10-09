@@ -189,9 +189,10 @@ def test_role_skills() -> None:
     # 🔴 `ax-advance` 는 ⑺ 라운드 종결(작업 브랜치 전진) · `ax-review` 는 main 반영 —
     #    **다른 단계**다. 그 둘을 섞어 오지시를 낸 것이 2026-09-04 의 결함이었다.
     # 🔴 2026-09-16 `ax-fix` 추가 (`#630` — 리뷰·플랜 수정 항목 검토·적용)
-    check("[중요] 요청자는 request·ontology·advance·review·fix (ax-work 아님)",
+    # 2026-10-09 `ax-gemini` 추가 (대화형 리서치·보고서 위임 · 사용자 결정)
+    check("[중요] 요청자는 request·ontology·advance·review·fix·gemini (ax-work 아님)",
           set(bundle.skills_for("requester"))
-          == {"ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-fix"},
+          == {"ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-fix", "ax-gemini"},
           str(bundle.skills_for("requester")))
     check("[중요] 요청자 스킬에 ax-work 가 섞이지 않는다",
           "ax-work" not in bundle.skills_for("requester"))
@@ -2201,8 +2202,9 @@ def test_index_only_delivery() -> None:
     check("🔴 .mcp.json 을 쓰지 않는다", ".mcp.json" not in wrote, str(wrote))
     check("  대신 로컬 스코프로 등록한다", "local" in str(got.get("claude_mcp_local")), str(got.get("claude_mcp_local")))
     check("  `.claude/CLAUDE.md` 블록은 쓴다", bundle.WORKSHOP_MD_REL in wrote, str(wrote))
-    check("  스킬은 ax-ontology 뿐", [r for r in wrote if "skills/" in r]
-          and all("ax-ontology" in r for r in wrote if "skills/" in r),
+    # 2026-10-09 `ax-gemini` 추가 (사용자 결정) — 분산 작업과 무관한 리서치 스킬이라 빈 참조가 아니다
+    check("  스킬은 ax-ontology·ax-gemini 뿐", [r for r in wrote if "skills/" in r]
+          and all(("ax-ontology" in r or "ax-gemini" in r) for r in wrote if "skills/" in r),
           str([r for r in wrote if "skills/" in r]))
     check("  config·토큰 자리는 그대로 (태그가 있어야 검색이 자기 프로젝트를 본다)",
           bundle.CONFIG_REL in wrote, str(wrote))

@@ -82,9 +82,10 @@ def test_unchanged() -> None:
           str(bundle.skills_for("worker")))
     # 🔴 2026-09-04 — `ax-advance` 추가 (정본 ⑺ 라운드 종결 · `ax-review` 와 다른 단계)
     # 🔴 2026-09-16 — `ax-fix` 추가 (`#630` · 리뷰·플랜 수정 항목)
+    # 2026-10-09 — `ax-gemini` 추가 (대화형 리서치·보고서 위임 · 사용자 결정)
     check("요청자 스킬 불변",
           bundle.skills_for("requester")
-          == ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-fix"),
+          == ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-fix", "ax-gemini"),
           str(bundle.skills_for("requester")))
     check("오버레이 없음 == 종전",
           bundle.skills_for("requester") == bundle.skills_for("requester", spec.EMPTY_INIT))
@@ -1004,7 +1005,8 @@ def test_code_kind_delivery():
           spec.skills_for("worker", code) == ("ax-work",) and spec.skills_for("worker", idx) == (),
           str(spec.skills_for("worker", code)))
     req = spec.skills_for("requester", code)
-    check("요청자는 등재·전진·검수·온톨로지", set(req) == {"ax-request", "ax-ontology", "ax-advance", "ax-review"},
+    check("요청자는 등재·전진·검수·온톨로지·리서치",
+          set(req) == {"ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-gemini"},
           str(req))
     check("  ax-fix · ax-infer 는 뺐다 (사용자 결정)",
           "ax-fix" not in req and "ax-infer" not in spec.skills_for("worker", code))

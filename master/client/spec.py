@@ -171,13 +171,15 @@ SKILLS_BY_ROLE = {
     # 🔴 `ax-fix` (`#630`, 사용자 요청 2026-09-16) — 자동 리뷰·주간 플랜을 번호(R12·P3)로 받아
     #   지금 main 기준으로 검토하고, 사람이 고른 항목만 `fix/<번호>` 브랜치에 고친다.
     #   [주의] `ax-review` 와 발화가 겹친다(「리뷰」) — SKILL.md §0 이 `R`/`P` 번호로 가른다.
-    "requester": ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-fix"),
+    # [중요] `ax-gemini` (사용자 결정 2026-10-09) — 리서치·보고서·코드 분석 요청에서 **먼저 묻고**
+    #   승인되면 agy 로 `reports/research/` 보고서를 만든다. 대화형 세션 전용이라 워커엔 안 간다.
+    "requester": ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-fix", "ax-gemini"),
 }
 
 # 🔴 [중요] **색인 전용 프로젝트의 배달** (`#693`, 사용자 확정 2026-09-28). 분산 작업이 없으니
 #    등재·전진·리뷰·수정 스킬은 **빈 참조**가 된다 — 받은 세션이 없는 경로를 부르려 한다.
 #    남는 것은 검색·온톨로지 하나다. 워커는 파견이 없으므로 아무것도 받지 않는다.
-INDEX_ONLY_SKILLS = {"worker": (), "requester": ("ax-ontology",)}
+INDEX_ONLY_SKILLS = {"worker": (), "requester": ("ax-ontology", "ax-gemini")}
 # 작업장 자산 중 색인 전용이 받는 것 — 검색 힌트 훅과 그 경로 도우미뿐이다. 에이전트·룰은
 #    UE 전제(`ue-editor-operator`·`unreal-architecture`)이고, 작업 알림 훅은 알릴 작업이 없다.
 INDEX_ONLY_WORKSHOP = (".claude/hooks/domain_hint.py", ".claude/hooks/hook_paths.py")
@@ -188,7 +190,7 @@ INDEX_ONLY_WORKSHOP = (".claude/hooks/domain_hint.py", ".claude/hooks/hook_paths
 #    [주의] 뺀 것 둘(사용자 결정): `ax-fix` — 자동 리뷰가 UE 전제라 비UE 에선 꺼 뒀다(`consumer`) ·
 #    `ax-infer` — 추론만 하는 옛 경로다. 워커 파견은 `ax-work` 가 계약이다.
 CODE_SKILLS = {"worker": ("ax-work",),
-               "requester": ("ax-request", "ax-ontology", "ax-advance", "ax-review")}
+               "requester": ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-gemini")}
 # 훅은 **스크립트 전부** — 완료 알림(`work_completion`)·대기 고지(`pending_works`)가 분산 작업의
 #    배선이다. `editor_mcp` 는 `pending_works` 가 import 하고, 옵트인이 없으면 조용하다(`notice`
 #    가 `endpoint()` None 에서 빠진다). 에이전트·룰은 UE 전제라 여전히 안 보낸다.
