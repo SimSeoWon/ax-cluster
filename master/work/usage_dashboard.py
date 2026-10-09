@@ -291,9 +291,6 @@ def _read_dispatch(root: Path, names: list[str], warnings: list[str], errors: di
 def _read_sessions(root: Path, warnings: list[str], errors: dict):
     # [DOC] `#740` — 위 머리말 「파일 간 응답 중복」 절이 계약이다. 판정은 `same_usage` 로만 한다.
     #       errors 에 duplicate_records·duplicate_conflicts 를 더한다(키는 build_report 가 0 으로 만들어 둔다).
-    # [PSEUDO] 아래 루프에서 tool=="claude" 이고 raw 에 mid 가 있으면 (data["host"], mid) 로 처음 레코드를 기억하고,
-    #          다시 나오면 same_usage 가 참일 때 건너뛰며 errors["duplicate_records"] += 1,
-    #          거짓이면 그대로 yield 하고 errors["duplicate_conflicts"] += 1 · 고정 경고를 _warn 으로 한 번 싣는다.
     if not root.is_dir():
         return
     try:
@@ -303,6 +300,7 @@ def _read_sessions(root: Path, warnings: list[str], errors: dict):
         errors["read_errors"] += 1
         _warn(warnings, "세션 스냅샷을 읽지 못했습니다.")
         return
+    seen: dict[tuple[object, object], dict] = {}
     for path in paths:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -316,7 +314,20 @@ def _read_sessions(root: Path, warnings: list[str], errors: dict):
                 raise ValueError("세션 프로젝트")
             for raw in data["records"]:
                 try:
-                    yield owner, _normal_record(raw, session=True, tool=tool)
+                    record = _normal_record(raw, session=True, tool=tool)
+                    mid = raw.get("mid") if tool == "claude" else None
+                    if mid:
+                        key = (data.get("host"), mid)
+                        first = seen.get(key)
+                        if first is None:
+                            seen[key] = raw
+                        elif same_usage(first, raw):
+                            errors["duplicate_records"] += 1
+                            continue
+                        else:
+                            errors["duplicate_conflicts"] += 1
+                            _warn(warnings, "같은 응답 id 인데 값이 다른 세션 기록이 있습니다(둘 다 셉니다).")
+                    yield owner, record
                 except (ValueError, TypeError) as exc:
                     _error("세션 레코드", exc)
                     errors["invalid_records"] += 1
@@ -368,13 +379,14 @@ def build_report(project: str = "", period: str = "daily", start: str = "",
             _warn(warnings, "프로젝트 필터는 작업 경로가 등록 작업장에 속한 세션만 포함합니다.")
     totals = {**_empty_counts(), "input_tokens": 0, "output_tokens": 0,
               "cache_read": 0, "cache_create": 0, "reasoning_tokens": 0,
-              "issues": 0, "unlinked_calls": 0, "invalid_records": 0, "read_errors": 0}
+              "issues": 0, "unlinked_calls": 0, "invalid_records": 0, "read_errors": 0,
+              "duplicate_records": 0, "duplicate_conflicts": 0}
     buckets: dict[tuple[str, str], dict] = {}
     models: dict[tuple[str, str], dict] = {}
     issues: dict[int, dict] = {}
     # [DOC] `#740` — 중복 집계 두 칸도 여기서 0 으로 연다(totals.update(errors) 로 보고서에 실린다).
-    # [PSEUDO] 아래 dict 에 "duplicate_records": 0, "duplicate_conflicts": 0 을 더하고 위 totals 초기값에도 같은 두 키를 0 으로 둔다.
-    errors = {"invalid_records": 0, "read_errors": 0}
+    errors = {"invalid_records": 0, "read_errors": 0,
+              "duplicate_records": 0, "duplicate_conflicts": 0}
     qroot = (Path(queue_root) if queue_root is not None else
              Path(os.environ.get("AX_TASK_QUEUE_ROOT") or Path.home() / "ax-state"))
     links = _request_map(qroot, warnings, errors) if source == "dispatch" else {}
