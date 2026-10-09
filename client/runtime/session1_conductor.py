@@ -37,12 +37,30 @@ Windows OpenSSH 는 **세션 0** 에서 프로세스를 만들고, 거기서는 
 사실**을 사람이 워커에 SSH 로 들어가서야 찾았다. 그래서 사건마다 `launcher.log` 에 한 줄씩
 남기고, 마스터가 결과를 회수할 때 그것을 저널로 가져간다(`runner.run_worker_session1`).
 [주의] 로그 쓰기 실패는 작업을 막지 않는다 — 조용히 넘기되 작업 결과 파일은 그대로 쓴다.
+
+## 🔴 agy 위임 중계 (`#764`, 사용자 결정 2026-10-09 ⓑ)
+
+Windows 에서는 codex 샌드박스 안의 agy 가 죽는다 — 실측 `.2`: agy 가 홈
+`C:/Users/<user>/.gemini/antigravity-cli/conversations/*.tmp` 저장에서 *"Access is denied"* 로 실패해
+출력 0바이트. SSH(세션 0)로 부르면 *"authentication failed or timed out"* 이다. 그래서 **샌드박스 밖이고
+로그온 세션인 이 런처가 agy 를 대신 돈다**:
+
+    지휘자   .agy-work/in/<n>/ 에 자료·BRIEF.md → 빈 파일 .agy-work/in/<n>.go
+    런처     codex 가 도는 동안 2초마다 *.go 를 본다 → agy … --add-dir in/<n> → out/<n>.json·.err·.done
+    지휘자   out/<n>.done 이 생길 때까지 기다렸다가 out/<n>.json 을 읽는다
+
+[중요] **명령은 받지 않는다** — 받는 것은 요청 이름(`[A-Za-z0-9_-]`)뿐이고 실행 파일·플래그·프롬프트는 여기
+고정이다(위 원칙 그대로). 런처가 job 을 시작할 때 `.agy-work/VIA_LAUNCHER` 를 써서 지휘자에게 「중계가
+있다」를 알린다 — **중계가 실제로 도는 경로에서만** 그 표시가 생긴다.
 """
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -65,6 +83,7 @@ INSTRUCTION = (
     "and for Python files do not start servers, run the program or run tests - "
     "verification is done later by the requester, not on this worker. "
     "Save each raw agy JSON response as a numbered file in .agy-work/out/ - the master collects it. "
+    "If a delegation fails or returns nothing usable, say why and do that work yourself - it is not a reason to stop. "
     "Above the RESULT line, list what you delegated, to which backend, and how you checked it. "
     "The last non-empty line of your output must be exactly RESULT: DONE "
     "(use RESULT: BLOCKED if you could not finish, and say why above it)."
@@ -109,6 +128,118 @@ def build_argv(root: Path, files, approvals=()) -> list:
     return argv
 
 
+AGY_ROOT, AGY_MARK = ".agy-work", "VIA_LAUNCHER"
+AGY_PROMPT = ("Read BRIEF.md in the added directory and follow it exactly. "
+              "Return the result as your response. Do not create or modify files.")
+AGY_POLL, AGY_LIMIT = 2.0, 900
+_REQ = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
+
+
+def _agy_exe() -> str:
+    return shutil.which("agy") or "agy"
+
+
+class AgyRelay(threading.Thread):
+    """codex 가 도는 동안 `.agy-work/in/*.go` 를 처리한다. 순서대로 하나씩 · 예외를 던지지 않는다."""
+
+    def __init__(self, root: Path, d: Path):
+        super().__init__(daemon=True)
+        self.root, self.d = root, d
+        self.stop = threading.Event()
+        self.handled: set = set()
+        self.proc = None
+
+    def run(self) -> None:
+        inn = self.root / AGY_ROOT / "in"
+        while not self.stop.is_set():
+            try:
+                for go in sorted(inn.glob("*.go")):
+                    name = go.stem
+                    if name in self.handled or self.stop.is_set():
+                        continue
+                    self.handled.add(name)
+                    if not _REQ.match(name):
+                        _log(self.d, f"🔴 agy 중계 — 이름 규칙 밖 요청을 버렸다: {name!r}")
+                        continue
+                    self.serve(name)
+            except Exception as e:                           # noqa: BLE001
+                _log(self.d, f"🔴 agy 중계 스캔 실패 — {type(e).__name__}: {e}")
+            self.stop.wait(AGY_POLL)
+
+    def serve(self, name: str) -> None:
+        out = self.root / AGY_ROOT / "out"
+        out.mkdir(parents=True, exist_ok=True)
+        req = self.root / AGY_ROOT / "in" / name
+        t0, rc, so, se = time.monotonic(), 2, "", ""
+        if not (req / "BRIEF.md").is_file():
+            se = f"{req / 'BRIEF.md'} 가 없다"
+        else:
+            argv = [_agy_exe(), "--dangerously-skip-permissions", "--output-format", "json",
+                    "--add-dir", str(req), "-p", AGY_PROMPT]
+            _log(self.d, f"agy 중계 시작 — 요청 {name} · 실행 파일 {argv[0]}")
+            kw = ({"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+                  if sys.platform.startswith("win") else {"start_new_session": True})
+            try:
+                self.proc = subprocess.Popen(argv, cwd=str(req), stdout=subprocess.PIPE,
+                                             stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                                             text=True, encoding="utf-8", errors="replace", **kw)
+                try:
+                    so, se = self.proc.communicate(timeout=AGY_LIMIT)
+                    rc = self.proc.returncode
+                except subprocess.TimeoutExpired:
+                    _kill_tree(self.proc)
+                    so, se = self.proc.communicate(timeout=30)
+                    se = (se or "") + f"\n[런처] agy 시간 초과 {AGY_LIMIT}초 — 프로세스 트리를 죽였다"
+                    rc = 124
+            except Exception as e:                           # noqa: BLE001
+                se, rc = f"[런처] agy 실행 실패 — {type(e).__name__}: {e}", 127
+            finally:
+                self.proc = None
+        try:
+            (out / f"{name}.json").write_text(so or "", encoding="utf-8")
+            (out / f"{name}.err").write_text((se or "")[-4000:], encoding="utf-8")
+            (out / f"{name}.done").write_text(str(rc), encoding="utf-8")      # 맨 마지막
+        except Exception as e:                               # noqa: BLE001
+            _log(self.d, f"🔴 agy 중계 결과를 못 썼다 — {type(e).__name__}: {e}")
+        _log(self.d, f"agy 중계 끝 — 요청 {name} · rc={rc} · {int(time.monotonic() - t0)}초 · "
+                     f"출력 {len(so or '')}자")
+
+    def shutdown(self) -> None:
+        self.stop.set()
+        if self.proc is not None:
+            _kill_tree(self.proc)
+            _log(self.d, "🔴 codex 가 끝났는데 agy 중계가 돌고 있었다 — 프로세스 트리를 죽였다")
+        self.join(timeout=10)
+
+
+def _start_relay(root: Path, d: Path):
+    """중계를 띄우고 표시를 쓴다. 실패하면 `None` — 지휘자는 표시가 없으니 직접 호출로 간다."""
+    try:
+        base = root / AGY_ROOT
+        (base / "in").mkdir(parents=True, exist_ok=True)
+        (base / "out").mkdir(parents=True, exist_ok=True)
+        relay = AgyRelay(root, d)
+        relay.start()
+        (base / AGY_MARK).write_text("agy requests are served by the session-1 launcher\n",
+                                     encoding="utf-8")
+        _log(d, f"agy 중계 대기 — {base / 'in'} 의 *.go")
+        return relay
+    except Exception as e:                                   # noqa: BLE001
+        _log(d, f"🔴 agy 중계를 못 띄웠다 — {type(e).__name__}: {e}")
+        return None
+
+
+def _stop_relay(root: Path, d: Path, relay) -> None:
+    if relay is None:
+        return
+    relay.shutdown()
+    try:
+        (root / AGY_ROOT / AGY_MARK).unlink()
+    except OSError:
+        pass
+    _log(d, f"agy 중계 종료 — 처리 {len(relay.handled)}건")
+
+
 def _kill_tree(proc) -> None:
     """프로세스 **트리**를 죽인다. [중요] 직계만 죽이면 손자(codex → dotnet)가 남는다."""
     try:
@@ -151,6 +282,7 @@ def run_job(root: Path, d: Path) -> int:
         kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kw["start_new_session"] = True
+    relay = _start_relay(root, d)                           # `#764` — codex 보다 먼저
     try:
         proc = subprocess.Popen(argv, cwd=str(root), stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -170,6 +302,7 @@ def run_job(root: Path, d: Path) -> int:
     except Exception as e:                                   # noqa: BLE001
         out, rc = f"[런처] 실행 실패 — {type(e).__name__}: {e}", 1
         _log(d, f"🔴 실행 실패 — {type(e).__name__}: {e}")
+    _stop_relay(root, d, relay)
     (d / OUT).write_text(out, encoding="utf-8")
     (d / RC).write_text(str(rc), encoding="utf-8")
     # [주의] 로그를 **done.flag 보다 먼저** 쓴다 — 마스터는 done.flag 를 보자마자 로그를 읽는다

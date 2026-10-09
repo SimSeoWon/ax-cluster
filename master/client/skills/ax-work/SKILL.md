@@ -112,6 +112,20 @@ invariant 도 지켰지만, `CurrentStep`(실제는 `Step`) · `EMissionTaskExec
 [주의] **`.ax/` 아래에 쓰지 않는다** — Windows 샌드박스는 그 아래 쓰기를 거부한다(실측 2026-10-09). `.agy-work/` 는
 git 이 무시한다(`.git/info/exclude`).
 
+🔴 [중요] **`.agy-work/VIA_LAUNCHER` 가 있으면 agy 를 직접 부르지 않는다** (Windows 세션 1 · 사용자 결정 2026-10-09 ⓑ).
+그 경로에서는 샌드박스 안의 agy 가 홈(`C:\Users\…\.gemini`) 쓰기 거부로 죽는다(실측). 대신 **런처에 요청한다**:
+
+1. `.agy-work/in/<n>/` 에 자료 사본과 `BRIEF.md` 를 쓴다 (`<n>` 은 `1`, `2` … — 영문·숫자·`-`·`_` 만)
+2. **다 쓴 뒤** 빈 파일 `.agy-work/in/<n>.go` 를 만든다 — 런처가 그것을 보고 샌드박스 밖에서 agy 를 돈다
+3. `.agy-work/out/<n>.done` 이 생길 때까지 **짧은 명령으로 반복해** 기다린다(한 번에 60초 이하 · 최대 15분).
+   PowerShell 예: `$t=0; while (-not (Test-Path .agy-work/out/1.done) -and $t -lt 55) { Start-Sleep 5; $t+=5 }`
+4. `out/<n>.done` 의 값이 agy 종료 코드다. `out/<n>.json` 이 응답 봉투, `out/<n>.err` 가 stderr 끝부분이다
+   — 응답 파일을 따로 저장할 필요가 없다(이미 `out/` 에 있고 마스터가 회수한다)
+
+[중요] **위임이 실패해도 멈추지 않는다** — `done` 이 0 이 아니거나, 15분 안에 안 오거나, 응답이 비었으면
+그 사실을 제출물에 적고 **그 일을 네가 직접 한다**. 위임은 수단이지 통과 조건이 아니다(실측 2026-10-09:
+지휘자가 위임 실패를 이유로 세 번 `BLOCKED` 했다).
+
 🔴 [중요] **응답은 반드시 `.agy-work/out/` 에 파일로 남긴다** (사용자 결정 2026-10-09, `#764`). 마스터가 조각을 마칠 때
 그 폴더를 `~/ax-state/delegations/<work_id>/<task_id>/` 로 회수하고, 워커의 `.agy-work/` 는 지운다
 — 파일로 안 남기면 「agy 가 무엇을 답했나」를 아무도 다시 볼 수 없다. 두 번째 호출은 `2.json` 이다.

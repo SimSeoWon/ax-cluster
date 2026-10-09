@@ -786,6 +786,79 @@ def test_instruction_asks_delegation() -> None:
     check("  여전히 ASCII", R.INSTRUCTION.isascii())
 
 
+def test_session1_agy_relay() -> None:
+    """🔴 `#764` ⓑ — 런처가 codex 가 도는 동안 `.agy-work/in/<n>.go` 를 받아 **샌드박스 밖에서** agy 를 돌린다.
+
+    [주의] 실 codex·agy 를 부르지 않는다 — 지휘자는 파이썬 한 줄(요청을 쓰고 `.done` 을 기다린다),
+    agy 는 PATH 앞의 가짜 스크립트다. 표시 파일(`VIA_LAUNCHER`)은 중계가 도는 동안에만 있다.
+    """
+    import json as _json
+    import os
+    import stat
+    import sys as _sys
+    import tempfile
+
+    L = _load_launcher()
+    root = Path(tempfile.mkdtemp(prefix="ax-s1-agy-"))
+    d = root / ".ax" / "session1" / "t2"
+    d.mkdir(parents=True)
+    (d / "job.json").write_text(_json.dumps({"task_id": "t2", "files": ["a.py"], "timeout": 60}),
+                                encoding="utf-8")
+    bindir = root / "bin"
+    bindir.mkdir()
+    fake = bindir / "agy"
+    fake.write_text("#!/usr/bin/env python3\nimport json,sys,os\n"
+                    "print(json.dumps({'status':'SUCCESS','response':'ok:'+os.path.basename(os.getcwd()),"
+                    "'argv':sys.argv[1:]}))\n", encoding="utf-8")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    conductor = (
+        "import pathlib,time,sys\n"
+        "b=pathlib.Path('.agy-work')\n"
+        "print('mark', (b/'VIA_LAUNCHER').exists())\n"
+        "(b/'in'/'1').mkdir(parents=True,exist_ok=True); (b/'in'/'1'/'BRIEF.md').write_text('q')\n"
+        "(b/'in'/'1.go').write_text('')\n"
+        "(b/'in'/'bad name.go').write_text('')\n"
+        "(b/'in'/'2.go').write_text('')\n"
+        "t=0\n"
+        "while not ((b/'out'/'1.done').exists() and (b/'out'/'2.done').exists()) and t<200:\n"
+        "    time.sleep(0.1); t+=1\n"
+        "print('one', (b/'out'/'1.done').read_text(), (b/'out'/'1.json').read_text().strip())\n"
+        "print('two', (b/'out'/'2.done').read_text(), (b/'out'/'2.err').read_text())\n"
+        "print('RESULT: DONE')\n")
+    saved_argv, saved_path = L.build_argv, os.environ.get("PATH", "")
+    L.build_argv = lambda r, files, approvals=(): [_sys.executable, "-c", conductor]
+    os.environ["PATH"] = f"{bindir}{os.pathsep}{saved_path}"
+    saved_poll = L.AGY_POLL
+    L.AGY_POLL = 0.1
+    try:
+        rc = L.run_job(root, d)
+        out = (d / "out.txt").read_text(encoding="utf-8")
+        log = (d / "launcher.log").read_text(encoding="utf-8")
+        check("지휘자가 끝났다", rc == 0 and "RESULT: DONE" in out, out[-300:])
+        check("[중요] 중계가 도는 동안 VIA_LAUNCHER 가 있다", "mark True" in out, out[:200])
+        check("  끝나면 표시를 지운다", not (root / ".agy-work" / "VIA_LAUNCHER").exists())
+        one = [ln for ln in out.splitlines() if ln.startswith("one ")]
+        check("[중요] 요청 1 → agy 응답 · done=0", bool(one) and one[0].startswith("one 0 ")
+              and '"ok:1"' in one[0], str(one))
+        if one:
+            args = _json.loads(one[0].split(" ", 2)[2]).get("argv", [])
+            check("  고정 플래그 · --add-dir 는 그 요청 폴더 · -p 는 프롬프트 바로 앞",
+                  args[:3] == ["--dangerously-skip-permissions", "--output-format", "json"]
+                  and Path(args[args.index("--add-dir") + 1]).name == "1"
+                  and args[-2] == "-p" and args[-1] == L.AGY_PROMPT, str(args))
+        two = [ln for ln in out.splitlines() if ln.startswith("two ")]
+        check("  BRIEF.md 없는 요청은 rc 2 · 사유", bool(two) and two[0].startswith("two 2 ")
+              and "BRIEF.md" in two[0], str(two))
+        check("[중요] 이름 규칙 밖 요청은 처리하지 않는다",
+              not (root / ".agy-work" / "out" / "bad name.done").exists())
+        for want in ("agy 중계 대기", "agy 중계 시작 — 요청 1", "agy 중계 끝 — 요청 1 · rc=0",
+                     "agy 중계 종료 — 처리"):
+            check(f"  launcher.log 에 「{want}」", want in log, log[-600:])
+    finally:
+        L.build_argv, L.AGY_POLL = saved_argv, saved_poll
+        os.environ["PATH"] = saved_path
+
+
 def test_claude_auth_runtime() -> None:
     from unittest.mock import patch
     raw = "Failed to authenticate: OAuth session expired and could not be refreshed"
@@ -828,7 +901,8 @@ def main() -> int:
                test_session1_launcher_logs,
                test_session1_attempt_isolation,
                test_worker_does_not_build, test_claude_auth_runtime,
-               test_delegation_calls, test_instruction_asks_delegation):
+               test_delegation_calls, test_instruction_asks_delegation,
+               test_session1_agy_relay):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_runner: {PASS}/{total} 통과")

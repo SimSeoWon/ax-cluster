@@ -93,6 +93,7 @@ INSTRUCTION = (
     "and for Python files do not start servers, run the program or run tests - "
     "verification is done later by the requester, not on this worker. "
     "Save each raw agy JSON response as a numbered file in .agy-work/out/ - the master collects it. "
+    "If a delegation fails or returns nothing usable, say why and do that work yourself - it is not a reason to stop. "
     "Above the RESULT line, list what you delegated, to which backend, and how you checked it. "
     "The last non-empty line of your output must be exactly RESULT: DONE "
     "(use RESULT: BLOCKED if you could not finish, and say why above it)."
