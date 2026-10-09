@@ -4,7 +4,41 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-09 22:55 · Claude · #769·#770·#695·#696·#766 종결, 리포트 102·103, #757·#726·#771(A0) 반영**.
+- **현재 체크포인트: 2026-10-10 02:04 KST · Codex · #772 수정 main 반영, #773 마감, 배포·재시작·검사 완료**.
+  - **저장소**: main, HEAD = origin/main `2dc6d23a2f8af2b6d588e157ce39feb4da3d0e94`.
+    문서 갱신 전 트리 clean. 이번 문서 변경은 미커밋이며 문서 커밋·푸시 승인은 아직 없다.
+  - **사용자 승인**: AX 워커 분산 방식, 골조 커밋·푸시, 실패 후 검증 재개, 「좋아 머지하고 드라이런하자」로
+    ⑺ 전진·main 마감, 「배포와 재시작해」로 update·ax-projects 재시작을 승인했다.
+  - **#772 구현**: `ax-projects` 신선도 감시에 `master/work/register.py`를 명시적으로 추가.
+    디렉터리뿐 아니라 단일 `.py` 파일의 mtime도 판정한다. `master/work` 전체 감시나 자동 재시작은 추가하지 않았다.
+    `master/test_service_freshness.py` 26건, `tests/integration/checks.json`에 검사 등록.
+  - **분산 결과**: work `20261009_2313_772_ax_projects_9a055113`, task `21a0637d`, .43 codex.
+    골조 `07311a1` → 워커 `b7fd210` → base 전진 `d1f9a6a` → main 머지 `2dc6d23a`.
+    기존 `review.finalize_work(confirm=True)`가 큐 `merged`·Redmine [#773](http://192.168.0.57:8080/issues/773)
+    「완료」100% 기록과 도달 가능한 원격 작업 브랜치 2개 정리를 수행했다. #772 자체 상태는 이 기록에서 단정하지 않는다.
+  - **운영 반영**: `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client update` rc0,
+    .2/.33/.43 배달·검사 3/3, 출처 `2dc6d23a`.
+    `scripts/ax-service-restart ax-projects` rc0: 10-09 22:52:49 → 10-10 01:50:10 KST,
+    `active/running`, `Result=success`. 신선도 `check()`에서 queue·broker·projects 모두 현재 코드.
+    재시작 뒤 MCP `get_worker_mode_tool()` 정상 응답: `codex`, source=state,
+    10-09 22:58:01 사용자 요청 전환. 마스터 담당 기록은 이번 갱신에서 재조회하지 않았다.
+  - **검증 범위**: main 기준 머지 시뮬레이션 충돌 없음·게이트 통과.
+    배포·재시작 후 `.venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v`
+    rc0, **28모듈·1,277건 통과**. 배달 계획·파일 대조·프로세스 신선도·MCP 응답·통합 검사이며,
+    배포 후 새 work를 등재해 워커 파견을 다시 실행한 것은 아니다.
+  - **#757·#726 실전 근거**: 이번 조각 `[layer2]` APPROVE, backend=agy·writer=codex,
+    grounding 2·baseline 2/2 파일. 사용량 session_id `01a1210e-7d39-7491-b34a-fa9c93d236d6`와
+    회수 rollout의 `conductor_metrics` 일치: 22호출, 입력 861,839·출력 6,043·캐시 808,320·비캐시 53,519.
+    이는 Python 공통 경로 실증이다. Unreal Slate 재실증·lane 모드 연결을 완료했다고 주장하지 않는다.
+  - **남은 결함·정정**: .43의 agy 위임은 홈 캐시 쓰기 오류(rc130) 후 codex 직접 구현으로 완료.
+    후속 [#774](http://192.168.0.57:8080/issues/774)에 기록했으며 위임 결함은 수정하지 않았다.
+    지휘자가 없는 `ReviewResult.summary()`를 호출해 출력 단계에서 예외를 냈으나 실제 검수는 통과했다.
+    사용자 지적 후 기존 머지 승인으로 계속 처리했다. 이 출력 오류를 새 머지 승인 대기로 인계하지 않는다.
+  - **다음 작업·보류**: #774 위임 오류, #757 Unreal 실증, #726 lane 연결, #771 A·B 보류, #768.
+    사용자 결정상 **#763은 다른 작업을 모두 끝낸 뒤 마운트를 Unreal 프로젝트로 전환해 진행**한다.
+    이번 배포·재시작·검사 명령은 모두 종료했다. 전체 큐·hold 상태는 문서 갱신 시 재조회하지 않았다.
+
+- **직전 체크포인트: 2026-10-09 22:55 · Claude · #769·#770·#695·#696·#766 종결, 리포트 102·103, #757·#726·#771(A0) 반영**.
   - **저장소**: HEAD = origin/main `c211789`(#771 A0) — 이 문서 커밋이 그 위에 올라간다.
     이번 세션 커밋: `ca395da`(직전 인계서) · `d6dabac`(리포트 101·102) · `efc72be`·`33964b4`·`36dea0d`·`7c46c11`·
     `d7c8592`·`346b646`·`333b293`·`fcf6794`·`c1bf9ba`(인계서) · `83fdaaa`(#770 수정) · `98a5e23`(리포트 103) ·

@@ -55,6 +55,20 @@
 `update` 는 마운트만, `#655`), ModularStage·NS·
 KimodoMotion_WebUI의 등록 작업장 9개 조합에서 프로젝트 로컬 Codex 자산 대조를 통과했다.
 
+### 운영 반영과 검증 범위 (2026-10-10)
+
+마운트된 프로젝트의 배달은 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client update`로
+수행하고 파일 대조까지 확인한다. 배달과 마스터 서비스 재시작은 별도 작업이며,
+사용자 승인 후 `scripts/ax-service-restart <unit>`로 기동 시각 변화와 최종 상태를 확인한다.
+`master/service_freshness.py`는 `ax-projects`의 디렉터리 의존성과 단일 파일
+`master/work/register.py`를 함께 감시한다. `master/work` 전체를 감시하거나 자동 재시작하지 않는다.
+
+`plan`은 배달 계획 조회다. 배포 후 파일 대조·서비스 신선도·MCP 응답·통합 검사와
+새 work의 실제 워커 파견은 각각 검증 범위를 명시한다. AXCluster의 통합 검사 정본은
+`tests/integration/checks.json`이며 실행 명령은 저장소 `AGENTS.md`를 따른다.
+이번 운영 반영 근거는 [인수인계 체크포인트](orchestrator-handoff.md)와
+[Redmine #772](http://192.168.0.57:8080/issues/772)·[#773](http://192.168.0.57:8080/issues/773)에 있다.
+
 ## 12.3 네 축과 순서 — 항목은 레드마인
 
     #231  전환이 성립하는가        마운트 강제 · 색인기 · 워터마크 · 워커 재배달 고지
