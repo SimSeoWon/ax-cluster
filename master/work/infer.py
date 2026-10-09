@@ -1008,21 +1008,48 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
     _log(f"[layer1] {task_id} 동결 원본 — "
          + (f"{_src} @ {str(base)[:10]}" if baseline is not None else "없음 (동결 미검사로 기록된다)"))
 
+    def _base_files(files):
+        """🔴 층2 에 같은 파일의 기준(골조) 원본을 싣는다 (`#757`, 실측 2026-10-09).
+
+        기준 원본을 못 본 층2 가 같은 파일에서 이미 빌드되던 `…_Lambda`·include 를 「없다」고
+        오탐해 옳은 파일을 막았다. 층1 이 쓰는 `baseline` 을 그대로 쓴다 — `None` 은 신규 파일이거나
+        못 읽은 것이라 **뺀다**. [주의] 예외도 빼고 남긴다 — 원본은 재료지 게이트가 아니다.
+        """
+        out = []
+        if baseline is None:
+            return out
+        for rel in files:
+            try:
+                txt = baseline(rel)
+            except Exception as e:                           # noqa: BLE001
+                _log(f"[layer2] [주의] {task_id} 기준 원본을 못 읽었다 ({rel}) — "
+                     f"{type(e).__name__}: {e} (원본 없이 판정한다)")
+                continue
+            if isinstance(txt, str) and txt:
+                out.append((rel, txt))
+        return out
+
     def verifier(files):
         from .. import layer2_verify as L2
         from ..verdict import Verdict
         from ..projects import profile
         from . import declarations as D, usage as U
+
+        # 🔴 **층2 를 건너뛴 자리도 한 줄 남긴다** (`#757`) — 일지에 판정이 늘 보이게 한다.
+        def _skip(v):
+            _log(f"[layer2] {task_id} 판정 생략 — {v.failure}")
+            return v
         # 별도 상용 검증 시간에도 claim 리스를 살린다. 작성 계측과 구간을 섞지 않는다.
         runner.heartbeat(task_id, facts.host, api=api)
         with runner._Beater(lambda: runner.heartbeat(task_id, facts.host, api=api)):
             prof = profile.load(paths.name)
             kind = prof.get("kind")
             if kind not in ("unreal", "code"):
-                return Verdict(False, "profile_unavailable", warnings=["검증 프로필 kind 미확정"])
+                return _skip(Verdict(False, "profile_unavailable", warnings=["검증 프로필 kind 미확정"]))
             if kind == "code" and (not prof.get("work_exts") or any(
                     Path(rel).suffix.lower() not in prof["work_exts"] for rel in files)):
-                return Verdict(False, "unsupported_target", warnings=["프로필 work_exts 밖 검증 대상"])
+                return _skip(Verdict(False, "unsupported_target",
+                                     warnings=["프로필 work_exts 밖 검증 대상"]))
             decl = D.from_commit(paths, base, kind=kind, work_exts=prof.get("work_exts"),
                                  target_files=list(files), per_class=16000, total=64000)
             diag = [f"grounding @ {str(base)[:10]} — {decl.summary}"]
@@ -1030,12 +1057,19 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                 if getattr(decl, key):
                     diag.append(f"grounding {key}: {', '.join(getattr(decl, key))}")
             if not decl.complete:
-                return Verdict(False, "grounding_incomplete", warnings=diag)
+                return _skip(Verdict(False, "grounding_incomplete", warnings=diag))
             if not author["lane"] or author["lane"] == "lane":
-                return Verdict(False, "author_unavailable", warnings=diag + ["작성 계열 미확정"])
+                return _skip(Verdict(False, "author_unavailable", warnings=diag + ["작성 계열 미확정"]))
+            base_files = _base_files(files)
             with U.sink(paths.usage_log, source="layer2", work_id=work_id, task_id=task_id):
                 v = L2.verify_files(list(files.items()), declarations=decl.render(for_verification=True),
-                                    author_lane=author["lane"], kind=kind)
+                                    author_lane=author["lane"], kind=kind, base_files=base_files)
+            # 🔴 **누가 판정했는지 남긴다** (`#757`, 사용자 2026-10-09) — 성공·차단 모두.
+            backend = next((w.split("=", 1)[1] for w in v.warnings
+                            if isinstance(w, str) and w.startswith("backend=")), "?")
+            _log(f"[layer2] {task_id} 판정 {v.summary()} · backend={backend} · "
+                 f"작성={author['lane']} · 그라운딩 {decl.summary} · "
+                 f"원본 {len(base_files)}/{len(files)}파일")
             v.warnings.extend(diag + [f"author={author['lane']}"])
             return v
 

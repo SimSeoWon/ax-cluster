@@ -1126,6 +1126,81 @@ def test_commit_layer2_grounding_gate() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_commit_layer2_base_files_and_judge_log() -> None:
+    """`#757` — 층2 에 기준(골조) 원본을 싣고, 판정·생략을 일지에 한 줄씩 남긴다.
+
+    [주의] 이음매는 `wcommit.run` 이다 — 대역이 `llm`(작성 계열 확정)과 `verifier` 를 직접
+    부른다. 층1 도 `baseline` 을 부르므로 실 `wcommit` 로는 「원본 읽기 예외」를 층2 에만
+    걸 수 없다. 실 백엔드는 부르지 않는다(`verify_files` 대역).
+    """
+    from master.verdict import Verdict
+    from master.work import usage as U, wcommit
+    from master.work.declarations import Declarations
+    files = {"A.cpp": "void A::Go() { Do(); }\n", "B.cpp": "void B::Go() { Do(); }\n"}
+
+    def raising(rel):
+        if rel == "A.cpp":
+            raise OSError("mirror gone")
+        return None
+
+    cases = (
+        ("기준 원본 있음·신규 제외", lambda rel: {"A.cpp": "BASE-A"}.get(rel),
+         {"kind": "unreal"}, [("A.cpp", "BASE-A")], "원본 1/2파일"),
+        ("원본 읽기 예외는 빼고 기록", raising,
+         {"kind": "unreal"}, [], "원본 0/2파일"),
+        ("원본 없음", None, {"kind": "unreal"}, [], "원본 0/2파일"),
+        ("프로필 미확정은 판정 생략", lambda rel: "X", {}, None, None),
+    )
+    paths, root = tmp_paths()
+    try:
+        for label, bl, prof, want_base, want_ratio in cases:
+            q, logs, seen = FakeQueue([]), [], {}
+
+            def fake_run(facts, task, **kw):
+                kw["llm"](facts, task["task_id"], list(files))
+                try:
+                    seen["v"] = kw["verifier"](dict(files))
+                except Exception as e:                       # noqa: BLE001
+                    seen["exc"] = e
+                return wcommit.Committed(task_id=task["task_id"], stage="층2",
+                                         reason="test stop", want=list(files))
+
+            with ExitStack() as stack:
+                stack.enter_context(patch("master.work.twin_base.local_baseline", return_value=bl))
+                stack.enter_context(patch("master.work.twin_base.commit_baseline", return_value=None))
+                stack.enter_context(patch("master.work.wcommit.run", side_effect=fake_run))
+                stack.enter_context(patch("master.projects.profile.load", return_value=prof))
+                stack.enter_context(patch("master.work.declarations.from_commit", return_value=Declarations(
+                    blocks=[("X", "X.h", "class X { void Go(); };")])))
+                verify = stack.enter_context(patch(
+                    "master.layer2_verify.verify_files",
+                    return_value=Verdict(True, None, warnings=["backend=agy"])))
+                stack.enter_context(patch.object(I._MODE, "current", return_value=("codex", "test")))
+                stack.enter_context(patch.object(I, "_notify_blocked"))
+                stack.enter_context(patch.object(I, "_log", side_effect=logs.append))
+                I.commit_task(paths, FakeFacts(), {"task_id": "bf", "attempt_count": 1},
+                              work_id="W1", base=SUB_TIP, want=list(files), branch="task/W1/bf",
+                              api=q, runner_=lambda *a: (0, U.envelope("done", {"source": "codex"})))
+            check(f"{label}: 검증기가 죽지 않는다", "exc" not in seen and "v" in seen, str(seen))
+            l2 = [ln for ln in logs if ln.startswith("[layer2]")]
+            if want_base is None:
+                check(f"{label}: 층2 미호출", not verify.called)
+                check(f"{label}: 판정 생략 한 줄", any(
+                    "bf 판정 생략 — profile_unavailable" in ln for ln in l2), str(l2))
+                continue
+            check(f"{label}: 기준 원본 전달", verify.called and
+                  verify.call_args.kwargs.get("base_files") == want_base, str(verify.call_args))
+            judge = [ln for ln in l2 if "bf 판정 APPROVE" in ln]
+            check(f"{label}: 판정 한 줄(backend·작성·그라운딩·원본)", len(judge) == 1 and
+                  "backend=agy" in judge[0] and "작성=codex" in judge[0] and
+                  "그라운딩 " in judge[0] and want_ratio in judge[0], str(l2))
+            if bl is raising:
+                check(f"{label}: 예외 사유 기록", any(
+                    "기준 원본을 못 읽었다 (A.cpp)" in ln and "OSError" in ln for ln in l2), str(l2))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (
                test_codex_jsonl_quota_reaches_submit_fail,
@@ -1164,7 +1239,8 @@ def main() -> int:
                test_parallel_uses_both_workers, test_limit_is_respected,
                test_handoff_states_that_nobody_applies_yet,
                test_reuse_avoids_paying_twice, test_commit_layer2_usage_and_author,
-               test_commit_layer2_grounding_gate):
+               test_commit_layer2_grounding_gate,
+               test_commit_layer2_base_files_and_judge_log):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_infer: {PASS}/{total} 통과")

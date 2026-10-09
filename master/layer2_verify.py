@@ -37,7 +37,8 @@ MAX_FILE_CHARS = 16000
 
 
 def build_prompt(files: list[tuple[str, str]], *, declarations: str = "",
-                 kind: str = "unreal") -> str:
+                 kind: str = "unreal",
+                 base_files: list[tuple[str, str]] | None = None) -> str:
     """UE5/C++ 문법 검사 프롬프트 + 판정 계약.
 
     AgentTest 와 같은 범위를 본다 — **컴파일을 깨뜨리는 것만**. 로직·스타일·설계는 보지 않는다
@@ -51,6 +52,15 @@ def build_prompt(files: list[tuple[str, str]], *, declarations: str = "",
     즉 **차이를 만드는 것은 모델이 아니라 grounding 이다** — 골조 게이트에서 배운 것과 같다
     (*"이름만 대고 내용을 안 줬더니 열거값을 지어냈다"*, 리포트 12 §6.3 ③). 층2 도 같은 재료를
     받아야 같은 부류를 잡는다. [주의] 안 주면 문법만 보는 검사기가 된다.
+
+    [중요] **`base_files` — 같은 파일의 기준(골조) 원본도 grounding 이다** (`#757`, 실측
+    2026-10-09). 층2 가 옳은 Unreal 파일을 오탐 6건으로 막았다 — *"SLATE_EVENT 는 `…_Lambda`
+    멤버를 만들지 않는다"* · *"`#include <atomic>` 누락"*. 그런데 **같은 파일의 기존 코드**가 이미
+    `.OnClicked_Lambda(...)` 를 쓰며 빌드되고 있었고 `<atomic>` 은 기존 include 로 들어왔다.
+    모델이 **기준 원본을 못 봤을 뿐**이다 — 위 「모델이 아니라 grounding」과 같은 부류다.
+    그래서 기준 원본을 선언부 **뒤**, 판정 대상 **앞**에 두고 *"바뀐 부분만 판정하라 · 기준에 이미
+    있는 구문은 유효하다"* 를 함께 준다. [주의] 비었거나 `None` 이면 프롬프트는 종전과 **바이트
+    단위로 같다.** 잘라 내지 않는다 — 판정 대상 파일도 자르지 않으므로(대칭이 우선이다).
     """
     parts = [
         "You are a strict C++/Unreal Engine 5 SYNTAX checker.",
@@ -80,6 +90,18 @@ def build_prompt(files: list[tuple[str, str]], *, declarations: str = "",
                   "Do not infer that external modules or unlisted types do not exist.",
                   declarations.strip(),
                   "=== END DECLARATIONS ===", ""]
+    if base_files:
+        parts += ["=== BASE VERSION (before this change; passed the project's skeleton gate) ===",
+                  "The base version already passed the project's skeleton gate; constructs, "
+                  "macros, includes and idioms already used there are valid in this project.",
+                  "Judge ONLY code that was added or changed relative to the base version.",
+                  "Do NOT report a construct as invalid when the same construct/idiom "
+                  "(e.g. the same macro-generated member such as `X_Lambda`, or the same "
+                  "include) already appears in the base version.",
+                  ""]
+        for rel, content in base_files:
+            parts += [f"--- {rel} (base) ---", content, ""]
+        parts += ["=== END BASE VERSION ===", ""]
     for rel, content in files:
         parts += [f"=== {rel} ===", content, ""]
     return "\n".join(parts)
@@ -549,8 +571,11 @@ def exclude_author(backends, author_lane: str) -> tuple:
 
 def verify_files(files: list[tuple[str, str]], *, timeout: int = TIMEOUT_SEC,
                  backends=None, declarations: str = "", author_lane: str = "",
-                 cooldown_sec: int = COOLDOWN_SEC, kind: str = "unreal") -> Verdict:
+                 cooldown_sec: int = COOLDOWN_SEC, kind: str = "unreal",
+                 base_files: list[tuple[str, str]] | None = None) -> Verdict:
     """층2 검증 실행. `files=[(상대경로, 내용)]`.
+
+    `base_files` — 같은 파일의 기준 원본 `[(상대경로, 내용)]` (`#757`). `build_prompt` 로 그대로 넘긴다.
 
     `author_lane` — **누가 썼는가**. 같은 계열은 백엔드에서 빠진다(`#379`). 남는 것이
     없으면 **차단**이다 — 이 게이트의 기존 계약 그대로(백엔드 부재 = fail-closed).
@@ -561,7 +586,7 @@ def verify_files(files: list[tuple[str, str]], *, timeout: int = TIMEOUT_SEC,
     """
     if not files:
         return Verdict(approved=False, failure="empty_input", warnings=["검증 대상 없음"])
-    prompt = build_prompt(files, declarations=declarations, kind=kind)
+    prompt = build_prompt(files, declarations=declarations, kind=kind, base_files=base_files)
     attempted: list[str] = []
     skipped: list[str] = []
     now = time.time()

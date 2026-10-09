@@ -113,6 +113,41 @@ class InputTests(unittest.TestCase):
         self.assertIn(content, calls[0])
         self.assertNotIn("(truncated)", calls[0])
 
+    def test_base_version_sits_between_declarations_and_files(self):
+        """`#757` — 기준 원본은 선언부 뒤, 판정 대상 앞. 바뀐 부분만 보라는 지시가 함께 간다."""
+        prompt = L2.build_prompt([("W.cpp", "NEW-BODY")], declarations="class X;",
+                                 base_files=[("W.cpp", "Btn.OnClicked_Lambda(f);")])
+        head = prompt.index("=== BASE VERSION")
+        self.assertLess(prompt.index("=== END DECLARATIONS ==="), head)
+        self.assertLess(head, prompt.index("--- W.cpp (base) ---"))
+        self.assertLess(prompt.index("Btn.OnClicked_Lambda(f);"), prompt.index("=== END BASE VERSION ==="))
+        self.assertLess(prompt.index("=== END BASE VERSION ==="), prompt.index("=== W.cpp ==="))
+        for text in ("passed the project's skeleton gate",
+                     "Judge ONLY code that was added or changed relative to the base version.",
+                     "Do NOT report a construct as invalid"):
+            self.assertIn(text, prompt)
+
+    def test_no_base_files_keeps_the_prompt_byte_identical(self):
+        files = [("W.cpp", "BODY")]
+        for kind in ("unreal", "code"):
+            before = L2.build_prompt(files, declarations="class X;", kind=kind)
+            self.assertEqual(before, L2.build_prompt(files, declarations="class X;", kind=kind,
+                                                     base_files=None))
+            self.assertEqual(before, L2.build_prompt(files, declarations="class X;", kind=kind,
+                                                     base_files=[]))
+            self.assertNotIn("BASE VERSION", before)
+
+    def test_verify_files_forwards_base_files_to_backend(self):
+        calls = []
+        def approve(prompt, timeout=0):
+            calls.append(prompt)
+            return "VERDICT: APPROVE"
+        L2.clear_cooldown()
+        v = L2.verify_files([("W.cpp", "BODY")], backends=[("fake", approve)],
+                            base_files=[("W.cpp", "BASE-MARKER")])
+        self.assertTrue(v.approved)
+        self.assertIn("--- W.cpp (base) ---\nBASE-MARKER", calls[0])
+
     def test_empty_input_cannot_get_model_approval(self):
         v = L2.verify_files([], backends=[("fake", lambda *_a, **_k: "VERDICT: APPROVE")])
         self.assertEqual(v.failure, "empty_input")
