@@ -4,7 +4,29 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-10 02:04 KST · Codex · #772 수정 main 반영, #773 마감, 배포·재시작·검사 완료**.
+- **현재 체크포인트: 2026-10-10 02:54 KST · Claude · #772 종결, #774 갈래 A 반영·배포 (실전 확인 대기)**.
+  - **저장소**: main, HEAD = origin/main `831ed14`(#774). 이 세션 커밋: `f254b95`(02:04 인계·docs 12/15) ·
+    `831ed14`(#774). 둘 다 사용자 승인 후 커밋·push. 이 문서 갱신은 미커밋이며 커밋 승인은 아직 없다.
+  - **지휘 상태**(02:10 조회, 변경 안 함): 마스터 담당 기록 `claude`(10-06) · 워커 전역 모드 `codex`(10-09 22:58).
+    직전 세션은 Codex였지만 담당 기록은 갱신되지 않았다 — 교대 지시가 없어 그대로 두었다.
+  - **#772 「완료」**(사용자 지시): main 머지 `2dc6d23`·배달 3/3·`ax-projects` 01:50:10 재기동·통합 1,277건을
+    결과 노트로 남기고 닫았다. 되읽기 확인.
+  - **#774 조사 결과**(근거: .43 codex rollout 사본 `~/ax-state/usage/raw/AXCluster/192.168.0.43/codex/sessions/2026/10/09/rollout-…01a1210e….jsonl`):
+    `.43` 지휘자는 `codex exec -s workspace-write` 라 홈이 읽기 전용 → agy 가 `~/.gemini/antigravity-cli` 쓰기 실패를
+    반복하며 응답을 못 냈다. rc130 은 codex 가 약 2분 8초 뒤 Ctrl-C 로 끊은 것. #764 의 샌드박스 밖 중계는
+    Windows(`uses_session1`)에만 있어 Linux 는 직접 호출 — 10-09 `.43` 직접 호출 3/3 실패, `.2`·`.33` 중계 3/3 성공.
+    「실패 뒤 직접 구현」은 파견 지시문(*"If a delegation fails … it is not a reason to stop"*)대로였다.
+  - **#774 갈래 A 반영**(사용자 결정 · 로컬 서브 에이전트 · `831ed14`): Linux 이고 `facts.home` 이 있을 때만
+    codex 명령에 `sandbox_workspace_write.writable_roots=["<home>/.gemini/antigravity-cli"]`. Windows·home 미상·
+    claude 모드 무변화. 사전 실측(.43, 같은 명령): agy SUCCESS 12.5초 rc0, read-only 0건, 「not logged in」 소멸.
+    `test_runner` 200/200 · 통합 28모듈 rc0(서브 에이전트 보고, 단위 검사는 직접 재실행).
+    배달 `update` rc0 · 3/3 · 출처 `831ed14`. `ax-dispatch` 는 oneshot 이라 재기동 없음. Redmine #774 「진행」 + 노트.
+  - **다음 작업·보류**: #774 닫는 조건 — 다음 `.43` 실전 파견 저널의 `[지휘자] 위임: agy … 종료 코드 0`.
+    **#774 갈래 D**(위임 실패 시 계속 / BLOCKED) 정책 미결. 그 밖에는 직전 체크포인트 그대로:
+    #757 Unreal 실증, #726 lane 연결, #771 A·B 보류, #768, #763(마지막, 마운트 Unreal 전환 후).
+    진행 중 work 0 · hold 없음(02:10 조회). 마스터의 Codex app-server 프로세스 3개(10-09 17:32~)는 그대로 두었다.
+
+- **직전 체크포인트: 2026-10-10 02:04 KST · Codex · #772 수정 main 반영, #773 마감, 배포·재시작·검사 완료**.
   - **저장소**: main, HEAD = origin/main `2dc6d23a2f8af2b6d588e157ce39feb4da3d0e94`.
     문서 갱신 전 트리 clean. 이번 문서 변경은 미커밋이며 문서 커밋·푸시 승인은 아직 없다.
   - **사용자 승인**: AX 워커 분산 방식, 골조 커밋·푸시, 실패 후 검증 재개, 「좋아 머지하고 드라이런하자」로
