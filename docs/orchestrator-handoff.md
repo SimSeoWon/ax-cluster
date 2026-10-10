@@ -4,7 +4,29 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-10 16:45 KST · Claude · #780 축 종결(드라이런 2회로 실전 확인) · #787 브랜치 자동 정리 진행 중(로컬 서브 에이전트 2)**.
+- **현재 체크포인트: 2026-10-10 16:55 KST · Claude · #787 배포·잔존 정리·finalize 수정 · #777 축 main 반영(87ea5dc) · #777·#781·#786 완료**.
+  - **저장소**: main, HEAD = origin/main `993ec41`. 이 세션 커밋(모두 사용자 승인 후 커밋·push): `5e3cbce`(#780) · `1da730e`(#783·#784·#785) ·
+    `5dfd2b2`(#787 + 16:45 인계) · `87ea5dc`(finalize 머지, 파이프라인) · `993ec41`(#787 finalize 수정). 이 체크포인트 갱신만 미커밋(커밋 지시 없음).
+    배달 `update` 마지막 rc0 · 3/3 · 출처 `993ec41`. 진행 중 work 0. 원격 heads = `main` 하나. 서브 에이전트 실행 중 없음.
+  - **지휘 상태**(변경 안 함): 마스터 담당 기록 `claude`(10-06) · 워커 전역 모드 `codex`(10-09 22:58).
+  - **#787 「진행」**(브랜치 자동 정리, 사용자 「절차에서 자동으로 정리했어야지」):
+    - `5dfd2b2`: catchup 이 rejected/cancelled work 의 `task/<W>/*` 를 지운다(큐 재확인 · 로컬 `refs/ax/pruned/` 보존 · force-with-lease · 저널+이슈 노트에 ref·tip) ·
+      ⑺ 전진 직후 머지한 서브 브랜치 삭제 · pre-push 가드 예외 둘(자기 base 에서 닿는 서브 브랜치 / 정리 코드가 넘긴 종결 work 하나) ·
+      워커 체크아웃 `fetch.prune=true`(배달·check) · wcommit `fetch --prune` · 큐 종결 노트 문구 수정. CLI `python -m master.work.cleanup terminal|merged-subs [--apply]`(기본 미리보기).
+    - 배포: 배달 3/3(fetch_prune 완료) · AXCluster 마스터 클론 가드 재설치(state ok) · `ax-task-queue` 16:48:57 재기동.
+    - 잔존 정리(수동 CLI): #777 3 · 1차 3 삭제(#778·#781 노트) · 2차 r1 2 삭제 · `.33` `fetch --prune` 으로 stale 추적 참조 14개 정리.
+    - **결함·수정 `993ec41`**: 전진 뒤 서브 브랜치를 지우자 finalize 가 「durable 이 origin 에 없다 — 통째 중단」(push 0). 사용자 갈래 1 —
+      작업 브랜치에 제목이 정확히 `[ADVANCE] <work>: <durable>` 인 머지 커밋이 있으면 전진분으로 인정, 없으면 종전대로 중단.
+    - 남음(닫지 않은 이유): ① 자동 경로(catchup sweep · advance 직후 삭제) 실관측 전 ② ModularStage·NS·MotionForge 마스터 클론 가드 stale
+      (비마운트라 재설치 안 함 → `test_onboard` 라이브 1건 79/80) ③ `test_branch_prune` 을 `tests/integration/checks.json` 에 넣을지 미정.
+  - **#777 축 종결**: 2차 재실증 work `20261010_1613_777_2_2_mkdtemp_783784785_94b9e4c3` ⑺ 전진 `5ab51fa` → finalize main `87ea5dc`
+    (전진분 2건 인정 · base 자동 삭제 · #786 「완료」). test_recipes_read 42/42 · test_stale_unknown 27/27 · /tmp/tmp* 5→5.
+    #777 · #781 사용자 지시로 「완료」. 전진·검수 트리 `/home/sim/ax-advance-<work>` · `/home/sim/ax-review-<work>` 는 남아 있다(파이프라인 소유).
+  - **남은 결정·미수행**: #782(합성 4,000자 상한) 갈래 · 정본 ⑤·CLAUDE.md 「제미나이·로컬 LLM 까지 써서」 문구(#784 와 어긋남, CLAUDE.md 는 동의 후) ·
+    #774 정정 3곳(「not logged into Antigravity 도 사라졌다」 — #774 노트·`831ed14`·인계서) · `.2` codex 로그 `127.0.0.1:8000/mcp` 연결 오류 미조사 ·
+    `test_mount_gate.py` rc1(HEAD 에서도 동일) · 기존 일감 #757 · #726 · #771 · #768 · #763(마지막).
+
+- **직전 체크포인트(같은 세션): 2026-10-10 16:45 KST · Claude · #780 축 종결(드라이런 2회로 실전 확인) · #787 브랜치 자동 정리 진행 중(로컬 서브 에이전트 2)**.
   - **저장소**: main, HEAD = origin/main `1da730e`. 이 세션 커밋(모두 사용자 승인 후 커밋·push): `5e3cbce`(#780) · `1da730e`(#783·#784·#785).
     배달 `update` 마지막 rc0 · 3/3 · 출처 `1da730e`. 훅 재설치(`ax-install-hook --apply`) rc0 · 4개 프로젝트. `ax-task-queue` 15:37:25 재기동(5e3cbce 반영).
     [주의] **#787 서브 에이전트 2개가 작업 트리를 고치는 중**(미커밋): A = `master/work/review.py`·`cleanup.py`·`pre_push_hook.sh`(+필요 시 task_queue·autodispatch),
