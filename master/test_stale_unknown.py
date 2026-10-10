@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -117,17 +118,19 @@ def test_missing_doc_is_not_undecidable() -> None:
     # [DOC] #777: 이 검사가 mkdtemp 로 만든 임시 루트가 실행 뒤 남아 `/tmp/tmp*` 가 쌓였다.
     # 검사 판정(check)은 그대로 두고, 함수가 끝날 때(실패·예외 포함) 루트를 지운다.
     tmp = Path(tempfile.mkdtemp())
-    # [PSEUDO] 아래 본문을 try/finally 로 감싸고 finally 에서 shutil.rmtree(tmp, ignore_errors=True).
-    (tmp / "context").mkdir()
-    import types
-    paths = types.SimpleNamespace(context=tmp / "context", ontology=tmp / "ontology")
-    check("문서가 없으면 MISSING", S.latest_commit(paths, "Source/A/B.cpp") == S.MISSING)
-    doc = tmp / "context" / "Source" / "A"
-    doc.mkdir(parents=True)
-    (doc / "B.md").write_text("---\nsource_commit: abc123\n---\n본문\n", encoding="utf-8")
-    check("스탬프가 있으면 그 값", S.latest_commit(paths, "Source/A/B.cpp") == "abc123")
-    (doc / "C.md").write_text("---\ntitle: x\n---\n본문\n", encoding="utf-8")
-    check("스탬프가 없으면 MISSING", S.latest_commit(paths, "Source/A/C.cpp") == S.MISSING)
+    try:
+        (tmp / "context").mkdir()
+        import types
+        paths = types.SimpleNamespace(context=tmp / "context", ontology=tmp / "ontology")
+        check("문서가 없으면 MISSING", S.latest_commit(paths, "Source/A/B.cpp") == S.MISSING)
+        doc = tmp / "context" / "Source" / "A"
+        doc.mkdir(parents=True)
+        (doc / "B.md").write_text("---\nsource_commit: abc123\n---\n본문\n", encoding="utf-8")
+        check("스탬프가 있으면 그 값", S.latest_commit(paths, "Source/A/B.cpp") == "abc123")
+        (doc / "C.md").write_text("---\ntitle: x\n---\n본문\n", encoding="utf-8")
+        check("스탬프가 없으면 MISSING", S.latest_commit(paths, "Source/A/C.cpp") == S.MISSING)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
