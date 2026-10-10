@@ -552,18 +552,51 @@ def _quarantine(f: Path, why: str) -> None:
              f"(이 파일이 남아 있으면 파견 유닛이 계속 깨어난다)")
 
 
-def _read_triggers() -> list:
-    """`(work_id, project, path)` 목록. 못 읽는 파일은 **격리**한다(`.json.bad`)."""
+def _read_triggers(*, registry=None) -> list:
+    """`(work_id, project, path)` 목록. 못 읽는 파일은 **격리**한다(`.json.bad`).
+
+    트리거를 쓰는 곳은 둘이다 — 소비자(`note_trigger`, `project` = 등록 이름)와 Gitea 훅
+    (`post_receive_hook._note_dispatch`, `#785`). 훅은 `master` 를 import 못 해 이름을 모르고
+    **`project_id` 만** 싣는다. 그때는 여기서 `Registry.find_by_project_id` 로 푼다(소비자와
+    같은 풀이). `registry` 는 테스트 주입용이고, 필요할 때만 한 번 읽는다.
+
+    🔴 **풀지 못한 `project_id` 는 조용히 버리지 않는다** — 크게 찍고 격리한다. 남겨 두면
+    `ax-dispatch.path` 가 계속 깨우고(`_quarantine` 주석), 버리면 파견이 영구 정지한 이유가 안
+    보인다.
+    """
     out = []
     if not TRIGGER_DIR.is_dir():
         return out
+    reg = registry
     for f in sorted(TRIGGER_DIR.glob("*.json")):
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
+            if not isinstance(d, dict):
+                raise ValueError("JSON 객체가 아니다")
             wid, proj = str(d.get("work_id") or ""), str(d.get("project") or "")
+            pid = str(d.get("project_id") or "")
         except (OSError, ValueError) as e:                   # noqa: PERF203
             _quarantine(f, f"{type(e).__name__}: {e}")
             continue
+        if wid and not proj and pid:
+            try:
+                if reg is None:
+                    from ..projects.config import Registry
+                    reg = Registry.load()
+                proj = reg.find_by_project_id(pid)
+            except Exception as e:                           # noqa: BLE001
+                _log(f"[중요] 트리거의 project_id 를 풀 레지스트리를 못 읽었다 — "
+                     f"work={wid} · project_id={pid!r} · {type(e).__name__}: {e}")
+                _quarantine(f, "레지스트리를 못 읽었다")
+                continue
+            if not proj:
+                _log(f"[중요] 골조 push 신호인데 등록된 프로젝트가 아니다 — "
+                     f"work={wid} · project_id={pid!r} · source={d.get('source') or '?'} "
+                     f"(파견하지 않는다 — 등록·ax-project-id 를 확인)")
+                _quarantine(f, f"project_id={pid!r} 를 레지스트리에서 못 찾았다")
+                continue
+            _log(f"트리거 project_id={pid!r} → {proj} ({wid} · "
+                 f"source={d.get('source') or '?'})")
         if not (wid and proj):
             _quarantine(f, "work_id·project 가 없다")
             continue
@@ -571,7 +604,8 @@ def _read_triggers() -> list:
     return out
 
 
-def drain(*, catchup: bool = False, api=None) -> dict:
+def drain(*, catchup: bool = False, api=None, registry=None, resolver=None,
+          dispatch_fn=None) -> dict:
     """트리거를 소비해 파견한다. `ax-dispatch.service` 의 본문.
 
     [중요] **파견 전에 트리거 파일을 지운다.** 남겨 두면 실패가 이어질 때 `ax-dispatch.path`
@@ -582,7 +616,10 @@ def drain(*, catchup: bool = False, api=None) -> dict:
     [주의] `catchup` 은 **열린 work 전부**를 훑는다 — 멱등 가드(pending 있을 때만)가 유일한
     방어선이므로 그 가드를 약화시키면 안 된다.
     """
-    from ..context_search.paths import resolve
+    from ..context_search.paths import resolve as _resolve
+    # `registry`·`resolver`·`dispatch_fn` 은 테스트 주입용 — 운영은 셋 다 비운다.
+    resolve = resolver or _resolve
+    run = dispatch_fn or dispatch
     # [중요] **보류 중이면 그 사실을 먼저 찍는다** — 「아무것도 안 했다」와 「막혀 있다」는
     #    다른 상태이고, 그 둘을 구분 못 해서 이틀을 잃었다.
     held, why_hold = hold_active()
@@ -591,7 +628,7 @@ def drain(*, catchup: bool = False, api=None) -> dict:
     res = {"triggers": 0, "dispatched": 0, "skipped": 0, "errors": 0}
     seen: set = set()
 
-    for wid, proj, f in _read_triggers():
+    for wid, proj, f in _read_triggers(registry=registry):
         res["triggers"] += 1
         try:
             f.unlink()
@@ -599,7 +636,7 @@ def drain(*, catchup: bool = False, api=None) -> dict:
             pass
         seen.add((proj, wid))
         try:
-            r = dispatch(resolve(proj), wid, api=api)
+            r = run(resolve(proj), wid, api=api)
         except Exception as e:                               # noqa: BLE001
             res["errors"] += 1
             _log(f"[중요] {proj}/{wid} 파견 중 예외 — {type(e).__name__}: {e}")

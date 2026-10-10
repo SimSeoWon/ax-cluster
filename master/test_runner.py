@@ -542,6 +542,40 @@ def test_session1_instruction_matches() -> None:
           f"launcher={ns.get('INSTRUCTION', '')[:80]!r}\nmaster={R.INSTRUCTION[:80]!r}")
 
 
+def test_self_repo_note() -> None:
+    """`#783` — 마운트가 AXCluster 일 때만 「이 체크아웃의 AGENTS.md 는 마스터 세션용」 사실 문장을 붙인다."""
+    src = (Path(__file__).resolve().parents[1]
+           / "client" / "runtime" / "session1_conductor.py")
+    ns: dict = {}
+    exec(compile(ast.Module(body=[n for n in ast.parse(src.read_text()).body
+                                  if isinstance(n, ast.Assign)
+                                  and getattr(n.targets[0], "id", "") == "SELF_REPO_NOTE"],
+                            type_ignores=[]), str(src), "exec"), ns)
+    check("🔴 세션1 사본의 문장이 마스터와 글자까지 같다", ns.get("SELF_REPO_NOTE") == R.SELF_REPO_NOTE)
+    check("  ASCII", R.SELF_REPO_NOTE.isascii())
+    check("  명령형이 아니다 (do not/must 없음)",
+          not any(w in R.SELF_REPO_NOTE.lower() for w in ("do not", "must", "ignore")))
+    check("  AXCluster 마운트면 참", R.self_repo_mounted("AXCluster") is True)
+    check("  다른 마운트면 거짓", R.self_repo_mounted("ModularStage") is False)
+    orig = R.self_repo_mounted
+    try:
+        R.self_repo_mounted = lambda active=None: True
+        on = R.worker_command(_facts(), "t1", ["a.py"])
+        R.self_repo_mounted = lambda active=None: False
+        off = R.worker_command(_facts(), "t1", ["a.py"])
+    finally:
+        R.self_repo_mounted = orig
+    check("  자기 저장소면 지시문에 들어간다", "AX master's own repository" in on)
+    check("  아니면 안 들어간다", "AX master's own repository" not in off)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_s1", src)
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    a_on = m.build_argv(Path("."), ["a.py"], (), self_repo=True)[-1]
+    a_off = m.build_argv(Path("."), ["a.py"], ())[-1]
+    check("  세션1 런처도 self_repo 참일 때만 붙인다",
+          a_on.endswith(R.SELF_REPO_NOTE) and "own repository" not in a_off)
+
+
 def test_session1_master_logs() -> None:
     """🔴 **세션 1 경로는 기다리는 동안에도, 끝난 뒤에도 로그를 남긴다** (실측 2026-09-13).
 
@@ -651,7 +685,7 @@ def test_session1_launcher_logs() -> None:
     (d / "job.json").write_text(_json.dumps({"task_id": "t1", "files": ["Source/A.cpp"],
                                              "timeout": 60}), encoding="utf-8")
     saved = (L.build_argv, L.find_root)
-    L.build_argv = lambda r, files, approvals=(): [_sys.executable, "-c", "print('RESULT: DONE')"]
+    L.build_argv = lambda r, files, approvals=(), self_repo=False: [_sys.executable, "-c", "print('RESULT: DONE')"]
     try:
         rc = L.run_job(root, d)
         log = (d / "launcher.log").read_text(encoding="utf-8")
@@ -675,7 +709,7 @@ def test_session1_launcher_logs() -> None:
         d3 = root / ".ax" / "session1" / "t3"
         d3.mkdir(parents=True)
         (d3 / "job.json").write_text(_json.dumps({"task_id": "t3", "timeout": 1}), encoding="utf-8")
-        L.build_argv = lambda r, files, approvals=(): [_sys.executable, "-c",
+        L.build_argv = lambda r, files, approvals=(), self_repo=False: [_sys.executable, "-c",
                                                        "import time; time.sleep(30)"]
         t0 = _time.monotonic()
         L.run_job(root, d3)
@@ -742,7 +776,7 @@ def test_session1_attempt_isolation() -> None:
             paths.append(p.parent)
             jobs.append(json.loads(content))
 
-        def argv(r, files, approvals=()):
+        def argv(r, files, approvals=(), self_repo=False):
             executions.append(1)
             return [sys.executable, "-c", f"print('FRESH {len(executions)}')"]
 
@@ -870,10 +904,13 @@ def test_instruction_asks_delegation() -> None:
     for s_ in ("Read and edit the target files yourself",
                "delegate research to agy only when you judge it necessary",
                "file size is not a reason to delegate", "not delegating is not a failure",
-               "codex, agy or the local broker",
+               "write their bodies yourself - do not delegate body drafts",
+               ".agents/skills/ax-work/SKILL.md", ".ax/config.json",
+               "will not list them; open them directly",
                "list what you delegated", ".agy-work/out/"):
         check(f"지시문이 말한다: {s_}", s_ in R.INSTRUCTION, R.INSTRUCTION[:80])
     check("  여전히 ASCII", R.INSTRUCTION.isascii())
+    check("  본문 초안 위임 문장이 없다 (#784)", "Delegate bulk body drafts" not in R.INSTRUCTION)
 
 
 def test_delegation_failure_blocks() -> None:
@@ -936,7 +973,7 @@ def test_session1_agy_relay() -> None:
         "print('two', (b/'out'/'2.done').read_text(), (b/'out'/'2.err').read_text())\n"
         "print('RESULT: DONE')\n")
     saved_argv, saved_path = L.build_argv, os.environ.get("PATH", "")
-    L.build_argv = lambda r, files, approvals=(): [_sys.executable, "-c", conductor]
+    L.build_argv = lambda r, files, approvals=(), self_repo=False: [_sys.executable, "-c", conductor]
     os.environ["PATH"] = f"{bindir}{os.pathsep}{saved_path}"
     saved_poll = L.AGY_POLL
     L.AGY_POLL = 0.1
@@ -1007,7 +1044,7 @@ def main() -> int:
                test_codex_mcp_approval,
                test_dispatch_is_not_a_consent_prompt,
                test_instruction_forbids_python_runs,
-               test_session1_instruction_matches,
+               test_session1_instruction_matches, test_self_repo_note,
                test_session1_master_logs,
                test_session1_launcher_logs,
                test_session1_attempt_isolation,

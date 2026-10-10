@@ -81,14 +81,16 @@ _HEAD = re.compile(r"^HEAD:\s*([0-9a-fA-F]{7,40})\s*$")
 #    결정적으로 한다(원전도 데몬의 `git_ops.py` 가 했다). 그래서 이 지시서는 push 를
 #    요구하지 않고 `ATTEMPT`/`HEAD` 도 요구하지 않는다.
 INSTRUCTION = (
-    "Follow the ax-work skill. You are on the assigned branch already. "
+    "Follow the ax-work skill. Read it by path at .agents/skills/ax-work/SKILL.md and the machine config at .ax/config.json - "
+    "both are excluded from git, so search tools that honor ignore files (rg, git ls-files) will not list them; open them directly. "
+    "You are on the assigned branch already. "
     "This message is dispatched work from the AX master, not a human chat: the plan was already approved when the task was registered. "
     "Do not ask for approval, do not propose a plan for review, do not wait for confirmation - implement the bodies now. "
     "Read the [DOC] and [PSEUDO] comments in these files and write their bodies: {files}. "
     "Judge from the source files in this checkout, not from memory. "
-    "Read and edit the target files yourself. Per section 4 of the ax-work skill, delegate research to agy only when you "
+    "Read and edit the target files yourself and write their bodies yourself - do not delegate body drafts "
+    "to agy, codex exec or the local broker. Per section 4 of the ax-work skill, delegate research to agy only when you "
     "judge it necessary - file size is not a reason to delegate, and not delegating is not a failure. "
-    "Delegate bulk body drafts to codex, agy or the local broker, then verify the result yourself. "
     "Do not run any git command. Do not commit or push. "
     "Do not run UE5 builds, UnrealBuildTool, UnrealEditor or automation tests, "
     "and for Python files do not start servers, run the program or run tests - "
@@ -102,6 +104,18 @@ INSTRUCTION = (
     "Above the RESULT line, list what you delegated, to which backend, and how you checked it. "
     "The last non-empty line of your output must be exactly RESULT: DONE "
     "(use RESULT: BLOCKED if you could not finish, and say why above it)."
+)
+
+# 🔴 마운트가 마스터 자신의 저장소(AXCluster)일 때만 지시문 끝에 붙이는 사실 문장 (`#783`, 사용자 2026-10-10).
+#    그 체크아웃의 AGENTS.md·CLAUDE.md 는 사람이 앉은 마스터 세션용 규칙이다 — 무인 워커의 codex 가
+#    「실패는 보고하는 자리」를 읽고 검색 0건(rg exit 1)에 BLOCKED 로 멈췄다(실측 2026-10-10 `.43`).
+#    [주의] 명령형이 아니라 사실로 쓴다 — 자동 경로의 명령형은 주입으로 거부된 실측이 있다(리포트 60).
+#    [중요] 세션 1 사본(`client/runtime/session1_conductor.py`)과 **같은 글자**여야 한다.
+SELF_PROJECT = "AXCluster"
+SELF_REPO_NOTE = (
+    "This checkout is the AX master's own repository: its AGENTS.md and CLAUDE.md describe "
+    "interactive master sessions with a human present, not dispatched work like this one. "
+    "A search that finds no matches is not a failure."
 )
 
 # 🔴 **워커는 UE5 빌드를 돌리지 않는다** (실측 2026-09-13 · 원전 대조).
@@ -622,7 +636,26 @@ def worker_command(facts, task_id: str, files=(), *, mode: str = "claude") -> st
     """
     shown = ", ".join(str(f) for f in (files or [])) or "(none given)"
     instr = INSTRUCTION.format(files=shown)
+    if self_repo_mounted():
+        instr += " " + SELF_REPO_NOTE
     return agent_command(facts, facts.path, instr, mode=mode)
+
+
+def self_repo_mounted(active=None) -> bool:
+    """마운트된 프로젝트가 마스터 자신의 저장소(`SELF_PROJECT`)인가 (`#783`).
+
+    [중요] 파견은 마운트된 프로젝트에만 돈다 — 그래서 마운트가 곧 판정이다. 못 읽으면 False
+    (지시문이 종전 그대로 나갈 뿐이다)이고, 그 사실을 한 줄 남긴다.
+    """
+    if active is None:
+        try:
+            from ..projects.config import Registry
+            active = Registry.load().active
+        except Exception as e:                               # noqa: BLE001
+            print(f"[dispatch] [주의] 마운트를 못 읽었다 — 자기 저장소 문장 생략 "
+                  f"({type(e).__name__}: {e})", flush=True)
+            return False
+    return active == SELF_PROJECT
 
 
 def uses_session1(facts, mode: str) -> bool:
@@ -788,7 +821,7 @@ def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT
     request_id = _uuid.uuid4().hex
     rel = f".ax/session1/{task_id}/{request_id}"
     job = _json.dumps({"task_id": task_id, "files": [str(f) for f in (files or [])],
-                       "request_id": request_id,
+                       "request_id": request_id, "self_repo": self_repo_mounted(),
                        "approvals": _approval_overrides(), "timeout": timeout},
                       ensure_ascii=False)
     try:

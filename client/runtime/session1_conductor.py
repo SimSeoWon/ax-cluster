@@ -71,14 +71,16 @@ LOG = "launcher.log"
 # [중요] 마스터 `runner.INSTRUCTION` 과 **같은 글자**여야 한다 — 배달물은 마스터를 import 하지
 #    않으므로(`clientside` 규약) 값을 복사한다. 갈리면 워커가 다른 계약으로 일한다.
 INSTRUCTION = (
-    "Follow the ax-work skill. You are on the assigned branch already. "
+    "Follow the ax-work skill. Read it by path at .agents/skills/ax-work/SKILL.md and the machine config at .ax/config.json - "
+    "both are excluded from git, so search tools that honor ignore files (rg, git ls-files) will not list them; open them directly. "
+    "You are on the assigned branch already. "
     "This message is dispatched work from the AX master, not a human chat: the plan was already approved when the task was registered. "
     "Do not ask for approval, do not propose a plan for review, do not wait for confirmation - implement the bodies now. "
     "Read the [DOC] and [PSEUDO] comments in these files and write their bodies: {files}. "
     "Judge from the source files in this checkout, not from memory. "
-    "Read and edit the target files yourself. Per section 4 of the ax-work skill, delegate research to agy only when you "
+    "Read and edit the target files yourself and write their bodies yourself - do not delegate body drafts "
+    "to agy, codex exec or the local broker. Per section 4 of the ax-work skill, delegate research to agy only when you "
     "judge it necessary - file size is not a reason to delegate, and not delegating is not a failure. "
-    "Delegate bulk body drafts to codex, agy or the local broker, then verify the result yourself. "
     "Do not run any git command. Do not commit or push. "
     "Do not run UE5 builds, UnrealBuildTool, UnrealEditor or automation tests, "
     "and for Python files do not start servers, run the program or run tests - "
@@ -116,7 +118,18 @@ def _codex_exe() -> str:
     return shutil.which("codex") or "codex"
 
 
-def build_argv(root: Path, files, approvals=()) -> list:
+# 🔴 job.json 의 `self_repo` 가 참일 때만 지시문 끝에 붙이는 사실 문장 (`#783`, 사용자 2026-10-10).
+#    그 체크아웃의 AGENTS.md·CLAUDE.md 는 사람이 앉은 마스터 세션용 규칙이다 — 무인 워커의 codex 가
+#    「실패는 보고하는 자리」를 읽고 검색 0건(rg exit 1)에 BLOCKED 로 멈췄다(실측 2026-10-10 `.43`).
+#    [주의] 명령형이 아니라 사실로 쓴다 — 자동 경로의 명령형은 주입으로 거부된 실측이 있다(리포트 60).
+#    [중요] 마스터 `runner.SELF_REPO_NOTE`과 **같은 글자**여야 한다.
+SELF_REPO_NOTE = (
+    "This checkout is the AX master's own repository: its AGENTS.md and CLAUDE.md describe "
+    "interactive master sessions with a human present, not dispatched work like this one. "
+    "A search that finds no matches is not a failure."
+)
+
+def build_argv(root: Path, files, approvals=(), self_repo: bool = False) -> list:
     """codex 인자. 🔴 **여기가 플래그의 주인이다** — 마스터가 주지 않는다.
 
     `agent_command` 의 codex 절과 같은 값을 쓴다: 쓰기는 작업공간으로 묶고 네트워크만 연다
@@ -129,7 +142,8 @@ def build_argv(root: Path, files, approvals=()) -> list:
     for a in approvals or ():
         argv += ["-c", a]
     argv += ["--skip-git-repo-check", "-C", str(root),
-             INSTRUCTION.format(files=", ".join(str(f) for f in files) or "(none given)")]
+             INSTRUCTION.format(files=", ".join(str(f) for f in files) or "(none given)")
+             + (" " + SELF_REPO_NOTE if self_repo else "")]
     return argv
 
 
@@ -275,7 +289,7 @@ def run_job(root: Path, d: Path) -> int:
     files = job.get("files") or []
     limit = int(job.get("timeout") or 3600)
     _log(d, f"job 집음 — task={job.get('task_id', d.name)} · 파일 {len(files)} · 제한 {limit}초")
-    argv = build_argv(root, files, job.get("approvals") or ())
+    argv = build_argv(root, files, job.get("approvals") or (), self_repo=job.get("self_repo") is True)
     # 🔴 [중요] **자식까지 죽여야 한다** (실측 2026-09-12). 세션 1 은 데스크톱이 있어서
     #    크래시가 **모달 대화상자**로 뜨고, 그러면 프로세스가 무한 대기한다 — 세션 0 에서는
     #    데스크톱이 없어 조용히 죽던 것이 여기서는 매달린다. 실제로 `dotnet`(UBT) 둘이

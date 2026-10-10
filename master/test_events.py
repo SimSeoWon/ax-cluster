@@ -159,6 +159,99 @@ def test_consumer_recovery(root):
         check("빈 고아와 빈 신규는 마운트 poll 한 번", result.polled == 1 and process.call_count == 1)
 
 
+def _run_hook(root: Path, stdin: str, *, dispatch_dir: Path | None = None):
+    """설치된 모양 그대로 훅을 돌린다 — 복사본 + 옆의 `ax-project-id` · 스풀은 전부 tmp."""
+    import os
+    import subprocess
+    hook_dir = root / "hooks" / "post-receive.d"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    hook = hook_dir / "ax-index"
+    shutil.copy(_ROOT / "master" / "events" / "post_receive_hook.py", hook)
+    (hook_dir / "ax-project-id").write_text("Sim/ModularStage\n", encoding="utf-8")
+    spool = root / "spool"
+    for d in ("tmp", "incoming"):
+        (spool / d).mkdir(parents=True, exist_ok=True)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("AX_EVENT_SPOOL", "AX_DISPATCH_SPOOL")}
+    env["AX_EVENT_SPOOL"] = str(spool)
+    env["AX_DISPATCH_SPOOL"] = str(dispatch_dir or (root / "dispatch"))
+    r = subprocess.run([sys.executable, str(hook)], input=stdin, capture_output=True,
+                       text=True, cwd=str(root), env=env, timeout=30)
+    return r, spool
+
+
+def test_hook_dispatch_signal(root: Path) -> None:
+    """`#785` 갈래 C — 골조 push 는 훅이 **바로** 파견 신호를 쓴다(색인 이벤트와 함께)."""
+    Z = "0" * 40
+    a, b = "a" * 40, "b" * 40
+
+    print("  (a) 골조 push → 트리거 + 색인 이벤트")
+    ra = root / "a"
+    disp = ra / "dispatch"
+    disp.mkdir(parents=True)
+    r, spool = _run_hook(ra, f"{Z} {a} refs/heads/task/W1/base\n")
+    check("rc 0", r.returncode == 0, r.stderr)
+    f = disp / "W1.json"
+    check("트리거 파일이 생겼다", f.is_file(), str(list(disp.iterdir())))
+    d = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
+    check("  work_id·project_id·ref·source 가 실린다",
+          d.get("work_id") == "W1" and d.get("project_id") == "Sim/ModularStage"
+          and d.get("ref") == "refs/heads/task/W1/base" and d.get("source") == "hook"
+          and d.get("at") and "project" not in d, str(d))
+    check("  tmp 가 남지 않았다(원자적)", [p.name for p in disp.iterdir()] == ["W1.json"],
+          str([p.name for p in disp.iterdir()]))
+    check("  파견기(sim)가 지울 수 있게 0664",
+          f.is_file() and (f.stat().st_mode & 0o777) == 0o664,
+          oct(f.stat().st_mode & 0o777) if f.is_file() else "-")
+    check("  한 줄 고지", "[ax-hook] 파견 신호 — W1" in r.stderr, r.stderr)
+    ev_files = list((spool / "incoming").glob("*.json"))
+    check("색인 이벤트도 그대로 쓰였다", len(ev_files) == 1, str(ev_files))
+    if ev_files:
+        e = json.loads(ev_files[0].read_text(encoding="utf-8"))
+        check("  이벤트의 ref 가 골조 ref", e.get("ref") == "refs/heads/task/W1/base", str(e))
+    # 재신호는 같은 파일을 덮는다 — 파일이 하나라 멱등이다
+    r2, _ = _run_hook(ra, f"{a} {b} refs/heads/task/W1/base\n")
+    check("  재신호는 같은 파일 하나", r2.returncode == 0
+          and [p.name for p in disp.iterdir()] == ["W1.json"],
+          str([p.name for p in disp.iterdir()]))
+
+    print("  (b) 골조가 아닌 ref → 트리거 없음")
+    rb = root / "b"
+    disp = rb / "dispatch"
+    disp.mkdir(parents=True)
+    stdin = (f"{Z} {a} refs/heads/main\n"
+             f"{Z} {a} refs/heads/task/W2/T1\n"
+             f"{Z} {a} refs/heads/task/W2/base/x\n"
+             f"{Z} {a} refs/tags/task/W2/base\n")
+    r, spool = _run_hook(rb, stdin)
+    check("rc 0", r.returncode == 0, r.stderr)
+    check("트리거 0건", list(disp.iterdir()) == [], str(list(disp.iterdir())))
+    check("  색인 이벤트는 4건", len(list((spool / "incoming").glob("*.json"))) == 4)
+    check("  파견 고지 없음", "파견 신호" not in r.stderr, r.stderr)
+
+    print("  (c) 골조 브랜치 삭제 → 트리거 없음")
+    rc_ = root / "c"
+    disp = rc_ / "dispatch"
+    disp.mkdir(parents=True)
+    r, spool = _run_hook(rc_, f"{a} {Z} refs/heads/task/W3/base\n")
+    check("rc 0", r.returncode == 0, r.stderr)
+    check("트리거 0건", list(disp.iterdir()) == [], str(list(disp.iterdir())))
+    check("  색인 이벤트도 0건", list((spool / "incoming").glob("*.json")) == [])
+
+    print("  (d) 트리거 디렉토리에 못 쓴다 → rc 0 · 로그 한 줄 · 색인은 그대로")
+    rd = root / "d"
+    rd.mkdir(parents=True)
+    blocker = rd / "not-a-dir"
+    blocker.write_text("x", encoding="utf-8")       # 파일 밑에는 아무도 못 쓴다(root 도)
+    r, spool = _run_hook(rd, f"{Z} {a} refs/heads/task/W4/base\n",
+                         dispatch_dir=blocker / "dispatch")
+    check("[중요] rc 0 — 푸시를 막지 않는다", r.returncode == 0, r.stderr)
+    lines = [ln for ln in r.stderr.splitlines() if "파견 신호를 쓰지 못했다" in ln]
+    check("  실패 로그 한 줄", len(lines) == 1, r.stderr)
+    check("  색인 이벤트는 그대로 쓰였다",
+          len(list((spool / "incoming").glob("*.json"))) == 1, r.stderr)
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="ax-events-test-"))
     s = Spool(tmp)
@@ -303,6 +396,9 @@ def main() -> int:
 
     print("\n[12] 소비자의 실제 고아 복구 경로 (#714)")
     test_consumer_recovery(tmp / "consumer")
+
+    print("\n[13] [중요] 훅의 파견 신호 — 골조 push 만 (#785)")
+    test_hook_dispatch_signal(tmp / "hook")
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0

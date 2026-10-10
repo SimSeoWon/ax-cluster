@@ -252,12 +252,66 @@ def test_dispatch_reason_is_written_where_the_requester_can_read_it() -> None:
     check("  걸렸는지 아닌지를 앞에 말한다", note.startswith("안 걸림"), note)
 
 
+def test_drain_resolves_hook_trigger_by_project_id() -> None:
+    """`#785` 갈래 C — 훅은 이름을 몰라 `project_id` 만 싣는다. 드레인이 이름으로 푼다.
+
+    🔴 못 푸는 `project_id` 는 **크게 찍고 격리**한다 — 조용히 버리지 않는다.
+    """
+    import contextlib
+    import io
+
+    class _Reg:
+        def find_by_project_id(self, pid):
+            return {"sim/modularstage": "ModularStage"}.get(pid.casefold(), "")
+
+    calls: list = []
+
+    def fake_dispatch(paths, wid, *, api=None, **kw):
+        calls.append((paths, wid))
+        return {"dispatched": True}
+
+    with tempfile.TemporaryDirectory() as td:
+        old = A.TRIGGER_DIR
+        A.TRIGGER_DIR = Path(td)
+        try:
+            (Path(td) / "W1.json").write_text(json.dumps(
+                {"work_id": "W1", "project_id": "Sim/ModularStage",
+                 "ref": "refs/heads/task/W1/base", "source": "hook"}), encoding="utf-8")
+            (Path(td) / "W2.json").write_text(json.dumps(
+                {"work_id": "W2", "project_id": "Sim/Nobody",
+                 "ref": "refs/heads/task/W2/base", "source": "hook"}), encoding="utf-8")
+            # 소비자 경로(이름 실림)는 레지스트리 없이 그대로 간다
+            A.note_trigger("W3", "Kimodo", "refs/heads/task/W3/base")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                r = A.drain(api=lambda *a, **k: {}, registry=_Reg(),
+                            resolver=lambda name: f"paths:{name}",
+                            dispatch_fn=fake_dispatch)
+            log = buf.getvalue()
+            left = sorted(p.name for p in Path(td).iterdir())
+        finally:
+            A.TRIGGER_DIR = old
+
+    check("project_id 트리거가 등록 이름으로 풀려 파견된다",
+          ("paths:ModularStage", "W1") in calls, str(calls))
+    check("  이름이 실린 트리거도 그대로 간다", ("paths:Kimodo", "W3") in calls, str(calls))
+    check("  🔴 못 푼 것은 파견하지 않는다",
+          not any(w == "W2" for _, w in calls), str(calls))
+    check("  🔴 못 푼 것은 크게 찍힌다",
+          "[중요]" in log and "Sim/Nobody" in log and "W2" in log, log)
+    check("  🔴 못 푼 것은 격리(.bad)로 증거가 남는다", "W2.json.bad" in left, str(left))
+    check("  소비된 트리거는 지워진다", "W1.json" not in left and "W3.json" not in left,
+          str(left))
+    check("  집계 — 트리거 2 · 파견 2", r["triggers"] == 2 and r["dispatched"] == 2, str(r))
+
+
 def main() -> int:
     for fn in (test_dispatch_reason_is_written_where_the_requester_can_read_it,test_submitted_means_worker_committed, test_failed_is_its_own_reason,
                test_pending_blocks_first, test_needs_revision_is_dispatchable,
                test_claimed_with_full_spool_integrates,
                test_partial_spool_waits, test_all_failed_spool_has_nothing_to_apply,
-               test_hold_blocks_integration_too, test_merge_status_gate):
+               test_hold_blocks_integration_too, test_merge_status_gate,
+               test_drain_resolves_hook_trigger_by_project_id):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_autodispatch: {PASS}/{total} 통과")
