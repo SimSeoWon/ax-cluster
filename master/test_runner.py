@@ -867,7 +867,10 @@ def test_session1_after_appends_relay_events() -> None:
 
 def test_instruction_asks_delegation() -> None:
     """`#764` — 지시문이 위임과 그 보고를 말한다(ASCII 유지 · 세션1 사본과 같은 글자는 별도 검사)."""
-    for s_ in ("delegate source research and analysis to agy", "codex, agy or the local broker",
+    for s_ in ("Read and edit the target files yourself",
+               "delegate research to agy only when you judge it necessary",
+               "file size is not a reason to delegate", "not delegating is not a failure",
+               "codex, agy or the local broker",
                "list what you delegated", ".agy-work/out/"):
         check(f"지시문이 말한다: {s_}", s_ in R.INSTRUCTION, R.INSTRUCTION[:80])
     check("  여전히 ASCII", R.INSTRUCTION.isascii())

@@ -1149,8 +1149,13 @@ def test_commit_layer2_base_files_and_judge_log() -> None:
         ("원본 읽기 예외는 빼고 기록", raising,
          {"kind": "unreal"}, [], "원본 0/2파일"),
         ("원본 없음", None, {"kind": "unreal"}, [], "원본 0/2파일"),
-        ("프로필 미확정은 판정 생략", lambda rel: "X", {}, None, None),
+        ("프로필 미확정은 판정 생략", lambda rel: "X", {}, None, "profile_unavailable"),
+        # #780: 생략 줄에 사유만이 아니라 **잘린 파일명**까지 남는다.
+        ("잘린 grounding 은 파일명과 함께 생략", lambda rel: "X", {"kind": "unreal"}, None,
+         "grounding_incomplete · grounding @ "),
     )
+    cut = Declarations(blocks=[("big", "client/big.py", "TOOLS = [")],
+                       truncated=["client/big.py"])
     paths, root = tmp_paths()
     try:
         for label, bl, prof, want_base, want_ratio in cases:
@@ -1170,8 +1175,9 @@ def test_commit_layer2_base_files_and_judge_log() -> None:
                 stack.enter_context(patch("master.work.twin_base.commit_baseline", return_value=None))
                 stack.enter_context(patch("master.work.wcommit.run", side_effect=fake_run))
                 stack.enter_context(patch("master.projects.profile.load", return_value=prof))
-                stack.enter_context(patch("master.work.declarations.from_commit", return_value=Declarations(
-                    blocks=[("X", "X.h", "class X { void Go(); };")])))
+                stack.enter_context(patch("master.work.declarations.from_commit", return_value=(
+                    cut if want_ratio.startswith("grounding_incomplete") else Declarations(
+                        blocks=[("X", "X.h", "class X { void Go(); };")]))))
                 verify = stack.enter_context(patch(
                     "master.layer2_verify.verify_files",
                     return_value=Verdict(True, None, warnings=["backend=agy"])))
@@ -1186,7 +1192,10 @@ def test_commit_layer2_base_files_and_judge_log() -> None:
             if want_base is None:
                 check(f"{label}: 층2 미호출", not verify.called)
                 check(f"{label}: 판정 생략 한 줄", any(
-                    "bf 판정 생략 — profile_unavailable" in ln for ln in l2), str(l2))
+                    f"bf 판정 생략 — {want_ratio}" in ln for ln in l2), str(l2))
+                if want_ratio.startswith("grounding_incomplete"):
+                    check(f"{label}: 잘린 파일명이 일지에", any(
+                        "grounding truncated: client/big.py" in ln for ln in l2), str(l2))
                 continue
             check(f"{label}: 기준 원본 전달", verify.called and
                   verify.call_args.kwargs.get("base_files") == want_base, str(verify.call_args))

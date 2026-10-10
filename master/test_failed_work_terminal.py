@@ -34,8 +34,29 @@ class TerminalTests(unittest.TestCase):
         self.cleanup = patch.object(L, "_auto_cleanup_work_async", lambda *a: None)
         self.cleanup.start()
         self.addCleanup(self.cleanup.stop)
+        # `#780` 즉시 통보 — 네트워크 없이 동기로 돌리고 노트·저널을 모은다.
+        self.piece_notes, self.log = [], []
+        self.note_result = True
+        orig_log = C._tq_log
+        for p in (patch.object(C.threading, "Thread", ImmediateThread),
+                  patch.object(C, "_read_redmine_config", lambda *a:
+                               {"url": "http://fake", "api_key": "fake", "project": "ns"}),
+                  patch.object(C, "_redmine_add_note", self._fake_note),
+                  patch.object(C, "_redmine_post_issue", self._no_new_issue),
+                  patch.object(C, "_tq_log", lambda m, r: (self.log.append(m), orig_log(m, r)))):
+            p.start()
+            self.addCleanup(p.stop)
         self.wid = Q.register_work(self.idx, title="test", target_repo="/tmp/repo",
                                   project="NS", target_branch="task/test/base")["work_id"]
+
+    def _fake_note(self, cfg, issue_id, notes, *a):
+        if isinstance(self.note_result, Exception):
+            raise self.note_result
+        self.piece_notes.append((issue_id, notes))
+        return self.note_result
+
+    def _no_new_issue(self, *a, **kw):
+        raise AssertionError("즉시 통보가 이슈를 새로 만들면 안 된다")
 
     def tasks(self, n):
         return [Q.register_task(self.idx, work_id=self.wid, type="code", task_data={},
@@ -158,6 +179,121 @@ class TerminalTests(unittest.TestCase):
         self.assertIn("통합·전진 대기 대상이 아니다", notes[0])
         self.assertNotIn("ax-advance", notes[0])
         self.assertEqual(self.work["noticed_status"], "rejected")
+
+    # ── `#780` 「즉시 통보, 나머지 계속」 ─────────────────────────────────────────
+    def piece_log(self):
+        return [m for m in self.log if m.startswith("[piece-fail]")]
+
+    def test_780_terminal_failure_with_others_running_notes_once(self):
+        self.work["redmine_issue_id"] = 123
+        self.tasks(3)
+        t = self.claim()
+        self.assertTrue(self.fail(t)["ok"])
+        tid = t["task_id"]
+        rec = self.idx.tasks[tid]
+        self.assertEqual(rec["status"], "failed")
+        self.assertEqual(self.work["merge_status"], "in_progress")   # 나머지는 계속
+        self.assertEqual(len(self.piece_notes), 1)
+        issue, note = self.piece_notes[0]
+        self.assertEqual(issue, 123)
+        for want in (tid, rec["target_file"], "execution failed: actual detail",
+                     "terminal failed", "2건은 계속 진행 중", "라운드 공지는"):
+            self.assertIn(want, note)
+        self.assertNotIn("하세요", note)                                # 명령형 없음
+        self.assertTrue(any(f"task={tid}" in m and rec["target_file"] in m
+                            and self.wid in m and "actual detail" in m
+                            for m in self.piece_log()))
+        self.assertTrue(rec["fail_notice_at"])
+        self.assertEqual(rec["fail_notice_error"], "")
+        self.assertEqual(rec["fail_notice_issue"], 123)
+        self.assertNotIn("fail_notice_pending", rec)
+        self.assertNotIn("notification_error", self.work)              # 라운드 계약 불변
+        # 다른 조각은 멈추지 않았다 — 여전히 집을 수 있다
+        self.assertEqual({x["status"] for k, x in self.idx.tasks.items() if k != tid},
+                         {"pending"})
+        # 중복 없음 — 직접 재호출 · 재검증 뒤 다시 실패
+        self.assertFalse(C._notify_piece_failed_async(self.idx, tid))
+        self.assertTrue(L.reverify_task(self.idx, tid)["ok"])
+        self.assertTrue(L.verify_task(self.idx, tid, result="reject", feedback="again")["ok"])
+        self.assertEqual(len(self.piece_notes), 1)
+        rebuilt = TaskIndex(self.idx.root)
+        rebuilt.rebuild()
+        self.assertTrue(rebuilt.tasks[tid]["fail_notice_at"])
+
+    def test_780_verify_reject_with_others_running_notes(self):
+        self.work["redmine_issue_id"] = 123
+        self.tasks(2)
+        t = self.claim()
+        self.assertTrue(L.submit_result(self.idx, t["task_id"], branch="attempt/x",
+                                        head_commit="abc1234", self_check={},
+                                        worker_id="192.168.0.2", epoch=t["epoch"])["ok"])
+        self.assertTrue(L.verify_task(self.idx, t["task_id"], result="reject",
+                                      feedback="layer2 grounding_incomplete")["ok"])
+        self.assertEqual(len(self.piece_notes), 1)
+        self.assertIn("verify:reject: layer2 grounding_incomplete", self.piece_notes[0][1])
+
+    def test_780_retryable_failures_do_not_notify(self):
+        self.work["redmine_issue_id"] = 123
+        self.tasks(2)
+        t = self.claim()
+        self.assertTrue(self.fail(t, result="revise")["revised"])
+        t = self.claim()
+        self.assertTrue(L.submit_fail(self.idx, t["task_id"], "quota_exhausted", "429",
+                                      worker_id="192.168.0.2", epoch=t["epoch"])["released"])
+        self.assertEqual(self.piece_notes, [])
+        self.assertEqual(self.piece_log(), [])
+        self.assertTrue(all("fail_notice_at" not in x for x in self.idx.tasks.values()))
+
+    def test_780_last_piece_failure_leaves_it_to_round_notice(self):
+        self.work["redmine_issue_id"] = 123
+        self.tasks(2)
+        self.finish(self.claim())
+        t = self.claim()
+        self.assertTrue(self.fail(t)["ok"])
+        self.assertEqual(self.work["merge_status"], "rejected")
+        self.assertEqual(self.piece_notes, [])
+        self.assertTrue(any("생략" in m for m in self.piece_log()))
+        self.assertNotIn("fail_notice_at", self.idx.tasks[t["task_id"]])
+
+    def test_780_redmine_error_keeps_transition(self):
+        self.work["redmine_issue_id"] = 123
+        self.tasks(3)
+        self.note_result = OSError("connection refused")
+        t1 = self.claim()
+        self.assertEqual(self.fail(t1), {"ok": True})
+        r1 = self.idx.tasks[t1["task_id"]]
+        self.assertEqual(r1["status"], "failed")
+        self.assertIn("예외", r1["fail_notice_error"])
+        self.note_result = False
+        t2 = self.claim()
+        self.assertEqual(self.fail(t2), {"ok": True})
+        r2 = self.idx.tasks[t2["task_id"]]
+        self.assertEqual(r2["status"], "failed")
+        self.assertIn("노트 실패", r2["fail_notice_error"])
+        self.assertEqual(self.work["merge_status"], "in_progress")
+        self.assertNotIn("termination_required", self.work)
+        # 실패도 기록이 남았으므로 재전송하지 않는다 (t2 의 실패 시도 1건만 있다)
+        self.assertEqual(len(self.piece_notes), 1)
+        self.note_result = True
+        self.assertFalse(C._notify_piece_failed_async(self.idx, t1["task_id"]))
+        self.assertFalse(C._notify_piece_failed_async(self.idx, t2["task_id"]))
+        self.assertEqual(len(self.piece_notes), 1)
+
+    def test_780_preparation_error_keeps_transition(self):
+        self.work["redmine_issue_id"] = 123
+        self.tasks(2)
+        t = self.claim()
+        with patch.object(C, "_notify_piece_failed", side_effect=RuntimeError("boom")):
+            self.assertEqual(self.fail(t), {"ok": True})
+        self.assertEqual(self.idx.tasks[t["task_id"]]["status"], "failed")
+        self.assertTrue(any("준비 예외" in m for m in self.piece_log()))
+
+    def test_780_without_registration_issue_creates_nothing(self):
+        self.tasks(2)
+        t = self.claim()
+        self.assertTrue(self.fail(t)["ok"])                           # _no_new_issue 가 지킨다
+        self.assertEqual(self.piece_notes, [])
+        self.assertIn("등재 이슈 없음", self.idx.tasks[t["task_id"]]["fail_notice_error"])
 
     def test_stale_round_callback_is_ignored(self):
         self.work["round"] = 2

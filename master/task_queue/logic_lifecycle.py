@@ -15,7 +15,7 @@ from .logic_persist import (
     _save_task, _save_work, _update_index_md, _count_terminal_in_work, completed_work_status
 )
 from .logic_claim import _mark_worker_quota_blocked
-from .logic_cleanup import _auto_cleanup_work_async
+from .logic_cleanup import _auto_cleanup_work_async, _notify_piece_failed_async
 
 
 def _flip_if_all_terminal(idx: TaskIndex, wid: str, *, why: str) -> bool:
@@ -232,6 +232,9 @@ def submit_fail(idx: TaskIndex, task_id: str, reason: str, detail: str = "", *,
         wid = t.get("work_id")
         if wid in idx.works and _flip_if_all_terminal(idx, wid, why="post-fail"):
             _auto_cleanup_work_async(idx, wid)
+        # 🔴 `#780` 「즉시 통보, 나머지 계속」 — 다른 조각이 아직 돌면 이 순간 알린다.
+        #    마지막 비종결 조각이면 위 라운드 공지가 다루므로 스스로 생략한다. 비치명적.
+        _notify_piece_failed_async(idx, task_id)
         return {"ok": True}
 
 
@@ -319,6 +322,8 @@ def verify_task(idx: TaskIndex, task_id: str, passed: bool = True,
         # 마지막 task verified — 서버측 자동 정리 + Redmine 이슈 생성 (백그라운드)
         if triggered_auto_cleanup:
             _auto_cleanup_work_async(idx, wid)
+        if new_status == "failed":
+            _notify_piece_failed_async(idx, task_id)               # `#780` — submit_fail 과 같다
         return {"ok": True, "status": new_status, "result": result}
 
 

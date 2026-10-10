@@ -76,8 +76,9 @@ INSTRUCTION = (
     "Do not ask for approval, do not propose a plan for review, do not wait for confirmation - implement the bodies now. "
     "Read the [DOC] and [PSEUDO] comments in these files and write their bodies: {files}. "
     "Judge from the source files in this checkout, not from memory. "
-    "Per section 4 of the ax-work skill, delegate source research and analysis to agy "
-    "and bulk body drafts to codex, agy or the local broker, then verify the result yourself. "
+    "Read and edit the target files yourself. Per section 4 of the ax-work skill, delegate research to agy only when you "
+    "judge it necessary - file size is not a reason to delegate, and not delegating is not a failure. "
+    "Delegate bulk body drafts to codex, agy or the local broker, then verify the result yourself. "
     "Do not run any git command. Do not commit or push. "
     "Do not run UE5 builds, UnrealBuildTool, UnrealEditor or automation tests, "
     "and for Python files do not start servers, run the program or run tests - "
@@ -135,7 +136,7 @@ def build_argv(root: Path, files, approvals=()) -> list:
 AGY_ROOT, AGY_MARK = ".agy-work", "VIA_LAUNCHER"
 AGY_PROMPT = ("Read BRIEF.md in the added directory and follow it exactly. "
               "Return the result as your response. Do not create or modify files.")
-AGY_POLL, AGY_LIMIT = 2.0, 900
+AGY_POLL, AGY_LIMIT = 2.0, 300   # #780: 5-minute hard cap per relayed agy call
 _REQ = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 
 

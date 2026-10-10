@@ -1068,7 +1068,10 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
 
         # 🔴 **층2 를 건너뛴 자리도 한 줄 남긴다** (`#757`) — 일지에 판정이 늘 보이게 한다.
         def _skip(v):
-            _log(f"[layer2] {task_id} 판정 생략 — {v.failure}")
+            # `#780`: 사유만 찍으면 어느 파일이 잘렸는지 일지에 안 남았다 — 진단 줄을 함께 싣는다.
+            detail = " · ".join(str(w) for w in (v.warnings or []))
+            _log(f"[layer2] {task_id} 판정 생략 — {v.failure}"
+                 + (f" · {detail}" if detail else ""))
             return v
         # 별도 상용 검증 시간에도 claim 리스를 살린다. 작성 계측과 구간을 섞지 않는다.
         runner.heartbeat(task_id, facts.host, api=api)
@@ -1082,7 +1085,10 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                 return _skip(Verdict(False, "unsupported_target",
                                      warnings=["프로필 work_exts 밖 검증 대상"]))
             decl = D.from_commit(paths, base, kind=kind, work_exts=prof.get("work_exts"),
-                                 target_files=list(files), per_class=16000, total=64000)
+                                 target_files=list(files), per_class=None, total=None)
+            # 🔴 층2 판정자는 클라우드(agy·claude)라 **글자 예산을 두지 않는다** (`#780`, 사용자 결정
+            #    2026-10-10). 종전 16000/64000 은 로컬 LLM 예산을 물려받은 숫자였고, `client_mcp.TOOLS`
+            #    (17,905자) 하나가 잘려 #777 의 두 조각이 판정 생략 → 차단됐다.
             diag = [f"grounding @ {str(base)[:10]} — {decl.summary}"]
             for key in ("missing", "truncated", "dropped"):
                 if getattr(decl, key):

@@ -11,7 +11,7 @@ from typing import Optional
 from .persistence import (
     TaskIndex, _tq_log, _git_repo, _git, is_live_queue_root
 )
-from .logic_persist import update_work_meta, _save_work
+from .logic_persist import update_work_meta, _save_work, _save_task
 from .persistence import _now_iso
 
 
@@ -489,6 +489,136 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
             _tq_log(f"[redmine] {work_id} 예외: {e}", idx.root)
 
     threading.Thread(target=_job, daemon=True).start()
+
+
+_TERMINAL = ("verified", "failed", "cancelled")
+
+
+def _record_piece_fail_notice(idx: TaskIndex, task_id: str, *, error: str = "",
+                              issue_id=None):
+    """조각 실패 즉시 통보의 결과를 **그 조각 레코드에** 남긴다 (`#780`).
+
+    [주의] work 의 `notification_error`·`termination_required` 는 라운드 공지의 계약이다
+    (`#701`, 요청자 훅이 읽는다) — 라운드 진행 중 통보 실패로 그 표시를 켜면 「라운드가
+    끝났는데 통보가 안 갔다」로 읽힌다. 그래서 여기는 조각 쪽 필드만 쓴다.
+    """
+    with idx.lock:
+        t = idx.tasks.get(task_id)
+        if not t:
+            return
+        t.pop("fail_notice_pending", None)
+        t["fail_notice_at"] = _now_iso()
+        t["fail_notice_error"] = str(error)[:500]
+        if issue_id:
+            t["fail_notice_issue"] = int(issue_id)
+        _save_task(idx, task_id)
+
+
+def _notify_piece_failed_async(idx: TaskIndex, task_id: str) -> bool:
+    """비치명 래퍼 — 통보 준비 단계의 예외도 실패 전이를 깨지 않는다(`#780`)."""
+    try:
+        return _notify_piece_failed(idx, task_id)
+    except Exception as e:                                   # noqa: BLE001
+        try:
+            _tq_log(f"[piece-fail] task={task_id} 즉시 통보 준비 예외: {e}", idx.root)
+        except Exception:                                    # noqa: BLE001
+            pass
+        return False
+
+
+def _notify_piece_failed(idx: TaskIndex, task_id: str) -> bool:
+    """조각 하나가 terminal `failed` 가 된 **그 순간** 통보한다 (`#780`, 사용자 설계
+    「즉시 통보, 나머지 계속」). 돌려주는 값은 *"통보를 걸었다"* 이다.
+
+    실측(`#777`): 조각 하나가 03:41 에 층2 → wcommit BLOCKED 로 종결됐는데 다른 조각이
+    03:48 까지 돌았고, 라운드 공지는 **전부 종결된 뒤에만** 나가므로 7분간 아무도 몰랐다.
+
+    - 저널 한 줄은 **동기**로 찍는다 — Redmine 이 죽어도 사건은 남는다.
+    - 노트는 등재 때 만든 그 work 이슈(`redmine_issue_id`)에만 붙인다. 이슈를 새로 만들지
+      않는다(없으면 사유를 기록하고 끝).
+    - 다른 조각을 멈추거나 취소하지 않는다.
+    - 같은 조각에 두 번 보내지 않는다 — `fail_notice_at` 이 있으면 건너뛴다(재검증 뒤
+      다시 실패해도 같다). 전송 실패도 기록이 남으므로 재전송하지 않는다.
+    - **마지막 비종결 조각이면 건너뛴다** — 같은 순간 라운드 공지가 같은 실패 사유를 싣고
+      나가므로 즉시 노트는 중복이다.
+    🔴 [중요] 본문은 **사실만** 쓴다 — 자동 경로로 LLM 세션에 닿는 명령형은 주입으로
+    거부된다(리포트 60).
+    """
+    with idx.lock:
+        t = idx.tasks.get(task_id)
+        if not t or t.get("status") != "failed":
+            return False
+        if t.get("fail_notice_at") or t.get("fail_notice_pending"):
+            return False
+        work_id = t.get("work_id")
+        wmeta = idx.works.get(work_id) if work_id else None
+        if not wmeta:
+            return False
+        round_no = int(wmeta.get("round", 1) or 1)
+        # 라운드 공지와 같은 규칙 — 이번 라운드 조각만 센다(지난 라운드 잔여는 무관).
+        siblings = [o for k, o in idx.tasks.items()
+                    if o.get("work_id") == work_id and k != task_id]
+        if any(int(o.get("round") or 0) > 0 for o in siblings + [t]):
+            siblings = [o for o in siblings if int(o.get("round") or 0) in (0, round_no)]
+        running = [o for o in siblings if o.get("status") not in _TERMINAL]
+        target_file = t.get("target_file") or "?"
+        reason = str(t.get("fail_reason") or "")
+        detail = str(t.get("fail_detail") or t.get("verdict_feedback") or "")
+        why = (f"{reason}: {detail}" if reason and detail else (reason or detail or "(사유 없음)"))
+        why = " ".join(why.split())[:200]
+        _tq_log(f"[piece-fail] {work_id} task={task_id} file={target_file} "
+                f"round={round_no} 진행 중 조각={len(running)} 사유={why}", idx.root)
+        if not running:
+            _tq_log(f"[piece-fail] {work_id} task={task_id} 즉시 노트 생략 — 마지막 비종결 "
+                    f"조각이라 라운드 공지가 같은 사유를 싣는다", idx.root)
+            return False
+        t["fail_notice_pending"] = True
+        issue_id = wmeta.get("redmine_issue_id")
+        work_project = wmeta.get("project") or ""
+        running_files = sorted({o.get("target_file") or o.get("task_id", "?") for o in running})
+        note = "\n".join([
+            f"조각 실패 — 라운드 {round_no} 진행 중",
+            "",
+            f"- work_id: {work_id}",
+            f"- 실패 조각: {task_id} ({target_file})",
+            f"- 사유: {why}",
+            "- 이 조각은 terminal failed 이며 큐가 재시도하지 않는다.",
+            f"- 나머지 조각 {len(running)}건은 계속 진행 중이다: {', '.join(running_files)}",
+            "- 라운드 공지는 이번 라운드의 조각이 전부 종결되면 이 이슈에 노트로 붙는다.",
+        ])
+
+    def _job():
+        try:
+            if not issue_id:
+                _record_piece_fail_notice(idx, task_id, error="등재 이슈 없음 (redmine_issue_id)")
+                _tq_log(f"[piece-fail] {work_id} task={task_id} 노트 스킵 — 등재 이슈 없음",
+                        idx.root)
+                return
+            rm_cfg = _read_redmine_config(idx.root, work_project)
+            missing = [n for n, v in (("url", rm_cfg.get("url")),
+                                      ("api_key", rm_cfg.get("api_key"))) if not v]
+            if missing:
+                _record_piece_fail_notice(idx, task_id, issue_id=issue_id,
+                                          error="Redmine 통보 설정 누락: " + ", ".join(missing))
+                _tq_log(f"[piece-fail] {work_id} task={task_id} 노트 스킵 — 없는 것: "
+                        f"{', '.join(missing)}", idx.root)
+                return
+            if _redmine_add_note(rm_cfg, int(issue_id), note):
+                _record_piece_fail_notice(idx, task_id, issue_id=issue_id)
+                _tq_log(f"[piece-fail] {work_id} task={task_id} 즉시 노트 → #{issue_id}",
+                        idx.root)
+            else:
+                _record_piece_fail_notice(idx, task_id, issue_id=issue_id,
+                                          error=f"Redmine 노트 실패 #{issue_id}")
+                _tq_log(f"[piece-fail] {work_id} task={task_id} 노트 실패 — #{issue_id}",
+                        idx.root)
+        except Exception as e:                               # noqa: BLE001
+            _record_piece_fail_notice(idx, task_id, issue_id=issue_id,
+                                      error=f"즉시 통보 예외: {type(e).__name__}: {e}")
+            _tq_log(f"[piece-fail] {work_id} task={task_id} 예외: {e}", idx.root)
+
+    threading.Thread(target=_job, daemon=True).start()
+    return True
 
 
 # [중요] **여기 있던 `_run_integration_build` 와 `_do_auto_cleanup` 을 지웠다**

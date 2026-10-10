@@ -96,19 +96,30 @@ invariant 도 지켰지만, `CurrentStep`(실제는 `Step`) · `EMissionTaskExec
 
 순서는 §0④ 그대로다 — **본문 초안은 `codex` → `agy` → 로컬**, 앞이 소진·실패하면 다음이다.
 시도한 백엔드가 **모두** 실패하면 그 일을 직접 하지 말고 `RESULT: BLOCKED` 로 멈춘다(아래 「위임이 실패하면」).
-**조사·분석은 `agy` 가 먼저다** (사용자 결정 2026-10-09, `#764`).
+**조사·분석 위임은 네가 필요하다고 볼 때만 한다** (`#764` 2026-10-09 · 사용자 결정 2026-10-10 으로 완화, `#780`).
+너는 체크아웃을 직접 읽는다 — **대상 파일을 읽고 고치는 일은 직접 한다.** 위임하지 않은 것은 실패가 아니다
+(아래 「위임이 실패하면」은 **시도한** 위임에만 걸린다).
+[주의] **파일 크기는 위임 사유가 아니다** — 너에게도 agy 에게도 글자 상한이 없다(실측 2026-10-10: agy 가
+`--add-dir` 1M자 파일의 중간·끝 표지를 정확히 읽었다, 16K~1M 5/5). 실측 `#777`(`.43`): 몇 줄 수정에 agy 를
+두 번 불렀고 두 번째는 6분을 넘겼다.
 
 | 백엔드 | 쓰는 자리 |
 |---|---|
 | **`codex`** (`backends.codex`) | 본문 초안 1차. `codex exec` 로 대상 파일·골조 주석을 주고 초안을 받는다. [주의] 네가 codex 지휘자라면 이 줄은 건너뛰고 직접 쓴다 |
-| **`agy`** (`backends.agy` 가 true 일 때) | **소스 조사·분석·요약** — 관련 클래스·호출 관계·선언부 정리, 큰 파일 훑기. 본문 초안 2차(codex 소진 시). [중요] **`--add-dir` 로 파일을 쥐여줄 것** — 웹에서 찾으라고 시키면 출처를 지어낸다(실측). `-p` 는 **프롬프트 직전**에 둔다 |
+| **`agy`** (`backends.agy` 가 true 일 때) | **소스 조사·분석·요약** — 관련 클래스·호출 관계·선언부 정리(필요할 때만 · 대상 파일 수정은 직접). 본문 초안 2차(codex 소진 시). [중요] **`--add-dir` 로 파일을 쥐여줄 것** — 웹에서 찾으라고 시키면 출처를 지어낸다(실측). `-p` 는 **프롬프트 직전**에 둔다 |
 | **로컬 LLM** (`backends.ollama`, 브로커 8102) | 본문 초안 3차 · 반복적 채우기·대량 변환. 무료다 |
 | **너** | 오케스트레이션 · 소스 대조 · **위임 결과 검증** · 최종 파일 작성 |
 
 `agy` 호출 모양 — 자료 사본과 지시서는 **`.agy-work/in/`**, 응답 봉투는 **`.agy-work/out/<번호>.json`**
-(체크아웃 기준 상대 경로 · 마스터가 비운 채로 미리 세워 둔다 · 저장소를 통째로 주지 않는다):
+(마스터가 비운 채로 미리 세워 둔다 · 저장소를 통째로 주지 않는다). 직접 호출(리눅스 등 `VIA_LAUNCHER` 가 없을 때) 예:
 
-    agy --dangerously-skip-permissions --output-format json --add-dir .agy-work/in -p "Read BRIEF.md in the added directory and follow it exactly. Return the result as your response. Do not create or modify files." > .agy-work/out/1.json
+    D="$(pwd)/.agy-work/in/1"     # 체크아웃 루트에서 — 체크아웃 절대 경로 + /.agy-work/in/<n>
+    timeout 300 agy --dangerously-skip-permissions --output-format json --add-dir "$D" -p "Read BRIEF.md in the added directory and follow it exactly. Return the result as your response. Do not create or modify files." > .agy-work/out/1.json
+
+🔴 [중요] **`--add-dir` 는 절대 경로다** — agy 는 상대 경로를 *"must be an absolute path"* 로 거부하고
+BRIEF 없이 돈다(실측 `#777`). 자료와 `BRIEF.md` 는 `.agy-work/in/<n>/` 에 두고 그 절대 경로를 넘긴다.
+🔴 [중요] **직접 호출은 한 번에 5분이 상한이다** — `timeout 300` 으로 감싼다. 시간 초과(종료 코드 124)는
+아래 「위임이 실패하면」의 실패다. 아래 중계 대기도 5분이며 그것은 **`VIA_LAUNCHER` 가 있을 때만** 쓴다.
 
 [주의] **`.ax/` 아래에 쓰지 않는다** — Windows 샌드박스는 그 아래 쓰기를 거부한다(실측 2026-10-09). `.agy-work/` 는
 git 이 무시한다(`.git/info/exclude`).
@@ -118,15 +129,15 @@ git 이 무시한다(`.git/info/exclude`).
 
 1. `.agy-work/in/<n>/` 에 자료 사본과 `BRIEF.md` 를 쓴다 (`<n>` 은 `1`, `2` … — 영문·숫자·`-`·`_` 만)
 2. **다 쓴 뒤** 빈 파일 `.agy-work/in/<n>.go` 를 만든다 — 런처가 그것을 보고 샌드박스 밖에서 agy 를 돈다
-3. `.agy-work/out/<n>.done` 이 생길 때까지 **짧은 명령으로 반복해** 기다린다(한 번에 60초 이하 · 최대 15분).
+3. `.agy-work/out/<n>.done` 이 생길 때까지 **짧은 명령으로 반복해** 기다린다(한 번에 60초 이하 · 최대 5분 — 런처도 5분에 agy 를 죽이고 종료 코드 124 를 쓴다).
    PowerShell 예: `$t=0; while (-not (Test-Path .agy-work/out/1.done) -and $t -lt 55) { Start-Sleep 5; $t+=5 }`
 4. `out/<n>.done` 의 값이 agy 종료 코드다. `out/<n>.json` 이 응답 봉투, `out/<n>.err` 가 stderr 끝부분이다
    — 응답 파일을 따로 저장할 필요가 없다(이미 `out/` 에 있고 마스터가 회수한다)
 
 🔴 [중요] **위임이 실패하면 다음 레인, 다 실패하면 멈춘다 — `RESULT: BLOCKED`** (사용자 결정 2026-10-10, `#774`).
 네가 **시도한** 위임(agy · `codex exec` · 로컬 브로커)이 실패하면 — 종료 코드(`done`)가 0 이 아니거나,
-15분 안에 안 오거나, 응답이 비었거나 쓸 수 없으면 — 레인 순서(본문 초안 `codex` → `agy` → 로컬 ·
-조사·분석은 `agy` 먼저)에서 **다음 활성 백엔드**로 넘어가도 된다. **시도한 백엔드가 모두 실패하면 그 일을
+5분 안에 안 오거나, 응답이 비었거나 쓸 수 없으면 — 레인 순서(본문 초안 `codex` → `agy` → 로컬 ·
+조사·분석은 `agy`)에서 **다음 활성 백엔드**로 넘어가도 된다. **시도한 백엔드가 모두 실패하면 그 일을
 네가 직접 하지 않는다** — 원응답 파일은 `.agy-work/out/` 에 그대로 두고, 백엔드마다 종료 코드·오류를 적은 뒤
 마지막 줄을 `RESULT: BLOCKED` 로 끝낸다. 어떤 경우에도 실패한 일을 직접 구현해 덮지 않는다.
 [주의] `backends` 에 없거나 false 인 백엔드에 **위임하지 않은 것은 실패가 아니다**(건너뛴다).

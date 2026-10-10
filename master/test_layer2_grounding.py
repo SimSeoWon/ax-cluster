@@ -153,5 +153,106 @@ class InputTests(unittest.TestCase):
         self.assertEqual(v.failure, "empty_input")
 
 
+class PieceScopedImportTests(unittest.TestCase):
+    """#780: import 확장은 이 조각의 대상에서만, from-import 는 그 이름의 선언만."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name)
+        self.paths = SimpleNamespace(repo=self.repo)
+        git = self.git
+        git("init", "-b", "main")
+        git("config", "user.name", "Fixture")
+        git("config", "user.email", "fixture@example.invalid")
+        files = {
+            "lib.py": "from origin import shared as alias_name\nLIMIT = 3\n"
+                      "def wanted(x: int) -> str:\n    return 'body-marker'\n"
+                      "def unwanted() -> None:\n    pass\nclass Unwanted:\n    pass\n",
+            "origin.py": "def shared() -> int:\n    return 1\n",
+            "big_other.py": "def other_only() -> None:\n    pass\n",
+            "mod.py": "def used() -> int:\n    return 1\ndef unused() -> int:\n    return 2\n",
+            "a.py": "def a():\n    pass\n",
+            "b.py": "def b():\n    pass\n",
+        }
+        for rel, text in files.items():
+            (self.repo / rel).write_text(text, encoding="utf-8")
+        git("add", ".")
+        git("commit", "-m", "base")
+        git("checkout", "-b", "work")
+        # 골조가 두 조각 파일을 바꾼다 — b.py 만 big_other 를 import 한다.
+        (self.repo / "a.py").write_text(
+            "from lib import wanted, LIMIT, alias_name, ghost\nimport mod as M\n"
+            "def a():\n    return M.used()\n", encoding="utf-8")
+        (self.repo / "b.py").write_text(
+            "import big_other\ndef b():\n    big_other.other_only()\n", encoding="utf-8")
+        git("add", ".")
+        git("commit", "-m", "frozen")
+        self.base = git("rev-parse", "HEAD").strip()
+
+    def git(self, *args):
+        return subprocess.run(["git", "-C", str(self.repo), *args], check=True,
+                              capture_output=True, text=True).stdout
+
+    def blocks(self, target):
+        d = D.from_commit(self.paths, self.base, kind="code", work_exts=[".py"],
+                          target_files=[target], per_class=16000, total=64000)
+        return d, {rel: text for _, rel, text in d.blocks}
+
+    def test_other_piece_imports_are_not_followed(self):
+        d, blocks = self.blocks("a.py")
+        # 골조가 바꾼 b.py 자체는 동결 계약이라 남지만, b.py 의 import 는 따라가지 않는다.
+        self.assertIn("b.py", blocks)
+        self.assertNotIn("big_other.py", blocks)
+        _, other = self.blocks("b.py")
+        self.assertIn("big_other.py", other)
+        self.assertNotIn("lib.py", other)
+
+    def test_from_import_carries_only_named_declarations(self):
+        d, blocks = self.blocks("a.py")
+        lib = blocks["lib.py"]
+        self.assertIn("def wanted(x: int) -> str", lib)
+        self.assertIn("LIMIT = 3", lib)
+        self.assertNotIn("unwanted", lib)
+        self.assertNotIn("Unwanted", lib)
+        self.assertNotIn("body-marker", lib)
+        # 재수출은 그 import 줄로 싣고 결손으로 세지 않는다.
+        self.assertIn("from origin import shared as alias_name", lib)
+        self.assertNotIn("lib.py:alias_name", d.missing)
+        # 정말 없는 이름은 조용히 빼지 않는다 — 결손으로 남아 grounding 이 불완전해진다.
+        self.assertIn("lib.py:ghost", d.missing)
+        self.assertFalse(d.complete)
+        self.assertIn("lib.py:ghost", d.render())
+
+    def test_module_import_narrows_to_attributes_used(self):
+        _, blocks = self.blocks("a.py")
+        self.assertIn("def used()", blocks["mod.py"])
+        self.assertNotIn("def unused()", blocks["mod.py"])
+
+    def test_unresolved_module_attribute_falls_back_to_whole_module(self):
+        (self.repo / "a.py").write_text("import mod as M\nM.dynamic\n", encoding="utf-8")
+        self.git("commit", "-am", "dynamic attr")
+        self.base = self.git("rev-parse", "HEAD").strip()
+        d, blocks = self.blocks("a.py")
+        self.assertIn("def unused()", blocks["mod.py"])
+        self.assertFalse(d.missing)
+
+    def test_truncated_narrowed_module_stays_incomplete(self):
+        d = D.from_commit(self.paths, self.base, kind="code", work_exts=[".py"],
+                          target_files=["a.py"], per_class=20, total=64000)
+        self.assertTrue(d.truncated)
+        self.assertFalse(d.complete)
+
+    def test_no_budget_never_truncates(self):
+        # #780: 층2(클라우드 판정)는 글자 예산 없이 부른다 — None 이면 잘림·예산 초과가 없다.
+        d = D.from_commit(self.paths, self.base, kind="code", work_exts=[".py"],
+                          target_files=["a.py"], per_class=None, total=None)
+        self.assertEqual((d.truncated, d.dropped), ([], []))
+        self.assertEqual(d.missing, ["lib.py:ghost"])     # 픽스처의 의도된 결손만 남는다
+        tight = D.from_commit(self.paths, self.base, kind="code", work_exts=[".py"],
+                              target_files=["a.py"], per_class=20, total=64000)
+        self.assertEqual(sorted(b[1] for b in d.blocks), sorted(b[1] for b in tight.blocks))
+
+
 if __name__ == "__main__":
     unittest.main()
