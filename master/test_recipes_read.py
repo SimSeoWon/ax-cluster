@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import sys
 import tempfile
 import types
@@ -26,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from master.context_synth import recipes_read as RR                # noqa: E402
 
 PASS = FAIL = 0
+_TEMP_ROOTS: list[Path] = []
 
 
 def check(name: str, cond: bool, detail: str = "") -> None:
@@ -42,7 +44,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 # 검사 판정(check)·기존 함수 시그니처는 바꾸지 않는다.
 def _paths(with_recipes=True):
     tmp = Path(tempfile.mkdtemp())
-    # [PSEUDO] 만든 tmp 를 모듈 수준 정리 목록에 추가한다.
+    _TEMP_ROOTS.append(tmp)
     if with_recipes:
         (tmp / "recipes").mkdir()
     return types.SimpleNamespace(name="X", root=tmp, recipes=tmp / "recipes")
@@ -198,13 +200,15 @@ def test_wiring_keeps_the_query_out_of_the_url() -> None:
 
 
 if __name__ == "__main__":
-    # [PSEUDO] 아래 검사 실행을 try/finally 로 감싸고, finally 에서 정리 목록의 루트를 모두
-    #   shutil.rmtree(root, ignore_errors=True) 로 지운다. 요약 출력과 종료 코드는 그대로 둔다.
-    for fn in (test_empty_states_say_why, test_matching_by_english_and_identifier,
-               test_korean_query_gets_a_catalog_not_a_dead_end,
-               test_frontmatter_parsing_is_narrow_on_purpose,
-               test_read_failure_is_not_absence,
-               test_wiring_keeps_the_query_out_of_the_url):
-        fn()
-    print(f"{'OK' if not FAIL else 'FAIL'} test_recipes_read: {PASS}/{PASS + FAIL} 통과")
-    sys.exit(1 if FAIL else 0)
+    try:
+        for fn in (test_empty_states_say_why, test_matching_by_english_and_identifier,
+                   test_korean_query_gets_a_catalog_not_a_dead_end,
+                   test_frontmatter_parsing_is_narrow_on_purpose,
+                   test_read_failure_is_not_absence,
+                   test_wiring_keeps_the_query_out_of_the_url):
+            fn()
+        print(f"{'OK' if not FAIL else 'FAIL'} test_recipes_read: {PASS}/{PASS + FAIL} 통과")
+        sys.exit(1 if FAIL else 0)
+    finally:
+        for root in _TEMP_ROOTS:
+            shutil.rmtree(root, ignore_errors=True)
