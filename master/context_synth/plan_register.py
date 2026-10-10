@@ -251,8 +251,12 @@ def _build_plan_issue_description(fm: dict, body: str, plan_md_name: str,
     return "\n".join(lines)
 
 
+# [DOC] #632: 신규 플랜은 명시한 프로젝트의 project_of 매핑에만 등록한다.
+#       프로젝트 누락·빈 매핑이면 create와 MD 변경 없이 error를 반환한다.
+#       기존 redmine_issue_id 갱신 및 전역 create_issue 기본값은 유지한다.
 def register_plan(plan_path: Path, *, create=redmine.create_issue,
-                  update=redmine.update_issue, logf=None) -> dict:
+                  update=redmine.update_issue, logf=None,
+                  project: str = "", project_lookup=redmine.project_of) -> dict:
     """플랜 MD를 Redmine 이슈로 등록하거나 기존 이슈를 갱신한다.
 
     frontmatter에 redmine_issue_id가 있으면 update, 없으면 create.
@@ -298,6 +302,7 @@ def register_plan(plan_path: Path, *, create=redmine.create_issue,
             return {"action": "updated", "issue_id": issue_id}
 
     # 신규 이슈 생성
+    # [PSEUDO] #632: 빈 project를 거절하고 project_lookup(project)의 매핑을 구한다. 조회 예외·빈 매핑은 error로 반환하며 create/파일 쓰기를 하지 않는다. create에 project=매핑을 명시한다.
     result = create(subject, description, tracker_name=TRACKER_NAME,
                     priority_name=priority_name)
     if "error" in result:
@@ -312,9 +317,11 @@ def register_plan(plan_path: Path, *, create=redmine.create_issue,
     return {"action": "created", "issue_id": new_id, "subject": subject}
 
 
+# [DOC] #632: 주차 등록은 project와 project_lookup을 각 플랜에 그대로 전달한다.
 def register_week_plans(week_dir: Path, author_name: str, *,
                         create=redmine.create_issue, update=redmine.update_issue,
-                        logf=None) -> dict:
+                        logf=None, project: str = "",
+                        project_lookup=redmine.project_of) -> dict:
     """주차 디렉토리의 플랜 MD들을 모두 Redmine에 등록/갱신한다. _summary.md 는 제외."""
     log = logf or (lambda m: None)
     out = {"created": 0, "updated": 0, "errors": []}
@@ -326,6 +333,7 @@ def register_week_plans(week_dir: Path, author_name: str, *,
         return out
 
     for plan_md in plan_files:
+        # [PSEUDO] #632: register_plan에 project와 project_lookup을 전달한다. 기존 집계 및 오류 로그 계약을 보존한다.
         result = register_plan(plan_md, create=create, update=update, logf=logf)
         action = result.get("action")
         if action == "created":

@@ -38,6 +38,8 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 
 class P:
     def __init__(self, root: Path):
+        # [DOC] #632: 테스트 요청 프로젝트 이름과 Redmine 매핑은 별개다.
+        # [PSEUDO] #632: self.name = "NS"를 설정해 실제 Paths.name 계약을 재현한다.
         self.root = root
         self.context = root / "context"
         self.repo = root / "repo"
@@ -86,6 +88,8 @@ def fixture(n_reviews=3):
 # ── ① 끝-끝 왕복 ─────────────────────────────────────────────
 
 def test_end_to_end():
+    # [DOC] #632: planner는 프로젝트 이름을 주차 등록에 전달한다. 외부 호출은 주입한다.
+    # [PSEUDO] #632: register 주입 함수에 project 인자를 받아 캡처하고 project == p.name을 검증한다.
     p, rdir = fixture()
     chats, regs = [], []
 
@@ -187,6 +191,8 @@ def test_dedup_inheritance():
 # ── ④ 플랜 등록 ──────────────────────────────────────────────
 
 def test_register():
+    # [DOC] #632: 등록 검사는 fake project_lookup을 사용해 네트워크 없이 돈다.
+    # [PSEUDO] #632: 신규 등록에 project="NS", project_lookup=lambda _: "ns-project"를 주입하고 create kwargs의 project를 검사한다. 기존 id 갱신 검사는 보존한다.
     d = Path(tempfile.mkdtemp(prefix="ax-pl4-"))
     plan = d / "plans" / "사람" / "2026-W33" / "high_B.md"
     plan.parent.mkdir(parents=True)
@@ -235,6 +241,12 @@ def test_register():
           week["updated"] == 1 and week["created"] == 0 and not week["errors"], str(week))
 
 
+# [DOC] #632: 프로젝트 전달 누락 및 잘못된 기본 프로젝트 등록을 회귀 검사한다.
+def test_project_routing() -> None:
+    # [PSEUDO] #632: NS/AXCluster가 서로 다른 매핑으로 생성되는지 검사한다. project 누락·빈 매핑·조회 예외는 create/update 0회, 원본 MD 바이트 불변 및 error 반환을 검사한다. register_week_plans의 전달과 오류 집계도 검사한다. run_weekly_plans부터 실제 등록 함수까지 fake create/update/lookup/chat을 연결해 전달 누락을 잡고, 매핑 실패에도 플랜 MD·요약이 남는지 확인한다. 실제 Redmine/Registry/LLM 네트워크 호출은 금지한다.
+    raise NotImplementedError("#632 프로젝트 라우팅 회귀 검사")
+
+
 # ── ⑤ create_issue ───────────────────────────────────────────
 
 def test_create_issue():
@@ -261,7 +273,7 @@ def test_create_issue():
 
 def main() -> int:
     for fn in (test_end_to_end, test_gates, test_dedup_inheritance,
-               test_register, test_create_issue):
+               test_register, test_project_routing, test_create_issue):
         fn()
     print(f"{'OK' if not FAIL else '[실패]'} test_planner: {PASS}/{PASS + FAIL} 통과")
     return 1 if FAIL else 0

@@ -112,9 +112,12 @@ def run_weekly_plans(paths, *, min_reviews: int = PLAN_MIN_REVIEWS,
             f"(토큰 ~{plan_result['tokens_used']:,})")
 
         # Step 3.5: Redmine 이슈 등록/갱신
+        # [DOC] #632: Redmine 대상은 요청 프로젝트 paths.name으로 결정한다.
+        #       등록 실패에도 플랜 MD·요약 생성은 유지하며 기본 프로젝트로 우회하지 않는다.
         if redmine and plan_result["plans_generated"]:
             from . import plan_register as PR
             reg = register or PR.register_week_plans
+            # [PSEUDO] #632: reg 호출에 project=paths.name을 전달한다. 매핑 실패로 생성·요약·아카이브를 중단하지 않는다.
             reg(week_dir, author_name, logf=log)
 
         # 주간 요약 생성
