@@ -117,8 +117,7 @@ def run_weekly_plans(paths, *, min_reviews: int = PLAN_MIN_REVIEWS,
         if redmine and plan_result["plans_generated"]:
             from . import plan_register as PR
             reg = register or PR.register_week_plans
-            # [PSEUDO] #632: reg 호출에 project=paths.name을 전달한다. 매핑 실패로 생성·요약·아카이브를 중단하지 않는다.
-            reg(week_dir, author_name, logf=log)
+            reg(week_dir, author_name, logf=log, project=paths.name)
 
         # 주간 요약 생성
         summary = _build_weekly_summary(
