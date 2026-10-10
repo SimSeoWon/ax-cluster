@@ -4,7 +4,14 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-11 02:10 KST · Claude · #798 구현·배포·5a 실증 완료, 5b(훅 경로) 대기**.
+- **현재 체크포인트: 2026-10-11 02:55 KST · Claude · #798 오늘 추가분 전부 되돌림(사용자 결정)**.
+  - 경위: 완료 훅을 마스터 홈 세션까지 넓히는 미커밋 작업 중 에러 발생 → 사용자가 홈 훅 정리(02:40, `~/.claude/settings.json` = `{}`) → 커밋까지 전부 되돌리기 결정. 02:28 홈 settings.json 이 `x` 1바이트로 깨져 있었으나 무엇이 썼는지는 미확인.
+  - 되돌림: revert 커밋 `02293a1`(636da9c·7e53df0·30739f7·b7c4ebe) push · 코드 트리 = `7f70309` · 미커밋 홈 훅 병합 6파일 폐기 · `ax-followup.timer`/`.service` 제거 · 마스터 AXCluster requester 작업장 등록 해제 + `~/trunk/AXCluster-requester` 삭제 · `master.client update` 3/3 OK · `ax-projects` 재시작 02:51:49. 백업·증거 `~/.cache/ax-revert-798/`. #798 노트 기록.
+  - 🔴 **다음 세션 진행 방식 (사용자 결정 2026-10-11)**: 인프라 서버(마스터)에서 분산 작업을 요청할 때 **훅을 쓰지 않는다** — 등재 뒤 **카운트다운으로 주기적으로 큐를 조회**해 완료를 확인하는 방식으로만 진행한다.
+  - #632(work e5e894a9): ⑦ 전진·finalize 미승인. followup 이 만든 `~/trunk/ax-advance-…`(c65247fc)는 정리 시점에 이미 없었음(원인 미확인). Codex 검수 트리 `~/ax-advance-20261011_0035_632_redmine_e5e894a9`(c60da325, 통합31/31·회귀38/38)와 `~/ax-632-work` 보존.
+  - #798 원래 문제(완료 후 요청자 후속 처리 누락)는 다시 미해결. 리포트 108·109·아래 체크포인트의 #798 구현 서술은 현행 아님.
+
+- **직전 체크포인트(되돌려짐 — 현행 아님): 2026-10-11 02:10 KST · Claude · #798 구현·배포·5a 실증 완료, 5b(훅 경로) 대기**.
   - 사용자 결정·근거·실측은 리포트 109. 커밋 636da9c·7e53df0·30739f7·b7c4ebe(문서 fa3e91f), origin/main 일치. 로컬 서브 에이전트 방식.
   - 마스터가 AXCluster requester 작업장으로 등록됨: /home/sim/trunk/AXCluster-requester (배달물은 체크아웃 안에만, 홈 불변 대조). 분산 등재 세션은 이 폴더에서 열어야 완료 훅이 걸린다.
   - ax-followup.timer 가동(1분, --scan --project AXCluster). 첫 주기 기준선 9건. 상태·로그 ~/.cache/ax-followup/. ax-projects 재시작 01:52:04.
