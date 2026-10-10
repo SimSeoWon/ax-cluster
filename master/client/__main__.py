@@ -587,6 +587,9 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
             if not got:
                 ok_codex = False
                 codex_note += f" · [실패] codex 가 {n} 을 모른다 (`codex mcp get` 못 찾음)"
+            elif bundle.codex_master_global_ok(got, f):
+                # `#798` — 마스터 호스트 요청자는 전역 `master-local` 항목을 본다(실측). 정본이다.
+                codex_note += f" · codex {n} = 마스터 전역 항목(master-local)"
             elif not bundle.codex_mcp_matches(got, f):
                 ok_codex = False
                 _tr = got.get("transport") or {}

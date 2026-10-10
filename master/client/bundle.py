@@ -1383,6 +1383,22 @@ def codex_mcp_matches(got: dict, facts: HostFacts) -> bool:
             and list(tr.get("args") or []) == list(want["args"]))
 
 
+def codex_master_global_ok(got: dict, facts: HostFacts) -> bool:
+    """마스터 호스트에서 codex 가 보는 항목이 **마스터 전역 등록**(`master-local`)인가 (`#798`).
+
+    [중요] 실측 2026-10-11: 마스터 요청자 클론에서 `codex mcp get ax-client` 는 프로젝트
+    `.codex/config.toml` 이 아니라 `~/.codex/config.toml` 의 전역 항목을 돌려줬다(신뢰 폴더는
+    `/home/sim` 하나). 그 항목은 `master_local` 이 관리·대조하는 정본이라 마스터에서는 그것이
+    맞는 답이다 — 홈을 고쳐 프로젝트 항목을 이기게 하는 것은 사용자가 고르지 않았다.
+    [주의] 마스터 호스트가 아니면 언제나 False — 워커·원격 요청자의 판정은 바뀌지 않는다.
+    """
+    if not facts.on_master:
+        return False
+    from . import master_local as _ml                    # noqa: PLC0415 (순환 임포트 회피)
+    ok, _why = _ml.codex_get_matches(got, _ml.entry_for(_ml.Paths.default()))
+    return ok
+
+
 def codex_mcp_add(facts: HostFacts, name: str) -> str:
     """codex 에 MCP 하나를 등록하고 **되읽어 대조**한다. 사람이 읽을 한 줄을 돌려준다.
 
@@ -1422,6 +1438,9 @@ def codex_project_mcp_add(facts: HostFacts, name: str) -> str:
     got = codex_mcp_get(facts, name, project=True)
     if not got:
         return f"{name} [주의] 프로젝트 설정을 썼는데 codex 가 못 찾는다"
+    if codex_master_global_ok(got, facts):
+        return (f"{name} [완료] 마스터 호스트 — codex 는 전역 `master-local` 항목을 본다"
+                f"(프로젝트 설정보다 우선 · 그 항목은 `master-local --check` 가 대조한다 · #798)")
     if not codex_mcp_matches(got, facts):
         tr = got.get("transport") or {}
         return (f"{name} [주의] 프로젝트 설정과 다르다 — "

@@ -274,11 +274,26 @@ def test_probe_finds_user_bin_codex() -> None:
     check("codex mcp get 도 같은 PATH", bundle.LINUX_USER_BIN in sent[0], sent[0])
 
 
+def test_codex_master_global_entry() -> None:
+    """실측 2026-10-11: 마스터 클론에서 codex 는 전역 `master-local` 항목을 본다 — 그것이 정본이다."""
+    from master.client import master_local as ml
+    e = ml.entry_for(ml.Paths.default())
+    glob = {"transport": {"type": "stdio", "command": e["command"], "args": list(e["args"])},
+            "enabled": True}
+    other = {"transport": {"type": "stdio", "command": "/usr/bin/python3", "args": ["x.py"]}}
+    check("🔴 마스터 호스트: 전역 master-local 항목은 맞는 답", bundle.codex_master_global_ok(glob, _facts()))
+    check("  마스터 호스트: 엉뚱한 항목은 아니다", not bundle.codex_master_global_ok(other, _facts()))
+    check("  빈 항목은 아니다", not bundle.codex_master_global_ok({}, _facts()))
+    check("🔴 원격 요청자는 전역 항목을 인정하지 않는다(판정 불변)",
+          not bundle.codex_master_global_ok(glob, _facts("192.168.0.33")))
+    check("  원격 워커도 마찬가지", not bundle.codex_master_global_ok(glob, _facts("192.168.0.43", role="worker")))
+
+
 def main() -> int:
     for fn in (test_detection, test_targets_and_scope, test_guard, test_deliver_master_requester,
                test_deliver_refuses_tracked_mcp_json, test_dry_run_master_requester,
                test_remote_requester_unchanged, test_plan_master_requester,
-               test_probe_finds_user_bin_codex):
+               test_probe_finds_user_bin_codex, test_codex_master_global_entry):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_master_requester: {PASS}/{total} 통과")
