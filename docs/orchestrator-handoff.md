@@ -4,7 +4,31 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-11 · Codex · 사용자 선택 #796 로컬 수정·검증 완료, 커밋·배포 승인 대기**.
+- **현재 체크포인트: 2026-10-11 · Codex 중단, Claude 인수 대기 — 사용자 지시로 버그 #798 등록·인계만 수행**.
+  - 사용자 마지막 지시: 「버그 일감으로 추가하고 인수인계서 작성해 … 클로드에게 시킬테니까」. Codex는 일감 등록·인계 작성 후 멈춘다. Claude는 실제 상태를 대조해 인수할 것. 마스터 담당 기록/워커 전역 모드 변경, 추가 파견·버그 수정·base 전진·finalize·배포는 이번 지시로 수행하지 않는다.
+  - [#798](http://192.168.0.57:8080/issues/798): 분산 작업 완료 후 요청자 후속 처리 누락·완료 알림 연계 확인 필요. AX 인프라, 버그·개선, 높음. 완료를 조회하고도 회수·검증을 이어가지 않은 Codex 처리 누락은 확정. 큐 알림 메타는 정상이나 이 마스터 대화 세션의 훅 수신/자동 재개 연결은 미확인. 이를 혼동한 설명을 원인 확정으로 이어받지 말 것. 이번에는 등록만 했고 원인 수정 없음.
+  - #632 / work 이슈 #797: work 20261011_0035_632_redmine_e5e894a9, task aafc78ce. 실제 get_work 재조회 ready_for_review·verified1/1·attempt1, worker_mode codex, .43. Gemini APPROVE/backend=agy. 구현 7bc489f1, 서브 task/20261011_0035_632_redmine_e5e894a9/r1/aafc78ce. 재파견·재등록 불필요.
+  - 요청자 검수까지 완료: 정본 master.work.review.advance_work(confirm=False, keep_tree=True, build_fn=회귀+공식 통합) 사용. /home/sim/ax-advance-20261011_0035_632_redmine_e5e894a9 HEAD c60da32580dc5b0ed7cd8af502624d0438fbb4c3, 충돌0, test_planner38/38 및 공식 통합31/31(63.876초), build_passed=true·pushed=false. #797에 검사 결과 기록. 승인되지 않은 base 전진/finalize를 완료로 표시하지 말 것.
+  - main /home/sim/ax-cluster HEAD7f70309fc115df866439ab804e7a67ac104a0b37. dirty는 이 인계서와 reports/108-worker-job-lifecycle-796.md 두 문서. 기존 배포후 기록 보존. /home/sim/ax-632-work의 로컬 base HEADb111c8a2b7c3699c1dfc398f8cf52599c88ac3fb. 검수 트리 보존, 강제 제거·새로 만들기 전에 검사 결과와 HEAD 대조. 새 문서 커밋/푸시 승인은 없음.
+  - 실제 서비스 조회 ax-dispatch.service inactive/dead·MainPID0, 이번 회수/검사 명령 종료. #632 work 취소하지 않음. #796은 완료 상태 유지하며 취소 실증은 사용자가 요청한 드라이런15/15 및 코멘트만; Windows 운영 job 취소는 미실행.
+  - Claude가 이어받을 때: 사용자 의도를 먼저 복원하고 #798의 수신/후속 처리 경계를 소스와 실제 훅 설정으로 확인. #632 결과는 보존된 검수 트리에서 검토하고 기존 승인 범위를 대조. 준비된 결과를 버리고 재파견하거나 이미 끝난 검사를 이유 없이 반복하지 말 것. ⑺ 전진과 finalize 미승인 상태는 유지하되 사용자의 후속 지시에 따른다.
+
+- **직전 체크포인트: 2026-10-11 00:36 KST · Codex · 사용자 선택 #632 단일 태스크 파견 중**.
+  - 사용자 선택: #632를 Codex AX 워커로 수행. 등록 함수·호출부·테스트 3파일을 한 태스크로 묶음. 사용자 「응 진행해!」로 준비된 골조 커밋·push·등록·파견 승인.
+  - 요청자 /home/sim/ax-632-work, base task/20261011_0035_632_redmine_e5e894a9/base, 골조 b111c8a2. main 7f70309 유지. 골조 compile 3파일/PSEUDO7 통과·동결22, master.client check AXCluster 3/3 통과.
+  - work 20261011_0035_632_redmine_e5e894a9, task aafc78ce, worker_mode codex, 자동 Redmine #797을 #632 자식으로 연결. #632 진행 상태·준비/검사 노트 기록. 00:36:06 실제 파견 시작, 00:36:10 .43 claimed, 00:36:13 서브브랜치 생성, 00:36:14 Codex 실행 진입. 시스템 journal ax-dispatch.service에서 확인; 사용자 journal에는 없음.
+  - 계약: paths.name → 주차 등록 → 플랜 등록 → project_of 매핑 → create(project=매핑). 신규 등록에서 프로젝트 누락/빈 매핑/조회 예외는 오류·외부 생성 및 MD 변경 없음. 기존 id 갱신 보존. 회귀 검사에 호출 연결과 매핑 실패 후 MD·요약 보존 포함. 아직 워커 구현·Gemini 판정·요청자 검사 결과 없음.
+  - 후속 결과: .43 Codex 구현 7bc489f1, 00:38:15 Gemini APPROVE/backend=agy, 00:38:16 verified1/1·ready_for_review. 실패/재시도0. 완료 조회 뒤 즉시 검증을 이어가지 않은 요청자 처리 누락을 사용자에게 설명하고 회수·검증 실행.
+  - 정본 review.advance_work(confirm=False)로 검수 트리 /home/sim/ax-advance-20261011_0035_632_redmine_e5e894a9 통합, HEAD c60da32580dc5b0ed7cd8af502624d0438fbb4c3·충돌0. 회귀 test_planner38/38, 공식 통합31/31(63.876초), build_passed=true. 초기 sandbox SSH 차단은 동일 명령 승인 해제로 해결. #797 결과 노트 기록.
+  - 다음: 검증된 ⑺ base 전진 승인, 이후 별도 finalize 승인. 현재 pushed=false·main7f70309 유지. 기존 문서 미커밋 보존, 실행 기록 추가 커밋 미승인. 완료 통보는 Redmine 및 요청자 시작/매턴 훅이며 이 대화를 즉시 깨우는 채널로 확인하지 않았음.
+
+- **직전 체크포인트: 2026-10-11 00:15 KST · Codex · #796 커밋·푸시·워커 배포 완료**.
+  - 사용자 「응」으로 직전 제안한 #796 수정·관련기록 커밋/push/워커배포 승인. main 7f70309fc115df866439ab804e7a67ac104a0b37 커밋, Gitea origin/main ref일치 확인. 구현3파일·관련기록 포함11파일. 배포 당시 트리clean·HEAD7f70309 유지.
+  - ax-deliver 정본 master.client update rc0, 마운트AXCluster .43/.2/.33 배포·검사3/3 통과. payload/프로젝트로컬skills·MCP/config·출처HEAD 일치. code 빌드상주미등록·세션1런처만유지. 서비스최신성 check에서 ax-task-queue/ax-broker/ax-projects 모두현재코드. 초기sandboxsystemctl조회차단은동일읽기명령승인해제로확인. 발동형파견/런처코드여서재기동없음, ax-projects22:04:44 active/running 유지.
+  - ax-redmine commit연결·완료100% 기록·되읽기. 기존runner241/241·공식통합31/31·실제로컬프로세스정리검증에근거. Windows실제운영job취소/새분산완주는미실행, 파일배포검사와구분. 당시Claudequota잔존원인미확정·직접SSHClaude미변경한계보존.
+  - 새작업등재/파견없음. #795cancelled·#793rejected 유지. 실행중마스터명령없음. 배포후이인계서/보고서108결과기록만미커밋(추가커밋미승인), 배포시clean출처와구분. 다음일감은사용자가선택하며자동선택하지않는다.
+
+- **직전 체크포인트: 2026-10-11 · Codex · 사용자 선택 #796 로컬 수정·검증 완료, 커밋·배포 승인 대기**.
   - 사용자 「796번부터 고쳐」「응 진행해」로 distribute의 로컬 서브 에이전트 방식 승인. fix796 담당 파일 master/work/runner.py, client/runtime/session1_conductor.py, master/test_runner.py. 커밋/push/배포 미승인. 기존 미커밋 문서·106 실증·107 기록 보존.
   - 당시 Claude quota 호출 rc1 종료, pending·5시간 워커 차단 및 hold 로그 확인. 현재 AXCluster 빌드 워커 probe .43/.2/.33 running0, Windows 런처Ready, 해당 파견 CLI 미확인. .2 pythonw worker_daemon PID91420는 MotionForge 소속. Claude 실패 실행 상주를 확정 원인으로 보고하지 않는다.
   - 소스 확인·수정: Windows Codex 마스터 timeout/런처 기동 실패 뒤 원격job취소 누락, 런처 unfinishedjob 지연 실행, 일반 communicate 예외 프로세스 정리 누락을 보완. request별 cancel/expiry·명시적 큐 취소·tree/relay 정리·최대15초 런처완료ACK. 전달성공/종료미확인구분, 부분job전송실패도취소, 비영점정상완료로그보존. 자동 hold/재시도 정책·다른 프로젝트 서비스·직접 SSH Claude 계약 변경 없음. 보고서108, Redmine#796 진행.

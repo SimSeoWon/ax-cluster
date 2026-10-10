@@ -37,3 +37,13 @@ Windows Codex `runner.run_worker_session1`은 요청별 job 파일을 보내지�
 운영 워커에는 배포하지 않았고 Windows 운영 프로세스 종료 실증도 아직 없다. POSIX 실제 프로세스 트리 종료와 마스터/Windows 명령 계약은 회귀로 검사했다. expires_at은 마스터와 워커의 시각이 맞는 조건에 의존한다. 직접 SSH Claude 실행 계약을 고치거나 당시 Claude quota가 잔존 원인이었다고 주장하지 않는다.
 
 이전 #795는 cancelled, #793은 rejected이며 새 분산 작업을 등재하지 않았다. main84abb5b와 기존 미커밋 기록을 유지한다. 커밋·푸시·배포 승인 전이며 #796은 진행 상태로 둔다.
+
+## 사용자 승인 후 커밋·배포 — 00:15 KST
+
+사용자 「응」으로 #796 수정과 관련기록 커밋·푸시·워커배포를 승인했다. main7f70309fc115df866439ab804e7a67ac104a0b37에 구현3파일과 앞선106실증/107정리/108 및 인계 기록을 함께 커밋했다(11파일). Gitea push rc0, 실제 origin/main ref일치 확인. 배포 시작부터 종료까지 마스터 트리는 clean, HEAD7f70309를 유지했다.
+
+`ax-deliver` 정본 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client update` rc0. 마운트AXCluster .43/.2/.33 모두 배포·되읽기 검사통과3/3. payload10개, 프로젝트 로컬 skills·Codex MCP/config, 배달 출처HEAD 일치. code프로젝트의 빌드상주는 미등록으로 유지하고 세션1런처만 등록됐다.
+
+`master.service_freshness.check`는 ax-task-queue/ax-broker/ax-projects 모두 현재코드로 판정했다. 초기 sandbox의 systemctl읽기 차단 뒤 같은 검사명령을 실행승인으로 재조회했다. 이번 변경은 발동형 파견/런처 코드이므로 서비스 재시작은 필요하지 않았다. ax-projects 시작22:04:44·active/running 유지 확인.
+
+ax-redmine으로 커밋연결 및 #796 완료100% 기록 후 되읽기 확인했다. 최종runner241/241·공식통합31/31 및 실제 로컬프로세스정리검증, 워커파일배포3/3에 근거하며 Windows 실제 운영취소·새분산완주 실증은 하지 않았다. 새work 등재/파견 없음. 이 배포 후 보고서와 인계서 결과 기록만 미커밋이며 추가커밋승인으로 확대하지 않는다.
