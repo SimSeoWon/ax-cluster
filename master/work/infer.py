@@ -1099,8 +1099,10 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                 return _skip(Verdict(False, "author_unavailable", warnings=diag + ["작성 계열 미확정"]))
             base_files = _base_files(files)
             with U.sink(paths.usage_log, source="layer2", work_id=work_id, task_id=task_id):
+                selected_mode = _MODE.current(mode)[0]
                 v = L2.verify_files(list(files.items()), declarations=decl.render(for_verification=True),
-                                    author_lane=author["lane"], kind=kind, base_files=base_files)
+                                    author_lane=author["lane"], kind=kind, base_files=base_files,
+                                    orchestrator=selected_mode if selected_mode in ("codex", "claude") else "")
             # 🔴 **누가 판정했는지 남긴다** (`#757`, 사용자 2026-10-09) — 성공·차단 모두.
             backend = next((w.split("=", 1)[1] for w in v.warnings
                             if isinstance(w, str) and w.startswith("backend=")), "?")

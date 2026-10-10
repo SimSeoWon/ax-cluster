@@ -1065,7 +1065,7 @@ def test_commit_layer2_usage_and_author() -> None:
                  patch("master.projects.profile.load", return_value={"kind": "unreal"}), \
                  patch("master.work.declarations.from_commit", side_effect=grounding), \
                  patch.object(L2, "BACKENDS", [("agy", agy), ("claude", claude)]), \
-                 patch.object(I._MODE, "current", return_value=("codex", "test")), \
+                 patch.object(I._MODE, "current", return_value=("lane", "test")), \
                  patch("master.work.revise.embed") as embed:
                 out = I.commit_task(paths, FakeFacts(), {"task_id": "l2", "attempt_count": 1},
                                     work_id="W1", base=SUB_TIP, want=["A.cpp"], branch="task/W1/l2",
@@ -1199,6 +1199,8 @@ def test_commit_layer2_base_files_and_judge_log() -> None:
                 continue
             check(f"{label}: 기준 원본 전달", verify.called and
                   verify.call_args.kwargs.get("base_files") == want_base, str(verify.call_args))
+            check(f"{label}: 선택 지휘자 재확인 전달", verify.call_args.kwargs.get(
+                  "orchestrator") == "codex", str(verify.call_args))
             judge = [ln for ln in l2 if "bf 판정 APPROVE" in ln]
             check(f"{label}: 판정 한 줄(backend·작성·그라운딩·원본)", len(judge) == 1 and
                   "backend=agy" in judge[0] and "작성=codex" in judge[0] and

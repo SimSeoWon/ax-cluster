@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from master.work import declarations as D
@@ -151,6 +152,102 @@ class InputTests(unittest.TestCase):
     def test_empty_input_cannot_get_model_approval(self):
         v = L2.verify_files([], backends=[("fake", lambda *_a, **_k: "VERDICT: APPROVE")])
         self.assertEqual(v.failure, "empty_input")
+
+
+class OrchestratorTests(unittest.TestCase):
+    def setUp(self):
+        L2.clear_cooldown()
+        self.addCleanup(L2.clear_cooldown)
+
+    def verify(self, gemini, final="VERDICT: APPROVE", mode="codex", why=""):
+        with patch.object(L2, "call_agy_why", return_value=(gemini, why)) as agy, \
+             patch.object(L2, "call_codex_why", return_value=(final, "", "")) as codex, \
+             patch.object(L2, "call_claude_why", return_value=(final, "")) as claude:
+            v = L2.verify_files([("api.py", "def existing(): pass")], kind="code",
+                                declarations="def existing(): ...", author_lane=mode,
+                                base_files=[("api.py", "def existing(): pass")],
+                                orchestrator=mode)
+        return v, agy, codex, claude
+
+    def test_false_positive_rechecked_against_full_evidence(self):
+        raw = "- existing is missing\nVERDICT: REQUEST_CHANGES"
+        v, agy, codex, claude = self.verify(raw)
+        self.assertTrue(v.approved)
+        self.assertEqual((agy.call_count, codex.call_count, claude.call_count), (1, 1, 0))
+        prompt = codex.call_args.args[0]
+        for evidence in (raw, "def existing(): ...", "def existing(): pass", "BASE VERSION"):
+            self.assertIn(evidence, prompt)
+        self.assertIn("gemini_raw_response=" + raw, v.warnings)
+
+    def test_actual_error_stays_request_changes(self):
+        raw = "- missing semicolon\nVERDICT: REQUEST_CHANGES"
+        v, _, _, claude = self.verify(raw, final=raw, mode="claude")
+        self.assertFalse(v.approved)
+        self.assertIsNone(v.failure)
+        self.assertEqual(v.findings, ["missing semicolon"])
+        self.assertEqual(claude.call_count, 1)
+
+    def test_unavailable_and_malformed_gemini_rechecked(self):
+        for raw, why in ((None, "타임아웃 300초"), (None, "quota exhausted"),
+                         ("invalid output", "")):
+            with self.subTest(why=why, raw=raw):
+                L2.clear_cooldown()
+                v, _, codex, _ = self.verify(raw, why=why)
+                self.assertTrue(v.approved)
+                self.assertEqual(codex.call_count, 1)
+                self.assertIn("gemini_failure_reason=" + why, v.warnings)
+                self.assertIn(why or "malformed", codex.call_args.args[0])
+
+    def test_final_response_failure_blocks(self):
+        for final in (None, "malformed response"):
+            with self.subTest(final=final):
+                v, _, _, _ = self.verify("VERDICT: REQUEST_CHANGES", final=final)
+                self.assertFalse(v.approved)
+                self.assertTrue(v.failure.startswith("orchestrator_"))
+
+    def test_approve_does_not_call_orchestrator(self):
+        v, _, codex, claude = self.verify("VERDICT: APPROVE")
+        self.assertTrue(v.approved)
+        self.assertEqual((codex.call_count, claude.call_count), (0, 0))
+
+    def test_cooldown_still_rechecks_with_reason(self):
+        L2._cooldown["agy"] = L2.time.time() + 60
+        v, agy, codex, _ = self.verify(None)
+        self.assertTrue(v.approved)
+        self.assertEqual((agy.call_count, codex.call_count), (0, 1))
+        self.assertIn("쿨다운", codex.call_args.args[0])
+
+    def test_both_calls_share_layer2_usage_attribution(self):
+        import json
+        from master.work import usage as U
+        def gemini(prompt, **kw):
+            U.emit_cli("agy", None, rc=1)
+            return None, "quota"
+        def codex(prompt, **kw):
+            U.emit_cli("codex", U.Usage(lane="codex", input_tokens=12, output_tokens=3), rc=0)
+            return "VERDICT: APPROVE", "", ""
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / "usage.jsonl"
+            with patch.object(L2, "call_agy_why", side_effect=gemini), \
+                 patch.object(L2, "call_codex_why", side_effect=codex), \
+                 U.sink(log, source="layer2", work_id="W", task_id="T"):
+                v = L2.verify_files([("a.py", "pass")], orchestrator="codex")
+            rows = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertTrue(v.approved)
+        self.assertEqual([row["lane"] for row in rows], ["agy", "codex"])
+        self.assertTrue(all(row["source"] == "layer2" and row["work_id"] == "W"
+                            and row["task_id"] == "T" for row in rows))
+        self.assertFalse(rows[0]["measured"])
+
+    def test_legacy_author_exclusion_and_malformed_block_preserved(self):
+        calls = []
+        def backend(prompt, timeout):
+            calls.append(prompt)
+            return "invalid response"
+        v = L2.verify_files([("api.py", "pass")], author_lane="codex",
+                            backends=[("codex", backend), ("agy", backend)])
+        self.assertEqual(v.failure, "malformed")
+        self.assertEqual(len(calls), 1)
 
 
 class PieceScopedImportTests(unittest.TestCase):
