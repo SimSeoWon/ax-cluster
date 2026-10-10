@@ -454,7 +454,10 @@ def test_reject_patches_and_keeps_branches():
         check("[중요] 반려된 work 는 전부 보존된다 (main 도달 불가라 구조적으로)",
               not d.cleanup.delete and len(d.cleanup.keep) >= 3, str(d.cleanup.delete))
         check("Redmine 본문을 만들어 둔다 (직접 쓰지 않는다)", "[반려]" in d.redmine_note)
-        check("반려 본문이 보존을 말한다", "보존" in d.redmine_note)
+        # `#787` ① (2026-10-10) — 반려 work 의 브랜치는 마스터 정리가 지우고 해시를 남긴다.
+        #    이 함수 자체는 여전히 지우지 않는다(위 두 검사) — 본문이 그 경로를 말한다.
+        check("반려 본문이 정리·해시 복원 경로를 말한다",
+              "#787" in d.redmine_note and "해시" in d.redmine_note, d.redmine_note)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

@@ -7,7 +7,7 @@
 ## [중요] 원전을 그대로 옮긴다 — 사이클은 원전 `worker/worker.py` 것이다
 
     docs/distributed-workers.md § 워커 사이클 (per task)
-      claim → git fetch --all → git reset --hard HEAD → git checkout -B <branch> <base_commit>
+      claim → git fetch --all --prune → git reset --hard HEAD → git checkout -B <branch> <base_commit>
             → spawn `claude -p` (prompt 에 target_file/스켈레톤/컨텍스트 주입)
             → 디스크 검증: [PSEUDO] 마커 0 · 빈 함수 본문 없음 · 마크다운 펜스 잔재 없음
             → git add <target_files> → git commit → git push --force-with-lease
@@ -136,7 +136,7 @@ def checkout_command(facts, branch: str, base_commit: str) -> str:
     성립하는 것이고, `.33`(사람 기계)에 이 명령을 절대 돌리지 않는다.
     """
     cd = f'cd /d "{facts.path}"' if facts.windows else f'cd "{facts.path}"'
-    return (f'{cd} && git fetch --all --quiet && git reset --hard --quiet HEAD && '
+    return (f'{cd} && git fetch --all --prune --quiet && git reset --hard --quiet HEAD && '
             f'git clean -fd && git checkout -q -B "{branch}" "{base_commit}" && '
             f'{delegation_dirs_command(facts)} && '
             f'git rev-parse HEAD')

@@ -2005,6 +2005,8 @@ def _deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
                        for dest, src in payload_pairs(facts.role)]
                     ) if payload_pairs(facts.role) else [],
         "excluded": _ensure_ignored(facts),
+        # `#787` ③ — 원격에서 지워진 브랜치의 원격추적 ref 를 워커 클론에 남기지 않는다
+        "fetch_prune": ensure_fetch_prune(facts),
     }
     # ── 상주 등록 (`#405`, `#255` 복원) ──────────────────────────────
     #    🔴 [중요] **`onboard.py` 가 적어둔 빈 칸이 여기다** — *"claimer 상주 등록:
@@ -2378,6 +2380,63 @@ def _ensure_ignored(facts: HostFacts) -> bool:
         raise BundleError(f"{facts.host}: .git/info/exclude 에 {', '.join(missing)} 를 넣지 못했다 "
                           f"(rc={rc}) — {(out or '')[:120]}")
     return True
+
+
+# `#787` ③ — 워커 클론의 `fetch.prune`. **역할이 worker 인 체크아웃에만** 건다.
+#    🔴 사람의 게임 체크아웃(requester)은 건드리지 않는다 — 그 클론의 git 동작을 바꾸는 것은
+#    사람 몫이다. 워커 클론은 파이프라인 소유의 임시 저장소라(CLAUDE.md) 성립한다.
+FETCH_PRUNE_KEY = "fetch.prune"
+
+
+def fetch_prune_applies(facts: HostFacts) -> bool:
+    return facts.role == "worker"
+
+
+def _git_config_prefix(facts: HostFacts) -> str:
+    """원격 셸에서 그 체크아웃의 **로컬** git config 를 부르는 머리 — 두 OS 모양."""
+    if facts.windows:
+        return f'git -C "{facts.path}" config --local'
+    return f"git -C {shlex.quote(facts.path)} config --local"
+
+
+def fetch_prune_set_command(facts: HostFacts) -> str:
+    g = _git_config_prefix(facts)
+    # 쓴 뒤 **되읽어** 찍는다 — rc 만 믿지 않는다(되읽어 대조까지가 배달이다)
+    return f"{g} {FETCH_PRUNE_KEY} true && {g} --get {FETCH_PRUNE_KEY}"
+
+
+def fetch_prune_get_command(facts: HostFacts) -> str:
+    return f"{_git_config_prefix(facts)} --get {FETCH_PRUNE_KEY}"
+
+
+def ensure_fetch_prune(facts: HostFacts) -> str:
+    """워커 체크아웃의 로컬 git config 에 `fetch.prune=true` 를 건다 (`#787` ③). 멱등.
+
+    실측 2026-10-10 `.33`(AXCluster 워커): `git branch -r` 17 · `ls-remote --heads` 10 — 원격에서
+    지운 브랜치(`#740` 4 · `#772` 2)의 원격추적 ref 가 남아 있었다. fetch 가 prune 하지 않아서다.
+    설정해 두면 그 클론의 **모든** fetch(사람·에이전트·파이프라인)가 prune 한다.
+    [중요] 실패를 삼키지 않는다 — 되읽은 값이 `true` 가 아니면 `BundleError`.
+    """
+    if not fetch_prune_applies(facts):
+        return f"건너뜀 — 역할 {facts.role} (워커 클론에만 건다)"
+    rc, out = _ssh(facts.host, facts.user, fetch_prune_set_command(facts))
+    got = (out or "").strip().splitlines()
+    if rc != 0 or not got or got[-1].strip().lower() != "true":
+        raise BundleError(f"{facts.host}: {FETCH_PRUNE_KEY}=true 를 걸지 못했다 "
+                          f"(rc={rc}) — {(out or '')[:160]}")
+    return f"[완료] {FETCH_PRUNE_KEY}=true"
+
+
+def check_fetch_prune(facts: HostFacts) -> tuple:
+    """`check` 용 판정 — `(ok, note)`. 워커가 아니면 검사하지 않고 통과다."""
+    if not fetch_prune_applies(facts):
+        return True, ""
+    rc, out = _ssh(facts.host, facts.user, fetch_prune_get_command(facts))
+    val = ((out or "").strip().splitlines() or [""])[-1].strip().lower()
+    if rc == 0 and val == "true":
+        return True, f" · {FETCH_PRUNE_KEY}=true"
+    return False, (f" · [실패] {FETCH_PRUNE_KEY} 가 true 가 아니다 "
+                   f"(rc={rc}, 값={val or '없음'}) — 재배달 필요")
 
 
 def delivered_stamp(facts: HostFacts) -> dict:

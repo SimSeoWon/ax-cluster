@@ -20,6 +20,14 @@
 #                 refs/heads/task/*      durable — 검증 통과분만 merge 된다
 # 막는 것:        그 외 전부 (특히 main)
 # 삭제:           [중요] **`<remote>/main` 에서 도달 가능한 것만** (사용자 결정 2026-08-14, `#125`)
+#                 예외 둘 (`#787` 사용자 승인 2026-10-10) — **그 밖의 도달 불가 삭제는 여전히 거부**:
+#                 ⓐ `refs/heads/task/<W>/r<N>/<조각>` 이 `<remote>/task/<W>/base` 에서 도달 가능
+#                    (⑺ 전진이 머지해 작업 브랜치에 들어갔다 = 지워도 잃는 것이 없다)
+#                 ⓑ `AX_PRUNE_TERMINAL_WORK=<W>` 가 지목한 **그 work 하나**의 `refs/heads/task/<W>/*`
+#                    — 큐가 rejected/cancelled 로 종결한 work. **훅은 큐를 묻지 않는다**: 판정은
+#                    `work/cleanup.py terminal` 이 push 직전에 큐를 다시 읽어서 하고, 그 push 의
+#                    환경에만 이 변수를 싣는다. 팁 해시는 지우기 전에 `refs/ax/pruned/` 에 보존하고
+#                    저널·레드마인 노트에 남긴다(해시로 복원).
 #
 # [중요] 삭제 기준은 `work/cleanup.py` 가 로컬 브랜치에 쓰는 것과 **같은 것 하나**다:
 #   *"그 팁이 origin/<기본브랜치> 에서 도달 가능한가"* = 정말 병합됐다 = 지워도 잃는 것이 없다.
@@ -70,21 +78,53 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 		esac
 
 		tracking="refs/remotes/$remote_name/$base_branch"
+		if git rev-parse --verify --quiet "$tracking" >/dev/null &&
+		   git merge-base --is-ancestor "$remote_sha" "$tracking" 2>/dev/null; then
+			continue	# 병합됐다 — 지워도 잃는 것이 없다
+		fi
+
+		# 예외 ⓐ (#787) — ⑺ 전진이 머지한 서브 브랜치: 작업 브랜치에서 도달 가능하면 통과
+		_w=""; _rest=""; _rnd=""; _leaf=""
+		case "$remote_ref" in
+		refs/heads/task/*/r*/*)
+			_rest=${remote_ref#refs/heads/task/}
+			_w=${_rest%%/*}; _rest=${_rest#*/}
+			_rnd=${_rest%%/*}; _leaf=${_rest#*/}
+			;;
+		esac
+		case "$_rnd" in r|r*[!0-9]*) _rnd="" ;; esac
+		case "$_leaf" in ""|*/*) _rnd="" ;; esac
+		case "$_w" in ""|*[!A-Za-z0-9_.-]*) _rnd="" ;; esac
+		if [ -n "$_rnd" ]; then
+			_base_track="refs/remotes/$remote_name/task/$_w/base"
+			if git rev-parse --verify --quiet "$_base_track" >/dev/null &&
+			   git merge-base --is-ancestor "$remote_sha" "$_base_track" 2>/dev/null; then
+				echo "[주의] pre-push 허용: $remote_ref 삭제 — $_base_track 에서 도달 가능 (#787 ⓐ, 팁 $remote_sha)" >&2
+				continue
+			fi
+		fi
+
+		# 예외 ⓑ (#787) — 큐가 종결(rejected/cancelled)한 work 하나. 이름 검사가 판정의 전부다
+		_tw="${AX_PRUNE_TERMINAL_WORK:-}"
+		case "$_tw" in ""|[!A-Za-z0-9]*|*[!A-Za-z0-9_.-]*) _tw="" ;; esac
+		if [ -n "$_tw" ]; then
+			case "$remote_ref" in
+			"refs/heads/task/$_tw/"?*)
+				echo "[주의] pre-push 허용: $remote_ref 삭제 — 종결 work $_tw (#787 ⓑ, 팁 $remote_sha)" >&2
+				continue
+				;;
+			esac
+		fi
+
 		if ! git rev-parse --verify --quiet "$tracking" >/dev/null; then
 			echo "[중요] pre-push 거부: $remote_ref 삭제 — $tracking 이 없어 도달 여부를 못 잰다" >&2
 			echo "   판정을 못 하면 보존한다 (fail-closed). 먼저: git fetch $remote_name" >&2
-			status=1
-			continue
-		fi
-
-		if git merge-base --is-ancestor "$remote_sha" "$tracking"; then
-			:	# 병합됐다 — 지워도 잃는 것이 없다
 		else
 			echo "[중요] pre-push 거부: $remote_ref 삭제 — $tracking 에 병합되지 않았다" >&2
 			echo "   그 커밋($remote_sha)이 여기에만 있을 수 있다 — 증거다" >&2
 			echo "   지울 근거가 생기면 사람이 판단한다 (#125 사용자 결정 2026-08-14)" >&2
-			status=1
 		fi
+		status=1
 		continue
 		;;
 	esac

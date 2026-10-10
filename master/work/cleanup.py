@@ -29,6 +29,17 @@
 결정은 자동화하지 않는다 (미병합 프로브·실패 증거가 그 부류다). 워커 로컬을 훑는
 plan/apply 와 달리 이건 **마스터 정본 저장소에서** 돈다.
 
+## [중요] 예외 하나 — 큐가 종결(rejected/cancelled)한 work 의 `task/<W>/*` (`#787`, 2026-10-10)
+
+사용자 승인(2026-10-10): 반려·취소로 **종결된** work 의 원격 브랜치는 도달 불가여도 지운다 —
+증거는 **팁 해시**로 남긴다(저널 · 그 work 의 레드마인 노트 · 마스터 트윈의
+`refs/ax/pruned/task/<W>/…` 로컬 보존). 판정은 **여기서** 한다 — push 직전에 큐를 다시 읽어
+`merge_status ∈ {rejected, cancelled}` 이고 조각이 전부 terminal 인지 보고, 그 push 의 환경에만
+`AX_PRUNE_TERMINAL_WORK=<W>` 를 싣는다. 훅은 큐를 묻지 않고 **그 work 하나의 접두어**만 통과시킨다.
+[중요] 자동 실행 자리는 `autodispatch --catchup`(10분 타이머) — 마운트된 프로젝트만, 그리고
+**설치된 훅이 원본과 같을 때만** 돈다(낡은 훅이면 반쯤 지우게 되므로 건너뛰고 그 사실을 찍는다).
+수동: `python -m master.work.cleanup terminal [프로젝트] [--apply]` (기본은 드라이런).
+
 ## [중요] 부산물은 성공한 것만 지운다
 
 `.ax/work/<id>/` 는 태스크가 `verified`·`cancelled` 일 때만 지운다. **`failed` 는 남긴다** —
@@ -357,12 +368,367 @@ def apply_remote(paths, plan: RemotePlan, *, git=None) -> dict:
     return done
 
 
+# ── 종결 work 의 원격 브랜치 (`#787` ① — 사용자 승인 2026-10-10) ──────────────────────
+#
+# [중요] **판정은 큐, 집행은 훅의 좁은 예외.** 이 모듈이 push 직전에 큐를 다시 읽어 종결을
+# 확인하고, 그 push 프로세스의 환경에만 `AX_PRUNE_TERMINAL_WORK=<W>` 를 싣는다. 훅
+# (`pre_push_hook.sh` 예외 ⓑ)은 큐를 모르고 **그 work 하나의 `refs/heads/task/<W>/` 접두어**만
+# 통과시킨다 — 다른 work·다른 접두어의 도달 불가 삭제는 그대로 거부된다.
+# [중요] **지우기 전에 보존한다** — `refs/ax/pruned/task/<W>/…` 로 fetch 하고 해시가 맞는지 대조한
+#    뒤에만 지운다. 삭제는 `--force-with-lease=<ref>:<팁>` 이라 **기록한 그 팁**만 지운다.
+#    기록(저널 줄 + 레드마인 노트)에 `git push <remote> <팁>:refs/heads/<ref>` 복원 명령을 싣는다.
+
+TERMINAL_WORK_ENV = "AX_PRUNE_TERMINAL_WORK"
+TERMINAL_MERGE_STATUSES = ("rejected", "cancelled")
+_TASK_TERMINAL = ("verified", "failed", "cancelled")
+PRUNED_NS = "refs/ax/pruned"
+
+
+@dataclass
+class TerminalWork:
+    work_id: str
+    status: str = ""
+    project: str = ""
+    issue_id: str = ""
+    refs: list = field(default_factory=list)          # [(ref, tip)] — ref 는 refs/heads/ 뗀 이름
+    skip: str = ""                                    # 비어 있지 않으면 지우지 않는다(사유)
+
+
+@dataclass
+class TerminalPlan:
+    project: str = ""
+    remote: str = ""
+    works: list = field(default_factory=list)
+    hook_state: str = ""
+    error: str = ""
+
+    def render(self) -> str:
+        n = sum(len(w.refs) for w in self.works if not w.skip)
+        out = [f"  종결 work 원격 브랜치 ({self.remote}) · 프로젝트 {self.project} · "
+               f"대상 work {len([w for w in self.works if not w.skip])} · ref {n} · "
+               f"훅 {self.hook_state or '?'}"]
+        for w in self.works:
+            head = (f"    work {w.work_id} · {w.status} · 레드마인 "
+                    f"{('#' + w.issue_id) if w.issue_id else '(없음)'}")
+            out.append(head + (f" · [보존] {w.skip}" if w.skip else ""))
+            for ref, tip in w.refs:
+                out.append(f"      {'[보존]' if w.skip else '[삭제]'} {ref} @ {tip}  ({w.status})")
+        if not self.works and not self.error:
+            out.append("    (종결 work 의 남은 브랜치 없음)")
+        if self.error:
+            out.append(f"    [중요] {self.error}")
+        return "\n".join(out)
+
+
+def _queue_api(api):
+    if api is not None:
+        return api
+    from .runner import _api
+    return _api
+
+
+def terminal_skip_reason(work: dict, tasks) -> str:
+    """종결 work 로 지워도 되는가. `""` 이면 된다 — **그 외엔 사유**(지우지 않는다)."""
+    st = str((work or {}).get("merge_status") or "")
+    if st not in TERMINAL_MERGE_STATUSES:
+        return f"merge_status={st!r} — 종결(rejected/cancelled) 이 아니다"
+    live = [t.get("task_id") for t in (tasks or [])
+            if str(t.get("status") or "") not in _TASK_TERMINAL]
+    if live:
+        return f"아직 terminal 이 아닌 조각이 있다: {', '.join(map(str, live[:4]))}"
+    return ""
+
+
+def _ls_task_refs(repo, remote: str, *, git=None) -> dict:
+    """`{work_id: [(ref, tip)]}` — `refs/heads/task/<W>/…` 를 한 번에 센다."""
+    from .attempt import _git
+    g = git or _git
+    out = g(repo, "ls-remote", "--heads", remote, "refs/heads/task/*")
+    found: dict = {}
+    for ln in out.splitlines():
+        parts = ln.split()
+        if len(parts) != 2 or not parts[1].startswith("refs/heads/task/"):
+            continue
+        ref = parts[1][len("refs/heads/"):]
+        wid = ref.split("/")[1] if ref.count("/") >= 2 else ""
+        if not wid or not _TASK_ID.match(wid):
+            continue
+        found.setdefault(wid, []).append((ref, parts[0]))
+    return found
+
+
+def survey_terminal(paths, *, api=None, remote: str = "", project: str = "",
+                    git=None) -> TerminalPlan:
+    """[중요] **읽기만 한다** — 큐(works·tasks)와 `ls-remote` 만 부른다."""
+    from pathlib import Path as _P
+
+    from .attempt import WRITE_REMOTE, GitError, hook_status
+    remote = remote or WRITE_REMOTE
+    call = _queue_api(api)
+    name = project or getattr(paths, "name", "") or ""
+    plan = TerminalPlan(project=name, remote=remote)
+    try:
+        plan.hook_state = str(hook_status(paths).get("state") or "")
+    except Exception as e:                                # noqa: BLE001
+        plan.hook_state = f"확인 실패 ({type(e).__name__})"
+    try:
+        works = call("GET", f"/api/v1/works?project={name}") if name else call("GET", "/api/v1/works")
+    except Exception as e:                                # noqa: BLE001
+        plan.error = f"큐를 못 읽었다 — 아무것도 판정하지 않는다: {type(e).__name__}: {e}"
+        return plan
+    rows = works if isinstance(works, list) else []
+    cand = {}
+    for w in rows:
+        wid = str(w.get("work_id") or "")
+        if not wid or not _TASK_ID.match(wid):
+            continue
+        if str(w.get("merge_status") or "") not in TERMINAL_MERGE_STATUSES:
+            continue
+        stamp = str(w.get("project") or "").strip()
+        if name and stamp and stamp != name:
+            continue
+        cand[wid] = w
+    if not cand:
+        return plan
+    try:
+        found = _ls_task_refs(_P(paths.repo), remote, git=git)
+    except GitError as e:
+        plan.error = f"원격을 못 봤다 — 아무것도 판정하지 않는다: {e}"
+        return plan
+    for wid in sorted(cand):
+        refs = sorted(found.get(wid) or [])
+        if not refs:
+            continue                                      # 이미 정리됐다 — 멱등
+        tw = TerminalWork(work_id=wid, project=name, refs=refs,
+                          status=str(cand[wid].get("merge_status") or ""),
+                          issue_id=str(cand[wid].get("redmine_issue_id") or ""))
+        try:
+            resp = call("GET", f"/api/v1/works/{wid}") or {}
+            tw.skip = terminal_skip_reason(resp.get("work") or {}, resp.get("tasks") or [])
+            tw.status = str((resp.get("work") or {}).get("merge_status") or tw.status)
+        except Exception as e:                            # noqa: BLE001
+            tw.skip = f"work 상세를 못 읽었다 ({type(e).__name__}) — 보존"
+        plan.works.append(tw)
+    return plan
+
+
+def _push_delete(repo, remote: str, ref: str, tip: str, *, allow_work: str = "") -> tuple:
+    """`push --delete` 한 번. [중요] 예외 변수는 **이 프로세스의 환경에만** 싣는다."""
+    import os
+    import subprocess
+
+    from .coordinator import _git_cmd
+    env = {k: v for k, v in os.environ.items() if k != TERMINAL_WORK_ENV}
+    if allow_work:
+        env[TERMINAL_WORK_ENV] = allow_work
+    r = subprocess.run(_git_cmd(repo, "push", f"--force-with-lease=refs/heads/{ref}:{tip}",
+                                remote, "--delete", f"refs/heads/{ref}"),
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       timeout=GIT_TIMEOUT, env=env)
+    return r.returncode, ((r.stdout or "") + (r.stderr or "")).strip()
+
+
+def _terminal_note(tw: TerminalWork, deleted: list, failed: list, remote: str) -> str:
+    lines = [f"[브랜치 정리] 종결 work ({tw.status}) 의 원격 브랜치 {len(deleted)}건 삭제 (#787)",
+             "", f"- work_id: {tw.work_id}",
+             f"- 마스터 트윈 로컬 보존: {PRUNED_NS}/task/{tw.work_id}/…",
+             "", "## 지운 ref 와 팁 (해시로 복원)"]
+    for ref, tip in deleted:
+        lines.append(f"- {ref} @ {tip}")
+    lines += ["", "복원: git push " + remote + " <팁>:refs/heads/<ref>"]
+    if failed:
+        lines += ["", "## 지우지 못한 것"] + [f"- {ref}: {why[:160]}" for ref, why in failed]
+    return "\n".join(lines)
+
+
+def apply_terminal(paths, plan: TerminalPlan, *, api=None, git=None,
+                   require_current_hook: bool = True, logf=None) -> dict:
+    """계획된 종결 work 의 원격 브랜치를 지운다. **work 마다 큐를 다시 읽는다.**"""
+    from pathlib import Path as _P
+
+    from .attempt import STATE_OK, GitError, _git, hook_status
+    g = git or _git
+    log = logf or (lambda m: print(f"[prune] {m}", flush=True))
+    call = _queue_api(api)
+    repo = _P(paths.repo)
+    remote = plan.remote
+    done = {"deleted": [], "failed": [], "skipped": [], "notes": []}
+    if plan.error:
+        done["skipped"].append(("*", plan.error))
+        return done
+    if require_current_hook:
+        st = hook_status(paths)
+        if st.get("state") != STATE_OK:
+            why = (f"[중요] 설치된 pre-push 훅이 원본과 같지 않다(state={st.get('state')}) — "
+                   f"종결 work 예외(#787)가 없을 수 있어 반쯤 지우게 된다. 건너뛴다. "
+                   f"복구: python -m master.work.attempt install-hook {plan.project}")
+            log(why)
+            done["skipped"].append(("*", why))
+            return done
+    for tw in plan.works:
+        if tw.skip:
+            done["skipped"].append((tw.work_id, tw.skip))
+            continue
+        # ① 지금 다시 큐를 본다 — 판정은 push 직전의 상태로 한다
+        try:
+            resp = call("GET", f"/api/v1/works/{tw.work_id}") or {}
+            why = terminal_skip_reason(resp.get("work") or {}, resp.get("tasks") or [])
+        except Exception as e:                            # noqa: BLE001
+            why = f"큐 재확인 실패 ({type(e).__name__}: {e})"
+        if why:
+            log(f"{tw.work_id}: 건너뛴다 — {why}")
+            done["skipped"].append((tw.work_id, why))
+            continue
+        # ② 지우기 전에 보존한다 — 실패하면 그 work 은 지우지 않는다
+        try:
+            g(repo, "fetch", "--no-tags", remote,
+              f"+refs/heads/task/{tw.work_id}/*:{PRUNED_NS}/task/{tw.work_id}/*")
+        except GitError as e:
+            why = f"보존 fetch 실패 — 지우지 않는다: {e}"
+            log(f"{tw.work_id}: {why}")
+            done["skipped"].append((tw.work_id, why))
+            continue
+        deleted, failed = [], []
+        for ref, tip in tw.refs:
+            try:
+                kept = g(repo, "rev-parse", "--verify", "--quiet", f"{PRUNED_NS}/{ref}")
+            except GitError:
+                kept = ""
+            if kept.strip() != tip:
+                failed.append((ref, f"보존 ref 가 팁과 다르다({kept.strip()[:12] or '없음'}) — 안 지운다"))
+                log(f"[중요] {ref} @ {tip} — 보존 대조 실패, 지우지 않는다")
+                continue
+            rc, out = _push_delete(repo, remote, ref, tip, allow_work=tw.work_id)
+            if rc == 0:
+                deleted.append((ref, tip))
+                log(f"삭제 {ref} @ {tip} (work {tw.work_id} · {tw.status} · "
+                    f"복원: git push {remote} {tip}:refs/heads/{ref})")
+            else:
+                failed.append((ref, out))
+                log(f"[중요] 삭제 실패 {ref} @ {tip} — {out[:200]}")
+        done["deleted"] += [(tw.work_id, r, t) for r, t in deleted]
+        done["failed"] += [(tw.work_id, r, w) for r, w in failed]
+        if deleted and tw.issue_id:
+            try:
+                resp = call("POST", "/api/v1/redmine/note",
+                            {"project": tw.project, "issue_id": int(tw.issue_id),
+                             "notes": _terminal_note(tw, deleted, failed, remote),
+                             "work_id": tw.work_id})
+                ok = not (isinstance(resp, dict) and resp.get("ok") is False)
+                msg = (f"레드마인 #{tw.issue_id} 기록" if ok else
+                       f"[중요] 레드마인 #{tw.issue_id} 기록 실패 — {resp}")
+            except Exception as e:                        # noqa: BLE001
+                msg = f"[중요] 레드마인 #{tw.issue_id} 기록 실패 — {type(e).__name__}: {e}"
+            log(f"{tw.work_id}: {msg}")
+            done["notes"].append((tw.work_id, msg))
+        elif deleted:
+            msg = f"[주의] {tw.work_id}: 레드마인 이슈 id 가 없다 — 저널과 {PRUNED_NS} 에만 남는다"
+            log(msg)
+            done["notes"].append((tw.work_id, msg))
+    return done
+
+
+def sweep_terminal(paths=None, *, api=None, apply_: bool = True, logf=None) -> dict:
+    """`autodispatch --catchup` 이 부르는 자리. **마운트된 프로젝트만** 본다(마운트 규칙)."""
+    from ..context_search.paths import resolve
+    log = logf or (lambda m: print(f"[prune] {m}", flush=True))
+    paths = paths or resolve("")
+    plan = survey_terminal(paths, api=api)
+    n = sum(len(w.refs) for w in plan.works if not w.skip)
+    if plan.error:
+        log(f"[중요] {paths.name}: {plan.error}")
+        return {"deleted": [], "failed": [], "skipped": [("*", plan.error)], "notes": []}
+    for w in plan.works:
+        if w.skip:
+            log(f"{w.work_id}: 보존 — {w.skip}")
+    if not n:
+        return {"deleted": [], "failed": [], "skipped": [], "notes": []}
+    log(f"{paths.name}: 종결 work 원격 브랜치 {n}건 정리 시작")
+    if not apply_:
+        return {"deleted": [], "failed": [], "skipped": [], "notes": [], "plan": plan}
+    return apply_terminal(paths, plan, api=api, logf=log)
+
+
 def main(argv) -> int:
     from ..context_search.paths import resolve
     from ..projects.config import ProjectConfig
     from .runner import pick_worker            # 역할 필터를 그대로 쓴다
 
     cmd = (argv[0] if argv else "plan").strip()
+    if cmd == "terminal":
+        pos = [a for a in argv[1:] if not a.startswith("--")]
+        paths = resolve(pos[0] if pos else "")
+        plan = survey_terminal(paths)
+        print(f"프로젝트 {paths.name} · 종결(rejected/cancelled) work 의 task/<W>/* (#787)")
+        print(plan.render())
+        if "--apply" not in argv:
+            print("\n  [중요] 드라이런 — 아무것도 지우지 않았다. 실행하려면 `terminal [프로젝트] --apply`.")
+            return 1 if plan.error else 0
+        done = apply_terminal(paths, plan)
+        print(f"  [완료] 삭제 {len(done['deleted'])} · 실패 {len(done['failed'])} · "
+              f"건너뜀 {len(done['skipped'])}")
+        for wid, ref, tip in done["deleted"]:
+            print(f"    삭제 {ref} @ {tip}")
+        for wid, ref, why in done["failed"]:
+            print(f"    [중요] {ref}: {why[:200]}")
+        for wid, why in done["skipped"]:
+            print(f"    건너뜀 {wid}: {why[:200]}")
+        for wid, msg in done["notes"]:
+            print(f"    {msg}")
+        return 1 if (done["failed"] or any(w == "*" for w, _ in done["skipped"])) else 0
+    if cmd == "merged-subs":
+        # `#787` ② 의 수동판 — 이미 전진한 work 에 남은 `task/<W>/r<N>/*` 를 같은 판정으로 정리
+        from pathlib import Path as _P
+
+        from .attempt import WRITE_REMOTE, _git
+        from .review import prune_merged_subbranches, work_base_branch
+        pos = [a for a in argv[1:] if not a.startswith("--")]
+        if not pos:
+            print("  merged-subs [프로젝트] <work_id> [--apply]")
+            return 2
+        wid = pos[-1]
+        paths = resolve(pos[0] if len(pos) > 1 else "")
+        if not _TASK_ID.match(wid):
+            print(f"  [중요] work_id 가 이상하다: {wid!r}")
+            return 2
+        repo = _P(paths.repo)
+        target = work_base_branch(wid)
+        tracking = f"refs/remotes/{WRITE_REMOTE}/{target}"
+        _git(repo, "fetch", "--no-tags", WRITE_REMOTE, f"+refs/heads/{target}:{tracking}")
+        out = _git(repo, "ls-remote", "--heads", WRITE_REMOTE, f"refs/heads/task/{wid}/*")
+        by_round: dict = {}
+        print(f"프로젝트 {paths.name} · work {wid} · 기준 {tracking}")
+        for ln in out.splitlines():
+            parts = ln.split()
+            if len(parts) != 2:
+                continue
+            ref, tip = parts[1][len("refs/heads/"):], parts[0]
+            m = re.match(rf"^task/{re.escape(wid)}/r(\d+)/[^/]+$", ref)
+            if not m:
+                print(f"    [보존] {ref} @ {tip} — 서브 브랜치가 아니다")
+                continue
+            rc = 0
+            try:
+                _git(repo, "merge-base", "--is-ancestor", tip, tracking)
+            except Exception:                              # noqa: BLE001
+                rc = 1
+            print(f"    {'[삭제]' if rc == 0 else '[보존]'} {ref} @ {tip}"
+                  + ("" if rc == 0 else f" — {tracking} 에서 도달 불가"))
+            if rc == 0:
+                by_round.setdefault(int(m.group(1)), []).append(ref)
+        if "--apply" not in argv:
+            print("\n  [중요] 드라이런 — 아무것도 지우지 않았다. 실행하려면 `--apply`.")
+            return 0
+        bad = 0
+        for rnd, refs in sorted(by_round.items()):
+            deleted, kept = prune_merged_subbranches(repo, work_id=wid, round_no=rnd, target=target,
+                                                     merged=refs, remote=WRITE_REMOTE)
+            for r, t in deleted:
+                print(f"    삭제 {r} @ {t}")
+            for r, w in kept:
+                print(f"    [중요] 보존 {r} — {w}")
+                bad += 1
+        return 1 if bad else 0
     if cmd == "remote":
         paths = resolve(argv[1] if len(argv) > 1 and not argv[1].startswith("--") else "")
         base = (ProjectConfig.load(paths.config).branch or "main").strip()
@@ -378,7 +744,8 @@ def main(argv) -> int:
             print(f"  [중요] {e}")
         return 1 if done["errors"] else 0
     if cmd not in ("plan", "apply"):
-        print("  plan | apply | remote [--apply]")
+        print("  plan | apply | remote [--apply] | terminal [프로젝트] [--apply]"
+              " | merged-subs [프로젝트] <work_id> [--apply]")
         return 2
     paths = resolve(argv[1] if len(argv) > 1 else "")
     base = (ProjectConfig.load(paths.config).branch or "main").strip()

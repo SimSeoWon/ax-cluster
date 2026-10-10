@@ -611,11 +611,13 @@ class Decision:
 def reject_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str = "",
                 reason: str = "", api=None, remote: str = DEFAULT_REMOTE,
                 base_branch: str = BASE_BRANCH, logf=C._noop_log) -> Decision:
-    """원전 `reject_work_impl` 이식 — 상태·통지 마무리. [중요] **브랜치를 지우지 않는다.**
+    """원전 `reject_work_impl` 이식 — 상태·통지 마무리. [중요] **여기서는 브랜치를 지우지 않는다.**
 
-    원전은 push work 반려 시 관련 원격 브랜치를 **전부** 지운다(증식 차단). 우리는 계획만
-    낸다 — 하드룰 + `#125`. [주의] 반려된 work 의 durable 은 `main` 에 도달할 리 없으므로
-    실질적으로 **전부 보존**된다. 그것이 의도다: 실패한 시도도 조사 자산이다(§8.4 누적 모델).
+    원전은 push work 반려 시 관련 원격 브랜치를 **전부** 지운다(증식 차단). 이 함수는 요청자
+    쪽에서도 돌므로 계획만 낸다. [중요] `#787` ①(사용자 승인 2026-10-10)부터 실제 삭제는
+    마스터의 `autodispatch --catchup` → `cleanup.sweep_terminal` 이 한다 — 큐가 `rejected` 를
+    보면 `task/<W>/*` 를 지우고 **팁 해시를 저널·이 이슈 노트·마스터 트윈 `refs/ax/pruned/`** 에
+    남긴다(해시로 복원). 그래서 「전부 보존」 서술은 더 이상 맞지 않는다.
     """
     d = Decision(work_id=work_id)
     cur = (work or {}).get("merge_status")
@@ -645,8 +647,8 @@ def reject_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str = 
     d.redmine_note = (
         f"[반려] 검토자={reviewer or '(미지정)'}\n\n"
         f"사유: {reason or '(미입력)'}\n\n"
-        f"- [중요] 브랜치는 **보존**된다 — 실패한 시도도 조사 자산이다(누적 모델). "
-        f"재작업은 같은 durable 위에 `[FEEDBACK]` 을 얹어 이어 간다\n"
+        f"- [중요] 원격 `task/<work>/*` 는 마스터 정리(#787)가 지우고, 지운 ref 와 팁 해시를 "
+        f"이 이슈에 노트로 남긴다 — 해시로 복원할 수 있다\n"
         f"- 영구 종결은 사람이 판단한다")
     d.ok = not d.error
     return d
@@ -911,6 +913,9 @@ class Advance:
     tree: str = ""
     commands: list = field(default_factory=list)
     notes: list = field(default_factory=list)   # 레드마인 기재 등 부수 기록
+    # `#787` ② — 전진 뒤 지운 이번 라운드 서브 브랜치 `[(ref, 팁)]` · 못 지운 것 `[(ref, 사유)]`
+    deleted_subbranches: list = field(default_factory=list)
+    subbranch_kept: list = field(default_factory=list)
     error: str = ""
 
     @property
@@ -940,6 +945,59 @@ class Advance:
                     "빌드를 돌린 뒤에 전진을 판단한다.")
         return ("빌드는 통과했다 — **코드에 버그가 없는가, 구조를 고쳐야 하지 않는가?** "
                 "이상 없으면 승인해 전진시키고, 고칠 것이 있으면 위와 같이 다음 라운드로 넘긴다.")
+
+
+def prune_merged_subbranches(repo: Path, *, work_id: str, round_no: int, target: str,
+                             merged, remote: str = DEFAULT_REMOTE,
+                             logf=C._noop_log) -> tuple:
+    """`#787` ② — ⑺ 전진이 머지한 **이번 라운드** 서브 브랜치를 지운다. `(deleted, kept)`.
+
+    [중요] 지우는 조건은 셋 다다: ① 이번 전진이 실제로 머지한 것(`merged`) ② 이름이
+    `task/<W>/r<라운드>/<조각>` ③ 그 팁이 **방금 전진한** `<remote>/task/<W>/base` 에서 도달 가능.
+    셋째가 pre-push 훅 예외 ⓐ 와 같은 판정이다 — 훅이 한 번 더 잰다. 작업 브랜치가
+    `task/<W>/base` 가 아니면(옛 `target_branch`) 훅 예외 밖이므로 건드리지 않는다.
+    [중요] 삭제는 `--force-with-lease=<ref>:<팁>` — 기록한 그 팁만 지운다.
+    [주의] 실패해도 전진을 되돌리지 않는다 — 사유를 돌려주고 사람이 본다.
+    """
+    deleted, kept = [], []
+    try:
+        expect_base = _base_branch(work_id)
+    except BranchNameError:
+        expect_base = ""
+    if not expect_base or target != expect_base:
+        why = f"작업 브랜치가 `{expect_base or 'task/<W>/base'}` 가 아니다(`{target}`) — 훅 예외 밖, 보존"
+        return [], [(m, why) for m in (merged or [])]
+    prefix = f"{DURABLE_PREFIX}/{work_id}/r{int(round_no)}/"
+    tracking = f"refs/remotes/{remote}/{target}"
+    # 방금 push 한 팁으로 추적 ref 를 맞춘다 — 훅도 이 ref 로 판정한다
+    rc, out = _git_rc(repo, "fetch", "--no-tags", remote, f"+refs/heads/{target}:{tracking}")
+    if rc != 0:
+        why = f"{tracking} 갱신 실패 — 도달 여부를 못 잰다, 보존: {out[:160]}"
+        return [], [(m, why) for m in (merged or [])]
+    for ref in merged or []:
+        leaf = ref[len(prefix):] if ref.startswith(prefix) else ""
+        if not leaf or "/" in leaf:
+            kept.append((ref, f"이번 라운드(r{int(round_no)}) 서브 브랜치 이름이 아니다 — 보존"))
+            continue
+        rc, ls = _git_rc(repo, "ls-remote", "--heads", remote, f"refs/heads/{ref}")
+        parts = ls.split() if rc == 0 else []
+        if len(parts) != 2:
+            kept.append((ref, "원격에 없다(이미 정리됨) 또는 조회 실패"))
+            continue
+        tip = parts[0]
+        rc, _ = _git_rc(repo, "merge-base", "--is-ancestor", tip, tracking)
+        if rc != 0:
+            kept.append((ref, f"{tracking} 에서 도달 불가 — 보존 (팁 {tip})"))
+            continue
+        rc, out = _git_rc(repo, "push", f"--force-with-lease=refs/heads/{ref}:{tip}",
+                          remote, "--delete", f"refs/heads/{ref}")
+        if rc == 0:
+            deleted.append((ref, tip))
+            logf("advance", f"서브 브랜치 삭제 {ref} @ {tip} (전진분에 포함 · #787)")
+        else:
+            kept.append((ref, f"삭제 거부 — {out.strip()[:160]}"))
+            logf("advance", f"[주의] 서브 브랜치 삭제 실패 {ref} — {out.strip()[:120]}")
+    return deleted, kept
 
 
 def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
@@ -1046,6 +1104,17 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
         a.pushed, a.ok = True, True
         logf("advance", f"[완료] {target} 전진 — {a.before[:8]} → {a.head[:8]}")
 
+        # `#787` ② — 전진분에 들어간 이번 라운드 서브 브랜치를 지운다(실패는 전진을 안 되돌린다)
+        a.deleted_subbranches, a.subbranch_kept = prune_merged_subbranches(
+            repo, work_id=work_id, round_no=cur_round, target=target, merged=a.merged,
+            remote=remote, logf=logf)
+        if a.deleted_subbranches:
+            a.notes.append(f"서브 브랜치 {len(a.deleted_subbranches)}건 삭제: "
+                           + ", ".join(f"{r}@{t[:12]}" for r, t in a.deleted_subbranches))
+        if a.subbranch_kept:
+            a.notes.append(f"[주의] 서브 브랜치 {len(a.subbranch_kept)}건 보존: "
+                           + "; ".join(f"{r} — {w}" for r, w in a.subbranch_kept[:4]))
+
         # 🔴 **전진과 그 자리의 결정을 레드마인에 남긴다** (사용자 2026-09-04:
         #    *"추가 개선 요청했을때 레드마인에 내용이 기입되어야 할 꺼같은데 … 타이밍이
         #    안맞고"*). 이슈는 **등재 때** 이미 만들어져 있고, 여기서 노트를 붙인다.
@@ -1062,7 +1131,13 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
                 f"- 머지한 서브 브랜치: {len(a.merged)}건"
                 + (f" ({', '.join(a.merged[:8])})" if a.merged else ""),
                 f"- 통합 빌드: {a.build_note or '(미기록)'}",
-            ] + (["", "## 이 자리에서 사람이 정한 것", "", decision_note]
+            ] + ((["", "## 지운 서브 브랜치 (#787 — 팁 해시로 복원)"]
+                  + [f"- {r} @ {t}" for r, t in a.deleted_subbranches])
+                 if a.deleted_subbranches else []
+            ) + ((["", "## 지우지 않은 서브 브랜치"]
+                  + [f"- {r}: {w}" for r, w in a.subbranch_kept])
+                 if a.subbranch_kept else []
+            ) + (["", "## 이 자리에서 사람이 정한 것", "", decision_note]
                  if decision_note else
                  ["", "[주의] 사람의 판단이 기록되지 않았다 — "
                   "「버그냐 구조냐 · 추가 개선인가 마감인가」를 묻고 그 답을 실어야 한다"]))

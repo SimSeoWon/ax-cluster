@@ -137,6 +137,15 @@ def test_commands():
           "clean -fd" in co and "-fdx" not in co and "clean -fd -x" not in co, co)
     check("잔재를 지우고 서브 브랜치를 세운다",
           "reset --hard" in co and f'checkout -q -B "task/{WORK}/{TASK}" "abc123"' in co, co)
+    check("`#787` ③ 워커 fetch 가 prune 한다 (원격에서 지운 브랜치의 원격추적 ref 를 남기지 않는다)",
+          "git fetch --all --prune --quiet" in co, co)
+    wf = _Facts(Path("/w/clone"))
+    wf.windows = True
+    try:
+        wco = wcommit.checkout_command(wf, "b", "abc123")
+        check("  윈도우 모양에서도 prune 한다", "git fetch --all --prune --quiet" in wco, wco)
+    except Exception as e:      # noqa: BLE001
+        check("  윈도우 모양에서도 prune 한다", False, f"{type(e).__name__}: {e}")
     cm = wcommit.commit_command(f, f"task/{WORK}/{TASK}", TASK, [SRC, HDR])
     check("[중요] `add` 는 명시 목록만 (`add -A` 아님)",
           f'git add "{SRC}" "{HDR}"' in cm and "add -A" not in cm, cm)

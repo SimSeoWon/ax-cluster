@@ -605,7 +605,7 @@ def _read_triggers(*, registry=None) -> list:
 
 
 def drain(*, catchup: bool = False, api=None, registry=None, resolver=None,
-          dispatch_fn=None) -> dict:
+          dispatch_fn=None, prune_fn=None) -> dict:
     """트리거를 소비해 파견한다. `ax-dispatch.service` 의 본문.
 
     [중요] **파견 전에 트리거 파일을 지운다.** 남겨 두면 실패가 이어질 때 `ax-dispatch.path`
@@ -680,11 +680,32 @@ def drain(*, catchup: bool = False, api=None, registry=None, resolver=None,
                         res.setdefault("recovered", 0)
                         res["recovered"] += 1
 
+        # 🔴 `#787` ① — **종결(rejected/cancelled) work 의 원격 `task/<W>/*` 정리.**
+        #    자리를 여기로 고른 이유: 큐 서버는 git 을 돌리지 않고(종결 판정만 한다), 종결은
+        #    조각 실패·취소·반려 PATCH 어느 경로로든 온다. 10분 타이머가 그 모두를 **멱등으로**
+        #    따라잡는다(남은 ref 가 없으면 아무것도 안 한다). 마운트된 프로젝트만 보고, 설치된
+        #    훅이 원본과 다르면 건너뛴다(`cleanup.apply_terminal`). [주의] 파견의 성패와 분리한다 —
+        #    정리 실패는 `prune_errors` 로만 센다(유닛을 매 10분 실패로 만들지 않되, 줄은 남긴다).
+        try:
+            if prune_fn is not None:
+                pr = prune_fn()
+            else:
+                from .cleanup import sweep_terminal
+                pr = sweep_terminal(api=api)
+            res["pruned"] = len((pr or {}).get("deleted") or [])
+            res["prune_errors"] = len((pr or {}).get("failed") or [])
+        except Exception as e:                               # noqa: BLE001
+            res["prune_errors"] = res.get("prune_errors", 0) + 1
+            _log(f"[중요] 종결 work 브랜치 정리 중 예외 — {type(e).__name__}: {e}")
+
     # [중요] **한 줄은 반드시 남긴다** — 「아무것도 안 했다」와 「안 돌았다」는 다른 상태이고,
     #    그 둘을 구분 못 해서 2026-08-29~31 이틀을 잃었다(`#340` 노트).
     _log(f"드레인 끝 — 트리거 {res['triggers']}건 · 파견 {res['dispatched']}건 · "
          f"안 걸림 {res['skipped']}건 · 예외 {res['errors']}건"
-         + (" · catchup" if catchup else ""))
+         + (" · catchup" if catchup else "")
+         + (f" · 종결 브랜치 정리 {res.get('pruned', 0)}건"
+            + (f"(실패 {res['prune_errors']})" if res.get("prune_errors") else "")
+            if catchup else ""))
     return res
 
 

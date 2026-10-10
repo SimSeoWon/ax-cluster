@@ -451,7 +451,8 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                     f"- 완료 {len(tasks_v)} / 실패 {len(tasks_f)} / 취소 {len(tasks_c)} / 할 일 없음 {len(tasks_nw)}"
                     + (f" / 요청자 인계 {len(tasks_ho)}" if tasks_ho else ""),
                     "작업은 실패·취소로 종결됐으며 통합·전진 대기 대상이 아니다.",
-                    "하위 태스크의 verified 이력과 워커 브랜치는 감사 자료로 보존한다.",
+                    "하위 태스크의 verified 이력은 보존한다. 이 work 의 원격 브랜치 task/<work>/* 는 "
+                    "마스터의 정리 주기(#787)가 지우고, 지운 ref·tip 해시를 이 이슈에 노트로 남긴다(해시로 복원 가능).",
                     "사람의 워킹트리·main은 변경하지 않았다.",
                     "", "## 실패 사유",
                     *[f"- {name}: {feedback or '사유 없음'}" for name, feedback in fail_details],

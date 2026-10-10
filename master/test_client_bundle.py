@@ -1553,6 +1553,82 @@ def test_ensure_ignored_is_one_call_and_strict() -> None:
         bundle._ssh = keep
 
 
+def test_fetch_prune_delivery_and_check() -> None:
+    """`#787` ③ — 워커 클론에 `fetch.prune=true` 를 걸고(두 OS 모양 · 멱등 · 되읽기),
+    실패는 삼키지 않으며, `check` 는 값을 재서 판정한다. requester(사람 클론)는 건드리지 않는다."""
+    calls = []
+    keep = bundle._ssh
+    try:
+        lin = _facts()
+        win = _facts(os="windows", path=r"C:\trunk\AXCluster", home=r"C:\Users\USER")
+        bundle._ssh = lambda h, u, cmd, **k: (calls.append(cmd) or (0, "true"))
+        got = bundle.ensure_fetch_prune(lin)
+        check("리눅스: 한 번의 연결로 설정+되읽기",
+              len(calls) == 1 and calls[0] == ("git -C /home/sim/trunk/ModularStage config --local "
+                                                "fetch.prune true && git -C /home/sim/trunk/ModularStage "
+                                                "config --local --get fetch.prune"), calls[0])
+        check("리눅스: 완료 보고", got.startswith("[완료]"), got)
+        calls.clear()
+        got = bundle.ensure_fetch_prune(win)
+        check("윈도우(cmd): 경로를 큰따옴표로 · --local 로컬 config",
+              len(calls) == 1 and calls[0] == ('git -C "C:\\trunk\\AXCluster" config --local '
+                                               'fetch.prune true && git -C "C:\\trunk\\AXCluster" '
+                                               'config --local --get fetch.prune'), calls[0])
+        check("윈도우: 완료 보고", got.startswith("[완료]"), got)
+        bundle._ssh = lambda h, u, cmd, **k: (calls.append(cmd) or (0, "true\r"))
+        check("윈도우: 끝의 CR 을 견딘다", bundle.ensure_fetch_prune(win).startswith("[완료]"))
+        # 멱등 — 같은 명령을 두 번 내도 결과가 같다(git config 는 값 덮어쓰기)
+        calls.clear()
+        bundle._ssh = lambda h, u, cmd, **k: (calls.append(cmd) or (0, "true"))
+        a, b = bundle.ensure_fetch_prune(lin), bundle.ensure_fetch_prune(lin)
+        check("멱등: 두 번 걸어도 같은 명령 · 같은 결과", a == b and calls[0] == calls[1]
+              and "--add" not in calls[0], str(calls))
+
+        for rc, out, why in ((128, "fatal: not in a git directory", "rc≠0"),
+                             (0, "", "빈 되읽기"), (0, "false", "값이 false")):
+            bundle._ssh = lambda h, u, cmd, rc=rc, out=out, **k: (rc, out)
+            raised = ""
+            try:
+                bundle.ensure_fetch_prune(lin)
+            except bundle.BundleError as e:
+                raised = str(e)
+            check(f"[중요] 실패를 삼키지 않는다 — {why}", "fetch.prune" in raised, raised or "예외 없음")
+
+        calls.clear()
+        bundle._ssh = lambda h, u, cmd, **k: (calls.append(cmd) or (0, "true"))
+        req = _facts(role="requester", os="windows", path=r"C:\Users\USER\Documents\ModularStage")
+        got = bundle.ensure_fetch_prune(req)
+        check("🔴 requester(사람 클론)는 건드리지 않는다", not calls and got.startswith("건너뜀"), got)
+        check("  check 도 requester 는 재지 않는다", bundle.check_fetch_prune(req) == (True, "")
+              and not calls, str(calls))
+
+        bundle._ssh = lambda h, u, cmd, **k: (calls.append(cmd) or (0, "true"))
+        ok, note = bundle.check_fetch_prune(win)
+        check("check: 값이 true 면 통과", ok and "fetch.prune=true" in note
+              and calls[-1] == 'git -C "C:\\trunk\\AXCluster" config --local --get fetch.prune',
+              f"{ok} {note} {calls[-1]}")
+        bundle._ssh = lambda h, u, cmd, **k: (1, "")
+        ok, note = bundle.check_fetch_prune(lin)
+        check("check: 설정 없음(rc=1)이면 실패로 이름을 대 보고", not ok and "[실패]" in note
+              and "없음" in note, note)
+        bundle._ssh = lambda h, u, cmd, **k: (255, "ssh: connect timed out")
+        ok, note = bundle.check_fetch_prune(lin)
+        check("check: 연결 실패도 실패다(통과로 접지 않는다)", not ok and "rc=255" in note, note)
+    finally:
+        bundle._ssh = keep
+
+
+def test_fetch_prune_wired_into_deliver_and_check() -> None:
+    """`#787` ③ — 배달 결과에 `fetch_prune` 이 실리고, `cmd_check` 가 판정에 넣는다."""
+    import inspect
+    src = inspect.getsource(bundle._deliver)
+    check("배달이 ensure_fetch_prune 을 부른다", '"fetch_prune": ensure_fetch_prune(facts)' in src)
+    csrc = inspect.getsource(client_cli.cmd_check)
+    check("check 가 check_fetch_prune 을 부른다", "bundle.check_fetch_prune(f)" in csrc)
+    check("check 의 OK/FAIL·bad·#737 분류 셋 모두에 ok_prune 이 들어간다",
+          csrc.count("ok_prune") >= 4, str(csrc.count("ok_prune")))
+
+
 def test_claude_mcp_local_add_skips_identical() -> None:
     """`#655` — 이미 같은 항목이면 remove·add 를 부르지 않는다. 다르면 종전대로 다시 넣는다."""
     f = _facts()
@@ -2236,6 +2312,8 @@ def main() -> int:
                test_remote_hashes_and_skip_unchanged,
                test_check_stats_counters_are_not_shadowed,
                test_ensure_ignored_is_one_call_and_strict,
+               test_fetch_prune_delivery_and_check,
+               test_fetch_prune_wired_into_deliver_and_check,
                test_claude_mcp_local_add_skips_identical,
                test_deliver_clears_hash_cache_even_on_error,
                test_update_reports_head_movement,
