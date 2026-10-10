@@ -23,6 +23,8 @@ import shutil
 import time
 import subprocess
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -155,15 +157,20 @@ def _run_rc(cmd: list[str], *, timeout: int) -> tuple:
     return out, why, rc
 
 
-def _run_raw(cmd: list[str], *, timeout: int) -> tuple:
+def _run_raw(cmd: list[str], *, timeout: int, input: str | None = None,
+             cwd: str | None = None) -> tuple:
     """`_run_rc` + **실패했을 때의 stdout** — `(출력, 사유, rc, stdout)` (`#733`).
 
     [중요] `claude --output-format json` 은 실패해도 stdout 에 봉투를 싣는다 — 실패한 호출의
     토큰·사유를 거기서 읽어야 해서 버리지 않고 함께 돌려준다.
+    🔴 `input` — 프롬프트는 **명령줄이 아니라 표준 입력**으로 넘긴다(2026-10-10 실측: 리눅스는
+    인자 하나가 128KB 를 넘으면 `E2BIG` 로 실행조차 안 된다 · 윈도우 명령줄은 약 32K자).
+    없으면 종전처럼 stdin 을 닫는다.
     """
+    stdin_kw = {"input": input} if input is not None else {"stdin": subprocess.DEVNULL}
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", stdin=subprocess.DEVNULL, timeout=timeout)
+                           errors="replace", timeout=timeout, cwd=cwd, **stdin_kw)
     except subprocess.TimeoutExpired:
         return None, f"타임아웃 {timeout}초", RC_NO_EXIT, ""
     except OSError as e:
@@ -175,6 +182,28 @@ def _run_raw(cmd: list[str], *, timeout: int) -> tuple:
     if not (r.stdout and r.stdout.strip()):
         return None, "빈 출력 (rc=0)", 0, r.stdout or ""
     return r.stdout, "", 0, r.stdout
+
+
+# 🔴 **agy 는 프롬프트를 파일로 받는다** (2026-10-10, #788 r2 실측 `E2BIG`). 워커의 `ax-work` 와
+#    `gemini_report.run_agy` 가 이미 쓰는 모양과 같다 — 본문은 `BRIEF.md`, 명령줄에는 짧은
+#    ASCII 지시 하나와 `--add-dir <절대 경로>` 뿐이다. [주의] `-p` 는 지시 **바로 앞**이다.
+AGY_BRIEF = "BRIEF.md"
+AGY_BRIEF_PROMPT = ("Read BRIEF.md in the added directory and follow it exactly. "
+                    "Return the result as your response. Do not create or modify files.")
+
+
+@contextmanager
+def agy_brief(prompt: str):
+    """임시 디렉터리에 `BRIEF.md` 를 쓰고 그 **절대 경로**를 준다. 블록을 나가면 지운다."""
+    with tempfile.TemporaryDirectory(prefix="ax-agy-") as td:
+        (Path(td) / AGY_BRIEF).write_text(prompt, encoding="utf-8")
+        yield str(Path(td).resolve())
+
+
+def agy_cmd(exe: str, brief_dir: str) -> list[str]:
+    """BRIEF 방식의 agy 명령. 레인(`usage.call_agy`)과 공용 진입이 **같은 모양**을 쓴다."""
+    return [exe, "--dangerously-skip-permissions", "--output-format", "json",
+            "--add-dir", brief_dir, "-p", AGY_BRIEF_PROMPT]
 
 
 def call_agy(prompt: str, *, timeout: int = TIMEOUT_SEC) -> str | None:
@@ -201,9 +230,8 @@ def call_agy_why(prompt: str, *, timeout: int = TIMEOUT_SEC) -> tuple:
         _log(f"[agy] {missing_exe_hint('agy')}")
         return None, why
     t0 = time.monotonic()
-    # [주의] `-p` 는 **반드시 프롬프트 직전**이다 — 출력 형식 플래그는 그 앞에 둔다
-    out, why, rc = _run_rc([exe, "--dangerously-skip-permissions", "--output-format", "json",
-                            "-p", prompt], timeout=timeout)
+    with agy_brief(prompt) as brief_dir:
+        out, why, rc = _run_rc(agy_cmd(exe, brief_dir), timeout=timeout)
     u = model = None
     if out is not None:
         out, u, why, model = _unwrap_agy(out)
@@ -336,8 +364,9 @@ def _codex_run(prompt: str, *, timeout: int, reasoning: str) -> tuple:
             try:
                 r = subprocess.run(
                     [exe, "exec", "--skip-git-repo-check", *eff, "--json",
-                     "-o", str(last), prompt],
-                    capture_output=True, text=True, timeout=timeout, cwd=td)
+                     "-o", str(last), "-"],
+                    input=prompt, capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=timeout, cwd=td)
             except subprocess.TimeoutExpired:
                 _log(f"[codex] 시간 초과 ({timeout}초)")
                 return None, "", "timeout", RC_NO_EXIT, True
@@ -432,7 +461,7 @@ def call_claude_why(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "")
     if (model or "").strip():
         cmd += ["--model", model.strip()]
     t0 = time.monotonic()
-    out, why, rc, raw = _run_raw(cmd + [prompt], timeout=timeout)
+    out, why, rc, raw = _run_raw(cmd, timeout=timeout, input=prompt)
     U = _usage_mod()
     parsed = None
     if U is not None and raw:

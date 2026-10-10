@@ -92,9 +92,13 @@ class Call:
     error: str = ""
 
 
-def _run(cmd, *, timeout: int) -> tuple:
+def _run(cmd, *, timeout: int, input: str | None = None, cwd: str | None = None) -> tuple:
+    """`(stdout, 사유)`. 🔴 프롬프트는 `input`(표준 입력)으로 넘긴다 — 명령줄 인자는 리눅스에서
+    하나당 128KB 가 상한이라 큰 골조가 `E2BIG` 로 죽는다(2026-10-10 실측)."""
+    stdin_kw = {"input": input} if input is not None else {"stdin": subprocess.DEVNULL}
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=timeout, cwd=cwd, **stdin_kw)
     except subprocess.TimeoutExpired:
         return None, f"시간 초과 ({timeout}초)"
     except OSError as e:                                         # noqa: BLE001
@@ -111,7 +115,7 @@ def call_claude(prompt: str, *, model: str = "", timeout: int = TIMEOUT) -> Call
     cmd = [exe, "-p", "--output-format", "json"]
     if (model or "").strip():
         cmd += ["--model", model.strip()]
-    out, why = _run(cmd + [prompt], timeout=timeout)
+    out, why = _run(cmd, timeout=timeout, input=prompt)
     if out is None:
         return Call(error=why)
     parsed = parse_claude_json(out)
@@ -166,9 +170,10 @@ def call_agy(prompt: str, *, timeout: int = TIMEOUT) -> Call:
     exe = shutil.which("agy")
     if not exe:
         return Call(error="agy 가 없다")
-    # [주의] `-p` 는 **반드시 프롬프트 직전**이다 (2026-08-08 실측 — 앞에 두면 다음 토큰을 먹는다)
-    out, why = _run([exe, "--dangerously-skip-permissions", "--output-format", "json",
-                     "-p", prompt], timeout=timeout)
+    # 🔴 BRIEF 파일 방식 — 공용 진입과 **같은 모양**(`layer2_verify.agy_cmd`, 2026-10-10 `E2BIG`)
+    from .. import layer2_verify as L2
+    with L2.agy_brief(prompt) as brief_dir:
+        out, why = _run(L2.agy_cmd(exe, brief_dir), timeout=timeout)
     if out is None:
         return Call(error=why)
     parsed = parse_agy_json(out)

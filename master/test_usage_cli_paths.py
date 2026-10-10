@@ -9,6 +9,8 @@
    4. 🔴 **두 번 세지 않는다** — 레인(`usage.call` → `lanes.run_one`)은 파견이 직접 기록하므로
       공용 진입의 기록을 끈다. 감싼 구간 안에서 불러도 sink 줄은 0 이다
    5. 대시보드가 새 줄(claude·codex·agy)을 제 계열로 분류한다
+   6. 🔴 프롬프트는 **명령줄에 실리지 않는다** — claude·codex 는 표준 입력, agy 는 `BRIEF.md` +
+      `--add-dir <절대 경로>` (2026-10-10 `E2BIG` 실측). 128KB 를 넘는 프롬프트도 실행된다
 
 [주의] **실제 상용 CLI 를 부르지 않는다** — `claude`·`codex`·`agy` 셋 다 가짜를 PATH 앞에 둔다.
 """
@@ -58,6 +60,7 @@ def lines(p: Path) -> list:
 _CLAUDE = r'''
 import json, os, sys
 open(os.environ["FAKE_ARGV"], "a").write(json.dumps(sys.argv[1:]) + "\n")
+open(os.environ["FAKE_STDIN"], "a").write(json.dumps(["claude", sys.stdin.read()]) + "\n")
 mode = os.environ.get("CLAUDE_FAKE", "json")
 res = os.environ.get("FAKE_RESULT", "OK")
 env = {"type": "result", "subtype": "success", "is_error": False, "result": res,
@@ -78,6 +81,7 @@ _CODEX = r'''
 import json, os, sys
 a = sys.argv[1:]
 open(os.environ["FAKE_ARGV"], "a").write(json.dumps(["codex"] + a) + "\n")
+open(os.environ["FAKE_STDIN"], "a").write(json.dumps(["codex", sys.stdin.read()]) + "\n")
 mode = os.environ.get("CODEX_FAKE", "ok")
 out = a[a.index("-o") + 1]
 ev = [{"type": "thread.started"},
@@ -96,6 +100,11 @@ open(out, "w").write(os.environ.get("FAKE_RESULT", "OK"))
 _AGY = r'''
 import json, os, sys
 open(os.environ["FAKE_ARGV"], "a").write(json.dumps(["agy"] + sys.argv[1:]) + "\n")
+a = sys.argv[1:]
+d = a[a.index("--add-dir") + 1] if "--add-dir" in a else ""
+brief = os.path.join(d, "BRIEF.md")
+open(os.environ["FAKE_STDIN"], "a").write(json.dumps(
+    ["agy", open(brief, encoding="utf-8").read() if d and os.path.isfile(brief) else None, d]) + "\n")
 if os.environ.get("AGY_FAKE") == "fail":
     print("quota", file=sys.stderr); sys.exit(3)
 print(json.dumps({"status": "SUCCESS", "response": os.environ.get("FAKE_RESULT", "OK"),
@@ -126,6 +135,7 @@ def main() -> int:
     old_path = os.environ.get("PATH", "")
     os.environ["PATH"] = f"{_fakes(tmp)}{os.pathsep}{old_path}"
     os.environ["FAKE_ARGV"] = str(tmp / "argv.jsonl")
+    os.environ["FAKE_STDIN"] = str(tmp / "stdin.jsonl")
     err = io.StringIO()
     try:
         check("가짜가 먼저 잡힌다 (실제 CLI 를 부르지 않는다)",
@@ -137,8 +147,10 @@ def main() -> int:
         check("감싸지 않으면 안 남는다", not log.exists())
         check("[중요] 호출자는 봉투가 아니라 본문 평문을 받는다", (out, why) == ("OK", ""), repr((out, why)))
         argv = json.loads((tmp / "argv.jsonl").read_text().splitlines()[-1])
-        check("`--output-format json` 으로 부른다 · 프롬프트는 맨 끝",
-              argv[:3] == ["-p", "--output-format", "json"] and argv[-1] == "p", str(argv))
+        got_in = json.loads((tmp / "stdin.jsonl").read_text().splitlines()[-1])
+        check("`--output-format json` 으로 부른다 · 프롬프트는 명령줄이 아니라 표준 입력",
+              argv[:3] == ["-p", "--output-format", "json"] and "p" not in argv[3:]
+              and got_in == ["claude", "p"], f"{argv} · {got_in}")
         with usage.sink(log, source="board", task_id="dom"):
             out, why = L2.call_claude_why("p", timeout=20, model="opus")
         r = lines(log)[-1] if lines(log) else {}
@@ -310,6 +322,43 @@ def main() -> int:
         rows = lines(rp.usage_log)[n:]
         check("리뷰 큐 모양(바깥 sink + 주입 chat) → 호출마다 한 줄 (agy 2회 · 형식 재시도)",
               [r["lane"] for r in rows] == ["agy", "agy"], str(rows))
+
+        print("⑧ 🔴 큰 프롬프트 — 명령줄에 싣지 않는다 (리눅스 인자 하나 128KB · E2BIG)")
+        _env(CLAUDE_FAKE="json", FAKE_RESULT="OK")
+        big = "가" * 70_000 + "\nEND-MARK"          # UTF-8 로 약 210KB — 인자 하나 상한을 넘는다
+        sin = tmp / "stdin.jsonl"
+
+        def last_in():
+            return json.loads(sin.read_text(encoding="utf-8").splitlines()[-1])
+
+        def last_argv():
+            return json.loads((tmp / "argv.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+
+        out, why = L2.call_claude_why(big, timeout=20)
+        check("claude 공용 진입 — 실행되고 본문 전체가 표준 입력으로 간다",
+              (out, why) == ("OK", "") and last_in() == ["claude", big]
+              and all(len(x) < 1000 for x in last_argv()), why)
+        c = usage.call_claude(big, timeout=20)
+        check("claude 레인 — 같다", not c.error and last_in() == ["claude", big], c.error)
+        _env(CODEX_FAKE="ok", FAKE_RESULT="OK")
+        text, _ev, why = L2.call_codex_why(big, timeout=20)
+        av = last_argv()
+        check("codex 로컬 — `-` 로 표준 입력을 읽게 하고 본문이 그리로 간다",
+              text == "OK" and av[-1] == "-" and last_in() == ["codex", big]
+              and all(len(x) < 1000 for x in av), f"{why} · {av[-3:]}")
+        _env(FAKE_RESULT="OK")
+        out, why = L2.call_agy_why(big, timeout=20)
+        av, got = last_argv(), last_in()
+        d = av[av.index("--add-dir") + 1] if "--add-dir" in av else ""
+        check("agy 공용 진입 — BRIEF.md 에 본문 · `--add-dir` 는 절대 경로 · `-p` 는 짧은 지시 직전",
+              out == "OK" and got[0] == "agy" and got[1] == big and os.path.isabs(d)
+              and av[-2:] == ["-p", L2.AGY_BRIEF_PROMPT] and all(len(x) < 1000 for x in av),
+              f"{why} · {av}")
+        check("agy — 호출 뒤 BRIEF 임시 디렉터리를 지운다", bool(d) and not os.path.exists(d), d)
+        c = usage.call_agy(big, timeout=20)
+        av, got = last_argv(), last_in()
+        check("agy 레인 — 공용 진입과 같은 모양", not c.error and got[1] == big
+              and av[-2:] == ["-p", L2.AGY_BRIEF_PROMPT], c.error)
 
         print("⑦ 대시보드 분류")
         fam = {}
