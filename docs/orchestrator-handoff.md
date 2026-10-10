@@ -4,7 +4,55 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-10 17:33 KST · Codex · #787 catchup 운영 삭제 실증·통합 등록 완료, 승인된 커밋·배포 진행**.
+- **현재 체크포인트: 2026-10-10 20:50 KST · Claude · #788 r2 4조각 층2 실패(E2BIG) → #790 CLI 전달 방식 수정 ea0bd15**.
+  - 사용자 「일단 모든 워커 클로드가 하도록 변경」: ax-mode set_worker_mode_tool 로 전역 워커 지휘자 codex→claude(19:36, readiness .43/.2/.33 claude auth 통과). 마스터 담당 기록은 바꾸지 않음(codex 17:10 그대로).
+  - 사용자 「2라운드 진행해」·결정 2건(온톨로지는 조각마다 정책 체인 · 로컬 코드 조각은 표시·통보만). 요청자 worktree /home/sim/ax-788-work 를 65951cb 로 ff 후 골조 79edb02 커밋·origin push(승인). 조각 A context_synth/synth.py · B work/lanes.py+infer.py · C ontology/synth.py+__main__.py · D work/revalidate_run.py, 각 새 테스트. 요청자 글루: batch/run.py 재검증 배치 등록 · checks.json 6건 · README/bundle 관리블록/ax-work 설명 문구 · revalidation EOF 2건 수정. 골조 게이트 4/4. test_client_bundle 483/485 는 base 에서도 동일 실패(이번 변경 무관, 미수정).
+  - improve_work(round=2, worker_mode=claude) 4조각 등록·자동 파견 19:56. 결과 20:10 성공0/실패4 — 모두 층2 BLOCKED(no_backend), work merge_status=rejected, r2 서브브랜치 4개는 base 79edb02 그대로(커밋 없음). 원인: 작성자 claude → 교차 계열로 층2 claude 제외, agy 만 남았는데 agy 가 프롬프트를 argv 로 받아 OSError E2BIG(리눅스 인자 하나 128KB), 첫 실패 후 쿨다운으로 나머지 3조각 no_backend. Claude 비용 약 $10.6. 워커 지적 2건(재시도 때 범위에 넣을 것): test_context_synth.py test_gemini_primary 가 새 정책과 불일치 · test_invalidate.py 233행 근처 _wiring_probe 가 기본값 변경 시 실제 클라우드 CLI 호출.
+  - 사용자 「다른 방식으로 부른다면 이것도 동일하게 처리해야지」·범위 agy/claude/codex 셋 다·이 세션 수정. #790(부모#788, 마일스톤6) 등록. ea0bd15: agy 는 임시 BRIEF.md + --add-dir 절대경로 + 짧은 -p(layer2_verify.agy_brief/agy_cmd 공용, usage.call_agy 도 사용), claude·로컬 codex 는 stdin(codex exec -). test_usage_cli_paths 46/46(약 210KB 6건), 관련 10파일·통합 31/31, 실측 147,670바이트 층2 agy 171초·claude 14초 판정 정상, codex stdin 6초 정상. main push 67eb3f9→ea0bd15.
+  - master.client update 1차: payload 3/3 해시 일치였으나 check FAIL(마스터 트리 dirty — 이 인계서·리포트105 미커밋). 사용자 승인으로 둘을 커밋 후 재배달.
+  - 다음: ① 재배달 check 3/3 확인 ② ax-projects 재기동 여부 사용자 확인(게시판이 같은 호출 사용, ax-dispatch 는 oneshot 이라 불필요) ③ rejected 인 #788 r2 의 재파견 경로 확인 후 claude 모드로 재시도 — 층2 리뷰어는 고쳐진 agy. ⑺ 전진·finalize 는 별도 승인.
+
+- **직전 체크포인트: 2026-10-10 19:16 KST · Codex · #788 정책·main 병합 드라이런 통과, EOF 형식2건 발견**.
+  - 사용자 「드라이런 해볼래?」→「둘다 수정을 했으니 테스트가 필요해」로 정책 시나리오 및 main 병합 시뮬레이션 승인. 정본 `review.review_work(..., build_fn=build_local.local_test_fn(...), remote='gitea-write', keep_tree=True)` 실행: main67eb3f9 + base65951cbc 충돌없음, 삭제된 서브2개를 전진 병합 증거로 정상 인식(#787), 통합31/31 통과(62.2초). 같은 검수 트리에서 정책/기록 새단위2/2 통과(0.418초). 실제 LLM 호출·후속 생성경로 종단 실행 아님.
+  - 검수 트리 `/home/sim/ax-cluster/AXCluster/ax-review-20261010_1742_788_1_46881e71`, HEAD `68ae95a62d7194926858f9d7236f7a7a682d7c63`, clean 보존. push/finalize/큐상태변경 없음. 실행 뒤 원격 main67eb3f9/base65951cbc 유지 확인. 새 마스터 실행 중 명령 없음.
+  - **남은 형식 문제**: main 기준 `git diff --check` rc2, master/test_revalidation.py:118 및 master/work/revalidation.py:168 끝 빈 줄. a31cf1d 골조 기준 비교에는 나타나지 않았던 신규 파일 EOF 문제다. 코드 본문·워커 환경 수정하지 않았고 실패 기록만 남김. 수정 대상은 두 파일 EOF이며 별도 커밋/push 승인 필요. #788 기능 후속 라운드는 여전히 미구현.
+  - 보고서 `reports/105-788-policy-and-main-merge-dryrun.md` 작성(미커밋), #789 결과 기록·되읽기. 마스터 main 미커밋은 인계서와 새 보고서105. #787 완료, #788 진행. finalize/main 반영/배포 승인은 없음.
+
+- **직전 체크포인트: 2026-10-10 19:11 KST · Codex · #788 r1 전진 완료65951cbc, #787 완료100%**.
+  - 사용자 「진행해」는 직전 제시한 #788 r1 ⑺ 전진 승인이다. 정본 `review.advance_work(confirm=True, decision_note='진행해', remote='gitea-write', build_fn=build_local.local_test_fn(...))` 실행 rc0. 통합31/31 재통과, merged2/skipped0/conflicts없음/error없음/pushedTrue. base `task/20261010_1742_788_1_46881e71/base` a31cf1d→`65951cbcd5b01d188e13620122acb236636df4f6`. 준비 때 단위2/2 통과한 트리665db30과 최종65951cbc의 내용 diff0 확인.
+  - #787 운영 자동 정리 확인: 전진 함수가 r1/44266e6d@36893f2d5bcdbd9f45a2e8507b4790c6f8e94b78, r1/1ed48be2@e4149d00ee3da406debb6f753b450c49ee50f10e 두 ref 삭제, 보존0·오류없음. Gitea 정본 refs 조회에서 이 work의 base65951cbc만 남음. 각 tip은 commit 객체로 존재하고 전진 tip의 조상임을 각각 rc0로 확인. #789 자동 노트에 tip2개와 사용자 결정 기록·되읽기.
+  - #787 마지막 요건이 충족되어 ax-redmine MCP로 완료100% 및 근거 기록·되읽기 확인. #788은 진행, 후속 경로 연결·주기·문서/온보딩 미구현이므로 전체 완료 아님. 부모#788에 전진/남은 범위 노트 기록·되읽기.
+  - 승인 범위: 이번 r1 base 전진·push 실행 완료. finalize/main 반영·배포·추가 골조 커밋/push 승인 없음. main은67eb3f9, 인계서dirty. 요청자 `/home/sim/ax-788-work`의 로컬 base는 아직a31cf1d clean이므로 다음 골조 작성 전 원격 전진tip으로 정상 fast-forward 필요. 검수 worktree는 정본 함수가 push 성공 뒤 정리함. 진행 중 마스터 명령 없음·재파견 없음.
+  - 다음: #788 기존 work의 round2를 `improve_work`로 준비(새 register_work 금지), 전진한 base65951cbc를 기준으로 컨텍스트/온톨로지/lane 연결·재검증 주기·README/CLAUDE/온보딩 및 새검사 목록 등록을 소유 파일별로 분해. 기존 AX 워커 분산·codex 선택 재사용. 실제 호출/큐 인증을 문서와 소스에서 확인하고, 대상 밖 수정 및 임시 우회 스크립트 금지. 주기적 코드 재작업도 사람 전진/finalize 경계를 보존한다. 필요한 새 골조 커밋/push 승인과 다음 라운드 ⑺·finalize는 별도다.
+
+- **직전 체크포인트: 2026-10-10 19:07 KST · Codex · #788 r1 단위2/2·통합31/31 통과, ⑺ 전진 승인 대기**.
+  - **마지막 사용자 지시**: 「그래 그럼 수정하고 테스트 진행해 어쩌라고」. 확인 명령의 백틱 인용을 고쳐 실제 조각4파일의 잔재 검색을 재실행: 셸 오류 없음·잔재0건(rg rc1은 정상 검색0건). 작업위치/샌드박스 변경·rg 설치 등 워커 환경 수정은 필요하지 않아 하지 않음. 코드 본문 수정·워커 재파견 없음. 실행 중인 마스터 명령 없음. 기존 읽기 검토 에이전트는 완료 상태이며 인수자는 이전 실행 ID 재사용을 전제하지 않는다.
+  - **검증 완료**: 정본 `review.advance_work(confirm=False, remote='gitea-write', build_fn=build_local.local_test_fn(...))`으로 두 조각을 모두 병합·통합검사. 최초 기본 샌드박스 SSH 차단 뒤 같은 명령을 승인 해제로 실행. conflicts 없음·merged2·skipped0·error 없음·build_passed=True·TESTS OK(31)·pushed=False. 별도 새 단위검사 `python -B -m unittest master.test_llm_policy master.test_revalidation -v` 2/2 통과, diff check 통과. 검수 트리 `/home/sim/ax-cluster/AXCluster/ax-advance-20261010_1742_788_1_46881e71`, HEAD `665db30f285c81d99d539fc5be3418072a94b83d`, clean으로 보존. 이 HEAD는 검사 준비용 병합이며 원격 base/main은 아직 움직이지 않음. #789에 검사 결과 기록·되읽기.
+  - **사용자 결정·승인**: #788은 AX 워커 분산, 워커 지휘자는 codex. 정책 agy→codex→claude→local, Claude는 앞의 둘이 모두 quota일 때만, local은 클라우드3개 모두 quota일 때만. 형식·사실·일반 오류로 local 우회 금지. local 산출물은 재검증 대상으로 기록하고 주기적으로 클라우드 회복 후 재작업한다. 컨텍스트·온톨로지·레인 작성에 적용하며 워커 지휘자 선택과는 별개. README·CLAUDE·온보딩도 확인 요청됨. a31cf1d 골조/보고서/CLAUDE 정책 문단 커밋·push만 승인·실행됐고, 새 커밋/push·⑺ 전진·finalize 승인은 없다.
+  - work `20261010_1742_788_1_46881e71` ready_for_review/verified2/2: 정책 .43 `36893f2d`, 기록 .2 `e4149d00`, 골조 a31cf1d. 층1·층2 및 위 단위/통합 검사 통과. 아직 ⑺전진·main 반영·배포 없음.
+  - .43 지휘자 마지막 정적 되읽기 명령의 백틱 셸인용 rc2 unexpected EOF → RESULT:BLOCKED. 기존 wcommit의 rc0 디스크·층1·층2 판정에 의해 verified됨(#720 계약). .2 DONE이나 기존 localhost8000/mcp 연결오류3줄. 실패 후 마스터가 코드/환경 수정하지 않았고 전진 준비도 중단.
+  - 사용자 작업위치/AXCluster 특례 질문 추가 실증(18:59 KST): 실제 Codex rollout의 session_meta·turn_context 확인. .43 cwd/runtime root=/home/sim/trunk/AXCluster, workspace-write(추가 쓰기 루트는 기존 agy 상태 폴더만), 모든 명시 workdir도 동일. .2 cwd/runtime root=E:\trunk\AXCluster, workspace-write. 두 조각 모두 base a31cf1d·배정 r1 브랜치, apply_patch 대상 각2파일도 체크아웃 내부. 두 실행에 #783 SELF_REPO_NOTE 포함. 이번 실패 명령의 실제 cwd도 .43 AXCluster이며, 큰따옴표 regex 안의 백틱3개를 Bash가 명령 치환으로 읽어 rc2 unexpected EOF 발생. 작업위치 이탈 재발 근거 없음.
+  - .2 추가로그목록 조회 실패 원인 확정: 같은 `_ssh` 명령의 stderr를 2>&1로 회수하니 SSH 세션에서 rg 명령을 찾지 못함. cd /d는 성공했으나 뒤의 rg가 실패한 조회 환경 문제이며 워커 Codex 작업의 실패가 아님. 임시 스크립트·설정/코드 수정·재파견 없음. .2 localhost8000/mcp 연결오류는 별도이며 원인 미확정, 실제 본문 구현/회수 rc0.
+  - #789에 실패·계약·대조 상세 기록/되읽기. 기존 보고서104·CLAUDE 수정은 base 커밋에 있다. main HEAD67eb3f9 및 이 인계서dirty, /home/sim/ax-788-work base a31cf1d clean. 사용자 재개/실증 판정 필요. 후속 3경로·주기·문서/온보딩은 미구현.
+  - **이번 인계 시 실제 재조회**: get_work ready_for_review/r1/codex/verified2/2, 리뷰 결정 없음. main HEAD `67eb3f97d9a1f9fd744b60507b8f7fc8c86c0fde`; dirty는 이 인계서만. 요청자 worktree `/home/sim/ax-788-work` HEAD `a31cf1dbc8b2668c1881ff083165a1d0b5779ad8`, clean. 워커 HEAD/서비스/전역 모드는 이번 기록 요청에서 재조회하지 않았으므로 이전 3/3 검사와 구분한다.
+  - **다음 작업**: 준비 결과를 바탕으로 사람 질문 「코드에 버그가 없는가, 구조를 고쳐야 하지 않는가?」와 ⑺ 전진 승인을 받는다. 승인 전 `confirm=True` 실행 금지. 새2개 테스트는 현재 통합 명시 목록에 아직 등록되지 않았으므로 이번에는 별도 실행한 근거로 기록한다. 이후 컨텍스트/온톨로지/레인 연결, 재검증 주기, README·CLAUDE·온보딩 정책 반영을 후속 라운드로 분해한다. 자동 재작업의 main 반영/사람 게이트 경계는 구현 전에 결정 필요. 별도 스크립트나 임의 우회 호출을 만들지 않는다.
+  - **다른 일감**: #782는 완료. #787은 커밋·배달3/3 및 catchup 삭제 실증 완료, 다음 승인된 ⑺ 전진 직후 자동 삭제 관측이 남아 진행 상태. #788 전체는 미완료, 하위 #789의 1라운드 조각 회수 완료를 전체 완료로 보고하지 않는다. 다음 일감 임의 선택 금지.
+
+- **직전 체크포인트: 2026-10-10 17:46 KST · Codex · #788 승인 골조 a31cf1d push, Codex 워커 2조각 실행 중**.
+  - 사용자 「응 진행해」로 골조·보고서 커밋/push 및 CLAUDE.md 정책 문단 수정 승인. `/home/sim/ax-788-work`의 골조4파일·보고서·CLAUDE.md 총6파일을 `a31cf1d`로 커밋, HEAD Python 골조 게이트 rc0, 원격 base push rc0. 이 worktree clean. main은 `67eb3f9` 그대로.
+  - work `20261010_1742_788_1_46881e71`, #789(부모#788), r1: `44266e6d` 공통정책=.43, `1ed48be2` 재검증기록=.2, 둘 다 claimed(17:45:50). hook 자동파견 시작17:45:46, 기준 a31cf1db, 골조2/2통과, work stamp codex, .2 세션1 런처17:45:55 기동. 실제 완료/회수/통합 아직 미확인.
+  - 다음: 두 조각 종결까지 관측→실물회수/검토→정본통합 및 새단위검사→confirm=False 전진 준비. ⑺ 전진 및 finalize 승인 없음. 승인된 전진 때 #787 자동삭제 운영 관측. 후속 생성3경로/주기재작업/문서·온보딩 연결은 아직 미구현. 읽기 검토 에이전트는 호출 계약·다음 분해 준비만 수행한다.
+  - CLAUDE 정책 수정은 base에만 있으며 ‘#788 구현 진행 중’을 명시, main/워커 배달 지침은 아직 변경하지 않았다. 홈 링크 보존. 마스터 main 미커밋은 이 인계서만, 배달·서비스재기동 미실행. Redmine#789 노트 기록·되읽기.
+
+- **직전 체크포인트: 2026-10-10 17:44 KST · Codex · #788 분산 1라운드 등재·실물 골조 준비, 커밋/push 승인 대기**.
+  - main=origin/main `67eb3f9`, #787 커밋·배달 .43/.2/.33 3/3 완료. #787 남음은 다음 승인된 ⑺ 전진 직후 자동 삭제 관측 하나. #782 완료.
+  - 사용자 #788 AX 워커 분산 선택·README/CLAUDE/온보딩 확인 추가. RAG 본문/소스 대조, 워커 codex(state), 프로필 code/.py·blockers 없음, 워커 clean 및 check3/3 확인. 기존 로컬 에이전트 읽기 검토2개 완료, 구현 대체 없음.
+  - work `20261010_1742_788_1_46881e71`, 이슈 #789(부모#788·마일스톤6), task `44266e6d`/`1ed48be2` pending, worker_mode codex. 원격 base 없음·아직 파견 안 됨.
+  - 실물 골조: `/home/sim/ax-788-work` 별도 worktree, `task/<work>/base`, 새 `master/work/llm_policy.py`, `master/work/revalidation.py` 및 각각 테스트2파일, 보고서 `reports/104-cloud-quota-revalidation-preparation.md` 미커밋. 기존 skeleton_gate.run_python으로 골조 rc0, diff check rc0. 모두 구현 없이 PSEUDO/NotImplementedError. 이5파일 커밋/push 별도 승인 대기, 승인 뒤 HEAD 골조 게이트 후 push·자동 파견 관측.
+  - README:131, CLAUDE:264, bundle managed_block:772/842 정책 드리프트 확인. 온보딩 do_synth는 공용 합성 진입. CLAUDE 정책 문단 수정 동의 질문 대기(아직 미수정). 작성 lane과 ax-work 지휘자 직접 작성 계약을 구분. 후속 라운드에서 생성3경로·로컬표시·주기재작업·문서/온보딩 연결 필요. 원전 참조만. Redmine#788·789에 기록·되읽기.
+  - 마스터 main의 미커밋은 이 인계서만. 골조5파일과 분리해서 보존한다. ⑺ 전진/finalize는 각각 별도 승인.
+
+- **직전 체크포인트: 2026-10-10 17:33 KST · Codex · #787 catchup 운영 삭제 실증·통합 등록 완료, 승인된 커밋·배포 진행**.
   - **사용자 승인**: 「응 진행해」로 통합 목록 2개 등록·검증 변경 커밋/push/배포·반려 work의 보존 ref 하나 복원 push 후 타이머 자동 삭제 관측 승인.
   - **운영 실증 성공**: `20261010_0335_777_2_mkdtemp_774_5078e6e6/r1/7118f80b`의 `cfd986ad0ec1aa6b74eebee78b39617a7e0c2be6`을 원격 task ref 하나로 복원. 17:31:08 자연 catchup 타이머가 실제 삭제, #778 자동 노트 기록. triggers/dispatched/skipped/exceptions=0, 정리 1. 이후 원격 heads는 main만, 로컬 보존 ref의 팁 동일. 수동 sweep/apply·서비스 재시작 없음.
   - **검증**: `checks.json`에 branch_prune 69개·autodispatch 26개 등록. 정본 통합 31모듈·1,563개 검사 rc0(59.966초). 마스터 4프로젝트 가드 정상·onboard 80/80. 생산 코드 추가 변경 없음.
