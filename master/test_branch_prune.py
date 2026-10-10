@@ -9,6 +9,7 @@
     ④ push 직전 큐 재확인 — 그새 열렸으면 안 지운다 · 낡은 훅이면 전부 건너뛴다
     ⑤ `review.advance_work(confirm=True)` — 이번 라운드 머지분만 지우고 노트에 싣는다
     ⑥ `main` 도달 가능 삭제(finalize 경로)는 그대로 통과
+    ⑦ `autodispatch.drain(catchup=True)` 기본 배선 — 실제 sweep·apply·원격 삭제와 멱등
 
 `.venv/bin/python master/test_branch_prune.py`
 """
@@ -20,10 +21,13 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master.work import attempt as A                              # noqa: E402
+from master.work import autodispatch as AD                         # noqa: E402
 from master.work import cleanup as CL                              # noqa: E402
 from master.work import review as R                                # noqa: E402
 
@@ -274,6 +278,69 @@ def test_requeue_and_stale_hook():
         check("큐 불통이면 판정 0 · 오류 문장", not p3.works and "큐를 못 읽었다" in p3.error, p3.error)
 
 
+def test_catchup_prunes_terminal():
+    """운영 큐·레지스트리·스풀 대신 픽스처를 연결하되 정리 배선과 Git 은 실제로 돈다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = Fx(Path(tmp))
+        tips = _setup_terminal(fx)
+        q = _queue()
+        before = fx.remote_refs()
+        resolved = []
+
+        def resolve(name):
+            if name not in ("", "Proj"):
+                raise AssertionError(f"픽스처 밖 프로젝트: {name!r}")
+            resolved.append(name)
+            return fx.paths
+
+        # catchup 의 열린 work 경로는 파견·통합을 하지 않는다. 종결 정리 함수는 감시만 한다.
+        with patch("master.projects.config.Registry.load", return_value=SimpleNamespace(names=["Proj"])), \
+             patch("master.context_search.paths.resolve", side_effect=resolve), \
+             patch.object(AD, "_read_triggers", return_value=[]), \
+             patch.object(AD, "hold_active", return_value=(False, "")), \
+             patch.object(AD, "dispatch", return_value={"dispatched": False}) as dispatch, \
+             patch.object(AD, "needs_integration", return_value=(False, "fixture")), \
+             patch.object(AD, "_log"), \
+             patch.object(CL, "sweep_terminal", wraps=CL.sweep_terminal) as sweep, \
+             patch.object(CL, "apply_terminal", wraps=CL.apply_terminal) as apply:
+            idle = AD.drain(catchup=False, api=q)
+            check("catchup=False 는 실제 원격 그대로", fx.remote_refs() == before, str(idle))
+            check("catchup=False 는 정리·큐·경로 조회 없음",
+                  not sweep.called and not apply.called and not q.calls and not resolved)
+
+            done = AD.drain(catchup=True, api=q)  # prune_fn=None: 운영 기본 배선을 그대로 사용
+            check("catchup 기본 배선은 실제 sweep·apply 를 한 번 호출",
+                  sweep.call_count == 1 and apply.call_count == 1)
+            check("catchup 삭제 2건·정리 실패 0·파견 예외 0",
+                  done.get("pruned") == 2 and done.get("prune_errors") == 0 and done["errors"] == 0,
+                  str(done))
+            check("catchup 은 마운트 경로를 실제 resolve 에 요청", "" in resolved, str(resolved))
+            check("열린 work 만 파견 판정", [c.args[1] for c in dispatch.call_args_list] == [WC],
+                  str(dispatch.call_args_list))
+            refs = fx.remote_refs()
+            deleted = {f"task/{WA}/base", f"task/{WA}/r1/p1"}
+            check("catchup 원격에서 종결 A 만 삭제", refs == {r: t for r, t in before.items()
+                                                                     if r not in deleted}, str(refs))
+            check("catchup pending B·진행 C·unknown X 의 모든 ref 보존",
+                  all(refs.get(ref) == tip for ref, tip in tips.items() if ref not in deleted))
+            for ref in sorted(deleted):
+                kept = _run(fx.repo, "rev-parse", f"{CL.PRUNED_NS}/{ref}")[1]
+                check(f"catchup 로컬 보존 ref {ref} 팁 일치", kept == tips[ref], kept)
+            check("catchup 노트는 A 이슈 한 건·프로젝트 일치",
+                  len(q.notes) == 1 and q.notes[0]["issue_id"] == 901
+                  and q.notes[0].get("project") == "Proj", str(q.notes))
+            body = q.notes[0]["notes"] if q.notes else ""
+            check("catchup 노트에 삭제 ref·두 팁 해시",
+                  all(ref in body and tips[ref] in body for ref in deleted), body)
+
+            again = AD.drain(catchup=True, api=q)
+            check("catchup 재실행 삭제 0·실패 0·추가 노트 없음",
+                  again.get("pruned") == 0 and again.get("prune_errors") == 0
+                  and again["errors"] == 0 and len(q.notes) == 1, str(again))
+            check("catchup 재실행 원격 동일·apply 재호출 없음",
+                  fx.remote_refs() == refs and sweep.call_count == 2 and apply.call_count == 1)
+
+
 # ── ⑤ ⑺ 전진 뒤 서브 브랜치 정리 ─────────────────────────────────────────────
 
 def test_advance_prunes_round_subbranches():
@@ -358,7 +425,7 @@ def test_prune_helper_keeps_unmerged_and_foreign():
 
 
 if __name__ == "__main__":
-    for fn in (test_hook_direct, test_apply_terminal, test_requeue_and_stale_hook,
+    for fn in (test_hook_direct, test_apply_terminal, test_requeue_and_stale_hook, test_catchup_prunes_terminal,
                test_advance_prunes_round_subbranches, test_prune_helper_keeps_unmerged_and_foreign):
         try:
             fn()

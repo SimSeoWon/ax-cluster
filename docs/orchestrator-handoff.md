@@ -4,7 +4,21 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-10 17:20 KST · Codex · #782 재검증·CLI 설명 보완 · #787 후속 확인 · 통합 검사 통과, 커밋 미승인**.
+- **현재 체크포인트: 2026-10-10 17:33 KST · Codex · #787 catchup 운영 삭제 실증·통합 등록 완료, 승인된 커밋·배포 진행**.
+  - **사용자 승인**: 「응 진행해」로 통합 목록 2개 등록·검증 변경 커밋/push/배포·반려 work의 보존 ref 하나 복원 push 후 타이머 자동 삭제 관측 승인.
+  - **운영 실증 성공**: `20261010_0335_777_2_mkdtemp_774_5078e6e6/r1/7118f80b`의 `cfd986ad0ec1aa6b74eebee78b39617a7e0c2be6`을 원격 task ref 하나로 복원. 17:31:08 자연 catchup 타이머가 실제 삭제, #778 자동 노트 기록. triggers/dispatched/skipped/exceptions=0, 정리 1. 이후 원격 heads는 main만, 로컬 보존 ref의 팁 동일. 수동 sweep/apply·서비스 재시작 없음.
+  - **검증**: `checks.json`에 branch_prune 69개·autodispatch 26개 등록. 정본 통합 31모듈·1,563개 검사 rc0(59.966초). 마스터 4프로젝트 가드 정상·onboard 80/80. 생산 코드 추가 변경 없음.
+  - **커밋 대상**: `master/test_branch_prune.py`, `tests/integration/checks.json`, 이 인계서. 현재 HEAD `310e9f6`; 이 세 파일 커밋/push 후 clean 트리에서 마운트 AXCluster update 예정. 최종 해시·배달 결과는 #787 노트에 기록하고 되읽는다.
+  - **남은 운영 관측**: ⑺ 전진 직후 삭제는 다음 승인된 전진에서 확인 필요하므로 #787은 진행 유지. #782 완료, #788 신규·미착수.
+
+- **직전 체크포인트: 2026-10-10 17:28 KST · Codex · #782 커밋·배포·완료 · #787 가드 정비·catchup 회귀 완료, 후속 승인 대기**.
+  - **저장소**: main, HEAD = origin/main `310e9f6` (#782 커밋·push 사용자 승인). 마운트 AXCluster `master.client update` rc0, .43·.2·.33 배달·검사 3/3, 출처 `310e9f6`(배달 시 clean). 새 push 색인기에 `cloud 무제한 8838자` 확인, 별도 재기동 없음. #782 완료(100%)·되읽기 확인; 전체 자동 합성 종료는 미조회.
+  - **#787 진행**: 정본 `master.work.attempt install-hook`으로 ModularStage·NS·MotionForge 마스터 가드 갱신(rc0 각각), AXCluster 포함 status 4/4 정상. `test_onboard` 80/80으로 기존 live 79/80 해소. 비마운트 배달·마운트 전환 없음.
+  - **미커밋**: `master/test_branch_prune.py`(기존 로컬 서브 에이전트) + 이 인계서. 실제 임시 Git에서 `drain(catchup=True, prune_fn=None)→sweep_terminal→apply_terminal→삭제` 회귀 14개 추가. 종결 work만 2ref 삭제, 진행·pending·unknown·main 보존, 보존 ref·이슈 노트 팁 일치, 멱등·catchup=False 무삭제. 에이전트와 지휘자 각각 69/69, diff check 통과. 생산 코드 변경 없음. 에이전트 완료.
+  - **운영 실증 준비**: 원격 heads=main 하나 확인. 반려 work `20261010_0335_777_2_mkdtemp_774_5078e6e6` rejected·조각 2개 failed·worker codex. 보존 `refs/ax/pruned/task/<work>/r1/7118f80b` = `cfd986ad0ec1aa6b74eebee78b39617a7e0c2be6` commit 존재. 이 서브 ref 하나 복원 push 후 수동 정리 없이 catchup 타이머 삭제를 관측하는 안으로 승인 질문(미응답). 아직 원격 ref 안 씀. timer active/waiting, 최근 catchup 17:20:51 rc0.
+  - **다음 결정/승인**: ① `test_branch_prune` 및 기존 `test_autodispatch` checks.json 등록 질문 미응답(목록 미수정) ② 위 복원 push 승인 후 catchup 실제 삭제·보존 ref·#778 노트·저널 관측 ③ 검증한 회귀 변경 커밋·push·배포 승인. ⑺ 전진 직후 실제 운영 삭제는 다음 승인된 전진에서 관측 필요. #787 노트에 상세 결과 기록·되읽기. #788 신규·미착수.
+
+- **직전 체크포인트: 2026-10-10 17:20 KST · Codex · #782 재검증·CLI 설명 보완 · #787 후속 확인 · 통합 검사 통과, 커밋 미승인**.
   - **저장소**: main, HEAD = origin/main `20eeaa4`. 미커밋 6파일: 이 인계서, `master/context_synth/{prompt.py,synth.py,__main__.py}`, `master/test_context_synth.py`, `master/test_pydigest.py`. 코드 4파일은 Claude 결과 인수, `__main__.py`는 로컬 전용 상한 설명 한 줄 추가. 커밋·push·배달·재기동·실제 LLM·재합성 미실행.
   - **지휘**: 사용자 「#782·#787 이어서 시작」에 따라 마스터 담당 `codex`로 기록·되읽기(17:10). 워커 전역 `codex`·출처 state 재확인, 변경 없음. 기존 로컬 서브 에이전트 방식으로 읽기 검토와 CLI 설명 보완 완료; 실행 중 에이전트 없음.
   - **검사**: 합성 235/235 · pydigest 24/24 · 병렬 합성 25/25 · 브랜치 정리 55/55 · diff check 통과. 정본 통합은 **샌드박스 밖에서 29모듈·1,468개 검사, rc0(54.297초)**.

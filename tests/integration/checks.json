@@ -143,5 +143,15 @@
     "path": "master/test_residency.py",
     "count_pattern": "(?m)^OK test_residency: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
+  },
+  {
+    "path": "master/test_branch_prune.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_autodispatch.py",
+    "count_pattern": "(?m)^OK test_autodispatch: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
   }
 ]
