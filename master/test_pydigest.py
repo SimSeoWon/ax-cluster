@@ -112,6 +112,9 @@ def main() -> int:
         check(".py 가 아니면 그대로", out3["m/a.h"] == "x" * 5000)
         out4, note4 = synth._prompt_bodies(_Paths("code"), {"m/a.py": "def (\n" * 900}, 4000)
         check("파싱 실패는 그대로 두고 사유를 남긴다", "파싱 실패" in note4, note4)
+        out6, note6 = synth._prompt_bodies(_Paths("code"), bodies, None)
+        check("🔴 #782 limit=None(상용 레인)이면 요약하지 않는다 — 원본 그대로",
+              out6["m/a.py"] == long_src and note6 == "", note6)
         synth._index_only = lambda paths: False
         out5, note5 = synth._prompt_bodies(_Paths("ue"), bodies, 4000)
         check("🔴 UE 프로젝트는 종전 그대로 (사용자 결정)", out5["m/a.py"] == long_src and note5 == "")

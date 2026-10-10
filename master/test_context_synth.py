@@ -241,6 +241,137 @@ def test_gemini_primary(tmp):
           and r.model == synth.LOCAL_MODEL)
 
 
+def test_per_lane_prompt(tmp):
+    """`#782` — 상용 CLI 레인은 원본 본문 무제한, 로컬 레인은 종전 상한·요약 그대로."""
+    import json
+    from unittest.mock import patch
+    files = ["Source/Game/Monster.h", "Source/Game/Monster.cpp"]
+    key = "Source/Game/Monster"
+    MARK = "TAIL_MARKER_782"
+    big_header = HEADER + "".join(f"// 채움 줄 {i:04d} — 상한을 넘기려는 주석\n"
+                                  for i in range(300)) + f"// {MARK}\n"
+
+    def big_project(name):
+        p = make_project(tmp / name)
+        (p.source / "Game" / "Monster.h").write_text(big_header, encoding="utf-8")
+        return p
+
+    def old_way(p, limit=prompt.CONTENT_LIMIT):
+        """종전 synthesize_group 이 만들던 단일 프롬프트 (주입 caller → related=[])."""
+        bodies = {f: synth.source_text.read(p.repo / f).text for f in files}
+        g = synth.collect_grounding(p, files)
+        g.related = []
+        pb, _ = synth._prompt_bodies(p, bodies, limit)
+        return prompt.build(files=files, bodies=pb, grounding=g, existing="", limit=limit)
+
+    BADR = "형식 없는 응답 그대로\n" * 10
+
+    # ① agy 실패 → gemma 는 4000 상한 로컬 프롬프트, agy 는 원본 전문
+    p = big_project("lane-split")
+    check("픽스처 본문이 상한을 넘는다", len(big_header) > prompt.CONTENT_LIMIT, str(len(big_header)))
+    sent = {}
+    def cli(lane, pr, timeout):
+        sent[lane] = pr
+        return None
+    def local(_url, payload):
+        sent[payload["model"]] = payload["prompt"]
+        return honest_llm(_url, payload)
+    logged, real_log = [], synth._log
+    synth._log = lambda m: (logged.append(m), real_log(m))
+    try:
+        r = synth.synthesize_group(p, key, files, chain=("agy", synth.LOCAL_MODEL),
+                                   caller=local, cli=cli)
+    finally:
+        synth._log = real_log
+    check("agy 실패 → gemma 통과", r.written and r.model == synth.LOCAL_MODEL
+          and list(sent) == ["agy", synth.LOCAL_MODEL], f"{r.reason} {list(sent)}")
+    check("🔴 cloud 프롬프트에 본문 끝 표식이 있다 (무제한)", MARK in sent.get("agy", ""))
+    check("🔴 local 프롬프트에는 표식이 없다 (4000 상한)", MARK not in sent.get(synth.LOCAL_MODEL, "x" + MARK))
+    check("cloud 프롬프트에 원본 본문 전체가 그대로 실린다", big_header in sent.get("agy", ""))
+    check("local 프롬프트는 종전 방식과 글자 그대로 같다",
+          sent.get(synth.LOCAL_MODEL) == old_way(p))
+    check("prompt_chars 는 통과 시도(local)의 실제 프롬프트 길이",
+          r.prompt_chars == len(sent[synth.LOCAL_MODEL]), f"{r.prompt_chars}")
+    rows = {row["model"]: row for row in (json.loads(f.read_text(encoding="utf-8"))
+            for f in (p.root / "synth_attempts").glob("*.json"))}
+    check("시도 기록마다 그 시도가 실제로 보낸 프롬프트",
+          rows["agy"]["prompt"] == sent["agy"]
+          and rows[synth.LOCAL_MODEL]["prompt"] == sent[synth.LOCAL_MODEL]
+          and rows["agy"]["prompt"] != rows[synth.LOCAL_MODEL]["prompt"])
+    check("시도 기록에 상한이 실린다 (cloud=None · local=4000)",
+          rows["agy"]["prompt_limit"] is None
+          and rows[synth.LOCAL_MODEL]["prompt_limit"] == prompt.CONTENT_LIMIT)
+    check("로그에 종류·상한·길이가 찍힌다",
+          any(f"프롬프트 cloud 무제한 {len(sent['agy'])}자" in m for m in logged)
+          and any(f"프롬프트 local 상한 4000 {len(sent[synth.LOCAL_MODEL])}자" in m
+                  for m in logged), str([m for m in logged if "프롬프트" in m]))
+
+    # ② 사슬 4개 전부 실패 → build 는 종류당 한 번 (총 2회)
+    p = big_project("lane-cache")
+    seen = []
+    def cli2(lane, pr, timeout):
+        seen.append((lane, pr))
+        return BADR
+    def local2(_url, payload):
+        seen.append((payload["model"], payload["prompt"]))
+        return BADR
+    real_build = prompt.build
+    builds = []
+    def counting(**kw):
+        builds.append(kw.get("limit"))
+        return real_build(**kw)
+    with patch.object(synth.prompt_mod, "build", side_effect=counting):
+        r = synth.synthesize_group(p, key, files, dry_run=True, caller=local2, cli=cli2)
+    by = dict(seen)
+    check("기본 사슬 4모델 전부 시도", [m for m, _ in seen] == list(synth.SYNTH_CHAIN),
+          str([m for m, _ in seen]))
+    check("🔴 프롬프트는 종류당 최대 한 번 (cloud 1 · local 1)",
+          sorted(builds, key=str) == sorted([None, prompt.CONTENT_LIMIT], key=str), str(builds))
+    check("agy·codex 는 같은 cloud 프롬프트 · e4b·12b 는 같은 local 프롬프트",
+          by["agy"] == by["codex"] and by[synth.LOCAL_MODEL] == by[synth.FALLBACK_MODEL]
+          and by["agy"] != by[synth.LOCAL_MODEL])
+    check("전부 실패면 prompt_chars 는 마지막 시도(12b, local)",
+          r.prompt_chars == len(by[synth.FALLBACK_MODEL]))
+
+    # ③ 로컬만의 사슬은 종전과 바이트 단위 동일 · cloud 프롬프트는 만들지 않는다
+    p = big_project("lane-local-only")
+    seen, builds = [], []
+    with patch.object(synth.prompt_mod, "build", side_effect=counting):
+        r = synth.synthesize_group(p, key, files, dry_run=True, caller=local2,
+                                   chain=(synth.LOCAL_MODEL, synth.FALLBACK_MODEL))
+    check("로컬 전용 사슬: 두 시도 모두 종전 프롬프트와 바이트 동일",
+          len(seen) == 2 and all(pr.encode() == old_way(p).encode() for _, pr in seen))
+    check("로컬 전용 사슬: build 1회 · cloud 프롬프트 없음",
+          builds == [prompt.CONTENT_LIMIT], str(builds))
+    seen, builds = [], []
+    with patch.object(synth.prompt_mod, "build", side_effect=counting):
+        r = synth.synthesize_group(p, key, files, dry_run=True, caller=local2,
+                                   chain=(synth.LOCAL_MODEL,), content_limit=6000)
+    check("명시 content_limit 은 로컬에 그대로 적용된다",
+          builds == [6000] and seen[0][1] == old_way(p, 6000)
+          and MARK not in seen[0][1] and len(big_header) > 6000, str(builds))
+
+    # ④ 비UE(.py) — local 은 요약본, cloud 는 원본 그대로 · digest 는 시도별
+    p = make_project(tmp / "lane-py")
+    pyfile = "Source/Game/mod.py"
+    src = ("def alpha(x):\n" + "".join(f"    y{i} = x + {i}\n" for i in range(400))
+           + "    return x\n\n# " + MARK + "\n")
+    (p.repo / pyfile).write_text(src, encoding="utf-8")
+    seen = []
+    orig = synth._index_only
+    synth._index_only = lambda paths: True
+    try:
+        r = synth.synthesize_group(p, "Source/Game/mod", [pyfile], dry_run=True, caller=local2,
+                                   cli=cli2, chain=("agy", synth.LOCAL_MODEL, "codex"))
+    finally:
+        synth._index_only = orig
+    by = dict(seen)
+    check("비UE cloud: 원본 .py 전문 (요약 안 함)", src in by.get("agy", ""))
+    check("비UE local: 요약본 (함수 본문을 덜었다)",
+          src not in by.get(synth.LOCAL_MODEL, src) and "alpha" in by.get(synth.LOCAL_MODEL, ""))
+    check("digest 는 마지막 시도(codex, cloud) 기준 — 요약 안 씀", r.digest == "", r.digest)
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="ax-synth-test-"))
     FILES = ["Source/Game/Monster.h", "Source/Game/Monster.cpp"]
@@ -889,6 +1020,8 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
     test_attempt_records(tmp)
     print("\n[제미나이 1차] 호출·형식·사실 실패는 로컬 LLM 대체")
     test_gemini_primary(tmp)
+    print("\n[#782] 레인별 프롬프트 — 상용 무제한 · 로컬 종전 상한")
+    test_per_lane_prompt(tmp)
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0

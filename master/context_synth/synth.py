@@ -503,13 +503,16 @@ def _remember(paths, key: str, files: list, res, commit: str, dry_run: bool):
     return res
 
 
-def _prompt_bodies(paths, bodies: dict, limit: int) -> tuple[dict, str]:
+def _prompt_bodies(paths, bodies: dict, limit: int | None) -> tuple[dict, str]:
     """프롬프트에 넣을 본문. 🔴 **비UE 프로젝트의 긴 `.py` 는 요약본**으로 바꾼다 (`#711`).
 
     [중요] 사용자 결정 2026-10-03: 비UE 에만 · 함수 본문을 덜고 구조·독스트링·주석을 남긴다
        (`pydigest`). UE 프로젝트는 **종전 그대로**(앞에서 자르기) — 재합성 비용·결과를 바꾸지 않는다.
     [주의] 사실 게이트는 호출자가 **원본 `bodies`** 로 돌린다. 여기 결과는 프롬프트에만 쓴다.
+    `limit=None`(상용 CLI 레인, `#782`)이면 자르는 것이 없으므로 요약하지 않는다 — 원본 그대로.
     """
+    if limit is None:
+        return bodies, ""
     if not _index_only(paths) or sum(len(b) for b in bodies.values()) <= limit:
         return bodies, ""
     from . import pydigest                                    # noqa: PLC0415
@@ -582,7 +585,8 @@ def _generate(prompt: str, model: str, *, broker: str, caller, cli, usage: dict)
 class _AttemptRecord:
     """실제 모델 시도 원문과 판정의 원자적 스냅샷. 기록 실패는 합성 판정을 바꾸지 않는다."""
 
-    def __init__(self, paths, *, key, files, commit, model, prompt, declared, dry_run):
+    def __init__(self, paths, *, key, files, commit, model, prompt, declared, dry_run,
+                 prompt_limit=None):
         self.enabled = not dry_run
         self.saved = False
         self.path = paths.root / "synth_attempts" / f"{uuid.uuid4().hex}.json"
@@ -594,7 +598,8 @@ class _AttemptRecord:
         self.data = {"schema": 1, "attempt_id": self.path.stem, "project": paths.name,
                      "group": key, "files": list(files), "commit": commit,
                      "model": model, "project_kind": kind, "declared": list(declared),
-                     "prompt": prompt, "raw": None, "raw_received": False,
+                     "prompt": prompt, "prompt_limit": prompt_limit,   # None = 무제한 (`#782`)
+                     "raw": None, "raw_received": False,
                      "format": None, "facts": None, "status": "generating",
                      "started_at": time.time()}
         self.update()
@@ -663,12 +668,24 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
         grounding.related = collect_related(paths, key, files, existing, searcher=searcher)
     else:
         grounding.related = []                 # 주입 caller는 실제 외부 검색도 하지 않는다
-    prompt_bodies, res.digest = _prompt_bodies(paths, bodies, content_limit)
-    if res.digest:
-        _log(f"{key} — {res.digest}")
-    p = prompt_mod.build(files=files, bodies=prompt_bodies, grounding=grounding,
-                         existing=existing, limit=content_limit)
-    res.prompt_chars = len(p)
+    # 🔴 `#782` (사용자 결정 2026-10-10) — 프롬프트는 **레인 종류마다** 만든다.
+    #    상용 CLI(`agy`·`codex`) = 원본 본문 무제한 · 요약 없음.
+    #    로컬(브로커) = 종전 그대로 `content_limit`(기본 4000) + `pydigest` 요약(`#711`).
+    #    `content_limit`(CLI `--content-limit` 포함)은 **로컬에만** 건다 — 상용은 결정상 무제한.
+    #    사슬이 상용·로컬을 오가므로 종류별로 **처음 쓸 때 한 번만** 만든다(지연·캐시).
+    #    사실 게이트·`md.finalize` 는 어느 시도든 같다 — 원본 `bodies` 로 판정한다.
+    prompts: dict[str, tuple[str, str, int | None]] = {}
+
+    def _prompt_for(kind: str) -> tuple[str, str, int | None]:
+        if kind not in prompts:
+            limit = None if kind == "cloud" else content_limit
+            pbodies, digest = _prompt_bodies(paths, bodies, limit)
+            text = prompt_mod.build(files=files, bodies=pbodies, grounding=grounding,
+                                    existing=existing, limit=limit)
+            prompts[kind] = (text, digest, limit)
+            label = "cloud 무제한" if limit is None else f"local 상한 {limit}"
+            _log(f"{key} — 프롬프트 {label} {len(text)}자" + (f" · {digest}" if digest else ""))
+        return prompts[kind]
 
     # 호출·형식·사실 실패는 다음 모델로 간다. 결과마다 같은 게이트를 탄다.
     from ..work import usage as usage_mod                         # noqa: PLC0415
@@ -680,10 +697,15 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
             # 주입된 브로커 호출자(테스트)에서 진짜 상용 CLI 를 부르지 않는다
             res.attempts.append(f"{m} 건너뜀(주입된 호출자)")
             continue
+        # 이 시도가 실제로 보내는 프롬프트. `prompt_chars`·`digest` 는 **마지막 시도**(통과했다면
+        #    통과 모델)의 값이다 — 결과를 만든 프롬프트를 가리키게 (`#782`)
+        p, res.digest, p_limit = _prompt_for("cloud" if _is_cli(m) else "local")
+        res.prompt_chars = len(p)
         usage: dict = {}
         t_call = time.monotonic()
         attempt = _AttemptRecord(paths, key=key, files=files, commit=commit, model=m,
-                                 prompt=p, declared=grounding.declared_classes, dry_run=dry_run)
+                                 prompt=p, declared=grounding.declared_classes, dry_run=dry_run,
+                                 prompt_limit=p_limit)
         if attempt.saved:
             res.attempt_records.append(str(attempt.path))
             _log(f"{key} — {m} · 원문 기록 {attempt.path}")

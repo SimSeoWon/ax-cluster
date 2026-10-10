@@ -7,6 +7,7 @@
     python -m master.context_synth status                       # 문서/소스 대비
 
 공통 플래그: --model <이름> · --fallback(.2 의 14b) · --content-limit N · --limit N
+--content-limit N은 로컬 레인 전용(기본 4000자)이며, 클라우드(agy·codex)는 원본 본문 무제한이다.
 
 [중요] **`--limit` 없이 `all` 을 돌리기 전에 한 그룹으로 품질을 확인할 것.** 1,600 그룹이고
 그룹당 수십 초라 전체는 시간 단위 작업이다. 그리고 나쁜 문서 1,600개는 좋은 문서 0개보다

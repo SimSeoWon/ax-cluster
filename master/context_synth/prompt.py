@@ -32,6 +32,11 @@ from dataclasses import dataclass, field
 # 8그룹 배치를 돌렸더니 **BC-250 이 먹통이 됐다** — ping 은 되는데 SSH banner exchange 가
 # 끊기고 Ollama 가 무응답(메모리 압박 신호). 프롬프트가 길면 KV 캐시가 보드 한계를 넘는다.
 # 상한은 CLI `--content-limit` 로 올릴 수 있지만, **올리기 전에 노드 여유를 확인할 것.**
+#
+# 🔴 [중요] **이 상한은 로컬 레인(브로커·Ollama)에만 건다** (`#782`, 사용자 결정 2026-10-10).
+#    상용 CLI 레인(`agy`·`codex`)은 보드 KV 와 무관하므로 원본 본문을 **자르지 않고** 받는다
+#    (`limit=None`). `--content-limit` 도 로컬 레인에만 적용된다 — 상용은 결정상 무제한이다.
+#    [주의] 근거·관련 문서 상한(`GROUNDING_LIMIT`·`RELATED_*`)은 본문 상한이 아니라 그대로다.
 CONTENT_LIMIT = 4000
 
 # 근거 항목 상한. 원본이 dependents 를 10개로 끊었다 — 그 이상은 프롬프트를 밀어내고
@@ -182,8 +187,10 @@ class Grounding:
 
 
 def build(*, files: list[str], bodies: dict[str, str], grounding: Grounding,
-          existing: str = "", limit: int = CONTENT_LIMIT) -> str:
+          existing: str = "", limit: int | None = CONTENT_LIMIT) -> str:
     """프롬프트 한 덩어리.
+
+    `limit=None` 이면 본문을 자르지 않는다 — 상용 CLI 레인 전용이다 (`#782`).
 
     `files` 는 **헤더 먼저** 정렬돼 있어야 한다(인터페이스 → 구현 순서). 정렬 자체는
     호출자(`synth.group`)가 한다 — 그룹 규칙과 같은 곳에 두는 게 맞다.
@@ -197,7 +204,8 @@ def build(*, files: list[str], bodies: dict[str, str], grounding: Grounding,
         if not body:
             continue
         code += f"// ── {f} ──\n{body}\n\n"
-    code = code[:limit]
+    if limit is not None:
+        code = code[:limit]
 
     parts = [FORMAT.format(path_hint=files[0]), grounding.render()]
 
