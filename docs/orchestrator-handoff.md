@@ -4,7 +4,14 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-11 · Codex 중단, Claude 인수 대기 — 사용자 지시로 버그 #798 등록·인계만 수행**.
+- **현재 체크포인트: 2026-10-11 02:10 KST · Claude · #798 구현·배포·5a 실증 완료, 5b(훅 경로) 대기**.
+  - 사용자 결정·근거·실측은 리포트 109. 커밋 636da9c·7e53df0·30739f7·b7c4ebe(문서 fa3e91f), origin/main 일치. 로컬 서브 에이전트 방식.
+  - 마스터가 AXCluster requester 작업장으로 등록됨: /home/sim/trunk/AXCluster-requester (배달물은 체크아웃 안에만, 홈 불변 대조). 분산 등재 세션은 이 폴더에서 열어야 완료 훅이 걸린다.
+  - ax-followup.timer 가동(1분, --scan --project AXCluster). 첫 주기 기준선 9건. 상태·로그 ~/.cache/ax-followup/. ax-projects 재시작 01:52:04.
+  - #632(work e5e894a9): followup 재준비 at_gate, 검수 트리 /home/sim/trunk/ax-advance-20261011_0035_632_redmine_e5e894a9 HEAD c65247fc, 통합31/31·회귀38/38. ⑦ 전진·finalize 미승인. 옛 Codex 검수 트리 /home/sim/ax-advance-… 와 ~/ax-632-work 는 보존.
+  - #798 진행(노트 기록). 남은 것: 5b Claude 훅 실증(사용자가 work 내용 선택) · #799 Windows 폴백 · codex queue 실측 보류. 마스터 담당 기록은 분류기 거부로 여전히 codex.
+
+- **직전 체크포인트: 2026-10-11 · Codex 중단, Claude 인수 대기 — 사용자 지시로 버그 #798 등록·인계만 수행**.
   - 사용자 마지막 지시: 「버그 일감으로 추가하고 인수인계서 작성해 … 클로드에게 시킬테니까」. Codex는 일감 등록·인계 작성 후 멈춘다. Claude는 실제 상태를 대조해 인수할 것. 마스터 담당 기록/워커 전역 모드 변경, 추가 파견·버그 수정·base 전진·finalize·배포는 이번 지시로 수행하지 않는다.
   - [#798](http://192.168.0.57:8080/issues/798): 분산 작업 완료 후 요청자 후속 처리 누락·완료 알림 연계 확인 필요. AX 인프라, 버그·개선, 높음. 완료를 조회하고도 회수·검증을 이어가지 않은 Codex 처리 누락은 확정. 큐 알림 메타는 정상이나 이 마스터 대화 세션의 훅 수신/자동 재개 연결은 미확인. 이를 혼동한 설명을 원인 확정으로 이어받지 말 것. 이번에는 등록만 했고 원인 수정 없음.
   - #632 / work 이슈 #797: work 20261011_0035_632_redmine_e5e894a9, task aafc78ce. 실제 get_work 재조회 ready_for_review·verified1/1·attempt1, worker_mode codex, .43. Gemini APPROVE/backend=agy. 구현 7bc489f1, 서브 task/20261011_0035_632_redmine_e5e894a9/r1/aafc78ce. 재파견·재등록 불필요.
