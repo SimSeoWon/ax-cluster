@@ -302,9 +302,17 @@ def register_plan(plan_path: Path, *, create=redmine.create_issue,
             return {"action": "updated", "issue_id": issue_id}
 
     # 신규 이슈 생성
-    # [PSEUDO] #632: 빈 project를 거절하고 project_lookup(project)의 매핑을 구한다. 조회 예외·빈 매핑은 error로 반환하며 create/파일 쓰기를 하지 않는다. create에 project=매핑을 명시한다.
+    if not (project or "").strip():
+        return {"error": "Redmine 대상 프로젝트가 비었다"}
+    try:
+        redmine_project = (project_lookup(project) or "").strip()
+    except Exception as e:                                  # noqa: BLE001
+        return {"error": f"Redmine 프로젝트 매핑 조회 실패 ({project}): {e}"}
+    if not redmine_project:
+        return {"error": f"Redmine 프로젝트 매핑이 없다: {project}"}
+
     result = create(subject, description, tracker_name=TRACKER_NAME,
-                    priority_name=priority_name)
+                    priority_name=priority_name, project=redmine_project)
     if "error" in result:
         return result
     new_id = result["id"]
@@ -333,8 +341,8 @@ def register_week_plans(week_dir: Path, author_name: str, *,
         return out
 
     for plan_md in plan_files:
-        # [PSEUDO] #632: register_plan에 project와 project_lookup을 전달한다. 기존 집계 및 오류 로그 계약을 보존한다.
-        result = register_plan(plan_md, create=create, update=update, logf=logf)
+        result = register_plan(plan_md, create=create, update=update, logf=logf,
+                               project=project, project_lookup=project_lookup)
         action = result.get("action")
         if action == "created":
             out["created"] += 1
