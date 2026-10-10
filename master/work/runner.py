@@ -791,7 +791,8 @@ def _session1_after(facts, task_id: str, base: str, sep: str, since: str, out: s
 
 
 def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT_TIMEOUT,
-                        sleeper=None, logf=None, now=None, popup=None) -> tuple:
+                        sleeper=None, logf=None, now=None, popup=None, cancelled=None,
+                        cleanup_timeout=15) -> tuple:
     """세션 1 런처를 거쳐 지휘자를 돌린다. `(rc, stdout)` (`#401`).
 
     🔴 [중요] **마스터가 보내는 것은 데이터뿐이다** — `job.json` 의 `task_id`·`files`.
@@ -820,59 +821,127 @@ def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT
     # Keep old attempts for audit; a fresh directory cannot contain their done.flag.
     request_id = _uuid.uuid4().hex
     rel = f".ax/session1/{task_id}/{request_id}"
+    stop_result = None
+    stopped_confirmed = False
+    def stop(reason):
+        nonlocal stop_result, stopped_confirmed
+        if stop_result is not None:
+            return stop_result
+        stop_result = False
+        try:
+            _b._remote_write(facts, f"{rel}/cancel.flag", reason + "\n", base="checkout")
+            log(f"{who} 취소 신호 전송 — {reason}")
+            stop_result = True
+            sep = chr(92) if facts.windows else "/"
+            marker = f"{facts.path}{sep}{rel.replace('/', sep)}{sep}done.flag"
+            command = (f'if exist "{marker}" type "{marker}"' if facts.windows else f'cat "{marker}"')
+            deadline = _t.monotonic() + cleanup_timeout
+            remaining = cleanup_timeout
+            while remaining > 0:
+                rc, result = bundle._ssh(facts.host, facts.user, command, timeout=min(5, remaining))
+                if rc == 0 and (result or "").strip() == request_id:
+                    stopped_confirmed = True
+                    log(f"{who} 런처 종료 확인 — 해당 시도의 done.flag")
+                    break
+                remaining = deadline - _t.monotonic()
+                if remaining > 0:
+                    nap(min(3, remaining))
+                remaining = deadline - _t.monotonic()
+            if not stopped_confirmed:
+                log(f"{who} 🔴 취소 신호는 전달했지만 원격 종료 미확인")
+        except Exception as e:
+            log(f"{who} 🔴 {'원격 종료 확인 실패' if stop_result else '취소 신호 전송 실패'} — {type(e).__name__}: {e}")
+        return stop_result
+    def is_cancelled():
+        if cancelled is not None:
+            return cancelled()
+        try:
+            return _api("GET", f"/api/v1/tasks/{task_id}", timeout=HTTP_TIMEOUT).get("status") == "cancelled"
+        except Exception:
+            # A missed query is not evidence of cancellation, like a missed heartbeat.
+            return False
     job = _json.dumps({"task_id": task_id, "files": [str(f) for f in (files or [])],
                        "request_id": request_id, "self_repo": self_repo_mounted(),
-                       "approvals": _approval_overrides(), "timeout": timeout},
+                       "approvals": _approval_overrides(), "timeout": timeout,
+                       "expires_at": t0 + timeout},
                       ensure_ascii=False)
     try:
         _b._remote_write(facts, f"{rel}/job.json", job + "\n", base="checkout")
     except Exception as e:                                   # noqa: BLE001
+        stop("job 전송 실패")
         log(f"{who} 🔴 job 전송 실패 — {type(e).__name__}: {e}")
         return 1, f"[세션1] job 을 못 보냈다 — {type(e).__name__}: {e}"
     log(f"{who} job 전송 — 파일 {len(files or [])} · 제한 {timeout}초")
 
-    task_name = _R.conductor_task_name(_project_of(facts))
-    rc0, out0 = bundle._ssh(facts.host, facts.user,
-                            _R.conductor_run_command(_project_of(facts), facts))
-    if rc0 != 0:
-        log(f"{who} 🔴 런처를 못 깨웠다 (rc={rc0}) — {(out0 or '').strip()[:200]}")
-        return 1, (f"[세션1] 런처를 못 깨웠다 (rc={rc0}) — {(out0 or '')[:200]}\n"
-                   f"[중요] `{task_name}` 작업이 등록돼 "
-                   f"있는지 본다(`master.client deliver` 가 등록한다)")
-    log(f"{who} 런처를 깨웠다 (`{task_name}`) — done.flag 를 기다린다")
+    completed = False
+    try:
+        task_name = _R.conductor_task_name(_project_of(facts))
+        try:
+            rc0, out0 = bundle._ssh(facts.host, facts.user,
+                                    _R.conductor_run_command(_project_of(facts), facts))
+        except BaseException:
+            stop("런처 호출 중단")
+            raise
+        if rc0 != 0:
+            stop("런처 기동 실패")
+            log(f"{who} 🔴 런처를 못 깨웠다 (rc={rc0}) — {(out0 or '').strip()[:200]}")
+            return 1, (f"[세션1] 런처를 못 깨웠다 (rc={rc0}) — {(out0 or '')[:200]}\n"
+                       f"[중요] `{task_name}` 작업이 등록돼 "
+                       f"있는지 본다(`master.client deliver` 가 등록한다)")
+        log(f"{who} 런처를 깨웠다 (`{task_name}`) — done.flag 를 기다린다")
 
-    sep = chr(92) if facts.windows else "/"
-    base = f"{facts.path}{sep}{rel.replace('/', sep)}"
-    waited = 0
-    next_note = SESSION1_NOTE_SEC
-    while waited < timeout:
-        rc, _o = bundle._ssh(facts.host, facts.user,
-                             (f'if exist "{base}{sep}done.flag" (echo DONE) else (echo WAIT)'
-                              if facts.windows
-                              else f'test -e "{base}/done.flag" && echo DONE || echo WAIT'))
-        if "DONE" in (_o or ""):
-            marker = (_b._remote_read(facts, f"{base}{sep}done.flag") or "").strip()
-            if marker != request_id:
-                log(f"{who} 🔴 결과 시도 불일치 — 현재 job 의 결과가 아니다")
-                return 1, "[세션1] 결과 request_id가 현재 job과 다르다 — 옛 결과 회수 거부"
-            out = _b._remote_read(facts, f"{base}{sep}out.txt") or ""
-            rct = (_b._remote_read(facts, f"{base}{sep}rc.txt") or "1").strip()
+        sep = chr(92) if facts.windows else "/"
+        base = f"{facts.path}{sep}{rel.replace('/', sep)}"
+        waited = 0
+        next_note = SESSION1_NOTE_SEC
+        while waited < timeout:
+            if is_cancelled():
+                sent = stop("큐 작업 취소")
+                return 1, ("[세션1] 큐 작업이 취소되었다 — "
+                           + ("런처 종료 확인" if stopped_confirmed else
+                              "취소 신호 전달, 원격 종료 미확인" if sent else
+                              "취소 신호 전달 실패, 원격 종료 미확인"))
             try:
-                rc_i = int(rct)
-            except ValueError:
-                rc_i = 1
-            log(f"{who} 결과 회수 — rc={rc_i} · {int(clock() - t0)}초 · 출력 {len(out)}자")
-            out = _session1_after(facts, task_id, base, sep, since, out, log=log, popup=popup)
-            return rc_i, out
-        if waited >= next_note:
-            log(f"{who} {waited}초째 대기 — 아직 결과 없음 (done.flag 없음)")
-            next_note += SESSION1_NOTE_SEC
-        nap(SESSION1_POLL_SEC)
-        waited += SESSION1_POLL_SEC
-    log(f"{who} 🔴 {timeout}초 시간 초과 — 결과를 못 받았다")
-    msg = (f"[세션1] {timeout}초 안에 끝나지 않았다 — 런처가 돌지 않았을 수 있다"
-           f"(로그온 세션이 없으면 `/IT` 작업은 뜨지 않는다)")
-    return 1, _session1_after(facts, task_id, base, sep, since, msg, log=log, popup=popup)
+                rc, _o = bundle._ssh(facts.host, facts.user,
+                                 (f'if exist "{base}{sep}done.flag" (echo DONE) else (echo WAIT)'
+                                  if facts.windows
+                                  else f'test -e "{base}/done.flag" && echo DONE || echo WAIT'))
+            except BaseException:
+                stop("결과 조회 중단")
+                raise
+            if "DONE" in (_o or ""):
+                marker = (_b._remote_read(facts, f"{base}{sep}done.flag") or "").strip()
+                if marker != request_id:
+                    stop("결과 시도 불일치")
+                    log(f"{who} 🔴 결과 시도 불일치 — 현재 job 의 결과가 아니다")
+                    return 1, "[세션1] 결과 request_id가 현재 job과 다르다 — 옛 결과 회수 거부"
+                out = _b._remote_read(facts, f"{base}{sep}out.txt") or ""
+                rct = (_b._remote_read(facts, f"{base}{sep}rc.txt") or "1").strip()
+                try:
+                    rc_i = int(rct)
+                except ValueError:
+                    rc_i = 1
+                log(f"{who} 결과 회수 — rc={rc_i} · {int(clock() - t0)}초 · 출력 {len(out)}자")
+                out = _session1_after(facts, task_id, base, sep, since, out, log=log, popup=popup)
+                completed = True
+                return rc_i, out
+            if waited >= next_note:
+                log(f"{who} {waited}초째 대기 — 아직 결과 없음 (done.flag 없음)")
+                next_note += SESSION1_NOTE_SEC
+            try:
+                nap(SESSION1_POLL_SEC)
+            except BaseException:
+                stop("요청자 대기 중단")
+                raise
+            waited += SESSION1_POLL_SEC
+        log(f"{who} 🔴 {timeout}초 시간 초과 — 결과를 못 받았다")
+        stop("요청자 시간 초과")
+        msg = (f"[세션1] {timeout}초 안에 끝나지 않았다 — 런처가 돌지 않았을 수 있다"
+               f"(로그온 세션이 없으면 `/IT` 작업은 뜨지 않는다)")
+        return 1, _session1_after(facts, task_id, base, sep, since, msg, log=log, popup=popup)
+    finally:
+        if not completed:
+            stop("결과 회수 전 요청자 종료")
 
 
 def _project_of(facts) -> str:

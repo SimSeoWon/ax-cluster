@@ -1,0 +1,15 @@
+{
+  "work_id": "20261010_2132_788_claude_codex_4_bca80057",
+  "task_id": "c2cf39d5",
+  "base": "ca196a5bccc815d00ebfcf70a5db87870d093c13",
+  "approved": true,
+  "failure": null,
+  "findings": [],
+  "warnings": [
+    "backend=agy",
+    "gemini_verdict=APPROVE",
+    "gemini_failure_reason=",
+    "gemini_raw_response=VERDICT: APPROVE\n"
+  ],
+  "raw_tail": "VERDICT: APPROVE"
+}

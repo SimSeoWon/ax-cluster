@@ -624,7 +624,7 @@ def test_session1_master_logs() -> None:
             rc, out = R.run_worker_session1(
                 facts, "t1", files=["Source/A.cpp"], timeout=timeout,
                 sleeper=lambda s: None, logf=lines.append, now=lambda: next(ticks),
-                popup=lambda f, since: [POPUP])
+                popup=lambda f, since: [POPUP], cancelled=lambda: False, cleanup_timeout=0)
         finally:
             B._ssh, B._remote_write, B._remote_read = saved
         return rc, out, lines
@@ -774,7 +774,8 @@ def test_session1_attempt_isolation() -> None:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content)
             paths.append(p.parent)
-            jobs.append(json.loads(content))
+            if rel.endswith("job.json"):
+                jobs.append(json.loads(content))
 
         def argv(r, files, approvals=(), self_repo=False):
             executions.append(1)
@@ -793,7 +794,7 @@ def test_session1_attempt_isolation() -> None:
         with patch.object(L, "find_root", lambda: root), patch.object(L, "build_argv", argv), \
                 patch.object(B, "_remote_write", write), patch.object(B, "_ssh", ssh), \
                 patch.object(B, "_remote_read", read):
-            results = [R.run_worker_session1(facts, "t1", files=[], popup=lambda *a: [])
+            results = [R.run_worker_session1(facts, "t1", files=[], popup=lambda *a: [], cancelled=lambda: False)
                        for _ in range(2)]
             check("#695 같은 task 재시도도 새 프로세스 둘", len(executions) == 2)
             check("#695 옛 출력 대신 각 시도의 새 결과", results == [(0, "FRESH 1\n"), (0, "FRESH 2\n")], str(results))
@@ -807,8 +808,155 @@ def test_session1_attempt_isolation() -> None:
             original = B._remote_read
             with patch.object(B, "_remote_read", lambda f, rel:
                               "old-request" if rel.endswith("done.flag") else original(f, rel)):
-                rc, out = R.run_worker_session1(facts, "t1", files=[], popup=lambda *a: [])
+                rc, out = R.run_worker_session1(facts, "t1", files=[], popup=lambda *a: [], cancelled=lambda: False, cleanup_timeout=0)
             check("#695 다른 request 결과는 성공으로 회수하지 않음", rc == 1 and "request_id" in out, out)
+
+
+def test_session1_cancellation() -> None:
+    """#796: abandoned attempts cannot run later; cancellation stops only their tree."""
+    import json
+    import tempfile
+    import threading
+    import time
+    import subprocess
+    from unittest.mock import patch
+    from types import SimpleNamespace
+    from master.client import bundle as B
+
+    L = _load_launcher()
+    with tempfile.TemporaryDirectory(prefix="ax-s1-cancel-") as temp:
+        root = Path(temp)
+        def job(name, **extra):
+            d = root / L.JOB_DIR / name / "request"
+            d.mkdir(parents=True)
+            (d / L.JOB).write_text(json.dumps({"task_id": name, "request_id": name,
+                                               "timeout": 30, **extra}))
+            return d
+        cancelled = job("cancelled")
+        (cancelled / L.CANCEL).write_text("cancel")
+        expired = job("expired", expires_at=time.time() - 1)
+        executions = []
+        def argv(*args, **kwargs):
+            executions.append(1)
+            return [sys.executable, "-c", "print('RESULT: DONE')"]
+        with patch.object(L, "find_root", lambda: root), patch.object(L, "build_argv", argv):
+            L.main()
+            L.main()
+        check("#796 취소·만료된 미실행 job은 뒤늦게 재실행하지 않음", not executions)
+        check("#796 취소·만료도 해당 시도 완료 마커와 실패 결과 기록", all(
+            (d / L.DONE).exists() and (d / L.RC).read_text() == "1" for d in (cancelled, expired)))
+
+        active = job("active")
+        pidfile = root / "child.pid"
+        child = "import time; time.sleep(120)"
+        code = ("import subprocess,time,pathlib; "
+                f"p=subprocess.Popen([{sys.executable!r},'-c',{child!r}]); "
+                f"pathlib.Path({str(pidfile)!r}).write_text(str(p.pid)); time.sleep(120)")
+        with patch.object(L, "build_argv", lambda *a, **k: [sys.executable, "-c", code]):
+            thread = threading.Thread(target=L.run_job, args=(root, active))
+            thread.start()
+            deadline = time.monotonic() + 10
+            while not pidfile.exists() and time.monotonic() < deadline:
+                time.sleep(.02)
+            started = pidfile.exists()
+            (active / L.CANCEL).write_text("cancel")
+            thread.join(timeout=10)
+        check("#796 실행 중 취소는 제한시간까지 기다리지 않고 끝남", started and not thread.is_alive())
+        if started and sys.platform.startswith("linux"):
+            pid = pidfile.read_text()
+            stat = Path(f"/proc/{pid}/stat")
+            check("#796 실제 자식 프로세스도 실행 종료", not stat.exists() or stat.read_text().split()[2] == "Z")
+        check("#796 취소 이유 보존·relay 표시 제거", "요청자 취소" in (active / L.OUT).read_text()
+              and not (root / L.AGY_ROOT / L.AGY_MARK).exists())
+
+        # A genuine communicate exception used to lose the running process handle.
+        failed = job("exception")
+        real_popen = subprocess.Popen
+        processes = []
+        class BrokenPipe:
+            def __init__(self, *a, **kw):
+                self.proc = real_popen([sys.executable, "-c", "import time; time.sleep(120)"], **kw)
+                processes.append(self.proc)
+            def __getattr__(self, name):
+                return getattr(self.proc, name)
+            def communicate(self, **kwargs):
+                raise OSError("injected pipe failure")
+        with patch.object(L.subprocess, "Popen", BrokenPipe), patch.object(L, "build_argv", argv):
+            L.run_job(root, failed)
+        check("#796 communicate 예외도 실제 실행 프로세스를 회수", processes[-1].poll() is not None
+              and "injected pipe failure" in (failed / L.OUT).read_text())
+        req = root / L.AGY_ROOT / "in" / "failure"
+        req.mkdir(parents=True)
+        (req / "BRIEF.md").write_text("test")
+        relay = L.AgyRelay(root, failed)
+        with patch.object(L.subprocess, "Popen", BrokenPipe):
+            relay.serve("failure")
+        check("#796 agy communicate 예외도 프로세스를 회수", processes[-1].poll() is not None
+              and relay.proc is None)
+        nonzero = job("nonzero")
+        with patch.object(L, "build_argv", lambda *a, **k: [sys.executable, "-c",
+                                      "import sys; print('quota failure'); sys.exit(3)"]):
+            result = L.run_job(root, nonzero)
+        check("#796 비영점 정상 종료도 원래 rc·본문·종료 로그를 보존", result == 3
+              and "quota failure" in (nonzero / L.OUT).read_text()
+              and "codex 종료 — rc=3" in (nonzero / L.LOG).read_text())
+
+        facts = SimpleNamespace(host="fake", user="fake", windows=True, path="C:\\AXCluster", os="windows")
+        writes = []
+        def write(f, rel, content, **kw):
+            writes.append((rel, content))
+        with patch.object(B, "_remote_write", write), patch.object(B, "_ssh", lambda *a, **k: (1, "failed")):
+            rc, _ = R.run_worker_session1(facts, "failed", cancelled=lambda: False, logf=lambda _: None, cleanup_timeout=0)
+        check("#796 런처 기동 실패 시 job을 취소함", rc == 1 and writes[-1][0].endswith("cancel.flag"))
+        writes.clear()
+        def partial_write(f, rel, content, **kw):
+            write(f, rel, content, **kw)
+            if rel.endswith("job.json"):
+                raise OSError("remote write completed but reply lost")
+        with patch.object(B, "_remote_write", partial_write):
+            rc, out = R.run_worker_session1(facts, "partial", cancelled=lambda: False,
+                                          logf=lambda _: None, cleanup_timeout=0)
+        check("#796 job 부분 전송 후 예외도 남은 시도를 취소함", rc == 1
+              and writes[0][0].endswith("job.json") and writes[-1][0].endswith("cancel.flag")
+              and writes[0][0].rsplit("/", 1)[0] == writes[-1][0].rsplit("/", 1)[0])
+        writes.clear()
+        with patch.object(B, "_remote_write", write), patch.object(B, "_ssh", lambda *a, **k: (0, "WAIT")), \
+                patch.object(R, "_api", lambda *a, **k: {"status": "cancelled"}):
+            rc, out = R.run_worker_session1(facts, "cancelled", logf=lambda _: None, cleanup_timeout=0)
+        check("#796 큐의 명시 취소를 원격 시도에 전파", rc == 1 and "취소" in out
+              and writes[-1][0].endswith("cancel.flag"))
+        check("#796 요청 기한을 job에 전달", "expires_at" in json.loads(writes[0][1]))
+        writes.clear()
+        def denied(*a, **k):
+            if a[1].endswith("cancel.flag"):
+                raise OSError("network disconnected")
+            write(*a, **k)
+        with patch.object(B, "_remote_write", denied), patch.object(B, "_ssh", lambda *a, **k: (0, "WAIT")):
+            rc, out = R.run_worker_session1(facts, "cancelled", cancelled=lambda: True,
+                                          logf=lambda _: None, cleanup_timeout=0)
+        check("#796 취소 전송 실패를 전송 성공으로 보고하지 않음", "전달 실패" in out and "미확인" in out)
+
+        writes.clear()
+        def acknowledged(*a, **k):
+            if "done.flag" in a[2]:
+                return 0, json.loads(writes[0][1])["request_id"]
+            return 0, ""
+        with patch.object(B, "_remote_write", write), patch.object(B, "_ssh", acknowledged):
+            rc, out = R.run_worker_session1(facts, "cancelled", cancelled=lambda: True, logf=lambda _: None)
+        check("#796 취소 반환 전 해당 시도 런처 종료 확인", "런처 종료 확인" in out and "미확인" not in out)
+
+        writes.clear()
+        def interrupted(_):
+            raise RuntimeError("requester interrupted")
+        with patch.object(B, "_remote_write", write), patch.object(B, "_ssh", lambda *a, **k: (0, "WAIT")), \
+                patch.object(R, "_api", side_effect=OSError("unavailable")):
+            try:
+                R.run_worker_session1(facts, "interrupted", sleeper=interrupted,
+                                      logf=lambda _: None, cleanup_timeout=0)
+            except RuntimeError:
+                pass
+        check("#796 큐 조회 실패는 취소로 오탐하지 않고 요청자 예외에서 취소", writes[-1][0].endswith("cancel.flag")
+              and "대기 중단" in writes[-1][1])
 
 
 def test_delegation_calls() -> None:
@@ -1048,6 +1196,7 @@ def main() -> int:
                test_session1_master_logs,
                test_session1_launcher_logs,
                test_session1_attempt_isolation,
+               test_session1_cancellation,
                test_worker_does_not_build, test_claude_auth_runtime,
                test_delegation_calls, test_instruction_asks_delegation,
                test_delegation_failure_blocks,

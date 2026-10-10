@@ -4,7 +4,46 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-10 22:02 KST · Codex · #794 재확인 구현·통합31/31 통과, 커밋·배포 승인 대기**.
+- **현재 체크포인트: 2026-10-11 · Codex · 사용자 선택 #796 로컬 수정·검증 완료, 커밋·배포 승인 대기**.
+  - 사용자 「796번부터 고쳐」「응 진행해」로 distribute의 로컬 서브 에이전트 방식 승인. fix796 담당 파일 master/work/runner.py, client/runtime/session1_conductor.py, master/test_runner.py. 커밋/push/배포 미승인. 기존 미커밋 문서·106 실증·107 기록 보존.
+  - 당시 Claude quota 호출 rc1 종료, pending·5시간 워커 차단 및 hold 로그 확인. 현재 AXCluster 빌드 워커 probe .43/.2/.33 running0, Windows 런처Ready, 해당 파견 CLI 미확인. .2 pythonw worker_daemon PID91420는 MotionForge 소속. Claude 실패 실행 상주를 확정 원인으로 보고하지 않는다.
+  - 소스 확인·수정: Windows Codex 마스터 timeout/런처 기동 실패 뒤 원격job취소 누락, 런처 unfinishedjob 지연 실행, 일반 communicate 예외 프로세스 정리 누락을 보완. request별 cancel/expiry·명시적 큐 취소·tree/relay 정리·최대15초 런처완료ACK. 전달성공/종료미확인구분, 부분job전송실패도취소, 비영점정상완료로그보존. 자동 hold/재시도 정책·다른 프로젝트 서비스·직접 SSH Claude 계약 변경 없음. 보고서108, Redmine#796 진행.
+  - 변경전84abb5b 실제취소job 실행1/rc0→수정후취소/만료실행0/rc1·반복재실행0. 실제부모/자식취소종료 및 Codex/agy 예외회수검증. 최종runner241/241, autodispatch26/26, 공식통합31/31(61.203초), diffcheck통과. 통합최초sandboxsource_scope28/32 실패→동일명령실행승인으로32/32 및 전체통과, 범위밖코드변경없음. 운영Windows종료실증미실행·expiry는시계동기조건.
+  - 현재 새 파견/등재 없음. #795 cancelled·#793 rejected, main84abb5b 유지. fix796완료·root최종diff/통합확인. 실행중검사명령없음. 구현3파일·108/인계및기존106/107미커밋. 다음: 커밋/push/배포 별도 승인 후 정본 ax-deliver update 및 서비스반영, Windows원격실증. 새분산작업 자동등재없음.
+
+- **직전 체크포인트: 2026-10-10 22:30 KST · Codex · 사용자 지시로 분산 work 취소·#788 브랜치 정리, 워커 상주 버그#796 등록**.
+  - 마지막 사용자 지시: 「일단 브랜치 정리하고, 워커들 계속 상주해서 오동작 하는거 버그로 등록하고」「분산작업 하던거 다 제거해」「레드마인 일감 선택해서 처리하는 플로우로 다시 시도할꺼니까」. 다음 작업을 자동 선택하거나 재등재/파견하지 않는다.
+  - #795 work20261010_2214_788_794_4_codex_2bda5a1f 실제파견22:15:02~22:20:57 결과3/4: A1f648d81=.43/b29cb46d, B47d837d9=.2/5cec480f, C25990f03=.33/583507bc. 모두 Gemini APPROVE, #794 원응답 notes 보존, 이번에는 Codex 재확인 미발동. D915a3150=.2는 code/task 레코드 계약 모순을 보고 구현 중단해 층1 스텁4건 차단; 자동피드백4abbcb81 뒤 needs_revision.
+  - 원인 실증: 요청자 골조의 B/D 지시 code와 revalidation._identity의 context/ontology/task 허용값 불일치. 실제 task허용/codeValueError 확인. 재파견 준비 Codex가 기존 골조의 API 계약 재대조를 누락한 책임. 사용자에게 설명했고 임의 코드수정 없음. 전체 통합검사/⑺전진/finalize 미실행.
+  - 사용자 제거 지시로 정본 runner.cancel(D) → workcancelled 종결. cleanup terminal AXCluster --apply로 원격base+서브4 삭제5/실패0/건너뜀0, 자동Redmine#795 정리기록 및 별도결과노트 되읽기. 워커 .43/.2/.33 모두main/#788 로컬task브랜치0 확인. 마스터fetch --prune, 요청자b510d2f detached(clean) 보존 및 옛#788 로컬base삭제. main84abb5b 유지, 관련#788 원격브랜치0. 로그/스풀·커밋객체는 증거 보존.
+  - 워커 상주/잔존 실행 사용자 보고는 [#796](http://192.168.0.57:8080/issues/796) 신규등록(버그·개선, 높음)·되읽기. 실제 워커 잔존프로세스는 미실측이므로 원인 확정 금지. 마스터catchup 재파견과 세션1/AgyRelay/하위프로세스 생명주기 구분해 조사. 이번엔 등록만, 코드수정 없음.
+  - ax-dispatch inactive/MainPID0 확인. 진행중 마스터수동명령 없음. #795 cancelled·#793 rejected·#794 완료100% 보존. 보고서107 작성. 기존 main의 인계서/보고서106/실증JSON4개와 새107 미커밋. 별도커밋/push 승인은 없다.
+  - 다음: 사용자 선택한 Redmine 일감의 정본 스킬·실제소스·계약부터 확인한다. 일감선택 전 임의후속작업 없음. 인수 시 큐/서비스/워커 상태는 다시 대조할 것.
+
+- **직전 체크포인트: 2026-10-10 22:16 KST · Codex · #795 새 Codex work 실제3워커 파견 중**.
+  - 사용자 「응 진행해줘」로 준비된 골조4파일 커밋/push 및 새 등재·파견 승인. 요청자 /home/sim/ax-788-work 골조b510d2f(원래ca196a5 위 #790/#794 반영) 커밋, 새 base push 성공. main84abb5b 및 배포 상태는 유지.
+  - ax-client.register_work: work `20261010_2214_788_794_4_codex_2bda5a1f`, [#795](http://192.168.0.57:8080/issues/795), round1, modecodex, verified0/4. A1f648d81=.43(컨텍스트3파일), B47d837d9=.2(레인3파일), C25990f03=.33(온톨로지4파일), D915a3150 pending(주기2파일). 각 target_files는 이전과 같으며 B 계약에 #794 mode 전달 보존을 명시했다.
+  - 자동 hook으로22:15:02 파견 시작, 골조4/4 통과, baseb510d2f6. 첫 수동 --resume은 sandbox 큐 접속 거절; 같은 명령을 승인 해제 후 실행하니 이미 자동 파견 잠금이 있어 중복 실행 없음. 실행 주체 ax-dispatch.service(pid388441, 이전 세션 ID가 아님). 결과 미확인.
+  - 다음: get_work와 journalctl로 전체4조각 결과/판정자·Codex 재확인 여부를 추적하고 성공 후 review.advance_work(confirm=False)로 별도 worktree에 전체 조각 머지·공식 통합검사. ⑺ 전진/finalize 미승인. 실패하면 코드/환경을 임의 수정하지 않고 보고. 기존 #793 rejected 보존.
+
+- **직전 체크포인트: 2026-10-10 22:13 KST · Codex · #788 실제 분산 재시도 골조 준비·검사 완료, 새 골조 커밋/push 승인 대기**.
+  - 사용자 「좋아 이제 배포된 것으로 클로드가 실패한 작업 다시 시도하자」「이걸로 실제 분산 작업 검증되면 좋겠네」. 기존 AX 워커 분산·codex 모드 선택을 유지한다. #793 종결 상태 수동 복구 대신 같은4조각 정본 새 등재 준비.
+  - 실조회: 전역codex, .43/.2/.33 dispatchable3/3 소스 clean, AXCluster profile code/.py/blockers0. 기존 #793 원격 ref0개, 마스터 Git에서 A90f8a6b4/C8fe0ee2f/Df9c614c2 객체 없음. 결과 스풀·요청자 골조ca196a5는 보존. 객체 부재를 전체 작업 내용 소실로 단정하지 않는다.
+  - 요청자 /home/sim/ax-788-work는 시작ca196a5 clean. 배포된 #790/#794를 골조에 반영: layer2_verify.py/test_layer2_grounding.py/test_infer.py는 main84abb5b 내용 대조, work/infer.py에는 #794 mode 전달4줄만 반영해 기존 [PSEUDO] 유지. 변경4파일198추가/11삭제 미커밋. 별도 정책 본문 구현 없음. 마스터 main84abb5b 및 기존 배포/증거dirty 기록은 유지.
+  - 골조 정본 skeleton_gate.run_python A/B/C/D4/4 통과, requester grounding26/26 및 diff check 통과. 분해는 기존 A컨텍스트3파일/B레인3파일/C온톨로지4파일/D주기2파일. 새 work 등록·골조커밋/push·재파견은 아직 하지 않았다.
+  - 다음: 사용자에게 위4파일 골조 커밋/push 승인을 받은 뒤 ax-client.register_work(worker_mode=codex) 새 등재, 새 base push, 정본 autodispatch로 실제4조각 재실증·회수·요청자 통합검사. distribute의 「골조·코드 커밋/푸시는 매번 별도 승인」을 따른다. ⑺전진/finalize 별도 승인 유지.
+
+- **직전 체크포인트: 2026-10-10 22:10 KST · Codex · 사용자 요청으로 인계서만 갱신, #794 완료·#793 rejected 보존**.
+  - 마지막 사용자 지시: 「토큰 얼마 없으니까 인수인계서만 작성해줘」. 이 기록만 갱신한다. 추가 코드 수정·커밋/push·배포·파견·큐 변경은 하지 않는다.
+  - 사용자 「응 진행해줘!」 승인: 84abb5b main 커밋/push 완료. ax-deliver 정본 master.client update rc0, clean 트리/출처84abb5b, .43/.2/.33 배달·검사3/3 통과. ax-projects 정본 재시작 rc0, 21:15:35→22:04:44 KST, active/running 확인.
+  - #793 재조회: A90f8a6b4/C8fe0ee2f/Df9c614c2 verified3/4, Bfailed 때문에 rejected(21:56:20). 정본 improve_work/재개로 종결 work를 살리지 않음. 새 등재·큐 수동변경·추가 워커 파견 없음.
+  - 보존된 B 스풀3파일·기준ca196a5 선언35개/원본으로 실제 새 검증기 호출: Gemini64.7초 rc0 APPROVE(추가 Codex0). 통제된 Gemini timeout 주입 시 실제 Codex8.9초 rc0 APPROVE. 두 실증 verdict/usage 파일 reports/106-layer2-live-*에 보존. Codex measured=true·source=layer2·work/task 귀속 확인. 자연 실패와 주입 실증을 구분할 것.
+  - ax-redmine 정본 도구로 #794 완료100% 및 #793 결과 노트를 기록·되읽기 확인. Redmine #793 상태 신규와 분산 큐 work rejected는 별개다. #794 구현/운영 적용/실증 완료. #793의 B 판정 성공은 큐 복구나 구현 커밋 생성·전체 통합 성공이 아님. #788 후속 준비에서 기존 infer.py 구현과 #794 모드 전달을 함께 보존해야 한다. ⑺ 전진/finalize 미실행.
+  - main HEAD84abb5b. 배포 후 실증 기록(이 인계서·보고서106 변경 및 JSON/JSONL4개)은 미커밋. 배포시 깨끗한 상태와 구분. 실행 중 마스터 검증 명령 없음. 다음 사용자 선택은 rejected work의 결과 보존/정본 재등재 및 추가 골조 커밋 승인이다.
+  - **인수자가 먼저 확인할 것**: 정본 ax-handoff로 HEAD/dirty·get_work·전역 worker_mode 및 서비스를 대조한다. #793 work_id=`20261010_2132_788_claude_codex_4_bca80057`, task A4138dcf1/Bc2cf39d5/C13ff20a1/D42c01670. 요청자 `/home/sim/ax-788-work`의 마지막 확인 HEAD는 ca196a5이며 이번 인계 요청에서는 재조회하지 않았다. 브랜치 삭제 문제 #791이 미해결이므로 원격 ref/커밋 존재를 실제 확인하고 완료 결과와 로컬 골조를 먼저 보존한다. 기존 종결 work 상태를 수동으로 고치지 않는다.
+  - **미커밋 증거4개**: reports/106-layer2-live-b-verdict.json, reports/106-layer2-live-b-usage.jsonl, reports/106-layer2-live-fallback-verdict.json, reports/106-layer2-live-fallback-usage.jsonl. 보고서106과 함께 확인한다. 이 기록들을 커밋하려면 새 승인이 필요하며 커밋 뒤 배달은 정본 ax-deliver 절차로 별도 승인 범위를 따른다. 이전 세션 실행 ID를 재사용하지 않는다.
+
+- **직전 체크포인트: 2026-10-10 22:02 KST · Codex · #794 재확인 구현·통합31/31 통과, 커밋·배포 승인 대기**.
   - 사용자 결정: 오케스트레이터 Codex/Claude → Gemini 기본 문법 검사 → Gemini 오탐·판정 불가 시 선택 지휘자가 전체 소스와 근거를 재확인해 최종 판정. 같은 작성 계열이라는 이유로 재확인을 배제하지 않는다. 요청자의 전체 머지·통합검사는 유지한다.
   - [#794](http://192.168.0.57:8080/issues/794) 버그 등록(부모 #788, 마일스톤6, 진행). distribute 절차로 사용자가 로컬 서브 에이전트 구현을 승인했다. 변경4파일: master/layer2_verify.py, master/work/infer.py, master/test_layer2_grounding.py, master/test_infer.py. 기존 인계서 dirty 기록 보존. 보고서106 작성.
   - 명시 orchestrator codex/claude 경로만 변경. Gemini 승인 시 추가호출0, 지적·timeout·quota·형식오류·쿨다운 시 선택 지휘자 재확인. 실제 오류는 수정 요청 유지, 최종 판정 불가도 원인을 남겨 차단. 두 원응답·사유 warnings→wcommit notes 보존, 기존 layer2 사용량 sink 사용. lane·비분산 계약 유지.

@@ -66,6 +66,7 @@ from pathlib import Path
 
 JOB_DIR = ".ax/session1"
 JOB, OUT, RC, DONE = "job.json", "out.txt", "rc.txt", "done.flag"
+CANCEL = "cancel.flag"
 LOG = "launcher.log"
 
 # [중요] 마스터 `runner.INSTRUCTION` 과 **같은 글자**여야 한다 — 배달물은 마스터를 import 하지
@@ -202,6 +203,8 @@ class AgyRelay(threading.Thread):
                 self.proc = subprocess.Popen(argv, cwd=str(req), stdout=subprocess.PIPE,
                                              stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
                                              text=True, encoding="utf-8", errors="replace", **kw)
+                if self.stop.is_set():
+                    _kill_tree(self.proc)
                 try:
                     so, se = self.proc.communicate(timeout=AGY_LIMIT)
                     rc = self.proc.returncode
@@ -213,6 +216,12 @@ class AgyRelay(threading.Thread):
             except Exception as e:                           # noqa: BLE001
                 se, rc = f"[런처] agy 실행 실패 — {type(e).__name__}: {e}", 127
             finally:
+                if self.proc is not None and self.proc.poll() is None:
+                    _kill_tree(self.proc)
+                    try:
+                        self.proc.wait(timeout=30)
+                    except Exception:
+                        _log(self.d, "🔴 agy 종료 뒤 프로세스 회수 실패")
                 self.proc = None
         try:
             (out / f"{name}.json").write_text(so or "", encoding="utf-8")
@@ -225,8 +234,9 @@ class AgyRelay(threading.Thread):
 
     def shutdown(self) -> None:
         self.stop.set()
-        if self.proc is not None:
-            _kill_tree(self.proc)
+        proc = self.proc
+        if proc is not None and proc.poll() is None:
+            _kill_tree(proc)
             _log(self.d, "🔴 codex 가 끝났는데 agy 중계가 돌고 있었다 — 프로세스 트리를 죽였다")
         self.join(timeout=10)
 
@@ -248,15 +258,19 @@ def _start_relay(root: Path, d: Path):
         return None
 
 
-def _stop_relay(root: Path, d: Path, relay) -> None:
+def _stop_relay(root: Path, d: Path, relay) -> bool:
     if relay is None:
-        return
+        return True
     relay.shutdown()
     try:
         (root / AGY_ROOT / AGY_MARK).unlink()
     except OSError:
         pass
     _log(d, f"agy 중계 종료 — 처리 {len(relay.handled)}건")
+    if relay.is_alive():
+        _log(d, "🔴 agy 중계 스레드 종료 미확인")
+        return False
+    return True
 
 
 def _kill_tree(proc) -> None:
@@ -288,6 +302,23 @@ def run_job(root: Path, d: Path) -> int:
         job = {}
     files = job.get("files") or []
     limit = int(job.get("timeout") or 3600)
+    def stopped():
+        if (d / CANCEL).exists():
+            return "요청자 취소"
+        if job.get("expires_at") and time.time() >= float(job["expires_at"]):
+            return "요청 기한 만료"
+        return ""
+    def finish():
+        (d / OUT).write_text(out, encoding="utf-8")
+        (d / RC).write_text(str(rc), encoding="utf-8")
+        _log(d, f"결과 기록 — rc={rc} · 전체 {int(time.monotonic() - t0)}초 · done.flag 를 쓴다")
+        (d / DONE).write_text(str(job.get("request_id") or "done"), encoding="utf-8")
+        return rc
+    reason = stopped()
+    if reason:
+        out = f"[런처] {reason} — 실행하지 않았다"
+        _log(d, out)
+        return finish()
     _log(d, f"job 집음 — task={job.get('task_id', d.name)} · 파일 {len(files)} · 제한 {limit}초")
     argv = build_argv(root, files, job.get("approvals") or (), self_repo=job.get("self_repo") is True)
     # 🔴 [중요] **자식까지 죽여야 한다** (실측 2026-09-12). 세션 1 은 데스크톱이 있어서
@@ -302,32 +333,48 @@ def run_job(root: Path, d: Path) -> int:
     else:
         kw["start_new_session"] = True
     relay = _start_relay(root, d)                           # `#764` — codex 보다 먼저
+    proc = None
     try:
         proc = subprocess.Popen(argv, cwd=str(root), stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                 text=True, encoding="utf-8", errors="replace", **kw)
         _log(d, f"codex 시작 — pid={proc.pid} · 실행 파일 {argv[0]}")
-        try:
-            out = proc.communicate(timeout=limit)[0] or ""
-            rc = proc.returncode
+        deadline = time.monotonic() + limit
+        completed = False
+        while True:
+            reason = stopped()
+            remaining = deadline - time.monotonic()
+            if reason or remaining <= 0:
+                _kill_tree(proc)
+                out = proc.communicate(timeout=30)[0] or ""
+                out += f"\n[런처] {reason or '시간 초과'} — 프로세스 트리를 죽였다"
+                _log(d, f"🔴 {reason or f'시간 초과 {limit}초'} — 프로세스 트리를 죽였다 (pid={proc.pid})")
+                break
+            try:
+                out = proc.communicate(timeout=min(1, remaining))[0] or ""
+                rc = proc.returncode
+                completed = True
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if completed:
             _log(d, f"codex 종료 — rc={rc} · {int(time.monotonic() - t0)}초 · 출력 {len(out)}자")
-        except subprocess.TimeoutExpired:
-            _kill_tree(proc)
-            _log(d, f"🔴 시간 초과 {limit}초 — 프로세스 트리를 죽였다 (pid={proc.pid})")
-            out = proc.communicate(timeout=30)[0] or ""
-            out += ("\n[런처] 시간 초과 — 프로세스 트리를 죽였다. 세션 1 은 크래시가 모달로 "
-                    "뜰 수 있고 그러면 자식이 무한 대기한다(`DontShowUI` 로 완화).")
-            rc = 1
     except Exception as e:                                   # noqa: BLE001
         out, rc = f"[런처] 실행 실패 — {type(e).__name__}: {e}", 1
         _log(d, f"🔴 실행 실패 — {type(e).__name__}: {e}")
-    _stop_relay(root, d, relay)
-    (d / OUT).write_text(out, encoding="utf-8")
-    (d / RC).write_text(str(rc), encoding="utf-8")
-    # [주의] 로그를 **done.flag 보다 먼저** 쓴다 — 마스터는 done.flag 를 보자마자 로그를 읽는다
-    _log(d, f"결과 기록 — rc={rc} · 전체 {int(time.monotonic() - t0)}초 · done.flag 를 쓴다")
-    (d / DONE).write_text(str(job.get("request_id") or "done"), encoding="utf-8")  # 맨 마지막
-    return rc
+    finally:
+        if proc is not None and proc.poll() is None:
+            _kill_tree(proc)
+            try:
+                proc.wait(timeout=30)
+            except Exception:
+                _log(d, "🔴 종료 뒤 프로세스 회수 실패")
+                out += "\n[런처] 프로세스 종료 미확인"
+                rc = 1
+        if not _stop_relay(root, d, relay):
+            out += "\n[런처] agy 중계 종료 미확인"
+            rc = 1
+    return finish()
 
 
 def find_root() -> Path:
