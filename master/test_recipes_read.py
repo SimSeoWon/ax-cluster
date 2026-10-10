@@ -37,8 +37,12 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
+# [DOC] #777: `_paths()` 가 mkdtemp 로 만든 임시 루트가 실행 뒤 남아 `/tmp/tmp*` 가 쌓였다.
+# 만든 루트를 모듈 수준 목록에 기록하고, 모든 검사가 끝나면(실패·예외 포함) 한 번에 지운다.
+# 검사 판정(check)·기존 함수 시그니처는 바꾸지 않는다.
 def _paths(with_recipes=True):
     tmp = Path(tempfile.mkdtemp())
+    # [PSEUDO] 만든 tmp 를 모듈 수준 정리 목록에 추가한다.
     if with_recipes:
         (tmp / "recipes").mkdir()
     return types.SimpleNamespace(name="X", root=tmp, recipes=tmp / "recipes")
@@ -194,6 +198,8 @@ def test_wiring_keeps_the_query_out_of_the_url() -> None:
 
 
 if __name__ == "__main__":
+    # [PSEUDO] 아래 검사 실행을 try/finally 로 감싸고, finally 에서 정리 목록의 루트를 모두
+    #   shutil.rmtree(root, ignore_errors=True) 로 지운다. 요약 출력과 종료 코드는 그대로 둔다.
     for fn in (test_empty_states_say_why, test_matching_by_english_and_identifier,
                test_korean_query_gets_a_catalog_not_a_dead_end,
                test_frontmatter_parsing_is_narrow_on_purpose,

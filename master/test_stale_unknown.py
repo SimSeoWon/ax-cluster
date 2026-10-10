@@ -114,7 +114,10 @@ def test_missing_doc_is_not_undecidable() -> None:
     실측 2026-08-23: 지금 그런 멤버는 **0건**이라 라이브로는 드러나지 않는다. 그래서 계약을
     유닛으로 못박는다 — 나중에 생겼을 때 조용히 판정 불가로 접히면 합성이 안 돈다.
     """
+    # [DOC] #777: 이 검사가 mkdtemp 로 만든 임시 루트가 실행 뒤 남아 `/tmp/tmp*` 가 쌓였다.
+    # 검사 판정(check)은 그대로 두고, 함수가 끝날 때(실패·예외 포함) 루트를 지운다.
     tmp = Path(tempfile.mkdtemp())
+    # [PSEUDO] 아래 본문을 try/finally 로 감싸고 finally 에서 shutil.rmtree(tmp, ignore_errors=True).
     (tmp / "context").mkdir()
     import types
     paths = types.SimpleNamespace(context=tmp / "context", ontology=tmp / "ontology")
