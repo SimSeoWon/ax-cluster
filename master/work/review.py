@@ -111,7 +111,32 @@ class Integration:
     conflict: bool = False
     conflict_branch: str = ""
     missing_durable: str = ""
+    # 🔴 `#787` — 서브 브랜치가 ⑺ 전진 때 작업 브랜치에 머지된 뒤 **정리돼 원격에 없는** 조각.
+    #    그 증거는 작업 브랜치의 `[ADVANCE] <work>: <durable>` 머지 커밋이다. 이름을 남긴다.
+    advanced: list = field(default_factory=list)
     error: str = ""
+
+
+ADVANCE_LABEL = "[ADVANCE]"
+
+
+def advanced_merge(repo: Path, remote: str, target_branch: str, work_id: str, dur: str) -> str:
+    """`dur` 이 ⑺ 전진 때 `target_branch` 에 머지됐다는 **git 안의 증거** — 그 머지 커밋 해시, 없으면 "".
+
+    🔴 `#787` (사용자 결정 2026-10-10): 전진 직후 머지한 서브 브랜치를 지우므로, finalize 시점에는
+    원격에 없다. 판정은 상태 추론이 아니라 **작업 브랜치에 남은 머지 커밋**이다 — `advance_work` 가
+    `merge --no-ff -m "[ADVANCE] <work>: <durable>"` 로 남긴다(`integrate_durables` 의 `merge_label`).
+    [주의] 제목이 **정확히** 같아야 한다 — 다른 work·다른 조각 이름이 부분 일치로 통과하지 않게.
+    """
+    want = f"{ADVANCE_LABEL} {work_id}: {dur}"
+    rc, out = _git_rc(repo, "log", "--merges", "--format=%H%x09%s", f"{remote}/{target_branch}")
+    if rc != 0:
+        return ""
+    for line in out.splitlines():
+        sha, _, subj = line.partition("\t")
+        if subj.strip() == want:
+            return sha.strip()
+    return ""
 
 
 def order_verified(tasks) -> list:
@@ -181,12 +206,22 @@ def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
     verified, skipped = split_push_tasks(tasks)
     merged: list = []
     ax_only: list = []
+    advanced: list = []
     for t in verified:
         tid = t.get("task_id")
         dur = durable_branch(work_id, tid, int(t.get("round") or 0))
         # [중요] verified 인데 durable 이 없다 = 이상(검증 워커의 merge 누락) → 통째 중단.
         #    [주의] 여기서 넘어가면 **검증됐다고 기록된 것이 빠진 채** 통합이 성공으로 보인다.
         rc, ls = _git_rc(repo, "ls-remote", "--heads", remote, dur)
+        if rc == 0 and not ls.strip():
+            # 🔴 `#787` — ⑺ 전진 때 작업 브랜치에 들어가고 정리된 서브 브랜치. 위 feature 머지로
+            #    이미 이 트리에 있다. 증거(머지 커밋)가 없으면 아래 「통째 중단」 그대로다.
+            sha = advanced_merge(repo, remote, target_branch, work_id, dur)
+            if sha:
+                advanced.append(dur)
+                logf("integrate", f"durable {dur} — ⑺ 전진 때 작업 브랜치에 머지됐다 "
+                                  f"({sha[:10]}) · 브랜치는 정리됨 (#787)")
+                continue
         if rc != 0 or not ls.strip():
             return Integration(merged=merged, skipped=skipped, missing_durable=dur,
                                error=f"verified task {tid} 의 durable `{dur}` 가 {remote} 에 없다 — 통째 중단")
@@ -223,7 +258,7 @@ def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
                            error=("[중요] 통합 트리에 `.ax/` 파일이 들어왔다 — 게임 `main` 에 "
                                   "인프라 파일을 넣지 않는다(`#319` ⓐ). 통째 중단: "
                                   + ", ".join(stray[:5])))
-    return Integration(ok=True, merged=merged, skipped=skipped, ax_only=ax_only)
+    return Integration(ok=True, merged=merged, skipped=skipped, ax_only=ax_only, advanced=advanced)
 
 
 def _touches_outside_ax(repo: Path, base_ref: str, dur_ref: str) -> list:
@@ -581,6 +616,8 @@ class Decision:
     merged_durables: list = field(default_factory=list)
     # [중요] `#319` ⓐ — 머지 **안 한** 매니페스트 전용 조각. "안 했다"와 "빠뜨렸다"는 다르다
     ax_only: list = field(default_factory=list)
+    # `#787` — ⑺ 전진 때 작업 브랜치로 들어가고 정리된 서브 브랜치(작업 브랜치 머지로 반영)
+    advanced_durables: list = field(default_factory=list)
     tree: str = ""
     cleanup: object = None          # CleanupPlan — [중요] 계획일 뿐이다
     commands: list = field(default_factory=list)
@@ -721,6 +758,7 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
                     integ = Integration(ok=True, merged=[target])
         d.merged_durables = integ.merged
         d.ax_only = integ.ax_only
+        d.advanced_durables = list(integ.advanced)
         if not integ.ok:
             d.error = integ.error
             _git_rc(repo, "worktree", "remove", "--force", str(tree))   # 부분 머지 폐기
@@ -774,7 +812,9 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
                 f"- 통합: 작업 브랜치 `{target}` + 소스를 든 durable "
                 f"{len(d.merged_durables)}건 (no-ff)"
                 + (f" · 매니페스트 전용 {len(d.ax_only)}건은 **머지하지 않았다** "
-                   f"(`#319` ⓐ)" if d.ax_only else "") + "\n"
+                   f"(`#319` ⓐ)" if d.ax_only else "")
+                + (f" · ⑺ 전진 때 작업 브랜치로 들어간 조각 {len(d.advanced_durables)}건"
+                   f"(서브 브랜치 정리됨 · `#787`)" if d.advanced_durables else "") + "\n"
                 f"- 검토자: {reviewer or '(미지정)'}\n"
                 + (f"- 커밋 연결: `{d.merge_commit}`\n" if d.merge_commit else "")
                 + f"- 브랜치 정리: 삭제 {len(d.deleted_branches)}건"

@@ -303,6 +303,33 @@ def test_advance_prunes_round_subbranches():
         body = (notes[0] or {}).get("notes", "") if notes else ""
         check("레드마인 노트에 지운 서브 브랜치·해시", p1 in body and p2 in body and "#787" in body, body)
 
+        # 🔴 #787 실측 2026-10-10: 전진 뒤 서브 브랜치가 없어서 finalize 가 「durable 이 없다 — 통째 중단」.
+        #    작업 브랜치의 `[ADVANCE]` 머지 커밋이 증거면 통과해야 한다 — main 에 두 조각이 다 들어간다.
+        work_r = dict(work, merge_status="ready_for_review", target_branch=f"task/{WD}/base")
+        # [주의] 이 픽스처의 원격은 가드(pre-push)가 main push 를 막는다 — 통합까지만 잰다(confirm=False).
+        d = R.finalize_work(fx.repo, work_id=WD, work=work_r, tasks=tasks, confirm=False,
+                            remote=REMOTE, api=lambda *a, **k: {"ok": True})
+        check("[중요] 전진·정리 뒤 finalize 통합이 통과한다", not d.error and not d.pushed, d.error)
+        check("  전진분으로 인정한 조각 둘", sorted(d.advanced_durables) ==
+              sorted([f"task/{WD}/r1/p1", f"task/{WD}/r1/p2"]), str(d.advanced_durables))
+        rc, files = _run(Path(d.tree), "ls-tree", "-r", "--name-only", "HEAD", ok=False)
+        check("  통합 트리에 두 조각의 파일이 다 있다",
+              "Source/D1.cpp" in files and "Source/D2.cpp" in files, files)
+
+    # 증거 없는 누락은 여전히 통째 중단 — 다른 work 이름의 머지 커밋으로 통과하지 않는다
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = Fx(Path(tmp))
+        base = fx.branch_at(f"task/{WD}/base", fx.main, "Source/E.h", "// e skel\n")
+        tasks = [{"task_id": "q1", "status": "verified", "distribution_mode": "push", "round": 1}]
+        work_r = {"work_id": WD, "round": 1, "merge_status": "ready_for_review",
+                  "target_branch": f"task/{WD}/base", "distribution_mode": "push"}
+        d = R.finalize_work(fx.repo, work_id=WD, work=work_r, tasks=tasks, confirm=True,
+                            remote=REMOTE, api=lambda *a, **k: {"ok": True})
+        check("[중요] 전진 증거 없는 durable 누락은 여전히 중단", (not d.ok) and not d.pushed
+              and "통째 중단" in (d.error or ""), d.error)
+        check("  증거 판정은 제목이 정확히 같아야 한다",
+              R.advanced_merge(fx.repo, REMOTE, f"task/{WD}/base", WD, f"task/{WD}/r1/q1") == "")
+
 
 def test_prune_helper_keeps_unmerged_and_foreign():
     with tempfile.TemporaryDirectory() as tmp:
