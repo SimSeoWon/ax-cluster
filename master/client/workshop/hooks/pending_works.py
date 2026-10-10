@@ -92,34 +92,6 @@ def _line(w: dict, detail: dict | None) -> str:
     return out
 
 
-def _load_followup():
-    """배달된 `axmaster.work.followup` (`#798`). `.ax/lib` 는 `_load_client` 가 경로에 넣었다."""
-    from axmaster.work import followup                      # noqa: PLC0415
-    return followup
-
-
-def _followup_block(cwd: Path, w: dict, detail: dict | None) -> str:
-    """⑦ 준비 기록(완료 훅·60초 타이머가 남긴 것)을 **사실로만** 붙인다 (`#798` ⓑ).
-
-    🔴 이 훅의 stdout 은 세션 컨텍스트에 들어간다 — 여기 붙는 글은 `followup.render` 그대로이고
-    명령형을 싣지 않는다. 기록을 못 읽은 것은 「없다」와 다르게 말한다(조용한 빈 결과 금지).
-    """
-    wid = str(w.get("work_id") or "")
-    try:
-        fu = _load_followup()
-    except Exception as e:                                  # noqa: BLE001
-        return f"    ⑦ 준비 기록 조회 불가 — {type(e).__name__}: {str(e).splitlines()[0] if str(e) else ''}"
-    rnd = ((detail or {}).get("work") or {}).get("round") or w.get("round")
-    try:
-        rec = fu.recorded_for(cwd, wid, int(rnd) if rnd else None)
-    except Exception as e:                                  # noqa: BLE001
-        return f"    ⑦ 준비 기록 조회 불가 — {type(e).__name__}: {str(e).splitlines()[0] if str(e) else ''}"
-    if not rec:
-        return (f"    ⑦ 준비 기록 없음 — 라운드 {rnd or '?'} 에 대해 완료 훅·타이머가 남긴 "
-                "준비 결과가 이 기계에 없다")
-    return "\n".join("    " + ln for ln in fu.render(rec).splitlines())
-
-
 def _editor_notice(data: dict) -> None:
     """에디터(Unreal MCP) 접근 가능 여부 한 줄 (`#374`).
 
@@ -226,9 +198,7 @@ def main() -> None:
     if ready:
         out.append(f"\n■ 라운드 종결 대기 {len(ready)}건 — **작업 브랜치를 한 칸 전진**"
                    f"시키는 자리다 (`main` 이 아니다)")
-        for w in ready:
-            out.append(_line(w, details.get(w.get("work_id"))))
-            out.append(_followup_block(cwd, w, details.get(w.get("work_id"))))
+        out += [_line(w, details.get(w.get("work_id"))) for w in ready]
         out.append("  → `ax-advance`: 서브 브랜치를 전부 작업 브랜치에 머지 → 거기서 "
                    "**한 번** UE5 빌드")
         out.append("     · 빌드가 실패하면 고치고 **다시 빌드한다** — 통과를 재기 전에는 "

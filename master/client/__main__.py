@@ -130,27 +130,20 @@ def cmd_plan(project: str, *, only: str = "") -> int:
         for n in bundle.skills_for(f.role, init):
             # [주의] 도구별 자리를 **전부** 찍는다 — 선언은 `spec.SKILL_HOMES` 하나다(`#385`).
             #    계획에 안 보이면 사람이 배달 내용을 눈으로 확인할 수 없다.
-            # 🔴 `#798` — 마스터 호스트는 홈이 아니라 체크아웃이다(`bundle.tool_skill_targets`).
-            for rel, base in bundle.tool_skill_targets(f, n):
-                print(f"   → {bundle._write_target(f, rel, base)} "
-                      f"({len(bundle.skill_text(n))}자)  [role={f.role}"
-                      + (" · 마스터 호스트: 체크아웃 프로젝트 스킬 · #798]" if f.on_master else "]"))
+            for rel in spec.skill_rels(n):
+                print(f"   → {f.home}/{rel} "
+                      f"({len(bundle.skill_text(n))}자)  [role={f.role}]")
             print(f"   → {f.path}/{spec.project_skill_rel(n)} "
                   f"({len(bundle.skill_text(n))}자)  [프로젝트 로컬 정본 · #699]")
         # [중요] **MCP 엔트리를 계획에 찍는다** — 워커가 못 받는다는 판단이 조건문 한 줄에
         #    숨어 있으면 아무도 그것을 보지 못한다 (#261).
         mcp = spec.mcp_for(f.role, init)
-        if f.on_master:
-            print(f"   [마스터 호스트 · #798] 홈(~/.claude/skills · ~/.codex/skills · ~/.claude.json)"
-                  " 을 쓰지도 지우지도 않는다 — 배달물은 전부 체크아웃 안")
-        if mcp and bundle.mcp_scope(f, init) == "local":
+        if mcp and spec.mcp_scope_for(init) == "local":
             for n in mcp:
                 print(f"   → {f.host}: `{bundle.claude_mcp_local_cmd(f, n)}`  "
                       "[로컬 스코프 — .mcp.json 은 안 건드림 · #693]")
         else:
-            print(f"   → {f.path}/.mcp.json — 엔트리 {', '.join(mcp) or '(없음 — 이 역할은 받지 않는다)'}"
-                  + ("  [project 스코프 — 마스터 ~/.claude.json 을 안 건드림 · #798]"
-                     if mcp and f.on_master else ""))
+            print(f"   → {f.path}/.mcp.json — 엔트리 {', '.join(mcp) or '(없음 — 이 역할은 받지 않는다)'}")
         if not spec.entry_docs_for(init):
             print(f"   → {f.path}/CLAUDE.md · {spec.CODEX_ENTRY_REL} — [건너뜀] 색인 전용: "
                   "커밋된 사람 파일이라 관리 블록을 쓰지 않는다 (#693)")
@@ -162,11 +155,8 @@ def cmd_plan(project: str, *, only: str = "") -> int:
                   f"[블록만 교체 · 없으면 CLAUDE.md 시드]")
         cmcp = spec.codex_mcp_for(f.role, init)
         if cmcp:
-            # `#798` — 배달은 `#699` 부터 홈 전역 `codex mcp add` 가 아니라 체크아웃의
-            #    `.codex/config.toml` 관리 블록을 쓴다(`bundle.codex_project_mcp_add`). 계획도 그 자리를 찍는다.
             for n in cmcp:
-                print(f"   → {f.path}/{bundle.CODEX_PROJECT_CONFIG_REL} — `[mcp_servers.{n}]` "
-                      f"관리 블록 [프로젝트 로컬 · #699]"
+                print(f"   → {f.host}: `{bundle.codex_mcp_cmd(f, n)}`"
                       + ("" if f.codex else "  ← [주의] codex 없음 — 건너뛴다"))
         # [중요] **훅 「등록」을 계획에 찍는다** (`#337`) — 파일 배달과 다른 자리다. 종전에는
         #    `.claude/hooks/domain_hint.py` 가 배달 목록에만 있어서, 그것이 **등록되지 않아
@@ -234,7 +224,7 @@ def cmd_plan(project: str, *, only: str = "") -> int:
         #    배달된 기계가 정리되지 않는다 — `#232` 가 그 부류였고 그때 실패는 조용했다.
         # [중요] **상주 등록 계획 절이 여기 있었다** (`#255` → `#320` 으로 철거, 2026-08-27).
         #    상주가 0이므로 낼 계획이 없다. 파견은 마스터가 SSH 로 민다.
-        rm = bundle.removals(f, init)          # `#798` — 마스터 호스트는 홈을 지우지 않는다
+        rm = spec.removals_for(f.role, init)
         for kind, names in (("스킬", rm["skills"]), ("MCP 엔트리", rm["mcp"])):
             if names:
                 # [중요] `#232` 는 2026-09-02 에 닫혔다 — `deliver` 가 실제로 지운다
@@ -377,8 +367,8 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
         # 🔴 `#655` — 아래에서 잴 고정 파일의 해시를 **연결 한 번에** 받는다. 종전에는 파일마다
         #    ssh(Windows 는 PowerShell 기동)를 따로 열어 `.2` 한 대 검사에 13회·약 8초가 들었다.
         #    [주의] 받지 못한 경로는 빈 값이라 「불일치」로 판정된다 — 실패는 실패 쪽으로 닫힌다.
-        _probe_targets = [bundle._write_target(f, r, b)
-                          for n in names for r, b in bundle.tool_skill_targets(f, n)]
+        _probe_targets = [bundle._write_target(f, r, "home")
+                          for n in names for r in spec.skill_rels(n)]
         _probe_targets += [bundle._write_target(f, spec.project_skill_rel(n), "checkout")
                            for n in names]
         _probe_targets += [bundle._write_target(
@@ -389,8 +379,8 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
         for n in names:
             want = hashlib.sha256(bundle.skill_text(n).encode("utf-8")).hexdigest()
             # [중요] 도구별 자리를 **전부** 검사한다 — 한 곳만 보면 codex 쪽 누락이 안 보인다.
-            for rel, base in bundle.tool_skill_targets(f, n):     # `#798`
-                target = bundle._write_target(f, rel, base)
+            for rel in spec.skill_rels(n):
+                target = bundle._write_target(f, rel, "home")
                 ok_skill = ok_skill and known.get(target, "") == want
             target = bundle._write_target(f, spec.project_skill_rel(n), "checkout")
             ok_skill = ok_skill and known.get(target, "") == want
@@ -422,7 +412,7 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
         ok_client = True
         client_note = ""
         if f.role == "requester":
-            if bundle.mcp_scope(f, init) == "local":
+            if spec.mcp_scope_for(init) == "local":
                 # 🔴 색인 전용(`#693`) — 배달이 쓴 자리(로컬 스코프)를 본다. `.mcp.json` 을 보면
                 #    정상 배달을 실패로 답한다(`#337` 과 같은 부류: 쓰는 자리와 재는 자리가 갈림).
                 got_l = bundle.claude_mcp_local_get(f, bundle.MCP_SERVER_NAME)
@@ -520,7 +510,7 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
 
         # [중요] **폐지분이 아직 남아 있는지 이름으로 답한다** (#266 완료 조건 4).
         #    합계만 답하면 「무엇이」 남았는지 알 수 없고, 그러면 고칠 수 없다.
-        rm = bundle.removals(f, init)          # `#798` — 마스터 호스트는 홈 폐지분을 묻지 않는다
+        rm = spec.removals_for(f.role, init)
         left: list = []
         if rm["skills"]:
             if f.windows:
@@ -587,9 +577,6 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
             if not got:
                 ok_codex = False
                 codex_note += f" · [실패] codex 가 {n} 을 모른다 (`codex mcp get` 못 찾음)"
-            elif bundle.codex_master_global_ok(got, f):
-                # `#798` — 마스터 호스트 요청자는 전역 `master-local` 항목을 본다(실측). 정본이다.
-                codex_note += f" · codex {n} = 마스터 전역 항목(master-local)"
             elif not bundle.codex_mcp_matches(got, f):
                 ok_codex = False
                 _tr = got.get("transport") or {}

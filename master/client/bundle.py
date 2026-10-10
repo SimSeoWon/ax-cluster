@@ -57,23 +57,6 @@ from . import spec
 
 MASTER_HOST = "192.168.0.57"
 SERVICES = {"task_queue": 8101, "broker": 8102, "projects": 8103}
-
-# 🔴 `#798` — **마스터 자기 호스트에 놓인 작업장** (사용자 결정: 마스터가 AXCluster 요청자를 겸한다).
-#    홈(`~/.claude/skills`·`~/.codex/skills`·`~/.claude.json`)은 **마스터 자신의 세션**이 읽는
-#    자리라 배달이 쓰거나 지우면 마스터의 스킬(`distribute` 등)이 사라진다. 그래서 이 호스트의
-#    배달물은 **전부 체크아웃 안**에 둔다. 판정은 레지스트리의 `host` 값 하나다.
-MASTER_HOST_ALIASES = (MASTER_HOST, "localhost", "127.0.0.1", "::1")
-# 마스터 홈에서 배달이 **절대 쓰거나 지우지 않는** 스킬 루트 (`_guard_master_home` 가 집행한다)
-MASTER_HOME_SKILL_ROOTS = tuple(f"{h}/skills" for h in spec.SKILL_HOMES + spec.SKILL_SHADOW_HOMES)
-
-
-# `#798` — 마스터 호스트 요청자의 `backends.python`. 저장소 정본 venv(이 파일 기준 두 단계 위).
-MASTER_VENV_PYTHON = str(Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python")
-
-
-def is_master_host(host: str) -> bool:
-    """이 호스트가 마스터 자신인가 (`#798`)."""
-    return (host or "").strip().lower() in MASTER_HOST_ALIASES
 # [중요] **표는 `spec.py` 가 소유한다** (#266). 여기 있던 정의를 옮겼다 — 같은 값이 두
 #    곳에 있으면 다음에 갈린다(리포트 29 §7-5: *관례는 세기 전에 찾는다*).
 SKILLS_BY_ROLE = spec.SKILLS_BY_ROLE
@@ -92,7 +75,6 @@ SKILL_NAME = "ax-work"          # (호환) 단수 참조가 남아 있는 곳
 #   보이는 실패다. 실측으로 확인한 폐포:
 #       review → coordinator → branch_names
 #       build_local → layer3_verify · skeleton_gate → layer3_verify
-#       followup → review · build_local · integration_checks(지연) — `#798`
 #   [중요] **토큰은 여전히 안 보낸다** — 큐·Redmine 호출은 MCP 가 한다(`review.api=` 주입).
 PAYLOAD_PKG = "axmaster"
 
@@ -157,11 +139,7 @@ PAYLOAD_BY_ROLE = {
                   _pair("layer3_verify.py"), _pair("source_text.py"), _pair("utf8.py"),
                   _pair("work/branch_names.py"), _pair("work/coordinator.py"),
                   _pair("work/review.py"),
-                  _pair("work/skeleton_gate.py"), _pair("work/build_local.py"),
-                  # 🔴 `#798` — ⑦ 준비 한 입구. 완료 훅(`work_completion.py`)·세션 시작 고지
-                  #    (`pending_works.py`)·60초 타이머가 **같은 함수**를 부른다. `integration_checks`
-                  #    는 code 판 회귀 검사가 지연 임포트한다(`followup.run_regression`).
-                  _pair("integration_checks.py"), _pair("work/followup.py")),
+                  _pair("work/skeleton_gate.py"), _pair("work/build_local.py")),
     # [중요] **worker 에는 폴링 상주가 없다** (`#320`, 2026-08-27 — `#317` 미결 ⑤ 상주 전폐).
     # `work/claimer.py`·`work/ax_safety.py` 가 여기 있었고 걷어냈다. 빌드·추론 둘 다 마스터가
     # SSH 로 민다(`layer3_verify.run_build_on_workshop` — 워커에 파이썬 payload 를 요구하지 않고
@@ -267,11 +245,6 @@ class HostFacts:
         return self.os == "windows"
 
     @property
-    def on_master(self) -> bool:
-        """마스터 자기 호스트의 작업장인가 (`#798`) — 그러면 홈을 건드리지 않는다."""
-        return is_master_host(self.host)
-
-    @property
     def capabilities(self) -> list:
         """task_queue 의 능력 화이트리스트(`ue5`·`windows`)에 맞춘 **측정 결과**."""
         caps = []
@@ -355,13 +328,6 @@ def _find_ue5(host: str, user: str, *, runner=None) -> str:
     return _pick_ue5(found)
 
 
-# 🔴 `#798` — 비대화형 SSH 의 PATH 에 `~/.local/bin` 이 없는 리눅스가 있다. 실측 2026-10-11:
-#    마스터(Ubuntu)의 SSH PATH 는 `/usr/local/bin:…:/snap/bin` 뿐이라 `~/.local/bin/codex` 를 못 찾아
-#    `codex [실패]` 로 쟀다(`claude` 는 `/usr/local/bin/claude` 가 있어 잡혔다). `.43`(Fedora)은
-#    기본 bashrc 가 그 경로를 넣어 문제가 없었다. 앞에 붙여도 이미 있는 기계엔 무해하다.
-LINUX_USER_BIN = 'PATH="$HOME/.local/bin:$PATH" '
-
-
 def probe(host: str, user: str, path: str, driven: str, role: str = "worker",
           dispatch: str = "") -> HostFacts:
     """머신 하나를 잰다. **읽기 전용** — 아무것도 바꾸지 않는다."""
@@ -391,17 +357,9 @@ def probe(host: str, user: str, path: str, driven: str, role: str = "worker",
         f.home = home.strip()
         rc, v = _ssh(host, user, "claude --version 2>/dev/null || true")
         f.claude = v.splitlines()[0].strip() if v else ""
-        rc, v = _ssh(host, user, f"{LINUX_USER_BIN}codex --version 2>/dev/null || true")
+        rc, v = _ssh(host, user, "codex --version 2>/dev/null || true")
         f.codex = v.splitlines()[0].strip() if rc == 0 and v else ""
         f.python = "/usr/bin/python3"
-        if is_master_host(host):
-            # 🔴 `#798` — 마스터 호스트 요청자의 ⑦ 검사는 저장소 정본 venv 로 돈다. 실측
-            #    2026-10-11: 시스템 Python 에는 `pydantic` 이 없어 공식 통합 검사의 `test_revise`
-            #    가 깨졌고, 같은 트리가 venv 로는 31/31 통과했다(검사기가 고른 Python 탓).
-            #    [주의] venv 가 없으면 종전 값 그대로 — 없는 경로를 config 에 쓰지 않는다.
-            rc, a = _ssh(host, user, f"test -x {shlex.quote(MASTER_VENV_PYTHON)} && echo YES || echo NO")
-            if "YES" in (a or ""):
-                f.python = MASTER_VENV_PYTHON
         rc, a = _ssh(host, user, "command -v agy >/dev/null && echo YES || echo NO")
         f.agy = "YES" in a
         f.ue5 = ""                      # 리눅스 노드에 UE5 툴체인은 없다
@@ -476,10 +434,6 @@ def config_for(project: str, facts: HostFacts) -> dict:
         #    프로필(사람 결정)에서 온다. [주의] 없으면 키를 **넣지 않는다** — `ax-advance` 가
         #    「무엇을 돌릴지 모른다」로 거절한다(빈 값을 넣으면 그 거절이 흐려진다).
         **({"tests": _tests} if (_tests := _tests_for(project)) else {}),
-        # 🔴 `#798` — 요청자의 ⑦ 준비(`work/followup.resolve_kind`)가 읽는 프로필 `kind`.
-        #    요청자 배달본에는 `projects` 가 없어 프로필을 직접 못 읽는다. [주의] 없으면 키를
-        #    넣지 않는다 — followup 이 「타입을 정할 수 없다」로 거절한다(추정하지 않는다).
-        **({"kind": _kind} if (_kind := _kind_for(project)) else {}),
     }
 
 
@@ -498,15 +452,6 @@ def _branch_for(project: str, *, registry=None) -> str:
         return branch or "main"
     except Exception:                                                # noqa: BLE001
         return "main"
-
-
-def _kind_for(project: str) -> str:
-    """프로필 `kind`(`unreal`·`code`·`index_only`). 못 읽거나 비었으면 빈 문자열 (`#798`)."""
-    try:
-        from ..projects import profile as _pf                        # noqa: PLC0415
-        return str(_pf.kind_of(project) or "")
-    except Exception:                                                # noqa: BLE001
-        return ""
 
 
 def _tests_for(project: str) -> dict:
@@ -1041,7 +986,6 @@ def _remote_rm_dir(facts: HostFacts, rel: str) -> str:
     계속 보인다.
     """
     root = facts.home
-    _guard_master_home(facts, f"{root}/{rel}", "home")       # `#798` — 마스터 홈은 지우지 않는다
     if facts.windows:
         target = f"{root}\\{rel.replace('/', chr(92))}"
         cmd = f'if exist "{target}" rmdir /s /q "{target}"'
@@ -1070,7 +1014,6 @@ def _remote_write(facts: HostFacts, rel: str, content: str, *, base: str = "home
     """
     want = hashlib.sha256(content.encode("utf-8")).hexdigest()
     target = _write_target(facts, rel, base)
-    _guard_master_home(facts, target, base)                   # `#798` — 마스터 홈에 쓰지 않는다
     # 🔴 `#655` — 배달 시작 때 한 번에 받아 둔 원격 해시가 이미 같으면 쓰지 않는다. 그 해시가
     #    곧 「되읽어 대조」의 증거다(같은 sha256 을 같은 자리에서 읽었다). 받아 둔 값이 없으면
     #    종전 경로 그대로다.
@@ -1137,66 +1080,6 @@ def _write_target(facts: HostFacts, rel: str, base: str = "home") -> str:
     root = facts.home if base == "home" else facts.path
     return (f"{root}\\{rel.replace('/', chr(92))}" if facts.windows
             else f"{root}/{rel}")
-
-
-# ── 마스터 자기 호스트 (`#798`) — 배달물은 **전부 체크아웃 안** ──────────────────
-#
-# 🔴 [중요] 마스터 홈의 `~/.claude/skills`·`~/.codex/skills` 는 **마스터 세션의 스킬**이다
-#    (`distribute`·`ax-deliver`·`ax-handoff`… 상당수가 저장소로의 심볼릭 링크). 요청자 배달이
-#    그 자리에 쓰면 링크를 따라 **저장소 파일을 덮고**, 폐지 정리는 `distribute` 를 **지운다**.
-#    그래서 판단을 호출자 조건문에 두지 않고 쓰기·지우기 자리에서 **거절**한다(파이썬이 강제).
-def _guard_master_home(facts: HostFacts, target: str, base: str) -> None:
-    """마스터 호스트에서 홈 쓰기·홈 스킬 루트 접근이면 `BundleError`. 아니면 조용히 통과."""
-    if not facts.on_master:
-        return
-    t = (target or "").replace("\\", "/")
-    home = (facts.home or "").replace("\\", "/").rstrip("/")
-    in_skill_root = bool(home) and any(t == f"{home}/{r}" or t.startswith(f"{home}/{r}/")
-                                       for r in MASTER_HOME_SKILL_ROOTS)
-    if in_skill_root or (base == "home" and facts.role == "requester"):
-        raise BundleError(f"{facts.host}: 마스터 호스트의 홈에는 배달하지 않는다 (#798) — {target}")
-
-
-def tool_skill_targets(facts: HostFacts, name: str) -> tuple:
-    """도구별 스킬 자리 `(rel, base)` — 보통은 홈(`spec.SKILL_HOMES`), 마스터 호스트는 체크아웃.
-
-    마스터 호스트(`#798`): Claude Code 는 `<체크아웃>/.claude/skills` 를 프로젝트 스킬로 읽고,
-    Codex 는 `<체크아웃>/.agents/skills`(`#699` 프로젝트 정본)를 읽는다 — 그래서 `.codex` 몫은
-    따로 두지 않는다(`project_skill_rel` 이 그 자리다).
-    """
-    if facts.on_master:
-        return ((spec.skill_rel(name, ".claude"), "checkout"),)
-    return tuple((r, "home") for r in spec.skill_rels(name))
-
-
-def removals(facts: HostFacts, init=None) -> dict:
-    """이 기계에서 지울 것 — `spec.removals_for` 에 **마스터 호스트 예외**를 얹는다 (`#798`).
-
-    폐지 스킬은 홈에서 지운다. 마스터 홈의 같은 이름(`distribute`)은 **마스터 세션의 스킬**이지
-    배달물이 아니므로 지울 것이 없다.
-    """
-    rm = spec.removals_for(facts.role, init)
-    return {**rm, "skills": ()} if facts.on_master else rm
-
-
-def mcp_scope(facts: HostFacts, init=None) -> str:
-    """ax-client MCP 의 자리 — 마스터 호스트는 **항상 `project`**(`.mcp.json`) (`#798`).
-
-    local 스코프는 `~/.claude.json`(마스터 자신의 Claude 설정)을 고친다. 체크아웃의
-    `.mcp.json` 은 `spec.GIT_EXCLUDES` 로 커밋에서 빠지고, 추적 중이면 배달 전에 거절한다
-    (`master_host_preflight`).
-    """
-    return "project" if facts.on_master else spec.mcp_scope_for(init)
-
-
-def master_host_preflight(facts: HostFacts, init=None) -> None:
-    """마스터 호스트 배달 전 검사 (`#798`). 쓰기 전에 실패해야 반쪽 배달이 안 남는다."""
-    if not facts.on_master:
-        return
-    if spec.mcp_for(facts.role, init) and ".mcp.json" in tracked_managed(facts):
-        raise BundleError(f"{facts.host}: 체크아웃이 `.mcp.json` 을 추적 중이라 project 스코프로 "
-                          "등록할 수 없다 — 로컬 스코프는 마스터 `~/.claude.json` 을 고치므로 "
-                          "쓰지 않는다 (#798, 사람 결정 필요)")
 
 
 # 🔴 `#655` — 배달 한 번 동안만 사는 원격 해시 표. `(host, user, 원격경로) → sha256`.
@@ -1376,8 +1259,7 @@ def codex_mcp_get(facts: HostFacts, name: str, *, project: bool = False) -> dict
     """
     prefix = ((f'cd /d "{facts.path}" && ') if facts.windows else
               (f"cd {shlex.quote(facts.path)} && ")) if project else ""
-    bin_ = "" if facts.windows else LINUX_USER_BIN       # `#798` — probe 와 같은 PATH 로 부른다
-    rc, out = _ssh(facts.host, facts.user, f"{prefix}{bin_}codex mcp get {name} --json")
+    rc, out = _ssh(facts.host, facts.user, f"{prefix}codex mcp get {name} --json")
     if rc != 0:
         return {}
     try:
@@ -1393,22 +1275,6 @@ def codex_mcp_matches(got: dict, facts: HostFacts) -> bool:
     want = mcp_entry_for(facts)
     return (tr.get("type") == "stdio" and tr.get("command") == want["command"]
             and list(tr.get("args") or []) == list(want["args"]))
-
-
-def codex_master_global_ok(got: dict, facts: HostFacts) -> bool:
-    """마스터 호스트에서 codex 가 보는 항목이 **마스터 전역 등록**(`master-local`)인가 (`#798`).
-
-    [중요] 실측 2026-10-11: 마스터 요청자 클론에서 `codex mcp get ax-client` 는 프로젝트
-    `.codex/config.toml` 이 아니라 `~/.codex/config.toml` 의 전역 항목을 돌려줬다(신뢰 폴더는
-    `/home/sim` 하나). 그 항목은 `master_local` 이 관리·대조하는 정본이라 마스터에서는 그것이
-    맞는 답이다 — 홈을 고쳐 프로젝트 항목을 이기게 하는 것은 사용자가 고르지 않았다.
-    [주의] 마스터 호스트가 아니면 언제나 False — 워커·원격 요청자의 판정은 바뀌지 않는다.
-    """
-    if not facts.on_master:
-        return False
-    from . import master_local as _ml                    # noqa: PLC0415 (순환 임포트 회피)
-    ok, _why = _ml.codex_get_matches(got, _ml.entry_for(_ml.Paths.default()))
-    return ok
 
 
 def codex_mcp_add(facts: HostFacts, name: str) -> str:
@@ -1450,9 +1316,6 @@ def codex_project_mcp_add(facts: HostFacts, name: str) -> str:
     got = codex_mcp_get(facts, name, project=True)
     if not got:
         return f"{name} [주의] 프로젝트 설정을 썼는데 codex 가 못 찾는다"
-    if codex_master_global_ok(got, facts):
-        return (f"{name} [완료] 마스터 호스트 — codex 는 전역 `master-local` 항목을 본다"
-                f"(프로젝트 설정보다 우선 · 그 항목은 `master-local --check` 가 대조한다 · #798)")
     if not codex_mcp_matches(got, facts):
         tr = got.get("transport") or {}
         return (f"{name} [주의] 프로젝트 설정과 다르다 — "
@@ -1520,10 +1383,6 @@ def claude_mcp_local_matches(got: dict, facts: HostFacts) -> bool:
 
 def claude_mcp_local_add(facts: HostFacts, name: str) -> str:
     """로컬 스코프 등록 + **되읽어 대조** (`#693`). fail-open — `codex_mcp_add` 와 같은 판단."""
-    if facts.on_master:
-        # `#798` — local 스코프는 마스터 자신의 `~/.claude.json` 을 고친다. 배달은 `mcp_scope` 가
-        #    project 로 돌리므로 여기 오지 않는다 — 와도 쓰지 않는다.
-        return f"{name} [주의] 건너뜀 — 마스터 호스트: ~/.claude.json 을 고치지 않는다 (#798)"
     if not facts.claude:
         return f"{name} [주의] 건너뜀 — 이 기계에 claude 가 없다"
     # 🔴 `#655` — 이미 같은 항목이면 지우고 다시 넣지 않는다(실측 2026-10-07: `.2` 에서 매번 1.7초).
@@ -2020,7 +1879,7 @@ def delivery_targets(project: str, facts: HostFacts, pinit) -> list:
             (".mcp.json", "checkout"), (spec.SETTINGS_REL, "checkout"),
             (f"{AX_DIR}/token", "checkout")]
     for n in skills_for(facts.role, pinit):
-        rels += list(tool_skill_targets(facts, n))          # `#798` — 마스터 호스트는 체크아웃
+        rels += [(r, "home") for r in spec.skill_rels(n)]
         rels.append((spec.project_skill_rel(n), "checkout"))
     if payload_pairs(facts.role):
         rels += [(f"{AX_DIR}/lib/{PAYLOAD_PKG}/{d + '/' if d else ''}__init__.py", "checkout")
@@ -2085,17 +1944,11 @@ def _deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     if dry_run:
         return {"host": facts.host, "dry_run": True, "config_bytes": len(cfg),
                 "skills": list(skills_for(facts.role, pinit)),
-                "removed": list(removals(facts, pinit)["skills"]),
+                "removed": list(spec.removals_for(facts.role, pinit)["skills"]),
                 "payload": list(payloads_for(facts.role)),
                 "workshop": [rel for rel, _src in workshop_files(facts.role, project, pinit)],
                 "entry_docs": spec.entry_docs_for(pinit),
-                "mcp_scope": mcp_scope(facts, pinit),
-                "skill_targets": [_write_target(facts, rel, base)
-                                  for n in skills_for(facts.role, pinit)
-                                  for rel, base in (tool_skill_targets(facts, n)
-                                                    + ((spec.project_skill_rel(n), "checkout"),))]}
-    # 🔴 `#798` — 마스터 호스트는 쓰기 전에 거절할 것을 먼저 본다
-    master_host_preflight(facts, pinit)
+                "mcp_scope": spec.mcp_scope_for(pinit)}
     # [중요] CLAUDE.md 는 **읽어서 병합**한다 — 덮어쓰면 사람이 쓴 것을 날린다
     md_path = (f"{facts.path}\\CLAUDE.md" if facts.windows else f"{facts.path}/CLAUDE.md")
     prev = _remote_read(facts, md_path)
@@ -2124,10 +1977,8 @@ def _deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
         #    (`#385`, 실측 2026-09-08: codex 는 `~/.claude/skills/` 를 안 본다. 읽기는 되지만
         #    스킬로 안 잡혀서 지시문의 *"Follow the ax-work skill"* 이 빈 참조가 됐고,
         #    계약 없이 진행해 `[PSEUDO]` 가 남아 층1 이 막았다). **내용은 한 벌이다.**
-        #    🔴 `#798` — 마스터 호스트는 홈이 아니라 체크아웃(`.claude/skills`)이다.
-        "skills": [_remote_write(facts, rel, skill_text(n), base=base)
-                   for n in skills_for(facts.role, pinit)
-                   for rel, base in tool_skill_targets(facts, n)],
+        "skills": [_remote_write(facts, rel, skill_text(n))
+                   for n in skills_for(facts.role, pinit) for rel in spec.skill_rels(n)],
         "project_skills": [
             _remote_write(facts, spec.project_skill_rel(n), skill_text(n), base="checkout")
             for n in skills_for(facts.role, pinit)],
@@ -2136,12 +1987,11 @@ def _deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
         #    `keep_skills` 를 이미 존중하므로 프로젝트가 오버레이로 되살린 이름은 지우지 않는다.
         # [주의] 사용자가 손으로 만든 스킬은 목록에 없으므로 **영향받지 않는다**
         #    (원전 `DEPRECATED_SKILL_NAMES` 와 같은 계약). 도구별 자리를 **둘 다** 지운다.
-        #    🔴 `#798` — 마스터 호스트는 빈 목록이다(`removals`) — 홈의 같은 이름은 마스터 것이다.
         "removed": [_remote_rm_dir(facts, d)
-                    for n in removals(facts, pinit)["skills"]
+                    for n in spec.removals_for(facts.role, pinit)["skills"]
                     for d in spec.skill_dirs(n)],
         "removed_codex": [_remote_rm_dir(facts, f".codex/skills/{n}")
-                          for n in removals(facts, pinit)["skills"]],
+                          for n in spec.removals_for(facts.role, pinit)["skills"]],
         # [중요] 파이썬 페이로드 — 패키지로 둬야 모듈의 **상대 임포트가 그대로** 산다.
         #    `__init__.py` 를 먼저 쓰지 않으면 나머지는 임포트되지 않는 파일 더미가 된다.
         # [중요] 파이썬 페이로드 — 저장소 배치를 미러링한다(상대 임포트가 그대로 산다).
@@ -2166,11 +2016,7 @@ def _deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     #    실패만 쌓인다. `worker_daemon.py` 가 payload 에 들어오는 `#404` 뒤에 저절로 풀린다.
     #    [주의] **마운트를 따른다** — 비마운트 프로젝트의 상주는 5분마다 `not_mounted` 거절만
     #    받으며 헛돈다(`residency.blocked_reason`). 사유를 찍고 건너뛴다.
-    # 🔴 `#798` — 마스터 호스트의 요청자는 상주가 없다. 해제 경로도 마스터 crontab 을 다시 쓰므로
-    #    부르지 않는다(요청자는 `desired_state` 가 늘 「없음」이다).
-    written["residency"] = ({"skipped": "마스터 호스트 요청자 — 상주 없음 · crontab 을 건드리지 않는다 (#798)"}
-                            if facts.on_master and facts.role == "requester"
-                            else _register_residency(project, facts))
+    written["residency"] = _register_residency(project, facts)
     # [중요] **배달은 파일을 놓는 것으로 끝나지 않는다** (`#277` · `#407`) — 도는 상주는 옛
     #    코드를 메모리에 쥔다. 실측 2026-08-22: 파일 해시가 3자 일치하는데 `.43` 상주가
     #    폭주했다. 2026-09-12 에 같은 일이 다시 났다(`#404`: 고친 데몬을 배달했는데 도는 쪽이
@@ -2228,7 +2074,7 @@ def _deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     #    `MCP_BY_ROLE["worker"]` 를 열어도 배달이 따라오지 않았다(실측 2026-08-23: 선언을
     #    바꾸고 배달했는데 워커에 `.mcp.json` 이 안 갔다). 선언과 배선이 **두 벌**이면 이런 일이
     #    조용히 난다 — 이제 한 곳(`mcp_for`)이 정한다.
-    if spec.mcp_for(facts.role, pinit) and mcp_scope(facts, pinit) == "local":
+    if spec.mcp_for(facts.role, pinit) and spec.mcp_scope_for(pinit) == "local":
         # 🔴 색인 전용(`#693`): `.mcp.json` 은 커밋된 사람 파일 → **로컬 스코프**로 등록한다
         written["mcp_json"] = "건너뜀 — 로컬 스코프로 등록 (.mcp.json 은 사람 것)"
         written["claude_mcp_local"] = [claude_mcp_local_add(facts, n)

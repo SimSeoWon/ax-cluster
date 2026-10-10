@@ -56,12 +56,6 @@ work·tasks 는 큐에서 읽어 넘긴다(이 모듈은 HTTP 를 모른다 — 
 
 ## 3. 세워 본다 — [중요] 사람의 트리를 건드리지 않는다
 
-🔴 [중요] **이미 준비돼 있으면 다시 세우지 않는다** (`#798`). 라운드가 끝나면 완료 훅이나
-1분 타이머가 `axmaster.work.followup` 으로 아래 호출을 이미 돌려 둔다 — 고지·`pending_works`
-의 `[⑦ 준비 결과]` 블록이 그 기록이다(상태 `at_gate` · 트리 경로 · 검사 결과 · 물음). 그
-블록이 있으면 §4 로 바로 간다. 없을 때만 아래를 직접 부르거나, 같은 잠금을 타는
-`py -m axmaster.work.followup <work_id> --repo .`(배달본, `.ax/lib` 를 경로에 둔다)를 쓴다.
-
     res = review.advance_work(repo, work_id=..., work=..., tasks=...,
                               build_fn=bfn, api=api)   # confirm 생략 = False
 
