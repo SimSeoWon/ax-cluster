@@ -1,0 +1,15 @@
+[Unit]
+Description=AX 분산 작업 완료 후속 주기 (1분 — 할 일 없으면 한 줄 남기고 끝난다)
+
+[Timer]
+# 1분 (사용자 결정 2026-10-11, #798: *"폴백으로 1분마다 주기적으로 검사"*).
+# 할 일이 없으면 큐 조회 한 번으로 끝난다. 주기마다 로그 한 줄이 남으므로
+# **journal 에 tick 이 끊기면 그건 타이머가 죽은 것이다.**
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+# 놓친 회차를 몰아 돌리지 않는다 — 상태는 큐에 있고 다음 회차가 본다.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

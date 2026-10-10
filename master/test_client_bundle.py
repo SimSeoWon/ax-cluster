@@ -242,7 +242,9 @@ def test_role_payload() -> None:
                        "clientside/fix_flow.py",
                        "layer3_verify.py", "source_text.py", "utf8.py",
                        "work/branch_names.py", "work/coordinator.py",
-                       "work/review.py", "work/skeleton_gate.py", "work/build_local.py"},
+                       "work/review.py", "work/skeleton_gate.py", "work/build_local.py",
+                       # `#798` — ⑦ 준비 한 입구 + code 판 회귀 검사
+                       "integration_checks.py", "work/followup.py"},
           str(pay))
     # [주의] 이 칸은 세 번 움직였다: 옛 계약("워커에는 안 간다") → `#204` 로 claimer 폐포 추가
     #    → 2026-08-23 클라 MCP 추가(`#267`·`#261`) → **2026-08-27 claimer 폐포 제거**(`#320`,
@@ -288,7 +290,9 @@ def test_role_payload() -> None:
     import ast as _ast
     delivered = {n[:-3].replace("/", ".") for n in pay}          # 예: work.review
     delivered |= {d.rsplit(".", 1)[-1] for d in delivered}       # 단축명도 (from . import x)
-    GUARDED_OK = {"runner", "client.bundle", "client"}           # 명시적 가드 화이트리스트
+    GUARDED_OK = {"runner", "client.bundle", "client",           # 명시적 가드 화이트리스트
+                  # `#798` — followup 의 마스터 전용 조회(프로필·마운트). 배달본에선 ImportError 가 정상
+                  "projects", "projects.config"}
     # [중요] 상대 임포트는 **배달된 트리**에서 해석되므로 `n` 은 배달 경로여야 하고, 파싱할
     #    원문은 **저장소**에서 와야 한다 (#262). 두 값이 같던 때는 구별이 안 보였다.
     for n, src_ in bundle.payload_pairs("requester"):
@@ -367,6 +371,9 @@ def test_payload_split() -> None:
                            "layer3_verify.py", "source_text.py", "utf8.py",
                            "work/branch_names.py", "work/coordinator.py", "work/review.py",
                            "work/skeleton_gate.py", "work/build_local.py")
+    # 🔴 `#798`: ⑦ 준비 한 입구(`work/followup.py`)와 그 지연 의존(`integration_checks.py`)이
+    #    **맨 뒤**에 들어간다 (결정된 변경 — 기준선 이동, 사용자 결정 2026-10-11)
+    FROZEN["requester"] = FROZEN["requester"] + ("integration_checks.py", "work/followup.py")
     for role, want in FROZEN.items():
         got = bundle.payloads_for(role)
         check(f"[중요] {role} 의 **배달 위치**가 동결값과 순서까지 같다",
@@ -2286,10 +2293,32 @@ def test_index_only_delivery() -> None:
           bundle.CONFIG_REL in wrote, str(wrote))
 
 
+def test_config_kind_798() -> None:
+    """🔴 `#798` — 요청자 배달본은 프로필을 못 읽는다. ⑦ 준비(`followup.resolve_kind`)가 쓸
+    `kind` 가 `.ax/config.json` 에 실려야 `.33`(unreal)이 「타입을 정할 수 없다」로 죽지 않는다."""
+    import master.projects.profile as PF
+    saved = PF.kind_of
+    f = bundle.HostFacts(host="h", user="u", path="p", driven="ssh", role="requester")
+    try:
+        for k in ("unreal", "code", "index_only"):
+            PF.kind_of = lambda p, k=k: k
+            check(f"config.json 에 kind={k} 가 실린다", bundle.config_for("X", f).get("kind") == k)
+        PF.kind_of = lambda p: ""
+        check("[중요] 프로필이 비면 kind 키를 넣지 않는다 (추정 금지)",
+              "kind" not in bundle.config_for("X", f))
+        def boom(p):
+            raise RuntimeError("no registry")
+        PF.kind_of = boom
+        check("프로필을 못 읽어도 배달은 죽지 않는다 — 키만 빠진다",
+              "kind" not in bundle.config_for("X", f))
+    finally:
+        PF.kind_of = saved
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
-               test_role_skills, test_role_payload, test_payload_split, test_deliver_removes_deprecated_skills, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
+               test_role_skills, test_role_payload, test_config_kind_798, test_payload_split, test_deliver_removes_deprecated_skills, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
                test_merge_never_replaces_existing,
                test_workshop_assets_reference_only_live_tools,
                test_workshop_delivery,

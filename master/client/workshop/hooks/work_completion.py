@@ -33,6 +33,21 @@ Redmine `#395` 까지 냈는데 `.33` 은 몰랐다.
 ## 경계
 
 큐가 완료의 주인이다 — **이 훅은 파견도 상태 변경도 하지 않는다.** 조회만 한다.
+
+## ⑦ 준비 — `followup.prepare_once` (`#798`, 사용자 결정 2026-10-11)
+
+라운드가 terminal(`ready_for_review`·`rejected`·`cancelled`)이 된 것을 관측하면 깨우기(exit 2)
+**전에** 배달된 `axmaster.work.followup.prepare_once` 를 부른다 — 머지·통합 검사까지 하고
+사람 게이트에서 멈춘 결과(또는 멈춤·오류 사실)를 고지 뒤에 붙인다. 60초 타이머(`--scan`)와
+**같은 함수·같은 잠금**이라 둘이 겹치면 한쪽만 돈다:
+
+    잠금이 잡혀 있다        → 기록이 생길 때까지 기다렸다가 그 기록을 싣는다 (다시 돌리지 않는다)
+    이미 기록이 있다        → 그 기록을 싣는다 (`prepare_reused`)
+    남은 시간이 모자란다    → 시작하지 않는다 (`prepare_deferred`) — 타이머 몫
+
+[중요] `confirm=True` 는 이 경로 어디에도 없다 — push·`main` 은 사람의 답 뒤 별도 호출이다.
+로그 사건: `prepare_started` · `prepare_done` · `prepare_reused` · `prepare_waiting` ·
+`prepare_pending` · `prepare_deferred` · `prepare_error` · `followup_line`(준비 단계 로그).
 로그(`.ax/work_completion.jsonl`)는 **관측(`state_observed`)과 발행(`signal_emitted`)을
 가른다.** [주의] `signal_emitted` 는 **훅이 보냈다**는 기록일 뿐이고, 세션이 실제로 받았다는
 증거는 **대화 기록뿐**이다. 그 둘을 같은 것으로 적지 않는다.
@@ -49,6 +64,13 @@ from hook_paths import checkout_root
 sys.dont_write_bytecode = True
 INTERVAL = 15
 TIMEOUT = 7200
+TERMINAL = ("ready_for_review", "merged", "cancelled", "rejected")
+# ⑦ 준비를 거는 상태 — `followup.TERMINAL_WORK` 와 같다(`merged` 는 마감 뒤라 준비할 것이 없다)
+PREPARE_STATES = ("ready_for_review", "rejected", "cancelled")
+# 훅 등록 timeout 은 7260초다. 준비(통합 검사·UE5 빌드)를 시작하려면 이만큼은 남아야 한다 —
+# 모자라면 중간에 죽어 잠금만 남기므로 시작하지 않고 타이머에 맡긴다.
+PREPARE_MIN_BUDGET = 900
+HEARTBEAT = 20
 
 
 def result_object(value):
@@ -166,8 +188,84 @@ def render_result(work, tasks, counts):
     return "\n".join(head)
 
 
+def _with_heartbeat(lock, fn):
+    """`fn()` 이 오래 걸려도(통합 검사) 고지 잠금이 「죽은 잠금」(90초)으로 보이지 않게 한다."""
+    import threading
+    stop = threading.Event()
+
+    def beat():
+        while not stop.wait(HEARTBEAT):
+            try:
+                lock.touch()
+            except OSError:
+                pass
+    t = threading.Thread(target=beat, name="completion-heartbeat", daemon=True)
+    t.start()
+    try:
+        return fn()
+    finally:
+        stop.set()
+
+
+def prepare_followup(cwd, session, work, round_no, api, followup, *, budget,
+                     interval=INTERVAL, sleep=time.sleep, clock=time.monotonic):
+    """terminal 을 본 직후 ⑦ 준비 — **사실 문단**을 돌려준다(없으면 빈 문자열).
+
+    `followup` 은 배달된 `axmaster.work.followup` 모듈(테스트는 대역). 판단은 전부
+    `prepare_once` 한 곳이다 — 여기서는 부르고, 결과를 `render` 로 옮기고, 로그를 남긴다.
+    🔴 돌려주는 글은 `followup.render` 그대로다 — **사실만** 싣는다(명령형 금지).
+    """
+    wid = str(work.get("work_id") or "")
+    status = work.get("merge_status")
+    if status not in PREPARE_STATES:
+        return ""
+    if budget < PREPARE_MIN_BUDGET:
+        log(cwd, "prepare_deferred", wid, round_no, session, budget=int(budget),
+            need=PREPARE_MIN_BUDGET)
+        return (f"[⑦ 준비] {wid} · 라운드 {round_no}: 훅 남은 시간 {int(budget)}초 "
+                f"(< {PREPARE_MIN_BUDGET}초) — 이 훅에서는 시작하지 않았다. 60초 타이머(scan) 대상이다.")
+
+    def flog(stage, msg):
+        log(cwd, "followup_line", wid, round_no, session, stage=stage, msg=str(msg)[:400])
+
+    log(cwd, "prepare_started", wid, round_no, session, status=status)
+    try:
+        r = followup.prepare_once(cwd, wid, round_no, api=api, origin="hook", logf=flog)
+    except Exception as exc:                                # noqa: BLE001
+        err = f"{type(exc).__name__}: {exc}"[:500]
+        log(cwd, "prepare_error", wid, round_no, session, error=err)
+        return f"[⑦ 준비 오류] {wid} · 라운드 {round_no}: {err}"
+    if r.get("action") == "prepared":
+        facts = r.get("facts") or {}
+        log(cwd, "prepare_done", wid, round_no, session, state=facts.get("state"),
+            build_passed=facts.get("build_passed"), tree=facts.get("tree"),
+            note=(facts.get("note") or {}).get("ok"))
+        return followup.render(facts)
+    skip = r.get("skip") or "?"
+    if skip == "locked":
+        # 타이머(또는 다른 세션)가 지금 준비 중이다 — 다시 돌리지 않고 그 기록을 기다린다
+        log(cwd, "prepare_waiting", wid, round_no, session, budget=int(budget))
+        deadline = clock() + max(0, budget - 60)
+        while clock() < deadline:
+            rec = followup.recorded_for(cwd, wid, round_no)
+            if rec:
+                log(cwd, "prepare_reused", wid, round_no, session, skip="locked",
+                    state=rec.get("state"))
+                return followup.render(rec)
+            sleep(interval)
+        log(cwd, "prepare_pending", wid, round_no, session)
+        return (f"[⑦ 준비] {wid} · 라운드 {round_no}: 다른 프로세스가 준비 잠금을 보유한 채 "
+                f"이 훅의 대기 시간이 끝났다 — 준비 결과 기록 없음.")
+    facts = r.get("facts") or {}
+    log(cwd, "prepare_reused", wid, round_no, session, skip=skip, state=facts.get("state"))
+    if not facts:
+        return f"[⑦ 준비] {wid} · 라운드 {round_no}: 건너뜀({skip}) — 기록 없음."
+    return followup.render(facts)
+
+
 def wait_for_work(cwd, session, work_id, round_no, get_work, *, timeout=TIMEOUT,
-                  interval=INTERVAL, clock=time.monotonic, sleep=time.sleep):
+                  interval=INTERVAL, clock=time.monotonic, sleep=time.sleep,
+                  on_terminal=None):
     path = notice_path(cwd, session, work_id, round_no)
     path.parent.mkdir(parents=True, exist_ok=True)
     lock = path.with_suffix(".lock")
@@ -208,8 +306,19 @@ def wait_for_work(cwd, session, work_id, round_no, get_work, *, timeout=TIMEOUT,
                 log(cwd, "state_observed", work_id, round_no, session,
                     status=status, counts=counts, worker_mode=work.get("worker_mode"))
                 previous = state
-            if status in ("ready_for_review", "merged", "cancelled", "rejected"):
+            if status in TERMINAL:
                 message = render_result(work, tasks, counts)
+                if on_terminal is not None:
+                    # [중요] 준비가 실패해도 **완료 고지는 접지 않는다** — 사실이 하나 붙을 뿐이다
+                    try:
+                        extra = _with_heartbeat(
+                            lock, lambda: on_terminal(work, max(0.0, deadline - clock())))
+                    except Exception as exc:                # noqa: BLE001
+                        err = f"{type(exc).__name__}: {exc}"[:500]
+                        log(cwd, "prepare_error", work_id, round_no, session, error=err)
+                        extra = f"[⑦ 준비 오류] {work_id} · 라운드 {round_no}: {err}"
+                    if extra:
+                        message += "\n" + extra
                 write_state(path, {"event": "signal_emitted", "at": time.time()})
                 log(cwd, "signal_emitted", work_id, round_no, session, status=status)
                 return message
@@ -231,6 +340,14 @@ def wait_for_work(cwd, session, work_id, round_no, get_work, *, timeout=TIMEOUT,
         raise TimeoutError("완료 대기 시간이 지났습니다. 완료로 처리하지 않았습니다")
     finally:
         lock.unlink(missing_ok=True)
+
+
+def _load_followup(cwd):
+    """배달된 `axmaster.work.followup` — `.ax/lib` 는 `_load_client` 가 이미 경로에 넣었다."""
+    from pending_works import _load_client
+    _load_client(Path(cwd))
+    from axmaster.work import followup                      # noqa: PLC0415
+    return followup
 
 
 def main():
@@ -280,8 +397,19 @@ def main():
         client = _load_client(cwd)
         client.HTTP_TIMEOUT = 6
         api = client.queue_api(cwd)
+        on_terminal = None
+        try:
+            followup = _load_followup(cwd)
+            on_terminal = (lambda work, budget:
+                           prepare_followup(cwd, session, work, round_no, api, followup,
+                                            budget=budget))
+        except Exception as exc:                            # noqa: BLE001
+            # [주의] 옛 배달본(followup 없음)이어도 완료 고지는 살린다 — 사유를 남긴다
+            log(cwd, "prepare_error", wid, round_no, session,
+                error=f"followup 을 못 불러왔다 — {type(exc).__name__}: {exc}"[:500])
         message = wait_for_work(cwd, session, wid, round_no,
-                                lambda work_id: client.tool_get_work(api, work_id))
+                                lambda work_id: client.tool_get_work(api, work_id),
+                                on_terminal=on_terminal)
     except Exception as exc:
         log(cwd, "watch_error", wid, round_no, session,
             error=f"{type(exc).__name__}: {exc}"[:500])

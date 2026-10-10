@@ -135,6 +135,24 @@ Claude에서는 제공된 위임 도구와 실제 등록 에이전트 역할을 
   기본 `confirm=False`, 별도 finalize 승인 뒤 main 반영과 종결 결과를 확인한다.
   요청자에는 큐 토큰을 두지 않으므로 실제 `queue_api()`를 `api=`로 주입한다.
 
+### 완료 이후 — 공통 핵심을 부른다 (`#798`)
+
+⑥ 이후는 지휘자(Claude/Codex)와 무관하게 `master.work.followup` 한 곳이 집행한다.
+수신 경로는 둘이고 같은 함수를 부른다(잠금으로 겹치지 않는다):
+
+    바닥   ax-followup.timer (1분) → `followup --scan --project AXCluster`
+    빠른 길 Claude 완료 훅(`work_completion.py`) → `prepare_once`
+
+준비 결과는 Redmine 노트와 요청자 작업장 훅 고지(`pending_works.py`)로 온다.
+완료를 조회했거나 고지를 받았는데 준비 기록이 없으면 직접 부른다:
+
+    AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.work.followup <work_id> \
+        --repo /home/sim/trunk/AXCluster-requester
+
+`at_gate` 결과의 질문(「버그냐 구조냐」)을 사용자에게 전하고 거기서 멈춘다. `stopped`·`error`는
+사유를 보고한다. 「완료 상태를 확인했다」로 턴을 끝내지 않는다 — 그 멈춤이 `#798` 이다.
+AXCluster 요청자 작업장은 `/home/sim/trunk/AXCluster-requester` 다(사용자 결정 2026-10-11).
+
 골조·코드 커밋/푸시는 매번 별도 승인이다. ⑦ 전진과 finalize도 서로 다른 승인이다.
 작업 시작 또는 분산 선택을 이 승인들 전체로 확대하지 않는다.
 워커 조각 커밋은 승인된 파견의 계약으로 수행하며 요청자 main 반영 승인과 혼동하지 않는다.

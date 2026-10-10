@@ -9,8 +9,52 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent / "client/workshop/hooks"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import work_completion as W
 import pending_works as P
+from master.work import followup as F
+
+IMPERATIVES = ("하세요", "하라", "해 주세요", "해주세요", "말고", "보고한다", "묻지", "넘겨라")
+
+
+class Prep:
+    """`prepare_round` 대역 — 부른 횟수를 센다. 실제 잠금·기록·렌더는 진짜 `followup` 이 한다."""
+
+    def __init__(self, state="at_gate"):
+        self.calls, self.state = 0, state
+
+    def __call__(self, repo, work_id, **kw):
+        self.calls += 1
+        return F.Followup(work_id=work_id, state=self.state, round=kw.get("expect_round") or 1,
+                          merge_status="ready_for_review", project="AXCluster", title="제목",
+                          redmine_issue_id=55, kind="code", tree=f"/x/ax-advance-{work_id}",
+                          target_branch=f"task/{work_id}/base", before="a" * 40, head="b" * 40,
+                          merged=[f"task/{work_id}/r1/p1"], build_passed=True,
+                          build_note="통합 TESTS OK (3) · 회귀 1/1",
+                          question=F.R.Advance(build_passed=True).question,
+                          checks={"passed": 2, "failed": 0, "items": [
+                              {"name": "통합 검사", "ok": True, "summary": "TESTS OK (3)"},
+                              {"name": "회귀 master/test_x.py", "ok": True, "summary": "ok"}]},
+                          reason="fake")
+
+
+class FollowupStub:
+    """배달된 `axmaster.work.followup` 자리 — 진짜 모듈에 상태 디렉토리·대역만 꽂는다."""
+
+    def __init__(self, sd, prep, notes=None):
+        self.sd, self.prep, self.notes = sd, prep, notes if notes is not None else []
+        self.render = F.render
+
+    def _note(self, api, **kw):
+        self.notes.append(kw)
+        return {"ok": True}
+
+    def prepare_once(self, repo, wid, rnd, **kw):
+        return F.prepare_once(repo, wid, rnd, state=self.sd, prepare=self.prep,
+                              note=self._note, **kw)
+
+    def recorded_for(self, repo, wid, rnd=None):
+        return F.recorded_for(repo, wid, rnd, state=self.sd)
 
 
 class CompletionTests(unittest.TestCase):
@@ -201,6 +245,196 @@ class CompletionTests(unittest.TestCase):
             self.assertEqual(run("S2"), first)
         finally:
             P._load_client, P._editor_notice, sys.stdin = old_load, old_editor, old_stdin
+
+
+class FollowupHookTests(unittest.TestCase):
+    """`#798` ⓒ — terminal 을 본 훅이 같은 `prepare_once` 를 부르고 그 사실을 고지에 싣는다."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="ax-fu-hook-")
+        self.root = Path(self.temp.name) / "repo"
+        self.root.mkdir()
+        self.sd = Path(self.temp.name) / "state"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def detail(self, status="ready_for_review", failed=False):
+        return {"work": {"work_id": "W", "round": 1, "merge_status": status,
+                         "redmine_issue_id": 55},
+                "tasks": [{"round": 1, "status": "failed" if failed else "verified",
+                           "task_id": "p1", "last_feedback": "x"}]}
+
+    def events(self):
+        return [json.loads(x)["event"] for x in
+                (self.root / ".ax/work_completion.jsonl").read_text().splitlines()]
+
+    def run_hook(self, stub, detail=None, budget=7200, **kw):
+        detail = detail or self.detail()
+        on_t = lambda work, left: W.prepare_followup(self.root, "S", work, 1, None, stub,
+                                                     budget=min(budget, left), **kw)
+        return W.wait_for_work(self.root, "S", "W", 1, lambda _: detail, on_terminal=on_t)
+
+    def test_terminal_prepares_and_message_has_facts(self):
+        prep = Prep()
+        stub = FollowupStub(self.sd, prep)
+        msg = self.run_hook(stub)
+        self.assertEqual(prep.calls, 1)
+        for want in ("[분산 작업 결과] W", "[⑦ 준비 결과] W", "at_gate", "승인 대기",
+                     "/x/ax-advance-W", "bbbbbbbbbbbb", "항목 통과 2", "실패 0",
+                     "게이트 물음(원문 인용)", "Redmine #55", "완료 훅"):
+            self.assertIn(want, msg)
+        for bad in IMPERATIVES:
+            self.assertNotIn(bad, msg)
+        ev = self.events()
+        self.assertIn("prepare_started", ev)
+        self.assertIn("prepare_done", ev)
+        self.assertIn("followup_line", ev)
+        self.assertEqual(ev[-1], "signal_emitted")
+        self.assertEqual(len(stub.notes), 1)               # ⓐ 노트도 한 번
+
+    def test_already_prepared_by_timer_is_reused_not_rerun(self):
+        prep = Prep()
+        F.prepare_once(self.root, "W", 1, state=self.sd, prepare=prep, origin="timer",
+                       note=lambda api, **kw: {"ok": True})
+        msg = self.run_hook(FollowupStub(self.sd, prep))
+        self.assertEqual(prep.calls, 1)                    # 다시 돌리지 않았다
+        self.assertIn("[⑦ 준비 결과] W", msg)
+        self.assertIn("타이머(scan)", msg)
+        self.assertIn("prepare_reused", self.events())
+
+    def test_lock_held_waits_for_record_and_reports_it(self):
+        prep = Prep()
+        lock = F.round_key_path(self.sd, self.root, "W", 1).with_suffix(".lock")
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text("timer pid=1")                     # 타이머가 지금 준비 중
+        def timer_finishes(_):
+            # 대기 중 타이머가 끝나 기록을 남긴다
+            lock.unlink(missing_ok=True)
+            F.prepare_once(self.root, "W", 1, state=self.sd, prepare=prep, origin="timer")
+        on_t = lambda work, left: W.prepare_followup(self.root, "S", work, 1, None,
+                                                     FollowupStub(self.sd, prep), budget=7200,
+                                                     sleep=timer_finishes)
+        msg = W.wait_for_work(self.root, "S", "W", 1, lambda _: self.detail(), on_terminal=on_t)
+        self.assertEqual(prep.calls, 1)                    # 훅은 돌리지 않았다
+        self.assertIn("[⑦ 준비 결과] W", msg)
+        self.assertIn("타이머(scan)", msg)
+        ev = self.events()
+        self.assertIn("prepare_waiting", ev)
+        self.assertIn("prepare_reused", ev)
+
+    def test_lock_held_until_budget_ends_is_reported_as_fact(self):
+        lock = F.round_key_path(self.sd, self.root, "W", 1).with_suffix(".lock")
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text("timer pid=1")
+        t = [0.0]
+        def clock():
+            return t[0]
+        def sleep(_):
+            t[0] += 1000
+            lock.touch()
+        out = W.prepare_followup(self.root, "S", self.detail()["work"], 1, None,
+                                 FollowupStub(self.sd, Prep()), budget=2000, sleep=sleep,
+                                 clock=clock)
+        self.assertIn("준비 결과 기록 없음", out)
+        self.assertIn("prepare_pending", self.events())
+
+    def test_short_budget_defers_to_timer(self):
+        prep = Prep()
+        msg = self.run_hook(FollowupStub(self.sd, prep), budget=10)
+        self.assertEqual(prep.calls, 0)
+        self.assertIn("타이머(scan) 대상", msg)
+        self.assertIn("prepare_deferred", self.events())
+
+    def test_prepare_error_keeps_completion_notice(self):
+        class Broken(FollowupStub):
+            def prepare_once(self, *a, **k):
+                raise OSError("disk full")
+        msg = self.run_hook(Broken(self.sd, Prep()))
+        self.assertIn("ready_for_review", msg)
+        self.assertIn("[⑦ 준비 오류] W", msg)
+        self.assertIn("disk full", msg)
+        self.assertIn("prepare_error", self.events())
+        self.assertTrue(W.already_noticed(self.root, "S", "W", 1))
+        # on_terminal 자체가 터져도 같다
+        msg2 = W.wait_for_work(self.root, "S2", "W", 1, lambda _: self.detail(),
+                               on_terminal=lambda w, b: 1 / 0)
+        self.assertIn("ready_for_review", msg2)
+        self.assertIn("ZeroDivisionError", msg2)
+
+    def test_failure_wake_and_merged_do_not_prepare(self):
+        prep = Prep()
+        stub = FollowupStub(self.sd, prep)
+        self.run_hook(stub, detail=self.detail("in_progress", failed=True))
+        self.assertEqual(prep.calls, 0)                    # 실패 깨우기는 terminal 이 아니다
+        out = W.prepare_followup(self.root, "S", {"work_id": "W", "merge_status": "merged"}, 1,
+                                 None, stub, budget=7200)
+        self.assertEqual((out, prep.calls), ("", 0))
+
+    def test_rejected_round_records_stopped(self):
+        prep = Prep(state="stopped")
+        msg = self.run_hook(FollowupStub(self.sd, prep), detail=self.detail("rejected"))
+        self.assertIn("상태 stopped", msg)
+        self.assertEqual(prep.calls, 1)
+
+    def test_main_end_to_end_wakes_with_prepared_facts(self):
+        prep = Prep()
+        detail = self.detail()
+        class Client:
+            HTTP_TIMEOUT = 0
+            def queue_api(self, cwd):
+                return None
+            def tool_get_work(self, api, wid):
+                return detail
+        old = P._load_client, W._load_followup, sys.stdin
+        P._load_client = lambda _: Client()
+        W._load_followup = lambda _: FollowupStub(self.sd, prep)
+        sys.stdin = io.StringIO(json.dumps({
+            "cwd": str(self.root), "session_id": "S", "tool_name": "mcp__ax-client__register_work",
+            "tool_response": {"ok": True, "work_id": "W", "round": 1}}))
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(W.main(), 2)
+        finally:
+            P._load_client, W._load_followup, sys.stdin = old
+        self.assertIn("[⑦ 준비 결과] W", err.getvalue())
+        self.assertEqual(prep.calls, 1)
+        self.assertEqual(self.events()[-1], "exit")
+
+    def test_pending_works_shows_timer_prepared_round(self):
+        """ⓑ 세션 시작·매 턴 고지가 타이머가 준비한 결과를 사실로 싣는다."""
+        F.prepare_once(self.root, "W", 1, state=self.sd, prepare=Prep(), origin="timer",
+                       note=lambda api, **kw: {"ok": True})
+        detail = self.detail()
+        detail["work"]["title"] = "제목"
+        class Client:
+            def queue_api(self, cwd):
+                return lambda *args: {}
+            def tool_list_works(self, api):
+                return {"works": [detail["work"]]}
+            def tool_get_work(self, api, wid):
+                return detail
+        old = P._load_client, P._editor_notice, P._load_followup, sys.stdin
+        P._load_client, P._editor_notice = lambda _: Client(), lambda _: None
+        P._load_followup = lambda: FollowupStub(self.sd, Prep())
+        try:
+            sys.stdin = io.StringIO(json.dumps({"cwd": str(self.root), "session_id": "S"}))
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                P.main()
+            text = out.getvalue()
+            for want in ("[⑦ 준비 결과] W", "승인 대기", "/x/ax-advance-W", "타이머(scan)",
+                         "Redmine 노트: 기재됨", "게이트 물음(원문 인용)"):
+                self.assertIn(want, text)
+            block = P._followup_block(self.root, detail["work"], detail)
+            for bad in IMPERATIVES:
+                self.assertNotIn(bad, block)
+            # 기록이 없는 work 는 「없음」을 사실로 말한다
+            none = P._followup_block(self.root, {"work_id": "Z"}, {"work": {"round": 1}})
+            self.assertIn("준비 기록 없음", none)
+            P._load_followup = lambda: (_ for _ in ()).throw(ImportError("no axmaster"))
+            self.assertIn("조회 불가", P._followup_block(self.root, detail["work"], detail))
+        finally:
+            P._load_client, P._editor_notice, P._load_followup, sys.stdin = old
 
 
 if __name__ == "__main__":
