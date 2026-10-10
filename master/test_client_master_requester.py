@@ -289,11 +289,39 @@ def test_codex_master_global_entry() -> None:
     check("  원격 워커도 마찬가지", not bundle.codex_master_global_ok(glob, _facts("192.168.0.43", role="worker")))
 
 
+def test_master_host_python_is_repo_venv() -> None:
+    """실측 2026-10-11: 시스템 Python 으로 ⑦ 검사를 돌려 `test_revise` 가 깨졌다 — 마스터는 venv."""
+    saved = bundle._ssh
+
+    def fake(venv_ok):
+        def _s(host, user, cmd, timeout=None):
+            if cmd.startswith("test -x"):
+                return 0, "YES" if venv_ok else "NO"
+            return 0, "Linux"
+        return _s
+    try:
+        bundle._ssh = fake(True)
+        m = bundle.probe(bundle.MASTER_HOST, "sim", CHECKOUT, "ssh", "requester")
+        check("🔴 마스터 호스트 python = 저장소 venv", m.python == bundle.MASTER_VENV_PYTHON, m.python)
+        check("  venv 경로는 .venv/bin/python", bundle.MASTER_VENV_PYTHON.endswith("/.venv/bin/python"))
+        check("  config backends.python 에 실린다",
+              bundle.config_for("AXCluster", m)["backends"]["python"] == bundle.MASTER_VENV_PYTHON)
+        bundle._ssh = fake(False)
+        m2 = bundle.probe(bundle.MASTER_HOST, "sim", CHECKOUT, "ssh", "requester")
+        check("  venv 가 없으면 종전 값(없는 경로를 쓰지 않는다)", m2.python == "/usr/bin/python3", m2.python)
+        bundle._ssh = fake(True)
+        r = bundle.probe("192.168.0.43", "sim", "/home/sim/trunk/AXCluster", "ssh", "worker")
+        check("🔴 원격 리눅스는 종전대로 /usr/bin/python3", r.python == "/usr/bin/python3", r.python)
+    finally:
+        bundle._ssh = saved
+
+
 def main() -> int:
     for fn in (test_detection, test_targets_and_scope, test_guard, test_deliver_master_requester,
                test_deliver_refuses_tracked_mcp_json, test_dry_run_master_requester,
                test_remote_requester_unchanged, test_plan_master_requester,
-               test_probe_finds_user_bin_codex, test_codex_master_global_entry):
+               test_probe_finds_user_bin_codex, test_codex_master_global_entry,
+               test_master_host_python_is_repo_venv):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_master_requester: {PASS}/{total} 통과")

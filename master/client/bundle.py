@@ -67,6 +67,10 @@ MASTER_HOST_ALIASES = (MASTER_HOST, "localhost", "127.0.0.1", "::1")
 MASTER_HOME_SKILL_ROOTS = tuple(f"{h}/skills" for h in spec.SKILL_HOMES + spec.SKILL_SHADOW_HOMES)
 
 
+# `#798` — 마스터 호스트 요청자의 `backends.python`. 저장소 정본 venv(이 파일 기준 두 단계 위).
+MASTER_VENV_PYTHON = str(Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python")
+
+
 def is_master_host(host: str) -> bool:
     """이 호스트가 마스터 자신인가 (`#798`)."""
     return (host or "").strip().lower() in MASTER_HOST_ALIASES
@@ -390,6 +394,14 @@ def probe(host: str, user: str, path: str, driven: str, role: str = "worker",
         rc, v = _ssh(host, user, f"{LINUX_USER_BIN}codex --version 2>/dev/null || true")
         f.codex = v.splitlines()[0].strip() if rc == 0 and v else ""
         f.python = "/usr/bin/python3"
+        if is_master_host(host):
+            # 🔴 `#798` — 마스터 호스트 요청자의 ⑦ 검사는 저장소 정본 venv 로 돈다. 실측
+            #    2026-10-11: 시스템 Python 에는 `pydantic` 이 없어 공식 통합 검사의 `test_revise`
+            #    가 깨졌고, 같은 트리가 venv 로는 31/31 통과했다(검사기가 고른 Python 탓).
+            #    [주의] venv 가 없으면 종전 값 그대로 — 없는 경로를 config 에 쓰지 않는다.
+            rc, a = _ssh(host, user, f"test -x {shlex.quote(MASTER_VENV_PYTHON)} && echo YES || echo NO")
+            if "YES" in (a or ""):
+                f.python = MASTER_VENV_PYTHON
         rc, a = _ssh(host, user, "command -v agy >/dev/null && echo YES || echo NO")
         f.agy = "YES" in a
         f.ue5 = ""                      # 리눅스 노드에 UE5 툴체인은 없다
