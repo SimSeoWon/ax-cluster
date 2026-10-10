@@ -662,6 +662,49 @@ def test_resolve_kind_from_delivered_config():
         shutil.rmtree(repo, ignore_errors=True)
 
 
+def test_failure_tail_is_kept_and_rendered():
+    """실측 2026-10-11 (#798 5a): 실패 판정만 남고 원문이 없어 원인을 못 봤다 — 꼬리를 남긴다."""
+    d = _repo_with_change()
+    try:
+        err = ("test_06 ... ok\ntest_07_test_revise ... FAIL\n\n"
+               "======================================================================\n"
+               "FAIL: test_07_test_revise (test_axcluster.AXClusterChecks)\n"
+               "Traceback (most recent call last):\n  File \"x.py\", line 9\n"
+               "AssertionError: master/test_revise.py rc=1 · 통과 66 · 실패 1\n\n"
+               "Ran 7 tests in 3.6s\n\nFAILED (failures=1)\n")
+
+        class P:
+            returncode, stdout, stderr = 1, "[AXCluster] master/x.py: 검사 3건 통과\n", err
+        lines = []
+        fn = F.code_build_fn(base_ref="basebr", runner=lambda a, c, t: P(),
+                             regression_fn=lambda tree, p: {"path": p, "ok": False, "reason": "rc=1",
+                                                            "tail": "Traceback\nValueError: boom"},
+                             logf=lambda s, m: lines.append(m))
+        res = fn(d)
+        tail = res["integration"].get("tail") or ""
+        check("🔴 통합 실패 꼬리가 결과에 남는다", "FAIL: test_07_test_revise" in tail
+              and "AssertionError" in tail, tail)
+        check("  꼬리는 FAIL 블록부터 (stdout 통과 줄이 아니다)", tail.startswith("FAIL:"), tail[:80])
+        check("🔴 실패 꼬리가 로그에 찍힌다", any("실패 원문 꼬리" in m and "AssertionError" in m for m in lines))
+        check("  회귀 실패 꼬리도 로그에", any("master/test_foo.py 실패 원문 꼬리" in m for m in lines))
+        cc = F.check_counts(res)
+        it = {i["name"]: i for i in cc["items"]}
+        check("🔴 check_counts 가 꼬리를 싣는다", "AssertionError" in it["통합 검사"].get("tail", ""))
+        check("  회귀 실패 꼬리도 싣는다", "ValueError: boom" in it["회귀 master/test_foo.py"].get("tail", ""))
+        txt = F.render({"work_id": "w1", "round": 1, "state": "at_gate", "build_passed": False,
+                        "checks": cc, "merged": ["x"]})
+        check("🔴 렌더(노트·고지)에 꼬리가 보인다", "실패 원문 꼬리" in txt and "AssertionError" in txt, txt)
+
+        class Ok:
+            returncode, stdout, stderr = 0, "", "Ran 3 tests in 0.1s\n\nOK\n"
+        res2 = F.code_build_fn(base_ref="basebr", runner=lambda a, c, t: Ok(),
+                               regression_fn=lambda tree, p: {"path": p, "ok": True, "reason": "ok"})(d)
+        check("  통과면 꼬리를 싣지 않는다", "tail" not in res2["integration"]
+              and all("tail" not in i for i in F.check_counts(res2)["items"]))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (test_running_has_no_side_effects,
                test_ready_calls_advance_with_confirm_false,
@@ -689,7 +732,8 @@ def main() -> int:
                test_post_note_uses_queue_route,
                test_recorded_for_lookup,
                test_check_counts_and_capture,
-               test_resolve_kind_from_delivered_config):
+               test_resolve_kind_from_delivered_config,
+               test_failure_tail_is_kept_and_rendered):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_followup: {PASS}/{total} 통과")

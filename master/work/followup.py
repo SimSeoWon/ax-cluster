@@ -35,6 +35,7 @@ fail-open 으로 넘긴다(code 판은 **fail-closed** — 못 돌린 것은 통
 from __future__ import annotations
 
 import json
+import re as _re_mod
 import subprocess
 import sys
 import time
@@ -183,6 +184,21 @@ def run_regression(tree, path: str, *, python: str = "", runner=None) -> dict:
             "reason": reason, "tail": tail}
 
 
+TAIL_LINES = 30
+_re_fail = _re_mod.compile(r"^(FAIL|ERROR): ", _re_mod.M)
+
+
+def _fail_tail(stderr: str, stdout: str, lines: int = TAIL_LINES) -> str:
+    """실패 원문 꼬리 — **첫 FAIL/ERROR 블록부터** stderr 를, 없으면 stderr·stdout 의 끝을 준다."""
+    se = (stderr or "").strip()
+    m = _re_fail.search(se)
+    body = se[m.start():] if m else se
+    got = body.splitlines()[:lines] if m else body.splitlines()[-lines:]
+    if not got:
+        got = (stdout or "").strip().splitlines()[-lines:]
+    return "\n".join(got)
+
+
 def code_build_fn(*, base_ref: str, start_dir: str = OFFICIAL_START_DIR,
                   pattern: str = OFFICIAL_PATTERN, python: str = "", timeout: int = 1800,
                   regressions: bool = True, runner=None, regression_fn=None,
@@ -226,6 +242,11 @@ def code_build_fn(*, base_ref: str, start_dir: str = OFFICIAL_START_DIR,
             so = r.stdout if isinstance(r.stdout, str) else (r.stdout or b"").decode("utf-8", "replace")
             se = r.stderr if isinstance(r.stderr, str) else (r.stderr or b"").decode("utf-8", "replace")
             integ = parse_unittest(se + "\n" + so, r.returncode)
+            if integ.get("passed") is not True:
+                # 🔴 실측 2026-10-11 (#798 5a): 실패 판정만 남고 원문이 어디에도 없어 재현 못 한
+                #    실패를 설명할 수 없었다. unittest 의 FAIL/ERROR·traceback 은 stderr 에 있고
+                #    `raw_tail` 은 stdout 꼬리라 그것을 놓친다 — stderr 꼬리를 따로 붙잡는다.
+                integ["tail"] = _fail_tail(se, so)
         except subprocess.TimeoutExpired:
             integ = {"ok": False, "passed": False, "failure": f"타임아웃 {timeout}초",
                      "summary": "BLOCKED(타임아웃)"}
@@ -235,6 +256,8 @@ def code_build_fn(*, base_ref: str, start_dir: str = OFFICIAL_START_DIR,
         integ["seconds"] = round(time.monotonic() - t0, 1)
         out["integration"] = integ
         logf("check", f"통합 검사 {integ.get('summary')} ({integ['seconds']}초)")
+        if integ.get("tail"):
+            logf("check", "통합 검사 실패 원문 꼬리 ↓\n" + integ["tail"])
 
         # ── ② 회귀 검사 — 통합 검사 결과와 무관하게 돌린다(사람이 볼 근거를 한 번에) ──
         reg_ok = True
@@ -252,6 +275,8 @@ def code_build_fn(*, base_ref: str, start_dir: str = OFFICIAL_START_DIR,
                 out["regressions"].append(rr)
                 reg_ok = reg_ok and bool(rr.get("ok"))
                 logf("check", f"회귀 {path}: {'통과' if rr.get('ok') else '실패'} — {rr.get('reason')}")
+                if not rr.get("ok") and rr.get("tail"):
+                    logf("check", f"회귀 {path} 실패 원문 꼬리 ↓\n" + rr["tail"])
 
         passed = integ.get("passed") is True and reg_ok
         nreg = len(out["regressions"])
@@ -400,10 +425,13 @@ def check_counts(res) -> dict:
     if isinstance(res, dict) and "integration" in res:
         integ = res.get("integration") or {}
         items.append({"name": "통합 검사", "ok": integ.get("passed") is True,
-                      "summary": str(integ.get("summary") or integ.get("failure") or "")[:200]})
+                      "summary": str(integ.get("summary") or integ.get("failure") or "")[:200],
+                      **({"tail": str(integ["tail"])[-3000:]} if integ.get("tail") else {})})
         for r in res.get("regressions") or []:
             items.append({"name": f"회귀 {r.get('path')}", "ok": r.get("ok") is True,
-                          "summary": str(r.get("reason") or "")[:200]})
+                          "summary": str(r.get("reason") or "")[:200],
+                          **({"tail": str(r["tail"])[-3000:]} if not r.get("ok") and r.get("tail")
+                             else {})})
     else:
         ok, note = R.build_verdict(res)
         items.append({"name": "빌드", "ok": ok, "summary": note[:200]})
@@ -714,6 +742,9 @@ def render(facts: dict, *, origin: str = "", at: float | None = None) -> str:
         for it in checks.get("items") or []:
             out.append(f"    · {it.get('name')}: {'통과' if it.get('ok') else '실패'}"
                        + (f" — {it['summary']}" if it.get("summary") else ""))
+            if it.get("tail") and not it.get("ok"):
+                out.append("      실패 원문 꼬리:")
+                out.extend("        " + ln for ln in str(it["tail"]).splitlines()[-TAIL_LINES:])
     elif st == "at_gate":
         out.append(f"  통합 검사 {verdict} — {f.get('build_note') or '요약 없음'}")
     if f.get("failed_tasks"):
