@@ -4,7 +4,13 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-11 11:15 KST · Claude · #798 타이머 경로 재착수·가동, 라이브 실증 대기**.
+- **현재 체크포인트: 2026-10-11 11:32 KST · Claude · #396 수정·훅 재설치·배포 완료, 라이브 확인 대기**.
+  - 사용자가 분산 추천 #396 을 골랐으나 AXCluster 프로필 `work_exts=[".py"]` 라 `.sh` 대상은 분산 불가 → 사용자 「1번으로 로컬 처리」(로컬 서브 에이전트). [주의] 분산 추천 전에 `project_profile_tool` 의 `work_exts` 를 먼저 볼 것.
+  - 커밋 `ca5af94`: `pre_push_hook.sh` 삭제 판정을 원격 실제 팁(ls-remote 1회/push, 팁 없을 때만 fetch)으로, 못 읽으면 거부, 메시지에 판정 ref·sha·낡은 추적 sha. #787 ⓐ 도 실제 팁. [주의] 원격 불통 시 로컬상 병합분도 거부(더 엄격). 검사 test_branch_prune 87/87 · attempt 46/46 · cleanup 46/46 · review 158/158 · 통합 31/31.
+  - 트윈 클론 4곳(MotionForge·AXCluster·ModularStage·NS) `attempt install-hook` → status 정상·원본과 바이트 일치. `master.client update` 3/3 OK(출처 `ca5af94`). #396 「해결」90% — 닫기 전 실제 Gitea 원격 삭제 1회 확인.
+  - #798 은 아래 체크포인트 그대로 — 다음 `.py` 분산 작업 때 타이머 ⑦ 준비 라이브 실증. 실행 중 작업 없음, 작업 트리 clean(이 인계서 수정 전). 다음 일감은 사용자 선택.
+
+- **직전 체크포인트: 2026-10-11 11:15 KST · Claude · #798 타이머 경로 재착수·가동, 라이브 실증 대기**.
   - 사용자 결정: AX 클러스터는 훅이 아닌 타이머 폴백으로 완료 확인 · ⑦ 준비(confirm=False)까지 · 마스터 정본 클론 · 로컬 서브 에이전트. 커밋 `b562ecb`(followup.py·test_followup 174/174·ax-followup.service/.timer·distribute 「완료 이후」). 훅·요청자 배달·별도 요청자 클론은 복원 안 함.
   - pkexec 로 유닛 설치·timer enable. 11:10:19 첫 주기 = 열린 work 8건 기준선, 11:11:21 일반 주기 준비 0. 기록 `~/.cache/ax-followup/followup.jsonl`·journal. `master.client update` 3/3 OK. settings.json 해시 불변. #798 진행 노트.
   - 🔴 **다음 분산 작업 때 라이브 실증한다 (사용자 2026-10-11)**: 라운드 종결 → 1분 안에 격리 worktree(`/home/sim/ax-advance-<work>`)·통합/회귀 검사·#work 이슈 노트·`at_gate` 멈춤을 확인하고 #798 을 닫을지 판단. 세션은 그와 별개로 `get_work` 카운트다운 조회.
