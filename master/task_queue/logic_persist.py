@@ -52,12 +52,41 @@ def update_work_meta(idx: TaskIndex, work_id: str, *,
                      target_branch: Optional[str] = None,
                      noticed_round: Optional[int] = None,
                      dispatch_note: Optional[str] = None,
-                     dispatch_at: Optional[str] = None) -> dict:
+                     dispatch_at: Optional[str] = None,
+                     worker_mode: Optional[str] = None) -> dict:
     """work 메타 부분 갱신. 명시된 필드만 patch. PATCH /api/v1/works/{work_id} 의 코어."""
+    # [DOC] #392 ② (사용자 결정 2026-10-05 · 2026-10-11 A안): `worker_mode` 는 진행 중 work 의
+    #       지휘자 스탬프를 바꾸는 장애 대응 경로다. None 이면 손대지 않는다. 적용은 **다음 파견부터**
+    #       (`autodispatch` 가 파견 시작 때 스탬프를 한 번 읽어 그 파견 전체에 고정한다 — #389 그대로).
+    #       거절은 `{"ok": False, "reason": <코드>, "error": <문장>}` 이고 저장하지 않는다:
+    #         invalid_worker_mode  `master.work.mode.MODES` 밖의 값 (strip 뒤 빈 값 포함)
+    #         terminal_work        merge_status 가 merged · rejected · cancelled
+    #       바뀌면 changed 에 `worker_mode=<이전 또는 None>→<새 값>` 한 항목을 넣는다 — 기존
+    #       `[work-patch]` 로그·커밋 메시지가 그 문자열로 이전·새 값을 남긴다.
+    normalized_worker_mode = None
+    if worker_mode is not None:
+        from ..work.mode import MODES
+        normalized_worker_mode = worker_mode.strip()
+        if normalized_worker_mode not in MODES:
+            return {
+                "ok": False,
+                "reason": "invalid_worker_mode",
+                "error": f"알 수 없는 worker_mode: {normalized_worker_mode!r}",
+            }
     with idx.lock:
         wmeta = idx.works.get(work_id)
         if not wmeta:
             return {"ok": False, "error": f"work not found: {work_id}"}
+        previous_worker_mode = wmeta.get("worker_mode")
+        worker_mode_changed = (normalized_worker_mode is not None
+                               and normalized_worker_mode != previous_worker_mode)
+        if worker_mode_changed and wmeta.get("merge_status") in (
+                "merged", "rejected", "cancelled"):
+            return {
+                "ok": False,
+                "reason": "terminal_work",
+                "error": f"종결된 work 의 worker_mode 는 바꿀 수 없습니다: {work_id}",
+            }
         changed: list[str] = []
         if merge_status is not None and merge_status != wmeta.get("merge_status"):
             wmeta["merge_status"] = merge_status
@@ -91,6 +120,9 @@ def update_work_meta(idx: TaskIndex, work_id: str, *,
         if target_branch is not None and target_branch != wmeta.get("target_branch"):
             wmeta["target_branch"] = target_branch
             changed.append(f"target_branch={target_branch}")
+        if worker_mode_changed:
+            wmeta["worker_mode"] = normalized_worker_mode
+            changed.append(f"worker_mode={previous_worker_mode}→{normalized_worker_mode}")
         if not changed:
             return {"ok": True, "work_id": work_id, "changed": []}
         _save_work(idx, work_id)
