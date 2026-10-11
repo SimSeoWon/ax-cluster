@@ -4,7 +4,15 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-11 11:32 KST · Claude · #396 수정·훅 재설치·배포 완료, 라이브 확인 대기**.
+- **현재 체크포인트: 2026-10-11 12:15 KST · Claude · #392 분산 완주·종결, #798 「묻기」 보강(`--wait`)**.
+  - `main` = `f770059`, 작업 트리 clean(이 인계서 수정 전), 워커 3/3 배달 일치. 실행 중 작업 없음. `~/ax-788-work`(옛 #788 요청자 트리)는 손대지 않음.
+  - **#392 ②(진행 중 work 지휘자 변경, 사용자 A안 「다음 파견부터」 · AX 워커 분산)**: work `20261011_1150_392_work_7e1f74b4`(#800 완료) — 골조 `3d5b4e1` · `.43`/`.2` codex 병렬 · 층2 APPROVE 2/2 · 사용자 「392 전진하고」 `bad83194` · 「392 finalize 해」 `afdd98e`. ax-mode 스킬 3-1절 `f770059`. `ax-task-queue` 12:11:20 · `ax-projects` 12:11:25 재기동. 라이브는 거절 경로만(merged work 에 typo→invalid_worker_mode, claude→terminal_work, 스탬프 불변). #392 「완료」. 미실증: 진행 중 work 실제 변경 → 다음 파견 새 모드.
+  - **#798**: 타이머 라이브 실증 — 조각 종결 11:55:31 → 준비 11:56:11 → at_gate 11:57:18(통합 31/31 · 회귀 2/2 · #800 노트). 🔴 사용자 지적: **타이머만 돌면 끝이 아니다 — 사람에게 묻는 것까지**(그날 질문이 닿은 것은 세션이 임의로 journal 을 본 덕). 사용자 선택 ① → `402d772`: `followup <work_id> --wait`(읽기 전용, 카운트다운 줄, at_gate 0 · 실패/종결/merged 3 · 타임아웃 4) + `register_work_tool` 응답 `wait` 필드 + distribute 스킬 「등재 직후 wait 를 백그라운드로, 끝나면 게이트 물음 전달」. test_followup 236/236, `ax-projects` 재기동. #798 진행 70%.
+  - 🔴 **다음 분산 등재 때 할 것**: 응답의 `wait` 명령을 곧바로 `run_in_background` 로 돌리고, 끝나면 게이트 물음을 사용자에게 전한다 — 이것이 #798 마지막 라이브 실증(등재 → wait → 세션 깨어나 묻기). 성공하면 #798 종결 판단.
+  - [주의] `.2` codex 가 시작 때 `ax-client` MCP(HTTP) 연결 실패 `Transport channel closed` 2회 — 작업은 rc0·APPROVE 로 끝났으나 원인 미조사. 일감 등록 여부는 사용자 미결.
+  - #396 은 아래 그대로(「해결」90%, 실제 Gitea 삭제 1회 확인 후 닫기). #799(.33 요청자 폴백) 미착수. 다음 일감은 사용자 선택.
+
+- **직전 체크포인트: 2026-10-11 11:32 KST · Claude · #396 수정·훅 재설치·배포 완료, 라이브 확인 대기**.
   - 사용자가 분산 추천 #396 을 골랐으나 AXCluster 프로필 `work_exts=[".py"]` 라 `.sh` 대상은 분산 불가 → 사용자 「1번으로 로컬 처리」(로컬 서브 에이전트). [주의] 분산 추천 전에 `project_profile_tool` 의 `work_exts` 를 먼저 볼 것.
   - 커밋 `ca5af94`: `pre_push_hook.sh` 삭제 판정을 원격 실제 팁(ls-remote 1회/push, 팁 없을 때만 fetch)으로, 못 읽으면 거부, 메시지에 판정 ref·sha·낡은 추적 sha. #787 ⓐ 도 실제 팁. [주의] 원격 불통 시 로컬상 병합분도 거부(더 엄격). 검사 test_branch_prune 87/87 · attempt 46/46 · cleanup 46/46 · review 158/158 · 통합 31/31.
   - 트윈 클론 4곳(MotionForge·AXCluster·ModularStage·NS) `attempt install-hook` → status 정상·원본과 바이트 일치. `master.client update` 3/3 OK(출처 `ca5af94`). #396 「해결」90% — 닫기 전 실제 Gitea 원격 삭제 1회 확인.
