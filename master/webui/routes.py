@@ -43,8 +43,6 @@
 # [DOC] import 는 이 모듈이 실제로 쓰는 이름만 둔다 (#815 pyflakes 정리).
 from __future__ import annotations
 
-# [PSEUDO] 이 import 의 `json` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
-import json
 import re
 from pathlib import Path
 
