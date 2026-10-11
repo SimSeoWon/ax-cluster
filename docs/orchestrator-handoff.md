@@ -4,7 +4,13 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-11 KST · Claude · #632 finalize·종결·배포 완료**.
+- **현재 체크포인트: 2026-10-11 11:15 KST · Claude · #798 타이머 경로 재착수·가동, 라이브 실증 대기**.
+  - 사용자 결정: AX 클러스터는 훅이 아닌 타이머 폴백으로 완료 확인 · ⑦ 준비(confirm=False)까지 · 마스터 정본 클론 · 로컬 서브 에이전트. 커밋 `b562ecb`(followup.py·test_followup 174/174·ax-followup.service/.timer·distribute 「완료 이후」). 훅·요청자 배달·별도 요청자 클론은 복원 안 함.
+  - pkexec 로 유닛 설치·timer enable. 11:10:19 첫 주기 = 열린 work 8건 기준선, 11:11:21 일반 주기 준비 0. 기록 `~/.cache/ax-followup/followup.jsonl`·journal. `master.client update` 3/3 OK. settings.json 해시 불변. #798 진행 노트.
+  - 🔴 **다음 분산 작업 때 라이브 실증한다 (사용자 2026-10-11)**: 라운드 종결 → 1분 안에 격리 worktree(`/home/sim/ax-advance-<work>`)·통합/회귀 검사·#work 이슈 노트·`at_gate` 멈춤을 확인하고 #798 을 닫을지 판단. 세션은 그와 별개로 `get_work` 카운트다운 조회.
+  - `~/ax-632-work`·`~/ax-advance-…632…` worktree 와 로컬 base 브랜치는 사용자 지시로 삭제(c60da32 는 main 미포함이나 789a244 와 내용 동일 — 사용자 확인 후).
+
+- **직전 체크포인트: 2026-10-11 KST · Claude · #632 finalize·종결·배포 완료**.
   - 사용자 「632 finalize 해」 → 정본 `review.finalize_work(confirm=True)`(마스터, 기본 큐 api) ok: `main` no-ff 머지 `2a30943` push · 큐 `merged`·approved · #797 「완료」100%+마감 노트 · 원격 `task/…632…/base` 삭제 1/실패 0 · 검수 트리 자동 제거. 머지 내용 = 789a244(3파일) 확인. 마스터 로컬 `main` ff → `2a30943`, clean.
   - 사용자 「둘 다 해」 → #632 「완료」100% 종결 노트(머지 커밋 연결) · `master.client update` rc0, AXCluster `.43`/`.2`/`.33` 배달·검사 3/3 OK, 출처 = HEAD `2a30943`(`.2` 홈 중복 스킬 `~/.agents/skills/ax-work` 주의는 기존과 같음). 서비스 재기동 없음.
   - 남은 것: #798(완료 후 요청자 후속 처리 누락) 미해결 · 보존 트리 `~/ax-advance-20261011_0035_632_redmine_e5e894a9`·`~/ax-632-work` 는 이제 정리 후보(삭제는 사용자 확인 뒤). 다음 일감은 사용자 선택. 이 체크포인트는 미커밋.
