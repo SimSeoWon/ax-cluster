@@ -199,6 +199,109 @@ def test_hook_direct():
         check("  예외 줄 없이 조용히 통과", "#787" not in out, out[-200:])
 
 
+# ── #396 판정 기준은 원격의 실제 팁 ────────────────────────────────────────────
+
+def _advance_main_elsewhere(fx: Fx, tmp: Path, branch: str) -> str:
+    """다른 클론에서 `branch` 를 main 에 머지해 올린다 — fx 클론의 추적 ref 는 그대로(낡는다)."""
+    other = tmp / "other"
+    subprocess.run(["git", "clone", "-q", str(fx.origin), str(other)], check=True)
+    _run(other, "checkout", "-q", "main")
+    _run(other, "merge", "-q", "--no-ff", f"origin/{branch}", "-m", f"merge {branch}")
+    _run(other, "push", "-q", "origin", "HEAD:refs/heads/main")
+    return _run(other, "rev-parse", "HEAD")[1]
+
+
+def test_stale_tracking_396():
+    track = f"refs/remotes/{REMOTE}/main"
+    # ① 추적 ref 가 낡았고, 실제 main 의 머지 커밋은 이 클론에 아직 없다 → ls-remote + fetch 로 통과
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = Fx(Path(tmp))
+        fx.branch_at("task/s1/r1/p1", fx.main, "Source/s1.cpp", "// s1\n")
+        real = _advance_main_elsewhere(fx, Path(tmp), "task/s1/r1/p1")
+        stale = _run(fx.repo, "rev-parse", track)[1]
+        check("픽스처: 추적 ref 가 낡았다", stale == fx.main and stale != real, stale)
+        rc, _ = _run(fx.repo, "cat-file", "-e", f"{real}^{{commit}}", ok=False)
+        check("픽스처: 실제 팁 커밋이 로컬에 없다", rc != 0)
+        rc, out = fx.delete("task/s1/r1/p1")
+        check("[중요] #396 낡은 추적 ref 라도 실제 main 에 병합됐으면 삭제 허용", rc == 0, out[-300:])
+        check("  추적 ref 가 실제 팁으로 갱신됐다", _run(fx.repo, "rev-parse", track)[1] == real)
+
+    # ② 추적 ref 가 낡았고 실제 팁 커밋은 로컬에 있다 → fetch 없이 실제 팁으로 판정
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = Fx(Path(tmp))
+        tip = fx.branch_at("task/s2/r1/p1", fx.main, "Source/s2.cpp", "// s2\n")
+        _run(fx.repo, "push", "-q", "--no-verify", REMOTE, f"{tip}:refs/heads/main")
+        _run(fx.repo, "update-ref", track, fx.main)          # 낡게 되돌린다
+        rc, out = fx.delete("task/s2/r1/p1")
+        check("[중요] #396 실제 팁이 로컬에 있으면 그것으로 판정해 허용", rc == 0, out[-300:])
+
+        # ③ 거부 메시지에 판정에 쓴 ref·해시, 낡은 추적 ref 의 해시
+        un = fx.branch_at("task/s2/r1/p2", fx.main, "Source/s2b.cpp", "// s2b\n")
+        _run(fx.repo, "update-ref", track, fx.main)
+        rc, out = fx.delete("task/s2/r1/p2")
+        check("[중요] 미병합은 여전히 거부", rc != 0 and "pre-push 거부" in out, out[-300:])
+        check("  거부 메시지에 판정 ref 와 실제 팁 해시",
+              f"{REMOTE} refs/heads/main = {tip}" in out, out[-400:])
+        check("  낡은 추적 ref 와 그 해시를 따로 찍는다", f"{track} = {fx.main}" in out and "낡았다" in out,
+              out[-400:])
+        check("  지우려던 팁 해시", un in out, out[-400:])
+
+    # ④ 원격을 못 읽으면 거부(fail-closed) — fetch URL 만 끊고 push URL 은 살린다
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = Fx(Path(tmp))
+        un = fx.branch_at("task/s3/r1/p1", fx.main, "Source/s3.cpp", "// s3\n")
+        ok_tip = fx.branch_at("task/s3/r1/p2", fx.main, "Source/s3b.cpp", "// s3b\n")
+        _run(fx.repo, "push", "-q", "--no-verify", REMOTE, f"{ok_tip}:refs/heads/main")
+        _run(fx.repo, "config", f"remote.{REMOTE}.pushurl", str(fx.origin))
+        _run(fx.repo, "config", f"remote.{REMOTE}.url", str(Path(tmp) / "missing.git"))
+        rc, out = fx.delete("task/s3/r1/p1")
+        check("[중요] #396 원격 불통 + 미병합 → 거부", rc != 0 and "pre-push 거부" in out, out[-300:])
+        check("  메시지에 추적 ref 이름과 해시", f"{track} = {ok_tip}" in out, out[-400:])
+        check("  사유가 ls-remote 실패 · fail-closed", "ls-remote" in out and "fail-closed" in out,
+              out[-400:])
+        rc, out = fx.delete("task/s3/r1/p2")
+        check("[중요] 원격 불통이면 로컬 추적 ref 상 병합분도 판정하지 않는다(보존)", rc != 0, out[-300:])
+        check("  원격에 그대로 남았다", "task/s3/r1/p1" in _remote_heads(fx.origin)
+              and "task/s3/r1/p2" in _remote_heads(fx.origin))
+        # ⓑ 는 원격 판정과 무관하게 그대로 돈다
+        rc, out = fx.delete("task/s3/r1/p1", env={CL.TERMINAL_WORK_ENV: "s3"})
+        check("  예외 ⓑ 는 원격 불통이어도 그대로", rc == 0 and "#787" in out, out[-300:])
+
+    # ⑤ 한 push 에 삭제가 여럿이어도 원격 목록은 한 번만 읽고, 루프가 끝까지 돈다
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = Fx(Path(tmp))
+        a = fx.branch_at("task/s5/r1/p1", fx.main, "Source/s5a.cpp", "// a\n")
+        _run(fx.repo, "checkout", "-q", "--detach", a)
+        b = fx.commit("Source/s5b.cpp", "// b\n", "b")
+        _run(fx.repo, "push", "-q", REMOTE, f"{b}:refs/heads/task/s5/r1/p2")
+        _run(fx.repo, "push", "-q", "--no-verify", REMOTE, f"{b}:refs/heads/main")
+        _run(fx.repo, "update-ref", track, fx.main)
+        trace = Path(tmp) / "trace.log"           # 훅이 stderr 를 버리므로 파일로 받는다
+        rc, out = _run(fx.repo, "push", REMOTE, "--delete", "task/s5/r1/p1", "task/s5/r1/p2",
+                       env={"GIT_TRACE": str(trace)}, ok=False)
+        tlog = trace.read_text(encoding="utf-8", errors="replace") if trace.exists() else ""
+        check("삭제 둘을 한 push 로 — 둘 다 허용", rc == 0 and not ({"task/s5/r1/p1", "task/s5/r1/p2"}
+              & _remote_heads(fx.origin)), out[-300:])
+        n = sum(1 for ln in tlog.splitlines()
+                if "built-in: git ls-remote" in ln and "--heads" in ln and "-q" not in ln.split())
+        check("[중요] 원격 목록 읽기는 훅 실행당 한 번", n == 1, str(n))
+
+    # ⑥ 삭제가 없는 push 는 원격을 따로 읽지 않는다 — 불통이어도 통과
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = Fx(Path(tmp))
+        _run(fx.repo, "config", f"remote.{REMOTE}.pushurl", str(fx.origin))
+        _run(fx.repo, "config", f"remote.{REMOTE}.url", str(Path(tmp) / "missing.git"))
+        tip = fx.commit("Source/s4.cpp", "// s4\n", "s4")
+        rc, out = _run(fx.repo, "push", REMOTE, f"{tip}:refs/heads/task/s4/base", ok=False)
+        check("삭제 없는 push 는 원격 읽기 없이 통과", rc == 0, out[-300:])
+
+
+def _remote_heads(origin: Path) -> set:
+    out = subprocess.run(["git", "-C", str(origin), "for-each-ref", "--format=%(refname:short)",
+                          "refs/heads/"], capture_output=True, text=True).stdout
+    return set(out.split())
+
+
 # ── ③④ 종결 work 정리 ──────────────────────────────────────────────────────
 
 def test_apply_terminal():
@@ -425,7 +528,7 @@ def test_prune_helper_keeps_unmerged_and_foreign():
 
 
 if __name__ == "__main__":
-    for fn in (test_hook_direct, test_apply_terminal, test_requeue_and_stale_hook, test_catchup_prunes_terminal,
+    for fn in (test_hook_direct, test_stale_tracking_396, test_apply_terminal, test_requeue_and_stale_hook, test_catchup_prunes_terminal,
                test_advance_prunes_round_subbranches, test_prune_helper_keeps_unmerged_and_foreign):
         try:
             fn()
