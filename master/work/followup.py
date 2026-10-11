@@ -39,11 +39,16 @@ fail-open 으로 넘긴다(code 판은 **fail-closed** — 못 돌린 것은 통
 등재 직후 백그라운드로 돌려 두면 이번 라운드의 준비 결과(at_gate·stopped·error)·work 종결·
 타임아웃에서 결과 블록(`render` 와 같은 문구)을 찍고 끝난다 — 그 종료가 세션을 깨운다.
 `--wait` 는 순수 읽기다(준비·전진·상태 기록 없음).
+[중요] **막힘도 끝이다** (사용자 결정 2026-10-11, `#798`): 이번 라운드 조각 하나라도
+`needs_revision`·`failed` 가 되면 **첫 막힘에서** 사유를 찍고 종료 코드 3 으로 끝난다(`blocked`).
+실측 2026-10-11 12:26 — 두 조각이 층1 에 막혀 `needs_revision` 이 됐는데 `--wait` 는
+「조각 0/2 · 준비 없음」만 6분 찍다 사람이 취소했다. 재시도 자체는 건드리지 않는다(읽기 전용) —
+계속 둘지 취소할지는 깨어난 세션이 사람에게 묻는다.
 
 `.venv/bin/python -m master.work.followup <work_id> [--repo PATH] [--python PY]`
 `.venv/bin/python -m master.work.followup --scan --project AXCluster --repo PATH`   (타이머)
 `.venv/bin/python -m master.work.followup <work_id> --wait --repo PATH [--interval S] [--timeout S]`
-    종료 코드: 0 at_gate · 3 stopped/error/terminal_*/merged · 4 timeout · 2 사용법
+    종료 코드: 0 at_gate · 3 stopped/error/blocked/terminal_*/merged · 4 timeout · 2 사용법
 """
 from __future__ import annotations
 
@@ -460,11 +465,62 @@ def _round_tasks(work: dict, tasks) -> list:
     return tasks
 
 
-def _failed_of(rtasks) -> list:
-    """실패·취소 조각의 사실 — `prepare_round` 와 `wait_for_gate` 가 같은 모양으로 쓴다."""
-    return [{"task_id": t.get("task_id") or t.get("id"), "status": t.get("status"),
-             "reason": str(t.get("failure") or t.get("error") or t.get("reason") or "")[:300]}
-            for t in rtasks or () if t.get("status") in TASK_BAD]
+# 큐가 상태별로 사유를 적는 키 (`task_queue/logic_lifecycle.py` — 실측 2026-10-11).
+#   failed          `fail_reason`(≤120) + `fail_detail`(≤600)   submit 실패 · `verify:<result>`
+#   cancelled       `cancel_reason`(≤300)                       취소 API
+#   needs_revision  `last_feedback`(≤600)                       층1 revise · verify revise
+# [주의] 종전에는 `failure`/`error`/`reason` 만 읽어 노트·대기 출력이 늘 「사유 없음」이었다.
+#    옛 키는 폴백으로만 남긴다 (주입 테스트·옛 레코드).
+REASON_KEYS = {
+    "failed": ("fail_reason", "fail_detail"),
+    "cancelled": ("cancel_reason",),
+    "needs_revision": ("last_feedback",),
+}
+LEGACY_REASON_KEYS = ("failure", "error", "reason")
+BLOCK_STATES = ("needs_revision", "failed")      # wait 가 첫 막힘으로 읽는 조각 상태
+
+
+def task_reason(t: dict, limit: int = 300) -> str:
+    """조각 하나의 사유 — 그 상태에서 큐가 쓰는 키를 먼저, 없으면 옛 키. 비면 ""."""
+    parts = []
+    for k in REASON_KEYS.get(str(t.get("status") or ""), ()):
+        v = str(t.get(k) or "").strip()
+        if v and v not in parts:
+            parts.append(v)
+    if not parts:
+        for k in LEGACY_REASON_KEYS:
+            v = str(t.get(k) or "").strip()
+            if v:
+                parts.append(v)
+                break
+    return " — ".join(parts)[:limit]
+
+
+def _failed_of(rtasks, states=TASK_BAD) -> list:
+    """실패·취소(·막힘) 조각의 사실 — `prepare_round` 와 `wait_for_gate` 가 같은 모양으로 쓴다.
+    워커는 `worker_id`, 없으면 `assignee`(revise·취소 뒤엔 `worker_id` 가 비워진다)."""
+    out = []
+    for t in rtasks or ():
+        if t.get("status") not in states:
+            continue
+        d = {"task_id": t.get("task_id") or t.get("id"), "status": t.get("status"),
+             "reason": task_reason(t)}
+        w = t.get("worker_id") or t.get("assignee")
+        if w:
+            d["worker"] = str(w)
+        if t.get("attempt_count") is not None:
+            d["attempt_count"] = int(t.get("attempt_count") or 0)
+        out.append(d)
+    return out
+
+
+def _task_line(t: dict) -> str:
+    """조각 사실 한 줄 (render·render_wait 공용)."""
+    meta = f" · 워커 {t['worker']}" if t.get("worker") else ""
+    if t.get("attempt_count") is not None:
+        cap = f"/{t['max_attempts']}" if t.get("max_attempts") else ""
+        meta += f" · 시도 {t['attempt_count']}{cap}"
+    return f"  조각 {t.get('status')} {t.get('task_id')}{meta}: {t.get('reason') or '사유 없음'}"
 
 
 def prepare_round(repo, work_id: str, *, api=None, kind: str | None = None, project: str = "",
@@ -765,7 +821,7 @@ def render(facts: dict, *, origin: str = "", at: float | None = None) -> str:
         out.append(f"  통합 검사 {verdict} — {f.get('build_note') or '요약 없음'}")
     if f.get("failed_tasks"):
         for t in f["failed_tasks"]:
-            out.append(f"  조각 {t.get('status')} {t.get('task_id')}: {t.get('reason') or '사유 없음'}")
+            out.append(_task_line(t))
     if f.get("reason") and st != "at_gate":
         out.append(f"  사유: {str(f['reason'])[:500]}")
     if f.get("question"):
@@ -1055,9 +1111,14 @@ def hashlib_name(repo, project: str) -> str:
 
 WAIT_RECORDED = ("at_gate", "stopped", "error")     # `RECORDED` 의 결과 state — 이 셋이면 끝
 WAIT_TERMINAL = ("rejected", "cancelled")
-WAIT_EXIT = {"at_gate": 0, "stopped": 3, "error": 3, "terminal_rejected": 3,
+WAIT_EXIT = {"at_gate": 0, "stopped": 3, "error": 3, "blocked": 3, "terminal_rejected": 3,
              "terminal_cancelled": 3, "merged": 3, "timeout": 4}
+try:                                   # revise 상한 — 원전 `_DEFAULT_MAX_ATTEMPTS` 와 같은 값
+    from .revise import MAX_ATTEMPTS as REVISE_MAX_ATTEMPTS
+except ImportError:                    # pragma: no cover — 배달본에 revise 가 없을 때
+    REVISE_MAX_ATTEMPTS = None
 WAIT_LABEL = {
+    "blocked": "이번 라운드 조각이 막혔다 — 첫 막힘에서 대기를 끝냈다 (재시도·취소는 건드리지 않았다)",
     "merged": "work 가 이미 `merged` — 마감됨, ⑦ 대기 대상 아님",
     "terminal_rejected": "work 가 `rejected` — ⑦ 준비 대상 아님",
     "terminal_cancelled": "work 가 `cancelled` — ⑦ 준비 대상 아님",
@@ -1083,8 +1144,15 @@ def render_wait(res: dict) -> str:
                         if res.get("total") is not None else "",
                         f"준비 기록 {res.get('record_state') or '없음'}") if x]
     out.append("  " + " · ".join(meta))
+    for t in res.get("blocked_tasks") or []:
+        out.append(_task_line(t))
+    nrev = sum(1 for t in res.get("blocked_tasks") or [] if t.get("status") == "needs_revision")
+    if nrev:
+        cap = f" (상한 {REVISE_MAX_ATTEMPTS}회)" if REVISE_MAX_ATTEMPTS else ""
+        out.append(f"  needs_revision {nrev}건은 큐의 자동 재시도 후보로 남아 있다{cap} — "
+                   f"이 대기는 재시도·취소를 건드리지 않았다")
     for t in res.get("failed_tasks") or []:
-        out.append(f"  조각 {t.get('status')} {t.get('task_id')}: {t.get('reason') or '사유 없음'}")
+        out.append(_task_line(t))
     if res.get("terminal_reason"):
         out.append(f"  사유: {str(res['terminal_reason'])[:500]}")
     if res.get("last_error"):
@@ -1102,6 +1170,8 @@ def wait_for_gate(repo, work_id: str, *, api=None, state=None, interval: float =
     `recorded_for(repo, work_id, 그 라운드)`. 라운드는 개선요청으로만 바뀌므로 매번 다시 읽는다.
 
         outcome   at_gate · stopped · error   그 라운드의 준비 기록 (facts · question · text=render)
+                  blocked                     이번 라운드 조각이 needs_revision·failed (첫 막힘,
+                                              기록이 없을 때만 — 기록이 앞선다) · blocked_tasks
                   terminal_rejected · terminal_cancelled   work 종결 (실패 조각 사유)
                   merged                      work 마감
                   timeout                     마지막으로 본 큐 상태·기록 · 마지막 조회 오류
@@ -1116,6 +1186,7 @@ def wait_for_gate(repo, work_id: str, *, api=None, state=None, interval: float =
     deadline = t0 + float(timeout)
     res: dict = {"work_id": work_id, "round": None, "outcome": "", "merge_status": "",
                  "verified": 0, "total": None, "record_state": "", "failed_tasks": [],
+                 "blocked": 0, "blocked_tasks": [],
                  "terminal_reason": "", "last_error": "", "polls": 0, "elapsed": 0.0,
                  "facts": {}, "question": "", "text": ""}
 
@@ -1141,12 +1212,15 @@ def wait_for_gate(repo, work_id: str, *, api=None, state=None, interval: float =
             rtasks = _round_tasks(work, tasks)
             res["total"] = len(rtasks)
             res["verified"] = sum(1 for t in rtasks if t.get("status") == "verified")
+            blocked = _failed_of(rtasks, BLOCK_STATES)
+            res["blocked"] = len(blocked)
             rec = recorded_for(repo, work_id, rnd, state=state)
             res["record_state"] = str(rec.get("state") or "") if rec else ""
             remain = deadline - clock()
             log("wait", f"{work_id} r{rnd} · 큐 {res['merge_status'] or '?'} · 조각 "
-                        f"{res['verified']}/{res['total']} · 준비 {res['record_state'] or '없음'} · "
-                        f"남은 {_mmss(remain)}")
+                        f"{res['verified']}/{res['total']}"
+                        + (f" · 막힘 {res['blocked']}" if res["blocked"] else "")
+                        + f" · 준비 {res['record_state'] or '없음'} · 남은 {_mmss(remain)}")
             if res["record_state"] in WAIT_RECORDED:
                 res["facts"] = rec
                 res["question"] = str(rec.get("question") or "")
@@ -1158,6 +1232,17 @@ def wait_for_gate(repo, work_id: str, *, api=None, state=None, interval: float =
                 res["failed_tasks"] = _failed_of(rtasks)
                 res["terminal_reason"] = str(work.get("terminal_reason") or "")
                 return _finish(f"terminal_{res['merge_status']}")
+            if blocked:
+                # 첫 막힘에서 끝낸다 (사용자 결정 2026-10-11) — 큐에는 아무것도 보내지 않는다
+                for t in blocked:
+                    if t["status"] == "needs_revision" and REVISE_MAX_ATTEMPTS:
+                        t["max_attempts"] = REVISE_MAX_ATTEMPTS
+                res["blocked_tasks"] = blocked
+                for t in blocked:
+                    log("wait", f"{work_id} r{rnd} 막힘 — {t['status']} {t['task_id']}"
+                                f" · 워커 {t.get('worker') or '?'} · 시도 {t.get('attempt_count', '?')}"
+                                f": {(t.get('reason') or '사유 없음')[:160]}")
+                return _finish("blocked")
         except Exception as e:                                     # noqa: BLE001
             res["last_error"] = f"{type(e).__name__}: {e}"[:300]
             log("wait", f"[주의] {work_id} 큐 조회 실패 — {res['last_error']} · 계속 조회한다 · "
@@ -1204,7 +1289,8 @@ def main(argv=None) -> int:
     ap.add_argument("--remote", default=R.DEFAULT_REMOTE)
     ap.add_argument("--state-dir", default="")
     ap.add_argument("--wait", action="store_true",
-                    help="준비하지 않고 이 work 의 지금 라운드 ⑦ 준비 결과까지 읽기만 하며 기다린다")
+                    help="준비하지 않고 이 work 의 지금 라운드 ⑦ 준비 결과까지 읽기만 하며 기다린다 "
+                         "(종료 코드 0 at_gate · 3 stopped/error/blocked/terminal_*/merged · 4 timeout)")
     ap.add_argument("--interval", type=float, default=30.0, help="--wait 조회 간격(초)")
     ap.add_argument("--timeout", type=float, default=5400.0, help="--wait 최대 대기(초)")
     ns = ap.parse_args(argv)
@@ -1225,7 +1311,7 @@ def main(argv=None) -> int:
         return 1
     if ns.wait:
         # stdout 은 결과 블록 하나, 조회마다의 줄은 stderr. 종료 코드: 0 at_gate ·
-        # 3 stopped/error/terminal_*/merged · 4 timeout · 2 사용법
+        # 3 stopped/error/blocked/terminal_*/merged · 4 timeout · 2 사용법
         res = wait_for_gate(repo, ns.work_id, api=api, state=ns.state_dir or None,
                             interval=ns.interval, timeout=ns.timeout, logf=stderr_log)
         print(render_wait(res))

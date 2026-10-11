@@ -886,6 +886,132 @@ def test_wait_uses_current_round():
         shutil.rmtree(repo, ignore_errors=True)
 
 
+def test_task_reason_key_mapping():
+    """큐가 실제로 쓰는 사유 키 (`logic_lifecycle.py`) — 옛 키는 폴백 (`#798` 후속)."""
+    rt = F.task_reason
+    check("failed: fail_reason + fail_detail",
+          rt({"status": "failed", "fail_reason": "layer1", "fail_detail": "동결 위반 x"})
+          == "layer1 — 동결 위반 x")
+    check("failed: verify:<result> 만 있어도", rt({"status": "failed", "fail_reason": "verify:reject"})
+          == "verify:reject")
+    check("cancelled: cancel_reason", rt({"status": "cancelled", "cancel_reason": "골조 결함",
+                                          "last_feedback": "층1"}) == "골조 결함")
+    check("needs_revision: last_feedback", rt({"status": "needs_revision", "last_feedback": "층1 위반 1"})
+          == "층1 위반 1")
+    check("옛 키 폴백 (failure)", rt({"status": "failed", "failure": "옛 사유"}) == "옛 사유")
+    check("옛 키 폴백 (error)", rt({"status": "cancelled", "error": "e"}) == "e")
+    check("큐 키가 옛 키보다 앞선다", rt({"status": "failed", "fail_reason": "새", "failure": "옛"}) == "새")
+    check("사유 없으면 빈 문자열", rt({"status": "failed"}) == "")
+    check("300자로 자른다", len(rt({"status": "needs_revision", "last_feedback": "x" * 900})) == 300)
+    got = F._failed_of([
+        {"task_id": "a", "status": "failed", "fail_reason": "r", "fail_detail": "d", "worker_id": "w1",
+         "attempt_count": 2},
+        {"task_id": "b", "status": "cancelled", "cancel_reason": "c", "assignee": "192.168.0.2",
+         "attempt_count": 1},
+        {"task_id": "c", "status": "needs_revision", "last_feedback": "f"},
+        {"task_id": "d", "status": "verified"}])
+    check("_failed_of: 기본은 failed·cancelled 만", [t["task_id"] for t in got] == ["a", "b"], str(got))
+    check("_failed_of: 상태·워커·시도·사유", got[0] == {"task_id": "a", "status": "failed", "reason": "r — d",
+                                                   "worker": "w1", "attempt_count": 2}, str(got[0]))
+    check("_failed_of: worker_id 없으면 assignee", got[1].get("worker") == "192.168.0.2"
+          and got[1]["reason"] == "c", str(got[1]))
+    blk = F._failed_of([{"task_id": "c", "status": "needs_revision", "last_feedback": "f"},
+                        {"task_id": "a", "status": "failed"},
+                        {"task_id": "b", "status": "cancelled"}], F.BLOCK_STATES)
+    check("_failed_of(BLOCK_STATES): needs_revision·failed", [t["task_id"] for t in blk] == ["c", "a"], str(blk))
+    txt = F.render({"state": "stopped", "work_id": "w", "round": 1, "failed_tasks": got})
+    check("render: 진짜 사유가 노트에 실린다", "r — d" in txt and "사유 없음" not in txt
+          and "워커 w1" in txt and "시도 2" in txt, txt)
+
+
+def test_wait_blocked_needs_revision():
+    """조회 도중 needs_revision → 첫 막힘에서 blocked · 코드 3 · last_feedback 사유 (사용자 결정 2026-10-11)."""
+    sd = Path(tempfile.mkdtemp(prefix="fu-wait6-"))
+    repo = Path(tempfile.mkdtemp(prefix="fu-wait6-repo-"))
+    try:
+        fc = FakeClock()
+        lines = []
+        before = _listing(sd)
+        claimed = [{"task_id": "t1", "status": "claimed", "round": 1, "assignee": "192.168.0.2"},
+                   {"task_id": "t2", "status": "claimed", "round": 1, "assignee": "192.168.0.43"}]
+        revised = [{"task_id": "t1", "status": "needs_revision", "round": 1, "assignee": "192.168.0.2",
+                    "worker_id": None, "attempt_count": 1, "last_feedback": "층1 위반 1: 동결 위반"},
+                   {"task_id": "t2", "status": "claimed", "round": 1, "assignee": "192.168.0.43"}]
+        api = _queue([_resp(tasks=claimed), _resp(tasks=revised)])
+        res = F.wait_for_gate(repo, "ww", api=api, state=sd, interval=30, timeout=600,
+                              clock=fc.clock, sleep=fc.sleep, logf=lambda s, m: lines.append(m))
+        check("[중요] wait: needs_revision → blocked", res["outcome"] == "blocked" and res["polls"] == 2, str(res))
+        check("wait: blocked → 종료 코드 3", res["exit_code"] == 3 and F.WAIT_EXIT["blocked"] == 3)
+        bt = res["blocked_tasks"]
+        check("wait: 막힌 조각 사실", len(bt) == 1 and bt[0]["task_id"] == "t1"
+              and bt[0]["status"] == "needs_revision" and bt[0]["worker"] == "192.168.0.2"
+              and bt[0]["attempt_count"] == 1 and bt[0]["reason"] == "층1 위반 1: 동결 위반", str(bt))
+        txt = F.render_wait(res)
+        check("render_wait: blocked 블록", txt.startswith("[⑦ 대기 결과] ww · 라운드 1 · 결과 blocked"), txt)
+        cap = F.REVISE_MAX_ATTEMPTS
+        check("render_wait: 조각 줄에 워커·시도·사유",
+              f"조각 needs_revision t1 · 워커 192.168.0.2 · 시도 1/{cap}: 층1 위반 1: 동결 위반" in txt, txt)
+        check("render_wait: 재시도 후보로 남아 있다는 사실", "needs_revision 1건은 큐의 자동 재시도 후보" in txt
+              and f"상한 {cap}회" in txt, txt)
+        check("render_wait: 사유 없음 아님", "사유 없음" not in txt, txt)
+        for bad in ("하세요", "하라", "해라", "실행하"):
+            check(f"render_wait blocked: 명령형 `{bad}` 없음", bad not in txt)
+        check("wait: 막힘 수가 조회 줄에 (0 이면 없음)",
+              any("조각 0/2 · 준비 없음" in m for m in lines)
+              and any("조각 0/2 · 막힘 1 · 준비 없음" in m for m in lines), str(lines))
+        check("wait: 막힘 사유 로그 줄", any("막힘 — needs_revision t1" in m for m in lines), str(lines))
+        check("wait: 큐에는 GET 만", all(c[0] == "GET" for c in api.calls), str(api.calls))
+        check("[중요] wait: blocked 도 아무것도 쓰지 않는다", _listing(sd) == before)
+    finally:
+        shutil.rmtree(sd, ignore_errors=True)
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_wait_blocked_failed_and_precedence():
+    sd = Path(tempfile.mkdtemp(prefix="fu-wait7-"))
+    repo = Path(tempfile.mkdtemp(prefix="fu-wait7-repo-"))
+    try:
+        fc = FakeClock()
+        failed = [{"task_id": "t1", "status": "failed", "round": 1, "worker_id": "janus",
+                   "attempt_count": 3, "fail_reason": "verify:reject", "fail_detail": "층2 차단"},
+                  {"task_id": "t2", "status": "verified", "round": 1}]
+        res = F.wait_for_gate(repo, "ww", api=_queue([_resp(tasks=failed)]), state=sd,
+                              clock=fc.clock, sleep=fc.sleep)
+        check("wait: failed → blocked", res["outcome"] == "blocked" and res["exit_code"] == 3, str(res))
+        bt = res["blocked_tasks"][0]
+        check("wait: failed 사유 = fail_reason — fail_detail", bt["reason"] == "verify:reject — 층2 차단"
+              and bt["worker"] == "janus" and "max_attempts" not in bt, str(bt))
+        txt = F.render_wait(res)
+        check("render_wait: failed 줄", "조각 failed t1 · 워커 janus · 시도 3: verify:reject — 층2 차단" in txt
+              and "재시도 후보" not in txt, txt)
+        # 지난 라운드의 막힘은 이번 라운드를 막지 않는다
+        old = [{"task_id": "t0", "status": "failed", "round": 1, "fail_reason": "x"},
+               {"task_id": "t1", "status": "claimed", "round": 2}]
+        res = F.wait_for_gate(repo, "ww", api=_queue([_resp(rnd=2, tasks=old)]), state=sd, interval=10,
+                              timeout=15, clock=fc.clock, sleep=fc.sleep)
+        check("wait: 지난 라운드 failed 는 막힘이 아니다", res["outcome"] == "timeout", res["outcome"])
+        # 그 라운드의 준비 기록이 있으면 기록이 앞선다
+        F.prepare_once(repo, "w-rec", 1, state=sd, prepare=PrepareSpy(state="at_gate"))
+        stale = [{"task_id": "t1", "status": "needs_revision", "round": 1, "last_feedback": "옛 피드백"}]
+        res = F.wait_for_gate(repo, "w-rec", api=_queue([_resp("ready_for_review", tasks=stale)]),
+                              state=sd, clock=fc.clock, sleep=fc.sleep)
+        check("[중요] wait: 준비 기록(at_gate)이 needs_revision 보다 앞선다",
+              res["outcome"] == "at_gate" and res["exit_code"] == 0, res["outcome"])
+        # work 종결(cancelled)은 막힘보다 앞서고, 취소 사유는 cancel_reason 으로 보인다
+        canc = [{"task_id": "t1", "status": "cancelled", "round": 1, "attempt_count": 1,
+                 "assignee": "192.168.0.43", "last_feedback": "층1", "cancel_reason": "골조 설계 결함"},
+                {"task_id": "t2", "status": "needs_revision", "round": 1, "last_feedback": "층1"}]
+        res = F.wait_for_gate(repo, "ww", api=_queue([_resp("cancelled", tasks=canc, terminal_reason="조각 취소")]),
+                              state=sd, clock=fc.clock, sleep=fc.sleep)
+        txt = F.render_wait(res)
+        check("wait: cancelled work 는 terminal_cancelled", res["outcome"] == "terminal_cancelled", res["outcome"])
+        check("[중요] render_wait: 취소 사유가 cancel_reason 으로", "조각 cancelled t1 · 워커 192.168.0.43 · "
+              "시도 1: 골조 설계 결함" in txt and "사유 없음" not in txt, txt)
+    finally:
+        shutil.rmtree(sd, ignore_errors=True)
+        shutil.rmtree(repo, ignore_errors=True)
+
+
 def test_wait_cli_exit_codes():
     import contextlib
     import io
@@ -894,7 +1020,7 @@ def test_wait_cli_exit_codes():
     orig_resolve, orig_wait = F._resolve_api, F.wait_for_gate
     try:
         F._resolve_api = lambda r: _queue([_resp("merged")])
-        for oc, code in (("at_gate", 0), ("stopped", 3), ("error", 3), ("terminal_rejected", 3),
+        for oc, code in (("at_gate", 0), ("stopped", 3), ("error", 3), ("blocked", 3), ("terminal_rejected", 3),
                          ("terminal_cancelled", 3), ("merged", 3), ("timeout", 4)):
             got = {}
 
@@ -991,6 +1117,9 @@ def main() -> int:
                test_wait_terminal_merged_and_records,
                test_wait_timeout_and_queue_errors,
                test_wait_uses_current_round,
+               test_task_reason_key_mapping,
+               test_wait_blocked_needs_revision,
+               test_wait_blocked_failed_and_precedence,
                test_wait_cli_exit_codes,
                test_register_tool_carries_wait_command):
         fn()
