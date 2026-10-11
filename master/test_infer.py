@@ -1212,6 +1212,166 @@ def test_commit_layer2_base_files_and_judge_log() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+# ── 🔴 `#809` 재시도 체크아웃 — 골조 기준과 체크아웃 커밋을 가른다 ─────────────────────
+
+FEEDBACK_TIP = "3" * 40     # revise.embed 가 서브 브랜치에 얹은 피드백 커밋
+
+
+def _fake_git(*, merge_base=None, boom=None, calls=None):
+    """`checkout_commit` 의 git 대역 — rev-parse 는 그대로, merge-base 는 `merge_base`."""
+    def g(repo, *args):
+        if calls is not None:
+            calls.append(args)
+        if boom is not None:
+            raise boom
+        if args[0] == "rev-parse":
+            return args[1].split("^", 1)[0]
+        if args[0] == "merge-base":
+            return merge_base if merge_base is not None else args[1]
+        return ""
+    return g
+
+
+def test_checkout_commit_unit() -> None:
+    """`#809` — 신설이면 골조 기준 · 있던 브랜치의 후손 tip 이면 tip · 아니면 골조 기준 + 로그."""
+    from master.work import subbranch as SB
+    paths, root = tmp_paths()
+    try:
+        logs: list = []
+        new = SB.Created(task_id="t1", branch="task/W1/r1/t1", tip=SUB_TIP, created=True)
+        calls: list = []
+        got = I.checkout_commit(paths, "t1", base=SUB_TIP, sub=new,
+                                git=_fake_git(calls=calls), logf=logs.append)
+        check("#809 첫 시도(신설): 체크아웃 = 골조 기준", got == SUB_TIP, got)
+        check("  git 을 부르지 않는다", not calls, str(calls))
+        check("  로그 없음 (평상)", not logs, str(logs))
+
+        logs.clear()
+        old = SB.Created(task_id="t1", branch="task/W1/r1/t1", tip=FEEDBACK_TIP, existed=True)
+        got = I.checkout_commit(paths, "t1", base=SUB_TIP, sub=old,
+                                git=_fake_git(), logf=logs.append)
+        check("#809 재시도(후손 tip): 체크아웃 = 서브 브랜치 tip", got == FEEDBACK_TIP, got)
+        check("  tip 선택을 로그로 남긴다", any("[subbranch] t1" in ln and FEEDBACK_TIP[:8] in ln
+                                         for ln in logs), str(logs))
+
+        logs.clear()
+        got = I.checkout_commit(paths, "t1", base=SUB_TIP, sub=old,
+                                git=_fake_git(merge_base="4" * 40), logf=logs.append)
+        check("#809 후손 아님: 골조 기준으로 물러난다", got == SUB_TIP, got)
+        check("  사유 로그", any("후손이 아니다" in ln and "[subbranch] t1" in ln for ln in logs),
+              str(logs))
+
+        logs.clear()
+        got = I.checkout_commit(paths, "t1", base=SUB_TIP, sub=old,
+                                git=_fake_git(boom=RuntimeError("no repo")), logf=logs.append)
+        check("#809 판정 실패: 골조 기준으로 물러난다 (fail-closed)", got == SUB_TIP, got)
+        check("  사유 로그", any("후손 판정을 못 돌렸다" in ln and "RuntimeError" in ln
+                              for ln in logs), str(logs))
+
+        logs.clear()
+        got = I.checkout_commit(paths, "t1", base=SUB_TIP, sub=old, task={"base_commit": "5" * 40},
+                                git=_fake_git(), logf=logs.append)
+        check("#809 큐 base_commit 불일치는 정보만 — 처분 불변", got == FEEDBACK_TIP, got)
+        check("  불일치 로그", any("큐의 base_commit 55555555" in ln for ln in logs), str(logs))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _run_retry(paths, q, *, sub_tip, merge_base=None, logs=None):
+    """재시도 한 바퀴 — 서브 브랜치가 **이미 있고** tip 이 `sub_tip` 이다. 기록을 돌려준다."""
+    from master.work import subbranch as SB
+    from master.work import attempt as AT
+    import master.work.twin_base as TB
+    seen = {"checkout": [], "baseline": [], "reuse": [], "grounding": []}
+
+    def create(paths, work_id, task_id, *, base_commit, remote="", logf=None, round_no=0):
+        return SB.Created(task_id=task_id,
+                          branch=SB.branch_names.durable_branch(work_id, task_id, round_no),
+                          tip=sub_tip, existed=(sub_tip != base_commit),
+                          created=(sub_tip == base_commit))
+
+    def ssh(facts, cmd, timeout):
+        if "checkout -q -B" in cmd:
+            want = cmd.split('checkout -q -B ')[1].split()[1].strip('"')
+            seen["checkout"].append(want)
+            return 0, want
+        if "git commit" in cmd:
+            return 0, WORKER_HEAD
+        return 0, ""
+
+    class _Base:
+        commit = SUB_TIP
+
+    orig_reusable = I.reusable
+
+    def reusable(p, tid, *, base_commit, work_id=""):
+        seen["reuse"].append(base_commit)
+        return orig_reusable(p, tid, base_commit=base_commit, work_id=work_id)
+
+    def from_commit(p, commit, **kw):
+        from master.work.declarations import Declarations
+        seen["grounding"].append(commit)
+        return Declarations(blocks=[("X", "X.h", "class X { void Go(); };")])
+
+    def baseline(p, b):
+        seen["baseline"].append(b)
+        return None
+
+    saved = (SB.create, TB.local_baseline, TB.resolve, I.reusable, I._log)
+    SB.create, TB.local_baseline, TB.resolve = create, baseline, (lambda p, w: _Base())
+    I.reusable = reusable
+    if logs is not None:
+        I._log = logs.append
+    try:
+        from master.verdict import Verdict
+        with patch("master.projects.profile.load", return_value={"kind": "unreal"}), \
+             patch("master.work.declarations.from_commit", side_effect=from_commit), \
+             patch.object(TB, "commit_baseline", side_effect=lambda p, b: baseline(p, b)), \
+             patch.object(AT, "has_commit", return_value=True), \
+             patch.object(AT, "_git", side_effect=_fake_git(merge_base=merge_base)), \
+             patch("master.layer2_verify.verify_files", return_value=Verdict(True, None)):
+            hand = I.run_many(paths, limit=4, facts=[FakeFacts()], api=q,
+                              clean=lambda f: Clean(), parallel=False, work_id="W1",
+                              runner_=_counting_runner("RESULT: DONE", None), ssh=ssh,
+                              reader=lambda f, p: "void X::Go() { Do(); }\n")
+    finally:
+        SB.create, TB.local_baseline, TB.resolve, I.reusable, I._log = saved
+    return hand, seen
+
+
+def test_retry_checks_out_the_feedback_tip() -> None:
+    """🔴 `#809` 실측 2026-10-11 — 재시도 워커가 피드백 없는 골조를 읽었다."""
+    for label, tip, mb, want_co in (
+            ("첫 시도", SUB_TIP, None, SUB_TIP),
+            ("재시도", FEEDBACK_TIP, None, FEEDBACK_TIP),
+            ("후손 아님", FEEDBACK_TIP, "4" * 40, SUB_TIP)):
+        paths, root = tmp_paths()
+        logs: list = []
+        try:
+            q = FakeQueue([_t("t1", epoch=1, round=1)])
+            hand, seen = _run_retry(paths, q, sub_tip=tip, merge_base=mb, logs=logs)
+            check(f"#809 {label}: 워커 체크아웃 커밋", seen["checkout"] == [want_co],
+                  str(seen["checkout"]))
+            check(f"#809 {label}: 커밋·제출까지 간다", len(q.submitted) == 1,
+                  f"{q.submitted} · {hand.summary()}")
+            check(f"#809 {label}: 동결 원본은 골조 기준", seen["baseline"]
+                  and set(seen["baseline"]) == {SUB_TIP}, str(seen["baseline"]))
+            check(f"#809 {label}: 재사용 키는 골조 기준", seen["reuse"] == [SUB_TIP],
+                  str(seen["reuse"]))
+            check(f"#809 {label}: grounding 은 골조 기준", seen["grounding"] == [SUB_TIP],
+                  str(seen["grounding"]))
+            rs = hand.ordered()
+            check(f"#809 {label}: Response.base_commit 은 골조 기준",
+                  len(rs) == 1 and rs[0].base_commit == SUB_TIP,
+                  str([r.base_commit for r in rs]))
+            if label == "후손 아님":
+                check("#809 후손 아님: 물러난 사유 로그", any(
+                    "[subbranch] t1 체크아웃은 골조 기준" in ln and "후손이 아니다" in ln
+                    for ln in logs), str([ln for ln in logs if "subbranch" in ln]))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (
                test_codex_jsonl_quota_reaches_submit_fail,
@@ -1251,7 +1411,8 @@ def main() -> int:
                test_handoff_states_that_nobody_applies_yet,
                test_reuse_avoids_paying_twice, test_commit_layer2_usage_and_author,
                test_commit_layer2_grounding_gate,
-               test_commit_layer2_base_files_and_judge_log):
+               test_commit_layer2_base_files_and_judge_log,
+               test_checkout_commit_unit, test_retry_checks_out_the_feedback_tip):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_infer: {PASS}/{total} 통과")

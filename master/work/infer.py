@@ -640,6 +640,58 @@ def prescreen_nowork(paths, work_id: str, *, api=runner._api) -> list:
     return out
 
 
+def checkout_commit(paths, task_id: str, *, base: str, sub=None, task=None,
+                    git=None, logf=None) -> str:
+    """워커가 체크아웃할 커밋 — **골조 기준(`base`)과 따로 정한다** (`#809`).
+
+    🔴 실측 2026-10-11: 재시도 조각이 골조 커밋에서 다시 체크아웃돼, `revise.embed` 가 서브
+    브랜치에 실어 둔 `AUTO-VERIFY FEEDBACK` 이 워커에 닿지 않았다(`tip=fdf376a4` 에는 있었다).
+    그래서 서브 브랜치가 **이미 있었고** 그 tip 이 골조 기준의 후손(또는 같음)이면 tip 을 쓴다.
+    [중요] 그 밖은 전부 골조 기준으로 물러난다 — 판정을 못 돌린 것도 같다(fail-closed).
+    [주의] 동결 원본·짝 채우기·재사용 키·`Response.base_commit` 은 여전히 `base` 다.
+    """
+    log = logf or _log
+    tip = str(getattr(sub, "tip", "") or "").strip()
+    chosen, why = base, ""
+    if not base:
+        why = "골조 기준이 비었다"
+    elif sub is None or not getattr(sub, "existed", False):
+        why = ""                                     # 신설 — tip 이 곧 골조 기준이다
+    elif not tip:
+        why = "서브 브랜치 tip 을 모른다"
+    elif tip == base:
+        why = ""
+    else:
+        try:
+            from .attempt import WRITE_REMOTE, _git
+            from .attempt import has_commit as _has
+            g, repo = (git or _git), Path(paths.repo)
+            if git is None and not _has(repo, tip):
+                # revise.embed 와 같은 ref 로 가져온다 — 내용이 같은 서브 브랜치다
+                g(repo, "fetch", WRITE_REMOTE,
+                  f"+refs/heads/{sub.branch}:refs/ax/revise/{task_id}")
+            # [중요] 종료코드가 아니라 **값으로** 판정한다(`attempt.plan_remote_cleanup` 과 같은 규약)
+            full = g(repo, "rev-parse", f"{base}^{{commit}}").strip()
+            mb = g(repo, "merge-base", full, tip).strip()
+            if full and mb == full:
+                chosen = tip
+            else:
+                why = f"tip {tip[:8]} 이 골조 {base[:8]} 의 후손이 아니다 (merge-base={mb[:8] or '?'})"
+        except Exception as e:                               # noqa: BLE001
+            why = f"후손 판정을 못 돌렸다 — {type(e).__name__}: {str(e)[:160]}"
+    if why:
+        log(f"[subbranch] {task_id} 체크아웃은 골조 기준 {base[:8]} — {why} (#809)")
+    elif chosen != base:
+        log(f"[subbranch] {task_id} 체크아웃은 서브 브랜치 tip {chosen[:8]} — 골조 "
+            f"{base[:8]} 의 후손이다 (재시도 피드백을 싣는다 · #809)")
+    queued = str((task or {}).get("base_commit") or "").strip()
+    if queued and chosen and queued != chosen:
+        # [주의] 정보만 남긴다 — 처분을 바꾸지 않는다
+        log(f"[subbranch] [주의] {task_id} 큐의 base_commit {queued[:8]} ≠ 체크아웃 "
+            f"{chosen[:8]} (#809 · 정보)")
+    return chosen
+
+
 def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", order: int = 0,
                  runner_=None, reader=None, ssh=None, mode: str = "",
                  timeout: int = runner.DEFAULT_TIMEOUT) -> Response:
@@ -704,6 +756,7 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
     # 🔴 [중요] **여기는 fail-closed 다** — ⑸ 가 이 브랜치에 커밋하므로 없으면 진행이 불가하다.
     #    (⑷ 를 만들 때는 비차단이었다. ⑸ 가 배선된 지금 그 유예가 끝났다.)
     sub_name = sub_err = ""
+    _c = None
     if base:
         try:
             from . import subbranch as _sb
@@ -807,9 +860,12 @@ def dispatch_task(paths, facts, task, *, api=runner._api, work_id: str = "", ord
         spool(paths, res, work_id=work_id, order=order)
         return res
 
+    # 🔴 `#809` — 골조 기준(`base`)과 체크아웃 커밋을 가른다. 재시도면 서브 브랜치 tip 에
+    #    피드백이 실려 있다. 그 밖의 쓰임(동결 원본·grounding·재사용 키)은 `base` 그대로다.
+    checkout = checkout_commit(paths, task_id, base=base, sub=_c, task=task)
     res = commit_task(paths, facts, task, work_id=work_id, base=base, want=want,
                       branch=sub_name, api=api, runner_=runner_, reader=reader, ssh=ssh,
-                      mode=mode, timeout=timeout)
+                      mode=mode, timeout=timeout, checkout=checkout)
     res.subbranch, res.subbranch_error = sub_name, sub_err
     spool(paths, res, work_id=work_id, order=order)
     return res
@@ -933,7 +989,7 @@ def usage_line(task_id: str, rec: dict, mode: str, meta: dict | None = None) -> 
 
 def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: str,
                 api=runner._api, runner_=None, reader=None, ssh=None, mode: str = "",
-                timeout: int = runner.DEFAULT_TIMEOUT) -> Response:
+                timeout: int = runner.DEFAULT_TIMEOUT, checkout: str = "") -> Response:
     """정본 ⑸ 한 바퀴: 워커가 본문을 쓰고 **마스터가 검증해 그 브랜치에 커밋**한다.
 
     사이클 자체는 `wcommit.py` 에 있다(원전 `worker/worker.py` 이식). 이 함수가 하는 것은
@@ -1112,7 +1168,9 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
             v.warnings.extend(diag + [f"author={author['lane']}"])
             return v
 
-    c = wcommit.run(facts, task, work_id=work_id, base_commit=base, want=want,
+    # 🔴 `#809` — 워커 체크아웃만 `checkout` 이다. `wcommit` 이 `HEAD == base_commit` 을
+    #    대조하므로 여기 넘기는 값이 곧 체크아웃 커밋이어야 한다. 비었으면 골조 기준이다.
+    c = wcommit.run(facts, task, work_id=work_id, base_commit=(checkout or base), want=want,
                     llm=llm, ssh=ssh, reader=reader, baseline=baseline, branch=branch,
                     verifier=verifier)
 
