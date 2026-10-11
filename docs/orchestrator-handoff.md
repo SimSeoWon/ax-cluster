@@ -4,7 +4,12 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-11 KST · Claude · 인수 대조 — #632 ⑦ 전진 완료로 정정**.
+- **현재 체크포인트: 2026-10-11 KST · Claude · #632 finalize·종결·배포 완료**.
+  - 사용자 「632 finalize 해」 → 정본 `review.finalize_work(confirm=True)`(마스터, 기본 큐 api) ok: `main` no-ff 머지 `2a30943` push · 큐 `merged`·approved · #797 「완료」100%+마감 노트 · 원격 `task/…632…/base` 삭제 1/실패 0 · 검수 트리 자동 제거. 머지 내용 = 789a244(3파일) 확인. 마스터 로컬 `main` ff → `2a30943`, clean.
+  - 사용자 「둘 다 해」 → #632 「완료」100% 종결 노트(머지 커밋 연결) · `master.client update` rc0, AXCluster `.43`/`.2`/`.33` 배달·검사 3/3 OK, 출처 = HEAD `2a30943`(`.2` 홈 중복 스킬 `~/.agents/skills/ax-work` 주의는 기존과 같음). 서비스 재기동 없음.
+  - 남은 것: #798(완료 후 요청자 후속 처리 누락) 미해결 · 보존 트리 `~/ax-advance-20261011_0035_632_redmine_e5e894a9`·`~/ax-632-work` 는 이제 정리 후보(삭제는 사용자 확인 뒤). 다음 일감은 사용자 선택. 이 체크포인트는 미커밋.
+
+- **직전 체크포인트: 2026-10-11 KST · Claude · 인수 대조 — #632 ⑦ 전진 완료로 정정**.
   - 대조(실측): `main` HEAD `be95220` = `origin/main`, 작업 트리 clean(이 인계서 수정 전). `ax-followup` 유닛 없음 · `~/.claude/settings.json` = `{}` · `~/trunk/AXCluster-requester`·`~/trunk/ax-advance-…` 없음 · `hold.json` 없음. `ax-task-queue`·`ax-broker`·`ax-projects` running, `ax-dispatch` inactive(path waiting). 마스터 담당 기록 `codex`(10-10 17:10, 미변경) · 워커 모드 `codex`(state, 10-10 21:27).
   - 🔴 **정정 — #632(work e5e894a9) ⑦ 전진은 끝났다.** 아래 02:55 체크포인트의 「⑦ 전진·finalize 미승인」은 틀렸다. 근거: 원격 `task/20261011_0035_632_redmine_e5e894a9/base` = `789a2445`([ADVANCE], 02:13:16, 부모 b111c8a2·7bc489f1, 트리는 검수 트리 c60da325 와 diff 0) · 서브 브랜치 `r1/aafc78ce` 원격 삭제됨 · Redmine #797 02:14 노트 「사용자 2026-10-11: 「632 전진하고」 — 버그 아님 · 구조 유지 · 추가 라운드 없음」.
   - **남은 사람 게이트는 finalize(`main` 머지) 하나 — 미승인.** 큐는 아직 `merge_status=ready_for_review`·`review_decision` 비어 있음(전진 뒤 이 값이 원래 유지되는지 미확인). #797 상태 「신규」.
