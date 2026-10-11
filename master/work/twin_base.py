@@ -35,11 +35,13 @@ bare 저장소 읽기에는 `gitea` 그룹이 필요한데 **대화형 세션에
 있다 — 재로그인 미실행, 리포트 08 §7.4-2). 서비스는 `SupplementaryGroups=gitea` 로 이미 갖고
 있고, 여기서는 **`sg` 로 우회**한다. 읽기 전용이라 §2.1 위반이 아니다.
 """
+# [DOC] import 는 이 모듈이 실제로 쓰는 이름만 둔다 (#815 pyflakes 정리).
 from __future__ import annotations
 
 import shlex
 import subprocess
 from dataclasses import dataclass
+# [PSEUDO] 이 import 의 `Path` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
 from pathlib import Path
 
 from .. import gitea_group

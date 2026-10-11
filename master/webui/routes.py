@@ -40,8 +40,10 @@
 [주의] ①~⑤ 는 **내 판단으로 뺀 것이 아니다** — 우리 아키텍처에서 물리적으로 다른 것과, 저장소가
 이미 내려 둔 결정이다. 각각을 화면에 **적어서** 사람이 "왜 없지?" 를 묻지 않게 한다.
 """
+# [DOC] import 는 이 모듈이 실제로 쓰는 이름만 둔다 (#815 pyflakes 정리).
 from __future__ import annotations
 
+# [PSEUDO] 이 import 의 `json` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
 import json
 import re
 from pathlib import Path

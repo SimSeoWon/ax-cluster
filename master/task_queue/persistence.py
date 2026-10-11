@@ -1,14 +1,19 @@
+# [DOC] import 는 이 모듈이 실제로 쓰는 이름만 둔다 (#815 pyflakes 정리).
 import os
 import sys
 import json
+# [PSEUDO] 이 import 의 `time` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
 import time
+# [PSEUDO] 이 import 의 `shutil` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
 import shutil
 import secrets
 import threading
 import subprocess
 from pathlib import Path
 import hashlib
+# [PSEUDO] 이 import 의 `timedelta` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
 from datetime import datetime, timezone, timedelta
+# [PSEUDO] 이 import 의 `Optional` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
 from typing import Optional, Any
 
 # ─────────────────────────────────────────

@@ -57,10 +57,12 @@ JSON 스키마 강제로 로컬이 형식을 지킬 수 있는지 쟀다(`gemma4
 [중요] **`num_ctx` 를 반드시 준다** — 안 주면 BC-250 이 KV 할당으로 죽는다
 (`work/generate.py:159`, 실측 2026-08-08).
 """
+# [DOC] import 는 이 모듈이 실제로 쓰는 이름만 둔다 (#815 pyflakes 정리).
 from __future__ import annotations
 
 import ast
 import re
+# [PSEUDO] 이 import 의 `subprocess` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
 import subprocess
 import time
 from pathlib import Path
@@ -492,6 +494,7 @@ def main(argv=None) -> int:
     빨가면 유닛이 아니다, `ax-batch.service` 와 같은 규약).
     """
     import argparse
+    # [PSEUDO] 이 import 의 `_sys` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
     import sys as _sys
 
     from ..context_search.paths import resolve

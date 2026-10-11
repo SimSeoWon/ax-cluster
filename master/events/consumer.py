@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+# [PSEUDO] 이 import 의 `os` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
 import os
 import subprocess
 import time
@@ -45,6 +46,7 @@ from pathlib import Path
 
 from .. import gitea_group
 from ..context_search.paths import ProjectPaths, resolve
+# [PSEUDO] 이 import 의 `normalize_project_id` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
 from ..projects.config import ConfigError, Registry, normalize_project_id
 from .spool import Event, Spool
 
@@ -220,6 +222,8 @@ def _git(repo: Path, *args: str, group: bool | None = None) -> tuple[int, str]:
 # [중요] 카나리 기록기는 `master/canary.py` 로 옮겼다 (소 3.5.6 · `#182`).
 #    이유는 층이다 — `context_search/rebuild` 도 찍어야 하는데 그쪽이 `events` 를 부르면
 #    **층 역전**이다. [주의] 이 이름으로 부르던 곳(테스트 포함)이 그대로 돌도록 재수출한다.
+# [PSEUDO] 이 import 의 `KIND_DOMAIN_INDEX_GAP` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
+# [PSEUDO] 이 import 의 `KIND_CONTEXT_MD_LOST` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
 from ..canary import (  # noqa: E402,F401
     KIND_CONTEXT_MD_LOST, KIND_DOMAIN_INDEX_GAP, append_canary,
 )
@@ -897,6 +901,7 @@ def process_event(ev: Event, *, registry: Registry | None = None,
     try:
         name = reg.find_by_project_id(ev.project_id)
         if not name:
+            # [PSEUDO] 다음 줄 f-string 에 자리표시자가 없다(pyflakes) — `f` 접두만 지운다. 문자열 내용은 바꾸지 않는다
             r.error = f"등록되지 않은 project_id (§5.5.4-④)"
             return r
         paths = resolve(name, registry=reg)

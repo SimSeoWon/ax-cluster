@@ -751,6 +751,7 @@ def _project_facts_rows(project: str) -> list:
     #    받았나」를 문서가 답할 수 있어야 한다(공통 표에 적으면 남의 프로젝트에서 거짓이 된다).
     own = sorted(r for r, _s in workshop_files("requester", project)
                  if (workshop_by_project_dir(project) / r[len(".claude/"):]).is_file())
+    # [PSEUDO] 다음 줄 f-string 에 자리표시자가 없다(pyflakes) — `f` 접두만 지운다. 문자열 내용은 바꾸지 않는다
     rows.append(f"| 이 프로젝트만의 작업장 자산 | "
                 + (", ".join(f"`{r}`" for r in own) if own else "(없음 — 공통만)") + " |")
     return rows + [""]
@@ -787,6 +788,7 @@ def managed_block(project: str, facts: HostFacts) -> str:
     lines = [
         MD_BEGIN,
         "",
+        # [PSEUDO] 다음 줄 f-string 에 자리표시자가 없다(pyflakes) — `f` 접두만 지운다. 문자열 내용은 바꾸지 않는다
         f"## AX 클러스터 — 이 머신의 역할 (마스터 생성)",
         "",
         # [중요] **축을 문서가 스스로 말한다** (`#309`, 사용자 지시 2026-08-24: *"워커쪽에
@@ -797,7 +799,9 @@ def managed_block(project: str, facts: HostFacts) -> str:
          "아래 「소스 트리 실측」 절뿐이고, 그 절은 **매 배달마다 마스터가 다시 만든다.** "
          "그래서 새 프로젝트를 등록할 때 사람이 옮겨 적을 것이 없다."),
         "",
+        # [PSEUDO] 다음 줄 f-string 에 자리표시자가 없다(pyflakes) — `f` 접두만 지운다. 문자열 내용은 바꾸지 않는다
         f"| | |",
+        # [PSEUDO] 다음 줄 f-string 에 자리표시자가 없다(pyflakes) — `f` 접두만 지운다. 문자열 내용은 바꾸지 않는다
         f"|---|---|",
         f"| 이 체크아웃 | `{facts.path}` |",
         f"| 호스트 | `{facts.host}` · 계정 `{facts.user}` · {facts.os} |",

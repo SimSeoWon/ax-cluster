@@ -2,12 +2,15 @@
 
 lifecycle → cleanup 단방향 의존 — 이 모듈은 logic_lifecycle 을 import 하지 않는다.
 """
+# [DOC] import 는 이 모듈이 실제로 쓰는 이름만 둔다 (#815 pyflakes 정리).
 import json
 import threading
 import urllib.request
 import urllib.error
 from pathlib import Path
 from typing import Optional
+# [PSEUDO] 이 import 의 `_git` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
+# [PSEUDO] 이 import 의 `_git_repo` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
 from .persistence import (
     TaskIndex, _tq_log, _git_repo, _git, is_live_queue_root
 )
