@@ -149,3 +149,38 @@ pending 상태에서만 그 필드를 읽는다. `fail_*`는 최종 실패 사�
 검사: failed_work_terminal 22개, followup 315/315, review 176/176, client_mcp 199/199,
 cleanup 46/46, infer 250/250, no_integrator 14/14, workmodel·rounds·revise 실패 0,
 공식 통합 32/32(63.1초). 커밋·push·배포 없음.
+
+## 실제 워커 재작업 라운드 실증 (2026-10-11, Claude)
+
+커밋 `fbb207c` 배포·서비스 재기동(16:08) 뒤 사용자 지시로 실증. work
+`20261011_1615_363_probe_3f14bef1`(Redmine #803), 워커 지휘자 codex, 병렬.
+골조(`master/rework_probe/`): alpha는 `parse_pair(text) -> tuple`을 동결하면서 `[PSEUDO]`가
+`(text, sep) -> dict`로 바꾸라고 지시(의도된 골조 결함), beta는 정상.
+
+| 시각 | 사건 |
+|---|---|
+| 16:15 | 등재 → base `23d462a` push → 파견 2건 (alpha `.2`, beta `.43`) |
+| 16:16 | beta 층2 APPROVE → 커밋 `7aed087`. alpha 시도1: `.2` codex가 모순을 감지하고 미수정 BLOCKED → 층1 「스텁 그대로」 → `code` 재시도 |
+| 16:21 | alpha 시도2 `.43`: 지시대로 시그니처 변경 → 층1 동결 위반(첫 위반) → `code` 재시도 |
+| 16:31 | alpha 시도3: 동결 위반 연속 → **`skeleton` 종결**, 라운드 `rejected` |
+| 16:32 | followup 타이머(1분)가 다음 회차에 재작업 통합 준비 → at_gate |
+
+결함(#805): 재작업 통합이 실패 조각 서브 브랜치의 `[revise]` 피드백 커밋 2개를 머지해
+통합 트리 `alpha.py` 머리에 `/* AUTO-VERIFY FEEDBACK */`가 들어가 SyntaxError, 근거는
+「검증 완료」로 표시됐다. 통합 검사 32/32는 probe 모듈을 import하지 않아 통과했다(#804 사례).
+사용자 「원천적으로 고쳐야지」 → `301ddac`: 피드백이 아닌 가장 최근 워커 커밋까지만 머지,
+없으면 `missing_results`, 실패 조각 근거는 항상 미검증. 수정 전 코드에서 새 회귀 6건 실패 확인.
+배포 후 오염 트리 제거(승인) → `--force` 재준비: beta만 머지, alpha 결과 없음, 피드백 블록 0.
+
+이후(각 단계 사용자 승인):
+- 통합 트리에서 라운드 2 골조 커밋 `560e51a` → `advance_work(rework=True, confirm=True)` 통합 32/32,
+  base `23d462ac→560e51aa`, `review_decision=rework_advanced`.
+- `improve_work(round=2, rework=True, expected_base_commit=560e51aa…)` → 큐 round 2,
+  `rework_previous_round=1`. alpha(`e4b0c048`) `.43` 구현 → 층2 APPROVE → 현재 라운드만 집계해
+  `ready_for_review` → ⑦ at_gate(통합 32/32). 통합본을 실제 실행해 지시대로 동작 확인.
+- 마감 추천안 A: 일반 ⑦ 전진 `560e51aa→7d11255d` → `reject_work` → `sweep_terminal`이 probe
+  원격 브랜치 2건 삭제(팁 해시 #803 기록), scratch worktree 제거. `main` 미접촉.
+
+미실증: 「전체 취소」 선택 · 같은 라운드 다조각 동시 동결 종합 · 실패 조각에 워커 커밋이 남은 통합(단위만).
+후속 일감: #805(수정) · #806(`.py` 피드백 C 주석, 버그) · #807(BLOCKED 골조 충돌 신호, 결정) ·
+#804(통합 검사 보강 아이디어, 사례 추가).
