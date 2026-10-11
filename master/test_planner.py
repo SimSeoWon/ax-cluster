@@ -38,6 +38,8 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 
 class P:
     def __init__(self, root: Path):
+        # [DOC] #632: 테스트 요청 프로젝트 이름과 Redmine 매핑은 별개다.
+        self.name = "NS"
         self.root = root
         self.context = root / "context"
         self.repo = root / "repo"
@@ -86,6 +88,7 @@ def fixture(n_reviews=3):
 # ── ① 끝-끝 왕복 ─────────────────────────────────────────────
 
 def test_end_to_end():
+    # [DOC] #632: planner는 프로젝트 이름을 주차 등록에 전달한다. 외부 호출은 주입한다.
     p, rdir = fixture()
     chats, regs = [], []
 
@@ -94,7 +97,8 @@ def test_end_to_end():
         return "## 문제 분석\n분석\n\n## 수정 방안\n방안\n\n## 영향 범위\n없음\n\n## 우선순위 근거\n높음"
 
     ok = PL.run_weekly_plans(p, chat=chat,
-                             register=lambda wd, an, logf=None: regs.append((wd, an)),
+                             register=lambda wd, an, logf=None, project="":
+                             regs.append((wd, an, project)),
                              logf=lambda m: None)
     check("[중요] 플랜이 생성됐다", ok is True)
     week = datetime.now().strftime("%Y-W%W")
@@ -106,7 +110,7 @@ def test_end_to_end():
     check("소스 스니펫이 프롬프트에 실린다 (repo 에 실재하는 B.cpp 플랜)",
           any("[소스 코드]" in c and "int line" in c for c in chats), str(len(chats)))
     check("[중요] Redmine 등록이 호출된다 (주차 디렉토리·작성자)",
-          regs == [(wd, "사람")], str(regs))
+          regs == [(wd, "사람", p.name)], str(regs))
     body = (wd / "high_B.md").read_text(encoding="utf-8")
     check("플랜 frontmatter 계약 (type/week/target_file/status)",
           "type: improvement_plan" in body and "target_file: Source/M/B.cpp" in body
@@ -187,6 +191,7 @@ def test_dedup_inheritance():
 # ── ④ 플랜 등록 ──────────────────────────────────────────────
 
 def test_register():
+    # [DOC] #632: 등록 검사는 fake project_lookup을 사용해 네트워크 없이 돈다.
     d = Path(tempfile.mkdtemp(prefix="ax-pl4-"))
     plan = d / "plans" / "사람" / "2026-W33" / "high_B.md"
     plan.parent.mkdir(parents=True)
@@ -205,12 +210,14 @@ def test_register():
         created.append((subject, description, kw))
         return {"id": 900}
 
-    got = PR.register_plan(plan, create=fake_create, update=lambda *a, **k: "안 옴")
+    got = PR.register_plan(plan, create=fake_create, update=lambda *a, **k: "안 옴",
+                           project="NS", project_lookup=lambda _: "ns-project")
     check("[중요] 신규 플랜은 create — 제목 규약 [플랜] <파일> — HIGH (분류)",
           got == {"action": "created", "issue_id": 900,
                   "subject": "[플랜] Source/M/B.cpp — HIGH (safety)"}, str(got))
     check("트래커/우선순위가 이름으로 간다 (코드리뷰·높음)",
-          created[0][2] == {"tracker_name": "코드리뷰", "priority_name": "높음"},
+          created[0][2] == {"tracker_name": "코드리뷰", "priority_name": "높음",
+                            "project": "ns-project"},
           str(created[0][2]))
     check("[중요] 원본 리뷰가 설명에 인용된다 (경로 + 발췌)",
           "원본 리뷰 위치" in created[0][1] and "null" in created[0][1])
@@ -230,9 +237,103 @@ def test_register():
                                                         update=lambda *a, **k: ""))
 
     week = PR.register_week_plans(plan.parent, "사람", create=fake_create,
-                                  update=lambda iid, notes="": "갱신")
+                                  update=lambda iid, notes="": "갱신", project="NS",
+                                  project_lookup=lambda _: "ns-project")
     check("주차 일괄 등록이 집계를 돌려준다 (기존 id → 갱신 1)",
           week["updated"] == 1 and week["created"] == 0 and not week["errors"], str(week))
+
+
+# [DOC] #632: 프로젝트 전달 누락 및 잘못된 기본 프로젝트 등록을 회귀 검사한다.
+def test_project_routing() -> None:
+    d = Path(tempfile.mkdtemp(prefix="ax-pl-route-"))
+
+    def make_plan(name: str) -> Path:
+        plan = d / name / "plans" / "사람" / "2026-W33" / "high_B.md"
+        plan.parent.mkdir(parents=True)
+        plan.write_text(
+            "---\ntype: improvement_plan\nweek: 2026-W33\ncategory: safety\n"
+            "severity: high\ntarget_file: Source/M/B.cpp\nstatus: pending\n---\n본문",
+            encoding="utf-8")
+        return plan
+
+    created, updated = [], []
+
+    def fake_create(subject, description, **kw):
+        created.append(kw)
+        return {"id": 1000 + len(created)}
+
+    def fake_update(*args, **kwargs):
+        updated.append((args, kwargs))
+        return "갱신"
+
+    mappings = {"NS": "ns-project", "AXCluster": "ax-cluster"}
+    for requested in ("NS", "AXCluster"):
+        plan = make_plan(requested)
+        got = PR.register_plan(plan, create=fake_create, update=fake_update,
+                               project=requested, project_lookup=mappings.get)
+        check(f"프로젝트 매핑에 따라 생성 ({requested})", got.get("action") == "created"
+              and created[-1]["project"] == mappings[requested], str(got))
+
+    for label, requested, lookup in (
+            ("누락", "", mappings.get),
+            ("빈 매핑", "Unknown", mappings.get),
+            ("조회 예외", "Broken", lambda _: (_ for _ in ()).throw(RuntimeError("boom")))):
+        plan = make_plan(f"bad-{label}")
+        before = plan.read_bytes()
+        call_counts = (len(created), len(updated))
+        got = PR.register_plan(plan, create=fake_create, update=fake_update,
+                               project=requested, project_lookup=lookup)
+        check(f"프로젝트 {label}는 호출·파일 변경 없이 거부", "error" in got
+              and call_counts == (len(created), len(updated))
+              and plan.read_bytes() == before, str(got))
+
+    week_plan = make_plan("week")
+    week = PR.register_week_plans(week_plan.parent, "사람", create=fake_create,
+                                  update=fake_update, project="NS",
+                                  project_lookup=mappings.get)
+    check("주차 등록이 프로젝트 매핑을 전달", week["created"] == 1
+          and created[-1]["project"] == "ns-project" and not week["errors"], str(week))
+
+    bad_week_plan = make_plan("bad-week")
+    bad_week = PR.register_week_plans(bad_week_plan.parent, "사람", create=fake_create,
+                                      update=fake_update, project="Unknown",
+                                      project_lookup=mappings.get)
+    check("주차 등록이 매핑 오류를 집계", bad_week["created"] == 0
+          and len(bad_week["errors"]) == 1, str(bad_week))
+
+    p, _ = fixture()
+    end_created = []
+
+    def end_register(wd, author, logf=None, project=""):
+        return PR.register_week_plans(
+            wd, author, create=lambda subject, description, **kw:
+            end_created.append(kw) or {"id": 2000}, update=fake_update,
+            logf=logf, project=project, project_lookup=mappings.get)
+
+    ok = PL.run_weekly_plans(
+        p, chat=lambda _: "본문", register=end_register, logf=lambda _: None,
+        archive=False)
+    week_dir = p.root / "plans" / "사람" / datetime.now().strftime("%Y-W%W")
+    check("planner부터 실제 등록까지 요청 프로젝트를 전달", ok and end_created
+          and all(kw["project"] == "ns-project" for kw in end_created), str(end_created))
+
+    p_bad, _ = fixture()
+    p_bad.name = "Unknown"
+    bad_created = []
+
+    def bad_register(wd, author, logf=None, project=""):
+        return PR.register_week_plans(
+            wd, author, create=lambda *args, **kwargs:
+            bad_created.append(kwargs) or {"id": 3000}, update=fake_update,
+            logf=logf, project=project, project_lookup=mappings.get)
+
+    bad_ok = PL.run_weekly_plans(
+        p_bad, chat=lambda _: "본문", register=bad_register, logf=lambda _: None,
+        archive=False)
+    bad_week_dir = p_bad.root / "plans" / "사람" / datetime.now().strftime("%Y-W%W")
+    check("매핑 실패에도 플랜과 요약을 보존", bad_ok and not bad_created
+          and (bad_week_dir / "high_B.md").exists()
+          and (bad_week_dir / "_summary.md").exists())
 
 
 # ── ⑤ create_issue ───────────────────────────────────────────
@@ -261,7 +362,7 @@ def test_create_issue():
 
 def main() -> int:
     for fn in (test_end_to_end, test_gates, test_dedup_inheritance,
-               test_register, test_create_issue):
+               test_register, test_project_routing, test_create_issue):
         fn()
     print(f"{'OK' if not FAIL else '[실패]'} test_planner: {PASS}/{PASS + FAIL} 통과")
     return 1 if FAIL else 0
