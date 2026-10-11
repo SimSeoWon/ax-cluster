@@ -153,5 +153,10 @@
     "path": "master/test_autodispatch.py",
     "count_pattern": "(?m)^OK test_autodispatch: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
+  },
+  {
+    "path": "master/test_workmodel.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
   }
 ]

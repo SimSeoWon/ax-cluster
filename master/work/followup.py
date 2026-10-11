@@ -63,6 +63,7 @@ from pathlib import Path
 
 from . import coordinator as C
 from . import review as R
+from . import workmodel as WM
 from .build_local import BuildSetupError, parse_unittest
 
 # ── 상태 이름 — 큐의 값 그대로 (`task_queue/logic_lifecycle.py`) ────────────────────────
@@ -457,43 +458,16 @@ def check_counts(res) -> dict:
     return {"passed": passed, "failed": len(items) - passed, "items": items}
 
 def _round_tasks(work: dict, tasks) -> list:
-    """`advance_work` 와 **같은** 라운드 거르기 — 스탬프 없는 옛 레코드는 거르지 않는다."""
-    cur = int((work or {}).get("round", 1) or 1)
-    tasks = list(tasks or [])
-    if any(int(t.get("round") or 0) > 0 for t in tasks):
-        tasks = [t for t in tasks if int(t.get("round") or 0) in (0, cur)]
-    return tasks
+    """`advance_work` 와 **같은** 라운드 거르기 — 정본은 `workmodel.round_filter` (`#363`)."""
+    return WM.round_filter(work, tasks)
 
 
-# 큐가 상태별로 사유를 적는 키 (`task_queue/logic_lifecycle.py` — 실측 2026-10-11).
-#   failed          `fail_reason`(≤120) + `fail_detail`(≤600)   submit 실패 · `verify:<result>`
-#   cancelled       `cancel_reason`(≤300)                       취소 API
-#   needs_revision  `last_feedback`(≤600)                       층1 revise · verify revise
-# [주의] 종전에는 `failure`/`error`/`reason` 만 읽어 노트·대기 출력이 늘 「사유 없음」이었다.
-#    옛 키는 폴백으로만 남긴다 (주입 테스트·옛 레코드).
-REASON_KEYS = {
-    "failed": ("fail_reason", "fail_detail"),
-    "cancelled": ("cancel_reason",),
-    "needs_revision": ("last_feedback",),
-}
-LEGACY_REASON_KEYS = ("failure", "error", "reason")
-BLOCK_STATES = ("needs_revision", "failed")      # wait 가 첫 막힘으로 읽는 조각 상태
-
-
-def task_reason(t: dict, limit: int = 300) -> str:
-    """조각 하나의 사유 — 그 상태에서 큐가 쓰는 키를 먼저, 없으면 옛 키. 비면 ""."""
-    parts = []
-    for k in REASON_KEYS.get(str(t.get("status") or ""), ()):
-        v = str(t.get(k) or "").strip()
-        if v and v not in parts:
-            parts.append(v)
-    if not parts:
-        for k in LEGACY_REASON_KEYS:
-            v = str(t.get(k) or "").strip()
-            if v:
-                parts.append(v)
-                break
-    return " — ".join(parts)[:limit]
+# 큐가 상태별로 사유를 적는 키·사유 읽기는 `workmodel` 로 옮겼다 (`#363` 1단계) — 공개 이름은
+# 그대로 다시 내보낸다(`F.task_reason` · `F.REASON_KEYS` · `F.LEGACY_REASON_KEYS`).
+REASON_KEYS = WM.REASON_KEYS
+LEGACY_REASON_KEYS = WM.LEGACY_REASON_KEYS
+task_reason = WM.task_reason
+BLOCK_STATES = WM.BLOCK_STATUSES      # wait 가 첫 막힘으로 읽는 조각 상태 (needs_revision · failed)
 
 
 def _failed_of(rtasks, states=TASK_BAD) -> list:
@@ -1146,11 +1120,21 @@ def render_wait(res: dict) -> str:
     out.append("  " + " · ".join(meta))
     for t in res.get("blocked_tasks") or []:
         out.append(_task_line(t))
+        if t.get("kind"):
+            out.append(f"    상태 {t.get('state_label') or t.get('state')} · 종류 {t['kind']} · "
+                       f"권고 {t.get('action') or 'none'} — {t.get('judgement') or '근거 없음'}")
     nrev = sum(1 for t in res.get("blocked_tasks") or [] if t.get("status") == "needs_revision")
     if nrev:
         cap = f" (상한 {REVISE_MAX_ATTEMPTS}회)" if REVISE_MAX_ATTEMPTS else ""
         out.append(f"  needs_revision {nrev}건은 큐의 자동 재시도 후보로 남아 있다{cap} — "
                    f"이 대기는 재시도·취소를 건드리지 않았다")
+    if res.get("outcome") == "blocked" and "other_tasks" in res:
+        # 사용자 우려 2026-10-11 — 취소하면 도는 워커를 건드리는지 보이게 한다
+        others = res.get("other_tasks") or []
+        out.append(f"  이번 라운드 다른 조각 — {_others_summary(others)}")
+        for o in others:
+            out.append(f"    · {o.get('task_id')} {o.get('state')}({o.get('status') or '?'})"
+                       + (f" · 워커 {o['worker']}" if o.get("worker") else ""))
     for t in res.get("failed_tasks") or []:
         out.append(_task_line(t))
     if res.get("terminal_reason"):
@@ -1159,6 +1143,46 @@ def render_wait(res: dict) -> str:
         out.append(f"  마지막 큐 조회 오류: {str(res['last_error'])[:300]}")
     out.append(f"  조회 {res.get('polls', 0)}회 · 경과 {_mmss(res.get('elapsed') or 0)}")
     return "\n".join(out)
+
+
+def _blocked_view(work: dict, tasks, blocked: list) -> tuple:
+    """막힌 조각 사실(`_failed_of` 모양)에 `workmodel` 판정을 얹고, 이번 라운드의 **나머지**
+    조각 상태를 함께 돌려준다 — `(blocked, others)`. 읽기 전용(`decide()` 는 권고만 한다)."""
+    w = WM.Work.from_record(work, tasks)
+    rec = {d["task_id"]: d for d in w.decide()}
+    rtasks = {t.task_id: t for t in w.round_tasks()}
+    for b in blocked:
+        t, d = rtasks.get(str(b.get("task_id") or "")), rec.get(str(b.get("task_id") or ""), {})
+        if t is None:
+            continue
+        b.update(state=t.state, state_label=t.state_label, retryable=t.retryable,
+                 kind=d.get("kind") or "", action=d.get("action") or "", judgement=d.get("reason") or "")
+    ids = {str(b.get("task_id") or "") for b in blocked}
+    others = []
+    for t in w.round_tasks():
+        if t.task_id in ids:
+            continue
+        o = {"task_id": t.task_id, "status": t.status, "state": t.state_label}
+        if t.worker:
+            o["worker"] = t.worker
+        others.append(o)
+    return blocked, others
+
+
+def _others_summary(others) -> str:
+    """`작업중 1 · 성공 0 · 대기 0` (+ 실패·미상이 있으면). 비면 「없음」."""
+    if not others:
+        return "없음"
+    n = {s: 0 for s in (WM.WORKING, WM.SUCCESS, WM.WAITING)}
+    extra: dict = {}
+    for o in others:
+        st = str(o.get("state") or "")
+        key = st if st in n else (WM.FAILED if st.startswith(WM.FAILED) else WM.UNKNOWN_STATE)
+        if key in n:
+            n[key] += 1
+        else:
+            extra[key] = extra.get(key, 0) + 1
+    return " · ".join(f"{k} {v}" for k, v in list(n.items()) + list(extra.items()))
 
 
 def wait_for_gate(repo, work_id: str, *, api=None, state=None, interval: float = 30,
@@ -1172,6 +1196,9 @@ def wait_for_gate(repo, work_id: str, *, api=None, state=None, interval: float =
         outcome   at_gate · stopped · error   그 라운드의 준비 기록 (facts · question · text=render)
                   blocked                     이번 라운드 조각이 needs_revision·failed (첫 막힘,
                                               기록이 없을 때만 — 기록이 앞선다) · blocked_tasks
+                                              (조각마다 `workmodel` 의 상태·종류·권고, `#363`) ·
+                                              other_tasks (이번 라운드 나머지 조각의 상태 — 취소가
+                                              도는 워커를 건드리는지 보이게, 사용자 2026-10-11)
                   terminal_rejected · terminal_cancelled   work 종결 (실패 조각 사유)
                   merged                      work 마감
                   timeout                     마지막으로 본 큐 상태·기록 · 마지막 조회 오류
@@ -1186,7 +1213,7 @@ def wait_for_gate(repo, work_id: str, *, api=None, state=None, interval: float =
     deadline = t0 + float(timeout)
     res: dict = {"work_id": work_id, "round": None, "outcome": "", "merge_status": "",
                  "verified": 0, "total": None, "record_state": "", "failed_tasks": [],
-                 "blocked": 0, "blocked_tasks": [],
+                 "blocked": 0, "blocked_tasks": [], "other_tasks": [],
                  "terminal_reason": "", "last_error": "", "polls": 0, "elapsed": 0.0,
                  "facts": {}, "question": "", "text": ""}
 
@@ -1237,11 +1264,13 @@ def wait_for_gate(repo, work_id: str, *, api=None, state=None, interval: float =
                 for t in blocked:
                     if t["status"] == "needs_revision" and REVISE_MAX_ATTEMPTS:
                         t["max_attempts"] = REVISE_MAX_ATTEMPTS
-                res["blocked_tasks"] = blocked
+                res["blocked_tasks"], res["other_tasks"] = _blocked_view(work, tasks, blocked)
                 for t in blocked:
                     log("wait", f"{work_id} r{rnd} 막힘 — {t['status']} {t['task_id']}"
                                 f" · 워커 {t.get('worker') or '?'} · 시도 {t.get('attempt_count', '?')}"
+                                f" · 종류 {t.get('kind') or '?'} · 권고 {t.get('action') or '?'}"
                                 f": {(t.get('reason') or '사유 없음')[:160]}")
+                log("wait", f"{work_id} r{rnd} 다른 조각 — {_others_summary(res['other_tasks'])}")
                 return _finish("blocked")
         except Exception as e:                                     # noqa: BLE001
             res["last_error"] = f"{type(e).__name__}: {e}"[:300]

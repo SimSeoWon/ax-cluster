@@ -888,6 +888,10 @@ def test_wait_uses_current_round():
 
 def test_task_reason_key_mapping():
     """큐가 실제로 쓰는 사유 키 (`logic_lifecycle.py`) — 옛 키는 폴백 (`#798` 후속)."""
+    from master.work import workmodel as WM
+    check("[중요] 공개 이름 재수출 — task_reason·REASON_KEYS 는 workmodel 정본",
+          F.task_reason is WM.task_reason and F.REASON_KEYS is WM.REASON_KEYS
+          and F.LEGACY_REASON_KEYS is WM.LEGACY_REASON_KEYS and F.BLOCK_STATES == ("needs_revision", "failed"))
     rt = F.task_reason
     check("failed: fail_reason + fail_detail",
           rt({"status": "failed", "fail_reason": "layer1", "fail_detail": "동결 위반 x"})
@@ -960,8 +964,58 @@ def test_wait_blocked_needs_revision():
               any("조각 0/2 · 준비 없음" in m for m in lines)
               and any("조각 0/2 · 막힘 1 · 준비 없음" in m for m in lines), str(lines))
         check("wait: 막힘 사유 로그 줄", any("막힘 — needs_revision t1" in m for m in lines), str(lines))
+        # `#363` — 4상태·종류·권고와 다른 조각의 상태
+        check("[중요] wait blocked: workmodel 판정 (첫 동결 위반 1건은 code → retry)",
+              bt[0].get("kind") == "code" and bt[0].get("action") == "retry"
+              and bt[0].get("state") == "실패" and bt[0].get("retryable") is True, str(bt))
+        check("render_wait: 상태·종류·권고 줄",
+              f"상태 실패·재시도 예정 (시도 1/{cap}) · 종류 code · 권고 retry — " in txt, txt)
+        check("[중요] wait blocked: 다른 조각 상태가 실린다",
+              res["other_tasks"] == [{"task_id": "t2", "status": "claimed", "state": "작업중",
+                                      "worker": "192.168.0.43"}], str(res["other_tasks"]))
+        check("render_wait: 다른 조각 요약·목록",
+              "이번 라운드 다른 조각 — 작업중 1 · 성공 0 · 대기 0" in txt
+              and "· t2 작업중(claimed) · 워커 192.168.0.43" in txt, txt)
+        check("wait: 다른 조각 로그 줄", any("다른 조각 — 작업중 1 · 성공 0 · 대기 0" in m for m in lines),
+              str(lines))
+        check("wait: 막힘 로그에 종류·권고", any("종류 code · 권고 retry" in m for m in lines), str(lines))
         check("wait: 큐에는 GET 만", all(c[0] == "GET" for c in api.calls), str(api.calls))
         check("[중요] wait: blocked 도 아무것도 쓰지 않는다", _listing(sd) == before)
+    finally:
+        shutil.rmtree(sd, ignore_errors=True)
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_wait_blocked_skeleton_two_frozen():
+    """같은 라운드 두 조각이 동시에 동결 위반 → skeleton · notify_human (`#363` 사용자 결정 2026-10-11).
+    사유 원문은 실측 #734(2026-10-11 12:26) 의 `last_feedback` 그대로."""
+    sd = Path(tempfile.mkdtemp(prefix="fu-wait8-"))
+    repo = Path(tempfile.mkdtemp(prefix="fu-wait8-repo-"))
+    try:
+        fc = FakeClock()
+        fb1 = ("[fp:f703f2c105b0] [중요] 층1 — 층1 이 막았다 — 커밋하지 않는다 — 층1 위반 1: "
+               "master/projects/mcp_server.py: 동결 위반 — 동결 인터페이스 변경/삭제: def get_code(...)")
+        fb2 = ("[fp:73785f4413c3] [중요] 층1 — 층1 이 막았다 — 커밋하지 않는다 — 층1 위반 1: "
+               "master/work/generate.py: 동결 위반 — 동결 인터페이스 변경/삭제: class Dispatch()")
+        tasks = [{"task_id": "d389e08f", "status": "needs_revision", "round": 1, "assignee": "192.168.0.2",
+                  "attempt_count": 1, "last_feedback": fb1},
+                 {"task_id": "ca8e428c", "status": "needs_revision", "round": 1, "assignee": "192.168.0.43",
+                  "attempt_count": 1, "last_feedback": fb2},
+                 {"task_id": "t3", "status": "pending", "round": 1}]
+        res = F.wait_for_gate(repo, "ww", api=_queue([_resp(tasks=tasks)]), state=sd,
+                              clock=fc.clock, sleep=fc.sleep)
+        bt = res["blocked_tasks"]
+        check("[중요] wait: 동결 위반 2건 동시 → 둘 다 skeleton · notify_human",
+              [(b.get("kind"), b.get("action")) for b in bt] == [("skeleton", "notify_human")] * 2, str(bt))
+        txt = F.render_wait(res)
+        check("render_wait: 골조 결함 근거 (사실만)",
+              "종류 skeleton · 권고 notify_human — 골조 결함 의심 — 같은 라운드 조각 2건이 동시에 동결 위반" in txt
+              and "골조 변경 결정 필요" in txt, txt)
+        check("render_wait: 대기 조각이 다른 조각으로", "작업중 0 · 성공 0 · 대기 1" in txt
+              and "· t3 대기(pending)" in txt, txt)
+        for bad in ("하세요", "하라", "해라", "실행하"):
+            check(f"render_wait skeleton: 명령형 `{bad}` 없음", bad not in txt)
+        check("wait skeleton: 종료 코드 3 그대로", res["outcome"] == "blocked" and res["exit_code"] == 3)
     finally:
         shutil.rmtree(sd, ignore_errors=True)
         shutil.rmtree(repo, ignore_errors=True)
@@ -984,6 +1038,11 @@ def test_wait_blocked_failed_and_precedence():
         txt = F.render_wait(res)
         check("render_wait: failed 줄", "조각 failed t1 · 워커 janus · 시도 3: verify:reject — 층2 차단" in txt
               and "재시도 후보" not in txt, txt)
+        check("wait blocked: 상한 도달 failed → cap · notify_human",
+              bt.get("kind") == "cap" and bt.get("action") == "notify_human"
+              and bt.get("retryable") is False, str(bt))
+        check("render_wait: 성공 조각도 다른 조각으로 보인다",
+              "이번 라운드 다른 조각 — 작업중 0 · 성공 1 · 대기 0" in txt and "· t2 성공(verified)" in txt, txt)
         # 지난 라운드의 막힘은 이번 라운드를 막지 않는다
         old = [{"task_id": "t0", "status": "failed", "round": 1, "fail_reason": "x"},
                {"task_id": "t1", "status": "claimed", "round": 2}]
@@ -1120,6 +1179,7 @@ def main() -> int:
                test_task_reason_key_mapping,
                test_wait_blocked_needs_revision,
                test_wait_blocked_failed_and_precedence,
+               test_wait_blocked_skeleton_two_frozen,
                test_wait_cli_exit_codes,
                test_register_tool_carries_wait_command):
         fn()
