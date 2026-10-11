@@ -4,11 +4,17 @@
 > 양식은 `docs/15-orchestrator-handoff.md` §15.5, 공용 규칙은 `docs/orchestrator-rules.md`.
 > 받는 쪽은 이 문서의 완료 서술도 HEAD·dirty diff·Redmine·프로세스로 직접 대조한다.
 
-- **현재 체크포인트: 2026-10-11 02:55 KST · Claude · #798 오늘 추가분 전부 되돌림(사용자 결정)**.
+- **현재 체크포인트: 2026-10-11 KST · Claude · 인수 대조 — #632 ⑦ 전진 완료로 정정**.
+  - 대조(실측): `main` HEAD `be95220` = `origin/main`, 작업 트리 clean(이 인계서 수정 전). `ax-followup` 유닛 없음 · `~/.claude/settings.json` = `{}` · `~/trunk/AXCluster-requester`·`~/trunk/ax-advance-…` 없음 · `hold.json` 없음. `ax-task-queue`·`ax-broker`·`ax-projects` running, `ax-dispatch` inactive(path waiting). 마스터 담당 기록 `codex`(10-10 17:10, 미변경) · 워커 모드 `codex`(state, 10-10 21:27).
+  - 🔴 **정정 — #632(work e5e894a9) ⑦ 전진은 끝났다.** 아래 02:55 체크포인트의 「⑦ 전진·finalize 미승인」은 틀렸다. 근거: 원격 `task/20261011_0035_632_redmine_e5e894a9/base` = `789a2445`([ADVANCE], 02:13:16, 부모 b111c8a2·7bc489f1, 트리는 검수 트리 c60da325 와 diff 0) · 서브 브랜치 `r1/aafc78ce` 원격 삭제됨 · Redmine #797 02:14 노트 「사용자 2026-10-11: 「632 전진하고」 — 버그 아님 · 구조 유지 · 추가 라운드 없음」.
+  - **남은 사람 게이트는 finalize(`main` 머지) 하나 — 미승인.** 큐는 아직 `merge_status=ready_for_review`·`review_decision` 비어 있음(전진 뒤 이 값이 원래 유지되는지 미확인). #797 상태 「신규」.
+  - 보존 트리 `~/ax-advance-20261011_0035_632_redmine_e5e894a9`(c60da32, clean)·`~/ax-632-work`(b111c8a, clean) 그대로. 다음 작업은 사용자 선택(#632 finalize · #798 재착수 · 기타). 이 인계서 수정은 미커밋.
+
+- **직전 체크포인트: 2026-10-11 02:55 KST · Claude · #798 오늘 추가분 전부 되돌림(사용자 결정)**.
   - 경위: 완료 훅을 마스터 홈 세션까지 넓히는 미커밋 작업 중 에러 발생 → 사용자가 홈 훅 정리(02:40, `~/.claude/settings.json` = `{}`) → 커밋까지 전부 되돌리기 결정. 02:28 홈 settings.json 이 `x` 1바이트로 깨져 있었으나 무엇이 썼는지는 미확인.
   - 되돌림: revert 커밋 `02293a1`(636da9c·7e53df0·30739f7·b7c4ebe) push · 코드 트리 = `7f70309` · 미커밋 홈 훅 병합 6파일 폐기 · `ax-followup.timer`/`.service` 제거 · 마스터 AXCluster requester 작업장 등록 해제 + `~/trunk/AXCluster-requester` 삭제 · `master.client update` 3/3 OK · `ax-projects` 재시작 02:51:49. 백업·증거 `~/.cache/ax-revert-798/`. #798 노트 기록.
   - 🔴 **다음 세션 진행 방식 (사용자 결정 2026-10-11)**: 인프라 서버(마스터)에서 분산 작업을 요청할 때 **훅을 쓰지 않는다** — 등재 뒤 **카운트다운으로 주기적으로 큐를 조회**해 완료를 확인하는 방식으로만 진행한다.
-  - #632(work e5e894a9): ⑦ 전진·finalize 미승인. followup 이 만든 `~/trunk/ax-advance-…`(c65247fc)는 정리 시점에 이미 없었음(원인 미확인). Codex 검수 트리 `~/ax-advance-20261011_0035_632_redmine_e5e894a9`(c60da325, 통합31/31·회귀38/38)와 `~/ax-632-work` 보존.
+  - #632(work e5e894a9): ~~⑦ 전진·finalize 미승인~~ [정정: ⑦ 전진은 02:13 완료(`789a2445`), finalize 만 미승인 — 위 체크포인트]. followup 이 만든 `~/trunk/ax-advance-…`(c65247fc)는 정리 시점에 이미 없었음(원인 미확인). Codex 검수 트리 `~/ax-advance-20261011_0035_632_redmine_e5e894a9`(c60da325, 통합31/31·회귀38/38)와 `~/ax-632-work` 보존.
   - #798 원래 문제(완료 후 요청자 후속 처리 누락)는 다시 미해결. 리포트 108·109·아래 체크포인트의 #798 구현 서술은 현행 아님.
 
 - **직전 체크포인트(되돌려짐 — 현행 아님): 2026-10-11 02:10 KST · Claude · #798 구현·배포·5a 실증 완료, 5b(훅 경로) 대기**.
