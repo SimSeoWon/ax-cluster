@@ -28,9 +28,6 @@ from __future__ import annotations
 
 import json
 import sys
-# [PSEUDO] 이 import 의 `timezone` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
-# [PSEUDO] 이 import 의 `datetime` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
-from datetime import datetime, timezone
 from pathlib import Path
 
 STORE_DIR = "worker_logs"           # [주의] 옛 회수 사본이 여기 남아 있다 (역사)
