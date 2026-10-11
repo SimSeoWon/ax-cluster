@@ -240,27 +240,42 @@ def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
                 missing_results.append({"task_id": tid, "status": "failed",
                                         "reason": "원격 durable 또는 기록된 시도 커밋이 없다 — 미커밋 본문은 골조 참고 대상"})
                 continue
+            found = 0
             for source, source_kind in sources:
                 rc_s, fetched = _git_rc(repo, "fetch", remote, source)
                 if rc_s != 0:
                     return Integration(error=f"재작업 결과 fetch 실패: {source} — {fetched[:200]}")
-                rc_s, tip = _git_rc(repo, "rev-parse", f"{remote}/{source}^{{commit}}")
-                if rc_s != 0:
-                    return Integration(error=f"재작업 결과 커밋 확인 실패: {source} — {tip[:200]}")
-                evidence = {"task_id": tid, "status": "failed", "branch": source,
-                            "head": tip.strip(), "source": source_kind,
-                            "verified": source_kind == "durable"}
-                rework_evidence.append(evidence)
-                if not _touches_outside_ax(repo, f"{remote}/{target_branch}", f"{remote}/{source}"):
+                # 🔴 `#805` — 서브 브랜치의 `[revise]` 커밋은 워커에게 보낸 피드백이지 결과가
+                #    아니다. verify-then-commit 은 층1/층2 가 막으면 구현을 커밋하지 않으므로
+                #    실패 조각 브랜치에는 피드백 커밋만 있을 수 있다(실측: alpha.py 머리에
+                #    `/* AUTO-VERIFY FEEDBACK */` 가 들어가 SyntaxError). 피드백이 아닌 가장
+                #    최근 커밋까지만 취하고, 없으면 결과 없음으로 둔다.
+                result, why = _rework_result_commit(repo, f"{remote}/{target_branch}",
+                                                    f"{remote}/{source}")
+                if why:
+                    return Integration(error=f"재작업 결과 커밋 확인 실패: {source} — {why}")
+                if not result:
+                    continue
+                found += 1
+                # 검증 여부는 큐의 조각 상태가 정한다 — 이 갈래는 실패 조각뿐이다.
+                rework_evidence.append({"task_id": tid, "status": "failed", "branch": source,
+                                        "head": result, "source": source_kind,
+                                        "verified": False})
+                if not _touches_outside_ax(repo, f"{remote}/{target_branch}", result):
                     ax_only.append(source)
                     continue
-                rc_s, merged_out = _git_rc(repo, "merge", "--no-ff", f"{remote}/{source}",
-                                          "-m", f"{lab}: {source}")
+                rc_s, merged_out = _git_rc(repo, "merge", "--no-ff", result,
+                                          "-m", f"{lab}: {source} @ {result[:12]}")
                 if rc_s != 0:
                     _git_rc(repo, "merge", "--abort")
                     return Integration(merged=merged, conflict=True, conflict_branch=source,
                                        error=f"재작업 결과 `{source}` 머지 충돌 — 통째 중단: {merged_out[:200]}")
                 merged.append(source)
+            if not found:
+                missing_results.append({"task_id": tid, "status": "failed",
+                                        "reason": "결과 커밋이 없다 — 서브 브랜치에는 [revise] 피드백 "
+                                                  "커밋만 있다(층1/층2 차단은 커밋하지 않는다). "
+                                                  "실패 사유는 다음 골조의 근거로 남는다"})
             continue
         if rc == 0 and not ls.strip():
             # 🔴 `#787` — ⑺ 전진 때 작업 브랜치에 들어가고 정리된 서브 브랜치. 위 feature 머지로
@@ -309,6 +324,23 @@ def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
                                   + ", ".join(stray[:5])))
     return Integration(ok=True, merged=merged, skipped=skipped, ax_only=ax_only, advanced=advanced,
                        rework_evidence=rework_evidence, missing_results=missing_results)
+
+
+def _rework_result_commit(repo: Path, base_ref: str, ref: str) -> tuple:
+    """`(결과 커밋, 오류)` — `base_ref..ref` 에서 `[revise]` 피드백이 아닌 가장 최근 커밋 (#805).
+
+    없으면 `("", "")`. 피드백 커밋이 결과 커밋보다 앞에 있으면 함께 들어오지만, 그 뒤의
+    워커 커밋이 피드백 블록을 걷어낸 상태다(워커 계약). 뒤에 붙은 피드백은 들어오지 않는다.
+    """
+    from .revise import FEEDBACK_COMMIT_PREFIX
+    rc, out = _git_rc(repo, "log", "--format=%H%x09%s", f"{base_ref}..{ref}")
+    if rc != 0:
+        return "", out[:200]
+    for line in out.splitlines():
+        sha, _, subject = line.partition("\t")
+        if sha.strip() and not subject.startswith(FEEDBACK_COMMIT_PREFIX):
+            return sha.strip(), ""
+    return "", ""
 
 
 def _touches_outside_ax(repo: Path, base_ref: str, dur_ref: str) -> list:

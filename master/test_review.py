@@ -1021,6 +1021,56 @@ def _rework_base_rejected(REG, paths, work, next_tip, post):
     return False
 
 
+def test_rework_skips_revise_feedback_commits():
+    """#805 — 실패 조각 서브 브랜치의 `[revise]` 피드백 커밋은 결과가 아니다.
+
+    실측 2026-10-11: 피드백만 있는 브랜치를 머지해 `.py` 머리에 `/* AUTO-VERIFY FEEDBACK */`
+    가 들어가 SyntaxError 가 됐고, 근거는 「검증 완료」로 표시됐다.
+    """
+    from master.work import revise as RV
+    root, repo, work, tasks = fixture()
+    try:
+        work.update(round=1, merge_status="rejected")
+        tasks[1].update(status="failed", fail_detail="[kind:code] x")
+        tasks[2]["fail_detail"] = "[kind:skeleton] 동결 위반"
+        block = RV.FEEDBACK_OPEN + " (attempt #2) — x\n */\n"
+        # t2: 워커 커밋(b.txt) 뒤에 피드백 커밋이 붙었다 → 워커 커밋까지만
+        g(repo, "checkout", durable_branch("t2"))
+        write(repo / "b.txt", block + "t2\n")
+        g(repo, "commit", "-am", f"{RV.FEEDBACK_COMMIT_PREFIX}t2 attempt #2 피드백")
+        g(repo, "push", "origin", durable_branch("t2"))
+        worker_t2 = g(repo, "rev-parse", "HEAD~1").strip()
+        # t3: 골조 위에 피드백 커밋만 있다 → 결과 없음
+        g(repo, "checkout", "feature/w1")
+        g(repo, "checkout", "-b", durable_branch("t3"))
+        write(repo / "c.py", block + "def f():\n    raise NotImplementedError\n")
+        g(repo, "add", "-A")
+        g(repo, "commit", "-m", f"{RV.FEEDBACK_COMMIT_PREFIX}t3 attempt #3 피드백")
+        g(repo, "push", "origin", durable_branch("t3"))
+        g(repo, "checkout", "main")
+        a = R.advance_work(repo, work_id=WORK, work=work, tasks=tasks, rework=True,
+                           build_fn=lambda _: _Build(True), keep_tree=True)
+        tree = Path(a.tree)
+        check("#805 준비는 성공", a.ok, a.summary)
+        check("#805 피드백만 있는 실패 조각은 머지하지 않는다",
+              not (tree / "c.py").exists() and durable_branch("t3") not in a.merged, str(a.merged))
+        check("#805 피드백만 있는 실패 조각은 결과 없음",
+              any(m["task_id"] == "t3" and "피드백" in m["reason"] for m in a.missing_results),
+              str(a.missing_results))
+        check("#805 워커 커밋 뒤 피드백은 들어오지 않는다",
+              (tree / "b.txt").read_text(encoding="utf-8") == "t2\n")
+        check("#805 근거는 워커 커밋을 가리킨다",
+              any(e["task_id"] == "t2" and e["head"] == worker_t2 for e in a.rework_evidence),
+              str(a.rework_evidence))
+        check("#805 실패 조각 근거는 검증 완료가 아니다",
+              a.rework_evidence and not any(e["verified"] for e in a.rework_evidence))
+        check("#805 통합 트리에 피드백 블록이 없다",
+              not any(RV.FEEDBACK_OPEN in f.read_text(encoding="utf-8", errors="replace")
+                      for f in tree.rglob("*.*") if ".git" not in f.parts and f.is_file()))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_rework_missing_verified_still_fails_and_default_skips_failed():
     root, repo, work, tasks = fixture(missing_durable=True)
     try:
@@ -1057,6 +1107,7 @@ def main() -> int:
                test_finalize_status_gate,
                test_finalize_six_step_edges, test_finalize_conflict_leaves_nothing,
                test_rework_integrates_failed_results_and_keeps_main_and_history,
+               test_rework_skips_revise_feedback_commits,
                test_rework_missing_verified_still_fails_and_default_skips_failed):
         fn()
     total = PASS + FAIL

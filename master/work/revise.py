@@ -88,6 +88,10 @@ PASS, REVISE, REJECT = "pass", "revise", "reject"
 #    원전과 같은 문자열을 쓴다(`/* AUTO-VERIFY FEEDBACK`).
 FEEDBACK_OPEN = "/* AUTO-VERIFY FEEDBACK"
 FEEDBACK_CLOSE = "*/"
+# [중요] 피드백 커밋의 제목 접두어 — **워커에게 가는 지시**이지 결과가 아니다. 재작업 통합
+#    (`review.integrate_durables(rework=True)`)이 이 접두어로 결과 커밋과 가른다(#805).
+#    만드는 곳(`embed_feedback`)과 가르는 곳이 이 상수 하나를 쓴다.
+FEEDBACK_COMMIT_PREFIX = "[revise] "
 
 
 # 🔴 **실행 환경이 죽은 신호** (`#391` 완결 · 실측 2026-09-12) ─────────────────────────
@@ -361,7 +365,7 @@ def embed(paths, work_id: str, task_id: str, *, issues, attempt: int, targets,
                 e.error = f"스테이징 실패 ({r}) — {out[:200]}"
                 return e
         rc, out = grc(wt, "commit", "-m",
-                      f"[revise] {task_id} attempt #{int(attempt)} 피드백 — 층1 이 막은 사유를 싣는다")
+                      f"{FEEDBACK_COMMIT_PREFIX}{task_id} attempt #{int(attempt)} 피드백 — 층1 이 막은 사유를 싣는다")
         if rc != 0:
             # [주의] **문구로 판정하지 않는다** (이 기계는 ko_KR 이라 git 메시지가 번역된다).
             #    rc≠0 이면 그대로 사유로 낸다.
