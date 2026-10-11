@@ -22,6 +22,7 @@ worktree 에서 검사만 하고 사람 게이트에서 멈추며, `master/test_
 
     unreal       `build_local.local_build_fn` 에 그대로 맡긴다 (다시 만들지 않는다)
     code         공식 통합 검사 + 이번 라운드가 건드린 파일의 회귀 검사 (`code_build_fn`)
+                 + 바뀐 .py 의 pyflakes·import 정적 검사 (`pystatic`, `#804`)
     index_only   거절 — 분산 작업을 받지 않는 타입이다
 
 원전 대조 (`~/AgentTest/mcp/master_orchestrator/executor_integration_build.py:17` 읽음,
@@ -62,6 +63,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import coordinator as C
+from . import pystatic as PS
 from . import review as R
 from . import workmodel as WM
 from .build_local import BuildSetupError, parse_unittest
@@ -204,6 +206,7 @@ def run_regression(tree, path: str, *, python: str = "", runner=None) -> dict:
 
 
 TAIL_LINES = 30
+STATIC_NAMES = {"pyflakes": "정적 pyflakes", "imports": "정적 import"}   # `check_counts` 항목 이름
 _re_fail = _re_mod.compile(r"^(FAIL|ERROR): ", _re_mod.M)
 
 
@@ -221,14 +224,16 @@ def _fail_tail(stderr: str, stdout: str, lines: int = TAIL_LINES) -> str:
 def code_build_fn(*, base_ref: str, start_dir: str = OFFICIAL_START_DIR,
                   pattern: str = OFFICIAL_PATTERN, python: str = "", timeout: int = 1800,
                   regressions: bool = True, runner=None, regression_fn=None,
-                  logf=C._noop_log):
+                  static: bool = True, static_fn=None, logf=C._noop_log):
     """`kind: code` 의 ⑦ 통합 검사 `build_fn(tree) -> dict`.
 
     ① 공식 통합 검사 — `python -B -m unittest discover -s <start_dir> -p <pattern> -f -v`
        (판정은 `build_local.parse_unittest` 그대로: `Ran N`(N≥1) · `OK` · rc 0)
     ② 회귀 검사 — `base_ref..HEAD` 가 건드린 파일마다 `regression_targets` 규칙으로 고른 스크립트
+    ③ 정적 검사 (`#804`) — 같은 바뀐 `.py` 의 pyflakes(문법·undefined name 만 차단) 와 import.
+       base 에 이미 있던 결함은 막지 않는다. 판정·기준선은 `pystatic` 머리말.
 
-    [중요] 통과 = ① 통과 **그리고** ② 전부 통과. 원전 `integration_build_impl` 의
+    [중요] 통과 = ① 통과 **그리고** ② 전부 통과 **그리고** ③ 차단 0 (확인 불가도 실패). 원전 `integration_build_impl` 의
     `gate_passed = build_passed and tests_passed` 와 같은 결이다. ② 대상이 0건이면 실패가 아니라
     「대상 없음」으로 적는다 — ① 은 언제나 1건 이상이어야 한다.
     [주의] `base_ref` 는 전진 전 작업 브랜치(`<remote>/<target>`)다 — 이번 라운드의 변경만 본다.
@@ -242,11 +247,13 @@ def code_build_fn(*, base_ref: str, start_dir: str = OFFICIAL_START_DIR,
     run = runner or (lambda argv, cwd, t: subprocess.run(argv, cwd=cwd, capture_output=True,
                                                          timeout=t))
     reg = regression_fn or (lambda tree, path: run_regression(tree, path, python=exe))
+    stat = static_fn or (lambda tree, files, lf: PS.run_static(tree, base_ref, files,
+                                                               python=exe, logf=lf))
 
     def _fn(tree) -> dict:
         root = Path(tree)
         out = {"ok": False, "passed": False, "integration": {}, "regressions": [],
-               "regression_notes": [], "failure": None}
+               "regression_notes": [], "static": {}, "failure": None}
         # ── ① 공식 통합 검사 ──
         if not (root / start_dir).is_dir():
             out.update(failure=f"검사 트리에 {start_dir} 이 없다: {tree}",
@@ -280,13 +287,18 @@ def code_build_fn(*, base_ref: str, start_dir: str = OFFICIAL_START_DIR,
 
         # ── ② 회귀 검사 — 통합 검사 결과와 무관하게 돌린다(사람이 볼 근거를 한 번에) ──
         reg_ok = True
-        if regressions:
+        files, files_err = None, ""
+        if regressions or static:
             try:
                 files = changed_files(root, base_ref)
-                targets, notes = regression_targets(root, files)
             except FollowupError as e:
-                targets, notes, reg_ok = [], [str(e)], False
+                files_err = str(e)
                 logf("check", f"[중요] {e}")
+        if regressions:
+            if files is None:
+                targets, notes, reg_ok = [], [files_err], False
+            else:
+                targets, notes = regression_targets(root, files)
             out["regression_notes"] = notes
             logf("check", f"회귀 대상 {len(targets)}건 (바뀐 경로 기준) — {', '.join(targets) or '없음'}")
             for path in targets:
@@ -297,17 +309,38 @@ def code_build_fn(*, base_ref: str, start_dir: str = OFFICIAL_START_DIR,
                 if not rr.get("ok") and rr.get("tail"):
                     logf("check", f"회귀 {path} 실패 원문 꼬리 ↓\n" + rr["tail"])
 
-        passed = integ.get("passed") is True and reg_ok
+        # ── ③ 정적 검사 (`#804`) — 바뀐 파일을 모르면 돌린 것이 아니다(확인 불가 = 실패) ──
+        static_ok = True
+        if static:
+            if files is None:
+                miss = {"ok": False, "setup_error": files_err, "summary": "확인 불가 — " + files_err}
+                out["static"] = {"pyflakes": dict(miss), "imports": dict(miss)}
+            else:
+                try:
+                    out["static"] = stat(root, files, logf)
+                except Exception as e:                               # noqa: BLE001
+                    msg = f"정적 검사 호출 실패 — {type(e).__name__}: {e}"
+                    logf("check", f"[중요] {msg}")
+                    miss = {"ok": False, "setup_error": msg, "summary": "확인 불가 — " + msg}
+                    out["static"] = {"pyflakes": dict(miss), "imports": dict(miss)}
+            static_ok = all((out["static"].get(k) or {}).get("ok") is True
+                            for k in ("pyflakes", "imports"))
+        sbad = [STATIC_NAMES[k] for k in ("pyflakes", "imports")
+                if static and (out["static"].get(k) or {}).get("ok") is not True]
+
+        passed = integ.get("passed") is True and reg_ok and static_ok
         nreg = len(out["regressions"])
         bad = [r["path"] for r in out["regressions"] if not r.get("ok")]
         out["ok"] = out["passed"] = passed
         out["summary"] = (f"통합 {integ.get('summary')} · 회귀 {nreg - len(bad)}/{nreg}"
                           + (f" (실패: {', '.join(bad)})" if bad else "")
-                          + ("" if reg_ok or bad else " · 회귀 대상 판정 실패"))
+                          + ("" if reg_ok or bad else " · 회귀 대상 판정 실패")
+                          + (f" · 정적 실패: {', '.join(sbad)}" if sbad else ""))
         if not passed:
             out["failure"] = integ.get("failure") or ("회귀 검사 실패" if bad else
                                                        "통합 검사 실패" if not integ.get("passed")
-                                                       else "회귀 대상 판정 실패")
+                                                       else "회귀 대상 판정 실패" if not reg_ok
+                                                       else f"정적 검사 실패 ({', '.join(sbad)})")
         return out
 
     _fn.command = f"{exe} -B -m unittest discover -s {start_dir} -p {pattern} -f -v"
@@ -455,6 +488,16 @@ def check_counts(res) -> dict:
             items.append({"name": f"회귀 {r.get('path')}", "ok": r.get("ok") is True,
                           "summary": str(r.get("reason") or "")[:200],
                           **({"tail": str(r["tail"])[-3000:]} if not r.get("ok") and r.get("tail")
+                             else {})})
+        # `#804` — 정적 검사 둘. 막힌 사유(차단 항목)를 꼬리로 실어 ⑦ 고지·노트에 보이게 한다
+        for key, name in STATIC_NAMES.items():
+            s = (res.get("static") or {}).get(key)
+            if not s:
+                continue
+            why = list(s.get("blocking") or []) or ([s["setup_error"]] if s.get("setup_error") else [])
+            items.append({"name": name, "ok": s.get("ok") is True,
+                          "summary": str(s.get("summary") or "")[:200],
+                          **({"tail": "\n".join(why)[-3000:]} if s.get("ok") is not True and why
                              else {})})
     else:
         ok, note = R.build_verdict(res)
