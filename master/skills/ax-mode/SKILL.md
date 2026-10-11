@@ -60,6 +60,23 @@ description: AX 워커 **지휘자 모드**를 보고 바꾼다 — 마스터가
 - **왜 바꾸는지(`why`)를 반드시 적는다.** 나중에 「왜 이 모드였나」를 그것으로만 알 수 있다
 - 지휘자 모드에서는 조각마다 **지휘자 토큰이 든다.** `lane` 은 마스터에서 텍스트만 만들어 싸다
 
+## 3-1. 진행 중인 work 하나만 바꾸기 — 장애 대응 (`#392` ②)
+
+전역 기본값이 아니라 **이미 등재된 work 하나**의 스탬프를 바꾼다. 워커 지휘자가 막혔을 때
+(예: 한 계정 한도 소진) 그 work만 다른 지휘자로 돌리는 경로다. 라운드 사이 지정은 종전대로
+개선요청 `improve_work(..., worker_mode=)`가 공식 경로다(사용자 결정 2026-10-05 ③).
+
+    변경   set_worker_mode_tool(mode, why="왜", by="누가", work_id="<work_id>")
+    직접   AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -c "import json; from master.work import conductor as c; print(json.dumps(c.set_work_worker_mode('<work_id>', 'claude', why='사유', by='현재 지휘자'), ensure_ascii=False))"
+
+- **다음 파견부터 적용된다** (사용자 결정 2026-10-11 A안). 파견은 시작할 때 스탬프를 한 번 읽어
+  그 파견 전체에 고정한다(`#389`) — 도는 파견에 소급되지 않는다.
+- **파견이 도는 중이면 거절한다** (파견 잠금 `~/.cache/ax-dispatch/<work_id>.lock`). 끝난 뒤 다시 부른다.
+- 종결된 work(merged · rejected · cancelled)와 모르는 모드는 큐가 거절한다(`terminal_work` ·
+  `invalid_worker_mode`). 전역과 같은 준비 검사를 거친다.
+- 성공하면 `[work-mode] <work_id> <이전>→<새> · … · 다음 파견부터 적용` 한 줄이 남는다.
+  `get_work` 로 스탬프를 다시 읽어 확인한다.
+
 마스터 담당 기록과 인수인계는 [`../ax-handoff/SKILL.md`](../ax-handoff/SKILL.md)에서 처리한다.
 
 ## 4. [주의] 계측을 0 으로 읽지 않는다
