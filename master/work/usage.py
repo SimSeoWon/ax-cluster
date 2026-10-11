@@ -128,7 +128,7 @@ def call_claude(prompt: str, *, model: str = "", timeout: int = TIMEOUT) -> Call
 def parse_claude_json(stdout: str) -> tuple | None:
     """`claude -p --output-format json` 봉투 → `(본문, Usage, is_error, model)`. 아니면 `None`.
 
-    [중요] **형식 지식은 이 모듈 한 곳이 갖는다** — 레인(`call_claude`)과 층2·게시판·리뷰 공용
+    [중요] **형식 지식은 이 모듈 한 곳이 갖는다** — 레인(`call_claude`)과 층2·리뷰 공용
     진입(`layer2_verify.call_claude_why`)이 같은 파서를 쓴다(`#733`, agy 의 `parse_agy_json` 과 같은 결).
     [주의] **`result` 키(또는 `type: result`)가 있는 dict 만 봉투로 본다** — 플래그가 안 먹어 모델 답
     자체가 JSON 이면 그것을 봉투로 오인해 본문을 버리게 된다.

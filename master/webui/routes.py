@@ -136,10 +136,33 @@ def wrap_side_nav(text: str, current: str, extra_css: str = "") -> str:
     return text[:j] + tail + text[j:] if j >= 0 else text + tail
 
 
+# [중요] `#812` (2026-10-11) — 게시판 쓰기·채팅을 **코드째 걷었다**(`board.py`·`app.py` 405).
+#    원전 화면의 쓰기 버튼은 그대로 두면 **조용히 성공처럼 보인다**(Apply 는 브라우저 textarea
+#    만 바꾸고, Activate 는 실패 분기가 없고, Clear 는 응답을 안 보고 화면을 비운다). 원전 바이트는
+#    그대로 두고(`OriginalsUntouchedTests`) **서빙 시점에 CSS 로 숨긴다**. JS 가 인라인
+#    `style.display` 를 바꾸므로 `!important` 로 이긴다. 채팅은 없어졌으므로 상세의 채팅 칸은
+#    **통째로** 숨긴다. 읽기(도메인 목록·문서·소스 문서·검색·다른 탭)는 숨기지 않는다.
+RETIRED_WRITE_SELECTORS = (
+    'button[onclick="toggleNewDomain()"]',   # + New Domain
+    "#newDomainForm",                        # 생성 폼(Create → createDomain)
+    "#domainDetail .delete-btn",             # Delete → deleteDomain
+    "#domainDetail .domain-chat-panel",      # 채팅 칸 전체 — 기록·입력·Send/Apply/Activate/Clear
+)
+RETIRED_WRITE_NOTICE = "도메인 문서 편집·채팅은 2026-10-11 제거됨 (#812)"
+_RETIRED_WRITE_CSS = (
+    ",".join(RETIRED_WRITE_SELECTORS) + "{display:none!important}"
+    # 상세는 문서 칸 하나만 남으므로 두 칸 격자를 한 칸으로 편다
+    + "#domainDetail .domain-layout{grid-template-columns:1fr!important}"
+    + f'#domainListView::before{{content:"{RETIRED_WRITE_NOTICE}";display:block;'
+    "color:#8b949e;font-size:.85rem;margin:0 0 8px}"
+)
+
+
 def context_server_html() -> bytes:
     """원전 `web_ui.py` 의 HTML. [중요] 파일은 손대지 않고 **좌측 목록으로 감싼다**."""
     from .web_ui_original import WEB_UI_HTML
-    return wrap_side_nav(WEB_UI_HTML, "/", _CONTEXT_SHELL_CSS).encode("utf-8")
+    return wrap_side_nav(WEB_UI_HTML, "/",
+                         _CONTEXT_SHELL_CSS + _RETIRED_WRITE_CSS).encode("utf-8")
 
 
 def inject_cluster_link(body: bytes) -> bytes:

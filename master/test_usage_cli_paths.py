@@ -5,7 +5,8 @@
 [중요] 지키는 불변식:
    1. claude·codex 공용 진입도 agy 와 같은 계약 — **감싼 구간만** 한 줄, 못 읽은 토큰은 `measured=False`
    2. 호출자가 받는 본문은 **종전 평문 그대로**다(claude 봉투를 벗긴다)
-   3. 층2(`layer2_verify.verify_files`) → `layer2` · 게시판 → `board` · 리뷰 기본 체인 → `review` 로 남는다
+   3. 층2(`layer2_verify.verify_files`) → `layer2` · 리뷰 기본 체인 → `review` 로 남는다
+      (게시판 `board.call_llm` 검사 ⑤ 는 `#812` 2026-10-11 에 코드와 함께 걷었다)
    4. 🔴 **두 번 세지 않는다** — 레인(`usage.call` → `lanes.run_one`)은 파견이 직접 기록하므로
       공용 진입의 기록을 끈다. 감싼 구간 안에서 불러도 sink 줄은 0 이다
    5. 대시보드가 새 줄(claude·codex·agy)을 제 계열로 분류한다
@@ -32,7 +33,6 @@ sys.path.insert(0, str(_ROOT))
 from master import layer2_verify as L2                                # noqa: E402
 from master.context_search.paths import ProjectPaths                  # noqa: E402
 from master.context_synth import review_gen as RG                     # noqa: E402
-from master.webui import board as B                                   # noqa: E402
 from master.work import lanes as LN                                   # noqa: E402
 from master.work import usage                                         # noqa: E402
 from master.work import usage_dashboard as UD                         # noqa: E402
@@ -255,31 +255,6 @@ def main() -> int:
         rows = [r for r in lines(gp.usage_log) if r.get("task_id") == "task-8"]
         check("폴백하면 시도한 백엔드마다 한 줄 (agy rc≠0 → claude)",
               [(r["lane"], r["rc"]) for r in rows] == [("agy", 3), ("claude", 0)], str(rows))
-
-        print("⑤ 게시판 — `board.call_llm` → source=board")
-        bp = ProjectPaths(name="B", root=tmp / "B")
-        (tmp / "B").mkdir()
-        _env(CODEX_FAKE="fail", AGY_FAKE="ok", FAKE_RESULT="게시판 답")
-        with redirect_stderr(err):
-            out = B.call_llm("p", timeout=20, paths=bp, task_id="전투")
-        rows = lines(bp.usage_log)
-        check("응답은 그대로", out == "게시판 답", repr(out))
-        check("[중요] 체인 시도마다 board 한 줄 (codex 실패 → agy)",
-              [(r["lane"], r["source"], r["task_id"]) for r in rows]
-              == [("codex", "board", "전투"), ("agy", "board", "전투")], str(rows))
-        n = len(lines(bp.usage_log))
-        with redirect_stderr(err):
-            B.call_llm("p", timeout=20)
-        check("paths 없이 부르면 기록하지 않는다 (어느 트윈인지 모른다)", len(lines(bp.usage_log)) == n)
-        # chat() 이 paths 를 넘기는지 — 실제 진입으로
-        dd = bp.context / "_domains"
-        dd.mkdir(parents=True)
-        (dd / "전투.md").write_text("---\nstatus: draft\n---\n본문\n", encoding="utf-8")
-        _env(CODEX_FAKE="ok", FAKE_RESULT="채팅 답")
-        B.chat(bp, "전투", "질문")
-        last = lines(bp.usage_log)[-1]
-        check("`chat()` 이 트윈·도메인으로 남긴다", (last["source"], last["lane"], last["task_id"])
-              == ("board", "codex", "전투"), str(last))
 
         print("⑥ 리뷰 기본 체인 — `review_commit(chat=None)` → source=review")
         rp = ProjectPaths(name="R", root=tmp / "R")

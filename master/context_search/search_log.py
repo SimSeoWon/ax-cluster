@@ -47,7 +47,6 @@ work_id) → §5.2-D 로 별도 판단 (감사 계층)"*. **누락이 아니라 
 | `projects/mcp_server.search_context_tool` | 사람·에이전트 질의 (MCP) | [완료] |
 | `webui/routes.api_search` | 사람 질의 (웹 UI) | [완료] |
 | `projects/mcp_server.resolve_terms_tool` | 시소러스 해소 — *"이 표현이 어느 클래스냐"* | [실패] 질의가 아니다 |
-| `webui/board.py` | 도메인 보드가 topic 으로 관련 문서 찾기 | [실패] 기계 생성 |
 | `work/register.py` · `work/manifest.py` | 파이프라인 내부 수집 | [실패] 기계 생성 |
 | `context_synth/synth.py` | 컨텍스트 합성 | [실패] 기계 생성 (원전도 안 한다) |
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -194,7 +194,8 @@ def test_both_surfaces_are_instrumented():
         check(f"⑧ {rel} 의 caller={caller}", f'caller="{caller}"' in src, "caller 가 다르다")
 
     # [중요] 기계 생성 질의는 기록하지 않는다 — 섞이면 분포가 오염된다
-    for rel in ("context_synth/synth.py", "webui/board.py", "work/subbranch.py"):
+    #    (`webui/board.py` 는 `#812` 에서 관련 문서 검색과 함께 쓰기를 걷어 목록에서 뺐다)
+    for rel in ("context_synth/synth.py", "work/subbranch.py"):
         src = (root / rel).read_text(encoding="utf-8")
         check(f"⑧ {rel} 은 기록하지 않는다", "search_log.log_search(" not in src,
               "기계 생성 질의가 로그에 섞인다")

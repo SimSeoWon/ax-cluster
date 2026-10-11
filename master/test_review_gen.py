@@ -375,7 +375,7 @@ def test_synth_paths_log_their_gaps() -> None:
 def test_generation_chain_is_codex_first_but_verification_is_not() -> None:
     """🔴 **쓰는 일은 코덱스, 보는 일은 아니다** (사용자 결정 2026-09-06).
 
-    생성(리뷰 응답·계획·레시피·게시판 채팅)에는 교차 계열 조건이 없어 codex 가 1순위다.
+    생성(리뷰 응답·계획·레시피)에는 교차 계열 조건이 없어 codex 가 1순위다.
     [중요] **검증(`BACKENDS`)에는 codex 를 넣지 않는다** — 작성 레인이 codex 이므로 넣는 순간
     자기가 쓴 것을 자기가 통과시킨다.
     """

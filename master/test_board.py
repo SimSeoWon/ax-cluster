@@ -1,12 +1,11 @@
-"""도메인 게시판 mutation (원전 복각 · 사용자 결정 2026-08-13).
+"""도메인 게시판 — **읽기 전용** (쓰기는 `#812` 2026-10-11 에 걷었다).
 
-[중요] 지키는 계약은 다섯이다:
+[중요] 지키는 계약은 넷이다:
 
-    ① **게시판은 `_domains/*.md` 다** — 온톨로지 YAML 을 건드리지 않는다(두 층을 헷갈리면 안 된다)
+    ① **게시판은 `_domains/*.md` 다** — 온톨로지 YAML 이 아니다(두 층을 헷갈리면 안 된다)
     ② **경로 이탈을 막는다** — 다만 [중요] **한글 이름은 허용**한다(원전이 그랬다)
-    ③ `_` 로 시작하는 관리 문서(`_overview`·`_unassigned`)는 **손대지 않는다**
-    ④ [중요] **삭제는 아카이브다** — 웹 버튼 한 번으로 사람이 쓴 문서를 잃지 않는다
-    ⑤ **원자적 쓰기** — 색인기(inotify)가 반쯤 쓰인 문서를 집어가면 안 된다
+    ③ `_` 로 시작하는 관리 문서(`_overview`·`_unassigned`)는 목록·상세에 **내지 않는다**
+    ④ 🔴 **쓰기·채팅 코드는 없다**(`#812`) — 상세는 `chat_history` 를 싣지 않고, 읽기는 아무것도 쓰지 않는다
 
 `.venv/bin/python master/test_board.py`
 """
@@ -128,98 +127,40 @@ def test_korean_names_allowed_traversal_blocked() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
-def test_management_docs_are_never_written() -> None:
-    paths, root = tmp_paths()
-    try:
-        before = (paths.context / "_domains" / "_overview.md").read_text(encoding="utf-8")
-        for fn in (lambda: B.update_domain(paths, "_overview", "덮어쓴다"),
-                   lambda: B.activate_domain(paths, "_overview", "덮어쓴다"),
-                   lambda: B.delete_domain(paths, "_overview")):
-            try:
-                fn()
-                check("[중요] 관리 문서를 건드렸다", False, "통과해버렸다")
-            except B.BoardError:
-                check("관리 문서는 거부", True)
-        after = (paths.context / "_domains" / "_overview.md").read_text(encoding="utf-8")
-        check("내용이 그대로", before == after)
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
+# ── 쓰기는 걷혔다 (`#812`) ────────────────────────────────────────────────────────
+
+RETIRED = ("create_domain", "chat", "update_domain", "activate_domain", "delete_domain",
+           "clear_chat", "save_chat", "load_chat", "chat_dir", "call_llm", "related_docs",
+           "_atomic_write", "CHAT_DIR")
 
 
-# ── 갱신 · 활성화 ───────────────────────────────────────────────────────────────
-
-def test_update_refuses_empty() -> None:
-    paths, root = tmp_paths()
-    try:
-        try:
-            B.update_domain(paths, "시험도메인", "   ")
-            check("[중요] 빈 내용으로 덮었다", False, "통과해버렸다")
-        except B.BoardError as e:
-            check("빈 내용은 거부", "빈 내용" in str(e), str(e))
-        got = B.update_domain(paths, "시험도메인", DRAFT + "\n추가됨\n")
-        check("갱신은 된다", got["status"] == "updated")
-        check("내용이 반영", "추가됨" in
-              (paths.context / "_domains" / "시험도메인.md").read_text(encoding="utf-8"))
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-
-
-def test_activate_flips_status_and_inherits_tags() -> None:
-    """[중요] 원전과 같은 동작 — draft→active + 소스 문서 태그 상속."""
-    paths, root = tmp_paths()
-    try:
-        got = B.activate_domain(paths, "시험도메인", DRAFT)
-        check("활성화됨", got["status"] == "activated", str(got))
-        text = (paths.context / "_domains" / "시험도메인.md").read_text(encoding="utf-8")
-        check("status 가 active", "status: active" in text)
-        check("draft 가 남지 않음", "status: draft" not in text)
-        # 소스의 tags [mission, snapshot, UI] 를 상속
-        for t in ("mission", "snapshot", "UI"):
-            check(f"태그 상속: {t}", t in text, text[:120])
-        # [중요] 색인은 우리가 하지 않는다 — 색인기에 맡긴다
-        check("색인을 직접 하지 않는다", got["indexed"] is False)
-        check("누가 색인하는지 말한다", "ax-indexer" in got["note"], got["note"])
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-
-
-# ── ④ 삭제는 아카이브 ───────────────────────────────────────────────────────────
-
-def test_delete_archives_instead_of_removing() -> None:
-    """[중요] 웹 버튼 한 번으로 사람이 쓴 문서를 잃지 않는다 (원전은 지웠다)."""
-    paths, root = tmp_paths()
-    try:
-        B.save_chat(paths, "시험도메인", [{"role": "user", "content": "x"}])
-        got = B.delete_domain(paths, "시험도메인")
-        check("아카이브됨", got["status"] == "archived", str(got))
-        check("원본이 없다", not (paths.context / "_domains" / "시험도메인.md").exists())
-        arch = list((paths.context / "_domains" / "_archive").glob("시험도메인.*.md"))
-        check("아카이브에 있다", len(arch) == 1, str(arch))
-        check("내용이 살아 있다", "시험용 초안" in arch[0].read_text(encoding="utf-8"))
-        check("채팅도 지워진다", B.load_chat(paths, "시험도메인") == [])
-        check("되돌릴 수 있다고 말한다", "되돌릴 수 있다" in got["note"], got["note"])
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-
-
-# ── ⑤ 원자적 쓰기 ──────────────────────────────────────────────────────────────
-
-def test_writes_are_atomic() -> None:
-    """색인기(inotify)가 반쯤 쓰인 문서를 집어가면 안 된다."""
+def test_writes_are_retired() -> None:
+    """🔴 `#812` (사용자 결정 2026-10-11) — 게시판 쓰기·채팅 코드가 되살아나지 않는다."""
+    for name in RETIRED:
+        check(f"[중요] `board.{name}` 이 없다", not hasattr(B, name), "되살아났다")
     src = Path(B.__file__).read_text(encoding="utf-8")
-    check("tmp → replace 를 쓴다", "tmp.replace(p)" in src)
-    check("[중요] 직접 write_text 로 본문을 쓰지 않는다",
-          "p.write_text(content" not in src and "md_path(paths, name).write_text" not in src)
+    for needle in ("write_text(", ".replace(p)", "unlink(", "mkdir("):
+        check(f"board.py 에 쓰기 호출 `{needle}` 이 없다", needle not in src)
 
 
-def test_chat_history_round_trip() -> None:
+def test_detail_has_no_chat_and_reads_do_not_write() -> None:
+    """상세는 `chat_history` 를 싣지 않고, 읽기가 디렉토리(`.chat`)를 만들지 않는다."""
     paths, root = tmp_paths()
     try:
-        B.save_chat(paths, "시험도메인", [{"role": "user", "content": "안녕"}])
-        got = B.load_chat(paths, "시험도메인")
-        check("히스토리 왕복", got and got[0]["content"] == "안녕", str(got))
-        B.clear_chat(paths, "시험도메인")
-        check("초기화", B.load_chat(paths, "시험도메인") == [])
+        d = paths.context / "_domains"
+        before = sorted(p.name for p in d.rglob("*"))
+        got = B.get_board_domain(paths, "시험도메인")
+        B.list_board(paths)
+        check("chat_history 키가 없다", "chat_history" not in got, str(sorted(got)))
+        check("응답 키는 넷", sorted(got) == ["content", "name", "source_documents", "status"],
+              str(sorted(got)))
+        check("[중요] 읽기가 파일·디렉토리를 만들지 않는다",
+              sorted(p.name for p in d.rglob("*")) == before)
+        try:
+            B.get_board_domain(paths, "_overview")
+            check("[중요] 관리 문서를 상세로 냈다", False, "통과해버렸다")
+        except B.BoardError:
+            check("관리 문서 상세는 거부", True)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -232,35 +173,6 @@ def test_frontmatter_parses_our_format() -> None:
     check("빈 리스트", meta2.get("tags") == [], str(meta2.get("tags")))
     check("status", meta2.get("status") == "draft")
     check("frontmatter 없으면 빈 dict", B.parse_front("본문만") == {})
-
-
-def test_create_without_llm_says_so() -> None:
-    """[주의] LLM 없이 만들어졌다는 사실을 숨기지 않는다."""
-    paths, root = tmp_paths()
-    saved = B.call_llm
-    try:
-        B.call_llm = lambda *a, **k: None
-        got = B.create_domain(paths, "테스트 주제")
-        check("초안은 만들어진다", got["status"] == "created", str(got))
-        check("[중요] LLM 실패를 말한다", "LLM" in (got.get("note") or ""), str(got.get("note")))
-        p = paths.context / "_domains" / f"{got['domain_name']}.md"
-        check("파일이 있다", p.is_file(), str(p))
-        check("draft 로 만든다", "status: draft" in p.read_text(encoding="utf-8"))
-    finally:
-        B.call_llm = saved
-        shutil.rmtree(root, ignore_errors=True)
-
-
-def test_create_refuses_empty_topic() -> None:
-    paths, root = tmp_paths()
-    try:
-        try:
-            B.create_domain(paths, "  ")
-            check("[중요] 빈 주제를 통과시켰다", False)
-        except B.BoardError as e:
-            check("빈 주제는 거부", "topic" in str(e), str(e))
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
 
 
 def test_tag_cloud_counts_context_documents() -> None:
@@ -428,11 +340,8 @@ def main() -> int:
     for fn in (test_board_lists_md_not_ontology, test_detail_carries_source_contents,
                test_korean_names_allowed_traversal_blocked, test_blank_query_lists_documents,
                test_search_row_matches_origin_schema,
-               test_management_docs_are_never_written, test_update_refuses_empty,
-               test_activate_flips_status_and_inherits_tags,
-               test_delete_archives_instead_of_removing, test_writes_are_atomic,
-               test_chat_history_round_trip, test_frontmatter_parses_our_format,
-               test_create_without_llm_says_so, test_create_refuses_empty_topic,
+               test_writes_are_retired, test_detail_has_no_chat_and_reads_do_not_write,
+               test_frontmatter_parses_our_format,
                test_tag_cloud_counts_context_documents,
                test_index_status_reveals_mismatch):
         fn()

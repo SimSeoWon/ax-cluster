@@ -104,51 +104,6 @@ class WebUI:
     def __init__(self, paths_fn):
         self._paths_fn = paths_fn
 
-    async def _write(self, scope, receive, method: str, path: str):
-        """[중요] 쓰기 — `(status, dict)` 또는 라우트 없으면 `None`. 원전 mutation 복각."""
-        from . import board
-        try:
-            paths = self._paths_fn()
-        except Exception as e:                               # noqa: BLE001
-            return 503, {"error": f"프로젝트 해석 실패: {e}"}
-
-        raw = await _read_body(receive)
-        data: dict = {}
-        if raw:
-            try:
-                data = json.loads(raw.decode("utf-8", "replace")) or {}
-            except ValueError:
-                data = {}
-
-        try:
-            if method == "POST" and path == _W_CREATE:
-                return 200, board.create_domain(paths, str(data.get("topic") or ""))
-            m = _W_CHAT.match(path)
-            if m and method == "POST":
-                return 200, board.chat(paths, unquote(m.group(1)),
-                                       str(data.get("message") or ""))
-            m = _W_UPDATE.match(path)
-            if m and method == "POST":
-                return 200, board.update_domain(paths, unquote(m.group(1)),
-                                                str(data.get("content") or ""))
-            m = _W_ACTIVATE.match(path)
-            if m and method == "POST":
-                return 200, board.activate_domain(paths, unquote(m.group(1)),
-                                                  str(data.get("content") or ""))
-            if method == "POST" and path == _W_DELETE_DOMAIN:
-                # 원전은 이 경로로 도메인을 지웠다. [중요] 우리는 `_archive/` 로 옮긴다(되돌리기 가능)
-                return 200, board.delete_domain(paths,
-                                                str(data.get("domain_name")
-                                                    or data.get("name") or ""))
-            m = _W_CHAT.match(path)
-            if m and method == "DELETE":
-                return 200, board.clear_chat(paths, unquote(m.group(1)))
-        except board.BoardError as e:
-            return 400, {"error": str(e)}
-        except Exception as e:                               # noqa: BLE001
-            return 500, {"error": f"{type(e).__name__}: {e}"}
-        return None
-
     async def __call__(self, scope, receive, send):
         # [DOC] LLM 사용량 조각: 이 파일과 master/test_usage_routes.py만 변경한다.
         # [DOC] /usage(/) -> usage_page.page(q:scalar dict), /api/v1/usage ->
@@ -201,9 +156,13 @@ class WebUI:
             if path in READ_POST:
                 pass                                  # 읽기 POST — 아래에서 처리
             elif method in ("POST", "DELETE"):
-                got = await self._write(scope, receive, method, path)
-                if got is not None:
-                    return await _send(send, got[0], _j(got[1]))
+                # 🔴 게시판 쓰기 라우트를 걷었다 (`#812`, 사용자 결정 2026-10-11).
+                #    도메인 생성·chat·update·activate·delete_domain·chat 비우기(DELETE)가 여기서
+                #    `board.*` 로 갔다. 상수(`_W_*`)가 `43e6319`(2026-09-29)에서 빠져 그 뒤로는
+                #    전부 500 NameError 였고, 실사용은 08-20 의 400 한 건이 마지막이었다 —
+                #    기계는 모두 SSH 로 다루므로 쓸 곳이 없다. 이제 「no such write route」 405 다.
+                #    `board.py` 의 쓰기·채팅 함수와 그 도우미도 같은 일감에서 **코드째 지웠다**.
+                #    [주의] 다시 필요하면 **토큰 뒤에** 되살린다 — 공개 접두어 `/api/v1` 에 두지 않는다.
                 return await _send(send, 405, _j({"error": "no such write route",
                                                   "path": path}))
             else:
