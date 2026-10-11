@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -444,7 +445,7 @@ def test_layer2_commit_boundary():
             ("no_backend", lambda files: L2.verify_files(list(files.items()), backends=[], cooldown_sec=0)),
             ("exception", lambda files: (_ for _ in ()).throw(RuntimeError("backend failed"))),
             ("missing", None)):
-        with tempfile.TemporaryDirectory() as td:
+        with tempfile.TemporaryDirectory() as td, patch.object(wcommit, "_log"):
             facts, bare, base, worker = _world(Path(td))
             c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
                             want=[SRC], llm=_llm_writes(GOOD), ssh=_shell, reader=_reader,
@@ -484,13 +485,53 @@ def test_layer2_commit_boundary():
               f"task/{WORK}/{TASK}" not in _heads(bare), c.summary)
 
 
+def _racing_verifier(files):
+    """`#818` 실측 증상을 흉내낸다 — 순회 중 크기가 바뀐 dict."""
+    d = {"a": 1}
+    for k in d:
+        d[k + "x"] = 2
+
+
+def test_layer2_exception_keeps_traceback():
+    """🔴 `#818` — 층2 검증기 예외의 추적을 버리지 않는다.
+
+    전체 추적은 파견 로그(`wcommit._log` → 저널)에 줄마다 태스크 id 를 붙여 남고,
+    사유(`c.reason`)는 짧은 모양 그대로 **마지막 프레임**만 더 싣는다.
+    """
+    logs = []
+    with tempfile.TemporaryDirectory() as td, \
+            patch.object(wcommit, "_log", side_effect=logs.append):
+        facts, bare, base, worker = _world(Path(td))
+        c = wcommit.run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+                        want=[SRC], llm=_llm_writes(GOOD), ssh=_shell, reader=_reader,
+                        verifier=_racing_verifier)
+        check("층2 예외: 커밋·push 차단", not c.ok and not c.head and
+              f"task/{WORK}/{TASK}" not in _heads(bare), c.summary)
+    check("층2 예외: verifier_exception 분류", c.layer2_failure == "verifier_exception",
+          c.layer2_failure)
+    check("층2 예외: 사유에 예외 원문", "RuntimeError: dictionary changed size during iteration"
+          in c.reason, c.reason)
+    check("층2 예외: 사유에 마지막 프레임(상대 경로:줄 in 함수)",
+          " @ master/test_wcommit.py:" in c.reason and "in _racing_verifier" in c.reason
+          and c.reason.endswith("— 커밋하지 않는다"), c.reason)
+    check("층2 예외: 사유가 짧다(추적 전체를 싣지 않는다)", "Traceback" not in c.reason
+          and "\n" not in c.reason and len(c.reason) < 300, c.reason)
+    tb = [ln for ln in logs if ln.startswith(f"[wcommit] {TASK} 층2 예외 추적: ")]
+    check("층2 예외: 추적이 로그로 — 줄마다 태스크 id", len(tb) >= 3 and len(tb) == len(logs) and
+          "Traceback (most recent call last):" in tb[0] and
+          "RuntimeError: dictionary changed size during iteration" in tb[-1], str(logs))
+    check("층2 예외: 추적에 경합 자리(파일·함수)", any(
+          "test_wcommit.py" in ln and "_racing_verifier" in ln for ln in tb), str(tb))
+
+
 def main() -> int:
     for fn in (test_no_pseudo_and_no_change_is_a_no_op_not_a_failure,
                test_commands, test_returns_to_main, test_worker_keeps_nothing,
                test_happy_path, test_collects_delegations, test_layer1_blocks_commit,
                test_layer1_block_records_what_the_conductor_said,
                test_empty_body_blocks, test_no_change_is_not_success,
-               test_refusals, test_llm_failure_does_not_commit, test_layer2_commit_boundary):
+               test_refusals, test_llm_failure_does_not_commit, test_layer2_commit_boundary,
+               test_layer2_exception_keeps_traceback):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_wcommit: {PASS}/{total} 통과")

@@ -46,6 +46,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -510,6 +511,17 @@ def _free_workers(facts, *, clean=None) -> tuple:
         pool = [f for f in pool if f is not pick.chosen]
     return chosen, rejected
 
+
+
+# 🔴 [중요] **층2 를 스레드 사이에 한 줄로 세운다** (`#818`, 실측 2026-10-11 20:48).
+#    병렬 9조각(워커 3대) 중 하나의 층2 가 마스터에서 `RuntimeError: dictionary changed size
+#    during iteration` 으로 죽었다 — 워커 산출물은 멀쩡했는데 `verification` 실패로 재시도 없이
+#    종결됐다. 경합 자리는 아직 모른다(추적은 `wcommit` 이 이제 저널에 남긴다).
+#    [주의] **이 잠금은 임시 조치다** — 경합 자리를 찾아 고치면(`#818` 3단계) 걷는다.
+#    워커 작성은 그대로 병렬이고, 마스터의 층2 판정만 한 번에 하나씩 돈다.
+_LAYER2_LOCK = threading.Lock()
+# 이보다 짧게 기다린 것은 찍지 않는다 — 잠금이 비어 있던 경우까지 로그를 채우지 않게.
+_LAYER2_WAIT_LOG_SEC = 0.5
 
 
 def _log(msg: str) -> None:
@@ -1117,6 +1129,20 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         return out
 
     def verifier(files):
+        # 별도 상용 검증 시간에도 claim 리스를 살린다. 작성 계측과 구간을 섞지 않는다.
+        runner.heartbeat(task_id, facts.host, api=api)
+        with runner._Beater(lambda: runner.heartbeat(task_id, facts.host, api=api)):
+            # 🔴 `#818` — 잠금 대기는 **하트비트 안에서** 한다. 밖에서 기다리면 앞 조각의 층2 가
+            #    길어질 때 이 조각의 claim 리스가 만료된다. [주의] 임시 조치 — 위 `_LAYER2_LOCK` 참조.
+            t0 = time.monotonic()
+            with _LAYER2_LOCK:
+                waited = time.monotonic() - t0
+                if waited > _LAYER2_WAIT_LOG_SEC:
+                    _log(f"[layer2] {task_id} 층2 잠금 대기 {waited:.1f}초 (#818)")
+                return _judge(files)
+
+    def _judge(files):
+        """층2 본체 — `verifier` 가 하트비트·`_LAYER2_LOCK` 안에서 부른다 (`#818`)."""
         from .. import layer2_verify as L2
         from ..verdict import Verdict
         from ..projects import profile
@@ -1129,44 +1155,41 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
             _log(f"[layer2] {task_id} 판정 생략 — {v.failure}"
                  + (f" · {detail}" if detail else ""))
             return v
-        # 별도 상용 검증 시간에도 claim 리스를 살린다. 작성 계측과 구간을 섞지 않는다.
-        runner.heartbeat(task_id, facts.host, api=api)
-        with runner._Beater(lambda: runner.heartbeat(task_id, facts.host, api=api)):
-            prof = profile.load(paths.name)
-            kind = prof.get("kind")
-            if kind not in ("unreal", "code"):
-                return _skip(Verdict(False, "profile_unavailable", warnings=["검증 프로필 kind 미확정"]))
-            if kind == "code" and (not prof.get("work_exts") or any(
-                    Path(rel).suffix.lower() not in prof["work_exts"] for rel in files)):
-                return _skip(Verdict(False, "unsupported_target",
-                                     warnings=["프로필 work_exts 밖 검증 대상"]))
-            decl = D.from_commit(paths, base, kind=kind, work_exts=prof.get("work_exts"),
-                                 target_files=list(files), per_class=None, total=None)
-            # 🔴 층2 판정자는 클라우드(agy·claude)라 **글자 예산을 두지 않는다** (`#780`, 사용자 결정
-            #    2026-10-10). 종전 16000/64000 은 로컬 LLM 예산을 물려받은 숫자였고, `client_mcp.TOOLS`
-            #    (17,905자) 하나가 잘려 #777 의 두 조각이 판정 생략 → 차단됐다.
-            diag = [f"grounding @ {str(base)[:10]} — {decl.summary}"]
-            for key in ("missing", "truncated", "dropped"):
-                if getattr(decl, key):
-                    diag.append(f"grounding {key}: {', '.join(getattr(decl, key))}")
-            if not decl.complete:
-                return _skip(Verdict(False, "grounding_incomplete", warnings=diag))
-            if not author["lane"] or author["lane"] == "lane":
-                return _skip(Verdict(False, "author_unavailable", warnings=diag + ["작성 계열 미확정"]))
-            base_files = _base_files(files)
-            with U.sink(paths.usage_log, source="layer2", work_id=work_id, task_id=task_id):
-                selected_mode = _MODE.current(mode)[0]
-                v = L2.verify_files(list(files.items()), declarations=decl.render(for_verification=True),
-                                    author_lane=author["lane"], kind=kind, base_files=base_files,
-                                    orchestrator=selected_mode if selected_mode in ("codex", "claude") else "")
-            # 🔴 **누가 판정했는지 남긴다** (`#757`, 사용자 2026-10-09) — 성공·차단 모두.
-            backend = next((w.split("=", 1)[1] for w in v.warnings
-                            if isinstance(w, str) and w.startswith("backend=")), "?")
-            _log(f"[layer2] {task_id} 판정 {v.summary()} · backend={backend} · "
-                 f"작성={author['lane']} · 그라운딩 {decl.summary} · "
-                 f"원본 {len(base_files)}/{len(files)}파일")
-            v.warnings.extend(diag + [f"author={author['lane']}"])
-            return v
+        prof = profile.load(paths.name)
+        kind = prof.get("kind")
+        if kind not in ("unreal", "code"):
+            return _skip(Verdict(False, "profile_unavailable", warnings=["검증 프로필 kind 미확정"]))
+        if kind == "code" and (not prof.get("work_exts") or any(
+                Path(rel).suffix.lower() not in prof["work_exts"] for rel in files)):
+            return _skip(Verdict(False, "unsupported_target",
+                                 warnings=["프로필 work_exts 밖 검증 대상"]))
+        decl = D.from_commit(paths, base, kind=kind, work_exts=prof.get("work_exts"),
+                             target_files=list(files), per_class=None, total=None)
+        # 🔴 층2 판정자는 클라우드(agy·claude)라 **글자 예산을 두지 않는다** (`#780`, 사용자 결정
+        #    2026-10-10). 종전 16000/64000 은 로컬 LLM 예산을 물려받은 숫자였고, `client_mcp.TOOLS`
+        #    (17,905자) 하나가 잘려 #777 의 두 조각이 판정 생략 → 차단됐다.
+        diag = [f"grounding @ {str(base)[:10]} — {decl.summary}"]
+        for key in ("missing", "truncated", "dropped"):
+            if getattr(decl, key):
+                diag.append(f"grounding {key}: {', '.join(getattr(decl, key))}")
+        if not decl.complete:
+            return _skip(Verdict(False, "grounding_incomplete", warnings=diag))
+        if not author["lane"] or author["lane"] == "lane":
+            return _skip(Verdict(False, "author_unavailable", warnings=diag + ["작성 계열 미확정"]))
+        base_files = _base_files(files)
+        with U.sink(paths.usage_log, source="layer2", work_id=work_id, task_id=task_id):
+            selected_mode = _MODE.current(mode)[0]
+            v = L2.verify_files(list(files.items()), declarations=decl.render(for_verification=True),
+                                author_lane=author["lane"], kind=kind, base_files=base_files,
+                                orchestrator=selected_mode if selected_mode in ("codex", "claude") else "")
+        # 🔴 **누가 판정했는지 남긴다** (`#757`, 사용자 2026-10-09) — 성공·차단 모두.
+        backend = next((w.split("=", 1)[1] for w in v.warnings
+                        if isinstance(w, str) and w.startswith("backend=")), "?")
+        _log(f"[layer2] {task_id} 판정 {v.summary()} · backend={backend} · "
+             f"작성={author['lane']} · 그라운딩 {decl.summary} · "
+             f"원본 {len(base_files)}/{len(files)}파일")
+        v.warnings.extend(diag + [f"author={author['lane']}"])
+        return v
 
     # 🔴 `#809` — 워커 체크아웃만 `checkout` 이다. `wcommit` 이 `HEAD == base_commit` 을
     #    대조하므로 여기 넘기는 값이 곧 체크아웃 커밋이어야 한다. 비었으면 골조 기준이다.

@@ -46,11 +46,37 @@ from __future__ import annotations
 import os
 import re
 import time
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import branch_names, layer1
 from .runner import DispatchError
+
+
+def _log(msg: str) -> None:
+    """파견 로그 한 줄 — `infer._log` 와 **같은 형식**(`[dispatch]` 접두어)이라 journalctl 에서
+    한 줄기로 읽힌다. [주의] 테스트는 이 자리를 바꿔 끼운다(`#818`)."""
+    print(f"[dispatch] {msg}", flush=True)
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _last_frame(exc: BaseException) -> str:
+    """예외의 마지막 프레임 → `파일:줄 in 함수` (`#818`). 저장소 안이면 상대 경로, 밖이면 파일명만.
+
+    [주의] 절대 경로를 큐 기록에 싣지 않는다 — 사유(`c.reason`)는 화면·일감으로 나간다.
+    """
+    try:
+        fr = traceback.extract_tb(exc.__traceback__)[-1]
+    except IndexError:
+        return "?"
+    try:
+        name = Path(fr.filename).resolve().relative_to(_REPO_ROOT).as_posix()
+    except (ValueError, OSError):
+        name = Path(fr.filename).name
+    return f"{name}:{fr.lineno} in {fr.name}"
 
 # 원전 커밋 메시지 규약 (`docs/distributed-workers.md` § 워커 사이클)
 COMMIT_FMT = "[task:{task_id}] worker={host} target={target}"
@@ -400,7 +426,15 @@ def _cycle(facts, task_id: str, c: "Committed", base: str, llm, do_ssh, do_read,
             return c
     except Exception as e:                                   # noqa: BLE001
         c.layer2_failure = "verifier_exception"
-        c.reason = f"층2 검증 실패 — {type(e).__name__}: {e} — 커밋하지 않는다"
+        # 🔴 **추적을 버리지 않는다** (`#818`, 실측 2026-10-11 20:48). 병렬 9조각 중 하나의 층2 가
+        #    마스터에서 `RuntimeError: dictionary changed size during iteration` 으로 죽었는데,
+        #    종전에는 예외 한 줄만 남아 **경합 자리를 알 수 없었다.**
+        #    [중요] 전체 추적은 **파견 로그(저널)** 로 — 줄마다 태스크 id 를 붙여 섞여도 가른다.
+        #    사유(`c.reason`)는 큐 `fail_detail` 에서 잘리므로 짧게 두고 **마지막 프레임만** 싣는다.
+        where = _last_frame(e)
+        for ln in traceback.format_exc().rstrip().splitlines():
+            _log(f"[wcommit] {task_id} 층2 예외 추적: {ln}")
+        c.reason = f"층2 검증 실패 — {type(e).__name__}: {e} @ {where} — 커밋하지 않는다"
         return c
 
     # ⑤ 커밋 + push

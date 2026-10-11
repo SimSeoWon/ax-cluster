@@ -1212,6 +1212,97 @@ def test_commit_layer2_base_files_and_judge_log() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_layer2_is_serialized_across_threads() -> None:
+    """🔴 `#818` — 병렬 조각의 층2 는 마스터에서 **한 번에 하나씩** 돈다(임시 조치).
+
+    잴 것 셋: ① 두 스레드의 `verify_files` 구간이 겹치지 않는다 ② 뒤 조각은 잠금 대기 줄을
+    남긴다 ③ **기다리는 동안에도 하트비트가 나간다**(대기가 `_Beater` 안이라 리스가 산다).
+    [주의] 이음매는 `test_commit_layer2_base_files_and_judge_log` 와 같다 — `wcommit.run` 대역이
+    `llm` 과 `verifier` 를 직접 부른다. 실 백엔드는 부르지 않는다.
+    """
+    import threading
+    import time
+    from master.verdict import Verdict
+    from master.work import usage as U, wcommit
+    from master.work.declarations import Declarations
+
+    files = {"A.cpp": "void A::Go() { Do(); }\n"}
+    HOLD = 0.8
+    spans, called, beats, logs, seen = {}, {}, [], [], {}
+    mu = threading.Lock()
+
+    class BeatQueue(FakeQueue):
+        def __call__(self, method, path, payload=None, *, timeout=20):
+            if path.endswith("/heartbeat"):
+                with mu:
+                    beats.append((path.split("/")[-2], time.monotonic()))
+            return super().__call__(method, path, payload, timeout=timeout)
+
+    def fake_verify(items, **kw):
+        tid = threading.current_thread().name
+        t0 = time.monotonic()
+        time.sleep(HOLD)
+        with mu:
+            spans[tid] = (t0, time.monotonic())
+        return Verdict(True, None, warnings=["backend=agy"])
+
+    def fake_run(facts, task, **kw):
+        tid = task["task_id"]
+        kw["llm"](facts, tid, list(files))
+        called[tid] = time.monotonic()
+        try:
+            seen[tid] = kw["verifier"](dict(files))
+        except Exception as e:                               # noqa: BLE001
+            seen[tid] = e
+        return wcommit.Committed(task_id=tid, stage="층2", reason="test stop", want=list(files))
+
+    orig_beater = R._Beater
+    paths, root = tmp_paths()
+    q = BeatQueue([])
+    try:
+        with ExitStack() as stack:
+            stack.enter_context(patch("master.work.twin_base.local_baseline", return_value=None))
+            stack.enter_context(patch("master.work.twin_base.commit_baseline", return_value=None))
+            stack.enter_context(patch("master.work.wcommit.run", side_effect=fake_run))
+            stack.enter_context(patch("master.projects.profile.load", return_value={"kind": "unreal"}))
+            stack.enter_context(patch("master.work.declarations.from_commit", return_value=Declarations(
+                blocks=[("X", "X.h", "class X { void Go(); };")])))
+            stack.enter_context(patch("master.layer2_verify.verify_files", side_effect=fake_verify))
+            stack.enter_context(patch.object(I._MODE, "current", return_value=("codex", "test")))
+            stack.enter_context(patch.object(I, "_notify_blocked"))
+            stack.enter_context(patch.object(I, "_log", side_effect=logs.append))
+            # 하트비트 간격만 줄인다 — `_Beater` 의 기본 간격은 정의 때 묶이므로 생성자를 감싼다.
+            stack.enter_context(patch.object(R, "_Beater", lambda beat: orig_beater(beat, interval=0.05)))
+
+            def go(tid):
+                I.commit_task(paths, FakeFacts(), {"task_id": tid, "attempt_count": 1},
+                              work_id="W1", base=SUB_TIP, want=list(files), branch=f"task/W1/{tid}",
+                              api=q, runner_=lambda *a: (0, U.envelope("done", {"source": "codex"})))
+            ts = [threading.Thread(target=go, args=(t,), name=t) for t in ("s1", "s2")]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join(timeout=10)
+        check("층2 직렬화: 두 조각 모두 판정", all(isinstance(seen.get(t), Verdict) and seen[t].approved
+              for t in ("s1", "s2")) and set(spans) == {"s1", "s2"}, f"{seen} {spans}")
+        if set(spans) != {"s1", "s2"}:
+            return
+        first, second = sorted(spans, key=lambda t: spans[t][0])
+        check("층2 직렬화: verify_files 구간이 겹치지 않는다",
+              spans[first][1] <= spans[second][0], str(spans))
+        waits = [ln for ln in logs if "층2 잠금 대기" in ln]
+        check("층2 직렬화: 뒤 조각만 잠금 대기 한 줄(#818)", len(waits) == 1 and
+              waits[0].startswith(f"[layer2] {second} 층2 잠금 대기 ") and
+              waits[0].endswith("초 (#818)"), str(waits))
+        # 대기 구간 = verifier 호출 직후(즉시 하트비트 1회는 빼려고 여유를 둔다) ~ verify_files 진입
+        during = [b for t, b in beats if t == second and called[second] + 0.02 < b < spans[second][0]]
+        check("층2 직렬화: 잠금 대기 중에도 하트비트", len(during) >= 3,
+              f"{len(during)} beats; called={called[second]:.2f} enter={spans[second][0]:.2f}")
+        check("층2 직렬화: 잠금이 풀려 있다", not I._LAYER2_LOCK.locked())
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 # ── 🔴 `#809` 재시도 체크아웃 — 골조 기준과 체크아웃 커밋을 가른다 ─────────────────────
 
 FEEDBACK_TIP = "3" * 40     # revise.embed 가 서브 브랜치에 얹은 피드백 커밋
@@ -1412,6 +1503,7 @@ def main() -> int:
                test_reuse_avoids_paying_twice, test_commit_layer2_usage_and_author,
                test_commit_layer2_grounding_gate,
                test_commit_layer2_base_files_and_judge_log,
+               test_layer2_is_serialized_across_threads,
                test_checkout_commit_unit, test_retry_checks_out_the_feedback_tip):
         fn()
     total = PASS + FAIL
