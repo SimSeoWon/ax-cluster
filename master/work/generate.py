@@ -1,4 +1,4 @@
-"""코드 생성 + 층2 통과 — **마스터의 몫은 여기서 끝난다** (PLAN §4.2 ②③④).
+"""코드 생성 — 이 모듈은 생성까지 맡는다 (PLAN §4.2 ②③).
 
     작업장 ① 요청
        ↓
@@ -6,13 +6,13 @@
        ↓
     추론 노드 ③ 로컬 LLM 이 코드 생성 (무료)
        ↓
-    마스터 ④ 층2 상용 모델 문법·API 검사 → **적합한 코드 뭉치**를 건넨다
+    마스터 ④ 층2 검증은 `wcommit`(#696)에서 수행한다
        ↓
     작업장 ⑤ 적용 · 빌드 · 테스트 (마스터는 파일을 만지지 않는다)
 
 [중요] **모토** (§4.3): 작성은 **무료 로컬 LLM**, 검증은 **상용 모델**. 값은 검증이라는
-고레버리지 지점에만 쓴다. 이 모듈이 그 경계를 코드로 굳힌 것이다 —
-생성은 브로커(무료), 검사는 `layer2_verify`(상용), **그리고 통과 못 하면 안 넘긴다.**
+고레버리지 지점에만 쓴다. 이 모듈은 브로커(무료)로 코드를 생성한다.
+층2 검증과 통과 여부에 따른 커밋 게이트는 `wcommit`(#696)의 몫이다.
 
 [중요] **추론은 stateless 다** (§4.2). Ollama 의 `context` 필드를 **의도적으로 재사용하지 않는다.**
 라운드 간 누적은 git 이 운반한다(git-as-feedback-bus) — 프롬프트로 다시 넣으면 인바운드
@@ -28,12 +28,10 @@ import re
 import sys
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ..auth import auth_headers
 from ..context_search.paths import ProjectPaths
-from ..layer2_verify import verify_files
-from ..verdict import Verdict
 
 DEFAULT_BROKER = "http://localhost:8102"
 CODER = "qwen2.5-coder:14b"          # §4.4 — UE5 C++ 생성용으로 확정
@@ -64,7 +62,6 @@ class Generated:
 
 # [DOC] #734: `Dispatch`·`dispatch` 는 요청자가 골조에서 걷었다 — 층2 의 실전 입구는 `wcommit`(#696) 하나다.
 #       이 모듈은 이제 **생성까지**만 한다. 아래 PSEUDO 는 남은 정리다.
-# [PSEUDO] #734: 모듈 docstring 의 ④「층2 상용 모델 검사 → 적합한 코드 뭉치를 건넨다」·「통과 못 하면 안 넘긴다」 서술을 「생성까지 — 층2 는 wcommit(#696)」로 고친다. `dispatch` 삭제로 이 모듈에서 쓰이지 않게 된 import(`verify_files`·`Verdict`·`field` 등)를 지운다 — 다른 이름이 쓰면 남긴다.
 
 
 def strip_fence(text: str) -> tuple[str, bool]:
