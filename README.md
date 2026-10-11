@@ -332,7 +332,7 @@ journalctl -u ax-indexer -n 30 --no-pager                # push → 트윈 성�
 | `search_context` | [중요] **검색 입구는 이것 하나** — 대괄호 해석 → 시소러스 확장 → 융합 검색 |
 | `infer_domain` | 질의가 말하는 도메인을 **결정적으로** 판단 — [중요] 모르면 비운다(추측 안 함) |
 | `resolve_terms` · `add_alias` · `mark_not_a_class` | 별칭 조회·등록. 마스터는 묻지 않고 **물을 재료**를 준다 |
-| `register_work` · `get_code` | 작업 등록 · 생성+층2 거친 코드 수령 |
+| `register_work` | 작업 등록 (`get_code` 는 `#734` 로 걷혔다 — 층2 는 `wcommit` `#696`) |
 | `create_domain` · `edit_ontology_item` · `remove_ontology_item` | 온톨로지 편집 — [중요] **편집이 곧 잠금** |
 | `lock`·`list_locked` · `protect`·`list_protected` | 사람 검수 잠금 / [중요] **일괄 보호**(재생성이 못 덮는다) |
 | `sync_ontology` · `drift_audit` · `unassigned_classes` | 경로·선언 동기화 · 어긋남 감사 · 미배정 노출 |
