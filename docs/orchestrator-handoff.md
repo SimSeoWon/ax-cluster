@@ -1,10 +1,13 @@
 # 현재 AX 작업 인수인계
 
-- **현재 체크포인트: 2026-10-11 · Claude · #804 ⑦ .py 정적 검사(pyflakes·import) 도입**.
+- **현재 체크포인트: 2026-10-11 · Claude · #804 완료 · #815 ③ 층1 pyflakes**.
   - `master/work/pystatic.py` + `followup.code_build_fn` ③: 바뀐 .py 의 pyflakes(구문·undefined name·`__all__` 미정의만 차단, 나머지 노트) 와 격리 import 검사(새 실패만 차단). base 에 이미 있던 결함은 「기존」, 서드파티 누락은 「환경」 — 막지 않는다. 확인 불가는 실패. 토큰 0. 공식 통합 33개(test_pystatic 39 추가).
   - 🔴 [주의] **pyflakes 4.0.3 은 마스터 `.venv` 에만 pip 로 설치했다**(의존성 목록 파일 없음, 사용자 승인 2026-10-11). venv 를 다시 만들면 ⑦ 이 「pyflakes 실행 불가」로 실패한다 — `.venv/bin/python -m pip install pyflakes`. 워커에는 필요 없다(⑦ 은 마스터 전용).
   - 리서치: `ax-gemini` 첫 실사용 — `reports/research/2026-10-11-py-static-verification-804.md`(인용 6 대조, 일치 4·불일치 2 표시). 조사 중 webui 실결함 발견 → #812.
-  - 다음 후보: #807 · #812 · #363 3단계 · lane 모드 피드백 미수신 결정. 이전 체크포인트(#806·#809 완료)는 보고서111.
+  - #804 라이브 검증 완료(probe5 #813: ⑦ at_gate·노트에 「정적 pyflakes/import 통과」, 정리 완료) → #804 완료.
+  - `f3e3242` #815 ③: 층1(wcommit 커밋 직전)이 조각마다 pyflakes undefined name 을 막는다(⑦ 과 같은 차단 집합, 골조 기존분 제외, 실행 불가는 `unchecked` 미검사·통과). layer1 머리말의 낡은 `integrate.apply_one` 정정. 라이브 미실증(다음 work 에서 확인).
+  - #815 「파이썬 검증 개선」 묶음 일감 — 남은 ①테스트(작업 방식 결정) · ②호출 인자 불일치(mypy 오탐 측정부터) · ④층2 [PSEUDO] 이행 판정. #814 라운드 완료 노트가 AXCluster 에도 `.33`/ax-advance 를 안내(버그).
+  - 다음 후보: #807 · #812 · #814 · #815 남은 항목 · #363 3단계 · lane 모드 피드백 미수신 결정. 이전 체크포인트(#806·#809 완료)는 보고서111.
 
 - **직전 체크포인트: 2026-10-11 · Claude · #363 재작업 라운드 실제 워커 실증 완주 · #805 수정** (보고서110 말미).
 
