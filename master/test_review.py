@@ -1083,8 +1083,75 @@ def test_rework_missing_verified_still_fails_and_default_skips_failed():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_feedback_prefix_single_source_in_branch_names():
+    """#805 회귀 — 접두어 정본은 배달되는 `branch_names` 다 (writer `revise` · reader `review`).
+
+    `review.py` 는 요청자에 배달되고 `revise.py` 는 아니다. reader 가 `revise` 에서 읽으면
+    배달 폐포(`test_client_bundle`)가 깨진다(실측 2026-10-11 `FAIL 485/487`).
+    """
+    import ast
+    import inspect
+    from master.work import branch_names as BN, revise as RV
+    check("#805 접두어 정본은 branch_names", BN.FEEDBACK_COMMIT_PREFIX == "[revise] ",
+          repr(BN.FEEDBACK_COMMIT_PREFIX))
+    check("#805 revise 는 정본을 재수출한다(같은 객체)",
+          RV.FEEDBACK_COMMIT_PREFIX is BN.FEEDBACK_COMMIT_PREFIX)
+    check("#805 review 도 같은 객체를 쓴다", R.FEEDBACK_COMMIT_PREFIX is BN.FEEDBACK_COMMIT_PREFIX)
+    check("#805 writer(revise.embed)는 그 이름을 읽는다",
+          "FEEDBACK_COMMIT_PREFIX" in RV.embed.__code__.co_names)
+    check("#805 reader(_rework_result_commit)는 그 이름을 읽는다",
+          "FEEDBACK_COMMIT_PREFIX" in R._rework_result_commit.__code__.co_names)
+    rel = [n.module for n in ast.walk(ast.parse(inspect.getsource(R)))
+           if isinstance(n, ast.ImportFrom) and n.level and n.module == "revise"]
+    check("#805 review 는 revise 를 임포트하지 않는다", not rel, str(rel))
+
+
+def test_rework_without_workmodel_fails_clearly_and_normal_advance_unaffected():
+    """요청자 환경 재현 — `workmodel` 미배달이면 재작업 통합은 git 을 만지기 전에 사유로 멈춘다.
+
+    일반 전진(rework=False)은 workmodel 없이도 그대로 돈다.
+    """
+    from unittest.mock import patch
+    key = "master.work.workmodel"
+    saved = sys.modules.get(key, ...)
+    root, repo, work, tasks = fixture()
+    try:
+        sys.modules[key] = None          # import → ImportError (배달 안 된 기계)
+        work.update(round=1, merge_status="rejected")
+        tasks[1].update(status="failed", fail_detail="[kind:code] x")
+        calls = []
+
+        def _spy_rc(*a, **k):
+            calls.append(a)
+            raise AssertionError("git 을 호출했다")
+        with patch.object(R, "_git_rc", _spy_rc), patch.object(R, "_git", _spy_rc):
+            a = R.advance_work(repo, work_id=WORK, work=work, tasks=tasks, rework=True,
+                               build_fn=lambda _: _Build(True))
+        check("workmodel 미배달 재작업은 실패한다", not a.ok and not a.pushed, a.summary)
+        check("  사유가 미배달을 말한다",
+              "workmodel 미배달" in a.error and "마스터 followup" in a.error, a.error)
+        check("  git 명령을 하나도 돌리지 않았다", not calls, str(calls))
+        check("  통합 트리를 만들지 않았다", not R.advance_tree_path(repo, WORK).exists())
+
+        work.update(merge_status=None)
+        before = g(repo, "rev-parse", "origin/feature/w1").strip()
+        b = R.advance_work(repo, work_id="w1", work=work, tasks=tasks,
+                           build_fn=lambda t: _Build(True))
+        check("  일반 전진은 workmodel 없이도 돈다", b.ok and not b.pushed and not b.error, b.summary)
+        check("  일반 전진도 push 하지 않았다",
+              g(repo, "rev-parse", "origin/feature/w1").strip() == before)
+    finally:
+        if saved is ...:
+            sys.modules.pop(key, None)
+        else:
+            sys.modules[key] = saved
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main() -> int:
-    for fn in (test_advance_bases_on_the_work_branch_not_main,
+    for fn in (test_feedback_prefix_single_source_in_branch_names,
+               test_rework_without_workmodel_fails_clearly_and_normal_advance_unaffected,
+               test_advance_bases_on_the_work_branch_not_main,
                test_advance_merges_only_this_round,
                test_advance_records_the_decision_in_redmine,
                test_advance_does_not_push_without_confirm,

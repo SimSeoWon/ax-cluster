@@ -66,7 +66,7 @@ from . import coordinator as C
 from .coordinator import GitError, _git, _git_rc
 from .branch_names import (
     BranchNameError, base_branch as _base_branch, durable_branch, attempt_glob,
-    DURABLE_PREFIX, ATTEMPT_PREFIX,
+    DURABLE_PREFIX, ATTEMPT_PREFIX, FEEDBACK_COMMIT_PREFIX,
 )
 
 
@@ -331,8 +331,11 @@ def _rework_result_commit(repo: Path, base_ref: str, ref: str) -> tuple:
 
     없으면 `("", "")`. 피드백 커밋이 결과 커밋보다 앞에 있으면 함께 들어오지만, 그 뒤의
     워커 커밋이 피드백 블록을 걷어낸 상태다(워커 계약). 뒤에 붙은 피드백은 들어오지 않는다.
+
+    [중요] 접두어의 단일 정본은 `branch_names.FEEDBACK_COMMIT_PREFIX` — `revise`(writer)와
+    여기(reader)가 공유한다. `revise` 에서 읽지 않는다: 이 파일은 요청자에 배달되고 `revise` 는
+    아니다(배달 폐포 — `test_client_bundle`).
     """
-    from .revise import FEEDBACK_COMMIT_PREFIX
     rc, out = _git_rc(repo, "log", "--format=%H%x09%s", f"{base_ref}..{ref}")
     if rc != 0:
         return "", out[:200]
@@ -1140,7 +1143,15 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
     """
     a = Advance(work_id=work_id, rework=rework)
     if rework:
-        from .workmodel import Work
+        # [중요] `workmodel` 은 요청자(`.33`)에 배달되지 않는다 — 재작업 통합은 마스터 followup
+        #    에서 돈다. 배달 폐포(`test_client_bundle`)가 이 임포트를 가드로 요구한다. 없으면
+        #    git 을 만지기 전에 사유를 싣고 멈춘다(조용히 일반 전진으로 접지 않는다).
+        try:
+            from .workmodel import Work
+        except ImportError:
+            a.error = ("재작업 통합은 이 기계에서 지원하지 않는다 — workmodel 미배달"
+                       "(마스터 followup 에서 돈다)")
+            return a
         if ((work or {}).get("merge_status") != "rejected"
                 or not Work.from_record(work, tasks).execution_summary()["rework_required"]):
             a.error = "재작업 통합 대상이 아니다 — 골조 실패와 라운드 종결을 확인한다"

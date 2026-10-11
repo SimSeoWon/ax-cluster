@@ -95,8 +95,10 @@ PY_FEEDBACK_OPEN = "# AUTO-VERIFY FEEDBACK"
 PY_FEEDBACK_CLOSE = "# END AUTO-VERIFY FEEDBACK"
 # [중요] 피드백 커밋의 제목 접두어 — **워커에게 가는 지시**이지 결과가 아니다. 재작업 통합
 #    (`review.integrate_durables(rework=True)`)이 이 접두어로 결과 커밋과 가른다(#805).
-#    만드는 곳(`embed_feedback`)과 가르는 곳이 이 상수 하나를 쓴다.
-FEEDBACK_COMMIT_PREFIX = "[revise] "
+#    단일 정본은 `branch_names.FEEDBACK_COMMIT_PREFIX` 다 — 만드는 곳(여기 `embed_feedback`)과
+#    가르는 곳(`review`)이 그 하나를 공유한다. 여기 이름은 기존 호출자를 위한 재수출이다.
+#    [주의] `review.py` 는 요청자에 배달되고 이 파일은 아니다 — 상수를 여기 두면 배달 폐포가 깨진다.
+FEEDBACK_COMMIT_PREFIX = branch_names.FEEDBACK_COMMIT_PREFIX
 
 
 # 🔴 **실행 환경이 죽은 신호** (`#391` 완결 · 실측 2026-09-12) ─────────────────────────

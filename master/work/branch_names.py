@@ -42,6 +42,12 @@ DURABLE_PREFIX = "task"
 ATTEMPT_PREFIX = "attempt"
 BASE_LEAF = "base"                  # [중요] 예약어 — task_id 로 쓸 수 없다 (아래 `_check` 가 막는다)
 
+# [중요] 서브 브랜치 위 **피드백 커밋**의 제목 접두어 (#805) — 워커에게 가는 지시이지 결과가
+#    아니다. 단일 정본은 여기다: `revise.embed_feedback` 가 쓰고(writer) `review` 의 재작업
+#    통합이 이 접두어로 결과 커밋과 가른다(reader). [주의] `review.py` 는 요청자(`.33`)에
+#    배달되고 `revise.py` 는 배달되지 않는다 — 그래서 두 쪽이 다 배달되는 이 파일에 둔다.
+FEEDBACK_COMMIT_PREFIX = "[revise] "
+
 # 브랜치명 **한 토큰**에 쓸 수 있는 문자. git 이 거부하는 것보다 좁게 잡는다 — 여기서 통과한
 # 이름이 나중에 glob·파싱에서 깨지지 않아야 하므로 `/` 도 막는다. 계층은 이 함수가 아니라
 # **조립 함수가** 만든다(토큰마다 따로 검사한다).

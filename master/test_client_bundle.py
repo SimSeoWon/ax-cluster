@@ -288,7 +288,8 @@ def test_role_payload() -> None:
     import ast as _ast
     delivered = {n[:-3].replace("/", ".") for n in pay}          # 예: work.review
     delivered |= {d.rsplit(".", 1)[-1] for d in delivered}       # 단축명도 (from . import x)
-    GUARDED_OK = {"runner", "client.bundle", "client"}           # 명시적 가드 화이트리스트
+    GUARDED_OK = {"runner", "client.bundle", "client",           # 명시적 가드 화이트리스트
+                  "workmodel"}   # review 재작업 판정 — 요청자에선 미지원으로 거절(사용자 승인 2026-10-11 · #815)
     # [중요] 상대 임포트는 **배달된 트리**에서 해석되므로 `n` 은 배달 경로여야 하고, 파싱할
     #    원문은 **저장소**에서 와야 한다 (#262). 두 값이 같던 때는 구별이 안 보였다.
     for n, src_ in bundle.payload_pairs("requester"):
