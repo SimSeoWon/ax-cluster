@@ -238,6 +238,9 @@ def main() -> int:
             restored = usage._SINK.get()
         check("레인이 끝나면 바깥 sink 가 되살아난다", bool(restored) and restored["task_id"] == "outer")
 
+        # [DOC] #734: `generate.dispatch` 는 골조에서 걷혔다. 층2 사용량 기록 검사는 실전 입구와 같은 모양 —
+        #       `usage.sink(gp.usage_log, source="layer2", task_id=…)` 안에서 `layer2_verify.verify_files` 를 직접 부른다.
+        # [PSEUDO] #734: ④ 절을 그렇게 바꾼다. 확인하는 사실은 그대로 — layer2 한 줄·lane agy·task_id, agy 실패 시 agy rc≠0 → claude 두 줄. 브로커 caller 는 더 필요 없다. 머리말 3번 줄의 `generate.dispatch` 언급도 고친다.
         print("④ 층2 — `generate.dispatch` → source=layer2")
         _env(AGY_FAKE="ok", FAKE_RESULT="- none\nVERDICT: APPROVE")
         gp = ProjectPaths(name="G", root=tmp / "G")

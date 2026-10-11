@@ -26,6 +26,8 @@ from master.work.register import (  # noqa: E402
     RegisterError, TaskSpec, register_work,
 )
 from master.work.generate import (  # noqa: E402
+    # [DOC] #734: `generate.dispatch` 는 골조에서 걷혔다 — 아래 import 는 지금 ImportError 다.
+    # [PSEUDO] #734: import 에서 `dispatch` 를 빼고, `dispatch(...)` 를 부르는 검사 절([20]~[22] — 펜스·fail-closed·빈 컨텍스트·층2 파일명)을 지운다. `generate`·`build_prompt`·`strip_fence` 검사는 남긴다. 빈 컨텍스트 거절은 `generate(...)` 가 GenerateError 를 내는지로 남긴다.
     GenerateError, build_prompt, dispatch, generate, strip_fence,
 )
 from master.verdict import Verdict  # noqa: E402

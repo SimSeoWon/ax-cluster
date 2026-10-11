@@ -4,7 +4,6 @@
   · register_project — 디지털 트윈을 생성할 프로젝트를 등록한다(설정 파일 생성부터)
   · set_active       — 가리키는 프로젝트를 바꾼다
   · register_work    — 작업장이 일감을 등록한다 (§4.7 복구 ①)
-  · get_code         — [중요] 생성 + 층2 를 거친 **코드 뭉치**를 받아 간다 (§4.2 ②③④)
 
 [주의] 이 서버가 프로젝트 레지스트리를 넘어 **작업장의 단일 창구**가 되고 있다. 의도된 통합이다 —
 작업장이 엔드포인트를 여러 개 물게 하는 것보다 낫다. 다만 더 커지면 쪼갤 것.
@@ -42,7 +41,7 @@ from .logic import (
 from .config import Registry, projects_root
 from .workshop_check import check_project_workshops
 from ..context_search.paths import resolve
-from ..work.generate import GenerateError, dispatch
+# [DOC] #734: `get_code` 도구와 `generate.dispatch` import 는 요청자가 골조에서 걷었다(사용자 결정 2026-10-05 ①).
 from ..work.register import RegisterError, TaskSpec, register_work
 
 mcp = MCPServer(
@@ -348,45 +347,6 @@ def _wait_command(work_id: str) -> str:
     py = str(_CODE_ROOT / ".venv" / "bin" / "python")
     return (f"AX_PROJECTS_ROOT={shlex.quote(root)} {shlex.quote(py)} -m master.work.followup "
             f"{shlex.quote(work_id)} --wait --repo {shlex.quote(repo)}")
-
-
-@mcp.tool()
-def get_code(task_id: str, instruction: str, target_file: str = "",
-             project: str = "") -> str:
-    """태스크의 코드를 생성해 **층2 검사를 통과시킨 뒤** 돌려준다 (§4.2 ②③④).
-
-    [중요] **`ok` 가 false 면 코드를 적용하지 말 것.** 층2(상용 모델 문법·API 검사)를 못 넘었거나
-    생성이 실패한 상태다. 코드를 함께 돌려주는 것은 진단용이지 쓰라는 뜻이 아니다.
-
-    마스터의 역할은 여기서 끝난다 — **파일 적용·빌드·테스트·커밋은 작업장 몫이다.**
-    층3(UE5 빌드 + RunTests)이 최종 권위이고, 층2 는 그 호출 횟수를 줄이는 선제 필터다.
-
-    Args:
-        task_id: `register_work` 가 돌려준 태스크 id (매니페스트가 있어야 한다)
-        instruction: 무엇을 구현할지. 골조·계약·RAG 는 매니페스트가 이미 싣고 있다
-        target_file: 대상 파일 경로 (층2 프롬프트와 진단에 쓰인다)
-        project: 비우면 지금 마운트된 프로젝트
-    """
-    try:
-        paths = resolve(project)
-        d = dispatch(paths, task_id, instruction=instruction, target_file=target_file)
-    except (ConfigError, GenerateError) as e:
-        return _fail(e)
-    v = d.verdict
-    return json.dumps({
-        "ok": d.ok,
-        "task_id": task_id,
-        "summary": d.summary(),
-        "code": d.code,
-        "notes": d.notes,
-        "error": d.error,
-        "verdict": None if v is None else {
-            "approved": v.approved,
-            "failure": v.failure,      # None 이면 모델이 실제 판정을 냈다는 뜻
-            "findings": v.findings,
-            "backend": next((w for w in v.warnings if w.startswith("backend=")), ""),
-        },
-    }, ensure_ascii=False)
 
 
 # ── 시소러스 (중 1.4) — [중요] **마스터는 사람에게 묻지 않는다. 물을 재료를 준다.** ─────────

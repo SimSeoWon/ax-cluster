@@ -62,38 +62,9 @@ class Generated:
         return not self.code.strip()
 
 
-@dataclass
-class Dispatch:
-    """작업장에 건넬 결과. **`ok` 가 아니면 코드를 쓰지 말 것.**"""
-
-    task_id: str
-    generated: Generated | None = None
-    verdict: Verdict | None = None
-    error: str = ""
-    notes: list[str] = field(default_factory=list)
-
-    @property
-    def ok(self) -> bool:
-        # [중요] fail-closed. verdict 가 없으면(검증을 못 돌렸으면) 통과가 아니다.
-        return (not self.error and self.generated is not None
-                and not self.generated.empty
-                and self.verdict is not None and not self.verdict.blocked)
-
-    @property
-    def code(self) -> str:
-        return self.generated.code if self.generated else ""
-
-    def summary(self) -> str:
-        if self.error:
-            return f"{self.task_id}: [중요] {self.error}"
-        g, v = self.generated, self.verdict
-        bits = [f"{len(g.code)}자 생성" if g else "생성 실패"]
-        if g and g.stripped_fence:
-            bits.append("펜스 제거")
-        if v:
-            bits.append(v.summary())
-        mark = "[완료]" if self.ok else "[중요] 차단"
-        return f"{self.task_id}: {mark} — " + " · ".join(bits)
+# [DOC] #734: `Dispatch`·`dispatch` 는 요청자가 골조에서 걷었다 — 층2 의 실전 입구는 `wcommit`(#696) 하나다.
+#       이 모듈은 이제 **생성까지**만 한다. 아래 PSEUDO 는 남은 정리다.
+# [PSEUDO] #734: 모듈 docstring 의 ④「층2 상용 모델 검사 → 적합한 코드 뭉치를 건넨다」·「통과 못 하면 안 넘긴다」 서술을 「생성까지 — 층2 는 wcommit(#696)」로 고친다. `dispatch` 삭제로 이 모듈에서 쓰이지 않게 된 import(`verify_files`·`Verdict`·`field` 등)를 지운다 — 다른 이름이 쓰면 남긴다.
 
 
 def strip_fence(text: str) -> tuple[str, bool]:
@@ -279,42 +250,3 @@ def generate(paths: ProjectPaths, task_id: str, *, instruction: str, context: st
     code, stripped = strip_fence(raw)
     return Generated(task_id=task_id, code=code, model=model, raw_len=len(raw),
                      stripped_fence=stripped, prompt_chars=len(prompt))
-
-
-def dispatch(paths: ProjectPaths, task_id: str, *, instruction: str, context: str,
-             target_file: str = "", model: str = CODER,
-             verifier=None, **kw) -> Dispatch:
-    """생성 → 층2 → 인계 준비. **마스터가 하는 일의 끝이다.**
-
-    [중요] 층2 를 통과하지 못하면 `ok=False` 다. 작업장은 `ok` 만 보고 판단하면 된다 —
-    "코드가 왔으니 일단 적용" 이 되지 않게 하는 것이 이 반환값의 목적이다.
-    """
-    d = Dispatch(task_id=task_id)
-    try:
-        d.generated = generate(paths, task_id, instruction=instruction, context=context,
-                               target_file=target_file, model=model, **kw)
-    except GenerateError as e:
-        d.error = str(e)
-        return d
-
-    if d.generated.empty:
-        d.error = "생성 결과가 비었다"
-        return d
-    if d.generated.stripped_fence:
-        d.notes.append("마크다운 펜스를 벗겼다 (§4.4 알려진 결함)")
-
-    name = target_file or f"{task_id}.cpp"
-    verify = verifier or verify_files
-    # [중요] **누가 썼는지 검증에 넘긴다** (`#379`) — 같은 계열이 자기 산출물을 통과시키지
-    #    않게. 이 경로의 작성자는 로컬 모델이라 지금은 아무것도 빠지지 않지만, 그 보장이
-    #    **우연이 아니라 구조**여야 한다(작성 레인은 2026-09-06 에 이미 한 번 바뀌었다).
-    # 🔴 `#733` — 층2 의 상용 호출(agy·claude)을 그 트윈의 `usage_log.jsonl` 에 `layer2` 로 남긴다.
-    #    [주의] **검증만 감싼다** — 위의 생성(브로커)까지 감싸면 로컬 생성이 `layer2` 로 잘못 묶인다.
-    #    이 진입(`mcp_server.dispatch_tool`)에는 work_id 가 없다 — task_id 만 싣는다.
-    from . import usage as _usage                                # noqa: PLC0415
-    with _usage.sink(paths.usage_log, source="layer2", task_id=task_id):
-        try:
-            d.verdict = verify([(name, d.generated.code)], author_lane=model)
-        except TypeError:
-            d.verdict = verify([(name, d.generated.code)])    # 주입된 테스트 더블 호환
-    return d
