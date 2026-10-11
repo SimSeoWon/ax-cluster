@@ -705,6 +705,259 @@ def test_failure_tail_is_kept_and_rendered():
         shutil.rmtree(d, ignore_errors=True)
 
 
+# ── wait — 읽기 전용 대기 (`#798` ①) ───────────────────────────────────────
+
+class FakeClock:
+    """주입 시계 — `sleep` 이 시간을 앞으로 민다. 실제로 자지 않는다."""
+
+    def __init__(self):
+        self.t = 1000.0
+        self.slept = []
+
+    def clock(self):
+        return self.t
+
+    def sleep(self, s):
+        self.slept.append(s)
+        self.t += s
+
+
+def _queue(seq):
+    """조회마다 다음 응답 — 함수면 호출(예외 주입), 마지막 값은 반복한다."""
+    calls = []
+
+    def api(method, path, payload=None):
+        calls.append((method, path))
+        item = seq[min(len(calls) - 1, len(seq) - 1)]
+        if callable(item):
+            return item()
+        return item
+    api.calls = calls
+    return api
+
+
+def _resp(status="in_progress", rnd=1, tasks=None, **extra):
+    w = {"work_id": "ww", "merge_status": status, "round": rnd, "project": "AXCluster", **extra}
+    return {"work": w, "tasks": tasks if tasks is not None else [
+        {"task_id": "t1", "status": "verified", "round": rnd},
+        {"task_id": "t2", "status": "claimed", "round": rnd}]}
+
+
+def _listing(d: Path) -> dict:
+    return {p.name: (p.stat().st_mtime_ns, p.stat().st_size) for p in d.rglob("*")} if d.exists() else {}
+
+
+def test_wait_at_gate_after_polls():
+    sd = Path(tempfile.mkdtemp(prefix="fu-wait-"))
+    repo = Path(tempfile.mkdtemp(prefix="fu-wait-repo-"))
+    try:
+        fc, lines = FakeClock(), []
+        polls = {"n": 0}
+
+        def third():
+            # 세 번째 조회 직전에 타이머가 준비를 끝냈다 — 기록을 심는다(대기 쪽은 쓰지 않는다)
+            def spy(repo_, wid, **kw):
+                fu = PrepareSpy(state="at_gate")(repo_, wid, **kw)
+                fu.question = "버그 수정인가, 구조 수정인가?"
+                return fu
+            F.prepare_once(repo, "ww", 1, state=sd, prepare=spy, note=lambda *a, **k: {"ok": True})
+            return _resp("ready_for_review", tasks=TASKS_DONE)
+        api = _queue([_resp(), _resp(), third])
+        before = _listing(sd)
+        res = F.wait_for_gate(repo, "ww", api=api, state=sd, interval=30, timeout=600,
+                              clock=fc.clock, sleep=fc.sleep, logf=lambda s, m: lines.append((s, m)))
+        check("wait: 세 번째 조회에서 at_gate", res["outcome"] == "at_gate" and res["polls"] == 3, str(res))
+        check("wait: at_gate → 종료 코드 0", res["exit_code"] == 0)
+        check("wait: 큐 라우트 그대로", api.calls[0] == ("GET", "/api/v1/works/ww"), str(api.calls))
+        rec = F.recorded_for(repo, "ww", 1, state=sd)
+        check("[중요] wait: 텍스트는 render(기록) 그대로 (노트와 같은 문구)", res["text"] == F.render(rec))
+        check("wait: 사실·게이트 물음을 싣는다", res["facts"].get("state") == "at_gate"
+              and res["question"] == "버그 수정인가, 구조 수정인가?" and "게이트 물음(원문 인용)" in F.render_wait(res), str(res)[:300])
+        check("wait: 진짜로 자지 않고 간격만큼 민다", fc.slept == [30, 30], str(fc.slept))
+        wl = [m for s, m in lines if s == "wait"]
+        check("wait: 조회마다 카운트다운 한 줄", sum(1 for m in wl if " · 남은 " in m) == 3, str(wl))
+        check("wait: 줄 모양", any(m.startswith("ww r1 · 큐 in_progress · 조각 1/2 · 준비 없음 · 남은 10:00")
+                                   for m in wl), str(wl))
+        check("wait: 다음 줄은 남은 시간이 준다", any("남은 09:30" in m for m in wl), str(wl))
+        for bad in ("하세요", "하라", "해라", "실행하", "묻지 말"):
+            check(f"wait: 렌더에 명령형 `{bad}` 없음", bad not in F.render_wait(res))
+        # 쓰지 않는다 — 이미 있는 기록을 두고 다시 기다려도 디렉토리가 그대로다
+        before = _listing(sd)
+        F.wait_for_gate(repo, "ww", api=_queue([_resp("ready_for_review", tasks=TASKS_DONE)]),
+                        state=sd, clock=fc.clock, sleep=fc.sleep)
+        check("[중요] wait 는 상태 파일·저널을 쓰지 않는다", _listing(sd) == before)
+    finally:
+        shutil.rmtree(sd, ignore_errors=True)
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_wait_terminal_merged_and_records():
+    sd = Path(tempfile.mkdtemp(prefix="fu-wait2-"))
+    repo = Path(tempfile.mkdtemp(prefix="fu-wait2-repo-"))
+    try:
+        fc = FakeClock()
+        before = _listing(sd)
+        for st in ("rejected", "cancelled"):
+            tasks = [{"task_id": "t1", "status": "failed", "round": 1, "failure": "층1 위반"},
+                     {"task_id": "t2", "status": "verified", "round": 1}]
+            res = F.wait_for_gate(repo, "ww", api=_queue([_resp(st, tasks=tasks, terminal_reason="반려")]),
+                                  state=sd, clock=fc.clock, sleep=fc.sleep)
+            check(f"wait: {st} → terminal_{st}", res["outcome"] == f"terminal_{st}", str(res))
+            check(f"wait: terminal_{st} → 종료 코드 3", res["exit_code"] == 3)
+            check(f"wait: {st} 실패 조각 사유", res["failed_tasks"][0]["reason"] == "층1 위반"
+                  and "층1 위반" in F.render_wait(res) and "반려" in F.render_wait(res))
+        res = F.wait_for_gate(repo, "ww", api=_queue([_resp("merged")]), state=sd,
+                              clock=fc.clock, sleep=fc.sleep)
+        check("wait: merged", res["outcome"] == "merged" and res["polls"] == 1)
+        check("[중요] wait: 종결 경로도 아무것도 쓰지 않는다", _listing(sd) == before)
+        for st, code in (("stopped", 3), ("error", 3)):
+            F.prepare_once(repo, "w-" + st, 1, state=sd, prepare=PrepareSpy(state=st))
+            api = _queue([_resp("ready_for_review", tasks=TASKS_DONE)])
+            res = F.wait_for_gate(repo, "w-" + st, api=api, state=sd, clock=fc.clock, sleep=fc.sleep)
+            check(f"wait: {st} 기록 → outcome {st} · 코드 {code}",
+                  res["outcome"] == st and res["exit_code"] == code, str(res)[:200])
+    finally:
+        shutil.rmtree(sd, ignore_errors=True)
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_wait_timeout_and_queue_errors():
+    sd = Path(tempfile.mkdtemp(prefix="fu-wait3-"))
+    repo = Path(tempfile.mkdtemp(prefix="fu-wait3-repo-"))
+    try:
+        fc, lines = FakeClock(), []
+        res = F.wait_for_gate(repo, "ww", api=_queue([_resp()]), state=sd, interval=30, timeout=100,
+                              clock=fc.clock, sleep=fc.sleep, logf=lambda s, m: lines.append(m))
+        check("wait: timeout", res["outcome"] == "timeout" and res["exit_code"] == 4, str(res))
+        check("wait: 마지막 간격은 남은 만큼만 잔다", fc.slept == [30, 30, 30, 10], str(fc.slept))
+        check("wait: timeout 에 마지막 큐 상태", res["merge_status"] == "in_progress"
+              and "in_progress" in F.render_wait(res) and "준비 기록 없음" in F.render_wait(res))
+
+        def boom():
+            raise OSError("connection refused")
+        fc = FakeClock()
+        lines.clear()
+        res = F.wait_for_gate(repo, "ww", api=_queue([boom, boom, _resp("merged")]), state=sd,
+                              interval=5, timeout=100, clock=fc.clock, sleep=fc.sleep,
+                              logf=lambda s, m: lines.append(m))
+        check("wait: 큐 오류 뒤 회복", res["outcome"] == "merged" and res["polls"] == 3
+              and res["last_error"] == "", str(res))
+        check("wait: 큐 오류도 줄을 남긴다", sum(1 for m in lines if "큐 조회 실패" in m) == 2, str(lines))
+        fc = FakeClock()
+        res = F.wait_for_gate(repo, "ww", api=_queue([boom]), state=sd, interval=10, timeout=25,
+                              clock=fc.clock, sleep=fc.sleep)
+        check("wait: 끝까지 실패 → timeout + last_error", res["outcome"] == "timeout"
+              and "connection refused" in res["last_error"]
+              and "connection refused" in F.render_wait(res), str(res))
+        fc = FakeClock()
+        res = F.wait_for_gate(repo, "ww", api=_queue([{}]), state=sd, interval=10, timeout=15,
+                              clock=fc.clock, sleep=fc.sleep)
+        check("wait: 큐에 work 없음은 오류로 계속 조회", res["outcome"] == "timeout"
+              and "없다" in res["last_error"], str(res))
+        check("[중요] wait: 오류·타임아웃도 아무것도 쓰지 않는다", _listing(sd) == {})
+    finally:
+        shutil.rmtree(sd, ignore_errors=True)
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_wait_uses_current_round():
+    sd = Path(tempfile.mkdtemp(prefix="fu-wait4-"))
+    repo = Path(tempfile.mkdtemp(prefix="fu-wait4-repo-"))
+    try:
+        # 라운드 1 은 이미 at_gate 로 기록됐다 — 개선요청으로 라운드 2 가 열렸으면 그것을 기다린다
+        F.prepare_once(repo, "ww", 1, state=sd, prepare=PrepareSpy(state="at_gate"))
+        fc, lines = FakeClock(), []
+        r2_tasks = [{"task_id": "t9", "status": "claimed", "round": 2},
+                    {"task_id": "t1", "status": "verified", "round": 1}]
+
+        def r2_done():
+            F.prepare_once(repo, "ww", 2, state=sd, prepare=PrepareSpy(state="stopped"))
+            return _resp("rejected", rnd=2, tasks=r2_tasks)
+        api = _queue([_resp("in_progress", rnd=2, tasks=r2_tasks), r2_done])
+        res = F.wait_for_gate(repo, "ww", api=api, state=sd, interval=30, timeout=300,
+                              clock=fc.clock, sleep=fc.sleep, logf=lambda s, m: lines.append(m))
+        check("[중요] wait: 옛 라운드의 at_gate 로 끝나지 않는다",
+              res["polls"] == 2 and res["round"] == 2, str(res)[:300])
+        check("wait: 라운드 2 의 기록(stopped)이 종결보다 앞선다", res["outcome"] == "stopped", res["outcome"])
+        check("wait: 라운드 조각만 센다", any(m.startswith("ww r2 · 큐 in_progress · 조각 0/1") for m in lines),
+              str(lines))
+    finally:
+        shutil.rmtree(sd, ignore_errors=True)
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_wait_cli_exit_codes():
+    import contextlib
+    import io
+    sd = Path(tempfile.mkdtemp(prefix="fu-wait5-"))
+    repo = Path(tempfile.mkdtemp(prefix="fu-wait5-repo-"))
+    orig_resolve, orig_wait = F._resolve_api, F.wait_for_gate
+    try:
+        F._resolve_api = lambda r: _queue([_resp("merged")])
+        for oc, code in (("at_gate", 0), ("stopped", 3), ("error", 3), ("terminal_rejected", 3),
+                         ("terminal_cancelled", 3), ("merged", 3), ("timeout", 4)):
+            got = {}
+
+            def fake_wait(repo_, wid, **kw):
+                got.update(kw, wid=wid)
+                return {"work_id": wid, "round": 1, "outcome": oc, "exit_code": F.WAIT_EXIT[oc],
+                        "text": f"BLOCK {oc}" if oc in ("at_gate", "stopped", "error") else ""}
+            F.wait_for_gate = fake_wait
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = F.main(["ww", "--wait", "--repo", str(repo), "--interval", "2", "--timeout", "9",
+                             "--state-dir", str(sd)])
+            check(f"CLI --wait {oc} → 종료 코드 {code}", rc == code, f"rc={rc}")
+            check(f"CLI --wait {oc} stdout 은 결과 블록", buf.getvalue().strip().startswith(
+                "BLOCK" if oc in ("at_gate", "stopped", "error") else "[⑦ 대기 결과]"), buf.getvalue())
+        check("CLI --wait 인자 전달", got.get("interval") == 2.0 and got.get("timeout") == 9.0
+              and got.get("wid") == "ww", str(got))
+        for bad in (["--scan", "--wait"], ["ww", "--wait", "--force"], ["ww", "--wait", "--interval", "0"]):
+            with contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    F.main(bad)
+                    code = 0
+                except SystemExit as e:
+                    code = e.code
+            check(f"CLI 사용법 오류 {bad} → 2", code == 2, f"code={code}")
+    finally:
+        F._resolve_api, F.wait_for_gate = orig_resolve, orig_wait
+        shutil.rmtree(sd, ignore_errors=True)
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_register_tool_carries_wait_command():
+    """등재 응답이 대기 명령을 싣는다 — 등재와 대기를 한 입구로 (`#798` ①)."""
+    import json as _json
+    try:
+        from master.projects import mcp_server as pj
+    except ImportError as e:                       # mcp SDK 가 없는 환경 — 실패로 남긴다
+        check("register_work_tool import", False, str(e))
+        return
+    from types import SimpleNamespace
+    orig = (pj.register_work, pj.resolve)
+    try:
+        pj.resolve = lambda project: None
+        pj.register_work = lambda *a, **k: SimpleNamespace(
+            ok=True, work_id="20261011_x_work_1", tasks=[], summary=lambda: "s")
+        got = _json.loads(pj.register_work_tool("T", "repo", "[]"))
+        want = ("AX_PROJECTS_ROOT=/home/sim/ax-cluster /home/sim/ax-cluster/.venv/bin/python "
+                "-m master.work.followup 20261011_x_work_1 --wait --repo /home/sim/ax-cluster")
+        check("[중요] 등재 응답에 wait 명령", got.get("wait") == want, str(got.get("wait")))
+        note = got.get("wait_note") or ""
+        check("등재 응답에 wait_note (사실)", "at_gate" in note and "읽기" in note, note)
+        for bad in ("하세요", "하라", "해라", "실행하"):
+            check(f"wait_note 에 명령형 `{bad}` 없음", bad not in note, note)
+        check("다른 필드는 그대로", set(got) == {"ok", "work_id", "summary", "tasks", "wait", "wait_note"},
+              str(sorted(got)))
+        pj.register_work = lambda *a, **k: SimpleNamespace(
+            ok=False, work_id="", tasks=[], summary=lambda: "s")
+        got = _json.loads(pj.register_work_tool("T", "repo", "[]"))
+        check("등재 실패면 wait 없음", "wait" not in got, str(got))
+    finally:
+        pj.register_work, pj.resolve = orig
+
+
 def main() -> int:
     for fn in (test_running_has_no_side_effects,
                test_ready_calls_advance_with_confirm_false,
@@ -733,7 +986,13 @@ def main() -> int:
                test_recorded_for_lookup,
                test_check_counts_and_capture,
                test_resolve_kind_from_delivered_config,
-               test_failure_tail_is_kept_and_rendered):
+               test_failure_tail_is_kept_and_rendered,
+               test_wait_at_gate_after_polls,
+               test_wait_terminal_merged_and_records,
+               test_wait_timeout_and_queue_errors,
+               test_wait_uses_current_round,
+               test_wait_cli_exit_codes,
+               test_register_tool_carries_wait_command):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_followup: {PASS}/{total} 통과")

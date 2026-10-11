@@ -146,14 +146,28 @@ Claude에서는 제공된 위임 도구와 실제 등록 에이전트 역할을 
 공식 통합 검사 + 바뀐 파일 회귀 → 사람 게이트에서 멈춤 → 라운드당 Redmine 노트 한 번이다.
 push·전진·`main` 은 없다. 기록: `~/.cache/ax-followup/followup.jsonl` · journal.
 
-세션도 등재 뒤 큐를 **카운트다운 주기 조회**(`get_work`)로 따라가 완료를 직접 확인한다.
-종결을 봤는데 준비 기록이 없으면 같은 핵심을 직접 부른다:
+준비는 타이머가 하지만 **사용자에게 묻는 것은 세션의 몫**이다. 그래서 등재와 대기를 한 입구로
+묶는다(사용자 결정 2026-10-11): `register_work_tool` 성공 응답의 `wait` 필드에 담긴 명령을
+**등재 직후 곧바로 백그라운드로** 돌려 둔다 — Claude 는 Bash `run_in_background`, Codex 는 그에
+해당하는 백그라운드 실행. 그 명령은 큐와 준비 기록을 **읽기만** 하며(준비·전진·기록 없음) 조회마다
+stderr 에 `[wait] <work_id> r<N> · 큐 … · 조각 …/… · 준비 … · 남은 mm:ss` 한 줄을 남기고,
+이번 라운드의 준비 결과·work 종결·타임아웃에서 결과 블록(Redmine 노트와 같은 문구)을 찍고 끝난다.
+
+    AX_PROJECTS_ROOT=/home/sim/ax-cluster /home/sim/ax-cluster/.venv/bin/python \
+        -m master.work.followup <work_id> --wait --repo /home/sim/ax-cluster
+
+그 명령이 끝나 세션이 깨어나면 종료 코드로 갈린다:
+
+    0  at_gate     결과 블록의 사실과 게이트 물음(「버그냐 구조냐」)을 사용자에게 전하고 거기서 멈춘다
+    3  stopped·error·terminal_*·merged   사유(실패 조각·준비 실패 원인)를 보고한다
+    4  timeout     마지막 큐 상태·준비 기록·조회 오류를 보고한다 — 준비 기록이 없으면 아래 직접 호출 후보
+
+타이머가 죽었거나 종결을 봤는데 준비 기록이 없으면 같은 핵심을 직접 부른다:
 
     AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.work.followup <work_id> \
         --repo /home/sim/ax-cluster --python /home/sim/ax-cluster/.venv/bin/python
 
-`at_gate` 결과의 질문(「버그냐 구조냐」)을 사용자에게 전하고 거기서 멈춘다. `stopped`·`error`는
-사유를 보고한다. 「완료 상태를 확인했다」로 턴을 끝내지 않는다 — 그 멈춤이 `#798` 이다.
+「완료 상태를 확인했다」로 턴을 끝내지 않는다 — 그 멈춤이 `#798` 이다.
 
 골조·코드 커밋/푸시는 매번 별도 승인이다. ⑦ 전진과 finalize도 서로 다른 승인이다.
 작업 시작 또는 분산 선택을 이 승인들 전체로 확대하지 않는다.

@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from mcp.server import MCPServer
 
@@ -38,7 +39,7 @@ from .logic import (
     set_active,
     set_workshop,
 )
-from .config import Registry
+from .config import Registry, projects_root
 from .workshop_check import check_project_workshops
 from ..context_search.paths import resolve
 from ..work.generate import GenerateError, dispatch
@@ -310,7 +311,7 @@ def register_work_tool(
                             original_request=original_request, target_branch=target_branch)
     except (RegisterError, ConfigError, ValueError, TypeError) as e:
         return _fail(e)
-    return json.dumps({
+    out = {
         "ok": got.ok,
         "work_id": got.work_id,
         "summary": got.summary(),
@@ -318,7 +319,35 @@ def register_work_tool(
             {"stem": t.stem, "task_id": t.task_id, "error": t.error}
             for t in got.tasks
         ],
-    }, ensure_ascii=False)
+    }
+    if got.ok and got.work_id:
+        # `#798` ① — 등재와 대기를 한 입구로. 준비는 `ax-followup.timer` 가 하고, 이 명령은
+        # 그 결과를 읽기만 하다 끝난다. 🔴 사실만 싣는다(명령형 없음) — 무엇을 하나는 스킬 몫이다.
+        out["wait"] = _wait_command(got.work_id)
+        out["wait_note"] = WAIT_NOTE
+    return json.dumps(out, ensure_ascii=False)
+
+
+# 대기 명령의 자리 — 이 서버가 도는 체크아웃(`master/projects/` 의 두 단계 위)과 그 venv.
+# `AX_PROJECTS_ROOT` 는 서버가 받은 값을 그대로 싣는다(없으면 체크아웃). 마스터에서는 셋 다
+# `/home/sim/ax-cluster` 다 — `ax-followup.service` 의 `--repo` 와 같아야 준비 기록 키가 맞는다.
+_CODE_ROOT = Path(__file__).resolve().parents[2]
+WAIT_NOTE = ("wait 는 이 work 의 지금 라운드 ⑦ 준비 결과(at_gate·stopped·error)나 work 종결"
+             "(rejected·cancelled·merged)·타임아웃까지 큐와 준비 기록을 읽기만 하는 명령이다. "
+             "준비는 ax-followup.timer 가 한다. 조회마다 stderr 에 한 줄, 끝나면 stdout 에 결과 "
+             "블록을 남기고 종료한다 (종료 코드 0 at_gate · 3 멈춤·실패·종결 · 4 타임아웃).")
+
+
+def _wait_command(work_id: str) -> str:
+    import shlex
+    try:
+        root = str(projects_root())
+    except ConfigError:
+        root = str(_CODE_ROOT)
+    repo = str(_CODE_ROOT)
+    py = str(_CODE_ROOT / ".venv" / "bin" / "python")
+    return (f"AX_PROJECTS_ROOT={shlex.quote(root)} {shlex.quote(py)} -m master.work.followup "
+            f"{shlex.quote(work_id)} --wait --repo {shlex.quote(repo)}")
 
 
 @mcp.tool()

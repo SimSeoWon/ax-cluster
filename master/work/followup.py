@@ -32,8 +32,18 @@ worktree 에서 검사만 하고 사람 게이트에서 멈추며, `master/test_
 `auto_flip` 으로 큐 상태·Redmine 을 직접 쓰고(여기는 큐에 쓰지 않는다), 테스트 인프라 미가용을
 fail-open 으로 넘긴다(code 판은 **fail-closed** — 못 돌린 것은 통과가 아니다).
 
+## 대기 입구 — 「준비」와 「묻기」는 다른 자리다 (`#798` ①, 사용자 결정 2026-10-11)
+
+마스터에서는 훅을 쓰지 않는다. **준비는 타이머**(`--scan`)가 하고, **세션에 알리는 것은
+`--wait`** 다: 등재 응답(`register_work_tool` 의 `wait`)이 이 명령을 싣고, 세션이 그것을
+등재 직후 백그라운드로 돌려 두면 이번 라운드의 준비 결과(at_gate·stopped·error)·work 종결·
+타임아웃에서 결과 블록(`render` 와 같은 문구)을 찍고 끝난다 — 그 종료가 세션을 깨운다.
+`--wait` 는 순수 읽기다(준비·전진·상태 기록 없음).
+
 `.venv/bin/python -m master.work.followup <work_id> [--repo PATH] [--python PY]`
 `.venv/bin/python -m master.work.followup --scan --project AXCluster --repo PATH`   (타이머)
+`.venv/bin/python -m master.work.followup <work_id> --wait --repo PATH [--interval S] [--timeout S]`
+    종료 코드: 0 at_gate · 3 stopped/error/terminal_*/merged · 4 timeout · 2 사용법
 """
 from __future__ import annotations
 
@@ -450,6 +460,13 @@ def _round_tasks(work: dict, tasks) -> list:
     return tasks
 
 
+def _failed_of(rtasks) -> list:
+    """실패·취소 조각의 사실 — `prepare_round` 와 `wait_for_gate` 가 같은 모양으로 쓴다."""
+    return [{"task_id": t.get("task_id") or t.get("id"), "status": t.get("status"),
+             "reason": str(t.get("failure") or t.get("error") or t.get("reason") or "")[:300]}
+            for t in rtasks or () if t.get("status") in TASK_BAD]
+
+
 def prepare_round(repo, work_id: str, *, api=None, kind: str | None = None, project: str = "",
                   build_fn=None, start_dir: str = "", pattern: str = "", python: str = "",
                   ue5_cmd: str = "", remote: str = R.DEFAULT_REMOTE,
@@ -491,9 +508,7 @@ def prepare_round(repo, work_id: str, *, api=None, kind: str | None = None, proj
         s = str(t.get("status") or "?")
         counts[s] = counts.get(s, 0) + 1
     fu.counts = counts
-    fu.failed_tasks = [{"task_id": t.get("task_id") or t.get("id"), "status": t.get("status"),
-                        "reason": str(t.get("failure") or t.get("error") or t.get("reason") or "")[:300]}
-                       for t in rtasks if t.get("status") in TASK_BAD]
+    fu.failed_tasks = _failed_of(rtasks)
     terminal = sum(n for s, n in counts.items() if s in TASK_TERMINAL)
     log("fetch", f"work {work_id} merge_status={fu.merge_status} · 라운드 {fu.round} · "
                  f"조각 {terminal}/{len(rtasks)} 종결 · {counts}")
@@ -1027,6 +1042,133 @@ def hashlib_name(repo, project: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
+# wait — 등재한 세션이 백그라운드로 돌려 두는 **읽기 전용** 대기 (`#798` ①)
+# ─────────────────────────────────────────────────────────────
+#
+# 타이머가 ⑦ 를 준비해도 **사용자에게 묻는 것**은 보장되지 않았다 — 실측 2026-10-11 에
+# 물음이 사람에게 닿은 것은 세션이 우연히 journald 를 따라가고 있었기 때문이다.
+# 그래서 등재와 대기를 한 입구로 묶는다: 등재 응답이 이 명령을 싣고, 세션이 그것을
+# 백그라운드로 돌려 두면 **끝날 때 세션이 깨어난다.**
+#
+# [중요] 순수 읽기다 — 준비하지 않고(`prepare_once` 를 부르지 않는다) · 전진·확인을 부르지
+# 않고 · 상태 파일·저널에 쓰지 않는다. 준비는 타이머의 몫이고 이 함수는 그 기록을 읽을 뿐이다.
+
+WAIT_RECORDED = ("at_gate", "stopped", "error")     # `RECORDED` 의 결과 state — 이 셋이면 끝
+WAIT_TERMINAL = ("rejected", "cancelled")
+WAIT_EXIT = {"at_gate": 0, "stopped": 3, "error": 3, "terminal_rejected": 3,
+             "terminal_cancelled": 3, "merged": 3, "timeout": 4}
+WAIT_LABEL = {
+    "merged": "work 가 이미 `merged` — 마감됨, ⑦ 대기 대상 아님",
+    "terminal_rejected": "work 가 `rejected` — ⑦ 준비 대상 아님",
+    "terminal_cancelled": "work 가 `cancelled` — ⑦ 준비 대상 아님",
+    "timeout": "대기 시간 초과 — 준비 결과를 보지 못했다",
+}
+
+
+def _mmss(sec: float) -> str:
+    s = max(0, int(round(sec)))
+    return f"{s // 60:02d}:{s % 60:02d}"
+
+
+def render_wait(res: dict) -> str:
+    """`wait_for_gate` 결과 → 사실만 담은 블록. 준비 기록이 있으면 `render()` 를 **그대로**
+    쓴다(Redmine 노트와 같은 문구). 🔴 명령형 없음 — 모듈 규칙(`render` 머리말)과 같다."""
+    if res.get("text"):
+        return str(res["text"])
+    oc = str(res.get("outcome") or "")
+    out = [f"[⑦ 대기 결과] {res.get('work_id') or '(id 없음)'} · 라운드 {res.get('round')} · "
+           f"결과 {oc} — {WAIT_LABEL.get(oc, oc or '미상')}"]
+    meta = [x for x in (f"큐 상태 {res['merge_status']}" if res.get("merge_status") else "",
+                        f"조각 {res.get('verified', 0)}/{res.get('total', 0)} verified"
+                        if res.get("total") is not None else "",
+                        f"준비 기록 {res.get('record_state') or '없음'}") if x]
+    out.append("  " + " · ".join(meta))
+    for t in res.get("failed_tasks") or []:
+        out.append(f"  조각 {t.get('status')} {t.get('task_id')}: {t.get('reason') or '사유 없음'}")
+    if res.get("terminal_reason"):
+        out.append(f"  사유: {str(res['terminal_reason'])[:500]}")
+    if res.get("last_error"):
+        out.append(f"  마지막 큐 조회 오류: {str(res['last_error'])[:300]}")
+    out.append(f"  조회 {res.get('polls', 0)}회 · 경과 {_mmss(res.get('elapsed') or 0)}")
+    return "\n".join(out)
+
+
+def wait_for_gate(repo, work_id: str, *, api=None, state=None, interval: float = 30,
+                  timeout: float = 5400, clock=time.monotonic, sleep=time.sleep,
+                  logf=None) -> dict:
+    """이번 라운드의 ⑦ 준비가 끝난 결과(또는 work 종결·타임아웃)까지 읽기만 하며 기다린다.
+
+    매 조회: 큐의 work(`GET /api/v1/works/<id>`) → 그 work 의 **지금** 라운드 →
+    `recorded_for(repo, work_id, 그 라운드)`. 라운드는 개선요청으로만 바뀌므로 매번 다시 읽는다.
+
+        outcome   at_gate · stopped · error   그 라운드의 준비 기록 (facts · question · text=render)
+                  terminal_rejected · terminal_cancelled   work 종결 (실패 조각 사유)
+                  merged                      work 마감
+                  timeout                     마지막으로 본 큐 상태·기록 · 마지막 조회 오류
+
+    큐 조회 실패는 로그를 남기고 계속 조회한다 — 끝까지 실패하면 `timeout` + `last_error`.
+    조회마다 한 줄(`[wait] … 남은 mm:ss`)을 남긴다 — 기다리는 동안에도 보여야 한다.
+    """
+    log = logf or C._noop_log
+    if api is None:
+        api = _resolve_api(repo)          # 못 정하면 FollowupError — 대기를 시작하지 않는다
+    t0 = clock()
+    deadline = t0 + float(timeout)
+    res: dict = {"work_id": work_id, "round": None, "outcome": "", "merge_status": "",
+                 "verified": 0, "total": None, "record_state": "", "failed_tasks": [],
+                 "terminal_reason": "", "last_error": "", "polls": 0, "elapsed": 0.0,
+                 "facts": {}, "question": "", "text": ""}
+
+    def _finish(outcome: str) -> dict:
+        res["outcome"] = outcome
+        res["elapsed"] = round(clock() - t0, 1)
+        res["exit_code"] = WAIT_EXIT.get(outcome, 3)
+        log("wait", f"{work_id} r{res['round'] if res['round'] is not None else '?'} 끝 — "
+                    f"{outcome} (조회 {res['polls']}회 · 경과 {_mmss(res['elapsed'])})")
+        return res
+
+    while True:
+        res["polls"] += 1
+        rec: dict = {}
+        try:
+            work, tasks = R.fetch_work(work_id, api=api)
+            if not work:
+                raise FollowupError(f"큐에 work {work_id} 가 없다")
+            res["last_error"] = ""
+            rnd = int(work.get("round", 1) or 1)
+            res["round"] = rnd
+            res["merge_status"] = str(work.get("merge_status") or "")
+            rtasks = _round_tasks(work, tasks)
+            res["total"] = len(rtasks)
+            res["verified"] = sum(1 for t in rtasks if t.get("status") == "verified")
+            rec = recorded_for(repo, work_id, rnd, state=state)
+            res["record_state"] = str(rec.get("state") or "") if rec else ""
+            remain = deadline - clock()
+            log("wait", f"{work_id} r{rnd} · 큐 {res['merge_status'] or '?'} · 조각 "
+                        f"{res['verified']}/{res['total']} · 준비 {res['record_state'] or '없음'} · "
+                        f"남은 {_mmss(remain)}")
+            if res["record_state"] in WAIT_RECORDED:
+                res["facts"] = rec
+                res["question"] = str(rec.get("question") or "")
+                res["text"] = render(rec)
+                return _finish(res["record_state"])
+            if res["merge_status"] == "merged":
+                return _finish("merged")
+            if res["merge_status"] in WAIT_TERMINAL:
+                res["failed_tasks"] = _failed_of(rtasks)
+                res["terminal_reason"] = str(work.get("terminal_reason") or "")
+                return _finish(f"terminal_{res['merge_status']}")
+        except Exception as e:                                     # noqa: BLE001
+            res["last_error"] = f"{type(e).__name__}: {e}"[:300]
+            log("wait", f"[주의] {work_id} 큐 조회 실패 — {res['last_error']} · 계속 조회한다 · "
+                        f"남은 {_mmss(deadline - clock())}")
+        remain = deadline - clock()
+        if remain <= 0:
+            return _finish("timeout")
+        sleep(min(float(interval), remain))
+
+
+# ─────────────────────────────────────────────────────────────
 # CLI — 어느 에이전트든, 타이머든 같은 한 줄로 부른다
 # ─────────────────────────────────────────────────────────────
 
@@ -1061,11 +1203,19 @@ def main(argv=None) -> int:
     ap.add_argument("--ue5-cmd", default="")
     ap.add_argument("--remote", default=R.DEFAULT_REMOTE)
     ap.add_argument("--state-dir", default="")
+    ap.add_argument("--wait", action="store_true",
+                    help="준비하지 않고 이 work 의 지금 라운드 ⑦ 준비 결과까지 읽기만 하며 기다린다")
+    ap.add_argument("--interval", type=float, default=30.0, help="--wait 조회 간격(초)")
+    ap.add_argument("--timeout", type=float, default=5400.0, help="--wait 최대 대기(초)")
     ns = ap.parse_args(argv)
     if bool(ns.scan) == bool(ns.work_id):
         ap.error("`<work_id>` 와 `--scan` 중 하나만 준다")
     if ns.scan and ns.force:
         ap.error("--force 는 work_id 하나에만 쓴다 (scan 전체를 다시 돌리지 않는다)")
+    if ns.wait and (ns.scan or ns.force):
+        ap.error("--wait 는 work_id 하나에만 쓰고 --scan·--force 와 함께 쓰지 않는다 (읽기 전용)")
+    if ns.wait and (ns.interval <= 0 or ns.timeout <= 0):
+        ap.error("--interval·--timeout 은 0 보다 커야 한다")
     repo = Path(ns.repo).resolve()
     try:
         api = _resolve_api(repo)
@@ -1073,6 +1223,13 @@ def main(argv=None) -> int:
         stderr_log("followup", f"[중요] {e}")
         print(json.dumps({"state": "error", "reason": str(e)}, ensure_ascii=False, indent=2))
         return 1
+    if ns.wait:
+        # stdout 은 결과 블록 하나, 조회마다의 줄은 stderr. 종료 코드: 0 at_gate ·
+        # 3 stopped/error/terminal_*/merged · 4 timeout · 2 사용법
+        res = wait_for_gate(repo, ns.work_id, api=api, state=ns.state_dir or None,
+                            interval=ns.interval, timeout=ns.timeout, logf=stderr_log)
+        print(render_wait(res))
+        return int(res.get("exit_code", 3))
     kw = dict(kind=ns.kind, start_dir=ns.start_dir, pattern=ns.pattern, python=ns.python,
               ue5_cmd=ns.ue5_cmd, remote=ns.remote)
     if ns.scan:
