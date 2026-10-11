@@ -1,4 +1,4 @@
-"""코드 생성 + 층2 통과 — **마스터의 몫은 여기서 끝난다** (PLAN §4.2 ②③④).
+"""코드 생성 — 이 모듈은 생성까지 맡는다 (PLAN §4.2 ②③).
 
     작업장 ① 요청
        ↓
@@ -6,13 +6,13 @@
        ↓
     추론 노드 ③ 로컬 LLM 이 코드 생성 (무료)
        ↓
-    마스터 ④ 층2 상용 모델 문법·API 검사 → **적합한 코드 뭉치**를 건넨다
+    마스터 ④ 층2 검증은 `wcommit`(#696)에서 수행한다
        ↓
     작업장 ⑤ 적용 · 빌드 · 테스트 (마스터는 파일을 만지지 않는다)
 
 [중요] **모토** (§4.3): 작성은 **무료 로컬 LLM**, 검증은 **상용 모델**. 값은 검증이라는
-고레버리지 지점에만 쓴다. 이 모듈이 그 경계를 코드로 굳힌 것이다 —
-생성은 브로커(무료), 검사는 `layer2_verify`(상용), **그리고 통과 못 하면 안 넘긴다.**
+고레버리지 지점에만 쓴다. 이 모듈은 브로커(무료)로 코드를 생성한다.
+층2 검증과 통과 여부에 따른 커밋 게이트는 `wcommit`(#696)의 몫이다.
 
 [중요] **추론은 stateless 다** (§4.2). Ollama 의 `context` 필드를 **의도적으로 재사용하지 않는다.**
 라운드 간 누적은 git 이 운반한다(git-as-feedback-bus) — 프롬프트로 다시 넣으면 인바운드
@@ -28,12 +28,10 @@ import re
 import sys
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ..auth import auth_headers
 from ..context_search.paths import ProjectPaths
-from ..layer2_verify import verify_files
-from ..verdict import Verdict
 
 DEFAULT_BROKER = "http://localhost:8102"
 CODER = "qwen2.5-coder:14b"          # §4.4 — UE5 C++ 생성용으로 확정
@@ -62,38 +60,8 @@ class Generated:
         return not self.code.strip()
 
 
-@dataclass
-class Dispatch:
-    """작업장에 건넬 결과. **`ok` 가 아니면 코드를 쓰지 말 것.**"""
-
-    task_id: str
-    generated: Generated | None = None
-    verdict: Verdict | None = None
-    error: str = ""
-    notes: list[str] = field(default_factory=list)
-
-    @property
-    def ok(self) -> bool:
-        # [중요] fail-closed. verdict 가 없으면(검증을 못 돌렸으면) 통과가 아니다.
-        return (not self.error and self.generated is not None
-                and not self.generated.empty
-                and self.verdict is not None and not self.verdict.blocked)
-
-    @property
-    def code(self) -> str:
-        return self.generated.code if self.generated else ""
-
-    def summary(self) -> str:
-        if self.error:
-            return f"{self.task_id}: [중요] {self.error}"
-        g, v = self.generated, self.verdict
-        bits = [f"{len(g.code)}자 생성" if g else "생성 실패"]
-        if g and g.stripped_fence:
-            bits.append("펜스 제거")
-        if v:
-            bits.append(v.summary())
-        mark = "[완료]" if self.ok else "[중요] 차단"
-        return f"{self.task_id}: {mark} — " + " · ".join(bits)
+# [DOC] #734: `Dispatch`·`dispatch` 는 요청자가 골조에서 걷었다 — 층2 의 실전 입구는 `wcommit`(#696) 하나다.
+#       이 모듈은 이제 **생성까지**만 한다. 아래 PSEUDO 는 남은 정리다.
 
 
 def strip_fence(text: str) -> tuple[str, bool]:
@@ -279,42 +247,3 @@ def generate(paths: ProjectPaths, task_id: str, *, instruction: str, context: st
     code, stripped = strip_fence(raw)
     return Generated(task_id=task_id, code=code, model=model, raw_len=len(raw),
                      stripped_fence=stripped, prompt_chars=len(prompt))
-
-
-def dispatch(paths: ProjectPaths, task_id: str, *, instruction: str, context: str,
-             target_file: str = "", model: str = CODER,
-             verifier=None, **kw) -> Dispatch:
-    """생성 → 층2 → 인계 준비. **마스터가 하는 일의 끝이다.**
-
-    [중요] 층2 를 통과하지 못하면 `ok=False` 다. 작업장은 `ok` 만 보고 판단하면 된다 —
-    "코드가 왔으니 일단 적용" 이 되지 않게 하는 것이 이 반환값의 목적이다.
-    """
-    d = Dispatch(task_id=task_id)
-    try:
-        d.generated = generate(paths, task_id, instruction=instruction, context=context,
-                               target_file=target_file, model=model, **kw)
-    except GenerateError as e:
-        d.error = str(e)
-        return d
-
-    if d.generated.empty:
-        d.error = "생성 결과가 비었다"
-        return d
-    if d.generated.stripped_fence:
-        d.notes.append("마크다운 펜스를 벗겼다 (§4.4 알려진 결함)")
-
-    name = target_file or f"{task_id}.cpp"
-    verify = verifier or verify_files
-    # [중요] **누가 썼는지 검증에 넘긴다** (`#379`) — 같은 계열이 자기 산출물을 통과시키지
-    #    않게. 이 경로의 작성자는 로컬 모델이라 지금은 아무것도 빠지지 않지만, 그 보장이
-    #    **우연이 아니라 구조**여야 한다(작성 레인은 2026-09-06 에 이미 한 번 바뀌었다).
-    # 🔴 `#733` — 층2 의 상용 호출(agy·claude)을 그 트윈의 `usage_log.jsonl` 에 `layer2` 로 남긴다.
-    #    [주의] **검증만 감싼다** — 위의 생성(브로커)까지 감싸면 로컬 생성이 `layer2` 로 잘못 묶인다.
-    #    이 진입(`mcp_server.dispatch_tool`)에는 work_id 가 없다 — task_id 만 싣는다.
-    from . import usage as _usage                                # noqa: PLC0415
-    with _usage.sink(paths.usage_log, source="layer2", task_id=task_id):
-        try:
-            d.verdict = verify([(name, d.generated.code)], author_lane=model)
-        except TypeError:
-            d.verdict = verify([(name, d.generated.code)])    # 주입된 테스트 더블 호환
-    return d

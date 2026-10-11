@@ -9,12 +9,12 @@ from .branch_names import (
     is_attempt, is_base, is_durable, parse_attempt, parse_base, parse_durable, work_glob,
 )
 from .generate import (
-    CODER, Dispatch, GenerateError, Generated, dispatch, generate, strip_fence,
+    CODER, GenerateError, Generated, generate, strip_fence,
 )
 
 __all__ = [
     "BranchNameError", "attempt_branch", "attempt_glob", "base_branch", "durable_branch",
     "is_attempt", "is_base", "is_durable", "parse_attempt", "parse_base", "parse_durable",
     "work_glob",
-    "CODER", "Dispatch", "GenerateError", "Generated", "dispatch", "generate", "strip_fence",
+    "CODER", "GenerateError", "Generated", "generate", "strip_fence",
 ]

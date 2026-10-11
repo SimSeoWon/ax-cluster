@@ -85,9 +85,11 @@ _pj = tool_names(pj.mcp)
 # [주의] **이 숫자는 도구를 더할 때 같이 고친다.** 실측 2026-09-10: `54a0669` 가 지휘 상태
 #   2종(`get_orchestration_tool`·`record_master_conductor_tool`)을 더하고 이 값을 안 고쳐
 #   **회귀가 이틀 내내 빨간 채로 있었다.** 상시 빨간 회귀는 진짜 실패를 묻는다.
-check("도구 39종 등록 (get_manifest 철거 2026-09-02 · 지휘자 모드 2종 09-08 · "
-      "지휘 상태 2종 09-08 · **프로필 2종 09-20 `#650`**)",
-      len(_pj) == 39, f"실제 {len(_pj)}종: {_pj}")
+# [DOC] #734: `get_code` 가 골조에서 걷혀 도구는 38종이다.
+check("도구 38종 등록 (get_manifest 철거 2026-09-02 · 지휘자 모드 2종 09-08 · "
+      "지휘 상태 2종 09-08 · **프로필 2종 09-20 `#650`** · "
+      "get_code 철거 2026-10-11 #734)",
+      len(_pj) == 38, f"실제 {len(_pj)}종: {_pj}")
 # [중요] **워커 지휘자 모드 창구 둘** (`#385`, 2026-09-08) — 모드를 고르는 표면은 **서버의
 #   이 한 벌**이고 Claude 스킬·Codex 스킬이 **같은 것**을 부른다(`ax-mode`). 도구마다 로직을
 #   따로 두면 두 벌이 갈라진다. [주의] 개수만 세면 「하나 빠지고 하나 늘어난」 것을 못 잡으므로
@@ -118,8 +120,9 @@ for name in ("register_project_tool", "set_active_tool",
              "set_workshop_tool", "remove_workshop_tool", "list_workshops_tool",
              "check_workshops_clean_tool",
              # 워크플로우 (§4.7) — 작업장이 부르는 두 창구
-             "register_work_tool", "get_code"):
+             "register_work_tool"):
     check(f"  {name}", name in _pj)
+check("  [중요] get_code 철거 유지", "get_code" not in _pj, str(_pj))
 
 
 print("\n[4] 두 서버가 같은 SDK 경로를 쓴다")
