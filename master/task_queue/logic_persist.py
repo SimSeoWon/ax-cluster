@@ -63,11 +63,30 @@ def update_work_meta(idx: TaskIndex, work_id: str, *,
     #         terminal_work        merge_status 가 merged · rejected · cancelled
     #       바뀌면 changed 에 `worker_mode=<이전 또는 None>→<새 값>` 한 항목을 넣는다 — 기존
     #       `[work-patch]` 로그·커밋 메시지가 그 문자열로 이전·새 값을 남긴다.
-    # [PSEUDO] #392: worker_mode 가 None 이 아니면 lock 밖에서 strip 하고 MODES 검증을 한다(logic.py 의 `from ..work.mode import MODES` 와 같은 import). 틀리면 invalid_worker_mode 로 즉시 반환한다.
+    normalized_worker_mode = None
+    if worker_mode is not None:
+        from ..work.mode import MODES
+        normalized_worker_mode = worker_mode.strip()
+        if normalized_worker_mode not in MODES:
+            return {
+                "ok": False,
+                "reason": "invalid_worker_mode",
+                "error": f"알 수 없는 worker_mode: {normalized_worker_mode!r}",
+            }
     with idx.lock:
         wmeta = idx.works.get(work_id)
         if not wmeta:
             return {"ok": False, "error": f"work not found: {work_id}"}
+        previous_worker_mode = wmeta.get("worker_mode")
+        worker_mode_changed = (normalized_worker_mode is not None
+                               and normalized_worker_mode != previous_worker_mode)
+        if worker_mode_changed and wmeta.get("merge_status") in (
+                "merged", "rejected", "cancelled"):
+            return {
+                "ok": False,
+                "reason": "terminal_work",
+                "error": f"종결된 work 의 worker_mode 는 바꿀 수 없습니다: {work_id}",
+            }
         changed: list[str] = []
         if merge_status is not None and merge_status != wmeta.get("merge_status"):
             wmeta["merge_status"] = merge_status
@@ -101,7 +120,9 @@ def update_work_meta(idx: TaskIndex, work_id: str, *,
         if target_branch is not None and target_branch != wmeta.get("target_branch"):
             wmeta["target_branch"] = target_branch
             changed.append(f"target_branch={target_branch}")
-        # [PSEUDO] #392: worker_mode 가 주어졌고 현재 wmeta["worker_mode"] 와 다르면 — merge_status 가 merged/rejected/cancelled 이면 아무 필드도 저장하지 않고 terminal_work 로 반환한다(이 검사는 다른 필드를 바꾸기 전에 해야 하므로 lock 진입 직후 wmeta 조회 다음에 둔다). 아니면 wmeta["worker_mode"] 를 새 값으로 바꾸고 changed 에 "worker_mode=<이전>→<새>" 를 더한다.
+        if worker_mode_changed:
+            wmeta["worker_mode"] = normalized_worker_mode
+            changed.append(f"worker_mode={previous_worker_mode}→{normalized_worker_mode}")
         if not changed:
             return {"ok": True, "work_id": work_id, "changed": []}
         _save_work(idx, work_id)
