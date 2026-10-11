@@ -456,6 +456,9 @@ class WorkPatchReq(BaseModel):
     #    생성 POST 가 아니라 이 patch 로 들어온다.
     target_branch: Optional[str] = None
     review_decision: Optional[dict] = None
+    # [DOC] #392 ②: 진행 중 work 의 지휘자 스탬프 변경 (lane · claude · codex). None 이면 안 바꾼다.
+    #       검증·거절은 `logic_persist.update_work_meta` 가 한다 — 여기서는 받기만 한다.
+    # [PSEUDO] #392: `worker_mode: Optional[str] = None` 필드를 둔다.
 
 
 class HistorySearchReq(BaseModel):

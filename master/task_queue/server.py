@@ -176,6 +176,10 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         bad = _stamp_gate(req.project, work_id=work_id)
         if bad:
             return bad
+        # [DOC] #392 ②: worker_mode 를 코어에 그대로 넘긴다. 코어의 **거절**(reason 이 있는 ok:false —
+        #       invalid_worker_mode · terminal_work)은 404 로 바꾸지 않고 **200 + 그 dict** 로 돌려준다
+        #       (요청 태그 거절과 같은 모양 — 호출자가 reason 을 읽는다). reason 없는 실패(work 없음)는 종전대로 404.
+        # [PSEUDO] #392: update_work_meta 호출에 worker_mode=req.worker_mode 를 더하고, r 이 ok 가 아니면서 r.get("reason") 이 있으면 r 을 그대로 반환한다.
         r = update_work_meta(idx, work_id,
                              merge_status=req.merge_status,
                              redmine_issue_id=req.redmine_issue_id,

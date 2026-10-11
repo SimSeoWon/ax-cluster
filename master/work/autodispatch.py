@@ -225,6 +225,16 @@ class _Lock:
             os.close(self.fd)
 
 
+# [DOC] #392 ②: 파견 잠금을 **잡지 않고** 들여다보는 판정. 지휘자 스탬프 변경 표면
+#       (`conductor.set_work_worker_mode`)이 「파견이 도는 동안은 거절」을 집행하려고 부른다.
+#       잠금 파일이 없으면 False. 있으면 `_Lock` 과 같은 flock(LOCK_EX | LOCK_NB)을 시도해 잡히면
+#       **즉시 풀고** False, 못 잡으면(다른 프로세스가 보유) True. 판정 자체가 실패하면(OSError) True —
+#       모르면 거절 쪽이다(fail-closed). 잠금 파일을 새로 만들지 않는다.
+def dispatch_locked(work_id: str) -> bool:
+    # [PSEUDO] #392: LOCK_DIR / f"{work_id}.lock" 가 없으면 False. 있으면 os.open(O_RDWR) 후 fcntl.flock 을 LOCK_EX|LOCK_NB 로 시도한다 — 성공하면 LOCK_UN·close 하고 False, BlockingIOError/OSError 면 close 하고 True. 파일 열기 실패도 True.
+    raise NotImplementedError
+
+
 # 🔴 [중요] **파견 대상은 `pending` 만이 아니다** (실측 2026-09-09 라이브).
 #
 # `#388` 이 층1 차단에 재시도를 주면서 **`needs_revision`** 이라는 상태를 새로 만들었는데,

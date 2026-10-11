@@ -775,7 +775,7 @@ def get_worker_mode_tool() -> str:
 
 
 @mcp.tool()
-def set_worker_mode_tool(mode: str, why: str = "", by: str = "") -> str:
+def set_worker_mode_tool(mode: str, why: str = "", by: str = "", work_id: str = "") -> str:
     """워커 지휘자 모드를 바꾼다 (`#385`). `mode` 는 `lane` · `claude` · `codex`.
 
     [중요] **기록이지 잠금이 아니다** — 호출부가 명시한 인자와 `AX_WORKER_MODE` 가 여전히
@@ -786,9 +786,14 @@ def set_worker_mode_tool(mode: str, why: str = "", by: str = "") -> str:
     구현하면 두 벌이 갈라진다.
 
     [주의] 모르는 값은 **거절한다** — 조용히 기본값으로 접지 않는다.
+
+    `work_id` 를 주면 **그 work 하나만** 바꾼다(`#392` ② — 장애 대응, 다음 파견부터 적용,
+    파견이 도는 중이면 거절). 비우면 종전대로 새 등재의 전역 기본값을 바꾼다.
     """
+    # [DOC] #392 ②: work_id 가 비어 있지 않으면 `wc.set_work_worker_mode(work_id.strip(), mode, why, by)` 로 간다. ValueError 는 기존과 같은 `{"ok": False, "reason": …, "modes": …}` 모양으로 돌려준다.
     try:
         from ..work import conductor as wc
+        # [PSEUDO] #392: work_id.strip() 이 있으면 got = wc.set_work_worker_mode(...) 로 분기하고, 없으면 아래 전역 경로.
         got = wc.set_worker(mode, why=why, by=by)
         return json.dumps(got, ensure_ascii=False)
     except ValueError as e:

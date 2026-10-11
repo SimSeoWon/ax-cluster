@@ -182,6 +182,26 @@ def snapshot():
             "worker": {"mode": selected, "source": source, "state": mode.read_state()},
             "note": "마스터는 마지막 담당 기록이며 실행 중임을 보증하지 않는다"}
 
+# [DOC] #392 ② (사용자 결정 2026-10-05 · 2026-10-11 A안) — **이 work 만** 지휘자를 바꾼다.
+#       전역 `set_worker` 와 같은 검사(문자열 · 사유 필수 · 준비 검사)를 거치고, 추가로:
+#         ① 파견이 도는 중이면 거절 — `autodispatch.dispatch_locked(work_id)` 가 True
+#         ② 큐 PATCH `/api/v1/works/<id>` 에 `{"project": <work 의 project>, "worker_mode": 새 값}`
+#            을 보내고, 응답이 ok:false 면 그 reason/error 로 거절(ValueError)
+#       적용 시점은 **다음 파견부터**다 — 도는 파견에 소급하지 않는다(#389).
+#       거절은 전부 ValueError(사유 문장). 성공하면 한 줄을 로그로 남긴다(stderr, `[work-mode]` 머리):
+#         `[work-mode] <work_id> <이전>→<새> · by=<by> · why=<why> · 다음 파견부터 적용`
+#       반환: {"ok": True, "work_id", "previous", "mode", "applies": "next_dispatch", "readiness"}
+#       주입점: api(기본 `runner._api`) · readiness(기본 `worker_mode_readiness(selected, project)`) ·
+#       locked(기본 `autodispatch.dispatch_locked`) — 테스트가 실 큐·실 잠금·SSH 를 안 두드리게.
+def set_work_worker_mode(work_id, selected, why, by="", *, api=None, readiness=None,
+                         locked=None):
+    # [PSEUDO] #392: work_id·selected·by 가 문자열이 아니거나 work_id 가 비면 ValueError. why 가 비면 ValueError("워커 모드 변경 사유가 필요하다"). selected 를 mode._check 로 검증한다.
+    # [PSEUDO] #392: locked(work_id) 가 True 면 ValueError — 파견이 도는 중이라 바꾸지 않는다(다음 파견 전에 다시).
+    # [PSEUDO] #392: api("GET", f"/api/v1/works/{work_id}") 로 work 를 읽어 previous=worker_mode, project 를 얻는다. work 가 없으면 ValueError. readiness 가 None 이면 worker_mode_readiness(selected, project) 를 쓰고 ok 가 아니면 ValueError.
+    # [PSEUDO] #392: api("PATCH", …, {"project": project, "worker_mode": selected}) 의 응답이 ok 가 아니면 reason·error 로 ValueError. 성공이면 위 형식의 [work-mode] 줄을 stderr 에 찍고 반환 dict 를 돌려준다.
+    raise NotImplementedError
+
+
 def set_worker(selected, why, by="", *, readiness=None):
     if not isinstance(selected, str) or not isinstance(by, str):
         raise ValueError("모드와 기록자는 문자열이어야 한다")

@@ -52,8 +52,18 @@ def update_work_meta(idx: TaskIndex, work_id: str, *,
                      target_branch: Optional[str] = None,
                      noticed_round: Optional[int] = None,
                      dispatch_note: Optional[str] = None,
-                     dispatch_at: Optional[str] = None) -> dict:
+                     dispatch_at: Optional[str] = None,
+                     worker_mode: Optional[str] = None) -> dict:
     """work 메타 부분 갱신. 명시된 필드만 patch. PATCH /api/v1/works/{work_id} 의 코어."""
+    # [DOC] #392 ② (사용자 결정 2026-10-05 · 2026-10-11 A안): `worker_mode` 는 진행 중 work 의
+    #       지휘자 스탬프를 바꾸는 장애 대응 경로다. None 이면 손대지 않는다. 적용은 **다음 파견부터**
+    #       (`autodispatch` 가 파견 시작 때 스탬프를 한 번 읽어 그 파견 전체에 고정한다 — #389 그대로).
+    #       거절은 `{"ok": False, "reason": <코드>, "error": <문장>}` 이고 저장하지 않는다:
+    #         invalid_worker_mode  `master.work.mode.MODES` 밖의 값 (strip 뒤 빈 값 포함)
+    #         terminal_work        merge_status 가 merged · rejected · cancelled
+    #       바뀌면 changed 에 `worker_mode=<이전 또는 None>→<새 값>` 한 항목을 넣는다 — 기존
+    #       `[work-patch]` 로그·커밋 메시지가 그 문자열로 이전·새 값을 남긴다.
+    # [PSEUDO] #392: worker_mode 가 None 이 아니면 lock 밖에서 strip 하고 MODES 검증을 한다(logic.py 의 `from ..work.mode import MODES` 와 같은 import). 틀리면 invalid_worker_mode 로 즉시 반환한다.
     with idx.lock:
         wmeta = idx.works.get(work_id)
         if not wmeta:
@@ -91,6 +101,7 @@ def update_work_meta(idx: TaskIndex, work_id: str, *,
         if target_branch is not None and target_branch != wmeta.get("target_branch"):
             wmeta["target_branch"] = target_branch
             changed.append(f"target_branch={target_branch}")
+        # [PSEUDO] #392: worker_mode 가 주어졌고 현재 wmeta["worker_mode"] 와 다르면 — merge_status 가 merged/rejected/cancelled 이면 아무 필드도 저장하지 않고 terminal_work 로 반환한다(이 검사는 다른 필드를 바꾸기 전에 해야 하므로 lock 진입 직후 wmeta 조회 다음에 둔다). 아니면 wmeta["worker_mode"] 를 새 값으로 바꾸고 changed 에 "worker_mode=<이전>→<새>" 를 더한다.
         if not changed:
             return {"ok": True, "work_id": work_id, "changed": []}
         _save_work(idx, work_id)
