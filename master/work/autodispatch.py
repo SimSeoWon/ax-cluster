@@ -231,8 +231,26 @@ class _Lock:
 #       **즉시 풀고** False, 못 잡으면(다른 프로세스가 보유) True. 판정 자체가 실패하면(OSError) True —
 #       모르면 거절 쪽이다(fail-closed). 잠금 파일을 새로 만들지 않는다.
 def dispatch_locked(work_id: str) -> bool:
-    # [PSEUDO] #392: LOCK_DIR / f"{work_id}.lock" 가 없으면 False. 있으면 os.open(O_RDWR) 후 fcntl.flock 을 LOCK_EX|LOCK_NB 로 시도한다 — 성공하면 LOCK_UN·close 하고 False, BlockingIOError/OSError 면 close 하고 True. 파일 열기 실패도 True.
-    raise NotImplementedError
+    import fcntl
+
+    path = LOCK_DIR / f"{work_id}.lock"
+    try:
+        path.stat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    fd = None
+    try:
+        fd = os.open(path, os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    except OSError:
+        return True
+    finally:
+        if fd is not None:
+            os.close(fd)
 
 
 # 🔴 [중요] **파견 대상은 `pending` 만이 아니다** (실측 2026-09-09 라이브).

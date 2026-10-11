@@ -793,8 +793,10 @@ def set_worker_mode_tool(mode: str, why: str = "", by: str = "", work_id: str = 
     # [DOC] #392 ②: work_id 가 비어 있지 않으면 `wc.set_work_worker_mode(work_id.strip(), mode, why, by)` 로 간다. ValueError 는 기존과 같은 `{"ok": False, "reason": …, "modes": …}` 모양으로 돌려준다.
     try:
         from ..work import conductor as wc
-        # [PSEUDO] #392: work_id.strip() 이 있으면 got = wc.set_work_worker_mode(...) 로 분기하고, 없으면 아래 전역 경로.
-        got = wc.set_worker(mode, why=why, by=by)
+        if work_id.strip():
+            got = wc.set_work_worker_mode(work_id.strip(), mode, why, by)
+        else:
+            got = wc.set_worker(mode, why=why, by=by)
         return json.dumps(got, ensure_ascii=False)
     except ValueError as e:
         return json.dumps({"ok": False, "reason": str(e),

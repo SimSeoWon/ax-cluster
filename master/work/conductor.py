@@ -195,11 +195,37 @@ def snapshot():
 #       locked(기본 `autodispatch.dispatch_locked`) — 테스트가 실 큐·실 잠금·SSH 를 안 두드리게.
 def set_work_worker_mode(work_id, selected, why, by="", *, api=None, readiness=None,
                          locked=None):
-    # [PSEUDO] #392: work_id·selected·by 가 문자열이 아니거나 work_id 가 비면 ValueError. why 가 비면 ValueError("워커 모드 변경 사유가 필요하다"). selected 를 mode._check 로 검증한다.
-    # [PSEUDO] #392: locked(work_id) 가 True 면 ValueError — 파견이 도는 중이라 바꾸지 않는다(다음 파견 전에 다시).
-    # [PSEUDO] #392: api("GET", f"/api/v1/works/{work_id}") 로 work 를 읽어 previous=worker_mode, project 를 얻는다. work 가 없으면 ValueError. readiness 가 None 이면 worker_mode_readiness(selected, project) 를 쓰고 ok 가 아니면 ValueError.
-    # [PSEUDO] #392: api("PATCH", …, {"project": project, "worker_mode": selected}) 의 응답이 ok 가 아니면 reason·error 로 ValueError. 성공이면 위 형식의 [work-mode] 줄을 stderr 에 찍고 반환 dict 를 돌려준다.
-    raise NotImplementedError
+    import sys
+    from . import autodispatch, runner
+
+    if not all(isinstance(value, str) for value in (work_id, selected, by)):
+        raise ValueError("work_id·모드·기록자는 문자열이어야 한다")
+    work_id = work_id.strip()
+    if not work_id:
+        raise ValueError("work_id가 필요하다")
+    if not isinstance(why, str) or not why.strip():
+        raise ValueError("워커 모드 변경 사유가 필요하다")
+    selected = mode._check(selected)
+    if (locked or autodispatch.dispatch_locked)(work_id):
+        raise ValueError("파견이 도는 중이라 바꾸지 않는다 — 다음 파견 전에 다시 시도할 것")
+    call = api or runner._api
+    path = f"/api/v1/works/{work_id}"
+    response = call("GET", path)
+    work = response.get("work") if isinstance(response, dict) else None
+    if not isinstance(work, dict) or not work:
+        raise ValueError("work가 없다")
+    previous, project = work.get("worker_mode", ""), work.get("project", "")
+    ready = readiness if readiness is not None else worker_mode_readiness(selected, project)
+    if not ready.get("ok"):
+        raise ValueError("지휘자 모드를 바꾸지 않았다 — " + ready.get("reason", "준비 검사 실패"))
+    response = call("PATCH", path, {"project": project, "worker_mode": selected})
+    if not isinstance(response, dict) or not response.get("ok"):
+        reason = (response.get("reason") or response.get("error")) if isinstance(response, dict) else None
+        raise ValueError(reason or "work 워커 모드 변경 실패")
+    print(f"[work-mode] {work_id} {previous}→{selected} · by={by.strip()} · "
+          f"why={why.strip()} · 다음 파견부터 적용", file=sys.stderr, flush=True)
+    return {"ok": True, "work_id": work_id, "previous": previous, "mode": selected,
+            "applies": "next_dispatch", "readiness": ready}
 
 
 def set_worker(selected, why, by="", *, readiness=None):
