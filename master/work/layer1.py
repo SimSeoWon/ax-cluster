@@ -1,13 +1,16 @@
 """층1 — **결정적 자기검증** (중 2.1 · §4.3). 무료 · 즉시 · LLM 0.
 
-## [중요] 어디에 박히나 — **두 곳이고, 둘 다 fail-closed 다**
+## [중요] 어디에 박히나 — 실제 호출자 (실측 2026-10-11, grep)
 
-    ① 응답 수락    `infer.judge`      워커 응답이 스풀에 **들어오기 전**    ← 가장 이른 자리
-    ② 적용 직전    `integrate.apply_one`  파일을 쓰기 **전**                ← 마지막 방어선
+    ① 커밋 직전    `wcommit` ④ 층1   워커 체크아웃을 **되읽은 디스크 내용**으로    ← 실전 경로
+                   (`baseline` = 기준 커밋의 골조 — 동결·스텁·pyflakes 기존분 대조)
+    ② 응답 수락    `infer.judge`      `ax-infer` 응답을 받는 자리 (`baseline` 없음 — 잔재·구문·pyflakes 만)
+    ③ 측정         `bench_lane_codex` 레인 비교 판정 (`baseline` = 골조)
 
-①이 없으면 잔재가 있는 응답이 *"통과"* 로 스풀에 쌓이고, 통합자가 적용 단계에서야 막는다 —
-같은 결론에 왕복이 하나 더 든다. ②가 없으면 스풀을 손으로 만지거나 재사용하는 경로에서 검사가
-빠진다. **둘 다 둔다.** 검사가 무료라서 두 번 돌려도 잃는 것이 없다.
+①이 verify-then-commit 이다 — 위반이면 커밋하지 않고 그 조각은 재시도로 간다. ②는 `infer_task`
+경로가 응답을 「통과」로 돌려주기 전에 본다. 검사가 무료라서 여러 자리에서 돌려도 잃는 것이 없다.
+[주의] 종전 서술의 「적용 직전 `integrate.apply_one`」은 통합자와 함께 지워졌다
+(`master/test_no_integrator.py` 가 부활을 막는다).
 
 [주의] 옛 구조에서 이 칸은 *"워커가 제출 전에 자기검증한다"* 였다(원전 `worker/validator.py`).
 쓰는 주체가 하나가 된 뒤로는 **마스터가 받는 자리**가 곧 제출 경로다 — 워커의 선의에 의존하지
@@ -20,6 +23,8 @@
     `[FEEDBACK]` 잔재      [중요] 아래 § 참조                              (소 2.1.2)
     재시도 피드백 블록     `AUTO-VERIFY FEEDBACK` 여는 줄(C·`#` 둘 다)        (`#806`)
     마크다운 펜스 잔재     14b 의 알려진 유일 결함                      (소 2.1.2)
+    `.py` 정의 안 된 이름  pyflakes `undefined name`(`__all__` 포함) — ⑦ 과 같은 차단 집합,
+                           기준 원본에 이미 있던 개수만큼은 기존이다      (`#815`)
 
 [중요] **보존 태그는 건드리지 않는다** — `[DOC]`·`[STATE]`·`[BIND]`·`[REPLICATED]` 와 무태그 주석은
 남아 있어야 정상이다. 태그가 두 종류라는 것이 소 1.1.1 의 실제 계약이다.
@@ -38,13 +43,17 @@
 - [주의] 다만 **없는 위반을 만들지는 않는다.** 인코딩이 유실된 사본으로 대조하면 치환된 글자가
   선언 키를 바꿔 정상 작업이 막힌다. *정상 작업을 막는 게이트가 통과시키는 게이트보다 나쁘다*
   — 그런 파일은 미검사로 넘긴다(판정은 층2·층3 이 이어받는다).
+- [주의] pyflakes 를 돌리지 못하면(미설치·예외) **막지 않고 `unchecked` 에 미검사로 적는다**
+  (사용자 결정, `#815`). 같은 결함은 ⑦ 의 `pystatic` 이 fail-closed 로 다시 본다 — 구멍이 아니다.
 """
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 
 from . import pyskel, skeleton
+from .pystatic import BLOCKING_FLAKES
 from .revise import FEEDBACK_OPEN, PY_FEEDBACK_OPEN
 
 
@@ -87,6 +96,7 @@ class Layer1:
     checked: bool = False
     problems: list = field(default_factory=list)
     skipped: list = field(default_factory=list)     # 기준 원본이 없어 동결을 못 본 파일
+    unchecked: list = field(default_factory=list)   # pyflakes 를 돌리지 못한 사유 (`#815`)
 
     @property
     def ok(self) -> bool:
@@ -97,16 +107,57 @@ class Layer1:
     def summary(self) -> str:
         if not self.checked:
             return "[주의] 층1 미확인"
+        un = (" · pyflakes 미검사 — " + "; ".join(self.unchecked[:2])) if self.unchecked else ""
         if self.problems:
-            return f"[중요] 층1 위반 {len(self.problems)}: " + "; ".join(self.problems[:3])
+            return f"[중요] 층1 위반 {len(self.problems)}: " + "; ".join(self.problems[:3]) + un
         s = "[완료] 층1 통과"
         if self.skipped:
             s += f" (기준 원본 없어 동결 미검사 {len(self.skipped)})"
-        return s
+        return s + un
+
+
+class _FlakesUnavailable(Exception):
+    """pyflakes 를 돌리지 못했다 — 「결함 0」도 「위반」도 아니다(미검사)."""
+
+
+def _flakes(path: str, text: str) -> list:
+    """pyflakes 의 **차단** 발견 `[(종류, 줄, 문구)]` — 분류는 ⑦(`pystatic`)과 같은 `BLOCKING_FLAKES`.
+
+    프로세스 안에서 부른다(파견 프로세스는 오래 살고, 조각마다 해석기를 띄울 이유가 없다).
+    구문 오류는 여기서 세지 않는다 — 호출자가 `pyskel.parse` 로 이미 본다(중복 문구 방지).
+    돌지 못하면 `_FlakesUnavailable`.
+    """
+    try:
+        from pyflakes import api as _api, reporter as _rep
+    except Exception as e:                                   # noqa: BLE001
+        raise _FlakesUnavailable(f"{type(e).__name__}: {e}") from None
+    found, broken = [], []
+
+    class _R(_rep.Reporter):
+        def __init__(self):                                  # noqa: D401 — 출력 스트림 없음
+            pass
+
+        def unexpectedError(self, filename, msg):
+            broken.append(str(msg))
+
+        def syntaxError(self, filename, msg, lineno, offset, text):
+            pass
+
+        def flake(self, m):
+            if type(m).__name__ in BLOCKING_FLAKES:
+                found.append((type(m).__name__, m.lineno, m.message % m.message_args))
+
+    try:
+        _api.check(text, path, _R())
+    except Exception as e:                                   # noqa: BLE001
+        raise _FlakesUnavailable(f"{path}: {type(e).__name__}: {e}") from None
+    if broken:
+        raise _FlakesUnavailable(f"{path}: {broken[0]}")
+    return found
 
 
 def check(files: dict, *, baseline=None) -> Layer1:
-    """동결 위반 · 휘발 태그 · `[FEEDBACK]` · 펜스 잔재를 본다. **무료 · LLM 0.**
+    """동결 위반 · 휘발 태그 · `[FEEDBACK]` · 펜스 잔재 · `.py` 의 정의 안 된 이름을 본다. **무료 · LLM 0.**
 
     `baseline(path) -> str|None` — 그 파일의 **변경 전** 내용. `None` 이면 신규 파일이라
     동결 대조 대상이 없다(정상). [중요] 함수 자체를 주지 않으면 **동결을 검사하지 않은 것**이다.
@@ -138,6 +189,26 @@ def check(files: dict, *, baseline=None) -> Layer1:
             if _tree is None:
                 L.problems.append(f"{path}: 구문 오류 — {_why}")
                 continue
+            # 🔴 `#815` — ⑦ 에서야 보이던 `undefined name` 을 조각 단위로 당긴다(즉시 재시도).
+            #    [중요] 기준 원본(골조)에 이미 있던 (종류, 문구)는 그 **개수만큼** 기존이다 — ⑦ 과 같은 규칙
+            try:
+                head = _flakes(path, text)
+                if head and baseline is not None:
+                    old = baseline(path)
+                    if old is not None:
+                        base_cnt = Counter((k, m) for k, _ln, m in _flakes(path, old))
+                        new = []
+                        for k, ln, m in head:
+                            if base_cnt[(k, m)] > 0:
+                                base_cnt[(k, m)] -= 1
+                            else:
+                                new.append((k, ln, m))
+                        head = new
+                for _k, ln, m in head:
+                    L.problems.append(f"{path}:{ln}: 정의되지 않은 이름 — {m}")
+            except _FlakesUnavailable as e:
+                if str(e) not in L.unchecked:
+                    L.unchecked.append(str(e))
         if baseline is None:
             continue
         if not (skeleton.is_header(path) or _is_py(path)):

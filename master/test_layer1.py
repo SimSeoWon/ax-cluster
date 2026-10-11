@@ -253,6 +253,84 @@ def test_python_freeze_stub_and_syntax():
         L = L1.check(files, baseline=lambda p: files.get(p))
         check(f"🔴 Kimodo 실물 {len(files)}개 — 자기 대조 오탐 0", L.ok, str(L.problems)[:200])
 
+def test_pyflakes_undefined_name_815():
+    print("\n🔴 `.py` — pyflakes 정의 안 된 이름을 조각 단위로 (`#815`)")
+    p = "pkg/mod.py"
+    bad = "def f():\n    return missing_name + 1\n"
+    L = L1.check({p: bad}, baseline=lambda _p: "def f():\n    raise NotImplementedError\n")
+    check("새 undefined name 은 위반", not L.ok and any("missing_name" in x for x in L.problems),
+          str(L.problems))
+    check("  문구가 줄 번호·한글 설명을 싣는다",
+          any(x.startswith(f"{p}:2: 정의되지 않은 이름") for x in L.problems), str(L.problems))
+
+    L = L1.check({p: bad}, baseline=lambda _p: bad)
+    check("기준 원본에 이미 있던 같은 이름은 통과", L.ok, L.summary)
+
+    two = "def f():\n    return missing_name + missing_name\n"
+    L = L1.check({p: two}, baseline=lambda _p: bad)
+    n = sum("missing_name" in x for x in L.problems)
+    check("🔴 기준보다 한 번 더 쓰면 한 건만 막는다 (개수 비교)", n == 1, str(L.problems))
+
+    L = L1.check({p: bad}, baseline=lambda _p: None)
+    check("신규 파일(None)의 undefined name 은 위반", not L.ok and len(L.problems) == 1,
+          str(L.problems))
+    L = L1.check({p: bad})
+    check("baseline 함수가 없어도 검사한다", not L.ok and len(L.problems) == 1, str(L.problems))
+
+    skel = ("import os\n\n\ndef f():\n    # [DOC] 경로를 돌려준다\n"
+            "    raise NotImplementedError\n")
+    impl = "import os\n\n\ndef f():\n    # [DOC] 경로를 돌려준다\n    return os.getcwd()\n"
+    L = L1.check({p: skel}, baseline=lambda _p: None)
+    check("미사용 import 만 있는 골조는 통과 (비차단)", L.ok, L.summary)
+    L = L1.check({p: impl}, baseline=lambda _p: skel)
+    check("  골조의 미사용 import 를 구현이 쓰면 통과", L.ok, L.summary)
+    L = L1.check({p: "import os\nx = 1\ny = f'abc'\nx = 2\n"})
+    check("  비차단 경고(미사용·f-string·재정의)는 문제에 안 든다", L.ok, L.summary)
+
+    L = L1.check({p: "__all__ = ['ghost']\n"}, baseline=lambda _p: None)
+    check("`__all__` 의 정의 안 된 이름은 위반",
+          not L.ok and any("ghost" in x and "__all__" in x for x in L.problems), str(L.problems))
+
+    L = L1.check({p: "def f(:\n    return nope\n"}, baseline=lambda _p: None)
+    check("구문 오류는 구문으로 한 번만 (pyflakes 중복 없음)",
+          len(L.problems) == 1 and "구문 오류" in L.problems[0], str(L.problems))
+
+    L = L1.check({"Source/A.cpp": "int f() { return missing_name; }\n",
+                  "notes.txt": "missing_name\n"}, baseline=lambda _p: None)
+    check(".py 가 아닌 파일은 이 검사 대상이 아니다", L.ok and not L.unchecked, L.summary)
+
+
+def test_pyflakes_unavailable_is_unchecked_not_blocked():
+    print("\n🔴 pyflakes 를 못 돌리면 막지 않고 미검사로 적는다 (`#815`, 사용자 결정)")
+    saved = {k: sys.modules.get(k) for k in ("pyflakes", "pyflakes.api", "pyflakes.reporter")}
+    for k in saved:
+        sys.modules[k] = None                                # → ImportError
+    try:
+        L = L1.check({"a.py": "x = missing_name\n", "b.py": "y = other\n"},
+                     baseline=lambda _p: None)
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+    check("미설치는 막지 않는다", L.ok and not L.problems, str(L.problems))
+    check("  미검사로 한 번 기록된다", len(L.unchecked) == 1 and "Error" in L.unchecked[0],
+          str(L.unchecked))
+    check("  요약이 pyflakes 미검사를 말한다", "pyflakes 미검사" in L.summary, L.summary)
+
+    real = L1._flakes
+    def boom(path, text):
+        raise L1._FlakesUnavailable(f"{path}: RuntimeError: 터짐")
+    L1._flakes = boom
+    try:
+        L = L1.check({"a.py": "x = missing_name\n"})
+    finally:
+        L1._flakes = real
+    check("pyflakes 예외도 막지 않고 미검사", L.ok and "pyflakes 미검사" in L.summary, L.summary)
+    L = L1.check({"a.py": "x = missing_name\n"})
+    check("  복원 뒤 다시 잡는다", not L.ok, L.summary)
+
 
 def main() -> int:
     for fn in (test_a_citation_is_not_a_marker,test_volatile_tags_are_caught, test_permanent_tags_and_plain_comments_pass,
@@ -261,7 +339,8 @@ def main() -> int:
                test_freeze_semantics, test_cpp_is_not_a_freeze_target,
                test_new_file_has_nothing_to_freeze, test_fail_closed_directions,
                test_residue_response_is_rejected_at_acceptance_not_at_apply,
-               test_python_freeze_stub_and_syntax):
+               test_python_freeze_stub_and_syntax,
+               test_pyflakes_undefined_name_815, test_pyflakes_unavailable_is_unchecked_not_blocked):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_layer1: {PASS}/{total} 통과")
