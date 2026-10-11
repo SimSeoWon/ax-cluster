@@ -88,6 +88,11 @@ PASS, REVISE, REJECT = "pass", "revise", "reject"
 #    원전과 같은 문자열을 쓴다(`/* AUTO-VERIFY FEEDBACK`).
 FEEDBACK_OPEN = "/* AUTO-VERIFY FEEDBACK"
 FEEDBACK_CLOSE = "*/"
+# 🔴 [중요] **`.py` 는 C 주석을 못 쓴다** (`#806`, 실측 2026-10-11 — `SyntaxError: invalid
+#    character '—'`). 원전은 UE5/C++ 만 받아서 C 모양 하나였다. `#695` 로 `.py` 조각이 생겨
+#    확장자로 고른다 — `.py` 는 `#` 줄 주석 블록, 나머지는 원전 모양 그대로다.
+PY_FEEDBACK_OPEN = "# AUTO-VERIFY FEEDBACK"
+PY_FEEDBACK_CLOSE = "# END AUTO-VERIFY FEEDBACK"
 # [중요] 피드백 커밋의 제목 접두어 — **워커에게 가는 지시**이지 결과가 아니다. 재작업 통합
 #    (`review.integrate_durables(rework=True)`)이 이 접두어로 결과 커밋과 가른다(#805).
 #    만드는 곳(`embed_feedback`)과 가르는 곳이 이 상수 하나를 쓴다.
@@ -259,11 +264,21 @@ def classify(issues, attempt_count: int = 1, max_attempts: int = MAX_ATTEMPTS) -
 
 
 def strip_feedback(text: str) -> str:
-    """이전 시도가 박아 둔 피드백 블록을 걷는다. 없으면 그대로 돌려준다.
+    """이전 시도가 박아 둔 피드백 블록을 걷는다(C 모양·`#` 모양 둘 다). 없으면 그대로 돌려준다.
 
     [주의] **누적되면 파일이 피드백으로 뒤덮인다** — 원전이 같은 자리에서 같은 일을 한다.
     """
     s = (text or "").lstrip()
+    if s.startswith(PY_FEEDBACK_OPEN):
+        # [중요] 여는 줄부터 END 줄까지만 걷는다 — 뒤따르는 일반 주석은 본문이다.
+        lines = s.splitlines(keepends=True)
+        for i, ln in enumerate(lines):
+            if ln.strip() == PY_FEEDBACK_CLOSE:
+                return "".join(lines[i + 1:]).lstrip()
+            if not ln.lstrip().startswith("#"):
+                break               # END 전에 주석 아닌 줄 — 잘린 블록이다
+        # [주의] END 줄이 없다 — 잘린 파일이다. 손대지 않는다(C 모양과 같은 규칙).
+        return text
     if not s.startswith(FEEDBACK_OPEN):
         return text
     end = s.find(FEEDBACK_CLOSE)
@@ -274,12 +289,19 @@ def strip_feedback(text: str) -> str:
     return s[end + len(FEEDBACK_CLOSE):].lstrip()
 
 
-def build_block(issues, attempt: int) -> str:
-    """피드백 주석 블록. **원전과 같은 모양**(`/* AUTO-VERIFY FEEDBACK (attempt #N) …`)."""
-    lines = [f"{FEEDBACK_OPEN} (attempt #{int(attempt)}) — address ALL items and "
-             f"REMOVE this block before next submit:"]
-    for iss in issues:
-        one = " ".join(str(iss).split())
+def build_block(issues, attempt: int, path: str = "") -> str:
+    """피드백 주석 블록. 기본은 **원전과 같은 모양**(`/* AUTO-VERIFY FEEDBACK (attempt #N) …`).
+
+    `path` 가 `.py` 면 `#` 줄 주석 블록이다(`#806`). 이슈는 한 줄로 접으므로 블록을 깨지 못한다.
+    """
+    head = (f"(attempt #{int(attempt)}) — address ALL items and "
+            f"REMOVE this block before next submit:")
+    ones = [" ".join(str(iss).split()) for iss in issues]
+    if str(path or "").lower().endswith(".py"):
+        return "\n".join([f"{PY_FEEDBACK_OPEN} {head}"]
+                         + [f"# - {one}" for one in ones] + [PY_FEEDBACK_CLOSE])
+    lines = [f"{FEEDBACK_OPEN} {head}"]
+    for one in ones:
         lines.append(f" * - {one}")
     lines.append(f" {FEEDBACK_CLOSE}")
     return "\n".join(lines)
@@ -345,13 +367,13 @@ def embed(paths, work_id: str, task_id: str, *, issues, attempt: int, targets,
         return e
 
     try:
-        block = build_block(issues, attempt)
         for r in rel:
             p = wt / r
             if not p.exists():
                 # [주의] 조용히 넘기지 않는다 — 어느 파일을 못 찾았는지 남긴다.
                 log(f"[revise] [주의] {task_id} 대상 없음 — {r}")
                 continue
+            block = build_block(issues, attempt, r)     # 파일마다 그 언어의 주석 모양
             body = strip_feedback(p.read_text(encoding="utf-8", errors="replace"))
             p.write_text(block + "\n\n" + body, encoding="utf-8")
             e.files.append(r)

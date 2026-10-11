@@ -52,6 +52,40 @@ check("🔴 닫는 줄이 없으면 손대지 않는다 (본문 보호)",
 twice = R.build_block(["새 사유"], 3) + "\n\n" + R.strip_feedback(src)
 check("두 번 박아도 블록은 하나", twice.count("AUTO-VERIFY FEEDBACK") == 1)
 
+print("[3b] #806 — `.py` 는 `#` 줄 주석 블록, 나머지는 원전 모양 그대로")
+import ast                                                              # noqa: E402
+check("C++ 는 종전과 같은 바이트",
+      R.build_block(["a  b\nc"], 2) == R.build_block(["a  b\nc"], 2, "Source/A.cpp")
+      == "/* AUTO-VERIFY FEEDBACK (attempt #2) — address ALL items and REMOVE this block "
+         "before next submit:\n * - a b c\n */")
+check("`.h` 도 C 모양", R.build_block(["x"], 2, "A.h").startswith(R.FEEDBACK_OPEN))
+pb = R.build_block(["[PSEUDO] 가 남아 있다", "줄이\n둘 */ 이고 \"따옴표\""], 2, "pkg/mod.py")
+check("`.py` 는 # 여는 줄", pb.startswith(R.PY_FEEDBACK_OPEN + " (attempt #2)"), pb[:60])
+check("`.py` 는 END 줄로 닫는다", pb.splitlines()[-1] == R.PY_FEEDBACK_CLOSE)
+check("`.py` 블록의 모든 줄이 주석", all(ln.startswith("#") for ln in pb.splitlines()))
+pbody = "import os\n\n\ndef f():\n    return os.sep\n"
+pfile = pb + "\n\n" + pbody
+try:
+    ast.parse(pfile)
+    _ok = True
+except SyntaxError as ex:
+    _ok = False
+    print("    ", ex)
+check("🔴 블록 박힌 `.py` 가 ast.parse 를 통과", _ok)
+check("`.py` strip 왕복은 본문 그대로", R.strip_feedback(pfile) == pbody, R.strip_feedback(pfile)[:80])
+again = R.build_block(["새 사유"], 3, "m.py") + "\n\n" + R.strip_feedback(pfile)
+again2 = R.build_block(["또"], 4, "m.py") + "\n\n" + R.strip_feedback(again)
+check("`.py` 두 번 박아도 블록은 하나", again2.count("AUTO-VERIFY FEEDBACK") == 2
+      and again2.count(R.PY_FEEDBACK_OPEN + " (attempt") == 1, again2)
+check("`.py` 재박기 뒤 본문 그대로", R.strip_feedback(again2) == pbody)
+cm = "# 일반 주석도 본문이다\nx = 1\n"
+check("END 뒤 일반 주석은 먹지 않는다",
+      R.strip_feedback(R.build_block(["y"], 2, "m.py") + "\n\n" + cm) == cm)
+cut = R.PY_FEEDBACK_OPEN + " (attempt #2) — 잘림\n# - y\nx = 1\n# END 아님\n"
+check("🔴 END 줄이 없는 `#` 블록은 손대지 않는다", R.strip_feedback(cut) == cut)
+check("C 블록은 `.py` 경로에서도 걷힌다(옛 잔재)",
+      R.strip_feedback(R.build_block(["z"], 2) + "\n\n" + pbody) == pbody)
+
 print("[4] embed — 거절 조건 (조용히 성공하지 않는다)")
 
 

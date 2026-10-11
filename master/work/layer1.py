@@ -18,6 +18,7 @@
     동결 인터페이스 위반   추가는 허용, **변경·삭제는 위반**            (소 2.1.1)
     휘발 태그 잔재         `[PSEUDO]`·`[PSEUDO:N]`·`[IMPL]`            (소 2.1.2)
     `[FEEDBACK]` 잔재      [중요] 아래 § 참조                              (소 2.1.2)
+    재시도 피드백 블록     `AUTO-VERIFY FEEDBACK` 여는 줄(C·`#` 둘 다)        (`#806`)
     마크다운 펜스 잔재     14b 의 알려진 유일 결함                      (소 2.1.2)
 
 [중요] **보존 태그는 건드리지 않는다** — `[DOC]`·`[STATE]`·`[BIND]`·`[REPLICATED]` 와 무태그 주석은
@@ -44,6 +45,7 @@ import re
 from dataclasses import dataclass, field
 
 from . import pyskel, skeleton
+from .revise import FEEDBACK_OPEN, PY_FEEDBACK_OPEN
 
 
 def _is_py(path: str) -> bool:
@@ -67,6 +69,12 @@ _VOLATILE = re.compile(
     r"(?m)^[ \t]*(?://+|/\*+|\*|#)[ \t]*(?:"
     + "|".join(re.escape(t.rstrip("]")) + r"(?::\d+)?\]" for t in skeleton.VOLATILE_TAGS)
     + ")")
+# 🔴 `#806` — 재시도 피드백 블록(`revise.build_block`)이 남으면 위반이다. 원전도 *"블록이
+#    남아 있으면 검증 실패"* 다(`worker/validator.py`). 종전에는 `.py` 에서 C 주석이 구문을
+#    깨뜨려 **우연히** 잡혔다 — `#` 모양으로 바뀌면 그 우연이 사라진다.
+# [주의] 인용과 가른다 — **줄 머리**(공백 허용)의 여는 줄만 본다. 문자열 안 언급은 아니다.
+_FEEDBACK_BLOCK = re.compile(
+    r"(?m)^[ \t]*(?:" + re.escape(FEEDBACK_OPEN) + "|" + re.escape(PY_FEEDBACK_OPEN) + ")")
 # 위반 문구에 태그 이름을 싣기 위한 보조 — 어떤 태그였나만 뽑는다
 _VOLATILE_NAME = re.compile(
     "|".join(re.escape(t.rstrip("]")) + r"(?::\d+)?\]" for t in skeleton.VOLATILE_TAGS))
@@ -119,6 +127,8 @@ def check(files: dict, *, baseline=None) -> Layer1:
         if FEEDBACK_TAG in text:
             # [중요] 소스에 남으면 다음 라운드가 그것을 또 읽는다 (리포트 11 §30 의 무한 실패)
             L.problems.append(f"{path}: `{FEEDBACK_TAG}` 가 소스에 남아 있다")
+        if _FEEDBACK_BLOCK.search(text):
+            L.problems.append(f"{path}: 재시도 피드백 블록(AUTO-VERIFY FEEDBACK)이 남아 있다")
         if skeleton._FENCE_ANY.search(text):
             L.problems.append(f"{path}: 마크다운 펜스가 남아 있다")
 

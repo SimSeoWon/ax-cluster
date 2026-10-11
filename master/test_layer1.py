@@ -69,6 +69,25 @@ def test_feedback_left_in_source_is_a_violation() -> None:
     check("사유가 FEEDBACK 을 지목", any("FEEDBACK" in p for p in r.problems), str(r.problems))
 
 
+def test_retry_feedback_block_residue_is_a_violation() -> None:
+    """`#806` — 재시도 피드백 블록(C·`#` 둘 다)이 남으면 위반. 문장 중간의 인용은 아니다."""
+    from master.work import revise as RV
+    r = L1.check({C: RV.build_block(["x"], 2, C) + "\n\nvoid UFoo::F() {}\n"})
+    check("C 피드백 블록 잔재는 위반", not r.ok, r.summary)
+    check("  사유가 AUTO-VERIFY FEEDBACK 을 지목",
+          any("AUTO-VERIFY FEEDBACK" in p for p in r.problems), str(r.problems))
+    r = L1.check({"m.py": RV.build_block(["x"], 2, "m.py") + "\n\ndef f():\n    return 1\n"})
+    check("`#` 피드백 블록 잔재는 위반 (구문은 멀쩡해도)", not r.ok
+          and any("AUTO-VERIFY FEEDBACK" in p for p in r.problems)
+          and not any("구문 오류" in p for p in r.problems), str(r.problems))
+    r = L1.check({"m.py": "    # AUTO-VERIFY FEEDBACK 들여쓴 잔재\nx = 1\n"})
+    check("들여쓴 `#` 여는 줄도 위반", not r.ok, r.summary)
+    r = L1.check({"m.py": 'OPEN = "# AUTO-VERIFY FEEDBACK"\nC = "/* AUTO-VERIFY FEEDBACK"\n'})
+    check("문자열 안 언급(줄 중간)은 통과", r.ok, r.summary)
+    r = L1.check({C: '// 블록은 /* AUTO-VERIFY FEEDBACK 로 연다\nvoid UFoo::F() {}\n'})
+    check("주석 문장 중간 인용은 통과", r.ok, r.summary)
+
+
 def test_fence_residue_is_a_violation() -> None:
     r = L1.check({C: "```cpp\nvoid UFoo::F() {}\n```\n"})
     check("펜스 잔재는 위반", not r.ok, r.summary)
@@ -237,7 +256,8 @@ def test_python_freeze_stub_and_syntax():
 
 def main() -> int:
     for fn in (test_a_citation_is_not_a_marker,test_volatile_tags_are_caught, test_permanent_tags_and_plain_comments_pass,
-               test_feedback_left_in_source_is_a_violation, test_fence_residue_is_a_violation,
+               test_feedback_left_in_source_is_a_violation, test_retry_feedback_block_residue_is_a_violation,
+               test_fence_residue_is_a_violation,
                test_freeze_semantics, test_cpp_is_not_a_freeze_target,
                test_new_file_has_nothing_to_freeze, test_fail_closed_directions,
                test_residue_response_is_rejected_at_acceptance_not_at_apply,

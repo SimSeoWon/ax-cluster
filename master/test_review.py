@@ -1065,7 +1065,8 @@ def test_rework_skips_revise_feedback_commits():
         check("#805 실패 조각 근거는 검증 완료가 아니다",
               a.rework_evidence and not any(e["verified"] for e in a.rework_evidence))
         check("#805 통합 트리에 피드백 블록이 없다",
-              not any(RV.FEEDBACK_OPEN in f.read_text(encoding="utf-8", errors="replace")
+              not any(op in f.read_text(encoding="utf-8", errors="replace")
+                      for op in (RV.FEEDBACK_OPEN, RV.PY_FEEDBACK_OPEN)       # #806 — 두 모양 다
                       for f in tree.rglob("*.*") if ".git" not in f.parts and f.is_file()))
     finally:
         shutil.rmtree(root, ignore_errors=True)
