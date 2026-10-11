@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -45,7 +44,7 @@ from pathlib import Path
 
 from .. import gitea_group
 from ..context_search.paths import ProjectPaths, resolve
-from ..projects.config import ConfigError, Registry, normalize_project_id
+from ..projects.config import ConfigError, Registry
 from .spool import Event, Spool
 
 DIGEST_FILE = "context_digest.json"
@@ -221,7 +220,7 @@ def _git(repo: Path, *args: str, group: bool | None = None) -> tuple[int, str]:
 #    이유는 층이다 — `context_search/rebuild` 도 찍어야 하는데 그쪽이 `events` 를 부르면
 #    **층 역전**이다. [주의] 이 이름으로 부르던 곳(테스트 포함)이 그대로 돌도록 재수출한다.
 from ..canary import (  # noqa: E402,F401
-    KIND_CONTEXT_MD_LOST, KIND_DOMAIN_INDEX_GAP, append_canary,
+    append_canary,
 )
 
 
@@ -897,7 +896,7 @@ def process_event(ev: Event, *, registry: Registry | None = None,
     try:
         name = reg.find_by_project_id(ev.project_id)
         if not name:
-            r.error = f"등록되지 않은 project_id (§5.5.4-④)"
+            r.error = "등록되지 않은 project_id (§5.5.4-④)"
             return r
         paths = resolve(name, registry=reg)
         r.project = name

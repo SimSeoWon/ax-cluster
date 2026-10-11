@@ -751,7 +751,7 @@ def _project_facts_rows(project: str) -> list:
     #    받았나」를 문서가 답할 수 있어야 한다(공통 표에 적으면 남의 프로젝트에서 거짓이 된다).
     own = sorted(r for r, _s in workshop_files("requester", project)
                  if (workshop_by_project_dir(project) / r[len(".claude/"):]).is_file())
-    rows.append(f"| 이 프로젝트만의 작업장 자산 | "
+    rows.append("| 이 프로젝트만의 작업장 자산 | "
                 + (", ".join(f"`{r}`" for r in own) if own else "(없음 — 공통만)") + " |")
     return rows + [""]
 
@@ -787,7 +787,7 @@ def managed_block(project: str, facts: HostFacts) -> str:
     lines = [
         MD_BEGIN,
         "",
-        f"## AX 클러스터 — 이 머신의 역할 (마스터 생성)",
+        "## AX 클러스터 — 이 머신의 역할 (마스터 생성)",
         "",
         # [중요] **축을 문서가 스스로 말한다** (`#309`, 사용자 지시 2026-08-24: *"워커쪽에
         #    기입되는 내용은 하나의 프로젝트에 디펜던시가 되지 않고, 신규 프로젝트를 등록한다고
@@ -797,8 +797,8 @@ def managed_block(project: str, facts: HostFacts) -> str:
          "아래 「소스 트리 실측」 절뿐이고, 그 절은 **매 배달마다 마스터가 다시 만든다.** "
          "그래서 새 프로젝트를 등록할 때 사람이 옮겨 적을 것이 없다."),
         "",
-        f"| | |",
-        f"|---|---|",
+        "| | |",
+        "|---|---|",
         f"| 이 체크아웃 | `{facts.path}` |",
         f"| 호스트 | `{facts.host}` · 계정 `{facts.user}` · {facts.os} |",
         f"| 설정 | `./{CONFIG_REL}` — 경로·능력·백엔드의 **유일한 출처** |",

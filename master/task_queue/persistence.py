@@ -1,15 +1,14 @@
+# [DOC] import 는 이 모듈이 실제로 쓰는 이름만 둔다 (#815 pyflakes 정리).
 import os
 import sys
 import json
-import time
-import shutil
 import secrets
 import threading
 import subprocess
 from pathlib import Path
 import hashlib
-from datetime import datetime, timezone, timedelta
-from typing import Optional, Any
+from datetime import datetime, timezone
+from typing import Any
 
 # ─────────────────────────────────────────
 # 경로·로깅

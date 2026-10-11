@@ -21,10 +21,9 @@ import sys
 import json
 import threading
 from pathlib import Path
-from typing import Optional
 
 from .models import (
-    _VALID_DIRECTIVES, _VERIFY_RESULT_TO_STATUS, WorkRegisterReq, TaskRegisterReq,
+    _VALID_DIRECTIVES, WorkRegisterReq, TaskRegisterReq,
     ClaimReq, HeartbeatReq, SubmitReq, SubmitFailReq, VerifyReq, CancelReq,
     AdminResetReq,
     WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq,
@@ -35,8 +34,8 @@ from .models import (
 )
 from . import tagging                      # 라우트별 태그 정책 (#257)
 from .persistence import (
-    TaskIndex, _project_root, _tasks_dir, _archive_dir, _log_dir, _tq_log,
-    _bootstrap_log_rotation, _atomic_write, _read_md, _git_repo, _slugify
+    TaskIndex, _project_root, _tasks_dir, _tq_log,
+    _bootstrap_log_rotation, _slugify
 )
 from .logic import (
     register_work, register_task, reopen_work, claim_task, heartbeat, poll_worker,

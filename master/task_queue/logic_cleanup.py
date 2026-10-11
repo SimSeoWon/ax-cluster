@@ -2,6 +2,7 @@
 
 lifecycle → cleanup 단방향 의존 — 이 모듈은 logic_lifecycle 을 import 하지 않는다.
 """
+# [DOC] import 는 이 모듈이 실제로 쓰는 이름만 둔다 (#815 pyflakes 정리).
 import json
 import threading
 import urllib.request
@@ -9,7 +10,7 @@ import urllib.error
 from pathlib import Path
 from typing import Optional
 from .persistence import (
-    TaskIndex, _tq_log, _git_repo, _git, is_live_queue_root
+    TaskIndex, _tq_log, is_live_queue_root
 )
 from .logic_persist import update_work_meta, _save_work, _save_task
 from .persistence import _now_iso
