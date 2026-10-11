@@ -62,8 +62,6 @@ from __future__ import annotations
 
 import ast
 import re
-# [PSEUDO] 이 import 의 `subprocess` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
-import subprocess
 import time
 from pathlib import Path
 
@@ -494,8 +492,6 @@ def main(argv=None) -> int:
     빨가면 유닛이 아니다, `ax-batch.service` 와 같은 규약).
     """
     import argparse
-    # [PSEUDO] 이 import 의 `_sys` 은 이 모듈에서 쓰이지 않는다(pyflakes) — 그 이름만 지운다. 같은 문의 다른 이름은 그대로 둔다
-    import sys as _sys
 
     from ..context_search.paths import resolve
     from ..projects.config import ConfigError, Registry
