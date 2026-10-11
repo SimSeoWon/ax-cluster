@@ -269,7 +269,6 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 tasks_c = [t for t in tasks_cx
                            if not t.get("no_work") and not t.get("requester_handoff")]
                 files_v = sorted({t.get("target_file", "") for t in tasks_v if t.get("target_file")})
-                files_f = sorted({t.get("target_file", "") for t in tasks_f if t.get("target_file")})
                 files_c = sorted({t.get("target_file", "") for t in tasks_c if t.get("target_file")})
                 nw_details = [(t.get("target_file", "?"),
                                str(t.get("cancel_reason") or "")[:200]) for t in tasks_nw]

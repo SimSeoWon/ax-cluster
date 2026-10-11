@@ -657,21 +657,6 @@ def claude_md_body(project: str) -> str:
             "{PROJECT_LINE}", _profile.project_line(project))
 
     f = _uproject_facts(project)
-    up = f["uproject"] or "(찾지 못했다)"
-    editor = next((t for t in f["targets"] if t.lower().endswith("editor")), "")
-    if f["uproject"] and editor:
-        build = ('```bat\n"<UE5>\\Engine\\Build\\BatchFiles\\Build.bat" ^\n'
-                 f'  {editor} Win64 Development "<checkout>\\{up}" '
-                 '-WaitMutex -FromMsBuild\n```\n\n'
-                 '(only where UE5 is installed — check the AX block)')
-    else:
-        build = ("[중요] **빌드 명령을 적지 않았다** — 소스 트리에서 "
-                 f"`.uproject`({up}) 또는 Editor 타깃({', '.join(f['targets']) or '없음'})을 "
-                 "확정하지 못했다. 추측한 명령은 사람을 엉뚱한 곳으로 보낸다.")
-    rows = ["| | |", "|---|---|",
-            f"| `.uproject` | `{up}` |",
-            f"| Targets | {', '.join(f'`{t}`' for t in f['targets']) or '(없음)'} |",
-            f"| Modules | {', '.join(f'`{m}`' for m in f['modules']) or '(없음)'} |"]
     # 🔴 [중요] **첫 문단은 사람의 답에서 온다** (`#650`). 종전에는 *"Unreal Engine 프로젝트"*
     #    한 줄이 전부였고, 「무슨 게임인가·왜 존재하는가」는 **어디에도 없었다**. 그 공백을
     #    지휘자가 다른 문서로 메우다 남의 프로젝트 설명을 NS 의 사실로 읽었다(`#649`).
