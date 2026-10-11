@@ -5,7 +5,7 @@
 [중요] 지키는 불변식:
    1. claude·codex 공용 진입도 agy 와 같은 계약 — **감싼 구간만** 한 줄, 못 읽은 토큰은 `measured=False`
    2. 호출자가 받는 본문은 **종전 평문 그대로**다(claude 봉투를 벗긴다)
-   3. 층2(`generate.dispatch`) → `layer2` · 게시판 → `board` · 리뷰 기본 체인 → `review` 로 남는다
+   3. 층2(`layer2_verify.verify_files`) → `layer2` · 게시판 → `board` · 리뷰 기본 체인 → `review` 로 남는다
    4. 🔴 **두 번 세지 않는다** — 레인(`usage.call` → `lanes.run_one`)은 파견이 직접 기록하므로
       공용 진입의 기록을 끈다. 감싼 구간 안에서 불러도 sink 줄은 0 이다
    5. 대시보드가 새 줄(claude·codex·agy)을 제 계열로 분류한다
@@ -16,7 +16,6 @@
 """
 from __future__ import annotations
 
-import importlib
 import io
 import json
 import os
@@ -37,8 +36,6 @@ from master.webui import board as B                                   # noqa: E4
 from master.work import lanes as LN                                   # noqa: E402
 from master.work import usage                                         # noqa: E402
 from master.work import usage_dashboard as UD                         # noqa: E402
-
-generate = importlib.import_module("master.work.generate")
 
 PASS = FAIL = 0
 
@@ -240,27 +237,21 @@ def main() -> int:
 
         # [DOC] #734: `generate.dispatch` 는 골조에서 걷혔다. 층2 사용량 기록 검사는 실전 입구와 같은 모양 —
         #       `usage.sink(gp.usage_log, source="layer2", task_id=…)` 안에서 `layer2_verify.verify_files` 를 직접 부른다.
-        # [PSEUDO] #734: ④ 절을 그렇게 바꾼다. 확인하는 사실은 그대로 — layer2 한 줄·lane agy·task_id, agy 실패 시 agy rc≠0 → claude 두 줄. 브로커 caller 는 더 필요 없다. 머리말 3번 줄의 `generate.dispatch` 언급도 고친다.
-        print("④ 층2 — `generate.dispatch` → source=layer2")
+        print("④ 층2 — `layer2_verify.verify_files` → source=layer2")
         _env(AGY_FAKE="ok", FAKE_RESULT="- none\nVERDICT: APPROVE")
         gp = ProjectPaths(name="G", root=tmp / "G")
         (tmp / "G").mkdir()
-        broker_calls = []
-
-        def caller(url, payload):
-            broker_calls.append(url)
-            return "void A::F() {}\n"
-        d = generate.dispatch(gp, "task-7", instruction="x", context="CTX", target_file="A.cpp",
-                              caller=caller)
+        files = [("A.cpp", "void A::F() {}\n")]
+        with usage.sink(gp.usage_log, source="layer2", task_id="task-7"):
+            verdict = L2.verify_files(files, timeout=20)
         rows = lines(gp.usage_log)
-        check("층2 가 실제로 돌았다 (판정이 있다)", d.verdict is not None, d.summary())
+        check("층2 가 실제로 돌았다 (판정이 있다)", verdict.approved and verdict.failure is None, verdict.summary())
         check("[중요] 트윈 usage_log 에 layer2 한 줄 · task_id", len(rows) == 1 and
               (rows[0].get("source"), rows[0].get("lane"), rows[0].get("task_id")) == ("layer2", "agy", "task-7"),
               str(rows))
-        check("생성(브로커)은 layer2 로 묶이지 않는다", all(r.get("lane") == "agy" for r in rows) and broker_calls)
         _env(AGY_FAKE="fail", CLAUDE_FAKE="json", FAKE_RESULT="VERDICT: APPROVE")
-        with redirect_stderr(err):
-            generate.dispatch(gp, "task-8", instruction="x", context="CTX", caller=caller)
+        with redirect_stderr(err), usage.sink(gp.usage_log, source="layer2", task_id="task-8"):
+            L2.verify_files(files, timeout=20)
         rows = [r for r in lines(gp.usage_log) if r.get("task_id") == "task-8"]
         check("폴백하면 시도한 백엔드마다 한 줄 (agy rc≠0 → claude)",
               [(r["lane"], r["rc"]) for r in rows] == [("agy", 3), ("claude", 0)], str(rows))

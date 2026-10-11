@@ -27,10 +27,8 @@ from master.work.register import (  # noqa: E402
 )
 from master.work.generate import (  # noqa: E402
     # [DOC] #734: `generate.dispatch` 는 골조에서 걷혔다 — 아래 import 는 지금 ImportError 다.
-    # [PSEUDO] #734: import 에서 `dispatch` 를 빼고, `dispatch(...)` 를 부르는 검사 절([20]~[22] — 펜스·fail-closed·빈 컨텍스트·층2 파일명)을 지운다. `generate`·`build_prompt`·`strip_fence` 검사는 남긴다. 빈 컨텍스트 거절은 `generate(...)` 가 GenerateError 를 내는지로 남긴다.
-    GenerateError, build_prompt, dispatch, generate, strip_fence,
+    GenerateError, build_prompt, generate, strip_fence,
 )
-from master.verdict import Verdict  # noqa: E402
 from master.work import register as _R  # noqa: E402  (프로필 게이트 주입용)
 
 # 🔴 [중요] **프로필 게이트를 이 파일에서는 끈다** (`#650`). `register_work` 는 이제
@@ -469,7 +467,7 @@ def main() -> int:
           got3.tasks and "task_id 도 아니다" in (got3.tasks[0].error or ""),
           str(got3.tasks[:1]))
 
-    # ── 생성 → 층2 → 인계 ───────────────────────────
+    # ── 코드 생성 ──────────────────────────────────
     F = chr(96) * 3
     print("\n[17] 마크다운 펜스 — §4.4 가 실측한 coder 모델의 유일한 결함")
     for label, src, want_code, want_stripped in [
@@ -485,64 +483,37 @@ def main() -> int:
     check("[중요] 중간 펜스는 남긴다 (층2 가 잡아야 한다)", F in code and not st, code)
     check("빈 입력", strip_fence("") == ("", False))
 
-    print("\n[20] 생성 → 층2 → 인계")
-    # [중요] 컨텍스트는 **호출자가 준다** (매니페스트 철거 2026-09-02) — 골조의 `[DOC]` 와
-    #    base 커밋 선언부다. 비면 `generate` 가 거절한다(아래 [19] 대체 검사).
+    print("\n[18] 생성 프롬프트와 생성 결과")
+    context = "관련 코드: UFoo"
+    declarations = "void Init();"
+    prompt = build_prompt(context=context, instruction="Init 구현", target_file="Foo.cpp",
+                          declarations=declarations)
+    check("컨텍스트·선언부·대상·지시를 싣는다",
+          all(part in prompt for part in (context, declarations, "Foo.cpp", "Init 구현")))
+    check("선언부는 컨텍스트 뒤, TASK 앞이다",
+          prompt.index(context) < prompt.index(declarations) < prompt.index("TASK:"))
     gp = ProjectPaths(name="G", root=tmp / "G")
-    CTX = "## 관련 코드\n- `A.md` 발췌"
-    seen = {}
+    generated = generate(gp, "t1", instruction="Init 구현", context=context,
+                         target_file="Foo.cpp",
+                         caller=lambda url, payload: f"{F}cpp\nvoid UFoo::Init(){{}}\n{F}")
+    check("생성 결과의 펜스를 벗긴다",
+          generated.code == "void UFoo::Init(){}" and generated.stripped_fence)
+    check("생성 메타데이터를 남긴다",
+          generated.task_id == "t1" and not generated.empty and
+          generated.raw_len > len(generated.code) and generated.prompt_chars > 0)
+
+    print("\n[19] [중요] 컨텍스트가 비면 생성하지 않는다 (grounding 0 = 환각 조건)")
+    gp = ProjectPaths(name="G", root=tmp / "G")
+    called = []
 
     def caller(url, payload):
-        seen.update(payload)
-        return f"{F}cpp\nvoid UFoo::Init(){{}}\n{F}"
+        called.append((url, payload))
+        return "void UFoo::Init(){}"
 
-    ok_v = Verdict(approved=True, failure=None)
-    d = dispatch(gp, "t1", instruction="Init 구현", context=CTX, target_file="Foo.cpp",
-                 caller=caller, verifier=lambda files: ok_v)
-    check("ok", d.ok, d.summary())
-    check("펜스가 벗겨진 코드", d.code == "void UFoo::Init(){}", repr(d.code))
-    check("  벗겼다고 알린다", any("펜스" in n for n in d.notes), str(d.notes))
-    check("[중요] stateless — context 를 안 보낸다", "context" not in seen, str(sorted(seen)))
-    check("temperature=0", seen["options"]["temperature"] == 0)
-    check("think=False (35B 토큰 낭비 방지)", seen["think"] is False)
-    check("stream=False", seen["stream"] is False)
-
-    print("\n[21] [중요] fail-closed — 층2 를 못 넘으면 인계하지 않는다")
-    bad = Verdict(approved=False, failure=None, findings=["세미콜론 누락"])
-    d = dispatch(gp, "t1", instruction="x", context=CTX, caller=caller, verifier=lambda f: bad)
-    check("차단", not d.ok and d.verdict.blocked)
-    check("  코드는 들고 있다 (진단용)", bool(d.code))
-    check("  요약에 드러난다", "차단" in d.summary(), d.summary())
-
-    d = dispatch(gp, "t1", instruction="x", context=CTX, caller=lambda u, p: "",
-                 verifier=lambda f: ok_v)
-    check("빈 생성 = 차단", not d.ok and "비었다" in d.error, d.error)
-
-    d = dispatch(gp, "t1", instruction="x", context=CTX, caller=caller, verifier=lambda f: None)
-    check("[중요] verdict 가 없으면 통과가 아니다", not d.ok)
-
-    def dead(url, payload):
-        raise GenerateError("브로커에 닿지 않는다")
-
-    d = dispatch(gp, "t1", instruction="x", context=CTX, caller=dead)
-    check("브로커 장애 = 차단", not d.ok and "닿지 않는다" in d.error)
-    check("  층2 를 부르지 않는다", d.verdict is None)
-
-    print("\n[21b] [중요] 컨텍스트가 비면 생성하지 않는다 (grounding 0 = 환각 조건)")
-    d = dispatch(gp, "t1", instruction="x", context="   ", caller=caller,
-                 verifier=lambda f: ok_v)
-    check("[중요] 빈 컨텍스트는 차단", not d.ok and "컨텍스트가 비었다" in d.error, d.error)
-    check("  층2 를 부르지 않는다", d.verdict is None)
-
-    print("\n[22] 층2 에 넘기는 파일명")
-    names = []
-    dispatch(gp, "t1", instruction="x", context=CTX, target_file="Bar.cpp", caller=caller,
-             verifier=lambda f: (names.append(f[0][0]), ok_v)[1])
-    check("target_file 을 쓴다", names == ["Bar.cpp"], str(names))
-    names.clear()
-    dispatch(gp, "t1", instruction="x", context=CTX, caller=caller,
-             verifier=lambda f: (names.append(f[0][0]), ok_v)[1])
-    check("없으면 task_id 로", names == ["t1.cpp"], str(names))
+    check("[중요] 빈 컨텍스트는 GenerateError",
+          _raises(lambda: generate(gp, "t1", instruction="x", context="   ",
+                                   caller=caller), GenerateError))
+    check("  브로커를 부르지 않는다", not called, str(called))
 
     shutil.rmtree(tmp, ignore_errors=True)
 
