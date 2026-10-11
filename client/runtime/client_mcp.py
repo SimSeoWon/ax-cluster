@@ -353,6 +353,14 @@ def tool_improve_work(_unused, args: dict, *, root=None) -> dict:
         body["target_branch"] = v
     if args.get("worker_mode") not in (None, ""):
         body["worker_mode"] = args["worker_mode"]
+    if "rework" in args:
+        if not isinstance(args["rework"], bool):
+            raise ClientError("rework 는 boolean 이어야 한다")
+        body["rework"] = args["rework"]
+    if args.get("expected_base_commit") not in (None, ""):
+        if not isinstance(args["expected_base_commit"], str):
+            raise ClientError("expected_base_commit 은 문자열이어야 한다")
+        body["expected_base_commit"] = args["expected_base_commit"]
     return projects_write_api(root)("POST", "/work/improve", body)
 
 
@@ -1355,8 +1363,9 @@ TOOLS.append(
          "[중요] **`round` 는 확인용이다** — 값은 큐가 이미 안다(현재+1). `get_work` 로 현재 "
          "라운드를 보고 +1 을 실어라. 어긋나면 큐가 **거절**한다(맞추지 않는다) — 너와 큐가 "
          "서로 다른 라운드를 보고 있다는 뜻이기 때문이다. "
-         "[중요] **부를 수 있는 상태는 `ready_for_review` 뿐이다** — 조각이 아직 도는 중이거나 "
-         "마감된 work 이면 사유를 실어 거절한다. "
+         "일반 개선은 `ready_for_review` 에서만 가능하다. 골조 실패 라운드는 재작업 통합 "
+         "전진 후 `rework=true` 와 수정 골조의 `expected_base_commit` 을 함께 실어 연다. "
+         "통합 기준에서 이어진 골조인지 확인하며 실패 이력은 유지한다. "
          "[주의] **`target_branch` 는 보통 비운다** — 비우면 큐에 저장된 작업 브랜치를 쓴다. "
          "지어내면 ⑺ 이 전진시킨 브랜치가 원복된다. "
          "[주의] 골조는 여기서도 **네가** 만든다 — 전진한 `.h`/`.cpp` 에 `[PSEUDO]` 지시 주석을 "
@@ -1370,6 +1379,10 @@ TOOLS.append(
                                    "description": ("🔴 이번에 여는 라운드 = **현재 + 1** (2 이상). "
                                                    "확인용이라 어긋나면 거절된다")},
                          "specs": _register_specs_schema(),
+                         "rework": {"type": "boolean", "default": False,
+                                    "description": "골조 실패 라운드의 통합 전진 후 재작업 개선요청"},
+                         "expected_base_commit": {"type": "string",
+                                    "description": "통합본에서 수정한 골조의 현재 원격 커밋"},
                          "worker_mode": {"type": "string", "enum": ["lane", "claude", "codex"],
                                          "description": "이번 라운드의 실행 모드. 생략하면 기존 값을 유지한다"},
                          "target_branch": {"type": "string",

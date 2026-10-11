@@ -432,6 +432,9 @@ def terminal_skip_reason(work: dict, tasks) -> str:
     st = str((work or {}).get("merge_status") or "")
     if st not in TERMINAL_MERGE_STATUSES:
         return f"merge_status={st!r} — 종결(rejected/cancelled) 이 아니다"
+    from .workmodel import Work
+    if st == "rejected" and Work.from_record(work, tasks).execution_summary()["rework_required"]:
+        return "골조 재작업 대상 — 통합 기준과 실패·성공 결과 브랜치를 보존한다"
     live = [t.get("task_id") for t in (tasks or [])
             if str(t.get("status") or "") not in _TASK_TERMINAL]
     if live:

@@ -5,6 +5,8 @@ Temporary persisted queue + synchronous fake notification, no network/SSH/real C
 import sys
 import tempfile
 import unittest
+import copy
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -130,6 +132,77 @@ class TerminalTests(unittest.TestCase):
         self.assertTrue(result["stale"])
         self.assertEqual(self.work["merge_status"], "in_progress")
 
+    def test_quota_failure_persists_reason_without_terminating_and_reassigns(self):
+        self.tasks(1)
+        task = self.claim()
+        tid = task["task_id"]
+        detail = "[fp:abcdefabcdef] [kind:quota] usage limit " + "x" * 900
+        before = datetime.now(timezone.utc)
+        result = L.submit_fail(self.idx, tid, "quota_exhausted", detail,
+                               worker_id="192.168.0.2", epoch=task["epoch"])
+        after = datetime.now(timezone.utc)
+        self.assertTrue(result["released"])
+        rec = self.idx.tasks[tid]
+        self.assertEqual(rec["status"], "pending")
+        self.assertEqual(rec["release_reason"], "quota_exhausted")
+        self.assertEqual(rec["release_detail"], detail[:600])
+        self.assertNotIn("fail_reason", rec)
+        self.assertNotIn("fail_detail", rec)
+        self.assertTrue(rec["release_detail"].startswith("[fp:abcdefabcdef] [kind:quota]"))
+        self.assertNotIn("failed_at", rec)
+        self.assertIsNone(rec["worker_id"])
+        self.assertEqual(self.work["merge_status"], "in_progress")
+        self.assertEqual(completed_work_status(self.idx, self.wid), "")
+        until = datetime.fromisoformat(rec["quota_blocked_workers"]["192.168.0.2"])
+        self.assertGreaterEqual((until - before).total_seconds(), 5 * 3600 - 1)
+        self.assertLessEqual((until - after).total_seconds(), 5 * 3600)
+        rebuilt = TaskIndex(self.idx.root)
+        rebuilt.rebuild()
+        self.assertEqual(rebuilt.tasks[tid]["status"], "pending")
+        self.assertEqual(rebuilt.tasks[tid]["release_detail"], detail[:600])
+        self.assertEqual(rebuilt.tasks[tid]["release_reason"], "quota_exhausted")
+        self.assertEqual(rebuilt.tasks[tid]["quota_blocked_workers"], rec["quota_blocked_workers"])
+        self.assertFalse(self.claim())
+        reassigned = Q.claim_task(self.idx, "192.168.0.43", capabilities=["ue5"], types=["code"])
+        self.assertEqual(reassigned["task_id"], tid)
+        self.assertEqual(reassigned["worker_id"], "192.168.0.43")
+        self.assertEqual(reassigned["epoch"], task["epoch"] + 1)
+        self.assertEqual(reassigned["release_detail"], detail[:600])
+
+    def test_quota_release_does_not_leak_into_later_failure(self):
+        # 한도 반납 → 다른 워커 재할당 → 검증 reject: 최종 실패는 옛 한도 사유로 읽히지 않는다.
+        from master.work import workmodel as WM
+        self.tasks(1)
+        task = self.claim()
+        tid = task["task_id"]
+        L.submit_fail(self.idx, tid, "quota_exhausted", "[kind:quota] usage limit",
+                      worker_id="192.168.0.2", epoch=task["epoch"])
+        Q.claim_task(self.idx, "192.168.0.43", capabilities=["ue5"], types=["code"])
+        self.idx.tasks[tid]["status"] = "submitted"
+        L.verify_task(self.idx, tid, result="reject", feedback="layer2 reject: invented enum")
+        rec = self.idx.tasks[tid]
+        self.assertEqual(rec["status"], "failed")
+        self.assertEqual(rec["fail_reason"], "verify:reject")
+        self.assertEqual(rec["fail_detail"], "layer2 reject: invented enum")
+        self.assertNotEqual(WM.Task(rec).classify()[0], WM.QUOTA)
+
+    def test_quota_stale_and_identity_rejections_preserve_record(self):
+        self.tasks(1)
+        task = self.claim()
+        tid = task["task_id"]
+        self.idx.tasks[tid]["fail_reason"] = "previous reason"
+        self.idx.tasks[tid]["fail_detail"] = "previous detail"
+        original = copy.deepcopy(self.idx.tasks[tid])
+        for epoch, worker, key in ((task["epoch"] - 1, "192.168.0.2", "stale"),
+                                   (task["epoch"], "192.168.0.43", "identity")):
+            with self.subTest(gate=key):
+                result = L.submit_fail(self.idx, tid, "quota_exhausted", "new detail",
+                                       epoch=epoch, worker_id=worker)
+                self.assertFalse(result["ok"])
+                self.assertTrue(result[key])
+                self.assertEqual(self.idx.tasks[tid], original)
+                self.assertEqual(self.work["merge_status"], "in_progress")
+
     def test_boot_recovers_old_failed_ready_without_reopening_terminal(self):
         self.tasks(1)
         self.fail(self.claim())
@@ -219,6 +292,40 @@ class TerminalTests(unittest.TestCase):
         rebuilt = TaskIndex(self.idx.root)
         rebuilt.rebuild()
         self.assertTrue(rebuilt.tasks[tid]["fail_notice_at"])
+
+    def test_skeleton_failure_waits_for_round_notice_and_preserves_remaining_success(self):
+        self.work["redmine_issue_id"] = 123
+        self.tasks(3)
+        skeleton, running = self.claim(), self.claim()
+        tid = skeleton["task_id"]
+        result = L.submit_fail(self.idx, tid, "BLOCKED",
+                               "[kind:skeleton] 층1 동결 위반 — 골조 변경 필요",
+                               worker_id="192.168.0.2", epoch=skeleton["epoch"])
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(self.idx.tasks[tid]["status"], "failed")
+        self.assertEqual(self.work["merge_status"], "in_progress")
+        self.assertEqual(self.piece_notes, [])
+        self.assertNotIn("fail_notice_at", self.idx.tasks[tid])
+        self.assertFalse(C._notify_piece_failed_async(self.idx, tid))
+        self.assertEqual({t["status"] for k, t in self.idx.tasks.items() if k != tid},
+                         {"pending", "claimed"})
+        self.finish(running)
+        self.assertEqual(self.work["merge_status"], "in_progress")
+        remaining = self.claim()
+        self.assertTrue(remaining)
+        self.finish(remaining)
+        self.assertEqual(self.work["merge_status"], "rejected")
+        self.assertEqual(self.work["verified"], 2)
+        self.assertEqual(self.piece_notes, [])
+        notes = self.notify()
+        self.assertEqual(len(notes), 1)
+        self.assertIn("골조 변경 필요", notes[0])
+        self.assertIn("골조 수정 후 재작업 필요", notes[0])
+        self.assertIn("성공 조각의 커밋 증거", notes[0])
+        for task in (running, remaining):
+            self.assertEqual(self.idx.tasks[task["task_id"]]["submitted_branch"], "attempt/preserved")
+            self.assertIn(task["task_id"], notes[0])
+            self.assertIn("head_commit: abc1234", self.idx.task_paths[task["task_id"]].read_text())
 
     def test_780_verify_reject_with_others_running_notes(self):
         self.work["redmine_issue_id"] = 123

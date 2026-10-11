@@ -134,9 +134,11 @@ def update_work_meta(idx: TaskIndex, work_id: str, *,
 
 
 def _count_terminal_in_work(idx: TaskIndex, work_id: str) -> int:
-    """work 의 verified+failed+cancelled task 수. lock 보유 가정."""
+    """현재 라운드의 verified+failed+cancelled task 수. lock 보유 가정."""
+    rnd = int((idx.works.get(work_id) or {}).get("round") or 1)
     return sum(1 for t in idx.tasks.values()
                if t.get("work_id") == work_id
+               and int(t.get("round") or 0) in (0, rnd)
                and t.get("status") in ("verified", "failed", "cancelled"))
 
 
@@ -147,12 +149,11 @@ def completed_work_status(idx: TaskIndex, work_id: str) -> str:
     `no_work` 처럼 라운드를 `cancelled` 로 만들지 않는다 — ⑦ 에서 사람이 채운다.
     """
     work = idx.works.get(work_id) or {}
-    total = int(work.get("total") or 0)
-    if total <= 0 or _count_terminal_in_work(idx, work_id) < total:
-        return ""
     round_no = int(work.get("round") or 1)
     tasks = [task for task in idx.tasks.values() if task.get("work_id") == work_id
              and int(task.get("round") or 0) in (0, round_no)]
+    if not tasks or _count_terminal_in_work(idx, work_id) < len(tasks):
+        return ""
     if any(task.get("status") == "failed" for task in tasks):
         return "rejected"
     if any(task.get("status") == "cancelled" and not task.get("no_work")

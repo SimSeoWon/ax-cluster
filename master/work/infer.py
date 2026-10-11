@@ -1171,6 +1171,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
             res.notes.append(f"[중요] 커밋은 됐는데 큐 제출이 실패했다 — {type(e).__name__}: {e}")
             _log(f"[wcommit] {task_id} 제출 실패 — {e}")
     else:
+        notice_args = None
         res.status = runner.BLOCKED
         res.reason = c.summary
         res.notes.extend(f"[중요] {v}" for v in c.layer1_violations[:5])
@@ -1200,27 +1201,28 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         #    큐가 그 동작을 이미 갖고 있다(`logic_lifecycle.py:196` — `quota_exhausted` 면
         #    `pending` 복귀 + 그 워커 **5시간 차단**). 🔴 그런데 **그 사유를 아무도 보내지
         #    않고 있었다** — 배관은 있고 만드는 코드가 0건이었다(`#388` 과 같은 병).
-        auth_hit = "" if c.stage == "층2" else _RV.authentication_failure(list(c.notes) + [c.summary])
-        quota_hit = "" if auth_hit or c.stage == "층2" else _RV.quota_exhausted(list(c.notes) + [c.summary])
-        env_hit = "" if quota_hit or c.stage == "층2" else _RV.environment_failure(list(c.notes) + [c.summary])
+        from . import workmodel as WM
+        decision = WM.decide_failure(task, issues=issues, notes=c.notes, summary=c.summary,
+                                     stage=c.stage, layer2_failure=c.layer2_failure)
+        verdict, fp = decision.verdict, decision.fingerprint
+        auth_hit = decision.marker if decision.kind == WM.AUTH else ""
+        quota_hit = decision.marker if decision.kind == WM.QUOTA else ""
+        env_hit = decision.marker if decision.kind == WM.ENVIRONMENT else ""
         if auth_hit:
-            verdict = _RV.REJECT
-            auth_detail = next((n for n in c.notes if _RV.authentication_failure([n])), c.summary)
+            auth_detail = decision.auth_detail
             res.reason = f"Claude 인증 확인 실패 @{facts.host}: {auth_detail}"
             res.notes.append(f"[중요] {res.reason} — 코드 재작성 재시도 제외")
             _log(f"[auth] {task_id} {res.reason} — 재시도 없이 종결")
-            _notify_blocked(task_id, task, auth_hit, res.reason, kind="auth", api=api)
+            notice_args = (task, auth_hit, res.reason, "auth")
         elif quota_hit:
-            verdict = _RV.REJECT                              # revise 로 보내지 않는다
             res.notes.append(
                 f"🔴 [중요] **한도 소진이다 — 코드 실패가 아니다** (`{quota_hit}`). "
                 f"재시도하지 않는다 — 한도는 **공용 자원**이라 다시 부르면 더 태운다. "
                 f"이 조각은 `pending` 으로 돌아가고 이 워커는 5시간 차단된다(다른 워커가 집는다).")
             _log(f"[quota] {task_id} 🔴 한도 소진 ({quota_hit}) — pending 복귀, "
                  f"워커={facts.host} 5h 차단")
-            _notify_blocked(task_id, task, quota_hit, c.summary, kind="quota", api=api)
+            notice_args = (task, quota_hit, c.summary, "quota")
         elif env_hit:
-            verdict = _RV.REJECT
             res.notes.append(
                 f"🔴 [중요] **실행 환경 실패다 — 코드 실패가 아니다** (`{env_hit}`). "
                 f"재시도하지 않는다(attempt {attempt}) — 같은 기계에서 같은 이유로 죽는다. "
@@ -1230,21 +1232,18 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                  f"워커={task.get('assignee') or '?'}")
             # 🔴 **즉시 요청자에게 알린다** — 라운드 끝까지 기다리면 그동안 요청자는
             #    아무것도 못 듣는다(`#399` · 2026-09-12 소프트 프리징의 그 자리).
-            _notify_blocked(task_id, task, env_hit, c.summary, kind="env", api=api)
-        else:
-            verdict = _RV.classify(issues, attempt)
+            notice_args = (task, env_hit, c.summary, "env")
+        elif decision.kind == WM.SKELETON:
+            res.notes.append(f"[중요] 골조 결함 의심 — {decision.reason} · 골조 변경 결정 필요")
         # 검증 인프라·판정 계약 실패는 작성 코드를 다시 사도 고쳐지지 않는다.
         if c.layer2_failure:
-            verdict = _RV.REJECT
             res.notes.append(f"[중요] 층2 검증 불가({c.layer2_failure}) — 코드 재작성 재시도 제외")
         # [DOC] 🔴 `#615` (가) — **직전 시도와 출력이 같으면 재시도는 무의미하다.** 판정 순서는
         #    한도 → 환경 → **출력 반복** → `classify` 다(앞 두 갈래는 처분이 달라 먼저 본다).
         #    지문은 지휘자의 말(`c.notes`)로 만들고, 직전 지문은 `task["last_feedback"]` 에 있다
         #    (`revise.tag_detail` 이 앞서 실어 둔 것). 출력이 비면 지문이 없어 이 갈래를 타지 않는다.
-        fp = "" if (auth_hit or quota_hit or env_hit) else _RV.output_fingerprint(list(c.notes))
-        repeat_hit = _RV.repeated_output(task.get("last_feedback") or "", fp)
+        repeat_hit = decision.kind == WM.REPEAT
         if repeat_hit:
-            verdict = _RV.REJECT
             res.notes.append(f"🔴 [중요] 직전 시도와 출력이 같다(fp={fp}) — 재시도 무의미, 종결")
             _log(f"[repeat] {task_id} 🔴 직전 시도와 출력이 같다(fp={fp}) — 재시도 없이 종결")
         r_result = r_base = ""
@@ -1265,18 +1264,22 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                 res.notes.append(f"[중요] 재시도로 보내려 했으나 피드백을 못 실었다 — "
                                  f"{emb.error} · terminal 로 종결한다")
                 _log(f"[revise] [중요] {task_id} 피드백 실패 — {emb.error}")
-        elif not auth_hit and not quota_hit and not env_hit and not repeat_hit and not c.layer2_failure:
+        elif decision.kind == WM.CAP:
             res.notes.append(f"[중요] 재시도 상한 — attempt {attempt} ≥ {_RV.MAX_ATTEMPTS}, "
                              f"종결한다(원전 `reject`)")
             _log(f"[revise] {task_id} 상한 도달 attempt={attempt} → 종결")
         try:
             # [중요] 사유가 처분을 정한다 — `quota_exhausted` 는 큐가 **pending 복귀**로 받는다
             _reason = "quota_exhausted" if quota_hit else runner.BLOCKED
-            runner.submit_fail(task_id, _reason, _RV.tag_detail(res.reason if auth_hit else c.summary, fp),
+            runner.submit_fail(task_id, _reason, WM.failure_detail(res.reason if auth_hit else c.summary,
+                                                                 decision.kind, fp),
                                epoch=epoch, worker_id=facts.host, api=api,
                                result=r_result, new_base_commit=r_base)
         except Exception as e:                               # noqa: BLE001
             res.notes.append(f"[주의] 반납도 실패했다 — {type(e).__name__}: {e}")
+        if notice_args:
+            n_task, n_marker, n_summary, n_kind = notice_args
+            _notify_blocked(task_id, n_task, n_marker, n_summary, kind=n_kind, api=api)
     return res
 
 

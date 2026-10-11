@@ -3,6 +3,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from contextlib import ExitStack
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from master.work import revise as R                                    # noqa: E402
@@ -212,13 +215,38 @@ check("[중요] 한도와 환경은 다른 갈래다", R.QUOTA != R.ENV)
 _src = (Path(__file__).resolve().parent / "work" / "infer.py").read_text(encoding="utf-8")
 check("🔴 [중요] 한도면 `quota_exhausted` 로 신고한다 (큐가 pending 복귀로 받는다)",
       '"quota_exhausted" if quota_hit' in _src, "infer.py 의 사유 분기")
+def _commit_failure(notes, previous="", attempt=1):
+    """실제 실패→판정→반납 경로. 외부실행·git·사용량·공지 API만 격리한다."""
+    from master.work import infer as I, wcommit as WC
+    calls = []
+    def api(method, path, body=None):
+        calls.append((method, path, body))
+        return {"ok": True}
+    committed = WC.Committed(task_id="isolated", stage="llm", reason="RESULT: BLOCKED", notes=notes)
+    with ExitStack() as stack:
+        stack.enter_context(patch("master.work.twin_base.local_baseline", return_value={}))
+        stack.enter_context(patch.object(WC, "run", return_value=committed))
+        stack.enter_context(patch("master.work.usage.record", return_value={"lane": "", "input_tokens": 0,
+            "output_tokens": 0, "cost_known": False, "measured": False}))
+        stack.enter_context(patch.object(I._MODE, "current", return_value=("codex", "test")))
+        notice = stack.enter_context(patch.object(I, "_notify_blocked"))
+        embed = stack.enter_context(patch.object(R, "embed", return_value=R.Embedded(
+            task_id="isolated", head="1234567890", branch="task/isolated")))
+        result = I.commit_task(SimpleNamespace(usage_log=Path("/unused")), SimpleNamespace(host="worker"),
+            {"task_id": "isolated", "attempt_count": attempt, "last_feedback": previous, "epoch": 7},
+            work_id="isolated-work", base="abc", want=[], branch="isolated", api=api)
+    return result, calls, notice, embed
+
+_quota_res, _quota_calls, _quota_notice, _quota_embed = _commit_failure(["usage limit reached", "0xC0000142"])
 check("  한도가 환경보다 **먼저** 판정된다 (둘 다 걸리면 처분이 다르므로)",
-      '_RV.environment_failure' in _src and 'if quota_hit else' in _src)
-check("  요청자에게도 알린다", 'kind="quota"' in _src)
+      len(_quota_calls) == 1 and _quota_calls[0][2]["reason"] == "quota_exhausted"
+      and not _quota_embed.called and any("pending" in n for n in _quota_res.notes), str(_quota_calls))
+check("  요청자에게도 알린다", _quota_notice.call_count == 1
+      and _quota_notice.call_args.kwargs.get("kind") == "quota")
 
 # ── `#615` (가) 출력 반복 ─────────────────────────────────────────────────────
 # [DOC] 실측 출력(같은 글자의 `RESULT: BLOCKED` 3회)이 같은 지문을 내고, 지문이 큐의 저장 한도
-#    (detail 앞 600자)를 넘어 살아남는지를 잰다. infer 의 배선은 소스 문자열로 확인한다(위 `_src` 관례).
+#    (detail 앞 600자)를 넘어 살아남는지와 실제 실패반납 경로를 잰다.
 _BLOCKED_OUT = ["승인이 필요합니다. 계획을 검토해 주세요.", "RESULT: BLOCKED"]
 _fp1 = R.output_fingerprint(_BLOCKED_OUT)
 _fp2 = R.output_fingerprint(list(_BLOCKED_OUT))
@@ -245,11 +273,14 @@ check("  다른 지문과는 반복이 아니다",
 check("  지문 없는 옛 피드백은 반복이 아니다",
       not R.repeated_output("층1 — [PSEUDO] 잔존", _fp1))
 
-_code = "\n".join(ln for ln in _src.splitlines() if not ln.lstrip().startswith("#"))
-check("🔴 infer 가 repeated_output 을 부른다", "_RV.repeated_output(" in _code,
-      "infer.py 의 반복 판정 배선")
-check("🔴 infer 가 tag_detail 로 지문을 싣는다", "_RV.tag_detail(" in _code,
-      "infer.py 의 submit_fail detail")
+_repeat_res, _repeat_calls, _repeat_notice, _repeat_embed = _commit_failure(_BLOCKED_OUT, R.tag_detail("previous", _fp1))
+check("🔴 infer 실패경로에서 같은출력은 반복종결", len(_repeat_calls) == 1
+      and _repeat_calls[0][2]["result"] != R.REVISE and not _repeat_embed.called
+      and any("직전 시도와 출력이 같다" in n for n in _repeat_res.notes), str(_repeat_calls))
+_first_res, _first_calls, _first_notice, _first_embed = _commit_failure(_BLOCKED_OUT)
+check("🔴 infer 반납지문은 큐절단후에도 재시도에 전달", len(_first_calls) == 1
+      and _first_calls[0][2]["result"] == R.REVISE and _first_embed.called
+      and R.repeated_output(_first_calls[0][2]["detail"][:600], _fp1), str(_first_calls))
 
 print("=" * 46)
 print(f"통과 {PASS} · 실패 {FAIL}")

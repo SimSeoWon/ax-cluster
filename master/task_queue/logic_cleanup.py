@@ -281,6 +281,12 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                     last_fb = (t.get("fail_detail") or t.get("last_feedback") or
                                t.get("verdict_feedback") or t.get("fail_reason") or "")
                     fail_details.append((rf, str(last_fb)[:200]))
+                from ..work import workmodel as WM
+                execution = WM.Work.from_record(wmeta, tasks_all).execution_summary()
+                success_evidence = [
+                    (t.get("task_id") or "?", t.get("submitted_branch") or t.get("branch") or "기록 없음")
+                    for t in tasks_v
+                ]
 
             rm_cfg = _read_redmine_config(idx.root, work_project)
             # [중요] **무엇이 없어서 안 갔는지 찍는다.** 종전에는 url 하나만 보고 한 문구로
@@ -461,6 +467,16 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                       for t in tasks_c],
                 ])
 
+            if execution["rework_required"]:
+                description += "\n\n" + "\n".join([
+                    "## 골조 수정 후 재작업 필요",
+                    "할당 가능한 조각과 실행 중인 조각이 없다. 골조 실패 조각의 재작업 판단이 필요하다.",
+                    *[f"- {t['task_id']}: {t['reason']}" for t in execution["rework_tasks"]],
+                    "", "## 성공 조각의 커밋 증거",
+                    "성공 조각의 제출 브랜치와 태스크 본문의 submit_meta 커밋 기록은 보존한다.",
+                    *[f"- {tid}: 제출 브랜치 `{branch}`" for tid, branch in success_evidence],
+                ])
+
             if issue_id:
                 if not _redmine_add_note(rm_cfg, int(issue_id), description):
                     _record_notification_outcome(idx, work_id, _r,
@@ -548,6 +564,10 @@ def _notify_piece_failed(idx: TaskIndex, task_id: str) -> bool:
     with idx.lock:
         t = idx.tasks.get(task_id)
         if not t or t.get("status") != "failed":
+            return False
+        from ..work import workmodel as WM
+        if WM.stored_kind(t.get("fail_detail") or "") == WM.SKELETON:
+            # 골조 실패는 기록만 남기고, 다른 조각을 소진한 뒤 Work가 종합 고지한다.
             return False
         if t.get("fail_notice_at") or t.get("fail_notice_pending"):
             return False

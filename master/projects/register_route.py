@@ -97,6 +97,11 @@ def _run(payload: dict, *, improve: bool = False) -> dict:
         return {"ok": False, "reason": "bad_round",
                 "error": f"round 가 정수가 아니다: {payload.get('round')!r}"}
     if improve:
+        if not isinstance(payload.get("rework", False), bool):
+            return {"ok": False, "reason": "bad_rework", "error": "rework 는 boolean 이어야 한다"}
+        if not isinstance(payload.get("expected_base_commit", ""), str):
+            return {"ok": False, "reason": "bad_base_commit",
+                    "error": "expected_base_commit 은 문자열이어야 한다"}
         if not work_id:
             return {"ok": False, "reason": "no_work_id",
                     "error": ("work_id 가 없다 — 개선요청은 **이미 있는 분산 작업**을 여는 것이다. "
@@ -179,6 +184,8 @@ def _run(payload: dict, *, improve: bool = False) -> dict:
                 work_id, specs, round=round_no, paths=paths,
                 target_branch=str(payload.get("target_branch") or ""),
                 worker_mode=str(payload.get("worker_mode") or ""),
+                rework=payload.get("rework", False),
+                expected_base_commit=payload.get("expected_base_commit", ""),
             )
         else:
             got = register_work(

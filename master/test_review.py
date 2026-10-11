@@ -913,6 +913,125 @@ def test_advance_stops_whole_on_conflict():
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
+def test_rework_integrates_failed_results_and_keeps_main_and_history():
+    from unittest.mock import patch
+    from types import SimpleNamespace
+    from master.work import cleanup as CL, register as REG
+    root, repo, work, tasks = fixture()
+    try:
+        work.update(round=1, merge_status="rejected")
+        tasks[1].update(status="failed", fail_detail="[kind:skeleton] 동결 위반")
+        tasks[2]["fail_detail"] = "[kind:skeleton] 동결 위반"
+        latest = "attempt/w1/t2/workshop/latest"
+        g(repo, "worktree", "add", "--detach", str(root / "attempt"), f"origin/{durable_branch('t2')}")
+        write(root / "attempt" / "attempt.txt", "실패한 시도의 커밋된 결과\n")
+        g(root / "attempt", "add", "attempt.txt")
+        g(root / "attempt", "commit", "-m", "committed attempt")
+        g(root / "attempt", "push", "origin", f"HEAD:refs/heads/{latest}")
+        tasks[1]["submitted_branch"] = latest
+        main = g(repo, "rev-parse", "origin/main").strip()
+        a = R.advance_work(repo, work_id=WORK, work=work, tasks=tasks, rework=True,
+                           build_fn=lambda _: _Build(True), keep_tree=True)
+        check("재작업 성공+실패durable+기록된시도 통합", a.ok and len(a.merged) == 3, a.summary)
+        check("실패시도는검증완료로승격안함", tasks[1]["status"] == "failed" and
+              any(e["source"] == "attempt" and not e["verified"] for e in a.rework_evidence))
+        check("미커밋실패결과없음 명시", any(e["task_id"] == "t3" for e in a.missing_results))
+        check("재작업종결브랜치는보존", "재작업" in CL.terminal_skip_reason(work, tasks))
+        check("전체취소선택은골조실패이력있어도정리가능",
+              CL.terminal_skip_reason(dict(work, merge_status="cancelled"), tasks) == "")
+        check("모든커밋소스가통합tree에있음", all((Path(a.tree) / f).exists()
+              for f in ("a.txt", "b.txt", "attempt.txt")))
+        blocked = R.advance_work(repo, work_id=WORK, work=work, tasks=tasks, rework=True,
+                                 build_fn=lambda _: _Build(False), confirm=True, keep_tree=True)
+        check("재작업빌드실패도승인push못함", not blocked.pushed and not blocked.ok and
+              Path(blocked.tree).exists(), blocked.summary)
+        write(Path(a.tree) / "next-skeleton.txt", "통합본 위의 수정 골조\n")
+        g(Path(a.tree), "add", "next-skeleton.txt")
+        g(Path(a.tree), "commit", "-m", "correct skeleton before advance")
+        corrected = g(Path(a.tree), "rev-parse", "HEAD").strip()
+        calls = []
+        def api(method, path, payload=None):
+            calls.append((method, path, payload))
+            if method == "PATCH":
+                work.update(payload)
+            return {"ok": True}
+        advanced = R.advance_work(repo, work_id=WORK, work=work, tasks=tasks, rework=True,
+                                  build_fn=lambda _: _Build(True), confirm=True,
+                                  keep_tree=True, api=api)
+        check("남긴tree수정골조삭제안함", advanced.ok and advanced.pushed and
+              (Path(advanced.tree) / "next-skeleton.txt").exists(), advanced.summary)
+        check("전진근거라운드tip기록", work["review_decision"]["result"] == "rework_advanced"
+              and work["review_decision"]["head"] == advanced.head)
+        check("수정골조commit이전진head조상", g(repo, "merge-base", corrected, advanced.head).strip() == corrected)
+        check("main불변", g(repo, "rev-parse", "origin/main").strip() == main)
+        # 전진한 통합본 위에 다음 골조 커밋을 작성한 뒤 2차 등록한다.
+        write(Path(advanced.tree) / "round2.txt", "다음 수정 골조\n")
+        g(Path(advanced.tree), "add", "round2.txt")
+        g(Path(advanced.tree), "commit", "-m", "round two skeleton")
+        g(Path(advanced.tree), "push", "origin", "HEAD:refs/heads/feature/w1")
+        next_tip = g(Path(advanced.tree), "rev-parse", "HEAD").strip()
+        posted = []
+        def post(url, payload):
+            posted.append((url, payload))
+            if url.endswith("/reopen"):
+                return {"ok": True, "round": 2, "target_branch": "feature/w1"}
+            return {"ok": True, "task_id": "round2-task"}
+        paths = SimpleNamespace(repo=repo, name="T")
+        with patch.object(REG, "_check_targets"), patch.object(REG, "base_status",
+                return_value=SimpleNamespace(checked=True, exists=True, commit=next_tip)):
+            result = REG.improve_work(WORK, [REG.TaskSpec(stem="repair", target_file="round2.txt")],
+                    round=2, paths=paths, rework=True, expected_base_commit=next_tip,
+                    getter=lambda _: {"work": work}, poster=post)
+        check("통합head조상+수정골조exacttip후2차등재", result.round == 2 and result.tasks[0].task_id == "round2-task")
+        check("재작업모드를큐reopen에명시", next(p for u, p in posted if u.endswith("/reopen"))["rework"] is True)
+        check("미확인base는reopen전에거절", _rework_base_rejected(REG, paths, work, next_tip, post))
+        unrelated = g(repo, "commit-tree", g(repo, "rev-parse", "HEAD^{tree}").strip(),
+                      "-m", "unrelated root").strip()
+        changed_work = dict(work, review_decision=dict(work["review_decision"], head=unrelated))
+        with patch.object(REG, "_check_targets"), patch.object(REG, "base_status",
+                return_value=SimpleNamespace(checked=True, exists=True, commit=next_tip)):
+            rejected = False
+            before_posts = len(posted)
+            try:
+                REG.improve_work(WORK, [REG.TaskSpec(stem="repair", target_file="round2.txt")],
+                    round=2, paths=paths, rework=True, expected_base_commit=next_tip,
+                    getter=lambda _: {"work": changed_work}, poster=post)
+            except REG.RegisterError:
+                rejected = True
+            check("통합본조상아니면reopen전에거절", rejected and len(posted) == before_posts)
+        for status in ("merged", "cancelled"):
+            refused = R.advance_work(repo, work_id=WORK, work=dict(work, merge_status=status),
+                                     tasks=tasks, rework=True)
+            check(f"재작업도{status}상태거절", not refused.ok and not refused.tree)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _rework_base_rejected(REG, paths, work, next_tip, post):
+    from unittest.mock import patch
+    from types import SimpleNamespace
+    with patch.object(REG, "_check_targets"), patch.object(REG, "base_status",
+            return_value=SimpleNamespace(checked=True, exists=True, commit=next_tip)):
+        try:
+            REG.improve_work(WORK, [REG.TaskSpec(stem="repair", target_file="round2.txt")],
+                round=2, paths=paths, rework=True, expected_base_commit="0" * 40,
+                getter=lambda _: {"work": work}, poster=post)
+        except REG.RegisterError:
+            return True
+    return False
+
+
+def test_rework_missing_verified_still_fails_and_default_skips_failed():
+    root, repo, work, tasks = fixture(missing_durable=True)
+    try:
+        work.update(round=1, merge_status="rejected")
+        tasks[2]["fail_detail"] = "[kind:skeleton] 동결 위반"
+        a = R.advance_work(repo, work_id=WORK, work=work, tasks=tasks, rework=True)
+        check("재작업도verified결과없으면통째중단", not a.ok and "verified task t2" in a.error, a.error)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (test_advance_bases_on_the_work_branch_not_main,
                test_advance_merges_only_this_round,
@@ -936,7 +1055,9 @@ def main() -> int:
                test_finalize_default_does_not_push,
                test_finalize_confirm_pushes_and_then_cleanup_is_possible,
                test_finalize_status_gate,
-               test_finalize_six_step_edges, test_finalize_conflict_leaves_nothing):
+               test_finalize_six_step_edges, test_finalize_conflict_leaves_nothing,
+               test_rework_integrates_failed_results_and_keeps_main_and_history,
+               test_rework_missing_verified_still_fails_and_default_skips_failed):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_review: {PASS}/{total} 통과")

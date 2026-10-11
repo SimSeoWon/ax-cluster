@@ -360,6 +360,48 @@ def test_finished_work_is_not_revived() -> None:
               ro.get("ok") is False and ro.get("reason") == "not_reopenable", str(ro)[:160])
 
 
+def test_skeleton_rework_reopens_only_with_advance_evidence():
+    from master.task_queue.logic_persist import completed_work_status
+    idx, wid = _work()
+    registered = register_task(idx, work_id=wid, type="code", task_data={},
+                               target_file="Source/A/Failed.cpp", stem="failed")
+    claimed = claim_task(idx, "192.168.0.2", capabilities=["ue5"], types=["code"])
+    LL.submit_fail(idx, claimed["task_id"], "BLOCKED", "[kind:skeleton] 동결 위반",
+                   worker_id="192.168.0.2", epoch=claimed["epoch"])
+    check("골조실패상태이력유지", idx.tasks[registered["task_id"]]["status"] == "failed")
+    no_evidence = reopen_work(idx, work_id=wid, expected_round=2)
+    check("전진근거없으면골조실패재개거절", not no_evidence["ok"])
+    evidence = {"result": "rework_advanced", "round": 1,
+                "head": "a" * 40, "target_branch": "task/W/base"}
+    for key, value in (("round", 9), ("target_branch", "main"), ("head", "bad")):
+        idx.works[wid]["review_decision"] = dict(evidence, **{key: value})
+        check(f"전진근거{key}불일치거절", not reopen_work(idx, work_id=wid, expected_round=2, rework=True)["ok"])
+    idx.works[wid]["review_decision"] = evidence
+    check("전진근거있어도rework명시없으면거절", not reopen_work(idx, work_id=wid, expected_round=2)["ok"])
+    result = reopen_work(idx, work_id=wid, expected_round=2, rework=True)
+    check("정확한전진근거면2라운드재개", result["ok"] and result["round"] == 2, str(result))
+    second = register_task(idx, work_id=wid, type="code", task_data={},
+                           target_file="Source/A/Repaired.cpp", stem="repaired")
+    third = register_task(idx, work_id=wid, type="code", task_data={},
+                          target_file="Source/A/Repaired2.cpp", stem="repaired2")
+    check("지난라운드failed로2차pending종결안함", completed_work_status(idx, wid) == "")
+    check("지난라운드failed이력보존", idx.tasks[registered["task_id"]]["status"] == "failed")
+    claim = claim_task(idx, "192.168.0.2", capabilities=["ue5"], types=["code"])
+    LL.submit_result(idx, second["task_id"], branch="b", head_commit="abc1234", self_check={},
+                     epoch=claim["epoch"], worker_id="192.168.0.2")
+    LL.verify_task(idx, second["task_id"], passed=True, result="pass")
+    check("2차한조각성공다른pending이면in_progress유지", idx.works[wid]["merge_status"] == "in_progress")
+    claim2 = claim_task(idx, "192.168.0.2", capabilities=["ue5"], types=["code"])
+    check("2차다른claimed도종결안함", completed_work_status(idx, wid) == "")
+    LL.submit_result(idx, third["task_id"], branch="b2", head_commit="def1234", self_check={},
+                     epoch=claim2["epoch"], worker_id="192.168.0.2")
+    LL.verify_task(idx, third["task_id"], passed=True, result="pass")
+    check("2차성공은지난failed와분리되어ready", idx.works[wid]["merge_status"] == "ready_for_review")
+    rebuilt = TaskIndex(idx.root)
+    rebuilt.rebuild()
+    check("전진기준기록rebuild보존", rebuilt.works[wid]["rework_base_commit"] == "a" * 40)
+
+
 def main() -> int:
     print("=== work 은 라운드를 여러 번 돈다 — 마감은 사람이 한다 ===")
     for fn in (test_improve_request_reopens_the_work,
@@ -369,7 +411,8 @@ def main() -> int:
                test_registration_itself_triggers_dispatch,
                test_bad_trigger_is_quarantined_not_left_to_thrash,
                test_round_is_in_the_branch_name,
-               test_finished_work_is_not_revived):
+               test_finished_work_is_not_revived,
+               test_skeleton_rework_reopens_only_with_advance_evidence):
         fn()
     print(("\nFAIL" if _fail else "\nOK") + f" test_rounds: 실패 {_fail}건")
     return 1 if _fail else 0

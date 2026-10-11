@@ -172,7 +172,7 @@ def register_work(idx: TaskIndex, *, title: str, target_repo: str,
 
 
 def reopen_work(idx: TaskIndex, *, work_id: str, expected_round: int = 0,
-                worker_mode: str = "") -> dict:
+                worker_mode: str = "", rework: bool = False) -> dict:
     """🔴 **개선요청 — 끝난 라운드의 work 을 다음 라운드로 연다** (사용자 결정 2026-09-05).
 
     사용자: *"분산작업 등록과 라운드 값을 받는 분산작업 개선 요청으로 말이야"* ·
@@ -203,7 +203,17 @@ def reopen_work(idx: TaskIndex, *, work_id: str, expected_round: int = 0,
         cur = int(w.get("round", 1) or 1)
         st = str(w.get("merge_status") or "")
         nxt = cur + 1
-        if st != "ready_for_review":
+        decision = w.get("review_decision") or {}
+        from ..work.workmodel import Work
+        rework = (rework is True and st == "rejected" and Work.from_record(w, [t for t in idx.tasks.values()
+                   if t.get("work_id") == work_id]).execution_summary()["rework_required"]
+                  and decision.get("result") == "rework_advanced"
+                  and int(decision.get("round") or 0) == cur
+                  and decision.get("target_branch") == w.get("target_branch")
+                  and isinstance(decision.get("head"), str)
+                  and len(decision["head"]) == 40
+                  and all(c in "0123456789abcdef" for c in decision["head"]))
+        if st != "ready_for_review" and not rework:
             # [중요] **열어 놓고 조각 등재가 실패한 경우의 재시도를 막지 않는다.** 승격은
             #    조각보다 앞이라, 그 사이에서 죽으면 work 이 `in_progress` · 라운드는 이미
             #    올라간 상태로 남는다. 그때 다시 거절하면 그 work 은 개선요청으로 되살릴 길이
@@ -241,6 +251,9 @@ def reopen_work(idx: TaskIndex, *, work_id: str, expected_round: int = 0,
                     "round": cur, "next_round": nxt}
         w["merge_status"] = "in_progress"
         w["round"] = nxt
+        if rework:
+            w["rework_previous_round"] = cur
+            w["rework_base_commit"] = decision["head"]
         previous_mode = w.get("worker_mode")
         if worker_mode:
             w["worker_mode"] = worker_mode

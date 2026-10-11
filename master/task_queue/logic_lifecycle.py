@@ -201,6 +201,13 @@ def submit_fail(idx: TaskIndex, task_id: str, reason: str, detail: str = "", *,
             worker_id = t.get("worker_id") or ""
             if worker_id:
                 _mark_worker_quota_blocked(t, worker_id)
+            # 재할당 가능한 실패도 래퍼/API에서 사유와 종류를 읽을 수 있어야 한다.
+            # [주의] `fail_*` 가 아니라 `release_*` 에 둔다 — `fail_*` 는 최종 실패의 사유이고
+            #    아무도 지우지 않으며 `verify_task` 는 `setdefault` 다. 거기 두면 재할당 뒤의
+            #    실패가 옛 할당량 사유로 읽힌다(#363 diff 검토 2026-10-11 재현).
+            # pending 복귀이므로 terminal 시각(failed_at)은 만들지 않는다.
+            t["release_reason"] = str(reason)[:120]
+            t["release_detail"] = str(detail)[:600]
             t["status"] = "pending"
             t["worker_id"] = None
             t["claimed_at"] = None

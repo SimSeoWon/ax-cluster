@@ -593,6 +593,10 @@ def improve_work(
     heuristics=None,
     worker_mode: str = "",
     target_check=None,                  # `#695` — `register_work` 와 같은 게이트
+    rework: bool = False,
+    expected_base_commit: str = "",
+    getter=None,
+    base_runner=None,
 ) -> Registered:
     """🔴 **분산작업 개선요청 — 이미 있는 work 을 다음 라운드로 연다** (사용자 결정 2026-09-05).
 
@@ -631,6 +635,28 @@ def improve_work(
             f"round={round!r} — 개선요청의 라운드는 2 이상이다(라운드 1은 **등록**이다). "
             f"큐가 아는 현재 라운드 + 1 을 실어라")
     _check_targets(paths, specs, target_check)
+    if rework:
+        from . import review
+        get = getter or (lambda url: _post(url, {}, token=token, method="GET"))
+        prior = (get(f"{queue_url}/api/v1/works/{wid}") or {}).get("work") or {}
+        decision = prior.get("review_decision") or {}
+        if (decision.get("result") != "rework_advanced"
+                or int(decision.get("round") or 0) != int(round) - 1
+                or decision.get("target_branch") != prior.get("target_branch")
+                or not decision.get("head")):
+            raise RegisterError("재작업 통합 전진의 라운드·브랜치·커밋 근거가 없다")
+        branch = target_branch.strip() or str(prior.get("target_branch") or "")
+        if branch != decision["target_branch"] or not expected_base_commit:
+            raise RegisterError("재작업 골조의 작업 브랜치와 기대 기준 커밋을 명시해야 한다")
+        base = base_status(paths, wid, branch=branch, runner=base_runner)
+        if not base.checked or not base.exists or base.commit != expected_base_commit:
+            raise RegisterError("원격 수정 골조 tip이 기대 기준 커밋과 다르거나 확인되지 않았다")
+        rc, out = review._git_rc(Path(paths.repo), "fetch", "origin", branch)
+        if rc != 0:
+            raise RegisterError(f"수정 골조 기준 fetch 실패: {out[:200]}")
+        rc, ancestor = review._git_rc(Path(paths.repo), "merge-base", decision["head"], base.commit)
+        if rc != 0 or ancestor.strip() != decision["head"]:
+            raise RegisterError("수정 골조는 재작업 통합 커밋을 조상으로 가져야 한다")
     _prep = _prepare_specs(specs, paths=paths, make_skeleton=make_skeleton,
                            gate=gate, heuristics=heuristics)
     post = poster or (lambda u, p: _post(u, p, token=token))
@@ -648,7 +674,8 @@ def improve_work(
 
     # ── ① 승격 (큐가 판정한다) ──────────────────────────────────────────────
     got = post(f"{queue_url}/api/v1/works/{wid}/reopen",
-               {"project": paths.name, "round": int(round), "worker_mode": worker_mode})
+               {"project": paths.name, "round": int(round), "worker_mode": worker_mode,
+                **({"rework": True} if rework else {})})
     if isinstance(got, dict) and got.get("ok") is False:
         raise RegisterError(str(got.get("error") or got))
     opened = int((got or {}).get("round") or round)

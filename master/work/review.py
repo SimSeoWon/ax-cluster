@@ -114,6 +114,8 @@ class Integration:
     # 🔴 `#787` — 서브 브랜치가 ⑺ 전진 때 작업 브랜치에 머지된 뒤 **정리돼 원격에 없는** 조각.
     #    그 증거는 작업 브랜치의 `[ADVANCE] <work>: <durable>` 머지 커밋이다. 이름을 남긴다.
     advanced: list = field(default_factory=list)
+    rework_evidence: list = field(default_factory=list)
+    missing_results: list = field(default_factory=list)
     error: str = ""
 
 
@@ -164,7 +166,7 @@ def split_push_tasks(tasks) -> tuple:
 
 def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
                        merge_label: str, remote: str = DEFAULT_REMOTE,
-                       logf=C._noop_log) -> Integration:
+                       logf=C._noop_log, rework: bool = False) -> Integration:
     """Plan v5 C.7 — 작업 브랜치(골조·코드) + **소스를 든** 조각 durable 을 현재 브랜치에 머지한다.
 
     [중요] **`#319` ⓐ — 매니페스트 전용 조각 durable 은 머지하지 않는다** (사용자 결정
@@ -204,6 +206,12 @@ def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
     logf("integrate", f"feature {target_branch} 머지")
 
     verified, skipped = split_push_tasks(tasks)
+    missing_results, rework_evidence = [], []
+    if rework:
+        failed = [t for t in tasks or [] if t.get("distribution_mode") == "push"
+                  and t.get("status") == "failed"]
+        verified = order_verified(verified + failed)
+        skipped = [t for t in skipped if t.get("status") != "failed"]
     merged: list = []
     ax_only: list = []
     advanced: list = []
@@ -213,6 +221,47 @@ def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
         # [중요] verified 인데 durable 이 없다 = 이상(검증 워커의 merge 누락) → 통째 중단.
         #    [주의] 여기서 넘어가면 **검증됐다고 기록된 것이 빠진 채** 통합이 성공으로 보인다.
         rc, ls = _git_rc(repo, "ls-remote", "--heads", remote, dur)
+        failed_task = rework and t.get("status") == "failed"
+        sources = []
+        if failed_task:
+            if rc != 0:
+                return Integration(error=f"실패 조각 {tid}의 durable 조회 실패: {ls[:200]}")
+            if ls.strip():
+                sources.append((dur, "durable"))
+            # 기록된 마지막 시도만 다룬다. 과거 attempt glob 전체를 합치지 않는다.
+            recorded = str(t.get("submitted_branch") or t.get("branch") or "")
+            if recorded.startswith(attempt_glob(work_id, tid)[:-1]):
+                rc_a, ls_a = _git_rc(repo, "ls-remote", "--heads", remote, recorded)
+                if rc_a != 0:
+                    return Integration(error=f"실패 조각 {tid}의 시도 조회 실패: {ls_a[:200]}")
+                if ls_a.strip():
+                    sources.append((recorded, "attempt"))
+            if not sources:
+                missing_results.append({"task_id": tid, "status": "failed",
+                                        "reason": "원격 durable 또는 기록된 시도 커밋이 없다 — 미커밋 본문은 골조 참고 대상"})
+                continue
+            for source, source_kind in sources:
+                rc_s, fetched = _git_rc(repo, "fetch", remote, source)
+                if rc_s != 0:
+                    return Integration(error=f"재작업 결과 fetch 실패: {source} — {fetched[:200]}")
+                rc_s, tip = _git_rc(repo, "rev-parse", f"{remote}/{source}^{{commit}}")
+                if rc_s != 0:
+                    return Integration(error=f"재작업 결과 커밋 확인 실패: {source} — {tip[:200]}")
+                evidence = {"task_id": tid, "status": "failed", "branch": source,
+                            "head": tip.strip(), "source": source_kind,
+                            "verified": source_kind == "durable"}
+                rework_evidence.append(evidence)
+                if not _touches_outside_ax(repo, f"{remote}/{target_branch}", f"{remote}/{source}"):
+                    ax_only.append(source)
+                    continue
+                rc_s, merged_out = _git_rc(repo, "merge", "--no-ff", f"{remote}/{source}",
+                                          "-m", f"{lab}: {source}")
+                if rc_s != 0:
+                    _git_rc(repo, "merge", "--abort")
+                    return Integration(merged=merged, conflict=True, conflict_branch=source,
+                                       error=f"재작업 결과 `{source}` 머지 충돌 — 통째 중단: {merged_out[:200]}")
+                merged.append(source)
+            continue
         if rc == 0 and not ls.strip():
             # 🔴 `#787` — ⑺ 전진 때 작업 브랜치에 들어가고 정리된 서브 브랜치. 위 feature 머지로
             #    이미 이 트리에 있다. 증거(머지 커밋)가 없으면 아래 「통째 중단」 그대로다.
@@ -258,7 +307,8 @@ def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
                            error=("[중요] 통합 트리에 `.ax/` 파일이 들어왔다 — 게임 `main` 에 "
                                   "인프라 파일을 넣지 않는다(`#319` ⓐ). 통째 중단: "
                                   + ", ".join(stray[:5])))
-    return Integration(ok=True, merged=merged, skipped=skipped, ax_only=ax_only, advanced=advanced)
+    return Integration(ok=True, merged=merged, skipped=skipped, ax_only=ax_only, advanced=advanced,
+                       rework_evidence=rework_evidence, missing_results=missing_results)
 
 
 def _touches_outside_ax(repo: Path, base_ref: str, dur_ref: str) -> list:
@@ -957,6 +1007,9 @@ class Advance:
     deleted_subbranches: list = field(default_factory=list)
     subbranch_kept: list = field(default_factory=list)
     error: str = ""
+    rework: bool = False
+    rework_evidence: list = field(default_factory=list)
+    missing_results: list = field(default_factory=list)
 
     @property
     def summary(self) -> str:
@@ -1043,7 +1096,7 @@ def prune_merged_subbranches(repo: Path, *, work_id: str, round_no: int, target:
 def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
                  confirm: bool = False, remote: str = DEFAULT_REMOTE,
                  keep_tree: bool = False, api=None, decision_note: str = "",
-                 logf=C._noop_log) -> Advance:
+                 logf=C._noop_log, rework: bool = False) -> Advance:
     """서브 브랜치를 **작업 브랜치에** 모아 세우고, 승인되면 그 브랜치를 전진시킨다.
 
     [중요] **`confirm=False` 가 기본이다** (fail-closed · `finalize_work` 와 같은 규약).
@@ -1053,7 +1106,13 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
     [중요] **사람의 워킹트리를 건드리지 않는다** — `<정본 옆>/ax-advance-<work_id>` 에서 돈다.
     `main` 은 **만지지 않는다**: 그것은 작업 전체가 끝난 뒤 `finalize_work` 의 몫이다.
     """
-    a = Advance(work_id=work_id)
+    a = Advance(work_id=work_id, rework=rework)
+    if rework:
+        from .workmodel import Work
+        if ((work or {}).get("merge_status") != "rejected"
+                or not Work.from_record(work, tasks).execution_summary()["rework_required"]):
+            a.error = "재작업 통합 대상이 아니다 — 골조 실패와 라운드 종결을 확인한다"
+            return a
     # 🔴 [중요] **이번 라운드 조각만 머지한다** (사용자 2026-09-04: *"이미 전진했는데 그냥 다
     #    머지하는게 말이 안되는거니까"*). 지난 라운드 조각은 그때 전진에서 이미 작업 브랜치로
     #    들어갔다 — 목록에 끼면 `.33` 이 「이번에 만든 것」을 못 가려낸다.
@@ -1071,6 +1130,9 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
                    "(`#319`: 이름은 `task/<work_id>/base`)")
         return a
     a.target_branch = target
+    if rework and target == BASE_BRANCH:
+        a.error = "재작업 결과는 분산 작업 브랜치에만 통합한다 — main 대상은 거절한다"
+        return a
 
     tree = advance_tree_path(repo, work_id)
     a.tree = str(tree)
@@ -1086,27 +1148,40 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
             return a
         a.before = before.strip()
 
-        if tree.exists():
+        reuse_tree = rework and tree.exists()
+        if reuse_tree:
+            rc, ancestor = _git_rc(tree, "merge-base", a.before, "HEAD")
+            if rc != 0 or ancestor.strip() != a.before:
+                a.error = "남겨 둔 재작업 통합 트리의 기준이 원격 작업 브랜치와 다르다 — 보존하고 중단한다"
+                return a
+            rc, dirty = _git_rc(tree, "status", "--porcelain")
+            if rc != 0 or dirty.strip():
+                a.error = "재작업 통합 트리에 미커밋 변경이 있다 — 수정 골조를 검토·커밋한 뒤 전진한다"
+                return a
+        elif tree.exists():
             _git_rc(repo, "worktree", "remove", "--force", str(tree))
-        rc, out = _git_rc(repo, "worktree", "add", "--detach", "--force",
-                          str(tree), f"{remote}/{target}")
-        if rc != 0:
-            a.error = f"전진 worktree 생성 실패: {out[:200]}"
-            return a
+        if not reuse_tree:
+            rc, out = _git_rc(repo, "worktree", "add", "--detach", "--force",
+                              str(tree), f"{remote}/{target}")
+            if rc != 0:
+                a.error = f"전진 worktree 생성 실패: {out[:200]}"
+                return a
         logf("advance", f"worktree {tree.name} = {remote}/{target} @ {a.before[:8]} "
                         f"(사람 트리 미접촉 · main 미접촉)")
 
         # ── ② 서브 브랜치 전부 머지 — [중요] 충돌이면 **통째 중단** ──────────────────
         integ = integrate_durables(tree, work_id=work_id, target_branch=target, tasks=tasks,
-                                   merge_label=f"[ADVANCE] {work_id}", remote=remote, logf=logf)
+                                   merge_label=f"[ADVANCE] {work_id}", remote=remote, logf=logf,
+                                   rework=rework)
         a.merged, a.ax_only, a.skipped = integ.merged, integ.ax_only, integ.skipped
+        a.rework_evidence, a.missing_results = integ.rework_evidence, integ.missing_results
         a.conflicts = integ.conflict
         if not integ.ok:
             a.error = integ.error
             return a
         rc, head = _git_rc(tree, "rev-parse", "HEAD")
         a.head = head.strip() if rc == 0 else ""
-        if a.head and a.head == a.before:
+        if a.head and a.head == a.before and not rework:
             # [주의] 머지했는데 tip 이 안 움직였다 = 전진할 것이 없다. 성공으로 접지 않는다
             a.error = "머지 뒤에도 tip 이 그대로다 — 전진할 것이 없다 (조각이 이미 반영됐나)"
             return a
@@ -1142,6 +1217,18 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
                        f"(잃지 않았다). **force 하지 않는다** — 사람이 판단한다")
             return a
         a.pushed, a.ok = True, True
+        if rework:
+            try:
+                marked = (api or _default_api)("PATCH", f"/api/v1/works/{work_id}",
+                    {"review_decision": {"result": "rework_advanced", "round": cur_round,
+                                         "head": a.head, "before": a.before,
+                                         "target_branch": target, "notes": decision_note}})
+                if not isinstance(marked, dict) or marked.get("ok") is not True:
+                    raise ReviewError(f"큐가 전진 증거 저장 성공을 확인하지 않았다: {marked}")
+            except Exception as e:
+                a.ok = False
+                a.error = f"재작업 기준은 push됐으나 전진 증거 기록이 실패했다 — {e}"
+                return a
         logf("advance", f"[완료] {target} 전진 — {a.before[:8]} → {a.head[:8]}")
 
         # `#787` ② — 전진분에 들어간 이번 라운드 서브 브랜치를 지운다(실패는 전진을 안 되돌린다)

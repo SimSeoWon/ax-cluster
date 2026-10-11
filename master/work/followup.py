@@ -407,6 +407,11 @@ class Followup:
     kind_source: str = ""
     counts: dict = field(default_factory=dict)
     failed_tasks: list = field(default_factory=list)
+    work_summary: dict = field(default_factory=dict)
+    rework: bool = False
+    next_skeleton: dict = field(default_factory=dict)
+    rework_evidence: list = field(default_factory=list)
+    missing_results: list = field(default_factory=list)
     reason: str = ""
     tree: str = ""
     target_branch: str = ""
@@ -539,6 +544,9 @@ def prepare_round(repo, work_id: str, *, api=None, kind: str | None = None, proj
         counts[s] = counts.get(s, 0) + 1
     fu.counts = counts
     fu.failed_tasks = _failed_of(rtasks)
+    model = WM.Work.from_record(work, tasks)
+    fu.work_summary = model.execution_summary()
+    fu.rework = _rework_preparable(model)
     terminal = sum(n for s, n in counts.items() if s in TASK_TERMINAL)
     log("fetch", f"work {work_id} merge_status={fu.merge_status} · 라운드 {fu.round} · "
                  f"조각 {terminal}/{len(rtasks)} 종결 · {counts}")
@@ -547,13 +555,17 @@ def prepare_round(repo, work_id: str, *, api=None, kind: str | None = None, proj
     if expect_round is not None and fu.round != int(expect_round):
         # [중요] 목록을 읽은 뒤 개선요청으로 라운드가 넘어갔다 — 옛 라운드 키로 새 라운드를 돌리지 않는다
         return _done("stale_round", f"요청한 라운드 {expect_round} ≠ 큐의 라운드 {fu.round} — 다음 주기에 다시 본다")
-    if fu.merge_status in STOP_STATES:
+    if model.pending_rework() and fu.merge_status not in ("cancelled", "merged") and not model.finished:
+        return _done("running", "골조 실패 사유를 기록했다 — 다른 할당 가능 조각과 실행 중인 조각이 남아 있다")
+    if model.rework_required and fu.merge_status not in ("rejected", "cancelled", "merged"):
+        return _done("running", "조각은 끝났다 — 큐의 골조 재작업 종결 판정을 기다린다")
+    if fu.merge_status in STOP_STATES and not fu.rework:
         return _done("stopped", f"work 가 `{fu.merge_status}` 다 — ⑦ 준비를 하지 않는다"
                      + (f" (사유: {work.get('terminal_reason')})" if work.get("terminal_reason") else ""))
-    if fu.failed_tasks:
+    if fu.failed_tasks and not fu.rework:
         return _done("stopped", f"이번 라운드 조각 {len(fu.failed_tasks)}건이 실패·취소다 — "
                                 "머지하지 않았다")
-    if fu.merge_status != READY:
+    if fu.merge_status != READY and not fu.rework:
         return _done("running", f"아직 `{fu.merge_status or '?'}` — 조각 {terminal}/{len(rtasks)} 종결. "
                                 "끝나면 다음 호출·주기에 다시 본다")
     if not rtasks or terminal < len(rtasks):
@@ -590,21 +602,37 @@ def prepare_round(repo, work_id: str, *, api=None, kind: str | None = None, proj
                    f"(confirm=False · keep_tree=True)")
     a = (advance or R.advance_work)(Path(repo), work_id=work_id, work=work, tasks=tasks,
                                     build_fn=build_fn, confirm=False, keep_tree=True,
-                                    remote=remote, api=api, logf=log)
+                                    remote=remote, api=api, logf=log,
+                                    **({"rework": True} if fu.rework else {}))
     fu.tree, fu.before, fu.head = a.tree, a.before, a.head
     fu.merged, fu.conflicts, fu.pushed = list(a.merged), bool(a.conflicts), bool(a.pushed)
     fu.build_passed, fu.build_note = a.build_passed, a.build_note
     fu.checks = check_counts(_seen.get("res")) if "res" in _seen else {}
     fu.commands = list(a.commands)
+    if fu.rework:
+        fu.rework_evidence = list(getattr(a, "rework_evidence", []) or [])
+        fu.missing_results = list(getattr(a, "missing_results", []) or [])
+        fu.next_skeleton = model.rework_plan(integrated_head=fu.head, integrated_tree=fu.tree)
+        fu.next_skeleton.update(rework_evidence=fu.rework_evidence, missing_results=fu.missing_results)
     if a.pushed:
         # 있어서는 안 된다 — confirm=False 를 넘겼다. 보이게 남긴다
         log("advance", "[중요] confirm=False 인데 push 됐다고 보고됐다 — 계약 위반, 사람이 확인할 것")
     if a.error:
         return _done("error", f"⑦ 준비 실패 — {a.error}")
     log("build", f"통합 검사 build_passed={a.build_passed} — {a.build_note[:200]}")
-    fu.question = a.question
+    fu.question = (f"분산 작업을 완전히 취소할까요, 아니면 현재 통합본을 수정하고 "
+                   f"라운드 {model.round + 1} 골조를 준비할까요? "
+                   "수정 후 전진에는 기존 통합 검사와 사람 승인이 필요합니다."
+                   if fu.rework else a.question)
     log("gate", f"사람 게이트에서 멈춘다 — 트리 {a.tree} · HEAD {a.head[:12]} · push 안 함")
     return _done("at_gate", a.summary)
+
+
+def _rework_preparable(model: WM.Work) -> bool:
+    """골조 재작업 라운드만 준비한다. 사람의 취소·마감은 통합으로 되돌리지 않는다."""
+    return model.rework_required and model.merge_status == "rejected" and not any(
+        t.status == "cancelled" and not (t.raw.get("no_work") or t.raw.get("requester_handoff"))
+        for t in model.round_tasks())
 
 
 
@@ -796,6 +824,7 @@ def render(facts: dict, *, origin: str = "", at: float | None = None) -> str:
     if f.get("failed_tasks"):
         for t in f["failed_tasks"]:
             out.append(_task_line(t))
+    out.extend(_next_skeleton_lines(f.get("next_skeleton") or {}))
     if f.get("reason") and st != "at_gate":
         out.append(f"  사유: {str(f['reason'])[:500]}")
     if f.get("question"):
@@ -815,6 +844,28 @@ def render(facts: dict, *, origin: str = "", at: float | None = None) -> str:
     if tail:
         out.append("  " + " · ".join(tail))
     return "\n".join(out)
+
+
+def _next_skeleton_lines(plan: dict) -> list:
+    if not plan:
+        return []
+    out = [f"  다음 골조 준비 · 라운드 {plan.get('next_round')} · 통합 기준 "
+           f"{plan.get('base_branch')} @ {str(plan.get('integrated_head') or '?')[:12]}",
+           f"  통합본 트리: {plan.get('integrated_tree') or '?'}"]
+    for t in plan.get("repairs") or []:
+        out.append(f"    · {t.get('task_id')} · 종류 {t.get('work_kind') or t.get('failure_kind')} · "
+                   f"대상 {', '.join(t.get('targets') or []) or '기존 태스크 명세'} · {t.get('reason') or '사유 기록 없음'}")
+    if plan.get("successful_tasks"):
+        out.append("  성공 결과 재사용: " + ", ".join(plan["successful_tasks"]))
+    for e in plan.get("rework_evidence") or []:
+        out.append(f"  통합 결과 {e.get('task_id')} · {e.get('branch')} @ {str(e.get('head') or '?')[:12]} · "
+                   f"출처 {e.get('source')} · 검증 {'완료' if e.get('verified') else '미완료'}")
+    for t in plan.get("missing_results") or []:
+        out.append(f"  결과 없음 {t.get('task_id')} · {t.get('reason') or '커밋 증거 없음'}")
+    for key, choice in (plan.get("decision_options") or {}).items():
+        out.append(f"  사람 선택 {key}: {choice.get('label')} (승인 필요)")
+    out.append("  통합본 기준 수정 내용으로 다음 골조를 준비하는 단계 — 코드 생성·다음 라운드 등재는 아직 없음")
+    return out
 
 
 def recorded_for(repo, work_id: str, round_no: int | None = None, *, state=None) -> dict:
@@ -929,6 +980,22 @@ def prepare_once(repo, work_id: str, round_no: int | None = None, *, state=None,
     try:
         # [중요] 기록 확인은 **잠금 안에서** 한다 — 잠금 밖에서 보면 둘이 동시에 「안 함」을 본다
         prev = read_state(path)
+        if prev and not force and prev.get("event") == "stopped":
+            try:
+                latest_work, latest_tasks = (fetch or R.fetch_work)(work_id, api=api)
+                latest = WM.Work.from_record(latest_work, latest_tasks)
+                reopen = latest.round == int(round_no) and _rework_preparable(latest)
+            except Exception as e:                                 # noqa: BLE001
+                reopen = False
+                log("once", f"골조 재작업 재확인 실패 — {type(e).__name__}: {e}")
+            if reopen:
+                history = Path(sdir) / "history" / path.name
+                if not history.exists():
+                    write_state(history, prev)
+                journal(sdir, "rework_reopened", work_id=work_id, round=round_no,
+                        previous_record=str(history), origin=origin)
+                log("once", "같은 라운드 골조 재작업 확정 — stopped 이력을 보존하고 통합을 준비한다")
+                prev = {}
         if prev and not force:
             ev = prev.get("event", "")
             out["skip"] = {"prepared": "already_prepared", "stopped": "already_stopped",
@@ -1109,7 +1176,10 @@ def render_wait(res: dict) -> str:
     """`wait_for_gate` 결과 → 사실만 담은 블록. 준비 기록이 있으면 `render()` 를 **그대로**
     쓴다(Redmine 노트와 같은 문구). 🔴 명령형 없음 — 모듈 규칙(`render` 머리말)과 같다."""
     if res.get("text"):
-        return str(res["text"])
+        # 저장된 준비 기록은 그대로 둔다. 종결한 최신 큐에 골조 재작업이 있으면
+        # 원문 아래에 사실을 덧붙인다(비골조 기록의 기존 출력은 그대로).
+        latest = _work_summary_lines(res.get("work_summary") or {})
+        return str(res["text"]) + ("\n\n[최신 큐 상태]\n" + "\n".join(latest) if latest else "")
     oc = str(res.get("outcome") or "")
     out = [f"[⑦ 대기 결과] {res.get('work_id') or '(id 없음)'} · 라운드 {res.get('round')} · "
            f"결과 {oc} — {WAIT_LABEL.get(oc, oc or '미상')}"]
@@ -1118,6 +1188,7 @@ def render_wait(res: dict) -> str:
                         if res.get("total") is not None else "",
                         f"준비 기록 {res.get('record_state') or '없음'}") if x]
     out.append("  " + " · ".join(meta))
+    out.extend(_work_summary_lines(res.get("work_summary") or {}))
     for t in res.get("blocked_tasks") or []:
         out.append(_task_line(t))
         if t.get("kind"):
@@ -1127,7 +1198,7 @@ def render_wait(res: dict) -> str:
     if nrev:
         cap = f" (상한 {REVISE_MAX_ATTEMPTS}회)" if REVISE_MAX_ATTEMPTS else ""
         out.append(f"  needs_revision {nrev}건은 큐의 자동 재시도 후보로 남아 있다{cap} — "
-                   f"이 대기는 재시도·취소를 건드리지 않았다")
+                   "이 대기는 재시도·취소를 건드리지 않았다")
     if res.get("outcome") == "blocked" and "other_tasks" in res:
         # 사용자 우려 2026-10-11 — 취소하면 도는 워커를 건드리는지 보이게 한다
         others = res.get("other_tasks") or []
@@ -1143,6 +1214,16 @@ def render_wait(res: dict) -> str:
         out.append(f"  마지막 큐 조회 오류: {str(res['last_error'])[:300]}")
     out.append(f"  조회 {res.get('polls', 0)}회 · 경과 {_mmss(res.get('elapsed') or 0)}")
     return "\n".join(out)
+
+
+def _work_summary_lines(summary: dict) -> list:
+    if not summary.get("rework_required"):
+        return []
+    out = ["  다른 할당 가능 작업과 실행 중인 작업이 끝났다 — 골조 재작업 필요"]
+    out.extend(_task_line(t) for t in summary.get("rework_tasks") or [])
+    out.extend(f"  성공 조각 {t.get('task_id')} · 워커 {t.get('worker') or '?'} — 결과 보존"
+               for t in summary.get("successful_tasks") or [])
+    return out
 
 
 def _blocked_view(work: dict, tasks, blocked: list) -> tuple:
@@ -1237,29 +1318,42 @@ def wait_for_gate(repo, work_id: str, *, api=None, state=None, interval: float =
             res["round"] = rnd
             res["merge_status"] = str(work.get("merge_status") or "")
             rtasks = _round_tasks(work, tasks)
+            model = WM.Work.from_record(work, tasks)
+            res["work_summary"] = model.execution_summary()
             res["total"] = len(rtasks)
             res["verified"] = sum(1 for t in rtasks if t.get("status") == "verified")
             blocked = _failed_of(rtasks, BLOCK_STATES)
+            # 골조 실패는 태스크에 저장하고 나머지 작업을 계속한다. 최종 골조 고지는
+            # 할당 가능한 조각과 이미 실행 중인 조각이 모두 끝난 뒤 work 단위로 낸다.
+            if not model.finished:
+                skeleton_ids = {t.task_id for t in model.pending_rework()}
+                blocked = [t for t in blocked if t["task_id"] not in skeleton_ids]
             res["blocked"] = len(blocked)
             rec = recorded_for(repo, work_id, rnd, state=state)
             res["record_state"] = str(rec.get("state") or "") if rec else ""
+            rework_pending = _rework_preparable(model)
+            stale_stopped = (bool(model.pending_rework()) and model.merge_status not in ("cancelled", "merged")
+                             and res["record_state"] == "stopped" and not rec.get("rework"))
+            res["awaiting_rework"] = rework_pending
             remain = deadline - clock()
             log("wait", f"{work_id} r{rnd} · 큐 {res['merge_status'] or '?'} · 조각 "
                         f"{res['verified']}/{res['total']}"
                         + (f" · 막힘 {res['blocked']}" if res["blocked"] else "")
                         + f" · 준비 {res['record_state'] or '없음'} · 남은 {_mmss(remain)}")
-            if res["record_state"] in WAIT_RECORDED:
+            if res["record_state"] in WAIT_RECORDED and not stale_stopped:
                 res["facts"] = rec
                 res["question"] = str(rec.get("question") or "")
                 res["text"] = render(rec)
                 return _finish(res["record_state"])
             if res["merge_status"] == "merged":
                 return _finish("merged")
-            if res["merge_status"] in WAIT_TERMINAL:
+            if res["merge_status"] in WAIT_TERMINAL and not rework_pending:
                 res["failed_tasks"] = _failed_of(rtasks)
                 res["terminal_reason"] = str(work.get("terminal_reason") or "")
                 return _finish(f"terminal_{res['merge_status']}")
-            if blocked:
+            if rework_pending:
+                log("wait", f"{work_id} r{rnd} 골조 재작업 — 남은 결과의 통합 준비 기록을 기다린다")
+            elif blocked:
                 # 첫 막힘에서 끝낸다 (사용자 결정 2026-10-11) — 큐에는 아무것도 보내지 않는다
                 for t in blocked:
                     if t["status"] == "needs_revision" and REVISE_MAX_ATTEMPTS:

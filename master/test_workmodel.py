@@ -238,9 +238,183 @@ def test_work_from_record_and_load():
         check("load: 없는 work → LookupError", True)
 
 
+def test_failure_decisions():
+    task = {"task_id": "a", "round": 2, "attempt_count": 2, "last_feedback": FB_STUB}
+    original = copy.deepcopy(task)
+    cases = [
+        ({"notes": ["AX_CLAUDE_AUTH_FAILED", "usage limit"]}, "auth", RV.REJECT),
+        ({"notes": ["usage limit"]}, "quota", RV.REJECT),
+        ({"notes": ["0xC0000142"]}, "environment", RV.REJECT),
+        ({"notes": ["usage limit"], "stage": "층2"}, "code", RV.REVISE),
+        ({"layer2_failure": "invalid judgement"}, "verification", RV.REJECT),
+        ({}, "code", RV.REVISE),
+    ]
+    for kwargs, kind, verdict in cases:
+        got = WM.decide_failure(task, issues=[FB_STUB], **kwargs)
+        check(f"순수판정 {kind}", (got.kind, got.verdict) == (kind, verdict), str(got))
+    got = WM.decide_failure(task, issues=[FB_734_A])
+    check("시도2지만 직전스텁 → 첫동결은 code", got.kind == "code", str(got))
+    prev = dict(task, last_feedback=FB_734_A)
+    got = WM.decide_failure(prev, issues=[FB_734_A])
+    check("직전동결 + 현재동결 → skeleton", got.kind == "skeleton" and got.verdict == RV.REJECT)
+    notes = ["same"]
+    prev = dict(task, last_feedback=RV.tag_detail(FB_734_A, RV.output_fingerprint(notes)))
+    got = WM.decide_failure(prev, issues=[FB_734_A], notes=notes)
+    check("동결반복은 fp반복보다 우선해 해당태스크만 종결", got.kind == "skeleton", str(got))
+    decisions = [WM.decide_failure(dict(task, task_id=tid), issues=[FB_734_A]) for tid in ("a", "b")]
+    check("동시 두조각 첫동결은 각각 재시도", all(d.kind == "code" and d.verdict == RV.REVISE for d in decisions))
+    pending = T(status="pending", release_reason="quota_exhausted", release_detail=WM.failure_detail("usage limit", "quota"))
+    check("pending 실패이력은 대기상태 유지", pending.state == WM.WAITING and pending.assignable)
+    check("pending 저장종류는 재할당 권고", pending.recorded_failure_kind == "quota" and pending.classify()[0] == "quota")
+    got = WM.decide_failure(dict(task, attempt_count=3), issues=[FB_STUB])
+    check("일반상한 → cap", got.kind == "cap" and got.verdict == RV.REJECT)
+    got = WM.decide_failure(dict(task, last_feedback=RV.tag_detail("x", RV.output_fingerprint(notes))),
+                            issues=[FB_STUB], notes=notes)
+    check("일반 fp반복 → repeat", got.kind == "repeat")
+    detail = WM.failure_detail(FB_734_A, "code", "abcdefabcdef")
+    check("종류 표지는 fp 접두 보존", RV.repeated_output(detail, "abcdefabcdef"))
+    check("종류 저장표지는 레거시 attempt 추정보다 우선",
+          T(status="needs_revision", attempt_count=3, last_feedback=detail).classify(peers_frozen=2)[0] == "code")
+    for kind in WM.KINDS:
+        tagged = WM.failure_detail("summary without markers", kind)
+        check(f"저장표지 {kind} 복구", T(status="failed", fail_detail=tagged).classify()[0] == kind)
+    check("판정은 입력을 수정하지 않는다", task == original)
+
+
+def test_work_rework_after_other_tasks_finish():
+    skeleton = {"task_id": "a", "status": "failed", "round": 1,
+                "fail_detail": WM.failure_detail(FB_734_A, "skeleton")}
+    success = {"task_id": "b", "status": "verified", "round": 1, "worker_id": "done-worker"}
+    for st in ("pending", "needs_revision", "claimed", "submitted"):
+        w = _work([skeleton, success, {"task_id": "c", "status": st, "round": 1}])
+        check(f"다른 {st} 남으면 골조재작업 최종고지유예", not w.finished and not w.rework_required)
+        check(f"{st}도 성공결과 보존", w.execution_summary()["successful_tasks"][0]["task_id"] == "b")
+    for tasks in ([skeleton, success], [success, skeleton]):
+        w = _work(tasks)
+        summary = w.execution_summary()
+        check("실행종결 후 골조 재작업 필요 순서무관", w.finished and w.rework_required)
+        check("재작업 조각과 성공 조각 함께보존", [t["task_id"] for t in summary["rework_tasks"]] == ["a"]
+              and [t["task_id"] for t in summary["successful_tasks"]] == ["b"])
+    q = {"task_id": "quota", "status": "pending", "round": 1,
+         "release_reason": "quota_exhausted", "release_detail": WM.failure_detail("quota", "quota")}
+    w = _work([skeleton, q])
+    check("한도재할당 대기 있으면 골조고지유예", len(w.assignable()) == 1 and not w.rework_required)
+    check("quota대기 Work권고는 재할당", w.decide()[1]["action"] == "reassign")
+    legacy = [dict(skeleton, fail_detail=FB_734_A, attempt_count=1),
+              dict(skeleton, task_id="other", fail_detail=FB_734_B, attempt_count=1), success]
+    check("종결시 레거시 동라운드동결 종합", _work(legacy).rework_required)
+    tagged = [dict(skeleton, fail_detail=WM.failure_detail(FB_734_A, "code")),
+              dict(skeleton, task_id="other", fail_detail=WM.failure_detail(FB_734_B, "code")), success]
+    for tasks in (tagged, list(reversed(tagged))):
+        w = _work(tasks)
+        check("종결시 code표지첫동결2건은 Work골조판단 순서무관", w.rework_required and len(w.pending_rework()) == 2)
+        check("Work종합해도 Task원래종류 code보존", all(t.recorded_failure_kind == "code" for t in w.pending_rework()))
+    legacy_repeats = [dict(skeleton, fail_detail=FB_734_A, last_feedback=FB_734_A, attempt_count=1),
+                      dict(skeleton, task_id="other", fail_detail=FB_734_B, last_feedback=FB_734_B, attempt_count=1), success]
+    check("최종레거시동결repeat2건도골조종합", _work(legacy_repeats).rework_required)
+    w = _work([dict(skeleton, target_files=["master/a.py", "master/b.py"]), success])
+    p = w.rework_plan(integrated_head="merged-head", integrated_tree="/integrated-tree")
+    check("다음골조계획은통합기준과라운드명시", p["integrated_head"] == "merged-head"
+          and p["integrated_tree"] == "/integrated-tree" and p["next_round"] == 2)
+    check("다음골조계획에실패대상과성공재사용", p["repairs"][0]["targets"] == ["master/a.py", "master/b.py"]
+          and p["successful_tasks"] == ["b"])
+    check("다음골조는전체취소또는수정후다음라운드사람선택", set(p["decision_options"]) == {"cancel_work", "fix_and_next_round"}
+          and all(o["requires_confirmation"] for o in p["decision_options"].values()))
+
+
+def test_parallel_continues_after_skeleton_failure():
+    import threading
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from master.work import infer as I, runner as R, wcommit as WC
+    tasks = [{"task_id": tid, "work_id": "w", "round": 1, "status": "pending", "epoch": 7,
+              "attempt_count": 2, "last_feedback": FB_734_A if tid == "a" else ""} for tid in ("a", "b", "c")]
+    tasks_by_id = {t["task_id"]: t for t in tasks}
+    workers = [SimpleNamespace(host=h, capabilities=[]) for h in ("one", "two")]
+    queue_lock = threading.Lock()
+    started = threading.Barrier(2)
+    next_claimed = threading.Event()
+    claimed_hosts = {}
+    def claim(host, capabilities, **kw):
+        with queue_lock:
+            task = next((t for t in tasks if t["status"] == "pending"), None)
+            if task:
+                task.update(status="claimed", worker_id=host)
+                claimed_hosts[task["task_id"]] = host
+                if task["task_id"] == "c":
+                    next_claimed.set()
+            return task
+    def api(method, path, body=None):
+        if method == "POST" and path.endswith("/a/submit-fail"):
+            tasks_by_id["a"].update(status="failed", fail_reason=body["reason"], fail_detail=body["detail"])
+            return {"ok": True}
+        raise AssertionError(f"예상밖 호출 {method} {path}")
+    def dispatch(paths, facts, task, **kw):
+        tid = task["task_id"]
+        if tid in ("a", "b"):
+            started.wait(timeout=3)
+        if tid == "a":
+            return I.commit_task(paths, facts, task, work_id="w", base="abc", want=[], branch="a", api=api)
+        if tid == "b":
+            if not next_claimed.wait(3):
+                raise AssertionError("골조실패 워커가 다음태스크를 집지 않았다")
+        task["status"] = "verified"
+        return I.Response(task_id=tid, worker=facts.host, status=R.DONE)
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(I, "prescreen_nowork"))
+        stack.enter_context(patch.object(I, "_free_workers", return_value=(workers, [])))
+        stack.enter_context(patch.object(R, "waiting_summary", return_value={"reclaimed": 0}))
+        stack.enter_context(patch.object(R, "claim", side_effect=claim))
+        stack.enter_context(patch.object(I, "dispatch_task", side_effect=dispatch))
+        stack.enter_context(patch("master.work.twin_base.local_baseline", return_value={}))
+        stack.enter_context(patch.object(WC, "run", return_value=WC.Committed(task_id="a", stage="층1",
+            reason="동결 위반", layer1_violations=[FB_734_A])))
+        stack.enter_context(patch("master.work.usage.record", return_value={"lane": "", "input_tokens": 0,
+            "output_tokens": 0, "cost_known": False, "measured": False}))
+        stack.enter_context(patch.object(I._MODE, "current", return_value=("codex", "test")))
+        notice = stack.enter_context(patch.object(I, "_notify_blocked"))
+        embed = stack.enter_context(patch.object(RV, "embed"))
+        hand = I.run_many(SimpleNamespace(name="T", usage_log=Path("/unused")), limit=3,
+                          facts=workers, clean=False, work_id="w", api=api)
+    w = _work(tasks)
+    check("골조실패 워커가 바로 다른태스크 처리", claimed_hosts.get("a") == claimed_hosts.get("c")
+          and tasks_by_id["c"]["status"] == "verified", str(claimed_hosts))
+    check("병렬 실행중 다른워커 성공결과 회수", tasks_by_id["b"]["status"] == "verified"
+          and len(hand.items) == 3)
+    check("골조태스크는 재시도/즉시고지 안함", not embed.called and not notice.called)
+    check("모두소진후 Work골조재작업+성공보존", w.rework_required
+          and [t["task_id"] for t in w.execution_summary()["successful_tasks"]] == ["b", "c"])
+
+
+def test_stale_skeleton_does_not_change_queue_or_success():
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from master.work import infer as I, wcommit as WC
+    tasks = [{"task_id": "a", "status": "claimed", "round": 1, "epoch": 8, "worker_id": "new-owner"},
+             {"task_id": "b", "status": "verified", "round": 1, "worker_id": "done-owner"}]
+    before = copy.deepcopy(tasks)
+    with ExitStack() as stack:
+        stack.enter_context(patch("master.work.twin_base.local_baseline", return_value={}))
+        stack.enter_context(patch.object(WC, "run", return_value=WC.Committed(task_id="a", stage="층1",
+            reason="동결 위반", layer1_violations=[FB_734_A])))
+        stack.enter_context(patch("master.work.usage.record", return_value={"lane": "", "input_tokens": 0,
+            "output_tokens": 0, "cost_known": False, "measured": False}))
+        stack.enter_context(patch.object(I._MODE, "current", return_value=("codex", "test")))
+        notice = stack.enter_context(patch.object(I, "_notify_blocked"))
+        result = I.commit_task(SimpleNamespace(usage_log=Path("/unused")), SimpleNamespace(host="old-owner"),
+            {"task_id": "a", "attempt_count": 2, "epoch": 7, "last_feedback": FB_734_A},
+            work_id="w", base="abc", want=[], branch="a", api=lambda *a: {"ok": False, "reason": "stale epoch"})
+    check("epoch거절은 큐와다른성공증거 안바꿈", tasks == before and not _work(tasks).rework_required)
+    check("epoch거절 골조즉시고지없음", not notice.called)
+
+
 def main() -> int:
     for fn in (test_state_mapping, test_reason_keys, test_kinds, test_skeleton_rule,
-               test_decide_actions, test_round_filtering, test_work_from_record_and_load):
+               test_decide_actions, test_round_filtering, test_work_from_record_and_load,
+               test_failure_decisions, test_work_rework_after_other_tasks_finish,
+               test_parallel_continues_after_skeleton_failure, test_stale_skeleton_does_not_change_queue_or_success):
         fn()
     print(f"통과 {PASS} · 실패 {FAIL}")
     return 1 if FAIL else 0

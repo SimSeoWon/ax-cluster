@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -1002,23 +1003,146 @@ def test_wait_blocked_skeleton_two_frozen():
                  {"task_id": "ca8e428c", "status": "needs_revision", "round": 1, "assignee": "192.168.0.43",
                   "attempt_count": 1, "last_feedback": fb2},
                  {"task_id": "t3", "status": "pending", "round": 1}]
-        res = F.wait_for_gate(repo, "ww", api=_queue([_resp(tasks=tasks)]), state=sd,
-                              clock=fc.clock, sleep=fc.sleep)
-        bt = res["blocked_tasks"]
+        final_tasks = [dict(t, status="failed", fail_detail=t.get("last_feedback"), fail_reason="BLOCKED")
+                       if t["status"] == "needs_revision" else dict(t, status="verified") for t in tasks]
+        gate = {"state": "at_gate", "work_id": "ww", "round": 1, "rework": True,
+                "tree": "/integrated", "head": "a" * 40, "build_passed": False}
+        with patch.object(F, "recorded_for", side_effect=[{}, {}, gate]):
+            res = F.wait_for_gate(repo, "ww", api=_queue([_resp(tasks=tasks),
+                                  _resp(tasks=final_tasks, merge_status="rejected")]), state=sd,
+                                  clock=fc.clock, sleep=fc.sleep)
+        bt = res["work_summary"]["rework_tasks"]
         check("[중요] wait: 동결 위반 2건 동시 → 둘 다 skeleton · notify_human",
-              [(b.get("kind"), b.get("action")) for b in bt] == [("skeleton", "notify_human")] * 2, str(bt))
+              [b.get("task_id") for b in bt] == ["d389e08f", "ca8e428c"], str(bt))
         txt = F.render_wait(res)
         check("render_wait: 골조 결함 근거 (사실만)",
-              "종류 skeleton · 권고 notify_human — 골조 결함 의심 — 같은 라운드 조각 2건이 동시에 동결 위반" in txt
-              and "골조 변경 결정 필요" in txt, txt)
-        check("render_wait: 대기 조각이 다른 조각으로", "작업중 0 · 성공 0 · 대기 1" in txt
-              and "· t3 대기(pending)" in txt, txt)
+              "골조 재작업 필요" in txt and "동결 위반" in txt, txt)
+        check("render_wait: 다른 대기조각도 완료+통합준비뒤 고지", "성공 조각 t3" in txt and res["polls"] == 3, txt)
         for bad in ("하세요", "하라", "해라", "실행하"):
             check(f"render_wait skeleton: 명령형 `{bad}` 없음", bad not in txt)
-        check("wait skeleton: 종료 코드 3 그대로", res["outcome"] == "blocked" and res["exit_code"] == 3)
+        check("wait skeleton: 통합본 사람게이트 코드0", res["outcome"] == "at_gate" and res["exit_code"] == 0)
     finally:
         shutil.rmtree(sd, ignore_errors=True)
         shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_wait_skeleton_deferred_until_other_tasks_finish():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        before = _listing(root)
+        skeleton = {"task_id": "a", "status": "failed", "round": 1,
+                    "fail_detail": "[kind:skeleton] 동결 위반"}
+        working = {"task_id": "b", "status": "claimed", "round": 1, "worker_id": "worker"}
+        pending = {"task_id": "c", "status": "pending", "round": 1}
+        done_b, done_c = dict(working, status="verified"), dict(pending, status="verified")
+        fc = FakeClock()
+        responses = [_resp(tasks=[skeleton, working, pending]),
+                     _resp(tasks=[skeleton, done_b, dict(pending, status="claimed")]),
+                     _resp(tasks=[skeleton, done_b, done_c], merge_status="rejected")]
+        old = {"state": "stopped", "work_id": "ww", "round": 1, "reason": "옛 실패 기록"}
+        gate = {"state": "at_gate", "work_id": "ww", "round": 1, "rework": True,
+                "tree": "/integrated", "head": "a" * 40, "build_passed": False}
+        with patch.object(F, "recorded_for", side_effect=[{}, {}, old, gate]):
+            res = F.wait_for_gate(root / "repo", "ww", api=_queue(responses), state=root / "state",
+                                  clock=fc.clock, sleep=fc.sleep)
+        txt = F.render_wait(res)
+        check("골조실패 즉시대기종료 않고 나머지종결+통합준비까지조회", res["polls"] == 4 and res["outcome"] == "at_gate")
+        check("최종 종결에 골조 재작업 필요", res["work_summary"]["rework_required"] and "골조 재작업 필요" in txt, txt)
+        check("최종 성공조각 결과 모두 보존", "성공 조각 b" in txt and "성공 조각 c" in txt, txt)
+        check("전체보류/취소/재할당제어 없음", "work 파견 보류" not in txt and _listing(root) == before)
+        original = "[준비 기록 원문] 예전 stopped 기록"
+        recorded = dict(res, text=original, outcome="stopped")
+        txt = F.render_wait(recorded)
+        check("과거준비기록원문보존+최신골조재작업덧붙임", txt.startswith(original + "\n\n[최신 큐 상태]")
+              and "골조 재작업 필요" in txt and "성공 조각 b" in txt)
+        active = dict(recorded, work_summary=F.WM.Work.from_record(
+            {"round": 1}, [skeleton, working, pending]).execution_summary())
+        check("과거기록에 실행중이면 종결거짓고지안함", F.render_wait(active) == original)
+
+
+def test_prepare_rework_merges_and_reports_second_skeleton():
+    w = dict(WORK_READY, merge_status="rejected")
+    tasks = [{"task_id": "t1", "status": "verified", "round": 1},
+             {"task_id": "t2", "status": "failed", "round": 1, "target_file": "master/x.py",
+              "fail_detail": "[kind:skeleton] 동결 위반 — 선언 삭제"}]
+    spy = AdvanceSpy(build_passed=False)
+    def advance(repo, **kw):
+        a = spy(repo, **kw)
+        a.rework_evidence = [{"task_id": "t1", "branch": "task/w1/r1/t1", "head": "c" * 40,
+                              "source": "durable", "verified": True}]
+        a.missing_results = [{"task_id": "t2", "status": "failed", "reason": "커밋 없음"}]
+        return a
+    fu = F.prepare_round("/r", "w1", fetch=_fetch(w, tasks), advance=advance, build_fn=_bfn)
+    check("골조종결은 rejected여도 통합사람게이트", fu.state == "at_gate" and fu.rework, fu.reason)
+    kw = spy.calls[0] if spy.calls else {}
+    check("재작업통합도 confirmFalse/keepTreeTrue", kw.get("rework") is True
+          and kw.get("confirm") is False and kw.get("keep_tree") is True)
+    p = fu.next_skeleton
+    check("2차골조는 통합본HEAD/tree기준", p.get("next_round") == 2 and p.get("integrated_head") == fu.head
+          and p.get("integrated_tree") == fu.tree)
+    check("2차골조 사유/대상/성공재사용 구조화", p.get("repairs", [{}])[0].get("targets") == ["master/x.py"]
+          and p.get("successful_tasks") == ["t1"])
+    txt = F.render(fu.facts())
+    check("고지에 통합증거와누락결과명시", "통합 결과 t1" in txt and "결과 없음 t2" in txt
+          and "다음 골조 준비" in txt and "성공 결과 재사용: t1" in txt, txt)
+    check("자동생성/파견/전진안함", "코드 생성·다음 라운드 등재는 아직 없음" in txt and not fu.pushed)
+    check("빌드실패도전체취소또는통합본수정2라운드선택고지", fu.build_passed is False
+          and "완전히 취소" in fu.question and "라운드 2" in fu.question
+          and "cancel_work" in txt and "fix_and_next_round" in txt
+          and p["decision_options"]["fix_and_next_round"]["requires_confirmation"])
+    spy = AdvanceSpy()
+    active = [tasks[1], dict(tasks[0], status="claimed")]
+    fu = F.prepare_round("/r", "w1", fetch=_fetch(dict(w, merge_status="in_progress"), active),
+                         advance=spy, build_fn=_bfn)
+    check("골조실패라도 다른실행중이면 통합안함", fu.state == "running" and not spy.calls)
+    spy = AdvanceSpy()
+    fu = F.prepare_round("/r", "w1", fetch=_fetch(dict(w, merge_status="cancelled"), tasks),
+                         advance=spy, build_fn=_bfn)
+    check("명시work취소는골조있어도통합안함", fu.state == "stopped" and not spy.calls)
+    fu = F.prepare_round("/r", "w1", fetch=_fetch(dict(w, merge_status="cancelled"), active),
+                         advance=spy, build_fn=_bfn)
+    check("명시취소는골조와실행중조각보다우선", fu.state == "stopped" and not spy.calls)
+    fu = F.prepare_round("/r", "w1", fetch=_fetch(dict(w, merge_status="in_progress"), tasks),
+                         advance=spy, build_fn=_bfn)
+    check("골조완료도큐rejected종결전통합안함", fu.state == "running" and not spy.calls)
+
+
+def test_rework_reopens_stopped_history_once_and_scan():
+    w = dict(WORK_READY, merge_status="rejected")
+    tasks = [{"task_id": "t1", "status": "verified", "round": 1},
+             {"task_id": "t2", "status": "failed", "round": 1, "fail_detail": "[kind:skeleton] 동결 위반"}]
+    with tempfile.TemporaryDirectory() as td:
+        state, repo = Path(td) / "state", Path(td) / "repo"
+        path = F.round_key_path(state, repo, "w1", 1)
+        old = {"event": "stopped", "state": "stopped", "work_id": "w1", "round": 1,
+               "repo": str(repo.resolve()), "reason": "옛 사유 없음 기록"}
+        F.write_state(path, old)
+        old_bytes = path.read_bytes()
+        spy = AdvanceSpy()
+        kwargs = {"state": state, "fetch": _fetch(w, tasks), "advance": spy, "build_fn": _bfn}
+        out = F.prepare_once(repo, "w1", 1, **kwargs)
+        check("최신골조확정때만stopped재준비", out["action"] == "prepared" and out["result"]["rework"])
+        check("옛stopped원문이력보존", (state / "history" / path.name).read_bytes() == old_bytes)
+        again = F.prepare_once(repo, "w1", 1, **kwargs)
+        check("재작업준비도라운드멱등", again["skip"] == "already_prepared" and len(spy.calls) == 1)
+        rec = dict(old, event="error", state="error")
+        F.write_state(path, rec)
+        again = F.prepare_once(repo, "w1", 1, **kwargs)
+        check("재작업준비오류는자동재시도안함", again["skip"] == "previous_error" and len(spy.calls) == 1)
+        F.write_state(path, old)
+        ordinary = [tasks[0], dict(tasks[1], fail_detail="[kind:code] 일반 코드 실패")]
+        again = F.prepare_once(repo, "w1", 1, state=state, fetch=_fetch(w, ordinary),
+                               advance=spy, build_fn=_bfn)
+        check("일반실패stopped는재개안함", again["skip"] == "already_stopped" and len(spy.calls) == 1)
+        again = F.prepare_once(repo, "w1", 1, state=state, fetch=_fetch(dict(w, round=2), tasks),
+                               advance=spy, build_fn=_bfn)
+        check("다른라운드는옛stopped재준비안함", again["skip"] == "already_stopped")
+        F.scan(repo, project="P", state=state, list_works=_works())
+        def once(*args, **kw):
+            return F.prepare_once(*args, fetch=_fetch(w, tasks), advance=spy, build_fn=_bfn, **kw)
+        out = F.scan(repo, project="P", state=state, list_works=_works(w), once=once)
+        check("timer scan도골조rejected를준비게이트연결", out["prepared"] == [{"work_id": "w1", "round": 1, "state": "at_gate"}])
+
 
 
 def test_wait_blocked_failed_and_precedence():
@@ -1180,6 +1304,9 @@ def main() -> int:
                test_wait_blocked_needs_revision,
                test_wait_blocked_failed_and_precedence,
                test_wait_blocked_skeleton_two_frozen,
+               test_wait_skeleton_deferred_until_other_tasks_finish,
+               test_prepare_rework_merges_and_reports_second_skeleton,
+               test_rework_reopens_stopped_history_once_and_scan,
                test_wait_cli_exit_codes,
                test_register_tool_carries_wait_command):
         fn()

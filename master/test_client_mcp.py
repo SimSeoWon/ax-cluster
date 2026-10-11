@@ -823,6 +823,44 @@ def test_find_invariants_sweeps_and_says_how_it_matched():
           any(k == "ontology/domain/MissionRuntime" for k in cache.puts), str(cache.puts))
 
 
+def test_rework_improve_surface():
+    """새 재작업 인자가 MCP → 서버 → 기존 개선 함수까지 보존되는지 확인한다."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from master.projects import register_route
+    from master.work import register
+    from master.context_search import paths
+    payload = {"work_id": "dry-work", "round": 2, "specs": [{"stem": "repair"}],
+               "rework": True, "expected_base_commit": "a" * 40}
+    forwarded = []
+    def write_api(method, path, body):
+        forwarded.append((method, path, body))
+        return {"ok": True}
+    with patch.object(M, "projects_write_api", return_value=write_api):
+        M.tool_improve_work(None, payload)
+    body = forwarded[0][2]
+    check("재작업 옵션은 기존 improve 경로로 전달", forwarded[0][:2] == ("POST", "/work/improve")
+          and body["rework"] is True and body["expected_base_commit"] == "a" * 40)
+    result = SimpleNamespace(ok=True, work_id="dry-work", round=2, tasks=[], summary=lambda: "dry")
+    with patch.object(paths, "resolve", return_value=SimpleNamespace(name="AXCluster")), \
+            patch.object(register, "improve_work", return_value=result) as improve:
+        got = register_route._run(dict(body, project="AXCluster"), improve=True)
+    check("서버는 재작업 옵션을 개선 함수에 보존", got["ok"] and improve.call_args.kwargs["rework"] is True
+          and improve.call_args.kwargs["expected_base_commit"] == "a" * 40)
+    schema = next(t for t in M.TOOLS if t["name"] == "improve_work")["inputSchema"]["properties"]
+    check("MCP 스키마에 재작업 기준 노출", schema["rework"]["type"] == "boolean"
+          and schema["expected_base_commit"]["type"] == "string")
+    with patch.object(M, "projects_write_api", return_value=write_api):
+        before = len(forwarded)
+        try:
+            M.tool_improve_work(None, dict(payload, rework="false"))
+            check("문자열 재작업 플래그 거절", False)
+        except M.ClientError:
+            check("문자열 재작업 플래그 거절", len(forwarded) == before)
+    refused = register_route._run(dict(payload, project="AXCluster", rework="false"), improve=True)
+    check("서버도 문자열 재작업 플래그 거절", refused.get("reason") == "bad_rework")
+
+
 def main() -> int:
     for fn in (test_single_file_stdlib_only, test_protocol_roundtrip,
                test_nonascii_work_id_is_encoded, test_search_caches_and_falls_back,
@@ -841,7 +879,7 @@ def main() -> int:
                test_find_invariants_sweeps_and_says_how_it_matched,
                test_redmine_delegation_goes_to_queue,
                test_redmine_wiki_tools, test_redmine_wiki_project_injection,
-               test_task_templates_read_surface):
+               test_task_templates_read_surface, test_rework_improve_surface):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_mcp: {PASS}/{total} 통과")
