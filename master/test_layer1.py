@@ -93,6 +93,48 @@ def test_fence_residue_is_a_violation() -> None:
     check("펜스 잔재는 위반", not r.ok, r.summary)
 
 
+
+def test_fence_baseline_aware_819() -> None:
+    print("\n🔴 펜스 잔재는 기준 원본의 개수만큼 기존이다 (`#819`)")
+    p = "pkg/review_runner.py"
+    F = "`" * 3
+    base = ("import os\nimport sys\n\n"
+            f'DRAFT_PROMPT = """답을 diff 로 낸다.\n{F}diff\n{{diff}}\n{F}"""\n\n\n'
+            "def f():\n    return DRAFT_PROMPT\n")
+    kept = base.replace("import os\nimport sys\n\n", "")
+    r = L1.check({p: kept}, baseline=lambda _p: base)
+    check("원본 펜스 2개를 그대로 두면 통과 (review_runner 사례)", r.ok, r.summary)
+
+    more = kept + f'\nEXTRA = """\n{F}\n"""\n'
+    r = L1.check({p: more}, baseline=lambda _p: base)
+    fp = [x for x in r.problems if "펜스" in x]
+    check("하나 더 생기면 막는다", not r.ok and len(fp) == 1, str(r.problems))
+    check("  문구가 새로 생김·원본 개수를 싣는다",
+          bool(fp) and "새로 생김 1" in fp[0] and "원본 2" in fp[0], str(fp))
+
+    fewer = kept.replace(f"{F}diff\n", "").replace(f"{F}\"\"\"", '"""')
+    r = L1.check({p: fewer}, baseline=lambda _p: base)
+    check("펜스를 줄인 것은 펜스 문제가 아니다",
+          not any("펜스" in x for x in r.problems), str(r.problems))
+
+    r = L1.check({p: kept}, baseline=lambda _p: None)
+    check("신규 파일(None)의 펜스는 종전대로 위반",
+          any(x == f"{p}: 마크다운 펜스가 남아 있다" for x in r.problems), str(r.problems))
+    r = L1.check({p: kept})
+    check("baseline 함수가 없으면 종전대로 위반",
+          any(x == f"{p}: 마크다운 펜스가 남아 있다" for x in r.problems), str(r.problems))
+
+    plain = "def f():\n    raise NotImplementedError\n"
+    wrapped = f"{F}python\ndef f():\n    return 1\n{F}\n"
+    r = L1.check({p: wrapped}, baseline=lambda _p: plain)
+    fp = [x for x in r.problems if "펜스" in x]
+    check("🔴 답을 펜스로 감싼 응답(14b 결함)은 기준이 있어도 막는다",
+          not r.ok and len(fp) == 1 and "새로 생김 2" in fp[0] and "원본 0" in fp[0], str(r.problems))
+    r = L1.check({C: f"{F}cpp\nvoid UFoo::F() {{}}\n{F}\n"},
+                 baseline=lambda _p: "void UFoo::F() {}\n")
+    check("  .cpp 도 같은 규칙 (기준에 펜스 없음 → 위반)", not r.ok, r.summary)
+
+
 # ── ③ 동결 ──────────────────────────────────────────────────────────────────────
 
 def test_freeze_semantics() -> None:
@@ -335,7 +377,7 @@ def test_pyflakes_unavailable_is_unchecked_not_blocked():
 def main() -> int:
     for fn in (test_a_citation_is_not_a_marker,test_volatile_tags_are_caught, test_permanent_tags_and_plain_comments_pass,
                test_feedback_left_in_source_is_a_violation, test_retry_feedback_block_residue_is_a_violation,
-               test_fence_residue_is_a_violation,
+               test_fence_residue_is_a_violation, test_fence_baseline_aware_819,
                test_freeze_semantics, test_cpp_is_not_a_freeze_target,
                test_new_file_has_nothing_to_freeze, test_fail_closed_directions,
                test_residue_response_is_rejected_at_acceptance_not_at_apply,

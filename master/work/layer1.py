@@ -23,6 +23,8 @@
     `[FEEDBACK]` 잔재      [중요] 아래 § 참조                              (소 2.1.2)
     재시도 피드백 블록     `AUTO-VERIFY FEEDBACK` 여는 줄(C·`#` 둘 다)        (`#806`)
     마크다운 펜스 잔재     14b 의 알려진 유일 결함                      (소 2.1.2)
+                           기준 원본에 이미 있던 개수만큼은 기존이다 — 프롬프트 문자열 속
+                           정상 펜스를 워커가 지워 통과하던 결함        (`#819`)
     `.py` 정의 안 된 이름  pyflakes `undefined name`(`__all__` 포함) — ⑦ 과 같은 차단 집합,
                            기준 원본에 이미 있던 개수만큼은 기존이다      (`#815`)
 
@@ -156,6 +158,27 @@ def _flakes(path: str, text: str) -> list:
     return found
 
 
+def _fence_problem(path: str, text: str, baseline) -> str:
+    """마크다운 펜스 잔재 문구 — 없으면 `""`.
+
+    🔴 `#819` (실측 2026-10-11, work `#817`) — 원본 문자열(`DRAFT_PROMPT` 의 ```` ```diff ````)에
+    정상으로 든 펜스를 잔재로 잡아, 재시도 워커가 **프롬프트의 펜스를 지워** 통과했다(범위 밖 변경).
+    [중요] 기준 원본에 이미 있던 펜스는 그 **개수만큼** 기존이다 — pyflakes(`#815`)와 같은 개수 규칙.
+    기준이 없거나(`baseline` 미지정) 신규 파일(`None`)이면 종전대로 펜스 하나도 위반이다.
+    [주의] 셈은 `_FENCE_ANY`(MULTILINE `^\\s*```) 의 일치 수 = 펜스로 **시작하는 줄** 수다.
+    """
+    new = len(skeleton._FENCE_ANY.findall(text))
+    if not new:
+        return ""
+    old_text = baseline(path) if baseline is not None else None
+    if old_text is None:
+        return f"{path}: 마크다운 펜스가 남아 있다"
+    old = len(skeleton._FENCE_ANY.findall(old_text))
+    if new <= old:
+        return ""                            # 원본의 펜스를 지키거나 줄였다 — 잔재가 아니다
+    return f"{path}: 마크다운 펜스가 남아 있다 (새로 생김 {new - old} · 원본 {old})"
+
+
 def check(files: dict, *, baseline=None) -> Layer1:
     """동결 위반 · 휘발 태그 · `[FEEDBACK]` · 펜스 잔재 · `.py` 의 정의 안 된 이름을 본다. **무료 · LLM 0.**
 
@@ -180,8 +203,9 @@ def check(files: dict, *, baseline=None) -> Layer1:
             L.problems.append(f"{path}: `{FEEDBACK_TAG}` 가 소스에 남아 있다")
         if _FEEDBACK_BLOCK.search(text):
             L.problems.append(f"{path}: 재시도 피드백 블록(AUTO-VERIFY FEEDBACK)이 남아 있다")
-        if skeleton._FENCE_ANY.search(text):
-            L.problems.append(f"{path}: 마크다운 펜스가 남아 있다")
+        _fence = _fence_problem(path, text, baseline)
+        if _fence:
+            L.problems.append(_fence)
 
         # 🔴 `#695` P3 — `.py` 는 선언과 정의가 한 몸이다. 구문은 **원본 없이도** 본다.
         if _is_py(path):
