@@ -1,0 +1,171 @@
+"""#823: 임시 main과 가짜 판정기로 수집/전달 계약을 검증한다. 실 LLM 호출 없음."""
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from master.context_synth import dismissal_candidates as D, fix_index as F
+from master.batch import gates, run as B
+
+
+class CandidatesTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "twin"
+        self.repo = Path(self.tmp.name) / "repo"
+        self.repo.mkdir()
+        self.git("init", "-b", "main")
+        self.git("config", "user.name", "Test")
+        self.git("config", "user.email", "test@example.invalid")
+        (self.repo / "a.py").write_text("def f():\n    return 1\n")
+        self.git("add", "a.py")
+        self.git("commit", "-m", "fixture")
+        review = self.root / "reviews" / "Tester" / "_archive" / "2026-W01" / "a.md"
+        review.parent.mkdir(parents=True)
+        review.write_text("# review\n- 커밋: `" + "a" * 40 + "`\n- 작성자: Tester\n"
+                          "### a.py\n## 1. 변경분 코딩 컨벤션\n"
+                          "| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n|---|---|---|---|---|\n"
+                          "| a.py | 타입 | 타입 표기 없음 | 1 | low |\n")
+        plan = self.root / "plans" / "Tester" / "2026-W01" / "a.md"
+        plan.parent.mkdir(parents=True)
+        plan.write_text("---\ntype: improvement_plan\ntarget_file: a.py\nstatus: pending\n---\n타입 권고\n")
+        F.sweep(self.root)
+        self.paths = SimpleNamespace(root=self.root, repo=self.repo,
+                                     usage_log=self.root / "usage.jsonl")
+        self.index = F.index_path(self.root).read_bytes()
+        self.plan = plan
+        self.plan_before = plan.read_bytes()
+        self.calls = []
+
+    def git(self, *args):
+        return subprocess.run(["git", "-C", str(self.repo), *args], check=True,
+                              capture_output=True, text=True).stdout
+
+    def chat(self, prompt):
+        self.calls.append(prompt)
+        data = json.loads(prompt.split("DATA_JSON\n", 1)[1])
+        self.assertEqual(data["source"][0]["text"], "def f():")
+        return json.dumps({"verdict": "candidate", "reason": "타입 표기 권고",
+                           "evidence": [{"file": "a.py", "line": 1, "text": "def f():"}]})
+
+    def collect(self, **kwargs):
+        return D.collect(self.paths, chat=self.chat, token_budget=100000,
+                         now=datetime(2026, 10, 17, 10), **kwargs)
+
+    def test_archived_review_old_plan_and_state_unchanged(self):
+        (self.repo / "a.py").write_text("UNCOMMITTED\n")
+        got = self.collect()
+        self.assertTrue(got["complete"])
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(F.index_path(self.root).read_bytes(), self.index)
+        self.assertEqual(self.plan.read_bytes(), self.plan_before)
+        self.assertEqual((self.repo / "a.py").read_text(), "UNCOMMITTED\n")
+        self.collect()
+        self.assertEqual(len(self.calls), 2)
+        with patch.object(D, "collect", side_effect=AssertionError("목록 수집 금지")):
+            public = F.list_docs(self.root, do_sweep=False)
+            private = F.list_docs(self.root, do_sweep=False, candidate_details=True)
+        self.assertEqual(public["dismissal_candidates"]["count"], 2)
+        self.assertNotIn("타입 표기 권고", json.dumps(public, ensure_ascii=False))
+        self.assertIn("타입 표기 권고", json.dumps(private, ensure_ascii=False))
+        F.set_status(self.root, "P1", "dismissed", by="human")
+        self.assertEqual(D.read_results(self.root)["count"], 1)
+
+    def test_main_change_stale_and_new_collection(self):
+        self.collect()
+        (self.repo / "a.py").write_text("def f():\n    return 2\n")
+        self.git("add", "a.py")
+        self.git("commit", "-m", "new main")
+        self.assertTrue(all(r["stale"] for r in D.read_results(self.root)["candidates"]))
+        self.collect()
+        self.assertFalse(any(r["stale"] for r in D.read_results(self.root)["candidates"]))
+        self.assertEqual(len(self.calls), 4)
+
+    def test_invalid_evidence_is_unjudged(self):
+        def bad(_):
+            return json.dumps({"verdict": "candidate", "reason": "wrong",
+                               "evidence": [{"file": "a.py", "line": 99, "text": "x"}]})
+        got = D.collect(self.paths, chat=bad, token_budget=100000)
+        self.assertEqual(len(got["unjudged"]), 2)
+        self.assertEqual(D.read_results(self.root)["count"], 0)
+
+    def test_malformed_or_resolved_response_is_not_candidate(self):
+        for answer in (None, "garbage", '{"verdict":"applied"}', '[]'):
+            with self.subTest(answer=answer):
+                D._path(self.root).unlink(missing_ok=True)
+                got = D.collect(self.paths, chat=lambda _: answer, token_budget=100000)
+                self.assertEqual(len(got["unjudged"]), 2)
+                self.assertEqual(D.read_results(self.root)["count"], 0)
+
+    def test_budget_resumes_next_weekend_not_same_weekend(self):
+        first = next(D._inputs(self.root))
+        source = D._source(self.repo, D.main_sha(self.repo), first["file"])
+        cost = len(D._prompt(first, source).encode("utf-8")) + 4096
+        # 둘 다 한 회차 예산 안에는 들어가지만 합치면 초과한다.
+        got = D.collect(self.paths, chat=self.chat, token_budget=cost + 2000)
+        self.assertFalse(got["complete"])
+        self.assertEqual(len(self.calls), 1)
+        self.collect()
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(D.read_results(self.root)["count"], 2)
+        runs = []
+
+        def execute(_):
+            runs.append(1)
+            return {"ok": True, "complete": False}
+
+        fake = B.BatchDef(gates.DISMISSAL_CANDIDATES, "test", lambda _: 1,
+                          execute, gates.should_run_dismissal_candidates)
+        with patch.object(B, "BATCHES", [fake]):
+            first_run = B.run(self.paths, {}, now=datetime(2026, 10, 17, 10))
+            # 미완료여도 주간 마커는 남는다 — 같은 주말에 매시 재실행하지 않는다(#823).
+            self.assertIsNotNone(gates.read_marker(self.root, "dismissal_candidates"))
+            self.assertTrue(first_run[0].ran)
+            self.assertIn("다음 주말", first_run[0].verdict)
+            B.run(self.paths, {}, now=datetime(2026, 10, 17, 11))
+            B.run(self.paths, {}, now=datetime(2026, 10, 18, 10))
+            self.assertEqual(len(runs), 1)
+            B.run(self.paths, {}, now=datetime(2026, 10, 24, 10))
+            self.assertEqual(len(runs), 2)
+
+    def test_oversized_input_is_unjudged_without_blocking_forever(self):
+        got = D.collect(self.paths, chat=self.chat, token_budget=1)
+        self.assertTrue(got["complete"])
+        self.assertEqual(len(got["unjudged"]), 2)
+        self.assertEqual(len(self.calls), 0)
+
+    def test_public_list_only_displays_summary(self):
+        from master.webui import fixes_page
+        from master.test_fixes_surface import FakeRegistry
+        self.collect()
+        reg = FakeRegistry({"T": self.root}, "T")
+        status, body = fixes_page.render("T", registry=reg)
+        self.assertEqual(status, 200)
+        self.assertIn("주말 기각 후보 2건", body)
+        self.assertNotIn("타입 표기 권고", body)
+        self.assertNotIn("a.py", body)
+
+    def test_weekend_gate_independent_and_failure_preserves_list(self):
+        s = gates.DISMISSAL_CANDIDATES
+        sat = datetime(2026, 10, 17, 10)
+        self.assertTrue(gates.should_run_dismissal_candidates(s, {}, self.root, input_count=2, now=sat).run)
+        self.assertFalse(gates.should_run_dismissal_candidates(s, {}, self.root, input_count=2,
+                                                            now=datetime(2026, 10, 16, 10)).run)
+        gates.write_marker(self.root, s.key, now=sat)
+        self.assertFalse(gates.should_run_dismissal_candidates(s, {}, self.root, input_count=2, now=sat).run)
+        self.assertTrue(any(b.schedule.key == s.key for b in B.BATCHES))
+        D._path(self.root).write_text("broken")
+        got = F.list_docs(self.root, do_sweep=False)
+        self.assertEqual(len(got["docs"]), 2)
+        self.assertIn("error", got["dismissal_candidates"])
+
+
+if __name__ == "__main__":
+    unittest.main()

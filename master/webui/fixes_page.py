@@ -242,6 +242,17 @@ def render(project: str = "", *, registry=None, list_docs=None) -> tuple:
         _log(f"[fix] 웹 목록이 번호를 붙였다 ({paths.name}): {', '.join(swept['assigned'])}")
 
     docs = got.get("docs") or []
+    candidates = got.get("dismissal_candidates") or {}
+    candidate_note = ""
+    if candidates.get("error"):
+        candidate_note = '<div class="note">기각 후보 수집 결과를 읽지 못했다.</div>'
+    elif candidates.get("count"):
+        stale = sum(bool(c.get("stale")) for c in candidates.get("candidates", []))
+        candidate_note = (f'<div class="note">주말 기각 후보 {int(candidates["count"])}건'
+                          f' · 재확인 필요 {stale}건 · 기준 '
+                          f'{html.escape(str(candidates.get("main_sha") or "")[:12])}'
+                          f' · {html.escape(str(candidates.get("collected_at") or ""))}'
+                          ' · 상태는 변경되지 않았다. 근거는 요청자 목록 조회로 확인한다.</div>')
     reviews = [d for d in docs if d.get("kind") == "review"]
     plans = [d for d in docs if d.get("kind") == "plan"]
     open_items = sum(int((d.get("states") or {}).get("open") or 0) for d in docs)
@@ -257,6 +268,7 @@ def render(project: str = "", *, registry=None, list_docs=None) -> tuple:
   <div class="stat"><b>{open_items}</b><span>미결 항목</span></div>
   <div class="stat"><b>{applied}</b><span>적용됨</span></div>
 </div>
+{candidate_note}
 <div class="note">자동 리뷰는 <b>로컬 1차 초고 → Antigravity 2차 퇴고</b>를 거친 최종본이다.
 번호를 누르면 상세가 열린다. <b>[복사]</b>는 <code>R12 검토해볼까?</code>를 복사하며,
 .33 의 <code>ax-fix</code>는 새 리뷰를 만들지 않고 지금 main 기준의 적용 여부를 검토한다.</div>

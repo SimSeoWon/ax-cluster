@@ -178,6 +178,25 @@ RAG_ANALYSIS = Schedule(key="rag_analysis", hour=23, schedule="weekly", day="sun
 WEEKLY_PLAN = Schedule(key="weekly_plan", hour=0, schedule="weekly", day="saturday",
                        min_entries=1)
 
+DISMISSAL_CANDIDATES = Schedule(key="dismissal_candidates", hour=0, schedule="weekly",
+                                day="saturday", min_entries=1)
+
+
+def should_run_dismissal_candidates(sched, cfg, root, *, input_count, now=None):
+    """기존 플랜 생성 여부와 독립: 토·일, 완료 마커는 주차별 한 번."""
+    now = now or datetime.now()
+    s = sched.from_config(cfg)
+    if not enabled(cfg, s.key):
+        return Verdict(False, "config 에서 꺼져 있다", s.key)
+    if input_count < s.min_entries:
+        return Verdict(False, "미결 항목 없음", s.key)
+    if now.weekday() not in (5, 6) or now.hour < s.hour:
+        return Verdict(False, "주말 수집 시간 아님", s.key)
+    last = read_marker(root, s.key)
+    if last and last.strftime("%Y-W%W") == now.strftime("%Y-W%W"):
+        return Verdict(False, "이번 주 기각 후보 수집 완료", s.key)
+    return Verdict(True, "주말 미결 기각 후보 수집", s.key)
+
 
 def should_run_weekly_plan(sched: Schedule, cfg: dict, root: Path, *, input_count: int,
                            now: datetime | None = None) -> Verdict:

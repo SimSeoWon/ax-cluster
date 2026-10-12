@@ -310,7 +310,7 @@ def _summary(root: Path, data: dict, serial: str, cache: dict) -> tuple:
     return s, items
 
 
-def list_docs(root, *, do_sweep: bool = True, logf=None) -> dict:
+def list_docs(root, *, do_sweep: bool = True, logf=None, candidate_details=False) -> dict:
     """번호 붙은 문서 전체의 요약 — 최신 번호가 먼저."""
     root = Path(root)
     swept = sweep(root, logf=logf) if do_sweep else None
@@ -321,7 +321,9 @@ def list_docs(root, *, do_sweep: bool = True, logf=None) -> dict:
         k, n, _ = parse_id(serial)
         return (k, -n)
     docs = [_summary(root, data, s, cache)[0] for s in sorted(data["docs"], key=order)]
-    return {"docs": docs, "swept": swept}
+    from .dismissal_candidates import read_results
+    return {"docs": docs, "swept": swept,
+            "dismissal_candidates": read_results(root, details=candidate_details)}
 
 
 def get_doc(root, serial: str) -> dict:
@@ -433,11 +435,13 @@ def main(argv=None) -> int:
         print(json.dumps(sweep(paths.root, logf=print), ensure_ascii=False))
         return 0
     if cmd == "list":
-        for s in list_docs(paths.root, logf=print)["docs"]:
+        listing = list_docs(paths.root, logf=print, candidate_details=True)
+        for s in listing["docs"]:
             when = s.get("created") or s.get("week", "")
             print(f"{s['serial']:>5} {s['kind']:<6} {when:<16} {s['author']:<12} "
                   f"항목 {s['items']:>3} {s['severity']} {s['states']}"
                   + (" [missing]" if s["missing"] else ""))
+        print(json.dumps({"dismissal_candidates": listing["dismissal_candidates"]}, ensure_ascii=False))
         return 0
     if cmd == "show" and len(args) > 1:
         print(json.dumps(get_doc(paths.root, args[1]), ensure_ascii=False, indent=1))

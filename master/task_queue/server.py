@@ -863,7 +863,8 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
             _tq_log(f"[fix] 목록 거부 — {e}", root)
             return {"ok": False, "status": "not_mounted", "reason": str(e), "project": project}
         try:
-            out = FX.list_docs(paths.root, logf=lambda m: _tq_log(f"{m} ({paths.name})", root))
+            out = FX.list_docs(paths.root, candidate_details=True,
+                               logf=lambda m: _tq_log(f"{m} ({paths.name})", root))
         except FX.FixIndexError as e:
             _tq_log(f"[fix] [중요] 목록 실패 — {e} ({paths.name})", root)
             return {"ok": False, "status": "index_error", "reason": str(e), "project": paths.name}

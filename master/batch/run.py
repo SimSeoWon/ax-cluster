@@ -119,6 +119,19 @@ def _plan_run(paths) -> dict:
     return {"ok": True, "generated": bool(generated), "assigned": swept["assigned"]}
 
 
+def _candidate_count(paths) -> int:
+    from ..context_synth.dismissal_candidates import count_open
+    return count_open(paths)
+
+
+def _candidate_run(paths) -> dict:
+    from ..context_synth.dismissal_candidates import collect
+    result = collect(paths)
+    if result.get("unjudged"):
+        print(f"    [기각 후보] 미판정: {', '.join(result['unjudged'])}", flush=True)
+    return result
+
+
 BATCHES = [
     BatchDef(schedule=gates.RAG_ANALYSIS,
              label="RAG 채널 분석 (stdlib·LLM 0)",
@@ -129,6 +142,10 @@ BATCHES = [
              count_input=_plan_count,
              execute=_plan_run,
              gate=gates.should_run_weekly_plan),
+    BatchDef(schedule=gates.DISMISSAL_CANDIDATES,
+             label="기각 후보 수집 (상태 변경 없음)",
+             count_input=_candidate_count, execute=_candidate_run,
+             gate=gates.should_run_dismissal_candidates),
 ]
 
 
@@ -204,6 +221,10 @@ def run(paths, cfg: dict, *, now: datetime | None = None, force: bool = False) -
             continue
 
         o.ran = True
+        if o.result.get("complete") is False:
+            # 예산으로 끊겨도 주간 마커는 쓴다 — 안 쓰면 시간 타이머가 같은 주말 내내 매시
+            # 다시 돈다(#823). 남은 항목은 캐시를 이어 **다음 주말**에 계속한다.
+            o.verdict = f"{o.verdict} · 예산으로 끊김 — 남은 항목은 다음 주말에 이어간다"
         m = gates.write_marker(paths.root, b.schedule.key, now=now)
         if not m.get("ok"):
             # 마커를 못 쓰면 **다음 회차에 또 돈다** — 그건 알아야 할 사실이다.
