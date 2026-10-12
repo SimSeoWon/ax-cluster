@@ -114,15 +114,24 @@ def check_citations(text: str, brief_dir: Path) -> tuple:
         key = (m.group(1), int(m.group(2)), int(m.group(3) or m.group(2)))
         if key not in seen:
             seen.append(key)
-    bad_file = bad_range = 0
+    bad_file = bad_range = unreadable = 0
     lines_cache: dict = {}
+    read_errors: dict = {}
     for rel, a, b in seen:
         f = brief_dir / rel
         if rel not in lines_cache:
-            lines_cache[rel] = (f.read_text(encoding="utf-8", errors="replace").splitlines()
-                                if f.is_file() else None)
+            try:
+                lines_cache[rel] = (f.read_text(encoding="utf-8", errors="replace").splitlines()
+                                    if f.is_file() else None)
+            except OSError as e:
+                lines_cache[rel] = None
+                read_errors[rel] = f"{type(e).__name__}: {e}"
         lines = lines_cache[rel]
         tag = f"{rel}:{a}" + (f"-{b}" if b != a else "")
+        if rel in read_errors:
+            unreadable += 1
+            rows.append(f"### {tag}  [읽기 실패] {read_errors[rel]}")
+            continue
         if lines is None:
             bad_file += 1
             rows.append(f"### {tag}  [파일 없음]")
@@ -135,7 +144,7 @@ def check_citations(text: str, brief_dir: Path) -> tuple:
         more = f"  (… {b - a + 1 - len(shown)}줄 생략)" if b - a + 1 > len(shown) else ""
         rows.append(f"### {tag}{more}\n" + "\n".join(f"{a + i:>5}  {t}" for i, t in enumerate(shown)))
     stats = {"total": len(seen), "missing_file": bad_file, "out_of_range": bad_range,
-             "in_range": len(seen) - bad_file - bad_range}
+             "unreadable_file": unreadable, "in_range": len(seen) - bad_file - bad_range - unreadable}
     return stats, "\n\n".join(rows) + ("\n" if rows else "")
 
 
@@ -158,7 +167,8 @@ def header(*, version: str, model: str, mats: list, seconds: float, u, project: 
         f"> 자료: {', '.join(mats) if mats else '(없음)'}",
         "> 검증: 미검증 — 위임한 세션이 인용 내용을 원본과 대조한 뒤 이 줄을 갱신한다"
         + (f" · 범위 검사(자동): 인용 {cites['total']}개 — 범위 안 {cites['in_range']} · "
-           f"범위 밖 {cites['out_of_range']} · 파일 없음 {cites['missing_file']}" if cites else ""),
+           f"범위 밖 {cites['out_of_range']} · 파일 없음 {cites['missing_file']} · "
+           f"읽기 실패 {cites.get('unreadable_file', 0)}" if cites else ""),
         f"> 소요 {seconds:.0f}초 · 토큰 {tok}",
         *([f"> [주의] {warn} — 본문이 불완전할 수 있다"] if warn else []),
         *([f"> 참고: {info}"] if info else []),
@@ -257,7 +267,8 @@ def main(argv=None) -> int:
                           project=a.project, cites=cites, warn=warn, info=info) + text.strip() + "\n",
                    encoding="utf-8")
     log(f"완료 — {secs:.0f}초 · {u.summary() if u else '토큰 미상'} · 인용 {cites['total']}개 "
-        f"(범위 밖 {cites['out_of_range']} · 파일 없음 {cites['missing_file']}) · 보고서 {out}")
+        f"(범위 밖 {cites['out_of_range']} · 파일 없음 {cites['missing_file']} · "
+        f"읽기 실패 {cites['unreadable_file']}) · 보고서 {out}")
     if info:
         log(f"참고 — {info}")
     if warn:

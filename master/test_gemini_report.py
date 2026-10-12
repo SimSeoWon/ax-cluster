@@ -26,6 +26,7 @@ import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
@@ -128,7 +129,8 @@ def main() -> int:
         run = out.with_suffix(".run")
         res = json.loads((run / "run.json").read_text(encoding="utf-8")) if (run / "run.json").is_file() else {}
         check("[중요] 인용 통계 — 중복 1회 · 범위 밖 · 파일 없음",
-              res.get("citations") == {"total": 3, "missing_file": 1, "out_of_range": 1, "in_range": 1},
+              res.get("citations") == {"total": 3, "missing_file": 1, "out_of_range": 1,
+                                       "unreadable_file": 0, "in_range": 1},
               str(res.get("citations")))
         check("  결과 JSON 에 요약 절만", res.get("summary") == "요약 한 줄", repr(res.get("summary")))
         ct = (run / "citations.txt").read_text(encoding="utf-8") if (run / "citations.txt").is_file() else ""
@@ -138,6 +140,33 @@ def main() -> int:
         check("원본 보관 — out.json·err.log·BRIEF.md·run.json",
               all((run / n).is_file() for n in ("out.json", "err.log", "BRIEF.md", "run.json")),
               str(list(run.iterdir()) if run.is_dir() else run))
+
+        print("\n[1b] 인용 파일 읽기 실패 — 보고서와 뒤 정상 인용 보존")
+        unreadable = brief / "src" / "a.py"
+        (brief / "src" / "b.py").write_text("first\nsecond\n", encoding="utf-8")
+        read_text = Path.read_text
+
+        def read(path, *args, **kwargs):
+            if path == unreadable:
+                raise PermissionError("citation fixture")
+            return read_text(path, *args, **kwargs)
+
+        failed_out = research / "2026-10-09-unreadable.md"
+        with patch.object(Path, "read_text", read):
+            rc = G.main(["--project", "AXCluster", "--brief-dir", str(brief),
+                         "--out", str(failed_out)])
+        failed_run = failed_out.with_suffix(".run")
+        failed_res = json.loads((failed_run / "run.json").read_text(encoding="utf-8"))
+        failed_cites = (failed_run / "citations.txt").read_text(encoding="utf-8")
+        check("읽기 실패가 실행을 중단하지 않음", rc == 0 and failed_out.is_file())
+        check("읽기 실패는 검증됨·파일없음으로 세지 않음", failed_res["citations"] == {
+            "total": 3, "missing_file": 0, "out_of_range": 0, "unreadable_file": 2, "in_range": 1},
+            str(failed_res))
+        check("실패 사유와 뒤 정상 인용 보존", "[읽기 실패] PermissionError: citation fixture" in failed_cites
+              and "### src/b.py:2\n    2  second" in failed_cites, failed_cites)
+        check("머리말에 읽기 실패 표시·미검증 유지", "읽기 실패 2" in failed_out.read_text(encoding="utf-8")
+              and "> 검증: 미검증" in failed_out.read_text(encoding="utf-8"))
+        (brief / "src" / "b.py").unlink()
 
         print("\n[2] 덮어쓰지 않는다")
         n0 = len(rows(log))

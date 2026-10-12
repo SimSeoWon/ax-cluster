@@ -297,6 +297,49 @@ def test_collects_delegations():
         check("  위치는 .ax 밖 (Windows 샌드박스가 .ax 쓰기를 거부한다)", not wcommit.AGY_ROOT.startswith(".ax"))
 
 
+def test_collect_delegations_continues_after_failure():
+    """첫 파일 회수 실패가 뒤의 유효 응답까지 버리지 않는다."""
+    for failure in ("none", "read", "write"):
+        with tempfile.TemporaryDirectory(prefix="ax-collect-") as td:
+            root = Path(td)
+            facts = _Facts(root / "worker")
+            c = wcommit.Committed(task_id=TASK)
+            reads = []
+
+            def reader(facts, path):
+                name = Path(path).name
+                reads.append(name)
+                if name == "1.json":
+                    if failure == "none":
+                        return None
+                    if failure == "read":
+                        raise OSError("read fixture")
+                return "" if name == "3.json" else '{"response":"ok"}'
+
+            write_text = Path.write_text
+
+            def write(path, *args, **kwargs):
+                if failure == "write" and path.name == "1.json":
+                    raise OSError("write fixture")
+                return write_text(path, *args, **kwargs)
+
+            dest = root / "deleg" / WORK / TASK
+            with patch.object(wcommit, "delegations_root", return_value=root / "deleg"), \
+                    patch.object(Path, "write_text", write):
+                wcommit.collect_delegations(facts, lambda *a: (
+                    0, "1.json\n2.json\n3.json\n../escape.json\nbad name.json\n"),
+                    reader, c, WORK)
+            check(f"{failure}: 뒤 파일과 빈 응답도 저장",
+                  sorted(p.name for p in dest.iterdir()) == ["2.json", "3.json"])
+            check(f"{failure}: 내용 보존", (dest / "2.json").read_text(encoding="utf-8")
+                  == '{"response":"ok"}' and (dest / "3.json").read_text(encoding="utf-8") == "")
+            check(f"{failure}: 안전명만 읽음", reads == ["1.json", "2.json", "3.json"], str(reads))
+            check(f"{failure}: 실패 파일과 성공 수 기록",
+                  any("1.json를 회수하지 못했다" in n for n in c.notes)
+                  and any("위임 결과 2개 회수" in n for n in c.notes), str(c.notes))
+        check(f"{failure}: 임시 루트 정리", not root.exists())
+
+
 def test_layer1_blocks_commit():
     """[중요] 층1 위반이면 **커밋하지 않는다** — verify-then-commit."""
     with tempfile.TemporaryDirectory() as td:
@@ -527,7 +570,8 @@ def test_layer2_exception_keeps_traceback():
 def main() -> int:
     for fn in (test_no_pseudo_and_no_change_is_a_no_op_not_a_failure,
                test_commands, test_returns_to_main, test_worker_keeps_nothing,
-               test_happy_path, test_collects_delegations, test_layer1_blocks_commit,
+               test_happy_path, test_collects_delegations,
+               test_collect_delegations_continues_after_failure, test_layer1_blocks_commit,
                test_layer1_block_records_what_the_conductor_said,
                test_empty_body_blocks, test_no_change_is_not_success,
                test_refusals, test_llm_failure_does_not_commit, test_layer2_commit_boundary,

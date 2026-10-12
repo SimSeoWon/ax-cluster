@@ -521,9 +521,14 @@ def collect_delegations(facts, do_ssh, do_read, c: Committed, work_id: str) -> N
         dest.mkdir(parents=True, exist_ok=True)
         got = 0
         for n in sorted(names)[:MAX_COLLECT]:
-            text = do_read(facts, f"{src}{sep}{n}")
-            (dest / n).write_text(text, encoding="utf-8")
-            got += 1
+            try:
+                text = do_read(facts, f"{src}{sep}{n}")
+                if not isinstance(text, str):
+                    raise TypeError(f"문자열이 아닌 응답: {type(text).__name__}")
+                (dest / n).write_text(text, encoding="utf-8")
+                got += 1
+            except Exception as e:                           # noqa: BLE001
+                c.notes.append(f"[주의] 위임 결과 {n}를 회수하지 못했다 — {type(e).__name__}: {e}")
         more = f" · {len(names) - MAX_COLLECT}개는 상한 초과로 버렸다" if len(names) > MAX_COLLECT else ""
         c.notes.append(f"[지휘자] 위임 결과 {got}개 회수 → {dest}{more}")
     except Exception as e:                                   # noqa: BLE001

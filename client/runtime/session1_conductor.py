@@ -237,12 +237,16 @@ class AgyRelay(threading.Thread):
         proc = self.proc
         if proc is not None and proc.poll() is None:
             _kill_tree(proc)
-            _log(self.d, "🔴 codex 가 끝났는데 agy 중계가 돌고 있었다 — 프로세스 트리를 죽였다")
+            try:
+                _log(self.d, "🔴 codex 가 끝났는데 agy 중계가 돌고 있었다 — 프로세스 트리를 죽였다")
+            except OSError:
+                pass
         self.join(timeout=10)
 
 
 def _start_relay(root: Path, d: Path):
     """중계를 띄우고 표시를 쓴다. 실패하면 `None` — 지휘자는 표시가 없으니 직접 호출로 간다."""
+    relay = None
     try:
         base = root / AGY_ROOT
         (base / "in").mkdir(parents=True, exist_ok=True)
@@ -254,7 +258,16 @@ def _start_relay(root: Path, d: Path):
         _log(d, f"agy 중계 대기 — {base / 'in'} 의 *.go")
         return relay
     except Exception as e:                                   # noqa: BLE001
-        _log(d, f"🔴 agy 중계를 못 띄웠다 — {type(e).__name__}: {e}")
+        if relay is not None and relay.ident is not None:
+            relay.shutdown()
+        try:
+            (root / AGY_ROOT / AGY_MARK).unlink()
+        except OSError:
+            pass
+        try:
+            _log(d, f"🔴 agy 중계를 못 띄웠다 — {type(e).__name__}: {e}")
+        except Exception:                                   # noqa: BLE001
+            pass
         return None
 
 

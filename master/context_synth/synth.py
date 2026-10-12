@@ -416,13 +416,13 @@ def collect_related(paths: ProjectPaths, key: str, files: list[str], existing: s
             #    나중에 되짚으려면 여기서 말해야 한다.
             _log(f"[related] 검색기를 열지 못했다 ({paths.name}) — {type(e).__name__}: {e}")
             return []
-    stem = Path(files[0]).stem if files else key.rsplit("/", 1)[-1]
-    query = stem
-    if existing:
-        query += " " + md_mod.strip_comments(existing).strip()[:prompt_mod.RELATED_QUERY_BODY]
-    self_doc = f"{key}.md"
     out: list = []
     try:
+        stem = Path(files[0]).stem if files else key.rsplit("/", 1)[-1]
+        query = stem
+        if existing:
+            query += " " + md_mod.strip_comments(existing).strip()[:prompt_mod.RELATED_QUERY_BODY]
+        self_doc = f"{key}.md"
         for hit in searcher.search(query, limit=prompt_mod.RELATED_LIMIT + 1,
                                    excerpt=prompt_mod.RELATED_EXCERPT):
             if hit.file_id == self_doc:

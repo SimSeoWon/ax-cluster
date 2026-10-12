@@ -125,6 +125,30 @@ def test_related_resource():
             related = synth.collect_related(p, "pkg/m00", files[:1], "")
         check("직접 관련검색은 자체 소유 연결을 해제", related == [("other.md", "관련 요약")]
               and closed == [coordinator])
+
+        closed.clear()
+        searches.clear()
+        with patch.object(synth, "_open_related", side_effect=factory), \
+                patch.object(synth.md_mod, "strip_comments", side_effect=RuntimeError("query fixture")), \
+                contextlib.redirect_stderr(io.StringIO()) as logs:
+            related = synth.collect_related(p, "pkg/m00", files[:1], "existing")
+        check("질의 구성 실패에서도 소유 검색기를 해제", related == []
+              and closed == [coordinator] and not searches)
+        check("질의 구성 실패 사유를 남기고 빈 결과 반환", "query fixture" in logs.getvalue())
+
+        closed.clear()
+        with patch.object(synth, "_open_related", side_effect=factory), \
+                patch.object(Search, "search", side_effect=RuntimeError("search fixture")), \
+                contextlib.redirect_stderr(io.StringIO()) as logs:
+            related = synth.collect_related(p, "pkg/m00", files[:1], "")
+        check("검색 실패에서도 소유 검색기를 해제", related == []
+              and closed == [coordinator] and "search fixture" in logs.getvalue())
+
+        closed.clear()
+        with patch.object(synth.md_mod, "strip_comments", side_effect=RuntimeError("query fixture")), \
+                contextlib.redirect_stderr(io.StringIO()):
+            related = synth.collect_related(p, "pkg/m00", files[:1], "existing", searcher=Search())
+        check("질의 구성 실패에서도 주입 검색기를 해제하지 않음", related == [] and closed == [])
         closed.clear()
         supplied = Search()
         with patch.object(synth, "synthesize_group", side_effect=fake):

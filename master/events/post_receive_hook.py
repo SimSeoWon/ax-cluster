@@ -79,6 +79,14 @@ def _note_dispatch(work_id: str, project_id: str, ref: str) -> bool:
                        "source": "hook"}, ensure_ascii=False)
     tmp = d / f".{work_id}.{os.getpid()}.hook.tmp"
     try:
+        try:
+            d.mkdir(parents=True)
+        except FileExistsError:
+            if not d.is_dir():
+                raise
+        else:
+            # 새 디렉토리만 공유 권한을 맞춘다 — 기존 설치 권한은 보존한다.
+            os.chmod(d, 0o2775)
         tmp.write_text(body + "\n", encoding="utf-8")
         os.chmod(tmp, 0o664)            # 파견기(sim)가 읽고 지울 수 있어야 한다
         os.replace(tmp, d / f"{work_id}.json")

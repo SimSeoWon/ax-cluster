@@ -49,6 +49,7 @@ import hashlib
 import json
 import shlex
 import subprocess
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -1003,8 +1004,9 @@ def _remote_write(facts: HostFacts, rel: str, content: str, *, base: str = "home
     #    곧 「되읽어 대조」의 증거다(같은 sha256 을 같은 자리에서 읽었다). 받아 둔 값이 없으면
     #    종전 경로 그대로다.
     key = (facts.host, facts.user, target)
-    if _KNOWN_HASHES.get(key) == want:
-        _UNCHANGED[(facts.host, facts.user)] = _UNCHANGED.get((facts.host, facts.user), 0) + 1
+    cache = _DELIVERY_CACHE.get()
+    if cache is not None and cache.hashes.get(key) == want:
+        cache.unchanged += 1
         return target
     if facts.windows:
         parent = target.rsplit("\\", 1)[0]
@@ -1051,8 +1053,8 @@ def _remote_write(facts: HostFacts, rel: str, content: str, *, base: str = "home
     got = (got or "").strip().lower()
     if rc != 0 or got != want:
         raise BundleError(f"{facts.host}: 해시 불일치 — 기대 {want[:12]} 실측 {got[:12] or '없음'}")
-    if key in _KNOWN_HASHES:
-        _KNOWN_HASHES[key] = want              # 받아 둔 값이 낡지 않게 — 방금 쓴 것이 정본이다
+    if cache is not None and key in cache.hashes:
+        cache.hashes[key] = want              # 받아 둔 값이 낡지 않게 — 방금 쓴 것이 정본이다
     return target
 
 
@@ -1068,9 +1070,14 @@ def _write_target(facts: HostFacts, rel: str, base: str = "home") -> str:
 
 
 # 🔴 `#655` — 배달 한 번 동안만 사는 원격 해시 표. `(host, user, 원격경로) → sha256`.
-#    `deliver()` 가 시작할 때 채우고 끝날 때(예외여도) 비운다. 프로세스를 넘겨 들고 다니지 않는다.
-_KNOWN_HASHES: dict = {}
-_UNCHANGED: dict = {}
+#    호출별로 격리하며 중첩 호출은 끝날 때(예외여도) 바깥 호출의 표를 복원한다.
+@dataclass
+class _DeliveryCache:
+    hashes: dict = field(default_factory=dict)
+    unchanged: int = 0
+
+
+_DELIVERY_CACHE: ContextVar = ContextVar("ax_delivery_cache", default=None)
 _PREFETCH_CHUNK = 6000                      # cmd.exe 명령 한도(8191자) 아래로 자른다
 
 
@@ -1889,21 +1896,19 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     결과에 `unchanged`(건너뛴 수)를 싣는다. 끄려면 `AX_DELIVER_ALL=1`.
     """
     import os
-    key = (facts.host, facts.user)
-    if dry_run or os.environ.get("AX_DELIVER_ALL") == "1":
-        return _deliver(project, facts, dry_run=dry_run, init=init, project_init=project_init)
-    pinit = spec.load_init(project) if project_init is None else project_init
-    _UNCHANGED[key] = 0
+    cache = _DeliveryCache()
+    token = _DELIVERY_CACHE.set(cache)
     try:
+        if dry_run or os.environ.get("AX_DELIVER_ALL") == "1":
+            return _deliver(project, facts, dry_run=dry_run, init=init, project_init=project_init)
+        pinit = spec.load_init(project) if project_init is None else project_init
         for t, h in remote_hashes(facts, delivery_targets(project, facts, pinit)).items():
-            _KNOWN_HASHES[(facts.host, facts.user, t)] = h
+            cache.hashes[(facts.host, facts.user, t)] = h
         r = _deliver(project, facts, dry_run=False, init=init, project_init=pinit)
-        r["unchanged"] = _UNCHANGED.get(key, 0)
+        r["unchanged"] = cache.unchanged
         return r
     finally:
-        for k in [k for k in _KNOWN_HASHES if k[:2] == key]:
-            del _KNOWN_HASHES[k]
-        _UNCHANGED.pop(key, None)
+        _DELIVERY_CACHE.reset(token)
 
 
 def _deliver(project: str, facts: HostFacts, *, dry_run: bool = False,

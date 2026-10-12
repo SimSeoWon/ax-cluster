@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -34,6 +35,7 @@ from master.work import runner                                             # noq
 
 _fail = 0
 _passed = 0
+_roots: list[Path] = []
 
 
 def check(label: str, ok: bool, detail: str = "") -> None:
@@ -55,8 +57,15 @@ class _ImmediateThread:
         self.target()
 
 
-def _work(n: int = 2) -> tuple:
-    root = Path(tempfile.mkdtemp(prefix="ax-handoff-"))
+@contextmanager
+def _work(n: int = 2):
+    with tempfile.TemporaryDirectory(prefix="ax-handoff-") as tmp:
+        root = Path(tmp)
+        _roots.append(root)
+        yield _register_work(root, n)
+
+
+def _register_work(root: Path, n: int) -> tuple:
     idx = TaskIndex(root)
     with patch.object(Q, "_create_work_issue_async", lambda *a: None):
         w = Q.register_work(idx, title="인계", target_repo="/tmp/repo", project="NS",
@@ -89,79 +98,79 @@ def _notice(idx, wid: str) -> list:
 
 def test_handoff_keeps_round_reviewable() -> None:
     print("\n[1] 인계 취소 + 나머지 verified → ready_for_review")
-    idx, wid, (t1, t2) = _work()
-    with patch.object(LL, "_auto_cleanup_work_async", lambda *a: None):
-        _finish_one(idx, t1)
-        r = LL.cancel_task(idx, t2, reason="층2 거짓 REQUEST_CHANGES", requester_handoff=True)
-    check("종결된다 · 반환에 플래그", r.get("ok") and r.get("requester_handoff") is True
-          and r.get("no_work") is False, str(r))
-    rec = idx.tasks[t2]
-    check("  레코드에 `requester_handoff` 가 남는다", rec.get("requester_handoff") is True,
-          str(rec.get("requester_handoff")))
-    check("  상태는 cancelled (terminal)", rec["status"] == "cancelled", rec["status"])
-    check("🔴 **work 은 cancelled 가 아니라 ready_for_review**",
-          idx.works[wid]["merge_status"] == "ready_for_review", idx.works[wid]["merge_status"])
-    check("  분모 그대로 2", int(idx.works[wid]["total"]) == 2, str(idx.works[wid]["total"]))
-    rebuilt = TaskIndex(idx.root)
-    rebuilt.rebuild()
-    check("  재기동(rebuild) 뒤에도 플래그·상태 유지",
-          rebuilt.tasks[t2].get("requester_handoff") is True
-          and rebuilt.works[wid]["merge_status"] == "ready_for_review",
-          f"{rebuilt.tasks[t2].get('requester_handoff')} {rebuilt.works[wid]['merge_status']}")
+    with _work() as (idx, wid, (t1, t2)):
+        with patch.object(LL, "_auto_cleanup_work_async", lambda *a: None):
+            _finish_one(idx, t1)
+            r = LL.cancel_task(idx, t2, reason="층2 거짓 REQUEST_CHANGES", requester_handoff=True)
+        check("종결된다 · 반환에 플래그", r.get("ok") and r.get("requester_handoff") is True
+              and r.get("no_work") is False, str(r))
+        rec = idx.tasks[t2]
+        check("  레코드에 `requester_handoff` 가 남는다", rec.get("requester_handoff") is True,
+              str(rec.get("requester_handoff")))
+        check("  상태는 cancelled (terminal)", rec["status"] == "cancelled", rec["status"])
+        check("🔴 **work 은 cancelled 가 아니라 ready_for_review**",
+              idx.works[wid]["merge_status"] == "ready_for_review", idx.works[wid]["merge_status"])
+        check("  분모 그대로 2", int(idx.works[wid]["total"]) == 2, str(idx.works[wid]["total"]))
+        rebuilt = TaskIndex(idx.root)
+        rebuilt.rebuild()
+        check("  재기동(rebuild) 뒤에도 플래그·상태 유지",
+              rebuilt.tasks[t2].get("requester_handoff") is True
+              and rebuilt.works[wid]["merge_status"] == "ready_for_review",
+              f"{rebuilt.tasks[t2].get('requester_handoff')} {rebuilt.works[wid]['merge_status']}")
 
 
 def test_plain_cancel_still_cancels() -> None:
     print("\n[2] 회귀 — 그냥 취소는 여전히 cancelled")
-    idx, wid, (t1, t2) = _work()
-    with patch.object(LL, "_auto_cleanup_work_async", lambda *a: None):
-        _finish_one(idx, t1)
-        r = LL.cancel_task(idx, t2, reason="사람이 접었다")
-    check("반환 플래그 false", r.get("requester_handoff") is False, str(r))
-    check("work cancelled", idx.works[wid]["merge_status"] == "cancelled",
-          idx.works[wid]["merge_status"])
+    with _work() as (idx, wid, (t1, t2)):
+        with patch.object(LL, "_auto_cleanup_work_async", lambda *a: None):
+            _finish_one(idx, t1)
+            r = LL.cancel_task(idx, t2, reason="사람이 접었다")
+        check("반환 플래그 false", r.get("requester_handoff") is False, str(r))
+        check("work cancelled", idx.works[wid]["merge_status"] == "cancelled",
+              idx.works[wid]["merge_status"])
 
 
 def test_both_flags_rejected() -> None:
     print("\n[3] `no_work` + `requester_handoff` → 거절 · 상태 불변")
-    idx, wid, (t1, _t2) = _work()
-    before = dict(idx.tasks[t1])
-    r = LL.cancel_task(idx, t1, reason="x", no_work=True, requester_handoff=True)
-    check("ok:false", r.get("ok") is False and r.get("reason") == "conflicting_flags", str(r))
-    check("  조각 레코드 그대로", idx.tasks[t1] == before,
-          f"{before.get('status')} → {idx.tasks[t1].get('status')}")
-    check("  work 그대로 in_progress", idx.works[wid]["merge_status"] == "in_progress",
-          idx.works[wid]["merge_status"])
+    with _work() as (idx, wid, (t1, _t2)):
+        before = dict(idx.tasks[t1])
+        r = LL.cancel_task(idx, t1, reason="x", no_work=True, requester_handoff=True)
+        check("ok:false", r.get("ok") is False and r.get("reason") == "conflicting_flags", str(r))
+        check("  조각 레코드 그대로", idx.tasks[t1] == before,
+              f"{before.get('status')} → {idx.tasks[t1].get('status')}")
+        check("  work 그대로 in_progress", idx.works[wid]["merge_status"] == "in_progress",
+              idx.works[wid]["merge_status"])
 
 
 def test_notice_lists_handoff_separately() -> None:
     print("\n[4] 공지 — 인계 파일은 자기 절에, 「취소된 파일」엔 없다")
-    idx, wid, (t1, t2, t3) = _work(3)
-    with patch.object(LL, "_auto_cleanup_work_async", lambda *a: None):
-        _finish_one(idx, t1)
-        _finish_one(idx, t2)
-        LL.cancel_task(idx, t3, reason="층2 거짓 REQUEST_CHANGES", requester_handoff=True)
-    notes = _notice(idx, wid)
-    body = notes[0] if notes else ""
-    check("공지가 나간다", len(notes) == 1, str(len(notes)))
-    check("ax-advance 안내가 있다 (종결 공지가 아니다)",
-          "ax-advance" in body and "통합·전진 대기 대상이 아니다" not in body, body[:300])
-    check("「요청자가 맡은 조각」 절이 있다", "## 요청자가 맡은 조각" in body, body[:600])
-    check("  그 절에 파일과 사유", "`Source/A/F2.cpp` — 층2 거짓 REQUEST_CHANGES" in body, body)
-    check("  건수 줄에 따로 센다", "요청자 인계: 1건" in body and "취소:" not in body, body[:400])
-    check("[주의] 「취소된 파일」 절은 없다", "취소된 파일" not in body, body)
-    check("partial 유지 — 미완성 경고 줄", "실패·취소분이 있다" in body, body)
-    # 제목은 이슈 생성 경로에서만 보인다 — 이슈 id 를 비우고 한 번 더 만든다.
-    idx.works[wid].pop("redmine_issue_id", None)
-    idx.works[wid]["noticed_round"] = 0
-    posted: list = []
-    with patch.object(LC.threading, "Thread", _ImmediateThread), \
-            patch.object(LC, "_read_redmine_config",
-                         lambda *a: {"url": "http://fake", "api_key": "k", "project": "ns"}), \
-            patch.object(LC, "_redmine_post_issue",
-                         lambda cfg, subject, desc: posted.append(subject) or 7):
-        LC._try_create_review_issue_async(idx, wid)
-    check("🔴 제목은 「일부 미완성」 — 사람이 채울 것이 남았다",
-          bool(posted) and posted[0].startswith("[리뷰 요청 — 일부 미완성]"), str(posted))
+    with _work(3) as (idx, wid, (t1, t2, t3)):
+        with patch.object(LL, "_auto_cleanup_work_async", lambda *a: None):
+            _finish_one(idx, t1)
+            _finish_one(idx, t2)
+            LL.cancel_task(idx, t3, reason="층2 거짓 REQUEST_CHANGES", requester_handoff=True)
+        notes = _notice(idx, wid)
+        body = notes[0] if notes else ""
+        check("공지가 나간다", len(notes) == 1, str(len(notes)))
+        check("ax-advance 안내가 있다 (종결 공지가 아니다)",
+              "ax-advance" in body and "통합·전진 대기 대상이 아니다" not in body, body[:300])
+        check("「요청자가 맡은 조각」 절이 있다", "## 요청자가 맡은 조각" in body, body[:600])
+        check("  그 절에 파일과 사유", "`Source/A/F2.cpp` — 층2 거짓 REQUEST_CHANGES" in body, body)
+        check("  건수 줄에 따로 센다", "요청자 인계: 1건" in body and "취소:" not in body, body[:400])
+        check("[주의] 「취소된 파일」 절은 없다", "취소된 파일" not in body, body)
+        check("partial 유지 — 미완성 경고 줄", "실패·취소분이 있다" in body, body)
+        # 제목은 이슈 생성 경로에서만 보인다 — 이슈 id 를 비우고 한 번 더 만든다.
+        idx.works[wid].pop("redmine_issue_id", None)
+        idx.works[wid]["noticed_round"] = 0
+        posted: list = []
+        with patch.object(LC.threading, "Thread", _ImmediateThread), \
+                patch.object(LC, "_read_redmine_config",
+                             lambda *a: {"url": "http://fake", "api_key": "k", "project": "ns"}), \
+                patch.object(LC, "_redmine_post_issue",
+                             lambda cfg, subject, desc: posted.append(subject) or 7):
+            LC._try_create_review_issue_async(idx, wid)
+        check("🔴 제목은 「일부 미완성」 — 사람이 채울 것이 남았다",
+              bool(posted) and posted[0].startswith("[리뷰 요청 — 일부 미완성]"), str(posted))
 
 
 def test_runner_sends_field() -> None:
@@ -176,11 +185,15 @@ def test_runner_sends_field() -> None:
 
 
 def main() -> int:
+    roots_before = len(_roots)
     print("=== 「요청자 인계」 조각 — 취소지만 라운드를 막지 않는다 (#757) ===")
     for fn in (test_handoff_keeps_round_reviewable, test_plain_cancel_still_cancels,
                test_both_flags_rejected, test_notice_lists_handoff_separately,
                test_runner_sends_field):
         fn()
+    roots = _roots[roots_before:]
+    check("임시 작업 루트 4개 모두 정리", len(roots) == 4
+          and all(not root.exists() for root in roots), str(roots))
     print(f"\n{_passed}/{_passed + _fail} 통과")
     return 1 if _fail else 0
 

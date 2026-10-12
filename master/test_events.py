@@ -189,8 +189,10 @@ def test_hook_dispatch_signal(root: Path) -> None:
     ra = root / "a"
     disp = ra / "dispatch"
     disp.mkdir(parents=True)
+    disp.chmod(0o2750)
     r, spool = _run_hook(ra, f"{Z} {a} refs/heads/task/W1/base\n")
     check("rc 0", r.returncode == 0, r.stderr)
+    check("기존 트리거 디렉토리 권한 보존", (disp.stat().st_mode & 0o7777) == 0o2750)
     f = disp / "W1.json"
     check("트리거 파일이 생겼다", f.is_file(), str(list(disp.iterdir())))
     d = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
@@ -214,6 +216,34 @@ def test_hook_dispatch_signal(root: Path) -> None:
     check("  재신호는 같은 파일 하나", r2.returncode == 0
           and [p.name for p in disp.iterdir()] == ["W1.json"],
           str([p.name for p in disp.iterdir()]))
+
+    print("  (a2) 첫 골조 push → 없는 중첩 트리거 디렉토리 생성")
+    first = root / "first"
+    first.mkdir()
+    first.chmod(0o2775)
+    disp = first / "missing" / "nested" / "dispatch"
+    check("  초기 트리거 경로가 없다", not disp.parent.exists())
+    r, spool = _run_hook(first, f"{Z} {a} refs/heads/task/W-first/base\n",
+                         dispatch_dir=disp)
+    check("  첫 push도 rc 0", r.returncode == 0, r.stderr)
+    f = disp / "W-first.json"
+    check("  없는 경로에 트리거 생성", f.is_file(), r.stderr)
+    check("  새 트리거 디렉토리는 공유 2775", disp.is_dir()
+          and (disp.stat().st_mode & 0o7777) == 0o2775, r.stderr)
+    check("  부모의 공유 그룹 상속", disp.is_dir()
+          and disp.stat().st_gid == first.stat().st_gid, r.stderr)
+    d = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
+    check("  첫 트리거의 JSON 내용 보존",
+          d.get("work_id") == "W-first" and d.get("project_id") == "Sim/ModularStage"
+          and d.get("ref") == "refs/heads/task/W-first/base" and d.get("source") == "hook"
+          and bool(d.get("at")), str(d))
+    check("  첫 트리거도 0664", f.is_file() and (f.stat().st_mode & 0o777) == 0o664)
+    check("  첫 기록 뒤 tmp 없음", disp.is_dir()
+          and [p.name for p in disp.iterdir()] == ["W-first.json"], r.stderr)
+    ev_files = list((spool / "incoming").glob("*.json"))
+    check("  첫 push 색인 이벤트 유지", len(ev_files) == 1 and
+          json.loads(ev_files[0].read_text(encoding="utf-8")).get("ref")
+          == "refs/heads/task/W-first/base", str(ev_files))
 
     print("  (b) 골조가 아닌 ref → 트리거 없음")
     rb = root / "b"

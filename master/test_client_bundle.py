@@ -1673,6 +1673,8 @@ def test_remote_hashes_and_skip_unchanged() -> None:
     import hashlib
     calls = []
     keep = bundle._ssh
+    cache = bundle._DeliveryCache()
+    token = bundle._DELIVERY_CACHE.set(cache)
     try:
         lin = _facts()
         bundle._ssh = lambda h, u, cmd, **k: (calls.append(cmd) or (0,
@@ -1701,16 +1703,14 @@ def test_remote_hashes_and_skip_unchanged() -> None:
         bundle._ssh = lambda h, u, cmd, **k: (calls.append(cmd) or (1, "불려선 안 된다"))
         content = "본문\n"
         target = bundle._write_target(lin, ".ax/config.json", "checkout")
-        bundle._KNOWN_HASHES[(lin.host, lin.user, target)] = hashlib.sha256(
+        cache.hashes[(lin.host, lin.user, target)] = hashlib.sha256(
             content.encode("utf-8")).hexdigest()
         out = bundle._remote_write(lin, ".ax/config.json", content, base="checkout")
         check("[중요] 해시가 같으면 연결 없이 끝난다", out == target and calls == [], str(calls))
-        check("  건너뛴 수를 센다", bundle._UNCHANGED.get((lin.host, lin.user)) == 1,
-              str(bundle._UNCHANGED))
+        check("  건너뛴 수를 센다", cache.unchanged == 1, str(cache.unchanged))
     finally:
         bundle._ssh = keep
-        bundle._KNOWN_HASHES.clear()
-        bundle._UNCHANGED.clear()
+        bundle._DELIVERY_CACHE.reset(token)
 
 
 def test_deliver_clears_hash_cache_even_on_error() -> None:
@@ -1723,7 +1723,7 @@ def test_deliver_clears_hash_cache_even_on_error() -> None:
         seen = {}
 
         def boom(*a, **k):
-            seen.update(bundle._KNOWN_HASHES)
+            seen.update(bundle._DELIVERY_CACHE.get().hashes)
             raise bundle.BundleError("중간 실패")
         bundle._deliver = boom
         try:
@@ -1731,10 +1731,86 @@ def test_deliver_clears_hash_cache_even_on_error() -> None:
         except bundle.BundleError:
             pass
         check("배달 중에는 받아 둔 해시가 있다", (f.host, f.user, "/t") in seen, str(seen))
-        check("[중요] 예외여도 끝나면 비운다", not bundle._KNOWN_HASHES, str(bundle._KNOWN_HASHES))
+        check("[중요] 예외여도 끝나면 비운다", bundle._DELIVERY_CACHE.get() is None)
     finally:
         bundle.remote_hashes, bundle._deliver, bundle.delivery_targets = keep
-        bundle._KNOWN_HASHES.clear()
+
+
+def test_deliver_cache_isolation() -> None:
+    """동일 호스트의 동시 호출·중첩·실패가 서로의 해시와 집계를 바꾸지 않는다."""
+    import hashlib
+    import threading
+    from unittest.mock import patch
+    f = _facts()
+    target = bundle._write_target(f, "same", "checkout")
+    barrier = threading.Barrier(2)
+    finished = threading.Event()
+    results, errors, restored = {}, [], []
+
+    def hashes(ff, ts):
+        content = threading.current_thread().name
+        return {target: hashlib.sha256(content.encode()).hexdigest()}
+
+    def fake(project, ff, **kw):
+        content = threading.current_thread().name
+        barrier.wait(timeout=5)
+        if content == "fails":
+            finished.set()
+            raise bundle.BundleError("fixture")
+        finished.wait(timeout=5)
+        for _ in range(7):
+            bundle._remote_write(ff, "same", content, base="checkout")
+        return {}
+
+    def run():
+        try:
+            results[threading.current_thread().name] = bundle.deliver("X", f, project_init=object())
+        except bundle.BundleError:
+            errors.append(threading.current_thread().name)
+        finally:
+            restored.append(bundle._DELIVERY_CACHE.get() is None)
+
+    with patch.object(bundle, "remote_hashes", side_effect=hashes), \
+            patch.object(bundle, "delivery_targets", return_value=[target]), \
+            patch.object(bundle, "_deliver", side_effect=fake), \
+            patch.object(bundle, "_ssh", side_effect=AssertionError("unexpected ssh")):
+        threads = [threading.Thread(target=run, name=name) for name in ("survives", "fails")]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+    check("동일 호스트 한쪽 실패 후 다른 호출의 해시·집계 유지",
+          results == {"survives": {"unchanged": 7}} and errors == ["fails"], str((results, errors)))
+    check("각 호출 종료 후 캐시 없음", len(restored) == 2 and all(restored))
+
+    outer = bundle._DeliveryCache({(f.host, f.user, target): "outer"}, 7)
+    token = bundle._DELIVERY_CACHE.set(outer)
+    try:
+        def nested(*args, **kw):
+            check("중첩 호출 캐시는 바깥과 독립", bundle._DELIVERY_CACHE.get() is not outer
+                  and not bundle._DELIVERY_CACHE.get().hashes)
+            return {}
+        with patch.object(bundle, "_deliver", side_effect=nested), \
+                patch.object(bundle, "remote_hashes", return_value={}), \
+                patch.object(bundle, "delivery_targets", return_value=[]):
+            bundle.deliver("X", f, project_init=object())
+            bundle.deliver("X", f, dry_run=True, project_init=object())
+            with patch.dict(os.environ, {"AX_DELIVER_ALL": "1"}):
+                bundle.deliver("X", f, project_init=object())
+        check("정상·dryrun·전체배달 후 바깥 캐시 복원", bundle._DELIVERY_CACHE.get() is outer
+              and outer.unchanged == 7 and outer.hashes[(f.host, f.user, target)] == "outer")
+        with patch.object(bundle, "_deliver", side_effect=bundle.BundleError("nested fixture")), \
+                patch.object(bundle, "remote_hashes", return_value={}), \
+                patch.object(bundle, "delivery_targets", return_value=[]):
+            try:
+                bundle.deliver("X", f, project_init=object())
+            except bundle.BundleError:
+                pass
+        check("중첩 실패 후에도 바깥 캐시 복원", bundle._DELIVERY_CACHE.get() is outer
+              and outer.unchanged == 7)
+    finally:
+        bundle._DELIVERY_CACHE.reset(token)
+    check("후속 호출은 캐시 없이 시작", bundle._DELIVERY_CACHE.get() is None)
 
 
 def _run_update_mount(active, *, argv=None, all_projects=False):
@@ -1877,7 +1953,7 @@ def _run_update_with_heads(heads, check_results, dirties=(False,)):
     client_cli.cmd_deliver = lambda project, *, init=False, only="": 0
     client_cli.cmd_check = fake_check
     client_cli._master_head = lambda: seq.pop(0) if len(seq) > 1 else seq[0]
-    client_cli._master_dirty = lambda: dseq.pop(0) if len(dseq) > 1 else dseq[0]
+    client_cli._master_dirty = lambda: dseq.pop(0) if len(dseq) > 1 else (dseq[0] if dseq else None)
     out = io.StringIO()
     try:
         with contextlib.redirect_stdout(out):
@@ -2003,6 +2079,13 @@ def test_update_reports_dirty_tree() -> None:
     rc, out = _run_update_with_heads([A], {"NS": ok}, dirties=[None])
     check("dirty 를 못 읽으면 감지 불가를 말하고 판정은 종전대로",
           rc == 0 and "dirty 여부를 읽지 못했다" in out, out[:300])
+
+    rc, out = _run_update_with_heads([A], {"NS": ok}, dirties=[])
+    check("빈 dirty 입력은 미상으로 경고하며 정상 검사 판정 유지",
+          rc == 0 and "dirty 여부를 읽지 못했다" in out, out[:300])
+    rc, out = _run_update_with_heads([A], {"MS": dirty2}, dirties=[])
+    check("빈 dirty 입력도 검사 실패는 rc 1로 유지",
+          rc == 1 and "dirty 여부를 읽지 못했다" in out and "MS: check\n" in out, out)
 
     check("_version_failure_kind — 사유 모양",
           [client_cli._version_failure_kind(v) for v in (
@@ -2317,6 +2400,7 @@ def main() -> int:
                test_fetch_prune_wired_into_deliver_and_check,
                test_claude_mcp_local_add_skips_identical,
                test_deliver_clears_hash_cache_even_on_error,
+               test_deliver_cache_isolation,
                test_update_reports_head_movement,
                test_update_reports_dirty_tree,
                test_update_head_round_trip_is_reported,
