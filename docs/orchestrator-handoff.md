@@ -1,6 +1,24 @@
 # 현재 AX 작업 인수인계
 
-- **현재 체크포인트: 2026-10-11 22:30 · Claude · 첫 실전 분산 정리(pyflakes 1차) main 반영 · #818·#819 수정**.
+- **현재 체크포인트: 2026-10-12 22:55 · Claude(복원) · Codex 가 #824 미결 10항목 수정·#823 구현 중 한도 소진(22:49) — 인계 미작성분을 세션 기록(`~/.codex/sessions/2026/10/12/`)·Redmine·실제 diff 로 복원**.
+  - HEAD `main` 271d4da(변화 없음). 🔴 **미커밋 변경 19파일 + 신규 2파일(`master/context_synth/dismissal_candidates.py`·`master/test_dismissal_candidates.py`)** — 커밋·배달·서비스 재기동 전부 안 함. 서비스는 옛 코드(`ax-task-queue` 21:32 기동). 루트의 빈 `graph.db`·`.graph.db`(01:17, 0바이트)는 출처 미확인, 보존. 마스터 담당 기록은 `codex`(10-10) 그대로, 워커 모드 `codex`.
+  - 경위(사용자 지시): 자동리뷰 R 19건·44항목을 현 main 과 직접 대조(「수정만 했고 자동리뷰를 관리하지 않았다」) → applied/dismissed 기록, 미결 10항목 → 플랜 P1~P8 검증(P4·7·8 기각 기록됨, **P1·2·3·5·6 「해소」 상태 기록은 안 됨 — 아직 pending/stale**) → 「로컬 서브에이전트로 미결 하나씩 수정」 + 「주말 기각 후보 수집 기능」(#823, 사용자 확정: **수집만, 상태 변경은 사람** · 리뷰/플랜 목록 조회 때 함께 전달).
+  - #824 10항목 처분(미커밋 수정은 `accepted` 로 기록 — finalize 뒤 `applied`): R109-1 dispatch 디렉터리 생성(신규만 2775) · R98-1 임시 폴더 정리 · R89-3 중계 시작 실패 회수 · R89-4 테스트 폴더 · R87-3 위임 결과 파일별 실패 격리 · R85-2 인용 읽기 실패 `unreadable_file` · R80-1 질의 구성을 try 안으로 — 이상 7개 `accepted`. **R74-3**(배달 캐시 `ContextVar` 호출별 격리)·**R48-3**(`dirties=[]` 가드, test_client_bundle) — 코드는 들어왔으나 **상태는 아직 `open`**. **R124-3** Linux codex PATH — `.43` 비대화형 SSH 미재현, 처분 미정(`open`).
+  - #823 구현(미커밋): 신규 `dismissal_candidates.py`(고정 main SHA 의 `git show` 소스로 판정, `commercial_chat` agy→claude, 근거 줄 원문 대조 검증, 예산 24000·초과 시 다음 주말 이어감, `fixes/dismissal_candidates.json` 별도 저장·잠금, 상태·frontmatter 불변) · `batch/gates.py` 토·일 독립 게이트 · `batch/run.py` 배치 등록(미완 수집은 마커 안 씀) · `fix_index.list_docs(candidate_details=)` · `task_queue/server.py` 인증 `/fixes` 근거 포함 · `webui/fixes_page.py` 공개 화면은 건수·기준 SHA·시각만. 🔴 **#823 구현 에이전트의 최종 보고는 한도 소진으로 없다 — 부모 리뷰 미실시.** 계획에 있던 `test_batch`·`test_fix_index`·`test_fixes_surface` 연결 회귀 추가는 안 됐다.
+  - Claude 재검증(22:55): `git diff --check` 통과 · 관련 11개 검사 전부 rc=0 — events 86 · requester_handoff 22 · runner 253 · wcommit 93 · gemini_report 46 · synth_parallel 29 · client_bundle 496 · dismissal_candidates OK · batch 50 · fix_index 39 · fixes_surface 140. pyflakes 신규 경고 0(`synth.py:284 src` 는 HEAD 부터 있던 것). **커밋 전 규칙의 `master/test_*.py` 전수 실행은 아직 안 함.**
+  - 23:05 갱신(사용자 「응!」): R74-3·R48-3 → `accepted`, P1·2·3·5·6 → `applied`(plan `acted`, 「이미 해소」 노트). #823 Claude 리뷰: 🔴 예산으로 끊긴 수집(`complete:false`)은 마커를 안 써서 **같은 주말 매시간 재실행**된다(`ax-batch.timer` 매시·게이트 토·일 0시~) — 주석·#823 노트의 「다음 주말 회차에 이어간다」와 어긋남, → 사용자 결정 「다음 주말에 이어감」, 로컬 서브 에이전트가 `run.py`(끊겨도 주간 마커 기록)·검사 수정, 부모 재실행 통과(#823 노트). 그 밖에 `/fixes` 인증 응답의 근거 포함(`server.py`)만 검사 없음.
+  - 다음: ①(완료) ②(완료) ③R124-3 처분 결정 ④전수 검사 → 커밋 승인 → `master.client update` → 서비스 재기동 ⑤그 뒤 01:10 체크포인트의 ③#818 3단계·④#821 순서 복귀.
+
+- **직전 체크포인트: 2026-10-12 01:10 · Claude · #812 완료 · review.py 배달 회귀 수정 · 토큰 소진으로 중단**.
+  - HEAD `main` 271d4da, 작업 트리는 이 인수인계서만 미커밋. 서비스 `ax-task-queue` 01:06·`ax-projects` 10-11 23:11 재기동, 신선도 ok, 배달 3/3. 마스터 담당·워커 모드 기록 미변경(`codex`/`codex`).
+  - 사용자가 정한 순서(로컬 서브 에이전트로): ①#812 ✅ → ②죽은 코드 3건 ✅ → **③#818 3단계(층2 경합 근본 수정) — 다음, 방법 미결** → ④#821(인프라 실패 처분·자동 정리 정책 — 결정 필요).
+  - ③ 제안(사용자 미답): 재현 — 잠금을 끈 상태에서 가짜 판정기로 병렬 층2 를 돌려 `[wcommit] … 층2 예외 추적` 으로 위치 특정(토큰 없음). 대안: 검증 경로 코드 직접 조사(유력 후보였던 `layer2_verify._cooldown` 은 운영 순회 없음).
+  - 이번 구간 커밋: `c43a062` #812 게시판 쓰기 제거(공개 `/api/v1` POST/DELETE 405 라이브 확인 · board.py 읽기 전용 · 화면 쓰기/채팅 숨김 — 사용자: 3단계(요청자 PC→마스터→워커)로만 작업하니 불필요) · `28905b5` review.py 배달 import 회귀(#805·#363 이 넣은 `revise`·`workmodel` 상대 import — 상수 branch_names 이전·workmodel 가드, `test_client_bundle` 486/486) · `271d4da` 죽은 지역 변수 3건.
+  - 🔴 새 작업 규칙(사용자 승인, 기억 `full-test-sweep-before-commit`): **커밋 전 `master/test_*.py` 전수 실행**. 첫 적용 8238/8240 — 기존 실패 2건: `test_mount_gate`(consumer.py 소스 문자열 split 이 낡음) · `test_sandbox`(최상위 `tests/` 가 ReadOnlyPaths 밖) — 처분 미결(#815 노트).
+  - #815 묶음 남은 것: ①테스트 작업 방식 결정 · ②mypy 오탐 측정 · ④층2 [PSEUDO] 이행 판정 · ⑤⑦ 회귀 선택 확대 · ⑥공식 목록 확대(첫 대상 test_client_bundle — 실제 레지스트리 읽어 격리 실패) · #820 범위 검사 · logic.py 재수출 판단 · test_runner 간헐 실패 1회 관찰.
+  - 그 밖의 열린 일감: #807 · #814 · #363 3단계 · lane 모드 피드백 미수신.
+
+- **직전 체크포인트: 2026-10-11 22:30 · Claude · 첫 실전 분산 정리(pyflakes 1차) main 반영 · #818·#819 수정**.
   - HEAD `main` 3cff78b(분산 work #822 finalize — 9파일 미사용 import·f-string 28건). 서비스 `ax-task-queue`·`ax-projects` 22:27 재기동, 신선도 ok, 배달 3/3. 마스터 담당·워커 모드 기록 미변경(`codex`/`codex`).
   - 오늘 커밋(이 체크포인트 이후분): `f3e3242` #815 ③ 층1 pyflakes · `069b1b9` #818 층2 예외 추적 보존 + 층2 잠금 직렬화(임시) · `b90fbf9` #819 층1 펜스 검사 원본 대조.
   - 1차 시도 work #817 은 consumer 조각이 층2 경합(#818)으로 실패 → 라운드 rejected → 성공 8조각 브랜치까지 자동 정리(#821, 미러 `refs/ax/pruned/` 보존). review_runner 조각은 층1 펜스 오탐(#819)에 유도돼 프롬프트 펜스를 지움(범위 밖 — #820). 수정 뒤 재실행 #822: 9/9 · 재시도 0 · 범위 이탈 0(줄 단위 대조) · ⑦ 통합 33·회귀 2·정적 차단 0 → 전진·finalize.
