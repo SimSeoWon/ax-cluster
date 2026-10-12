@@ -138,12 +138,18 @@ def submit_result(idx: TaskIndex, task_id: str, *,
 
 def submit_fail(idx: TaskIndex, task_id: str, reason: str, detail: str = "", *,
                 epoch: Optional[int] = None, worker_id: Optional[str] = None,
-                result: str = "", new_base_commit: str = "") -> dict:
+                result: str = "", new_base_commit: str = "",
+                infra_undecided: bool = False) -> dict:
     """실패 고지. [중요] **submit 과 같은 두 게이트를 건다** (`#318` 완료 조건 2).
 
     [중요] 종전에는 이 경로에 **epoch 게이트조차 없었다.** 만기돼 회수당한 워커가 뒤늦게
     「실패했다」고 고지하면 **재할당된 태스크가 실패로 뒤집혔다** — submit 은 fencing 하면서
     fail 은 안 하는 비대칭이었고, 방향이 나빴다: zombie 가 **살아 있는 작업을 죽인다.**
+
+    🔴 `infra_undecided=True` 는 *"마스터 검증 인프라가 오동작해 판정을 못 냈다"* 다 (`#821`
+    · 사용자 결정 2026-10-13). terminal `failed` 그대로 두고 **표지만** 레코드에 남긴다 —
+    다른 조각은 멈추지 않는다. 즉시 통보(`#780`)는 생략하고 라운드 공지가 따로 적으며,
+    `completed_work_status` 는 이 조각 때문에 라운드를 `rejected` 로 만들지 않는다.
     """
     with idx.lock:
         t = idx.tasks.get(task_id)
@@ -223,6 +229,8 @@ def submit_fail(idx: TaskIndex, task_id: str, reason: str, detail: str = "", *,
             return {"ok": True, "released": True}
         # 일반 실패 — 기존 동작
         t["status"] = "failed"
+        # `#821` — 인프라 판단 불가 표지. 레코드에 남겨야 집계·공지·재기동 뒤에도 같게 읽힌다.
+        t["infra_undecided"] = bool(infra_undecided)
         # 근거를 **본문뿐 아니라 레코드에도** 남긴다 (#222) — 본문에만 있으면 API·화면이
         # 「실패했다」까지만 알고 「왜」를 모른다. 본문은 감사 기록으로 그대로 유지한다.
         t["fail_reason"] = str(reason)[:120]
@@ -231,8 +239,11 @@ def submit_fail(idx: TaskIndex, task_id: str, reason: str, detail: str = "", *,
         path = idx.task_paths[task_id]
         _, body = _read_md(path)
         body += f"\n## fail\nreason: {reason}\ndetail: {detail}\nat: {_now_iso()}\n"
+        if infra_undecided:
+            body += "infra_undecided: true (#821 — 인프라 서버 오동작, 판단 불가)\n"
         _save_task(idx, task_id, body_override=body)
-        _tq_log(f"[submit-fail] {task_id} reason={reason}", idx.root)
+        _tq_log(f"[submit-fail] {task_id} reason={reason}"
+                + (" infra_undecided=1 (#821)" if infra_undecided else ""), idx.root)
         _git_commit_tasks(idx.root, f"[submit-fail] {task_id}: {reason}", [path])
         # Phase 2 보강 — submit_fail 도 terminal 트리거 검사. failed task 가 마지막 상태
         # 라면 work 의 cleanup 진입.
@@ -241,6 +252,7 @@ def submit_fail(idx: TaskIndex, task_id: str, reason: str, detail: str = "", *,
             _auto_cleanup_work_async(idx, wid)
         # 🔴 `#780` 「즉시 통보, 나머지 계속」 — 다른 조각이 아직 돌면 이 순간 알린다.
         #    마지막 비종결 조각이면 위 라운드 공지가 다루므로 스스로 생략한다. 비치명적.
+        #    [주의] 인프라 판단 불가(`#821`)는 통보 함수가 스스로 생략한다 — 라운드 공지에만 실린다.
         _notify_piece_failed_async(idx, task_id)
         return {"ok": True}
 
@@ -348,6 +360,8 @@ def reverify_task(idx: TaskIndex, task_id: str) -> dict:
         if t.get("status") != "failed":
             return {"ok": False, "error": f"not failed (current={t.get('status')})"}
         t["status"] = "submitted"
+        # `#821` 표지는 직전 failed 의 사유다 — 재검증 뒤의 판정에 남기지 않는다.
+        t["infra_undecided"] = False
         # work 의 verified 카운트 보정 — failed 였으니 늘리지 않았었음. 그대로 유지.
         # 단 work 가 이미 ready_for_review 로 flip 됐다면 다시 in_progress 로 돌림
         wid = t.get("work_id")

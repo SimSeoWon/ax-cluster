@@ -156,12 +156,51 @@ def split_push_tasks(tasks) -> tuple:
 
     [주의] **verified 만 통합한다** — 원전 C.7 의 핵심이다. 실패·미완료를 섞으면 「검증된 것만
     durable 에 올린다」는 2-tier 의 전제가 무너진다.
+
+    🔴 `#821` — 건너뛴 항목은 `infra_undecided`(bool)를 싣고, 참이면 `fail_reason` 도 싣는다.
+    마스터 층2 검증 인프라가 판정을 못 낸 조각이다 — 코드 판정이 아니지만 **verified 가 아니므로
+    머지하지 않는다**(위 규칙 그대로). ⑦ 표시가 일반 실패와 갈라 보여 준다.
     """
     push = [t for t in tasks or [] if t.get("distribution_mode") == "push"]
     verified = order_verified([t for t in push if t.get("status") == "verified"])
-    skipped = [{"task_id": t.get("task_id"), "status": t.get("status")}
-               for t in push if t.get("status") != "verified"]
+    skipped = []
+    for t in push:
+        if t.get("status") == "verified":
+            continue
+        ent = {"task_id": t.get("task_id"), "status": t.get("status"),
+               "infra_undecided": bool(t.get("infra_undecided"))}
+        if ent["infra_undecided"]:
+            ent["fail_reason"] = str(t.get("fail_reason") or "")
+        skipped.append(ent)
     return verified, skipped
+
+
+def infra_spool_rel(work_id: str, task_id: str) -> str:
+    """`#821` — 인프라 판단 불가 조각의 산출물 자리. **트윈 루트 기준 상대 경로**만 낸다
+    (`infer.spool_path` 와 같은 모양 · 절대 경로는 사람·요청자 표면에 싣지 않는다)."""
+    return f"responses/{work_id}/{task_id}.json"
+
+
+def infra_undecided_lines(work_id: str, skipped, limit: int = 30) -> list:
+    """`#821` — 건너뛴 조각 중 인프라 판단 불가분을 사람용 줄로. 없으면 `[]`.
+
+    [중요] **사실만 싣는다** — 이 글은 자동 경로로 요청자 LLM 세션에 닿고, 명령형은 주입으로
+    거부된다(리포트 60). 무엇을 할지는 스킬이 말한다.
+    """
+    iu = [s for s in skipped or [] if s.get("infra_undecided")]
+    if not iu:
+        return []
+    out = [f"## 인프라 판단 불가 — 마스터 검증 인프라 오동작 ({len(iu)}건, 머지하지 않음)", "",
+           "이 조각들은 코드 판정이 아니다. 마스터의 층2 검증이 판정을 내지 못해 verified 가 아니고,",
+           "작업 브랜치에 머지되지 않았다(#821). 작성된 내용은 마스터 스풀(트윈 루트 기준 경로)에 남아 있다.",
+           ""]
+    for s in iu[:limit]:
+        tid = str(s.get("task_id") or "?")
+        out.append(f"- {tid} — 사유: {s.get('fail_reason') or '기록 없음'} — "
+                   f"스풀 `{infra_spool_rel(work_id, tid)}`")
+    if len(iu) > limit:
+        out.append(f"- … 외 {len(iu) - limit}건")
+    return out
 
 
 def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
@@ -733,13 +772,13 @@ class Decision:
 def reject_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str = "",
                 reason: str = "", api=None, remote: str = DEFAULT_REMOTE,
                 base_branch: str = BASE_BRANCH, logf=C._noop_log) -> Decision:
-    """원전 `reject_work_impl` 이식 — 상태·통지 마무리. [중요] **여기서는 브랜치를 지우지 않는다.**
+    """원전 `reject_work_impl` 이식 — 상태·통지 마무리. [중요] **브랜치를 지우지 않는다.**
 
     원전은 push work 반려 시 관련 원격 브랜치를 **전부** 지운다(증식 차단). 이 함수는 요청자
-    쪽에서도 돌므로 계획만 낸다. [중요] `#787` ①(사용자 승인 2026-10-10)부터 실제 삭제는
-    마스터의 `autodispatch --catchup` → `cleanup.sweep_terminal` 이 한다 — 큐가 `rejected` 를
-    보면 `task/<W>/*` 를 지우고 **팁 해시를 저널·이 이슈 노트·마스터 트윈 `refs/ax/pruned/`** 에
-    남긴다(해시로 복원). 그래서 「전부 보존」 서술은 더 이상 맞지 않는다.
+    쪽에서도 돌므로 계획만 낸다. 🔴 `#821` (사용자 결정 2026-10-13: *"브랜치는 분리되어 있어,
+    문법 문제든 검증 실패든 main 은 온존하니 그냥 놔두고 사용자에게 고지해"*) — 반려 work 의
+    `task/<W>/*` 는 마스터 정리(`cleanup.sweep_terminal`, `#787` ①)도 **지우지 않는다**. 그 자동
+    삭제는 취소(cancelled) work 에만 남았다. `main` 은 건드리지 않으며, 영구 종결은 사람이 판단한다.
     """
     d = Decision(work_id=work_id)
     cur = (work or {}).get("merge_status")
@@ -769,8 +808,9 @@ def reject_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str = 
     d.redmine_note = (
         f"[반려] 검토자={reviewer or '(미지정)'}\n\n"
         f"사유: {reason or '(미입력)'}\n\n"
-        f"- [중요] 원격 `task/<work>/*` 는 마스터 정리(#787)가 지우고, 지운 ref 와 팁 해시를 "
-        f"이 이슈에 노트로 남긴다 — 해시로 복원할 수 있다\n"
+        f"- [중요] 원격 `task/<work>/*` 는 지우지 않고 그대로 남겨 둔다 "
+        f"(#821 — 반려 work 브랜치 보존 · 사용자 결정 2026-10-13). 서브 브랜치는 분리돼 있어 "
+        f"`main` 은 변경되지 않았다\n"
         f"- 영구 종결은 사람이 판단한다")
     d.ok = not d.error
     return d
@@ -1059,7 +1099,26 @@ class Advance:
         s = (f"조각 {len(self.merged)}개 머지 · {b} · "
              f"{self.target_branch} {self.before[:8]}→{self.head[:8]}")
         return (s + (" · **push 됨(전진)**" if self.pushed else " · push 안 함(승인 대기)")
-                + tail)
+                + self.infra_undecided_tail + tail)
+
+    @property
+    def infra_undecided(self) -> list:
+        """`#821` — 건너뛴 조각 중 마스터 검증 인프라가 판정을 못 낸 것(머지하지 않았다)."""
+        return [s for s in self.skipped or [] if s.get("infra_undecided")]
+
+    @property
+    def infra_undecided_tail(self) -> str:
+        """요약 한 줄에 붙는 `#821` 꼬리 — 사실만. 상세 절은 `infra_undecided_lines`."""
+        iu = self.infra_undecided
+        if not iu:
+            return ""
+        items = "; ".join(
+            f"{s.get('task_id') or '?'} (사유: {s.get('fail_reason') or '기록 없음'} · "
+            f"스풀 `{infra_spool_rel(self.work_id, str(s.get('task_id') or '?'))}`)"
+            for s in iu[:8])
+        more = f"; … 외 {len(iu) - 8}건" if len(iu) > 8 else ""
+        return (f" · [주의] 인프라 판단 불가 {len(iu)}건 머지하지 않음"
+                f"(마스터 검증 인프라 오동작 · #821): {items}{more}")
 
     @property
     def question(self) -> str:
@@ -1307,6 +1366,8 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
             ) + ((["", "## 지우지 않은 서브 브랜치"]
                   + [f"- {r}: {w}" for r, w in a.subbranch_kept])
                  if a.subbranch_kept else []
+            ) + (([""] + infra_undecided_lines(work_id, a.skipped))
+                 if a.infra_undecided else []
             ) + (["", "## 이 자리에서 사람이 정한 것", "", decision_note]
                  if decision_note else
                  ["", "[주의] 사람의 판단이 기록되지 않았다 — "

@@ -156,6 +156,11 @@ class SubmitFailReq(BaseModel):
     result: str = ""
     # 피드백 주석이 박힌 새 커밋 — 재시도는 여기서 출발한다 (원전 `new_base_commit` 과 같다).
     new_base_commit: str = ""
+    # 🔴 `#821` (사용자 결정 2026-10-13) — **마스터 검증 인프라가 판정을 못 낸** 조각이다
+    #    (층2 `layer2_failure` · `workmodel.VERIFICATION`). 상태는 `failed` 그대로 두고 표지만
+    #    단다: 즉시 통보(`#780`)를 내지 않고, 라운드를 `rejected` 로 만들지 않으며, 라운드
+    #    공지가 자기 절에 따로 적는다. 옛 호출자는 안 보내므로 False 다.
+    infra_undecided: bool = False
 
 
 class VerifyReq(BaseModel):

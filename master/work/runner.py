@@ -1189,7 +1189,7 @@ def cancel(task_id: str, *, reason: str = "", no_work: bool = False,
 
 def submit_fail(task_id: str, reason: str, detail: str = "", *, epoch=None,
                 worker_id: str = "", result: str = "", new_base_commit: str = "",
-                api=_api):
+                infra_undecided: bool = False, api=_api):
     """실패 고지. [중요] **submit 과 같은 두 게이트**를 통과해야 한다 (`#318`).
 
     🔴 `result="revise"` 면 terminal `failed` 이 아니라 **`needs_revision`** 으로 간다
@@ -1197,11 +1197,15 @@ def submit_fail(task_id: str, reason: str, detail: str = "", *, epoch=None,
     주석이 박힌 커밋**이고, 다음 시도가 거기서 출발한다.
 
     [중요] **분류는 여기서 하지 않는다** — 호출자가 `work/revise.classify` 로 정한다.
+
+    🔴 `infra_undecided=True` 는 *"마스터 검증 인프라 오동작 — 판단 불가"* 표지다 (`#821`).
+    큐는 `failed` 로 두되 즉시 통보·라운드 반려에서 뺀다.
     """
     return api("POST", f"/api/v1/tasks/{task_id}/submit-fail",
                {"reason": reason[:200], "detail": detail[-2000:],
                 "epoch": epoch, "worker_id": worker_id,
-                "result": result, "new_base_commit": new_base_commit})
+                "result": result, "new_base_commit": new_base_commit,
+                "infra_undecided": bool(infra_undecided)})
 
 
 AUTO = "auto"          # [중요] 기본은 **재는 것**이다. 끄려면 호출자가 명시적으로 None 을 준다.

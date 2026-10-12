@@ -708,9 +708,11 @@ def drain(*, catchup: bool = False, api=None, registry=None, resolver=None,
                         res.setdefault("recovered", 0)
                         res["recovered"] += 1
 
-        # 🔴 `#787` ① — **종결(rejected/cancelled) work 의 원격 `task/<W>/*` 정리.**
+        # 🔴 `#787` ① — **취소(cancelled)로 종결된 work 의 원격 `task/<W>/*` 정리.**
+        #    🔴 `#821` (사용자 결정 2026-10-13) — **반려(rejected) work 은 지우지 않고 보존한다**
+        #    (`cleanup.terminal_skip_reason` 이 보존 사유를 내고, 그 사유는 work 마다 한 번만 찍힌다).
         #    자리를 여기로 고른 이유: 큐 서버는 git 을 돌리지 않고(종결 판정만 한다), 종결은
-        #    조각 실패·취소·반려 PATCH 어느 경로로든 온다. 10분 타이머가 그 모두를 **멱등으로**
+        #    조각 실패·취소 PATCH 어느 경로로든 온다. 10분 타이머가 그 모두를 **멱등으로**
         #    따라잡는다(남은 ref 가 없으면 아무것도 안 한다). 마운트된 프로젝트만 보고, 설치된
         #    훅이 원본과 다르면 건너뛴다(`cleanup.apply_terminal`). [주의] 파견의 성패와 분리한다 —
         #    정리 실패는 `prune_errors` 로만 센다(유닛을 매 10분 실패로 만들지 않되, 줄은 남긴다).

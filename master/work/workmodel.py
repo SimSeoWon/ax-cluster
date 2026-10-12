@@ -29,6 +29,8 @@ followup 이 큐에 없는 사유 키를 읽어 「사유 없음」만 찍던 �
     repeat       직전 시도와 같은 출력 지문                              → stop
     cap          시도 상한 도달                                         → notify_human
     cancelled    사람 취소 · no_work · requester_handoff                → none
+    verification 마스터 층2 검증 불가 — 큐 표지 `infra_undecided`(#821)  → notify_human
+                 (라운드 공지에만 실린다 · 라운드를 rejected 로 만들지 않는다)
     skeleton     같은 동결 위반이 반복 — 골조 결함                       → notify_human
     unknown      표지 없음 · 미상 상태 · stuck                          → notify_human
 
@@ -301,6 +303,10 @@ class Task:
         if st == "stuck":
             return UNKNOWN, (f"stuck — 리스 만료 재회수 {int(raw.get('reclaim_count') or 0)}회 "
                              "(상한 3 초과), 큐가 자동으로 다시 집지 않는다")
+        if st == "failed" and raw.get("infra_undecided"):
+            # 🔴 `#821` — 큐 레코드의 표지가 우선한다(사유 문구로 추정하지 않는다).
+            why = str(raw.get("fail_reason") or "").strip()
+            return VERIFICATION, (why or "인프라 서버 오동작 — 판단 불가") + " (infra_undecided)"
         texts = reason_texts(raw)
         saved = next((stored_kind(s) for s in texts if stored_kind(s)), "")
         if saved:

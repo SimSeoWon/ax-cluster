@@ -10,6 +10,11 @@
     ⑤ `review.advance_work(confirm=True)` — 이번 라운드 머지분만 지우고 노트에 싣는다
     ⑥ `main` 도달 가능 삭제(finalize 경로)는 그대로 통과
     ⑦ `autodispatch.drain(catchup=True)` 기본 배선 — 실제 sweep·apply·원격 삭제와 멱등
+    ⑧ `sweep_terminal` 보존 줄은 (work, 사유)마다 한 번 · 사유가 바뀌면 다시 · 상태 실패면 찍고 알린다
+    ⑨ `#821` 인프라 판단 불가 조각 — ⑦ 전진이 머지하지 않고 노트·요약에 따로 적는다
+
+[중요] 보존 고지 상태(`AX_PRUNE_STATE_DIR`)는 이 파일이 임시 디렉토리로 돌린다 — 홈의
+`~/.cache/ax-dispatch/` 를 건드리지 않는다.
 
 `.venv/bin/python master/test_branch_prune.py`
 """
@@ -33,11 +38,14 @@ from master.work import review as R                                # noqa: E402
 
 PASS = FAIL = 0
 REMOTE = "gitea-write"
-WA = "20261010_0335_wa_aaaa1111"      # rejected
+WA = "20261010_0335_wa_aaaa1111"      # cancelled · 조각 전부 terminal → 지운다
 WB = "20261010_0400_wb_bbbb2222"      # cancelled 이지만 조각 하나가 아직 pending
 WC = "20261010_0500_wc_cccc3333"      # in_progress
 WD = "20261010_0600_wd_dddd4444"      # 전진 대상
 WX = "20261010_0700_wx_eeee5555"      # 큐에 없는 무관한 work
+# 🔴 `#821` (사용자 결정 2026-10-13) — 반려 work 은 조각이 전부 terminal 이어도 **지우지 않는다**.
+#    종전 WA 가 rejected 였고 그 삭제를 못박았다 — 그 계약이 뒤집혀 WA 를 cancelled 로 옮겼다.
+WR = "20261010_0800_wr_ffff6666"      # rejected · 성공+실패 조각 → 보존
 
 
 def check(name: str, cond: bool, detail: str = "") -> None:
@@ -130,7 +138,7 @@ class FakeQueue:
 
 def _setup_terminal(fx: Fx) -> dict:
     t = {}
-    for w in (WA, WB, WC, WX):
+    for w in (WA, WB, WC, WX, WR):
         t[f"task/{w}/base"] = fx.branch_at(f"task/{w}/base", fx.main, f"Source/{w}.h", "// skel\n")
         t[f"task/{w}/r1/p1"] = fx.branch_at(f"task/{w}/r1/p1", t[f"task/{w}/base"],
                                             f"Source/{w}.cpp", "// body\n")
@@ -138,10 +146,12 @@ def _setup_terminal(fx: Fx) -> dict:
 
 
 def _queue() -> FakeQueue:
-    works = {WA: {"work_id": WA, "merge_status": "rejected", "project": "Proj", "redmine_issue_id": 901},
+    works = {WA: {"work_id": WA, "merge_status": "cancelled", "project": "Proj", "redmine_issue_id": 901},
+             WR: {"work_id": WR, "merge_status": "rejected", "project": "Proj", "redmine_issue_id": 903},
              WB: {"work_id": WB, "merge_status": "cancelled", "project": "Proj", "redmine_issue_id": 902},
              WC: {"work_id": WC, "merge_status": "in_progress", "project": "Proj"}}
-    tasks = {WA: [{"task_id": "p1", "status": "failed"}],
+    tasks = {WA: [{"task_id": "p1", "status": "cancelled"}],
+             WR: [{"task_id": "p1", "status": "verified"}, {"task_id": "p2", "status": "failed"}],
              WB: [{"task_id": "p1", "status": "cancelled"}, {"task_id": "p2", "status": "pending"}],
              WC: [{"task_id": "p1", "status": "claimed"}]}
     return FakeQueue(works, tasks)
@@ -312,11 +322,14 @@ def test_apply_terminal():
         plan = CL.survey_terminal(fx.paths, api=q, remote=REMOTE)
         txt = plan.render()
         ids = {w.work_id: w for w in plan.works}
-        check("후보는 종결 work 둘(A·B)", set(ids) == {WA, WB}, str(set(ids)))
+        check("후보는 종결 work 셋(A·B·R)", set(ids) == {WA, WB, WR}, str(set(ids)))
+        check("🔴 #821 반려 R 은 보존 — 사유가 계획에 실린다",
+              ids[WR].skip == CL.REJECTED_KEEP_REASON and "#821" in ids[WR].skip, ids[WR].skip)
+        check("  드라이런에 R 의 [보존] 줄", f"[보존] task/{WR}/base" in txt, txt)
         check("[중요] B 는 pending 조각 때문에 보존", "pending" in ids[WB].skip or "p2" in ids[WB].skip,
               ids[WB].skip)
         check("드라이런 출력에 ref·팁·상태", f"task/{WA}/base @ {t[f'task/{WA}/base']}" in txt
-              and "rejected" in txt, txt)
+              and "cancelled" in txt, txt)
         check("[중요] survey 는 원격을 바꾸지 않는다", fx.remote_refs().get(f"task/{WA}/base")
               == t[f"task/{WA}/base"])
         check("[중요] survey 는 노트를 안 쓴다", not q.notes)
@@ -326,8 +339,12 @@ def test_apply_terminal():
         refs = fx.remote_refs()
         check("A 의 ref 둘이 지워졌다", f"task/{WA}/base" not in refs and f"task/{WA}/r1/p1" not in refs,
               str(done))
-        check("[중요] B·C·X 는 그대로", all(refs.get(f"task/{w}/base") == t[f"task/{w}/base"]
-                                          for w in (WB, WC, WX)), str(refs))
+        check("[중요] B·C·X·R 은 그대로", all(refs.get(f"task/{w}/base") == t[f"task/{w}/base"]
+                                            for w in (WB, WC, WX, WR)), str(refs))
+        check("🔴 #821 반려 R 의 서브 브랜치도 그대로",
+              refs.get(f"task/{WR}/r1/p1") == t[f"task/{WR}/r1/p1"], str(refs))
+        check("  R 은 건너뜀 목록에 보존 사유로", (WR, CL.REJECTED_KEEP_REASON) in done["skipped"],
+              str(done["skipped"]))
         check("실패 0", not done["failed"], str(done["failed"]))
         kept = _run(fx.repo, "rev-parse", f"{CL.PRUNED_NS}/task/{WA}/base")[1]
         check("[중요] 지우기 전에 로컬 보존 ref 가 팁과 같다", kept == t[f"task/{WA}/base"], kept)
@@ -424,7 +441,7 @@ def test_catchup_prunes_terminal():
             deleted = {f"task/{WA}/base", f"task/{WA}/r1/p1"}
             check("catchup 원격에서 종결 A 만 삭제", refs == {r: t for r, t in before.items()
                                                                      if r not in deleted}, str(refs))
-            check("catchup pending B·진행 C·unknown X 의 모든 ref 보존",
+            check("catchup pending B·진행 C·unknown X·반려 R(#821) 의 모든 ref 보존",
                   all(refs.get(ref) == tip for ref, tip in tips.items() if ref not in deleted))
             for ref in sorted(deleted):
                 kept = _run(fx.repo, "rev-parse", f"{CL.PRUNED_NS}/{ref}")[1]
@@ -527,9 +544,103 @@ def test_prune_helper_keeps_unmerged_and_foreign():
         check("작업 브랜치가 task/<W>/base 가 아니면 손대지 않는다", not d and k, str(k))
 
 
+# ── ⑧ 보존 줄은 한 번만 (`#821` 후속) ─────────────────────────────────────────
+
+def test_sweep_kept_logged_once():
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = Fx(Path(tmp))
+        _setup_terminal(fx)
+        state = Path(tmp) / "state"
+
+        def run(env_dir) -> list:
+            logs = []
+            with patch.dict(os.environ, {CL.PRUNE_STATE_ENV: str(env_dir)}):
+                CL.sweep_terminal(fx.paths, api=_queue(), apply_=False, logf=logs.append)
+            return logs
+
+        def kept(logs, wid):
+            return [m for m in logs if m.startswith(f"{wid}: 보존 — ")]
+
+        first = run(state)
+        check("1회차 — 반려 R 의 보존 줄", len(kept(first, WR)) == 1, "\n".join(first))
+        check("  1회차 — pending B 의 보존 줄", len(kept(first, WB)) == 1, "\n".join(first))
+        check("  상태 파일이 생겼다", (state / CL.PRUNE_STATE_FILE).exists())
+        second = run(state)
+        check("[중요] 2회차 — 같은 사유면 보존 줄 없음", not kept(second, WR) and not kept(second, WB),
+              "\n".join(second))
+        check("  2회차 — 상태 실패 줄 없음", not any("보존 고지 상태" in m for m in second),
+              "\n".join(second))
+        check("  2회차 — 정리 계획 줄은 그대로", any("정리 시작" in m for m in second), "\n".join(second))
+        with patch.object(CL, "REJECTED_KEEP_REASON", "다른 보존 사유(시험)"):
+            third = run(state)
+        check("사유가 바뀌면 다시 찍는다", kept(third, WR) == [f"{WR}: 보존 — 다른 보존 사유(시험)"]
+              and not kept(third, WB), "\n".join(third))
+        fourth = run(state)
+        check("  원래 사유로 돌아와도 다시 찍는다(바뀐 것이다)", len(kept(fourth, WR)) == 1,
+              "\n".join(fourth))
+
+        blocker = Path(tmp) / "blocker"
+        blocker.write_text("파일이라 디렉토리를 못 만든다\n", encoding="utf-8")
+        for n in (1, 2):
+            bad = run(blocker / "sub")
+            check(f"[중요] 상태 저장 불가 {n}회차 — 보존 줄은 그대로 찍힌다",
+                  len(kept(bad, WR)) == 1 and len(kept(bad, WB)) == 1, "\n".join(bad))
+            check(f"  상태 저장 불가 {n}회차 — 실패 한 줄",
+                  sum("보존 고지 상태를 저장하지 못했다" in m for m in bad) == 1, "\n".join(bad))
+
+        broken = Path(tmp) / "broken"
+        broken.mkdir()
+        (broken / CL.PRUNE_STATE_FILE).write_text("{깨진", encoding="utf-8")
+        bad = run(broken)
+        check("상태 읽기 실패 — 전부 찍고 한 줄 알린다", len(kept(bad, WR)) == 1
+              and sum("보존 고지 상태를 읽지 못했다" in m for m in bad) == 1, "\n".join(bad))
+        check("  읽기 실패 뒤 다시 저장돼 다음 회차는 조용하다", not kept(run(broken), WR))
+        check("[중요] 원격은 그대로(apply_=False)", fx.remote_refs().get(f"task/{WR}/base") is not None)
+
+
+# ── ⑨ `#821` 인프라 판단 불가 조각 — ⑦ 전진 표시 ─────────────────────────────
+
+def test_advance_lists_infra_undecided():
+    with tempfile.TemporaryDirectory() as tmp:
+        fx = Fx(Path(tmp))
+        base = fx.branch_at(f"task/{WD}/base", fx.main, "Source/F.h", "// f skel\n")
+        p1 = fx.branch_at(f"task/{WD}/r1/p1", base, "Source/F1.cpp", "// f1\n")
+        p3 = fx.branch_at(f"task/{WD}/r1/p3", base, "Source/F3.cpp", "// f3\n")
+        why = "인프라 서버 오동작 — 판단 불가 (verifier_exception)"
+        tasks = [{"task_id": "p1", "status": "verified", "distribution_mode": "push", "round": 1},
+                 {"task_id": "p3", "status": "failed", "distribution_mode": "push", "round": 1,
+                  "infra_undecided": True, "fail_reason": why}]
+        work = {"work_id": WD, "round": 1, "redmine_issue_id": 905, "distribution_mode": "push"}
+        notes = []
+
+        def api(method, path, payload=None):
+            notes.append(payload)
+            return {"ok": True}
+
+        a = R.advance_work(fx.repo, work_id=WD, work=work, tasks=tasks, confirm=True, remote=REMOTE,
+                           build_fn=lambda tree: {"passed": True, "summary": "ok"}, api=api)
+        spool = f"responses/{WD}/p3.json"
+        check("전진 성공 · 머지는 verified 하나", a.ok and a.pushed
+              and a.merged == [f"task/{WD}/r1/p1"], a.summary)
+        check("[중요] 표지 조각 브랜치는 머지·삭제되지 않았다",
+              fx.remote_refs().get(f"task/{WD}/r1/p3") == p3, str(fx.remote_refs()))
+        check("  p1 은 전진분으로 지워졌다", f"task/{WD}/r1/p1" not in fx.remote_refs()
+              and (f"task/{WD}/r1/p1", p1) in a.deleted_subbranches)
+        check("요약에 표지 조각·사유·상대 스풀", "p3" in a.summary and why in a.summary
+              and spool in a.summary, a.summary)
+        body = (notes[0] or {}).get("notes", "") if notes else ""
+        check("레드마인 노트에 인프라 판단 불가 절", "## 인프라 판단 불가" in body and "p3" in body
+              and why in body and f"`{spool}`" in body, body)
+        check("  노트·요약에 임시(절대) 경로 없음", tmp not in body and tmp not in a.summary)
+
+
 if __name__ == "__main__":
+    # [중요] 보존 고지 상태가 홈(`~/.cache/ax-dispatch/`)에 쌓이지 않게 — 실행 동안만 임시 디렉토리
+    _state_tmp = tempfile.TemporaryDirectory()
+    os.environ[CL.PRUNE_STATE_ENV] = _state_tmp.name
     for fn in (test_hook_direct, test_stale_tracking_396, test_apply_terminal, test_requeue_and_stale_hook, test_catchup_prunes_terminal,
-               test_advance_prunes_round_subbranches, test_prune_helper_keeps_unmerged_and_foreign):
+               test_advance_prunes_round_subbranches, test_prune_helper_keeps_unmerged_and_foreign,
+               test_sweep_kept_logged_once, test_advance_lists_infra_undecided):
         try:
             fn()
         except Exception as e:                                    # noqa: BLE001

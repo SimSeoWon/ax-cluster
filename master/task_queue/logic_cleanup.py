@@ -255,7 +255,12 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                     tasks_all = [t for t in tasks_all
                                  if int(t.get("round") or 0) in (0, _round)]
                 tasks_v = [t for t in tasks_all if t.get("status") == "verified"]
-                tasks_f = [t for t in tasks_all if t.get("status") == "failed"]
+                # 🔴 `#821` — 인프라 판단 불가(`infra_undecided`)는 「미완성 파일(failed)」에
+                #    섞지 않는다. 코드 판정이 아니라 마스터 검증 인프라가 판정을 못 낸 조각이다.
+                tasks_iu = [t for t in tasks_all
+                            if t.get("status") == "failed" and t.get("infra_undecided")]
+                tasks_f = [t for t in tasks_all
+                           if t.get("status") == "failed" and not t.get("infra_undecided")]
                 # 🔴 [중요] `cancelled` 를 **둘로 가른다** (사용자 결정 2026-09-04).
                 #    `no_work` = *"골조에 `[PSEUDO]` 가 0개 = 이미 완성된 파일"* 이고 실패도
                 #    취소도 아니다. 뭉뚱그리면 공지에서 실패로 읽힌다 — 공지 본문이 사실과
@@ -281,6 +286,15 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                     last_fb = (t.get("fail_detail") or t.get("last_feedback") or
                                t.get("verdict_feedback") or t.get("fail_reason") or "")
                     fail_details.append((rf, str(last_fb)[:200]))
+                # 산출물은 마스터 스풀(트윈 루트 기준 `responses/<work>/<task>.json`,
+                # `infer.spool_path`)에 있다 — 절대 경로는 싣지 않는다.
+                iu_details = []
+                for t in tasks_iu:
+                    tid = str(t.get("task_id") or "?")
+                    files = [str(f) for f in (t.get("target_file"), t.get("header_file")) if f]
+                    iu_details.append((tid, ", ".join(f"`{f}`" for f in files) or "?",
+                                       str(t.get("fail_reason") or "")[:200],
+                                       f"responses/{work_id}/{tid}.json"))
                 from ..work import workmodel as WM
                 execution = WM.Work.from_record(wmeta, tasks_all).execution_summary()
                 success_evidence = [
@@ -304,7 +318,7 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
             # [주의] **`no_work` 는 미완성이 아니다** — 제목에 「일부 미완성」을 붙이지
             #    않는다. 골조가 완성본이라 채울 것이 없었던 조각이고, 그것은 정상 결과다.
             #    [주의] 요청자 인계분은 **미완성이다** — 사람이 ⑦ 에서 채워야 한다(`#757`).
-            partial = bool(tasks_f or tasks_c or tasks_ho)
+            partial = bool(tasks_f or tasks_c or tasks_ho or tasks_iu)
             build_failed = (build_status == "failed")
             if build_failed:
                 subject_prefix = "[빌드 실패] 통합 빌드 게이트 차단"
@@ -327,6 +341,7 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 f"- 작업 브랜치: `origin/{target_branch}`",
                 f"- 완료된 조각: {len(tasks_v)}건"
                 + (f" / 실패: {len(tasks_f)}건" if tasks_f else "")
+                + (f" / 인프라 판단 불가: {len(tasks_iu)}건" if tasks_iu else "")
                 + (f" / 할 일 없음: {len(tasks_nw)}건" if tasks_nw else "")
                 + (f" / 요청자 인계: {len(tasks_ho)}건" if tasks_ho else "")
                 + (f" / 취소: {len(tasks_c)}건" if tasks_c else ""),
@@ -369,6 +384,23 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                         lines.append(f"- `{rf}`")
                 if len(fail_details) > 30:
                     lines.append(f"- … 외 {len(fail_details) - 30}건")
+
+            # 🔴 `#821` 절 — 사실만 싣는다(자동 경로로 요청자 LLM 세션에 닿는다, 리포트 60).
+            iu_section = []
+            if tasks_iu:
+                iu_section = ["", f"## 인프라 판단 불가 — 마스터 검증 인프라 오동작 ({len(tasks_iu)}건)",
+                              "",
+                              "이 조각들은 코드 판정이 아니다. 마스터의 층2 검증이 판정을 내지 못해",
+                              "커밋되지 않았고, 큐 상태는 `failed`(infra_undecided) 이다(#821).",
+                              "작성된 파일 내용은 마스터 스풀(트윈 루트 기준 경로)에 남아 있다.",
+                              "이 조각들은 라운드를 반려(rejected)로 만들지 않았다.",
+                              ""]
+                for tid, files, why, spool_rel in iu_details[:30]:
+                    iu_section.append(f"- {tid} — {files} — 사유: {why or '기록 없음'} — "
+                                      f"스풀 `{spool_rel}`")
+                if len(iu_details) > 30:
+                    iu_section.append(f"- … 외 {len(iu_details) - 30}건")
+            lines += iu_section
 
             if tasks_nw:
                 lines += ["", f"## 할 일 없음 — 골조가 이미 완성본이다 ({len(tasks_nw)}건)", "",
@@ -455,16 +487,24 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                     f"라운드 {_r} 종결 — {merge_status}",
                     f"- work_id: {work_id}",
                     f"- 완료 {len(tasks_v)} / 실패 {len(tasks_f)} / 취소 {len(tasks_c)} / 할 일 없음 {len(tasks_nw)}"
-                    + (f" / 요청자 인계 {len(tasks_ho)}" if tasks_ho else ""),
+                    + (f" / 요청자 인계 {len(tasks_ho)}" if tasks_ho else "")
+                    + (f" / 인프라 판단 불가 {len(tasks_iu)}" if tasks_iu else ""),
                     "작업은 실패·취소로 종결됐으며 통합·전진 대기 대상이 아니다.",
-                    "하위 태스크의 verified 이력은 보존한다. 이 work 의 원격 브랜치 task/<work>/* 는 "
-                    "마스터의 정리 주기(#787)가 지우고, 지운 ref·tip 해시를 이 이슈에 노트로 남긴다(해시로 복원 가능).",
+                    "하위 태스크의 verified 이력은 보존한다.",
+                    # 🔴 `#821` (사용자 결정 2026-10-13) — 반려 work 의 브랜치는 지우지 않는다.
+                    #    취소(cancelled) work 은 종전대로 마스터 정리 주기(#787)가 지운다.
+                    ("이 work 의 원격 브랜치 task/<work>/* 는 지우지 않고 그대로 남아 있다 "
+                     "(#821 — 반려 work 브랜치 보존). 서브 브랜치는 분리돼 있어 main 은 영향받지 않았다."
+                     if merge_status == "rejected" else
+                     "이 work 의 원격 브랜치 task/<work>/* 는 마스터의 정리 주기(#787)가 지우고, "
+                     "지운 ref·tip 해시를 이 이슈에 노트로 남긴다(해시로 복원 가능)."),
                     "사람의 워킹트리·main은 변경하지 않았다.",
                     "", "## 실패 사유",
                     *[f"- {name}: {feedback or '사유 없음'}" for name, feedback in fail_details],
                     "", "## 취소된 파일",
                     *[f"- {t.get('target_file') or '?'}: {t.get('cancel_reason') or '사유 없음'}"
                       for t in tasks_c],
+                    *iu_section,
                 ])
 
             if execution["rework_required"]:
@@ -568,6 +608,12 @@ def _notify_piece_failed(idx: TaskIndex, task_id: str) -> bool:
         from ..work import workmodel as WM
         if WM.stored_kind(t.get("fail_detail") or "") == WM.SKELETON:
             # 골조 실패는 기록만 남기고, 다른 조각을 소진한 뒤 Work가 종합 고지한다.
+            return False
+        if t.get("infra_undecided"):
+            # 🔴 `#821` (사용자 결정 2026-10-13) — 인프라 판단 불가 조각은 즉시 통보하지 않는다.
+            #    라운드가 전부 종결된 뒤 라운드 공지의 자기 절에만 실린다.
+            _tq_log(f"[piece-fail] {t.get('work_id')} task={task_id} 즉시 노트 생략 — "
+                    f"인프라 판단 불가(#821), 라운드 공지에 싣는다", idx.root)
             return False
         if t.get("fail_notice_at") or t.get("fail_notice_pending"):
             return False

@@ -1321,6 +1321,14 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         # 검증 인프라·판정 계약 실패는 작성 코드를 다시 사도 고쳐지지 않는다.
         if c.layer2_failure:
             res.notes.append(f"[중요] 층2 검증 불가({c.layer2_failure}) — 코드 재작성 재시도 제외")
+        # 🔴 `#821` (사용자 결정 2026-10-13) — **마스터 검증 인프라 오동작이면 표지만 남긴다.**
+        #    상태는 `failed` 그대로, 다른 조각은 멈추지 않는다. 큐가 즉시 통보(`#780`)를 생략하고
+        #    라운드를 반려로 만들지 않으며, 라운드 공지가 따로 적는다. 산출물은 스풀에 남는다.
+        infra_undecided = decision.kind == WM.VERIFICATION
+        if infra_undecided:
+            infra_reason = f"인프라 서버 오동작 — 판단 불가 ({c.layer2_failure})"
+            res.notes.append(f"[중요] {infra_reason} — 표지(infra_undecided)만 남긴다 (#821)")
+            _log(f"[layer2] {task_id} 인프라 판단 불가 — 표지만 남기고 계속 (#821)")
         # [DOC] 🔴 `#615` (가) — **직전 시도와 출력이 같으면 재시도는 무의미하다.** 판정 순서는
         #    한도 → 환경 → **출력 반복** → `classify` 다(앞 두 갈래는 처분이 달라 먼저 본다).
         #    지문은 지휘자의 말(`c.notes`)로 만들고, 직전 지문은 `task["last_feedback"]` 에 있다
@@ -1353,11 +1361,13 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
             _log(f"[revise] {task_id} 상한 도달 attempt={attempt} → 종결")
         try:
             # [중요] 사유가 처분을 정한다 — `quota_exhausted` 는 큐가 **pending 복귀**로 받는다
-            _reason = "quota_exhausted" if quota_hit else runner.BLOCKED
+            _reason = ("quota_exhausted" if quota_hit else
+                       infra_reason if infra_undecided else runner.BLOCKED)
             runner.submit_fail(task_id, _reason, WM.failure_detail(res.reason if auth_hit else c.summary,
                                                                  decision.kind, fp),
                                epoch=epoch, worker_id=facts.host, api=api,
-                               result=r_result, new_base_commit=r_base)
+                               result=r_result, new_base_commit=r_base,
+                               infra_undecided=infra_undecided)
         except Exception as e:                               # noqa: BLE001
             res.notes.append(f"[주의] 반납도 실패했다 — {type(e).__name__}: {e}")
         if notice_args:

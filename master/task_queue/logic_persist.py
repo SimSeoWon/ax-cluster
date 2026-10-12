@@ -147,6 +147,10 @@ def completed_work_status(idx: TaskIndex, work_id: str) -> str:
 
     [중요] 요청자 인계 취소(`requester_handoff`, `#757` · 사용자 결정 2026-10-09 ①)도
     `no_work` 처럼 라운드를 `cancelled` 로 만들지 않는다 — ⑦ 에서 사람이 채운다.
+
+    🔴 인프라 판단 불가(`infra_undecided`, `#821` · 사용자 결정 2026-10-13)인 `failed` 는
+    라운드를 `rejected` 로 만들지 않는다 — 코드가 아니라 마스터 검증 인프라가 판정을 못 낸
+    것이다. 표지 없는 진짜 실패가 하나라도 있으면 종전대로 `rejected` 다.
     """
     work = idx.works.get(work_id) or {}
     round_no = int(work.get("round") or 1)
@@ -154,7 +158,8 @@ def completed_work_status(idx: TaskIndex, work_id: str) -> str:
              and int(task.get("round") or 0) in (0, round_no)]
     if not tasks or _count_terminal_in_work(idx, work_id) < len(tasks):
         return ""
-    if any(task.get("status") == "failed" for task in tasks):
+    if any(task.get("status") == "failed" and not task.get("infra_undecided")
+           for task in tasks):
         return "rejected"
     if any(task.get("status") == "cancelled" and not task.get("no_work")
            and not task.get("requester_handoff") for task in tasks):

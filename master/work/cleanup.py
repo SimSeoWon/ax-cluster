@@ -29,12 +29,17 @@
 결정은 자동화하지 않는다 (미병합 프로브·실패 증거가 그 부류다). 워커 로컬을 훑는
 plan/apply 와 달리 이건 **마스터 정본 저장소에서** 돈다.
 
-## [중요] 예외 하나 — 큐가 종결(rejected/cancelled)한 work 의 `task/<W>/*` (`#787`, 2026-10-10)
+## [중요] 예외 하나 — 큐가 취소(cancelled)로 종결한 work 의 `task/<W>/*` (`#787`, 2026-10-10)
 
-사용자 승인(2026-10-10): 반려·취소로 **종결된** work 의 원격 브랜치는 도달 불가여도 지운다 —
+🔴 **반려(rejected) work 은 지우지 않는다** (`#821` · 사용자 결정 2026-10-13: *"브랜치는 분리되어
+있어, 문법 문제든 검증 실패든 main 은 온존하니 그냥 놔두고 사용자에게 고지해"*). 실측 2026-10-11:
+work `#817` 이 층2 인프라 예외 한 조각 때문에 `rejected` 가 됐고 이 정리가 **성공 조각 8개의
+브랜치**까지 지웠다. 반려 work 은 계획에 `[보존]` 사유와 함께 남고, 고지는 라운드 공지가 한다.
+
+사용자 승인(2026-10-10): **취소로 종결된** work 의 원격 브랜치는 도달 불가여도 지운다 —
 증거는 **팁 해시**로 남긴다(저널 · 그 work 의 레드마인 노트 · 마스터 트윈의
 `refs/ax/pruned/task/<W>/…` 로컬 보존). 판정은 **여기서** 한다 — push 직전에 큐를 다시 읽어
-`merge_status ∈ {rejected, cancelled}` 이고 조각이 전부 terminal 인지 보고, 그 push 의 환경에만
+`merge_status == cancelled` 이고 조각이 전부 terminal 인지 보고, 그 push 의 환경에만
 `AX_PRUNE_TERMINAL_WORK=<W>` 를 싣는다. 훅은 큐를 묻지 않고 **그 work 하나의 접두어**만 통과시킨다.
 [중요] 자동 실행 자리는 `autodispatch --catchup`(10분 타이머) — 마운트된 프로젝트만, 그리고
 **설치된 훅이 원본과 같을 때만** 돈다(낡은 훅이면 반쯤 지우게 되므로 건너뛰고 그 사실을 찍는다).
@@ -370,6 +375,9 @@ def apply_remote(paths, plan: RemotePlan, *, git=None) -> dict:
 
 # ── 종결 work 의 원격 브랜치 (`#787` ① — 사용자 승인 2026-10-10) ──────────────────────
 #
+# 🔴 `#821` (사용자 결정 2026-10-13) — **지우는 것은 cancelled 뿐이다.** rejected 는 후보로 세되
+# `terminal_skip_reason` 이 보존 사유를 돌려준다(계획·로그에 `[보존]` 으로 보인다).
+#
 # [중요] **판정은 큐, 집행은 훅의 좁은 예외.** 이 모듈이 push 직전에 큐를 다시 읽어 종결을
 # 확인하고, 그 push 프로세스의 환경에만 `AX_PRUNE_TERMINAL_WORK=<W>` 를 싣는다. 훅
 # (`pre_push_hook.sh` 예외 ⓑ)은 큐를 모르고 **그 work 하나의 `refs/heads/task/<W>/` 접두어**만
@@ -379,7 +387,10 @@ def apply_remote(paths, plan: RemotePlan, *, git=None) -> dict:
 #    기록(저널 줄 + 레드마인 노트)에 `git push <remote> <팁>:refs/heads/<ref>` 복원 명령을 싣는다.
 
 TERMINAL_WORK_ENV = "AX_PRUNE_TERMINAL_WORK"
-TERMINAL_MERGE_STATUSES = ("rejected", "cancelled")
+TERMINAL_MERGE_STATUSES = ("rejected", "cancelled")       # 후보로 세는 종결 상태
+PRUNABLE_MERGE_STATUSES = ("cancelled",)                   # 🔴 `#821` — 실제로 지우는 것은 이것뿐
+REJECTED_KEEP_REASON = ("반려(rejected) work — 브랜치 보존, 라운드 공지로 고지 "
+                        "(#821 · 사용자 결정 2026-10-13)")
 _TASK_TERMINAL = ("verified", "failed", "cancelled")
 PRUNED_NS = "refs/ax/pruned"
 
@@ -432,9 +443,13 @@ def terminal_skip_reason(work: dict, tasks) -> str:
     st = str((work or {}).get("merge_status") or "")
     if st not in TERMINAL_MERGE_STATUSES:
         return f"merge_status={st!r} — 종결(rejected/cancelled) 이 아니다"
-    from .workmodel import Work
-    if st == "rejected" and Work.from_record(work, tasks).execution_summary()["rework_required"]:
-        return "골조 재작업 대상 — 통합 기준과 실패·성공 결과 브랜치를 보존한다"
+    if st not in PRUNABLE_MERGE_STATUSES:
+        # 🔴 `#821` — 반려 work 은 문법·검증 실패여도 main 과 분리돼 있으므로 남긴다.
+        #    골조 재작업 대상이면 종전의 더 구체적인 사유를 그대로 돌려준다(어느 쪽이든 보존).
+        from .workmodel import Work
+        if Work.from_record(work, tasks).execution_summary()["rework_required"]:
+            return "골조 재작업 대상 — 통합 기준과 실패·성공 결과 브랜치를 보존한다"
+        return REJECTED_KEEP_REASON
     live = [t.get("task_id") for t in (tasks or [])
             if str(t.get("status") or "") not in _TASK_TERMINAL]
     if live:
@@ -631,6 +646,66 @@ def apply_terminal(paths, plan: TerminalPlan, *, api=None, git=None,
     return done
 
 
+# ── 보존 고지는 한 번만 (`#821` 후속) ─────────────────────────────────────────────────
+#
+# `#821` 이후 반려 work 은 **영원히** 보존 대상이라, 10분 catchup 마다 같은 「보존」 줄이 쌓였다.
+# 그래서 `(프로젝트/work, 사유)` 를 한 번만 찍는다 — 상태는 파견기와 같은 디렉토리
+# (`~/.cache/ax-dispatch/`, `hold.json` 옆)의 작은 JSON 이다. 사유가 바뀌면 다시 찍는다.
+# [중요] **지우고 남기는 판정과 무관하다** — 줄을 줄일 뿐이다. 상태를 못 읽거나 못 쓰면
+# 종전처럼 전부 찍고, 못 저장한 사실을 **한 줄** 남긴다(조용히 넘기지 않는다 · 죽지 않는다).
+
+PRUNE_STATE_ENV = "AX_PRUNE_STATE_DIR"
+PRUNE_STATE_FILE = "prune_reported.json"
+
+
+def prune_state_path():
+    import os
+    from pathlib import Path as _P
+    d = os.environ.get(PRUNE_STATE_ENV)
+    return (_P(d) if d else _P.home() / ".cache" / "ax-dispatch") / PRUNE_STATE_FILE
+
+
+def _report_kept_once(project: str, skips: dict, log) -> None:
+    """`skips` = `{work_id: 보존 사유}`. 새것·사유가 바뀐 것만 「보존」 줄로 찍는다."""
+    import json
+    import os
+    path = prune_state_path()
+    prev: dict = {}
+    try:
+        if path.exists():
+            got = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(got, dict):
+                raise ValueError(f"형식이 dict 가 아니다({type(got).__name__})")
+            prev = {str(k): str(v) for k, v in got.items()}
+    except Exception as e:                                   # noqa: BLE001
+        log(f"[주의] 보존 고지 상태를 읽지 못했다({PRUNE_STATE_FILE}) — "
+            f"{type(e).__name__}: {e} · 이번 회차는 보존 줄을 전부 찍는다")
+        prev = {}
+    prefix = f"{project}/"
+    cur = {f"{prefix}{wid}": why for wid, why in skips.items()}
+    for wid, why in skips.items():
+        if prev.get(f"{prefix}{wid}") != why:
+            log(f"{wid}: 보존 — {why}")
+    # 다른 프로젝트 항목은 그대로 두고, 이 프로젝트는 지금 보존 중인 것만 남긴다
+    new = {k: v for k, v in prev.items() if not k.startswith(prefix)}
+    new.update(cur)
+    if new == prev:
+        return
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(new, ensure_ascii=False, indent=1, sort_keys=True) + "\n",
+                       encoding="utf-8")
+        os.replace(tmp, path)
+    except Exception as e:                                   # noqa: BLE001
+        log(f"[주의] 보존 고지 상태를 저장하지 못했다({PRUNE_STATE_FILE}) — "
+            f"{type(e).__name__}: {e} · 다음 회차에 같은 보존 줄이 다시 찍힌다")
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
 def sweep_terminal(paths=None, *, api=None, apply_: bool = True, logf=None) -> dict:
     """`autodispatch --catchup` 이 부르는 자리. **마운트된 프로젝트만** 본다(마운트 규칙)."""
     from ..context_search.paths import resolve
@@ -641,9 +716,8 @@ def sweep_terminal(paths=None, *, api=None, apply_: bool = True, logf=None) -> d
     if plan.error:
         log(f"[중요] {paths.name}: {plan.error}")
         return {"deleted": [], "failed": [], "skipped": [("*", plan.error)], "notes": []}
-    for w in plan.works:
-        if w.skip:
-            log(f"{w.work_id}: 보존 — {w.skip}")
+    # `#821` 후속 — 같은 (work, 사유) 의 「보존」 줄은 한 번만 찍는다(상태 실패 시 전부 찍는다)
+    _report_kept_once(paths.name, {w.work_id: w.skip for w in plan.works if w.skip}, log)
     if not n:
         return {"deleted": [], "failed": [], "skipped": [], "notes": []}
     log(f"{paths.name}: 종결 work 원격 브랜치 {n}건 정리 시작")
@@ -662,7 +736,7 @@ def main(argv) -> int:
         pos = [a for a in argv[1:] if not a.startswith("--")]
         paths = resolve(pos[0] if pos else "")
         plan = survey_terminal(paths)
-        print(f"프로젝트 {paths.name} · 종결(rejected/cancelled) work 의 task/<W>/* (#787)")
+        print(f"프로젝트 {paths.name} · 취소(cancelled) work 의 task/<W>/* (#787 · rejected 는 보존 #821)")
         print(plan.render())
         if "--apply" not in argv:
             print("\n  [중요] 드라이런 — 아무것도 지우지 않았다. 실행하려면 `terminal [프로젝트] --apply`.")
