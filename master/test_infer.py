@@ -19,7 +19,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -1212,23 +1212,20 @@ def test_commit_layer2_base_files_and_judge_log() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
-def test_layer2_is_serialized_across_threads() -> None:
-    """🔴 `#818` — 병렬 조각의 층2 는 마스터에서 **한 번에 하나씩** 돈다(임시 조치).
+def _layer2_threads(tids, verify, *, from_commit=None):
+    """`#818` 층2 이음매 — `test_commit_layer2_base_files_and_judge_log` 와 같은 대역.
 
-    잴 것 셋: ① 두 스레드의 `verify_files` 구간이 겹치지 않는다 ② 뒤 조각은 잠금 대기 줄을
-    남긴다 ③ **기다리는 동안에도 하트비트가 나간다**(대기가 `_Beater` 안이라 리스가 산다).
-    [주의] 이음매는 `test_commit_layer2_base_files_and_judge_log` 와 같다 — `wcommit.run` 대역이
-    `llm` 과 `verifier` 를 직접 부른다. 실 백엔드는 부르지 않는다.
+    `wcommit.run` 대역이 `llm` 과 `verifier` 를 직접 부른다. 실 백엔드는 부르지 않는다.
+    `verify(tid, n)` 은 그 스레드의 n번째(1부터) `verify_files` 호출이 할 일이다.
+    돌려주는 것: seen(판정 또는 예외) · spans · beats · logs · calls(스레드별 verify 횟수) · fc(from_commit 대역).
     """
     import threading
     import time
-    from master.verdict import Verdict
     from master.work import usage as U, wcommit
     from master.work.declarations import Declarations
 
     files = {"A.cpp": "void A::Go() { Do(); }\n"}
-    HOLD = 0.8
-    spans, called, beats, logs, seen = {}, {}, [], [], {}
+    spans, beats, logs, seen, calls = {}, [], [], {}, {}
     mu = threading.Lock()
 
     class BeatQueue(FakeQueue):
@@ -1240,22 +1237,28 @@ def test_layer2_is_serialized_across_threads() -> None:
 
     def fake_verify(items, **kw):
         tid = threading.current_thread().name
-        t0 = time.monotonic()
-        time.sleep(HOLD)
         with mu:
-            spans[tid] = (t0, time.monotonic())
-        return Verdict(True, None, warnings=["backend=agy"])
+            calls[tid] = calls.get(tid, 0) + 1
+            n = calls[tid]
+        t0 = time.monotonic()
+        try:
+            return verify(tid, n)
+        finally:
+            with mu:
+                spans.setdefault(tid, []).append((t0, time.monotonic()))
 
     def fake_run(facts, task, **kw):
         tid = task["task_id"]
         kw["llm"](facts, tid, list(files))
-        called[tid] = time.monotonic()
         try:
             seen[tid] = kw["verifier"](dict(files))
         except Exception as e:                               # noqa: BLE001
             seen[tid] = e
         return wcommit.Committed(task_id=tid, stage="층2", reason="test stop", want=list(files))
 
+    fc = MagicMock(return_value=Declarations(blocks=[("X", "X.h", "class X { void Go(); };")]))
+    if from_commit is not None:
+        fc.side_effect = from_commit
     orig_beater = R._Beater
     paths, root = tmp_paths()
     q = BeatQueue([])
@@ -1265,8 +1268,7 @@ def test_layer2_is_serialized_across_threads() -> None:
             stack.enter_context(patch("master.work.twin_base.commit_baseline", return_value=None))
             stack.enter_context(patch("master.work.wcommit.run", side_effect=fake_run))
             stack.enter_context(patch("master.projects.profile.load", return_value={"kind": "unreal"}))
-            stack.enter_context(patch("master.work.declarations.from_commit", return_value=Declarations(
-                blocks=[("X", "X.h", "class X { void Go(); };")])))
+            stack.enter_context(patch("master.work.declarations.from_commit", fc))
             stack.enter_context(patch("master.layer2_verify.verify_files", side_effect=fake_verify))
             stack.enter_context(patch.object(I._MODE, "current", return_value=("codex", "test")))
             stack.enter_context(patch.object(I, "_notify_blocked"))
@@ -1278,29 +1280,100 @@ def test_layer2_is_serialized_across_threads() -> None:
                 I.commit_task(paths, FakeFacts(), {"task_id": tid, "attempt_count": 1},
                               work_id="W1", base=SUB_TIP, want=list(files), branch=f"task/W1/{tid}",
                               api=q, runner_=lambda *a: (0, U.envelope("done", {"source": "codex"})))
-            ts = [threading.Thread(target=go, args=(t,), name=t) for t in ("s1", "s2")]
+            ts = [threading.Thread(target=go, args=(t,), name=t) for t in tids]
             for t in ts:
                 t.start()
             for t in ts:
                 t.join(timeout=10)
-        check("층2 직렬화: 두 조각 모두 판정", all(isinstance(seen.get(t), Verdict) and seen[t].approved
-              for t in ("s1", "s2")) and set(spans) == {"s1", "s2"}, f"{seen} {spans}")
-        if set(spans) != {"s1", "s2"}:
-            return
-        first, second = sorted(spans, key=lambda t: spans[t][0])
-        check("층2 직렬화: verify_files 구간이 겹치지 않는다",
-              spans[first][1] <= spans[second][0], str(spans))
-        waits = [ln for ln in logs if "층2 잠금 대기" in ln]
-        check("층2 직렬화: 뒤 조각만 잠금 대기 한 줄(#818)", len(waits) == 1 and
-              waits[0].startswith(f"[layer2] {second} 층2 잠금 대기 ") and
-              waits[0].endswith("초 (#818)"), str(waits))
-        # 대기 구간 = verifier 호출 직후(즉시 하트비트 1회는 빼려고 여유를 둔다) ~ verify_files 진입
-        during = [b for t, b in beats if t == second and called[second] + 0.02 < b < spans[second][0]]
-        check("층2 직렬화: 잠금 대기 중에도 하트비트", len(during) >= 3,
-              f"{len(during)} beats; called={called[second]:.2f} enter={spans[second][0]:.2f}")
-        check("층2 직렬화: 잠금이 풀려 있다", not I._LAYER2_LOCK.locked())
     finally:
         shutil.rmtree(root, ignore_errors=True)
+    return seen, spans, beats, logs, calls, fc
+
+
+def test_layer2_runs_in_parallel_with_heartbeats() -> None:
+    """🔴 `#818` — 층2 잠금을 걷었다(2026-10-12): 두 조각의 층2 가 **겹쳐 돈다**.
+
+    잴 것 셋: ① `verify_files` 구간이 겹친다 ② 잠금 대기 줄이 없다 ③ 판정 중에도 하트비트가 나간다.
+    """
+    import time
+    from master.verdict import Verdict
+
+    HOLD = 0.8
+
+    def verify(tid, n):
+        time.sleep(HOLD)
+        return Verdict(True, None, warnings=["backend=agy"])
+
+    seen, spans, beats, logs, calls, _ = _layer2_threads(("s1", "s2"), verify)
+    check("층2 병렬: 두 조각 모두 판정", all(isinstance(seen.get(t), Verdict) and seen[t].approved
+          for t in ("s1", "s2")) and set(spans) == {"s1", "s2"}, f"{seen} {spans}")
+    if set(spans) != {"s1", "s2"}:
+        return
+    (a0, a1), (b0, b1) = spans["s1"][0], spans["s2"][0]
+    check("층2 병렬: verify_files 구간이 겹친다", a0 < b1 and b0 < a1, str(spans))
+    check("층2 병렬: 잠금 대기 줄이 없다", not [ln for ln in logs if "잠금 대기" in ln], str(logs))
+    check("층2 병렬: 재시도 없음(조각마다 1회)", calls == {"s1": 1, "s2": 1}, str(calls))
+    for t in ("s1", "s2"):
+        s0, s1_ = spans[t][0]
+        during = [b for tt, b in beats if tt == t and s0 < b < s1_]
+        check(f"층2 병렬: 판정 중에도 하트비트 ({t})", len(during) >= 3, f"{len(during)} beats")
+
+
+def test_layer2_runtime_error_is_retried_once() -> None:
+    """🔴 `#818` — `RuntimeError` 1차는 추적을 줄마다 남기고 **한 번** 다시 판정한다."""
+    from master.verdict import Verdict
+
+    def verify(tid, n):
+        if n == 1:
+            raise RuntimeError("dictionary changed size during iteration")
+        return Verdict(True, None, warnings=["backend=agy"])
+
+    seen, _, _, logs, calls, _ = _layer2_threads(("r1",), verify)
+    v = seen.get("r1")
+    check("층2 재시도: 두 번째 판정을 돌려준다", isinstance(v, Verdict) and v.approved, repr(v))
+    check("층2 재시도: verify_files 정확히 2회", calls.get("r1") == 2, str(calls))
+    retry = [ln for ln in logs if ln.startswith("[layer2] r1 층2 예외 — 1회 재시도 (#818): ")]
+    check("층2 재시도: 재시도 한 줄(유형·사유)", len(retry) == 1 and
+          "RuntimeError: dictionary changed size during iteration" in retry[0], str(logs))
+    trace = [ln for ln in logs if ln.startswith("[layer2] r1 층2 예외 추적(1차): ")]
+    check("층2 재시도: 1차 추적이 줄마다 남는다", len(trace) >= 2 and
+          any("Traceback" in ln for ln in trace) and
+          any("dictionary changed size" in ln for ln in trace), str(trace))
+
+
+def test_layer2_runtime_error_twice_propagates() -> None:
+    """🔴 `#818` — 재시도도 죽으면 예외가 그대로 나간다(`wcommit` 이 받는다)."""
+    def verify(tid, n):
+        raise RuntimeError(f"boom {n}")
+
+    seen, _, _, logs, calls, _ = _layer2_threads(("r2",), verify)
+    e = seen.get("r2")
+    check("층2 재시도 실패: 예외가 전파된다", isinstance(e, RuntimeError) and str(e) == "boom 2", repr(e))
+    check("층2 재시도 실패: verify_files 정확히 2회", calls.get("r2") == 2, str(calls))
+
+
+def test_layer2_decl_error_is_not_retried() -> None:
+    """🔴 `#818` — `DeclError` 는 결정적이라 재시도하지 않는다."""
+    from master.work.declarations import DeclError
+
+    seen, _, _, logs, calls, fc = _layer2_threads(("d1",), lambda tid, n: None,
+                                                    from_commit=DeclError("x"))
+    e = seen.get("d1")
+    check("층2 DeclError: 그대로 전파", isinstance(e, DeclError), repr(e))
+    check("층2 DeclError: from_commit 1회(재시도 없음)", fc.call_count == 1, str(fc.call_count))
+    check("층2 DeclError: 재시도 줄 없음", not [ln for ln in logs if "1회 재시도" in ln], str(logs))
+
+
+def test_layer2_other_error_is_not_retried() -> None:
+    """🔴 `#818` — `RuntimeError` 가 아닌 예외는 즉시 나간다."""
+    def verify(tid, n):
+        raise ValueError("bad")
+
+    seen, _, _, logs, calls, _ = _layer2_threads(("v1",), verify)
+    e = seen.get("v1")
+    check("층2 ValueError: 그대로 전파", isinstance(e, ValueError), repr(e))
+    check("층2 ValueError: verify_files 1회", calls.get("v1") == 1, str(calls))
+    check("층2 ValueError: 재시도 줄 없음", not [ln for ln in logs if "1회 재시도" in ln], str(logs))
 
 
 # ── 🔴 `#809` 재시도 체크아웃 — 골조 기준과 체크아웃 커밋을 가른다 ─────────────────────
@@ -1503,7 +1576,11 @@ def main() -> int:
                test_reuse_avoids_paying_twice, test_commit_layer2_usage_and_author,
                test_commit_layer2_grounding_gate,
                test_commit_layer2_base_files_and_judge_log,
-               test_layer2_is_serialized_across_threads,
+               test_layer2_runs_in_parallel_with_heartbeats,
+               test_layer2_runtime_error_is_retried_once,
+               test_layer2_runtime_error_twice_propagates,
+               test_layer2_decl_error_is_not_retried,
+               test_layer2_other_error_is_not_retried,
                test_checkout_commit_unit, test_retry_checks_out_the_feedback_tip):
         fn()
     total = PASS + FAIL

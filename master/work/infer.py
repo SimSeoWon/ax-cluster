@@ -46,7 +46,6 @@ from __future__ import annotations
 import json
 import re
 import threading
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -513,15 +512,14 @@ def _free_workers(facts, *, clean=None) -> tuple:
 
 
 
-# 🔴 [중요] **층2 를 스레드 사이에 한 줄로 세운다** (`#818`, 실측 2026-10-11 20:48).
-#    병렬 9조각(워커 3대) 중 하나의 층2 가 마스터에서 `RuntimeError: dictionary changed size
-#    during iteration` 으로 죽었다 — 워커 산출물은 멀쩡했는데 `verification` 실패로 재시도 없이
-#    종결됐다. 경합 자리는 아직 모른다(추적은 `wcommit` 이 이제 저널에 남긴다).
-#    [주의] **이 잠금은 임시 조치다** — 경합 자리를 찾아 고치면(`#818` 3단계) 걷는다.
-#    워커 작성은 그대로 병렬이고, 마스터의 층2 판정만 한 번에 하나씩 돈다.
-_LAYER2_LOCK = threading.Lock()
-# 이보다 짧게 기다린 것은 찍지 않는다 — 잠금이 비어 있던 경우까지 로그를 채우지 않게.
-_LAYER2_WAIT_LOG_SEC = 0.5
+# 🔴 [중요] **층2 가 `RuntimeError` 로 죽으면 한 번만 다시 판정한다** (`#818`, 사용자 결정 2026-10-12).
+#    실측 2026-10-11 20:48: 병렬 9조각(워커 3대) 중 하나의 층2 가 마스터에서 `RuntimeError:
+#    dictionary changed size during iteration` 으로 죽었다 — 워커 산출물은 멀쩡했는데
+#    `verification` 실패로 재시도 없이 종결됐다. 경합 자리는 아직 모른다.
+#    [주의] 임시 조치였던 모듈 잠금(층2 직렬화)은 2026-10-12 에 걷었다 — 조각을 한 줄로 세워
+#    9조각이 18분 걸렸고(잠금 대기 117~370초), 병렬 층2 900회(콜드 스타트 임포트 포함)로도
+#    경합이 재현되지 않았다. 지금은 `verifier` 가 1차 예외의 추적을 줄마다 남기고 한 번 재시도한다.
+#    결정적인 `DeclError` 와 다른 예외는 재시도하지 않는다. 재시도도 죽으면 `wcommit` 이 받는다.
 
 
 def _log(msg: str) -> None:
@@ -1132,17 +1130,21 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         # 별도 상용 검증 시간에도 claim 리스를 살린다. 작성 계측과 구간을 섞지 않는다.
         runner.heartbeat(task_id, facts.host, api=api)
         with runner._Beater(lambda: runner.heartbeat(task_id, facts.host, api=api)):
-            # 🔴 `#818` — 잠금 대기는 **하트비트 안에서** 한다. 밖에서 기다리면 앞 조각의 층2 가
-            #    길어질 때 이 조각의 claim 리스가 만료된다. [주의] 임시 조치 — 위 `_LAYER2_LOCK` 참조.
-            t0 = time.monotonic()
-            with _LAYER2_LOCK:
-                waited = time.monotonic() - t0
-                if waited > _LAYER2_WAIT_LOG_SEC:
-                    _log(f"[layer2] {task_id} 층2 잠금 대기 {waited:.1f}초 (#818)")
+            # 🔴 `#818` — 재시도도 **하트비트 안에서** 한다. 밖에서 하면 재판정 동안 claim 리스가 만료된다.
+            try:
                 return _judge(files)
+            except RuntimeError as e:
+                from .declarations import DeclError
+                if isinstance(e, DeclError):
+                    raise                                    # 결정적 — 다시 돌려도 같다
+                import traceback
+                for ln in traceback.format_exc().rstrip().splitlines():
+                    _log(f"[layer2] {task_id} 층2 예외 추적(1차): {ln}")
+                _log(f"[layer2] {task_id} 층2 예외 — 1회 재시도 (#818): {type(e).__name__}: {e}")
+            return _judge(files)
 
     def _judge(files):
-        """층2 본체 — `verifier` 가 하트비트·`_LAYER2_LOCK` 안에서 부른다 (`#818`)."""
+        """층2 본체 — `verifier` 가 하트비트 안에서 부르고 `RuntimeError` 면 한 번 더 부른다 (`#818`)."""
         from .. import layer2_verify as L2
         from ..verdict import Verdict
         from ..projects import profile
