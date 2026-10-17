@@ -1,6 +1,12 @@
 # 현재 AX 작업 인수인계
 
-- **현재 체크포인트: 2026-10-17 22:00 · Claude · #815 ② mypy 오탐 측정 → `distribute register` 결함 둘 수정 (로컬 서브 에이전트, 마스터 대조)**.
+- **현재 체크포인트: 2026-10-17 23:00 · Claude · #815 ② ⑦ mypy `call-arg` 차단 · 76건 오탐 대조 · 레드마인 상태 정리**.
+  - HEAD `main` 3de9370(push · 배달 3/3 OK · 재기동 없음 — ⑦ 은 `ax-followup.timer` 새 프로세스) + 이 인계·보고서 118. 마스터 담당 `codex`·워커 모드 `codex` 미변경.
+  - attr-defined 49 · union-attr 27 전수 대조 → 실결함 0(추론 잡음·미좁힘·관용). 사용자 결정: 자리는 ⑦(조각이 안 죽고 사람 게이트 앞), 차단은 `call-arg` 만. `3de9370` `pystatic.mypy_check`(바뀐 .py · base 대비 신규만 · 나머지 노트 · 못 돌면 fail-closed) · `mypy==1.11.2` `.venv` 설치. 드라이런(격리 worktree, `code_build_fn`): f53a360 결함 되돌리기 차단(mypy 64.8초) · 잡음만 통과(34.0초). 한계: 무표기 함수 본문 미검사 · 바뀐 파일만 · ⑦ +30~70초.
+  - 🔴 레드마인: 검증 끝난 일감을 「해결」·0 에 세워 둬 진척이 안 움직였다(사용자 지적, 기억 `close-issue-when-verified`). 「완료」 7건(#798 #814 #799 #763 #821 #396 #819) · 진척 #825 60 · #823 80 · #818 80 · #815 「진행」(자식 #820 이 있어 진척은 계산값) · 실증 `[분산 작업]` 13건 「완료」(work 26개 전부 종결 대조). 마일스톤 6 229/276 · 버그·개선 27/28.
+  - 다음 작업은 사용자 지시 대기. 보고서 `reports/118-815-mypy-step7-gate-redmine-cleanup.md`.
+
+- **직전 체크포인트: 2026-10-17 22:00 · Claude · #815 ② mypy 오탐 측정 → `distribute register` 결함 둘 수정 (로컬 서브 에이전트, 마스터 대조)**.
   - HEAD `main` f53a360(push · 배달 3/3 OK · 재기동 없음 — CLI 진입점) + 이 인계·보고서 117. 마스터 담당 `codex`·워커 모드 `codex` 미변경.
   - mypy 1.11.2(scratchpad venv, 서비스 `.venv` 무접촉) 비테스트 209모듈: 기본 309건/79파일/48초 · untyped 351건. 대부분 추론 잡음, `call-arg` 는 오탐 0·실결함 1. #815 노트.
   - 결함(둘 다 #348 `53fc90f` 매니페스트 철거 잔재, CLI `distribute register` 한 경로): ① `searcher=` 를 지운 `register_work` 에 넘김 → TypeError ② `t.manifest_degraded`(TaskResult 에 없음) → AttributeError — 내가 첫 측정에서 놓쳤다. 잔재 제거(되살리지 않음), 한 커밋 `f53a360`. 신규 test_distribute 10/10(①만 되돌리면 1/5 · ②만 되돌리면 3/5) · 전수 171 실패 0 · mypy 두 경고 0.
