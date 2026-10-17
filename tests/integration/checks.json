@@ -168,5 +168,670 @@
     "path": "master/test_pystatic.py",
     "count_pattern": "(?m)^OK test_pystatic: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
+  },
+  {
+    "path": "master/test_agy_probe.py",
+    "count_pattern": "(?m)^OK test_agy_probe: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_attempt.py",
+    "count_pattern": "(?m)^OK test_attempt: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_auth.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_batch.py",
+    "count_pattern": "(?m)^OK test_batch: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_batching.py",
+    "count_pattern": "(?m)^OK test_batching: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_bm25_diagnose.py",
+    "count_pattern": "(?m)^OK test_bm25_diagnose: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_board.py",
+    "count_pattern": "(?m)^OK test_board: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_bootstrap.py",
+    "count_pattern": "(?m)^OK test_bootstrap: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_broker_health.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_canary.py",
+    "count_pattern": "(?m)^OK test_canary: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_capability_routing.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_census.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_cleanup.py",
+    "count_pattern": "(?m)^OK test_cleanup: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_client_bundle.py",
+    "count_pattern": "(?m)^OK test_client_bundle: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_client_cache.py",
+    "count_pattern": "(?m)^OK test_client_cache: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_client_editor_mcp.py",
+    "count_pattern": "(?m)^OK test_client_editor_mcp: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_client_master_local.py",
+    "count_pattern": "(?m)^OK test_client_master_local: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_client_mcp.py",
+    "count_pattern": "(?m)^OK test_client_mcp: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_client_spec.py",
+    "count_pattern": "(?m)^OK test_client_spec: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_commit_flow_page.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_context_audit.py",
+    "count_pattern": "(?m)^OK test_context_audit: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_context_doc_view.py",
+    "count_pattern": "(?m)^OK test_context_doc_view: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_context_search.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_context_synth.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_conventions.py",
+    "count_pattern": "(?m)^OK test_conventions: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_coordinator.py",
+    "count_pattern": "(?m)^OK test_coordinator: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_decompose.py",
+    "count_pattern": "(?m)^OK test_decompose: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_descriptions.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_dismissal_candidates.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_dispatch_axis.py",
+    "count_pattern": "(?m)^OK test_dispatch_axis: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_dispatch_records.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_distribute.py",
+    "count_pattern": "(?m)^OK test_distribute: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_domain_index.py",
+    "count_pattern": "(?m)^OK test_domain_index: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_drift.py",
+    "count_pattern": "(?m)^OK test_drift: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_edit_field.py",
+    "count_pattern": "(?m)^OK test_edit_field: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_events.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_expand.py",
+    "count_pattern": "(?m)^OK test_expand: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_failed_work_terminal.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_fix_index.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_fixes_surface.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_followup.py",
+    "count_pattern": "(?m)^OK test_followup: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_gate.py",
+    "count_pattern": "(?m)^OK test_gate: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_gemini_report.py",
+    "count_pattern": "(?m)^OK test_gemini_report: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_gitea_group.py",
+    "count_pattern": "(?m)^OK test_gitea_group: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_graph.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_handover.py",
+    "count_pattern": "(?m)^OK test_handover: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_heuristic_loop.py",
+    "count_pattern": "(?m)^OK test_heuristic_loop: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_heuristics.py",
+    "count_pattern": "(?m)^OK test_heuristics: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_history_gen.py",
+    "count_pattern": "(?m)^OK test_history_gen: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_history_harvest.py",
+    "count_pattern": "(?m)^OK test_history_harvest: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_id_typing.py",
+    "count_pattern": "(?m)^OK test_id_typing: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_infra_undecided.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_invalidate.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_lanes.py",
+    "count_pattern": "(?m)^OK test_lanes: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_layer1.py",
+    "count_pattern": "(?m)^OK test_layer1: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_layer3_verify.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_log_tags.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_mcp_boundary.py",
+    "count_pattern": "(?m)^OK test_mcp_boundary: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_mcp_servers.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_mount_gate.py",
+    "count_pattern": "(?m)^OK test_mount_gate: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_no_integrator.py",
+    "count_pattern": "(?m)^OK test_no_integrator: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_norms.py",
+    "count_pattern": "(?m)^OK test_norms: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_onboard.py",
+    "count_pattern": "(?m)^OK test_onboard: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_ontology_create.py",
+    "count_pattern": "(?m)^OK test_ontology_create: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_ontology_edit.py",
+    "count_pattern": "(?m)^OK test_ontology_edit: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_ontology_sync.py",
+    "count_pattern": "(?m)^OK test_ontology_sync: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_ontology_synth.py",
+    "count_pattern": "(?m)^OK test_ontology_synth: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_pending.py",
+    "count_pattern": "(?m)^OK test_pending: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_pinned_tree.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_pkg_audit.py",
+    "count_pattern": "(?m)^OK test_pkg_audit: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_planner.py",
+    "count_pattern": "(?m)^OK test_planner: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_porting.py",
+    "count_pattern": "(?m)^OK test_porting: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_project_affinity.py",
+    "count_pattern": "(?m)^OK test_project_affinity: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_project_profile.py",
+    "count_pattern": "(?m)^OK test_project_profile: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_projects.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_protect.py",
+    "count_pattern": "(?m)^OK test_protect: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_provision.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_pydigest.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_pyparse.py",
+    "count_pattern": "(?m)^OK test_pyparse: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_recipes.py",
+    "count_pattern": "(?m)^OK test_recipes: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_recipes_read.py",
+    "count_pattern": "(?m)^OK test_recipes_read: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_redmine.py",
+    "count_pattern": "(?m)^OK test_redmine: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_redmine_live_guard.py",
+    "count_pattern": "(?m)^OK test_redmine_live_guard: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_redmine_wiki.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_related.py",
+    "count_pattern": "(?m)^OK test_related: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_rename.py",
+    "count_pattern": "(?m)^OK test_rename: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_review.py",
+    "count_pattern": "(?m)^OK test_review: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_review_collect.py",
+    "count_pattern": "(?m)^OK test_review_collect: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_review_enqueue.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_review_gen.py",
+    "count_pattern": "(?m)^OK test_review_gen: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_review_queue.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_review_runner.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_runbook.py",
+    "count_pattern": "(?m)^OK test_runbook: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_search_log.py",
+    "count_pattern": "(?m)^OK test_search_log: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_selftest.py",
+    "count_pattern": "(?m)^OK test_selftest: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_service_restart.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_session_usage_dedupe.py",
+    "count_pattern": "(?m)^OK test_session_usage_dedupe: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_sigma_audit.py",
+    "count_pattern": "(?m)^OK test_sigma_audit: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_signals.py",
+    "count_pattern": "(?m)^OK test_signals: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_skeleton.py",
+    "count_pattern": "(?m)^OK test_skeleton: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_sqlite_util.py",
+    "count_pattern": "(?m)^OK test_sqlite_util: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_staging.py",
+    "count_pattern": "(?m)^OK test_staging: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_stale_index.py",
+    "count_pattern": "(?m)^OK test_stale_index: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_stale_unknown.py",
+    "count_pattern": "(?m)^OK test_stale_unknown: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_status.py",
+    "count_pattern": "(?m)^OK test_status: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_status_live.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_stepper.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_subbranch.py",
+    "count_pattern": "(?m)^OK test_subbranch: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_submit_gates.py",
+    "count_pattern": "(?m)^OK test_submit_gates: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_synth_parallel.py",
+    "count_pattern": "(?m)^OK test_synth_parallel: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_tagging.py",
+    "count_pattern": "(?m)^OK test_tagging: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_task_templates.py",
+    "count_pattern": "(?m)^OK test_task_templates: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_tdd_dryrun.py",
+    "count_pattern": "(?m)^OK test_tdd_dryrun: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_thesaurus_guard.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_transfer.py",
+    "count_pattern": "(?m)^OK test_transfer: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_twin_base.py",
+    "count_pattern": "(?m)^OK test_twin_base: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_unassigned.py",
+    "count_pattern": "(?m)^OK test_unassigned: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_uproject.py",
+    "count_pattern": "(?m)^OK test_uproject: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_usage_accounting.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_usage_sink.py",
+    "count_pattern": "(?m)^OK test_usage_sink: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_utf8.py",
+    "count_pattern": "(?m)^OK test_utf8: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_verdict.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_verify_gate.py",
+    "count_pattern": "(?m)^OK test_verify_gate: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_view.py",
+    "count_pattern": "(?m)^OK test_view: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_viewer.py",
+    "count_pattern": "(?m)^OK test_viewer: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_work.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_work_claim_scope.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_work_completion.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_work_mode_override.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_work_mode_patch.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_work_mode_stamp.py",
+    "count_pattern": "(?m)^통과 (?P<count>\\d+) · 실패 (?P<failed>\\d+)$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_worker_daemon.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_worker_mode_transport.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
   }
 ]

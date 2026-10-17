@@ -334,11 +334,20 @@ def test_regression_selection_real_repo():
     """실물 — `work/review.py` 를 고치면 배달 import 를 잡는 `test_client_bundle.py` 가 돈다
     (⑦ 이 같은 이름만 돌려 놓친 사례)."""
     repo = Path(__file__).resolve().parent.parent
+    # #815 ⑥ 뒤 두 검사 모두 공식 통합 목록에 들어갔다 — 선택은 되지만 「공식 목록 제외」로
+    # notes 에 남아야 한다(조용히 사라지면 안 된다). 경로 언급 선택 규칙 자체는
+    # 임시 트리 고정물 test_regression_selection_rules 가 맡는다.
     targets, notes = F.regression_targets(repo, ["master/work/review.py"])
-    check("실물: review.py → test_client_bundle.py", "master/test_client_bundle.py" in targets,
-          str(targets))
-    check("실물: 같은 이름 test_review.py 가 맨 앞", targets[:1] == ["master/test_review.py"],
-          str(targets))
+    excl = [n for n in notes if "는 공식 통합 목록에 있다" in n]
+    check("실물: review.py → test_client_bundle.py 공식 목록 제외 기록",
+          "master/work/review.py: master/test_client_bundle.py 는 공식 통합 목록에 있다 — 거기서 돈다"
+          in notes and "master/test_client_bundle.py" not in targets, str(notes))
+    check("실물: 같은 이름 test_review.py 가 맨 앞에 제외 기록",
+          excl[:1] == ["master/work/review.py: master/test_review.py 는 공식 통합 목록에 있다 — 거기서 돈다"]
+          and "master/test_review.py" not in targets, str(notes))
+    check("실물: 건수 줄에 공식 목록 제외가 실린다",
+          any(n.startswith("master/work/review.py: 회귀 ") and "공식 목록 제외" in n for n in notes),
+          str(notes))
 
 
 def test_code_build_fn_pass_and_fail():
