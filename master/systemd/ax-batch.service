@@ -14,6 +14,9 @@ Group=sim
 WorkingDirectory=/home/sim/ax-cluster
 Environment=AX_PROJECTS_ROOT=/home/sim/ax-cluster
 Environment=PYTHONUNBUFFERED=1
+# 상용 체인(codex·agy·claude)을 공식 설치본으로 찾는다. 없으면 systemd 기본 PATH 의
+# /snap/bin/codex(비공식 snap)가 잡혀 「not a snap cgroup」으로 죽었다 (#823, 2026-10-17).
+Environment=PATH=/home/sim/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 ExecStart=/home/sim/ax-cluster/.venv/bin/python -m master.batch.run run
 
