@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .issue_classifier import group_issues
 from .plan_archive import archive_reviews
-from .plan_generator import (PLAN_TOKEN_BUDGET, _build_weekly_summary,
+from .plan_generator import (_build_weekly_summary,
                              _update_global_plan_index, _update_plan_index,
                              generate_improvement_plans)
 from .review_collector import parse_review_reports
@@ -40,7 +40,6 @@ def list_author_dirs(reviews_dir: Path) -> list:
 
 
 def run_weekly_plans(paths, *, min_reviews: int = PLAN_MIN_REVIEWS,
-                     token_budget: int = PLAN_TOKEN_BUDGET,
                      redmine: bool = True, archive: bool = True,
                      chat=None, register=None, logf=None,
                      now: datetime | None = None) -> bool:
@@ -105,7 +104,7 @@ def run_weekly_plans(paths, *, min_reviews: int = PLAN_MIN_REVIEWS,
         # Step 3-4: 플랜 생성
         plan_result = generate_improvement_plans(
             grouped, context_dir, author_plans_dir, repo_dir,
-            week_num, token_budget=token_budget, chat=chat, logf=log,
+            week_num, chat=chat, logf=log,
         )
 
         log(f"[플랜] {author_name}: 플랜 {plan_result['plans_generated']}건 생성 "

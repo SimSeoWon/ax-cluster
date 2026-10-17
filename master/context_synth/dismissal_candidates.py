@@ -17,8 +17,8 @@ from pathlib import Path, PurePosixPath
 from . import fix_index as FX
 
 NAME = "dismissal_candidates.json"
-TOKEN_BUDGET = 24000
-MAX_SOURCE = 24000
+# [중요] 상용(클라우드) 판정에는 토큰 예산·소스 크기 한도를 두지 않는다 — 토큰 한도는 로컬 LLM
+# 에만 해당한다(사용자 2026-10-17). 첫 수집에서 24000 예산이 4건 중 3건을 판정 전에 막았다.
 
 
 def main_sha(repo) -> str:
@@ -106,10 +106,7 @@ def _source(repo, sha, file):
     p = PurePosixPath(file)
     if p.is_absolute() or ".." in p.parts or ":" in file:
         raise ValueError("대상 파일 경로 미확인")
-    text = _git(repo, "show", f"{sha}:{file}")
-    if len(text) > MAX_SOURCE:
-        raise ValueError("대상 파일이 수집 한도를 넘었다")
-    return text.splitlines()
+    return _git(repo, "show", f"{sha}:{file}").splitlines()
 
 
 def _prompt(item, lines):
@@ -131,9 +128,12 @@ def _validate(raw, item, lines):
     got = json.loads(raw)
     if not isinstance(got, dict) or got.get("verdict") not in ("candidate", "unjudged"):
         raise ValueError("판정 형식 오류")
+    reason = got.get("reason")
     if got["verdict"] == "unjudged":
-        return {"verdict": "unjudged"}
-    reason, evidence = got.get("reason"), got.get("evidence")
+        # 왜 후보가 아닌지(이미 고쳐짐·모호함 등)를 사람이 보도록 이유만 남긴다. 근거 대조는 하지 않는다.
+        return ({"verdict": "unjudged", "reason": reason.strip()}
+                if isinstance(reason, str) and reason.strip() else {"verdict": "unjudged"})
+    evidence = got.get("evidence")
     if not isinstance(reason, str) or not reason.strip() or len(reason) > 2000:
         raise ValueError("판정 이유 오류")
     if not isinstance(evidence, list) or not 1 <= len(evidence) <= 3:
@@ -148,14 +148,14 @@ def _validate(raw, item, lines):
     return {"verdict": "candidate", "reason": reason.strip(), "evidence": evidence}
 
 
-def collect(paths, *, chat=None, token_budget=TOKEN_BUDGET, now=None) -> dict:
-    """고정 main의 미결 항목을 수집한다. 예산 부족이면 다음 회차에 캐시에서 이어간다."""
+def collect(paths, *, chat=None, now=None) -> dict:
+    """고정 main의 미결 항목을 수집한다. 같은 main·입력의 판정은 캐시에서 건너뛴다."""
     stamp = (now or datetime.now()).isoformat(timespec="seconds")
     with _locked(paths.root):
         data = _load(paths.root)
         sha = main_sha(paths.repo)
         data.update(repo=str(Path(paths.repo).resolve()), main_sha=sha, collected_at=stamp)
-        used, complete, errors = 0, True, []
+        errors = []
         for item in _inputs(paths.root):
             key = item["id"]
             previous = data["entries"].get(key, {})
@@ -167,18 +167,6 @@ def collect(paths, *, chat=None, token_budget=TOKEN_BUDGET, now=None) -> dict:
             try:
                 lines = _source(paths.repo, sha, item["file"])
                 prompt = _prompt(item, lines)
-                # 보수적 상한: UTF-8 바이트 수 + 출력 상한 4KB. 호출 전에 예산 검사.
-                cost = len(prompt.encode("utf-8")) + 4096
-                if cost > token_budget:
-                    # 회차 전체 예산보다 큰 한 항목이 뒤의 모든 항목을 영구히 막지 않는다.
-                    data["entries"][key] = {**base, "verdict": "unjudged", "error": "input_budget"}
-                    errors.append(key)
-                    _save(paths.root, data)
-                    continue
-                if used + cost > token_budget:
-                    complete = False
-                    break
-                used += cost
                 if chat is None:
                     from .review_gen import commercial_chat
                     from ..work import usage
@@ -192,9 +180,9 @@ def collect(paths, *, chat=None, token_budget=TOKEN_BUDGET, now=None) -> dict:
                 errors.append(key)
             data["entries"][key] = {**base, **result}
             _save(paths.root, data)
-        data["complete"] = complete
+        data["complete"] = True
         _save(paths.root, data)
-    return {"ok": True, "complete": complete, "budget_used": used, "unjudged": errors}
+    return {"ok": True, "complete": True, "unjudged": errors}
 
 
 def read_results(root, *, details=False) -> dict:

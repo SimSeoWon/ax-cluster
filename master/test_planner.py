@@ -163,9 +163,9 @@ def test_gates():
     got3 = generate_improvement_plans(
         {"file_issues": {"Source/M/D.cpp": [mk("high")]},
          "pattern_issues": [], "excluded_count": 0, "total": 1},
-        d / "ctx", d, None, "2026-W33", chat=lambda pr: "본문", token_budget=0)
-    check("[중요] 토큰 예산 0 이면 생성 안 함 (예산이 상한이다)",
-          got3["plans_generated"] == 0)
+        d / "ctx", d, None, "2026-W33", chat=lambda pr: "본문")
+    check("[중요] 상용 플랜엔 토큰 예산이 없다 — 고위험 1건이면 생성 (#823)",
+          got3["plans_generated"] == 1)
 
 
 # ── ③ redmine_issue_id 상속 ──────────────────────────────────

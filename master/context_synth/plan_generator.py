@@ -21,7 +21,8 @@ from .issue_classifier import DOMAIN_DIR_NAME, _extract_comments_section
 from .plan_dedup import _inherit_redmine_issue_id
 from .review_gen import commercial_chat
 
-PLAN_TOKEN_BUDGET = 100_000  # 주당 토큰 상한 (기본값)
+# [중요] 상용(클라우드) 플랜 생성에는 토큰 예산을 두지 않는다 — 토큰 한도는 로컬 LLM 에만
+# 해당한다(사용자 2026-10-17, #823). tokens_used 는 기록용 추정치로만 남긴다.
 
 
 def _find_matching_domain(context_dir: Path, file_paths: list) -> str:
@@ -125,7 +126,6 @@ def _read_source_snippet(repo_dir: Path, file_path: str, issues: list) -> str:
 
 def generate_improvement_plans(grouped: dict, context_dir: Path, plans_dir: Path,
                                repo_dir, week_num: str,
-                               token_budget: int = PLAN_TOKEN_BUDGET,
                                chat=None, logf=None) -> dict:
     """그룹핑된 이슈를 바탕으로 LLM 개선 플랜을 생성한다.
 
@@ -148,10 +148,6 @@ def generate_improvement_plans(grouped: dict, context_dir: Path, plans_dir: Path
 
         if not high and len(mid) < 3:
             continue
-
-        if tokens_used >= token_budget:
-            log(f"[플랜] 토큰 예산 소진 ({tokens_used:,}/{token_budget:,})")
-            break
 
         target = high + mid
         sev_label = "high" if high else "mid"
@@ -219,9 +215,6 @@ def generate_improvement_plans(grouped: dict, context_dir: Path, plans_dir: Path
 
     # ── B. 반복 패턴 일괄 플랜 ──
     for pinfo in grouped["pattern_issues"]:
-        if tokens_used >= token_budget:
-            break
-
         safe_name = re.sub(r'[\\/:*?"<>|\s]', '_', pinfo["pattern"][:30])
         plan_filename = f"pattern_{safe_name}.md"
 

@@ -56,7 +56,7 @@ class CandidatesTest(unittest.TestCase):
                            "evidence": [{"file": "a.py", "line": 1, "text": "def f():"}]})
 
     def collect(self, **kwargs):
-        return D.collect(self.paths, chat=self.chat, token_budget=100000,
+        return D.collect(self.paths, chat=self.chat,
                          now=datetime(2026, 10, 17, 10), **kwargs)
 
     def test_archived_review_old_plan_and_state_unchanged(self):
@@ -92,29 +92,46 @@ class CandidatesTest(unittest.TestCase):
         def bad(_):
             return json.dumps({"verdict": "candidate", "reason": "wrong",
                                "evidence": [{"file": "a.py", "line": 99, "text": "x"}]})
-        got = D.collect(self.paths, chat=bad, token_budget=100000)
+        got = D.collect(self.paths, chat=bad)
         self.assertEqual(len(got["unjudged"]), 2)
+        self.assertEqual(D.read_results(self.root)["count"], 0)
+
+    def test_unjudged_reason_is_kept_but_not_listed(self):
+        got = D.collect(self.paths, chat=lambda _: json.dumps(
+            {"verdict": "unjudged", "reason": "이미 수정됨", "evidence": []}))
+        self.assertEqual(got["unjudged"], [])
+        entries = json.loads(D._path(self.root).read_text())["entries"]
+        self.assertTrue(all(e["reason"] == "이미 수정됨" for e in entries.values()))
         self.assertEqual(D.read_results(self.root)["count"], 0)
 
     def test_malformed_or_resolved_response_is_not_candidate(self):
         for answer in (None, "garbage", '{"verdict":"applied"}', '[]'):
             with self.subTest(answer=answer):
                 D._path(self.root).unlink(missing_ok=True)
-                got = D.collect(self.paths, chat=lambda _: answer, token_budget=100000)
+                got = D.collect(self.paths, chat=lambda _: answer)
                 self.assertEqual(len(got["unjudged"]), 2)
                 self.assertEqual(D.read_results(self.root)["count"], 0)
 
-    def test_budget_resumes_next_weekend_not_same_weekend(self):
-        first = next(D._inputs(self.root))
-        source = D._source(self.repo, D.main_sha(self.repo), first["file"])
-        cost = len(D._prompt(first, source).encode("utf-8")) + 4096
-        # 둘 다 한 회차 예산 안에는 들어가지만 합치면 초과한다.
-        got = D.collect(self.paths, chat=self.chat, token_budget=cost + 2000)
-        self.assertFalse(got["complete"])
-        self.assertEqual(len(self.calls), 1)
-        self.collect()
-        self.assertEqual(len(self.calls), 2)
+    def test_large_source_is_judged_without_budget(self):
+        # 상용 판정엔 토큰·크기 한도가 없다(사용자 2026-10-17). 종전 24000 한도를 넘는 소스.
+        big = "def f():\n" + "    x = '" + "가" * 30000 + "'\n    return 1\n"
+        (self.repo / "a.py").write_text(big)
+        self.git("add", "a.py")
+        self.git("commit", "-m", "big")
+        seen = []
+
+        def judge(prompt):
+            seen.append(len(prompt))
+            return json.dumps({"verdict": "candidate", "reason": "r",
+                               "evidence": [{"file": "a.py", "line": 1, "text": "def f():"}]})
+        got = D.collect(self.paths, chat=judge)
+        self.assertTrue(got["complete"])
+        self.assertEqual(got["unjudged"], [])
+        self.assertEqual(len(seen), 2)
+        self.assertTrue(all(n > 30000 for n in seen))
         self.assertEqual(D.read_results(self.root)["count"], 2)
+
+    def test_incomplete_run_resumes_next_weekend_not_same_weekend(self):
         runs = []
 
         def execute(_):
@@ -134,12 +151,6 @@ class CandidatesTest(unittest.TestCase):
             self.assertEqual(len(runs), 1)
             B.run(self.paths, {}, now=datetime(2026, 10, 24, 10))
             self.assertEqual(len(runs), 2)
-
-    def test_oversized_input_is_unjudged_without_blocking_forever(self):
-        got = D.collect(self.paths, chat=self.chat, token_budget=1)
-        self.assertTrue(got["complete"])
-        self.assertEqual(len(got["unjudged"]), 2)
-        self.assertEqual(len(self.calls), 0)
 
     def test_public_list_only_displays_summary(self):
         from master.webui import fixes_page
