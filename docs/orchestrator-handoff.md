@@ -1,6 +1,12 @@
 # 현재 AX 작업 인수인계
 
-- **현재 체크포인트: 2026-10-17 21:15 · Claude · #825 1차 — 기각 후보 수집이 고정 SHA 작업 트리를 직접 읽는다 (로컬 서브 에이전트, 마스터 대조)**.
+- **현재 체크포인트: 2026-10-17 21:30 · Claude · #815 기존 실패 2건 해소 — 전수 170파일 실패 0 (로컬 서브 에이전트, 마스터 대조)**.
+  - HEAD `main` caf6763(push · 배달 3/3 OK · `ax-task-queue` 21:27:28 재기동 — 유닛 `/etc` 설치·daemon-reload, 진행 중 조각 0 확인) + 이 인계·보고서 116. 마스터 담당 `codex`·워커 모드 `codex` 미변경.
+  - `test_mount_gate` 는 테스트가 낡았다(빈 스풀 분기 앵커 `if not res.results:` 로 갱신, 앵커 부재는 이름 붙은 실패). `test_sandbox` 는 테스트가 맞았다 — 최상위 `tests/` 가 큐 유닛 ReadOnlyPaths 밖이라 조용히 쓰기 가능이었다 → 한 줄 추가, 실물 반영 확인.
+  - 🔴 이제 전수 실패는 곧 새 회귀다 — 「기존 2개뿐」 거르기는 끝났다.
+  - #815 남은 것(순서는 사용자): ① 동작 정합 · ② mypy 오탐 측정 · ④ 층2 [PSEUDO] · ⑤ ⑦ 회귀 선택 · ⑥ 공식 목록 · logic.py 재수출 · test_runner 간헐. 다음 작업은 사용자 지시 대기. 보고서 `reports/116-815-two-stale-failures-cleared.md`.
+
+- **직전 체크포인트: 2026-10-17 21:15 · Claude · #825 1차 — 기각 후보 수집이 고정 SHA 작업 트리를 직접 읽는다 (로컬 서브 에이전트, 마스터 대조)**.
   - HEAD `main` be6654b(push · 배달 3/3 OK · 재기동 없음 — `ax-batch` 는 회차마다 새로 읽는다) + 이 인계·보고서 115. 마스터 담당 `codex`·워커 모드 `codex` 미변경.
   - `be6654b`: `layer2_verify` 세 백엔드 `workdir=`(codex `-s read-only -C` · agy 두 번째 `--add-dir` · claude `--tools Read,Grep,Glob`, 없으면 argv 종전 그대로) · `commercial_chat(workdir=)` · 신규 `pinned_tree.pinned_worktree`(저장소 밖 detached, 항상 제거, 쓰기 경고 로그) · 프롬프트에서 소스 제거(근거 대조는 그대로 `git show`). 원전 선례 `call_cli_llm(prompt, cwd=repo_path)`. 범위는 사용자 선택으로 dismissal 만.
   - 드라이런(실 체인, scratchpad): 5건 codex · 71초 · 오류 0 · 트리 생성·제거 · 전부 unjudged(지적 유효, 코드 직접 인용). 🔴 토큰은 늘었다 — P12 95,994 → 154,300(캐시 116,352). 한도 금지 규칙상 막는 근거는 아니다.

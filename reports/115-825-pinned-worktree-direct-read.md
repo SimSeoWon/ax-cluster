@@ -79,3 +79,7 @@
 - claude `--tools`와 agy 다중 `--add-dir`도 실측하지 못했다. 체인이 codex에서 끝났기 때문이다.
 - `plan_generator`·`recipes_synthesizer` 전환은 사용자 결정 대기다(토큰 실측을 보고 판단).
 - 이전 보고서의 남은 것은 그대로다: `.33` 실측 셋 · #798 마지막 라이브 · `watch.exe` 훅 · #815.
+
+### 이후 경과
+
+- 같은 날 21:30 #815 기존 실패 2건 해소, 전수 실패 0 — [리포트 116](116-815-two-stale-failures-cleared.md).
