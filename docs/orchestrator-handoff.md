@@ -1,6 +1,12 @@
 # 현재 AX 작업 인수인계
 
-- **현재 체크포인트: 2026-10-17 23:00 · Claude · #815 ② ⑦ mypy `call-arg` 차단 · 76건 오탐 대조 · 레드마인 상태 정리**.
+- **현재 체크포인트: 2026-10-17 23:40 · Claude · #815 ⑤ ⑦ 회귀 선택 보강 — 같은 이름 + 직접 import + 경로 언급 (로컬 서브 에이전트, 마스터 대조)**.
+  - HEAD `main` 04463ef(push · 배달 3/3 OK · 재기동 없음 — ⑦ 은 `ax-followup.timer` 새 프로세스) + 이 인계·보고서 119. 마스터 담당 `codex`·워커 모드 `codex` 미변경.
+  - 사전 실측: 선택 중앙값 2 · 최대 38(paths.py). `regression_targets` ast import 판정 + 경로 언급 + 이유별 노트·로그. 드라이런 1차에서 무해한 변경도 실패 → 검사 트리에서 항상 실패하는 테스트 4/171: test_ontology·test_sandbox 는 `MASTER_ENV_TESTS` 로 ⑦ 제외(마스터 전수가 돈다), test_followup wait 검사·test_client_bundle 실측 uproject 검사는 위치 무관하게 수정(⑥ 선행 조건 해소, 단 `bundle.probe(.33)` 실 SSH 남음).
+  - 드라이런 2차: #805·#363 배달 import 회귀 재현 → test_client_bundle(경로로 선택)이 차단 · 무해한 변경 통과(147초). 전수 171 실패 0.
+  - #815 남은 것: ① 동작 정합 · ④ 층2 [PSEUDO] · ⑥ 공식 목록. 다음 작업은 사용자 지시 대기. 보고서 `reports/119-815-step7-regression-selection.md`.
+
+- **직전 체크포인트: 2026-10-17 23:00 · Claude · #815 ② ⑦ mypy `call-arg` 차단 · 76건 오탐 대조 · 레드마인 상태 정리**.
   - HEAD `main` 3de9370(push · 배달 3/3 OK · 재기동 없음 — ⑦ 은 `ax-followup.timer` 새 프로세스) + 이 인계·보고서 118. 마스터 담당 `codex`·워커 모드 `codex` 미변경.
   - attr-defined 49 · union-attr 27 전수 대조 → 실결함 0(추론 잡음·미좁힘·관용). 사용자 결정: 자리는 ⑦(조각이 안 죽고 사람 게이트 앞), 차단은 `call-arg` 만. `3de9370` `pystatic.mypy_check`(바뀐 .py · base 대비 신규만 · 나머지 노트 · 못 돌면 fail-closed) · `mypy==1.11.2` `.venv` 설치. 드라이런(격리 worktree, `code_build_fn`): f53a360 결함 되돌리기 차단(mypy 64.8초) · 잡음만 통과(34.0초). 한계: 무표기 함수 본문 미검사 · 바뀐 파일만 · ⑦ +30~70초.
   - 🔴 레드마인: 검증 끝난 일감을 「해결」·0 에 세워 둬 진척이 안 움직였다(사용자 지적, 기억 `close-issue-when-verified`). 「완료」 7건(#798 #814 #799 #763 #821 #396 #819) · 진척 #825 60 · #823 80 · #818 80 · #815 「진행」(자식 #820 이 있어 진척은 계산값) · 실증 `[분산 작업]` 13건 「완료」(work 26개 전부 종결 대조). 마일스톤 6 229/276 · 버그·개선 27/28.
