@@ -145,7 +145,7 @@ def load_plan(paths, slug: str) -> tuple:
 
 def stage_register(paths, *, slug: str, title: str, target_repo: str, target_branch: str = "",
                    gate=None, make_skeleton=None, queue_url=register.DEFAULT_QUEUE,
-                   poster=None, searcher=None) -> Staged:
+                   poster=None) -> Staged:
     """사람이 자른 계획을 등록한다. 골조는 없으면 생성되고, `gate` 를 주면 **세워 보고** 등재한다.
 
     [주의] **게이트를 안 주는 것은 통과가 아니라 미확인이다** — 결과에 그렇게 적는다.
@@ -162,14 +162,12 @@ def stage_register(paths, *, slug: str, title: str, target_repo: str, target_bra
     reg = register.register_work(
         title, specs, paths=paths, target_repo=target_repo, target_branch=target_branch,
         original_request=rec.get("instruction", "") or title,
-        queue_url=queue_url, poster=poster, searcher=searcher,
+        queue_url=queue_url, poster=poster,
         make_skeleton=make_skeleton, gate=gate)
     lines = [reg.summary()]
     for t in reg.tasks:
         mark = "OK" if t.ok else "FAIL"
-        lines.append(f"  {mark} {t.stem} → {t.task_id or t.error}"
-                     + (f" · 매니페스트 결손 {len(t.manifest_degraded)}" if t.manifest_degraded
-                        else ""))
+        lines.append(f"  {mark} {t.stem} → {t.task_id or t.error}")
     if not reg.gate_checked:
         # [중요] 미확인을 통과처럼 읽히게 두지 않는다
         lines.append("")
