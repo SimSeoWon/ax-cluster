@@ -90,21 +90,27 @@ agy 봉투 `status` 가 `SUCCESS` 가 아니다(실측: `ERROR` + 503 용량 부
 `citations_file`(인용된 원문 줄 모음)이 실린다.
 [주의] 마운트되지 않은 프로젝트·`reports/research/` 밖 경로·이미 있는 파일은 실행 전에 거절된다.
 
-**`.33` 요청자** — 모듈이 아직 배달되지 않는다(트윈 기록 경로는 별도 일감). 같은 인자로 직접 돌린다:
+**`.33` 요청자 — 배달된 같은 모듈을 `--remote` 로 돌린다** (`#763`, agy 를 직접 부르지 않는다).
+체크아웃 루트(cwd)에서, `.ax/config.json` 의 `backends.python` **절대경로**로 실행한다(`py` PATH 에 기대지 않는다):
 
-    agy --dangerously-skip-permissions --output-format json --add-dir <폴더> \
-        -p "Read BRIEF.md in the added directory and follow it exactly. Return the full report as your response. Do not create or modify files." \
-        > <폴더>/out.json 2> <폴더>/err.log
+    "<backends.python>" -c "import sys; sys.path.insert(0, '.ax/lib'); from axmaster.work import gemini_report as G; sys.exit(G.main())" \
+        --remote --brief-dir <scratch>/ax-gemini-<주제> --out reports/research/YYYY-MM-DD-<주제>.md
 
-  `out.json` 최상위 `response` 가 본문, `usage` 가 토큰이다. 봉투가 아니거나 `response` 가 비면 실패(§5).
-  본문은 **네가** `reports/research/` 에 쓰고 아래 머리말을 손으로 붙인다.
+  [중요] 기록은 **큐를 거쳐 마스터 트윈** `usage_log.jsonl` 에 남는다 — 모듈이 `POST /api/v1/usage` 로
+  한 줄(`source=ax-gemini` · `lane=agy` · `worker=<이 기계 this_host.host>` · 토큰 · 소요 · rc · 모델 · 비고)을
+  보내고 마스터가 대행해 쓴다. 성공·실패 모두 보낸다. 프로젝트 태그는 `.ax/config.json` 의 `project` 다
+  (`--project` 는 주지 않는다 — 다르면 거절). 종료 코드·결과 JSON·머리말·`.run/` 보관·인용 검사는 마스터와 같다.
+  [주의] 전송이 실패해도 실행은 실패가 아니다 — stderr `[주의] 사용량 기록 실패` 줄과 결과 JSON `usage_error`
+  에 사유가 남는다. 그 값이 있으면 사용자에게 보고에 함께 싣는다(대시보드에 그 실행이 안 잡힌다).
+  [주의] 마스터 큐가 이 체크아웃의 프로젝트를 마운트하고 있지 않으면 큐가 `not_mounted` 로 거절한다 —
+  보고서는 써지고 `usage_error` 에 그 사유가 실린다.
 
 [중요] **`-p` 는 프롬프트 바로 앞이다** — 앞에 두면 다음 토큰을 프롬프트로 먹는다(실측 2026-08-08).
 [주의] 오래 걸린다(수십 초~수 분). 시작할 때 「백그라운드로 돌린다」고 한 줄, 끝나면 한 줄 알린다.
 
 ## 4. 검증한다
 
-1. 보고서는 **모듈(또는 너)이 쓴다** — agy 가 파일을 쓰게 하지 않는다(지시한 경로가 아닌 곳에 쓴
+1. 보고서는 **모듈이 쓴다** — agy 가 파일을 쓰게 하지 않는다(지시한 경로가 아닌 곳에 쓴
    사례가 있다). 기준은 **지금 작업 중인 저장소 루트**다(마스터는 `~/ax-cluster`)
 2. **종료 3(경고)이면 먼저 사용자에게 알린다** — `error` 원문과 함께. 본문이 잘렸을 수 있으니 결과
    JSON 의 `summary` 와 절 제목(`grep '^## '`)으로 골격이 온전한지 보고, 대조를 **5개 이상**으로 늘린다.
@@ -117,7 +123,7 @@ agy 봉투 `status` 가 `SUCCESS` 가 아니다(실측: `ERROR` + 503 용량 부
    `runner.py:356-358` 은 범위 안이었지만 실제 근거는 360-361 이었다.
    [중요] `status:"SUCCESS"` 나 그럴듯한 문장은 근거가 아니다(실측: SUCCESS 인데 파일이 없었다)
 5. 머리말의 **「검증」 줄 하나만** 대조 결과로 고친다 — Edit 로 그 줄만 바꾼다
-   (`.33` 은 머리말 전체를 붙인다):
+   (마스터·`.33` 모두 머리말은 모듈이 썼다):
 
        > 작성: Gemini (agy <버전>) · 위임·검증: <세션 Claude/Codex> · <날짜>
        > 자료: <원본 경로 목록>
@@ -132,7 +138,7 @@ agy 봉투 `status` 가 `SUCCESS` 가 아니다(실측: `ERROR` + 503 용량 부
 
 `agy` 없음 · 한도(429) · 인증 실패 · 시간 초과 · 봉투 아님 — **사유를 그대로 보고하고 멈춘다.**
 그 자리에서 지금 세션이 직접 쓸지 묻는다. 말없이 직접 써서 「Gemini 가 썼다」처럼 보이게 하지
-않는다. `err.log` 끝부분을 보고에 싣는다.
+않는다. `<보고서>.run/err.log` 끝부분을 보고에 싣는다.
 
 ## 6. 커밋
 

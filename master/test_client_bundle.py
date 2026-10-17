@@ -242,7 +242,8 @@ def test_role_payload() -> None:
                        "clientside/fix_flow.py",
                        "layer3_verify.py", "source_text.py", "utf8.py",
                        "work/branch_names.py", "work/coordinator.py",
-                       "work/review.py", "work/skeleton_gate.py", "work/build_local.py"},
+                       "work/review.py", "work/skeleton_gate.py", "work/build_local.py",
+                       "work/usage.py", "work/gemini_report.py"},       # `#763` ax-gemini 실행부
           str(pay))
     # [주의] 이 칸은 세 번 움직였다: 옛 계약("워커에는 안 간다") → `#204` 로 claimer 폐포 추가
     #    → 2026-08-23 클라 MCP 추가(`#267`·`#261`) → **2026-08-27 claimer 폐포 제거**(`#320`,
@@ -289,7 +290,8 @@ def test_role_payload() -> None:
     delivered = {n[:-3].replace("/", ".") for n in pay}          # 예: work.review
     delivered |= {d.rsplit(".", 1)[-1] for d in delivered}       # 단축명도 (from . import x)
     GUARDED_OK = {"runner", "client.bundle", "client",           # 명시적 가드 화이트리스트
-                  "workmodel"}   # review 재작업 판정 — 요청자에선 미지원으로 거절(사용자 승인 2026-10-11 · #815)
+                  "workmodel",   # review 재작업 판정 — 요청자에선 미지원으로 거절(사용자 승인 2026-10-11 · #815)
+                  "layer2_verify"}   # usage 의 레인 호출 — 요청자는 파서만 쓴다(`#763`, 가드가 마스터 전용이라 말한다)
     # [중요] 상대 임포트는 **배달된 트리**에서 해석되므로 `n` 은 배달 경로여야 하고, 파싱할
     #    원문은 **저장소**에서 와야 한다 (#262). 두 값이 같던 때는 구별이 안 보였다.
     for n, src_ in bundle.payload_pairs("requester"):
@@ -367,7 +369,9 @@ def test_payload_split() -> None:
                            "clientside/fix_flow.py",
                            "layer3_verify.py", "source_text.py", "utf8.py",
                            "work/branch_names.py", "work/coordinator.py", "work/review.py",
-                           "work/skeleton_gate.py", "work/build_local.py")
+                           "work/skeleton_gate.py", "work/build_local.py",
+                           # 🔴 `#763`: ax-gemini 실행부가 **끝에** 더해진다 (결정된 변경 — 기준선 이동)
+                           "work/usage.py", "work/gemini_report.py")
     for role, want in FROZEN.items():
         got = bundle.payloads_for(role)
         check(f"[중요] {role} 의 **배달 위치**가 동결값과 순서까지 같다",

@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
 # ─────────────────────────────────────────
 # 상수
@@ -388,6 +388,46 @@ class HistoryReq(BaseModel):
     alternatives_considered: list = [] # 검토했으나 채택 안 한 옵션 (negative knowledge)
     tags: list = []
     user_quote: str = ""               # 사용자 직접 발화 1~3줄 — WHY 신호, 본문보다 강함
+
+
+class UsageTokens(BaseModel):
+    """`UsageReq.usage` — `usage.normalize` 가 읽는 안쪽 키 그대로 (`meta_from_usage` 의 모양).
+
+    [주의] 모르는 값은 **보내지 않는다**(None) — 0 으로 접으면 「안 썼다」가 된다(`usage.py` 규약).
+    """
+    model_config = ConfigDict(extra="forbid")
+    input_tokens: Optional[int] = Field(None, ge=0, strict=True)
+    output_tokens: Optional[int] = Field(None, ge=0, strict=True)
+    cache_read_input_tokens: Optional[int] = Field(None, ge=0, strict=True)
+    cache_creation_input_tokens: Optional[int] = Field(None, ge=0, strict=True)
+    reasoning_output_tokens: Optional[int] = Field(None, ge=0, strict=True)
+    total_tokens: Optional[int] = Field(None, ge=0, strict=True)
+
+
+class UsageReq(BaseModel):
+    """사용량 한 줄 대행 (`#763`) — 요청자(`.33`) 의 `ax-gemini` 실행이 마스터 트윈 `usage_log.jsonl` 에 남긴다.
+
+    `usage_log` 는 마스터의 트윈 디렉토리에 있으므로 마스터가 대행한다(`history`·`signals` 와 같은 구조).
+    서버는 이 값을 `usage.record` 에 그대로 넘긴다 — 레코드 모양은 마스터 로컬 기록과 같다.
+    [중요] **모르는 키는 거절한다**(`extra="forbid"`) — 자유 dict 를 받으면 기록 모양이 발신자마다 갈린다.
+    [주의] `source` 는 비울 수 없다 — 대시보드가 이 값으로 출처를 가른다. 값 목록은 두지 않는다
+    (지금 발신자는 `ax-gemini` 하나뿐이고, 모양 검사로 충분하다).
+    """
+    model_config = ConfigDict(extra="forbid")
+    project: str = ""                  # 태그 (#257) — work_id 가 없으면 마운트와 대조한다
+    source: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
+    lane: str = Field("", max_length=32)
+    worker: str = Field("", max_length=128)   # 실행한 기계 — `.ax/config.json` this_host.host
+    work_id: str = Field("", max_length=128)
+    task_id: str = Field("", max_length=128)
+    mode: str = Field("", max_length=32)
+    rc: int = Field(0, strict=True)
+    seconds: float = Field(0.0, ge=0, le=7 * 86400)
+    model: str = Field("", max_length=128)
+    note: str = Field("", max_length=2000)
+    session_id: str = Field("", max_length=128)
+    usage: Optional[UsageTokens] = None
+    total_cost_usd: Optional[float] = Field(None, ge=0)   # 없으면 비용 미상(cost_known=False)
 
 
 class AliasReq(BaseModel):

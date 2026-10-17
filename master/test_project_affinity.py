@@ -59,8 +59,9 @@ def test_resolution_rule():
     src = (Path(__file__).parent / "task_queue" / "server.py").read_text(encoding="utf-8")
     check("[중요] 종결 기록이 _paths_for(스탬프) 를 쓴다 — resolve(\"\") 아님",
           '_paths_for(r.get("work"))' in src)
-    check("[중요] history/signals 가 work_id 스탬프로 푼다",
-          src.count("_paths_for(work_id=req.work_id)") == 2,
+    # `#763` — `usage` 대행도 같은 규칙으로 푼다 (history·signals·usage = 3)
+    check("[중요] history/signals/usage 가 work_id 스탬프로 푼다",
+          src.count("_paths_for(work_id=req.work_id)") == 3,
           str(src.count("_paths_for(work_id=req.work_id)")))
     check("종결·신호·기록 경로에 resolve(\"\") 직접 호출이 안 남았다",
           'resolve("")' not in src)

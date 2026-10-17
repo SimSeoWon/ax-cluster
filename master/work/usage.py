@@ -171,7 +171,10 @@ def call_agy(prompt: str, *, timeout: int = TIMEOUT) -> Call:
     if not exe:
         return Call(error="agy 가 없다")
     # 🔴 BRIEF 파일 방식 — 공용 진입과 **같은 모양**(`layer2_verify.agy_cmd`, 2026-10-10 `E2BIG`)
-    from .. import layer2_verify as L2
+    try:
+        from .. import layer2_verify as L2
+    except ImportError as e:        # `#763` — 요청자 배달본엔 없다(파서만 쓴다). 레인 호출은 마스터 전용
+        return Call(error=f"layer2_verify 없음 — 레인 호출은 마스터 전용: {e}")
     with L2.agy_brief(prompt) as brief_dir:
         out, why = _run(L2.agy_cmd(exe, brief_dir), timeout=timeout)
     if out is None:
@@ -396,7 +399,10 @@ def call_codex(prompt: str, *, timeout: int = TIMEOUT, reasoning: str = "") -> C
     이고, 그 `Call.usage` 는 파견이 `record(paths.usage_log, …)` 로 **직접** 남긴다(`infer.py`).
     `call_codex_why` 가 감싼 구간에서 한 줄을 더 쓰면 같은 호출이 두 번 세진다.
     """
-    from .. import layer2_verify as L2
+    try:
+        from .. import layer2_verify as L2
+    except ImportError as e:        # `#763` — 위 `call_agy` 와 같은 이유
+        return Call(error=f"layer2_verify 없음 — 레인 호출은 마스터 전용: {e}")
     with _suppressed():
         text, events, why = L2.call_codex_why(
             prompt, timeout=timeout, reasoning=(reasoning or L2.CODEX_REASONING))

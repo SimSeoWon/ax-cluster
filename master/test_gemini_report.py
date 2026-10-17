@@ -246,6 +246,95 @@ def main() -> int:
         for label, args in bad:
             check(f"{label} → rc 2", G.main(args) == 2)
         check("  agy 호출 0 · 기록 0", not argv_file.exists() and len(rows(log)) == n0, "")
+
+        print("\n[6] 요청자 --remote (#763) — 기록 한 줄은 큐로 · 성공·실패 모두 · 전송 실패는 실행 실패가 아니다")
+        co = tmp / "checkout"; (co / ".ax").mkdir(parents=True)
+        (co / ".ax" / "config.json").write_text(json.dumps({
+            "project": "AXCluster", "this_host": {"host": "DESKTOP-FU2GNGL", "role": "requester"},
+            "master": {"host": "127.0.0.1", "services": {"task_queue": 1}}}), encoding="utf-8")
+        sent = []
+
+        def fake_queue(method, path, payload=None):
+            sent.append((method, path, payload))
+            return {"ok": True, "record": {"source": payload["source"], "rc": payload["rc"]}}
+
+        n_local = len(rows(log))
+        os.environ["FAKE_AGY_MODE"] = "ok"
+        o = research / "2026-10-17-remote-ok.md"
+        rc = G.main(["--remote", "--checkout", str(co), "--brief-dir", str(brief), "--out", str(o)],
+                    queue=fake_queue)
+        check("rc 0 · 보고서", rc == 0 and o.is_file(), str(rc))
+        check("[중요] POST /api/v1/usage 한 번", [(m, p_) for m, p_, _ in sent] == [("POST", "/api/v1/usage")],
+              str(sent))
+        if sent:
+            b = sent[0][2]
+            check("  source·lane·rc·worker(this_host.host)",
+                  (b["source"], b["lane"], b["rc"], b["worker"]) == ("ax-gemini", "agy", 0, "DESKTOP-FU2GNGL"), str(b))
+            check("  토큰은 usage 안쪽 키 그대로 · 비용은 안 보낸다(미상)",
+                  b.get("usage") == {"input_tokens": 120, "output_tokens": 45, "cache_read_input_tokens": 7}
+                  and "total_cost_usd" not in b, str(b))
+            check("  모델은 로그 label", b.get("model") == "gemini-3.6-flash-high", str(b))
+        res = json.loads((o.with_suffix(".run") / "run.json").read_text(encoding="utf-8"))
+        check("  결과 JSON 의 usage_log 는 마스터 트윈 경유 · usage_error 없음",
+              "POST /api/v1/usage" in res["usage_log"] and "usage_error" not in res, str(res))
+        check("  머리말 프로젝트는 체크아웃 설정값", "프로젝트 AXCluster" in o.read_text(encoding="utf-8"), "")
+        check("[중요] 마스터 로컬 usage_log 는 건드리지 않는다", len(rows(log)) == n_local, str(len(rows(log))))
+
+        sent.clear()
+        os.environ["FAKE_AGY_MODE"] = "fail"
+        o = research / "2026-10-17-remote-fail.md"
+        rc = G.main(["--remote", "--checkout", str(co), "--brief-dir", str(brief), "--out", str(o)],
+                    queue=fake_queue)
+        check("[중요] agy 실패도 한 줄 — rc≠0 · 비고에 사유", rc == 1 and len(sent) == 1
+              and sent[0][2]["rc"] == 3 and "rc=3" in sent[0][2]["note"], str(sent))
+
+        def dead_queue(method, path, payload=None):
+            raise RuntimeError("[미연결] 마스터에 연결할 수 없다")
+
+        os.environ["FAKE_AGY_MODE"] = "ok"
+        o = research / "2026-10-17-remote-postfail.md"
+        rc = G.main(["--remote", "--checkout", str(co), "--brief-dir", str(brief), "--out", str(o)],
+                    queue=dead_queue)
+        res = json.loads((o.with_suffix(".run") / "run.json").read_text(encoding="utf-8"))
+        check("[중요] 전송 실패 → 실행은 성공(rc 0 · 보고서)", rc == 0 and o.is_file(), str(rc))
+        check("  결과 JSON usage_error 에 사유 (조용히 넘기지 않는다)",
+              "[미연결]" in res.get("usage_error", ""), str(res))
+
+        def refusing_queue(method, path, payload=None):
+            return {"ok": False, "status": "not_mounted", "reason": "마운트되지 않은 프로젝트다"}
+
+        o = research / "2026-10-17-remote-refused.md"
+        rc = G.main(["--remote", "--checkout", str(co), "--brief-dir", str(brief), "--out", str(o)],
+                    queue=refusing_queue)
+        res = json.loads((o.with_suffix(".run") / "run.json").read_text(encoding="utf-8"))
+        check("  큐 거절(ok:false) 도 usage_error 로 · 실행은 rc 0",
+              rc == 0 and "not_mounted" in res.get("usage_error", ""), str(res))
+
+        sent.clear()
+        rc = G.main(["--remote", "--checkout", str(co), "--project", "NS", "--brief-dir", str(brief),
+                     "--out", str(research / "2026-10-17-remote-mismatch.md")], queue=fake_queue)
+        check("--project 가 체크아웃 설정과 다르면 rc 2 · 전송 0", rc == 2 and not sent, str(rc))
+        rc = G.main(["--remote", "--checkout", str(tmp / "nowhere"), "--brief-dir", str(brief),
+                     "--out", str(research / "2026-10-17-remote-nocfg.md")], queue=fake_queue)
+        check("체크아웃 설정이 없으면 rc 2 (실행 전 거절)", rc == 2 and not sent, str(rc))
+        rc = G.main(["--brief-dir", str(brief), "--out", str(research / "2026-10-17-noproj.md")])
+        check("마스터 모드는 --project 필수 → rc 2", rc == 2, str(rc))
+
+        # 실물 `queue_api` 가 프로젝트 태그를 싣는다 — 전송 함수만 가로챈다
+        (co / ".ax" / "token").write_text("t" * 40, encoding="utf-8")
+        cm = G._client_mcp()
+        wire = []
+        cm._call = lambda method, url, token, payload=None, root_hint=None: (
+            wire.append((method, url, payload)) or {"ok": True, "record": {}})
+        cm.tool_log_usage(cm.queue_api(co), G.usage_payload(
+            {"cost_unknown": True}, lane="agy", rc=0, source=G.SOURCE, worker="h"))
+        check("[중요] 실물 queue_api — URL·프로젝트 태그", wire and wire[0][1] == "http://127.0.0.1:1/api/v1/usage"
+              and wire[0][2].get("project") == "AXCluster", str(wire))
+        try:
+            cm.tool_log_usage(lambda *a: {}, {"source": " "})
+            check("source 비면 ClientError", False, "통과해버렸다")
+        except cm.ClientError:
+            check("source 비면 ClientError", True)
     finally:
         P.resolve_mounted_only = real_resolve
         os.environ["PATH"] = real_path

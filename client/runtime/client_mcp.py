@@ -727,6 +727,38 @@ def tool_log_history(api, args: dict) -> dict:
     return api("POST", "/api/v1/history", payload)
 
 
+USAGE_STR_KEYS = ("lane", "worker", "work_id", "task_id", "mode", "model", "note", "session_id")
+USAGE_TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens",
+                    "cache_creation_input_tokens", "reasoning_output_tokens", "total_tokens")
+
+
+def tool_log_usage(api, args: dict) -> dict:
+    """사용량 한 줄 (`#763`) — 마스터 트윈 `usage_log.jsonl` 에 남긴다(마스터 대행 `POST /api/v1/usage`).
+
+    [중요] 부르는 쪽은 `axmaster.work.gemini_report --remote` 다 — MCP 도구로는 열지 않는다
+    (세션이 손으로 지어 낸 수치를 기록할 길을 만들지 않는다). 모양 판정은 서버 모델이 한다 —
+    여기서는 **모르는 값을 0 으로 만들지 않고 빼기만** 한다.
+    """
+    source = str(args.get("source") or "").strip()
+    if not source:
+        raise ClientError("source 가 비었다 — 대시보드가 이 값으로 출처를 가른다")
+    payload = {"source": source, "rc": int(args.get("rc") or 0),
+               "seconds": round(float(args.get("seconds") or 0.0), 1)}
+    for k in USAGE_STR_KEYS:
+        v = str(args.get(k) or "").strip()
+        if v:
+            payload[k] = v
+    inner = args.get("usage") if isinstance(args.get("usage"), dict) else {}
+    tokens = {k: int(inner[k]) for k in USAGE_TOKEN_KEYS
+              if isinstance(inner.get(k), int) and not isinstance(inner.get(k), bool)}
+    if tokens:
+        payload["usage"] = tokens
+    cost = args.get("total_cost_usd")
+    if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+        payload["total_cost_usd"] = float(cost)       # 없으면 서버가 cost_unknown 으로 남긴다
+    return api("POST", "/api/v1/usage", payload)
+
+
 FIX_STATES = ("open", "accepted", "dismissed", "stale", "applied", "failed")
 
 

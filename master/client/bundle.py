@@ -140,7 +140,12 @@ PAYLOAD_BY_ROLE = {
                   _pair("layer3_verify.py"), _pair("source_text.py"), _pair("utf8.py"),
                   _pair("work/branch_names.py"), _pair("work/coordinator.py"),
                   _pair("work/review.py"),
-                  _pair("work/skeleton_gate.py"), _pair("work/build_local.py")),
+                  _pair("work/skeleton_gate.py"), _pair("work/build_local.py"),
+                  # 🔴 `#763` — `ax-gemini` 실행부. 사용량을 큐로 보내 마스터 트윈에 남긴다(`--remote`).
+                  #    `usage` 는 agy 봉투·로그 파서의 **한 곳**이라 같이 간다(두 번째 파서를 만들지 않는다).
+                  #    [주의] `usage` 의 레인 호출(`call_agy`·`call_codex`)은 `layer2_verify` 를 지연
+                  #    임포트하고 그것은 배달하지 않는다 — 가드가 마스터 전용이라고 말하고 멈춘다.
+                  _pair("work/usage.py"), _pair("work/gemini_report.py")),
     # [중요] **worker 에는 폴링 상주가 없다** (`#320`, 2026-08-27 — `#317` 미결 ⑤ 상주 전폐).
     # `work/claimer.py`·`work/ax_safety.py` 가 여기 있었고 걷어냈다. 빌드·추론 둘 다 마스터가
     # SSH 로 민다(`layer3_verify.run_build_on_workshop` — 워커에 파이썬 payload 를 요구하지 않고

@@ -50,8 +50,11 @@
 필수 목록(`tagging.REQUIRE_TAG`): `POST /works` · `POST /tasks/claim` ·
 `POST /workers/{id}/poll` · `POST /thesaurus/alias` · `POST /thesaurus/not-a-class`.
 
-[주의] `POST /history`·`/signals` 는 목록에 **없다** — `work_id` 가 있으면 스탬프로 풀리고,
-없으면 서버가 조건부로 필수를 건다.
+[주의] `POST /history`·`/signals`·`/usage` 는 목록에 **없다** — `work_id` 가 있으면 스탬프로 풀리고,
+없으면 서버가 조건부로 필수를 건다. `POST /usage`(`#763`, 정책 `STAMP`)는 요청자 `ax-gemini` 실행의
+사용량 한 줄을 마스터 트윈 `usage_log.jsonl` 에 대행해 쓰는 **새 표면**이다 — 발신자
+(`gemini_report --remote` → `client_mcp.queue_api`)가 처음부터 태그를 싣고, 기존 발신자가 없어
+§13.6 의 순서 문제가 생기지 않는다. 요청자 스코프는 **정확 일치**(`auth.REQUESTER_SCOPE`)다.
 
 ## 13.4 거절 — 형태 하나, 사유 셋
 
@@ -78,6 +81,7 @@
     master/work/register.py   work·task 양쪽에 `paths.name`
     master/work/claimer.py    `_call` 에서 (배달되는 코드 — 체크아웃은 단일 프로젝트다)
     client/runtime/client_mcp.py  `queue_api` — POST 본문 + **GET 은 쿼리로**
+    master/work/gemini_report.py  `--remote` — 요청자 배달본이 `queue_api` 로 `POST /usage` (`#763`)
 
 [중요] **도구마다 넣게 하면 다음 도구는 또 빠진다.** 그래서 관문에서 붙인다.
 

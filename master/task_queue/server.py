@@ -30,7 +30,7 @@ from .models import (
     RedmineIssueReq, RedmineLinkCommitReq, RedmineVersionReq, RedmineWikiReq,
     RedmineVersionPatchReq, RedmineVersionDeleteReq,
     WriterSignalReq, HistoryReq, AliasReq, NotAClassReq, RecipeSearchReq, \
-    HistorySearchReq, FixStatusReq
+    HistorySearchReq, FixStatusReq, UsageReq
 )
 from . import tagging                      # 라우트별 태그 정책 (#257)
 from .persistence import (
@@ -238,6 +238,51 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         _tq_log(f"[history] '{req.title[:60]}' type={req.decision_type} "
                 f"work={req.work_id or '-'}", root)
         return {"ok": True, "stored_at": stored, "title": req.title}
+
+    @app.post("/api/v1/usage")
+    def usage_ep(req: UsageReq):
+        """사용량 한 줄 (`#763`) — 요청자(`.33`) 의 `ax-gemini` 실행을 마스터 트윈 `usage_log` 에 남긴다.
+
+        `history` 와 같은 대행 구조·같은 관문(STAMP, work 가 없으면 마운트 강제)이다.
+        [중요] **기록 실패에 500 을 내지 않는다** — `usage.record` 의 비차단 계약을 따르되 조용히
+        넘기지 않고 `ok:false` + 사유로 돌려준다(발신자가 결과 JSON 에 싣는다).
+        """
+        from ..work import usage as U
+        bad = _stamp_gate(req.project, work_id=req.work_id)
+        if bad:
+            return bad
+        if not req.work_id:                     # 스탬프가 없으면 마운트를 강제한다 (history 와 같은 규칙)
+            bad = _mount_gate(req.project, require=True)
+            if bad:
+                return bad
+        meta = {}
+        inner = req.usage.model_dump(exclude_none=True) if req.usage else {}
+        if inner:
+            meta["usage"] = inner
+        if req.total_cost_usd is None:
+            meta["cost_unknown"] = True         # 🔴 0 으로 접지 않는다 (usage.meta_from_usage 와 같은 규약)
+        else:
+            meta["total_cost_usd"] = float(req.total_cost_usd)
+        if req.session_id.strip():
+            meta["session_id"] = req.session_id.strip()
+        try:
+            paths = _paths_for(work_id=req.work_id)
+            rec = U.record(paths.usage_log, meta, lane=req.lane, task_id=req.task_id,
+                           work_id=req.work_id, worker=req.worker, rc=req.rc,
+                           seconds=req.seconds, mode=req.mode, source=req.source,
+                           model=req.model, note=req.note)
+        except Exception as e:                               # noqa: BLE001
+            _tq_log(f"[usage] [주의] 기록 실패: {type(e).__name__}: {e}", root)
+            return {"ok": False, "status": "record_error", "reason": f"{type(e).__name__}: {e}"}
+        if rec.get("error"):
+            _tq_log(f"[usage] [주의] 기록 실패 source={req.source} worker={req.worker or '-'}: "
+                    f"{rec['error']} ({paths.name})", root)
+            return {"ok": False, "status": "record_error", "reason": rec["error"],
+                    "project": paths.name}
+        _tq_log(f"[usage] source={rec['source']} lane={rec['lane'] or '-'} "
+                f"worker={rec['worker'] or '-'} rc={rec['rc']} 입력 {rec['input_tokens']} / "
+                f"출력 {rec['output_tokens']} · {rec['seconds']}초 ({paths.name})", root)
+        return {"ok": True, "record": rec, "project": paths.name}
 
     @app.get("/api/v1/works/{work_id}/summary")
     def work_summary_ep(work_id: str):

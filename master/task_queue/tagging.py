@@ -81,6 +81,7 @@ POLICY = {
     # 트윈 쓰기 대행 — work 가 있으면 스탬프, 없으면 마운트 (`_twin_policy` 참조)
     "POST /api/v1/history":                         STAMP,
     "POST /api/v1/signals":                         STAMP,
+    "POST /api/v1/usage":                           STAMP,   # `#763` — 요청자 ax-gemini 사용량 한 줄
     "POST /api/v1/thesaurus/alias":                 MOUNT,
     "POST /api/v1/thesaurus/not-a-class":           MOUNT,
 
@@ -142,7 +143,7 @@ NEEDS_FIELD = (TAG, MOUNT, STAMP)
 #     쓰고 · 스탬프로 푼다   → 선택      스탬프가 판정한다 — 가정이 아니다 (`#210`)
 #     읽는다                 → 선택      오염이 없다. 태그는 필터로만 쓴다
 #
-# [주의] 그래서 `POST /api/v1/history`·`signals` 는 **여기 없다** — 그 둘은 `work_id` 가 있으면
+# [주의] 그래서 `POST /api/v1/history`·`signals`·`usage`(`#763`) 는 **여기 없다** — 그 셋은 `work_id` 가 있으면
 #    스탬프로 풀리고, 없으면 서버가 `_mount_gate(require=True)` 를 따로 건다(조건부다).
 REQUIRE_TAG = (
     "POST /api/v1/works",                       # 등재 — 스탬프의 출처다. 여기가 비면 전부 빈다

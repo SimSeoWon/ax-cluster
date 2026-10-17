@@ -122,7 +122,7 @@ def test_stamp_check_does_not_use_mount() -> None:
 
 def test_twin_writers_are_gated() -> None:
     """[중요] **트윈에 쓰는 표면은 OPEN·TAG 일 수 없다** — 거기가 `#243` 의 구멍이었다."""
-    twin = ("POST /api/v1/history", "POST /api/v1/signals",
+    twin = ("POST /api/v1/history", "POST /api/v1/signals", "POST /api/v1/usage",
             "POST /api/v1/thesaurus/alias", "POST /api/v1/thesaurus/not-a-class",
             "PATCH /api/v1/works/{work_id}")
     for k in twin:
@@ -146,9 +146,13 @@ def test_gates_are_actually_wired() -> None:
         body = src[i:i + 1200]
         check(f"{fn} 에 마운트 관문이 있다", "_mount_gate(" in body, body[:80])
     for fn, gate in (("history_ep", "_stamp_gate("), ("writer_signal_ep", "_stamp_gate("),
-                     ("patch_work_ep", "_stamp_gate(")):
+                     ("usage_ep", "_stamp_gate("), ("patch_work_ep", "_stamp_gate(")):
         i = src.index(f"def {fn}(")
         check(f"{fn} 에 스탬프 대조가 있다", gate in src[i:i + 1600])
+    for fn in ("history_ep", "writer_signal_ep", "usage_ep"):
+        i = src.index(f"def {fn}(")
+        check(f"[중요] {fn} 는 work 가 없으면 마운트를 강제한다 (태그만으로 남의 트윈에 쓰지 않는다)",
+              "_mount_gate(req.project, require=True)" in src[i:i + 1800])
     check("[중요] 거부에 HTTPException 을 쓰지 않는다 (거절≠장애)",
           "_mount_gate" in src and "return bad" in src)
 
@@ -252,13 +256,114 @@ def test_senders_are_wired() -> None:
           str(reg.count('"project": paths.name')))
 
 
+def _live_queue(tmp: Path):
+    """[중요] 실물 앱을 **프로세스 안에서** 띄운다 — `uvicorn.run` 만 가로채 감싼 앱(인증 미들웨어 포함)을 받는다.
+
+    토큰은 가짜 값이고 큐 루트·트윈 루트는 임시 디렉토리다(실 큐 `~/ax-state`·실 트윈을 만지지 않는다).
+    돌려주는 것: `(TestClient, 전권, requester, worker 토큰)`.
+    """
+    import os
+    import types
+    from unittest.mock import patch
+    from fastapi.testclient import TestClient
+    from master.task_queue import server as S
+    master_t, req_t, wrk_t = "m" * 40, "r" * 40, "w" * 40
+    got = {}
+    fake_uv = types.ModuleType("uvicorn")
+    fake_uv.run = lambda app, **kw: got.setdefault("app", app)
+    (tmp / "queue").mkdir(parents=True, exist_ok=True)
+    with patch.dict(sys.modules, {"uvicorn": fake_uv}), \
+            patch.object(S, "load_token", return_value=master_t), \
+            patch("master.auth.load_role_token",
+                  side_effect=lambda role: {"requester": req_t, "worker": wrk_t}.get(role)):
+        S._run_http_server(tmp / "queue", 0, "127.0.0.1")
+    return TestClient(got["app"]), master_t, req_t, wrk_t
+
+
+def test_usage_route_live() -> None:
+    """[중요] `POST /api/v1/usage` (`#763`) — 실물 라우트가 임시 트윈에 한 줄을 쓰고, 관문이 거절한다."""
+    import json
+    import os
+    import shutil
+    import tempfile
+    tmp = Path(tempfile.mkdtemp(prefix="test_usage_route_"))
+    old_root = os.environ.get("AX_PROJECTS_ROOT")
+    try:
+        proots = tmp / "projects"
+        for n in ("AXCluster", "NS"):
+            (proots / n).mkdir(parents=True)
+        (proots / "projects.yaml").write_text(
+            "version: 1\nactive: AXCluster\nprojects:\n- AXCluster\n- NS\n", encoding="utf-8")
+        os.environ["AX_PROJECTS_ROOT"] = str(proots)
+        c, _m, req_t, wrk_t = _live_queue(tmp)
+        H = {"Authorization": f"Bearer {req_t}"}
+        log = proots / "AXCluster" / "usage_log.jsonl"
+        body = {"project": "AXCluster", "source": "ax-gemini", "lane": "agy", "worker": "DESKTOP-FU2GNGL",
+                "rc": 0, "seconds": 12.34, "model": "gemini-3.6-flash-high", "note": "n",
+                "usage": {"input_tokens": 120, "output_tokens": 45, "cache_read_input_tokens": 7}}
+        r = c.post("/api/v1/usage", json=body, headers=H)
+        j = r.json()
+        check("[중요] requester 토큰 200 · ok", r.status_code == 200 and j.get("ok"), f"{r.status_code} {j}")
+        rows = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines()] if log.is_file() else []
+        check("[중요] 마운트 트윈 usage_log 에 한 줄", len(rows) == 1, str(rows))
+        if rows:
+            w = rows[0]
+            check("  레코드 — source·lane·worker·rc·model·note",
+                  (w["source"], w["lane"], w["worker"], w["rc"], w["model"], w.get("note"))
+                  == ("ax-gemini", "agy", "DESKTOP-FU2GNGL", 0, "gemini-3.6-flash-high", "n"), str(w))
+            check("  토큰 측정 · 비용 미상(0 아님) · 초 반올림",
+                  w["measured"] and w["input_tokens"] == 120 and w["output_tokens"] == 45
+                  and w["cache_read"] == 7 and w["cost_known"] is False and w["seconds"] == 12.3, str(w))
+            check("  응답 record 가 쓴 줄과 같다", j.get("record") == w, str(j.get("record")))
+        n0 = len(rows)
+        for label, b, status in (
+                ("태그 없음 → no_project_tag", {k: v for k, v in body.items() if k != "project"}, "no_project_tag"),
+                ("비마운트 태그 → not_mounted", {**body, "project": "NS"}, "not_mounted")):
+            r = c.post("/api/v1/usage", json=b, headers=H)
+            check(f"[중요] {label} (200 + ok:false)", r.status_code == 200 and r.json().get("status") == status,
+                  f"{r.status_code} {r.text[:200]}")
+        # STAMP — work 스탬프와 태그가 다르면 project_mismatch
+        w = c.post("/api/v1/works", json={"title": "u", "target_repo": "R", "project": "AXCluster"},
+                   headers={"Authorization": f"Bearer {_m}"}).json()
+        r = c.post("/api/v1/usage", json={**body, "project": "NS", "work_id": w.get("work_id", "")}, headers=H)
+        check("[중요] work 스탬프와 다른 태그 → project_mismatch", r.json().get("status") == "project_mismatch",
+              r.text[:200])
+        for label, b in (("source 비었음", {**body, "source": ""}),
+                         ("모르는 키", {**body, "cost": 1}),
+                         ("토큰이 문자열", {**body, "usage": {"input_tokens": "120"}}),
+                         ("음수 토큰", {**body, "usage": {"input_tokens": -1}})):
+            r = c.post("/api/v1/usage", json=b, headers=H)
+            check(f"모양 검사 — {label} → 422", r.status_code == 422, f"{r.status_code} {r.text[:120]}")
+        r = c.post("/api/v1/usage", json=body, headers={"Authorization": f"Bearer {wrk_t}"})
+        check("[중요] worker 토큰 → 403", r.status_code == 403, str(r.status_code))
+        r = c.post("/api/v1/usage", json=body)
+        check("토큰 없음 → 401", r.status_code == 401, str(r.status_code))
+        r = c.post("/api/v1/usage/x", json=body, headers=H)
+        check("[중요] 하위 경로는 스코프 밖 → 403 (정확 일치)", r.status_code == 403, str(r.status_code))
+        rows = log.read_text(encoding="utf-8").splitlines()
+        check("[중요] 거절은 한 줄도 쓰지 않는다", len(rows) == n0, str(len(rows)))
+        # 기록 실패 — 500 이 아니라 ok:false + 사유
+        log.unlink()
+        log.mkdir()                                    # 파일 자리에 디렉토리 → open 실패
+        r = c.post("/api/v1/usage", json=body, headers=H)
+        check("[중요] 기록 실패 → 200 + ok:false · record_error",
+              r.status_code == 200 and r.json().get("status") == "record_error" and r.json().get("reason"),
+              f"{r.status_code} {r.text[:200]}")
+    finally:
+        if old_root is None:
+            os.environ.pop("AX_PROJECTS_ROOT", None)
+        else:
+            os.environ["AX_PROJECTS_ROOT"] = old_root
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     for fn in (test_server_actually_compiles, test_every_route_declared, test_undeclared_is_an_error,
                test_models_carry_the_tag, test_reject_shape,
                test_stamp_check_does_not_use_mount, test_twin_writers_are_gated,
                test_gates_are_actually_wired, test_claim_filters_by_project,
                test_untagged_is_rejected_on_write_surfaces, test_path_normalization,
-               test_senders_are_wired):
+               test_senders_are_wired, test_usage_route_live):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_tagging: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

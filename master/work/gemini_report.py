@@ -22,7 +22,14 @@ agy 봉투 `status` 가 `SUCCESS` 가 아니다(사용자 결정 2026-10-09 (나
 `--log-file <보고서>.run/agy.log` 를 받아 `usage.parse_agy_log` 로 판정한다 — 「attempt N 실패 →
 재시도 → 이후 생성 요청」이 로그에 있으면 종료 0 · 비고에 재시도 횟수. 로그가 없거나 회복 근거가
 모자라면 종전대로 경고 3이다(모르면 회복으로 보지 않는다). 모델 이름도 그 로그에서 읽는다.
-[주의] 마스터 전용이다 — 트윈 `usage_log` 는 마스터에 있다. `.33` 기록 경로는 별도 일감(사용자 결정 (가)).
+[중요] **요청자(`.33`) 는 `--remote` 로 돈다** (`#763`, 사용자 승인 2026-10-17). 트윈 `usage_log` 는
+마스터에 있으므로 기록 한 줄을 큐(`POST /api/v1/usage`)로 보내 마스터가 대행한다 — 프로젝트 태그·
+`worker`(= `.ax/config.json` `this_host.host`)는 체크아웃 설정에서 온다. 배달 위치는
+`.ax/lib/axmaster/work/` 이고 큐 호출은 옆 패키지의 `clientside/client_mcp.py` 를 경로로 로드한다.
+[주의] 전송이 실패해도 실행은 실패가 아니다 — stderr 와 결과 JSON `usage_error` 에 사유를 남긴다.
+
+    "<backends.python>" -c "import sys; sys.path.insert(0, '.ax/lib'); from axmaster.work import gemini_report as G; sys.exit(G.main())" \\
+        --remote --brief-dir <scratch>/ax-gemini-<주제> --out reports/research/2026-10-17-<주제>.md
 """
 from __future__ import annotations
 
@@ -37,7 +44,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from master.work import usage as U
+from . import usage as U          # [중요] 상대 임포트 — 요청자 배달본(`axmaster.work`)에서도 산다
 
 BRIEF = "BRIEF.md"
 PROMPT = ("Read BRIEF.md in the added directory and follow it exactly. "
@@ -175,20 +182,105 @@ def header(*, version: str, model: str, mats: list, seconds: float, u, project: 
         "", ""])
 
 
-def main(argv=None) -> int:
+def _client_mcp():
+    """큐 호출자 — 배달본은 옆 패키지(`axmaster/clientside/`), 저장소는 `client/runtime/` 이다.
+
+    [주의] 패키지 이름으로 임포트하지 않는다 — 저장소엔 `master.clientside` 가 없다(`#263`).
+    `fix_flow.py` 와 같은 방식(경로 로드)이라 두 집 문제가 없다.
+    """
+    import importlib.util
+    here = Path(__file__).resolve()
+    for src in (here.parents[1] / "clientside" / "client_mcp.py",
+                here.parents[2] / "client" / "runtime" / "client_mcp.py"):
+        if src.is_file():
+            spec = importlib.util.spec_from_file_location("ax_client_mcp_for_gemini", src)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+    raise RuntimeError("client_mcp.py 를 찾지 못했다 — 마스터에서 재배달: python -m master.client update")
+
+
+def usage_payload(meta: dict, *, lane: str, rc: int, seconds: float = 0.0, source: str,
+                  model: str = "", note: str = "", worker: str = "") -> dict:
+    """`U.record` 인자 → `POST /api/v1/usage` 본문. [중요] 모양 지식은 `meta_from_usage` 의 키 그대로다 —
+    서버가 같은 meta 를 다시 만들어 `U.record` 에 넘기므로 레코드가 마스터 로컬 기록과 같아진다."""
+    meta = meta or {}
+    out = {"source": source, "lane": lane, "rc": int(rc), "seconds": round(float(seconds or 0.0), 1),
+           "model": model, "note": note, "worker": worker,
+           "usage": dict(meta.get("usage") or {}), "session_id": str(meta.get("session_id") or "")}
+    if not meta.get("cost_unknown") and meta.get("total_cost_usd") is not None:
+        out["total_cost_usd"] = float(meta["total_cost_usd"])
+    return out
+
+
+def remote_recorder(root: Path, *, api=None):
+    """요청자 기록기 → `(record(meta, **kw) -> dict, 설명, 프로젝트, worker)`. **예외를 올리지 않는다** —
+    실패는 `{"error": …}` 로 돌려준다(`U.record` 와 같은 비차단 계약).
+
+    [중요] `api` 를 주입할 수 있다 — 테스트·드라이런은 가짜 큐를 꽂는다. 없으면 체크아웃의
+    `.ax/config.json`·`.ax/token` 으로 `queue_api` 를 만든다(프로젝트 태그는 거기서 붙는다).
+    """
+    cm = _client_mcp()
+    cfg = cm.load_config(root)
+    project = str(cfg.get("project") or "").strip()
+    worker = str((cfg.get("this_host") or {}).get("host") or "").strip()
+    q = api or cm.queue_api(root)
+
+    def record(meta: dict, **kw) -> dict:
+        body = usage_payload(meta, worker=worker, **kw)
+        try:
+            got = cm.tool_log_usage(q, body)
+        except Exception as e:                                   # noqa: BLE001
+            return {**body, "error": f"{type(e).__name__}: {e}"}
+        if not isinstance(got, dict):
+            return {**body, "error": f"큐 응답이 객체가 아니다: {str(got)[:200]}"}
+        if not got.get("ok"):
+            why = got.get("reason") or got.get("error") or str(got)[:200]
+            return {**body, "error": f"큐 거절({got.get('status') or 'ok:false'}): {why}"}
+        return got.get("record") or body
+
+    return record, f"마스터 트윈({project or '?'}) via POST /api/v1/usage", project, worker
+
+
+def main(argv=None, *, queue=None) -> int:
     ap = argparse.ArgumentParser(prog="python -m master.work.gemini_report")
-    ap.add_argument("--project", required=True, help="마운트된 프로젝트 — 사용량이 그 트윈에 남는다")
+    ap.add_argument("--project", default="",
+                    help="마운트된 프로젝트 — 사용량이 그 트윈에 남는다 (마스터 필수 · --remote 는 설정값)")
     ap.add_argument("--brief-dir", required=True, help="BRIEF.md 와 자료 사본이 든 스크래치 폴더")
     ap.add_argument("--out", required=True, help="보고서 경로 — reports/research/ 아래 .md")
     ap.add_argument("--timeout", type=int, default=U.TIMEOUT)
+    ap.add_argument("--remote", action="store_true",
+                    help="요청자(.33) — 사용량을 큐로 보내 마스터 트윈에 남긴다 (#763)")
+    ap.add_argument("--checkout", default="",
+                    help="--remote 의 체크아웃 루트 (.ax/config.json 이 있는 곳, 기본 cwd)")
     a = ap.parse_args(argv)
 
-    from master.context_search import paths as P
-    try:
-        paths = P.resolve_mounted_only(a.project)
-    except Exception as e:                                       # noqa: BLE001
-        log(f"거절 — {e}")
-        return 2
+    if a.remote:
+        try:
+            record, usage_where, project, worker = remote_recorder(
+                Path(a.checkout or ".").resolve(), api=queue)
+        except Exception as e:                                   # noqa: BLE001
+            log(f"거절 — 요청자 설정을 읽지 못했다: {e}")
+            return 2
+        if a.project and project and a.project != project:
+            log(f"거절 — --project {a.project} 가 체크아웃 설정 project({project}) 와 다르다")
+            return 2
+        a.project = project or a.project
+        log(f"요청자 모드 — 기록은 {usage_where} · worker={worker or '(미상)'}")
+    else:
+        if not a.project:
+            log("거절 — --project 가 필요하다 (요청자는 --remote)")
+            return 2
+        from master.context_search import paths as P
+        try:
+            paths = P.resolve_mounted_only(a.project)
+        except Exception as e:                                   # noqa: BLE001
+            log(f"거절 — {e}")
+            return 2
+        usage_where = str(paths.usage_log)
+
+        def record(meta: dict, **kw) -> dict:
+            return U.record(paths.usage_log, meta, **kw)
     brief_dir = Path(a.brief_dir).resolve()
     out = Path(a.out).resolve()
     if not (brief_dir / BRIEF).is_file():
@@ -206,8 +298,9 @@ def main(argv=None) -> int:
 
     if not exe:
         log("실패 — agy 가 없다")
-        U.record(paths.usage_log, {"cost_unknown": True}, lane="agy",
-                 rc=127, source=SOURCE, note="agy 없음")
+        rec = record({"cost_unknown": True}, lane="agy", rc=127, source=SOURCE, note="agy 없음")
+        if rec.get("error"):
+            log(f"[주의] 사용량 기록 실패 — {rec['error']}")
         return 1
 
     version = agy_version(exe)
@@ -239,16 +332,18 @@ def main(argv=None) -> int:
     for msg in (why, warn, info):
         if msg:
             meta["note"] = msg if not meta.get("note") else f"{msg} · {meta['note']}"
-    rec = U.record(paths.usage_log, meta, lane="agy", rc=rc if rc else (0 if not why else 1),
-                   seconds=secs, source=SOURCE, model=model, note=meta.get("note", ""))
+    rec = record(meta, lane="agy", rc=rc if rc else (0 if not why else 1),
+                 seconds=secs, source=SOURCE, model=model, note=meta.get("note", ""))
     if rec.get("error"):
         log(f"[주의] 사용량 기록 실패 — {rec['error']}")
     summary = {"ok": not why and not warn, "why": why or warn, "rc": rc, "seconds": round(secs, 1),
                "status": status, "error": err_text, "model": model,
                "retries": lg["retries"], "recovered": recovered,
                "tokens": (u.as_dict() if u else None),
-               "usage_log": str(paths.usage_log), "run_dir": str(run_dir),
+               "usage_log": usage_where, "run_dir": str(run_dir),
                "report": "" if why else str(out)}
+    if rec.get("error"):
+        summary["usage_error"] = rec["error"]       # [중요] 조용히 넘기지 않는다 — 세션이 보고한다
     (run_dir / "run.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1),
                                       encoding="utf-8")
     if why:

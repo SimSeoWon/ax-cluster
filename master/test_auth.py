@@ -211,6 +211,18 @@ def main() -> int:
     check("[중요] admin 경로는 못 연다", st == 403, str(st))
     st, _b, _ = asyncio.run(call(sapp, "/api/v1/tasks/t1", headers=H, method="DELETE"))
     check("허용 경로라도 다른 메서드는 403", st == 403, str(st))
+    # 🔴 `#763` — 사용량 한 줄은 **정확 일치**로만 열린다 (하위 경로가 조용히 열리지 않는다)
+    st, _b, _ = asyncio.run(call(sapp, "/api/v1/usage", headers=H, method="POST"))
+    check("[중요] 스코프 안 POST usage → 통과 (#763)", st == 200, str(st))
+    for p_ in ("/api/v1/usage/x", "/api/v1/usage2", "/api/v1/usage/"):
+        st, _b, _ = asyncio.run(call(sapp, p_, headers=H, method="POST"))
+        check(f"[중요] {p_} 는 열리지 않는다 — 정확 일치 (#763)", st == 403, str(st))
+    st, _b, _ = asyncio.run(call(sapp, "/api/v1/usage", headers=H, method="GET"))
+    check("usage 의 GET 은 열리지 않는다", st == 403, str(st))
+    from master.auth import WORKER_SCOPE
+    wapp = BearerAuthMiddleware(inner8, tok, scoped=((req_tok, WORKER_SCOPE),))
+    st, _b, _ = asyncio.run(call(wapp, "/api/v1/usage", headers=H, method="POST"))
+    check("[중요] 워커 토큰은 usage 를 못 쓴다 — 403 (#763)", st == 403, str(st))
 
     st, _b, _ = asyncio.run(call(sapp, "/api/v1/works", headers={"authorization": "Bearer 틀린것"},
                                  method="GET"))

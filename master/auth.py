@@ -196,6 +196,9 @@ REQUESTER_SCOPE: tuple = (
     ("POST", "/api/v1/redmine/link-commit"),
     ("POST", "/api/v1/signals"),
     ("POST", "/api/v1/history"),
+    # 🔴 **사용량 한 줄** (`#763`) — 요청자 `ax-gemini` 실행이 마스터 트윈 `usage_log` 에 남긴다.
+    #    [중요] 정확 일치다 — 접두어로 두면 이 아래 하위 경로가 조용히 열린다(`#769` 와 같은 이유).
+    ("POST", "/api/v1/usage", "", "exact"),
     ("POST", "/api/v1/thesaurus/"),
     # [중요] **등재** (`#336` ④, 사용자 결정 2026-08-30). 요청자가 분산 작업을 등재하는
     #    자리다 — `ax-request` §3 은 오래 등재를 지시했는데 **요청자에게 그 경로가 없었다**
