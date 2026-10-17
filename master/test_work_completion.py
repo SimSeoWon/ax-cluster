@@ -203,5 +203,180 @@ class CompletionTests(unittest.TestCase):
             P._load_client, P._editor_notice, sys.stdin = old_load, old_editor, old_stdin
 
 
+class CliWaitTests(unittest.TestCase):
+    """`#799` — 훅이 없을 때(Codex)·2시간을 넘길 때 대기하는 쪽이 큐를 직접 본다."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="ax-cliwait-")
+        self.root = Path(self.temp.name)
+        self.now = [0.0]
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def clock(self):
+        return self.now[0]
+
+    def sleep(self, s):
+        self.sleep_calls.append(s)
+        self.now[0] += s
+
+    def detail(self, status="in_progress", round_no=1, task_status="claimed"):
+        return {"work": {"work_id": "W", "round": round_no, "merge_status": status,
+                         "title": "제목"},
+                "tasks": [{"task_id": "T1", "round": round_no, "status": task_status,
+                           "last_feedback": "빌드 오류"},
+                          {"task_id": "OLD", "round": round_no - 1, "status": "failed"}]}
+
+    def run_wait(self, states, **kw):
+        self.sleep_calls = []
+        seq = iter(states)
+        calls = []
+        def get(wid):
+            calls.append(wid)
+            got = next(seq)
+            if isinstance(got, Exception):
+                raise got
+            return got
+        err = io.StringIO()
+        code, text = W.cli_wait(self.root, "W", get, clock=self.clock, sleep=self.sleep,
+                                err=err, **kw)
+        return code, text, err.getvalue().splitlines(), calls
+
+    def test_ready_exits_zero_with_facts_and_poll_lines(self):
+        code, text, lines, calls = self.run_wait(
+            [self.detail(), self.detail(), self.detail("ready_for_review", task_status="verified")],
+            round_no=1)
+        self.assertEqual(code, 0)
+        self.assertIn("[분산 작업 결과] W · 라운드 1 · ready_for_review", text)
+        self.assertEqual(len(lines), 3)                      # 조회마다 한 줄
+        self.assertTrue(all(x.startswith("[wait] W r1 · 큐 ") and " · 남은 " in x for x in lines))
+        self.assertIn("조각 claimed 1", lines[0])            # 지난 라운드 조각은 안 센다
+        self.assertEqual(self.sleep_calls, [60, 60])        # 기본 1분 간격
+        for imperative in ("하세요", "하라", "말고", "묻지"):
+            self.assertNotIn(imperative, text)
+
+    def test_default_interval_is_one_minute(self):
+        self.assertEqual(W.CLI_INTERVAL, 60)
+        self.assertGreaterEqual(W.CLI_TIMEOUT, 86400)
+
+    def test_timeout_exits_four_and_is_not_completion(self):
+        code, text, lines, calls = self.run_wait([self.detail()] * 10, round_no=1,
+                                                 timeout=150, interval=60)
+        self.assertEqual(code, 4)
+        self.assertIn("완료로 처리하지 않았습니다", text)
+        self.assertIn("in_progress", text)
+        self.assertEqual(len(calls), 4)                      # 0·60·120·150(상한 시각)
+        self.assertEqual(self.sleep_calls, [60, 60, 30])
+
+    def test_query_error_is_logged_and_retried(self):
+        code, text, lines, _ = self.run_wait(
+            [OSError("offline"), self.detail("ready_for_review", task_status="verified")],
+            round_no=1)
+        self.assertEqual(code, 0)
+        self.assertIn("조회 오류 OSError: offline", lines[0])
+        code, text, lines, _ = self.run_wait([OSError("offline")] * 3, round_no=1,
+                                             timeout=100, interval=60)
+        self.assertEqual(code, 4)
+        self.assertIn("마지막 조회 오류: OSError: offline", text)
+
+    def test_current_round_lookup_when_round_omitted(self):
+        code, text, lines, _ = self.run_wait(
+            [self.detail(round_no=3), self.detail("ready_for_review", 3, "verified")])
+        self.assertEqual(code, 0)
+        self.assertTrue(lines[0].startswith("[wait] W r3 · "))
+        self.assertIn("라운드 3", text)
+
+    def test_round_mismatch_is_not_completion(self):
+        code, text, _, _ = self.run_wait([self.detail("ready_for_review", round_no=2)], round_no=1)
+        self.assertEqual(code, 3)
+        self.assertIn("완료로 처리하지 않았습니다", text)
+
+    def test_other_terminal_and_failure_exit_three(self):
+        for status in ("merged", "cancelled", "rejected"):
+            code, text, _, _ = self.run_wait([self.detail(status)], round_no=1)
+            self.assertEqual(code, 3, status)
+            self.assertIn(status, text)
+        code, text, _, _ = self.run_wait([self.detail(task_status="failed")], round_no=1)
+        self.assertEqual(code, 3)
+        self.assertIn("빌드 오류", text)
+        # --skip-failures 는 실패를 찍고 종결까지 기다린다
+        code, text, lines, _ = self.run_wait(
+            [self.detail(task_status="failed"), self.detail("ready_for_review", task_status="verified")],
+            round_no=1, skip_failures=True)
+        self.assertEqual(code, 0)
+        self.assertTrue(any("실패 조각 1건" in x for x in lines))
+
+    def test_read_only_and_independent_of_hook_dedupe(self):
+        """큐에 쓰지 않고, 훅의 고지·잠금 파일을 쓰지도 읽지도 않는다 — 신호를 서로 안 지운다."""
+        ready = self.detail("ready_for_review", task_status="verified")
+        # 훅이 같은 work·라운드를 이미 고지한 뒤에도 CLI 는 결과를 낸다
+        W.wait_for_work(self.root, "S", "W", 1, lambda _: ready)
+        before = sorted(p.name for p in (self.root / ".ax/work-notices").iterdir())
+        code, text, _, _ = self.run_wait([ready], round_no=1)
+        self.assertEqual(code, 0)
+        self.assertEqual(sorted(p.name for p in (self.root / ".ax/work-notices").iterdir()), before)
+        # CLI 가 먼저 돌아도 훅의 고지는 억제되지 않는다
+        other = Path(tempfile.mkdtemp(dir=self.temp.name))
+        self.root, saved = other, self.root
+        self.run_wait([ready], round_no=1)
+        self.assertFalse((other / ".ax/work-notices").exists())
+        self.assertIn("ready_for_review", W.wait_for_work(other, "S", "W", 1, lambda _: ready))
+        events = [json.loads(x) for x in (other / ".ax/work_completion.jsonl").read_text().splitlines()]
+        self.assertEqual({e["session"] for e in events if e["event"].startswith("cli_")}, {"cli-wait"})
+        self.root = saved
+
+    def test_log_write_failure_does_not_stop_wait(self):
+        (self.root / ".ax").write_text("not a dir")          # .ax 쓰기가 실패하는 자리
+        code, _, _, _ = self.run_wait([self.detail("ready_for_review", task_status="verified")],
+                                      round_no=1)
+        self.assertEqual(code, 0)
+
+    def test_cli_main_uses_hook_client_and_exit_codes(self):
+        got_api = []
+        class Client:
+            HTTP_TIMEOUT = 0
+            def queue_api(self, cwd):
+                got_api.append(cwd)
+                return "API"
+            def tool_get_work(self, api, wid):
+                assert api == "API" and wid == "W"
+                return {"work": {"work_id": "W", "round": 2, "merge_status": "ready_for_review"},
+                        "tasks": []}
+        old_load = P._load_client
+        P._load_client = lambda _: Client()
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out, \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                code = W.cli_main(["--wait", "W", "--root", str(self.root)])
+            self.assertEqual(code, 0)
+            self.assertIn("ready_for_review", out.getvalue())
+            self.assertIn("[wait] W r2", err.getvalue())
+            self.assertEqual(got_api, [self.root])
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(W.cli_main(["--wait", "W", "--interval", "0",
+                                             "--root", str(self.root)]), 2)
+                self.assertEqual(W.cli_main(["--round", "1"]), 2)   # --wait 없음
+        finally:
+            P._load_client = old_load
+
+    def test_cli_main_setup_failure_exits_two(self):
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(W.cli_main(["--wait", "W", "--root", str(self.root)]), 2)
+        self.assertIn("연결 준비 실패", err.getvalue())
+
+    def test_script_without_args_stays_hook_mode(self):
+        """인자 없이 불리면 종전 훅 경로(stdin) 그대로다 — 등록 명령은 인자를 싣지 않는다."""
+        import subprocess
+        script = Path(W.__file__)
+        r = subprocess.run([sys.executable, "-B", str(script)], input=json.dumps(
+            {"cwd": str(self.root), "session_id": "S", "tool_name": "Bash",
+             "tool_response": {"ok": False}}), capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0)
+        events = [json.loads(x)["event"] for x in
+                  (self.root / ".ax/work_completion.jsonl").read_text().splitlines()]
+        self.assertEqual(events, ["not_a_registration"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -318,7 +318,7 @@ def tool_register_work(_unused, args: dict, *, root=None) -> dict:
         v = args.get(k)
         if v not in (None, ""):
             body[k] = v
-    return projects_write_api(root)("POST", "/work/register", body)
+    return _attach_wait(projects_write_api(root)("POST", "/work/register", body), root, 1)
 
 
 def tool_improve_work(_unused, args: dict, *, root=None) -> dict:
@@ -361,7 +361,63 @@ def tool_improve_work(_unused, args: dict, *, root=None) -> dict:
         if not isinstance(args["expected_base_commit"], str):
             raise ClientError("expected_base_commit 은 문자열이어야 한다")
         body["expected_base_commit"] = args["expected_base_commit"]
-    return projects_write_api(root)("POST", "/work/improve", body)
+    return _attach_wait(projects_write_api(root)("POST", "/work/improve", body), root, round_no)
+
+
+# ── `#799` 대기 명령 — 훅이 없거나(Codex) 죽었거나 2시간을 넘긴 work 의 끝을 받는 길 ─────
+#
+# 마스터 쪽 짝은 `master/projects/mcp_server.py` `_wait_command`(`#798`)다. 같은 모양으로
+# **성공 응답에 명령을 실어** 세션이 곧바로 돌리게 한다. 명령은 배달된 완료 훅의 CLI 모드
+# (`.claude/hooks/work_completion.py --wait`)이고, 1분마다 큐를 읽기만 한다.
+# 🔴 사실만 싣는다 — 「무엇을 하나」는 `ax-request` 스킬의 몫이다(명령형은 주입으로 거부된다).
+WAIT_HOOK_REL = ".claude/hooks/work_completion.py"
+WAIT_NOTE = ("wait 는 체크아웃 루트에서 실행하는 명령이다. 이 work·라운드가 ready_for_review·"
+             "merged·cancelled·rejected 가 되거나 실패 조각이 생기거나 타임아웃(기본 24시간)될 "
+             "때까지 1분마다 큐를 읽기만 한다. 조회마다 stderr 에 [wait] 한 줄, 끝나면 stdout 에 "
+             "결과 블록을 남긴다 (종료 코드 0 ready_for_review · 3 그 밖의 종결·실패 신호·라운드 "
+             "불일치 · 4 타임아웃 · 2 연결 준비 실패). wait_argv 는 같은 명령의 인자 목록이다.")
+
+
+def _wait_arg(text: str) -> str:
+    """셸 하나에 기대지 않는 인자 — 역슬래시를 `/` 로 바꾸고 공백이 있을 때만 따옴표로 감싼다.
+
+    [주의] Windows 는 `C:/…/python.exe` 를 그대로 연다. 역슬래시를 남기면 Git Bash(Claude 의
+    Bash 도구)가 일부를 이스케이프로 먹는다. 따옴표로 감싼 첫 토큰은 PowerShell 에서 명령이
+    아니라 문자열이 되므로 늘 감싸지 않는다 — 그 경우를 위해 `wait_argv` 를 함께 싣는다.
+    """
+    text = str(text).replace("\\", "/")
+    return f'"{text}"' if any(c.isspace() for c in text) else text
+
+
+def _wait_command(root, work_id: str, round_no: int) -> tuple[str, list[str]]:
+    """이 체크아웃에서 돌릴 대기 명령 `(문자열, argv)`. 못 만들면 `ClientError` — 사유가 그대로 간다."""
+    base = Path(root) if root else Path.cwd()
+    if not (base / WAIT_HOOK_REL).is_file():
+        raise ClientError(f"대기 스크립트가 없다: {base / WAIT_HOOK_REL} (마스터 배달 전이거나 "
+                          "이 체크아웃에 완료 훅이 배달되지 않는 종류다)")
+    cfg = load_config(base)
+    py = str(((cfg.get("backends") or {}).get("python")) or "").strip()
+    if not py:
+        # `backends.python` 이 없을 때만 — Windows 는 런처 `py`, 그 밖은 `python3`
+        osname = str(((cfg.get("this_host") or {}).get("os")) or "").lower()
+        py = "py" if osname.startswith("win") else "python3"
+    argv = [py.replace("\\", "/"), WAIT_HOOK_REL, "--wait", str(work_id), "--round", str(int(round_no))]
+    return " ".join(_wait_arg(a) for a in argv), argv
+
+
+def _attach_wait(got, root, round_no: int):
+    """성공 응답에 `wait`(+`wait_argv`·`wait_note`)를 싣는다. 못 만들면 `wait_error` — 조용히 빼지 않는다."""
+    if not (isinstance(got, dict) and got.get("ok") is True and got.get("work_id")):
+        return got
+    try:
+        rnd = int(got.get("round") or round_no)
+    except (TypeError, ValueError):
+        rnd = round_no
+    try:
+        cmd, argv = _wait_command(root, str(got["work_id"]), rnd)
+    except Exception as e:                                   # noqa: BLE001
+        return {**got, "wait_error": f"{type(e).__name__}: {e}"[:500]}
+    return {**got, "wait": cmd, "wait_argv": argv, "wait_note": WAIT_NOTE}
 
 
 def tool_get_work(api, work_id: str) -> dict:

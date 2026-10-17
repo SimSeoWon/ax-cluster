@@ -36,6 +36,41 @@ Redmine `#395` 까지 냈는데 `.33` 은 몰랐다.
 로그(`.ax/work_completion.jsonl`)는 **관측(`state_observed`)과 발행(`signal_emitted`)을
 가른다.** [주의] `signal_emitted` 는 **훅이 보냈다**는 기록일 뿐이고, 세션이 실제로 받았다는
 증거는 **대화 기록뿐**이다. 그 둘을 같은 것으로 적지 않는다.
+
+## CLI 대기 모드 (`#799`) — 훅이 없거나 죽었을 때 대기하는 쪽이 큐를 직접 본다
+
+    py .claude/hooks/work_completion.py --wait <work_id> [--round N]
+                                        [--timeout S] [--interval S] [--skip-failures]
+
+훅이 못 덮는 두 자리를 위해서다 (사용자 확인 2026-10-17): ① work 가 훅 제한(`TIMEOUT` 2시간)보다
+오래 걸린다 ② 요청자가 Codex CLI 다 — `.33` 의 Codex 에는 훅이 하나도 없다(실측 2026-10-17).
+세션이 등재 응답의 `wait` 명령(`client_mcp._wait_command`)을 돌리면 이 모드로 들어온다.
+
+    조회        **1분마다**(`--interval` 기본 60초) 큐를 직접 읽는다 — `wait_for_work` 와 같은
+                클라(`pending_works._load_client` → `tool_get_work`)와 같은 판정(`observe`)
+    읽기 전용   큐에 쓰지 않는다. 훅의 고지·잠금 파일(`.ax/work-notices`)도 **읽지도 쓰지도
+                않는다** — 아래 「중복 억제」
+    --round     생략하면 첫 조회의 큐 라운드를 그 대기의 라운드로 고정한다
+    --timeout   기본 86400초(24시간). LLM 한도가 아니라 대기 상한이다
+    stderr      조회마다 한 줄 `[wait] <work_id> r<N> · 큐 <상태> · 조각 <상태 수> · 남은 mm:ss`
+    stdout      끝날 때 결과 한 덩이 — `render_result` 의 사실만 실은 본문(명령형 없음)
+
+    종료 코드   0  ready_for_review
+                3  그 밖의 종결·신호 — merged · cancelled · rejected · 실패 조각 신호
+                   (failed·needs_revision, 큐는 아직 in_progress 일 수 있다) · 라운드 불일치
+                4  타임아웃 — 완료로 처리하지 않는다. 마지막 상태와 조회 오류를 싣는다
+                2  사용법 오류 · 연결 준비 실패(`.ax/lib`·config·token 없음)
+
+    --skip-failures   실패 조각 신호로 끝내지 않는다(stderr 에만 찍는다). 실패 고지를 이미
+                      받은 뒤 같은 라운드의 종결을 다시 기다릴 때 쓴다 — 없으면 같은 실패를
+                      첫 조회에서 다시 보고 곧바로 끝난다.
+
+[중요] **중복 억제를 공유하지 않는다.** 훅의 억제는 `(session, work_id, round)` 키라 세션마다
+따로다. CLI 가 그 파일을 쓰면 같은 결과를 훅이 「이미 고지함」으로 삼키고, 훅이 쓴 파일을 CLI 가
+읽으면 반대로 CLI 가 침묵한다 — **어느 쪽이 실제로 세션에 닿았는지 모르는 채** 신호 하나를
+지운다. 그래서 둘은 독립이고, 같은 사실이 두 번 올 수 있다(훅 + CLI). 중복은 사람이 알아보지만
+누락은 아무도 모른다. 로그(`.ax/work_completion.jsonl`)에는 `session="cli-wait"` 로 남기되
+**쓰기 실패는 대기를 멈추지 않는다**(Windows 샌드박스의 `.ax` 쓰기 실패 전례, 리포트 89).
 """
 import hashlib
 import json
@@ -49,6 +84,12 @@ from hook_paths import checkout_root
 sys.dont_write_bytecode = True
 INTERVAL = 15
 TIMEOUT = 7200
+CLI_INTERVAL = 60          # `#799` — 훅이 없을 때 1분마다 큐를 직접 본다 (사용자 2026-10-17)
+CLI_TIMEOUT = 86400        # 대기 상한(24시간) — LLM 토큰 한도가 아니다
+CLI_SESSION = "cli-wait"   # 로그의 session 칸. 훅의 고지 키와 섞이지 않는다
+TERMINAL = ("ready_for_review", "merged", "cancelled", "rejected")
+FAILURE_STATES = ("failed", "needs_revision")
+EXIT_READY, EXIT_OTHER, EXIT_TIMEOUT, EXIT_SETUP = 0, 3, 4, 2
 
 
 def result_object(value):
@@ -166,6 +207,31 @@ def render_result(work, tasks, counts):
     return "\n".join(head)
 
 
+def observe(detail, round_no):
+    """큐 응답 한 번 → (work, 이번 라운드 조각, 상태별 수). 훅과 CLI 대기가 **같은 판정**을 쓴다.
+
+    [중요] 라운드가 다르면 완료로 읽지 않는다 — `RuntimeError`. 지난 라운드의 terminal 을
+    이번 라운드의 완료로 잘못 고지하는 것을 막는다.
+    """
+    work = detail.get("work") or {}
+    if int(work.get("round") or 0) != round_no:
+        raise RuntimeError("요청한 라운드와 서버 라운드가 다릅니다")
+    tasks = [t for t in detail.get("tasks", []) if int(t.get("round") or 0) == round_no]
+    counts = {}
+    for task in tasks:
+        status = task.get("status", "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return work, tasks, counts
+
+
+def failure_keys(tasks):
+    """실패 신호의 동일성 키 — 같은 실패를 두 번 고지하지 않고, 새 시도는 새 신호로 본다."""
+    return [[t.get("task_id"), t.get("status"), t.get("attempt_count"),
+             t.get("fail_detail"), t.get("last_feedback"),
+             t.get("verdict_feedback"), t.get("fail_reason")]
+            for t in tasks if t.get("status") in FAILURE_STATES]
+
+
 def wait_for_work(cwd, session, work_id, round_no, get_work, *, timeout=TIMEOUT,
                   interval=INTERVAL, clock=time.monotonic, sleep=time.sleep):
     path = notice_path(cwd, session, work_id, round_no)
@@ -193,30 +259,19 @@ def wait_for_work(cwd, session, work_id, round_no, get_work, *, timeout=TIMEOUT,
         deadline, previous = clock() + timeout, None
         while clock() < deadline:
             lock.touch()
-            detail = get_work(work_id)
-            work = detail.get("work") or {}
-            if int(work.get("round") or 0) != round_no:
-                raise RuntimeError("요청한 라운드와 서버 라운드가 다릅니다")
-            tasks = [t for t in detail.get("tasks", []) if int(t.get("round") or 0) == round_no]
-            counts = {}
-            for task in tasks:
-                status = task.get("status", "unknown")
-                counts[status] = counts.get(status, 0) + 1
+            work, tasks, counts = observe(get_work(work_id), round_no)
             status = work.get("merge_status")
             state = (status, sorted(counts.items()))
             if state != previous:
                 log(cwd, "state_observed", work_id, round_no, session,
                     status=status, counts=counts, worker_mode=work.get("worker_mode"))
                 previous = state
-            if status in ("ready_for_review", "merged", "cancelled", "rejected"):
+            if status in TERMINAL:
                 message = render_result(work, tasks, counts)
                 write_state(path, {"event": "signal_emitted", "at": time.time()})
                 log(cwd, "signal_emitted", work_id, round_no, session, status=status)
                 return message
-            failures = [[t.get("task_id"), t.get("status"), t.get("attempt_count"),
-                         t.get("fail_detail"), t.get("last_feedback"),
-                         t.get("verdict_feedback"), t.get("fail_reason")]
-                        for t in tasks if t.get("status") in ("failed", "needs_revision")]
+            failures = failure_keys(tasks)
             new_failures = [failure for failure in failures if failure not in noticed_failures]
             if new_failures:
                 message = render_result(work, tasks, counts)
@@ -297,5 +352,145 @@ def main():
     return code
 
 
+def _mmss(seconds):
+    seconds = max(0, int(seconds))
+    return f"{seconds // 60:02d}:{seconds % 60:02d}"
+
+
+def _counts_text(counts):
+    return " · ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "없음"
+
+
+def _log_quiet(cwd, event, work_id, round_no, **fields):
+    """CLI 대기의 로그 — [주의] 쓰기 실패가 대기를 멈추지 않는다(stderr 줄이 주 관측이다)."""
+    try:
+        log(cwd, event, work_id, round_no, CLI_SESSION, **fields)
+    except OSError:
+        pass
+
+
+def cli_wait(cwd, work_id, get_work, *, round_no=None, timeout=CLI_TIMEOUT,
+             interval=CLI_INTERVAL, skip_failures=False, clock=time.monotonic,
+             sleep=time.sleep, err=None):
+    """`#799` — 큐를 **직접, 1분마다** 읽으며 이 work·라운드의 끝을 기다린다. 읽기만 한다.
+
+    반환 `(종료 코드, stdout 본문)`. 코드의 뜻은 머리말 「CLI 대기 모드」 표.
+    [중요] 훅의 고지·잠금 파일을 쓰지도 읽지도 않는다 — 신호를 서로 지우지 않게(머리말).
+    [주의] 조회 실패는 그 자리에서 끝내지 않는다 — 한 줄 찍고 다음 조회로 간다. 끝까지
+    실패하면 타임아웃(4)이 마지막 오류를 싣는다.
+    """
+    err = err or sys.stderr
+    deadline = clock() + timeout
+    last_work, last_tasks, last_counts, last_error = {}, [], {}, ""
+    noticed, previous, polls = [], None, 0
+    _log_quiet(cwd, "cli_wait_started", work_id, round_no, timeout=timeout, interval=interval)
+
+    def say(line):
+        print(line, file=err, flush=True)
+
+    def finish(code, outcome, text):
+        _log_quiet(cwd, "cli_wait_exit", work_id, round_no, code=code, outcome=outcome,
+                   polls=polls)
+        return code, text
+
+    while True:
+        polls += 1
+        remain = deadline - clock()
+        try:
+            detail = get_work(work_id)
+            if round_no is None:
+                # 생략이면 첫 조회의 큐 라운드에 고정한다 — 도중에 개선요청이 와도 따라가지 않는다
+                round_no = int((detail.get("work") or {}).get("round") or 0)
+                if round_no < 1:
+                    raise RuntimeError("큐 응답에 라운드가 없습니다")
+            try:
+                work, tasks, counts = observe(detail, round_no)
+            except RuntimeError:
+                server = (detail.get("work") or {}).get("round")
+                say(f"[wait] {work_id} r{round_no} · 큐 라운드 r{server} · 남은 {_mmss(remain)}")
+                return finish(EXIT_OTHER, "round_mismatch",
+                              f"[분산 작업 대기 종료] {work_id} · 요청 라운드 {round_no} · "
+                              f"큐 라운드 {server}\n요청한 라운드와 큐의 라운드가 다릅니다. "
+                              "이 라운드의 완료로 처리하지 않았습니다.")
+            last_work, last_tasks, last_counts, last_error = work, tasks, counts, ""
+            status = work.get("merge_status")
+            say(f"[wait] {work_id} r{round_no} · 큐 {status or '?'} · 조각 "
+                f"{_counts_text(counts)} · 남은 {_mmss(remain)}")
+            state = (status, sorted(counts.items()))
+            if state != previous:
+                _log_quiet(cwd, "state_observed", work_id, round_no, status=status,
+                           counts=counts, worker_mode=work.get("worker_mode"))
+                previous = state
+            if status in TERMINAL:
+                code = EXIT_READY if status == "ready_for_review" else EXIT_OTHER
+                return finish(code, status, render_result(work, tasks, counts))
+            failures = failure_keys(tasks)
+            if failures and [f for f in failures if f not in noticed]:
+                if not skip_failures:
+                    return finish(EXIT_OTHER, "failure", render_result(work, tasks, counts))
+                say(f"[wait] {work_id} r{round_no} · 실패 조각 {len(failures)}건 — "
+                    "--skip-failures 로 종결까지 계속 대기")
+                noticed = failures
+        except Exception as exc:                            # noqa: BLE001
+            last_error = f"{type(exc).__name__}: {exc}"[:300]
+            say(f"[wait] {work_id} r{round_no if round_no is not None else '?'} · 조회 오류 "
+                f"{last_error} · 남은 {_mmss(remain)}")
+        left = deadline - clock()
+        if left <= 0:
+            break
+        sleep(min(interval, left))         # 마지막 조회는 상한 시각에 한 번 더 한다
+    lines = [f"[분산 작업 대기 시간 초과] {work_id} · 라운드 "
+             f"{round_no if round_no is not None else '?'} · 조회 {polls}회",
+             "완료로 처리하지 않았습니다."]
+    if last_work:
+        lines.append(render_result(last_work, last_tasks, last_counts))
+    if last_error:
+        lines.append(f"마지막 조회 오류: {last_error}")
+    return finish(EXIT_TIMEOUT, "timeout", "\n".join(lines))
+
+
+def cli_main(argv):
+    """`--wait` 진입. 훅(stdin) 경로와 섞이지 않는다 — 인자가 있을 때만 여기로 온다."""
+    import argparse
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    ap = argparse.ArgumentParser(prog="work_completion.py",
+                                 description="분산 작업 완료를 큐에서 직접 읽으며 기다린다 (#799)")
+    ap.add_argument("--wait", metavar="WORK_ID", required=True)
+    ap.add_argument("--round", type=int, default=None, help="생략하면 큐의 현재 라운드")
+    ap.add_argument("--timeout", type=float, default=CLI_TIMEOUT, help="최대 대기(초)")
+    ap.add_argument("--interval", type=float, default=CLI_INTERVAL, help="조회 간격(초, 기본 60)")
+    ap.add_argument("--skip-failures", action="store_true",
+                    help="실패 조각 신호로 끝내지 않고 종결까지 기다린다")
+    ap.add_argument("--root", default="", help="체크아웃 루트 (기본: 이 파일의 체크아웃)")
+    try:
+        args = ap.parse_args(argv)
+    except SystemExit as exc:
+        return EXIT_SETUP if exc.code else 0
+    work_id = args.wait.strip()
+    if not work_id or args.interval <= 0 or args.timeout <= 0 or \
+            (args.round is not None and args.round < 1):
+        print("[wait] 사용법 오류 — work_id 비어 있음 · interval/timeout 0 이하 · round 1 미만 "
+              "중 하나", file=sys.stderr, flush=True)
+        return EXIT_SETUP
+    cwd = Path(args.root) if args.root else checkout_root(Path.cwd())
+    try:
+        from pending_works import _load_client
+        client = _load_client(cwd)
+        client.HTTP_TIMEOUT = 20
+        api = client.queue_api(cwd)
+    except Exception as exc:                                # noqa: BLE001
+        print(f"[wait] 연결 준비 실패 — {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        _log_quiet(cwd, "cli_wait_setup_error", work_id, args.round,
+                   error=f"{type(exc).__name__}: {exc}"[:500])
+        return EXIT_SETUP
+    code, text = cli_wait(cwd, work_id, lambda wid: client.tool_get_work(api, wid),
+                          round_no=args.round, timeout=args.timeout, interval=args.interval,
+                          skip_failures=args.skip_failures)
+    print(text, flush=True)
+    return code
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(cli_main(sys.argv[1:]) if len(sys.argv) > 1 else main())
