@@ -1195,6 +1195,49 @@ def test_wait_blocked_failed_and_precedence():
         shutil.rmtree(repo, ignore_errors=True)
 
 
+def test_wait_baseline_ends_first_poll():
+    """기준선 기록은 준비되지 않는다 — 첫 조회에서 `baseline` 으로 끝난다 (`#798`)."""
+    sd = Path(tempfile.mkdtemp(prefix="fu-wait-bl-"))
+    repo = Path(tempfile.mkdtemp(prefix="fu-wait-bl-repo-"))
+    try:
+        # scan 첫 실행이 쓰는 모양 그대로 심는다
+        F.scan(repo, project="P", state=sd,
+               list_works=_works({"work_id": "ww", "merge_status": "ready_for_review", "round": 1}))
+        path = F.round_key_path(sd, repo, "ww", 1)
+        check("baseline: scan 이 기준선을 썼다", F.read_state(path).get("event") == "baseline",
+              str(F.read_state(path)))
+        check("baseline: _with_facts 가 event 를 싣는다",
+              F.recorded_for(repo, "ww", 1, state=sd).get("event") == "baseline")
+        fc, lines = FakeClock(), []
+        before = _listing(sd)
+        res = F.wait_for_gate(repo, "ww", api=_queue([_resp("ready_for_review", tasks=TASKS_DONE)]),
+                              state=sd, interval=30, timeout=600, clock=fc.clock, sleep=fc.sleep,
+                              logf=lambda s_, m: lines.append((s_, m)))
+        check("[중요] baseline: 첫 조회에서 끝난다", res["outcome"] == "baseline" and res["polls"] == 1, str(res)[:300])
+        check("baseline: 종료 코드 3", res["exit_code"] == 3 and F.WAIT_EXIT["baseline"] == 3)
+        check("baseline: 자지 않는다", fc.slept == [], str(fc.slept))
+        check("baseline: 기록 상태·사실", res["record_state"] == "baseline"
+              and res["facts"].get("event") == "baseline", str(res)[:300])
+        wl = [m for s_, m in lines if s_ == "wait"]
+        check("baseline: 조회 한 줄 + 끝 한 줄", len(wl) == 2 and " · 남은 " in wl[0]
+              and "끝 — baseline" in wl[1], str(wl))
+        txt = F.render_wait(res)
+        check("baseline: 렌더에 라벨", F.WAIT_LABEL["baseline"] in txt and "다시 하려면 --force" in txt, txt)
+        for bad in ("하세요", "하라", "해라", "실행하", "묻지 말"):
+            check(f"baseline: 렌더에 명령형 `{bad}` 없음", bad not in txt)
+        check("[중요] baseline: wait 는 쓰지 않는다", _listing(sd) == before)
+        # --force 준비가 같은 파일을 at_gate 로 덮으면 그 결과를 본다
+        F.write_state(path, {"event": "prepared", "state": "at_gate", "at": 1.0, "work_id": "ww",
+                             "round": 1, "repo": str(repo.resolve()), "reason": "준비됨"})
+        res = F.wait_for_gate(repo, "ww", api=_queue([_resp("ready_for_review", tasks=TASKS_DONE)]),
+                              state=sd, clock=fc.clock, sleep=fc.sleep)
+        check("baseline: --force 로 덮인 뒤엔 at_gate · 코드 0",
+              res["outcome"] == "at_gate" and res["exit_code"] == 0, str(res)[:300])
+    finally:
+        shutil.rmtree(sd, ignore_errors=True)
+        shutil.rmtree(repo, ignore_errors=True)
+
+
 def test_wait_cli_exit_codes():
     import contextlib
     import io
@@ -1204,7 +1247,7 @@ def test_wait_cli_exit_codes():
     try:
         F._resolve_api = lambda r: _queue([_resp("merged")])
         for oc, code in (("at_gate", 0), ("stopped", 3), ("error", 3), ("blocked", 3), ("terminal_rejected", 3),
-                         ("terminal_cancelled", 3), ("merged", 3), ("timeout", 4)):
+                         ("terminal_cancelled", 3), ("merged", 3), ("baseline", 3), ("timeout", 4)):
             got = {}
 
             def fake_wait(repo_, wid, **kw):
@@ -1307,6 +1350,7 @@ def main() -> int:
                test_wait_skeleton_deferred_until_other_tasks_finish,
                test_prepare_rework_merges_and_reports_second_skeleton,
                test_rework_reopens_stopped_history_once_and_scan,
+               test_wait_baseline_ends_first_poll,
                test_wait_cli_exit_codes,
                test_register_tool_carries_wait_command):
         fn()

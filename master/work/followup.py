@@ -49,7 +49,7 @@ fail-open 으로 넘긴다(code 판은 **fail-closed** — 못 돌린 것은 통
 `.venv/bin/python -m master.work.followup <work_id> [--repo PATH] [--python PY]`
 `.venv/bin/python -m master.work.followup --scan --project AXCluster --repo PATH`   (타이머)
 `.venv/bin/python -m master.work.followup <work_id> --wait --repo PATH [--interval S] [--timeout S]`
-    종료 코드: 0 at_gate · 3 stopped/error/blocked/terminal_*/merged · 4 timeout · 2 사용법
+    종료 코드: 0 at_gate · 3 stopped/error/blocked/terminal_*/merged/baseline · 4 timeout · 2 사용법
 """
 from __future__ import annotations
 
@@ -942,7 +942,7 @@ def _with_facts(rec: dict) -> dict:
     if not rec:
         return {}
     facts = dict(rec.get("facts") or {})
-    for k in ("work_id", "round", "state", "reason", "tree", "head", "build_passed"):
+    for k in ("work_id", "round", "state", "reason", "tree", "head", "build_passed", "event"):
         facts.setdefault(k, rec.get(k))
     if not facts.get("state"):
         facts["state"] = rec.get("event", "")
@@ -1196,7 +1196,7 @@ def hashlib_name(repo, project: str) -> str:
 WAIT_RECORDED = ("at_gate", "stopped", "error")     # `RECORDED` 의 결과 state — 이 셋이면 끝
 WAIT_TERMINAL = ("rejected", "cancelled")
 WAIT_EXIT = {"at_gate": 0, "stopped": 3, "error": 3, "blocked": 3, "terminal_rejected": 3,
-             "terminal_cancelled": 3, "merged": 3, "timeout": 4}
+             "terminal_cancelled": 3, "merged": 3, "baseline": 3, "timeout": 4}
 try:                                   # revise 상한 — 원전 `_DEFAULT_MAX_ATTEMPTS` 와 같은 값
     from .revise import MAX_ATTEMPTS as REVISE_MAX_ATTEMPTS
 except ImportError:                    # pragma: no cover — 배달본에 revise 가 없을 때
@@ -1206,6 +1206,7 @@ WAIT_LABEL = {
     "merged": "work 가 이미 `merged` — 마감됨, ⑦ 대기 대상 아님",
     "terminal_rejected": "work 가 `rejected` — ⑦ 준비 대상 아님",
     "terminal_cancelled": "work 가 `cancelled` — ⑦ 준비 대상 아님",
+    "baseline": "준비하지 않은 라운드(기준선 — followup 설치 전 종결) — 다시 하려면 --force",
     "timeout": "대기 시간 초과 — 준비 결과를 보지 못했다",
 }
 
@@ -1325,6 +1326,9 @@ def wait_for_gate(repo, work_id: str, *, api=None, state=None, interval: float =
                                               도는 워커를 건드리는지 보이게, 사용자 2026-10-11)
                   terminal_rejected · terminal_cancelled   work 종결 (실패 조각 사유)
                   merged                      work 마감
+                  baseline                    그 라운드 기록이 `scan` 첫 실행의 기준선(설치 전 종결)
+                                              — 타이머가 준비하지 않으므로 첫 조회에서 끝낸다
+                                              (`#798`). `--force` 준비가 같은 파일을 덮으면 그 결과를 본다
                   timeout                     마지막으로 본 큐 상태·기록 · 마지막 조회 오류
 
     큐 조회 실패는 로그를 남기고 계속 조회한다 — 끝까지 실패하면 `timeout` + `last_error`.
@@ -1383,6 +1387,12 @@ def wait_for_gate(repo, work_id: str, *, api=None, state=None, interval: float =
                         f"{res['verified']}/{res['total']}"
                         + (f" · 막힘 {res['blocked']}" if res["blocked"] else "")
                         + f" · 준비 {res['record_state'] or '없음'} · 남은 {_mmss(remain)}")
+            if rec.get("event") == "baseline":
+                # 기준선은 준비되지 않는다 — 기다리면 타임아웃까지 돈다(`#798`). `--force` 준비는
+                # 같은 파일을 덮으므로 지금 기록만 보면 된다.
+                res["facts"] = rec
+                res["record_state"] = "baseline"
+                return _finish("baseline")
             if res["record_state"] in WAIT_RECORDED and not stale_stopped:
                 res["facts"] = rec
                 res["question"] = str(rec.get("question") or "")
@@ -1456,7 +1466,7 @@ def main(argv=None) -> int:
     ap.add_argument("--state-dir", default="")
     ap.add_argument("--wait", action="store_true",
                     help="준비하지 않고 이 work 의 지금 라운드 ⑦ 준비 결과까지 읽기만 하며 기다린다 "
-                         "(종료 코드 0 at_gate · 3 stopped/error/blocked/terminal_*/merged · 4 timeout)")
+                         "(종료 코드 0 at_gate · 3 stopped/error/blocked/terminal_*/merged/baseline · 4 timeout)")
     ap.add_argument("--interval", type=float, default=30.0, help="--wait 조회 간격(초)")
     ap.add_argument("--timeout", type=float, default=5400.0, help="--wait 최대 대기(초)")
     ns = ap.parse_args(argv)
@@ -1477,7 +1487,7 @@ def main(argv=None) -> int:
         return 1
     if ns.wait:
         # stdout 은 결과 블록 하나, 조회마다의 줄은 stderr. 종료 코드: 0 at_gate ·
-        # 3 stopped/error/blocked/terminal_*/merged · 4 timeout · 2 사용법
+        # 3 stopped/error/blocked/terminal_*/merged/baseline · 4 timeout · 2 사용법
         res = wait_for_gate(repo, ns.work_id, api=api, state=ns.state_dir or None,
                             interval=ns.interval, timeout=ns.timeout, logf=stderr_log)
         print(render_wait(res))
