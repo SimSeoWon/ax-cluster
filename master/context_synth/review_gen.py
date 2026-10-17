@@ -80,17 +80,39 @@ def parseable_rows(body: str) -> int:
 
 _CONV_HEADER = "| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |"
 _SAFETY_HEADER = "| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |"
+# `#815` ④ — 골조 지시 이행 (사용자 결정 2026-10-18: 층2 차단이 아니라 리뷰 큐 지적으로 모은다).
+#    구분은 둘 — `불이행`(지시를 안 따랐다) · `골조 모순`(지시가 동결 선언·다른 지시와 충돌, 코드는 한쪽을 따랐다)
+_INTENT_HEADER = "| 파일 | 지시([PSEUDO]) | 실제 구현 | 라인 | 구분 |"
+INTENT_KINDS = ("불이행", "골조 모순")
+_DIFF_FILE_HEAD = re.compile(r'^--- (?:a/|/dev/null)')
 
 
-def format_ok(body: str) -> bool:
+def removed_pseudo_lines(diff: str) -> int:
+    """diff 에서 **지워진** `[PSEUDO]` 줄 수 — 골조 지시가 본문으로 바뀐 조각 커밋의 흔적.
+
+    결정적 판정이다(LLM 무관). 0 보다 크면 리뷰에 「4. 골조 지시 이행」 절을 요청한다.
+    [주의] 일반 diff 의 첫 열만 본다 — 머지 결합 diff(`--cc`)는 조각 커밋이 이미 리뷰했다.
+    """
+    n = 0
+    for line in (diff or "").split("\n"):
+        if line.startswith("-") and not _DIFF_FILE_HEAD.match(line) and "[PSEUDO]" in line:
+            n += 1
+    return n
+
+
+def format_ok(body: str, *, intent: bool = False) -> bool:
     """`### 모듈` 절 + 두 표 헤더가 있으면 형식 준수 — **데이터 행 0개도 정상이다**
     (위반 없는 커밋의 표는 헤더만 남는다, 원전 규약).
 
     [중요] 「(없음)」 자리표시 행은 내 발명이었고 소비자(#156)에서 `file="(없음)"` 쓰레기
     이슈가 되는 것이 확인됐다(2026-08-17) — 원전 프롬프트에 그런 규약은 없다. 빈 표는
-    비워 둔다."""
+    비워 둔다.
+
+    `intent` (`#815` ④) — 4절을 **요청한** 리뷰만 그 표 헤더를 요구한다(fail-closed, 1·2절과
+    같은 대우). 요청하지 않은 리뷰(옛 리뷰·사람 커밋)는 종전 그대로다."""
     return (bool(re.search(r'^###\s+', body, flags=re.M))
-            and _CONV_HEADER in body and _SAFETY_HEADER in body)
+            and _CONV_HEADER in body and _SAFETY_HEADER in body
+            and (not intent or _INTENT_HEADER in body))
 
 
 _FORMAT_EXAMPLE = (
@@ -106,6 +128,28 @@ _FORMAT_EXAMPLE = (
     "호출부 영향 없음.\n\n"
     "(위반·위험이 없으면 위 안전성 표처럼 **헤더만 두고 행을 비워 둔다** — "
     "「없음」 같은 자리표시 행을 만들지 않는다)\n")
+_EXAMPLE_ANCHOR = "호출부 영향 없음.\n\n"
+# [주의] 예시 표는 비워 둔다 — 행을 보여 주면 과생성을 부른다(review_runner 실측 1.9~6x).
+_INTENT_EXAMPLE = (
+    "## 4. 골조 지시 이행\n"
+    f"{_INTENT_HEADER}\n"
+    "|---|---|---|---|---|\n\n")
+
+# `#815` ④ — 측정한 문구(scratchpad l2intent `INTENT_AXIS`, 회수 6/6 · 음성 1/36)를 표 계약에 맞춰 옮겼다
+_INTENT_RULES = (
+    "  ## 4. 골조 지시 이행 (이 커밋은 골조 지시를 본문으로 바꾼 조각이다 — 각 `### ` 절에 이 표도 쓴다)\n"
+    f"  {_INTENT_HEADER}\n"
+    "- 골조 지시 이행은 지적만 한다(차단·판정이 아니다). DIFF 에서 **지워진** `[PSEUDO]`·`[DOC]` "
+    "주석이 이 변경의 작업 지시서다. 지시 하나하나를 그 자리에 **추가된** 코드와 대조한다.\n"
+    "  - 지시가 요구한 동작을 코드가 실제로 구현했는지 본다: 필요한 단계, 반환값과 모양, 조건, "
+    "더하거나 지울 이름, 그리고 「하지 말라」고 한 것.\n"
+    "  - 어긋난 지시마다 한 행: `지시([PSEUDO])` 칸에 지시 요지, `실제 구현` 칸에 코드가 대신 한 것, "
+    "`구분` 은 `불이행`.\n"
+    "  - 지시가 선언부(동결된 시그니처·선언)나 다른 지시와 모순되면 `구분` 을 `골조 모순` 으로 하고, "
+    "`실제 구현` 칸에 코드가 어느 쪽을 따랐는지 적는다.\n"
+    "  - 지시가 요구한 것을 넘어서는 스타일·명명·설계 취향은 이 표에 적지 않는다.\n"
+    "  - 모든 지시가 이행됐으면 표 헤더만 두고 행을 비운다. 자리표시 행은 쓰지 않는다. 칸 안에 `|` 를 쓰지 않는다.\n"
+)
 
 
 def _git(repo: Path, *args: str) -> tuple:
@@ -257,11 +301,14 @@ def domain_hint(paths, files: list) -> str:
 
 
 def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
-                 grounding: str = "", kind: str = "unreal") -> str:
-    """리뷰 프롬프트. [중요] 표 형식은 소비자의 파싱 계약이다 — 열 순서를 바꾸지 말 것."""
+                 grounding: str = "", kind: str = "unreal", intent: bool = False) -> str:
+    """리뷰 프롬프트. [중요] 표 형식은 소비자의 파싱 계약이다 — 열 순서를 바꾸지 말 것.
+
+    `intent` (`#815` ④) — 지워진 `[PSEUDO]` 가 있을 때만 4절 규칙·예시를 싣는다.
+    False 면 종전과 **바이트 단위로 같다**(테스트가 해시로 지킨다)."""
     python = kind == "code"
     role = "Python" if python else "Unreal Engine 5 C++"
-    example = format_example(kind)
+    example = format_example(kind, intent=intent)
     return (
         f"당신은 {role} 코드 리뷰어다. 아래 커밋의 **변경분만** 리뷰하라.\n\n"
         "규칙 (어기면 리포트가 못 쓰게 된다):\n"
@@ -280,6 +327,7 @@ def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
            "- Python 검토: 예외 처리·반환값·자원 수명·동시성·입력 검증을 diff 근거로 확인한다.\n"
            "- 프로젝트 규약을 지어내거나 UE·Blueprint 규칙을 적용하지 않는다.\n" if python else
            "  (자유 서술 — 이 변경이 의존 파일·Blueprint 에 줄 수 있는 영향)\n")
+        + (_INTENT_RULES if intent else "")
         +
         "- [중요] 출력은 반드시 `### ` 로 시작한다. 표 밖의 산문은 ## 3 절에만 쓴다.\n"
         "- 출력 예시 (이 골격 그대로):\n"
@@ -291,12 +339,14 @@ def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
     )
 
 
-def format_example(kind: str = "unreal") -> str:
-    """언어 예시는 바꾸되 소비자의 표 계약은 유지한다."""
+def format_example(kind: str = "unreal", *, intent: bool = False) -> str:
+    """언어 예시는 바꾸되 소비자의 표 계약은 유지한다. `intent` 면 3절 뒤에 빈 4절 표를 둔다."""
+    base = (_FORMAT_EXAMPLE.replace(_EXAMPLE_ANCHOR, _EXAMPLE_ANCHOR + _INTENT_EXAMPLE)
+            if intent else _FORMAT_EXAMPLE)
     if kind == "code":
-        return (_FORMAT_EXAMPLE.replace("Source/ModularStage/Mission", "master/module")
+        return (base.replace("Source/ModularStage/Mission", "master/module")
                 .replace("X.cpp", "example.py").replace("bFlag 접두 누락", "프로젝트 명명 규약 위반"))
-    return _FORMAT_EXAMPLE
+    return base
 
 
 def review_kind(paths) -> str:
@@ -330,6 +380,7 @@ class ReviewResult:
     error: str = ""             # [중요] 실패 — 이 커밋의 리뷰는 다시 생기지 않는다 (카나리 대상)
     format_ok: bool = True      # [중요] False = 사람은 읽어도 **소비자는 0건으로 읽는다** (카나리)
     retried: bool = False
+    pseudo_removed: int = 0     # `#815` ④ — 지워진 [PSEUDO] 줄 수. >0 이면 4절을 요청했다
     serial: str = ""            # 수정 항목 번호 (`#627` — R35). 비면 부여 실패 → `serial_error`
     serial_error: str = ""
 
@@ -431,9 +482,13 @@ def review_commit(paths, commit: str, files: list, *,
         r.error = "diff 를 읽지 못했다 — 리뷰 없이 넘기지 않고 기록한다"
         return r
 
+    r.pseudo_removed = removed_pseudo_lines(diff)
+    intent = r.pseudo_removed > 0
+    log("review", f"{commit[:8]} 골조 지시 이행 절 {'요청' if intent else '미요청'} "
+                  f"— 지워진 [PSEUDO] {r.pseudo_removed}줄")
     prompt = build_prompt(diff=diff, files=src_files, commit=commit,
                           domains=domain_hint(paths, src_files), grounding=grounding,
-                          kind=review_kind(paths))
+                          kind=review_kind(paths), intent=intent)
     _ask = chat if chat is not None else _recorded_chat(paths, commit)
 
     try:
@@ -441,19 +496,19 @@ def review_commit(paths, commit: str, files: list, *,
         # [중요] 형식 검증은 어떤 백엔드에도 그대로 둔다 — 첫 라이브 런(2026-08-17)의 교훈은
         #    "형식은 지시가 아니라 검증이 지킨다"였고, 그 결은 모델과 무관하다.
         #    grounding 과 같은 자리: 계약 위반은 조용히 통과시키지 않는다.
-        if not format_ok(body or ""):
+        if not format_ok(body or "", intent=intent):
             r.retried = True
             log("review", f"{commit[:8]} 형식 위반 — 예시를 앞세워 1회 재시도")
             body = _ask("직전 응답이 형식을 어겼다. 아래 골격 **그대로**, `### ` 로 시작해 "
                         "표만으로 다시 써라. 표 밖 산문은 ## 3 에만.\n\n"
-                        + format_example(review_kind(paths)) + "\n\n" + prompt)
+                        + format_example(review_kind(paths), intent=intent) + "\n\n" + prompt)
     except ReviewChatError as e:
         r.error = f"리뷰 생성 실패: {e}"
         return r
     if not (body or "").strip():
         r.error = "리뷰 응답이 비었다"
         return r
-    r.format_ok = format_ok(body)
+    r.format_ok = format_ok(body, intent=intent)
 
     from datetime import datetime
     ts = datetime.now()

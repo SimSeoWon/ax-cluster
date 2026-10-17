@@ -15,6 +15,7 @@
     ⑫ 기존 초안을 재사용하고 성공 시 제거한다. 실패 시에는 보존한다
     ⑪ 🔴 **`main()` 이 실제로 돈다** — 유닛이 부르는 진입점이다
     ⑬ 머지는 결합 diff(`--cc`)로 가른다 — 비면 스킵(done), 있으면 그것만 리뷰 (`#744` ①)
+    ⑭ 지워진 [PSEUDO] 가 있으면 초고·퇴고 둘 다 「골조 지시 이행」을 싣는다 (`#815` ④)
 
 [중요] ⑪ 은 값을 치르고 얻었다. 첫 배포 회차가 @reg.projects@ AttributeError 로 죽었는데
 (`Registry` 의 필드는 `.names` 다), **유닛 21건이 전부 통과한 상태였다** — `run_once` 만 탔고
@@ -470,6 +471,84 @@ def test_시간예산과_주인없는_running_회수():
     shutil.rmtree(root); shutil.rmtree(projects)
 
 
+def make_piece_repo():
+    """골조(`[PSEUDO]`) → 조각 커밋이 그 줄을 지우고 본문을 쓴다 — 실제 조각 커밋의 모양."""
+    root = Path(tempfile.mkdtemp(prefix="ax-run-"))
+    repo = root / "repo"
+    (repo / "Source" / "M").mkdir(parents=True)
+    git(repo.parent, "init", "-q", str(repo))
+    git(repo, "config", "user.email", "t@e.st")
+    git(repo, "config", "user.name", "테스터")
+    (repo / "Source" / "M" / "A.h").write_text("class AFoo {\npublic:\n  bool Bar();\n};\n",
+                                              encoding="utf-8")
+    (repo / "Source" / "M" / "A.cpp").write_text(
+        "bool AFoo::Bar() {\n  // [PSEUDO] 실패하면 false 를 돌려준다\n  return false;\n}\n",
+        encoding="utf-8")
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "골조")
+    (repo / "Source" / "M" / "A.cpp").write_text(
+        "bool AFoo::Bar() {\n  int x = 1;\n  return true;\n}\n", encoding="utf-8")
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "[task:t1] worker=w target=A.cpp")
+    return root, git(repo, "rev-parse", "HEAD").stdout.strip()
+
+
+def _intent_body(rows=""):
+    return (_review_body().rstrip() + "\n\n## 4. 골조 지시 이행\n" + RG._INTENT_HEADER
+            + "\n|---|---|---|---|---|\n" + rows)
+
+
+def test_골조_지시_이행_절():
+    import hashlib
+    diff = "--- a/x.py\n+++ b/x.py\n@@ -1,2 +1,1 @@\n-import json, os\n+import os\n"
+    gold = {"unreal": "78960881fa44da5b60af7c7b737ddc0a29accc01fe8338ec8d6eb1012cc0ac34",
+            "code": "d23ce97100d29b8662bc06f629a7644e4e194119d42a3fb514b1a7dcf6da0dcf"}
+    for kind, h in gold.items():
+        seen = []
+        R.draft(diff, "decl", call=lambda p: seen.append(p) or "없음", kind=kind)
+        check(f"⑭ [중요] intent 없는 초고 프롬프트는 종전과 바이트 단위로 같다 ({kind})",
+              hashlib.sha256(seen[0].encode()).hexdigest() == h)
+        seen2 = []
+        R.draft(diff, "decl", call=lambda p: seen2.append(p) or "없음", kind=kind, intent=True)
+        check(f"⑭ intent 초고는 지시 대조를 덧붙인다 ({kind})",
+              seen2[0] == seen[0] + R.DRAFT_INTENT and "표를 만들지 마라" in seen2[0])
+
+    root, head = make_piece_repo()
+    Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
+    drafts, finals, logs = [], [], []
+    row = "| Source/M/A.cpp | 실패하면 false 를 돌려준다 | 늘 true 를 돌려준다 | 3 | 불이행 |\n"
+    r = R.run_once(Paths(root), draft_call=lambda p: drafts.append(p) or "없음",
+                   review_call=lambda p: finals.append(p) or _intent_body(row),
+                   logf=logs.append)
+    check("⑭ 초고 프롬프트가 지시 대조를 싣는다", drafts and R.DRAFT_INTENT in drafts[0])
+    check("⑭ 퇴고 프롬프트가 4절을 싣는다",
+          finals and "## 4. 골조 지시 이행" in finals[0] and RG._INTENT_HEADER in finals[0])
+    check("⑭ 요청 로그 한 줄", sum("골조 지시 이행 절 요청" in m for m in logs) == 1, str(logs))
+    check("⑭ 4절 있는 퇴고는 done", r.state == "done" and bool(r.written), r.why)
+    from master.context_synth import fix_index as F
+    items = F.get_doc(root, r.serial)["items_detail"] if r.serial else []
+    check("⑭ 4절 행이 R 항목이 된다 (안전성 1 + 지시 이행 1)",
+          [i["category"] for i in items] == ["safety", "intent"], str(items))
+    shutil.rmtree(root)
+
+    root, head = make_piece_repo()
+    Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
+    r = R.run_once(Paths(root), draft_call=lambda p: "없음",
+                   review_call=lambda p: _review_body())
+    check("⑭ [중요] 4절을 요청했는데 빠지면 fail-closed — 큐 실패 + _rejected 보존",
+          r.state == "failed" and "형식 위반" in r.why
+          and list((Path(root) / "reviews" / "_rejected").glob("*.md")), r.why)
+    shutil.rmtree(root)
+
+    root, head = make_repo()
+    Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
+    drafts, finals = [], []
+    r = R.run_once(Paths(root), draft_call=lambda p: drafts.append(p) or "없음",
+                   review_call=lambda p: finals.append(p) or _review_body())
+    check("⑭ [중요] [PSEUDO] 없는 커밋은 둘 다 4절 없이 종전대로 done",
+          R.DRAFT_INTENT not in drafts[0] and "## 4. 골조 지시 이행" not in finals[0]
+          and r.state == "done")
+    shutil.rmtree(root)
+
+
 if __name__ == "__main__":
     for fn in (test_로컬뒤_antigravity가_퇴고한다,
                test_로컬_없음이어도_antigravity가_본다,
@@ -478,7 +557,8 @@ if __name__ == "__main__":
                test_diff를_못_읽으면_결정적이다,
                test_설계된_스킵, test_선언부, test_main_이_실제로_돈다,
                test_퇴고도_사용량에_남는다, test_grounding_머리말,
-               test_머지는_결합_diff로_가른다, test_시간예산과_주인없는_running_회수):
+               test_머지는_결합_diff로_가른다, test_시간예산과_주인없는_running_회수,
+               test_골조_지시_이행_절):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

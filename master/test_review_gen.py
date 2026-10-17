@@ -423,6 +423,101 @@ def test_serial_travels_to_journal():
           r2.serial_error)
 
 
+# ── ⑤ 골조 지시 이행 절 (`#815` ④) ────────────────────────────
+
+# 변경 전 코드로 잰 해시 (2026-10-18). intent=False 프롬프트는 바이트 단위로 그대로여야 한다
+_GOLD_DIFF = "--- a/x.py\n+++ b/x.py\n@@ -1,2 +1,1 @@\n-import json, os\n+import os\n"
+_GOLDEN = {
+    "bp-unreal-False": "51047dc1e1a69f774a77e64dceb4821d87d9ecd8376161b2119e1da762f4436a",
+    "bp-unreal-True": "0b114764d70a629fc0ee903b4d153bfff9f85977e19cc7f603eeed3f323df55b",
+    "ex-unreal": "2af61ce6d0e2d718d4941bb5803984f1c6cd4f7f467c408d41b777496173dfb4",
+    "bp-code-False": "14e3da5a7bf24dc0c03bb9a55b922eb062782ba5cc6b141377ed432ff1e4a308",
+    "bp-code-True": "0daabd89c3f15a568edb4f7ddf84c08d8747b8966476535cfea7ab71c7ce004d",
+    "ex-code": "a20d07d0218e1bd4f3456bb43bb92318d322308e6d4177ed96b61b48b902263e",
+}
+
+_PSEUDO_DIFF = ("--- a/m.py\n+++ b/m.py\n@@ -1,3 +1,2 @@\n"
+                "-# [PSEUDO] 실패하면 False 를 돌려준다\n"
+                "-# [DOC] 이름 있는 함수로\n"
+                " def f():\n+    return True\n")
+
+
+def test_intent_section_only_when_pseudo_removed():
+    import hashlib
+    for kind in ("unreal", "code"):
+        for gnd in ("", "## 선언부\nclass A"):
+            pr = RG.build_prompt(diff=_GOLD_DIFF, files=["x.py"], commit="abcdef1234567890",
+                                 domains="d", grounding=gnd, kind=kind)
+            key = f"bp-{kind}-{bool(gnd)}"
+            check(f"[중요] [PSEUDO] 없는 프롬프트는 종전과 바이트 단위로 같다 ({key})",
+                  hashlib.sha256(pr.encode()).hexdigest() == _GOLDEN[key])
+        check(f"[중요] 예시도 종전 그대로 ({kind})",
+              hashlib.sha256(RG.format_example(kind).encode()).hexdigest() == _GOLDEN[f"ex-{kind}"])
+
+    check("지워진 [PSEUDO] 를 센다 ([DOC]·추가 줄·파일 머리는 안 센다)",
+          RG.removed_pseudo_lines(_PSEUDO_DIFF) == 1, str(RG.removed_pseudo_lines(_PSEUDO_DIFF)))
+    check("추가된 [PSEUDO] 는 지시 이행 흔적이 아니다",
+          RG.removed_pseudo_lines("+# [PSEUDO] x\n--- a/[PSEUDO].py\n") == 0)
+    check("빈 diff 는 0", RG.removed_pseudo_lines("") == 0)
+
+    for kind in ("unreal", "code"):
+        pr = RG.build_prompt(diff=_PSEUDO_DIFF, files=["m.py"], commit="abcdef1234567890",
+                             kind=kind, intent=True)
+        check(f"[중요] intent 프롬프트에 4절 규칙·표 헤더가 있다 ({kind})",
+              "## 4. 골조 지시 이행" in pr and RG._INTENT_HEADER in pr
+              and "골조 모순" in pr and "불이행" in pr)
+        check(f"  빈 표 규칙(자리표시 금지)을 4절에도 말한다 ({kind})",
+              "모든 지시가 이행됐으면 표 헤더만" in pr)
+        ex = RG.format_example(kind, intent=True)
+        check(f"  예시가 3절 뒤에 빈 4절 표를 둔다 ({kind})",
+              ex.index("## 3. 영향 분석") < ex.index("## 4. 골조 지시 이행")
+              and RG.parseable_rows(ex) == 1, str(RG.parseable_rows(ex)))
+
+
+def test_intent_format_is_fail_closed():
+    old = ("### M\n\n## 1. 변경분 코딩 컨벤션\n"
+           "| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n|---|---|---|---|---|\n\n"
+           "## 2. 변경분 버그·안전성\n"
+           "| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n|---|---|---|---|---|\n")
+    check("[중요] 4절 없는 옛 리뷰는 그대로 형식 준수", RG.format_ok(old))
+    check("[중요] 4절을 요청했는데 없으면 형식 위반 (1·2절과 같은 fail-closed)",
+          not RG.format_ok(old, intent=True))
+    with4 = old + "\n## 4. 골조 지시 이행\n" + RG._INTENT_HEADER + "\n|---|---|---|---|---|\n"
+    check("  4절 표 헤더가 있으면 통과 (빈 표 정상)", RG.format_ok(with4, intent=True))
+
+    root, p = fixture()
+    commit_change(p, "// [PSEUDO] 1 을 돌려준다\nint F();\n", msg="골조")
+    c = commit_change(p, "int F() { return 2; }\n", msg="[task:t1] worker=w target=A.cpp")
+    calls, logs = [], []
+
+    def no_section4(prompt):
+        calls.append(prompt)
+        return CANNED
+
+    r = RG.review_commit(p, c, ["Source/M/A.cpp"], chat=no_section4,
+                         logf=lambda k, m: logs.append(m))
+    check("조각 커밋의 지워진 [PSEUDO] 를 센다", r.pseudo_removed == 1, str(r.pseudo_removed))
+    check("[중요] 첫 프롬프트가 4절을 싣는다", calls and "## 4. 골조 지시 이행" in calls[0])
+    check("[중요] 4절이 빠진 응답은 재시도한다", r.retried and len(calls) == 2, str(len(calls)))
+    check("  재시도 예시도 4절을 싣는다",
+          len(calls) == 2 and calls[1].index(RG._INTENT_HEADER) < calls[1].index("## 커밋"))
+    check("[중요] 두 번 다 빠지면 format_ok=False", r.format_ok is False)
+    check("요청 여부·줄 수를 로그 한 줄로 남긴다",
+          any("골조 지시 이행 절 요청 — 지워진 [PSEUDO] 1줄" in m for m in logs), str(logs))
+
+    good = CANNED.rstrip() + "\n\n## 4. 골조 지시 이행\n" + RG._INTENT_HEADER + "\n|---|---|---|---|---|\n"
+    r2 = RG.review_commit(p, c, ["Source/M/A.cpp"], chat=lambda pr: good)
+    check("4절이 있으면 재시도 없이 통과", r2.format_ok and not r2.retried)
+
+    c3 = commit_change(p, "int F() { return 3; }\n", msg="사람 변경")
+    calls3, logs3 = [], []
+    r3 = RG.review_commit(p, c3, ["Source/M/A.cpp"], chat=lambda pr: calls3.append(pr) or CANNED,
+                          logf=lambda k, m: logs3.append(m))
+    check("[중요] [PSEUDO] 없는 커밋은 4절을 요청하지 않는다",
+          "## 4. 골조 지시 이행" not in calls3[0] and r3.format_ok and not r3.retried)
+    check("  미요청도 로그로 남긴다", any("미요청 — 지워진 [PSEUDO] 0줄" in m for m in logs3), str(logs3))
+
+
 def main() -> int:
     for fn in (test_serial_travels_to_journal,
                test_trivial_detection, test_author_exclusion_skips_before_llm,
@@ -430,7 +525,8 @@ def main() -> int:
                test_report_is_parseable_by_origin_collector, test_prompt_carries_the_contract,
                test_consumer_wiring_failure_goes_to_canary,
                test_failure_reasons_are_never_silent, test_synth_paths_log_their_gaps,
-               test_generation_chain_is_codex_first_but_verification_is_not):
+               test_generation_chain_is_codex_first_but_verification_is_not,
+               test_intent_section_only_when_pseudo_removed, test_intent_format_is_fail_closed):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_review_gen: {PASS}/{total} 통과")

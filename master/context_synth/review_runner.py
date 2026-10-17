@@ -105,6 +105,13 @@ DRAFT_PROMPT = """당신은 Unreal Engine 5 C++ 리뷰어다. 아래 커밋의 *
 {diff}
 ```"""
 
+# `#815` ④ — 퇴고의 「4. 골조 지시 이행」 절과 같은 축을 초고에도 싣는다(형식 자유 · 지워진 [PSEUDO] 가 있을 때만)
+DRAFT_INTENT = (
+    "\n이 커밋은 골조 지시를 본문으로 바꾼 조각이다. DIFF 에서 **지워진** `[PSEUDO]`·`[DOC]` 주석(작업 지시)을 "
+    "그 자리에 추가된 코드와 하나씩 대조해, 지시대로 구현되지 않은 것(단계·반환값·조건·더하거나 지울 이름·"
+    "「하지 말라」고 한 것)과, 지시가 선언부나 다른 지시와 모순되는 것(코드가 어느 쪽을 따랐는지)도 적어라. "
+    "지시를 넘어서는 스타일·설계 취향은 적지 않는다.\n")
+
 
 class RunnerResult:
     """한 회차의 결과 — 호출자(유닛·테스트)가 읽는다."""
@@ -195,8 +202,11 @@ def declarations(repo: Path, files: list, commit: str, *,
 # ── ③ 초고 ──────────────────────────────────────────────────────────────────
 
 def draft(diff: str, decls: str = "", *, model: str = DRAFT_MODEL,
-          call=None, timeout: int = DRAFT_TIMEOUT, logf=None, kind: str = "unreal") -> tuple:
+          call=None, timeout: int = DRAFT_TIMEOUT, logf=None, kind: str = "unreal",
+          intent: bool = False) -> tuple:
     """로컬 모델에 초고를 청한다. 반환 `(초고, 사유)` — 실패해도 예외를 올리지 않는다.
+
+    `intent` (`#815` ④) — 지워진 `[PSEUDO]` 가 있으면 `DRAFT_INTENT` 를 덧붙인다. False 면 종전과 같다.
 
     🔴 [중요] **실패가 리뷰를 막지 않는다.** 호출자는 빈 초고로 ④ 를 계속한다.
     """
@@ -214,7 +224,10 @@ def draft(diff: str, decls: str = "", *, model: str = DRAFT_MODEL,
         if kind == "code":
             template = template.replace("Unreal Engine 5 C++", "Python")
             template += "\nPython 예외·반환값·자원 수명·동시성·입력을 검토하되 diff에 근거하고 UE 규칙을 적용하지 마라.\n"
-        out = (fn(template.format(decls=head, diff=diff)) or "").strip()
+        prompt = template.format(decls=head, diff=diff)
+        if intent:
+            prompt += DRAFT_INTENT
+        out = (fn(prompt) or "").strip()
     except Exception as e:                                       # noqa: BLE001
         why = f"{type(e).__name__}: {e}"
         log(f"[리뷰큐] 초고 실패 {why[:90]} — 초고 없이 진행")
@@ -407,8 +420,10 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
         from ..work import usage as usage_mod                     # noqa: PLC0415
         # `#713` ① — 초고의 브로커 호출을 트윈의 `usage_log.jsonl` 에 `review` 로 남긴다
         with usage_mod.sink(paths.usage_log, source="review", task_id=str(commit)[:12]):
+            # 4절 요청 여부는 퇴고(`review_commit`)와 같은 결정적 판정이다 — 로그 한 줄은 그쪽이 남긴다
             body, why = draft(diff, decls, model=model, call=draft_call, logf=log,
-                              kind=rg.review_kind(paths))
+                              kind=rg.review_kind(paths),
+                              intent=rg.removed_pseudo_lines(diff) > 0)
         res.drafted, res.draft_why = bool(body), why
         fn = write or write_draft
         try:

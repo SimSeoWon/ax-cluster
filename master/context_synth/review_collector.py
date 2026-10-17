@@ -4,7 +4,10 @@
 [중요] **이 파서가 생산자의 형식 계약 그 자체다** — `review_gen.parseable_rows`/`format_ok` 가
 이 정규식을 기준으로 만들어졌고, 여기가 바뀌면 생산자 검증기도 같이 바뀌어야 한다.
 
-원전과의 차이: 없음 (파싱 로직 글자대로). 타입 힌트 표기만 우리 파이썬에 맞췄다.
+원전과의 차이 하나 (`#815` ④): 「## 4. 골조 지시 이행」 절. 안전성 표는 그 절 앞에서 끊는다
+(끊지 않으면 4절 행이 안전성으로 새어 든다). 4절 행은 `include_intent=True` 일 때만
+`category="intent"` 로 낸다 — 기본값은 빼는 쪽이라 주간 플랜(`planner`)은 종전 그대로 읽는다.
+4절이 없는 리뷰는 파싱 결과가 종전과 같다.
 """
 from __future__ import annotations
 
@@ -17,7 +20,7 @@ from pathlib import Path
 class ReviewIssue:
     file: str
     line: str
-    category: str          # "convention" | "safety"
+    category: str          # "convention" | "safety" | "intent"(#815 ④)
     severity: str          # "high" | "mid" | "low"
     description: str
     recommendation: str
@@ -37,11 +40,27 @@ def _normalize_severity(raw: str) -> str:
     return "low"
 
 
-def parse_review_reports(author_reviews_dir: Path, since_date: str) -> list:
+# `#815` ④ — 4절 머리. 「## 4.」 만으로 잡지 않는다 — 다른 4절이 있는 리뷰의 번호를 흔들지 않게
+_INTENT_SECTION = re.compile(r'^##\s*4\.\s*골조\s*지시\s*이행', re.MULTILINE)
+
+
+def _intent_severity(kind: str) -> str:
+    """구분 → 심각도. 불이행 = mid(게이트를 지난 동작 이탈) · 골조 모순 = low(코드는 동결 쪽을 따랐다,
+    고칠 곳은 골조) · 모르는 값도 low — 원문은 설명에 그대로 남는다."""
+    if "모순" in kind:
+        return "low"
+    if "불이행" in kind:
+        return "mid"
+    return "low"
+
+
+def parse_review_reports(author_reviews_dir: Path, since_date: str, *,
+                         include_intent: bool = False) -> list:
     """특정 작성자의 리뷰 MD 파일들을 파싱하여 구조화된 이슈 목록을 반환한다.
 
     author_reviews_dir: 작성자별 리뷰 디렉토리 (reviews/<author>/)
     since_date: 'YYYY-MM-DD' 형식, 이 날짜 이후의 리뷰만 수집.
+    include_intent: 4절(골조 지시 이행) 행도 낸다 — 수정 항목 색인(`fix_index`)만 켠다.
     """
     issues: list[ReviewIssue] = []
 
@@ -83,16 +102,33 @@ def parse_review_reports(author_reviews_dir: Path, since_date: str) -> list:
                     safety_start = m.start()
                     break
 
+            # 4절 위치 (#815 ④) — 없으면 None 이고 아래 두 표의 범위는 종전과 같다
+            im = _INTENT_SECTION.search(block)
+            intent_start = im.start() if im else None
+
             if conv_start is not None:
                 conv_end = safety_start if safety_start else len(block)
+                if intent_start is not None and conv_start < intent_start < conv_end:
+                    conv_end = intent_start
                 _parse_table_rows(
                     block[conv_start:conv_end], "convention",
                     module_name, date_part, commit_hash, rf.name, issues,
                 )
 
             if safety_start is not None:
+                safety_end = len(block)
+                if intent_start is not None and intent_start > safety_start:
+                    safety_end = intent_start
                 _parse_table_rows(
-                    block[safety_start:], "safety",
+                    block[safety_start:safety_end], "safety",
+                    module_name, date_part, commit_hash, rf.name, issues,
+                )
+
+            if include_intent and intent_start is not None:
+                ends = [x for x in (conv_start, safety_start)
+                        if x is not None and x > intent_start]
+                _parse_table_rows(
+                    block[intent_start:min(ends) if ends else len(block)], "intent",
                     module_name, date_part, commit_hash, rf.name, issues,
                 )
 
@@ -120,6 +156,17 @@ def _parse_table_rows(text: str, category: str, module: str,
                 category="convention",
                 severity=_normalize_severity(vals[4]),
                 description=f"{vals[1]}: {vals[2]}",
+                recommendation="",
+                review_date=date, commit_hash=commit,
+                module=module, source_review=source_file,
+            ))
+        elif category == "intent":
+            # | 파일 | 지시([PSEUDO]) | 실제 구현 | 라인 | 구분 | — 목록 화면이 분류 칸을 안 그리므로 설명이 스스로 밝힌다
+            out_list.append(ReviewIssue(
+                file=vals[0], line=vals[3],
+                category="intent",
+                severity=_intent_severity(vals[4]),
+                description=f"골조 지시 이행({vals[4]}): 지시 「{vals[1]}」 · 실제 「{vals[2]}」",
                 recommendation="",
                 review_date=date, commit_hash=commit,
                 module=module, source_review=source_file,

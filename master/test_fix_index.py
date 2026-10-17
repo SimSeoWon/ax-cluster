@@ -11,6 +11,7 @@
     ⑦ 플랜 결정은 MD frontmatter `status` 를 원전 값(acted/dismissed/pending)으로 맞춘다
     ⑧ [중요] 깨진 색인은 **덮지 않는다** (덮으면 번호가 다시 매겨진다)
     ⑨ 동시에 훑어도 번호가 겹치지 않는다 (파일 잠금)
+    ⑩ 「4. 골조 지시 이행」 행도 R 항목이다 — 분류 intent · 불이행=mid · 골조 모순=low (`#815` ④)
 
 `.venv/bin/python master/test_fix_index.py`
 """
@@ -228,11 +229,64 @@ def test_concurrent_sweeps():
     shutil.rmtree(root)
 
 
+def _intent_section(rows: str) -> str:
+    return ("\n## 3. 영향 분석\n영향 없음.\n\n## 4. 골조 지시 이행\n"
+            "| 파일 | 지시([PSEUDO]) | 실제 구현 | 라인 | 구분 |\n|---|---|---|---|---|\n" + rows)
+
+
+def test_intent_rows_are_items():
+    root = make_root()
+    a = root / "reviews" / "Simkung"
+    rows = ("| m/x.py | 실패하면 False 를 돌려준다 | 늘 True 를 돌려준다 | 7 | 불이행 |\n"
+            "| m/x.py | json 만 지운다 | 선언부가 json 을 요구해 남겼다 | 1 | 골조 모순 |\n")
+    (a / "2026-09-13_1710_dddddddd.md").write_text(
+        review_text("d" * 40, "Simkung", rows=1) + _intent_section(rows), encoding="utf-8")
+    (a / "2026-09-13_1711_eeeeeeee.md").write_text(
+        review_text("e" * 40, "Simkung", rows=1) + _intent_section(""), encoding="utf-8")
+    before = {s: [i["id"] for i in F.get_doc(root, s)["items_detail"]] for s in ("R1", "R2", "R3")}
+    F.sweep(root)
+    data = F.load(root)
+    serial = F.serial_for_commit(root, "d" * 40)
+    items = F.get_doc(root, serial)["items_detail"]
+    check("⑩ 컨벤션 1 + 안전성 1 + 지시 이행 2", [i["category"] for i in items]
+          == ["convention", "safety", "intent", "intent"], str([i["category"] for i in items]))
+    it = [i for i in items if i["category"] == "intent"]
+    check("⑩ 불이행 → mid · 골조 모순 → low", [i["severity"] for i in it] == ["mid", "low"],
+          str([i["severity"] for i in it]))
+    check("⑩ 설명이 스스로 「골조 지시 이행(구분)」을 밝힌다 (목록 화면에 분류 칸이 없다)",
+          it[0]["description"].startswith("골조 지시 이행(불이행): 지시 「실패하면")
+          and "늘 True" in it[0]["description"] and it[0]["line"] == "7", it[0]["description"])
+    check("⑩ [중요] 4절 행이 안전성으로 새지 않는다",
+          sum(i["category"] == "safety" for i in items) == 1)
+    check("⑩ R 번호로 상태를 기록할 수 있다",
+          F.set_status(root, it[1]["id"], "dismissed", note="골조 쪽 문제")["ok"])
+    s = F._summary(root, F.load(root), serial, {})[0]
+    check("⑩ 요약의 심각도 집계에 들어간다", s["severity"] == {"high": 1, "mid": 1, "low": 2}, str(s))
+    empty = F.get_doc(root, F.serial_for_commit(root, "e" * 40))["items_detail"]
+    check("⑩ 빈 4절 표는 항목 0", [i["category"] for i in empty] == ["convention", "safety"],
+          str(empty))
+    after = {s: [i["id"] for i in F.get_doc(root, s)["items_detail"]] for s in ("R1", "R2", "R3")}
+    check("⑩ [중요] 4절 없는 옛 리뷰의 번호·항목은 그대로", before == after, f"{before} {after}")
+
+    from master.context_synth.review_collector import parse_review_reports
+    plan_view = parse_review_reports(a, "0000-00-00")
+    check("⑩ [중요] 주간 플랜 기본 수집은 4절을 빼고 읽는다 (안전성으로도 새지 않는다)",
+          all(i.category != "intent" for i in plan_view)
+          and sum(i.source_review.endswith("dddddddd.md") for i in plan_view) == 2,
+          str([(i.source_review, i.category) for i in plan_view]))
+    from master.context_synth import dismissal_candidates as DC
+    ids = {i["id"] for i in DC._inputs(root)}
+    check("⑩ 주말 기각 후보 입력에 4절 미결 항목이 실린다 (기각한 것은 빠진다)",
+          it[0]["id"] in ids and it[1]["id"] not in ids, str(sorted(ids)))
+    shutil.rmtree(root)
+
+
 if __name__ == "__main__":
     for fn in (test_serials_and_idempotent, test_archive_move_keeps_serial,
                test_header_less_review_binds_by_prefix, test_missing_then_revived,
                test_summary_has_no_body, test_status_validation, test_plan_status_frontmatter,
-               test_broken_index_is_not_overwritten, test_concurrent_sweeps):
+               test_broken_index_is_not_overwritten, test_concurrent_sweeps,
+               test_intent_rows_are_items):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

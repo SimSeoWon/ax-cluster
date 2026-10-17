@@ -267,7 +267,9 @@ def _review_items(root: Path, doc: dict, serial: str, cache: dict) -> list:
     key = f.parent.as_posix()
     if key not in cache:
         by_file: dict = {}
-        for i in parse_review_reports(f.parent, "0000-00-00"):
+        # `#815` ④ — 4절(골조 지시 이행) 행도 R 항목이다. 모듈 절마다 컨벤션 → 안전성 → 4절 순이라
+        #    4절이 없는 옛 리뷰의 번호는 그대로다
+        for i in parse_review_reports(f.parent, "0000-00-00", include_intent=True):
             by_file.setdefault(i.source_review, []).append(i)
         cache[key] = by_file
     out = []
