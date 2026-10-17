@@ -206,7 +206,8 @@ def run_regression(tree, path: str, *, python: str = "", runner=None) -> dict:
 
 
 TAIL_LINES = 30
-STATIC_NAMES = {"pyflakes": "정적 pyflakes", "imports": "정적 import"}   # `check_counts` 항목 이름
+STATIC_NAMES = {"pyflakes": "정적 pyflakes", "imports": "정적 import",   # `check_counts` 항목 이름
+                "mypy": "정적 mypy"}                                      # `#815` — call-arg 만 차단
 _re_fail = _re_mod.compile(r"^(FAIL|ERROR): ", _re_mod.M)
 
 
@@ -230,7 +231,8 @@ def code_build_fn(*, base_ref: str, start_dir: str = OFFICIAL_START_DIR,
     ① 공식 통합 검사 — `python -B -m unittest discover -s <start_dir> -p <pattern> -f -v`
        (판정은 `build_local.parse_unittest` 그대로: `Ran N`(N≥1) · `OK` · rc 0)
     ② 회귀 검사 — `base_ref..HEAD` 가 건드린 파일마다 `regression_targets` 규칙으로 고른 스크립트
-    ③ 정적 검사 (`#804`) — 같은 바뀐 `.py` 의 pyflakes(문법·undefined name 만 차단) 와 import.
+    ③ 정적 검사 (`#804`) — 같은 바뀐 `.py` 의 pyflakes(문법·undefined name 만 차단) 와 import,
+       mypy(`[call-arg]` 만 차단, `#815`).
        base 에 이미 있던 결함은 막지 않는다. 판정·기준선은 `pystatic` 머리말.
 
     [중요] 통과 = ① 통과 **그리고** ② 전부 통과 **그리고** ③ 차단 0 (확인 불가도 실패). 원전 `integration_build_impl` 의
@@ -314,7 +316,7 @@ def code_build_fn(*, base_ref: str, start_dir: str = OFFICIAL_START_DIR,
         if static:
             if files is None:
                 miss = {"ok": False, "setup_error": files_err, "summary": "확인 불가 — " + files_err}
-                out["static"] = {"pyflakes": dict(miss), "imports": dict(miss)}
+                out["static"] = {k: dict(miss) for k in STATIC_NAMES}
             else:
                 try:
                     out["static"] = stat(root, files, logf)
@@ -322,10 +324,10 @@ def code_build_fn(*, base_ref: str, start_dir: str = OFFICIAL_START_DIR,
                     msg = f"정적 검사 호출 실패 — {type(e).__name__}: {e}"
                     logf("check", f"[중요] {msg}")
                     miss = {"ok": False, "setup_error": msg, "summary": "확인 불가 — " + msg}
-                    out["static"] = {"pyflakes": dict(miss), "imports": dict(miss)}
-            static_ok = all((out["static"].get(k) or {}).get("ok") is True
-                            for k in ("pyflakes", "imports"))
-        sbad = [STATIC_NAMES[k] for k in ("pyflakes", "imports")
+                    out["static"] = {k: dict(miss) for k in STATIC_NAMES}
+            # [주의] 키가 빠진 결과(주입된 static_fn 등)도 「확인 불가」다 — 없는 키를 통과로 접지 않는다
+            static_ok = all((out["static"].get(k) or {}).get("ok") is True for k in STATIC_NAMES)
+        sbad = [STATIC_NAMES[k] for k in STATIC_NAMES
                 if static and (out["static"].get(k) or {}).get("ok") is not True]
 
         passed = integ.get("passed") is True and reg_ok and static_ok
@@ -489,7 +491,7 @@ def check_counts(res) -> dict:
                           "summary": str(r.get("reason") or "")[:200],
                           **({"tail": str(r["tail"])[-3000:]} if not r.get("ok") and r.get("tail")
                              else {})})
-        # `#804` — 정적 검사 둘. 막힌 사유(차단 항목)를 꼬리로 실어 ⑦ 고지·노트에 보이게 한다
+        # `#804`·`#815` — 정적 검사 셋. 막힌 사유(차단 항목)를 꼬리로 실어 ⑦ 고지·노트에 보이게 한다
         for key, name in STATIC_NAMES.items():
             s = (res.get("static") or {}).get(key)
             if not s:

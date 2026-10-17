@@ -27,3 +27,7 @@ chromadb
 # 리눅스에서 UE 매크로 전처리 결과 검증됨: 1,654 파일 → 1,806 클래스 (2026-08-08).
 tree-sitter
 tree-sitter-cpp
+
+# ⑦ code 판 정적 검사 (`master/work/pystatic.py`, `#815`). `[call-arg]` 만 차단하고 나머지는 노트다.
+# 판정 실측이 이 판에서 나왔다 — 올리면 다시 잰다.
+mypy==1.11.2
