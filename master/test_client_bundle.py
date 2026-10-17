@@ -824,7 +824,25 @@ def test_claude_md_body_has_a_project_axis() -> None:
           "AX 관리 블록에 있다" in ns and "NS.uproject" not in ns, ns[:400])
     f = bundle.probe("192.168.0.33", "user", r"C:\Users\USER\Documents\NS",
                      "ssh", "requester")
-    blk = bundle.managed_block("NS", f)
+    # [주의] 실측 절은 **자기 픽스처 트윈**에서 잰다 — 실제 레지스트리(`NS/` 는 git 밖)를 읽으면
+    #    격리 worktree(⑦ 검사 트리)에서 트윈이 없어 실패한다(`#815` ⑤). 단정은 같다.
+    import tempfile
+    from unittest.mock import patch
+    tmp = Path(tempfile.mkdtemp(prefix="bundle-ns-"))
+    try:
+        (tmp / "projects.yaml").write_text("version: 1\nactive: NS\nprojects:\n- NS\n",
+                                           encoding="utf-8")
+        src = tmp / "NS" / "repo" / "Source"
+        (src / "NS").mkdir(parents=True)
+        (tmp / "NS" / "repo" / "NS.uproject").write_text("{}\n", encoding="utf-8")
+        for t in ("NS", "NSEditor"):
+            (src / f"{t}.Target.cs").write_text("//\n", encoding="utf-8")
+        (src / "NS" / "NS.Build.cs").write_text("//\n", encoding="utf-8")
+        with patch.dict(os.environ, {"AX_PROJECTS_ROOT": str(tmp)}):
+            blk = bundle.managed_block("NS", f)
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
     check("[중요] 블록이 실측 uproject 를 적는다", "NS.uproject" in blk, blk[:300])
     check("[중요] 블록이 실측 Editor 타깃으로 빌드 명령을 만든다",
           "NSEditor" in blk and "Build.bat" in blk, blk[:300])

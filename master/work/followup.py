@@ -53,6 +53,7 @@ fail-open 으로 넘긴다(code 판은 **fail-closed** — 못 돌린 것은 통
 """
 from __future__ import annotations
 
+import ast
 import json
 import re as _re_mod
 import subprocess
@@ -80,6 +81,11 @@ OFFICIAL_START_DIR = "tests/integration"
 OFFICIAL_PATTERN = "test_axcluster.py"
 OFFICIAL_MANIFEST = "tests/integration/checks.json"
 REGRESSION_TIMEOUT = 180            # checks.json 의 항목별 값과 같다
+# 마스터 환경 검사 — 리뷰 대상 코드가 아니라 마스터의 실제 배치(설치 유닛)·트윈 데이터(git 밖)를
+# 본다. 격리 검사 트리에는 그것이 없어 변경과 무관하게 실패한다 → 고르지 않고 사유를 남긴다.
+# 그 둘은 마스터의 커밋 전 전수가 돈다 (`#815` ⑤).
+MASTER_ENV_TESTS = frozenset({"master/test_ontology.py", "master/test_sandbox.py"})
+MASTER_ENV_NOTE = "마스터 환경 검사 — 검사 트리에서 돌지 않는다, 마스터 전수가 돈다"
 
 # 회귀 스크립트의 「몇 건 통과」 형식 — 이 저장소에 실재하는 셋 (CLAUDE.md 「세는 법」·checks.json).
 # [주의] 어느 것도 못 읽으면 **통과가 아니다** — 수치 없이 rc 0 만 보고 통과로 접지 않는다.
@@ -129,18 +135,68 @@ def changed_files(tree, base_ref: str) -> list:
     return [ln.strip() for ln in out.splitlines() if ln.strip()]
 
 
-def regression_targets(tree, files) -> tuple:
+def _module_name(p: Path) -> str:
+    """`master/work/review.py` → `master.work.review`."""
+    return ".".join(list(p.parts[:-1]) + [p.stem])
+
+
+def _imports_ast(text: str) -> set:
+    """테스트 파일이 **직접** import 하는 모듈 이름들. `from X import a` 는 `X` 와 `X.a` 둘 다 —
+    `a` 가 하위 모듈인지 이름인지는 여기서 모른다(하위 모듈이면 그것이 직접 import 다).
+    상대 import 는 `master/test_*.py` 기준(`master` 패키지)으로 푼다. 구문 오류는 예외로 올린다."""
+    names: set = set()
+    for node in ast.walk(ast.parse(text)):
+        if isinstance(node, ast.Import):
+            names.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                pkg = ["master"][: max(0, 2 - node.level)]   # level 1 → master · 2 이상 → 최상위
+                base = ".".join(pkg + ([base] if base else []))
+            if base:
+                names.add(base)
+            names.update(f"{base}.{a.name}" if base else a.name for a in node.names)
+    return names
+
+
+def _imports_regex(text: str, dotted: str) -> bool:
+    """구문 오류 파일의 대체 판정 — `import X` · `from X import` · `from <pkg> import (… stem …)`."""
+    pkg, _, stem = dotted.rpartition(".")
+    d = _re_mod.escape(dotted)
+    if _re_mod.search(rf"(?m)^\s*import\s+[^\n#]*(?<![\w.]){d}(?![\w])", text):
+        return True
+    if _re_mod.search(rf"(?m)^\s*from\s+{d}(?:\.[\w.]+)?\s+import\b", text):
+        return True
+    if pkg:
+        for m in _re_mod.finditer(rf"(?m)^\s*from\s+{_re_mod.escape(pkg)}\s+import\s+"
+                                  r"(\([^)]*\)|[^\n]*)", text):
+            if _re_mod.search(rf"(?<![\w.]){_re_mod.escape(stem)}(?![\w])", m.group(1)):
+                return True
+    return False
+
+
+def _path_mentioned(text: str, sub: str) -> bool:
+    """`<sub>` (`work/review.py`) 또는 `master/<sub>` 가 글에 있다 — 앞뒤가 이름 글자면 아니다
+    (`test_review.py` 의 `review.py` 는 언급이 아니다)."""
+    return bool(_re_mod.search(rf"(?<![\w.\-]){_re_mod.escape(sub)}(?![\w])", text))
+
+
+def regression_targets(tree, files, logf=None) -> tuple:
     """바뀐 파일 → 돌릴 회귀 검사 `(targets, notes)`.
 
-    대응 규칙 (AXCluster 관례 `master/test_<stem>.py`):
+    대응 규칙 (사용자 결정 `#815` ⑤ — **직접** 관계만, 전이 import 는 고르지 않는다):
 
-        master/test_*.py 자체가 바뀌었다     → 그 파일
-        그 밖의 `<경로>/<stem>.py`          → `master/test_<stem>.py` 가 트리에 **있으면** 그 파일
+        같은 이름   `master/test_<stem>.py` (master/test_*.py 자체가 바뀌었으면 그 파일)
+        import     트리의 master/test_*.py 중 그 모듈을 직접 import 하는 것
+                   (`import master.a.b` · `from master.a.b import …` · `from master.a import b [as x]`)
+        경로 언급   글에 `<master 아래 경로>` (`work/review.py`) 또는 `master/<그 경로>` 가 있는 것
         `__init__.py` · `tests/` 아래 · 비 .py  → 대상 아님
 
-    [주의] 공식 목록(`checks.json`)에 이미 있는 파일은 빼고 사유를 남긴다 — 통합 검사가 이미
-    돌린다. 대응 테스트가 없는 파일도 **조용히 지나가지 않는다** — `notes` 에 「대응 없음」을 남긴다.
+    순서는 같은 이름 먼저, 나머지는 정렬. [주의] 공식 목록(`checks.json`)에 이미 있는 파일은 빼고
+    사유를 남긴다 — 통합 검사가 이미 돌린다. 대응 테스트가 없는 파일도 **조용히 지나가지 않는다** —
+    `notes` 에 「대응 없음」을 남긴다. 파일마다 이유별 건수를 `notes` 에 싣고 `logf` 로 한 줄 찍는다.
     """
+    log = logf or C._noop_log
     root = Path(tree)
     official = set()
     man = root / OFFICIAL_MANIFEST
@@ -150,23 +206,80 @@ def regression_targets(tree, files) -> tuple:
                         if isinstance(e, dict)}
         except (OSError, ValueError):
             official = set()
+    tests: dict = {}          # rel → (text, imports|None) — 한 호출 안에서 한 번만 읽고 푼다
+    parse_failed: list = []
+
+    def _scan():
+        if tests or not (root / "master").is_dir():
+            return
+        for tp in sorted((root / "master").glob("test_*.py")):
+            rel = tp.relative_to(root).as_posix()
+            try:
+                text = tp.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            try:
+                imps = _imports_ast(text)
+            except (SyntaxError, ValueError):
+                imps = None
+                parse_failed.append(rel)
+            tests[rel] = (text, imps)
+
     targets, notes = [], []
     for f in files:
         p = Path(f)
         if p.suffix != ".py" or p.name == "__init__.py" or (p.parts and p.parts[0] == "tests"):
             continue
+        _scan()
         if len(p.parts) == 2 and p.parts[0] == "master" and p.name.startswith("test_"):
             cand = f
         else:
             cand = f"master/test_{p.stem}.py"
-        if not (root / cand).is_file():
-            notes.append(f"{f}: 대응 회귀 검사 없음 ({cand})")
+        dotted = _module_name(p)
+        sub = p.relative_to("master").as_posix() if p.parts[0] == "master" else p.as_posix()
+        reasons: dict = {}                     # test → 이유 (처음 걸린 것 하나)
+        if (root / cand).is_file():
+            reasons[cand] = "같은 이름"
+        for rel, (text, imps) in tests.items():
+            if rel in reasons or rel == f:
+                continue
+            if imps is None:
+                hit = _imports_regex(text, dotted)
+            else:
+                hit = any(n == dotted or n.startswith(dotted + ".") for n in imps)
+            if hit:
+                reasons[rel] = "import"
+            elif _path_mentioned(text, sub):
+                reasons[rel] = "경로"
+        if not reasons:
+            notes.append(f"{f}: 대응 회귀 검사 없음 ({cand} · import·경로 언급 0)")
+            log("check", f"회귀 선택 {f}: 없음")
             continue
-        if cand in official:
-            notes.append(f"{f}: {cand} 는 공식 통합 목록에 있다 — 거기서 돈다")
-            continue
-        if cand not in targets:
-            targets.append(cand)
+        order = ([cand] if cand in reasons else []) + sorted(r for r in reasons if r != cand)
+        picked, skipped, env = [], [], []
+        for t in order:
+            if t in official:
+                skipped.append(t)
+                notes.append(f"{f}: {t} 는 공식 통합 목록에 있다 — 거기서 돈다")
+                continue
+            if t in MASTER_ENV_TESTS:
+                env.append(t)
+                notes.append(f"{f}: {t} — {MASTER_ENV_NOTE}")
+                continue
+            picked.append(t)
+            if t not in targets:
+                targets.append(t)
+        cnt = {k: sum(1 for t in picked if reasons[t] == k) for k in ("같은 이름", "import", "경로")}
+        notes.append(f"{f}: 회귀 {len(picked)}건 — 같은 이름 {cnt['같은 이름']} · import {cnt['import']}"
+                     f" · 경로 {cnt['경로']}" + (f" (공식 목록 제외 {len(skipped)})" if skipped else "")
+                     + (f" (마스터 환경 제외 {len(env)})" if env else ""))
+        log("check", f"회귀 선택 {f}: " + (", ".join(f"{t}({reasons[t]})" for t in picked) or "없음")
+            + (f" · 공식 목록 제외 {', '.join(skipped)}" if skipped else "")
+            + (f" · 마스터 환경 제외 {', '.join(env)}" if env else ""))
+    if parse_failed:
+        notes.append(f"[주의] 구문 해석 실패 — 정규식으로 import 판정: {', '.join(parse_failed)}")
+        log("check", f"[주의] 회귀 선택 — 구문 해석 실패 {len(parse_failed)}건, 정규식 대체: "
+            + ", ".join(parse_failed))
     return targets, notes
 
 
@@ -300,7 +413,7 @@ def code_build_fn(*, base_ref: str, start_dir: str = OFFICIAL_START_DIR,
             if files is None:
                 targets, notes, reg_ok = [], [files_err], False
             else:
-                targets, notes = regression_targets(root, files)
+                targets, notes = regression_targets(root, files, logf=logf)
             out["regression_notes"] = notes
             logf("check", f"회귀 대상 {len(targets)}건 (바뀐 경로 기준) — {', '.join(targets) or '없음'}")
             for path in targets:

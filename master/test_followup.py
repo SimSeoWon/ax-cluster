@@ -269,6 +269,78 @@ def test_regression_mapping():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_regression_selection_rules():
+    """`#815` ⑤ — 같은 이름 + 직접 import + 경로 언급. 전이 import 는 고르지 않는다."""
+    d = Path(tempfile.mkdtemp(prefix="fu-sel-"))
+    try:
+        (d / "master" / "work").mkdir(parents=True)
+        (d / "tests" / "integration").mkdir(parents=True)
+        (d / F.OFFICIAL_MANIFEST).write_text('[{"path": "master/test_official.py"}]', encoding="utf-8")
+        files = {
+            "master/work/target.py": "X = 1\n",
+            "master/work/middle.py": "from master.work import target\n",
+            "master/test_target.py": "pass\n",
+            "master/test_plain.py": "import master.work.target\n",
+            "master/test_multi.py": "from master.work import (\n    other,\n    target,\n)\n",
+            "master/test_alias.py": "from master.work import target as T\n",
+            "master/test_fromname.py": "from master.work.target import X\n",
+            "master/test_path.py": "SRC = 'master/work/target.py'\n",
+            "master/test_subpath.py": "# work/target.py 를 배달한다\n",
+            "master/test_transitive.py": "from master.work import middle\n",
+            "master/test_lookalike.py": "from master.work import targets\nP = 'work/target.pyc_x'\n"
+                                        "Q = 'test_target.py'\n",
+            "master/test_official.py": "import master.work.target\n",
+            "master/test_ontology.py": "import master.work.target\n",
+            "master/test_broken.py": "def (:\nfrom master.work import (\n  target,\n)\n",
+        }
+        for rel, text in files.items():
+            (d / rel).write_text(text, encoding="utf-8")
+        lines = []
+        targets, notes = F.regression_targets(d, ["master/work/target.py", "master/nomatch.py"],
+                                              logf=lambda s, m: lines.append(m))
+        check("같은 이름이 맨 앞", targets[:1] == ["master/test_target.py"], str(targets))
+        want = {"master/test_plain.py", "master/test_multi.py", "master/test_alias.py",
+                "master/test_fromname.py", "master/test_path.py", "master/test_subpath.py",
+                "master/test_broken.py"}
+        check("import(평범·괄호 여러 줄·별칭·from 모듈)·경로 언급을 고른다",
+              want <= set(targets), str(targets))
+        check("나머지는 정렬", targets[1:] == sorted(targets[1:]), str(targets))
+        check("[중요] 전이 import 는 고르지 않는다", "master/test_transitive.py" not in targets)
+        check("닮은 이름(targets·.pyc_x·test_target.py)은 아님", "master/test_lookalike.py" not in targets)
+        check("공식 목록은 빼고 사유", "master/test_official.py" not in targets
+              and any("test_official.py 는 공식 통합 목록" in n for n in notes), str(notes))
+        check("중복 없음", len(targets) == len(set(targets)))
+        check("마스터 환경 검사는 빼고 사유", "master/test_ontology.py" not in targets
+              and any("test_ontology.py — 마스터 환경 검사 — 검사 트리에서 돌지 않는다, 마스터 전수가 돈다"
+                      in n for n in notes), str(notes))
+        check("이유별 건수 노트", any(n.startswith("master/work/target.py: 회귀 8건 — 같은 이름 1 · "
+                                              "import 5 · 경로 2 (공식 목록 제외 1) (마스터 환경 제외 1)")
+                                       for n in notes),
+              str(notes))
+        check("구문 해석 실패는 정규식 대체 + 노트", any("구문 해석 실패" in n and "test_broken.py" in n
+                                               for n in notes), str(notes))
+        check("대응 없음 노트", any(n.startswith("master/nomatch.py: 대응 회귀 검사 없음") for n in notes))
+        check("파일마다 로그 한 줄(선택·이유)", any(m.startswith("회귀 선택 master/work/target.py:")
+                                              and "test_plain.py(import)" in m
+                                              and "test_path.py(경로)" in m
+                                              and "마스터 환경 제외 master/test_ontology.py" in m
+                                              for m in lines)
+              and any(m == "회귀 선택 master/nomatch.py: 없음" for m in lines), str(lines))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_regression_selection_real_repo():
+    """실물 — `work/review.py` 를 고치면 배달 import 를 잡는 `test_client_bundle.py` 가 돈다
+    (⑦ 이 같은 이름만 돌려 놓친 사례)."""
+    repo = Path(__file__).resolve().parent.parent
+    targets, notes = F.regression_targets(repo, ["master/work/review.py"])
+    check("실물: review.py → test_client_bundle.py", "master/test_client_bundle.py" in targets,
+          str(targets))
+    check("실물: 같은 이름 test_review.py 가 맨 앞", targets[:1] == ["master/test_review.py"],
+          str(targets))
+
+
 def test_code_build_fn_pass_and_fail():
     d = _repo_with_change()
     try:
@@ -1293,8 +1365,18 @@ def test_register_tool_carries_wait_command():
         pj.register_work = lambda *a, **k: SimpleNamespace(
             ok=True, work_id="20261011_x_work_1", tasks=[], summary=lambda: "s")
         got = _json.loads(pj.register_work_tool("T", "repo", "[]"))
-        want = ("AX_PROJECTS_ROOT=/home/sim/ax-cluster /home/sim/ax-cluster/.venv/bin/python "
-                "-m master.work.followup 20261011_x_work_1 --wait --repo /home/sim/ax-cluster")
+        # 자리는 서버가 도는 체크아웃(`pj._CODE_ROOT`) — 마스터에서는 `/home/sim/ax-cluster`,
+        # 격리 worktree 에서는 그 worktree 다. `AX_PROJECTS_ROOT` 는 받은 값(없으면 체크아웃).
+        import shlex
+        code = Path(__file__).resolve().parents[1]
+        check("서버 체크아웃 = 이 테스트의 체크아웃", pj._CODE_ROOT == code, str(pj._CODE_ROOT))
+        try:
+            proot = str(pj.projects_root())
+        except pj.ConfigError:
+            proot = str(code)
+        want = (f"AX_PROJECTS_ROOT={shlex.quote(proot)} "
+                f"{shlex.quote(str(code / '.venv' / 'bin' / 'python'))} "
+                f"-m master.work.followup 20261011_x_work_1 --wait --repo {shlex.quote(str(code))}")
         check("[중요] 등재 응답에 wait 명령", got.get("wait") == want, str(got.get("wait")))
         note = got.get("wait_note") or ""
         check("등재 응답에 wait_note (사실)", "at_gate" in note and "읽기" in note, note)
@@ -1324,6 +1406,8 @@ def main() -> int:
                test_fetch_failure_reported,
                test_source_never_passes_confirm_true,
                test_regression_mapping,
+               test_regression_selection_rules,
+               test_regression_selection_real_repo,
                test_code_build_fn_pass_and_fail,
                test_run_regression_real_subprocess,
                test_build_fn_for_code_defaults_to_official_manifest,
