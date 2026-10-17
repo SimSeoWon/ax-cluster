@@ -94,15 +94,22 @@ def test_gate_fails_closed_on_empty_active() -> None:
 def test_poll_loop_only_mounted() -> None:
     """빈 스풀 폴링이 마운트된 하나만 만든다 — 완료 조건 ②(`프로젝트 1개`)."""
     src = (Path(__file__).resolve().parent / "events" / "consumer.py").read_text(encoding="utf-8")
-    body = src.split("if not batch.events:")[1].split("sp.done(batch)")[0]
-    check("[중요] 폴링이 reg.names 전부를 돌지 않는다",
-          "for _name in reg.names:" not in body, "전수 순회가 남아 있다")
-    check("마운트된 것만 만든다", "_mounted" in body and "reg.active" in body, body[:120])
-    # [중요] **비마운트 프로젝트를 「건너뜀」으로 남긴다** (`#246` 완료 조건 ③).
-    #    실측 2026-08-23: 마운트 왕복 뒤 로그에 마운트된 것만 나오고 나머지는 **아예 언급이
-    #    없었다** — 부재는 기록이 아니다. 「NS 는 왜 안 도나」를 로그로 답할 수 없으면 운영자는
-    #    **고장과 설계를 구분하지 못한다.**
-    check("비마운트를 세어 남긴다", "res.unmounted" in body, "부재로 두면 기록이 아니다")
+    # [주의] 블록이 옮겨 가면 IndexError 로 죽지 말고 **앵커가 없다**고 말한다 (`#815`, 2026-10-17 —
+    #    `if not batch.events:` 가 `if not res.results:` 로 바뀌어 이 검사가 오래 죽어 있었다).
+    head, tail = "if not res.results:", "for ev in synth:"
+    found = head in src and tail in src.split(head, 1)[-1]
+    check("빈 스풀 분기 앵커가 있다", head in src, f"{head!r} 없음 — consumer.py 블록이 옮겨 갔다")
+    check("분기 끝 앵커가 있다", found, f"{tail!r} 없음 — consumer.py 블록이 옮겨 갔다")
+    if found:                               # 앵커가 없으면 본문 검사는 실패로 이미 셌다
+        body = src.split(head, 1)[1].split(tail, 1)[0]
+        check("[중요] 폴링이 reg.names 전부를 돌지 않는다",
+              "for _name in reg.names:" not in body, "전수 순회가 남아 있다")
+        check("마운트된 것만 만든다", "_mounted" in body and "reg.active" in body, body[:120])
+        # [중요] **비마운트 프로젝트를 「건너뜀」으로 남긴다** (`#246` 완료 조건 ③).
+        #    실측 2026-08-23: 마운트 왕복 뒤 로그에 마운트된 것만 나오고 나머지는 **아예 언급이
+        #    없었다** — 부재는 기록이 아니다. 「NS 는 왜 안 도나」를 로그로 답할 수 없으면 운영자는
+        #    **고장과 설계를 구분하지 못한다.**
+        check("비마운트를 세어 남긴다", "res.unmounted" in body, "부재로 두면 기록이 아니다")
     from master.events import consumer as C
     r = C.RunResult()                       # [주의] 실물 이름을 쓴다 — 추측하면 조용히 통과한다
     check("기본은 빈 목록", r.unmounted == [])

@@ -64,6 +64,10 @@ ReadOnlyPaths=/home/sim/ax-cluster/ax-exports
 #    [주의] 이 줄을 빼먹어 `test_sandbox` 가 잡았다: *"트윈이 아닌 최상위 항목이 전부 읽기 전용
 #    목록에 있다 — ['scripts']"*. 최상위에 디렉토리를 만들면 **여기에도 같이 넣는다.**
 ReadOnlyPaths=/home/sim/ax-cluster/scripts
+# [중요] 2026-10-17 신설 — 통합 검사(`tests/integration`, 2026-10-03 추가). 큐 서비스가 쓸 일이 없다.
+#    [주의] 이 줄을 빼먹어 `test_sandbox` 가 잡았다(`#815`): *"…전부 읽기 전용 목록에 있다 —
+#    ['tests']"*. 루트가 `ReadWritePaths` 라 그동안 **조용히 쓰기 가능**이었다.
+ReadOnlyPaths=/home/sim/ax-cluster/tests
 ReadOnlyPaths=/home/sim/ax-cluster/.git
 ReadOnlyPaths=/home/sim/ax-cluster/PLAN.md
 ReadOnlyPaths=/home/sim/ax-cluster/README.md
