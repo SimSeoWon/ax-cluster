@@ -237,6 +237,163 @@ def test_completion_is_a_note_not_a_new_issue() -> None:
          LC._redmine_add_note) = s_cfg, s_new, s_note
 
 
+# ── `#814` 요청자 분기 — 트윈 `config.yaml` 이 정한다 (`.33` 을 기본값으로 박지 않는다) ──────────
+_TWIN_SHOPS = {
+    "workshop": ("workshops:\n"
+                 "  192.168.0.33:\n    driven: ssh\n    role: requester\n    user: user\n"
+                 "    path: C:\\x\n"
+                 "  192.168.0.2:\n    driven: ssh\n    role: worker\n    user: janus\n"
+                 "    path: E:\\x\n"),
+    # AXCluster 모양 — `.33` 이 있어도 **워커**이고 요청자는 마스터다
+    "master": ("requester: master\n"
+               "workshops:\n"
+               "  192.168.0.33:\n    driven: ssh\n    role: worker\n    user: user\n"
+               "    path: C:\\x\n"),
+    "unknown": ("requester: Master57\n"
+                "workshops:\n"
+                "  192.168.0.33:\n    driven: ssh\n    role: requester\n    user: user\n"
+                "    path: C:\\x\n"),
+    "none": ("workshops:\n"
+             "  192.168.0.2:\n    driven: ssh\n    role: worker\n    user: janus\n"
+             "    path: E:\\x\n"),
+}
+
+
+def _twin_root(kind: str) -> Path:
+    root = Path(tempfile.mkdtemp(prefix="ax-twin-"))
+    (root / "projects.yaml").write_text("version: 1\nactive: NS\nprojects:\n- NS\n",
+                                        encoding="utf-8")
+    (root / "NS").mkdir()
+    (root / "NS" / "config.yaml").write_text(
+        "version: 1\nname: NS\nredmine:\n  project: ns\n" + _TWIN_SHOPS[kind], encoding="utf-8")
+    return root
+
+
+def _texts_for(kind: str, target_branch: str = "task/W/base") -> tuple:
+    """(등재 이슈 본문, 라운드 완료 노트, work_id, 큐 로그) — 레드마인은 가짜, 트윈은 임시 루트."""
+    import os
+    from unittest.mock import patch
+    from master.task_queue import logic_cleanup as LC
+    made: list = []
+    notes: list = []
+    logs: list = []     # `_tq_log` 은 하루 한 파일(첫 루트)에 쓰므로 파일이 아니라 호출을 본다
+    with patch.dict(os.environ, {"AX_PROJECTS_ROOT": str(_twin_root(kind))}), \
+            patch.object(LC, "_tq_log", lambda msg, root: logs.append(msg)), \
+            patch.object(LC, "_read_redmine_config",
+                         lambda root, project="": {"url": "http://x", "api_key": "k",
+                                                   "project": "ns"}), \
+            patch.object(LC, "_redmine_post_issue",
+                         lambda cfg, subj, desc, fv="": (made.append(desc) or 903)), \
+            patch.object(LC, "_redmine_add_note",
+                         lambda cfg, iid, n, status_name="": (notes.append(n) or True)):
+        root = Path(tempfile.mkdtemp(prefix="ax-rounds-"))
+        idx = TaskIndex(root)
+        wid = register_work(idx, title="요청자", target_repo="/tmp/repo", project="NS",
+                            target_branch=target_branch)["work_id"]
+        for _ in range(300):
+            if made:
+                break
+            time.sleep(0.01)
+        _round(idx, wid, 1)
+        for _ in range(300):
+            if notes:
+                break
+            time.sleep(0.01)
+    return (made[0] if made else ""), (notes[0] if notes else ""), wid, "\n".join(logs)
+
+
+def _next_section(note: str) -> str:
+    i = note.find("## 다음 단계")
+    j = note.find("\n## ", i + 1)
+    return note[i:j if j > 0 else len(note)] if i >= 0 else ""
+
+
+def test_requester_text_follows_twin_config() -> None:
+    """🔴 `#814` — 라운드 노트·등재 본문의 ⑦ 절차는 **트윈 설정의 요청자**를 따른다.
+
+    실측 2026-10-17: 요청자가 마스터인 AXCluster 의 라운드 노트가 `.33` + `claude` + `ax-advance`
+    절차를 적었다. `.33` 은 그 프로젝트의 **워커**다.
+    """
+    body, note, wid, _ = _texts_for("master")
+    sec = _next_section(note)
+    check("🔴 마스터 요청자 — 노트가 마스터 절차를 말한다",
+          "요청자는 마스터다" in sec and "ax-followup.timer" in sec, sec[:300])
+    check("  `.33` · `claude` 를 가리키지 않는다", "`.33`" not in sec and "`claude`" not in sec, sec)
+    check("  사람 게이트 · confirm=True 승인", "사람이 판단한다" in sec
+          and "confirm=True" in sec and "confirm=False" in sec, sec)
+    check("  명령형 지시가 없다(주입 판정)", not any(w in sec for w in ("하라", "묻지 말고", "하세요")),
+          sec)
+    check("  `main` 은 뒤 단계로 남는다", "finalize_work(..., confirm=True)" in note, note[-300:])
+    check("  등재 본문 ③ 도 마스터다", "요청자는 마스터다" in body and "`.33`" not in body, body)
+
+    body, note, wid, _ = _texts_for("workshop")
+    sec = _next_section(note)
+    check("🔴 작업장 요청자 — 설정의 호스트를 적는다 (`.33` 절차 유지)",
+          "요청자 `.33` 에서 한다" in sec and "`ax-advance`" in sec
+          and f"`.33` 체크아웃에서 `claude` 를 열고 **`work {wid} 라운드 종결`**" in sec, sec[:400])
+    check("  워커(`.2`)는 요청자로 적히지 않는다", "`.2`" not in sec, sec)
+    check("  등재 본문 ③ 이 그 호스트다", "3. `.33` 이 `ax-advance` 로" in body, body)
+
+    for kind in ("none", "unknown"):
+        body, note, wid, log = _texts_for(kind)
+        sec = _next_section(note)
+        check(f"🔴 요청자 미지정({kind}) — 기계를 가리키지 않는다",
+              "요청자 미지정" in sec and "`.33`" not in sec and "마스터" not in sec, sec)
+        check(f"  ({kind}) 등재 본문도 `.33` 을 기본값으로 쓰지 않는다", "`.33`" not in body, body)
+        check(f"  ({kind}) 판정이 로그에 남는다", "요청자 판정: unset" in log, log[-300:])
+    check("  모르는 값은 그 값과 함께 사유를 적는다",
+          "`requester: Master57` 는 인식하지 않는 값이다" in sec, sec)
+
+
+def test_unreadable_twin_is_neutral_and_logged() -> None:
+    """설정을 못 읽으면(`AX_PROJECTS_ROOT` 없음) 미지정 문구 · 사유는 로그로 (침묵하지 않는다)."""
+    import os
+    from unittest.mock import patch
+    from master.task_queue import logic_cleanup as LC
+    root = Path(tempfile.mkdtemp(prefix="ax-rounds-"))
+    env = {k: v for k, v in os.environ.items() if k != "AX_PROJECTS_ROOT"}
+    logs: list = []
+    with patch.dict(os.environ, env, clear=True), \
+            patch.object(LC, "_tq_log", lambda msg, r: logs.append(msg)):
+        prof = LC._requester_profile(root, "W9", "NS")
+    log = "\n".join(logs)
+    check("설정 못 읽음 → unset · unreadable", prof["kind"] == "unset"
+          and prof["why"] == "unreadable", str(prof))
+    check("  사유가 로그에 남는다", "트윈 설정을 못 읽었다" in log, log[-300:])
+    check("  노트 사유 줄에 절대 경로가 없다", "/" not in LC._unset_reason_line(prof),
+          LC._unset_reason_line(prof))
+
+
+def test_work_branch_is_derived_when_unstored() -> None:
+    """🔴 `#814` ③ — `target_branch` 를 비워 등재해도 노트는 실재 브랜치를 적는다(`(unknown)` 아님)."""
+    body, note, wid, _ = _texts_for("master", target_branch="")
+    want = f"task/{wid}/base"
+    check("🔴 라운드 노트가 유도된 작업 브랜치를 적는다", f"`origin/{want}`" in note
+          and "(unknown)" not in note, note[:300])
+    check("  등재 본문도 같다", f"`{want}`" in body and "(unknown)" not in body, body)
+    body, note, wid, _ = _texts_for("master", target_branch="feature/kept")
+    check("  저장값이 이긴다", "`origin/feature/kept`" in note and "`feature/kept`" in body,
+          note[:300])
+
+
+def test_requester_key_round_trips() -> None:
+    """`requester:` 는 `ProjectConfig` 왕복에서 살아남는다 — 모르는 값도 지우지 않는다."""
+    from master.projects.config import ProjectConfig
+    for kind, want, is_master in (("master", "master", True), ("unknown", "Master57", False),
+                                  ("workshop", "", False)):
+        p = _twin_root(kind) / "NS" / "config.yaml"
+        cfg = ProjectConfig.load(p)
+        p.write_text(cfg.to_yaml(), encoding="utf-8")
+        again = ProjectConfig.load(p)
+        check(f"왕복 ({kind}) requester={want!r}", cfg.requester == want == again.requester
+              and again.requester_is_master is is_master, f"{cfg.requester!r} {again.requester!r}")
+        check(f"  ({kind}) 빈 값은 키를 만들지 않는다", ("requester:" in p.read_text("utf-8")) == bool(want),
+              p.read_text("utf-8")[:200])
+    cfg = ProjectConfig.load(_twin_root("workshop") / "NS" / "config.yaml")
+    check("  requester_hosts 는 role: requester 작업장만", cfg.requester_hosts() == ["192.168.0.33"],
+          str(cfg.requester_hosts()))
+
+
 def test_registration_itself_triggers_dispatch() -> None:
     """🔴 **등재도 트리거다 — 단 라이브 큐일 때만** (사용자 2026-09-05).
 
@@ -412,7 +569,11 @@ def main() -> int:
                test_bad_trigger_is_quarantined_not_left_to_thrash,
                test_round_is_in_the_branch_name,
                test_finished_work_is_not_revived,
-               test_skeleton_rework_reopens_only_with_advance_evidence):
+               test_skeleton_rework_reopens_only_with_advance_evidence,
+               test_requester_text_follows_twin_config,
+               test_unreadable_twin_is_neutral_and_logged,
+               test_work_branch_is_derived_when_unstored,
+               test_requester_key_round_trips):
         fn()
     print(("\nFAIL" if _fail else "\nOK") + f" test_rounds: 실패 {_fail}건")
     return 1 if _fail else 0

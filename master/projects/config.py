@@ -95,6 +95,12 @@ ROLE_WORKER = "worker"          # 큐에서 claim 해 처리한다
 ROLE_REQUESTER = "requester"    # 요청만 한다 — 사람의 기계. [중요] 파견 대상이 아니다
 ROLES = (ROLE_WORKER, ROLE_REQUESTER)
 
+# 🔴 **요청자가 마스터인 프로젝트** (`#814`, 사용자 결정 2026-10-17). `<twin>/config.yaml` 의 최상위
+#    `requester: master` 하나로 적는다 — AXCluster 처럼 `role: requester` 작업장이 없고 마스터
+#    (`.57`)가 ⑦ 을 맡는 경우다. [주의] **인식하는 값은 이것 하나다** — 다른 값은 「미지정」으로
+#    읽고 호출자가 사유를 찍는다(오타가 조용히 마스터로 읽히면 공지가 남의 자리를 가리킨다).
+REQUESTER_MASTER = "master"
+
 # [중요] **파견 여부는 `role` 과 다른 축이다** (`#317` 미결 ④ · `#321`, 사용자 결정 2026-08-27).
 #    `role` 하나가 세 가지를 겸했다 — 파견 여부 · 배달 내용물(`bundle.PAYLOAD_BY_ROLE`) ·
 #    토큰 스코프(`auth.WORKER_SCOPE`). 그래서 `.33` 을 파견 대상으로 만들려고 role 을 바꾸면
@@ -257,10 +263,22 @@ class ProjectConfig:
     #    같은 판단). [주의] **AX 인프라 이슈는 이 값과 무관하다** — 그것은 사용자 확정
     #    (2026-08-09)대로 `ModularStage` 에 둔다. 여기 값은 *게임 소스 일감*의 자리다.
     redmine_project: str = ""
+    # 🔴 **요청자 명시** (`#814`) — `REQUESTER_MASTER` 만 의미가 있다. 비어 있으면 요청자는
+    #    `role: requester` 작업장에서 읽는다. 모르는 값도 문자열 그대로 보존한다(`to_yaml` 왕복).
+    requester: str = ""
     include: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
     workshops: dict[str, Workshop] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def requester_is_master(self) -> bool:
+        """`requester: master` 인가 (`#814`). 그 외 값은 거짓 — 마스터로 추정하지 않는다."""
+        return self.requester == REQUESTER_MASTER
+
+    def requester_hosts(self) -> list[str]:
+        """`role: requester` 작업장의 호스트 목록 (등록 순서)."""
+        return [h for h, w in self.workshops.items() if w.role == ROLE_REQUESTER]
 
     @classmethod
     def load(cls, path: Path) -> "ProjectConfig":
@@ -286,6 +304,7 @@ class ProjectConfig:
             analyzed_commit=str(index.get("analyzed_commit") or ""),
             analyzed_at=str(index.get("analyzed_at") or ""),
             redmine_project=str((data.get("redmine") or {}).get("project") or ""),
+            requester=str(data.get("requester") or "").strip(),
             include=list(index.get("include") or []),
             exclude=list(index.get("exclude") or []),
             raw=data,
@@ -319,6 +338,11 @@ class ProjectConfig:
         #    "아직 안 정했다" 가 구별되지 않는다.
         if self.redmine_project:
             data["redmine"] = {"project": self.redmine_project}
+        # `requester:` 도 값이 있을 때만 — raw 에 있던 자리는 그대로 유지된다(dict 순서).
+        if self.requester:
+            data["requester"] = self.requester
+        else:
+            data.pop("requester", None)
         # [중요] **`init:`(초기화 사양 오버레이, #266)을 `engine:` 뒤로 보낸다.** `dict(self.raw)`
         #    로 시작하므로 그대로 두면 `version:` 보다 **앞에** 찍힌다 — 사람이 읽는 파일이라
         #    순서가 내용이다. 모르는 키의 통과는 그대로 두고(그것이 raw 의 값이다) **우리가 쓰는
