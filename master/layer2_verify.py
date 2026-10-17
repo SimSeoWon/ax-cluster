@@ -151,9 +151,9 @@ def _run(cmd: list[str], *, timeout: int) -> tuple:
 RC_NO_EXIT = -1
 
 
-def _run_rc(cmd: list[str], *, timeout: int) -> tuple:
+def _run_rc(cmd: list[str], *, timeout: int, cwd: str | None = None) -> tuple:
     """`_run` 과 같되 **종료 코드까지** `(출력, 사유, rc)` 로 돌려준다 — 사용량 기록용(`#728`)."""
-    out, why, rc, _raw = _run_raw(cmd, timeout=timeout)
+    out, why, rc, _raw = _run_raw(cmd, timeout=timeout, cwd=cwd)
     return out, why, rc
 
 
@@ -200,10 +200,22 @@ def agy_brief(prompt: str):
         yield str(Path(td).resolve())
 
 
-def agy_cmd(exe: str, brief_dir: str) -> list[str]:
-    """BRIEF 방식의 agy 명령. 레인(`usage.call_agy`)과 공용 진입이 **같은 모양**을 쓴다."""
+def agy_cmd(exe: str, brief_dir: str, workdir: str | None = None) -> list[str]:
+    """BRIEF 방식의 agy 명령. 레인(`usage.call_agy`)과 공용 진입이 **같은 모양**을 쓴다.
+
+    `workdir` 를 주면 그 디렉터리를 두 번째 `--add-dir` 로 싣고, 디렉터리가 둘이라 지시가
+    BRIEF 의 **절대 경로**를 직접 가리킨다(`#825`). 없으면 종전 명령 그대로다.
+    [주의] agy 에는 읽기 전용 강제가 없다(`--dangerously-skip-permissions`). `--mode plan`·
+    `--sandbox` 는 실측 전이라 쓰지 않는다 — 쓰기는 호출자가 사후 검사로 드러낸다.
+    """
+    if workdir is None:
+        return [exe, "--dangerously-skip-permissions", "--output-format", "json",
+                "--add-dir", brief_dir, "-p", AGY_BRIEF_PROMPT]
+    brief = str(Path(brief_dir) / AGY_BRIEF)
     return [exe, "--dangerously-skip-permissions", "--output-format", "json",
-            "--add-dir", brief_dir, "-p", AGY_BRIEF_PROMPT]
+            "--add-dir", brief_dir, "--add-dir", str(workdir), "-p",
+            f"Read {brief} and follow it exactly. Return the result as your response. "
+            "Do not create or modify files."]
 
 
 def call_agy(prompt: str, *, timeout: int = TIMEOUT_SEC) -> str | None:
@@ -213,8 +225,11 @@ def call_agy(prompt: str, *, timeout: int = TIMEOUT_SEC) -> str | None:
     return out
 
 
-def call_agy_why(prompt: str, *, timeout: int = TIMEOUT_SEC) -> tuple:
+def call_agy_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
+                 workdir: str | None = None) -> tuple:
     """`(출력, 사유)`. 사유는 실패했을 때만 채워진다.
+
+    `workdir` — 에이전트가 직접 읽을 작업 디렉터리(`#825`). `--add-dir` 로 싣고 그곳에서 실행한다.
 
     🔴 [중요] **사용량을 여기서 잰다** (`#728`, 2026-10-04 실측: 트윈 `usage_log.jsonl` 에 agy 행이
     0건이었다 — 리뷰 퇴고·층2·(당시) 게시판이 모두 이 진입을 탔는데 아무도 세지 않았다. 게시판은 `#812` 에서 걷었다).
@@ -229,9 +244,13 @@ def call_agy_why(prompt: str, *, timeout: int = TIMEOUT_SEC) -> tuple:
         why = MISSING_EXE                      # [중요] 쿨다운 대상이 아니다 — 설정 오류다
         _log(f"[agy] {missing_exe_hint('agy')}")
         return None, why
+    if workdir is not None:
+        _log(f"[agy] 작업 디렉터리 {workdir} (읽기 전용 강제 없음)")
     t0 = time.monotonic()
     with agy_brief(prompt) as brief_dir:
-        out, why, rc = _run_rc(agy_cmd(exe, brief_dir), timeout=timeout)
+        # [주의] workdir 가 없으면 종전 호출 모양 그대로 — `_run_rc` 를 바꿔 끼운 검사가 있다
+        kw = {} if workdir is None else {"cwd": str(workdir)}
+        out, why, rc = _run_rc(agy_cmd(exe, brief_dir, workdir), timeout=timeout, **kw)
     u = model = None
     if out is not None:
         out, u, why, model = _unwrap_agy(out)
@@ -309,7 +328,7 @@ def call_codex(prompt: str, *, timeout: int = TIMEOUT_SEC,
 
 
 def call_codex_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
-                   reasoning: str = CODEX_REASONING) -> tuple:
+                   reasoning: str = CODEX_REASONING, workdir: str | None = None) -> tuple:
     """`(본문, 이벤트 JSONL, 사유)`. 실행은 `_codex_run` 이 하고 여기서는 **사용량을 잰다**.
 
     🔴 [중요] `#733` — `usage.sink(...)` 로 감싼 구간이면 호출 하나당 한 줄을 남긴다(agy 와 같은
@@ -319,7 +338,9 @@ def call_codex_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
     [주의] 레인(`usage.call_codex`)은 이 기록을 끄고 부른다 — 그쪽은 파견이 따로 센다.
     """
     t0 = time.monotonic()
-    text, events, why, rc, ran = _codex_run(prompt, timeout=timeout, reasoning=reasoning)
+    # [주의] workdir 가 없으면 종전 호출 모양 그대로 — `_codex_run` 을 바꿔 끼운 검사가 있다
+    kw = {} if workdir is None else {"workdir": workdir}
+    text, events, why, rc, ran = _codex_run(prompt, timeout=timeout, reasoning=reasoning, **kw)
     if ran:
         # `ran` 이 문자열이면 실패한 실행의 이벤트다 — 호출자에게는 종전처럼 `""` 를 돌려준다
         seen = ran if isinstance(ran, str) else (events or "")
@@ -334,7 +355,8 @@ def call_codex_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
     return text, events, why
 
 
-def _codex_run(prompt: str, *, timeout: int, reasoning: str) -> tuple:
+def _codex_run(prompt: str, *, timeout: int, reasoning: str,
+               workdir: str | None = None) -> tuple:
     """`(본문, 이벤트 JSONL, 사유, rc, 실행됐나)`. 「실행됐나」는 bool, 또는 rc≠0 으로 끝난 로컬
     실행이면 **그 stdout(이벤트)** 이다 — 사용량은 읽되 반환 계약(실패 시 이벤트 `""`)은 지킨다.
 
@@ -353,20 +375,28 @@ def _codex_run(prompt: str, *, timeout: int, reasoning: str) -> tuple:
 
     [중요] **추론 등급을 명시한다** — 기본이 `reasoning effort: none` 이다(실측). 그 상태로 Opus 와
     비교해 *"골조에 못 쓴다"* 는 결론을 낼 뻔했다.
+
+    `workdir` (`#825`) — 에이전트가 직접 읽을 디렉터리. `-s read-only -C <workdir>` 로 그곳에서
+    돌린다(`-o` 는 별도 임시 디렉터리 그대로). [주의] 주면 `.33` 원격으로 떨어지지 않는다 —
+    그 디렉터리는 마스터에 있다.
     """
     import subprocess
     import tempfile
     eff = ["-c", f'model_reasoning_effort="{reasoning}"'] if reasoning else []
     exe = shutil.which("codex")
     if exe:
+        wd = [] if workdir is None else ["-s", "read-only", "-C", str(workdir)]
+        if workdir is not None:
+            _log(f"[codex] 작업 디렉터리 {workdir} · read-only")
         with tempfile.TemporaryDirectory(prefix="ax-codex-") as td:
             last = Path(td) / "last.txt"
             try:
                 r = subprocess.run(
-                    [exe, "exec", "--skip-git-repo-check", *eff, "--json",
+                    [exe, "exec", "--skip-git-repo-check", *eff, "--json", *wd,
                      "-o", str(last), "-"],
                     input=prompt, capture_output=True, text=True, encoding="utf-8",
-                    errors="replace", timeout=timeout, cwd=td)
+                    errors="replace", timeout=timeout,
+                    cwd=td if workdir is None else str(workdir))
             except subprocess.TimeoutExpired:
                 _log(f"[codex] 시간 초과 ({timeout}초)")
                 return None, "", "timeout", RC_NO_EXIT, True
@@ -387,6 +417,10 @@ def _codex_run(prompt: str, *, timeout: int, reasoning: str) -> tuple:
             return text.strip(), r.stdout or "", "", 0, True
 
     # ── 폴백: `.33` 원격 (마스터에 codex 가 없을 때) ────────────────────────────────
+    if workdir is not None:
+        why = f"로컬 codex 없음 — 작업 디렉터리({workdir})가 마스터에 있어 `.33` 원격으로 가지 않는다"
+        _log(f"[codex] {why}")
+        return None, "", why, RC_NO_EXIT, False
     ssh, scp = shutil.which("ssh"), shutil.which("scp")
     if not (ssh and scp):
         _log("[codex] 로컬에도 없고 ssh/scp 도 없다")
@@ -440,8 +474,11 @@ def call_claude(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "") -> 
     return out
 
 
-def call_claude_why(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "") -> tuple:
+def call_claude_why(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "",
+                    workdir: str | None = None) -> tuple:
     """`(출력, 사유)`.
+
+    `workdir` (`#825`) — 그 디렉터리에서 돌리고 내장 도구를 `--tools Read,Grep,Glob` 로 좁힌다.
 
     🔴 [중요] **사용량을 여기서 잰다** (`#733`, agy 의 `#728` 과 같은 계약). `--output-format json`
     으로 불러 봉투의 `result` 만 꺼내 **종전과 같은 평문**을 돌려주고, `usage.sink(...)` 로 감싼
@@ -460,8 +497,12 @@ def call_claude_why(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "")
     cmd = [exe, "-p", "--output-format", "json"]
     if (model or "").strip():
         cmd += ["--model", model.strip()]
+    if workdir is not None:
+        cmd += ["--tools", "Read,Grep,Glob"]
+        _log(f"[claude] 작업 디렉터리 {workdir} · 도구 Read,Grep,Glob")
     t0 = time.monotonic()
-    out, why, rc, raw = _run_raw(cmd, timeout=timeout, input=prompt)
+    kw = {} if workdir is None else {"cwd": str(workdir)}
+    out, why, rc, raw = _run_raw(cmd, timeout=timeout, input=prompt, **kw)
     U = _usage_mod()
     parsed = None
     if U is not None and raw:
@@ -514,9 +555,11 @@ def missing_exe_hint(name: str = "") -> str:
     return (f"{what}실행파일을 PATH 에서 찾지 못했다 — 리눅스: 서비스는 로그인 셸을 거치지 "
             "않으므로 `~/.local/bin` 이 PATH 에 없다 (시스템 경로에 두는 것이 해법)")
 
-def call_codex_text_why(prompt: str, *, timeout: int = TIMEOUT_SEC) -> tuple:
+def call_codex_text_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
+                        workdir: str | None = None) -> tuple:
     """`call_codex_why` 의 3-튜플을 체인 계약(`(본문, 사유)`)에 맞춘 어댑터."""
-    out, _events, why = call_codex_why(prompt, timeout=timeout)
+    kw = {} if workdir is None else {"workdir": workdir}
+    out, _events, why = call_codex_why(prompt, timeout=timeout, **kw)
     return out, why
 
 

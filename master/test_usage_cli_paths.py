@@ -12,6 +12,9 @@
    5. 대시보드가 새 줄(claude·codex·agy)을 제 계열로 분류한다
    6. 🔴 프롬프트는 **명령줄에 실리지 않는다** — claude·codex 는 표준 입력, agy 는 `BRIEF.md` +
       `--add-dir <절대 경로>` (2026-10-10 `E2BIG` 실측). 128KB 를 넘는 프롬프트도 실행된다
+   7. `workdir` (`#825`) — 주면 백엔드마다 그 디렉터리에서 돌고(codex `-s read-only -C`,
+      agy 두 번째 `--add-dir`, claude `--tools Read,Grep,Glob`) 한 줄 로그를 남긴다.
+      **안 주면 명령줄·cwd 가 종전 그대로다**
 
 [주의] **실제 상용 CLI 를 부르지 않는다** — `claude`·`codex`·`agy` 셋 다 가짜를 PATH 앞에 둔다.
 """
@@ -56,6 +59,7 @@ def lines(p: Path) -> list:
 
 _CLAUDE = r'''
 import json, os, sys
+open(os.environ["FAKE_CWD"], "a").write(json.dumps(["claude", os.getcwd()]) + "\n") if os.environ.get("FAKE_CWD") else None
 open(os.environ["FAKE_ARGV"], "a").write(json.dumps(sys.argv[1:]) + "\n")
 open(os.environ["FAKE_STDIN"], "a").write(json.dumps(["claude", sys.stdin.read()]) + "\n")
 mode = os.environ.get("CLAUDE_FAKE", "json")
@@ -76,6 +80,7 @@ elif mode == "limit":
 
 _CODEX = r'''
 import json, os, sys
+open(os.environ["FAKE_CWD"], "a").write(json.dumps(["codex", os.getcwd()]) + "\n") if os.environ.get("FAKE_CWD") else None
 a = sys.argv[1:]
 open(os.environ["FAKE_ARGV"], "a").write(json.dumps(["codex"] + a) + "\n")
 open(os.environ["FAKE_STDIN"], "a").write(json.dumps(["codex", sys.stdin.read()]) + "\n")
@@ -96,6 +101,7 @@ open(out, "w").write(os.environ.get("FAKE_RESULT", "OK"))
 
 _AGY = r'''
 import json, os, sys
+open(os.environ["FAKE_CWD"], "a").write(json.dumps(["agy", os.getcwd()]) + "\n") if os.environ.get("FAKE_CWD") else None
 open(os.environ["FAKE_ARGV"], "a").write(json.dumps(["agy"] + sys.argv[1:]) + "\n")
 a = sys.argv[1:]
 d = a[a.index("--add-dir") + 1] if "--add-dir" in a else ""
@@ -133,6 +139,7 @@ def main() -> int:
     os.environ["PATH"] = f"{_fakes(tmp)}{os.pathsep}{old_path}"
     os.environ["FAKE_ARGV"] = str(tmp / "argv.jsonl")
     os.environ["FAKE_STDIN"] = str(tmp / "stdin.jsonl")
+    os.environ["FAKE_CWD"] = str(tmp / "cwd.jsonl")
     err = io.StringIO()
     try:
         check("가짜가 먼저 잡힌다 (실제 CLI 를 부르지 않는다)",
@@ -329,6 +336,101 @@ def main() -> int:
         check("agy 레인 — 공용 진입과 같은 모양", not c.error and got[1] == big
               and av[-2:] == ["-p", L2.AGY_BRIEF_PROMPT], c.error)
 
+        print("⑨ `workdir` (#825) — 없으면 종전 그대로, 있으면 그 디렉터리에서")
+        wd = tmp / "pinned"
+        wd.mkdir()
+        rp_ = os.path.realpath
+
+        def last_cwd():
+            return json.loads((tmp / "cwd.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+
+        logs = []
+        old_logf = L2._LOGF
+        L2._LOGF = logs.append
+        try:
+            here = rp_(os.getcwd())
+            _env(CLAUDE_FAKE="json", FAKE_RESULT="OK")
+            L2.call_claude_why("p", timeout=20)
+            check("claude 없음 — argv·cwd 종전 그대로",
+                  last_argv() == ["-p", "--output-format", "json"]
+                  and rp_(last_cwd()[1]) == here and not logs, f"{last_argv()} {last_cwd()}")
+            out, why = L2.call_claude_why("p", timeout=20, workdir=str(wd))
+            check("claude 있음 — `--tools Read,Grep,Glob` · cwd=workdir · 로그 한 줄",
+                  out == "OK" and last_argv() == ["-p", "--output-format", "json",
+                                                  "--tools", "Read,Grep,Glob"]
+                  and rp_(last_cwd()[1]) == rp_(wd)
+                  and len(logs) == 1 and "[claude]" in logs[0] and str(wd) in logs[0],
+                  f"{last_argv()} {last_cwd()} {logs}")
+
+            logs.clear()
+            _env(CODEX_FAKE="ok", FAKE_RESULT="OK")
+            L2.call_codex_why("p", timeout=20)
+            av = last_argv()
+            check("codex 없음 — argv 종전 그대로 · cwd 는 -o 임시 디렉터리",
+                  av[:6] == ["codex", "exec", "--skip-git-repo-check", "-c",
+                             'model_reasoning_effort="medium"', "--json"]
+                  and av[6] == "-o" and av[8:] == ["-"] and len(av) == 9
+                  and rp_(last_cwd()[1]) == rp_(os.path.dirname(av[7])) and not logs,
+                  f"{av} {last_cwd()}")
+            text, _e, why = L2.call_codex_why("p", timeout=20, workdir=str(wd))
+            av = last_argv()
+            check("codex 있음 — `-s read-only -C <workdir>` · -o 는 workdir 밖 · cwd=workdir · 로그",
+                  text == "OK" and av[6:10] == ["-s", "read-only", "-C", str(wd)]
+                  and av[10] == "-o" and not rp_(av[11]).startswith(rp_(wd))
+                  and rp_(last_cwd()[1]) == rp_(wd)
+                  and len(logs) == 1 and "[codex]" in logs[0] and str(wd) in logs[0],
+                  f"{av} {last_cwd()} {logs}")
+
+            logs.clear()
+            from unittest.mock import patch as _patch
+            real_which = shutil.which
+            with _patch.object(L2.shutil, "which",
+                               lambda n, *a, **k: None if n == "codex" else real_which(n, *a, **k)), \
+                    _patch("subprocess.run", side_effect=AssertionError("원격 호출 금지")) as sr:
+                text, ev, why = L2.call_codex_why("p", timeout=20, workdir=str(wd))
+            check("codex 로컬 없음 + workdir — `.33` 원격으로 가지 않고 사유·로그를 남긴다",
+                  text is None and ev == "" and "원격" in why and sr.call_count == 0
+                  and any("[codex]" in m and str(wd) in m for m in logs), f"{why} {logs}")
+
+            logs.clear()
+            _env(FAKE_RESULT="OK")
+            L2.call_agy_why("p", timeout=20)
+            av = last_argv()
+            check("agy 없음 — argv·cwd 종전 그대로",
+                  av[:5] == ["agy", "--dangerously-skip-permissions", "--output-format", "json",
+                             "--add-dir"] and av[6:] == ["-p", L2.AGY_BRIEF_PROMPT]
+                  and rp_(last_cwd()[1]) == here and not logs, f"{av} {last_cwd()}")
+            out, why = L2.call_agy_why("p body", timeout=20, workdir=str(wd))
+            av, got = last_argv(), last_in()
+            brief_dir = av[av.index("--add-dir") + 1]
+            check("agy 있음 — BRIEF 디렉터리 + 두 번째 `--add-dir <workdir>` · cwd=workdir · 로그",
+                  out == "OK" and got[1] == "p body" and av.count("--add-dir") == 2
+                  and av[av.index("--add-dir", av.index("--add-dir") + 1) + 1] == str(wd)
+                  and av[-2] == "-p" and os.path.join(brief_dir, "BRIEF.md") in av[-1]
+                  and rp_(last_cwd()[1]) == rp_(wd)
+                  and len(logs) == 1 and "[agy]" in logs[0] and str(wd) in logs[0],
+                  f"{av} {last_cwd()} {logs}")
+            c = usage.call_agy("p", timeout=20)
+            check("agy 레인(`usage.call_agy`) — 기본 명령 그대로",
+                  not c.error and last_argv()[-2:] == ["-p", L2.AGY_BRIEF_PROMPT]
+                  and last_argv().count("--add-dir") == 1, str(last_argv()))
+        finally:
+            L2._LOGF = old_logf
+
+        seen_kw = []
+        old_b = L2.WHY_BACKENDS
+        try:
+            L2.WHY_BACKENDS = [("only", lambda pr, timeout: ("A", ""))]
+            check("commercial_chat — workdir 없으면 (prompt, timeout) 가짜도 그대로 돈다",
+                  RG.commercial_chat("p", timeout=5) == "A")
+            L2.WHY_BACKENDS = [("x", lambda pr, timeout, **kw: (seen_kw.append(kw), ("", "fail"))[1]),
+                               ("y", lambda pr, timeout, **kw: (seen_kw.append(kw), ("B", ""))[1])]
+            out = RG.commercial_chat("p", timeout=5, workdir=wd)
+            check("commercial_chat — workdir 를 백엔드마다 넘긴다",
+                  out == "B" and seen_kw == [{"workdir": str(wd)}] * 2, str(seen_kw))
+        finally:
+            L2.WHY_BACKENDS = old_b
+
         print("⑦ 대시보드 분류")
         fam = {}
         for lane in ("claude", "codex", "agy"):
@@ -344,6 +446,7 @@ def main() -> int:
         os.environ["PATH"] = old_path
         _env()
         os.environ.pop("FAKE_ARGV", None)
+        os.environ.pop("FAKE_CWD", None)
         shutil.rmtree(tmp, ignore_errors=True)
 
     total = PASS + FAIL

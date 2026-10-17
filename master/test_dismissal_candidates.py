@@ -51,7 +51,11 @@ class CandidatesTest(unittest.TestCase):
     def chat(self, prompt):
         self.calls.append(prompt)
         data = json.loads(prompt.split("DATA_JSON\n", 1)[1])
-        self.assertEqual(data["source"][0]["text"], "def f():")
+        # #825: 소스는 싣지 않는다 — 대상 경로와 고정 SHA 만 준다
+        self.assertNotIn("source", data)
+        self.assertEqual(data["item"]["file"], "a.py")
+        self.assertIn(D.main_sha(self.repo), prompt)
+        self.assertNotIn("return 1", prompt)
         return json.dumps({"verdict": "candidate", "reason": "타입 표기 권고",
                            "evidence": [{"file": "a.py", "line": 1, "text": "def f():"}]})
 
@@ -131,8 +135,8 @@ class CandidatesTest(unittest.TestCase):
                 self.assertEqual(len(got["unjudged"]), 2)
                 self.assertEqual(D.read_results(self.root)["count"], 0)
 
-    def test_large_source_is_judged_without_budget(self):
-        # 상용 판정엔 토큰·크기 한도가 없다(사용자 2026-10-17). 종전 24000 한도를 넘는 소스.
+    def test_prompt_carries_no_source_regardless_of_size(self):
+        # #825: 에이전트가 작업 디렉터리에서 직접 읽는다. 상용 판정엔 크기 한도도 없다(2026-10-17).
         big = "def f():\n" + "    x = '" + "가" * 30000 + "'\n    return 1\n"
         (self.repo / "a.py").write_text(big)
         self.git("add", "a.py")
@@ -140,15 +144,53 @@ class CandidatesTest(unittest.TestCase):
         seen = []
 
         def judge(prompt):
-            seen.append(len(prompt))
+            seen.append(prompt)
             return json.dumps({"verdict": "candidate", "reason": "r",
                                "evidence": [{"file": "a.py", "line": 1, "text": "def f():"}]})
         got = D.collect(self.paths, chat=judge)
         self.assertTrue(got["complete"])
         self.assertEqual(got["unjudged"], [])
         self.assertEqual(len(seen), 2)
-        self.assertTrue(all(n > 30000 for n in seen))
+        self.assertTrue(all("가" * 100 not in p and len(p) < 5000 for p in seen),
+                        [len(p) for p in seen])
         self.assertEqual(D.read_results(self.root)["count"], 2)
+
+    def test_real_chain_gets_pinned_worktree_at_main(self):
+        sha = D.main_sha(self.repo)
+        seen = []
+
+        def fake_chat(prompt, *, workdir=None, **_):
+            wd = Path(workdir)
+            head = subprocess.run(["git", "-C", str(wd), "rev-parse", "HEAD"], check=True,
+                                  capture_output=True, text=True).stdout.strip()
+            seen.append((wd, head, (wd / "a.py").read_text(), wd.is_relative_to(self.repo)))
+            return json.dumps({"verdict": "candidate", "reason": "r",
+                               "evidence": [{"file": "a.py", "line": 1, "text": "def f():"}]})
+        (self.repo / "a.py").write_text("UNCOMMITTED\n")
+        with patch("master.context_synth.review_gen.commercial_chat", fake_chat):
+            got = D.collect(self.paths, now=datetime(2026, 10, 17, 10))
+        self.assertEqual(got["unjudged"], [])
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(len({w for w, *_ in seen}), 1, "수집 한 번에 트리 하나")
+        wd, head, text, inside = seen[0]
+        self.assertEqual(head, sha)
+        self.assertEqual(text, "def f():\n    return 1\n")
+        self.assertFalse(inside, "트리는 저장소 밖에 있다")
+        self.assertFalse(wd.exists(), "수집 뒤 트리를 지운다")
+        listed = self.git("worktree", "list", "--porcelain")
+        self.assertNotIn(str(wd), listed)
+        self.assertEqual((self.repo / "a.py").read_text(), "UNCOMMITTED\n")
+
+    def test_real_chain_worktree_failure_is_unjudged(self):
+        calls = []
+        with patch("master.context_synth.pinned_tree.pinned_worktree",
+                   side_effect=RuntimeError("x")) as pw, \
+                patch("master.context_synth.review_gen.commercial_chat",
+                      lambda *a, **k: calls.append(1)):
+            got = D.collect(self.paths, now=datetime(2026, 10, 17, 10))
+        self.assertEqual(len(got["unjudged"]), 2)
+        self.assertEqual(calls, [])
+        self.assertEqual(pw.call_count, 1, "같은 수집에서 재시도하지 않는다")
 
     def test_incomplete_run_resumes_next_weekend_not_same_weekend(self):
         runs = []

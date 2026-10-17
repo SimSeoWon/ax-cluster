@@ -338,8 +338,16 @@ class ReviewResult:
         return not self.error
 
 
-def commercial_chat(prompt: str, *, timeout: int = REVIEW_TIMEOUT) -> str:
+def commercial_chat(prompt: str, *, timeout: int = REVIEW_TIMEOUT,
+                    workdir=None) -> str:
     """직접 호출 하위 호환용 상용 체인. 리뷰 큐는 이 함수를 쓰지 않는다.
+
+    `workdir` (`#825`) — 상용 CLI 는 파일을 읽는 에이전트다. 소스를 프롬프트에 싣는 대신 그
+    디렉터리를 작업 디렉터리로 준다. 원전 `master_orchestrator/common.py:418`
+    `call_cli_llm(prompt, cwd=...)` 와 호출부(`llm_tools.py:52,76,126` 의 `cwd=repo_path`)가
+    선례인데 이식에서 빠졌다. 우리는 더 좁다 — 고정 SHA 의 분리 worktree 를 준다
+    (`pinned_tree.pinned_worktree`). [주의] `None` 이면 종전 그대로 `fn(prompt, timeout=…)` 로
+    부른다 — `WHY_BACKENDS` 를 바꿔 끼운 가짜가 그 모양만 받는다.
 
     [중요] **실패 사유를 예외에 싣는다** (`#285`, 사용자 지적 2026-08-23). 종전 메시지는
     *"둘 다 응답 없음"* 이었는데, 실측된 진짜 원인은 **systemd 유닛에 PATH 가 없어 `which` 가
@@ -349,7 +357,8 @@ def commercial_chat(prompt: str, *, timeout: int = REVIEW_TIMEOUT) -> str:
     from .. import layer2_verify as l2
     whys = []
     for name, fn in l2.WHY_BACKENDS:
-        out, why = fn(prompt, timeout=timeout)
+        kw = {} if workdir is None else {"workdir": str(workdir)}
+        out, why = fn(prompt, timeout=timeout, **kw)
         if out and out.strip():
             return out
         whys.append(f"{name}: {why or '사유 미기록'}")
