@@ -5,6 +5,7 @@
 AXCluster의 통합 검사는 `tests/integration/checks.json`의 명시 목록을
 `master/integration_checks.py`로 별도 프로세스에서 실행하고 종료 코드·실행 건수를 대조한다.
 실행: `.venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v`.
+[중요] 공식 목록은 ⑦ 이 검사 트리(격리 worktree)에서 그대로 돈다 — **사실상 전수**다(`#815` ⑥, 2026-10-18). 빠지는 것은 건수를 찍지 않는 테스트와 `followup.MASTER_ENV_TESTS`(마스터 실 배치·트윈을 보는 검사 — 커밋 전 전수가 돈다)뿐이다. [주의] 새 테스트는 「격리 worktree · 빈 `AX_PROJECTS_ROOT`」에서 통과해야 공식 목록에 들어간다 — 실 레지스트리·고정 경로를 읽으면 검사 트리에서 항상 실패한다.
 `test_indexer.py`는 Git·색인·문서 합성기를 주입해 실제 브로커에 의존하지 않는다.
 Windows Codex 준비 검사는 예약 작업의 정적 등록을 검증하며 실제 도구 실행은 별도 실증이다.
 변경·검사·배포 근거: [리포트 89](../reports/89-codex-worker-readiness-and-write-probes.md)·
@@ -33,7 +34,7 @@ MCP가 없으면 같은 정본 `work.conductor.snapshot()`·`set_worker()`를 �
 | `work/mode.py` | `lane`/`claude`/`codex` 저장값과 실제 선택 출처 관리. 명시 인자·환경변수가 저장값보다 우선 |
 | `work/conductor.py` | 담당 기록·상태 조회·워커 준비 검사 후 모드 저장. 담당 기록은 프로세스 생존 판정이나 잠금이 아님 |
 | `verdict.py` | **층2 판정 계약 (fail-closed).** `contract_text()` 로 프롬프트에 계약을 붙이고 `parse_verdict()` 로 읽는다. **모든 실패 경로가 차단으로 떨어진다** |
-| `layer2_verify.py` | 층2 검증기 — UE5/C++ 문법 프롬프트 + 백엔드 체인(`agy` → `claude`). `verify_files([(경로, 내용)])` |
+| `layer2_verify.py` | 층2 검증기 — UE5/C++ 문법 프롬프트 + 백엔드 체인(`agy` → `claude`). `verify_files([(경로, 내용)])` · `workdir=`(`#825`): 고정 SHA 작업 트리를 직접 읽게 한다(codex `-s read-only -C` · agy 두 번째 `--add-dir` · claude `--tools Read,Grep,Glob`), 안 주면 argv 종전 그대로 · [주의] 계약 끝 *"or violate the spec"* 때문에 **claude 는 `[PSEUDO]` 위반을 막고 agy 는 안 막는다**(`#815` ④ 실측 2/3 · 0/2) — 백엔드에 따라 갈린다(처리 결정 대기) |
 | `test_*.py` | **테스트는 저장소 루트 `CLAUDE.md` 의 세는 법을 따른다.** pytest 불필요 — 각 파일을 그대로 실행한다. 목록은 저장소 루트 `CLAUDE.md` 참조 |
 | `task_queue/` | **잡 분배 큐** (AgentTest `mcp/task_queue/` 이식, 2,717줄). HTTP 서비스 + MCP stdio |
 | `task_queue/tagging.py` | [중요] **요청 태그 정책의 정본** (`#257`·`#258`, 2026-08-22) — 35개 라우트에 4정책(`OPEN`/`TAG`/`MOUNT`/`STAMP`). **선언 없는 라우트가 생기면 `test_tagging.py` 가 깨진다** — 엔드포인트마다 `if` 를 뿌리면 다음 것이 빠지기 때문이고, `#243` 이 시소러스 둘만 배선하고 `signals`·`history`·`claim` 을 남긴 사고가 그 실측이다. [중요] **`MOUNT`(마운트와 대조, 태그 없음도 거절)와 `STAMP`(work 스탬프로 판정, 대조만)를 가르는 것이 핵심** — `STAMP` 에 마운트를 강제하면 `#210`(미종결 work 는 원래 프로젝트로)을 깨뜨린다. 거절 사유 셋(`no_project_tag`·`not_mounted`·`project_mismatch`)은 **고칠 곳이 다르기 때문**에 가른 것이고, 형태는 전부 **200 + `ok:false`**(§12.5-c: 4xx/5xx 는 `ax-client` 가 [미연결]로 읽어 낡은 스냅샷을 정답처럼 돌려준다) |
@@ -56,6 +57,9 @@ MCP가 없으면 같은 정본 `work.conductor.snapshot()`·`set_worker()`를 �
 | `bench_layer2.py` | **층2 모델 선정 벤치** (소 2.2.1) — 표본 7개(전부 실제로 났던 실패), 채점은 `verdict` 계약만. [중요] 실측: agy·sonnet·opus **동점**(4/5·오탐 0) → 싼 쪽 먼저 · 14b 는 선언부를 줘도 못 잡음 · **35B 는 오탐 2 로 탈락**. [중요] **차이는 모델이 아니라 grounding** — 넷이 선언부 없이는 열거값 환각을 놓쳤다 |
 | `work/porting.py` | **포팅 원본 대응** (소 1.3.5) — `python -m master.work.porting pairs\|find`. [중요] 실측 2026-08-12: 파일 1,654개 중 stem 그대로 같은 것 **9쌍**, **접두사 정규화 후 21쌍**(포팅이 개명을 거쳤다). [중요] **퍼지 매칭 없음** — 틀린 원본은 원본 없는 것보다 나쁘다. 규칙(`exact`/`prefix`)을 결과에 실어 사람이 가늠한다. [중요] **경로만** 싣는다(워커의 Claude 는 체크아웃을 읽는다 — 골조 생성과 반대인 이유) + **읽기 전용·복사 금지·Edit/Write 금지**를 매니페스트에 못박는다 |
 | `work/distribute.py` | **`/distribute` 입구** (소 1.3.4) — `plan` → `register` → `dispatch`, [중요] **단계마다 사람이 끊는다.** 계획은 **JSON 파일로** 낸다 — `preview()` 를 눈으로 보는 것만으로는 **자를 수 없다**. 사람이 그 파일에서 조각을 지우고, `register` 가 그것을 읽는다. 스킬 = `master/skills/distribute/`(`~/.claude/skills/distribute` 는 심볼릭 링크) |
+| `work/followup.py` | **⑦ 준비·대기** (`#798`) — `ax-followup.timer` 1분 · `code_build_fn` = 공식 통합 + 회귀 + 정적(`pystatic`). 회귀 선택(`#815` ⑤): 같은 이름 + **직접 import(ast)** + **경로 언급**(전이 제외) · 공식 목록·`MASTER_ENV_TESTS` 는 빼고 노트 · 파일마다 이유 로그 |
+| `work/pystatic.py` | **⑦ 정적 검사** — pyflakes(문법·undefined name 차단, `#804`) · import · **mypy `[call-arg]` 만 차단**(`#815` ②, 나머지는 노트 — attr-defined·union-attr 76/76 오탐 실측). base 에 있던 것은 안 막음 · 못 돌면 fail-closed. [주의] 무표기 함수 본문은 mypy 가 안 본다 |
+| `context_synth/pinned_tree.py` | **고정 SHA 분리 worktree** (`#825`) — 저장소 밖 임시 · 항상 제거 · 쓰기는 `status --porcelain` 경고 로그. 기각 후보 수집이 상용 체인에 cwd 로 준다 |
 | `work/runner.py` | **워커 러너 — 현행 파견기** (`autodispatch` 가 부른다: claim → SSH → submit). 지휘자 모드 `claude`/`codex` 실행과 Windows 세션 1 런처(`uses_session1`)도 여기서 간다. 큐에서 집어 워커의 Claude 에 파견하고 결과를 제출한다. `python -m master.work.runner probe\|once\|loop`. [중요] **워커에 큐 토큰을 주지 않는다 — 마스터가 중개한다**(실측: 두 워커 다 8101 이 401, AX MCP 0건). 하트비트도 마스터가 친다. 판정은 **fail-closed 마커** `ATTEMPT`/`HEAD`/`RESULT` 마지막 세 줄, 관대함은 **BLOCKED 쪽으로만**. [중요] 기준 절은 **파견 시점에 다시 푼다**. 실측 e2e 71초 |
 | `work/cleanup.py` | **찌꺼기 정리** — 워커의 로컬 브랜치·부산물. `python -m master.work.cleanup plan\|apply\|remote [--apply]`. [중요] **워커는 스스로 못 지운다**(스킬이 브랜치 삭제 금지 — 의도). 삭제는 **팁이 `origin/<base>` 에서 도달 가능할 때만**, 나머지는 **보존**(fail-closed 의 방향이 보존이다). [중요] **원격은 `remote` 서브커맨드가** 병합 확인분(attempt/task)만 지운다 (#219, 사용자 결정 2026-08-18 — 원전 cleanup_attempts 회귀 · pre-push 훅 #125 가 이중 가드). 미병합 원격은 계속 사람 몫. `failed` 부산물은 증거로 남긴다. [주의] `--format` 은 셸별로 감싼다 — `%(...)` 의 괄호가 POSIX 문법이라 안 감싸면 리눅스 워커만 조용히 실패한다 |
 | ~~`work/claimer.py`~~ · `work/ax_safety.py` | `claimer.py` 는 **철거됨** (#320, 2026-08-27). 상주는 `work/worker_daemon.py` 로 **build 한정 복원**(`#404`, `010db71`)됐고 `ax_safety.py` 는 그 안전 가드(원전 `worker/safety.py` 이식)로 남는다. 추론(code)은 여전히 마스터 SSH push |
@@ -242,7 +246,7 @@ CI 러너 패턴으로 분리한다.
 **선결 설치**: `claude` [완료] v2.1.223 / `agy` [완료] v1.1.10(리포트 04) /
 ~~`bun`·`node`~~ → **마스터엔 불필요**(2026-08-08) — gjc 는 loopback 제약상 윈도우에서 돈다(`../PLAN.md` §9).
 
-| `context_synth/review_gen.py` | **생산자① 자동 코드리뷰** (#205) — 유저 커밋 → `reviews/<작성자>/`. [중요] 백엔드는 **상용 체인**(원전 기본값 — 14b 는 라이브에서 재시도 포함 2회 산문, 탈락 실측). 형식은 지시가 아니라 **검증기+재시도 1회**가 지킨다(검증 정규식 = 소비자 파서 그대로). trivial/파이프라인(author=ax-cluster) 스킵. 소비자 배선은 `events/consumer._auto_review` — fail-soft + 카나리 2종 |
+| `context_synth/review_gen.py` | **생산자① 자동 코드리뷰** (#205) — 유저 커밋 → `reviews/<작성자>/`. [중요] 백엔드는 **상용 체인**(원전 기본값 — 14b 는 라이브에서 재시도 포함 2회 산문, 탈락 실측). 형식은 지시가 아니라 **검증기+재시도 1회**가 지킨다(검증 정규식 = 소비자 파서 그대로). trivial/파이프라인(author=ax-cluster) 스킵. 소비자 배선은 `events/consumer._auto_review` — fail-soft + 카나리 2종 · 「## 4. 골조 지시 이행」(`#815` ④): diff 에 **지워진 `[PSEUDO]`** 가 있는 커밋(워커 조각)에만 요청(`removed_pseudo_lines`) — 불이행 / 골조 모순 행 → R 항목(intent · mid/low) → /fixes · 기각 후보, 주간 플랜 제외. 요청했는데 빠지면 형식 위반. 없는 커밋은 프롬프트 바이트 동일 |
 | `context_synth/signals.py` | **생산자② code-writer 신호** (#206) — 코드가 아니라 **작업 과정**(intent·검색·파일·피드백·거절·복구)을 `recipes/_signals.jsonl` 에. 적재는 지금 하나다: 요청자가 큐 `POST /api/v1/signals`(redmine/note 와 같은 대행, `task_queue/server.py`). [주의] 「통합자가 통과분만 자동 적재」하던 경로는 통합자 삭제(2026-09-04)로 없어졌다 — `#383` 이 그 공백을 다룬다. [중요] 큐 유닛 샌드박스는 `recipes/`·`history/` **두 디렉토리만** 연다 |
 | `context_synth/history_gen.py` | **생산자③ 작업 기록** (#207) — 원전 α′ frontmatter. work 종결(merged/rejected) 시 큐가 자동 기록 + `.33` `log_history` 대행. [중요] **원전 미니 파서는 인라인 리스트를 통째로 버린다** — 대시 리스트만 (emission/parser 쌍 왕복 테스트) |
 | `context_synth/review_collector.py` `issue_classifier.py` | **소비자①** (#156) — 리뷰 MD → 구조화 이슈(원전 글자대로: 심각도 정규화·`[리뷰]` 코멘트 제외·라인 버킷 중복 제거·3파일+ 반복 패턴). [중요] **이 파서가 생산자 형식 계약 그 자체** — 「(없음)」 자리표시는 여기서 쓰레기 이슈 10건으로 측정돼 생산자에서 제거됐다 |

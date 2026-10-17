@@ -1,6 +1,14 @@
 # 현재 AX 작업 인수인계
 
-- **현재 체크포인트: 2026-10-18 01:00 · Claude · #815 ④ 의도 축 측정 → 리뷰 큐로 방향 전환 · 🔴 agy 쿼터 소진**.
+- **현재 체크포인트: 2026-10-18 04:00 · Claude · 세션 마감 — #815 ④ 리뷰 큐 4절 배포 · agy 모델 별칭 함정(#830) · Argon 리뷰 품질 대조 · 문서 최신화**.
+  - HEAD `main` 7b244ba(push · 배달 3/3 · `ax-task-queue` 03:06:30 · `ax-projects` 03:06:35 재기동) + 이 인계·보고서 122·문서 최신화. 마스터 담당 `codex`·워커 모드 `codex` 미변경.
+  - `7b244ba` 리뷰 큐 「## 4. 골조 지시 이행」 — 지워진 [PSEUDO] 가 있는 커밋에만, R 항목(intent) → /fixes·기각 후보, 주간 플랜 제외, 없는 커밋 프롬프트 바이트 동일. 한국어 문구 미실측.
+  - 🔴 **agy 는 모델 이름이 별칭이다** — agy 로그 `model alias "Gemini 3.6 Flash (High)" resolved to "Gemini 4 Argon (Medium)"`(10-17 10:08~). 우리 자동 경로가 Argon 으로 돌았고 내 측정이 Argon 주간 한도를 소진(~10-24 회복). 한도는 모델 묶음별. **설정은 지금 `Gemini 3.8 Flash (Medium)`**(High 는 리뷰 240초 초과) — 백업 `~/.gemini/antigravity-cli/settings.json.bak-model-20261018-*`. 리뷰 큐 대기 0(R162 처리 확인). #830 등록(모델 명시·agy 내 모델 폴백·모델별 쿨다운·별칭 해석 검사·Argon 은 비교 전용).
+  - Argon(Medium) 리뷰 지적 7건 대조: 진짜 5(R154-1 은 #799 코드 실제 결함) · 취향 1 · 오탐 1 — #829·#799 코멘트. 결정 색인 상태 미변경.
+  - 문서: master/README.md(공식 목록=사실상 전수·layer2/review_gen 보강·followup/pystatic/pinned_tree 행) · machines/llm-fitness.md(agy 별칭·한도) · milestones/6(10-17~18 근거 절).
+  - 다음: 결정 대기(R154-1 처리 · 층2 「spec」 문구 · #830 착수) · **다음 주 Argon 코드 생성 비교(#829, 착수 전 소모 보고)** · 10-24 #823/#825 회차 · 리뷰 큐 4절 첫 실 조각 리뷰 관찰. 보고서 `reports/122-agy-model-alias-argon-review-queue.md`.
+
+- **직전 체크포인트: 2026-10-18 01:00 · Claude · #815 ④ 의도 축 측정 → 리뷰 큐로 방향 전환 · 🔴 agy 쿼터 소진**.
   - HEAD `main` ecf0512(코드 변경 없음) + 이 인계·보고서 121. 마스터 담당 `codex`·워커 모드 `codex` 미변경.
   - 🔴 **agy 쿼터 소진(내 측정 84회 · ~400만 토큰) — `429 … Resets in 153h`(10-24 오전 회복). 리뷰 큐 자동 리뷰(`review_runner.agy_only`, 폴백 없음)가 그때까지 멈춘다.** 층2 는 claude 폴백으로 동작, 레인·⑦·#823 수집은 codex 우선이라 무관. 기억 `shared-quota-impact-before-bulk-calls`.
   - 측정(P0 운영 vs P1 의도 축): 검출 6/6(probe4 는 skeleton contradiction 으로 보고·APPROVE 유지) · 음성 [INTENT] 1/36(경계선 실이탈) · P1 이 판정을 바꾼 2건은 전부 덜 막는 쪽. 발견: 계약 끝 「or violate the spec」 때문에 claude 는 의도 위반을 이미 막고(2/3) agy 는 안 막는다(0/2) — 백엔드에 따라 갈린다.
