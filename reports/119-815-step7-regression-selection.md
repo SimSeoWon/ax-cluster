@@ -72,3 +72,7 @@ worktree 잔여는 0.
   - 문자열 동적 import(`importlib.import_module`)는 잡지 않는다.
   - `from pkg import name`은 함수인지 하위 모듈인지 구분하지 않는다.
 - 이전 보고서의 남은 것은 그대로다.
+
+### 이후 경과
+
+- 같은 날 #815 ⑥ 공식 통합 목록 34 → 167 — [리포트 120](120-815-official-list-expansion.md). ⑤ 의 선택은 공식 목록에 아직 없는 새 테스트를 받는 안전망이 됐다.
