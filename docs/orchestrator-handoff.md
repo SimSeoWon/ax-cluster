@@ -1,6 +1,12 @@
 # 현재 AX 작업 인수인계
 
-- **현재 체크포인트: 2026-10-17 17:20 · Claude · 버그·개선 일괄 — #798 · #814 · #799 · #763 (로컬 서브 에이전트, 마스터 대조)**.
+- **현재 체크포인트: 2026-10-17 21:15 · Claude · #825 1차 — 기각 후보 수집이 고정 SHA 작업 트리를 직접 읽는다 (로컬 서브 에이전트, 마스터 대조)**.
+  - HEAD `main` be6654b(push · 배달 3/3 OK · 재기동 없음 — `ax-batch` 는 회차마다 새로 읽는다) + 이 인계·보고서 115. 마스터 담당 `codex`·워커 모드 `codex` 미변경.
+  - `be6654b`: `layer2_verify` 세 백엔드 `workdir=`(codex `-s read-only -C` · agy 두 번째 `--add-dir` · claude `--tools Read,Grep,Glob`, 없으면 argv 종전 그대로) · `commercial_chat(workdir=)` · 신규 `pinned_tree.pinned_worktree`(저장소 밖 detached, 항상 제거, 쓰기 경고 로그) · 프롬프트에서 소스 제거(근거 대조는 그대로 `git show`). 원전 선례 `call_cli_llm(prompt, cwd=repo_path)`. 범위는 사용자 선택으로 dismissal 만.
+  - 드라이런(실 체인, scratchpad): 5건 codex · 71초 · 오류 0 · 트리 생성·제거 · 전부 unjudged(지적 유효, 코드 직접 인용). 🔴 토큰은 늘었다 — P12 95,994 → 154,300(캐시 116,352). 한도 금지 규칙상 막는 근거는 아니다.
+  - #825 「진행」. 남은 것: 직접 읽은 줄 번호 대조 라이브(10-24 회차, #823 과 함께) · claude/agy 경로 미실측 · `plan_generator`·`recipes_synthesizer` 전환은 사용자 결정. 다음 작업은 사용자 지시 대기. 보고서 `reports/115-825-pinned-worktree-direct-read.md`.
+
+- **직전 체크포인트: 2026-10-17 17:20 · Claude · 버그·개선 일괄 — #798 · #814 · #799 · #763 (로컬 서브 에이전트, 마스터 대조)**.
   - HEAD `main` 53c0bd5(push · 배달 3/3 OK · `ax-task-queue` 17:16:20 · `ax-projects` 17:16:25 재기동) + 이 인계·보고서 114. 마스터 담당 `codex`·워커 모드 `codex` 미변경.
   - `d21a20c` #798 `followup --wait` 기준선 → 첫 조회 rc 3(라이브 읽기 전용 확인) · `326c0c2` #814 트윈 `requester: master` 명시 항목 → 노트·등재 본문 갈래 + 작업 브랜치 유도 · `749675c` #799 `work_completion.py --wait`(1분 · 읽기 전용) + 등록 응답 `wait` · `53c0bd5` #763 `POST /api/v1/usage` + `gemini_report --remote`. 넷 다 「해결」.
   - 🔴 #799 를 한 번 잘못 닫았다 — 본문 빈 경우 셋(세션 닫음·2시간 초과·Codex) 중 첫째에만 맞는 근거로 종결, 사용자 지적으로 재개·정정 노트. `.33` Codex 는 훅 설정 전무(SSH 확인).
