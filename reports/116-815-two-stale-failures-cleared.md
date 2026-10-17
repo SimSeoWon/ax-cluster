@@ -40,3 +40,7 @@
   ⑥ 공식 목록 확대 · `logic.py` 재수출 판단 · `test_runner` 간헐 실패(원문 미확보). 순서는 사용자가 정한다.
 - 이전 보고서의 남은 것은 그대로다: #825 줄 번호 대조 라이브(10-24) · #823 10-24 회차 · `.33` 실측 셋 ·
   #798 마지막 라이브 · `watch.exe` 훅.
+
+### 이후 경과
+
+- 같은 날 #815 ② mypy 오탐 측정 → `distribute register` 결함 둘 — [리포트 117](117-815-mypy-measurement-distribute-defects.md).

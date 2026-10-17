@@ -1,6 +1,12 @@
 # 현재 AX 작업 인수인계
 
-- **현재 체크포인트: 2026-10-17 21:30 · Claude · #815 기존 실패 2건 해소 — 전수 170파일 실패 0 (로컬 서브 에이전트, 마스터 대조)**.
+- **현재 체크포인트: 2026-10-17 22:00 · Claude · #815 ② mypy 오탐 측정 → `distribute register` 결함 둘 수정 (로컬 서브 에이전트, 마스터 대조)**.
+  - HEAD `main` f53a360(push · 배달 3/3 OK · 재기동 없음 — CLI 진입점) + 이 인계·보고서 117. 마스터 담당 `codex`·워커 모드 `codex` 미변경.
+  - mypy 1.11.2(scratchpad venv, 서비스 `.venv` 무접촉) 비테스트 209모듈: 기본 309건/79파일/48초 · untyped 351건. 대부분 추론 잡음, `call-arg` 는 오탐 0·실결함 1. #815 노트.
+  - 결함(둘 다 #348 `53fc90f` 매니페스트 철거 잔재, CLI `distribute register` 한 경로): ① `searcher=` 를 지운 `register_work` 에 넘김 → TypeError ② `t.manifest_degraded`(TaskResult 에 없음) → AttributeError — 내가 첫 측정에서 놓쳤다. 잔재 제거(되살리지 않음), 한 커밋 `f53a360`. 신규 test_distribute 10/10(①만 되돌리면 1/5 · ②만 되돌리면 3/5) · 전수 171 실패 0 · mypy 두 경고 0.
+  - 다음: mypy 도입 여부·위치(층1 / ⑦)·차단 집합(`call-arg` 만?)은 사용자 결정. 다음 작업은 사용자 지시 대기. 보고서 `reports/117-815-mypy-measurement-distribute-defects.md`.
+
+- **직전 체크포인트: 2026-10-17 21:30 · Claude · #815 기존 실패 2건 해소 — 전수 170파일 실패 0 (로컬 서브 에이전트, 마스터 대조)**.
   - HEAD `main` caf6763(push · 배달 3/3 OK · `ax-task-queue` 21:27:28 재기동 — 유닛 `/etc` 설치·daemon-reload, 진행 중 조각 0 확인) + 이 인계·보고서 116. 마스터 담당 `codex`·워커 모드 `codex` 미변경.
   - `test_mount_gate` 는 테스트가 낡았다(빈 스풀 분기 앵커 `if not res.results:` 로 갱신, 앵커 부재는 이름 붙은 실패). `test_sandbox` 는 테스트가 맞았다 — 최상위 `tests/` 가 큐 유닛 ReadOnlyPaths 밖이라 조용히 쓰기 가능이었다 → 한 줄 추가, 실물 반영 확인.
   - 🔴 이제 전수 실패는 곧 새 회귀다 — 「기존 2개뿐」 거르기는 끝났다.
