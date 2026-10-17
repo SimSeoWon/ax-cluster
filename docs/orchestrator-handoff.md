@@ -1,6 +1,13 @@
 # 현재 AX 작업 인수인계
 
-- **현재 체크포인트: 2026-10-17 15:50 · Claude · #823 첫 수집 후속 — 상용 LLM 토큰 예산 제거 · codex 탐색 경로 · 이미 해소 후보**.
+- **현재 체크포인트: 2026-10-17 17:20 · Claude · 버그·개선 일괄 — #798 · #814 · #799 · #763 (로컬 서브 에이전트, 마스터 대조)**.
+  - HEAD `main` 53c0bd5(push · 배달 3/3 OK · `ax-task-queue` 17:16:20 · `ax-projects` 17:16:25 재기동) + 이 인계·보고서 114. 마스터 담당 `codex`·워커 모드 `codex` 미변경.
+  - `d21a20c` #798 `followup --wait` 기준선 → 첫 조회 rc 3(라이브 읽기 전용 확인) · `326c0c2` #814 트윈 `requester: master` 명시 항목 → 노트·등재 본문 갈래 + 작업 브랜치 유도 · `749675c` #799 `work_completion.py --wait`(1분 · 읽기 전용) + 등록 응답 `wait` · `53c0bd5` #763 `POST /api/v1/usage` + `gemini_report --remote`. 넷 다 「해결」.
+  - 🔴 #799 를 한 번 잘못 닫았다 — 본문 빈 경우 셋(세션 닫음·2시간 초과·Codex) 중 첫째에만 맞는 근거로 종결, 사용자 지적으로 재개·정정 노트. `.33` Codex 는 훅 설정 전무(SSH 확인).
+  - 아이디어: #731 노트(NotebookLM via agy) · #829(제미나이4 via agy → 파이썬 이관 R&D, 미확인 · Gemma 4 와 구분).
+  - 남은 것: `.33` 실측 셋(#814 노트 실물 · #799 깨어남·Codex 방식 · #763 트윈 한 줄)은 게임 프로젝트 마운트 전환 때 · #798 마지막 라이브는 다음 실제 분산 작업 · `.33` ModularStage 낡은 `watch.exe` 훅 정리 여부(사용자 결정) · #823 10-24 회차. 다음 작업은 사용자 지시 대기. 보고서 `reports/114-bug-batch-798-814-799-763.md`.
+
+- **직전 체크포인트: 2026-10-17 15:50 · Claude · #823 첫 수집 후속 — 상용 LLM 토큰 예산 제거 · codex 탐색 경로 · 이미 해소 후보**.
   - HEAD `main` bd49c81(push · 배달 3/3 OK · `ax-projects` 15:40:46 재기동) + 이 인계·보고서 113. 마스터 담당 `codex`·워커 모드 `codex` 미변경.
   - 첫 주말 수집(10:12)이 판정 0건 — 원인은 `TOKEN_BUDGET` 24000·`MAX_SOURCE`. 🔴 사용자 결정: **토큰 한도는 로컬 LLM 에만**(기억 `no-token-budget-for-cloud-llm`). `cd4f270` 기각 후보·주간 플랜 예산 제거(2,000자 플랜 발췌는 유지), unjudged reason 저장.
   - codex 실패는 인증 만료가 아니라 `ax-batch` 무PATH → 비공식 `/snap/bin/codex`(jcat). `3446e09` 유닛 PATH · snap 제거 · `/usr/local/bin/codex` 링크. 파견·큐는 영향 없었다(9-20 이후 0건).
