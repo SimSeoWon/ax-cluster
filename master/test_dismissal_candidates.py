@@ -96,6 +96,25 @@ class CandidatesTest(unittest.TestCase):
         self.assertEqual(len(got["unjudged"]), 2)
         self.assertEqual(D.read_results(self.root)["count"], 0)
 
+    def test_resolved_is_listed_separately_with_checked_evidence(self):
+        good = {"verdict": "resolved", "reason": "이미 수정됨",
+                "evidence": [{"file": "a.py", "line": 2, "text": "    return 1"}]}
+        D.collect(self.paths, chat=lambda _: json.dumps(good))
+        got = D.read_results(self.root, details=True)
+        self.assertEqual((got["count"], got["resolved_count"]), (0, 2))
+        self.assertTrue(all(r["verdict"] == "resolved" and r["reason"] == "이미 수정됨"
+                            for r in got["candidates"]))
+        from master.webui import fixes_page
+        from master.test_fixes_surface import FakeRegistry
+        _, body = fixes_page.render("T", registry=FakeRegistry({"T": self.root}, "T"))
+        self.assertIn("주말 기각 후보 0건 · 이미 해소 후보 2건", body)
+        self.assertNotIn("이미 수정됨", body)
+        D._path(self.root).unlink()
+        bad = {**good, "evidence": [{"file": "a.py", "line": 2, "text": "    return 9"}]}
+        got = D.collect(self.paths, chat=lambda _: json.dumps(bad))
+        self.assertEqual(len(got["unjudged"]), 2)
+        self.assertEqual(D.read_results(self.root)["resolved_count"], 0)
+
     def test_unjudged_reason_is_kept_but_not_listed(self):
         got = D.collect(self.paths, chat=lambda _: json.dumps(
             {"verdict": "unjudged", "reason": "이미 수정됨", "evidence": []}))

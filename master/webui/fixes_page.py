@@ -246,9 +246,10 @@ def render(project: str = "", *, registry=None, list_docs=None) -> tuple:
     candidate_note = ""
     if candidates.get("error"):
         candidate_note = '<div class="note">기각 후보 수집 결과를 읽지 못했다.</div>'
-    elif candidates.get("count"):
+    elif candidates.get("count") or candidates.get("resolved_count"):
         stale = sum(bool(c.get("stale")) for c in candidates.get("candidates", []))
-        candidate_note = (f'<div class="note">주말 기각 후보 {int(candidates["count"])}건'
+        candidate_note = (f'<div class="note">주말 기각 후보 {int(candidates.get("count") or 0)}건'
+                          f' · 이미 해소 후보 {int(candidates.get("resolved_count") or 0)}건'
                           f' · 재확인 필요 {stale}건 · 기준 '
                           f'{html.escape(str(candidates.get("main_sha") or "")[:12])}'
                           f' · {html.escape(str(candidates.get("collected_at") or ""))}'
