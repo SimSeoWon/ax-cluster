@@ -18,7 +18,7 @@
    `~/ax-cluster/docs/orchestrator-handoff.md`와 `~/ax-cluster/docs/orchestrator-rules.md`를 읽고
    실제 상태를 대조하며, 마스터 담당과 워커 지휘자 모드를 각각 확인한다.
    모드 변경은 사용자 선택에 따른다.
-2. `~/ax-cluster/docs/milestones/6-improvements.md` · `~/ax-cluster/docs/12-multi-project.md`.
+2. `~/ax-cluster/docs/milestones/7-improvements.md` · `~/ax-cluster/docs/12-multi-project.md`.
    [주의] **항목·진행은 레드마인(`:8080`)만.**
 3. `~/ax-cluster/reports/` 를 **전문으로** 읽는다.
 

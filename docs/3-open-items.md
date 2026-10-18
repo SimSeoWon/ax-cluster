@@ -4,7 +4,7 @@
 ## 3. 미정/다음 단계
 
 [중요] **이 문서는 「무엇으로 할지 안 정한 것」만 담는다** — *"아직 안 한 것"* 은 열린 마일스톤에
-있다([`milestones/6-improvements.md`](milestones/6-improvements.md)). 섞이면 어느 쪽도
+있다([`milestones/7-improvements.md`](milestones/7-improvements.md)). 섞이면 어느 쪽도
 신뢰할 수 없다.
 
 [주의] **아래 여섯 항목은 마일스톤 3 의 작업 칸이 됐고, 그 마일스톤은 2026-08-17 에 닫혔다**
