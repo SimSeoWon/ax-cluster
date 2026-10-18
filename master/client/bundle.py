@@ -49,6 +49,7 @@ import hashlib
 import json
 import shlex
 import subprocess
+import sys
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -411,12 +412,23 @@ def code_drift() -> dict:
     #       bundle 로 배달하면서 도장(`_delivery_stamp`)은 디스크의 새 HEAD 를 찍는다. 그 뒤 `check` 의 「출처」
     #       대조는 도장만 보므로 통과로 보인다. 실측 2026-10-18: `set_active(align=True)` 가 「HEAD 와 같다」로
     #       찍었는데 `backends.agy_model`·워커 `work/usage.py` 가 배달되지 않아 CLI check 가 3/3 FAIL 이었다.
-    # [PSEUDO] #831: 모듈을 import 하는 시점에 `_delivery_stamp()` 의 commit 을 모듈 상수 하나(예: `_LOADED_COMMIT`)에
-    #       한 번 잡아 둔다(이 함수 바깥, 모듈 최상위). 이 함수는 그 값과 지금의 `_delivery_stamp()` commit 을 비교해
-    #       `{"drift": bool, "loaded": 짧은 커밋, "disk": 짧은 커밋, "reason": 한 줄 사유}` 를 돌려준다.
-    #       어느 쪽이든 commit 을 못 읽으면(빈 값·error) drift=False 로 두고 reason 에 「미측정」과 그 이유를 적는다 —
-    #       재지 못한 것을 위반으로 만들지 않는다. 예외를 던지지 않는다.
-    raise NotImplementedError("#831")
+    disk = _delivery_stamp()
+    loaded, now = _LOADED_COMMIT, disk.get("commit") or ""
+    out = {"drift": False, "loaded": loaded[:7], "disk": now[:7], "reason": ""}
+    if not loaded or not now or disk.get("error"):
+        why = [] if loaded else ["기동 시점 커밋을 못 읽었다"]
+        if not now or disk.get("error"):
+            why.append(f"디스크 HEAD 를 못 읽었다: {disk.get('error') or '빈 커밋'}")
+        out["reason"] = "미측정 — " + " · ".join(why)
+        return out
+    out["drift"] = loaded != now
+    out["reason"] = (f"실행 중 코드 {loaded[:7]} ≠ 디스크 HEAD {now[:7]}" if out["drift"]
+                     else f"실행 중 코드와 디스크 HEAD 가 같다 ({now[:7]})")
+    return out
+
+
+# [중요] #831: import 시점에 한 번 잡는다 — 이 프로세스가 **불러온 코드**의 커밋이다(실패해도 빈 값일 뿐)
+_LOADED_COMMIT: str = _delivery_stamp().get("commit") or ""
 
 
 def agy_model() -> str:
@@ -1938,10 +1950,15 @@ def deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     결과에 `unchanged`(건너뛴 수)를 싣는다. 끄려면 `AX_DELIVER_ALL=1`.
     """
     import os
-    # [PSEUDO] #831: `dry_run` 이 아니면 **가장 먼저** `code_drift()` 를 보고, drift 면 원격에 아무것도 쓰지 않고
-    #       `BundleError` 를 던진다. 문구: 「실행 중 코드 <loaded> ≠ 디스크 HEAD <disk> — 이 프로세스는 커밋 전에
-    #       기동했다. 서비스를 재기동하거나 CLI `python -m master.client update` 로 배달하라 (#831)」.
-    #       같은 문구를 배달 로그에도 한 줄 남긴다(이 모듈의 기존 로그 방식). 미측정(drift=False)은 막지 않는다.
+    # [중요] #831: 커밋 전에 기동한 프로세스는 메모리의 옛 코드로 배달하면서 도장만 새 HEAD 를 찍는다.
+    #    미측정(drift=False)은 막지 않는다 — 재지 못한 것을 위반으로 만들지 않는다.
+    if not dry_run:
+        d = code_drift()
+        if d["drift"]:
+            msg = (f"실행 중 코드 {d['loaded']} ≠ 디스크 HEAD {d['disk']} — 이 프로세스는 커밋 전에 "
+                   "기동했다. 서비스를 재기동하거나 CLI `python -m master.client update` 로 배달하라 (#831)")
+            print(f"[배달 거절] {facts.host}: {msg}", file=sys.stderr)
+            raise BundleError(msg)
     cache = _DeliveryCache()
     token = _DELIVERY_CACHE.set(cache)
     try:
