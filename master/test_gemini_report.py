@@ -79,6 +79,9 @@ if mode == "statuserror":
                       "usage": {"input_tokens": 5, "output_tokens": 2}})); sys.exit(0)
 if mode == "nousage":
     print(json.dumps({"response": "# 보고서\\n본문", "status": "SUCCESS"})); sys.exit(0)
+if mode == "authfail":
+    print(json.dumps({"response": "", "status": "ERROR",
+                      "error": "authentication failed or timed out"})); sys.exit(0)
 print(json.dumps({"response": "# 보고서\\n\\n## 요약\\n요약 한 줄\\n\\n## 1\\n본문 `src/a.py:1` 재인용 `src/a.py:1` 범위밖 `src/a.py:9` 없음 (`src/b.py:2`)", "status": "SUCCESS",
                   "usage": {"input_tokens": 120, "output_tokens": 45, "cache_read_tokens": 7}}))
 """
@@ -221,6 +224,7 @@ def main() -> int:
               and "503" in res["why"] and res["error"].startswith("API error"), str(res))
         check("  머리말 경고", "> [주의] agy status=ERROR: API error" in out6.read_text(encoding="utf-8"), "")
         check("  기록 — 토큰 측정 · 비고에 오류", r["measured"] and "status=ERROR" in r.get("note", ""), str(r))
+        why_statuserror = res["why"]       # [4d2] 에서 — 모델이 맞을 때는 agy 오류 접두가 안 붙는지 대조
 
         print("\n[4c] status=ERROR + 로그에 재시도 회복 — 성공(종료 0)")
         os.environ["FAKE_AGY_MODE"] = "retryok"
@@ -268,11 +272,21 @@ def main() -> int:
               and r["model"] == "gemini-4-argon" and r.get("actual_model") == "gemini-4-argon"
               and r.get("requested_model") == "gemini-3.8-flash-medium" and "모델 불일치" in r.get("note", ""), str(r))
         check("  인용 파일·보고서 안 만든다", not (mrun / "citations.txt").exists())
+        why_mismatch = res["why"]           # [4d2] 에서 대조
 
-        # [PSEUDO] #831: 절 [4d2] 를 더한다 — 가짜 agy 가 봉투 `status=ERROR` · `error="authentication failed or timed out"` ·
-        #       응답 빈 값 · 로그 label 없음으로 끝나게 해서(가짜 agy 의 기존 모드 중 맞는 것을 쓰거나 하나 추가) `G.main` 을 돌리고,
-        #       종료 1 · run.json `why` 가 「agy 오류: authentication failed or timed out」로 **시작**하고 그 뒤에 「실제 모델 미상」이
-        #       붙는지 확인한다. 봉투 오류가 없는 기존 [4c]·[4d] 의 사유 문구는 그대로인지도 하나 확인한다.
+        print("\n[4d2] 봉투 오류(인증 실패) + 모델 미상 — agy 오류가 사유를 연다 (#831)")
+        os.environ["FAKE_AGY_MODE"] = "authfail"
+        o = research / "2026-10-18-authfail.md"
+        rc = G.main(["--project", "AXCluster", "--brief-dir", str(brief), "--out", str(o)])
+        res = json.loads((o.with_suffix(".run") / "run.json").read_text(encoding="utf-8"))
+        check("[중요] 종료 1 · 보고서 없음", rc == 1 and not o.exists(), str(rc))
+        check("  [중요] why 가 agy 오류로 시작하고 모델 판정이 뒤따른다",
+              res["why"].startswith("agy 오류: authentication failed or timed out")
+              and "실제 모델 미상" in res["why"], str(res))
+        check("  error 칸은 agy 봉투 그대로", res["error"] == "authentication failed or timed out", str(res))
+        check("  [주의] 봉투 오류가 없던 [4b]·[4d] 의 사유 문구는 agy 오류 접두 없이 그대로",
+              not why_statuserror.startswith("agy 오류:") and not why_mismatch.startswith("agy 오류:"),
+              f"{why_statuserror!r} {why_mismatch!r}")
 
         print("\n[4e] Argon 은 --model + --allow-argon 일 때만")
         os.environ.update({"FAKE_AGY_MODE": "ok", "FAKE_AGY_LABEL": "Gemini 4 Argon"})
