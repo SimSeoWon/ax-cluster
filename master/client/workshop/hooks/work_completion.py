@@ -399,10 +399,11 @@ def cli_wait(cwd, work_id, get_work, *, round_no=None, timeout=CLI_TIMEOUT,
         try:
             detail = get_work(work_id)
             if round_no is None:
-                # 생략이면 첫 조회의 큐 라운드에 고정한다 — 도중에 개선요청이 와도 따라가지 않는다
-                round_no = int((detail.get("work") or {}).get("round") or 0)
-                if round_no < 1:
+                # 생략이면 첫 유효한 큐 라운드에 고정한다 — 잘못된 값은 다음 조회에 남기지 않는다
+                current_round = int((detail.get("work") or {}).get("round") or 0)
+                if current_round < 1:
                     raise RuntimeError("큐 응답에 라운드가 없습니다")
+                round_no = current_round
             try:
                 work, tasks, counts = observe(detail, round_no)
             except RuntimeError:

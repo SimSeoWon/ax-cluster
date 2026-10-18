@@ -287,6 +287,50 @@ class CliWaitTests(unittest.TestCase):
         self.assertTrue(lines[0].startswith("[wait] W r3 · "))
         self.assertIn("라운드 3", text)
 
+    def test_invalid_initial_round_is_retried_without_fixing_round(self):
+        for invalid in (None, 0, -1, "invalid"):
+            with self.subTest(round=invalid):
+                self.now[0] = 0
+                bad = self.detail()
+                if invalid is None:
+                    del bad["work"]["round"]
+                else:
+                    bad["work"]["round"] = invalid
+                code, text, lines, calls = self.run_wait(
+                    [bad, self.detail("ready_for_review", 3, "verified")])
+                self.assertEqual(code, 0)
+                self.assertIn("라운드 3", text)
+                self.assertIn("r? · 조회 오류", lines[0])
+                self.assertTrue(lines[1].startswith("[wait] W r3 · "))
+                self.assertEqual(calls, ["W", "W"])
+                self.assertEqual(self.sleep_calls, [60])
+
+    def test_invalid_round_until_timeout_does_not_become_mismatch(self):
+        for invalid in (None, 0, -1, "invalid"):
+            with self.subTest(round=invalid):
+                self.now[0] = 0
+                bad = self.detail()
+                if invalid is None:
+                    del bad["work"]["round"]
+                else:
+                    bad["work"]["round"] = invalid
+                code, text, lines, calls = self.run_wait(
+                    [bad] * 3, timeout=100, interval=60)
+                self.assertEqual(code, 4)
+                self.assertIn("라운드 ?", text)
+                self.assertIn("마지막 조회 오류", text)
+                self.assertTrue(all("r? · 조회 오류" in line for line in lines))
+                self.assertEqual(calls, ["W"] * 3)
+                self.assertEqual(self.sleep_calls, [60, 40])
+
+    def test_first_valid_round_stays_fixed_when_round_omitted(self):
+        code, text, _, calls = self.run_wait(
+            [self.detail(round_no=3), self.detail("ready_for_review", 4, "verified")])
+        self.assertEqual(code, 3)
+        self.assertIn("요청 라운드 3", text)
+        self.assertIn("큐 라운드 4", text)
+        self.assertEqual(calls, ["W", "W"])
+
     def test_round_mismatch_is_not_completion(self):
         code, text, _, _ = self.run_wait([self.detail("ready_for_review", round_no=2)], round_no=1)
         self.assertEqual(code, 3)
