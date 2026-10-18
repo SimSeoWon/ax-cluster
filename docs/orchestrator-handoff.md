@@ -2,7 +2,8 @@
 
 - **현재 체크포인트: 2026-10-18 17:xx · Claude · #832 Windows 세션 0 가드 구현·전수 통과 → 커밋·배달(승인)**.
   - 근거 `reports/124-windows-session0-guard.md`. 윈도우 claude 도 세션 1 런처 · 세션 0 즉시 거절 · 준비 검사 claude 확장. 공식 169/169 · 173파일 rc0.
-  - 남은 것: `.33` SSH `gemini_report` 즉시 종료 2 실증 · 윈도우 claude 세션 1 완주와 #830 `.2` 중계는 다음 실제 분산 작업 때.
+  - 커밋 `98c70d0` · 배달 AXCluster/MotionForge 3/3 · `.33` SSH `gemini_report` → rc 2 · 0초 · SessionId=0 거절 실증 · ax-projects 재기동 17:21 · 준비 검사 codex/claude 각 3/3 OK.
+  - 남은 것: 윈도우 claude 세션 1 완주와 #830 `.2` 중계는 다음 실제 분산 작업 때. #830·#832 「진행」80%.
   - 기억 정정: 세션 0 은 codex 만의 문제가 아니다(사용자 지적 2026-10-18, #832).
 
 - **직전 체크포인트: 2026-10-18 16:3x · Claude · #830 커밋 `e6033ba` push · 배달 3/3 · 실호출 1/3**.
