@@ -1,6 +1,15 @@
 # 현재 AX 작업 인수인계
 
-- **현재 체크포인트: 2026-10-18 17:xx · Claude · #832 Windows 세션 0 가드 구현·전수 통과 → 커밋·배달(승인)**.
+- **현재 체크포인트: 2026-10-18 18:0x · Claude · 사용자 「토큰도 다썼어」로 휴식 — #831 분산 작업 라운드 1 진행 중(조각 1개 재시도 대기) · #834 수정 커밋**.
+  - HEAD `main` `78149da`(push). 마운트 **AXCluster**. 마스터 담당 **claude**(17:25 기록) · 워커 지휘자 **claude**(17:23, 사용자 결정). Codex 는 15시 전 토큰 소진.
+  - **#831 work `20261018_1728_831_align_align_gemini_report_4a7db0e4`** (골조 `1d672f5` → `task/<work>/base`, 별도 worktree `~/ax-cluster-skel-831` 브랜치 `wip/831-skeleton` — 서비스가 읽는 정본 트리에 스텁을 넣지 않으려고 분리):
+    e40b965b(.2, bundle code_drift) **verified** · 5fee4a5e(.43, gemini_report 사유 순서) **verified** · 9bf36e03(.33, sync_check align 실패 안내) **failed — 마스터 층2 결함(#834), 워커 산출물 무관** → **재시도 미실행**(#834 수정 뒤 재시도할 차례). ⑦ 미도달.
+  - **#834(버그·개선) 수정 커밋 `78149da`**: CPython `ast.Load/Store` 는 프로세스 전역 싱글턴, 층1 pyflakes 가 거기에 `_pyflakes_parent` 를 붙이고 층2 `declarations._declare` 의 `deepcopy` 가 그걸 따라 다른 조각 트리를 복사하다 병렬 스레드 경합(`dictionary changed size`). 필드 복제로 교체. 397파일 선언 결과 동일 · 회귀 테스트(옛 코드에서 실패 확인) · 동시 스트레스 0오류. **실증(재시도 통과)·Redmine 종결은 아직.** 사용자 요청: 원인을 나중에 **자세히 설명**(보고서로).
+  - **#832 실증 진전**: 윈도우 claude 가 세션 1 런처로 완주 — `.2` 세션3 88초 rc0 · `.33` 세션4 71초 rc0, 결과 회수 · e40b965b(.2) verified. agy 중계는 0건이라 **#830 중계 판정은 여전히 미실증**.
+  - 🔴 `master/test_projects.py` 는 **실제 큐**의 미종결 work 를 읽어 지금 실패한다(#831 work 가 열려 있어서) — 테스트 격리 결함, 이번 변경 무관. 공식 목록 `-f` 가 19번째에서 멈춘다. #831 종결 뒤 재확인, 별도 일감 후보.
+  - 다음 할 일(사용자 결정 필요): ① 9bf36e03 재시도 → ⑦ 「버그냐 구조냐」 ② #834 보고서(멀티 스레드 침범 상세) ③ #830·#832 종결 판단 ④ test_projects 격리 일감 여부.
+
+- **직전 체크포인트: 2026-10-18 17:xx · Claude · #832 Windows 세션 0 가드 구현·전수 통과 → 커밋·배달(승인)**.
   - 근거 `reports/124-windows-session0-guard.md`. 윈도우 claude 도 세션 1 런처 · 세션 0 즉시 거절 · 준비 검사 claude 확장. 공식 169/169 · 173파일 rc0.
   - 커밋 `98c70d0` · 배달 AXCluster/MotionForge 3/3 · `.33` SSH `gemini_report` → rc 2 · 0초 · SessionId=0 거절 실증 · ax-projects 재기동 17:21 · 준비 검사 codex/claude 각 3/3 OK.
   - 남은 것: 윈도우 claude 세션 1 완주와 #830 `.2` 중계는 다음 실제 분산 작업 때. #830·#832 「진행」80%.
