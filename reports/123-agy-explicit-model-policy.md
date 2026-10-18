@@ -72,3 +72,13 @@
 [주의] 배달 순서: 새 런처는 config 의 `agy_model` 과 `usage.py` 가 함께 가야 돈다(없으면 78·79 로 막힌다 — fail-closed). `update` 한 번이 둘을 같이 싣는다.
 
 남은 것: 커밋·push(승인 대기) → `master.client update` → 기계마다 Flash Medium 실호출 1회(직접·중계·`--remote`)로 요청=실제 모델 확인. 원격 사용량 행의 요청/실제 모델은 `note` 에 실린다(구조화 필드는 큐 서버 변경이 필요해 범위 밖).
+
+### 커밋·배달·실호출 (16:2x~16:3x)
+
+- 커밋 `e6033ba` push · AXCluster `update` 3/3 OK(`agy_model` 대조 포함).
+- `.43` 직접 호출(ax-work 명령 그대로): rc 0 · 로그 `label="Gemini 3.8 Flash (Medium)"` 만 · 배달된 `usage.py` 판정 일치.
+- `.2` 세션 1 중계: 다음 실제 분산 작업 때 실증(사용자 결정). **미실증.**
+- `.33` `--remote`(MotionForge 전환): rc 1 — agy `authentication failed or timed out`, SSH 세션 인증 실패로 보인다. 검사는 fail-closed 로 출력을 버렸다. 사유 문구가 인증 실패보다 「모델 미상」을 앞세운다. agy 1.3.2 로그 `Model ID … not in local config, defaulting to CCPA`. 증거는 세션 scratch 에만 있다. 확인 파일 삭제, 사람 변경 2건 보존.
+- 🔴 `set_active_tool(align=True)` 결함: 서비스(12:44 시작)가 커밋(16:26) 이전 bundle 로 배달하고 도장은 현재 HEAD — `check` 3/3 FAIL. CLI `update` 로 복구, 복귀는 `align=False`.
+- 서비스 재기동 미승인 — 마스터 서비스 경로(리뷰 큐 층2 등)는 아직 #830 이전 코드다.
+- 사용자 결정 후속: `ax-projects`·`ax-task-queue` 재기동(16:35:49, health 200 · broker 는 변경 코드 미사용) · 결함 **#831** 등록(align 의 옛 코드 배달 + gemini_report 사유 순서) · `.33 --remote` 실증 보류.
