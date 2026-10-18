@@ -2453,14 +2453,85 @@ def test_index_only_delivery() -> None:
 
 def test_code_drift_blocks_stale_delivery() -> None:
     """`#831` — 서비스가 커밋 전에 기동했으면 옛 코드로 배달하지 않는다."""
-    # [PSEUDO] #831: `bundle._LOADED_COMMIT`(또는 구현한 이름)과 `bundle._delivery_stamp` 를 바꿔 끼워 다음을 확인한다 —
-    #       ① 같은 커밋 → `code_drift()["drift"] is False` 이고 `deliver(...)` 가 거절하지 않는다(원격 호출은 기존 테스트의 가짜를 쓴다)
-    #       ② 다른 커밋 → drift True · loaded/disk 짧은 커밋이 실린다 · `deliver` 가 `BundleError` 이고 메시지에 「#831」·재기동·
-    #          `master.client update` 가 들어 있다 · 원격 쓰기(`_remote_write`·scp 가짜)가 **한 번도** 불리지 않았다
-    #       ③ 한쪽 commit 이 비거나 error → drift False · reason 에 「미측정」
-    #       ④ `dry_run=True` 는 drift 여도 거절하지 않는다
-    #       끝나면 바꿔 낀 것을 되돌린다(finally).
-    raise NotImplementedError("#831")
+    full_a, full_b = "a" * 40, "b" * 40
+    calls: dict = {"write": 0, "scp": 0, "deliver": []}
+    saved = {k: getattr(bundle, k) for k in ("_LOADED_COMMIT", "_delivery_stamp", "_deliver",
+             "_remote_write", "_scp", "remote_hashes", "delivery_targets")
+             if hasattr(bundle, k)}
+
+    def _fake_deliver(project, facts, *, dry_run=False, init=False, project_init=None):
+        calls["deliver"].append(dry_run)
+        bundle._remote_write(facts, bundle.CONFIG_REL, "{}", base="checkout")
+        return {"host": facts.host, "dry_run": dry_run}
+
+    def _stamp(commit, error=""):
+        return lambda: {"commit": commit, "commit_short": commit[:7], "dirty": False,
+                        "contract": 1, **({"error": error} if error else {})}
+
+    bundle._remote_write = lambda facts, rel, content, base="home": (
+        calls.__setitem__("write", calls["write"] + 1), f"[완료] {rel}")[1]
+    if "_scp" in saved:
+        bundle._scp = lambda *a, **k: calls.__setitem__("scp", calls["scp"] + 1)
+    bundle._deliver = _fake_deliver
+    bundle.remote_hashes = lambda facts, targets: {}
+    bundle.delivery_targets = lambda project, facts, pinit: []
+    f = _facts()
+    pinit = spec.ProjectInit()
+    try:
+        # ① 같은 커밋 — 막지 않는다
+        bundle._LOADED_COMMIT = full_a
+        bundle._delivery_stamp = _stamp(full_a)
+        d = bundle.code_drift()
+        check("① 같은 커밋 → drift False", d["drift"] is False, str(d))
+        check("  모양: drift·loaded·disk·reason", set(d) >= {"drift", "loaded", "disk", "reason"}, str(d))
+        try:
+            bundle.deliver("P", f, project_init=pinit)
+            check("① 같은 커밋이면 배달을 거절하지 않는다", calls["deliver"] == [False], str(calls))
+        except bundle.BundleError as e:
+            check("① 같은 커밋이면 배달을 거절하지 않는다", False, str(e))
+
+        # ② 다른 커밋 — 원격에 아무것도 쓰지 않고 거절한다
+        calls.update(write=0, scp=0, deliver=[])
+        bundle._delivery_stamp = _stamp(full_b)
+        d = bundle.code_drift()
+        check("② 다른 커밋 → drift True", d["drift"] is True, str(d))
+        check("  짧은 커밋이 실린다", d["loaded"] == full_a[:7] and d["disk"] == full_b[:7], str(d))
+        msg = ""
+        try:
+            bundle.deliver("P", f, project_init=pinit)
+        except bundle.BundleError as e:
+            msg = str(e)
+        check("🔴 ② drift 면 BundleError", bool(msg), "거절하지 않았다")
+        check("  메시지에 #831·재기동·master.client update",
+              "#831" in msg and "재기동" in msg and "master.client update" in msg, msg)
+        check("🔴 ② 원격 쓰기가 한 번도 불리지 않았다",
+              calls["write"] == 0 and calls["scp"] == 0 and not calls["deliver"], str(calls))
+
+        # ③ 한쪽 commit 이 비거나 error — 미측정, 막지 않는다
+        for name, loaded, stamp in (("기동 커밋 빈 값", "", _stamp(full_b)),
+                                    ("디스크 커밋 빈 값", full_a, _stamp("")),
+                                    ("디스크 error", full_a, _stamp("", "git 을 읽지 못했다"))):
+            bundle._LOADED_COMMIT = loaded
+            bundle._delivery_stamp = stamp
+            try:
+                d = bundle.code_drift()
+            except Exception as e:                                   # noqa: BLE001
+                d = {"drift": None, "reason": f"예외: {e}"}
+            check(f"③ {name} → drift False · 「미측정」",
+                  d["drift"] is False and "미측정" in d["reason"], str(d))
+
+        # ④ dry_run 은 drift 여도 거절하지 않는다
+        calls.update(write=0, scp=0, deliver=[])
+        bundle._LOADED_COMMIT = full_a
+        bundle._delivery_stamp = _stamp(full_b)
+        try:
+            bundle.deliver("P", f, dry_run=True, project_init=pinit)
+            check("④ dry_run 은 drift 여도 거절하지 않는다", calls["deliver"] == [True], str(calls))
+        except bundle.BundleError as e:
+            check("④ dry_run 은 drift 여도 거절하지 않는다", False, str(e))
+    finally:
+        for k, v in saved.items():
+            setattr(bundle, k, v)
 
 
 def main() -> int:
