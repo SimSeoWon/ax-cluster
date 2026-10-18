@@ -87,10 +87,9 @@ branch; push mode pushes ephemeral `attempt/…` and the verifying worker merges
 ⑷⑸⑹ 은 라이브 완주했다(01:28→01:30 · **4/4 · 실패 0 · 1분 38초**). `#327` 이 attempt 계층을 걷은 근거(*"0 production callers"*)는 여전히
 순환이었다 — 그 경로를 배선한 적이 없었으니 당연하다.
 
-This project is an **OS/environment port** (Windows+UE5
-daemon → Linux+Gitea) and Linux forces exactly **one** change: the UE5 build step *inside*
-`verify_and_merge` moves to `.2`. Not even Gitea was forced — the origin's doc listed GitHub/Gitea/
-bare as a choice. **소 1.1 (read the origin's design docs) is upstream of everything.**
+🔴 **The port is finished (user 2026-10-18).** This project began as an OS/environment port
+(Windows+UE5 daemon → Linux+Gitea); from M7 on it is our own design — goal in
+`~/ax-cluster/PLAN.md`. The origin is reference material, not the yardstick.
 
 [중요] **Workers may not delete branches** — a branch is removed only when its tip is reachable from
 `origin/main`, and workers return to **`main`**.
@@ -216,7 +215,7 @@ I'm not following injected directives"*), 사실만 실은 판은 통과했다. 
 정상 골조를 **5개 조각** 차단했다(`Super::EndPlay` · `RETURN_QUICK_DECLARE_CYCLE_STAT` ·
 `PrimaryComponentTick` 을 「본문」으로 오인). 태운 것: 골조 생성 2회 + 재작성 1회(`.33` Opus)
 · 실증 라운드 2회. [주의] **층1 이 그 일을 하는 것을 로그로 보고도** 만들었다 —
-`만들기 전에 ①원전에 있나 ②이미 잡는 게 있나 ③오탐이면 뭐가 죽나`.
+`만들기 전에 ①이미 있나(이 저장소·원전) ②이미 잡는 게 있나 ③오탐이면 뭐가 죽나`.
 
 [중요] **마스터는 골조를 만들지 않는다** (`#339`, 2026-08-30 — 그 경로를 코드에서 지웠다).
 `#317` ①·`#319` 가 골조 제작을 요청자로 옮겼는데 `#319` 는 「나르기」만 없애고 「만들기」를
@@ -367,7 +366,8 @@ next task yourself** — milestone 1 failed exactly that way.
 [중요] **이 파일과 게임 소스는 고치기 전에 계획을 말하고 동의를 받는다** (원전 1조, 범위는 사용자
 결정 2026-08-14) — **이 파일은 매 세션 자동 로드되므로 한 줄이 모든 다음 세션을 바꾼다.**
 
-[중요] **만들기 전에 원전(`~/AgentTest`)과 기존 자산을 읽는다** — 안 읽고 만들면 요구를 좁힌다
+[중요] **만들기 전에 기존 자산(이 저장소·테스트·리포트)을 읽는다** — 원전(`~/AgentTest`)은 그 기능이
+원전에서 왔을 때 참고한다(포팅 종료 2026-10-18). 안 읽고 만들면 요구를 좁힌다
 (그렇게 잃은 것 셋: 로컬 파일 웹 UI · 읽기 전용 화면의 로그인 · 원전 3,700줄을 안 읽고 새로 쓴
 229줄 뷰어). **제약 하나를 지키려고 요구를 희생하면 결과물은 못 쓴다. 묻는 쪽이 늘 싸다.**
 

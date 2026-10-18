@@ -59,7 +59,9 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   🔴 **The topology is the user's 정본 7단계 (사용자 확정 2026-09-02)** — memory
   `distributed-pipeline-intended-shape`. **The worker commits to its own sub-branch and asks for
   the next task.** Linux forces exactly **one** change: the UE5 build step inside
-  `verify_and_merge` moves to `.2`. Everything I redesigned beyond that was redesign, not a port.
+  `verify_and_merge` moves to `.2`. 🔴 **The port is finished (user 2026-10-18)** — design now
+  stands on our own structure (정본 7단계 + current code, goal in `PLAN.md`); the origin is
+  reference material, not the yardstick.
   🔴 [중요] **And the citation I redesigned it with was a misquote** (found 2026-09-02):
   `cluster_coordinator.verify_and_merge`'s docstring is *"**검증 워커**: … durable 단일 writer
   보존"* — the writer is the **verifying worker**, not the server (Plan v5 C.3: *"verify 를 서버
@@ -69,14 +71,9 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   pushes ephemeral `attempt/…` → verifying worker merges into durable.
   [중요] **Do not argue the topology from M3's docs** — its label *"사용자 확정 2026-08-11"* is wrong
   (it was *"그래 해"* after I pushed it), and `settled-decisions.md:251` carries the same bad label.
-  [중요] **Before building anything, read the origin and leave a citation.** Must-reads (M4 때
-  인용 0이었던 넷 — 2026-08-17 census 로 전부 인용 확인):
-  `local_llm_distributed_workers_plan_v5.0.md` (463, user-confirmed C.1–C.7/κ.0),
-  `.agents/AGENTS.md` (21 — its rule 3 *is* 애매하면 묻는다), `.claude/reviews/_silent_failure/
-  audit_matrix.md` (99 — the σ audit method), `plan_completed_v4.5.md` (2397 — what already exists).
-  [중요] **만들기 전에 census**: `python3 master/census.py <원전파일>` — 인용 0이면 실물부터
-  연다. 절차와 census 의 양방향 한계(인용됨≠읽음 · 인용0≠미이식):
-  `docs/11-agent-conduct.md` §11.2.1.
+  [중요] **Before building anything, read the existing assets** (this repo, its tests, reports) —
+  most requests are already partly built. The origin (`~/AgentTest`) is consulted only when a
+  feature came from there; `master/census.py` stays for that (limits: `docs/11` §11.2.1).
   **Read only the open milestone** — closed ones are reference; don't load them. Progress
   lives in the milestone doc, never in the design docs (`docs/1`–`docs/10`, always current).
   [중요] **Neither the numerator nor the denominator is written in any document** — read both from
@@ -97,7 +94,8 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   [주의] **짧은 수긍(`응`·`그래`)이 가장 위험하다 — 앞에 물음이 없었으면 승인이 아니라 수긍일 수 있다**
   (실측: 한 세션에서 `응` 이 두 번, 하나만 승인이었다). **내가 방금 무엇을 물었는지 확인하고 답과
   맞물리는지 본다.**
-- [중요] **만들기 전에 원전(`~/AgentTest`)과 기존 자산을 읽는다** — 대부분의 요구에는 이미 만들어진
+- [중요] **만들기 전에 기존 자산(이 저장소·테스트·리포트)을 읽는다** — 원전(`~/AgentTest`)은
+  그 기능이 원전에서 왔을 때 참고한다(포팅 종료 2026-10-18). 대부분의 요구에는 이미 만들어진
   것이 있다. 안 읽고 만들면 요구를 좁힌다(그렇게 잃은 것 셋: 로컬 파일 웹 UI · 읽기 전용 화면의
   로그인 · 원전 3,700줄을 안 읽고 새로 쓴 229줄 뷰어). **제약 하나를 지키려고 요구를 희생하면
   결과물은 못 쓴다.**
@@ -175,7 +173,7 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   sensitive body there; its write surface `/control/*` needs the requester token. All are *also* ufw LAN-only —
   **never widen those rules to `Anywhere`.** Two layers, not one instead of the other.
   → `master/auth.py`, PLAN §9.5.6
-- [중요] **`/home/sim/AgentTest` is reference-only — never modify or push to it.** Port code *out* of it.
+- [중요] **`/home/sim/AgentTest` is reference-only — never modify or push to it.** Reference only — the port finished 2026-10-18.
 - [중요] **Never commit or push without asking first** (user, 2026-08-14: *"커밋은 나에게 허락을
   요구해줄래?"*). Prepare the message, **ask**, run only after approval. **The origin's rule is
   stricter (*"forbidden even when told"*) and ours is looser because the *user* chose it** — no

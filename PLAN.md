@@ -1,8 +1,19 @@
 # AX Cluster — plan (index)
 
-**Goal (AX, AI Transformation):** fundamentally raise AI usage across an entire Unreal Engine 5
+**Goal (2026-10-18, user — supersedes the original below):**
+**AX 클러스터는 프로젝트 타입(`kind`)마다 맞는 검증 게이트를 갖춘 분산 코딩 클러스터다** (사용자 2026-10-18).
+지금 정리하는 타입은 둘이다.
+- **`unreal`** — UE5 게임 프로젝트(ModularStage 등). C++ 게이트: 층1 · 층2 · 조각별 UE5 빌드 · 통합 빌드
+- **`code`** — 클러스터 자신(AXCluster)처럼 Python 코드 프로젝트. 게이트: 층1 · pyflakes · import · mypy(call-arg) · 층2 · 공식 통합 검사
+- 원전(AgentTest) 포팅은 끝났다. 판단 기준은 우리 구조이고, 원전은 참고 자료다.
+- 상용 LLM 이 주역이고, 로컬 LLM 은 합성과 폴백을 맡는다.
+- 새 프로젝트는 이 두 타입 중 하나로 등록한다. 새 타입이 필요하면 게이트부터 정의한다.
+- (유보) 플러그인·혼합 언어·외부 오픈소스 포크를 가진 `unreal` 프로젝트(MotionForge)의 관리 방식 — #771
+
+**Original goal (2026-08-05, kept for history):** fundamentally raise AI usage across an entire Unreal Engine 5
 game production pipeline — beyond coding assistance, unifying an ontology-based digital twin,
-Unreal MCP (UE 5.8.1+), and code-writing agents into one pipeline.
+Unreal MCP (UE 5.8.1+), and code-writing agents into one pipeline. It began as a port of the
+Windows `AgentTest` daemons to Linux; that port is finished.
 
 **Started:** 2026-08-05 · **Split into sections:** 2026-08-08 (one 1,839-line file → 13 in `docs/`)
 
