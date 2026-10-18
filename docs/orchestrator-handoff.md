@@ -1,6 +1,15 @@
 # 현재 AX 작업 인수인계
 
-- **현재 체크포인트: 2026-10-18 18:0x · Claude · 사용자 「토큰도 다썼어」로 휴식 — #831 분산 작업 라운드 1 진행 중(조각 1개 재시도 대기) · #834 수정 커밋**.
+- **현재 체크포인트: 2026-10-18 20:2x · Claude · #831 분산 작업 2라운드 완주·마감(main `ce4beee`) · #831·#833·#835 완료 · ax-projects 재기동**.
+  - HEAD `main` `ce4beee`(finalize push) 위에 이 인계 커밋. 마운트 **AXCluster**. 마스터 담당 **claude** · 워커 지휘자 **claude**(17:23, 사용자 결정 — 그대로). 작업 트리 clean.
+  - **#831 work 마감**: 라운드 1 ⑦ — 2조각 머지, 통합 검사에서 `test_projects` 실큐 의존(#835, 신규)을 ⑦ 트리 버그 수정 `01297e0` 으로 고침, 남은 1건은 미구현 스텁이라 사용자 결정 「그대로 전진 → 라운드 2」(base `1d672f5→01297e0`). 9bf36e03 은 `infra_undecided` 라 큐 재시도·`reverify` 경로가 없다(제출 브랜치 없음) — `improve_work(round=2)` 로 재파견. 라운드 2 b64b3bfc 는 **`.43`** 이 집음(claude, 위임 0) · 층2 APPROVE · ⑦ 169/169 → 전진 `95693c0` → `finalize_work(confirm=True)` main `ce4beee` · 브랜치 5개 정리 · main 공식 169/169 OK · update 3/3.
+    [주의] followup 은 실패 조각이 있는 라운드를 `stopped` 로 두고 ⑦ 준비를 안 한다 — `advance_work` 자체는 실패 조각을 건너뛰므로 직접 호출로 준비했다(distribute 스킬 경로). `advance_work(confirm=True)` 는 트리를 다시 세워 ⑦ 트리의 수정을 지우므로, 트리에서 고친 경우 전진은 돌려준 push 명령으로 했다.
+  - **#834**: 원인 보고서 `reports/125`(커밋 `000acf8`) — 공유 `ast.Load` + pyflakes 부모 링크 + deepcopy, 재현 포함. 라운드 2 에서 같은 조각 층2 정상 판정(단 1조각이라 병렬 겹침 미관찰). **종결은 사용자 결정 대기.**
+  - **ax-projects 재기동 20:20:02**(사용자 승인) — 새 PID 오류 0 · 그 뒤 update 3/3 OK, 「옛 코드」 경고 해소. #831 의 code_drift 거절이 이제 서비스에 실린다(라이브 거절은 미관찰).
+  - #830·#832 는 사용자 결정 「열어 둠」 — 남은 항목은 각 이슈 노트(#830: `.2` agy 중계 · `.33` 대화형 gemini_report / #832: 마스터 쪽 거절 코드 · 범용 런처 미룸 · `.2` SSH 거절 라이브).
+  - 다음(사용자 결정): #834 종결 여부 · `~/ax-cluster-skel-831` worktree(`wip/831-skeleton`, 골조 `1d672f5` 는 main 에 포함) 삭제 승인 · ⑦/검수 worktree `~/ax-advance-…831…`·`~/ax-review-…831…` 는 파이프라인 소유.
+
+- **직전 체크포인트: 2026-10-18 18:0x · Claude · 사용자 「토큰도 다썼어」로 휴식 — #831 분산 작업 라운드 1 진행 중(조각 1개 재시도 대기) · #834 수정 커밋**.
   - HEAD `main` `78149da`(push). 마운트 **AXCluster**. 마스터 담당 **claude**(17:25 기록) · 워커 지휘자 **claude**(17:23, 사용자 결정). Codex 는 15시 전 토큰 소진.
   - **#831 work `20261018_1728_831_align_align_gemini_report_4a7db0e4`** (골조 `1d672f5` → `task/<work>/base`, 별도 worktree `~/ax-cluster-skel-831` 브랜치 `wip/831-skeleton` — 서비스가 읽는 정본 트리에 스텁을 넣지 않으려고 분리):
     e40b965b(.2, bundle code_drift) **verified** · 5fee4a5e(.43, gemini_report 사유 순서) **verified** · 9bf36e03(.33, sync_check align 실패 안내) **failed — 마스터 층2 결함(#834), 워커 산출물 무관** → **재시도 미실행**(#834 수정 뒤 재시도할 차례). ⑦ 미도달.
