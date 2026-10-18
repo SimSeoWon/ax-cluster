@@ -43,16 +43,17 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
       AX-ENTRY-MARK: repo
 
 - [중요] **세션 시작에 이 둘을 먼저 읽는다 — 조건부가 아니다** (사용자 2026-08-22):
-  **① 열린 마일스톤** [`docs/milestones/6-improvements.md`](docs/milestones/6-improvements.md)
+  **① 열린 마일스톤** [`docs/milestones/7-improvements.md`](docs/milestones/7-improvements.md)
   · **② 지금 열린 축의 지도** [`docs/12-multi-project.md`](docs/12-multi-project.md).
   둘 다 읽지 않고 코드부터 grep 하면 규칙을 코드에서 알아내려 하게 된다 — 2026-08-21 세션이
   그렇게 §11.5(데몬 재기동)를 어겼다. [주의] **항목·진행은 레드마인만** 본다.
-  **M1–M5 all closed (M3·M4·M5 closed 2026-08-17, user decisions); M6
-  (개선·확장) is open.**
-  → [`docs/milestones/6-improvements.md`](docs/milestones/6-improvements.md) —
-  numbers live in Redmine (version *마일스톤 6*). 개선은 실측이 앞선다 — 검색 관련은
+  **M1–M6 all closed (M6 closed 2026-10-18, user decision — one milestone ran too long);
+  M7 (개선·확장, continues M6) is open.**
+  → [`docs/milestones/7-improvements.md`](docs/milestones/7-improvements.md) —
+  numbers live in Redmine (version *마일스톤 7*; bugs → *마일스톤 7 - 버그/개선*). 개선은 실측이 앞선다 — 검색 관련은
   **정답 집합 없이 손대지 않는다** (M2 규칙). M5 의 판정들(git-carried·한글 베이스 머지·
   중앙화 가드)은 부활 조건과 함께 닫혔다 — `5-version-reconcile.md` 「여기서 배운 것」.
+  M6 「여기서 배운 것」 → `6-improvements.md`.
   [주의] **What follows are the traps that still bind — not the closed milestones' scope or counts**
   (those are in Redmine and the closed milestone docs; M4's own 「여기서 배운 것」 too).
   🔴 **The topology is the user's 정본 7단계 (사용자 확정 2026-09-02)** — memory
@@ -210,7 +211,7 @@ milestone doc grew stale numbers before.
 
 | | Answers | Rule |
 |---|---|---|
-| **Milestone doc** `docs/milestones/6-improvements.md` (open) | *Why this order?* — chains, traps, measured evidence | [중요] **No numerators here.** They drifted twice (중 1.3 counted 7/10 against a 13-item list; 대 1 stayed at 15 after 중 1.3 went 5→8). Keep the reasoning an issue cannot hold |
+| **Milestone doc** `docs/milestones/7-improvements.md` (open) | *Why this order?* — chains, traps, measured evidence | [중요] **No numerators here.** They drifted twice (중 1.3 counted 7/10 against a 13-item list; 대 1 stayed at 15 after 중 1.3 went 5→8). Keep the reasoning an issue cannot hold |
 | **Redmine** `http://192.168.0.57:8080` | *Where are we, and what is open?* — **the milestone itself** | [중요] **Version = 마일스톤 · parent issue = 중분류 · subtask = 소분류** (user-confirmed 2026-08-09). Progress is **computed**, never typed. Only **완료(4)** is a closing status — 해결(3) still counts as open. Put the commit hash in the note |
 | **`reports/`** | *Why did we decide that?* — decisions, measurements, traps | One report per session, Korean. Not a task list |
 | **Redmine 위키 [[아이디어수집]]** | *What might we build someday?* — 미정 아이디어의 본문 | [중요] **일감이 아니다** (사용자 개설 2026-08-17). 항목 = 위키 절 + 버전 「아이디어 — 추후 검토 수집」의 이슈. 진행·집계 금지, 착수 결정 시 실 마일스톤으로 이동 |
@@ -224,6 +225,8 @@ made AX no longer one game's tooling). Game/tool issues go where `<twin>/config.
 AX issues **and their milestone versions** belong to `ax-cluster` (user decision 2026-10-05: 107
 closed `[AX]` issues moved from `modularstage`; versions 마일스톤 6 · 버그·개선 · 아이디어 recreated in
 `ax-cluster` as ids 17·19·18, the old `modularstage` copies un-shared so name lookups resolve once).
+2026-10-18: M6(17) and its bug version (19, renamed *마일스톤 6 - 버그/개선*) closed; open now
+마일스톤 7 — 개선·확장(21) · 마일스톤 7 - 버그/개선(22) · 아이디어(18).
 Tracker `코드리뷰` only — **never create a project or tracker without the user.** Read is public; writing needs the admin API key, which is **not on disk** — pull it
 from the master's own container DB. [중요] **Never write the key value into a doc or commit.**
 → [`docs/10-references.md`](docs/10-references.md) §10.1

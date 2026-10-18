@@ -5,7 +5,8 @@
 
 | | 상태 |
 |---|---|
-| [`6-improvements.md`](6-improvements.md) | [진행] **진행 중 — 여기만 읽으면 된다** (2026-08-17 개시). 개선·확장 |
+| [`7-improvements.md`](7-improvements.md) | [진행] **진행 중 — 여기만 읽으면 된다** (2026-10-18 개시). 개선·확장 — M6 이어감 |
+| [`6-improvements.md`](6-improvements.md) | [완료] 닫힘 2026-10-18 (사용자 결정 — 한 마일스톤을 너무 오래 끌었다). 참조용 — 「여기서 배운 것」 |
 | [`5-version-reconcile.md`](5-version-reconcile.md) | [완료] 닫힘 2026-08-17 (사용자 결정). 참조용 — 「여기서 배운 것」 |
 | [`4-origin-reconciliation.md`](4-origin-reconciliation.md) | [완료] 닫힘 2026-08-17 (사용자 결정). 참조용 — 원전 대조·재이식 |
 | [`3-work-pipeline.md`](3-work-pipeline.md) | [완료] 닫힘 2026-08-17 (사용자 승인). 2026-08-13 `locked` 로 멈췄던 열린 9건은 M4 마감 후 처분됐다 |

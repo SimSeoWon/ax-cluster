@@ -49,15 +49,15 @@ prerequisites before offering dispatch; an unready path needs preparation. Selec
 source boundaries and checks from registered `kind` (`unreal`/`code`/`index_only`).
 Details: [`../master/skills/distribute/SKILL.md`](../master/skills/distribute/SKILL.md).
 
-**M1–M5 all closed (M3·M4·M5 closed 2026-08-17, user decisions). M6 (개선·확장)
-is open — numbers live in Redmine (version *마일스톤 6*). A separate dateless bucket
+**M1–M6 all closed (M6 closed 2026-10-18, user decision). M7 (개선·확장, continues M6)
+is open — numbers live in Redmine (version *마일스톤 7*; bugs → *마일스톤 7 - 버그/개선*). A separate dateless bucket
 *아이디어 — 추후 검토 수집* holds not-yet-decided ideas (wiki [[아이디어수집]]) — items there
 are NOT work.**
 
 | | |
 |---|---|
-| Current milestone — **read only this one** | `~/ax-cluster/docs/milestones/6-improvements.md` |
-| Closed, kept as reference | `5-version-reconcile.md` (「여기서 배운 것」 — 전제가 죽은 선택 · 허위 인용 · 중앙화의 새 좌표) · `4-origin-reconciliation.md` (왕복이 계약 · 원전 기본값 · census 한계) · `3-work-pipeline.md` (gates/grounding 실측) · `2-twin-restoration.md` · `1-infrastructure.md` |
+| Current milestone — **read only this one** | `~/ax-cluster/docs/milestones/7-improvements.md` |
+| Closed, kept as reference | `6-improvements.md` (「여기서 배운 것」 — 호출부 0 · 실경로 재현 · 코드가 강제) · `5-version-reconcile.md` (「여기서 배운 것」 — 전제가 죽은 선택 · 허위 인용 · 중앙화의 새 좌표) · `4-origin-reconciliation.md` (왕복이 계약 · 원전 기본값 · census 한계) · `3-work-pipeline.md` (gates/grounding 실측) · `2-twin-restoration.md` · `1-infrastructure.md` |
 
 > [주의] **Below are the traps that still bind, not the closed milestones' records.** Progress and
 > counts live in Redmine; the narrative (census numbers, M2/M3/M4 scope and timings, the ported web
@@ -501,7 +501,7 @@ the failing command left the old process running, so `is-active` still said `act
 | Cluster design — settled vs open | `~/ax-cluster/PLAN.md` → `docs/` |
 | [중요] **요청 태그 계약** — 네 정책 · 필수 표면 · 거절 사유 셋 · 발신자 · **순서 규칙** | `~/ax-cluster/docs/13-request-tagging.md` |
 | [중요] **신규 프로젝트 온보딩 런북** — 명령 단위 · 단계별 「안 됐으면 무엇이 안 보이나」 | `~/ax-cluster/docs/14-onboarding-runbook.md` |
-| [중요] **세션 시작에 먼저 읽을 둘** | `~/ax-cluster/docs/milestones/6-improvements.md`(열린 마일스톤) · `~/ax-cluster/docs/12-multi-project.md`(지금 열린 축). [주의] 항목·진행은 **레드마인만** |
+| [중요] **세션 시작에 먼저 읽을 둘** | `~/ax-cluster/docs/milestones/7-improvements.md`(열린 마일스톤) · `~/ax-cluster/docs/12-multi-project.md`(지금 열린 축). [주의] 항목·진행은 **레드마인만** |
 | Working *in* the repo | `~/ax-cluster/CLAUDE.md` |
 
 ## Work journal
