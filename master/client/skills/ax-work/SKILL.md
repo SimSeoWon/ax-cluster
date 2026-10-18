@@ -134,6 +134,9 @@ BRIEF 없이 돈다(실측 `#777`). 자료와 `BRIEF.md` 는 `.agy-work/in/<n>/`
 [주의] **`.ax/` 아래에 쓰지 않는다** — Windows 샌드박스는 그 아래 쓰기를 거부한다(실측 2026-10-09). `.agy-work/` 는
 git 이 무시한다(`.git/info/exclude`).
 
+🔴 [중요] **Windows 에서 `.agy-work/VIA_LAUNCHER` 가 없으면 agy 를 부르지 않고 보고한다** (`#832`) — SSH 세션 0 은
+agy 로그인을 못 쓴다(실측 2026-10-18: *"not logged into Antigravity"*). 위 직접 호출은 리눅스 전용이다.
+
 🔴 [중요] **`.agy-work/VIA_LAUNCHER` 가 있으면 agy 를 직접 부르지 않는다** (Windows 세션 1 · 사용자 결정 2026-10-09 ⓑ).
 그 경로에서는 샌드박스 안의 agy 가 홈(`C:\Users\…\.gemini`) 쓰기 거부로 죽는다(실측). 대신 **런처에 요청한다**:
 

@@ -245,6 +245,37 @@ def _client_mcp():
     raise RuntimeError("client_mcp.py 를 찾지 못했다 — 마스터에서 재배달: python -m master.client update")
 
 
+def _winsession():
+    """세션 0 판정 모듈 (`#832`) — `_client_mcp` 와 같은 경로 로드. 배달본은 `axmaster/clientside/`,
+    저장소는 `client/runtime/` 이다. 못 찾으면 `None`."""
+    import importlib.util
+    here = Path(__file__).resolve()
+    for src in (here.parents[1] / "clientside" / "winsession.py",
+                here.parents[2] / "client" / "runtime" / "winsession.py"):
+        if src.is_file():
+            spec = importlib.util.spec_from_file_location("ax_winsession_for_gemini", src)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+    return None
+
+
+def session0_refusal() -> str:
+    """🔴 `#832` — Windows 세션 0(SSH)이면 고정 사유, 아니면 `""`. agy 로그인은 대화형 세션 자격이라
+    세션 0 에서는 *"not logged into Antigravity"* 로 늦게 죽고 「실제 모델 미상」으로 오보된다(실측 2026-10-18).
+    [주의] Windows 에서 판정 모듈을 못 불러오면 **거절**한다(fail-closed) — 리눅스는 판정할 것이 없다."""
+    try:
+        ws = _winsession()
+    except Exception as e:                                       # noqa: BLE001
+        ws, err = None, f"{type(e).__name__}: {e}"
+    else:
+        err = "winsession.py 가 배달되지 않았다"
+    if ws is None:
+        return (f"세션 판정 모듈을 못 불러왔다({err}) — 마스터에서 재배달: python -m master.client update"
+                if sys.platform == "win32" else "")
+    return ws.refuse_reason()
+
+
 def usage_payload(meta: dict, *, lane: str, rc: int, seconds: float = 0.0, source: str,
                   model: str = "", note: str = "", worker: str = "") -> dict:
     """`U.record` 인자 → `POST /api/v1/usage` 본문. [중요] 모양 지식은 `meta_from_usage` 의 키 그대로다 —
@@ -303,6 +334,12 @@ def main(argv=None, *, queue=None) -> int:
     ap.add_argument("--allow-argon", action="store_true",
                     help="--model 로 Argon 을 고를 때만 — 사용자가 명시적으로 요청한 경우 (#830)")
     a = ap.parse_args(argv)
+    # 🔴 `#832` — agy·모델 해석·요청자 설정보다 **먼저**. 실행 전 거절(종료 2)이라 사용량 행은 남기지 않는다
+    #    (다른 종료 2 거절과 같은 계약 — agy 를 부르지 않았다).
+    s0 = session0_refusal()
+    if s0:
+        log(f"거절 — {s0}")
+        return 2
     if a.allow_argon and not a.model:
         log("거절 — --allow-argon 은 --model 과 함께만 쓴다")
         return 2

@@ -239,7 +239,7 @@ def test_role_payload() -> None:
           "clientside/client_mcp.py" in pay, str(pay))
     check("요청자에게 review·build 의 의존 폐포가 간다",
           set(pay) == {"clientside/client_mcp.py", "clientside/ontology_cache.py",
-                       "clientside/fix_flow.py",
+                       "clientside/fix_flow.py", "clientside/winsession.py",   # `#832`
                        "layer3_verify.py", "source_text.py", "utf8.py",
                        "work/branch_names.py", "work/coordinator.py",
                        "work/review.py", "work/skeleton_gate.py", "work/build_local.py",
@@ -258,7 +258,7 @@ def test_role_payload() -> None:
           set(bundle.payloads_for("worker")) == {
               "clientside/client_mcp.py", "clientside/ontology_cache.py",
               "work/worker_daemon.py", "work/ax_safety.py",
-              "clientside/session1_conductor.py",
+              "clientside/session1_conductor.py", "clientside/winsession.py",   # `#832`
               "work/build_local.py",
               "work/skeleton_gate.py", "layer3_verify.py", "source_text.py", "utf8.py",
               "work/usage.py"},                    # `#830` 런처의 agy 실제 모델 대조
@@ -363,6 +363,8 @@ def test_payload_split() -> None:
     FROZEN["worker"] = ("clientside/client_mcp.py", "clientside/ontology_cache.py",
                         "work/worker_daemon.py", "work/ax_safety.py",
                         "clientside/session1_conductor.py",
+                        # 🔴 `#832`: 세션 0 거절 판정이 런처 **바로 뒤**에 들어간다 (결정된 변경 — 기준선 이동)
+                        "clientside/winsession.py",
                         "work/build_local.py", "work/skeleton_gate.py",
                         "layer3_verify.py", "source_text.py", "utf8.py",
                         # 🔴 `#830`: agy 로그 파서가 **끝에** 더해진다 (결정된 변경 — 기준선 이동)
@@ -370,6 +372,8 @@ def test_payload_split() -> None:
     # 🔴 `#630`: 요청자에게 `fix_flow.py` 가 MCP 폐포 **바로 뒤**에 들어간다 (결정된 변경 — 기준선 이동)
     FROZEN["requester"] = ("clientside/client_mcp.py", "clientside/ontology_cache.py",
                            "clientside/fix_flow.py",
+                           # 🔴 `#832`: 세션 0 거절 판정이 fix_flow **바로 뒤**에 (결정된 변경 — 기준선 이동)
+                           "clientside/winsession.py",
                            "layer3_verify.py", "source_text.py", "utf8.py",
                            "work/branch_names.py", "work/coordinator.py", "work/review.py",
                            "work/skeleton_gate.py", "work/build_local.py",
@@ -392,6 +396,7 @@ def test_payload_split() -> None:
     #    나머지는 `master/<배달경로>` 미러링이다 — 사용자 결정 ⓒ(빌드 사슬은 `master/` 에
     #    남는다, `layer3_verify` 를 상대경로로 올려다보기 때문). 의도하지 않은 갈림도 여기서 죽는다.
     SPLIT = {"clientside/session1_conductor.py": "client/runtime/session1_conductor.py",
+             "clientside/winsession.py": "client/runtime/winsession.py",
              "clientside/fix_flow.py": "client/runtime/fix_flow.py",
              "clientside/client_mcp.py": "client/runtime/client_mcp.py",
              "clientside/ontology_cache.py": "client/runtime/ontology_cache.py"}

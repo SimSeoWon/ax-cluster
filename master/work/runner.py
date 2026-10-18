@@ -306,6 +306,44 @@ def _codex(stdout: str):
     return parse_codex_jsonl(stdout)
 
 
+S1_ERROR_PREFIX = "ERROR [세션1]"
+
+
+def _s1_appendix_line(ln: str) -> bool:
+    """`_session1_after` 가 결과 끝에 붙이는 줄인가 — 중계 이벤트 JSON 또는 `ERROR [세션1]` 줄."""
+    ln = ln.strip()
+    if not ln or ln.startswith(S1_ERROR_PREFIX):
+        return True
+    try:
+        d = json.loads(ln)
+    except ValueError:
+        return False
+    return isinstance(d, dict) and d.get("type") == RELAY_EVENT
+
+
+def claude_envelope(stdout: str):
+    """claude `--output-format json` 봉투 dict 또는 `None`. 예외를 던지지 않는다.
+
+    🔴 `#832` — 세션 1 경유 claude 는 봉투 **뒤에** `_session1_after` 의 꼬리(중계 이벤트·오류 창 줄)가
+    붙는다. 그래서 통째 `json.loads` 가 실패하면 앞의 JSON 하나를 떼어 보고, **나머지가 전부 그 꼬리
+    줄일 때만** 봉투로 인정한다. [주의] 그 꼬리 문자열은 세션 1 경로만 만든다 — SSH 출력(리눅스
+    포함)의 판독은 종전과 같다(순수 JSON 은 첫 분기에서 그대로 읽힌다).
+    """
+    t = (stdout or "").strip()
+    if not t.startswith("{"):
+        return None
+    try:
+        d = json.loads(t)
+    except ValueError:
+        try:
+            d, end = json.JSONDecoder().raw_decode(t)
+        except ValueError:
+            return None
+        if not all(_s1_appendix_line(ln) for ln in t[end:].splitlines()):
+            return None
+    return d if isinstance(d, dict) and "result" in d else None
+
+
 def _unwrap(stdout: str) -> tuple:
     """`(본문, 계측)`. `--output-format json` 이면 `result` 를 꺼내고 나머지를 계측으로 쥔다.
 
@@ -321,6 +359,11 @@ def _unwrap(stdout: str) -> tuple:
     try:
         d = json.loads(t)
     except ValueError:
+        # 🔴 `#832` — 세션 1 claude 봉투 + 꼬리(중계 이벤트·오류 창). 꼬리는 원문(stdout)에 남아
+        #    `agent_report`·`delegation_calls` 가 그대로 읽는다 — 판정 본문에만 섞지 않는다.
+        env = claude_envelope(t)
+        if env is not None:
+            return str(env.get("result") or ""), {k: v for k, v in env.items() if k != "result"}
         got = _codex(stdout)
         return got if got is not None else (stdout, {})
     if not isinstance(d, dict) or "result" not in d:
@@ -658,45 +701,61 @@ def self_repo_mounted(active=None) -> bool:
     return active == SELF_PROJECT
 
 
-def uses_session1(facts, mode: str) -> bool:
-    """이 파견이 **세션 1 경유**여야 하나 (`#401`).
+SESSION1_MODES = ("codex", "claude")
 
-    🔴 [중요] **Windows + codex 조합 하나다.** SSH 는 세션 0 이고 거기서는 codex 의 제한 토큰
-    샌드박스 자식이 `0xC0000142` 로 죽는다 — 실측 2026-09-12 에 조각 2건이 `ax-work` SKILL.md
-    조차 못 읽고 죽었다. `/IT` 로 등록된 작업을 `schtasks /run` 으로 부르면 스케줄러가
-    프로세스를 **세션 1** 에 만들고 거기서는 산다.
-    [주의] 리눅스는 이 문제가 **없다**(`.43` 은 SSH 로 4조각을 완주했다) · `claude` 모드도
-    이 경로를 안 탄다(셸 도구를 그렇게 쓰지 않는다). **좁게 건다.**
+
+def uses_session1(facts, mode: str) -> bool:
+    """이 파견이 **세션 1 경유**여야 하나 (`#401` codex · `#832` claude).
+
+    🔴 [중요] **Windows + (codex 또는 claude) 다.** SSH 는 세션 0 이다.
+    - codex (`#401`): 제한 토큰 샌드박스 자식이 `0xC0000142` 로 죽는다 — 실측 2026-09-12 에
+      조각 2건이 `ax-work` SKILL.md 조차 못 읽고 죽었다.
+    - claude (`#832`, 사용자 결정 2026-10-18): claude 자체는 세션 0 에서 돈다(파일 자격, `#721`).
+      그러나 ax-work 스킬대로 agy 에 위임하면 agy 가 세션 0 에서 로그인을 못 본다(*"You are not
+      logged into Antigravity"*). 세션 1 런처의 agy 중계(`VIA_LAUNCHER`)를 받으려고 같은 길을 탄다.
+    `/IT` 로 등록된 작업을 `schtasks /run` 으로 부르면 스케줄러가 프로세스를 **로그온 세션**에
+    만든다. [주의] 리눅스는 이 문제가 **없다**(`.43` 은 SSH 로 완주했다) — 리눅스는 어떤 모드든
+    거짓이다. 범위는 이 두 모드뿐이다(`lane` 등은 지휘자가 워커에서 돌지 않는다). **좁게 건다.**
     """
-    return bool(getattr(facts, "windows", False)) and mode == "codex"
+    return bool(getattr(facts, "windows", False)) and mode in SESSION1_MODES
 
 
 def run_worker(facts, task_id: str, *, files=(), runner=None, mode: str = "claude",
                timeout: int = DEFAULT_TIMEOUT) -> tuple:
     """워커에서 **지휘자**를 한 번 돌린다. `(rc, stdout)`. **예외를 던지지 않는다.**
 
-    [중요] Windows+codex 는 **세션 1 경유**다(`uses_session1`) — 전송만 다르고 판정·커밋
+    [중요] Windows+codex·claude 는 **세션 1 경유**다(`uses_session1`) — 전송만 다르고 판정·커밋
     흐름은 그대로다.
+    🔴 `#832` — claude 의 인증 계약은 **전송과 무관하게** 마스터에 남는다: 사전 검사
+    (`check_claude_auth`, 워커 홈의 24시간 캐시를 SSH 로 읽는다 — 파일 자격이라 세션 0 에서도 맞다)는
+    런처를 깨우기 **전에** 하고, 실행 중 OAuth 실패 판독·캐시 무효화는 회수한 출력으로 한다.
+    런처는 stderr 를 stdout 에 합치므로 SSH 의 `2>&1` 과 같은 출력을 받는다.
     """
-    if runner is None and uses_session1(facts, mode):
-        return run_worker_session1(facts, task_id, files=files, timeout=timeout)
-    cmd = worker_command(facts, task_id, files, mode=mode)
-    if runner is not None:
-        return runner(facts, cmd, timeout)
+    s1 = runner is None and uses_session1(facts, mode)
+    if s1 and mode != "claude":
+        return run_worker_session1(facts, task_id, files=files, timeout=timeout, mode=mode)
+    if not s1:
+        cmd = worker_command(facts, task_id, files, mode=mode)
+        if runner is not None:
+            return runner(facts, cmd, timeout)
     if mode == "claude":
         from .conductor_auth import check_claude_auth, invalidate_claude_auth
         from .revise import authentication_failure
         checked = check_claude_auth(facts)
         if not checked["ok"]:
             return 1, f"AX_CLAUDE_AUTH_FAILED: {checked['reason']}\nRESULT: BLOCKED"
-        # bundle._ssh 회수 대상은 stdout뿐이다. Claude의 인증 stderr도 회수한다.
-        rc, out = bundle._ssh(facts.host, facts.user, cmd + " 2>&1", timeout=timeout)
+        if s1:
+            rc, out = run_worker_session1(facts, task_id, files=files, timeout=timeout, mode=mode)
+        else:
+            # bundle._ssh 회수 대상은 stdout뿐이다. Claude의 인증 stderr도 회수한다.
+            rc, out = bundle._ssh(facts.host, facts.user, cmd + " 2>&1", timeout=timeout)
         json_failed = False
         try:
             payload = json.loads(out)
-            json_failed = isinstance(payload, dict) and payload.get("is_error") is True
         except (ValueError, TypeError):
-            pass
+            # 🔴 `#832` — 세션 1 출력은 봉투 뒤에 꼬리가 붙는다. SSH 판독은 종전 그대로 둔다
+            payload = claude_envelope(out) if s1 else None
+        json_failed = isinstance(payload, dict) and payload.get("is_error") is True
         if (rc != 0 or json_failed) and authentication_failure([out]):
             invalidated = invalidate_claude_auth(facts)
             detail = "Claude OAuth session expired; claude auth login 후 강제 재검사 필요"
@@ -792,10 +851,12 @@ def _session1_after(facts, task_id: str, base: str, sep: str, since: str, out: s
 
 def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT_TIMEOUT,
                         sleeper=None, logf=None, now=None, popup=None, cancelled=None,
-                        cleanup_timeout=15) -> tuple:
-    """세션 1 런처를 거쳐 지휘자를 돌린다. `(rc, stdout)` (`#401`).
+                        cleanup_timeout=15, mode: str = "codex") -> tuple:
+    """세션 1 런처를 거쳐 지휘자를 돌린다. `(rc, stdout)` (`#401` codex · `#832` claude).
 
-    🔴 [중요] **마스터가 보내는 것은 데이터뿐이다** — `job.json` 의 `task_id`·`files`.
+    🔴 [중요] **마스터가 보내는 것은 데이터뿐이다** — `job.json` 의 `task_id`·`files`·`mode`.
+    `mode` 는 이름일 뿐이고 런처가 허용 목록으로 검사한 뒤 argv 를 **스스로** 만든다(목록 밖이면
+    거절 · 폴백 없음). 필드가 없는 옛 job 은 런처가 codex 로 읽는다(하위 호환).
     실행 파일과 플래그는 **워커의 런처가 소유한다**(`clientside/session1_conductor.py`).
     2026-09-12 에 「마스터가 임의 셸 문자열을 파일로 떨구는」 구조를 만들었다가 폐기했다 —
     인증도 계약도 없는 **로컬 원격실행 면**이었다. 그 차이가 이 함수의 요점이다.
@@ -860,8 +921,12 @@ def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT
         except Exception:
             # A missed query is not evidence of cancellation, like a missed heartbeat.
             return False
+    if mode not in SESSION1_MODES:
+        # 런처도 거절하지만, 모르는 이름을 워커까지 보낼 이유가 없다
+        log(f"{who} 🔴 세션 1 모드 거절 — {mode!r} (허용 {list(SESSION1_MODES)})")
+        return 1, f"[세션1] 모르는 지휘자 모드 {mode!r} — 보내지 않았다\nRESULT: BLOCKED"
     job = _json.dumps({"task_id": task_id, "files": [str(f) for f in (files or [])],
-                       "request_id": request_id, "self_repo": self_repo_mounted(),
+                       "mode": mode, "request_id": request_id, "self_repo": self_repo_mounted(),
                        "approvals": _approval_overrides(), "timeout": timeout,
                        "expires_at": t0 + timeout},
                       ensure_ascii=False)
@@ -871,7 +936,7 @@ def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT
         stop("job 전송 실패")
         log(f"{who} 🔴 job 전송 실패 — {type(e).__name__}: {e}")
         return 1, f"[세션1] job 을 못 보냈다 — {type(e).__name__}: {e}"
-    log(f"{who} job 전송 — 파일 {len(files or [])} · 제한 {timeout}초")
+    log(f"{who} job 전송 — 모드 {mode} · 파일 {len(files or [])} · 제한 {timeout}초")
 
     completed = False
     try:

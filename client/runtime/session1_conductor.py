@@ -1,4 +1,5 @@
-"""세션 1 지휘자 런처 — 윈도우 워커에서 `codex exec` 를 **로그온 세션**에서 돌린다 (`#401`).
+"""세션 1 지휘자 런처 — 윈도우 워커에서 지휘자(`codex exec` · `claude -p`)를 **로그온 세션**에서 돌린다
+(`#401` codex · `#832` claude).
 
 ## 왜 필요한가 (실측 2026-09-12)
 
@@ -11,10 +12,16 @@ Windows OpenSSH 는 **세션 0** 에서 프로세스를 만들고, 거기서는 
 
 `/IT` 로 등록된 작업은 SSH 가 **부탁만** 하고 프로세스는 스케줄러가 세션 1 에 만든다.
 
+🔴 `#832` (사용자 결정 2026-10-18) — **claude 모드도 이 길로 온다.** claude 자체는 세션 0 에서도
+돌지만(파일 자격, `#721`) ax-work 스킬대로 agy 에 위임하면 agy 가 세션 0 에서 로그인을 못 본다
+(*"You are not logged into Antigravity"*). 아래 agy 중계를 claude 도 받으려고 같은 런처를 탄다.
+[주의] 범위는 codex·claude 둘뿐이다 — 범용 런처가 아니다(`MODES`).
+
 ## 🔴 [중요] 이 파일은 **명령을 받지 않는다**
 
-마스터가 주는 것은 `job.json` 의 **`task_id` 와 `files` 뿐**이고, **실행 파일과 플래그는
-이 런처가 소유한다.** 2026-09-12 에 「마스터가 임의 셸 문자열을 파일로 떨구고 스케줄러가
+마스터가 주는 것은 `job.json` 의 **`task_id`·`files`·`mode` 같은 데이터뿐**이고, **실행 파일과
+플래그는 이 런처가 소유한다.** `mode` 는 허용 목록(`MODES`)의 이름 하나일 뿐 명령이 아니다 —
+목록 밖이면 아무것도 돌리지 않고 거절한다(폴백 없음). 2026-09-12 에 「마스터가 임의 셸 문자열을 파일로 떨구고 스케줄러가
 실행하는」 구조를 만들었다가 폐기했다 — 인증도 계약도 없는 **로컬 원격실행 면**이었기
 때문이다. 그 차이가 이 주석의 요점이다: **데이터는 받고, 명령은 받지 않는다.**
 
@@ -23,7 +30,8 @@ Windows OpenSSH 는 **세션 0** 에서 프로세스를 만들고, 거기서는 
 ## 규약
 
     입력   <checkout>/.ax/session1/<task_id>/<request_id>/job.json
-           {"task_id","files","request_id"}; 옛 단일 task 디렉터리도 읽는다
+           {"task_id","files","request_id","mode"}; 옛 단일 task 디렉터리도 읽는다
+           `mode` 가 없으면 codex 다 — `#832` 이전 마스터가 보낸 job 의 뜻 그대로(하위 호환)
     출력   같은 디렉토리의 out.txt · rc.txt · done.flag  (done.flag 를 **맨 마지막에** 쓴다)
     로그   같은 디렉토리의 launcher.log                  (사건마다 한 줄 · 덧붙인다)
 
@@ -85,6 +93,13 @@ import time
 from pathlib import Path
 
 JOB_DIR = ".ax/session1"
+# 🔴 `#832` — job.json 의 `mode` 허용 목록. 이름만 받고 argv 는 `build_argv` 가 만든다.
+MODES = ("codex", "claude")
+# [중요] 필드가 **없을 때만** codex 다 — `#832` 이전 마스터는 mode 를 안 실었고 그때 이 런처는
+#    codex 만 돌렸다(하위 호환). 필드가 있는데 목록 밖(빈 값·null·"lane" 포함)이면 거절이다.
+DEFAULT_MODE = "codex"
+MODE_REFUSE_RC = 2                   # 모드 거절 — 지휘자를 돌리지 않았다
+SESSION0_REFUSE_RC = 3               # 세션 0 거절 — 지휘자를 돌리지 않았다 (`#832`)
 JOB, OUT, RC, DONE = "job.json", "out.txt", "rc.txt", "done.flag"
 CANCEL = "cancel.flag"
 LOG = "launcher.log"
@@ -139,6 +154,12 @@ def _codex_exe() -> str:
     return shutil.which("codex") or "codex"
 
 
+def _claude_exe() -> str:
+    """claude 실행 파일 (`#832`). `_codex_exe` 와 같은 이유로 `shutil.which` 로 잰다 —
+    설치 방식에 따라 `claude.exe`(네이티브) 또는 `claude.cmd`(npm) 다."""
+    return shutil.which("claude") or "claude"
+
+
 # 🔴 job.json 의 `self_repo` 가 참일 때만 지시문 끝에 붙이는 사실 문장 (`#783`, 사용자 2026-10-10).
 #    그 체크아웃의 AGENTS.md·CLAUDE.md 는 사람이 앉은 마스터 세션용 규칙이다 — 무인 워커의 codex 가
 #    「실패는 보고하는 자리」를 읽고 검색 0건(rg exit 1)에 BLOCKED 로 멈췄다(실측 2026-10-10 `.43`).
@@ -150,22 +171,98 @@ SELF_REPO_NOTE = (
     "A search that finds no matches is not a failure."
 )
 
-def build_argv(root: Path, files, approvals=(), self_repo: bool = False) -> list:
-    """codex 인자. 🔴 **여기가 플래그의 주인이다** — 마스터가 주지 않는다.
+def instruction(files, self_repo: bool = False) -> str:
+    """지휘자 지시문 — 마스터 `runner.worker_command` 와 같은 조립(지시문 + 자기 저장소 문장)."""
+    return (INSTRUCTION.format(files=", ".join(str(f) for f in files) or "(none given)")
+            + (" " + SELF_REPO_NOTE if self_repo else ""))
 
-    `agent_command` 의 codex 절과 같은 값을 쓴다: 쓰기는 작업공간으로 묶고 네트워크만 연다
+
+def build_argv(root: Path, files, approvals=(), self_repo: bool = False,
+               mode: str = DEFAULT_MODE) -> list:
+    """지휘자 인자. 🔴 **여기가 플래그의 주인이다** — 마스터가 주지 않는다.
+
+    codex: `agent_command` 의 codex 절과 같은 값을 쓴다: 쓰기는 작업공간으로 묶고 네트워크만 연다
     (레인 위임이 브로커 HTTP 라서다). Windows 는 `unelevated` 를 못 박는다(`#401` 완화).
+    claude (`#832`): `agent_command` 의 claude 절과 같은 플래그·순서다
+    (`claude -p --output-format json --dangerously-skip-permissions "<지시문>"`). 디렉토리는
+    `-C` 가 아니라 `run_job` 의 `cwd` 로 준다(마스터 쪽 `cd /d` 와 같은 뜻). `approvals` 는 codex 전용이다.
+    목록 밖 모드는 `ValueError` — 호출부(`run_job`)가 먼저 거르므로 여기 오면 계약 위반이다.
     """
+    text = instruction(files, self_repo)
+    if mode == "claude":
+        return [_claude_exe(), "-p", "--output-format", "json",
+                "--dangerously-skip-permissions", text]
+    if mode != "codex":
+        raise ValueError(f"모르는 지휘자 모드: {mode!r}")
     argv = [_codex_exe(), "exec", "--json", "-s", "workspace-write",
             "-c", "sandbox_workspace_write.network_access=true"]
     if sys.platform.startswith("win"):
         argv += ["-c", 'windows.sandbox="unelevated"']
     for a in approvals or ():
         argv += ["-c", a]
-    argv += ["--skip-git-repo-check", "-C", str(root),
-             INSTRUCTION.format(files=", ".join(str(f) for f in files) or "(none given)")
-             + (" " + SELF_REPO_NOTE if self_repo else "")]
+    argv += ["--skip-git-repo-check", "-C", str(root), text]
     return argv
+
+
+def job_mode(job: dict) -> tuple:
+    """`(모드, "")` 또는 `("", 거절 사유)`. 예외를 던지지 않는다.
+
+    [중요] 필드가 없으면 codex(하위 호환 — `DEFAULT_MODE` 주석). 있는데 허용 목록 밖이면 거절이다.
+    """
+    if "mode" not in job:
+        return DEFAULT_MODE, ""
+    mode = job.get("mode")
+    if isinstance(mode, str) and mode in MODES:
+        return mode, ""
+    return "", f"job.json 의 mode 가 허용 목록 {list(MODES)} 밖이다: {mode!r} — 실행하지 않는다"
+
+
+_WINSESSION = None
+
+
+def _winsession_paths() -> list:
+    """`winsession.py` 후보 — 이 파일과 **같은 디렉토리**다(배달본 `clientside/` · 저장소 `client/runtime/`)."""
+    return [Path(__file__).resolve().parent / "winsession.py"]
+
+
+def _load_winsession():
+    """`winsession.py` 를 **경로로** 로드한다(`_load_usage` 와 같은 방식). 실패면 예외."""
+    global _WINSESSION
+    if _WINSESSION is not None:
+        return _WINSESSION
+    for src in _winsession_paths():
+        if not src.is_file():
+            continue
+        spec = importlib.util.spec_from_file_location("ax_s1_winsession", src)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _WINSESSION = mod
+        return mod
+    raise FileNotFoundError("winsession.py 가 배달되지 않았다 — " + " · ".join(map(str, _winsession_paths())))
+
+
+def session_check(d: Path) -> tuple:
+    """`(세션 id 또는 None, 거절 사유)` — 사유가 빈 문자열이면 진행. 예외를 던지지 않는다 (`#832`).
+
+    🔴 `/IT` 등록이 어긋나 런처가 세션 0 에서 떴다면 지휘자를 돌려 봐야 늦고 엉뚱한 오류로 죽는다
+    (codex `0xC0000142` · agy 로그인 없음) — 그래서 시작 전에 고정 사유로 거절한다.
+    [주의] 모듈을 못 불러오면 **경고만 남기고 진행한다** — 이 검사는 보조 방어다. 옛 배달본에는
+    `winsession.py` 가 없고, 그것 때문에 지금 도는 세션 1 경로를 막으면 안 된다.
+    """
+    try:
+        ws = _load_winsession()
+    except Exception as e:                                   # noqa: BLE001
+        _log(d, f"[주의] 세션 판정 모듈(winsession.py)을 못 불러왔다 — 판정 없이 진행 "
+                f"({type(e).__name__}: {e})")
+        return None, ""
+    try:
+        sid = ws.session_id()
+        if ws.is_session0():
+            return sid, (ws.refuse_reason() or f"세션 0 이다 · SessionId={sid}")
+        return sid, ""
+    except Exception as e:                                   # noqa: BLE001
+        _log(d, f"[주의] 세션 판정 실패 — 판정 없이 진행 ({type(e).__name__}: {e})")
+        return None, ""
 
 
 AGY_ROOT, AGY_MARK = ".agy-work", "VIA_LAUNCHER"
@@ -460,8 +557,23 @@ def run_job(root: Path, d: Path) -> int:
         out = f"[런처] {reason} — 실행하지 않았다"
         _log(d, out)
         return finish()
-    _log(d, f"job 집음 — task={job.get('task_id', d.name)} · 파일 {len(files)} · 제한 {limit}초")
-    argv = build_argv(root, files, job.get("approvals") or (), self_repo=job.get("self_repo") is True)
+    mode, bad_mode = job_mode(job)
+    sid, s0 = session_check(d)
+    _log(d, f"job 집음 — task={job.get('task_id', d.name)} · 모드 {mode or '(거절)'} · "
+            f"파일 {len(files)} · 제한 {limit}초 · 세션 {sid if sid is not None else '미상'}")
+    if bad_mode:
+        # 🔴 `#832` — 폴백하지 않는다. 모르는 이름을 codex 로 돌리면 마스터가 고른 지휘자와 갈린다
+        rc, out = MODE_REFUSE_RC, f"ERROR [런처] {bad_mode}\nRESULT: BLOCKED"
+        _log(d, f"🔴 모드 거절 — {bad_mode}")
+        return finish()
+    if s0:
+        # 🔴 `#832` — 세션 0 이면 지휘자도 agy 중계도 띄우지 않는다(VIA_LAUNCHER 를 쓰지 않는다)
+        rc, out = SESSION0_REFUSE_RC, f"ERROR [런처] {s0}\nRESULT: BLOCKED"
+        _log(d, f"🔴 세션 0 거절 — SessionId={sid} · {s0}")
+        return finish()
+    argv = build_argv(root, files, job.get("approvals") or (), self_repo=job.get("self_repo") is True,
+                      mode=mode)
+    _log(d, f"argv 준비 — 모드 {mode} · 실행 파일 {argv[0]}")
     # 🔴 [중요] **자식까지 죽여야 한다** (실측 2026-09-12). 세션 1 은 데스크톱이 있어서
     #    크래시가 **모달 대화상자**로 뜨고, 그러면 프로세스가 무한 대기한다 — 세션 0 에서는
     #    데스크톱이 없어 조용히 죽던 것이 여기서는 매달린다. 실제로 `dotnet`(UBT) 둘이
@@ -473,13 +585,13 @@ def run_job(root: Path, d: Path) -> int:
         kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kw["start_new_session"] = True
-    relay = _start_relay(root, d)                           # `#764` — codex 보다 먼저
+    relay = _start_relay(root, d)                           # `#764` — 지휘자보다 먼저 (codex·claude 둘 다)
     proc = None
     try:
         proc = subprocess.Popen(argv, cwd=str(root), stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                 text=True, encoding="utf-8", errors="replace", **kw)
-        _log(d, f"codex 시작 — pid={proc.pid} · 실행 파일 {argv[0]}")
+        _log(d, f"{mode} 시작 — pid={proc.pid} · 실행 파일 {argv[0]}")
         deadline = time.monotonic() + limit
         completed = False
         while True:
@@ -499,7 +611,7 @@ def run_job(root: Path, d: Path) -> int:
             except subprocess.TimeoutExpired:
                 continue
         if completed:
-            _log(d, f"codex 종료 — rc={rc} · {int(time.monotonic() - t0)}초 · 출력 {len(out)}자")
+            _log(d, f"{mode} 종료 — rc={rc} · {int(time.monotonic() - t0)}초 · 출력 {len(out)}자")
     except Exception as e:                                   # noqa: BLE001
         out, rc = f"[런처] 실행 실패 — {type(e).__name__}: {e}", 1
         _log(d, f"🔴 실행 실패 — {type(e).__name__}: {e}")

@@ -137,6 +137,8 @@ PAYLOAD_BY_ROLE = {
                   _pair("clientside/ontology_cache.py", "client/runtime/ontology_cache.py"),
                   # `#630` — `ax-fix` 의 결정론 부분. 옆 파일 `client_mcp.py` 를 경로로 로드한다
                   _pair("clientside/fix_flow.py", "client/runtime/fix_flow.py"),
+                  # 🔴 `#832` — Windows 세션 0(SSH) 거절 판정. `gemini_report` 가 옆 트리에서 경로로 로드한다
+                  _pair("clientside/winsession.py", "client/runtime/winsession.py"),
                   _pair("layer3_verify.py"), _pair("source_text.py"), _pair("utf8.py"),
                   _pair("work/branch_names.py"), _pair("work/coordinator.py"),
                   _pair("work/review.py"),
@@ -169,6 +171,8 @@ PAYLOAD_BY_ROLE = {
                #    [중요] 마스터는 `job.json` 의 task_id·files 만 준다 — **플래그는 런처 소유**.
                _pair("clientside/session1_conductor.py",
                      "client/runtime/session1_conductor.py"),
+               # 🔴 `#832` — 세션 0 거절 판정. 런처·러너가 옆 파일로 경로 로드한다(표준 라이브러리뿐)
+               _pair("clientside/winsession.py", "client/runtime/winsession.py"),
                _pair("work/build_local.py"), _pair("work/skeleton_gate.py"),
                _pair("layer3_verify.py"),
                _pair("source_text.py"), _pair("utf8.py"),

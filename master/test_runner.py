@@ -685,7 +685,7 @@ def test_session1_launcher_logs() -> None:
     (d / "job.json").write_text(_json.dumps({"task_id": "t1", "files": ["Source/A.cpp"],
                                              "timeout": 60}), encoding="utf-8")
     saved = (L.build_argv, L.find_root)
-    L.build_argv = lambda r, files, approvals=(), self_repo=False: [_sys.executable, "-c", "print('RESULT: DONE')"]
+    L.build_argv = lambda r, files, approvals=(), self_repo=False, mode="codex": [_sys.executable, "-c", "print('RESULT: DONE')"]
     try:
         rc = L.run_job(root, d)
         log = (d / "launcher.log").read_text(encoding="utf-8")
@@ -709,7 +709,7 @@ def test_session1_launcher_logs() -> None:
         d3 = root / ".ax" / "session1" / "t3"
         d3.mkdir(parents=True)
         (d3 / "job.json").write_text(_json.dumps({"task_id": "t3", "timeout": 1}), encoding="utf-8")
-        L.build_argv = lambda r, files, approvals=(), self_repo=False: [_sys.executable, "-c",
+        L.build_argv = lambda r, files, approvals=(), self_repo=False, mode="codex": [_sys.executable, "-c",
                                                        "import time; time.sleep(30)"]
         t0 = _time.monotonic()
         L.run_job(root, d3)
@@ -777,7 +777,7 @@ def test_session1_attempt_isolation() -> None:
             if rel.endswith("job.json"):
                 jobs.append(json.loads(content))
 
-        def argv(r, files, approvals=(), self_repo=False):
+        def argv(r, files, approvals=(), self_repo=False, mode="codex"):
             executions.append(1)
             return [sys.executable, "-c", f"print('FRESH {len(executions)}')"]
 
@@ -1130,7 +1130,7 @@ def test_session1_agy_relay() -> None:
             "print('two', (b/'out'/'2.done').read_text(), (b/'out'/'2.err').read_text())\n"
             "print('RESULT: DONE')\n")
         saved_argv, saved_path = L.build_argv, os.environ.get("PATH", "")
-        L.build_argv = lambda r, files, approvals=(), self_repo=False: [_sys.executable, "-c", conductor]
+        L.build_argv = lambda r, files, approvals=(), self_repo=False, mode="codex": [_sys.executable, "-c", conductor]
         os.environ["PATH"] = f"{bindir}{os.pathsep}{saved_path}"
         saved_poll = L.AGY_POLL
         L.AGY_POLL = 0.1
@@ -1382,6 +1382,312 @@ def test_claude_auth_runtime() -> None:
     check("실측 OAuth 오류는 agent notes에 추출", any(raw in note for note in R.agent_report(raw, rc=1)))
 
 
+# 🔴 `#832` — 리눅스 워커(`.43`)는 **바이트까지 그대로**여야 한다 (사용자 2026-10-18).
+#    아래 해시는 `#832` 변경 **전** 의 `worker_command` 출력에서 잰 값이다(파일 2 · 승인 플래그 고정).
+#    지시문(`INSTRUCTION`) 자체를 고치는 일감이면 이 값도 함께 갱신한다 — 그 외의 이유로 깨지면 회귀다.
+LINUX_PINNED = {
+    ("claude", "/home/sim", False): "8b297ab67bd15726eb7388072155413eab9430290987f98c1149073a3a1045af",
+    ("claude", "/home/sim", True):  "79772a6f92a2d41a9e0944ab86a33adf4e0294ae6e57dba60b256d87597f39a1",
+    ("codex",  "/home/sim", False): "7b082f032f4d6b4a2945df1af83222b7de5428343efd3eff484ac20d5b2515bf",
+    ("codex",  "/home/sim", True):  "9650c94e13c66bc60af9e2fd23043053e74948f1ba8c13176f7755f1b3f97972",
+    ("claude", "", False):          "8b297ab67bd15726eb7388072155413eab9430290987f98c1149073a3a1045af",
+    ("claude", "", True):           "79772a6f92a2d41a9e0944ab86a33adf4e0294ae6e57dba60b256d87597f39a1",
+    ("codex",  "", False):          "3e7b4bf1bd2349dbd4ab4e1ecccb1a479d6b542c5e56d4126baaa58636b82e3b",
+    ("codex",  "", True):           "8ca174e3891bacebc528370ad765b78b7f607593be2c5c480cb037197a46aebe",
+}
+LINUX_PREFIX = {
+    "claude": ('cd "/home/sim/trunk/ModularStage" && claude -p --output-format json '
+               '--dangerously-skip-permissions "Follow the ax-work skill.'),
+    "codex": ('cd "/home/sim/trunk/ModularStage" && codex exec --json -s workspace-write '
+              '-c sandbox_workspace_write.network_access=true '
+              '-c \'sandbox_workspace_write.writable_roots=["/home/sim/.gemini/antigravity-cli"]\' '
+              '-c FIXED_APPR -C "/home/sim/trunk/ModularStage" "Follow the ax-work skill.'),
+}
+
+
+def test_linux_commands_pinned() -> None:
+    """🔴 `#832` — 리눅스 claude·codex SSH 명령이 변경 전과 **바이트까지 같다**, 세션 1 은 절대 안 탄다."""
+    import hashlib
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    files = ["Source/A.cpp", "Source/A.h"]
+    with patch.object(R.bundle, "codex_approval_flags", return_value="-c FIXED_APPR"):
+        for (mode, home, self_repo), want in LINUX_PINNED.items():
+            f = SimpleNamespace(windows=False, path="/home/sim/trunk/ModularStage", home=home)
+            with patch.object(R, "self_repo_mounted", lambda active=None, v=self_repo: v):
+                cmd = R.worker_command(f, "t1", files, mode=mode)
+            got = hashlib.sha256(cmd.encode()).hexdigest()
+            check(f"🔴 리눅스 {mode} 명령 바이트 동일 (home={home!r} · self_repo={self_repo})",
+                  got == want, f"{got} {cmd[:200]!r}")
+            if home:
+                check(f"  리눅스 {mode} 명령 앞부분 글자 고정", cmd.startswith(LINUX_PREFIX[mode]), cmd[:300])
+            check(f"  리눅스 {mode} 꼬리", cmd.endswith('< /dev/null' if mode == "codex"
+                                                      else 'say why above it)."'
+                                                      if not self_repo else 'not a failure."'), cmd[-80:])
+    # uses_session1 — 리눅스는 어떤 모드에서도 거짓
+    for mode in ("claude", "codex", "lane", "", None, "CLAUDE"):
+        for f in (_facts(), SimpleNamespace(windows=False), SimpleNamespace()):
+            check(f"🔴 리눅스 uses_session1 거짓 (mode={mode!r})", R.uses_session1(f, mode) is False)
+    # run_worker — 리눅스는 SSH 로 가고 세션 1 을 부르지 않는다. claude 는 `2>&1` 을 붙인다(그대로).
+    lf = SimpleNamespace(windows=False, path="/home/sim/trunk/ModularStage", home="/home/sim",
+                         host="192.168.0.43", user="sim")
+    with patch.object(R.bundle, "codex_approval_flags", return_value="-c FIXED_APPR"), \
+         patch.object(R, "self_repo_mounted", lambda active=None: False), \
+         patch.object(R, "run_worker_session1", side_effect=AssertionError("세션 1")) as s1, \
+         patch("master.work.conductor_auth.check_claude_auth", return_value={"ok": True}), \
+         patch.object(R.bundle, "_ssh", return_value=(0, "RESULT: DONE")) as ssh:
+        for mode in ("claude", "codex"):
+            ssh.reset_mock()
+            rc, out = R.run_worker(lf, "t1", files=files, mode=mode)
+            sent = ssh.call_args.args[2]
+            want = R.worker_command(lf, "t1", files, mode=mode) + (" 2>&1" if mode == "claude" else "")
+            check(f"🔴 리눅스 run_worker {mode} — SSH 로 같은 명령", rc == 0 and sent == want, sent[-60:])
+            check(f"  리눅스 {mode} 는 세션 1 을 부르지 않는다", not s1.called)
+            check(f"  리눅스 {mode} SSH 대상 그대로", ssh.call_args.args[:2] == ("192.168.0.43", "sim"))
+
+
+def _win_facts():
+    from types import SimpleNamespace
+    return SimpleNamespace(host="192.168.0.2", user="janus", windows=True, os="windows",
+                           path="E:\\trunk\\NS", home="C:\\Users\\janus")
+
+
+def test_session1_claude_master() -> None:
+    """🔴 `#832` — Windows claude 는 세션 1 경유다. 인증 사전 검사·실행 중 OAuth 판독·결과 판독은 그대로."""
+    import json as _json
+    from unittest.mock import patch
+    wf = _win_facts()
+    check("Windows codex 는 세션 1", R.uses_session1(wf, "codex") is True)
+    check("🔴 Windows claude 도 세션 1 (#832)", R.uses_session1(wf, "claude") is True)
+    for m in ("lane", "", None, "CLAUDE", "agy"):
+        check(f"  Windows {m!r} 는 세션 1 아님 (범위는 둘뿐)", R.uses_session1(wf, m) is False)
+
+    raw = "Failed to authenticate: OAuth session expired and could not be refreshed"
+    relay = _json.dumps({"type": R.RELAY_EVENT, "request": "r1", "rc": 0, "seconds": 3, "chars": 9})
+    tail = "\n" + relay + "\nERROR [세션1] 오류 창 감지 — 19:00:01 x"
+
+    # 사전 검사 실패 — 런처를 깨우지 않는다
+    with patch("master.work.conductor_auth.check_claude_auth",
+               return_value={"ok": False, "reason": "캐시 실패"}), \
+         patch.object(R, "run_worker_session1") as s1, patch.object(R.bundle, "_ssh") as ssh:
+        rc, out = R.run_worker(wf, "t1", files=["A.cpp"], mode="claude")
+        check("🔴 Windows claude 사전 검사 실패는 런처를 깨우지 않는다",
+              rc == 1 and not s1.called and not ssh.called and "AX_CLAUDE_AUTH_FAILED" in out, out)
+
+    # 실행 중 OAuth 실패 — 세션 1 출력(꼬리 포함)에서도 판독·무효화
+    for prc, pout in ((1, raw), (0, _json.dumps({"is_error": True, "result": raw}) + tail)):
+        with patch("master.work.conductor_auth.check_claude_auth", return_value={"ok": True}), \
+             patch("master.work.conductor_auth.invalidate_claude_auth", return_value={"ok": False}) as inv, \
+             patch.object(R, "run_worker_session1", return_value=(prc, pout)) as s1, \
+             patch.object(R.bundle, "_ssh") as ssh:
+            rc, out = R.run_worker(wf, "t1", files=["A.cpp"], mode="claude")
+            check(f"🔴 세션 1 claude OAuth 실패 판독 (rc={prc})",
+                  rc == 1 and inv.call_count == 1 and "AX_CLAUDE_AUTH_FAILED" in out[-300:], out)
+            check("  세션 1 에 mode=claude 로 간다 · SSH 직접 실행 없음",
+                  s1.call_args.kwargs.get("mode") == "claude" and not ssh.called, str(s1.call_args))
+
+    # 정상 — 봉투 + 꼬리에서도 RESULT 를 읽는다
+    env = _json.dumps({"type": "result", "is_error": False, "result": "구현했다\nRESULT: DONE",
+                       "usage": {"input_tokens": 1}})
+    with patch("master.work.conductor_auth.check_claude_auth", return_value={"ok": True}), \
+         patch("master.work.conductor_auth.invalidate_claude_auth") as inv, \
+         patch.object(R, "run_worker_session1", return_value=(0, env + tail)):
+        rc, out = R.run_worker(wf, "t1", files=["A.cpp"], mode="claude")
+        check("정상 claude 결과는 그대로 돌아온다", rc == 0 and out == env + tail and not inv.called)
+    o = R.parse_result(env + tail)
+    check("🔴 봉투 뒤 세션1 꼬리가 있어도 RESULT: DONE 을 읽는다", o.status == R.DONE, o.reason)
+    check("  계측(usage)도 읽는다", (o.usage or {}).get("usage") == {"input_tokens": 1}, str(o.usage))
+    o2 = R.parse_result(_json.dumps({"result": "x\nRESULT: BLOCKED"}) + tail)
+    check("  BLOCKED 도 읽는다", o2.status == R.BLOCKED, o2.reason)
+    known, calls = R.delegation_calls(env + tail)
+    check("  중계 이벤트는 원문에 남아 위임 계측이 읽는다", bool(calls), str(calls))
+    check("  오류 창 줄은 agent_report 가 뽑는다",
+          any("오류 창 감지" in l for l in R.agent_report(env + tail, rc=0)))
+    o3 = R.parse_result(_json.dumps({"result": "RESULT: DONE"}) + "\nsomething else")
+    check("[주의] 꼬리가 세션1 줄이 아니면 봉투로 인정하지 않는다 (종전 판독)",
+          o3.status != R.DONE, o3.reason)
+
+    # codex 는 claude 인증을 거치지 않는다 — 종전 그대로
+    with patch("master.work.conductor_auth.check_claude_auth") as ca, \
+         patch.object(R, "run_worker_session1", return_value=(0, "RESULT: DONE")) as s1:
+        R.run_worker(wf, "t1", files=["A.cpp"], mode="codex")
+        check("Windows codex — 세션 1 에 mode=codex · claude 인증 없음",
+              s1.call_args.kwargs.get("mode") == "codex" and not ca.called, str(s1.call_args))
+    with patch("master.work.conductor_auth.check_claude_auth") as ca, \
+         patch.object(R, "run_worker_session1") as s1:
+        R.run_worker(wf, "t1", mode="claude", runner=lambda *a: (0, "RESULT: DONE"))
+        check("주입 runner 는 세션 1·인증 경로를 안 탄다", not s1.called and not ca.called)
+
+
+def test_session1_job_carries_mode() -> None:
+    """🔴 `#832` — job.json 은 mode 를 **데이터로** 싣는다(명령 문자열 없음). 모르는 모드는 보내지 않는다."""
+    import json as _json
+    from master.client import bundle as B
+    wf = _win_facts()
+    saved = (B._ssh, B._remote_write, B._remote_read)
+    for mode in ("claude", "codex"):
+        sent, lines = {}, []
+
+        def fake_write(facts, path, content, **kw):
+            if path.endswith("job.json"):
+                sent.update(_json.loads(content))
+
+        def fake_ssh(host, user, cmd, timeout=None, **kw):
+            return 0, ("DONE" if "done.flag" in cmd else "")
+
+        def fake_read(f, p):
+            return {"done.flag": sent.get("request_id"), "out.txt": "RESULT: DONE", "rc.txt": "0",
+                    "launcher.log": ""}.get(p.rsplit("\\", 1)[-1], "")
+
+        B._ssh, B._remote_write, B._remote_read = fake_ssh, fake_write, fake_read
+        try:
+            rc, out = R.run_worker_session1(wf, "t1", files=["A.cpp"], mode=mode, sleeper=lambda s: None,
+                                            logf=lines.append, popup=lambda *a: [],
+                                            cancelled=lambda: False, cleanup_timeout=0)
+        finally:
+            B._ssh, B._remote_write, B._remote_read = saved
+        check(f"🔴 job.json 에 mode={mode}", sent.get("mode") == mode and rc == 0, str(sent))
+        check(f"  job.json 에 명령 문자열이 없다 ({mode})",
+              not any(k in sent for k in ("cmd", "command", "argv")) and
+              not any(isinstance(v, str) and (" -p " in v or "exec --json" in v) for v in sent.values()))
+        check(f"  마스터 로그에 모드가 찍힌다 ({mode})", any(f"모드 {mode}" in l for l in lines), str(lines))
+    lines = []
+    with __import__("unittest.mock").mock.patch.object(B, "_remote_write") as w:
+        rc, out = R.run_worker_session1(wf, "t1", mode="lane", logf=lines.append, cancelled=lambda: False)
+        check("🔴 모르는 모드는 job 을 보내지 않는다", rc == 1 and not w.called and "lane" in out, out)
+
+
+def test_session1_launcher_claude_argv() -> None:
+    """🔴 `#832` — 런처의 claude argv 가 마스터 `worker_command(mode="claude")`(Windows) 와 같은 플래그·지시문."""
+    L = _load_launcher()
+    wf = _win_facts()
+    orig = R.self_repo_mounted
+    try:
+        for self_repo in (False, True):
+            R.self_repo_mounted = lambda active=None, v=self_repo: v
+            cmd = R.worker_command(wf, "t1", ["Source/A.cpp", "Source/A.h"], mode="claude")
+            argv = L.build_argv(Path("E:/trunk/NS"), ["Source/A.cpp", "Source/A.h"],
+                                ["X=1"], self_repo=self_repo, mode="claude")
+            want = (f'cd /d "{wf.path}" && claude -p --output-format json '
+                    f'--dangerously-skip-permissions "{argv[-1]}"')
+            check(f"🔴 claude argv 의 플래그·지시문이 마스터 명령과 같다 (self_repo={self_repo})",
+                  cmd == want, f"\nmaster={cmd[:160]!r}\nlaunch={want[:160]!r}")
+            check("  claude argv 모양", argv[1:5] == ["-p", "--output-format", "json",
+                                                     "--dangerously-skip-permissions"] and len(argv) == 6,
+                  str(argv[:5]))
+            check("  지시문 = INSTRUCTION 조립 그대로",
+                  argv[-1] == L.INSTRUCTION.format(files="Source/A.cpp, Source/A.h")
+                  + (" " + L.SELF_REPO_NOTE if self_repo else ""))
+    finally:
+        R.self_repo_mounted = orig
+    c_default = L.build_argv(Path("."), ["a.py"], ["X=1"])
+    c_codex = L.build_argv(Path("."), ["a.py"], ["X=1"], mode="codex")
+    check("기본(모드 없음) argv 는 codex 와 같다", c_default == c_codex and "exec" in c_codex, str(c_codex[:3]))
+    check("  claude 는 codex 승인 -c 를 싣지 않는다",
+          "X=1" not in L.build_argv(Path("."), ["a.py"], ["X=1"], mode="claude"))
+    try:
+        L.build_argv(Path("."), ["a.py"], mode="lane")
+        check("모르는 모드는 ValueError", False)
+    except ValueError:
+        check("모르는 모드는 ValueError", True)
+    check("job_mode: 필드 없음 → codex (하위 호환)", L.job_mode({}) == ("codex", ""))
+    check("job_mode: claude", L.job_mode({"mode": "claude"}) == ("claude", ""))
+    for bad in ("lane", "", None, "Claude", 1, "codex; rm"):
+        m, why = L.job_mode({"mode": bad})
+        check(f"🔴 job_mode 거절 {bad!r}", m == "" and "허용 목록" in why, why)
+
+
+def _fake_winsession(tmp: Path, sid) -> Path:
+    tmp.mkdir(parents=True, exist_ok=True)
+    f = tmp / "winsession.py"
+    f.write_text(
+        f"SID = {sid!r}\n"
+        "def session_id():\n    return SID\n"
+        "def is_session0():\n    return SID == 0\n"
+        "def refuse_reason():\n    return ('세션 0 거절 고정 사유 · SessionId=%s' % SID) if SID == 0 else ''\n",
+        encoding="utf-8")
+    return f
+
+
+def test_session1_launcher_mode_and_session0() -> None:
+    """🔴 `#832` — 런처: 모드 거절 · 세션 0 거절 · 모듈 부재는 경고 후 진행 · 시작 로그(모드·argv[0]·세션)."""
+    import json as _json
+    import sys as _sys
+    import tempfile
+    from unittest.mock import patch
+
+    def job_dir(root, name, job):
+        d = root / ".ax" / "session1" / name / "r"
+        d.mkdir(parents=True)
+        (d / "job.json").write_text(_json.dumps(job), encoding="utf-8")
+        return d
+
+    def boom(*a, **k):
+        raise AssertionError("build_argv 를 부르면 안 된다")
+
+    with tempfile.TemporaryDirectory(prefix="ax-s1-832-") as tmp:
+        root = Path(tmp) / "co"
+        # ① 모드 거절
+        L = _load_launcher()
+        d = job_dir(root, "bad", {"task_id": "bad", "mode": "lane", "request_id": "q1", "timeout": 30})
+        with patch.object(L, "_winsession_paths", lambda: [_fake_winsession(Path(tmp) / "w2", 2)]), \
+             patch.object(L, "build_argv", boom):
+            rc = L.run_job(root, d)
+        log = (d / "launcher.log").read_text(encoding="utf-8")
+        check("🔴 모르는 모드 — rc≠0 · 지휘자 안 돌림", rc == L.MODE_REFUSE_RC and rc != 0, str(rc))
+        check("  거절 사유가 결과·로그에", "허용 목록" in (d / "out.txt").read_text(encoding="utf-8")
+              and "모드 거절" in log, log)
+        check("  done.flag 는 쓴다 (마스터가 기다리지 않게)", (d / "done.flag").read_text() == "q1")
+        check("  agy 중계 표시를 쓰지 않았다", not (root / ".agy-work" / "VIA_LAUNCHER").exists())
+
+        # ② 세션 0 거절
+        L = _load_launcher()
+        d = job_dir(root, "s0", {"task_id": "s0", "mode": "claude", "request_id": "q2", "timeout": 30})
+        with patch.object(L, "_winsession_paths", lambda: [_fake_winsession(Path(tmp) / "w0", 0)]), \
+             patch.object(L, "build_argv", boom):
+            rc = L.run_job(root, d)
+        log = (d / "launcher.log").read_text(encoding="utf-8")
+        out = (d / "out.txt").read_text(encoding="utf-8")
+        check("🔴 세션 0 — rc≠0 · 지휘자 안 돌림", rc == L.SESSION0_REFUSE_RC and rc != 0, str(rc))
+        check("  고정 사유가 결과에", "세션 0 거절 고정 사유" in out and "RESULT: BLOCKED" in out, out)
+        check("  로그에 세션 id", "세션 0 거절 — SessionId=0" in log and "세션 0" in log, log)
+        check("  agy 중계를 띄우지 않았다", not (root / ".agy-work" / "VIA_LAUNCHER").exists())
+        check("  rc.txt·done.flag", (d / "rc.txt").read_text() == str(L.SESSION0_REFUSE_RC)
+              and (d / "done.flag").read_text() == "q2")
+        check("  마스터 agent_report 가 오류 줄로 뽑는다",
+              any("세션 0" in l for l in R.agent_report(out, rc=rc)), str(R.agent_report(out, rc=rc)))
+
+        # ③ 세션 2 — claude 로 돈다, 시작 로그
+        L = _load_launcher()
+        d = job_dir(root, "ok", {"task_id": "ok", "mode": "claude", "files": ["A.cpp"],
+                                 "request_id": "q3", "timeout": 30})
+        seen = {}
+
+        def argv(r, files, approvals=(), self_repo=False, mode="codex"):
+            seen["mode"] = mode
+            return [_sys.executable, "-c", "print('RESULT: DONE')"]
+        with patch.object(L, "_winsession_paths", lambda: [_fake_winsession(Path(tmp) / "w2b", 2)]), \
+             patch.object(L, "build_argv", argv):
+            rc = L.run_job(root, d)
+        log = (d / "launcher.log").read_text(encoding="utf-8")
+        check("🔴 세션 2 claude job 이 돈다", rc == 0 and seen.get("mode") == "claude", f"{rc} {seen}")
+        check("  시작 로그에 모드·세션", "모드 claude" in log and "세션 2" in log, log)
+        check("  argv[0] 로그", f"실행 파일 {_sys.executable}" in log and "claude 시작 — pid=" in log, log)
+        check("  claude 종료 로그", "claude 종료 — rc=0" in log, log)
+
+        # ④ 모듈 부재 — 경고만, 진행. 필드 없는 job 은 codex
+        L = _load_launcher()
+        d = job_dir(root, "nomod", {"task_id": "nomod", "request_id": "q4", "timeout": 30})
+        seen.clear()
+        with patch.object(L, "_winsession_paths", lambda: [Path(tmp) / "missing" / "winsession.py"]), \
+             patch.object(L, "build_argv", argv):
+            rc = L.run_job(root, d)
+        log = (d / "launcher.log").read_text(encoding="utf-8")
+        check("🔴 winsession 부재 — 막지 않고 진행", rc == 0 and seen.get("mode") == "codex", f"{rc} {seen}")
+        check("  부재 경고가 로그에", "winsession.py)을 못 불러왔다" in log and "세션 미상" in log, log)
+        check("  필드 없는 job → codex 로그", "모드 codex" in log and "codex 시작" in log, log)
+
+
 def main() -> int:
     for fn in (test_parse, test_pick, test_command, test_codex_windows_sandbox,
                test_codex_linux_agy_writable_root,
@@ -1404,7 +1710,10 @@ def main() -> int:
                test_session1_agy_model_verdict,
                test_session1_relay_start_failure,
                test_relay_events_are_authoritative,
-               test_session1_after_appends_relay_events):
+               test_session1_after_appends_relay_events,
+               test_linux_commands_pinned,
+               test_session1_claude_master, test_session1_job_carries_mode,
+               test_session1_launcher_claude_argv, test_session1_launcher_mode_and_session0):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_runner: {PASS}/{total} 통과")

@@ -118,9 +118,10 @@ def worker_mode_readiness(selected, project="", *, registry=None, prober=None,
                  f"{facts.home}/.{selected}/skills/ax-work/SKILL.md")
         if not (read(facts, skill) or "").strip():
             problems.append(f"필수 스킬을 읽지 못했다: {skill}")
-        if selected == "codex" and facts.windows and not problems:
+        if selected in ("codex", "claude") and facts.windows and not problems:
             # SSH Session 0에서 Codex를 실행하면 실제 /IT 파견과 다른 경로를 잰다.
             # 조회만 한다. 셸 읽기·apply_patch·결과 회수는 실제 런처에서 별도 검증한다.
+            # `#832` — Windows claude 도 같은 세션 1 런처로 파견되므로 같은 등록을 요구한다.
             problems.extend(_windows_codex_registration(facts, target, read, run_shell))
         auth = None
         if selected == "claude" and not problems:

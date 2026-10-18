@@ -318,6 +318,89 @@ def main() -> int:
         G.master_model = real_mm
         check("  agy 호출 0 · 기록 0", not argv_file.exists() and len(rows(log)) == n0, "")
 
+        print("\n[5b] 🔴 #832 Windows 세션 0 — agy·모델 해석 전에 거절(종료 2) · 리눅스는 영향 없음")
+        import contextlib
+        import ctypes
+        import io
+
+        class K32:
+            def __init__(self, sid):
+                self.sid, self.calls = sid, []
+
+            def GetCurrentProcessId(self):
+                return 7
+
+            def ProcessIdToSessionId(self, pid, ref):
+                self.calls.append(pid); ref._obj.value = self.sid; return 1
+
+        @contextlib.contextmanager
+        def platform(plat, sid):
+            k, real_plat = K32(sid), sys.platform
+            had, old = hasattr(ctypes, "windll"), getattr(ctypes, "windll", None)
+            ctypes.windll = type("W", (), {"kernel32": k})()
+            sys.platform = plat
+            try:
+                yield k
+            finally:
+                sys.platform = real_plat
+                if had:
+                    ctypes.windll = old
+                else:
+                    delattr(ctypes, "windll")
+
+        def run(args, **kw):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                rc = G.main(args, **kw)
+            return rc, err.getvalue()
+
+        ws = G._winsession()
+        check("판정 모듈을 저장소 경로(client/runtime)에서 찾는다", ws is not None and hasattr(ws, "REFUSAL"))
+        argv_file.unlink(missing_ok=True); n0 = len(rows(log))
+        qcalls = []
+        with platform("win32", 0) as k:
+            rc, err = run(["--project", "AXCluster", "--brief-dir", str(brief),
+                           "--out", str(research / "2026-10-18-s0.md")])
+            check("[중요] 세션 0 (마스터 경로) → rc 2", rc == 2, str(rc))
+            check("[중요] 고정 사유 + SessionId 가 로그에 찍힌다",
+                  ws.REFUSAL in err and "SessionId=0" in err and "거절" in err, err)
+            rc, err = run(["--remote", "--checkout", str(tmp / "nowhere"), "--brief-dir", str(brief),
+                           "--out", str(research / "2026-10-18-s0r.md")],
+                          queue=lambda *a, **kw: qcalls.append(a) or {"ok": True})
+            check("[중요] 세션 0 (--remote) → rc 2 · 요청자 설정보다 먼저", rc == 2 and ws.REFUSAL in err, err)
+            check("  세션을 실제로 쟀다", len(k.calls) >= 1, str(k.calls))
+        check("[중요] agy 호출 0 · 사용량 기록 0 · 큐 호출 0 (다른 종료 2 거절과 같은 계약)",
+              not argv_file.exists() and len(rows(log)) == n0 and not qcalls, str(qcalls))
+        check("  보고서·.run 없음", not (research / "2026-10-18-s0.md").exists()
+              and not (research / "2026-10-18-s0.run").exists())
+
+        with platform("win32", 18):
+            check("Windows 대화형(SessionId 18) → 거절 없음", G.session0_refusal() == "")
+
+        real_ws = G._winsession
+        G._winsession = lambda: None
+        try:
+            with platform("win32", 18):
+                r = G.session0_refusal()
+                check("[주의] Windows 에서 판정 모듈을 못 찾으면 거절(fail-closed)", "재배달" in r, r)
+            check("[중요] 리눅스에선 판정 모듈이 없어도 거절 없음", G.session0_refusal() == "")
+        finally:
+            G._winsession = real_ws
+
+        os.environ["FAKE_AGY_MODE"] = "ok"
+        argv_file.unlink(missing_ok=True); n0 = len(rows(log))
+        for plat in ("linux", "darwin"):
+            with platform(plat, 0) as k:       # 세션 0 을 말하는 가짜 kernel32 가 꽂혀 있어도
+                check(f"[중요] {plat}: 가드는 무동작", G.session0_refusal() == "")
+                o = research / f"2026-10-18-linux-{plat}.md"
+                rc, err = run(["--project", "AXCluster", "--brief-dir", str(brief), "--out", str(o)])
+                check(f"[중요] {plat}: 마스터 경로 그대로 — rc 0 · 보고서 · 기록 한 줄",
+                      rc == 0 and o.is_file() and len(rows(log)) == n0 + 1, f"rc={rc} {err[-300:]}")
+                check(f"  {plat}: kernel32 를 부르지 않았다 · 세션 사유 없음",
+                      k.calls == [] and "#832" not in err, str(k.calls))
+                n0 = len(rows(log))
+        check("  agy 는 불렸다(가드가 막지 않았다)", argv_file.exists())
+
         print("\n[6] 요청자 --remote (#763) — 기록 한 줄은 큐로 · 성공·실패 모두 · 전송 실패는 실행 실패가 아니다")
         co = tmp / "checkout"; (co / ".ax").mkdir(parents=True)
         (co / ".ax" / "config.json").write_text(json.dumps({

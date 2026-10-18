@@ -73,13 +73,13 @@ class ControlTests(unittest.TestCase):
                 'ok': False, 'reason': '준비되지 않은 워커: 192.168.0.2'})
         self.assertFalse(C.mode.STATE.exists())
 
-    def windows_readiness(self, xml=None, *, xml_rc=0, identity=None, reader=None):
+    def windows_readiness(self, xml=None, *, xml_rc=0, identity=None, reader=None, mode='codex'):
         class Reg:
             active = 'NS'
         facts = B.HostFacts(host='192.168.0.2', user='janus', path=r'E:\trunk\NS',
                             driven='ssh', role='worker', os='windows',
                             home=r'C:\Users\janus', codex='codex-cli 0.159.3',
-                            checkout_ok=True)
+                            claude='2.1.0 (Claude Code)', checkout_ok=True)
         calls = []
         def shell(_host, _user, command, **_kwargs):
             calls.append(command)
@@ -91,8 +91,9 @@ class ControlTests(unittest.TestCase):
         with patch.object(B, 'workshops', return_value=[
                 ('192.168.0.2', 'janus', r'E:\trunk\NS', 'ssh', 'worker', '')]):
             got = REAL_WORKER_MODE_READINESS(
-                'codex', registry=Reg(), prober=lambda *a: facts,
-                reader=reader or (lambda *_a: 'delivered file body'), shell_probe=shell)
+                mode, registry=Reg(), prober=lambda *a: facts,
+                reader=reader or (lambda *_a: 'delivered file body'), shell_probe=shell,
+                **({'auth_checker': lambda *a, **k: {'ok': True}} if mode == 'claude' else {}))
         return got, calls
 
     @staticmethod
@@ -115,6 +116,18 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(calls, ['schtasks /query /tn "AxConductor_NS" /xml',
                                  'whoami /user /fo csv /nh'])
         self.assertIn('별도 실행 검증', got['note'])
+
+    def test_claude_readiness_on_windows_checks_launcher_registration(self):
+        # `#832` — Windows claude 도 세션 1 런처로 파견된다: 등록이 없으면 준비 실패
+        got, calls = self.windows_readiness(mode='claude')
+        self.assertTrue(got['ok'], got)
+        self.assertEqual(calls[:1], ['schtasks /query /tn "AxConductor_NS" /xml'])
+        got, _ = self.windows_readiness('ERROR: The system cannot find the file specified.',
+                                        xml_rc=1, mode='claude')
+        self.assertFalse(got['ok'])
+        got, _ = self.windows_readiness(self.launcher_xml().replace('InteractiveToken', 'S4U'),
+                                        mode='claude')
+        self.assertFalse(got['ok'])
 
     def test_codex_readiness_accepts_registered_sid(self):
         xml = self.launcher_xml().replace('DESKTOP\\janus', 'S-1-5-21-123-1001')
