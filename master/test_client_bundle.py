@@ -2451,6 +2451,18 @@ def test_index_only_delivery() -> None:
           bundle.CONFIG_REL in wrote, str(wrote))
 
 
+def test_code_drift_blocks_stale_delivery() -> None:
+    """`#831` — 서비스가 커밋 전에 기동했으면 옛 코드로 배달하지 않는다."""
+    # [PSEUDO] #831: `bundle._LOADED_COMMIT`(또는 구현한 이름)과 `bundle._delivery_stamp` 를 바꿔 끼워 다음을 확인한다 —
+    #       ① 같은 커밋 → `code_drift()["drift"] is False` 이고 `deliver(...)` 가 거절하지 않는다(원격 호출은 기존 테스트의 가짜를 쓴다)
+    #       ② 다른 커밋 → drift True · loaded/disk 짧은 커밋이 실린다 · `deliver` 가 `BundleError` 이고 메시지에 「#831」·재기동·
+    #          `master.client update` 가 들어 있다 · 원격 쓰기(`_remote_write`·scp 가짜)가 **한 번도** 불리지 않았다
+    #       ③ 한쪽 commit 이 비거나 error → drift False · reason 에 「미측정」
+    #       ④ `dry_run=True` 는 drift 여도 거절하지 않는다
+    #       끝나면 바꿔 낀 것을 되돌린다(finally).
+    raise NotImplementedError("#831")
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
@@ -2488,7 +2500,8 @@ def main() -> int:
                test_update_head_round_trip_is_reported,
                test_update_live_shaped_in_temp_repo,
                test_shadow_skills_are_reported,
-               test_index_only_delivery):
+               test_index_only_delivery,
+               test_code_drift_blocks_stale_delivery):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_bundle: {PASS}/{total} 통과")

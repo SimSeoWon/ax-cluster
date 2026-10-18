@@ -283,6 +283,15 @@ def test_md_blocks() -> None:
 
 # ── ⑦ 서버 절 (완료 조건은 #259 가 갖는다. 여기서는 선언의 온전함만) ──
 
+def test_sync_check_align_failure_tells_what_to_run() -> None:
+    """`#831` — align 실패를 보고만 하지 않고 사람이 실행할 명령과 사유를 돌려준다."""
+    # [PSEUDO] #831: `test_sync_check_shape` 와 같은 방식으로 `B.workshops`·`B.probe` 를 바꿔 끼우고,
+    #       `deliverer` 로 BundleError("…#831…") 를 던지는 가짜를 준다. `sync_check("X", align=True, checker=drift, deliverer=…)` 가
+    #       ① `align_failed == ["h1"]` ② `commands` 에 "python -m master.client update" ③ note 에 「align 실패 1대」와 그 사유
+    #       를 담는지 확인한다. align 이 성공하는 기존 경우의 반환이 바뀌지 않았는지도 하나 확인한다. finally 로 되돌린다.
+    raise NotImplementedError("#831")
+
+
 def test_server_steps() -> None:
     keys = [s.key for s in spec.SERVER_STEPS]
     check("단계 이름이 중복되지 않는다", len(keys) == len(set(keys)), str(keys))
@@ -1061,6 +1070,7 @@ if __name__ == "__main__":
                test_tag_managed,
                test_switch_syncs,
                test_sync_check_shape,
+               test_sync_check_align_failure_tells_what_to_run,
                test_server_steps,
                test_load_init_env,
                test_delivered_skills_do_not_contradict_the_command_line,

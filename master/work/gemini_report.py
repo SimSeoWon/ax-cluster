@@ -444,6 +444,11 @@ def main(argv=None, *, queue=None) -> int:
                  f"모델 불일치 — 요청 {want} · 실제 {actual}, 출력을 버린다")
     log(f"실제 모델 {actual or '(미상)'} (출처 {actual_from or '없음'}) · 판정 "
         + ("일치" if not model_why else "[주의] " + model_why))
+    # [DOC] #831: 봉투에 agy 자체 오류가 있으면(예: `authentication failed or timed out`) 모델 판정은 그 **결과**다 —
+    #       실측 2026-10-18 `.33`: 원인은 로그인 부재였는데 사유가 「실제 모델 미상」을 앞세워 원인을 가렸다.
+    # [PSEUDO] #831: `err_text` 가 있으면 사유를 「agy 오류: <err_text>」로 **먼저** 쓰고, 모델 판정(`model_why`)은 그 뒤에
+    #       ` · ` 로 잇는다(지금은 rc/봉투 사유 뒤에 모델 판정만 붙는다). `err_text` 가 없으면 지금과 똑같다.
+    #       같은 순서로 로그 한 줄(`log(...)`)도 남긴다. 종료 코드·run.json 필드·사용량 기록 계약은 바꾸지 않는다.
     if model_why:
         why = f"{why} · {model_why}" if why else model_why
     bad_status = not why and status and status != "SUCCESS"

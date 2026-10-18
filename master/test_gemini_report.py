@@ -269,6 +269,11 @@ def main() -> int:
               and r.get("requested_model") == "gemini-3.8-flash-medium" and "모델 불일치" in r.get("note", ""), str(r))
         check("  인용 파일·보고서 안 만든다", not (mrun / "citations.txt").exists())
 
+        # [PSEUDO] #831: 절 [4d2] 를 더한다 — 가짜 agy 가 봉투 `status=ERROR` · `error="authentication failed or timed out"` ·
+        #       응답 빈 값 · 로그 label 없음으로 끝나게 해서(가짜 agy 의 기존 모드 중 맞는 것을 쓰거나 하나 추가) `G.main` 을 돌리고,
+        #       종료 1 · run.json `why` 가 「agy 오류: authentication failed or timed out」로 **시작**하고 그 뒤에 「실제 모델 미상」이
+        #       붙는지 확인한다. 봉투 오류가 없는 기존 [4c]·[4d] 의 사유 문구는 그대로인지도 하나 확인한다.
+
         print("\n[4e] Argon 은 --model + --allow-argon 일 때만")
         os.environ.update({"FAKE_AGY_MODE": "ok", "FAKE_AGY_LABEL": "Gemini 4 Argon"})
         o = research / "2026-10-18-argon-explicit.md"

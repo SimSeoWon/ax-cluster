@@ -247,6 +247,12 @@ def sync_check(name: str, *, align: bool = False, checker=None, deliverer=None,
         hosts.append(entry)
 
     drifted = [h["host"] for h in hosts if not h["ok"]]
+    # [DOC] #831: align 이 실패한 기계가 있으면(배달 예외 — 예: 서비스가 커밋 전에 기동해 `deliver` 가 거절)
+    #       지금 반환은 `commands=[]` 이고 note 는 「버전이 다른 기계 N대」뿐이라 사람이 **무엇을 하면 되는지** 모른다.
+    # [PSEUDO] #831: `failed`(align_failed) 가 비어 있지 않으면 — `commands` 에 CLI 배달 명령
+    #       `python -m master.client update` 를 싣고(align 여부와 무관), `note` 끝에 「align 실패 N대 — 첫 사유: <첫 align_error>」를
+    #       덧붙인다. 같은 사유를 `print(..., flush=True)` 로 한 줄 남긴다(이 모듈의 다른 로그와 같은 모양).
+    #       align 실패가 없으면 반환은 지금과 **바이트 단위로 같아야** 한다.
     # [중요] **맞췄는데도 FAIL 로 남는 경우가 하나 있다: 마스터 트리가 dirty 일 때.**
     #    커밋이 같아도(`verdict=same`) 그 커밋이 배달 내용을 다 말하지 못하므로 `ok=False` 다.
     #    판정은 옳지만 사유를 말하지 않으면 *"align 했는데 왜 FAIL?"* 로 읽힌다 — 실측
