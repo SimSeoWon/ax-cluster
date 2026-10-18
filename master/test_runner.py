@@ -1688,8 +1688,47 @@ def test_session1_launcher_mode_and_session0() -> None:
         check("  필드 없는 job → codex 로그", "모드 codex" in log and "codex 시작" in log, log)
 
 
+def test_master_windows_direct_refused() -> None:
+    """`#832` ② — 마스터는 Windows 워커에 에이전트를 SSH 로 직접 보내지 않는다(세션 0).
+
+    세션 1 이 아닌 갈래(`run_worker`)와 `ax-infer` 의 기본 러너 둘 다 SSH 를 열기 전에 거절한다.
+    리눅스는 종전대로 SSH 를 연다."""
+    from master.work import infer as I
+    calls = []
+    keep = R.bundle._ssh
+    R.bundle._ssh = lambda host, user, cmd, timeout=0: (calls.append((host, cmd)) or (0, "RAN"))
+    try:
+        win = _facts("192.168.0.2", os_="windows", path="E:\\trunk\\AXCluster")
+        # 지금은 Windows+codex/claude 가 전부 세션 1 이라 이 갈래에 못 온다 — 라우팅이 바뀐 미래를 흉내 낸다
+        keep_s1 = R.uses_session1
+        R.uses_session1 = lambda f, m: False
+        try:
+            rc, out = R.run_worker(win, "t832", files=["a.py"], mode="claude", timeout=5)
+        finally:
+            R.uses_session1 = keep_s1
+        check("Windows · 세션 1 라우팅이 빠져도 → 거절 rc 3", rc == R.SESSION0_REFUSE_RC, str(rc))
+        check("  출력이 BLOCKED 와 사유", "RESULT: BLOCKED" in out and "#832" in out, out)
+        check("  SSH 를 열지 않았다", calls == [], str(calls))
+        rc2, out2 = I._default_runner(win, "t832", 5, ["a.py"], mode="claude")
+        check("ax-infer 기본 러너도 Windows 거절", rc2 == R.SESSION0_REFUSE_RC
+              and "RESULT: BLOCKED" in out2, out2)
+        check("  SSH 를 열지 않았다(infer)", calls == [], str(calls))
+        seam = R.run_worker(win, "t832", files=["a.py"], mode="codex", timeout=5,
+                            runner=lambda f, c, t: (0, "INJECTED"))
+        check("주입 러너는 SSH 가 아니라 가드 대상 밖", seam == (0, "INJECTED"), str(seam))
+        lin = _facts()
+        rc3, out3 = R.run_worker(lin, "t832", files=["a.py"], mode="codex", timeout=5)
+        check("리눅스는 종전대로 SSH", (rc3, out3) == (0, "RAN") and len(calls) == 1, str(calls))
+        check("  보낸 명령은 리눅스 worker_command 그대로",
+              calls and calls[0][1] == R.worker_command(lin, "t832", ["a.py"], mode="codex"))
+        check("거절 함수 — 리눅스는 None",
+              R.windows_direct_refusal(lin, "t", mode="codex", where="x") is None)
+    finally:
+        R.bundle._ssh = keep
+
+
 def main() -> int:
-    for fn in (test_parse, test_pick, test_command, test_codex_windows_sandbox,
+    for fn in (test_master_windows_direct_refused, test_parse, test_pick, test_command, test_codex_windows_sandbox,
                test_codex_linux_agy_writable_root,
                test_agent_report, test_codex_error_report, test_beater, test_run_task,
                test_queue_calls, test_run_once_happy, test_run_once_returns_the_task,

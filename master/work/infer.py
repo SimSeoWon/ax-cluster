@@ -364,6 +364,10 @@ def infer_task(facts, task_id: str, *, want, beat=None, runner_=None,
 
 def _default_runner(facts, task_id: str, timeout: int, files=(), *,
                     mode: str = "claude") -> tuple:
+    # 🔴 `#832` ② — `ax-infer` 도 Windows 에 에이전트를 SSH 로 직접 보내지 않는다
+    refused = runner.windows_direct_refusal(facts, task_id, mode=mode, where="infer 직접 SSH")
+    if refused:
+        return refused
     return bundle._ssh(facts.host, facts.user,
                        infer_command(facts, task_id, files, mode=mode), timeout=timeout)
 

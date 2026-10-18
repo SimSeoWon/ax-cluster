@@ -720,6 +720,24 @@ def uses_session1(facts, mode: str) -> bool:
     return bool(getattr(facts, "windows", False)) and mode in SESSION1_MODES
 
 
+# 🔴 `#832` ② — 마스터 쪽 가드. Windows 워커에 에이전트 명령을 **SSH 로 직접** 보내지 않는다.
+#    SSH 는 세션 0·NETWORK 로그온이라 사용자 자격 증명(agy 로그인·codex 샌드박스)이 안 보이고,
+#    늦게 엉뚱한 증상(0xC0000142 · 「not logged into」 · 모델 미상)으로 죽는다. 허용 경로는
+#    세션 1 런처(`run_worker_session1`)뿐이다. 워커 쪽 가드(`winsession`)와 같은 뜻을 보내기 전에 건다.
+SESSION0_REFUSE_RC = 3                # 런처의 세션 0 거절과 같은 값
+SESSION0_REFUSAL = ("Windows 워커에 에이전트를 SSH(세션 0)로 직접 보내지 않는다 — "
+                    "세션 1 런처(schtasks /IT) 경로만 허용한다 (#832)")
+
+
+def windows_direct_refusal(facts, task_id: str, *, mode: str, where: str) -> tuple | None:
+    """Windows 면 `(rc, 출력)` 거절, 아니면 `None`. SSH 를 열기 **전에** 부른다."""
+    if not getattr(facts, "windows", False):
+        return None
+    print(f"[dispatch] 🔴 {task_id} @{facts.host} {where} 거절 — 모드 {mode or '?'} · "
+          f"{SESSION0_REFUSAL}", flush=True)
+    return SESSION0_REFUSE_RC, f"ERROR [마스터] {SESSION0_REFUSAL}\nRESULT: BLOCKED"
+
+
 def run_worker(facts, task_id: str, *, files=(), runner=None, mode: str = "claude",
                timeout: int = DEFAULT_TIMEOUT) -> tuple:
     """워커에서 **지휘자**를 한 번 돌린다. `(rc, stdout)`. **예외를 던지지 않는다.**
@@ -738,6 +756,9 @@ def run_worker(facts, task_id: str, *, files=(), runner=None, mode: str = "claud
         cmd = worker_command(facts, task_id, files, mode=mode)
         if runner is not None:
             return runner(facts, cmd, timeout)
+        refused = windows_direct_refusal(facts, task_id, mode=mode, where="run_worker 직접 SSH")
+        if refused:
+            return refused
     if mode == "claude":
         from .conductor_auth import check_claude_auth, invalidate_claude_auth
         from .revise import authentication_failure
