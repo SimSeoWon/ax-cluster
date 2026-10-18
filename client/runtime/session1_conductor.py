@@ -54,7 +54,7 @@ Windows 에서는 codex 샌드박스 안의 agy 가 죽는다 — 실측 `.2`: a
 로그온 세션인 이 런처가 agy 를 대신 돈다**:
 
     지휘자   .agy-work/in/<n>/ 에 자료·BRIEF.md → 빈 파일 .agy-work/in/<n>.go
-    런처     codex 가 도는 동안 2초마다 *.go 를 본다 → agy … --add-dir in/<n> → out/<n>.json·.err·.done
+    런처     지휘자(codex·claude)가 도는 동안 2초마다 *.go 를 본다 → agy … --add-dir in/<n> → out/<n>.json·.err·.done
     지휘자   out/<n>.done 이 생길 때까지 기다렸다가 out/<n>.json 을 읽는다
 
 [중요] **명령은 받지 않는다** — 받는 것은 요청 이름(`[A-Za-z0-9_-]`)뿐이고 실행 파일·플래그·프롬프트는 여기
@@ -355,7 +355,7 @@ def agy_model(root: Path) -> tuple:
 
 
 class AgyRelay(threading.Thread):
-    """codex 가 도는 동안 `.agy-work/in/*.go` 를 처리한다. 순서대로 하나씩 · 예외를 던지지 않는다."""
+    """지휘자(codex·claude)가 도는 동안 `.agy-work/in/*.go` 를 처리한다. 순서대로 하나씩 · 예외를 던지지 않는다."""
 
     def __init__(self, root: Path, d: Path):
         super().__init__(daemon=True)
@@ -463,7 +463,7 @@ class AgyRelay(threading.Thread):
         if proc is not None and proc.poll() is None:
             _kill_tree(proc)
             try:
-                _log(self.d, "🔴 codex 가 끝났는데 agy 중계가 돌고 있었다 — 프로세스 트리를 죽였다")
+                _log(self.d, "🔴 지휘자가 끝났는데 agy 중계가 돌고 있었다 — 프로세스 트리를 죽였다")
             except OSError:
                 pass
         self.join(timeout=10)
