@@ -132,7 +132,9 @@ def main() -> int:
     reg = Registry.load(root)
     register_project("Other", "sim/other", registry=reg)
     check("등록 후에도 active 는 그대로", Registry.load(root).active == "ModularStage")
-    out = set_active("Other")
+    # `#835` — 전환 가드(미종결 work)는 실제 큐(8101)를 읽는다. 열린 work 가 있으면 운영 상태에
+    #    따라 실패하므로 빈 큐를 주입한다. 가드 자체는 `test_project_affinity` 가 가짜 큐로 본다.
+    out = set_active("Other", works_fetcher=lambda: [])
     check("전환됨", Registry.load(root).active == "Other", str(out))
     check("이전 값 보고", out["previous"] == "ModularStage")
     raises("등록되지 않은 이름 거부", set_active, "Nope")
@@ -287,7 +289,7 @@ def main() -> int:
     check("Registry 가 읽는다", Registry.load(root4).raw_retention_days() == 45)
     register_project("ModularStage", "sim/modularstage")        # save() 1회
     register_project("Other", "sim/other")                      # save() 2회
-    set_active("Other")                                         # save() 3회
+    set_active("Other", works_fetcher=lambda: [])               # save() 3회 · 빈 큐 주입(`#835`)
     reg4 = Registry.load(root4)
     check("등록·전환 뒤에도 usage 절이 남는다", reg4.raw.get("usage") == {"raw_retention_days": 45},
           str(reg4.raw))

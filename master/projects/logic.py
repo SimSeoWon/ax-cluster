@@ -253,6 +253,23 @@ def sync_check(name: str, *, align: bool = False, checker=None, deliverer=None,
     #    2026-08-22 에 내가 그렇게 읽었다. 그래서 **무엇을 하면 통과하는지** 함께 낸다.
     dirty_only = bool(drifted) and all(
         (h.get("verdict") == "same") for h in hosts if not h["ok"])
+    commands = ([] if align or not drifted
+                else [f"python -m master.client deliver {name}"])
+    note = ("전부 마스터와 같은 버전이다" if not drifted
+            else (f"커밋은 맞췄다({len(drifted)}대) — 남은 FAIL 은 **마스터 트리가 dirty**"
+                  f" 이기 때문이다. 커밋한 뒤 다시 재면 통과한다"
+                  if dirty_only and align else
+                  f"버전이 다른 기계 {len(drifted)}대 — 클러스터는 버전이 하나다"
+                  + ("" if align else ". 맞추려면 align=True 또는 위 명령")))
+    # [중요] #831: align 이 실패한 기계가 있으면(배달 예외 — 예: 서비스가 커밋 전에 기동해
+    #    `deliver` 가 거절) 사람이 실행할 명령과 사유를 함께 낸다 — 보고만 하고 끝내지 않는다.
+    if failed:
+        first_align_error = next(
+            (h.get("align_error") for h in hosts if h.get("align_error")), "")
+        reason = f"align 실패 {len(failed)}대 — 첫 사유: {first_align_error}"
+        commands.append("python -m master.client update")
+        note = f"{note} — {reason}"
+        print(f"[sync_check] {reason}", flush=True)
     return {
         "checked": True,
         "hosts": hosts,
@@ -260,16 +277,10 @@ def sync_check(name: str, *, align: bool = False, checker=None, deliverer=None,
         "aligned": aligned,
         "align_failed": failed,
         # [중요] 맞추지 않았으면 **사람이 실행할 명령을 돌려준다** (finalize_work 관례).
-        "commands": ([] if align or not drifted
-                     else [f"python -m master.client deliver {name}"]),
+        "commands": commands,
         # [중요] 「맞췄다」와 「맞출 수 없다」를 가른다 — 고칠 곳이 다르다(#276 의 사유 셋과 같은 결).
         "dirty_master": dirty_only,
-        "note": ("전부 마스터와 같은 버전이다" if not drifted
-                 else (f"커밋은 맞췄다({len(drifted)}대) — 남은 FAIL 은 **마스터 트리가 dirty**"
-                       f" 이기 때문이다. 커밋한 뒤 다시 재면 통과한다"
-                       if dirty_only and align else
-                       f"버전이 다른 기계 {len(drifted)}대 — 클러스터는 버전이 하나다"
-                       + ("" if align else ". 맞추려면 align=True 또는 위 명령"))),
+        "note": note,
     }
 
 

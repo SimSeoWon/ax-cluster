@@ -444,8 +444,14 @@ def main(argv=None, *, queue=None) -> int:
                  f"모델 불일치 — 요청 {want} · 실제 {actual}, 출력을 버린다")
     log(f"실제 모델 {actual or '(미상)'} (출처 {actual_from or '없음'}) · 판정 "
         + ("일치" if not model_why else "[주의] " + model_why))
+    # [DOC] #831: 봉투에 agy 자체 오류가 있으면(예: `authentication failed or timed out`) 모델 판정은 그 **결과**다 —
+    #       실측 2026-10-18 `.33`: 원인은 로그인 부재였는데 사유가 「실제 모델 미상」을 앞세워 원인을 가렸다.
     if model_why:
-        why = f"{why} · {model_why}" if why else model_why
+        if err_text:
+            why = f"agy 오류: {err_text} · {model_why}"
+            log(f"[주의] agy 오류 — {err_text} · {model_why}")
+        else:
+            why = f"{why} · {model_why}" if why else model_why
     bad_status = not why and status and status != "SUCCESS"
     recovered = bool(bad_status and lg["recovered"])
     info = (f"agy 재시도 {lg['retries']}회 후 완료 (마지막 실패: {lg['last_error']}) — "

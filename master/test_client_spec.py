@@ -283,6 +283,45 @@ def test_md_blocks() -> None:
 
 # ── ⑦ 서버 절 (완료 조건은 #259 가 갖는다. 여기서는 선언의 온전함만) ──
 
+def test_sync_check_align_failure_tells_what_to_run() -> None:
+    """`#831` — align 실패를 보고만 하지 않고 사람이 실행할 명령과 사유를 돌려준다."""
+    from master.projects import logic as L
+
+    facts = _fake_facts()
+
+    import master.client.bundle as B
+    keep_ws, keep_probe = B.workshops, B.probe
+    try:
+        B.workshops = lambda n: [("h1", "u", "/p", "ssh", "worker", "")]
+        B.probe = lambda *a: facts
+
+        drift = lambda f: {"ok": False, "verdict": "drifted", "behind": 3, "reason": "3 뒤"}
+
+        def _boom(f):
+            raise B.BundleError("배달 거절 #831")
+
+        out = L.sync_check("X", align=True, checker=drift, deliverer=_boom)
+        check("[중요] align_failed 에 실린다 (호스트 이름은 작업장 목록의 것)",
+              out["align_failed"] == ["h1"], str(out))
+        check("[중요] commands 에 update 명령이 실린다(align 여부와 무관)",
+              "python -m master.client update" in out["commands"], str(out["commands"]))
+        check("note 끝에 align 실패 건수가 실린다", "align 실패 1대" in out["note"], out["note"])
+        check("note 에 첫 사유가 실린다", "배달 거절 #831" in out["note"], out["note"])
+
+        # ── align 이 성공하는 기존 경우는 반환이 바뀌지 않았다 (회귀 방지)
+        delivered = []
+        out2 = L.sync_check("X", align=True, checker=drift,
+                            deliverer=lambda f: delivered.append(f.host))
+        check("[주의] align 성공이면 commands 는 그대로 비어 있다", out2["commands"] == [],
+              str(out2))
+        check("[주의] align 성공이면 align_failed 가 비어 있다", out2["align_failed"] == [],
+              str(out2))
+        check("[주의] align 성공이면 note 에 실패 문구가 없다",
+              "align 실패" not in out2["note"], out2["note"])
+    finally:
+        B.workshops, B.probe = keep_ws, keep_probe
+
+
 def test_server_steps() -> None:
     keys = [s.key for s in spec.SERVER_STEPS]
     check("단계 이름이 중복되지 않는다", len(keys) == len(set(keys)), str(keys))
@@ -1061,6 +1100,7 @@ if __name__ == "__main__":
                test_tag_managed,
                test_switch_syncs,
                test_sync_check_shape,
+               test_sync_check_align_failure_tells_what_to_run,
                test_server_steps,
                test_load_init_env,
                test_delivered_skills_do_not_contradict_the_command_line,
