@@ -206,6 +206,11 @@ DEPRECATED_SKILLS = (
     # 2026-08-20 제거 — 배달 스킬 3종이 제거된 MCP 서버를 부르고 있었다(`#232`).
     "distribute",
     "review-work",
+    # 2026-10-18 제거 — 같은 부류(`#232`). 대응물(`selftest.run_live`·`tdd_dryrun.run`)이 부를 수
+    #    없었고(`#234`) 본문이 없어진 구조(attempt·2-tier·매니페스트)를 전제한다. 사용자 결정
+    #    「사용 안되는거면 제거하자」.
+    "cluster-selftest",
+    "tdd-dryrun",
     # [주의] `ax-work` 가 여기 있었다 — 되돌렸다(2026-09-02). 정본 ⑸ 의 계약이므로 지우면
     #    파견이 죽는다. 근거는 `SKILLS_BY_ROLE` 주석.
 )

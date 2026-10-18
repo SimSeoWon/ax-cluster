@@ -686,8 +686,8 @@ def test_workshop_assets_reference_only_live_tools() -> None:
     #    왜 남겨둬야해?"*). 대응물이 실제로 도는 것을 감사로 확인했다 — `ax-review` 스킬이
     #    `review_work`/`reject_work`/`finalize_work` 를 호출자로 명시하고, 분배는 마스터측
     #    `/distribute` + `ax-request` 가 받는다. 사라진 절차는 `workshop/README.md` §5 가 말한다.
-    PENDING = {"CLAUDE.md", "manage-domain",     # 「은퇴했다 · 부르지 말 것」 금지 문장
-               "cluster-selftest", "tdd-dryrun"}  # 은퇴 여부 대기 — 대응물이 **부를 수 없다**(#234)
+    # `cluster-selftest`·`tdd-dryrun` 은 2026-10-18 삭제(#232, 사용자 결정) — 대기분이 비었다
+    PENDING = {"CLAUDE.md", "manage-domain"}     # 「은퇴했다 · 부르지 말 것」 금지 문장
     left = set()
     for f in delivered_md():
         if any(pre in f.read_text(encoding="utf-8") for pre in RETIRED):
@@ -708,11 +708,10 @@ def test_workshop_assets_reference_only_live_tools() -> None:
         r[len("mcp__"):-len("__")] for r in RETIRED) + r")__[a-z_0-9]+\(")
     calls = sorted(f"{f.parent.name}/{f.name}" for f in delivered_md()
                    if CALL.search(f.read_text(encoding="utf-8")))
-    allowed = {"cluster-selftest/SKILL.md", "tdd-dryrun/SKILL.md"}   # #234 까지 대기
-    check("[중요] 죽은 서버를 **호출**하는 파일은 대기분뿐 (조용한 실패)",
-          set(calls) <= allowed, str(sorted(set(calls) - allowed)))
-    check("대기분이 실제로 남아 있다 — 해소되면 이 목록을 지울 것",
-          set(calls) == allowed, f"실제 {calls}")
+    check("[중요] 죽은 서버를 **호출**하는 파일이 없다 (조용한 실패, #232)",
+          calls == [], str(calls))
+    check("[중요] 삭제한 두 스킬이 폐지 목록에 있다 — 놓인 사본도 지운다 (#232)",
+          {"cluster-selftest", "tdd-dryrun"} <= set(spec.DEPRECATED_SKILLS))
 
     # ⑥ 미이식·미위임을 조용히 지우지 않고 **말한다**
     val = (root / "agents" / "code-validator.md").read_text(encoding="utf-8")

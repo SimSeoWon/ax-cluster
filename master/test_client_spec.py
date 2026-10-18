@@ -176,7 +176,8 @@ def test_removals() -> None:
     rm = spec.removals_for("requester")
     # [주의] `ax-work` 는 폐지가 아니다 — 정본 ⑸ 의 계약이라 되돌렸다 (2026-09-02)
     check("폐지 스킬이 제거 목록에 있다",
-          set(rm["skills"]) == {"distribute", "review-work"}, str(rm["skills"]))
+          set(rm["skills"]) == {"distribute", "review-work", "cluster-selftest", "tdd-dryrun"},
+          str(rm["skills"]))                     # 뒤 둘은 2026-10-18 폐지(#232)
     check("[주의] 폐지 MCP 목록은 비어 있다 (귀속 미결 #235)", rm["mcp"] == (), str(rm["mcp"]))
 
     # [중요] 배달과 제거가 같은 이름을 두고 싸우지 않는다 — 배달이 이긴다

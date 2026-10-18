@@ -120,7 +120,9 @@
 즉 `.33` 세션이 이 스킬을 따라가면 **없는 도구를 부르고 조용히 실패**한다(#232).
 `test_client_bundle.py` 의 ⑤칸이 그 부류를 이제 호출 단위로 막는다.
 
-[주의] **`cluster-selftest`·`tdd-dryrun` 은 남겼다** — 같은 문제를 갖고 있지만
+[완료] **`cluster-selftest`·`tdd-dryrun` 도 2026-10-18 지웠다**(#232, 사용자 결정 「사용 안되는거면
+제거하자」) — `spec.DEPRECATED_SKILLS` 에 올려 놓인 사본도 다음 배달이 지운다. 아래는 그때까지 남겨 둔 이유다.
+[주의] (당시) **`cluster-selftest`·`tdd-dryrun` 은 남겼다** — 같은 문제를 갖고 있지만
 대응물(`work/selftest.py:run_live`·`work/tdd_dryrun.py:run`)이 **호출자·CLI·MCP 도구가 없어
 부를 수 없다**(#234). 지금 지우면 「그 능력이 있었다」는 흔적만 사라지고 능력은 돌아오지
 않는다. **#234 에서 진입점을 만들거나 폐기를 결정한 뒤** 지운다.
