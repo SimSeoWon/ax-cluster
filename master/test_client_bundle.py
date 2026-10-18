@@ -260,7 +260,8 @@ def test_role_payload() -> None:
               "work/worker_daemon.py", "work/ax_safety.py",
               "clientside/session1_conductor.py",
               "work/build_local.py",
-              "work/skeleton_gate.py", "layer3_verify.py", "source_text.py", "utf8.py"},
+              "work/skeleton_gate.py", "layer3_verify.py", "source_text.py", "utf8.py",
+              "work/usage.py"},                    # `#830` 런처의 agy 실제 모델 대조
           str(bundle.payloads_for("worker")))
     check("🔴 [중요] 옛 `claimer.py` 는 돌아오지 않는다 — 추론 경로째 폐기했다",
           "work/claimer.py" not in set(bundle.payloads_for("worker")),
@@ -363,7 +364,9 @@ def test_payload_split() -> None:
                         "work/worker_daemon.py", "work/ax_safety.py",
                         "clientside/session1_conductor.py",
                         "work/build_local.py", "work/skeleton_gate.py",
-                        "layer3_verify.py", "source_text.py", "utf8.py")
+                        "layer3_verify.py", "source_text.py", "utf8.py",
+                        # 🔴 `#830`: agy 로그 파서가 **끝에** 더해진다 (결정된 변경 — 기준선 이동)
+                        "work/usage.py")
     # 🔴 `#630`: 요청자에게 `fix_flow.py` 가 MCP 폐포 **바로 뒤**에 들어간다 (결정된 변경 — 기준선 이동)
     FROZEN["requester"] = ("clientside/client_mcp.py", "clientside/ontology_cache.py",
                            "clientside/fix_flow.py",
@@ -1650,6 +1653,57 @@ def test_fetch_prune_wired_into_deliver_and_check() -> None:
     check("check 가 check_fetch_prune 을 부른다", "bundle.check_fetch_prune(f)" in csrc)
     check("check 의 OK/FAIL·bad·#737 분류 셋 모두에 ok_prune 이 들어간다",
           csrc.count("ok_prune") >= 4, str(csrc.count("ok_prune")))
+    check("#830 check 가 check_agy_model 을 부른다", "bundle.check_agy_model(f)" in csrc)
+    check("#830 check 의 OK/FAIL·bad·#737 분류 셋 모두에 ok_agy 가 들어간다",
+          csrc.count("ok_agy") >= 4, str(csrc.count("ok_agy")))
+
+
+def test_agy_model_delivered_and_checked() -> None:
+    """`#830` — config 에 정본 agy 모델 id 가 실리고, `check_agy_model` 이 없음·다름을 잡는다."""
+    import json as _json
+    from master import agy_models
+    canon = agy_models.DEFAULT_MODEL
+    for facts in (_facts(), _facts(os="windows", path=r"C:\trunk\AXCluster", home=r"C:\Users\USER")):
+        cfg = bundle.config_for("ModularStage", facts)
+        check(f"config 에 정본 agy_model 이 실린다 ({facts.os})",
+              cfg["backends"].get("agy_model") == canon, str(cfg["backends"]))
+    check("정본은 agy_models.DEFAULT_MODEL 하나다", bundle.agy_model() == canon)
+    # [중요] agy_models 는 fcntl(리눅스 전용) — 배달물에 섞이면 윈도우 워커에서 import 가 죽는다
+    srcs = [str(src) for role in (ROLE_WORKER, ROLE_REQUESTER)
+            for _rel, src in bundle.payload_pairs(role)]
+    check("[중요] agy_models.py 는 배달 목록에 없다",
+          not any("agy_models" in s_ for s_ in srcs), str([s_ for s_ in srcs if "agy" in s_]))
+
+    keep = bundle._remote_read
+    try:
+        lin = _facts()
+        good = _json.dumps(bundle.config_for("ModularStage", lin))
+        bundle._remote_read = lambda f, path: good
+        ok, note = bundle.check_agy_model(lin)
+        check("check: 정본과 같으면 통과", ok and canon in note, note)
+        bundle._remote_read = lambda f, path: _json.dumps({"backends": {"agy": True}})
+        ok, note = bundle.check_agy_model(lin)
+        check("[중요] check: agy_model 이 없으면 실패", not ok and "없다" in note, note)
+        bundle._remote_read = lambda f, path: _json.dumps({"backends": {"agy_model": "gemini-4-argon"}})
+        ok, note = bundle.check_agy_model(lin)
+        check("[중요] check: 값이 다르면 실패 + 두 값을 댄다",
+              not ok and "gemini-4-argon" in note and canon in note, note)
+        bundle._remote_read = lambda f, path: _json.dumps({"project": "ModularStage"})
+        ok, note = bundle.check_agy_model(lin)
+        check("check: backends 자체가 없으면 실패", not ok and "backends" in note, note)
+        bundle._remote_read = lambda f, path: ""
+        ok, note = bundle.check_agy_model(lin)
+        check("check: 못 읽음도 실패다(통과로 접지 않는다)", not ok and "재지 못했다" in note, note)
+        bundle._remote_read = lambda f, path: "{not json"
+        ok, note = bundle.check_agy_model(lin)
+        check("check: 깨진 JSON 도 실패다", not ok and "파싱" in note, note)
+        paths = []
+        bundle._remote_read = lambda f, path: (paths.append(path) or good)
+        bundle.check_agy_model(_facts(os="windows", path=r"C:\trunk\AXCluster", home=r"C:\Users\USER"))
+        check("윈도우: 역슬래시 경로로 config 를 읽는다",
+              paths and paths[-1] == r"C:\trunk\AXCluster\.ax\config.json", str(paths))
+    finally:
+        bundle._remote_read = keep
 
 
 def test_claude_mcp_local_add_skips_identical() -> None:
@@ -2420,6 +2474,7 @@ def main() -> int:
                test_ensure_ignored_is_one_call_and_strict,
                test_fetch_prune_delivery_and_check,
                test_fetch_prune_wired_into_deliver_and_check,
+               test_agy_model_delivered_and_checked,
                test_claude_mcp_local_add_skips_identical,
                test_deliver_clears_hash_cache_even_on_error,
                test_deliver_cache_isolation,

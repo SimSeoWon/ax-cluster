@@ -888,6 +888,8 @@ def test_session1_cancellation() -> None:
         req = root / L.AGY_ROOT / "in" / "failure"
         req.mkdir(parents=True)
         (req / "BRIEF.md").write_text("test")
+        # `#830` — 모델이 없으면 agy 를 부르지 않으므로(그러면 아래 검사가 공허하게 통과한다) 값을 둔다
+        (root / ".ax" / "config.json").write_text(json.dumps({"backends": {"agy_model": "gemini-3.8-flash-medium"}}))
         relay = L.AgyRelay(root, failed)
         with patch.object(L.subprocess, "Popen", BrokenPipe):
             relay.serve("failure")
@@ -1100,10 +1102,16 @@ def test_session1_agy_relay() -> None:
         d.mkdir(parents=True)
         (d / "job.json").write_text(_json.dumps({"task_id": "t2", "files": ["a.py"], "timeout": 60}),
                                     encoding="utf-8")
+        (root / ".ax" / "config.json").write_text(
+            _json.dumps({"backends": {"agy_model": "gemini-3.8-flash-medium"}}), encoding="utf-8")
         bindir = root / "bin"
         bindir.mkdir()
         fake = bindir / "agy"
         fake.write_text("#!/usr/bin/env python3\nimport json,sys,os\n"
+                        # `#830` — 실제 agy 처럼 --log-file 에 모델 label 줄을 남긴다
+                        "a=sys.argv[1:]\n"
+                        "open(a[a.index('--log-file')+1],'w').write("
+                        "'Propagating selected model override to backend: label=\"Gemini 3.8 Flash (Medium)\"\\n')\n"
                         "print(json.dumps({'status':'SUCCESS','response':'ok:'+os.path.basename(os.getcwd()),"
                         "'argv':sys.argv[1:]}))\n", encoding="utf-8")
         fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
@@ -1142,18 +1150,161 @@ def test_session1_agy_relay() -> None:
                       args[:3] == ["--dangerously-skip-permissions", "--output-format", "json"]
                       and Path(args[args.index("--add-dir") + 1]).name == "1"
                       and args[-2] == "-p" and args[-1] == L.AGY_PROMPT, str(args))
+                check("[중요] #830 --model 은 설정의 정본 id",
+                      "--model" in args and args[args.index("--model") + 1] == "gemini-3.8-flash-medium",
+                      str(args))
+                check("  #830 --log-file 은 out/<요청>.log",
+                      "--log-file" in args
+                      and Path(args[args.index("--log-file") + 1]) == root / ".agy-work" / "out" / "1.log",
+                      str(args))
             two = [ln for ln in out.splitlines() if ln.startswith("two ")]
             check("  BRIEF.md 없는 요청은 rc 2 · 사유", bool(two) and two[0].startswith("two 2 ")
                   and "BRIEF.md" in two[0], str(two))
             check("[중요] 이름 규칙 밖 요청은 처리하지 않는다",
                   not (root / ".agy-work" / "out" / "bad name.done").exists())
             for want in ("agy 중계 대기", "agy 중계 시작 — 요청 1", "agy 중계 끝 — 요청 1 · rc=0",
+                         "모델 gemini-3.8-flash-medium", "요청 모델 gemini-3.8-flash-medium",
+                         "실제 gemini-3.8-flash-medium (출처 log)", "판정 일치",
                          "agy 중계 종료 — 처리"):
                 check(f"  launcher.log 에 「{want}」", want in log, log[-600:])
         finally:
             L.build_argv, L.AGY_POLL = saved_argv, saved_poll
             os.environ["PATH"] = saved_path
     check("중계 테스트 임시 루트 정리", not root.exists(), str(root))
+
+
+def test_session1_agy_model_refusal() -> None:
+    """🔴 `#830` — `backends.agy_model` 이 없거나 정본 id 가 아니거나 Argon 이면 agy 를 **부르지 않는다**.
+
+    별칭이 조용히 Argon 으로 풀려 한도를 태웠다. 폴백 없음 — 실패 결과(rc 78 · `.err` 사유)와 로그 줄만 남긴다.
+    """
+    import json as _json
+    import tempfile
+    from unittest.mock import patch
+
+    L = _load_launcher()
+    cases = (("설정 파일 없음", None, "를 못 읽었다"),
+             ("backends 없음", {}, "agy_model 이 없다"),
+             ("빈 값", {"backends": {"agy_model": ""}}, "agy_model 이 없다"),
+             ("별칭(공백·대문자)", {"backends": {"agy_model": "Gemini 3.8 Flash"}}, "정본 id 모양이 아니다"),
+             ("옵션 주입 모양", {"backends": {"agy_model": "--yolo"}}, "정본 id 모양이 아니다"),
+             ("문자열 아님", {"backends": {"agy_model": ["gemini-3.8-flash-medium"]}}, "정본 id 모양이 아니다"),
+             ("gemini- 아님", {"backends": {"agy_model": "claude-sonnet-4"}}, "gemini- 로 시작하지 않는다"),
+             ("Argon", {"backends": {"agy_model": "gemini-4-argon"}}, "Argon"))
+    for label, cfg, why in cases:
+        with tempfile.TemporaryDirectory(prefix="ax-s1-model-") as tmp:
+            root = Path(tmp)
+            d = root / ".ax" / "session1" / "t" / "r"
+            d.mkdir(parents=True)
+            if cfg is not None:
+                (root / ".ax" / "config.json").write_text(_json.dumps(cfg), encoding="utf-8")
+            req = root / L.AGY_ROOT / "in" / "1"
+            req.mkdir(parents=True)
+            (req / "BRIEF.md").write_text("q", encoding="utf-8")
+            calls = []
+            with patch.object(L.subprocess, "Popen", lambda *a, **k: calls.append(a) or 1 / 0):
+                L.AgyRelay(root, d).serve("1")
+            out = root / L.AGY_ROOT / "out"
+            log = (d / L.LOG).read_text(encoding="utf-8")
+            err = (out / "1.err").read_text(encoding="utf-8")
+            check(f"[중요] #830 {label} → agy 를 부르지 않는다", not calls, str(calls))
+            check(f"  {label} → rc {L.AGY_BAD_MODEL_RC} · .err 에 사유",
+                  (out / "1.done").read_text() == str(L.AGY_BAD_MODEL_RC) and why in err, err)
+            check(f"  {label} → 거절 로그 줄 · 끝 줄은 마스터 정규식 그대로",
+                  "agy 중계 거절 — 요청 1" in log and why in log
+                  and R._RELAY_DONE.search(log) is not None
+                  and R._RELAY_DONE.search(log).group(2) == str(L.AGY_BAD_MODEL_RC), log)
+    with tempfile.TemporaryDirectory(prefix="ax-s1-model-") as tmp:
+        root = Path(tmp)
+        (root / ".ax").mkdir()
+        (root / ".ax" / "config.json").write_text(
+            _json.dumps({"backends": {"agy_model": "gemini-3.8-flash-medium"}}), encoding="utf-8")
+        check("#830 정본 id 는 통과 — agy_model() → (id, 빈 사유)", L.agy_model(root) == ("gemini-3.8-flash-medium", ""),
+              str(L.agy_model(root)))
+
+
+def test_session1_agy_model_verdict() -> None:
+    """🔴 `#830` ⓐ — 중계가 `--log-file` 로그(배달된 `work/usage.py` 파서)로 **실제 모델**을 대조한다.
+
+    실제 ≠ 요청 · 실제 미상 · 파서 로드 실패는 거절(rc 79)이다. `.json`·`.log` 는 증거로 남는다.
+    [주의] 실 agy 를 부르지 않는다 — 환경변수로 움직이는 가짜 스크립트다.
+    """
+    import json as _json
+    import os
+    import stat
+    import tempfile
+    from unittest.mock import patch
+
+    L = _load_launcher()
+    want = "gemini-3.8-flash-medium"
+    fake_src = ("#!/usr/bin/env python3\nimport json,os,sys\n"
+                "a=sys.argv[1:]\nlabel=os.environ.get('AX_FAKE_LABEL','')\n"
+                "if label:\n"
+                "    open(a[a.index('--log-file')+1],'w').write("
+                "'x\\nPropagating selected model override to backend: label=\"'+label+'\"\\n')\n"
+                "env={'status':'SUCCESS','response':'BODY'}\n"
+                "if os.environ.get('AX_FAKE_ENV_MODEL'): env['model']=os.environ['AX_FAKE_ENV_MODEL']\n"
+                "print(json.dumps(env)); sys.exit(int(os.environ.get('AX_FAKE_RC','0')))\n")
+
+    def run(label="", env_model="", fake_rc=0, load=None):
+        tmp = tempfile.mkdtemp(prefix="ax-s1-verdict-")
+        root = Path(tmp)
+        d = root / ".ax" / "session1" / "t" / "r"
+        d.mkdir(parents=True)
+        (root / ".ax" / "config.json").write_text(_json.dumps({"backends": {"agy_model": want}}))
+        req = root / L.AGY_ROOT / "in" / "1"
+        req.mkdir(parents=True)
+        (req / "BRIEF.md").write_text("q")
+        fake = root / "agy"
+        fake.write_text(fake_src)
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+        env = {"AX_FAKE_LABEL": label, "AX_FAKE_ENV_MODEL": env_model, "AX_FAKE_RC": str(fake_rc)}
+        calls = []
+        real_popen = L.subprocess.Popen
+        def popen(*a, **k):
+            calls.append(a)
+            return real_popen(*a, **k)
+        with patch.dict(os.environ, env), patch.object(L, "_agy_exe", lambda: str(fake)), \
+                patch.object(L.subprocess, "Popen", popen), \
+                patch.object(L, "_load_usage", load or L._load_usage):
+            L.AgyRelay(root, d).serve("1")
+        out = root / L.AGY_ROOT / "out"
+        res = {"rc": (out / "1.done").read_text(), "json": (out / "1.json").read_text() if (out / "1.json").exists() else "",
+               "err": (out / "1.err").read_text(), "log_kept": (out / "1.log").exists(),
+               "launcher": (d / L.LOG).read_text(encoding="utf-8"), "calls": len(calls)}
+        import shutil as _sh
+        _sh.rmtree(tmp)
+        return res
+
+    r = run(label="Gemini 3.8 Flash (Medium)")
+    check("[중요] #830 로그 모델 = 요청 → rc 0 · 판정 일치", r["rc"] == "0" and "판정 일치" in r["launcher"]
+          and "출력을 버린다" not in r["err"], str(r))
+    r = run(label="Gemini 4 Argon")
+    check("🔴 [중요] #830 로그 모델 ≠ 요청 → rc 79", r["rc"] == str(L.AGY_MODEL_REJECT_RC), str(r))
+    check("  불일치 — .json·.log 증거 보존 · .err 에 사유",
+          '"BODY"' in r["json"] and r["log_kept"] and "모델 불일치 — 요청 gemini-3.8-flash-medium · 실제 gemini-4-argon"
+          in r["err"], str(r))
+    check("  불일치 — 런처 로그에 요청·실제·판정 거절 · 끝 줄은 마스터 정규식 그대로",
+          "실제 gemini-4-argon (출처 log)" in r["launcher"] and "판정 거절" in r["launcher"]
+          and R._RELAY_DONE.search(r["launcher"]).group(2) == str(L.AGY_MODEL_REJECT_RC), r["launcher"])
+    r = run(env_model="Gemini 3.8 Flash (Medium)")
+    check("#830 로그에 모델이 없으면 봉투 모델(정규화)로 판정 → 일치",
+          r["rc"] == "0" and "(출처 envelope)" in r["launcher"] and "판정 일치" in r["launcher"], str(r))
+    r = run()
+    check("🔴 [중요] #830 실제 모델 미상 → 거절 rc 79", r["rc"] == str(L.AGY_MODEL_REJECT_RC)
+          and "실제 모델 미상" in r["err"] and "실제 (미상)" in r["launcher"] and '"BODY"' in r["json"], str(r))
+    r = run(label="Gemini 4 Argon", fake_rc=3)
+    check("#830 agy 자체 실패(rc 3)는 rc 를 그대로 두고 사유만 덧붙인다",
+          r["rc"] == "3" and "모델 불일치" in r["err"], str(r))
+    def broken():
+        raise FileNotFoundError("work/usage.py 가 배달되지 않았다")
+    r = run(label="Gemini 3.8 Flash (Medium)", load=broken)
+    check("🔴 [중요] #830 파서 로드 실패 → agy 를 부르지 않고 rc 79",
+          r["calls"] == 0 and r["rc"] == str(L.AGY_MODEL_REJECT_RC)
+          and "파서(work/usage.py)를 못 불러왔다" in r["err"]
+          and "agy 중계 거절 — 요청 1" in r["launcher"], str(r))
+    check("#830 저장소에서 실행하면 master/work/usage.py 를 로드한다",
+          hasattr(L._load_usage(), "parse_agy_log"))
 
 
 def test_session1_relay_start_failure() -> None:
@@ -1249,7 +1400,9 @@ def main() -> int:
                test_worker_does_not_build, test_claude_auth_runtime,
                test_delegation_calls, test_instruction_asks_delegation,
                test_delegation_failure_blocks,
-               test_session1_agy_relay, test_session1_relay_start_failure,
+               test_session1_agy_relay, test_session1_agy_model_refusal,
+               test_session1_agy_model_verdict,
+               test_session1_relay_start_failure,
                test_relay_events_are_authoritative,
                test_session1_after_appends_relay_events):
         fn()

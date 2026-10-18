@@ -30,6 +30,16 @@ agy 봉투 `status` 가 `SUCCESS` 가 아니다(사용자 결정 2026-10-09 (나
 
     "<backends.python>" -c "import sys; sys.path.insert(0, '.ax/lib'); from axmaster.work import gemini_report as G; sys.exit(G.main())" \\
         --remote --brief-dir <scratch>/ax-gemini-<주제> --out reports/research/2026-10-17-<주제>.md
+
+🔴 [중요] **모델은 정본 id 로 명시한다** (`#830`, 사용자 승인 2026-10-18). 설정의 별칭이 조용히
+「Gemini 4 Argon」으로 풀려 한도를 태웠다. 그래서 매 실행 `agy --model <id>` 를 싣는다 — 출처는
+`--remote` 면 체크아웃 `.ax/config.json` 의 `backends.agy_model`, 마스터면 `agy_models.DEFAULT_MODEL`,
+`--model` 을 주면 그 값이다. 값이 없거나 정본 모양(`[a-z0-9][a-z0-9.-]*` · `gemini-` 로 시작 — 사용자 결정
+2026-10-18)이 아니거나 `argon` 이 들면
+**agy 를 부르지 않고 거절(종료 2)** 한다 — Argon 은 `--model` 과 `--allow-argon` 을 **함께** 준 때만.
+폴백·쿨다운·자동 Argon 은 없다. 실행 뒤 `--log-file` 로그(`usage.parse_agy_log`)로 **실제 모델**을
+읽어 요청과 다르거나 읽지 못하면 **출력을 버린다**(종료 1 · 보고서 없음 · 원본은 `.run/` 에 남는다).
+[주의] `agy_models` 는 `fcntl`(리눅스 전용)을 쓴다 — `--remote`(`.33` Windows) 경로에서는 임포트하지 않는다.
 """
 from __future__ import annotations
 
@@ -55,6 +65,8 @@ SOURCE = "ax-gemini"
 _CITE = re.compile(r"(src/[^\s`:()\[\],]+):(\d+)(?:-(\d+))?")
 CITE_SHOW = 12          # 인용 하나당 citations.txt 에 싣는 최대 줄 수 (긴 범위는 앞부분만)
 SUMMARY_CHARS = 600     # 결과 JSON 에 싣는 요약 길이 — 세션이 본문을 안 열고 보고할 만큼만
+# agy 정본 모델 id 모양 (`agy models` 의 첫 칸 · `agy_models.parse_catalog` 와 같은 식) — `#830`
+_MODEL_ID = re.compile(r"[a-z0-9][a-z0-9.-]*")
 
 
 def log(msg: str) -> None:
@@ -75,14 +87,47 @@ def agy_version(exe: str) -> str:
         return "미상"
 
 
-def run_agy(exe: str, brief_dir: Path, *, timeout: int, log_file: Path | None = None) -> tuple:
+def model_refusal(model: str, *, explicit: bool = False, allow_argon: bool = False) -> str:
+    """요청 모델이 쓸 수 있으면 `""`, 아니면 거절 사유 (`#830`). [중요] **폴백하지 않는다** —
+    빈 값·별칭·Argon 은 agy 를 부르기 **전에** 막는다. Argon 은 `--model` 로 직접 고르고
+    `--allow-argon` 을 함께 준 때만(사용자 정책: 사용자가 명시적으로 요청할 때만)."""
+    if not model:
+        return "agy 모델이 설정되지 않았다(backends.agy_model 없음) — agy 를 부르지 않는다"
+    if not _MODEL_ID.fullmatch(model) or not model.startswith("gemini-"):
+        return (f"agy 모델 {model!r} 이 정본 id 모양이 아니다(gemini- 로 시작하는 id 만 · 별칭 금지)"
+                " — agy 를 부르지 않는다")
+    if "argon" in model.casefold() and not (explicit and allow_argon):
+        return (f"agy 모델 {model} 은 Argon 이다 — --model 과 --allow-argon 을 함께 줄 때만 쓴다"
+                " (자동 경로 금지)")
+    return ""
+
+
+def configured_model(root: Path) -> str:
+    """요청자 체크아웃 `.ax/config.json` 의 `backends.agy_model` — 없으면 `""` (마스터가 배달한 값)."""
+    cfg = _client_mcp().load_config(root)
+    v = (cfg.get("backends") or {}).get("agy_model") if isinstance(cfg, dict) else ""
+    return v.strip() if isinstance(v, str) else ""
+
+
+def master_model() -> str:
+    """마스터 정본 `agy_models.DEFAULT_MODEL`. [주의] 마스터 경로 전용 지연 임포트 — `--remote` 에서
+    부르지 않는다(`fcntl` 이 없는 Windows 에서 죽는다)."""
+    from master import agy_models
+    return str(agy_models.DEFAULT_MODEL or "").strip()
+
+
+def run_agy(exe: str, brief_dir: Path, *, timeout: int, log_file: Path | None = None,
+            model: str = "") -> tuple:
     """agy 를 돌린다 → `(rc, stdout, stderr, seconds)`. 도는 동안 하트비트를 찍는다.
 
     [중요] **`-p` 는 프롬프트 바로 앞이다** (실측 2026-08-08). 프롬프트는 ASCII 한 문장 —
     내용은 `BRIEF.md` 파일이 나른다(백틱·CP949 회피).
+    🔴 `model` 은 **정본 id 로만** — 부르는 쪽이 `model_refusal` 로 거른 값이다(`#830`).
     """
     cmd = [exe, "--dangerously-skip-permissions", "--output-format", "json",
            "--add-dir", str(brief_dir)]
+    if model:
+        cmd += ["--model", model]
     if log_file is not None:
         cmd += ["--log-file", str(log_file)]
     cmd += ["-p", PROMPT]
@@ -253,7 +298,14 @@ def main(argv=None, *, queue=None) -> int:
                     help="요청자(.33) — 사용량을 큐로 보내 마스터 트윈에 남긴다 (#763)")
     ap.add_argument("--checkout", default="",
                     help="--remote 의 체크아웃 루트 (.ax/config.json 이 있는 곳, 기본 cwd)")
+    ap.add_argument("--model", default="",
+                    help="agy 정본 모델 id 를 직접 고른다 (기본: --remote 는 backends.agy_model, 마스터는 정본)")
+    ap.add_argument("--allow-argon", action="store_true",
+                    help="--model 로 Argon 을 고를 때만 — 사용자가 명시적으로 요청한 경우 (#830)")
     a = ap.parse_args(argv)
+    if a.allow_argon and not a.model:
+        log("거절 — --allow-argon 은 --model 과 함께만 쓴다")
+        return 2
 
     if a.remote:
         try:
@@ -267,6 +319,15 @@ def main(argv=None, *, queue=None) -> int:
             return 2
         a.project = project or a.project
         log(f"요청자 모드 — 기록은 {usage_where} · worker={worker or '(미상)'}")
+        if a.model:
+            want, want_from = a.model, "--model"
+        else:
+            try:
+                want = configured_model(Path(a.checkout or ".").resolve())
+            except Exception as e:                               # noqa: BLE001
+                log(f"거절 — 요청자 설정에서 agy 모델을 읽지 못했다: {e}")
+                return 2
+            want_from = ".ax/config.json backends.agy_model"
     else:
         if not a.project:
             log("거절 — --project 가 필요하다 (요청자는 --remote)")
@@ -281,6 +342,20 @@ def main(argv=None, *, queue=None) -> int:
 
         def record(meta: dict, **kw) -> dict:
             return U.record(paths.usage_log, meta, **kw)
+        if a.model:
+            want, want_from = a.model, "--model"
+        else:
+            try:
+                want = master_model()
+            except Exception as e:                               # noqa: BLE001
+                log(f"거절 — 마스터 정본 agy 모델을 읽지 못했다: {type(e).__name__}: {e}")
+                return 2
+            want_from = "agy_models.DEFAULT_MODEL"
+    bad_model = model_refusal(want, explicit=bool(a.model), allow_argon=a.allow_argon)
+    if bad_model:
+        log(f"거절 — {bad_model} (출처 {want_from})")
+        return 2
+    log(f"요청 모델 {want} (출처 {want_from})")
     brief_dir = Path(a.brief_dir).resolve()
     out = Path(a.out).resolve()
     if not (brief_dir / BRIEF).is_file():
@@ -298,7 +373,8 @@ def main(argv=None, *, queue=None) -> int:
 
     if not exe:
         log("실패 — agy 가 없다")
-        rec = record({"cost_unknown": True}, lane="agy", rc=127, source=SOURCE, note="agy 없음")
+        rec = record({"cost_unknown": True, "requested_model": want}, lane="agy", rc=127,
+                     source=SOURCE, model=want, note="agy 없음")
         if rec.get("error"):
             log(f"[주의] 사용량 기록 실패 — {rec['error']}")
         return 1
@@ -306,8 +382,10 @@ def main(argv=None, *, queue=None) -> int:
     version = agy_version(exe)
     run_dir.mkdir(parents=True, exist_ok=True)
     agy_log = run_dir / "agy.log"
-    log(f"시작 — agy {version} · 자료 {len(mats)}개 · 지시서 {brief_dir / BRIEF} · agy 로그 {agy_log}")
-    rc, stdout, stderr, secs = run_agy(exe, brief_dir, timeout=a.timeout, log_file=agy_log)
+    log(f"시작 — agy {version} · 모델 {want} · 자료 {len(mats)}개 · 지시서 {brief_dir / BRIEF} · "
+        f"agy 로그 {agy_log}")
+    rc, stdout, stderr, secs = run_agy(exe, brief_dir, timeout=a.timeout, log_file=agy_log,
+                                       model=want)
 
     (run_dir / "out.json").write_text(stdout, encoding="utf-8")
     (run_dir / "err.log").write_text(stderr, encoding="utf-8")
@@ -320,7 +398,17 @@ def main(argv=None, *, queue=None) -> int:
     err_text = U.agy_envelope_error(stdout) if parsed else ""
     lg = U.parse_agy_log(agy_log.read_text(encoding="utf-8", errors="replace")
                          if agy_log.is_file() else "")
-    model = model or lg["model"]
+    # 🔴 실제 모델 — 로그 label/별칭 해석이 우선, 없으면 봉투 키. 요청과 다르거나 모르면 출력을 버린다
+    actual = lg["model"] or (U.agy_model_id(model) if model else "")
+    actual_from = lg.get("model_source") or ("envelope" if model else "")
+    model = actual
+    model_why = ("" if actual == want else
+                 f"실제 모델 미상 — agy 로그에서 모델을 읽지 못했다(요청 {want}), 출력을 버린다" if not actual else
+                 f"모델 불일치 — 요청 {want} · 실제 {actual}, 출력을 버린다")
+    log(f"실제 모델 {actual or '(미상)'} (출처 {actual_from or '없음'}) · 판정 "
+        + ("일치" if not model_why else "[주의] " + model_why))
+    if model_why:
+        why = f"{why} · {model_why}" if why else model_why
     bad_status = not why and status and status != "SUCCESS"
     recovered = bool(bad_status and lg["recovered"])
     info = (f"agy 재시도 {lg['retries']}회 후 완료 (마지막 실패: {lg['last_error']}) — "
@@ -329,15 +417,21 @@ def main(argv=None, *, queue=None) -> int:
             f"agy status={status}" + (f": {err_text}" if err_text else "")
             + ("" if agy_log.is_file() else " · agy 로그 없음(회복 판정 불가)"))
     meta = U.meta_from_usage(u) if u is not None else {"cost_unknown": True}
+    meta.update({"requested_model": want, "actual_model": actual, "model_source": actual_from})
+    if a.remote:      # 큐 모델(`UsageReq`)엔 요청/실제 칸이 없다 — 비고로 남긴다
+        meta["note"] = (f"요청 모델 {want}" + ("" if actual == want else f" · 실제 {actual or '미상'}")
+                        + (f" · {meta['note']}" if meta.get("note") else ""))
     for msg in (why, warn, info):
         if msg:
             meta["note"] = msg if not meta.get("note") else f"{msg} · {meta['note']}"
     rec = record(meta, lane="agy", rc=rc if rc else (0 if not why else 1),
-                 seconds=secs, source=SOURCE, model=model, note=meta.get("note", ""))
+                 seconds=secs, source=SOURCE, model=actual or want, note=meta.get("note", ""))
     if rec.get("error"):
         log(f"[주의] 사용량 기록 실패 — {rec['error']}")
     summary = {"ok": not why and not warn, "why": why or warn, "rc": rc, "seconds": round(secs, 1),
                "status": status, "error": err_text, "model": model,
+               "requested_model": want, "requested_from": want_from,
+               "actual_model": actual, "actual_from": actual_from, "model_ok": not model_why,
                "retries": lg["retries"], "recovered": recovered,
                "tokens": (u.as_dict() if u else None),
                "usage_log": usage_where, "run_dir": str(run_dir),

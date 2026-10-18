@@ -971,21 +971,44 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
         return _json.dumps({"status": "SUCCESS", "response": text,
                             "usage": {"input_tokens": 50, "output_tokens": 9}})
 
+    from master import agy_models as _am
+    import os as _os
+
     def usage_run(name, agy_text):
-        saved = (_ur.urlopen, _gen.auth_headers, _l2._codex_run, _l2._run_rc, _l2.shutil.which)
+        # #830: agy 는 `agy models` 사전검사 → `_run_raw` 4-튜플 경로로 돈다 — 둘 다 바꿔 끼우고
+        # 모델 상태(카탈로그·쿨다운)는 사례마다 임시 파일로 격리한다
+        saved = (_ur.urlopen, _gen.auth_headers, _l2._codex_run, _l2._run_raw, _l2.shutil.which,
+                 _am._catalog_run)
+        old_state = _os.environ.get("AX_AGY_STATE_PATH")
         pu = make_project(tmp / name)
         real_which = _l2.shutil.which
         try:
+            _os.environ["AX_AGY_STATE_PATH"] = str(tmp / name / "agy-state.json")
             _ur.urlopen = fake_urlopen
             _gen.auth_headers = lambda t=None: {}
             _l2._codex_run = lambda prompt, *, timeout, reasoning: (good_txt, ev, "", 0, True)
-            _l2._run_rc = lambda cmd, *, timeout: (agy_env(agy_text), "", 0)
+            def fake_run_raw(cmd, *, timeout, **kw):
+                # #830: 실제 모델 미상이면 출력이 버려진다 — 진짜 agy 처럼 요청 모델의 label 을
+                # `--log-file` 에 남긴다
+                if "--log-file" in cmd:
+                    Path(cmd[cmd.index("--log-file") + 1]).write_text(
+                        'Propagating selected model override to backend: '
+                        'label="Gemini 3.8 Flash (Medium)"\n', encoding="utf-8")
+                return agy_env(agy_text), "", 0, agy_env(agy_text)
+
+            _l2._run_raw = fake_run_raw
+            _am._catalog_run = lambda exe, timeout: \
+                f"{_am.DEFAULT_MODEL}\tGemini 3.8 Flash (Medium)\n"
             _l2.shutil.which = lambda n, *a, **k: "/usr/bin/agy" if n == "agy" \
                 else real_which(n, *a, **k)
             rr = synth.synthesize_group(pu, K, FILES, commit="c727", dry_run=True, chain=old_chain)
         finally:
-            (_ur.urlopen, _gen.auth_headers, _l2._codex_run, _l2._run_rc,
-             _l2.shutil.which) = saved
+            (_ur.urlopen, _gen.auth_headers, _l2._codex_run, _l2._run_raw,
+             _l2.shutil.which, _am._catalog_run) = saved
+            if old_state is None:
+                _os.environ.pop("AX_AGY_STATE_PATH", None)
+            else:
+                _os.environ["AX_AGY_STATE_PATH"] = old_state
         rws = [_json.loads(x) for x in pu.usage_log.read_text(encoding="utf-8").splitlines()] \
             if pu.usage_log.is_file() else []
         return rr, rws

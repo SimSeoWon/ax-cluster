@@ -13,6 +13,10 @@
       요청이 없거나 로그가 없으면 경고 3 · 모델은 로그 label 에서 (사용자 결정 2026-10-09 A)
    8. **봉투 status 가 SUCCESS 가 아니면 경고(종료 3)** — 보고서는 쓰되 `ok:false` · 머리말·기록에
       오류 문구 (사용자 결정 2026-10-09 (나))
+  10. **모델은 정본 id(`gemini-` 로 시작) 로 명시 · 실제 모델을 로그로 대조** (`#830`) — `--model <id>` 를 싣는다(마스터는
+      `agy_models.DEFAULT_MODEL`, `--remote` 는 `.ax/config.json` `backends.agy_model`) · 없음·별칭·Argon 은
+      실행 전 거절(종료 2, agy 호출 0) · Argon 은 `--model`+`--allow-argon` 때만 · 실제 모델이 다르거나
+      모르면 출력을 버린다(종료 1 · 보고서 없음 · 원본 `.run/` 보존 · 기록에 요청/실제)
    7. **세션이 본문을 안 읽어도 되게** — 인용 범위를 결정적으로 검사해 `citations.txt` 에 원문 줄을
       모으고, 결과 JSON 에 `summary`(요약 절)·`citations` 통계를 싣는다(`#762` 후속)
 """
@@ -53,11 +57,12 @@ if sys.argv[1:] == ["--version"]:
     print("9.9.9"); sys.exit(0)
 open(os.environ["FAKE_AGY_ARGV"], "w").write(json.dumps(sys.argv[1:]))
 mode = os.environ.get("FAKE_AGY_MODE", "ok")
-LABEL = 'I1009 model_config_manager.go:327] Propagating selected model override to backend: label="Gemini 3.6 Flash (High)"'
+LABEL = ('I1009 model_config_manager.go:327] Propagating selected model override to backend: label="'
+         + os.environ.get("FAKE_AGY_LABEL", "Gemini 3.8 Flash (Medium)") + '"')
 GEN = "I1009 http_helpers.go:315] URL: https://x/v1internal:streamGenerateContent?alt=sse"
 RETRY = "I1009 run.go:395] Run: attempt 1 failed (UNAVAILABLE (code 503): No capacity), retrying in 4s"
 logs = {"ok": [LABEL, GEN], "retryok": [LABEL, GEN, RETRY, GEN, GEN],
-        "retrytail": [LABEL, GEN, RETRY], "statuserror": [LABEL, GEN]}
+        "retrytail": [LABEL, GEN, RETRY], "statuserror": [LABEL, GEN], "nousage": [LABEL, GEN]}
 if "--log-file" in sys.argv and mode in logs and not os.environ.get("FAKE_AGY_NOLOG"):
     open(sys.argv[sys.argv.index("--log-file") + 1], "w").write("\\n".join(logs[mode]) + "\\n")
 if mode in ("retryok", "retrytail"):
@@ -107,6 +112,8 @@ def main() -> int:
         check("rc 0", rc == 0, str(rc))
         argv = json.loads(argv_file.read_text())
         check("[중요] -p 가 프롬프트 바로 앞", argv[-2] == "-p" and argv[-1] == G.PROMPT, str(argv))
+        check("[중요] 마스터 정본 모델을 --model 로 싣는다 (#830)", G.master_model() == "gemini-3.8-flash-medium"
+              and "--model" in argv and argv[argv.index("--model") + 1] == "gemini-3.8-flash-medium", str(argv))
         check("  프롬프트는 ASCII", G.PROMPT.isascii())
         check("  --add-dir 는 자료 폴더", argv[argv.index("--add-dir") + 1] == str(brief.resolve()), str(argv))
         check("  --log-file 은 .run/agy.log", "--log-file" in argv
@@ -114,7 +121,7 @@ def main() -> int:
         body = out.read_text(encoding="utf-8") if out.is_file() else ""
         check("보고서 본문", "본문 `src/a.py:1`" in body, body[:200])
         check("  머리말 — 범위 검사(자동)", "인용 3개 — 범위 안 1 · 범위 밖 1 · 파일 없음 1" in body, body[:400])
-        check("  머리말 — 작성·버전·모델(로그 label)", "Gemini (agy 9.9.9 · gemini-3.6-flash-high)" in body, body[:200])
+        check("  머리말 — 작성·버전·모델(로그 label)", "Gemini (agy 9.9.9 · gemini-3.8-flash-medium)" in body, body[:200])
         check("  머리말 — 자료 목록", "src/a.py" in body.split("\n")[1], body[:300])
         check("  머리말 — 검증은 미검증으로 시작", "> 검증: 미검증" in body, body[:300])
         check("  머리말 — 토큰", "입력 120 / 출력 45" in body, body[:300])
@@ -126,6 +133,9 @@ def main() -> int:
             check("  토큰 측정됨", r[0]["measured"] and r[0]["input_tokens"] == 120
                   and r[0]["output_tokens"] == 45 and r[0]["cache_read"] == 7, str(r[0]))
             check("  비용은 미상(0 아님)", r[0]["cost_known"] is False, str(r[0]))
+            check("  [중요] 기록에 요청·실제 모델 (출처 log)",
+                  (r[0].get("requested_model"), r[0].get("actual_model"), r[0].get("model_source"), r[0]["model"])
+                  == ("gemini-3.8-flash-medium",) * 2 + ("log", "gemini-3.8-flash-medium"), str(r[0]))
         run = out.with_suffix(".run")
         res = json.loads((run / "run.json").read_text(encoding="utf-8")) if (run / "run.json").is_file() else {}
         check("[중요] 인용 통계 — 중복 1회 · 범위 밖 · 파일 없음",
@@ -133,6 +143,9 @@ def main() -> int:
                                        "unreadable_file": 0, "in_range": 1},
               str(res.get("citations")))
         check("  결과 JSON 에 요약 절만", res.get("summary") == "요약 한 줄", repr(res.get("summary")))
+        check("  run.json 에 요청·실제 모델 · model_ok",
+              (res.get("requested_model"), res.get("actual_model"), res.get("model_ok"), res.get("requested_from"))
+              == ("gemini-3.8-flash-medium", "gemini-3.8-flash-medium", True, "agy_models.DEFAULT_MODEL"), str(res))
         ct = (run / "citations.txt").read_text(encoding="utf-8") if (run / "citations.txt").is_file() else ""
         check("  citations.txt — 원문 줄", "### src/a.py:1\n    1  x = 1" in ct, ct)
         check("  citations.txt — 범위 밖·파일 없음 표시",
@@ -220,19 +233,59 @@ def main() -> int:
               and res["retries"] == 1, str(res))
         check("  머리말 참고 줄 · 경고 줄 없음", "> 참고: agy 재시도 1회 후 완료" in b7 and "[주의] agy" not in b7, b7[:500])
         check("  기록 비고에 재시도 · 모델", "재시도 1회" in r.get("note", "")
-              and r["model"] == "gemini-3.6-flash-high", str(r))
-        for mode, extra, label in (("retrytail", {}, "재시도 뒤 생성 요청 없음"),
-                                   ("retryok", {"FAKE_AGY_NOLOG": "1"}, "로그 없음")):
-            os.environ["FAKE_AGY_MODE"] = mode
-            os.environ.update(extra)
-            o = research / f"2026-10-09-{mode}-{len(extra)}.md"
-            rc = G.main(["--project", "AXCluster", "--brief-dir", str(brief), "--out", str(o)])
-            os.environ.pop("FAKE_AGY_NOLOG", None)
-            res = json.loads((o.with_suffix(".run") / "run.json").read_text(encoding="utf-8"))
-            check(f"  {label} → 경고 3 (모르면 회복으로 보지 않는다)",
-                  rc == 3 and not res["recovered"] and res["ok"] is False, str(res))
+              and r["model"] == "gemini-3.8-flash-medium", str(r))
+        os.environ["FAKE_AGY_MODE"] = "retrytail"
+        o = research / "2026-10-09-retrytail-0.md"
+        rc = G.main(["--project", "AXCluster", "--brief-dir", str(brief), "--out", str(o)])
+        res = json.loads((o.with_suffix(".run") / "run.json").read_text(encoding="utf-8"))
+        check("  재시도 뒤 생성 요청 없음 → 경고 3 (모르면 회복으로 보지 않는다)",
+              rc == 3 and not res["recovered"] and res["ok"] is False, str(res))
+        # 🔴 `#830` — 로그가 없으면 실제 모델도 모른다. 종전 「경고 3」이 아니라 출력을 버린다(종료 1)
+        os.environ.update({"FAKE_AGY_MODE": "retryok", "FAKE_AGY_NOLOG": "1"})
         o = research / "2026-10-09-retryok-1.md"
-        check("  로그 없음 경고에 사유", "agy 로그 없음" in o.read_text(encoding="utf-8"), "")
+        rc = G.main(["--project", "AXCluster", "--brief-dir", str(brief), "--out", str(o)])
+        os.environ.pop("FAKE_AGY_NOLOG", None)
+        res = json.loads((o.with_suffix(".run") / "run.json").read_text(encoding="utf-8"))
+        check("  [중요] 로그 없음 → 실제 모델 미상 → 종료 1 · 보고서 없음 · 원본 보존",
+              rc == 1 and not o.exists() and res["model_ok"] is False and "실제 모델 미상" in res["why"]
+              and (o.with_suffix(".run") / "out.json").is_file(), str(res))
+
+        print("\n[4d] 모델 불일치 — 출력을 버린다 (#830)")
+        os.environ.update({"FAKE_AGY_MODE": "ok", "FAKE_AGY_LABEL": "Gemini 4 Argon"})
+        o = research / "2026-10-18-mismatch.md"
+        rc = G.main(["--project", "AXCluster", "--brief-dir", str(brief), "--out", str(o)])
+        os.environ.pop("FAKE_AGY_LABEL", None)
+        r = rows(log)[-1]
+        mrun = o.with_suffix(".run")
+        res = json.loads((mrun / "run.json").read_text(encoding="utf-8"))
+        check("[중요] 종료 1 · 보고서 없음", rc == 1 and not o.exists(), str(rc))
+        check("  run.json — ok:false · 모델 불일치 · 요청/실제", res["ok"] is False and not res["model_ok"]
+              and "모델 불일치" in res["why"] and res["requested_model"] == "gemini-3.8-flash-medium"
+              and res["actual_model"] == "gemini-4-argon" and res["report"] == "", str(res))
+        check("  원본 보존 — out.json·agy.log·err.log", all((mrun / n).is_file()
+              for n in ("out.json", "agy.log", "err.log")), str(list(mrun.iterdir())))
+        check("  [중요] 기록 — rc≠0 · 실제(태운) 모델 · 요청 모델 · 비고", r["rc"] == 1
+              and r["model"] == "gemini-4-argon" and r.get("actual_model") == "gemini-4-argon"
+              and r.get("requested_model") == "gemini-3.8-flash-medium" and "모델 불일치" in r.get("note", ""), str(r))
+        check("  인용 파일·보고서 안 만든다", not (mrun / "citations.txt").exists())
+
+        print("\n[4e] Argon 은 --model + --allow-argon 일 때만")
+        os.environ.update({"FAKE_AGY_MODE": "ok", "FAKE_AGY_LABEL": "Gemini 4 Argon"})
+        o = research / "2026-10-18-argon-explicit.md"
+        rc = G.main(["--project", "AXCluster", "--model", "gemini-4-argon", "--allow-argon",
+                     "--brief-dir", str(brief), "--out", str(o)])
+        os.environ.pop("FAKE_AGY_LABEL", None)
+        argv = json.loads(argv_file.read_text())
+        res = json.loads((o.with_suffix(".run") / "run.json").read_text(encoding="utf-8"))
+        check("명시 Argon → rc 0 · --model gemini-4-argon · -p 는 끝", rc == 0 and o.is_file()
+              and argv[argv.index("--model") + 1] == "gemini-4-argon" and argv[-2] == "-p", str(argv))
+        check("  requested_from=--model", res.get("requested_from") == "--model", str(res))
+        os.environ.update({"FAKE_AGY_MODE": "ok", "FAKE_AGY_LABEL": "Gemini 4 Argon (Medium)"})
+        o = research / "2026-10-18-argon-medium-explicit.md"
+        rc = G.main(["--project", "AXCluster", "--model", "gemini-4-argon-medium", "--allow-argon",
+                     "--brief-dir", str(brief), "--out", str(o)])
+        os.environ.pop("FAKE_AGY_LABEL", None)
+        check("명시 Argon 변형(gemini-4-argon-medium) + --allow-argon → rc 0", rc == 0 and o.is_file(), str(rc))
 
         print("\n[5] 실행 전 거절 — agy 를 부르지 않는다")
         argv_file.unlink(missing_ok=True); n0 = len(rows(log))
@@ -242,15 +295,34 @@ def main() -> int:
                                      "--out", str(tmp / "repo" / "reports" / "x.md")]),
             ("BRIEF.md 없음", ["--project", "AXCluster", "--brief-dir", str(tmp / "bin"),
                               "--out", str(research / "y.md")]),
+            ("[#830] Argon --model 에 --allow-argon 없음", ["--project", "AXCluster", "--model", "gemini-4-argon",
+                                                         "--brief-dir", str(brief), "--out", str(research / "z1.md")]),
+            ("[#830] --allow-argon 만 (--model 없음)", ["--project", "AXCluster", "--allow-argon",
+                                                      "--brief-dir", str(brief), "--out", str(research / "z2.md")]),
+            ("[#830] 별칭 모양 --model", ["--project", "AXCluster", "--model", "Gemini Flash",
+                                        "--brief-dir", str(brief), "--out", str(research / "z3.md")]),
+            ("[#830] 소문자 별칭 flash (gemini- 접두 아님)", ["--project", "AXCluster", "--model", "flash",
+                                        "--brief-dir", str(brief), "--out", str(research / "z6.md")]),
+            ("[#830] Argon 변형 --model 에 --allow-argon 없음", ["--project", "AXCluster", "--model",
+                                        "gemini-4-argon-medium", "--brief-dir", str(brief), "--out", str(research / "z7.md")]),
+            ("[#830] 대문자 id", ["--project", "AXCluster", "--model", "Gemini-3.8-flash-medium",
+                                "--brief-dir", str(brief), "--out", str(research / "z4.md")]),
         ]
         for label, args in bad:
             check(f"{label} → rc 2", G.main(args) == 2)
+        real_mm = G.master_model
+        for label, val in (("[#830] 마스터 정본 모델이 비면", ""), ("[#830] 마스터 정본이 Argon 이면", "gemini-4-argon")):
+            G.master_model = lambda v=val: v
+            check(f"{label} → rc 2", G.main(["--project", "AXCluster", "--brief-dir", str(brief),
+                                             "--out", str(research / "z5.md")]) == 2)
+        G.master_model = real_mm
         check("  agy 호출 0 · 기록 0", not argv_file.exists() and len(rows(log)) == n0, "")
 
         print("\n[6] 요청자 --remote (#763) — 기록 한 줄은 큐로 · 성공·실패 모두 · 전송 실패는 실행 실패가 아니다")
         co = tmp / "checkout"; (co / ".ax").mkdir(parents=True)
         (co / ".ax" / "config.json").write_text(json.dumps({
             "project": "AXCluster", "this_host": {"host": "DESKTOP-FU2GNGL", "role": "requester"},
+            "backends": {"agy_model": "gemini-3.8-flash-medium"},
             "master": {"host": "127.0.0.1", "services": {"task_queue": 1}}}), encoding="utf-8")
         sent = []
 
@@ -261,9 +333,17 @@ def main() -> int:
         n_local = len(rows(log))
         os.environ["FAKE_AGY_MODE"] = "ok"
         o = research / "2026-10-17-remote-ok.md"
+
+        def no_master_model():
+            raise AssertionError("--remote 가 agy_models 경로를 탔다")
+
+        G.master_model = no_master_model       # 🔴 Windows 에서 fcntl 을 임포트하면 죽는다
         rc = G.main(["--remote", "--checkout", str(co), "--brief-dir", str(brief), "--out", str(o)],
                     queue=fake_queue)
         check("rc 0 · 보고서", rc == 0 and o.is_file(), str(rc))
+        argv = json.loads(argv_file.read_text())
+        check("[중요] --remote 는 backends.agy_model 을 --model 로 (agy_models 안 탐)",
+              argv[argv.index("--model") + 1] == "gemini-3.8-flash-medium", str(argv))
         check("[중요] POST /api/v1/usage 한 번", [(m, p_) for m, p_, _ in sent] == [("POST", "/api/v1/usage")],
               str(sent))
         if sent:
@@ -273,7 +353,8 @@ def main() -> int:
             check("  토큰은 usage 안쪽 키 그대로 · 비용은 안 보낸다(미상)",
                   b.get("usage") == {"input_tokens": 120, "output_tokens": 45, "cache_read_input_tokens": 7}
                   and "total_cost_usd" not in b, str(b))
-            check("  모델은 로그 label", b.get("model") == "gemini-3.6-flash-high", str(b))
+            check("  모델은 로그 label", b.get("model") == "gemini-3.8-flash-medium", str(b))
+            check("  비고에 요청 모델 (큐 모델엔 칸이 없다)", "요청 모델 gemini-3.8-flash-medium" in b.get("note", ""), str(b))
         res = json.loads((o.with_suffix(".run") / "run.json").read_text(encoding="utf-8"))
         check("  결과 JSON 의 usage_log 는 마스터 트윈 경유 · usage_error 없음",
               "POST /api/v1/usage" in res["usage_log"] and "usage_error" not in res, str(res))
@@ -287,6 +368,31 @@ def main() -> int:
                     queue=fake_queue)
         check("[중요] agy 실패도 한 줄 — rc≠0 · 비고에 사유", rc == 1 and len(sent) == 1
               and sent[0][2]["rc"] == 3 and "rc=3" in sent[0][2]["note"], str(sent))
+
+        sent.clear()
+        os.environ.update({"FAKE_AGY_MODE": "ok", "FAKE_AGY_LABEL": "Gemini 4 Argon"})
+        o = research / "2026-10-18-remote-mismatch.md"
+        rc = G.main(["--remote", "--checkout", str(co), "--brief-dir", str(brief), "--out", str(o)],
+                    queue=fake_queue)
+        os.environ.pop("FAKE_AGY_LABEL", None)
+        check("[중요] 요청자 모델 불일치 → rc 1 · 보고서 없음 · 한 줄 rc≠0 · 실제 모델 · 비고",
+              rc == 1 and not o.exists() and len(sent) == 1 and sent[0][2]["rc"] == 1
+              and sent[0][2]["model"] == "gemini-4-argon" and "모델 불일치" in sent[0][2]["note"]
+              and "요청 모델 gemini-3.8-flash-medium · 실제 gemini-4-argon" in sent[0][2]["note"], str(sent))
+
+        for label, backends in (("agy_model 없음", {}), ("Argon 설정", {"agy_model": "gemini-4-argon"}),
+                                ("별칭 설정", {"agy_model": "flash"}), ("이름 표기", {"agy_model": "Gemini 3.8 Flash"}),
+                                ("Argon 변형 설정", {"agy_model": "gemini-4-argon-medium"})):
+            co2 = tmp / f"checkout-{len(backends)}-{label.replace(' ', '')}"; (co2 / ".ax").mkdir(parents=True)
+            (co2 / ".ax" / "config.json").write_text(json.dumps({
+                "project": "AXCluster", "this_host": {"host": "h"}, "backends": backends,
+                "master": {"host": "127.0.0.1", "services": {"task_queue": 1}}}), encoding="utf-8")
+            sent.clear(); argv_file.unlink(missing_ok=True)
+            rc = G.main(["--remote", "--checkout", str(co2), "--brief-dir", str(brief),
+                         "--out", str(research / f"2026-10-18-remote-{label}.md")], queue=fake_queue)
+            check(f"[#830] 요청자 {label} → rc 2 · agy 호출 0 · 전송 0",
+                  rc == 2 and not argv_file.exists() and not sent, f"{rc} {sent}")
+        G.master_model = real_mm
 
         def dead_queue(method, path, payload=None):
             raise RuntimeError("[미연결] 마스터에 연결할 수 없다")

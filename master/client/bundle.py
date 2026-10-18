@@ -171,7 +171,11 @@ PAYLOAD_BY_ROLE = {
                      "client/runtime/session1_conductor.py"),
                _pair("work/build_local.py"), _pair("work/skeleton_gate.py"),
                _pair("layer3_verify.py"),
-               _pair("source_text.py"), _pair("utf8.py")),
+               _pair("source_text.py"), _pair("utf8.py"),
+               # 🔴 `#830` (사용자 결정 ⓐ) — 세션 1 런처의 agy 중계가 `--log-file` 로그로 **실제 모델**을
+               #    대조한다. 파서는 `usage` 한 곳이다(두 번째 파서를 만들지 않는다) — 런처가 옆 트리
+               #    `work/usage.py` 를 경로로 로드한다. 최상위 임포트는 표준 라이브러리뿐이다.
+               _pair("work/usage.py")),
 }
 
 AX_DIR = ".ax"                      # [중요] 체크아웃 안. 상대경로가 모든 머신에서 같다
@@ -397,6 +401,18 @@ def _delivery_stamp() -> dict:
         return {"commit": "", "error": f"{type(e).__name__}: {e}"}
 
 
+def agy_model() -> str:
+    """워커가 `agy --model` 로 넘길 **정본 모델 id** (`#830`).
+
+    [중요] **정본은 `master/agy_models.DEFAULT_MODEL` 하나다** — 여기서 값을 다시 적지 않는다.
+    설정의 별칭이 조용히 「Gemini 4 Argon」으로 풀려 그 한도를 태웠기 때문에, 워커도 별칭이
+    아니라 정본 id 를 명시해 부른다. [주의] 지연 import — `agy_models` 는 `fcntl`(리눅스 전용)을
+    쓰므로 **배달물이 아니다.** 이 함수는 마스터에서만 돈다.
+    """
+    from ..agy_models import DEFAULT_MODEL
+    return DEFAULT_MODEL
+
+
 def config_for(project: str, facts: HostFacts) -> dict:
     """머신 하나의 `.ax/config.json`. [중요] **비밀은 넣지 않는다.**"""
     return {
@@ -432,6 +448,9 @@ def config_for(project: str, facts: HostFacts) -> dict:
             # 프로젝트 안의 스킬도 이 값을 쓴다. 전역 PATH·런처 탐지에 다시 의존하지 않는다.
             "python": facts.python or None,
             "agy": facts.agy,
+            # 🔴 `#830` — 워커 쪽 agy 호출이 `--model` 로 넘길 정본 id. 폴백·쿨다운은 없다.
+            #    `check` 가 `check_agy_model` 로 이 값을 마스터 정본과 댄다.
+            "agy_model": agy_model(),
             "ollama": f"http://{facts.host}:11434" if facts.ollama_models else None,
             "ollama_models": facts.ollama_models,
             "ue5_cmd": facts.ue5 or None,
@@ -2432,6 +2451,41 @@ def check_fetch_prune(facts: HostFacts) -> tuple:
         return True, f" · {FETCH_PRUNE_KEY}=true"
     return False, (f" · [실패] {FETCH_PRUNE_KEY} 가 true 가 아니다 "
                    f"(rc={rc}, 값={val or '없음'}) — 재배달 필요")
+
+
+def stored_backends(facts: HostFacts) -> dict:
+    """그 기계의 `.ax/config.json` 에 적힌 `backends` (`#830`).
+
+    못 읽으면 `{"error": ...}` — 빈 dict 로 접지 않는다(「없음」과 「못 읽음」은 다르다).
+    """
+    rel = CONFIG_REL.replace("/", chr(92)) if facts.windows else CONFIG_REL
+    path = f"{facts.path}{chr(92) if facts.windows else '/'}{rel}"
+    raw = _remote_read(facts, path)
+    if not (raw or "").strip():
+        return {"error": f"config 를 읽지 못했다(빈 응답): {path}"}
+    try:
+        got = json.loads(raw).get("backends")
+    except ValueError as e:
+        return {"error": f"config JSON 파싱 실패: {e}"}
+    return got if isinstance(got, dict) else {"error": "backends 가 없다"}
+
+
+def check_agy_model(facts: HostFacts, expected: str = "") -> tuple:
+    """`check` 용 판정 — `(ok, note)`. 배달된 `backends.agy_model` 이 마스터 정본과 같은가 (`#830`).
+
+    [중요] **fail-closed** — 못 읽음·키 없음·값 다름은 모두 실패다. 키가 없으면 그 워커는
+    `--model` 없이 별칭으로 agy 를 불러 Argon 으로 새는 바로 그 상태다.
+    """
+    want = expected or agy_model()
+    got = stored_backends(facts)
+    if got.get("error"):
+        return False, f" · [실패] agy_model 을 재지 못했다 — {got['error']}"
+    if "agy_model" not in got:
+        return False, f" · [실패] backends.agy_model 이 없다 (정본 {want}) — 재배달 필요"
+    have = got.get("agy_model")
+    if have != want:
+        return False, f" · [실패] backends.agy_model 이 다르다 — 저장 {have!r} ≠ 정본 {want!r} (재배달 필요)"
+    return True, f" · agy_model={have}"
 
 
 def delivered_stamp(facts: HostFacts) -> dict:

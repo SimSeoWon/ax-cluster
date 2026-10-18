@@ -200,7 +200,8 @@ def agy_brief(prompt: str):
         yield str(Path(td).resolve())
 
 
-def agy_cmd(exe: str, brief_dir: str, workdir: str | None = None) -> list[str]:
+def agy_cmd(exe: str, brief_dir: str, workdir: str | None = None, *,
+            model: str = "", log_file: str = "") -> list[str]:
     """BRIEF 방식의 agy 명령. 레인(`usage.call_agy`)과 공용 진입이 **같은 모양**을 쓴다.
 
     `workdir` 를 주면 그 디렉터리를 두 번째 `--add-dir` 로 싣고, 디렉터리가 둘이라 지시가
@@ -208,25 +209,61 @@ def agy_cmd(exe: str, brief_dir: str, workdir: str | None = None) -> list[str]:
     [주의] agy 에는 읽기 전용 강제가 없다(`--dangerously-skip-permissions`). `--mode plan`·
     `--sandbox` 는 실측 전이라 쓰지 않는다 — 쓰기는 호출자가 사후 검사로 드러낸다.
     """
+    prefix = [exe, "--dangerously-skip-permissions", "--output-format", "json"]
+    if model:
+        prefix += ["--model", model]
+    if log_file:
+        prefix += ["--log-file", log_file]
     if workdir is None:
-        return [exe, "--dangerously-skip-permissions", "--output-format", "json",
+        return prefix + [
                 "--add-dir", brief_dir, "-p", AGY_BRIEF_PROMPT]
     brief = str(Path(brief_dir) / AGY_BRIEF)
-    return [exe, "--dangerously-skip-permissions", "--output-format", "json",
+    return prefix + [
             "--add-dir", brief_dir, "--add-dir", str(workdir), "-p",
             f"Read {brief} and follow it exactly. Return the result as your response. "
             "Do not create or modify files."]
 
 
-def call_agy(prompt: str, *, timeout: int = TIMEOUT_SEC) -> str | None:
+def call_agy(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "",
+             allow_argon: bool = False, fallback_models=()) -> str | None:
     """`agy` 호출. [주의] `-p` 는 **반드시 프롬프트 직전**에 둔다 — 앞에 두면 다음 토큰을
     프롬프트 값으로 먹는다(2026-08-08 실측)."""
-    out, why = call_agy_why(prompt, timeout=timeout)
+    out, why = call_agy_why(prompt, timeout=timeout, model=model,
+                           allow_argon=allow_argon, fallback_models=fallback_models)
     return out
 
 
+def run_agy(prompt: str, *, timeout: int = TIMEOUT_SEC,
+            workdir: str | None = None, model: str = "", allow_argon: bool = False,
+            fallback_models=()):
+    """Shared model policy/runner; caller owns usage emission (lanes must not double count)."""
+    if __package__:
+        from . import agy_models
+    else:
+        import agy_models
+    exe = shutil.which("agy")
+    if not exe:
+        return agy_models.AgyResult(why=MISSING_EXE)
+    if workdir is not None:
+        _log(f"[agy] 작업 디렉터리 {workdir} (읽기 전용 강제 없음)")
+    with agy_brief(prompt) as brief_dir:
+        def build(selected, log_path):
+            return agy_cmd(exe, brief_dir, workdir, model=selected, log_file=log_path)
+
+        def runner(cmd, *, timeout):
+            kw = {} if workdir is None else {"cwd": str(workdir)}
+            return _run_raw(cmd, timeout=timeout, **kw)
+
+        result = agy_models.execute(exe, build, runner, timeout=timeout, model=model,
+                                     allow_argon=allow_argon, fallback_models=fallback_models)
+        if result.attempts and not result.actual_model:
+            _log(f"[agy] 실제 모델 미상 · 요청={result.requested_model}; canonical catalog만 확인")
+        return result
+
+
 def call_agy_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
-                 workdir: str | None = None) -> tuple:
+                 workdir: str | None = None, model: str = "", allow_argon: bool = False,
+                 fallback_models=()) -> tuple:
     """`(출력, 사유)`. 사유는 실패했을 때만 채워진다.
 
     `workdir` — 에이전트가 직접 읽을 작업 디렉터리(`#825`). `--add-dir` 로 싣고 그곳에서 실행한다.
@@ -239,34 +276,32 @@ def call_agy_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
     `measured=False` 로 남긴다 — 토큰을 0 으로 지어내지 않는다.
     [주의] 실행파일 부재는 호출이 일어나지 않은 것이라 기록하지 않는다.
     """
-    exe = shutil.which("agy")
-    if not exe:
-        why = MISSING_EXE                      # [중요] 쿨다운 대상이 아니다 — 설정 오류다
-        _log(f"[agy] {missing_exe_hint('agy')}")
-        return None, why
-    if workdir is not None:
-        _log(f"[agy] 작업 디렉터리 {workdir} (읽기 전용 강제 없음)")
-    t0 = time.monotonic()
-    with agy_brief(prompt) as brief_dir:
-        # [주의] workdir 가 없으면 종전 호출 모양 그대로 — `_run_rc` 를 바꿔 끼운 검사가 있다
-        kw = {} if workdir is None else {"cwd": str(workdir)}
-        out, why, rc = _run_rc(agy_cmd(exe, brief_dir, workdir), timeout=timeout, **kw)
-    u = model = None
-    if out is not None:
-        out, u, why, model = _unwrap_agy(out)
-    _emit_usage("agy", u, seconds=time.monotonic() - t0, rc=rc, model=model or "")
-    if out is None:
-        _log(f"[agy] 실패 — {why}")
+    result = run_agy(prompt, timeout=timeout, workdir=workdir, model=model,
+                     allow_argon=allow_argon, fallback_models=fallback_models)
+    for attempt in result.attempts:
+        if "rc" not in attempt:
+            continue
+        _text, u, _why, _model = _unwrap_agy(attempt.get("raw") or "")
+        if u is not None:
+            u.requested_model = attempt.get("requested_model", "")
+            u.actual_model = attempt.get("actual_model", "")
+            u.model_source = attempt.get("model_source", "")
+        _emit_usage("agy", u, seconds=attempt.get("seconds", 0),
+                    rc=attempt["rc"], model=attempt.get("actual_model", ""))
+    if result.why:
+        _log(f"[agy] 실패 — {result.why}")
+        return None, result.why
+    out, _u, why, _model = _unwrap_agy(result.raw or "")
     return out, why
 
 
 def _usage_mod():
-    """`master.work.usage` — 이 모듈이 최상위(`layer2_verify`)로 읽혀 패키지가 없으면 `None`."""
-    try:
-        from master.work import usage                         # noqa: PLC0415
-    except ImportError:
-        return None
-    return usage
+    """Canonical usage parser; standalone entry loads the same verified source file."""
+    if __package__:
+        from . import agy_models
+    else:
+        import agy_models
+    return agy_models.usage_parser()
 
 
 def _unwrap_agy(out: str) -> tuple:

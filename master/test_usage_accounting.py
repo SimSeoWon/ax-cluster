@@ -9,6 +9,8 @@ import json
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -199,6 +201,104 @@ class LogAndSummary(unittest.TestCase):
     def test_missing_file_is_empty_not_an_error(self):
         s = U.summarize(Path(self.tmp.name) / "absent.jsonl", days=1)
         self.assertEqual((s["calls"], s["files"]), (0, 0))
+
+    def test_agy_observed_model_survives_emit_and_wins_over_requested(self):
+        u = U.Usage(lane="agy", input_tokens=9, requested_model="gemini-3.8-flash-medium",
+                    actual_model="gemini-3.8-flash-high", model_source="log")
+        with U.sink(self.log, source="review"):
+            rec = U.emit_cli("agy", u, rc=1, model="stale-request")
+        self.assertEqual(rec["model"], u.actual_model)
+        self.assertEqual(rec["requested_model"], u.requested_model)
+        self.assertEqual(rec["actual_model"], u.actual_model)
+        self.assertEqual(rec["model_source"], "log")
+        self.assertEqual(U.summarize(self.log)["input_tokens"], 9)
+
+    def test_requested_model_does_not_invent_observed_model(self):
+        meta = U.meta_from_usage(U.Usage(lane="agy", requested_model="gemini-3.8-flash-medium"))
+        rec = U.record(self.log, meta)
+        self.assertEqual(rec["model"], "gemini-3.8-flash-medium")
+        self.assertEqual(rec["model_source"], "requested")
+        self.assertNotIn("actual_model", rec)
+
+    def test_other_cli_keeps_optional_model_fields_absent(self):
+        rec = U.record(self.log, U.meta_from_usage(U.Usage(lane="claude")), model="claude-x")
+        self.assertEqual(rec["model"], "claude-x")
+        for key in ("actual_model", "requested_model", "model_source"):
+            self.assertNotIn(key, rec)
+
+
+class AgySharedRunner(unittest.TestCase):
+    def test_alias_resolution_reports_target_and_propagated_label_wins(self):
+        alias = 'model alias "Gemini 3.6 Flash (High)" resolved to "Gemini 4 Argon (Medium)"'
+        parsed = U.parse_agy_log(alias)
+        self.assertEqual(parsed["model"], "gemini-4-argon-medium")
+        self.assertEqual(parsed["model_source"], "alias_log")
+        parsed = U.parse_agy_log(alias + '\nPropagating selected model override to backend: label="Gemini 3.8 Flash (Medium)"')
+        self.assertEqual(parsed["model"], "gemini-3.8-flash-medium")
+        self.assertEqual(parsed["model_source"], "log")
+
+    def test_failure_retains_usage_and_lane_does_not_double_record(self):
+        raw = json.dumps({"response": "partial", "usage": {"input_tokens": 12}, "status": "ERROR"})
+        result = SimpleNamespace(raw=raw, rc=1, why="quota", requested_model="gemini-3.8-flash-medium",
+                                 actual_model="", model_source="requested", attempts=[])
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "usage.jsonl"
+            with patch("master.layer2_verify.run_agy", create=True, return_value=result) as run:
+                with U.sink(log, source="dispatch"):
+                    call = U.call_agy("prompt", timeout=7)
+                run.assert_called_once_with("prompt", timeout=7, model="", allow_argon=False,
+                                            fallback_models=())
+            self.assertFalse(log.exists())
+        self.assertEqual(call.error, "quota")
+        self.assertEqual(call.text, "")
+        self.assertEqual(call.usage.input_tokens, 12)
+        self.assertEqual(call.usage.requested_model, result.requested_model)
+        self.assertEqual(call.usage.actual_model, "")
+
+    def test_lane_model_is_forwarded_without_argon_authorization(self):
+        with patch.object(U, "call_agy", return_value=U.Call()) as run:
+            U.call("agy:argon", "prompt", timeout=8)
+        run.assert_called_once_with("prompt", timeout=8, model="argon")
+
+    def test_zero_exit_does_not_hide_model_or_envelope_failure(self):
+        for why in ("actual model mismatch: gemini-4-argon-medium", "agy status=ERROR: quota"):
+            with self.subTest(why=why):
+                raw = json.dumps({"response": "must not use", "usage": {"input_tokens": 13}})
+                result = SimpleNamespace(raw=raw, rc=0, why=why,
+                                         requested_model="gemini-3.8-flash-medium",
+                                         actual_model="", model_source="requested", attempts=[])
+                with patch("master.layer2_verify.run_agy", return_value=result):
+                    call = U.call_agy("prompt")
+                self.assertEqual(call.error, why)
+                self.assertEqual(call.text, "")
+                self.assertEqual(call.usage.input_tokens, 13)
+
+    def test_all_models_cooling_down_preserves_failure_without_usage(self):
+        result = SimpleNamespace(raw=None, rc=-1, why="all agy models cooling down",
+                                 requested_model="gemini-3.8-flash-medium", actual_model="",
+                                 model_source="requested", attempts=[{"skipped": "cooldown"}])
+        with patch("master.layer2_verify.run_agy", return_value=result):
+            call = U.call_agy("prompt")
+        self.assertEqual(call.error, result.why)
+        self.assertEqual(call.text, "")
+        self.assertFalse(call.usage.known)
+        self.assertNotIn("usage", U.meta_from_usage(call.usage))
+
+    def test_explicit_fallback_keeps_failed_attempt_tokens_once(self):
+        raw1 = json.dumps({"response": "", "usage": {"input_tokens": 12}, "status": "ERROR"})
+        raw2 = json.dumps({"response": "done", "usage": {"input_tokens": 5, "output_tokens": 2}})
+        attempts = [dict(raw=raw1, rc=1, why="quota", requested_model="gemini-first"),
+                    dict(raw=raw2, rc=0, why="", requested_model="gemini-second")]
+        result = SimpleNamespace(raw=raw2, rc=0, why="", requested_model="gemini-second",
+                                 actual_model="", model_source="requested", attempts=attempts)
+        with patch("master.layer2_verify.run_agy", return_value=result):
+            call = U.call_agy("prompt")
+        self.assertEqual(call.usage.input_tokens, 17)
+        self.assertEqual(call.usage.output_tokens, 2)
+        meta = U.meta_from_usage(call.usage)
+        self.assertEqual(len(meta["agy_attempts"]), 2)
+        self.assertEqual(meta["agy_attempts"][0]["usage"]["input_tokens"], 12)
+        self.assertEqual(meta["usage"]["input_tokens"], 17)
 
 
 if __name__ == "__main__":

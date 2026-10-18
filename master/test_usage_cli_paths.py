@@ -41,6 +41,8 @@ from master.work import usage                                         # noqa: E4
 from master.work import usage_dashboard as UD                         # noqa: E402
 
 PASS = FAIL = 0
+_AGY_STATE_ROOT = None
+_AGY_CASE = 0
 
 
 def check(label: str, cond: bool, detail: str = "") -> None:
@@ -101,6 +103,13 @@ open(out, "w").write(os.environ.get("FAKE_RESULT", "OK"))
 
 _AGY = r'''
 import json, os, sys
+a = sys.argv[1:]
+if a == ["models"]:
+    print("gemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)")
+    sys.exit(0)
+if "--log-file" in a:
+    open(a[a.index("--log-file") + 1], "w").write(
+        'Propagating selected model override to backend: label="Gemini 3.8 Flash (Medium)"\n')
 open(os.environ["FAKE_CWD"], "a").write(json.dumps(["agy", os.getcwd()]) + "\n") if os.environ.get("FAKE_CWD") else None
 open(os.environ["FAKE_ARGV"], "a").write(json.dumps(["agy"] + sys.argv[1:]) + "\n")
 a = sys.argv[1:]
@@ -126,20 +135,29 @@ def _fakes(tmp: Path) -> Path:
 
 
 def _env(**kw):
+    global _AGY_CASE
     for k in ("CLAUDE_FAKE", "CODEX_FAKE", "AGY_FAKE", "FAKE_RESULT"):
         os.environ.pop(k, None)
     os.environ.update(kw)
     L2.clear_cooldown()
+    # Each scenario has its own policy state; never reset the user's shared state.
+    if _AGY_STATE_ROOT is not None:
+        _AGY_CASE += 1
+        os.environ["AX_AGY_STATE_PATH"] = str(_AGY_STATE_ROOT / f"agy-case-{_AGY_CASE}.json")
 
 
 def main() -> int:
+    global _AGY_STATE_ROOT
     tmp = Path(tempfile.mkdtemp(prefix="ax-usage-cli-"))
+    _AGY_STATE_ROOT = tmp
     log = tmp / "usage_log.jsonl"
     old_path = os.environ.get("PATH", "")
     os.environ["PATH"] = f"{_fakes(tmp)}{os.pathsep}{old_path}"
     os.environ["FAKE_ARGV"] = str(tmp / "argv.jsonl")
     os.environ["FAKE_STDIN"] = str(tmp / "stdin.jsonl")
     os.environ["FAKE_CWD"] = str(tmp / "cwd.jsonl")
+    old_agy_state = os.environ.get("AX_AGY_STATE_PATH")
+    os.environ["AX_AGY_STATE_PATH"] = str(tmp / "agy-state.json")
     err = io.StringIO()
     try:
         check("가짜가 먼저 잡힌다 (실제 CLI 를 부르지 않는다)",
@@ -397,8 +415,10 @@ def main() -> int:
             L2.call_agy_why("p", timeout=20)
             av = last_argv()
             check("agy 없음 — argv·cwd 종전 그대로",
-                  av[:5] == ["agy", "--dangerously-skip-permissions", "--output-format", "json",
-                             "--add-dir"] and av[6:] == ["-p", L2.AGY_BRIEF_PROMPT]
+                  av[:4] == ["agy", "--dangerously-skip-permissions", "--output-format", "json"]
+                  and av[-2:] == ["-p", L2.AGY_BRIEF_PROMPT]
+                  and av[av.index("--model") + 1] == "gemini-3.8-flash-medium"
+                  and "--log-file" in av
                   and rp_(last_cwd()[1]) == here and not logs, f"{av} {last_cwd()}")
             out, why = L2.call_agy_why("p body", timeout=20, workdir=str(wd))
             av, got = last_argv(), last_in()
@@ -444,6 +464,11 @@ def main() -> int:
         check("claude 모델명이 실려도 claude", UD._normal_record(raw, session=False)["family"] == "claude")
     finally:
         os.environ["PATH"] = old_path
+        _AGY_STATE_ROOT = None
+        if old_agy_state is None:
+            os.environ.pop("AX_AGY_STATE_PATH", None)
+        else:
+            os.environ["AX_AGY_STATE_PATH"] = old_agy_state
         _env()
         os.environ.pop("FAKE_ARGV", None)
         os.environ.pop("FAKE_CWD", None)

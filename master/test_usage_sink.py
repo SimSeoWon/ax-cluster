@@ -61,9 +61,20 @@ def _fake_agy(tmp: Path) -> Path:
     d.mkdir(exist_ok=True)
     exe = d / "agy"
     exe.write_text("""#!/bin/sh
+if [ "$1" = models ]; then
+  printf '%s\\t%s\\n' 'gemini-3.8-flash-medium' 'Gemini 3.8 Flash (Medium)'
+  exit 0
+fi
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --log-file ]; then
+    shift
+    printf '%s\\n' 'Propagating selected model override to backend: label="Gemini 3.8 Flash (Medium)"' > "$1"
+  fi
+  shift
+done
 case "$AGY_FAKE" in
   json) printf '%s\\n' '{"conversation_id":"x","status":"SUCCESS","response":"OK\\n","duration_seconds":1.0,"num_turns":1,"usage":{"input_tokens":4869,"output_tokens":26,"thinking_tokens":25,"cache_read_tokens":8136,"total_tokens":4895}}' ;;
-  model) printf '%s\\n' '{"status":"SUCCESS","response":"OK","model":"gemini-2.5-pro","usage":{"input_tokens":1,"output_tokens":1}}' ;;
+  model) printf '%s\\n' '{"status":"SUCCESS","response":"OK","model":"gemini-3.8-flash-medium","usage":{"input_tokens":1,"output_tokens":1}}' ;;
   empty) printf '%s\\n' '{"status":"ERROR","response":"","usage":{}}' ;;
   plain) printf '%s\\n' '평문 답' ;;
   garbled) printf '{"respo' ;;
@@ -142,6 +153,8 @@ def main() -> int:
         fake = _fake_agy(tmp)
         old_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{fake}{os.pathsep}{old_path}"
+        old_agy_state = os.environ.get("AX_AGY_STATE_PATH")
+        os.environ["AX_AGY_STATE_PATH"] = str(tmp / "agy-state.json")
         try:
             os.environ["AGY_FAKE"] = "json"
             n2 = len(lines(log))
@@ -160,7 +173,9 @@ def main() -> int:
                   (r6.get("input_tokens"), r6.get("output_tokens"), r6.get("cache_read"),
                    r6.get("reasoning_tokens")) == (4869, 26, 8136, 25), str(r6))
             check("[중요] 비용은 모름(0 이 아니다)", r6.get("cost_known") is False, str(r6))
-            check("모델 키가 없으면 model 은 비운다", r6.get("model") == "", str(r6))
+            check("봉투 모델이 없어도 요청별 로그의 실제 모델을 기록한다",
+                  r6.get("model") == "gemini-3.8-flash-medium"
+                  and r6.get("requested_model") == "gemini-3.8-flash-medium", str(r6))
 
             for mode, want in (("plain", "평문 답\n"), ("garbled", '{"respo')):
                 os.environ["AGY_FAKE"] = mode
@@ -175,7 +190,7 @@ def main() -> int:
             os.environ["AGY_FAKE"] = "model"
             with usage.sink(log, source="review"):
                 l2.call_agy_why("p", timeout=10)
-            check("모델 키가 생기면 실린다", lines(log)[-1].get("model") == "gemini-2.5-pro",
+            check("모델 키가 생기면 실린다", lines(log)[-1].get("model") == "gemini-3.8-flash-medium",
                   str(lines(log)[-1]))
 
             os.environ["AGY_FAKE"] = "empty"
@@ -199,6 +214,10 @@ def main() -> int:
                   r8.get("rc") == 3 and r8.get("measured") is False, str(r8))
         finally:
             os.environ["PATH"] = old_path
+            if old_agy_state is None:
+                os.environ.pop("AX_AGY_STATE_PATH", None)
+            else:
+                os.environ["AX_AGY_STATE_PATH"] = old_agy_state
             os.environ.pop("AGY_FAKE", None)
 
         print("⑤ 집계 — 출처 축")

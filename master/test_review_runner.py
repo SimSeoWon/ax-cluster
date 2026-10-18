@@ -269,7 +269,20 @@ def test_퇴고도_사용량에_남는다():
                                          "cache_read_tokens": 50, "total_tokens": 1020}},
                               ensure_ascii=False), encoding="utf-8")
     exe = bindir / "agy"
-    exe.write_text(f"#!/bin/sh\ncat '{env}'\n", encoding="utf-8")
+    exe.write_text(f'''#!/bin/sh
+if [ "$1" = models ]; then
+  printf '%s\\t%s\\n' 'gemini-3.8-flash-medium' 'Gemini 3.8 Flash (Medium)'
+  exit 0
+fi
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --log-file ]; then
+    shift
+    printf '%s\\n' 'Propagating selected model override to backend: label="Gemini 3.8 Flash (Medium)"' > "$1"
+  fi
+  shift
+done
+cat '{env}'
+''', encoding="utf-8")
     exe.chmod(0o755)
 
     def draft_call(p):
@@ -278,10 +291,16 @@ def test_퇴고도_사용량에_남는다():
 
     old_path = os.environ.get("PATH", "")
     os.environ["PATH"] = f"{bindir}{os.pathsep}{old_path}"
+    old_agy_state = os.environ.get("AX_AGY_STATE_PATH")
+    os.environ["AX_AGY_STATE_PATH"] = str(Path(root) / "agy-state.json")
     try:
         r = R.run_once(paths, draft_call=draft_call)
     finally:
         os.environ["PATH"] = old_path
+        if old_agy_state is None:
+            os.environ.pop("AX_AGY_STATE_PATH", None)
+        else:
+            os.environ["AX_AGY_STATE_PATH"] = old_agy_state
     check("⑬ 기본 퇴고 경로로 done", r.state == "done" and bool(r.written), f"{r.state} {r.why}")
     rows = [json.loads(x) for x in paths.usage_log.read_text(encoding="utf-8").splitlines()] \
         if paths.usage_log.is_file() else []

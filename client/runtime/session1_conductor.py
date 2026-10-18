@@ -52,9 +52,29 @@ Windows 에서는 codex 샌드박스 안의 agy 가 죽는다 — 실측 `.2`: a
 [중요] **명령은 받지 않는다** — 받는 것은 요청 이름(`[A-Za-z0-9_-]`)뿐이고 실행 파일·플래그·프롬프트는 여기
 고정이다(위 원칙 그대로). 런처가 job 을 시작할 때 `.agy-work/VIA_LAUNCHER` 를 써서 지휘자에게 「중계가
 있다」를 알린다 — **중계가 실제로 도는 경로에서만** 그 표시가 생긴다.
+
+## 🔴 agy 모델은 정본 id 로 못 박는다 (`#830`)
+
+설정의 모델 이름은 별칭이고, 별칭이 조용히 「Gemini 4 Argon」으로 풀려 그 한도를 태웠다. 그래서
+중계는 배달된 `<checkout>/.ax/config.json` 의 `backends.agy_model`(정본 id, 예
+`gemini-3.8-flash-medium`)을 읽어 **`agy --model <id>`** 로 넘긴다. 폴백·쿨다운은 없다.
+값이 없거나 정본 모양(`[a-z0-9][a-z0-9.-]*`)이 아니거나 `gemini-` 로 시작하지 않거나 `argon` 이
+들어 있으면 **agy 를 부르지 않고** 실패 결과(`.err` 사유 · `.done` rc **78**)와 로그 줄을 남긴다.
+
+`--log-file out/<n>.log` 도 넘기고, 끝나면 그 로그를 배달된 `work/usage.py` 의 `parse_agy_log` 로
+읽어 **실제 모델**을 대조한다(사용자 결정 ⓐ — 파서는 그 한 곳이다, 두 번째를 만들지 않는다).
+로그에 모델이 없으면 봉투(`parse_agy_json`)의 모델을 `agy_model_id` 로 정규화해 쓴다(`gemini_report` 와 같다).
+실제 ≠ 요청 **이거나 실제를 모르면** 거절한다 — `.json`·`.log` 는 증거로 남기고 `.err` 끝에 사유,
+`.done` rc **79**. 파서를 못 불러오면 그것도 거절(rc 79)이고 이때는 agy 를 **부르지 않는다**
+(버릴 출력에 한도를 쓰지 않는다). [주의] agy 자체가 실패한 경우(rc≠0)는 그 rc 를 그대로 두고
+판정 사유만 덧붙인다 — 시간 초과(124)·실행 실패(127)가 79 에 묻히지 않게.
+
+    rc 78   설정 결함 — 모델 값이 없거나 정본 gemini id 가 아니다 · agy 를 부르지 않았다
+    rc 79   모델 판정 거절 — 실제 모델 불일치·미상, 또는 파서 로드 실패
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import shutil
@@ -153,10 +173,88 @@ AGY_PROMPT = ("Read BRIEF.md in the added directory and follow it exactly. "
               "Return the result as your response. Do not create or modify files.")
 AGY_POLL, AGY_LIMIT = 2.0, 300   # #780: 5-minute hard cap per relayed agy call
 _REQ = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
+# 🔴 `#830` — 정본 모델 id 모양. 별칭(`Gemini 3.8 Flash` 등 공백·대문자)은 여기서 걸린다
+_AGY_MODEL = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
+AGY_BAD_MODEL_RC = 78                # 설정 결함(EX_CONFIG) — agy 를 부르지 않았다
+AGY_MODEL_REJECT_RC = 79             # 실제 모델 불일치·미상 · 파서 로드 실패 — 출력을 버린다
+CONFIG_REL = ".ax/config.json"
+_USAGE = None                        # 로드한 `work/usage.py` (한 번만 로드한다)
+
+
+def _usage_paths() -> list:
+    """`work/usage.py` 후보. 배달본은 `axmaster/clientside/` 옆 `axmaster/work/`, 저장소는 `master/work/`."""
+    here = Path(__file__).resolve()
+    return [here.parents[1] / "work" / "usage.py",            # 배달본 (.ax/lib/axmaster/work)
+            here.parents[2] / "master" / "work" / "usage.py"]  # 저장소에서 직접 실행 (client/runtime)
+
+
+def _load_usage():
+    """배달된 `work/usage.py` 를 **경로로** 로드한다(`ontology_cache` 와 같은 방식). 실패면 예외."""
+    global _USAGE
+    if _USAGE is not None:
+        return _USAGE
+    for src in _usage_paths():
+        if not src.is_file():
+            continue
+        spec = importlib.util.spec_from_file_location("ax_s1_usage", src)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod          # dataclass 가 자기 모듈을 sys.modules 에서 찾는다
+        try:
+            spec.loader.exec_module(mod)
+        except Exception:
+            sys.modules.pop(spec.name, None)
+            raise
+        _USAGE = mod
+        return mod
+    raise FileNotFoundError("work/usage.py 가 배달되지 않았다 — " + " · ".join(map(str, _usage_paths())))
+
+
+def model_verdict(usage, want: str, log_file: Path, stdout: str) -> tuple:
+    """`(실제 모델, 출처, 거절 사유)` — 사유가 빈 문자열이면 일치. 예외를 던지지 않는다.
+
+    [중요] 실제를 **모르면 거절**이다(사용자 결정 2026-10-18) — 모르는 것을 일치로 보지 않는다.
+    """
+    try:
+        text = log_file.read_text(encoding="utf-8", errors="replace") if log_file.is_file() else ""
+        lg = usage.parse_agy_log(text)
+        parsed = usage.parse_agy_json(stdout or "")
+        env = parsed[3] if parsed else ""
+        actual = lg.get("model") or (usage.agy_model_id(env) if env else "")
+        source = lg.get("model_source") or ("envelope" if env else "")
+    except Exception as e:                                   # noqa: BLE001
+        return "", "", f"모델 판정 실패 — {type(e).__name__}: {e}"
+    if not actual:
+        return "", "", (f"실제 모델 미상 — agy 로그({'있음' if text else '없음'})·봉투에서 모델을 읽지 "
+                        f"못했다(요청 {want}), 출력을 버린다")
+    if actual != want:
+        return actual, source, f"모델 불일치 — 요청 {want} · 실제 {actual}, 출력을 버린다"
+    return actual, source, ""
 
 
 def _agy_exe() -> str:
     return shutil.which("agy") or "agy"
+
+
+def agy_model(root: Path) -> tuple:
+    """배달된 설정의 `backends.agy_model` → `(id, "")` 또는 `("", 거절 사유)`. 예외를 던지지 않는다.
+
+    [중요] 폴백이 없다 — 값이 없거나 모양이 틀리면 agy 를 부르지 않는다(별칭이 아무 모델로나 풀린다).
+    """
+    try:
+        cfg = json.loads((root / CONFIG_REL).read_text(encoding="utf-8"))
+    except Exception as e:                                   # noqa: BLE001
+        return "", f"{CONFIG_REL} 를 못 읽었다 — {type(e).__name__}: {e}"
+    backends = cfg.get("backends") if isinstance(cfg, dict) else None
+    model = backends.get("agy_model") if isinstance(backends, dict) else None
+    if not model:
+        return "", f"{CONFIG_REL} 에 backends.agy_model 이 없다"
+    if not isinstance(model, str) or not _AGY_MODEL.match(model):
+        return "", f"backends.agy_model 이 정본 id 모양이 아니다: {model!r}"
+    if not model.startswith("gemini-"):
+        return "", f"backends.agy_model 이 gemini- 로 시작하지 않는다: {model!r}"
+    if "argon" in model:
+        return "", f"backends.agy_model 이 Argon 이다 — 워커에서 쓰지 않는다: {model!r}"
+    return model, ""
 
 
 class AgyRelay(threading.Thread):
@@ -191,12 +289,31 @@ class AgyRelay(threading.Thread):
         out.mkdir(parents=True, exist_ok=True)
         req = self.root / AGY_ROOT / "in" / name
         t0, rc, so, se = time.monotonic(), 2, "", ""
+        model, why = agy_model(self.root)
+        log_file = out / f"{name}.log"
+        usage, ran = None, False
+        if model and (req / "BRIEF.md").is_file():
+            try:
+                usage = _load_usage()
+            except Exception as e:                           # noqa: BLE001
+                why = f"agy 로그 파서(work/usage.py)를 못 불러왔다 — {type(e).__name__}: {e}"
         if not (req / "BRIEF.md").is_file():
             se = f"{req / 'BRIEF.md'} 가 없다"
+        elif not model:
+            # 🔴 `#830` — 부르지 않는다. 사유는 `.err` 와 런처 로그 둘 다에 남는다
+            se, rc = f"[런처] agy 를 부르지 않았다 — {why}", AGY_BAD_MODEL_RC
+            _log(self.d, f"🔴 agy 중계 거절 — 요청 {name} · {why}")
+        elif usage is None:
+            # 🔴 실제 모델을 대조할 수 없으면 버릴 출력이다 — 한도를 쓰지 않는다
+            se, rc = f"[런처] agy 를 부르지 않았다 — {why}", AGY_MODEL_REJECT_RC
+            _log(self.d, f"🔴 agy 중계 거절 — 요청 {name} · {why}")
         else:
+            ran = True
             argv = [_agy_exe(), "--dangerously-skip-permissions", "--output-format", "json",
+                    "--model", model, "--log-file", str(log_file),
                     "--add-dir", str(req), "-p", AGY_PROMPT]
-            _log(self.d, f"agy 중계 시작 — 요청 {name} · 실행 파일 {argv[0]}")
+            _log(self.d, f"agy 중계 시작 — 요청 {name} · 실행 파일 {argv[0]} · 모델 {model} · "
+                         f"로그 {log_file}")
             kw = ({"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
                   if sys.platform.startswith("win") else {"start_new_session": True})
             try:
@@ -223,6 +340,17 @@ class AgyRelay(threading.Thread):
                     except Exception:
                         _log(self.d, "🔴 agy 종료 뒤 프로세스 회수 실패")
                 self.proc = None
+        if ran:
+            # 🔴 `#830` — 실제 모델 대조. `.json`·`.log` 는 증거로 그대로 남는다
+            actual, source, bad = model_verdict(usage, model, log_file, so)
+            if bad:
+                se = (se or "")[-3000:] + f"\n[런처] {bad}"
+                if rc == 0:
+                    rc = AGY_MODEL_REJECT_RC
+            _log(self.d, f"{'🔴 ' if bad else ''}agy 중계 모델 — 요청 {name} · 요청 모델 {model} · "
+                         f"실제 {actual or '(미상)'} (출처 {source or '없음'}) · 로그 {log_file} "
+                         f"({'있음' if log_file.is_file() else '없음'}) · 판정 "
+                         + (f"거절 — {bad}" if bad else "일치"))
         try:
             (out / f"{name}.json").write_text(so or "", encoding="utf-8")
             (out / f"{name}.err").write_text((se or "")[-4000:], encoding="utf-8")

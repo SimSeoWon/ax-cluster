@@ -117,7 +117,14 @@ invariant 도 지켰지만, `CurrentStep`(실제는 `Step`) · `EMissionTaskExec
 (마스터가 비운 채로 미리 세워 둔다 · 저장소를 통째로 주지 않는다). 직접 호출(리눅스 등 `VIA_LAUNCHER` 가 없을 때) 예:
 
     D="$(pwd)/.agy-work/in/1"     # 체크아웃 루트에서 — 체크아웃 절대 경로 + /.agy-work/in/<n>
-    timeout 300 agy --dangerously-skip-permissions --output-format json --add-dir "$D" -p "Read BRIEF.md in the added directory and follow it exactly. Return the result as your response. Do not create or modify files." > .agy-work/out/1.json
+    M="<.ax/config.json 의 backends.agy_model 값>"
+    timeout 300 agy --dangerously-skip-permissions --output-format json --model "$M" --log-file .agy-work/out/1.log --add-dir "$D" -p "Read BRIEF.md in the added directory and follow it exactly. Return the result as your response. Do not create or modify files." > .agy-work/out/1.json
+
+🔴 [중요] **모델은 `backends.agy_model` 정본 id 로 명시한다** (`#830` — 별칭이 조용히 Argon 으로 풀려 한도를 태웠다).
+값이 없거나 비거나 `gemini-` 로 시작하지 않으면 **agy 를 부르지 않고** 그 사실을 보고한다(다른 모델·별칭으로 바꾸지 않는다).
+끝나면 `.agy-work/out/<n>.log` 의 마지막 `label="…"`(없으면 `resolved to "…"`)을 소문자로, 괄호를 빼고
+공백을 `-` 로 바꿔(`Gemini 3.8 Flash (Medium)` → `gemini-3.8-flash-medium`) 요청 모델과 댄다. 다르거나
+찾지 못하면 **그 응답을 쓰지 않고** 보고한다 — 아래 「위임이 실패하면」의 실패다. 파일은 지우지 않는다.
 
 🔴 [중요] **`--add-dir` 는 절대 경로다** — agy 는 상대 경로를 *"must be an absolute path"* 로 거부하고
 BRIEF 없이 돈다(실측 `#777`). 자료와 `BRIEF.md` 는 `.agy-work/in/<n>/` 에 두고 그 절대 경로를 넘긴다.

@@ -58,6 +58,10 @@ class Usage:
     reasoning_tokens: int | None = None  # agy `thinking_tokens` (출력의 부분집합으로 보인다)
     cache_create: int | None = None     # claude `cache_creation_input_tokens` (`#733`)
     session_id: str = ""                # codex `thread.started.thread_id` (`#726`) — 모르면 빈 값
+    requested_model: str = ""
+    actual_model: str = ""
+    model_source: str = ""              # log/envelope 는 실측, requested 는 요청값만 앎
+    agy_attempts: list[dict] = field(default_factory=list)
 
     @property
     def known(self) -> bool:
@@ -166,24 +170,40 @@ def parse_claude_json(stdout: str) -> tuple | None:
     return text, u, bool(d.get("is_error")), str(model or "")
 
 
-def call_agy(prompt: str, *, timeout: int = TIMEOUT) -> Call:
-    exe = shutil.which("agy")
-    if not exe:
-        return Call(error="agy 가 없다")
-    # 🔴 BRIEF 파일 방식 — 공용 진입과 **같은 모양**(`layer2_verify.agy_cmd`, 2026-10-10 `E2BIG`)
+def call_agy(prompt: str, *, timeout: int = TIMEOUT, model: str = "",
+             allow_argon: bool = False, fallback_models=()) -> Call:
+    # 모델 정책·실행은 공용 진입 한 곳에서만 결정한다(`#830`).
     try:
         from .. import layer2_verify as L2
     except ImportError as e:        # `#763` — 요청자 배달본엔 없다(파서만 쓴다). 레인 호출은 마스터 전용
         return Call(error=f"layer2_verify 없음 — 레인 호출은 마스터 전용: {e}")
-    with L2.agy_brief(prompt) as brief_dir:
-        out, why = _run(L2.agy_cmd(exe, brief_dir), timeout=timeout)
-    if out is None:
-        return Call(error=why)
-    parsed = parse_agy_json(out)
+    # run_agy 는 기록하지 않는다. 레인은 infer 가 반환 계측을 한 번 기록한다.
+    result = L2.run_agy(prompt, timeout=timeout, model=model,
+                        allow_argon=allow_argon, fallback_models=fallback_models)
+    out = result.raw
+    parsed = parse_agy_json(out) if out else None
     if parsed is None:
-        return Call(text=out, usage=Usage(lane="agy", note="JSON 파싱 실패(agy 봉투 아님)"))
-    text, u, _status, _model = parsed
-    return Call(text=text, usage=u)
+        text, u = out or "", Usage(lane="agy", note="JSON 파싱 실패(agy 봉투 아님)")
+    else:
+        text, u, _status, _model = parsed
+    u.requested_model = result.requested_model
+    u.actual_model = result.actual_model
+    u.model_source = result.model_source
+    attempts = [a for a in result.attempts if "rc" in a]
+    if len(attempts) > 1:
+        parsed_attempts = [parse_agy_json(a["raw"]) if a.get("raw") else None for a in attempts]
+        for attr in ("input_tokens", "output_tokens", "cache_read", "total_tokens", "reasoning_tokens"):
+            values = [getattr(p[1], attr) for p in parsed_attempts if p is not None]
+            known = [value for value in values if value is not None]
+            setattr(u, attr, sum(known) if known else None)
+        for attempt, parsed_attempt in zip(attempts, parsed_attempts):
+            meta = meta_from_usage(parsed_attempt[1]) if parsed_attempt else {}
+            u.agy_attempts.append({**meta, **{key: attempt[key] for key in
+                ("requested_model", "actual_model", "model_source", "rc", "why") if key in attempt}})
+        if any(p is None or not p[1].known for p in parsed_attempts):
+            u.note = "일부 agy 시도 토큰 미상 — 확인된 시도만 합산"
+    # CLI 종료 코드가 0 이어도 봉투 오류·모델 불일치는 실패다. 계측만 보존한다.
+    return Call(text="" if result.why else text, usage=u, error=result.why)
 
 
 def parse_agy_json(stdout: str) -> tuple | None:
@@ -216,6 +236,8 @@ def parse_agy_json(stdout: str) -> tuple | None:
         u.note = "usage 키 없음"
     # 2026-10-04 실측에는 모델 키가 없다 — 생기면 쓴다(대시보드가 gemini-* 로 분류한다)
     model = d.get("model")
+    if isinstance(model, str) and model:
+        u.actual_model, u.model_source = model, "envelope"
     return text, u, str(d.get("status") or ""), (model if isinstance(model, str) else "")
 
 
@@ -238,6 +260,7 @@ def agy_envelope_error(stdout: str) -> str:
 _AGY_RETRY = re.compile(r"Run: attempt (\d+) failed \((.*)\), retrying in (\S+)")
 _AGY_FAIL = re.compile(r"Run: attempt (\d+) failed \((.*)\)(?!, retrying)")
 _AGY_LABEL = re.compile(r'Propagating selected model override to backend: label="([^"]+)"')
+_AGY_ALIAS = re.compile(r'model alias "[^"]+" resolved to "([^"]+)"')
 _AGY_GENERATE = "streamGenerateContent"
 
 
@@ -258,7 +281,7 @@ def parse_agy_log(text: str) -> dict:
     [주의] 모델은 로그의 마지막 label 이다(봉투에는 모델 키가 없다).
     """
     lines = (text or "").splitlines()
-    retries, last_retry_at, final_failure, labels = [], -1, "", []
+    retries, last_retry_at, final_failure, labels, aliases = [], -1, "", [], []
     for i, line in enumerate(lines):
         m = _AGY_RETRY.search(line)
         if m:
@@ -271,8 +294,12 @@ def parse_agy_log(text: str) -> dict:
         m = _AGY_LABEL.search(line)
         if m:
             labels.append(m.group(1))
+        m = _AGY_ALIAS.search(line)
+        if m:
+            aliases.append(m.group(1))
     after = any(_AGY_GENERATE in l for l in lines[last_retry_at + 1:]) if last_retry_at >= 0 else False
-    return {"model": agy_model_id(labels[-1]) if labels else "",
+    return {"model": agy_model_id(labels[-1] if labels else aliases[-1]) if labels or aliases else "",
+            "model_source": "log" if labels else "alias_log" if aliases else "",
             "retries": len(retries), "last_error": retries[-1] if retries else "",
             "recovered": bool(retries) and after and not final_failure,
             "final_failure": final_failure}
@@ -456,7 +483,7 @@ def call(lane: str, prompt: str, *, timeout: int = TIMEOUT) -> Call:
     if name == "claude":
         return call_claude(prompt, model=sub, timeout=timeout)
     if name == "agy":
-        return call_agy(prompt, timeout=timeout)
+        return call_agy(prompt, timeout=timeout, model=sub)
     if name == "codex":
         return call_codex(prompt, timeout=timeout)
     return Call(error=f"계측 대상 레인이 아니다: {lane}")
@@ -521,6 +548,12 @@ def meta_from_usage(u) -> dict:
     sid = getattr(u, "session_id", "")
     if isinstance(sid, str) and sid:
         meta["session_id"] = sid                   # `#726` — 없으면 키를 만들지 않는다
+    for key in ("requested_model", "actual_model", "model_source"):
+        value = getattr(u, key, "")
+        if isinstance(value, str) and value:
+            meta[key] = value
+    if getattr(u, "agy_attempts", None):
+        meta["agy_attempts"] = u.agy_attempts
     return meta
 
 
@@ -573,6 +606,17 @@ def record(path, meta: dict, *, lane: str = "", task_id: str = "", work_id: str 
            **normalize(meta, lane=lane, seconds=seconds)}
     if note:
         rec["note"] = note          # 값이 있을 때만 — 기존 레코드 모양은 그대로다 (ax-gemini 경고·실패 사유)
+    for key in ("requested_model", "actual_model", "model_source"):
+        value = (meta or {}).get(key)
+        if isinstance(value, str) and value:
+            rec[key] = value
+    if (meta or {}).get("agy_attempts"):
+        rec["agy_attempts"] = meta["agy_attempts"]
+    if rec.get("actual_model"):
+        rec["model"] = rec["actual_model"]
+    elif rec.get("requested_model"):
+        rec["model"] = rec["requested_model"]
+        rec["model_source"] = "requested"
     # 🔴 `#726` — codex 세션 id(`thread.started.thread_id`). 대시보드가 읽을 때 수집된 rollout
     #    사본과 잇는다(사용자 결정 2026-10-09 (가)). [주의] 없으면 칸을 만들지 않는다.
     sid = (meta or {}).get("session_id") if isinstance(meta, dict) else None

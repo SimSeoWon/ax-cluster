@@ -608,25 +608,27 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
 
         # `#787` ③ — 워커 클론이 원격에서 지운 브랜치의 원격추적 ref 를 남기지 않는가
         ok_prune, prune_note = bundle.check_fetch_prune(f)
+        # `#830` — 워커의 agy 호출이 `--model` 로 넘길 정본 id 가 배달됐는가 (없으면 별칭 → Argon)
+        ok_agy, agy_note = bundle.check_agy_model(f)
 
         mark = ("OK" if (ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
                          and ok_ver and ok_tag and ok_codex and ok_res and ok_shadow
-                         and ok_prune) else "FAIL")
+                         and ok_prune and ok_agy) else "FAIL")
         pay_note = (f" · payload {len(pay)}개 일치" if pay and ok_pay
                     else f" · [중요] payload 불일치/없음 {len(stale)}개: {', '.join(stale[:3])}"
                     if pay else "")
         print(f"  {mark} {f.host} [{f.role}]: 스킬 {len(names)}종 "
               f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}"
               f"{python_note}{pay_note}{ws_note}{client_note}{codex_note}{shadow_note}{res_note}{rm_note}"
-              f"{prune_note}{tag_note}{ver_note}")
+              f"{prune_note}{agy_note}{tag_note}{ver_note}")
         bad += 0 if (ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
                      and ok_ver and ok_tag and ok_codex and ok_res and ok_shadow
-                     and ok_prune) else 1
+                     and ok_prune and ok_agy) else 1
         # `#737` — 다른 검사는 모두 통과했고 출처만 어긋난 호스트를 사유별로 센다.
         #    실행 중 마스터에 커밋이 들어오면 「N 커밋 뒤」, 작업 트리를 고치면 「dirty 도장」
         #    — 정확히 이 모양으로 실패한다.
         if (ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
-                and ok_tag and ok_codex and ok_res and ok_shadow and ok_prune):
+                and ok_tag and ok_codex and ok_res and ok_shadow and ok_prune and ok_agy):
             kind = _version_failure_kind(ver)
             behind_only += kind == "behind"
             dirty_only += kind == "dirty"

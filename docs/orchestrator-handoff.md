@@ -1,6 +1,19 @@
 # 현재 AX 작업 인수인계
 
-- **현재 체크포인트: 2026-10-18 04:00 · Claude · 세션 마감 — #815 ④ 리뷰 큐 4절 배포 · agy 모델 별칭 함정(#830) · Argon 리뷰 품질 대조 · 문서 최신화**.
+- **현재 체크포인트: 2026-10-18 16:4x · Claude · #830 워커·요청자 확장 구현·전수 통과 — 커밋 승인 대기**.
+  - Codex 인계(아래) 인수. 사용자 결정·변경표·검증은 보고서 123 「후속」절. 공식 168/168 · `master/test_*.py` 172파일 rc0. 미커밋 19+3 파일. 커밋·push·`update`·실호출 **미승인**. 담당·워커 모드 `codex` 미변경.
+
+- **직전 체크포인트: 2026-10-18 15:56 · Codex · 사용자 「토큰 없다 인수 인계서 작성해」로 구현 중단 — R154-1 배포 완료, #830 미커밋·공식 검사 실패·워커 반영 미구현**.
+  - HEAD `main` **`08291cc`**(origin/main 푸시 완료). 마운트 **AXCluster**(MotionForge 실측 후 복귀 확인). 담당 기록·워커 모드 모두 `codex`, 변경하지 않음.
+  - **R154-1 / #799 완료**: `work_completion.py --wait`가 첫 응답의 잘못된 round를 저장하지 않도록 수정. 관련30/30·공식167/167 통과 → 사용자 승인 커밋·푸시·AXCluster 배달3/3. MotionForge 전환·배달3/3 뒤 `.33` 훅 해시/커밋 일치, 실제 큐 조회 및 첫 round 누락 주입→실제 큐 r1 복구 확인. AXCluster 복귀3대 버전 일치. #799 노트에 상세.
+  - **#830 사용자 정책**: Argon은 파이썬 작업 등의 검증·비교를 위해 아낀다. **사용자가 명시적으로 요청하지 않으면 기본 모델·자동 폴백으로 쓰지 않는다.** 리뷰는 기존처럼 Flash Medium으로 동작해야 한다. 로컬 서브 에이전트 방식 승인 유지. Claude/GPT-OSS 내부 자동 폴백·교차 계열 정책 변경은 하지 않음.
+  - **#830 현재 미커밋 변경(이 목록 보존)**: `master/agy_models.py`(신규) · `master/layer2_verify.py` · `master/work/usage.py` · `master/test_agy_models.py`(신규) · `master/test_usage_accounting.py` · `master/test_usage_cli_paths.py` · `master/test_usage_sink.py` · `master/test_review_runner.py` · `tests/integration/checks.json` · `master/README.md` · 보고서123(신규) · 이 인계. 기본 canonical `gemini-3.8-flash-medium`, catalog 사전검사·요청별 실제 모델 로그·프로세스 공용 cooldown·requested/actual/source 계측. Argon은 명시 model+allow_argon 두 조건일 때만 수동 허용. 모델 불일치의 rc0 본문도 사용 금지. 서비스 상태 파일은 `AX_PROJECTS_ROOT/.ax/agy/models.json`(쓰기 권한 대조 완료).
+  - 검증: 정책15/15·계측27/27·CLI51/51·sink35/35·리뷰68/68. standalone parser와 서비스 상태 경로 별도 통과. **Flash Medium 라이브1회** 요청=실제모델(로그), 입력18,978·출력290, **Argon0회**. 첫 CLI fixture cooldown 격리 실패는 사용자 승인으로 보완했다.
+  - **공식 실패 해소 (16:1x, Claude · 사용자 「가 부터 해」)**: `master/test_context_synth.py` `usage_run` 의 주입 자리를 `_run_rc` → `_run_raw`(4-튜플)로 옮기고 `agy_models._catalog_run` 을 가짜 카탈로그로, `AX_AGY_STATE_PATH` 를 사례별 임시 파일로 격리(테스트만 수정, 제품 코드 무변경). 해당 파일 235/235 · **공식 168/168 OK**(175초, rc0). 이 파일도 #830 미커밋 목록에 더한다.
+  - **사용자 확대 지시(그대로 이어받음)**: 「인프라 서버 말고 워커 BC250, .2 PC와 메인 작업 PC(.33)도 변경되어야해」. 마스터만 수정하고 끝내면 안 된다. 워커/요청자 배달·실행 경로는 **아직 구현하지 않음**. `bundle.config_for`의 `backends`에 agy bool만 있음 → 모델 필드 배달·대조, ax-work 직접 agy 명령(.43 포함), Windows `session1_conductor.py:197-198` relay, `gemini_report.py` 리서치 경로까지 반영해야 한다. 후보는 공용 default→config `backends.agy_model`→각 `--model`; 설계 미확정. 홈 설정을 임시 원격 스크립트로 덮지 말고 기존 배달 계약으로 한다. `agy_models.py`는 현재 fcntl/Linux 전용이므로 Windows에 그대로 배달 금지. gemini_report heartbeat/원본/log회복/remote계측 계약 보존, 서버 whitelist도 확인. 읽기 조사만 했고 이 파일들은 변경하지 않았다.
+  - **실행 중 작업 없음**: 공식 검사 종료, Flash 호출 종료, 서브 에이전트 중단. 에이전트 실행 ID를 이어받지 말고 위 파일·검사 결과로 복원한다. #830 커밋·푸시·배달·서비스 재기동 **미승인·미실행**(앞선 #799 승인을 재사용하지 않음). #830 Redmine 진행 유지. 근거 **`reports/123-agy-explicit-model-policy.md`**.
+
+- **직전 체크포인트: 2026-10-18 04:00 · Claude · 세션 마감 — #815 ④ 리뷰 큐 4절 배포 · agy 모델 별칭 함정(#830) · Argon 리뷰 품질 대조 · 문서 최신화**.
   - HEAD `main` 7b244ba(push · 배달 3/3 · `ax-task-queue` 03:06:30 · `ax-projects` 03:06:35 재기동) + 이 인계·보고서 122·문서 최신화. 마스터 담당 `codex`·워커 모드 `codex` 미변경.
   - `7b244ba` 리뷰 큐 「## 4. 골조 지시 이행」 — 지워진 [PSEUDO] 가 있는 커밋에만, R 항목(intent) → /fixes·기각 후보, 주간 플랜 제외, 없는 커밋 프롬프트 바이트 동일. 한국어 문구 미실측.
   - 🔴 **agy 는 모델 이름이 별칭이다** — agy 로그 `model alias "Gemini 3.6 Flash (High)" resolved to "Gemini 4 Argon (Medium)"`(10-17 10:08~). 우리 자동 경로가 Argon 으로 돌았고 내 측정이 Argon 주간 한도를 소진(~10-24 회복). 한도는 모델 묶음별. **설정은 지금 `Gemini 3.8 Flash (Medium)`**(High 는 리뷰 240초 초과) — 백업 `~/.gemini/antigravity-cli/settings.json.bak-model-20261018-*`. 리뷰 큐 대기 0(R162 처리 확인). #830 등록(모델 명시·agy 내 모델 폴백·모델별 쿨다운·별칭 해석 검사·Argon 은 비교 전용).
