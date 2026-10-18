@@ -80,9 +80,37 @@ def test_prompt_places_it_last() -> None:
           "DECL" not in G.build_prompt(context="M", instruction="T"))
 
 
+def test_shared_ctx_attributes_are_not_followed() -> None:
+    """`#834` — pyflakes 가 공유 ast ctx 싱글턴에 붙인 속성을 복사가 따라가지 않는다."""
+    import ast
+
+    class Boom:
+        def __deepcopy__(self, memo):
+            raise RuntimeError("dictionary changed size during iteration")
+
+    src = ("import os\nX: int = 1\n\nclass A:\n    def __init__(self):\n        self.v = os.sep\n\n"
+           "    def f(self, a: int = 2) -> str:\n        return str(a)\n\n\ndef g(x):\n    y = x\n    return y\n")
+    want = D.python_declarations(src, filename="m.py")
+    store = ast.parse("x = 1").body[0].targets[0].ctx
+    load = ast.parse("x").body[0].value.ctx
+    for ctx in (store, load):
+        ctx._pyflakes_parent = Boom()
+    try:
+        got = D.python_declarations(src, filename="m.py")
+        check("공유 ctx 에 터지는 속성이 붙어도 선언 추출이 끝난다", True)
+        check("  결과가 같다", got == want, got)
+        check("  본문은 생략된다", "return y" not in got and "def g(x):" in got, got)
+    except RuntimeError as e:
+        check("공유 ctx 에 터지는 속성이 붙어도 선언 추출이 끝난다", False, str(e))
+    finally:
+        for ctx in (store, load):
+            ctx.__dict__.pop("_pyflakes_parent", None)
+
+
 def main() -> int:
     for fn in (test_render_states_the_rule, test_missing_is_never_silent, test_budget,
-               test_read_only, test_prompt_places_it_last):
+               test_read_only, test_prompt_places_it_last,
+               test_shared_ctx_attributes_are_not_followed):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_declarations: {PASS}/{total} 통과")

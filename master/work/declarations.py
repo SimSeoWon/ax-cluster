@@ -27,7 +27,6 @@
 from __future__ import annotations
 
 import ast
-import copy
 import pathlib
 
 from dataclasses import dataclass, field
@@ -207,16 +206,41 @@ def _parse_python(source: str, filename: str):
         raise DeclError(f"Python 기준 선언 파싱 실패: {filename}:{e.lineno}: {e.msg}") from e
 
 
+def _clone(node):
+    """노드를 `_fields`·`_attributes` 만 따라 복제한다 (`#834`).
+
+    🔴 `copy.deepcopy` 를 쓰지 않는다. CPython 의 `ast.Load`/`ast.Store` 는 프로세스 전역 싱글턴이고,
+    층1 이 같은 프로세스에서 pyflakes 를 돌리면 그 싱글턴에도 `_pyflakes_parent` 를 붙인다. deepcopy 는
+    그 속성을 따라 **다른 조각의 트리 전체**를 복사하다가, 병렬 조각의 pyflakes 가 노드에 속성을 붙이는
+    순간 `dictionary changed size during iteration` 으로 죽었다(실측 2026-10-18, #831 work).
+    ctx 는 복사하지 않고 그대로 공유한다 — `ast.parse` 가 하는 것과 같다.
+    """
+    if isinstance(node, ast.expr_context):
+        return node
+    if isinstance(node, ast.AST):
+        new = type(node)()
+        for name in node._fields:
+            if hasattr(node, name):
+                setattr(new, name, _clone(getattr(node, name)))
+        for name in node._attributes:
+            if hasattr(node, name):
+                setattr(new, name, getattr(node, name))
+        return new
+    if isinstance(node, list):
+        return [_clone(item) for item in node]
+    return node
+
+
 def _declare(nodes, *, in_class: bool = False, keep_assign: bool = False) -> list:
     """선언 노드만 남긴다. `keep_assign` 은 이름으로 고른 대입(소문자 포함)을 살린다."""
     out = []
     for node in nodes:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            signature = copy.deepcopy(node)
+            signature = _clone(node)
             signature.body = [ast.Expr(value=ast.Constant(value=Ellipsis))]
             out.append(signature)
         elif isinstance(node, ast.ClassDef):
-            cls = copy.deepcopy(node)
+            cls = _clone(node)
             fields = {}
             for method in node.body:
                 if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
