@@ -335,6 +335,12 @@ journalctl -u ax-indexer -n 30 --no-pager                # push → 트윈 성�
 자료를 대조한다. 현재 단계에서 검색 가중치·형태소 분석기·trigram·별칭을 자동 조정하지 않는다.
 보존·배포 후 확인 방법은 [온보딩 런북](docs/14-onboarding-runbook.md#rag-검색-로그-확인)을 참고한다.
 
+## 운영 문서 최신화
+
+등록한 README·CLAUDE·AGENTS·온보딩·인수인계 문서는 `master.doc_sync`의
+**계획 → LLM 수정안 → 검증·승인 적용**으로 갱신한다. 원문·근거·등록 목록을 대조하며
+보호 문서에는 별도 승인이 필요하다. [등록 목록과 사용법](docs/document-sync.md)을 참고한다.
+
 ## MCP 도구 (Claude·Codex가 쓰는 창구)
 
 `ax-projects`(8103) 하나가 작업장의 단일 창구다. [중요] **개수는 여기 적지 않는다** —

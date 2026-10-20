@@ -29,6 +29,7 @@ MCP가 없으면 같은 정본 `work.conductor.snapshot()`·`set_worker()`를 �
 
 | 파일 | 내용 |
 |---|---|
+| `doc_sync/` | 등록 운영 문서 최신화(`#838`). `plan`은 문서·정본·근거를 읽기 전용으로 수집하고, `draft`는 기존 계측 LLM 경로로 인용·diff가 있는 수정안을 저장한다. `apply`는 현재 입력 재검증 후 승인 ID만 적용한다. CLAUDE·AGENTS 보호·심볼릭 링크·반복 적용을 검사한다. [사용법](../docs/document-sync.md) |
 | `skills/ax-handoff/SKILL.md` | 마스터 인수인계 복원·실제 상태/승인 대조·마스터 담당과 워커 모드 구분. Claude/Codex 홈은 같은 정본을 참조 |
 | `skills/ax-mode/SKILL.md` | 워커 지휘자 선택. MCP와 동일한 준비 검사·저장·재조회 호출을 사용 |
 | `work/mode.py` | `lane`/`claude`/`codex` 저장값과 실제 선택 출처 관리. 명시 인자·환경변수가 저장값보다 우선 |

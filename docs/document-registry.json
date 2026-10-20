@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "id": "readme",
+      "path": "README.md",
+      "role": "프로젝트 개요·기능·사용법",
+      "protected": false,
+      "instructions": "현재 구현된 기능과 사용법을 설명한다. 진행 항목·완료율은 Redmine으로 연결하고 추정하지 않는다. 역사적 실측은 현재 상태와 구분한다.",
+      "evidence": ["master/webui/nav.py", "master/webui/rag_logs.py", "master/doc_sync/__main__.py"]
+    },
+    {
+      "id": "modules",
+      "path": "master/README.md",
+      "role": "모듈 역할과 호출 계약 색인",
+      "protected": false,
+      "instructions": "실제 모듈·함수·CLI를 근거로 설명한다. 검증되지 않은 기능을 있다고 적지 않는다.",
+      "evidence": ["master/context_search/search_log.py", "master/doc_sync/__init__.py", "master/doc_sync/__main__.py"]
+    },
+    {
+      "id": "onboarding",
+      "path": "docs/14-onboarding-runbook.md",
+      "role": "프로젝트·워커 온보딩 실행 절차",
+      "protected": false,
+      "instructions": "계획·실행·배달·운영 반영의 차이와 기존 승인 절차를 유지한다. 문서 검증 목적으로 명령을 실행하지 않는다.",
+      "evidence": ["master/client/__main__.py", "master/client/spec.py", "master/doc_sync/__main__.py"]
+    },
+    {
+      "id": "claude",
+      "path": "CLAUDE.md",
+      "role": "저장소 자동 로드 운영 지침",
+      "protected": true,
+      "instructions": "기존 사용자 결정·승인·실패 중단 규칙과 AX-ENTRY-MARK를 보존한다. 확인 안 된 정책을 새로 만들지 않는다.",
+      "evidence": ["docs/orchestrator-rules.md", "master/skills/distribute/SKILL.md"]
+    },
+    {
+      "id": "agents",
+      "path": "AGENTS.md",
+      "role": "저장소 Codex 진입 지침",
+      "protected": true,
+      "instructions": "AX-ENTRY-MARK와 사용자 결정·정본 경로를 보존한다. 공용 지침과 도구별 지침을 혼동하지 않는다.",
+      "evidence": ["docs/orchestrator-rules.md", "master/skills/ax-handoff/SKILL.md"]
+    },
+    {
+      "id": "home-claude",
+      "path": "machines/sim-desktop.md",
+      "role": "홈 CLAUDE.md 심볼릭링크의 기계별 정본",
+      "protected": true,
+      "instructions": "홈 심볼릭링크와 기계별 사용자 결정을 보존한다. 실제 도구·명령 근거 없이 정책을 바꾸지 않는다.",
+      "evidence": ["master/skills/ax-handoff/SKILL.md", "master/skills/ax-mode/SKILL.md"]
+    },
+    {
+      "id": "home-agents",
+      "path": "machines/sim-desktop-agents.md",
+      "role": "홈 AGENTS.md 심볼릭링크의 기계별 정본",
+      "protected": true,
+      "instructions": "홈 심볼릭링크·AX-ENTRY-MARK·경로 확인 두 단계·기존 사용자 승인 규칙을 보존한다.",
+      "evidence": ["master/skills/ax-handoff/SKILL.md", "master/skills/distribute/SKILL.md"]
+    },
+    {
+      "id": "handoff",
+      "path": "docs/orchestrator-handoff.md",
+      "role": "현재 운영·승인·검증·다음 작업의 체크포인트",
+      "protected": false,
+      "instructions": "최신 체크포인트만 필요한 근거로 갱신하고 과거 이력은 보존한다. 입력에 최신 Redmine·배포·검증 근거가 없으면 해당 상태를 추정하지 말고 unchanged로 남긴다.",
+      "evidence": ["master/skills/ax-handoff/SKILL.md", "docs/orchestrator-rules.md"]
+    }
+  ]
+}

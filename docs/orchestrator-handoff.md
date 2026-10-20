@@ -1,6 +1,17 @@
 # 현재 AX 작업 인수인계
 
-- **최신 체크포인트: 2026-10-21 · Codex · #837 배포·운영 확인 완료 → 실사용 로그 수집 단계 · 문서 보완 및 #838 등록**.
+- **최신 체크포인트: 2026-10-21 · Codex · #838 로컬 1차 구현·검증·실제 LLM 사본 드라이런 완료, 커밋 승인됨 · 스킬/MCP 미연결**.
+  - 사용자가 앞선 문서 전부 커밋 및 #838 착수를 지시했고 로컬 Codex 서브 에이전트 방식을 선택했다. 문서 5파일은 **`16d6b16` 커밋 완료**. HEAD main은 origin/main `a341819`보다 1커밋 앞이며 문서 커밋은 아직 푸시·배포하지 않았다. 이번 신규 #838 구현과 기록은 별도 미커밋이다. 코드 커밋·푸시·배포를 새로 승인받은 것으로 넓히지 않는다.
+  - #838: Python 등록 목록·근거 수집→LLM 수정안→검증/승인 적용 기능. `master/doc_sync/{__init__,__main__,registry,draft,apply}.py`, `docs/document-registry.json`, `docs/document-sync.md`, 테스트 4개와 공식 목록, README 2개, 이 인계서·리포트가 대상이다. 운영 CLAUDE·AGENTS 원본은 수정하지 않았다. 세 로컬 에이전트는 편집·리뷰 종료했고 현재 실행 중인 검사·LLM·파견은 없다.
+  - CLI: `.venv/bin/python -B -m master.doc_sync plan`(읽기 전용), `draft --project AXCluster --id <id> --out <새수정안JSON>`(LLM 작성·원본 불변), `apply --artifact <JSON>`(미리보기), `apply ... --confirm --approve <id>`(명시 적용). draft에는 `AX_PROJECTS_ROOT=/home/sim/ax-cluster` 필요. 보호 문서 적용은 기존 사람 동의 후 `--allow-protected`도 필요하다. 실제 사용법은 `docs/document-sync.md`를 읽는다.
+  - 기본 등록8개: README·모듈 안내·온보딩·저장소 CLAUDE/AGENTS·홈 지침 정본2개·인계서. 실제 plan에서 목록·정본 확인. 최신 운영 상태·Redmine을 자동으로 조회하는 기능은 없으며, 등록한 근거에 없으면 추정하지 않는다.
+  - LLM 실행: 공용 `work.usage.call`은 읽기 전용 workdir를 받지 않아 그보다 아래의 확인된 공용 `layer2_verify.call_codex_why(workdir=임시디렉토리)`와 기존 사용량 파서/기록기를 재사용한다. 첫 구현은 codex만 지원, read-only 강제·자동 폴백/재시도 없음. 파일은 Python만 승인범위에서 쓴다.
+  - 검증: 신규 직접 실행 **29/29**(등록6·생성9·적용9·CLI5), pyflakes 경고0·diff check 통과. 공식 목록에4개 추가하여 **178/178 rc0**. 통합 실행 중 실제 호출 격리를 보완했고 생성/CLI 14건과 pyflakes를 별도 재검증했다. 읽기 전용 보조 통합 리뷰 중요결함0이며 별도 층2 판정으로 주장하지 않는다.
+  - 실제 Codex 드라이런: `/tmp/ax-838-live-7wu00v19/`의 이전 README 사본·현재 실제 CLI 소스에서 사용법7줄 추가 diff 생성. `proposal.json` 인용과 소스를 대조하고 미리보기→사본 승인 적용→재적용 changed=[] 확인, 모두 rc0. 운영 원본의 자동 적용은 미실행. usage source=doc-sync 1건·rc0, 입력28303/출력428/캐시읽기12288, 비용 미상. 원본 로그·정본 홈 링크는 보존.
+  - 근거: `reports/126-document-sync.md`. [#838](http://192.168.0.57:8080/issues/838)은 진행 상태에 구현·검사·실증을 기록한다. 이후 사용자 「응 커밋하자」로 신규16파일 커밋을 승인했다. 이 체크포인트를 포함하는 실제 커밋 해시는 Git 기록으로 확인한다. 아직 스킬·MCP 연결은 없고 CLI뿐이다. 서버 재기동만으로 「문서 최신화 해」가 연결되지는 않는다. 다음 후보는 기존 CLI를 호출하는 스킬 또는 MCP 연결과 그 자연어 경로 실증이다. 연결 구현·푸시·배포를 이 질문만으로 자동 승인받은 것으로 해석하지 않는다. 실제 보호 문서 변경은 수정안 검토·동의 없이 진행하지 않는다.
+  - #837은 `a341819` 배포·ax-projects 재기동·운영 HTTP 확인 후 완료·100%다. **RAG는 계속 실사용 로그 수집 단계**이며 한글 적중률 판정·검색 설정 변경은 착수하지 않는다. 마스터 담당/워커 전역 codex 선택 유지, 기존 work 스탬프는 변경하지 않았다.
+
+- **이전 체크포인트: 2026-10-21 · Codex · #837 배포·운영 확인 완료 → 실사용 로그 수집 단계 · 문서 보완 및 #838 등록**.
   - HEAD `main a341819` = origin/main. #837 구현 27파일을 커밋·푸시했다. 마운트 AXCluster. 이번 후속 문서 보완은 **미커밋 5파일**: `README.md`, `master/README.md`, `docs/14-onboarding-runbook.md`, `docs/orchestrator-handoff.md`, `reports/research/2026-10-20-837-fix-plan.md`. 코드 수정은 없다. 문서 커밋·푸시·재배포는 이번 요청에서 실행하지 않았다. dirty 상태를 배포 상태로 오인하지 않는다.
   - 완료 정본: [#837](http://192.168.0.57:8080/issues/837) **완료·100%**, 노트·상태 되읽기 확인. 공식 통합 174/174, 연결·화면 50/50, 전수 직접 실행 178파일 rc0. 마지막 미사용 import 제거 뒤 해당 검사·pyflakes와 전수 실행 통과. 기존 index.py·synth.py 경고는 범위 밖 보존.
   - 배포: `master.client update`로 `.43`·`.2`·`.33` 배달 및 파일 대조 3/3. 최초 최종 check는 마스터 ax-projects 신선도에서 rc1 → 보고 → 사용자 「재기동해줘!」 승인 → `scripts/ax-service-restart ax-projects`로 **2026-10-21 00:04:45 KST active/running·success** → `master.client check AXCluster` **rc0·3/3**. 이 서비스 신선도 실패는 해소됐다.
