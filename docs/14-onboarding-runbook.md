@@ -179,6 +179,13 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update --all   # 등록 
 `config.json`의 `checkout.branch`는 해당 프로젝트 레지스트리의 기본 브랜치를 따른다(`#260`).
 배달은 체크아웃 안의 `.agents/skills`와 `.codex/config.toml`도 구성·대조한다(`#699`).
 홈의 동명 스킬만 있는 상태를 정상 배달로 판단하지 않는다.
+`check`는 그 밖에도 네 가지를 대조한다.
+- Windows에서는 Python 절대경로를 확인한다. 경로를 못 찾았으면 Codex 로컬 도구를 실행할 수 없으므로 실패다.
+- 워커 클론이 원격에서 지운 브랜치의 원격추적 ref를 남기지 않는지 본다(`fetch_prune`, `#787`).
+- 워커의 agy 호출이 `--model`로 넘길 정본 id가 배달됐는지 본다(`#830`).
+- `~/.agents/skills`에 남은 우리 이름의 홈 중복 스킬은 실패로 치지 않는다. 프로젝트 로컬 정본이 우선하므로 `[주의]`로만 보고한다.
+
+한 대만 먼저 보거나 사람 기계를 빼려면 `probe`·`plan`·`deliver`·`check`에 `--host=<ip>`를 준다(`#407`). 값은 레지스트리의 호스트와 정확히 일치해야 한다. 모르는 호스트를 주면 0대에 조용히 배달하지 않고 거절한다.
 소스 동기화와 payload 배달은 별도다. 작업장 소스가 `main`·clean인지 확인하고
 `fetch → merge --ff-only`로 승인된 커밋을 맞춘 뒤 배달 출처와 함께 대조한다.
 

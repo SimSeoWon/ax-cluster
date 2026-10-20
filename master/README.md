@@ -29,7 +29,7 @@ MCP가 없으면 같은 정본 `work.conductor.snapshot()`·`set_worker()`를 �
 
 | 파일 | 내용 |
 |---|---|
-| `doc_sync/` | 등록 운영 문서 최신화(`#838`). `plan`은 문서·정본·근거를 읽기 전용으로 수집하고, `draft`는 기존 계측 LLM 경로로 인용·diff가 있는 수정안을 저장한다. `apply`는 현재 입력 재검증 후 승인 ID만 적용한다. CLAUDE·AGENTS 보호·심볼릭 링크·반복 적용을 검사한다. [사용법](../docs/document-sync.md) |
+| `doc_sync/` | 등록 운영 문서 최신화(`#838`). `plan`은 문서·정본·근거를 읽기 전용으로 수집하고, `draft`는 기존 계측 LLM 경로로 인용·diff가 있는 수정안을 저장한다. `apply`는 현재 입력 재검증 후 승인 ID만 적용한다. CLAUDE·AGENTS 보호·심볼릭 링크·반복 적용을 검사한다. `python -m master.doc_sync plan\|draft\|apply`(기본 등록목록 `docs/document-registry.json`). `draft`는 `--project`(사용량을 기록할 마운트된 프로젝트)와 `--out`을 받는다. `--out`은 아직 없는 파일이어야 하고 등록목록·문서·근거 파일을 덮을 수 없다. 레인은 `--lane codex\|claude`이며 자동 폴백은 없다. 응답을 해석하지 못하면 원문을 `<out>.raw.txt`에 남긴다. `apply`는 `--confirm`·`--approve <id>`가 없으면 미리보기만 하고, 보호 문서에는 `--allow-protected`가 필요하다. LLM은 파일을 쓰지 않으며 자동 커밋·배포·서비스 재기동은 없다. [사용법](../docs/document-sync.md) |
 | `skills/ax-handoff/SKILL.md` | 마스터 인수인계 복원·실제 상태/승인 대조·마스터 담당과 워커 모드 구분. Claude/Codex 홈은 같은 정본을 참조 |
 | `skills/ax-mode/SKILL.md` | 워커 지휘자 선택. MCP와 동일한 준비 검사·저장·재조회 호출을 사용 |
 | `work/mode.py` | `lane`/`claude`/`codex` 저장값과 실제 선택 출처 관리. 명시 인자·환경변수가 저장값보다 우선 |
