@@ -843,5 +843,30 @@
     "path": "master/test_winsession.py",
     "count_pattern": "(?m)^OK test_winsession: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
+  },
+  {
+    "path": "master/test_rag_trace.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_rag_callers.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_rag_logs_page.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_rag_routes.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_rag_request_flow.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
   }
 ]

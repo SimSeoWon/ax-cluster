@@ -96,7 +96,9 @@ def main() -> None:
     client_mcp.HTTP_TIMEOUT = HTTP_TIMEOUT_SEC          # 위 상수의 근거 참조
     try:
         got = client_mcp.tool_search_context(
-            client_mcp.projects_api(cwd), query, n=N_RESULTS)
+            client_mcp.projects_api(cwd), query, n=N_RESULTS,
+            task_type="automatic_edit_hint", caller="domain_hint",
+            session_id=str(data.get("session_id") or ""))
     except Exception as e:                              # noqa: BLE001
         # [주의] 첫 줄만 — `[미연결]` 안내는 여러 줄이고, 편집마다 도는 자리다
         print(f"[도메인 힌트] {str(e).splitlines()[0]}", file=sys.stderr)

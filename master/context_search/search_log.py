@@ -1,70 +1,18 @@
-"""검색 로그 — 원전 `mcp/context_search/cs_common.py` 의 `_log_search` 계열 이식
-(소 3.4.5 · `#193`, 2026-08-14).
+"""RAG 요청 추적 (#837).
 
-    detect_lang            질의 언어 휴리스틱 (ko/en/mixed/other) — 원전 그대로
-    build_result_details   채널별 rank·score 추출 — [중요] `Hit` **필드**를 직접 읽는다
-    log_search             한 줄 append (+ 회전) — [중요] 검색을 절대 막지 않는다
-    read_entries           소비자용 로더 (분석기 `#161` 가 쓴다)
-
-## [중요] 왜 이제 이식하나 — 보류였고, 그 보류를 푸는 근거가 셋 생겼다
-
-`search.py` 머리말이 이식 당시 적어 뒀다: *"검색 로그(`_log_search`, caller/session_id/
-work_id) → §5.2-D 로 별도 판단 (감사 계층)"*. **누락이 아니라 의도적 보류**였다. 푸는 근거:
-
-    ① 우리 코드가 이미 요청하고 있다 — `bm25.py`: *"이 규칙은 질의 3개로 정했다. 표본이
-       얇다 — `search_log.jsonl` 이 쌓이면…"*
-    ② `#161`(원전 `search_log_analyzer` 696줄)의 **입력**이다. 없으면 입력 없는 배치가 된다
-    ③ 사용자 지시 2026-08-14: *"작동하는 상태를 만들어야 **실증 로그를 심어서** 문제가 될
-       것이 있는지 보고 개선할 게 있는지 찾지"*
-
-## [중요] 원전과 다르게 둔 것 둘 — 근거가 있다
-
-**① 조용히 실패하지 않는다.** 원전은 `_log_search` 와 `_rotate_search_log` 둘 다
-`except Exception: pass` 다. **fail-open 자체는 옮긴다** — 로그가 검색을 막으면 그건 더 나쁘다.
-하지만 **소리 없이는 안 된다**: 중 4.2 에서 σ 감사(원전 `.claude/reviews/_silent_failure/`)를
-이식했고 그 기준이 *"조용한 실패는 결함"* 이다. 그래서 실패를 **반환값으로 돌려주고**
-(σ 기준: *"예외를 값으로 돌려주면 조용하지 않다"*) 호출자가 무시할지 고른다.
-
-**② 위치가 프로젝트 밖이다.** 원전은 `<프로젝트>/.claude/search_log.jsonl` 이지만 §5.5 가
-*"데이터를 프로젝트 밖으로"* 로 확정했다 → `<프로젝트 데이터>/search_log.jsonl`.
-[중요] 그리고 이것은 **관측 기록이라 파생물이 아니다** — canary(`permanent_loss.jsonl`)와 같은 결로
-지우면 복구되지 않는다. 청소 대상에 넣지 말 것.
-
-## [주의] `Hit.to_dict()` 로는 스키마를 채울 수 없다
-
-`to_dict()` 는 `bm25_score`·`vector_rank`·`bm25_rank` 를 **버린다**(응답 축소용). 원전
-`result_details` 는 그 셋이 본체다 — 채널 기여도 비교가 목적이므로 **필드를 직접 읽는다.**
-`to_dict()` 로 적으면 분석기의 채널 분해가 조용히 전부 비게 된다.
-
-## [중요] 어디서 기록하나 — 표면 전수 (2026-08-14 census)
-
-기준 하나: **사람·에이전트가 던진 질의만 기록한다.** 기계가 스스로 만든 질의를 섞으면 분포가
-오염되고, 채널 튜닝의 근거가 오염된 분포 위에 서게 된다. 원전도 `combined_search`(MCP·HTTP
-표면) 에서만 기록하고 `watcher/context.py` 는 기록하지 않는다.
-
-| 자리 | 성격 | 기록 |
-|---|---|---|
-| `projects/mcp_server.search_context_tool` | 사람·에이전트 질의 (MCP) | [완료] |
-| `webui/routes.api_search` | 사람 질의 (웹 UI) | [완료] |
-| `projects/mcp_server.resolve_terms_tool` | 시소러스 해소 — *"이 표현이 어느 클래스냐"* | [실패] 질의가 아니다 |
-| `work/register.py` · `work/manifest.py` | 파이프라인 내부 수집 | [실패] 기계 생성 |
-| `context_synth/synth.py` | 컨텍스트 합성 | [실패] 기계 생성 (원전도 안 한다) |
-
-[주의] **처음엔 MCP 한 곳만 심었다.** 서비스 재기동을 검증하려다 `api_search` 를 발견했다 —
-원전은 **양쪽**에서 기록하므로 한쪽만 심으면 로그가 표면에 따라 편향된다. [중요] **이식을
-「한 자리에 넣었다」로 끝내지 말고 원전이 부르는 자리를 전수로 세라** — census 가 있는 이유다.
-
-## 기록만 해 둔 개선 후보 (사용자 지시: 개선은 기록만)
-
-- `query_used`(시소러스 확장·`focus()` 적용 **후**의 질의) 를 한 필드 더 싣기. 우리 `focus()` 는
-  대괄호 밖을 **버리므로** 원전보다 질의가 크게 바뀐다 — 시소러스 갭 분석에 유용할 수 있다.
-  [중요] 원전에 없는 필드라 지금은 넣지 않는다.
+모든 검색은 분류와 원문 출처를 기록한다. 날짜별 search_logs/*.jsonl은 누적
+관측 원본이며 삭제 회전하지 않는다. search_log.jsonl은 기존 분석기용 최근 캐시다.
+사용자 원문은 확보된 값만 기록하며 검색 질의로 대체하지 않는다.
 """
 from __future__ import annotations
 
 import json
 import re
 import threading
+import fcntl
+from contextlib import contextmanager
+from contextvars import ContextVar
+from uuid import uuid4
 from datetime import datetime
 from pathlib import Path
 
@@ -76,6 +24,62 @@ _LATIN_RE = re.compile(r"[A-Za-z]")
 # 원전 Phase η.12.16 — 같은 파일에 동시 append 하면 줄이 겹칠 수 있다. `ax-projects` 도
 # uvicorn **단일 프로세스**이므로 프로세스 내 락으로 충분하다(워커를 늘리면 무효 — 늘리지 않는다).
 _lock = threading.Lock()
+
+
+_context = ContextVar("rag_search_context", default=None)
+_suppressed = ContextVar("rag_search_suppressed", default=False)
+
+
+def current_context() -> dict:
+    return dict(_context.get() or {})
+
+
+@contextmanager
+def search_context(**metadata):
+    """원문/작업 분류를 하위 검색에 전달하고 종료 후 원래 컨텍스트를 복구한다."""
+    context = current_context()
+    context.update(metadata)
+    context["request_id"] = context.get("request_id") or uuid4().hex
+    token = _context.set(context)
+    try:
+        yield context
+    finally:
+        _context.reset(token)
+
+
+@contextmanager
+def suppress_logging():
+    """융합 검색 안의 벡터 호출을 중복 기록하지 않는다."""
+    token = _suppressed.set(True)
+    try:
+        yield
+    finally:
+        _suppressed.reset(token)
+
+
+def logging_suppressed() -> bool:
+    return _suppressed.get()
+
+
+def _field(hit, key, default=None):
+    return hit.get(key, default) if isinstance(hit, dict) else getattr(hit, key, default)
+
+
+def _snapshot(hits):
+    out = []
+    for rank, hit in enumerate(hits, 1):
+        out.append({
+            "rank": rank, "file_id": _field(hit, "file_id"),
+            "source": _field(hit, "source", "vector"),
+            "rrf_score": _field(hit, "rrf_score"),
+            "similarity": _field(hit, "similarity", _field(hit, "score")),
+            "bm25_score": _field(hit, "bm25_score"),
+            "vector_rank": _field(hit, "vector_rank"),
+            "bm25_rank": _field(hit, "bm25_rank"),
+            "excerpt": _field(hit, "excerpt", ""),
+            "meta": _field(hit, "meta", {}),
+        })
+    return out
 
 
 def detect_lang(query: str) -> str:
@@ -109,18 +113,18 @@ def build_result_details(hits) -> list[dict]:
     details = []
     for h in hits or []:
         d = {
-            "file": getattr(h, "file_id", None),
-            "source": getattr(h, "source", None),
-            "rrf_score": round(getattr(h, "rrf_score", 0.0) or 0.0, 6),
+            "file": _field(h, "file_id", None),
+            "source": _field(h, "source", None),
+            "rrf_score": round(_field(h, "rrf_score", 0.0) or 0.0, 6),
         }
-        if getattr(h, "vector_rank", None) is not None:
-            d["vec_rank"] = h.vector_rank
-        if getattr(h, "bm25_rank", None) is not None:
-            d["bm25_rank"] = h.bm25_rank
-        if getattr(h, "similarity", 0):
-            d["similarity"] = round(h.similarity, 4)
-        if getattr(h, "bm25_score", None) is not None:
-            d["bm25_score"] = round(h.bm25_score, 4)
+        if _field(h, "vector_rank", None) is not None:
+            d["vec_rank"] = _field(h, "vector_rank")
+        if _field(h, "bm25_rank", None) is not None:
+            d["bm25_rank"] = _field(h, "bm25_rank")
+        if _field(h, "similarity", 0):
+            d["similarity"] = round(_field(h, "similarity"), 4)
+        if _field(h, "bm25_score", None) is not None:
+            d["bm25_score"] = round(_field(h, "bm25_score"), 4)
         details.append(d)
     return details
 
@@ -138,59 +142,72 @@ def log_path_for(paths) -> Path:
 
 def log_search(paths, *, query: str | None = None, hits=None,
                caller: str | None = None, session_id: str | None = None,
-               work_id: str | None = None) -> dict:
-    """검색 한 건을 기록한다. **반환값으로만** 성패를 말한다 — 예외를 올리지 않는다.
-
-    [중요] **로그가 검색을 막아선 안 된다**(원전의 fail-open 을 옮긴다). 다만 원전처럼 조용히
-    삼키지는 않는다 — `{"ok": False, "reason": …}` 을 돌려주므로 호출자가 무시할지 고른다
-    (σ 기준: *"예외를 값으로 돌려주면 조용하지 않다"*).
-
-    스키마는 원전 그대로다:
-
-        ts · results · zero_hit(2건 미만일 때만) · query · lang · result_details
-        caller · session_id · work_id
-
-    [주의] `results`(파일 목록)는 원전이 스스로 *"자동 승급은 영구 비활성이라 회귀 호환 목적만"*
-    이라 적어 뒀지만 **스키마는 그대로 둔다** — 분석기가 그 필드를 읽는다.
-    """
+               work_id: str | None = None, query_expanded: str | None = None,
+               query_used: str | None = None, duration_ms: float | None = None,
+               generation: str | None = None, error: str | None = None,
+               **metadata) -> dict:
+    """날짜별 원본과 기존 최근 로그에 기록한다. 실패는 반환값으로 관측한다."""
     hits = list(hits or [])
-    if query is None and not hits:
+    if query is None and not hits and error is None:
         return {"ok": False, "reason": "질의도 결과도 없다 — 기록할 것이 없다", "written": False}
-
-    payload: dict = {
-        "ts": datetime.now().isoformat(),
-        "results": [getattr(h, "file_id", None) for h in hits],
+    context = current_context()
+    context.update(metadata)
+    now = datetime.now().astimezone()
+    origin = context.get("user_request")
+    missing = origin is None or origin == ""
+    payload = {
+        **context,
+        "schema_version": 2, "ts": now.isoformat(),
+        "project": getattr(paths, "name", ""),
+        "request_id": context.get("request_id") or uuid4().hex,
+        "search_id": uuid4().hex,
+        "task_type": context.get("task_type") or "unclassified",
+        "user_request": origin,
+        "user_request_missing": missing,
+        "user_request_source": "missing" if missing else context.get("user_request_source", "provided"),
+        "query": query, "lang": detect_lang(query or ""),
+        "query_expanded": query_expanded if query_expanded is not None else query,
+        "query_used": query_used if query_used is not None else query,
+        "results": [_field(h, "file_id") for h in hits],
+        "result_details": build_result_details(hits),
+        "result_snapshot": _snapshot(hits),
+        "status": "error" if error is not None else ("success" if hits else "empty"),
+        "error": error, "duration_ms": duration_ms, "generation": generation,
     }
-    # [중요] 원전 Phase η.12.5 — 2건 미만일 때만 명시한다. *"0건 검색어를 모아 시소러스 후보를
-    #    제안"* 하는 배치의 입력 신호이고, 과거엔 2건 미만을 통째로 스킵해 그 데이터가
-    #    전혀 쌓이지 않는 갭이었다.
     if len(hits) < 2:
         payload["zero_hit"] = len(hits) == 0
-    if query is not None:
-        payload["query"] = query
-        payload["lang"] = detect_lang(query)
-    if hits:
-        payload["result_details"] = build_result_details(hits)
-    for k, v in (("caller", caller), ("session_id", session_id), ("work_id", work_id)):
-        if v is not None:
-            payload[k] = v
-
+    for key, value in (("caller", caller), ("session_id", session_id), ("work_id", work_id)):
+        if value is not None:
+            payload[key] = value
     p = log_path_for(paths)
+    archive = p.parent / "search_logs" / f"{now.date().isoformat()}.jsonl"
     try:
         line = json.dumps(payload, ensure_ascii=False)
-    except (TypeError, ValueError) as e:
-        return {"ok": False, "reason": f"직렬화 실패: {e}", "written": False}
-
+    except (TypeError, ValueError) as exc:
+        return {"ok": False, "reason": f"직렬화 실패: {exc}", "written": False}
+    written = False
     try:
         with _lock:
             p.parent.mkdir(parents=True, exist_ok=True)
-            with open(p, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
-            rot = rotate(p)
-    except OSError as e:
-        # [중요] fail-open — 검색은 이미 끝났고 사용자는 결과를 받아야 한다.
-        return {"ok": False, "reason": f"기록 실패: {e}", "written": False}
-    return {"ok": True, "written": True, "path": str(p), "rotated": rot.get("removed", 0)}
+            # CLI와 서비스 사이에도 원본 append 및 최근 캐시 회전을 직렬화한다.
+            with (p.parent / ".search-log.lock").open("a") as lockfile:
+                fcntl.flock(lockfile.fileno(), fcntl.LOCK_EX)
+                archive.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open("a", encoding="utf-8") as stream:
+                    stream.write(line + "\n")
+                written = True
+                with p.open("a", encoding="utf-8") as stream:
+                    stream.write(line + "\n")
+                rot = rotate(p)
+                if not rot["ok"]:
+                    return {"ok": False, "written": True, "reason": rot["reason"],
+                            "search_id": payload["search_id"]}
+    except OSError as exc:
+        return {"ok": False, "reason": f"기록 실패: {exc}", "written": written,
+                "search_id": payload["search_id"]}
+    return {"ok": True, "written": True, "path": str(archive),
+            "search_id": payload["search_id"], "request_id": payload["request_id"],
+            "rotated": rot.get("removed", 0)}
 
 
 def rotate(p: Path) -> dict:
@@ -233,3 +250,61 @@ def read_entries(paths, *, limit: int = 0) -> list[dict]:
         if isinstance(rec, dict):
             out.append(rec)
     return out[-limit:] if limit else out
+
+
+def _all_entries(paths):
+    """누적 원본과 도입 전 최근 로그를 합치되 신규 search_id 중복을 제거한다."""
+    p = log_path_for(paths)
+    files = [p] + sorted((p.parent / "search_logs").glob("????-??-??.jsonl"))
+    seen = set()
+    entries = []
+    for file in files:
+        if not file.is_file():
+            continue
+        for line in file.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            key = rec.get("search_id")
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            entries.append(rec)
+    return entries
+
+
+def list_entries(paths, *, task_type='', query='', request_id='', status='',
+                 date_from='', date_to='', offset=0, limit=50):
+    """웹UI 조회. status=missing_origin은 실제 원문 미수집 요청만 고른다."""
+    entries = []
+    needle = query.casefold()
+    for rec in _all_entries(paths):
+        if task_type and rec.get("task_type", "unclassified") != task_type:
+            continue
+        if request_id and rec.get("request_id") != request_id:
+            continue
+        if status == "missing_origin":
+            if not rec.get("user_request_missing", not rec.get("user_request")):
+                continue
+        elif status and rec.get("status") != status:
+            continue
+        day = rec.get("ts", "")[:10]
+        if date_from and day < date_from or date_to and day > date_to:
+            continue
+        if needle and not any(needle in str(rec.get(key) or '').casefold()
+                              for key in ("query", "query_expanded", "query_used", "user_request")):
+            continue
+        entries.append(rec)
+    entries.sort(key=lambda rec: (rec.get("ts", ""), rec.get("search_id", "")), reverse=True)
+    offset = max(0, int(offset))
+    limit = min(200, max(1, int(limit)))
+    return {"items": entries[offset:offset + limit], "total": len(entries),
+            "offset": offset, "limit": limit}
+
+
+def get_entry(paths, search_id):
+    return next((rec for rec in _all_entries(paths) if rec.get("search_id") == search_id), None)

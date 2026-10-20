@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .paths import ProjectPaths
+from .search_log import search_context
 
 # object yaml 의 `aliases:` 블록. PyYAML 없이 읽는다 — 원본도 수제 리더를 쓴다
 # (`ontology_md_parse.py`), 프론트매터 생성 쪽과 짝이 맞춰져 있어서다.
@@ -246,7 +247,9 @@ def candidates_for(paths: ProjectPaths, term: str, *, searcher=None,
     # ② 검색 상위 문서가 지목한 협력 클래스 — 한글 별칭은 대개 여기서 잡힌다
     if searcher is not None and len(out) < limit:
         try:
-            for hit in searcher.search(term, limit=3):
+            with search_context(task_type="thesaurus_resolution", caller="thesaurus"):
+                hits = searcher.search(term, limit=3)
+            for hit in hits:
                 rc = (hit.meta or {}).get("related_classes") or ""
                 for name in [x.strip() for x in str(rc).split(",") if x.strip()]:
                     if name not in seen and len(out) < limit:

@@ -204,7 +204,9 @@ def attach(paths: ProjectPaths, *, classes: list | None = None, stem: str = "",
 
     finder = search or domain_index.search_norms
     try:
-        hits = finder(paths, query, top_k=top_k)
+        from ..context_search.search_log import search_context
+        with search_context(task_type="work_preparation", caller="work_norms"):
+            hits = finder(paths, query, top_k=top_k)
     except Exception as e:                              # noqa: BLE001 — 등록을 막지 않는다
         b.degraded.append(f"규범 검색 실패: {type(e).__name__}: {e}")
         return b

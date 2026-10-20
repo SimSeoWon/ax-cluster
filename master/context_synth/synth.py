@@ -40,6 +40,7 @@ from pathlib import Path
 
 from .. import source_text
 from ..context_search.paths import ProjectPaths
+from ..context_search.search_log import search_context
 from ..graph import class_graph as cg, dependency as dep, parse as gparse
 from ..work.generate import DEFAULT_BROKER, GenerateError, call_broker, unload_model
 from . import md as md_mod, prompt as prompt_mod, verify as verify_mod
@@ -423,8 +424,11 @@ def collect_related(paths: ProjectPaths, key: str, files: list[str], existing: s
         if existing:
             query += " " + md_mod.strip_comments(existing).strip()[:prompt_mod.RELATED_QUERY_BODY]
         self_doc = f"{key}.md"
-        for hit in searcher.search(query, limit=prompt_mod.RELATED_LIMIT + 1,
-                                   excerpt=prompt_mod.RELATED_EXCERPT):
+        with search_context(task_type="context_synthesis", caller="context_synth",
+                            context_key=key):
+            hits = searcher.search(query, limit=prompt_mod.RELATED_LIMIT + 1,
+                                   excerpt=prompt_mod.RELATED_EXCERPT)
+        for hit in hits:
             if hit.file_id == self_doc:
                 continue
             # [중요] **요약 절로 한정한다** (사용자 확정 2026-08-08).

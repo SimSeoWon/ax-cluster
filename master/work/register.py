@@ -524,8 +524,13 @@ def register_work(
     if not specs:
         raise RegisterError("등록할 태스크가 없다")
     _check_targets(paths, specs, target_check)
-    _prep = _prepare_specs(specs, paths=paths, make_skeleton=make_skeleton,
-                           gate=gate, heuristics=heuristics)
+    from ..context_search.search_log import search_context
+    # 실제 전달 인자만 원문으로 기록한다. 제목/조각 명세로 빈 원문을 채우지 않는다.
+    with search_context(task_type="work_preparation", caller="work_register",
+                        user_request=original_request or None,
+                        user_request_source="provided" if original_request else "missing") as trace:
+        _prep = _prepare_specs(specs, paths=paths, make_skeleton=make_skeleton,
+                               gate=gate, heuristics=heuristics)
     post = poster or (lambda u, p: _post(u, p, token=token))
     # [중요] **주입된 큐가 PATCH 도 받는다** — `carrier="AUTO"` 와 같은 관례다. poster 를 주입한
     #    것은 "큐가 가짜다" 라는 뜻이고, 그때 실 HTTP 로 나가면 테스트가 마스터를 두드린다.
@@ -564,10 +569,11 @@ def register_work(
     #    work 이 `in_progress` 로 남았고, 다음 세션이 그것을 「이미 등재돼 있다」로 읽었다.
     #    지울 수 없으면 **종결시킨다** — 열려 있지만 않으면 다음 실행을 오염시키지 않는다.
     try:
-        return _register_after_create(
-            work_id, specs, paths=paths, target_branch=target_branch, queue_url=queue_url,
-            token=token, post=post, patcher=patcher,
-            require_base=require_base, **_prep)
+        with search_context(**{**trace, "work_id": work_id}):
+            return _register_after_create(
+                work_id, specs, paths=paths, target_branch=target_branch, queue_url=queue_url,
+                token=token, post=post, patcher=patcher,
+                require_base=require_base, **_prep)
     except BaseException as e:                              # noqa: BLE001
         # [중요] **보상 취소는 「내가 만든 work」에만 한다** — 등재는 방금 만든 work 이라
         #    여기서 닫아도 남의 산출물이 죽지 않는다. 개선요청(`improve_work`)은 **닫지 않는다.**

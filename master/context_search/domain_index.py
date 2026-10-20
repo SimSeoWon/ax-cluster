@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -370,6 +372,43 @@ def _vector_hits(paths: ProjectPaths, query: str, limit: int) -> list:
 
 def search_norms(paths: ProjectPaths, query: str, *, top_k: int = DEFAULT_TOP_K,
                  threshold: float = SIMILARITY_THRESHOLD) -> list:
+    """독립 도메인 검색도 공통 요청 문맥과 결과·실패 로그를 남긴다."""
+    from . import search_log
+    from .expand import expand_for
+
+    context = search_log.current_context()
+    started = time.monotonic()
+    hits = []
+    expanded = query
+    error = None
+    with search_log.search_context(
+            task_type=context.get("task_type") or "work_preparation",
+            caller=context.get("caller") or "domain_norms"):
+        try:
+            expanded = expand_for(paths, query).query
+            hits = _search_norms(paths, expanded, top_k=top_k, threshold=threshold)
+            return hits
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            snapshots = [{**hit, "file_id": hit["domain"],
+                          "excerpt": hit.get("preview", ""),
+                          "meta": {key: hit[key] for key in
+                                   ("domain", "path", "tier", "collaborates_with")
+                                   if key in hit}}
+                         for hit in hits]
+            logged = search_log.log_search(
+                paths, query=query, query_expanded=expanded, query_used=expanded,
+                hits=snapshots, error=error,
+                duration_ms=(time.monotonic() - started) * 1000)
+            if not logged.get("ok"):
+                print(f"[검색 로그] 도메인 검색 기록 실패: {logged.get('reason', '')}",
+                      file=sys.stderr)
+
+
+def _search_norms(paths: ProjectPaths, query: str, *, top_k: int,
+                  threshold: float) -> list:
     """질의 → 관련 도메인 규범. [중요] **노이즈 3중 차단**(모듈 독스트링 참조).
 
     반환 항목에는 `path` 가 있다 — 호출자가 필요할 때 본문을 직접 읽으라는 뜻이고,
@@ -379,9 +418,6 @@ def search_norms(paths: ProjectPaths, query: str, *, top_k: int = DEFAULT_TOP_K,
     # `ContextSearch.search()` 에만 붙였더니 「다이얼로그 매니저」가 엉뚱한 도메인을 1위로
     # 냈다(AlphaCoreGameFramework 1.500 → 확장하면 MissionSystemTools 5.233). 매니페스트의
     # 규범 채널이 이 함수를 쓰므로, 여기서 빠지면 **코드 생성이 틀린 규범을 받는다.**
-    from .expand import expand_for
-    ex = expand_for(paths, query)
-    query = ex.query
     pool = max(top_k * 3, 5)
     hits = _bm25_hits(paths, query, pool)
     # ① [중요] BM25 0건이면 끝. 도메인은 광범위 신호라 정확 매칭이 있어야 의미가 있다.
@@ -409,8 +445,9 @@ def search_norms(paths: ProjectPaths, query: str, *, top_k: int = DEFAULT_TOP_K,
         e["rrf_score"] = round(rrf, 6)
         e["source"] = ("vector+bm25" if "_v" in e and "_b" in e
                        else "bm25" if "_b" in e else "vector")
-        e.pop("_v", None)
-        e.pop("_b", None)
+        for private, public in (("_v", "vector_rank"), ("_b", "bm25_rank")):
+            if private in e:
+                e[public] = e.pop(private)
         man = paths.ontology / "domains" / e["domain"] / "domain.yaml"
         e["path"] = str(man)
         data = yaml_io.read(man) if man.is_file() else None

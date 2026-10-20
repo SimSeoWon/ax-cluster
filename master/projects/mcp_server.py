@@ -458,7 +458,9 @@ def mark_not_a_class_tool(term: str) -> str:
 
 
 @mcp.tool()
-def search_context_tool(query: str, limit: int = 8) -> str:
+def search_context_tool(query: str, limit: int = 8, *, task_type: str = "",
+                        user_request: str | None = None, request_id: str = "",
+                        session_id: str = "", work_id: str = "") -> str:
     """[중요] **검색 입구는 이것 하나다.** 대괄호 해석 → 시소러스 확장 → 검색을 한 번에 한다.
 
     작업장의 Claude 는 이 도구만 부르면 된다. 순서를 스스로 조립할 필요가 없다 —
@@ -470,6 +472,10 @@ def search_context_tool(query: str, limit: int = 8) -> str:
           ③ 아는 별칭을 질의에 덧붙임 → "미션시스템 완료 연출 UAlphaManager_Mission"
           ④ 벡터+BM25 융합 검색
 
+    사용자 명령으로 검색하면 task_type='user_command', user_request에는 실제 명령을
+    요약하지 않고 그대로 넣는다. 같은 명령의 후속 검색에는 반환 request_id를 재사용한다.
+    자동 리뷰 등은 task_type='automatic_review'처럼 작업을 분류하고 원문을 만들지 않는다.
+
     반환에 `ask` 가 있으면 **그 문장을 사용자에게 그대로 물어라.** 답을 받으면
     `add_alias_tool(클래스, 표현)` 으로 등록한다 — 다음 검색부터 자동 확장된다.
     클래스가 아니라고 하면 `mark_not_a_class_tool(표현)`.
@@ -478,8 +484,22 @@ def search_context_tool(query: str, limit: int = 8) -> str:
     등록은 **검색을 막지 않는다.** 모르는 별칭이 있어도 결과는 그대로 돌려준다 —
     사람을 기다리는 인프라를 만들지 않는다(§2).
     """
+    # #837: user_request is the original command, never a paraphrase of query.
+    # Native MCP callers supply it explicitly; only input hooks can mark it captured.
+    from ..context_search import search_log
+    with search_log.search_context(caller="mcp_direct", task_type=task_type or "unclassified",
+                                   user_request=user_request,
+                                   user_request_source="provided" if user_request is not None else "missing",
+                                   request_id=request_id, session_id=session_id, work_id=work_id,
+                                   llm_query=query):
+        return _search_context(query, limit)
+
+
+def _search_context(query: str, limit: int) -> str:
+    paths = None
+    searcher = None
     try:
-        from ..context_search import search_log, thesaurus as th
+        from ..context_search import thesaurus as th
         from ..context_search.paths import resolve as resolve_paths
         from ..context_search.search import focus, open_search
 
@@ -497,7 +517,7 @@ def search_context_tool(query: str, limit: int = 8) -> str:
         #    기록하는 질의는 **받은 그대로**(`query`)다 — 원전 `combined_search` 가 확장 전
         #    파라미터를 넘기는 것과 같다. 기록 실패는 **검색을 막지 않는다**(fail-open)지만
         #    조용하지도 않다 — 응답의 `logged` 로 나간다.
-        logged = search_log.log_search(paths, query=query, hits=hits, caller="mcp_direct")
+        logged = getattr(searcher, "last_log_result", {"ok": False})
 
         return json.dumps({
             "ok": True,
@@ -515,9 +535,17 @@ def search_context_tool(query: str, limit: int = 8) -> str:
             "hits": [h.to_dict() for h in hits],
             # [주의] 기록이 실패하면 사유를 그대로 실어 보낸다 — 조용히 사라지지 않게.
             "logged": logged.get("ok", False),
+            "search_id": logged.get("search_id"),
+            "request_id": logged.get("request_id"),
             **({"log_error": logged.get("reason", "")} if not logged.get("ok") else {}),
         }, ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
+        if paths is not None and not getattr(searcher, "last_log_result", None):
+            from ..context_search import search_log
+            logged = search_log.log_search(paths, query=query, error=f"{type(e).__name__}: {e}")
+            if not logged.get("ok"):
+                import logging
+                logging.getLogger(__name__).error("RAG log write failed: %s", logged.get("reason"))
         return _fail(e)
 
 

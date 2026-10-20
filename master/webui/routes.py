@@ -161,7 +161,13 @@ _RETIRED_WRITE_CSS = (
 def context_server_html() -> bytes:
     """원전 `web_ui.py` 의 HTML. [중요] 파일은 손대지 않고 **좌측 목록으로 감싼다**."""
     from .web_ui_original import WEB_UI_HTML
-    return wrap_side_nav(WEB_UI_HTML, "/",
+    # 실제 입력값을 trim된 검색 질의와 별도로 보존한다. 원전 자산 파일은 변경하지 않는다.
+    body = WEB_UI_HTML.replace(
+        "const body = { query, n_results: n };",
+        "const body = { query, n_results: n, task_type: 'user_search', caller: 'web_ui', "
+        "user_request: document.getElementById('searchQuery').value, "
+        "user_request_source: 'captured_web_input' };")
+    return wrap_side_nav(body, "/",
                          _CONTEXT_SHELL_CSS + _RETIRED_WRITE_CSS).encode("utf-8")
 
 
@@ -608,7 +614,7 @@ def _search_row(paths, h) -> dict:
     }
 
 
-def api_search(paths, query: str, limit: int = 5) -> dict:
+def api_search(paths, query: str, limit: int = 5, *, trace=None) -> dict:
     """융합 검색(벡터+BM25). [중요] 우리 `ContextSearch` 를 그대로 쓴다.
 
     [중요] **여기도 기록한다** (소 3.4.5). 원전은 MCP(`search_tools.py`)와 **HTTP
@@ -620,16 +626,34 @@ def api_search(paths, query: str, limit: int = 5) -> dict:
     **클라이언트가 신고**하는데(`req.caller`, 기본 None) 우리 webui 는 in-process 호출이라
     신고할 주체가 없다. 표면을 못 가르면 이 필드의 존재 의미가 없으므로 값을 준다.
     """
+    from ..context_search import search_log
+    context = dict(trace or {})
+    context.setdefault("caller", "web_ui")
+    context.setdefault("task_type", "unclassified")
+    with search_log.search_context(**context):
+        return _api_search(paths, query, limit)
+
+
+def _api_search(paths, query: str, limit: int) -> dict:
+    from ..context_search import search_log
+    searcher = None
     try:
         from ..context_search import ContextSearch
-        hits = ContextSearch(paths).search(query, limit=max(1, min(50, limit)))
+        searcher = ContextSearch(paths)
+        hits = searcher.search(query, limit=max(1, min(50, limit)))
     except Exception as e:                                   # noqa: BLE001
-        return {"error": f"{type(e).__name__}: {e}", "results": []}
-    # [중요] 검색 뒤에 기록한다 — 실패하면 기록할 것이 없고, 기록은 검색을 막지 않는다.
-    from ..context_search import search_log
-    search_log.log_search(paths, query=query, hits=hits, caller="web_ui")
+        logged = (getattr(searcher, "last_log_result", None) if searcher is not None else None)
+        if logged is None:
+            logged = search_log.log_search(paths, query=query, error=f"{type(e).__name__}: {e}")
+        return {"error": f"{type(e).__name__}: {e}", "results": [],
+                "logged": logged.get("ok", False), "search_id": logged.get("search_id"),
+                "request_id": logged.get("request_id")}
+    logged = getattr(searcher, "last_log_result", {})
     return {"query": query, "count": len(hits),
-            "results": [_search_row(paths, h) for h in hits]}
+            "results": [_search_row(paths, h) for h in hits],
+            "logged": logged.get("ok", False), "search_id": logged.get("search_id"),
+            "request_id": logged.get("request_id"),
+            **({"log_error": "검색 로그 기록 실패"} if not logged.get("ok") else {})}
 
 
 def api_context_doc(paths, file: str) -> tuple:

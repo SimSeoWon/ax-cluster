@@ -134,6 +134,14 @@ def main() -> None:
         # [주의] 배달 전 체크아웃에서는 조용히 넘어간다 — 이 훅의 문제가 아니다
         print(f"[분산 작업] 점검 못 함 — {e}")
         return
+    if data.get("hook_event_name") == "UserPromptSubmit" and isinstance(data.get("prompt"), str):
+        try:
+            captured = client_mcp.capture_rag_request(cwd, data)
+            if captured:
+                print("[RAG 요청] 사용자 입력 원문을 보관했다. 이 명령의 search_context 호출에 "
+                      f"request_id={captured['request_id']}를 전달한다. 원문을 재작성하지 않는다.")
+        except (OSError, ValueError, TypeError, AttributeError) as e:
+            print(f"[RAG 요청] 사용자 원문 보관 실패: {type(e).__name__}")
     try:
         from axmaster import utf8                           # noqa: PLC0415
         utf8.enforce()

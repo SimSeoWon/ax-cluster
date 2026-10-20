@@ -41,7 +41,7 @@ def test_single_file_stdlib_only():
     src = Path(M.__file__).read_text(encoding="utf-8")
     tree = ast.parse(src)
     STDLIB = {"json", "sys", "urllib", "urllib.error", "urllib.request", "pathlib",
-              "__future__", "os", "importlib", "importlib.util"}
+              "__future__", "os", "importlib", "importlib.util", "uuid"}
     bad = []
     for n in ast.walk(tree):
         if isinstance(n, ast.Import):
@@ -492,7 +492,6 @@ def test_live_state_is_never_cached():
     M.dispatch_tool("list_works", {}, api=api, cache=cache)
     M.dispatch_tool("get_work", {"work_id": "w"}, api=api, cache=cache)
     check("[중요] 큐 조회가 캐시에 아무것도 적재하지 않았다", cache.puts == [], str(cache.puts))
-    import ast as _ast
     src = Path(M.__file__).read_text(encoding="utf-8")
     for fn in ("tool_list_works", "tool_get_work"):
         seg = src[src.index(f"def {fn}"):]

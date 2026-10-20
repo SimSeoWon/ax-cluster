@@ -9,7 +9,7 @@
     ⑤ 회전 — 최대 건수를 넘으면 **최신**을 남긴다
     ⑥ 깨진 줄이 있어도 나머지를 읽는다
     ⑦ 위치가 프로젝트 **밖**이다 (§5.5)
-    ⑧ [중요] 표면 census — MCP·웹UI **양쪽**이 기록하고, 기계 생성 질의는 기록하지 않는다
+    ⑧ 요청 분류 및 사용자 원문/LLM 질의 분리 (#837)
 
 `.venv/bin/python master/test_search_log.py`
 """
@@ -138,13 +138,29 @@ def test_write_failure_is_not_silent():
     """[중요] 원전은 `except Exception: pass` 다 — 우리는 값으로 돌린다."""
     with tempfile.TemporaryDirectory() as tmp:
         p = _paths(tmp)
-        # 로그 경로 자리에 **디렉토리**를 놓아 쓰기를 실패시킨다
+        # 원본 선기록 후 최근 캐시만 실패한 경우를 구분한다.
         lp = SL.log_path_for(p)
         lp.parent.mkdir(parents=True, exist_ok=True)
         lp.mkdir()
         r = SL.log_search(p, query="x", hits=[Hit()])
         check("④ [중요] 실패가 조용하지 않다", not r["ok"] and bool(r.get("reason")), str(r))
-        check("④ 예외를 올리지 않았다 (fail-open)", r.get("written") is False, str(r))
+        check("④ 캐시 실패 전 원본은 기록됐다", r.get("written") is True, str(r))
+        archives = list((lp.parent / "search_logs").glob("*.jsonl"))
+        records = [json.loads(line) for archive in archives
+                   for line in archive.read_text(encoding="utf-8").splitlines()]
+        check("④ 캐시 실패에도 실제 원본 보존",
+              len(records) == 1 and records[0]["query"] == "x", str(records))
+    with tempfile.TemporaryDirectory() as tmp:
+        p = _paths(tmp)
+        lp = SL.log_path_for(p)
+        lp.parent.mkdir(parents=True, exist_ok=True)
+        # 원본 디렉터리 자리에 파일을 둬 원본 기록 자체를 실패시킨다.
+        (lp.parent / "search_logs").write_text("blocked", encoding="utf-8")
+        r = SL.log_search(p, query="x", hits=[Hit()])
+        check("④ 원본 기록 실패가 관측된다",
+              not r["ok"] and bool(r.get("reason")), str(r))
+        check("④ 원본 실패는 미기록으로 반환 (fail-open)",
+              r.get("written") is False and not lp.exists(), str(r))
 
 
 # ── ⑤⑥ 회전·복원력 ───────────────────────────────────────────────────────────
@@ -176,29 +192,20 @@ def test_broken_line_does_not_kill_the_read():
               [r["i"] for r in recs] == [1, 2], str(recs))
 
 
-def test_both_surfaces_are_instrumented():
-    """[중요] 표면 census 를 고정한다 — 원전은 MCP·HTTP **양쪽**에서 기록한다.
-
-    처음엔 MCP 한 곳만 심었고 재기동 검증 중에 `api_search` 를 발견했다. 배선이 조용히
-    빠지면 로그가 표면에 따라 **편향**되고, 그건 값이 없는 것보다 나쁘다(틀린 근거가 된다).
-    [주의] 소스 검사다 — 실행 경로가 아니라 **배선의 존재**를 잰다.
-    """
-    root = Path(__file__).resolve().parent
-    want = {
-        "projects/mcp_server.py": "mcp_direct",
-        "webui/routes.py": "web_ui",
-    }
-    for rel, caller in want.items():
-        src = (root / rel).read_text(encoding="utf-8")
-        check(f"⑧ {rel} 이 기록한다", "search_log.log_search(" in src, "호출이 없다")
-        check(f"⑧ {rel} 의 caller={caller}", f'caller="{caller}"' in src, "caller 가 다르다")
-
-    # [중요] 기계 생성 질의는 기록하지 않는다 — 섞이면 분포가 오염된다
-    #    (`webui/board.py` 는 `#812` 에서 관련 문서 검색과 함께 쓰기를 걷어 목록에서 뺐다)
-    for rel in ("context_synth/synth.py", "work/subbranch.py"):
-        src = (root / rel).read_text(encoding="utf-8")
-        check(f"⑧ {rel} 은 기록하지 않는다", "search_log.log_search(" not in src,
-              "기계 생성 질의가 로그에 섞인다")
+def test_request_classification_and_original():
+    """#837: 자동 검색도 분류해 기록하고 원문 부재를 질의로 채우지 않는다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        p = _paths(tmp)
+        with SL.search_context(task_type="automatic_review"):
+            SL.log_search(p, query="기계 검색어")
+        with SL.search_context(task_type="user_task", user_request="원래 명령",
+                               user_request_source="captured"):
+            SL.log_search(p, query="LLM 변환 질의")
+        auto, user = SL.read_entries(p)
+        check("⑧ 자동 검색 분류", auto["task_type"] == "automatic_review")
+        check("⑧ 원문 부재 명시", auto["user_request_missing"] and auto["user_request"] is None)
+        check("⑧ 실제 원문 보존", user["user_request"] == "원래 명령")
+        check("⑧ LLM 질의 별도 보존", user["query"] == "LLM 변환 질의")
 
 
 def main() -> int:
@@ -206,7 +213,7 @@ def main() -> int:
                test_log_writes_schema, test_zero_hit_only_below_two,
                test_nothing_to_log_is_a_fact, test_write_failure_is_not_silent,
                test_rotation_keeps_newest, test_broken_line_does_not_kill_the_read,
-               test_both_surfaces_are_instrumented):
+               test_request_classification_and_original):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_search_log: {PASS}/{total} 통과")

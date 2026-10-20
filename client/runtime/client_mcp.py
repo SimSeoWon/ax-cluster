@@ -885,12 +885,54 @@ def tool_mark_not_a_class(api, term: str, *, project: str = "") -> dict:
     return api("POST", "/api/v1/thesaurus/not-a-class", payload)
 
 
-def tool_search_context(papi, query: str, tags=None, n: int = 5, *, cache=None) -> dict:
+def capture_rag_request(root: Path, data: dict) -> dict | None:
+    """실제 UserPromptSubmit 입력을 요청별로 보관한다. 최신 파일 추측은 하지 않는다."""
+    if data.get("hook_event_name") != "UserPromptSubmit" or not isinstance(data.get("prompt"), str):
+        return None
+    from uuid import uuid4
+    record = {"request_id": uuid4().hex, "user_request": data["prompt"],
+              "user_request_source": "captured_client_input",
+              "session_id": str(data.get("session_id") or ""), "task_type": "user_command"}
+    directory = Path(root) / ".ax" / "rag_requests"
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / (record["request_id"] + ".json")
+    with target.open("x", encoding="utf-8") as stream:
+        json.dump(record, stream, ensure_ascii=False)
+    return record
+
+
+def rag_request_context(root: Path, request_id: str) -> dict:
+    """지정 요청 하나만 읽는다. 다른 세션이나 최근 명령으로 대체하지 않는다."""
+    from uuid import UUID
+    try:
+        key = UUID(request_id).hex
+    except (ValueError, AttributeError, TypeError):
+        return {}
+    path = Path(root) / ".ax" / "rag_requests" / (key + ".json")
+    if not path.is_file():
+        return {}
+    record = json.loads(path.read_text(encoding="utf-8"))
+    if (record.get("request_id") != key or not isinstance(record.get("user_request"), str)
+            or record.get("user_request_source") != "captured_client_input"):
+        raise ClientError("RAG 사용자 원문 기록 형식 오류")
+    return record
+
+
+def tool_search_context(papi, query: str, tags=None, n: int = 5, *, cache=None,
+                        task_type: str = "", user_request: str | None = None,
+                        request_id: str = "", session_id: str = "", work_id: str = "",
+                        caller: str = "client_mcp", user_request_source: str = "provided") -> dict:
     """통합 검색 — 8103 의 원전 라우트(`/api/v1/search/combined`) 프록시. 참조 지식이라
     [미연결] 시 마지막 정상 응답으로 폴백한다(`_stale` 표기)."""
     if not (query or "").strip():
         raise ClientError("query 가 비었다")
     payload = {"query": query.strip(), "n": max(1, int(n))}
+    payload.update(caller=caller, task_type=task_type or "unclassified")
+    for key, value in (("request_id", request_id), ("session_id", session_id), ("work_id", work_id)):
+        if value:
+            payload[key] = value
+    if user_request is not None:
+        payload.update(user_request=user_request, user_request_source=user_request_source)
     if tags:
         payload["tags"] = list(tags)
     key = "search/combined?" + json.dumps(payload, ensure_ascii=False, sort_keys=True)
@@ -1111,12 +1153,20 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["work_id"],
                      "properties": {"work_id": {"type": "string"}}}},
     {"name": "search_context",
-     "description": "마스터 RAG 통합 검색 (읽기 전용 · 한국어 질의 가능). 마스터 미연결이면 "
-                    "마지막 정상 응답을 _stale 표기로 준다 — _stale 이 보이면 낡은 값이다.",
+     "description": "마스터 RAG 통합 검색. 사용자 명령 작업이면 task_type=user_command와 "
+                    "실제 명령 원문 user_request(요약 금지)를 보낸다. 입력 훅이 알려준 request_id가 "
+                    "있으면 그것을 전달하면 캡처한 원문이 자동 연결된다. 같은 명령의 검색은 request_id를 "
+                    "재사용한다. 자동 리뷰는 automatic_review 등으로 분류하고 원문을 만들지 않는다. "
+                    "마스터 미연결이면 마지막 정상 응답에 _stale을 표시한다.",
      "inputSchema": {"type": "object", "required": ["query"],
                      "properties": {"query": {"type": "string"},
                                     "tags": {"type": "array", "items": {"type": "string"}},
-                                    "n": {"type": "integer", "description": "결과 수 (기본 5)"}}}},
+                                    "n": {"type": "integer", "description": "결과 수 (기본 5)"},
+                                    "task_type": {"type": "string"},
+                                    "user_request": {"type": "string", "description": "사용자가 쓴 실제 명령 원문, 요약 금지"},
+                                    "request_id": {"type": "string"},
+                                    "session_id": {"type": "string"},
+                                    "work_id": {"type": "string"}}}},
     {"name": "list_domains",
      "description": "온톨로지 도메인 카탈로그 (읽기 전용 · _stale 폴백 있음).",
      "inputSchema": {"type": "object", "properties": {}}},
@@ -1604,8 +1654,15 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
         if name == "get_task_template":
             return tool_get_task_template(pa, str(args.get("task_type") or ""), cache=c)
         if name == "search_context":
+            trace = {key: args[key] for key in
+                     ("task_type", "user_request", "request_id", "session_id", "work_id") if key in args}
+            captured = rag_request_context(root or Path.cwd(), str(args.get("request_id") or ""))
+            if captured:
+                if "user_request" in trace and trace["user_request"] != captured["user_request"]:
+                    raise ClientError("RAG 사용자 원문이 캡처한 입력과 다르다")
+                trace.update(captured)
             return tool_search_context(pa, str(args.get("query") or ""),
-                                       tags=args.get("tags"), n=args.get("n") or 5, cache=c)
+                                       tags=args.get("tags"), n=args.get("n") or 5, cache=c, **trace)
         if name == "list_domains":
             return tool_list_domains(pa, cache=c)
         if name == "get_domain_layer":

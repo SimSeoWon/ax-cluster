@@ -23,6 +23,10 @@
 from __future__ import annotations
 
 import re
+import time
+import logging
+
+from . import search_log
 
 from dataclasses import dataclass, field
 
@@ -160,19 +164,37 @@ class ContextSearch:
         `pool` 은 융합 **전** 각 채널에서 가져올 후보 수다. `limit` 과 같게 두면 한 채널에만
         잡힌 문서가 잘려 나가 융합의 의미가 줄어든다 — 기본값을 넉넉히(`limit*3`) 잡는다.
         """
-        if not query.strip():
-            return []
-        # [중요] 시소러스 확장 (소 2.2.1) — 한글 말을 실제 식별자로 잇는다. 원본은 지우지 않고
-        #    **덧붙이기만** 한다. 무엇을 붙였는지는 `last_expansion` 에 남는다 — 조용히
-        #    질의를 바꾸면 결과가 이상할 때 사람이 색인이나 가중치를 의심한다.
-        from .expand import expand_for
-        ex = expand_for(self.paths, query)
-        self.last_expansion = ex
-        q = focus(ex.query)
-        n = pool or max(limit * 3, 10)
-        vec = self.vector.search(q, limit=n, excerpt=excerpt)
-        kw = self.bm25.search(q, limit=n)
-        return fuse(vec, kw)[:limit]
+        started = time.monotonic()
+        hits = []
+        expanded = query
+        used = query
+        error = None
+        try:
+            if not query.strip():
+                return []
+            from .expand import expand_for
+            ex = expand_for(self.paths, query)
+            self.last_expansion = ex
+            expanded = ex.query
+            used = focus(expanded)
+            n = pool or max(limit * 3, 10)
+            with search_log.suppress_logging():
+                vec = self.vector.search(used, limit=n, excerpt=excerpt)
+            kw = self.bm25.search(used, limit=n)
+            hits = fuse(vec, kw)[:limit]
+            return hits
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            self.last_log_result = search_log.log_search(
+                self.paths, query=query, hits=hits, query_expanded=expanded,
+                query_used=used, generation=self.generation, error=error,
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+            if not self.last_log_result["ok"]:
+                logging.getLogger(__name__).error("RAG log write failed: %s",
+                                                self.last_log_result.get("reason"))
 
     def close(self) -> None:
         self.bm25.close()

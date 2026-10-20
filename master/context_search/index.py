@@ -16,6 +16,8 @@ Work 컬렉션에서 진행한 뒤 원자적으로 교체한다. 재색인 중�
 from __future__ import annotations
 
 import threading
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -121,6 +123,33 @@ class ContextIndex:
         return self._live.count()
 
     def search(self, query: str, limit: int = 8, *, excerpt: int = 400) -> list[dict]:
+        """직접 벡터 검색은 기록하고 융합 검색의 내부 호출은 중복 기록하지 않는다."""
+        from . import search_log
+
+        if search_log.logging_suppressed():
+            return self._search_with_retry(query, limit, excerpt=excerpt)
+        context = search_log.current_context()
+        started = time.monotonic()
+        hits = []
+        error = None
+        with search_log.search_context(caller=context.get("caller") or "vector_direct"):
+            try:
+                hits = self._search_with_retry(query, limit, excerpt=excerpt)
+                return hits
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+                raise
+            finally:
+                self.last_log_result = search_log.log_search(
+                    self.paths, query=query, query_used=query, hits=hits, error=error,
+                    generation=self.live_name,
+                    duration_ms=(time.monotonic() - started) * 1000)
+                if not self.last_log_result.get("ok"):
+                    print(f"[검색 로그] 벡터 검색 기록 실패: "
+                          f"{self.last_log_result.get('reason', '')}", file=sys.stderr)
+
+    def _search_with_retry(self, query: str, limit: int = 8, *,
+                           excerpt: int = 400) -> list[dict]:
         """Live 컬렉션에서 검색한다. **갱신 중에도 막히지 않는다.**
 
         🔴 [중요] **낡은 Chroma 핸들을 한 번 복구한다** (`#693`, 재현 2026-09-29). 오래 사는

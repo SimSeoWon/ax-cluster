@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 from urllib.parse import parse_qs, unquote
 
 from . import routes
@@ -31,7 +32,7 @@ from . import routes
 #    매번 하나를 빠뜨려 401/404 가 났다. **목록을 하나로 모으면 그 부류가 사라진다** —
 #    `viewer.Router` 와 `projects/__main__` 이 이 상수를 import 해서 쓴다.
 PREFIXES = ("/ontology", "/ontology-static", "/api/v1", "/cluster", "/onboarding",
-            "/commit-flow", "/reviews", "/usage")
+            "/commit-flow", "/reviews", "/usage", "/rag-logs")
 # 정확히 이 경로만(접두어가 아니라 완전 일치) 이 앱이 가져간다
 EXACT = ("/", "", "/cluster.html")
 
@@ -85,6 +86,51 @@ def _j(obj) -> bytes:
     return json.dumps(obj, ensure_ascii=False).encode("utf-8")
 
 
+def rag_paths(paths, project: str):
+    """로그 조회만 등록 프로젝트로 해석한다. 마운트 상태는 변경하지 않는다."""
+    from ..projects.config import Registry
+    from ..context_search.paths import resolve
+    if not project or project == getattr(paths, "name", ""):
+        # 주입된 활성 paths만으로도 조회할 수 있다. 목록은 선택적 보강이다.
+        try:
+            names = Registry.load().names
+        except Exception:
+            names = [getattr(paths, "name", "")]
+        return paths, names
+    reg = Registry.load()
+    if project not in reg.names:
+        raise ValueError("unknown project")
+    return resolve(project, registry=reg), reg.names
+
+
+def _public_rag_entry(entry):
+    """원본 로그는 유지하고 공개 응답에서 서버 메타·오류 경로를 제외한다."""
+    keys = ("schema_version", "ts", "project", "search_id", "request_id", "parent_search_id",
+            "session_id", "work_id", "task_type", "user_request", "user_request_missing",
+            "user_request_source", "llm_query", "query", "query_expanded", "query_used", "caller", "status",
+            "duration_ms")
+    result = {key: entry[key] for key in keys if key in entry}
+    for collection in ("result_snapshot", "result_details"):
+        if not isinstance(entry.get(collection), list):
+            continue
+        rows = []
+        for row in entry[collection]:
+            if not isinstance(row, dict):
+                continue
+            fields = ("rank", "file_id", "file", "source", "channel", "rrf_score", "score", "similarity",
+                      "bm25_score", "vector_rank", "bm25_rank", "excerpt", "content_preview", "body")
+            public = {key: row[key] for key in fields if key in row}
+            for key in ("file", "file_id"):
+                value = str(public.get(key, ""))
+                if value.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", value) or ".." in value.replace("\\", "/").split("/"):
+                    public[key] = "[비공개 경로]"
+            rows.append(public)
+        result[collection] = rows
+    if entry.get("status") == "error":
+        result["error"] = "search failed"
+    return result
+
+
 async def _read_body(receive) -> bytes:
     """요청 본문. [주의] `more_body` 를 끝까지 읽는다 — 한 번만 받으면 큰 본문이 잘린다."""
     buf = b""
@@ -115,6 +161,45 @@ class WebUI:
             return await _send(send, 400, b'{"error":"http only"}')
         method = scope.get("method", "GET").upper()
         path = scope.get("path", "")
+
+        if path in ("/rag-logs", "/rag-logs/", "/api/v1/rag-logs"):
+            if method != "GET":
+                return await _send(send, 405, _j({"error": "read-only method"}))
+            try:
+                query = parse_qs((scope.get("query_string") or b"").decode("utf-8", "replace"),
+                                 keep_blank_values=True)
+                keys = ("project", "start", "end", "query", "task_type", "status", "request_id", "search_id", "offset", "limit")
+                filters = {key: query[key][0] for key in keys if key in query}
+                paths, names = rag_paths(self._paths_fn(), filters.get("project", ""))
+                if path != "/api/v1/rag-logs":
+                    from . import rag_logs
+                    status, body = rag_logs.page(paths, filters, projects=names)
+                    return await _send(send, status, body, HTML)
+                from ..context_search import search_log
+                offset, limit = int(filters.get("offset", "0")), int(filters.get("limit", "50"))
+                if offset < 0 or not 1 <= limit <= 200:
+                    raise ValueError("invalid pagination")
+                for key in ("start", "end"):
+                    if filters.get(key):
+                        date.fromisoformat(filters[key])
+                if filters.get("start") and filters.get("end") and filters["start"] > filters["end"]:
+                    raise ValueError("invalid range")
+                if filters.get("search_id"):
+                    entry = search_log.get_entry(paths, filters["search_id"])
+                    if entry is None:
+                        return await _send(send, 404, _j({"error": "search log not found"}))
+                    report = {"item": _public_rag_entry(entry)}
+                else:
+                    report = search_log.list_entries(paths, task_type=filters.get("task_type", ""),
+                        query=filters.get("query", ""), request_id=filters.get("request_id", ""),
+                        status=filters.get("status", ""), date_from=filters.get("start", ""),
+                        date_to=filters.get("end", ""), offset=offset, limit=limit)
+                    report["items"] = [_public_rag_entry(entry) for entry in report["items"]]
+                return await _send(send, 200, _j(report))
+            except ValueError:
+                return await _send(send, 400, _j({"error": "invalid RAG log filters"}))
+            except Exception:
+                return await _send(send, 503, _j({"error": "RAG logs unavailable"}))
 
         if path in ("/usage", "/usage/", "/api/v1/usage"):
             if method != "GET":
@@ -316,7 +401,16 @@ class WebUI:
                 # 원전 계약: 빈 질의는 **문서 목록**이다 (`loadDocs`). 아래 검색은 융합이라
                 # 공백이면 0건이 나온다 — 계약을 지키려면 목록으로 답해야 한다.
                 return await _send(send, 200, _j(routes.api_documents(sp, n)))
-            return await _send(send, 200, _j(routes.api_search(sp, query, n)))
+            trace = {key: data[key] for key in
+                     ("task_type", "user_request", "user_request_source", "request_id",
+                      "session_id", "work_id", "caller")
+                     if key in data and isinstance(data[key], str)}
+            if trace:
+                trace["llm_query"] = query
+                result = routes.api_search(sp, query, n, trace=trace)
+            else:
+                result = routes.api_search(sp, query, n)
+            return await _send(send, 200, _j(result))
         # [중요] 게시판은 `_domains/*.md` 다 — 온톨로지 YAML 이 아니다(`board.py` 머리말)
         from . import board
         if path == "/api/v1/domains":

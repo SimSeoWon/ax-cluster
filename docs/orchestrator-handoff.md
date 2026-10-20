@@ -1,5 +1,76 @@
 # 현재 AX 작업 인수인계
 
+- **최신 체크포인트: 2026-10-21 · Codex · #837 보완·검증 완료, 사용자 커밋·배포 승인**.
+  - 이전 10-18 기록의 미승인·미수정 항목은 아래 최신 결과로 대체한다. 최초 수정 24파일에 계획 파일과 추가 승인된 회귀 테스트 2개를 더한 **27파일**이 이번 커밋 대상이다. 시작 HEAD `main 9bd40dc`; 이 체크포인트를 포함하는 실제 커밋은 Git 기록으로 조회한다.
+  - 테스트 4개 sys.path·미사용 import 2건, 자동합성 원문 표시·51건 이상 오래된 검색 상세·규범 채널 순위·날짜 표기를 보완했다. 추가 발견한 메뉴 기대값, uuid 허용 목록, 기존 미사용 `_ast` import도 각각 실패 보고 후 사용자 승인으로 수정했다.
+  - 검증: 신규 5파일 직접 실행 모두 통과(4/10/9/5/5건), 연결·화면 회귀 50/50, 공식 통합 174/174 rc0. `_ast` 제거 뒤 해당 MCP 검사 199/199와 pyflakes rc0. 전수 직접 실행은 샌드박스 소켓 차단 후 승인된 좁은 스크립트로 재실행하여 **178파일 rc0·실패0** 확인. 기존 index.py·synth.py 경고는 범위 밖 보존.
+  - 실제 MCP 검색 드라이런 결과3건과 저장 로그·현재 코드 ASGI 목록/상세/API 200을 대조했다. request_id `2b234c66441c4e0081490778be5fd033`, search_id `0bf526daced14607ad8e9cf76ae925ad`. 원문·결과·점수 일치. 배포 서비스/브라우저 실증은 아직 별도다. 상세: `reports/research/2026-10-20-837-fix-plan.md` 실행 기록.
+  - 마스터 담당은 사용자 시작 지시로 실제 인수 후 **codex** 기록 완료(2026-10-20 23:37:33 KST). 워커 전역 codex 선택 유지, 기존 work 스탬프는 변경하지 않았다. 로컬 에이전트 두 개 편집 종료.
+  - 사용자 「응 그럼 커밋하고 배포하자」 승인으로 커밋·origin 푸시·마운트된 프로젝트 `master.client update` 순서로 진행한다. 배포는 깨끗한 트리에서 수행하고, 이 문서 작성 시점에는 아직 배포 결과가 없다. 서비스 재기동은 별도 승인, #837 완료 종결도 운영 확인 후 판단한다.
+  - 원문 자동 캡처는 Claude UserPromptSubmit 경로뿐이며 Codex/native MCP는 실제 원문 명시 전달로 검증했다. 모든 CLI 자동 캡처 완성으로 주장하지 않는다. 검색 알고리즘·pooling·재색인·형태소 분석기 등은 수정하지 않았다.
+
+- **현재 체크포인트: 2026-10-18 · Codex · #837 RAG 연결 로그/웹UI 구현 중단 · 사용자 「토큰이 없다 인수인계서만 써」**.
+  - HEAD **`main` `9bd40dc`**, origin/main과 같음. 아래 구현은 **미커밋**이며 보존한다. 마운트 **AXCluster**. 워커 전역 모드 **codex**로 사용자 지시 변경·준비 검사 `.43/.2/.33` 3/3 통과·재조회 완료(22:28:01, state). 기존 work 스탬프는 바꾸지 않음. 마스터 담당 기록은 **claude로 남아 있음**(조회 이후 record_master 미실행). 담당 기록과 실제 현재 세션을 혼동하지 말 것.
+  - **지금 이어받을 작업은 [#837](http://192.168.0.57:8080/issues/837)**(부모 #211, M7 개선·확장, 높음, 진행). 사용자 선택 **로컬 서브 에이전트**, 워커 분산 아님. 이미 선택했으므로 다시 묻지 않는다. 서브에이전트 실행 ID를 이어받지 말고 공유 파일·아래 검증으로 복원한다. 에이전트 작업/리뷰는 종료됐으며 마지막 공식 검사도 실패 종료했다. 새 파견·서비스 재기동 없음.
+  - **사용자가 확정한 요구**: RAG 검색 전 과정에 인프라 로그 공통 함수를 붙이고, 사용자 명령으로 작업 전 검색/자동 리뷰 중 확인/자동 합성/규범 준비 등 **작업 분류**를 남긴다. 사용자 명령 작업이면 **사용자가 쓴 실제 원문**을 남긴다. `사용자 원문 → LLM의 검색 질의 → 확장/focus 후 실제 검색어 → 순위별 당시 반환 결과`를 요청 ID로 연결·누적하며 웹UI 페이지에서 목록·필터·상세를 본다. 자료부터 쌓고 뒤에 품질을 분석한다. 정답 라벨 없이 결과 발생률을 적중률이라고 부르지 않는다. 새 형태소 분석기·trigram 활성화·별칭 자동 등록은 이번 범위 밖.
+
+  **#837 구현된 미커밋 변경 — 대상 목록 보존**
+  - 공통: `master/context_search/search_log.py` — `search_context(**metadata)` ContextVar, `current_context`, `suppress_logging/logging_suppressed`, 확장 `log_search`, `list_entries`, `get_entry`. 원본은 `<twin>/search_logs/YYYY-MM-DD.jsonl`에 누적·삭제 회전 없음, 기존 `search_log.jsonl`은 최근 2,000건 캐시 유지. 스레드+fcntl 잠금. 실제 원문/출처/미수집, task_type, request_id/search_id, query/query_expanded/query_used, result_snapshot(발췌·정밀 점수·순위·meta), 오류/빈결과/시간/세대 저장. 기록 실패를 값/로그로 관측.
+  - `master/context_search/search.py` — 일반 검색 중앙 계측·중복 벡터 로그 억제·성공/빈결과/오류·`last_log_result`. `master/context_search/index.py` — 직접 벡터 검색도 계측, stale handle 재시도 알고리즘 유지.
+  - 내부 소비자: `master/context_search/domain_index.py`, `master/context_search/thesaurus.py`, `master/context_synth/synth.py`, `master/work/norms.py`, `master/work/register.py` — 규범/시소러스/자동합성/작업준비 분류 및 요청 문맥 전달. register_work는 **실제 전달된 original_request만** 연결, title fallback을 원문으로 쓰지 않는다. work 생성 전에는 request_id만, 생성 후 동일 request_id+실제 work_id; 옛 로그 소급 변경 없음.
+  - `master/projects/mcp_server.py` — native search_context_tool에 task_type/user_request/request_id/session_id/work_id optional 추가·원문은 provided 출처. bracket 해소 전 질의는 `llm_query`. 초기화 실패도 프로젝트를 해석했다면 기록. **현재 서비스/현재 세션 도구에는 아직 새 인자가 노출됐다고 주장하면 안 됨**.
+  - `client/runtime/client_mcp.py` — search_context 스키마/전달에 작업분류·원문·request_id 등 추가. `capture_rag_request(root,data)`는 실제 UserPromptSubmit의 prompt를 `.ax/rag_requests/<UUID>.json`에 원문 그대로 저장. `rag_request_context`는 **지정 요청 ID만** 조회(최신 파일 추정 금지), 원문 불일치 거절. `master/client/workshop/hooks/pending_works.py`가 캡처 후 request_id를 세션에 알림. `master/client/workshop/hooks/domain_hint.py`는 automatic_edit_hint 분류.
+  - **원문 수집의 실제 범위**: 위 자동 캡처는 기존 **Claude UserPromptSubmit 훅** 경로다. Codex/마스터 native MCP에 같은 훅이 있다고 주장하지 않는다. 그 경로는 명령 원문을 명시 전달하면 provided, 못 받았으면 missing. 모든 CLI 자동 캡처까지 완성됐다고 말하면 안 된다. 사용자의 전체 원문 요구에 대해 이 범위를 마지막 검토·실증에서 명확히 보고할 것.
+  - 웹: `master/webui/routes.py` — trace 문맥 전달, 중앙 로그 중복 제거·응답 search_id/request_id, 검색 폼의 **실제 입력값**을 trim된 질의와 별도 캡처(원전 HTML 자산은 파일 수정 없이 서빙시 치환). `master/webui/app.py` — `/rag-logs`·`/api/v1/rag-logs` GET, 등록 프로젝트 경계(조회만·마운트 불변), 메타 전달. 기존 LAN 웹UI 경로, 새 토큰 UX/서비스 변경 없음. API는 raw error/서버 meta/절대경로를 공개 응답에서 제외.
+  - `master/webui/rag_logs.py`(신규), `master/webui/nav.py` — RAG 검색 로그 메뉴·프로젝트/기간/질의/분류/상태/요청ID 필터·동일 요청 다중검색·원문 및 당시 결과 상세. `page(paths,filters,projects=...)` 계약.
+  - 테스트 신규 5개: `master/test_rag_trace.py`, `master/test_rag_callers.py`, `master/test_rag_logs_page.py`, `master/test_rag_routes.py`, `master/test_rag_request_flow.py`. 기존 `master/test_search_log.py` 갱신. `tests/integration/checks.json`에 새 5개 검사 등록.
+
+  **검증·실패·승인 상태 (이 부분부터 대조)**
+  - 사용자 승인으로 이미 고친 실패: ① core 에이전트 import 전역치환으로 search.py 하단 `from .paths import resolve`가 깨진 구문 오류 → 복구. ② 누적 원본 저장 성공/최근 캐시 실패가 written=True인데 기존 검사가 False를 기대 → 원본/캐시 실패를 나눠 검사. 사용자 「응」으로 각 수정 승인, 수정 뒤 `master.test_rag_trace` **4/4**, `master/test_search_log.py` **37/37** 통과.
+  - 부모가 실제 실행한 연결·회귀: `.venv/bin/python -B -m unittest master.test_rag_request_flow master.test_rag_trace master.test_rag_callers master.test_rag_logs_page master.test_rag_routes master.test_webui_side_nav master.test_webui_write_routes -v` → **44/44 OK**. 원문 공백·개행 보존, 캡처→client dispatch→HTTP→공통검색→누적로그→웹UI, 다중 요청/분류/오류/빈결과/미수집, native MCP, 메뉴·기존 화면 확인. 검색 엔진은 가짜 채널을 주입한 격리 검사이며 **운영 라이브가 아님**.
+  - **공식 통합 검사 실패·종료**: `.venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v` → **rc1**, `Ran 87 tests`, 86통과/1실패에서 중단(이름 문자열 정렬 순서). `test_170_test_rag_trace`: 스크립트 실행 `master/test_rag_trace.py:10`에서 **ModuleNotFoundError: No module named 'master'**. 이 신규 파일은 `python -m unittest`에선 통과하지만 공식 실행기의 파일 직접 실행에 필요한 repo-root sys.path 삽입이 빠짐. **미수정**. 나머지 신규 파일도 직접 실행 계약을 함께 확인할 것. 전체 공식 통과라고 말하지 않는다. PTY session 90997은 종료·회수 완료.
+  - `git diff --check` 통과(후속 구현 큰 변경 전후 마지막 실행 시점은 인수 후 재확인).
+  - **pyflakes rc1·미수정**: 신규 검사 미사용 import 2건 `master/test_rag_trace.py:3 json`, `master/test_rag_routes.py:10 search_log`. 그 밖의 2건은 HEAD에도 존재함을 git show로 확인: `master/context_search/index.py`의 Path import, `master/context_synth/synth.py`의 src 지역변수. 무관한 기존 경고는 이번에 고치지 않음.
+  - **읽기 전용 독립 리뷰 발견 4건·미수정**: (a) UI 자동작업 분류가 auto*·internal_collection만 인정해 `context_synthesis` 원문없음을 잘못 「원문 미수집」으로 표시. (b) 동일 요청 검색 51건 이상이면 search_id 상세가 첫 50건만 읽어 선택된 오래된 검색이 화면에서 빠질 수 있음. (c) domain_index가 `_b/_v` 채널순위를 pop한 뒤 반환하므로 규범 검색 snapshot vector_rank/bm25_rank는 None — 순위 보존 필요. (d) UI 날짜는 UTC라고 표시하지만 저장/필터는 서버 로컬 날짜(KST).
+  - 위 **신규 import 2개+리뷰 보완 4건**을 수정하고 재검증할지 async 질문을 냈으나 사용자는 승인 대신 **「토큰이 없다 인수인계서만 써」**라고 했다. 따라서 **해당 보완 승인은 아직 없다**. 새 공식 통합 실패도 이 중단 시 결과를 회수해 확인했으며 **수정 미승인**. 다음 세션은 이 구체적 범위를 제시해 승인받아 계속한다. 이미 받은 로컬 방식 선택이나 이미 고친 두 실패 승인은 다시 묻지 않는다.
+  - 커밋·푸시·배달·서비스 재기동 **전부 미승인/미실행**. 운영 `/rag-logs`가 보인다고 주장하지 않는다. #837도 완료로 닫지 않았다. 이번 사용자는 **인수인계서만** 쓰라고 했으므로 추가 코드·Redmine 갱신하지 않음. 다음 세션 승인 후 필수검사 및 실제 원문/검색/웹UI 라이브까지 확인한 뒤 종결 판단.
+
+  **Claude 가 인계서를 마무리하며 다시 잰 것 (2026-10-18, 코드 수정 0 · 읽기·실행만)**
+  - Codex 가 인계서 작성 중 한도로 끊겨 Claude 가 이어 썼다. 위 서술은 Codex 원문 그대로이고, 아래는 Claude 의 재측정이다.
+  - 작업 트리: HEAD `main` `9bd40dc` = origin/main · 수정 18파일(+641 −184, 이 인계서 포함) · 신규 6파일(`master/webui/rag_logs.py` + 테스트 5). **미커밋 그대로.**
+  - 🔴 **직접 실행 실패는 1개가 아니라 4개다** (Claude 추가 발견 · Codex 는 첫 실패만 봤고 「나머지도 확인할 것」으로 남겼다) — 각 파일을 `.venv/bin/python -B <파일>` 로 실행:
+
+    | 파일 | rc | 실패 위치 (첫 `from master…` 줄) |
+    |---|---|---|
+    | `master/test_rag_trace.py` | 1 | 10행 `from master.context_search import search_log as log` |
+    | `master/test_rag_callers.py` | 1 | 8행 `from master.context_search import domain_index, search_log` |
+    | `master/test_rag_logs_page.py` | 1 | 6행 `from master.webui import rag_logs` |
+    | `master/test_rag_routes.py` | 1 | 10행 `from master.context_search import search_log` |
+    | `master/test_rag_request_flow.py` | **0** | — 11행에 `sys.path.insert(0, str(Path(__file__).resolve().parents[1]))` 가 있다 |
+
+    오류는 넷 다 `ModuleNotFoundError: No module named 'master'`. 원인은 하나다: 공식 실행기(`checks.json`)는 파일을 **스크립트로 직접** 돌리는데(`sys.path[0]` = `master/`), 이 넷은 저장소 루트를 `sys.path` 에 넣지 않는다. `python -m unittest master.test_…` 로는 통과하므로 Codex 의 44/44 는 이 결함을 못 본다. 공식 실행기가 `-f` 라 첫 실패(`test_170_test_rag_trace`)에서 멈췄을 뿐, 나머지 셋도 같은 자리에서 실패한다(직접 실행으로 확인).
+    **고칠 모양**: 넷 각각에 `import sys` 와 `sys.path.insert(0, str(Path(__file__).resolve().parents[1]))` 를 첫 `from master…` 줄 앞에 넣는다(`test_rag_request_flow.py` 1–11행과 같은 모양 · 넷 다 `from pathlib import Path` 가 있는지는 고칠 때 확인). 고친 뒤 확인: 다섯 파일 직접 실행 rc 0.
+  - pyflakes(신규 테스트 5 + `rag_logs.py`): 위의 미사용 import 2건만 · `git diff --check` rc 0 · 워커 전역 모드 `mode.json` = **codex**(22:28:01, by codex) — 위 서술과 일치.
+  - **공식 통합 87건 중 86 통과는 `-f` 중단 시점까지의 수다** — 전체 공식 목록과 `master/test_*.py` 전수(커밋 전 규칙)는 아직 한 번도 끝까지 돌지 않았다.
+
+  🔴 **사용자 결정 (2026-10-18, 이 인계 직후)**: *"토큰 받으면 문제점인 곳을 수정한 뒤 커밋하자."* — 아래 2번 보완 묶음 수정과 그 뒤 커밋은 **승인됐다. 다시 묻지 않는다.** 단 커밋은 3번 검사가 전부 통과한 뒤, 메시지와 대상 파일 목록을 보여 주고 실행한다. 검사가 실패하면 그 자리에서 멈추고 보고한다(실패=보고).
+
+  **다음 세션 순서**
+  1. 이 인계서·`git status` 대조 (미커밋 24파일 보존 확인). 마스터 담당 기록은 실제로 인수하는 쪽이 `record_master_conductor` 로 남긴다.
+  2. **보완 묶음 수정 (승인됨)**: ① 신규 테스트 4개 sys.path 삽입(위 표) ② 미사용 import 2건(`test_rag_trace.py:3 json` · `test_rag_routes.py:10 search_log`) ③ 리뷰 4건(a 자동합성 원문없음 표시 · b 51건 이상 상세 누락 · c 규범 검색 채널 순위 보존 · d UTC/KST 날짜 표기). 기존 HEAD 경고 2건(`index.py` Path · `synth.py` src)은 범위 밖. 이 목록 밖 파일을 고쳐야 하면 멈추고 보고.
+  3. 보완 뒤 신규 5파일 직접 실행 → pyflakes → 44건 연결 검사 → 공식 통합 전체(`-f`) → `master/test_*.py` 전수.
+  4. 커밋(승인됨 · 메시지 제시 후) · push → `python -m master.client update`. 서비스(`ax-projects`·웹UI) 재기동은 **별도 승인**.
+  5. 라이브: 실제 원문 한 건이 요청 ID로 검색 로그에 묶이고 `/rag-logs` 목록·상세에 보이는지. 원문 자동 캡처는 **Claude UserPromptSubmit 훅 경로뿐**임을 결과 보고에 명시.
+  6. 그 뒤 #837 종결 판단 (경우별 대조 후 「완료」).
+
+  **이 세션 앞부분의 M7 일감 대조와 #211 사실**
+  - #232·#745는 이미 완료였고 추가 드라이런 근거만 기록. #774는 처음 탐침 지시에서 #783 git제외/SELF_REPO_NOTE 안내를 빼먹어 BLOCKED → 원인 조사·사용자 재실행 승인 → .43 정본 Codex→agy rc0/SUCCESS/정본 Flash 모델 일치/read-only 오류0 원본 회수 후 **완료·100%**. 증거 `/tmp/ax-774-dryrun-retry-20261018.jsonl`, `/tmp/ax-774-retry-evidence-20261018.{json,log,err,rc}`.
+  - ④ 체인 묶음 대조: **#790·#823·#825 완료**(MCP 상태 되읽기). #790 큰 입력 검사51/51+기존 라이브/후속 실파견 근거. #823 기존 검사16/16+실 Codex 후보2건/근거 원문대조/중복호출0/상태보존. #825 승인된 1차 기각후보수집 범위에서 Codex·Claude·agy 전부 실제 파일읽기/근거대조 통과, 쓰기0·트리정리. 미승인 plan_generator/recipes_synthesizer 전환은 구현하지 않음. 증거 `/tmp/ax-823-825-dryrun-t3o0k98z/`, `/tmp/ax-825-backends-21sy6gdp/`.
+  - #788·#633·#639·#726·#733은 남은 구현/완료조건 때문에 유지, #750의 지어낸 related/예시태그 사실게이트 통과는 재현해 유지. 각 Redmine에 근거 노트/되읽기 완료. ⑤ 지휘·세션·⑥ 기타는 본문 조회만 했고 처리 결정을 하지 않음.
+  - 한국어 검색 질문에서 Codex가 설명만 반복해 사용자가 강하게 지적했고, **로그 수집→자료 축적→분석**으로 방향을 확정. 시소러스는 검색에 연결돼 있지만 AXCluster 별칭0, 한국어 기본 어절토큰화 동작, 보조 trigram은 구현돼 있으나 AX_BM25_KR off. 형태소 분석기가 구현된 것처럼 말하면 안 됨.
+  - 기존 ModularStage 자연 확정4건으로 `master.bench_kr` 재측정: baseline/kr_on hit@1=.5,hit@5=1,MRR=.6667; gated/kr+gated hit@1=.5,hit@5=1,MRR=.7083. 표본4건으로 전체 품질 확정하지 않음. #211에 측정과 현재 실패질의 근거 기록.
+  - fastembed 실행 시 multilingual MiniLM 모델 pooling이 CLS→mean으로 바뀌었다는 경고 관찰. 저장색인과 질의 pooling 일치 여부는 미조사이고 현재 오답 원인으로 단정하지 않음. #211 후속 조사 후보이며 **#837 구현 중 임의 수정·재색인 금지**.
+
 - **현재 체크포인트: 2026-10-18 22:xx · Claude → Codex · M7 목표 재정의 · 열린 47건 대조 중(①②③ 끝, ④⑤⑥ 남음) · 사용자 「토큰이 없으니 인수인계서 작성해주면 코덱스에서 진행할게」**.
   - HEAD `main` `5915c4c`(+ 이 인계 커밋). 마운트 **AXCluster**. 워커 지휘자 **claude**(전역 · 17:23 사용자 결정, 바꾸지 않았다). 마스터 담당 기록은 claude — **Codex 가 실제 인수하면** `record_master_conductor` 로 기록.
   - 🔴 **목표가 바뀌었다** (`PLAN.md` Goal · `docs/milestones/7-improvements.md` 「목표」): 프로젝트 타입(`kind`)별 게이트를 갖춘 분산 코딩 클러스터 — `unreal`(C++) · `code`(Python, AXCluster). **원전 포팅은 끝났다** — 원전은 참고 자료이고 「원전과 다르면 결함」으로 판정하지 않는다(CLAUDE.md 둘 · AGENTS.md 반영 `bd41e6f`). 상용 주역 · 로컬은 합성·폴백. MotionForge/Kimodo 관리 방식은 **유보**(#771 노트에 실측 — `Source/` 제외 · 포크 상태). NS 는 **대상**이다.
