@@ -63,6 +63,16 @@ class CliTests(unittest.TestCase):
         self.assertEqual(json.loads(output_path.read_text())["documents"][0]["after"], "new\n")
         self.assertEqual((self.root / "README.md").read_text(), "old\n")
 
+    def test_draft_passes_claude_lane(self):
+        output_path = self.root / "proposal-claude.json"
+        with patch("master.context_search.paths.resolve_mounted_only", return_value=SimpleNamespace(
+                usage_log=self.root / "usage.jsonl")), \
+                patch("master.doc_sync.draft.generate", return_value=self.artifact()) as generate:
+            rc, _, error = self.run_cli("draft", "--project", "T", "--lane", "claude",
+                                        "--out", str(output_path))
+        self.assertEqual((rc, error), (0, ""))
+        self.assertEqual(generate.call_args.kwargs["lane"], "claude")
+
     def test_apply_requires_explicit_ids_and_is_repeatable(self):
         output_path = self.root / "proposal.json"
         output_path.write_text(json.dumps(self.artifact()), encoding="utf-8")

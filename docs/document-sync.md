@@ -28,6 +28,7 @@ CLAUDE.md·AGENTS.md 및 홈 진입 문서 정본은 `protected=true`가 필요�
 # 선택한 문서의 수정안 작성. 원본은 바꾸지 않는다
 AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -B -m master.doc_sync draft \
   --id readme --project AXCluster --lane codex --out /tmp/ax-doc-proposal.json
+# Codex 한도가 없을 때: --lane claude
 
 # 현재 등록·원문·근거와 대조하는 읽기 전용 적용 미리보기
 .venv/bin/python -B -m master.doc_sync apply --artifact /tmp/ax-doc-proposal.json
@@ -39,8 +40,10 @@ AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -B -m master.doc_sync dra
 
 `--root`와 `--registry`로 다른 작업 사본과 등록 파일을 명시할 수 있다. 보호 문서를 실제로 수정할 때는
 기존 계획·사람 승인 절차를 먼저 마친 뒤 `--allow-protected`도 명시한다. 이 옵션이 사람의 승인을
-대신하지 않는다. 첫 구현의 생성 레인은 `codex`다. 공용 `layer2_verify.call_codex_why`의 임시 작업
-디렉토리·읽기 전용 실행과 기존 사용량 파서를 재사용한다. 암묵적 폴백이나 재시도는 하지 않는다.
+대신하지 않는다. 생성 레인은 `codex`(기본)와 `claude`다. 각각 공용 `layer2_verify.call_codex_why`·
+`call_claude_why`(도구 `Read,Grep,Glob`)의 임시 작업 디렉토리·읽기 전용 실행과 기존 사용량 파서를 재사용한다.
+레인은 사람이 고르며 암묵적 폴백이나 재시도는 하지 않는다. claude 레인이면 쓰는 쪽과 검토하는 세션이
+같은 계열일 수 있으므로 사람의 diff 검토가 실제 게이트다.
 마운트된 프로젝트의 사용량 로그에 `source=doc-sync`로 성공·실패를 기록한다.
 `plan`·`apply`는 프로젝트 마운트를 바꾸지 않는다.
 

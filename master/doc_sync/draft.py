@@ -4,11 +4,12 @@ from __future__ import annotations
 from copy import deepcopy
 import difflib
 import json
+from pathlib import Path
 import sys
 import tempfile
 import time
 
-from . import DocSyncError, digest
+from . import LANES, DocSyncError, digest
 from ..work import usage
 from .. import layer2_verify as L2
 
@@ -85,10 +86,36 @@ def _parse(text, before, allowed):
     return data["decision"], after, reason, citations
 
 
+def _call_claude(prompt, timeout, workdir):
+    """`(본문, 사유, meta)`. claude 는 사용량을 공용 진입(`emit_cli`)으로만 내므로 임시 구간에
+    받아 meta 로 되돌린다 — 실제 기록은 호출자가 문서당 한 줄로 남긴다(codex 와 같은 계약)."""
+    with tempfile.TemporaryDirectory(prefix="ax-doc-sync-usage-") as metered:
+        probe = Path(metered) / "usage.jsonl"
+        with usage.sink(probe, source="doc-sync"):
+            response, why = L2.call_claude_why(prompt, timeout=timeout, workdir=workdir)
+        lines = probe.read_text(encoding="utf-8").splitlines() if probe.exists() else []
+    meta = {"cost_unknown": True}
+    if lines:
+        rec = json.loads(lines[-1])
+        if rec.get("measured"):
+            meta = {"source": "claude", "usage": {
+                "input_tokens": rec["input_tokens"], "output_tokens": rec["output_tokens"],
+                "cache_read_input_tokens": rec["cache_read"],
+                "cache_creation_input_tokens": rec["cache_create"]}}
+            if rec.get("cost_known"):
+                meta["total_cost_usd"] = rec["cost_usd"]
+            else:
+                meta["cost_unknown"] = True
+        if rec.get("model"):
+            meta["actual_model"] = rec["model"]
+    print(f"[doc-sync] claude 계측: {'측정' if 'usage' in meta else '미측정'}", file=sys.stderr)
+    return response, why, meta
+
+
 def generate(plan, *, lane="codex", timeout=180, generator=None, usage_log=None):
     """계획을 보존한 수정안. 실제 CLI 호출은 사용량 기록 경로가 필수다."""
-    if lane != "codex":
-        raise DocSyncError(f"읽기 전용 격리 실행 계약을 지원하는 레인은 codex뿐이다: {lane}")
+    if lane not in LANES:
+        raise DocSyncError(f"읽기 전용 격리 실행 계약을 지원하는 레인은 {', '.join(LANES)}뿐이다: {lane}")
     if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
         raise DocSyncError("timeout은 양수여야 한다")
     if generator is None and not usage_log:
@@ -108,9 +135,13 @@ def generate(plan, *, lane="codex", timeout=180, generator=None, usage_log=None)
                 response = generator(prompt, lane, timeout)
             else:
                 with tempfile.TemporaryDirectory(prefix="ax-doc-sync-llm-") as workdir:
-                    response, events, why = L2.call_codex_why(
-                        prompt, timeout=timeout, workdir=workdir)
-                meta = usage.meta_from_usage(usage.usage_from_codex_events(events, response or ""))
+                    if lane == "codex":
+                        response, events, why = L2.call_codex_why(
+                            prompt, timeout=timeout, workdir=workdir)
+                        meta = usage.meta_from_usage(
+                            usage.usage_from_codex_events(events, response or ""))
+                    else:
+                        response, why, meta = _call_claude(prompt, timeout, workdir)
                 if why or response is None:
                     raise DocSyncError(why or "LLM 응답 본문이 없다")
             decision, after, reason, citations = _parse(response, document["before"], allowed)

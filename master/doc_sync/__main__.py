@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import sys
 
-from . import DocSyncError, read_text
+from . import LANES, DocSyncError, read_text
 from .registry import collect
 
 
@@ -47,7 +47,7 @@ def main(argv=None):
         if name == "draft":
             command.add_argument("--project", required=True, help="사용량을 기록할 마운트된 프로젝트")
             command.add_argument("--out", type=Path, required=True)
-            command.add_argument("--lane", choices=("codex",), default="codex")
+            command.add_argument("--lane", choices=LANES, default="codex")
             command.add_argument("--timeout", type=int, default=180)
         if name == "apply":
             command.add_argument("--artifact", type=Path, required=True)

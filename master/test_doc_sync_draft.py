@@ -129,10 +129,48 @@ class DraftTests(unittest.TestCase):
                 generate(plan())
             with self.assertRaises(DocSyncError):
                 generate(plan(), lane="unknown", generator=lambda *args: response())
-            for lane in ("agy", "claude"):
-                with self.assertRaisesRegex(DocSyncError, "읽기 전용"):
-                    generate(plan(), lane=lane, generator=lambda *args: response())
+            with self.assertRaisesRegex(DocSyncError, "읽기 전용"):
+                generate(plan(), lane="agy", generator=lambda *args: response())
             call.assert_not_called()
+
+    def test_claude_lane_isolated_and_metered_once(self):
+        from master.work import usage as U
+
+        def fake(prompt, *, timeout, workdir):
+            # 실제 call_claude_why 처럼 공용 진입으로만 사용량을 낸다
+            U.emit_cli("claude", U.Usage(lane="claude", input_tokens=11, output_tokens=3,
+                                         cache_read=2, cost_usd=0.5), rc=0, model="opus")
+            return response(), ""
+
+        with tempfile.TemporaryDirectory() as directory:
+            logfile = Path(directory) / "usage.jsonl"
+            with patch("master.doc_sync.draft.L2.call_codex_why") as codex, \
+                    patch("master.doc_sync.draft.L2.call_claude_why", side_effect=fake) as call:
+                artifact = generate(plan(), lane="claude", usage_log=logfile)
+            codex.assert_not_called()
+            self.assertEqual(call.call_count, 1)
+            self.assertIn("ax-doc-sync-llm-", call.call_args.kwargs["workdir"])
+            self.assertEqual(artifact["lane"], "claude")
+            self.assertEqual(artifact["documents"][0]["decision"], "update")
+            records = [json.loads(line) for line in logfile.read_text().splitlines()]
+            self.assertEqual(len(records), 1)
+            self.assertEqual((records[0]["lane"], records[0]["source"], records[0]["rc"]),
+                             ("claude", "doc-sync", 0))
+            self.assertEqual((records[0]["input_tokens"], records[0]["output_tokens"],
+                              records[0]["cache_read"]), (11, 3, 2))
+            self.assertEqual(records[0]["model"], "opus")
+
+    def test_claude_lane_failure_recorded_without_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            logfile = Path(directory) / "usage.jsonl"
+            with patch("master.doc_sync.draft.L2.call_codex_why") as codex, \
+                    patch("master.doc_sync.draft.L2.call_claude_why",
+                          return_value=(None, "rc=1: limit")):
+                with self.assertRaisesRegex(DocSyncError, "limit"):
+                    generate(plan(), lane="claude", usage_log=logfile)
+            codex.assert_not_called()
+            record = json.loads(logfile.read_text())
+            self.assertEqual((record["rc"], record["lane"], record["measured"]), (1, "claude", False))
 
 
 if __name__ == "__main__":

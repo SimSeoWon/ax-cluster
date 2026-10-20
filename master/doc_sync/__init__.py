@@ -20,6 +20,10 @@ import hashlib
 from pathlib import Path
 
 
+# 읽기 전용 격리 실행(임시 workdir)을 지원하는 생성 레인. 자동 폴백은 없다.
+LANES = ("codex", "claude")
+
+
 class DocSyncError(RuntimeError):
     """등록·근거·수정안·적용 계약이 충족되지 않았다."""
 
