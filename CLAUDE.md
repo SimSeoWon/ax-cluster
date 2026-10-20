@@ -212,7 +212,7 @@ milestone doc grew stale numbers before.
 | **Milestone doc** `docs/milestones/7-improvements.md` (open) | *Why this order?* — chains, traps, measured evidence | [중요] **No numerators here.** They drifted twice (중 1.3 counted 7/10 against a 13-item list; 대 1 stayed at 15 after 중 1.3 went 5→8). Keep the reasoning an issue cannot hold |
 | **Redmine** `http://192.168.0.57:8080` | *Where are we, and what is open?* — **the milestone itself** | [중요] **Version = 마일스톤 · parent issue = 중분류 · subtask = 소분류** (user-confirmed 2026-08-09). Progress is **computed**, never typed. Only **완료(4)** is a closing status — 해결(3) still counts as open. Put the commit hash in the note |
 | **`reports/`** | *Why did we decide that?* — decisions, measurements, traps | One report per session, Korean. Not a task list |
-| **Redmine 위키 [[아이디어수집]]** | *What might we build someday?* — 미정 아이디어의 본문 | [중요] **일감이 아니다** (사용자 개설 2026-08-17). 항목 = 위키 절 + 버전 「아이디어 — 추후 검토 수집」의 이슈. 진행·집계 금지, 착수 결정 시 실 마일스톤으로 이동 |
+| **Redmine 버전 「아이디어 — 추후 검토 수집」** | *What might we build someday?* — 미정 아이디어 | [중요] **일감이 아니다** (사용자 개설 2026-08-17). 내용은 **그 이슈의 본문·코멘트**에만 쓴다 — 위키는 쓰지 않는다(사용자 2026-10-21). 진행·집계 금지, 착수 결정 시 실 마일스톤으로 이동 |
 
 **At session start**: read the open milestone, then `GET /issues.json?project_id=ax-cluster&status_id=open`. **At session end**: update the issues you moved, then write the report.
 

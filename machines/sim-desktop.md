@@ -51,7 +51,7 @@ Details: [`../master/skills/distribute/SKILL.md`](../master/skills/distribute/SK
 
 **M1–M6 all closed (M6 closed 2026-10-18, user decision). M7 (개선·확장, continues M6)
 is open — numbers live in Redmine (version *마일스톤 7*; bugs → *마일스톤 7 - 버그/개선*). A separate dateless bucket
-*아이디어 — 추후 검토 수집* holds not-yet-decided ideas (wiki [[아이디어수집]]) — items there
+*아이디어 — 추후 검토 수집* holds not-yet-decided ideas (issue body/comments only — no wiki) — items there
 are NOT work.**
 
 | | |
