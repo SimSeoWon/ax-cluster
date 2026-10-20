@@ -18,6 +18,8 @@ CLAUDE.md·AGENTS.md 및 홈 진입 문서 정본은 `protected=true`가 필요�
 ## 실행
 
 작업 위치 `/home/sim/ax-cluster`, Python `.venv/bin/python`.
+대화형 세션에서는 [`ax-docsync`](../master/skills/ax-docsync/SKILL.md) 스킬(「문서 최신화 해」)이
+아래 순서와 사람 승인 지점을 안내한다. 스킬은 같은 CLI를 부를 뿐 별도 경로가 아니다.
 
 ```bash
 # 등록 문서·정본·역할 확인. LLM 호출과 파일 쓰기 없음
