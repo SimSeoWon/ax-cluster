@@ -43,9 +43,21 @@ def _prompt(document):
     return prompt, allowed
 
 
+def _unfence(text):
+    """응답 전체가 코드 펜스 하나로 감싸였으면 안쪽만 돌려준다. 그 밖의 형태는 그대로 둔다."""
+    if not isinstance(text, str):
+        return text
+    body = text.strip()
+    if body.startswith("```") and body.endswith("```") and body.count("```") == 2:
+        first, _, rest = body.partition("\n")
+        if first[3:].strip() in ("", "json"):
+            return rest[:-3].strip()
+    return text
+
+
 def _parse(text, before, allowed):
     try:
-        data = json.loads(text)
+        data = json.loads(_unfence(text))
     except (ValueError, TypeError) as exc:
         raise DocSyncError("LLM 응답은 JSON 객체여야 한다") from exc
     if not isinstance(data, dict) or data.get("decision") not in ("update", "unchanged"):
@@ -128,6 +140,7 @@ def generate(plan, *, lane="codex", timeout=180, generator=None, usage_log=None)
         meta = {"cost_unknown": True}
         started = time.monotonic()
         error = ""
+        response = None
         print(f'[doc-sync] 생성 시작: {document.get("id", "?")} ({lane})', file=sys.stderr)
         try:
             prompt, allowed = _prompt(document)
@@ -154,7 +167,10 @@ def generate(plan, *, lane="codex", timeout=180, generator=None, usage_log=None)
                             usage_meta=meta)
         except Exception as exc:
             error = str(exc)
-            raise DocSyncError(f'문서 수정안 실패 ({document.get("id", "?")}): {exc}') from exc
+            failure = DocSyncError(f'문서 수정안 실패 ({document.get("id", "?")}): {exc}')
+            # 해석 실패 진단용 — 받은 원문을 호출자가 파일로 남길 수 있게 싣는다
+            failure.raw_response = response if isinstance(response, str) else None
+            raise failure from exc
         finally:
             if usage_log:
                 recorded = usage.record(usage_log, meta, lane=lane, source="doc-sync",

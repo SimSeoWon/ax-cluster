@@ -246,7 +246,7 @@ ax-cluster/
 |---|---|---|
 | 작업 큐 | 8101 | `ax-task-queue.service` |
 | 추론 브로커 | 8102 | `ax-broker.service` |
-| 프로젝트 레지스트리 (MCP) + **웹 UI** | 8103 | `ax-projects.service` (`/`·`/ontology`·`/cluster`·`/commit-flow`·`/rag-logs`) |
+| 프로젝트 레지스트리 (MCP) + **웹 UI** | 8103 | `ax-projects.service` (`/`·`/ontology`·`/cluster`·`/commit-flow`·`/rag-logs`·`/reviews`·`/usage`·`/onboarding`) |
 | ↳ 지휘 제어 표면 | 8103 | `/control/*` — **요청자 토큰 전용** (무인증 401 · 워커 403) |
 | 색인기 | — | `ax-indexer.path`(inotify) → `ax-indexer.service` |
 | 리뷰 큐 소비자 | — | `ax-review-queue.timer`(10분) → `ax-review-queue.service` |
@@ -309,6 +309,8 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update              # �
 .venv/bin/python -m master.status html                   # → <프로젝트>/cluster.html 한 장
 #   [중요] 다른 머신에서 보기: http://192.168.0.57:8103  ← 인증 없음 (원전 웹 UI)
 #      / = Context Server · /ontology = 도메인 뷰어+그래프 · /cluster = 클러스터 상태
+#      /reviews = 리뷰·플랜 · /usage = LLM 사용량(기간별 작업·토큰) · /onboarding = 분산 작업 흐름
+#      화면마다 같은 좌측 목록으로 이동한다(목록 정본: master/webui/nav.py)
 #      [중요] /cluster 상단 「지휘 상태」 = 마스터 담당(claude/codex) + 워커 실행 모드
 #         마스터 담당은 **마지막으로 기록된** 지휘자다 — 생존 판정도 잠금도 아니다
 #   [중요] 최소 간격 120초 — BC-250 을 자주 두드리지 않는다 (넘기려면 --force)
@@ -339,7 +341,8 @@ journalctl -u ax-indexer -n 30 --no-pager                # push → 트윈 성�
 
 등록한 README·CLAUDE·AGENTS·온보딩·인수인계 문서는 `master.doc_sync`의
 **계획 → LLM 수정안 → 검증·승인 적용**으로 갱신한다. 원문·근거·등록 목록을 대조하며
-보호 문서에는 별도 승인이 필요하다. [등록 목록과 사용법](docs/document-sync.md)을 참고한다.
+보호 문서에는 별도 승인이 필요하다. 수정안 생성(`draft`)은 `--project`로 지정한 마운트 프로젝트에
+LLM 사용량을 기록하며, `--out`에는 아직 없는 새 파일만 지정할 수 있다(기존 파일을 덮지 않는다). [등록 목록과 사용법](docs/document-sync.md)을 참고한다.
 
 ## MCP 도구 (Claude·Codex가 쓰는 창구)
 

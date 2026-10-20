@@ -73,6 +73,21 @@ class CliTests(unittest.TestCase):
         self.assertEqual((rc, error), (0, ""))
         self.assertEqual(generate.call_args.kwargs["lane"], "claude")
 
+    def test_draft_parse_failure_saves_raw_response(self):
+        from master.doc_sync import DocSyncError
+        output_path = self.root / "proposal-bad.json"
+        failure = DocSyncError("LLM 응답은 JSON 객체여야 한다")
+        failure.raw_response = "not json"
+        with patch("master.context_search.paths.resolve_mounted_only", return_value=SimpleNamespace(
+                usage_log=self.root / "usage.jsonl")), \
+                patch("master.doc_sync.draft.generate", side_effect=failure):
+            rc, _, error = self.run_cli("draft", "--project", "T", "--out", str(output_path))
+        self.assertEqual(rc, 1)
+        self.assertFalse(output_path.exists())
+        raw = Path(f"{output_path}.raw.txt")
+        self.assertEqual(raw.read_text(), "not json")
+        self.assertIn("응답 원문 저장", error)
+
     def test_apply_requires_explicit_ids_and_is_repeatable(self):
         output_path = self.root / "proposal.json"
         output_path.write_text(json.dumps(self.artifact()), encoding="utf-8")

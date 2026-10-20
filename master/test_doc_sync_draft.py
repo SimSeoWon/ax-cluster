@@ -160,6 +160,16 @@ class DraftTests(unittest.TestCase):
                               records[0]["cache_read"]), (11, 3, 2))
             self.assertEqual(records[0]["model"], "opus")
 
+    def test_single_code_fence_unwrapped_only(self):
+        fenced = "```json\n" + response() + "\n```\n"
+        artifact = generate(plan(), generator=lambda *args: fenced)
+        self.assertEqual(artifact["documents"][0]["after"], "new\n")
+        for bad in ("설명\n```json\n" + response() + "\n```",
+                    "```python\n" + response() + "\n```"):
+            with self.assertRaisesRegex(DocSyncError, "JSON") as caught:
+                generate(plan(), generator=lambda *args, text=bad: text)
+            self.assertEqual(caught.exception.raw_response, bad)
+
     def test_claude_lane_failure_recorded_without_fallback(self):
         with tempfile.TemporaryDirectory() as directory:
             logfile = Path(directory) / "usage.jsonl"

@@ -35,6 +35,16 @@ def _save(path, artifact, plan):
         raise DocSyncError(f"수정안을 저장할 수 없다(기존 파일 덮기 금지): {destination}: {exc}") from exc
 
 
+def _save_raw(path, raw):
+    """해석에 실패한 LLM 응답 원문을 새 파일로 남긴다. 기존 파일은 덮지 않는다."""
+    try:
+        with path.expanduser().absolute().open("x", encoding="utf-8") as stream:
+            stream.write(raw)
+        print(f"[doc-sync] 응답 원문 저장: {path} ({len(raw)}자)", file=sys.stderr)
+    except OSError as exc:
+        print(f"[doc-sync] 응답 원문 저장 실패: {path}: {exc}", file=sys.stderr)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -88,6 +98,9 @@ def main(argv=None):
         return 0
     except (DocSyncError, OSError, ValueError, TypeError) as exc:
         print(f"[doc-sync] 실패: {exc}", file=sys.stderr)
+        raw = getattr(exc, "raw_response", None)
+        if args.command == "draft" and raw:
+            _save_raw(Path(f"{args.out}.raw.txt"), raw)
         return 1
 
 
