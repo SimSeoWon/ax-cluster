@@ -1,6 +1,18 @@
 # 현재 AX 작업 인수인계
 
-- **최신 체크포인트: 2026-10-21 · Codex · 사용자 「일단 인수인계서 작성해 토큰이 없다」로 중단 · #838 CLI 구현 커밋 완료, 스킬/MCP 미연결**.
+- **최신 체크포인트: 2026-10-21 01:30 · Claude · #838 스킬 연결·claude 레인·비보호 문서 3/4 실증 완료 · 전부 push·배포**.
+  - 실제 대조: HEAD **`main 84568de` = origin/main**, 작업 트리는 이 인계서 갱신만 dirty(미커밋). 마운트 AXCluster. 이번 세션 커밋 4개 모두 사용자 승인 후 커밋·push·`master.client update`(.43·.2·.33 배달·검사 3/3 OK, 출처 = 마스터 HEAD) 완료.
+    `3f8e947` ax-docsync 스킬 연결 · `f0e8a82` doc_sync claude 레인 · `c9619f1` 코드펜스 JSON 수용·실패 원문 저장 + README 적용 · `84568de` master/README·온보딩 런북 적용. 앞선 Codex 커밋 `16d6b16`·`8b516b2`도 `3f8e947` push 로 함께 올라갔다.
+  - **담당**: Codex 토큰 소진으로 사용자 지시에 따라 Claude 인수, 마스터 담당 **claude** 기록(00:52:58). 워커 전역 모드 **codex(state)** 는 바꾸지 않았다.
+  - **스킬**: `master/skills/ax-docsync/SKILL.md`(「문서 최신화 해」) — plan → 대상 ID 사용자 선택 → draft(레인 사용자 선택) → diff·근거 원문 제시·소스 대조 → 미리보기 → ID별 승인 → `apply --confirm --approve`. `~/.claude/skills`·`~/.agents/skills`·`~/.codex/skills` 에 심볼릭 링크(마스터 전용, 워커 배달 대상 아님). MCP 도구 연결은 없다.
+  - **claude 레인**: `master/doc_sync/__init__.py` `LANES=("codex","claude")`. claude 는 `call_claude_why(임시 workdir, Read,Grep,Glob)`, 사용량은 `emit_cli` 임시 구간에서 받아 문서당 1줄. 레인 간 자동 폴백 없음, agy 거절. 같은 계열이 쓰고 보므로 **사람 diff 검토가 실제 게이트**.
+  - **실증 결과**(전부 claude 레인, `source=doc-sync` 사용량 기록): readme 1차 rc1(「JSON 객체여야 한다」, 원문 미보존·$0.57) → 보고 → 사용자 A+B 승인 → 펜스 수용·`<out>.raw.txt` 저장 추가 → 2차 update($0.32). modules $0.44 · onboarding $0.81 update. 세 문서 모두 인용을 소스와 대조해 일치, 미리보기 → 승인 적용 → 재적용 `changed=[]` 확인.
+  - **검증**: 커밋마다 `master/test_*.py` 182파일 rc0·실패0, 레인·펜스 변경 때 공식 통합 178/178 OK, pyflakes 0.
+  - **한계(기록)**: 수정안은 등록 근거 파일에 있는 사실만 반영한다 — 예: README 에 `--lane claude` 는 안 들어갔다. 인수인계서는 근거(ax-handoff SKILL·orchestrator-rules)에 현재 상태가 없어 doc_sync 대상으로 부적합 → 사용자 결정으로 **이 체크포인트는 ax-handoff 절차로 직접 작성**(doc_sync 미호출).
+  - **남은 것(사용자 결정 대기)**: ① 보호 문서 4개(claude·agents·home-claude·home-agents) 실증 — 문서별 계획·동의 후 `--allow-protected` ② 근거 목록 확장 여부 ③ 이후 [#838](http://192.168.0.57:8080/issues/838) 완료 판정(현재 「진행」, 노트 4건 추가). #837 RAG 는 여전히 로그 수집 단계.
+  - 실행 중인 검사·LLM·파견 없음. 이 인계서 갱신의 커밋은 승인 전이다.
+
+- **이전 체크포인트: 2026-10-21 · Codex · 사용자 「일단 인수인계서 작성해 토큰이 없다」로 중단 · #838 CLI 구현 커밋 완료, 스킬/MCP 미연결**.
   - 실제 대조: HEAD **`main 8b516b2`**, origin/main **`a341819`보다 2커밋 앞**. `16d6b16`은 앞선 #837 문서5파일, `8b516b2`는 #838 신규16파일 구현·검증·문서다. 모두 사용자 승인 후 커밋했고 **푸시·배포는 아직 안 했다**. 이번 요청 직전 트리는 clean이었고 이번 인계 후 dirty는 **이 인수인계서 한 파일뿐**이다. 이 인계 갱신은 미커밋으로 보존하며 임의 추가 커밋하지 않는다.
   - #838: Python 등록 목록·근거 수집→LLM 수정안→검증/승인 적용 기능. `master/doc_sync/{__init__,__main__,registry,draft,apply}.py`, `docs/document-registry.json`, `docs/document-sync.md`, 테스트 4개와 공식 목록, README 2개, 이 인계서·리포트가 대상이다. 운영 CLAUDE·AGENTS 원본은 수정하지 않았다. 세 로컬 에이전트는 편집·리뷰 종료했고 현재 실행 중인 검사·LLM·파견은 없다.
   - CLI: `.venv/bin/python -B -m master.doc_sync plan`(읽기 전용), `draft --project AXCluster --id <id> --out <새수정안JSON>`(LLM 작성·원본 불변), `apply --artifact <JSON>`(미리보기), `apply ... --confirm --approve <id>`(명시 적용). draft에는 `AX_PROJECTS_ROOT=/home/sim/ax-cluster` 필요. 보호 문서 적용은 기존 사람 동의 후 `--allow-protected`도 필요하다. 실제 사용법은 `docs/document-sync.md`를 읽는다.
