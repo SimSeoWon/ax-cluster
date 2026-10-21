@@ -8,10 +8,10 @@
 
 ## 상태
 
-- **갱신**: 2026-10-22 00:50 KST · Claude
+- **갱신**: 2026-10-22 00:53 KST · Claude (진척률 정리 뒤)
 - **상태**: 인계 완료 · 작업 정지. 사용자 결정 대기(아래). **답 없이 이어서 하지 않는다.**
-- **저장소**: `~/ax-cluster` · `main 3123389` = origin/main · 작업 트리는 이 인계서만 dirty(미커밋)
-- **배달**: `master.client update` AXCluster `.43`·`.2`·`.33` 3/3 OK · 출처 `3123389` (재기동 뒤 `check` 재확인 rc0).
+- **저장소**: `~/ax-cluster` · `main 9ebcd0c` = origin/main · 작업 트리는 이 인계서만 dirty(미커밋)
+- **배달**: `master.client update` AXCluster `.43`·`.2`·`.33` 3/3 OK · 출처 `9ebcd0c`(마스터 HEAD 와 같다).
   [주의] 이 인계서를 커밋하면 HEAD 가 배달 출처보다 앞서 `check` 가 실패한다 — 커밋 뒤 `update` 를 다시 돌린다.
 - **마스터 서비스**: `ax-task-queue` 00:48:06 · `ax-projects`·`ax-broker` 00:48:12 재기동(사용자 지시) — `3123389` 코드,
   active/running · 8101·8102·8103 응답 200. 재기동 전 진행 중 task 0건.
@@ -23,7 +23,8 @@
 - 인수인계서 정리 — 2,506줄 → 현재판, 원문은 history 파일 (`8f7643a`)
 - [#842](http://192.168.0.57:8080/issues/842) **완료** — 등록부 지시문·`docs/15` 덮어쓰기 규칙 + `master/test_handoff_size.py` (`ba97da5`)
 - [#839](http://192.168.0.57:8080/issues/839)·[#840](http://192.168.0.57:8080/issues/840) 구현 + 실패 수정 커밋 `3123389` · push · 배달 · 서비스 재기동.
-  둘 다 **「진행」 유지**(완료 아님 · 진척률 0% 그대로). 상세 [`reports/127-doc-sync-cloud-policy-local.md`](../reports/127-doc-sync-cloud-policy-local.md) 2026-10-22 절
+  둘 다 **「진행」 유지**(완료 아님). 진척률은 근거 노트와 함께 #839 **30%** · #840 **70%** 로 맞췄다 —
+  부모 #788 은 자식에서 계산돼 92%(닫힌 자식 3건 탓에 높다 · 실제 남은 것은 #840 의 30%). 상세 [`reports/127-doc-sync-cloud-policy-local.md`](../reports/127-doc-sync-cloud-policy-local.md) 2026-10-22 절
   - 검증: 가짜 `agy`·`codex`·`claude`·`ssh`·`scp` 를 PATH 앞에 두고 공식 통합 181/181 · `master/test_*.py` 185파일 9,115/9,115 rc0 · 상용 CLI 호출 0건
   - 🔴 고치기 전 `test_descriptions.py` 가 실제 agy 를 불렀다 — 이 세션 통합 2회분 쿼터 사용 추정(사용량 기록 미대조)
   - [주의] 기존 검사 일부가 실제 SSH(`.43`·`.33` 탐침)를 시도한다 — 범위 밖이라 그대로
@@ -34,7 +35,6 @@
 2. **#839 보호 문서 4개 실증**(claude·agents·home-claude·home-agents) — 어느 문서부터, 문서별 계획·동의·레인
 3. **#840 로컬 조각의 cloud 재작성 반영** — 후보 보관 vs 후속 라운드 자동 준비
 4. **#840 남은 구현** — 코드 조각 사실 실패 → 다음 cloud 재작성 루프 · context 쓰기 원자성(CAS)
-5. #839·#840 Redmine 진척률(둘 다 0%)을 맞출지
 
 ## 바로 다음 작업
 
