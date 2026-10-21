@@ -95,7 +95,36 @@ def load_registry(registry_path, root):
     return {'version': 1, 'documents': documents}
 
 
-def collect(root, registry_path, ids=None):
+def _git(root, *args):
+    try:
+        result = subprocess.run(['git', '-C', str(root), *args],
+                                capture_output=True, check=False)
+    except OSError as exc:
+        raise DocSyncError(f'Git 실행 실패: {exc}') from exc
+    if result.returncode:
+        raise DocSyncError(f'Git 조회 실패 (rc={result.returncode}): '
+                           f'{result.stderr.decode("utf-8", errors="replace").strip()}')
+    return result.stdout
+
+
+def _changes(root, since, until):
+    commits = []
+    for value in (since, until or 'HEAD'):
+        if not isinstance(value, str) or not value.strip():
+            raise DocSyncError('변경 범위는 비어 있지 않은 커밋이어야 한다')
+        commits.append(_git(root, 'rev-parse', '--verify', '--end-of-options',
+                            value + '^{commit}').decode('ascii').strip())
+    # rename을 삭제+추가로 보아 이전/새 경로 모두 의존 대조에 포함한다.
+    raw = _git(root, 'diff', '--name-only', '-z', '--no-renames', *commits, '--')
+    try:
+        paths = sorted(set(raw.decode('utf-8').rstrip('\0').split('\0'))) if raw else []
+    except UnicodeError as exc:
+        raise DocSyncError('Git 변경 경로는 UTF-8이어야 한다') from exc
+    return {'since': commits[0], 'until': commits[1], 'changed_paths': paths,
+            'included': [], 'excluded': []}
+
+
+def collect(root, registry_path, ids=None, *, since=None, until=None):
     """원문·근거 해시를 보존하며 읽기 전용 계획을 만든다."""
     root = _root(root)
     registry = _file(root, str(registry_path))
@@ -107,8 +136,28 @@ def collect(root, registry_path, ids=None):
     known = {doc['id'] for doc in manifest['documents']}
     if selected is not None and selected - known:
         raise DocSyncError(f'등록되지 않은 문서 id: {sorted(selected - known)}')
+    if until is not None and since is None:
+        raise DocSyncError('until에는 since가 필요하다')
+    selection = _changes(root, since, until) if since is not None else None
+    if selection is not None:
+        selection['content_source'] = 'current-working-tree'
+        selection['content_head'] = _git(root, 'rev-parse', 'HEAD').decode('ascii').strip()
+        selection['working_tree_dirty'] = bool(_git(root, 'status', '--porcelain', '-z'))
+        selection['registry_changed'] = registry.relative_to(root).as_posix() in selection['changed_paths']
     documents = []
     for entry in manifest['documents']:
+        matched = (sorted(set(selection['changed_paths']) &
+                          {entry['target'], *entry['evidence']}) if selection else [])
+        if selection is not None:
+            reason = ('explicit-id-filter' if selected is not None and entry['id'] not in selected
+                      else 'registry-changed' if selection['registry_changed']
+                      else 'registered-dependency-changed' if matched
+                      else 'no-registered-dependency-change')
+            bucket = 'included' if reason in ('registry-changed', 'registered-dependency-changed') else 'excluded'
+            selection[bucket].append({'id': entry['id'], 'reason': reason,
+                                      'matched_paths': matched})
+            if bucket == 'excluded':
+                continue
         if selected is not None and entry['id'] not in selected:
             continue
         before = read_text(root / entry['target'])
@@ -129,5 +178,8 @@ def collect(root, registry_path, ids=None):
         head = result.stdout.strip() if result.returncode == 0 else ''
     except OSError:
         head = ''
-    return {'schema_version': 1, 'root': str(root), 'registry': str(registry),
+    plan = {'schema_version': 1, 'root': str(root), 'registry': str(registry),
             'registry_hash': digest(read_text(registry)), 'head': head, 'documents': documents}
+    if selection is not None:
+        plan['selection'] = selection
+    return plan

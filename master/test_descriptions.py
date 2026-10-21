@@ -217,7 +217,8 @@ def _run(tmp: Path) -> int:
     orig = sy.generate
     sy.generate = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("노드 죽음"))
     try:
-        note = sy.describe_domain(P7, "D")
+        # 기본 모델이 cloud(agy)다(#840) — cli 도 주입해 실제 상용 호출을 막는다.
+        note = sy.describe_domain(P7, "D", cli=lambda lane, prompt, timeout: (None, "노드 죽음"))
     finally:
         sy.generate = orig
     check("예외를 던지지 않는다", isinstance(note, str), str(type(note)))

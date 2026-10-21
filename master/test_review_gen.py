@@ -387,8 +387,14 @@ def test_generation_chain_is_codex_first_but_verification_is_not() -> None:
     check("  그다음 agy, 마지막 claude", names[1:] == ["agy", "claude"], str(names))
     vnames = [n for n, _ in l2.BACKENDS]
     check("🔴 [중요] 검증 체인에는 codex 가 없다 (교차 계열)", "codex" not in vnames, str(vnames))
-    check("  그리고 작성 레인 1순위는 codex 다 — 그래서 검증에 넣으면 안 된다",
-          LN.DEFAULT_LANES[0] == "codex", str(LN.DEFAULT_LANES))
+    # 본문 작성 체인은 이 생성 체인과 별개다 — #788 결정(2026-10-10)으로 agy 가 1순위가 됐다.
+    # 그래서 교차 계열은 고정 순서가 아니라 `exclude_author`(#379)가 작성자마다 지킨다.
+    check("  본문 작성 레인은 별도 체인 — agy → codex → claude → 로컬 (#788)",
+          LN.DEFAULT_LANES[:3] == ("agy", "codex", "claude"), str(LN.DEFAULT_LANES))
+    for author in LN.DEFAULT_LANES[:3]:
+        kept = [n for n, _ in l2.exclude_author(l2.BACKENDS, author)]
+        check(f"  작성자 {author} → 검증자에 같은 계열이 없다",
+              l2.family_of(author) not in {l2.family_of(n) for n in kept}, str(kept))
 
 def test_serial_travels_to_journal():
     """[중요] 번호(`#627`)는 **결과 필드로** 소비자 요약 줄까지 간다 — `review_commit` 의 `log` 는

@@ -1536,8 +1536,102 @@ def test_retry_checks_out_the_feedback_tip() -> None:
             shutil.rmtree(root, ignore_errors=True)
 
 
+def test_lane_policy_metadata_and_bypasses() -> None:
+    """#840: 실제 chain→infer→submit, 외부 호출·워커 파일쓰기는 주입한다."""
+    from master.work import lanes as LN, wcommit
+    from master.work import revise as RV
+
+    for case in ("local", "cloud", "mixed", "write", "skeleton", "codex", "claude", "facts"):
+        paths, root = tmp_paths()
+        paths.root = root
+        calls, seen = [], []
+        skel = {"a.py": "# [DOC] fill\ndef f():\n    # [PSEUDO] body\n    raise NotImplementedError\n"}
+        files = {"a.py": "# [DOC] fill\ndef f():\n    return 1\n"}
+
+        def api(method, path, body=None):
+            calls.append((method, path, body))
+            return {"work": {"redmine_issue_id": 840}} if method == "GET" else {"ok": True}
+
+        def run_one(skeleton, lane, **kw):
+            seen.append(lane)
+            if case == "local" and lane != LN.DEFAULT_LANES[-1]:
+                return LN.LaneRun(lane=lane, failure_kind="quota", reason="usage limit reached")
+            if case == "mixed":
+                return LN.LaneRun(lane=lane, failure_kind="quota" if lane == "agy" else "format",
+                                  reason="usage limit reached" if lane == "agy" else "bad format")
+            return LN.LaneRun(lane=lane, ok=True, files=files)
+
+        def commit(facts, task, *, llm, **kw):
+            rc, text = llm(facts, task["task_id"], ["a.py"])
+            if rc:
+                return wcommit.Committed(task_id=task["task_id"], stage="llm", reason=text)
+            if case == "facts":
+                return wcommit.Committed(task_id=task["task_id"], stage="층2",
+                                         reason="facts failure: usage limit reached",
+                                         layer2_findings=["invented symbol"])
+            return wcommit.Committed(task_id=task["task_id"], branch="task/W1/local",
+                                     head=WORKER_HEAD, files=files, want=["a.py"])
+
+        try:
+            with ExitStack() as stack:
+                stack.enter_context(patch("master.work.twin_base.local_baseline", return_value={}))
+                stack.enter_context(patch("master.work.usage.record", return_value={}))
+                stack.enter_context(patch("master.work.wcommit.run", side_effect=commit))
+                stack.enter_context(patch.object(I, "_skeleton_at", return_value={} if case == "skeleton" else skel))
+                stack.enter_context(patch.object(I._MODE, "current", return_value=(case if case in
+                    ("codex", "claude") else "lane", "test")))
+                stack.enter_context(patch.object(LN, "run_one", side_effect=run_one))
+                writer = stack.enter_context(patch.object(LN, "write_back", return_value=["disk error"]
+                                                          if case == "write" else []))
+                worker = stack.enter_context(patch.object(R, "run_worker", return_value=(0, "done")))
+                mark = stack.enter_context(patch("master.work.revalidation.mark"))
+                note = stack.enter_context(patch("master.redmine.update_issue"))
+                embed = stack.enter_context(patch("master.work.revise.embed"))
+                stack.enter_context(patch.object(I, "_log"))
+                result = I.commit_task(paths, FakeFacts(), {
+                    "task_id": "local-task", "round": 2, "epoch": 7,
+                    "attempt_count": RV.MAX_ATTEMPTS}, work_id="W1", base=SUB_TIP,
+                    want=["a.py"], branch="task/W1/local", api=api)
+            submits = [body for _, path, body in calls if path.endswith("/submit")]
+            failures = [body for _, path, body in calls if path.endswith("/submit-fail")]
+            if case == "local":
+                check("#840 quota 세cloud 후 local", seen == list(LN.DEFAULT_LANES), str(seen))
+                check("#840 local 영속표지 1회", mark.call_count == 1)
+                saved = mark.call_args.kwargs
+                metadata = saved["metadata"]
+                check("#840 재실행 근거 저장", metadata["base_commit"] == SUB_TIP and
+                      metadata["round"] == 2 and metadata["files"] == files and
+                      metadata["skeleton"] == skel and "Files to implement:" in metadata["prompt"])
+                check("#840 self_check 표지·출처 제출", len(submits) == 1 and
+                      submits[0]["self_check"]["needs_revalidation"] is True and
+                      submits[0]["self_check"]["fingerprint"] == saved["fingerprint"])
+                check("#840 이슈에 표지·model·provenance 기록", note.call_count == 1 and
+                      all(s in note.call_args.kwargs["notes"] for s in
+                          ("needs_revalidation", "qwen2.5-coder:14b", "provenance")))
+                check("#840 응답에도 표지 보존", any("needs_revalidation=true" in n for n in result.notes))
+            elif case in ("mixed", "write", "skeleton", "facts"):
+                check(f"#840 {case} 제출 없음", not submits and len(failures) == 1, str(calls))
+                check(f"#840 {case} quota release 아님", failures[0].get("reason") != "quota_exhausted")
+                check(f"#840 {case} local기록·코드재작성 없음", not mark.called and not embed.called)
+                if case == "skeleton":
+                    check("#840 골조실패 Claude우회 없음", not worker.called and not seen)
+                elif case == "write":
+                    check("#840 쓰기실패 후 모델추가호출 없음", seen == ["agy"] and writer.call_count == 1)
+                elif case == "mixed":
+                    check("#840 혼합오류 Claude/local 우회 없음", seen == ["agy", "codex"])
+            else:
+                check(f"#840 {case} 성공 제출", len(submits) == 1 and not failures)
+                check(f"#840 {case} local표지 없음", not mark.called and not note.called)
+                if case in ("codex", "claude"):
+                    check(f"#840 {case} 원격모드 보존", worker.call_count == 1 and not seen and
+                          worker.call_args.kwargs["mode"] == case)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (
+               test_lane_policy_metadata_and_bypasses,
                test_codex_jsonl_quota_reaches_submit_fail,
                test_commit_task_failure_notices_match_disposition,
                test_auth_notice_content,

@@ -561,7 +561,11 @@ def test_synth_source_only() -> None:
     def fake_model(url, payload):
         fake_calls.append(payload)
         return "---\ntags: [source]\ncategory: Code/Source\nrelated_classes: []\n---\n\n## 요약\n소스 변수 선언.\n\n## 개선 필요 사항\n없음\n"
-    injected = {"caller": fake_model, "model": "fake", "chain": ["fake"], "parallel": 1}
+    # #840: 로컬은 cloud 셋이 모두 quota 일 때만 돈다 — cloud 도 주입해 실제 호출을 막는다.
+    def quota_cli(lane, prompt, timeout):
+        return None, "quota exhausted: usage limit reached"
+    injected = {"caller": fake_model, "cli": quota_cli, "model": "fake",
+                "chain": ["agy", "codex", "claude", "fake"], "parallel": 1}
     # 정상 경로는 그대로 돈다 (경계가 기능을 막지 않는다)
     s = synth.run(paths, changed=["Source/A.cpp"], dry_run=True, **injected)
     check("Source/ 안은 통과한다", s.groups == 1, str(s.groups))

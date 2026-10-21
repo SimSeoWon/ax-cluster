@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import unittest
 
@@ -97,6 +98,91 @@ class RegistryTests(unittest.TestCase):
         (self.root / 'source.py').write_text('x' * 500_001, encoding='utf-8')
         with self.assertRaises(DocSyncError):
             collect(self.root, self.registry)
+
+
+class ImpactTests(unittest.TestCase):
+    """임시 Git 저장소로 실제 커밋 범위와 현재 파일의 경계를 검사한다."""
+
+    def setUp(self):
+        RegistryTests.setUp(self)
+        self.git('init', '-q')
+        self.git('config', 'user.name', 'Doc Sync Test')
+        self.git('config', 'user.email', 'test@example.invalid')
+        self.commit()
+        self.base = self.git('rev-parse', 'HEAD').strip()
+
+    save = RegistryTests.save
+
+    def git(self, *args):
+        return subprocess.run(['git', '-C', str(self.root), *args], check=True,
+                              capture_output=True, text=True).stdout
+
+    def commit(self):
+        self.git('add', '.')
+        self.git('commit', '-qm', 'fixture')
+
+    def test_source_change_exact_match_and_id_intersection(self):
+        (self.root / 'other.md').write_text('other', encoding='utf-8')
+        (self.root / 'unrelated.py').write_text('other', encoding='utf-8')
+        self.save([self.entry, dict(self.entry, id='other', path='other.md',
+                                    evidence=['unrelated.py'])])
+        self.commit()
+        base = self.git('rev-parse', 'HEAD').strip()
+        (self.root / 'source.py').write_text('answer = 43\n', encoding='utf-8')
+        self.commit()
+        plan = collect(self.root, self.registry, since=base)
+        self.assertEqual([d['id'] for d in plan['documents']], ['readme'])
+        self.assertEqual(plan['selection']['included'][0]['matched_paths'], ['source.py'])
+        self.assertEqual(plan['selection']['excluded'][0]['reason'], 'no-registered-dependency-change')
+        selected = collect(self.root, self.registry, ['other'], since=base)
+        self.assertEqual(selected['documents'], [])
+        self.assertEqual(selected['selection']['excluded'][0]['reason'], 'explicit-id-filter')
+
+    def test_registry_change_includes_all_documents(self):
+        self.save([dict(self.entry, instructions='new instruction')])
+        self.commit()
+        plan = collect(self.root, self.registry, since=self.base)
+        self.assertTrue(plan['selection']['registry_changed'])
+        self.assertEqual(plan['selection']['included'][0]['reason'], 'registry-changed')
+
+    def test_rename_and_delete_paths_are_preserved(self):
+        self.git('mv', 'source.py', 'renamed.py')
+        (self.root / 'unused.py').write_text('unused', encoding='utf-8')
+        self.save([dict(self.entry, evidence=['renamed.py'])])
+        self.commit()
+        paths = collect(self.root, self.registry, since=self.base)['selection']['changed_paths']
+        self.assertIn('source.py', paths)
+        self.assertIn('renamed.py', paths)
+        base = self.git('rev-parse', 'HEAD').strip()
+        self.git('rm', 'unused.py')
+        self.commit()
+        plan = collect(self.root, self.registry, since=base)
+        self.assertEqual(plan['documents'], [])
+        self.assertEqual(plan['selection']['changed_paths'], ['unused.py'])
+
+    def test_no_changes_and_historical_range_uses_current_content_explicitly(self):
+        plan = collect(self.root, self.registry, since=self.base)
+        self.assertEqual(plan['documents'], [])
+        self.assertEqual(plan['selection']['changed_paths'], [])
+        (self.root / 'source.py').write_text('committed\n', encoding='utf-8')
+        self.commit()
+        end = self.git('rev-parse', 'HEAD').strip()
+        (self.root / 'source.py').write_text('latest\n', encoding='utf-8')
+        self.commit()
+        (self.root / 'README.md').write_text('uncommitted\n', encoding='utf-8')
+        plan = collect(self.root, self.registry, since=self.base, until=end)
+        self.assertEqual(plan['selection']['until'], end)
+        self.assertNotEqual(plan['selection']['content_head'], end)
+        self.assertEqual(plan['selection']['content_source'], 'current-working-tree')
+        self.assertTrue(plan['selection']['working_tree_dirty'])
+        self.assertEqual(plan['documents'][0]['before'], 'uncommitted\n')
+        self.assertEqual(plan['documents'][0]['evidence'][0]['text'], 'latest\n')
+
+    def test_bad_revision_and_until_without_since_are_errors(self):
+        with self.assertRaisesRegex(DocSyncError, 'Git 조회 실패'):
+            collect(self.root, self.registry, since='missing-commit')
+        with self.assertRaisesRegex(DocSyncError, 'since'):
+            collect(self.root, self.registry, until='HEAD')
 
 
 if __name__ == '__main__':

@@ -948,6 +948,23 @@ def _notify_blocked(task_id: str, task: dict, marker: str, summary: str,
         _log(f"[{kind}] {task_id} 알림 실패 — {type(e).__name__}: {e}")
 
 
+def _notify_revalidation(work_id: str, task_id: str, metadata: dict,
+                         *, api=runner._api) -> None:
+    """로컬 채택의 표지와 출처를 기존 work 이슈에 기록한다."""
+    try:
+        meta = api("GET", f"/api/v1/works/{work_id}") or {}
+        iid = (meta.get("work") or meta).get("redmine_issue_id")
+        if not iid:
+            _log(f"[revalidation] {task_id} 이슈 기록 생략 — redmine_issue_id 없음")
+            return
+        from .. import redmine
+        redmine.update_issue(int(iid), notes=(
+            f"조각 `{task_id}` 로컬 생성: 클라우드 재검증 필요.\n\n"
+            + json.dumps(metadata, ensure_ascii=False, sort_keys=True)))
+    except Exception as e:                                   # noqa: BLE001
+        _log(f"[revalidation] {task_id} 이슈 기록 실패 — {type(e).__name__}: {e}")
+
+
 def _skeleton_at(paths, commit: str, files) -> dict:
     """`{경로: 골조 본문}` — **base 커밋에서** 읽는다. 못 읽으면 빈 dict.
 
@@ -1022,13 +1039,13 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
     task_id = str(task.get("task_id") or task.get("id") or "")
     epoch = task.get("epoch")
     author = {"lane": ""}
+    generation = {}
 
     def llm(f, tid, files):
         """본문을 쓴다. [중요] **git 은 안 만진다** — 커밋은 `wcommit` 이 결정적으로 한다.
 
-        🔴 **레인 순서는 `agy` → 로컬 → (명시하면) `claude`** 다 (사용자 지시 2026-09-04).
-        종전에는 워커의 `claude -p` 하드코딩이었고, 계정 한도 하나로 **4조각 중 3이 동시에
-        죽었다**(실측 00:16, `429 session limit`). 근거·실측은 `lanes.py` 머리말에 있다.
+        lane 모드는 #840의 quota 전용 클라우드→로컬 정책을 따른다.
+        원격 codex/claude 지휘자 모드는 기존 실행 계약을 유지한다.
 
         [주의] `runner_` 주입이 **가장 먼저**다 — 테스트가 그 자리를 쓴다(실 CLI·실 노드를
         두드리지 않게). 주입이 없을 때만 레인 체인이 돈다.
@@ -1069,14 +1086,11 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
             from . import lanes as _LN
             skel = _skeleton_at(paths, base, files)
             if not skel:
-                # [중요] 골조를 못 읽으면 레인이 쓸 재료가 없다 — 워커 CLI 로 되돌린다
-                #    (그 경로는 자기 체크아웃을 직접 읽는다). 조용히 실패하지 않는다.
-                #    [주의] 폴백의 주체도 모드를 따른다 — `lane` 일 때의 기본은 `claude` 다.
-                _log(f"[lane] {tid} 골조를 못 읽었다 — 워커 CLI 로 되돌린다 (지휘자=claude)")
-                author["lane"] = "claude"
-                return runner.run_worker(f, tid, files=files, runner=None,
-                                         mode="claude", timeout=timeout)
+                _log(f"[lane] {tid} 골조를 못 읽었다 — 생성 중단")
+                return 1, "RESULT: BLOCKED - skeleton unavailable"
             got, tried = _LN.run_chain(f, skel, timeout=timeout, logf=_log)
+            generation["attempts"] = [dict(lane=t.lane, kind=t.failure_kind or
+                                           ("success" if t.ok else "error")) for t in tried]
             # 🔴 **계측을 봉투에 실어 보낸다** (`#387`). 종전에는 합성 문자열만 돌려줘서
             #    `LaneRun.usage` 가 이 자리에서 **버려졌다** — 레인 비용을 영영 못 쟀다.
             #    봉투는 `claude --output-format json` 과 같은 모양이라 받는 쪽(`wcommit`)이
@@ -1090,6 +1104,9 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                 return 1, _U.envelope(f"RESULT: BLOCKED - all lanes failed: {why}",
                                       _U.meta_from_usage(last))
             author["lane"] = got.lane
+            generation.update(needs_revalidation=got.needs_revalidation,
+                              model=got.lane, provenance=got.provenance,
+                              skeleton=skel, prompt=_LN.build_prompt(skel))
             return 0, _U.envelope(f"RESULT: DONE (lane={got.lane})",
                                   _U.meta_from_usage(got.usage))
 
@@ -1232,10 +1249,35 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
             res.notes.append("[주의] 골조에 `[PSEUDO]` 가 0개였다 — 채울 본문이 없는 조각이다 "
                              "(커밋 없음이 정상)")
         # [중요] **커밋이 생겼으므로 제출한다** (원전 `submit_result` 자리)
+        self_check = {}
+        revalidation_note = ""
+        if generation.get("needs_revalidation"):
+            import hashlib
+            from . import revalidation
+
+            round_no = int(task.get("round") or 0)
+            identity = dict(base_commit=base, round=round_no, files=dict(c.files),
+                            want=sorted(c.want))
+            fingerprint = hashlib.sha256(json.dumps(
+                identity, sort_keys=True, ensure_ascii=False,
+                separators=(",", ":")).encode("utf-8")).hexdigest()
+            metadata = dict(generation, work_id=work_id, task_id=task_id,
+                            round=round_no, base_commit=base,
+                            checkout_commit=checkout or base, branch=c.branch,
+                            head_commit=c.head, want=list(c.want), files=dict(c.files))
+            revalidation.mark(paths.root, "task", task_id, fingerprint=fingerprint,
+                              metadata=metadata)
+            self_check = dict(needs_revalidation=True, model=generation["model"],
+                              provenance=generation["provenance"], fingerprint=fingerprint)
+            revalidation_note = " · needs_revalidation=true " + json.dumps(
+                self_check, ensure_ascii=False, sort_keys=True)
+            res.notes.append("[주의] 로컬 생성 — " + revalidation_note)
         out = runner.Outcome(status=runner.DONE, branch=c.branch, head=c.head,
-                             tail=(c.reason or "")[-2000:])
+                             tail=(c.reason or "")[-2000:], self_check=self_check)
         try:
             runner.submit(task_id, out, epoch=epoch, worker_id=facts.host, api=api)
+            if self_check:
+                _notify_revalidation(work_id, task_id, self_check, api=api)
             # [중요] **제출에서 끝내지 않는다 — 조각의 끝은 여기다.** 커밋이 생겼고 층1 을
             #    통과했으므로 이 조각은 끝났다. verify 까지 내야 큐에서 terminal 이 되고,
             #    조각이 전부 terminal 이 돼야 `.33` 에 완료 공지가 나간다(정본 ⑹).
@@ -1245,7 +1287,7 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                 runner.verify(task_id, passed=True,
                               feedback=f"조각 작업 완료 — {c.branch} ← {c.head[:8]}. "
                                        f"[주의] 검증 아님: 통합 검사는 `.33` 이 서브 브랜치를 "
-                                       f"전부 머지한 뒤 한 번 한다", api=api)
+                                       f"전부 머지한 뒤 한 번 한다{revalidation_note}", api=api)
                 _log(f"[wcommit] {task_id} 조각 종결 — 큐에 완료 기록 (검증은 `.33`)")
             except Exception as e:                           # noqa: BLE001
                 # [중요] 조용히 넘기지 않는다 — 이 한 줄이 안 나가면 공지가 통째로 멈춘다.
@@ -1291,6 +1333,11 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         from . import workmodel as WM
         decision = WM.decide_failure(task, issues=issues, notes=c.notes, summary=c.summary,
                                      stage=c.stage, layer2_failure=c.layer2_failure)
+        # A chain with a format/fact/call/write failure is not a quota release
+        # merely because another attempt's diagnostic contains quota words.
+        if generation.get("attempts") and c.stage == "llm":
+            decision = WM.FailureDecision(_RV.REJECT, WM.UNKNOWN,
+                                           reason="cloud generation chain failed")
         verdict, fp = decision.verdict, decision.fingerprint
         auth_hit = decision.marker if decision.kind == WM.AUTH else ""
         quota_hit = decision.marker if decision.kind == WM.QUOTA else ""

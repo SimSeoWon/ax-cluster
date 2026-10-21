@@ -11,11 +11,14 @@ from .registry import collect
 
 
 def _summary(plan):
-    return {"schema_version": plan["schema_version"], "root": plan["root"],
+    summary = {"schema_version": plan["schema_version"], "root": plan["root"],
             "registry": plan["registry"], "head": plan["head"],
             "documents": [{key: doc[key] for key in
                            ("id", "path", "target", "role", "protected")}
                           for doc in plan["documents"]]}
+    if "selection" in plan:
+        summary["selection"] = plan["selection"]
+    return summary
 
 
 def _save(path, artifact, plan):
@@ -54,6 +57,8 @@ def main(argv=None):
         command.add_argument("--registry", type=Path, default=Path("docs/document-registry.json"))
         if name != "apply":
             command.add_argument("--id", action="append", dest="ids")
+            command.add_argument("--since", help="영향 문서 탐지의 시작 커밋")
+            command.add_argument("--until", help="종료 커밋 (since 지정 시 기본 HEAD)")
         if name == "draft":
             command.add_argument("--project", required=True, help="사용량을 기록할 마운트된 프로젝트")
             command.add_argument("--out", type=Path, required=True)
@@ -77,7 +82,7 @@ def main(argv=None):
                                  approved_ids=args.approved_ids,
                                  allow_protected=args.allow_protected)
         else:
-            plan = collect(root, registry, ids=args.ids)
+            plan = collect(root, registry, ids=args.ids, since=args.since, until=args.until)
             if args.command == "plan":
                 result = _summary(plan)
             else:
@@ -94,6 +99,8 @@ def main(argv=None):
                           "documents": [{"id": doc["id"], "decision": doc["decision"],
                                          "reason": doc["reason"], "diff": doc["diff"]}
                                         for doc in artifact["documents"]]}
+                if "selection" in artifact:
+                    result["selection"] = artifact["selection"]
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (DocSyncError, OSError, ValueError, TypeError) as exc:

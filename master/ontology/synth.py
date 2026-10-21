@@ -37,11 +37,15 @@ from __future__ import annotations
 
 import time
 import contextvars
+import hashlib
+import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from ..context_search.paths import ProjectPaths
 from ..work.generate import DEFAULT_BROKER, GenerateError, call_broker, unload_model
+from ..work import llm_policy
+from .. import source_text
 from . import collect, contexts as ctx_mod, domain_md, layers, package, parse, verify_facts, yaml_io
 
 # [중요] **모델 이름이 곧 노드 선택이다.** 브로커(8102)가 모델 보유·상주로 라우팅하므로,
@@ -56,7 +60,7 @@ ALT_MODEL = "gemma3:12b"          # `.2` 보유. [중요] 상주가 아니다 �
 # `qwen2.5-coder:14b` 를 **쫓아낸다.** 그러면 브로커의 상주 재확립이 돌아 다시 14b 를
 # 올리고(~60초), 다음 조각이 또 gemma 를 부르면 **왕복 스래싱**이 된다.
 # 다른 모델로 재려면 그 노드의 핀을 **바꿔서** 재라 — 섞어 쓰지 말 것.
-DEFAULT_MODELS = (HEAVY_MODEL, CODER_MODEL)
+DEFAULT_MODELS = (*llm_policy.CLOUD_LANES, CODER_MODEL)
 
 # [중요] 두 노드 모두 실측 상한이 8192 다 (BC-250 여유 ~2.0GB / 3060 여유 2569 MiB).
 # 이 값을 올리려면 **양쪽 노드의 여유를 먼저 재라.**
@@ -118,11 +122,18 @@ class DomainResult:
     settled: int = 0                      # [중요] 워터마크를 올린 오브젝트 수 (stale 이 가라앉는다)
     unreflected: set = field(default_factory=set)   # [중요] 조각이 실패해 **재추출 못 한** 클래스
     descriptions: str = ""                # 레이어 책임 서술 결과 한 줄 (full 일 때만 · 소 3.1.4)
+    policy_attempts: list = field(default_factory=list)
+    generation_models: list = field(default_factory=list)
+    needs_revalidation: bool = False
+    source_fingerprint: str = ""
+    source_files: list = field(default_factory=list)
+    write_failed: bool = False
+    descriptions_revalidated: bool = False
 
     @property
     def ok(self) -> bool:
         """한 종류라도 건졌나. [중요] **둘 다 0 이면 실패다** — 빈 결과를 성공으로 세지 않는다."""
-        return bool(self.actions or self.invariants)
+        return bool(self.actions or self.invariants) and not self.write_failed
 
     @property
     def summary(self) -> str:
@@ -284,40 +295,92 @@ def generate(prompt: str, model: str, *, broker: str, num_ctx: int, timeout: int
                        num_ctx=num_ctx, caller=caller)
 
 
-def _lane(chunks: list, model: str, doc, kind: str, *, broker: str, num_ctx: int,
-          timeout: int, caller, res: DomainResult) -> list:
-    """한 모델(=한 노드)에 배정된 조각들을 **순차로** 처리한다.
+def _policy_generate(prompt, models, *, broker, num_ctx, timeout, caller, cli, validate,
+                     cloud_only=False):
+    """검증 실패를 같은 cloud 정책에 되먹인다. 응답 본문을 quota로 분류하지 않는다."""
+    attempts = []
+    for model in models:
+        explicit_cloud = len(models) == 1 and llm_policy.family(model) != "local"
+        if not explicit_cloud and not llm_policy.eligible(model, attempts, allow_local=not cloud_only):
+            continue
+        try:
+            if llm_policy.family(model) != "local":
+                if cli is not None:
+                    response = cli(model, prompt, timeout)
+                    raw, why = response if isinstance(response, tuple) else (response, "")
+                elif caller is not None:
+                    raw, why = None, "주입된 호출자 — 실제 cloud 호출 금지"
+                else:
+                    from .. import layer2_verify as l2
+                    lane, _, sub = model.partition(":")
+                    if lane == "agy":
+                        raw, why = l2.call_agy_why(prompt, timeout=timeout, model=sub)
+                    elif lane == "codex":
+                        raw, _events, why = l2.call_codex_why(prompt, timeout=timeout)
+                    else:
+                        raw, why = l2.call_claude_why(prompt, timeout=timeout, model=sub)
+                if not raw or why:
+                    raise GenerateError(why or "빈 cloud 응답")
+            else:
+                raw = generate(prompt, model, broker=broker, num_ctx=num_ctx,
+                               timeout=timeout, caller=caller)
+        except GenerateError as e:
+            attempts.append({"lane": model, "kind": llm_policy.classify_failure(str(e)),
+                             "error": str(e)})
+            continue
+        try:
+            result, failure_kind, reason = validate(raw)
+        except parse.ResponseError as e:
+            result, failure_kind, reason = None, "format", str(e)
+        if failure_kind:
+            attempts.append({"lane": model, "kind": failure_kind, "error": reason})
+            continue
+        attempts.append({"lane": model, "kind": "success"})
+        return result, model, attempts
+    return None, "", attempts
 
-    레인당 in-flight 를 1로 유지하는 것이 요점이다 — 같은 노드에 동시에 밀어넣으면
-    Ollama 가 직렬화하면서 메모리만 함께 물고 있는다.
-    """
+
+def _lane(chunks: list, models, doc, kind: str, *, broker: str, num_ctx: int,
+          timeout: int, caller, res: DomainResult, paths=None, cli=None,
+          cloud_only=False) -> list:
+    """각 조각에 동일한 cloud 우선·quota 전용 local 정책을 적용한다."""
     build = prompt_actions if kind == "actions" else prompt_invariants
     read_back = parse.actions if kind == "actions" else parse.invariants
-    every = UNLOAD_EVERY.get(model, 0)
+    models = (models,) if isinstance(models, str) else tuple(models)
     out: list = []
     for n, ctx in enumerate(chunks, 1):
         p = build(doc, ctx)
         res.prompt_chars += len(p)
-        try:
-            raw = generate(p, model, broker=broker, num_ctx=num_ctx,
-                           timeout=timeout, caller=caller)
-        except GenerateError as e:
-            res.reasons.append(f"{kind}[{ctx.summary}] LLM 실패: {e}")
-            res.llm_failed = True
-            # [중요] **이 조각의 클래스는 반영되지 않았다.** 기록하지 않으면 settle 이
-            # 도메인 전체를 「반영했다」로 찍어 낡은 문서가 정합으로 위장한다
-            # (2026-08-15 실측: 노드가 죽어 12개 클래스가 그렇게 위장됐다).
-            res.unreflected |= ctx.names
-            continue
-        try:
+
+        def validate(raw):
             got = (read_back(raw, allowed=res.allowed) if kind == "actions"
                    else read_back(raw))
-        except parse.ResponseError as e:
-            res.reasons.append(f"{kind}[{ctx.summary}] 응답 거부: {e}")
-            res.unreflected |= ctx.names      # 받긴 했지만 쓸 수 없었다 = 미반영
+            if got.dropped:
+                return None, "facts", got.summary
+            if kind == "actions" and got.items and paths is not None:
+                _kept, dropped = _fact_gate(paths, got.items)
+                if dropped:
+                    res.dropped_facts.extend(dropped)
+                    return None, "facts", "; ".join(dropped)
+            return got, "", ""
+
+        got, model, attempts = _policy_generate(
+            p, models, broker=broker, num_ctx=num_ctx, timeout=timeout, caller=caller,
+            cli=cli, validate=validate, cloud_only=cloud_only)
+        res.policy_attempts.extend({**a, "kind_of_content": kind, "chunk": ctx.summary}
+                                   for a in attempts)
+        if got is None:
+            res.reasons.append(f"{kind}[{ctx.summary}] 모든 허용 모델 실패: {attempts}")
+            res.llm_failed = any(a["kind"] in ("error", "quota") for a in attempts)
+            res.unreflected |= ctx.names
             continue
         res.parse_notes.append(f"{kind} {ctx.summary} → {got.summary}")
         out.append(got.items)
+        if model not in res.generation_models:
+            res.generation_models.append(model)
+        res.needs_revalidation |= llm_policy.family(model) == "local"
+        res.lanes[model] = res.lanes.get(model, 0) + 1
+        every = UNLOAD_EVERY.get(model, 0)
         # [중요] 누적 회수 (위 UNLOAD_EVERY). 실패해도 치명적이지 않다 — 다음 주기에 다시 한다.
         if every and n % every == 0 and caller is None:
             try:
@@ -372,7 +435,9 @@ def _refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT
                     broker: str = DEFAULT_BROKER, num_ctx: int = NUM_CTX,
                     timeout: int = TIMEOUT, dry_run: bool = False,
                     caller=None, with_objects: bool = False,
-                    changed_classes: set | None = None) -> DomainResult:
+                    changed_classes: set | None = None, cli=None, cloud_only: bool = False,
+                    expected_source_fingerprint: str | None = None,
+                    expected_artifact_fingerprint: str | None = None) -> DomainResult:
     """도메인 하나를 재합성한다. **실패는 결과로 돌려준다 — 예외를 던지지 않는다.**
 
     도메인을 응집 순서로 **조각내어 여러 노드에 나눠 던지고**(사용자 지시 2026-08-09)
@@ -394,6 +459,16 @@ def _refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT
     if not members:
         res.reasons.append("멤버가 0 — 재합성할 대상이 없다")
         return res
+    source_bodies = {}
+    for filename in sorted(set(members.values())):
+        body = source_text.read(paths.repo / filename)
+        if body is None:
+            res.reasons.append(f"소스 읽기 실패: {filename}")
+            return res
+        source_bodies[filename] = body.text
+    res.source_files = sorted(source_bodies)
+    res.source_fingerprint = hashlib.sha256(json.dumps(
+        source_bodies, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
     scope_members = members
     if changed_classes is not None:
@@ -421,21 +496,10 @@ def _refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT
     res.allowed = set(members)
 
     layer_of = _layer_map(paths, domain, members)
-    lanes = {m: chunks[i::len(models)] for i, m in enumerate(models)}
-    lanes = {m: c for m, c in lanes.items() if c}
-    res.lanes = {m: len(c) for m, c in lanes.items()}
-
     for kind in ("actions", "invariants"):
-        with ThreadPoolExecutor(max_workers=len(lanes)) as ex:
-            # `#713` ① — 레인 스레드에도 사용량 기록 지점(`usage.sink`)을 같이 넘긴다.
-            #    `contextvars` 는 스레드 풀로 저절로 넘어가지 않는다 — 레인마다 문맥을 복사한다
-            futures = [ex.submit(contextvars.copy_context().run, _lane, cs, m, doc, kind,
-                                 broker=broker, num_ctx=num_ctx, timeout=timeout,
-                                 caller=caller, res=res)
-                       for m, cs in lanes.items()]
-            batches: list = []
-            for f in futures:
-                batches.extend(f.result())
+        batches = _lane(chunks, models, doc, kind, broker=broker, num_ctx=num_ctx,
+                        timeout=timeout, caller=caller, res=res, paths=paths,
+                        cli=cli, cloud_only=cloud_only)
         items, collisions = merge_items(batches)
         for item in items:
             _assign_layer(item, layer_of)
@@ -444,29 +508,60 @@ def _refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT
         else:
             res.invariants, res.collisions_invariants = items, collisions
 
-    if res.actions:
-        res.actions, res.dropped_facts = _fact_gate(paths, res.actions)
-
     if not res.ok:
         res.reasons.append("건진 항목이 0")
         res.elapsed_ms = int((time.monotonic() - t0) * 1000)
         return res
 
     if not dry_run:
+        try:
+            if expected_source_fingerprint is not None:
+                current = {}
+                for filename in res.source_files:
+                    body = source_text.read(paths.repo / filename)
+                    if body is None:
+                        raise OSError(f"재검증 중 소스 유실: {filename}")
+                    current[filename] = body.text
+                fingerprint = hashlib.sha256(json.dumps(
+                    current, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+                if fingerprint != expected_source_fingerprint:
+                    raise OSError("재검증 중 소스 변경 — 기존 패키지 보존")
+            if expected_artifact_fingerprint is not None:
+                from ..work.revalidation import artifact_fingerprint
+                if artifact_fingerprint(paths.ontology / "domains" / domain) != expected_artifact_fingerprint:
+                    raise OSError("재검증 중 패키지 변경 — 기존 패키지 보존")
+        except OSError as e:
+            res.write_failed = True
+            res.reasons.append(str(e))
+            return res
         objects = None
         if with_objects:
             objects = [{"name": n, "file": members[n], "layer": layer_of.get(n, 3)}
                        for n in sorted(members)]
         if res.partial:
             res.invalidated = _delete_invalidated(res.invalidation)
-        res.written = package.write(
-            paths, domain,
-            objects=objects,
-            actions=res.actions or None,
-            invariants=res.invariants or None,
-            manifest_extra=_manifest_extra(paths, domain, doc),
-            prune=not res.partial,      # [중요] 부분 갱신은 안 들어온 항목을 지우지 않는다
-        )
+        extra = _manifest_extra(paths, domain, doc) or {}
+        previous = yaml_io.read(paths.ontology / "domains" / domain / package.MANIFEST) or {}
+        previous_generation = previous.get("generation") or {}
+        # 부분 갱신/미반영이 남으면 이전 local 출처 표시를 지우지 않는다.
+        res.needs_revalidation |= bool(previous_generation.get("needs_revalidation")
+                                        and (res.partial or res.unreflected
+                                             or not res.actions or not res.invariants))
+        extra["generation"] = {
+            "needs_revalidation": res.needs_revalidation,
+            "models": res.generation_models,
+            "source_fingerprint": res.source_fingerprint,
+            "source_files": res.source_files,
+        }
+        try:
+            res.written = package.write(
+                paths, domain, objects=objects, actions=res.actions or None,
+                invariants=res.invariants or None, manifest_extra=extra, prune=not res.partial)
+        except OSError as e:
+            res.write_failed = True
+            res.reasons.append(f"쓰기 실패: {e}")
+            res.policy_attempts.append({"lane": "", "kind": "write", "error": str(e)})
+            return res
         # [중요] **워터마크를 올린다 — 이것이 없으면 이 도메인은 영원히 stale 이다** (원본
         # η.7.2 제안 2 의 self-settling). [중요] **성공했을 때만** 찍는다: 실패한 재합성이
         # "반영했다" 고 말하면 낡은 문서가 조용히 정합으로 위장한다.
@@ -480,15 +575,22 @@ def _refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT
         # `collect_layer_members` 가 방금 쓴 L{n} 멤버를 읽을 수 있다 — 순서가 계약이다.
         if not res.partial:
             res.descriptions = describe_domain(
-                paths, domain, model=models[0], broker=broker, num_ctx=num_ctx,
-                timeout=timeout, caller=caller)
+                paths, domain, models=models, broker=broker, num_ctx=num_ctx,
+                timeout=timeout, caller=caller, cli=cli, cloud_only=cloud_only, result=res)
+            if previous_generation.get("needs_revalidation") and not res.descriptions_revalidated:
+                res.needs_revalidation = True
+                manifest = paths.ontology / "domains" / domain / package.MANIFEST
+                data = yaml_io.read(manifest) or {}
+                data.setdefault("generation", {})["needs_revalidation"] = True
+                yaml_io.write(manifest, data)
     res.elapsed_ms = int((time.monotonic() - t0) * 1000)
     return res
 
 
 def describe_domain(paths: ProjectPaths, domain: str, *, model: str = DEFAULT_MODELS[0],
                     broker: str = DEFAULT_BROKER, num_ctx: int = NUM_CTX,
-                    timeout: int = TIMEOUT, caller=None) -> str:
+                    timeout: int = TIMEOUT, caller=None, models=None, cli=None,
+                    cloud_only=False, result=None) -> str:
     """레이어 책임 서술을 뽑아 쓴다 (소 3.1.4). 반환은 사람이 읽을 한 줄.
 
     원본: `ontology_refresh` 의 5번 절 — 추출(`ontology_descriptions`) + 저장
@@ -500,11 +602,51 @@ def describe_domain(paths: ProjectPaths, domain: str, *, model: str = DEFAULT_MO
     """
     from . import descriptions as desc_mod
     try:
-        res = desc_mod.extract(paths, domain, call=lambda p: generate(
-            p, model, broker=broker, num_ctx=num_ctx, timeout=timeout, caller=caller))
+        chosen = []
+        def call(prompt):
+            def validate(raw):
+                descriptions, reason = desc_mod.parse_response(raw)
+                if not descriptions:
+                    return None, "format", reason
+                active = {n for n, members in desc_mod.collect_layer_members(paths, domain).items()
+                          if desc_mod.has_content(members)}
+                if set(descriptions) - active:
+                    return None, "facts", "멤버 없는 레이어 서술"
+                # 빠진 레이어는 `write()` 가 기존(로컬일 수 있는) 서술을 남긴다 — 그 상태로
+                # `descriptions_revalidated` 를 세우면 재검증 표시가 거짓으로 풀린다.
+                root = paths.ontology / "domains" / domain
+                missing = sorted(n for n in active - set(descriptions)
+                                 if not desc_mod.is_locked(desc_mod.read(root / f"L{n}" / desc_mod.FILENAME)))
+                if missing:
+                    return None, "format", f"잠기지 않은 활성 레이어 서술 누락: L{missing}"
+                return raw, "", ""
+            raw, selected, attempts = _policy_generate(
+                prompt, tuple(models) if models is not None else (model,), broker=broker,
+                num_ctx=num_ctx, timeout=timeout, caller=caller, cli=cli,
+                validate=validate, cloud_only=cloud_only)
+            if result is not None:
+                result.policy_attempts.extend({**a, "kind_of_content": "descriptions"}
+                                              for a in attempts)
+            if raw is None:
+                raise GenerateError(f"서술의 모든 허용 모델 실패: {attempts}")
+            chosen.append(selected)
+            return raw
+        res = desc_mod.extract(paths, domain, call=call)
         if not res.ok:
             return res.summary
-        return f"{res.summary} · {desc_mod.write(paths, domain, res.descriptions).summary}"
+        written = desc_mod.write(paths, domain, res.descriptions)
+        if result is not None and chosen:
+            result.descriptions_revalidated = True
+            if chosen[0] not in result.generation_models:
+                result.generation_models.append(chosen[0])
+            result.needs_revalidation |= llm_policy.family(chosen[0]) == "local"
+            manifest = paths.ontology / "domains" / domain / package.MANIFEST
+            data = yaml_io.read(manifest) or {}
+            generation = data.setdefault("generation", {})
+            generation["needs_revalidation"] = result.needs_revalidation
+            generation["models"] = result.generation_models
+            yaml_io.write(manifest, data)
+        return f"{res.summary} · {written.summary}"
     except Exception as e:                              # noqa: BLE001
         return f"[중요] 서술 실패 — {type(e).__name__}: {e}"
 
@@ -541,7 +683,7 @@ def prompt_invariants(doc, ctx):
 def run(paths: ProjectPaths, *, domains: list | None = None,
         models: tuple = DEFAULT_MODELS,
         broker: str = DEFAULT_BROKER, num_ctx: int = NUM_CTX, dry_run: bool = False,
-        caller=None, progress=None) -> Stats:
+        caller=None, progress=None, cli=None, cloud_only=False) -> Stats:
     """여러 도메인 재합성. `domains` 를 안 주면 **stale 한 active 도메인만.**
 
     [중요] 전체를 무조건 다시 만들지 않는다 — 받아온 스냅샷을 이유 없이 덮는 것이 되고,
@@ -583,7 +725,8 @@ def run(paths: ProjectPaths, *, domains: list | None = None,
             progress(f"  {i}/{len(domains)} {plan.summary}")
         r = refresh_domain(paths, d, models=models, broker=broker, num_ctx=num_ctx,
                            dry_run=dry_run, caller=caller,
-                           changed_classes=(plan.changed if plan and not plan.full else None))
+                           changed_classes=(plan.changed if plan and not plan.full else None),
+                           cli=cli, cloud_only=cloud_only)
         st.results.append(r)
         if r.partial:
             st.partial += 1

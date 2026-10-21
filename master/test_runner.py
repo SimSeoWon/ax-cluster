@@ -331,6 +331,15 @@ def test_queue_calls() -> None:
     body = api.calls[-1][2]
     check("submit 이 브랜치·커밋을 싣는다", body["branch"] == "a/b" and body["head_commit"] == SHA)
     check("[중요] epoch 을 실어 fencing 을 살린다", body["epoch"] == 7, str(body.get("epoch")))
+    out.self_check = {"needs_revalidation": True, "model": "qwen2.5-coder:14b",
+                      "provenance": [{"lane": "agy", "kind": "quota"}]}
+    R.submit("t1", out, epoch=7, worker_id="w1", api=api)
+    stored = api.calls[-1][2]["self_check"]
+    check("local 재검증 metadata 제출 보존", stored.get("needs_revalidation") is True and
+          stored.get("model") == "qwen2.5-coder:14b" and
+          stored.get("provenance") == out.self_check["provenance"], str(stored))
+    check("기존 self_check 필드 보존", "worker_report" in stored and
+          stored.get("gates") == "worker-side only", str(stored))
 
     # [중요] 근거 없는 결과를 제출하려 하면 막는다
     try:

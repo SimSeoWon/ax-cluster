@@ -239,9 +239,156 @@ def test_merge() -> None:
     check("이름 없는 항목은 안 남는다", len(items) == 1 and coll == 0)
 
 
+def test_quota_policy_and_provenance() -> None:
+    import json
+    import tempfile
+    from contextlib import ExitStack
+    from unittest.mock import patch
+    from master.context_search.paths import ProjectPaths
+    from master.ontology import synth, yaml_io, package
+    from master.work import revalidation
+
+    def payload(prompt):
+        if "layer_descriptions" in prompt:
+            return json.dumps({"layer_descriptions": {"3": "실행 책임"}})
+        if '"invariants"' in prompt:
+            return _inv_payload()
+        return _actions_payload()
+
+    with tempfile.TemporaryDirectory(prefix="ax-ontology-policy-") as tmp:
+        paths = ProjectPaths(name="O", root=Path(tmp))
+        source = paths.repo / "Source/A.h"
+        source.parent.mkdir(parents=True)
+        source.write_text("class UA { void Run(); };", encoding="utf-8")
+        doc = domain_md.parse_text(_REGISTER_SCHEMA, domain="D")
+        chunk = DomainContexts(domain="D", items=[ClassContext(name="UA", header="class UA {}; ")])
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(synth.domain_md, "read", return_value=doc))
+            stack.enter_context(patch.object(synth.collect, "members_of", return_value={"UA": "Source/A.h"}))
+            stack.enter_context(patch.object(synth.ctx_mod, "chunk_domain", return_value=[chunk]))
+            stack.enter_context(patch.object(synth, "_layer_map", return_value={"UA": 3}))
+            stack.enter_context(patch.object(synth, "_fact_gate", side_effect=lambda _p, items: (items, [])))
+            stack.enter_context(patch("master.ontology.stale.settle", return_value=1))
+            calls, local_calls = [], []
+            def quota_cli(lane, prompt, timeout):
+                calls.append(lane)
+                return None, "quota exhausted"
+            def local(_url, request):
+                local_calls.append(request["model"])
+                return payload(request["prompt"])
+            res = synth.refresh_domain(paths, "D", caller=local, cli=quota_cli)
+            manifest = paths.ontology / "domains/D" / package.MANIFEST
+            generation = (yaml_io.read(manifest) or {}).get("generation", {})
+            check("quota 셋 뒤에만 온톨로지 local 호출", res.ok and local_calls
+                  and calls == ["agy", "codex", "claude"] * 3, str((calls, local_calls, res.reasons)))
+            check("로컬 provenance·재검증 표시 저장", generation.get("needs_revalidation") is True
+                  and generation.get("source_files") == ["Source/A.h"]
+                  and generation.get("source_fingerprint") == revalidation.source_fingerprint(paths, ["Source/A.h"]))
+            before = manifest.read_bytes()
+            calls.clear(); local_calls.clear()
+            def mixed(lane, prompt, timeout):
+                calls.append(lane)
+                return (None, "quota exhausted") if lane == "agy" else (None, "network timeout")
+            failed = synth.refresh_domain(paths, "D", caller=local, cli=mixed)
+            check("혼합 오류는 Claude/local 금지·기존 패키지 보존", not failed.ok
+                  and calls == ["agy", "codex"] * 2 and not local_calls
+                  and manifest.read_bytes() == before, str(calls))
+
+            calls.clear()
+            def cloud(lane, prompt, timeout):
+                calls.append(lane)
+                return payload(prompt)
+            fingerprint = revalidation.artifact_fingerprint(manifest.parent)
+            res = synth.refresh_domain(paths, "D", cli=cloud, cloud_only=True,
+                expected_source_fingerprint=generation["source_fingerprint"],
+                expected_artifact_fingerprint=fingerprint)
+            check("cloud 재합성은 성공 뒤 local 표시 해제", res.ok and not res.needs_revalidation
+                  and (yaml_io.read(manifest) or {})["generation"]["needs_revalidation"] is False,
+                  str((res.reasons, res.descriptions)))
+
+            before = revalidation.artifact_fingerprint(manifest.parent)
+            res = synth.refresh_domain(paths, "D", cli=cloud, cloud_only=True,
+                expected_source_fingerprint="stale-source",
+                expected_artifact_fingerprint=before)
+            check("쓰기 직전 소스 guard는 기존 패키지 보존", not res.ok and res.write_failed
+                  and revalidation.artifact_fingerprint(manifest.parent) == before)
+
+            calls.clear(); local_calls.clear()
+            res = synth.refresh_domain(paths, "D", caller=local, cli=quota_cli, cloud_only=True)
+            check("cloud_only는 quota 셋이어도 local 호출0", not res.ok and not local_calls)
+
+            # 형식·사실 실패는 quota와 구별하고 다른 첫 두 cloud만 사용한다.
+            calls.clear()
+            def invalid_then_valid(lane, prompt, timeout):
+                calls.append(lane)
+                return "invalid" if lane == "agy" else payload(prompt)
+            res = synth.refresh_domain(paths, "D", cli=invalid_then_valid, dry_run=True)
+            check("형식 실패는 codex로만 전진", res.ok and calls == ["agy", "codex"] * 2
+                  and any(a["kind"] == "format" for a in res.policy_attempts))
+            calls.clear()
+            def wrong_then_valid(lane, prompt, timeout):
+                calls.append(lane)
+                return (_actions_payload(evidence="") if lane == "agy" else payload(prompt))
+            res = synth.refresh_domain(paths, "D", cli=wrong_then_valid, dry_run=True)
+            check("근거 없는 항목은 facts 실패로 다른 cloud에서 재생성", res.ok
+                  and any(a["kind"] == "facts" for a in res.policy_attempts)
+                  and "claude" not in calls)
+
+
+def test_descriptions_need_full_layer_coverage() -> None:
+    """cloud 가 활성 레이어 일부만 서술하면 재검증 표시를 풀지 않는다 (#840 결함 ①)."""
+    import json
+    import tempfile
+    from unittest.mock import patch
+    from master.context_search.paths import ProjectPaths
+    from master.ontology import descriptions as desc_mod, package, synth, yaml_io
+
+    with tempfile.TemporaryDirectory(prefix="ax-ontology-cover-") as tmp:
+        paths = ProjectPaths(name="O", root=Path(tmp))
+        root = paths.ontology / "domains/D"
+        for n, name in ((1, "a"), (2, "b")):
+            (root / f"L{n}/actions").mkdir(parents=True)
+            (root / f"L{n}/actions/{name}.yaml").write_text("id: x\n", encoding="utf-8")
+        local_l2 = desc_mod.dump("D", 2, "로컬 L2 서술")
+        (root / "L2" / desc_mod.FILENAME).write_text(local_l2, encoding="utf-8")
+        manifest = root / package.MANIFEST
+
+        def run(cli):
+            yaml_io.write(manifest, {"generation": {"needs_revalidation": True}})
+            res = synth.DomainResult(domain="D", needs_revalidation=True)
+            with patch.object(desc_mod.domain_md, "read", return_value=None):
+                synth.describe_domain(paths, "D", models=synth.DEFAULT_MODELS, cli=cli,
+                                      cloud_only=True, result=res)
+            return res
+
+        l1_only = json.dumps({"layer_descriptions": {"1": "cloud L1"}})
+        both = json.dumps({"layer_descriptions": {"1": "cloud L1", "2": "cloud L2"}})
+        calls = []
+        def partial_then_full(lane, prompt, timeout):
+            calls.append(lane)
+            return l1_only if lane == "agy" else both
+        res = run(partial_then_full)
+        check("레이어 누락은 format 실패로 다음 cloud", calls == ["agy", "codex"]
+              and any(a.get("kind") == "format" for a in res.policy_attempts), str(calls))
+        check("  전부 받은 뒤에만 재검증 해제", res.descriptions_revalidated
+              and desc_mod.read(root / "L2" / desc_mod.FILENAME)["body"] == "cloud L2")
+
+        (root / "L2" / desc_mod.FILENAME).write_text(local_l2, encoding="utf-8")
+        calls.clear()
+        def always_partial(lane, prompt, timeout):
+            calls.append(lane)
+            return l1_only
+        res = run(always_partial)
+        check("🔴 cloud 가 모두 일부만 주면 표시 유지·로컬 L2 보존", not res.descriptions_revalidated
+              and (yaml_io.read(manifest) or {})["generation"]["needs_revalidation"] is True
+              and desc_mod.read(root / "L2" / desc_mod.FILENAME)["body"] == "로컬 L2 서술",
+              str((calls, res.policy_attempts)))
+
+
 def main() -> int:
     for fn in (test_domain_md, test_chunk_note, test_actions_parse,
-               test_invariants_parse, test_merge):
+               test_invariants_parse, test_merge, test_quota_policy_and_provenance,
+               test_descriptions_need_full_layer_coverage):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_ontology_synth: {PASS}/{total} 통과")

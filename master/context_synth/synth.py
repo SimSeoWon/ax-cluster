@@ -43,6 +43,7 @@ from ..context_search.paths import ProjectPaths
 from ..context_search.search_log import search_context
 from ..graph import class_graph as cg, dependency as dep, parse as gparse
 from ..work.generate import DEFAULT_BROKER, GenerateError, call_broker, unload_model
+from ..work import llm_policy
 from . import md as md_mod, prompt as prompt_mod, verify as verify_mod
 
 # 컨텍스트 합성용 모델 — [중요] **Gemma 로 바꿨다** (실측 2026-08-08).
@@ -67,9 +68,9 @@ SYNTH_TIMEOUT = 600
 # 사용자 2026-10-08: 제미나이 1차, 로컬 LLM 폴백. 순서는 여기 한 곳이다.
 # 호출 오류·형식 거부·사실 거부 모두 다음 모델로 간다. 각 모델은 그룹당 한 번만 시도한다.
 # 모든 시도는 같은 md.finalize와 사실 게이트를 통과해야 하며 claude 제외는 유지한다.
-SYNTH_CHAIN = (SYNTH_MODEL, LOCAL_MODEL, "codex", FALLBACK_MODEL)
+SYNTH_CHAIN = (*llm_policy.CLOUD_LANES, LOCAL_MODEL)
 _CLI_LANES = ("claude", "agy", "codex")          # `ontology.synth.CLI_MODELS` 와 같은 레인 이름
-_CHAIN_EXCLUDED = ("claude",)
+_CHAIN_EXCLUDED = ()
 
 # [중요] KV 컨텍스트 상한. **이것이 BC-250 정지 사고의 진짜 원인이었다** — 모델 기본
 # `context_length` 가 **262144(256K)** 라, 안 주면 그 전제로 KV 와 컨텍스트 체크포인트를
@@ -122,6 +123,9 @@ class GroupResult:
     model: str = ""           # 형식 게이트를 통과한 결과를 낸 모델 (`#727`)
     attempts: list = field(default_factory=list)   # 사슬 시도 기록 — `모델 결과` 문자열들
     attempt_records: list[str] = field(default_factory=list)  # 원문·판정 JSON 경로
+    policy_attempts: list = field(default_factory=list)
+    needs_revalidation: bool = False
+    source_fingerprint: str = ""
 
     @property
     def passed(self) -> bool:
@@ -572,16 +576,17 @@ def _generate(prompt: str, model: str, *, broker: str, caller, cli, usage: dict)
     if sub:
         raise GenerateError(f"{lane} 는 모델 지정을 받지 않는다: {model}")
     if cli is not None:
-        out, why = cli(lane, prompt, SYNTH_TIMEOUT), ""
+        response = cli(lane, prompt, SYNTH_TIMEOUT)
+        out, why = response if isinstance(response, tuple) else (response, "")
     else:
         from .. import layer2_verify as l2                        # noqa: PLC0415
         if lane == "codex":
             out, _events, why = l2.call_codex_why(prompt, timeout=SYNTH_TIMEOUT)
         elif lane == "agy":
             out, why = l2.call_agy_why(prompt, timeout=SYNTH_TIMEOUT)
-        else:                       # `_chain_for` 가 이미 뺐다 — 여기 오면 배선 결함이다
-            raise GenerateError(f"{lane} 는 합성 사슬 레인이 아니다 (#727)")
-    if not out or not str(out).strip():
+        else:
+            out, why = l2.call_claude_why(prompt, timeout=SYNTH_TIMEOUT)
+    if why or not out or not str(out).strip():
         raise GenerateError(f"{lane} CLI 가 응답하지 않았다 — {why or '빈 출력'}")
     return out
 
@@ -635,7 +640,10 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                      model: str | None = None, caller=None, dry_run: bool = False,
                      content_limit: int = prompt_mod.CONTENT_LIMIT,
                      tally: source_text.EncodingTally | None = None,
-                     chain=None, cli=None, related=None, searcher=None) -> GroupResult:
+                     chain=None, cli=None, related=None, searcher=None,
+                     cloud_only: bool = False,
+                     expected_source_fingerprint: str | None = None,
+                     expected_artifact_fingerprint: str | None = None) -> GroupResult:
     """한 그룹 → 컨텍스트 MD 한 개.
 
     실패는 **예외가 아니라 결과**다 — 한 그룹이 죽었다고 배치를 멈추지 않는다. 대신
@@ -697,9 +705,15 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
     doc = ""
     format_reason = llm_reason = ""
     for n, m in enumerate(models):
+        explicit_cloud = len(models) == 1 and _is_cli(m)
+        if not explicit_cloud and not llm_policy.eligible(
+                m, res.policy_attempts, allow_local=not cloud_only):
+            res.attempts.append(f"{m} 건너뜀(quota 정책)")
+            continue
         if _is_cli(m) and caller is not None and cli is None:
             # 주입된 브로커 호출자(테스트)에서 진짜 상용 CLI 를 부르지 않는다
             res.attempts.append(f"{m} 건너뜀(주입된 호출자)")
+            res.policy_attempts.append({"lane": m, "kind": "error", "error": "주입된 호출자"})
             continue
         # 이 시도가 실제로 보내는 프롬프트. `prompt_chars`·`digest` 는 **마지막 시도**(통과했다면
         #    통과 모델)의 값이다 — 결과를 만든 프롬프트를 가리키게 (`#782`)
@@ -724,6 +738,8 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                 #    보여 준다(종전엔 「미상」). [주의] GroupResult 합계는 **로컬만** — 계약 그대로다.
                 shown = usage or (usage_mod.sink_cli_tokens() if _is_cli(m) else {})
         except GenerateError as e:
+            res.policy_attempts.append({"lane": m, "kind": llm_policy.classify_failure(str(e)),
+                                        "error": str(e)})
             attempt.update(status="transport_error", error=str(e), finished_at=time.time())
             llm_reason = f"LLM 실패: {e}"
             res.attempts.append(f"{m} LLM 실패")
@@ -755,15 +771,18 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                            status="facts_passed" if report.ok else "facts_rejected")
             if report.ok:
                 res.model = m
+                res.policy_attempts.append({"lane": m, "kind": "success"})
                 res.reason = ""
                 break
             attempt.update(finished_at=time.time())
             res.reason = f"사실 게이트 거부 — {report.reason}"
+            res.policy_attempts.append({"lane": m, "kind": "facts", "error": report.reason})
             res.attempts.append(f"{m} 사실 거부")
             _log(f"{key} — {m} {res.reason}")
             continue
         # σ.7-B — [중요] 기존 파일을 남긴다. 사슬이 다 실패하면 다음 사이클에 다시 시도된다.
         format_reason = f"형식 게이트 {verdict.summary} · preview={verdict.preview!r}"
+        res.policy_attempts.append({"lane": m, "kind": "format", "error": verdict.reason})
         res.reason = format_reason
         res.attempts.append(f"{m} 형식 거부")
         _log(f"{key} — {m} 형식 거부 · preview={verdict.preview!r}")
@@ -784,6 +803,16 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
     from . import related as related_mod
     doc, _fixed, _unres = related_mod.normalize_doc(doc, paths)
     res.related_fixed, res.related_unresolved = _fixed, list(_unres)
+    import hashlib
+    res.source_fingerprint = hashlib.sha256(json.dumps(
+        bodies, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    res.needs_revalidation = not _is_cli(res.model)
+    for field_name, value in (
+            ("needs_revalidation", "true" if res.needs_revalidation else "false"),
+            ("generation_model", json.dumps(res.model)),
+            ("generation_source_fingerprint", res.source_fingerprint),
+            ("generation_source_files", json.dumps(sorted(bodies)))):
+        doc = md_mod._set_field(doc, field_name, value)
 
     res.chars = len(doc)
     if dry_run:
@@ -791,8 +820,29 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
         res.dry_ok = True
         res.elapsed_ms = int((time.monotonic() - t0) * 1000)
         return res
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(doc, encoding="utf-8")
+    try:
+        if expected_source_fingerprint is not None:
+            current = {}
+            for f in bodies:
+                source = source_text.read(paths.repo / f)
+                if source is None:
+                    raise OSError(f"재검증 중 소스 유실: {f}")
+                current[f] = source.text
+            fingerprint = hashlib.sha256(json.dumps(
+                current, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+            if fingerprint != expected_source_fingerprint:
+                raise OSError("재검증 중 소스 변경 — 기존 문서 보존")
+        if expected_artifact_fingerprint is not None:
+            fingerprint = hashlib.sha256(out.read_bytes()).hexdigest()
+            if fingerprint != expected_artifact_fingerprint:
+                raise OSError("재검증 중 문서 변경 — 기존 문서 보존")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(doc, encoding="utf-8")
+    except OSError as e:
+        res.reason = f"쓰기 실패: {e}"
+        res.policy_attempts.append({"lane": res.model, "kind": "write", "error": str(e)})
+        attempt.update(status="write_error", error=str(e), finished_at=time.time())
+        return res
     res.written = True
     attempt.update(status="written", document=str(out), finished_at=time.time())
     res.elapsed_ms = int((time.monotonic() - t0) * 1000)

@@ -51,6 +51,42 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("before", data["documents"][0])
         self.assertEqual(sorted(p.name for p in self.root.iterdir()), before)
 
+    def test_range_options_and_selection_survive_plan_and_draft(self):
+        artifact = self.artifact()
+        artifact['selection'] = {'included': [{'id': 'readme', 'reason': 'registry-changed'}],
+                                 'excluded': [], 'content_source': 'current-working-tree'}
+        with patch('master.doc_sync.__main__.collect', return_value=artifact) as collect_mock:
+            rc, output, error = self.run_cli('plan', '--since', 'start', '--until', 'end',
+                                             '--id', 'readme')
+        self.assertEqual((rc, error), (0, ''))
+        self.assertEqual(json.loads(output)['selection'], artifact['selection'])
+        self.assertEqual(collect_mock.call_args.kwargs,
+                         dict(ids=['readme'], since='start', until='end'))
+        destination = self.root / 'selected.json'
+        from master.doc_sync.draft import generate as actual_generate
+        def generate(plan, **kwargs):
+            return actual_generate(plan, generator=lambda *args: json.dumps({
+                'decision': 'unchanged', 'reason': '현재 내용이 근거와 일치', 'citations': []}))
+        with patch('master.doc_sync.__main__.collect', return_value=artifact), \
+                patch('master.context_search.paths.resolve_mounted_only',
+                      return_value=SimpleNamespace(usage_log=self.root / 'usage.jsonl')), \
+                patch('master.doc_sync.draft.generate', side_effect=generate):
+            rc, output, _ = self.run_cli('draft', '--since', 'start', '--project', 'T',
+                                          '--out', str(destination))
+        self.assertEqual(rc, 0)
+        saved = json.loads(destination.read_text())
+        self.assertEqual(saved['selection'], artifact['selection'])
+        self.assertEqual(json.loads(output)['selection'], artifact['selection'])
+        self.assertEqual(saved['documents'][0]['decision'], 'unchanged')
+
+    def test_until_requires_since_before_model_call(self):
+        with patch('master.doc_sync.draft.generate') as generate:
+            rc, _, error = self.run_cli('draft', '--until', 'HEAD', '--project', 'T',
+                                          '--out', str(self.root / 'never.json'))
+        self.assertEqual(rc, 1)
+        self.assertIn('since', error)
+        generate.assert_not_called()
+
     def test_draft_saves_artifact_but_does_not_apply(self):
         output_path = self.root / "proposal.json"
         with patch("master.context_search.paths.resolve_mounted_only", return_value=SimpleNamespace(

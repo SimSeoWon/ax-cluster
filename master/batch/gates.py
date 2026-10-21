@@ -168,6 +168,10 @@ def should_run(sched: Schedule, cfg: dict, root: Path, *, input_count: int,
 RAG_ANALYSIS = Schedule(key="rag_analysis", hour=23, schedule="weekly", day="sunday",
                         min_entries=10)
 
+# 기존 유휴 타이머와 daily 최소 간격을 재사용한다. 표시 대상이 있을 때만 돈다.
+CLOUD_REVALIDATION = Schedule(key="cloud_revalidation", hour=0, schedule="daily",
+                              min_entries=1)
+
 
 # [중요] 주간 플랜 (`#628`, 2026-09-16) — 원전 `watch_state._should_run_weekly_plan` 을 글자대로.
 #    시각·마커가 없고 **작성자별 이번 주 `_summary.md` 부재**가 간격 노릇을 한다 — 플래너가 요약을

@@ -258,6 +258,7 @@ class Outcome:
     tail: str = ""
     # [중요] 실측 계측 — `--output-format json` 이 주는 것. 비어 있으면 **모른다**는 뜻이다.
     usage: dict = field(default_factory=dict)
+    self_check: dict = field(default_factory=dict)
 
     @property
     def cost_known(self) -> bool:
@@ -1219,7 +1220,8 @@ def submit(task_id: str, out: Outcome, *, epoch=None, worker_id: str = "", api=_
         raise QueueError(f"제출 불가한 결과를 submit 하려 했다 — {out.summary}")
     return api("POST", f"/api/v1/tasks/{task_id}/submit", {
         "branch": out.branch, "head_commit": out.head,
-        "self_check": {"worker_report": out.tail[-2000:], "gates": "worker-side only"},
+        "self_check": {"worker_report": out.tail[-2000:], "gates": "worker-side only",
+                       **out.self_check},
         "epoch": epoch, "worker_id": worker_id,
     })
 

@@ -2,8 +2,8 @@
 
 [중요] 지키는 계약은 넷이다:
 
-    ① **순서** — `agy` → 로컬. `claude` 는 기본 체인에 **없다** (사용자 지시 2026-09-04)
-    ② **fail-forward** — 한 레인이 죽으면 다음으로 넘어간다 (429 하나로 라운드가 죽던 것)
+    ① **순서** — agy → codex → claude → local, 제한 레인은 quota 조건을 만족해야 한다
+    ② **실패 분류** — 모델 본문·형식 실패는 quota 증거가 아니다
     ③ **써 넣기 실패는 성공이 아니다** — 텍스트를 받은 것과 워커 디스크에 올라간 것은 다르다
     ④ **레인 규약을 두 벌 두지 않는다** — `ontology/synth.generate` 를 그대로 쓴다
 
@@ -48,23 +48,16 @@ def both(marker: str = "") -> str:
 
 # ── ① 순서 ──────────────────────────────────────────────────────────────────────
 
-def test_default_order_is_codex_then_agy_then_local() -> None:
-    """🔴 **사용자 결정 2026-09-06**: *"지금까지 클로드가 하던 작업들 대부분을 1차로 코덱스에게
-    대신 요청하고, 코덱스 모두 소진하면 안티그래비티로 가자. 클로드와 동급으로."*
-
-    [중요] **근거는 품질이 아니라 한도 배분이다.** 셋 다 층1 을 통과했고 실측은 agy 32.9초 ·
-    codex 98.6초 · 로컬 117.6초라 이 순서는 **속도 손해**다. 그 손해를 받는 이유는 클로드의
-    한도가 마스터 세션과 **공용 자원**이기 때문이다 — 쓰는 일을 코덱스가 받아야 마스터 쪽이 산다.
-    [주의] 종전 순서(`agy → codex`, 2026-09-04·09-05)는 **빠른 순**이었다. 바뀐 것은 축이다.
-    """
-    check("🔴 첫 레인이 codex", LN.DEFAULT_LANES[0] == "codex", str(LN.DEFAULT_LANES))
-    check("  둘째가 agy — 코덱스가 소진되면 여기다", LN.DEFAULT_LANES[1] == "agy",
+def test_default_order_is_quota_aware_cloud_first() -> None:
+    """#840의 현재 순서를 검사한다. 실제 호출 허용은 별도 시나리오가 검사한다."""
+    check("첫 레인이 agy", LN.DEFAULT_LANES[0] == "agy", str(LN.DEFAULT_LANES))
+    check("둘째가 codex", LN.DEFAULT_LANES[1] == "codex",
           str(LN.DEFAULT_LANES))
     check("  마지막이 로컬 모델 — 상용이 다 막혔을 때 남는 자리",
           ":" in LN.DEFAULT_LANES[-1] and "claude" not in LN.DEFAULT_LANES[-1],
           str(LN.DEFAULT_LANES))
-    check("[중요] claude 는 기본 체인에 없다",
-          not any(l.startswith("claude") for l in LN.DEFAULT_LANES), str(LN.DEFAULT_LANES))
+    check("claude는 세번째 quota 전용 레인",
+          LN.DEFAULT_LANES[2] == "claude", str(LN.DEFAULT_LANES))
 
 
 def test_prompt_names_every_file() -> None:
@@ -111,7 +104,7 @@ def test_all_lanes_failing_is_blocked_not_silent() -> None:
         raise RuntimeError("nope")
     got, tried = LN.run_chain(FakeFacts(), SKEL, generator=boom, writer=lambda *a, **k: None)
     check("[중요] 성공으로 접지 않는다", got is None)
-    check("  시도를 전부 기록한다", len(tried) == len(LN.DEFAULT_LANES), str(len(tried)))
+    check("일반 실패 뒤 Claude와 local을 부르지 않는다", len(tried) == 2, str(len(tried)))
 
 
 def test_missing_file_is_not_success() -> None:
@@ -125,7 +118,7 @@ def test_missing_file_is_not_success() -> None:
 
 # ── ③ 써 넣기 실패는 성공이 아니다 ──────────────────────────────────────────────
 
-def test_write_failure_falls_through() -> None:
+def test_write_failure_stops_chain() -> None:
     """[중요] 텍스트를 받은 것과 **워커 디스크에 올라간 것**은 다르다."""
     def gen(prompt, lane):
         return both()
@@ -138,6 +131,39 @@ def test_write_failure_falls_through() -> None:
     check("  사유가 써 넣기를 지목한다",
           any("써 넣지 못했다" in (t.reason or "") for t in tried),
           str([t.reason for t in tried]))
+    check("쓰기 실패 뒤 다른 모델을 호출하지 않는다", len(tried) == 1, str(len(tried)))
+
+
+def test_quota_only_fallback_and_local_provenance() -> None:
+    for failure, expected in (("quota", list(LN.DEFAULT_LANES)),
+                              ("format", ["agy", "codex"]),
+                              ("mixed", ["agy", "codex"])):
+        seen = []
+        def gen(prompt, lane):
+            seen.append(lane)
+            if lane == LN.DEFAULT_LANES[-1]:
+                return both()
+            if failure == "format":
+                return "usage limit reached"  # model text is not quota evidence
+            if failure == "mixed" and lane == "codex":
+                raise RuntimeError("transport failed")
+            raise RuntimeError("usage limit reached")
+        got, tried = LN.run_chain(FakeFacts(), SKEL, generator=gen,
+                                 writer=lambda *a, **kw: None)
+        check(f"{failure} 호출 순서", seen == expected, str(seen))
+        if failure == "quota":
+            check("local 성공은 재검증 표지", got is not None and got.needs_revalidation)
+            check("local 출처에 세 cloud quota 보존", got is not None and
+                  [a["kind"] for a in got.provenance] == ["quota"] * 3 + ["success"])
+        else:
+            check(f"{failure} 실패는 local 성공 아님", got is None)
+            check(f"{failure} 명시 실패종류 유지", tried[-1].failure_kind ==
+                  ("format" if failure == "format" else "error"))
+    seen = []
+    got, tried = LN.run_chain(FakeFacts(), SKEL, lanes=("qwen2.5-coder:14b",),
+                             generator=lambda *a: seen.append(a) or both(),
+                             writer=lambda *a, **kw: None)
+    check("local 단일 override로 quota 우회 불가", not seen and got is None and not tried)
 
 
 # ── ④ 파싱 — 펜스·잡음 ─────────────────────────────────────────────────────────
@@ -179,12 +205,13 @@ def test_python_pieces_get_the_python_instruction():
 
 
 def main() -> int:
-    for fn in (test_default_order_is_codex_then_agy_then_local,
+    for fn in (test_default_order_is_quota_aware_cloud_first,
+               test_quota_only_fallback_and_local_provenance,
                test_prompt_names_every_file,
                test_chain_moves_on_when_a_lane_fails,
                test_all_lanes_failing_is_blocked_not_silent,
                test_missing_file_is_not_success,
-               test_write_failure_falls_through,
+               test_write_failure_stops_chain,
                test_markdown_fence_is_stripped,
                test_unknown_paths_are_ignored,
                test_python_pieces_get_the_python_instruction):

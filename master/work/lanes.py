@@ -12,14 +12,12 @@
     `claude[:모델]` · `agy`  →  마스터의 상용 CLI (`layer2_verify.call_*`)
     그 밖(모델 이름)          →  브로커(8102) → 그 모델을 상주한 노드
 
-## 순서 (사용자 결정 2026-09-06): 🔴 **codex → agy → 로컬**
+## #840 순서: agy → codex → claude → 로컬
 
-종전은 `agy → codex → 로컬` 이었다(2026-09-04·09-05). 바꾼 이유는 품질이 아니라 **자원 배분**이다 —
-*"클로드는 마스터 서버 수정도 병행해야 하니까 워커와 `.33` 작업에 최대한 코덱스를 우선 쓰고,
-코덱스를 다 소진하면 안티그래비티로 가자. 클로드와 동급으로."* 즉 **쓰는 일은 코덱스가 1차**이고
-클로드의 한도는 마스터 쪽에 남긴다. [주의] 속도는 손해다 — 실측 agy 32.9초 대 codex 98.6초.
-   `claude` 는 여전히 체인 밖이다 — 한도가 이 세션과 **공용 자원**이라 429 하나로
-   조각 여럿이 함께 죽는다(2026-09-04 실측: 4조각 중 3).
+Claude는 앞 두 클라우드가 모두 한도 소진일 때만, 로컬은 세 클라우드가 모두
+한도 소진일 때만 호출한다. 형식·사실·일반 호출 실패는 한도 소진으로 취급하지 않는다.
+로컬 채택은 재검증 표지와 실제 시도 이력을 남긴다. 쓰기 실패는 즉시 중단한다.
+원격 워커의 codex/claude 지휘자 모드는 이 텍스트 작성 체인과 별개다.
 
 실측(같은 골조 · 같은 프롬프트 · 같은 판정 = 층1):
 
@@ -27,8 +25,7 @@
     로컬 qwen2.5-coder:14b   117.6초   파일 2/2   `[PSEUDO]` 0   층1 통과  (`.43`)
     claude (워커)          90~154초   파일 2/2        —          오늘 429 로 3조각 사망
 
-[중요] **`claude` 를 체인 끝으로 미룬 것은 사용자 결정이다** — 품질 판정이 아니다.
-한도가 공용 자원이라 먼저 쓰면 라운드 전체가 그 한도에 묶인다.
+[중요] 위 측정은 과거 비교 기록이며 현재 폴백의 근거는 #840의 한도 정책이다.
 
 ## [중요] 구조가 하나 바뀐다 — 마스터가 쓰고, 워커로 써 넣는다
 
@@ -53,26 +50,10 @@ from dataclasses import dataclass, field
 
 from ..client import bundle
 
-# 🔴 사용자 지시 2026-09-04 — **agy 먼저, 그다음 로컬. `claude` 는 나중에.**
-#    [주의] `.43` 에는 `agy` 가 없다(실측: `command -v agy` → NO). 그 대는 로컬부터 걸린다 —
-#    체인이 레인 실패를 다음으로 넘기므로 배선을 나눌 필요가 없다.
-# 🔴 **codex 가 2순위다** (사용자 결정 2026-09-05, 실측 근거 아래).
-#    A/B 실측 2026-09-05 — 같은 골조(동결 20 · `[PSEUDO]` 6)로 본문 작성:
-#
-#        agy     32.9초   층1 통과   `[PSEUDO]` 잔재 0   `.h` 4,501자 · `.cpp` 3,303자
-#        codex   98.6초   층1 통과   `[PSEUDO]` 잔재 0   `.h` 4,501자 · `.cpp` 3,397자
-#        로컬     117.6초  층1 통과  (2026-09-04 측정)
-#
-#    [중요] **두 레인의 헤더가 바이트 단위로 동일했다** — 동결이 실제로 지켜진다는 뜻이다.
-#    [중요] 그 뒤 **1순위로 다시 올랐다** (사용자 결정 2026-09-06) — 품질이 같으니 남는 축은
-#    한도이고, **클로드를 마스터 작업에 남기려면 쓰는 일을 코덱스가 받아야 한다**. 로컬은 그 뒤다
-#    (codex 도 구독이라 한도가 있고, 그때 마지막으로 남는 것이 로컬이다).
-#    [주의] **종전 서술 「codex 는 `.33` 원격 CLI」는 폐기됐다** — 2026-09-05 에 마스터에 깔았고
-#    `call_codex_why` 는 **로컬 우선**이다(실측 2026-09-06 `codex-cli 0.153.4`). 원격은 폴백이라
-#    `.33` 이 꺼져 있어도 이 레인은 산다.
-DEFAULT_LANES = ("codex", "agy", "qwen2.5-coder:14b")
+# #840: ordering is fixed; llm_policy.eligible enforces quota prerequisites.
+DEFAULT_LANES = ("agy", "codex", "claude", "qwen2.5-coder:14b")
 
-# `claude` 를 쓰려면 **명시**해야 한다 (`AX_LANES=claude:opus` 또는 인자)
+# A single explicitly selected cloud lane is also supported.
 LANE_CLAUDE = "claude"
 
 INSTRUCTION = (
@@ -125,7 +106,7 @@ def instruction_for(files) -> str:
 
 
 class LaneError(RuntimeError):
-    """레인 자체가 불가능하다 — 다음 레인으로 넘긴다."""
+    """레인 자체가 불가능하다 — 정책이 허용하는 다음 클라우드로 넘긴다."""
 
 
 @dataclass
@@ -138,6 +119,9 @@ class LaneRun:
     files: dict = field(default_factory=dict)     # {경로: 본문}
     missing: list = field(default_factory=list)
     reason: str = ""
+    failure_kind: str = ""
+    needs_revalidation: bool = False
+    provenance: list = field(default_factory=list)
     # 🔴 **토큰 계측** (사용자 결정 2026-09-05) — 「위임하면 클로드 토큰이 주는가」는
     #    추정으로 답할 수 없다. 레인마다 실제로 쓴 것을 남긴다.
     #    [중요] 못 읽으면 **None** 이다 — 0 으로 적으면 「안 썼다」로 읽힌다.
@@ -214,6 +198,7 @@ def run_one(skeleton: dict, lane: str, *, broker: str = "", num_ctx: int = 16384
         prompt = build_prompt(skeleton)
     except LaneError as e:
         r.reason = str(e)
+        r.failure_kind = "format"
         return r
     t0 = time.time()
     try:
@@ -235,17 +220,22 @@ def run_one(skeleton: dict, lane: str, *, broker: str = "", num_ctx: int = 16384
                 out = synth.generate(prompt, lane, broker=broker or DEFAULT_BROKER,
                                      num_ctx=num_ctx, timeout=timeout)
     except Exception as e:                                   # noqa: BLE001
+        from .llm_policy import classify_failure
         r.seconds = time.time() - t0
         r.reason = f"{type(e).__name__}: {e}"
+        # Only invocation errors carry quota evidence. Model text is never inspected.
+        r.failure_kind = classify_failure(str(e))
         return r
     r.seconds = time.time() - t0
     r.chars = len(out or "")
     r.files, r.missing = parse_blocks(out, skeleton.keys())
     if not r.files:
         r.reason = "`=== FILE:` 블록을 못 읽었다 (형식 미준수)"
+        r.failure_kind = "format"
         return r
     if r.missing:
         r.reason = "일부 파일이 안 왔다"
+        r.failure_kind = "format"
         return r
     r.ok = True
     return r
@@ -274,26 +264,42 @@ def run_chain(facts, skeleton: dict, *, lanes=DEFAULT_LANES, broker: str = "",
               logf=None) -> tuple:
     """레인을 **순서대로** 시도해 첫 성공분을 워커에 써 넣는다. `(성공한 LaneRun|None, 시도들)`.
 
-    [중요] **fail-forward 다** — 한 레인이 죽으면 다음으로 넘어간다. 그것이 이 배선의 목적이고,
-    오늘 429 하나로 3조각이 함께 죽은 것을 막는다.
-    [주의] **써 넣기가 실패하면 그 레인은 성공이 아니다** — 텍스트를 받은 것과 워커 디스크에
-    올라간 것은 다르다. 조용히 넘기지 않는다.
+    일반·형식 실패 뒤에는 정책이 허용하는 다른 클라우드만 시도한다.
+    Claude/local은 quota 조건을 지키며 쓰기 실패 뒤에는 호출을 중단한다.
     """
+    from .llm_policy import eligible, family
+
     log = logf or (lambda m: None)
     tried: list = []
+    attempts: list = []
+    lanes = tuple(lanes)
     for lane in lanes:
+        # A single explicit cloud override remains supported. A local override
+        # cannot bypass the three-cloud quota requirement.
+        explicit_cloud = len(lanes) == 1 and family(lane) in ("agy", "codex", "claude")
+        if not explicit_cloud and not eligible(lane, attempts):
+            continue
         r = run_one(skeleton, lane, broker=broker, num_ctx=num_ctx, timeout=timeout,
                     generator=generator)
         tried.append(r)
         if not r.ok:
+            attempts.append({"lane": lane, "kind": r.failure_kind or "error",
+                             "reason": r.reason})
+            r.provenance = list(attempts)
             log(f"[lane] {r.summary} → 다음 레인")
             continue
         bad = write_back(facts, r.files, writer=writer)
         if bad:
             r.ok = False
+            r.failure_kind = "write"
             r.reason = "워커에 써 넣지 못했다 — " + "; ".join(bad[:2])
-            log(f"[lane] {r.summary} → 다음 레인")
-            continue
+            attempts.append({"lane": lane, "kind": "write", "reason": r.reason})
+            r.provenance = list(attempts)
+            log(f"[lane] {r.summary} → 쓰기 실패로 중단")
+            break
+        attempts.append({"lane": lane, "kind": "success"})
+        r.provenance = list(attempts)
+        r.needs_revalidation = family(lane) not in ("agy", "codex", "claude")
         log(f"[lane] {r.summary} · 워커에 기록")
         return r, tried
     return None, tried

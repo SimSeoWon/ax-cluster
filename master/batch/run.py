@@ -132,6 +132,16 @@ def _candidate_run(paths) -> dict:
     return result
 
 
+def _revalidation_count(paths) -> int:
+    from ..work.revalidation import marked_documents
+    return len(marked_documents(paths))
+
+
+def _revalidation_run(paths) -> dict:
+    from ..work.revalidation import run_documents
+    return run_documents(paths)
+
+
 BATCHES = [
     BatchDef(schedule=gates.RAG_ANALYSIS,
              label="RAG 채널 분석 (stdlib·LLM 0)",
@@ -146,6 +156,9 @@ BATCHES = [
              label="기각 후보 수집 (상태 변경 없음)",
              count_input=_candidate_count, execute=_candidate_run,
              gate=gates.should_run_dismissal_candidates),
+    BatchDef(schedule=gates.CLOUD_REVALIDATION,
+             label="로컬 문서 클라우드 재합성 (표시된 대상만, 회당 최대 2건)",
+             count_input=_revalidation_count, execute=_revalidation_run),
 ]
 
 

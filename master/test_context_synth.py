@@ -101,6 +101,21 @@ def boom(url, payload):
     raise GenerateError("브로커에 닿지 않는다: refused")
 
 
+def injected_group(*args, caller, **kwargs):
+    """형식·기록 검사는 한 cloud 레인을 주입해 정책 폴백과 분리한다."""
+    return synth.synthesize_group(*args, caller=caller, model='agy',
+        cli=lambda lane, text, timeout: caller('', {'prompt': text, 'model': lane}), **kwargs)
+
+
+def injected_run(*args, caller, **kwargs):
+    return synth.run(*args, caller=caller, model='agy',
+        cli=lambda lane, text, timeout: caller('', {'prompt': text, 'model': lane}), **kwargs)
+
+
+def quota_cli(*_args):
+    return None, 'quota exhausted: usage limit reached'
+
+
 def test_attempt_records(tmp):
     """가짜 LLM의 실제 원문·판정 연결, 원자적 파일·병렬 고유성을 확인한다."""
     import contextlib
@@ -125,7 +140,7 @@ def test_attempt_records(tmp):
         before_finalize.append(rows[0]["raw"] == response and rows[0]["status"] == "received")
         return real_finalize(response, **kwargs)
     with patch.object(md, "finalize", side_effect=finalize):
-        r = synth.synthesize_group(p, key, files, caller=caller, commit="capture123")
+        r = injected_group(p, key, files, caller=caller, commit="capture123")
     rows = [json.loads(f.read_text(encoding="utf-8"))
             for f in (p.root / "synth_attempts").glob("*.json")]
     row = rows[0]
@@ -148,7 +163,7 @@ def test_attempt_records(tmp):
           and next((p.root / "synth_attempts").glob("*.json")).stat().st_mode & 0o777 == 0o600)
 
     p = make_project(tmp / "attempt-facts")
-    r = synth.synthesize_group(p, key, files, caller=llm(GOOD.replace("AMonster", "AOther")))
+    r = injected_group(p, key, files, caller=llm(GOOD.replace("AMonster", "AOther")))
     row = json.loads(next((p.root / "synth_attempts").glob("*.json")).read_text(encoding="utf-8"))
     check("사실 거부에도 원문·거부근거 보존", not r.written
           and row["status"] == "facts_rejected" and row["format"]["ok"]
@@ -156,19 +171,20 @@ def test_attempt_records(tmp):
 
     p = make_project(tmp / "attempt-chain")
     bad = "형식 없는 응답 그대로\n" * 10
-    r = synth.synthesize_group(p, key, files, caller=llm(bad, GOOD),
-                               chain=(synth.LOCAL_MODEL, synth.FALLBACK_MODEL))
+    responses = iter((bad, GOOD))
+    r = synth.synthesize_group(p, key, files, caller=llm(GOOD),
+                               cli=lambda *_: next(responses))
     rows = [json.loads(f.read_text(encoding="utf-8"))
             for f in (p.root / "synth_attempts").glob("*.json")]
     by_model = {row["model"]: row for row in rows}
     check("형식 거부·대체 통과를 모델별 독립 원문으로 기록", r.written and len(rows) == 2
-          and by_model[synth.LOCAL_MODEL]["raw"] == bad
-          and by_model[synth.LOCAL_MODEL]["status"] == "format_rejected"
-          and by_model[synth.LOCAL_MODEL]["facts"] is None
-          and by_model[synth.FALLBACK_MODEL]["status"] == "written")
+          and by_model['agy']["raw"] == bad
+          and by_model['agy']["status"] == "format_rejected"
+          and by_model['agy']["facts"] is None
+          and by_model['codex']["status"] == "written")
 
     p = make_project(tmp / "attempt-error")
-    r = synth.synthesize_group(p, key, files, caller=boom)
+    r = injected_group(p, key, files, caller=boom)
     row = json.loads(next((p.root / "synth_attempts").glob("*.json")).read_text(encoding="utf-8"))
     check("생성 오류는 원문 없음과 transport_error를 명시", not r.written
           and row["status"] == "transport_error" and row["raw"] is None
@@ -177,14 +193,14 @@ def test_attempt_records(tmp):
 
     p = make_project(tmp / "attempt-dry")
     before = sorted(str(f.relative_to(p.root)) for f in p.root.rglob("*") if f.is_file())
-    r = synth.synthesize_group(p, key, files, caller=llm(GOOD), dry_run=True)
+    r = injected_group(p, key, files, caller=llm(GOOD), dry_run=True)
     after = sorted(str(f.relative_to(p.root)) for f in p.root.rglob("*") if f.is_file())
     check("dry-run은 기록 디렉토리·파일도 쓰지 않음",
           r.dry_ok and before == after and not (p.root / "synth_attempts").exists())
 
     p = make_project(tmp / "attempt-parallel")
     with ThreadPoolExecutor(max_workers=4) as pool:
-        results = list(pool.map(lambda n: synth.synthesize_group(
+        results = list(pool.map(lambda n: injected_group(
             p, f"Source/Game/parallel{n}", files, caller=llm(GOOD)), range(4)))
     rows = [json.loads(f.read_text(encoding="utf-8"))
             for f in (p.root / "synth_attempts").glob("*.json")]
@@ -194,182 +210,134 @@ def test_attempt_records(tmp):
     p = make_project(tmp / "attempt-write-error")
     (p.root / "synth_attempts").write_text("cannot create directory", encoding="utf-8")
     with contextlib.redirect_stderr(io.StringIO()) as logs:
-        r = synth.synthesize_group(p, key, files, caller=llm(GOOD))
+        r = injected_group(p, key, files, caller=llm(GOOD))
     check("기록 실패는 로그에 남고 합성 판정은 유지",
           r.written and "[attempt] 기록 실패" in logs.getvalue())
 
 
 def test_gemini_primary(tmp):
-    """기본 제미나이 1차와 호출·형식·사실 실패의 로컬 대체를 실제 게이트로 잰다."""
+    """#840 quota와 본문 실패를 구분하고 cloud-only 재검증 경계를 잰다."""
     import json
     files = ["Source/Game/Monster.h", "Source/Game/Monster.cpp"]
     key = "Source/Game/Monster"
-    for name, primary in (("ok", GOOD), ("transport", None),
-                          ("format", "깨진 응답"),
-                          ("facts", GOOD.replace("AMonster", "AOther"))):
-        p = make_project(tmp / f"gemini-{name}")
-        called = []
-        def cli(lane, prompt, timeout):
-            called.append(lane)
-            return primary
-        def local(_url, payload):
-            called.append(payload["model"])
+    scenarios = [
+        ('agy-ok', {'agy': GOOD}, ['agy'], 'agy'),
+        ('codex-ok', {'agy': 'broken', 'codex': GOOD}, ['agy', 'codex'], 'codex'),
+        ('quota-claude', {'agy': quota_cli(), 'codex': quota_cli(), 'claude': GOOD},
+         ['agy', 'codex', 'claude'], 'claude'),
+        ('quota-local', {lane: quota_cli() for lane in ('agy', 'codex', 'claude')},
+         ['agy', 'codex', 'claude', synth.LOCAL_MODEL], synth.LOCAL_MODEL),
+        ('format-stop', {'agy': 'quota exhausted', 'codex': 'broken'}, ['agy', 'codex'], ''),
+        ('facts-stop', {'agy': GOOD.replace('AMonster', 'AOther'),
+                        'codex': GOOD.replace('AMonster', 'AOther')}, ['agy', 'codex'], ''),
+        ('transport-stop', {'agy': (None, 'connection refused'),
+                            'codex': (None, 'connection refused')}, ['agy', 'codex'], ''),
+    ]
+    for name, responses, expected, model in scenarios:
+        p = make_project(tmp / name)
+        calls = []
+        def cli(lane, *_):
+            calls.append(lane)
+            return responses[lane]
+        def local(_, payload):
+            calls.append(payload['model'])
             return GOOD
-        r = synth.synthesize_group(p, key, files, caller=local, cli=cli)
-        expected = ["agy"] if name == "ok" else ["agy", synth.LOCAL_MODEL]
-        check(f"제미나이 {name}: 지정 순서·동일 게이트로 통과",
-              r.written and called == expected
-              and r.model == ("agy" if name == "ok" else synth.LOCAL_MODEL), str(called))
-        rows = {row["model"]: row for row in (
-            json.loads(f.read_text(encoding="utf-8"))
-            for f in (p.root / "synth_attempts").glob("*.json"))}
-        check(f"제미나이 {name}: 모델마다 원문·판정 기록 연결",
-              len(rows) == len(expected) and rows[r.model]["facts"]["ok"])
-        if name == "facts":
-            check("제미나이 사실 거부가 로컬 통과 기록으로 덮이지 않음",
-                  rows["agy"]["status"] == "facts_rejected"
-                  and not rows["agy"]["facts"]["ok"])
-    p = make_project(tmp / "gemini-manual")
+        result = synth.synthesize_group(p, key, files, caller=local, cli=cli)
+        check(name + ': 호출 순서와 최종 판정', calls == expected
+              and result.model == model and result.written == bool(model), str(calls))
+        rows = [json.loads(f.read_text()) for f in (p.root / 'synth_attempts').glob('*.json')]
+        check(name + ': 실제 호출만 기록', len(rows) == len(expected))
+        if model:
+            body = synth.doc_path(p, key).read_text()
+            check(name + ': 재검증 표시는 로컬 결과에만 남음',
+                  result.needs_revalidation == (model == synth.LOCAL_MODEL)
+                  and ('needs_revalidation: true' in body) == (model == synth.LOCAL_MODEL))
+    p = make_project(tmp / 'cloud-only')
     calls = []
-    r = synth.synthesize_group(p, key, files, model="agy", caller=llm(GOOD),
-                               cli=lambda lane, *_a: calls.append(lane))
-    check("명시 agy 호출 실패는 단독 실행이라 다른 모델을 부르지 않음",
-          not r.passed and calls == ["agy"] and len(r.attempt_records) == 1)
-    r = synth.synthesize_group(p, key, files, caller=llm(GOOD), dry_run=True)
-    check("기본 제미나이도 fake caller만 있으면 실제 상용을 부르지 않음",
-          r.passed and "agy 건너뜀(주입된 호출자)" in r.attempts
-          and r.model == synth.LOCAL_MODEL)
+    result = synth.synthesize_group(p, key, files, cloud_only=True,
+        cli=quota_cli, caller=lambda *_: calls.append('local'))
+    check('cloud_only는 세 cloud quota에도 로컬을 부르지 않음',
+          not result.passed and calls == []
+          and [a['lane'] for a in result.policy_attempts] == ['agy', 'codex', 'claude'])
+    result = synth.synthesize_group(p, key, files, caller=llm(GOOD), dry_run=True)
+    check('caller-only 주입은 quota 증거가 없어 로컬 사용 금지', not result.passed)
+    result = synth.synthesize_group(p, key, files, caller=llm(GOOD),
+                                    model=synth.LOCAL_MODEL, dry_run=True)
+    check('명시 local 모델도 quota 정책을 우회할 수 없음', not result.passed)
+    for field in ('expected_source_fingerprint', 'expected_artifact_fingerprint'):
+        out = synth.doc_path(p, key)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(GOOD)
+        result = synth.synthesize_group(p, key, files, cli=lambda *_: GOOD,
+            caller=llm(GOOD), **{field: 'stale-fingerprint'})
+        check(field + ': 오래된 재검증은 원본 보존',
+              not result.written and out.read_text() == GOOD)
 
 
 def test_per_lane_prompt(tmp):
-    """`#782` — 상용 CLI 레인은 원본 본문 무제한, 로컬 레인은 종전 상한·요약 그대로."""
+    """#782 프롬프트 차이는 세 cloud quota 뒤 로컬 경로에서도 유지된다."""
     import json
     from unittest.mock import patch
-    files = ["Source/Game/Monster.h", "Source/Game/Monster.cpp"]
-    key = "Source/Game/Monster"
-    MARK = "TAIL_MARKER_782"
-    big_header = HEADER + "".join(f"// 채움 줄 {i:04d} — 상한을 넘기려는 주석\n"
-                                  for i in range(300)) + f"// {MARK}\n"
-
-    def big_project(name):
-        p = make_project(tmp / name)
-        (p.source / "Game" / "Monster.h").write_text(big_header, encoding="utf-8")
-        return p
-
-    def old_way(p, limit=prompt.CONTENT_LIMIT):
-        """종전 synthesize_group 이 만들던 단일 프롬프트 (주입 caller → related=[])."""
-        bodies = {f: synth.source_text.read(p.repo / f).text for f in files}
-        g = synth.collect_grounding(p, files)
-        g.related = []
-        pb, _ = synth._prompt_bodies(p, bodies, limit)
-        return prompt.build(files=files, bodies=pb, grounding=g, existing="", limit=limit)
-
-    BADR = "형식 없는 응답 그대로\n" * 10
-
-    # ① agy 실패 → gemma 는 4000 상한 로컬 프롬프트, agy 는 원본 전문
-    p = big_project("lane-split")
-    check("픽스처 본문이 상한을 넘는다", len(big_header) > prompt.CONTENT_LIMIT, str(len(big_header)))
-    sent = {}
-    def cli(lane, pr, timeout):
-        sent[lane] = pr
-        return None
-    def local(_url, payload):
-        sent[payload["model"]] = payload["prompt"]
-        return honest_llm(_url, payload)
-    logged, real_log = [], synth._log
-    synth._log = lambda m: (logged.append(m), real_log(m))
-    try:
-        r = synth.synthesize_group(p, key, files, chain=("agy", synth.LOCAL_MODEL),
-                                   caller=local, cli=cli)
-    finally:
-        synth._log = real_log
-    check("agy 실패 → gemma 통과", r.written and r.model == synth.LOCAL_MODEL
-          and list(sent) == ["agy", synth.LOCAL_MODEL], f"{r.reason} {list(sent)}")
-    check("🔴 cloud 프롬프트에 본문 끝 표식이 있다 (무제한)", MARK in sent.get("agy", ""))
-    check("🔴 local 프롬프트에는 표식이 없다 (4000 상한)", MARK not in sent.get(synth.LOCAL_MODEL, "x" + MARK))
-    check("cloud 프롬프트에 원본 본문 전체가 그대로 실린다", big_header in sent.get("agy", ""))
-    check("local 프롬프트는 종전 방식과 글자 그대로 같다",
-          sent.get(synth.LOCAL_MODEL) == old_way(p))
-    check("prompt_chars 는 통과 시도(local)의 실제 프롬프트 길이",
-          r.prompt_chars == len(sent[synth.LOCAL_MODEL]), f"{r.prompt_chars}")
-    rows = {row["model"]: row for row in (json.loads(f.read_text(encoding="utf-8"))
-            for f in (p.root / "synth_attempts").glob("*.json"))}
-    check("시도 기록마다 그 시도가 실제로 보낸 프롬프트",
-          rows["agy"]["prompt"] == sent["agy"]
-          and rows[synth.LOCAL_MODEL]["prompt"] == sent[synth.LOCAL_MODEL]
-          and rows["agy"]["prompt"] != rows[synth.LOCAL_MODEL]["prompt"])
-    check("시도 기록에 상한이 실린다 (cloud=None · local=4000)",
-          rows["agy"]["prompt_limit"] is None
-          and rows[synth.LOCAL_MODEL]["prompt_limit"] == prompt.CONTENT_LIMIT)
-    check("로그에 종류·상한·길이가 찍힌다",
-          any(f"프롬프트 cloud 무제한 {len(sent['agy'])}자" in m for m in logged)
-          and any(f"프롬프트 local 상한 4000 {len(sent[synth.LOCAL_MODEL])}자" in m
-                  for m in logged), str([m for m in logged if "프롬프트" in m]))
-
-    # ② 사슬 4개 전부 실패 → build 는 종류당 한 번 (총 2회)
-    p = big_project("lane-cache")
-    seen = []
-    def cli2(lane, pr, timeout):
-        seen.append((lane, pr))
-        return BADR
-    def local2(_url, payload):
-        seen.append((payload["model"], payload["prompt"]))
-        return BADR
+    files = ['Source/Game/Monster.h', 'Source/Game/Monster.cpp']
+    key = 'Source/Game/Monster'
+    marker = 'TAIL_MARKER_782'
+    big_header = HEADER + ''.join(f'// 채움 줄 {i:04d} 상한을 넘기는 주석\n'
+                                  for i in range(400)) + f'// {marker}\n'
+    p = make_project(tmp / 'lane-quota')
+    (p.source / 'Game' / 'Monster.h').write_text(big_header)
+    sent, builds = {}, []
+    def cli(lane, text, timeout):
+        sent[lane] = text
+        return quota_cli()
+    def local(url, payload):
+        sent[payload['model']] = payload['prompt']
+        return honest_llm(url, payload)
     real_build = prompt.build
-    builds = []
-    def counting(**kw):
-        builds.append(kw.get("limit"))
-        return real_build(**kw)
-    with patch.object(synth.prompt_mod, "build", side_effect=counting):
-        r = synth.synthesize_group(p, key, files, dry_run=True, caller=local2, cli=cli2)
-    by = dict(seen)
-    check("기본 사슬 4모델 전부 시도", [m for m, _ in seen] == list(synth.SYNTH_CHAIN),
-          str([m for m, _ in seen]))
-    check("🔴 프롬프트는 종류당 최대 한 번 (cloud 1 · local 1)",
-          sorted(builds, key=str) == sorted([None, prompt.CONTENT_LIMIT], key=str), str(builds))
-    check("agy·codex 는 같은 cloud 프롬프트 · e4b·12b 는 같은 local 프롬프트",
-          by["agy"] == by["codex"] and by[synth.LOCAL_MODEL] == by[synth.FALLBACK_MODEL]
-          and by["agy"] != by[synth.LOCAL_MODEL])
-    check("전부 실패면 prompt_chars 는 마지막 시도(12b, local)",
-          r.prompt_chars == len(by[synth.FALLBACK_MODEL]))
-
-    # ③ 로컬만의 사슬은 종전과 바이트 단위 동일 · cloud 프롬프트는 만들지 않는다
-    p = big_project("lane-local-only")
-    seen, builds = [], []
-    with patch.object(synth.prompt_mod, "build", side_effect=counting):
-        r = synth.synthesize_group(p, key, files, dry_run=True, caller=local2,
-                                   chain=(synth.LOCAL_MODEL, synth.FALLBACK_MODEL))
-    check("로컬 전용 사슬: 두 시도 모두 종전 프롬프트와 바이트 동일",
-          len(seen) == 2 and all(pr.encode() == old_way(p).encode() for _, pr in seen))
-    check("로컬 전용 사슬: build 1회 · cloud 프롬프트 없음",
-          builds == [prompt.CONTENT_LIMIT], str(builds))
-    seen, builds = [], []
-    with patch.object(synth.prompt_mod, "build", side_effect=counting):
-        r = synth.synthesize_group(p, key, files, dry_run=True, caller=local2,
-                                   chain=(synth.LOCAL_MODEL,), content_limit=6000)
-    check("명시 content_limit 은 로컬에 그대로 적용된다",
-          builds == [6000] and seen[0][1] == old_way(p, 6000)
-          and MARK not in seen[0][1] and len(big_header) > 6000, str(builds))
-
-    # ④ 비UE(.py) — local 은 요약본, cloud 는 원본 그대로 · digest 는 시도별
-    p = make_project(tmp / "lane-py")
-    pyfile = "Source/Game/mod.py"
-    src = ("def alpha(x):\n" + "".join(f"    y{i} = x + {i}\n" for i in range(400))
-           + "    return x\n\n# " + MARK + "\n")
-    (p.repo / pyfile).write_text(src, encoding="utf-8")
-    seen = []
-    orig = synth._index_only
-    synth._index_only = lambda paths: True
-    try:
-        r = synth.synthesize_group(p, "Source/Game/mod", [pyfile], dry_run=True, caller=local2,
-                                   cli=cli2, chain=("agy", synth.LOCAL_MODEL, "codex"))
-    finally:
-        synth._index_only = orig
-    by = dict(seen)
-    check("비UE cloud: 원본 .py 전문 (요약 안 함)", src in by.get("agy", ""))
-    check("비UE local: 요약본 (함수 본문을 덜었다)",
-          src not in by.get(synth.LOCAL_MODEL, src) and "alpha" in by.get(synth.LOCAL_MODEL, ""))
-    check("digest 는 마지막 시도(codex, cloud) 기준 — 요약 안 씀", r.digest == "", r.digest)
+    def counting(**kwargs):
+        builds.append(kwargs.get('limit'))
+        return real_build(**kwargs)
+    with patch.object(synth.prompt_mod, 'build', side_effect=counting):
+        result = synth.synthesize_group(p, key, files, caller=local, cli=cli)
+    check('세 cloud quota 뒤 로컬 통과', result.written
+          and list(sent) == ['agy', 'codex', 'claude', synth.LOCAL_MODEL])
+    check('cloud 원본 전문, local 상한 유지',
+          big_header in sent['agy'] and marker not in sent[synth.LOCAL_MODEL])
+    check('cloud 프롬프트 공유 및 종류당 1회 생성',
+          sent['agy'] == sent['codex'] == sent['claude']
+          and builds == [None, prompt.CONTENT_LIMIT], str(builds))
+    check('prompt_chars는 최종 로컬 프롬프트 길이',
+          result.prompt_chars == len(sent[synth.LOCAL_MODEL]))
+    bodies = {f: synth.source_text.read(p.repo / f).text for f in files}
+    grounding = synth.collect_grounding(p, files)
+    grounding.related = []
+    limited, _ = synth._prompt_bodies(p, bodies, prompt.CONTENT_LIMIT)
+    expected = prompt.build(files=files, bodies=limited, grounding=grounding,
+                            existing='', limit=prompt.CONTENT_LIMIT)
+    check('로컬 프롬프트는 종전 구성과 동일', sent[synth.LOCAL_MODEL] == expected)
+    rows = {row['model']: row for row in (json.loads(f.read_text())
+            for f in (p.root / 'synth_attempts').glob('*.json'))}
+    check('시도별 prompt_limit 및 원문 연결', all(rows[lane]['prompt_limit'] is None
+          and rows[lane]['prompt'] == sent[lane] for lane in ('agy', 'codex', 'claude'))
+          and rows[synth.LOCAL_MODEL]['prompt_limit'] == prompt.CONTENT_LIMIT)
+    p = make_project(tmp / 'lane-custom-limit')
+    (p.source / 'Game' / 'Monster.h').write_text(big_header)
+    sent = {}
+    result = synth.synthesize_group(p, key, files, caller=local, cli=cli,
+                                    content_limit=6000, dry_run=True)
+    check('명시 상한 6000도 quota 뒤 로컬에 적용', result.passed
+          and len(sent[synth.LOCAL_MODEL]) > 6000 and marker not in sent[synth.LOCAL_MODEL])
+    p = make_project(tmp / 'lane-py')
+    pyfile = 'Source/Game/mod.py'
+    src = 'def alpha(x):\n' + ''.join(f'    y{i} = x + {i}\n' for i in range(400))
+    src += '    return x\n\n# ' + marker + '\n'
+    (p.repo / pyfile).write_text(src)
+    sent = {}
+    with patch.object(synth, '_index_only', return_value=True):
+        # 이 검사는 프롬프트 구조를 보며 사실 게이트 통과를 요구하지 않는다.
+        synth.synthesize_group(p, 'Source/Game/mod', [pyfile], caller=local, cli=cli,
+                                dry_run=True)
+    check('비UE cloud는 원본, local은 구조 요약', src in sent['agy']
+          and 'y399 = x + 399' not in sent[synth.LOCAL_MODEL])
 
 
 def main() -> int:
@@ -539,7 +507,7 @@ def main() -> int:
 
     print("\n[8] 합성 — 한 그룹")
     p1 = make_project(tmp)
-    r1 = synth.synthesize_group(p1, "Source/Game/Monster", FILES,
+    r1 = injected_group(p1, "Source/Game/Monster", FILES,
                                 commit="aa11", caller=llm(GOOD))
     check("문서를 쓴다", r1.written, r1.reason)
     out = synth.doc_path(p1, "Source/Game/Monster")
@@ -549,7 +517,7 @@ def main() -> int:
 
     print("\n[9] [중요] 게이트 거부는 기존 문서를 지키고, 실패로 센다")
     before = out.read_text(encoding="utf-8")
-    r2 = synth.synthesize_group(p1, "Source/Game/Monster", FILES,
+    r2 = injected_group(p1, "Source/Game/Monster", FILES,
                                 commit="bb22", caller=llm("망가진 응답"))
     check("쓰지 않는다", not r2.written)
     check("[중요] 기존 문서가 그대로다", out.read_text(encoding="utf-8") == before)
@@ -558,7 +526,7 @@ def main() -> int:
     check("[중요] 영구 유실로 표시된다", r2.lost)
 
     print("\n[10] LLM 실패도 결과로 (예외로 배치를 멈추지 않는다)")
-    r3 = synth.synthesize_group(p1, "Source/Game/Monster", FILES, caller=boom)
+    r3 = injected_group(p1, "Source/Game/Monster", FILES, caller=boom)
     check("결과로 돌아온다", not r3.written and r3.reason.startswith("LLM 실패"), r3.reason)
     check("[중요] 기존 문서 유지", out.read_text(encoding="utf-8") == before)
 
@@ -567,7 +535,7 @@ def main() -> int:
     for i in range(4):
         (p2.source / "Game" / f"F{i}.h").write_text(f"class AF{i} {{}};\n", encoding="utf-8")
     allf = FILES + [f"Source/Game/F{i}.h" for i in range(4)]
-    st = synth.run(p2, changed=allf, commit="c9", caller=honest_llm)
+    st = injected_run(p2, changed=allf, commit="c9", caller=honest_llm)
     check("그룹 수", st.groups == 5, str(st.groups))
     check("전부 작성", st.written == 5, st.summary)
     check("유실 0", st.lost == 0, st.summary)
@@ -579,7 +547,7 @@ def main() -> int:
     for i in range(10):
         (p3.source / "Game" / f"G{i}.h").write_text(f"class AG{i} {{}};\n", encoding="utf-8")
     many = [f"Source/Game/G{i}.h" for i in range(10)]
-    st2 = synth.run(p3, changed=many, caller=boom)
+    st2 = injected_run(p3, changed=many, caller=boom)
     check(f"임계값 {synth.CIRCUIT_THRESHOLD} 에서 끊는다",
           st2.failed == synth.CIRCUIT_THRESHOLD, str(st2.failed))
     check("[중요] 남은 그룹을 태우지 않는다", st2.failed < st2.groups, st2.summary)
@@ -587,19 +555,19 @@ def main() -> int:
     check("마지막 사유도 붙는다", "브로커" in st2.aborted, st2.aborted)
 
     print("\n[13] 게이트 거부는 서킷을 열지 않는다 (모델은 살아 있다)")
-    st3 = synth.run(p3, changed=many, caller=llm("망가짐"))
+    st3 = injected_run(p3, changed=many, caller=llm("망가짐"))
     check("전부 시도한다", st3.refused == st3.groups, st3.summary)
     check("중단하지 않는다", not st3.aborted, st3.aborted)
 
     print("\n[14] skip_existing · limit — 감추지 않고 적는다")
-    st4 = synth.run(p2, changed=allf, skip_existing=True, caller=honest_llm)
+    st4 = injected_run(p2, changed=allf, skip_existing=True, caller=honest_llm)
     check("이미 있으면 건너뛴다", st4.skipped == 5 and st4.written == 0, st4.summary)
-    st5 = synth.run(p2, changed=allf, limit=2, caller=honest_llm)
+    st5 = injected_run(p2, changed=allf, limit=2, caller=honest_llm)
     check("상한이 먹는다", st5.written == 2, st5.summary)
     check("[중요] 남긴 것을 적는다", "상한" in st5.aborted and "미처리" in st5.aborted, st5.aborted)
 
     print("\n[14-1] [중요] 주기적 모델 회수 — num_ctx 만으로는 부족하다 (실측)")
-    st_u = synth.run(p2, changed=allf, caller=honest_llm, unload_every=2)
+    st_u = injected_run(p2, changed=allf, caller=honest_llm, unload_every=2)
     check("주입 caller 일 때는 회수하지 않는다 (실제 노드가 아니다)",
           st_u.unloads == 0, str(st_u.unloads))
     check("  그래도 전부 처리된다", st_u.written == 5, st_u.summary)
@@ -609,12 +577,14 @@ def main() -> int:
     synth.unload_model = lambda m, **kw: calls.append(m)
     synth.call_broker = lambda pr, **kw: honest_llm("", {"prompt": pr})
     try:
-        st_u2 = synth.run(p2, changed=allf, unload_every=2, model=synth.LOCAL_MODEL)
+        st_u2 = synth.run(p2, changed=allf, unload_every=2, model=synth.LOCAL_MODEL,
+                          chain=synth.SYNTH_CHAIN, cli=quota_cli, parallel=1)
         check("[중요] 노드 경로에서는 주기마다 회수한다", len(calls) == 2, str(len(calls)))
         check("  통계에 회수 횟수가 남는다", st_u2.unloads == 2, st_u2.summary)
         check("  요약에 나타난다", "모델 회수 2회" in st_u2.summary, st_u2.summary)
         calls.clear()
-        st_u3 = synth.run(p2, changed=allf, unload_every=0, model=synth.LOCAL_MODEL)
+        st_u3 = synth.run(p2, changed=allf, unload_every=0, model=synth.LOCAL_MODEL,
+                          chain=synth.SYNTH_CHAIN, cli=quota_cli, parallel=1)
         check("unload_every=0 이면 회수하지 않는다 (전용 VRAM 노드)",
               not calls and st_u3.unloads == 0)
 
@@ -622,7 +592,8 @@ def main() -> int:
             raise synth.GenerateError("회수 실패")
 
         synth.unload_model = _boom_unload
-        st_u4 = synth.run(p2, changed=allf, unload_every=2, model=synth.LOCAL_MODEL)
+        st_u4 = synth.run(p2, changed=allf, unload_every=2, model=synth.LOCAL_MODEL,
+                          chain=synth.SYNTH_CHAIN, cli=quota_cli, parallel=1)
         check("[중요] 회수 실패가 배치를 죽이지 않는다", st_u4.written == 5, st_u4.summary)
     finally:
         synth.unload_model = real_unload
@@ -647,7 +618,7 @@ def main() -> int:
         seen["prompt"] = payload["prompt"]
         return honest_llm(url, payload)
 
-    st6 = synth.run(p4, changed=["Source/Game/Kr.h"], caller=capture)
+    st6 = injected_run(p4, changed=["Source/Game/Kr.h"], caller=capture)
     check("합성이 된다", st6.written == 1, st6.summary)
     check("[중요] 한글 주석이 프롬프트에 살아서 들어간다",
           "몬스터 스폰을 관리한다" in seen["prompt"], seen["prompt"][:120])
@@ -734,11 +705,11 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
     print("\n[16-2] 사실 게이트가 합성에 물려 있다")
     p6 = make_project(tmp / "factual")
     (p6.source / "Game" / "T.h").write_text(SRC, encoding="utf-8")
-    r6 = synth.synthesize_group(p6, "Source/Game/T", ["Source/Game/T.h"], caller=llm(GHOST))
+    r6 = injected_group(p6, "Source/Game/T", ["Source/Game/T.h"], caller=llm(GHOST))
     check("[중요] 유령 문서를 저장하지 않는다", not r6.written, r6.reason)
     check("  사유가 사실 게이트라고 말한다", "사실 게이트" in r6.reason, r6.reason)
     check("  영구 유실로 센다", r6.lost)
-    st7 = synth.run(p6, changed=["Source/Game/T.h"], caller=llm(GHOST))
+    st7 = injected_run(p6, changed=["Source/Game/T.h"], caller=llm(GHOST))
     check("통계가 사실 거부를 따로 센다", st7.unfactual == 1 and st7.refused == 0, st7.summary)
     check("  요약에 나타난다", "사실 거부" in st7.summary, st7.summary)
     check("[중요] 사실 거부는 서킷을 열지 않는다 (모델은 살아 있다)", not st7.aborted)
@@ -826,117 +797,13 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
         check(f"{label}: 여전히 거부한다(게이트를 무디게 하지 않았다)", dd == "" and not vv.ok,
               dd[:120])
 
-    print("\n[기본 사슬] agy → e4b → codex → 12b, claude 는 없다")
-    check("사슬이 상수 한 곳이다 — agy → e4b → codex → 12b",
-          synth.SYNTH_CHAIN == ("agy", synth.LOCAL_MODEL, "codex", synth.FALLBACK_MODEL),
-          str(synth.SYNTH_CHAIN))
-    check("[중요] claude 는 사슬에 없다", not any(m.startswith("claude") for m in synth.SYNTH_CHAIN))
-    check("첫 모델은 제미나이 agy", synth.SYNTH_MODEL == "agy"
-          and synth._chain_for(None, None)[0] == "agy")
-    check("기본 사슬은 상수 순서 그대로다 (로컬을 앞으로 모으지 않는다)",
-          synth._chain_for(None, None)
-          == ["agy", "gemma4:e4b", "codex", "gemma3:12b"],
-          str(synth._chain_for(None, None)))
-    check("claude 를 넣어도 뺀다 · 받은 순서를 지킨다",
-          synth._chain_for(synth.SYNTH_MODEL, ("gemma4:e4b", "agy", "claude:opus", "codex",
-                                               "gemma3:12b"))
-          == ["gemma4:e4b", "agy", "codex", "gemma3:12b"])
-    check("명시한 사슬의 상용 첫 순서도 그대로 유지한다",
-          synth._chain_for(synth.SYNTH_MODEL, ("codex", "claude:opus", "gemma4:e4b", "agy"))
-          == ["codex", "gemma4:e4b", "agy"])
-    check("명시 --model agy는 그 하나만", synth._chain_for("agy", None) == ["agy"])
-    check("명시한 다른 모델은 그 하나만 (수동 경로 종전 그대로)",
-          synth._chain_for("gemma3:12b", None) == ["gemma3:12b"])
+    print("\n[기본 사슬] quota 전용 cloud-first")
+    check("agy → codex → claude → local 순서",
+          synth.SYNTH_CHAIN == ('agy', 'codex', 'claude', synth.LOCAL_MODEL))
+    check("명시 agy는 한 cloud 시도", synth._chain_for('agy', None) == ['agy'])
     BAD = "설명만 있고 frontmatter 가 없다. " * 6
-
-    def routed(table, seen):
-        def caller(url, payload):
-            seen.append(payload["model"])
-            v = table[payload["model"]]
-            return v(url, payload) if callable(v) else v
-        return caller
-
-    def cli_rec(table, seen):
-        def cli(lane, prompt, timeout):
-            seen.append(lane)
-            v = table.get(lane)
-            return v(None, {"prompt": prompt}) if callable(v) else v
-        return cli
-
-    pc = make_project(tmp / "chain")
-    K = "Source/Game/Monster"
-    old_chain = (synth.LOCAL_MODEL, "agy", "codex", synth.FALLBACK_MODEL)
-    seen, cseen = [], []
-    r = synth.synthesize_group(pc, K, FILES, commit="c727", dry_run=True, chain=old_chain,
-                               caller=routed({"gemma4:e4b": BAD, "gemma3:12b": honest_llm}, seen),
-                               cli=cli_rec({"agy": honest_llm, "codex": honest_llm}, cseen))
-    check("e4b 형식 거부 → agy 통과", r.passed and r.model == "agy", r.reason)
-    check("  codex·12b 는 부르지 않았다", cseen == ["agy"] and seen == ["gemma4:e4b"],
-          f"{seen} {cseen}")
-    check("  시도 기록이 남는다", r.attempts == ["gemma4:e4b 형식 거부", "agy 형식 통과"],
-          str(r.attempts))
-
-    seen, cseen = [], []
-    r = synth.synthesize_group(pc, K, FILES, commit="c727", dry_run=True, chain=old_chain,
-                               caller=routed({"gemma4:e4b": BAD, "gemma3:12b": honest_llm}, seen),
-                               cli=cli_rec({"agy": BAD, "codex": honest_llm,
-                                            "claude": honest_llm}, cseen))
-    check("e4b·agy 거부 → codex 통과", r.passed and r.model == "codex", r.reason)
-    check("  12b·claude 는 부르지 않았다", cseen == ["agy", "codex"] and seen == ["gemma4:e4b"],
-          f"{seen} {cseen}")
-
-    seen, cseen = [], []
-    r = synth.synthesize_group(pc, K, FILES, commit="c727", dry_run=True, chain=old_chain,
-                               caller=routed({"gemma4:e4b": BAD, "gemma3:12b": honest_llm}, seen),
-                               cli=cli_rec({"agy": BAD, "codex": BAD}, cseen))
-    check("e4b·agy·codex 거부 → 12b 통과 (최후)", r.passed and r.model == "gemma3:12b", r.reason)
-    check("  순서대로 한 번씩", cseen == ["agy", "codex"] and seen == ["gemma4:e4b", "gemma3:12b"],
-          f"{seen} {cseen}")
-    check("  시도 기록이 남는다", r.attempts == ["gemma4:e4b 형식 거부", "agy 형식 거부",
-                                         "codex 형식 거부", "gemma3:12b 형식 통과"],
-          str(r.attempts))
-
-    seen, cseen = [], []
-    pc2 = make_project(tmp / "chain2")
-    synth.doc_path(pc2, K).parent.mkdir(parents=True, exist_ok=True)
-    synth.doc_path(pc2, K).write_text(GOOD, encoding="utf-8")
-    r = synth.synthesize_group(pc2, K, FILES, commit="c727", chain=old_chain,
-                               caller=routed({"gemma4:e4b": BAD, "gemma3:12b": BAD}, seen),
-                               cli=cli_rec({"codex": BAD, "agy": None}, cseen))
-    check("전부 실패 → 쓰지 않는다 · 유실로 남는다", not r.written and r.lost, r.reason)
-    check("  [중요] 형식 거부로 센다 (서킷 사유가 아니다)", r.reason.startswith("형식 게이트"),
-          r.reason[:80])
-    check("  사유에 사슬이 실린다", "사슬:" in r.reason and "agy LLM 실패" in r.reason, r.reason)
-    check("  레인마다 한 번 · claude 없음", cseen == ["agy", "codex"]
-          and seen == ["gemma4:e4b", "gemma3:12b"], f"{seen} {cseen}")
-    check("  기존 문서를 지킨다", synth.doc_path(pc2, K).read_text(encoding="utf-8") == GOOD)
-    from master.context_synth import pending as pending_mod
-    check("  보류로 남는다 (다음 실행이 다시 시도)", any(k == K for k, _ in pending_mod.due(pc2))
-          or K in (pending_mod.summary(pc2) or ""), pending_mod.summary(pc2))
-
-    seen, cseen = [], []
-    r = synth.synthesize_group(pc, K, FILES, dry_run=True, chain=old_chain,
-                               caller=routed({"gemma4:e4b": boom, "gemma3:12b": honest_llm}, seen),
-                               cli=cli_rec({"agy": honest_llm, "codex": honest_llm}, cseen))
-    check("첫 모델 호출 실패도 다음 모델로 대체한다",
-          r.passed and r.model == "agy" and seen == ["gemma4:e4b"]
-          and cseen == ["agy"], f"{r.reason} {seen} {cseen}")
-
-    seen = []
-    r = synth.synthesize_group(pc, K, FILES, dry_run=True,
-                               caller=routed({"gemma4:e4b": BAD, "gemma3:12b": BAD}, seen))
-    check("주입된 브로커 호출자뿐이면 진짜 상용 CLI 를 부르지 않는다",
-          not r.passed and "agy 건너뜀(주입된 호출자)" in r.attempts
-          and "codex 건너뜀(주입된 호출자)" in r.attempts
-          and seen == ["gemma4:e4b", "gemma3:12b"], f"{r.attempts} {seen}")
-
-    seen, cseen = [], []
-    stc = synth.run(pc, changed=FILES, commit="c727", dry_run=True,
-                    model=synth.LOCAL_MODEL, chain=old_chain,
-                    caller=routed({"gemma4:e4b": BAD, "gemma3:12b": honest_llm}, seen),
-                    cli=cli_rec({"agy": honest_llm}, cseen))
-    check("배치 통계가 대체 통과를 센다", stc.fallback_passed == 1
-          and "대체 모델 통과 1" in stc.summary, stc.summary)
+    K = 'Source/Game/Monster'
+    old_chain = synth.SYNTH_CHAIN
 
     print("\n[#727-3] 사용량 — 로컬·상용 시도가 트윈 usage_log 에 `synth` 로 남는다")
     import json as _json
@@ -1023,25 +890,24 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
     check("🔴 #751 상용 레인 로그 줄에 실제 토큰이 찍힌다 (「미상」 아님)",
           any("— agy · 토큰 입력 50 · 출력 9" in m for m in logged),
           str([m for m in logged if "agy ·" in m]))
-    check("사용량 2행 — e4b · agy", [x["lane"] for x in rows]
-          == ["local:gemma4:e4b", "agy"], str([x.get("lane") for x in rows]))
+    check("사용량 1행 — agy", [x["lane"] for x in rows]
+          == ["agy"], str([x.get("lane") for x in rows]))
     check("  전부 source=synth · task_id=그룹", rows and all(
         x["source"] == "synth" and x["task_id"] == K for x in rows), str(rows)[:300])
-    check("  토큰이 실린다", rows and rows[0]["input_tokens"] == 11
-          and rows[-1]["input_tokens"] == 50, str(rows)[:300])
-    check("  GroupResult 는 로컬 토큰 합을 든다", r.tokens_in == 11 and r.tokens_out == 7,
+    check("  토큰이 실린다", rows and rows[0]["input_tokens"] == 50, str(rows)[:300])
+    check("  GroupResult 는 로컬 토큰 합을 든다", r.tokens_in == 0 and r.tokens_out == 0,
           f"{r.tokens_in}/{r.tokens_out}")
 
     r, rows = usage_run("usage2", BAD)
     check("agy 형식 거부 → codex 통과", r.passed and r.model == "codex", r.reason)
-    check("사용량 3행 — e4b · agy · codex", [x["lane"] for x in rows]
-          == ["local:gemma4:e4b", "agy", "codex"], str([x.get("lane") for x in rows]))
+    check("사용량 2행 — agy · codex", [x["lane"] for x in rows]
+          == ["agy", "codex"], str([x.get("lane") for x in rows]))
     check("  전부 source=synth", rows and all(x["source"] == "synth" for x in rows),
           str(rows)[:300])
 
     print("\n[원문기록] 실제 프롬프트·모델 응답·게이트 결과")
     test_attempt_records(tmp)
-    print("\n[제미나이 1차] 호출·형식·사실 실패는 로컬 LLM 대체")
+    print("\n[#840] cloud 순서·quota 전용 로컬 대체·재검증 경계")
     test_gemini_primary(tmp)
     print("\n[#782] 레인별 프롬프트 — 상용 무제한 · 로컬 종전 상한")
     test_per_lane_prompt(tmp)
