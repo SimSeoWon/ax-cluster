@@ -38,7 +38,8 @@
 | 위치 | 용도 |
 |---|---|
 | `docs/15-orchestrator-handoff.md` | 교대 설계와 검증 방법 — 이 문서 |
-| `docs/orchestrator-handoff.md` | 현재 작업의 짧은 인수인계 기록, 한 벌만 유지 |
+| `docs/orchestrator-handoff.md` | 현재 작업의 짧은 인수인계 기록, 한 벌만 유지 — 갱신은 **덮어쓰기**다. 「이전 체크포인트」를 쌓지 않고 지난 내용은 `reports/`·Redmine 노트로 보낸다. 길이는 `master/test_handoff_size.py` 가 막는다(`#842`) |
+| `docs/orchestrator-handoff-history.md` | 2026-10-21 까지 쌓였던 인수인계 원문(2,506줄) — 이력 전용, 더 쌓지 않는다 |
 | `docs/orchestrator-rules.md` | 두 지휘자가 함께 지키는 운영 규칙과 원문 근거 |
 | 기존 `machines/sim-desktop.md` | Claude 진입점에 공용 문서 링크 연결, 기존 심볼릭 링크 보존 |
 | Codex의 적용 범위에 맞는 `AGENTS.md` | 실제 로드 위치를 확인한 뒤 공용 문서 링크 연결 |

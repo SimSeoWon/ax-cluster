@@ -62,7 +62,7 @@
       "path": "docs/orchestrator-handoff.md",
       "role": "현재 운영·승인·검증·다음 작업의 체크포인트",
       "protected": false,
-      "instructions": "최신 체크포인트만 필요한 근거로 갱신하고 과거 이력은 보존한다. 입력에 최신 Redmine·배포·검증 근거가 없으면 해당 상태를 추정하지 말고 unchanged로 남긴다.",
+      "instructions": "현재 체크포인트 한 벌로 덮어쓴다. 「이전 체크포인트」를 쌓지 않으며 지난 내용은 reports/·Redmine 노트가 보존한다(2026-10-21까지 원문은 docs/orchestrator-handoff-history.md, 이력 전용 · #842). 입력에 최신 Redmine·배포·검증 근거가 없으면 해당 상태를 추정하지 말고 unchanged로 남긴다.",
       "evidence": ["master/skills/ax-handoff/SKILL.md", "docs/orchestrator-rules.md"]
     }
   ]
