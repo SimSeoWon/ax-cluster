@@ -80,7 +80,10 @@
 
 - 비마운트 3개(ModularStage·NS·MotionForge)는 `.2` 등록부만 C 로 바꿨다. 클론은 마운트를 전환할 때 한다.
 - 실제 Codex 셸 읽기·apply_patch·결과 회수를 `.2` 새 경로에서 확인하는 일 — 다음 파견에서 본다.
-- **`.2` 시스템 node v24.11.1** — 리포트 129 의 Brotli CVE 미조치 항목이 그대로다(오늘 재확인).
+- [완료] **`.2` 시스템 node v24.11.1 → v24.22.2** (같은 날, 사용자 지시) — 리포트 129 방식 그대로:
+  `latest-v24.x` MSI → `SHASUMS256` 대조 → scp 후 `.2` 재해시 일치(`9231bf64…b6b6d`) →
+  `msiexec /qn /norestart` exit 0 → `node -v` v24.22.2 · npm 11.19.1 · 설치 파일 삭제.
+  실행 중이던 node 는 Codex 런타임 내장본(별 경로)이라 영향 없음
 - UE 5.8.4 업데이트 완료 확인(`probe` 로 `Build.version` 재측정)
 - `.mypy_cache/` 생성 주체
 - `setup-host` 의 윈도우 낡은 상주 판정은 영문·한글 `schtasks /v` 출력의 경로 문자열에 기댄다.

@@ -23,6 +23,7 @@
   - 실증: 등록부 4개 이전 · 낡은 상주 4개 해제 · AXCluster 클론·배달·check OK · codex readiness 3/3
 - **`.2` Ollama 복구** — 앱 설정의 모델 경로를 사용자가 `C:\Ollama` 로 바꿨다. 모델 3종을 다시 받았다(e4b 상주)
   - 원격 재기동 두 번 실패(`0x80070534` · `/IT` 무반응, 원인 미확정) — 리포트 130 표
+- **`.2` 시스템 node → v24.22.2** (Brotli CVE, 리포트 129 미조치분)
 - **provision 35B 정리** (`cd803a4`) · `.gitignore` 에 `.mypy_cache/` 추가 (`206a3dc`)
 
 ## 사용자 답을 기다리는 것 (2026-10-22 부터 그대로)
@@ -39,7 +40,6 @@
 
 ## 열려 있지만 별개인 것 (기록 시점 — Redmine 재조회)
 
-- **`.2` 시스템 node v24.11.1** — Brotli CVE 미조치(리포트 129) · 2026-10-30 재확인
 - `.2` 새 경로에서 실제 Codex 셸 읽기·apply_patch·결과 회수 — 다음 파견에서 확인
 - 비마운트 3개(ModularStage·NS·MotionForge)의 `.2` 클론 — 마운트 전환 때 `set_active` 가 한다
 - UE 5.8.4 업데이트 완료 확인 · `.mypy_cache/` 생성 주체(미확정)
