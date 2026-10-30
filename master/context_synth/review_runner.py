@@ -252,10 +252,14 @@ def grounding_text(draft_body: str, decls: str) -> str:
     return "\n\n".join(parts)
 
 
-def agy_only(prompt: str, *, timeout: int = rg.REVIEW_TIMEOUT) -> str:
-    """Antigravity 단독 호출 — 실패해도 Claude·Codex·로컬로 폴백하지 않는다."""
+def agy_only(prompt: str, *, timeout: int = rg.REVIEW_TIMEOUT, workdir=None) -> str:
+    """Antigravity 단독 호출 — 실패해도 Claude·Codex·로컬로 폴백하지 않는다.
+
+    `workdir` (`#844`) — 에이전트가 명령을 돌릴 자리. `run_once` 는 리뷰 커밋의 고정 트리를 준다.
+    """
     from .. import layer2_verify as l2
-    out, why = l2.call_agy_why(prompt, timeout=timeout)
+    kw = {} if workdir is None else {"workdir": str(workdir)}
+    out, why = l2.call_agy_why(prompt, timeout=timeout, **kw)
     if not (out or "").strip():
         raise rg.ReviewChatError("Antigravity 실패 — " + (why or "사유 미기록"))
     return out
@@ -434,15 +438,33 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
             res.state, res.why = "failed", str(e)
             return res
 
-    ask = review_call or agy_only
+    from contextlib import ExitStack                              # noqa: PLC0415
     from ..work import usage as usage_mod                         # noqa: PLC0415
-    # `#728` — 퇴고(agy)도 초고와 **같은 task_id** 로 트윈의 `usage_log.jsonl` 에 남긴다.
-    #    초고는 `local:<모델>`, 퇴고는 `agy` 레인으로 갈린다(기록은 `layer2_verify.call_agy_why`).
-    with usage_mod.sink(paths.usage_log, source="review", task_id=str(commit)[:12]):
-        reviewed = rg.review_commit(
-            paths, commit, src, chat=ask, grounding=grounding_text(body, decls),
-            provenance={"draft_model": model, "review_model": "Antigravity"},
-            logf=lambda _kind, msg: log(f"[리뷰큐] Antigravity {msg}"))
+    # 🔴 `#844` — agy 는 셸을 쓰는 에이전트다. workdir 없이 부르면 서비스 작업 폴더(= 마스터
+    #    라이브 트리)에서 명령을 돌리고, 그 산출물이 트리를 dirty 로 만든다(실측 2026-10-30:
+    #    `mypy` 가 `.mypy_cache/` 를 남겨 `update` 의 check 가 3대 모두 실패). 리뷰 커밋의 고정
+    #    트리에서 돌린다 — 읽는 내용도 그 순간의 라이브 트리가 아니라 그 커밋이 된다.
+    #    [중요] 트리를 못 만들면 실패로 끝낸다 — 라이브 트리로 되돌아가지 않는다.
+    with ExitStack() as stack:
+        ask = review_call
+        if ask is None:
+            from .pinned_tree import pinned_worktree               # noqa: PLC0415
+            try:
+                tree = stack.enter_context(pinned_worktree(repo, commit, logf=log))
+            except RuntimeError as e:
+                why = f"고정 트리 생성 실패 — {e}"
+                rq.finish(paths.root, item["id"], ok=False, why=why, logf=log)
+                res.state, res.why = "failed", why
+                return res
+            log(f"[리뷰큐] Antigravity 작업 디렉터리 {tree} @ {commit[:8]}")
+            ask = lambda p, **kw: agy_only(p, workdir=tree, **kw)  # noqa: E731
+        # `#728` — 퇴고(agy)도 초고와 **같은 task_id** 로 트윈의 `usage_log.jsonl` 에 남긴다.
+        #    초고는 `local:<모델>`, 퇴고는 `agy` 레인으로 갈린다(기록은 `layer2_verify.call_agy_why`).
+        with usage_mod.sink(paths.usage_log, source="review", task_id=str(commit)[:12]):
+            reviewed = rg.review_commit(
+                paths, commit, src, chat=ask, grounding=grounding_text(body, decls),
+                provenance={"draft_model": model, "review_model": "Antigravity"},
+                logf=lambda _kind, msg: log(f"[리뷰큐] Antigravity {msg}"))
     if reviewed.error or not reviewed.written or not reviewed.format_ok:
         if reviewed.written and not reviewed.format_ok:
             # 파서가 일부 행만 읽는 일을 막되, 실패 산출물은 조사할 수 있게 보존한다.

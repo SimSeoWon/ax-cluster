@@ -16,6 +16,7 @@
     ⑪ 🔴 **`main()` 이 실제로 돈다** — 유닛이 부르는 진입점이다
     ⑬ 머지는 결합 diff(`--cc`)로 가른다 — 비면 스킵(done), 있으면 그것만 리뷰 (`#744` ①)
     ⑭ 지워진 [PSEUDO] 가 있으면 초고·퇴고 둘 다 「골조 지시 이행」을 싣는다 (`#815` ④)
+    ⑮ 기본 퇴고는 리뷰 커밋의 고정 트리에서 돈다 — 원본 트리에 아무것도 안 남는다 (`#844`)
 
 [중요] ⑪ 은 값을 치르고 얻었다. 첫 배포 회차가 @reg.projects@ AttributeError 로 죽었는데
 (`Registry` 의 필드는 `.names` 다), **유닛 21건이 전부 통과한 상태였다** — `run_once` 만 탔고
@@ -568,6 +569,67 @@ def test_골조_지시_이행_절():
     shutil.rmtree(root)
 
 
+def test_퇴고는_고정_트리에서_돈다():
+    """⑮ `#844` — agy 가 원본 트리에서 명령을 돌려 `.mypy_cache/` 를 남겼다(실측 2026-10-30).
+
+    기본 경로(`review_call=None`)는 `agy_only(workdir=<고정 트리>)` 를 부른다. 트리는 저장소 밖에
+    리뷰 커밋으로 있고, 그 안의 쓰기는 원본에 닿지 않으며, 끝나면 사라진다.
+    """
+    root, head = make_repo()
+    repo = Path(root) / "repo"
+    # 리뷰 커밋 뒤에 라이브 트리가 움직였다 — 고정 트리는 그래도 리뷰 커밋을 보여야 한다
+    (repo / "Source" / "M" / "A.cpp").write_text("void AFoo::Bar() {}\n", encoding="utf-8")
+    git(repo, "commit", "-qam", "later")
+    before = git(repo, "status", "--porcelain").stdout
+    Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
+    seen = {}
+
+    def fake_agy(prompt, *, workdir=None, **kw):
+        wd = Path(workdir)
+        seen.update(wd=wd, head=git(wd, "rev-parse", "HEAD").stdout.strip(),
+                    body=(wd / "Source" / "M" / "A.cpp").read_text(encoding="utf-8"))
+        (wd / ".mypy_cache").mkdir()                       # 에이전트의 셸 산출물 흉내 —
+        (wd / ".mypy_cache" / "x.json").write_text("{}")    # 빈 디렉터리는 status 에 안 보인다
+        return _review_body()
+    orig, R.agy_only = R.agy_only, fake_agy
+    logs = []
+    try:
+        r = R.run_once(Paths(root), draft_call=lambda p: "없음", logf=logs.append)
+    finally:
+        R.agy_only = orig
+    wd = seen.get("wd")
+    check("⑮ done", r.state == "done", f"{r.state} {r.why}")
+    check("⑮ workdir 를 받았다", wd is not None)
+    check("⑮ 저장소 밖이다", wd is not None and not str(wd).startswith(str(root)), str(wd))
+    check("⑮ 리뷰 커밋에 고정됐다", seen.get("head") == head and "x / 0" in seen.get("body", ""),
+          str(seen.get("head")))
+    check("⑮ 끝나면 트리가 사라진다", wd is not None and not wd.exists(), str(wd))
+    check("⑮ worktree 등록도 걷혔다",
+          git(repo, "worktree", "list").stdout.count("\n") == 1, git(repo, "worktree", "list").stdout)
+    check("⑮ 🔴 원본 트리는 그대로다", git(repo, "status", "--porcelain").stdout == before
+          and not (repo / ".mypy_cache").exists())
+    check("⑮ 트리 안 쓰기를 로그로 드러낸다", any("고정 트리에 쓰기" in x for x in logs), str(logs))
+    shutil.rmtree(root)
+
+
+def test_고정_트리_실패는_실패다():
+    """⑮ 트리를 못 만들면 라이브 트리로 되돌아가지 않고 실패로 끝낸다 (재시도는 큐 규칙)."""
+    root, head = make_repo()
+    Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
+    calls = []
+    orig_agy, R.agy_only = R.agy_only, lambda p, **kw: calls.append(kw) or _review_body()
+    from master.context_synth import pinned_tree as PT
+    orig_git = PT._git
+    PT._git = lambda *a, **kw: subprocess.CompletedProcess(a, 128, "", "fatal: 흉내")
+    try:
+        r = R.run_once(Paths(root), draft_call=lambda p: "없음")
+    finally:
+        R.agy_only, PT._git = orig_agy, orig_git
+    check("⑮ 트리 실패면 failed", r.state == "failed" and "고정 트리" in r.why, f"{r.state} {r.why}")
+    check("⑮ agy 를 부르지 않았다", calls == [], str(calls))
+    shutil.rmtree(root)
+
+
 if __name__ == "__main__":
     for fn in (test_로컬뒤_antigravity가_퇴고한다,
                test_로컬_없음이어도_antigravity가_본다,
@@ -577,7 +639,8 @@ if __name__ == "__main__":
                test_설계된_스킵, test_선언부, test_main_이_실제로_돈다,
                test_퇴고도_사용량에_남는다, test_grounding_머리말,
                test_머지는_결합_diff로_가른다, test_시간예산과_주인없는_running_회수,
-               test_골조_지시_이행_절):
+               test_골조_지시_이행_절, test_퇴고는_고정_트리에서_돈다,
+               test_고정_트리_실패는_실패다):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)
