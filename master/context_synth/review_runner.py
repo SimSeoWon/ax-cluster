@@ -515,6 +515,11 @@ def drain(paths, *, limit: int = 5, logf=None, deadline: float | None = None,
         if r is None:
             break
         out.append(r)
+        # `#847` — 한도(쿨다운 포함)는 모델 단위다. 같은 회차의 다음 항목도 똑같이 막히므로
+        #    더 꺼내지 않는다 — 방금 재큐된 항목을 곧바로 다시 집어 헛도는 것도 막는다.
+        if r.state == "failed" and rq.is_quota(rq.classify(r.why)):
+            log(f"[리뷰큐] 한도 — 회차 중단 ({(r.why or '')[:80]})")
+            break
     return out
 
 

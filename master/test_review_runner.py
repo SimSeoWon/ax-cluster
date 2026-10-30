@@ -17,6 +17,7 @@
     ⑬ 머지는 결합 diff(`--cc`)로 가른다 — 비면 스킵(done), 있으면 그것만 리뷰 (`#744` ①)
     ⑭ 지워진 [PSEUDO] 가 있으면 초고·퇴고 둘 다 「골조 지시 이행」을 싣는다 (`#815` ④)
     ⑮ 기본 퇴고는 리뷰 커밋의 고정 트리에서 돈다 — 원본 트리에 아무것도 안 남는다 (`#844`)
+    ⑯ agy 쿨다운은 시도를 소비하지 않고, 그 회차는 다음 항목을 꺼내지 않는다 (`#847`)
 
 [중요] ⑪ 은 값을 치르고 얻었다. 첫 배포 회차가 @reg.projects@ AttributeError 로 죽었는데
 (`Registry` 의 필드는 `.names` 다), **유닛 21건이 전부 통과한 상태였다** — `run_once` 만 탔고
@@ -630,6 +631,34 @@ def test_고정_트리_실패는_실패다():
     shutil.rmtree(root)
 
 
+def test_쿨다운은_시도를_쓰지_않고_회차를_멈춘다():
+    """⑯ `#847` 실측 — 쿨다운 중 2/3·3/3 이 같은 초에 소진돼 포기됐다(2026-10-30 18:29:23)."""
+    root, head = make_repo()
+    repo = Path(root) / "repo"
+    first = git(repo, "rev-parse", "HEAD~1").stdout.strip()
+    Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
+    Q.enqueue(root, key=first, files=["Source/M/A.cpp"])
+    calls, logs = [], []
+
+    def cooled(p):
+        calls.append(1)
+        raise RG.ReviewChatError("Antigravity 실패 — gemini-3.8-flash-medium: model cooldown 237s")
+    out = R.drain(Paths(root), limit=5, logf=logs.append,
+                  draft_call=lambda p: "없음", review_call=cooled)
+    its = {it["key"]: it for it in Q.items(root)}
+    check("⑯ 한 건만 처리하고 멈춘다", len(out) == 1 and len(calls) == 1, f"{len(out)} {len(calls)}")
+    check("⑯ 시도를 소비하지 않는다", its[head]["attempts"] == 0 and its[head]["state"] == "pending",
+          str(its[head]))
+    check("⑯ 다음 항목은 손대지 않았다", its[first]["attempts"] == 0 and its[first]["state"] == "pending")
+    check("⑯ 회차 중단을 로그에 남긴다", any("회차 중단" in x for x in logs), str(logs[-3:]))
+    # 쿨다운이 아닌 실패는 종전대로 다음 항목으로 넘어간다
+    calls.clear()
+    out = R.drain(Paths(root), limit=5, draft_call=lambda p: "없음",
+                  review_call=lambda p: (_ for _ in ()).throw(RG.ReviewChatError("연결 끊김")))
+    check("⑯ 일반 실패는 회차를 멈추지 않는다", len(out) >= 2, str(len(out)))
+    shutil.rmtree(root)
+
+
 if __name__ == "__main__":
     for fn in (test_로컬뒤_antigravity가_퇴고한다,
                test_로컬_없음이어도_antigravity가_본다,
@@ -640,7 +669,8 @@ if __name__ == "__main__":
                test_퇴고도_사용량에_남는다, test_grounding_머리말,
                test_머지는_결합_diff로_가른다, test_시간예산과_주인없는_running_회수,
                test_골조_지시_이행_절, test_퇴고는_고정_트리에서_돈다,
-               test_고정_트리_실패는_실패다):
+               test_고정_트리_실패는_실패다,
+               test_쿨다운은_시도를_쓰지_않고_회차를_멈춘다):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

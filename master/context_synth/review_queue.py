@@ -97,6 +97,11 @@ def classify(why: str) -> str:
     low = text.lower()
     if any(m.lower() in low for m in _rv.QUOTA_MARKERS):
         return QUOTA
+    # 🔴 `#847` — agy 쿨다운(`agy_models`: 「<모델>: model cooldown Ns」)은 호출 **전에** 막힌 것이고
+    #    쿨다운은 실제 소진에서만 걸린다(`#845`). 공용 마커에 넣으면 레인·작업 조각 동작이 바뀌어
+    #    (사용자 결정 (가)) 리뷰 큐에만 둔다 — 아래 `실행파일 없음` 과 같은 로컬 규칙이다.
+    if "model cooldown" in low:
+        return QUOTA
     if any(m.lower() in low for m in _rv.ENV_MARKERS):
         return ENV
     # PATH·실행파일 부재는 `#285` 가 남긴 우리 쪽 문구다 — 환경 실패다.

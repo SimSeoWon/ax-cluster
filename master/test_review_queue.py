@@ -61,6 +61,8 @@ def test_classify():
     cases = [
         ("429 You've hit your session limit", Q.QUOTA),
         ("rate limit exceeded", Q.QUOTA),
+        # `#847` 실측 사유(2026-10-30 18:29:23) — 종전에는 TRANSIENT 로 시도를 소비했다
+        ("리뷰 생성 실패: Antigravity 실패 — gemini-3.8-flash-medium: model cooldown 237s", Q.QUOTA),
         ("0xC0000142", Q.ENV),
         ("CreateProcessAsUserW failed", Q.ENV),
         ("agy: 실행파일 없음 — PATH 미등록", Q.ENV),
