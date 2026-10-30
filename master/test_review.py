@@ -630,6 +630,75 @@ def test_finalize_six_step_edges():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_finalize_prunes_local_base_373():
+    """🔴 `#373` — 마감이 원격만 지우고 **요청자 로컬의 작업 브랜치**는 남겼다(실측 2026-10-31 재현).
+
+    [중요] 사람의 로컬 `main` 은 마감이 안 움직인다 — 그래서 `git branch -d` 는 여기서 거절된다.
+    도달 판정을 `origin/main` 기준으로 직접 하고 `update-ref -d` 로 지우는지 본다.
+    """
+    root, repo, work, tasks = fixture()
+    try:
+        logs: list = []
+        d = R.finalize_work(repo, work_id="w1", work=dict(work, merge_status="ready_for_review"),
+                            tasks=tasks, reviewer="사람", confirm=True, api=FakeApi(),
+                            logf=lambda k, m: logs.append(m))
+        check("마감 성공", d.ok, d.error)
+        check("[전제] 사람의 로컬 main 은 origin/main 보다 뒤다 (마감이 안 움직인다)",
+              g(repo, "rev-parse", "main").strip() != g(repo, "rev-parse", "origin/main").strip())
+        check("🔴 로컬 작업 브랜치를 지웠다",
+              d.local_deleted == ["feature/w1"] and not g(repo, "branch", "--list", "feature/w1").strip(),
+              f"{d.local_deleted} · {d.local_kept}")
+        check("  노트에 이름이 남는다", "로컬 작업 브랜치 삭제: `feature/w1`" in d.redmine_note,
+              d.redmine_note[-300:])
+        check("  로그 한 줄", any("로컬 작업 브랜치 삭제 feature/w1" in m for m in logs), str(logs[-3:]))
+        check("  사람의 브랜치·미커밋 작업은 그대로",
+              g(repo, "branch", "--show-current").strip() == "main"
+              and (repo / "Content" / "BP_Live.uasset").exists())
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    # 체크아웃돼 있으면 보존 — 사람이 그 위에 있다
+    root, repo, work, tasks = fixture()
+    try:
+        g(repo, "stash", "-u"); g(repo, "checkout", "feature/w1")
+        d = R.finalize_work(repo, work_id="w1", work=dict(work, merge_status="ready_for_review"),
+                            tasks=tasks, reviewer="사람", confirm=True, api=FakeApi())
+        check("체크아웃 중이면 보존 · 사유", d.ok and not d.local_deleted
+              and any("체크아웃" in why for _, why in d.local_kept), f"{d.local_kept} {d.error}")
+        check("  브랜치가 그대로", g(repo, "branch", "--show-current").strip() == "feature/w1")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    # confirm=False 는 아무것도 안 지운다
+    root, repo, work, tasks = fixture()
+    try:
+        d = R.finalize_work(repo, work_id="w1", work=dict(work, merge_status="ready_for_review"),
+                            tasks=tasks, confirm=False, api=FakeApi())
+        check("confirm=False — 로컬 작업 브랜치 그대로",
+              not d.local_deleted and g(repo, "branch", "--list", "feature/w1").strip() != "")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    # 함수 단위 — 판정 못 하면 보존
+    root, repo, work, tasks = fixture()
+    try:
+        dl, kp = R.prune_local_base(repo, work={}, target="feature/w1", remote="origin")
+        check("큐에 target_branch 기록 없음 → 보존(이름 유도 금지)",
+              not dl and kp and "target_branch" in kp[0][1], str(kp))
+        dl, kp = R.prune_local_base(repo, work={"target_branch": "feature/other"},
+                                    target="feature/w1", remote="origin")
+        check("기록과 이름이 다르면 → 보존", not dl and kp, str(kp))
+        dl, kp = R.prune_local_base(repo, work=work, target="feature/w1", remote="origin")
+        check("🔴 origin/main 에 도달하지 않으면(머지 전) → 보존 · 증거",
+              not dl and kp and "도달하지 않는다" in kp[0][1]
+              and g(repo, "branch", "--list", "feature/w1").strip() != "", str(kp))
+        dl, kp = R.prune_local_base(repo, work={"target_branch": "feature/none"},
+                                    target="feature/none", remote="origin")
+        check("로컬에 없으면 → 지울 것 없음(보존도 아님)", dl == [] and kp == [], f"{dl} {kp}")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_finalize_status_gate():
     root, repo, work, tasks = fixture()
     try:
@@ -1176,6 +1245,7 @@ def main() -> int:
                test_reject_patches_and_keeps_branches, test_reject_idempotent_and_guarded,
                test_finalize_default_does_not_push,
                test_finalize_confirm_pushes_and_then_cleanup_is_possible,
+               test_finalize_prunes_local_base_373,
                test_finalize_status_gate,
                test_finalize_six_step_edges, test_finalize_conflict_leaves_nothing,
                test_rework_integrates_failed_results_and_keeps_main_and_history,

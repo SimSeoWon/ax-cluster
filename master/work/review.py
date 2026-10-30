@@ -452,6 +452,52 @@ def apply_branch_cleanup(repo: Path, plan: "CleanupPlan", *, remote: str = DEFAU
     return deleted, failed
 
 
+def prune_local_base(repo: Path, *, work: dict, target: str, remote: str = DEFAULT_REMOTE,
+                     base_branch: str = BASE_BRANCH, logf=C._noop_log) -> tuple:
+    """🔴 마감 뒤 **요청자 로컬의 작업 브랜치 하나**를 지운다 (`#373`). 반환 `(deleted, kept)`.
+
+    `apply_branch_cleanup` 은 원격만 지운다(`push --delete`). 요청자가 정본 ⑵ 에서 만든
+    `task/<work>/base` 는 **사람의 체크아웃**에 남고 아무도 안 지웠다(실측 2026-09-10 · 10-18 · 10-31 재현).
+
+    지우는 조건 — 하나라도 판정 못 하면 **보존**(fail-closed, `cleanup.py` 와 같은 방향):
+        ① 큐 `work.target_branch` 와 이름이 **정확히** 같다 — 기록이 없으면 이름을 유도하지 않는다
+        ② 로컬 tip 이 `<remote>/<base>` 에서 **도달 가능**(`#125` 기준 · 호출자가 막 fetch 했다)
+        ③ 어느 worktree 에도 체크아웃돼 있지 않다
+    [주의] `git branch -d` 를 쓰지 않는다 — 그것은 `origin/main` 이 아니라 **지금 HEAD·upstream**
+       기준이라, 마감이 사람의 로컬 `main` 을 안 움직이는 한 거의 항상 거절된다(실측 2026-10-31).
+       대신 ②를 직접 판정하고 `update-ref -d <ref> <확인한 커밋>` 으로 지운다 — 그 사이 ref 가
+       바뀌면 git 이 거절한다. 도달 판정은 **커밋만** 본다(미추적 파일은 브랜치에 없다).
+    """
+    stored = ((work or {}).get("target_branch") or "").strip()
+    ref = f"refs/heads/{target}"
+
+    def keep(why: str) -> tuple:
+        logf("cleanup", f"로컬 작업 브랜치 보존 {target or '(없음)'} — {why}")
+        return [], [(target, why)]
+
+    if not stored or stored != target:
+        return keep("큐에 기록된 target_branch 와 일치하지 않는다 — 이름을 유도해 지우지 않는다")
+    rc, tip = _git_rc(repo, "rev-parse", "--verify", "--quiet", ref)
+    tip = (tip or "").strip()
+    if rc != 0 or not tip:
+        logf("cleanup", f"로컬 작업 브랜치 없음 {target} — 지울 것 없음")
+        return [], []
+    tracking = f"refs/remotes/{remote}/{base_branch}"
+    rc, _ = _git_rc(repo, "merge-base", "--is-ancestor", tip, tracking)
+    if rc != 0:
+        return keep(f"{remote}/{base_branch} 에서 도달하지 않는다(또는 판정 불가) — 미병합은 증거다")
+    rc, wt = _git_rc(repo, "worktree", "list", "--porcelain")
+    if rc != 0:
+        return keep("worktree 목록을 못 읽었다 — 체크아웃 여부를 모른다")
+    if f"branch {ref}" in (wt or "").splitlines():
+        return keep("worktree 에 체크아웃돼 있다")
+    rc, out = _git_rc(repo, "update-ref", "-d", ref, tip)
+    if rc != 0:
+        return keep(f"update-ref 거절: {(out or '').strip()[:120]}")
+    logf("cleanup", f"로컬 작업 브랜치 삭제 {target} ({tip[:8]}) — {remote}/{base_branch} 에서 도달")
+    return [target], []
+
+
 def plan_branch_cleanup(repo: Path, *, tasks, work_id: str = "", target_branch: str = "",
                         remote: str = DEFAULT_REMOTE, base_branch: str = BASE_BRANCH,
                         logf=C._noop_log) -> CleanupPlan:
@@ -753,6 +799,9 @@ class Decision:
     redmine_posted: bool = False    # 노트 전송 성공 (마스터 대행 경유)
     deleted_branches: list = field(default_factory=list)
     cleanup_failed: list = field(default_factory=list)   # (ref, 사유) — 실패해도 머지는 끝났다
+    # `#373` — 요청자 로컬의 작업 브랜치 정리 (원격 정리와 별개)
+    local_deleted: list = field(default_factory=list)
+    local_kept: list = field(default_factory=list)       # (브랜치, 사유)
     error: str = ""
 
     @property
@@ -930,6 +979,9 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
                 repo, d.cleanup, remote=remote, logf=logf)
             # 못 지운 것만 사람 몫으로 남긴다 — 지운 것을 명령으로 또 주면 혼선이다
             d.commands += [f"git push {remote} --delete {ref}" for ref, _ in d.cleanup_failed]
+            # `#373` — 원격 정리 뒤 요청자 로컬의 작업 브랜치. 조건·근거는 `prune_local_base`
+            d.local_deleted, d.local_kept = prune_local_base(
+                repo, work=work, target=target, remote=remote, base_branch=base_branch, logf=logf)
             kept = len(d.cleanup.keep)
             d.redmine_note = (
                 f"분산 작업 완료 — {base_branch} 머지 완료\n\n"
@@ -960,7 +1012,10 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
                    + ", ".join(f"`{ref}`" for ref in d.deleted_branches[:8])
                    + (f" 외 {len(d.deleted_branches) - 8}건"
                       if len(d.deleted_branches) > 8 else "")
-                   if d.deleted_branches else ""))
+                   if d.deleted_branches else "")
+                + ("".join(f"\n  - 로컬 작업 브랜치 삭제: `{b}`" for b in d.local_deleted)
+                   + "".join(f"\n  - 로컬 작업 브랜치 보존: `{b}` — {why}"
+                             for b, why in d.local_kept)))
             # ── ② Redmine 기재 (원전 6단계 ② — 상태·머지 커밋) ──────────────
             # [중요] **키는 이 코드가 도는 기계에 없다** — 이 모듈은 `.33` 에도 배달된다.
             #    그래서 마스터 대행(`/api/v1/redmine/note`)을 지나간다. 값이 아니라 본문만 만든다.
