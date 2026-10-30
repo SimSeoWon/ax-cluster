@@ -9,6 +9,9 @@
     python -m master.client uproject <프로젝트>  에디터 플러그인 계획 (`--confirm` 으로 적용)
     python -m master.client master-local         마스터 Claude·Codex·agy 에 ax-client 등록 계획
                                                  (`--apply` 로 적용 · `--check` 로 대조)
+    python -m master.client setup-host --host=<ip> --root=<경로> [--user=<계정>] [--confirm]
+                                                 워커 한 대를 새로 놓거나 옮긴다 — 등록부 경로 →
+                                                 낡은 상주 해제 → 클론·배달 → 대조 (기본은 계획만)
 
 [중요] **`probe` → `plan` → `deliver` 순서로 쓴다.** 남의 기계에 쓰는 작업이므로, 무엇을 어디에
 쓸지 먼저 눈으로 본다.
@@ -1010,7 +1013,7 @@ def cmd_master_local(*, apply: bool = False, check: bool = False) -> int:
 
 _CMDS = {"probe": cmd_probe, "plan": cmd_plan, "deliver": cmd_deliver, "check": cmd_check,
          "ensure": cmd_ensure, "uproject": cmd_uproject, "update": cmd_update,
-         "master-local": cmd_master_local}
+         "master-local": cmd_master_local, "setup-host": None}
 
 
 def main(argv: list) -> int:
@@ -1024,6 +1027,15 @@ def main(argv: list) -> int:
         return cmd_update(init="--init" in argv, all_projects="--all" in argv)
     if argv[0] == "master-local":
         return cmd_master_local(apply="--apply" in argv, check="--check" in argv)
+    if argv[0] == "setup-host":
+        # 프로젝트 인자를 받지 않는다 — 대상은 마운트가 정한다(`setup_host` 머리말)
+        from . import setup_host
+        opts = dict(a[2:].split("=", 1) for a in argv[1:] if a.startswith("--") and "=" in a)
+        if not opts.get("host") or not opts.get("root"):
+            print("[중요] --host=<ip> 와 --root=<경로> 가 필요하다")
+            return 2
+        return setup_host.run(opts["host"], opts["root"], user=opts.get("user", ""),
+                              confirm="--confirm" in argv)
     rest = [a for a in argv[1:] if not a.startswith("-")]
     # [중요] **fail-closed** — 주워 쓰지 않는다 (`#227` 소 1.2, 모듈 머리말 참조).
     if not rest:
