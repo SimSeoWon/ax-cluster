@@ -8,28 +8,62 @@
 
 ## 상태
 
-- **갱신**: 2026-10-30 · Codex · 사용자 선택 #849 로컬 서브 에이전트 수행
-- **상태**: #849 구현·회귀·공식 통합 검사 통과. 커밋 승인 대기. 실제 합성은 사용자 승인으로 보류.
-- **저장소**: `~/ax-cluster` · `main 125a335` = origin/main · #849 소스 3파일·리포트 131·이 인계서 **미커밋**
-- **배달**: `master.client update` AXCluster `.43`·`.2`·`.33` 3/3 OK · 출처 `6f9d81a`.
-  [주의] 이 인계서·리포트를 커밋하면 HEAD 가 앞서 `check` 가 실패한다 — 커밋 뒤 `update` 를 다시 돌린다.
+- **갱신**: 2026-10-30 · Codex 작성(사용자 지시로 중단) → Claude 대조·정리
+- **상태**: 사용자가 작업의 신뢰성 문제를 지적하고 Codex 작업을 멈췄다. Claude 가 인계서를 실제 상태와
+  대조했고, 사용자 지시로 #850 등록·#849 정정 노트·조사 초안과 임시 폴더 삭제를 했다. 추가 구현·실증 없음.
+- **저장소**: `~/ax-cluster` · 소스 기준 `fd97d62` = origin/main(이 인계서 커밋은 그 위). 소스 3파일·리포트 131은 커밋·푸시됨.
+- **배달**: 사용자 승인 후 `master.client update` AXCluster `.43`·`.2`·`.33` **3/3 OK**, 출처 `fd97d62`, rc=0.
+  `.2` 홈 중복 `~/.agents/skills/ax-work` 주의 1건(프로젝트 로컬 정본 우선), 수정하지 않았다.
 - **지휘 기록**: 마스터 담당 `claude`(2026-10-21) · 워커 전역 `codex`(state, 2026-10-18). 바꾸지 않았다.
-- **실행 중**: 없음. 커밋·푸시·배달·서비스 재시작 미실행.
+- **실행 중**: 없음. 서비스 재시작·운영 도메인 등록·마운트 변경 없음.
 
-## 현재 작업 — #849 · [리포트 131](../reports/131-849-ontology-pinned-tree.md)
+## 현재 작업 — #849의 검증 공백과 사용자 정정
 
-- 사용자 선택: 로컬 서브 에이전트. CLI 작업 폴더는 합성 시작의 미러 HEAD를 SHA로 고정.
-- `ontology/synth.py`의 agy·codex에 기존 `pinned_worktree` 적용, 배치 공유·직접 호출 정리.
-  생성 실패는 레인 실패이며 라이브로 돌아가지 않는다. 상용 전용 도메인 작업 범위 규칙 추가.
-- 첫 회귀 63/64: 새 테스트가 로컬 진입의 cloud quota 선행 조건을 누락했다.
-  중단·보고 후 사용자 승인으로 테스트만 수정 → **64/64 통과**. 정책 변경 없음.
-- 공식 통합 검사 **181/181 통과**(188.167초, rc=0). 독립 읽기 검토에서 범위 내 결함 없음.
-- `master.ontology status`는 active 도메인 없음(rc=1). 사용자 승인으로 실제 합성 실증 보류.
-  도메인 선정 후 agy 도구 호출 수·시간·마스터 상태 불변을 확인한다.
-- SHA 고정은 CLI 작업 폴더만이며 발췌·사실 검증의 기존 `paths.repo` 읽기는 유지한다.
-- #849는 진행 상태. 커밋·푸시는 별도 승인, 운영 실증은 아직 남아 있다.
+- [#849](http://192.168.0.57:8080/issues/849)는 마지막 조회 **진행**, 완료로 닫지 않았다.
+- 사용자 기준: **등록 타입·언어·소스 경계를 확인하고 해당 프로젝트에 맞게 합성·검증한다.**
+  언리얼이면 언리얼, AXCluster면 Python이다. 도메인 합성 자체가 언리얼 전용인 것이 아니다.
+- Codex 실패: 마운트 AXCluster(`kind: code`, Python, `.py`)를 알고도 UE5 고정 프롬프트를 보고
+  C++를 검증 전제로 판단해 **사용자 확인 없이 NS 소스로 실증 대상을 바꿨다.**
+  잘못된 전제로 작업·승인 요청을 반복했다. NS 드라이런을 재개하지 않는다.
+- `fd97d62`: 로컬 서브 에이전트로 `master/ontology/synth.py`의 agy·codex 작업 폴더를 시작 미러 HEAD
+  SHA의 pinned_worktree로 연결. 배치 공유·직접 호출 정리·생성 실패 시 라이브 폴백 금지.
+  `master/ontology/prompt.py` 상용 범위 규칙과 `master/test_ontology_synth.py` 검사 추가.
+- 회귀 **64/64**, 공식 통합 **181/181** 통과는 실제 기록이다. 추가 검사는 `source.txt`와
+  모의 CLI, 진입점 본체 mock을 쓴다. **Python 도메인 합성의 유효성을 입증하지 않는다.**
+  앞선 완료 주장만으로 신뢰하지 말고 변경분을 독립 재검토해야 한다.
+- SHA 고정은 CLI 작업 폴더만이다. 프롬프트 발췌·사실 검증은 기존 `paths.repo`를 읽는다.
 
-## 이번 세션에서 한 것 — [리포트 130](../reports/130-worker2-board-swap-setup-host-ollama.md)
+## 읽기 전용 재확인 — 아직 수정하지 않음
+
+1. 프로필 `master/client/payload/profile/AXCluster.yaml`: `kind: code`, Python 중심, `.py`.
+   MCP 조회도 동일. 그래프 `master/graph/class_graph.py:142`는 Python을 AST로 처리한다.
+   시스템 전체가 Python 미지원인 것은 아니다.
+2. `master/ontology/prompt.py:43,102`와 `descriptions.py:63`: UE5 전제 고정, 프로젝트 타입 반영 없음.
+   → 2~5는 **[#850](http://192.168.0.57:8080/issues/850)** 으로 분리 등록했다(신규).
+3. `master/ontology/contexts.py:161,171`: Python도 파일 앞 1200자를 `.h 선언부`로 표시하고,
+   `.h`가 아니면 body는 빈 문자열. 대상 클래스 본문을 선택해 발췌하지 않는다.
+4. `master/ontology/parse.py:92`: 클래스 구분은 `::`만 분리. `DomainResult.summary`는 도메인 밖으로
+   버리고 `DomainResult::summary`는 수용하는 현상을 기존 parse.actions로 재현했다.
+5. 기존 excerpt_header/body에 `master/ontology/synth.py`를 넣은 읽기 전용 재현(rc=0):
+   header 1199자, body 0자, `class DomainResult` 포함 false. dot 항목 0/1, colon 항목 1/1.
+6. `fd97d62^..fd97d62` diff: contexts/descriptions/parse/verify_facts 변경 없음.
+   위 공백은 기존부터 있었다. **#849가 이를 해결하거나 검증한 것은 아니다.**
+
+## 잘못 진행한 드라이런과 보존 증거
+
+- 조사 초안 `reports/research/2026-10-30-849-dry-run.md`(C++ 전제, 미커밋)와 임시 루트
+  `/tmp/ax-849-dry-vYgLSMXs`(NS 미러 `0533518` 독립 복제본, 로컬 변경 없음)는 **사용자 지시로 삭제했다.**
+  운영 NS 소스·도메인은 수정하지 않았다. 아래 수치는 그 실행의 기록이다.
+- graph 성공: 클래스 139·메서드 823. 첫 plan은 manifest 인라인 목록 오류로 멤버 0.
+  중단·사용자 승인 후 줄 목록으로 수정 → 멤버 1·청크 1·요청 2.
+- dry는 pinned worktree 생성 rc=128로 실패. `git lfs logs last`: `Content/Audio/Classes/SC_Ambience.uasset`
+  smudge `remote missing object`. checkout에만 GIT_LFS_SKIP_SMUDGE를 줬고 dry에는 빠졌다.
+  **agy 호출 0회**, actions/invariants 0. cmd_dry rc=0이므로 종료코드만으로 성공 처리 금지.
+- 운영 registry·NS config 체크섬 불변은 Codex 기록. 전체 전후 status 비교 완료는 주장하지 않는다.
+- 상세 실패·배달 기록과 사용자 정정(NS 드라이런·LFS 재실행안 폐기)은 #849 노트. [리포트 131](../reports/131-849-ontology-pinned-tree.md)은
+  커밋 시점 기록이며 이후 사용자 정정을 반영하지 못했다.
+
+## 앞선 Claude 세션 기록 — [리포트 130](../reports/130-worker2-board-swap-setup-host-ollama.md)
 
 - **`.2` 보드 교체 복구.** E: SSD 제거 → 체크아웃 루트를 `C:\trunk` 로 옮겼다
   - [#843](http://192.168.0.57:8080/issues/843) **완료** — `setup-host` 진입점 + `ax-worker-setup` 스킬 (`0941944`)
@@ -60,14 +94,16 @@
 
 ## 바로 다음 작업
 
-1. 소스 3파일·리포트 131·인계서의 커밋·푸시 승인. 승인 뒤 배달은 별도 범위를 확인한다.
-2. 실제 합성 실증의 대상 도메인은 사용자가 정한다. 자동 등록·마운트 전환하지 않는다.
+1. 코드 수정·실증·NS 재시도를 자동 시작하지 않는다. 다음 작업은 사용자가 고른다.
+2. 재개 지시가 오면 #850(AXCluster/Python 합성 입력·프롬프트·파싱)부터 — 갈림길은 이슈 본문, 착수 때 사용자와 정한다.
+   #849 의 로컬 서브 에이전트 선택은 #849 범위만이다. #850 수행 방식은 다시 묻는다.
+3. #849 실증(합성 1회 전후 `status --ignored` 불변 · agy 도구 호출 수)은 #850 상태를 고려해 대상을 정한다.
 
 ## 열려 있지만 별개인 것 (기록 시점 — Redmine 재조회)
 
 - `.2` 새 경로에서 실제 Codex 셸 읽기·apply_patch·결과 회수 — 다음 파견에서 확인
 - 비마운트 3개(ModularStage·NS·MotionForge)의 `.2` 클론 — 마운트 전환 때 `set_active` 가 한다
-- [#849](http://192.168.0.57:8080/issues/849) 현재 작업 — 구현 미커밋, 실증 보류(위 절).
+- [#849](http://192.168.0.57:8080/issues/849) 위 절. fd97d62 배달됨, 실제 합성 0회 · [#850](http://192.168.0.57:8080/issues/850) Python 합성 결함.
 - #846 효과 재측정 — 리뷰 퇴고 소요·도구 호출 분포를 10-11~10-30 기준과 비교(한도 상향 B 판단 근거)
 - 포기된 `f3e3d96` 리뷰 재등재 여부 — 사용자 미결정
 - [#709](http://192.168.0.57:8080/issues/709) GitHub `SimSeoWon/Test_KimodoMotion` — 사용자가 웹에서 지운 뒤 404 확인하고 닫는다
