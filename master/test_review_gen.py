@@ -432,13 +432,16 @@ def test_serial_travels_to_journal():
 # ── ⑤ 골조 지시 이행 절 (`#815` ④) ────────────────────────────
 
 # 변경 전 코드로 잰 해시 (2026-10-18). intent=False 프롬프트는 바이트 단위로 그대로여야 한다
+# [주의] `bp-*` 넷은 `#846`(2026-10-30)이 **일부러** 다시 쟀다 — `_SCOPE_RULES` 한 덩이를 넣었다.
+#    갱신 전에 「새 프롬프트에서 그 덩이만 빼면 옛 해시와 같다」를 넷 다 확인했다(`ex-*` 는 그대로).
+#    계약은 여전히 「intent=False 는 intent 절 외에 다른 것이 섞이지 않는다」다.
 _GOLD_DIFF = "--- a/x.py\n+++ b/x.py\n@@ -1,2 +1,1 @@\n-import json, os\n+import os\n"
 _GOLDEN = {
-    "bp-unreal-False": "51047dc1e1a69f774a77e64dceb4821d87d9ecd8376161b2119e1da762f4436a",
-    "bp-unreal-True": "0b114764d70a629fc0ee903b4d153bfff9f85977e19cc7f603eeed3f323df55b",
+    "bp-unreal-False": "fec46f197150526ae43e4e79272442e4a4a0bb2ca3cf47d6184cdd845c706ef4",
+    "bp-unreal-True": "07b61c0d81de6cf9b8b72f9edab1447f11cae6a9a45bb76c9e24d57b9989be5f",
     "ex-unreal": "2af61ce6d0e2d718d4941bb5803984f1c6cd4f7f467c408d41b777496173dfb4",
-    "bp-code-False": "14e3da5a7bf24dc0c03bb9a55b922eb062782ba5cc6b141377ed432ff1e4a308",
-    "bp-code-True": "0daabd89c3f15a568edb4f7ddf84c08d8747b8966476535cfea7ab71c7ce004d",
+    "bp-code-False": "05b8d8b82fe48bdc3cfbc2d8715f19f756f6393836b7d677426cf57c1c23d802",
+    "bp-code-True": "1d572908429386cb10036a3a6a54fed9840a36af3cc27ce04c244a9ce8a5dd52",
     "ex-code": "a20d07d0218e1bd4f3456bb43bb92318d322308e6d4177ed96b61b48b902263e",
 }
 
@@ -446,6 +449,19 @@ _PSEUDO_DIFF = ("--- a/m.py\n+++ b/m.py\n@@ -1,3 +1,2 @@\n"
                 "-# [PSEUDO] 실패하면 False 를 돌려준다\n"
                 "-# [DOC] 이름 있는 함수로\n"
                 " def f():\n+    return True\n")
+
+
+def test_scope_rules():
+    """`#846` — 퇴고 에이전트의 작업 범위 규칙이 모든 리뷰 프롬프트에 한 번씩 들어간다."""
+    for kind in ("unreal", "code"):
+        for intent in (False, True):
+            pr = RG.build_prompt(diff=_GOLD_DIFF, files=["x.py"], commit="abcdef1234567890",
+                                 kind=kind, intent=intent)
+            check(f"#846 범위 규칙 한 번 ({kind}, intent={intent})", pr.count(RG._SCOPE_RULES) == 1)
+            check(f"#846 규칙은 DIFF 보다 앞이다 ({kind}, intent={intent})",
+                  pr.index(RG._SCOPE_RULES) < pr.index("## DIFF"))
+    for word in ("테스트", "find", "바로 리뷰를 출력"):
+        check(f"#846 규칙 문구: {word}", word in RG._SCOPE_RULES)
 
 
 def test_intent_section_only_when_pseudo_removed():
@@ -532,7 +548,8 @@ def main() -> int:
                test_consumer_wiring_failure_goes_to_canary,
                test_failure_reasons_are_never_silent, test_synth_paths_log_their_gaps,
                test_generation_chain_is_codex_first_but_verification_is_not,
-               test_intent_section_only_when_pseudo_removed, test_intent_format_is_fail_closed):
+               test_intent_section_only_when_pseudo_removed, test_intent_format_is_fail_closed,
+               test_scope_rules):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_review_gen: {PASS}/{total} 통과")
