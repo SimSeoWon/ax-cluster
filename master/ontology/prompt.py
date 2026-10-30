@@ -40,7 +40,19 @@ def commercial(body: str) -> str:
             "테스트 실행, 빌드, 저장소 전체 탐색, 파일 변경을 하지 않는다. "
             "주어진 근거가 부족하면 추측하지 말고 해당 항목을 생략한다.\n\n" + body)
 
-_ACTIONS_RULES = """당신은 Unreal Engine 5 프로젝트의 **도메인 내부 액션**을 종합 기술 문서로 추출한다.
+# ── 규칙 블록 — 공통 몸통 + 언어 블록 (`#850`) ─────────────────────────────────
+#
+# [중요] **unreal(또는 kind 미기재) 프로젝트의 C++ 조각은 종전 문자열과 바이트 단위로 같다**
+#    (`test_ontology_python.py` 가 고정본과 대조한다). 언어 블록은 조각 멤버의 **파일 확장자**가
+#    고르고(`contexts.lang_of`), UE 전용 규칙을 실을지는 **프로젝트 kind** 만 정한다.
+#    혼합 조각(C++ + Python)이면 해당 블록을 모두 싣는다.
+# [주의] invariant 신호 6종의 **이름은 그대로**다 — `parse.VALID_SIGNALS` 가 그 이름으로 거른다.
+#    언어 블록은 이름마다 그 언어의 대응물만 정의한다.
+
+_INTRO_UE = "당신은 Unreal Engine 5 프로젝트의 "
+_INTRO = "당신은 소프트웨어 프로젝트의 "
+
+_A_COMMON_HEAD = """**도메인 내부 액션**을 종합 기술 문서로 추출한다.
 
 액션은 함수 1:1 매핑이 **아니다** — 의미 단위다.
 누가(trigger) → 누구에게(actor) → 무엇을(operation) → 어떤 순서로(flow) 작동하는지 쓴다.
@@ -53,7 +65,10 @@ OAF 분류:
 == 추출 대상 — 반드시 같은 도메인 안에서만 ==
   [완료] 아래 「대상 클래스」 목록 안의 클래스끼리의 호출·상태 변경
   [완료] 같은 도메인 멤버 변수 변경
-  [완료] 이벤트 **발행** → `triggers_events` (3패턴 모두):
+"""
+
+_A_EVENTS = {
+    "ue": """  [완료] 이벤트 **발행** → `triggers_events` (3패턴 모두):
      (1) `OnXxx.Broadcast(...)` / `ExecuteIfBound(...)` 같은 표준 델리게이트
      (2) 자체 디스패처 — `FGlobalEventSystem::ExecuteEvent<IEventXxx>(...)` 등
      (3) 람다 콜백 등록 트리거 — `Service->Bind([this](){...})` 의 **호출자 쪽**
@@ -61,12 +76,41 @@ OAF 분류:
      (1) `AddDynamic` / `AddUObject` / `BindUObject` / `AddLambda` / `AddRaw`
      (2) 인터페이스 상속 — `class UWidget : public IEventXxx` + 메서드 override
      (3) 람다 핸들러 — 람다 본문이 사실상 핸들러
+""",
+    "cpp": """  [완료] 이벤트 **발행** → `triggers_events`:
+     (1) 콜백 호출 — 보관한 `std::function` / 함수 포인터 호출, 리스너 목록 순회 통지
+     (2) 자체 디스패처·시그널 — `emit` / `notify` / `dispatch` 류 호출
+  [완료] 이벤트 **구독** → `subscribed_to`:
+     (1) 핸들러 등록 — `connect` / `subscribe` / `addListener` 류 호출, 람다 핸들러
+     (2) 인터페이스 상속 — 리스너 인터페이스 상속 + 메서드 override
+""",
+    "python": """  [완료] 이벤트 **발행** → `triggers_events`:
+     (1) 콜백 호출 — 등록된 콜백·훅 목록을 순회해 부르는 것, 주입받은 callable 호출
+     (2) 자체 디스패처·시그널 — `emit` / `notify` / `dispatch` / `send` 류 메서드
+  [완료] 이벤트 **구독** → `subscribed_to`:
+     (1) 핸들러 등록 — `subscribe` / `connect` / `add_listener` 류 호출, 데코레이터 등록
+     (2) 상속 — 핸들러 기반 클래스 상속 + 메서드 override
+""",
+}
 
+_A_FORBID_HEAD = """
 == 절대 추출 금지 ==
-  [실패] 통신 인프라 — 형태 불문: FSocket / FHttpModule / IOnlineSubsystem / Connect / Send /
+"""
+
+_A_COMM = {
+    "ue": """  [실패] 통신 인프라 — 형태 불문: FSocket / FHttpModule / IOnlineSubsystem / Connect / Send /
      Receive / Packet / WebSocket / TCP / UDP / IPC / RPC 매크로(Server_*/Client_*/Multicast_*)
      / 외부 REST SDK. 통신은 별도 도메인의 책임이다
-  [실패] 도메인 밖 클래스 호출 — 「대상 클래스」에 없는 이름은 flow·objects_affected 에 쓰지 말 것
+""",
+    "cpp": """  [실패] 통신 인프라 — 형태 불문: 소켓 / HTTP 클라이언트 / Connect / Send / Receive / Packet /
+     WebSocket / TCP / UDP / IPC / RPC 스텁 / 외부 REST SDK. 통신은 별도 도메인의 책임이다
+""",
+    "python": """  [실패] 통신 인프라 — 형태 불문: socket / urllib / requests / httpx / aiohttp / websocket /
+     IPC / RPC 클라이언트 / 외부 REST SDK. 통신은 별도 도메인의 책임이다
+""",
+}
+
+_A_FORBID_TAIL = """  [실패] 도메인 밖 클래스 호출 — 「대상 클래스」에 없는 이름은 flow·objects_affected 에 쓰지 말 것
   [실패] 자명한 getter/setter 한 줄 함수, 컴파일러가 검증하는 시그니처 정합성
   [실패] 별도 events 항목 — 이벤트는 위 두 채널에 흡수한다
 
@@ -74,8 +118,21 @@ OAF 분류:
   - 의미 있는 것만 5~15건. 억지로 채우지 말 것
   - `name` 은 **의미 단위 PascalCase** (예: AddTaskItem) — 함수명 그대로 쓰지 말 것
   - `description` 은 **한국어**. 의미와 맥락을 쓴다
-  - `implementation.primary` 는 `"클래스명::메서드명"` 형식. **발췌에서 실제로 본 것만**
-  - `evidence` 는 `"<파일>:<줄 또는 메서드>"`. 못 대면 그 항목을 내지 말 것
+"""
+
+_A_PRIMARY = {
+    "cpp": """  - `implementation.primary` 는 `"클래스명::메서드명"` 형식. **발췌에서 실제로 본 것만**
+""",
+    "python": """  - `implementation.primary` 는 `"클래스명.메서드명"` 형식. **발췌에서 실제로 본 것만**
+  - 「대상 클래스」 이름에 모듈 경로가 붙어 있으면(`pkg.mod.Class`) 그 이름 그대로 쓴다
+""",
+    "mixed": """  - `implementation.primary` 는 C++ 클래스면 `"클래스명::메서드명"`, Python 클래스면
+    `"클래스명.메서드명"` 형식. **발췌에서 실제로 본 것만**
+  - 「대상 클래스」 이름에 모듈 경로가 붙어 있으면(`pkg.mod.Class`) 그 이름 그대로 쓴다
+""",
+}
+
+_A_TAIL_HEAD = """  - `evidence` 는 `"<파일>:<줄 또는 메서드>"`. 못 대면 그 항목을 내지 말 것
   - confidence 0.5 미만이면 출력하지 말 것
 
 [중요] **발췌에 없는 것은 지어내지 말 것.** 없는 호출을 쓰면 결정적 게이트가 그 항목을 버린다.
@@ -92,25 +149,59 @@ OAF 분류:
       "objects_affected": ["<대상 클래스>"],
       "triggers_events": ["<이벤트명>"],
       "subscribed_to": ["<이벤트명>"],
-      "implementation": {"primary": "<클래스::메서드>", "related": ["<클래스::메서드>"]},
-      "evidence": "<파일:줄>",
+"""
+
+_A_IMPL = {
+    "cpp": "클래스::메서드",
+    "python": "클래스.메서드",
+    "mixed": "클래스::메서드 또는 클래스.메서드",
+}
+
+_A_TAIL = """      "evidence": "<파일:줄>",
       "confidence": 0.0
     }
   ]
 }"""
 
-_INVARIANTS_RULES = """당신은 Unreal Engine 5 프로젝트의 **도메인 invariant** 를 추출한다.
+_I_HEAD = """**도메인 invariant** 를 추출한다.
 
-invariant 는 "이 도메인에서 항상 참이어야 하는 규칙" 이다. 매크로 표면이 아니라
+invariant 는 "이 도메인에서 항상 참이어야 하는 규칙" 이다. """
+
+_I_SURFACE = {
+    "ue": "매크로 표면이 아니라",
+    "other": "선언 표면이 아니라",
+}
+
+_I_HEAD2 = """
 **코드 본문**에서 온다. 아래 6가지 신호만 근거로 쓴다:
 
-  function-signature : const/virtual/override, 반환 타입이 강제하는 계약
+"""
+
+_I_SIGNALS = {
+    "ue": """  function-signature : const/virtual/override, 반환 타입이 강제하는 계약
   lifetime-pattern   : TSharedPtr/TWeakPtr/TUniquePtr, 소유권·GC 독립성
   algorithm          : 초기화 순서, 상태 머신 전이, early-return 권한 검사
   check-statement    : check() / ensure() / verify() 가 못박은 전제
   comment            : @invariant / @precondition 또는 한국어 설명 주석
   lock-pattern       : FScopeLock / CriticalSection / RAII 로 지켜지는 것
+""",
+    "cpp": """  function-signature : const/virtual/override/noexcept, 반환 타입이 강제하는 계약
+  lifetime-pattern   : std::unique_ptr/std::shared_ptr/std::weak_ptr, RAII 소유권
+  algorithm          : 초기화 순서, 상태 머신 전이, early-return 권한 검사
+  check-statement    : assert() / static_assert / 조건 위반 시 throw 가 못박은 전제
+  comment            : @invariant / @precondition 또는 한국어 설명 주석
+  lock-pattern       : std::mutex + lock_guard/unique_lock/scoped_lock 으로 지켜지는 것
+""",
+    "python": """  function-signature : 타입 힌트·반환 타입, @abstractmethod / Protocol / @property 가 강제하는 계약
+  lifetime-pattern   : with 컨텍스트 매니저(__enter__/__exit__) · try/finally 가 지키는 자원 소유·해제
+  algorithm          : 초기화 순서, 상태 머신 전이, early-return 권한 검사
+  check-statement    : assert / 조건 위반 시 raise 가 못박은 전제
+  comment            : docstring 의 계약 서술 · @invariant / [중요] 류 표식 또는 한국어 설명 주석
+  lock-pattern       : threading.Lock/RLock 의 `with lock:` · 파일 잠금(fcntl) 으로 지켜지는 것
+""",
+}
 
+_I_TAIL = """
 == 절대 추출 금지 ==
   [실패] 컴파일러가 이미 강제하는 것 (타입 일치, 시그니처 정합성) — 가치 없다
   [실패] 도메인 밖 클래스에 대한 규칙
@@ -138,6 +229,53 @@ invariant 는 "이 도메인에서 항상 참이어야 하는 규칙" 이다. �
     }
   ]
 }"""
+
+_LABEL = {"cpp": "C++", "python": "Python"}
+
+
+def is_ue(kind: str) -> bool:
+    """UE 전용 규칙을 싣나. [중요] **kind 가 비었거나 모르는 값이면 싣는다** — 종전 동작이다."""
+    from ..projects.profile import NON_UNREAL_KINDS          # noqa: PLC0415
+    return (kind or "") not in NON_UNREAL_KINDS
+
+
+def langs_of(ctx: DomainContexts) -> tuple:
+    """조각 멤버의 언어 — **파일 확장자로만.** 아무 것도 모르면 `("cpp",)`(종전 동작)."""
+    from .contexts import lang_of                            # noqa: PLC0415
+    got = {lang_of(getattr(c, "file", "")) for c in ctx.items} - {""}
+    return tuple(x for x in ("cpp", "python") if x in got) or ("cpp",)
+
+
+def _pick(table: dict, langs: tuple, ue: bool) -> str:
+    """언어 블록을 고른다. 하나면 그대로, 여럿이면 언어 이름표를 붙여 차례로 싣는다."""
+    keys = [("ue" if (lang == "cpp" and ue and "ue" in table) else lang) for lang in langs]
+    if len(keys) == 1:
+        return table[keys[0]]
+    return "".join(f"  ({_LABEL[lang]} 소스)\n" + table[k] for lang, k in zip(langs, keys))
+
+
+def actions_rules(langs: tuple = ("cpp",), ue: bool = True) -> str:
+    """actions 규칙 블록. `actions_rules(("cpp",), True)` 는 종전 문자열과 같다."""
+    form = langs[0] if len(langs) == 1 else "mixed"
+    intro = _INTRO_UE if (ue and "cpp" in langs) else _INTRO
+    return (intro + _A_COMMON_HEAD + _pick(_A_EVENTS, langs, ue) + _A_FORBID_HEAD
+            + _pick(_A_COMM, langs, ue) + _A_FORBID_TAIL + _A_PRIMARY[form] + _A_TAIL_HEAD
+            + f'      "implementation": {{"primary": "<{_A_IMPL[form]}>", '
+              f'"related": ["<{_A_IMPL[form]}>"]}},\n'
+            + _A_TAIL)
+
+
+def invariants_rules(langs: tuple = ("cpp",), ue: bool = True) -> str:
+    """invariants 규칙 블록. `invariants_rules(("cpp",), True)` 는 종전 문자열과 같다."""
+    ue_cpp = ue and "cpp" in langs
+    intro = _INTRO_UE if ue_cpp else _INTRO
+    surface = _I_SURFACE["ue" if ue_cpp else "other"]
+    return (intro + _I_HEAD + surface + _I_HEAD2 + _pick(_I_SIGNALS, langs, ue) + _I_TAIL)
+
+
+# 종전 이름 — unreal 의 C++ 조각에 실리는 것이 이것이다.
+_ACTIONS_RULES = actions_rules()
+_INVARIANTS_RULES = invariants_rules()
 
 
 def _body(doc: DomainDoc | None, ctx: DomainContexts, rules: str, tail: str) -> str:
@@ -168,10 +306,12 @@ def _body(doc: DomainDoc | None, ctx: DomainContexts, rules: str, tail: str) -> 
 
 
 def actions(doc: DomainDoc | None, ctx: DomainContexts) -> str:
-    """actions 추출 프롬프트."""
-    return _body(doc, ctx, _ACTIONS_RULES, "== JSON 응답 ==")
+    """actions 추출 프롬프트. 규칙 블록은 조각 멤버의 언어와 프로젝트 kind 가 고른다."""
+    rules = actions_rules(langs_of(ctx), is_ue(getattr(ctx, "kind", "")))
+    return _body(doc, ctx, rules, "== JSON 응답 ==")
 
 
 def invariants(doc: DomainDoc | None, ctx: DomainContexts) -> str:
-    """invariants 추출 프롬프트."""
-    return _body(doc, ctx, _INVARIANTS_RULES, "== JSON 응답 ==")
+    """invariants 추출 프롬프트. 규칙 블록은 조각 멤버의 언어와 프로젝트 kind 가 고른다."""
+    rules = invariants_rules(langs_of(ctx), is_ue(getattr(ctx, "kind", "")))
+    return _body(doc, ctx, rules, "== JSON 응답 ==")

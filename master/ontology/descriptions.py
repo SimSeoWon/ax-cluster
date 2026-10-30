@@ -88,6 +88,21 @@ PROMPT_HEADER = """당신은 Unreal Engine 5 프로젝트의 도메인을 DDD �
 """
 
 
+# [중요] UE 가 아닌 프로젝트(`kind: code`·`index_only`)에는 첫 줄의 「Unreal Engine 5」를 뺀다
+#    (`#850`). 서술 입력은 이름과 요약뿐이라 파일 언어가 없다 — 프로젝트 kind 만 본다.
+#    kind 가 비었거나 모르는 값이면 `PROMPT_HEADER` 그대로다(종전 동작).
+_UE_PHRASE = "당신은 Unreal Engine 5 프로젝트의 도메인을"
+_NEUTRAL_PHRASE = "당신은 소프트웨어 프로젝트의 도메인을"
+
+
+def prompt_header(kind: str = "") -> str:
+    """kind 에 맞춘 헤더. unreal·미기재는 `PROMPT_HEADER` 와 바이트 단위로 같다."""
+    from ..projects.profile import NON_UNREAL_KINDS          # noqa: PLC0415
+    if (kind or "") in NON_UNREAL_KINDS:
+        return PROMPT_HEADER.replace(_UE_PHRASE, _NEUTRAL_PHRASE, 1)
+    return PROMPT_HEADER
+
+
 def _pkg(paths: ProjectPaths, domain: str) -> Path:
     return paths.ontology / "domains" / domain
 
@@ -112,9 +127,13 @@ def has_content(members: dict) -> bool:
     return any(members.get(k) for k in package.SUBDIRS)
 
 
-def build_prompt(domain: str, summary: str, responsibilities: list, layer_members: dict) -> str:
-    """LLM 1회분 프롬프트. [중요] **문구는 원본 그대로** (바꾸면 산출물을 비교할 수 없다)."""
-    parts = [PROMPT_HEADER, f"== 도메인: {domain} =="]
+def build_prompt(domain: str, summary: str, responsibilities: list, layer_members: dict,
+                 *, kind: str = "") -> str:
+    """LLM 1회분 프롬프트. [중요] **문구는 원본 그대로** (바꾸면 산출물을 비교할 수 없다).
+
+    예외는 UE 가 아닌 kind 의 첫 줄 하나다(`prompt_header`).
+    """
+    parts = [prompt_header(kind), f"== 도메인: {domain} =="]
     if summary:
         parts.append(f"[도메인 요약]\n{summary}")
     if responsibilities:
@@ -333,7 +352,8 @@ def extract(paths: ProjectPaths, domain: str, *, call) -> Result:
     summary = (getattr(doc, "summary", "") or "")[:2000] if doc else ""
     responsibilities = list(getattr(doc, "responsibilities", None) or []) if doc else []
 
-    prompt = build_prompt(domain, summary, responsibilities, layer_members)
+    prompt = build_prompt(domain, summary, responsibilities, layer_members,
+                          kind=_kind(paths))
     try:
         text = call(prompt)
         res.llm_calls = 1
@@ -350,5 +370,15 @@ def extract(paths: ProjectPaths, domain: str, *, call) -> Result:
     return res
 
 
+def _kind(paths: ProjectPaths) -> str:
+    """프로젝트 kind. 읽지 못하면 빈 값 — 헤더는 종전(UE) 그대로다."""
+    try:
+        from ..projects import profile                      # noqa: PLC0415
+        return profile.kind_of(getattr(paths, "name", "") or "")
+    except Exception:                                       # noqa: BLE001
+        return ""
+
+
 __all__ = ["Result", "WriteStats", "build_prompt", "collect_layer_members", "dump",
-           "extract", "has_content", "is_locked", "parse_response", "read", "write"]
+           "extract", "has_content", "is_locked", "parse_response", "prompt_header", "read",
+           "write"]

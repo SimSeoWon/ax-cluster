@@ -77,6 +77,10 @@ def cmd_plan(argv: list) -> int:
             print(f"    [{c.part[0]}/{c.part[1]}] 클래스 {len(c.items):2d} · 발췌 {c.chars:6d}자"
                   f" · 프롬프트 {max(pa, pi):6d}자 ≈ {tok:5d}tok · 출력여유 {head:5d}tok{flag}")
             print(f"        {', '.join(sorted(c.names))}")
+            # [중요] 클래스마다 **어느 발췌 경로를 탔나**를 찍는다 (`#850`) — 폴백이 조용하면
+            #    파이썬 클래스가 파일 앞부분으로 대신 실린 것을 프롬프트 크기만 보고는 모른다.
+            for item in c.items:
+                print(f"          {item.name}: {item.excerpt or '발췌 경로 미기록'}")
     print(f"\n전체 프롬프트 {total:,}자 · 요청 {requests}건 "
           f"(출력 여유 기준 {OUTPUT_RESERVE}tok, num_ctx {synth.NUM_CTX})")
     return 0

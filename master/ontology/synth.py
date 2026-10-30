@@ -246,7 +246,8 @@ def _assign_layer(item: dict, layer_of: dict) -> None:
     보수적으로 둔다(`package._layer_of` 와 같은 기본값).
     """
     impl = (item.get("implementation") or {}).get("primary") or ""
-    cls = impl.split("::", 1)[0] if "::" in impl else ""
+    # 아는 클래스의 가장 긴 접두(`::`·`.` 둘 다 — `#850`). 못 찾으면 종전 규칙(첫 `::` 앞).
+    cls = parse.owner_class(impl, layer_of) or (impl.split("::", 1)[0] if "::" in impl else "")
     if not cls:
         for c in item.get("objects_affected") or []:
             if c in layer_of:

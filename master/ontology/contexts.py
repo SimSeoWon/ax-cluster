@@ -32,9 +32,22 @@
 `.cpp` 는 전체가 아니라 **invariant 신호 인근만** 발췌한다(원본 휴리스틱):
 함수 정의 · `check()`/`ensure()`/`verify()` · lock/RAII · 스마트 포인터 선언 ·
 `@invariant`/`@precondition` 주석.
+
+## 언어는 파일 확장자가 고른다 (`#850`)
+
+`.py` 멤버에 위 규칙을 그대로 걸면 **대상 클래스 본문이 안 실린다** — 선언부는 파일 앞
+1,200자(대개 모듈 docstring)이고, 본문은 `.h` 가 아니라 빈 문자열이다(실측:
+`master/ontology/synth.py` 의 `DomainResult` 가 발췌에 없었다). 그래서 `.py` 는 `ast` 로
+**그 클래스**를 찾아 선언부(클래스 시그니처·docstring·필드·메서드 시그니처)와 클래스 범위
+안의 신호 인근을 싣는다. 혼합 프로젝트가 있으므로(MotionForge = unreal + Python 웹 UI)
+프로젝트 kind 가 아니라 **파일마다** 고른다.
+
+[중요] `excerpt_header` 의 동작은 바꾸지 않는다 — 층2 그라운딩(`work/declarations.py`)과
+골조(`work/skeleton.py`)도 부른다. 갈림은 이 모듈의 `_build_one` 한 곳에서만 한다.
 """
 from __future__ import annotations
 
+import ast
 import re
 from dataclasses import dataclass, field
 
@@ -79,6 +92,24 @@ _SIGNAL = re.compile(
     r"|//\s*@(?:invariant|precondition|postcondition|note)\b"
     r")", re.I)
 
+# 파이썬 클래스 범위 안의 「표시된 주석」. 이 저장소의 규약 표식과 원본의 `@invariant` 류다.
+# [주의] 주석 전부를 신호로 세지 않는다 — 주석이 촘촘한 코드에서는 예산을 주석이 다 먹는다.
+_PY_COMMENT = re.compile(
+    r"^\s*#.*(?:@(?:invariant|precondition|postcondition|note)\b|\[중요\]|\[주의\]|🔴)", re.I)
+PY_BODY_AFTER = 3             # 파이썬 신호 줄 뒤에 붙이는 문맥 줄 수 (.cpp 는 8 — 줄이 짧다)
+
+CPP_EXTS = (".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp", ".c", ".cc", ".cpp", ".cxx")
+
+
+def lang_of(file: str) -> str:
+    """발췌·프롬프트 언어 — **파일 확장자로만** 정한다. 모르는 확장자는 빈 문자열(종전 동작)."""
+    f = (file or "").lower()
+    if f.endswith(".py"):
+        return "python"
+    if f.endswith(CPP_EXTS):
+        return "cpp"
+    return ""
+
 
 @dataclass
 class ClassContext:
@@ -89,6 +120,8 @@ class ClassContext:
     neighbours: list = field(default_factory=list)     # `#include` 로 얽힌 도메인 밖 클래스
     header: str = ""
     body: str = ""
+    lang: str = ""                # `lang_of(file)` — 라벨과 프롬프트 언어 블록이 이것을 본다
+    excerpt: str = ""             # [중요] 어떤 발췌 경로를 탔나 · 폴백 사유 (`plan` 이 찍는다)
 
     @property
     def chars(self) -> int:
@@ -100,11 +133,12 @@ class ClassContext:
             out.append(f"  조상: {', '.join(self.ancestors[:ANCESTORS_SHOWN])}")
         if self.neighbours:
             out.append(f"  도메인 밖 include: {', '.join(self.neighbours[:NEIGHBOURS_SHOWN])}")
+        py = self.lang == "python"
         if self.header:
-            out.append("  [.h 선언부]")
+            out.append("  [선언부]" if py else "  [.h 선언부]")
             out += [f"    {ln}" for ln in self.header.splitlines()]
         if self.body:
-            out.append("  [.cpp 신호 인근]")
+            out.append("  [신호 인근]" if py else "  [.cpp 신호 인근]")
             out += [f"    {ln}" for ln in self.body.splitlines()]
         return "\n".join(out)
 
@@ -117,6 +151,7 @@ class DomainContexts:
     truncated: list = field(default_factory=list)   # [중요] 예산 때문에 뺀 클래스 이름
     chars: int = 0
     part: tuple = (1, 1)                            # (조각 번호, 전체 조각 수)
+    kind: str = ""                                  # `profile.kind_of` — 빈 값은 종전(UE) 동작
 
     @property
     def names(self) -> set:
@@ -182,6 +217,11 @@ def excerpt_body(paths: ProjectPaths, file: str, limit: int = BODY_CHARS) -> str
             hits.append((max(0, i - 1), min(len(lines), i + 8)))
     if not hits:
         return "\n".join(lines[:40])[:limit].rstrip()
+    return _render_hits(lines, hits, limit)
+
+
+def _render_hits(lines: list, hits: list, limit: int) -> str:
+    """신호 구간 `(시작, 끝)` 들을 합쳐 **줄번호와 생략 표시**로 그린다. C++·파이썬 공용."""
     merged: list = []
     for s, e in sorted(hits):
         if merged and s <= merged[-1][1]:
@@ -199,6 +239,117 @@ def excerpt_body(paths: ProjectPaths, file: str, limit: int = BODY_CHARS) -> str
             break
     body = "\n".join(out)
     return body[:limit].rstrip() + ("\n..." if len(body) > limit else "")
+
+
+def _py_class(tree, name: str):
+    """모듈 최상위 `ClassDef` 중 이름이 맞는 것. 모듈 접두가 붙은 이름은 **마지막 마디**로 찾는다
+    (`graph/pyparse.disambiguate` 가 겹친 이름에 `pkg.mod.` 을 붙인다)."""
+    short = name.rsplit(".", 1)[-1]
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == short:
+            return node
+    return None
+
+
+def _first_line(node) -> int:
+    """데코레이터까지 포함한 시작 줄 (1부터)."""
+    decos = getattr(node, "decorator_list", None) or []
+    return min([node.lineno] + [d.lineno for d in decos])
+
+
+def _signature_end(node, lines: list) -> int:
+    """`def`/`class` 시그니처의 끝 줄 (1부터). 본문 첫 문장 앞까지이되, 뒤에 붙은 빈 줄·주석은 뺀다."""
+    end = max(node.lineno, node.body[0].lineno - 1) if node.body else node.lineno
+    while end > node.lineno and (not lines[end - 1].strip()
+                                 or lines[end - 1].lstrip().startswith("#")):
+        end -= 1
+    return end
+
+
+def _py_header(node, lines: list, limit: int) -> list:
+    """선언부 줄 번호(1부터) — 클래스 시그니처 · docstring · 메서드 시그니처, 남는 예산에 필드.
+
+    [주의] 필드는 **뒤순위**다. 필드가 많은 `@dataclass` 는 필드만으로 예산을 다 먹어 메서드
+    시그니처가 안 보였다(실측: `synth.DomainResult` 필드 29개 > 1,200자).
+    """
+    keep: set = set()
+    end = _signature_end(node, lines)
+    body = node.body
+    if (body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)):
+        end = body[0].end_lineno
+        body = body[1:]
+    keep.update(range(_first_line(node), end + 1))
+    fields: list = []
+    for st in body:
+        if isinstance(st, (ast.AnnAssign, ast.Assign)):
+            fields.append(range(st.lineno, st.end_lineno + 1))
+        elif isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            keep.update(range(_first_line(st), _signature_end(st, lines) + 1))
+    used = sum(len(lines[i - 1]) + 1 for i in keep)
+    for rng in fields:
+        cost = sum(len(lines[i - 1]) + 1 for i in rng)
+        if used + cost > limit:
+            break
+        keep.update(rng)
+        used += cost
+    return sorted(keep)
+
+
+def _py_signal_lines(node, lines: list) -> list:
+    """클래스 범위 안의 신호 줄(0부터) — assert · raise · with · early return · 표시된 주석."""
+    hits: set = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, (ast.Assert, ast.Raise, ast.With, ast.AsyncWith)):
+            hits.add(sub.lineno - 1)
+        elif isinstance(sub, ast.If):
+            # early return — `if …:` 바로 아래가 return/raise 인 가드절
+            if sub.body and isinstance(sub.body[0], (ast.Return, ast.Raise)):
+                hits.add(sub.lineno - 1)
+    for i in range(node.lineno - 1, node.end_lineno):
+        if _PY_COMMENT.match(lines[i]):
+            hits.add(i)
+    return sorted(hits)
+
+
+def excerpt_python(paths: ProjectPaths, file: str, name: str, header_limit: int = HEADER_CHARS,
+                   body_limit: int = BODY_CHARS) -> tuple:
+    """`.py` 의 **대상 클래스** 발췌 → `(선언부, 신호 인근, 경로 설명)`.
+
+    [중요] AST 파싱이 실패하거나 클래스를 못 찾으면 **종전 동작으로 떨어지고 그 사실을
+    설명에 적는다** — 조용히 파일 앞부분을 실으면 모델은 그것이 그 클래스인 줄 안다.
+    """
+    d = source_text.read(paths.repo / file) if file else None
+    if d is None:
+        return "", "", "python → 폴백: 파일을 못 읽음"
+    try:
+        tree = ast.parse(d.text)
+    except (SyntaxError, ValueError) as e:
+        why = f"AST 파싱 실패 ({type(e).__name__})"
+        return excerpt_header(paths, file, header_limit), "", f"python → 폴백: {why}"
+    node = _py_class(tree, name)
+    if node is None:
+        return (excerpt_header(paths, file, header_limit), "",
+                f"python → 폴백: 클래스 못 찾음 ({name.rsplit('.', 1)[-1]})")
+    lines = d.text.splitlines()
+    shown = _py_header(node, lines, header_limit)
+    header = "\n".join(lines[i - 1] for i in shown)[:header_limit].rstrip()
+    sig = _py_signal_lines(node, lines)
+    hi = node.end_lineno
+    if sig:
+        hits = [(max(node.lineno - 1, i - 1), min(hi, i + 1 + PY_BODY_AFTER)) for i in sig]
+        return header, _render_hits(lines, hits, body_limit), "python(ast)"
+    # 신호가 없으면 선언부에 안 실린 클래스 본문 앞 40줄 — `.cpp` 의 「앞 40줄」과 같은 취지
+    # [주의] **메서드 본문이 먼저다** — 앞에서부터 채우면 선언부에 못 실린 필드 줄이 자리를 먹어
+    #    `synth.DomainResult` 는 `ok`·`summary` 본문 대신 필드 한 줄이 실렸다(실측 `#850`).
+    seen = set(shown)
+    in_method = {i for st in node.body if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef))
+                 for i in range(st.body[0].lineno, st.end_lineno + 1)}
+    cand = [i for i in range(node.lineno, hi + 1) if i not in seen and lines[i - 1].strip()]
+    rest = sorted(([i for i in cand if i in in_method] + [i for i in cand if i not in in_method])[:40])
+    body = _render_hits(lines, [(i - 1, i) for i in rest], body_limit) if rest else ""
+    what = "메서드 본문 앞부분" if in_method & set(rest) else "본문 앞부분"
+    return header, body, f"python(ast) · 신호 없음 → {what}"
 
 
 def _neighbours(paths: ProjectPaths, file: str, inside: set) -> list:
@@ -227,14 +378,32 @@ def _neighbours(paths: ProjectPaths, file: str, inside: set) -> list:
 def _build_one(paths: ProjectPaths, name: str, members: dict, inside: set,
                header_chars: int, body_chars: int) -> ClassContext:
     file = members.get(name) or ""
+    lang = lang_of(file)
+    if lang == "python":
+        header, body, route = excerpt_python(paths, file, name, header_chars, body_chars)
+    else:
+        header = excerpt_header(paths, file, header_chars)
+        body = excerpt_body(paths, file, body_chars)
+        route = "c++(.h+.cpp)" if lang == "cpp" else f"기본({file.rsplit('.', 1)[-1] if '.' in file else '확장자 없음'})"
     return ClassContext(
         name=name,
         file=file,
         ancestors=cg.find_ancestors(paths, name, max_depth=3),
         neighbours=_neighbours(paths, file, inside),
-        header=excerpt_header(paths, file, header_chars),
-        body=excerpt_body(paths, file, body_chars),
+        header=header,
+        body=body,
+        lang=lang,
+        excerpt=f"발췌 {route} · 선언 {len(header)}자 · 본문 {len(body)}자",
     )
+
+
+def _kind(paths: ProjectPaths) -> str:
+    """프로젝트 kind. 읽지 못하면 빈 값 — 프롬프트는 그것을 종전(UE) 동작으로 읽는다."""
+    try:
+        from ..projects import profile                      # noqa: PLC0415
+        return profile.kind_of(getattr(paths, "name", "") or "")
+    except Exception:                                       # noqa: BLE001
+        return ""
 
 
 def collect_domain(paths: ProjectPaths, domain: str, *, members: dict | None = None,
@@ -251,7 +420,7 @@ def collect_domain(paths: ProjectPaths, domain: str, *, members: dict | None = N
     정렬하는 척하지 않는다.** 채워지면 그때 정렬을 바꾼다.
     """
     members = collect.members_of(paths, domain) if members is None else members
-    ctx = DomainContexts(domain=domain, members_total=len(members))
+    ctx = DomainContexts(domain=domain, members_total=len(members), kind=_kind(paths))
     inside = set(members)
     for name in sorted(members):
         if len(ctx.items) >= max_classes or ctx.chars >= total_chars:
@@ -333,15 +502,16 @@ def chunk_domain(paths: ProjectPaths, domain: str, *, members: dict | None = Non
     inside = set(members)
     order = cohesion_order(paths, members)
 
+    kind = _kind(paths)
     chunks: list = []
-    cur = DomainContexts(domain=domain, members_total=len(members))
+    cur = DomainContexts(domain=domain, members_total=len(members), kind=kind)
     for name in order:
         item = _build_one(paths, name, members, inside, header_chars, body_chars)
         over = (len(cur.items) >= max_classes
                 or (cur.items and cur.chars + item.chars > total_chars))
         if over:
             chunks.append(cur)
-            cur = DomainContexts(domain=domain, members_total=len(members))
+            cur = DomainContexts(domain=domain, members_total=len(members), kind=kind)
         cur.items.append(item)
         cur.chars += item.chars
     if cur.items:

@@ -89,8 +89,28 @@ def _conf(v) -> float:
         return 0.0
 
 
-def _class_of(qualified: str) -> str:
-    return qualified.split("::", 1)[0] if "::" in qualified else qualified
+def owner_class(qualified: str, known) -> str:
+    """`클래스<구분자>메서드` 의 클래스 — `known` 중 **가장 긴 접두**가 `::` 또는 `.` 로 이어지는 것.
+
+    [중요] 첫 `::` 에서 자르면 파이썬 이름(`DomainResult.summary`)이 통째로 클래스명이 되어
+    도메인 밖으로 버려졌다(`#850`). 모듈 접두가 붙은 클래스명(`pkg.mod.Class.method` —
+    `graph/pyparse.disambiguate`)도 있으므로 「첫 `.`」로도 못 자른다 — 아는 이름에 맞춘다.
+    못 찾으면 빈 문자열. `parse._class_of` 와 `synth._assign_layer` 가 함께 쓴다.
+    """
+    best = ""
+    for c in known:
+        if (len(c) > len(best) and qualified.startswith(c)
+                and (qualified[len(c):len(c) + 2] == "::" or qualified[len(c):len(c) + 1] == ".")):
+            best = c
+    return best
+
+
+def _class_of(qualified: str, allowed=()) -> str:
+    """구현 문자열의 클래스. `allowed` 에 맞는 것이 없으면 **종전 규칙**(첫 `::` 앞)으로 떨어진다."""
+    if qualified in allowed:
+        return qualified
+    return (owner_class(qualified, allowed)
+            or (qualified.split("::", 1)[0] if "::" in qualified else qualified))
 
 
 def actions(text: str, *, allowed: set, min_confidence: float = MIN_CONFIDENCE) -> Parsed:
@@ -131,10 +151,10 @@ def actions(text: str, *, allowed: set, min_confidence: float = MIN_CONFIDENCE) 
         impl: dict = {}
         if isinstance(impl_raw, dict):
             primary = str(impl_raw.get("primary") or "").strip()
-            if primary and _class_of(primary) in allowed:
+            if primary and _class_of(primary, allowed) in allowed:
                 impl["primary"] = primary
             related = [r for r in _strs(impl_raw.get("related"))
-                       if _class_of(r) in allowed]
+                       if _class_of(r, allowed) in allowed]
             if related:
                 impl["related"] = related
         if not impl.get("primary"):
