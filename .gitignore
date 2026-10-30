@@ -5,6 +5,7 @@
 # 프로젝트별 데이터 디렉토리 — 마스터 로컬 전용, ax-cluster 에 커밋하지 않는다 (PLAN.md §5.5)
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
 .venv/
 /ModularStage/
 /projects.yaml
