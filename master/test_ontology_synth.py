@@ -385,10 +385,98 @@ def test_descriptions_need_full_layer_coverage() -> None:
               str((calls, res.policy_attempts)))
 
 
+def test_cloud_pinned_tree() -> None:
+    """실제 임시 Git으로 SHA 고정·공유·정리와 CLI 계약을 검증한다 (#849)."""
+    import subprocess
+    import tempfile
+    from contextlib import ExitStack
+    from unittest.mock import patch
+    from master.context_search.paths import ProjectPaths
+    from master.ontology import synth, prompt
+    from master import layer2_verify as l2
+    from master.context_synth import pinned_tree
+
+    with tempfile.TemporaryDirectory(prefix="ax-ontology-tree-") as tmp:
+        paths = ProjectPaths(name="O", root=Path(tmp))
+        paths.repo.mkdir()
+        def git(*args):
+            return subprocess.run(["git", "-C", str(paths.repo), *args], check=True,
+                                  capture_output=True, text=True).stdout.strip()
+        git("init")
+        f = paths.repo / "source.txt"
+        f.write_text("start", encoding="utf-8")
+        git("add", ".")
+        git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "fixture")
+        first = git("rev-parse", "HEAD")
+        calls = []
+        def agy(body, **kw):
+            tree = Path(kw["workdir"])
+            calls.append(tree)
+            check("agy는 시작 SHA의 분리 트리", tree != paths.repo
+                  and (tree / "source.txt").read_text() == "start")
+            check("상용 범위 규칙 추가", "[상용 CLI 작업 범위]" in body)
+            return None, "network timeout"
+        def codex(body, **kw):
+            calls.append(Path(kw["workdir"]))
+            return "valid", [], ""
+        def invoke(tree, models=("agy", "codex"), caller=None):
+            return synth._policy_generate("base", models, broker="", num_ctx=1, timeout=1,
+                caller=caller, cli=None, validate=lambda raw: (raw, "", ""), tree=tree)
+
+        with ExitStack() as stack:
+            tree = synth._CloudTree(paths, ("agy", "codex"), stack)
+            f.write_text("moved", encoding="utf-8")
+            git("add", ".")
+            git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "move")
+            with patch.object(l2, "call_agy_why", side_effect=agy), \
+                    patch.object(l2, "call_codex_why", side_effect=codex):
+                raw, model, attempts = invoke(tree)
+                invoke(tree, ("codex",))
+            check("시작 SHA 고정", tree.sha == first)
+            check("여러 레인·호출은 하나의 트리 공유", len(calls) == 3
+                  and len(set(calls)) == 1 and raw == "valid" and model == "codex")
+            workdir = tree.path
+        check("종료 시 트리·등록 정리", not workdir.exists()
+              and git("worktree", "list", "--porcelain").count("worktree ") == 1)
+        check("미러 HEAD·파일 보존", git("rev-parse", "HEAD") != first
+              and f.read_text() == "moved" and not git("status", "--porcelain"))
+
+        with ExitStack() as stack:
+            tree = synth._CloudTree(paths, ("agy", "codex"), stack)
+            with patch.object(pinned_tree, "pinned_worktree", side_effect=RuntimeError("fixture failure")), \
+                    patch.object(l2, "call_agy_why") as cloud:
+                raw, model, attempts = invoke(tree)
+            check("트리 생성 실패는 cloud 호출 없이 레인 실패", raw is None and not cloud.called
+                  and len(attempts) == 2 and all(a["kind"] == "error" for a in attempts))
+        with ExitStack() as stack:
+            tree = synth._CloudTree(paths, ("local-model",), stack)
+            seen = []
+            with patch.object(synth, "generate", side_effect=lambda p, *a, **kw: seen.append(p) or "valid"):
+                raw, model, attempts = synth._policy_generate(
+                    "base", (*synth.llm_policy.CLOUD_LANES, "local-model"), broker="",
+                    num_ctx=1, timeout=1, caller=None,
+                    cli=lambda *a: (None, "quota exhausted"),
+                    validate=lambda raw: (raw, "", ""), tree=tree)
+            check("로컬 프롬프트·트리 생성 불변", seen == ["base"] and tree.path is None)
+
+        # 입구에서 만든 공급자가 본체에 전달되고 수명 종료까지 정리되는지 확인한다.
+        for entry, internal, args in ((synth.refresh_domain, "_refresh_domain", ("D",)),
+                                      (synth.describe_domain, "_describe_domain", ("D",)),
+                                      (synth.run, "_run", ())):
+            allocated = []
+            def body(_paths, *a, tree, **kw):
+                allocated.append(tree())
+                return "done"
+            with patch.object(synth, internal, side_effect=body):
+                result = entry(paths, *args, models=("agy",))
+            check(f"{entry.__name__} 직접 호출 정리", result == "done"
+                  and len(allocated) == 1 and not allocated[0].exists())
+
+
 def main() -> int:
     for fn in (test_domain_md, test_chunk_note, test_actions_parse,
                test_invariants_parse, test_merge, test_quota_policy_and_provenance,
-               test_descriptions_need_full_layer_coverage):
+               test_descriptions_need_full_layer_coverage, test_cloud_pinned_tree):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_ontology_synth: {PASS}/{total} 통과")

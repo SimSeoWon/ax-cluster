@@ -39,6 +39,8 @@ import time
 import contextvars
 import hashlib
 import json
+import subprocess
+from contextlib import ExitStack
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
@@ -96,6 +98,38 @@ CLI_MODELS = ("claude", "agy", "codex")
 
 class SynthError(RuntimeError):
     """재합성을 시작할 수 없다. [중요] 삼키면 빈 결과가 정상처럼 보인다."""
+
+
+class _CloudTree:
+    """합성 시작의 미러 HEAD를 보관하고 실제 CLI 호출 때만 고정 트리를 만든다."""
+
+    def __init__(self, paths, models, stack, *, caller=None, cli=None):
+        self.repo, self.stack = paths.repo, stack
+        self.path, self.error, self.sha = None, "", ""
+        models = (models,) if isinstance(models, str) else models
+        if caller is not None or cli is not None or not any(
+                m.partition(":")[0] in ("agy", "codex") for m in models):
+            return
+        try:
+            p = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "--verify", "HEAD^{commit}"],
+                               capture_output=True, text=True, timeout=60)
+            if p.returncode:
+                self.error = f"미러 HEAD 확인 실패: {p.stderr.strip()}"
+            else:
+                self.sha = p.stdout.strip()
+        except (OSError, subprocess.SubprocessError) as e:
+            self.error = f"미러 HEAD 확인 실패: {e}"
+
+    def __call__(self):
+        if not self.path and not self.error:
+            from ..context_synth.pinned_tree import pinned_worktree
+            try:
+                self.path = self.stack.enter_context(pinned_worktree(self.repo, self.sha))
+            except RuntimeError as e:
+                self.error = str(e)
+        if self.error:
+            raise GenerateError(f"고정 트리를 만들지 못했다 — {self.error}")
+        return self.path
 
 
 @dataclass
@@ -296,7 +330,7 @@ def generate(prompt: str, model: str, *, broker: str, num_ctx: int, timeout: int
 
 
 def _policy_generate(prompt, models, *, broker, num_ctx, timeout, caller, cli, validate,
-                     cloud_only=False):
+                     cloud_only=False, tree=None):
     """검증 실패를 같은 cloud 정책에 되먹인다. 응답 본문을 quota로 분류하지 않는다."""
     attempts = []
     for model in models:
@@ -305,20 +339,25 @@ def _policy_generate(prompt, models, *, broker, num_ctx, timeout, caller, cli, v
             continue
         try:
             if llm_policy.family(model) != "local":
+                from .prompt import commercial
+                cloud_prompt = commercial(prompt)
                 if cli is not None:
-                    response = cli(model, prompt, timeout)
+                    response = cli(model, cloud_prompt, timeout)
                     raw, why = response if isinstance(response, tuple) else (response, "")
                 elif caller is not None:
                     raw, why = None, "주입된 호출자 — 실제 cloud 호출 금지"
                 else:
                     from .. import layer2_verify as l2
                     lane, _, sub = model.partition(":")
+                    if lane in ("agy", "codex") and tree is None:
+                        raise GenerateError("고정 트리 공급자가 없다 — 라이브 트리 호출 금지")
+                    wd = {"workdir": str(tree())} if lane in ("agy", "codex") else {}
                     if lane == "agy":
-                        raw, why = l2.call_agy_why(prompt, timeout=timeout, model=sub)
+                        raw, why = l2.call_agy_why(cloud_prompt, timeout=timeout, model=sub, **wd)
                     elif lane == "codex":
-                        raw, _events, why = l2.call_codex_why(prompt, timeout=timeout)
+                        raw, _events, why = l2.call_codex_why(cloud_prompt, timeout=timeout, **wd)
                     else:
-                        raw, why = l2.call_claude_why(prompt, timeout=timeout, model=sub)
+                        raw, why = l2.call_claude_why(cloud_prompt, timeout=timeout, model=sub)
                 if not raw or why:
                     raise GenerateError(why or "빈 cloud 응답")
             else:
@@ -342,7 +381,7 @@ def _policy_generate(prompt, models, *, broker, num_ctx, timeout, caller, cli, v
 
 def _lane(chunks: list, models, doc, kind: str, *, broker: str, num_ctx: int,
           timeout: int, caller, res: DomainResult, paths=None, cli=None,
-          cloud_only=False) -> list:
+          cloud_only=False, tree=None) -> list:
     """각 조각에 동일한 cloud 우선·quota 전용 local 정책을 적용한다."""
     build = prompt_actions if kind == "actions" else prompt_invariants
     read_back = parse.actions if kind == "actions" else parse.invariants
@@ -366,7 +405,7 @@ def _lane(chunks: list, models, doc, kind: str, *, broker: str, num_ctx: int,
 
         got, model, attempts = _policy_generate(
             p, models, broker=broker, num_ctx=num_ctx, timeout=timeout, caller=caller,
-            cli=cli, validate=validate, cloud_only=cloud_only)
+            cli=cli, validate=validate, cloud_only=cloud_only, tree=tree)
         res.policy_attempts.extend({**a, "kind_of_content": kind, "chunk": ctx.summary}
                                    for a in attempts)
         if got is None:
@@ -427,7 +466,10 @@ def refresh_domain(paths: ProjectPaths, domain: str, **kw) -> DomainResult:
     """도메인 하나를 재합성한다 — 본문은 `_refresh_domain`. 🔴 `#713` ①: 이 도메인의 브로커 호출을
     트윈의 `usage_log.jsonl` 에 `ontology` 로 남기도록 **구간을 감싼다**(레인 스레드에도 넘어간다)."""
     from ..work import usage as usage_mod                     # noqa: PLC0415
-    with usage_mod.sink(paths.usage_log, source="ontology", task_id=domain):
+    with ExitStack() as stack, usage_mod.sink(paths.usage_log, source="ontology", task_id=domain):
+        if kw.get("tree") is None:
+            kw["tree"] = _CloudTree(paths, kw.get("models", DEFAULT_MODELS), stack,
+                                    caller=kw.get("caller"), cli=kw.get("cli"))
         return _refresh_domain(paths, domain, **kw)
 
 
@@ -437,7 +479,7 @@ def _refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT
                     caller=None, with_objects: bool = False,
                     changed_classes: set | None = None, cli=None, cloud_only: bool = False,
                     expected_source_fingerprint: str | None = None,
-                    expected_artifact_fingerprint: str | None = None) -> DomainResult:
+                    expected_artifact_fingerprint: str | None = None, tree=None) -> DomainResult:
     """도메인 하나를 재합성한다. **실패는 결과로 돌려준다 — 예외를 던지지 않는다.**
 
     도메인을 응집 순서로 **조각내어 여러 노드에 나눠 던지고**(사용자 지시 2026-08-09)
@@ -499,7 +541,7 @@ def _refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT
     for kind in ("actions", "invariants"):
         batches = _lane(chunks, models, doc, kind, broker=broker, num_ctx=num_ctx,
                         timeout=timeout, caller=caller, res=res, paths=paths,
-                        cli=cli, cloud_only=cloud_only)
+                        cli=cli, cloud_only=cloud_only, tree=tree)
         items, collisions = merge_items(batches)
         for item in items:
             _assign_layer(item, layer_of)
@@ -576,7 +618,7 @@ def _refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT
         if not res.partial:
             res.descriptions = describe_domain(
                 paths, domain, models=models, broker=broker, num_ctx=num_ctx,
-                timeout=timeout, caller=caller, cli=cli, cloud_only=cloud_only, result=res)
+                timeout=timeout, caller=caller, cli=cli, cloud_only=cloud_only, result=res, tree=tree)
             if previous_generation.get("needs_revalidation") and not res.descriptions_revalidated:
                 res.needs_revalidation = True
                 manifest = paths.ontology / "domains" / domain / package.MANIFEST
@@ -587,10 +629,19 @@ def _refresh_domain(paths: ProjectPaths, domain: str, *, models: tuple = DEFAULT
     return res
 
 
-def describe_domain(paths: ProjectPaths, domain: str, *, model: str = DEFAULT_MODELS[0],
+def describe_domain(paths: ProjectPaths, domain: str, *, tree=None, **kw) -> str:
+    """직접 호출에서도 고정 트리의 수명을 서술 추출 전체에 묶는다."""
+    with ExitStack() as stack:
+        if tree is None:
+            tree = _CloudTree(paths, kw.get("models") or (kw.get("model", DEFAULT_MODELS[0]),),
+                              stack, caller=kw.get("caller"), cli=kw.get("cli"))
+        return _describe_domain(paths, domain, tree=tree, **kw)
+
+
+def _describe_domain(paths: ProjectPaths, domain: str, *, model: str = DEFAULT_MODELS[0],
                     broker: str = DEFAULT_BROKER, num_ctx: int = NUM_CTX,
                     timeout: int = TIMEOUT, caller=None, models=None, cli=None,
-                    cloud_only=False, result=None) -> str:
+                    cloud_only=False, result=None, tree=None) -> str:
     """레이어 책임 서술을 뽑아 쓴다 (소 3.1.4). 반환은 사람이 읽을 한 줄.
 
     원본: `ontology_refresh` 의 5번 절 — 추출(`ontology_descriptions`) + 저장
@@ -623,7 +674,7 @@ def describe_domain(paths: ProjectPaths, domain: str, *, model: str = DEFAULT_MO
             raw, selected, attempts = _policy_generate(
                 prompt, tuple(models) if models is not None else (model,), broker=broker,
                 num_ctx=num_ctx, timeout=timeout, caller=caller, cli=cli,
-                validate=validate, cloud_only=cloud_only)
+                validate=validate, cloud_only=cloud_only, tree=tree)
             if result is not None:
                 result.policy_attempts.extend({**a, "kind_of_content": "descriptions"}
                                               for a in attempts)
@@ -680,10 +731,18 @@ def prompt_invariants(doc, ctx):
 
 
 
-def run(paths: ProjectPaths, *, domains: list | None = None,
+def run(paths: ProjectPaths, **kw) -> Stats:
+    """배치 전체에서 시작 SHA와 하나의 고정 트리를 공유한다."""
+    with ExitStack() as stack:
+        tree = _CloudTree(paths, kw.get("models", DEFAULT_MODELS), stack,
+                          caller=kw.get("caller"), cli=kw.get("cli"))
+        return _run(paths, tree=tree, **kw)
+
+
+def _run(paths: ProjectPaths, *, domains: list | None = None,
         models: tuple = DEFAULT_MODELS,
         broker: str = DEFAULT_BROKER, num_ctx: int = NUM_CTX, dry_run: bool = False,
-        caller=None, progress=None, cli=None, cloud_only=False) -> Stats:
+        caller=None, progress=None, cli=None, cloud_only=False, tree=None) -> Stats:
     """여러 도메인 재합성. `domains` 를 안 주면 **stale 한 active 도메인만.**
 
     [중요] 전체를 무조건 다시 만들지 않는다 — 받아온 스냅샷을 이유 없이 덮는 것이 되고,
@@ -726,7 +785,7 @@ def run(paths: ProjectPaths, *, domains: list | None = None,
         r = refresh_domain(paths, d, models=models, broker=broker, num_ctx=num_ctx,
                            dry_run=dry_run, caller=caller,
                            changed_classes=(plan.changed if plan and not plan.full else None),
-                           cli=cli, cloud_only=cloud_only)
+                           cli=cli, cloud_only=cloud_only, tree=tree)
         st.results.append(r)
         if r.partial:
             st.partial += 1
