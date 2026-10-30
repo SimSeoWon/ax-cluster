@@ -73,8 +73,17 @@
   - 노드 설명을 실제 핀에 맞췄다: bc250 「e4b 핀」, .2 「e4b 핀 · 14b 보유」.
   - 브로커의 `DRIVER` 상수는 라우팅 회귀 방지용이라 그대로 뒀다.
 - 첫 `update` 가 **실패**했다. 추적되지 않은 `.mypy_cache/`(17:04:58 생성)가 트리를 dirty 로 만들었다.
-  `.gitignore` 에 추가한 뒤 3/3 OK 가 됐다. **누가 만들었는지는 확정하지 못했다.** 저장소에서 mypy 를
-  쓰는 곳은 `master/pystatic` 이고, 그 시각에 내가 저장소에서 돌린 것은 없다.
+  `.gitignore` 에 추가한 뒤 3/3 OK 가 됐다.
+- **생성 주체를 확정했다 — 리뷰 큐의 agy 리뷰 에이전트다** (같은 날 추적):
+  - `ax-review-queue.service` 의 `WorkingDirectory` 는 `~/ax-cluster` 다. 17:02:07 에 내 커밋 `0941944` 를 꺼냈고, 17:02:33 부터 agy 퇴고를 돌렸다.
+  - agy 기록(`~/.gemini/antigravity-cli/brain/c9ff11a8-…/logs/transcript.jsonl`):
+    17:04:42 `.venv/bin/mypy master/client/setup_host.py` · 17:04:46 `.venv/bin/mypy -m master.client.setup_host`.
+    캐시 경로를 지정하지 않아 17:04:58 에 작업 폴더에 `.mypy_cache` 를 만들었다.
+  - 캐시 모듈(`master/client`·`client/init/*`·`bundle.py` 의 import)이 `setup_host.py` 의 의존 범위와 맞는다.
+  - 배제한 것: 이 세션(17:04:02~17:11 도구 호출 0) · `pystatic`(임시 `--cache-dir` 를 쓴다) ·
+    VS Code(2023 이후 실행 기록 없음) · 그 시각 저널의 다른 유닛.
+  - 원인: `review_runner.agy_only` 가 `call_agy_why` 를 workdir 없이 부른다. 그래서 에이전트가 **마스터 라이브 트리**에서 명령을 실행한다.
+  - 사용자 결정: 격리 트리에서 돌린다 → [#844](http://192.168.0.57:8080/issues/844)
 
 ## 남은 것
 
@@ -87,6 +96,6 @@
 - [완료] **UE 5.8.4 확인** (같은 날) — `Build.version` 5.8.4 CL 58902052 · `UnrealEditor.exe` 같은 CL ·
   `Build.bat` 있음 · `probe` `ue5 OK`. [주의] 런처 `LauncherInstalled.dat` 는 아직 `5.8.1` 로 남았다 —
   우리 빌드 경로는 `Build.bat` 을 직접 불러 이 기록을 읽지 않는다
-- `.mypy_cache/` 생성 주체
+- [완료] `.mypy_cache/` 생성 주체 — 리뷰 큐 agy (위 절). 근본 조치는 [#844](http://192.168.0.57:8080/issues/844)
 - `setup-host` 의 윈도우 낡은 상주 판정은 영문·한글 `schtasks /v` 출력의 경로 문자열에 기댄다.
   리눅스(cron)는 배달이 표식으로 다시 쓰므로 해제 단계가 없다.
