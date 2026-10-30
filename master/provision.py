@@ -24,7 +24,6 @@ PULL_TIMEOUT = 3600
 # §4.4 가 확정한 모델 배정. 여기가 **의도**이고, `check()` 가 실제와 대조한다.
 CODER = "qwen2.5-coder:14b"          # UE5 C++ 생성
 SYNTH = "gemma4:e4b"                # .33 승인된 합성 모델
-DRIVER = "hf.co/bartowski/Qwen_Qwen3.5-35B-A3B-GGUF:IQ2_M"   # 컨텍스트 쿠킹
 
 
 @dataclass
@@ -42,10 +41,11 @@ class Node:
 
 
 NODES: list[Node] = [
-    Node("bc250", "192.168.0.43:11434", want=[DRIVER, CODER],
-         note="추론 엔드포인트 #1 — 35B 핀"),
+    # 35B 는 뺐다 — 상주 해제(2026-08-17, #105) 뒤에도 남아 매번 「없음」으로 보고됐다
+    Node("bc250", "192.168.0.43:11434", want=[CODER],
+         note="추론 엔드포인트 #1 — e4b 핀"),
     Node("rtx3060", "192.168.0.2:11434", want=[CODER],
-         note="추론 엔드포인트 #2 겸 작업장 — 14b 핀"),
+         note="추론 엔드포인트 #2 겸 작업장 — e4b 핀 · 14b 보유"),
     Node("rtx3080", "192.168.0.33:11434", want=[CODER, SYNTH], resident=False,
          note="[중요] 메인 작업 PC. e4b 상주 허용 · 14b는 보유만, 상주 금지",
          resident_models=frozenset({SYNTH})),
