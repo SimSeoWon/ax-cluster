@@ -562,7 +562,8 @@ def _chain_for(model: str | None, chain) -> list[str]:
     return out
 
 
-def _generate(prompt: str, model: str, *, broker: str, caller, cli, usage: dict) -> str:
+def _generate(prompt: str, model: str, *, broker: str, caller, cli, usage: dict,
+              tree=None) -> str:
     """한 번의 생성. 로컬 → 브로커, `codex`/`agy` → 마스터의 상용 CLI (`#727`).
 
     [중요] 상용 호출은 `layer2_verify.call_*_why` 공용 진입을 탄다 — 그 진입이 `usage.sink` 로
@@ -580,10 +581,12 @@ def _generate(prompt: str, model: str, *, broker: str, caller, cli, usage: dict)
         out, why = response if isinstance(response, tuple) else (response, "")
     else:
         from .. import layer2_verify as l2                        # noqa: PLC0415
+        # `#848` — 상용 CLI 는 고정 트리에서 돈다. 못 만들면 `GenerateError` 로 이 레인만 실패한다
+        wd = {} if tree is None else {"workdir": str(tree())}
         if lane == "codex":
-            out, _events, why = l2.call_codex_why(prompt, timeout=SYNTH_TIMEOUT)
+            out, _events, why = l2.call_codex_why(prompt, timeout=SYNTH_TIMEOUT, **wd)
         elif lane == "agy":
-            out, why = l2.call_agy_why(prompt, timeout=SYNTH_TIMEOUT)
+            out, why = l2.call_agy_why(prompt, timeout=SYNTH_TIMEOUT, **wd)
         else:
             out, why = l2.call_claude_why(prompt, timeout=SYNTH_TIMEOUT)
     if why or not out or not str(out).strip():
@@ -635,7 +638,51 @@ class _AttemptRecord:
                 pass
 
 
-def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
+class _LazyTree:
+    """상용 CLI 의 작업 디렉터리 — 리뷰 커밋(없으면 미러 HEAD)의 고정 트리를 **처음 쓸 때** 만든다 (`#848`).
+
+    🔴 agy·codex 는 workdir 없이 부르면 서비스 작업 폴더(`ax-indexer` = 마스터 라이브 트리)에서
+    명령을 돌린다 — `#844` 가 리뷰 큐에서 막은 것과 같은 부류다. 로컬만 타거나 dry-run 이면 만들지 않는다.
+    병렬 묶음이 하나를 같이 쓴다(같은 저장소에 동시 `worktree add` 를 피한다). 실패는 `GenerateError`
+    — 라이브 트리로 되돌아가지 않는다.
+    """
+
+    def __init__(self, repo, commit: str, stack):
+        self.repo, self.commit, self.stack = repo, commit or "HEAD", stack
+        self.path = None
+        self.error = ""
+        self._lock = threading.Lock()
+
+    def __call__(self):
+        with self._lock:
+            if self.path is None and not self.error:
+                from .pinned_tree import pinned_worktree               # noqa: PLC0415
+                try:
+                    self.path = self.stack.enter_context(
+                        pinned_worktree(self.repo, self.commit, logf=lambda m: _log(f"[synth] {m}")))
+                except RuntimeError as e:
+                    self.error = str(e)
+            if self.error:
+                raise GenerateError(f"고정 트리를 만들지 못했다 — {self.error}")
+            return self.path
+
+
+def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *, tree=None,
+                     **kw) -> GroupResult:
+    """한 그룹 → 컨텍스트 MD 한 개. 본체는 `_synthesize_group`.
+
+    `tree` (`#848`) — 상용 CLI 의 작업 디렉터리 공급자. `run()` 은 배치 하나에 하나를 만들어 준다.
+    직접 부르는 경로(`revalidation`·CLI)는 여기서 자기 것을 만들고 끝나면 지운다.
+    """
+    if tree is not None:
+        return _synthesize_group(paths, key, files, tree=tree, **kw)
+    from contextlib import ExitStack                                # noqa: PLC0415
+    with ExitStack() as stack:
+        return _synthesize_group(paths, key, files, **kw,
+                                 tree=_LazyTree(paths.repo, kw.get("commit", ""), stack))
+
+
+def _synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                      commit: str = "", broker: str = DEFAULT_BROKER,
                      model: str | None = None, caller=None, dry_run: bool = False,
                      content_limit: int = prompt_mod.CONTENT_LIMIT,
@@ -643,7 +690,8 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                      chain=None, cli=None, related=None, searcher=None,
                      cloud_only: bool = False,
                      expected_source_fingerprint: str | None = None,
-                     expected_artifact_fingerprint: str | None = None) -> GroupResult:
+                     expected_artifact_fingerprint: str | None = None,
+                     tree=None) -> GroupResult:
     """한 그룹 → 컨텍스트 MD 한 개.
 
     실패는 **예외가 아니라 결과**다 — 한 그룹이 죽었다고 배치를 멈추지 않는다. 대신
@@ -731,7 +779,8 @@ def synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
             # `#713` ① — 이 그룹의 호출을 트윈의 `usage_log.jsonl` 에 `synth` 로 남긴다.
             #    상용 CLI 도 같은 sink 를 읽는다(`#728`·`#733`)
             with usage_mod.sink(paths.usage_log, source="synth", task_id=key):
-                raw = _generate(p, m, broker=broker, caller=caller, cli=cli, usage=usage)
+                raw = _generate(p, m, broker=broker, caller=caller, cli=cli, usage=usage,
+                                tree=tree)
                 # 정규화가 원문을 바꾸거나 예외를 내기 전에 받은 응답 그대로 보존한다.
                 attempt.update(raw=raw, raw_received=True, status="received")
                 # `#751` — 상용 CLI 의 토큰은 공용 진입이 사용량 행으로 남긴다. 로그 줄도 그 값을
@@ -893,13 +942,16 @@ def run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str = 
     검색기는 첫 실제 작업 묶음에서 열며 관련검색은 coordinator에서 직렬 수행한다.
     주입 searcher는 호출자가 소유·해제한다. 주입 caller는 searcher 없으면 검색을 생략한다.
     """
+    from contextlib import ExitStack                                # noqa: PLC0415
     related = _BatchRelated(paths, searcher=searcher, enabled=caller is None)
     try:
-        return _run(paths, changed=changed, commit=commit, skip_existing=skip_existing,
-                    limit=limit, broker=broker, model=model, caller=caller,
-                    dry_run=dry_run, content_limit=content_limit, unload_every=unload_every,
-                    git=git, progress=progress, parallel=parallel, chain=chain, cli=cli,
-                    related_resource=related)
+        # `#848` — 배치 하나에 고정 트리 하나. 병렬 묶음이 같이 쓰고 끝나면 지운다
+        with ExitStack() as stack:
+            return _run(paths, changed=changed, commit=commit, skip_existing=skip_existing,
+                        limit=limit, broker=broker, model=model, caller=caller,
+                        dry_run=dry_run, content_limit=content_limit, unload_every=unload_every,
+                        git=git, progress=progress, parallel=parallel, chain=chain, cli=cli,
+                        related_resource=related, tree=_LazyTree(paths.repo, commit, stack))
     finally:
         related.close()
 
@@ -909,7 +961,7 @@ def _run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str =
          model: str | None = None, caller=None, dry_run: bool = False,
          content_limit: int = prompt_mod.CONTENT_LIMIT, unload_every: int = UNLOAD_EVERY,
          git=None, progress=None, parallel: int | None = None,
-         chain=None, cli=None, related_resource) -> Stats:
+         chain=None, cli=None, related_resource, tree=None) -> Stats:
     """배치 합성. `changed` 를 주면 그 파일들만, 없으면 경계(`paths.scope`, 기본 `Source/`) 전체.
 
     `skip_existing` — 이미 문서가 있는 그룹을 건너뛴다(최초 전체 빌드에서 누락분만 보충).
@@ -991,7 +1043,7 @@ def _run(paths: ProjectPaths, *, changed: list[str] | None = None, commit: str =
             return synthesize_group(paths, key, fs, commit=commit, broker=broker, model=model,
                                     caller=caller, dry_run=dry_run,
                                     content_limit=content_limit, tally=tallies[j],
-                                    chain=chain, cli=cli, related=related[j])
+                                    chain=chain, cli=cli, related=related[j], tree=tree)
         if len(batch) == 1:
             results = [_one(0)]
         else:

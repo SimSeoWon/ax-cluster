@@ -186,6 +186,17 @@ class Grounding:
         return "\n\n".join(out)
 
 
+# 🔴 `#848` — 상용 CLI(agy·codex)는 도구를 쓰는 에이전트다. 지시가 없으면 저장소를 뒤지고 테스트를
+#    돌렸다(실측 2026-10-30 19:08: 186초 · 입력 140405 토큰 · 도구 호출 29회 — `.venv/bin/python -c` ·
+#    `unittest` · `find /home/sim`). 판단 재료(본문 무제한·근거·관련 문서)는 이미 프롬프트에 있다.
+#    [주의] **상용(`limit=None`)에만** 붙인다 — 로컬 모델은 도구가 없고 문맥 창만 먹는다. `#846` 과 같은 취지.
+CLOUD_SCOPE_RULES = (
+    "[작업 범위] 판단 근거는 아래 소스 본문·근거·관련 문서로 충분하다. 파일을 열어야 하면 대상 파일과 "
+    "그 직접 import 대상만 필요한 만큼 본다. 테스트·린트·빌드·타입 검사를 실행하지 않고, 저장소 전체나 "
+    "홈 디렉터리를 검색(find·grep -r 등)하지 않는다. 근거가 모이면 바로 문서를 출력한다."
+)
+
+
 def build(*, files: list[str], bodies: dict[str, str], grounding: Grounding,
           existing: str = "", limit: int | None = CONTENT_LIMIT) -> str:
     """프롬프트 한 덩어리.
@@ -208,6 +219,8 @@ def build(*, files: list[str], bodies: dict[str, str], grounding: Grounding,
         code = code[:limit]
 
     parts = [FORMAT.format(path_hint=files[0]), grounding.render()]
+    if limit is None:
+        parts.insert(1, CLOUD_SCOPE_RULES)
 
     dev_comments = ""
     if existing:

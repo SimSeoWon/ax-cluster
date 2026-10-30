@@ -853,7 +853,7 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
             _os.environ["AX_AGY_STATE_PATH"] = str(tmp / name / "agy-state.json")
             _ur.urlopen = fake_urlopen
             _gen.auth_headers = lambda t=None: {}
-            _l2._codex_run = lambda prompt, *, timeout, reasoning: (good_txt, ev, "", 0, True)
+            _l2._codex_run = lambda prompt, *, timeout, reasoning, **_kw: (good_txt, ev, "", 0, True)
             def fake_run_raw(cmd, *, timeout, **kw):
                 # #830: 실제 모델 미상이면 출력이 버려진다 — 진짜 agy 처럼 요청 모델의 label 을
                 # `--log-file` 에 남긴다
@@ -868,7 +868,11 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
                 f"{_am.DEFAULT_MODEL}\tGemini 3.8 Flash (Medium)\n"
             _l2.shutil.which = lambda n, *a, **k: "/usr/bin/agy" if n == "agy" \
                 else real_which(n, *a, **k)
-            rr = synth.synthesize_group(pu, K, FILES, commit="c727", dry_run=True, chain=old_chain)
+            # `#848` — 픽스처는 git 저장소가 아니고 커밋도 가짜다. 여기서 재는 것은 사용량·사슬이라
+            #    작업 디렉터리 공급자만 주입한다(실제 진입점 `call_*_why` → `_run_raw` 는 그대로 탄다).
+            #    고정 트리 자체는 `test_cloud_lanes_run_in_pinned_tree` 가 진짜 git 으로 잰다.
+            rr = synth.synthesize_group(pu, K, FILES, commit="c727", dry_run=True, chain=old_chain,
+                                        tree=lambda: tmp / name)
         finally:
             (_ur.urlopen, _gen.auth_headers, _l2._codex_run, _l2._run_raw,
              _l2.shutil.which, _am._catalog_run) = saved
@@ -912,8 +916,89 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
     print("\n[#782] 레인별 프롬프트 — 상용 무제한 · 로컬 종전 상한")
     test_per_lane_prompt(tmp)
     shutil.rmtree(tmp, ignore_errors=True)
+    print("\n[#848] 상용 CLI 는 고정 트리에서 · 작업 범위 규칙은 상용에만")
+    test_cloud_lanes_run_in_pinned_tree()
+    test_cloud_scope_rules_only_for_cloud()
+
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
+
+
+def test_cloud_lanes_run_in_pinned_tree():
+    """`#848` — 상용 CLI 는 커밋의 고정 트리에서 돈다. 라이브 트리로 되돌아가지 않는다.
+
+    실측 2026-10-30 19:08: 합성 agy 가 `ax-indexer` 작업 폴더(마스터 라이브 트리)에서
+    `.venv/bin/python -c` · `unittest` 를 돌렸다(186초 · 도구 호출 29회).
+    """
+    import subprocess as _sp
+    import tempfile as _tf
+    from master import layer2_verify as _l2
+    from master import agy_models as _am
+    import os as _os
+    tmp = Path(_tf.mkdtemp(prefix="ax-synth-tree-"))
+    p = make_project(tmp)
+    _sp.run(["git", "init", "-q", str(p.repo)], check=True)
+    _sp.run(["git", "-C", str(p.repo), "-c", "user.email=t@e.st", "-c", "user.name=t",
+             "add", "-A"], check=True)
+    _sp.run(["git", "-C", str(p.repo), "-c", "user.email=t@e.st", "-c", "user.name=t",
+             "commit", "-qm", "init"], check=True)
+    head = _sp.run(["git", "-C", str(p.repo), "rev-parse", "HEAD"], capture_output=True,
+                   text=True).stdout.strip()
+    seen = []
+    saved = (_l2._run_raw, _l2.shutil.which, _am._catalog_run)
+    old_state = _os.environ.get("AX_AGY_STATE_PATH")
+    real_which = _l2.shutil.which
+
+    def fake_run_raw(cmd, *, timeout, **kw):
+        wd = Path(kw.get("cwd") or ".")
+        seen.append((wd, _sp.run(["git", "-C", str(wd), "rev-parse", "HEAD"],
+                                 capture_output=True, text=True).stdout.strip()))
+        if "--log-file" in cmd:
+            Path(cmd[cmd.index("--log-file") + 1]).write_text(
+                'Propagating selected model override to backend: '
+                'label="Gemini 3.8 Flash (Medium)"\n', encoding="utf-8")
+        return "", "", 1, ""
+    try:
+        _os.environ["AX_AGY_STATE_PATH"] = str(tmp / "agy-state.json")
+        _l2._run_raw = fake_run_raw
+        _am._catalog_run = lambda exe, timeout: f"{_am.DEFAULT_MODEL}\tGemini 3.8 Flash (Medium)\n"
+        _l2.shutil.which = lambda n, *a, **k: "/usr/bin/agy" if n == "agy" else real_which(n, *a, **k)
+        synth.synthesize_group(p, "Source/Game/Monster", ["Source/Game/Monster.h"],
+                               commit=head, dry_run=True, chain=("agy",))
+        check("#848 agy 가 불렸다", len(seen) == 1, str(seen))
+        wd, at = seen[0] if seen else (Path("."), "")
+        check("#848 작업 디렉터리는 저장소 밖 고정 트리다",
+              "ax-pinned-" in str(wd) and not str(wd).startswith(str(p.repo)), str(wd))
+        check("#848 그 트리는 합성 커밋이다", at == head, at)
+        check("#848 끝나면 트리가 사라진다", not wd.exists(), str(wd))
+        listed = _sp.run(["git", "-C", str(p.repo), "worktree", "list"], capture_output=True,
+                         text=True).stdout
+        check("#848 worktree 등록도 걷혔다", listed.count("\n") == 1, listed)
+
+        # git 이 아닌 저장소 — 트리를 못 만들면 상용 레인은 실패하고 라이브로 가지 않는다
+        seen.clear()
+        q = make_project(tmp / "nogit")
+        r = synth.synthesize_group(q, "Source/Game/Monster", ["Source/Game/Monster.h"],
+                                   commit="c848", dry_run=True, chain=("agy",))
+        check("#848 트리 실패면 agy 를 부르지 않는다", seen == [], str(seen))
+        check("#848 사유가 남는다", "고정 트리" in (r.reason or ""), r.reason)
+    finally:
+        _l2._run_raw, _l2.shutil.which, _am._catalog_run = saved
+        if old_state is None:
+            _os.environ.pop("AX_AGY_STATE_PATH", None)
+        else:
+            _os.environ["AX_AGY_STATE_PATH"] = old_state
+
+
+def test_cloud_scope_rules_only_for_cloud():
+    """`#848` — 작업 범위 규칙은 상용 프롬프트(`limit=None`)에만, 한 번."""
+    from master.context_synth.prompt import Grounding as _G, build as _build, CLOUD_SCOPE_RULES
+    files, bodies = ["Source/Game/Monster.h"], {"Source/Game/Monster.h": HEADER}
+    cloud = _build(files=files, bodies=bodies, grounding=_G(), limit=None)
+    local = _build(files=files, bodies=bodies, grounding=_G(), limit=4000)
+    check("#848 상용 프롬프트에 한 번", cloud.count(CLOUD_SCOPE_RULES) == 1)
+    check("#848 로컬 프롬프트에는 없다", CLOUD_SCOPE_RULES not in local)
+    check("#848 규칙은 소스 본문보다 앞이다", cloud.index(CLOUD_SCOPE_RULES) < cloud.index("파일 경로:"))
 
 
 if __name__ == "__main__":
