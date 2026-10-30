@@ -116,14 +116,14 @@ class ModelPolicyTests(unittest.TestCase):
 
     def test_mismatch_with_quota_cannot_fallback_or_poison_requested_model(self):
         self.answers = [{"label": "Gemini 4 Argon (Medium)", "rc": 3,
-                         "why": "429 quota Resets in 150h"}]
+                         "why": "RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 150h"}]
         result = self.run_model(fallback_models=("gemini-3.8-flash-low",))
         self.assertIn("mismatch", result.why)
         self.assertEqual(len(self.calls), 1)
         self.assertNotIn(A.DEFAULT_MODEL, json.loads(self.state.read_text()).get("cooldowns", {}))
 
     def test_cooldown_is_visible_to_another_process(self):
-        self.answers = [{"rc": 3, "why": "429 quota"}]
+        self.answers = [{"rc": 3, "why": "RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits."}]
         self.run_model()
         code = '''import sys
 from master import agy_models as A
@@ -157,7 +157,7 @@ assert "cooldown" in r.why, r
 
     def test_unknown_actual_model_rejects_output_without_cooldown_or_fallback(self):
         # 사용자 결정(#830): 실제 모델을 증명하지 못하면 출력이 있어도 실패다.
-        self.answers = [{"label": None, "log": "429 quota Resets in 2h\n"}]
+        self.answers = [{"label": None, "log": "RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h\n"}]
         result = self.run_model(fallback_models=("gemini-3.8-flash-low",))
         self.assertIn("실제 모델 미상", result.why)
         self.assertIsNone(result.raw)
@@ -174,7 +174,7 @@ assert "cooldown" in r.why, r
         self.assertEqual(len(self.calls), 2)
 
     def test_quota_survives_call_and_expires_at_reported_reset(self):
-        self.answers = [{"rc": 3, "why": "rc=3: 429 quota Resets in 2m 5s"}]
+        self.answers = [{"rc": 3, "why": "rc=3: RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2m 5s"}]
         result = self.run_model()
         self.assertTrue(result.why)
         state = json.loads(self.state.read_text())
@@ -186,7 +186,7 @@ assert "cooldown" in r.why, r
         self.assertEqual(len(self.calls), 2)
 
     def test_default_no_fallback_and_approved_fallback_preserves_attempts(self):
-        self.answers = [{"rc": 3, "why": "429 quota"}]
+        self.answers = [{"rc": 3, "why": "RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits."}]
         self.assertTrue(self.run_model().why)
         result = self.run_model(fallback_models=("gemini-3.8-flash-low",))
         self.assertFalse(result.why)
@@ -205,6 +205,34 @@ assert "cooldown" in r.why, r
         self.catalog = lambda *_: "not a model catalog"
         self.assertTrue(self.run_model().why)
         self.assertEqual(self.calls, [])
+
+    # 🔴 `#845` — agy CLI 정상 로그 줄(실측 2026-10-30)은 한도가 아니다
+    ROUTINE_LOG = (
+        "I1030 18:19:20.896604     236 quota_manager.go:36] doRefreshQuota: skipped (not logged in)\n"
+        "I1030 18:19:20.909156       1 server_oauth.go:224] applyAuthResult: email=x, authMethod=consumer, quotaProject=\n"
+        "W1018 00:26:24.627900     429 cache.go:163] Failed to refresh cache in background: admin controls not applicable\n")
+
+    def test_routine_log_lines_are_not_a_limit(self):
+        self.assertFalse(A._limited(self.ROUTINE_LOG))
+        self.assertFalse(A._limited("타임아웃 236.48초\n" + self.ROUTINE_LOG))
+
+    def test_timeout_with_routine_log_does_not_cool_down(self):
+        """#845 실측 — 타임아웃이 정상 로그의 quota 로 600초 쿨다운이 됐고, 재시도 둘이 즉시 소진됐다."""
+        self.answers = [{"rc": 1, "why": "타임아웃 236.48초", "log": self.ROUTINE_LOG}]
+        self.assertTrue(self.run_model().why)
+        self.assertNotIn(A.DEFAULT_MODEL, json.loads(self.state.read_text()).get("cooldowns", {}))
+        self.assertFalse(self.run_model().why)
+        self.assertEqual(len(self.calls), 2)
+
+    def test_real_exhaustion_line_cools_down_until_reported_reset(self):
+        line = ("E1018 03:15:04.005814     548 errorreport.go:224] generating and executing: "
+                "RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your "
+                "subscription to increase your limits. Resets in 150h53m7s.\n")
+        self.assertTrue(A._limited(line))
+        self.answers = [{"rc": 1, "why": "agy failed rc=1", "log": self.ROUTINE_LOG + line}]
+        self.assertTrue(self.run_model().why)
+        until = json.loads(self.state.read_text())["cooldowns"][A.DEFAULT_MODEL]
+        self.assertEqual(until, self.now + 150 * 3600 + 53 * 60 + 7)
 
     def test_reset_units_and_bounded_unknown(self):
         self.assertEqual(A.reset_deadline("Resets in ~150h", 10), 540010)

@@ -123,8 +123,18 @@ def reset_deadline(text: str, now: float) -> float:
     return now + (seconds if seconds > 0 else COOLDOWN_SECONDS)
 
 
+# 🔴 `#845` — 한도 신호만 잡는다. 종전 `\b429\b|…|quota|…` 는 agy CLI 정상 로그(`quota_manager.go`
+#    · `doRefreshQuota` · `quotaProject=`)와 glog 스레드 번호 열(`… 429 cache.go`)에 걸려, 실측 로그
+#    248개 중 247개가 「한도」였다 — 타임아웃이든 빈 출력이든 실패마다 600초 쿨다운이 걸렸다.
+#    실제 소진(2026-10-18): `RESOURCE_EXHAUSTED (code 429): Individual quota reached. … Resets in 150h53m7s.`
+_LIMIT_RE = re.compile(
+    r"RESOURCE_EXHAUSTED|\b(?:code|status|http)[\s:=]*429\b|\b429\s+too many requests"
+    r"|quota\s+(?:reached|exceeded|exhausted)|rate[\s_-]?limit(?:ed|\s+exceeded|\s+reached)"
+    r"|too many requests", re.I)
+
+
 def _limited(text: str) -> bool:
-    return bool(re.search(r"\b429\b|RESOURCE_EXHAUSTED|quota|rate.?limit", text, re.I))
+    return bool(_LIMIT_RE.search(text))
 
 
 def execute(exe, build_command, runner, *, timeout, model="", allow_argon=False,
