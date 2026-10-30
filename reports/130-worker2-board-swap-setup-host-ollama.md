@@ -84,7 +84,9 @@
   `latest-v24.x` MSI → `SHASUMS256` 대조 → scp 후 `.2` 재해시 일치(`9231bf64…b6b6d`) →
   `msiexec /qn /norestart` exit 0 → `node -v` v24.22.2 · npm 11.19.1 · 설치 파일 삭제.
   실행 중이던 node 는 Codex 런타임 내장본(별 경로)이라 영향 없음
-- UE 5.8.4 업데이트 완료 확인(`probe` 로 `Build.version` 재측정)
+- [완료] **UE 5.8.4 확인** (같은 날) — `Build.version` 5.8.4 CL 58902052 · `UnrealEditor.exe` 같은 CL ·
+  `Build.bat` 있음 · `probe` `ue5 OK`. [주의] 런처 `LauncherInstalled.dat` 는 아직 `5.8.1` 로 남았다 —
+  우리 빌드 경로는 `Build.bat` 을 직접 불러 이 기록을 읽지 않는다
 - `.mypy_cache/` 생성 주체
 - `setup-host` 의 윈도우 낡은 상주 판정은 영문·한글 `schtasks /v` 출력의 경로 문자열에 기댄다.
   리눅스(cron)는 배달이 표식으로 다시 쓰므로 해제 단계가 없다.
