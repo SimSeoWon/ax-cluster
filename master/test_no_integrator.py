@@ -103,6 +103,7 @@ BUILD_CALLERS_ALLOWED = {
     "master/work/review.py",          # `.33` 의 검수·통합 빌드 — **여기가 맞는 자리**
     "master/layer3_verify.py",        # 빌드 실행기 자체 (호출자가 아니라 구현)
     "master/client/uproject.py",      # 배달 도구
+    "master/plan_build.py",           # 플랜 빌드 단계 — 서버 SSH 주관(#861 T2·#857 T7), 데몬 큐 경로 대체
 }
 
 
