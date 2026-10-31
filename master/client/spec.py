@@ -241,6 +241,16 @@ MCP_BY_ROLE = {
 #    지금 만들어 두고 목록만 비운다 — 없는 것을 지어내지 않는 쪽이 fail-closed 다.
 DEPRECATED_MCP: tuple = ()
 
+# 폐기된 파이썬 페이로드 — 배달 상대경로(`<checkout>/.ax/lib/axmaster/` 기준).
+#
+# 🔴 사용자 결정 2026-10-31 (`#860` · `#861`): 워커 상주 데몬은 폐기됐고 서버(.57)가 SSH 로
+# 총괄한다. 저장소에서 `work/worker_daemon.py`·`work/ax_safety.py` 를 지웠지만 **이미 배달된
+# 사본은 워커 체크아웃에 남는다** — 표에서 빼는 것만으로는 정리되지 않는다(`#232` 와 같은 부류).
+# `deliver` 가 지우고 되읽어 확인하며(fail-open), `check` 는 남아 있거나 **조회 자체가 실패하면**
+# 그 호스트를 실패로 판정한다(조회 실패 ≠ 부재 — `residency.registration_status` 와 같은 원칙).
+# [주의] 지금 배달 대상인 경로는 지우지 않는다 — 배달이 이긴다(`removals_for` 와 같은 뺄셈).
+DEPRECATED_PAYLOAD: tuple = ("work/worker_daemon.py", "work/ax_safety.py")
+
 
 # ── 커밋 제외 대상 ───────────────────────────────────────────────────
 #
@@ -740,6 +750,16 @@ def removals_for(role: str, init: ProjectInit | None = None) -> dict:
         "skills": tuple(n for n in DEPRECATED_SKILLS if n not in keep_skills),
         "mcp": tuple(n for n in DEPRECATED_MCP if n not in keep_mcp),
     }
+
+
+def retired_payload_for(keep=()) -> tuple:
+    """지울 폐기 페이로드(배달 상대경로). `keep`(지금 배달하는 경로)에 든 것은 뺀다.
+
+    역할을 묻지 않는다 — 역할이 바뀐 기계에도 옛 사본이 남을 수 있어서다. 호출자는
+    `bundle.retired_payload_for(role)` 로 그 역할의 배달 목록을 넘긴다.
+    """
+    keep = set(keep or ())
+    return tuple(p for p in DEPRECATED_PAYLOAD if p not in keep)
 
 
 def md_blocks_for(role: str) -> tuple:

@@ -246,10 +246,11 @@ def test_senders_are_wired() -> None:
     check("클라가 관문에서 붙인다", 'payload = {**payload, "project": project}' in cmcp)
     check("GET 은 쿼리로 붙인다", '"project=" not in path' in cmcp)
 
-    bj = (root / "master" / "work" / "buildjob.py").read_text(encoding="utf-8")
-    check("[중요] buildjob 이 프로젝트를 하드코딩하지 않는다",
-          '"target_repo": "ModularStage"' not in bj, "하드코딩이 남았다")
-    check("buildjob 이 마운트에서 푼다", "resolve_mounted_only" in bj)
+    # [주의] `buildjob` 발신자 검사 절이 여기 있었다 — `#861`(2026-10-31) 으로 `buildjob` 이
+    #    데몬과 함께 삭제됐다(빌드는 서버가 SSH 로 건다, `plan_build`). 되살림은
+    #    `test_no_worker_daemon.py` 가 막는다. 남은 등록 발신자는 아래 `register.py` 다.
+    check("[중요] buildjob 발신자는 삭제됐다 (#861)",
+          not (root / "master" / "work" / "buildjob.py").exists())
 
     reg = (root / "master" / "work" / "register.py").read_text(encoding="utf-8")
     check("태스크 등록도 스탬프를 싣는다", reg.count('"project": paths.name') >= 2,

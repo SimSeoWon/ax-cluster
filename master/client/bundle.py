@@ -158,15 +158,12 @@ PAYLOAD_BY_ROLE = {
     #    `client_mcp.py` 와 **옆 파일로 로드되는** `ontology_cache.py`(`_load_cache` 가
     #    `Path(__file__).with_name` 으로 찾는다 — 빠지면 조회 도구가 조용히 죽는다).
     #    [주의] 권한은 이 표가 아니라 **토큰 스코프**가 정한다(`auth.WORKER_SCOPE` — 쓰기는 403).
-    # 🔴 **상주 폐포** (`#404`, `#320` 철거분 복원 — 추론 경로는 뺐다). `worker_daemon.py` 가
-    #    여기 들어오는 것이 `#405` 의 등록 게이트를 푸는 값이다: `_register_residency` 가
-    #    이 목록에서 데몬을 찾고, 없으면 **등록하지 않는다**(없는 파일을 가리키는 작업을 걸면
-    #    5분마다 실패만 쌓인다). `ax_safety` 는 데몬이 `from . import ax_safety` 로 부르므로
-    #    **같이 가야 한다** — 빠지면 상주 진입에서 죽는다(`clientside/ontology_cache.py` 가
-    #    옆 파일로 로드되는 것과 같은 부류의 함정).
+    # 🔴 **상주 폐포는 철회됐다** (2026-10-31, 사용자 결정 `#860`·`#861`). `#404` 가 되살린
+    #    `work/worker_daemon.py`·`work/ax_safety.py` 를 저장소째 지웠다 — 서버(.57)가 SSH 로
+    #    총괄한다. 되살리지 않는다: `master/test_no_worker_daemon.py` 가 막는다. 이미 배달된
+    #    사본은 `spec.DEPRECATED_PAYLOAD` 로 `deliver` 가 지우고 `check` 가 잔존을 실패로 잡는다.
     "worker": (_pair("clientside/client_mcp.py", "client/runtime/client_mcp.py"),
                _pair("clientside/ontology_cache.py", "client/runtime/ontology_cache.py"),
-               _pair("work/worker_daemon.py"), _pair("work/ax_safety.py"),
                # 🔴 세션 1 지휘자 런처 (`#401`) — Windows 는 SSH(세션 0)에서 codex 샌드박스
                #    자식이 죽는다. 이 런처가 `/IT` 작업으로 **세션 1** 에서 돈다.
                #    [중요] 마스터는 `job.json` 의 task_id·files 만 준다 — **플래그는 런처 소유**.
@@ -1042,6 +1039,92 @@ def _remote_rm_dir(facts: HostFacts, rel: str) -> str:
         # [중요] 「지웠다」를 되확인 없이 말하지 않는다 — 그 습관이 이 결함을 낳았다
         return f"{rel} [주의] 지웠는데 아직 있다 — {(got or '').strip()[:60]}"
     return f"{rel} [완료]"
+
+
+# ── 폐기 페이로드 (`#861`) ────────────────────────────────────────────────────
+#    선언은 `spec.DEPRECATED_PAYLOAD` 하나다. 지우기(`deliver`)·잔존 판정(`check`)·목록(`plan`)이
+#    모두 `retired_payload_for` 를 부른다 — 셋이 갈라지지 않게 한다(`removals_for` 와 같은 결).
+
+RETIRED_LEFT = "AX_RETIRED_LEFT="
+RETIRED_DONE = "AX_RETIRED_DONE"
+
+
+def retired_payload_for(role: str) -> tuple:
+    """이 역할의 기계에서 지울 폐기 페이로드(배달 상대경로). 지금 배달 대상인 것은 뺀다."""
+    return spec.retired_payload_for(payloads_for(role))
+
+
+def _retired_rel(dest: str) -> str:
+    """배달 상대경로 → 체크아웃 기준 상대경로."""
+    return f"{AX_DIR}/lib/{PAYLOAD_PKG}/{dest}"
+
+
+def _remote_rm_checkout_file(facts: HostFacts, rel: str) -> str:
+    """체크아웃 기준 **파일**을 지우고 사라졌는지 되확인한다. `"<rel> [완료]"` 또는 사유.
+
+    `_remote_rm_dir` 과 같은 계약이다 — **fail-open**(삭제 실패가 배달을 막지 않는다, 남은 것은
+    `check` 가 이름으로 잡는다)이고 「지웠다」는 LEFT/GONE 되읽기 뒤에만 말한다.
+    [주의] 홈이 아니라 **체크아웃** 기준이다 — 페이로드는 `<checkout>/.ax/lib/` 에 놓인다.
+    """
+    target = _write_target(facts, rel, "checkout")
+    if facts.windows:
+        cmd = f'if exist "{target}" del /f /q "{target}"'
+        probe = f'if exist "{target}" (echo LEFT) else (echo GONE)'
+    else:
+        cmd = f"rm -f {shlex.quote(target)}"
+        probe = f"test -e {shlex.quote(target)} && echo LEFT || echo GONE"
+    rc, out = _ssh(facts.host, facts.user, cmd)
+    if rc != 0:
+        return f"{rel} [주의] 삭제 실패 (rc={rc}) — {(out or '')[:80]}"
+    _rc2, got = _ssh(facts.host, facts.user, probe)
+    if "GONE" not in (got or ""):
+        return f"{rel} [주의] 지웠는데 아직 있다 — {(got or '').strip()[:60]}"
+    return f"{rel} [완료]"
+
+
+def retired_payload_query_command(facts: HostFacts, names: tuple) -> str:
+    """폐기 페이로드 잔존 조회 — 남은 것마다 `AX_RETIRED_LEFT=<배달경로>`, 끝에 `AX_RETIRED_DONE`.
+
+    [중요] 끝 표식이 없으면 「조회 실패」다. 출력이 비었다고 「없다」로 읽지 않는다.
+    """
+    if facts.windows:
+        tests = "; ".join(
+            "if(Test-Path -LiteralPath '"
+            + _write_target(facts, _retired_rel(n), "checkout").replace("'", "''")
+            + f"'){{'{RETIRED_LEFT}{n}'}}" for n in names)
+        return ('powershell -NoProfile -Command "$ErrorActionPreference=\'Stop\'; '
+                f"try {{ {tests}; '{RETIRED_DONE}' }} "
+                "catch { Write-Output ('AX_RETIRED_ERROR='+$_.Exception.Message); exit 1 }\"")
+    tests = " ; ".join(
+        f"{{ test -e {shlex.quote(_write_target(facts, _retired_rel(n), 'checkout'))} "
+        f"&& echo {RETIRED_LEFT}{n} ; }}" for n in names)
+    return f"{tests} ; echo {RETIRED_DONE}"
+
+
+def retired_payload_status(rc: int, out: str, names: tuple) -> dict:
+    """조회 결과 → `{"known", "left", "error"}`. 조회 실패를 부재로 접지 않는다 (`#861`)."""
+    lines = [x.strip() for x in (out or "").splitlines() if x.strip()]
+    if rc != 0 or RETIRED_DONE not in lines:
+        return {"known": False, "left": [],
+                "error": f"폐기 페이로드 조회 실패 rc={rc}: {(out or '').strip()[:160] or '(응답 없음)'}"}
+    left = [x[len(RETIRED_LEFT):] for x in lines
+            if x.startswith(RETIRED_LEFT) and x[len(RETIRED_LEFT):] in names]
+    return {"known": True, "left": left, "error": ""}
+
+
+def check_retired_payload(facts: HostFacts) -> tuple:
+    """`check` 용 판정 — `(ok, note)`. 남아 있거나 **조회가 실패하면** 실패다 (`#861`)."""
+    names = retired_payload_for(facts.role)
+    if not names:
+        return True, ""
+    rc, out = _ssh(facts.host, facts.user, retired_payload_query_command(facts, names))
+    st = retired_payload_status(rc, out, names)
+    if not st["known"]:
+        return False, f" · [실패] {st['error']}"
+    if st["left"]:
+        return False, (f" · [실패] 폐기 페이로드가 남아 있다: {', '.join(st['left'])} "
+                       f"(#861 — deliver 가 지운다)")
+    return True, f" · 폐기 페이로드 {len(names)}종 없음(정리됨)"
 
 
 def _remote_write(facts: HostFacts, rel: str, content: str, *, base: str = "home") -> str:
@@ -1998,6 +2081,7 @@ def _deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
         return {"host": facts.host, "dry_run": True, "config_bytes": len(cfg),
                 "skills": list(skills_for(facts.role, pinit)),
                 "removed": list(spec.removals_for(facts.role, pinit)["skills"]),
+                "retired_payload": list(retired_payload_for(facts.role)),
                 "payload": list(payloads_for(facts.role)),
                 "workshop": [rel for rel, _src in workshop_files(facts.role, project, pinit)],
                 "entry_docs": spec.entry_docs_for(pinit),
@@ -2057,6 +2141,10 @@ def _deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
                                      payload_text(src), base="checkout")
                        for dest, src in payload_pairs(facts.role)]
                     ) if payload_pairs(facts.role) else [],
+        # 🔴 `#861` — 폐기된 상주 데몬 사본을 체크아웃에서 지운다(fail-open · 되읽어 확인).
+        #    선언은 `spec.DEPRECATED_PAYLOAD`, 지금 배달 대상인 것은 빠진다.
+        "retired_payload": [_remote_rm_checkout_file(facts, _retired_rel(n))
+                            for n in retired_payload_for(facts.role)],
         "excluded": _ensure_ignored(facts),
         # `#787` ③ — 원격에서 지워진 브랜치의 원격추적 ref 를 워커 클론에 남기지 않는다
         "fetch_prune": ensure_fetch_prune(facts),

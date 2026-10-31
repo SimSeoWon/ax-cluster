@@ -239,6 +239,12 @@ def cmd_plan(project: str, *, only: str = "") -> int:
                 #    있었고 구현이 없었다. `check` 가 `ax-work` 잔존을 잡아 드러났다.
                 doing = "deliver 가 지운다" if kind == "스킬" else "지우지 않는다 (#235 미결)"
                 print(f"   ✕ 폐지 {kind}: {', '.join(names)}  [주의] {doing}")
+        # 🔴 `#861` — 폐기 페이로드(옛 상주 데몬 사본). 지금 배달 대상인 것은 빠진다.
+        retired = bundle.retired_payload_for(f.role)
+        if retired:
+            print(f"   ✕ 폐기 페이로드: {', '.join(retired)} "
+                  f"(→ {bundle._write_target(f, bundle._retired_rel(''), 'checkout')})  "
+                  f"[주의] deliver 가 지운다 · check 는 잔존·조회 실패를 FAIL 로 본다")
     return 0
 
 
@@ -289,6 +295,9 @@ def cmd_deliver(project: str, *, init: bool = False, only: str = "") -> int:
         # [중요] 제거 결과를 **이름으로** 찍는다 — 합계만 찍으면 무엇이 안 지워졌는지 모른다
         for rmv in r.get("removed") or []:
             print(f"     removed={rmv}")
+        # `#861` — 폐기 페이로드(옛 상주 데몬 사본) 제거 결과도 이름으로 찍는다
+        for rmv in r.get("retired_payload") or []:
+            print(f"     retired={rmv}")
         # [중요] **페이로드도 찍는다.** 첫 실 배달(2026-08-16)에서 파일 8개가 **실제로 갔는데**
         #    출력에 안 나와서, 확인하려면 원격 디렉토리를 직접 뒤져야 했다.
         #    *"배달했다고 믿지 않는다"* 는 사람이 읽는 출력에도 적용된다 — 안 보이는 산출물은
@@ -534,6 +543,9 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
         rm_note = (f" · [중요] 폐지 스킬이 남아 있다: {', '.join(left)}" if left else
                    f" · 폐지 {len(rm['skills'])}종 없음(정리됨)" if rm["skills"] else "")
 
+        # 🔴 `#861` — 폐기 페이로드가 남았거나 조회가 실패하면 그 호스트는 실패다.
+        ok_retired, retired_note = bundle.check_retired_payload(f)
+
         # 상주 작업 데몬은 금지다. 조회 실패는 정상 부재가 아니다 (#861).
         from client.init import residency as _R
         _cmd = _R.registration_query_command(project, f)
@@ -610,22 +622,22 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
 
         mark = ("OK" if (ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
                          and ok_ver and ok_tag and ok_codex and ok_res and ok_shadow
-                         and ok_prune and ok_agy) else "FAIL")
+                         and ok_prune and ok_agy and ok_retired) else "FAIL")
         pay_note = (f" · payload {len(pay)}개 일치" if pay and ok_pay
                     else f" · [중요] payload 불일치/없음 {len(stale)}개: {', '.join(stale[:3])}"
                     if pay else "")
         print(f"  {mark} {f.host} [{f.role}]: 스킬 {len(names)}종 "
               f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}"
-              f"{python_note}{pay_note}{ws_note}{client_note}{codex_note}{shadow_note}{res_note}{rm_note}"
+              f"{python_note}{pay_note}{ws_note}{client_note}{codex_note}{shadow_note}{res_note}{rm_note}{retired_note}"
               f"{prune_note}{agy_note}{tag_note}{ver_note}")
         bad += 0 if (ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
                      and ok_ver and ok_tag and ok_codex and ok_res and ok_shadow
-                     and ok_prune and ok_agy) else 1
+                     and ok_prune and ok_agy and ok_retired) else 1
         # `#737` — 다른 검사는 모두 통과했고 출처만 어긋난 호스트를 사유별로 센다.
         #    실행 중 마스터에 커밋이 들어오면 「N 커밋 뒤」, 작업 트리를 고치면 「dirty 도장」
         #    — 정확히 이 모양으로 실패한다.
         if (ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
-                and ok_tag and ok_codex and ok_res and ok_shadow and ok_prune and ok_agy):
+                and ok_tag and ok_codex and ok_res and ok_shadow and ok_prune and ok_agy and ok_retired):
             kind = _version_failure_kind(ver)
             behind_only += kind == "behind"
             dirty_only += kind == "dirty"

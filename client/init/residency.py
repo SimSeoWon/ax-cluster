@@ -12,8 +12,8 @@ from dataclasses import dataclass
 
 TASK_NAME = "AxWorker"           # 🔴 개명 (`#405`) — 근거는 아래 「개명」 절
 INTERVAL_MIN = 5                 # 감시자 주기. 잠금 싱글턴이 겹침을 흡수한다
-DAEMON_REL = ".ax/lib/axmaster/work/worker_daemon.py"
-RESTART_FILE = "worker_daemon.restart"   # 데몬의 같은 상수와 짝 (배달물은 마스터를 import 하지 않는다)
+# [주의] 데몬 파일 경로·재기동 깃발 상수는 지웠다 (#861, 2026-10-31) — 데몬 모듈이 저장소에서
+#    삭제됐다. 옛 등록 해제는 작업 이름(`task_name`)과 cron 표식(`cron_marker`)만 쓴다.
 
 
 def types_for(facts) -> str:
@@ -227,11 +227,6 @@ def blocked_reason(project: str, mounted: str, facts=None) -> str:
 
 # ── 배달 뒤 갱신 (`#277`) ──────────────────────────────────────────────────────
 
-DAEMON_REL_WIN = DAEMON_REL.replace("/", chr(92))
-PROBE_KEYS = ("running", "stale", "busy", "restart_pending", "pid", "started",
-              "alive_age", "boot_mtime", "code_mtime", "locked", "no_stamp", "hung")
-
-
 def console_python(path: str) -> str:
     """`pythonw.exe` → `python.exe`. [중요] 출력이 필요한 호출에는 콘솔판을 쓴다."""
     p = (path or "").strip()
@@ -242,42 +237,6 @@ def console_python(path: str) -> str:
     return p
 
 
-def probe_command(facts, *, python_path: str = "") -> str:
-    """상주 상태를 묻는 원격 명령 한 줄.
-
-    [중요] **판정 로직을 명령줄에 짜지 않는다** — `claimer.py --probe` 안(파이썬)에 있다.
-    이유 둘: ⓐ bash→ssh→cmd 삼중 인용에서 `for /f`·PowerShell 한 줄이 깨진 실측이 있다
-    (위 `PYTHONW_PROBE` 주석) ⓑ 같은 코드가 두 OS 에서 돌아 **로컬 유닛으로 잴 수 있다**.
-    """
-    if facts.windows:
-        # [중요] **인터프리터를 박지 않는다** — 실측 2026-08-22: `.2` 에서 `where pythonw` 가
-        #    빈 값이었다(실물은 `%LOCALAPPDATA%\Programs\Python\Python310\`). `python` 도
-        #    PATH 에 있다고 가정하면 안 된다. 호출자가 `PYTHONW_PROBE` 로 잰 값을 넘긴다.
-        # [중요] **probe 는 `pythonw` 로 돌리면 안 된다 — 콘솔이 없어 stdout 이 사라진다.**
-        #    상주는 콘솔 창을 띄우지 않으려고 `pythonw` 를 쓰지만, 관측은 출력이 목적이다.
-        py = console_python(python_path or python_for(facts))
-        return f'cd /d "{facts.path}" && "{py}" "{facts.path}\\{DAEMON_REL_WIN}" --probe'
-    return (f"cd {shlex.quote(facts.path)} && {python_for(facts)} "
-            f"{shlex.quote(DAEMON_REL)} --probe")
-
-
-def parse_probe(out: str) -> dict:
-    """`key=value` 줄을 읽는다. [주의] 못 읽은 키는 **없는 것으로 두지 않는다** — 호출자가
-    「모른다」와 「거짓」을 구분해야 한다(모르면 갱신을 강행하지 않는다)."""
-    got = {}
-    for line in (out or "").splitlines():
-        line = line.strip()
-        if "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        if k.strip() in PROBE_KEYS:
-            try:
-                got[k.strip()] = int(v.strip())
-            except ValueError:
-                continue
-    return got
-
-
 def needs_refresh(state: dict) -> bool:
     """옛 데몬 상태가 남아 있어도 재기동·갱신 대상으로 삼지 않는다."""
     return False
@@ -286,14 +245,6 @@ def needs_refresh(state: dict) -> bool:
 def refresh_commands(facts, *, force: bool = False, pid: int = 0) -> list:
     """데몬 갱신을 위한 깃발·종료·재기동 명령을 생성하지 않는다."""
     return []
-
-
-def clear_flag_commands(facts) -> list:
-    """깃발 제거 — **놓은 쪽이 치운다.** 강제 종료 뒤에 부른다."""
-    flag = f"{facts.path}\\.ax\\{RESTART_FILE}" if facts.windows \
-        else f"{facts.path}/.ax/{RESTART_FILE}"
-    return [("clear", f'del /q "{flag}" 2>nul' if facts.windows
-             else f"rm -f {shlex.quote(flag)}")]
 
 
 def refresh_plan_lines(facts, state: dict) -> list:

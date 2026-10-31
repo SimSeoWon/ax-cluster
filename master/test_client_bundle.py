@@ -254,10 +254,11 @@ def test_role_payload() -> None:
     #    제 일을 했다 — 오늘 이 배선을 정확히 잡아 세웠다.
     #    [주의] **`claimer.py` 가 아니라 `worker_daemon.py` 다** — 추론(code) 경로는 들어냈다.
     #    그쪽이 폐기된 `carry`/`manifest` 운송 규약 위에 서 있었기 때문이다(2026-09-02 철거).
-    check("[중요] 워커에는 클라 MCP + 빌드 사슬 + **상주 폐포**가 간다 (#404)",
+    # 🔴 **다섯 번째 움직임 — 상주 폐포 철회** (2026-10-31, 사용자 결정 `#860`·`#861`).
+    #    서버(.57)가 SSH 로 총괄한다. 이미 배달된 사본은 `spec.DEPRECATED_PAYLOAD` 로 지운다.
+    check("[중요] 워커에는 클라 MCP + 빌드 사슬이 간다 — 상주 폐포는 없다 (#861)",
           set(bundle.payloads_for("worker")) == {
               "clientside/client_mcp.py", "clientside/ontology_cache.py",
-              "work/worker_daemon.py", "work/ax_safety.py",
               "clientside/session1_conductor.py", "clientside/winsession.py",   # `#832`
               "work/build_local.py",
               "work/skeleton_gate.py", "layer3_verify.py", "source_text.py", "utf8.py",
@@ -266,8 +267,9 @@ def test_role_payload() -> None:
     check("🔴 [중요] 옛 `claimer.py` 는 돌아오지 않는다 — 추론 경로째 폐기했다",
           "work/claimer.py" not in set(bundle.payloads_for("worker")),
           str(bundle.payloads_for("worker")))
-    check("[중요] `ax_safety` 가 데몬과 **함께** 간다 (빠지면 상주 진입에서 죽는다)",
-          {"work/worker_daemon.py", "work/ax_safety.py"} <= set(bundle.payloads_for("worker")))
+    check("🔴 [중요] 상주 데몬 폐포는 어느 역할에도 가지 않는다 (#861)",
+          not any({"work/worker_daemon.py", "work/ax_safety.py"} & set(bundle.payloads_for(r))
+                  for r in bundle.PAYLOAD_BY_ROLE))
     check("[중요] MCP 폐포가 함께 간다 (옆 파일이 빠지면 조회 도구가 조용히 죽는다)",
           {"clientside/client_mcp.py", "clientside/ontology_cache.py"}
           <= set(bundle.payloads_for("worker")))
@@ -360,8 +362,8 @@ def test_payload_split() -> None:
     #    가야 나머지가 임포트된다는 것과 같은 결).
     # 🔴 `#401`: 세션 1 지휘자 런처가 더해졌다 — Windows 는 SSH(세션 0)에서 codex 샌드박스
     #    자식이 죽으므로, `/IT` 작업으로 **세션 1** 에서 지휘자를 돌린다.
+    # 🔴 `#861`: 상주 폐포 둘이 빠졌다 (결정된 변경 — 기준선 이동, 사용자 2026-10-31)
     FROZEN["worker"] = ("clientside/client_mcp.py", "clientside/ontology_cache.py",
-                        "work/worker_daemon.py", "work/ax_safety.py",
                         "clientside/session1_conductor.py",
                         # 🔴 `#832`: 세션 0 거절 판정이 런처 **바로 뒤**에 들어간다 (결정된 변경 — 기준선 이동)
                         "clientside/winsession.py",
@@ -514,6 +516,88 @@ def test_deliver_removes_deprecated_skills() -> None:
     check("[중요] 오버레이로 되살린 이름은 제거 목록에서 빠진다",
           "ax-work" not in spec.removals_for("worker", revived)["skills"],
           str(spec.removals_for("worker", revived)["skills"]))
+
+
+def test_retired_payload_removed_checked_and_planned() -> None:
+    """🔴 `#861` — 폐기된 상주 데몬 사본(`spec.DEPRECATED_PAYLOAD`)을 deliver 가 지우고,
+    check 는 잔존 **과 조회 실패**를 FAIL 로 보고, plan 은 제거 목록으로 낸다.
+
+    [중요] 조회 실패 ≠ 부재 — `residency.registration_status` 와 같은 원칙이다.
+    """
+    import inspect
+    want = ("work/worker_daemon.py", "work/ax_safety.py")
+    for role in bundle.PAYLOAD_BY_ROLE:
+        check(f"[중요] {role}: 지울 목록 = 선언 그대로 (배달 대상과 겹치지 않음)",
+              bundle.retired_payload_for(role) == want, str(bundle.retired_payload_for(role)))
+    check("배달이 이긴다 — 지금 배달하는 경로는 지울 목록에서 빠진다",
+          spec.retired_payload_for(("work/ax_safety.py",)) == ("work/worker_daemon.py",))
+
+    for windows in (True, False):
+        f = _facts(role="worker", os="windows" if windows else "linux",
+                   path=r"E:\trunk\NS" if windows else "/home/sim/trunk/NS")
+        label = "win" if windows else "linux"
+        calls: list = []
+        state = {n: True for n in want}
+
+        def fake_ssh(host, user, cmd, *, timeout=None):
+            calls.append(cmd)
+            if "GONE" in cmd:
+                return 0, ("LEFT" if any(state[n] and n.split("/")[-1] in cmd for n in want)
+                           else "GONE")
+            if "del /f /q" in cmd or cmd.startswith("rm -f "):
+                for n in want:
+                    if n.split("/")[-1] in cmd:
+                        state[n] = False
+                return 0, ""
+            return 0, ""
+
+        saved = bundle._ssh
+        bundle._ssh = fake_ssh
+        try:
+            got = [bundle._remote_rm_checkout_file(f, bundle._retired_rel(n))
+                   for n in bundle.retired_payload_for("worker")]
+        finally:
+            bundle._ssh = saved
+        check(f"[중요] {label}: 폐기 페이로드를 지우고 [완료]", all("[완료]" in g for g in got)
+              and not any(state.values()), str(got))
+        check(f"  {label}: 체크아웃 아래 .ax/lib/axmaster 를 겨눈다 (홈 아님)",
+              all(f.path in c for c in calls) and all("axmaster" in c for c in calls), str(calls))
+        check(f"  {label}: 지운 뒤 되읽는다", sum("GONE" in c for c in calls) == len(want), str(calls))
+
+        # fail-open: 삭제가 실패해도 예외 없이 사유
+        bundle._ssh = lambda h, u, c, *, timeout=None: (0, "LEFT") if "GONE" in c else (5, "denied")
+        try:
+            r = bundle._remote_rm_checkout_file(f, bundle._retired_rel(want[0]))
+        finally:
+            bundle._ssh = saved
+        check(f"[중요] {label}: 삭제 실패는 fail-open (사유 문자열)", "[주의]" in r, r)
+
+        # check 판정 — 부재 / 잔존 / 조회 실패
+        q = bundle.retired_payload_query_command(f, want)
+        check(f"  {label}: 조회 명령이 끝 표식을 낸다", bundle.RETIRED_DONE in q, q)
+        for rc, out, ok_want, why in (
+                (0, bundle.RETIRED_DONE, True, "부재"),
+                (0, f"{bundle.RETIRED_LEFT}work/ax_safety.py\n{bundle.RETIRED_DONE}", False, "잔존"),
+                (255, "", False, "SSH 실패"),
+                (0, "", False, "빈 응답(끝 표식 없음)"),
+                (1, "AX_RETIRED_ERROR=Access denied", False, "조회 오류")):
+            bundle._ssh = lambda h, u, c, *, timeout=None, _r=(rc, out): _r
+            try:
+                ok, note = bundle.check_retired_payload(f)
+            finally:
+                bundle._ssh = saved
+            check(f"[중요] {label}: check — {why} → {'통과' if ok_want else 'FAIL'}",
+                  ok is ok_want and (ok or "[실패]" in note), f"{ok} {note}")
+
+    # 배선 — deliver 가 지우고, check 가 판정에 넣고, plan 이 목록으로 낸다
+    dsrc = inspect.getsource(bundle._deliver)
+    check("[중요] deliver 가 폐기 페이로드를 지운다",
+          "_remote_rm_checkout_file" in dsrc and "retired_payload_for" in dsrc)
+    csrc = inspect.getsource(client_cli.cmd_check)
+    check("[중요] check 가 폐기 페이로드 판정을 호스트 판정에 넣는다",
+          "check_retired_payload" in csrc and csrc.count("ok_retired") >= 4, str(csrc.count("ok_retired")))
+    psrc = inspect.getsource(client_cli.cmd_plan)
+    check("plan 이 폐기 페이로드를 제거 목록으로 낸다", "retired_payload_for" in psrc)
 
 
 def test_role_block() -> None:
@@ -2585,7 +2669,7 @@ def test_code_drift_blocks_stale_delivery() -> None:
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
-               test_role_skills, test_role_payload, test_payload_split, test_deliver_removes_deprecated_skills, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
+               test_role_skills, test_role_payload, test_payload_split, test_deliver_removes_deprecated_skills, test_retired_payload_removed_checked_and_planned, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
                test_merge_never_replaces_existing,
                test_workshop_assets_reference_only_live_tools,
                test_workshop_delivery,

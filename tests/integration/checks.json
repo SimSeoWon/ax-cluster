@@ -825,8 +825,13 @@
     "timeout": 180
   },
   {
-    "path": "master/test_worker_daemon.py",
-    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "path": "master/test_queue_worker_contracts.py",
+    "count_pattern": "(?m)^OK test_queue_worker_contracts: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_no_worker_daemon.py",
+    "count_pattern": "(?m)^OK test_no_worker_daemon: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
   },
   {
