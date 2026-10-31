@@ -4,80 +4,70 @@
 > 공용 규칙 `docs/orchestrator-rules.md`. 체크포인트를 갱신할 때는 이 파일을 **덮어써서** 짧게
 > 유지한다(`master/test_handoff_size.py` 가 막는다, `#842`) — 지난 내용은 `reports/`·Redmine 노트에 남기고,
 > 2026-10-21 까지의 원문은 [`orchestrator-handoff-history.md`](orchestrator-handoff-history.md) 에 있다(이력 전용).
-> 직전 체크포인트(10-31 02:19 Codex — #211 분석·코드 팩토리 보고서·드라이런 4건)는 이 파일의 git 이력(`b80c8e4`)에 있다.
+> 직전 체크포인트(10-31 17:20 Claude — #826 Phase A·#852)는 git 이력 `3184a9b`, 리포트 132.
 > 여기 적힌 상태는 **기록 시점의 값**이다 — HEAD·dirty·Redmine·모드는 재조회해서 쓴다.
 
 ## 상태
 
-- **갱신**: 2026-10-31 17:20 KST · Claude · 사용자 지시(#826 Phase A·#852 완료 뒤 인계서 반영)
-- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`b5ec5eb`. 미커밋: 이 인계서 수정뿐(커밋은 별도 승인).
-- **배달**: 커밋마다 `master.client update` — `.43`·`.2`·`.33` 전부 OK, 출처 HEAD 일치(`b5ec5eb` 기준).
-  `.2` 홈 중복 `~/.agents/skills/ax-work` 주의는 종전과 같다(수정 안 함).
-- **서비스 재기동**(사용자 승인): `ax-task-queue` 15:59:54·17:06:15 · `ax-projects` 16:39:01.
-- **지휘 기록**: 마스터 담당 `claude`(10-21 기록) · 워커 전역 `codex`(state, 10-18). 바꾸지 않았다.
-- **실행 중**: 없음. 서브 에이전트 없음(전부 마스터 로컬).
-- **저장소 밖 변경**: `ax-plan` 스킬 링크 3개(`~/.claude/skills` · `~/.agents/skills` · `~/.codex/skills`).
+- **갱신**: 2026-10-31 18:45 KST · Claude · 사용자 지시(토큰 부족으로 인계)
+- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`f29aaf0`. 미커밋: 이 인계서뿐(커밋은 별도 승인).
+- **마운트**: **AXCluster**. 배달 `.43`·`.2`·`.33` 전부 HEAD 일치(update rc=0, f29aaf0).
+- **서비스 재기동**(사용자 승인): `ax-task-queue` 18:05:01 · `ax-projects` 18:18:23.
+- **지휘 기록**: 마스터 담당 `claude`(10-21) · 워커 전역 `codex`(10-18). 바꾸지 않았다.
+- **실행 중**: 없음. `.2` 상주 데몬은 **정지·등록 해제**(AxWorker 삭제, pid 59676 종료, 재조회 0).
+- **설정 변경(트윈, git 밖)**: `ModularStage/config.yaml` `clone_url` HTTP → `gitea@192.168.0.57:Sim/ModularStage.git`
+  (.2 세션0 HTTP 자격증명 실패 해소, 사용자 승인). 백업은 세션 scratchpad. `.2` 에 `C:\trunk\ModularStage` 클론 생김(4cd229f).
 
-## 이번 세션 — #729 묶음 · #826 Phase A · #852
+## 🔴 이번 세션의 큰 결정 — 워커·요청자 상주 데몬 폐기, 서버(.57) SSH 총괄
 
-- **일감 정리**: [#729](http://192.168.0.57:8080/issues/729)·[#826](http://192.168.0.57:8080/issues/826) 를 아이디어 → M7 로 이동,
-  제목 `[아이디어]` 제거. #854·#856 은 아이디어에 남김. [#856](http://192.168.0.57:8080/issues/856) 에 Monolith MIT
-  라이선스 배포 조건 노트(저작권·허가 문구 전문 유지, 번들 의존성·UE EULA 별도 확인 — LICENSE 원문 미대조).
-- **#826 본문**: Textile → Markdown 변환(이 Redmine 서식이 Markdown — `h2.` 가 글자로 보였다).
-  **플랜 영역 형식 v1**(사용자 결정): 본문 안 `<!-- ax:plan:begin v=1 -->` ~ `<!-- ax:plan:end -->`,
-  표 칸 ID·상태·목표·대상·선행·검증·근거, 상태 대기·작업중·완료·차단·해당없음. 주석 태그는 화면에서 숨겨짐(실측).
-- **#826 Phase A 플랜 T1~T6 전부 완료** (kind=code 파일럿, 7단계 중 1·3·5·7):
+- 사용자 확정 2026-10-31: *"상주하는 서버가 모두 ssh로 총괄 처리할 수 있는데?"* · **정본 ⑤ = 「서버가 다음 조각을 배정」**(pull 폐기).
+- 경위: `#320`(08-27) 상주 전폐 → `#404`(09-12) .2 빌드 상주 복원 → 이번 세션이 #404 를 「기존 자산」으로 보고
+  #857 T4 를 buildjob·데몬 경로로 구현(`03af704`) — 사용자 지적 *"폐기했다고 히스토리 있는데 왜 쓴건데"*.
+- 원인 정리: 메모리 6곳(정본 7단계의 「원전 데몬을 옮겨라」·「부활 조건」 등)과 CLAUDE.md 셋(`~/CLAUDE.md`·저장소·
+  `win-worker-2.md`+.2 사본)을 고쳤다 — `f29aaf0`. 결정은 `log_history` 2건.
+- 정리 일감 **[#860](http://192.168.0.57:8080/issues/860)** — 전수 조사 노트 있음. 요지:
+  데몬이 실제로 받던 일은 `buildjob` 뿐 · `client/init/residency.py` 는 데몬 상주 + **세션1 런처(AxConductor, 유지)** 겸용 ·
+  빌드 대체는 `layer3_verify.run_build_on_workshop`(SSH, 호출부 0, 가드 `test_no_integrator.BUILD_CALLERS_ALLOWED` 가 막음) ·
+  M7 일감 중 데몬 전제: **#406**(데몬 자기 갱신) · **#344**(directive 를 데몬이 따름) · **#259**(온보딩에 claimer 상주).
+  [주의] 배달 코드가 아직 상주를 등록한다 — **unreal 프로젝트를 마운트하면 .2 에 AxWorker 가 되살아난다**(#860 T1 전까지).
 
-  | T | 커밋 | 내용 |
+## 이번 세션 — 완료한 것
+
+- #729·#826 → M7, `[아이디어]` 제거. #856 에 Monolith MIT 배포 조건 노트.
+- **#826 Phase A(T1~T6) 완료** · **#852 완료** — 리포트 132(`5ecb719`). 플랜 영역 형식 v1/v2, MCP `plan_*_tool`, 스킬 `ax-plan`.
+- #826 하위 분리: **#857** Phase B(unreal 소스 경로) · **#858** Phase C(에디터·MCP, #856 선행). 본문 [보충](제네레이트 불필요).
+- **#857 진행**(플랜 v1 표, 마킹은 전부 `plan_transition`):
+
+  | T | 상태 | 커밋·근거 |
   |---|---|---|
-  | T1 | `79a3c0d` | `master/plan_block.py`(태그 사이만 읽고 쓰기·영역 밖 바이트 보존) · `redmine._update_mismatches` CRLF 오탐 수정 |
-  | T2 | `4cab2b1` | `master/plan_state.py` — 전이는 `transition` 하나, 근거 없는 완료·사유 없는 차단·선행 미완료 착수·완료 되돌리기 거절 |
-  | T3 | `a02e7ee` | `master/plan_start.py` — no_spec·plan_needed·plan_invalid·plan_violations·resume·next·blocked·plan_done |
-  | T4 | `90ed562` | `master/plan_steps.py` — kind 별 7단계(code 2·4·6 해당없음 · unreal 조건부 · 빈/index_only 거절) |
-  | T5 | `2552ff4` | `master/plan_tools.py` + MCP `plan_start_tool`·`plan_set_tool`·`plan_transition_tool` + 스킬 `ax-plan` |
-  | T6 | `b5ec5eb` | [#852](http://192.168.0.57:8080/issues/852) 파일럿 완주 — 아래 |
+  | T1 | 완료 | .2 임시 worktree 실측 — Build.bat 이 새 UCLASS 를 **제네레이트 없이** 컴파일(46초) |
+  | T2 | 완료 | `aec663b` 플랜 형식 v2 「단계」 칸 |
+  | T3 | 완료 | `d49af03` `plan_steps.steps_for_task` |
+  | T4 | 완료(**재작업 대상**) | `03af704` buildjob 경로 + `GET /api/v1/tasks/{id}/submission` — 데몬 폐기로 T7 이 대체 |
+  | T5 | 완료 | `fe10709` unreal 4단계 해당없음 |
+  | T7 | 대기 | **빌드 단계를 서버 SSH(run_build_on_workshop)로 재연결** — 가드 변경과 맞물림(#860 T2) |
+  | T6 | 차단 | 실증 — T7 뒤. 데몬 경로 빌드 4624089c(PASS 104초)는 사실로만 남김 |
 
-  설계 선택(사용자에게 보고함): 완료는 되돌리지 않는다 · 근거와 사유는 같은 칸 · `plan_set` 은 상태·근거를 못 바꾸고
-  시작된 태스크를 못 뺀다 · 읽기-쓰기 사이 사람 수정은 덮인다(Redmine 조건부 갱신 없음 → 동시 마킹 금지).
-- **#852 완료** — `find_history` 자유 질의 공백 단위 AND(`history_harvest.search`). plan_start → RAG·소스 대조 →
-  승인 → plan_set → T1~T3 마킹 → plan_done 의 첫 실사용. MCP 실호출 '언어 분기 온톨로지'·'온톨로지 언어' 0→1, 기존 1·1·5 유지.
-- **CRLF 오탐**: Redmine 이 본문을 CRLF 로 저장해 description 갱신이 매번 「반영 안 됨」이었다(직전 Codex 세션에서도).
-  T1 에서 고쳤고 큐 재기동 뒤 `ok: true` 확인.
-- 검사(마지막 커밋 기준): `master/test_*.py` 192개 9049/9049 · 통합 181 OK.
-- 결정은 `log_history` 로 올렸다(플랜 영역 형식·Phase A 범위).
-
-## 미검증·정정
-
-- **#826 T6 의 「다른 세션이 다음 태스크를 정확히 집는지」는 미검증** — 같은 세션 안에서만 확인했다(#826 보충 노트).
-  다음 세션에서 `plan_start_tool(826)`(→ plan_done) · `plan_start_tool(852)`(→ plan_done) 를 불러 확인한다.
-- [정정] 세션 중 `find_history` 의 `next_steps` 가 `alternatives_considered` 와 같은 것을 「매핑 결함 후보」로 보고했으나,
-  원전 계약이다 — `history_harvest.py:293-296` 이 alternatives + 후속 섹션을 합치고, 원전 `AgentTest/watcher/history_harvest.py:317`
-  과 양쪽 테스트(`test_alternatives_in_next_steps`, 우리 `test_history_harvest.py:71`)가 그렇게 못박는다. 결함 등록은 보류하고 사용자에게 물었다.
+- 커밋(이 세션): `79a3c0d` `4cab2b1` `a02e7ee` `90ed562` `2552ff4` `b5ec5eb` `aec663b` `d49af03` `03af704` `fe10709` `f29aaf0`
+  + 문서 `3184a9b` `5ecb719`. 마지막 코드 검사: 전수 194개 9121/9121 · 통합 181 OK.
 
 ## 사용자 답을 기다리는 것
 
-1. **#826 다음 단계** — 본문 범위(Unreal 제네레이트·에디터·MCP·클래스 추가/제거)는 Phase A 밖. 다음 Phase 플랜을 #826 에 더할지, 하위 일감으로 나눌지. #826 은 닫지 않았다.
-2. **`next_steps` 표시** — 원전 계약을 유지할지, MCP 응답에서 「다음 단계」에 기각된 대안이 섞이는 것을 개선 일감으로 올릴지.
-3. 앞 세션에서 넘어온 결정(그대로 유효): [#839](http://192.168.0.57:8080/issues/839) ② 스냅샷 범위 · [#840](http://192.168.0.57:8080/issues/840) ① 후보 보관 ·
-   [#791](http://192.168.0.57:8080/issues/791) D 라운드 실패 처리 · [#820](http://192.168.0.57:8080/issues/820) ⑦ 범위 밖 고지 · [#372](http://192.168.0.57:8080/issues/372) 차단 게이트 ·
-   [#855](http://192.168.0.57:8080/issues/855) 착수 방식 · 포기된 `f3e3d96` 리뷰 재등재.
+1. **#860 플랜 초안**(대화에서 제시, 아직 미등록) — T1 배달 상주 등록 제거(런처 유지) · T2 가드 재정의 ·
+   T3 데몬 코드 처분(#857 T7 뒤) · T4 #406·#344·#259 재정의 · T5 docs 정정 · T6 실측(마운트 전환해도 AxWorker 안 생김).
+   미결: ① T3 에서 `buildjob`·submission 엔드포인트까지 지울지 ② T4 를 이 플랜에서 할지 ③ 등록 여부·수행 방식(로컬/AX 워커).
+2. #826 다음 단계는 #857·#858 로 나눔(완료). `next_steps` 표시 개선 여부(원전 계약이라 결함 아님) 미결.
+3. 앞 세션에서 넘어온 결정: #839 ②·#840 ①·#791 D·#820·#372·#855 착수 방식.
 
 ## 바로 다음 작업
 
-1. HEAD·dirty·Redmine 을 재조회한다. 다음 작업은 사용자가 고른다 — 스스로 착수하지 않는다.
-2. **일감을 시작할 때는 `ax-plan` 스킬**: `plan_start_tool` 이 먼저, `ok:false` 면 구현하지 않는다. 마킹은 `plan_transition_tool` 로만 —
-   `redmine_note` 로 본문 전체를 보내 플랜을 고치지 않는다.
-3. 위 「미검증」의 새 세션 확인부터 하면 #826 T6 공백이 닫힌다.
-4. agy 를 쓰는 실측은 공용 한도 영향을 먼저 말한다. AXCluster 운영 온톨로지 도메인은 여전히 0개(등록은 사용자 결정).
-5. **마운트 전환 때**: ModularStage → [#650](http://192.168.0.57:8080/issues/650) 프로필 · NS → [#649](http://192.168.0.57:8080/issues/649) E(쓰기 전 `.33` dirty 확인).
-6. 마스터 worktree 2개(`ax-788-work`·`ax-advance-…_831`) 정리 미결([#333](http://192.168.0.57:8080/issues/333)).
-   `b510d2f` 는 트윈 미러 `refs/ax/pruned/…` 에 보존돼 있다.
+1. HEAD·dirty·Redmine·마운트 재조회. 다음 작업은 사용자가 고른다.
+2. 일감 시작은 `ax-plan` 스킬 — `plan_start_tool` 먼저, 마킹은 `plan_transition_tool` 로만.
+3. #860 플랜 미결 3개를 묻고 등록 → T1·T2 → #857 T7 → #860 T3 순.
+4. **기존 경로를 재사용하자고 하기 전에 그 경로의 폐기·복원 이력부터 grep**(reports·history·Redmine) — 이번 세션의 실수.
+5. 미검증: #826 T6 「다른 세션이 다음 태스크를 집는지」 — 새 세션에서 `plan_start_tool(826)`·`(852)` → plan_done 확인.
 
 ## 열려 있지만 별개인 것 (기록 시점 — Redmine 재조회)
 
-- `.2` 새 경로 Codex 셸 읽기·apply_patch·결과 회수 — 다음 파견에서 확인
-- 비마운트 3개(ModularStage·NS·MotionForge)의 `.2` 클론 — 마운트 전환 때 `set_active`
-- #846 효과 재측정 · [#709](http://192.168.0.57:8080/issues/709) GitHub 저장소 삭제(사용자 웹 작업 뒤 404 확인)
-- [#211](http://192.168.0.57:8080/issues/211) RAG 품질 — 분석·2차 검증 완료(`reports/research/2026-10-31-211-*`), 정책·구현 미착수
-- 코드 팩토리·SDD 보고서 `reports/research/2026-10-31-code-factory-sdd.html`(+검증 MD) — Phase A 가 그 권고의 첫 파일럿이었다
-- 앞선 Claude 세션 리포트: [130](../reports/130-worker2-board-swap-setup-host-ollama.md) · [131](../reports/131-849-ontology-pinned-tree.md)
+- AXCluster 큐 고아 태스크 10건·스풀 26묶음 — 마운트 전환 handover 에 보고됨, 손대지 않음
+- 마스터 worktree 2개 정리(#333) · #709 GitHub 저장소 삭제 · #211 RAG 정책 미착수 · #650(ModularStage 마운트 때 프로필)
