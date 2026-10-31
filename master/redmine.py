@@ -245,6 +245,10 @@ def create_issue(subject: str, description: str = "", *, tracker_name: str = "",
     return out
 
 
+def _same_newlines(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _update_mismatches(iid: int, requested: dict, response) -> tuple[list[str], list[int]]:
     """PUT 뒤 실제 이슈 필드와 비교한다 (`#754`). 불완전한 응답은 성공 근거가 아니다."""
     actual = response.get("issue") if isinstance(response, dict) else None
@@ -272,6 +276,10 @@ def _update_mismatches(iid: int, requested: dict, response) -> tuple[list[str], 
             if field not in actual or type(actual[field]) is not type(wanted):
                 raise ValueError(f"응답의 {field}가 없거나 형식이 잘못됐다")
             value = actual[field]
+        if field == "description":
+            # Redmine 은 본문을 CRLF 로 저장한다 — LF 로 보낸 같은 본문이 매번 미반영으로
+            # 잡혔다(#826 본문 PUT 3회 전부 오탐, 되읽기로 반영 확인). 줄바꿈만 맞춰 비교한다.
+            value, wanted = _same_newlines(value), _same_newlines(wanted)
         if value != wanted:
             mismatches.append(f"{field}: 요청 {repr(wanted)[:180]}, 실제 {repr(value)[:180]}")
     children = actual.get("children")

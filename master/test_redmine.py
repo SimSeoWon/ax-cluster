@@ -429,6 +429,18 @@ def test_update_every_field_is_verified():
         check(f"{field} 검사에도 PUT은 한 번뿐이다", len(s.puts) == 1, str(s.calls))
 
 
+def test_update_description_crlf_is_not_a_mismatch():
+    """#826: Redmine 이 CRLF 로 저장한 같은 본문을 미반영으로 읽지 않는다."""
+    sent = "## 제목\n\n본문 한 줄\n- 항목\n"
+    s = ReadbackSender({"issue": {"id": 826, "description": sent.replace("\n", "\r\n")}})
+    out = RM.update_issue(826, description=sent, sender=s)
+    check("LF 로 보낸 본문이 CRLF 로 돌아와도 성공", not out.startswith("[주의]"), out)
+    s = ReadbackSender({"issue": {"id": 826, "description": "## 제목\r\n\r\n다른 본문\r\n"}})
+    out = RM.update_issue(826, description=sent, sender=s)
+    check("줄바꿈 말고 내용이 다르면 여전히 미반영",
+          out.startswith("[주의]") and "description: 요청" in out, out)
+
+
 def test_update_clear_parent_readback_shapes():
     for fields in ({}, {"parent": None}):
         s = ReadbackSender({"issue": {"id": 259, **fields}})
@@ -736,6 +748,7 @@ def main() -> int:
                test_update_version_needs_right_project,
                test_update_ignored_parent_status_is_not_success,
                test_update_every_field_is_verified,
+               test_update_description_crlf_is_not_a_mismatch,
                test_update_clear_parent_readback_shapes,
                test_update_readback_errors_are_not_success,
                test_create_version_posts_to_that_project,
