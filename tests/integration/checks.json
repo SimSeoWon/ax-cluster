@@ -908,5 +908,15 @@
     "path": "master/test_handoff_size.py",
     "count_pattern": "(?m)^OK test_handoff_size: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 60
+  },
+  {
+    "path": "master/test_plan_events.py",
+    "count_pattern": "(?m)^OK test_plan_events: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 60
+  },
+  {
+    "path": "master/test_plan_metrics.py",
+    "count_pattern": "(?m)^OK test_plan_metrics: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 60
   }
 ]
