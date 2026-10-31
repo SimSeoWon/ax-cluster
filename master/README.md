@@ -108,6 +108,7 @@ MCP가 없으면 같은 정본 `work.conductor.snapshot()`·`set_worker()`를 �
 | `work/tdd_dryrun.py` | TDD 드라이런 하니스 — 원전 이식(`#145`). [주의] 진입점 없음 — 처분은 `#234`·`#232` |
 | `redmine.py` | Redmine 이슈 조회·생성·**갱신**(노트·상태·진척·마일스톤·부모·우선순위·제목·본문 — `#752`). 키는 마스터에만 있고 응답·로그에 내보내지 않는다 |
 | `plan_block.py` | Redmine 이슈 본문 안 **플랜 영역**(`<!-- ax:plan:begin v=1 -->` ~ `<!-- ax:plan:end -->`) 읽기/쓰기 (`#826` T1). 태그 사이만 다루고 영역 밖 본문은 바이트 그대로 둔다. 형식이 어긋나면 고쳐 읽지 않고 `PlanError` 로 거절한다. 상태 전이 규칙은 여기 없다(T2) |
+| `plan_state.py` | 플랜 태스크 **상태 전이 강제** (`#826` T2). 전이는 `transition` 하나 — 근거 없는 완료·사유 없는 차단/해당없음·선행 미완료 착수·완료 되돌리기를 `TransitionError` 로 거절한다. `violations` 는 사람이 고친 본문의 규칙 위반을 읽기만 한다 |
 | `service_restart.py` · `service_freshness.py` | 승인 뒤 부르는 AX 서비스 재시작·복구 CLI(`scripts/ax-service-restart`, `#647`) · 서비스가 **도는 코드**가 최신인가(`#301` — `update` 가 보고한다) |
 | `version.py` | 마스터 정체 — 버전 핸드셰이크(`get_master_version`, `#191`) |
 | `census.py` · `canary.py` | 원전 인용 census(`#177`) · 영구 유실 카나리(`#182`) |
