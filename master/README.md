@@ -111,6 +111,7 @@ MCP가 없으면 같은 정본 `work.conductor.snapshot()`·`set_worker()`를 �
 | `plan_state.py` | 플랜 태스크 **상태 전이 강제** (`#826` T2). 전이는 `transition` 하나 — 근거 없는 완료·사유 없는 차단/해당없음·선행 미완료 착수·완료 되돌리기를 `TransitionError` 로 거절한다. `violations` 는 사람이 고친 본문의 규칙 위반을 읽기만 한다 |
 | `plan_start.py` | 「일감 시작」 진입점 (`#826` T3). 이슈 본문으로 `no_spec`·`plan_needed`·`plan_invalid`·`plan_violations`·`resume`·`next`·`blocked`·`plan_done` 판정과 다음 행동 문장을 낸다. 판정만 하고 쓰지 않는다 — [중요] `plan_needed` 에서 구현으로 넘어가지 않는 것이 호출자 계약이다 |
 | `plan_steps.py` | 태스크 실행 7단계의 **해당 여부 판정** (`#826` T4). 프로필 `kind` 로 단계마다 실행·해당없음·조건부와 사유를 낸다 — code 는 2·4·6 해당없음, unreal 은 2·4·6 조건부. [중요] 빈·모르는 kind 와 `index_only` 는 `StepError` 로 거절한다(빈 값을 unreal 로 읽지 않는다) |
+| `plan_tools.py` | 플랜 도구 본체 (`#826` T5) — `start`(판정+7단계 표) · `set_plan`(등록·편집, 상태·근거는 못 바꿈, 시작된 태스크는 못 뺌) · `transition`(상태 전이+노트). MCP `plan_*_tool` 3종과 스킬 `master/skills/ax-plan` 이 이것을 부른다. [주의] 읽고-쓰기 사이 사람 수정은 덮인다 — 같은 일감 동시 마킹 금지 |
 | `service_restart.py` · `service_freshness.py` | 승인 뒤 부르는 AX 서비스 재시작·복구 CLI(`scripts/ax-service-restart`, `#647`) · 서비스가 **도는 코드**가 최신인가(`#301` — `update` 가 보고한다) |
 | `version.py` | 마스터 정체 — 버전 핸드셰이크(`get_master_version`, `#191`) |
 | `census.py` · `canary.py` | 원전 인용 census(`#177`) · 영구 유실 카나리(`#182`) |

@@ -1053,3 +1053,49 @@ def record_master_conductor_tool(agent: str, why: str, by: str = "") -> str:
         return json.dumps(conductor.record_master(agent, why, by), ensure_ascii=False)
     except (ValueError, OSError) as exc:
         return _fail(exc)
+
+
+# ── 플랜 영역 (`#826` T5) — 본체는 `master/plan_tools.py`. 상태는 plan_transition_tool 로만 바뀐다 ──
+
+@mcp.tool()
+def plan_start_tool(issue_id: int, project: str = "") -> str:
+    """일감을 시작하기 **전에** 부른다 — 스펙·플랜 판정과 프로젝트 7단계 표(읽기 전용, `#826`).
+
+    판정이 `ok: false` 면 구현으로 넘어가지 않는다. 특히 `plan_needed` 는 RAG·현재 소스 대조 뒤
+    사용자와 플랜을 쓰고 `plan_set_tool` 로 등록하라는 뜻이다. `project` 를 비우면 마운트된 프로젝트.
+    """
+    from .. import plan_tools
+    try:
+        return json.dumps(plan_tools.start(issue_id, project=project), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def plan_set_tool(issue_id: int, tasks: list[dict], why: str) -> str:
+    """이슈 본문의 플랜 영역을 등록하거나 태스크를 추가·편집한다 (`#826`).
+
+    `tasks` 는 원하는 **전체 목록**(표 순서): 항목마다 `id`·`goal` 필수, `target`·`deps`·`check` 선택.
+    [중요] `state`·`evidence` 는 받지 않는다 — 새 태스크는 「대기」, 기존 태스크는 본문 값 유지.
+    시작된 태스크는 뺄 수 없다. `why` 는 노트로 남는다(필수).
+    """
+    from .. import plan_tools
+    try:
+        return json.dumps(plan_tools.set_plan(issue_id, tasks, why), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def plan_transition_tool(issue_id: int, task_id: str, to: str, note: str = "") -> str:
+    """플랜 태스크 하나의 상태를 바꾼다 (`#826`) — 상태를 바꾸는 **유일한** 쓰기.
+
+    `to`: 작업중 · 완료 · 차단 · 해당없음 · 대기. 완료는 근거(커밋 해시·검사 결과), 차단·해당없음은
+    사유가 `note` 에 필수다. 선행이 안 끝났거나 허용되지 않는 전이는 거절된다. 응답의 `next` 가
+    다음 판정이다.
+    """
+    from .. import plan_tools
+    try:
+        return json.dumps(plan_tools.transition(issue_id, task_id, to, note), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
