@@ -88,13 +88,47 @@ def test_every_kind_in_profile_is_decided():
         check(f"프로필 KINDS 의 {kind} 는 판정되거나 의도적으로 거절된다", decided)
 
 
+def test_task_declares_conditional_steps():
+    s = _by_no(PS.steps_for_task("unreal", [4]))
+    check("선언한 조건부 단계는 실행", s[4].applies == PS.RUN and "선언" in s[4].reason, s[4].reason)
+    check("선언 안 한 조건부는 해당없음 + 조건을 사유로",
+          s[2].applies == PS.SKIP and s[6].applies == PS.SKIP and "조건" in s[6].reason, s[6].reason)
+    check("늘 하는 단계는 그대로 실행", all(s[n].applies == PS.RUN for n in (1, 3, 5, 7)))
+    check("[중요] 판정 뒤에는 조건부가 남지 않는다",
+          not any(x.applies == PS.COND for x in s.values()))
+    s = _by_no(PS.steps_for_task("unreal", []))
+    check("아무것도 선언 안 하면 2·4·6 해당없음", all(s[n].applies == PS.SKIP for n in (2, 4, 6)))
+    s = _by_no(PS.steps_for_task("unreal", [6, 2, 2]))
+    check("중복·순서와 무관", s[2].applies == PS.RUN and s[6].applies == PS.RUN and s[4].applies == PS.SKIP)
+    s = _by_no(PS.steps_for_task("code", []))
+    check("code 는 선언 없이 종전 표 그대로", s[4].applies == PS.SKIP and s[5].applies == PS.RUN)
+
+
+def test_task_declaring_non_conditional_is_refused():
+    for kind, steps in (("code", [4]), ("code", [6]), ("unreal", [5]), ("unreal", [1, 4])):
+        try:
+            PS.steps_for_task(kind, steps)
+            ok = False
+        except PS.StepError as e:
+            ok = "조건부가 아닌" in str(e)
+        check(f"[중요] {kind} 에 {steps} 선언 → 거절", ok)
+    try:
+        PS.steps_for_task("", [4])
+        ok = False
+    except PS.StepError:
+        ok = True
+    check("모르는 kind 는 선언과 무관하게 거절", ok)
+
+
 def main() -> int:
     for fn in (test_order_is_826,
                test_code_table,
                test_unreal_table,
                test_refuses_unknown_and_index_only,
                test_project_uses_profile_kind,
-               test_every_kind_in_profile_is_decided):
+               test_every_kind_in_profile_is_decided,
+               test_task_declares_conditional_steps,
+               test_task_declaring_non_conditional_is_refused):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_plan_steps: {PASS}/{total} 통과")
