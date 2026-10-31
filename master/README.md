@@ -107,7 +107,7 @@ MCP가 없으면 같은 정본 `work.conductor.snapshot()`·`set_worker()`를 �
 | `work/pyskel.py` | `.py` 골조의 동결·스텁 잔존·구문 — 층1 의 Python 판 (`#695`) |
 | `work/tdd_dryrun.py` | TDD 드라이런 하니스 — 원전 이식(`#145`). [주의] 진입점 없음 — 처분은 `#234`·`#232` |
 | `redmine.py` | Redmine 이슈 조회·생성·**갱신**(노트·상태·진척·마일스톤·부모·우선순위·제목·본문 — `#752`). 키는 마스터에만 있고 응답·로그에 내보내지 않는다 |
-| `plan_block.py` | Redmine 이슈 본문 안 **플랜 영역**(`<!-- ax:plan:begin v=1 -->` ~ `<!-- ax:plan:end -->`) 읽기/쓰기 (`#826` T1). 태그 사이만 다루고 영역 밖 본문은 바이트 그대로 둔다. 형식이 어긋나면 고쳐 읽지 않고 `PlanError` 로 거절한다. 상태 전이 규칙은 여기 없다(T2) |
+| `plan_block.py` | Redmine 이슈 본문 안 **플랜 영역**(`<!-- ax:plan:begin v=N -->` ~ `<!-- ax:plan:end -->`) 읽기/쓰기 (`#826` T1). 형식 v2(`#857`)는 「단계」 칸(조건부 단계 선언)을 더한다 — v1 본문은 그대로 읽고 쓰며, 단계를 선언할 때만 v2 로 올린다. 태그 사이만 다루고 영역 밖 본문은 바이트 그대로 둔다. 형식이 어긋나면 고쳐 읽지 않고 `PlanError` 로 거절한다. 상태 전이 규칙은 여기 없다(T2) |
 | `plan_state.py` | 플랜 태스크 **상태 전이 강제** (`#826` T2). 전이는 `transition` 하나 — 근거 없는 완료·사유 없는 차단/해당없음·선행 미완료 착수·완료 되돌리기를 `TransitionError` 로 거절한다. `violations` 는 사람이 고친 본문의 규칙 위반을 읽기만 한다 |
 | `plan_start.py` | 「일감 시작」 진입점 (`#826` T3). 이슈 본문으로 `no_spec`·`plan_needed`·`plan_invalid`·`plan_violations`·`resume`·`next`·`blocked`·`plan_done` 판정과 다음 행동 문장을 낸다. 판정만 하고 쓰지 않는다 — [중요] `plan_needed` 에서 구현으로 넘어가지 않는 것이 호출자 계약이다 |
 | `plan_steps.py` | 태스크 실행 7단계의 **해당 여부 판정** (`#826` T4). 프로필 `kind` 로 단계마다 실행·해당없음·조건부와 사유를 낸다 — code 는 2·4·6 해당없음, unreal 은 2·4·6 조건부. [중요] 빈·모르는 kind 와 `index_only` 는 `StepError` 로 거절한다(빈 값을 unreal 로 읽지 않는다) |

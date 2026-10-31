@@ -33,6 +33,15 @@ def _deps_of(raw) -> list[str]:
     return [str(d).strip() for d in raw if str(d).strip()]
 
 
+def _steps_of(raw) -> list[int]:
+    """「단계」 선언 — 목록(`[4, 6]`) 또는 「4·6」. 1~7 밖이면 `plan_block` 이 거절한다."""
+    if raw in (None, "", PB.NO_DEPS, []):
+        return []
+    if isinstance(raw, (str, int)):
+        return PB._steps(str(raw))
+    return PB._steps("·".join(str(x) for x in raw))
+
+
 def _default_getter(issue_id):
     from master import redmine
     return redmine.get_issue(issue_id)
@@ -79,7 +88,8 @@ def start(issue_id, *, project: str = "", getter=None, kind_of=None, active=None
 def set_plan(issue_id, tasks: list, why: str, *, getter=None, updater=None) -> dict:
     """플랜을 만들거나 태스크를 추가·편집한다. `tasks` 는 **원하는 전체 목록**(표 순서)이다.
 
-    각 항목: `id`·`goal` 필수, `target`·`deps`(목록 또는 「T1·T2」)·`check` 선택.
+    각 항목: `id`·`goal` 필수, `target`·`deps`(목록 또는 「T1·T2」)·`check`·`steps`(조건부 단계 선언,
+    목록 또는 「4·6」 — v2) 선택.
     `state`·`evidence` 를 실으면 거절한다 — 상태는 `transition` 으로만 바뀐다.
     """
     if not (why or "").strip():
@@ -104,7 +114,7 @@ def set_plan(issue_id, tasks: list, why: str, *, getter=None, updater=None) -> d
         new_tasks.append(PB.Task(tid, prev.state if prev else PS.WAITING, goal,
                                  str(raw.get("target") or "").strip(), _deps_of(raw.get("deps")),
                                  str(raw.get("check") or "").strip(),
-                                 prev.evidence if prev else ""))
+                                 prev.evidence if prev else "", _steps_of(raw.get("steps"))))
     kept = {t.id for t in new_tasks}
     dropped = [t for t in old.values() if t.id not in kept]
     started = [t.id for t in dropped if t.state != PS.WAITING]

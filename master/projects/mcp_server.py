@@ -1075,7 +1075,8 @@ def plan_start_tool(issue_id: int, project: str = "") -> str:
 def plan_set_tool(issue_id: int, tasks: list[dict], why: str) -> str:
     """이슈 본문의 플랜 영역을 등록하거나 태스크를 추가·편집한다 (`#826`).
 
-    `tasks` 는 원하는 **전체 목록**(표 순서): 항목마다 `id`·`goal` 필수, `target`·`deps`·`check` 선택.
+    `tasks` 는 원하는 **전체 목록**(표 순서): 항목마다 `id`·`goal` 필수, `target`·`deps`·`check`·
+    `steps`(이 태스크가 하는 조건부 단계 번호, 예 `[4, 6]` — 형식 v2) 선택.
     [중요] `state`·`evidence` 는 받지 않는다 — 새 태스크는 「대기」, 기존 태스크는 본문 값 유지.
     시작된 태스크는 뺄 수 없다. `why` 는 노트로 남는다(필수).
     """

@@ -105,7 +105,8 @@ def test_bad_formats_are_refused():
         "끝 태그만": "x\n" + end + "\n",
         "시작 태그만": "x\n" + begin + "\n" + TABLE,
         "끝이 앞": end + "\n" + begin + "\n" + TABLE,
-        "모르는 버전": BODY.replace("v=1", "v=2"),
+        "모르는 버전": BODY.replace("v=1", "v=9"),
+        "v2 태그에 v1 머리줄": BODY.replace("v=1", "v=2"),
         "머리줄 다름": BODY.replace("| 근거 |\n|---", "| 메모 |\n|---"),
         "구분줄 없음": BODY.replace("|---|---|---|---|---|---|---|\n", ""),
         "칸 수 다름": BODY.replace("| 거절 검사 | |", "| 거절 검사 |"),
@@ -139,6 +140,48 @@ def test_append_creates_region():
     check("빈 본문에도 붙인다", PB.parse(out).task("T1").goal == "목표", out)
 
 
+TABLE_V2 = ("| ID | 상태 | 목표 | 대상 | 단계 | 선행 | 검증 | 근거 |\n"
+            "|---|---|---|---|---|---|---|---|\n"
+            "| T1 | 완료 | 클래스 추가 | Source/A.h | 4 | — | 빌드 | abc |\n"
+            "| T2 | 대기 | 어셋 | — | 2·6 | T1 | 에디터 | |\n")
+BODY_V2 = HEAD + "<!-- ax:plan:begin v=2 -->\n" + TABLE_V2 + "<!-- ax:plan:end -->\n"
+
+
+def test_v2_reads_steps():
+    plan = PB.parse(BODY_V2)
+    check("v2 를 읽는다", plan is not None and plan.version == 2)
+    check("단계를 숫자 목록으로", plan.task("T2").steps == [2, 6], str(plan.task("T2")))
+    swapped = PB.parse(BODY_V2.replace("| 2·6 |", "| 6·2 |"))
+    check("순서가 달라도 같은 집합 — 정렬해 읽는다", swapped.task("T2").steps == [2, 6])
+    check("쓸 때는 정렬된 기준 형식", "| 2·6 |" in PB.replace(BODY_V2, swapped.tasks))
+    check("단계 — 는 빈 목록", PB.parse(BODY_V2.replace("| 4 |", "| — |")).task("T1").steps == [])
+    for bad in ("8", "0", "x", "4·9"):
+        check(f"단계 {bad!r} 거절", bool(_err(lambda b=bad: PB.parse(BODY_V2.replace("| 4 |", f"| {b} |")))))
+
+
+def test_v2_roundtrip_and_v1_untouched():
+    for nl in ("\n", "\r\n"):
+        body = BODY_V2.replace("\n", nl)
+        check(f"v2 왕복 바이트 같음 ({nl!r})", PB.replace(body, PB.parse(body).tasks) == body)
+    v1 = PB.parse(BODY)
+    check("[중요] v1 본문은 단계 없이 고치면 v1 그대로", "v=1" in PB.replace(BODY, v1.tasks))
+    v1.task("T2").steps = [4]
+    out = PB.replace(BODY, v1.tasks)
+    check("단계를 선언하면 v2 로 올린다", "<!-- ax:plan:begin v=2 -->" in out and "v=1" not in out, out)
+    plan = PB.parse(out)
+    check("올린 뒤 다시 읽힌다", plan.version == 2 and plan.task("T2").steps == [4])
+    check("올려도 영역 밖은 그대로", out.split("<!-- ax:plan:begin")[0] == BODY.split("<!-- ax:plan:begin")[0]
+          and out.split(PB.END_TAG)[1] == BODY.split(PB.END_TAG)[1])
+    check("새 플랜은 v2 로 붙인다", "v=2" in PB.append("## 스펙\n", [PB.Task("T1", "대기", "x")]))
+
+
+def test_render_v1_refuses_steps():
+    check("v1 표에 단계를 쓰려 하면 거절",
+          bool(_err(lambda: PB.render([PB.Task("T1", "대기", "x", steps=[4])], version=1))))
+    check("1~7 밖 단계는 렌더 거절",
+          bool(_err(lambda: PB.render([PB.Task("T1", "대기", "x", steps=[9])]))))
+
+
 def test_render_refuses_unknown_state():
     check("모르는 상태는 쓰지 않는다",
           bool(_err(lambda: PB.render([PB.Task("T1", "진행", "x")]))))
@@ -154,6 +197,9 @@ def main() -> int:
                test_bad_formats_are_refused,
                test_replace_needs_region_append_needs_none,
                test_append_creates_region,
+               test_v2_reads_steps,
+               test_v2_roundtrip_and_v1_untouched,
+               test_render_v1_refuses_steps,
                test_render_refuses_unknown_state):
         fn()
     total = PASS + FAIL

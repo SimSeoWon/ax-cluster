@@ -88,6 +88,18 @@ def test_set_keeps_states_and_evidence():
     check("문자열 선행도 읽는다", plan.task("T3").deps == ["T1", "T2"])
 
 
+def test_set_steps_v2():
+    iss = FakeIssue(SPEC)
+    tasks = [{"id": "T1", "goal": "클래스 추가", "steps": [4]},
+             {"id": "T2", "goal": "어셋", "steps": "6·2", "deps": ["T1"]}]
+    PT.set_plan(1, tasks, "단계 선언", getter=iss.get, updater=iss.update)
+    plan = PB.parse(iss.body)
+    check("단계 선언이 v2 로 들어간다", plan.version == 2 and plan.task("T1").steps == [4]
+          and plan.task("T2").steps == [2, 6], str(plan))
+    check("범위 밖 단계 거절", bool(_err(lambda: PT.set_plan(
+        1, [{"id": "T1", "goal": "x", "steps": [8]}], "x", getter=iss.get, updater=iss.update))))
+
+
 def test_set_refuses_state_and_bad_input():
     iss = FakeIssue(SPEC)
     for bad in ([{"id": "T1", "goal": "x", "state": "완료"}],
@@ -170,6 +182,7 @@ def test_start_adds_steps():
 def main() -> int:
     for fn in (test_set_creates_plan,
                test_set_keeps_states_and_evidence,
+               test_set_steps_v2,
                test_set_refuses_state_and_bad_input,
                test_set_cannot_drop_started_task,
                test_transition_writes_and_reports_next,
