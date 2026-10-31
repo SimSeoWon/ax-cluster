@@ -83,7 +83,7 @@ Windows session-0 isolation is an OS boundary, not a setting. Everything below f
 
 | | Notes |
 |---|---|
-| `UnrealEditor-Cmd` — commandlets, **build, `RunTests`** | Headless, session 0 is fine. This opens layer-3 verification to master control. [완료] Remote builds run here (`run_build_on_workshop` → `Build.bat`); the resident completed claim → UE5 build → `submit 200` with no human input on 2026-09-12 (report 63) |
+| `UnrealEditor-Cmd` — commandlets, **build, `RunTests`** | Headless, session 0 is fine. This opens layer-3 verification to master control. [완료] Remote builds run here, driven by the master over SSH (`run_build_on_workshop` → `Build.bat`). (The 2026-09-12 resident build daemon, report 63, was withdrawn 2026-10-31 — `#860`.) |
 | `git` operations in the checkout | On PATH |
 | `gjc`, `node`, any CLI | Once `gjc` is installed |
 | Read/write files, inspect state | |
@@ -106,20 +106,16 @@ a supervisor. (Same call the master made discarding `process_lifecycle.py` for s
 
 Detail: `~/ax-cluster/docs/5_5-project-isolation.md` §5.5.4-⑥.
 
-### Resident tasks — `AxClaimer` removed (#320), `AxWorker` / `AxConductor` now (#405)
+### No resident daemon — only the on-demand `AxConductor` launcher (user 2026-10-31, #860)
 
-A Scheduled Task (`AxClaimer_NS`) used to wake a resident claimer every 5 min (#204,
-2026-08-18); it was torn down 2026-08-27 (#320). Since `#405` residency is not a manual step:
-`master.client deliver`/`update` registers or removes it per
-`client/init/residency.py::desired_state()` —
+`AxClaimer` was removed by #320 (2026-08-27). `AxWorker` (#404/#405, a build daemon) was withdrawn
+2026-10-31: the master drives builds over SSH (`run_build_on_workshop`). What remains:
 
-    AxWorker[_<프로젝트>]      worker + UE5 + mounted unreal project · 5 min · build jobs
-    AxConductor_<프로젝트>     codex conductor launcher (/IT /RL LIMITED) — also for kind: code
-                               projects, which get no build resident
+    AxConductor_<프로젝트>     codex conductor launcher (/IT /RL LIMITED) — started by the master
+                               with `schtasks /run` only when dispatching; not resident
 
-Code(infer) work still arrives as a **master-driven SSH push**; builds go through
-`layer3_verify.run_build_on_workshop`. [주의] `.ax\logs\claimer_*.log` from the old resident
-era is historical.
+[주의] Until #860 removes the registration code, delivering a mounted unreal project can
+re-register `AxWorker`. If you see it, it is a leftover, not the design.
 
 🔴 [중요] **After a reboot `janus` must log in** (console or RDP 3389). `/IT` tasks need an
 interactive logon and this box has no auto-logon (`AutoAdminLogon` absent) — without it the

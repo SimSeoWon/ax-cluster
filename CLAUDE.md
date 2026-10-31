@@ -126,7 +126,8 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   🔴 [중요] **Write authority under 정본 7단계**: the **requester** owns `task/<work>/base`
   (골조), the **worker** commits its piece to its own sub-branch off that base (⑸), and the
   master creates those sub-branches and integrates on approval (⑷·⑺). What still holds without
-  qualification: **the master never touches `main`** and never builds.
+  qualification: **the master never touches `main`**, and it never builds **locally** — builds run on
+  the worker, driven by the master over SSH (`run_build_on_workshop`; 사용자 확정 2026-10-31, `#860`).
   [완료] **⑷⑸⑹ are live** (measured 2026-09-04 01:28→01:30: **4/4 · 0 failed · 1m38s**).
   Sub-branch per piece, the worker commits its pair (`.h`+`.cpp`) to it, the piece closes at that
   commit, and when all pieces are terminal the queue posts a Redmine `[리뷰 요청]` issue to the
@@ -379,10 +380,12 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update
 
 [중요] **승인 뒤는 한 호출이다** (원전 6단계 동등, 2026-08-21): `review.finalize_work(confirm=True)` 가 ①`main` `--no-ff` 머지+push ②Redmine 기재 + **이슈를 「완료」로 닫는다**(머지 커밋 해시 · 사용자 2026-09-04 *"레드마인 닫고 메인에 머지해야지"* — 이 호출 자체가 승인으로만 도는 자리라 자동으로 닫히는 것이 아니다) ③**도달 가능한 브랜치 삭제** ⑤`merge_status`→`merged` 를 이어서 한다. `confirm=False`(기본)는 **통합만 하고 멈추고** 사람이 실행할 명령을 돌려준다. [주의] 순서가 계약이다 — 정리는 **머지 뒤**여야 도달 가능 판정이 참이 된다.
 
-[중요] **상주 데몬은 build 만 집는다** (`#404`, 2026-09-12). `#320`(2026-08-27)이 걷은 claimer 를
-`master/work/worker_daemon.py` 로 되살려 `.2` 세션 1 에서 claim → UE5 빌드 → submit 을 사람 개입
-없이 완주했다. **추론(code) 조각은 여전히 마스터가 SSH 로 민다** — 데몬의 추론 경로는 폐기된
-`carry`/`manifest` 위에 있어 들어냈다.
+🔴 [중요] **워커·요청자에 상주 데몬은 없다 — 서버(.57)가 SSH 로 총괄한다** (사용자 확정 2026-10-31,
+`#860`). 정본 ⑤ 는 「서버가 다음 조각을 배정한다」. `#320`(08-27)이 걷은 상주를 `#404`(09-12)가
+`.2` 빌드 전용으로 되살렸지만 **철회됐다** — 그 복원을 「기존 자산」으로 다시 쓰지 않는다(2026-10-31
+`#857` T4 가 그렇게 되돌아갔다). 로그인 세션이 필요한 일은 서버가 SSH 로 `schtasks /run`(/IT 런처)을
+그때만 건다. [주의] 배달 코드의 상주 등록 철거는 `#860` 진행 중 — 그 전에는 unreal 마운트 때 `.2` 에
+`AxWorker` 가 다시 등록될 수 있다. 보이면 잔재이지 설계가 아니다.
 [완료] **파견은 마스터 유닛이 잇는다** (`#340`, `c33316e`·`9cc73d9`): 골조 push 이벤트·등재 →
 `ax-dispatch.path` → 파견 → 조각 종결 → `.33` 공지.
 🔴 [중요] **사람 게이트는 둘이다 — ⑺ 통합 앞과 finalize(`main` 머지)** (정본 7단계, 사용자 확정

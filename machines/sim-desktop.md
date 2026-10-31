@@ -163,11 +163,10 @@ where today's code differs, that difference is a defect, not a variant:
                     완료 훅 기록만 믿지 말고 큐의 terminal 상태를 함께 대조한다.
           **자기 서브 브랜치에 커밋**하고                            [완료] 라이브 2026-09-03
           (끝나면 `main` 복귀 — 체크아웃된 브랜치는 정리에서 빠진다)  [완료] 실측
-          🔴 **끝내고 다음 작업을 요청한다**   [완료] 라이브 2026-09-12 — `.2` 상주가
-                 claim → UE5 빌드 → `submit 200` 을 **사람 개입 0** 으로 완주했다.
-                 [주의] **build 한정**이다 — 추론(code)은 마스터 push 가 그대로 맡는다
-                 (데몬의 추론 경로는 폐기된 `carry`/`manifest` 위에 있어 들어냈다).
-                 `#404`·`#405`·`#407` · 리포트 63
+          🔴 **서버가 끝난 것을 확인하고 다음 조각을 배정한다** (사용자 확정 2026-10-31 —
+                 종전 「워커가 다음 작업을 요청」(pull)은 폐기). 워커·요청자에는 **상주 데몬이
+                 없다** — 서버(.57)가 SSH 로 총괄한다(`#860`). [주의] `#404`(09-12)가 `.2` 에
+                 되살린 빌드 상주는 철회됐다 — 리포트 63 은 이력이다
     6 모든 서브태스크가 끝나면 **요청한 `.33` 에 전달**               [완료] Redmine `[리뷰 요청]`
           이슈가 실제로 발행된다 (`#350`·`#352`·`#354`) · `.33` 훅이 **세션 시작과 매 턴** 고지
           🔴 [완료] **라이브 완주 2026-09-10 23:12** — `work_completion.py` 훅(`asyncRewake`)이
@@ -314,7 +313,7 @@ anywhere in `Source/`). §4.3's *"hallucinations that compile"* are catchable **
 code — writing tests is a project decision, parked in the milestone's 「예정」.
 
 🔴 [중요] **Parallel is the default** (사용자 확정 2026-09-03). 정본 ⑸: *"작업을 전달받은
-**워커들은** … **각각** 지정된 서브 브랜치에 커밋하고 작업을 마치고 **다음 작업을 요청**"* —
+**워커들은** … **각각** 지정된 서브 브랜치에 커밋"*(다음 조각은 서버가 배정) —
 **splitting per class exists for this.** Measured live 2026-09-03: pieces went to `.2` **and**
 `.43` in one round. [주의] `autodispatch` now passes `parallel=True` **explicitly** — it used to
 pass nothing, so the real path was always serial and no one could see it.
@@ -405,9 +404,9 @@ Shared details and evidence: [`../docs/windows-codex-remote.md`](../docs/windows
 | IP | Machine | Login | Role | Reachable from here |
 |---|---|---|---|---|
 | **.57** | **sim-desktop** — this box | `sim` | **Master**: orchestration, RAG index, ontology/graph, task queue, broker, project registry | — |
-| **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) |  **Worker** *and* inference endpoint #2 (gemma4:e4b pinned; user 2026-10-03). **The only machine that can run the layer-3 verdict unattended** (UE5 5.8). 🔴 **정본 ⑸: this box commits its piece to its own sub-branch and then asks for the next task** (사용자 확정 2026-09-02). The master drives builds over SSH (`run_build_on_workshop` calls `Build.bat` directly, so **no Python payload is needed to build**). Resident `worker_daemon` restored for **build only** (`#404`, live 2026-09-12 in session 1); inference (code) is still master push | **`ssh janus@192.168.0.2`** [완료] passwordless · RDP 3389 · Ollama 11434 |
+| **.2** | Windows + **RTX 3060**, UE5 installed<br>host `DESKTOP-HV0I6DL` | **`janus`**<br>(admin) |  **Worker** *and* inference endpoint #2 (gemma4:e4b pinned; user 2026-10-03). **The only machine that can run the layer-3 verdict unattended** (UE5 5.8). 🔴 **정본 ⑸: this box commits its piece to its own sub-branch; the master assigns the next piece** (사용자 확정 2026-10-31). The master drives builds over SSH (`run_build_on_workshop` calls `Build.bat` directly, so **no Python payload is needed to build**). **No resident daemon** — the master drives builds and pieces over SSH; session-1 work via `schtasks /run` (`AxConductor`). `#404`'s build resident was withdrawn 2026-10-31 (`#860`) | **`ssh janus@192.168.0.2`** [완료] passwordless · RDP 3389 · Ollama 11434 |
 | **.33** | Windows 10.0.26200, RTX 3080 10GB, **user main work PC**<br>host `DESKTOP-FU2GNGL` | **`user`** | **Game requester** and Unreal entry point. **AXCluster worker** in `C:\trunk\AXCluster` while mounted (user 2026-10-03); master is AXCluster requester. Roles are per project; `dispatch` only narrows availability. `gemma4:e4b` resident verified; third broker endpoint active; three concurrent inference requests verified (2026-10-03). Dirty check before writes, keep game trees separate. | **`ssh user@192.168.0.33`** passwordless · RDP 3389 · Ollama 11434 |
-| **.43** | **BC-250 #1** — Fedora, headless | `sim` |  **Worker** *and* inference endpoint #1. **35B residency was REMOVED 2026-08-17 (user decision ⓐ, measured #105)** — plain sequential inference grew GPU(GTT) allocations ~120MB/cycle and collapsed the node in 4 minutes; idle did not release it; only `systemctl restart ollama` did (NOPASSWD exists for it). Now pins **gemma4:e4b (~5GB, ~10GB headroom)** — the synth model, which also kills the old fallback-OOM hazard. The 35B stays on disk, unpinned. **e4b also fills the agentic-driver seat (#106 closed 2026-08-17)** — tool-calling gates 4/4 ×3 runs + Korean 3/3, 30-cycle sustained 30/30 with no #105-style accumulation (~-5MB/cycle vs 35B's -120). Fallback: `qwen3:8b` (4/4, lives on `.2`). Has the project clone at `~/trunk/ModularStage` — no longer stateless. 🔴 [중요] **This box is a committing worker too, exactly like `.2`** (사용자 정정 2026-09-02): **the memory limit decides only *which model* it may run locally, never whether it may commit**, and **building was never the worker's job** (the origin's per-task verify is static-only; UE5 belongs to the integration gate). I had blocked its commits on the strength of the "one writer" misquote and then re-justified it with memory/UE5 — neither reason holds. Inference it cannot host locally goes through the broker (8102). `worker_daemon` was restored by `#404` (build only; without UE5 this box has no type to claim — `types_for`), so code pieces still arrive by master push. Caps still come measured from `.ax/config.json` | `ssh sim@192.168.0.43` [완료] passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
+| **.43** | **BC-250 #1** — Fedora, headless | `sim` |  **Worker** *and* inference endpoint #1. **35B residency was REMOVED 2026-08-17 (user decision ⓐ, measured #105)** — plain sequential inference grew GPU(GTT) allocations ~120MB/cycle and collapsed the node in 4 minutes; idle did not release it; only `systemctl restart ollama` did (NOPASSWD exists for it). Now pins **gemma4:e4b (~5GB, ~10GB headroom)** — the synth model, which also kills the old fallback-OOM hazard. The 35B stays on disk, unpinned. **e4b also fills the agentic-driver seat (#106 closed 2026-08-17)** — tool-calling gates 4/4 ×3 runs + Korean 3/3, 30-cycle sustained 30/30 with no #105-style accumulation (~-5MB/cycle vs 35B's -120). Fallback: `qwen3:8b` (4/4, lives on `.2`). Has the project clone at `~/trunk/ModularStage` — no longer stateless. 🔴 [중요] **This box is a committing worker too, exactly like `.2`** (사용자 정정 2026-09-02): **the memory limit decides only *which model* it may run locally, never whether it may commit**, and **building was never the worker's job** (the origin's per-task verify is static-only; UE5 belongs to the integration gate). I had blocked its commits on the strength of the "one writer" misquote and then re-justified it with memory/UE5 — neither reason holds. Inference it cannot host locally goes through the broker (8102). No resident daemon (user 2026-10-31, `#860`) — pieces arrive by master SSH push. Caps still come measured from `.ax/config.json` | `ssh sim@192.168.0.43` [완료] passwordless · Ollama 11434 · no RDP (headless since 2026-08-05) |
 | — | BC-250 #2 | — |  **Bazzite gaming machine — NOT an inference node.** Converting it means giving up that machine. **Never assume a 2nd board exists.** | n/a |
 
 ### `.33` — the main work PC has its own guide
@@ -442,7 +441,7 @@ SSH PATH trap — lives in **[`win-worker-2.md`](win-worker-2.md)**, which is al
 
 ### Roles — `driven` (can we reach it) ≠ `role` (may we dispatch to it)
 
-    worker      claims from the queue and implements   .2 · .43 · .33 (AXCluster only)
+    worker      implements pieces the master assigns over SSH   .2 · .43 · .33 (AXCluster only)
     requester   registers, verifies, gives feedback    .33 (games); master (AXCluster)
 
 **Every worker holds the project clone and judges from source** — that is the point, and all
