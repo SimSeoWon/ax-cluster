@@ -1,26 +1,19 @@
-"""claimer 상주 등록 (`#255`) — **두 기계가 한 선언에서 나온다.**
-
-[중요] **실물과 대조해 만들었다** (2026-08-22). 문서만 보고 짜면 틀린다 — 실제로 두 번 틀렸다:
-
-    ⓐ `pythonw` 가 **PATH 에 없다** (`where pythonw` 빈 값 · 실물은 `%LOCALAPPDATA%` 아래)
-    ⓑ `schtasks /tr` 은 전체를 한 인자로 받고 **안쪽 인용을 `\\"` 로 이스케이프**해야 한다.
-      그냥 주니 cmd 가 두 번째 토큰을 옵션으로 읽어 *"잘못된 인수/옵션"* 으로 거부했다
-
-그리고 임시 작업(`AxProbeQuote`)으로 형태를 확인한 뒤 기존 `AxClaimer` 의 Task_To_Run 과
-**글자까지 대조**했다 — 같았다.
-
-`python3 master/test_residency.py`
-"""
+"""#861: 상주 금지, 관측 실패 구분, 로그인 런처와 안전한 옛 등록 해제."""
 from __future__ import annotations
 
-import sys
-import types
+from contextlib import redirect_stdout
+from dataclasses import replace
+from io import StringIO
 from pathlib import Path
+import sys
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from client.init import residency as R                              # noqa: E402
-from master.client.bundle import HostFacts                           # noqa: E402
+from client.init import residency as R
+from master.client import bundle
+from master.client import __main__ as cli
+from master.client.bundle import HostFacts
 
 PASS = FAIL = 0
 
@@ -34,597 +27,160 @@ def check(name, cond, detail=""):
         print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
-def _f(*, windows, ue5="", path="/p/M"):
-    return HostFacts(host="h", user="u", path=path, driven="ssh", role="worker",
+def _f(*, windows, ue5="", role="worker", path="/p/NS"):
+    return HostFacts(host="h", user="u", path=path, driven="ssh", role=role,
                      os="windows" if windows else "linux", ue5=ue5, checkout_ok=True)
 
 
-def test_types_from_probe() -> None:
-    """[중요] 유형은 **probe 실측(`ue5`)** 에서 나온다 — 표로 들지 않는다."""
-    # 🔴 `#404`: 데몬에서 추론(code) 경로를 들어냈다 — 폐기된 carry/manifest 위에 있었다.
-    #    종전 값은 UE5 없는 기계에 `code` 를 신고했고, 그러면 **마스터 push 가 맡아야 할
-    #    태스크를 집어서 `unsupported-type` 으로 튕긴다.** 실물 등록에서 잡았다(`.43` cron 이
-    #    `--types=code` 였다). 그래서 집을 유형은 build 뿐이고, UE5 가 없으면 **없다.**
-    check("UE5 있으면 build", R.types_for(_f(windows=True, ue5="x")) == "build")
-    check("🔴 UE5 없으면 집을 유형이 없다 (켜면 헛돈다)", R.types_for(_f(windows=False)) == "")
+def test_no_combination_can_restore_residency():
+    for windows in (True, False):
+        for role in ("worker", "requester"):
+            for ue5 in ("", "x"):
+                f = _f(windows=windows, role=role, ue5=ue5)
+                for project, mounted in (("NS", "NS"), ("NS", "Other"), ("NS", "")):
+                    for flags in ({}, {"code": True}, {"index_only": True}):
+                        state = R.desired_state(project, mounted, f, **flags)
+                        check(f"상주 금지 {windows}/{role}/{ue5}/{mounted}/{flags}",
+                              state.required is False and "SSH" in state.reason, state)
+                check("등록 명령을 만들지 않는다", R.commands("NS", f) == [])
+                check("기동 명령을 만들지 않는다", R.ensure_commands("NS", f) == [])
+                check("깃발·종료·갱신 명령을 만들지 않는다",
+                      R.refresh_commands(f, force=True, pid=42) == [])
+                check("옛 상태를 갱신 대상으로 읽지 않는다",
+                      not R.needs_refresh({"running": 1, "stale": 1, "busy": 0}))
+    check("스탬프 없는 옛 호출도 금지", R.desired_state("NS", "NS").required is False)
+    check("blocked_reason도 같은 정책", R.blocked_reason("NS", "NS") == R.DECOMMISSIONED_REASON)
 
 
-def test_task_name_per_project() -> None:
-    """[중요] 한 기계에 둘이 설치될 수 있다(`#250`) → 이름이 갈려야 한다."""
-    # 🔴 개명 (`#405`): claimer 가 없어졌고 이 자리는 워커 데몬이다. 원본 주석의 경고
-    #    (*"바꾸면 기존 등록과 둘이 된다"*)는 `#320` 철거로 해소됐다 — 실측 2026-09-12
-    #    `.2` 에 `Ax*` 스케줄 작업 **0건**.
-    check("ModularStage 는 접미 없는 이름", R.task_name("ModularStage") == "AxWorker")
-    check("다른 프로젝트는 접미", R.task_name("NS") == "AxWorker_NS")
-    check("[중요] 두 이름이 다르다", R.task_name("NS") != R.task_name("ModularStage"))
+def test_plan_does_not_offer_a_daemon():
+    for win in (True, False):
+        f = _f(windows=win, ue5="x")
+        text = "\n".join(R.plan_lines("NS", f, mounted="NS"))
+        check("계획은 폐기 정책을 명시", R.DECOMMISSIONED_REASON in text, text)
+        check("계획은 등록·폴링 명령을 안내하지 않음",
+              "/sc minute" not in text and "*/5" not in text and "--types" not in text, text)
+        check("계획에서 로그인 런처는 Windows만 안내",
+              ("AxConductor_NS" in text) == win, text)
+        refreshed = "\n".join(R.refresh_plan_lines(f, {"running": 1, "stale": 1}))
+        check("구 갱신 계획도 폐기를 안내", R.DECOMMISSIONED_REASON in refreshed)
 
 
-def test_windows_command_shape() -> None:
-    """실물과 같은 형태여야 한다 — 인용이 이 함수의 핵심이다."""
-    c = dict(R.commands("ModularStage", _f(windows=True, ue5="x", path=r"E:\t\M"),
-                        python_path=r"C:\Py\pythonw.exe"))["register"]
-    check("schtasks /create /f (멱등)", "/create /f" in c, c)
-    check("5분 주기", "/sc minute /mo 5" in c, c)
-    check("[주의] 대화형 전용(/it) — 사람 PC 에 백그라운드 상주를 심지 않는다", "/it" in c, c)
-    check("권한 상승 없음(/rl LIMITED)", "/rl LIMITED" in c, c)
-    check("[중요] 안쪽 인용을 이스케이프한다", '\\"C:\\Py\\pythonw.exe\\"' in c, c)
-    check("스크립트도 이스케이프", "worker_daemon.py" in c and c.count('\\"') == 4, c)
-    check("유형이 붙는다", "--types=build" in c, c)
-    check("pythonw 를 쓴다 (콘솔 창 없음)", "pythonw" in c, c)
+def test_registration_observation_distinguishes_errors():
+    win, lin = _f(windows=True), _f(windows=False)
+    cases = [
+        (win, 0, "AX_RESIDENCY_PRESENT=1", True, True),
+        (win, 0, "AX_RESIDENCY_PRESENT=0", True, False),
+        (win, 0, "", False, None),
+        (win, 1, "AX_RESIDENCY_ERROR=Access denied", False, None),
+        (win, 255, "", False, None),
+        (lin, 0, "PATH=/usr/bin\n", True, False),
+        (lin, 0, "*/5 * * * * cd /p/NS && python old.py\n", True, True),
+        (lin, 1, "no crontab for sim", True, False),
+        (lin, 1, "permission denied", False, None),
+        (lin, 127, "crontab: command not found", False, None),
+        (lin, 255, "", False, None),
+    ]
+    for f, rc, text, known, present in cases:
+        state = R.registration_status(rc, text, f)
+        check(f"조회 결과를 구분 {f.windows}/{rc}/{text}",
+              state["known"] is known and state["present"] is present, state)
+    cmd = R.registration_query_command("NS", win)
+    check("Windows 전체 조회 실패를 숨기지 않음",
+          "Get-ScheduledTask -ErrorAction Stop" in cmd and "catch" in cmd, cmd)
+    check("Windows 부재를 명시적 표식으로 낸다",
+          "AX_RESIDENCY_PRESENT=0" in cmd and "AX_RESIDENCY_PRESENT=1" in cmd)
+    check("Linux 부재 메시지 언어·stderr를 고정",
+          R.registration_query_command("NS", lin) == "LC_ALL=C crontab -l 2>&1")
 
 
-def test_linux_command_preserves_path_line() -> None:
-    """[중요] **PATH 줄을 지키고 우리 줄만 갈아끼운다** — 실측: `.43` crontab 첫 줄이 PATH= 다."""
-    c = dict(R.commands("ModularStage", _f(windows=False, path="/home/sim/trunk/M")))["register"]
-    check("crontab -l 을 읽어서 다시 쓴다", "crontab -l" in c and "| crontab -" in c, c)
-    check("[중요] 우리 줄만 제외한다 (grep -vF 마커)", "grep -vF" in c, c)
-    check("[주의] 통째로 지우지 않는다", "crontab -r" not in c, c)
-    check("마커가 체크아웃 경로다", "/home/sim/trunk/M &&" in c, c)
-    check("5분 주기", "*/5 * * * *" in c, c)
-    check("출력을 버린다 (감시자 로그 폭증 방지)", ">/dev/null 2>&1" in c, c)
-
-
-def test_gate_is_mount_singularity_not_a_missing_axis() -> None:
-    """[중요] **막는 이유가 바뀌었다** (`#311`, 사용자 결정 ⓐ 2026-08-25).
-
-    종전 사유는 *"claim 에 프로젝트 축이 없다(`#248`)"* 였고 **낡았다** — `#248` 은 닫혔고
-    `ClaimReq.project` 가 있고 claimer 가 `#258` 로 태그를 붙인다. 실제 제약은 **마운트
-    단일성**(§5.5.2)이고, 비마운트 claim 은 거르는 것이 아니라 **거절**된다.
-    [주의] **낡은 사유를 지키는 테스트가 새 사실을 막는다** — 그래서 이 테스트를 갈아치웠다.
-    """
-    check("마운트와 같으면 막지 않는다", R.blocked_reason("M", "M") == "")
-    why = R.blocked_reason("NS", "ModularStage")
-    check("[중요] 다르면 막는다", bool(why), why)
-    check("[중요] 사유가 **거절**을 말한다 (거른다가 아니다)",
-          "거절" in why and "거른" not in why, why)
-    check("사유가 마운트 단일성을 든다", "§5.5.2" in why or "마운트를 따른다" in why, why)
-    check("[주의] 낡은 근거를 다시 들지 않는다 — 프로젝트 축은 있다",
-          "#248" not in why and "축이 없" not in why, why)
-    check("주기를 말해 「헛돈다」가 구체적이다", str(R.INTERVAL_MIN) in why, why)
-
-    lines = R.plan_lines("NS", _f(windows=False, ue5="x"), mounted="ModularStage")
-    check("계획에 그 사유가 찍힌다", any("지금 켜지 않는다" in l for l in lines), str(lines))
-    check("[중요] 계획이 **정본 문장 그대로**를 쓴다 (두 벌 금지)",
-          any(why in l for l in lines), str(lines))
-    ok = R.plan_lines("ModularStage", _f(windows=False, ue5="x"), mounted="ModularStage")
-    check("같은 프로젝트면 그 줄이 없다", not any("지금 켜지 않는다" in l for l in ok), str(ok))
-
-
-def test_claim_policy_matches_the_reason() -> None:
-    """[중요] **사유가 근거로 든 정책을 실제로 잰다** (`#311` 완료 조건 3).
-
-    문서만 있고 잰 것이 없어서 네 곳이 갈렸다. claim 이 `MOUNT` 가 아니게 되면 이 테스트가
-    깨지고, 그때는 `blocked_reason` 을 같이 고쳐야 한다 — 그것이 이 게이트의 요점이다.
-    """
-    import sys as _s
-    from pathlib import Path as _P
-    _s.path.insert(0, str(_P(__file__).resolve().parent.parent))
-    from master.task_queue import tagging as T
-    check("[중요] claim 은 MOUNT 정책이다 (비마운트를 거절한다)",
-          T.POLICY.get("POST /api/v1/tasks/claim") == T.MOUNT,
-          str(T.POLICY.get("POST /api/v1/tasks/claim")))
-    check("[주의] 태그를 요구한다 — 빈 태그도 거절",
-          T.requires_tag("POST", "/api/v1/tasks/claim"))
-    from master.task_queue.models import ClaimReq
-    check("[중요] 프로젝트 축이 실재한다 (사유가 그 부재를 들면 거짓이 된다)",
-          "project" in ClaimReq.model_fields, str(sorted(ClaimReq.model_fields)))
-
-
-def test_unregister_mirrors_register() -> None:
-    """[중요] **켜는 쪽과 멈추는 쪽이 같은 이름·같은 표식을 써야 한다** (`#311`).
-
-    ⓐ 는 「상주는 마운트를 따른다」이므로 이전이 늘 둘(켜기+멈추기)이다. 멈추는 쪽이 코드에
-    없어 손으로 쓰였고(실측 2026-08-25), 그러면 다음번에 작업 이름이 갈린다.
-    """
+def test_legacy_registration_cleanup_is_targeted():
     win = _f(windows=True)
-    reg = R.commands("NS", win, python_path=r"C:\py\pythonw.exe")[0][1]
-    unreg = R.unregister_commands("NS", win)[0][1]
-    name = R.task_name("NS")
-    check("[중요] 윈도우는 같은 작업 이름을 지운다",
-          f"/tn {name}" in reg and f"/tn {name}" in unreg, f"{reg}\n{unreg}")
-    check("강제 삭제다 (확인 프롬프트가 무인 실행을 막는다)", "/f" in unreg, unreg)
-
-    lnx = _f(windows=False)
-    reg_l = R.commands("NS", lnx)[0][1]
-    unreg_l = R.unregister_commands("NS", lnx)[0][1]
-    marker = R.cron_marker(lnx)
-    check("[중요] 리눅스는 같은 표식으로 찾는다",
-          marker in reg_l and marker in unreg_l, f"{reg_l}\n{unreg_l}")
-    check("[주의] 우리 줄만 뺀다 — crontab 을 통째로 쓰지 않는다 (PATH 줄 보존)",
-          "grep -vF" in unreg_l and "echo" not in unreg_l, unreg_l)
-    check("표식이 체크아웃 경로다 (프로젝트별로 갈린다)", lnx.path in marker, marker)
-    other = R.cron_marker(_f(windows=False, path="/home/sim/trunk/Other"))
-    check("[중요] 다른 프로젝트의 줄은 안 걸린다", other != marker, f"{marker} vs {other}")
+    check("ModularStage의 기존 작업 이름 보존", R.task_name("ModularStage") == "AxWorker")
+    check("프로젝트별 기존 작업 이름 보존", R.task_name("NS") == "AxWorker_NS")
+    unreg = dict(R.unregister_commands("NS", win))["unregister"]
+    check("기존 작업 이름만 삭제", unreg == "schtasks /delete /f /tn AxWorker_NS", unreg)
+    lin = _f(windows=False, path="/home/sim/trunk/NS")
+    other = _f(windows=False, path="/home/sim/trunk/Other")
+    unreg_l = dict(R.unregister_commands("NS", lin))["unregister"]
+    check("우리 cron 표식만 제거", R.cron_marker(lin) in unreg_l and "grep -vF" in unreg_l)
+    check("PATH와 다른 cron 보존", "crontab -r" not in unreg_l and "echo" not in unreg_l)
+    check("다른 프로젝트 표식과 분리", R.cron_marker(other) != R.cron_marker(lin))
 
 
-def test_python_probe() -> None:
-    """[중요] 경로를 **박지 않고 잰다** — `Python310` 같은 버전 디렉토리가 들어간다."""
-    check("PATH 먼저 본다", R.PYTHONW_PROBE.startswith("where pythonw"))
-    check("LOCALAPPDATA 후보를 훑는다", "%LOCALAPPDATA%" in R.PYTHONW_PROBE)
-    check("버전을 와일드카드로", "Python3*" in R.PYTHONW_PROBE)
-    out = ("C:\\Users\\janus\\AppData\\Local\\Programs\\Python\\Python310\\pythonw.exe\n" * 2)
-    check("출력에서 한 줄을 고른다",
-          R.parse_python_probe(out).endswith("pythonw.exe"), R.parse_python_probe(out))
-    check("[주의] 못 찾으면 빈 문자열 (추측하지 않는다)",
-          R.parse_python_probe("INFO: 파일을 찾을 수 없습니다") == "")
+def test_python_probe_and_conductor_contract():
+    check("Python 경로는 PATH와 LOCALAPPDATA 실측",
+          R.PYTHONW_PROBE.startswith("where pythonw")
+          and "%LOCALAPPDATA%" in R.PYTHONW_PROBE and "Python3*" in R.PYTHONW_PROBE)
+    check("실측 Python 경로 파싱",
+          R.parse_python_probe("noise\nC:\\Py\\pythonw.exe\n") == r"C:\Py\pythonw.exe")
+    check("경로 미확인은 추측하지 않음", R.parse_python_probe("missing") == "")
+    check("콘솔 관측용 경로 변환 보존",
+          R.console_python(r"C:\Py\pythonw.exe") == r"C:\Py\python.exe")
+    win = _f(windows=True, path=r"C:\trunk\NS")
+    cmd = dict(R.conductor_register_commands("NS", win, python_path=r"C:\Py\pythonw.exe"))[
+        "conductor-register"]
+    check("로그인 세션 런처는 유지", "/tn AxConductor_NS " in cmd, cmd)
+    check("LIMITED /IT 계약 보존", "/it /rl LIMITED" in cmd)
+    check("런처는 폴링 데몬이 아님",
+          "session1_conductor.py" in cmd and "worker_daemon.py" not in cmd
+          and "/sc minute" not in cmd)
+    check("인터프리터와 스크립트 인용 보존", cmd.count('\\"') == 4, cmd)
+    check("런처 실행 명령을 데몬 기동과 구분",
+          R.conductor_run_command("NS", win) == "schtasks /run /tn AxConductor_NS")
+    check("Linux에는 Windows 런처 없음",
+          R.conductor_register_commands("NS", _f(windows=False)) == [])
 
 
-# ── 배달 뒤 갱신 (#277) ────────────────────────────────────────────────────────
-
-def test_probe_command_never_uses_pythonw() -> None:
-    """[중요] **`pythonw` 는 콘솔이 없어 stdout 이 사라진다** — 관측은 출력이 목적이다."""
-    w = _f(windows=True, ue5="x", path=r"E:\t\NS")
-    c = R.probe_command(w, python_path=r"C:\P\Python310\pythonw.exe")
-    check("pythonw 를 쓰지 않는다", "pythonw.exe" not in c, c)
-    check("콘솔판으로 바꾼다", "python.exe" in c, c)
-    check("console_python 이 접미만 바꾼다",
-          R.console_python(r"C:\P\Python310\pythonw.exe") == r"C:\P\Python310\python.exe")
-    check("이미 콘솔판이면 그대로", R.console_python("/usr/bin/python3") == "/usr/bin/python3")
-    check("[중요] 인터프리터를 박지 않는다 (`.2` 는 PATH 에 없다)",
-          r"C:\P\Python310" in c, c)
-    lin = R.probe_command(_f(windows=False, path="/p/NS"))
-    check("리눅스는 절대경로 인터프리터", "/usr/bin/python3" in lin, lin)
-    check("[주의] 판정 로직이 명령줄에 없다 (파이썬 안에 있다)",
-          "--probe" in lin and "for /f" not in lin and "powershell" not in lin.lower(), lin)
-
-
-def test_probe_parse_distinguishes_unknown_from_false() -> None:
-    """[중요] **「모른다」와 「거짓」은 다르다** — 모르면 건드리지 않는다."""
-    st = R.parse_probe("running=1\nstale=0\nbusy=0\nboot_mtime=5\ncode_mtime=5\n잡음")
-    check("읽는다", st.get("running") == 1 and st.get("stale") == 0, str(st))
-    check("모르는 키는 버린다", "잡음" not in st)
-    check("stale=0 → 갱신 안 한다", not R.needs_refresh(st))
-    check("[중요] 빈 응답 → 갱신 안 한다 (모르는 것을 고치지 않는다)",
-          not R.needs_refresh(R.parse_probe("")))
-    check("[중요] stale 키가 없으면 갱신 안 한다",
-          not R.needs_refresh({"running": 1}))
-    check("stale=1 → 갱신한다", R.needs_refresh(R.parse_probe("stale=1")))
-    # [주의] 안 도는 것은 갱신 대상이 아니다 — 감시자가 새 코드로 띄운다
-    lines = R.refresh_plan_lines(_f(windows=False), R.parse_probe("running=0\nstale=0"))
-    check("상주 없음을 그렇게 말한다", any("상주 없음" in l for l in lines), str(lines))
-
-
-def test_kill_is_pid_targeted() -> None:
-    """[중요] **이름으로 죽이면 남의 프로젝트 상주까지 죽는다** — `#250` 이 깨진다."""
-    w = _f(windows=True, ue5="x", path=r"E:\t\NS")
-    f = _f(windows=False, path="/p/NS")
-    for facts, want, bad in ((w, "taskkill /f /pid 4242", "/im"),
-                             (f, "kill 4242", "pkill")):
-        cmds = dict(R.refresh_commands(facts, force=True, pid=4242))
-        check(f"pid 로 죽인다 (windows={facts.windows})", cmds["kill"] == want, cmds["kill"])
-        check(f"이름/패턴으로 죽이지 않는다 (windows={facts.windows})",
-              bad not in cmds["kill"], cmds["kill"])
-    # pid 를 모르면 강제 종료를 **건너뛴다**
-    cmds = dict(R.refresh_commands(f, force=True))
-    check("[중요] pid 를 모르면 죽이지 않는다", "kill 0" not in cmds["kill"]
-          and "pid 를 모른다" in cmds["kill"], cmds["kill"])
-    # 깃발은 언제나 먼저
-    order = [lbl for lbl, _ in R.refresh_commands(f, force=True, pid=1)]
-    check("깃발이 먼저, 강제 종료가 나중", order == ["flag", "kill"], str(order))
-    check("[주의] force 없이는 강제 종료가 없다",
-          [l for l, _ in R.refresh_commands(f)] == ["flag"])
-
-
-def test_claimer_state_is_process_based() -> None:
-    """[중요] **완료 조건 2** — 판정이 파일 해시가 아니라 **도는 프로세스**를 본다.
-
-    그리고 **완료 조건 4** — 옛 코드가 도는 상태를 재현해 잡는지 잰다.
-    """
-    import os
-    import tempfile
-    import time as _t
-    from master.work import worker_daemon as C
-
-    import shutil
-    root = Path(tempfile.mkdtemp())
-    # [주의] 쥔 잠금 핸들을 먼저 놓고 임시 루트를 지운다 — 실패·예외에도 (#776)
-    _held = None
-    try:
-        (root / ".ax" / "lib" / "axmaster").mkdir(parents=True)
-        (root / ".ax" / "config.json").write_text("{}", encoding="utf-8")
-        lib = root / ".ax" / "lib" / "axmaster" / "x.py"
-        lib.write_text("# v1", encoding="utf-8")
-
-        st = C.probe_state(root)
-        check("안 돌고 있으면 running=False", not st["running"])
-        check("[중요] 안 도는 것은 stale 이 아니다 (감시자가 새 코드로 띄운다)", not st["stale"])
-
-        # [중요] **실물처럼 잠금을 쥔다** — 도는 상주는 `worker_daemon.lock` 을 배타적으로 잡고 있다.
-        #    (종전 테스트는 스탬프만 쓰고 「돈다」로 가정했다. 그 계약은 2026-08-23 에 바뀌었다:
-        #    죽인 직후 신선한 `alive` 에 속지 않으려고 **잠금을 권위로** 삼았다.)
-        _held = C.acquire_singleton(root)
-        check("잠금을 쥐었다 (테스트 전제)", _held is not None)
-        C.write_boot_stamp(root); C.touch_alive(root)
-        st = C.probe_state(root)
-        check("부팅 스탬프 뒤 running", st["running"])
-        check("갓 배달된 코드로 떴으면 stale 아님", not st["stale"])
-        check("pid 를 남긴다 (강제 종료가 pid 로만 돌 수 있게)", st["pid"] == os.getpid())
-
-        # ── 옛 코드가 도는 상태 재현: 코드만 새로 놓는다 (프로세스는 그대로)
-        os.utime(lib, (_t.time() + 5, _t.time() + 5))
-        st = C.probe_state(root)
-        check("[중요] **옛 코드로 돌고 있음을 잡는다**", st["stale"],
-              f"boot={st['boot_mtime']} code={st['code_mtime']}")
-        check("근거를 함께 낸다", st["code_mtime"] > st["boot_mtime"])
-
-        # ── 진행 중 태스크를 죽이지 않는다 (완료 조건 3)
-        (root / ".ax" / C.BUSY_FILE).write_text("T1", encoding="utf-8")
-        check("처리 중을 말한다", C.probe_state(root)["busy"])
-        (root / ".ax" / C.BUSY_FILE).unlink()
-
-        # ── 깃발 계약
-        check("깃발이 없으면 False", not C.restart_requested(root))
-        (root / ".ax" / C.RESTART_FILE).write_text("1", encoding="utf-8")
-        check("깃발을 본다", C.restart_requested(root))
-        check("probe 가 그것도 보고한다", C.probe_state(root)["restart_pending"])
-        C.clear_restart(root)
-        check("치우면 사라진다", not C.restart_requested(root))
-
-        _held.close()                                  # 상주가 죽은 상태로 만든다
-        # ── [중요] **살아 있음의 권위는 잠금이다** (실측 2026-08-23 에 고친 자리)
-        #    처음엔 `fresh or locked` 였다 → 죽인 직후 60초 동안 「아직 돈다」로 읽혀 배달이
-        #    *"여전히 stale — 사람이 봐야 한다"* 를 냈다. 파일은 죽은 뒤에도 남는다.
-        C.touch_alive(root)                       # 신선한 alive, 그러나 잠금은 아무도 안 쥠
-        st = C.probe_state(root)
-        check("[중요] 잠금이 없으면 running=False (신선한 alive 에 속지 않는다)",
-              not st["running"], str(st))
-        check("[중요] 그래서 죽인 직후는 stale 이 아니다 (감시자가 새 코드로 띄운다)",
-              not st["stale"], str(st))
-        src_probe = (Path(__file__).resolve().parent / "work" / "worker_daemon.py").read_text(
-            encoding="utf-8")
-        check("`fresh or locked` 로 되돌아가지 않았다", "running = locked" in src_probe)
-        check("그 이유가 주석에 남아 있다", "죽인 직후" in src_probe)
-        # ── 먹통(잠금은 쥐었는데 루프가 멈췄다)은 **다른 병**이다
-        check("hung 을 낸다", "hung" in st)
-        from client.init import residency as _R
-        lines = _R.refresh_plan_lines(_f(windows=False), {"stale": 0, "running": 1, "hung": 1,
-                                                          "alive_age": 999})
-        check("먹통을 갱신과 갈라 보고한다", any("먹통" in l for l in lines), str(lines))
-
-        # ── 트리 전체를 본다 (claimer.py 만 보지 않는다)
-        src = (Path(__file__).resolve().parent / "work" / "worker_daemon.py").read_text(encoding="utf-8")
-        check("[중요] lib 트리 전체의 mtime 을 본다", "rglob" in src and "lib_mtime" in src)
-        check("[중요] 루프가 claim **전에** 깃발을 본다",
-              src.index("restart_requested(root)") < src.index("task = c.claim(types)"))
-        check("busy 마커를 finally 로 지운다", "finally:" in src and "busy.unlink()" in src)
-        # [중요] **관측이 부작용을 갖지 않는다** — probe 는 잠금을 *잡아 보고 즉시 놓는다*.
-        #    (잡히면 아무도 없다는 뜻이므로 그것이 판정이다. 쥐고 있으면 진짜 상주가 못 뜬다.)
-        lock_src = src[src.index("def someone_holds_lock"):src.index("def probe_state")]
-        check("잠금을 얻으면 즉시 닫는다", "f.close()" in lock_src, lock_src[:80])
-        check("[중요] 잠금 파일을 지우지 않는다 (지우면 싱글턴이 깨진다)",
-              "unlink" not in lock_src)
-        main_src = src[src.index("def main("):]
-        check("[중요] main 은 probe 를 상주 경로 **앞에서** 끝낸다",
-              main_src.index('"--probe" in argv')
-              < main_src.index("acquire_singleton(root)"), "관측이 상주를 띄운다")
-        # 옛 코드(스탬프 없음)를 잠금으로 잡는다 — 이것이 실물 사고의 상태다
-        check("[중요] 잠금 축이 있다 (스탬프만 보면 옛 코드를 「안 돈다」로 읽는다)",
-              "someone_holds_lock" in src and "no_stamp" in src)
-        check("깃발은 부팅 시각으로 거른다 (앞 프로세스에게 내려진 요구를 먹지 않는다)",
-              "booted_at" in src)
-    finally:
-        if _held is not None:
-            _held.close()                          # 이미 닫혔으면 아무 일도 없다
-        shutil.rmtree(root, ignore_errors=True)
-
-
-def test_stale_flag_is_not_eaten_by_the_new_process() -> None:
-    """[중요] **앞 프로세스에게 내려진 깃발을 새 프로세스가 먹으면 한 주기를 버린다.**
-
-    실측 2026-08-22: 옛 상주를 강제 종료한 뒤 깃발이 남았고, 감시자가 새 코드로 되살린
-    프로세스가 그것을 보고 **즉시 물러났다**(cron 5분을 버렸다).
-    """
-    import tempfile
-    import time as _t
-    from master.work import worker_daemon as C
-    import shutil
-    root = Path(tempfile.mkdtemp())
-    # [주의] 임시 루트를 끝에 지운다 — 남기면 실행마다 `/tmp/tmp*` 가 쌓였다 (#776)
-    try:
-        (root / ".ax").mkdir(parents=True)
-        flag = root / ".ax" / C.RESTART_FILE
-        flag.write_text("1", encoding="utf-8")
-        old_flag = int(flag.stat().st_mtime)
-        check("관측용 호출은 존재만 본다", C.restart_requested(root))
-        check("[중요] 내가 뜨기 전 깃발은 내 것이 아니다",
-              not C.restart_requested(root, booted_at=old_flag + 5))
-        check("내가 뜬 뒤 깃발은 내 것이다",
-              C.restart_requested(root, booted_at=old_flag - 5))
-        # 마스터도 치운다 — 놓은 쪽이 치우는 것이 옳다
-        from client.init import residency as _R
-        cmds = dict(_R.clear_flag_commands(_f(windows=False, path="/p/NS")))
-        check("리눅스 제거 명령", cmds["clear"] == "rm -f /p/NS/.ax/worker_daemon.restart", cmds["clear"])
-        cmds = dict(_R.clear_flag_commands(_f(windows=True, ue5="x", path=r"E:\t\NS")))
-        check("윈도우 제거 명령은 조용히 실패한다(2>nul)", "2>nul" in cmds["clear"], cmds["clear"])
-        import inspect
-        from master.client import bundle
-        rsrc = inspect.getsource(bundle.refresh_residency)
-        check("[중요] 강제 종료 뒤 깃발을 치운다",
-              rsrc.index("clear_flag_commands") > rsrc.index("force=True"), "치우지 않는다")
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-
-
-def _calls_named(src: str, name: str) -> list:
-    """소스에서 `name(...)` 호출 노드만 고른다 — 주석·문자열 속 같은 글자는 세지 않는다."""
-    import ast
-    import textwrap
-    return [n for n in ast.walk(ast.parse(textwrap.dedent(src)))
-            if isinstance(n, ast.Call) and getattr(n.func, "id", None) == name]
-
-
-def test_deliver_refreshes_residency() -> None:
-    """[중요] **완료 조건 1** — 배달 절차 자체가 확인한다(사람 눈이 아니다)."""
-    import inspect
-    from master.client import bundle
-    # [중요] `#655`(`d0bf674`) 이후 `deliver` 는 해시 캐시만 얹는 래퍼이고 본체는 `_deliver` 다 —
-    #    `deliver` 소스만 보던 검사가 낡아 거짓 실패했다(`#775`). 호출 고리를 두 단계로 따로 잰다.
-    dcalls = _calls_named(inspect.getsource(bundle.deliver), "_deliver")
-    check("배달이 본체를 부른다", bool(dcalls), "deliver 가 _deliver 를 부르지 않는다")
-    rcalls = _calls_named(inspect.getsource(bundle._deliver), "refresh_residency")
-    check("배달이 갱신을 부른다",
-          any(c.args and getattr(c.args[0], "id", None) == "facts" for c in rcalls),
-          "배달이 파일만 놓고 끝난다")
-    rsrc = inspect.getsource(bundle.refresh_residency)
-    check("관측 → 요구 → 재관측", rsrc.count("probe_command") >= 2, "재관측이 없다")
-    check("[중요] 못 읽으면 아무것도 안 한다", "건드리지 않는다" in rsrc)
-    check("[중요] busy 면 강제 종료하지 않는다",
-          rsrc.index('after.get("busy")') < rsrc.index("force=True"))
-    check("강제 종료는 pid 로만", "pid=pid" in rsrc)
-    check("[주의] requester 는 대상이 아니다", 'facts.role != "worker"' in rsrc)
-
-    # 주입 이음으로 전체 흐름을 잰다 — 옛 코드(깃발 무시)를 재현
-    calls = []
-
-    def fake_run(cmd, timeout=60):
-        calls.append(cmd)
-        if "--probe" in cmd:
-            return 0, "running=1\nstale=1\nbusy=0\npid=777\nboot_mtime=1\ncode_mtime=9\n"
-        return 0, ""
-
-    f = _f(windows=False, path="/p/NS")
-    r = bundle.refresh_residency(f, runner=fake_run)
-    check("깃발을 무시하는 코드는 강제 종료된다", r.get("pid_killed") == 777, str(r))
-    check("kill 이 pid 로 나갔다", any(c == "kill 777" for c in calls), str(calls))
-    check("깃발도 먼저 나갔다", any("worker_daemon.restart" in c for c in calls))
-
-    # [중요] **깃발을 볼 시간을 준다** — 실측 2026-08-23: 즉시 재확인했더니 새 코드도
-    #    「깃발을 모르는 코드」로 판정돼 매번 강제 종료했다(우아한 경로가 죽은 코드였다).
-    #    유닛이 통과한 이유는 stub 이 즉시 응답했기 때문이다 — 그래서 **기다림 자체**를 잰다.
-    naps, probes = [], []
-
-    def slow(cmd, timeout=60):
-        if "--probe" in cmd:
-            probes.append(1)
-            # 세 번째 관측에서 비로소 물러난다 (claimer 가 루프 top 에 도달)
-            return (0, "running=1\nstale=1\nbusy=0\npid=42\n" if len(probes) < 3
-                    else "running=0\nstale=0\n")
-        return 0, ""
-
-    r = bundle.refresh_residency(f, runner=slow, sleeper=lambda s: naps.append(s))
-    check("[중요] 기다렸다가 우아하게 끝낸다", r.get("refreshed") == "깃발", str(r))
-    check("기다린 시간을 보고한다", r.get("waited_sec", 0) > 0, str(r))
-    check("한 번이 아니라 여러 번 관측한다", len(probes) >= 3, str(len(probes)))
-    check("[주의] 무한정 기다리지 않는다",
-          bundle.FLAG_GRACE_SEC <= 120 and bundle.FLAG_POLL_SEC <= 10,
-          f"{bundle.FLAG_GRACE_SEC}/{bundle.FLAG_POLL_SEC}")
-    # 계속 반응이 없으면 결국 강제 종료 — 사유에 기다린 시간이 든다
-    naps2 = []
-    r2 = bundle.refresh_residency(
-        f, runner=lambda c, t=60: (0, "running=1\nstale=1\nbusy=0\npid=7\n")
-        if "--probe" in c else (0, ""), sleeper=lambda s: naps2.append(s))
-    check("반응 없으면 강제 종료", r2.get("pid_killed") == 7, str(r2))
-    check("[중요] 사유에 기다린 시간이 든다", "초 기다렸" in (r2.get("refreshed") or ""),
-          str(r2.get("refreshed")))
-    check("유예를 다 쓴다", sum(naps2) >= bundle.FLAG_GRACE_SEC - bundle.FLAG_POLL_SEC,
-          str(naps2))
-
-    # 깃발을 아는 코드: 두 번째 probe 에서 stale 이 풀린다
-    seq = iter(["running=1\nstale=1\nbusy=0\npid=5\n", "running=0\nstale=0\n"])
-
-    def fake_ok(cmd, timeout=60):
-        return (0, next(seq)) if "--probe" in cmd else (0, "")
-
-    r = bundle.refresh_residency(f, runner=fake_ok)
-    check("[중요] 깃발만으로 끝나면 죽이지 않는다", r.get("refreshed") == "깃발", str(r))
-
-    # 처리 중이면 기다린다
-    seq2 = iter(["running=1\nstale=1\nbusy=1\npid=5\n", "running=1\nstale=1\nbusy=1\npid=5\n"])
-    r = bundle.refresh_residency(f, runner=lambda c, timeout=60:
-                                (0, next(seq2)) if "--probe" in c else (0, ""))
-    check("[중요] 처리 중이면 강제 종료하지 않는다 (완료 조건 3)",
-          "pending" in r and not r.get("pid_killed"), str(r))
-
-    # 못 읽으면 아무것도 안 한다
-    r = bundle.refresh_residency(f, runner=lambda c, timeout=60: (1, "connection refused"))
-    check("[중요] probe 를 못 읽으면 손대지 않는다", r.get("unknown") is True, str(r))
-    check("사유를 남긴다", "건드리지 않는다" in (r.get("why") or ""))
-
-    # requester 는 건너뛴다
-    req = _f(windows=True, ue5="x", path=r"C:\p\NS")
-    req = req.__class__(**{**req.__dict__, "role": "requester"})
-    r = bundle.refresh_residency(req, runner=lambda c, timeout=60: (0, "stale=1"))
-    check("requester 는 건너뛴다", "skipped" in r, str(r))
-
-
-def _facts_w():
-    f = HostFacts(host="h", user="u", path=r"E:\t\NS", driven="ssh", role="worker")
-    f.os, f.ue5 = "windows", "x"
-    return f
-
-
-def test_ensure_starts_only_when_down() -> None:
-    """🔴 **꺼져 있으면 켠다 — 이미 돌면 건드리지 않는다** (`#407`).
-
-    사용자 설계 2026-09-12: *"데몬이 상주한다 or SSH 를 활용해 데몬이 꺼져있다면 키자"*.
-    SSH 의 역할이 「일을 시킨다」에서 **「떠 있게 한다」**로 내려간 자리다.
-    """
-    from client.init import residency as _R
-    from master.client import bundle
-
-    cmds = dict(_R.ensure_commands("NS", _f(windows=True, path=r"E:\t\NS", ue5="x")))
-    # 🔴 세션 0(SSH)에서 부탁해도 스케줄러가 `/IT` 덕에 세션 1 에 만든다 — `#401` 이 이것으로 풀렸다
-    check("[중요] 윈도우는 `schtasks /run` — SSH 가 직접 프로세스를 만들지 않는다",
-          cmds["ensure"] == "schtasks /run /tn AxWorker_NS", cmds["ensure"])
-    lin = dict(_R.ensure_commands("NS", _f(windows=False, path="/t/NS", ue5="x")))
-    check("[주의] cron 엔 「지금 실행」이 없다 — 직접 띄우되 `nohup` 으로 수명을 끊는다",
-          "nohup" in lin["ensure"] and lin["ensure"].rstrip().endswith("&"), lin["ensure"])
-    check("  등록과 **다른 동사**다 (만들기가 아니라 지금 한 번 돌리기)",
-          "/create" not in cmds["ensure"] and "crontab -" not in lin["ensure"])
-
-    calls = []
-
-    def run_running(cmd, timeout=60):
-        calls.append(cmd)
-        return (0, "running=1\nstale=0\nbusy=0\npid=42\n") if "--probe" in cmd else (0, "")
-
-    r = bundle.ensure_worker_daemon("NS", _facts_w(), runner=run_running)
-    check("[중요] 이미 돌면 켜지 않는다", r.get("already") and not r.get("started"), str(r))
-    check("  그래서 기동 명령이 안 나갔다", not any("/run" in c for c in calls), str(calls))
-
-    calls.clear()
-    seq = {"n": 0}
-
-    def run_down(cmd, timeout=60):
-        calls.append(cmd)
-        if "--probe" in cmd:
-            seq["n"] += 1
-            if seq["n"] == 1:
-                return 0, "running=0\nno_stamp=1\nlocked=0\n"
-            return 0, "running=1\npid=99\n"
-        return 0, ""                     # schtasks /query rc=0 = 등록돼 있다
-
-    r2 = bundle.ensure_worker_daemon("NS", _facts_w(), runner=run_down)
-    check("🔴 [중요] 꺼져 있으면 켠다", bool(r2.get("started") and r2.get("ok")), str(r2))
-    check("  기동 명령이 나갔다", any("schtasks /run" in c for c in calls), str(calls))
-
-    calls.clear()
-
-    def run_unregistered(cmd, timeout=60):
-        calls.append(cmd)
-        if "--probe" in cmd:
-            return 0, "running=0\nno_stamp=1\nlocked=0\n"
-        return 1, ""                     # rc≠0 = 등록이 없다
-
-    r3 = bundle.ensure_worker_daemon("NS", _facts_w(), runner=run_unregistered)
-    check("🔴 [중요] 등록이 없으면 켜지 않고 **크게 말한다** (온보딩 누락이다)",
-          bool(r3.get("not_registered") and not r3.get("ok")), str(r3))
-    check("  기동 명령을 내지 않았다", not any("/run" in c for c in calls), str(calls))
-
-
-def test_session1_side_effects() -> None:
-    """🔴 **세션 1 로 옮긴 것의 부작용을 같이 막는다** (`#401`, 실측 2026-09-12).
-
-    세션 1 은 데스크톱이 있어서 크래시가 **모달 대화상자**로 뜬다 — 그러면 프로세스가
-    무한 대기한다. 세션 0 에서는 데스크톱이 없어 조용히 죽던 것이 여기서는 매달린다.
-    실물: `dotnet`(UBT) 둘이 CPU 0 으로 남아 **사람이 창을 닫아 줘야** 풀렸다.
-    [중요] 배선에 넣지 않으면 새 워커에서 그대로 재현된다 — 문서에만 있으면 재현되지 않는다.
-    """
-    from client.init import residency as _R
-
-    cmds = dict(_R.crash_dialog_commands(_f(windows=True)))
-    check("🔴 [중요] 윈도우 배달이 크래시 대화상자를 끈다 (프로세스가 안 매달린다)",
-          "DontShowUI" in cmds.get("crash-dialog-off", ""), str(cmds))
-    check("  사용자 범위다 — 관리자 권한이 필요 없다",
+def test_session1_side_effects():
+    cmds = dict(R.crash_dialog_commands(_f(windows=True)))
+    check("Windows 크래시 모달 차단 보존",
+          "DontShowUI" in cmds.get("crash-dialog-off", ""), cmds)
+    check("크래시 설정은 사용자 범위",
           "HKCU" in cmds["crash-dialog-off"] and "HKLM" not in cmds["crash-dialog-off"])
-    check("[주의] 리눅스에는 걸지 않는다 (데스크톱 크래시 모달이 없다)",
-          _R.crash_dialog_commands(_f(windows=False)) == [])
-
-    # 런처가 **트리째** 죽이는지 — 직계만 죽이면 손자(codex → dotnet)가 남는다
+    check("Linux 크래시 설정 건드리지 않음", R.crash_dialog_commands(_f(windows=False)) == [])
     src = (Path(__file__).resolve().parent.parent
            / "client" / "runtime" / "session1_conductor.py").read_text(encoding="utf-8")
-    check("🔴 [중요] 런처가 프로세스 **트리**를 죽인다 (손자가 남지 않는다)",
+    check("런처는 시간 초과 프로세스 트리를 정리",
           "_kill_tree" in src and "/T" in src and "killpg" in src)
-    check("  시간 초과에서 그것을 부른다", "TimeoutExpired" in src and "_kill_tree(proc)" in src)
+    check("시간 초과에서 트리 정리를 호출",
+          "TimeoutExpired" in src and "_kill_tree(proc)" in src)
 
 
-def test_desired_registration_matrix() -> None:
-    """plan·deliver·check가 공유할 원하는 상태와 실제 상태의 4칸."""
-    from client.init import residency as R
-
-    need = _f(windows=True, path=r"E:\t\NS", ue5="x")
-    skip = _f(windows=False, path="/t/NS", ue5="")
-    d_need = R.desired_state("NS", "NS", need, daemon_available=True)
-    d_skip = R.desired_state("NS", "NS", skip, daemon_available=True)
-    check("required 판정", d_need.required and not d_need.reason, str(d_need))
-    check("skipped 판정", not d_skip.required and "집을 유형" in d_skip.reason, str(d_skip))
-
-    expected = {
-        (True, True): True,
-        (True, False): False,
-        (False, False): True,
-        (False, True): False,
-    }
-    for (required, present), ok in expected.items():
-        check(f"상태 행렬 required={required} present={present}",
-              (required == present) is ok)
+def test_compatibility_apis_never_touch_the_worker():
+    def forbidden(*args, **kwargs):
+        raise AssertionError("폐기된 데몬 경로가 원격 명령을 실행했다")
+    for win in (True, False):
+        f = _f(windows=win, ue5="x")
+        r = bundle.ensure_worker_daemon("NS", f, runner=forbidden)
+        check("구 ensure API는 원격 호출 없이 폐기 안내", r.get("retired") is True)
+        r = bundle.refresh_residency(f, runner=forbidden, sleeper=forbidden)
+        check("구 refresh API는 원격 호출 없이 폐기 안내", r.get("retired") is True)
+    with patch.object(cli, "_facts", forbidden):
+        out = StringIO()
+        with redirect_stdout(out):
+            rc = cli.cmd_ensure("NS", only="192.168.0.2")
+        check("CLI ensure는 probe도 실행하지 않음",
+              rc == 0 and R.DECOMMISSIONED_REASON in out.getvalue())
 
 
-def test_index_only_never_registers() -> None:
-    print("\n🔴 색인 전용 프로젝트는 상주를 받지 않는다 (`#693`)")
-    f = _f(windows=True, ue5="x")
-    d = R.desired_state("K", "K", f, index_only=True)
-    check("UE5 워커 + 마운트여도 등록하지 않는다", d.required is False, d.reason)
-    check("  사유가 index_only 를 말한다", "index_only" in d.reason, d.reason)
-    check("  기본값(False)은 종전 판정 그대로", R.desired_state("K", "K", f).required is True)
-
-
-def test_code_kind_gets_no_build_residency() -> None:
-    print("\n🔴 `kind: code` — 빌드 상주 없음 · 지휘자 런처는 따로 (`#695` P6)")
-    f = _f(windows=True, ue5="x")
-    d = R.desired_state("K", "K", f, index_only=True, code=True)
-    check("UE5 워커 + 마운트여도 빌드 상주는 등록하지 않는다", d.required is False, d.reason)
-    check("  사유가 code 와 지휘자 런처를 말한다", "code" in d.reason and "지휘자" in d.reason, d.reason)
-    check("  지휘자 런처 등록 명령은 윈도우에서 나온다 (`/it`)",
-          any("/it" in c for _l, c in R.conductor_register_commands("K", f)))
-    check("  요청자는 여전히 아무것도 안 받는다",
-          "요청자" in R.desired_state("K", "K", __import__("dataclasses").replace(
-              _f(windows=True), role="requester"), code=True).reason)
+def test_claim_policy_is_preserved():
+    from master.task_queue import tagging as T
+    from master.task_queue.models import ClaimReq
+    check("정상 claim의 MOUNT 정책 보존",
+          T.POLICY.get("POST /api/v1/tasks/claim") == T.MOUNT)
+    check("정상 claim의 태그 필수 계약 보존", T.requires_tag("POST", "/api/v1/tasks/claim"))
+    check("정상 claim의 프로젝트 축 보존", "project" in ClaimReq.model_fields)
 
 
 if __name__ == "__main__":
-    for fn in (test_types_from_probe,
-               test_task_name_per_project,
-               test_windows_command_shape,
-               test_linux_command_preserves_path_line,
-               test_gate_is_mount_singularity_not_a_missing_axis,
-               test_claim_policy_matches_the_reason,
-               test_unregister_mirrors_register,
-               test_python_probe,
-               test_probe_command_never_uses_pythonw,
-               test_probe_parse_distinguishes_unknown_from_false,
-               test_kill_is_pid_targeted,
-               # [완료] 아래 셋은 `#404`(데몬)·`#407`(배달 뒤 갱신)로 되살아났다 —
-               #    미뤄 둘 때 주석으로 남긴 그 계약들이다(프로세스 기반 판정 · stale 플래그
-               #    보존 · 배달이 도는 것을 본다).
-               test_claimer_state_is_process_based,
-               test_stale_flag_is_not_eaten_by_the_new_process,
-               test_deliver_refreshes_residency,
-               test_ensure_starts_only_when_down,
-               test_desired_registration_matrix,
+    for fn in (test_no_combination_can_restore_residency,
+               test_plan_does_not_offer_a_daemon,
+               test_registration_observation_distinguishes_errors,
+               test_legacy_registration_cleanup_is_targeted,
+               test_python_probe_and_conductor_contract,
                test_session1_side_effects,
-               test_index_only_never_registers,
-               test_code_kind_gets_no_build_residency):
+               test_compatibility_apis_never_touch_the_worker,
+               test_claim_policy_is_preserved):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_residency: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

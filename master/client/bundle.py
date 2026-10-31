@@ -2061,23 +2061,8 @@ def _deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
         # `#787` ③ — 원격에서 지워진 브랜치의 원격추적 ref 를 워커 클론에 남기지 않는다
         "fetch_prune": ensure_fetch_prune(facts),
     }
-    # ── 상주 등록 (`#405`, `#255` 복원) ──────────────────────────────
-    #    🔴 [중요] **`onboard.py` 가 적어둔 빈 칸이 여기다** — *"claimer 상주 등록:
-    #    `schtasks`/`crontab` 을 **실행하는** 코드 0건 (주석만 있었다)"*. `commands()` 는
-    #    있었는데 아무도 부르지 않았다. 그래서 새 기계에서 재현되지 않았고 사람이 손으로 했다.
-    #    [중요] **데몬이 없으면 등록하지 않는다** — 없는 파일을 가리키는 작업을 걸면 5분마다
-    #    실패만 쌓인다. `worker_daemon.py` 가 payload 에 들어오는 `#404` 뒤에 저절로 풀린다.
-    #    [주의] **마운트를 따른다** — 비마운트 프로젝트의 상주는 5분마다 `not_mounted` 거절만
-    #    받으며 헛돈다(`residency.blocked_reason`). 사유를 찍고 건너뛴다.
+    # 상주 데몬은 등록/갱신하지 않는다. 옛 등록 정리와 로그인 런처만 조정한다 (#861).
     written["residency"] = _register_residency(project, facts)
-    # [중요] **배달은 파일을 놓는 것으로 끝나지 않는다** (`#277` · `#407`) — 도는 상주는 옛
-    #    코드를 메모리에 쥔다. 실측 2026-08-22: 파일 해시가 3자 일치하는데 `.43` 상주가
-    #    폭주했다. 2026-09-12 에 같은 일이 다시 났다(`#404`: 고친 데몬을 배달했는데 도는 쪽이
-    #    옛 코드라 같은 409 를 냈다). 그래서 배달 절차 자체가 **도는 프로세스**를 보고 갱신을
-    #    요구한다 — 사람 눈이 아니다.
-    #    [주의] 등록이 건너뛰어졌으면 갱신할 대상도 없다.
-    if (written["residency"] or {}).get("registered"):
-        written["residency_refresh"] = refresh_residency(facts)
 
     # ── 진입 문서의 codex 판 (`#402`) ────────────────────────────────
     # 🔴 [중요] **codex 는 계층 로드를 하지 않는다** (실측 2026-09-08) — 그래서 두 진입 파일은
@@ -2185,203 +2170,57 @@ def _deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
             "verified": True}
 
 
-# ── 배달 뒤 상주 갱신 (`#277` · `#407` 복원) ────────────────────────────────────
-#
-# 🔴 [중요] **`#404` 실물에서 이 부재가 드러났다** (2026-09-12). 데몬을 고쳐 배달했는데
-#    **도는 상주가 옛 코드를 메모리에 쥐고** 있어서 같은 409 를 다시 냈고, 사람이
-#    `worker_daemon.restart` 깃발을 손으로 놓아야 했다. 그 자리가 여기다.
-# [중요] 깃발을 놓은 뒤 **기다려 준다** (`#277`). 데몬은 깃발을 **루프 top**(다음 claim
-#    전)에서만 본다 — 그것이 「진행 중 작업을 죽이지 않는다」의 방법이다. 즉 반응까지 최대
-#    한 폴링 주기(20초) + 왕복이 걸린다.
-#    [주의] 실측 2026-08-23: 즉시 재확인했더니 **새 코드도 「깃발을 모르는 코드」로 판정**돼
-#    매번 강제 종료했다 — 우아한 경로가 죽은 코드였다. 유닛은 통과했다(주입 stub 이 즉시
-#    응답했으니까).
-FLAG_GRACE_SEC = 35                 # 데몬 POLL_SEC(20) + 왕복 여유
-FLAG_POLL_SEC = 5
-
-
+# 폐기된 데몬 API는 호출 호환만 유지한다. 관측·깃발·기동 명령도 실행하지 않는다 (#861).
 def refresh_residency(facts: HostFacts, *, runner=None, sleeper=None) -> dict:
-    """배달 뒤 상주 갱신 (`#277`). **관측 → 요구 → 재관측** 세 걸음.
-
-    [중요] **판정은 파일이 아니라 도는 프로세스다** — `worker_daemon.py --probe` 가 부팅 시점의 코드
-    mtime 을 들고 있고, 지금 코드 mtime 과 비교한다(같은 기계·같은 시계라 스큐가 없다).
-    [중요] **진행 중 태스크를 죽이지 않는다** — 깃발(`worker_daemon.restart`)을 놓으면 데몬이
-    **다음 claim 전에** 물러난다. `busy` 면 그것으로 끝이고, 강제 종료는 하지 않는다.
-    [주의] **옛 코드는 깃발을 모른다.** 그래서 `busy=0` 이고 재관측에도 여전히 stale 이면
-    **pid 로만** 죽인다 — 이름/패턴으로 죽이면 남의 프로젝트 상주까지 죽는다(`#250` 이 깨진다).
-    [주의] 상태를 **못 읽으면 아무것도 하지 않는다** — 모르는 것을 고치면 진행 중 작업을 죽인다.
-    """
-    from client.init import residency          # 관례: 함수 안 절대 import (루트는 패키지가 아니다)
-    if facts.role != "worker":
-        return {"skipped": "worker 가 아니다 — 상주가 없다"}
-    run = runner or (lambda cmd, timeout=60: _ssh(facts.host, facts.user, cmd, timeout=timeout))
-    py = ""
-    if facts.windows:
-        rc, out = run(residency.PYTHONW_PROBE)
-        py = residency.parse_python_probe(out)
-    rc, out = run(residency.probe_command(facts, python_path=py))
-    state = residency.parse_probe(out)
-    if not state or "stale" not in state:
-        return {"unknown": True, "why": "probe 를 읽지 못했다 — **건드리지 않는다**",
-                "raw": (out or "")[:200]}
-    if not residency.needs_refresh(state):
-        why = ("도는 것이 지금 코드다" if state.get("running")
-               else "상주 없음 — 감시자가 새 코드로 띄운다")
-        # [중요] **상주가 상태 파일을 못 읽었으면 그 사실을 올린다** (`#296`). 그것을 삼키면
-        #    「상주 없음」이 *정말 없는 것*인지 *못 읽은 것*인지 구분되지 않는다 — `#277` 의
-        #    판정이 그 값에 걸려 있다.
-        errs = state.get("read_errors") or []
-        if errs:
-            why += " · [주의] 상주가 못 읽은 것: " + " · ".join(str(e) for e in errs[:3])
-        return {"ok": True, "running": bool(state.get("running")), "why": why}
-    for label, cmd in residency.refresh_commands(facts):
-        run(cmd)
-    # [중요] 깃발을 볼 시간을 준다 — 반응이 오면 **강제 종료하지 않는다**.
-    import time as _t
-    nap = sleeper or _t.sleep
-    waited, after = 0, {}
-    while True:
-        rc, out2 = run(residency.probe_command(facts, python_path=py))
-        after = residency.parse_probe(out2)
-        if not after.get("stale") or after.get("busy") or waited >= FLAG_GRACE_SEC:
-            break
-        nap(FLAG_POLL_SEC)
-        waited += FLAG_POLL_SEC
-    if not after.get("stale"):
-        return {"ok": True, "refreshed": "깃발", "pid_was": state.get("pid"),
-                "waited_sec": waited}
-    if after.get("busy"):
-        return {"ok": True, "pending": "처리 중 — 태스크가 끝난 뒤 물러난다",
-                "pid": after.get("pid")}
-    # 여기까지 왔으면 깃발을 모르는 코드다 (이번 사고의 상주가 그랬다)
-    pid = int(after.get("pid") or state.get("pid") or 0)
-    for label, cmd in residency.refresh_commands(facts, force=True, pid=pid):
-        if label == "kill" and pid > 0:
-            run(cmd)
-    # [주의] 깃발을 치운다 — 강제 종료로 이미 목적을 이뤘고, 남기면 **감시자가 되살린 새
-    #    프로세스가 그것을 먹고 즉시 물러난다**(실측 2026-08-22: 한 주기를 버렸다).
-    #    데몬도 부팅 시각으로 걸러 내지만, 놓은 쪽이 치우는 것이 옳다.
-    for label, cmd in residency.clear_flag_commands(facts):
-        run(cmd)
-    rc, out3 = run(residency.probe_command(facts, python_path=py))
-    final = residency.parse_probe(out3)
-    return {"ok": not final.get("stale"),
-            "refreshed": f"강제 종료 (깃발을 {waited}초 기다렸으나 반응 없음)",
-            "pid_killed": pid or None,
-            "note": ("감시자가 새 코드로 되살린다" if not final.get("running")
-                     else "여전히 stale — 사람이 봐야 한다")}
+    """상주 데몬은 갱신하지 않는다. 원격 호출도 수행하지 않는다."""
+    from client.init import residency as R
+    return {"skipped": R.DECOMMISSIONED_REASON, "retired": True}
 
 
 def ensure_worker_daemon(project: str, facts: HostFacts, *, runner=None) -> dict:
-    """상주가 **꺼져 있으면 켠다** (`#407`). 관측 → (필요할 때만) 기동 → 재관측.
-
-    사용자 설계 2026-09-12: *"워커들 한정으로 데몬이 상주한다 or SSH 를 활용해 데몬이
-    꺼져있다면 키자"*. SSH 의 역할을 「일을 시킨다」에서 **「데몬이 떠 있게 한다」**로 내린다.
-
-    [중요] **판정은 OS 가 이미 갖고 있다** — 새 프로토콜을 만들지 않는다. 도는지는
-    `worker_daemon.py --probe` 가 답하고(부팅 시 코드 mtime·pid·busy), 그 값을 그대로 쓴다.
-    [중요] **등록이 없으면 켜지 않고 크게 말한다** — 그것은 온보딩 누락이지 기동 문제가
-    아니다(`#406`). 조용히 등록해 버리면 「왜 상주가 생겼나」를 아무도 모른다.
-    [주의] **못 읽으면 아무것도 하지 않는다** — `refresh_residency` 와 같은 판단이다.
-    모르는 상태에서 켜면 이미 도는 것 위에 하나를 더 얹는다(잠금이 흡수하지만 로그가 더러워진다).
-    """
+    """옛 ensure 호출로 폐기된 데몬을 되살리지 않는다."""
     from client.init import residency as R
-    if facts.role != "requester" and not R.types_for(facts):
-        return {"skipped": "이 기계가 집을 유형이 없다 — 상주가 없는 것이 정상이다"}
-    if facts.role == "requester":
-        return {"skipped": "요청자는 상주가 없다"}
-    run = runner or (lambda cmd, timeout=60: _ssh(facts.host, facts.user, cmd, timeout=timeout))
-    py = ""
-    if facts.windows:
-        _rc, out = run(R.PYTHONW_PROBE)
-        py = R.parse_python_probe(out)
-    _rc, out = run(R.probe_command(facts, python_path=py))
-    state = R.parse_probe(out)
-    if state.get("running"):
-        return {"ok": True, "already": True, "pid": state.get("pid"),
-                "why": "이미 돌고 있다"}
-    if state.get("no_stamp") and not state.get("locked"):
-        # 등록 여부는 OS 에 묻는다 — 우리 파일이 아니라 감시자의 존재가 판정이다
-        chk = (f"schtasks /query /tn {R.task_name(project)}" if facts.windows
-               else "crontab -l 2>/dev/null")
-        rc2, out2 = run(chk)
-        listed = (rc2 == 0) if facts.windows else (R.cron_marker(facts) in (out2 or ""))
-        if not listed:
-            return {"ok": False, "not_registered": True,
-                    "why": "감시자가 등록돼 있지 않다 — 기동이 아니라 **온보딩**의 문제다 "
-                           "(`master.client deliver` 가 등록한다)"}
-    for _label, cmd in R.ensure_commands(project, facts):
-        run(cmd)
-    _rc, out3 = run(R.probe_command(facts, python_path=py))
-    after = R.parse_probe(out3)
-    return {"ok": bool(after.get("running")), "started": True,
-            "pid": after.get("pid"),
-            "why": ("켰다" if after.get("running")
-                    else "켜라고 했는데 아직 안 보인다 — 로그온 세션이 없을 수 있다"
-                          "(`/IT` 는 세션 전용이다)")}
+    return {"skipped": R.DECOMMISSIONED_REASON, "retired": True}
 
 
 def _register_residency(project: str, facts: HostFacts) -> dict:
-    """워커에 상주를 등록한다. 반환은 사람이 읽을 dict — **fail-open**(배달을 막지 않는다).
+    """옛 데몬 등록을 해제하고 Windows worker의 로그인 런처만 유지한다 (#861).
 
-    [중요] **조용히 건너뛰지 않는다.** 왜 안 걸었는지를 반드시 담는다 — 등록이 빠진 채
-    「배달 완료」로 보이면 `#255` 이전 상태로 돌아간다(등록이 문서에만 있던 그 상태).
+    관측 실패를 부재로 읽고 다른 등록을 진행하지 않는다. 프로세스 강제 종료는 하지 않는다.
     """
-    try:
-        from client.init import residency as R
-    except Exception as e:                                   # noqa: BLE001
-        return {"error": f"상주 모듈을 못 읽었다 — {type(e).__name__}: {e}"}
-
-    mounted = ""
-    try:
-        mounted = (Registry.load().active or "").strip()
-    except Exception:                                        # noqa: BLE001
-        pass                                                 # 마운트를 못 읽으면 게이트를 못 본다
-    have_daemon = any(dest.endswith("worker_daemon.py")
-                      for dest, _src in payload_pairs(facts.role))
-    _code = is_code(project)
-    decision = R.desired_state(project, mounted, facts, daemon_available=have_daemon,
-                               index_only=index_only(project), code=_code)
-    if not decision.required:
-        # 원하는 상태가 '없음'이면 단순 skip이 아니라 과거 등록까지 걷는다. 그렇지 않으면
-        # 마운트/능력이 바뀐 뒤에도 5분마다 죽은 상주가 계속 돈다.
-        qcmd = R.registration_query_command(project, facts)
+    from client.init import residency as R
+    qcmd = R.registration_query_command(project, facts)
+    qrc, qout = _ssh(facts.host, facts.user, qcmd)
+    state = R.registration_status(qrc, qout, facts)
+    if not state["known"]:
+        return {"error": state["error"]}
+    results = []
+    if state["present"]:
+        for label, cmd in R.unregister_commands(project, facts):
+            rc, got = _ssh(facts.host, facts.user, cmd)
+            results.append(f"{label} {'[완료]' if rc == 0 else f'[주의] rc={rc} {(got or chr(32))[:80]}'}")
+            if rc != 0:
+                return {"error": f"금지된 데몬 등록 해제 실패 rc={rc}", "results": results}
         qrc, qout = _ssh(facts.host, facts.user, qcmd)
-        removed = []
-        if R.registration_present(qrc, qout, facts):
-            for label, cmd in R.unregister_commands(project, facts):
-                rc, got = _ssh(facts.host, facts.user, cmd)
-                result = "[완료]" if rc == 0 else f"[주의] rc={rc} {(got or '')[:80]}"
-                removed.append(f"{label} {result}")
-            qrc, qout = _ssh(facts.host, facts.user, qcmd)
-            if R.registration_present(qrc, qout, facts):
-                return {"error": f"상주를 해제했지만 등록이 남았다 — {decision.reason}",
-                        "results": removed}
-        # 🔴 `#695` P6 — `code` 는 빌드 상주 없이 **세션 1 지휘자 런처만** 건다(윈도우 워커).
-        #    [중요] 없으면 `.2` 의 codex 지휘자가 SSH(세션 0)에서 샌드박스째 죽는다(`#401`).
-        if _code and facts.windows and getattr(facts, "role", "worker") == "worker":
-            py = _probe_python(facts)
-            for label, cmd in (list(R.conductor_register_commands(project, facts, python_path=py))
-                               + list(R.crash_dialog_commands(facts))):
-                rc, got = _ssh(facts.host, facts.user, cmd)
-                removed.append(f"{label} {'[완료]' if rc == 0 else f'[주의] rc={rc} {(got or 0)[:80]}'}")
-            return {"skipped": f"빌드 상주는 켜지 않는다 — {decision.reason}",
-                    "conductor": R.conductor_task_name(project), "results": removed}
-        return {"skipped": f"지금 켜지 않는다 — {decision.reason}",
-                **({"results": removed} if removed else {})}
+        state = R.registration_status(qrc, qout, facts)
+        if not state["known"] or state["present"]:
+            return {"error": state.get("error") or "상주를 해제했지만 등록이 남았다",
+                    "results": results}
 
-    py = _probe_python(facts)
-    out = []
-    # [중요] 상주(주기) + 세션 1 지휘자 런처(`/run` 전용) 둘 다 등록한다 — 목적이 다르다.
-    #    상주는 큐를 물어가고(build), 런처는 마스터가 조각을 보낼 때 **세션 1** 을 빌려준다.
-    cmds = list(R.commands(project, facts, python_path=py))
-    cmds += list(R.conductor_register_commands(project, facts, python_path=py))
-    # 🔴 세션 1 의 부작용을 같이 막는다 — 크래시 모달이 뜨면 프로세스가 무한 대기한다
-    cmds += list(R.crash_dialog_commands(facts))
-    for label, cmd in cmds:
-        rc, got = _ssh(facts.host, facts.user, cmd)
-        out.append(f"{label} {'[완료]' if rc == 0 else f'[주의] rc={rc} {(got or 0)[:80]}'}")
-    return {"registered": R.task_name(project) if facts.windows else "cron", "results": out}
+    # code뿐 아니라 Unreal Windows worker도 로그인 세션 런처가 필요하다.
+    # requester/index_only에는 워커 지휘자를 등록하지 않는다.
+    if (facts.windows and facts.role == "worker" and not index_only(project)):
+        py = _probe_python(facts)
+        for label, cmd in (list(R.conductor_register_commands(project, facts, python_path=py))
+                           + list(R.crash_dialog_commands(facts))):
+            rc, got = _ssh(facts.host, facts.user, cmd)
+            results.append(f"{label} {'[완료]' if rc == 0 else f'[주의] rc={rc} {(got or chr(32))[:80]}'}")
+            if rc != 0:
+                return {"error": f"로그인 런처 설정 실패 rc={rc}", "results": results}
+        return {"skipped": R.DECOMMISSIONED_REASON,
+                "conductor": R.conductor_task_name(project), "results": results}
+    return {"skipped": R.DECOMMISSIONED_REASON,
+            **({"results": results} if results else {})}
 
 
 def _probe_python(facts: HostFacts) -> str:

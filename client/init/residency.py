@@ -1,68 +1,10 @@
-"""워커 데몬 상주 등록 — **`.2` schtasks 와 `.43` cron 이 한 선언에서 나온다** (`#255`·`#405`).
+"""AX 원격 등록 — 상주 작업 데몬은 금지, 로그인 런처와 옛 등록 해제만 유지한다.
 
-## 🔴 [중요] 되살린 파일이다 — 새로 쓰지 않았다 (`#405`, 2026-09-12)
-
-`#320` 이 상주를 전폐하며 이 파일을 지웠지만(`b28d889`), **그 노트가 조건을 남겼다**:
-*"워커가 늘면 되살릴 물건일 수 있다 … 되살릴 조건을 기록에 남긴다."* 기계 확장이 전제가
-되면서 그 조건이 성립했다.
-
-[중요] **아래 실측 주석을 지우지 않는다.** 2026-09-12 에 같은 일을 `.bat` 으로 새로 쓰다가
-여기 적힌 함정을 **그대로 다시 밟았다**(`py` 를 PATH 로 찾고, `%~dp0` 상대경로를 쓰고,
-중첩 따옴표를 눈으로 맞췄다). 이 파일의 값어치는 코드가 아니라 **실측으로 산 지식**이다.
-
-## 개명 — `AxClaimer` → `AxWorker`
-
-claimer 는 없어졌고 이 자리는 **워커 데몬**(`poll → claim → 실행 → submit`, `#404`)이 온다.
-원본 주석이 *"바꾸면 기존 등록과 둘이 된다"* 고 경고했는데, `#320` 이 철거했고 **실측
-2026-09-12 `.2` 에 `Ax*` 스케줄 작업 0건**이라 충돌하지 않는다. 아래 본문의 `AxClaimer`·
-`claimer.py` 언급은 **그때의 실물 기록**이므로 역사로 남긴다.
-
-## [주의] 상주 모양을 바꾸지 않는다
-
-`/sc minute /mo 5` + **잠금 싱글턴**이다 — 항상 떠 있는 프로세스가 아니라 5분마다 재기동하고
-락이 겹침을 흡수한다. 프로세스가 죽어도 다음 틱이 살리므로 **자기치유**이고 감시자가 따로
-필요 없다. 「상주 프로세스 + 재시작 관리」로 바꾸면 그 성질을 잃는다.
-
-## 🔴 [중요] Windows 는 `/it` 가 세션 문제를 푼다 (실측 2026-09-12, `#401`)
-
-Windows OpenSSH 는 **세션 0** 에서 프로세스를 만들고, 거기서는 codex 의 제한 토큰 샌드박스
-자식이 `0xC0000142` 로 죽는다. `/it`(로그온 시에만) 로 등록하면 스케줄러가 **세션 1** 에
-만들고 정상 동작한다 — 같은 기계·같은 플래그에서 세션 0 실패 / 세션 1 `exit_code 0`.
-**그래서 패치 codex·Rust 빌드·아티팩트 배포가 전부 불필요하다.**
-[주의] 리눅스는 이 문제가 없다 — cron 은 로그인과 무관하고 `.43` 은 헤드리스다.
-
-## 왜 선언이 필요한가
-
-`#229` 미결 3 이 *"감시자(schtasks/cron) 등록을 사람이 하나, 배달이 하나"* 로 **질문 상태**로
-남아 있었고, 두 기계의 등록 방식은 **문서에만** 있었다(`win-worker-2.md` § AxClaimer ·
-`bc250-1.md` § AX claimer). 문서만 있으면 새 기계에서 재현되지 않는다.
-
-## 실측 — 지금 두 기계의 실물 (2026-08-22)
-
-    .2   schtasks `\\AxClaimer` · 5분 · 실행 계정 `DESKTOP-HV0I6DL\\janus`
-         `"…\\Python310\\pythonw.exe" "E:\\trunk\\ModularStage\\.ax\\lib\\axmaster\\work\\claimer.py"
-          --types=build,code`
-         [주의] 마지막 결과 `0x800710e0` = *"운영자 또는 관리자가 요청을 거부"* — **로그온 세션
-         전용**이라 세션이 없으면 이 값이 정상이다(CLAUDE.md 가 그렇게 적어 뒀다).
-         지금 `claimer.lock` 도 pythonw 프로세스도 없다 = **상주 없음**이고 그것이 설계다
-    .43  cron `*/5 * * * *` + `PATH=` 줄 · `cd <체크아웃> && /usr/bin/python3
-         .ax/lib/axmaster/work/claimer.py --types=code`
-         [주의] 상주 중(pid 실측). 헤드리스라 세션 제약이 없다
-
-## [중요] 유형(`--types`)은 능력에서 나온다 — 표로 들지 않는다
-
-`.2` 는 `build,code`(UE5 있음), `.43` 은 `code`(UE5 없음). 그 판정은 **probe 실측**(`ue5`)이고,
-`#204` 가 그렇게 정했다. 선언에 하드코딩하면 새 기계에서 틀린다.
-
-## [중요] 켜는 것과 만드는 것을 가른다 (`#251` 실측)
-
-잠금은 **체크아웃 단위**(`<체크아웃>/.ax/claimer.lock`)인데 그 근거는 **큐**다
-(*"겹치면 같은 큐를 두 입이 빤다"*). 프로젝트가 둘이면 각자 잠금을 얻고 같은 큐를 빨며,
-claim 에 프로젝트 축이 없어(`#248`) 서로의 태스크를 집는다.
-
-    → **한 기계에 두 번째 프로젝트의 상주는 `#248` 뒤에 켠다.**
-      `plan_lines()` 가 그 사실을 찍고, `commands()` 는 만들어도 실행기가 게이트를 본다.
+사용자 2026-10-31 (#860 · #861): 서버가 SSH로 작업을 총괄한다. 데몬 생성·기동·갱신
+명령은 더 이상 만들지 않는다. AxConductor는 Windows 로그인 세션을 빌리는 별도 런처다.
+옛 AxWorker 이름·cron 표식은 이미 배달된 등록을 찾아 제거하기 위한 계약으로 남긴다.
 """
+
 from __future__ import annotations
 
 import shlex
@@ -128,55 +70,13 @@ def parse_python_probe(out: str) -> str:
 
 
 def commands(project: str, facts, *, python_path: str = "") -> list:
-    """등록 명령 `(라벨, 명령)`. **여기가 계약이다** — 두 기계의 모양이 여기서만 갈린다."""
-    types = types_for(facts)
-    if facts.windows:
-        py = python_path or python_for(facts)
-        script = f'{facts.path}\\{DAEMON_REL.replace("/", chr(92))}'
-        # [중요] **`/tr` 은 전체를 한 인자로 받고, 안쪽 인용은 `\"` 로 이스케이프한다.**
-        #    실측 2026-08-22: 그냥 `"py" "script" --types=…` 로 주니 cmd 가 두 번째 토큰을
-        #    schtasks 의 옵션으로 읽어 *"잘못된 인수/옵션 - 'E:\…\claimer.py'"* 로 거부했다.
-        #    임시 작업(`AxProbeQuote`)으로 이 형태를 확인한 뒤 기존 `AxClaimer` 의 Task_To_Run
-        #    과 **글자까지 대조**했다 — 같았다. (임시 작업은 지웠다)
-        run = f'\\"{py}\\" \\"{script}\\" --types={types}'
-        name = task_name(project)
-        # [주의] `/f` 로 덮어쓴다 — 멱등이어야 한다(감시자 등록을 두 벌 만들면 겹쳐 돈다).
-        #    `/it` = 대화형 전용. 세션 없을 때 `0x800710e0` 이 나는 것이 **정상**이고,
-        #    그것이 이 기계의 설계다(사람 PC 에 백그라운드 상주를 심지 않는다).
-        return [("register",
-                 f'schtasks /create /f /tn {name} /sc minute /mo {INTERVAL_MIN} '
-                 f'/it /rl LIMITED /tr "{run}"')]
-    q = shlex.quote
-    line = (f"*/{INTERVAL_MIN} * * * * cd {q(facts.path)} && {python_for(facts)} "
-            f"{DAEMON_REL} --types={types} >/dev/null 2>&1")
-    # [중요] **PATH 줄을 지키고 우리 줄만 갈아끼운다** — 실측: `.43` crontab 첫 줄이
-    #    `PATH=/home/sim/.local/bin:…` 이고, 그것이 없으면 claimer 가 도구를 못 찾는다.
-    #    [주의] `crontab -l | grep -v` 로 통째로 다시 쓰면 그 줄을 날린다.
-    marker = cron_marker(facts)          # [중요] 해제와 **같은 표식** (`#311`)
-    return [("register",
-             "( crontab -l 2>/dev/null | grep -vF " + q(marker)
-             + "; echo " + q(line) + " ) | crontab -")]
+    """폐기된 데몬 등록 API — 모든 OS·프로젝트에서 생성 명령을 내지 않는다."""
+    return []
 
 
 def ensure_commands(project: str, facts) -> list:
-    """**꺼져 있으면 켜는** 명령 `(라벨, 명령)` (`#407`, 사용자 설계 2026-09-12:
-    *"워커들 한정으로 데몬이 상주한다 or SSH 를 활용해 데몬이 꺼져있다면 키자"*).
-
-    [중요] **등록과 다른 동사다.** `commands()` 는 감시자를 **만들고**, 이것은 이미 등록된
-    감시자를 **지금 한 번 돌린다.** 감시자가 5분 주기라 가만 둬도 곧 뜨지만, 파견 직전에
-    기다릴 이유가 없다.
-    [중요] **윈도우는 `schtasks /run` 이다** — 세션 0(SSH)에서 부탁해도 스케줄러가 `/IT` 등록
-    덕에 **세션 1** 에 만든다(실측 2026-09-12, `#401` 이 이것으로 풀렸다). SSH 가 직접
-    프로세스를 만들지 않는다는 것이 요점이다.
-    [주의] **리눅스 cron 에는 「지금 실행」이 없다** — 그래서 명령을 직접 띄운다. `nohup` +
-    `&` 로 SSH 세션과 수명을 끊지 않으면 연결이 닫힐 때 같이 죽는다.
-    """
-    if facts.windows:
-        return [("ensure", f"schtasks /run /tn {task_name(project)}")]
-    q = shlex.quote
-    run = (f"cd {q(facts.path)} && {python_for(facts)} {DAEMON_REL} "
-           f"--types={types_for(facts)}")
-    return [("ensure", f"nohup sh -c {q(run)} >/dev/null 2>&1 &")]
+    """폐기된 데몬 기동 API — schtasks /run·nohup을 만들지 않는다."""
+    return []
 
 
 CONDUCTOR_TASK = "AxConductor"
@@ -236,14 +136,37 @@ def cron_marker(facts) -> str:
 
 
 def registration_query_command(project: str, facts) -> str:
-    """상주 등록 여부를 묻는 명령. 배달과 검사가 같은 실제 상태를 보게 한다."""
-    return (f"schtasks /query /tn {task_name(project)}" if facts.windows
-            else "crontab -l 2>/dev/null")
+    """조회 성공·명시적 부재·조회 실패를 구분할 수 있는 관측 명령."""
+    if facts.windows:
+        name = task_name(project).replace("'", "''")
+        return (
+            'powershell -NoProfile -Command "$ErrorActionPreference=\'Stop\'; '
+            "try { $found=@(Get-ScheduledTask -ErrorAction Stop | "
+            f"Where-Object {{ $_.TaskName -eq '{name}' }}); "
+            "if($found.Count -gt 0){'AX_RESIDENCY_PRESENT=1'}"
+            "else{'AX_RESIDENCY_PRESENT=0'} } "
+            "catch { Write-Output ('AX_RESIDENCY_ERROR='+$_.Exception.Message); exit 1 }\""
+        )
+    return "LC_ALL=C crontab -l 2>&1"
+
+
+def registration_status(rc: int, out: str, facts) -> dict:
+    """관측 불가를 부재로 접지 않는다. 존재는 옛 작업 이름/cron 표식으로만 판정."""
+    text = (out or "").strip()
+    if facts.windows:
+        if rc == 0 and text in ("AX_RESIDENCY_PRESENT=0", "AX_RESIDENCY_PRESENT=1"):
+            return {"known": True, "present": text.endswith("=1")}
+    elif rc == 0:
+        return {"known": True, "present": cron_marker(facts) in text}
+    elif rc == 1 and text.lower().startswith("no crontab for "):
+        return {"known": True, "present": False}
+    return {"known": False, "present": None,
+            "error": f"상주 등록 조회 실패 rc={rc}: {text[:160] or '(응답 없음)'}"}
 
 
 def registration_present(rc: int, out: str, facts) -> bool:
-    """등록 조회 결과를 한 자리에서 판정한다."""
-    return (rc == 0) if facts.windows else (cron_marker(facts) in (out or ""))
+    """호환용 존재 조회. 실패를 다루는 호출자는 registration_status를 사용한다."""
+    return registration_status(rc, out, facts).get("present") is True
 
 
 def unregister_commands(project: str, facts) -> list:
@@ -263,18 +186,12 @@ def unregister_commands(project: str, facts) -> list:
 
 
 def plan_lines(project: str, facts, *, mounted: str = "") -> list:
-    """`plan` 이 찍을 줄. [중요] **게이트를 함께 찍는다** — 지금 켜면 안 되는 경우가 있다."""
-    out = [f"   ⟳ {facts.host}: 워커 데몬 상주 등록 — "
-           + (f"schtasks `{task_name(project)}`" if facts.windows else "cron")
-           + f" {INTERVAL_MIN}분 · --types={types_for(facts)}"]
-    if facts.windows:
-        out.append("     [주의] 로그온 세션 전용 — 세션이 없으면 `0x800710e0`(요청 거부)이 "
-                   "정상이다. 사람 PC 에 백그라운드 상주를 심지 않는다")
-    # [중요] **사유를 여기 다시 쓰지 않는다** (`#311`) — 종전에는 여기와 `blocked_reason` 이
-    #    각자 적어 두 벌이었고, `#248` 이 닫힌 뒤 **둘 다** 낡은 채로 남았다.
+    """새 데몬 등록 계획 대신 정책과 유지할 로그인 런처를 명시한다."""
     decision = desired_state(project, mounted, facts)
-    if not decision.required:
-        out.append(f"     [중요] **지금 켜지 않는다** — {decision.reason}")
+    out = [f"   · {facts.host}: {decision.reason}"]
+    if facts.windows and getattr(facts, "role", "worker") == "worker":
+        out.append(f"   → {facts.host}: 로그인 런처 {conductor_task_name(project)} 유지 "
+                   "(서버 SSH 요청 시 실행)")
     return out
 
 
@@ -291,63 +208,20 @@ class ResidencyDecision:
     reason: str = ""
 
 
+DECOMMISSIONED_REASON = "워커·요청자 상주 데몬은 폐기됐다 — 서버가 SSH로 총괄한다 (#861)"
+
+
 def desired_state(project: str, mounted: str, facts=None, *, daemon_available: bool = True,
                   index_only: bool = False, code: bool = False) -> ResidencyDecision:
-    """이 프로젝트·기계에 상주 등록이 있어야 하는가.
+    """타입·능력·마운트와 무관하게 AX 작업 데몬은 요구하지 않는다.
 
-    `index_only` — 프로필의 `kind` 가 색인 전용인가(`#693`). 이 모듈은 클라에서 도므로
-    마스터 프로필을 읽지 않는다 — **마스터 호출자가 판정해 넘긴다.**
+    기존 인자는 호출 호환을 위해 남긴다. Windows 지휘자 런처는 별도 등록 계약이다.
     """
-    if facts is not None and getattr(facts, "role", "worker") == "requester":
-        return ResidencyDecision(False, "요청자는 상주를 받지 않는다")
-    if code:
-        # 🔴 `#695` P6 — 분산 작업은 **있지만** 상주가 집을 유형(build)이 없다. 추론(code)은
-        #    마스터가 민다(`#404`). [중요] 세션 1 지휘자 런처는 **따로** 등록한다(`bundle`) —
-        #    상주와 목적이 다르다: 런처는 마스터가 조각을 보낼 때 세션 1 을 빌려줄 뿐이다.
-        return ResidencyDecision(
-            False, "`kind: code` 프로젝트다(`#695`) — 빌드 상주가 집을 유형이 없다(추론은 마스터가 "
-                   "민다). 세션 1 지휘자 런처만 등록한다")
-    if index_only:
-        return ResidencyDecision(
-            False, "색인 전용 프로젝트다(`kind: index_only`, `#693`) — 분산 작업이 없으니 "
-                   "집을 일감도 없다. 상주를 켜면 5분마다 헛돈다")
-    if not daemon_available:
-        return ResidencyDecision(False, "데몬(`worker_daemon.py`)이 배달 대상이 아니다")
-    if facts is not None and not types_for(facts):
-        return ResidencyDecision(
-            False,
-            "이 기계가 집을 유형이 없다 — UE5가 없어 build를 못 하고, 추론(code)은 "
-            "마스터 push가 맡는다(`#404`). 상주를 켜면 5분마다 헛돈다",
-        )
-    if mounted and project != mounted:
-        return ResidencyDecision(
-            False,
-            f"{project} 는 마운트되지 않았다(마운트: {mounted}). claim 이 `MOUNT` 정책이라 "
-            f"200 + `not_mounted` 로 **거절**되고, 상주는 {INTERVAL_MIN}분마다 그 거절만 "
-            "받는다 — 상주는 마운트를 따른다(§5.5.2)",
-        )
-    return ResidencyDecision(True)
+    return ResidencyDecision(False, DECOMMISSIONED_REASON)
 
 
 def blocked_reason(project: str, mounted: str, facts=None) -> str:
-    """켜면 안 되는 사유. 빈 문자열이면 켜도 된다.
-
-    [중요] **막는 이유는 프로젝트 축의 부재가 아니라 마운트의 단일성이다** (§5.5.2 *"동시에
-    하나만 연다"*, 사용자 결정 ⓐ). claim 은 `tagging.POLICY` 에서 **`MOUNT`** 이므로 비마운트
-    프로젝트의 claim 은 **거절된다** — 실측 2026-08-25(마운트 NS):
-
-        project="NS"            → 204            (정상 · 큐가 비었다)
-        project="ModularStage"  → 200 ok:false   status=not_mounted
-        project=""              → 200 ok:false   status=no_project_tag
-
-    [주의] **거르는 것이 아니라 거절이다.** 그래서 비마운트 상주는 남의 태스크를 집지는
-    않지만 **5분마다 거절만 받으며 헛돈다** — 「도는데 아무 일도 안 한다」로 보이는 상태이고,
-    그것이 켜지 말아야 하는 이유다.
-
-    [중요] **상주는 마운트를 따른다.** 마운트를 옮기면 이전 프로젝트의 상주를 멈추고 새
-    프로젝트의 상주를 켠다. 한 기계가 두 프로젝트를 **동시에** 맡는 길은 ⓐ 에서 없다
-    (그것을 원하면 claim 을 스탬프 축으로 내려야 하고, 그건 마운트의 뜻을 바꾸는 별 결정이다).
-    """
+    """상주 금지 사유. 과거의 마운트별 허용 판정으로 돌아가지 않는다."""
     return desired_state(project, mounted, facts).reason
 
 
@@ -405,37 +279,13 @@ def parse_probe(out: str) -> dict:
 
 
 def needs_refresh(state: dict) -> bool:
-    """갱신해야 하나. [중요] **`stale` 하나만 본다** — `running=0` 은 갱신 대상이 아니다
-    (감시자가 다음 주기에 새 코드로 띄운다). 상태를 못 읽었으면 **건드리지 않는다.**"""
-    if not state or "stale" not in state:
-        return False
-    return bool(state.get("stale"))
+    """옛 데몬 상태가 남아 있어도 재기동·갱신 대상으로 삼지 않는다."""
+    return False
 
 
 def refresh_commands(facts, *, force: bool = False, pid: int = 0) -> list:
-    """갱신 명령 `(라벨, 명령)`. **깃발이 먼저, 강제 종료는 폴백이다.**
-
-    [중요] 완료 조건 3(*"재기동이 진행 중 작업을 죽이지 않는다"*)을 지키는 방법이 깃발이다 —
-    claimer 가 **다음 claim 전에** 그것을 보고 물러나므로 처리 중 태스크를 버리지 않는다.
-    [주의] 그런데 **옛 코드는 깃발을 모른다**(이번 사고의 상주가 그랬다). 그래서 폴백이 필요하고,
-    폴백은 `force=True` 로만 나간다 — 호출자가 `busy=0` 을 확인한 뒤에만 켠다.
-    """
-    flag = f"{facts.path}\\.ax\\{RESTART_FILE}" if facts.windows \
-        else f"{facts.path}/.ax/{RESTART_FILE}"
-    out = [("flag", f'echo 1 > "{flag}"' if facts.windows
-            else f"echo 1 > {shlex.quote(flag)}")]
-    if force:
-        # [주의] 강제 종료는 **깃발을 모르는 옛 코드**를 위한 것이다. 감시자가 되살린다.
-        # [중요] **pid 로만 죽인다.** 이름/패턴으로 죽이면(`taskkill /im pythonw.exe`,
-        #    `pkill -f claimer.py`) **다른 프로젝트의 상주까지 죽는다** — 한 기계에 여럿을
-        #    허용한 것(`#250`)이 이 갱신 절차 때문에 깨지면 안 된다. pid 는 probe 가 준다.
-        if pid > 0:
-            out.append(("kill", f"taskkill /f /pid {pid}" if facts.windows
-                        else f"kill {pid}"))
-        else:
-            out.append(("kill", "(pid 를 모른다 — 강제 종료를 건너뛴다. "
-                                "이름으로 죽이면 남의 프로젝트 상주까지 죽는다)"))
-    return out
+    """데몬 갱신을 위한 깃발·종료·재기동 명령을 생성하지 않는다."""
+    return []
 
 
 def clear_flag_commands(facts) -> list:
@@ -447,24 +297,5 @@ def clear_flag_commands(facts) -> list:
 
 
 def refresh_plan_lines(facts, state: dict) -> list:
-    """`plan` 이 찍을 줄 — [중요] **무엇을 근거로 갱신하는지 함께 찍는다.**"""
-    if not state or "stale" not in state:
-        return [f"   ? {facts.host}: 상주 상태를 읽지 못했다 — **건드리지 않는다** "
-                f"(모르는 것을 고치면 진행 중 작업을 죽인다)"]
-    if not state.get("running"):
-        return [f"   · {facts.host}: 상주 없음 — 갱신 대상이 아니다 "
-                f"(감시자가 다음 주기에 새 코드로 띄운다)"]
-    if state.get("hung"):
-        # [중요] 잠금은 쥐었는데 루프가 멈췄다 — 갱신과 다른 병이다(코드는 최신일 수 있다)
-        return [f"   [주의] {facts.host}: 상주가 **먹통**이다 (잠금 보유 · alive "
-                f"{state.get('alive_age')}초 전) — 갱신이 아니라 사람이 볼 일이다"]
-    if not state.get("stale"):
-        return [f"   [완료] {facts.host}: 도는 것이 지금 코드다 "
-                f"(부팅 mtime {state.get('boot_mtime')} ≥ 코드 {state.get('code_mtime')})"]
-    busy = " · **처리 중** — 태스크가 끝난 뒤 물러난다" if state.get("busy") else ""
-    if state.get("no_stamp"):
-        # [중요] 가장 위험한 상태다 — 깃발을 모르고, 거절을 태스크로 읽는다(이번 사고의 상주)
-        return [f"   ⟳ {facts.host}: **`#277` 이전 코드가 돌고 있다** (잠금은 쥐었는데 부팅 "
-                f"스탬프가 없다) → 깃발은 무시될 것이므로 **pid 로 강제 종료**한다{busy}"]
-    return [f"   ⟳ {facts.host}: **옛 코드로 돌고 있다** "
-            f"(부팅 {state.get('boot_mtime')} < 코드 {state.get('code_mtime')}) → 갱신 깃발{busy}"]
+    """옛 호출자에게도 폐기 정책을 안내한다."""
+    return [f"   · {facts.host}: {DECOMMISSIONED_REASON}"]

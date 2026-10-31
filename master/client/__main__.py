@@ -12,6 +12,9 @@
     python -m master.client setup-host --host=<ip> --root=<경로> [--user=<계정>] [--confirm]
                                                  워커 한 대를 새로 놓거나 옮긴다 — 등록부 경로 →
                                                  낡은 상주 해제 → 클론·배달 → 대조 (기본은 계획만)
+    python -m master.client home-guides [--host=<ip>] [--apply]
+                                                 기계별 홈 CLAUDE.md·AGENTS.md 를 정본과 대조
+                                                 (`--apply` 는 copy 대상의 DIFF 만 백업 후 쓴다, #861)
 
 [중요] **`probe` → `plan` → `deliver` 순서로 쓴다.** 남의 기계에 쓰는 작업이므로, 무엇을 어디에
 쓸지 먼저 눈으로 본다.
@@ -306,7 +309,8 @@ def cmd_deliver(project: str, *, init: bool = False, only: str = "") -> int:
             # [중요] **왜 안 걸었는지를 찍는다** — 빠진 채 「완료」로 보이면 `#255` 이전이다
             print(f"     residency=[건너뜀] {res['skipped']}")
         elif res.get("error"):
-            print(f"     residency=[주의] {res['error']}")
+            print(f"     residency=[실패] {res['error']}")
+            bad += 1
         # [중요] **갱신 결과를 찍는다** (`#277`) — 판정을 했는데 안 보이면 「안 한 것」과
         #    구분되지 않는다. 이 줄이 없어서 종전에 갱신이 화면에 안 보였다.
         rr = r.get("residency_refresh") or {}
@@ -530,28 +534,18 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
         rm_note = (f" · [중요] 폐지 스킬이 남아 있다: {', '.join(left)}" if left else
                    f" · 폐지 {len(rm['skills'])}종 없음(정리됨)" if rm["skills"] else "")
 
-        # ── 상주 등록 (`#405`) — **파일이 아니라 「등록됐나」를 본다** ────────
-        #    `#337` 의 훅과 같은 교훈이다: 파일 해시가 3자 일치해도 **등록이 없으면 안 돈다.**
-        ok_res = True
-        res_note = ""
+        # 상주 작업 데몬은 금지다. 조회 실패는 정상 부재가 아니다 (#861).
         from client.init import residency as _R
-        _have_daemon = any(d.endswith("worker_daemon.py")
-                           for d, _s in bundle.payload_pairs(f.role))
-        _mounted = _mounted_project_for_check()
-        _decision = _R.desired_state(project, _mounted, f, daemon_available=_have_daemon,
-                                     index_only=bundle.index_only(project),
-                                     code=bundle.is_code(project))
         _cmd = _R.registration_query_command(project, f)
         _rc, _out = bundle._ssh(f.host, f.user, _cmd)
-        _hit = _R.registration_present(_rc, _out, f)
-        if _decision.required and not _hit:
-            ok_res = False
-            res_note = " · [실패] 상주 미등록 (배달만 되고 안 돈다)"
-        elif not _decision.required and _hit:
-            ok_res = False
-            res_note = f" · [실패] 켜면 안 되는 상주가 등록돼 있다 — {_decision.reason}"
-        elif not _decision.required:
-            res_note = f" · 상주 미등록 정상 — {_decision.reason}"
+        _state = _R.registration_status(_rc, _out, f)
+        ok_res = _state["known"] and not _state["present"]
+        if not _state["known"]:
+            res_note = f" · [실패] {_state['error']}"
+        elif _state["present"]:
+            res_note = " · [실패] 금지된 상주 데몬이 등록돼 있다 (#861)"
+        else:
+            res_note = " · 상주 미등록 정상 — 서버 SSH 주관 (#861)"
 
         # ── codex 몫 (`#402`) — **역할 무관** ────────────────────────────
         #    [중요] `AGENTS.md` 는 「있나」가 아니라 **관리 블록이 최신인가**를 본다. 전문은
@@ -726,28 +720,10 @@ def cmd_uproject(project: str, *, confirm: bool = False) -> int:
 
 
 def cmd_ensure(project: str, *, only: str = "") -> int:
-    """상주가 **꺼져 있으면 켠다** (`#407`). 파견 직전에 부르는 자리다.
-
-    [중요] **아무것도 설치하지 않는다** — 등록은 `deliver` 가 한다. 여기는 「살아있나 / 켜기」
-    두 동사뿐이고, 등록이 없으면 **그 사실을 크게 말하고 멈춘다**(온보딩 누락은 기동 문제가
-    아니다).
-    """
-    bad = 0
-    for f in _facts(project, only=only):
-        r = bundle.ensure_worker_daemon(project, f)
-        if r.get("skipped"):
-            print(f"  ―  {f.host}: {r['skipped']}")
-        elif r.get("already"):
-            print(f"  OK {f.host}: 이미 돌고 있다 (pid {r.get('pid')})")
-        elif r.get("not_registered"):
-            print(f"  FAIL {f.host}: {r['why']}")
-            bad += 1
-        elif r.get("ok"):
-            print(f"  OK {f.host}: {r['why']} (pid {r.get('pid')})")
-        else:
-            print(f"  FAIL {f.host}: {r.get('why', '알 수 없다')}")
-            bad += 1
-    return 1 if bad else 0
+    """폐기된 데몬 ensure의 호환 안내. 워커 프로브나 원격 명령을 실행하지 않는다."""
+    from client.init import residency as R
+    print(f"  ― {project}: {R.DECOMMISSIONED_REASON} — ensure는 아무것도 실행하지 않는다")
+    return 0
 
 
 def _master_head() -> str:
@@ -1011,9 +987,19 @@ def cmd_master_local(*, apply: bool = False, check: bool = False) -> int:
         return 1
 
 
+def cmd_home_guides(*, apply: bool = False, host: str = "") -> int:
+    """기계별 홈 안내서 대조 — 기본은 읽기 전용, `--apply` 는 copy 대상의 DIFF 만 (`#861`).
+
+    프로젝트 인자를 받지 않는다 — 대상은 `home_guides.TARGETS` 표다.
+    """
+    from . import home_guides
+    return home_guides.run(apply=apply, host=host)
+
+
 _CMDS = {"probe": cmd_probe, "plan": cmd_plan, "deliver": cmd_deliver, "check": cmd_check,
          "ensure": cmd_ensure, "uproject": cmd_uproject, "update": cmd_update,
-         "master-local": cmd_master_local, "setup-host": None}
+         "master-local": cmd_master_local, "setup-host": None,
+         "home-guides": None}
 
 
 def main(argv: list) -> int:
@@ -1027,6 +1013,12 @@ def main(argv: list) -> int:
         return cmd_update(init="--init" in argv, all_projects="--all" in argv)
     if argv[0] == "master-local":
         return cmd_master_local(apply="--apply" in argv, check="--check" in argv)
+    if argv[0] == "home-guides":
+        host = ""
+        for a in argv[1:]:
+            if a.startswith("--host="):
+                host = a.split("=", 1)[1].strip()
+        return cmd_home_guides(apply="--apply" in argv, host=host)
     if argv[0] == "setup-host":
         # 프로젝트 인자를 받지 않는다 — 대상은 마운트가 정한다(`setup_host` 머리말)
         from . import setup_host

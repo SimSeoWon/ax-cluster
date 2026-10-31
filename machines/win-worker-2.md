@@ -1,10 +1,11 @@
 # CLAUDE.md — Windows worker `.2`
 
 > [중요] **This file is a COPY, not a symlink.** Canonical:
-> `sim@192.168.0.57:~/ax-cluster/machines/win-worker-2.md`. Edit there, then refresh here:
+> `sim@192.168.0.57:~/ax-cluster/machines/win-worker-2.md`. Edit there, then refresh here
+> (writes both `CLAUDE.md` and the derived `AGENTS.md`, with backup and sha256 re-read — #861):
 >
 > ```bash
-> scp ~/ax-cluster/machines/win-worker-2.md janus@192.168.0.2:C:/Users/janus/CLAUDE.md
+> AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client home-guides --host=192.168.0.2 --apply
 > ```
 >
 > The other two machines symlink into a local `ax-cluster` clone; this box's only ax-cluster tree
@@ -114,8 +115,9 @@ Detail: `~/ax-cluster/docs/5_5-project-isolation.md` §5.5.4-⑥.
     AxConductor_<프로젝트>     codex conductor launcher (/IT /RL LIMITED) — started by the master
                                with `schtasks /run` only when dispatching; not resident
 
-[주의] Until #860 removes the registration code, delivering a mounted unreal project can
-re-register `AxWorker`. If you see it, it is a leftover, not the design.
+[주의] Delivery no longer registers `AxWorker` for any project kind; it removes a leftover
+registration, and `check` fails while one exists — or when the query itself fails (#861).
+If you see it, it is a leftover, not the design.
 
 🔴 [중요] **After a reboot `janus` must log in** (console or RDP 3389). `/IT` tasks need an
 interactive logon and this box has no auto-logon (`AutoAdminLogon` absent) — without it the

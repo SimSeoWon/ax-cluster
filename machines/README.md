@@ -7,8 +7,8 @@ Each machine's `~/CLAUDE.md` (the file Claude Code auto-loads at session start) 
 |---|---|---|
 | [`sim-desktop.md`](sim-desktop.md) + [`sim-desktop.d/`](sim-desktop.d/) | master `sim-desktop` (192.168.0.57) | **symlink** → `/home/sim/CLAUDE.md` |
 | [`bc250-1.md`](bc250-1.md) | BC-250 #1 (192.168.0.43) | **symlink** → `sim@192.168.0.43:/home/sim/CLAUDE.md` |
-| [`win-worker-2.md`](win-worker-2.md) | Windows worker (192.168.0.2, account `janus`) | [중요] **copy** → `C:\Users\janus\CLAUDE.md` (no repo clone there — see below) |
-| [`win-main-33.md`](win-main-33.md) | Windows **main work PC** (192.168.0.33, account `user`) | [중요] **copy** → `C:\Users\USER\CLAUDE.md` — verify by hash, like `.2` |
+| [`win-worker-2.md`](win-worker-2.md) | Windows worker (192.168.0.2, account `janus`) | [중요] **copy** → `C:\Users\janus\CLAUDE.md` **and** `AGENTS.md` (derived: title + refresh line only) — no repo clone there, see below |
+| [`win-main-33.md`](win-main-33.md) | Windows **main work PC** (192.168.0.33, account `user`) | [중요] **copy** → `C:\Users\USER\CLAUDE.md` (no `AGENTS.md` — not created on the human's PC) |
 
 **192.168.0.33** now has its own guide — [`win-main-33.md`](win-main-33.md) — because SSH
 (account **`user`**) and Ollama came up on 2026-08-08 and there is real operating detail to carry:
@@ -24,15 +24,20 @@ before anything that writes.
 
 `ax-cluster` is **not cloned** on the Windows worker, so there is nothing for a symlink to point
 at. Cloning the whole repo there just to carry one guide file costs more than the problem, so that
-machine gets a copy:
+machine gets a copy. **Never `scp` by hand** — one command owns every home guide (#861):
 
 ```bash
-scp ~/ax-cluster/machines/win-worker-2.md janus@192.168.0.2:C:/Users/janus/CLAUDE.md
-
-# drift check — should print identical hashes
-sha256sum ~/ax-cluster/machines/win-worker-2.md | cut -d' ' -f1
-ssh janus@192.168.0.2 'powershell -NoProfile -Command "(Get-FileHash C:\Users\janus\CLAUDE.md -Algorithm SHA256).Hash.ToLower()"'
+cd ~/ax-cluster
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client home-guides            # check only (rc=1 on any DIFF/FAIL)
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client home-guides --apply    # back up, write copies, re-read sha256
+#   --host=<ip> limits it to one machine
 ```
+
+It covers all four machines from one table (`master/client/home_guides.py`): copies are written
+only with `--apply` after a remote `.bak-<timestamp>`; symlinks (`.57`, `.43`) are verified, never
+written; `.2`'s `AGENTS.md` is generated from `win-worker-2.md` (the hand copy drifted — on
+2026-10-31 it still described a resident `AxWorker` while `CLAUDE.md` said no daemon). A failed
+query is reported as FAIL, never read as "absent".
 
 **Copies drift — that is exactly what this directory exists to prevent**, so treat this as a
 known exception with a compensating check, not as the pattern to copy. When `gjc` lands and that
@@ -67,6 +72,7 @@ They are written in **English on purpose**: only Claude reads them, and Korean c
 After editing a machine guide, commit and **`git pull` on the other machine** for its
 `~/CLAUDE.md` to catch up. The repo lives in the master and BC-250 #1 clones plus the canonical
 Gitea `origin` (GitHub is only Gitea's push mirror) — check they're in sync.
+For the copies (`.2`, `.33`) run `master.client home-guides` and then `--apply` (section above).
 
 ```bash
 # on the master

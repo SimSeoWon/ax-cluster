@@ -1465,7 +1465,7 @@ def test_residency_reconcile_removes_forbidden_registration() -> None:
         if "| crontab -" in cmd:
             state["registered"] = False
             return 0, ""
-        if cmd == "crontab -l 2>/dev/null":
+        if cmd == "LC_ALL=C crontab -l 2>&1":
             return 0, (f"*/5 * * * * cd {f.path} && /usr/bin/python3 x\n"
                        if state["registered"] else "")
         return 0, ""
@@ -1479,7 +1479,56 @@ def test_residency_reconcile_removes_forbidden_registration() -> None:
     check("[중요] 등록 불필요 상태를 skipped로 말한다", "skipped" in got, str(got))
     check("[중요] 남아 있던 등록을 제거한다", not state["registered"], str(calls))
     check("[중요] 제거 뒤 다시 조회한다",
-          calls.count("crontab -l 2>/dev/null") == 2, str(calls))
+          calls.count("LC_ALL=C crontab -l 2>&1") == 2, str(calls))
+
+
+def test_residency_is_retired_and_conductor_is_independent() -> None:
+    """Unreal도 상주 없이 Windows 로그인 런처를 받으며 관측 실패는 쓰기를 막는다."""
+    from unittest.mock import patch
+    from client.init import residency as R
+
+    for windows in (True, False):
+        for role in ("worker", "requester"):
+            for kind in ("unreal", "code", "index_only"):
+                f = _facts(role=role, os="windows" if windows else "linux",
+                           ue5="ue5", path=r"C:\trunk\NS" if windows else "/p/NS")
+                calls = []
+                query = R.registration_query_command("NS", f)
+
+                def run(host, user, cmd, *, timeout=None):
+                    calls.append(cmd)
+                    if cmd == query:
+                        return 0, "AX_RESIDENCY_PRESENT=0" if windows else "PATH=/usr/bin\n"
+                    return 0, ""
+
+                with patch.object(bundle, "_ssh", run), \
+                        patch.object(bundle, "_probe_python", return_value=r"C:\Py\pythonw.exe"), \
+                        patch.object(bundle, "index_only", return_value=kind == "index_only"):
+                    got = bundle._register_residency("NS", f)
+                label = f"{windows}/{role}/{kind}"
+                check("상주 등록/기동 없음 " + label,
+                      not any("worker_daemon.py" in c or "nohup" in c
+                              or ("/create" in c and "AxWorker" in c)
+                              or ("/run" in c and "AxWorker" in c) for c in calls), calls)
+                want_conductor = windows and role == "worker" and kind != "index_only"
+                check("정상 로그인 런처 분리 " + label,
+                      bool(got.get("conductor")) == want_conductor, got)
+                check("로그인 런처 명령 일치 " + label,
+                      any("/create" in c and "AxConductor_NS" in c for c in calls)
+                      == want_conductor, calls)
+
+    for windows in (True, False):
+        f = _facts(role="worker", os="windows" if windows else "linux", ue5="ue5")
+        calls = []
+
+        def denied(host, user, cmd, *, timeout=None):
+            calls.append(cmd)
+            return 255, "connection refused"
+
+        with patch.object(bundle, "_ssh", denied):
+            got = bundle._register_residency("NS", f)
+        check("조회 실패는 부재/성공이 아님", "error" in got and not got.get("conductor"), got)
+        check("조회 실패 뒤 등록/해제 쓰기 없음", len(calls) == 1, calls)
 
 
 def test_check_mount_lookup_is_fail_closed() -> None:
@@ -2552,6 +2601,7 @@ def main() -> int:
                test_project_local_codex_surfaces,
                test_codex_identity,
                test_residency_reconcile_removes_forbidden_registration,
+               test_residency_is_retired_and_conductor_is_independent,
                test_check_mount_lookup_is_fail_closed,
                test_update_covers_every_registered_project,
                test_update_reports_partial_failure,

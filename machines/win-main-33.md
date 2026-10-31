@@ -224,5 +224,6 @@ like a truncated answer rather than a failure, which is exactly how it misleads.
 ## When something here changes
 
 This file is a **copy**, like `win-worker-2.md` — `ax-cluster` is not cloned on this machine, so
-there is nothing for a symlink to point at. Refresh it deliberately after measuring; see
-[`README.md`](README.md) for the reasoning and the copy procedure.
+there is nothing for a symlink to point at. Refresh it deliberately after measuring with
+`master.client home-guides --host=192.168.0.33` (check) then `--apply` (backs up first); see
+[`README.md`](README.md) for the reasoning.

@@ -1,0 +1,984 @@
+{
+  "live": {
+    "active": "AXCluster",
+    "hosts": [
+      {
+        "host": "192.168.0.2",
+        "user": "janus",
+        "windows": true,
+        "queries": [
+          {
+            "label": "connectivity",
+            "rc": 0,
+            "out": "Microsoft Windows [Version 10.0.26300.9818]"
+          },
+          {
+            "label": "tasks",
+            "rc": 0,
+            "out": "[{\"TaskName\":\"AxConductor\",\"State\":3,\"Actions\":{\"Execute\":\"\\\"C:\\\\Users\\\\janus\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python310\\\\pythonw.exe\\\"\",\"Arguments\":\"\\\"C:\\\\trunk\\\\ModularStage\\\\.ax\\\\lib\\\\axmaster\\\\clientside\\\\session1_conductor.py\\\"\",\"WorkingDirectory\":null}},{\"TaskName\":\"AxConductor_AXCluster\",\"State\":3,\"Actions\":{\"Execute\":\"\\\"C:\\\\Users\\\\janus\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python310\\\\pythonw.exe\\\"\",\"Arguments\":\"\\\"C:\\\\trunk\\\\AXCluster\\\\.ax\\\\lib\\\\axmaster\\\\clientside\\\\session1_conductor.py\\\"\",\"WorkingDirectory\":null}}]"
+          },
+          {
+            "label": "processes",
+            "rc": 0,
+            "out": ""
+          }
+        ],
+        "checkouts": [
+          {
+            "project": "ModularStage",
+            "path": "C:\\trunk\\ModularStage",
+            "role": "worker",
+            "stamp": {
+              "commit": "fe107097bdfeb5e255f6e0e4b16e32fb5db6a955",
+              "commit_short": "fe10709",
+              "dirty": false,
+              "contract": 1
+            },
+            "hashes": {
+              "C:\\trunk\\ModularStage\\.ax\\lib\\axmaster\\work\\worker_daemon.py": "8af8c2f74ee9744350a869dc892c33327e8ee22fe84dfcc6cf8dadc1e2255395",
+              "C:\\trunk\\ModularStage\\.ax\\lib\\axmaster\\work\\ax_safety.py": "bb3165014a7b99685f3e497c9d1b8d5e346abe14dd9fc25357d65f67fb678f6e",
+              "C:\\trunk\\ModularStage\\.ax\\lib\\axmaster\\clientside\\session1_conductor.py": "a847d6ccdd2d71d17c7e907ee61cf999fc38614a17a9980269e982f8df1c7894",
+              "C:\\trunk\\ModularStage\\CLAUDE.md": "d975d24006aa280e370d32464a2dc4919de40abc8a6808df4c554420eb0f925e",
+              "C:\\trunk\\ModularStage\\AGENTS.md": "1024109194c3dd12872d0ff419be76ca7b884de395bb9955473b7737ba8ea135"
+            },
+            "query_targets": [
+              "C:\\trunk\\ModularStage\\.ax\\lib\\axmaster\\work\\worker_daemon.py",
+              "C:\\trunk\\ModularStage\\.ax\\lib\\axmaster\\work\\claimer.py",
+              "C:\\trunk\\ModularStage\\.ax\\lib\\axmaster\\work\\ax_safety.py",
+              "C:\\trunk\\ModularStage\\.ax\\lib\\axmaster\\clientside\\session1_conductor.py",
+              "C:\\trunk\\ModularStage\\CLAUDE.md",
+              "C:\\trunk\\ModularStage\\AGENTS.md"
+            ]
+          },
+          {
+            "project": "NS",
+            "path": "C:\\trunk\\NS",
+            "role": "worker",
+            "stamp": {
+              "error": "config 를 읽지 못했다(빈 응답): C:\\trunk\\NS\\.ax\\config.json"
+            },
+            "hashes": {},
+            "query_targets": [
+              "C:\\trunk\\NS\\.ax\\lib\\axmaster\\work\\worker_daemon.py",
+              "C:\\trunk\\NS\\.ax\\lib\\axmaster\\work\\claimer.py",
+              "C:\\trunk\\NS\\.ax\\lib\\axmaster\\work\\ax_safety.py",
+              "C:\\trunk\\NS\\.ax\\lib\\axmaster\\clientside\\session1_conductor.py",
+              "C:\\trunk\\NS\\CLAUDE.md",
+              "C:\\trunk\\NS\\AGENTS.md"
+            ]
+          },
+          {
+            "project": "MotionForge",
+            "path": "C:\\trunk\\MotionForge",
+            "role": "worker",
+            "stamp": {
+              "error": "config 를 읽지 못했다(빈 응답): C:\\trunk\\MotionForge\\.ax\\config.json"
+            },
+            "hashes": {},
+            "query_targets": [
+              "C:\\trunk\\MotionForge\\.ax\\lib\\axmaster\\work\\worker_daemon.py",
+              "C:\\trunk\\MotionForge\\.ax\\lib\\axmaster\\work\\claimer.py",
+              "C:\\trunk\\MotionForge\\.ax\\lib\\axmaster\\work\\ax_safety.py",
+              "C:\\trunk\\MotionForge\\.ax\\lib\\axmaster\\clientside\\session1_conductor.py",
+              "C:\\trunk\\MotionForge\\CLAUDE.md",
+              "C:\\trunk\\MotionForge\\AGENTS.md"
+            ]
+          },
+          {
+            "project": "AXCluster",
+            "path": "C:\\trunk\\AXCluster",
+            "role": "worker",
+            "stamp": {
+              "commit": "f29aaf0de03322fc66158f374141a0882bb1a78d",
+              "commit_short": "f29aaf0",
+              "dirty": false,
+              "contract": 1
+            },
+            "hashes": {
+              "C:\\trunk\\AXCluster\\.ax\\lib\\axmaster\\work\\worker_daemon.py": "8af8c2f74ee9744350a869dc892c33327e8ee22fe84dfcc6cf8dadc1e2255395",
+              "C:\\trunk\\AXCluster\\.ax\\lib\\axmaster\\work\\ax_safety.py": "bb3165014a7b99685f3e497c9d1b8d5e346abe14dd9fc25357d65f67fb678f6e",
+              "C:\\trunk\\AXCluster\\.ax\\lib\\axmaster\\clientside\\session1_conductor.py": "a847d6ccdd2d71d17c7e907ee61cf999fc38614a17a9980269e982f8df1c7894",
+              "C:\\trunk\\AXCluster\\CLAUDE.md": "9a7075153a9822f1c71ee457dfc827bf20f4d468f5f4bc7b2d5d58cb2cb99744",
+              "C:\\trunk\\AXCluster\\AGENTS.md": "22bb06281209eb6b8b5a85a6ad1716e55eb6ccfab23111f73bf37cef0ea509a8"
+            },
+            "query_targets": [
+              "C:\\trunk\\AXCluster\\.ax\\lib\\axmaster\\work\\worker_daemon.py",
+              "C:\\trunk\\AXCluster\\.ax\\lib\\axmaster\\work\\claimer.py",
+              "C:\\trunk\\AXCluster\\.ax\\lib\\axmaster\\work\\ax_safety.py",
+              "C:\\trunk\\AXCluster\\.ax\\lib\\axmaster\\clientside\\session1_conductor.py",
+              "C:\\trunk\\AXCluster\\CLAUDE.md",
+              "C:\\trunk\\AXCluster\\AGENTS.md"
+            ]
+          }
+        ]
+      },
+      {
+        "host": "192.168.0.33",
+        "user": "user",
+        "windows": true,
+        "queries": [
+          {
+            "label": "connectivity",
+            "rc": 0,
+            "out": "Microsoft Windows [Version 10.0.26200.9711]"
+          },
+          {
+            "label": "tasks",
+            "rc": 0,
+            "out": "[{\"TaskName\":\"AxConductor_AXCluster\",\"State\":3,\"Actions\":{\"Execute\":\"\\\"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\pythonw.exe\\\"\",\"Arguments\":\"\\\"C:\\\\trunk\\\\AXCluster\\\\.ax\\\\lib\\\\axmaster\\\\clientside\\\\session1_conductor.py\\\"\",\"WorkingDirectory\":null}},{\"TaskName\":\"AX_Ollama33\",\"State\":4,\"Actions\":{\"Execute\":\"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe\",\"Arguments\":\"serve\",\"WorkingDirectory\":null}}]"
+          },
+          {
+            "label": "processes",
+            "rc": 0,
+            "out": ""
+          }
+        ],
+        "checkouts": [
+          {
+            "project": "ModularStage",
+            "path": "C:\\Users\\USER\\Documents\\ModularStage",
+            "role": "requester",
+            "stamp": {
+              "commit": "fe107097bdfeb5e255f6e0e4b16e32fb5db6a955",
+              "commit_short": "fe10709",
+              "dirty": false,
+              "contract": 1
+            },
+            "hashes": {
+              "C:\\Users\\USER\\Documents\\ModularStage\\CLAUDE.md": "fcb59509ff8596502c556935fdc3920fdf5aed0719476f0e64f92ae17551c809",
+              "C:\\Users\\USER\\Documents\\ModularStage\\AGENTS.md": "869b9c565e779f1c384da4746216a76f6a131bcba5c6c47de4d44f387f82041e"
+            },
+            "query_targets": [
+              "C:\\Users\\USER\\Documents\\ModularStage\\.ax\\lib\\axmaster\\work\\worker_daemon.py",
+              "C:\\Users\\USER\\Documents\\ModularStage\\.ax\\lib\\axmaster\\work\\claimer.py",
+              "C:\\Users\\USER\\Documents\\ModularStage\\.ax\\lib\\axmaster\\work\\ax_safety.py",
+              "C:\\Users\\USER\\Documents\\ModularStage\\.ax\\lib\\axmaster\\clientside\\session1_conductor.py",
+              "C:\\Users\\USER\\Documents\\ModularStage\\CLAUDE.md",
+              "C:\\Users\\USER\\Documents\\ModularStage\\AGENTS.md"
+            ]
+          },
+          {
+            "project": "NS",
+            "path": "C:\\Users\\USER\\Documents\\NS",
+            "role": "requester",
+            "stamp": {
+              "commit": "4ef398bd23634ae70eb29b7767f9b00f5ba7f8b3",
+              "commit_short": "4ef398b",
+              "dirty": false,
+              "contract": 1
+            },
+            "hashes": {
+              "C:\\Users\\USER\\Documents\\NS\\CLAUDE.md": "3b11b4ad290a61a90799e50b6db2f9d6339e077fef775b0c6353cf82691406c0",
+              "C:\\Users\\USER\\Documents\\NS\\AGENTS.md": "eef1785e40625c410842d24cd146d2bd113de14dd9da3223bd453a14992edf46"
+            },
+            "query_targets": [
+              "C:\\Users\\USER\\Documents\\NS\\.ax\\lib\\axmaster\\work\\worker_daemon.py",
+              "C:\\Users\\USER\\Documents\\NS\\.ax\\lib\\axmaster\\work\\claimer.py",
+              "C:\\Users\\USER\\Documents\\NS\\.ax\\lib\\axmaster\\work\\ax_safety.py",
+              "C:\\Users\\USER\\Documents\\NS\\.ax\\lib\\axmaster\\clientside\\session1_conductor.py",
+              "C:\\Users\\USER\\Documents\\NS\\CLAUDE.md",
+              "C:\\Users\\USER\\Documents\\NS\\AGENTS.md"
+            ]
+          },
+          {
+            "project": "MotionForge",
+            "path": "C:\\trunk\\MotionForge",
+            "role": "requester",
+            "stamp": {
+              "commit": "584df1923842d3adb653656acb7d6107dca465cd",
+              "commit_short": "584df19",
+              "dirty": false,
+              "contract": 1
+            },
+            "hashes": {
+              "C:\\trunk\\MotionForge\\CLAUDE.md": "db68cc6416a97f4fd42d3c184bfe5fe5bffe881e1cc4cc56b780552fb4befeb3",
+              "C:\\trunk\\MotionForge\\AGENTS.md": "e13f1fab705f3eee66f0c016bf3473f0a9ce3a2768c8ea4742cf2144f9e93f81"
+            },
+            "query_targets": [
+              "C:\\trunk\\MotionForge\\.ax\\lib\\axmaster\\work\\worker_daemon.py",
+              "C:\\trunk\\MotionForge\\.ax\\lib\\axmaster\\work\\claimer.py",
+              "C:\\trunk\\MotionForge\\.ax\\lib\\axmaster\\work\\ax_safety.py",
+              "C:\\trunk\\MotionForge\\.ax\\lib\\axmaster\\clientside\\session1_conductor.py",
+              "C:\\trunk\\MotionForge\\CLAUDE.md",
+              "C:\\trunk\\MotionForge\\AGENTS.md"
+            ]
+          },
+          {
+            "project": "AXCluster",
+            "path": "C:\\trunk\\AXCluster",
+            "role": "worker",
+            "stamp": {
+              "commit": "f29aaf0de03322fc66158f374141a0882bb1a78d",
+              "commit_short": "f29aaf0",
+              "dirty": false,
+              "contract": 1
+            },
+            "hashes": {
+              "C:\\trunk\\AXCluster\\.ax\\lib\\axmaster\\work\\worker_daemon.py": "8af8c2f74ee9744350a869dc892c33327e8ee22fe84dfcc6cf8dadc1e2255395",
+              "C:\\trunk\\AXCluster\\.ax\\lib\\axmaster\\work\\ax_safety.py": "bb3165014a7b99685f3e497c9d1b8d5e346abe14dd9fc25357d65f67fb678f6e",
+              "C:\\trunk\\AXCluster\\.ax\\lib\\axmaster\\clientside\\session1_conductor.py": "a847d6ccdd2d71d17c7e907ee61cf999fc38614a17a9980269e982f8df1c7894",
+              "C:\\trunk\\AXCluster\\CLAUDE.md": "9de3783454e4e8395570caf73226b5f9a8e5b1373ede166711af03ccc6daf059",
+              "C:\\trunk\\AXCluster\\AGENTS.md": "e9bd6a6321298c1888a42ba8dbf08343ddea7d93fcd40d792162a9d4942ca102"
+            },
+            "query_targets": [
+              "C:\\trunk\\AXCluster\\.ax\\lib\\axmaster\\work\\worker_daemon.py",
+              "C:\\trunk\\AXCluster\\.ax\\lib\\axmaster\\work\\claimer.py",
+              "C:\\trunk\\AXCluster\\.ax\\lib\\axmaster\\work\\ax_safety.py",
+              "C:\\trunk\\AXCluster\\.ax\\lib\\axmaster\\clientside\\session1_conductor.py",
+              "C:\\trunk\\AXCluster\\CLAUDE.md",
+              "C:\\trunk\\AXCluster\\AGENTS.md"
+            ]
+          }
+        ]
+      },
+      {
+        "host": "192.168.0.43",
+        "user": "sim",
+        "windows": false,
+        "queries": [
+          {
+            "label": "connectivity",
+            "rc": 0,
+            "out": "Linux"
+          },
+          {
+            "label": "cron",
+            "rc": 0,
+            "out": "PATH=/home/sim/.local/bin:/usr/local/bin:/usr/bin:/bin"
+          },
+          {
+            "label": "processes",
+            "rc": 1,
+            "out": ""
+          }
+        ],
+        "checkouts": [
+          {
+            "project": "ModularStage",
+            "path": "/home/sim/trunk/ModularStage",
+            "role": "worker",
+            "stamp": {
+              "commit": "fe107097bdfeb5e255f6e0e4b16e32fb5db6a955",
+              "commit_short": "fe10709",
+              "dirty": false,
+              "contract": 1
+            },
+            "hashes": {
+              "/home/sim/trunk/ModularStage/.ax/lib/axmaster/work/worker_daemon.py": "8af8c2f74ee9744350a869dc892c33327e8ee22fe84dfcc6cf8dadc1e2255395",
+              "/home/sim/trunk/ModularStage/.ax/lib/axmaster/work/ax_safety.py": "bb3165014a7b99685f3e497c9d1b8d5e346abe14dd9fc25357d65f67fb678f6e",
+              "/home/sim/trunk/ModularStage/.ax/lib/axmaster/clientside/session1_conductor.py": "a847d6ccdd2d71d17c7e907ee61cf999fc38614a17a9980269e982f8df1c7894",
+              "/home/sim/trunk/ModularStage/CLAUDE.md": "4899b8d031f9d9b16cf30d4851ea7c7321aced51b01e08d3ee6d006903da5f63",
+              "/home/sim/trunk/ModularStage/AGENTS.md": "00d161897519f0423c0bab313eaac7fc06fba795c62646829e40adf03073299d"
+            },
+            "query_targets": [
+              "/home/sim/trunk/ModularStage/.ax/lib/axmaster/work/worker_daemon.py",
+              "/home/sim/trunk/ModularStage/.ax/lib/axmaster/work/claimer.py",
+              "/home/sim/trunk/ModularStage/.ax/lib/axmaster/work/ax_safety.py",
+              "/home/sim/trunk/ModularStage/.ax/lib/axmaster/clientside/session1_conductor.py",
+              "/home/sim/trunk/ModularStage/CLAUDE.md",
+              "/home/sim/trunk/ModularStage/AGENTS.md"
+            ]
+          },
+          {
+            "project": "NS",
+            "path": "/home/sim/trunk/NS",
+            "role": "worker",
+            "stamp": {
+              "commit": "4ef398bd23634ae70eb29b7767f9b00f5ba7f8b3",
+              "commit_short": "4ef398b",
+              "dirty": false,
+              "contract": 1
+            },
+            "hashes": {
+              "/home/sim/trunk/NS/.ax/lib/axmaster/work/worker_daemon.py": "8af8c2f74ee9744350a869dc892c33327e8ee22fe84dfcc6cf8dadc1e2255395",
+              "/home/sim/trunk/NS/.ax/lib/axmaster/work/ax_safety.py": "bb3165014a7b99685f3e497c9d1b8d5e346abe14dd9fc25357d65f67fb678f6e",
+              "/home/sim/trunk/NS/.ax/lib/axmaster/clientside/session1_conductor.py": "5c58585d0a471887335a8acba25ba98dad5c3ae1b9d06fbdf4dd4201ddf22bf7",
+              "/home/sim/trunk/NS/CLAUDE.md": "ea9540ced69198bee7ed3243cad74a5d710a0d2a9dfe39d0f7b0fcea8f7e271c",
+              "/home/sim/trunk/NS/AGENTS.md": "2ae353e9c1f6edb87da7050c1c2fbac4afa8a8b29212bb87209f85bc78be18bd"
+            },
+            "query_targets": [
+              "/home/sim/trunk/NS/.ax/lib/axmaster/work/worker_daemon.py",
+              "/home/sim/trunk/NS/.ax/lib/axmaster/work/claimer.py",
+              "/home/sim/trunk/NS/.ax/lib/axmaster/work/ax_safety.py",
+              "/home/sim/trunk/NS/.ax/lib/axmaster/clientside/session1_conductor.py",
+              "/home/sim/trunk/NS/CLAUDE.md",
+              "/home/sim/trunk/NS/AGENTS.md"
+            ]
+          },
+          {
+            "project": "MotionForge",
+            "path": "/home/sim/trunk/MotionForge",
+            "role": "worker",
+            "stamp": {
+              "commit": "584df1923842d3adb653656acb7d6107dca465cd",
+              "commit_short": "584df19",
+              "dirty": false,
+              "contract": 1
+            },
+            "hashes": {
+              "/home/sim/trunk/MotionForge/.ax/lib/axmaster/work/worker_daemon.py": "8af8c2f74ee9744350a869dc892c33327e8ee22fe84dfcc6cf8dadc1e2255395",
+              "/home/sim/trunk/MotionForge/.ax/lib/axmaster/work/ax_safety.py": "bb3165014a7b99685f3e497c9d1b8d5e346abe14dd9fc25357d65f67fb678f6e",
+              "/home/sim/trunk/MotionForge/.ax/lib/axmaster/clientside/session1_conductor.py": "a847d6ccdd2d71d17c7e907ee61cf999fc38614a17a9980269e982f8df1c7894",
+              "/home/sim/trunk/MotionForge/CLAUDE.md": "1d32ae50d52a36e2d6ade4b7056331307d3b0a820400d65fc5c7cd8371a969eb",
+              "/home/sim/trunk/MotionForge/AGENTS.md": "8504cc2bd7cbc6b3c91b409543330c69cb5a083bc9e7474256683ee6d20eb07c"
+            },
+            "query_targets": [
+              "/home/sim/trunk/MotionForge/.ax/lib/axmaster/work/worker_daemon.py",
+              "/home/sim/trunk/MotionForge/.ax/lib/axmaster/work/claimer.py",
+              "/home/sim/trunk/MotionForge/.ax/lib/axmaster/work/ax_safety.py",
+              "/home/sim/trunk/MotionForge/.ax/lib/axmaster/clientside/session1_conductor.py",
+              "/home/sim/trunk/MotionForge/CLAUDE.md",
+              "/home/sim/trunk/MotionForge/AGENTS.md"
+            ]
+          },
+          {
+            "project": "AXCluster",
+            "path": "/home/sim/trunk/AXCluster",
+            "role": "worker",
+            "stamp": {
+              "commit": "f29aaf0de03322fc66158f374141a0882bb1a78d",
+              "commit_short": "f29aaf0",
+              "dirty": false,
+              "contract": 1
+            },
+            "hashes": {
+              "/home/sim/trunk/AXCluster/.ax/lib/axmaster/work/worker_daemon.py": "8af8c2f74ee9744350a869dc892c33327e8ee22fe84dfcc6cf8dadc1e2255395",
+              "/home/sim/trunk/AXCluster/.ax/lib/axmaster/work/ax_safety.py": "bb3165014a7b99685f3e497c9d1b8d5e346abe14dd9fc25357d65f67fb678f6e",
+              "/home/sim/trunk/AXCluster/.ax/lib/axmaster/clientside/session1_conductor.py": "a847d6ccdd2d71d17c7e907ee61cf999fc38614a17a9980269e982f8df1c7894",
+              "/home/sim/trunk/AXCluster/CLAUDE.md": "6c8c705ab45b1b82d93d28c597832779702b72c6f45663cc8433c643138bedf9",
+              "/home/sim/trunk/AXCluster/AGENTS.md": "3f86a04e5c990755822990622d2859085037ad2d8052ddb6022a4252fe091357"
+            },
+            "query_targets": [
+              "/home/sim/trunk/AXCluster/.ax/lib/axmaster/work/worker_daemon.py",
+              "/home/sim/trunk/AXCluster/.ax/lib/axmaster/work/claimer.py",
+              "/home/sim/trunk/AXCluster/.ax/lib/axmaster/work/ax_safety.py",
+              "/home/sim/trunk/AXCluster/.ax/lib/axmaster/clientside/session1_conductor.py",
+              "/home/sim/trunk/AXCluster/CLAUDE.md",
+              "/home/sim/trunk/AXCluster/AGENTS.md"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "extra": {
+    "linux_processes": {
+      "host": "192.168.0.43",
+      "rc": 0,
+      "matches": []
+    },
+    "entry_docs": [
+      {
+        "project": "ModularStage",
+        "host": "192.168.0.2",
+        "path": "C:\\trunk\\ModularStage\\CLAUDE.md",
+        "sha256": "d975d24006aa280e370d32464a2dc4919de40abc8a6808df4c554420eb0f925e",
+        "matched_lines": []
+      },
+      {
+        "project": "ModularStage",
+        "host": "192.168.0.2",
+        "path": "C:\\trunk\\ModularStage\\AGENTS.md",
+        "sha256": "1024109194c3dd12872d0ff419be76ca7b884de395bb9955473b7737ba8ea135",
+        "matched_lines": []
+      },
+      {
+        "project": "ModularStage",
+        "host": "192.168.0.33",
+        "path": "C:\\Users\\USER\\Documents\\ModularStage\\CLAUDE.md",
+        "sha256": "fcb59509ff8596502c556935fdc3920fdf5aed0719476f0e64f92ae17551c809",
+        "matched_lines": []
+      },
+      {
+        "project": "ModularStage",
+        "host": "192.168.0.33",
+        "path": "C:\\Users\\USER\\Documents\\ModularStage\\AGENTS.md",
+        "sha256": "869b9c565e779f1c384da4746216a76f6a131bcba5c6c47de4d44f387f82041e",
+        "matched_lines": []
+      },
+      {
+        "project": "ModularStage",
+        "host": "192.168.0.43",
+        "path": "/home/sim/trunk/ModularStage/CLAUDE.md",
+        "sha256": "4899b8d031f9d9b16cf30d4851ea7c7321aced51b01e08d3ee6d006903da5f63",
+        "matched_lines": []
+      },
+      {
+        "project": "ModularStage",
+        "host": "192.168.0.43",
+        "path": "/home/sim/trunk/ModularStage/AGENTS.md",
+        "sha256": "00d161897519f0423c0bab313eaac7fc06fba795c62646829e40adf03073299d",
+        "matched_lines": []
+      },
+      {
+        "project": "NS",
+        "host": "192.168.0.33",
+        "path": "C:\\Users\\USER\\Documents\\NS\\CLAUDE.md",
+        "sha256": "3b11b4ad290a61a90799e50b6db2f9d6339e077fef775b0c6353cf82691406c0",
+        "matched_lines": []
+      },
+      {
+        "project": "NS",
+        "host": "192.168.0.33",
+        "path": "C:\\Users\\USER\\Documents\\NS\\AGENTS.md",
+        "sha256": "eef1785e40625c410842d24cd146d2bd113de14dd9da3223bd453a14992edf46",
+        "matched_lines": []
+      },
+      {
+        "project": "NS",
+        "host": "192.168.0.43",
+        "path": "/home/sim/trunk/NS/CLAUDE.md",
+        "sha256": "ea9540ced69198bee7ed3243cad74a5d710a0d2a9dfe39d0f7b0fcea8f7e271c",
+        "matched_lines": []
+      },
+      {
+        "project": "NS",
+        "host": "192.168.0.43",
+        "path": "/home/sim/trunk/NS/AGENTS.md",
+        "sha256": "2ae353e9c1f6edb87da7050c1c2fbac4afa8a8b29212bb87209f85bc78be18bd",
+        "matched_lines": []
+      },
+      {
+        "project": "MotionForge",
+        "host": "192.168.0.33",
+        "path": "C:\\trunk\\MotionForge\\CLAUDE.md",
+        "sha256": "db68cc6416a97f4fd42d3c184bfe5fe5bffe881e1cc4cc56b780552fb4befeb3",
+        "matched_lines": []
+      },
+      {
+        "project": "MotionForge",
+        "host": "192.168.0.33",
+        "path": "C:\\trunk\\MotionForge\\AGENTS.md",
+        "sha256": "e13f1fab705f3eee66f0c016bf3473f0a9ce3a2768c8ea4742cf2144f9e93f81",
+        "matched_lines": []
+      },
+      {
+        "project": "MotionForge",
+        "host": "192.168.0.43",
+        "path": "/home/sim/trunk/MotionForge/CLAUDE.md",
+        "sha256": "1d32ae50d52a36e2d6ade4b7056331307d3b0a820400d65fc5c7cd8371a969eb",
+        "matched_lines": []
+      },
+      {
+        "project": "MotionForge",
+        "host": "192.168.0.43",
+        "path": "/home/sim/trunk/MotionForge/AGENTS.md",
+        "sha256": "8504cc2bd7cbc6b3c91b409543330c69cb5a083bc9e7474256683ee6d20eb07c",
+        "matched_lines": []
+      },
+      {
+        "project": "AXCluster",
+        "host": "192.168.0.43",
+        "path": "/home/sim/trunk/AXCluster/CLAUDE.md",
+        "sha256": "6c8c705ab45b1b82d93d28c597832779702b72c6f45663cc8433c643138bedf9",
+        "matched_lines": [
+          {
+            "line": 363,
+            "text": "curl -s localhost:8102/health | python3 -m json.tool   # 노드별 상주 모델"
+          },
+          {
+            "line": 381,
+            "text": "[중요] **상주 데몬은 build 만 집는다** (`#404`, 2026-09-12). `#320`(2026-08-27)이 걷은 claimer 를"
+          },
+          {
+            "line": 382,
+            "text": "`master/work/worker_daemon.py` 로 되살려 `.2` 세션 1 에서 claim → UE5 빌드 → submit 을 사람 개입"
+          },
+          {
+            "line": 383,
+            "text": "없이 완주했다. **추론(code) 조각은 여전히 마스터가 SSH 로 민다** — 데몬의 추론 경로는 폐기된"
+          }
+        ]
+      },
+      {
+        "project": "AXCluster",
+        "host": "192.168.0.43",
+        "path": "/home/sim/trunk/AXCluster/AGENTS.md",
+        "sha256": "3f86a04e5c990755822990622d2859085037ad2d8052ddb6022a4252fe091357",
+        "matched_lines": [
+          {
+            "line": 113,
+            "text": "  실행한다. “세션 1”은 고정 SessionId가 아니다. SSH 직접 실행·예약 작업 요청 성공을 실증으로"
+          }
+        ]
+      },
+      {
+        "project": "AXCluster",
+        "host": "192.168.0.2",
+        "path": "C:\\trunk\\AXCluster\\CLAUDE.md",
+        "sha256": "9a7075153a9822f1c71ee457dfc827bf20f4d468f5f4bc7b2d5d58cb2cb99744",
+        "matched_lines": [
+          {
+            "line": 364,
+            "text": "curl -s localhost:8102/health | python3 -m json.tool   # 노드별 상주 모델"
+          },
+          {
+            "line": 382,
+            "text": "[중요] **상주 데몬은 build 만 집는다** (`#404`, 2026-09-12). `#320`(2026-08-27)이 걷은 claimer 를"
+          },
+          {
+            "line": 383,
+            "text": "`master/work/worker_daemon.py` 로 되살려 `.2` 세션 1 에서 claim → UE5 빌드 → submit 을 사람 개입"
+          },
+          {
+            "line": 384,
+            "text": "없이 완주했다. **추론(code) 조각은 여전히 마스터가 SSH 로 민다** — 데몬의 추론 경로는 폐기된"
+          }
+        ]
+      },
+      {
+        "project": "AXCluster",
+        "host": "192.168.0.2",
+        "path": "C:\\trunk\\AXCluster\\AGENTS.md",
+        "sha256": "22bb06281209eb6b8b5a85a6ad1716e55eb6ccfab23111f73bf37cef0ea509a8",
+        "matched_lines": [
+          {
+            "line": 114,
+            "text": "  실행한다. “세션 1”은 고정 SessionId가 아니다. SSH 직접 실행·예약 작업 요청 성공을 실증으로"
+          }
+        ]
+      },
+      {
+        "project": "AXCluster",
+        "host": "192.168.0.33",
+        "path": "C:\\trunk\\AXCluster\\CLAUDE.md",
+        "sha256": "9de3783454e4e8395570caf73226b5f9a8e5b1373ede166711af03ccc6daf059",
+        "matched_lines": [
+          {
+            "line": 363,
+            "text": "curl -s localhost:8102/health | python3 -m json.tool   # 노드별 상주 모델"
+          },
+          {
+            "line": 381,
+            "text": "[중요] **상주 데몬은 build 만 집는다** (`#404`, 2026-09-12). `#320`(2026-08-27)이 걷은 claimer 를"
+          },
+          {
+            "line": 382,
+            "text": "`master/work/worker_daemon.py` 로 되살려 `.2` 세션 1 에서 claim → UE5 빌드 → submit 을 사람 개입"
+          },
+          {
+            "line": 383,
+            "text": "없이 완주했다. **추론(code) 조각은 여전히 마스터가 SSH 로 민다** — 데몬의 추론 경로는 폐기된"
+          }
+        ]
+      },
+      {
+        "project": "AXCluster",
+        "host": "192.168.0.33",
+        "path": "C:\\trunk\\AXCluster\\AGENTS.md",
+        "sha256": "e9bd6a6321298c1888a42ba8dbf08343ddea7d93fcd40d792162a9d4942ca102",
+        "matched_lines": [
+          {
+            "line": 113,
+            "text": "  실행한다. “세션 1”은 고정 SessionId가 아니다. SSH 직접 실행·예약 작업 요청 성공을 실증으로"
+          }
+        ]
+      }
+    ],
+    "home_doc_inventory": [
+      {
+        "host": "192.168.0.2",
+        "home": "C:\\Users\\janus",
+        "hashes": {
+          "C:\\Users\\janus\\CLAUDE.md": "12e67d3d451e175574c7a31f5919c7f426ad5604f45f86255023100ff97c1535",
+          "C:\\Users\\janus\\AGENTS.md": "c7206932d1a486213aa7f61c073d8d1764651c1944574fb57a1eabc177d6d869",
+          "C:\\Users\\janus\\.codex\\AGENTS.md": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "targets": [
+          "C:\\Users\\janus\\CLAUDE.md",
+          "C:\\Users\\janus\\AGENTS.md",
+          "C:\\Users\\janus\\.codex\\AGENTS.md",
+          "C:\\Users\\janus\\.claude\\CLAUDE.md"
+        ]
+      },
+      {
+        "host": "192.168.0.33",
+        "home": "C:\\Users\\USER",
+        "hashes": {
+          "C:\\Users\\USER\\CLAUDE.md": "d2473fc4a1d99cb359012bbbca5db38c934132a5a1e02c4d5f45e2f06f47069b"
+        },
+        "targets": [
+          "C:\\Users\\USER\\CLAUDE.md",
+          "C:\\Users\\USER\\AGENTS.md",
+          "C:\\Users\\USER\\.codex\\AGENTS.md",
+          "C:\\Users\\USER\\.claude\\CLAUDE.md"
+        ]
+      },
+      {
+        "host": "192.168.0.43",
+        "home": "/home/sim",
+        "hashes": {
+          "/home/sim/CLAUDE.md": "b779de88663125564b848c43f70b6b8aa5bfa774d7d5672a5243406ca3c8512c"
+        },
+        "targets": [
+          "/home/sim/CLAUDE.md",
+          "/home/sim/AGENTS.md",
+          "/home/sim/.codex/AGENTS.md",
+          "/home/sim/.claude/CLAUDE.md"
+        ]
+      }
+    ]
+  },
+  "home": {
+    "home_docs": [
+      {
+        "host": "192.168.0.2",
+        "path": "C:\\Users\\janus\\CLAUDE.md",
+        "sha256": "12e67d3d451e175574c7a31f5919c7f426ad5604f45f86255023100ff97c1535",
+        "chars": 12880,
+        "matches": [
+          {
+            "line": 28,
+            "text": "이면 **이 기계에서** 그 에이전트가 체크아웃을 읽고 고친다 — codex 는 SSH 세션 0 에서 직접"
+          },
+          {
+            "line": 37,
+            "text": "| `.claude\\daemons\\worker.exe` | [완료] **삭제** (25.7MB) · 옛 로그 1건은 남겼다 |"
+          },
+          {
+            "line": 46,
+            "text": "[완료] 정리 후 배선 무손상 확인(2026-08-20 당시): `.ax/`(config·lib·token·claimer.lock) ·"
+          },
+          {
+            "line": 47,
+            "text": "당시 `AxClaimer` 실행 중 · 마스터 `client check` OK. (`AxClaimer` 는 이후 철거·개명됐다 — 아래"
+          },
+          {
+            "line": 56,
+            "text": "| **Account** | **`janus`** — a local **Administrator**. *Not* `sim`; `ssh sim@…` fails |"
+          },
+          {
+            "line": 57,
+            "text": "| **SSH** | `ssh janus@192.168.0.2` — passwordless. Master's key is in `C:\\ProgramData\\ssh\\administrators_authorized_keys` (admin path, not `~/.ssh/`) |"
+          },
+          {
+            "line": 67,
+            "text": "Both Windows PCs are reachable over SSH; Codex worker execution uses the interactive `/IT` conductor."
+          },
+          {
+            "line": 73,
+            "text": "SSH login     → SessionId 0   (services session — NO desktop access)"
+          },
+          {
+            "line": 82,
+            "text": "### [완료] The master CAN do these over SSH"
+          },
+          {
+            "line": 86,
+            "text": "| `UnrealEditor-Cmd` — commandlets, **build, `RunTests`** | Headless, session 0 is fine. This opens layer-3 verification to master control. [완료] Remote builds run here, driven by the master over SSH (`run_build_on_workshop` → `Build.bat`). (The 2026-09-12 resident build daemon, report 63, was withdrawn 2026-10-31 — `#860`.) |"
+          },
+          {
+            "line": 102,
+            "text": "**For SSH-launched processes, the SSH connection is the owner.** When it closes, children die."
+          },
+          {
+            "line": 109,
+            "text": "### No resident daemon — only the on-demand `AxConductor` launcher (user 2026-10-31, #860)"
+          },
+          {
+            "line": 111,
+            "text": "`AxClaimer` was removed by #320 (2026-08-27). `AxWorker` (#404/#405, a build daemon) was withdrawn"
+          },
+          {
+            "line": 112,
+            "text": "2026-10-31: the master drives builds over SSH (`run_build_on_workshop`). What remains:"
+          },
+          {
+            "line": 118,
+            "text": "re-register `AxWorker`. If you see it, it is a leftover, not the design."
+          },
+          {
+            "line": 195,
+            "text": "## The SSH PATH trap"
+          },
+          {
+            "line": 197,
+            "text": "The SSH session gets a minimal PATH. **`where` / `Get-Command` report installed tools as missing.**"
+          },
+          {
+            "line": 201,
+            "text": "| On SSH PATH | Installed but NOT on SSH PATH |"
+          },
+          {
+            "line": 205,
+            "text": "**Quoting over SSH is its own hazard.** Nested `powershell -Command \"...\"` through SSH mangles"
+          },
+          {
+            "line": 210,
+            "text": "ssh janus@192.168.0.2 'powershell -NoProfile -Command \"Invoke-Expression ([Console]::In.ReadToEnd())\"' < probe.ps1"
+          }
+        ]
+      },
+      {
+        "host": "192.168.0.2",
+        "path": "C:\\Users\\janus\\AGENTS.md",
+        "sha256": "c7206932d1a486213aa7f61c073d8d1764651c1944574fb57a1eabc177d6d869",
+        "chars": 13029,
+        "matches": [
+          {
+            "line": 28,
+            "text": "이면 **이 기계에서** 그 에이전트가 체크아웃을 읽고 고친다 — codex 는 SSH 세션 0 에서 직접"
+          },
+          {
+            "line": 37,
+            "text": "| `.Codex\\daemons\\worker.exe` | [완료] **삭제** (25.7MB) · 옛 로그 1건은 남겼다 |"
+          },
+          {
+            "line": 46,
+            "text": "[완료] 정리 후 배선 무손상 확인(2026-08-20 당시): `.ax/`(config·lib·token·claimer.lock) ·"
+          },
+          {
+            "line": 47,
+            "text": "당시 `AxClaimer` 실행 중 · 마스터 `client check` OK. (`AxClaimer` 는 이후 철거·개명됐다 — 아래"
+          },
+          {
+            "line": 56,
+            "text": "| **Account** | **`janus`** — a local **Administrator**. *Not* `sim`; `ssh sim@…` fails |"
+          },
+          {
+            "line": 57,
+            "text": "| **SSH** | `ssh janus@192.168.0.2` — passwordless. Master's key is in `C:\\ProgramData\\ssh\\administrators_authorized_keys` (admin path, not `~/.ssh/`) |"
+          },
+          {
+            "line": 67,
+            "text": "Both Windows PCs are reachable over SSH; Codex worker execution uses the interactive `/IT` conductor."
+          },
+          {
+            "line": 73,
+            "text": "SSH login     → SessionId 0   (services session — NO desktop access)"
+          },
+          {
+            "line": 82,
+            "text": "### [완료] The master CAN do these over SSH"
+          },
+          {
+            "line": 102,
+            "text": "**For SSH-launched processes, the SSH connection is the owner.** When it closes, children die."
+          },
+          {
+            "line": 109,
+            "text": "### Resident tasks — `AxClaimer` removed (#320), `AxWorker` / `AxConductor` now (#405)"
+          },
+          {
+            "line": 111,
+            "text": "A Scheduled Task (`AxClaimer_NS`) used to wake a resident claimer every 5 min (#204,"
+          },
+          {
+            "line": 112,
+            "text": "2026-08-18); it was torn down 2026-08-27 (#320). Since `#405` residency is not a manual step:"
+          },
+          {
+            "line": 114,
+            "text": "`client/init/residency.py::desired_state()` —"
+          },
+          {
+            "line": 116,
+            "text": "    AxWorker[_<프로젝트>]      worker + UE5 + mounted unreal project · 5 min · build jobs"
+          },
+          {
+            "line": 120,
+            "text": "Code(infer) work still arrives as a **master-driven SSH push**; builds go through"
+          },
+          {
+            "line": 121,
+            "text": "`layer3_verify.run_build_on_workshop`. [주의] `.ax\\logs\\claimer_*.log` from the old resident"
+          },
+          {
+            "line": 199,
+            "text": "## The SSH PATH trap"
+          },
+          {
+            "line": 201,
+            "text": "The SSH session gets a minimal PATH. **`where` / `Get-Command` report installed tools as missing.**"
+          },
+          {
+            "line": 205,
+            "text": "| On SSH PATH | Installed but NOT on SSH PATH |"
+          },
+          {
+            "line": 209,
+            "text": "**Quoting over SSH is its own hazard.** Nested `powershell -Command \"...\"` through SSH mangles"
+          },
+          {
+            "line": 214,
+            "text": "ssh janus@192.168.0.2 'powershell -NoProfile -Command \"Invoke-Expression ([Console]::In.ReadToEnd())\"' < probe.ps1"
+          }
+        ]
+      },
+      {
+        "host": "192.168.0.2",
+        "path": "C:\\Users\\janus\\.codex\\AGENTS.md",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "chars": 0,
+        "matches": []
+      },
+      {
+        "host": "192.168.0.33",
+        "path": "C:\\Users\\USER\\CLAUDE.md",
+        "sha256": "d2473fc4a1d99cb359012bbbca5db38c934132a5a1e02c4d5f45e2f06f47069b",
+        "chars": 15094,
+        "matches": [
+          {
+            "line": 27,
+            "text": "| **SSH** | `ssh user@192.168.0.33` — passwordless since 2026-08-08. Master's key is in `C:\\ProgramData\\ssh\\administrators_authorized_keys` (admin path, same as `.2`) |"
+          },
+          {
+            "line": 72,
+            "text": "SSH sends job data and requests execution; **do not run worker Codex directly in SSH session 0**."
+          },
+          {
+            "line": 79,
+            "text": "꺼져 있어도 레인은 돈다(2026-09-05 이전에는 `.33` 을 SSH 로 거쳤다). [주의] 다만 AXCluster 에서는"
+          },
+          {
+            "line": 98,
+            "text": "Historical provisioning flags (`resident=False`) are not evidence of today's live residency."
+          },
+          {
+            "line": 103,
+            "text": "SSH lands in **session 0**, which has no desktop. The user's interactive login is a different"
+          },
+          {
+            "line": 106,
+            "text": "### [완료] The master CAN do these over SSH"
+          },
+          {
+            "line": 114,
+            "text": "| Ollama check / `pull` | Over HTTP, no SSH needed |"
+          },
+          {
+            "line": 153,
+            "text": "`.33`'s origin switched HTTP → SSH on 2026-08-17 (user, via SourceTree — OpenSSH client,"
+          },
+          {
+            "line": 154,
+            "text": "key `ax-requester-33`). **Gitea's SSH user is `gitea@`, not `git@`** — `git@192.168.0.57` fails"
+          },
+          {
+            "line": 164,
+            "text": "It read `driven: interactive` with the note *\"SSH 없음(RDP 뿐)\"* and carried no path. Now:"
+          },
+          {
+            "line": 168,
+            "text": "  driven: ssh"
+          }
+        ]
+      },
+      {
+        "host": "192.168.0.43",
+        "path": "/home/sim/CLAUDE.md",
+        "sha256": "b779de88663125564b848c43f70b6b8aa5bfa774d7d5672a5243406ca3c8512c",
+        "chars": 16056,
+        "matches": [
+          {
+            "line": 11,
+            "text": "  Access is SSH from the master. (The Wayland/IBus notes below are recovery info only.)"
+          },
+          {
+            "line": 23,
+            "text": "**실제로 되는 방법 — 마스터에서 SSH 로, 업로드와 실행을 분리한다:**"
+          },
+          {
+            "line": 26,
+            "text": "ssh sim@192.168.0.43 'cat > /tmp/x.sh' << 'EOF'"
+          },
+          {
+            "line": 29,
+            "text": "printf '%s\\n' \"$PW\" | ssh sim@192.168.0.43 'chmod +x /tmp/x.sh && sudo -S -p \"\" /tmp/x.sh'"
+          },
+          {
+            "line": 32,
+            "text": "[주의] **업로드와 실행을 반드시 분리할 것** — 히어독을 `sudo -S` 와 같은 SSH 호출에 넣으면"
+          },
+          {
+            "line": 34,
+            "text": "비밀번호가 없으면 방법이 없다 — `root` 직접 SSH 는 키 미등록으로 거부되고 NOPASSWD 항목도 0건이다."
+          },
+          {
+            "line": 49,
+            "text": "clone) and commits its piece to its own sub-branch (정본 ⑤). **35B residency removed"
+          },
+          {
+            "line": 61,
+            "text": "| **.2** | Windows + RTX 3060, UE5 | Worker **and** inference endpoint #2 (`gemma4:e4b` pinned, 2026-10-03). `ssh janus@192.168.0.2` from the master — **account is `janus`, not `sim`** |"
+          },
+          {
+            "line": 62,
+            "text": "| **.33** | Windows, user's main work PC | Game requester; **AXCluster worker** (`C:\\trunk\\AXCluster`). `ssh user@192.168.0.33` · Ollama `gemma4:e4b` resident (third broker endpoint, 2026-10-03) |"
+          },
+          {
+            "line": 69,
+            "text": "### AX claimer — removed 2026-08-27 (#320); residency is now decided by delivery"
+          },
+          {
+            "line": 71,
+            "text": "A `*/5` user-crontab watchdog used to keep a resident claimer polling the queue for"
+          },
+          {
+            "line": 72,
+            "text": "**code(infer)** jobs (#204, 2026-08-18). It was removed (#320). Since `#405` residency is no"
+          },
+          {
+            "line": 74,
+            "text": "`client/init/residency.py::desired_state()`. That rule registers a resident only for"
+          },
+          {
+            "line": 76,
+            "text": "work arrives as a **master-driven SSH push** (`#404`)."
+          },
+          {
+            "line": 77,
+            "text": "[주의] `~/trunk/<Project>/.ax/logs/claimer_*.log` from the resident era is still on disk —"
+          },
+          {
+            "line": 109,
+            "text": "and SSH stayed unusable ~10 more minutes. Full write-up: `reports/17-*.md` §16."
+          },
+          {
+            "line": 167,
+            "text": "- Packages installed: `ibus`, `ibus-hangul`, `libhangul`, `ibus-gtk3`/`ibus-gtk4` (Qt/GTK IM plugins), and **`ibus-wayland`** — this last one is the piece most likely to be missing after a fresh install. Without it, native Wayland apps (e.g. Konsole) show the IBus engine switching to Hangul but never actually compose Hangul text, while XWayland/browser apps work fine. 설치는 위 SSH+`sudo -S` 패턴으로: `dnf install -y ibus-wayland`(**`pkexec` 아님**)."
+          },
+          {
+            "line": 168,
+            "text": "- `ibus-daemon` must be running (`ibus-daemon -drxR`); autostart entry lives at `~/.config/autostart/ibus-daemon.desktop`."
+          },
+          {
+            "line": 192,
+            "text": "🔴 [중요] **헤드리스라 로그인은 사람이 SSH 로 한다**: 사용자 터미널에서 `ssh sim@192.168.0.43` →"
+          }
+        ]
+      }
+    ],
+    "axcluster_heads": [
+      {
+        "host": "192.168.0.2",
+        "path": "C:\\trunk\\AXCluster",
+        "rc": 0,
+        "head": "0941944666d598399a567b58a3700660e77bb3e5"
+      },
+      {
+        "host": "192.168.0.33",
+        "path": "C:\\trunk\\AXCluster",
+        "rc": 0,
+        "head": "749675ca7ac5c67a4dbbf72161fead3846426a85"
+      },
+      {
+        "host": "192.168.0.43",
+        "path": "/home/sim/trunk/AXCluster",
+        "rc": 0,
+        "head": "169970124034d59223f0646ec9e19e0e8c45d555"
+      }
+    ]
+  },
+  "source_head": "1366e08035602599496cf3cf62fe666ff2e718f8",
+  "review_date": "2026-10-31",
+  "tests": {
+    "test_no_integrator": 14,
+    "test_plan_build": 21,
+    "test_residency": 145,
+    "test_worker_daemon": 22,
+    "test_task_submission": 15,
+    "test_client_bundle": 536
+  },
+  "note": "읽기 전용 시점 조회. 원격 오류/빈 해시는 부재와 구분. 별도 샌드박스 해제 실행한 제출 API 검사는 15/15 rc0."
+}
