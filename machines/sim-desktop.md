@@ -65,7 +65,7 @@ are NOT work.**
 
 🔴 [중요] **The pipeline's canonical shape is the user's 7 steps — 사용자 확정 2026-09-02.**
 Read them before planning anything in this area: memory `distributed-pipeline-intended-shape`.
-**In them the worker commits to its own sub-branch and asks for the next task.** Every record
+**In them the worker commits to its own sub-branch; the master assigns the next piece** (user 2026-10-31, `#860`). Every record
 that says otherwise lost to those 7 steps on that date.
 
 🔴 [중요] **"one writer = the server" was a misquote of the origin, and it is what turned this

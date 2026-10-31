@@ -9,7 +9,7 @@
 
 | # | 산출물 | 자리 | 이식본의 대응물 |
 |---|---|---|---|
-| 1 | `watch.exe` | 루트 | **은퇴** — 마스터 큐(8101) + 파견(`ax-dispatch`) · 워커 상주 `AxWorker`/`worker_daemon.py`(#405, 옛 claimer #204 는 #320 철거). 2026-08-20 삭제 |
+| 1 | `watch.exe` | 루트 | **은퇴** — 마스터 큐(8101) + 파견(`ax-dispatch`) · 마스터 SSH push + `ax-work`/`ax-infer` 스킬(워커 상주 `AxWorker`/`worker_daemon.py`(#405)는 2026-10-31 철회·삭제 `#860`·`#861`, 옛 claimer #204 는 #320 철거). 2026-08-20 삭제 |
 | 2 | `context_search.exe` | `.claude/mcp/` | 마스터 `ax-projects`(8103) + `ax-client` 조회 9종 |
 | 3 | `log_analyzer.exe` | `.claude/mcp/` | **로컬 유지** — UE5 로그는 그 기계 것 · 설치: `AgentWatch.zip` 의 exe 를 UE5 프로젝트 `.claude/mcp/` 에 둔다(`#236`) |
 | 4 | `crash_analyzer.exe` | `.claude/mcp/` | **로컬 유지** · 설치: `AgentWatch.zip` 의 exe 를 UE5 프로젝트 `.claude/mcp/` 에 둔다(`#236`) |
@@ -18,7 +18,7 @@
 | 7 | `redmine_tracker.exe` | `.claude/mcp/` | [완료] **`ax-client` 로 이식** — `redmine_note`·`redmine_list_issues`·`redmine_get_issue`·`redmine_meta`·`redmine_create_issue`·`redmine_link_commit`·`redmine_create/update/delete_version` (§4 2단계 · 읽기도 토큰 잠긴 큐 8101 경유) |
 | 8 | `code_recipes.exe` | `.claude/mcp/` | [완료] **`ax-client` 가 흡수**(`#267`, 2026-08-23) — `log_writer_signal` · `find_recipes` · `get_anti_patterns`. 별 서버를 만들지 않았다: 레시피는 **마스터 트윈**에 있고 요청자 기계엔 그 디렉토리가 없어 큐가 대행한다. [주의] 그 전까지 `code-writer` 에이전트가 **없는 서버**를 부르도록 적혀 있었다. **폐기**(`#236`) — `mcp.json` 항목 제거 |
 | 9 | `task_queue.exe` | `.claude/mcp/` | 마스터 큐 8101 |
-| 10 | `worker.exe` | `.claude/daemons/` | 워커 상주 `worker_daemon.py`(#405) · 마스터 SSH push + `ax-work`/`ax-infer` 스킬. **2026-08-20 삭제**(재빌드 가능한 산출물이라 백업 없이) |
+| 10 | `worker.exe` | `.claude/daemons/` | 마스터 SSH push + `ax-work`/`ax-infer` 스킬(상주 `worker_daemon.py`(#405)는 2026-10-31 철회·삭제 `#860`·`#861`). **2026-08-20 삭제**(재빌드 가능한 산출물이라 백업 없이) |
 | 11 | `master_orchestrator.exe` | `.claude/mcp/` | 마스터 파이프라인 — `autodispatch`(분해·파견) · 요청자 `ax-advance`(`review.advance_work`, ⑺) · `ax-review`(`finalize_work`). [주의] 「통합자」(`integrate.py`)는 2026-09-04 삭제됐다 |
 | 12 | `local_llm_runner.exe` | `.claude/mcp/` | 마스터 브로커 8102 |
 | + | `onnx_model/`(임베딩) | `.claude/mcp/` | 마스터 벡터 색인 |

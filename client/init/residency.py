@@ -10,7 +10,7 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass
 
-TASK_NAME = "AxWorker"           # 🔴 개명 (`#405`) — 근거는 아래 「개명」 절
+TASK_NAME = "AxWorker"           # 철회된 상주의 옛 작업 이름 — 남은 등록을 찾아 해제하는 데만 쓴다 (#861)
 INTERVAL_MIN = 5                 # 감시자 주기. 잠금 싱글턴이 겹침을 흡수한다
 # [주의] 데몬 파일 경로·재기동 깃발 상수는 지웠다 (#861, 2026-10-31) — 데몬 모듈이 저장소에서
 #    삭제됐다. 옛 등록 해제는 작업 이름(`task_name`)과 cron 표식(`cron_marker`)만 쓴다.
@@ -32,8 +32,9 @@ def types_for(facts) -> str:
 
 
 def task_name(project: str) -> str:
-    """[중요] **프로젝트마다 다른 이름**이어야 한다 — 한 기계에 둘이 설치될 수 있으므로
-    (`#250` 허용). `.2` 의 기존 등록은 `AxClaimer` 이고 그것이 ModularStage 몫이다.
+    """옛 상주 작업 이름(프로젝트별). 등록은 더 이상 하지 않는다 — 배달이 남은 등록을 이 이름으로
+    찾아 해제하고 check 가 잔재를 잡는다 (#861). 옛 `AxClaimer`(#320 철거)·`AxWorker`(#404 철회)는
+    기록이다.
     """
     return TASK_NAME if project == "ModularStage" else f"{TASK_NAME}_{project}"
 

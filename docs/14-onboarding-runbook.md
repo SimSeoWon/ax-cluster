@@ -205,27 +205,27 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update --all   # 등록 
 실패를 삼켜 *"`.uproject` 를 찾지 못했다"* 로 렌더했다(`#309` 에서 고쳐 지금은 사유가 표에
 찍힌다). 위 명령줄에 그 변수가 붙어 있는 것이 우연이 아니다.
 
-### 4 · 상주 등록 — 원하는 상태를 배달이 맞춘다 (`#405`)
+### 4 · 상주 없음 — 배달은 금지 등록을 해제한다 (`#861`)
 
-상주는 다시 살아 있다. 별도 수동 등록 단계는 없고 `deliver`/`onboard`가
-`client/init/residency.py::desired_state()`의 판정에 맞춰 등록 또는 해제한다.
+워커·요청자에 상주 데몬은 없다 — 서버(.57)가 SSH 로 총괄한다(사용자 확정 2026-10-31, `#860`).
+별도 수동 단계는 없고 `deliver`/`onboard`가 아래 상태를 맞춘다(`#861` `bbd0110`).
 
-    requester                  미등록 — 사람의 기계는 상주를 받지 않는다
-    worker + UE5 + 현재 마운트  등록 — Windows `AxWorker[_프로젝트]`, 5분 주기
-    worker + 집을 유형 없음     미등록 — 헛도는 상주를 만들지 않는다
-    비마운트 프로젝트           미등록 — claim이 not_mounted로 거절되므로 상주는 마운트를 따른다
+    모든 kind · 모든 역할       미등록 — `AxWorker`/`AxClaimer` 상주를 등록하지 않는다
+    Windows worker             `AxConductor_<project>` 로그인 런처만(/IT /RL LIMITED) —
+                               파견 때 서버가 `schtasks /run` 으로 그때만 건다
+    과거 등록 잔재              `deliver`가 해제한 뒤 다시 조회한다
+    `check`                    잔재가 있거나 등록 조회 자체가 실패하면 FAIL(조회 실패 ≠ 없음)
 
-`plan`·`deliver`·`check`가 같은 판정을 소비한다. `deliver`는 “건너뜀”으로 끝내지 않고 과거의
-불필요한 등록을 제거한 뒤 다시 조회하며, `check`는 원하는 상태와 실물 등록 여부를 비교한다.
-`kind: code`는 빌드 상주를 등록하지 않고, Windows의 세션 1 지휘자 런처만 등록한다(`#695`).
-현재 마운트와 역할은 실행 시 조회한다. 과거 NS 상주 실측을 AXCluster의 상태로 읽지 않는다.
+`ensure`는 아무것도 하지 않는다. 데몬 소스(`worker_daemon.py`·`buildjob.py`)는 지웠고
+(`#861` T3, `9a195e0`) `master/test_no_worker_daemon.py`가 부활을 막는다.
+과거 NS 상주 실측을 AXCluster의 상태로 읽지 않는다.
 
 🔴 [중요] **다만 「등재해도 아무도 집지 않는다」는 2026-09-01 부터 틀리다** (`#340`, `c33316e`).
 파견은 **자동**이다 — 요청자가 `task/<work_id>/base`를 push하면 그 이벤트가
 `ax-dispatch.path`를 깨운다. 조각 완료 뒤 요청자가 `ax-advance`로 통합·검사하고,
 **사람 승인 뒤 ⑺ 전진**한다. `main` 반영은 별도의 **finalize 승인**이다.
 게임 요청자는 `.33`, AXCluster 요청자는 `.57`이며 통합자를 따로 두지 않는다.
-[주의] 자동 파견 트리거도 별도 축으로 살아 있다. 온보딩 뒤에는 상주 등록뿐 아니라
+[주의] 자동 파견 트리거도 별도 축으로 살아 있다. 온보딩 뒤에는 상주 잔재가 없는지뿐 아니라
 **「트리거 유닛이 무장돼 있나」**도 확인한다:
 
     systemctl is-enabled ax-dispatch.path ax-dispatch.timer     둘 다 enabled 여야 한다
@@ -237,15 +237,15 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update --all   # 등록 
 `.33` 세션 시작 훅이 「재개 대기」를 고지하고, 푸는 것은
 `python -m master.work.autodispatch --resume <프로젝트> <work_id>` 뿐이다.
 
-[중요] `#311`의 ⓐ 규칙(**상주는 마운트를 따른다 — 한 기계에 두 프로젝트를 동시에 켜지
-않는다**)이 현재 구현의 정본이다. claim 정책이 `MOUNT`라 비마운트 claim은 거르는 것이 아니라
-**거절**된다(실측 2026-08-25 · 마운트 NS).
+[중요] claim 정책은 여전히 `MOUNT`라 비마운트 claim은 거르는 것이 아니라 **거절**된다
+(실측 2026-08-25 · 마운트 NS). 다만 이 정책은 **더 이상 상주를 정하지 않는다** — 상주 자체가 없다.
 
     project="NS"            → 204            정상 (큐가 비었다)
     project="ModularStage"  → 200 ok:false   status=not_mounted
     project=""              → 200 ok:false   status=no_project_tag
 
-철거 당시의 근거는 `#320`, 부활 구현과 실증은 `#401`·`#405` 및 리포트 63에 있다.
+이력: 철거 `#320`, 복원 `#401`·`#405`(리포트 63)은 2026-10-31 철회됐다(`#860`·`#861`).
+`#311` ⓐ 「상주는 마운트를 따른다」는 그 복원기의 규칙으로 기록에만 남는다.
 
 #### Codex 준비 검사와 실제 실행
 

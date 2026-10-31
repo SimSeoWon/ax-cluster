@@ -77,15 +77,16 @@
 
     master/work/runner.py     `_tag()` → `_api` (review 가 이것을 재사용한다)
     master/work/selftest.py   `_q` 안에서
-    master/work/buildjob.py   `enqueue(project=…)` — [중요] **인자로 받는다**
+    master/work/buildjob.py   [철거됨 2026-10-31 `#861` T3] `enqueue(project=…)` — 인자로 받았다
     master/work/register.py   work·task 양쪽에 `paths.name`
-    master/work/claimer.py    `_call` 에서 (배달되는 코드 — 체크아웃은 단일 프로젝트다)
+    master/work/claimer.py    [철거됨 `#320`] `_call` 에서 (배달되던 코드 — 체크아웃은 단일 프로젝트)
     client/runtime/client_mcp.py  `queue_api` — POST 본문 + **GET 은 쿼리로**
     master/work/gemini_report.py  `--remote` — 요청자 배달본이 `queue_api` 로 `POST /usage` (`#763`)
 
 [중요] **도구마다 넣게 하면 다음 도구는 또 빠진다.** 그래서 관문에서 붙인다.
 
-[주의] `buildjob` 은 안에서 환경(`AX_PROJECTS_ROOT`)을 읽게 만들었더니 `api=` **주입 이음을
+[주의] 위 `[철거됨]` 두 발신자는 더 없다 — 아래 교훈은 기록으로 남긴다(상주 없음, `#860`·`#861`).
+`buildjob` 은 안에서 환경(`AX_PROJECTS_ROOT`)을 읽게 만들었더니 `api=` **주입 이음을
 우회**했고 유닛 하나가 그것을 잡았다. 프로젝트를 인자로 받는 것이 옳다 — 이 함수는 어느
 프로젝트의 빌드인지 알아야 한다.
 

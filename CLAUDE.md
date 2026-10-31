@@ -57,8 +57,8 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   [주의] **What follows are the traps that still bind — not the closed milestones' scope or counts**
   (those are in Redmine and the closed milestone docs; M4's own 「여기서 배운 것」 too).
   🔴 **The topology is the user's 정본 7단계 (사용자 확정 2026-09-02)** — memory
-  `distributed-pipeline-intended-shape`. **The worker commits to its own sub-branch and asks for
-  the next task.** Linux forces exactly **one** change: the UE5 build step inside
+  `distributed-pipeline-intended-shape`. **The worker commits to its own sub-branch; the master
+  assigns the next piece** (user 2026-10-31, `#860`). Linux forces exactly **one** change: the UE5 build step inside
   `verify_and_merge` moves to `.2`. 🔴 **The port is finished (user 2026-10-18)** — design now
   stands on our own structure (정본 7단계 + current code, goal in `PLAN.md`); the origin is
   reference material, not the yardstick.
@@ -384,8 +384,9 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update
 `#860`). 정본 ⑤ 는 「서버가 다음 조각을 배정한다」. `#320`(08-27)이 걷은 상주를 `#404`(09-12)가
 `.2` 빌드 전용으로 되살렸지만 **철회됐다** — 그 복원을 「기존 자산」으로 다시 쓰지 않는다(2026-10-31
 `#857` T4 가 그렇게 되돌아갔다). 로그인 세션이 필요한 일은 서버가 SSH 로 `schtasks /run`(/IT 런처)을
-그때만 건다. [주의] 배달 코드의 상주 등록 철거는 `#860` 진행 중 — 그 전에는 unreal 마운트 때 `.2` 에
-`AxWorker` 가 다시 등록될 수 있다. 보이면 잔재이지 설계가 아니다.
+그때만 건다. [완료] 철거 완료(`#861` `bbd0110`·`9a195e0`) — 배달은 어떤 kind 에도 상주를 등록하지
+않고 잔재를 해제하며, `check` 는 잔재·조회 실패를 FAIL 로 본다. 데몬 소스는 지웠고
+`master/test_no_worker_daemon.py` 가 부활을 막는다.
 [완료] **파견은 마스터 유닛이 잇는다** (`#340`, `c33316e`·`9cc73d9`): 골조 push 이벤트·등재 →
 `ax-dispatch.path` → 파견 → 조각 종결 → `.33` 공지.
 🔴 [중요] **사람 게이트는 둘이다 — ⑺ 통합 앞과 finalize(`main` 머지)** (정본 7단계, 사용자 확정
