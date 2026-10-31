@@ -42,7 +42,7 @@ from .logic import (
     submit_result, submit_fail, verify_task, cancel_task, admin_reset,
     push_worker_directive, update_work_meta, get_work_summary,
     rebase_pending_tasks_in_work, recover_stuck_works, reverify_task,
-    find_active_duplicates,
+    find_active_duplicates, submission,
 )
 from ..auth import BearerAuthMiddleware, auth_headers, load_token
 from .reclaim import _verify_loop, _reclaim_loop
@@ -384,6 +384,14 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         if not r.get("ok"):
             raise HTTPException(409, r.get("error"))
         return r
+
+    @app.get("/api/v1/tasks/{task_id}/submission")
+    def get_task_submission_ep(task_id: str):
+        """제출된 사실(`head_commit`·`self_check`) 읽기 — `#857` T4. 판정하지 않는다."""
+        out = submission(idx, task_id)
+        if not out.get("ok") and out.get("error") == "task not found":
+            raise HTTPException(404, "task not found")
+        return out
 
     @app.get("/api/v1/tasks/{task_id}")
     def get_task_ep(task_id: str):

@@ -65,6 +65,7 @@ POLICY = {
     "POST /api/v1/works/{work_id}/reopen":          STAMP,
     "POST /api/v1/tasks":                           STAMP,
     "GET /api/v1/tasks/{task_id}":                  STAMP,
+    "GET /api/v1/tasks/{task_id}/submission":       STAMP,   # #857 제출 사실 읽기
     "POST /api/v1/tasks/{task_id}/heartbeat":       STAMP,
     "POST /api/v1/tasks/{task_id}/submit":          STAMP,
     "POST /api/v1/tasks/{task_id}/submit-fail":     STAMP,

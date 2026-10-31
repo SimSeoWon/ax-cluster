@@ -32,6 +32,7 @@ from .logic_claim import (  # noqa: F401  (re-export)
 )
 from .logic_lifecycle import (  # noqa: F401  (re-export)
     _is_stale_epoch, submit_result, submit_fail, verify_task, reverify_task, cancel_task,
+    submission,
 )
 from .logic_cleanup import (  # noqa: F401  (re-export)
     _read_redmine_config, _redmine_post_issue, _redmine_add_note,

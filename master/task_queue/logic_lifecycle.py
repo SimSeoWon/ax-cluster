@@ -4,6 +4,7 @@ verify_task/submit_fail 종결 시 logic_cleanup 의 auto-cleanup 클러스터�
 (단방향 — cleanup 은 lifecycle 을 역참조하지 않음).
 """
 import json
+import re
 from typing import Optional
 from .models import (
     _VERIFY_RESULT_TO_STATUS
@@ -134,6 +135,38 @@ def submit_result(idx: TaskIndex, task_id: str, *,
         _tq_log(f"[submit] {task_id} branch={branch} head={head_commit[:8]}", idx.root)
         _git_commit_tasks(idx.root, f"[submit] {task_id}: branch={branch}", [path])
         return {"ok": True}
+
+
+_SELF_CHECK_RE = re.compile(r"\n## self_check\n```json\n(.*?)\n```\n", re.S)
+_SUBMIT_META_RE = re.compile(r"\n## submit_meta\nbranch: (.*?)\nhead_commit: (.*?)\nat: (.*?)\n")
+
+
+def submission(idx: TaskIndex, task_id: str) -> dict:
+    """제출된 사실 읽기 (`#857` T4) — `submit_result` 가 본문에 덧붙인 `self_check`·`submit_meta`.
+
+    [중요] 읽기만 한다. 판정(통과/반려)은 호출자 몫이다 — 여기서는 적힌 그대로 돌려준다.
+    재배정으로 제출이 여러 번 쌓였으면 **마지막 것**이 그 태스크의 현재 제출이다.
+    [주의] 제출이 없으면 `submitted: False` — 빈 dict 를 「통과 정보 없음」과 섞지 않는다.
+    """
+    t = idx.tasks.get(task_id)
+    if not t:
+        return {"ok": False, "error": "task not found"}
+    path = idx.task_paths.get(task_id)
+    if path is None:
+        return {"ok": False, "error": "task file not found"}
+    _, body = _read_md(path)
+    metas = _SUBMIT_META_RE.findall("\n" + body)
+    checks = _SELF_CHECK_RE.findall("\n" + body)
+    if not metas:
+        return {"ok": True, "task_id": task_id, "status": t.get("status"), "submitted": False}
+    branch, head, at = (x.strip() for x in metas[-1])
+    try:
+        self_check = json.loads(checks[-1]) if checks else None
+    except json.JSONDecodeError as e:
+        return {"ok": False, "error": f"self_check JSON 을 읽지 못했다 — {e}"}
+    return {"ok": True, "task_id": task_id, "status": t.get("status"), "submitted": True,
+            "submissions": len(metas), "branch": branch, "head_commit": head, "at": at,
+            "self_check": self_check}
 
 
 def submit_fail(idx: TaskIndex, task_id: str, reason: str, detail: str = "", *,
