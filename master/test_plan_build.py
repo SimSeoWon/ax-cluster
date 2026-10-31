@@ -190,6 +190,25 @@ def test_no_ue5_worker():
     check("워크숍이 비어도 stage pick", not r["ok"] and r["stage"] == "pick", str(r))
 
 
+def test_build_pick_does_not_need_claude():
+    """`#861` T5 — 빌드는 서버가 SSH 로 돈다. claude 없는 UE5 워커도 빌드 대상이다."""
+    from master.work import runner as RN
+    s, b = FakeSsh(), FakeBuild()
+    r = _run(s, b, facts=[_facts(claude="")])
+    check("[중요] claude 없는 UE5 워커가 빌드에 뽑힌다", r["ok"] and r["host"] == "192.168.0.2", str(r))
+    check("  그 워커에서 빌드 한 번", len(b.calls) == 1, str(b.calls))
+    pick = RN.pick_worker([_facts(claude="")], requires=("ue5",))
+    check("[중요] 파견 선택(기본)은 여전히 claude 를 요구", pick.chosen is None
+          and any("claude" in why for _h, why in pick.rejected), str(pick.rejected))
+    s, b = FakeSsh(), FakeBuild()
+    r = _run(s, b, facts=[_facts(claude="", dispatch="never"),
+                          _facts(claude="", host="192.168.0.43", ue5="")])
+    check("빌드 선택도 dispatch·능력은 본다", not r["ok"] and r["stage"] == "pick"
+          and "dispatch" in r["evidence"] and "능력 부족" in r["evidence"], r["evidence"])
+    r = _run(s, b, facts=[_facts(claude="", checkout_ok=False)])
+    check("빌드 선택도 체크아웃은 본다", not r["ok"] and "체크아웃" in r["evidence"], r["evidence"])
+
+
 def test_no_build_bat():
     s, b = FakeSsh(), FakeBuild()
     r = _run(s, b, facts=[_facts(ue5=r"C:\weird\UnrealEditor-Cmd.exe")])
@@ -236,7 +255,8 @@ def main() -> int:
     for fn in (test_pass_with_matching_revision, test_tree_override,
                test_revision_mismatch_no_build, test_revision_query_failure_no_build,
                test_dirty_tree_no_build, test_build_failure, test_build_timeout_is_fail,
-               test_head_moved_after_build, test_no_ue5_worker, test_no_build_bat,
+               test_head_moved_after_build, test_no_ue5_worker, test_build_pick_does_not_need_claude,
+               test_no_build_bat,
                test_refusals_do_no_ssh, test_short_commit_rules,
                test_source_uses_ssh_runner_not_daemon):
         fn()

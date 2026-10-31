@@ -99,7 +99,7 @@ src = ("# CLAUDE.md — Windows worker `.2`\n\n> scp x janus@192.168.0.2:C:/User
        "> keep CLAUDE.md word\n## Body\nC:/Users/janus/CLAUDE.md stays\n# CLAUDE.md later\n")
 d = H.derive_agents(src)
 check("derive: 제목", d.startswith("# AGENTS.md — Windows worker `.2`\n"))
-check("derive: 머리 scp 줄", "janus@192.168.0.2:C:/Users/janus/AGENTS.md\r\n" in d)
+check("derive: 머리의 경로도 바이트 그대로(제목만 바꾼다)", "janus@192.168.0.2:C:/Users/janus/CLAUDE.md\r\n" in d)
 check("derive: 머리의 다른 CLAUDE.md 단어 보존", "> keep CLAUDE.md word\n" in d)
 check("derive: 본문 그대로", d.split("## Body", 1)[1] == src.split("## Body", 1)[1])
 check("derive: 길이 동일", len(d) == len(src))

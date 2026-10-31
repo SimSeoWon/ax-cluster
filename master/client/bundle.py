@@ -1127,6 +1127,22 @@ def check_retired_payload(facts: HostFacts) -> tuple:
     return True, f" · 폐기 페이로드 {len(names)}종 없음(정리됨)"
 
 
+def check_daemon_processes(facts: HostFacts) -> tuple:
+    """`check` 용 — 실행 중인 `worker_daemon`·`claimer` 프로세스. `(ok, note)` (`#861` T5).
+
+    조회 실패도, 프로세스가 하나라도 있어도 실패다. [중요] **종료하지 않는다** — 보고만 한다.
+    """
+    from client.init import residency as R
+    rc, out = _ssh(facts.host, facts.user, R.daemon_process_query_command(facts))
+    st = R.daemon_process_status(rc, out)
+    if not st["known"]:
+        return False, f" · [실패] {st['error']}"
+    if st["pids"]:
+        return False, (f" · [실패] 데몬 프로세스가 돌고 있다 pid={','.join(st['pids'])} "
+                       "(#861 — 자동 종료하지 않는다, 사람이 확인)")
+    return True, " · 데몬 프로세스 없음"
+
+
 def _remote_write(facts: HostFacts, rel: str, content: str, *, base: str = "home") -> str:
     """원격 파일 쓰기 + **되읽어 sha256 대조.** 불일치면 예외.
 
@@ -2284,7 +2300,13 @@ def _register_residency(project: str, facts: HostFacts) -> dict:
         return {"error": state["error"]}
     results = []
     if state["present"]:
-        for label, cmd in R.unregister_commands(project, facts):
+        # 🔴 프로젝트 이름과 무관하게 찾은 잔재를 **전부** 지운다 (#861 T5). 보호 접두
+        #    (`AxConductor*`·`AX_Ollama*`)는 `unregister_commands` 가 명령을 내지 않는다.
+        cmds = R.unregister_commands(project, facts, names=state.get("names") or ())
+        if not cmds:
+            return {"error": f"남은 등록을 지울 명령을 만들지 못했다: {state.get('names')}",
+                    "results": results}
+        for label, cmd in cmds:
             rc, got = _ssh(facts.host, facts.user, cmd)
             results.append(f"{label} {'[완료]' if rc == 0 else f'[주의] rc={rc} {(got or chr(32))[:80]}'}")
             if rc != 0:
@@ -2292,7 +2314,8 @@ def _register_residency(project: str, facts: HostFacts) -> dict:
         qrc, qout = _ssh(facts.host, facts.user, qcmd)
         state = R.registration_status(qrc, qout, facts)
         if not state["known"] or state["present"]:
-            return {"error": state.get("error") or "상주를 해제했지만 등록이 남았다",
+            left = ", ".join(state.get("names") or [])
+            return {"error": state.get("error") or f"상주를 해제했지만 등록이 남았다: {left}",
                     "results": results}
 
     # code뿐 아니라 Unreal Windows worker도 로그인 세션 런처가 필요하다.

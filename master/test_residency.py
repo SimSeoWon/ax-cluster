@@ -65,30 +65,57 @@ def test_plan_does_not_offer_a_daemon():
         check("구 갱신 계획도 폐기를 안내", R.DECOMMISSIONED_REASON in refreshed)
 
 
+def _decode(cmd: str) -> str:
+    import base64
+    head = "powershell -NoProfile -NonInteractive -EncodedCommand "
+    assert cmd.startswith(head), cmd
+    return base64.b64decode(cmd[len(head):]).decode("utf-16-le")
+
+
 def test_registration_observation_distinguishes_errors():
     win, lin = _f(windows=True), _f(windows=False)
+    T = R.TASKS_MARK
     cases = [
-        (win, 0, "AX_RESIDENCY_PRESENT=1", True, True),
-        (win, 0, "AX_RESIDENCY_PRESENT=0", True, False),
-        (win, 0, "", False, None),
-        (win, 1, "AX_RESIDENCY_ERROR=Access denied", False, None),
-        (win, 255, "", False, None),
-        (lin, 0, "PATH=/usr/bin\n", True, False),
-        (lin, 0, "*/5 * * * * cd /p/NS && python old.py\n", True, True),
-        (lin, 1, "no crontab for sim", True, False),
-        (lin, 1, "permission denied", False, None),
-        (lin, 127, "crontab: command not found", False, None),
-        (lin, 255, "", False, None),
+        (win, 0, f"{T}\\AxWorker", True, True, ["\\AxWorker"]),
+        (win, 0, f"{T}\\AxClaimer;\\AxWorker_NS;\\AxWorker_Kimodo", True, True,
+         ["\\AxClaimer", "\\AxWorker_NS", "\\AxWorker_Kimodo"]),
+        (win, 0, "#< CLIXML\nAX_RESIDENCY_PRESENT=0", True, False, []),
+        (win, 0, "AX_RESIDENCY_PRESENT=0", True, False, []),
+        (win, 0, "", False, None, []),
+        (win, 0, "noise only", False, None, []),
+        (win, 0, f"{T}\\AxConductor_NS", False, None, []),       # 보호 이름은 잔재가 아니다 → 해석 실패
+        (win, 0, f"{T}\\Ax Worker bad", False, None, []),         # 안전하지 않은 이름
+        (win, 0, f"AX_RESIDENCY_PRESENT=0\n{T}\\AxWorker", False, None, []),  # 표식 둘
+        (win, 1, "AX_RESIDENCY_ERROR=Access denied", False, None, []),
+        (win, 255, "", False, None, []),
+        (lin, 0, "PATH=/usr/bin\n", True, False, []),
+        (lin, 0, "*/5 * * * * cd /p/NS && python old.py\n", True, False, []),
+        (lin, 0, "PATH=/x\n*/5 * * * * cd /p/Other && python .ax/x/worker_daemon.py\n", True, True,
+         ["*/5 * * * * cd /p/Other && python .ax/x/worker_daemon.py"]),
+        (lin, 0, "*/5 * * * * cd /q && python claimer.py --types=code\n", True, True,
+         ["*/5 * * * * cd /q && python claimer.py --types=code"]),
+        (lin, 1, "no crontab for sim", True, False, []),
+        (lin, 1, "permission denied", False, None, []),
+        (lin, 127, "crontab: command not found", False, None, []),
+        (lin, 255, "", False, None, []),
     ]
-    for f, rc, text, known, present in cases:
+    for f, rc, text, known, present, names in cases:
         state = R.registration_status(rc, text, f)
-        check(f"조회 결과를 구분 {f.windows}/{rc}/{text}",
-              state["known"] is known and state["present"] is present, state)
+        check(f"조회 결과를 구분 {f.windows}/{rc}/{text!r}",
+              state["known"] is known and state["present"] is present
+              and state["names"] == names, state)
     cmd = R.registration_query_command("NS", win)
+    check("Windows 조회는 프로젝트 이름과 무관", cmd == R.registration_query_command("Other", win))
+    check("[중요] cmd.exe 를 안전히 지난다 — | % ^ 따옴표가 평문에 없다",
+          not any(c in cmd for c in "|%^\"'"), cmd)
+    ps = _decode(cmd)
     check("Windows 전체 조회 실패를 숨기지 않음",
-          "Get-ScheduledTask -ErrorAction Stop" in cmd and "catch" in cmd, cmd)
-    check("Windows 부재를 명시적 표식으로 낸다",
-          "AX_RESIDENCY_PRESENT=0" in cmd and "AX_RESIDENCY_PRESENT=1" in cmd)
+          "Get-ScheduledTask -ErrorAction Stop" in ps and "catch" in ps and "exit 1" in ps, ps)
+    check("AxWorker*·AxClaimer* 전부를 찾는다",
+          "-like 'AxWorker*'" in ps and "-like 'AxClaimer*'" in ps, ps)
+    check("AxConductor·AX_Ollama 를 조회하지 않는다", "Conductor" not in ps and "Ollama" not in ps)
+    check("Windows 부재·목록을 명시적 표식으로 낸다",
+          "AX_RESIDENCY_PRESENT=0" in ps and R.TASKS_MARK in ps and "AX_RESIDENCY_ERROR=" in ps)
     check("Linux 부재 메시지 언어·stderr를 고정",
           R.registration_query_command("NS", lin) == "LC_ALL=C crontab -l 2>&1")
 
@@ -97,14 +124,106 @@ def test_legacy_registration_cleanup_is_targeted():
     win = _f(windows=True)
     check("ModularStage의 기존 작업 이름 보존", R.task_name("ModularStage") == "AxWorker")
     check("프로젝트별 기존 작업 이름 보존", R.task_name("NS") == "AxWorker_NS")
-    unreg = dict(R.unregister_commands("NS", win))["unregister"]
-    check("기존 작업 이름만 삭제", unreg == "schtasks /delete /f /tn AxWorker_NS", unreg)
+    unreg = dict(R.unregister_commands("NS", win))
+    check("이름을 안 주면 옛 프로젝트 이름(호환)",
+          list(unreg.values()) == ['schtasks /delete /f /tn "AxWorker_NS"'], unreg)
+    found = ["\\AxClaimer", "\\AxWorker_NS", "\\AxWorker", "\\AxConductor_NS", "\\AX_Ollama33"]
+    cmds = [c for _l, c in R.unregister_commands("AXCluster", win, names=found)]
+    check("[중요] 찾은 잔재마다 하나씩 지운다(현재 프로젝트 무관)",
+          cmds == ['schtasks /delete /f /tn "\\AxClaimer"',
+                   'schtasks /delete /f /tn "\\AxWorker_NS"',
+                   'schtasks /delete /f /tn "\\AxWorker"'], cmds)
+    check("[중요] AxConductor·AX_Ollama33 는 절대 지우지 않는다",
+          not any("Conductor" in c or "Ollama" in c for c in cmds), cmds)
+    check("보호 판정은 대소문자 무관",
+          not R.is_legacy_task("\\axconductor") and not R.is_legacy_task("ax_ollama33")
+          and R.is_legacy_task("\\axworker_x"))
     lin = _f(windows=False, path="/home/sim/trunk/NS")
-    other = _f(windows=False, path="/home/sim/trunk/Other")
     unreg_l = dict(R.unregister_commands("NS", lin))["unregister"]
-    check("우리 cron 표식만 제거", R.cron_marker(lin) in unreg_l and "grep -vF" in unreg_l)
-    check("PATH와 다른 cron 보존", "crontab -r" not in unreg_l and "echo" not in unreg_l)
-    check("다른 프로젝트 표식과 분리", R.cron_marker(other) != R.cron_marker(lin))
+    check("cron 은 두 패턴 줄만 제거", "grep -vF -e worker_daemon -e claimer" in unreg_l, unreg_l)
+    check("crontab 읽기 실패면 쓰지 않는다", unreg_l.startswith("c=$(crontab -l) || exit 1;"), unreg_l)
+    check("PATH와 다른 cron 보존(통째 삭제 없음)", "crontab -r" not in unreg_l)
+
+
+def test_linux_cron_filter_runs_for_real():
+    """실제 bash 로 해제 파이프를 돌린다 — crontab 만 가짜 스크립트로 바꾼다."""
+    import os
+    import subprocess
+    import tempfile
+    lin = _f(windows=False, path="/home/sim/trunk/NS")
+    cmd = dict(R.unregister_commands("NS", lin))["unregister"]
+    before = ("PATH=/usr/local/bin:/usr/bin\n"
+              "*/5 * * * * cd /home/sim/trunk/NS && /usr/bin/python3 .ax/lib/worker_daemon.py --types=build\n"
+              "0 3 * * * /home/sim/backup.sh\n"
+              "*/5 * * * * cd /home/sim/trunk/Other && /usr/bin/python3 claimer.py\n"
+              "@reboot /usr/bin/true\n")
+    with tempfile.TemporaryDirectory() as d:
+        tab = os.path.join(d, "tab")
+        with open(tab, "w") as fh:
+            fh.write(before)
+        fake = os.path.join(d, "crontab")
+        with open(fake, "w") as fh:
+            fh.write(f'#!/bin/bash\nif [ "$1" = "-l" ]; then cat {tab}; else cat > {tab}; fi\n')
+        os.chmod(fake, 0o755)
+        env = {**os.environ, "PATH": d + ":" + os.environ.get("PATH", "")}
+        p = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True)
+        after = open(tab).read()
+        check("해제 파이프 rc=0", p.returncode == 0, p.stderr)
+        check("[중요] 다중 줄 — 두 패턴 줄만 빠지고 PATH·다른 줄 보존",
+              after == "PATH=/usr/local/bin:/usr/bin\n0 3 * * * /home/sim/backup.sh\n@reboot /usr/bin/true\n",
+              repr(after))
+        st = R.registration_status(0, after, lin)
+        check("해제 뒤 재조회는 부재", st["known"] and not st["present"], st)
+        # crontab -l 실패 → 쓰지 않는다
+        with open(fake, "w") as fh:
+            fh.write(f'#!/bin/bash\nif [ "$1" = "-l" ]; then exit 2; else cat > {tab}; fi\n')
+        p = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True)
+        check("[중요] 읽기 실패면 rc≠0 이고 crontab 을 덮지 않는다",
+              p.returncode != 0 and open(tab).read() == after, (p.returncode, open(tab).read()))
+
+
+def test_daemon_process_query():
+    win, lin = _f(windows=True), _f(windows=False)
+    cmd = R.daemon_process_query_command(win)
+    check("프로세스 조회도 cmd.exe 안전", not any(c in cmd for c in "|%^\"'"), cmd)
+    ps = _decode(cmd)
+    check("Win32_Process 명령줄을 본다",
+          "Get-CimInstance Win32_Process" in ps and "worker_daemon|claimer" in ps
+          and "$PID" in ps and R.PROCS_DONE in ps and "exit 1" in ps, ps)
+    check("Windows 조회는 종료하지 않는다", "Stop-Process" not in ps and "taskkill" not in ps.lower())
+    lc = R.daemon_process_query_command(lin)
+    check("Linux 는 pgrep 이 자기 셸을 잡지 않는 패턴",
+          "pgrep" in lc and "[w]orker_daemon|[c]laimer" in lc and "kill" not in lc.replace("pgrep", ""), lc)
+    for rc, out, known, pids in (
+            (0, f"{R.PROCS_MARK}\n{R.PROCS_DONE}", True, []),
+            (0, f"#< CLIXML\n{R.PROCS_MARK}1234,5678\n{R.PROCS_DONE}", True, ["1234", "5678"]),
+            (0, f"{R.PROCS_MARK}12", False, []),               # 끝 표식 없음
+            (0, "", False, []),
+            (1, "AX_DAEMON_ERROR=denied", False, []),
+            (0, f"{R.PROCS_MARK}abc\n{R.PROCS_DONE}", False, []),
+            (255, "", False, [])):
+        st = R.daemon_process_status(rc, out)
+        check(f"프로세스 조회 판정 {rc}/{out!r}", st["known"] is known and st["pids"] == pids, st)
+    # 실제 bash — 조회가 성공하고, 자기 셸은 잡지 않고, 진짜 프로세스는 잡는다.
+    #    [주의] 「pid 가 비었다」는 단정하지 않는다 — 이 검사를 부른 상위 셸의 명령줄에 그
+    #    낱말이 있으면 정당하게 잡힌다(실측: 같은 셸에서 이 파일을 쓰고 돌렸을 때).
+    import subprocess
+    p = subprocess.run(["bash", "-c", lc], capture_output=True, text=True)
+    st = R.daemon_process_status(p.returncode, p.stdout)
+    check("로컬 실제 실행: 조회 성공", st["known"], (p.returncode, p.stdout, p.stderr))
+    decoy = subprocess.Popen(["bash", "-c", "exec -a fake_worker_daemon sleep 30"])
+    try:
+        import time
+        time.sleep(0.3)
+        p = subprocess.run(["bash", "-c", lc], capture_output=True, text=True)
+        st2 = R.daemon_process_status(p.returncode, p.stdout)
+        check("로컬 실제 실행: 데몬 이름 프로세스를 잡는다", st2["known"] and str(decoy.pid) in st2["pids"],
+              (p.stdout, decoy.pid))
+        own = [x for x in st2["pids"] if x not in st["pids"] and x != str(decoy.pid)]
+        check("로컬 실제 실행: 조회 셸 자신은 잡지 않는다", own == [], (st["pids"], st2["pids"]))
+    finally:
+        decoy.kill()
+        decoy.wait()
 
 
 def test_python_probe_and_conductor_contract():
@@ -177,6 +296,8 @@ if __name__ == "__main__":
                test_plan_does_not_offer_a_daemon,
                test_registration_observation_distinguishes_errors,
                test_legacy_registration_cleanup_is_targeted,
+               test_linux_cron_filter_runs_for_real,
+               test_daemon_process_query,
                test_python_probe_and_conductor_contract,
                test_session1_side_effects,
                test_compatibility_apis_never_touch_the_worker,

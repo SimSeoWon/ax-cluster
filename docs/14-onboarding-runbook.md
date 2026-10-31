@@ -213,7 +213,7 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update --all   # 등록 
     모든 kind · 모든 역할       미등록 — `AxWorker`/`AxClaimer` 상주를 등록하지 않는다
     Windows worker             `AxConductor_<project>` 로그인 런처만(/IT /RL LIMITED) —
                                파견 때 서버가 `schtasks /run` 으로 그때만 건다
-    과거 등록 잔재              `deliver`가 해제한 뒤 다시 조회한다
+    과거 등록 잔재              프로젝트 이름 무관(`AxWorker*`·`AxClaimer*` · `worker_daemon`/`claimer` cron) — `deliver`가 전부 해제·재조회, `check`는 실행 중 데몬 프로세스도 FAIL
     `check`                    잔재가 있거나 등록 조회 자체가 실패하면 FAIL(조회 실패 ≠ 없음)
 
 `ensure`는 아무것도 하지 않는다. 데몬 소스(`worker_daemon.py`·`buildjob.py`)는 지웠고

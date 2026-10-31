@@ -555,9 +555,12 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
         if not _state["known"]:
             res_note = f" · [실패] {_state['error']}"
         elif _state["present"]:
-            res_note = " · [실패] 금지된 상주 데몬이 등록돼 있다 (#861)"
+            res_note = (" · [실패] 금지된 상주 데몬이 등록돼 있다: "
+                        f"{', '.join(_state.get('names') or [])} (#861 — deliver 가 해제한다)")
         else:
             res_note = " · 상주 미등록 정상 — 서버 SSH 주관 (#861)"
+        # 실행 중인 데몬 프로세스 — 조회 실패·존재 모두 FAIL, 종료하지 않는다 (#861 T5).
+        ok_procs, procs_note = bundle.check_daemon_processes(f)
 
         # ── codex 몫 (`#402`) — **역할 무관** ────────────────────────────
         #    [중요] `AGENTS.md` 는 「있나」가 아니라 **관리 블록이 최신인가**를 본다. 전문은
@@ -622,22 +625,22 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
 
         mark = ("OK" if (ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
                          and ok_ver and ok_tag and ok_codex and ok_res and ok_shadow
-                         and ok_prune and ok_agy and ok_retired) else "FAIL")
+                         and ok_prune and ok_agy and ok_retired and ok_procs) else "FAIL")
         pay_note = (f" · payload {len(pay)}개 일치" if pay and ok_pay
                     else f" · [중요] payload 불일치/없음 {len(stale)}개: {', '.join(stale[:3])}"
                     if pay else "")
         print(f"  {mark} {f.host} [{f.role}]: 스킬 {len(names)}종 "
               f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}"
-              f"{python_note}{pay_note}{ws_note}{client_note}{codex_note}{shadow_note}{res_note}{rm_note}{retired_note}"
+              f"{python_note}{pay_note}{ws_note}{client_note}{codex_note}{shadow_note}{res_note}{procs_note}{rm_note}{retired_note}"
               f"{prune_note}{agy_note}{tag_note}{ver_note}")
         bad += 0 if (ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
                      and ok_ver and ok_tag and ok_codex and ok_res and ok_shadow
-                     and ok_prune and ok_agy and ok_retired) else 1
+                     and ok_prune and ok_agy and ok_retired and ok_procs) else 1
         # `#737` — 다른 검사는 모두 통과했고 출처만 어긋난 호스트를 사유별로 센다.
         #    실행 중 마스터에 커밋이 들어오면 「N 커밋 뒤」, 작업 트리를 고치면 「dirty 도장」
         #    — 정확히 이 모양으로 실패한다.
         if (ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws
-                and ok_tag and ok_codex and ok_res and ok_shadow and ok_prune and ok_agy and ok_retired):
+                and ok_tag and ok_codex and ok_res and ok_shadow and ok_prune and ok_agy and ok_retired and ok_procs):
             kind = _version_failure_kind(ver)
             behind_only += kind == "behind"
             dirty_only += kind == "dirty"

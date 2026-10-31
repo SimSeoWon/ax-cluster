@@ -79,7 +79,8 @@ def build_step(project: str, *, expected_commit: str, kind: str = "", tree: str 
         facts = _default_facts(project)
 
     from master.work.runner import pick_worker
-    pick = pick_worker(list(facts), requires=("ue5",))
+    # 빌드는 서버가 SSH 로 직접 돈다 — 워커 에이전트(claude) 유무와 무관하다 (#861 T5)
+    pick = pick_worker(list(facts), requires=("ue5",), need_agent=False)
     if pick.chosen is None:
         why = " · ".join(f"{h}: {r}" for h, r in pick.rejected) or "워크숍 없음"
         return {"ok": False, "stage": "pick", "evidence": f"빌드할 UE5 워커가 없다 — {why}"}

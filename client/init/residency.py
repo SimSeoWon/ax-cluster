@@ -7,13 +7,17 @@
 
 from __future__ import annotations
 
+import base64
+import re
 import shlex
 from dataclasses import dataclass
 
 TASK_NAME = "AxWorker"           # 철회된 상주의 옛 작업 이름 — 남은 등록을 찾아 해제하는 데만 쓴다 (#861)
 INTERVAL_MIN = 5                 # 감시자 주기. 잠금 싱글턴이 겹침을 흡수한다
 # [주의] 데몬 파일 경로·재기동 깃발 상수는 지웠다 (#861, 2026-10-31) — 데몬 모듈이 저장소에서
-#    삭제됐다. 옛 등록 해제는 작업 이름(`task_name`)과 cron 표식(`cron_marker`)만 쓴다.
+#    삭제됐다. 옛 등록 해제는 **프로젝트 이름과 무관하게** `AxWorker*`·`AxClaimer*` 작업과
+#    `worker_daemon`·`claimer` cron 줄을 찾는다 (#861 T5 — 현재 프로젝트명만 보면 다른 이름의
+#    잔재를 놓친다).
 
 
 def types_for(facts) -> str:
@@ -131,37 +135,98 @@ def conductor_run_command(project: str, facts) -> str:
 
 
 def cron_marker(facts) -> str:
-    """`.43` 류의 crontab 에서 **우리 줄을 찾는 표식**. [중요] 등록과 해제가 같은 값을 써야
-    한다 — 두 벌로 쓰면 해제가 남의 줄을 지우거나 우리 줄을 못 지운다."""
+    """옛 체크아웃별 cron 표식(기록·호환용). 잔재 판정·해제는 `CRON_PATTERNS` 를 쓴다 (#861 T5)."""
     return f"cd {facts.path} &&"
 
 
-def registration_query_command(project: str, facts) -> str:
-    """조회 성공·명시적 부재·조회 실패를 구분할 수 있는 관측 명령."""
-    if facts.windows:
-        name = task_name(project).replace("'", "''")
-        return (
-            'powershell -NoProfile -Command "$ErrorActionPreference=\'Stop\'; '
-            "try { $found=@(Get-ScheduledTask -ErrorAction Stop | "
-            f"Where-Object {{ $_.TaskName -eq '{name}' }}); "
-            "if($found.Count -gt 0){'AX_RESIDENCY_PRESENT=1'}"
-            "else{'AX_RESIDENCY_PRESENT=0'} } "
-            "catch { Write-Output ('AX_RESIDENCY_ERROR='+$_.Exception.Message); exit 1 }\""
-        )
+LEGACY_TASK_PREFIXES = ("AxWorker", "AxClaimer")   # 철회된 상주의 옛 작업 이름 접두 — 프로젝트명 무관 (#861 T5)
+PROTECTED_TASK_PREFIXES = ("AxConductor", "AX_Ollama")  # 절대 건드리지 않는다 — 로그인 런처·추론 상주
+CRON_PATTERNS = ("worker_daemon", "claimer")       # 옛 cron 줄을 찾는 고정 문자열 — 경로·프로젝트 무관
+TASKS_MARK = "AX_RESIDENCY_TASKS="
+ABSENT_MARK = "AX_RESIDENCY_PRESENT=0"
+ERROR_MARK = "AX_RESIDENCY_ERROR="
+_SAFE_TASK = re.compile(r"^\\?(?:[A-Za-z0-9_.-]+\\)*[A-Za-z0-9_.-]+$")
+
+
+def encoded_powershell(script: str) -> str:
+    """PowerShell 스크립트를 `-EncodedCommand`(UTF-16LE base64)로 싼다.
+
+    [중요] OpenSSH → cmd.exe → powershell 세 겹 인용을 아예 피한다 — `|`·`%`·`^`·따옴표가
+    cmd 에 닿지 않는다. 덤으로 이 프로세스의 명령줄에 검색 문자열이 평문으로 남지 않아
+    프로세스 조회가 자기 자신을 잡지 않는다.
+    """
+    b64 = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return f"powershell -NoProfile -NonInteractive -EncodedCommand {b64}"
+
+
+def _task_leaf(name: str) -> str:
+    return name.rsplit("\\", 1)[-1]
+
+
+def is_legacy_task(name: str) -> bool:
+    """옛 상주 작업 이름인가. 보호 접두(`AxConductor*`·`AX_Ollama*`)는 늘 거짓이다."""
+    leaf = _task_leaf(name).lower()
+    if any(leaf.startswith(p.lower()) for p in PROTECTED_TASK_PREFIXES):
+        return False
+    return any(leaf.startswith(p.lower()) for p in LEGACY_TASK_PREFIXES)
+
+
+def _registration_ps_script() -> str:
+    likes = " -or ".join(f"$_.TaskName -like '{p}*'" for p in LEGACY_TASK_PREFIXES)
+    return (
+        "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; "
+        "try { $n=@(Get-ScheduledTask -ErrorAction Stop | "
+        f"Where-Object {{ {likes} }} | "
+        "ForEach-Object { $_.TaskPath + $_.TaskName }); "
+        f"if($n.Count -gt 0){{ '{TASKS_MARK}' + ($n -join ';') }} else {{ '{ABSENT_MARK}' }} }} "
+        f"catch {{ Write-Output ('{ERROR_MARK}' + $_.Exception.Message); exit 1 }}"
+    )
+
+
+def registration_query_command(project: str = "", facts=None) -> str:
+    """옛 상주 등록 조회 — **프로젝트 이름과 무관하게** 남은 것을 전부 찾는다 (#861 T5).
+
+    Windows: `AxWorker*`·`AxClaimer*` 예약 작업 전부 → `AX_RESIDENCY_TASKS=<경로1>;<경로2>` 또는
+    `AX_RESIDENCY_PRESENT=0`, 오류는 `AX_RESIDENCY_ERROR=` + exit 1.
+    Linux: crontab 전체(`worker_daemon`·`claimer` 줄을 판정 쪽에서 찾는다).
+    `project` 인자는 호출 호환용이다.
+    """
+    if facts is not None and facts.windows:
+        return encoded_powershell(_registration_ps_script())
     return "LC_ALL=C crontab -l 2>&1"
 
 
+def _cron_hits(text: str) -> list:
+    return [ln.strip() for ln in (text or "").splitlines()
+            if ln.strip() and any(p in ln for p in CRON_PATTERNS)]
+
+
 def registration_status(rc: int, out: str, facts) -> dict:
-    """관측 불가를 부재로 접지 않는다. 존재는 옛 작업 이름/cron 표식으로만 판정."""
+    """`{"known", "present", "names"}`. 관측 불가를 부재로 접지 않는다.
+
+    Windows 는 표식 줄만 읽는다(`#< CLIXML` 등 잡음은 무시). 표식이 정확히 하나 있어야 known 이다.
+    """
     text = (out or "").strip()
     if facts.windows:
-        if rc == 0 and text in ("AX_RESIDENCY_PRESENT=0", "AX_RESIDENCY_PRESENT=1"):
-            return {"known": True, "present": text.endswith("=1")}
+        lines = [x.strip() for x in text.splitlines()]
+        marks = [x for x in lines if x.startswith(("AX_RESIDENCY_", ))]
+        if rc == 0 and len(marks) == 1:
+            m = marks[0]
+            if m == ABSENT_MARK:
+                return {"known": True, "present": False, "names": []}
+            if m.startswith(TASKS_MARK):
+                names = [n.strip() for n in m[len(TASKS_MARK):].split(";") if n.strip()]
+                bad = [n for n in names if not _SAFE_TASK.match(n) or not is_legacy_task(n)]
+                if names and not bad:
+                    return {"known": True, "present": True, "names": names}
+                return {"known": False, "present": None, "names": [],
+                        "error": f"상주 등록 조회 결과를 해석하지 못했다: {m[:160]}"}
     elif rc == 0:
-        return {"known": True, "present": cron_marker(facts) in text}
+        hits = _cron_hits(text)
+        return {"known": True, "present": bool(hits), "names": hits}
     elif rc == 1 and text.lower().startswith("no crontab for "):
-        return {"known": True, "present": False}
-    return {"known": False, "present": None,
+        return {"known": True, "present": False, "names": []}
+    return {"known": False, "present": None, "names": [],
             "error": f"상주 등록 조회 실패 rc={rc}: {text[:160] or '(응답 없음)'}"}
 
 
@@ -170,20 +235,59 @@ def registration_present(rc: int, out: str, facts) -> bool:
     return registration_status(rc, out, facts).get("present") is True
 
 
-def unregister_commands(project: str, facts) -> list:
-    """상주 **해제** 명령 `(라벨, 명령)` (`#311`).
+def unregister_commands(project: str, facts, names=()) -> list:
+    """상주 **해제** 명령 `(라벨, 명령)` (`#311` · `#861` T5).
 
-    [중요] **ⓐ 결정의 짝이다** — 「상주는 마운트를 따른다」면 옮기는 일이 늘 둘이다: 새 것을
-    켜고 **이전 것을 멈춘다**. 켜는 쪽만 코드에 있으면 멈추는 쪽은 매번 손으로 쓰이고, 그러면
-    작업 이름·표식이 등록과 갈린다(실측 2026-08-25: 손으로 쓴 뒤 이 함수를 만들었다).
-    [주의] crontab 은 **우리 줄만** 뺀다 — 통째로 다시 쓰면 `PATH=` 줄이 날아가고 claimer 가
-    도구를 못 찾는다(`commands()` 의 같은 주의).
+    Windows: 조회가 찾은 **이름마다** `schtasks /delete` — 프로젝트 이름과 무관하다.
+    `names` 를 안 주면 옛 프로젝트별 이름 하나(호환). 보호 접두·이상한 이름은 명령을 내지 않는다.
+    Linux: `worker_daemon`·`claimer` 줄만 뺀다 — `PATH=` 등 다른 줄은 보존한다.
+    [주의] crontab 읽기가 실패하면 쓰지 않는다 — 빈 crontab 으로 덮지 않는다.
     """
     if facts.windows:
-        return [("unregister", f"schtasks /delete /f /tn {task_name(project)}")]
-    q = shlex.quote
+        want = list(names) or [task_name(project)]
+        return [(f"unregister {n}", f'schtasks /delete /f /tn "{n}"')
+                for n in want if _SAFE_TASK.match(n) and is_legacy_task(n)]
+    pats = " ".join(f"-e {shlex.quote(p)}" for p in CRON_PATTERNS)
     return [("unregister",
-             "( crontab -l 2>/dev/null | grep -vF " + q(cron_marker(facts)) + " ) | crontab -")]
+             'c=$(crontab -l) || exit 1; '
+             f'printf \'%s\\n\' "$c" | grep -vF {pats} | crontab -')]
+
+
+# ── 실행 중인 데몬 프로세스 (#861 T5) — 조회만, 종료하지 않는다 ─────────────────
+PROCS_MARK = "AX_DAEMON_PROCS="
+PROCS_DONE = "AX_DAEMON_DONE"
+PROCS_ERROR = "AX_DAEMON_ERROR="
+
+
+def daemon_process_query_command(facts) -> str:
+    """`worker_daemon`·`claimer` 가 명령줄에 든 프로세스 pid. 끝 표식이 없으면 조회 실패다."""
+    if facts.windows:
+        script = (
+            "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; "
+            "try { $p=@(Get-CimInstance Win32_Process -ErrorAction Stop | "
+            "Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match 'worker_daemon|claimer' } | "
+            "ForEach-Object { $_.ProcessId }); "
+            f"'{PROCS_MARK}' + ($p -join ','); '{PROCS_DONE}' }} "
+            f"catch {{ Write-Output ('{PROCS_ERROR}' + $_.Exception.Message); exit 1 }}"
+        )
+        return encoded_powershell(script)
+    # [중요] `[w]orker_daemon` — 이 명령을 실은 셸의 명령줄 자체는 정규식에 걸리지 않는다
+    return ("p=$(pgrep -d, -f '[w]orker_daemon|[c]laimer'); rc=$?; "
+            f"if [ $rc -gt 1 ]; then echo {PROCS_ERROR}pgrep_rc=$rc; exit 1; fi; "
+            f'echo "{PROCS_MARK}$p"; echo {PROCS_DONE}')
+
+
+def daemon_process_status(rc: int, out: str) -> dict:
+    """`{"known", "pids", "error"}`. 끝 표식·pid 표식이 없거나 rc≠0 이면 조회 실패다."""
+    lines = [x.strip() for x in (out or "").splitlines()]
+    procs = [x for x in lines if x.startswith(PROCS_MARK)]
+    if rc != 0 or PROCS_DONE not in lines or len(procs) != 1:
+        return {"known": False, "pids": [],
+                "error": f"데몬 프로세스 조회 실패 rc={rc}: {(out or '').strip()[:160] or '(응답 없음)'}"}
+    pids = [p.strip() for p in procs[0][len(PROCS_MARK):].split(",") if p.strip()]
+    if not all(p.isdigit() for p in pids):
+        return {"known": False, "pids": [], "error": f"데몬 프로세스 조회 결과 해석 실패: {procs[0][:160]}"}
+    return {"known": True, "pids": pids, "error": ""}
 
 
 def plan_lines(project: str, facts, *, mounted: str = "") -> list:

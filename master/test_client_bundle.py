@@ -1550,7 +1550,7 @@ def test_residency_reconcile_removes_forbidden_registration() -> None:
             state["registered"] = False
             return 0, ""
         if cmd == "LC_ALL=C crontab -l 2>&1":
-            return 0, (f"*/5 * * * * cd {f.path} && /usr/bin/python3 x\n"
+            return 0, (f"*/5 * * * * cd {f.path} && /usr/bin/python3 .ax/worker_daemon.py\n"
                        if state["registered"] else "")
         return 0, ""
 
@@ -1613,6 +1613,124 @@ def test_residency_is_retired_and_conductor_is_independent() -> None:
             got = bundle._register_residency("NS", f)
         check("조회 실패는 부재/성공이 아님", "error" in got and not got.get("conductor"), got)
         check("조회 실패 뒤 등록/해제 쓰기 없음", len(calls) == 1, calls)
+
+
+def test_register_residency_error_paths_and_all_names() -> None:
+    """`#861` T5 — 잔재는 프로젝트 이름과 무관하게 전부 지우고, 실패마다 멈춘다."""
+    from unittest.mock import patch
+    from client.init import residency as R
+
+    win = _facts(role="worker", os="windows", ue5="ue5", path=r"C:\trunk\AXCluster",
+                 home=r"C:\Users\janus", user="janus", host="192.168.0.2")
+    query = R.registration_query_command("AXCluster", win)
+    found = ["\\AxClaimer", "\\AxWorker_NS", "\\AxWorker"]
+
+    def scenario(*, delete_rc=0, left_after=None, conductor_rc=0, crash_rc=0):
+        st = {"names": list(found), "queries": 0}
+        calls = []
+
+        def run(host, user, cmd, *, timeout=None):
+            calls.append(cmd)
+            if cmd == query:
+                st["queries"] += 1
+                names = st["names"] if st["queries"] == 1 else (left_after or [])
+                return 0, (f"#< CLIXML\n{R.TASKS_MARK}{';'.join(names)}" if names
+                           else "AX_RESIDENCY_PRESENT=0")
+            if cmd.startswith("schtasks /delete"):
+                return delete_rc, "" if delete_rc == 0 else "ERROR: Access is denied."
+            if "AxConductor" in cmd and "/create" in cmd:
+                return conductor_rc, "" if conductor_rc == 0 else "ERROR"
+            if "DontShowUI" in cmd:
+                return crash_rc, "" if crash_rc == 0 else "ERROR"
+            return 0, ""
+
+        with patch.object(bundle, "_ssh", run), \
+                patch.object(bundle, "_probe_python", return_value=r"C:\Py\pythonw.exe"), \
+                patch.object(bundle, "index_only", return_value=False):
+            got = bundle._register_residency("AXCluster", win)
+        return got, calls
+
+    got, calls = scenario()
+    dels = [c for c in calls if c.startswith("schtasks /delete")]
+    check("[중요] 찾은 잔재(AxClaimer·AxWorker_NS·AxWorker)를 하나씩 전부 지운다",
+          dels == [f'schtasks /delete /f /tn "{n}"' for n in found], dels)
+    check("[중요] AxConductor·AX_Ollama 는 지우지 않는다",
+          not any("Conductor" in c or "Ollama" in c for c in dels), dels)
+    check("  정상 경로는 지휘자 런처를 등록", got.get("conductor") == "AxConductor_AXCluster"
+          and "error" not in got, got)
+
+    got, calls = scenario(delete_rc=1)
+    check("[중요] 해제 rc≠0 → error", "error" in got and "rc=1" in got["error"], got)
+    check("[중요] 해제 실패 뒤 지휘자·크래시 설정 쓰기 없음",
+          not any("AxConductor" in c or "DontShowUI" in c for c in calls), calls)
+    check("  해제 실패 뒤 다음 이름도 시도하지 않는다",
+          sum(c.startswith("schtasks /delete") for c in calls) == 1, calls)
+
+    got, calls = scenario(left_after=["\\AxWorker_NS"])
+    check("[중요] 재조회에 잔재가 남으면 error(이름 포함)",
+          "error" in got and "AxWorker_NS" in got["error"], got)
+    check("  남았으면 지휘자 쓰기 없음", not any("AxConductor" in c for c in calls), calls)
+
+    got, calls = scenario(conductor_rc=5)
+    check("[중요] 지휘자 등록 rc≠0 → error", "error" in got and "rc=5" in got["error"], got)
+    check("  지휘자 실패 뒤 크래시 설정 안 함", not any("DontShowUI" in c for c in calls), calls)
+    got, calls = scenario(crash_rc=7)
+    check("[중요] 크래시 대화상자 설정 rc≠0 → error", "error" in got and "rc=7" in got["error"], got)
+
+    # 리눅스 — 다른 체크아웃 경로의 옛 데몬 줄도 잔재다
+    lin = _facts(role="worker", os="linux", path="/home/sim/trunk/AXCluster")
+    tab = {"text": ("PATH=/usr/bin\n*/5 * * * * cd /home/sim/trunk/NS && python3 .ax/worker_daemon.py\n"
+                    "0 3 * * * /home/sim/backup.sh\n")}
+    lcalls = []
+
+    def lrun(host, user, cmd, *, timeout=None):
+        lcalls.append(cmd)
+        if cmd == "LC_ALL=C crontab -l 2>&1":
+            return 0, tab["text"]
+        if "| crontab -" in cmd:
+            tab["text"] = "\n".join(ln for ln in tab["text"].splitlines()
+                                    if "worker_daemon" not in ln and "claimer" not in ln) + "\n"
+            return 0, ""
+        return 0, ""
+
+    with patch.object(bundle, "_ssh", lrun):
+        got = bundle._register_residency("AXCluster", lin)
+    check("[중요] 리눅스: 다른 프로젝트 경로의 데몬 cron 도 지운다",
+          "error" not in got and "worker_daemon" not in tab["text"], (got, tab))
+    check("  리눅스: PATH·다른 줄 보존",
+          "PATH=/usr/bin" in tab["text"] and "backup.sh" in tab["text"], tab)
+
+
+def test_check_daemon_processes() -> None:
+    """`#861` T5 — check 는 실행 중인 데몬 프로세스를 FAIL 로 보고, 조회 실패도 FAIL 이다."""
+    import inspect
+    from client.init import residency as R
+    saved = bundle._ssh
+    for os_ in ("windows", "linux"):
+        f = _facts(os=os_)
+        for rc, out, ok_want, why in (
+                (0, f"{R.PROCS_MARK}\n{R.PROCS_DONE}", True, "없음"),
+                (0, f"{R.PROCS_MARK}4242\n{R.PROCS_DONE}", False, "있음"),
+                (255, "", False, "SSH 실패"),
+                (1, "AX_DAEMON_ERROR=denied", False, "조회 오류"),
+                (0, "", False, "빈 응답")):
+            seen = []
+            bundle._ssh = lambda h, u, c, *, timeout=None, _r=(rc, out): (seen.append(c), _r)[1]
+            try:
+                ok, note = bundle.check_daemon_processes(f)
+            finally:
+                bundle._ssh = saved
+            check(f"[중요] {os_}: 데몬 프로세스 {why} → {'OK' if ok_want else 'FAIL'}",
+                  ok is ok_want and (ok or "[실패]" in note), f"{ok} {note}")
+            if why == "있음":
+                check(f"  {os_}: pid 를 보고한다", "4242" in note, note)
+            check(f"  {os_}: 조회 한 번 · 종료 명령 없음",
+                  len(seen) == 1 and "kill" not in seen[0].replace("pgrep", "").lower()
+                  and "Stop-Process" not in seen[0], seen)
+    csrc = inspect.getsource(client_cli.cmd_check)
+    check("[중요] check 가 프로세스 판정을 호스트 판정에 넣는다",
+          "check_daemon_processes" in csrc and csrc.count("ok_procs") >= 4, str(csrc.count("ok_procs")))
+    check("check 가 잔재 이름을 출력한다", "_state.get('names')" in csrc)
 
 
 def test_check_mount_lookup_is_fail_closed() -> None:
@@ -2686,6 +2804,8 @@ def main() -> int:
                test_codex_identity,
                test_residency_reconcile_removes_forbidden_registration,
                test_residency_is_retired_and_conductor_is_independent,
+               test_register_residency_error_paths_and_all_names,
+               test_check_daemon_processes,
                test_check_mount_lookup_is_fail_closed,
                test_update_covers_every_registered_project,
                test_update_reports_partial_failure,

@@ -443,7 +443,7 @@ def cleanliness(project: str):
     return check
 
 
-def pick_worker(facts: list, requires=(), *, clean=None) -> Pick:
+def pick_worker(facts: list, requires=(), *, clean=None, need_agent: bool = True) -> Pick:
     """능력이 맞고 실제로 준비된 워커 하나. **읽기 전용 판정.**
 
     [중요] `role` 로 먼저 거른다 — `.33` 은 SSH 가 닿지만 `requester` 이고, 사람이 편집 중인
@@ -456,6 +456,9 @@ def pick_worker(facts: list, requires=(), *, clean=None) -> Pick:
     [중요] `clean` 을 주면 **워킹트리까지 보고 고른다.** 실측 2026-08-09: `.2` 의 추적 파일이
     더러운 줄 모르고 태스크를 집었고, 워커가 (옳게) 거부해 **집었다 반납하는 왕복**만 남았다.
     거부는 워커의 마지막 방어선이지 **선택 기준**이 아니다 — 못 돌릴 워커에게 주지 않는다.
+
+    `need_agent=False` 는 **빌드 선택 전용**이다 (`#861` T5) — 서버가 SSH 로 `Build.bat` 를
+    직접 부르므로 워커의 `claude` 가 필요 없다. 파견 기본값(True)은 그대로다.
     """
     need = set(requires or ())
     p = Pick()
@@ -469,7 +472,7 @@ def pick_worker(facts: list, requires=(), *, clean=None) -> Pick:
         if not f.checkout_ok:
             p.rejected.append((f.host, "체크아웃이 없다"))
             continue
-        if not f.claude:
+        if need_agent and not f.claude:
             p.rejected.append((f.host, "claude 가 없다"))
             continue
         missing = need - set(f.capabilities)

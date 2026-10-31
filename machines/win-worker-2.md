@@ -8,9 +8,10 @@
 > AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client home-guides --host=192.168.0.2 --apply
 > ```
 >
-> The other two machines symlink into a local `ax-cluster` clone; this box's only ax-cluster tree
-> is the pipeline-owned worker checkout `E:\trunk\AXCluster` (not a place to symlink from), so it
-> gets a copy. **Copies drift** — change the canonical file first. Structure: [`README.md`](README.md).
+> `.57` and `.43` symlink their guides into a local `ax-cluster` clone; `.33` gets a copy too.
+> This box's only ax-cluster tree is the pipeline-owned worker checkout `E:\trunk\AXCluster` (not a
+> place to symlink from), so it gets a copy. **Copies drift** — change the canonical file first.
+> Structure: [`README.md`](README.md).
 
 
 ## Codex CLI (2026-09-05 설치)

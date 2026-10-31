@@ -90,16 +90,13 @@ class GuideError(RuntimeError):
 def derive_agents(text: str) -> str:
     """`.2` 의 `AGENTS.md` 를 `CLAUDE.md` 정본에서 결정적으로 만든다.
 
-    첫 줄의 `# CLAUDE.md` → `# AGENTS.md`, 머리 블록(첫 `## ` 앞) 안의
-    `C:/Users/janus/CLAUDE.md` → `C:/Users/janus/AGENTS.md`. 그 밖은 바이트 그대로.
+    첫 줄의 `# CLAUDE.md` → `# AGENTS.md` 만 바꾼다. 그 밖은 바이트 그대로다.
+    [주의] 옛 머리말의 수동 `scp … C:/Users/janus/CLAUDE.md` 경로 치환은 걷었다 (#861 T5) —
+    머리말이 `home-guides` 안내로 바뀌어 맞는 곳이 없었다. 제목 모양 검사는 fail-closed 로 남긴다.
     """
     if not text.startswith("# CLAUDE.md"):
         raise GuideError("정본 첫 줄이 `# CLAUDE.md` 로 시작하지 않는다 — 유도 규칙을 다시 본다")
-    text = "# AGENTS.md" + text[len("# CLAUDE.md"):]
-    m = re.search(r"^## ", text, flags=re.M)
-    cut = m.start() if m else len(text)
-    head = text[:cut].replace("C:/Users/janus/CLAUDE.md", "C:/Users/janus/AGENTS.md")
-    return head + text[cut:]
+    return "# AGENTS.md" + text[len("# CLAUDE.md"):]
 
 
 def want_content(t: Target, root: Path = REPO_ROOT) -> str:
