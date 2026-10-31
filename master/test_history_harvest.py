@@ -249,6 +249,15 @@ def test_search_surface():
     check("[중요] 뒤집힌 결정만 골라낸다 (drift 축)",
           sup["count"] == 1 and sup["records"][0]["decision_type"] == "revert", str(sup["count"]))
     check("자유 질의는 태그·제목을 훑는다", HH.search(p, query="되돌린")["count"] == 1)
+    # #852 — 구절 전체 부분문자열이라 단어 순서만 바뀌어도 0건이었다
+    check("구절 그대로 찾는다", HH.search(p, query="패드 입력 채택")["count"] == 1)
+    check("[중요] 단어 순서를 바꿔도 찾는다 (#852)", HH.search(p, query="채택 패드")["count"] == 1)
+    check("[중요] 사이 단어를 빼도 찾는다 (#852)", HH.search(p, query="패드 채택")["count"] == 1)
+    check("조각은 AND — 하나라도 없으면 0건", HH.search(p, query="패드 없는말")["count"] == 0)
+    check("조각마다 다른 필드여도 된다 (제목+태그)",
+          HH.search(p, query="되돌린다 GAMEPAD")["count"] == 1)
+    check("여분 공백은 조각이 아니다", HH.search(p, query="  패드   채택  ")["count"] == 1)
+    check("공백만 있는 질의는 조건이 아니다", HH.search(p, query="   ")["count"] == 2)
     check("[주의] 필터는 AND 다 — 겹치지 않으면 0건",
           HH.search(p, decision_type="revert", classes=["UCommonGameViewportClient"])["count"] == 0)
     check("[중요] alternatives 를 next_steps 와 갈라 돌려준다",

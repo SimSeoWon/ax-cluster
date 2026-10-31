@@ -637,8 +637,10 @@ def search(paths, *, query: str = "", decision_type: str = "", classes=(),
     if supersedes_only:
         recs = [r for r in recs if r.supersedes]
     if query:
-        q = str(query).strip().lower()
-        recs = [r for r in recs if q in _hay(r)]
+        # 공백 단위 AND (#852) — 구절 전체를 한 덩어리로 찾으면 단어 순서만 바뀌어도 조용히
+        # 0건이었다. 구절이 들어 있으면 조각도 전부 들어 있으므로 종전 결과는 줄지 않는다.
+        words = str(query).lower().split()
+        recs = [r for r in recs if all(w in _hay(r) for w in words)]
     out = recs[:max(1, int(limit))]
     return {"count": len(out), "total": total, "dir": str(cdir),
             "exists": cdir.is_dir(),
