@@ -48,10 +48,12 @@ def test_code_table():
 def test_unreal_table():
     s = _by_no(PS.steps_for_kind("unreal"))
     check("unreal 은 1·3·5·7 실행", all(s[n].applies == PS.RUN for n in (1, 3, 5, 7)))
-    check("unreal 은 2·4·6 조건부", all(s[n].applies == PS.COND for n in (2, 4, 6)))
+    check("unreal 은 2·6 조건부", all(s[n].applies == PS.COND for n in (2, 6)))
+    check("[중요] unreal 4단계(제네레이트)는 해당없음 — #857 T1 실측", s[4].applies == PS.SKIP
+          and "T1" in s[4].reason and "IDE" in s[4].reason, s[4].reason)
     check("프리 에디터 조건에 승인 뒤 제거가 있다", "승인" in s[2].reason, s[2].reason)
     check("에디터 조건에 MCP 확인이 있다", "MCP" in s[6].reason, s[6].reason)
-    check("해당없음은 하나도 없다", not any(x.applies == PS.SKIP for x in s.values()))
+    check("해당없음은 4단계 하나뿐", [n for n, x in s.items() if x.applies == PS.SKIP] == [4])
 
 
 def test_refuses_unknown_and_index_only():
@@ -89,15 +91,16 @@ def test_every_kind_in_profile_is_decided():
 
 
 def test_task_declares_conditional_steps():
-    s = _by_no(PS.steps_for_task("unreal", [4]))
-    check("선언한 조건부 단계는 실행", s[4].applies == PS.RUN and "선언" in s[4].reason, s[4].reason)
+    s = _by_no(PS.steps_for_task("unreal", [6]))
+    check("선언한 조건부 단계는 실행", s[6].applies == PS.RUN and "선언" in s[6].reason, s[6].reason)
     check("선언 안 한 조건부는 해당없음 + 조건을 사유로",
-          s[2].applies == PS.SKIP and s[6].applies == PS.SKIP and "조건" in s[6].reason, s[6].reason)
+          s[2].applies == PS.SKIP and "조건" in s[2].reason, s[2].reason)
     check("늘 하는 단계는 그대로 실행", all(s[n].applies == PS.RUN for n in (1, 3, 5, 7)))
     check("[중요] 판정 뒤에는 조건부가 남지 않는다",
           not any(x.applies == PS.COND for x in s.values()))
     s = _by_no(PS.steps_for_task("unreal", []))
     check("아무것도 선언 안 하면 2·4·6 해당없음", all(s[n].applies == PS.SKIP for n in (2, 4, 6)))
+    check("4단계 사유는 선언 여부가 아니라 실측", "T1" in s[4].reason, s[4].reason)
     s = _by_no(PS.steps_for_task("unreal", [6, 2, 2]))
     check("중복·순서와 무관", s[2].applies == PS.RUN and s[6].applies == PS.RUN and s[4].applies == PS.SKIP)
     s = _by_no(PS.steps_for_task("code", []))
@@ -105,7 +108,8 @@ def test_task_declares_conditional_steps():
 
 
 def test_task_declaring_non_conditional_is_refused():
-    for kind, steps in (("code", [4]), ("code", [6]), ("unreal", [5]), ("unreal", [1, 4])):
+    for kind, steps in (("code", [4]), ("code", [6]), ("unreal", [5]), ("unreal", [1, 6]),
+                        ("unreal", [4])):
         try:
             PS.steps_for_task(kind, steps)
             ok = False

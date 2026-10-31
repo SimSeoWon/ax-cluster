@@ -34,7 +34,7 @@ def _deps_of(raw) -> list[str]:
 
 
 def _steps_of(raw) -> list[int]:
-    """「단계」 선언 — 목록(`[4, 6]`) 또는 「4·6」. 1~7 밖이면 `plan_block` 이 거절한다."""
+    """「단계」 선언 — 목록(`[2, 6]`) 또는 「2·6」. 1~7 밖이면 `plan_block` 이 거절한다."""
     if raw in (None, "", PB.NO_DEPS, []):
         return []
     if isinstance(raw, (str, int)):
@@ -89,7 +89,7 @@ def set_plan(issue_id, tasks: list, why: str, *, getter=None, updater=None) -> d
     """플랜을 만들거나 태스크를 추가·편집한다. `tasks` 는 **원하는 전체 목록**(표 순서)이다.
 
     각 항목: `id`·`goal` 필수, `target`·`deps`(목록 또는 「T1·T2」)·`check`·`steps`(조건부 단계 선언,
-    목록 또는 「4·6」 — v2) 선택.
+    목록 또는 「2·6」 — v2) 선택.
     `state`·`evidence` 를 실으면 거절한다 — 상태는 `transition` 으로만 바뀐다.
     """
     if not (why or "").strip():
