@@ -1,4 +1,6 @@
-"""클라이언트 폴백 캐시 (소 3.4.3 · `#162`) — 원전 두 모듈 이식분.
+"""클라이언트 온톨로지 폴백 캐시 (소 3.4.3 · `#162`).
+
+#234에서 미배선 벡터 폴백과 그 전용 검사는 제거했다. 현행 SQLite 캐시 계약을 검증한다.
 
 검증하는 것:
 
@@ -9,8 +11,6 @@
     ④ TTL 이 없다 — 오래돼도 내준다 (온톨로지는 중앙 SSOT)
     ⑤ 초기화 실패는 **한 번만** 시도하고, 실패를 값으로 돌린다
     ⑥ 모르는 `outcome` 은 **예외** — 조용히 `unreachable` 로 접지 않는다
-    ⑦ [중요] 벡터 폴백: **해시가 같으면 임베딩을 다시 만들지 않는다**
-    ⑧ 벡터 폴백 결과에 `source` 표시가 박힌다 · 임베더는 **우리 다국어 모델**이다
 
 `.venv/bin/python master/test_client_cache.py`
 """
@@ -24,7 +24,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from client.runtime.ontology_cache import OntologyCache, is_error_payload      # noqa: E402
-from master.context_search import vector_fallback as VF                        # noqa: E402
 
 PASS = FAIL = 0
 GOOD = json.dumps({"domain": "MissionRuntime", "objects": ["UManager_Mission"]},
@@ -129,64 +128,10 @@ def test_broken_cache_fails_open_once():
         check("⑤ 한 번만 시도한다", c._conn_or_none() is None)
 
 
-# ── ⑦⑧ 벡터 폴백 ────────────────────────────────────────────────────────────
-
-def _results(h="h1", body="미션 실행기는 태스크를 순차로 돌린다. 본문이 충분히 길다."):
-    return [{"file": "Source/Mission/Executor.md", "content_preview": body,
-             "content_hash": h, "category": "Game/Mission",
-             "tags": ["미션", "실행기"], "related_classes": {"UMissionTaskExecutor": "x.h"}}]
-
-
-def test_hash_skip_avoids_reembedding():
-    with tempfile.TemporaryDirectory() as tmp:
-        vf = VF.VectorFallback(tmp)
-        if not vf.available:
-            # [중요] **chromadb 부재만 건너뜀이다.** 그 밖의 사유는 결함이므로 실패로 낸다 —
-            #    2026-08-22 에 `client/runtime/` 이동이 상대 임포트를 깨뜨렸는데
-            #    (`No module named 'client.context_search'`) 이 자리가 그것을 삼켜 **검사 9개가
-            #    조용히 사라지고 「통과」로 보고됐다.** 분모가 33→24 로 줄어야 겨우 보였다.
-            check("⑦ (건너뜀) chromadb 를 못 열었다", "chromadb" in (vf.error or ""),
-                  vf.error)
-            return
-        r1 = vf.upsert(_results())
-        check("⑦ 처음엔 적재한다", r1["upserted"] == 1, str(r1))
-        r2 = vf.upsert(_results())
-        check("⑦ [중요] 해시가 같으면 건너뛴다", r2["upserted"] == 0 and r2["skipped"] == 1, str(r2))
-        r3 = vf.upsert(_results(h="h2"))
-        check("⑦ 해시가 바뀌면 다시 적재한다", r3["upserted"] == 1, str(r3))
-        bad = vf.upsert([{"file": "", "content_preview": ""}])
-        check("⑦ 못 쓸 항목은 버리고 센다", bad["dropped"] == 1, str(bad))
-
-
-def test_search_marks_the_fallback_and_uses_our_model():
-    with tempfile.TemporaryDirectory() as tmp:
-        vf = VF.VectorFallback(tmp)
-        if not vf.available:
-            # [중요] ⑦ 과 같은 이유로 **chromadb 부재만** 건너뜀이다 (2026-08-22).
-            check("⑧ (건너뜀) chromadb 를 못 열었다", "chromadb" in (vf.error or ""),
-                  vf.error)
-            return
-        vf.upsert(_results())
-        hits = vf.search("미션 실행기", limit=3)
-        check("⑧ 한글 질의로 결과가 나온다", len(hits) == 1, str(len(hits)))
-        check("⑧ [중요] 폴백임을 표시한다", hits[0]["source"] == "client_cache_vector",
-              hits[0]["source"])
-        check("⑧ 유사도가 0 이상", hits[0]["similarity"] >= 0.0, str(hits[0]["similarity"]))
-        check("⑧ 태그를 되살린다", hits[0]["tags"] == ["미션", "실행기"], str(hits[0]["tags"]))
-        check("⑧ related_classes 를 되살린다",
-              "UMissionTaskExecutor" in hits[0]["related_classes"],
-              str(hits[0]["related_classes"]))
-        st = vf.stats()
-        check("⑧ [중요] 임베더가 우리 다국어 모델이다",
-              "multilingual" in (st["embed_model"] or ""), str(st["embed_model"]))
-        check("⑧ 빈 질의는 빈 결과", vf.search("  ") == [])
-
-
 def main() -> int:
     for fn in (test_three_outcomes_stay_separate, test_unknown_outcome_raises,
                test_error_payloads_are_never_cached, test_no_ttl,
-               test_broken_cache_fails_open_once, test_hash_skip_avoids_reembedding,
-               test_search_marks_the_fallback_and_uses_our_model):
+               test_broken_cache_fails_open_once):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_cache: {PASS}/{total} 통과")

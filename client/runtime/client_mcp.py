@@ -975,16 +975,6 @@ def _ontology_item(papi, kind: str, domain: str, name: str, *, cache=None) -> di
                         lambda: papi("GET", f"/api/v1/ontology/{kind}/{qd}/{qn}"))
 
 
-def tool_get_object_spec(papi, domain: str, name: str, *, cache=None) -> dict:
-    """클래스 1건의 스펙 — 8103 `/api/v1/ontology/object/<도메인>/<이름>` 프록시."""
-    return _ontology_item(papi, "object", domain, name, cache=cache)
-
-
-def tool_get_action_spec(papi, domain: str, name: str, *, cache=None) -> dict:
-    """행위 1건의 스펙 — 같은 라우트의 `action` 쪽."""
-    return _ontology_item(papi, "action", domain, name, cache=cache)
-
-
 def tool_get_domain_layer(papi, domain: str, layer: int = 0, *, cache=None) -> dict:
     """한 도메인의 층 서술 + 그 층의 항목 이름 목록.
 

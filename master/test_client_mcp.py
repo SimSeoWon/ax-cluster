@@ -586,28 +586,36 @@ def test_ontology_item_tools_encode_and_cache():
         calls.append(path)
         return {"name": "UMissionTaskExecutor", "kind": "Object", "layer": 3}
     cache = FakeCache()
-    got = M.tool_get_object_spec(papi, "MissionRuntime", "UMissionTaskExecutor", cache=cache)
+    got = M.dispatch_tool("get_object_spec",
+                          {"domain": "MissionRuntime", "name": "UMissionTaskExecutor"},
+                          papi=papi, cache=cache)
     check("클래스 스펙이 온다", got["kind"] == "Object", str(got))
     check("object 라우트로 간다", calls[0] == "/api/v1/ontology/object/MissionRuntime/UMissionTaskExecutor",
           calls[0])
     check("[중요] 성공이 캐시에 적재된다", cache.puts and "ontology/object/" in cache.puts[0],
           str(cache.puts))
 
-    M.tool_get_action_spec(papi, "MissionRuntime", "AdvanceTaskOnTick", cache=None)
+    M.dispatch_tool("get_action_spec",
+                    {"domain": "MissionRuntime", "name": "AdvanceTaskOnTick"},
+                    papi=papi, cache=FakeCache())
     check("action 은 action 라우트로 간다", calls[-1].startswith("/api/v1/ontology/action/"), calls[-1])
 
-    M.tool_get_object_spec(papi, "미션 런타임", "U태스크", cache=None)
+    M.dispatch_tool("get_object_spec", {"domain": "미션 런타임", "name": "U태스크"},
+                    papi=papi, cache=FakeCache())
     check("[중요] 도메인·이름 **양쪽** 다 URL 인코딩 (#197 의 교훈)",
           "%EB%AF%B8" in calls[-1] and "%ED%83%9C%EC%8A%A4%ED%81%AC" in calls[-1], calls[-1])
 
     def dead(m, path, pl=None):
         raise M.ClientError("[미연결] 마스터(http://x:8103)에 연결할 수 없다")
-    stale = M.tool_get_object_spec(dead, "MissionRuntime", "UMissionTaskExecutor", cache=cache)
+    stale = M.dispatch_tool("get_object_spec",
+                            {"domain": "MissionRuntime", "name": "UMissionTaskExecutor"},
+                            papi=dead, cache=cache)
     check("[중요] 미연결이면 _stale 폴백", stale.get("_stale") is True, str(stale))
 
     for bad in (("", "UX"), ("MissionRuntime", "  ")):
         try:
-            M.tool_get_object_spec(papi, *bad, cache=None)
+            M.dispatch_tool("get_object_spec", {"domain": bad[0], "name": bad[1]},
+                            papi=papi, cache=FakeCache())
             check(f"빈 인자 거부 {bad}", False)
         except M.ClientError:
             check(f"빈 인자 거부 {bad}", True)

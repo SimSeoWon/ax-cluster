@@ -689,12 +689,3 @@ def api_context_doc(paths, file: str) -> tuple:
             body = text[end + 4:].lstrip("\n")
     return 200, {"file": f, "project": getattr(paths, "name", ""), "frontmatter": front,
                  "body": body, "chars": len(text)}
-
-
-def api_rebuild() -> dict:
-    # [중요] 웹이 재색인을 트리거하지 않는다 (머리말 § ④)
-    return {"status": "refused", "note": NOTES["rebuild"]}
-
-
-def api_refuse_mutation() -> dict:
-    return {"status": "refused", "note": NOTES["mutation"]}

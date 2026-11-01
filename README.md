@@ -184,11 +184,10 @@ ax-cluster/
 │   │                              테스트의 push 가 색인기를 15번 깨웠고 14번은 할 일이 없었다).
 │   │                              [주의] 조건은 `in_progress` **하나뿐**(원전 Phase 2) · 모르면 진행
 │   ├── work/                   ← 작업 루프 — 골조·분해·**추론 파견**·검증
-│   │   ├── coordinator.py      [중요] **2단 브랜치 조율 (원전 이식)** — `selftest` 드라이런용. 「단일 writer」= epoch 펜싱.
+│   │   ├── coordinator.py      검수·후속 검사·정리의 공용 Git 헬퍼. 옛 2-tier 실행부는 #234에서 제거.
 │   │   │                          `assign_attempt`(git 접촉 0) · `push_attempt`(ephemeral, force 허용)
 │   │   │                          · `verify_and_merge`(**epoch 펜싱** — 낡은 좀비는 병합 거부)
 │   │   │                          · `cleanup_attempts`([중요] **기본은 세기만** — 잔재는 증거다)
-│   │   ├── selftest.py         [중요] **실증 하네스** — `dry`(임시 저장소) / `live`(실 Gitea·실 작업장).
 │   │   │                          매니페스트에만 심은 NONCE 가 durable 산출물에 나타나면
 │   │   │                          **git 으로 실린 컨텍스트가 실제로 읽혔다**는 증명이 된다
 │   │   ├── conventions.py      [중요] UE 금지사항(개명·상속변경·모듈이동 — 블루프린트 에셋이 깨진다) +
@@ -408,8 +407,8 @@ AXCluster 통합 검사의 명시 목록은 `tests/integration/checks.json`이�
 | `test_context_search.py` | 마운트 라우팅 · RRF · 대괄호 · 시소러스 확장 |
 | `test_graph.py` | `Source/` 한정 · fail-closed · 유령 행 방지 |
 | `test_indexer.py` | ff-only 미러 · 다이제스트 · 트윈 성장 · 문서 스탬프와 커서. 합성 성공 케이스는 가짜 합성기를 주입해 브로커 없이 검사 |
-| `test_coordinator.py` | [중요] **2단 브랜치** — 낡은 epoch 은 **부작용 없이** 거부(durable 안 움직임·좀비 attempt 는 증거로 보존). [중요] **주입이 아니라 실제 git**(임시 bare + 클론)으로 잰다 |
-| `test_selftest.py` | [중요] 매니페스트가 **git 으로만** 도착하는지 · NONCE 왕복 · 잔재 0(로컬 ref 까지) |
+| `test_coordinator.py` | 실제 Git 저장소로 공용 헬퍼의 커밋 신원·경로 전달·실패 반환 계약 검증 |
+| `test_retired_code.py` | #234에서 제거한 미사용 모듈·진입점의 부활과 프로덕션 잔여 import 차단 |
 | `test_gate.py` | [중요] 일시정지 조건은 `in_progress` **하나뿐** · HTTP 실패 시 디스크 대체 · **모르면 진행** |
 | `test_conventions.py` | UE 금지사항 · `repo/CLAUDE.md` 절 추출. [주의] **파일 없음은 degraded 가 아니다**(그 파일은 gitignore 대상이라 부재가 정상 — 늘 빨간 게이트는 게이트가 아니다) |
 | `test_sigma_audit.py` | [중요] **좁히는 조건 셋** — 넓은 핸들러만 · 예외를 값으로 돌려주면 조용하지 않다 · 의도는 **주석에서도** 찾는다. [중요] 이 파일이 스캐너의 `bare except` 누락을 **먼저 잡았다** |

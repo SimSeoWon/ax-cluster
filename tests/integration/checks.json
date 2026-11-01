@@ -640,8 +640,8 @@
     "timeout": 180
   },
   {
-    "path": "master/test_selftest.py",
-    "count_pattern": "(?m)^OK test_selftest: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "path": "master/test_retired_code.py",
+    "count_pattern": "(?m)^OK test_retired_code: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
   },
   {

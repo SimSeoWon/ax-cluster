@@ -124,8 +124,8 @@ def test_dead_wiring_stays_dead():
     for live in ("plan_remote_cleanup", "apply_remote_cleanup",
                  "hook_target", "hook_status", "install_hook", "WRITE_REMOTE"):
         check(f"attempt.{live} 는 산다", hasattr(A, live), "같이 걷혔다")
-    for live in ("assign_attempt", "push_attempt", "verify_and_merge", "cleanup_attempts"):
-        check(f"coordinator.{live} 는 산다 (selftest 드라이런이 쓴다)",
+    for live in ("GitError", "_git_cmd", "_git", "_git_rc", "_noop_log"):
+        check(f"coordinator.{live} 는 산다 (현행 검수·정리에서 사용)",
               hasattr(_C, live), "같이 걷혔다")
 
 
