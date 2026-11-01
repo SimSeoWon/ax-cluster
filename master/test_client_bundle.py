@@ -2822,6 +2822,23 @@ def test_code_drift_docs_only_868() -> None:
     check("#868 실 git: 없는 커밋은 None", bundle._diff_names("0" * 40, "a8d058c") is None)
 
 
+def test_service_entry_imports_bundle_at_start_869() -> None:
+    """`#869` — 서비스 진입점이 bundle 을 **최상위에서** 불러와 기동 커밋을 기동 시점에 잡는다."""
+    import ast
+    src = (Path(__file__).resolve().parent / "projects" / "__main__.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    top = [n for n in tree.body if isinstance(n, ast.ImportFrom)
+           and n.module == "client" and n.level == 2 and any(a.name == "bundle" for a in n.names)]
+    check("#869 진입점 최상위에 `from ..client import bundle`", len(top) == 1,
+          str([ast.dump(n) for n in tree.body if isinstance(n, ast.ImportFrom)])[:300])
+    main_fn = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main"]
+    body = ast.get_source_segment(src, main_fn[0]) if main_fn else ""
+    check("#869 main() 이 기동 커밋을 로그로 남긴다", "[drift] 기동 커밋" in body and "#869" in body)
+    check("#869 지연 import(logic.sync_check)는 그대로 — 같은 모듈 객체를 쓴다",
+          "from ..client import bundle as _b" in
+          (Path(__file__).resolve().parent / "projects" / "logic.py").read_text(encoding="utf-8"))
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
@@ -2863,7 +2880,8 @@ def main() -> int:
                test_update_live_shaped_in_temp_repo,
                test_shadow_skills_are_reported,
                test_index_only_delivery,
-               test_code_drift_blocks_stale_delivery, test_code_drift_docs_only_868):
+               test_code_drift_blocks_stale_delivery, test_code_drift_docs_only_868,
+               test_service_entry_imports_bundle_at_start_869):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_bundle: {PASS}/{total} 통과")

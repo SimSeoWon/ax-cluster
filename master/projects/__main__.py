@@ -17,6 +17,11 @@ import uvicorn
 from mcp.server.transport_security import TransportSecuritySettings
 
 from ..auth import OPEN_PATHS, BearerAuthMiddleware, load_token, load_view_token
+# [중요] #869: bundle 을 **기동 때** 불러온다 — `_LOADED_COMMIT`(#831 비교 기준)이 import 순간의 HEAD 라,
+#    `logic.sync_check` 의 지연 import 에 맡기면 「첫 마운트 전환 시점 HEAD」가 되어 그 사이 바뀐
+#    `logic.py` 등 기동 때 이미 불러온 모듈의 변경을 drift 로 못 본다(실측 2026-11-01: 15:48 기동인데
+#    기동 커밋이 첫 전환 때 HEAD a8c300a 였다).
+from ..client import bundle as _bundle
 from ..viewer import FAVICON, PREFIX as VIEW_PREFIX
 from ..viewer import Router, ViewApp, project_root
 from .mcp_server import mcp
@@ -104,6 +109,8 @@ def main() -> None:
         if _tok:
             _scoped.append((_tok, _scope))
     print(f"[auth] 역할 스코프 토큰 {len(_scoped)}개 배선")
+    print(f"[drift] 기동 커밋 {(_bundle._LOADED_COMMIT or '')[:7] or '미측정'} — "
+          f"#831 배달 가드의 비교 기준 (#869)")
     print(f"[shutdown] 종료 유예 {GRACEFUL_SHUTDOWN_SECONDS}초 — 넘으면 남은 연결"
           f"(subscriptions/listen 등)을 끊는다 (#770)")
     uvicorn.run(BearerAuthMiddleware(served, auth_token, scoped=tuple(_scoped),
