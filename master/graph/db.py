@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from pathlib import Path
+# [DOC] 이 모듈은 pathlib.Path 를 쓰지 않는다 — 공개 이름·시그니처는 그대로 둔다.
 
 from .. import sqlite_util
 from ..context_search.paths import ProjectPaths

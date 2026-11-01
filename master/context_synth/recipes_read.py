@@ -27,7 +27,7 @@ step-by-step 가이드를 컨텍스트로 받는다."*
 from __future__ import annotations
 
 import re
-from pathlib import Path
+# [DOC] 이 모듈은 pathlib.Path 를 쓰지 않는다 — 공개 이름·시그니처는 그대로 둔다.
 
 from .recipes_synthesizer import ANTI_PATTERNS_FILENAME, recipes_dir
 

@@ -37,7 +37,7 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
+# [DOC] 이 모듈은 pathlib.Path 를 쓰지 않는다 — 공개 이름·시그니처는 그대로 둔다.
 
 _FM = re.compile(r"^(---\s*\n)(.*?)(\n---\s*\n)", re.DOTALL)
 _BLOCK = re.compile(r"(^related_classes:[ \t]*\n)((?:[ \t]+-[ \t]+.+\n?)*)", re.MULTILINE)
