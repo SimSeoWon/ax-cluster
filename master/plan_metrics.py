@@ -526,6 +526,9 @@ def render_issue(m: dict) -> str:
     lines = [f"#{m['id']} {m['subject'][:60]}",
              f"  플랜          {'v' + str(m['plan_version']) if m['has_plan'] else '없음'}"
              + (f" (형식 오류: {m['plan_error']})" if m["plan_error"] else ""),
+             # [DOC] 「상태별」 줄 — 태스크 상태별 개수를 한 줄로 낸다. 출력 문자열은 바꾸지 않는다.
+             # [PSEUDO] 바로 아래 줄 맨 앞의 문자열 조각 f"  상태별        " 은 자리 표시자가 없는 f-string 이라
+             # [PSEUDO] pyflakes 가 경고한다(F541). 앞의 f 접두만 지워 일반 문자열로 바꾼다 — 그 외 변경 금지.
              f"  상태별        " + (" · ".join(f"{k} {v}" for k, v in m["tasks_by_state"].items()) or "—"),
              f"  전이/등록     전이 {m['transitions']} · 플랜 등록·갱신 노트 {m['plan_sets']}",
              "  플랜 갱신     " + _render_changes(m["plan_changes"]),
