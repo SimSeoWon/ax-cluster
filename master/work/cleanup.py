@@ -808,8 +808,27 @@ def _status_counts(text: str) -> tuple:
     return untracked, len(rows) - untracked
 
 
-def scan_repo(run, repo: str, *, machine: str, label: str = "", base: str = "main") -> RepoScan:
-    """`run(path, args) -> (rc, out)` 로 `git -C <path> <args>` 를 돌려 열거한다. **읽기만 한다.**"""
+_WID_RE = re.compile(r"\d{8}_\d{4}_[A-Za-z0-9_.-]+")
+
+
+def work_id_of(path: str = "", branch: str = "") -> str:
+    """worktree 경로의 마지막 이름이나 `task/<W>/…` 브랜치에서 work_id 를 뽑는다(`#874`). 없으면 ""."""
+    for seg in ([x for x in branch.split("/") if x] + [path.replace("\\", "/").rstrip("/").split("/")[-1]]):
+        m = _WID_RE.search(seg)
+        if m:
+            return m.group(0)
+    return ""
+
+
+def scan_repo(run, repo: str, *, machine: str, label: str = "", base: str = "main",
+              work_status=None, local_branches: bool = False) -> RepoScan:
+    """`run(path, args) -> (rc, out)` 로 `git -C <path> <args>` 를 돌려 열거한다. **읽기만 한다.**
+
+    [DOC] #874: `work_status(work_id) -> merge_status | None` 를 주면 이름에서 뽑은 work_id 로 큐를 대조한다 —
+          cancelled → 후보(#787 기준 · 이 저장소의 원격추적·refs/ax 밖 고유 커밋 수 — 다른 저장소(트윈 미러)의 보존은 모른다) · rejected → 볼 것(#821 보존) ·
+          열린 work → 볼 것 · 조회 실패·id 없음 → 종전(도달 판정만). `local_branches=True`(마스터 저장소)면
+          worktree 에 붙지 않은 로컬 `task/*`·`attempt/*` 도 같은 판정으로 연다.
+    """
     r = RepoScan(machine=machine, repo=repo, label=label)
     rc, out = run(repo, f"rev-parse --verify -q origin/{base}")
     if rc == 0 and out.strip():
@@ -825,6 +844,30 @@ def scan_repo(run, repo: str, *, machine: str, label: str = "", base: str = "mai
             return None
         rc2, _ = run(repo, f"merge-base --is-ancestor {sha} {r.base_ref}")
         return True if rc2 == 0 else (False if rc2 == 1 else None)
+
+    def unique(sha: str) -> str:
+        rc2, o2 = run(repo, f"rev-list --count {sha} --not --remotes --glob=refs/ax/*")
+        return o2.strip() if rc2 == 0 and o2.strip().isdigit() else "?"
+
+    def by_queue(wid: str, sha: str):
+        """`(판정, 사유)` — 판정은 "candidate"·"review"·"" (큐로 못 정함 → 종전 판정)."""
+        if not wid or work_status is None:
+            return "", ""
+        try:
+            st = work_status(wid)
+        except Exception:                                    # noqa: BLE001
+            st = None
+        if not st:
+            return "", ""
+        if st == "cancelled":
+            n = unique(sha)
+            return "candidate", (f"취소 work {wid}(#787 기준) · 이 저장소의 원격추적·refs/ax 밖 고유 커밋 {n}개"
+                                 + (" — 지우면 그 커밋은 gc 대상" if n not in ("0", "?") else ""))
+        if st == "rejected":
+            return "review", f"반려 work {wid} — #821 보존(사람이 판단)"
+        if st == "merged":
+            return "", ""
+        return "review", f"진행 중 work {wid}({st}) — 파이프라인이 쓰는 중일 수 있다"
 
     rc, out = run(repo, "worktree list --porcelain")
     if rc != 0:
@@ -858,10 +901,45 @@ def scan_repo(run, repo: str, *, machine: str, label: str = "", base: str = "mai
             why.append(f"HEAD 가 {r.base_ref} 에 도달 불가")
         elif reach is None:
             why.append("도달 미판정")
-        if why:
+        if un or mod:
+            r.review.append((name, " · ".join(why) + " — 지우면 잃을 수 있다"))
+            continue
+        verdict, qwhy = by_queue(work_id_of(w["path"], w["branch"]), w["head"])
+        if verdict == "candidate":
+            r.candidates.append((name, f"미추적 0 · 수정 0 · {qwhy}"))
+        elif verdict == "review":
+            r.review.append((name, qwhy))
+        elif why:
             r.review.append((name, " · ".join(why) + " — 지우면 잃을 수 있다"))
         else:
             r.candidates.append((name, f"미추적 0 · 수정 0 · HEAD 가 {r.base_ref} 에 도달"))
+
+    if local_branches:
+        held = {w["branch"] for w in wts if w["branch"]}
+        rc, out = run(repo, "for-each-ref --format=%(refname:short):%(objectname) refs/heads/task refs/heads/attempt")
+        if rc != 0:
+            r.errors.append(f"로컬 task/attempt 목록 실패 ({out.strip()[:80]})")
+        else:
+            for ln in out.splitlines():
+                if ":" not in ln:
+                    continue
+                br, sha = ln.strip().rsplit(":", 1)
+                if br in held:
+                    continue                                  # worktree 줄에서 이미 본다
+                what = f"로컬 브랜치 {br} @ {sha[:8]}"
+                verdict, qwhy = by_queue(work_id_of("", br), sha)
+                if verdict == "candidate":
+                    r.candidates.append((what, qwhy))
+                elif verdict == "review":
+                    r.review.append((what, qwhy))
+                else:
+                    reach = reachable(sha)
+                    if reach:
+                        r.candidates.append((what, f"{r.base_ref} 에 도달 — 지워도 잃는 커밋 없음"))
+                    else:
+                        r.review.append((what, f"{r.base_ref or '기준'} 에 "
+                                               f"{'도달 불가' if reach is False else '도달 미판정'} · "
+                                               f"이 저장소의 원격추적·refs/ax 밖 고유 커밋 {unique(sha)}개"))
 
     rc, out = run(repo, "remote")
     remotes = {x.strip() for x in out.splitlines() if x.strip()} if rc == 0 else None
@@ -953,8 +1031,26 @@ def machine_targets(*, registry=None) -> list:
     return out
 
 
-def survey_machines(targets=None) -> list:
-    return [scan_repo(run, repo, machine=m, label=label)
+def _queue_status():
+    """`work_id → merge_status | None` (`#874`). 큐 GET 만 — 실패는 None(종전 판정으로 물러난다)."""
+    cache: dict = {}
+
+    def get(wid: str):
+        if wid not in cache:
+            try:
+                from .review import fetch_work
+                work, _ = fetch_work(wid)
+                cache[wid] = (work or {}).get("merge_status") or None
+            except Exception:                                # noqa: BLE001
+                cache[wid] = None
+        return cache[wid]
+    return get
+
+
+def survey_machines(targets=None, *, work_status=None) -> list:
+    ws = work_status if work_status is not None else _queue_status()
+    return [scan_repo(run, repo, machine=m, label=label, work_status=ws,
+                      local_branches=m.startswith("마스터"))          # 워커 로컬 브랜치는 plan 워커 구역이 본다
             for m, run, repos in (targets if targets is not None else machine_targets())
             for repo, label in repos]
 

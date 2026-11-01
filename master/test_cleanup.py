@@ -448,6 +448,77 @@ def test_main_lag_real_git_333() -> None:
         check("#333 실 git — 다시 보면 할 일 없음", not C.survey(f, runner=shell).park)
 
 
+def test_machine_scan_queue_and_local_branches_874() -> None:
+    """`#874` — 이름의 work_id 로 큐 대조(취소·반려·진행·모름) · 마스터 로컬 task/attempt 열거. 쓰기 0."""
+    import os
+    import subprocess
+    import tempfile
+    from master.work import cleanup as C
+
+    def g(cwd, *a):
+        return subprocess.run(["git", "-C", str(cwd), *a], capture_output=True, text=True, check=True).stdout.strip()
+    W1, W2, W3, W4, W5 = ("20261101_2208_t5_cancel_aa", "20261010_1742_788_rej_bb", "20261101_2300_open_cc",
+                          "20261101_2301_unknown_dd", "20261101_2302_merged_ee")
+    status = {W1: "cancelled", W2: "rejected", W3: "ready_for_review", W5: "merged"}
+    with tempfile.TemporaryDirectory() as td:
+        bare, repo = os.path.join(td, "o.git"), os.path.join(td, "r")
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", bare], check=True)
+        subprocess.run(["git", "clone", "-q", bare, repo], check=True, capture_output=True)
+        g(repo, "config", "user.email", "t@t"); g(repo, "config", "user.name", "t")
+        open(os.path.join(repo, "a"), "w").write("a\n")
+        g(repo, "add", "a"); g(repo, "commit", "-q", "-m", "a"); g(repo, "push", "-q", "origin", "main")
+
+        def side(name):                                   # main 에서 갈라진 미병합 커밋 하나
+            g(repo, "checkout", "-q", "-b", f"tmp-{name}", "main")
+            open(os.path.join(repo, name), "w").write(name + "\n")
+            g(repo, "add", name); g(repo, "commit", "-q", "-m", name)
+            sha = g(repo, "rev-parse", "HEAD"); g(repo, "checkout", "-q", "main")
+            g(repo, "branch", "-q", "-D", f"tmp-{name}")
+            return sha
+        for wid in (W1, W2, W3, W4):
+            g(repo, "worktree", "add", "-q", "--detach", os.path.join(td, f"ax-advance-{wid}"), side(wid))
+        g(repo, "branch", f"task/{W1}/base", side("b1"))                      # 취소 work 로컬 브랜치
+        g(repo, "branch", f"task/{W5}/base", "main")                          # 병합 — 도달
+        lost = side("lost")
+        g(repo, "branch", "attempt/x/y/1", lost)                              # work_id 없음 · 미병합
+        kept = side("kept")
+        g(repo, "branch", "attempt/x/y/2", kept)
+        g(repo, "update-ref", "refs/ax/pruned/x", kept)                       # 미러 보존 → 고유 0
+        calls = []
+
+        def run(path, args):
+            calls.append(args)
+            return C._local_run(path, args)
+        r = C.scan_repo(run, repo, machine="마스터", work_status=lambda w: status.get(w), local_branches=True)
+        cand = {w: why for w, why in r.candidates}
+        rev = {w: why for w, why in r.review}
+
+        def find(d, key):
+            return next((why for w, why in d.items() if key in w), "")
+        check("#874 취소 work worktree → 후보 · 고유 커밋 1개", "취소 work" in find(cand, f"ax-advance-{W1}")
+              and "고유 커밋 1개" in find(cand, f"ax-advance-{W1}"), str(cand))
+        check("#874 반려 work worktree → 볼 것 #821", "#821" in find(rev, f"ax-advance-{W2}"), str(rev))
+        check("#874 진행 중 work → 볼 것", "진행 중 work" in find(rev, f"ax-advance-{W3}"), str(rev))
+        check("#874 큐가 모르는 work → 종전(도달 불가 · 볼 것)", "도달 불가" in find(rev, f"ax-advance-{W4}"), str(rev))
+        check("#874 worktree 밖 로컬 task/<취소>/base → 후보", "취소 work" in find(cand, f"task/{W1}/base"), str(cand))
+        check("#874 병합 work 로컬 브랜치 → 도달 후보", "도달" in find(cand, f"task/{W5}/base"), str(cand))
+        check("#874 id 없는 미병합 attempt → 볼 것 · 고유 1", "고유 커밋 1개" in find(rev, "attempt/x/y/1"), str(rev))
+        check("#874 미러(refs/ax) 보존분은 고유 0", "고유 커밋 0개" in find(rev, "attempt/x/y/2"), str(rev))
+        bad = [a for a in calls if any(k in a for k in ("prune", "remove", "delete", " -d", " -D", "update-ref",
+                                                        "push", "reset", "checkout", "clean"))]
+        check("🔴 #874 쓰기 명령 0", bad == [], str(bad))
+        r2 = C.scan_repo(run, repo, machine="마스터", work_status=lambda w: (_ for _ in ()).throw(RuntimeError("큐")),
+                         local_branches=True)
+        check("#874 큐 조회 예외 → 종전 판정(취소 worktree 도 볼 것)",
+              any(f"ax-advance-{W1}" in w for w, _ in r2.review), str(r2.review))
+        r3 = C.scan_repo(run, repo, machine="m")
+        check("#874 local_branches 끄면 로컬 브랜치 줄 없음",
+              not any("로컬 브랜치" in w for w, _ in r3.candidates + r3.review))
+    check("#874 work_id_of — 경로·브랜치", C.work_id_of("/home/sim/ax-advance-20261101_2208_x_y", "")
+          == "20261101_2208_x_y" and C.work_id_of("", "task/20261010_1742_a_b/r1/c") == "20261010_1742_a_b"
+          and C.work_id_of("/home/sim/ax-788-work", "") == "")
+
+
 def main() -> int:
     for fn in (test_only_merged_is_deleted, test_format_has_no_space, test_uncertain_is_kept, test_current_branch_kept,
                test_never_touches_remote, test_artifacts, test_path_traversal,
@@ -455,7 +526,7 @@ def main() -> int:
                test_remote_only_merged_is_deleted, test_remote_ls_failure_judges_nothing,
                test_remote_apply_follows_plan_only, test_machine_scan_real_git_333,
                test_machine_scan_failures_333, test_main_lag_sync_333,
-               test_main_lag_real_git_333):
+               test_main_lag_real_git_333, test_machine_scan_queue_and_local_branches_874):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_cleanup: {PASS}/{total} 통과")
