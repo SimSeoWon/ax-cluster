@@ -9,8 +9,8 @@
 
 ## 상태
 
-- **갱신**: 2026-11-01 21:05 KST · Claude · 사용자 지시
-- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`4f46230`(+ 이 인계서, 커밋 여부는 git 으로 확인) · 그 외 작업 트리 clean.
+- **갱신**: 2026-11-01 21:35 KST · Claude · 사용자 지시
+- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`6b1fa78`(+ 이 인계서, 커밋 여부는 git 으로 확인) · 그 외 작업 트리 clean.
 - **마운트**: **AXCluster**(#863 에서 MotionForge→NS→AXCluster, ModularStage→AXCluster 왕복 뒤 복귀). 배달은 이 인계서
   커밋 직후 update 로 맞춘다 — 그 뒤 커밋이 생기면 `check` 출처 대조만 어긋난다(다음 update 는 승인 받아).
   MotionForge·NS·ModularStage 도 이번 세션에 3대 최신·check OK. `.2` 에 `C:\trunk\MotionForge`·`C:\trunk\NS` 를 **새로 클론**했다.
@@ -55,6 +55,10 @@
 - `#853` — **완료로 닫음**. 노드 실효 `OLLAMA_NUM_PARALLEL` 은 이미 1(.43·.2 로그, .33 미확인) — 빈틈은 브로커 적체.
   `4f46230` 브로커 노드별 동시 요청 상한(`AX_BROKER_NODE_CAP` 기본 4 · 0=무제한) · 포화면 즉시 503 · 상주 포화 시 재적재 금지.
   실측: 동시 3·7 전부 200 · 동시 9 → 8×200 + 1×503(0.02초). 기본 4 는 사용자 결정(2 면 동시 7 중 3건 503).
+- 데몬 잔재 전수 확인(사용자 지시) — 등록 4프로젝트×3기계 check: 상주·프로세스·폐기 페이로드 전부 없음. 예약 작업은 정식
+  런처(AxConductor*)·AX_Ollama33 뿐. 단 AXCluster 워커 체크아웃 로컬 main 이 옛 커밋(.43 10-07)이라 데몬 소스가 남아 있었다
+  → .43·.33 ff 로 정리 · 원인 `#871` **완료로 닫음** `6b1fa78`: 사이클 복귀가 `checkout -B main origin/main` 으로 로컬 main 을
+  원격에 맞춘다(.2 드라이런 836004c→6931118). 세 워커 AXCluster main 모두 6931118. 게임 체크아웃은 다음 사이클부터 맞춰진다.
 - `master.client update` 여러 차례(커밋마다·ModularStage 포함) 모두 3대 OK. `.2` 홈 중복 스킬 경고가 `ax-work`·`ax-infer` 2개로 늘었다(#661 계열, 생성 시점 미확인).
 
 ## 플랜(SDD) 효능 축 — `#864`·`#865` 둘 다 닫음
