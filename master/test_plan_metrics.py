@@ -211,8 +211,96 @@ def run() -> None:
     check("깨진 플랜은 오류만 싣는다", not m["has_plan"] and m["plan_error"] and m["transitions"] == 11)
 
 
+def test_has_test_865() -> None:
+    """`#865` T1 — 검사 수치 판별 확대. 거짓 음성(#862 T2)과 과잉 판정을 함께 본다."""
+    for t in ("배달 3대 OK(출처=HEAD)", "통합 184 OK", ".43 실측 5경우 기대대로", "정상 해제 rc0·설치1",
+              "rc=1 · 설치0", "test_a 12/12", "3건 확인", "전수 통과"):
+        check(f"검사 수치 있음: {t}", M.has_test(t))
+    for t in ("워커 3대에 배달했다", "Ok 라고 답했다", "TOKEN 갱신", "BOOKS 정리", "rcfile 정리",
+              "src 정리", "커밋 abc1234 만", "경우에 따라 다르다"):
+        check(f"검사 수치 없음: {t}", not M.has_test(t))
+
+
+def test_work_commits_865() -> None:
+    """`#865` T2 — 작업 커밋은 제목 범위 칸 `종류(… #N …)` 에 그 일감을 단 것만."""
+    def fake_git(args):
+        return ("\x1ea1\x1ffix(#900 T1): 고침\x1f\nmaster/a.py\n"
+                "\x1ea2\x1ffix(#861 T2, #900 T7): 둘\x1f\nmaster/test_a.py\n"
+                "\x1ea3\x1fdocs: 인수인계 — 후속 #900\x1f\ndocs/orchestrator-handoff.md\n"
+                "\x1ea4\x1fdocs(#864 T5): #900 비교 보고\x1f\nreports/r.md\n"
+                "\x1ea5\x1fdocs(report): 132 (#826 · #900)\x1f\nreports/q.md\n"
+                "\x1ea6\x1ffix(#9001): 다른 일감 #900 언급\x1f\nmaster/z.py\n")
+    cs = M.issue_commits(900, git=fake_git)
+    check("작업 커밋 판정", [c["hash"] for c in cs if c["work"]] == ["a1", "a2"],
+          str([(c["hash"], c["work"]) for c in cs]))
+    check("제목 언급(primary)은 넓은 그대로", [c["hash"] for c in cs if c["primary"]] == ["a1", "a2", "a3", "a4", "a5", "a6"])
+    sc = M.scope_drift(cs, ["master/a.py; master/test_a.py"])
+    check("작업 커밋만 — 대상 밖 0", sc["work_files"] == 2 and sc["work_outside"] == []
+          and sc["work_outside_ratio"] == 0.0, str(sc))
+    check("언급 전체 값은 나란히 남는다", sc["outside_ratio"] is not None and sc["outside_ratio"] > 0)
+
+
+def test_plan_changes_865() -> None:
+    """`#865` T3 — 플랜 갱신 노트마다 전후 본문으로 무엇이 바뀌었나."""
+    t1 = PB.Task("T1", "대기", "고침", "client/a.py; master/test_a.py")
+    t2 = PB.Task("T2", "대기", "실측", ".43 임시 폴더", ["T1"])
+    v1 = PB.append("## 스펙\n", [t1, t2])
+    t1b = PB.Task("T1", "작업중", "고침", "client/a.py; master/test_a.py; master/test_b.py")
+    v2 = PB.append("## 스펙\n", [t1b, t2])
+    t3 = PB.Task("T3", "대기", "추가", "docs/x.md", ["T2"])
+    t1c = PB.Task("T1", "작업중", "고침", "client/a.py")
+    v3 = PB.append("## 스펙\n", [t1c, t2, t3])
+
+    def dj(at, note, old, new):
+        return {"created_on": f"2026-11-01T{at}:00Z", "notes": note,
+                "details": [{"property": "attr", "name": "description", "old_value": old, "new_value": new}]}
+    js = [dj("07:00", "플랜 등록 — 추가 T1, T2 · 제거 없음\n사유: 처음", "## 스펙\n", v1),
+          dj("07:01", "플랜 T1: 대기 → 작업중", v1, v1.replace("| T1 | 대기", "| T1 | 작업중")),
+          dj("07:10", "플랜 갱신 — 추가 없음 · 제거 없음\n사유: 대상 밖 실패", v1, v2),
+          dj("07:20", "플랜 갱신 — 추가 T3 · 제거 없음\n사유: 더함", v2, v3),
+          {"created_on": "2026-11-01T07:30:00Z", "notes": "플랜 갱신 — 추가 없음\n사유: 상세 없음", "details": []}]
+    pc = M.plan_changes(js)
+    check("등록 1 · 갱신 3 · 전이 노트는 안 센다", pc["registers"] == 1 and pc["updates"] == 3, str(pc))
+    ev = pc["events"]
+    check("등록 diff = 태스크 둘 추가", ev[0]["diff"]["added"] == ["T1", "T2"] and ev[0]["why"] == "처음")
+    check("대상 확장 — 새 토큰만", ev[1]["diff"]["targets"] == [
+        {"task": "T1", "change": "확장", "added": ["master/test_b.py"], "removed": []}], str(ev[1]["diff"]))
+    check("확장 사유", ev[1]["why"] == "대상 밖 실패")
+    check("태스크 추가 + 대상 축소", ev[2]["diff"]["added"] == ["T3"]
+          and ev[2]["diff"]["targets"][0]["change"] == "축소", str(ev[2]["diff"]))
+    check("상태 변화는 정의 변화가 아니다", "target" not in ev[1]["diff"]["fields"] or ev[1]["diff"]["fields"]["target"] == ["T1"])
+    check("전후 본문 없으면 추측하지 않는다", ev[3]["diff"] is None and pc["unreadable"] == 1)
+    check("집계", pc["tasks_added_after_register"] == 1 and pc["target_changes"] == 2
+          and pc["target_expansions"] == 1, str(pc))
+    line = M._render_changes(pc)
+    check("출력에 확장·사유", "T1 대상 확장 +master/test_b.py" in line and "사유: 대상 밖 실패" in line, line)
+
+
+def test_start_lead_865() -> None:
+    """`#865` T4 — 착수 기준 리드: 진행 전이 · 플랜 등록 · 플랜 작업중 중 가장 이른 것 → 종결."""
+    base = {"id": 1, "subject": "s", "status": {"id": 4}, "created_on": "2026-10-31T00:00:00Z",
+            "closed_on": "2026-10-31T10:00:00Z"}
+    prog = dict(base, journals=[j("06:00", status=(1, 2)), j("10:00", "완료 abc1234 3/3", status=(2, 4))])
+    b = M.baseline_metrics(prog, STATUSES)
+    check("기준선: 첫 진행 전이 → 종결 4h", b["start_lead_hours"] == 4.0 and b["start_source"] == "진행 전이", str(b))
+    none = dict(base, journals=[j("10:00", "완료", status=(1, 4))])
+    b = M.baseline_metrics(none, STATUSES)
+    check("진행 전이 없으면 측정 불가", b["start_lead_hours"] is None and b["start_source"] == "", str(b))
+    plan = dict(base, journals=[j("09:00", "플랜 등록 — 추가 T1\n사유: x"), j("09:01", "플랜 T1: 대기 → 작업중"),
+                                j("10:00", "완료", status=(1, 4))])
+    b = M.baseline_metrics(plan, STATUSES)
+    check("플랜: 등록 → 종결 1h", b["start_lead_hours"] == 1.0 and b["start_source"] == "플랜 등록", str(b))
+    agg = M.aggregate([M.baseline_metrics(x, STATUSES) for x in (prog, none, plan)])
+    check("집계: 측정 2/3 · 중앙 2.5h", agg["start_measured"] == 2 and agg["start_lead_hours_median"] == 2.5, str(agg))
+    check("집계 출력에 측정 수", "(측정 2/3)" in M.render_aggregate(agg))
+
+
 if __name__ == "__main__":
     run()
+    test_has_test_865()
+    test_work_commits_865()
+    test_plan_changes_865()
+    test_start_lead_865()
     total = PASS + FAIL
     if FAIL:
         print(f"FAIL test_plan_metrics: {PASS}/{total} 통과")

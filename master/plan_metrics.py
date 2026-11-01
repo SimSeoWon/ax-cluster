@@ -40,12 +40,20 @@ PLAN_PREFIX = "플랜 "
 TRANS_RE = re.compile(r"^플랜 (\S+): (\S*) → (\S+)(?: — (.*))?\Z", re.S)
 # 커밋 해시: 7~40 자 16진수, **문자와 숫자를 둘 다** 포함해야 한다(날짜 20261031·영단어 오탐 방지).
 HASH_RE = re.compile(r"(?<![0-9A-Za-z])(?=[0-9a-f]*[a-f])(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}(?![0-9A-Za-z])")
-TEST_RE = re.compile(r"\d+/\d+|\d+\s*건|통과")
+# 검사 수치: `N/N` · `N건` · `통과` + (`#865` T1) 대문자 `OK` · `N경우` · `rc=N`/`rcN`.
+#   [주의] `N대` 단독은 넣지 않는다 — 「워커 3대에 배달」처럼 결과가 아닌 수량에도 붙는다(「3대 OK」는 OK 가 잡는다).
+#   `OK` 는 영문자 경계만 본다 — 한글이 \w 라 `\b` 로는 「검사OK」·「184 OK」 구분이 흔들린다.
+TEST_RE = re.compile(r"\d+/\d+|\d+\s*건|통과|(?<![A-Za-z])OK(?![A-Za-z])|\d+\s*경우"
+                     r"|(?<![A-Za-z])rc\s*=?\s*\d+")
 PATH_RE = re.compile(r"[\w./*-]+\.(?:py|md|json|toml|yaml|yml|sh)\b")
+# `#865` T2 — 작업 커밋: 제목이 `종류(… #N …)` 모양(`fix(#862 T1)` · `fix(#861 T2, #857 T7)`).
+#   「후속 #N」·「(#826 · #852)」처럼 제목에 지나가며 단 언급은 범위 밖이다.
+WORK_SCOPE_RE = re.compile(r"^[a-z]+(?:-[a-z]+)*\(([^)]*)\)")
 DIR_RE = re.compile(r"(?<![\w/:])[A-Za-z_][\w.-]*(?:/[\w.-]+)*/(?![\w*])")
 WORKING, DONE, BLOCKED, WAITING = "작업중", "완료", "차단", "대기"
 POST_WORK_NAMES = ("해결", "검토")
 RESOLVED_NAME = "해결"
+WORKING_STATUS_NAME = "진행"     # 기준선 착수 근사 — 첫 「진행」 상태 전이 (#865 T4)
 APPROX = "근사"
 
 
@@ -112,8 +120,10 @@ def issue_commits(issue_id, *, git=git_run) -> list[dict]:
         if not own.search(body):                     # grep 이 넓게 잡은 것을 한 번 더 거른다
             continue
         subject = body.strip().splitlines()[0] if body.strip() else ""
+        ws = WORK_SCOPE_RE.match(subject)
         commits.append({"hash": h.strip(), "subject": subject,
                         "primary": bool(own.search(subject)),   # 제목에 언급 = 그 일감의 커밋
+                        "work": bool(ws and own.search(ws.group(1))),   # 제목 범위 칸에 = 작업 커밋 (#865)
                         "files": [f.strip() for f in files.splitlines() if f.strip()]})
     return commits
 
@@ -240,13 +250,91 @@ def scope_drift(commits: list[dict], targets: list[str]) -> dict:
 
     files, outside = measure(commits)
     pfiles, poutside = measure([c for c in commits if c.get("primary")])
+    wcs = [c for c in commits if c.get("work")]
+    wfiles, woutside = measure(wcs)
     return {"label": APPROX, "commits": [c["hash"][:9] for c in commits], "files": len(files),
             "target_tokens": tokens, "outside": outside,
             "outside_ratio": round(len(outside) / len(files), 3) if files else None,
             "primary_commits": sum(1 for c in commits if c.get("primary")),
             "primary_files": len(pfiles), "primary_outside": poutside,
             "primary_outside_ratio": round(len(poutside) / len(pfiles), 3) if pfiles else None,
+            "work_commits": [c["hash"][:9] for c in wcs], "work_files": len(wfiles),
+            "work_outside": woutside,
+            "work_outside_ratio": round(len(woutside) / len(wfiles), 3) if wfiles else None,
             "note": "「대상」 칸은 자유 서술 — 경로처럼 생긴 토큰만 대조한 근사치"}
+
+
+# ── 플랜 갱신 내용 (#865 T3) ─────────────────────────────────────────────
+
+PLAN_SET_PREFIXES = ("플랜 등록", "플랜 갱신")
+_TASK_FIELDS = ("goal", "target", "deps", "check", "steps")
+
+
+def _desc_change(j: dict) -> tuple[str, str] | None:
+    for d in j.get("details") or []:
+        if d.get("name") == "description" and d.get("property", "attr") == "attr":
+            return d.get("old_value") or "", d.get("new_value") or ""
+    return None
+
+
+def _parse_or_none(body: str):
+    from master import plan_block as PB
+    try:
+        return PB.parse(body)
+    except PB.PlanError:
+        return None
+
+
+def plan_changes(journals: list[dict]) -> dict:
+    """플랜 등록·갱신 노트마다 **무엇이 바뀌었나** — 저널 description 상세의 전후 본문으로 비교한다.
+
+    갱신 노트 자체는 「추가 없음 · 제거 없음」만 적어 대상 확장 같은 변화가 안 보였다(#862 실측).
+    대상 변경은 경로 토큰으로 「확장」(새 토큰만)·「축소」(빠진 토큰만)·「변경」으로 나눈다.
+    전후 본문이 없거나 파싱이 안 되면 그 이벤트는 `diff: None` 으로 남긴다(추측하지 않는다).
+    """
+    events = []
+    for j in sorted(journals or [], key=lambda j: j.get("created_on") or ""):
+        note = (j.get("notes") or "").strip()
+        if not note.startswith(PLAN_SET_PREFIXES):
+            continue
+        kind = "등록" if note.startswith("플랜 등록") else "갱신"
+        why = note.split("사유:", 1)[1].strip() if "사유:" in note else ""
+        ev = {"at": ts(j.get("created_on")), "kind": kind, "why": why, "diff": None}
+        ch = _desc_change(j)
+        old_p = new_p = None
+        if ch is not None:
+            old_p, new_p = _parse_or_none(ch[0]), _parse_or_none(ch[1])
+        if ch is not None and new_p is not None:
+            old_t = {t.id: t for t in (old_p.tasks if old_p else [])}
+            new_t = {t.id: t for t in new_p.tasks}
+            fields: dict[str, list[str]] = {}
+            targets = []
+            for tid in [t for t in new_t if t in old_t]:
+                for f in _TASK_FIELDS:
+                    if getattr(old_t[tid], f) != getattr(new_t[tid], f):
+                        fields.setdefault(f, []).append(tid)
+                if old_t[tid].target != new_t[tid].target:
+                    a = target_tokens([old_t[tid].target])
+                    b = target_tokens([new_t[tid].target])
+                    plus = [x for x in b if x not in a]
+                    minus = [x for x in a if x not in b]
+                    label = ("확장" if plus and not minus else "축소" if minus and not plus else "변경")
+                    targets.append({"task": tid, "change": label, "added": plus, "removed": minus})
+            ev["diff"] = {"added": [t for t in new_t if t not in old_t],
+                          "removed": [t for t in old_t if t not in new_t],
+                          "fields": fields, "targets": targets}
+        events.append(ev)
+    diffs = [e["diff"] for e in events if e["diff"]]
+    return {"events": events,
+            "registers": sum(1 for e in events if e["kind"] == "등록"),
+            "updates": sum(1 for e in events if e["kind"] == "갱신"),
+            "unreadable": sum(1 for e in events if e["diff"] is None),
+            "tasks_added_after_register": sum(len(d["added"]) for e, d in
+                                              ((e, e["diff"]) for e in events if e["diff"])
+                                              if e["kind"] == "갱신"),
+            "tasks_removed": sum(len(d["removed"]) for d in diffs),
+            "target_changes": sum(len(d["targets"]) for d in diffs),
+            "target_expansions": sum(1 for d in diffs for t in d["targets"] if t["change"] == "확장")}
 
 
 # ── 기준선 (플랜 없는 일감도 잴 수 있는 것) ─────────────────────────────────
@@ -262,6 +350,24 @@ def _status_changes(issue: dict) -> list[tuple[datetime, int, int, dict]]:
                 except (TypeError, ValueError):
                     continue
     return out
+
+
+def work_start(issue: dict, statuses: dict[int, dict]) -> tuple[datetime | None, str]:
+    """착수 시각 (`#865` T4) — 가장 이른 것: 첫 「진행」 상태 전이 · 플랜 등록 노트 · 첫 플랜 「작업중」 전이.
+
+    플랜 없는 일감은 「진행」 전이만 남는다. 아무것도 없으면 `(None, "")` — 측정 불가로 센다
+    (M6 32건 중 「진행」을 거친 것은 13건뿐이었다, 실측 2026-11-01).
+    """
+    working = {i for i, st in statuses.items() if st.get("name") == WORKING_STATUS_NAME}
+    cands = [(when, "진행 전이") for when, _o, new, _j in _status_changes(issue) if new in working]
+    for j in issue.get("journals") or []:
+        note = (j.get("notes") or "").strip()
+        if note.startswith("플랜 등록"):
+            cands.append((ts(j.get("created_on")), "플랜 등록"))
+    cands += [(t["at"], "플랜 작업중") for t in plan_transitions(issue.get("journals") or [])
+              if t["to"] == WORKING]
+    cands = [c for c in cands if c[0] is not None]
+    return min(cands, key=lambda c: c[0]) if cands else (None, "")
 
 
 def baseline_metrics(issue: dict, statuses: dict[int, dict], *, now: datetime | None = None) -> dict:
@@ -284,6 +390,7 @@ def baseline_metrics(issue: dict, statuses: dict[int, dict], *, now: datetime | 
     if cur in resolved and at:
         in_resolved += ((closed_on or now) - at).total_seconds()
     closing = [j for _, _o, new, j in changes if new in closed]
+    start, start_src = work_start(issue, statuses)
     note = (closing[-1].get("notes") or "") if closing else None
     return {
         "id": issue.get("id"), "subject": issue.get("subject", ""),
@@ -291,6 +398,9 @@ def baseline_metrics(issue: dict, statuses: dict[int, dict], *, now: datetime | 
         "closed": closed_on is not None,
         "lead_hours": round((closed_on - created).total_seconds() / 3600, 2)
         if (closed_on and created) else None,
+        "start_lead_hours": round((closed_on - start).total_seconds() / 3600, 2)
+        if (closed_on and start) else None,
+        "start_source": start_src,
         "reopen": reopen,
         "resolved_hours": round(in_resolved / 3600, 2),
         "close_note": None if note is None else {"hash": has_hash(note), "test": has_test(note)},
@@ -315,6 +425,11 @@ def aggregate(rows: list[dict]) -> dict:
     return {"issues": len(rows), "closed": len(closed),
             "lead_hours_median": _med([r["lead_hours"] for r in closed]),
             "lead_hours_mean": _mean([r["lead_hours"] for r in closed]),
+            "start_lead_hours_median": _med([r["start_lead_hours"] for r in closed
+                                             if r.get("start_lead_hours") is not None]),
+            "start_lead_hours_mean": _mean([r["start_lead_hours"] for r in closed
+                                            if r.get("start_lead_hours") is not None]),
+            "start_measured": sum(1 for r in closed if r.get("start_lead_hours") is not None),
             "reopened_issues": sum(1 for r in rows if r["reopen"]),
             "reopen_total": sum(r["reopen"] for r in rows),
             "resolved_hours_median": _med([r["resolved_hours"] for r in rows]),
@@ -360,6 +475,7 @@ def issue_metrics(issue: dict, *, commits: list[dict], events: list[dict] | None
         "tasks": {k: v for k, v in stats.items()},
         "task_lead_min_median": _med(leads),
         "transitions": len(trans), "plan_sets": sets,
+        "plan_changes": plan_changes(issue.get("journals") or []),
         "blocked_total": sum(v["blocked"] for v in stats.values()),
         "reopen_total": sum(v["reopen"] for v in stats.values()),
         "evidence": evidence_fidelity(trans),
@@ -380,6 +496,31 @@ def _v(x):
     return "N/A" if x is None else str(x)
 
 
+def _render_changes(pc: dict) -> str:
+    head = (f"등록 {pc['registers']} · 갱신 {pc['updates']} · 갱신 때 태스크 추가 "
+            f"{pc['tasks_added_after_register']} · 제거 {pc['tasks_removed']} · 대상 변경 "
+            f"{pc['target_changes']}(확장 {pc['target_expansions']})"
+            + (f" · 전후 비교 불가 {pc['unreadable']}" if pc["unreadable"] else ""))
+    rows = []
+    for e in pc["events"]:
+        if e["kind"] != "갱신":
+            continue
+        d = e["diff"]
+        at = e["at"].strftime("%m-%d %H:%MZ") if e["at"] else "?"
+        if d is None:
+            what = "전후 비교 불가"
+        else:
+            bits = ([f"추가 {','.join(d['added'])}"] if d["added"] else []) \
+                + ([f"제거 {','.join(d['removed'])}"] if d["removed"] else []) \
+                + [f"{t['task']} 대상 {t['change']}"
+                   + (f" +{','.join(t['added'])}" if t["added"] else "")
+                   + (f" -{','.join(t['removed'])}" if t["removed"] else "") for t in d["targets"]] \
+                + [f"{f}:{','.join(ids)}" for f, ids in d["fields"].items() if f != "target"]
+            what = " · ".join(bits) or "태스크 정의 변화 없음"
+        rows.append(f"\n    {at} {what}" + (f" — 사유: {e['why'][:80]}" if e["why"] else ""))
+    return head + "".join(rows)
+
+
 def render_issue(m: dict) -> str:
     ev, sc, rs, b = m["evidence"], m["scope"], m["resume"], m["baseline"]
     lines = [f"#{m['id']} {m['subject'][:60]}",
@@ -387,6 +528,7 @@ def render_issue(m: dict) -> str:
              + (f" (형식 오류: {m['plan_error']})" if m["plan_error"] else ""),
              f"  상태별        " + (" · ".join(f"{k} {v}" for k, v in m["tasks_by_state"].items()) or "—"),
              f"  전이/등록     전이 {m['transitions']} · 플랜 등록·갱신 노트 {m['plan_sets']}",
+             "  플랜 갱신     " + _render_changes(m["plan_changes"]),
              f"  차단/되돌림   차단 {m['blocked_total']} · 되돌림 {m['reopen_total']}",
              f"  태스크 리드   중앙값 {_v(m['task_lead_min_median'])}분"]
     for tid, v in m["tasks"].items():
@@ -398,6 +540,8 @@ def render_issue(m: dict) -> str:
         f"{len(sc['outside'])}({_pct(sc['outside_ratio'])}) · 대상 토큰 {len(sc['target_tokens'])}",
         f"    제목 언급 커밋만: 커밋 {sc['primary_commits']} · 파일 {sc['primary_files']} · 대상 밖 "
         f"{len(sc['primary_outside'])}({_pct(sc['primary_outside_ratio'])})",
+        f"    작업 커밋만(종류(#N…)): 커밋 {len(sc['work_commits'])} · 파일 {sc['work_files']} · 대상 밖 "
+        f"{len(sc['work_outside'])}({_pct(sc['work_outside_ratio'])})",
     ]
     for f in sc["outside"][:15]:
         lines.append(f"    밖: {f}")
@@ -408,7 +552,9 @@ def render_issue(m: dict) -> str:
                                      f"{rj['total']}" + (f" — {rj['by_kind']}" if rj["by_kind"] else "")))
     lines.append(f"  재개[{APPROX}]    공백≥{rs['gap_min']:g}분 {rs['gaps']} · 셀 수 있는 것 "
                  f"{rs['countable']} · 이어 잡음 {rs['continued']} ({_pct(rs['ratio'])}) · 유휴 공백 {rs['idle_gaps']}")
-    lines.append(f"  기준선 지표   리드 {_v(b['lead_hours'])}h · 재개 {b['reopen']} · 해결 체류 "
+    lines.append(f"  기준선 지표   리드 {_v(b['lead_hours'])}h · 착수 리드 {_v(b.get('start_lead_hours'))}h"
+                 + (f"({b['start_source']})" if b.get("start_source") else "(측정 불가)")
+                 + f" · 재개 {b['reopen']} · 해결 체류 "
                  f"{b['resolved_hours']}h · 종결 노트 근거 "
                  + ("N/A" if b["close_note"] is None else
                     f"해시 {'O' if b['close_note']['hash'] else 'X'} · 검사 {'O' if b['close_note']['test'] else 'X'}"))
@@ -416,11 +562,12 @@ def render_issue(m: dict) -> str:
 
 
 def render_baseline(rows: list[dict], agg: dict, title: str) -> str:
-    lines = [title, f"  {'id':>5} {'상태':<4} {'리드h':>8} {'재개':>4} {'해결h':>7} 종결근거(해시/검사)  제목"]
+    lines = [title, f"  {'id':>5} {'상태':<4} {'리드h':>8} {'착수h':>7} {'재개':>4} {'해결h':>7} 종결근거(해시/검사)  제목"]
     for r in rows:
         cn = r["close_note"]
         ev = "N/A" if cn is None else f"{'O' if cn['hash'] else 'X'}/{'O' if cn['test'] else 'X'}"
-        lines.append(f"  {r['id']:>5} {r['status']:<4} {_v(r['lead_hours']):>8} {r['reopen']:>4} "
+        lines.append(f"  {r['id']:>5} {r['status']:<4} {_v(r['lead_hours']):>8} "
+                     f"{_v(r.get('start_lead_hours')):>7} {r['reopen']:>4} "
                      f"{r['resolved_hours']:>7} {ev:<19} {r['subject'][:40]}")
     lines.append(render_aggregate(agg))
     lines.append("  플랜 전용 지표(기준선 N/A): " + " · ".join(PLAN_ONLY))
@@ -429,7 +576,9 @@ def render_baseline(rows: list[dict], agg: dict, title: str) -> str:
 
 def render_aggregate(a: dict, label: str = "집계") -> str:
     return (f"  {label}: 이슈 {a['issues']} · 종결 {a['closed']} · 리드 중앙 {_v(a['lead_hours_median'])}h"
-            f" / 평균 {_v(a['lead_hours_mean'])}h · 재개 이슈 {a['reopened_issues']}(총 {a['reopen_total']})"
+            f" / 평균 {_v(a['lead_hours_mean'])}h · 착수 리드 중앙 {_v(a.get('start_lead_hours_median'))}h"
+            f" / 평균 {_v(a.get('start_lead_hours_mean'))}h (측정 {a.get('start_measured', 0)}/{a['closed']})"
+            f" · 재개 이슈 {a['reopened_issues']}(총 {a['reopen_total']})"
             f" · 해결 체류 중앙 {_v(a['resolved_hours_median'])}h · 종결 노트 근거 해시 "
             f"{_pct(a['close_note_hash_share'])} · 검사 {_pct(a['close_note_test_share'])}"
             f" · 하나 이상 {_pct(a['close_note_either_share'])} (n={a['close_notes']})")
