@@ -71,6 +71,5 @@
 ## 열려 있지만 별개인 것 (기록 시점 — Redmine 재조회)
 
 - AXCluster 큐 고아 태스크 10건·스풀 26묶음 — 손대지 않음 · 마스터 worktree 2개(#333) · #709 · #211 · #650
-- 골조용 worktree `/home/sim/ax-863-skel`·`/home/sim/ax-867-skel`(로컬 브랜치 `task/…/base`, 원격은 정리됨·내용은 main) — 정리 승인 대기
 - 전환 인계 조사가 보고한 잔여(손대지 않음): MotionForge 미병합 durable `task/20261009_0051_motionforge_aac50fe6/r1/0906d6fc`
   (사람 몫)·스풀 2 · NS 고아 태스크 2·스풀 1
