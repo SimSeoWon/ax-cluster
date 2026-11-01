@@ -9,8 +9,8 @@
 
 ## 상태
 
-- **갱신**: 2026-11-01 19:04 KST · Claude · 사용자 지시
-- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`c2cf511`(+ 이 인계서, 커밋 여부는 git 으로 확인) · 그 외 작업 트리 clean.
+- **갱신**: 2026-11-01 19:28 KST · Claude · 사용자 지시
+- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`c5003d8`(#870 finalize 머지 · + 이 인계서, 커밋 여부는 git 으로 확인) · 그 외 작업 트리 clean.
 - **마운트**: **AXCluster**(#863 에서 MotionForge→NS→AXCluster, ModularStage→AXCluster 왕복 뒤 복귀). 배달은 이 인계서
   커밋 직후 update 로 맞춘다 — 그 뒤 커밋이 생기면 `check` 출처 대조만 어긋난다(다음 update 는 승인 받아).
   MotionForge·NS·ModularStage 도 이번 세션에 3대 최신·check OK. `.2` 에 `C:\trunk\MotionForge`·`C:\trunk\NS` 를 **새로 클론**했다.
@@ -43,7 +43,11 @@
   실측: 문서만 커밋 `e79fe5c` 직후 AXCluster 복귀 align 3대 성공(오전 같은 조건 3대 실패) · CLI check OK. 빈틈은 **`#869`**.
 - `#869` — **완료로 닫음**. `ffaa139` ax-projects 가 기동 때 bundle import → 기동 커밋 = 기동 시점 HEAD(로그 한 줄).
   실측: 재기동 직후 로그 `ffaa139` · 문서만 커밋 `c2cf511` 뒤 첫 전환부터 align 성공 · check OK. 기동 뒤 .py 커밋 거부의 서비스 실측은 안 함(사용자 결정).
-- `master.client update` 4회(`68f87eb`·`c521568`·`03fa5a6`·ModularStage) 모두 3대 OK. `.2` 홈 중복 스킬 경고가 `ax-work`·`ax-infer` 2개로 늘었다(#661 계열, 생성 시점 미확인).
+- `#867` — **완료로 닫음**. T1 FAIL 경로 드라이런(.2 미추적 임시 .cpp → `build_step` FAIL · 근거에 `error C2065` 줄 · UBT 로그 일치 · 복구 PASS).
+  T2 work `20261101_1912_867_t2_…`(#870) 3조각 병렬 — **.2·.33 Windows 세션 1 실파견 완주**(런처·codex rc0·회수) · .43 SSH →
+  ⑦ 전진 → finalize `main` `c5003d8`(미사용 import 3건). 층1 차단 2건은 자동 재시도 1회로 해소 — 원인은 내 골조 문구
+  「그 외 변경 금지」가 `[PSEUDO]` 제거와 충돌. `ax-request` 지침 반영 여부는 미결.
+- `master.client update` 여러 차례(커밋마다·ModularStage 포함) 모두 3대 OK. `.2` 홈 중복 스킬 경고가 `ax-work`·`ax-infer` 2개로 늘었다(#661 계열, 생성 시점 미확인).
 
 ## 플랜(SDD) 효능 축 — `#864`·`#865` 둘 다 닫음
 
@@ -52,7 +56,7 @@
 
 ## 사용자 답을 기다리는 것 / 다음
 
-1. 다음 일감 선택(열린 M7 일감에서 — 사용자가 고른다). 오늘 새로 연 것 중 열린 일감: `#867`.
+1. 다음 일감 선택(열린 M7 일감에서 — 사용자가 고른다). 오늘 새로 연 일감은 전부 닫혔다(#866~#870).
 2. 앞 세션 설계 선택 확인 — 거절 기록은 getter 미주입(MCP·실 Redmine) 호출에서만 · MCP 래퍼 caller 빈칸.
 3. 앞 세션 미결: #839 ②·#840 ①·#791 D·#820·#372·#855 · #826 `next_steps` 표시.
 
@@ -67,6 +71,6 @@
 ## 열려 있지만 별개인 것 (기록 시점 — Redmine 재조회)
 
 - AXCluster 큐 고아 태스크 10건·스풀 26묶음 — 손대지 않음 · 마스터 worktree 2개(#333) · #709 · #211 · #650
-- 골조용 worktree `/home/sim/ax-863-skel`(로컬 브랜치 `task/20261101_1818_…/base`, 원격은 정리됨·내용은 main) — 정리 승인 대기
+- 골조용 worktree `/home/sim/ax-863-skel`·`/home/sim/ax-867-skel`(로컬 브랜치 `task/…/base`, 원격은 정리됨·내용은 main) — 정리 승인 대기
 - 전환 인계 조사가 보고한 잔여(손대지 않음): MotionForge 미병합 durable `task/20261009_0051_motionforge_aac50fe6/r1/0906d6fc`
   (사람 몫)·스풀 2 · NS 고아 태스크 2·스풀 1
