@@ -526,7 +526,8 @@ def render_issue(m: dict) -> str:
     lines = [f"#{m['id']} {m['subject'][:60]}",
              f"  플랜          {'v' + str(m['plan_version']) if m['has_plan'] else '없음'}"
              + (f" (형식 오류: {m['plan_error']})" if m["plan_error"] else ""),
-             f"  상태별        " + (" · ".join(f"{k} {v}" for k, v in m["tasks_by_state"].items()) or "—"),
+             # [DOC] 「상태별」 줄 — 태스크 상태별 개수를 한 줄로 낸다. 출력 문자열은 바꾸지 않는다.
+             "  상태별        " + (" · ".join(f"{k} {v}" for k, v in m["tasks_by_state"].items()) or "—"),
              f"  전이/등록     전이 {m['transitions']} · 플랜 등록·갱신 노트 {m['plan_sets']}",
              "  플랜 갱신     " + _render_changes(m["plan_changes"]),
              f"  차단/되돌림   차단 {m['blocked_total']} · 되돌림 {m['reopen_total']}",
