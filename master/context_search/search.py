@@ -143,6 +143,41 @@ def fuse(vector_hits: list[dict], bm25_hits: list[tuple[str, float]]) -> list[Hi
     )
 
 
+def fill_bm25_only(hits: list[Hit], getter, *, excerpt: int = 400) -> dict:
+    """BM25 단독 히트에 meta·발췌를 채운다 (`#851`). **순위·점수·출처는 건드리지 않는다.**
+
+    [DOC] #851: `fuse()` 는 BM25 에만 걸린 문서를 `meta={}`·`excerpt=""` 로 만든다 — 그 채널엔
+          본문이 없다. 융합·자르기 **뒤에** 남은 것만 벡터 색인 같은 세대(`getter`)에서 채운다.
+          채우기가 실패해도 검색은 실패시키지 않는다 — 비운 채로 두고 사유를 로그와 반환값에 남긴다.
+    돌려주는 것: `{"wanted", "filled", "missing", "error"}`.
+    """
+    need = [h for h in hits if h.source == "bm25" and not h.meta]
+    out = {"wanted": len(need), "filled": 0, "missing": [], "error": ""}
+    if not need:
+        return out
+    if getter is None:
+        out["error"] = "getter 없음 — 벡터 색인에 get_many 가 없다"
+        logging.getLogger(__name__).warning("BM25 단독 히트 meta 채우기 건너뜀 (#851): %s", out["error"])
+        return out
+    try:
+        got = getter([h.file_id for h in need], excerpt=excerpt) or {}
+    except Exception as e:                                       # noqa: BLE001
+        out["error"] = f"{type(e).__name__}: {e}"
+        logging.getLogger(__name__).warning("BM25 단독 히트 meta 채우기 실패 (#851): %s", out["error"])
+        return out
+    for h in need:
+        g = got.get(h.file_id)
+        if not g:
+            out["missing"].append(h.file_id)
+            continue
+        h.meta, h.excerpt = (g.get("meta") or {}), (g.get("excerpt") or "")
+        out["filled"] += 1
+    if out["missing"]:
+        logging.getLogger(__name__).warning("BM25 단독 히트 %d건이 벡터 색인에 없다 (#851): %s",
+                                            len(out["missing"]), ", ".join(out["missing"][:5]))
+    return out
+
+
 class ContextSearch:
     """한 프로젝트의 검색 진입점. **두 채널이 같은 세대를 본다** (`generation.py`)."""
 
@@ -182,6 +217,8 @@ class ContextSearch:
                 vec = self.vector.search(used, limit=n, excerpt=excerpt)
             kw = self.bm25.search(used, limit=n)
             hits = fuse(vec, kw)[:limit]
+            # getattr — 대역·옛 색인에 get_many 가 없어도 검색은 깨지지 않는다(속성 조회까지 보호 안)
+            fill_bm25_only(hits, getattr(self.vector, "get_many", None), excerpt=excerpt)
             return hits
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"

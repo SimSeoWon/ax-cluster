@@ -34,7 +34,7 @@ from master.context_search.documents import (  # noqa: E402
 from master.context_search.paths import (  # noqa: E402
     SOURCE_SUBDIR, ProjectPaths, resolve, resolve_mounted_only,
 )
-from master.context_search.search import RRF_K, Hit, fuse  # noqa: E402
+from master.context_search.search import RRF_K, Hit, fill_bm25_only, fuse  # noqa: E402
 from master.projects.config import ConfigError  # noqa: E402
 
 PASS = FAIL = 0
@@ -266,6 +266,59 @@ def main() -> int:
     check("빈 입력", fuse([], []) == [])
     check("Hit.to_dict 는 직렬화된다",
           json.loads(json.dumps(Hit("A", "vector").to_dict()))["file_id"] == "A")
+
+    # ── #851 BM25 단독 히트 meta·발췌 채우기 ──
+    vec = [{"file_id": "V", "score": 0.9, "meta": {"path": "v"}, "excerpt": "vv"}]
+    out = fuse(vec, [("V", 3.0), ("K1", 2.0), ("K2", 1.0)])
+    before = [(h.file_id, h.source, h.rrf_score, h.similarity, h.vector_rank, h.bm25_rank) for h in out]
+    calls = []
+
+    def getter(ids, excerpt=400):
+        calls.append((list(ids), excerpt))
+        return {"K1": {"meta": {"path": "k1", "tags": "t", "category": "c"}, "excerpt": "x" * 900}}
+    r = fill_bm25_only(out, getter, excerpt=120)
+    by = {h.file_id: h for h in out}
+    check("#851 BM25 단독만 조회한다(K1·K2) · 발췌 상한 전달",
+          calls == [(["K1", "K2"], 120)], str(calls))
+    check("#851 K1 meta·발췌가 채워진다", by["K1"].meta.get("category") == "c" and by["K1"].excerpt.startswith("x"))
+    check("#851 벡터 히트는 건드리지 않는다", by["V"].meta == {"path": "v"} and by["V"].excerpt == "vv")
+    check("#851 색인에 없는 id 는 빈 채로 · missing 에 실린다",
+          by["K2"].meta == {} and r["missing"] == ["K2"] and r["filled"] == 1 and r["wanted"] == 2, str(r))
+    after = [(h.file_id, h.source, h.rrf_score, h.similarity, h.vector_rank, h.bm25_rank) for h in out]
+    check("#851 순위·점수·출처·순번 불변", before == after, f"{before} ≠ {after}")
+
+    def boom(ids, excerpt=400):
+        raise RuntimeError("chroma down")
+    out2 = fuse([], [("K", 1.0)])
+    r2 = fill_bm25_only(out2, boom)
+    check("#851 채우기 실패는 검색을 실패시키지 않는다 · 사유 기록",
+          out2[0].meta == {} and "chroma down" in r2["error"], str(r2))
+    out3 = fuse([], [("K", 1.0)])
+    r3 = fill_bm25_only(out3, None)
+    check("#851 getter 없음(대역·옛 색인) — 검색을 깨지 않고 사유만",
+          out3[0].meta == {} and "getter 없음" in r3["error"], str(r3))
+    check("#851 BM25 단독이 없으면 조회하지 않는다",
+          fill_bm25_only(fuse(vec, []), lambda *a, **k: 1 / 0)["wanted"] == 0)
+
+    # ContextIndex.get_many — 컬렉션 대역(chroma `get` 반환 모양)
+    from master.context_search.index import ContextIndex
+    import threading
+
+    class FakeColl:
+        def __init__(self):
+            self.asked = None
+
+        def get(self, ids, include):
+            self.asked = (list(ids), list(include))
+            return {"ids": ["A"], "documents": ["본문" * 300], "metadatas": [{"path": "a"}]}
+    ci = ContextIndex.__new__(ContextIndex)
+    ci._swap, ci._live = threading.Lock(), FakeColl()
+    got = ci.get_many(["A", "B", "A", ""], excerpt=50)
+    check("#851 get_many — 중복·빈 id 제거 · documents·metadatas 요청",
+          ci._live.asked == (["A", "B"], ["documents", "metadatas"]), str(ci._live.asked))
+    check("#851 get_many — 있는 것만 · 발췌는 상한에서 자른다",
+          set(got) == {"A"} and got["A"]["meta"] == {"path": "a"} and len(got["A"]["excerpt"]) == 50, str(got)[:120])
+    check("#851 get_many — 빈 목록은 조회 없이 {}", ci.get_many([]) == {})
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")

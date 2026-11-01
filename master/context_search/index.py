@@ -219,6 +219,35 @@ class ContextIndex:
             })
         return out
 
+    def get_many(self, ids, *, excerpt: int = 400) -> dict:
+        """`file_id` 들의 meta·발췌를 **같은 세대 live 컬렉션**에서 가져온다 (`#851`).
+
+        [DOC] #851: BM25 에만 걸린 문서는 융합 결과에 meta·발췌가 비어 나갔다. 벡터 히트와 **같은
+              원천·같은 세대·같은 형식**(`_search_once` 의 meta 그대로 · 발췌 상한도 호출자 값)으로
+              채우려고 질의 없이 id 로 읽는다. 색인에 없는 id 는 결과에서 빠진다(호출자가 센다).
+        """
+        want = [i for i in dict.fromkeys(ids or ()) if i]
+        if not want:
+            return {}
+
+        def _once():
+            with self._swap:
+                coll = self._live
+            res = coll.get(ids=want, include=["documents", "metadatas"])
+            got_ids = res.get("ids") or []
+            docs = res.get("documents") or []
+            metas = res.get("metadatas") or []
+            return {fid: {"meta": (metas[i] if i < len(metas) else None) or {},
+                          "excerpt": ((docs[i] if i < len(docs) else None) or "")[:excerpt]}
+                    for i, fid in enumerate(got_ids)}
+        try:
+            return _once()
+        except Exception as e:                                   # noqa: BLE001
+            if not _is_stale_segment(e):
+                raise
+            self._reopen()                                       # `_search_with_retry` 와 같은 한 번
+            return _once()
+
     # ── 갱신 ──────────────────────────────────────────
     def rebuild(self, *, progress=None, swap: bool = True) -> IndexStats:
         """Work 컬렉션에 전체 재색인. **검색은 내내 Live 에서 열려 있다.**
