@@ -145,6 +145,9 @@ CRON_PATTERNS = ("worker_daemon", "claimer")       # 옛 cron 줄을 찾는 고�
 TASKS_MARK = "AX_RESIDENCY_TASKS="
 ABSENT_MARK = "AX_RESIDENCY_PRESENT=0"
 ERROR_MARK = "AX_RESIDENCY_ERROR="
+CRON_ERROR_MARK = "AX_CRON_ERROR="                 # Linux 해제가 설치 전에 멈춘 사유 (#862)
+CRON_DONE_MARK = "AX_CRON_DONE"                    # Linux 해제 설치 완료 — removed=·kept= 를 함께 찍는다
+CRON_NOOP_MARK = "AX_CRON_NOOP"                    # 지울 줄이 없어 쓰지 않았다
 _SAFE_TASK = re.compile(r"^\\?(?:[A-Za-z0-9_.-]+\\)*[A-Za-z0-9_.-]+$")
 
 
@@ -241,16 +244,35 @@ def unregister_commands(project: str, facts, names=()) -> list:
     Windows: 조회가 찾은 **이름마다** `schtasks /delete` — 프로젝트 이름과 무관하다.
     `names` 를 안 주면 옛 프로젝트별 이름 하나(호환). 보호 접두·이상한 이름은 명령을 내지 않는다.
     Linux: `worker_daemon`·`claimer` 줄만 뺀다 — `PATH=` 등 다른 줄은 보존한다.
-    [주의] crontab 읽기가 실패하면 쓰지 않는다 — 빈 crontab 으로 덮지 않는다.
+    🔴 [중요] 설치 전 단계가 하나라도 어긋나면 **쓰지 않고** `AX_CRON_ERROR=<사유>` + rc≠0 (#862):
+    `crontab -l` 실패(`no crontab for` 포함 — 조회~해제 사이 경합에서만 나며 지울 것이 없다) ·
+    `grep` 오류(rc≥2 — 파이프였을 때는 빈 출력이 그대로 설치됐다) · 줄 수 불일치
+    (원본 − 제거 대상 ≠ 결과). 지울 줄이 없으면 쓰지 않고 `AX_CRON_NOOP`.
+    필터 결과는 임시 파일에 쓰고 대조를 통과한 뒤에만 `crontab <파일>` 로 설치한다.
     """
     if facts.windows:
         want = list(names) or [task_name(project)]
         return [(f"unregister {n}", f'schtasks /delete /f /tn "{n}"')
                 for n in want if _SAFE_TASK.match(n) and is_legacy_task(n)]
     pats = " ".join(f"-e {shlex.quote(p)}" for p in CRON_PATTERNS)
-    return [("unregister",
-             'c=$(crontab -l) || exit 1; '
-             f'printf \'%s\\n\' "$c" | grep -vF {pats} | crontab -')]
+    err = CRON_ERROR_MARK
+    # POSIX sh 로만 쓴다 — SSH 원격 로그인 셸이 bash 라는 보장이 없다
+    script = (
+        f's=$(mktemp) && t=$(mktemp) || {{ echo {err}mktemp; exit 1; }}; '
+        "trap 'rm -f \"$s\" \"$t\"' EXIT; "
+        f'LC_ALL=C crontab -l >"$s" 2>"$t" || {{ echo "{err}read:$(head -c 120 "$t")"; exit 1; }}; '
+        f'r=$(grep -cF {pats} "$s"); '
+        f'grep -vF {pats} "$s" >"$t"; g=$?; '
+        f'[ "$g" -le 1 ] || {{ echo {err}grep_rc=$g; exit 1; }}; '
+        "a=$(grep -c '' \"$s\"); k=$(grep -c '' \"$t\"); "
+        'for v in "$a" "$r" "$k"; do case "$v" in ""|*[!0-9]*) '
+        f'echo "{err}count:a=$a,r=$r,k=$k"; exit 1;; esac; done; '
+        f'[ "$r" -gt 0 ] || {{ echo {CRON_NOOP_MARK}; exit 0; }}; '
+        f'[ "$k" -eq $((a - r)) ] || {{ echo "{err}mismatch:a=$a,r=$r,k=$k"; exit 1; }}; '
+        f'crontab "$t" || {{ echo {err}install; exit 1; }}; '
+        f'echo "{CRON_DONE_MARK} removed=$r kept=$k"'
+    )
+    return [("unregister", script)]
 
 
 # ── 실행 중인 데몬 프로세스 (#861 T5) — 조회만, 종료하지 않는다 ─────────────────

@@ -28,6 +28,7 @@ sys.path.insert(0, str(_REPO))
 os.environ.setdefault("AX_PROJECTS_ROOT", str(_REPO))
 
 from master.client import __main__ as client_cli, bundle, spec      # noqa: E402
+from client.init import residency as _R                             # noqa: E402
 from master.projects.config import ROLE_REQUESTER, ROLE_WORKER, Workshop, ConfigError  # noqa: E402
 
 PASS = FAIL = 0
@@ -1546,7 +1547,7 @@ def test_residency_reconcile_removes_forbidden_registration() -> None:
 
     def fake_ssh(host, user, cmd, *, timeout=None):
         calls.append(cmd)
-        if "| crontab -" in cmd:
+        if _R.CRON_DONE_MARK in cmd:  # 해제 명령 판별 — 완료 표식은 해제 명령에만 있다 (#862)
             state["registered"] = False
             return 0, ""
         if cmd == "LC_ALL=C crontab -l 2>&1":
@@ -1687,7 +1688,7 @@ def test_register_residency_error_paths_and_all_names() -> None:
         lcalls.append(cmd)
         if cmd == "LC_ALL=C crontab -l 2>&1":
             return 0, tab["text"]
-        if "| crontab -" in cmd:
+        if _R.CRON_DONE_MARK in cmd:  # 해제 명령 판별 — 완료 표식은 해제 명령에만 있다 (#862)
             tab["text"] = "\n".join(ln for ln in tab["text"].splitlines()
                                     if "worker_daemon" not in ln and "claimer" not in ln) + "\n"
             return 0, ""

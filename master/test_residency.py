@@ -141,7 +141,11 @@ def test_legacy_registration_cleanup_is_targeted():
     lin = _f(windows=False, path="/home/sim/trunk/NS")
     unreg_l = dict(R.unregister_commands("NS", lin))["unregister"]
     check("cron 은 두 패턴 줄만 제거", "grep -vF -e worker_daemon -e claimer" in unreg_l, unreg_l)
-    check("crontab 읽기 실패면 쓰지 않는다", unreg_l.startswith("c=$(crontab -l) || exit 1;"), unreg_l)
+    check("crontab 읽기 실패면 쓰지 않는다(#862)",
+          'crontab -l >"$s"' in unreg_l and f"{R.CRON_ERROR_MARK}read" in unreg_l, unreg_l)
+    check("파이프로 바로 설치하지 않는다 — 임시 파일 대조 뒤 설치(#862)",
+          "| crontab -" not in unreg_l and 'crontab "$t"' in unreg_l
+          and unreg_l.index("mismatch") < unreg_l.index('crontab "$t"'), unreg_l)
     check("PATH와 다른 cron 보존(통째 삭제 없음)", "crontab -r" not in unreg_l)
 
 
@@ -163,7 +167,7 @@ def test_linux_cron_filter_runs_for_real():
             fh.write(before)
         fake = os.path.join(d, "crontab")
         with open(fake, "w") as fh:
-            fh.write(f'#!/bin/bash\nif [ "$1" = "-l" ]; then cat {tab}; else cat > {tab}; fi\n')
+            fh.write(f'#!/bin/bash\nif [ "$1" = "-l" ]; then cat {tab}; else cat "${{1:--}}" > {tab}; fi\n')
         os.chmod(fake, 0o755)
         env = {**os.environ, "PATH": d + ":" + os.environ.get("PATH", "")}
         p = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True)
@@ -174,12 +178,102 @@ def test_linux_cron_filter_runs_for_real():
               repr(after))
         st = R.registration_status(0, after, lin)
         check("해제 뒤 재조회는 부재", st["known"] and not st["present"], st)
+        check("완료 표식에 제거·보존 줄 수", f"{R.CRON_DONE_MARK} removed=2 kept=3" in p.stdout, p.stdout)
         # crontab -l 실패 → 쓰지 않는다
         with open(fake, "w") as fh:
-            fh.write(f'#!/bin/bash\nif [ "$1" = "-l" ]; then exit 2; else cat > {tab}; fi\n')
+            fh.write(f'#!/bin/bash\nif [ "$1" = "-l" ]; then exit 2; else cat "${{1:--}}" > {tab}; fi\n')
         p = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True)
         check("[중요] 읽기 실패면 rc≠0 이고 crontab 을 덮지 않는다",
               p.returncode != 0 and open(tab).read() == after, (p.returncode, open(tab).read()))
+        check("읽기 실패 사유 표식", f"{R.CRON_ERROR_MARK}read" in p.stdout, p.stdout)
+
+
+def _cron_sandbox(d, tab_text, *, list_rc=0, list_err="", grep_mode=""):
+    """가짜 `crontab`(·선택적으로 가짜 `grep`)을 PATH 앞에 둔 환경 (#862).
+
+    `grep_mode`: `fail` = `-vF` 호출만 rc 2 · `drop` = `-vF` 결과를 전부 버린다(줄 수 불일치 주입).
+    설치(`crontab <파일>`)는 `installs` 파일에 횟수를 남긴다 — 「쓰지 않았다」를 직접 센다.
+    """
+    import os
+    import shutil
+    tab, installs = os.path.join(d, "tab"), os.path.join(d, "installs")
+    with open(tab, "w") as fh:
+        fh.write(tab_text)
+    open(installs, "w").close()
+    fake = os.path.join(d, "crontab")
+    with open(fake, "w") as fh:
+        fh.write("#!/bin/sh\n"
+                 f'if [ "$1" = "-l" ]; then\n'
+                 f'  if [ {list_rc} -ne 0 ]; then echo "{list_err}" >&2; exit {list_rc}; fi\n'
+                 f'  cat {tab}; exit 0\nfi\n'
+                 f'echo x >> {installs}; cat "$1" > {tab}\n')
+    os.chmod(fake, 0o755)
+    if grep_mode:
+        real = shutil.which("grep")
+        g = os.path.join(d, "grep")
+        act = "exit 2" if grep_mode == "fail" else f'{real} "$@" | head -n 0; exit 0'
+        with open(g, "w") as fh:
+            fh.write("#!/bin/sh\n"
+                     f'case "$1" in -vF) {act};; esac\n'
+                     f'exec {real} "$@"\n')
+        os.chmod(g, 0o755)
+    # TMPDIR=d — mktemp 가 이 폴더에 만들게 해서 「임시 파일을 남기지 않는다」를 실제로 센다
+    env = {**os.environ, "PATH": d + ":" + os.environ.get("PATH", ""), "TMPDIR": d}
+    return tab, installs, env
+
+
+def test_linux_cron_unregister_guards_862():
+    """`#862` — 설치 전 단계가 어긋나면 쓰지 않는다. 실제 `sh`(POSIX)로 돌린다."""
+    import subprocess
+    import tempfile
+    lin = _f(windows=False, path="/home/sim/trunk/NS")
+    cmd = dict(R.unregister_commands("NS", lin))["unregister"]
+    keep = "PATH=/usr/local/bin:/usr/bin\n0 3 * * * /home/sim/backup.sh\n"
+    daemon = "*/5 * * * * cd /x && python3 .ax/lib/worker_daemon.py\n"
+
+    def run(tab_text, **kw):
+        with tempfile.TemporaryDirectory() as d:
+            tab, installs, env = _cron_sandbox(d, tab_text, **kw)
+            p = subprocess.run(["sh", "-c", cmd], env=env, capture_output=True, text=True)
+            leftovers = [f for f in __import__("os").listdir(d) if f.startswith("tmp")]
+            return p, open(tab).read(), open(installs).read().count("x"), leftovers
+
+    p, after, n, _ = run(keep + daemon, grep_mode="fail")
+    check("[중요] grep 오류(rc 2)면 설치하지 않는다",
+          p.returncode != 0 and n == 0 and after == keep + daemon, (p.returncode, n, p.stdout))
+    check("grep 오류 사유 표식", f"{R.CRON_ERROR_MARK}grep_rc=2" in p.stdout, p.stdout)
+
+    p, after, n, _ = run(keep + daemon, grep_mode="drop")
+    check("[중요] 줄 수 불일치면 설치하지 않는다(남의 줄이 사라지는 결과)",
+          p.returncode != 0 and n == 0 and after == keep + daemon, (p.returncode, n, p.stdout))
+    check("불일치 사유 표식에 줄 수", f"{R.CRON_ERROR_MARK}mismatch:a=3,r=1,k=0" in p.stdout, p.stdout)
+
+    p, after, n, _ = run("", list_rc=1, list_err="no crontab for sim")
+    check("no crontab for 는 실패+표식, 쓰지 않는다(사용자 결정 2026-11-01)",
+          p.returncode != 0 and n == 0 and f"{R.CRON_ERROR_MARK}read:no crontab for sim" in p.stdout,
+          (p.returncode, n, p.stdout))
+
+    p, after, n, _ = run("")
+    check("빈 crontab 은 지울 것 없음 — 쓰지 않고 NOOP",
+          p.returncode == 0 and n == 0 and R.CRON_NOOP_MARK in p.stdout, (p.returncode, n, p.stdout))
+
+    p, after, n, _ = run(keep)
+    check("데몬 줄이 없으면 쓰지 않는다(조회~해제 사이 경합)",
+          p.returncode == 0 and n == 0 and after == keep and R.CRON_NOOP_MARK in p.stdout,
+          (p.returncode, n, p.stdout))
+
+    p, after, n, _ = run(daemon + "*/5 * * * * claimer.py\n")
+    check("데몬 줄만 있으면 빈 crontab 을 설치한다",
+          p.returncode == 0 and n == 1 and after == ""
+          and f"{R.CRON_DONE_MARK} removed=2 kept=0" in p.stdout, (p.returncode, n, repr(after)))
+
+    p, after, n, _ = run(keep + daemon.rstrip("\n"))          # 마지막 줄 개행 없음
+    check("마지막 줄 개행이 없어도 줄 수가 맞는다",
+          p.returncode == 0 and n == 1 and after == keep, (p.returncode, repr(after), p.stdout))
+
+    p, after, n, left = run(keep + daemon)
+    check("정상 해제 — PATH·다른 줄 보존", p.returncode == 0 and n == 1 and after == keep, repr(after))
+    check("임시 파일을 남기지 않는다(trap)", left == [], left)
 
 
 def test_daemon_process_query():
@@ -297,6 +391,7 @@ if __name__ == "__main__":
                test_registration_observation_distinguishes_errors,
                test_legacy_registration_cleanup_is_targeted,
                test_linux_cron_filter_runs_for_real,
+               test_linux_cron_unregister_guards_862,
                test_daemon_process_query,
                test_python_probe_and_conductor_contract,
                test_session1_side_effects,
