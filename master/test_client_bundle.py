@@ -2785,6 +2785,43 @@ def test_code_drift_blocks_stale_delivery() -> None:
             setattr(bundle, k, v)
 
 
+def test_code_drift_docs_only_868() -> None:
+    """`#868` — 그 사이 변경이 docs/·reports/ 뿐이면 막지 않는다. 그 밖·못 읽음은 막는다."""
+    full_a, full_b = "a" * 40, "b" * 40
+    saved = {k: getattr(bundle, k) for k in ("_LOADED_COMMIT", "_delivery_stamp", "_diff_names")}
+    bundle._LOADED_COMMIT = full_a
+    bundle._delivery_stamp = lambda: {"commit": full_b, "commit_short": full_b[:7], "dirty": False,
+                                      "contract": 1}
+    try:
+        for name, names, want in (
+                ("문서만(docs·reports)", ["docs/orchestrator-handoff.md", "reports/134-x.md"], False),
+                ("트리 변화 없음(빈 목록)", [], False),
+                (".py 변경", ["master/client/bundle.py"], True),
+                ("섞임", ["docs/a.md", "master/x.py"], True),
+                ("배달되는 스킬 .md", ["master/client/skills/ax-work/SKILL.md"], True),
+                ("이름만 비슷한 경로", ["docsx/a.md", "master/docs/a.md"], True),
+                ("diff 못 읽음", None, True)):
+            bundle._diff_names = lambda a, b, _n=names: _n
+            d = bundle.code_drift()
+            check(f"#868 {name} → drift {want}", d["drift"] is want, str(d))
+        bundle._diff_names = lambda a, b: ["docs/a.md"]
+        d = bundle.code_drift()
+        check("#868 문서만 — 사유에 #868·파일 수", "#868" in d["reason"] and d.get("docs_only") == 1, str(d))
+        bundle._diff_names = lambda a, b: None
+        check("#868 못 읽음 — 사유에 「못 읽었다」", "못 읽었다" in bundle.code_drift()["reason"])
+        bundle._diff_names = lambda a, b: ["docs/a.md", "master/x.py"]
+        check("#868 섞임 — 사유에 문서 밖 예시", "master/x.py" in bundle.code_drift()["reason"])
+    finally:
+        for k, v in saved.items():
+            setattr(bundle, k, v)
+    # 실 git — 이 저장소의 실제 구간 (a8c300a..a8d058c = 인계서 1파일 · e7d0600~1..e7d0600 은 .py 커밋)
+    got = bundle._diff_names("a8c300a", "a8d058c")
+    check("#868 실 git: a8c300a..a8d058c 는 docs/ 1파일", got == ["docs/orchestrator-handoff.md"], str(got))
+    got = bundle._diff_names("e7d0600~1", "e7d0600")
+    check("#868 실 git: .py 가 섞인 구간", got is not None and any(n.endswith(".py") for n in got), str(got))
+    check("#868 실 git: 없는 커밋은 None", bundle._diff_names("0" * 40, "a8d058c") is None)
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_mcp_json_merge,
@@ -2826,7 +2863,7 @@ def main() -> int:
                test_update_live_shaped_in_temp_repo,
                test_shadow_skills_are_reported,
                test_index_only_delivery,
-               test_code_drift_blocks_stale_delivery):
+               test_code_drift_blocks_stale_delivery, test_code_drift_docs_only_868):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_bundle: {PASS}/{total} 통과")

@@ -421,7 +421,35 @@ def code_drift() -> dict:
     out["drift"] = loaded != now
     out["reason"] = (f"실행 중 코드 {loaded[:7]} ≠ 디스크 HEAD {now[:7]}" if out["drift"]
                      else f"실행 중 코드와 디스크 HEAD 가 같다 ({now[:7]})")
+    if out["drift"]:
+        # [DOC] #868: 그 사이 바뀐 것이 **전부 배달과 무관한 문서**(`docs/`·`reports/`)면 메모리의 코드가
+        #       디스크 코드와 같다 — 막을 이유가 없다. 인계서·리포트 커밋마다 마운트 전환 align 이 실패했다
+        #       (실측 2026-11-01 a8c300a..a8d058c = 인계서 1파일). 그 밖의 파일이 하나라도 있거나 diff 를
+        #       못 읽으면 종전대로 막는다(fail-closed) — 스킬 `.md` 처럼 배달되는 비코드 파일도 막는 쪽이다.
+        names = _diff_names(loaded, now)
+        if names is not None and all(n.startswith(DOC_ONLY_PREFIXES) for n in names):
+            out["drift"] = False
+            out["docs_only"] = len(names)
+            out["reason"] = (f"실행 중 코드 {loaded[:7]} ≠ 디스크 HEAD {now[:7]} 이지만 그 사이 변경이 "
+                             f"문서만이다({len(names)}파일 · {'·'.join(DOC_ONLY_PREFIXES)}) — 코드는 같다 (#868)")
+        elif names is None:
+            out["reason"] += " · 변경 파일 목록을 못 읽었다(막는다)"
+        else:
+            other = [n for n in names if not n.startswith(DOC_ONLY_PREFIXES)]
+            out["reason"] += f" · 문서 밖 변경 {len(other)}파일(예: {other[0]})"
     return out
+
+
+DOC_ONLY_PREFIXES = ("docs/", "reports/")      # #868 — 배달·코드와 무관한 경로(spec·bundle 참조 0)
+
+
+def _diff_names(a: str, b: str):
+    """`a..b` 사이 바뀐 파일 경로 목록. 못 읽으면 `None` — 빈 목록(변경 없음)과 구별한다 (#868)."""
+    r = subprocess.run(["git", "-C", str(Path(__file__).resolve().parents[2]), "diff", "--name-only",
+                        a, b], capture_output=True, text=True, check=False)
+    if r.returncode != 0:
+        return None
+    return [x.strip() for x in (r.stdout or "").splitlines() if x.strip()]
 
 
 # [중요] #831: import 시점에 한 번 잡는다 — 이 프로세스가 **불러온 코드**의 커밋이다(실패해도 빈 값일 뿐)
