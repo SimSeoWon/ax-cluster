@@ -27,6 +27,8 @@ step-by-step 가이드를 컨텍스트로 받는다."*
 from __future__ import annotations
 
 import re
+# [DOC] 이 모듈은 pathlib.Path 를 쓰지 않는다 — 공개 이름·시그니처는 그대로 둔다.
+# [PSEUDO] 바로 아래 줄 `from pathlib import Path` 는 미사용 import(pyflakes F401)다. 그 한 줄만 지운다 — 그 외 변경 금지.
 from pathlib import Path
 
 from .recipes_synthesizer import ANTI_PATTERNS_FILENAME, recipes_dir
