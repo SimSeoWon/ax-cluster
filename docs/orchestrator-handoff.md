@@ -38,6 +38,7 @@
   `build_step` PASS 실컴파일(UBT `Compile Module.ModularStage.cpp`·58.3초) · T3 실 work `20261101_1818_863_t3_…`(#866)
   `.43` codex 파견 → 워커 커밋 → ⑦ 전진 `e27b0258→e7b415a4` → finalize `main` `020cffd`(F541 한 줄) · check 3대 OK.
   codex 입력 35만 토큰(캐시 91%). 미확인(FAIL 경로·Windows 세션 1)은 **`#867`**, #831 가드 문제는 **`#868`**.
+- `#868` 진행 중 — T1 `f35d0da`(docs/·reports/ 만 바뀐 drift 는 align 허용) · T2 실측 중(ax-projects 18:46:58 재기동).
 - `master.client update` 4회(`68f87eb`·`c521568`·`03fa5a6`·ModularStage) 모두 3대 OK. `.2` 홈 중복 스킬 경고가 `ax-work`·`ax-infer` 2개로 늘었다(#661 계열, 생성 시점 미확인).
 
 ## 플랜(SDD) 효능 축 — `#864`·`#865` 둘 다 닫음
