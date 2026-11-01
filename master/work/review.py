@@ -861,7 +861,91 @@ def reject_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str = 
         f"(#821 — 반려 work 브랜치 보존 · 사용자 결정 2026-10-13). 서브 브랜치는 분리돼 있어 "
         f"`main` 은 변경되지 않았다\n"
         f"- 영구 종결은 사람이 판단한다")
+    # `#875` — 종전에는 본문만 만들고 게시는 호출자 몫이었는데, 요청자 스킬에 게시 절차가 없어 반려
+    #    노트가 실제로 남지 않았다. 큐를 바꾼 뒤에만, 대행 경로로 **노트만** 단다(상태는 그대로 —
+    #    반려의 영구 종결은 사람이 판단한다).
+    if d.queue_patched:
+        _post_redmine(d, api, work_id=work_id, logf=logf, tag="reject")
     d.ok = not d.error
+    return d
+
+
+_TASK_TERMINAL = ("verified", "failed", "cancelled")
+
+
+def _post_redmine(d: "Decision", api, *, work_id: str, logf, tag: str,
+                  status_name: str = "", done_ratio=None) -> None:
+    """마스터 대행(`/api/v1/redmine/note`)으로 노트를 단다 — finalize 와 같은 경로. 실패는 기록만."""
+    if not d.redmine_issue_id:
+        logf(tag, "[주의] 이 work 에 Redmine 이슈가 없다 — 노트를 남기지 않는다")
+        return
+    body = {"issue_id": int(d.redmine_issue_id), "notes": d.redmine_note, "work_id": work_id}
+    if status_name:
+        body["status_name"] = status_name
+    if done_ratio is not None:
+        body["done_ratio"] = done_ratio
+    try:
+        (api or _default_api)("POST", "/api/v1/redmine/note", body)
+        d.redmine_posted = True
+    except Exception as e:                                   # noqa: BLE001
+        logf(tag, f"[주의] Redmine 기재 실패 — {type(e).__name__}: {e}")
+
+
+def cancel_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str = "",
+                reason: str = "", confirm: bool = False, api=None,
+                logf=C._noop_log) -> "Decision":
+    """⑦ 대기·진행 중 work 을 **취소**로 종결한다 (`#875`). [중요] `confirm=False` 가 기본이다.
+
+    [DOC] #875: 취소 입구가 없어 큐 PATCH 를 직접 쓰면 Redmine 이슈가 열린 채 남았다(실측 #873).
+          확인되면 ① 아직 terminal 이 아닌 조각을 취소 ② 큐 `merge_status=cancelled` ③ 그 work 의
+          Redmine 이슈에 노트 + 「완료」·100 (finalize 와 같은 대행 경로 — 닫힌 상태는 「완료」 하나다).
+          원격 `task/<W>/*` 는 여기서 지우지 않는다 — 마스터 정리 주기(`#787`, refs/ax/pruned 보존)의 몫.
+          🔴 반려(rejected) work 은 취소로 바꾸지 않는다 — `#821` 브랜치 보존 결정을 우회하는 길이 된다.
+    """
+    d = Decision(work_id=work_id)
+    cur = (work or {}).get("merge_status")
+    d.redmine_issue_id = str((work or {}).get("redmine_issue_id") or "")
+    if cur == "cancelled":
+        d.ok, d.noop, d.merge_status = True, True, "cancelled"
+        return d
+    if cur in ("merged", "rejected"):
+        d.error = (f"이미 {cur} 된 work — 취소할 수 없다"
+                   + (" (#821 반려 보존을 우회하지 않는다)" if cur == "rejected" else ""))
+        return d
+    live = [t for t in (tasks or []) if str(t.get("status") or "") not in _TASK_TERMINAL]
+    d.redmine_note = (
+        f"[취소] 검토자={reviewer or '(미지정)'}\n\n"
+        f"사유: {reason or '(미입력)'}\n\n"
+        f"- 큐 merge_status: {cur or '(없음)'} → cancelled · 진행 중 조각 {len(live)}개 취소\n"
+        f"- 원격 `task/<work>/*` 는 마스터 정리 주기(#787)가 지우고 tip 을 `refs/ax/pruned/` 에 보존한다\n"
+        f"- `main` 은 변경되지 않았다")
+    if not confirm:
+        d.merge_status = cur or ""
+        d.commands = [f"review.cancel_work(repo, work_id={work_id!r}, ..., confirm=True)"]
+        d.ok = True
+        logf("cancel", f"[계획] {work_id} — 조각 {len(live)}개 취소 · 큐 cancelled · Redmine 「완료」 (confirm=False)")
+        return d
+    call = api or _default_api
+    for t in live:
+        tid = t.get("task_id")
+        try:
+            call("POST", f"/api/v1/tasks/{tid}/cancel", {"reason": f"work 취소(#875) — {reason}"[:300]})
+        except Exception as e:                               # noqa: BLE001
+            d.error = f"조각 {tid} 취소 실패 — work 은 바꾸지 않는다: {type(e).__name__}: {e}"
+            logf("cancel", d.error)
+            return d
+    try:
+        call("PATCH", f"/api/v1/works/{work_id}",
+             {"merge_status": "cancelled",
+              "review_decision": _decision("cancelled", reviewer, reason)})
+        d.queue_patched = True
+    except Exception as e:                                   # noqa: BLE001
+        d.error = f"큐 상태 갱신 실패 (수동 갱신 필요): {type(e).__name__}: {e}"
+        logf("cancel", d.error)
+        return d
+    d.merge_status = "cancelled"
+    _post_redmine(d, api, work_id=work_id, logf=logf, tag="cancel", status_name="완료", done_ratio=100)
+    d.ok = True
     return d
 
 

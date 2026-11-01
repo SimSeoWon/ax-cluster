@@ -453,7 +453,12 @@ def test_reject_patches_and_keeps_branches():
               and durable_branch("t2") in g(repo, "ls-remote", "--heads", "origin"))
         check("[중요] 반려된 work 는 전부 보존된다 (main 도달 불가라 구조적으로)",
               not d.cleanup.delete and len(d.cleanup.keep) >= 3, str(d.cleanup.delete))
-        check("Redmine 본문을 만들어 둔다 (직접 쓰지 않는다)", "[반려]" in d.redmine_note)
+        check("Redmine 본문을 만든다", "[반려]" in d.redmine_note)
+        # `#875` — 종전엔 본문만 만들고 아무도 게시하지 않았다. 대행 경로로 노트만 단다(상태 유지)
+        posts = [p for m, path, p in api.calls if m == "POST" and path == "/api/v1/redmine/note"]
+        check("#875 반려 노트를 대행 경로로 게시한다 — 이슈 42 · 상태는 바꾸지 않는다",
+              len(posts) == 1 and posts[0]["issue_id"] == 42 and "[반려]" in posts[0]["notes"]
+              and "status_name" not in posts[0] and d.redmine_posted, str(api.calls))
         # 🔴 `#821` (사용자 결정 2026-10-13) — 반려 work 의 브랜치는 마스터 정리(#787)도 지우지
         #    않는다. 종전 검사는 「정리가 지우고 해시를 남긴다」를 못박았다 — 그 계약이 뒤집혔다.
         check("🔴 반려 본문이 브랜치 보존(#821)을 말한다",
@@ -480,6 +485,49 @@ def test_reject_idempotent_and_guarded():
                            tasks=tasks, api=api)
         check("[중요] 큐 갱신 실패를 조용히 넘기지 않는다", not d3.ok and "수동 갱신" in d3.error,
               d3.error)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_cancel_work_875():
+    """`#875` — ⑦ 대기 work 취소: confirm=False 무동작 · confirm=True 조각 취소→PATCH→노트 「완료」·100."""
+    root, repo, work, tasks = fixture()
+    try:
+        w = dict(work, merge_status="ready_for_review", redmine_issue_id="77")
+        ts = [dict(task_id="a", status="verified"), dict(task_id="b", status="pending"),
+              dict(task_id="c", status="claimed")]
+        api = FakeApi()
+        d0 = R.cancel_work(repo, work_id="w1", work=w, tasks=ts, reviewer="사람", reason="프로브", api=api)
+        check("#875 confirm=False — 큐·Redmine 호출 0 · 계획만", d0.ok and api.calls == []
+              and not d0.queue_patched and d0.commands and "조각 2개" in d0.redmine_note, str(api.calls))
+        d = R.cancel_work(repo, work_id="w1", work=w, tasks=ts, reviewer="사람", reason="프로브",
+                          confirm=True, api=api)
+        paths = [(m, pth) for m, pth, _ in api.calls]
+        check("#875 terminal 아닌 조각만 취소 → PATCH → 노트 순서",
+              paths == [("POST", "/api/v1/tasks/b/cancel"), ("POST", "/api/v1/tasks/c/cancel"),
+                        ("PATCH", "/api/v1/works/w1"), ("POST", "/api/v1/redmine/note")], str(paths))
+        patch = api.calls[2][2]
+        check("#875 PATCH cancelled · 결정 기록", patch["merge_status"] == "cancelled"
+              and patch["review_decision"]["result"] == "cancelled"
+              and patch["review_decision"]["decided_by"] == "사람", str(patch))
+        note = api.calls[3][2]
+        check("#875 노트 — 이슈 77 · 「완료」 · 100 · #787 정리 안내",
+              note["issue_id"] == 77 and note["status_name"] == "완료" and note["done_ratio"] == 100
+              and "[취소]" in note["notes"] and "#787" in note["notes"], str(note))
+        check("#875 결과 — ok · cancelled · 게시됨", d.ok and d.merge_status == "cancelled" and d.redmine_posted)
+        check("#875 이미 취소면 no-op", R.cancel_work(repo, work_id="w1", work=dict(w, merge_status="cancelled"),
+                                                     tasks=ts, confirm=True, api=FakeApi()).noop)
+        for st in ("merged", "rejected"):
+            dx = R.cancel_work(repo, work_id="w1", work=dict(w, merge_status=st), tasks=ts,
+                               confirm=True, api=FakeApi())
+            check(f"#875 {st} work 은 취소 거절", not dx.ok and st in dx.error, dx.error)
+        df = R.cancel_work(repo, work_id="w1", work=w, tasks=ts, confirm=True, api=FakeApi(fail=True))
+        check("#875 큐 실패는 조용히 넘기지 않고 멈춘다(노트 없음)", not df.ok and not df.redmine_posted
+              and "실패" in df.error, df.error)
+        api2 = FakeApi()
+        dn = R.cancel_work(repo, work_id="w1", work=dict(w, redmine_issue_id=""), tasks=[], confirm=True, api=api2)
+        check("#875 Redmine 이슈 없음 — 큐만 바꾸고 노트는 건너뜀", dn.ok and not dn.redmine_posted
+              and not any(pth == "/api/v1/redmine/note" for _, pth, _ in api2.calls), str(api2.calls))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -1242,7 +1290,7 @@ def main() -> int:
                test_cleanup_tells_already_clean_from_half_cleaned,
                test_cleanup_ok_and_named_refs_in_note,
                test_cleanup_plan_fails_closed,
-               test_reject_patches_and_keeps_branches, test_reject_idempotent_and_guarded,
+               test_reject_patches_and_keeps_branches, test_reject_idempotent_and_guarded, test_cancel_work_875,
                test_finalize_default_does_not_push,
                test_finalize_confirm_pushes_and_then_cleanup_is_possible,
                test_finalize_prunes_local_base_373,

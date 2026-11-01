@@ -122,13 +122,25 @@ pop 실패 시 **로그 한 줄**로 끝난다. 바이너리는 되살릴 수 �
 
     review.reject_work(repo, work_id=..., work=..., tasks=..., reviewer=..., reason=...)
 
-큐 상태를 `rejected` 로 바꾸고 코멘트 본문을 만든다. [중요] **브랜치를 지우지 않는다** —
+큐 상태를 `rejected` 로 바꾸고 그 work 의 Redmine 이슈에 반려 노트를 단다(`#875` — 상태는 그대로,
+영구 종결은 사람이 판단한다). [중요] **브랜치를 지우지 않는다** —
 반려된 작업의 durable 은 `main` 에 도달하지 않으므로 **전부 보존**된다. 실패한 시도도
 조사 자산이다(누적 모델).
 
 반려를 **코드로 전하려면** `[FEEDBACK]` 블록을 그 자리에 박아 commit·push 한다 —
 골조의 `[PSEUDO]` 와 같은 자리, 같은 방식이다. 큐의 텍스트만으로는 워커가 **어디를**
 고칠지 모른다. [중요] 재구현이 아니라 **수정**이다.
+
+
+## 6.1 취소 — 이 work 을 더 진행하지 않는다 (`#875`)
+
+    review.cancel_work(repo, work_id=..., work=..., tasks=..., reviewer=..., reason=...)               # 계획만
+    review.cancel_work(repo, work_id=..., work=..., tasks=..., reviewer=..., reason=..., confirm=True, api=queue_api())
+
+[중요] **`confirm=False` 가 기본이다** — 무엇을 할지만 돌려준다. 확인되면 아직 끝나지 않은 조각을 취소하고
+큐를 `cancelled` 로 바꾸고, 그 Redmine 이슈에 취소 노트를 달아 **「완료」로 닫는다**. 원격 `task/<work>/*` 는
+마스터 정리 주기(`#787`)가 지우고 tip 을 보존한다. [주의] **큐에 `merge_status` 를 직접 PATCH 하지 마라** —
+그 경로는 Redmine 을 모른다(실측 #873: 이슈가 열린 채 남았다). 반려(rejected) work 은 취소로 바꾸지 않는다(#821).
 
 ## 7. Redmine 은 마스터를 거친다
 
