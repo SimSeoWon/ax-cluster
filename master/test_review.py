@@ -532,6 +532,42 @@ def test_cancel_work_875():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_redmine_post_checks_ok_and_retries_875():
+    """`#875` — 대행 응답 `ok: false` 는 실패 · 실패하면 재시도 · 끝내 실패면 사유를 남긴다."""
+    seq_calls = []
+
+    def seq_api(answers):
+        it = iter(answers)
+
+        def call(method, path, payload=None):
+            seq_calls.append((method, path))
+            a = next(it)
+            if isinstance(a, Exception):
+                raise a
+            return a
+        return call
+    slept = []
+    d = R.Decision(work_id="w"); d.redmine_issue_id = "9"; d.redmine_note = "n"
+    R._post_redmine(d, seq_api([{"ok": False, "result": "[주의] 레드마인 #9 갱신 실패 — HTTP 422"},
+                                {"ok": True, "result": "갱신"}]),
+                    work_id="w", logf=lambda *a: None, tag="t", sleep=slept.append)
+    check("#875 ok:false 뒤 재시도 성공 → posted · 1회 대기", d.redmine_posted and slept == [R.REDMINE_RETRY_SEC]
+          and len(seq_calls) == 2, f"{d} {slept}")
+    seq_calls.clear(); slept.clear()
+    d2 = R.Decision(work_id="w"); d2.redmine_issue_id = "9"; d2.redmine_note = "n"
+    R._post_redmine(d2, seq_api([{"ok": False, "result": "HTTP 422"}, RuntimeError("down"),
+                                 {"ok": False, "result": "[주의] 최종 실패"}]),
+                    work_id="w", logf=lambda *a: None, tag="t", sleep=slept.append)
+    check("#875 세 번 모두 실패 → posted 아님 · 마지막 사유 기록 · 대기 2회",
+          not d2.redmine_posted and "최종 실패" in d2.redmine_error and len(slept) == 2
+          and len(seq_calls) == R.REDMINE_POST_TRIES, f"{d2.redmine_error} {slept}")
+    seq_calls.clear()
+    d3 = R.Decision(work_id="w"); d3.redmine_issue_id = "9"; d3.redmine_note = "n"
+    R._post_redmine(d3, seq_api([{"ok": True}]), work_id="w", logf=lambda *a: None, tag="t",
+                    sleep=lambda s: (_ for _ in ()).throw(AssertionError("대기하면 안 된다")))
+    check("#875 첫 시도 성공이면 대기 없음", d3.redmine_posted and len(seq_calls) == 1)
+
+
 # ── 승인 — [중요] 기본값이 push 를 막는다 ─────────────────────────
 
 def test_finalize_default_does_not_push():
@@ -1291,6 +1327,7 @@ def main() -> int:
                test_cleanup_ok_and_named_refs_in_note,
                test_cleanup_plan_fails_closed,
                test_reject_patches_and_keeps_branches, test_reject_idempotent_and_guarded, test_cancel_work_875,
+               test_redmine_post_checks_ok_and_retries_875,
                test_finalize_default_does_not_push,
                test_finalize_confirm_pushes_and_then_cleanup_is_possible,
                test_finalize_prunes_local_base_373,

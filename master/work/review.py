@@ -797,6 +797,7 @@ class Decision:
     # 원전 6단계 동등 (사용자 결정 2026-08-21) — ② Redmine 기재 · ③ 브랜치 정리 실행
     merge_commit: str = ""          # main 에 올라간 머지 커밋 (원전이 이슈에 적는 그 값)
     redmine_posted: bool = False    # 노트 전송 성공 (마스터 대행 경유)
+    redmine_error: str = ""         # `#875` — 재시도까지 실패한 마지막 사유(대행 `result` 그대로)
     deleted_branches: list = field(default_factory=list)
     cleanup_failed: list = field(default_factory=list)   # (ref, 사유) — 실패해도 머지는 끝났다
     # `#373` — 요청자 로컬의 작업 브랜치 정리 (원격 정리와 별개)
@@ -873,9 +874,20 @@ def reject_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str = 
 _TASK_TERMINAL = ("verified", "failed", "cancelled")
 
 
+REDMINE_POST_TRIES = 3          # `#875` — 1회 + 재시도 2회
+REDMINE_RETRY_SEC = 3.0
+
+
 def _post_redmine(d: "Decision", api, *, work_id: str, logf, tag: str,
-                  status_name: str = "", done_ratio=None) -> None:
-    """마스터 대행(`/api/v1/redmine/note`)으로 노트를 단다 — finalize 와 같은 경로. 실패는 기록만."""
+                  status_name: str = "", done_ratio=None, sleep=None) -> None:
+    """마스터 대행(`/api/v1/redmine/note`)으로 노트를 단다 — finalize·reject·cancel 공용. 실패는 기록만.
+
+    [DOC] #875 실측: ⑴ 대행은 Redmine 실패도 **HTTP 200 + `ok: false`** 로 돌려준다 — 예외만 보던 종전
+          코드는 실패를 「게시됨」으로 찍었다(cancel 노트가 422 로 거절됐는데 redmine_posted=True).
+          ⑵ 조각 취소 직후 큐가 같은 이슈에 「라운드 종결」 노트를 비동기로 달아 같은 초에 겹쳤다 —
+          그래서 실패하면 잠시 뒤 다시 보낸다(41초 뒤 같은 본문은 성공했다).
+    """
+    import time as _time
     if not d.redmine_issue_id:
         logf(tag, "[주의] 이 work 에 Redmine 이슈가 없다 — 노트를 남기지 않는다")
         return
@@ -884,11 +896,24 @@ def _post_redmine(d: "Decision", api, *, work_id: str, logf, tag: str,
         body["status_name"] = status_name
     if done_ratio is not None:
         body["done_ratio"] = done_ratio
-    try:
-        (api or _default_api)("POST", "/api/v1/redmine/note", body)
-        d.redmine_posted = True
-    except Exception as e:                                   # noqa: BLE001
-        logf(tag, f"[주의] Redmine 기재 실패 — {type(e).__name__}: {e}")
+    wait = sleep or _time.sleep
+    last = ""
+    for attempt in range(1, REDMINE_POST_TRIES + 1):
+        try:
+            r = (api or _default_api)("POST", "/api/v1/redmine/note", body)
+        except Exception as e:                               # noqa: BLE001
+            last = f"{type(e).__name__}: {e}"
+        else:
+            if not isinstance(r, dict) or r.get("ok") is not False:
+                d.redmine_posted = True
+                if attempt > 1:
+                    logf(tag, f"Redmine 기재 — {attempt}번째 시도에 성공")
+                return
+            last = str(r.get("result") or r.get("error") or "ok: false")
+        logf(tag, f"[주의] Redmine 기재 실패 ({attempt}/{REDMINE_POST_TRIES}) — {last[:160]}")
+        if attempt < REDMINE_POST_TRIES:
+            wait(REDMINE_RETRY_SEC)
+    d.redmine_error = last
 
 
 def cancel_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str = "",
@@ -1109,23 +1134,11 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
             #    [주의] 종전 규약은 *"「해결」까지만 — 닫는 것은 사람"* 이었다. 그 규약이
             #    지키려던 것은 **사람이 판단한다**인데, `finalize_work(confirm=True)` 자체가
             #    사람의 승인 발화로만 도는 자리다. 자동으로 닫히는 것이 아니다.
+            # [중요] **진행률도 채운다** (`#366`) — 상태만 바꾸면 닫힌 이슈가 0% 로 남는다.
+            # `#875` — 공용 게시(응답 `ok` 확인 · 실패 시 재시도). 머지·정리는 끝났으니 실패는 사유만 싣는다.
             if d.redmine_issue_id:
-                try:
-                    (api or _default_api)("POST", "/api/v1/redmine/note",
-                                          {"issue_id": int(d.redmine_issue_id),
-                                           "notes": d.redmine_note,
-                                           "status_name": "완료",
-                                           # [중요] **진행률도 채운다** (`#366`). 상태만 바꾸면
-                                           #    닫힌 이슈가 **0%** 로 남아 마일스톤 진행률이
-                                           #    거짓이 된다(실측 2026-09-06: 오늘 고쳐 커밋한
-                                           #    일감들이 「완료」인데 0% 였다). 마감은 `main`
-                                           #    머지가 끝난 자리이므로 100 이다.
-                                           "done_ratio": 100,
-                                           "work_id": work_id})
-                    d.redmine_posted = True
-                except Exception as e:                      # noqa: BLE001
-                    # 머지·정리는 끝났다 — 기재 실패는 조용히 넘기지 않고 사유만 싣는다
-                    logf("finalize", f"[주의] Redmine 기재 실패 — {type(e).__name__}: {e}")
+                _post_redmine(d, api, work_id=work_id, logf=logf, tag="finalize",
+                              status_name="완료", done_ratio=100)
         d.ok = not d.error
         return d
     except GitError as e:
