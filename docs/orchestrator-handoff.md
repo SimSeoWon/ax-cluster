@@ -9,14 +9,14 @@
 
 ## 상태
 
-- **갱신**: 2026-11-01 19:28 KST · Claude · 사용자 지시
-- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`c5003d8`(#870 finalize 머지 · + 이 인계서, 커밋 여부는 git 으로 확인) · 그 외 작업 트리 clean.
+- **갱신**: 2026-11-01 19:42 KST · Claude · 사용자 지시
+- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`eddaa86`(+ 이 인계서, 커밋 여부는 git 으로 확인) · 그 외 작업 트리 clean.
 - **마운트**: **AXCluster**(#863 에서 MotionForge→NS→AXCluster, ModularStage→AXCluster 왕복 뒤 복귀). 배달은 이 인계서
   커밋 직후 update 로 맞춘다 — 그 뒤 커밋이 생기면 `check` 출처 대조만 어긋난다(다음 update 는 승인 받아).
   MotionForge·NS·ModularStage 도 이번 세션에 3대 최신·check OK. `.2` 에 `C:\trunk\MotionForge`·`C:\trunk\NS` 를 **새로 클론**했다.
   `#868` 로 **문서(`docs/`·`reports/`)만 바뀐 커밋은 전환 align 이 통과**한다. 코드 커밋 직후는 여전히 #831 가드로
   막힌다 → CLI update 또는 `ax-projects` 재기동. `#869` 로 기동 커밋 = **서비스 기동 시점 HEAD**(기동 로그 `[drift] 기동 커밋 …`).
-- **서비스**: 11-01 15:48 재부팅. `ax-projects` 는 19:00:26 재기동(사용자 승인, 실행 커밋 `ffaa139`).
+- **서비스**: 11-01 15:48 재부팅. `ax-projects` 는 19:41:50 재기동(사용자 승인, 기동 커밋 `eddaa86` — 기동 로그로 확인).
   [주의] `.2` 도 재부팅됐는지는 미확인 — 세션 1 과제는 `janus` 로그인이 있어야 돈다.
 - **지휘 기록**: 마스터 담당 `claude`(10-21 기록 — 이번 인수 미기록, 사용자 지시 없음) · 워커 전역 `codex`(10-18).
 - **실행 중**: 없음.
@@ -46,7 +46,9 @@
 - `#867` — **완료로 닫음**. T1 FAIL 경로 드라이런(.2 미추적 임시 .cpp → `build_step` FAIL · 근거에 `error C2065` 줄 · UBT 로그 일치 · 복구 PASS).
   T2 work `20261101_1912_867_t2_…`(#870) 3조각 병렬 — **.2·.33 Windows 세션 1 실파견 완주**(런처·codex rc0·회수) · .43 SSH →
   ⑦ 전진 → finalize `main` `c5003d8`(미사용 import 3건). 층1 차단 2건은 자동 재시도 1회로 해소 — 원인은 내 골조 문구
-  「그 외 변경 금지」가 `[PSEUDO]` 제거와 충돌. `ax-request` 지침 반영 여부는 미결.
+  「그 외 변경 금지」가 `[PSEUDO]` 제거와 충돌 → `ax-request` §3.5 지침 추가 `eddaa86`, ModularStage update 로 `.33` 배달 확인.
+- ModularStage 전환 때 기동 커밋 `ffaa139`≠`eddaa86`(.py·스킬 변경)로 align 이 #831 에 **의도대로 막혔다** — #868·#869 의
+  「코드 커밋 직후 거부」가 서비스로 실측됐다. CLI update 로 맞춘 뒤 재기동·AXCluster 복귀(3대 same).
 - `master.client update` 여러 차례(커밋마다·ModularStage 포함) 모두 3대 OK. `.2` 홈 중복 스킬 경고가 `ax-work`·`ax-infer` 2개로 늘었다(#661 계열, 생성 시점 미확인).
 
 ## 플랜(SDD) 효능 축 — `#864`·`#865` 둘 다 닫음
