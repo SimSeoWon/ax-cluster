@@ -9,8 +9,8 @@
 
 ## 상태
 
-- **갱신**: 2026-11-01 21:55 KST · Claude · 사용자 지시
-- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`53f5b7d`(+ 이 인계서, 커밋 여부는 git 으로 확인) · 그 외 작업 트리 clean.
+- **갱신**: 2026-11-01 22:19 KST · Claude · 사용자 지시
+- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`dfd9c24`(+ 이 인계서, 커밋 여부는 git 으로 확인) · 그 외 작업 트리 clean.
 - **마운트**: **AXCluster**(#863 에서 MotionForge→NS→AXCluster, ModularStage→AXCluster 왕복 뒤 복귀). 배달은 이 인계서
   커밋 직후 update 로 맞춘다 — 그 뒤 커밋이 생기면 `check` 출처 대조만 어긋난다(다음 update 는 승인 받아).
   MotionForge·NS·ModularStage 도 이번 세션에 3대 최신·check OK. `.2` 에 `C:\trunk\MotionForge`·`C:\trunk\NS` 를 **새로 클론**했다.
@@ -59,9 +59,11 @@
   런처(AxConductor*)·AX_Ollama33 뿐. 단 AXCluster 워커 체크아웃 로컬 main 이 옛 커밋(.43 10-07)이라 데몬 소스가 남아 있었다
   → .43·.33 ff 로 정리 · 원인 `#871` **완료로 닫음** `6b1fa78`: 사이클 복귀가 `checkout -B main origin/main` 으로 로컬 main 을
   원격에 맞춘다(.2 드라이런 836004c→6931118). 세 워커 AXCluster main 모두 6931118. 게임 체크아웃은 다음 사이클부터 맞춰진다.
-- `#333` ⓐ **완료**(일감은 열림) — `53f5b7d` `cleanup plan` 끝 「기계 단위」 구역 · `cleanup machines`(읽기 전용, 쓰기 0):
-  마스터+트윈 미러+모든 작업장의 worktree(죽은 등록)·미추적·도달·지워진 원격 ref. 첫 실행이 미러의 `ax-review-788` worktree 를
-  처음 드러냈다. 남은 것: ⓑ 취소 work 삭제 예외 · ⓒ 중단 경로 복귀(둘 다 사용자 결정) · ④ 프로브 취소 게이트.
+- `#333` — **완료로 닫음**. ⓐ `53f5b7d` `cleanup plan` 끝 「기계 단위」 구역·`cleanup machines`(읽기 전용) · ⓑ 는 #787 로 이미
+  구현됨을 대조 · ⓒ(가) `dfd9c24` 워커 main 뒤처짐 표시 + apply 가 `merge --ff-only`(운영 apply 로 3대 5커밋 뒤 → 일치) ·
+  ④ 프로브 work(#873) 1조각 → ⑦ 준비 → 취소 → terminal·machines·plan 이 브랜치·worktree·부산물 전부 잡음.
+  프로브 문구는 새 ax-request 지침대로 써서 첫 시도 통과. 마스터 프로브 잔재 3개 삭제(사용자 승인 — 통합 머지 커밋
+  a45bc7d 는 마스터에만 있던 자동 머지라 확인받고 삭제). 관찰 ⑴ 취소 work worktree 큐 대조 ⑵ 마스터 로컬 task/* 열거 → `#874`.
 - `master.client update` 여러 차례(커밋마다·ModularStage 포함) 모두 3대 OK. `.2` 홈 중복 스킬 경고가 `ax-work`·`ax-infer` 2개로 늘었다(#661 계열, 생성 시점 미확인).
 
 ## 플랜(SDD) 효능 축 — `#864`·`#865` 둘 다 닫음
@@ -71,7 +73,7 @@
 
 ## 사용자 답을 기다리는 것 / 다음
 
-1. 다음 일감 선택(열린 M7 일감에서 — 사용자가 고른다). 오늘 새로 연 일감은 전부 닫혔다(#866~#870). M7 버그/개선 열린 일감 0건(#851·#853 닫음).
+1. 다음 일감 선택(열린 M7 일감에서 — 사용자가 고른다). M7 버그/개선 열린 일감: `#874`(낮음) 하나. 오늘 연 #866~#873 은 전부 닫힘(#873 은 프로브 work 이슈 — 취소로 종결).
 2. 앞 세션 설계 선택 확인 — 거절 기록은 getter 미주입(MCP·실 Redmine) 호출에서만 · MCP 래퍼 caller 빈칸.
 3. 앞 세션 미결: #839 ②·#840 ①·#791 D·#820·#372·#855 · #826 `next_steps` 표시.
 
