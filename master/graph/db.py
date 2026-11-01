@@ -1,3 +1,7 @@
+# AUTO-VERIFY FEEDBACK (attempt #2) — address ALL items and REMOVE this block before next submit:
+# - master/graph/db.py: 휘발 태그 `[PSEUDO]` 가 남아 있다
+# END AUTO-VERIFY FEEDBACK
+
 """클래스 그래프 SQLite 코어 — 스키마·연결 (소 1.1.2, 소 1.1.4).
 
 원본: `AgentTest/watcher/class_graph_db.py`.
