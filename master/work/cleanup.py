@@ -83,6 +83,7 @@ class HostPlan:
     keep_dirs: list = field(default_factory=list)        # [(task_id, 사유)]
     remote_attempts: int = 0                             # [중요] 세기만 한다
     park: str = ""                                       # main 으로 되돌릴 것인가
+    lag: str = ""                                        # `#333` ⓒ — main 이 origin/main 과 어긋난 정도
     errors: list = field(default_factory=list)
 
     @property
@@ -90,7 +91,10 @@ class HostPlan:
         s = (f"{self.host}: 브랜치 삭제 {len(self.delete)} · 보존 {len(self.keep)}"
              f" · 부산물 삭제 {len(self.drop_dirs)} · 보존 {len(self.keep_dirs)}")
         if self.park:
-            s += f" · {self.current} → {self.park} 복귀"
+            s += (f" · {self.current} → {self.park} 복귀" if self.current != self.park
+                  else f" · {self.park} 를 origin/{self.park} 로 앞당긴다") + (f" ({self.lag})" if self.lag else "")
+        elif self.lag:
+            s += f" · {self.lag}"
         if self.remote_attempts:
             s += f" · 원격 attempt {self.remote_attempts}건(건드리지 않음)"
         if self.errors:
@@ -188,6 +192,29 @@ def survey(facts, *, base_branch: str = "main", closed=None, runner=None) -> Hos
                                       + ", ".join(first)))
         else:
             p.park = base_branch
+    elif p.current == base_branch:
+        # 🔴 `#333` ⓒ (사용자 결정 2026-11-01, (가)) — 사이클이 중간에 죽어 #871 의 복귀(-B main origin/main)를
+        #    못 탔으면 로컬 main 이 옛 트리로 남는다. 보이고, 깨끗하고 **앞선 커밋이 없을 때만** 앞당긴다
+        #    (`merge --ff-only` — 커밋을 잃는 경로가 없다). 재지 못하면 아무것도 하지 않는다.
+        rb, ob = _git(facts, f"rev-list --count {base_branch}..origin/{base_branch}", runner=runner)
+        ra, oa = _git(facts, f"rev-list --count origin/{base_branch}..{base_branch}", runner=runner)
+        try:
+            behind = int(ob.strip()) if rb == 0 else None
+            ahead = int(oa.strip()) if ra == 0 else None
+        except ValueError:
+            behind = ahead = None
+        if behind is None or ahead is None:
+            p.lag = f"{base_branch} 뒤처짐을 재지 못했다 — 앞당기지 않는다"
+        elif ahead:
+            p.lag = f"{base_branch} 에 origin 에 없는 커밋 {ahead}개 — 사람이 볼 것(앞당기지 않는다)"
+        elif behind:
+            rc, out = _git(facts, "status --porcelain -uno", runner=runner)
+            if rc != 0:
+                p.lag = f"{base_branch} 가 {behind} 커밋 뒤 · 더티 확인 실패 — 앞당기지 않는다"
+            elif out.strip():
+                p.lag = f"{base_branch} 가 {behind} 커밋 뒤 · 추적 파일이 더럽다 — 앞당기지 않는다"
+            else:
+                p.park, p.lag = base_branch, f"origin/{base_branch} 보다 {behind} 커밋 뒤"
 
     if closed is not None:
         _survey_dirs(facts, p, closed, runner=runner)
@@ -230,6 +257,10 @@ def apply(facts, plan: HostPlan, *, runner=None) -> dict:
         if rc == 0:
             done["parked"] = plan.park
             plan.keep = [(n, w) for n, w in plan.keep if w != "지금 체크아웃되어 있다"]
+            # `#333` ⓒ — 복귀한 main 을 origin 에 맞춘다. ff-only 라 커밋을 잃지 않는다(갈라졌으면 실패만 기록)
+            rc2, out2 = _git(facts, f"merge --ff-only -q origin/{plan.park}", runner=runner)
+            if rc2 != 0:
+                done["errors"].append(f"{plan.park} 앞당기기(ff) 실패 — 그대로 둔다: {out2.strip()[:80]}")
         else:
             done["errors"].append(f"{plan.park} 복귀 실패: {out.strip()[:80]}")
     for name, tip in plan.delete:

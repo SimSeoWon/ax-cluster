@@ -39,7 +39,8 @@ class Fake:
     """워커를 흉내낸다. **부른 명령을 전부 남긴다** — 무엇을 안 불렀는지가 계약이다."""
 
     def __init__(self, *, branches="", current="main", fetch_rc=0, dirs="",
-                 merged=(MERGED,), dirs_rc=0, status="", status_rc=0):
+                 merged=(MERGED,), dirs_rc=0, status="", status_rc=0, behind=0, ahead=0, lag_rc=0):
+        self.behind, self.ahead, self.lag_rc = behind, ahead, lag_rc
         self.branches, self.current, self.fetch_rc = branches, current, fetch_rc
         self.dirs, self.merged, self.dirs_rc = dirs, set(merged), dirs_rc
         self.status, self.status_rc = status, status_rc
@@ -62,6 +63,10 @@ class Fake:
             return (0 if tip in self.merged else 1), ""
         if "status --porcelain" in cmd:
             return self.status_rc, self.status
+        if "rev-list --count" in cmd:                 # `#333` ⓒ — main..origin/main · origin/main..main
+            if self.lag_rc:
+                return self.lag_rc, "fatal"
+            return 0, str(self.behind if ".." in cmd and cmd.split("rev-list --count ")[1].startswith("main..") else self.ahead)
         if "checkout " in cmd:
             return 0, ""
         if cmd.strip().startswith("ls -1") or "dir /b" in cmd:
@@ -375,13 +380,82 @@ def test_machine_scan_failures_333() -> None:
           p[0]["branch"] == "main" and p[1]["detached"] and p[1]["prunable"].startswith("gitdir"), str(p))
 
 
+def test_main_lag_sync_333() -> None:
+    """`#333` ⓒ (가) — main 이 뒤처졌으면 plan 이 보이고, 깨끗·앞선 커밋 없음일 때만 apply 가 ff 로 앞당긴다."""
+    r = Fake(current="main", behind=5)
+    p = C.survey(_facts(), runner=r)
+    check("#333 뒤처진 main → 앞당기기 계획 · 표시", p.park == "main" and "5 커밋 뒤" in p.summary, p.summary)
+    check("#333 survey 는 옮기지 않는다", not any(k in c for c in r.calls for k in ("checkout ", "merge ")), str(r.calls))
+    r2 = Fake()
+    done = C.apply(_facts(), p, runner=r2)
+    check("#333 apply — checkout main 뒤 merge --ff-only origin/main",
+          done["parked"] == "main" and any("merge --ff-only -q origin/main" in c for c in r2.calls), str(r2.calls))
+    check("#333 reset·-B 를 쓰지 않는다(커밋 잃는 경로 없음)",
+          not any("reset" in c or "checkout -B" in c for c in r2.calls), str(r2.calls))
+    pd = C.survey(_facts(), runner=Fake(current="main", behind=3, status=" M a.py\n"))
+    check("#333 추적 파일이 더러우면 앞당기지 않고 사유", not pd.park and "더럽다" in pd.lag, pd.summary)
+    pa = C.survey(_facts(), runner=Fake(current="main", behind=2, ahead=1))
+    check("#333 origin 에 없는 커밋이 있으면 앞당기지 않음(사람이 볼 것)", not pa.park and "사람이 볼 것" in pa.lag, pa.summary)
+    pu = C.survey(_facts(), runner=Fake(current="main", lag_rc=128))
+    check("#333 재지 못하면 아무것도 안 함", not pu.park and "재지 못했다" in pu.lag, pu.summary)
+    p0 = C.survey(_facts(), runner=Fake(current="main"))
+    check("#333 최신 main 이면 할 일 없음 · 표시 없음", not p0.park and not p0.lag, p0.summary)
+    pt = C.survey(_facts(), runner=Fake(branches=f"task/t1:{UNMERGED}\n", current="task/t1"))
+    d2 = C.apply(_facts(), pt, runner=Fake())
+    check("#333 우리 브랜치에서 복귀할 때도 main 을 ff 로 맞춘다", d2["parked"] == "main", str(d2))
+
+    class FF(Fake):
+        def __call__(self, facts, cmd):
+            if "merge --ff-only" in cmd:
+                self.calls.append(cmd)
+                return 1, "fatal: Not possible to fast-forward"
+            return Fake.__call__(self, facts, cmd)
+    d3 = C.apply(_facts(), C.survey(_facts(), runner=Fake(current="main", behind=1)), runner=FF())
+    check("#333 ff 실패는 기록만(그대로 둔다)", any("ff) 실패" in e for e in d3["errors"]), str(d3))
+
+
+def test_main_lag_real_git_333() -> None:
+    """`#333` ⓒ 실 git — 원격이 앞선 워커 클론: plan 이 N 뒤를 보이고 apply 가 ff 로 맞춘다."""
+    import os
+    import subprocess
+    import tempfile
+
+    def g(cwd, *a):
+        return subprocess.run(["git", "-C", str(cwd), *a], capture_output=True, text=True, check=True).stdout.strip()
+
+    def shell(facts, cmd):
+        p_ = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+        return p_.returncode, (p_.stdout or "") + (p_.stderr or "")
+    with tempfile.TemporaryDirectory() as td:
+        bare, seed, wk = (os.path.join(td, n) for n in ("o.git", "seed", "worker"))
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", bare], check=True)
+        subprocess.run(["git", "clone", "-q", bare, seed], check=True, capture_output=True)
+        for d in (seed,):
+            g(d, "config", "user.email", "t@t"); g(d, "config", "user.name", "t")
+        open(os.path.join(seed, "a"), "w").write("1\n")
+        g(seed, "add", "a"); g(seed, "commit", "-q", "-m", "1"); g(seed, "push", "-q", "origin", "main")
+        subprocess.run(["git", "clone", "-q", bare, wk], check=True, capture_output=True)
+        for i in (2, 3):                                               # 워커 클론 뒤 원격이 2 커밋 앞선다
+            open(os.path.join(seed, "a"), "w").write(f"{i}\n")
+            g(seed, "commit", "-qam", str(i))
+        g(seed, "push", "-q", "origin", "main")
+        f = _facts(path=wk)
+        p = C.survey(f, runner=shell)
+        check("#333 실 git — 2 커밋 뒤를 본다", p.park == "main" and "2 커밋 뒤" in p.lag, p.summary)
+        done = C.apply(f, p, runner=shell)
+        check("#333 실 git — apply 뒤 로컬 main == origin/main",
+              not done["errors"] and g(wk, "rev-parse", "main") == g(bare, "rev-parse", "main"), str(done))
+        check("#333 실 git — 다시 보면 할 일 없음", not C.survey(f, runner=shell).park)
+
+
 def main() -> int:
     for fn in (test_only_merged_is_deleted, test_format_has_no_space, test_uncertain_is_kept, test_current_branch_kept,
                test_never_touches_remote, test_artifacts, test_path_traversal,
                test_apply_follows_plan_only, test_park_to_main,
                test_remote_only_merged_is_deleted, test_remote_ls_failure_judges_nothing,
                test_remote_apply_follows_plan_only, test_machine_scan_real_git_333,
-               test_machine_scan_failures_333):
+               test_machine_scan_failures_333, test_main_lag_sync_333,
+               test_main_lag_real_git_333):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_cleanup: {PASS}/{total} 통과")
