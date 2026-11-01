@@ -132,6 +132,65 @@ def test_union_tags_excludes_dead_nodes():
     assert union_tags([_bc250(healthy=False), _rtx()]) == sorted({CODER, "gemma3:12b"})
 
 
+
+# ── #853 노드별 동시 요청 상한 ──────────────────────────────────
+
+def _hot(name, host="h:1"):
+    return Endpoint(name, host, models=[CODER], resident=CODER, healthy=True)
+
+
+def test_cap_skips_full_resident_node_853():
+    a, b = _hot("a"), _hot("b")
+    ep, why = choose([a, b], CODER, {"a": 2, "b": 1}, cap=2)
+    assert ep is b, why
+
+
+def test_cap_all_resident_full_is_saturated_no_reload_853():
+    """상주 노드가 전부 차면 즉시 None(포화) — 비상주 노드 재적재로 흘리지 않는다."""
+    a = _hot("a")
+    cold = Endpoint("cold", "c:1", models=[CODER], resident="other:1b", healthy=True, prefer=[CODER])
+    ep, why = choose([a, cold], CODER, {"a": 2}, cap=2)
+    assert ep is None and "포화" in why and "#853" in why, why
+
+
+def test_cap_under_limit_keeps_old_choice_853():
+    a, b = _hot("a"), _hot("b")
+    assert choose([a, b], CODER, {"a": 1, "b": 1}, cap=2)[0] is a     # 같으면 목록 순서(종전)
+
+
+def test_cap_released_node_comes_back_853():
+    a = _hot("a")
+    assert choose([a], CODER, {"a": 2}, cap=2)[0] is None
+    assert choose([a], CODER, {"a": 1}, cap=2)[0] is a
+
+
+def test_cap_zero_is_unlimited_853():
+    a = _hot("a")
+    assert choose([a], CODER, {"a": 99}, cap=0)[0] is a
+    assert choose([a], CODER, {"a": 99})[0] is a                       # 기본값 = 종전 동작
+
+
+def test_cap_cold_path_skips_full_and_saturates_853():
+    """상주가 없을 때 — prefer·폴백도 찬 노드는 건너뛰고, 전부 차면 포화."""
+    p = Endpoint("p", "p:1", models=[CODER], resident=None, healthy=True, prefer=[CODER])
+    q = Endpoint("q", "q:1", models=[CODER], resident=None, healthy=True)
+    assert choose([p, q], CODER, {"p": 2}, cap=2)[0] is q
+    ep, why = choose([p, q], CODER, {"p": 2, "q": 2}, cap=2)
+    assert ep is None and "포화" in why, why
+
+
+def test_server_node_cap_env_853():
+    import importlib
+    import os
+    from master.broker import server as S
+    for raw, want in (("", 4), ("3", 3), ("0", 0), ("-1", 0), ("x", 4)):
+        os.environ["AX_BROKER_NODE_CAP"] = raw
+        assert S._node_cap() == want, (raw, S._node_cap())
+    os.environ.pop("AX_BROKER_NODE_CAP", None)
+    importlib.reload(S)
+    assert S.NODE_CAP == 4 == S.DEFAULT_NODE_CAP      # 사용자 결정 2026-11-01(②)
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = 0

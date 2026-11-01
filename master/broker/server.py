@@ -46,6 +46,27 @@ HEALTH_INTERVAL_SEC = int(os.environ.get("AX_BROKER_HEALTH_SEC", "30"))
 _TIMEOUT = httpx.Timeout(connect=5.0, read=900.0, write=60.0, pool=10.0)
 
 
+DEFAULT_NODE_CAP = 4
+
+
+def _node_cap() -> int:
+    """노드별 동시 요청 상한 (`#853`). `AX_BROKER_NODE_CAP` · 기본 4(실행 1 + 대기 3) · 0 = 무제한.
+    [DOC] 기본 4 는 사용자 결정(2026-11-01): 2 면 실측 동시 7건(상주 2노드) 중 3건이 즉시 503 이 됐다 —
+          지금 성공하는 묶음을 거절하지 않으면서 무한 적체(900초 대기 끝 실패)만 막는 값.
+    잘못된 값은 기본값으로 — 상한을 조용히 끄지 않는다."""
+    import os
+    raw = os.environ.get("AX_BROKER_NODE_CAP", "").strip()
+    try:
+        v = int(raw) if raw else DEFAULT_NODE_CAP
+    except ValueError:
+        log.warning("[cap] AX_BROKER_NODE_CAP=%r 해석 불가 — 기본 %d", raw, DEFAULT_NODE_CAP)
+        return DEFAULT_NODE_CAP
+    return max(0, v)
+
+
+NODE_CAP = _node_cap()
+
+
 def create_app():
     """ASGI 앱. 반환형이 `FastAPI` 가 아니라 **인증 미들웨어로 감싼 ASGI 콜러블**이다."""
     endpoints, pins = load_endpoints()
@@ -89,6 +110,7 @@ def create_app():
         app.state.task = asyncio.create_task(health_loop())
         log.info("브로커 기동 — 엔드포인트 %d개: %s", len(endpoints),
                  ", ".join(f"{e.name}({'up' if e.healthy else 'DOWN'})" for e in endpoints))
+        log.info("[cap] 노드별 동시 요청 상한 %d (0=무제한 · AX_BROKER_NODE_CAP) — #853", NODE_CAP)
 
     @app.on_event("shutdown")
     async def _shutdown():
@@ -108,6 +130,7 @@ def create_app():
              "models": e.models, "inflight": state["inflight"].get(e.name, 0),
              "last_error": e.last_error}
             for e in endpoints],
+            "node_cap": NODE_CAP,                        # `#853` — 0 = 무제한
             "recent": list(state["recent"])[::-1]}     # 최신이 앞
 
     # ── Ollama 호환 표면 ──────────────────────────────────────
@@ -129,7 +152,7 @@ def create_app():
         model = (body.get("model") or "").strip()
         if not model:
             return JSONResponse({"error": "model 필드가 필요하다"}, status_code=400)
-        ep, why = choose(endpoints, model, state["inflight"])     # `#715` 처리 중 요청이 적은 쪽
+        ep, why = choose(endpoints, model, state["inflight"], cap=NODE_CAP)  # `#715` 적은 쪽 · `#853` 상한
         if ep is None:
             # [중요] fail-closed — 아무 노드에나 보내면 그쪽에서 pull 이 터진다.
             log.warning("[route] 거부 model=%s — %s", model, why)

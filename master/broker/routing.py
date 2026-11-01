@@ -43,7 +43,7 @@ def _has_model(ep: Endpoint, model: str) -> bool:
 
 
 def choose(endpoints: list[Endpoint], model: str,
-           inflight: Optional[dict] = None) -> tuple[Optional[Endpoint], str]:
+           inflight: Optional[dict] = None, cap: int = 0) -> tuple[Optional[Endpoint], str]:
     """모델을 처리할 엔드포인트 선택. (선택, 사유) 반환. 없으면 (None, 사유).
 
     우선순위 — 재적재 비용을 피하는 순서다:
@@ -53,6 +53,13 @@ def choose(endpoints: list[Endpoint], model: str,
          노드만 골라, 같은 모델이 둘에 상주해도 한쪽만 일했다. 같으면 목록 순서(종전과 같다)
       2. 건강 + 보유 + `prefer` 에 지정됨     → 설계상 그 모델의 집
       3. 건강 + 보유                          → 폴백 (재적재를 물지만 응답은 된다)
+
+    🔴 `cap` (`#853`) — 노드별 동시 요청 상한(0 = 무제한, 종전 동작). 노드의 실효
+    `OLLAMA_NUM_PARALLEL` 은 이미 1 이라 넘친 요청은 노드 대기열(512)에 쌓여 브로커 읽기
+    타임아웃(900초)까지 기다리다 죽었다(09-19 `.2` inflight=4). 상한에 찬 노드는 건너뛰고,
+    후보가 전부 차면 **즉시 (None, "포화 …")** — 호출자가 503 으로 바로 안다.
+    [중요] 상주 노드가 전부 포화여도 **다른 노드 재적재로 흘리지 않는다** — 부하 중인 클러스터에
+    가장 비싼 일(적재)을 얹는 경로다(2026-08-15 보드 정지 · `#105`).
     """
     alive = [e for e in endpoints if e.healthy]
     if not alive:
@@ -61,18 +68,29 @@ def choose(endpoints: list[Endpoint], model: str,
     if not owners:
         return None, f"'{model}' 을 가진 건강한 엔드포인트가 없다"
 
+    load = inflight or {}
+
+    def _full(x: Endpoint) -> bool:
+        return cap > 0 and load.get(x.name, 0) >= cap
+
     hot = [e for e in owners
            if e.resident and _has_model(Endpoint(e.name, e.host, models=[e.resident]), model)]
     if hot:
-        load = inflight or {}
-        e = min(hot, key=lambda x: load.get(x.name, 0))     # min 은 같으면 앞의 것 — 목록 순서
+        free = [e for e in hot if not _full(e)]
+        if not free:
+            return None, (f"포화 — '{model}' 상주 노드 {len(hot)}곳이 모두 처리 중 상한 {cap}건이다 "
+                          f"(재적재로 흘리지 않는다 · #853)")
+        e = min(free, key=lambda x: load.get(x.name, 0))    # min 은 같으면 앞의 것 — 목록 순서
         return e, (f"{e.name}: 이미 상주 중 (적재 0)"
                    + (f" · 처리 중 {load.get(e.name, 0)} (상주 {len(hot)}곳 중 최소)"
                       if len(hot) > 1 else ""))
-    for e in owners:
+    room = [e for e in owners if not _full(e)]
+    if not room:
+        return None, (f"포화 — '{model}' 을 가진 노드 {len(owners)}곳이 모두 처리 중 상한 {cap}건이다 (#853)")
+    for e in room:
         if model in e.prefer:
             return e, f"{e.name}: prefer 지정 (재적재 필요)"
-    e = owners[0]
+    e = room[0]
     return e, f"{e.name}: 폴백 — prefer 노드가 죽었거나 미지정 (재적재 필요)"
 
 
