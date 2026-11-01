@@ -9,11 +9,12 @@
 
 ## 상태
 
-- **갱신**: 2026-11-01 17:55 KST · Claude · 사용자 지시
-- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`a8c300a`(+ 이 인계서, 커밋 여부는 git 으로 확인) · 그 외 작업 트리 clean.
-- **마운트**: **AXCluster**(#863 T1 로 MotionForge→NS→AXCluster 왕복 뒤 복귀). 배달은 복귀 align 으로 `a8c300a` 기준
-  3대 — 이후 커밋이 이 인계서 하나면 `check` 의 출처 커밋 대조만 어긋난다(배달물 변화 없음, 다음 update 는 승인 받아).
-  MotionForge·NS 도 이번 전환으로 3대 최신·check OK. `.2` 에 `C:\trunk\MotionForge`·`C:\trunk\NS` 를 **새로 클론**했다(부트스트랩).
+- **갱신**: 2026-11-01 18:35 KST · Claude · 사용자 지시
+- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`020cffd`(#866 finalize 머지 · + 이 인계서, 커밋 여부는 git 으로 확인) · 그 외 작업 트리 clean.
+- **마운트**: **AXCluster**(#863 에서 MotionForge→NS→AXCluster, ModularStage→AXCluster 왕복 뒤 복귀). 배달은 이 인계서
+  커밋 직후 update 로 맞춘다 — 그 뒤 커밋이 생기면 `check` 출처 대조만 어긋난다(다음 update 는 승인 받아).
+  MotionForge·NS·ModularStage 도 이번 세션에 3대 최신·check OK. `.2` 에 `C:\trunk\MotionForge`·`C:\trunk\NS` 를 **새로 클론**했다.
+  [주의] 커밋 직후 마운트 전환 align 은 #831 가드로 실패한다(문서 커밋도) → CLI update 로 우회 · `#868`.
 - **서비스**: 11-01 15:48 재부팅으로 `ax-task-queue`·`ax-broker`·`ax-projects` 재기동(이번 세션 재기동 없음).
   [주의] `.2` 도 재부팅됐는지는 미확인 — 세션 1 과제는 `janus` 로그인이 있어야 돈다.
 - **지휘 기록**: 마스터 담당 `claude`(10-21 기록 — 이번 인수 미기록, 사용자 지시 없음) · 워커 전역 `codex`(10-18).
@@ -33,10 +34,11 @@
   검사 수치 OK·N경우·rc · 작업 커밋(`종류(#N…)`) 범위 이탈 · 플랜 갱신 분류(저널 description 전후) · 착수 리드.
   #862 범위 이탈 0% · 대상 확장 1회 · 착수 0.29h. 비교: 착수 리드 중앙 기준선 2.73h(13/32) vs 플랜 2.94h(3/3) — 차이 없음.
   남는 한계: 「대상」 칸 토큰이 적으면 이탈 과대(#857 76%) · 종결 직전 플랜 부착은 착수 아님(#852).
-- `#863` T1 — `.43` 폐기 페이로드 잔재(worker_daemon·ax_safety) 정리 실증: MotionForge·NS 전환 align 이 지웠고
-  4체크아웃 전부 없음 확인, check 3대 OK. **T2(실컴파일 빌드)·T3(실 SSH 파견)는 실제 사건 대기 — 일감 열림.**
-  ModularStage 는 `4cd229f` 이후 커밋이 없어 T2 를 일으킬 리비전이 아직 없다.
-- `master.client update` 3회(`68f87eb`·`c521568`·`03fa5a6`) 모두 3대 OK. `.2` 홈 중복 스킬 경고가 `ax-work`·`ax-infer` 2개로 늘었다(#661 계열, 생성 시점 미확인).
+- `#863` — **완료로 닫음**. T1 `.43` 잔재 정리(MotionForge·NS 전환 align, 4체크아웃 확인) · T2 `.2` touch 드라이런으로
+  `build_step` PASS 실컴파일(UBT `Compile Module.ModularStage.cpp`·58.3초) · T3 실 work `20261101_1818_863_t3_…`(#866)
+  `.43` codex 파견 → 워커 커밋 → ⑦ 전진 `e27b0258→e7b415a4` → finalize `main` `020cffd`(F541 한 줄) · check 3대 OK.
+  codex 입력 35만 토큰(캐시 91%). 미확인(FAIL 경로·Windows 세션 1)은 **`#867`**, #831 가드 문제는 **`#868`**.
+- `master.client update` 4회(`68f87eb`·`c521568`·`03fa5a6`·ModularStage) 모두 3대 OK. `.2` 홈 중복 스킬 경고가 `ax-work`·`ax-infer` 2개로 늘었다(#661 계열, 생성 시점 미확인).
 
 ## 플랜(SDD) 효능 축 — `#864`·`#865` 둘 다 닫음
 
@@ -45,7 +47,7 @@
 
 ## 사용자 답을 기다리는 것 / 다음
 
-1. 다음 일감 선택(열린 M7 일감에서 — 사용자가 고른다).
+1. 다음 일감 선택(열린 M7 일감에서 — 사용자가 고른다). 오늘 새로 연 것: `#867`·`#868`.
 2. 앞 세션 설계 선택 확인 — 거절 기록은 getter 미주입(MCP·실 Redmine) 호출에서만 · MCP 래퍼 caller 빈칸.
 3. 앞 세션 미결: #839 ②·#840 ①·#791 D·#820·#372·#855 · #826 `next_steps` 표시.
 
@@ -60,5 +62,6 @@
 ## 열려 있지만 별개인 것 (기록 시점 — Redmine 재조회)
 
 - AXCluster 큐 고아 태스크 10건·스풀 26묶음 — 손대지 않음 · 마스터 worktree 2개(#333) · #709 · #211 · #650
+- 골조용 worktree `/home/sim/ax-863-skel`(로컬 브랜치 `task/20261101_1818_…/base`, 원격은 정리됨·내용은 main) — 정리 승인 대기
 - 전환 인계 조사가 보고한 잔여(손대지 않음): MotionForge 미병합 durable `task/20261009_0051_motionforge_aac50fe6/r1/0906d6fc`
   (사람 몫)·스풀 2 · NS 고아 태스크 2·스풀 1
