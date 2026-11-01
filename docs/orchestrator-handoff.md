@@ -9,8 +9,8 @@
 
 ## 상태
 
-- **갱신**: 2026-11-01 21:35 KST · Claude · 사용자 지시
-- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`6b1fa78`(+ 이 인계서, 커밋 여부는 git 으로 확인) · 그 외 작업 트리 clean.
+- **갱신**: 2026-11-01 21:55 KST · Claude · 사용자 지시
+- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`53f5b7d`(+ 이 인계서, 커밋 여부는 git 으로 확인) · 그 외 작업 트리 clean.
 - **마운트**: **AXCluster**(#863 에서 MotionForge→NS→AXCluster, ModularStage→AXCluster 왕복 뒤 복귀). 배달은 이 인계서
   커밋 직후 update 로 맞춘다 — 그 뒤 커밋이 생기면 `check` 출처 대조만 어긋난다(다음 update 는 승인 받아).
   MotionForge·NS·ModularStage 도 이번 세션에 3대 최신·check OK. `.2` 에 `C:\trunk\MotionForge`·`C:\trunk\NS` 를 **새로 클론**했다.
@@ -59,6 +59,9 @@
   런처(AxConductor*)·AX_Ollama33 뿐. 단 AXCluster 워커 체크아웃 로컬 main 이 옛 커밋(.43 10-07)이라 데몬 소스가 남아 있었다
   → .43·.33 ff 로 정리 · 원인 `#871` **완료로 닫음** `6b1fa78`: 사이클 복귀가 `checkout -B main origin/main` 으로 로컬 main 을
   원격에 맞춘다(.2 드라이런 836004c→6931118). 세 워커 AXCluster main 모두 6931118. 게임 체크아웃은 다음 사이클부터 맞춰진다.
+- `#333` ⓐ **완료**(일감은 열림) — `53f5b7d` `cleanup plan` 끝 「기계 단위」 구역 · `cleanup machines`(읽기 전용, 쓰기 0):
+  마스터+트윈 미러+모든 작업장의 worktree(죽은 등록)·미추적·도달·지워진 원격 ref. 첫 실행이 미러의 `ax-review-788` worktree 를
+  처음 드러냈다. 남은 것: ⓑ 취소 work 삭제 예외 · ⓒ 중단 경로 복귀(둘 다 사용자 결정) · ④ 프로브 취소 게이트.
 - `master.client update` 여러 차례(커밋마다·ModularStage 포함) 모두 3대 OK. `.2` 홈 중복 스킬 경고가 `ax-work`·`ax-infer` 2개로 늘었다(#661 계열, 생성 시점 미확인).
 
 ## 플랜(SDD) 효능 축 — `#864`·`#865` 둘 다 닫음
@@ -82,6 +85,8 @@
 
 ## 열려 있지만 별개인 것 (기록 시점 — Redmine 재조회)
 
-- AXCluster 큐 고아 태스크 10건·스풀 26묶음 — 손대지 않음 · 마스터 worktree 2개(#333) · #709 · #211 · #650
+- AXCluster 큐 고아 태스크 10건·스풀 26묶음 — 손대지 않음 · #709 · #211 · #650
+- `cleanup plan` 이 보이는 잔재(삭제는 목록 확인·승인 뒤): 마스터 `ax-788-work`(도달 불가 — 커밋은 미러 refs/ax/pruned 보존)·
+  `ax-advance-…831…`(후보) · AXCluster 미러 `ax-review-20261010_1742_788_1_…`(도달 불가)
 - 전환 인계 조사가 보고한 잔여(손대지 않음): MotionForge 미병합 durable `task/20261009_0051_motionforge_aac50fe6/r1/0906d6fc`
   (사람 몫)·스풀 2 · NS 고아 태스크 2·스풀 1
