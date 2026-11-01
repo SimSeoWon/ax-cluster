@@ -1,3 +1,7 @@
+# AUTO-VERIFY FEEDBACK (attempt #2) — address ALL items and REMOVE this block before next submit:
+# - master/context_synth/recipes_read.py: 휘발 태그 `[PSEUDO]` 가 남아 있다
+# END AUTO-VERIFY FEEDBACK
+
 """레시피·안티패턴 **읽기** — 컨벤션 루프의 반대 방향 (`#267`).
 
 ## 왜 별 모듈인가
