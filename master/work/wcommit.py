@@ -218,7 +218,13 @@ def return_home_command(facts, home: str = HOME_BRANCH, branch: str = "",
     #    전부 `|| true`(윈도우 `|| ver >nul`)로 관용한다: 이미 없어도 사이클을 실패로 만들지
     #    않는다. 판정은 마지막 `rev-parse` 가 `main` 을 찍는가 하나다.
     tolerate = "ver >nul" if facts.windows else "true"
-    steps = [f'git checkout -q "{home}"']
+    # 🔴 [중요] `#871` — 복귀는 로컬 `main` 을 **원격에 맞춰 다시 세운다**(`-B home origin/home`).
+    #    종전 `checkout main` 은 로컬 main 을 앞당기지 않아, 사이클이 끝나면 언제 만든지 모를 옛
+    #    트리로 돌아갔다(실측 2026-11-01: .43 은 321 커밋 뒤 10-07 트리 — #861 이 지운 데몬 소스가
+    #    그대로였다). `origin/<home>` 은 사이클 시작의 `fetch --all` 로 최신이다. 이 클론은 파이프라인
+    #    소유라(바로 앞에서 `reset --hard`·`clean` 을 한다) 로컬 main 을 다시 세워도 잃을 것이 없다.
+    #    원격추적이 없으면(첫 클론 직후 등) 종전대로 로컬 main 으로 간다.
+    steps = [f'(git checkout -q -B "{home}" "origin/{home}" || git checkout -q "{home}")']
     if branch:
         steps.append(f'(git branch -D "{branch}" -q || {tolerate})')
     # 원격추적 캐시도 남기지 않는다 — 원격에서 지워도 prune 전까지 남는다(실측 2026-09-01)

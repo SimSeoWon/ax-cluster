@@ -186,6 +186,54 @@ def test_returns_to_main():
               c2.summary)
 
 
+
+def test_return_home_syncs_main_871():
+    """🔴 `#871` — 복귀는 로컬 `main` 을 `origin/main` 에 맞춘다(앞선 원격 · 갈라진 로컬 · 실패 경로)."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        facts, bare, base, worker = _world(tmp)
+        old_main = sh(worker, "git", "rev-parse", "main")
+        # 워커 클론을 만든 뒤 원격 main 이 앞서 나간다(다른 커밋이 쌓인 상황)
+        seed = tmp / "seed"
+        sh(seed, "git", "checkout", "-q", "main")
+        (seed / "NEW").write_text("y\n", encoding="utf-8")
+        sh(seed, "git", "add", "NEW")
+        sh(seed, "git", "commit", "-q", "-m", "main 2")
+        sh(seed, "git", "push", "-q", str(bare), "main")
+        new_main = _heads(bare)["main"]
+        check("#871 전제 — 워커 로컬 main 은 옛 커밋", old_main != new_main)
+        c = _verified_run(facts, {"task_id": TASK}, work_id=WORK, base_commit=base,
+                          want=[SRC], llm=_llm_writes(GOOD), ssh=_shell, reader=_reader,
+                          baseline=lambda p: KEEP_HDR if p == HDR else None)
+        check("#871 통과한다", c.ok, c.summary)
+        check("#871 복귀 뒤 로컬 main == origin/main(앞선 원격을 따라잡는다)",
+              sh(worker, "git", "rev-parse", "main") == new_main
+              and sh(worker, "git", "rev-parse", "--abbrev-ref", "HEAD") == "main",
+              sh(worker, "git", "rev-parse", "main"))
+        check("#871 트리도 새 main 이다(NEW 파일)", (worker / "NEW").exists())
+        # 갈라진 로컬 main(있어서는 안 되지만) — 파이프라인 소유 클론이라 원격에 맞춰 다시 세운다
+        (worker / "LOCAL").write_text("z\n", encoding="utf-8")
+        sh(worker, "git", "add", "LOCAL")
+        sh(worker, "git", "commit", "-q", "-m", "diverged")
+        c2 = _verified_run(facts, {"task_id": "bad871"}, work_id=WORK, base_commit=base,
+                           want=[SRC], llm=_llm_writes({SRC: "// [PSEUDO] 안 채웠다\n"}),
+                           ssh=_shell, reader=_reader)
+        check("#871 막힌(실패) 경로도 · 갈라진 로컬 main 도 origin/main 으로",
+              not c2.ok and sh(worker, "git", "rev-parse", "main") == new_main
+              and not (worker / "LOCAL").exists(), c2.summary)
+
+
+def test_return_home_command_shape_871():
+    """명령 모양 — `-B main origin/main` 을 먼저, 없으면 종전 `checkout main` 대비(리눅스·윈도우)."""
+    from master.work import wcommit as W
+    for win in (False, True):
+        f = _Facts("C:\\w" if win else "/w")
+        f.windows = win
+        cmd = W.return_home_command(f, branch="task/x/y", task_id="t1")
+        check(f"#871 {'윈도우' if win else '리눅스'}: -B main origin/main 뒤 대비",
+              '(git checkout -q -B "main" "origin/main" || git checkout -q "main")' in cmd, cmd)
+
+
 def test_worker_keeps_nothing() -> None:
     """🔴 **워커는 임시 저장소다 — 커밋하고 나면 아무것도 안 남는다** (사용자 2026-09-04).
 
@@ -569,7 +617,8 @@ def test_layer2_exception_keeps_traceback():
 
 def main() -> int:
     for fn in (test_no_pseudo_and_no_change_is_a_no_op_not_a_failure,
-               test_commands, test_returns_to_main, test_worker_keeps_nothing,
+               test_commands, test_returns_to_main, test_return_home_syncs_main_871,
+               test_return_home_command_shape_871, test_worker_keeps_nothing,
                test_happy_path, test_collects_delegations,
                test_collect_delegations_continues_after_failure, test_layer1_blocks_commit,
                test_layer1_block_records_what_the_conductor_said,

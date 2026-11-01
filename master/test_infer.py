@@ -149,6 +149,8 @@ def _fake_subbranch(monkey=True):
 def _fake_shell(bodies):
     """checkout·commit 명령을 흉내낸다. `bodies` 가 비면 커밋이 안 생긴 것으로 본다."""
     def ssh(facts, cmd, timeout):
+        if "rev-parse --abbrev-ref HEAD" in cmd:      # #871 복귀 명령(-B main origin/main)은 조각 체크아웃이 아니다
+            return 0, "main"
         if "checkout -q -B" in cmd:
             return 0, SUB_TIP
         if "git commit" in cmd:
@@ -1455,6 +1457,8 @@ def _run_retry(paths, q, *, sub_tip, merge_base=None, logs=None):
                           created=(sub_tip == base_commit))
 
     def ssh(facts, cmd, timeout):
+        if "rev-parse --abbrev-ref HEAD" in cmd:      # #871 복귀 명령(-B main origin/main)은 조각 체크아웃이 아니다
+            return 0, "main"
         if "checkout -q -B" in cmd:
             want = cmd.split('checkout -q -B ')[1].split()[1].strip('"')
             seen["checkout"].append(want)
