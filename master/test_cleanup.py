@@ -294,12 +294,94 @@ def test_remote_apply_follows_plan_only():
           not any("task/probe" in " ".join(x) for x in g.pushes))
 
 
+def test_machine_scan_real_git_333() -> None:
+    """`#333` ⓐ — 실 git: 죽은 등록·미추적·도달 불가·깨끗한 worktree · 지워진 원격의 추적 ref. 쓰기 0."""
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+    from master.work import cleanup as C
+
+    def g(cwd, *a):
+        return subprocess.run(["git", "-C", str(cwd), *a], capture_output=True, text=True, check=True).stdout.strip()
+    with tempfile.TemporaryDirectory() as td:
+        bare, repo = os.path.join(td, "o.git"), os.path.join(td, "r")
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", bare], check=True)
+        subprocess.run(["git", "clone", "-q", bare, repo], check=True, capture_output=True)
+        g(repo, "config", "user.email", "t@t"); g(repo, "config", "user.name", "t")
+        open(os.path.join(repo, "a"), "w").write("a\n")
+        g(repo, "add", "a"); g(repo, "commit", "-q", "-m", "a"); g(repo, "push", "-q", "origin", "main")
+        main_sha = g(repo, "rev-parse", "HEAD")
+        clean, dirty, dead, lost = (os.path.join(td, n) for n in ("wt-clean", "wt-dirty", "wt-dead", "wt-lost"))
+        g(repo, "worktree", "add", "-q", "--detach", clean, "main")
+        g(repo, "worktree", "add", "-q", "--detach", dirty, "main")
+        open(os.path.join(dirty, "new.txt"), "w").write("x\n")             # 미추적
+        g(repo, "worktree", "add", "-q", "--detach", dead, "main")
+        shutil.rmtree(dead)                                                   # 죽은 등록
+        g(repo, "worktree", "add", "-q", "-b", "probe", lost, "main")         # 이름 패턴 밖 · 미병합 커밋
+        open(os.path.join(lost, "p"), "w").write("p\n")
+        g(lost, "add", "p"); g(lost, "commit", "-q", "-m", "probe")
+        lost_sha = g(lost, "rev-parse", "HEAD")
+        g(repo, "update-ref", "refs/remotes/gw/ok", main_sha)                 # 지워진 원격 `gw`
+        g(repo, "update-ref", "refs/remotes/gw/only", lost_sha)
+        calls = []
+
+        def run(path, args):
+            calls.append(args)
+            return C._local_run(path, args)
+        r = C.scan_repo(run, repo, machine="m", label="P · worker")
+        cand = " | ".join(w for w, _ in r.candidates)
+        rev = " | ".join(f"{w} — {why}" for w, why in r.review)
+        check("#333 기준 ref = origin/main", r.base_ref == "origin/main", r.base_ref)
+        check("#333 worktree 4개 열거(주 트리 제외 · 이름 패턴 무관)", r.worktrees == 4, str(r))
+        check("#333 깨끗·도달 → 후보", "wt-clean" in cand, cand)
+        check("#333 미추적 있는 worktree → 볼 것(미추적 1)", "wt-dirty" in rev and "미추적 1" in rev, rev)
+        check("#333 죽은 등록(도달) → 후보 · prune 안내", "wt-dead" in cand
+              and any("죽은 등록" in why for w, why in r.candidates if "wt-dead" in w), str(r.candidates))
+        check("#333 미병합 커밋 worktree → 볼 것(도달 불가)", "wt-lost" in rev and "도달 불가" in rev, rev)
+        check("#333 지워진 원격 ref — 도달은 후보 · 유일 사본은 볼 것",
+              "refs/remotes/gw/ok" in cand and "refs/remotes/gw/only" in rev, f"{cand} // {rev}")
+        bad = [a for a in calls if any(w in a for w in ("prune", "remove", "delete", " -d", " -D",
+                                                         "update-ref", "push", "reset", "checkout", "clean"))]
+        check("🔴 #333 쓰기 명령 0 — 읽기 전용", bad == [], str(bad))
+        check("#333 실제로 아무것도 안 지웠다(죽은 등록·ref 그대로)",
+              "prunable" in g(repo, "worktree", "list", "--porcelain")
+              and g(repo, "rev-parse", "refs/remotes/gw/only") == lost_sha)
+        out = C.render_scan(r)
+        check("#333 출력 — 후보와 볼 것이 다른 줄", "    후보   " in out and "    볼 것  " in out, out)
+
+
+def test_machine_scan_failures_333() -> None:
+    """기준 ref 없음·목록 실패는 지울 것 후보를 만들지 않는다(전부 사람이 볼 것 · 오류 기록)."""
+    from master.work import cleanup as C
+
+    def run(path, args):
+        if args.startswith("rev-parse"):
+            return 1, ""
+        if args.startswith("worktree list"):
+            return 0, "worktree /r\nHEAD aaaa\nbranch refs/heads/main\n\nworktree /r-x\nHEAD bbbb\ndetached\n"
+        if args.startswith("status"):
+            return 0, ""
+        if args == "remote":
+            return 128, "fatal"
+        return 0, ""
+    r = C.scan_repo(run, "/r", machine="m")
+    check("#333 기준 ref 없음 → 후보 0 · 볼 것 1 · 오류 기록",
+          r.candidates == [] and len(r.review) == 1 and any("기준 ref" in e for e in r.errors), str(r))
+    check("#333 원격 목록 실패 → 추적 ref 판정 생략 기록", any("원격 목록 실패" in e for e in r.errors), str(r.errors))
+    p = C.parse_worktrees("worktree /a\nHEAD 1\nbranch refs/heads/main\n\nworktree /b\nHEAD 2\ndetached\n"
+                          "prunable gitdir file points to non-existent location\n")
+    check("#333 porcelain 해석 — 주 트리·detached·prunable",
+          p[0]["branch"] == "main" and p[1]["detached"] and p[1]["prunable"].startswith("gitdir"), str(p))
+
+
 def main() -> int:
     for fn in (test_only_merged_is_deleted, test_format_has_no_space, test_uncertain_is_kept, test_current_branch_kept,
                test_never_touches_remote, test_artifacts, test_path_traversal,
                test_apply_follows_plan_only, test_park_to_main,
                test_remote_only_merged_is_deleted, test_remote_ls_failure_judges_nothing,
-               test_remote_apply_follows_plan_only):
+               test_remote_apply_follows_plan_only, test_machine_scan_real_git_333,
+               test_machine_scan_failures_333):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_cleanup: {PASS}/{total} 통과")

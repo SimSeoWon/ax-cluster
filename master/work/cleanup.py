@@ -726,6 +726,208 @@ def sweep_terminal(paths=None, *, api=None, apply_: bool = True, logf=None) -> d
     return apply_terminal(paths, plan, api=api, logf=log)
 
 
+# ── ⓐ 기계 단위 열거 (`#333`) — **읽기 전용** ───────────────────────────────────
+#
+# [DOC] #333 ⓐ: `plan` 은 한 프로젝트의 워커 로컬 브랜치와 `.ax/work` 만 보고 worktree 는 0 이었다 —
+#       08-29·09-01·09-09 세 번 손으로 치운 잔재(요청자 검수·전진 worktree · 죽은 등록 · 지워진 원격의
+#       추적 ref · 같은 기계의 다른 프로젝트 소속)가 그때마다 「0건」 으로 보였다. 여기서는 **기계마다
+#       등록된 체크아웃 전부(모든 프로젝트) + 마스터 저장소**를 `git worktree list` 로 연다 — 이름 패턴
+#       금지(09-01 `ms-wt-probe` 는 `ax-wt-*` 밖이었다). 🔴 아무것도 지우지 않는다 · 쓰는 git 명령 0.
+#       안전 조건(09-01 미추적 유실): worktree 마다 미추적·수정 수를 싣고, 하나라도 있으면 「사람이 볼
+#       것」이다. 도달 가능성은 커밋만 본다 — 미추적은 따로 센다.
+
+@dataclass
+class RepoScan:
+    """저장소 하나의 열거 결과. `candidates`=[(무엇, 사유)] · `review`=[(무엇, 사유)]."""
+    machine: str
+    repo: str
+    label: str = ""                     # 프로젝트·역할
+    base_ref: str = ""
+    candidates: list = field(default_factory=list)
+    review: list = field(default_factory=list)
+    worktrees: int = 0
+    errors: list = field(default_factory=list)
+
+
+def parse_worktrees(text: str) -> list:
+    """`git worktree list --porcelain` → `[{path, head, branch, detached, prunable}]`. 첫 항목이 주 트리."""
+    out, cur = [], None
+    for raw in (text or "").splitlines():
+        line = raw.rstrip("\r")
+        if line.startswith("worktree "):
+            cur = {"path": line[len("worktree "):].strip(), "head": "", "branch": "",
+                   "detached": False, "prunable": ""}
+            out.append(cur)
+        elif cur is None:
+            continue
+        elif line.startswith("HEAD "):
+            cur["head"] = line[5:].strip()
+        elif line.startswith("branch "):
+            cur["branch"] = line[7:].strip().removeprefix("refs/heads/")
+        elif line == "detached":
+            cur["detached"] = True
+        elif line.startswith("prunable"):
+            cur["prunable"] = line[len("prunable"):].strip() or "prunable"
+    return out
+
+
+def _status_counts(text: str) -> tuple:
+    rows = [ln for ln in (text or "").splitlines() if ln.strip()]
+    untracked = sum(1 for ln in rows if ln.startswith("??"))
+    return untracked, len(rows) - untracked
+
+
+def scan_repo(run, repo: str, *, machine: str, label: str = "", base: str = "main") -> RepoScan:
+    """`run(path, args) -> (rc, out)` 로 `git -C <path> <args>` 를 돌려 열거한다. **읽기만 한다.**"""
+    r = RepoScan(machine=machine, repo=repo, label=label)
+    rc, out = run(repo, f"rev-parse --verify -q origin/{base}")
+    if rc == 0 and out.strip():
+        r.base_ref = f"origin/{base}"
+    else:
+        rc, out = run(repo, f"rev-parse --verify -q {base}")
+        r.base_ref = base if (rc == 0 and out.strip()) else ""
+    if not r.base_ref:
+        r.errors.append(f"기준 ref(origin/{base}·{base})가 없다 — 도달 판정을 못 한다(전부 사람이 볼 것)")
+
+    def reachable(sha: str):
+        if not sha or not r.base_ref:
+            return None
+        rc2, _ = run(repo, f"merge-base --is-ancestor {sha} {r.base_ref}")
+        return True if rc2 == 0 else (False if rc2 == 1 else None)
+
+    rc, out = run(repo, "worktree list --porcelain")
+    if rc != 0:
+        r.errors.append(f"worktree 목록 실패 ({out.strip()[:80]})")
+        wts = []
+    else:
+        wts = parse_worktrees(out)
+    r.worktrees = max(0, len(wts) - 1)
+    for w in wts[1:]:                                     # 첫 항목 = 주 트리(체크아웃 자신)
+        name = f"worktree {w['path']} @ {w['head'][:8] or '?'}" + (f" [{w['branch']}]" if w["branch"] else "")
+        reach = reachable(w["head"])
+        if w["prunable"]:
+            if reach:
+                r.candidates.append((name, f"죽은 등록({w['prunable']}) · HEAD 가 {r.base_ref} 에 도달 — "
+                                           "`git worktree prune` 은 관리 정보만 지운다"))
+            else:
+                r.review.append((name, f"죽은 등록({w['prunable']}) · HEAD 가 {r.base_ref or '기준'} 에 "
+                                       f"{'도달 불가' if reach is False else '도달 미판정'} — prune 하면 gc 대상이 될 수 있다"))
+            continue
+        rc, st = run(w["path"], "status --porcelain")
+        if rc != 0:
+            r.review.append((name, f"상태를 못 읽었다 ({st.strip()[:60]})"))
+            continue
+        un, mod = _status_counts(st)
+        why = []
+        if un:
+            why.append(f"미추적 {un}")
+        if mod:
+            why.append(f"수정 {mod}")
+        if reach is False:
+            why.append(f"HEAD 가 {r.base_ref} 에 도달 불가")
+        elif reach is None:
+            why.append("도달 미판정")
+        if why:
+            r.review.append((name, " · ".join(why) + " — 지우면 잃을 수 있다"))
+        else:
+            r.candidates.append((name, f"미추적 0 · 수정 0 · HEAD 가 {r.base_ref} 에 도달"))
+
+    rc, out = run(repo, "remote")
+    remotes = {x.strip() for x in out.splitlines() if x.strip()} if rc == 0 else None
+    if remotes is None:
+        r.errors.append("원격 목록 실패 — 추적 ref 판정 생략")
+        return r
+    rc, out = run(repo, "for-each-ref --format=%(refname):%(objectname) refs/remotes")
+    if rc != 0:
+        r.errors.append(f"추적 ref 목록 실패 ({out.strip()[:80]})")
+        return r
+    gone: dict = {}
+    for ln in out.splitlines():
+        if ":" not in ln:
+            continue
+        ref, sha = ln.strip().rsplit(":", 1)
+        parts = ref.split("/")
+        if len(parts) < 4 or parts[2] in remotes:
+            continue
+        gone.setdefault(parts[2], []).append((ref, sha))
+    for rem, refs in sorted(gone.items()):
+        for ref, sha in refs:
+            reach = reachable(sha)
+            what = f"추적 ref {ref} @ {sha[:8]} (원격 `{rem}` 이 없다)"
+            if reach:
+                r.candidates.append((what, f"{r.base_ref} 에 도달 — 지워도 잃는 커밋 없음"))
+            else:
+                r.review.append((what, f"{r.base_ref or '기준'} 에 {'도달 불가' if reach is False else '도달 미판정'}"
+                                       " — 이 ref 가 유일한 사본일 수 있다"))
+    return r
+
+
+def render_scan(r: RepoScan) -> str:
+    head = (f"  {r.machine} {r.repo}" + (f" ({r.label})" if r.label else "")
+            + f" — worktree {r.worktrees} · 지울 것 후보 {len(r.candidates)} · 사람이 볼 것 {len(r.review)}")
+    out = [head]
+    for e in r.errors:
+        out.append(f"    [주의] {e}")
+    for w, why in r.candidates:
+        out.append(f"    후보   {w} — {why}")
+    for w, why in r.review:
+        out.append(f"    볼 것  {w} — {why}")
+    return "\n".join(out)
+
+
+def _local_run(path: str, args: str) -> tuple:
+    import shlex
+    import subprocess
+    p = subprocess.run(["git", "-C", path, *shlex.split(args)], capture_output=True, text=True,
+                       timeout=GIT_TIMEOUT)
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def _remote_run(host: str, user: str, windows: bool):
+    def run(path: str, args: str) -> tuple:
+        if windows:                                        # cmd 는 큰따옴표 · POSIX 는 작은따옴표(fmt_arg 와 같은 이유)
+            spec = args.replace("--format=%(refname):%(objectname)", '--format="%(refname):%(objectname)"')
+        else:
+            spec = args.replace("--format=%(refname):%(objectname)", "--format='%(refname):%(objectname)'")
+        return bundle._ssh(host, user, f'git -C "{path}" {spec}', timeout=GIT_TIMEOUT)
+    return run
+
+
+def machine_targets(*, registry=None) -> list:
+    """`[(machine, run, [(repo, label)])]` — 마스터(로컬 저장소들) + 등록부의 모든 작업장(모든 프로젝트)."""
+    from pathlib import Path
+    from ..context_search.paths import resolve
+    from ..projects.config import Registry
+    reg = registry or Registry.load()
+    master_repos = [(str(Path(__file__).resolve().parents[2]), "마스터 개발 클론")]
+    by_host: dict = {}
+    for name in reg.names:
+        try:
+            master_repos.append((str(resolve(name, registry=reg).repo), f"{name} 트윈 미러"))
+        except Exception:                                    # noqa: BLE001
+            pass
+        try:
+            ws = bundle.workshops(name)
+        except Exception:                                    # noqa: BLE001
+            continue
+        for host, user, path, driven, role, _dp in ws:
+            if not (user and path):
+                continue
+            ent = by_host.setdefault(host, {"user": user, "windows": (":" in path[:3]), "repos": []})
+            tag = f"{name} · {role}" + (" · 사람 트리 — 보고만" if role != "worker" else "")
+            ent["repos"].append((path, tag))
+    out = [("마스터(.57)", _local_run, [(p, l) for p, l in master_repos if Path(p, ".git").exists()])]
+    for host, ent in sorted(by_host.items()):
+        out.append((host, _remote_run(host, ent["user"], ent["windows"]), ent["repos"]))
+    return out
+
+
+def survey_machines(targets=None) -> list:
+    return [scan_repo(run, repo, machine=m, label=label)
+            for m, run, repos in (targets if targets is not None else machine_targets())
+            for repo, label in repos]
+
+
 def main(argv) -> int:
     from ..context_search.paths import resolve
     from ..projects.config import ProjectConfig
@@ -820,8 +1022,14 @@ def main(argv) -> int:
         for e in done["errors"]:
             print(f"  [중요] {e}")
         return 1 if done["errors"] else 0
+    if cmd == "machines":
+        print("── 기계 단위 (#333 ⓐ · 읽기 전용 · 모든 프로젝트 · 마스터 포함) ──")
+        for scan in survey_machines():
+            print(render_scan(scan))
+        print("\n  [중요] 아무것도 지우지 않았다 — 읽기 전용 열거다.")
+        return 0
     if cmd not in ("plan", "apply"):
-        print("  plan | apply | remote [--apply] | terminal [프로젝트] [--apply]"
+        print("  plan | apply | machines | remote [--apply] | terminal [프로젝트] [--apply]"
               " | merged-subs [프로젝트] <work_id> [--apply]")
         return 2
     paths = resolve(argv[1] if len(argv) > 1 else "")
@@ -863,7 +1071,11 @@ def main(argv) -> int:
                         print(f"    [중요] {e}")
                         rc = 1
     if cmd == "plan":
-        print("\n  [중요] 아무것도 지우지 않았다. 실행하려면 `apply`.")
+        # `#333` ⓐ — 기계 단위(마스터 포함 · 모든 프로젝트) worktree·추적 ref. 읽기만 한다.
+        print("\n── 기계 단위 (#333 ⓐ · 읽기 전용 · 모든 프로젝트 · 마스터 포함) ──")
+        for scan in survey_machines():
+            print(render_scan(scan))
+        print("\n  [중요] 아무것도 지우지 않았다. 실행하려면 `apply`(기계 단위 항목은 apply 가 다루지 않는다).")
     return rc
 
 
