@@ -9,13 +9,14 @@
 
 ## 상태
 
-- **갱신**: 2026-11-01 18:35 KST · Claude · 사용자 지시
-- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`020cffd`(#866 finalize 머지 · + 이 인계서, 커밋 여부는 git 으로 확인) · 그 외 작업 트리 clean.
+- **갱신**: 2026-11-01 18:52 KST · Claude · 사용자 지시
+- **저장소**: `~/ax-cluster` · `main` · HEAD=`origin/main`=`e79fe5c`(+ 이 인계서, 커밋 여부는 git 으로 확인) · 그 외 작업 트리 clean.
 - **마운트**: **AXCluster**(#863 에서 MotionForge→NS→AXCluster, ModularStage→AXCluster 왕복 뒤 복귀). 배달은 이 인계서
   커밋 직후 update 로 맞춘다 — 그 뒤 커밋이 생기면 `check` 출처 대조만 어긋난다(다음 update 는 승인 받아).
   MotionForge·NS·ModularStage 도 이번 세션에 3대 최신·check OK. `.2` 에 `C:\trunk\MotionForge`·`C:\trunk\NS` 를 **새로 클론**했다.
-  [주의] 커밋 직후 마운트 전환 align 은 #831 가드로 실패한다(문서 커밋도) → CLI update 로 우회 · `#868`.
-- **서비스**: 11-01 15:48 재부팅으로 `ax-task-queue`·`ax-broker`·`ax-projects` 재기동(이번 세션 재기동 없음).
+  `#868` 로 **문서(`docs/`·`reports/`)만 바뀐 커밋은 전환 align 이 통과**한다. 코드 커밋 직후는 여전히 #831 가드로
+  막힌다 → CLI update 또는 `ax-projects` 재기동. [주의] 기동 커밋은 bundle **첫 import(첫 전환) 시점 HEAD** 다(`#869`).
+- **서비스**: 11-01 15:48 재부팅. `ax-projects` 만 18:46:58 재기동(사용자 승인, 실행 커밋 `f35d0da`).
   [주의] `.2` 도 재부팅됐는지는 미확인 — 세션 1 과제는 `janus` 로그인이 있어야 돈다.
 - **지휘 기록**: 마스터 담당 `claude`(10-21 기록 — 이번 인수 미기록, 사용자 지시 없음) · 워커 전역 `codex`(10-18).
 - **실행 중**: 없음.
@@ -38,7 +39,8 @@
   `build_step` PASS 실컴파일(UBT `Compile Module.ModularStage.cpp`·58.3초) · T3 실 work `20261101_1818_863_t3_…`(#866)
   `.43` codex 파견 → 워커 커밋 → ⑦ 전진 `e27b0258→e7b415a4` → finalize `main` `020cffd`(F541 한 줄) · check 3대 OK.
   codex 입력 35만 토큰(캐시 91%). 미확인(FAIL 경로·Windows 세션 1)은 **`#867`**, #831 가드 문제는 **`#868`**.
-- `#868` 진행 중 — T1 `f35d0da`(docs/·reports/ 만 바뀐 drift 는 align 허용) · T2 실측 중(ax-projects 18:46:58 재기동).
+- `#868` — **완료로 닫음**. `f35d0da` `code_drift()`: 기동..HEAD diff 가 전부 docs/·reports/ 면 허용, 그 밖·diff 실패는 거부.
+  실측: 문서만 커밋 `e79fe5c` 직후 AXCluster 복귀 align 3대 성공(오전 같은 조건 3대 실패) · CLI check OK. 빈틈은 **`#869`**.
 - `master.client update` 4회(`68f87eb`·`c521568`·`03fa5a6`·ModularStage) 모두 3대 OK. `.2` 홈 중복 스킬 경고가 `ax-work`·`ax-infer` 2개로 늘었다(#661 계열, 생성 시점 미확인).
 
 ## 플랜(SDD) 효능 축 — `#864`·`#865` 둘 다 닫음
@@ -48,7 +50,7 @@
 
 ## 사용자 답을 기다리는 것 / 다음
 
-1. 다음 일감 선택(열린 M7 일감에서 — 사용자가 고른다). 오늘 새로 연 것: `#867`·`#868`.
+1. 다음 일감 선택(열린 M7 일감에서 — 사용자가 고른다). 오늘 새로 연 것 중 열린 일감: `#867`·`#869`.
 2. 앞 세션 설계 선택 확인 — 거절 기록은 getter 미주입(MCP·실 Redmine) 호출에서만 · MCP 래퍼 caller 빈칸.
 3. 앞 세션 미결: #839 ②·#840 ①·#791 D·#820·#372·#855 · #826 `next_steps` 표시.
 
