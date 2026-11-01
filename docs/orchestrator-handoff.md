@@ -41,6 +41,7 @@
   codex 입력 35만 토큰(캐시 91%). 미확인(FAIL 경로·Windows 세션 1)은 **`#867`**, #831 가드 문제는 **`#868`**.
 - `#868` — **완료로 닫음**. `f35d0da` `code_drift()`: 기동..HEAD diff 가 전부 docs/·reports/ 면 허용, 그 밖·diff 실패는 거부.
   실측: 문서만 커밋 `e79fe5c` 직후 AXCluster 복귀 align 3대 성공(오전 같은 조건 3대 실패) · CLI check OK. 빈틈은 **`#869`**.
+- `#869` 진행 중 — T1 `ffaa139`(ax-projects 가 기동 때 bundle import → 기동 커밋 = 기동 시점 HEAD) · T2 실측 중(19:00:26 재기동).
 - `master.client update` 4회(`68f87eb`·`c521568`·`03fa5a6`·ModularStage) 모두 3대 OK. `.2` 홈 중복 스킬 경고가 `ax-work`·`ax-infer` 2개로 늘었다(#661 계열, 생성 시점 미확인).
 
 ## 플랜(SDD) 효능 축 — `#864`·`#865` 둘 다 닫음
