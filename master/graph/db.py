@@ -1,7 +1,3 @@
-# AUTO-VERIFY FEEDBACK (attempt #2) — address ALL items and REMOVE this block before next submit:
-# - master/graph/db.py: 휘발 태그 `[PSEUDO]` 가 남아 있다
-# END AUTO-VERIFY FEEDBACK
-
 """클래스 그래프 SQLite 코어 — 스키마·연결 (소 1.1.2, 소 1.1.4).
 
 원본: `AgentTest/watcher/class_graph_db.py`.
@@ -29,8 +25,6 @@ from __future__ import annotations
 import sqlite3
 import threading
 # [DOC] 이 모듈은 pathlib.Path 를 쓰지 않는다 — 공개 이름·시그니처는 그대로 둔다.
-# [PSEUDO] 바로 아래 줄 `from pathlib import Path` 는 미사용 import(pyflakes F401)다. 그 한 줄만 지운다 — 그 외 변경 금지.
-from pathlib import Path
 
 from .. import sqlite_util
 from ..context_search.paths import ProjectPaths
