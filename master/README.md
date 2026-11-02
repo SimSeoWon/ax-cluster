@@ -92,9 +92,10 @@ MCP가 없으면 같은 정본 `work.conductor.snapshot()`·`set_worker()`를 �
 | `work/autodispatch.py` | **자동 파견** (`#340`) — 골조 push·등재가 `ax-dispatch.path` 를 깨우면 끝까지 배당한다. 걸었는지와 왜 안 걸었는지를 **둘 다** `[dispatch]` 로 찍는다 · 세션 한도 보류는 `--resume` 으로만 푼다 |
 | `work/subbranch.py` | 정본 ⑷ — 조각마다 작업 브랜치에서 갈라진 **서브 브랜치**를 push 한 번으로 만든다(worktree·체크아웃 없음) |
 | `work/wcommit.py` | 정본 ⑸-a — **워커가 자기 서브 브랜치에 커밋**하는 사이클. 디스크에서 다시 읽어 층1 → 층2(`#696`) → 커밋·push → `main` 복귀 · 조각 브랜치·원격추적·`.ax/work/<task>` 정리 |
-| `work/lanes.py` | 본문 작성 **레인** — `DEFAULT_LANES` 가 정본(`codex → agy → 로컬`, 2026-09-06). fail-forward |
+| `work/lanes.py` | 본문 작성 **레인** — `DEFAULT_LANES` 가 정본(`agy → codex → claude → 로컬`, #788). 로컬은 클라우드 셋 모두 한도 소진일 때만(`work/llm_policy.py`) · 로컬 결과는 「재검증 필요」 표시 |
+| `work/revalidation.py` | **로컬 산출물 재검증** (#788·#840) — 표시 기록(`<트윈>/revalidation/records.json`) · 문서 재합성(`run_documents`) · 조각 정산(`settle_tasks`, LLM 0) · 조각 후보 생성(`run_tasks` — 클라우드만, 층1 통과분을 `task/<W>/r<N>/<T>-cloud` 로 push, 표시 유지). 매일 00시 `cloud_revalidation` 배치(`batch/run.py`)가 이 순서로 돈다. 채택은 ⑦ `advance_work(adopt=[…])` 의 사람 선택뿐 · 미채택 후보는 지우지 않고 cleanup·finalize 보고에 따로 나온다. 머리말을 못 읽는 문서는 「표시 없음」 + 요약 한 줄 |
 | `work/register.py` | 작업 등록 — `/distribute` 의 마스터 몫(원전 `executor_work_register.py` 이식) |
-| `work/review.py` | 요청자 검수·⑺ 전진(`advance_work`)·마감(`finalize_work`)·반려(`reject_work`). 기본은 `confirm=False` — 승인 발화가 트리거 |
+| `work/review.py` | 요청자 검수·⑺ 전진(`advance_work`)·마감(`finalize_work`)·반려(`reject_work`). 기본은 `confirm=False` — 승인 발화가 트리거 · ⑺ 은 로컬 생성 조각·클라우드 후보를 보이고 `adopt=[…]` 로 조각별 채택(#840, 기본은 원래 조각) |
 | `work/revise.py` | **상한 있는 재시도** (`#388`) — 층1 이 막은 조각에 고칠 기회를 준다. 인증 실패(`#721`)·한도는 재시도에서 뺀다 |
 | `work/handover.py` | 마운트 전환 인계 조사 (`#253`) — 남은 것을 다섯 부류 전부 이름으로 낸다 |
 | `work/conductor_auth.py` | **워커 Claude 인증 24시간 보관** (`#721`) — `claude auth status` 결과를 워커 홈 `.cache/ax-dispatch/claude-auth.json` 에. 자격 정보는 읽거나 저장하지 않는다. 재로그인 뒤 `force=True` (절차: `docs/14-onboarding-runbook.md` §14.2-4) |

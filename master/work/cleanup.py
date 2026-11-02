@@ -335,35 +335,128 @@ def _render(p: HostPlan) -> str:
 _CLEANUP_BASE_REF = "refs/ax/cleanup-base"
 
 
+CANDIDATE_LABEL = "클라우드 후보(미채택)"                 # `#840` T4
+REPLACED_LABEL = "채택으로 대체된 원래 조각"               # `#840` T4
+
+
 @dataclass
 class RemotePlan:
-    """원격 attempt/task 의 처분 계획. [중요] 판정 불가는 전부 「보존」 쪽으로 넘어진다."""
+    """원격 attempt/task 의 처분 계획. [중요] 판정 불가는 전부 「보존」 쪽으로 넘어진다.
+
+    `#840` T4 — 도달 불가(보존)분 중 클라우드 재검증 부류는 `keep` 이 아니라 따로 든다:
+    `candidates`(미채택 후보) · `replaced`(⑦ 에서 후보 채택으로 대체된 원래 조각). [중요] 둘 다
+    **지우지 않는다** — 사용자 결정(보고만). 도달 가능한 후보(채택분)는 종전대로 `delete` 다.
+    """
     delete: list = field(default_factory=list)       # [(ref, tip)] — 기준에서 도달 가능
     keep: list = field(default_factory=list)         # [(ref, tip, 사유)] — 사람 몫
+    candidates: list = field(default_factory=list)   # [(ref, tip, 사유)] — 미채택 후보 · 보존
+    replaced: list = field(default_factory=list)     # [(ref, tip, 사유)] — 대체된 원래 조각 · 보존
     error: str = ""
 
     def render(self) -> str:
-        out = [f"  원격(gitea-write): 삭제 후보 {len(self.delete)} · 보존 {len(self.keep)}"]
+        out = [f"  원격(gitea-write): 삭제 후보 {len(self.delete)} · 보존 {len(self.keep)}"
+               + (f" · {CANDIDATE_LABEL} {len(self.candidates)}" if self.candidates else "")
+               + (f" · {REPLACED_LABEL} {len(self.replaced)}" if self.replaced else "")]
         for ref, tip in self.delete:
             out.append(f"    [삭제] {ref} @ {tip[:8]} — 기준에서 도달 가능(병합됨)")
         for ref, tip, why in self.keep:
             out.append(f"    [보존] {ref} @ {tip[:8]} — {why}")
+        for ref, tip, why in self.candidates:
+            out.append(f"    [보존·{CANDIDATE_LABEL}] {ref} @ {tip[:8]} — {why}")
+        for ref, tip, why in self.replaced:
+            out.append(f"    [보존·{REPLACED_LABEL}] {ref} @ {tip[:8]} — {why}")
         if self.error:
             out.append(f"    [중요] {self.error}")
         return "\n".join(out)
 
 
-def survey_remote(paths, *, base_branch: str = "main", git=None) -> RemotePlan:
+def _piece_of(ref: str) -> str:
+    """`task/<W>/<T>` · `task/<W>/r<N>/<T>` 조각 이름이면 work_id, 아니면 "" (후보·base 제외)."""
+    from .branch_names import BASE_LEAF, parse_candidate
+    parts = ref.split("/")
+    if parse_candidate(ref) or len(parts) not in (3, 4) or parts[0] != "task":
+        return ""
+    if len(parts) == 3 and parts[2] == BASE_LEAF:
+        return ""
+    if len(parts) == 4 and not re.fullmatch(r"r\d+", parts[2]):
+        return ""
+    return parts[1]
+
+
+def _classify_candidates(repo, plan: "RemotePlan", bases: dict, *, git, log) -> None:
+    """`#840` T4 — `plan.keep`(도달 불가) 중 후보·대체된 원래 조각을 따로 옮긴다. **읽기만 한다.**
+
+    대체 판정의 증거는 ⑦ 채택 머지 제목(`review.parse_adopt_subject`)이다 — 기준 이력과, 로컬에
+    객체가 있는 작업 브랜치 팁에서 찾는다. 객체가 없거나 조회가 실패하면 그 조각은 종전대로
+    `keep` 에 남는다(「대체 아님」이 아니라 「모름」 — 로그로 밝힌다).
+    """
+    from .attempt import GitError
+    from .branch_names import parse_candidate
+    from .review import parse_adopt_subject, ADOPT_MARK
+    rest = []
+    for ref, tip, why in plan.keep:
+        if parse_candidate(ref):
+            plan.candidates.append((ref, tip, f"{why} · ⑦ 에서 채택되지 않았다 — 지우지 않는다(보고만 · #840)"))
+        else:
+            rest.append((ref, tip, why))
+    plan.keep = rest
+    works = sorted({w for w in (_piece_of(r) for r, _, _ in plan.keep) if w})
+    if plan.candidates:
+        log(f"{CANDIDATE_LABEL} {len(plan.candidates)}건 — 보존·보고만 (#840): "
+            + ", ".join(r for r, _, _ in plan.candidates[:6]))
+    if not works:
+        return
+    revs, unseen = [_CLEANUP_BASE_REF], []
+    for w in works:
+        tip = bases.get(w)
+        if not tip:
+            continue
+        try:
+            git(repo, "cat-file", "-e", f"{tip}^{{commit}}")
+            revs.append(tip)
+        except GitError:
+            unseen.append(w)
+    try:
+        out = git(repo, "log", "--merges", "--format=%s", "--fixed-strings",
+                  f"--grep={ADOPT_MARK}", *revs, "--")
+    except GitError as e:
+        log(f"[주의] 채택 이력 조회 실패 — 대체된 원래 조각을 가리지 못했다(보존은 그대로): {e}")
+        return
+    pairs = {}
+    for line in out.splitlines():
+        got = parse_adopt_subject(line)
+        if got:
+            pairs[got["durable"]] = got["candidate"]
+    rest = []
+    for ref, tip, why in plan.keep:
+        if ref in pairs:
+            plan.replaced.append((ref, tip, f"⑦ 에서 `{pairs[ref]}` 채택으로 대체 — 작업 브랜치에서도 "
+                                            f"도달 불가, 지우지 않는다(보고만 · #840)"))
+        else:
+            rest.append((ref, tip, why))
+    plan.keep = rest
+    if plan.replaced:
+        log(f"{REPLACED_LABEL} {len(plan.replaced)}건 — 보존·보고만 (#840): "
+            + ", ".join(r for r, _, _ in plan.replaced[:6]))
+    if unseen:
+        log(f"[주의] 작업 브랜치 객체가 로컬에 없다 — 대체 여부 모름(보존): {', '.join(unseen[:6])}")
+
+
+def survey_remote(paths, *, base_branch: str = "main", git=None, logf=None) -> RemotePlan:
     """gitea-write 의 attempt/*·task/* 를 세고 **기준 도달 가능성**으로 가른다.
 
     [중요] 기준 팁을 fetch 하면 그 조상 전부가 로컬에 온다 — 도달 가능한 팁은 반드시
     로컬에 존재하므로, `merge-base --is-ancestor` 가 객체 부재로 죽는 경우는 곧
     「도달 불가」다. 판정 실패의 방향은 언제나 보존이다.
+
+    `#840` T4 — 보존분 중 클라우드 후보(미채택)·채택으로 대체된 원래 조각은 `candidates`·
+    `replaced` 로 따로 든다(`_classify_candidates`). 지우는 판정은 바뀌지 않는다.
     """
     from pathlib import Path as _P
 
     from .attempt import WRITE_REMOTE, GitError, _git
     g = git or _git
+    log = logf or (lambda m: print(f"[cleanup] {m}", flush=True))
     repo = _P(paths.repo)
     p = RemotePlan()
     try:
@@ -374,16 +467,21 @@ def survey_remote(paths, *, base_branch: str = "main", git=None) -> RemotePlan:
     except GitError as e:
         p.error = f"원격을 못 봤다 — 아무것도 판정하지 않는다: {e}"
         return p
+    bases: dict = {}
     for ln in out.splitlines():
         parts = ln.split()
         if len(parts) != 2:
             continue
         tip, ref = parts[0], parts[1].removeprefix("refs/heads/")
+        bits = ref.split("/")
+        if len(bits) == 3 and bits[0] == "task" and bits[2] == "base":
+            bases[bits[1]] = tip
         try:
             g(repo, "merge-base", "--is-ancestor", tip, _CLEANUP_BASE_REF)
             p.delete.append((ref, tip))
         except GitError:
             p.keep.append((ref, tip, f"origin/{base_branch} 에 없다 — 병합 안 됨, 사람 몫"))
+    _classify_candidates(repo, p, bases, git=g, log=log)
     return p
 
 
@@ -435,6 +533,13 @@ class TerminalWork:
     refs: list = field(default_factory=list)          # [(ref, tip)] — ref 는 refs/heads/ 뗀 이름
     skip: str = ""                                    # 비어 있지 않으면 지우지 않는다(사유)
 
+    @property
+    def candidates(self) -> list:
+        """`#840` T4 — `refs` 중 클라우드 재검증 후보. [중요] 처분은 다른 ref 와 같다(취소 work 정책 ·
+        `refs/ax/pruned` 보존) — 사람이 따로 보게 **이름만** 가른다."""
+        from .branch_names import parse_candidate
+        return [(r, t) for r, t in self.refs if parse_candidate(r)]
+
 
 @dataclass
 class TerminalPlan:
@@ -452,9 +557,12 @@ class TerminalPlan:
         for w in self.works:
             head = (f"    work {w.work_id} · {w.status} · 레드마인 "
                     f"{('#' + w.issue_id) if w.issue_id else '(없음)'}")
-            out.append(head + (f" · [보존] {w.skip}" if w.skip else ""))
+            cands = {r for r, _ in w.candidates}
+            out.append(head + (f" · 클라우드 후보 {len(cands)}" if cands else "")
+                       + (f" · [보존] {w.skip}" if w.skip else ""))
             for ref, tip in w.refs:
-                out.append(f"      {'[보존]' if w.skip else '[삭제]'} {ref} @ {tip}  ({w.status})")
+                tag = ("[보존" if w.skip else "[삭제") + ("·클라우드 후보]" if ref in cands else "]")
+                out.append(f"      {tag} {ref} @ {tip}  ({w.status})")
         if not self.works and not self.error:
             out.append("    (종결 work 의 남은 브랜치 없음)")
         if self.error:
@@ -584,6 +692,12 @@ def _terminal_note(tw: TerminalWork, deleted: list, failed: list, remote: str) -
              "", "## 지운 ref 와 팁 (해시로 복원)"]
     for ref, tip in deleted:
         lines.append(f"- {ref} @ {tip}")
+    cands = {r for r, _ in tw.candidates}
+    gone = [(r, t) for r, t in deleted if r in cands]
+    if gone:
+        # `#840` T4 — 같은 정책으로 지웠지만 사람이 따로 보게 이름을 다시 적는다
+        lines += ["", f"## 그중 클라우드 재검증 후보 {len(gone)}건 (#840 — 미채택 상태로 취소됨)"]
+        lines += [f"- {ref} @ {tip}" for ref, tip in gone]
     lines += ["", "복원: git push " + remote + " <팁>:refs/heads/<ref>"]
     if failed:
         lines += ["", "## 지우지 못한 것"] + [f"- {ref}: {why[:160]}" for ref, why in failed]
@@ -638,6 +752,10 @@ def apply_terminal(paths, plan: TerminalPlan, *, api=None, git=None,
             done["skipped"].append((tw.work_id, why))
             continue
         deleted, failed = [], []
+        cand_refs = {r for r, _ in tw.candidates}
+        if cand_refs:
+            log(f"{tw.work_id}: 클라우드 후보 {len(cand_refs)}건도 취소 work 정책대로 지운다 "
+                f"(팁은 {PRUNED_NS} 에 보존 · #840): " + ", ".join(sorted(cand_refs)[:6]))
         for ref, tip in tw.refs:
             try:
                 kept = g(repo, "rev-parse", "--verify", "--quiet", f"{PRUNED_NS}/{ref}")
@@ -650,8 +768,9 @@ def apply_terminal(paths, plan: TerminalPlan, *, api=None, git=None,
             rc, out = _push_delete(repo, remote, ref, tip, allow_work=tw.work_id)
             if rc == 0:
                 deleted.append((ref, tip))
-                log(f"삭제 {ref} @ {tip} (work {tw.work_id} · {tw.status} · "
-                    f"복원: git push {remote} {tip}:refs/heads/{ref})")
+                log(f"삭제 {ref} @ {tip} (work {tw.work_id} · {tw.status}"
+                    + (" · 클라우드 후보 #840" if ref in cand_refs else "")
+                    + f" · 복원: git push {remote} {tip}:refs/heads/{ref})")
             else:
                 failed.append((ref, out))
                 log(f"[중요] 삭제 실패 {ref} @ {tip} — {out[:200]}")
@@ -751,7 +870,9 @@ def sweep_terminal(paths=None, *, api=None, apply_: bool = True, logf=None) -> d
     _report_kept_once(paths.name, {w.work_id: w.skip for w in plan.works if w.skip}, log)
     if not n:
         return {"deleted": [], "failed": [], "skipped": [], "notes": []}
-    log(f"{paths.name}: 종결 work 원격 브랜치 {n}건 정리 시작")
+    nc = sum(len(w.candidates) for w in plan.works if not w.skip)
+    log(f"{paths.name}: 종결 work 원격 브랜치 {n}건 정리 시작"
+        + (f" (그중 클라우드 후보 {nc}건 · #840)" if nc else ""))
     if not apply_:
         return {"deleted": [], "failed": [], "skipped": [], "notes": [], "plan": plan}
     return apply_terminal(paths, plan, api=api, logf=log)
@@ -1055,6 +1176,14 @@ def survey_machines(targets=None, *, work_status=None) -> list:
             for repo, label in repos]
 
 
+def subbranch_label(ref: str, reachable: bool) -> str:
+    """`merged-subs` 의 줄 머리. `#840` T4 — 클라우드 후보는 이름으로 따로 단다(판정은 그대로)."""
+    from .branch_names import is_candidate
+    if is_candidate(ref):
+        return "[삭제·클라우드 후보(채택분)]" if reachable else f"[보존·{CANDIDATE_LABEL}]"
+    return "[삭제]" if reachable else "[보존]"
+
+
 def main(argv) -> int:
     from ..context_search.paths import resolve
     from ..projects.config import ProjectConfig
@@ -1087,6 +1216,7 @@ def main(argv) -> int:
         from pathlib import Path as _P
 
         from .attempt import WRITE_REMOTE, _git
+        from .branch_names import is_candidate as _is_candidate
         from .review import prune_merged_subbranches, work_base_branch
         pos = [a for a in argv[1:] if not a.startswith("--")]
         if not pos:
@@ -1109,17 +1239,21 @@ def main(argv) -> int:
             if len(parts) != 2:
                 continue
             ref, tip = parts[1][len("refs/heads/"):], parts[0]
+            cand = _is_candidate(ref)
             m = re.match(rf"^task/{re.escape(wid)}/r(\d+)/[^/]+$", ref)
             if not m:
-                print(f"    [보존] {ref} @ {tip} — 서브 브랜치가 아니다")
+                print(f"    [보존{'·클라우드 후보' if cand else ''}] {ref} @ {tip} — 서브 브랜치가 아니다"
+                      + (" (라운드 없는 후보 — 이 명령의 대상 밖 · #840)" if cand else ""))
                 continue
             rc = 0
             try:
                 _git(repo, "merge-base", "--is-ancestor", tip, tracking)
             except Exception:                              # noqa: BLE001
                 rc = 1
-            print(f"    {'[삭제]' if rc == 0 else '[보존]'} {ref} @ {tip}"
-                  + ("" if rc == 0 else f" — {tracking} 에서 도달 불가"))
+            print(f"    {subbranch_label(ref, rc == 0)} {ref} @ {tip}"
+                  + ("" if rc == 0 else f" — {tracking} 에서 도달 불가")
+                  + ("" if not cand else (" — 채택돼 작업 브랜치에 들어간 후보" if rc == 0 else
+                                          " — 미채택 후보, 지우지 않는다(보고만 · #840)")))
             if rc == 0:
                 by_round.setdefault(int(m.group(1)), []).append(ref)
         if "--apply" not in argv:

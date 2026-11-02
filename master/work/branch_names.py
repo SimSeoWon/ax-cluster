@@ -41,6 +41,10 @@ import re
 DURABLE_PREFIX = "task"
 ATTEMPT_PREFIX = "attempt"
 BASE_LEAF = "base"                  # [중요] 예약어 — task_id 로 쓸 수 없다 (아래 `_check` 가 막는다)
+# `#840` 클라우드 재검증 후보의 접미어 — [중요] task_id 끝에 쓸 수 없다(아래 `_check` 가 막는다).
+#    큐가 짓는 task_id 는 `secrets.token_hex(4)`(16진 8자)라 실제로 겹칠 수 없지만, 그 사실을
+#    약속이 아니라 코드로 못박는다 — 그래야 `parse_durable`/`parse_candidate` 가 이름만으로 가른다.
+CANDIDATE_SUFFIX = "-cloud"
 
 # [중요] 서브 브랜치 위 **피드백 커밋**의 제목 접두어 (#805) — 워커에게 가는 지시이지 결과가
 #    아니다. 단일 정본은 여기다: `revise.embed_feedback` 가 쓰고(writer) `review` 의 재작업
@@ -71,6 +75,11 @@ def _check(kind: str, value: str) -> str:
         # [중요] 통과시키면 `task/<W>/base` 가 조각 durable 과 같은 이름이 된다 — 작업
         #    브랜치를 조각으로 착각해 머지·정리가 조용히 어긋난다.
         raise BranchNameError(f"task_id 로 {BASE_LEAF!r} 를 쓸 수 없다 — 작업 브랜치의 예약어다")
+    if kind == "task_id" and v.endswith(CANDIDATE_SUFFIX):
+        # [중요] 통과시키면 조각 `task/<W>/<T>-cloud` 가 조각 `<T>` 의 클라우드 후보와 같은 이름이
+        #    된다 — 정리가 조각을 후보로(또는 그 반대로) 읽는다 (`#840`).
+        raise BranchNameError(f"task_id 가 {CANDIDATE_SUFFIX!r} 로 끝날 수 없다 — "
+                              f"클라우드 재검증 후보 접미어의 예약어다 (#840)")
     return v
 
 
@@ -104,6 +113,18 @@ def durable_branch(work_id: str, task_id: str, round_no: int = 0) -> str:
     return f"{head}/r{int(round_no)}/{leaf}" if int(round_no or 0) > 0 else f"{head}/{leaf}"
 
 
+def candidate_branch(work_id: str, task_id: str, round_no: int = 0) -> str:
+    """클라우드 재검증 **후보** 브랜치 (#840) — 조각 브랜치의 형제 `…/<task_id>-cloud`.
+
+    [중요] 조각 브랜치 아래(`…/<task_id>/cloud`)에 두지 않는다 — `task/W/T` 와 `task/W/T/x` 는
+    ref 파일/디렉터리 충돌로 공존할 수 없다(위 ②). 접미어라 `review` 의 정확한 이름 머지에
+    끼지 않는다. 채택은 ⑦ 에서 사람이 조각별로 명시한다.
+    [중요] 이름만으로 가린다 — `parse_candidate` 가 읽고 `parse_durable` 은 `None` 을 낸다.
+    task_id 가 접미어로 끝날 수 없다는 것을 `_check` 가 못박으므로 둘이 겹치지 않는다.
+    """
+    return durable_branch(work_id, task_id, round_no) + CANDIDATE_SUFFIX
+
+
 def attempt_branch(work_id: str, task_id: str, workshop: str, ts: str) -> str:
     """1회용 시도 브랜치.
 
@@ -124,6 +145,10 @@ def is_attempt(name: str) -> bool:
 
 def is_base(name: str) -> bool:
     return parse_base(name) is not None
+
+
+def is_candidate(name: str) -> bool:
+    return parse_candidate(name) is not None
 
 
 def attempt_glob(work_id: str, task_id: str) -> str:
@@ -170,13 +195,42 @@ def parse_durable(name: str) -> dict | None:
     근거: NS bare 에 `task/62efc6a6`(첫 완주 산출물, 머지 갈래 미결) · `task/6ff986ed` 가
     실재한다. 모르는 격으로 두면 `cleanup`·`finalize` 의 도달 가능 판정에서 **조용히 빠져**
     영원히 남는다.
+
+    [중요] **클라우드 후보(`…/<T>-cloud`, `#840`)도 조각이 아니다** — `None`. 후보는
+    `parse_candidate` 가 읽는다(task_id 가 접미어로 끝날 수 없음은 `_check` 가 보장한다).
     """
     m = re.match(rf"^{DURABLE_PREFIX}/([^/]+)/([^/]+)$", name or "")
     if m:
-        if m.group(2) == BASE_LEAF:
+        if m.group(2) == BASE_LEAF or m.group(2).endswith(CANDIDATE_SUFFIX):
             return None
         return {"work_id": m.group(1), "task_id": m.group(2)}
     m = re.match(rf"^{DURABLE_PREFIX}/([^/]+)$", name or "")
     if not m:
         return None
     return {"work_id": None, "task_id": m.group(1), "legacy": True}
+
+
+def parse_candidate(name: str) -> dict | None:
+    """클라우드 재검증 후보 브랜치명 → `{work_id, task_id, round}`. 아니면 `None` (`#840`).
+
+        task/<W>/<T>-cloud          라운드 없는 조각의 후보 (round 0)
+        task/<W>/r<N>/<T>-cloud     라운드 N 조각의 후보
+
+    `candidate_branch` 의 역함수다 — 돌려준 값으로 `candidate_branch` 를 다시 부르면 같은 이름이
+    나온다. 그 왕복이 안 되는 이름(빈 task_id·예약어·허용 밖 문자)은 `None` 이다.
+    """
+    n = name or ""
+    m = re.match(rf"^{DURABLE_PREFIX}/([^/]+)/r(\d+)/([^/]+){re.escape(CANDIDATE_SUFFIX)}$", n)
+    if m:
+        wid, rnd, tid = m.group(1), int(m.group(2)), m.group(3)
+    else:
+        m = re.match(rf"^{DURABLE_PREFIX}/([^/]+)/([^/]+){re.escape(CANDIDATE_SUFFIX)}$", n)
+        if not m:
+            return None
+        wid, rnd, tid = m.group(1), 0, m.group(2)
+    try:
+        if candidate_branch(wid, tid, rnd) != n:
+            return None
+    except BranchNameError:
+        return None
+    return {"work_id": wid, "task_id": tid, "round": rnd}

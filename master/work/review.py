@@ -59,14 +59,16 @@ work 관련 **모든** 원격 브랜치를 지운다. 우리는 둘 때문에 �
 """
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import coordinator as C
 from .coordinator import GitError, _git, _git_rc
 from .branch_names import (
-    BranchNameError, base_branch as _base_branch, durable_branch, attempt_glob,
-    DURABLE_PREFIX, ATTEMPT_PREFIX, FEEDBACK_COMMIT_PREFIX,
+    BranchNameError, base_branch as _base_branch, durable_branch, candidate_branch,
+    parse_candidate, attempt_glob, DURABLE_PREFIX, ATTEMPT_PREFIX, FEEDBACK_COMMIT_PREFIX,
 )
 
 
@@ -116,6 +118,8 @@ class Integration:
     advanced: list = field(default_factory=list)
     rework_evidence: list = field(default_factory=list)
     missing_results: list = field(default_factory=list)
+    # `#840` — 원래 조각 대신 머지한 클라우드 후보 `[{task_id, durable, candidate, head}]`
+    adopted: list = field(default_factory=list)
     error: str = ""
 
 
@@ -139,6 +143,202 @@ def advanced_merge(repo: Path, remote: str, target_branch: str, work_id: str, du
         if subj.strip() == want:
             return sha.strip()
     return ""
+
+
+# ─────────────────────────────────────────────────────────────
+# `#840` — 로컬 생성 조각과 클라우드 재검증 후보 (⑦ 에서 사람이 조각별로 채택)
+# ─────────────────────────────────────────────────────────────
+#
+# [중요] 표지의 정본은 큐의 조각 본문 `## self_check` 다(`infer` → `runner.submit`). 큐의
+#    `GET /works/{id}` 는 본문을 싣지 않으므로, 실제로 닿는 것은 같은 사실을 담은
+#    `verdict_feedback`(조각 종결 판정문 — 표지가 있으면 `needs_revalidation=true` 가 붙는다)다.
+# [주의] 이 파일은 요청자에 배달된다 — `task_queue`·`revalidation` 을 임포트하지 않고 여기서
+#    직접 읽는다(배달 폐포 `test_client_bundle`). 정규식은 `logic_lifecycle._SELF_CHECK_RE` 와 같다.
+
+REVALIDATION_MARK = "needs_revalidation=true"
+_SELF_CHECK_BLOCK_RE = re.compile(r"\n## self_check\n```json\n(.*?)\n```\n", re.S)
+# 조각 종결 판정문의 유일한 작성처(`infer` wcommit) 머리 — 표지는 **같은 문자열에** 붙는다.
+#    그래서 이 머리가 있고 표지가 없으면 「로컬 생성 아님」이다. 다른 판정문은 「모름」이다.
+_PIECE_DONE_FEEDBACK = "조각 작업 완료 —"
+ADOPT_MARK = "← 채택"
+
+
+def revalidation_marker(task: dict) -> tuple:
+    """조각의 로컬 생성 표지 → `("yes"|"no"|"unknown", 정보 dict)`.
+
+    [중요] **없음을 「아니다」로 접지 않는다** — 근거가 없으면 `unknown` 이다. `no` 는 적힌
+    `self_check` 가 표지 없이 있거나, 판정문이 표지 없이 wcommit 판정문일 때뿐이다.
+    """
+    t = task or {}
+    checks: list = []
+    sc = t.get("self_check")
+    if isinstance(sc, dict):
+        checks.append(sc)
+    body = t.get("body")
+    if isinstance(body, str) and "## self_check" in body:
+        found = _SELF_CHECK_BLOCK_RE.findall("\n" + body)
+        if found:
+            try:
+                got = json.loads(found[-1])
+                if isinstance(got, dict):
+                    checks.append(got)
+            except json.JSONDecodeError:
+                pass
+    for c in checks:
+        if c.get("needs_revalidation") is True:
+            return "yes", {k: c.get(k) for k in ("model", "provenance", "fingerprint") if c.get(k)}
+    fb = str(t.get("verdict_feedback") or "")
+    if REVALIDATION_MARK in fb:
+        info: dict = {}
+        tail = fb.split(REVALIDATION_MARK, 1)[1].strip()
+        if tail.startswith("{"):
+            try:
+                got = json.JSONDecoder().raw_decode(tail)[0]
+                if isinstance(got, dict):
+                    info = {k: got.get(k) for k in ("model", "provenance", "fingerprint")
+                            if got.get(k)}
+            except ValueError:
+                pass                                     # 600자 절단 — 표지 자체는 이미 읽었다
+        return "yes", info
+    if checks or fb.startswith(_PIECE_DONE_FEEDBACK):
+        return "no", {}
+    return "unknown", {}
+
+
+def candidate_heads(repo: Path, remote: str, refs) -> tuple:
+    """원격 후보 브랜치들의 팁 → `({ref: sha}, 오류)`. 한 번의 `ls-remote` 로 잰다.
+
+    [중요] 조회가 실패하면 `({}, 사유)` — 호출자는 **「없다」가 아니라 「모른다」**로 읽는다.
+    """
+    refs = [r for r in refs or [] if r]
+    if not refs:
+        return {}, ""
+    rc, out = _git_rc(repo, "ls-remote", "--heads", remote, *[f"refs/heads/{r}" for r in refs])
+    if rc != 0:
+        return {}, (out or "").strip()[:200] or f"rc={rc}"
+    want = set(refs)
+    heads: dict = {}
+    for ln in (out or "").splitlines():
+        parts = ln.split()
+        if len(parts) == 2 and parts[1].startswith("refs/heads/"):
+            name = parts[1][len("refs/heads/"):]
+            if name in want:
+                heads[name] = parts[0]
+    return heads, ""
+
+
+def revalidation_report(repo: Path, *, work_id: str, tasks, remote: str = DEFAULT_REMOTE,
+                        logf=C._noop_log) -> list:
+    """이번 라운드 조각마다 `{task_id, status, needs_revalidation, candidate, …}` (`#840`).
+
+    `needs_revalidation`: `yes`/`no`/`unknown` · `candidate`: `present`/`absent`/`unknown`
+    (조회 실패는 `unknown` — **`absent` 로 접지 않는다**).
+    """
+    rows, refs = [], []
+    for t in tasks or []:
+        tid = str(t.get("task_id") or "")
+        if not tid:
+            continue
+        mark, info = revalidation_marker(t)
+        try:
+            cand = candidate_branch(work_id, tid, int(t.get("round") or 0))
+        except BranchNameError:
+            cand = ""
+        rows.append({"task_id": tid, "status": t.get("status"), "needs_revalidation": mark,
+                     "model": info.get("model") or "", "candidate_branch": cand,
+                     "candidate": "unknown", "candidate_head": "", "adopted": False})
+        refs.append(cand)
+    heads, err = candidate_heads(repo, remote, refs)
+    for r in rows:
+        if not r["candidate_branch"]:
+            r["candidate_reason"] = "후보 브랜치 이름을 만들 수 없다"
+        elif err:
+            r["candidate_reason"] = f"ls-remote 실패 — {err}"
+        elif r["candidate_branch"] in heads:
+            r["candidate"], r["candidate_head"] = "present", heads[r["candidate_branch"]]
+        else:
+            r["candidate"] = "absent"
+    marked = [r["task_id"] for r in rows if r["needs_revalidation"] == "yes"]
+    present = [r["task_id"] for r in rows if r["candidate"] == "present"]
+    logf("advance", f"재검증 표지 — 로컬 생성 {len(marked)}건{marked if marked else ''} · "
+                    f"표지 모름 {sum(1 for r in rows if r['needs_revalidation'] == 'unknown')}건 · "
+                    f"클라우드 후보 {len(present)}건{present if present else ''}"
+                    + (f" · [주의] 후보 조회 실패(모름) — {err}" if err else "") + " (#840)")
+    return rows
+
+
+def adopted_merge(repo: Path, remote: str, target_branch: str, work_id: str, dur: str) -> str:
+    """`dur` 조각 대신 **클라우드 후보를 채택해** 머지한 ⑦ 커밋 해시, 없으면 "" (`#840`).
+
+    채택 머지 제목은 `[ADVANCE] <work>: <durable> ← 채택 <후보> @ <팁>` 이다. 원래 조각 브랜치는
+    작업 브랜치에서 도달 불가라 원격에 남는다 — finalize 가 그것을 다시 머지하지 않게 이 증거로 가린다.
+    """
+    want = f"{ADVANCE_LABEL} {work_id}: {dur} {ADOPT_MARK} "
+    rc, out = _git_rc(repo, "log", "--merges", "--format=%H%x09%s", f"{remote}/{target_branch}")
+    if rc != 0:
+        return ""
+    for line in out.splitlines():
+        sha, _, subj = line.partition("\t")
+        if subj.startswith(want):
+            return sha.strip()
+    return ""
+
+
+# `#840` T4 — 채택 머지 제목 `[ADVANCE] <W>: <원래 조각> ← 채택 <후보> @ <팁12>` 의 판독기.
+#    쓰는 쪽은 `integrate_durables`(lab = `[ADVANCE] <W>`) 하나다 — 정리·마감이 「채택으로 대체된
+#    원래 조각」을 이름만으로는 못 가르므로 이 제목을 증거로 읽는다.
+_ADOPT_SUBJECT_RE = re.compile(
+    rf"^{re.escape(ADVANCE_LABEL)} (\S+): (\S+) {re.escape(ADOPT_MARK)} (\S+) @ ([0-9a-f]+)\s*$")
+
+
+def parse_adopt_subject(subject: str) -> dict | None:
+    """채택 머지 제목 → `{work_id, durable, candidate, head12}`. 아니면 `None`."""
+    m = _ADOPT_SUBJECT_RE.match((subject or "").strip())
+    if not m:
+        return None
+    return {"work_id": m.group(1), "durable": m.group(2), "candidate": m.group(3),
+            "head12": m.group(4)}
+
+
+def adopted_pairs(repo: Path, revs, *, work_id: str = "") -> tuple:
+    """`revs` 의 이력에서 채택 머지를 모은다 → `({원래 조각: 채택 후보}, 오류)` (`#840` T4).
+
+    [중요] 실패하면 `({}, 사유)` — 호출자는 「채택이 없었다」가 아니라 **「모른다」**로 읽는다.
+    `work_id` 를 주면 그 work 의 제목만 센다. 읽기만 한다(`git log`).
+    """
+    revs = [r for r in (revs or []) if r]
+    if not revs:
+        return {}, ""
+    rc, out = _git_rc(repo, "log", "--merges", "--format=%s", "--fixed-strings",
+                      f"--grep={ADOPT_MARK}", *revs, "--")
+    if rc != 0:
+        return {}, (out or "").strip()[:200] or f"rc={rc}"
+    pairs: dict = {}
+    for line in (out or "").splitlines():
+        got = parse_adopt_subject(line)
+        if got and (not work_id or got["work_id"] == work_id):
+            pairs.setdefault(got["durable"], got["candidate"])
+    return pairs, ""
+
+
+def leftover_candidate_report(repo: Path, *, work_id: str, kept, rev: str,
+                              logf=C._noop_log) -> tuple:
+    """마감 뒤 원격에 **남은** 것 중 `#840` 부류를 가른다 → `(미채택 후보, 대체된 원래 조각, 오류)`.
+
+    `kept` = `[(ref, 사유)]`(정리가 도달 불가로 보존한 것). 미채택 후보 = 이 work 의 후보 이름 ·
+    대체된 원래 조각 = `rev` 이력의 채택 머지가 가리키는 원래 조각. [중요] **지우지 않는다** —
+    사실만 돌려준다(사용자 결정: 남은 후보·원래 조각은 보고만).
+    """
+    cands = [ref for ref, _ in kept or []
+             if (parse_candidate(ref) or {}).get("work_id") == work_id]
+    pairs, err = adopted_pairs(repo, [rev], work_id=work_id)
+    replaced = [(ref, pairs[ref]) for ref, _ in kept or [] if ref in pairs]
+    logf("finalize", f"남은 클라우드 후보(미채택) {len(cands)}건{cands if cands else ''} · "
+                     f"채택으로 대체된 원래 조각 {len(replaced)}건"
+                     f"{[r for r, _ in replaced] if replaced else ''}"
+                     + (f" · [주의] 채택 이력 조회 실패(대체 여부 모름) — {err}" if err else "")
+                     + " · 지우지 않는다 (#840)")
+    return cands, replaced, err
 
 
 def order_verified(tasks) -> list:
@@ -205,7 +405,8 @@ def infra_undecided_lines(work_id: str, skipped, limit: int = 30) -> list:
 
 def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
                        merge_label: str, remote: str = DEFAULT_REMOTE,
-                       logf=C._noop_log, rework: bool = False) -> Integration:
+                       logf=C._noop_log, rework: bool = False,
+                       adopt: dict | None = None) -> Integration:
     """Plan v5 C.7 — 작업 브랜치(골조·코드) + **소스를 든** 조각 durable 을 현재 브랜치에 머지한다.
 
     [중요] **`#319` ⓐ — 매니페스트 전용 조각 durable 은 머지하지 않는다** (사용자 결정
@@ -230,8 +431,17 @@ def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
     충돌·이상 시 **진행 중 머지를 abort 하고 통째 중단**한다(사용자 2026-06-16, 원전).
     부분 머지 잔재를 정리할 책임은 호출자에게 있다 — review 는 트리를 버리면 되고 finalize
     는 되돌려야 한다.
+
+    `#840` — `adopt={task_id: {"branch": 후보, "head": 팁}}` 이면 그 조각은 원래 서브 브랜치
+    **대신** 클라우드 후보를 머지한다(검증은 호출자 `advance_work` 가 끝냈다). 후보를 못 읽거나
+    팁이 바뀌었으면 **통째 중단** — 원래 조각으로 조용히 접지 않는다. 채택 사실은 머지 제목
+    (`… ← 채택 <후보> @ <팁>`)과 본문에 남고, 그 제목이 이후 finalize 에서 남은 원래 조각을
+    다시 머지하지 않게 하는 증거다(`adopted_merge`).
     """
     lab = merge_label or "[integrate]"
+    adopt = dict(adopt or {})
+    if adopt and rework:
+        return Integration(error="재작업 통합에는 후보 채택을 섞지 않는다 (#840)")
     # 1) feature 먼저 — durable 이 없는 완전구현 클래스는 feature 에만 있다 (원전 주석).
     rc, out = _git_rc(repo, "fetch", remote, target_branch)
     if rc != 0:
@@ -254,9 +464,43 @@ def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
     merged: list = []
     ax_only: list = []
     advanced: list = []
+    adopted: list = []
+    unseen = set(adopt) - {t.get("task_id") for t in verified}
+    if unseen:
+        return Integration(skipped=skipped,
+                           error=f"채택 대상 {sorted(unseen)} 이 이번 통합의 verified 조각이 아니다 — 통째 중단 (#840)")
     for t in verified:
         tid = t.get("task_id")
         dur = durable_branch(work_id, tid, int(t.get("round") or 0))
+        if tid in adopt:
+            cand, want = str(adopt[tid].get("branch") or ""), str(adopt[tid].get("head") or "")
+            rc, out = _git_rc(repo, "fetch", remote, cand)
+            if rc != 0 or not cand or not want:
+                return Integration(merged=merged, skipped=skipped, missing_durable=cand,
+                                   error=f"채택 후보 `{cand}` fetch 실패 — 원래 조각으로 접지 않는다, "
+                                         f"통째 중단: {out[:200]}")
+            rc, got = _git_rc(repo, "rev-parse", f"{remote}/{cand}")
+            if rc != 0 or got.strip() != want:
+                return Integration(merged=merged, skipped=skipped, missing_durable=cand,
+                                   error=f"채택 후보 `{cand}` 의 팁이 확인한 값({want[:12]})과 다르다"
+                                         f"({got.strip()[:12]}) — 통째 중단")
+            if not _touches_outside_ax(repo, f"{remote}/{target_branch}", f"{remote}/{cand}"):
+                return Integration(merged=merged, skipped=skipped,
+                                   error=f"채택 후보 `{cand}` 가 `.ax/` 밖을 바꾸지 않는다 — 머지할 것이 "
+                                         f"없다, 통째 중단")
+            rc, out = _git_rc(repo, "merge", "--no-ff", f"{remote}/{cand}",
+                              "-m", f"{lab}: {dur} {ADOPT_MARK} {cand} @ {want[:12]}",
+                              "-m", f"클라우드 재검증 후보 채택 (#840) — task {tid} · "
+                                    f"candidate {cand} · head {want} · "
+                                    f"원래 조각 브랜치 {dur} 는 머지하지 않았다 (사람의 조각별 선택)")
+            if rc != 0:
+                _git_rc(repo, "merge", "--abort")
+                return Integration(merged=merged, skipped=skipped, conflict=True, conflict_branch=cand,
+                                   error=f"채택 후보 `{cand}` 머지 충돌 — 통째 중단: {out[:200]}")
+            merged.append(cand)
+            adopted.append({"task_id": tid, "durable": dur, "candidate": cand, "head": want})
+            logf("integrate", f"[중요] {tid} — 원래 {dur} 대신 후보 {cand} @ {want[:12]} 머지 (채택 · #840)")
+            continue
         # [중요] verified 인데 durable 이 없다 = 이상(검증 워커의 merge 누락) → 통째 중단.
         #    [주의] 여기서 넘어가면 **검증됐다고 기록된 것이 빠진 채** 통합이 성공으로 보인다.
         rc, ls = _git_rc(repo, "ls-remote", "--heads", remote, dur)
@@ -316,6 +560,15 @@ def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
                                                   "커밋만 있다(층1/층2 차단은 커밋하지 않는다). "
                                                   "실패 사유는 다음 골조의 근거로 남는다"})
             continue
+        # `#840` — ⑦ 에서 이 조각 대신 후보를 채택했으면 원래 조각 브랜치는 원격에 남아 있어도
+        #    머지하지 않는다(작업 브랜치 머지로 채택분이 이미 이 트리에 있다).
+        if not failed_task and rc == 0:
+            sha = adopted_merge(repo, remote, target_branch, work_id, dur)
+            if sha:
+                advanced.append(dur)
+                logf("integrate", f"durable {dur} — ⑦ 에서 클라우드 후보로 대체 채택됐다 "
+                                  f"({sha[:10]}) · 원래 조각은 머지하지 않는다 (#840)")
+                continue
         if rc == 0 and not ls.strip():
             # 🔴 `#787` — ⑺ 전진 때 작업 브랜치에 들어가고 정리된 서브 브랜치. 위 feature 머지로
             #    이미 이 트리에 있다. 증거(머지 커밋)가 없으면 아래 「통째 중단」 그대로다.
@@ -362,7 +615,8 @@ def integrate_durables(repo: Path, *, work_id: str, target_branch: str, tasks,
                                   "인프라 파일을 넣지 않는다(`#319` ⓐ). 통째 중단: "
                                   + ", ".join(stray[:5])))
     return Integration(ok=True, merged=merged, skipped=skipped, ax_only=ax_only, advanced=advanced,
-                       rework_evidence=rework_evidence, missing_results=missing_results)
+                       rework_evidence=rework_evidence, missing_results=missing_results,
+                       adopted=adopted)
 
 
 def _rework_result_commit(repo: Path, base_ref: str, ref: str) -> tuple:
@@ -803,6 +1057,9 @@ class Decision:
     # `#373` — 요청자 로컬의 작업 브랜치 정리 (원격 정리와 별개)
     local_deleted: list = field(default_factory=list)
     local_kept: list = field(default_factory=list)       # (브랜치, 사유)
+    # `#840` T4 — 마감 뒤 원격에 남은 것 중 클라우드 재검증 부류. [중요] **보고만** 한다(지우지 않는다)
+    leftover_candidates: list = field(default_factory=list)   # [ref] — 미채택 후보
+    replaced_originals: list = field(default_factory=list)    # [(원래 조각 ref, 채택 후보)]
     error: str = ""
 
     @property
@@ -1091,6 +1348,10 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
             # `#373` — 원격 정리 뒤 요청자 로컬의 작업 브랜치. 조건·근거는 `prune_local_base`
             d.local_deleted, d.local_kept = prune_local_base(
                 repo, work=work, target=target, remote=remote, base_branch=base_branch, logf=logf)
+            # `#840` T4 — 남은 미채택 후보·채택으로 대체된 원래 조각을 **사실로만** 싣는다.
+            #    판정 근거는 방금 push·fetch 한 `<remote>/<base>` 이력의 채택 머지 제목이다.
+            d.leftover_candidates, d.replaced_originals, adopt_err = leftover_candidate_report(
+                repo, work_id=work_id, kept=d.cleanup.keep, rev=f"{remote}/{base_branch}", logf=logf)
             kept = len(d.cleanup.keep)
             d.redmine_note = (
                 f"분산 작업 완료 — {base_branch} 머지 완료\n\n"
@@ -1124,7 +1385,16 @@ def finalize_work(repo: Path, *, work_id: str, work: dict, tasks, reviewer: str 
                    if d.deleted_branches else "")
                 + ("".join(f"\n  - 로컬 작업 브랜치 삭제: `{b}`" for b in d.local_deleted)
                    + "".join(f"\n  - 로컬 작업 브랜치 보존: `{b}` — {why}"
-                             for b, why in d.local_kept)))
+                             for b, why in d.local_kept))
+                # `#840` T4 — 보존분 중 클라우드 재검증 부류를 이름으로 따로 적는다(지우지 않았다)
+                + (("\n- 클라우드 재검증 (#840) — 아래는 지우지 않고 원격에 남겼다"
+                    + "".join(f"\n  - 클라우드 후보(미채택): `{ref}`"
+                              for ref in d.leftover_candidates)
+                    + "".join(f"\n  - 채택으로 대체된 원래 조각: `{ref}` (채택 `{cand}`)"
+                              for ref, cand in d.replaced_originals)
+                    + (f"\n  - [주의] 채택 이력을 못 읽었다 — 대체된 원래 조각을 가리지 못했다: "
+                       f"{adopt_err[:160]}" if adopt_err else ""))
+                   if (d.leftover_candidates or d.replaced_originals or adopt_err) else ""))
             # ── ② Redmine 기재 (원전 6단계 ② — 상태·머지 커밋) ──────────────
             # [중요] **키는 이 코드가 도는 기계에 없다** — 이 모듈은 `.33` 에도 배달된다.
             #    그래서 마스터 대행(`/api/v1/redmine/note`)을 지나간다. 값이 아니라 본문만 만든다.
@@ -1237,6 +1507,10 @@ class Advance:
     rework: bool = False
     rework_evidence: list = field(default_factory=list)
     missing_results: list = field(default_factory=list)
+    # `#840` — 이번 라운드 조각별 로컬 생성 표지·클라우드 후보 (`revalidation_report` 행)
+    revalidation: list = field(default_factory=list)
+    # `#840` — 사람이 채택한 후보 `[{task_id, durable, candidate, head}]`
+    adopted: list = field(default_factory=list)
 
     @property
     def summary(self) -> str:
@@ -1251,7 +1525,36 @@ class Advance:
         s = (f"조각 {len(self.merged)}개 머지 · {b} · "
              f"{self.target_branch} {self.before[:8]}→{self.head[:8]}")
         return (s + (" · **push 됨(전진)**" if self.pushed else " · push 안 함(승인 대기)")
-                + self.infra_undecided_tail + tail)
+                + self.infra_undecided_tail + self.revalidation_tail + tail)
+
+    @property
+    def adoptable(self) -> list:
+        """`#840` — 채택할 수 있는 조각: 로컬 생성 표지 `yes` · 후보 `present` · 아직 채택 안 함."""
+        done = {d.get("task_id") for d in self.adopted or []}
+        return [r["task_id"] for r in self.revalidation or []
+                if r.get("needs_revalidation") == "yes" and r.get("candidate") == "present"
+                and r.get("task_id") not in done]
+
+    @property
+    def revalidation_tail(self) -> str:
+        """요약 꼬리 — 사실만(자동 경로로 요청자 세션에 닿는다). 해당이 없으면 ""."""
+        rows = self.revalidation or []
+        marked = [r for r in rows if r.get("needs_revalidation") == "yes"]
+        present = [r for r in rows if r.get("candidate") == "present"]
+        unk_cand = [r for r in rows if r.get("candidate") == "unknown"]
+        if not (marked or present or unk_cand or self.adopted):
+            return ""
+        s = f" · [주의] 로컬 생성 {len(marked)}건 · 클라우드 후보 {len(present)}건"
+        if unk_cand:
+            s += f" · 후보 조회 불가(모름) {len(unk_cand)}건"
+        unk_mark = sum(1 for r in rows if r.get("needs_revalidation") == "unknown")
+        if unk_mark:
+            s += f" · 표지 모름 {unk_mark}건"
+        if self.adopted:
+            s += " · 채택: " + ", ".join(f"{d['task_id']}←{d['candidate']}" for d in self.adopted)
+        if self.adoptable:
+            s += f" — adopt={self.adoptable!r} 로 채택 가능(기본은 원래 조각 브랜치)"
+        return s + " (#840)"
 
     @property
     def infra_undecided(self) -> list:
@@ -1278,12 +1581,22 @@ class Advance:
         if self.build_passed is False:
             return ("빌드가 깨졌다 — **버그인가, 구조를 고쳐야 하는가?** "
                     "버그면 이 트리에서 고쳐 커밋하고, 구조 문제면 전진을 보류하고 "
-                    "`.h`/`.cpp` 에 지시 주석을 남겨 다음 라운드를 등재한다.")
+                    "`.h`/`.cpp` 에 지시 주석을 남겨 다음 라운드를 등재한다."
+                    + self._adopt_question)
         if self.build_passed is None:
             return ("빌드를 **재지 못했다** — 확인 못 한 것은 통과가 아니다. "
-                    "빌드를 돌린 뒤에 전진을 판단한다.")
+                    "빌드를 돌린 뒤에 전진을 판단한다." + self._adopt_question)
         return ("빌드는 통과했다 — **코드에 버그가 없는가, 구조를 고쳐야 하지 않는가?** "
-                "이상 없으면 승인해 전진시키고, 고칠 것이 있으면 위와 같이 다음 라운드로 넘긴다.")
+                "이상 없으면 승인해 전진시키고, 고칠 것이 있으면 위와 같이 다음 라운드로 넘긴다."
+                + self._adopt_question)
+
+    @property
+    def _adopt_question(self) -> str:
+        """`#840` — 채택할 수 있는 후보가 있으면 그 사실과 기본값을 물음에 붙인다."""
+        if not self.adoptable:
+            return ""
+        return (f" 로컬 LLM 생성 조각 {self.adoptable} 에 클라우드 재검증 후보가 있다 — "
+                "조각마다 원래 브랜치(기본)와 후보(`adopt=[...]`) 중 무엇을 머지할지도 사람이 정한다.")
 
 
 def prune_merged_subbranches(repo: Path, *, work_id: str, round_no: int, target: str,
@@ -1342,7 +1655,7 @@ def prune_merged_subbranches(repo: Path, *, work_id: str, round_no: int, target:
 def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
                  confirm: bool = False, remote: str = DEFAULT_REMOTE,
                  keep_tree: bool = False, api=None, decision_note: str = "",
-                 logf=C._noop_log, rework: bool = False) -> Advance:
+                 logf=C._noop_log, rework: bool = False, adopt=None) -> Advance:
     """서브 브랜치를 **작업 브랜치에** 모아 세우고, 승인되면 그 브랜치를 전진시킨다.
 
     [중요] **`confirm=False` 가 기본이다** (fail-closed · `finalize_work` 와 같은 규약).
@@ -1351,8 +1664,20 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
 
     [중요] **사람의 워킹트리를 건드리지 않는다** — `<정본 옆>/ax-advance-<work_id>` 에서 돈다.
     `main` 은 **만지지 않는다**: 그것은 작업 전체가 끝난 뒤 `finalize_work` 의 몫이다.
+
+    `#840` — 이번 라운드 조각마다 로컬 생성 표지와 클라우드 재검증 후보를 `a.revalidation` 에
+    싣는다(confirm 과 무관). `adopt=[task_id, …]` 는 **사람이 조각별로 고른** 채택이다 — 그
+    조각은 원래 서브 브랜치 대신 후보 브랜치를 머지한다. 기본(`None`)은 원래 조각이다.
+    [중요] 채택 대상이 이번 라운드 verified 조각이 아니거나, 표지가 `yes` 가 아니거나, 후보가
+    `present` 가 아니면(조회 실패 포함) **거절**한다 — 머지·push 없이, 원래 조각으로 접지 않는다.
     """
     a = Advance(work_id=work_id, rework=rework)
+    if isinstance(adopt, str):
+        adopt = [adopt]
+    adopt_ids = [str(x) for x in (adopt or []) if str(x or "").strip()]
+    if adopt_ids and rework:
+        a.error = "재작업 통합에는 클라우드 후보 채택을 섞지 않는다 (#840)"
+        return a
     if rework:
         # [중요] `workmodel` 은 요청자(`.33`)에 배달되지 않는다 — 재작업 통합은 마스터 followup
         #    에서 돈다. 배달 폐포(`test_client_bundle`)가 이 임포트를 가드로 요구한다. 없으면
@@ -1402,6 +1727,36 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
             return a
         a.before = before.strip()
 
+        # ── ①-b `#840` 로컬 생성 표지·클라우드 후보 — 채택 검증은 **머지 전에** 끝낸다 ─────
+        a.revalidation = revalidation_report(repo, work_id=work_id, tasks=tasks, remote=remote,
+                                             logf=logf)
+        adopt_plan: dict = {}
+        if adopt_ids:
+            rows = {r["task_id"]: r for r in a.revalidation}
+            verified_ids = {t.get("task_id") for t in split_push_tasks(tasks)[0]}
+            bad = []
+            for tid in adopt_ids:
+                r = rows.get(tid)
+                if r is None:
+                    bad.append(f"{tid}: 이번 라운드(r{cur_round}) 조각이 아니다")
+                elif tid not in verified_ids:
+                    bad.append(f"{tid}: verified 조각이 아니다(상태 {r.get('status')}) — 머지 대상 밖")
+                elif r["needs_revalidation"] != "yes":
+                    bad.append(f"{tid}: 로컬 생성 표지가 `{r['needs_revalidation']}` 이다 — "
+                               "표지(needs_revalidation)가 확인된 조각만 채택한다")
+                elif r["candidate"] != "present":
+                    bad.append(f"{tid}: 후보 `{r['candidate_branch']}` 가 `{r['candidate']}` 이다"
+                               + (f" ({r['candidate_reason']})" if r.get("candidate_reason") else ""))
+                else:
+                    adopt_plan[tid] = {"branch": r["candidate_branch"], "head": r["candidate_head"]}
+            if bad:
+                a.error = ("후보 채택 거절 — 머지·push 하지 않았다, 원래 조각으로 접지 않는다 (#840): "
+                           + "; ".join(bad))
+                logf("advance", f"[중요] {a.error}")
+                return a
+            logf("advance", "채택 요청 확인 — " + ", ".join(
+                f"{t}←{p['branch']}@{p['head'][:12]}" for t, p in adopt_plan.items()))
+
         reuse_tree = rework and tree.exists()
         if reuse_tree:
             rc, ancestor = _git_rc(tree, "merge-base", a.before, "HEAD")
@@ -1426,8 +1781,13 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
         # ── ② 서브 브랜치 전부 머지 — [중요] 충돌이면 **통째 중단** ──────────────────
         integ = integrate_durables(tree, work_id=work_id, target_branch=target, tasks=tasks,
                                    merge_label=f"[ADVANCE] {work_id}", remote=remote, logf=logf,
-                                   rework=rework)
+                                   rework=rework, adopt=adopt_plan)
         a.merged, a.ax_only, a.skipped = integ.merged, integ.ax_only, integ.skipped
+        a.adopted = integ.adopted
+        for d in a.adopted:
+            for r in a.revalidation:
+                if r["task_id"] == d["task_id"]:
+                    r["adopted"] = True
         a.rework_evidence, a.missing_results = integ.rework_evidence, integ.missing_results
         a.conflicts = integ.conflict
         if not integ.ok:
@@ -1489,6 +1849,12 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
         a.deleted_subbranches, a.subbranch_kept = prune_merged_subbranches(
             repo, work_id=work_id, round_no=cur_round, target=target, merged=a.merged,
             remote=remote, logf=logf)
+        # `#840` — 채택된 조각의 원래 서브 브랜치는 전진분에서 도달 불가다. 지우지 않고 사유를 남긴다.
+        for d in a.adopted:
+            why = (f"클라우드 후보 {d['candidate']} 를 채택해 머지하지 않은 원래 조각 브랜치 — "
+                   f"작업 브랜치에서 도달 불가라 보존 (#840)")
+            a.subbranch_kept.append((d["durable"], why))
+            logf("advance", f"원래 조각 브랜치 보존 {d['durable']} — {why}")
         if a.deleted_subbranches:
             a.notes.append(f"서브 브랜치 {len(a.deleted_subbranches)}건 삭제: "
                            + ", ".join(f"{r}@{t[:12]}" for r, t in a.deleted_subbranches))
@@ -1520,6 +1886,13 @@ def advance_work(repo: Path, *, work_id: str, work: dict, tasks, build_fn=None,
                  if a.subbranch_kept else []
             ) + (([""] + infra_undecided_lines(work_id, a.skipped))
                  if a.infra_undecided else []
+            ) + ((["", "## 클라우드 재검증 후보 채택 (#840 — 사람의 조각별 선택)"]
+                  + [f"- {d['task_id']}: 원래 `{d['durable']}` 대신 `{d['candidate']}` @ {d['head']}"
+                     for d in a.adopted])
+                 if a.adopted else []
+            ) + (["", f"- 로컬 생성 조각 중 채택하지 않은 후보: {', '.join(a.adoptable)} "
+                  "(원래 조각 브랜치를 머지했다 · 후보 브랜치는 그대로 둔다)"]
+                 if a.adoptable else []
             ) + (["", "## 이 자리에서 사람이 정한 것", "", decision_note]
                  if decision_note else
                  ["", "[주의] 사람의 판단이 기록되지 않았다 — "

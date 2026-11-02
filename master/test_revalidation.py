@@ -95,6 +95,62 @@ class RevalidationTests(unittest.TestCase):
         self.assertEqual([(e["kind"], e["key"]) for e in entries], [("context", "master/a")])
         self.assertEqual(len(R.pending(self.root)), 1)
 
+    def test_unreadable_header_is_reported_not_fatal(self):
+        """사용자 결정 2026-11-03 — 머리말 못 읽음은 「표시 없음」 + 보고, 스캔은 계속."""
+        self.document()
+        broken = self.paths.context / "master/broken.md"
+        broken.write_text("---\ntags: [x]\nrelated_classes:\n  - x.py: ?\n---\n본문\n",
+                          encoding="utf-8")
+        listed = self.paths.context / "master/list.md"
+        listed.write_text("---\n- a\n- b\n---\n본문\n", encoding="utf-8")
+        unreadable = []
+        entries = R.marked_documents(self.paths, unreadable=unreadable)
+        self.assertEqual([(e["kind"], e["key"]) for e in entries], [("context", "master/a")])
+        self.assertEqual([u["path"] for u in unreadable],
+                         ["context/master/broken.md", "context/master/list.md"])
+        self.assertIn("ScannerError", unreadable[0]["reason"])
+        self.assertIn("mapping 이 아니다", unreadable[1]["reason"])
+        self.assertEqual(len(R.marked_documents(self.paths)), 1, "목록 없이 불러도 예외 없음")
+        line = R.unreadable_summary(unreadable)
+        self.assertTrue(line.startswith("[revalidation] 머리말 못 읽음 2건"), line)
+        many = [dict(path=f"f{i}.md", reason="r") for i in range(7)]
+        line = R.unreadable_summary(many)
+        self.assertIn("f4.md", line)
+        self.assertNotIn("f5.md", line)
+        self.assertTrue(line.endswith("…)"), line)
+        self.assertEqual(R.unreadable_summary([]), "")
+
+        # 전체 목록은 실행 결과에 남는다 · 배치 입력 수는 표시된 것만 센다
+        seen = []
+        result = R.run_documents(self.paths, limit=0, context_runner=lambda *a, **k: seen.append(a))
+        self.assertEqual(len(result["unreadable"]), 2)
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from master.batch import run as batch
+        out = StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(batch._revalidation_count(self.paths), 1)
+        self.assertEqual(out.getvalue().count("머리말 못 읽음"), 1, out.getvalue())
+
+    def test_broken_ontology_manifest_is_reported_not_fatal(self):
+        from master.ontology import package
+        domain = self.paths.ontology / "domains" / "bad"
+        domain.mkdir(parents=True)
+        (domain / package.MANIFEST).write_text("- a\n- b\n", encoding="utf-8")
+        unreadable = []
+        self.assertEqual(R.marked_documents(self.paths, unreadable=unreadable), [])
+        self.assertEqual(len(unreadable), 1)
+        self.assertTrue(unreadable[0]["path"].endswith("bad/" + package.MANIFEST), unreadable)
+        self.assertIn("mapping 이 아니다", unreadable[0]["reason"])
+
+    def test_context_dir_oserror_still_surfaces(self):
+        """관용은 파일 내용 해석에만 — 디렉터리를 못 읽는 것은 그대로 올라간다."""
+        from unittest.mock import patch
+        self.document()
+        with patch.object(Path, "rglob", side_effect=PermissionError("denied")):
+            with self.assertRaises(PermissionError):
+                R.marked_documents(self.paths)
+
     def test_source_changed_does_not_call_or_clear_mark(self):
         path = self.document()
         original = path.read_bytes()

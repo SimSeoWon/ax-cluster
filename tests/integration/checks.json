@@ -918,5 +918,20 @@
     "path": "master/test_plan_metrics.py",
     "count_pattern": "(?m)^OK test_plan_metrics: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 60
+  },
+  {
+    "path": "master/test_revalidation_tasks.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 300
+  },
+  {
+    "path": "master/test_review_adopt.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 300
+  },
+  {
+    "path": "master/test_candidate_cleanup.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 300
   }
 ]

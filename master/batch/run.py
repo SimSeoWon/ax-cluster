@@ -133,13 +133,62 @@ def _candidate_run(paths) -> dict:
 
 
 def _revalidation_count(paths) -> int:
-    from ..work.revalidation import marked_documents
-    return len(marked_documents(paths))
+    """입력 = 표시된 문서 + 표시된 조각 기록 **전부** (후보 유무 무관).
+
+    [중요] 후보가 붙은 기록도 센다 — 채택·삭제는 정산(`settle_tasks`, LLM 0)을 돌려야만 보인다.
+    후보 대기만 남아도 매일 한 번 git 조회가 돈다(호출 비용 0).
+    """
+    from ..work.revalidation import marked_documents, task_entries, unreadable_summary
+    unreadable = []
+    n = len(marked_documents(paths, unreadable=unreadable))
+    line = unreadable_summary(unreadable)
+    if line:
+        # [중요] 매 회차(plan·run 둘 다) 사람이 보도록 한 줄 — 파일별 줄은 찍지 않는다.
+        print(f"    {line}", flush=True)
+    return n + len(task_entries(paths.root))
 
 
-def _revalidation_run(paths) -> dict:
-    from ..work.revalidation import run_documents
-    return run_documents(paths)
+def _revalidation_half(fn) -> dict:
+    """반쪽 하나. 예외도 결과로 바꾼다 — [중요] 한쪽 실패가 다른 쪽을 가리지 않게."""
+    try:
+        result = fn() or {}
+    except Exception as e:                                  # noqa: BLE001
+        result = {"ok": False, "reason": f"{type(e).__name__}: {e}", "entries": 0}
+    if not isinstance(result, dict):
+        result = {"ok": False, "reason": f"결과 형식 오류: {type(result).__name__}", "entries": 0}
+    return result
+
+
+def _revalidation_run(paths, *, documents=None, settle=None, tasks=None) -> dict:
+    """문서 재합성 → 조각 정산 → 조각 후보 생성 (#840 T2). 셋 다 돌고 결과는 따로 남는다.
+
+    호출 예산은 반쪽마다 따로다 — 문서 최대 2호출 · 조각 최대 2호출(정산은 LLM 0).
+    전체 ok = 셋 다 ok. 주입 자리는 테스트용(`documents`·`settle`·`tasks` 는 `(paths)->dict`).
+    """
+    from ..work import revalidation as RV
+    say = lambda m: print(f"    {m}", flush=True)                    # noqa: E731
+    documents = documents or (lambda p: RV.run_documents(p, limit=2))
+    settle = settle or (lambda p: RV.settle_tasks(p, logf=say))
+    tasks = tasks or (lambda p: RV.run_tasks(p, limit=2, logf=say))
+
+    doc = _revalidation_half(lambda: documents(paths))
+    say(f"[재검증] 문서 — ok={doc.get('ok')} · 대상 {doc.get('entries', 0)}건"
+        + (f" · 머리말 못 읽음 {len(doc['unreadable'])}건" if doc.get("unreadable") else "")
+        + (f" · {doc.get('reason')}" if doc.get("reason") else ""))
+    st = _revalidation_half(lambda: settle(paths))
+    say(f"[재검증] 조각 정산 — ok={st.get('ok')} · {st.get('summary') or st.get('entries', 0)}"
+        + (f" · {st.get('reason')}" if st.get("reason") else ""))
+    tk = _revalidation_half(lambda: tasks(paths))
+    say(f"[재검증] 조각 후보 — ok={tk.get('ok')} · 대상 {tk.get('entries', 0)}건 · "
+        f"호출 {tk.get('calls', 0)} · 채택 대기 {tk.get('waiting', 0)}"
+        + (f" · {tk.get('reason')}" if tk.get("reason") else ""))
+
+    halves = (("문서", doc), ("정산", st), ("조각", tk))
+    return {"ok": all(r.get("ok") is True for _, r in halves),
+            "entries": sum(int(r.get("entries") or 0) for _, r in halves),
+            "documents": doc, "tasks": {"settle": st, "run": tk},
+            "reason": " / ".join(f"{n}: {r.get('reason') or '실패'}"
+                                 for n, r in halves if r.get("ok") is not True)}
 
 
 BATCHES = [
@@ -157,7 +206,8 @@ BATCHES = [
              count_input=_candidate_count, execute=_candidate_run,
              gate=gates.should_run_dismissal_candidates),
     BatchDef(schedule=gates.CLOUD_REVALIDATION,
-             label="로컬 문서 클라우드 재합성 (표시된 대상만, 회당 최대 2건)",
+             label="로컬 산출물 클라우드 재검증 — 문서 재합성 · 조각 정산·후보 "
+                   "(표시된 대상만, 각 회당 최대 2호출 · 정산 LLM 0)",
              count_input=_revalidation_count, execute=_revalidation_run),
 ]
 

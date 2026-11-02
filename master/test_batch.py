@@ -360,8 +360,77 @@ def test_weekly_plan_batch_is_wired_without_redmine():
         check("⑨ 실행 뒤 번호가 붙는다", res["ok"] and res["assigned"] == ["R1"], str(res))
 
 
+def test_cloud_revalidation_counts_tasks_and_runs_both_halves():
+    """#840 T2 — 문서 + 조각(정산 → 후보) 둘 다 돌고 결과가 갈려 남는다. LLM 0 (가짜 주입)."""
+    b = next((x for x in R.BATCHES if x.schedule.key == "cloud_revalidation"), None)
+    check("⑩ 재검증 배치가 BATCHES 에 있다", b is not None)
+    if b is None:
+        return
+    check("⑩ 라벨이 조각까지 말한다", "조각" in b.label and "문서" in b.label, b.label)
+    from master.work import revalidation as RV
+    with tempfile.TemporaryDirectory() as tmp:
+        p = _paths(tmp)
+        check("⑩ 기록 없음 → 입력 0", R._revalidation_count(p) == 0)
+        RV.mark(p.root, "task", "T1", fingerprint="a", metadata={})
+        RV.mark(p.root, "task", "T2", fingerprint="b", metadata={})
+        RV.set_candidate(p.root, "task", "T2", fingerprint="b", candidate={"branch": "x", "head": "h"})
+        RV.mark(p.root, "context", "doc", fingerprint="c", metadata={})
+        check("⑩ 입력 = 조각 기록 전부(후보 포함) · 문서 기록 표기는 문서 쪽이 센다",
+              R._revalidation_count(p) == 2, str(R._revalidation_count(p)))
+
+        order = []
+
+        def half(name, result):
+            def fn(paths):
+                order.append(name)
+                if isinstance(result, Exception):
+                    raise result
+                return result
+            return fn
+        ok = {"ok": True, "entries": 1, "reason": ""}
+        res = R._revalidation_run(p, documents=half("doc", dict(ok)),
+                                  settle=half("settle", dict(ok, summary="adopted 1")),
+                                  tasks=half("tasks", dict(ok, calls=1, waiting=0)))
+        check("⑩ 순서 — 문서 → 정산 → 후보", order == ["doc", "settle", "tasks"], str(order))
+        check("⑩ 결과가 갈려 남는다", res["ok"] and res["documents"]["entries"] == 1
+              and res["tasks"]["settle"]["summary"] == "adopted 1"
+              and res["tasks"]["run"]["calls"] == 1 and res["entries"] == 3, str(res))
+
+        order.clear()
+        res = R._revalidation_run(p, documents=half("doc", RuntimeError("synth down")),
+                                  settle=half("settle", dict(ok)), tasks=half("tasks", dict(ok)))
+        check("⑩ 문서 예외 → 조각은 그래도 돈다 · 전체 실패",
+              order == ["doc", "settle", "tasks"] and not res["ok"]
+              and "synth down" in res["documents"]["reason"] and res["tasks"]["run"]["ok"]
+              and "문서" in res["reason"], str(res))
+
+        order.clear()
+        res = R._revalidation_run(p, documents=half("doc", dict(ok)),
+                                  settle=half("settle", {"ok": False, "reason": "fetch 실패"}),
+                                  tasks=half("tasks", {"ok": False, "reason": "T1: 소진"}))
+        check("⑩ 조각 실패 → 문서 성공을 가리지 않고 둘 다 보고",
+              not res["ok"] and res["documents"]["ok"] and "정산: fetch 실패" in res["reason"]
+              and "조각: T1: 소진" in res["reason"], str(res))
+
+        # 배치 정의를 통해 execute 가 그대로 쓰인다 — 실제 run() 경로에서 마커는 성공 때만
+        calls = []
+        orig = (RV.run_documents, RV.settle_tasks, RV.run_tasks)
+        RV.run_documents = lambda paths, **kw: calls.append(("doc", kw)) or dict(ok)
+        RV.settle_tasks = lambda paths, **kw: calls.append(("settle", kw)) or dict(ok)
+        RV.run_tasks = lambda paths, **kw: calls.append(("tasks", kw)) or dict(ok)
+        try:
+            res = b.execute(p)
+        finally:
+            RV.run_documents, RV.settle_tasks, RV.run_tasks = orig
+        check("⑩ 기본 배선 — 세 반쪽 · 각 limit 2",
+              [c[0] for c in calls] == ["doc", "settle", "tasks"]
+              and calls[0][1].get("limit") == 2 and calls[2][1].get("limit") == 2 and res["ok"],
+              str(calls))
+
+
 def main() -> int:
-    for fn in (test_weekly_plan_gate_is_origin_shape,
+    for fn in (test_cloud_revalidation_counts_tasks_and_runs_both_halves,
+               test_weekly_plan_gate_is_origin_shape,
                test_weekly_plan_batch_is_wired_without_redmine,
                test_each_condition_blocks_alone, test_config_overrides_use_origin_key_names,
                test_marker_gap_blocks, test_broken_marker_is_treated_as_absent,

@@ -104,6 +104,38 @@ work·tasks 는 큐에서 읽어 넘긴다(이 모듈은 HTTP 를 모른다 — 
 [중요] **묻지 않고 전진하지 않는다.** 잘못 전진하면 다음 라운드 조각이 그 위에서 갈라지고,
 되돌리려면 사람이 브랜치를 되감아야 한다.
 
+## 4-b. 로컬 LLM 생성 조각과 클라우드 재검증 후보 (`#840`)
+
+상용 한도가 소진된 동안 로컬 LLM 이 쓴 조각에는 `needs_revalidation` 표지가 붙는다. 한도가
+돌아오면 마스터 배치가 그 조각을 상용 LLM 으로 다시 써서 **후보 브랜치**
+`task/<work>/r<N>/<조각>-cloud` 로 올린다(작업 브랜치·라운드는 그대로다).
+
+`advance_work` 는 `confirm` 과 무관하게 이번 라운드 조각마다 그 사실을 `res.revalidation` 에 싣는다:
+
+    needs_revalidation   yes · no · unknown    (근거가 없으면 unknown — no 로 접지 않는다)
+    candidate            present · absent · unknown   (ls-remote 실패는 unknown)
+    candidate_branch · candidate_head · model · adopted
+
+채택할 수 있는 조각(`yes` + `present`)이 있으면 `res.summary` 끝에
+*"로컬 생성 N건 · 클라우드 후보 M건 — adopt=[…] 로 채택 가능"* 이, `res.question` 에 그 선택이 붙는다.
+
+**채택은 사람이 조각별로 명시한다. 기본은 원래 조각 브랜치다.**
+
+    res = review.advance_work(..., adopt=["<task_id>", ...])   # 지정한 조각만 후보를 머지
+
+- `adopt` 를 생략하면 지금과 똑같이 원래 조각 브랜치를 머지한다.
+- 채택한 조각은 원래 서브 브랜치 **대신** 후보를 머지하고, 머지 커밋 제목에
+  `… ← 채택 <후보> @ <팁>`, 본문에 task id 가 남는다.
+- 거절(머지·push 없음, 원래 조각으로 대신하지 않음): 이번 라운드 verified 조각이 아님 ·
+  표지가 `yes` 가 아님 · 후보가 `present` 가 아님(조회 실패 포함) · 재작업 통합(`rework=True`).
+- `confirm=True` 로 전진하면 채택한 후보 브랜치는 작업 브랜치에서 도달 가능해져 다른 서브
+  브랜치와 함께 지워진다. 채택돼 머지되지 않은 **원래 조각 브랜치는 도달 불가라 보존**되고
+  `res.subbranch_kept` 에 사유와 함께 남는다. 채택하지 않은 후보 브랜치는 건드리지 않는다.
+- 레드마인 노트에 채택 절(조각 · 원래 브랜치 · 후보 · 팁)과 채택하지 않은 후보 목록이 붙는다.
+- 채택 내용은 §4 의 물음과 같은 자리에서 사람이 답한 것이다 — `decision_note` 에 함께 싣는다.
+- 이후 `finalize_work` 는 작업 브랜치의 채택 머지 커밋을 증거로, 남아 있는 원래 조각 브랜치를
+  다시 머지하지 않는다.
+
 ## 5. 전진 — 사용자의 승인 발화가 있고 나서
 
     review.advance_work(..., confirm=True, api=api,        # §2 의 queue_api()
