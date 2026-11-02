@@ -1568,7 +1568,7 @@ def test_lane_policy_metadata_and_bypasses() -> None:
         def commit(facts, task, *, llm, **kw):
             rc, text = llm(facts, task["task_id"], ["a.py"])
             if rc:
-                return wcommit.Committed(task_id=task["task_id"], stage="llm", reason=text)
+                return wcommit.Committed(task_id=task["task_id"], stage=wcommit.STAGE_LLM, reason=text)
             if case == "facts":
                 return wcommit.Committed(task_id=task["task_id"], stage="층2",
                                          reason="facts failure: usage limit reached",
@@ -1633,9 +1633,85 @@ def test_lane_policy_metadata_and_bypasses() -> None:
             shutil.rmtree(root, ignore_errors=True)
 
 
+def run_fact_failure_attempts(*, layer2_failure: str = "", attempts: int = 3, logs=None):
+    """#840 ② — 실제 commit_task 를 재시도마다 다시 부르고, 큐가 하듯 detail 앞 600자를
+    `last_feedback` 으로 다음 시도에 싣는다. 외부 호출·디스크·git 은 주입이다(LLM 0)."""
+    from master.work import lanes as LN, wcommit
+    rounds = []
+    last_fb = ""
+    files = {"a.py": "# [DOC] fill\ndef f():\n    return 1\n"}
+    skel = {"a.py": "# [DOC] fill\ndef f():\n    # [PSEUDO] body\n    raise NotImplementedError\n"}
+    for attempt in range(1, attempts + 1):
+        paths, root = tmp_paths()
+        paths.root = root
+        calls, seen = [], []
+
+        def api(method, path, body=None):
+            calls.append((method, path, body))
+            return {"work": {"redmine_issue_id": 840}} if method == "GET" else {"ok": True}
+
+        def run_one(skeleton, lane, **kw):
+            seen.append(lane)
+            return LN.LaneRun(lane=lane, ok=True, files=files)
+
+        def commit(facts, task, *, llm, **kw):
+            rc, text = llm(facts, task["task_id"], ["a.py"])
+            if rc:
+                return wcommit.Committed(task_id=task["task_id"], stage=wcommit.STAGE_LLM, reason=text)
+            return wcommit.Committed(task_id=task["task_id"], stage="층2",
+                                     reason="층2 이 막았다 — invented symbol",
+                                     layer2_findings=["invented symbol"], layer2_failure=layer2_failure)
+        try:
+            with ExitStack() as stack:
+                stack.enter_context(patch("master.work.twin_base.local_baseline", return_value={}))
+                stack.enter_context(patch("master.work.usage.record", return_value={}))
+                stack.enter_context(patch("master.work.wcommit.run", side_effect=commit))
+                stack.enter_context(patch.object(I, "_skeleton_at", return_value=skel))
+                stack.enter_context(patch.object(I._MODE, "current", return_value=("lane", "test")))
+                stack.enter_context(patch.object(LN, "run_one", side_effect=run_one))
+                stack.enter_context(patch.object(LN, "write_back", return_value=[]))
+                stack.enter_context(patch("master.work.revalidation.mark"))
+                stack.enter_context(patch("master.redmine.update_issue"))
+                stack.enter_context(patch("master.work.revise.embed",
+                                          return_value=SimpleNamespace(ok=True, head="f" * 40,
+                                                                       branch="task/W1/r1/t", error="")))
+                stack.enter_context(patch.object(I, "_notify_blocked"))
+                stack.enter_context(patch.object(I, "_log", side_effect=(logs.append if logs is not None
+                                                                         else (lambda m: None))))
+                I.commit_task(paths, FakeFacts(), {
+                    "task_id": "t", "round": 1, "epoch": 7, "attempt_count": attempt,
+                    "last_feedback": last_fb}, work_id="W1", base=SUB_TIP,
+                    want=["a.py"], branch="task/W1/r1/t", api=api)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+        fail = next(body for _, path, body in calls if path.endswith("/submit-fail"))
+        last_fb = str(fail.get("detail") or fail.get("reason"))[:600]   # 큐 logic_lifecycle 와 같은 절단
+        rounds.append(dict(seen=list(seen), result=fail.get("result"), reason=fail.get("reason"),
+                           feedback=last_fb))
+    return rounds
+
+
+def test_fact_failure_moves_to_next_cloud_840_2() -> None:
+    """#840 ② — 층2 사실 실패는 다른 클라우드로만, 모두 지면 로컬 없이 즉시 실패."""
+    r = run_fact_failure_attempts()
+    check("②-1 1회차 agy", r[0]["seen"] == ["agy"], str(r[0]))
+    check("②-1 1회차 재시도로 · 표지 agy:facts", r[0]["result"] == "revise"
+          and "[lane-fail:agy:facts]" in r[0]["feedback"], r[0]["feedback"][:200])
+    check("②-2 2회차는 agy 를 빼고 codex", r[1]["seen"] == ["codex"], str(r[1]))
+    check("②-2 표지 누적 agy·codex", "[lane-fail:agy:facts,codex:facts]" in r[1]["feedback"],
+          r[1]["feedback"][:200])
+    check("②-3 3회차는 아무 모델도 안 부른다(claude·로컬 닫힘)", r[2]["seen"] == [], str(r[2]))
+    check("②-3 재시도 아님·한도 반납 아님(즉시 실패)", r[2]["result"] != "revise"
+          and r[2]["reason"] != "quota_exhausted", str(r[2]))
+    # 층2 검증 불가는 작성자 탓이 아니다 — 클라우드를 빼지 않는다
+    r = run_fact_failure_attempts(layer2_failure="verifier_exception", attempts=2)
+    check("②-4 층2 검증 불가는 표지 없음", "[lane-fail:" not in r[0]["feedback"], r[0]["feedback"][:200])
+
+
 def main() -> int:
     for fn in (
                test_lane_policy_metadata_and_bypasses,
+               test_fact_failure_moves_to_next_cloud_840_2,
                test_codex_jsonl_quota_reaches_submit_fail,
                test_commit_task_failure_notices_match_disposition,
                test_auth_notice_content,

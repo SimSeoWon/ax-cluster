@@ -1039,7 +1039,9 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
     task_id = str(task.get("task_id") or task.get("id") or "")
     epoch = task.get("epoch")
     author = {"lane": ""}
-    generation = {}
+    from . import llm_policy as _LP
+    # #840 ② — 앞 시도들에서 형식·사실 검사에 진 클라우드(누적 표지, `last_feedback`)
+    generation = {"prior_failures": _LP.parse_lane_failures(task.get("last_feedback") or "")}
 
     def llm(f, tid, files):
         """본문을 쓴다. [중요] **git 은 안 만진다** — 커밋은 `wcommit` 이 결정적으로 한다.
@@ -1088,9 +1090,20 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
             if not skel:
                 _log(f"[lane] {tid} 골조를 못 읽었다 — 생성 중단")
                 return 1, "RESULT: BLOCKED - skeleton unavailable"
-            got, tried = _LN.run_chain(f, skel, timeout=timeout, logf=_log)
+            # 🔴 #840 ② — 앞 재시도에서 형식(층1)·사실(층2)에 진 클라우드는 다시 부르지 않는다.
+            #    표지는 큐가 다음 시도에 실어 주는 `last_feedback` 에 누적돼 있다.
+            excluded = [x["lane"] for x in generation["prior_failures"]]
+            if excluded:
+                _log(f"[lane] {tid} 앞 재시도에서 진 클라우드 {', '.join(excluded)} — "
+                     f"다른 클라우드로만 다시 쓴다 (#840 ②)")
+            got, tried = _LN.run_chain(f, skel, timeout=timeout, logf=_log, excluded=excluded)
             generation["attempts"] = [dict(lane=t.lane, kind=t.failure_kind or
                                            ("success" if t.ok else "error")) for t in tried]
+            if got is None and not tried and excluded:
+                # 남은 클라우드가 없다(진 것 + 정책상 닫힌 것) — 로컬로 가지 않고 실패로 기록한다.
+                generation["attempts"] = [dict(lane=x, kind="excluded") for x in excluded]
+                _log(f"[lane] {tid} 🔴 클라우드가 모두 형식·사실 검사에 졌다 "
+                     f"({', '.join(excluded)}) — 로컬 없이 실패로 기록 (#840 ②)")
             # 🔴 **계측을 봉투에 실어 보낸다** (`#387`). 종전에는 합성 문자열만 돌려줘서
             #    `LaneRun.usage` 가 이 자리에서 **버려졌다** — 레인 비용을 영영 못 쟀다.
             #    봉투는 `claude --output-format json` 과 같은 모양이라 받는 쪽(`wcommit`)이
@@ -1335,7 +1348,9 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
                                      stage=c.stage, layer2_failure=c.layer2_failure)
         # A chain with a format/fact/call/write failure is not a quota release
         # merely because another attempt's diagnostic contains quota words.
-        if generation.get("attempts") and c.stage == "llm":
+        # 🔴 #840 ② — 비교는 `wcommit.STAGE_LLM` 으로 한다. 종전 `"llm"` 은 wcommit 이 쓰는
+        #    「본문 작성」과 달라 이 가드가 운영에서 한 번도 발동하지 않았다(검사는 "llm" 주입).
+        if generation.get("attempts") and c.stage == wcommit.STAGE_LLM:
             decision = WM.FailureDecision(_RV.REJECT, WM.UNKNOWN,
                                            reason="cloud generation chain failed")
         verdict, fp = decision.verdict, decision.fingerprint
@@ -1388,6 +1403,18 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
         if repeat_hit:
             res.notes.append(f"🔴 [중요] 직전 시도와 출력이 같다(fp={fp}) — 재시도 무의미, 종결")
             _log(f"[repeat] {task_id} 🔴 직전 시도와 출력이 같다(fp={fp}) — 재시도 없이 종결")
+        # 🔴 #840 ② — 형식(층1)·사실(층2)에 진 클라우드를 누적 표지로 남긴다. 다음 재시도는
+        #    `last_feedback` 에서 이것을 읽어 그 클라우드를 빼고 다른 클라우드로만 쓴다.
+        #    [주의] 층2 **검증 불가**(`layer2_failure`)는 작성자 탓이 아니다 — 더하지 않는다.
+        lane_failures = list(generation.get("prior_failures") or [])
+        if generation.get("model") and not c.layer2_failure and c.stage in ("층1", "층2"):
+            kind = "format" if c.stage == "층1" else "facts"
+            lane_failures = _LP.add_lane_failure(lane_failures, generation["model"], kind)
+            _log(f"[lane] {task_id} {generation['model']} 이 {c.stage} 에서 졌다 — 다음 재시도는 "
+                 f"이 클라우드를 뺀다 (#840 ② · 누적 {_LP.format_lane_failures(lane_failures)})")
+        lane_tag = _LP.format_lane_failures(lane_failures)
+        if lane_tag:
+            res.notes.append(f"[주의] 형식·사실 검사에 진 클라우드 {lane_tag} — 재시도는 다른 클라우드로만 (#840 ②)")
         r_result = r_base = ""
         if verdict == _RV.REVISE:
             try:
@@ -1414,8 +1441,10 @@ def commit_task(paths, facts, task, *, work_id: str, base: str, want, branch: st
             # [중요] 사유가 처분을 정한다 — `quota_exhausted` 는 큐가 **pending 복귀**로 받는다
             _reason = ("quota_exhausted" if quota_hit else
                        infra_reason if infra_undecided else runner.BLOCKED)
-            runner.submit_fail(task_id, _reason, WM.failure_detail(res.reason if auth_hit else c.summary,
-                                                                 decision.kind, fp),
+            _detail = res.reason if auth_hit else c.summary
+            if lane_tag:                                     # 앞 600자 안에 들도록 맨 앞에
+                _detail = f"{lane_tag} {_detail}"
+            runner.submit_fail(task_id, _reason, WM.failure_detail(_detail, decision.kind, fp),
                                epoch=epoch, worker_id=facts.host, api=api,
                                result=r_result, new_base_commit=r_base,
                                infra_undecided=infra_undecided)

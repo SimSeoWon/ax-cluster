@@ -52,5 +52,33 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(P.classify_failure("quota exhausted", kind=kind), kind)
 
 
+    def test_excluded_clouds_840_2(self):
+        """#840 ② — 앞 재시도에서 형식·사실에 진 클라우드는 빼고, 그 자리는 「건너뜀」(quota 아님)."""
+        self.assertEqual(P.next_lane([], excluded=["agy"]), "codex")
+        self.assertIsNone(P.next_lane([], excluded=["agy", "codex"], local_model="local"),
+                          "둘 다 졌으면 claude·로컬을 열지 않는다")
+        self.assertFalse(P.eligible("claude", [{"lane": "codex", "kind": "quota"}], excluded=["agy"]),
+                         "진 것은 quota 가 아니다 — claude 조건 불충족")
+        self.assertEqual(P.next_lane([], excluded=["codex"]), "agy")
+        self.assertIsNone(P.next_lane([{"lane": "agy", "kind": "quota"}], excluded=["codex"],
+                                      local_model="local"))
+        self.assertEqual(P.next_lane([{"lane": "agy", "kind": "quota"}, {"lane": "codex", "kind": "quota"}],
+                                     excluded=["claude"], local_model="local"), None,
+                         "claude 가 졌고 둘이 quota 여도 로컬은 세 클라우드 quota 조건")
+
+    def test_lane_failure_tag_roundtrip(self):
+        f = P.add_lane_failure([], "agy", "facts")
+        f = P.add_lane_failure(f, "codex:gpt-5", "format")
+        f = P.add_lane_failure(f, "agy", "format")            # 같은 클라우드는 한 번
+        f = P.add_lane_failure(f, "qwen2.5-coder:14b", "facts")  # 로컬은 나르지 않는다
+        f = P.add_lane_failure(f, "claude", "quota")          # 형식·사실만
+        tag = P.format_lane_failures(f)
+        self.assertEqual(tag, "[lane-fail:agy:facts,codex:format]")
+        self.assertEqual(P.parse_lane_failures(f"[fp:abc] [kind:code] {tag} 층2 이 막았다"), f)
+        self.assertEqual(P.parse_lane_failures("표지 없음"), [])
+        self.assertEqual(P.parse_lane_failures("[lane-fail:evil:facts,agy:quota,codex:facts]"),
+                         [{"lane": "codex", "kind": "facts"}])
+        self.assertEqual(P.format_lane_failures([]), "")
+
 if __name__ == "__main__":
     unittest.main()

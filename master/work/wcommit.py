@@ -54,6 +54,11 @@ from . import branch_names, layer1
 from .runner import DispatchError
 
 
+# 🔴 본문 작성 단계 이름 — **비교하는 쪽은 이 상수를 쓴다** (#840 ②). `infer` 의 「클라우드 생성
+#    전부 실패 → 즉시 실패」 가드가 `"llm"` 을 비교하고 있었는데 여기는 「본문 작성」을 써서
+#    운영에서 한 번도 발동하지 않았다(검사는 `"llm"` 을 주입해 통과했다).
+STAGE_LLM = "본문 작성"
+
 def _log(msg: str) -> None:
     """파견 로그 한 줄 — `infer._log` 와 **같은 형식**(`[dispatch]` 접두어)이라 journalctl 에서
     한 줄기로 읽힌다. [주의] 테스트는 이 자리를 바꿔 끼운다(`#818`)."""
@@ -330,7 +335,7 @@ def _cycle(facts, task_id: str, c: "Committed", base: str, llm, do_ssh, do_read,
            baseline, verifier) -> "Committed":
     """체크아웃이 선 뒤의 사이클 — 본문 → 되읽기 → 층1 → 층2 → 커밋·push."""
     # ② LLM — [중요] **본문만 쓴다.** git 은 만지지 않는다
-    c.stage = "본문 작성"
+    c.stage = STAGE_LLM
     _t0 = time.time()
     try:
         rc, out = llm(facts, task_id, c.want)

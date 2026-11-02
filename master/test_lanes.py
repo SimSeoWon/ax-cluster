@@ -166,6 +166,20 @@ def test_quota_only_fallback_and_local_provenance() -> None:
     check("local 단일 override로 quota 우회 불가", not seen and got is None and not tried)
 
 
+def test_excluded_clouds_are_not_called_840_2() -> None:
+    """#840 ② — 진 클라우드는 부르지 않고, 남은 클라우드가 없으면 로컬로 가지 않는다."""
+    seen = []
+    got, tried = LN.run_chain(FakeFacts(), SKEL, generator=lambda p, lane: seen.append(lane) or both(),
+                             writer=lambda *a, **kw: None, excluded=["agy"])
+    check("agy 제외 → codex 가 쓴다", got is not None and got.lane == "codex" and seen == ["codex"], str(seen))
+    check("  codex 성공은 재검증 표지 아님", got is not None and not got.needs_revalidation)
+    seen.clear()
+    got, tried = LN.run_chain(FakeFacts(), SKEL, generator=lambda p, lane: seen.append(lane) or both(),
+                             writer=lambda *a, **kw: None, excluded=["agy", "codex"])
+    check("agy·codex 제외 → 아무도 안 부른다(claude·로컬 닫힘)", got is None and not seen and not tried,
+          str(seen))
+
+
 # ── ④ 파싱 — 펜스·잡음 ─────────────────────────────────────────────────────────
 
 def test_markdown_fence_is_stripped() -> None:
@@ -207,6 +221,7 @@ def test_python_pieces_get_the_python_instruction():
 def main() -> int:
     for fn in (test_default_order_is_quota_aware_cloud_first,
                test_quota_only_fallback_and_local_provenance,
+               test_excluded_clouds_are_not_called_840_2,
                test_prompt_names_every_file,
                test_chain_moves_on_when_a_lane_fails,
                test_all_lanes_failing_is_blocked_not_silent,

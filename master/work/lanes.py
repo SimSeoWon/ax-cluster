@@ -261,11 +261,12 @@ def write_back(facts, files: dict, *, writer=None) -> list:
 
 def run_chain(facts, skeleton: dict, *, lanes=DEFAULT_LANES, broker: str = "",
               num_ctx: int = 16384, timeout: int = 900, generator=None, writer=None,
-              logf=None) -> tuple:
+              logf=None, excluded=()) -> tuple:
     """레인을 **순서대로** 시도해 첫 성공분을 워커에 써 넣는다. `(성공한 LaneRun|None, 시도들)`.
 
     일반·형식 실패 뒤에는 정책이 허용하는 다른 클라우드만 시도한다.
     Claude/local은 quota 조건을 지키며 쓰기 실패 뒤에는 호출을 중단한다.
+    `excluded` (#840 ②) — 앞 재시도에서 형식·사실 검사에 진 클라우드. 부르지 않는다.
     """
     from .llm_policy import eligible, family
 
@@ -273,11 +274,16 @@ def run_chain(facts, skeleton: dict, *, lanes=DEFAULT_LANES, broker: str = "",
     tried: list = []
     attempts: list = []
     lanes = tuple(lanes)
+    excluded = tuple(excluded or ())
+    if excluded:
+        log(f"[lane] 앞 재시도에서 진 클라우드 제외 — {', '.join(excluded)} (#840 ②)")
     for lane in lanes:
         # A single explicit cloud override remains supported. A local override
         # cannot bypass the three-cloud quota requirement.
         explicit_cloud = len(lanes) == 1 and family(lane) in ("agy", "codex", "claude")
-        if not explicit_cloud and not eligible(lane, attempts):
+        if family(lane) in {family(x) for x in excluded}:
+            continue
+        if not explicit_cloud and not eligible(lane, attempts, excluded=excluded):
             continue
         r = run_one(skeleton, lane, broker=broker, num_ctx=num_ctx, timeout=timeout,
                     generator=generator)
