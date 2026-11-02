@@ -13,6 +13,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 
@@ -193,15 +194,60 @@ def unreadable_summary(unreadable, *, sample=UNREADABLE_SAMPLE):
     return f"[revalidation] 머리말 못 읽음 {len(unreadable)}건 (예: {names}{more})"
 
 
+_FRONTMATTER = re.compile(r"^---[ \t]*\n(.*?)\n---[ \t]*(?:\n|$)", re.DOTALL)
+_GEN_KEYS = ("needs_revalidation", "generation_source_fingerprint", "generation_source_files")
+
+
+def _generation_fields(text):
+    """머리말에서 재검증 생성 필드만 줄 단위로 읽는다. `(필드 dict, 못 읽은 사유|"")`.
+
+    `md._set_field` 가 쓰는 모양 그대로다 — 최상위 `키: 값`, `needs_revalidation` 은 `true`/`false`,
+    `generation_source_files` 는 JSON 목록, 지문은 그대로의 문자열. 머리말이 없거나 표시가 없으면
+    빈 dict 다(표시 없음 — 사유 아님). [주의] **표시된 문서**의 생성 필드가 깨졌을 때만 사유를
+    돌려준다 — 그 문서는 재합성 대상인데 무엇으로 대조할지 모르기 때문이다.
+    """
+    m = _FRONTMATTER.match(text or "")
+    if not m:
+        return {}, ""
+    raw = {}
+    for line in m.group(1).splitlines():
+        km = re.match(r"^([A-Za-z_][A-Za-z0-9_]*):[ \t]*(.*?)[ \t]*$", line)
+        if km and km.group(1) in _GEN_KEYS:
+            raw[km.group(1)] = km.group(2)
+    flag = raw.get("needs_revalidation", "").strip("\"'").lower()
+    if flag != "true":
+        return {}, ""
+    out = dict(needs_revalidation=True,
+               generation_source_fingerprint=raw.get("generation_source_fingerprint", "").strip("\"'") or None)
+    files = raw.get("generation_source_files")
+    if files is None:
+        out["generation_source_files"] = None
+        return out, ""
+    try:
+        parsed = json.loads(files)
+    except ValueError as exc:
+        return {}, f"표시된 문서의 generation_source_files 를 못 읽었다 — {_short(exc)}"
+    if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+        return {}, "표시된 문서의 generation_source_files 가 문자열 목록이 아니다"
+    out["generation_source_files"] = parsed
+    return out, ""
+
+
 def marked_documents(paths, *, unreadable=None):
     """기존 생성기 표기만 읽는다. 전체 문서를 재생성 대상으로 삼지 않는다.
 
     [중요] 머리말을 못 읽는 문서 하나가 스캔 전체를 죽이지 않는다(사용자 결정 2026-11-03) —
     「표시 없음」으로 보고 `unreadable` 목록에 `{path(트윈 기준 상대), reason}` 를 남긴다.
-    그 관용은 **파일 내용 해석**(YAML 오류·dict 아님·디코딩)에만 적용한다 — 스캔 루트 경계 위반·
-    디렉터리/파일 OSError 는 그대로 올라간다.
+    그 관용은 **파일 내용 해석**(디코딩·표시된 문서의 생성 필드 손상)에만 적용한다 — 스캔 루트
+    경계 위반·디렉터리/파일 OSError 는 그대로 올라간다.
+
+    🔴 [중요] **머리말을 YAML 로 읽지 않는다** (`#878`). 정식 규약의 `related_classes` 는
+    `  - 클래스명: ?`(경로 모름, `context_synth/prompt.py`)를 허용하고, 그 줄은 YAML 문법 오류다 —
+    정식 파서(`context_search/documents.parse_frontmatter`)는 정규식이라 멀쩡히 읽는다. YAML 로
+    읽던 동안(`3123389`~) 배치가 대상 수를 못 셌고, 관용만 넣은 뒤로는 그런 문서가 표시가 있어도
+    재합성되지 않았다. 생성 필드는 쓰는 쪽(`context_synth/md._set_field`)과 같은 규약 — 최상위
+    `키: 값` 한 줄 — 으로 읽는다(`_generation_fields`).
     """
-    import yaml
     documents = []
     skipped = unreadable if unreadable is not None else []
     context = Path(getattr(paths, "context", Path(paths.root) / "context"))
@@ -229,18 +275,9 @@ def marked_documents(paths, *, unreadable=None):
             except UnicodeDecodeError as exc:
                 skip(path, _short(exc))
                 continue
-            if not text.startswith("---\n"):
-                continue
-            _, header, *_rest = text.split("---", 2) if text.count("---") >= 2 else ("", "", "")
-            try:
-                meta = yaml.safe_load(header)
-            except yaml.YAMLError as exc:
-                skip(path, _short(exc))
-                continue
-            if meta is None:
-                meta = {}
-            if not isinstance(meta, dict):
-                skip(path, f"머리말이 mapping 이 아니다 ({type(meta).__name__})")
+            meta, why = _generation_fields(text)
+            if why:
+                skip(path, why)
                 continue
             if meta.get("needs_revalidation") is True:
                 documents.append(dict(kind="context", key=path.relative_to(context).as_posix()[:-3],

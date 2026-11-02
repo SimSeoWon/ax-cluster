@@ -33,8 +33,17 @@ class RevalidationTests(unittest.TestCase):
         meta.update(updates)
         path = self.paths.context / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        import yaml
-        path.write_text("---\n" + yaml.safe_dump(meta) + "---\n기존 산출물\n", encoding="utf-8")
+        # `#878` — 실제 생성기(`synth` → `md._set_field`)와 같은 모양으로 쓴다. YAML 덤프로 만들면
+        #    운영과 다른 모양(블록 목록)을 검사하게 되고, 그 틈이 `#878` 을 숨겼다.
+        import json
+        from master.context_synth import md
+        doc = "---\ntags: [x]\ncategory: a/b\nrelated_classes:\n  - UActorComponent: ?\n---\n기존 산출물\n"
+        for key, value in meta.items():
+            text = ("true" if value else "false") if isinstance(value, bool) else (
+                json.dumps(value) if isinstance(value, (list, dict)) or key == "generation_model"
+                else str(value))
+            doc = md._set_field(doc, key, text)
+        path.write_text(doc, encoding="utf-8")
         return path
 
     def test_mark_persists_idempotently_and_clear_rejects_stale(self):
@@ -96,20 +105,29 @@ class RevalidationTests(unittest.TestCase):
         self.assertEqual(len(R.pending(self.root)), 1)
 
     def test_unreadable_header_is_reported_not_fatal(self):
-        """사용자 결정 2026-11-03 — 머리말 못 읽음은 「표시 없음」 + 보고, 스캔은 계속."""
-        self.document()
-        broken = self.paths.context / "master/broken.md"
-        broken.write_text("---\ntags: [x]\nrelated_classes:\n  - x.py: ?\n---\n본문\n",
-                          encoding="utf-8")
-        listed = self.paths.context / "master/list.md"
+        """`#878` — 정식 규약 「이름: ?」 머리말은 정상 판독. 표시된 문서의 생성 필드가 깨졌을 때만 보고."""
+        self.document()                                     # 「UActorComponent: ?」 줄이 있다
+        q = self.paths.context / "master/q.md"              # 표시 없는 「?」 문서 — 조용히 표시 없음
+        q.write_text("---\ntags: [x]\nrelated_classes:\n  - master/x.py: ?\n  - ? : B\n---\n본문\n",
+                     encoding="utf-8")
+        listed = self.paths.context / "master/list.md"      # YAML 이 아닌 머리말도 표시가 없으면 무사
         listed.write_text("---\n- a\n- b\n---\n본문\n", encoding="utf-8")
+        broken = self.paths.context / "master/broken.md"    # 표시됐는데 대조 재료가 깨졌다
+        broken.write_text("---\nrelated_classes:\n  - A: ?\nneeds_revalidation: true\n"
+                          "generation_source_files: [master/a.py\n---\n본문\n", encoding="utf-8")
+        notlist = self.paths.context / "master/notlist.md"
+        notlist.write_text("---\nneeds_revalidation: true\ngeneration_source_files: {\"a\": 1}\n---\n본문\n",
+                           encoding="utf-8")
         unreadable = []
         entries = R.marked_documents(self.paths, unreadable=unreadable)
         self.assertEqual([(e["kind"], e["key"]) for e in entries], [("context", "master/a")])
+        self.assertEqual(entries[0]["source_files"], ["master/a.py"])
+        self.assertEqual(entries[0]["source_fingerprint"],
+                         R.source_fingerprint(self.paths, ["master/a.py"]))
         self.assertEqual([u["path"] for u in unreadable],
-                         ["context/master/broken.md", "context/master/list.md"])
-        self.assertIn("ScannerError", unreadable[0]["reason"])
-        self.assertIn("mapping 이 아니다", unreadable[1]["reason"])
+                         ["context/master/broken.md", "context/master/notlist.md"])
+        self.assertIn("generation_source_files 를 못 읽었다", unreadable[0]["reason"])
+        self.assertIn("문자열 목록이 아니다", unreadable[1]["reason"])
         self.assertEqual(len(R.marked_documents(self.paths)), 1, "목록 없이 불러도 예외 없음")
         line = R.unreadable_summary(unreadable)
         self.assertTrue(line.startswith("[revalidation] 머리말 못 읽음 2건"), line)
@@ -131,6 +149,20 @@ class RevalidationTests(unittest.TestCase):
         with redirect_stdout(out):
             self.assertEqual(batch._revalidation_count(self.paths), 1)
         self.assertEqual(out.getvalue().count("머리말 못 읽음"), 1, out.getvalue())
+
+    def test_question_mark_header_from_real_writer_is_selected(self):
+        """`#878` 회귀 — 운영 문서 모양(「이름: ?」 + `_set_field` 생성 필드)이 재합성 대상에 들어온다."""
+        import yaml
+        path = self.document("master/q_marked.md")
+        header = path.read_text(encoding="utf-8").split("---")[1]
+        with self.assertRaises(yaml.YAMLError):            # 종전 독자(YAML)는 여기서 죽었다
+            yaml.safe_load(header)
+        self.assertIn(("context", "master/q_marked"),
+                      [(e["kind"], e["key"]) for e in R.marked_documents(self.paths)])
+        unmarked = self.document("master/off.md", needs_revalidation=False)
+        self.assertIn("needs_revalidation: false", unmarked.read_text(encoding="utf-8"))
+        self.assertNotIn(("context", "master/off"),
+                         [(e["kind"], e["key"]) for e in R.marked_documents(self.paths)])
 
     def test_broken_ontology_manifest_is_reported_not_fatal(self):
         from master.ontology import package
@@ -213,7 +245,7 @@ class RevalidationTests(unittest.TestCase):
         stale = self.document("master/0.md")
         (self.paths.repo / "master/stale.py").write_text("x = 1\n", encoding="utf-8")
         stale.write_text(stale.read_text(encoding="utf-8").replace(
-            "- master/a.py", "- master/stale.py"), encoding="utf-8")
+            '["master/a.py"]', '["master/stale.py"]'), encoding="utf-8")   # 생성기 모양(JSON 목록)
         (self.paths.repo / "master/stale.py").write_text("x = 2\n", encoding="utf-8")
         seen = []
         def failing(paths, key, files, **kw):
