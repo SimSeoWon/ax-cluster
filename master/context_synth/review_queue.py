@@ -51,7 +51,7 @@ QUEUE_NAME = "queue.json"
 SCHEMA = 1
 
 STATES = ("pending", "running", "done", "failed", "abandoned")
-KINDS = ("commit", "scope")
+KINDS = ("commit", "scope", "range")  # range = 일감 시작~끝 (`#879`)
 
 # ── 실패 갈래와 상한 ─────────────────────────────────────────────────────────
 #
@@ -209,10 +209,16 @@ def reclaim_orphans(root, *, logf=None) -> list:
     out = []
     for iid in orphans:
         it = finish(root, iid, ok=False, why=ORPHAN_WHY, logf=log)
-        log(f"[리뷰큐] 회수 {it['key'][:12]} running → {it['state']} "
+        log(f"[리뷰큐] 회수 {_short(it['key'])} running → {it['state']} "
             f"(시도 {it.get('attempts')}/{cap(it.get('last_kind') or TRANSIENT)})")
         out.append(it)
     return out
+
+
+def _short(key: str) -> str:
+    """로그용 짧은 키 — 범위(`a..b`)는 양 끝을 8자씩 보인다(앞 12자면 끝이 안 보인다)."""
+    base, sep, end = (key or "").partition("..")
+    return f"{base[:8]}..{end[:8]}" if sep else (key or "")[:12]
 
 
 def _item_id(kind: str, key: str) -> str:
@@ -222,10 +228,13 @@ def _item_id(kind: str, key: str) -> str:
 # ── 공개 API ────────────────────────────────────────────────────────────────
 
 def enqueue(root, *, kind: str = "commit", key: str = "", files=None,
-            requester: str = "", priority: int = 0, logf=None) -> dict:
+            requester: str = "", priority: int = 0, meta: dict | None = None,
+            logf=None) -> dict:
     """항목을 등재한다. **이미 있으면 그대로 둔다**(커밋당 리뷰 한 번).
 
     `kind="commit"` 이면 `key` 는 커밋 해시, `kind="scope"` 면 대상(디렉토리·도메인)이다.
+    `kind="range"`(`#879`) 면 `key` 는 `<시작>..<끝>` 전체 해시이고 `meta` 에 `issue_id`·`base`·`end`
+    가 실린다 — 소비자가 리뷰 뒤 그 일감에 노트를 남긴다. 그 둘이 없으면 거절한다.
     `priority` 가 크면 먼저 꺼낸다 — 사람 요청(`#638`)이 자동 등재보다 앞선다.
 
     [중요] **등재는 파일 쓰기 한 번이다** — 색인 경로에서 불려도 LLM 을 기다리지 않는다(ⓑ).
@@ -237,6 +246,12 @@ def enqueue(root, *, kind: str = "commit", key: str = "", files=None,
         raise ReviewQueueError(f"알 수 없는 kind: {kind}")
     if not key:
         raise ReviewQueueError("key 가 비었다")
+    meta = dict(meta or {})
+    if kind == "range":
+        base, _, end = key.partition("..")
+        if not (base and end) or meta.get("base") != base or meta.get("end") != end \
+                or not str(meta.get("issue_id") or "").isdigit():
+            raise ReviewQueueError("range 항목은 key=<시작>..<끝> 과 meta(issue_id·base·end)가 맞아야 한다")
     iid = _item_id(kind, key)
     with _locked(root):
         data = _read(root)
@@ -254,9 +269,11 @@ def enqueue(root, *, kind: str = "commit", key: str = "", files=None,
             "created_at": _now(), "updated_at": _now(),
             "last_kind": "", "last_why": "", "history": [],
         }
+        if meta:
+            item["meta"] = meta
         data["items"].append(item)
         _write(root, data)
-    log(f"[리뷰큐] 등재 {kind}={key[:12]} 파일 {len(item['files'])}건"
+    log(f"[리뷰큐] 등재 {kind}={_short(key)} 파일 {len(item['files'])}건"
         + (f" 요청자={requester}" if requester else ""))
     return item
 
@@ -280,7 +297,7 @@ def claim(root, *, logf=None) -> dict | None:
         it["updated_at"] = _now()
         _write(root, data)
     limit = cap(it.get("last_kind") or TRANSIENT)
-    log(f"[리뷰큐] 꺼냄 {it['kind']}={it['key'][:12]} 시도 {it['attempts']}/{limit}")
+    log(f"[리뷰큐] 꺼냄 {it['kind']}={_short(it['key'])} 시도 {it['attempts']}/{limit}")
     return it
 
 
@@ -307,7 +324,7 @@ def finish(root, item_id: str, *, ok: bool, why: str = "", note: str = "",
             it["last_why"] = ""
             it["history"].append({"at": _now(), "result": "done", "note": note})
             _write(root, data)
-            log(f"[리뷰큐] 완료 {it['kind']}={it['key'][:12]}" + (f" — {note}" if note else ""))
+            log(f"[리뷰큐] 완료 {it['kind']}={_short(it['key'])}" + (f" — {note}" if note else ""))
             return it
 
         k = classify(why)
@@ -319,17 +336,17 @@ def finish(root, item_id: str, *, ok: bool, why: str = "", note: str = "",
             it["attempts"] = max(0, int(it.get("attempts") or 1) - 1)
             it["state"] = "pending"
             _write(root, data)
-            log(f"[리뷰큐] 한도 — {it['key'][:12]} 시도 미소비 · 재큐 ({why[:60]})")
+            log(f"[리뷰큐] 한도 — {_short(it['key'])} 시도 미소비 · 재큐 ({why[:60]})")
             return it
         limit = cap(k)
         if int(it.get("attempts") or 0) >= limit:
             it["state"] = "abandoned"
             _write(root, data)
-            log(f"[리뷰큐] 포기 {it['key'][:12]} 갈래={k} 상한 {limit} 초과 — {why[:70]}")
+            log(f"[리뷰큐] 포기 {_short(it['key'])} 갈래={k} 상한 {limit} 초과 — {why[:70]}")
             return it
         it["state"] = "pending"
         _write(root, data)
-    log(f"[리뷰큐] 실패 {it['key'][:12]} 시도 {it['attempts']}/{limit} 갈래={k} — {why[:70]}")
+    log(f"[리뷰큐] 실패 {_short(it['key'])} 시도 {it['attempts']}/{limit} 갈래={k} — {why[:70]}")
     return it
 
 

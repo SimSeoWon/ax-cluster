@@ -314,16 +314,21 @@ def domain_hint(paths, files: list) -> str:
 
 
 def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
-                 grounding: str = "", kind: str = "unreal", intent: bool = False) -> str:
+                 grounding: str = "", kind: str = "unreal", intent: bool = False,
+                 subject: str = "") -> str:
     """리뷰 프롬프트. [중요] 표 형식은 소비자의 파싱 계약이다 — 열 순서를 바꾸지 말 것.
 
     `intent` (`#815` ④) — 지워진 `[PSEUDO]` 가 있을 때만 4절 규칙·예시를 싣는다.
-    False 면 종전과 **바이트 단위로 같다**(테스트가 해시로 지킨다)."""
+    False 면 종전과 **바이트 단위로 같다**(테스트가 해시로 지킨다).
+    `subject` (`#879`) — 범위 리뷰의 대상 이름(예 「일감 #879 범위 a..b (커밋 3건)」). 비우면 종전과
+    바이트 단위로 같다."""
     python = kind == "code"
     role = "Python" if python else "Unreal Engine 5 C++"
     example = format_example(kind, intent=intent)
     return (
-        f"당신은 {role} 코드 리뷰어다. 아래 커밋의 **변경분만** 리뷰하라.\n\n"
+        f"당신은 {role} 코드 리뷰어다. 아래 "
+        + ("범위(여러 커밋을 합친 diff)" if subject else "커밋")
+        + "의 **변경분만** 리뷰하라.\n\n"
         "규칙 (어기면 리포트가 못 쓰게 된다):\n"
         "- 리뷰 범위는 변경된 라인과 그 직접 영향뿐이다. 변경되지 않은 기존 코드의 무관한 "
         "이슈는 보고 금지.\n"
@@ -349,7 +354,8 @@ def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
         + example + "\n"
         + (f"## 도메인 컨텍스트 (참고)\n{domains}\n\n" if domains else "")
         + (f"## 실측 근거 (참고)\n{grounding}\n\n" if grounding else "")
-        + f"## 커밋 {commit[:12]} 의 변경 파일\n" + "\n".join(f"- {f}" for f in files)
+        + (f"## {subject} 의 변경 파일\n" if subject else f"## 커밋 {commit[:12]} 의 변경 파일\n")
+        + "\n".join(f"- {f}" for f in files)
         + f"\n\n## DIFF (unified=3)\n```diff\n{diff}\n```\n"
     )
 
@@ -564,6 +570,137 @@ def review_commit(paths, commit: str, files: list, *,
         r.serial = serial_for_commit(paths.root, commit)
         if not r.serial:
             r.serial_error = "색인에서 이 커밋을 찾지 못했다"
+    except Exception as e:                                   # noqa: BLE001
+        r.serial_error = type(e).__name__
+    log("review", f"[fix] 번호 {r.serial or '없음(' + r.serial_error + ')'} ← {path.name}")
+    return r
+
+
+# ── 범위 리뷰 (`#879`) ───────────────────────────────────────────────────────
+#
+# 일감 하나의 시작~끝 커밋을 합친 diff 를 한 번 리뷰한다. 사용자 결정(2026-11-03):
+# 커밋 단위 리뷰는 그대로 두고 **둘 다** 만든다 · 게시판에는 번호(R)로 올리되 **주간 플랜 집계에서는
+# 뺀다** — 같은 지적이 두 번 세지지 않게. 그래서 `reviews/_range/` 에 둔다: `_` 접두 디렉토리는
+# 작성자가 아니라서 planner·plan_archive 가 안 읽고, `fix_index` 만 따로 읽는다.
+# [중요] 파일명은 `<시각>_issue<N>_<시작8>-<끝8>.md` 다 — `*_<커밋8>.md` 로 끝나면 색인기의
+#    「이미 정상 리뷰가 있다」 판정(`events.consumer`)과 `find_final_review` 가 이 파일을 끝 커밋의
+#    리뷰로 읽고 **커밋 리뷰를 조용히 건너뛴다.**
+# [중요] diff 에 크기 상한을 두지 않는다 — 상용 LLM 경로에 상한 금지(사용자 결정 2026-11-03).
+
+RANGE_DIRNAME = "_range"
+RANGE_TITLE = "# 자동 범위 리뷰 —"
+
+
+def range_commits(repo: Path, base: str, end: str) -> list | None:
+    """`base..end` 의 커밋(오래된 것부터). 읽지 못하면 None — 빈 범위(`[]`)와 구분한다."""
+    rc, out = _git(repo, "rev-list", "--reverse", f"{base}..{end}")
+    return out.split() if rc == 0 else None
+
+
+def range_files(repo: Path, base: str, end: str) -> list | None:
+    rc, out = _git(repo, "diff", "--name-only", "--no-renames", base, end)
+    return [x for x in out.splitlines() if x.strip()] if rc == 0 else None
+
+
+def range_diff(repo: Path, files: list, base: str, end: str) -> str:
+    """`base` 와 `end` 사이 합친 diff (unified=3). 실패·빈 diff 는 빈 문자열. **자르지 않는다.**"""
+    rc, out = _git(repo, "diff", "--unified=3", "--no-color", base, end, "--", *files)
+    return out.strip() if rc == 0 else ""
+
+
+def range_review_name(issue_id, base: str, end: str, ts) -> str:
+    return f"{ts.strftime('%Y-%m-%d_%H%M')}_issue{int(issue_id)}_{base[:8]}-{end[:8]}.md"
+
+
+def find_range_review(paths, base: str, end: str) -> Path | None:
+    """이미 게시된 정상 범위 리뷰 — 재시도 때 모델 중복 호출을 막는다."""
+    d = Path(paths.root) / REVIEWS_DIRNAME / RANGE_DIRNAME
+    if not d.is_dir():
+        return None
+    for path in sorted(d.glob(f"*_{base[:8]}-{end[:8]}.md"), reverse=True):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if text.startswith(RANGE_TITLE) and f"`{base}..{end}`" in text and format_ok(text):
+            return path
+    return None
+
+
+def review_range(paths, issue_id, base: str, end: str, files: list, *,
+                 chat=None, logf=None, grounding: str = "",
+                 provenance: dict | None = None, commits: int = 0) -> ReviewResult:
+    """일감 범위 `base..end` 의 합친 변경분을 리뷰해 `reviews/_range/` 에 쓴다.
+
+    커밋 리뷰(`review_commit`)와 같은 프롬프트·형식 검증·1회 재시도를 쓴다. 작성자 제외·trivial·
+    머지 갈래는 없다 — 사람이 일감을 마치며 **요청한** 리뷰라서 거르지 않는다.
+    """
+    log = logf or (lambda s, m: None)
+    r = ReviewResult(commit=end)
+    src_files = review_source_files(paths, files)
+    if not src_files:
+        r.skipped = "소스 변경 없음"
+        return r
+    repo = Path(paths.repo)
+    r.author = commit_author(repo, end)
+    diff = range_diff(repo, src_files, base, end)
+    if not diff:
+        r.error = "범위 diff 를 읽지 못했다 — 리뷰 없이 넘기지 않고 기록한다"
+        return r
+    r.pseudo_removed = removed_pseudo_lines(diff)
+    intent = r.pseudo_removed > 0
+    subject = (f"일감 #{int(issue_id)} 범위 {base[:12]}..{end[:12]}"
+               + (f" (커밋 {commits}건)" if commits else ""))
+    log("review", f"{subject} — diff {len(diff)}자 · 파일 {len(src_files)} · "
+                  f"골조 지시 이행 절 {'요청' if intent else '미요청'}")
+    prompt = build_prompt(diff=diff, files=src_files, commit=end,
+                          domains=domain_hint(paths, src_files), grounding=grounding,
+                          kind=review_kind(paths), intent=intent, subject=subject)
+    _ask = chat if chat is not None else _recorded_chat(paths, end)
+    try:
+        body = _ask(prompt)
+        if not format_ok(body or "", intent=intent):
+            r.retried = True
+            log("review", f"{subject} 형식 위반 — 예시를 앞세워 1회 재시도")
+            body = _ask("직전 응답이 형식을 어겼다. 아래 골격 **그대로**, `### ` 로 시작해 "
+                        "표만으로 다시 써라. 표 밖 산문은 ## 3 에만.\n\n"
+                        + format_example(review_kind(paths), intent=intent) + "\n\n" + prompt)
+    except ReviewChatError as e:
+        r.error = f"리뷰 생성 실패: {e}"
+        return r
+    if not (body or "").strip():
+        r.error = "리뷰 응답이 비었다"
+        return r
+    r.format_ok = format_ok(body, intent=intent)
+
+    from datetime import datetime
+    ts = datetime.now()
+    out_dir = Path(paths.root) / REVIEWS_DIRNAME / RANGE_DIRNAME
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / range_review_name(issue_id, base, end, ts)
+    trace = ""
+    if provenance:
+        if provenance.get("draft_model"):
+            trace += f"- 초안 모델: {provenance['draft_model']}\n"
+        if provenance.get("review_model"):
+            trace += f"- 검증 모델: {provenance['review_model']}\n"
+    # [주의] 「- 커밋: `<해시>`」 줄을 쓰지 않는다 — fix_index·collector 가 그 줄로 커밋 리뷰를 묶는다.
+    head = (f"{RANGE_TITLE} 일감 #{int(issue_id)}\n\n"
+            f"- 범위: `{base}..{end}`\n- 일감: #{int(issue_id)}\n"
+            f"- 커밋 수: {commits}\n- 작성자: {r.author}\n"
+            f"- 파일: {len(src_files)}개\n- 생성: {ts.strftime('%Y-%m-%d %H:%M')}\n" + trace + "\n")
+    tmp = path.with_name("_writing_" + path.name)
+    tmp.write_text(head + body.strip() + "\n", encoding="utf-8")
+    tmp.replace(path)
+    r.written = str(path)
+    log("review", f"{subject} → {path.name} (행 {parseable_rows(body)}"
+                  + ("" if r.format_ok else " · [중요] 형식 위반") + ")")
+    try:
+        from .fix_index import serial_for_range, sweep
+        sweep(paths.root)
+        r.serial = serial_for_range(paths.root, base, end)
+        if not r.serial:
+            r.serial_error = "색인에서 이 범위를 찾지 못했다"
     except Exception as e:                                   # noqa: BLE001
         r.serial_error = type(e).__name__
     log("review", f"[fix] 번호 {r.serial or '없음(' + r.serial_error + ')'} ← {path.name}")

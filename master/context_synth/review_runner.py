@@ -344,6 +344,8 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
         return None
     res.claimed = item["key"]
 
+    if item.get("kind") == "range":
+        return run_range(paths, item, res, logf=log, review_call=review_call)
     if item.get("kind") != "commit":
         # `kind=scope` 는 온디맨드 플랜의 몫이다 (`#639`) — 여기서 처리하지 않는다.
         rq.finish(paths.root, item["id"], ok=False,
@@ -493,6 +495,84 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
     res.state = "done"
     log(f"[리뷰큐] Antigravity 퇴고 저장 {Path(res.written).name}"
         + (f" ({res.serial})" if res.serial else "") + " — 주간 플랜 입력")
+    return res
+
+
+def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
+              review_call=None) -> RunnerResult:
+    """일감 범위 항목(`kind=range`, `#879`) — 합친 diff 를 Antigravity 로 한 번 리뷰한다.
+
+    커밋 경로와 다른 점: 로컬 초고를 만들지 않는다(근거는 결정적 선언부만 — 초고는 사실 게이트를
+    안 받은 글이고, 범위 리뷰는 같은 커밋들의 커밋 리뷰가 이미 초고를 거쳤다) · 머지·trivial
+    갈래가 없다(사람이 요청한 리뷰다). 실패 갈래와 고정 트리(`#844`)는 커밋 경로와 같다.
+    """
+    log = logf or (lambda m: None)
+    meta = item.get("meta") or {}
+    base, end, issue = meta.get("base", ""), meta.get("end", ""), meta.get("issue_id", 0)
+    tag = f"#{issue} {base[:8]}..{end[:8]}"
+    repo = Path(paths.repo)
+    if not (base and end and str(issue).isdigit()):
+        why = "range 항목의 meta 가 비었다 — 커밋을 찾지 못했다"
+        rq.finish(paths.root, item["id"], ok=False, why=why, logf=log)
+        res.state, res.why = "failed", why
+        return res
+    final = rg.find_range_review(paths, base, end)
+    if final:
+        res.written = str(final)
+        rq.finish(paths.root, item["id"], ok=True, note=final.name + " (기존 범위 리뷰)", logf=log)
+        res.state = "done"
+        log(f"[리뷰큐] 범위 {tag} — 기존 리뷰 {final.name}")
+        return res
+    commits = rg.range_commits(repo, base, end)
+    files = list(item.get("files") or []) or (rg.range_files(repo, base, end) or [])
+    if commits is None:
+        why = f"범위 {base[:12]}..{end[:12]} 의 커밋을 찾지 못했다"
+        rq.finish(paths.root, item["id"], ok=False, why=why, logf=log)
+        res.state, res.why = "failed", why
+        return res
+    src = rg.review_source_files(paths, files)
+    log(f"[리뷰큐] 범위 {tag} — 커밋 {len(commits)}건 · 파일 {len(files)} (소스 {len(src)})")
+    if not commits or not src:
+        rq.finish(paths.root, item["id"], ok=True, note="스킵: 소스 변경 없음", logf=log)
+        res.state, res.why = "done", "소스 변경 없음"
+        return res
+    decls = declarations(repo, src, end)
+
+    from contextlib import ExitStack                              # noqa: PLC0415
+    from ..work import usage as usage_mod                         # noqa: PLC0415
+    with ExitStack() as stack:
+        ask = review_call
+        if ask is None:
+            from .pinned_tree import pinned_worktree               # noqa: PLC0415
+            try:
+                tree = stack.enter_context(pinned_worktree(repo, end, logf=log))
+            except RuntimeError as e:
+                why = f"고정 트리 생성 실패 — {e}"
+                rq.finish(paths.root, item["id"], ok=False, why=why, logf=log)
+                res.state, res.why = "failed", why
+                return res
+            log(f"[리뷰큐] Antigravity 작업 디렉터리 {tree} @ {end[:8]}")
+            ask = lambda p, **kw: agy_only(p, workdir=tree, **kw)  # noqa: E731
+        with usage_mod.sink(paths.usage_log, source="review", task_id=f"issue{issue}"):
+            reviewed = rg.review_range(
+                paths, issue, base, end, src, chat=ask, grounding=grounding_text("", decls),
+                provenance={"review_model": "Antigravity"}, commits=len(commits),
+                logf=lambda _kind, msg: log(f"[리뷰큐] Antigravity {msg}"))
+    if reviewed.error or not reviewed.written or not reviewed.format_ok:
+        if reviewed.written and not reviewed.format_ok:
+            bad = Path(paths.root) / rg.REVIEWS_DIRNAME / "_rejected"
+            bad.mkdir(parents=True, exist_ok=True)
+            Path(reviewed.written).replace(bad / Path(reviewed.written).name)
+        why = reviewed.error or "Antigravity 정형 리뷰 형식 위반"
+        rq.finish(paths.root, item["id"], ok=False, why=why, logf=log)
+        res.state, res.why = "failed", why
+        return res
+    res.written, res.serial = reviewed.written, reviewed.serial
+    rq.finish(paths.root, item["id"], ok=True,
+              note=Path(res.written).name + (f" ({res.serial})" if res.serial else ""), logf=log)
+    res.state = "done"
+    log(f"[리뷰큐] 범위 {tag} 리뷰 저장 {Path(res.written).name}"
+        + (f" ({res.serial})" if res.serial else "") + " — 주간 플랜 제외")
     return res
 
 

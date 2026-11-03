@@ -47,6 +47,9 @@ _COMMIT = re.compile(r"커밋:\s*`([0-9a-f]{7,40})`")
 _AUTHOR = re.compile(r"^- 작성자:\s*(.+)$", re.M)
 _CREATED = re.compile(r"^- 생성:\s*(.+)$", re.M)
 _FILES = re.compile(r"^- 파일:\s*(\d+)", re.M)
+_RANGE = re.compile(r"^- 범위:\s*`([0-9a-f]{7,40})\.\.([0-9a-f]{7,40})`", re.M)
+_ISSUE = re.compile(r"^- 일감:\s*#(\d+)", re.M)
+RANGE_SUBDIR = "_range"          # `review_gen.RANGE_DIRNAME` 과 같다 (`#879`)
 _STAMP = re.compile(r"^(\d{4}-\d{2}-\d{2})_(\d{2})(\d{2})_([0-9a-f]{7,40})$")
 
 
@@ -136,6 +139,42 @@ def _review_files(root: Path) -> list:
     return sorted(out, key=lambda f: (f.name, f.as_posix()))
 
 
+def _range_files(root: Path) -> list:
+    """`reviews/_range/*.md` — 일감 범위 리뷰(`#879`). 작성자 디렉토리가 아니라서 위 목록에 없다.
+
+    [중요] 게시판 번호는 주되 **주간 플랜은 이 디렉토리를 읽지 않는다**(사용자 결정 2026-11-03 —
+    커밋 리뷰와 같은 지적이 두 번 세지지 않게). `_` 접두 파일(작성 중)은 리뷰가 아니다.
+    """
+    d = root / REVIEWS_DIRNAME / RANGE_SUBDIR
+    if not d.is_dir():
+        return []
+    return sorted((f for f in d.glob("*.md") if not f.name.startswith("_")),
+                  key=lambda f: f.name)
+
+
+def _range_head(f: Path) -> dict:
+    try:
+        text = f.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    m, i = _RANGE.search(text), _ISSUE.search(text)
+    a, c, n = _AUTHOR.search(text), _CREATED.search(text), _FILES.search(text)
+    return {"range": f"{m.group(1)}..{m.group(2)}" if m else "",
+            "issue_id": int(i.group(1)) if i else 0,
+            "author": a.group(1).strip() if a else "",
+            "created": c.group(1).strip() if c else "",
+            "files": int(n.group(1)) if n else 0}
+
+
+def serial_for_range(root, base: str, end: str) -> str:
+    """이 범위의 리뷰 번호. 없으면 빈 문자열."""
+    key = f"{base}..{end}"
+    for serial, d in (load(root).get("docs") or {}).items():
+        if d.get("kind") == "review" and d.get("range") == key:
+            return serial
+    return ""
+
+
 def _review_head(f: Path) -> dict:
     try:
         text = f.read_text(encoding="utf-8", errors="replace")
@@ -218,6 +257,29 @@ def sweep(root, *, logf=None, now: datetime | None = None) -> dict:
                 moved += 1
             seen.add(serial)
 
+        by_range = {d["range"]: s for s, d in docs.items()
+                    if d.get("kind") == "review" and d.get("range")}
+        for f in _range_files(root):
+            head = _range_head(f)
+            if not head["range"]:
+                no_commit += 1
+                continue
+            rel = f.relative_to(root).as_posix()
+            serial = by_range.get(head["range"])
+            if not serial:
+                serial = f"R{data['next']['R']}"
+                data["next"]["R"] += 1
+                docs[serial] = {"kind": "review", "range": head["range"],
+                                "issue_id": head["issue_id"], "author": head["author"],
+                                "created": head["created"], "files": head["files"],
+                                "file": rel, "assigned_at": stamp}
+                by_range[head["range"]] = serial
+                assigned.append(serial)
+            elif serial not in seen and docs[serial].get("file") != rel:
+                docs[serial]["file"] = rel
+                moved += 1
+            seen.add(serial)
+
         for f in _plan_files(root):
             rel = f.relative_to(root).as_posix()
             serial = by_plan.get(rel)
@@ -291,6 +353,9 @@ def _summary(root: Path, data: dict, serial: str, cache: dict) -> tuple:
         items = _review_items(root, d, serial, cache)
         s.update(created=d.get("created", ""), commit=(d.get("commit") or "")[:12],
                  files=d.get("files", 0))
+        if d.get("range"):
+            b, _, e = d["range"].partition("..")
+            s.update(range=f"{b[:12]}..{e[:12]}", issue_id=d.get("issue_id", 0))
         keys = [it["id"] for it in items]
     else:
         fm, _ = _plan_front(root / d.get("file", "")) if not d.get("missing") else ({}, "")
@@ -351,6 +416,8 @@ def get_doc(root, serial: str) -> dict:
     out = {"ok": True, **s, "file": d.get("file", ""), "items_detail": items, "body": body}
     if d.get("kind") == "review":
         out["commit_full"] = d.get("commit", "")
+        if d.get("range"):
+            out["range_full"] = d["range"]
     else:
         fm, _ = _plan_front(f) if f.is_file() else ({}, "")
         out.update(target_file=fm.get("target_file", ""),
