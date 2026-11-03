@@ -94,8 +94,9 @@ class _Log:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        except OSError as e:
-            print(f"[issue_flow] [주의] 이벤트 기록 실패 {path}: {e}", file=sys.stderr)
+        except (OSError, TypeError, ValueError) as e:
+            # `#881` R218-3 — 직렬화 불가 값(TypeError·ValueError)도 흐름을 바꾸지 않는다
+            print(f"[issue_flow] [주의] 이벤트 기록 실패 {path}: {type(e).__name__}: {e}", file=sys.stderr)
 
 
 def _refuse(log: _Log, step: str, why: str, **extra) -> dict:
@@ -112,6 +113,18 @@ def _default_getter(issue_id):
 def _default_noter(issue_id, *, notes: str, status_name: str = "") -> str:
     from master import redmine
     return redmine.update_issue(issue_id, notes=notes, status_name=status_name)
+
+
+def _call_redmine(fn, *a, **kw) -> str:
+    """Redmine 호출 — 예외도 `[주의]` 문장으로 바꾼다(`#881` R216-4·R218-2·R216-5).
+
+    `update_issue` 는 실패를 문장으로 돌려주지만 대역·네트워크 계층은 예외를 던질 수 있다. 예외가
+    새면 `start` 는 방금 만든 브랜치를 되돌리지 못하고, `finish` 는 push 뒤 결과를 못 돌려준다.
+    """
+    try:
+        return str(fn(*a, **kw))
+    except Exception as e:                              # noqa: BLE001
+        return f"[주의] Redmine 호출 예외 {type(e).__name__}: {e}"
 
 
 def _resolve_events(events_path, injected: bool):
@@ -142,7 +155,10 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
     branch = branch_name(issue_id)
 
     # ① 플랜 강제
-    verdict = ST.start_issue(issue_id, getter=getter)
+    try:
+        verdict = ST.start_issue(issue_id, getter=getter)
+    except Exception as e:                              # noqa: BLE001
+        return _refuse(log, "plan", f"이슈를 읽지 못했다 — 예외 {type(e).__name__}: {e}")
     if "error" in verdict:
         return _refuse(log, "plan", f"이슈를 읽지 못했다 — {verdict['error']}")
     if not verdict.get("ok"):
@@ -159,7 +175,10 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
         if cur != branch:
             return _refuse(log, "branch", f"{branch} 가 이미 있는데 지금 브랜치는 {cur} 다 — "
                                           "그 브랜치로 옮겨 이어 가거나 정리 여부를 사람이 정한다")
-        rev = _git_ok(repo, "merge-base", MAIN, branch)
+        try:
+            rev = _git_ok(repo, "merge-base", MAIN, branch)
+        except IssueFlowError as e:                     # `#881` R216-6
+            return _refuse(log, "branch", f"{branch} 의 시작 리비전을 못 구했다 — {e}")
         log("branch", f"이미 {branch} 에 있다 — 시작 리비전 {rev[:12]} (새 기록 없음)")
         return {"ok": True, "issue_id": issue_id, "already": True, "branch": branch,
                 "start_rev": rev, "log": log.lines}
@@ -179,7 +198,9 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
         if rc != 0:
             return _refuse(log, "fetch", f"{REMOTE} fetch 실패: {out}")
         log("fetch", f"{REMOTE}/{MAIN} fetch")
-    head = _git_ok(repo, "rev-parse", "HEAD")
+    rc, head = _git(repo, "rev-parse", "HEAD")
+    if rc != 0:
+        return _refuse(log, "base", f"HEAD 를 못 읽었다: {head}")
     rc, remote = _git(repo, "rev-parse", f"{REMOTE}/{MAIN}")
     if rc != 0:
         return _refuse(log, "base", f"{REMOTE}/{MAIN} 을 못 읽었다: {remote}")
@@ -195,10 +216,13 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
     log("branch", f"{branch} 생성 @ {head[:12]}")
 
     # ⑤ Redmine 기록 — 실패하면 브랜치를 되돌린다
-    got = getter(issue_id)
+    try:
+        got = getter(issue_id)
+    except Exception:                                   # noqa: BLE001 — 상태 판정용 읽기일 뿐이다
+        got = None
     status = "진행" if isinstance(got, dict) and got.get("status") == "신규" else ""
     note = START_NOTE.format(rev=head, branch=branch)
-    res = str(noter(issue_id, notes=note, status_name=status))
+    res = _call_redmine(noter, issue_id, notes=note, status_name=status)
     if res.startswith("[주의]"):
         back = [_git(repo, "switch", MAIN), _git(repo, "branch", "-d", branch)]
         undone = all(rc == 0 for rc, _ in back)
@@ -251,7 +275,7 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, enqueue=No
         return _refuse(log, "branch", f"지금 브랜치가 {cur} 다 — {branch} 에서 마친다")
     rc, dirty = _git(repo, "status", "--porcelain")
     if rc != 0 or dirty:
-        return _refuse(log, "tree", f"작업 트리가 깨끗하지 않다 — 커밋·정리는 사람이 정한다",
+        return _refuse(log, "tree", "작업 트리가 깨끗하지 않다 — 커밋·정리는 사람이 정한다",
                        dirty=(dirty or "").splitlines()[:20])
     if fetch:
         rc, out = _git(repo, "fetch", "--quiet", REMOTE, MAIN)
@@ -272,7 +296,10 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, enqueue=No
     if _git(repo, "merge-base", "--is-ancestor", remote, end)[0] != 0:
         return _refuse(log, "base", f"{REMOTE}/{MAIN} {remote[:12]} 이 {branch} 의 조상이 아니다 — "
                                     "fast-forward 불가, rebase·머지는 사람이 정한다")
-    files = _git_ok(repo, "diff", "--name-only", base, end).splitlines()
+    try:
+        files = _git_ok(repo, "diff", "--name-only", base, end).splitlines()
+    except IssueFlowError as e:
+        return _refuse(log, "span", str(e))
     summary = {"issue_id": issue_id, "branch": branch, "base": base, "end": end,
                "commits": commits, "files": len(files)}
     log("span", f"범위 {base[:12]}..{end[:12]} · 커밋 {len(commits)}건 · 파일 {len(files)}")
@@ -335,7 +362,7 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, enqueue=No
     note = FINISH_NOTE.format(base=base, end=end, n=len(commits), end12=end[:12], branch=branch,
                               deleted="" if deleted else " 실패", commits=lines,
                               base12=base[:12], state=state)
-    res = str(noter(issue_id, notes=note))
+    res = _call_redmine(noter, issue_id, notes=note)
     if res.startswith("[주의]"):
         problems.append(f"Redmine: {res}")
         log("redmine", f"기록 실패 — {res}")

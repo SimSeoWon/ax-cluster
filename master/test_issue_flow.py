@@ -301,6 +301,80 @@ def t_git_stderr_not_in_value(tmp):
     check("_git 실패 — 사유에 stderr", rc3 != 0 and ("없는-ref" in why or "fatal" in why), why)
 
 
+def _boom(*a, **k):
+    raise ConnectionError("네트워크 끊김")
+
+
+def t_start_noter_exception_rolls_back(tmp):
+    """`#881` R216-4·R218-2 — noter 예외여도 브랜치를 되돌리고 거절로 답한다."""
+    repo = make_repo(tmp)
+    iss = Issue(SPEC + PLAN)
+    r = IF.start(7, repo=repo, getter=iss.get, noter=_boom)
+    check("start noter 예외 → ok 아님 · step redmine", not r["ok"] and r["step"] == "redmine"
+          and "ConnectionError" in r["why"], str(r)[:300])
+    check("start noter 예외 → 브랜치 되돌림", r.get("branch_rolled_back") is True
+          and sh(repo, "branch", "--list", "issue/7") == ""
+          and sh(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main")
+
+
+def t_start_getter_exception(tmp):
+    repo = make_repo(tmp)
+    r = IF.start(7, repo=repo, getter=_boom, noter=lambda *a, **k: "ok")
+    check("start getter 예외 → 거절(plan)", not r["ok"] and r["step"] == "plan"
+          and "ConnectionError" in r["why"], str(r)[:300])
+    check("start getter 예외 → 브랜치 없음", sh(repo, "branch", "--list", "issue/7") == "")
+
+
+def t_start_status_read_exception_still_records(tmp):
+    """판정은 읽혔는데 상태 읽기만 실패 — 기록은 남기고 상태는 안 바꾼다."""
+    repo = make_repo(tmp)
+    iss = Issue(SPEC + PLAN)
+    calls = {"n": 0}
+
+    def flaky(iid):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise TimeoutError("느림")
+        return iss.get(iid)
+    r = IF.start(7, repo=repo, getter=flaky, noter=iss.note)
+    check("상태 읽기 예외 → 시작은 성공 · 상태 미변경", r["ok"] and iss.notes and iss.notes[-1][1] == "",
+          str(r)[:200])
+
+
+def t_finish_noter_exception_reports(tmp):
+    """`#881` R216-5 — push 뒤 noter 예외여도 done/why 로 돌려준다."""
+    repo, iss, base, end = started(tmp)
+    r = IF.finish(7, confirm=True, repo=repo, noter=_boom, enqueue=Q(), review_root=tmp)
+    check("finish noter 예외 → 결과 딕셔너리 · ok 아님", isinstance(r, dict) and not r["ok"]
+          and "ConnectionError" in r["why"], str(r)[:300])
+    check("finish noter 예외 → push·삭제·등재는 done", all(x in r["done"] for x in
+          ("push", "ff", "delete_branch", "enqueue")) and "redmine" not in r["done"], str(r.get("done")))
+
+
+def t_start_already_merge_base_failure(tmp):
+    """`#881` R216-6 — 기존 브랜치 경로의 merge-base 실패는 거절로 답한다(main 이 없는 저장소)."""
+    repo = make_repo(tmp)
+    iss = Issue(SPEC + PLAN)
+    sh(repo, "switch", "-q", "--orphan", "issue/7")
+    (repo / "o.txt").write_text("o"); sh(repo, "add", "o.txt"); sh(repo, "commit", "-q", "-m", "orphan")
+    r = IF.start(7, repo=repo, getter=iss.get, noter=iss.note)
+    check("기존 브랜치 merge-base 실패 → 거절(branch)", not r["ok"] and r["step"] == "branch"
+          and "시작 리비전을 못 구했다" in r["why"], str(r)[:300])
+
+
+def t_log_unserializable(tmp):
+    """`#881` R218-3 — 직렬화 불가 extra 도 흐름을 바꾸지 않는다."""
+    ev = tmp / "ev.jsonl"
+    log = IF._Log("t", 7, events_path=ev)
+    try:
+        log("x", "메시지", obj=object())
+        ok = True
+    except Exception as e:                              # noqa: BLE001
+        ok = False
+        print(e)
+    check("_Log 직렬화 불가 → 예외 없음 · 목록엔 남음", ok and log.lines and "메시지" in log.lines[-1])
+
+
 def main() -> int:
     for fn in (t_plan_needed_refuses, t_no_spec_refuses, t_happy_path,
                t_status_kept_when_not_new, t_dirty_refuses, t_not_on_main_refuses,
@@ -308,7 +382,10 @@ def main() -> int:
                t_redmine_failure_rolls_back, t_read_failure,
                t_finish_preview_writes_nothing, t_finish_confirm, t_finish_refusals,
                t_finish_no_commits, t_finish_origin_moved, t_finish_push_rejected,
-               t_finish_enqueue_failure_reported, t_git_stderr_not_in_value):
+               t_finish_enqueue_failure_reported, t_git_stderr_not_in_value,
+               t_start_noter_exception_rolls_back, t_start_getter_exception,
+               t_start_status_read_exception_still_records, t_finish_noter_exception_reports,
+               t_start_already_merge_base_failure, t_log_unserializable):
         run(fn)
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_issue_flow: {PASS}/{total} 통과")
