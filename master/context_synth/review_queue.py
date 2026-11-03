@@ -19,6 +19,7 @@
     QUOTA(429·session limit)    카운트 미소비 · 지연 후 재큐
     일시적(응답 없음·타임아웃)     3            원전 `verifier.py:55` _DEFAULT_MAX_ATTEMPTS
     형식 위반(format_ok=False)    3            원전의 revise 정책
+    대기(미러 미도착, `#880`)      12           회차당 1번(`drain` exclude) — 색인기 fetch 를 기다린다
 
 🔴 실측이 이 배분을 받친다 — 카나리 `review-lost` 31행 중 **27건이 ENV, 3건이 결정적**이었다.
 갈래 구분이 없어 결정적 실패를 계속 재시도한 결과다. 이 설계면 4행으로 줄었다.
@@ -63,12 +64,16 @@ DETERMINISTIC = "deterministic"
 QUOTA = "quota"
 TRANSIENT = "transient"
 FORMAT = "format"
+WAIT = "wait"           # `#880` — 입력이 아직 안 왔다(범위 끝 커밋이 미러에 없음). 회차당 1번 · 상한 12
 
 MAX_ATTEMPTS = {
     ENV: 1,             # 재시도는 토큰만 쓴다
     DETERMINISTIC: 1,   # 몇 번을 돌려도 같다
     TRANSIENT: 3,       # 원전 _DEFAULT_MAX_ATTEMPTS
     FORMAT: 3,
+    # `#880` (사용자 결정 2026-11-03) — 색인기 fetch 는 push 뒤 27분이 걸린 적이 있다(23:13→23:40).
+    #    회차(약 10분)당 1번이므로 12 ≈ 2시간. 끝내 안 오는 커밋(강제 push 등)도 언젠가 종결된다.
+    WAIT: 12,
     # QUOTA 는 여기 없다 — 시도 횟수를 소비하지 않는다 (아래 `is_quota`)
 }
 
@@ -79,6 +84,11 @@ DETERMINISTIC_MARKERS = (
     "커밋을 찾지 못했다",
     "unknown revision",
     "bad object",
+)
+
+
+WAIT_MARKERS = (
+    "미러에 아직 없다",       # review_runner.run_range — 범위 끝 커밋이 색인기 fetch 전
 )
 
 
@@ -107,6 +117,8 @@ def classify(why: str) -> str:
     # PATH·실행파일 부재는 `#285` 가 남긴 우리 쪽 문구다 — 환경 실패다.
     if "실행파일 없음" in text or "PATH 미등록" in text:
         return ENV
+    if any(m in text for m in WAIT_MARKERS):
+        return WAIT
     if any(m in text for m in DETERMINISTIC_MARKERS):
         return DETERMINISTIC
     return TRANSIENT
@@ -278,16 +290,21 @@ def enqueue(root, *, kind: str = "commit", key: str = "", files=None,
     return item
 
 
-def claim(root, *, logf=None) -> dict | None:
+def claim(root, *, exclude=(), logf=None) -> dict | None:
     """`pending` 하나를 `running` 으로 바꿔 돌려준다. 없으면 `None`.
 
     우선순위 → 등재 순. [중요] **잠금 안에서 상태를 바꾼다** — 두 소비자가 같은 항목을
     집으면 리뷰가 두 번 난다(2026-09-13 NS 에서 같은 커밋 리뷰 150개가 났던 사고의 결).
+    `exclude`(`#880`) — 이 id 들은 꺼내지 않는다. `drain` 이 **이번 회차에 이미 꺼낸 항목**을 넘긴다:
+    실패해 `pending` 으로 돌아간 항목은 우선순위가 그대로라 곧바로 다시 1순위가 되고, LLM 없이
+    즉시 끝나는 실패(미러 미도착 등)는 한 회차에 상한을 다 써 버렸다(실측 2026-11-03 23:37, 수 초에 3/3).
     """
     log = logf or (lambda m: None)
+    skip = set(exclude or ())
     with _locked(root):
         data = _read(root)
-        cands = [it for it in data["items"] if it.get("state") == "pending"]
+        cands = [it for it in data["items"]
+                 if it.get("state") == "pending" and it.get("id") not in skip]
         if not cands:
             return None
         cands.sort(key=lambda it: (-int(it.get("priority") or 0), it.get("created_at") or ""))

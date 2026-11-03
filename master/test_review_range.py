@@ -14,6 +14,7 @@
     ⑨ (T4) 끝나면 그 일감에 노트 — 번호·범위·건수·링크·지적 표 · 절대 경로 없음
     ⑩ (T4) 노트 실패는 리뷰를 되돌리지 않고 다음 회차가 다시 남긴다(LLM 0)
     ⑫ 수정 기록 절 — 커밋 순서·본문 · 「사실로 받지 말 것」 단서 · 서명 줄 제외 · DIFF 앞
+    ⑬ (#880) drain — 미러 미도착 range 는 회차당 1번 · 도착하면 다음 회차에 done·노트
     ⑪ (T4) 대역 없이 임시 루트로 돌면 실 Redmine 기본 경로를 타지 않는다 — 실측 누출의 재발 방지
 
 실 LLM 을 부르지 않는다(review_call 주입). git 은 실제 임시 저장소다.
@@ -204,8 +205,8 @@ def test_end_not_yet_in_mirror_is_transient():
               meta={"issue_id": 879, "base": base, "end": missing})
     r = R.run_once(Paths(root), range_noter=noter, review_call=lambda p, **kw: BODY)
     it = [x for x in Q.items(root) if x["kind"] == "range"][0]
-    check("⑦ 끝 커밋이 미러에 없음 → 일시적 · pending 으로 재시도", r.state == "failed"
-          and it["last_kind"] == Q.TRANSIENT and it["state"] == "pending", f"{it['last_kind']} {it['state']}")
+    check("⑦ 끝 커밋이 미러에 없음 → 대기(WAIT, #880) · pending 으로 재시도", r.state == "failed"
+          and it["last_kind"] == Q.WAIT and it["state"] == "pending", f"{it['last_kind']} {it['state']}")
     shutil.rmtree(root)
 
 
@@ -258,6 +259,48 @@ def test_notify_issue():
     shutil.rmtree(root)
 
 
+def test_drain_waits_across_runs():
+    """`#880` T3 — 미러 미도착 항목은 **회차당 1번**만 시도되고, 커밋이 도착하면 다음 회차에 끝난다.
+
+    실측 결함(2026-11-03 23:37): 같은 회차의 drain 이 즉시 3번 다시 꺼내 수 초 만에 abandoned.
+    """
+    root, base, end = make_repo()
+    repo = Path(root) / "repo"
+    # 끝 커밋을 미러에서 숨긴다 — 다른 클론에서 만든 커밋을 아직 fetch 안 한 상태
+    other = Path(root) / "other"
+    subprocess.run(["git", "clone", "-q", str(repo), str(other)], check=True, capture_output=True)
+    git(other, "config", "user.email", "o@o"); git(other, "config", "user.name", "다른")
+    (other / "Source" / "M" / "C.cpp").write_text("int C() { return 1 / 0; }\n")
+    git(other, "add", "-A"); git(other, "commit", "-qm", "c3")
+    new_end = git(other, "rev-parse", "HEAD").stdout.strip()
+    Q.enqueue(root, kind="range", key=f"{end}..{new_end}", files=[],
+              meta={"issue_id": 880, "base": end, "end": new_end})
+    Q.enqueue(root, key=end, files=["Source/M/B.cpp"])            # 같은 회차에 커밋 항목도 하나
+    NOTES.clear()
+    calls = []
+    kw = dict(range_noter=noter, draft_call=lambda p: "없음",
+              review_call=lambda p, **k: calls.append(p) or BODY)
+    rs = R.drain(Paths(root), limit=5, **kw)
+    it = [x for x in Q.items(root) if x["kind"] == "range"][0]
+    check("⑬ 1회차 — range 는 한 번만 꺼냈다", sum(1 for r in rs if r.item_id == it["id"]) == 1
+          and it["attempts"] == 1 and it["state"] == "pending" and it["last_kind"] == Q.WAIT,
+          f"{[r.item_id for r in rs]} {it['attempts']} {it['state']} {it['last_kind']}")
+    check("⑬ 1회차 — 커밋 항목은 그대로 처리됐다", any(r.item_id == f"commit:{end}" and r.state == "done"
+                                                 for r in rs))
+    R.drain(Paths(root), limit=5, **kw)
+    it = [x for x in Q.items(root) if x["kind"] == "range"][0]
+    check("⑬ 2회차 — 아직 없음 · 시도 2 · 대기", it["attempts"] == 2 and it["state"] == "pending")
+    # 색인기 fetch 가 도착했다
+    git(repo, "fetch", "-q", str(other), "HEAD")
+    n_before = len(calls)
+    R.drain(Paths(root), limit=5, **kw)
+    it = [x for x in Q.items(root) if x["kind"] == "range"][0]
+    check("⑬ 3회차 — 도착 뒤 done · 모델 1회", it["state"] == "done" and len(calls) == n_before + 1,
+          f"{it['state']} {len(calls) - n_before}")
+    check("⑬ 일감 노트", NOTES and NOTES[-1][0] == 880 and it["meta"].get("noted") is True, str(NOTES[-1:]))
+    shutil.rmtree(root)
+
+
 def test_commit_prompt_unchanged():
     a = RG.build_prompt(diff="d", files=["x"], commit="abc")
     check("⑧ 커밋 프롬프트 — 범위 문구 없음", "여러 커밋을 합친" not in a and "수정 기록" not in a and "일감 #" not in a and "## 커밋 abc 의 변경 파일" in a
@@ -267,6 +310,7 @@ def test_commit_prompt_unchanged():
 def main() -> int:
     for fn in (test_enqueue_contract, test_run_range, test_bad_range_is_deterministic,
                test_end_not_yet_in_mirror_is_transient, test_notify_issue,
+               test_drain_waits_across_runs,
                test_commit_prompt_unchanged):
         fn()
     total = PASS + FAIL

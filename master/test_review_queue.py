@@ -268,10 +268,45 @@ def test_orphan_running_is_reclaimed():
     shutil.rmtree(root)
 
 
+def test_wait_kind():
+    """`#880` — 미러 미도착은 WAIT · 상한 12 · 결정적 마커보다 앞선다."""
+    why = "범위 끝 bcdd2905c70f 이 미러에 아직 없다 — 색인기 fetch 를 기다린다"
+    check("⑫ 미러 미도착 → WAIT", Q.classify(why) == Q.WAIT, Q.classify(why))
+    check("⑫ WAIT 상한 12", Q.cap(Q.WAIT) == 12)
+    check("⑫ WAIT 는 한도 소진이 아니다(시도를 소비한다)", not Q.is_quota(Q.WAIT))
+    root = make_root()
+    Q.enqueue(root, key="w")
+    for n in range(1, 13):
+        it = Q.claim(root)
+        out = Q.finish(root, it["id"], ok=False, why=why)
+        if n < 12 and out["state"] != "pending":
+            check(f"⑫ {n}회째는 pending", False, out["state"])
+            break
+    check("⑫ 12회째에 abandoned", out["state"] == "abandoned" and out["attempts"] == 12,
+          f"{out['state']} {out['attempts']}")
+    shutil.rmtree(root)
+
+
+def test_claim_exclude():
+    """`#880` — exclude 에 든 항목은 꺼내지 않는다(실패해 되돌아간 1순위 항목도)."""
+    root = make_root()
+    Q.enqueue(root, key="hi", priority=10)
+    Q.enqueue(root, key="lo")
+    a = Q.claim(root)
+    Q.finish(root, a["id"], ok=False, why="응답 없음")            # 일시적 → pending, 우선순위 그대로
+    check("⑪ 되돌아간 1순위는 exclude 없으면 다시 1순위", Q.claim(root, exclude=())["key"] == "hi")
+    Q.finish(root, "commit:hi", ok=False, why="응답 없음")
+    b = Q.claim(root, exclude={"commit:hi"})
+    check("⑪ exclude 면 다음 항목을 꺼낸다", b and b["key"] == "lo", str(b))
+    check("⑪ exclude 만 남으면 None", Q.claim(root, exclude={"commit:hi", "commit:lo"}) is None)
+    shutil.rmtree(root)
+
+
 if __name__ == "__main__":
     for fn in (test_classify, test_caps, test_enqueue_and_claim, test_outcomes,
                test_format_violation_does_not_block, test_broken_queue_and_location,
-               test_concurrent_claim, test_orphan_running_is_reclaimed):
+               test_concurrent_claim, test_orphan_running_is_reclaimed, test_claim_exclude,
+               test_wait_kind):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

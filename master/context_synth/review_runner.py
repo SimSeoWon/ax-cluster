@@ -118,6 +118,7 @@ class RunnerResult:
 
     def __init__(self):
         self.claimed = ""
+        self.item_id = ""          # 꺼낸 큐 항목 id — `drain` 이 회차 안 재선택을 막는 데 쓴다 (`#880`)
         self.drafted = False
         self.draft_why = ""
         self.draft_written = ""
@@ -335,14 +336,18 @@ def find_final_review(paths, commit: str) -> Path | None:
 
 
 def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
-             write=None, review_call=None, range_noter=None) -> RunnerResult | None:
-    """큐에서 하나를 꺼내 로컬 초안 → Antigravity 최종 리뷰까지 만든다."""
+             write=None, review_call=None, range_noter=None,
+             exclude=()) -> RunnerResult | None:
+    """큐에서 하나를 꺼내 로컬 초안 → Antigravity 최종 리뷰까지 만든다.
+
+    `exclude` — 꺼내지 않을 항목 id(`#880`, `drain` 이 이번 회차에 꺼낸 것을 넘긴다)."""
     log = logf or (lambda m: None)
     res = RunnerResult()
-    item = rq.claim(paths.root, logf=log)
+    item = rq.claim(paths.root, exclude=exclude, logf=log)
     if item is None:
         return None
     res.claimed = item["key"]
+    res.item_id = item["id"]
 
     if item.get("kind") == "range":
         return run_range(paths, item, res, logf=log, review_call=review_call,
@@ -698,15 +703,19 @@ def drain(paths, *, limit: int = 5, logf=None, deadline: float | None = None,
     """
     log = logf or (lambda m: None)
     out = []
+    seen: set = set()          # `#880` — 이번 회차에 꺼낸 항목은 다시 꺼내지 않는다
     for _ in range(max(1, limit)):
         if deadline is not None:
             left = deadline - clock()
             if left < ITEM_WORST:
                 log(f"[리뷰큐] 시간 예산 — 남은 {int(left)}초 < 한 건 최악 {ITEM_WORST}초 · 다음 회차로 넘긴다")
                 break
-        r = run_once(paths, logf=logf, **kw)
+        r = run_once(paths, logf=logf, exclude=seen, **kw)
         if r is None:
+            if seen:
+                log(f"[리뷰큐] 이번 회차에 꺼낸 {len(seen)}건 외에 대기 없음 — 실패분은 다음 회차가 다시 집는다")
             break
+        seen.add(r.item_id)
         out.append(r)
         # `#847` — 한도(쿨다운 포함)는 모델 단위다. 같은 회차의 다음 항목도 똑같이 막히므로
         #    더 꺼내지 않는다 — 방금 재큐된 항목을 곧바로 다시 집어 헛도는 것도 막는다.
