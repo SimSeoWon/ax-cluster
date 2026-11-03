@@ -350,6 +350,19 @@ def finish(root, item_id: str, *, ok: bool, why: str = "", note: str = "",
     return it
 
 
+def set_meta(root, item_id: str, **kv) -> dict:
+    """항목의 `meta` 에 값을 더한다 — 범위 리뷰의 일감 노트 상태(`#879` T4)가 쓴다. 상태는 안 바꾼다."""
+    with _locked(root):
+        data = _read(root)
+        it = next((x for x in data["items"] if x.get("id") == item_id), None)
+        if it is None:
+            raise ReviewQueueError(f"큐에 없는 항목: {item_id}")
+        it.setdefault("meta", {}).update(kv)
+        it["updated_at"] = _now()
+        _write(root, data)
+        return it
+
+
 def counts(root) -> dict:
     """상태별 건수. 읽기만 한다."""
     data = _read(root)

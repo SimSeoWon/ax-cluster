@@ -11,6 +11,9 @@
     ⑥ 재시도 때 이미 게시된 범위 리뷰가 있으면 모델을 다시 부르지 않는다
     ⑦ 범위를 못 읽으면 **결정적** 실패로 1회에 멈춘다
     ⑧ 범위 프롬프트의 대상 이름 · 커밋 프롬프트는 그대로
+    ⑨ (T4) 끝나면 그 일감에 노트 — 번호·범위·건수·링크·지적 표 · 절대 경로 없음
+    ⑩ (T4) 노트 실패는 리뷰를 되돌리지 않고 다음 회차가 다시 남긴다(LLM 0)
+    ⑪ (T4) 대역 없이 임시 루트로 돌면 실 Redmine 기본 경로를 타지 않는다 — 실측 누출의 재발 방지
 
 실 LLM 을 부르지 않는다(review_call 주입). git 은 실제 임시 저장소다.
 `.venv/bin/python master/test_review_range.py`
@@ -32,6 +35,13 @@ from master.context_synth import review_queue as Q                # noqa: E402
 from master.context_synth import review_runner as R               # noqa: E402
 
 PASS = FAIL = 0
+NOTES: list = []
+
+
+def noter(issue_id, *, notes):
+    """[중요] 실 Redmine 대역 — 주입하지 않으면 소비자가 진짜 일감에 노트를 쓴다(2026-11-03 실측 누출)."""
+    NOTES.append((issue_id, notes))
+    return f"레드마인 #{issue_id} 갱신 (notes)"
 
 
 def check(name: str, cond: bool, detail: str = "") -> None:
@@ -118,7 +128,7 @@ def test_run_range():
     root, base, end = make_repo()
     enqueue_range(root, base, end)
     calls = []
-    r = R.run_once(Paths(root), review_call=lambda p, **kw: calls.append(p) or BODY)
+    r = R.run_once(Paths(root), range_noter=noter, review_call=lambda p, **kw: calls.append(p) or BODY)
     check("② 한 번 부른다", len(calls) == 1, str(len(calls)))
     p = calls[0] if calls else ""
     check("② 합친 diff — 두 커밋의 변경이 다 있다", "1 / 0" in p and "return 42" in p)
@@ -148,7 +158,7 @@ def test_run_range():
     check("④ serial_for_commit(끝) 은 범위 리뷰가 아니다", FX.serial_for_commit(root, end) == "")
     # 커밋 리뷰가 따로 생겨도 번호가 갈린다
     Q.enqueue(root, key=end, files=["Source/M/B.cpp"])
-    rc = R.run_once(Paths(root), draft_call=lambda p: "없음", review_call=lambda p, **kw: BODY)
+    rc = R.run_once(Paths(root), range_noter=noter, draft_call=lambda p: "없음", review_call=lambda p, **kw: BODY)
     check("④ 끝 커밋의 커밋 리뷰도 생긴다(둘 다 유지)", rc.state == "done" and "reviews/테스터/" in rc.written,
           f"{rc.state} {rc.written}")
     check("④ 번호가 겹치지 않는다", rc.serial and rc.serial != r.serial, f"{rc.serial} {r.serial}")
@@ -164,7 +174,7 @@ def test_run_range():
             it["state"] = "pending"
     Q._write(root, data)
     again = []
-    r2 = R.run_once(Paths(root), review_call=lambda p, **kw: again.append(p) or BODY)
+    r2 = R.run_once(Paths(root), range_noter=noter, review_call=lambda p, **kw: again.append(p) or BODY)
     check("⑥ 기존 범위 리뷰가 있으면 모델 0회", not again and r2.state == "done", f"{len(again)} {r2.state}")
     shutil.rmtree(root)
 
@@ -174,7 +184,7 @@ def test_bad_range_is_deterministic():
     bogus = "0" * 40
     Q.enqueue(root, kind="range", key=f"{bogus}..{end}", files=[],
               meta={"issue_id": 879, "base": bogus, "end": end})
-    r = R.run_once(Paths(root), review_call=lambda p, **kw: BODY)
+    r = R.run_once(Paths(root), range_noter=noter, review_call=lambda p, **kw: BODY)
     it = [x for x in Q.items(root) if x["kind"] == "range"][0]
     check("⑦ 범위 못 읽음 → failed", r.state == "failed", r.why)
     check("⑦ 결정적 갈래 → 1회에 abandoned", it["last_kind"] == Q.DETERMINISTIC
@@ -187,10 +197,59 @@ def test_end_not_yet_in_mirror_is_transient():
     missing = "f" * 40
     Q.enqueue(root, kind="range", key=f"{base}..{missing}", files=[],
               meta={"issue_id": 879, "base": base, "end": missing})
-    r = R.run_once(Paths(root), review_call=lambda p, **kw: BODY)
+    r = R.run_once(Paths(root), range_noter=noter, review_call=lambda p, **kw: BODY)
     it = [x for x in Q.items(root) if x["kind"] == "range"][0]
     check("⑦ 끝 커밋이 미러에 없음 → 일시적 · pending 으로 재시도", r.state == "failed"
           and it["last_kind"] == Q.TRANSIENT and it["state"] == "pending", f"{it['last_kind']} {it['state']}")
+    shutil.rmtree(root)
+
+
+def test_notify_issue():
+    """T4 — 범위 리뷰가 끝나면 그 일감에 노트 · 실패는 다음 회차 재시도 · 대역 없으면 실 경로 차단."""
+    root, base, end = make_repo()
+    enqueue_range(root, base, end, issue=4242)
+    NOTES.clear()
+    r = R.run_once(Paths(root), range_noter=noter, review_call=lambda p, **kw: BODY)
+    check("⑨ 노트 1건 · 그 일감", len(NOTES) == 1 and NOTES[0][0] == 4242, str(NOTES))
+    text = NOTES[0][1] if NOTES else ""
+    check("⑨ 노트에 번호·범위·건수·링크·지적", r.serial in text and f"`{base[:12]}..{end[:12]}`" in text
+          and "지적 1건 (높음 1" in text and f"/reviews/{r.serial}?project=" in text
+          and "Source/M/A.cpp:2" in text and "0으로 나눔" in text, text)
+    check("⑨ 노트에 절대 경로 없음", str(root) not in text)
+    it = [x for x in Q.items(root) if x["kind"] == "range"][0]
+    check("⑨ meta.noted · serial", it["meta"].get("noted") is True and it["meta"].get("serial") == r.serial,
+          str(it["meta"]))
+    check("⑨ 재시도 스윕은 이미 남긴 것을 다시 안 남긴다",
+          R.retry_range_notes(Paths(root), noter=noter) == 0 and len(NOTES) == 1)
+    shutil.rmtree(root)
+
+    # 실패 → 재시도
+    root, base, end = make_repo()
+    enqueue_range(root, base, end, issue=4243)
+    NOTES.clear()
+    bad = lambda issue_id, *, notes: "[주의] 레드마인 #4243 갱신 실패: 503"   # noqa: E731
+    r = R.run_once(Paths(root), range_noter=bad, review_call=lambda p, **kw: BODY)
+    it = [x for x in Q.items(root) if x["kind"] == "range"][0]
+    check("⑩ 노트 실패 → 리뷰는 done · noted False · 사유", r.state == "done"
+          and it["meta"].get("noted") is False and "503" in it["meta"].get("note_error", ""), str(it["meta"]))
+    check("⑩ 다음 회차 스윕이 남긴다(LLM 0)", R.retry_range_notes(Paths(root), noter=noter) == 1
+          and len(NOTES) == 1 and NOTES[0][0] == 4243)
+    shutil.rmtree(root)
+
+    # 대역 없음 + 임시 루트 → 실 Redmine 경로를 안 탄다
+    root, base, end = make_repo()
+    enqueue_range(root, base, end, issue=4244)
+    import master.context_synth.review_runner as RR
+    called = []
+    orig = RR._default_range_noter
+    RR._default_range_noter = lambda *a, **k: called.append(a) or "레드마인 갱신"
+    try:
+        R.run_once(Paths(root), review_call=lambda p, **kw: BODY)
+    finally:
+        RR._default_range_noter = orig
+    it = [x for x in Q.items(root) if x["kind"] == "range"][0]
+    check("⑪ 대역 없음·임시 루트 → 기본 noter 호출 0", not called and it["meta"].get("noted") is False
+          and "등록된 트윈 루트가 아니다" in it["meta"].get("note_error", ""), str(it["meta"]))
     shutil.rmtree(root)
 
 
@@ -202,7 +261,7 @@ def test_commit_prompt_unchanged():
 
 def main() -> int:
     for fn in (test_enqueue_contract, test_run_range, test_bad_range_is_deterministic,
-               test_end_not_yet_in_mirror_is_transient,
+               test_end_not_yet_in_mirror_is_transient, test_notify_issue,
                test_commit_prompt_unchanged):
         fn()
     total = PASS + FAIL

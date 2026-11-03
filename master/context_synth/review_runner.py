@@ -335,7 +335,7 @@ def find_final_review(paths, commit: str) -> Path | None:
 
 
 def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
-             write=None, review_call=None) -> RunnerResult | None:
+             write=None, review_call=None, range_noter=None) -> RunnerResult | None:
     """큐에서 하나를 꺼내 로컬 초안 → Antigravity 최종 리뷰까지 만든다."""
     log = logf or (lambda m: None)
     res = RunnerResult()
@@ -345,7 +345,8 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
     res.claimed = item["key"]
 
     if item.get("kind") == "range":
-        return run_range(paths, item, res, logf=log, review_call=review_call)
+        return run_range(paths, item, res, logf=log, review_call=review_call,
+                         range_noter=range_noter)
     if item.get("kind") != "commit":
         # `kind=scope` 는 온디맨드 플랜의 몫이다 (`#639`) — 여기서 처리하지 않는다.
         rq.finish(paths.root, item["id"], ok=False,
@@ -498,8 +499,101 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
     return res
 
 
+VIEW_BASE = "http://192.168.0.57:8103"     # 게시판(무인증 LAN) — 노트에는 번호·링크만, 본문 경로는 싣지 않는다
+SEV_LABEL = {"high": "높음", "mid": "중간", "low": "낮음"}
+
+
+def _default_range_noter(issue_id, *, notes: str) -> str:
+    from .. import redmine                                         # noqa: PLC0415
+    return redmine.update_issue(int(issue_id), notes=notes)
+
+
+def range_note_text(paths, item: dict) -> str:
+    """일감에 남길 리뷰 노트 — 번호·범위·심각도별 건수·지적 표·게시판 링크."""
+    from . import fix_index as fx                                  # noqa: PLC0415
+    meta = item.get("meta") or {}
+    base, end = meta.get("base", ""), meta.get("end", "")
+    serial = meta.get("serial") or fx.serial_for_range(paths.root, base, end)
+    head = f"자동 범위 리뷰 완료: `{base[:12]}..{end[:12]}`"
+    note = ""
+    for h in reversed(item.get("history") or []):
+        if h.get("result") == "done":
+            note = h.get("note", "")
+            break
+    if note.startswith("스킵"):
+        return head + f" — {note}"
+    doc = fx.get_doc(paths.root, serial) if serial else {"ok": False}
+    if not doc.get("ok"):
+        return head + f" — [주의] 게시판 번호를 찾지 못했다({serial or '번호 없음'}) · 큐 기록: {note}"
+    items = doc.get("items_detail") or []
+    sev = doc.get("severity") or {}
+    name = getattr(paths, "name", "") or "AXCluster"
+    lines = [f"{head} · **{serial}** · 지적 {len(items)}건 (높음 {sev.get('high', 0)} · "
+             f"중간 {sev.get('mid', 0)} · 낮음 {sev.get('low', 0)})",
+             f"- 게시판: {VIEW_BASE}/reviews/{serial}?project={name}"]
+    if items:
+        lines += ["", "| 번호 | 심각도 | 파일:라인 | 내용 | 권장 |", "|---|---|---|---|---|"]
+        for it in items:
+            cell = lambda v: str(v or "").replace("|", "\\|").replace("\n", " ")  # noqa: E731
+            lines.append(f"| {it['id']} | {SEV_LABEL.get(it.get('severity'), it.get('severity'))} | "
+                         f"{cell(it.get('file'))}:{cell(it.get('line'))} | {cell(it.get('description'))} | "
+                         f"{cell(it.get('recommendation'))} |")
+    return "\n".join(lines)
+
+
+def _is_registered_root(paths) -> bool:
+    """`paths.root` 가 레지스트리에 등록된 프로젝트의 트윈 루트인가 — 실 Redmine 기본 경로의 조건."""
+    try:
+        from ..context_search.paths import resolve                 # noqa: PLC0415
+        name = getattr(paths, "name", "")
+        return bool(name) and Path(resolve(name).root).resolve() == Path(paths.root).resolve()
+    except Exception:                                              # noqa: BLE001
+        return False
+
+
+def notify_range(paths, item_id: str, *, noter=None, logf=None) -> bool:
+    """끝난 범위 리뷰를 그 일감에 노트로 남긴다. 성공하면 `meta.noted`. 실패는 다음 회차가 다시 한다.
+
+    🔴 [중요] **기본 noter(실 Redmine)는 등록된 트윈 루트에서만 쓴다** — 2026-11-03 첫 테스트가
+    대역 없이 임시 디렉토리로 돌아 **실제 #879 에 노트 2건**을 남겼다. 임시 경로에서 noter 를
+    안 주면 거절하고 기록만 한다.
+    """
+    log = logf or (lambda m: None)
+    if noter is None and not _is_registered_root(paths):
+        rq.set_meta(paths.root, item_id, noted=False,
+                    note_error="등록된 트윈 루트가 아니다 — 실 Redmine 기본 경로를 쓰지 않는다")
+        log("[리뷰큐] [주의] 범위 리뷰 노트 생략 — 등록된 트윈 루트가 아니다(대역 미주입)")
+        return False
+    item = next((x for x in rq.items(paths.root) if x.get("id") == item_id), None)
+    if item is None or item.get("state") != "done":
+        return False
+    meta = item.get("meta") or {}
+    issue = meta.get("issue_id")
+    try:
+        text = range_note_text(paths, item)
+        out = str((noter or _default_range_noter)(issue, notes=text))
+    except Exception as e:                                         # noqa: BLE001
+        out = f"[주의] {type(e).__name__}: {e}"
+    if out.startswith("[주의]"):
+        rq.set_meta(paths.root, item_id, noted=False, note_error=out[:300])
+        log(f"[리뷰큐] [중요] 범위 리뷰 일감 #{issue} 노트 실패 — 다음 회차 재시도: {out[:120]}")
+        return False
+    rq.set_meta(paths.root, item_id, noted=True, note_error="", noted_at=rq._now())
+    log(f"[리뷰큐] 범위 리뷰 → 일감 #{issue} 노트 ({out[:60]})")
+    return True
+
+
+def retry_range_notes(paths, *, noter=None, logf=None) -> int:
+    """끝났는데 일감 노트가 안 남은 범위 리뷰를 다시 남긴다(LLM 0). 남긴 건수."""
+    n = 0
+    for it in rq.items(paths.root, state="done"):
+        if it.get("kind") == "range" and not (it.get("meta") or {}).get("noted"):
+            n += notify_range(paths, it["id"], noter=noter, logf=logf)
+    return n
+
+
 def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
-              review_call=None) -> RunnerResult:
+              review_call=None, range_noter=None) -> RunnerResult:
     """일감 범위 항목(`kind=range`, `#879`) — 합친 diff 를 Antigravity 로 한 번 리뷰한다.
 
     커밋 경로와 다른 점: 로컬 초고를 만들지 않는다(근거는 결정적 선언부만 — 초고는 사실 게이트를
@@ -522,6 +616,7 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
         rq.finish(paths.root, item["id"], ok=True, note=final.name + " (기존 범위 리뷰)", logf=log)
         res.state = "done"
         log(f"[리뷰큐] 범위 {tag} — 기존 리뷰 {final.name}")
+        notify_range(paths, item["id"], noter=range_noter, logf=log)
         return res
     # [중요] 끝 커밋이 미러에 아직 없으면 **일시적**이다 — `issue_flow.finish` 는 push 직후 등재하고,
     #    미러(`paths.repo`)는 색인기가 push 이벤트 뒤에 fetch 한다. 그 사이에 타이머가 집으면
@@ -543,6 +638,7 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
     if not commits or not src:
         rq.finish(paths.root, item["id"], ok=True, note="스킵: 소스 변경 없음", logf=log)
         res.state, res.why = "done", "소스 변경 없음"
+        notify_range(paths, item["id"], noter=range_noter, logf=log)
         return res
     decls = declarations(repo, src, end)
 
@@ -576,11 +672,14 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
         res.state, res.why = "failed", why
         return res
     res.written, res.serial = reviewed.written, reviewed.serial
+    if res.serial:
+        rq.set_meta(paths.root, item["id"], serial=res.serial)
     rq.finish(paths.root, item["id"], ok=True,
               note=Path(res.written).name + (f" ({res.serial})" if res.serial else ""), logf=log)
     res.state = "done"
     log(f"[리뷰큐] 범위 {tag} 리뷰 저장 {Path(res.written).name}"
         + (f" ({res.serial})" if res.serial else "") + " — 주간 플랜 제외")
+    notify_range(paths, item["id"], noter=range_noter, logf=log)
     return res
 
 
@@ -662,6 +761,8 @@ def main(argv=None) -> int:
                 continue
             try:
                 rq.reclaim_orphans(paths.root, logf=log)   # 잠금을 쥔 지금 running 은 주인이 없다
+                # `#879` T4 — 끝났는데 일감 노트가 안 남은 범위 리뷰를 다시 남긴다(LLM 0)
+                retry_range_notes(paths, logf=log)
                 before = rq.counts(paths.root)
             except rq.ReviewQueueError as e:
                 # [중요] 깨진 큐는 덮지 않는다 — 사람에게 보고하고 그 프로젝트만 건너뛴다.
