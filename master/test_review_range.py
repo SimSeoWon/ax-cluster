@@ -13,6 +13,7 @@
     ⑧ 범위 프롬프트의 대상 이름 · 커밋 프롬프트는 그대로
     ⑨ (T4) 끝나면 그 일감에 노트 — 번호·범위·건수·링크·지적 표 · 절대 경로 없음
     ⑩ (T4) 노트 실패는 리뷰를 되돌리지 않고 다음 회차가 다시 남긴다(LLM 0)
+    ⑫ 수정 기록 절 — 커밋 순서·본문 · 「사실로 받지 말 것」 단서 · 서명 줄 제외 · DIFF 앞
     ⑪ (T4) 대역 없이 임시 루트로 돌면 실 Redmine 기본 경로를 타지 않는다 — 실측 누출의 재발 방지
 
 실 LLM 을 부르지 않는다(review_call 주입). git 은 실제 임시 저장소다.
@@ -81,7 +82,7 @@ def make_repo():
     (repo / "Source" / "M" / "A.cpp").write_text("void AFoo::Bar() {\n  int x = 1 / 0;\n}\n")
     git(repo, "add", "-A"); git(repo, "commit", "-qm", "c1")
     (repo / "Source" / "M" / "B.cpp").write_text("int Baz() { return 42; }\n")
-    git(repo, "add", "-A"); git(repo, "commit", "-qm", "c2")
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "c2", "-m", "본문 둘째 줄\n\nCo-Authored-By: X <x@x>")
     end = git(repo, "rev-parse", "HEAD").stdout.strip()
     return root, base, end
 
@@ -135,6 +136,10 @@ def test_run_range():
     check("⑧ 대상 이름이 범위다", f"일감 #879 범위 {base[:12]}..{end[:12]} (커밋 2건)" in p
           and "아래 범위(여러 커밋을 합친 diff)의" in p, p[:200])
     check("⑧ 선언부 근거가 실린다", "선언부" in p and "AFoo" in p)
+    check("⑫ 수정 기록 — 커밋 순서대로 · 단서", "## 수정 기록 (참고" in p and "사실로 받지 말고" in p
+          and 0 < p.find("c1") < p.find("### ", p.find("c1")) and "c2" in p
+          and p.find("## 수정 기록") < p.find("## DIFF"), p[p.find("## 수정 기록"):][:300])
+    check("⑫ 서명 줄은 뺀다", "Co-Authored-By" not in p)
     check("② done", r is not None and r.state == "done" and Q.counts(root)["done"] == 1,
           f"{r and r.state} {r and r.why}")
     w = Path(r.written)
@@ -255,7 +260,7 @@ def test_notify_issue():
 
 def test_commit_prompt_unchanged():
     a = RG.build_prompt(diff="d", files=["x"], commit="abc")
-    check("⑧ 커밋 프롬프트 — 범위 문구 없음", "여러 커밋을 합친" not in a and "일감 #" not in a and "## 커밋 abc 의 변경 파일" in a
+    check("⑧ 커밋 프롬프트 — 범위 문구 없음", "여러 커밋을 합친" not in a and "수정 기록" not in a and "일감 #" not in a and "## 커밋 abc 의 변경 파일" in a
           and "아래 커밋의 **변경분만**" in a)
 
 

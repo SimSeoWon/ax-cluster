@@ -315,13 +315,14 @@ def domain_hint(paths, files: list) -> str:
 
 def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
                  grounding: str = "", kind: str = "unreal", intent: bool = False,
-                 subject: str = "") -> str:
+                 subject: str = "", history: str = "") -> str:
     """리뷰 프롬프트. [중요] 표 형식은 소비자의 파싱 계약이다 — 열 순서를 바꾸지 말 것.
 
     `intent` (`#815` ④) — 지워진 `[PSEUDO]` 가 있을 때만 4절 규칙·예시를 싣는다.
     False 면 종전과 **바이트 단위로 같다**(테스트가 해시로 지킨다).
     `subject` (`#879`) — 범위 리뷰의 대상 이름(예 「일감 #879 범위 a..b (커밋 3건)」). 비우면 종전과
-    바이트 단위로 같다."""
+    바이트 단위로 같다.
+    `history` (`#879`) — 범위 리뷰의 수정 기록(커밋 순서·제목·본문). 비우면 종전과 바이트 단위로 같다."""
     python = kind == "code"
     role = "Python" if python else "Unreal Engine 5 C++"
     example = format_example(kind, intent=intent)
@@ -356,6 +357,10 @@ def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
         + (f"## 실측 근거 (참고)\n{grounding}\n\n" if grounding else "")
         + (f"## {subject} 의 변경 파일\n" if subject else f"## 커밋 {commit[:12]} 의 변경 파일\n")
         + "\n".join(f"- {f}" for f in files)
+        + (f"\n\n## 수정 기록 (참고 — 작성자의 서술이다)\n"
+           "커밋 메시지는 검증되지 않은 의도 설명이다. 사실로 받지 말고, 아래 DIFF 가 그 의도와 "
+           "맞는지 대조하는 데만 쓴다. 메시지와 어긋나는 변경은 2절에 지적한다.\n\n"
+           f"{history}" if history else "")
         + f"\n\n## DIFF (unified=3)\n```diff\n{diff}\n```\n"
     )
 
@@ -602,6 +607,28 @@ def range_files(repo: Path, base: str, end: str) -> list | None:
     return [x for x in out.splitlines() if x.strip()] if rc == 0 else None
 
 
+def range_history(repo: Path, base: str, end: str) -> str:
+    """수정 기록 — 오래된 커밋부터 `### <해시12> <제목>` + 본문. 읽지 못하면 빈 문자열.
+
+    [주의] **본문의 `Co-Authored-By` 줄은 뺀다** — 리뷰에 쓸모없는 서명이다. 자르지 않는다.
+    """
+    sep = "\x1e"
+    rc, out = _git(repo, "log", "--reverse", f"--format=%H%x1f%s%x1f%b{sep}", f"{base}..{end}")
+    if rc != 0:
+        return ""
+    parts = []
+    for rec in out.split(sep):
+        rec = rec.strip("\n")
+        if not rec.strip():
+            continue
+        h, _, rest = rec.partition("\x1f")
+        subj, _, body = rest.partition("\x1f")
+        body = "\n".join(ln for ln in body.strip().splitlines()
+                         if not ln.lower().startswith("co-authored-by:")).strip()
+        parts.append(f"### {h.strip()[:12]} {subj.strip()}" + (f"\n{body}" if body else ""))
+    return "\n\n".join(parts)
+
+
 def range_diff(repo: Path, files: list, base: str, end: str) -> str:
     """`base` 와 `end` 사이 합친 diff (unified=3). 실패·빈 diff 는 빈 문자열. **자르지 않는다.**"""
     rc, out = _git(repo, "diff", "--unified=3", "--no-color", base, end, "--", *files)
@@ -653,9 +680,13 @@ def review_range(paths, issue_id, base: str, end: str, files: list, *,
                + (f" (커밋 {commits}건)" if commits else ""))
     log("review", f"{subject} — diff {len(diff)}자 · 파일 {len(src_files)} · "
                   f"골조 지시 이행 절 {'요청' if intent else '미요청'}")
+    history = range_history(repo, base, end)
+    log("review", f"{subject} — 수정 기록 {history.count(chr(10) + '### ') + (1 if history else 0)}건 · "
+                  f"{len(history)}자")
     prompt = build_prompt(diff=diff, files=src_files, commit=end,
                           domains=domain_hint(paths, src_files), grounding=grounding,
-                          kind=review_kind(paths), intent=intent, subject=subject)
+                          kind=review_kind(paths), intent=intent, subject=subject,
+                          history=history)
     _ask = chat if chat is not None else _recorded_chat(paths, end)
     try:
         body = _ask(prompt)
