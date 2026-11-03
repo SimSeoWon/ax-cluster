@@ -47,8 +47,17 @@ def branch_name(issue_id) -> str:
 
 
 def _git(repo: Path, *args: str) -> tuple[int, str]:
-    p = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
-    return p.returncode, (p.stdout + p.stderr).strip()
+    """`(rc, 출력)`. **성공이면 stdout 만**, 실패면 stdout+stderr(사유)를 돌려준다 (`#881` R218-1).
+
+    [중요] 성공해도 git 은 stderr 에 경고·안내를 쓴다(CRLF 경고·`switch` 안내 등). 합쳐 돌려주면
+    해시(`rev-parse`·`merge-base`)가 오염되고 `status --porcelain` 이 깨끗한 트리를 dirty 로 읽는다.
+    인코딩은 UTF-8 고정·`replace` — 로케일에 기대지 않는다(R216-3).
+    """
+    p = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
+    if p.returncode == 0:
+        return 0, (p.stdout or "").strip()
+    return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
 
 
 def _git_ok(repo: Path, *args: str) -> str:

@@ -281,6 +281,26 @@ def t_finish_enqueue_failure_reported(tmp):
     check("등재 실패 → 노트에 실패 표시", "등재 실패" in iss.notes[-1][0])
 
 
+def t_git_stderr_not_in_value(tmp):
+    """`#881` R218-1 — 성공한 git 의 stderr 는 값에 안 섞인다(GIT_TRACE 로 실제 stderr 를 낸다)."""
+    import os
+    repo = make_repo(tmp)
+    head = sh(repo, "rev-parse", "HEAD")
+    os.environ["GIT_TRACE"] = "1"
+    try:
+        rc, out = IF._git(repo, "rev-parse", "HEAD")
+        rc2, dirty = IF._git(repo, "status", "--porcelain")
+        iss = Issue(SPEC + PLAN)
+        r = IF.start(7, repo=repo, getter=iss.get, noter=iss.note)
+    finally:
+        os.environ.pop("GIT_TRACE", None)
+    check("_git 성공 — 값은 stdout 만(해시 그대로)", rc == 0 and out == head, repr(out[:120]))
+    check("_git 성공 — 깨끗한 트리는 빈 문자열", rc2 == 0 and dirty == "", repr(dirty[:120]))
+    check("stderr 가 많아도 start 가 깨끗한 트리로 읽는다", r["ok"] and r.get("start_rev") == head, str(r)[:300])
+    rc3, why = IF._git(repo, "rev-parse", "--verify", "없는-ref")
+    check("_git 실패 — 사유에 stderr", rc3 != 0 and ("없는-ref" in why or "fatal" in why), why)
+
+
 def main() -> int:
     for fn in (t_plan_needed_refuses, t_no_spec_refuses, t_happy_path,
                t_status_kept_when_not_new, t_dirty_refuses, t_not_on_main_refuses,
@@ -288,7 +308,7 @@ def main() -> int:
                t_redmine_failure_rolls_back, t_read_failure,
                t_finish_preview_writes_nothing, t_finish_confirm, t_finish_refusals,
                t_finish_no_commits, t_finish_origin_moved, t_finish_push_rejected,
-               t_finish_enqueue_failure_reported):
+               t_finish_enqueue_failure_reported, t_git_stderr_not_in_value):
         run(fn)
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_issue_flow: {PASS}/{total} 통과")
