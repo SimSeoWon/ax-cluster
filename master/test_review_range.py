@@ -182,6 +182,18 @@ def test_bad_range_is_deterministic():
     shutil.rmtree(root)
 
 
+def test_end_not_yet_in_mirror_is_transient():
+    root, base, end = make_repo()
+    missing = "f" * 40
+    Q.enqueue(root, kind="range", key=f"{base}..{missing}", files=[],
+              meta={"issue_id": 879, "base": base, "end": missing})
+    r = R.run_once(Paths(root), review_call=lambda p, **kw: BODY)
+    it = [x for x in Q.items(root) if x["kind"] == "range"][0]
+    check("⑦ 끝 커밋이 미러에 없음 → 일시적 · pending 으로 재시도", r.state == "failed"
+          and it["last_kind"] == Q.TRANSIENT and it["state"] == "pending", f"{it['last_kind']} {it['state']}")
+    shutil.rmtree(root)
+
+
 def test_commit_prompt_unchanged():
     a = RG.build_prompt(diff="d", files=["x"], commit="abc")
     check("⑧ 커밋 프롬프트 — 범위 문구 없음", "여러 커밋을 합친" not in a and "일감 #" not in a and "## 커밋 abc 의 변경 파일" in a
@@ -190,6 +202,7 @@ def test_commit_prompt_unchanged():
 
 def main() -> int:
     for fn in (test_enqueue_contract, test_run_range, test_bad_range_is_deterministic,
+               test_end_not_yet_in_mirror_is_transient,
                test_commit_prompt_unchanged):
         fn()
     total = PASS + FAIL

@@ -167,11 +167,128 @@ def t_read_failure(tmp):
     check("읽기 실패 → 거절", not r["ok"] and "읽지 못했다" in r["why"], str(r))
 
 
+class Q:
+    """리뷰 큐 대역 — 등재 인자를 기록한다."""
+
+    def __init__(self, fail: bool = False):
+        self.items, self.fail = [], fail
+
+    def __call__(self, root, **kw):
+        if self.fail:
+            raise RuntimeError("큐가 깨졌다")
+        self.items.append((root, kw))
+        return {"state": "pending"}
+
+
+def started(tmp: Path):
+    """시작한 상태 + 커밋 둘."""
+    repo = make_repo(tmp)
+    iss = Issue(SPEC + PLAN)
+    IF.start(7, repo=repo, getter=iss.get, noter=iss.note)
+    base = sh(repo, "rev-parse", "HEAD")
+    for name in ("b.txt", "c.txt"):
+        (repo / name).write_text(name)
+        sh(repo, "add", name)
+        sh(repo, "commit", "-q", "-m", f"add {name}")
+    return repo, iss, base, sh(repo, "rev-parse", "HEAD")
+
+
+def t_finish_preview_writes_nothing(tmp):
+    repo, iss, base, end = started(tmp)
+    q = Q()
+    n0 = len(iss.notes)
+    r = IF.finish(7, repo=repo, noter=iss.note, enqueue=q, review_root=tmp)
+    check("종료 미리보기 → ok · 확인 전", r["ok"] and r["confirmed"] is False, str(r))
+    check("미리보기 → 범위", r.get("base") == base and r.get("end") == end and len(r["commits"]) == 2)
+    check("미리보기 → 원격 그대로", sh(repo, "rev-parse", "origin/main") == base)
+    check("미리보기 → 브랜치·노트·등재 0", sh(repo, "rev-parse", "--abbrev-ref", "HEAD") == "issue/7"
+          and len(iss.notes) == n0 and not q.items)
+
+
+def t_finish_confirm(tmp):
+    repo, iss, base, end = started(tmp)
+    q, ev = Q(), tmp / "ev.jsonl"
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, enqueue=q, review_root=tmp,
+                  events_path=ev)
+    check("승인 → ok", r["ok"], str(r))
+    check("승인 → 원격 main = 끝", sh(tmp / "origin.git", "rev-parse", "main") == end)
+    check("승인 → 로컬 main 에 서 있고 = 끝", sh(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main"
+          and sh(repo, "rev-parse", "main") == end)
+    check("승인 → 로컬 브랜치 삭제", sh(repo, "branch", "--list", "issue/7") == "")
+    check("승인 → range 등재 1건", len(q.items) == 1 and q.items[0][1]["kind"] == "range"
+          and q.items[0][1]["key"] == f"{base}..{end}"
+          and q.items[0][1]["meta"] == {"issue_id": 7, "base": base, "end": end}
+          and set(q.items[0][1]["files"]) == {"b.txt", "c.txt"}, str(q.items))
+    check("승인 → 사람 요청 우선순위", q.items and q.items[0][1]["priority"] > 0)
+    note = iss.notes[-1][0]
+    check("승인 → 리뷰 요청 노트(범위 전체 해시·커밋 목록)", f"`{base}..{end}`" in note
+          and "add b.txt" in note and "add c.txt" in note and "삭제 실패" not in note, note)
+    steps = [json.loads(x)["step"] for x in ev.read_text().splitlines()]
+    check("단계 로그", steps[-6:] == ["push", "switch", "ff", "delete_branch", "enqueue", "redmine"]
+          and "span" in steps, str(steps))
+
+
+def t_finish_refusals(tmp):
+    repo, iss, base, end = started(tmp)
+    (repo / "dirty.txt").write_text("x")
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, enqueue=Q(), review_root=tmp)
+    check("종료 dirty → 거절", not r["ok"] and r["step"] == "tree", str(r))
+    (repo / "dirty.txt").unlink()
+    sh(repo, "switch", "-q", "main")
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, enqueue=Q(), review_root=tmp)
+    check("종료 다른 브랜치 → 거절", not r["ok"] and r["step"] == "branch", str(r))
+
+
+def t_finish_no_commits(tmp):
+    repo = make_repo(tmp)
+    iss = Issue(SPEC + PLAN)
+    IF.start(7, repo=repo, getter=iss.get, noter=iss.note)
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, enqueue=Q(), review_root=tmp)
+    check("커밋 0 → 거절", not r["ok"] and r["step"] == "span", str(r))
+
+
+def t_finish_origin_moved(tmp):
+    repo, iss, base, end = started(tmp)
+    other = tmp / "other"
+    subprocess.run(["git", "clone", "-q", str(tmp / "origin.git"), str(other)], check=True,
+                   capture_output=True)
+    sh(other, "config", "user.email", "o@o"); sh(other, "config", "user.name", "o")
+    (other / "z.txt").write_text("z"); sh(other, "add", "z.txt"); sh(other, "commit", "-q", "-m", "z")
+    sh(other, "push", "-q", "origin", "main")
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, enqueue=Q(), review_root=tmp)
+    check("원격이 앞섬 → 거절(ff 불가 · 강제 없음)", not r["ok"] and r["step"] == "base", str(r))
+    check("원격이 앞섬 → 브랜치 그대로", sh(repo, "rev-parse", "issue/7") == end)
+
+
+def t_finish_push_rejected(tmp):
+    repo, iss, base, end = started(tmp)
+    hook = tmp / "origin.git" / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\necho 거절 >&2\nexit 1\n")
+    hook.chmod(0o755)
+    q = Q()
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, enqueue=q, review_root=tmp)
+    check("push 거절 → ok 아님 · step push", not r["ok"] and r["step"] == "push", str(r))
+    check("push 거절 → 로컬 그대로", sh(repo, "rev-parse", "--abbrev-ref", "HEAD") == "issue/7"
+          and sh(repo, "rev-parse", "main") == base and not q.items)
+
+
+def t_finish_enqueue_failure_reported(tmp):
+    repo, iss, base, end = started(tmp)
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, enqueue=Q(fail=True), review_root=tmp)
+    check("등재 실패 → ok 아님 · 사유", not r["ok"] and "리뷰 등재" in r["why"], str(r))
+    check("등재 실패 → push 는 이미 됨(되돌리지 않음)", "push" in r["done"]
+          and sh(tmp / "origin.git", "rev-parse", "main") == end)
+    check("등재 실패 → 노트에 실패 표시", "등재 실패" in iss.notes[-1][0])
+
+
 def main() -> int:
     for fn in (t_plan_needed_refuses, t_no_spec_refuses, t_happy_path,
                t_status_kept_when_not_new, t_dirty_refuses, t_not_on_main_refuses,
                t_ahead_of_origin_refuses, t_existing_branch_elsewhere_refuses,
-               t_redmine_failure_rolls_back, t_read_failure):
+               t_redmine_failure_rolls_back, t_read_failure,
+               t_finish_preview_writes_nothing, t_finish_confirm, t_finish_refusals,
+               t_finish_no_commits, t_finish_origin_moved, t_finish_push_rejected,
+               t_finish_enqueue_failure_reported):
         run(fn)
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_issue_flow: {PASS}/{total} 통과")
