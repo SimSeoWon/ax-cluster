@@ -499,6 +499,11 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
     return res
 
 
+# `#879` — 범위 리뷰는 diff 를 자르지 않아 커밋 리뷰(상한 24,000자 · 240초)보다 크다. 첫 실측
+#    (2026-11-03 23:19, 71,904자)이 240초에서 시간 초과했다. 사용자 결정: range 만 한도를 늘린다.
+#    [주의] 유닛 TimeoutStartSec 10분 안이다 — 형식 위반 재시도까지 가면 넘을 수 있고, 그때는
+#    주인 없는 running 회수(일시적 1회)로 다음 회차가 다시 한다.
+RANGE_REVIEW_TIMEOUT = 480
 VIEW_BASE = "http://192.168.0.57:8103"     # 게시판(무인증 LAN) — 노트에는 번호·링크만, 본문 경로는 싣지 않는다
 SEV_LABEL = {"high": "높음", "mid": "중간", "low": "낮음"}
 
@@ -655,8 +660,9 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
                 rq.finish(paths.root, item["id"], ok=False, why=why, logf=log)
                 res.state, res.why = "failed", why
                 return res
-            log(f"[리뷰큐] Antigravity 작업 디렉터리 {tree} @ {end[:8]}")
-            ask = lambda p, **kw: agy_only(p, workdir=tree, **kw)  # noqa: E731
+            log(f"[리뷰큐] Antigravity 작업 디렉터리 {tree} @ {end[:8]} · 한도 {RANGE_REVIEW_TIMEOUT}초")
+            ask = lambda p, **kw: agy_only(p, workdir=tree,          # noqa: E731
+                                           **{"timeout": RANGE_REVIEW_TIMEOUT, **kw})
         with usage_mod.sink(paths.usage_log, source="review", task_id=f"issue{issue}"):
             reviewed = rg.review_range(
                 paths, issue, base, end, src, chat=ask, grounding=grounding_text("", decls),
