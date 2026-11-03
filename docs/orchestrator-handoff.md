@@ -51,3 +51,7 @@
 3. 일감 작업은 `issue_start_tool` → 커밋 → `issue_finish_tool` 미리보기 → 승인 → `confirm=True` 로 한다.
 4. 커밋·운영 배달·재기동·마운트 전환은 각각 승인을 확인한다. dirty 상태로 배달하지 않는다.
 5. 다음 일감은 사용자가 고른다. 실패 시 코드·설정을 자동 수정하지 않고 보고·중단한다.
+6. **문서 최신화 남은 몫**(11-04 사용자 결정 「오늘은 여기까지」): doc_sync 로 readme·modules·onboarding 은 적용했지만
+   오늘 기능(issue_flow·범위 리뷰·MCP 2종·WAIT)은 안 들어갔다 — `--since 013eedf` 영향 탐지도 handoff 만 잡았다.
+   원인: `docs/document-registry.json` 의 문서별 의존 파일에 그 소스가 없다. **등록 목록 보강은 사용자가 정한다**
+   (후보: modules ← issue_flow·review_runner·review_queue·projects/mcp_server · readme ← skills/ax-plan) → 그 뒤 draft.

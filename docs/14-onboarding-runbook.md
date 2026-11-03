@@ -129,8 +129,10 @@ set_workshop_tool(name="NS", host="192.168.0.33", driven="ssh", user="user",
 
 ### 2 · 체크아웃이 없는 기계 → 클론
 
-`deliver` 가 체크아웃 없는 기계를 **부트스트랩 대상**으로 보고한다. 맞추는 것은 전환
-동기화 경로다:
+`plan`은 체크아웃 없는 기계의 클론 계획을 보여 주고, `deliver`는 먼저 체크아웃을
+**부트스트랩한 뒤 다시 프로브하여 배달**한다. 부트스트랩에 실패한 호스트는 실패로 기록하고
+그 호스트의 배달은 건너뛴다. 신규 프로젝트 전체 구성은 §14.1의 `onboard --confirm`을 따른다.
+전환 동기화 경로를 별도로 사용할 때는:
 
 ```bash
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -c "
@@ -150,6 +152,7 @@ from master.projects import logic; print(logic.sync_check('NS', align=True))"
 ### 3 · 배달 → 대조
 
 ```bash
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client probe   <프로젝트>   # 읽기 전용 실측
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client plan    <프로젝트>   # 쓰지 않는다
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client deliver <프로젝트>
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client check   <프로젝트>
@@ -166,8 +169,10 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update --all   # 등록 
 🔴 2026-10-06 부터 기본은 마운트 하나다(`#655`·`#745`, 사용자 결정) — 등록 전체가 5개 × 3대라 한 번에
 15~20분이 걸렸다. 비마운트 프로젝트는 **마운트 전환 때** 맞춘다: `set_active` 가 그 프로젝트의 기계를
 마스터 버전과 대조해 뒤처진 기계만 재배달한다(기본 `align=True`, 보고만 원하면 `align=False`).
-마운트가 비어 있으면 폴백 없이 멈춘다(rc 2). `--all` 은 `Registry.names` 전체에 `deliver → check`를
-실행하고, 신규 프로젝트도 등재되는 순간 자동 포함되며, 하나라도 실패하면 전체 rc=1이다. 신규 프로젝트 최초 구성은 위 §14.1의
+마운트가 비어 있으면 폴백 없이 멈춘다(rc 2). `--all`은 `Registry.names` 전체에 먼저 배달한 뒤, 배달에 성공한 프로젝트 전부를 다시
+검사한다. 뒤 프로젝트의 배달이 앞 프로젝트의 전역 설정을 덮는 경우까지 종료 상태에서 확인하기
+위해서다. 신규 프로젝트도 등재되는 순간 자동 포함되며, 한 프로젝트의 배달이 실패해도 나머지는
+시도한다. 하나라도 실패하면 전체 rc=1이다. 신규 프로젝트 최초 구성은 위 §14.1의
 `onboard --confirm`이 checkout→deliver→check까지 수행하므로 별도 수동 배달을 끼우지 않는다.
 
 [주의] **마스터 트리가 dirty 면 `check` 가 통과하지 않는다** — 커밋이 같아도 그 커밋이 배달
@@ -175,6 +180,12 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update --all   # 등록 
 [주의] **배달본의 출처 커밋이 마스터 HEAD 보다 뒤처져도 `check` 는 실패한다** — 파일 해시가
 모두 같아도 그렇다(`master/client/__main__.py` 의 `behind` 판정). 저장소가 전진했으면 `update` 로
 다시 배달한다.
+
+`update`는 시작·검사 직전·종료 시점의 마스터 HEAD와 dirty 상태를 관측한다(`#737`).
+시작부터 dirty여도 경고 후 배달은 계속하므로, 실행 전에 먼저 커밋한다. 실행 중에는 마스터에
+커밋하거나 작업 트리를 수정하지 않는다. 관측된 HEAD 이동이나 clean→dirty 변화가 있으면
+검사가 통과했어도 전체 rc=1이다. 자동 재실행이나 커밋 잠금은 하지 않는다. HEAD가 움직였으면
+다시 실행하고, dirty해졌으면 먼저 커밋한 뒤 다시 실행한다. 서비스 재기동은 기존 승인 절차를 따른다.
 
 `config.json`의 `checkout.branch`는 해당 프로젝트 레지스트리의 기본 브랜치를 따른다(`#260`).
 배달은 체크아웃 안의 `.agents/skills`와 `.codex/config.toml`도 구성·대조한다(`#699`).
@@ -215,6 +226,10 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update --all   # 등록 
                                파견 때 서버가 `schtasks /run` 으로 그때만 건다
     과거 등록 잔재              프로젝트 이름 무관(`AxWorker*`·`AxClaimer*` · `worker_daemon`/`claimer` cron) — `deliver`가 전부 해제·재조회, `check`는 실행 중 데몬 프로세스도 FAIL
     `check`                    잔재가 있거나 등록 조회 자체가 실패하면 FAIL(조회 실패 ≠ 없음)
+
+폐기 페이로드 `work/worker_daemon.py`·`work/ax_safety.py`의 배달 사본도 정리 대상이다.
+현재 배달 대상인 경로는 보존하고, 나머지는 `deliver`가 제거 후 되읽어 확인한다.
+`check`는 폐기 사본이 남았거나 조회 자체가 실패하면 해당 호스트를 FAIL로 판정한다.
 
 `ensure`는 아무것도 하지 않는다. 데몬 소스(`worker_daemon.py`·`buildjob.py`)는 지웠고
 (`#861` T3, `9a195e0`) `master/test_no_worker_daemon.py`가 부활을 막는다.
