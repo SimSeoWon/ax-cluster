@@ -7,11 +7,13 @@ description: AX 마스터에서 Redmine 일감을 **시작·재개·진행 마�
 
 정본: `~/ax-cluster/master/skills/ax-plan/SKILL.md` · 일감 `#826` · 본체 `master/plan_tools.py`
 
-## 1. 도구는 셋 — `ax-projects` MCP
+## 1. 도구는 다섯 — `ax-projects` MCP
 
     plan_start_tool(issue_id)                       시작 판정 + 7단계 표 (읽기)
     plan_set_tool(issue_id, tasks, why)             플랜 등록·태스크 추가/편집
     plan_transition_tool(issue_id, task_id, to, note)   상태 전이 — 상태를 바꾸는 유일한 쓰기
+    issue_start_tool(issue_id)                      작업 시작 — 로컬 issue/<N> · 시작 리비전 기록 (#879)
+    issue_finish_tool(issue_id, confirm=False)      작업 종료 — main 적용 · 범위 리뷰 요청 (#879)
 
 MCP 가 안 보이거나 실패하면 사유를 보고하고 묻는다. `redmine_note` 로 본문 전체를 보내
 플랜을 고치는 우회는 하지 않는다 — 그 경로는 T2 규칙(근거 없는 완료 거절 등)을 거치지 않는다.
@@ -41,6 +43,17 @@ MCP 가 안 보이거나 실패하면 사유를 보고하고 묻는다. `redmine
 `tasks` 항목: `id`·`goal` 필수, `target`·`deps`(목록)·`check`·`steps` 선택. `state`·`evidence` 는
 넣지 않는다 — 새 태스크는 「대기」로 들어간다. `steps` 는 그 태스크가 하는 **조건부 단계 번호**
 (`plan_start` 의 `steps` 표에서 「조건부」인 것, 예 `[2, 6]`)다 — 추측으로 채우지 말고 사용자와 정한다.
+
+## 3-1. 일감 작업 시작·종료 — 브랜치와 리뷰 (`#879`, 마스터 AXCluster 저장소)
+
+- 첫 태스크에 손대기 **전에** `issue_start_tool` 을 부른다. 플랜이 없거나 판정이 ok 가 아니면
+  거절된다. 깨끗한 `main` = `origin/main` 이어야 하고, 아니면 사유를 보고하고 멈춘다(고치지 않는다).
+  성공하면 로컬 `issue/<N>` 에서 일하고 시작 리비전이 Redmine 에 남는다.
+- 커밋은 `issue/<N>` 에 쌓는다. 커밋 승인 규칙은 그대로다.
+- 모든 태스크가 끝나면 `issue_finish_tool(N)`(기본 `confirm=False`)으로 범위·커밋 목록을 보여 주고
+  **승인을 받은 뒤에만** `confirm=True` 로 부른다. 그 호출이 push·로컬 브랜치 삭제·범위 리뷰 등재·
+  Redmine 「리뷰 요청」 노트를 이어서 한다. 리뷰 결과 노트는 리뷰 큐가 끝난 뒤 같은 일감에 붙는다.
+- `.33` 요청자 경로와 게임 저장소는 이 도구의 범위가 아니다(후속).
 
 ## 4. 진행 마킹 — 시작할 때와 끝낼 때 둘 다
 

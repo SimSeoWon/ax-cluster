@@ -1100,3 +1100,36 @@ def plan_transition_tool(issue_id: int, task_id: str, to: str, note: str = "") -
         return json.dumps(plan_tools.transition(issue_id, task_id, to, note), ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
+
+
+# ── 일감 작업 흐름 (`#879` T5) — 본체는 `master/issue_flow.py` ─────────────────────────────
+
+@mcp.tool()
+def issue_start_tool(issue_id: int) -> str:
+    """일감 작업을 **시작**한다 (`#879`) — 구현에 손대기 전에 부른다.
+
+    `plan_start` 판정이 ok 가 아니면 거절한다(플랜 강제). 깨끗한 `main` = `origin/main` 에서 로컬
+    `issue/<N>` 브랜치를 만들고 시작 리비전(git 해시)을 Redmine 노트로 남긴다. 이미 그 브랜치에
+    서 있으면 새로 만들지 않고 시작 리비전을 돌려준다. 응답의 `log` 가 단계별 기록이다.
+    """
+    from .. import issue_flow
+    try:
+        return json.dumps(issue_flow.start(issue_id), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def issue_finish_tool(issue_id: int, confirm: bool = False) -> str:
+    """일감 작업을 **마친다** (`#879`). [중요] `confirm=False`(기본)는 범위·커밋 목록만 보여 주고 아무것도
+    바꾸지 않는다 — 사용자 승인을 받은 뒤에만 `confirm=True`.
+
+    승인 시: `push origin issue/<N>:main`(fast-forward 만) → 로컬 `main` 맞춤 → `issue/<N>` 삭제 →
+    시작~끝 범위 리뷰를 리뷰 큐에 등재 → Redmine 「리뷰 요청」 노트. 리뷰가 끝나면 큐 소비자가 같은
+    일감에 리뷰 노트를 남긴다. 실패 단계는 `why`, 끝난 단계는 `done` 이다.
+    """
+    from .. import issue_flow
+    try:
+        return json.dumps(issue_flow.finish(issue_id, confirm=confirm), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
