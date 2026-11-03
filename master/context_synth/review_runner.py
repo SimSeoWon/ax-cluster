@@ -623,7 +623,17 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
     final = rg.find_range_review(paths, base, end)
     if final:
         res.written = str(final)
-        rq.finish(paths.root, item["id"], ok=True, note=final.name + " (기존 범위 리뷰)", logf=log)
+        # `#881` R216-1 — 재사용 경로도 번호를 채운다(호출자 결과·큐 meta). 못 구하면 노트가 다시 찾는다
+        try:
+            from . import fix_index as fx                          # noqa: PLC0415
+            fx.sweep(paths.root)
+            res.serial = fx.serial_for_range(paths.root, base, end)
+        except Exception as e:                                     # noqa: BLE001
+            log(f"[리뷰큐] [주의] 기존 범위 리뷰 번호 조회 실패 — {type(e).__name__}: {e}")
+        if res.serial:
+            rq.set_meta(paths.root, item["id"], serial=res.serial)
+        rq.finish(paths.root, item["id"], ok=True,
+                  note=final.name + (f" ({res.serial})" if res.serial else "") + " (기존 범위 리뷰)", logf=log)
         res.state = "done"
         log(f"[리뷰큐] 범위 {tag} — 기존 리뷰 {final.name}")
         notify_range(paths, item["id"], noter=range_noter, logf=log)

@@ -182,6 +182,9 @@ def test_run_range():
     again = []
     r2 = R.run_once(Paths(root), range_noter=noter, review_call=lambda p, **kw: again.append(p) or BODY)
     check("⑥ 기존 범위 리뷰가 있으면 모델 0회", not again and r2.state == "done", f"{len(again)} {r2.state}")
+    it2 = [x for x in Q.items(root) if x["kind"] == "range"][0]
+    check("⑥ 재사용 경로도 번호를 채운다(#881 R216-1)", r2.serial == r.serial
+          and it2["meta"].get("serial") == r.serial, f"{r2.serial} {it2['meta'].get('serial')} {r.serial}")
     shutil.rmtree(root)
 
 
