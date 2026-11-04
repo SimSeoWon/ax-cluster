@@ -79,7 +79,7 @@ class CandidatesTest(unittest.TestCase):
         self.assertEqual(public["dismissal_candidates"]["count"], 2)
         self.assertNotIn("타입 표기 권고", json.dumps(public, ensure_ascii=False))
         self.assertIn("타입 표기 권고", json.dumps(private, ensure_ascii=False))
-        F.set_status(self.root, "P1", "dismissed", by="human")
+        F.set_status(self.root, "P1", "dismissed", note="중복 플랜", by="human")
         self.assertEqual(D.read_results(self.root)["count"], 1)
 
     def test_main_change_stale_and_new_collection(self):

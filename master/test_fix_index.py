@@ -173,6 +173,14 @@ def test_status_validation():
                        (("R1-1", "done"), "모르는 상태")):
         got = F.set_status(root, *args)
         check(f"⑥ 거절: {args}", got["ok"] is False and want in got["reason"], str(got))
+    for note in ("", "   "):
+        got = F.set_status(root, "R1-1", "dismissed", note=note)
+        check(f"⑥ [중요] 사유 없는 기각은 거절 (note={note!r}) — #883",
+              got["ok"] is False and "사유" in got["reason"] and "R1-1" not in F.load(root)["status"],
+              str(got))
+    got = F.set_status(root, "R1-1", "dismissed", note="의도된 동작")
+    check("⑥ 사유 있는 기각은 기록", got["ok"]
+          and F.load(root)["status"]["R1-1"]["note"] == "의도된 동작", str(got))
     F.set_status(root, "R1-2", "open")
     check("⑥ open 은 기록을 지운다", "R1-2" not in F.load(root)["status"])
     shutil.rmtree(root)
@@ -186,7 +194,7 @@ def test_plan_status_frontmatter():
     check("⑦ applied → acted", got.get("plan_status") == "acted" and "status: acted" in p.read_text())
     F.set_status(root, "P1", "accepted")
     check("⑦ accepted 는 frontmatter 를 안 건드린다", "status: acted" in p.read_text())
-    F.set_status(root, "P1", "dismissed")
+    F.set_status(root, "P1", "dismissed", note="중복 플랜")
     check("⑦ dismissed → dismissed", "status: dismissed" in p.read_text())
     F.set_status(root, "P1", "open")
     check("⑦ open → pending", "status: pending" in p.read_text())
