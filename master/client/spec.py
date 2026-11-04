@@ -175,7 +175,12 @@ SKILLS_BY_ROLE = {
     #   [주의] `ax-review` 와 발화가 겹친다(「리뷰」) — SKILL.md §0 이 `R`/`P` 번호로 가른다.
     # [중요] `ax-gemini` (사용자 결정 2026-10-09) — 리서치·보고서·코드 분석 요청에서 **먼저 묻고**
     #   승인되면 agy 로 `reports/research/` 보고서를 만든다. 대화형 세션 전용이라 워커엔 안 간다.
-    "requester": ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-fix", "ax-gemini"),
+    # 🔴 `ax-issue` (`#884` T6, 사용자 결정 2026-11-04) — Redmine 일감 하나를 **사람 작업 트리 옆
+    #   worktree** 의 `issue/<N>` 에서 하고 `main` 에 ff 로 올린 뒤 마감 추적에 등록한다(플랜 강제·
+    #   일감 잠금은 마스터와 같은 규칙, 8101 대행). [주의] 분산 작업(`ax-request`·`ax-advance`)과
+    #   발화가 겹친다(「작업 시작」) — SKILL.md §0 이 「Redmine `#N` 일감 vs 분산 work」로 가른다.
+    "requester": ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-fix", "ax-gemini",
+                  "ax-issue"),
 }
 
 # 🔴 [중요] **색인 전용 프로젝트의 배달** (`#693`, 사용자 확정 2026-09-28). 분산 작업이 없으니
@@ -191,8 +196,11 @@ INDEX_ONLY_WORKSHOP = (".claude/hooks/domain_hint.py", ".claude/hooks/hook_paths
 #    배달」 규약이다 — 커밋된 진입 파일을 안 쓰고 MCP 는 로컬 스코프(`index_only` 플래그가 그 뜻).
 #    [주의] 뺀 것 둘(사용자 결정): `ax-fix` — 자동 리뷰가 UE 전제라 비UE 에선 꺼 뒀다(`consumer`) ·
 #    `ax-infer` — 추론만 하는 옛 경로다. 워커 파견은 `ax-work` 가 계약이다.
+#    `ax-issue`(`#884` T6)는 받는다 — git·Redmine·트윈 잠금만 쓰고 UE 전제가 없다. 색인 전용은 안 받는다
+#    (요청자 저장소에서 일감을 구현하는 흐름이 아니다).
 CODE_SKILLS = {"worker": ("ax-work",),
-               "requester": ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-gemini")}
+               "requester": ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-gemini",
+                             "ax-issue")}
 # 훅은 **스크립트 전부** — 완료 알림(`work_completion`)·대기 고지(`pending_works`)가 분산 작업의
 #    배선이다. `editor_mcp` 는 `pending_works` 가 import 하고, 옵트인이 없으면 조용하다(`notice`
 #    가 `endpoint()` None 에서 빠진다). 에이전트·룰은 UE 전제라 여전히 안 보낸다.

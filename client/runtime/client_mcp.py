@@ -791,6 +791,103 @@ def tool_update_fix_status(api, args: dict) -> dict:
     return api("POST", "/fixes/" + urllib.parse.quote(item, safe="") + "/status", payload)
 
 
+# ── 일감 흐름·플랜 (`#884` T6) — 8101 `/api/v1/issue/*`·`/api/v1/plan/*` 대행 ─────────────────
+# [중요] **git 은 이 기계(요청자 worktree)가 하고 인프라는 기록만 한다** — 잠금·마감 추적·Redmine 노트.
+#    마스터 로컬 흐름(`issue_flow`)과 같은 함수(`master/issue_infra.py`)가 서버에서 돈다.
+#    프로젝트 태그는 `queue_api` 가 체크아웃 config 에서 붙인다(요청자가 고르는 값이 아니다).
+# [주의] 서버 거절은 200 + ok:false + 사유다 — 그대로 돌려준다(장애로 바꾸지 않는다).
+
+def _issue_id(v) -> int:
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        raise ClientError(f"issue_id 가 일감 번호가 아니다 — {v!r}")
+    if n <= 0:
+        raise ClientError(f"issue_id 는 양수다 — {n}")
+    return n
+
+
+def _str_list(v, name: str) -> list:
+    if v is None:
+        return []
+    if isinstance(v, str) or not isinstance(v, list):
+        raise ClientError(f"{name} 는 문자열 배열이다")
+    return [str(x) for x in v]
+
+
+def tool_issue_start(api, args: dict) -> dict:
+    payload = {"issue_id": _issue_id(args.get("issue_id"))}
+    if args.get("check_only"):
+        payload["check_only"] = True
+    for k in ("branch", "start_rev"):
+        v = str(args.get(k) or "").strip()
+        if v:
+            payload[k] = v
+    return api("POST", "/api/v1/issue/start", payload)
+
+
+def tool_issue_finish(api, args: dict) -> dict:
+    payload = {"issue_id": _issue_id(args.get("issue_id")),
+               "base": str(args.get("base") or "").strip(),
+               "end": str(args.get("end") or "").strip(),
+               "hashes": _str_list(args.get("hashes"), "hashes")}
+    subs = _str_list(args.get("subjects"), "subjects")
+    if subs:
+        payload["subjects"] = subs
+    return api("POST", "/api/v1/issue/finish", payload)
+
+
+def tool_issue_pause(api, args: dict) -> dict:
+    payload = {"issue_id": _issue_id(args.get("issue_id"))}
+    end = str(args.get("end") or "").strip()
+    if end:
+        payload["end"] = end
+    return api("POST", "/api/v1/issue/pause", payload)
+
+
+def tool_issue_cancel(api, args: dict) -> dict:
+    payload = {"issue_id": _issue_id(args.get("issue_id")),
+               "confirm": args.get("confirm") is True,
+               "delete_branch": args.get("delete_branch") is True,
+               "branch_exists": args.get("branch_exists") is not False,
+               "commits": _str_list(args.get("commits"), "commits"),
+               "local_only": _str_list(args.get("local_only"), "local_only")}
+    return api("POST", "/api/v1/issue/cancel", payload)
+
+
+def tool_plan_start(api, args: dict) -> dict:
+    return api("POST", "/api/v1/plan/start", {"issue_id": _issue_id(args.get("issue_id"))})
+
+
+def tool_plan_set(api, args: dict) -> dict:
+    tasks = args.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        raise ClientError("tasks 는 비지 않은 배열이다 — 원하는 전체 목록(표 순서)")
+    why = str(args.get("why") or "").strip()
+    if not why:
+        raise ClientError("why 가 비었다 — 플랜을 왜 바꾸는지가 노트로 남는다")
+    return api("POST", "/api/v1/plan/set", {"issue_id": _issue_id(args.get("issue_id")),
+                                           "tasks": tasks, "why": why})
+
+
+def tool_plan_transition(api, args: dict) -> dict:
+    task_id = str(args.get("task_id") or "").strip()
+    to = str(args.get("to") or "").strip()
+    if not task_id or not to:
+        raise ClientError("task_id 와 to 는 필수다")
+    payload = {"issue_id": _issue_id(args.get("issue_id")), "task_id": task_id, "to": to}
+    note = str(args.get("note") or "")
+    if note.strip():
+        payload["note"] = note
+    return api("POST", "/api/v1/plan/transition", payload)
+
+
+ISSUE_TOOLS = {"issue_start": tool_issue_start, "issue_finish": tool_issue_finish,
+               "issue_pause": tool_issue_pause, "issue_cancel": tool_issue_cancel,
+               "plan_start": tool_plan_start, "plan_set": tool_plan_set,
+               "plan_transition": tool_plan_transition}
+
+
 def _bare(name: str) -> str:
     """UE 접두 한 글자를 뗀 이름. 파일 stem 은 접두가 없다 (`UActorComponent_X` →
     `ActorComponent_X.cpp`), 그래서 evidence(파일:줄) 대조에는 이쪽이 필요하다."""
@@ -1517,6 +1614,88 @@ TOOLS.append(
                                            "description": "보통 비운다 — 저장된 작업 브랜치를 쓴다"}}}})
 
 
+# ── 일감 흐름·플랜 (`#884` T6) — 설명은 사실만 적는다. 절차·승인 지점은 `ax-issue` 스킬이 말한다 ──
+_SHA_DESC = "40자리 커밋 해시"
+TOOLS.extend([
+    {"name": "plan_start",
+     "description": "일감의 시작 판정과 이 프로젝트의 7단계 표를 돌려준다(읽기). 판정: no_spec · plan_needed · "
+                    "plan_invalid · plan_violations · resume · next · blocked · plan_done. ok 는 resume·next "
+                    "일 때만 참이다. 응답의 next_action 이 그 판정의 다음 행동 문장이다.",
+     "inputSchema": {"type": "object", "required": ["issue_id"], "properties": {
+         "issue_id": {"type": "integer", "description": "Redmine 일감 번호"}}}},
+    {"name": "plan_set",
+     "description": "일감 본문의 플랜 영역(ax:plan)을 등록하거나 태스크를 추가·편집한다. tasks 는 원하는 전체 "
+                    "목록이다. state·evidence 는 받지 않는다 — 새 태스크는 「대기」, 기존 태스크는 본문 값을 "
+                    "유지한다. 시작된 태스크는 목록에서 뺄 수 없다. why 는 노트로 남는다(필수).",
+     "inputSchema": {"type": "object", "required": ["issue_id", "tasks", "why"], "properties": {
+         "issue_id": {"type": "integer"},
+         "tasks": {"type": "array", "items": {"type": "object", "required": ["id", "goal"], "properties": {
+             "id": {"type": "string", "description": "T1 · T2 …"},
+             "goal": {"type": "string"},
+             "target": {"type": "string", "description": "대상 파일·영역"},
+             "deps": {"type": "array", "items": {"type": "string"}, "description": "선행 태스크 id"},
+             "check": {"type": "string", "description": "검증 방법"},
+             "steps": {"type": "array", "items": {"type": "integer"},
+                       "description": "이 태스크가 하는 조건부 단계 번호(plan_start 의 steps 표)"}}}},
+         "why": {"type": "string", "description": "플랜을 바꾸는 이유 — 사용자 결정"}}}},
+    {"name": "plan_transition",
+     "description": "플랜 태스크 하나의 상태를 바꾼다 — 상태를 바꾸는 유일한 쓰기. to: 작업중 · 완료 · 차단 · "
+                    "해당없음 · 대기. 완료는 근거(커밋 해시·검사 결과), 차단·해당없음은 사유가 note 에 필수다. "
+                    "「작업중」은 이 프로젝트의 일감 잠금을 보고, 다른 일감이 활성이면 거절된다. "
+                    "응답의 next 가 다음 판정이다.",
+     "inputSchema": {"type": "object", "required": ["issue_id", "task_id", "to"], "properties": {
+         "issue_id": {"type": "integer"},
+         "task_id": {"type": "string"},
+         "to": {"type": "string", "enum": ["작업중", "완료", "차단", "해당없음", "대기"]},
+         "note": {"type": "string"}}}},
+    {"name": "issue_start",
+     "description": "일감 작업 시작을 마스터에 기록한다 — 플랜 판정(ok 가 아니면 거절) · 프로젝트 트윈의 일감 "
+                    "잠금(다른 일감이 활성이면 거절) · Redmine 시작 리비전 노트(신규 일감은 「진행」으로). "
+                    "check_only=true 는 판정과 잠금 상태만 돌려주고 아무것도 쓰지 않는다. 기록 호출은 "
+                    "branch=issue/<N> 과 그 브랜치의 시작 리비전(start_rev, origin/main 해시)을 싣는다. "
+                    "같은 일감이 보류 중이면 잠금을 재개하고 「재개」 노트를 남긴다(resumed). "
+                    "git(worktree·브랜치)은 이 도구가 만지지 않는다.",
+     "inputSchema": {"type": "object", "required": ["issue_id"], "properties": {
+         "issue_id": {"type": "integer"},
+         "check_only": {"type": "boolean", "default": False},
+         "branch": {"type": "string", "description": "issue/<N>"},
+         "start_rev": {"type": "string", "description": _SHA_DESC + " — worktree 를 만든 origin/main"}}}},
+    {"name": "issue_finish",
+     "description": "일감 종료를 마스터에 기록한다 — issue/<N> 을 origin main 에 push 한 뒤에 부른다. 인프라는 "
+                    "보고받은 base..end 와 해시 목록으로 마감 추적(issue_track)을 등록하고, 색인기 리뷰를 잇고, "
+                    "등록이 성공했을 때만 일감 잠금을 푼 뒤 Redmine 「리뷰 요청」 노트를 남긴다. 해시별 리뷰와 "
+                    "종합 리뷰 결과는 리뷰 큐가 같은 일감에 노트로 남긴다. 등록이 실패하면 잠금이 남고 why 에 "
+                    "사유가 온다. git 은 만지지 않는다.",
+     "inputSchema": {"type": "object", "required": ["issue_id", "base", "end", "hashes"], "properties": {
+         "issue_id": {"type": "integer"},
+         "base": {"type": "string", "description": _SHA_DESC + " — 시작 리비전(merge-base)"},
+         "end": {"type": "string", "description": _SHA_DESC + " — push 한 issue/<N> 끝"},
+         "hashes": {"type": "array", "items": {"type": "string"},
+                    "description": "base..end 커밋 해시, 오래된 것부터(마지막 = end)"},
+         "subjects": {"type": "array", "items": {"type": "string"},
+                      "description": "같은 순서의 커밋 제목(선택 — 노트의 커밋 목록)"}}}},
+    {"name": "issue_pause",
+     "description": "진행 중인 일감을 보류로 기록한다 — 프로젝트 트윈의 잠금을 보류로 옮기고 Redmine 「보류」 "
+                    "노트를 남긴다. 브랜치·worktree 는 그대로 남는다. 재개는 issue_start 다.",
+     "inputSchema": {"type": "object", "required": ["issue_id"], "properties": {
+         "issue_id": {"type": "integer"},
+         "end": {"type": "string", "description": _SHA_DESC + " — 보류 시점의 issue/<N> 끝"}}}},
+    {"name": "issue_cancel",
+     "description": "일감 작업 취소. confirm=false(기본)는 잠금 상태와 보낸 커밋 목록으로 미리보기만 한다(쓰기 0). "
+                    "confirm=true 는 잠금 해제 → Redmine 「취소」 노트(커밋 목록·브랜치 운명)를 남긴다. "
+                    "응답의 branch_delete_allowed 가 참일 때만 브랜치 삭제가 노트와 일치한다. "
+                    "git(worktree·브랜치)은 이 도구가 만지지 않는다.",
+     "inputSchema": {"type": "object", "required": ["issue_id"], "properties": {
+         "issue_id": {"type": "integer"},
+         "confirm": {"type": "boolean", "default": False},
+         "delete_branch": {"type": "boolean", "default": False},
+         "branch_exists": {"type": "boolean", "default": True},
+         "commits": {"type": "array", "items": {"type": "string"},
+                     "description": "origin/main 밖 커밋 — 줄마다 '<40자리 해시> <제목>'"},
+         "local_only": {"type": "array", "items": {"type": "string"},
+                        "description": "원격 어디에도 없는 커밋 해시"}}}},
+])
+
 
 def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                   root: Path | None = None) -> dict:
@@ -1535,6 +1714,8 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
         return tool_register_work(None, args, root=root)
     if name == "improve_work":
         return tool_improve_work(None, args, root=root)
+    if name in ISSUE_TOOLS:                         # 일감 흐름·플랜 (`#884` T6) — 큐(8101) 대행
+        return ISSUE_TOOLS[name](api or queue_api(root), args)
     if name in ("list_works", "get_work", "redmine_note", "log_writer_signal", "log_history",
                 "add_object_alias", "mark_not_a_class", "redmine_list_issues",
                 "redmine_get_issue", "redmine_meta", "redmine_create_issue",

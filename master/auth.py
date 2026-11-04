@@ -236,6 +236,16 @@ REQUESTER_SCOPE: tuple = (
     #    쓰기는 항목 상태 기록 하나뿐이고 코드·브랜치는 건드리지 않는다.
     ("GET", "/fixes"),
     ("POST", "/fixes/", "/status"),
+    # 🔴 **일감 흐름·플랜 대행** (`#884` T6, 사용자 결정 2026-11-04) — `.33` 요청자 세션도 마스터와 같은
+    #    흐름(플랜 강제 · 일감 잠금 · 마감 추적 · Redmine 노트)을 쓴다. git 은 요청자 worktree 몫이고
+    #    여기는 기록뿐이다. [중요] **정확 일치**다 — 접두어로 두면 하위 경로가 조용히 열린다(`#769`).
+    ("POST", "/api/v1/issue/start", "", "exact"),
+    ("POST", "/api/v1/issue/finish", "", "exact"),
+    ("POST", "/api/v1/issue/pause", "", "exact"),
+    ("POST", "/api/v1/issue/cancel", "", "exact"),
+    ("POST", "/api/v1/plan/start", "", "exact"),
+    ("POST", "/api/v1/plan/set", "", "exact"),
+    ("POST", "/api/v1/plan/transition", "", "exact"),
 )
 
 # worker (작업장 claimer, #204 — κ.0 CI 러너 패턴): 집고(claim) · 살아 있다 알리고(heartbeat) ·

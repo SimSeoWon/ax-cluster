@@ -20,8 +20,9 @@
 [중요] **`#883` 일감 하나씩 — 「작업중」 전이는 일감 잠금(`issue_lock`)을 본다.** 다른 일감이 활성이면
 거절한다(같은 `_rejections` 경로, 보유 일감 번호를 사유에 싣는다). 아무도 활성이 아니면 보류 중인
 일감도 허용하되 「재개는 issue_start」 를 결과에 알린다. 잠금 위치는 `lock_root` → 없으면 운영 호출만
-AXCluster 트윈(`issue_lock.default_root()`); getter·updater 를 주입하고 `lock_root` 를 안 주면 **검사를
-건너뛴다**(대역이 운영 상태를 읽지 않게). [주의] `redmine.get_issue` 응답에 프로젝트가 없어
+AXCluster 트윈(`issue_lock.default_root()`) — `project` 를 실으면 그 프로젝트 트윈(`#884` T6, `.33`
+요청자의 8101 호출); getter·updater 를 주입하고 `lock_root` 를 안 주면 **검사를 건너뛴다**(대역이 운영
+상태를 읽지 않게). [주의] `redmine.get_issue` 응답에 프로젝트가 없어
 AXCluster 일감만 고르지 못한다 — **모든 일감의 「작업중」 전이에 적용한다.**
 """
 from __future__ import annotations
@@ -175,11 +176,18 @@ def set_plan(issue_id, tasks: list, why: str, *, getter=None, updater=None,
                 "redmine": result}
 
 
-def _lock_gate(issue_id, lock_root) -> str:
-    """「작업중」 전이의 잠금 검사(`#883`). 거절이면 `PlanToolError`, 아니면 알릴 문장(없으면 "")."""
+def _lock_gate(issue_id, lock_root, project: str = "") -> str:
+    """「작업중」 전이의 잠금 검사(`#883`). 거절이면 `PlanToolError`, 아니면 알릴 문장(없으면 "").
+
+    잠금 위치: `lock_root` → 없으면 `project` 의 트윈 루트(`#884` T6 — `.33` 요청자 호출은 프로젝트를
+    싣는다) → 그것도 없으면 AXCluster(마스터 로컬 흐름의 종전 기본값).
+    """
     from master import issue_lock as IL
     try:
-        root = lock_root if lock_root is not None else IL.default_root()
+        if lock_root is not None:
+            root = lock_root
+        else:
+            root = IL.default_root(project) if project else IL.default_root()
         active = IL.current(root)
         paused = IL.paused(root)
     except Exception as e:                              # noqa: BLE001 — IssueLockError·경로 해석
@@ -197,10 +205,12 @@ def _lock_gate(issue_id, lock_root) -> str:
 
 
 def transition(issue_id, task_id: str, to: str, note: str = "", *, getter=None,
-               updater=None, events_path=None, caller: str = "", lock_root=None) -> dict:
+               updater=None, events_path=None, caller: str = "", lock_root=None,
+               project: str = "") -> dict:
     """태스크 하나의 상태를 바꾸고 같은 갱신에 노트를 남긴다.
 
-    「작업중」 으로 갈 때는 일감 잠금을 본다(`#883` — 모듈 설명).
+    「작업중」 으로 갈 때는 일감 잠금을 본다(`#883` — 모듈 설명). `project` 는 잠금 트윈을 고른다
+    (`#884` T6 · 비면 AXCluster).
     """
     ctx = {"task_id": task_id, "to": to, "note": note or ""}
     injected = getter is not None or updater is not None
@@ -208,7 +218,7 @@ def transition(issue_id, task_id: str, to: str, note: str = "", *, getter=None,
     with _rejections("transition", issue_id, enabled=events_path is not None or getter is None,
                      events_path=events_path, caller=caller, ctx=ctx):
         if to == PS.WORKING and (lock_root is not None or not injected):
-            lock_note = _lock_gate(issue_id, lock_root)
+            lock_note = _lock_gate(issue_id, lock_root, project)
         body = _read(issue_id, getter or _default_getter)
         plan = PB.parse(body)
         if plan is None:

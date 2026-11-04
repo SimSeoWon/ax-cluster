@@ -331,6 +331,82 @@ def test_redmine_wiki_project_injection():
               calls[1][0] == "PUT" and calls[1][2]["project"] == "AXCluster")
 
 
+def test_issue_tools_queue_delegation():
+    """`#884` T6 — 일감·플랜 일곱 도구는 큐 대행이며 서버 판정을 그대로 보존한다."""
+    required = {
+        "plan_start": {"issue_id"},
+        "plan_set": {"issue_id", "tasks", "why"},
+        "plan_transition": {"issue_id", "task_id", "to"},
+        "issue_start": {"issue_id"},
+        "issue_finish": {"issue_id", "base", "end", "hashes"},
+        "issue_pause": {"issue_id"},
+        "issue_cancel": {"issue_id"},
+    }
+    listed = M.handle_message({"id": 884, "method": "tools/list"})["result"]["tools"]
+    schemas = {t["name"]: t["inputSchema"] for t in listed}
+    for name, fields in required.items():
+        schema = schemas.get(name, {})
+        check(f"일감 도구 {name} 스키마·필수 인자 노출", set(schema.get("required", [])) == fields,
+              str(schema))
+        check(f"{name} 프로젝트는 체크아웃 태그가 정한다", "project" not in schema.get("properties", {}))
+
+    calls = []
+    response = {"ok": False, "step": "lock", "why": "#8 작업이 진행 중이다", "holder": 8}
+    def api(method, path, payload=None):
+        calls.append((method, path, payload))
+        return response
+    a, b = "a" * 40, "b" * 40
+    cases = [
+        ("plan_start", {"issue_id": 7}, "/api/v1/plan/start", {"issue_id": 7}),
+        ("plan_set", {"issue_id": 7, "tasks": [{"id": "T1", "goal": "한글 목표"}], "why": "사용자 결정"},
+         "/api/v1/plan/set", {"issue_id": 7, "tasks": [{"id": "T1", "goal": "한글 목표"}], "why": "사용자 결정"}),
+        ("plan_transition", {"issue_id": 7, "task_id": "T1", "to": "완료", "note": "검사 통과\n근거"},
+         "/api/v1/plan/transition", {"issue_id": 7, "task_id": "T1", "to": "완료", "note": "검사 통과\n근거"}),
+        ("issue_start", {"issue_id": 7, "check_only": True}, "/api/v1/issue/start",
+         {"issue_id": 7, "check_only": True}),
+        ("issue_start", {"issue_id": 7, "branch": "issue/7", "start_rev": a}, "/api/v1/issue/start",
+         {"issue_id": 7, "branch": "issue/7", "start_rev": a}),
+        ("issue_finish", {"issue_id": 7, "base": a, "end": b, "hashes": [b], "subjects": ["수정"]},
+         "/api/v1/issue/finish", {"issue_id": 7, "base": a, "end": b, "hashes": [b], "subjects": ["수정"]}),
+        ("issue_pause", {"issue_id": 7, "end": b}, "/api/v1/issue/pause", {"issue_id": 7, "end": b}),
+        ("issue_cancel", {"issue_id": 7}, "/api/v1/issue/cancel",
+         {"issue_id": 7, "confirm": False, "delete_branch": False, "branch_exists": True,
+          "commits": [], "local_only": []}),
+        ("issue_cancel", {"issue_id": 7, "confirm": True, "delete_branch": True,
+                          "branch_exists": False, "commits": [b + " 수정"], "local_only": [b]},
+         "/api/v1/issue/cancel", {"issue_id": 7, "confirm": True, "delete_branch": True,
+                                 "branch_exists": False, "commits": [b + " 수정"], "local_only": [b]}),
+    ]
+    for name, args, path, payload in cases:
+        before = len(calls)
+        got = M.dispatch_tool(name, args, api=api)
+        check(f"{name} 큐 POST 한 번·본문 보존", calls[before:] == [("POST", path, payload)], str(calls[before:]))
+        check(f"{name} 서버 거절 응답 보존", got is response)
+    result = M.handle_message({"id": 884, "method": "tools/call",
+                              "params": {"name": "issue_start", "arguments": {"issue_id": 7}}}, api=api)
+    check("일감 거절은 MCP 통신 오류로 바꾸지 않는다", result["result"]["isError"] is False
+          and json.loads(result["result"]["content"][0]["text"]) == response, str(result))
+
+    invalid = [(name, {**args, "issue_id": 0}) for name, args, _p, _pl in cases]
+    invalid += [
+        ("plan_start", {}),
+        ("plan_set", {"issue_id": 7, "tasks": [], "why": "결정"}),
+        ("plan_set", {"issue_id": 7, "tasks": [{"id": "T1", "goal": "한다"}], "why": "  "}),
+        ("plan_transition", {"issue_id": 7, "task_id": "", "to": "완료"}),
+        ("plan_transition", {"issue_id": 7, "task_id": "T1", "to": ""}),
+        ("issue_finish", {"issue_id": 7, "base": a, "end": b, "hashes": b}),
+        ("issue_finish", {"issue_id": 7, "base": a, "end": b, "hashes": [b], "subjects": "수정"}),
+        ("issue_cancel", {"issue_id": 7, "commits": "커밋 한 줄"}),
+        ("issue_cancel", {"issue_id": 7, "local_only": b}),
+    ]
+    for name, args in invalid:
+        before = len(calls)
+        result = M.handle_message({"id": 884, "method": "tools/call",
+                                  "params": {"name": name, "arguments": args}}, api=api)
+        check(f"{name} 잘못된 인자 왕복 전에 거절 {args}", result["result"]["isError"] is True
+              and len(calls) == before, str(result))
+
+
 def test_task_templates_read_surface():
     """태스크 템플릿은 **8103**(공개 읽기) 이다 — 도메인 조회와 같은 등급의 구조 자료.
 
@@ -886,7 +962,8 @@ def main() -> int:
                test_find_invariants_sweeps_and_says_how_it_matched,
                test_redmine_delegation_goes_to_queue,
                test_redmine_wiki_tools, test_redmine_wiki_project_injection,
-               test_task_templates_read_surface, test_rework_improve_surface):
+               test_task_templates_read_surface, test_rework_improve_surface,
+               test_issue_tools_queue_delegation):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_mcp: {PASS}/{total} 통과")

@@ -47,6 +47,63 @@ from .logic import (
 from ..auth import BearerAuthMiddleware, auth_headers, load_token
 from .reclaim import _verify_loop, _reclaim_loop
 
+from pydantic import BaseModel, ConfigDict
+
+
+# ─────────────────────────────────────────
+# 일감 흐름·플랜 대행 요청 (`#884` T6) — `.33` 요청자가 `ax-client` 로 부른다
+# ─────────────────────────────────────────
+# [중요] 본체는 `master/issue_infra.py`(잠금·마감 추적·노트)와 `master/plan_tools.py` 다 — 마스터
+#    로컬 흐름(`issue_flow`)과 **같은 함수**를 부른다. git 은 요청자의 worktree 몫이라 여기 없다.
+# [주의] 모델을 `models.py` 가 아니라 여기 둔 것은 이 대행 표면 하나에만 쓰기 때문이다. 셋 다
+#    `project` 를 받는다(태그 계약 · `test_tagging` 이 따로 확인한다). 모르는 키는 422 다.
+
+class _IssueReq(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project: str = ""
+    issue_id: int
+
+
+class IssueStartReq(_IssueReq):
+    branch: str = ""
+    start_rev: str = ""
+    check_only: bool = False
+
+
+class IssueFinishReq(_IssueReq):
+    base: str
+    end: str
+    hashes: list[str]
+    subjects: list[str] = []
+
+
+class IssuePauseReq(_IssueReq):
+    end: str = ""
+
+
+class IssueCancelReq(_IssueReq):
+    confirm: bool = False
+    delete_branch: bool = False
+    branch_exists: bool = True
+    commits: list[str] = []
+    local_only: list[str] = []
+
+
+class PlanStartReq(_IssueReq):
+    pass
+
+
+class PlanSetReq(_IssueReq):
+    tasks: list[dict]
+    why: str
+
+
+class PlanTransitionReq(_IssueReq):
+    task_id: str
+    to: str
+    note: str = ""
+
+
 
 
 # ─────────────────────────────────────────
@@ -684,6 +741,99 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         _tq_log(f"[redmine] #{req.issue_id} 커밋 연결 {req.commit_hash[:12]} → {result}", root)
         return {"ok": not result.startswith("[주의]"), "result": result,
                 "issue_id": req.issue_id}
+
+    # ── 일감 흐름·플랜 대행 (`#884` T6) ───────────────────────────────────────
+    # [중요] 잠금·마감 추적은 **프로젝트 트윈**에 쓴다 → 정책 `MOUNT` + 태그 필수(`_mount_gate(require=True)`).
+    #    거절은 200 + ok:false(`no_project_tag`·`not_mounted`) 이고, 흐름 거절(플랜·잠금)도 200 + ok:false 다.
+    # [주의] 여기 오는 것은 기록뿐이다 — 요청자 저장소의 git 은 만지지 않는다(그쪽 worktree 몫).
+    def _issue_gate(op: str, req):
+        bad = _mount_gate(req.project, require=True)
+        if bad:
+            _tq_log(f"[issue] {op} #{req.issue_id} 거절 {bad.get('status')} project={req.project or '-'}", root)
+        return bad
+
+    def _issue_done(op: str, req, got: dict) -> dict:
+        _tq_log(f"[issue] {op} #{req.issue_id} project={req.project} → ok={got.get('ok')}"
+                + (f" step={got.get('step')} why={str(got.get('why') or '')[:200]}" if not got.get("ok") else "")
+                + (f" done={','.join(got.get('done') or [])}" if got.get("done") else ""), root)
+        return got
+
+    def _issue_call(op: str, req, fn):
+        bad = _issue_gate(op, req)
+        if bad:
+            return bad
+        try:
+            got = fn(getattr(_mount_gate, "last", "") or req.project.strip())
+        except Exception as e:                               # noqa: BLE001 — 500 이 아니라 사유
+            got = {"ok": False, "issue_id": req.issue_id, "step": "error",
+                   "why": f"{type(e).__name__}: {e}"}
+        return _issue_done(op, req, got)
+
+    @app.post("/api/v1/issue/start")
+    def issue_start_ep(req: IssueStartReq):
+        """요청자 일감 시작 기록 — 플랜 판정 · 잠금 · 시작 노트 (`check_only` 는 쓰기 0)."""
+        from .. import issue_infra as INF
+        return _issue_call("start", req, lambda p: INF.infra_start(
+            p, req.issue_id, branch=req.branch, start_rev=req.start_rev, check_only=req.check_only))
+
+    @app.post("/api/v1/issue/finish")
+    def issue_finish_ep(req: IssueFinishReq):
+        """요청자 일감 종료 기록 — 마감 추적 등록 · 리뷰 연결 · 잠금 해제 · 「리뷰 요청」 노트."""
+        from .. import issue_infra as INF
+        return _issue_call("finish", req, lambda p: INF.infra_finish(
+            p, req.issue_id, base=req.base, end=req.end, hashes=req.hashes, subjects=req.subjects))
+
+    @app.post("/api/v1/issue/pause")
+    def issue_pause_ep(req: IssuePauseReq):
+        """요청자 일감 보류 기록 — 잠금 보류 · 「보류」 노트."""
+        from .. import issue_infra as INF
+        return _issue_call("pause", req, lambda p: INF.infra_pause(p, req.issue_id, end=req.end))
+
+    @app.post("/api/v1/issue/cancel")
+    def issue_cancel_ep(req: IssueCancelReq):
+        """요청자 일감 취소 — `confirm=false` 는 미리보기, 승인 시 잠금 해제 · 「취소」 노트."""
+        from .. import issue_infra as INF
+        return _issue_call("cancel", req, lambda p: INF.infra_cancel(
+            p, req.issue_id, confirm=req.confirm, delete_branch=req.delete_branch,
+            branch_exists=req.branch_exists, commits=req.commits, local_only=req.local_only))
+
+    def _plan_call(op: str, req, fn):
+        """플랜 도구 — 규칙 거절(`PlanError`)은 200 + ok:false + 사유(`plan_refused`)."""
+        from .. import plan_block as PB
+        bad = _issue_gate(f"plan.{op}", req)
+        if bad:
+            return bad
+        try:
+            got = fn(getattr(_mount_gate, "last", "") or req.project.strip())
+        except PB.PlanError as e:
+            got = {"ok": False, "issue_id": req.issue_id, "status": "plan_refused", "why": str(e)}
+        except Exception as e:                               # noqa: BLE001
+            got = {"ok": False, "issue_id": req.issue_id, "status": "error",
+                   "why": f"{type(e).__name__}: {e}"}
+        if not isinstance(got, dict):
+            got = {"ok": False, "issue_id": req.issue_id, "status": "error", "why": f"반환 형식 오류 {got!r}"[:200]}
+        got.setdefault("ok", "error" not in got)
+        return _issue_done(f"plan.{op}", req, got)
+
+    @app.post("/api/v1/plan/start")
+    def plan_start_ep(req: PlanStartReq):
+        """시작 판정 + 그 프로젝트의 7단계 표 (읽기)."""
+        from .. import plan_tools
+        return _plan_call("start", req, lambda p: plan_tools.start(req.issue_id, project=p))
+
+    @app.post("/api/v1/plan/set")
+    def plan_set_ep(req: PlanSetReq):
+        """플랜 등록·태스크 추가/편집 — 상태·근거는 못 바꾼다(`plan_tools.set_plan`)."""
+        from .. import plan_tools
+        return _plan_call("set", req, lambda p: plan_tools.set_plan(
+            req.issue_id, req.tasks, req.why, caller=f"8101:{p}"))
+
+    @app.post("/api/v1/plan/transition")
+    def plan_transition_ep(req: PlanTransitionReq):
+        """태스크 상태 전이 — 「작업중」은 그 프로젝트 트윈의 일감 잠금을 본다."""
+        from .. import plan_tools
+        return _plan_call("transition", req, lambda p: plan_tools.transition(
+            req.issue_id, req.task_id, req.to, req.note, caller=f"8101:{p}", project=p))
 
     @app.post("/api/v1/signals")
     def writer_signal_ep(req: WriterSignalReq):

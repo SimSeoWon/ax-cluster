@@ -35,31 +35,33 @@
 로컬은 그대로다(잃는 것 없음, 강제 push 없음). 사용자 결정(2026-11-03): main 적용 뒤 로컬 브랜치 삭제.
 [주의] push 뒤 단계(로컬 맞춤·삭제·등록·해제·노트)가 실패해도 **되돌리지 않는다** — 이미 원격 정본이
 바뀌었다. 무엇이 됐고 무엇이 안 됐는지를 `done`/`why` 로 돌려준다.
+[중요] `#884` T6 — **git 이 아닌 부분(플랜 판정·잠금·마감 추적·Redmine 노트)은 `master/issue_infra.py`
+가 본체다.** `.33` 요청자는 같은 함수를 8101 `/api/v1/issue/*` 로 부른다(git 은 요청자 worktree 몫).
+이 모듈은 마스터 로컬 저장소의 git 단계와 그 함수들을 잇는 자리다.
 [주의] **로그는 둘이다** — 호출자에게 돌려주는 `log` 목록과 `<AXCluster 트윈>/issue_flow.jsonl`
 (한 줄 = 단계 하나). 파일 기록 실패는 흐름을 바꾸지 않는다(stderr 경고).
 """
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
+
+from master import issue_infra as INF
 
 REPO = Path(__file__).resolve().parent.parent
 MAIN = "main"
 REMOTE = "origin"
-BRANCH_PREFIX = "issue/"
-EVENTS_NAME = "issue_flow.jsonl"
-START_NOTE = "작업 시작 리비전: `{rev}` · 브랜치 `{branch}`"
+BRANCH_PREFIX = INF.BRANCH_PREFIX
+EVENTS_NAME = INF.EVENTS_NAME
+START_NOTE = INF.START_NOTE
 
 
 class IssueFlowError(RuntimeError):
     """흐름이 계약에 어긋나 멈췄다 — 사유 문장을 담는다."""
 
 
-def branch_name(issue_id) -> str:
-    return f"{BRANCH_PREFIX}{int(issue_id)}"
+branch_name = INF.branch_name
 
 
 def _git(repo: Path, *args: str) -> tuple[int, str]:
@@ -88,59 +90,16 @@ def default_events_path() -> Path:
     return PE.default_path().parent / EVENTS_NAME
 
 
-class _Log:
-    """단계 로그 — 목록 + jsonl + (선택) 호출자 logf."""
-
-    def __init__(self, op: str, issue_id, *, events_path=None, logf=None):
-        self.op, self.issue_id, self.lines = op, issue_id, []
-        self.events_path, self.logf = events_path, logf
-
-    def __call__(self, step: str, msg: str, **extra) -> None:
-        line = f"[issue_flow] #{self.issue_id} {self.op}.{step}: {msg}"
-        self.lines.append(line)
-        if self.logf:
-            self.logf(line)
-        path = self.events_path
-        if path is None:
-            return
-        rec = {"at": datetime.now().astimezone().isoformat(timespec="seconds"),
-               "op": self.op, "issue_id": self.issue_id, "step": step, "msg": msg, **extra}
-        try:
-            path = Path(path)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        except (OSError, TypeError, ValueError) as e:
-            # `#881` R218-3 — 직렬화 불가 값(TypeError·ValueError)도 흐름을 바꾸지 않는다
-            print(f"[issue_flow] [주의] 이벤트 기록 실패 {path}: {type(e).__name__}: {e}", file=sys.stderr)
-
-
-def _refuse(log: _Log, step: str, why: str, **extra) -> dict:
-    log(step, f"거절 — {why}")
-    return {"ok": False, "issue_id": log.issue_id, "step": step, "why": why,
-            "log": log.lines, **extra}
-
-
-def _default_getter(issue_id):
-    from master import redmine
-    return redmine.get_issue(issue_id)
-
-
-def _default_noter(issue_id, *, notes: str, status_name: str = "") -> str:
-    from master import redmine
-    return redmine.update_issue(issue_id, notes=notes, status_name=status_name)
-
-
-def _call_redmine(fn, *a, **kw) -> str:
-    """Redmine 호출 — 예외도 `[주의]` 문장으로 바꾼다(`#881` R216-4·R218-2·R216-5).
-
-    `update_issue` 는 실패를 문장으로 돌려주지만 대역·네트워크 계층은 예외를 던질 수 있다. 예외가
-    새면 `start` 는 방금 만든 브랜치를 되돌리지 못하고, `finish` 는 push 뒤 결과를 못 돌려준다.
-    """
-    try:
-        return str(fn(*a, **kw))
-    except Exception as e:                              # noqa: BLE001
-        return f"[주의] Redmine 호출 예외 {type(e).__name__}: {e}"
+# `#884` T6 — 기록 쪽(로그·거절·Redmine·잠금)은 `issue_infra` 가 본체다. `.33` 요청자의 8101 경로와
+#    같은 함수를 쓰려고 옮겼다 — 아래 이름은 이 모듈의 종전 이름을 잇는 별칭이다.
+_Log = INF.Log
+_refuse = INF.refuse
+_default_getter = INF.default_getter
+_default_noter = INF.default_noter
+_call_redmine = INF.call_redmine
+_NO_LOCK = INF.NO_LOCK
+_busy_why = INF.busy_why
+_lock_logf = INF.lock_logf
 
 
 def _resolve_events(events_path, injected: bool):
@@ -156,39 +115,9 @@ def _resolve_events(events_path, injected: bool):
         return None
 
 
-_NO_LOCK = object()          # 주입 실행 + lock_root 없음 → 잠금 미사용
-
-
 def _resolve_lock(lock_root, injected: bool):
-    """잠금 위치. 주입 실행이 `lock_root` 를 안 주면 `_NO_LOCK`(운영 트윈을 건드리지 않는다).
-
-    운영 호출에서 위치를 못 풀면 예외가 그대로 올라간다 — 호출자가 `lock` 단계 거절로 바꾼다
-    (잠금을 못 읽은 채 시작하면 두 일감이 동시에 열린다 — fail-closed).
-    """
-    if lock_root is not None:
-        return Path(lock_root)
-    if injected:
-        return _NO_LOCK
-    from master import issue_lock as IL
-    return IL.default_root()
-
-
-def _lock_state(IL, root, n: int) -> tuple[dict | None, dict]:
-    """(활성 기록 | None, N 의 보류 기록 | {})."""
-    active = IL.current(root)
-    rec = IL.paused(root).get(n) or {}
-    return active, rec
-
-
-def _busy_why(active: dict) -> str:
-    h = active["issue_id"]
-    return (f"#{h} 작업이 진행 중이다({active.get('branch')}) — 일감은 하나씩 한다. "
-            f"#{h} 를 완료하거나, 보류(issue_pause) 또는 취소(issue_cancel)한 뒤 시작한다")
-
-
-def _lock_logf(log: "_Log"):
-    """`issue_lock` 의 줄을 같은 단계 로그(`lock`)로 흘린다."""
-    return lambda line: log("lock", line)
+    """잠금 위치 — `issue_infra.resolve_lock`(프로젝트 미지정 = AXCluster)."""
+    return INF.resolve_lock(lock_root, injected)
 
 
 def _clean(repo: Path) -> tuple[bool, list]:
@@ -202,8 +131,8 @@ def _branch_exists(repo: Path, branch: str) -> bool:
     return _git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}")[0] == 0
 
 
-RESUME_NOTE = "재개: 브랜치 `{branch}` (시작 리비전 `{rev}`) — 보류에서 이어서 작업한다"
-PAUSE_NOTE = "보류: 브랜치 `{branch}` 유지 (끝 `{end}`), 재개는 issue_start — 잠금을 풀었다"
+RESUME_NOTE = INF.RESUME_NOTE
+PAUSE_NOTE = INF.PAUSE_NOTE
 
 
 def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
@@ -213,9 +142,8 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
     이미 `issue/<N>` 에 서 있으면 새로 만들지 않고 그 시작점(`main` 과의 merge-base)을 돌려준다
     (잠금에 없던 옛 브랜치도 이때 잠금에 올린다). N 이 보류 중이고 깨끗한 `main` 에 서 있으면
     `issue/<N>` 으로 옮기고 잠금을 재개한 뒤 「재개」 노트를 남긴다(`resumed: True`).
+    플랜·잠금·노트는 `issue_infra` 의 공용 함수다(`.33` 요청자 경로와 같은 규칙).
     """
-    from master import issue_lock as IL
-    from master import plan_start as ST
     repo = Path(repo or REPO)
     injected = getter is not None or noter is not None
     log = _Log("start", issue_id, events_path=_resolve_events(events_path, injected), logf=logf)
@@ -223,48 +151,24 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
     noter = noter or _default_noter
     branch = branch_name(issue_id)
     n = int(issue_id)
-    llog = _lock_logf(log)
 
     # ① 플랜 강제
-    try:
-        verdict = ST.start_issue(issue_id, getter=getter)
-    except Exception as e:                              # noqa: BLE001
-        return _refuse(log, "plan", f"이슈를 읽지 못했다 — 예외 {type(e).__name__}: {e}")
-    if "error" in verdict:
-        return _refuse(log, "plan", f"이슈를 읽지 못했다 — {verdict['error']}")
-    if not verdict.get("ok"):
-        return _refuse(log, "plan", f"플랜 판정 {verdict.get('verdict')} — {verdict.get('next_action', '')}",
-                       verdict=verdict.get("verdict"))
-    log("plan", f"판정 {verdict.get('verdict')} · 태스크 {', '.join(verdict.get('tasks') or []) or '-'}")
+    bad, _verdict = INF.plan_gate(issue_id, getter=getter, log=log)
+    if bad:
+        return bad
 
     # ①-1 잠금 — 다른 일감이 활성이면 아무것도 바꾸지 않고 거절 (`#883`)
     try:
         lroot = _resolve_lock(lock_root, injected)
-        if lroot is _NO_LOCK:
-            active, prec = None, {}
-            log("lock", "[주의] 잠금 미사용 — 대역 주입 실행에 lock_root 가 없다")
-        else:
-            active, prec = _lock_state(IL, lroot, n)
-    except Exception as e:                              # noqa: BLE001 — IssueLockError·경로 해석
+    except Exception as e:                              # noqa: BLE001 — 경로 해석
         return _refuse(log, "lock", f"잠금 상태를 못 읽었다 — {type(e).__name__}: {e}")
-    if active and active["issue_id"] != n:
-        return _refuse(log, "lock", _busy_why(active), holder=active["issue_id"])
-    if lroot is not _NO_LOCK:
-        log("lock", f"#{n} 이미 활성" if active else (f"빈 자리 · #{n} 보류 중" if prec else "빈 자리"))
+    bad, active, prec = INF.lock_gate(lroot, n, log=log)
+    if bad:
+        return bad
 
     def _acquire(start_rev: str, why: str) -> dict:
-        if lroot is _NO_LOCK:
-            return {"ok": True, "skipped": True}
-        try:
-            return IL.acquire(lroot, n, branch=branch, start_rev=start_rev, by="issue_flow.start",
-                              why=why, logf=llog)
-        except Exception as e:                          # noqa: BLE001
-            return {"ok": False, "reason": "error", "why": f"{type(e).__name__}: {e}"}
-
-    def _lock_kind(res: dict) -> str:
-        if res.get("skipped"):
-            return "none"
-        return "already" if res.get("already") else ("resumed" if res.get("resumed") else "acquired")
+        return INF.acquire(lroot, n, branch=branch, start_rev=start_rev, why=why,
+                           by="issue_flow.start", log=log)
 
     # ② 이미 시작했나
     rc, cur = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
@@ -283,7 +187,7 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
             got = _acquire(rev, "이미 브랜치에 서 있음")
             if not got.get("ok"):
                 return _refuse(log, "lock", got.get("why", "잠금 실패"), holder=got.get("holder"))
-            kind = _lock_kind(got)
+            kind = INF.lock_kind(got)
             log("branch", f"이미 {branch} 에 있다 — 시작 리비전 {rev[:12]} (새 기록 없음 · 잠금 {kind})")
             return {"ok": True, "issue_id": issue_id, "already": True, "branch": branch,
                     "start_rev": rev, "lock": kind, "log": log.lines}
@@ -291,7 +195,7 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
             return _refuse(log, "branch", f"{branch} 가 이미 있는데 지금 브랜치는 {cur} 다 — "
                                           "그 브랜치로 옮겨 이어 가거나 정리 여부를 사람이 정한다")
         return _resume(issue_id, repo=repo, cur=cur, branch=branch, prec=prec, noter=noter,
-                       acquire=_acquire, lroot=lroot, log=log, llog=llog)
+                       lroot=lroot, log=log)
 
     # ③ 기준 상태 — 깨끗한 main = origin/main
     if cur != MAIN:
@@ -300,8 +204,8 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
     if rc != 0:
         return _refuse(log, "base", f"git status 실패: {dirty}")
     if dirty:
-        n = len(dirty.splitlines())
-        return _refuse(log, "base", f"작업 트리가 깨끗하지 않다({n}건) — 커밋·정리는 사람이 정한다",
+        cnt = len(dirty.splitlines())
+        return _refuse(log, "base", f"작업 트리가 깨끗하지 않다({cnt}건) — 커밋·정리는 사람이 정한다",
                        dirty=dirty.splitlines()[:20])
     if fetch:
         rc, out = _git(repo, "fetch", "--quiet", REMOTE, MAIN)
@@ -326,13 +230,7 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
     log("branch", f"{branch} 생성 @ {head[:12]}")
 
     # ⑤ Redmine 기록 — 실패하면 브랜치를 되돌린다
-    try:
-        got = getter(issue_id)
-    except Exception:                                   # noqa: BLE001 — 상태 판정용 읽기일 뿐이다
-        got = None
-    status = "진행" if isinstance(got, dict) and got.get("status") == "신규" else ""
-    note = START_NOTE.format(rev=head, branch=branch)
-    res = _call_redmine(noter, issue_id, notes=note, status_name=status)
+    res, status = INF.start_note(issue_id, branch=branch, start_rev=head, getter=getter, noter=noter)
     if res.startswith("[주의]"):
         back = [_git(repo, "switch", MAIN), _git(repo, "branch", "-d", branch)]
         undone = all(rc == 0 for rc, _ in back)
@@ -354,16 +252,16 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
                 "holder": got.get("holder"), "branch_rolled_back": undone, "redmine": res,
                 "log": log.lines}
     return {"ok": True, "issue_id": issue_id, "already": False, "branch": branch,
-            "start_rev": head, "redmine": res, "lock": _lock_kind(got), "log": log.lines}
+            "start_rev": head, "redmine": res, "lock": INF.lock_kind(got), "log": log.lines}
 
 
-def _resume(issue_id, *, repo: Path, cur: str, branch: str, prec: dict, noter, acquire,
-            lroot, log: _Log, llog) -> dict:
+def _resume(issue_id, *, repo: Path, cur: str, branch: str, prec: dict, noter, lroot,
+            log: _Log) -> dict:
     """보류 중인 N 을 재개 — 깨끗한 main → `switch issue/N` → 잠금 재개 → 「재개」 노트.
 
-    노트가 실패하면 main 으로 되돌아가고 잠금을 다시 보류로 둔다(undo).
+    기록 쪽(잠금 재개·노트·노트 실패 시 보류 복원)은 `issue_infra.resume_record` 다. 실패하면
+    여기서 main 으로 되돌아간다(undo).
     """
-    from master import issue_lock as IL
     n = int(issue_id)
     if cur != MAIN:
         return _refuse(log, "base", f"#{n} 는 보류 중이다 — 재개는 {MAIN} 에서 한다(지금 {cur})")
@@ -375,47 +273,35 @@ def _resume(issue_id, *, repo: Path, cur: str, branch: str, prec: dict, noter, a
     if rc != 0:
         return _refuse(log, "branch", f"{branch} 로 옮기지 못했다: {out}")
     log("branch", f"{MAIN} → {branch}")
-    rev = prec.get("start_rev") or ""
-    got = acquire(rev, "보류 재개")
-    if not got.get("ok"):
+    got = INF.resume_record(issue_id, lroot=lroot, branch=branch, prec=prec, noter=noter, log=log,
+                            by="issue_flow.start")
+    if not got["ok"]:
         rc2, out2 = _git(repo, "switch", MAIN)
-        log("lock", f"재개 실패 — {got.get('why')} · {MAIN} 복귀 {'완료' if rc2 == 0 else '실패: ' + out2}")
-        return {"ok": False, "issue_id": issue_id, "step": "lock", "why": got.get("why", "잠금 실패"),
-                "holder": got.get("holder"), "switched_back": rc2 == 0, "log": log.lines}
-    rec = got.get("record") or {}
-    rev = rec.get("start_rev") or rev
-    note = RESUME_NOTE.format(branch=branch, rev=rev)
-    res = _call_redmine(noter, issue_id, notes=note)
-    if res.startswith("[주의]"):
-        rc2, out2 = _git(repo, "switch", MAIN)
-        try:
-            back = IL.pause(lroot, n, by="issue_flow.start", why="재개 노트 실패 — 되돌림", logf=llog)
-            relocked = bool(back.get("ok"))
-        except Exception as e:                          # noqa: BLE001
-            relocked = False
-            log("lock", f"보류 되돌림 예외 — {type(e).__name__}: {e}")
-        log("redmine", f"재개 노트 실패 — {res} · {MAIN} 복귀 {'완료' if rc2 == 0 else '실패: ' + out2}"
+        back = "완료" if rc2 == 0 else "실패: " + out2
+        if got["step"] == "lock":
+            log("lock", f"재개 실패 — {got.get('why')} · {MAIN} 복귀 {back}")
+            return {"ok": False, "issue_id": issue_id, "step": "lock", "why": got.get("why", "잠금 실패"),
+                    "holder": got.get("holder"), "switched_back": rc2 == 0, "log": log.lines}
+        relocked = got["relocked"]
+        res = got["res"]
+        log("redmine", f"재개 노트 실패 — {res} · {MAIN} 복귀 {back}"
                        f" · 잠금 보류 복원 {'완료' if relocked else '실패'}")
         return {"ok": False, "issue_id": issue_id, "step": "redmine",
                 "why": f"Redmine 재개 노트 실패: {res} — 재개를 되돌렸다"
                        f"({MAIN} 복귀 {'완료' if rc2 == 0 else '실패'} · 보류 복원 {'완료' if relocked else '실패'})",
                 "switched_back": rc2 == 0, "relocked": relocked, "log": log.lines}
+    rev = got["start_rev"]
     log("redmine", f"재개 노트 · 시작 리비전 {str(rev)[:12]}")
     return {"ok": True, "issue_id": issue_id, "already": False, "resumed": True, "branch": branch,
-            "start_rev": rev, "redmine": res, "lock": "resumed", "log": log.lines}
+            "start_rev": rev, "redmine": got["res"], "lock": "resumed", "log": log.lines}
 
 
 REVIEW_PRIORITY = 10            # 사람이 요청한 리뷰 — 자동 등재(0)보다 먼저 (`#638` 규약) · 값은
                                 # 이제 `issue_link.PRIORITY` 가 해시·종합 리뷰에 건다(`#884`)
-REVIEW_PROJECT = "AXCluster"    # 마감 추적·리뷰 큐 트윈 — 이 흐름은 AXCluster 저장소용이다
-FINISH_NOTE = ("리뷰 요청: `{base}..{end}` (커밋 {n}건) · main 적용 `{end12}` · 브랜치 `{branch}` 삭제{deleted}\n"
-               "{commits}\n"
-               "마감 추적: {track}\n"
-               "일감 잠금: {lock}")
-TRACK_OK = ("라운드 {round} 에 해시 {n}개 등록{already} — 해시별 커밋 리뷰가 끝날 때마다 이 일감에 진행 노트가 "
-            "남고, 모두 끝나면 `{base12}..{end12}` 종합 리뷰 1회의 결과가 노트로 남는다. "
-            "「완료」 관문은 그 종합 리뷰로 판정한다")
-TRACK_FAIL = "등록 실패 — {why}. 해시별·종합 리뷰가 이 일감에 이어지지 않는다"
+REVIEW_PROJECT = "AXCluster"    # 마스터 로컬 흐름의 마감 추적 트윈 — 이 흐름은 AXCluster 저장소용이다
+FINISH_NOTE = INF.FINISH_NOTE
+TRACK_OK = INF.TRACK_OK
+TRACK_FAIL = INF.TRACK_FAIL
 
 
 def _default_review_root(project: str = REVIEW_PROJECT) -> Path:
@@ -423,14 +309,8 @@ def _default_review_root(project: str = REVIEW_PROJECT) -> Path:
     return Path(resolve(project).root)
 
 
-def _default_register(root, issue_id, **kw) -> dict:
-    from master.context_synth import issue_track as it
-    return it.register(root, issue_id, **kw)
-
-
-def _default_link(root, issue_id, **kw) -> dict:
-    from master.context_synth import issue_link as il
-    return il.link_round(root, issue_id, **kw)
+_default_register = INF.default_register
+_default_link = INF.default_link
 
 
 def _span(repo: Path, branch: str) -> tuple[str, str, list]:
@@ -464,7 +344,6 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
     (noter·register·link 중 하나라도)이 `review_root` 를 안 주면 운영 트윈을 건드리지 않으려고 등록을
     하지 않는다(등록 실패로 다룬다 — 잠금도 남는다).
     """
-    from master import issue_lock as IL
     repo = Path(repo or REPO)
     injected = noter is not None or register is not None or link is not None
     log = _Log("finish", issue_id, events_path=_resolve_events(events_path, injected), logf=logf)
@@ -473,28 +352,15 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
     link = link or _default_link
     branch = branch_name(issue_id)
     n = int(issue_id)
-    lock_held = False
 
     # ⓪ 잠금
     try:
         lroot = _resolve_lock(lock_root, injected)
-        if lroot is _NO_LOCK:
-            log("lock", "[주의] 잠금 미사용 — 대역 주입 실행에 lock_root 가 없다")
-        else:
-            active, prec = _lock_state(IL, lroot, n)
-            if prec:
-                return _refuse(log, "lock", f"#{n} 는 보류 중이다 — issue_start 로 재개한 뒤 마친다")
-            if active and active["issue_id"] != n:
-                return _refuse(log, "lock", f"#{active['issue_id']} 가 활성이다({active.get('branch')}) — "
-                                            f"#{n} 는 잠금에 없다, 일감은 하나씩 마친다",
-                               holder=active["issue_id"])
-            if active:
-                lock_held = True
-                log("lock", f"#{n} 활성 — 마감 추적 등록이 성공하면 이 단계 끝에서 푼다(op=finish)")
-            else:
-                log("lock", f"[주의] 잠금 기록 없음 — #{n} 는 #883 이전 시작으로 보고 진행한다")
     except Exception as e:                              # noqa: BLE001
         return _refuse(log, "lock", f"잠금 상태를 못 읽었다 — {type(e).__name__}: {e}")
+    bad, lock_held = INF.finish_lock_check(lroot, n, log=log)
+    if bad:
+        return bad
 
     # ① 위치·상태
     rc, cur = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
@@ -575,94 +441,19 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
             problems.append(f"branch -d: {out[-200:]}")
             log("delete_branch", f"실패 — {out[-200:]}")
 
-    # ④ 마감 추적 등록 — 범위 리뷰를 직접 등재하지 않는다(`#884` T5)
-    hashes = [c[:40] for c in commits]
-    registered, track_round, track_text = False, None, ""
-    root = None
-    try:
+    # ④~⑦ 마감 추적 등록 → 리뷰 연결 → 잠금 해제(등록 성공 시만) → 「리뷰 요청」 노트 — `issue_infra`
+    def _track_root():
         if review_root is None and injected:
             raise IssueFlowError("대역 주입 실행에 review_root 가 없다 — 운영 트윈을 건드리지 않는다")
-        root = Path(review_root) if review_root is not None else _default_review_root(project)
-        reg = register(root, n, project=project, base=base, end=end, hashes=hashes,
-                       by="issue_flow.finish", logf=lambda line: log("track", line))
-        if not isinstance(reg, dict):
-            raise IssueFlowError(f"등록 반환 형식 오류: {reg!r}"[:200])
-        if reg.get("ok"):
-            registered, track_round = True, reg.get("round")
-            done.append("register")
-            log("register", f"라운드 {track_round} · 해시 {len(hashes)}개"
-                            + (" (이미 등록)" if reg.get("already") else "") + f" · {root}")
-            track_text = TRACK_OK.format(round=track_round, n=len(hashes),
-                                         already=" (같은 범위가 이미 등록돼 있었다)" if reg.get("already") else "",
-                                         base12=base[:12], end12=end[:12])
-        else:
-            why = f"{reg.get('reason', '?')}: {reg.get('why', '')}"
-            problems.append(f"마감 추적 등록: {why}")
-            log("register", f"거절 — {why}")
-            track_text = TRACK_FAIL.format(why=why)
-    except Exception as e:                              # noqa: BLE001 — IssueTrackError·경로 해석 포함
-        why = f"{type(e).__name__}: {e}"
-        problems.append(f"마감 추적 등록: {why}")
-        log("register", f"실패 — {why}")
-        track_text = TRACK_FAIL.format(why=why)
+        return Path(review_root) if review_root is not None else _default_review_root(project)
 
-    # ⑤ 색인기가 이미 넣은 해시를 줍는다 — 실패해도 다음 동기화 회차가 잇는다
-    if registered:
-        try:
-            lk = link(root, n, logf=lambda line: log("link", line))
-            if isinstance(lk, dict) and lk.get("ok"):
-                done.append("link")
-                log("link", f"이음 {len(lk.get('linked') or [])} · 큐에 없음 {len(lk.get('untouched') or [])}")
-            else:
-                if isinstance(lk, dict):
-                    why = lk.get("why") or lk.get("reason") or lk.get("errors")
-                else:
-                    why = f"반환 형식 오류 {lk!r}"
-                problems.append(f"리뷰 연결: {str(why)[:200]}")
-                log("link", f"[주의] 실패 — {str(why)[:200]} · 다음 동기화 회차가 다시 잇는다")
-        except Exception as e:                          # noqa: BLE001
-            problems.append(f"리뷰 연결: {type(e).__name__}: {e}")
-            log("link", f"[주의] 예외 — {type(e).__name__}: {e} · 다음 동기화 회차가 다시 잇는다")
-
-    # ⑥ 잠금 해제 — 등록 성공일 때만(근거는 docstring ⑥)
-    if lroot is _NO_LOCK:
-        lock_text = "미사용(대역 실행)"
-    elif not lock_held:
-        lock_text = "기록 없음 — 해제할 것 없음(#883 이전 시작)"
-        log("release", "잠금 기록 없음 — 해제할 것 없음")
-    elif not registered:
-        lock_text = "유지 — 마감 추적 등록이 실패해 풀지 않았다(리뷰가 이어지지 않은 채 다음으로 가지 않게)"
-        log("release", "[중요] 등록 실패 — 잠금 유지")
-    else:
-        try:
-            rel = IL.release(lroot, n, op="finish", by="issue_flow.finish",
-                             why=f"마감 추적 라운드 {track_round} 등록", logf=_lock_logf(log))
-        except Exception as e:                          # noqa: BLE001
-            rel = {"ok": False, "why": f"{type(e).__name__}: {e}"}
-        if rel.get("ok"):
-            done.append("release")
-            lock_text = "해제(finish) — 다음 일감을 시작할 수 있다"
-            log("release", f"잠금 해제({rel.get('was', '?')}→없음)")
-        else:
-            problems.append(f"잠금 해제: {rel.get('why')}")
-            lock_text = f"해제 실패 — {rel.get('why')}"
-            log("release", f"실패 — {rel.get('why')}")
-
-    # ⑦ Redmine
-    lines = "\n".join(f"- `{c[:12]}` {c[41:]}" for c in commits)
-    note = FINISH_NOTE.format(base=base, end=end, n=len(commits), end12=end[:12], branch=branch,
-                              deleted="" if deleted else " 실패", commits=lines,
-                              track=track_text, lock=lock_text)
-    res = _call_redmine(noter, issue_id, notes=note)
-    if res.startswith("[주의]"):
-        problems.append(f"Redmine: {res}")
-        log("redmine", f"기록 실패 — {res}")
-    else:
-        done.append("redmine")
-        log("redmine", "리뷰 요청 노트")
+    got = INF.finish_record(issue_id, project=project, track_root_fn=_track_root, lroot=lroot,
+                            lock_held=lock_held, base=base, end=end, commits=commits, branch=branch,
+                            deleted="" if deleted else " 실패", register=register, link=link,
+                            noter=noter, log=log, done=done, problems=problems, by="issue_flow.finish")
     return {"ok": not problems, "confirmed": True, **summary, "done": done,
-            "registered": registered, "round": track_round,
-            "lock_released": "release" in done, "why": " · ".join(problems), "log": log.lines}
+            "registered": got["registered"], "round": got["round"],
+            "lock_released": got["lock_released"], "why": " · ".join(problems), "log": log.lines}
 
 
 # ── `#883` 보류·취소 ──────────────────────────────────────────────────────────
@@ -707,13 +498,9 @@ def pause(issue_id, *, repo=None, noter=None, lock_root=None, events_path=None, 
         return _refuse(log, "tree", f"작업 트리가 깨끗하지 않다({len(lines)}건) — 미커밋 변경이 {MAIN} 으로 "
                                     "따라간다, 커밋·정리는 사람이 정한다", dirty=lines)
     end = _git(repo, "rev-parse", "HEAD")[1]
-    try:
-        got = IL.pause(lroot, n, by="issue_flow.pause", why="보류 요청", logf=llog)
-    except Exception as e:                              # noqa: BLE001
-        return _refuse(log, "lock", f"잠금 상태를 못 읽었다 — {type(e).__name__}: {e}")
-    if not got.get("ok"):
-        return _refuse(log, "lock", got.get("why", "잠금 보류 실패"), holder=got.get("holder"))
-    rec = got.get("record") or {}
+    bad, rec = INF.pause_lock(lroot, n, log=log, by="issue_flow.pause")
+    if bad:
+        return bad
 
     rc, out = _git(repo, "switch", MAIN)
     if rc != 0:
@@ -731,7 +518,7 @@ def pause(issue_id, *, repo=None, noter=None, lock_root=None, events_path=None, 
                 "relocked": relocked, "log": log.lines}
     log("switch", f"{branch} → {MAIN} · {branch} 유지 @ {end[:12]}")
 
-    res = _call_redmine(noter, issue_id, notes=PAUSE_NOTE.format(branch=branch, end=end))
+    res = INF.pause_note(issue_id, branch=branch, end=end, noter=noter)
     base = {"issue_id": issue_id, "paused": True, "branch": branch, "end": end,
             "start_rev": rec.get("start_rev")}
     if res.startswith("[주의]"):
@@ -743,7 +530,7 @@ def pause(issue_id, *, repo=None, noter=None, lock_root=None, events_path=None, 
     return {"ok": True, **base, "redmine": res, "log": log.lines}
 
 
-CANCEL_NOTE = "취소: 잠금 해제 · 브랜치 `{branch}` {fate}\n{commits}"
+CANCEL_NOTE = INF.CANCEL_NOTE
 
 
 def cancel(issue_id, *, confirm: bool = False, delete_branch: bool = False, repo=None, noter=None,
@@ -754,23 +541,20 @@ def cancel(issue_id, *, confirm: bool = False, delete_branch: bool = False, repo
     → `delete_branch=True` **일 때만** `branch -D`. [중요] 노트가 실패하면 브랜치를 지우지 않는다 —
     지울 커밋 목록이 어디에도 안 남는다. 잠금에 없는 N 은 브랜치가 있을 때만 받는다(옛 브랜치 정리).
     """
-    from master import issue_lock as IL
     repo = Path(repo or REPO)
     injected = noter is not None
     log = _Log("cancel", issue_id, events_path=_resolve_events(events_path, injected), logf=logf)
     noter = noter or _default_noter
     branch = branch_name(issue_id)
     n = int(issue_id)
-    llog = _lock_logf(log)
     lroot, refused = _lock_required(lock_root, injected, log)
     if refused:
         return refused
 
     try:
-        active, prec = _lock_state(IL, lroot, n)
+        lock_state = INF.cancel_state(lroot, n)
     except Exception as e:                              # noqa: BLE001
         return _refuse(log, "lock", f"잠금 상태를 못 읽었다 — {type(e).__name__}: {e}")
-    lock_state = "active" if active and active["issue_id"] == n else ("paused" if prec else "absent")
     rc, cur = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
     if rc != 0:
         return _refuse(log, "repo", f"저장소를 못 읽었다: {cur}")
@@ -818,32 +602,17 @@ def cancel(issue_id, *, confirm: bool = False, delete_branch: bool = False, repo
             return _refuse(log, "switch", f"{MAIN} 으로 옮기지 못했다: {out[-300:]}", **summary)
         done.append("switch")
         log("switch", f"{branch} → {MAIN}")
-    if lock_state != "absent":
-        try:
-            got = IL.release(lroot, n, op="cancel", by="issue_flow.cancel", why="취소 요청", logf=llog)
-        except Exception as e:                          # noqa: BLE001
-            got = {"ok": False, "why": f"{type(e).__name__}: {e}"}
-        if not got.get("ok"):
-            log("lock", f"해제 실패 — {got.get('why')}")
-            return {"ok": False, "confirmed": True, **summary, "step": "lock",
-                    "why": f"잠금 해제 실패: {got.get('why')}", "done": done, "log": log.lines}
-        done.append("release")
-    else:
-        log("lock", "[주의] 잠금 기록 없음 — 해제할 것 없음")
-
     will_delete = bool(delete_branch and exists)
-    fate = "삭제(branch -D)" if will_delete else "유지"
-    lines_ = "\n".join(f"- `{c[:12]}` {c[41:]}" + (" (로컬에만)" if c[:40] in local_only else "")
-                       for c in commits) or "- (main 밖 커밋 없음)"
-    res = _call_redmine(noter, issue_id, notes=CANCEL_NOTE.format(branch=branch, fate=fate, commits=lines_))
-    if res.startswith("[주의]"):
-        log("redmine", f"취소 노트 실패 — {res}" + (" · 브랜치 삭제 안 함" if will_delete else ""))
-        return {"ok": False, "confirmed": True, **summary, "step": "redmine",
-                "why": f"Redmine 취소 노트 실패: {res} — 잠금 해제는 됐다"
-                       + (f", 커밋 목록이 기록되지 않아 {branch} 는 지우지 않았다" if will_delete else ""),
-                "branch_deleted": False, "done": done, "log": log.lines}
-    done.append("redmine")
-    log("redmine", f"취소 노트 · 브랜치 {fate}")
+    got = INF.cancel_record(issue_id, lroot=lroot, lock_state_=lock_state, branch=branch, commits=commits,
+                            local_only=local_only, will_delete=will_delete, noter=noter, log=log,
+                            done=done, by="issue_flow.cancel")
+    if not got["ok"]:
+        out = {"ok": False, "confirmed": True, **summary, "step": got["step"], "why": got["why"],
+               "done": done, "log": log.lines}
+        if got["step"] == "redmine":
+            out["branch_deleted"] = False
+        return out
+    res = got["res"]
 
     deleted = False
     if will_delete:

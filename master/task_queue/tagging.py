@@ -129,6 +129,17 @@ POLICY = {
     "GET /fixes":                                   MOUNT,
     "GET /fixes/{serial}":                          MOUNT,
     "POST /fixes/{item}/status":                    MOUNT,
+
+    # 🔴 일감 흐름·플랜 대행 (`#884` T6) — `.33` 요청자 세션이 마스터와 같은 흐름을 쓴다. 잠금·마감 추적은
+    #    **프로젝트 트윈**에 쓰므로 `MOUNT` 이고 태그가 필수다(태그 없이 가정하면 남의 잠금을 건드린다).
+    #    플랜 셋은 Redmine 본문을 쓰지만 「작업중」 전이가 트윈 잠금을 읽으므로 같은 축에 둔다.
+    "POST /api/v1/issue/start":                     MOUNT,
+    "POST /api/v1/issue/finish":                    MOUNT,
+    "POST /api/v1/issue/pause":                     MOUNT,
+    "POST /api/v1/issue/cancel":                    MOUNT,
+    "POST /api/v1/plan/start":                      MOUNT,
+    "POST /api/v1/plan/set":                        MOUNT,
+    "POST /api/v1/plan/transition":                 MOUNT,
 }
 
 # [중요] 태그를 **받아야** 하는 정책 — `OPEN` 만 예외다.
@@ -153,6 +164,14 @@ REQUIRE_TAG = (
     "POST /api/v1/thesaurus/alias",
     "POST /api/v1/thesaurus/not-a-class",
     "POST /fixes/{item}/status",                # 수정 항목 결정 — 트윈의 fixes/index.json 에 쓴다 (#629)
+    # 일감 흐름·플랜 (`#884` T6) — 트윈 잠금·마감 추적에 쓴다
+    "POST /api/v1/issue/start",
+    "POST /api/v1/issue/finish",
+    "POST /api/v1/issue/pause",
+    "POST /api/v1/issue/cancel",
+    "POST /api/v1/plan/start",
+    "POST /api/v1/plan/set",
+    "POST /api/v1/plan/transition",
 )
 
 

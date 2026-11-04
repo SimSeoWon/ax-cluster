@@ -781,8 +781,10 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
         log(f"[리뷰큐] 범위 {tag} — 기존 리뷰 {final.name}")
         notify_range(paths, item["id"], noter=range_noter, logf=log)
         return res
-    # [중요] 끝 커밋이 미러에 아직 없으면 **일시적**이다 — `issue_flow.finish` 는 push 직후 등재하고,
-    #    미러(`paths.repo`)는 색인기가 push 이벤트 뒤에 fetch 한다. 그 사이에 타이머가 집으면
+    # [중요] 끝 커밋이 미러에 아직 없으면 **일시적**이다 — 범위(종합) 리뷰는 `issue_flow.finish`(·요청자
+    #    `issue_finish`)가 push 직후 등록한 마감 추적에서 큐 소비자가 해시가 모두 끝난 뒤 건다(`#884` —
+    #    finish 가 직접 등재하지 않는다). 미러(`paths.repo`)는 색인기가 push 이벤트 뒤에 fetch 한다. 그 사이에
+    #    타이머가 집으면
     #    결정적 실패(「커밋을 찾지 못했다」)로 1회에 포기됐을 것이다. 문구에 결정적 마커를 넣지 않는다.
     if rg._git(repo, "cat-file", "-e", f"{end}^{{commit}}")[0] != 0:
         why = f"범위 끝 {end[:12]} 이 미러에 아직 없다 — 색인기 fetch 를 기다린다"

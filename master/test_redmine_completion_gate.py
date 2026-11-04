@@ -16,6 +16,8 @@
     ⑩ (`#884` T5) 잠금이 풀렸어도 마감 추적 라운드가 있으면 관문 적용 — 해시 대기 → 막힘 ·
          종합 리뷰 done(HIGH 0) → PUT · **해제 꼬리 없음**(풀 잠금이 없다) · 깨진 추적 파일 → 막힘(경로) ·
          잠금+라운드 둘 다 → 통과 뒤 잠금 해제
+    ⑪ (`#884` T6) 기본 관문은 등록된 트윈을 훑는다 — 파일 있는 트윈만 · 빈 트윈에 파일을 안 만든다 ·
+         한 트윈 → 그 트윈 판정·해제 · 둘 이상 → 막음 · 어느 트윈이든 읽기 실패 → 막음 · 목록 실패 → 막음
 
 [중요] 실 Redmine·실 트윈을 두드리지 않는다 — `sender` 와 임시 루트만 쓴다.
 
@@ -391,6 +393,68 @@ def test_track_corrupt_refuses():
           and not IT.state_path(root).exists())
 
 
+# ── ⑪ (`#884` T6) 여러 트윈 훑기 — Redmine 번호는 전역, 잠금·추적은 트윈마다 ─────────────────
+
+def _registry(names):
+    from master.projects.config import Registry
+    base = Path(tempfile.mkdtemp(prefix="rm-gate-reg-"))
+    for n in names:
+        (base / n).mkdir()
+    (base / "projects.yaml").write_text(
+        "version: 1\nactive: %s\nprojects:\n%s" % (names[0], "".join(f"- {n}\n" for n in names)),
+        encoding="utf-8")
+    return Registry.load(base), base
+
+
+def test_scan_roots():
+    reg, base = _registry(["AXCluster", "Game", "Empty"])
+    IL.acquire(base / "AXCluster", 1, branch="issue/1", start_rev="a" * 40)
+    IT.register(base / "Game", 5, project="Game", base="1" * 40, end="2" * 40, hashes=["2" * 40])
+    got = RM.tracking_roots(registry=reg)
+    check("⑪ tracking_roots — 잠금·추적 파일이 있는 트윈만", [n for n, _ in got] == ["AXCluster", "Game"], str(got))
+    check("⑪ tracking_roots — 빈 트윈에 잠금 파일을 만들지 않는다",
+          not any((base / "Empty").iterdir()), str(list((base / "Empty").iterdir())))
+
+    logs: list = []
+    ok_review = lambda root, n, logf=None: {"ok_to_complete": True, "why": "통과", "review": "done"}  # noqa: E731
+    gate = RM.make_completion_gate(roots_fn=lambda: RM.tracking_roots(registry=reg), review=ok_review,
+                                   logf=logs.append)
+    d = gate(5)
+    check("⑪ 추적 트윈 하나(Game, 라운드만) → 적용 · 그 트윈 판정", d.get("apply") and d.get("ok")
+          and d.get("project") == "Game" and d.get("lock_tracked") is False and "release" not in d, str(d))
+    check("⑪ Game 쪽 훑기가 잠금 파일을 만들지 않았다", not (base / "Game" / "issue_lock.json").exists())
+    d = gate(1)
+    check("⑪ 잠금 트윈(AXCluster) → 적용 · release 있음", d.get("apply") and d.get("project") == "AXCluster"
+          and callable(d.get("release")), str(d))
+    rel = d["release"]()
+    check("⑪ release 는 그 트윈의 잠금을 푼다", rel.get("ok") and not IL.is_tracked(base / "AXCluster", 1), str(rel))
+    d = gate(77)
+    check("⑪ 어디에도 없음 → 관문 밖", d.get("apply") is False and d.get("ok"), str(d))
+    check("⑪ 관문 밖 로그에 트윈 수", any("트윈 2개" in m for m in logs), str(logs[-3:]))
+
+    IL.acquire(base / "AXCluster", 5, branch="issue/5", start_rev="b" * 40)
+    d = gate(5)
+    check("⑪ 두 트윈이 같은 일감 추적 → 막음(fail-closed)", d.get("apply") and not d.get("ok")
+          and "여러 트윈" in d.get("why", "") and "AXCluster" in d["why"] and "Game" in d["why"], str(d))
+    IL.release(base / "AXCluster", 5, op="cancel")
+
+    (base / "Game" / "issue_lock.json").write_text("{깨짐", encoding="utf-8")
+    d = gate(1)
+    check("⑪ 다른 트윈의 잠금 파일이 깨졌으면 막음(fail-closed)", d.get("apply") and not d.get("ok")
+          and "Game" in d.get("why", "") and "issue_lock.json" in d["why"], str(d))
+
+    def boom():
+        raise RuntimeError("레지스트리 없음")
+    d = RM.make_completion_gate(roots_fn=boom, logf=lambda m: None)(5)
+    check("⑪ 트윈 목록 실패 → 막음", d.get("apply") and not d.get("ok")
+          and "등록된 프로젝트 트윈 목록" in d.get("why", ""), str(d))
+
+    s = Sender()
+    out = RM.update_issue(5, status_name="완료", sender=s,
+                          completion_gate=RM.make_completion_gate(roots_fn=boom, logf=lambda m: None))
+    check("⑪ update_issue — 훑기 실패면 PUT 0", out.startswith("[주의]") and not s.puts, out)
+
+
 def test_server_warn_field():
     """`#883` T5 — 8101 `/redmine/note` 는 반영 뒤 경고(잠금 해제 실패 등)를 `warn` 으로 따로 말한다.
 
@@ -411,7 +475,7 @@ def main() -> int:
                test_injected_sender_without_gate, test_real_gate_wiring,
                test_real_gate_skip_releases, test_real_gate_broken_lock_and_root,
                test_track_only_gate, test_track_and_lock_releases, test_track_corrupt_refuses,
-               test_server_warn_field):
+               test_scan_roots, test_server_warn_field):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_redmine_completion_gate: {PASS}/{total} 통과")

@@ -1125,8 +1125,11 @@ def issue_finish_tool(issue_id: int, confirm: bool = False) -> str:
     바꾸지 않는다 — 사용자 승인을 받은 뒤에만 `confirm=True`.
 
     승인 시: `push origin issue/<N>:main`(fast-forward 만) → 로컬 `main` 맞춤 → `issue/<N>` 삭제 →
-    시작~끝 범위 리뷰를 리뷰 큐에 등재 → Redmine 「리뷰 요청」 노트. 리뷰가 끝나면 큐 소비자가 같은
-    일감에 리뷰 노트를 남긴다. 실패 단계는 `why`, 끝난 단계는 `done` 이다.
+    마감 추적 등록(`issue_track` · 범위의 해시 전부) → 색인기 리뷰 연결 → 일감 잠금 해제(**등록이 성공했을
+    때만**) → Redmine 「리뷰 요청」 노트(`#884`). 범위 리뷰를 직접 등재하지 않는다 — 해시별 커밋 리뷰가
+    끝날 때마다 진행 노트가, 모두 끝나면 종합 리뷰 1회의 결과가 같은 일감에 노트로 남고 「완료」 관문은
+    그 종합 리뷰로 판정한다. 등록이 실패하면 잠금이 남는다. 실패 단계는 `why`, 끝난 단계는 `done` 이다.
+    `.33` 요청자는 같은 기록을 `ax-client` 의 `issue_finish`(8101)로 한다(`ax-issue` 스킬).
     """
     from .. import issue_flow
     try:

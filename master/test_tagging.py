@@ -358,13 +358,164 @@ def test_usage_route_live() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+ISSUE_ROUTES = ("/api/v1/issue/start", "/api/v1/issue/finish", "/api/v1/issue/pause", "/api/v1/issue/cancel",
+                "/api/v1/plan/start", "/api/v1/plan/set", "/api/v1/plan/transition")
+
+
+def test_issue_routes_declared() -> None:
+    """`#884` T6 — 일감 흐름·플랜 대행 일곱은 MOUNT · 태그 필수 · 서버에서 관문을 탄다."""
+    for r in ISSUE_ROUTES:
+        k = f"POST {r}"
+        check(f"{k} 는 MOUNT", T.POLICY.get(k) == T.MOUNT, str(T.POLICY.get(k)))
+        check(f"{k} 는 태그 필수", k in T.REQUIRE_TAG)
+    src = (Path(__file__).resolve().parent / "task_queue" / "server.py").read_text(encoding="utf-8")
+    i = src.index("def _issue_gate(")
+    check("[중요] 일감 관문이 마운트를 강제한다", "_mount_gate(req.project, require=True)" in src[i:i + 400])
+    for fn in ("issue_start_ep", "issue_finish_ep", "issue_pause_ep", "issue_cancel_ep"):
+        i = src.index(f"def {fn}(")
+        check(f"{fn} 가 관문을 지난다(_issue_call)", "_issue_call(" in src[i:i + 600])
+    for fn in ("plan_start_ep", "plan_set_ep", "plan_transition_ep"):
+        i = src.index(f"def {fn}(")
+        check(f"{fn} 가 관문을 지난다(_plan_call)", "_plan_call(" in src[i:i + 600])
+    check("일감 대행은 _tq_log 한 줄을 남긴다", '_tq_log(f"[issue] {op}' in src)
+    from master.task_queue import server as S
+    for n in ("IssueStartReq", "IssueFinishReq", "IssuePauseReq", "IssueCancelReq", "PlanStartReq",
+              "PlanSetReq", "PlanTransitionReq"):
+        check(f"{n} 가 project 를 받는다", "project" in getattr(S, n).model_fields)
+
+
+def test_issue_routes_live() -> None:
+    """[중요] 실물 앱 — requester 200 · worker 403 · 무토큰 401 · 태그 없음/비마운트 거절 · 잠금·추적이 임시 트윈에."""
+    import os
+    import shutil
+    import tempfile
+    from unittest.mock import patch
+    from master import issue_infra as INF
+    from master import issue_lock as IL
+    from master import plan_tools as PT
+    from master.context_synth import issue_track as IT
+    tmp = Path(tempfile.mkdtemp(prefix="test_issue_routes_"))
+    old_root = os.environ.get("AX_PROJECTS_ROOT")
+    plan = ("## 목적\n\n무엇.\n\n<!-- ax:plan:begin v=1 -->\n"
+            "| ID | 상태 | 목표 | 대상 | 선행 | 검증 | 근거 |\n|---|---|---|---|---|---|---|\n"
+            "| T1 | 대기 | 한다 | x | — | y |  |\n<!-- ax:plan:end -->\n")
+    bodies = {7: plan, 8: plan}
+    notes: list = []
+
+    def getter(iid):
+        return {"id": iid, "subject": "s", "status": "신규", "description": bodies.get(int(iid), plan)}
+
+    def noter(iid, *, notes: str = "", status_name: str = ""):
+        globals_notes.append((iid, notes, status_name))
+        return "레드마인 갱신"
+
+    def updater(iid, *, description: str, notes: str):
+        bodies[int(iid)] = description
+        globals_notes.append((iid, notes, ""))
+        return "레드마인 갱신"
+    globals_notes = notes
+    try:
+        proots = tmp / "projects"
+        for n in ("AXCluster", "NS"):
+            (proots / n).mkdir(parents=True)
+        (proots / "projects.yaml").write_text(
+            "version: 1\nactive: AXCluster\nprojects:\n- AXCluster\n- NS\n", encoding="utf-8")
+        os.environ["AX_PROJECTS_ROOT"] = str(proots)
+        twin = proots / "AXCluster"
+        with patch.object(INF, "default_getter", getter), patch.object(INF, "default_noter", noter), \
+                patch.object(PT, "_default_getter", getter), patch.object(PT, "_default_updater", updater):
+            c, _m, req_t, wrk_t = _live_queue(tmp)
+            H = {"Authorization": f"Bearer {req_t}"}
+            body = {"project": "AXCluster", "issue_id": 7}
+            route_fields = {
+                "/api/v1/issue/finish": {"base": "a" * 40, "end": "b" * 40, "hashes": ["b" * 40]},
+                "/api/v1/plan/set": {"tasks": [{"id": "T1", "goal": "한다"}], "why": "검사"},
+                "/api/v1/plan/transition": {"task_id": "T1", "to": "작업중"},
+            }
+            for r in ISSUE_ROUTES:
+                route_body = {**body, **route_fields.get(r, {})}
+                st = c.post(r, json=route_body, headers={"Authorization": f"Bearer {wrk_t}"}).status_code
+                check(f"[중요] worker 토큰 {r} → 403", st == 403, str(st))
+                st = c.post(r, json=route_body).status_code
+                check(f"무토큰 {r} → 401", st == 401, str(st))
+                untagged_body = {k: v for k, v in route_body.items() if k != "project"}
+                j = c.post(r, json=untagged_body, headers=H).json()
+                check(f"[중요] 태그 없음 {r} → no_project_tag", j.get("status") == "no_project_tag", str(j)[:160])
+                j = c.post(r, json={**route_body, "project": "NS"}, headers=H).json()
+                check(f"[중요] 비마운트 {r} → not_mounted", j.get("status") == "not_mounted", str(j)[:160])
+            check("거절은 잠금 파일을 만들지 않았다", not IL.state_path(twin).exists() and not notes)
+            r = c.post("/api/v1/issue/start/x", json=body, headers=H)
+            check("[중요] 하위 경로는 스코프 밖 → 403 (정확 일치)", r.status_code == 403, str(r.status_code))
+            r = c.post("/api/v1/issue/start", json={**body, "nope": 1}, headers=H)
+            check("모르는 키 → 422", r.status_code == 422, str(r.status_code))
+
+            j = c.post("/api/v1/plan/start", json=body, headers=H).json()
+            check("plan/start → 판정 next · 프로젝트 7단계", j.get("verdict") == "next"
+                  and j.get("project") == "AXCluster", str(j)[:200])
+            j = c.post("/api/v1/issue/start", json={**body, "check_only": True}, headers=H).json()
+            check("issue/start check_only → ok · free · 쓰기 0", j.get("ok") and j.get("lock_state") == "free"
+                  and not notes, str(j)[:200])
+            j = c.post("/api/v1/issue/start", json={**body, "branch": "issue/7", "start_rev": "a" * 40},
+                       headers=H).json()
+            check("[중요] issue/start → 마운트 트윈 잠금 · 시작 노트", j.get("ok") and IL.current(twin)["issue_id"] == 7
+                  and any("a" * 40 in n[1] for n in notes), str(j)[:300])
+            check("흐름 로그가 그 트윈의 issue_flow.jsonl 에", (twin / "issue_flow.jsonl").is_file())
+            j = c.post("/api/v1/plan/transition", json={"project": "AXCluster", "issue_id": 8, "task_id": "T1",
+                                                        "to": "작업중"}, headers=H).json()
+            check("[중요] 다른 일감 「작업중」 → plan_refused(#7 잠금 · 그 트윈)", j.get("ok") is False
+                  and j.get("status") == "plan_refused" and "#7" in j.get("why", ""), str(j)[:300])
+            j = c.post("/api/v1/plan/transition", json={**body, "task_id": "T1", "to": "작업중"}, headers=H).json()
+            check("plan/transition 같은 일감 → ok", j.get("ok") and j.get("to") == "작업중", str(j)[:200])
+            j = c.post("/api/v1/plan/set", json={**body, "tasks": [{"id": "T1", "goal": "한다"},
+                                                                   {"id": "T2", "goal": "더"}], "why": "추가"},
+                       headers=H).json()
+            check("plan/set → ok · T2 추가", j.get("ok") and j.get("added") == ["T2"], str(j)[:200])
+            j = c.post("/api/v1/plan/set", json={**body, "tasks": [{"id": "T1", "goal": "x", "state": "완료"}],
+                                                 "why": "옆문"}, headers=H).json()
+            check("plan/set 상태 옆문 → plan_refused", j.get("ok") is False and j.get("status") == "plan_refused",
+                  str(j)[:200])
+            j = c.post("/api/v1/issue/pause", json={**body, "end": "b" * 40}, headers=H).json()
+            check("issue/pause → ok · 보류", j.get("ok") and 7 in IL.paused(twin), str(j)[:200])
+            j = c.post("/api/v1/issue/start", json={**body, "branch": "issue/7", "start_rev": "a" * 40},
+                       headers=H).json()
+            check("issue/start(보류) → resumed", j.get("ok") and j.get("resumed"), str(j)[:200])
+            j = c.post("/api/v1/issue/finish", json={**body, "base": "a" * 40, "end": "c" * 40,
+                                                     "hashes": ["b" * 40, "c" * 40], "subjects": ["하나", "둘"]},
+                       headers=H).json()
+            check("[중요] issue/finish → 등록 · 잠금 해제 · 리뷰 요청 노트", j.get("ok") and j.get("registered")
+                  and j.get("lock_released") and IL.current(twin) is None
+                  and (IT.current(twin, 7) or {}).get("end") == "c" * 40
+                  and notes[-1][1].startswith("리뷰 요청:"), str(j)[:300])
+            j = c.post("/api/v1/issue/finish", json={**body, "base": "a" * 40, "end": "c" * 40,
+                                                     "hashes": ["c" * 40, "b" * 40]}, headers=H).json()
+            check("issue/finish 범위 어긋남 → 200 + ok:false(span)", j.get("ok") is False and j.get("step") == "span",
+                  str(j)[:200])
+            j = c.post("/api/v1/issue/start", json={**body, "branch": "issue/7", "start_rev": "a" * 40},
+                       headers=H).json()
+            j = c.post("/api/v1/issue/cancel", json=body, headers=H).json()
+            check("issue/cancel 미리보기 → 쓰기 0", j.get("ok") and j.get("confirmed") is False
+                  and IL.current(twin)["issue_id"] == 7, str(j)[:200])
+            j = c.post("/api/v1/issue/cancel", json={**body, "confirm": True, "delete_branch": True,
+                                                     "commits": ["d" * 40 + " 하나"]}, headers=H).json()
+            check("issue/cancel 승인 → 해제 · 삭제 허용", j.get("ok") and j.get("branch_delete_allowed")
+                  and IL.current(twin) is None, str(j)[:200])
+            check("NS 트윈은 그대로", not (proots / "NS" / "issue_lock.json").exists())
+    finally:
+        if old_root is None:
+            os.environ.pop("AX_PROJECTS_ROOT", None)
+        else:
+            os.environ["AX_PROJECTS_ROOT"] = old_root
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     for fn in (test_server_actually_compiles, test_every_route_declared, test_undeclared_is_an_error,
                test_models_carry_the_tag, test_reject_shape,
                test_stamp_check_does_not_use_mount, test_twin_writers_are_gated,
                test_gates_are_actually_wired, test_claim_filters_by_project,
                test_untagged_is_rejected_on_write_surfaces, test_path_normalization,
-               test_senders_are_wired, test_usage_route_live):
+               test_senders_are_wired, test_usage_route_live, test_issue_routes_declared,
+               test_issue_routes_live):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_tagging: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

@@ -35,6 +35,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 from urllib.parse import quote
 
 DEFAULT_URL = "http://192.168.0.57:8080"
@@ -337,10 +338,41 @@ def _is_closing(status_name: str, entry) -> bool:
     return bool(isinstance(entry, dict) and entry.get("is_closed") is True)
 
 
-def make_completion_gate(*, root_fn=None, lock=None, review=None, track=None, logf=None):
-    """기본 「완료」 관문을 만든다. 주입 자리(테스트): `root_fn`·`lock`·`review`·`track`·`logf`.
+def tracking_roots(*, registry=None) -> list:
+    """「완료」 관문이 볼 트윈 루트 후보 — `[(프로젝트, 루트)]` (`#884` T6).
 
-    `root_fn()` → 잠금 루트 = 리뷰 큐·마감 추적 트윈 루트(AXCluster). 기본은 `issue_lock.default_root`.
+    등록된 프로젝트 전부의 트윈 루트 중 **잠금(`issue_lock.json`) 또는 마감 추적(`issue_track.json`)
+    파일이 있는 것만** 돌려준다 — 없는 트윈은 일감 흐름을 쓴 적이 없다. 파일 유무만 보고 잠금 파일을
+    새로 만들지 않는다. 레지스트리를 못 읽으면 예외가 그대로 올라간다(관문이 막는다).
+    """
+    from master.projects.config import Registry
+    reg = registry or Registry.load()
+    out = []
+    for name in reg.names:
+        root = Path(reg.dir_of(name))
+        if (root / "issue_lock.json").is_file() or (root / "issue_track.json").is_file():
+            out.append((name, root))
+    return out
+
+
+def make_completion_gate(*, root_fn=None, roots_fn=None, lock=None, review=None, track=None, logf=None):
+    """기본 「완료」 관문을 만든다. 주입 자리(테스트): `root_fn`·`roots_fn`·`lock`·`review`·`track`·`logf`.
+
+    🔴 **트윈 루트 고르기** (`#884` T6 — `.33` 요청자도 같은 흐름을 쓰게 됐다). Redmine 일감 번호는
+    전역이고 잠금·마감 추적은 **프로젝트 트윈마다** 있다. 그래서 기본은 등록된 트윈(`tracking_roots`)을
+    **전부 훑어** 그 일감을 잠금이 추적하거나 마감 라운드를 가진 트윈을 찾는다:
+
+        0개   관문 밖(종전과 같다)
+        1개   그 트윈의 리뷰 판정으로 연다·막는다 · 해제도 그 트윈의 잠금
+        2개+  막는다 — 어느 트윈의 판정이 정본인지 모른다(사람이 본다)
+        어느 트윈이든 읽기 실패 · 레지스트리 실패 → 막는다(fail-closed)
+
+    [주의] `redmine.project_of`(트윈 → Redmine 프로젝트) 역매핑은 쓰지 않았다 — ① `get_issue` 응답에
+    프로젝트가 없어 일감 쪽에서 출발할 수 없고 ② 여러 트윈이 같은 Redmine 프로젝트를 가리킬 수 있어
+    (예: 여러 인프라 축) 역매핑이 하나로 정해지지 않는다. 잠금·추적 파일은 그 일감이 **실제로** 어느
+    트윈의 흐름을 탔는지의 직접 증거다.
+
+    `root_fn()` 을 주면 종전 동작이다(루트 하나 — 테스트·단일 트윈). `roots_fn()` 은 `[(이름, 루트)]`.
     `lock` 은 `is_tracked`·`release`·`IssueLockError` 를 가진 모듈, `review(root, n, logf=)` 는
     `issue_review_status` 와 같은 계약이다. `track(root, n)` 은 최신 마감 라운드 또는 None
     (기본 `issue_review.track_round` — 추적 파일이 없으면 잠금 파일도 만들지 않는다).
@@ -351,41 +383,68 @@ def make_completion_gate(*, root_fn=None, lock=None, review=None, track=None, lo
         from master.context_synth.issue_review import issue_review_status as review
     if track is None:
         from master.context_synth.issue_review import track_round as track
-    if root_fn is None:
-        root_fn = lock.default_root
+    scan = root_fn is None
+    if scan and roots_fn is None:
+        roots_fn = tracking_roots
+
+    def _probe(root, n, label: str):
+        """`(tracked, rnd, 막음 | None)` — 한 트윈에서 그 일감의 잠금·추적을 본다."""
+        lock_file = lock.state_path(root) if hasattr(lock, "state_path") else root
+        try:
+            if scan and hasattr(lock, "state_path") and not Path(lock_file).is_file():
+                tracked = False                          # 훑기 모드 — 잠금 파일을 새로 만들지 않는다
+            else:
+                tracked = lock.is_tracked(root, n)
+        except Exception as e:                           # noqa: BLE001
+            why = (f"일감 잠금 상태를 읽지 못했다({label}) — {type(e).__name__}: {e}. 추적 여부를 모르므로 "
+                   f"막는다. 복구: `{lock_file}` 를 사람이 확인·수리한다(깨진 파일은 덮어쓰지 않는다)")
+            _gate_log(f"#{n} 잠금 조회 실패({label}) — 막음 · {type(e).__name__} · {lock_file}", logf)
+            return False, None, {"apply": True, "ok": False, "why": why}
+        try:
+            rnd = track(root, n)
+        except Exception as e:                           # noqa: BLE001 — IssueTrackError 포함
+            track_file = os.path.join(str(root), "issue_track.json")
+            why = (f"일감 마감 추적 기록을 읽지 못했다({label}) — {type(e).__name__}: {e}. 마감 여부를 모르므로 "
+                   f"막는다. 복구: `{track_file}` 를 사람이 확인·수리한다(깨진 파일은 덮어쓰지 않는다)")
+            _gate_log(f"#{n} 마감 추적 조회 실패({label}) — 막음 · {type(e).__name__} · {track_file}", logf)
+            return False, None, {"apply": True, "ok": False, "why": why}
+        return tracked, rnd, None
 
     def gate(issue_id) -> dict:
         n = int(issue_id)
         try:
-            root = root_fn()
+            cands = [("", root_fn())] if not scan else list(roots_fn())
         except Exception as e:                               # noqa: BLE001
-            why = (f"일감 잠금 루트(AXCluster 트윈)를 찾지 못했다 — {type(e).__name__}: {e}. "
-                   "추적 여부를 확인할 수 없어 막는다. `master.context_search.paths.resolve"
-                   "(\"AXCluster\")` 를 확인한다")
+            what = "일감 잠금 루트(AXCluster 트윈)" if not scan else "등록된 프로젝트 트윈 목록"
+            how = ("`master.context_search.paths.resolve(\"AXCluster\")`" if not scan
+                   else "`projects.yaml`(`master.projects.config.Registry`)")
+            why = (f"{what}를 찾지 못했다 — {type(e).__name__}: {e}. "
+                   f"추적 여부를 확인할 수 없어 막는다. {how} 를 확인한다")
             _gate_log(f"#{n} 잠금 루트 실패 — 막음 · {type(e).__name__}", logf)
             return {"apply": True, "ok": False, "why": why}
-        lock_file = lock.state_path(root) if hasattr(lock, "state_path") else root
-        try:
-            tracked = lock.is_tracked(root, n)
-        except Exception as e:                               # noqa: BLE001
-            why = (f"일감 잠금 상태를 읽지 못했다 — {type(e).__name__}: {e}. 추적 여부를 모르므로 "
-                   f"막는다. 복구: `{lock_file}` 를 사람이 확인·수리한다(깨진 파일은 덮어쓰지 않는다)")
-            _gate_log(f"#{n} 잠금 조회 실패 — 막음 · {type(e).__name__} · {lock_file}", logf)
-            return {"apply": True, "ok": False, "why": why}
-        try:
-            rnd = track(root, n)
-        except Exception as e:                               # noqa: BLE001 — IssueTrackError 포함
-            track_file = os.path.join(str(root), "issue_track.json")
-            why = (f"일감 마감 추적 기록을 읽지 못했다 — {type(e).__name__}: {e}. 마감 여부를 모르므로 "
-                   f"막는다. 복구: `{track_file}` 를 사람이 확인·수리한다(깨진 파일은 덮어쓰지 않는다)")
-            _gate_log(f"#{n} 마감 추적 조회 실패 — 막음 · {type(e).__name__} · {track_file}", logf)
-            return {"apply": True, "ok": False, "why": why}
-        has_round = rnd is not None
-        if not tracked and not has_round:
-            _gate_log(f"#{n} 잠금·마감 추적 밖 — 관문 해당 없음", logf)
+        hits = []
+        for name, root in cands:
+            tracked, rnd, blocked = _probe(root, n, name or str(root))
+            if blocked:
+                return blocked
+            if tracked or rnd is not None:
+                hits.append((name, root, tracked, rnd))
+        if not hits:
+            where = f"트윈 {len(cands)}개" if scan else "잠금 루트"
+            _gate_log(f"#{n} 잠금·마감 추적 밖({where}) — 관문 해당 없음", logf)
             return {"apply": False, "ok": True, "why": f"#{n} 는 issue_flow 잠금·마감 추적 밖이다"}
+        if len(hits) > 1:
+            names = ", ".join(h[0] or str(h[1]) for h in hits)
+            why = (f"#{n} 가 여러 트윈에서 추적된다({names}) — 어느 판정이 정본인지 정할 수 없어 막는다. "
+                   "각 트윈의 issue_lock.json·issue_track.json 을 사람이 확인한다")
+            _gate_log(f"#{n} 여러 트윈 추적 — 막음 · {names}", logf)
+            return {"apply": True, "ok": False, "why": why}
+        name, root, tracked, rnd = hits[0]
+        has_round = rnd is not None
         basis = " · ".join(x for x in (("잠금" if tracked else ""),
                                        (f"마감 라운드 {rnd.get('round')}" if has_round else "")) if x)
+        if name:
+            basis += f" · 트윈 {name}"
         try:
             st = review(root, n, logf=logf)
         except Exception as e:                               # noqa: BLE001
@@ -400,6 +459,8 @@ def make_completion_gate(*, root_fn=None, lock=None, review=None, track=None, lo
 
         decision = {"apply": True, "ok": ok, "why": why or ("통과" if ok else "사유 없음 — 막는다"),
                     "lock_tracked": bool(tracked), "track_round": rnd.get("round") if has_round else None}
+        if name:
+            decision["project"] = name
         if not tracked:
             return decision                              # 풀 잠금이 없다 — finish 가 이미 풀었다
 
