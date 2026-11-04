@@ -530,11 +530,13 @@ def range_note_text(paths, item: dict) -> str:
         if h.get("result") == "done":
             note = h.get("note", "")
             break
+    track = bool(meta.get("track"))
     if note.startswith("스킵"):
-        return head + f" — {note}"
+        return head + f" — {note}" + ("\n\n" + track_note_text(paths, item) if track else "")
     doc = fx.get_doc(paths.root, serial) if serial else {"ok": False}
     if not doc.get("ok"):
-        return head + f" — [주의] 게시판 번호를 찾지 못했다({serial or '번호 없음'}) · 큐 기록: {note}"
+        return (head + f" — [주의] 게시판 번호를 찾지 못했다({serial or '번호 없음'}) · 큐 기록: {note}"
+                + ("\n\n" + track_note_text(paths, item) if track else ""))
     items = doc.get("items_detail") or []
     sev = doc.get("severity") or {}
     name = getattr(paths, "name", "") or "AXCluster"
@@ -548,7 +550,126 @@ def range_note_text(paths, item: dict) -> str:
             lines.append(f"| {it['id']} | {SEV_LABEL.get(it.get('severity'), it.get('severity'))} | "
                          f"{cell(it.get('file'))}:{cell(it.get('line'))} | {cell(it.get('description'))} | "
                          f"{cell(it.get('recommendation'))} |")
+    if track:
+        lines += ["", track_note_text(paths, item, body=doc.get("body") or "")]
     return "\n".join(lines)
+
+
+# ── 종합 리뷰 (`#884` T4) ─────────────────────────────────────────────────────
+#
+# 사용자 결정(2026-11-04, 「B」): 일감 마감 회차의 해시가 모두 종결되면(`issue_progress` 가 등재 —
+# meta `track: True`·`issue_round`) 범위 리뷰 **한 번**에 해시별 커밋 리뷰 지적을 실어, 지적마다
+# 「최종 코드에 남음 / 뒤 커밋에서 해소」를 판정하고 커밋 사이 문제도 본다.
+#
+#     남음   이 리뷰의 1·2절 표에 다시 적힌다 → fix_index 가 이 리뷰(R)의 항목으로 세고 완료 게이트가 본다
+#     해소   판정 표(3열 · 마지막 `### 해시별 지적 판정` 절)에만 — 소비자 파서는 5열만 읽어 세지 않는다
+#
+# 노트에는 회차의 해시 결과 표(완료 R·지적 수 / 포기 사유 / 생략 사유)와 지적별 판정이 붙는다.
+# [중요] 노트는 자동 경로로 세션이 읽는 글이다 — 사실만 적는다(명령형 없음).
+
+_HASH_LABEL = {"done": "완료", "abandoned": "포기", "skipped": "생략"}
+
+
+def track_round(root, meta: dict) -> dict | None:
+    """range 항목 meta(`issue_id`·`issue_round`)가 가리키는 마감 회차(사본) 또는 None."""
+    from . import issue_track as itk                               # noqa: PLC0415
+    n, rnum = int(meta.get("issue_id")), int(meta.get("issue_round") or 0)
+    return next((r for r in itk.rounds(root, n) if r["round"] == rnum), None)
+
+
+def collected_findings(root, rnd: dict, *, logf=None) -> tuple:
+    """(지적 목록, 리뷰 없는 해시 목록) — 회차의 done 해시 R 번호에서 `fix_index` 항목을 모은다.
+
+    지적: `{id, commit, severity, file, line, description}` · 리뷰 없음: `{sha, state, why}`
+    (포기·생략, 그리고 done 인데 번호·문서를 못 찾은 해시 — 지적이 빠졌다는 사실을 프롬프트·노트에 남긴다).
+    """
+    from . import fix_index as fx                                  # noqa: PLC0415
+    log = logf or (lambda m: None)
+    findings, uncovered = [], []
+    for h in rnd.get("hashes") or []:
+        st, sha = h.get("state"), h.get("sha", "")
+        if st != "done":
+            uncovered.append({"sha": sha, "state": st, "why": h.get("why") or ""})
+            continue
+        serial = h.get("serial") or fx.serial_for_commit(root, sha)
+        doc = fx.get_doc(root, serial) if serial else {"ok": False, "reason": "리뷰 번호 없음"}
+        if not doc.get("ok"):
+            why = doc.get("reason") or "리뷰 문서 없음"
+            log(f"[리뷰큐] [주의] 종합 리뷰 — {sha[:12]} 커밋 리뷰 지적을 못 읽었다({serial or '번호 없음'}): {why}")
+            uncovered.append({"sha": sha, "state": "done", "why": f"{serial or '번호 없음'} — {why}"})
+            continue
+        for it in doc.get("items_detail") or []:
+            findings.append({"id": it.get("id", ""), "commit": sha, "severity": it.get("severity", ""),
+                             "file": it.get("file", ""), "line": it.get("line", ""),
+                             "description": it.get("description", "")})
+    return findings, uncovered
+
+
+def _cell(v) -> str:
+    return " ".join(str(v if v is not None else "").replace("|", "\\|").split())
+
+
+def track_note_text(paths, item: dict, *, body: str = "", abandoned: bool = False) -> str:
+    """종합 리뷰 노트의 회차 절 — 해시 결과 표 + 지적별 판정(남음/해소). 사실만 적는다."""
+    meta = item.get("meta") or {}
+    try:
+        rnd = track_round(paths.root, meta)
+    except Exception as e:                                         # noqa: BLE001
+        return f"[주의] 마감 회차 기록을 읽지 못했다 — {type(e).__name__}"
+    if rnd is None:
+        return f"[주의] 마감 회차 기록이 없다 (회차 {meta.get('issue_round')})"
+    hs = rnd["hashes"]
+    cnt = {k: sum(1 for h in hs if h.get("state") == k) for k in _HASH_LABEL}
+    lines = [f"종합 리뷰 회차 {rnd['round']} — 해시 {len(hs)}건: 리뷰 완료 {cnt['done']} · "
+             f"포기 {cnt['abandoned']} · 생략 {cnt['skipped']}",
+             "", "| 해시 | 결과 | 리뷰·사유 |", "|---|---|---|"]
+    for h in hs:
+        st = h.get("state")
+        if st == "done":
+            info = (h.get("serial") or "번호 없음") + (
+                f" · 지적 {h['findings']}" if h.get("findings") is not None else "")
+            if not h.get("serial") and h.get("why"):
+                info += f" · {h['why']}"
+        else:
+            info = h.get("why") or "사유 미기록"
+        lines.append(f"| `{h['sha'][:12]}` | {_HASH_LABEL.get(st, st)} | {_cell(info)} |")
+    if "collected" in meta:
+        collected = meta.get("collected") or []
+    else:                       # 종합 리뷰가 돌기 전에 끝난 항목(포기 등) — 회차에서 다시 모은다(LLM 0)
+        try:
+            collected, _ = collected_findings(paths.root, rnd)
+        except Exception as e:                                     # noqa: BLE001
+            lines += ["", f"[주의] 해시별 커밋 리뷰 지적을 모으지 못했다 — {type(e).__name__}"]
+            return "\n".join(lines)
+    if not collected:
+        lines += ["", "해시별 커밋 리뷰 지적: 0건 — 판정 대상 없음"]
+        return "\n".join(lines)
+    if abandoned or not body:
+        why = "종합 리뷰가 포기돼" if abandoned else "종합 리뷰 문서가 없어"
+        lines += ["", f"해시별 커밋 리뷰 지적 {len(collected)}건 — {why} 남음/해소 판정 없음"]
+        return "\n".join(lines)
+    verdicts = rg.parse_verdicts(body)
+    rows, tally = [], {"남음": 0, "해소": 0, "판정 없음": 0}
+    for f in collected:
+        v, ev = verdicts.get(str(f.get("id", "")).upper(), ("판정 없음", ""))
+        key = v if v in tally else "판정 없음"
+        tally[key] += 1
+        rows.append(f"| {_cell(f.get('id'))} | {SEV_LABEL.get(f.get('severity'), f.get('severity'))} | "
+                    f"{_cell(f.get('file'))}:{_cell(f.get('line'))} | {_cell(f.get('description'))} | "
+                    f"{_cell(v)} | {_cell(ev)} |")
+    lines += ["", f"해시별 지적 판정 — 남음 {tally['남음']} · 해소 {tally['해소']} · 판정 없음 {tally['판정 없음']}"
+              " (남음은 위 지적 표에 이 리뷰의 항목으로 다시 실렸다)",
+              "", "| 원 지적 | 심각도 | 파일:라인 | 내용 | 판정 | 근거 |", "|---|---|---|---|---|---|", *rows]
+    return "\n".join(lines)
+
+
+def range_abandoned_note_text(paths, item: dict) -> str:
+    """종합 리뷰 항목이 포기(abandoned)됐을 때의 노트 — 포기도 끝난 것으로 적는다(사용자 결정 2026-11-04)."""
+    meta = item.get("meta") or {}
+    base, end = meta.get("base", ""), meta.get("end", "")
+    why = _cell(item.get("last_why")) or "사유 미기록"
+    return (f"자동 범위 리뷰 포기: `{base[:12]}..{end[:12]}` — 시도 {item.get('attempts', 0)}회 · {why}\n\n"
+            + track_note_text(paths, item, abandoned=True))
 
 
 def _is_registered_root(paths) -> bool:
@@ -620,7 +741,29 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
         rq.finish(paths.root, item["id"], ok=False, why=why, logf=log)
         res.state, res.why = "failed", why
         return res
-    final = rg.find_range_review(paths, base, end)
+    # `#884` T4 — 종합 리뷰 항목이면 회차의 해시별 커밋 리뷰 지적을 모은다
+    track = bool(meta.get("track"))
+    rnum, findings, uncovered = 0, [], []
+    if track:
+        try:
+            rnd = track_round(paths.root, meta)
+        except Exception as e:                                     # noqa: BLE001
+            rnd, terr = None, f"{type(e).__name__}: {e}"
+        else:
+            terr = f"#{issue} 회차 {meta.get('issue_round')} 기록이 없다"
+        if rnd is None:
+            why = f"종합 리뷰 — 마감 회차 기록을 읽지 못했다({terr})"
+            rq.finish(paths.root, item["id"], ok=False, why=why, logf=log)
+            res.state, res.why = "failed", why
+            return res
+        rnum = rnd["round"]
+        findings, uncovered = collected_findings(paths.root, rnd, logf=log)
+        rq.set_meta(paths.root, item["id"], collected=findings,
+                    uncovered=[{"sha": u["sha"], "state": u["state"]} for u in uncovered])
+        log(f"[리뷰큐] 종합 리뷰 {tag} 회차 {rnum} — 해시 {len(rnd['hashes'])} · 수집 지적 {len(findings)} · "
+            f"리뷰 없는 해시 {len(uncovered)}")
+    final = rg.find_range_review(paths, base, end, issue_id=issue if track else 0,
+                                 issue_round=rnum, verdict=bool(findings))
     if final:
         res.written = str(final)
         # `#881` R216-1 — 재사용 경로도 번호를 채운다(호출자 결과·큐 meta). 못 구하면 노트가 다시 찾는다
@@ -682,6 +825,7 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
             reviewed = rg.review_range(
                 paths, issue, base, end, src, chat=ask, grounding=grounding_text("", decls),
                 provenance={"review_model": "Antigravity"}, commits=len(commits),
+                issue_round=rnum, findings=findings, uncovered=uncovered,
                 logf=lambda _kind, msg: log(f"[리뷰큐] Antigravity {msg}"))
     if reviewed.error or not reviewed.written or not reviewed.format_ok:
         if reviewed.written and not reviewed.format_ok:

@@ -84,6 +84,15 @@ _SAFETY_HEADER = "| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |"
 #    구분은 둘 — `불이행`(지시를 안 따랐다) · `골조 모순`(지시가 동결 선언·다른 지시와 충돌, 코드는 한쪽을 따랐다)
 _INTENT_HEADER = "| 파일 | 지시([PSEUDO]) | 실제 구현 | 라인 | 구분 |"
 INTENT_KINDS = ("불이행", "골조 모순")
+# `#884` T4 — 종합 리뷰의 해시별 지적 판정 표. [중요] **3열이다** — 소비자 표 정규식(`_TABLE_ROW`·
+#    `review_collector._parse_table_rows`)은 5열만 읽으므로 이 표의 행은 지적으로 세지지 않는다.
+#    그리고 **모듈 절 밖의 마지막 `### ` 절**에 둔다 — 모듈 절 안의 2절 뒤에 두면 안전성 표 구간에 든다.
+#    「남음」 지적은 1·2절 표에 이 리뷰의 지적으로 **다시 적게** 해서 fix_index·완료 게이트가 본다.
+VERDICT_SECTION = "### 해시별 지적 판정"
+_VERDICT_SECTION_RE = re.compile(r'^###\s+해시별\s*지적\s*판정', re.M)
+_VERDICT_HEADER = "| 원 지적 | 판정(남음/해소) | 근거(파일:라인) |"
+VERDICTS = ("남음", "해소")
+_VERDICT_ROW = re.compile(r'^\|\s*([RrPp]\d+-\d+)\s*\|\s*([^|\n]*?)\s*\|\s*([^|\n]*?)\s*\|\s*$', re.M)
 _DIFF_FILE_HEAD = re.compile(r'^--- (?:a/|/dev/null)')
 
 
@@ -100,7 +109,7 @@ def removed_pseudo_lines(diff: str) -> int:
     return n
 
 
-def format_ok(body: str, *, intent: bool = False) -> bool:
+def format_ok(body: str, *, intent: bool = False, verdict: bool = False) -> bool:
     """`### 모듈` 절 + 두 표 헤더가 있으면 형식 준수 — **데이터 행 0개도 정상이다**
     (위반 없는 커밋의 표는 헤더만 남는다, 원전 규약).
 
@@ -109,10 +118,14 @@ def format_ok(body: str, *, intent: bool = False) -> bool:
     비워 둔다.
 
     `intent` (`#815` ④) — 4절을 **요청한** 리뷰만 그 표 헤더를 요구한다(fail-closed, 1·2절과
-    같은 대우). 요청하지 않은 리뷰(옛 리뷰·사람 커밋)는 종전 그대로다."""
+    같은 대우). 요청하지 않은 리뷰(옛 리뷰·사람 커밋)는 종전 그대로다.
+
+    `verdict` (`#884` T4) — 해시별 지적을 실어 보낸 종합 리뷰만 마지막 `### 해시별 지적 판정` 절과
+    그 표 헤더를 요구한다(fail-closed). 해시 지적이 없던 종합 리뷰·옛 범위 리뷰는 종전 그대로다."""
     return (bool(re.search(r'^###\s+', body, flags=re.M))
             and _CONV_HEADER in body and _SAFETY_HEADER in body
-            and (not intent or _INTENT_HEADER in body))
+            and (not intent or _INTENT_HEADER in body)
+            and (not verdict or (bool(_VERDICT_SECTION_RE.search(body)) and _VERDICT_HEADER in body)))
 
 
 _FORMAT_EXAMPLE = (
@@ -150,6 +163,72 @@ _INTENT_RULES = (
     "  - 지시가 요구한 것을 넘어서는 스타일·명명·설계 취향은 이 표에 적지 않는다.\n"
     "  - 모든 지시가 이행됐으면 표 헤더만 두고 행을 비운다. 자리표시 행은 쓰지 않는다. 칸 안에 `|` 를 쓰지 않는다.\n"
 )
+
+
+_VERDICT_EXAMPLE = (
+    f"{VERDICT_SECTION}\n"
+    f"{_VERDICT_HEADER}\n"
+    "|---|---|---|\n")
+_VERDICT_RULES = (
+    "- 해시별 지적 판정: 아래 「해시별 리뷰 지적」 절의 지적 하나하나를 **범위 끝 커밋의 최종 코드**와 "
+    "DIFF 로 대조해 판정한다.\n"
+    "  - `남음` — 최종 코드에 그 문제가 아직 있다. 그 지적을 해당 `### <모듈>` 절의 1절 또는 2절 표에 "
+    "**이 리뷰의 지적으로 다시 적는다**(파일·라인은 최종 코드 기준).\n"
+    "  - `해소` — 뒤 커밋이 고쳤거나 그 코드가 사라졌다. 1·2절 표에는 적지 않는다.\n"
+    f"  - 모든 모듈 절 **뒤에** 마지막 절 `{VERDICT_SECTION}` 을 두고 지적마다 한 행을 쓴다:\n"
+    f"  {_VERDICT_HEADER}\n"
+    "  - `원 지적` 칸은 지적 번호(예 R12-3)를 그대로, `판정` 칸은 `남음`·`해소` 중 하나만, "
+    "`근거` 칸은 최종 코드의 파일:라인을 쓴다. 칸 안에 `|` 를 쓰지 않는다.\n"
+    "- 커밋 사이 문제(앞 커밋의 변경을 뒤 커밋이 깨뜨린 것 · 커밋 하나만 봐서는 안 보이던 상호작용)도 "
+    "2절에 지적한다.\n"
+)
+
+
+def collected_section(findings: list, uncovered: list | None = None) -> str:
+    """종합 리뷰 프롬프트의 「해시별 리뷰 지적」 본문 (`#884` T4). 지적이 없으면 빈 문자열.
+
+    `findings` — `{id, commit, severity, file, line, description}` 목록(커밋 리뷰 `items_detail`).
+    `uncovered` — 커밋 리뷰를 거치지 않은 해시 `{sha, state, why}`(포기·생략).
+    [주의] 자르지 않는다 — 상용 LLM 경로에 크기 상한을 두지 않는다(사용자 결정 2026-11-03).
+    """
+    if not findings:
+        return ""
+    sev = {"high": "높음", "mid": "중간", "low": "낮음"}
+
+    def cell(v):
+        return " ".join(str(v if v is not None else "").replace("|", "/").split())
+    lines = ["| 원 지적 | 커밋 | 심각도 | 파일:라인 | 내용 |", "|---|---|---|---|---|"]
+    for f in findings:
+        lines.append(f"| {cell(f.get('id'))} | {cell(str(f.get('commit') or '')[:12])} | "
+                     f"{cell(sev.get(f.get('severity'), f.get('severity')))} | "
+                     f"{cell(f.get('file'))}:{cell(f.get('line'))} | {cell(f.get('description'))} |")
+    out = "\n".join(lines)
+    if uncovered:
+        lab = {"abandoned": "포기", "skipped": "생략", "done": "완료(커밋 리뷰 지적을 못 읽음)"}
+        out += ("\n\n커밋 리뷰를 거치지 않은 커밋 (포기·생략 — 이 커밋들의 변경은 위 지적에 들어 있지 않다):\n"
+                + "\n".join(f"- {str(u.get('sha') or '')[:12]} {lab.get(u.get('state'), u.get('state'))}"
+                             f" — {cell(u.get('why')) or '사유 미기록'}" for u in uncovered))
+    return out
+
+
+def parse_verdicts(body: str) -> dict:
+    """`### 해시별 지적 판정` 절의 행 → `{원 지적: (판정, 근거)}`. 판정은 `남음`·`해소` 또는 원문.
+
+    절이 없으면 빈 사전. 같은 번호가 두 번 나오면 첫 행을 쓴다.
+    """
+    m = _VERDICT_SECTION_RE.search(body or "")
+    if not m:
+        return {}
+    rest = body[m.end():]
+    nxt = re.search(r'^###\s+', rest, flags=re.M)
+    block = rest[:nxt.start()] if nxt else rest
+    out: dict = {}
+    for row in _VERDICT_ROW.finditer(block):
+        rid = row.group(1).upper()
+        raw = row.group(2).strip()
+        v = next((x for x in VERDICTS if raw.startswith(x)), raw)
+        out.setdefault(rid, (v, row.group(3).strip()))
+    return out
 
 
 # 🔴 `#846` — 퇴고 백엔드(agy)는 도구를 쓰는 에이전트다. 지시가 없으면 저장소를 뒤지고 테스트를
@@ -315,17 +394,19 @@ def domain_hint(paths, files: list) -> str:
 
 def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
                  grounding: str = "", kind: str = "unreal", intent: bool = False,
-                 subject: str = "", history: str = "") -> str:
+                 subject: str = "", history: str = "", collected: str = "") -> str:
     """리뷰 프롬프트. [중요] 표 형식은 소비자의 파싱 계약이다 — 열 순서를 바꾸지 말 것.
 
     `intent` (`#815` ④) — 지워진 `[PSEUDO]` 가 있을 때만 4절 규칙·예시를 싣는다.
     False 면 종전과 **바이트 단위로 같다**(테스트가 해시로 지킨다).
     `subject` (`#879`) — 범위 리뷰의 대상 이름(예 「일감 #879 범위 a..b (커밋 3건)」). 비우면 종전과
     바이트 단위로 같다.
-    `history` (`#879`) — 범위 리뷰의 수정 기록(커밋 순서·제목·본문). 비우면 종전과 바이트 단위로 같다."""
+    `history` (`#879`) — 범위 리뷰의 수정 기록(커밋 순서·제목·본문). 비우면 종전과 바이트 단위로 같다.
+    `collected` (`#884` T4) — 종합 리뷰에 싣는 해시별 커밋 리뷰 지적(`collected_section`). 있으면 판정
+    규칙·마지막 판정 절 예시·지적 표를 싣는다. 비우면 종전과 바이트 단위로 같다."""
     python = kind == "code"
     role = "Python" if python else "Unreal Engine 5 C++"
-    example = format_example(kind, intent=intent)
+    example = format_example(kind, intent=intent, verdict=bool(collected))
     return (
         f"당신은 {role} 코드 리뷰어다. 아래 "
         + ("범위(여러 커밋을 합친 diff)" if subject else "커밋")
@@ -349,6 +430,7 @@ def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
            "- 프로젝트 규약을 지어내거나 UE·Blueprint 규칙을 적용하지 않는다.\n" if python else
            "  (자유 서술 — 이 변경이 의존 파일·Blueprint 에 줄 수 있는 영향)\n")
         + (_INTENT_RULES if intent else "")
+        + (_VERDICT_RULES if collected else "")
         +
         "- [중요] 출력은 반드시 `### ` 로 시작한다. 표 밖의 산문은 ## 3 절에만 쓴다.\n"
         "- 출력 예시 (이 골격 그대로):\n"
@@ -361,14 +443,21 @@ def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
            "커밋 메시지는 검증되지 않은 의도 설명이다. 사실로 받지 말고, 아래 DIFF 가 그 의도와 "
            "맞는지 대조하는 데만 쓴다. 메시지와 어긋나는 변경은 2절에 지적한다.\n\n"
            f"{history}" if history else "")
+        + (f"\n\n## 해시별 리뷰 지적 — 최종 코드 기준으로 남음/해소 판정\n"
+           "이 범위의 커밋을 하나씩 리뷰했을 때 나온 지적이다. 각 지적이 범위 끝의 최종 코드에 아직 "
+           f"남았는지, 뒤 커밋에서 해소됐는지 판정해 마지막 `{VERDICT_SECTION}` 절에 적는다.\n\n"
+           f"{collected}" if collected else "")
         + f"\n\n## DIFF (unified=3)\n```diff\n{diff}\n```\n"
     )
 
 
-def format_example(kind: str = "unreal", *, intent: bool = False) -> str:
-    """언어 예시는 바꾸되 소비자의 표 계약은 유지한다. `intent` 면 3절 뒤에 빈 4절 표를 둔다."""
+def format_example(kind: str = "unreal", *, intent: bool = False, verdict: bool = False) -> str:
+    """언어 예시는 바꾸되 소비자의 표 계약은 유지한다. `intent` 면 3절 뒤에 빈 4절 표를 둔다.
+    `verdict` (`#884` T4) 면 맨 끝에 빈 `### 해시별 지적 판정` 절을 둔다."""
     base = (_FORMAT_EXAMPLE.replace(_EXAMPLE_ANCHOR, _EXAMPLE_ANCHOR + _INTENT_EXAMPLE)
             if intent else _FORMAT_EXAMPLE)
+    if verdict:
+        base = base + "\n" + _VERDICT_EXAMPLE
     if kind == "code":
         return (base.replace("Source/ModularStage/Mission", "master/module")
                 .replace("X.cpp", "example.py").replace("bFlag 접두 누락", "프로젝트 명명 규약 위반"))
@@ -639,28 +728,48 @@ def range_review_name(issue_id, base: str, end: str, ts) -> str:
     return f"{ts.strftime('%Y-%m-%d_%H%M')}_issue{int(issue_id)}_{base[:8]}-{end[:8]}.md"
 
 
-def find_range_review(paths, base: str, end: str) -> Path | None:
-    """이미 게시된 정상 범위 리뷰 — 재시도 때 모델 중복 호출을 막는다."""
+def track_marker(issue_id, issue_round) -> str:
+    """종합 리뷰(`#884` T4) 머리말의 회차 줄 — 재사용 판정이 이 줄로 「그 일감·그 회차의 종합 리뷰」를 가린다."""
+    return f"- 종합 회차: #{int(issue_id)} 회차 {int(issue_round)}"
+
+
+def find_range_review(paths, base: str, end: str, *, issue_id=0, issue_round=0,
+                      verdict: bool = False) -> Path | None:
+    """이미 게시된 정상 범위 리뷰 — 재시도 때 모델 중복 호출을 막는다.
+
+    `issue_round` (`#884` T4) — 종합 리뷰 항목이 부를 때. 그 일감·회차의 머리말 줄(`track_marker`)이
+    있는 문서만 재사용한다 — 같은 범위의 **옛 범위 리뷰**(해시 지적 판정이 없다)를 종합 리뷰로 받지 않는다.
+    `verdict` 면 판정 절까지 있어야 한다(`format_ok(verdict=True)`). 생략하면 종전 그대로다.
+    """
     d = Path(paths.root) / REVIEWS_DIRNAME / RANGE_DIRNAME
     if not d.is_dir():
         return None
+    marker = track_marker(issue_id, issue_round) if issue_round else ""
     for path in sorted(d.glob(f"*_{base[:8]}-{end[:8]}.md"), reverse=True):
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        if text.startswith(RANGE_TITLE) and f"`{base}..{end}`" in text and format_ok(text):
+        if marker and not re.search(rf"^{re.escape(marker)}$", text, flags=re.M):
+            continue
+        if text.startswith(RANGE_TITLE) and f"`{base}..{end}`" in text and format_ok(text, verdict=verdict):
             return path
     return None
 
 
 def review_range(paths, issue_id, base: str, end: str, files: list, *,
                  chat=None, logf=None, grounding: str = "",
-                 provenance: dict | None = None, commits: int = 0) -> ReviewResult:
+                 provenance: dict | None = None, commits: int = 0,
+                 issue_round: int = 0, findings: list | None = None,
+                 uncovered: list | None = None) -> ReviewResult:
     """일감 범위 `base..end` 의 합친 변경분을 리뷰해 `reviews/_range/` 에 쓴다.
 
     커밋 리뷰(`review_commit`)와 같은 프롬프트·형식 검증·1회 재시도를 쓴다. 작성자 제외·trivial·
     머지 갈래는 없다 — 사람이 일감을 마치며 **요청한** 리뷰라서 거르지 않는다.
+
+    `issue_round` · `findings` · `uncovered` (`#884` T4 종합 리뷰) — 회차가 있으면 머리말에
+    `track_marker` 줄을 쓴다. `findings`(해시별 커밋 리뷰 지적)가 있으면 프롬프트에 「해시별 리뷰 지적」
+    절을 싣고 판정 절을 형식 검증에 넣는다(fail-closed). 지적이 없으면 종전 범위 리뷰와 같다.
     """
     log = logf or (lambda s, m: None)
     r = ReviewResult(commit=end)
@@ -683,26 +792,32 @@ def review_range(paths, issue_id, base: str, end: str, files: list, *,
     history = range_history(repo, base, end)
     log("review", f"{subject} — 수정 기록 {history.count(chr(10) + '### ') + (1 if history else 0)}건 · "
                   f"{len(history)}자")
+    collected = collected_section(findings or [], uncovered)
+    verdict = bool(collected)
+    if issue_round:
+        log("review", f"{subject} — 종합 리뷰 회차 {issue_round} · 해시 지적 {len(findings or [])}건 · "
+                      f"리뷰 없는 해시 {len(uncovered or [])}건 · 판정 절 {'요청' if verdict else '미요청'}")
     prompt = build_prompt(diff=diff, files=src_files, commit=end,
                           domains=domain_hint(paths, src_files), grounding=grounding,
                           kind=review_kind(paths), intent=intent, subject=subject,
-                          history=history)
+                          history=history, collected=collected)
     _ask = chat if chat is not None else _recorded_chat(paths, end)
     try:
         body = _ask(prompt)
-        if not format_ok(body or "", intent=intent):
+        if not format_ok(body or "", intent=intent, verdict=verdict):
             r.retried = True
             log("review", f"{subject} 형식 위반 — 예시를 앞세워 1회 재시도")
             body = _ask("직전 응답이 형식을 어겼다. 아래 골격 **그대로**, `### ` 로 시작해 "
                         "표만으로 다시 써라. 표 밖 산문은 ## 3 에만.\n\n"
-                        + format_example(review_kind(paths), intent=intent) + "\n\n" + prompt)
+                        + format_example(review_kind(paths), intent=intent, verdict=verdict)
+                        + "\n\n" + prompt)
     except ReviewChatError as e:
         r.error = f"리뷰 생성 실패: {e}"
         return r
     if not (body or "").strip():
         r.error = "리뷰 응답이 비었다"
         return r
-    r.format_ok = format_ok(body, intent=intent)
+    r.format_ok = format_ok(body, intent=intent, verdict=verdict)
 
     from datetime import datetime
     ts = datetime.now()
@@ -719,7 +834,9 @@ def review_range(paths, issue_id, base: str, end: str, files: list, *,
     head = (f"{RANGE_TITLE} 일감 #{int(issue_id)}\n\n"
             f"- 범위: `{base}..{end}`\n- 일감: #{int(issue_id)}\n"
             f"- 커밋 수: {commits}\n- 작성자: {r.author}\n"
-            f"- 파일: {len(src_files)}개\n- 생성: {ts.strftime('%Y-%m-%d %H:%M')}\n" + trace + "\n")
+            f"- 파일: {len(src_files)}개\n- 생성: {ts.strftime('%Y-%m-%d %H:%M')}\n" + trace
+            + (track_marker(issue_id, issue_round) + f"\n- 해시 리뷰 지적: {len(findings or [])}건\n"
+               if issue_round else "") + "\n")
     tmp = path.with_name("_writing_" + path.name)
     tmp.write_text(head + body.strip() + "\n", encoding="utf-8")
     tmp.replace(path)

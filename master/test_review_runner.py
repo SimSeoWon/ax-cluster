@@ -659,6 +659,27 @@ def test_쿨다운은_시도를_쓰지_않고_회차를_멈춘다():
     shutil.rmtree(root)
 
 
+def test_종합_리뷰_회차_기록이_없으면_실패다():
+    """`#884` T4 — meta track 인데 마감 회차 기록이 없으면 해시 지적 없이 리뷰하지 않는다(모델 0)."""
+    root = Path(tempfile.mkdtemp(prefix="ax-rr-track-"))
+    b, e = "a" * 40, "b" * 40
+    Q.enqueue(root, kind="range", key=f"{b}..{e}", files=[], priority=10,
+              meta={"issue_id": 884, "base": b, "end": e, "issue_round": 1, "track": True})
+    calls, logs = [], []
+    r = R.run_once(Paths(root), logf=logs.append, range_noter=lambda *a, **k: "x",
+                   review_call=lambda p, **kw: calls.append(p) or "x")
+    it = Q.items(root)[0]
+    check("T4 회차 기록 없음 → failed · 모델 0", r.state == "failed" and not calls
+          and "마감 회차 기록" in r.why and it["state"] == "pending", f"{r.state} {r.why} {it['state']}")
+    txt = R.track_note_text(Paths(root), it)
+    check("T4 노트 회차 절 — 기록 없음을 적는다", txt.startswith("[주의] 마감 회차 기록이 없다"), txt)
+    # 옛(track 없는) 범위 항목의 노트에는 회차 절이 없다
+    legacy = {"meta": {"issue_id": 1, "base": b, "end": e}, "history": [{"result": "done", "note": "스킵: 소스 변경 없음"}]}
+    lt = R.range_note_text(Paths(root), legacy)
+    check("T4 옛 범위 노트는 종전 그대로", lt == f"자동 범위 리뷰 완료: `{b[:12]}..{e[:12]}` — 스킵: 소스 변경 없음", lt)
+    shutil.rmtree(root)
+
+
 if __name__ == "__main__":
     for fn in (test_로컬뒤_antigravity가_퇴고한다,
                test_로컬_없음이어도_antigravity가_본다,
@@ -670,7 +691,8 @@ if __name__ == "__main__":
                test_머지는_결합_diff로_가른다, test_시간예산과_주인없는_running_회수,
                test_골조_지시_이행_절, test_퇴고는_고정_트리에서_돈다,
                test_고정_트리_실패는_실패다,
-               test_쿨다운은_시도를_쓰지_않고_회차를_멈춘다):
+               test_쿨다운은_시도를_쓰지_않고_회차를_멈춘다,
+               test_종합_리뷰_회차_기록이_없으면_실패다):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

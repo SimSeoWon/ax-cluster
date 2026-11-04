@@ -3,7 +3,8 @@
 사용자 결정(2026-11-04): 작업 세션이 마감 해시를 등록하고 떠나면(T1), 색인기가 그 커밋 리뷰를
 우선순위 10 으로 넣는다(T2). 이 모듈은 **리뷰 큐 소비자 쪽**에서 추적 기록을 큐에 맞추고, 해시의
 커밋 리뷰가 끝날 때마다(done · abandoned — *"abandoned 도 끝난 것으로 보고 노트에 쓴다"* · skipped 도
-적는다) 그 일감에 **짧은 진행 노트**를 남긴다. 종합 리뷰(T4)는 여기서 하지 않는다.
+적는다) 그 일감에 **짧은 진행 노트**를 남긴다. 회차의 해시가 모두 종결되면 **종합 리뷰(T4)를
+등재**하고 그 진행을 회차의 summary 에 옮긴다 — 리뷰 자체는 리뷰 큐 소비자(`review_runner.run_range`)가 한다.
 
     sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None) -> dict
 
@@ -23,6 +24,30 @@
                    성공하면 각 해시 noted=True · 실패(`[주의]` 로 시작하는 결과 또는 예외)면 그대로 둬서
                    다음 회차가 다시 한다
 
+    ④ 종합 등재   (T4) 해시가 전부 done·abandoned·skipped 이고 summary 가 waiting(또는 failed)이면
+                   `kind=range` key `<base>..<end>` · 우선순위 10 · meta `{issue_id, base, end, issue_round,
+                   track: True}` 로 등재하고 summary → queued(item_id). 멱등 — 이미 우리 항목이면 그대로 잇는다
+    ⑤ 종합 추적   (T4) 큐 항목 running → summary running · pending(실패 뒤 재시도 포함) → queued ·
+                   done → **노트가 남은 뒤** done(R 번호 · noted) · abandoned → 포기 노트가 남은 뒤
+                   abandoned(noted). 노트 실패면 summary 를 닫지 않고 다음 회차가 다시 한다 —
+                   닫힌 회차는 `open_rounds` 에 안 나와서 그 뒤로는 고칠 자리가 없다
+                   항목이 큐에서 사라졌으면 summary → waiting(다음 회차가 다시 등재)
+
+## [중요] 같은 범위의 옛 범위 항목 (`#879` 경로 · 큐 id 는 `range:<base>..<end>` 하나뿐이다)
+
+`review_queue.enqueue` 는 pending·running·done 항목을 그대로 돌려준다. 우리 것(meta `track` ·
+같은 일감 · 같은 회차)이 아니면:
+
+    pending    채택 — 우선순위 10 · meta 에 `issue_round`·`track` 을 합친다(아직 아무도 리뷰하지 않았다)
+    running    기다린다(summary waiting 유지) — 이미 꺼낸 소비자는 옛 meta 로 돈다
+    done       🔴 **재사용하지 않는다** — 해시 지적 판정이 없는 리뷰를 종합 리뷰로 받으면 사용자 결정 「B」가
+               조용히 빠진다. summary → failed + `[중요]` 로그. 큐는 done 항목을 재등재하지 않으므로
+               (`enqueue` 계약) 다시 돌리는 것은 사람 몫이다 — 그 항목이 pending 으로 돌아오면 다음 회차가 채택한다
+    다른 일감  done 과 같다(failed)
+
+문서 쪽 재사용(`find_range_review`)도 같은 원칙이다 — 종합 리뷰 항목은 그 일감·회차의 머리말 줄이 있는
+문서만 재사용한다.
+
 [중요] 노트는 자동 경로로 세션이 읽는 글이다 — **사실만 적고 명령형을 쓰지 않는다**
 (`~/CLAUDE.md` 「자동 경로로 LLM 에게 보내는 글에 명령형을 쓰지 않는다」).
 🔴 [중요] 기본 noter(실 Redmine)는 **레지스트리에 등록된 트윈 루트에서만** 쓴다 — `review_runner.
@@ -41,6 +66,9 @@ from . import issue_track as it
 from . import review_queue as rq
 
 WATERMARK_SKIP_WHY = "색인 워터마크 통과 · 리뷰 미등재"
+SUMMARY_PRIORITY = il.PRIORITY          # 종합 리뷰도 일감 마감 해시와 같은 10 (사용자 결정 2026-11-04)
+STALE_RANGE_WHY = ("같은 범위의 옛 범위 리뷰 항목이 이미 {state} — 해시 지적 판정이 없는 리뷰라 종합 리뷰로 "
+                   "받지 않는다 · 큐는 done 항목을 재등재하지 않는다")
 _SEV = (("high", "높음"), ("mid", "중간"), ("low", "낮음"))
 _WHY_MAX = 100
 
@@ -233,6 +261,169 @@ def _note_round(paths, rnd: dict, noter, counts: dict, log) -> None:
     log(f"[issue-progress] {tag} 진행 노트 — 해시 {len(fresh)}건 ({out[:60]})")
 
 
+def _ours(item: dict, n: int, rnum: int) -> bool:
+    meta = (item or {}).get("meta") or {}
+    try:
+        return bool(meta.get("track")) and int(meta.get("issue_id")) == n \
+            and int(meta.get("issue_round") or 0) == rnum
+    except (TypeError, ValueError):
+        return False
+
+
+def _range_item(root, iid: str):
+    return next((x for x in rq.items(root) if x.get("id") == iid), None)
+
+
+def _set_summary(root, n, rnum, state, counts, log, **kw) -> dict:
+    res = it.set_summary(root, n, state=state, round=rnum, logf=log, **kw)
+    if not res.get("ok"):
+        counts["errors"] += 1
+        log(f"[issue-progress] [주의] #{n} 회차 {rnum} 종합 상태 {state} 거절 — "
+            f"{res.get('reason')}: {res.get('why')}")
+    return res
+
+
+def _stale(root, n, rnum, item, cur_state, counts, log) -> None:
+    why = STALE_RANGE_WHY.format(state=item.get("state"))
+    meta = item.get("meta") or {}
+    if str(meta.get("issue_id") or "") != str(n):
+        why += f" (다른 일감 #{meta.get('issue_id')})"
+    counts["range_stale"] += 1
+    if cur_state == "failed":
+        log(f"[issue-progress] #{n} 회차 {rnum} 종합 리뷰 보류 지속 — {item.get('id')} {item.get('state')}")
+        return
+    _set_summary(root, n, rnum, "failed", counts, log, item_id=item.get("id", ""))
+    log(f"[issue-progress] [중요] #{n} 회차 {rnum} 종합 리뷰 등재 불가 — {why} · {item.get('id')}")
+
+
+def _trigger_summary(paths, rnd: dict, counts: dict, log) -> None:
+    """④ — 해시가 모두 종결된 회차의 종합 리뷰를 등재한다(멱등)."""
+    root = paths.root
+    n, rnum, sm = rnd["issue_id"], rnd["round"], rnd["summary"]["state"]
+    base, end = rnd["base"], rnd["end"]
+    key = f"{base}..{end}"
+    meta = {"issue_id": n, "base": base, "end": end, "issue_round": rnum, "track": True}
+    try:
+        item = rq.enqueue(root, kind="range", key=key, files=[], requester=f"issue_progress#{n}",
+                          priority=SUMMARY_PRIORITY, meta=meta, logf=log)
+    except rq.ReviewQueueError as e:
+        counts["errors"] += 1
+        log(f"[issue-progress] [중요] #{n} 회차 {rnum} 종합 리뷰 등재 실패 — {e}")
+        return
+    st = item.get("state")
+    tag = f"#{n} 회차 {rnum}"
+    if _ours(item, n, rnum):
+        _set_summary(root, n, rnum, "queued", counts, log, item_id=item["id"])
+        counts["range_queued"] += 1
+        log(f"[issue-progress] {tag} 해시 {len(rnd['hashes'])}건 전부 종결 → 종합 리뷰 등재 "
+            f"{rq._short(key)} ({st} · 우선순위 {item.get('priority')})")
+        return
+    other = str((item.get("meta") or {}).get("issue_id") or "")
+    if st == "pending" and other == str(n):
+        rq.set_priority(root, item["id"], SUMMARY_PRIORITY,
+                        meta={"issue_round": rnum, "track": True}, logf=log)
+        _set_summary(root, n, rnum, "queued", counts, log, item_id=item["id"])
+        counts["range_queued"] += 1
+        log(f"[issue-progress] {tag} 종합 리뷰 — 같은 범위의 대기 중 옛 항목을 채택 {item['id']}")
+        return
+    if st == "running" and other == str(n):
+        counts["unchanged"] += 1
+        log(f"[issue-progress] {tag} 종합 리뷰 대기 — 같은 범위의 옛 항목이 도는 중({item['id']}), "
+            f"끝난 뒤 다시 판정")
+        return
+    _stale(root, n, rnum, item, sm, counts, log)
+
+
+def _follow_summary(paths, rnd: dict, noter, counts: dict, log) -> None:
+    """⑤ — 등재된 종합 리뷰 항목의 상태를 회차 summary 에 옮기고, 끝났으면 노트까지 확인한다."""
+    from . import review_runner as rr                               # noqa: PLC0415
+    root = paths.root
+    n, rnum = rnd["issue_id"], rnd["round"]
+    sm = rnd["summary"]
+    cur = sm["state"]
+    tag = f"#{n} 회차 {rnum}"
+    iid = sm.get("item_id") or f"range:{rnd['base']}..{rnd['end']}"
+    item = _range_item(root, iid)
+    if item is None:
+        _set_summary(root, n, rnum, "waiting", counts, log)
+        log(f"[issue-progress] [주의] {tag} 종합 리뷰 항목 {iid} 가 큐에 없다 — waiting 으로 되돌려 다시 등재")
+        return
+    if not _ours(item, n, rnum):
+        _stale(root, n, rnum, item, cur, counts, log)
+        return
+    st = item.get("state")
+    meta = item.get("meta") or {}
+    if st in ("pending", "running"):
+        want = "running" if st == "running" else "queued"
+        if want != cur:
+            _set_summary(root, n, rnum, want, counts, log)
+            log(f"[issue-progress] {tag} 종합 리뷰 {cur} → {want}"
+                + (f" (재시도 대기 · 시도 {item.get('attempts')} · {_short(item.get('last_why'))})"
+                   if st == "pending" and item.get("last_why") else ""))
+        counts["range_running" if st == "running" else "unchanged"] += 1
+        return
+    if st == "done":
+        if not meta.get("noted"):
+            if noter is None:
+                counts["note_skipped"] += 1
+                log(f"[issue-progress] [주의] {tag} 종합 리뷰 노트 생략 — 등록된 트윈 루트가 아니다(대역 미주입)")
+                return
+            if not rr.notify_range(paths, item["id"], noter=noter, logf=log):
+                counts["range_note_failed"] += 1
+                log(f"[issue-progress] [중요] {tag} 종합 리뷰 노트 실패 — summary 를 닫지 않고 다음 회차 재시도")
+                return
+            item = _range_item(root, iid) or item
+            meta = item.get("meta") or {}
+        from . import fix_index as fx                               # noqa: PLC0415
+        serial = meta.get("serial") or fx.serial_for_range(root, rnd["base"], rnd["end"])
+        res = _set_summary(root, n, rnum, "done", counts, log, serial=serial, noted=True)
+        if res.get("ok"):
+            counts["range_done"] += 1
+            counts["range_noted"] += 1
+            log(f"[issue-progress] {tag} 종합 리뷰 done · {serial or '번호 없음'} · 노트 남음 — 회차 닫힘")
+        return
+    if st == "abandoned":
+        if not meta.get("noted"):
+            if noter is None:
+                counts["note_skipped"] += 1
+                log(f"[issue-progress] [주의] {tag} 종합 리뷰 포기 노트 생략 — 등록된 트윈 루트가 아니다(대역 미주입)")
+                return
+            try:
+                out = str(noter(n, notes=rr.range_abandoned_note_text(paths, item)))
+            except Exception as e:                                  # noqa: BLE001
+                out = f"[주의] {type(e).__name__}: {e}"
+            if out.startswith("[주의]"):
+                rq.set_meta(root, iid, noted=False, note_error=out[:300])
+                counts["range_note_failed"] += 1
+                log(f"[issue-progress] [중요] {tag} 종합 리뷰 포기 노트 실패 — 다음 회차 재시도: {out[:120]}")
+                return
+            rq.set_meta(root, iid, noted=True, note_error="", noted_at=rq._now())
+        res = _set_summary(root, n, rnum, "abandoned", counts, log, noted=True)
+        if res.get("ok"):
+            counts["range_abandoned"] += 1
+            counts["range_noted"] += 1
+            log(f"[issue-progress] {tag} 종합 리뷰 포기(abandoned — 끝난 것으로 친다) · "
+                f"{_short(item.get('last_why'))} · 노트 남음 — 회차 닫힘")
+        return
+    counts["errors"] += 1
+    log(f"[issue-progress] [주의] {tag} 종합 리뷰 항목 상태를 모른다 {st!r} — 그대로 둔다")
+
+
+def _summary_round(paths, rnd: dict, noter, counts: dict, log) -> None:
+    """④⑤ — 한 회차의 종합 리뷰 등재·추적."""
+    st = rnd["summary"]["state"]
+    if st in ("waiting", "failed"):
+        if not it.all_hashes_terminal(rnd):
+            return
+        _trigger_summary(paths, rnd, counts, log)
+        rnd = next((r for r in it.rounds(paths.root, rnd["issue_id"]) if r["round"] == rnd["round"]), None)
+        if rnd is None or rnd["summary"]["state"] not in ("queued", "running"):
+            return
+    elif st not in ("queued", "running"):
+        return
+    _follow_summary(paths, rnd, noter, counts, log)
+
+
 def sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None) -> dict:
     """열린 마감 라운드를 리뷰 큐·색인 워터마크에 맞추고 진행 노트를 남긴다. 예외를 올리지 않는다.
 
@@ -243,7 +434,9 @@ def sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None) -> dict:
     """
     log = logf or print
     counts = {k: 0 for k in ("rounds", "done", "abandoned", "skipped", "queued", "unchanged",
-                             "noted_notes", "noted_hashes", "note_failed", "note_skipped", "errors")}
+                             "noted_notes", "noted_hashes", "note_failed", "note_skipped", "errors",
+                             "range_queued", "range_running", "range_done", "range_abandoned",
+                             "range_noted", "range_note_failed", "range_stale")}
     root = paths.root
     try:
         if not it.state_path(root).exists():
@@ -275,6 +468,10 @@ def sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None) -> dict:
             cur = next((r for r in fresh if r["round"] == rnum), None)
             if cur is not None:
                 _note_round(paths, cur, noter, counts, log)
+                # `#884` T4 — 해시가 다 끝났으면 종합 리뷰 등재·추적
+                cur = next((r for r in it.rounds(root, n) if r["round"] == rnum), None)
+                if cur is not None:
+                    _summary_round(paths, cur, noter, counts, log)
         except Exception as e:                                      # noqa: BLE001 — 다른 라운드는 계속
             counts["errors"] += 1
             sev = "[중요]" if isinstance(e, it.IssueTrackError) else "[주의]"
@@ -283,5 +480,8 @@ def sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None) -> dict:
     log(f"[issue-progress] {Path(str(root)).name} 라운드 {counts['rounds']} — done {counts['done']} · "
         f"포기 {counts['abandoned']} · 생략 {counts['skipped']} · 연결 {counts['queued']} · "
         f"노트 {counts['noted_notes']}(해시 {counts['noted_hashes']}) · 노트 실패 {counts['note_failed']} · "
-        f"오류 {counts['errors']}")
-    return {"ok": counts["errors"] == 0 and counts["note_failed"] == 0, **counts}
+        f"종합 등재 {counts['range_queued']} · 종합 done {counts['range_done']} · "
+        f"종합 포기 {counts['range_abandoned']} · 종합 노트 실패 {counts['range_note_failed']} · "
+        f"종합 보류 {counts['range_stale']} · 오류 {counts['errors']}")
+    return {"ok": counts["errors"] == 0 and counts["note_failed"] == 0
+            and counts["range_note_failed"] == 0, **counts}

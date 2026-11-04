@@ -310,11 +310,37 @@ def test_commit_prompt_unchanged():
           and "아래 커밋의 **변경분만**" in a)
 
 
+def test_verdict_contract():
+    """`#884` T4 — 종합 리뷰 프롬프트·형식·판정 파싱. 지적이 없으면 종전과 바이트 단위로 같다."""
+    kw = dict(diff="d", files=["x"], commit="abc", subject="일감 #1 범위 a..b", history="h")
+    check("T4 collected 비면 바이트 동일", RG.build_prompt(**kw) == RG.build_prompt(**kw, collected=""))
+    check("T4 collected_section — 지적 없으면 빈 문자열",
+          RG.collected_section([], [{"sha": "a" * 40, "state": "skipped", "why": "w"}]) == "")
+    sec = RG.collected_section([{"id": "R3-1", "commit": "c" * 40, "severity": "high", "file": "A.cpp",
+                                 "line": "3", "description": "a | b\n줄"}],
+                               [{"sha": "d" * 40, "state": "abandoned", "why": ""}])
+    check("T4 collected_section — 표·칸 안 | 치환·포기 사유 미기록", "| R3-1 | cccccccccccc | 높음 | A.cpp:3 | a / b 줄 |" in sec
+          and "- dddddddddddd 포기 — 사유 미기록" in sec, sec)
+    p = RG.build_prompt(**kw, collected=sec)
+    check("T4 collected → 판정 규칙·절·예시", "## 해시별 리뷰 지적" in p and "- 해시별 지적 판정:" in p
+          and p.count("### 해시별 지적 판정") >= 2 and p.find("## 해시별 리뷰 지적") < p.find("## DIFF"))
+    check("T4 format_ok — 판정 절 없으면 verdict=True 에서 거절", RG.format_ok(BODY)
+          and not RG.format_ok(BODY, verdict=True))
+    vb = BODY + "\n### 해시별 지적 판정\n| 원 지적 | 판정(남음/해소) | 근거(파일:라인) |\n|---|---|---|\n" \
+        "| R3-1 | 남음 | A.cpp:3 |\n| r3-2 | 해소 (뒤 커밋) | A.cpp:9 |\n| R3-1 | 해소 | 중복 |\n"
+    check("T4 format_ok — 판정 절 있으면 통과", RG.format_ok(vb, verdict=True))
+    v = RG.parse_verdicts(vb)
+    check("T4 parse_verdicts — 번호 정규화·판정 접두·첫 행 우선", v == {"R3-1": ("남음", "A.cpp:3"),
+                                                              "R3-2": ("해소", "A.cpp:9")}, str(v))
+    check("T4 판정 표는 소비자 행으로 안 센다", RG.parseable_rows(vb) == RG.parseable_rows(BODY) == 1)
+    check("T4 parse_verdicts — 절 없으면 빈 사전", RG.parse_verdicts(BODY) == {})
+
+
 def main() -> int:
     for fn in (test_enqueue_contract, test_run_range, test_bad_range_is_deterministic,
                test_end_not_yet_in_mirror_is_transient, test_notify_issue,
                test_drain_waits_across_runs,
-               test_commit_prompt_unchanged):
+               test_commit_prompt_unchanged, test_verdict_contract):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_review_range: {PASS}/{total} 통과")
