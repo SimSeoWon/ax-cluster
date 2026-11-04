@@ -32,6 +32,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import urllib.error
 import urllib.request
 from urllib.parse import quote
@@ -100,6 +101,12 @@ def resolve_status_id(name: str, *, key: str = "", url: str = "", sender=None):
     [중요] id 를 코드에 박지 않는 이유(원전 주석): 환경마다 다르다. 우리는 거기에 하나 더 있다 —
     이 Redmine 의 상태 이름이 **한국어**라 원전 기본값(`Resolved`)이 애초에 안 맞는다.
     """
+    entry = _status_entry(name, key=key, url=url, sender=sender)
+    return entry.get("id") if entry else None
+
+
+def _status_entry(name: str, *, key: str = "", url: str = "", sender=None):
+    """상태 이름 → `issue_statuses` 항목(dict) 하나. 못 찾으면 `None` (`#883` T4 — `is_closed` 를 읽으려고)."""
     if not name:
         return None
     try:
@@ -108,7 +115,7 @@ def resolve_status_id(name: str, *, key: str = "", url: str = "", sender=None):
         return None
     for s in (got or {}).get("issue_statuses") or []:
         if str(s.get("name", "")).strip() == name.strip():
-            return s.get("id")
+            return s
     return None
 
 
@@ -289,12 +296,141 @@ def _update_mismatches(iid: int, requested: dict, response) -> tuple[list[str], 
     return mismatches, child_ids
 
 
+# ─────────────────────────────────────────
+# 「완료」 관문 — `#883` 규칙 4 (사용자 결정 2026-11-04)
+#
+# `issue_flow` 로 시작한 일감(= `issue_lock` 이 추적하는 것)은 범위 리뷰가 OK 로 끝나지 않았거나
+# 결정되지 않은 HIGH 지적이 남았으면 「완료」로 닫지 않는다. 자리가 **이 함수**인 이유: MCP
+# `redmine_note`(8101)·스킬·플랜 도구가 모두 `update_issue` 를 지나므로 우회로가 없다.
+# [중요] 추적되지 않는 일감(옛 일감 · `finalize_work` 가 닫는 분산 작업)은 건드리지 않는다.
+# [주의] Redmine 웹 UI 에서 사람이 닫는 것은 막지 못한다 — 수용된 한계다.
+#
+#     gate(issue_id) -> {"apply": bool, "ok": bool, "why": str, "release": callable | 없음}
+#
+# `apply` 가 거짓이면 관문 밖이다. `apply and not ok` 면 **아무것도 PUT 하지 않는다**(노트도).
+# 관문 자체가 예외를 던지면 막는다(fail-closed). `release` 는 PUT 성공 뒤 잠금을 푸는 수단이다.
+# ─────────────────────────────────────────
+
+CLOSED_STATUS_NAME = STATUS_ON_FINALIZE      # 이 Redmine 에서 닫힌 상태는 「완료」(id 4 · is_closed) 뿐이다
+
+
+def _gate_log(msg: str, logf=None) -> None:
+    line = f"[redmine-gate] {msg}"
+    if logf:
+        logf(line)
+    else:
+        print(line, file=sys.stderr, flush=True)
+
+
+def _is_closing(status_name: str, entry) -> bool:
+    """요청 상태가 「닫기」인가 — 이름이 「완료」이거나 조회한 항목이 `is_closed` 다.
+
+    둘 중 하나면 닫기로 본다: 이름만 보면 다른 닫힌 상태가 생겼을 때 새고, `is_closed` 만 보면
+    상태 목록 응답에 그 필드가 빠졌을 때 샌다.
+    """
+    if (status_name or "").strip() == CLOSED_STATUS_NAME:
+        return True
+    return bool(isinstance(entry, dict) and entry.get("is_closed") is True)
+
+
+def make_completion_gate(*, root_fn=None, lock=None, review=None, logf=None):
+    """기본 「완료」 관문을 만든다. 주입 자리(테스트): `root_fn`·`lock`·`review`·`logf`.
+
+    `root_fn()` → 잠금 루트 = 리뷰 큐 트윈 루트(AXCluster). 기본은 `issue_lock.default_root`.
+    `lock` 은 `is_tracked`·`release`·`IssueLockError` 를 가진 모듈, `review(root, n, logf=)` 는
+    `issue_review_status` 와 같은 계약이다.
+    """
+    if lock is None:
+        from master import issue_lock as lock
+    if review is None:
+        from master.context_synth.issue_review import issue_review_status as review
+    if root_fn is None:
+        root_fn = lock.default_root
+
+    def gate(issue_id) -> dict:
+        n = int(issue_id)
+        try:
+            root = root_fn()
+        except Exception as e:                               # noqa: BLE001
+            why = (f"일감 잠금 루트(AXCluster 트윈)를 찾지 못했다 — {type(e).__name__}: {e}. "
+                   "추적 여부를 확인할 수 없어 막는다. `master.context_search.paths.resolve"
+                   "(\"AXCluster\")` 를 확인한다")
+            _gate_log(f"#{n} 잠금 루트 실패 — 막음 · {type(e).__name__}", logf)
+            return {"apply": True, "ok": False, "why": why}
+        lock_file = lock.state_path(root) if hasattr(lock, "state_path") else root
+        try:
+            tracked = lock.is_tracked(root, n)
+        except Exception as e:                               # noqa: BLE001
+            why = (f"일감 잠금 상태를 읽지 못했다 — {type(e).__name__}: {e}. 추적 여부를 모르므로 "
+                   f"막는다. 복구: `{lock_file}` 를 사람이 확인·수리한다(깨진 파일은 덮어쓰지 않는다)")
+            _gate_log(f"#{n} 잠금 조회 실패 — 막음 · {type(e).__name__} · {lock_file}", logf)
+            return {"apply": True, "ok": False, "why": why}
+        if not tracked:
+            _gate_log(f"#{n} 잠금 추적 밖 — 관문 해당 없음", logf)
+            return {"apply": False, "ok": True, "why": f"#{n} 는 issue_flow 잠금 추적 밖이다"}
+        try:
+            st = review(root, n, logf=logf)
+        except Exception as e:                               # noqa: BLE001
+            why = (f"#{n} 범위 리뷰 상태를 읽지 못했다 — {type(e).__name__}: {e}. 확인할 수 없어 막는다")
+            _gate_log(f"#{n} 리뷰 상태 조회 실패 — 막음 · {type(e).__name__}", logf)
+            return {"apply": True, "ok": False, "why": why}
+        ok = bool(isinstance(st, dict) and st.get("ok_to_complete") is True)
+        why = str((st or {}).get("why") or "") if isinstance(st, dict) else f"리뷰 판정 형식 오류: {st!r}"
+        _gate_log(f"#{n} 추적 중 · 리뷰 {(st or {}).get('review', '?') if isinstance(st, dict) else '?'}"
+                  f" {(st or {}).get('serial', '') if isinstance(st, dict) else ''} → "
+                  f"{'통과' if ok else '막음'}", logf)
+
+        def release() -> dict:
+            return lock.release(root, n, op="complete", by="redmine.update_issue",
+                                why="Redmine 「완료」 갱신 성공", logf=logf)
+
+        return {"apply": True, "ok": ok, "why": why or ("통과" if ok else "사유 없음 — 막는다"),
+                "release": release}
+
+    return gate
+
+
+def _run_gate(gate, iid: int) -> dict:
+    """관문을 부른다 — 예외·형식 오류는 막음(fail-closed)으로 바꾼다."""
+    try:
+        got = gate(iid)
+    except Exception as e:                                   # noqa: BLE001
+        _gate_log(f"#{iid} 관문 예외 — 막음 · {type(e).__name__}: {e}")
+        return {"apply": True, "ok": False,
+                "why": f"완료 관문 예외 {type(e).__name__}: {e} — 확인할 수 없어 막는다"}
+    if not isinstance(got, dict):
+        _gate_log(f"#{iid} 관문 반환 형식 오류 — 막음 · {got!r}"[:300])
+        return {"apply": True, "ok": False, "why": f"완료 관문 반환 형식 오류({type(got).__name__})"}
+    return got
+
+
+def _release_after_close(decision: dict, iid: int) -> str:
+    """PUT 성공 뒤 잠금 해제. [중요] Redmine 변경은 이미 일어났다 — 실패해도 거절로 바꾸지 않는다."""
+    rel = decision.get("release")
+    if not callable(rel):
+        _gate_log(f"#{iid} 완료 반영 — 관문이 해제 수단을 주지 않아 잠금 해제 생략")
+        return " · 잠금 해제 생략(관문이 해제 수단을 주지 않음)"
+    try:
+        got = rel()
+    except Exception as e:                                   # noqa: BLE001
+        _gate_log(f"#{iid} [주의] 잠금 해제 예외 — {type(e).__name__}: {e}")
+        return (f" · [주의] 잠금 해제 실패 — {type(e).__name__}: {e} "
+                "(Redmine 「완료」는 이미 반영됐다 — 잠금 파일을 사람이 정리한다)")
+    if isinstance(got, dict) and got.get("ok"):
+        _gate_log(f"#{iid} 완료 반영 · 잠금 해제({got.get('was', '?')}→없음)")
+        return " · 잠금 해제"
+    why = (got or {}).get("why", got) if isinstance(got, dict) else got
+    _gate_log(f"#{iid} [주의] 잠금 해제 실패 — {why}")
+    return (f" · [주의] 잠금 해제 실패 — {why} "
+            "(Redmine 「완료」는 이미 반영됐다 — 잠금 파일을 사람이 정리한다)")
+
+
 def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio=None,
                  fixed_version: str = "", parent_issue_id=None,
                  priority_name: str = "", subject: str = "", description: str = "",
                  clear_parent: bool = False,
                  project: str = PROJECT_ID, key: str = "", url: str = "",
-                 sender=None) -> str:
+                 sender=None, completion_gate=None) -> str:
     """기존 이슈에 코멘트·상태·완료율을 붙인다. **사람이 읽을 결과 문자열**을 돌려준다.
 
     [중요] 실패해도 예외를 던지지 않는다 — 검수 흐름은 이것 때문에 멈추면 안 된다. 다만
@@ -314,6 +450,12 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
 
     코멘트 외 필드는 PUT 뒤 GET으로 반영을 확인한다 (`#754`). 미반영·확인 실패는
     `[주의]`로 시작해 호출자가 성공으로 처리하지 않게 한다. PUT은 재시도하지 않는다.
+
+    🔴 **「완료」 관문** (`#883` 규칙 4): 요청 상태가 닫기(「완료」 또는 `is_closed`)이고 실제로
+    `status_id` 를 실을 때만 `completion_gate(issue_id)` 를 부른다. `None` 이면 실호출
+    (`sender is None`)에서만 기본 관문(`make_completion_gate()` — 잠금·범위 리뷰)을 쓰고,
+    `sender` 를 주입한 호출(테스트)은 관문을 걸지 않는다 — 실 트윈을 읽지 않게. 관문이 막으면
+    **아무것도 PUT 하지 않는다**(노트도). 통과한 닫기가 성공하면 잠금을 푼다.
     """
     base = (url or base_url()).rstrip("/")
     k = key or api_key()
@@ -334,13 +476,16 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
     if done_ratio is not None:
         issue["done_ratio"] = int(done_ratio)
     status_note = ""
+    closing = False
     if status_name:
-        sid = resolve_status_id(status_name, key=k, url=base, sender=sender)
+        entry = _status_entry(status_name, key=k, url=base, sender=sender)
+        sid = entry.get("id") if entry else None
         if sid is None:
             # [주의] 원전과 같다 — 상태만 건너뛰고 코멘트는 남긴다. [중요] 다만 **말은 한다.**
             status_note = f" (상태 `{status_name}` 은 이 Redmine 에 없어 건너뜀)"
         else:
             issue["status_id"] = sid
+            closing = _is_closing(status_name, entry)
     priority_note = ""
     if priority_name:
         pid = resolve_priority_id(priority_name, key=k, url=base, sender=sender)
@@ -362,6 +507,23 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
     if not issue:
         return ("[주의] 레드마인 갱신 건너뜀 — 바꿀 것이 없다"
                 + status_note + priority_note + stamp_note)
+
+    decision = None
+    if closing:
+        gate = completion_gate
+        if gate is None and sender is None:
+            gate = make_completion_gate()
+        if gate is not None:
+            decision = _run_gate(gate, iid)
+            if decision.get("apply") and not decision.get("ok"):
+                why = str(decision.get("why") or "사유 없음")
+                _gate_log(f"#{iid} 「{status_name}」 거절 — PUT 안 함 · {why[:200]}")
+                return (f"[주의] 레드마인 #{iid} 완료 거절 — {why} "
+                        "(아무것도 쓰지 않았다: 상태·노트·다른 필드 모두 PUT 안 함)")
+            if not decision.get("apply"):
+                decision = None
+            else:
+                _gate_log(f"#{iid} 「{status_name}」 관문 통과 — PUT 진행")
 
     try:
         _request("PUT", f"{base}/issues/{iid}.json", k, {"issue": issue}, sender=sender)
@@ -393,7 +555,8 @@ def update_issue(issue_id, *, notes: str = "", status_name: str = "", done_ratio
                           + " (미반영 원인은 별도 확인 필요)") if children else ""
             return (f"[주의] 레드마인 #{iid} 요청했으나 반영 안 됨 — "
                     + " · ".join(mismatches) + child_note + f". {put_note}{extra_notes}")
-    return f"레드마인 #{iid} 갱신 ({what}){status_note}{priority_note}{stamp_note}"
+    lock_note = _release_after_close(decision, iid) if decision else ""
+    return f"레드마인 #{iid} 갱신 ({what}){status_note}{priority_note}{stamp_note}{lock_note}"
 
 
 # ─────────────────────────────────────────
