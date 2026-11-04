@@ -768,6 +768,21 @@ def _synthesize(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
                     r.canary_write_failed += 1
 
 
+def _issue_link(op: str, paths, sha: str, *args, **kw) -> None:
+    """일감 마감 추적에 잇는다 (`#884` T2) — **색인을 깨지 않는다.**
+
+    `issue_link` 함수들이 이미 예외를 잡지만, import 실패까지 여기서 한 번 더 막는다. 노트
+    (`r.review_note` 등)는 바꾸지 않고 저널(stdout)에만 찍는다 — 추적에 없는 해시는 아무것도 안 찍는다.
+    """
+    if not sha:
+        return
+    try:
+        from ..context_synth import issue_link as _il
+        getattr(_il, op)(getattr(paths, "root", ""), sha, *args, logf=print, **kw)
+    except Exception as e:                              # noqa: BLE001 — 색인을 깨지 않는다
+        print(f"[issue_link] [주의] {op} {sha[:12]} — 연결 호출 실패, 건너뛴다: {type(e).__name__}: {e}")
+
+
 def _enqueue_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
                     *, commit: str = "", enqueue=None) -> None:
     """리뷰를 **큐에 등재만** 한다 (`#635` · 설계안 `docs/17-review-queue.md` §3.2).
@@ -797,6 +812,7 @@ def _enqueue_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
     from ..projects import profile as _pf
     if _pf.is_index_only(getattr(paths, "name", "")):
         r.review_note = "색인 전용 프로젝트 — 자동 리뷰를 쌓지 않는다 (#693)"
+        _issue_link("on_skipped", paths, commit or r.to_commit, r.review_note)
         return
 
     from ..context_synth import review_gen as rg
@@ -805,6 +821,7 @@ def _enqueue_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
     changed = rg.review_source_files(paths, changed)
     if not changed:
         r.review_note = "리뷰 등재 생략: 소스 변경 없음"
+        _issue_link("on_skipped", paths, commit or r.to_commit, r.review_note)
         return
 
     c = commit or r.to_commit
@@ -822,6 +839,8 @@ def _enqueue_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
             ok = False
         if ok:
             r.review_note = f"리뷰 등재 생략: 정상 리뷰가 이미 있다 ({prior[0].name})"
+            # 리뷰가 실제로 있다 — 추적에는 `skipped` 가 아니라 `done` 으로 적는다(`issue_link` 머리말)
+            _issue_link("on_skipped", paths, c, r.review_note, reviewed=True)
             return
         r.review_note = f"[중요] 기존 리뷰가 형식 위반 — 다시 등재한다 ({prior[0].name})"
 
@@ -836,6 +855,7 @@ def _enqueue_review(paths: ProjectPaths, changed: list[str], r: "ProjectResult",
             r.canary_write_failed += 1
         return
     r.review_queued = c
+    _issue_link("on_enqueued", paths, c, item)      # `#884` T2 — 일감 해시면 우선순위 10 · queued
     note = f"리뷰 큐 등재 {c[:8]} (파일 {len(changed or [])}건 · {item.get('state')})"
     r.review_note = (r.review_note + " · " + note) if r.review_note else note
 
@@ -1083,6 +1103,8 @@ def process_event(ev: Event, *, registry: Registry | None = None,
                 r.nonsource_notes.append(
                     f"{c[:8]}: " + ("머지 — 조각 커밋이 이미 걸었다 · 합성 없음" if merge
                                     else "소스 밖 변경만 — 합성 없음"))
+                # `#884` T2 — 리뷰 큐에 안 들어가는 커밋이다. 일감 해시면 `skipped` 로 적는다.
+                _issue_link("on_skipped", paths, c, r.nonsource_notes[-1])
                 continue
             r.source_changed += len(changed)
             _update_graphs(paths, changed, r)

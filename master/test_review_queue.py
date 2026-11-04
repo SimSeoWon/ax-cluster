@@ -302,11 +302,30 @@ def test_claim_exclude():
     shutil.rmtree(root)
 
 
+def test_set_priority():
+    """`#884` T2 — 일감 해시의 커밋 리뷰를 10 으로 올린다. 올리기만 하고 meta 는 합친다."""
+    root = make_root()
+    Q.enqueue(root, key="lo")
+    Q.enqueue(root, key="mid")
+    log = []
+    it = Q.set_priority(root, "commit:mid", 10, meta={"issue_id": 884}, logf=log.append)
+    check("⑬ 올린다", it["priority"] == 10 and it["meta"] == {"issue_id": 884}, str(it))
+    check("⑬ 로그 한 줄", len(log) == 1 and "0→10" in log[0], str(log))
+    check("⑬ 올린 항목을 먼저 꺼낸다", Q.claim(root)["key"] == "mid")
+    it = Q.set_priority(root, "commit:mid", 0, meta={"issue_round": 2}, logf=log.append)
+    check("⑬ 낮추지 않는다 · meta 는 합친다",
+          it["priority"] == 10 and it["meta"] == {"issue_id": 884, "issue_round": 2}, str(it))
+    check("⑬ 상태는 안 바꾼다", it["state"] == "running", it["state"])
+    check("⑬ 낮추기 요청은 로그가 말한다", "낮추지 않는다" in log[-1], log[-1])
+    check("⑬ 없는 항목은 거절", raises(Q.set_priority, root, "commit:nope", 10))
+    shutil.rmtree(root)
+
+
 if __name__ == "__main__":
     for fn in (test_classify, test_caps, test_enqueue_and_claim, test_outcomes,
                test_format_violation_does_not_block, test_broken_queue_and_location,
                test_concurrent_claim, test_orphan_running_is_reclaimed, test_claim_exclude,
-               test_wait_kind):
+               test_wait_kind, test_set_priority):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

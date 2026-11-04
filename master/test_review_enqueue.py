@@ -177,12 +177,159 @@ def test_요약줄():
     check("⑦ 요약이 위임을 말한다", "리뷰 등재로 위임" in line and "abc12345" in line, line)
 
 
+# ── `#884` T2 — 일감 마감 추적 연결 자리 ─────────────────────────────────────────
+
+class Hooks:
+    """`issue_link` 의 두 함수를 기록기로 바꾼다 — 호출부가 어디서 무엇을 넘기는지만 본다."""
+
+    def __init__(self, boom=False):
+        from master.context_synth import issue_link as L
+        self.L, self.calls, self.boom = L, [], boom
+        self.orig = (L.on_enqueued, L.on_skipped)
+
+    def _rec(self, op):
+        def f(root, sha, *a, **kw):
+            self.calls.append((op, str(root), sha, a, {k: v for k, v in kw.items() if k != "logf"}))
+            if self.boom:
+                raise RuntimeError("연결 폭발")
+            return {"ok": True}
+        return f
+
+    def __enter__(self):
+        self.L.on_enqueued, self.L.on_skipped = self._rec("enq"), self._rec("skip")
+        return self
+
+    def __exit__(self, *exc):
+        self.L.on_enqueued, self.L.on_skipped = self.orig
+
+
+def test_연결_등재_자리():
+    root = make_root()
+    r = Res()
+    with Hooks() as h:
+        C._enqueue_review(Paths(root), ["Source/A.cpp"], r, commit="abc12345deadbeef")
+    check("T2 등재 뒤 on_enqueued", len(h.calls) == 1 and h.calls[0][0] == "enq"
+          and h.calls[0][1] == str(root) and h.calls[0][2] == "abc12345deadbeef"
+          and h.calls[0][3][0].get("state") == "pending", str(h.calls))
+    check("T2 note 는 그대로", r.review_note == "리뷰 큐 등재 abc12345 (파일 1건 · pending)", r.review_note)
+    shutil.rmtree(root)
+
+
+def test_연결_건너뜀_자리():
+    root = make_root()
+    # 소스 변경 없음
+    r = Res()
+    with Hooks() as h:
+        C._enqueue_review(Paths(root), ["Content/X.uasset"], r, commit="abc12345deadbeef")
+    check("T2 소스 변경 없음 → on_skipped", h.calls == [("skip", str(root), "abc12345deadbeef",
+                                                        ("리뷰 등재 생략: 소스 변경 없음",), {})],
+          str(h.calls))
+    check("T2 note 그대로", r.review_note == "리뷰 등재 생략: 소스 변경 없음", r.review_note)
+    # 정상 리뷰가 이미 있다 → reviewed=True
+    write_review(root, "abc12345", GOOD)
+    r = Res()
+    with Hooks() as h:
+        C._enqueue_review(Paths(root), ["Source/A.cpp"], r, commit="abc12345deadbeef")
+    check("T2 정상 리뷰 → on_skipped(reviewed=True)",
+          len(h.calls) == 1 and h.calls[0][0] == "skip" and h.calls[0][4] == {"reviewed": True}
+          and "정상 리뷰가 이미 있다" in h.calls[0][3][0], str(h.calls))
+    # 색인 전용
+    from master.projects import profile as PF
+    orig = PF.is_index_only
+    PF.is_index_only = lambda name: True
+    r = Res()
+    try:
+        with Hooks() as h:
+            C._enqueue_review(Paths(root), ["Source/A.cpp"], r, commit="")
+    finally:
+        PF.is_index_only = orig
+    check("T2 색인 전용 → on_skipped (커밋은 to_commit)",
+          len(h.calls) == 1 and h.calls[0][0] == "skip" and h.calls[0][2] == r.to_commit
+          and "색인 전용" in h.calls[0][3][0], str(h.calls))
+    # 커밋 없음 → 부르지 않는다
+    r = Res()
+    r.to_commit = ""
+    with Hooks() as h:
+        C._enqueue_review(Paths(root), ["Content/X.uasset"], r, commit="")
+    check("T2 커밋이 없으면 연결하지 않는다", h.calls == [], str(h.calls))
+    shutil.rmtree(root)
+
+
+def test_연결_실패가_색인을_깨지_않는다():
+    root = make_root()
+    r = Res()
+    with Hooks(boom=True):
+        C._enqueue_review(Paths(root), ["Source/A.cpp"], r, commit="abc12345deadbeef")
+    check("T2 연결 예외에도 등재는 성립", r.review_queued == "abc12345deadbeef"
+          and r.review_note.startswith("리뷰 큐 등재"), r.review_note)
+    shutil.rmtree(root)
+
+
+def test_연결_실물_우선순위():
+    """실제 issue_track·review_queue 파일 — 추적 해시면 10 · queued, 아니면 0."""
+    from master.context_synth import issue_track as T
+    from master.context_synth import review_queue as Q
+    root = make_root()
+    sha, other = "ab" * 20, "cd" * 20
+    T.register(root, 884, project="Demo", base="0" * 40, end="f" * 40, hashes=[sha])
+    C._enqueue_review(Paths(root), ["Source/A.cpp"], Res(), commit=sha)
+    C._enqueue_review(Paths(root), ["Source/A.cpp"], Res(), commit=other)
+    pr = {x["key"]: x["priority"] for x in Q.items(root)}
+    check("T2 실물 — 추적 해시 10 · 아닌 해시 0", pr == {sha: 10, other: 0}, str(pr))
+    st = T.current(root, 884)["hashes"][0]["state"]
+    check("T2 실물 — 해시 queued", st == "queued", st)
+    shutil.rmtree(root)
+
+
+def test_연결_걷기의_건너뜀():
+    """걷기 루프 — 깨끗한 머지·소스 밖 커밋은 `_enqueue_review` 전에 continue 한다. 그 자리도 잇는다."""
+    from master import test_indexer as TI
+    C1, N1, MX, MY = "1" * 40, "2" * 40, "e" * 40, "f" * 40
+    parents = {C1: [], N1: [C1], MX: [N1, "9" * 40], MY: [MX, "8" * 40]}
+    tree = {MX: "", MY: "Source/A.cpp"}
+
+    def run(repo, *args):
+        if args[0] == "rev-parse":
+            return 0, MY
+        if args[0] == "log":
+            return 0, "\n".join([MY, MX, N1, C1])
+        if args[0] == "rev-list":
+            return 0, " ".join([args[-1]] + parents[args[-1]])
+        if args[0] == "diff-tree":
+            return 0, tree[args[-3]]
+        if args[0] == "diff":
+            return 0, "" if args[3] == N1 else "Source/B.cpp"
+        if args[0] == "ls-files":
+            return 0, "Source/A.cpp\nSource/B.cpp"
+        return 0, ""
+
+    tmp = Path(tempfile.mkdtemp(prefix="ax-enq-walk-"))
+    try:
+        TI.make_project(tmp / "w")
+        with Hooks() as h:
+            r = C.process_event(TI.ev(), registry=TI.FakeReg(tmp / "w"), git=run,
+                                reindex=lambda p: 1, synth_run=TI.synth_writes,
+                                enqueue_review=lambda root, **k: {"state": "pending"})
+        skips = [(c[2], c[3][0]) for c in h.calls if c[0] == "skip"]
+        enqs = [c[2] for c in h.calls if c[0] == "enq"]
+        check("T2 걷기 — 네 커밋을 다 걷는다", r.commits_total == 4 and not r.halted, r.summary)
+        check("T2 걷기 — 소스 밖·깨끗한 머지가 on_skipped",
+              [s for s, _ in skips] == [N1, MX] and "소스 밖" in skips[0][1] and "머지" in skips[1][1],
+              str(skips))
+        check("T2 걷기 — 등재된 커밋은 on_enqueued", enqs == [C1, MY], str(enqs))
+        check("T2 걷기 — 연결 root 는 트윈 루트",
+              all(c[1] == str(tmp / "w" / "Demo") for c in h.calls), str({c[1] for c in h.calls}))
+    finally:
+        shutil.rmtree(tmp)
+
+
 if __name__ == "__main__":
     for fn in (test_기본_등재, test_LLM을_부르지_않는다,
                test_기존_리뷰가_정상이면_등재하지_않는다,
                test_형식위반_리뷰는_다시_등재한다, test_등재_실패는_카나리다,
                test_커밋이_없으면_생략, test_호출부가_todo_밖이고_changed_를_넘긴다,
-               test_요약줄):
+               test_요약줄, test_연결_등재_자리, test_연결_건너뜀_자리,
+               test_연결_실패가_색인을_깨지_않는다, test_연결_실물_우선순위, test_연결_걷기의_건너뜀):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

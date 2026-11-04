@@ -380,6 +380,35 @@ def set_meta(root, item_id: str, **kv) -> dict:
         return it
 
 
+def set_priority(root, item_id: str, priority: int, *, meta: dict | None = None,
+                 logf=None) -> dict:
+    """항목의 우선순위를 **올리기만** 하고 `meta` 를 합친다 (`#884` T2). 상태는 안 바꾼다.
+
+    일감 마감에 등록된 해시의 커밋 리뷰를 사람 요청과 같은 10 으로 올리는 자리다 — 색인기가
+    먼저 0 으로 넣은 항목도 앞으로 당긴다. [중요] **낮추지 않는다** — 사람 요청(10)으로 들어온
+    항목을 다른 경로가 0 으로 끌어내리면 `#638` 의 약속이 깨진다. 같거나 낮은 값이면 우선순위는
+    그대로 두고 `meta` 만 합친다. 없는 항목은 `ReviewQueueError`.
+    """
+    log = logf or (lambda m: None)
+    want = int(priority)
+    with _locked(root):
+        data = _read(root)
+        it = next((x for x in data["items"] if x.get("id") == item_id), None)
+        if it is None:
+            raise ReviewQueueError(f"큐에 없는 항목: {item_id}")
+        cur = int(it.get("priority") or 0)
+        if want > cur:
+            it["priority"] = want
+        if meta:
+            it.setdefault("meta", {}).update(meta)
+        it["updated_at"] = _now()
+        _write(root, data)
+    log(f"[리뷰큐] 우선순위 {_short(it['key'])} {cur}→{it['priority']}"
+        + ("" if want > cur else f" (요청 {want} — 낮추지 않는다)")
+        + (f" · meta {sorted(meta)}" if meta else ""))
+    return it
+
+
 def counts(root) -> dict:
     """상태별 건수. 읽기만 한다."""
     data = _read(root)
