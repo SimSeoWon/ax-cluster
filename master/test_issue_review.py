@@ -13,6 +13,10 @@
     ⑨ 사유 없는 기각은 거절 → 여전히 막힘
     ⑩ done(스킵, 리뷰 파일 없음) → 완료 가능 · done 인데 번호 없음 → 막힘(fail-closed)
     ⑪ 다른 일감의 항목은 섞이지 않는다 · 큐를 바꾸지 않는다
+    ⑫ (`#884` T5) 마감 추적 라운드가 있으면 그 종합 리뷰(summary)로 판정한다 — 옛 범위 항목보다 우선
+         대기 해시 → pending(개수) · summary waiting/queued/running → pending · failed → failed ·
+         abandoned → abandoned(막힘) · done+serial → HIGH 판정 · done 스킵 → 완료 가능 ·
+         done 번호 없음 → 막힘 · 깨진 추적 파일 → 예외(관문이 막는다) · 추적 파일 없으면 잠금 파일도 안 만든다
 
 `.venv/bin/python master/test_issue_review.py`
 """
@@ -28,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master.context_synth import fix_index as F                   # noqa: E402
 from master.context_synth import issue_review as IR               # noqa: E402
+from master.context_synth import issue_track as IT                # noqa: E402
 from master.context_synth import review_queue as RQ               # noqa: E402
 
 PASS = FAIL = 0
@@ -225,9 +230,135 @@ def test_logs():
     shutil.rmtree(root)
 
 
+HA, HB = "a" * 40, "b" * 40
+
+
+def tracked_root(*, legacy_done: bool = False) -> Path:
+    root = new_root()
+    if legacy_done:                                 # 같은 일감의 옛 범위 항목(HIGH 0 done)이 있어도
+        it = enqueue(root, B2, E2)
+        write_review(root, B2, E2, ISSUE, [("mid", 1)], hhmm="0900")
+        done(root, it["id"])
+    r = IT.register(root, ISSUE, project="AXCluster", base=B1, end=E1, hashes=[HA, HB])
+    assert r["ok"], r
+    return root
+
+
+def terminal(root: Path) -> None:
+    IT.set_hash(root, ISSUE, HA, state="done", serial="R90", findings=0)
+    IT.set_hash(root, ISSUE, HB, state="skipped", why="소스 변경 없음")
+
+
+def track_item(root: Path) -> dict:
+    return RQ.enqueue(root, kind="range", key=f"{B1}..{E1}", priority=10,
+                      meta={"issue_id": ISSUE, "base": B1, "end": E1, "issue_round": 1, "track": True},
+                      requester="issue_progress")
+
+
+def test_track_pending_and_failed():
+    root = tracked_root(legacy_done=True)
+    lines = []
+    got = IR.issue_review_status(root, ISSUE, logf=lines.append)
+    check("⑫ 추적 라운드가 옛 범위 항목보다 우선 → pending", got["review"] == "pending"
+          and not got["ok_to_complete"] and got["round"] == 1, str(got))
+    check("⑫ 대기 해시 수를 말한다", "대기 해시 2개" in got["why"] and got["hashes"]["pending"] == 2
+          and got["hashes"]["total"] == 2, str(got))
+    check("⑫ 로그: 추적 라운드로 판정", any("마감 추적 라운드 1 로 판정" in m for m in lines)
+          and any("판정 pending" in m for m in lines), str(lines))
+    IT.set_hash(root, ISSUE, HA, state="queued")
+    got = IR.issue_review_status(root, ISSUE)
+    check("⑫ queued 해시도 대기", got["hashes"]["queued"] == 1 and got["hashes"]["waiting"] == 1
+          and got["review"] == "pending", str(got))
+    terminal(root)
+    got = IR.issue_review_status(root, ISSUE)
+    check("⑫ 해시 종결 · summary waiting → pending", got["review"] == "pending"
+          and "종합 리뷰 waiting" in got["why"] and got["hashes"]["pending"] == 0, str(got))
+    it = track_item(root)
+    IT.set_summary(root, ISSUE, state="queued", item_id=it["id"])
+    got = IR.issue_review_status(root, ISSUE)
+    check("⑫ summary queued → pending · item_id", got["review"] == "pending" and got["item_id"] == it["id"]
+          and got["queue_state"] == "pending" and got["items"] == [it["id"]], str(got))
+    IT.set_summary(root, ISSUE, state="running")
+    check("⑫ summary running → pending", IR.issue_review_status(root, ISSUE)["review"] == "pending")
+    IT.set_summary(root, ISSUE, state="failed")
+    got = IR.issue_review_status(root, ISSUE)
+    check("⑫ summary failed → failed · 막힘", got["review"] == "failed" and not got["ok_to_complete"]
+          and "다시 건다" in got["why"], str(got))
+    IT.set_summary(root, ISSUE, state="abandoned")
+    got = IR.issue_review_status(root, ISSUE)
+    check("⑫ summary abandoned → abandoned · 막힘", got["review"] == "abandoned" and not got["ok_to_complete"]
+          and "다시 등재" in got["why"], str(got))
+    shutil.rmtree(root)
+
+
+def test_track_done():
+    root = tracked_root()
+    terminal(root)
+    write_review(root, B1, E1, ISSUE, [("high", 10), ("low", 30)])
+    F.sweep(root, logf=lambda m: None)
+    serial = F.serial_for_range(root, B1, E1)
+    it = track_item(root)
+    IT.set_summary(root, ISSUE, state="queued", item_id=it["id"])
+    IT.set_summary(root, ISSUE, state="done", serial=serial, noted=True)
+    got = IR.issue_review_status(root, ISSUE)
+    check("⑫ done + HIGH open → 막힘 · 번호", got["review"] == "done" and got["serial"] == serial
+          and not got["ok_to_complete"] and [b["id"] for b in got["blocking"]] == [f"{serial}-2"]
+          and "라운드 1 종합 리뷰" in got["why"], str(got))
+    F.set_status(root, f"{serial}-2", "dismissed", note="의도")
+    got = IR.issue_review_status(root, ISSUE)
+    check("⑫ HIGH 기각 → 완료 가능", got["ok_to_complete"] and got["blocking"] == []
+          and got["hashes"] == {"total": 2, "waiting": 0, "queued": 0, "done": 1, "abandoned": 0,
+                                "skipped": 1, "pending": 0}, str(got))
+    shutil.rmtree(root)
+
+    root = tracked_root()
+    terminal(root)
+    it = track_item(root)
+    IT.set_summary(root, ISSUE, state="queued", item_id=it["id"])
+    done(root, it["id"], note="스킵: 변경 파일 없음")
+    IT.set_summary(root, ISSUE, state="done", noted=True)
+    got = IR.issue_review_status(root, ISSUE)
+    check("⑫ done 스킵(번호 없음) → 완료 가능", got["review"] == "done" and got["ok_to_complete"]
+          and got["serial"] == "", str(got))
+    shutil.rmtree(root)
+
+    root = tracked_root()
+    terminal(root)
+    it = track_item(root)
+    IT.set_summary(root, ISSUE, state="queued", item_id=it["id"])
+    done(root, it["id"], note="x.md")
+    IT.set_summary(root, ISSUE, state="done", noted=True)
+    got = IR.issue_review_status(root, ISSUE)
+    check("⑫ [중요] done 인데 번호 없음 → 막힘", got["review"] == "done" and not got["ok_to_complete"]
+          and "번호" in got["why"], str(got))
+    shutil.rmtree(root)
+
+
+def test_track_corrupt_and_absent():
+    root = new_root()
+    IT.state_path(root).write_text("{깨짐", encoding="utf-8")
+    try:
+        IR.issue_review_status(root, ISSUE)
+        raised = False
+    except IT.IssueTrackError:
+        raised = True
+    check("⑫ 깨진 추적 파일 → IssueTrackError(관문이 막는다)", raised)
+    check("⑫ 깨진 파일 덮어쓰지 않음", IT.state_path(root).read_text(encoding="utf-8") == "{깨짐")
+    shutil.rmtree(root)
+
+    root = new_root()
+    got = IR.issue_review_status(root, ISSUE)
+    check("⑫ 추적 없음 → 옛 경로 · round None", got["review"] == "none" and got["round"] is None
+          and got["hashes"] == {}, str(got))
+    check("⑫ 추적 파일 없으면 잠금 파일도 안 만든다", not (root / IT.LOCK_NAME).exists()
+          and not IT.state_path(root).exists())
+    shutil.rmtree(root)
+
+
 if __name__ == "__main__":
     for fn in (test_none, test_pending, test_abandoned, test_done_paths, test_latest_wins,
-               test_skip_and_unknown_serial, test_logs):
+               test_skip_and_unknown_serial, test_logs, test_track_pending_and_failed,
+               test_track_done, test_track_corrupt_and_absent):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

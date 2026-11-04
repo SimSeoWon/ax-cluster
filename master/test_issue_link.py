@@ -197,8 +197,19 @@ def test_closed_round_not_linked():
     shutil.rmtree(root)
 
 
+def test_public_apply():
+    """`#884` T5 — `apply` 가 공개 이름이고 `_apply` 는 같은 함수의 별칭이다."""
+    check("⑨ apply 공개 · _apply 별칭", callable(L.apply) and L._apply is L.apply)
+    root = make_root()
+    it = Q.enqueue(root, key=C, files=["Source/C.cpp"])
+    out = L.apply(root, 884, 1, C, it, lambda m: None)
+    check("⑨ apply → queued · 우선순위 10", out.get("ok") and out.get("hash_state") == "queued"
+          and item(root, C)["priority"] == 10, str(out))
+    shutil.rmtree(root)
+
+
 if __name__ == "__main__":
-    for fn in (test_on_enqueued, test_on_enqueued_done, test_on_skipped, test_link_round,
+    for fn in (test_public_apply, test_on_enqueued, test_on_enqueued_done, test_on_skipped, test_link_round,
                test_corruption_tolerated, test_no_state_file_no_lock, test_closed_round_not_linked):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")

@@ -13,6 +13,9 @@
          추적 밖 → 통과 · 추적+리뷰 없음 → 막힘 · 추적+HIGH open → 막힘
          추적+리뷰 스킵 완료 → PUT 뒤 **실제 잠금 해제** · 깨진 잠금 파일 → 막힘(경로를 말한다)
          루트 해석 실패 → 막힘
+    ⑩ (`#884` T5) 잠금이 풀렸어도 마감 추적 라운드가 있으면 관문 적용 — 해시 대기 → 막힘 ·
+         종합 리뷰 done(HIGH 0) → PUT · **해제 꼬리 없음**(풀 잠금이 없다) · 깨진 추적 파일 → 막힘(경로) ·
+         잠금+라운드 둘 다 → 통과 뒤 잠금 해제
 
 [중요] 실 Redmine·실 트윈을 두드리지 않는다 — `sender` 와 임시 루트만 쓴다.
 
@@ -28,6 +31,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master import issue_lock as IL                               # noqa: E402
 from master import redmine as RM                                  # noqa: E402
+from master.context_synth import fix_index as FX                  # noqa: E402
+from master.context_synth import issue_track as IT                # noqa: E402
 from master.context_synth import review_queue as RQ               # noqa: E402
 from master.test_redmine import Sender                            # noqa: E402
 
@@ -297,6 +302,95 @@ def test_real_gate_broken_lock_and_root():
           and "KeyError" in out and not s.puts, out)
 
 
+HA, HB = "a" * 40, "b" * 40
+
+
+def _tracked_round(root, n, b, e):
+    r = IT.register(root, n, project="AXCluster", base=b, end=e, hashes=[HA, HB])
+    assert r["ok"], r
+
+
+def _summary_done(root, n, b, e, rows):
+    """해시 둘 종결 → 종합 리뷰 문서 → summary done(serial)."""
+    IT.set_hash(root, n, HA, state="done", serial="R50", findings=0)
+    IT.set_hash(root, n, HB, state="skipped", why="소스 변경 없음")
+    d = root / "reviews" / "_range"
+    d.mkdir(parents=True, exist_ok=True)
+    safety = "\n".join(f"| m/x.py | {sev} | {ln} | 설명 | 고친다 |" for sev, ln in rows)
+    (d / f"2026-11-05_1000_issue{n}_{b[:8]}-{e[:8]}.md").write_text(
+        f"# 일감 범위 리뷰 — #{n}\n\n- 범위: `{b}..{e}`\n- 일감: #{n}\n- 작성자: Antigravity\n"
+        "- 파일: 1개\n- 생성: 2026-11-05 10:00\n\n### m\n\n## 1. 변경분 코딩 컨벤션\n"
+        "| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n|---|---|---|---|---|\n\n"
+        "## 2. 변경분 버그·안전성\n| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n"
+        "|---|---|---|---|---|\n" + safety + "\n", encoding="utf-8")
+    FX.sweep(root, logf=lambda m: None)
+    serial = FX.serial_for_range(root, b, e)
+    assert serial, "serial"
+    IT.set_summary(root, n, state="done", serial=serial, noted=True)
+    return serial
+
+
+def test_track_only_gate():
+    logs: list = []
+    root = _roots()
+    gate = _real_gate(root, logs)
+    b, e = "5" * 40, "6" * 40
+    _tracked_round(root, 886, b, e)
+    check("⑩ 잠금 없음(finish 가 풀었다)", not IL.is_tracked(root, 886))
+    s = Sender()
+    out = RM.update_issue(886, notes="닫음", status_name="완료", sender=s, completion_gate=gate)
+    check("⑩ 라운드만 있어도 관문 적용 → 해시 대기로 막힘", out.startswith("[주의] 레드마인 #886 완료 거절")
+          and "대기 해시 2개" in out and not s.puts, out)
+    check("⑩ 로그: 추적 근거(마감 라운드)", any("추적 중(마감 라운드 1)" in m for m in logs), str(logs))
+
+    _summary_done(root, 886, b, e, [("mid", 3)])
+    logs.clear()
+    s = Sender()
+    out = RM.update_issue(886, notes="닫음", status_name="완료", sender=s, completion_gate=gate)
+    check("⑩ 종합 리뷰 done · HIGH 0 → PUT", len(s.puts) == 1 and out.startswith("레드마인 #886 갱신"), out)
+    check("⑩ 해제 꼬리 없음(풀 잠금이 없다)", "잠금" not in out, out)
+    d = gate(886)
+    check("⑩ 결정: lock_tracked False · release 없음 · 라운드", d.get("lock_tracked") is False
+          and "release" not in d and d.get("track_round") == 1 and d["ok"], str(d))
+
+    # HIGH 가 있으면 막힌다
+    root2 = _roots()
+    _tracked_round(root2, 887, b, e)
+    _summary_done(root2, 887, b, e, [("high", 9)])
+    s = Sender()
+    out = RM.update_issue(887, status_name="완료", sender=s, completion_gate=_real_gate(root2, []))
+    check("⑩ 종합 리뷰 HIGH open → 막힘", "HIGH 지적 1건" in out and not s.puts, out)
+
+
+def test_track_and_lock_releases():
+    logs: list = []
+    root = _roots()
+    b, e = "7" * 40, "8" * 40
+    IL.acquire(root, 888, branch="issue/888", start_rev="a" * 40)
+    _tracked_round(root, 888, b, e)
+    _summary_done(root, 888, b, e, [("low", 2)])
+    s = Sender()
+    out = RM.update_issue(888, status_name="완료", sender=s, completion_gate=_real_gate(root, logs))
+    check("⑩ 잠금+라운드 → PUT · 잠금 해제", len(s.puts) == 1 and out.endswith(" · 잠금 해제")
+          and not IL.is_tracked(root, 888), out)
+    check("⑩ 로그: 추적 근거 둘", any("추적 중(잠금 · 마감 라운드 1)" in m for m in logs), str(logs))
+
+
+def test_track_corrupt_refuses():
+    root = _roots()
+    IT.state_path(root).write_text("{깨짐", encoding="utf-8")
+    s = Sender()
+    out = RM.update_issue(889, status_name="완료", sender=s, completion_gate=_real_gate(root, []))
+    check("⑩ 깨진 추적 파일 → 막음", out.startswith("[주의] 레드마인 #889 완료 거절") and not s.puts, out)
+    check("⑩ 복구 경로(추적 파일)를 말한다", str(IT.state_path(root)) in out and "복구" in out, out)
+    check("⑩ 깨진 파일 덮어쓰지 않음", IT.state_path(root).read_text(encoding="utf-8") == "{깨짐")
+
+    root = _roots()
+    RM.update_issue(890, status_name="완료", sender=Sender(), completion_gate=_real_gate(root, []))
+    check("⑩ 추적 파일 없으면 잠금 파일도 안 만든다", not (root / IT.LOCK_NAME).exists()
+          and not IT.state_path(root).exists())
+
+
 def test_server_warn_field():
     """`#883` T5 — 8101 `/redmine/note` 는 반영 뒤 경고(잠금 해제 실패 등)를 `warn` 으로 따로 말한다.
 
@@ -316,6 +410,7 @@ def main() -> int:
                test_non_closing_untouched, test_closed_detection,
                test_injected_sender_without_gate, test_real_gate_wiring,
                test_real_gate_skip_releases, test_real_gate_broken_lock_and_root,
+               test_track_only_gate, test_track_and_lock_releases, test_track_corrupt_refuses,
                test_server_warn_field):
         fn()
     total = PASS + FAIL

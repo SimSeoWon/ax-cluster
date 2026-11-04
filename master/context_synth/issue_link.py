@@ -84,8 +84,12 @@ def _serial(root, sha: str) -> str:
         return ""
 
 
-def _apply(root, n: int, rnum: int, sha: str, item: dict, logf) -> dict:
-    """큐 항목 하나의 상태를 추적 기록에 옮긴다. 호출부가 예외를 잡는다."""
+def apply(root, n: int, rnum: int, sha: str, item: dict, logf) -> dict:
+    """큐 항목 하나의 상태를 추적 기록에 옮긴다. 호출부가 예외를 잡는다.
+
+    공개 이름이다(`#884` T5) — `issue_progress.sync_issue_tracks` 도 같은 규칙으로 잇는다.
+    `_apply` 는 옛 이름(별칭)이다.
+    """
     log = _say(logf)
     state = item.get("state")
     out = {"ok": True, "linked": True, "issue_id": n, "round": rnum, "item_state": state}
@@ -108,6 +112,9 @@ def _apply(root, n: int, rnum: int, sha: str, item: dict, logf) -> dict:
     return out
 
 
+_apply = apply          # 옛 이름 — T2·T3 호출부 호환
+
+
 def on_enqueued(root, sha, item, *, logf=None) -> dict:
     """색인기가 `commit:<sha>` 를 등재한 직후. 추적에 없는 해시면 `linked=False` 로 아무것도 안 한다."""
     try:
@@ -115,7 +122,7 @@ def on_enqueued(root, sha, item, *, logf=None) -> dict:
         if own is None:
             return {"ok": True, "linked": False}
         n, rnum, _ = own
-        return _apply(root, n, rnum, it._norm_sha(sha), item or {}, logf)
+        return apply(root, n, rnum, it._norm_sha(sha), item or {}, logf)
     except Exception as e:                              # noqa: BLE001 — 색인을 깨지 않는다
         return _fail(logf, "on_enqueued", sha, e)
 
@@ -171,7 +178,7 @@ def link_round(root, issue_id, *, logf=None) -> dict:
                 untouched.append(h["sha"])
                 continue
             try:
-                res = _apply(root, n, rnd["round"], h["sha"], item, logf)
+                res = apply(root, n, rnd["round"], h["sha"], item, logf)
             except Exception as e:                      # noqa: BLE001
                 res = _fail(logf, "link_round", h["sha"], e)
             (linked if res.get("ok") else errors).append({"sha": h["sha"], **res})

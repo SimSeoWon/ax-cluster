@@ -610,8 +610,15 @@ def test_지적_없으면_종전_범위_리뷰():
     shutil.rmtree(root)
 
 
+def test_공개_apply_를_쓴다():
+    """`#884` T5 — 동기화는 `issue_link.apply`(공개 이름)를 부른다."""
+    import inspect
+    src = inspect.getsource(P)
+    check("⑩ il.apply 사용", "il.apply(" in src and "il._apply(" not in src)
+
+
 if __name__ == "__main__":
-    for fn in (test_done_과_포기_한_노트, test_노트_실패는_다음_회차가_다시, test_워터마크,
+    for fn in (test_공개_apply_를_쓴다, test_done_과_포기_한_노트, test_노트_실패는_다음_회차가_다시, test_워터마크,
                test_추적_밖과_연결, test_깨진_추적_파일, test_실_redmine_가드,
                test_main_이_drain_앞뒤로_부른다,
                test_종합_등재는_전부_종결_뒤, test_종합_리뷰_한_바퀴, test_종합_상태_전이,

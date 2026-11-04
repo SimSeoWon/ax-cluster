@@ -16,7 +16,7 @@
     ① 큐 → 해시   waiting·queued 해시의 `commit:<sha>` 항목이
                      done        → done (R 번호 · 지적 수 — fix_index)
                      abandoned   → abandoned (why = last_why)
-                     pending·running·failed 이고 해시가 waiting → `issue_link._apply`(우선순위 10 · queued)
+                     pending·running·failed 이고 해시가 waiting → `issue_link.apply`(우선순위 10 · queued)
     ② 워터마크    waiting 이고 큐 항목이 없는 해시가 색인 워터마크(`index.last_indexed_commit`)의
                    조상이면 → skipped("색인 워터마크 통과 · 리뷰 미등재").
                    미러(`paths.repo`)에 그 커밋이 아직 없으면 그대로 waiting(미러 지연, `#880`)
@@ -160,7 +160,7 @@ def _sync_round(paths, rnd: dict, by_key: dict, wm: str, counts: dict, log) -> N
                     + ("" if res.get("ok") else f" — 거절 {res.get('reason')}: {res.get('why')}"))
             elif cur == "waiting":
                 # T2 와 같은 연결(우선순위 10 · meta · queued) — 코드를 복제하지 않고 그 함수를 부른다
-                res = il._apply(root, n, rnum, sha, item, log)
+                res = il.apply(root, n, rnum, sha, item, log)
                 counts["queued" if res.get("ok") else "errors"] += 1
                 log(f"[issue-progress] {tag} {sha[:12]} 큐 {st} → 연결"
                     + (f" (우선순위 {res.get('priority')})" if res.get("ok")

@@ -17,6 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master import issue_flow as IF    # noqa: E402
 from master import issue_lock as IL    # noqa: E402
+from master.context_synth import issue_track as IT    # noqa: E402
+from master.context_synth import review_queue as RQ   # noqa: E402
 
 PASS = FAIL = 0
 
@@ -168,17 +170,25 @@ def t_read_failure(tmp):
     check("읽기 실패 → 거절", not r["ok"] and "읽지 못했다" in r["why"], str(r))
 
 
-class Q:
-    """리뷰 큐 대역 — 등재 인자를 기록한다."""
+def twin(tmp: Path) -> Path:
+    """마감 추적·리뷰 큐가 사는 임시 트윈 루트 (`#884` T5 — 운영 트윈을 쓰지 않는다)."""
+    return tmp / "twin"
 
-    def __init__(self, fail: bool = False):
-        self.items, self.fail = [], fail
 
-    def __call__(self, root, **kw):
-        if self.fail:
-            raise RuntimeError("큐가 깨졌다")
-        self.items.append((root, kw))
-        return {"state": "pending"}
+def no_range_items(root: Path) -> bool:
+    """`finish` 가 범위 리뷰를 직접 등재하지 않았다 — 큐 파일이 없거나 range 항목 0."""
+    try:
+        return not [x for x in RQ.items(root) if x.get("kind") == "range"]
+    except Exception:                                   # noqa: BLE001
+        return True
+
+
+def _reg_refused(root, n, **kw):
+    return {"ok": False, "reason": "bad_sha", "why": "대역 거절"}
+
+
+def _reg_boom(root, n, **kw):
+    raise RuntimeError("추적 파일이 깨졌다")
 
 
 def started(tmp: Path):
@@ -196,47 +206,62 @@ def started(tmp: Path):
 
 def t_finish_preview_writes_nothing(tmp):
     repo, iss, base, end = started(tmp)
-    q = Q()
     n0 = len(iss.notes)
-    r = IF.finish(7, repo=repo, noter=iss.note, enqueue=q, review_root=tmp)
+    r = IF.finish(7, repo=repo, noter=iss.note, review_root=twin(tmp))
     check("종료 미리보기 → ok · 확인 전", r["ok"] and r["confirmed"] is False, str(r))
     check("미리보기 → 범위", r.get("base") == base and r.get("end") == end and len(r["commits"]) == 2)
     check("미리보기 → 원격 그대로", sh(repo, "rev-parse", "origin/main") == base)
     check("미리보기 → 브랜치·노트·등재 0", sh(repo, "rev-parse", "--abbrev-ref", "HEAD") == "issue/7"
-          and len(iss.notes) == n0 and not q.items)
+          and len(iss.notes) == n0 and not IT.state_path(twin(tmp)).exists())
+    check("미리보기 → next 에 마감 추적 등록", "마감 추적 등록(해시 2개)" in r["next"]
+          and "범위 리뷰 등재" not in r["next"], r["next"])
 
 
 def t_finish_confirm(tmp):
     repo, iss, base, end = started(tmp)
-    q, ev = Q(), tmp / "ev.jsonl"
-    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, enqueue=q, review_root=tmp,
+    ev = tmp / "ev.jsonl"
+    hashes = sh(repo, "log", "--reverse", "--format=%H", f"{base}..{end}").split()
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, review_root=twin(tmp),
                   events_path=ev)
     check("승인 → ok", r["ok"], str(r))
     check("승인 → 원격 main = 끝", sh(tmp / "origin.git", "rev-parse", "main") == end)
     check("승인 → 로컬 main 에 서 있고 = 끝", sh(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main"
           and sh(repo, "rev-parse", "main") == end)
     check("승인 → 로컬 브랜치 삭제", sh(repo, "branch", "--list", "issue/7") == "")
-    check("승인 → range 등재 1건", len(q.items) == 1 and q.items[0][1]["kind"] == "range"
-          and q.items[0][1]["key"] == f"{base}..{end}"
-          and q.items[0][1]["meta"] == {"issue_id": 7, "base": base, "end": end}
-          and set(q.items[0][1]["files"]) == {"b.txt", "c.txt"}, str(q.items))
-    check("승인 → 사람 요청 우선순위", q.items and q.items[0][1]["priority"] > 0)
+    rnd = IT.current(twin(tmp), 7)
+    check("승인 → 마감 추적 라운드 1 · 해시 전부 순서대로", rnd is not None and rnd["round"] == 1
+          and [h["sha"] for h in rnd["hashes"]] == hashes and len(hashes) == 2
+          and rnd["base"] == base and rnd["end"] == end and rnd["project"] == "AXCluster"
+          and all(h["state"] == "waiting" for h in rnd["hashes"]), str(rnd)[:400])
+    check("승인 → 등록 by issue_flow.finish", rnd and "by issue_flow.finish" in rnd["history"][-1]["msg"],
+          str(rnd and rnd["history"]))
+    check("승인 → range 직접 등재 0", no_range_items(twin(tmp)))
+    check("승인 → 반환 registered · round", r.get("registered") is True and r.get("round") == 1, str(r)[:300])
     note = iss.notes[-1][0]
     check("승인 → 리뷰 요청 노트(범위 전체 해시·커밋 목록)", f"`{base}..{end}`" in note
           and "add b.txt" in note and "add c.txt" in note and "삭제 실패" not in note, note)
+    check("승인 → 노트에 추적 등록·종합 리뷰·관문", "마감 추적: 라운드 1 에 해시 2개 등록" in note
+          and "종합 리뷰 1회" in note and "「완료」 관문은 그 종합 리뷰로 판정한다" in note
+          and "리뷰 큐 등재" not in note, note)
+    check("승인 → 노트에 잠금(대역 = 미사용)", "일감 잠금: 미사용" in note, note)
     steps = [json.loads(x)["step"] for x in ev.read_text().splitlines()]
-    check("단계 로그", steps[-6:] == ["push", "switch", "ff", "delete_branch", "enqueue", "redmine"]
-          and "span" in steps, str(steps))
+    core = []
+    for x in steps:                     # 같은 단계의 여러 줄(link_round 자체 로그 + 요약)은 하나로
+        if x in ("push", "switch", "ff", "delete_branch", "register", "link", "release", "redmine",
+                 "enqueue") and (not core or core[-1] != x):
+            core.append(x)
+    check("단계 로그", core[-7:] == ["push", "switch", "ff", "delete_branch", "register", "link", "redmine"]
+          and "span" in steps and "track" in steps and "enqueue" not in steps, str(steps))
 
 
 def t_finish_refusals(tmp):
     repo, iss, base, end = started(tmp)
     (repo / "dirty.txt").write_text("x")
-    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, enqueue=Q(), review_root=tmp)
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, review_root=twin(tmp))
     check("종료 dirty → 거절", not r["ok"] and r["step"] == "tree", str(r))
     (repo / "dirty.txt").unlink()
     sh(repo, "switch", "-q", "main")
-    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, enqueue=Q(), review_root=tmp)
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, review_root=twin(tmp))
     check("종료 다른 브랜치 → 거절", not r["ok"] and r["step"] == "branch", str(r))
 
 
@@ -244,7 +269,7 @@ def t_finish_no_commits(tmp):
     repo = make_repo(tmp)
     iss = Issue(SPEC + PLAN)
     IF.start(7, repo=repo, getter=iss.get, noter=iss.note)
-    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, enqueue=Q(), review_root=tmp)
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, review_root=twin(tmp))
     check("커밋 0 → 거절", not r["ok"] and r["step"] == "span", str(r))
 
 
@@ -256,7 +281,7 @@ def t_finish_origin_moved(tmp):
     sh(other, "config", "user.email", "o@o"); sh(other, "config", "user.name", "o")
     (other / "z.txt").write_text("z"); sh(other, "add", "z.txt"); sh(other, "commit", "-q", "-m", "z")
     sh(other, "push", "-q", "origin", "main")
-    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, enqueue=Q(), review_root=tmp)
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, review_root=twin(tmp))
     check("원격이 앞섬 → 거절(ff 불가 · 강제 없음)", not r["ok"] and r["step"] == "base", str(r))
     check("원격이 앞섬 → 브랜치 그대로", sh(repo, "rev-parse", "issue/7") == end)
 
@@ -266,20 +291,32 @@ def t_finish_push_rejected(tmp):
     hook = tmp / "origin.git" / "hooks" / "pre-receive"
     hook.write_text("#!/bin/sh\necho 거절 >&2\nexit 1\n")
     hook.chmod(0o755)
-    q = Q()
-    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, enqueue=q, review_root=tmp)
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, review_root=twin(tmp))
     check("push 거절 → ok 아님 · step push", not r["ok"] and r["step"] == "push", str(r))
-    check("push 거절 → 로컬 그대로", sh(repo, "rev-parse", "--abbrev-ref", "HEAD") == "issue/7"
-          and sh(repo, "rev-parse", "main") == base and not q.items)
+    check("push 거절 → 로컬 그대로 · 등록 0", sh(repo, "rev-parse", "--abbrev-ref", "HEAD") == "issue/7"
+          and sh(repo, "rev-parse", "main") == base and not IT.state_path(twin(tmp)).exists())
 
 
-def t_finish_enqueue_failure_reported(tmp):
+def t_finish_register_failure_reported(tmp):
     repo, iss, base, end = started(tmp)
-    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, enqueue=Q(fail=True), review_root=tmp)
-    check("등재 실패 → ok 아님 · 사유", not r["ok"] and "리뷰 등재" in r["why"], str(r))
-    check("등재 실패 → push 는 이미 됨(되돌리지 않음)", "push" in r["done"]
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, register=_reg_boom, review_root=twin(tmp))
+    check("등록 예외 → ok 아님 · 사유", not r["ok"] and "마감 추적 등록" in r["why"]
+          and "RuntimeError" in r["why"] and r.get("registered") is False, str(r))
+    check("등록 예외 → push 는 이미 됨(되돌리지 않음)", "push" in r["done"]
           and sh(tmp / "origin.git", "rev-parse", "main") == end)
-    check("등재 실패 → 노트에 실패 표시", "등재 실패" in iss.notes[-1][0])
+    check("등록 예외 → 노트에 실패 표시", "마감 추적: 등록 실패" in iss.notes[-1][0]
+          and "이어지지 않는다" in iss.notes[-1][0], iss.notes[-1][0])
+    check("등록 예외 → link 안 부름 · range 등재 0", "link" not in r["done"] and no_range_items(twin(tmp)))
+
+
+def t_finish_injected_without_root(tmp):
+    """대역 주입 실행이 review_root 를 안 주면 운영 트윈 대신 등록을 하지 않는다(실패로 다룬다)."""
+    repo, iss, base, end = started(tmp)
+    called = []
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note,
+                  register=lambda *a, **k: called.append(a) or {"ok": True, "round": 1})
+    check("review_root 없음 → register 안 부름 · ok 아님", not called and not r["ok"]
+          and "review_root" in r["why"], str(r)[:300])
 
 
 def t_git_stderr_not_in_value(tmp):
@@ -345,11 +382,11 @@ def t_start_status_read_exception_still_records(tmp):
 def t_finish_noter_exception_reports(tmp):
     """`#881` R216-5 — push 뒤 noter 예외여도 done/why 로 돌려준다."""
     repo, iss, base, end = started(tmp)
-    r = IF.finish(7, confirm=True, repo=repo, noter=_boom, enqueue=Q(), review_root=tmp)
+    r = IF.finish(7, confirm=True, repo=repo, noter=_boom, review_root=twin(tmp))
     check("finish noter 예외 → 결과 딕셔너리 · ok 아님", isinstance(r, dict) and not r["ok"]
           and "ConnectionError" in r["why"], str(r)[:300])
-    check("finish noter 예외 → push·삭제·등재는 done", all(x in r["done"] for x in
-          ("push", "ff", "delete_branch", "enqueue")) and "redmine" not in r["done"], str(r.get("done")))
+    check("finish noter 예외 → push·삭제·등록은 done", all(x in r["done"] for x in
+          ("push", "ff", "delete_branch", "register", "link")) and "redmine" not in r["done"], str(r.get("done")))
 
 
 def t_start_already_merge_base_failure(tmp):
@@ -593,29 +630,88 @@ def t_finish_lock_rules(tmp):
     commit(repo, "f.txt")
     IF.pause(7, repo=repo, noter=a.note, lock_root=lk)
     sh(repo, "switch", "-q", "issue/7")                 # 사람이 손으로 옮겼다
-    r = IF.finish(7, repo=repo, noter=a.note, enqueue=Q(), review_root=tmp, lock_root=lk)
+    r = IF.finish(7, repo=repo, noter=a.note, review_root=twin(tmp), lock_root=lk)
     check("finish — 보류 중이면 거절(lock)", not r["ok"] and r["step"] == "lock" and "재개" in r["why"], str(r)[:300])
     sh(repo, "switch", "-q", "main")
     IF.start(8, repo=repo, getter=b.get, noter=b.note, lock_root=lk)
     sh(repo, "switch", "-q", "issue/7")
     IL.release(lk, 7, op="cancel")
-    r = IF.finish(7, repo=repo, noter=a.note, enqueue=Q(), review_root=tmp, lock_root=lk)
+    r = IF.finish(7, repo=repo, noter=a.note, review_root=twin(tmp), lock_root=lk)
     check("finish — 다른 일감 활성이면 거절", not r["ok"] and r["step"] == "lock" and r.get("holder") == 8, str(r)[:300])
 
 
-def t_finish_keeps_lock_and_legacy(tmp):
+def t_finish_releases_lock_and_legacy(tmp):
     repo, lk, a, _ = two(tmp)
     IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
-    commit(repo, "g.txt")
-    r = IF.finish(7, confirm=True, repo=repo, noter=a.note, enqueue=Q(), review_root=tmp, lock_root=lk)
-    check("finish 승인 — ok · 잠금은 유지", r["ok"] and (IL.current(lk) or {}).get("issue_id") == 7, str(r)[:300])
+    g = commit(repo, "g.txt")
+    r = IF.finish(7, confirm=True, repo=repo, noter=a.note, review_root=twin(tmp), lock_root=lk)
+    check("finish 승인 — ok · 잠금 해제(#884 T5)", r["ok"] and IL.current(lk) is None
+          and not IL.is_tracked(lk, 7) and r.get("lock_released") is True and "release" in r["done"],
+          str(r)[:300])
+    hist = IL._load(lk)["history"][-1]
+    check("finish 승인 — 잠금 이력 op=finish · by issue_flow.finish",
+          hist["op"] == "finish" and hist["by"] == "issue_flow.finish", str(hist))
+    check("finish 승인 — 등록 뒤 해제 순서", r["done"].index("register") < r["done"].index("release")
+          < r["done"].index("redmine"), str(r["done"]))
+    check("finish 승인 — 노트에 잠금 해제", "일감 잠금: 해제(finish)" in a.notes[-1][0], a.notes[-1][0])
+    rnd = IT.current(twin(tmp), 7)
+    check("finish 승인 — 해시 등록", rnd and [h["sha"] for h in rnd["hashes"]] == [g], str(rnd)[:300])
+    # 다음 일감을 곧바로 시작할 수 있다
+    r8 = IF.start(8, repo=repo, getter=a.get, noter=a.note, lock_root=lk, fetch=False)
+    check("finish 뒤 — 다른 일감 시작 가능", r8["ok"] and (IL.current(lk) or {}).get("issue_id") == 8, str(r8)[:300])
+    sh(repo, "switch", "-q", "main")
+    IL.release(lk, 8, op="cancel")
+    sh(repo, "branch", "-D", "issue/8")
     # 옛 시작(잠금 기록 없음)
     lk2 = tmp / "lock2"
     sh(repo, "switch", "-q", "-c", "issue/9")
     commit(repo, "h.txt")
-    r = IF.finish(9, repo=repo, noter=a.note, enqueue=Q(), review_root=tmp, lock_root=lk2)
+    r = IF.finish(9, repo=repo, noter=a.note, review_root=twin(tmp), lock_root=lk2)
     check("finish — 잠금 기록 없음 → [주의] 로그 · 진행", r["ok"] and any("잠금 기록 없음" in x for x in r["log"]),
           str(r)[:300])
+
+
+def t_finish_register_failure_keeps_lock(tmp):
+    """등록이 실패하면 잠금을 풀지 않는다 — 리뷰가 이어지지 않은 채 다음으로 가지 않게."""
+    repo, lk, a, _ = two(tmp)
+    IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    commit(repo, "k.txt")
+    r = IF.finish(7, confirm=True, repo=repo, noter=a.note, register=_reg_refused,
+                  review_root=twin(tmp), lock_root=lk)
+    check("등록 거절 → ok 아님 · 잠금 유지", not r["ok"] and IL.is_tracked(lk, 7)
+          and "release" not in r["done"] and r.get("lock_released") is False, str(r)[:300])
+    check("등록 거절 → 사유(reason)", "bad_sha" in r["why"], r["why"])
+    note = a.notes[-1][0]
+    check("등록 거절 → 노트: 등록 실패 · 잠금 유지", "마감 추적: 등록 실패 — bad_sha" in note
+          and "일감 잠금: 유지" in note, note)
+    check("등록 거절 → push·삭제는 됨", all(x in r["done"] for x in ("push", "ff", "delete_branch")))
+
+
+def t_finish_link_failure_still_releases(tmp):
+    """연결 실패는 다음 동기화 회차가 잇는다 — 등록이 됐으면 잠금은 푼다(problems 에는 적는다)."""
+    repo, lk, a, _ = two(tmp)
+    IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    commit(repo, "l.txt")
+    r = IF.finish(7, confirm=True, repo=repo, noter=a.note, review_root=twin(tmp), lock_root=lk,
+                  link=lambda root, n, **k: (_ for _ in ()).throw(OSError("큐 파일")))
+    check("연결 예외 → ok 아님 · 사유", not r["ok"] and "리뷰 연결" in r["why"] and "OSError" in r["why"], str(r)[:300])
+    check("연결 예외 → 등록됨 · 잠금 해제", r.get("registered") and not IL.is_tracked(lk, 7)
+          and "release" in r["done"], str(r)[:300])
+
+
+def t_finish_link_picks_existing_items(tmp):
+    """색인기가 등록 전에 이미 넣은 commit 항목을 link_round 가 줍는다(실배선 · 임시 큐)."""
+    repo, iss, base, end = started(tmp)
+    hashes = sh(repo, "log", "--reverse", "--format=%H", f"{base}..{end}").split()
+    root = twin(tmp)
+    RQ.enqueue(root, key=hashes[0], files=["b.txt"])
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, review_root=root)
+    rnd = IT.current(root, 7)
+    st = {h["sha"]: h["state"] for h in rnd["hashes"]}
+    item = next(x for x in RQ.items(root) if x["id"] == f"commit:{hashes[0]}")
+    check("기존 항목 → queued · 우선순위 10", r["ok"] and st[hashes[0]] == "queued"
+          and st[hashes[1]] == "waiting" and item["priority"] == 10, f"{st} {item.get('priority')} {r.get('why')}")
+    check("기존 항목 → range 등재 0", no_range_items(root))
 
 
 def t_new_branch_acquire_race_rolls_back(tmp):
@@ -662,7 +758,8 @@ def main() -> int:
                t_redmine_failure_rolls_back, t_read_failure,
                t_finish_preview_writes_nothing, t_finish_confirm, t_finish_refusals,
                t_finish_no_commits, t_finish_origin_moved, t_finish_push_rejected,
-               t_finish_enqueue_failure_reported, t_git_stderr_not_in_value,
+               t_finish_register_failure_reported, t_finish_injected_without_root,
+               t_git_stderr_not_in_value,
                t_start_noter_exception_rolls_back, t_start_getter_exception,
                t_start_status_read_exception_still_records, t_finish_noter_exception_reports,
                t_start_already_merge_base_failure, t_log_unserializable,
@@ -670,7 +767,9 @@ def main() -> int:
                t_legacy_branch_busy_refused, t_pause_resume_cycle, t_resume_note_failure_undoes,
                t_resume_dirty_refused, t_pause_refusals, t_pause_note_failure_keeps_paused,
                t_pause_switch_failure_relocks, t_cancel_preview_and_keep, t_cancel_paused_delete,
-               t_cancel_dirty_and_note_failure, t_finish_lock_rules, t_finish_keeps_lock_and_legacy,
+               t_cancel_dirty_and_note_failure, t_finish_lock_rules, t_finish_releases_lock_and_legacy,
+               t_finish_register_failure_keeps_lock, t_finish_link_failure_still_releases,
+               t_finish_link_picks_existing_items,
                t_new_branch_acquire_race_rolls_back, t_paused_without_branch_refused,
                t_corrupt_lock_refuses):
         run(fn)

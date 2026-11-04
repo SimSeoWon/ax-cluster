@@ -2,14 +2,17 @@
 
     start(issue_id)                  플랜 판정 → 로컬 `issue/<N>` 브랜치 → 시작 리비전을 Redmine 에
     finish(issue_id, confirm=False)  범위 보고 → (승인 시) main 적용·push → 브랜치 삭제 →
-                                     범위 리뷰 등재(`kind=range`) → Redmine 에 리뷰 요청 노트
+                                     마감 추적 등록(`issue_track.register` · 해시 전부) →
+                                     `issue_link.link_round` → 잠금 해제(`op=finish`) →
+                                     Redmine 에 리뷰 요청 노트
     pause(issue_id)                  잠금 보류 → main 으로 → Redmine 「보류」 노트 (브랜치 유지)
     cancel(issue_id, confirm=False)  미리보기(쓰기 0) → (승인 시) 잠금 해제 · 「취소」 노트 ·
                                      `delete_branch=True` 일 때만 브랜치 삭제
 
 `#883` 일감 하나씩: 활성 일감이 있으면 다른 일감의 `start` 는 거절한다(`master/issue_lock.py`).
-보류된 일감은 `start` 를 다시 부르면 재개된다(브랜치로 옮기고 「재개」 노트). 잠금은 `finish` 뒤에도
-남는다 — Redmine 「완료」 때 푼다(T4).
+보류된 일감은 `start` 를 다시 부르면 재개된다(브랜치로 옮기고 「재개」 노트). `#884` T5: 잠금은
+`finish` 가 **마감 추적 등록에 성공한 뒤** 푼다 — 세션은 곧바로 다음 일감으로 간다(사용자 결정
+2026-11-04). 리뷰·「완료」 관문은 그 뒤 추적 기록(`issue_track`)을 본다.
 [중요] **잠금 위치(`lock_root`)** — 넘기면 그것을 쓴다. 안 넘기면 **아무것도 주입하지 않은 운영
 호출만** AXCluster 트윈(`issue_lock.default_root()`)을 쓴다. getter·noter·enqueue 를 주입한 호출
 (테스트 대역)이 `lock_root` 를 안 주면 **잠금을 쓰지 않는다**(`start`·`finish` 는 `[주의] 잠금 미사용`
@@ -27,9 +30,10 @@
 잃는다. 되돌리는 브랜치는 `main` 과 같은 커밋이라 잃는 것이 없다.
 [중요] **종료는 승인이 트리거다** — `confirm=False`(기본)는 범위·커밋 목록만 돌려주고 아무것도 안
 바꾼다. 승인 시 순서: **원격 먼저**(`push origin issue/<N>:main`, fast-forward 만) → 성공해야 로컬
-`main` 을 `--ff-only` 로 맞춘다 → `branch -d`(병합 확인 삭제) → 리뷰 등재 → 노트. push 가 거절되면
+`main` 을 `--ff-only` 로 맞춘다 → `branch -d`(병합 확인 삭제) → 마감 추적 등록 → 연결 → 잠금 해제
+→ 노트. push 가 거절되면
 로컬은 그대로다(잃는 것 없음, 강제 push 없음). 사용자 결정(2026-11-03): main 적용 뒤 로컬 브랜치 삭제.
-[주의] push 뒤 단계(로컬 맞춤·삭제·등재·노트)가 실패해도 **되돌리지 않는다** — 이미 원격 정본이
+[주의] push 뒤 단계(로컬 맞춤·삭제·등록·해제·노트)가 실패해도 **되돌리지 않는다** — 이미 원격 정본이
 바뀌었다. 무엇이 됐고 무엇이 안 됐는지를 `done`/`why` 로 돌려준다.
 [주의] **로그는 둘이다** — 호출자에게 돌려주는 `log` 목록과 `<AXCluster 트윈>/issue_flow.jsonl`
 (한 줄 = 단계 하나). 파일 기록 실패는 흐름을 바꾸지 않는다(stderr 경고).
@@ -401,19 +405,32 @@ def _resume(issue_id, *, repo: Path, cur: str, branch: str, prec: dict, noter, a
             "start_rev": rev, "redmine": res, "lock": "resumed", "log": log.lines}
 
 
-REVIEW_PRIORITY = 10            # 사람이 요청한 리뷰 — 자동 등재(0)보다 먼저 (`#638` 규약)
+REVIEW_PRIORITY = 10            # 사람이 요청한 리뷰 — 자동 등재(0)보다 먼저 (`#638` 규약) · 값은
+                                # 이제 `issue_link.PRIORITY` 가 해시·종합 리뷰에 건다(`#884`)
+REVIEW_PROJECT = "AXCluster"    # 마감 추적·리뷰 큐 트윈 — 이 흐름은 AXCluster 저장소용이다
 FINISH_NOTE = ("리뷰 요청: `{base}..{end}` (커밋 {n}건) · main 적용 `{end12}` · 브랜치 `{branch}` 삭제{deleted}\n"
-               "{commits}\n리뷰 큐 등재: `range:{base12}..{end12}` ({state}) — 리뷰가 끝나면 이 일감에 노트로 남는다")
+               "{commits}\n"
+               "마감 추적: {track}\n"
+               "일감 잠금: {lock}")
+TRACK_OK = ("라운드 {round} 에 해시 {n}개 등록{already} — 해시별 커밋 리뷰가 끝날 때마다 이 일감에 진행 노트가 "
+            "남고, 모두 끝나면 `{base12}..{end12}` 종합 리뷰 1회의 결과가 노트로 남는다. "
+            "「완료」 관문은 그 종합 리뷰로 판정한다")
+TRACK_FAIL = "등록 실패 — {why}. 해시별·종합 리뷰가 이 일감에 이어지지 않는다"
 
 
-def _default_review_root() -> Path:
+def _default_review_root(project: str = REVIEW_PROJECT) -> Path:
     from master.context_search.paths import resolve
-    return Path(resolve("AXCluster").root)
+    return Path(resolve(project).root)
 
 
-def _default_enqueue(root, **kw) -> dict:
-    from master.context_synth import review_queue as rq
-    return rq.enqueue(root, **kw)
+def _default_register(root, issue_id, **kw) -> dict:
+    from master.context_synth import issue_track as it
+    return it.register(root, issue_id, **kw)
+
+
+def _default_link(root, issue_id, **kw) -> dict:
+    from master.context_synth import issue_link as il
+    return il.link_round(root, issue_id, **kw)
 
 
 def _span(repo: Path, branch: str) -> tuple[str, str, list]:
@@ -423,22 +440,40 @@ def _span(repo: Path, branch: str) -> tuple[str, str, list]:
     return base, end, [ln for ln in out.splitlines() if ln.strip()]
 
 
-def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, enqueue=None,
+def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=None, link=None,
            review_root=None, events_path=None, logf=None, fetch: bool = True,
-           lock_root=None) -> dict:
+           lock_root=None, project: str = REVIEW_PROJECT) -> dict:
     """일감 작업을 마친다. `confirm=False` 면 보고만 한다(쓰기 0).
 
     `#883`: N 이 보류 중이면(먼저 재개) · 다른 일감이 활성이면 거절한다. 잠금에 없는 N(`#883` 이전
-    시작)은 `[주의]` 로그만 남기고 진행한다. **잠금은 여기서 풀지 않는다** — Redmine 「완료」 때(T4).
+    시작)은 `[주의]` 로그만 남기고 진행한다.
+
+    `#884` T5 — 승인 시 push·로컬 맞춤·브랜치 삭제 뒤:
+      ④ `issue_track.register(review_root, N, project=, base=, end=, hashes=<base..end 전체 sha, 순서대로>)`
+         [중요] **범위 리뷰(`kind=range`)를 직접 등재하지 않는다** — 커밋 리뷰는 색인기가 해시마다
+         걸고(우선순위 10 은 `issue_link` 가 올린다), 종합 리뷰는 해시가 모두 끝난 뒤 큐 소비자
+         (`issue_progress.sync_issue_tracks`)가 건다.
+      ⑤ `issue_link.link_round(review_root, N)` — 등록 **전에** 색인기가 이미 넣은 해시를 줍는다.
+         실패해도 다음 동기화 회차가 같은 규칙(`issue_link.apply`)으로 잇는다 — `problems` 에만 적는다.
+      ⑥ 잠금 해제(`op=finish`) — 🔴 **등록이 성공했을 때만**. 등록이 실패했는데 잠금을 풀면 그 일감의
+         리뷰는 어디에도 이어지지 않은 채 세션이 다음으로 가 버린다(조용한 유실). 그래서 등록 실패면
+         잠금을 남겨 두고 노트·`why` 가 그 사실을 말한다 — 사람이 재등록하거나 취소로 푼다.
+      ⑦ 「리뷰 요청」 노트 — 등록 결과·잠금 결과를 사실로 적는다.
+
+    주입: `register(root, N, **kw)`·`link(root, N, logf=)` 는 테스트 대역 자리다. 대역 주입 실행
+    (noter·register·link 중 하나라도)이 `review_root` 를 안 주면 운영 트윈을 건드리지 않으려고 등록을
+    하지 않는다(등록 실패로 다룬다 — 잠금도 남는다).
     """
     from master import issue_lock as IL
     repo = Path(repo or REPO)
-    injected = noter is not None or enqueue is not None
+    injected = noter is not None or register is not None or link is not None
     log = _Log("finish", issue_id, events_path=_resolve_events(events_path, injected), logf=logf)
     noter = noter or _default_noter
-    enqueue = enqueue or _default_enqueue
+    register = register or _default_register
+    link = link or _default_link
     branch = branch_name(issue_id)
     n = int(issue_id)
+    lock_held = False
 
     # ⓪ 잠금
     try:
@@ -454,7 +489,8 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, enqueue=No
                                             f"#{n} 는 잠금에 없다, 일감은 하나씩 마친다",
                                holder=active["issue_id"])
             if active:
-                log("lock", f"#{n} 활성 — 잠금은 Redmine 완료 때 푼다(여기서 유지)")
+                lock_held = True
+                log("lock", f"#{n} 활성 — 마감 추적 등록이 성공하면 이 단계 끝에서 푼다(op=finish)")
             else:
                 log("lock", f"[주의] 잠금 기록 없음 — #{n} 는 #883 이전 시작으로 보고 진행한다")
     except Exception as e:                              # noqa: BLE001
@@ -501,7 +537,10 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, enqueue=No
         log("preview", "confirm=False — 아무것도 바꾸지 않았다")
         return {"ok": True, "confirmed": False, **summary,
                 "next": f"승인하면 finish({issue_id}, confirm=True) — push {REMOTE} {branch}:{MAIN} · "
-                        f"로컬 {MAIN} ff · {branch} 삭제 · 범위 리뷰 등재 · Redmine 노트",
+                        f"로컬 {MAIN} ff · {branch} 삭제 · 마감 추적 등록(해시 {len(commits)}개) · "
+                        f"색인기 리뷰 연결 · "
+                        + ("잠금 해제(등록 성공 시) · " if lock_held else "")
+                        + "Redmine 리뷰 요청 노트 — 해시별 리뷰와 종합 리뷰는 큐 소비자가 이 일감에 노트로 남긴다",
                 "log": log.lines}
 
     done: list[str] = []
@@ -536,25 +575,84 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, enqueue=No
             problems.append(f"branch -d: {out[-200:]}")
             log("delete_branch", f"실패 — {out[-200:]}")
 
-    # ④ 범위 리뷰 등재
-    state = "등재 실패"
+    # ④ 마감 추적 등록 — 범위 리뷰를 직접 등재하지 않는다(`#884` T5)
+    hashes = [c[:40] for c in commits]
+    registered, track_round, track_text = False, None, ""
+    root = None
     try:
-        root = review_root or _default_review_root()
-        item = enqueue(root, kind="range", key=f"{base}..{end}", files=files,
-                       requester=f"issue_flow#{issue_id}", priority=REVIEW_PRIORITY,
-                       meta={"issue_id": int(issue_id), "base": base, "end": end})
-        state = item.get("state", "?")
-        done.append("enqueue")
-        log("enqueue", f"range:{base[:8]}..{end[:8]} {state}")
-    except Exception as e:                              # noqa: BLE001
-        problems.append(f"리뷰 등재: {type(e).__name__}: {e}")
-        log("enqueue", f"실패 — {type(e).__name__}: {e}")
+        if review_root is None and injected:
+            raise IssueFlowError("대역 주입 실행에 review_root 가 없다 — 운영 트윈을 건드리지 않는다")
+        root = Path(review_root) if review_root is not None else _default_review_root(project)
+        reg = register(root, n, project=project, base=base, end=end, hashes=hashes,
+                       by="issue_flow.finish", logf=lambda line: log("track", line))
+        if not isinstance(reg, dict):
+            raise IssueFlowError(f"등록 반환 형식 오류: {reg!r}"[:200])
+        if reg.get("ok"):
+            registered, track_round = True, reg.get("round")
+            done.append("register")
+            log("register", f"라운드 {track_round} · 해시 {len(hashes)}개"
+                            + (" (이미 등록)" if reg.get("already") else "") + f" · {root}")
+            track_text = TRACK_OK.format(round=track_round, n=len(hashes),
+                                         already=" (같은 범위가 이미 등록돼 있었다)" if reg.get("already") else "",
+                                         base12=base[:12], end12=end[:12])
+        else:
+            why = f"{reg.get('reason', '?')}: {reg.get('why', '')}"
+            problems.append(f"마감 추적 등록: {why}")
+            log("register", f"거절 — {why}")
+            track_text = TRACK_FAIL.format(why=why)
+    except Exception as e:                              # noqa: BLE001 — IssueTrackError·경로 해석 포함
+        why = f"{type(e).__name__}: {e}"
+        problems.append(f"마감 추적 등록: {why}")
+        log("register", f"실패 — {why}")
+        track_text = TRACK_FAIL.format(why=why)
 
-    # ⑤ Redmine
+    # ⑤ 색인기가 이미 넣은 해시를 줍는다 — 실패해도 다음 동기화 회차가 잇는다
+    if registered:
+        try:
+            lk = link(root, n, logf=lambda line: log("link", line))
+            if isinstance(lk, dict) and lk.get("ok"):
+                done.append("link")
+                log("link", f"이음 {len(lk.get('linked') or [])} · 큐에 없음 {len(lk.get('untouched') or [])}")
+            else:
+                if isinstance(lk, dict):
+                    why = lk.get("why") or lk.get("reason") or lk.get("errors")
+                else:
+                    why = f"반환 형식 오류 {lk!r}"
+                problems.append(f"리뷰 연결: {str(why)[:200]}")
+                log("link", f"[주의] 실패 — {str(why)[:200]} · 다음 동기화 회차가 다시 잇는다")
+        except Exception as e:                          # noqa: BLE001
+            problems.append(f"리뷰 연결: {type(e).__name__}: {e}")
+            log("link", f"[주의] 예외 — {type(e).__name__}: {e} · 다음 동기화 회차가 다시 잇는다")
+
+    # ⑥ 잠금 해제 — 등록 성공일 때만(근거는 docstring ⑥)
+    if lroot is _NO_LOCK:
+        lock_text = "미사용(대역 실행)"
+    elif not lock_held:
+        lock_text = "기록 없음 — 해제할 것 없음(#883 이전 시작)"
+        log("release", "잠금 기록 없음 — 해제할 것 없음")
+    elif not registered:
+        lock_text = "유지 — 마감 추적 등록이 실패해 풀지 않았다(리뷰가 이어지지 않은 채 다음으로 가지 않게)"
+        log("release", "[중요] 등록 실패 — 잠금 유지")
+    else:
+        try:
+            rel = IL.release(lroot, n, op="finish", by="issue_flow.finish",
+                             why=f"마감 추적 라운드 {track_round} 등록", logf=_lock_logf(log))
+        except Exception as e:                          # noqa: BLE001
+            rel = {"ok": False, "why": f"{type(e).__name__}: {e}"}
+        if rel.get("ok"):
+            done.append("release")
+            lock_text = "해제(finish) — 다음 일감을 시작할 수 있다"
+            log("release", f"잠금 해제({rel.get('was', '?')}→없음)")
+        else:
+            problems.append(f"잠금 해제: {rel.get('why')}")
+            lock_text = f"해제 실패 — {rel.get('why')}"
+            log("release", f"실패 — {rel.get('why')}")
+
+    # ⑦ Redmine
     lines = "\n".join(f"- `{c[:12]}` {c[41:]}" for c in commits)
     note = FINISH_NOTE.format(base=base, end=end, n=len(commits), end12=end[:12], branch=branch,
                               deleted="" if deleted else " 실패", commits=lines,
-                              base12=base[:12], state=state)
+                              track=track_text, lock=lock_text)
     res = _call_redmine(noter, issue_id, notes=note)
     if res.startswith("[주의]"):
         problems.append(f"Redmine: {res}")
@@ -563,7 +661,8 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, enqueue=No
         done.append("redmine")
         log("redmine", "리뷰 요청 노트")
     return {"ok": not problems, "confirmed": True, **summary, "done": done,
-            "why": " · ".join(problems), "log": log.lines}
+            "registered": registered, "round": track_round,
+            "lock_released": "release" in done, "why": " · ".join(problems), "log": log.lines}
 
 
 # ── `#883` 보류·취소 ──────────────────────────────────────────────────────────

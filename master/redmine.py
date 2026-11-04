@@ -299,8 +299,10 @@ def _update_mismatches(iid: int, requested: dict, response) -> tuple[list[str], 
 # ─────────────────────────────────────────
 # 「완료」 관문 — `#883` 규칙 4 (사용자 결정 2026-11-04)
 #
-# `issue_flow` 로 시작한 일감(= `issue_lock` 이 추적하는 것)은 범위 리뷰가 OK 로 끝나지 않았거나
-# 결정되지 않은 HIGH 지적이 남았으면 「완료」로 닫지 않는다. 자리가 **이 함수**인 이유: MCP
+# `issue_flow` 로 시작한 일감은 범위 리뷰가 OK 로 끝나지 않았거나 결정되지 않은 HIGH 지적이 남았으면
+# 「완료」로 닫지 않는다. **관문 대상** (`#884` T5): `issue_lock` 이 추적하는 일감 **또는**
+# `issue_track` 에 마감 라운드가 있는 일감 — `finish` 가 등록 뒤 잠금을 풀므로 잠금만 보면 마감한
+# 일감이 전부 관문 밖으로 샌다. 판정은 `issue_review_status`(라운드가 있으면 종합 리뷰). 자리가 **이 함수**인 이유: MCP
 # `redmine_note`(8101)·스킬·플랜 도구가 모두 `update_issue` 를 지나므로 우회로가 없다.
 # [중요] 추적되지 않는 일감(옛 일감 · `finalize_work` 가 닫는 분산 작업)은 건드리지 않는다.
 # [주의] Redmine 웹 UI 에서 사람이 닫는 것은 막지 못한다 — 수용된 한계다.
@@ -308,7 +310,9 @@ def _update_mismatches(iid: int, requested: dict, response) -> tuple[list[str], 
 #     gate(issue_id) -> {"apply": bool, "ok": bool, "why": str, "release": callable | 없음}
 #
 # `apply` 가 거짓이면 관문 밖이다. `apply and not ok` 면 **아무것도 PUT 하지 않는다**(노트도).
-# 관문 자체가 예외를 던지면 막는다(fail-closed). `release` 는 PUT 성공 뒤 잠금을 푸는 수단이다.
+# 관문 자체가 예외를 던지면 막는다(fail-closed) — 잠금·추적 파일 어느 쪽이든 못 읽으면 막는다.
+# `release` 는 PUT 성공 뒤 잠금을 푸는 수단이다 — **잠금이 추적할 때만** 싣는다. 추적 기록으로만
+# 관문에 든 일감은 `lock_tracked: False` 이고 풀 잠금이 없다(결과 문장에 해제 꼬리를 붙이지 않는다).
 # ─────────────────────────────────────────
 
 CLOSED_STATUS_NAME = STATUS_ON_FINALIZE      # 이 Redmine 에서 닫힌 상태는 「완료」(id 4 · is_closed) 뿐이다
@@ -333,17 +337,20 @@ def _is_closing(status_name: str, entry) -> bool:
     return bool(isinstance(entry, dict) and entry.get("is_closed") is True)
 
 
-def make_completion_gate(*, root_fn=None, lock=None, review=None, logf=None):
-    """기본 「완료」 관문을 만든다. 주입 자리(테스트): `root_fn`·`lock`·`review`·`logf`.
+def make_completion_gate(*, root_fn=None, lock=None, review=None, track=None, logf=None):
+    """기본 「완료」 관문을 만든다. 주입 자리(테스트): `root_fn`·`lock`·`review`·`track`·`logf`.
 
-    `root_fn()` → 잠금 루트 = 리뷰 큐 트윈 루트(AXCluster). 기본은 `issue_lock.default_root`.
+    `root_fn()` → 잠금 루트 = 리뷰 큐·마감 추적 트윈 루트(AXCluster). 기본은 `issue_lock.default_root`.
     `lock` 은 `is_tracked`·`release`·`IssueLockError` 를 가진 모듈, `review(root, n, logf=)` 는
-    `issue_review_status` 와 같은 계약이다.
+    `issue_review_status` 와 같은 계약이다. `track(root, n)` 은 최신 마감 라운드 또는 None
+    (기본 `issue_review.track_round` — 추적 파일이 없으면 잠금 파일도 만들지 않는다).
     """
     if lock is None:
         from master import issue_lock as lock
     if review is None:
         from master.context_synth.issue_review import issue_review_status as review
+    if track is None:
+        from master.context_synth.issue_review import track_round as track
     if root_fn is None:
         root_fn = lock.default_root
 
@@ -365,9 +372,20 @@ def make_completion_gate(*, root_fn=None, lock=None, review=None, logf=None):
                    f"막는다. 복구: `{lock_file}` 를 사람이 확인·수리한다(깨진 파일은 덮어쓰지 않는다)")
             _gate_log(f"#{n} 잠금 조회 실패 — 막음 · {type(e).__name__} · {lock_file}", logf)
             return {"apply": True, "ok": False, "why": why}
-        if not tracked:
-            _gate_log(f"#{n} 잠금 추적 밖 — 관문 해당 없음", logf)
-            return {"apply": False, "ok": True, "why": f"#{n} 는 issue_flow 잠금 추적 밖이다"}
+        try:
+            rnd = track(root, n)
+        except Exception as e:                               # noqa: BLE001 — IssueTrackError 포함
+            track_file = os.path.join(str(root), "issue_track.json")
+            why = (f"일감 마감 추적 기록을 읽지 못했다 — {type(e).__name__}: {e}. 마감 여부를 모르므로 "
+                   f"막는다. 복구: `{track_file}` 를 사람이 확인·수리한다(깨진 파일은 덮어쓰지 않는다)")
+            _gate_log(f"#{n} 마감 추적 조회 실패 — 막음 · {type(e).__name__} · {track_file}", logf)
+            return {"apply": True, "ok": False, "why": why}
+        has_round = rnd is not None
+        if not tracked and not has_round:
+            _gate_log(f"#{n} 잠금·마감 추적 밖 — 관문 해당 없음", logf)
+            return {"apply": False, "ok": True, "why": f"#{n} 는 issue_flow 잠금·마감 추적 밖이다"}
+        basis = " · ".join(x for x in (("잠금" if tracked else ""),
+                                       (f"마감 라운드 {rnd.get('round')}" if has_round else "")) if x)
         try:
             st = review(root, n, logf=logf)
         except Exception as e:                               # noqa: BLE001
@@ -376,16 +394,21 @@ def make_completion_gate(*, root_fn=None, lock=None, review=None, logf=None):
             return {"apply": True, "ok": False, "why": why}
         ok = bool(isinstance(st, dict) and st.get("ok_to_complete") is True)
         why = str((st or {}).get("why") or "") if isinstance(st, dict) else f"리뷰 판정 형식 오류: {st!r}"
-        _gate_log(f"#{n} 추적 중 · 리뷰 {(st or {}).get('review', '?') if isinstance(st, dict) else '?'}"
+        _gate_log(f"#{n} 추적 중({basis}) · 리뷰 {(st or {}).get('review', '?') if isinstance(st, dict) else '?'}"
                   f" {(st or {}).get('serial', '') if isinstance(st, dict) else ''} → "
                   f"{'통과' if ok else '막음'}", logf)
+
+        decision = {"apply": True, "ok": ok, "why": why or ("통과" if ok else "사유 없음 — 막는다"),
+                    "lock_tracked": bool(tracked), "track_round": rnd.get("round") if has_round else None}
+        if not tracked:
+            return decision                              # 풀 잠금이 없다 — finish 가 이미 풀었다
 
         def release() -> dict:
             return lock.release(root, n, op="complete", by="redmine.update_issue",
                                 why="Redmine 「완료」 갱신 성공", logf=logf)
 
-        return {"apply": True, "ok": ok, "why": why or ("통과" if ok else "사유 없음 — 막는다"),
-                "release": release}
+        decision["release"] = release
+        return decision
 
     return gate
 
@@ -407,6 +430,9 @@ def _run_gate(gate, iid: int) -> dict:
 def _release_after_close(decision: dict, iid: int) -> str:
     """PUT 성공 뒤 잠금 해제. [중요] Redmine 변경은 이미 일어났다 — 실패해도 거절로 바꾸지 않는다."""
     rel = decision.get("release")
+    if decision.get("lock_tracked") is False:
+        _gate_log(f"#{iid} 완료 반영 — 잠금 추적 밖(마감 추적으로 관문 적용) · 해제할 잠금 없음")
+        return ""
     if not callable(rel):
         _gate_log(f"#{iid} 완료 반영 — 관문이 해제 수단을 주지 않아 잠금 해제 생략")
         return " · 잠금 해제 생략(관문이 해제 수단을 주지 않음)"

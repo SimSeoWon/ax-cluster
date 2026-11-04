@@ -2,7 +2,9 @@
 
     acquire(root, N, branch=…, start_rev=…)   빈 자리면 N 을 활성으로 · 같은 N 이면 이어감
     pause(root, N)                             활성 N 을 보류로 옮기고 자리를 비운다
-    release(root, N, op="complete"|"cancel")   활성·보류에서 N 을 지운다
+    release(root, N, op="complete"|"cancel"|"finish")   활성·보류에서 N 을 지운다
+        finish — `issue_flow.finish` 가 main 적용·마감 추적 등록 뒤 푼다(`#884` T5, 사용자 결정
+                 2026-11-04 「잠금은 마감 때 푼다 — 세션은 곧바로 다음으로 간다」)
     current(root) / is_tracked(root, N)        조회
 
 사용자 결정(2026-11-04): 일감 작업을 시작하면 그 일감이 **완료·보류·취소** 되기 전에는 다른 일감을
@@ -29,7 +31,7 @@ SCHEMA = 1
 STATE_NAME = "issue_lock.json"
 LOCK_NAME = ".issue_lock.lock"
 HISTORY_CAP = 50
-RELEASE_OPS = ("complete", "cancel")
+RELEASE_OPS = ("complete", "cancel", "finish")
 
 
 class IssueLockError(RuntimeError):
