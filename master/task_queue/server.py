@@ -515,8 +515,11 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         _tq_log(f"[redmine] #{req.issue_id} work={req.work_id or '-'} → {result}", root)
         # [주의] 실패해도 200 이다 — 검수 흐름을 막지 않는다. [중요] 다만 `ok` 로 **말은 한다**
         #    (조용한 실패 금지). 호출자가 사람에게 그대로 보여 준다.
-        return {"ok": not result.startswith("[주의]"), "result": result,
-                "issue_id": req.issue_id}
+        # `#883` — 갱신은 됐지만 뒤처리(완료 뒤 일감 잠금 해제 등)가 실패하면 문장 **안에** `[주의]`
+        #    가 붙는다. `ok` 는 Redmine 반영 여부 그대로 두고, 그 경고를 `warn` 으로 따로 말한다.
+        ok = not result.startswith("[주의]")
+        return {"ok": ok, "result": result, "issue_id": req.issue_id,
+                "warn": ok and "[주의]" in result}
 
     # ── Redmine 조회·생성·연결 (#226 위임 구멍 ①) ─────────────────────
     # [중요] **읽기를 8103 에 두지 않았다.** 그 포트의 `/api/v1/*` 는 무인증 공개라(실측

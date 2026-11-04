@@ -1133,3 +1133,34 @@ def issue_finish_tool(issue_id: int, confirm: bool = False) -> str:
         return json.dumps(issue_flow.finish(issue_id, confirm=confirm), ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
+
+
+@mcp.tool()
+def issue_pause_tool(issue_id: int) -> str:
+    """진행 중인 일감을 **보류**한다 (`#883`) — 일감 잠금을 풀고 `issue/<N>` 브랜치는 남긴다.
+
+    깨끗한 `issue/<N>` 에 서 있어야 한다(미커밋 변경은 거절). 잠금을 보류로 옮기고 `main` 으로
+    돌아간 뒤 Redmine 에 「보류」 노트를 남긴다. 재개는 `main` 에서 `issue_start_tool(N)` 이다.
+    """
+    from .. import issue_flow
+    try:
+        return json.dumps(issue_flow.pause(issue_id), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def issue_cancel_tool(issue_id: int, confirm: bool = False, delete_branch: bool = False) -> str:
+    """일감 작업을 **취소**한다 (`#883`). [중요] `confirm=False`(기본)는 잠금 상태·브랜치·
+    로컬에만 있는 커밋 목록만 보여 주고 아무것도 바꾸지 않는다 — 사용자 승인 뒤에만 `confirm=True`.
+
+    승인 시: (그 브랜치에 서 있으면 `main` 으로) → 잠금 해제 → Redmine 「취소」 노트(커밋 목록).
+    🔴 브랜치는 기본으로 **남긴다**. `delete_branch=True` 일 때만 `git branch -D` — 로컬 전용 커밋은
+    되살릴 수 없으므로 그 목록을 사용자에게 보여 주고 삭제 승인을 따로 받는다.
+    """
+    from .. import issue_flow
+    try:
+        return json.dumps(issue_flow.cancel(issue_id, confirm=confirm, delete_branch=delete_branch),
+                          ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)

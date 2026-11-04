@@ -297,12 +297,26 @@ def test_real_gate_broken_lock_and_root():
           and "KeyError" in out and not s.puts, out)
 
 
+def test_server_warn_field():
+    """`#883` T5 — 8101 `/redmine/note` 는 반영 뒤 경고(잠금 해제 실패 등)를 `warn` 으로 따로 말한다.
+
+    앱이 `_run_http_server` 안에서 만들어지므로 `test_work_mode_patch` 와 같이 소스로 확인한다.
+    """
+    import inspect
+    from master.task_queue.server import _run_http_server
+    src = inspect.getsource(_run_http_server)
+    check("⑨ 8101 redmine/note — ok 는 [주의] 시작 여부", 'ok = not result.startswith("[주의]")' in src)
+    check("⑨ 8101 redmine/note — warn 은 반영 뒤 문장 안 [주의]",
+          '"warn": ok and "[주의]" in result' in src)
+
+
 def main() -> int:
     for fn in (test_not_applicable_puts, test_refused_no_put, test_passed_releases,
                test_put_failure_does_not_release, test_gate_errors_fail_closed,
                test_non_closing_untouched, test_closed_detection,
                test_injected_sender_without_gate, test_real_gate_wiring,
-               test_real_gate_skip_releases, test_real_gate_broken_lock_and_root):
+               test_real_gate_skip_releases, test_real_gate_broken_lock_and_root,
+               test_server_warn_field):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_redmine_completion_gate: {PASS}/{total} 통과")
