@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master import issue_flow as IF    # noqa: E402
+from master import issue_lock as IL    # noqa: E402
 
 PASS = FAIL = 0
 
@@ -101,7 +102,7 @@ def t_happy_path(tmp):
     check("정상 → 노트에 전체 해시", len(iss.notes) == 1 and head in iss.notes[0][0], str(iss.notes))
     check("신규 → 진행으로", iss.notes and iss.notes[0][1] == "진행")
     lines = [json.loads(x) for x in ev.read_text().splitlines()]
-    check("단계 로그가 jsonl 에", [x["step"] for x in lines] == ["plan", "fetch", "base", "branch", "redmine"],
+    check("단계 로그가 jsonl 에", [x["step"] for x in lines] == ["plan", "lock", "fetch", "base", "branch", "redmine"],
           str([x["step"] for x in lines]))
     # 다시 부르면 새 기록 없이 같은 시작점
     r2 = IF.start(7, repo=repo, getter=iss.get, noter=iss.note)
@@ -375,7 +376,286 @@ def t_log_unserializable(tmp):
     check("_Log 직렬화 불가 → 예외 없음 · 목록엔 남음", ok and log.lines and "메시지" in log.lines[-1])
 
 
+# ── `#883` 일감 하나씩 — 잠금 배선 (lock_root 는 늘 임시 디렉토리) ─────────────────
+
+def two(tmp: Path):
+    """저장소 하나 + 잠금 + 플랜 있는 일감 둘(7·8)."""
+    repo = make_repo(tmp)
+    return repo, tmp / "lock", Issue(SPEC + PLAN), Issue(SPEC + PLAN)
+
+
+def commit(repo: Path, name: str) -> str:
+    (repo / name).write_text(name)
+    sh(repo, "add", name)
+    sh(repo, "commit", "-q", "-m", f"add {name}")
+    return sh(repo, "rev-parse", "HEAD")
+
+
+def head_of(repo):
+    return sh(repo, "rev-parse", "--abbrev-ref", "HEAD")
+
+
+def t_lock_busy_names_holder(tmp):
+    repo, lk, a, b = two(tmp)
+    r = IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    check("잠금 — 첫 시작 ok · acquired", r["ok"] and r.get("lock") == "acquired", str(r)[:300])
+    check("잠금 — 7 활성", (IL.current(lk) or {}).get("issue_id") == 7)
+    check("잠금 — 시작 로그에 lock 줄", any(".lock:" in x for x in r["log"]), str(r["log"]))
+    sh(repo, "switch", "-q", "main")
+    r = IF.start(8, repo=repo, getter=b.get, noter=b.note, lock_root=lk)
+    check("잠금 — 다른 일감 거절(step lock · holder 7)", not r["ok"] and r["step"] == "lock"
+          and r.get("holder") == 7 and "#7" in r["why"] and "보류" in r["why"] and "취소" in r["why"], str(r)[:300])
+    check("잠금 — 거절 시 브랜치·노트 없음", sh(repo, "branch", "--list", "issue/8") == "" and b.notes == [])
+
+
+def t_lock_already_on_branch(tmp):
+    repo, lk, a, _ = two(tmp)
+    IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    r = IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    check("잠금 — 같은 일감 재호출 already", r["ok"] and r["already"] and r.get("lock") == "already", str(r)[:300])
+
+
+def t_legacy_branch_gets_tracked(tmp):
+    repo, lk, a, b = two(tmp)
+    sh(repo, "switch", "-q", "-c", "issue/7")          # #883 이전에 만든 브랜치(잠금 기록 없음)
+    r = IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    check("옛 브랜치 — 서 있으면 잠금에 올린다", r["ok"] and r.get("lock") == "acquired"
+          and IL.is_tracked(lk, 7), str(r)[:300])
+    sh(repo, "switch", "-q", "main")
+    r = IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    check("옛 브랜치 — 다른 데 서 있으면 기존 거절(branch)", not r["ok"] and r["step"] == "branch", str(r)[:300])
+
+
+def t_legacy_branch_busy_refused(tmp):
+    repo, lk, a, b = two(tmp)
+    IL.acquire(lk, 8, branch="issue/8", start_rev="x")
+    sh(repo, "switch", "-q", "-c", "issue/7")
+    r = IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    check("옛 브랜치 — 다른 일감 활성이면 거절", not r["ok"] and r["step"] == "lock" and r.get("holder") == 8, str(r)[:300])
+
+
+def t_pause_resume_cycle(tmp):
+    repo, lk, a, b = two(tmp)
+    ev = tmp / "ev.jsonl"
+    IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    end7 = commit(repo, "p.txt")
+    r = IF.pause(7, repo=repo, noter=a.note, lock_root=lk, events_path=ev)
+    check("보류 — ok", r["ok"] and r["paused"] and r["end"] == end7, str(r)[:300])
+    check("보류 — main 에 서 있고 브랜치 유지", head_of(repo) == "main" and sh(repo, "rev-parse", "issue/7") == end7)
+    check("보류 — 잠금 비고 7 보류", IL.current(lk) is None and 7 in IL.paused(lk))
+    check("보류 — 노트", "보류" in a.notes[-1][0] and "issue_start" in a.notes[-1][0] and a.notes[-1][1] == "",
+          str(a.notes[-1]))
+    steps = [json.loads(x)["step"] for x in ev.read_text().splitlines()]
+    check("보류 — 단계 로그", steps == ["lock", "switch", "redmine"], str(steps))
+    # 다른 일감 시작 가능
+    r8 = IF.start(8, repo=repo, getter=b.get, noter=b.note, lock_root=lk)
+    check("보류 중 다른 일감 시작 ok", r8["ok"] and head_of(repo) == "issue/8", str(r8)[:300])
+    sh(repo, "switch", "-q", "main")
+    r = IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    check("8 활성 중 7 재개 거절(busy)", not r["ok"] and r["step"] == "lock" and r.get("holder") == 8, str(r)[:300])
+    check("거절 — main 그대로", head_of(repo) == "main")
+    IL.release(lk, 8, op="complete")
+    n0 = len(a.notes)
+    r = IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    check("재개 — ok · resumed", r["ok"] and r.get("resumed") is True and r.get("lock") == "resumed", str(r)[:300])
+    check("재개 — issue/7 로 옮김", head_of(repo) == "issue/7")
+    check("재개 — 7 활성", (IL.current(lk) or {}).get("issue_id") == 7 and 7 not in IL.paused(lk))
+    check("재개 — 노트 1건 · 상태 안 바꿈", len(a.notes) == n0 + 1 and "재개" in a.notes[-1][0]
+          and a.notes[-1][1] == "", str(a.notes[-1]))
+
+
+def t_resume_note_failure_undoes(tmp):
+    repo, lk, a, _ = two(tmp)
+    IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    IF.pause(7, repo=repo, noter=a.note, lock_root=lk)
+    bad = Issue(SPEC + PLAN, answer="[주의] 503")
+    r = IF.start(7, repo=repo, getter=bad.get, noter=bad.note, lock_root=lk)
+    check("재개 노트 실패 → ok 아님 · step redmine", not r["ok"] and r["step"] == "redmine", str(r)[:300])
+    check("재개 노트 실패 → main 복귀 · 다시 보류", head_of(repo) == "main" and IL.current(lk) is None
+          and 7 in IL.paused(lk) and r.get("relocked") and r.get("switched_back"), str(r)[:300])
+    r = IF.start(7, repo=repo, getter=_boom, noter=_boom, lock_root=lk)
+    check("재개 — getter 예외는 plan 단계 거절", not r["ok"] and r["step"] == "plan")
+
+
+def t_resume_dirty_refused(tmp):
+    repo, lk, a, _ = two(tmp)
+    IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    IF.pause(7, repo=repo, noter=a.note, lock_root=lk)
+    (repo / "x.txt").write_text("x")
+    r = IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    check("재개 dirty → 거절(base) · 보류 유지", not r["ok"] and r["step"] == "base"
+          and 7 in IL.paused(lk) and head_of(repo) == "main", str(r)[:300])
+
+
+def t_pause_refusals(tmp):
+    repo, lk, a, _ = two(tmp)
+    IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    (repo / "d.txt").write_text("x")
+    n0 = len(a.notes)
+    r = IF.pause(7, repo=repo, noter=a.note, lock_root=lk)
+    check("보류 dirty → 거절(tree) · 잠금 활성 그대로", not r["ok"] and r["step"] == "tree"
+          and (IL.current(lk) or {}).get("issue_id") == 7 and head_of(repo) == "issue/7"
+          and len(a.notes) == n0, str(r)[:300])
+    (repo / "d.txt").unlink()
+    sh(repo, "switch", "-q", "main")
+    r = IF.pause(7, repo=repo, noter=a.note, lock_root=lk)
+    check("보류 — 브랜치 밖이면 거절(branch)", not r["ok"] and r["step"] == "branch", str(r)[:300])
+    sh(repo, "switch", "-q", "-c", "issue/9")
+    r = IF.pause(9, repo=repo, noter=a.note, lock_root=lk)
+    check("보류 — 잠금 활성 아님 → 거절(lock)", not r["ok"] and r["step"] == "lock" and "활성 일감이 아니다" in r["why"],
+          str(r)[:300])
+    r = IF.pause(9, repo=repo, noter=a.note)
+    check("보류 — 주입 실행에 lock_root 없음 → 거절", not r["ok"] and r["step"] == "lock", str(r)[:300])
+
+
+def t_pause_note_failure_keeps_paused(tmp):
+    repo, lk, a, _ = two(tmp)
+    IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    r = IF.pause(7, repo=repo, noter=_boom, lock_root=lk)
+    check("보류 노트 실패 → ok 아님 · 보류는 유지", not r["ok"] and r["step"] == "redmine" and r["paused"]
+          and 7 in IL.paused(lk) and head_of(repo) == "main", str(r)[:300])
+
+
+def t_pause_switch_failure_relocks(tmp):
+    repo, lk, a, _ = two(tmp)
+    IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    real = IF._git
+
+    def fake(repo_, *args):
+        if args[:2] == ("switch", "main"):
+            return 1, "막힘"
+        return real(repo_, *args)
+    IF._git = fake
+    try:
+        r = IF.pause(7, repo=repo, noter=a.note, lock_root=lk)
+    finally:
+        IF._git = real
+    check("보류 switch 실패 → 잠금 다시 활성", not r["ok"] and r["step"] == "switch" and r.get("relocked")
+          and (IL.current(lk) or {}).get("issue_id") == 7 and 7 not in IL.paused(lk), str(r)[:300])
+
+
+def t_cancel_preview_and_keep(tmp):
+    repo, lk, a, _ = two(tmp)
+    IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    c1 = commit(repo, "k.txt")
+    state_before = IL.state_path(lk).read_text()
+    n0 = len(a.notes)
+    r = IF.cancel(7, repo=repo, noter=a.note, lock_root=lk, delete_branch=True)
+    check("취소 미리보기 — ok · 확인 전", r["ok"] and r["confirmed"] is False and r["lock_state"] == "active", str(r)[:300])
+    check("취소 미리보기 — 로컬 전용 커밋 · [중요] 경고", r["local_only"] == [c1] and len(r["commits"]) == 1
+          and r["warning"].startswith("[중요]") and "되살릴 수 없다" in r["warning"], str(r)[:400])
+    check("취소 미리보기 — 쓰기 0", IL.state_path(lk).read_text() == state_before and len(a.notes) == n0
+          and head_of(repo) == "issue/7" and sh(repo, "rev-parse", "issue/7") == c1)
+    check("취소 미리보기 — 무엇을 할지", "branch -D" in r["next"] and "main" in r["next"], r["next"])
+    r = IF.cancel(7, confirm=True, repo=repo, noter=a.note, lock_root=lk)
+    check("취소 승인(기본) — ok · 브랜치 유지", r["ok"] and r["branch_deleted"] is False
+          and sh(repo, "rev-parse", "issue/7") == c1, str(r)[:300])
+    check("취소 승인 — 브랜치에서 main 으로", head_of(repo) == "main" and "switch" in r["done"])
+    check("취소 승인 — 잠금 해제", not IL.is_tracked(lk, 7) and IL.current(lk) is None)
+    check("취소 승인 — 노트(커밋 목록 · 유지)", "취소" in a.notes[-1][0] and c1[:12] in a.notes[-1][0]
+          and "유지" in a.notes[-1][0], a.notes[-1][0])
+    # 잠금 없음 + 브랜치 있음 → 옛 브랜치로 받아 삭제
+    r = IF.cancel(7, confirm=True, delete_branch=True, repo=repo, noter=a.note, lock_root=lk)
+    check("취소 — 잠금 없는 옛 브랜치 + delete_branch → 삭제", r["ok"] and r["lock_state"] == "absent"
+          and r["branch_deleted"] and sh(repo, "branch", "--list", "issue/7") == "", str(r)[:300])
+    r = IF.cancel(7, repo=repo, noter=a.note, lock_root=lk)
+    check("취소 — 잠금·브랜치 둘 다 없음 → 거절", not r["ok"] and r["step"] == "lock", str(r)[:300])
+
+
+def t_cancel_paused_delete(tmp):
+    repo, lk, a, _ = two(tmp)
+    IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    commit(repo, "q.txt")
+    IF.pause(7, repo=repo, noter=a.note, lock_root=lk)
+    r = IF.cancel(7, confirm=True, delete_branch=True, repo=repo, noter=a.note, lock_root=lk)
+    check("보류 일감 취소 + 삭제", r["ok"] and r["lock_state"] == "paused" and r["branch_deleted"]
+          and sh(repo, "branch", "--list", "issue/7") == "" and not IL.is_tracked(lk, 7)
+          and "switch" not in r["done"], str(r)[:300])
+    check("삭제 기록 — 노트에 삭제", "삭제" in a.notes[-1][0])
+
+
+def t_cancel_dirty_and_note_failure(tmp):
+    repo, lk, a, _ = two(tmp)
+    IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    commit(repo, "w.txt")
+    (repo / "dd.txt").write_text("x")
+    r = IF.cancel(7, confirm=True, repo=repo, noter=a.note, lock_root=lk)
+    check("취소 dirty → 거절(tree) · 잠금 그대로", not r["ok"] and r["step"] == "tree" and IL.is_tracked(lk, 7), str(r)[:300])
+    (repo / "dd.txt").unlink()
+    r = IF.cancel(7, confirm=True, delete_branch=True, repo=repo, noter=_boom, lock_root=lk)
+    check("취소 노트 실패 → 브랜치 안 지움", not r["ok"] and r["step"] == "redmine" and not r["branch_deleted"]
+          and sh(repo, "branch", "--list", "issue/7") != "" and "release" in r["done"], str(r)[:300])
+
+
+def t_finish_lock_rules(tmp):
+    repo, lk, a, b = two(tmp)
+    IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    commit(repo, "f.txt")
+    IF.pause(7, repo=repo, noter=a.note, lock_root=lk)
+    sh(repo, "switch", "-q", "issue/7")                 # 사람이 손으로 옮겼다
+    r = IF.finish(7, repo=repo, noter=a.note, enqueue=Q(), review_root=tmp, lock_root=lk)
+    check("finish — 보류 중이면 거절(lock)", not r["ok"] and r["step"] == "lock" and "재개" in r["why"], str(r)[:300])
+    sh(repo, "switch", "-q", "main")
+    IF.start(8, repo=repo, getter=b.get, noter=b.note, lock_root=lk)
+    sh(repo, "switch", "-q", "issue/7")
+    IL.release(lk, 7, op="cancel")
+    r = IF.finish(7, repo=repo, noter=a.note, enqueue=Q(), review_root=tmp, lock_root=lk)
+    check("finish — 다른 일감 활성이면 거절", not r["ok"] and r["step"] == "lock" and r.get("holder") == 8, str(r)[:300])
+
+
+def t_finish_keeps_lock_and_legacy(tmp):
+    repo, lk, a, _ = two(tmp)
+    IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    commit(repo, "g.txt")
+    r = IF.finish(7, confirm=True, repo=repo, noter=a.note, enqueue=Q(), review_root=tmp, lock_root=lk)
+    check("finish 승인 — ok · 잠금은 유지", r["ok"] and (IL.current(lk) or {}).get("issue_id") == 7, str(r)[:300])
+    # 옛 시작(잠금 기록 없음)
+    lk2 = tmp / "lock2"
+    sh(repo, "switch", "-q", "-c", "issue/9")
+    commit(repo, "h.txt")
+    r = IF.finish(9, repo=repo, noter=a.note, enqueue=Q(), review_root=tmp, lock_root=lk2)
+    check("finish — 잠금 기록 없음 → [주의] 로그 · 진행", r["ok"] and any("잠금 기록 없음" in x for x in r["log"]),
+          str(r)[:300])
+
+
+def t_new_branch_acquire_race_rolls_back(tmp):
+    repo, lk, a, _ = two(tmp)
+
+    class Racer(Issue):
+        def note(self, iid, *, notes, status_name=""):
+            IL.acquire(lk, 99, branch="issue/99", start_rev="r")      # 노트 사이에 다른 일감이 잡았다
+            return super().note(iid, notes=notes, status_name=status_name)
+    rr = Racer(SPEC + PLAN)
+    r = IF.start(7, repo=repo, getter=rr.get, noter=rr.note, lock_root=lk)
+    check("경합 — ok 아님 · step lock · holder 99", not r["ok"] and r["step"] == "lock" and r.get("holder") == 99, str(r)[:300])
+    check("경합 — 브랜치 되돌림 · 노트 기록됨을 알린다", r.get("branch_rolled_back") and head_of(repo) == "main"
+          and sh(repo, "branch", "--list", "issue/7") == "" and "이미 기록됐다" in r["why"], str(r)[:300])
+
+
+def t_paused_without_branch_refused(tmp):
+    repo, lk, a, _ = two(tmp)
+    IL.acquire(lk, 7, branch="issue/7", start_rev="r")
+    IL.pause(lk, 7)
+    r = IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    check("보류 기록만 있고 브랜치 없음 → 거절(lock)", not r["ok"] and r["step"] == "lock"
+          and "issue_cancel" in r["why"] and sh(repo, "branch", "--list", "issue/7") == "", str(r)[:300])
+
+
+def t_corrupt_lock_refuses(tmp):
+    repo, lk, a, _ = two(tmp)
+    lk.mkdir()
+    IL.state_path(lk).write_text("{깨짐")
+    r = IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk)
+    check("깨진 잠금 → 거절(lock) · 브랜치 없음", not r["ok"] and r["step"] == "lock"
+          and sh(repo, "branch", "--list", "issue/7") == "", str(r)[:300])
+
+
+def _no_real_twin(*a, **k):
+    raise AssertionError("테스트가 운영 잠금 위치(default_root)를 불렀다")
+
+
 def main() -> int:
+    IL.default_root = _no_real_twin       # 대역 실행은 실 트윈 잠금을 절대 건드리지 않는다
     for fn in (t_plan_needed_refuses, t_no_spec_refuses, t_happy_path,
                t_status_kept_when_not_new, t_dirty_refuses, t_not_on_main_refuses,
                t_ahead_of_origin_refuses, t_existing_branch_elsewhere_refuses,
@@ -385,7 +665,14 @@ def main() -> int:
                t_finish_enqueue_failure_reported, t_git_stderr_not_in_value,
                t_start_noter_exception_rolls_back, t_start_getter_exception,
                t_start_status_read_exception_still_records, t_finish_noter_exception_reports,
-               t_start_already_merge_base_failure, t_log_unserializable):
+               t_start_already_merge_base_failure, t_log_unserializable,
+               t_lock_busy_names_holder, t_lock_already_on_branch, t_legacy_branch_gets_tracked,
+               t_legacy_branch_busy_refused, t_pause_resume_cycle, t_resume_note_failure_undoes,
+               t_resume_dirty_refused, t_pause_refusals, t_pause_note_failure_keeps_paused,
+               t_pause_switch_failure_relocks, t_cancel_preview_and_keep, t_cancel_paused_delete,
+               t_cancel_dirty_and_note_failure, t_finish_lock_rules, t_finish_keeps_lock_and_legacy,
+               t_new_branch_acquire_race_rolls_back, t_paused_without_branch_refused,
+               t_corrupt_lock_refuses):
         run(fn)
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_issue_flow: {PASS}/{total} 통과")

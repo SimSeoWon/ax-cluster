@@ -17,6 +17,12 @@
 규칙 거절이 아니라서 남기지 않는다. 기본 경로(실 Redmine getter)일 때만 기록하고, getter 를
 주입한 호출(테스트 대역)은 `events_path` 를 줄 때만 기록한다 — 대역 실행이 운영 기록을 오염시키지
 않게.
+[중요] **`#883` 일감 하나씩 — 「작업중」 전이는 일감 잠금(`issue_lock`)을 본다.** 다른 일감이 활성이면
+거절한다(같은 `_rejections` 경로, 보유 일감 번호를 사유에 싣는다). 아무도 활성이 아니면 보류 중인
+일감도 허용하되 「재개는 issue_start」 를 결과에 알린다. 잠금 위치는 `lock_root` → 없으면 운영 호출만
+AXCluster 트윈(`issue_lock.default_root()`); getter·updater 를 주입하고 `lock_root` 를 안 주면 **검사를
+건너뛴다**(대역이 운영 상태를 읽지 않게). [주의] `redmine.get_issue` 응답에 프로젝트가 없어
+AXCluster 일감만 고르지 못한다 — **모든 일감의 「작업중」 전이에 적용한다.**
 """
 from __future__ import annotations
 
@@ -169,12 +175,40 @@ def set_plan(issue_id, tasks: list, why: str, *, getter=None, updater=None,
                 "redmine": result}
 
 
+def _lock_gate(issue_id, lock_root) -> str:
+    """「작업중」 전이의 잠금 검사(`#883`). 거절이면 `PlanToolError`, 아니면 알릴 문장(없으면 "")."""
+    from master import issue_lock as IL
+    try:
+        root = lock_root if lock_root is not None else IL.default_root()
+        active = IL.current(root)
+        paused = IL.paused(root)
+    except Exception as e:                              # noqa: BLE001 — IssueLockError·경로 해석
+        raise PlanTransportError(f"일감 잠금 상태를 못 읽었다 — {type(e).__name__}: {e}") from e
+    n = int(issue_id)
+    if active and active["issue_id"] != n:
+        h = active["issue_id"]
+        state = "보류 중인 " if n in paused else ""
+        raise PlanToolError(f"#{h} 작업이 진행 중이다({active.get('branch')}) — {state}#{n} 의 태스크를 "
+                            f"작업중으로 옮기지 않는다, 일감은 하나씩 한다. #{h} 를 완료·보류(issue_pause)·"
+                            "취소(issue_cancel)한 뒤 진행한다")
+    if n in paused:
+        return f"#{n} 는 보류 중이다 — 작업 재개(브랜치·잠금)는 issue_start 가 한다"
+    return ""
+
+
 def transition(issue_id, task_id: str, to: str, note: str = "", *, getter=None,
-               updater=None, events_path=None, caller: str = "") -> dict:
-    """태스크 하나의 상태를 바꾸고 같은 갱신에 노트를 남긴다."""
+               updater=None, events_path=None, caller: str = "", lock_root=None) -> dict:
+    """태스크 하나의 상태를 바꾸고 같은 갱신에 노트를 남긴다.
+
+    「작업중」 으로 갈 때는 일감 잠금을 본다(`#883` — 모듈 설명).
+    """
     ctx = {"task_id": task_id, "to": to, "note": note or ""}
+    injected = getter is not None or updater is not None
+    lock_note = ""
     with _rejections("transition", issue_id, enabled=events_path is not None or getter is None,
                      events_path=events_path, caller=caller, ctx=ctx):
+        if to == PS.WORKING and (lock_root is not None or not injected):
+            lock_note = _lock_gate(issue_id, lock_root)
         body = _read(issue_id, getter or _default_getter)
         plan = PB.parse(body)
         if plan is None:
@@ -186,5 +220,8 @@ def transition(issue_id, task_id: str, to: str, note: str = "", *, getter=None,
         line = f"플랜 {task_id}: {before} → {to}" + (f" — {note.strip()}" if (note or "").strip() else "")
         result = _write(issue_id, new_body, line, updater or _default_updater)
     nxt = ST.assess(new_body)
-    return {"ok": True, "issue_id": issue_id, "task": task_id, "from": before, "to": to,
-            "next": nxt.as_dict(), "redmine": result}
+    out = {"ok": True, "issue_id": issue_id, "task": task_id, "from": before, "to": to,
+           "next": nxt.as_dict(), "redmine": result}
+    if lock_note:
+        out["lock_note"] = lock_note
+    return out

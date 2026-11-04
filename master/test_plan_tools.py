@@ -7,12 +7,14 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master import plan_block as PB    # noqa: E402
 from master import plan_tools as PT    # noqa: E402
+from master import issue_lock as IL    # noqa: E402
 
 PASS = FAIL = 0
 
@@ -179,6 +181,56 @@ def test_start_adds_steps():
     check("읽기 실패는 ok false", out["ok"] is False and "error" in out, str(out))
 
 
+def test_transition_lock_gate():
+    """`#883` — 다른 일감이 활성이면 작업중 전이를 거절한다(lock_root 는 늘 임시)."""
+    with tempfile.TemporaryDirectory() as d:
+        lk = Path(d)
+        iss = FakeIssue(SPEC)
+        PT.set_plan(5, _tasks(), "등록", getter=iss.get, updater=iss.update)
+        IL.acquire(lk, 9, branch="issue/9", start_rev="r")
+        n = len(iss.writes)
+        msg = _err(lambda: PT.transition(5, "T1", "작업중", getter=iss.get, updater=iss.update, lock_root=lk))
+        check("잠금 — 비보유 일감 작업중 거절 · 보유자 이름", "#9" in msg and "하나씩" in msg, msg)
+        check("잠금 — 거절 뒤 쓰기 없음", len(iss.writes) == n)
+        check("잠금 — 작업중 아닌 전이는 막지 않는다(해당없음)", PT.transition(
+            5, "T2", "해당없음", "안 함", getter=iss.get, updater=iss.update, lock_root=lk)["ok"])
+        # 보유자 자신은 된다
+        own = FakeIssue(SPEC)
+        PT.set_plan(9, _tasks(), "등록", getter=own.get, updater=own.update)
+        out = PT.transition(9, "T1", "작업중", getter=own.get, updater=own.update, lock_root=lk)
+        check("잠금 — 보유 일감은 허용 · 알림 없음", out["ok"] and "lock_note" not in out, str(out))
+        # 보류 중 일감: 누가 활성이면 거절, 비어 있으면 허용 + 알림
+        IL.pause(lk, 9)
+        IL.acquire(lk, 5, branch="issue/5", start_rev="r")
+        p9 = FakeIssue(SPEC)
+        PT.set_plan(9, _tasks(), "등록", getter=p9.get, updater=p9.update)
+        msg = _err(lambda: PT.transition(9, "T1", "작업중", getter=p9.get, updater=p9.update, lock_root=lk))
+        check("잠금 — 보류 일감도 다른 활성 있으면 거절", "#5" in msg and "보류 중인" in msg, msg)
+        IL.release(lk, 5, op="cancel")
+        out = PT.transition(9, "T1", "작업중", getter=p9.get, updater=p9.update, lock_root=lk)
+        check("잠금 — 빈 자리면 보류 일감 허용 · issue_start 안내", out["ok"]
+              and "issue_start" in out.get("lock_note", ""), str(out))
+        # 주입 + lock_root 없음 → 검사 건너뜀(운영 잠금 안 읽음)
+        IL.acquire(lk, 77, branch="issue/77", start_rev="r")
+        orig = IL.default_root
+        IL.default_root = lambda *a, **k: (_ for _ in ()).throw(AssertionError("운영 잠금을 읽었다"))
+        try:
+            f = FakeIssue(SPEC)
+            PT.set_plan(6, _tasks(), "등록", getter=f.get, updater=f.update)
+            out = PT.transition(6, "T1", "작업중", getter=f.get, updater=f.update)
+        finally:
+            IL.default_root = orig
+        check("잠금 — 주입 대역 + lock_root 없음 → 건너뜀", out["ok"], str(out))
+        # 깨진 잠금 → 전송 실패로 거절
+        IL.state_path(lk).write_text("{깨짐")
+        try:
+            PT.transition(6, "T2", "작업중", getter=f.get, updater=f.update, lock_root=lk)
+            e = None
+        except PB.PlanError as x:
+            e = x
+        check("잠금 — 못 읽으면 PlanTransportError", isinstance(e, PT.PlanTransportError), repr(e))
+
+
 def main() -> int:
     for fn in (test_set_creates_plan,
                test_set_keeps_states_and_evidence,
@@ -189,7 +241,8 @@ def main() -> int:
                test_transition_refusals_do_not_write,
                test_write_failure_is_not_success,
                test_read_failure,
-               test_start_adds_steps):
+               test_start_adds_steps,
+               test_transition_lock_gate):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_plan_tools: {PASS}/{total} 통과")
