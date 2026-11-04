@@ -749,6 +749,7 @@ def main(argv=None) -> int:
 
     from ..context_search.paths import resolve
     from ..projects.config import ConfigError, Registry
+    from . import issue_progress
 
     ap = argparse.ArgumentParser(description="리뷰 큐 소비자 (#636)")
     ap.add_argument("--project", default="", help="하나만 처리 (기본: 등록된 전부)")
@@ -788,6 +789,8 @@ def main(argv=None) -> int:
                 rq.reclaim_orphans(paths.root, logf=log)   # 잠금을 쥔 지금 running 은 주인이 없다
                 # `#879` T4 — 끝났는데 일감 노트가 안 남은 범위 리뷰를 다시 남긴다(LLM 0)
                 retry_range_notes(paths, logf=log)
+                # `#884` T3 — 일감 마감 해시를 큐에 맞추고 진행 노트(LLM 0 · 예외를 올리지 않는다)
+                issue_progress.sync_issue_tracks(paths, logf=log)
                 before = rq.counts(paths.root)
             except rq.ReviewQueueError as e:
                 # [중요] 깨진 큐는 덮지 않는다 — 사람에게 보고하고 그 프로젝트만 건너뛴다.
@@ -800,6 +803,8 @@ def main(argv=None) -> int:
                 total += 1
                 done += 1 if r.state == "done" else 0
                 failed += 1 if r.state == "failed" else 0
+            # `#884` T3 — 이번 회차에 끝난 커밋 리뷰의 진행 노트를 같은 회차에 남긴다
+            issue_progress.sync_issue_tracks(paths, logf=log)
             after = rq.counts(paths.root)
             log(f"[리뷰큐] {name} 완료 — 대기 {after['pending']} · 종결 {after['done']} "
                 f"· 포기 {after['abandoned']}")
