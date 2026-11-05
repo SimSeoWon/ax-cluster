@@ -32,8 +32,14 @@ does not start a game-source task; it serves one.**
 [중요] **Claude and Codex take turns here.** Before planning, use
 [`ax-handoff`](../master/skills/ax-handoff/SKILL.md) to read the handoff and shared rules,
 cross-check actual state, and inspect master ownership and worker conductor mode separately.
-Change worker mode only when the user chooses it. The master has no session-start hook;
-this instruction is the entry point.
+Change worker mode only when the user chooses it; a master handoff alone does not select a
+worker mode. Record master ownership only after a user-directed handoff and actual takeover;
+reading the handoff or querying state does not authorize a record change. Carry forward existing
+approvals and distribution choices within their original scope; do not request them again merely
+because the session changed. Preserve outstanding approval and `awaiting_resume` conditions.
+If the documented call path differs or the procedure is unclear, ask the user before proceeding;
+do not create temporary scripts or substitute calls.
+The master has no session-start hook; this instruction is the entry point.
 Use [`ax-mode`](../master/skills/ax-mode/SKILL.md) for worker queries and changes, including its
 canonical fallback when MCP is unavailable. Changes go through `conductor.set_worker()` readiness
 checks. Query the current mode and source rather than treating an old state record as live;

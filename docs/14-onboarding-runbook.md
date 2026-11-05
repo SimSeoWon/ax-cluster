@@ -149,6 +149,17 @@ from master.projects import logic; print(logic.sync_check('NS', align=True))"
 (`fatal: detected dubious ownership`, rc=128). `icacls /setowner` 로 맞춘다 — `safe.directory`
 로 덮지 않는다(정상 저장소와 구분되지 않아야 한다).
 
+#### 워커 한 대 신규 설치·경로 이전
+
+체크아웃 루트를 새로 정하거나 옮길 때는 `setup-host`를 사용한다. 프로젝트 인자는 받지 않고
+마운트된 프로젝트를 대상으로 한다. `--host`와 `--root`는 필수이며 계정은 `--user`로 지정할 수 있다.
+기본은 계획만 출력하고, `--confirm`으로 등록부 경로 변경 → 낡은 상주 해제 → 클론·배달 → 대조를 수행한다.
+
+```bash
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client setup-host --host=<ip> --root=<경로>
+AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client setup-host --host=<ip> --root=<경로> --confirm
+```
+
 ### 3 · 배달 → 대조
 
 ```bash
@@ -190,6 +201,9 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update --all   # 등록 
 `config.json`의 `checkout.branch`는 해당 프로젝트 레지스트리의 기본 브랜치를 따른다(`#260`).
 배달은 체크아웃 안의 `.agents/skills`와 `.codex/config.toml`도 구성·대조한다(`#699`).
 홈의 동명 스킬만 있는 상태를 정상 배달로 판단하지 않는다.
+프로필이 색인 전용 또는 `kind: code`인 프로젝트는 루트 `CLAUDE.md`·`AGENTS.md`에 관리 블록을
+쓰지 않고 기존 사람 파일을 보존한다. Claude의 ax-client는 `.mcp.json` 대신 해당 체크아웃의
+로컬 스코프(`~/.claude.json`)에 등록하며, `check`도 그 등록을 대조한다.
 `check`는 그 밖에도 네 가지를 대조한다.
 - Windows에서는 Python 절대경로를 확인한다. 경로를 못 찾았으면 Codex 로컬 도구를 실행할 수 없으므로 실패다.
 - 워커 클론이 원격에서 지운 브랜치의 원격추적 ref를 남기지 않는지 본다(`fetch_prune`, `#787`).

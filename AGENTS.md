@@ -92,6 +92,11 @@
   프로젝트 로컬 정본이 우선이다. 초기화·배달 뒤 이 둘이 없으면 정상 상태가 아니다.
 - 마스터의 공용 호출 창구는 `ax-projects` MCP 다. Codex 설정은 `~/.codex/config.toml`,
   Claude 설정은 `~/.claude.json` 에 있다. 설정 추가만으로 현재 세션에 도구가 생겼다고 판단하지 않는다.
+- 마스터 담당 조회는 [`ax-handoff`](master/skills/ax-handoff/SKILL.md) 스킬의
+  `get_orchestration_tool()`을 쓴다. 마스터 담당은 마지막 인수 기록이며 프로세스 생존 판정·
+  잠금·세션 실행이나 종료 기능이 아니다. 사용자가 마스터 교대를 지시했고 실제 인수를
+  마친 경우에만 `record_master_conductor_tool(agent, why, by)`로 기록한다.
+  단순 조회나 인수인계 읽기 요청은 기록 변경 승인이 아니다.
 - 워커 지휘자 선택은 [`ax-mode`](master/skills/ax-mode/SKILL.md) 스킬 →
   `get_worker_mode_tool` / `set_worker_mode_tool` 이다. 변경은 준비 검사를 수행하는
   `conductor.set_worker()`를 거치며, MCP가 없을 때도 스킬의 같은 정본 호출을 따른다.

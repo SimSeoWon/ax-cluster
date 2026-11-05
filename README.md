@@ -344,7 +344,10 @@ journalctl -u ax-indexer -n 30 --no-pager                # push → 트윈 성�
 등록한 README·CLAUDE·AGENTS·온보딩·인수인계 문서는 `master.doc_sync`의
 **계획 → LLM 수정안 → 검증·승인 적용**으로 갱신한다. 원문·근거·등록 목록을 대조하며
 보호 문서에는 별도 승인이 필요하다. 수정안 생성(`draft`)은 `--project`로 지정한 마운트 프로젝트에
-LLM 사용량을 기록하며, `--out`에는 아직 없는 새 파일만 지정할 수 있다(기존 파일을 덮지 않는다). [등록 목록과 사용법](docs/document-sync.md)을 참고한다.
+LLM 사용량을 기록하며, `--out`에는 아직 없는 새 파일만 지정할 수 있다(기존 파일을 덮지 않는다).
+`plan`·`draft`는 `--id`를 반복 지정해 문서를 선택하거나, `--since`·`--until`로 영향 문서 탐지의
+커밋 범위를 지정할 수 있다(`--since` 지정 시 `--until` 기본값은 HEAD).
+[등록 목록과 사용법](docs/document-sync.md)을 참고한다.
 
 ## MCP 도구 (Claude·Codex가 쓰는 창구)
 

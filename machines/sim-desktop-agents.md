@@ -93,6 +93,17 @@
 골조·소스 경계·검사는 등록 프로필 `kind`(`unreal`/`code`/`index_only`)로 분기한다.
 세부 절차: [`../master/skills/distribute/SKILL.md`](../master/skills/distribute/SKILL.md).
 
+**분산 등재 뒤 대기·후속 처리**(사용자 결정 2026-10-11, #798): `register_work_tool` 성공 응답의
+`wait` 명령을 등재 직후 곧바로 백그라운드로 실행한다. 이 명령은 큐와 준비 기록을 읽기만 한다.
+⑥ 이후 준비는 지휘자와 무관하게 `master.work.followup`이 수행하며, 마스터 수신자는
+`ax-followup.timer`(1분) 하나다. 마스터에서는 훅을 쓰지 않는다. 타이머는 격리 worktree에서
+통합·회귀 검사를 준비하고 사람 게이트에서 멈추며, 라운드당 Redmine 노트를 한 번 남긴다.
+push·base 전진·main 반영은 하지 않는다. 대기 종료 코드가 0(`at_gate`)이면 결과와 게이트 물음
+「버그냐 구조냐」를 사용자에게 전하고 멈춘다. 3이면 실패·종결 사유를, 4이면 마지막 큐 상태·
+준비 기록·조회 오류를 보고한다. 타이머가 죽었거나 종결을 봤는데 준비 기록이 없으면 스킬에
+명시된 같은 followup 핵심의 직접 호출 절차를 따른다. 완료 상태 확인만으로 턴을 끝내지 않는다.
+⑦ 전진과 finalize는 기존대로 각각 별도 승인을 받는다.
+
 - AX 도구 실행 전 작업 위치를 `/home/sim/ax-cluster` 로 맞춘다. Python 은 `.venv/bin/python` 을 쓴다.
 - **Codex 에서 레드마인 키 조회가 빈 문자열이면 키 부재로 단정하지 않는다.** `master.redmine.api_key()`는
   `AX_REDMINE_API_KEY` 다음에 `docker exec redmine-db-1 psql ...`로 컨테이너 DB를 읽는데, 기본
