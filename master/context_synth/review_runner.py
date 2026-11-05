@@ -71,12 +71,16 @@ from . import review_queue as rq
 DRAFT_MODEL = "gemma4:e4b"      # 잠정 (`#640` 이 확정한다)
 DRAFT_NUM_CTX = 8192            # 합성과 같은 값 — 다르면 모델을 통째로 다시 올린다(61.6초 실측)
 DRAFT_TIMEOUT = 180
+# `#888` (사용자 결정 2026-11-06) — 커밋 리뷰 퇴고(agy) 한도. diff 를 자르지 않게 되어 240초에서
+#    늘렸다. `rg.REVIEW_TIMEOUT`(240)은 `commercial_chat` 의 다른 호출자 기본값이라 건드리지 않는다.
+COMMIT_REVIEW_TIMEOUT = 480
 # 🔴 [중요] 한 회차의 시간 예산 (`#749`) — `master/systemd/ax-review-queue.service` 의
-#    `TimeoutStartSec=600` 과 같은 값이다. 넘기면 systemd 가 소비자를 죽인다(실측 2026-10-05
+#    `TimeoutStartSec=900` 과 같은 값이다. 넘기면 systemd 가 소비자를 죽인다(실측 2026-10-05
 #    15:45 — 한 회차 최대 5건이 600초를 넘었다). 한 건의 최악은 초고 + 퇴고 상한에 여유 60초다.
 #    남은 시간이 그보다 적으면 새 항목을 꺼내지 않고 다음 회차(타이머)에 넘긴다.
-RUN_BUDGET = 600
-ITEM_WORST = DRAFT_TIMEOUT + rg.REVIEW_TIMEOUT + 60
+#    `#888` — 퇴고 한도 480초로 600 → 900 (180 + 480 + 60 = 720).
+RUN_BUDGET = 900
+ITEM_WORST = DRAFT_TIMEOUT + COMMIT_REVIEW_TIMEOUT + 60
 DRAFT_MAX_CHARS = 4000          # 초고가 길어지면 리뷰 프롬프트를 밀어낸다
 DECL_MAX_CHARS = 6000
 
@@ -265,7 +269,8 @@ def diff_truncation_note(prompt: str) -> str:
 def agy_only(prompt: str, *, timeout: int = rg.REVIEW_TIMEOUT, workdir=None, log=None) -> str:
     """Antigravity 단독 호출 — 실패해도 Claude·Codex·로컬로 폴백하지 않는다.
 
-    `workdir` (`#844`) — 에이전트가 명령을 돌릴 자리. `run_once` 는 리뷰 커밋의 고정 트리를 준다.
+    `workdir` (`#844`) — 에이전트가 명령을 돌릴 자리. `run_once` 는 빈 임시 디렉터리(`#888`),
+    `run_range` 는 끝 커밋의 고정 트리를 준다.
     `log` (`#888`) — 주면 호출 중 `[agy 하트비트]`, 끝에 `[agy 궤적]` 요약(+diff 잘림 여부)을
     그 함수로 남긴다. 없으면 종전과 같다.
     """
@@ -464,28 +469,35 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
     from ..work import usage as usage_mod                         # noqa: PLC0415
     # 🔴 `#844` — agy 는 셸을 쓰는 에이전트다. workdir 없이 부르면 서비스 작업 폴더(= 마스터
     #    라이브 트리)에서 명령을 돌리고, 그 산출물이 트리를 dirty 로 만든다(실측 2026-10-30:
-    #    `mypy` 가 `.mypy_cache/` 를 남겨 `update` 의 check 가 3대 모두 실패). 리뷰 커밋의 고정
-    #    트리에서 돌린다 — 읽는 내용도 그 순간의 라이브 트리가 아니라 그 커밋이 된다.
-    #    [중요] 트리를 못 만들면 실패로 끝낸다 — 라이브 트리로 되돌아가지 않는다.
+    #    `mypy` 가 `.mypy_cache/` 를 남겨 `update` 의 check 가 3대 모두 실패).
+    #    🔴 `#888` (사용자 결정 2026-11-06) — 커밋 리뷰는 고정 트리 대신 **빈 임시 디렉터리**를 준다.
+    #    트리를 주면 지시(`_SCOPE_RULES`)에도 도구 호출 20–37회로 탐색하다 시간 초과했고, 빈
+    #    디렉터리면 4–6회였다. 판단 근거는 프롬프트의 **자르지 않은 diff**·선언부·초고다.
+    #    [중요] workdir 는 None 이 아니다 — 못 만들면 실패로 끝내고 라이브 트리로 가지 않는다.
     with ExitStack() as stack:
         ask = review_call
         if ask is None:
-            from .pinned_tree import pinned_worktree               # noqa: PLC0415
+            import tempfile                                        # noqa: PLC0415
             try:
-                tree = stack.enter_context(pinned_worktree(repo, commit, logf=log))
-            except RuntimeError as e:
-                why = f"고정 트리 생성 실패 — {e}"
+                empty = stack.enter_context(
+                    tempfile.TemporaryDirectory(prefix="ax-review-agy-", ignore_cleanup_errors=True))
+            except OSError as e:
+                why = f"agy 빈 작업 디렉터리 생성 실패 — {type(e).__name__}: {e}"
                 rq.finish(paths.root, item["id"], ok=False, why=why, logf=log)
                 res.state, res.why = "failed", why
                 return res
-            log(f"[리뷰큐] Antigravity 작업 디렉터리 {tree} @ {commit[:8]}")
-            ask = lambda p, **kw: agy_only(p, workdir=tree, log=log, **kw)  # noqa: E731
+            log(f"[리뷰큐] Antigravity 작업 디렉터리 {empty} (빈 디렉터리) @ {commit[:8]}"
+                f" · 한도 {COMMIT_REVIEW_TIMEOUT}초")
+            ask = lambda p, **kw: agy_only(  # noqa: E731
+                p, workdir=empty, log=log, **{"timeout": COMMIT_REVIEW_TIMEOUT, **kw})
         # `#728` — 퇴고(agy)도 초고와 **같은 task_id** 로 트윈의 `usage_log.jsonl` 에 남긴다.
         #    초고는 `local:<모델>`, 퇴고는 `agy` 레인으로 갈린다(기록은 `layer2_verify.call_agy_why`).
         with usage_mod.sink(paths.usage_log, source="review", task_id=str(commit)[:12]):
+            # `#888` — 퇴고 diff 는 자르지 않는다(상한은 위 초고의 로컬 모델 몫).
             reviewed = rg.review_commit(
                 paths, commit, src, chat=ask, grounding=grounding_text(body, decls),
                 provenance={"draft_model": model, "review_model": "Antigravity"},
+                diff_max_chars=None,
                 logf=lambda _kind, msg: log(f"[리뷰큐] Antigravity {msg}"))
     if reviewed.error or not reviewed.written or not reviewed.format_ok:
         if reviewed.written and not reviewed.format_ok:
@@ -518,9 +530,10 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
     return res
 
 
-# `#879` — 범위 리뷰는 diff 를 자르지 않아 커밋 리뷰(상한 24,000자 · 240초)보다 크다. 첫 실측
-#    (2026-11-03 23:19, 71,904자)이 240초에서 시간 초과했다. 사용자 결정: range 만 한도를 늘린다.
-#    [주의] 유닛 TimeoutStartSec 10분 안이다 — 형식 위반 재시도까지 가면 넘을 수 있고, 그때는
+# `#879` — 범위 리뷰는 diff 를 자르지 않는다. 첫 실측(2026-11-03 23:19, 71,904자)이 240초에서
+#    시간 초과했다. 사용자 결정: range 만 한도를 늘린다(`#888` 부터 커밋 리뷰도 480초 · 무상한 diff).
+#    범위 리뷰는 초고가 없어 한 건 최악 480 + 여유가 `ITEM_WORST`(720) 안이다.
+#    [주의] 형식 위반 재시도까지 가면 유닛 TimeoutStartSec(900초)을 넘을 수 있고, 그때는
 #    주인 없는 running 회수(일시적 1회)로 다음 회차가 다시 한다.
 RANGE_REVIEW_TIMEOUT = 480
 VIEW_BASE = "http://192.168.0.57:8103"     # 게시판(무인증 LAN) — 노트에는 번호·링크만, 본문 경로는 싣지 않는다

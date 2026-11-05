@@ -25,8 +25,9 @@ ExecStart=/home/sim/ax-cluster/.venv/bin/python -m master.context_synth.review_r
 
 # 🔴 한 건은 로컬 1차 초안 뒤 Antigravity 2차 검증·퇴고를 한다. Claude 자동 폴백은 없다.
 #    Antigravity는 이 유닛이 도는 마스터(.57)의 CLI만 사용하며 워커 설치 여부와 무관하다.
-#    기본 5건 × 여유 → 600초.
-TimeoutStartSec=600
+#    기본 5건 × 여유 → 600초. `#888` — 퇴고 한도 240 → 480초로 900초.
+#    [중요] review_runner.RUN_BUDGET 과 같은 값이다 — 한쪽만 바꾸지 않는다.
+TimeoutStartSec=900
 
 # 🔴 리뷰 실패는 **큐에 남는다** — 종료코드로 올리지 않는다.
 #    (늘 빨간 유닛은 유닛이 아니다 — ax-batch.service 와 같은 규약)

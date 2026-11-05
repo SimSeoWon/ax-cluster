@@ -235,6 +235,8 @@ def parse_verdicts(body: str) -> dict:
 #    돌리다 240초 한도에 걸렸다(실측 10-11~10-30 퇴고 90건: 200초 이상 37건은 평균 도구 호출 25.5회·
 #    테스트 실행 23/37, 120초 미만 34건은 6.0회·7/34 · 10-01 이후 260회 중 타임아웃 63회). 판단에 필요한
 #    것(골격·예시·diff·선언부)은 이미 프롬프트에 있으므로 작업 범위를 그만큼으로 적는다.
+#    [주의] 지시만으로는 탐색이 안 멈췄다(`#888` 실측: 트리를 주면 도구 호출 20–37회·시간 초과,
+#    빈 디렉터리면 4–6회). 그래서 리뷰 큐 커밋 리뷰는 agy 에 트리 대신 빈 임시 디렉터리를 준다.
 _SCOPE_RULES = (
     "- 작업 범위: 판단 근거는 아래 DIFF·실측 근거·변경 파일 목록으로 충분하다. 파일을 열어야 하면 "
     "변경 파일과 그 직접 호출부만 필요한 만큼 본다.\n"
@@ -344,8 +346,15 @@ def is_clean_merge(repo: Path, files: list, commit: str) -> bool:
     return rc == 0 and not out.strip()
 
 
-def commit_diff(repo: Path, files: list, commit: str, *, max_chars: int = 24000) -> str:
+# 로컬 모델용 diff 상한(자) — 상용 경로는 `None`(무제한)을 넘길 수 있다 (`#888`)
+DIFF_MAX_CHARS = 24000
+
+
+def commit_diff(repo: Path, files: list, commit: str, *,
+                max_chars: int | None = DIFF_MAX_CHARS) -> str:
     """리뷰 프롬프트에 실을 diff (unified=3). [중요] 상한을 두고 자르면 **잘렸다고 말한다**.
+
+    `max_chars=None` 이면 자르지 않는다 — 리뷰 큐의 agy 퇴고가 그렇게 부른다(`#888`).
 
     머지(부모 둘 이상)는 결합 diff 만 돌려준다 — 비어 있으면 빈 문자열이고, 그것은 실패가
     아니라 「깨끗한 머지」다(`#744` ①). 그 판정은 호출자가 `parent_count` 로 가른다. 비어 있지
@@ -357,7 +366,7 @@ def commit_diff(repo: Path, files: list, commit: str, *, max_chars: int = 24000)
     if rc != 0:
         return ""
     d = out.strip()
-    if len(d) > max_chars:
+    if max_chars is not None and len(d) > max_chars:
         d = d[:max_chars] + "\n... (diff 가 잘렸다 — 여기까지만 리뷰 대상이다)"
     if merge and d:
         d = MERGE_DIFF_HEADER + "\n\n" + d
@@ -557,8 +566,12 @@ def _recorded_chat(paths, commit: str):
 def review_commit(paths, commit: str, files: list, *,
                   exclude_authors: tuple = DEFAULT_EXCLUDE_AUTHORS,
                   chat=None, logf=None, grounding: str = "",
-                  provenance: dict | None = None) -> ReviewResult:
+                  provenance: dict | None = None,
+                  diff_max_chars: int | None = DIFF_MAX_CHARS) -> ReviewResult:
     """커밋 하나의 변경분을 리뷰해 `reviews/<작성자>/` 에 쓴다.
+
+    `diff_max_chars` (`#888`) — 프롬프트 diff 상한. 기본은 종전 24,000자이고, 리뷰 큐는
+    `None`(무제한)을 넘긴다 — 상한은 로컬 모델 몫이지 상용 퇴고 몫이 아니다.
 
     `chat(prompt) -> str` 주입은 테스트와 리뷰 큐의 백엔드 선택 자리다. 리뷰 큐는
     `review_runner.agy_only`를 주입해 Antigravity만 호출한다.
@@ -587,7 +600,7 @@ def review_commit(paths, commit: str, files: list, *,
         r.skipped = "trivial (주석/로그/include 만)"
         return r
 
-    diff = commit_diff(repo, src_files, commit)
+    diff = commit_diff(repo, src_files, commit, max_chars=diff_max_chars)
     if not diff and is_clean_merge(repo, src_files, commit):
         # `#744` ① (사용자 결정 2026-10-05) — 깨끗한 머지. 들어온 변경은 조각 커밋이 리뷰했다.
         r.skipped = MERGE_SKIP_NOTE.removeprefix("스킵: ")

@@ -540,6 +540,29 @@ def test_intent_format_is_fail_closed():
     check("  미요청도 로그로 남긴다", any("미요청 — 지워진 [PSEUDO] 0줄" in m for m in logs3), str(logs3))
 
 
+def test_diff_cap_is_opt_out():
+    """`#888` — 기본은 종전 24,000자 상한, `diff_max_chars=None` 만 자르지 않는다."""
+    root, p = fixture()
+    big = "int F() {\n" + "".join(f"  int v{i} = {i};\n" for i in range(3000)) + "  return 1;\n}\n"
+    c = commit_change(p, big, msg="큰 변경")
+    files = ["Source/M/A.cpp"]
+    full = RG.commit_diff(p.repo, files, c, max_chars=None)
+    check("#888 큰 diff 픽스처는 상한보다 크다", len(full) > RG.DIFF_MAX_CHARS, str(len(full)))
+    check("#888 None 이면 자르지 않는다", "(diff 가 잘렸다" not in full and "int v2999 = 2999;" in full)
+    capped = RG.commit_diff(p.repo, files, c)
+    check("#888 기본은 종전 상한으로 자른다", "(diff 가 잘렸다" in capped
+          and len(capped) < len(full), str(len(capped)))
+    seen = []
+    RG.review_commit(p, c, files, chat=lambda pr: seen.append(pr) or CANNED)
+    check("#888 review_commit 기본은 잘린 diff (직접 호출자 종전 그대로)",
+          seen and "(diff 가 잘렸다" in seen[0] and "int v2999 = 2999;" not in seen[0])
+    seen.clear()
+    RG.review_commit(p, c, files, chat=lambda pr: seen.append(pr) or CANNED, diff_max_chars=None)
+    check("#888 diff_max_chars=None 은 온전한 diff",
+          seen and "(diff 가 잘렸다" not in seen[0] and "int v2999 = 2999;" in seen[0])
+    shutil.rmtree(root)
+
+
 def main() -> int:
     for fn in (test_serial_travels_to_journal,
                test_trivial_detection, test_author_exclusion_skips_before_llm,
@@ -549,7 +572,7 @@ def main() -> int:
                test_failure_reasons_are_never_silent, test_synth_paths_log_their_gaps,
                test_generation_chain_is_codex_first_but_verification_is_not,
                test_intent_section_only_when_pseudo_removed, test_intent_format_is_fail_closed,
-               test_scope_rules):
+               test_scope_rules, test_diff_cap_is_opt_out):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_review_gen: {PASS}/{total} 통과")
