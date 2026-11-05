@@ -680,6 +680,65 @@ def test_종합_리뷰_회차_기록이_없으면_실패다():
     shutil.rmtree(root)
 
 
+def test_agy_하트비트_배선():
+    """⑰ `#888` — `agy_only(log=)` 는 하트비트·요약을 켜고 diff 잘림 여부를 요약에 싣는다.
+
+    `log` 가 없으면 `call_agy_why` 에 새 인자를 하나도 넘기지 않는다(종전 그대로).
+    기본 퇴고 경로(`review_call=None`)는 커밋·범위 두 자리 모두 큐의 로그 함수를 넘긴다.
+    """
+    import inspect
+    from master import layer2_verify as L2
+    seen = []
+
+    def fake(prompt, **kw):
+        seen.append(kw)
+        if "heartbeat" in kw:
+            kw["heartbeat"]("[agy 하트비트] 경과 20초 · 턴 1")
+        return _review_body(), ""
+    orig, L2.call_agy_why = L2.call_agy_why, fake
+    logs = []
+    try:
+        R.agy_only("본문", timeout=9)
+        R.agy_only("본문", timeout=9, workdir="/w", log=logs.append)
+        cut = "diff\n... (diff 가 잘렸다 — 여기까지만 리뷰 대상이다)"
+        R.agy_only(cut, log=logs.append)
+    finally:
+        L2.call_agy_why = orig
+    check("⑰ log 없음 → 새 인자 없음", seen[0] == {"timeout": 9}, str(seen[0]))
+    check("⑰ log 있음 → heartbeat·note", callable(seen[1].get("heartbeat"))
+          and seen[1].get("heartbeat_note") == "diff 온전" and seen[1].get("workdir") == "/w",
+          str(seen[1]))
+    check("⑰ 잘린 diff 를 표시한다", seen[2].get("heartbeat_note") == "diff 잘림", str(seen[2]))
+    check("⑰ 하트비트는 큐 로그로 간다(접두 포함)",
+          logs and logs[0] == "[리뷰큐] [agy 하트비트] 경과 20초 · 턴 1", str(logs))
+    check("⑰ 잘림 판정은 review_gen 꼬리와 같은 글", R.DIFF_TRUNCATED_MARK in inspect.getsource(RG.commit_diff))
+
+    # 기본 커밋 리뷰 경로가 실제로 log 를 넘긴다
+    root, head = make_repo()
+    Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
+    got = {}
+
+    def fake_agy(prompt, **kw):
+        got.update(kw)
+        return _review_body()
+    orig_agy, R.agy_only = R.agy_only, fake_agy
+    qlogs = []
+    try:
+        r = R.run_once(Paths(root), draft_call=lambda p: "없음", logf=qlogs.append)
+    finally:
+        R.agy_only = orig_agy
+    check("⑰ 커밋 리뷰 done", r.state == "done", f"{r.state} {r.why}")
+    lg = got.get("log")
+    check("⑰ 커밋 리뷰 경로가 log 를 넘긴다", callable(lg), str(got))
+    if callable(lg):
+        lg("표지")
+        check("⑰ 그 log 는 큐 로그다", "표지" in qlogs, str(qlogs[-3:]))
+    shutil.rmtree(root)
+    # 범위 리뷰 자리 — 기본 경로는 유닛이 타지 않으므로 배선 문장을 직접 본다
+    src = inspect.getsource(R.run_range)
+    check("⑰ 범위 리뷰 경로도 log 를 넘긴다", "agy_only(p, workdir=tree, log=log" in src)
+
+
 if __name__ == "__main__":
     for fn in (test_로컬뒤_antigravity가_퇴고한다,
                test_로컬_없음이어도_antigravity가_본다,
@@ -692,7 +751,8 @@ if __name__ == "__main__":
                test_골조_지시_이행_절, test_퇴고는_고정_트리에서_돈다,
                test_고정_트리_실패는_실패다,
                test_쿨다운은_시도를_쓰지_않고_회차를_멈춘다,
-               test_종합_리뷰_회차_기록이_없으면_실패다):
+               test_종합_리뷰_회차_기록이_없으면_실패다,
+               test_agy_하트비트_배선):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

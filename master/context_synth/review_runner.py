@@ -253,13 +253,27 @@ def grounding_text(draft_body: str, decls: str) -> str:
     return "\n\n".join(parts)
 
 
-def agy_only(prompt: str, *, timeout: int = rg.REVIEW_TIMEOUT, workdir=None) -> str:
+# `review_gen.commit_diff` 가 상한에서 자를 때 덧붙이는 꼬리의 앞부분 (`#888` — 요약에 싣는다)
+DIFF_TRUNCATED_MARK = "(diff 가 잘렸다"
+
+
+def diff_truncation_note(prompt: str) -> str:
+    """agy 궤적 요약에 붙일 diff 잘림 표시 — 프롬프트에 잘림 꼬리가 있는지만 본다."""
+    return "diff 잘림" if DIFF_TRUNCATED_MARK in (prompt or "") else "diff 온전"
+
+
+def agy_only(prompt: str, *, timeout: int = rg.REVIEW_TIMEOUT, workdir=None, log=None) -> str:
     """Antigravity 단독 호출 — 실패해도 Claude·Codex·로컬로 폴백하지 않는다.
 
     `workdir` (`#844`) — 에이전트가 명령을 돌릴 자리. `run_once` 는 리뷰 커밋의 고정 트리를 준다.
+    `log` (`#888`) — 주면 호출 중 `[agy 하트비트]`, 끝에 `[agy 궤적]` 요약(+diff 잘림 여부)을
+    그 함수로 남긴다. 없으면 종전과 같다.
     """
     from .. import layer2_verify as l2
     kw = {} if workdir is None else {"workdir": str(workdir)}
+    if log is not None:
+        kw.update(heartbeat=lambda m: log(f"[리뷰큐] {m}"),
+                  heartbeat_note=diff_truncation_note(prompt))
     out, why = l2.call_agy_why(prompt, timeout=timeout, **kw)
     if not (out or "").strip():
         raise rg.ReviewChatError("Antigravity 실패 — " + (why or "사유 미기록"))
@@ -465,7 +479,7 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
                 res.state, res.why = "failed", why
                 return res
             log(f"[리뷰큐] Antigravity 작업 디렉터리 {tree} @ {commit[:8]}")
-            ask = lambda p, **kw: agy_only(p, workdir=tree, **kw)  # noqa: E731
+            ask = lambda p, **kw: agy_only(p, workdir=tree, log=log, **kw)  # noqa: E731
         # `#728` — 퇴고(agy)도 초고와 **같은 task_id** 로 트윈의 `usage_log.jsonl` 에 남긴다.
         #    초고는 `local:<모델>`, 퇴고는 `agy` 레인으로 갈린다(기록은 `layer2_verify.call_agy_why`).
         with usage_mod.sink(paths.usage_log, source="review", task_id=str(commit)[:12]):
@@ -821,7 +835,7 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
                 res.state, res.why = "failed", why
                 return res
             log(f"[리뷰큐] Antigravity 작업 디렉터리 {tree} @ {end[:8]} · 한도 {RANGE_REVIEW_TIMEOUT}초")
-            ask = lambda p, **kw: agy_only(p, workdir=tree,          # noqa: E731
+            ask = lambda p, **kw: agy_only(p, workdir=tree, log=log,  # noqa: E731
                                            **{"timeout": RANGE_REVIEW_TIMEOUT, **kw})
         with usage_mod.sink(paths.usage_log, source="review", task_id=f"issue{issue}"):
             reviewed = rg.review_range(

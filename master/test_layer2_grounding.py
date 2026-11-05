@@ -4,6 +4,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -349,6 +350,135 @@ class PieceScopedImportTests(unittest.TestCase):
         tight = D.from_commit(self.paths, self.base, kind="code", work_exts=[".py"],
                               target_files=["a.py"], per_class=20, total=64000)
         self.assertEqual(sorted(b[1] for b in d.blocks), sorted(b[1] for b in tight.blocks))
+
+
+class AgyHeartbeatTests(unittest.TestCase):
+    """`#888` T2 — `run_agy(heartbeat=...)` 의 하트비트·궤적 요약. agy·대화 기록은 가짜다."""
+
+    def setUp(self):
+        from master import agy_models as AM, agy_trace as AT
+        self.AM, self.AT = AM, AT
+        self.markers = []
+        stack = [patch.object(L2, "AGY_HEARTBEAT_SEC", 0.05),
+                 patch.object(L2.shutil, "which", return_value="/fake/agy")]
+        for st in stack:
+            st.start()
+            self.addCleanup(st.stop)
+
+    def fake_execute(self, result, *, delay=0.3, seen=None):
+        def run(exe, build, runner, **kw):
+            if seen is not None:
+                seen["cmd"] = build("gemini-x", "")
+                seen["threads"] = [t.name for t in __import__("threading").enumerate()]
+            time.sleep(delay)
+            return result
+        return patch.object(self.AM, "execute", side_effect=run)
+
+    def fake_trace(self, *, find=None):
+        tr = self.AT.Trace(conversation="conv-1", steps=3, turns=2, turn_seconds=[4.0, 9.0],
+                           tools=[self.AT.ToolCall("read_file", "/tmp/ax-pinned-q/tree/a.py", 1, 9)],
+                           first_ts=1.0, last_ts=14.0, last_status=3, last_step_type=132)
+
+        def default_find(marker, *, since):
+            self.markers.append((marker, since))
+            return Path("/fake/conv-1.db")
+        return (patch.object(self.AT, "find_conversation", side_effect=find or default_find),
+                patch.object(self.AT, "read_trace", return_value=tr))
+
+    def test_off_no_thread_no_log(self):
+        seen, logs = {}, []
+        ok = self.AM.AgyResult(raw="본문", rc=0)
+        with self.fake_execute(ok, delay=0.2, seen=seen), \
+                patch.object(L2, "_AgyTracer", side_effect=AssertionError("tracer")), \
+                patch.object(L2, "_LOGF", logs.append):
+            out, why = L2.call_agy_why("p", timeout=5)
+        self.assertEqual((out, why), ("본문", ""))
+        self.assertNotIn("agy-heartbeat", seen["threads"])
+        self.assertEqual(logs, [])
+
+    def test_off_passes_no_new_kwargs(self):
+        res = self.AM.AgyResult(raw="x", rc=0)
+        with patch.object(L2, "run_agy", return_value=res) as run:
+            L2.call_agy_why("p", timeout=5)
+        run.assert_called_once_with("p", timeout=5, workdir=None, model="", allow_argon=False,
+                                    fallback_models=())
+
+    def test_on_emits_heartbeats_and_summary(self):
+        seen, logs = {}, []
+        ok = self.AM.AgyResult(raw="본문", rc=0)
+        f, r = self.fake_trace()
+        with self.fake_execute(ok, delay=0.4, seen=seen), f, r:
+            out, why = L2.call_agy_why("p", timeout=5, heartbeat=logs.append,
+                                       heartbeat_note="diff 잘림")
+        self.assertEqual((out, why), ("본문", ""))
+        self.assertIn("agy-heartbeat", seen["threads"])
+        beats = [x for x in logs if x.startswith("[agy 하트비트]")]
+        self.assertGreaterEqual(len(beats), 2, logs)
+        self.assertIn("턴 2", beats[0])
+        self.assertIn("마지막 read_file a.py:1-9", beats[0])
+        sums = [x for x in logs if x.startswith("[agy 궤적]")]
+        self.assertEqual(len(sums), 1, logs)
+        self.assertIn("대화 conv-1", sums[0])
+        self.assertIn("(4,9초)", sums[0])
+        self.assertIn("diff 잘림", sums[0])
+        self.assertEqual(logs[-1], sums[0])
+        # 마커는 이번 호출의 BRIEF 디렉터리다
+        brief = seen["cmd"][seen["cmd"].index("--add-dir") + 1]
+        self.assertTrue(self.markers and all(m == brief for m, _ in self.markers), self.markers)
+
+    def test_not_found_line(self):
+        logs = []
+        f, r = self.fake_trace(find=lambda marker, *, since: None)
+        with self.fake_execute(self.AM.AgyResult(raw="x", rc=0), delay=0.2), f, r:
+            L2.call_agy_why("p", timeout=5, heartbeat=logs.append)
+        self.assertTrue(any("대화 기록 미발견" in x and x.startswith("[agy 하트비트]") for x in logs), logs)
+        self.assertTrue(logs[-1].startswith("[agy 궤적] 대화 기록 미발견"), logs)
+
+    def test_heartbeat_exception_does_not_affect_result(self):
+        logs = []
+
+        def boom(marker, *, since):
+            raise RuntimeError("trace exploded")
+        f, r = self.fake_trace(find=boom)
+        ok = self.AM.AgyResult(raw="본문", rc=0)
+        with self.fake_execute(ok, delay=0.3), f, r, patch.object(L2, "_LOGF", lambda m: None):
+            out, why = L2.call_agy_why("p", timeout=5, heartbeat=logs.append)
+        self.assertEqual((out, why), ("본문", ""))
+        self.assertFalse(any(x.startswith("[agy 하트비트]") for x in logs), logs)
+        # 요약 자리에서도 같은 예외 — 그래도 요약 한 줄은 남고 오류 수를 싣는다
+        self.assertTrue(logs and logs[-1].startswith("[agy 궤적] 대화 기록 미발견"), logs)
+        self.assertIn("하트비트 오류", logs[-1])
+        self.assertIn("trace exploded", logs[-1])
+
+    def test_heartbeat_error_counted_in_summary(self):
+        logs, calls = [], []
+
+        def flaky(marker, *, since):
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("first beat")
+            return Path("/fake/conv-1.db")
+        f, r = self.fake_trace(find=flaky)
+        with self.fake_execute(self.AM.AgyResult(raw="x", rc=0), delay=0.3), f, r:
+            L2.call_agy_why("p", timeout=5, heartbeat=logs.append)
+        self.assertIn("하트비트 오류 1건", logs[-1])
+        self.assertIn("대화 conv-1", logs[-1])
+
+    def test_summary_on_timeout(self):
+        logs = []
+        f, r = self.fake_trace()
+        to = self.AM.AgyResult(raw=None, rc=-1, why="타임아웃 240초")
+        with self.fake_execute(to, delay=0.15), f, r, patch.object(L2, "_LOGF", lambda m: None):
+            out, why = L2.call_agy_why("p", timeout=5, heartbeat=logs.append)
+        self.assertEqual((out, why), (None, "타임아웃 240초"))
+        self.assertTrue(logs and logs[-1].startswith("[agy 궤적] 대화 conv-1"), logs)
+
+    def test_tracer_thread_stops(self):
+        import threading
+        f, r = self.fake_trace()
+        with self.fake_execute(self.AM.AgyResult(raw="x", rc=0), delay=0.1), f, r:
+            L2.call_agy_why("p", timeout=5, heartbeat=lambda m: None)
+        self.assertNotIn("agy-heartbeat", [t.name for t in threading.enumerate()])
 
 
 if __name__ == "__main__":

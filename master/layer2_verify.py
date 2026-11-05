@@ -24,6 +24,7 @@ import time
 import subprocess
 import sys
 import tempfile
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -233,10 +234,95 @@ def call_agy(prompt: str, *, timeout: int = TIMEOUT_SEC, model: str = "",
     return out
 
 
+# `#888` — agy 호출 중 하트비트 간격(초). 유닛은 이 값을 줄여 쓴다.
+AGY_HEARTBEAT_SEC = 20
+
+
+def _agy_trace_mod():
+    if __package__:
+        from . import agy_trace
+    else:
+        import agy_trace
+    return agy_trace
+
+
+class _AgyTracer:
+    """agy 가 도는 동안 대화 기록(`agy_trace`)을 따라가 하트비트를 찍는다 (`#888` T2).
+
+    `work/runner.py` 의 `_Beater` 와 같은 모양 — 멈춤 이벤트 · 예외는 모아 두고 **호출을 죽이지
+    않는다**. 하트비트 하나를 놓친 것은 관측의 결손이지 호출의 실패가 아니다.
+    끝나면(`summary`) 성공·실패와 무관하게 요약 한 줄을 남긴다.
+    """
+
+    def __init__(self, log, brief_dir: str, *, note: str = "", interval: float | None = None):
+        self._log, self._marker, self._note = log, brief_dir, note
+        self._interval = AGY_HEARTBEAT_SEC if interval is None else interval
+        self._stop = threading.Event()
+        self._t = None
+        self._start_wall = time.time()
+        self._start = time.monotonic()
+        self.beats = 0
+        self.errors = []
+
+    def _find(self):
+        # 매번 다시 찾는다 — 모델 폴백이면 같은 BRIEF 로 대화가 새로 생기고, 가장 최근 것이 이긴다.
+        # 파일 mtime 은 초 미만이 잘릴 수 있어 1초 앞당겨 본다.
+        return _agy_trace_mod().find_conversation(self._marker, since=self._start_wall - 1)
+
+    def beat(self):
+        T = _agy_trace_mod()
+        path = self._find()
+        trace = T.read_trace(path) if path is not None else None
+        self._log(T.heartbeat_line(time.monotonic() - self._start, trace))
+
+    def _loop(self):
+        while not self._stop.wait(self._interval):
+            try:
+                self.beat()
+                self.beats += 1
+            except Exception as e:                           # noqa: BLE001
+                self.errors.append(f"{type(e).__name__}: {e}")
+
+    def __enter__(self):
+        self._t = threading.Thread(target=self._loop, daemon=True, name="agy-heartbeat")
+        self._t.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        if self._t is not None:
+            self._t.join(timeout=5)
+        try:
+            self.summary()
+        except Exception as e:                               # noqa: BLE001
+            self.errors.append(f"{type(e).__name__}: {e}")
+        return False
+
+    def summary(self):
+        T = _agy_trace_mod()
+        try:
+            path = self._find()
+            trace = T.read_trace(path) if path is not None else None
+        except Exception as e:                               # noqa: BLE001
+            self.errors.append(f"{type(e).__name__}: {e}")
+            trace = None
+        note = self._note
+        if self.errors:
+            extra = f"하트비트 오류 {len(self.errors)}건 ({self.errors[-1][:80]})"
+            note = f"{note} · {extra}" if note else extra
+        self._log(T.summary_line(trace, note=note)
+                  + f" · 경과 {int(time.monotonic() - self._start)}초")
+
+
 def run_agy(prompt: str, *, timeout: int = TIMEOUT_SEC,
             workdir: str | None = None, model: str = "", allow_argon: bool = False,
-            fallback_models=()):
-    """Shared model policy/runner; caller owns usage emission (lanes must not double count)."""
+            fallback_models=(), heartbeat=None, heartbeat_note: str = ""):
+    """Shared model policy/runner; caller owns usage emission (lanes must not double count).
+
+    `heartbeat` (`#888`) — 로그 함수. 주면 호출 동안 `AGY_HEARTBEAT_SEC` 마다 `[agy 하트비트]` 를,
+    끝나면(성공·실패 무관) `[agy 궤적]` 요약 한 줄(+`heartbeat_note`)을 그 함수로 남긴다.
+    없으면(기본) 스레드도 로그도 없다 — 종전과 같다.
+    """
     if __package__:
         from . import agy_models
     else:
@@ -254,8 +340,14 @@ def run_agy(prompt: str, *, timeout: int = TIMEOUT_SEC,
             kw = {} if workdir is None else {"cwd": str(workdir)}
             return _run_raw(cmd, timeout=timeout, **kw)
 
-        result = agy_models.execute(exe, build, runner, timeout=timeout, model=model,
-                                     allow_argon=allow_argon, fallback_models=fallback_models)
+        if heartbeat is None:
+            result = agy_models.execute(exe, build, runner, timeout=timeout, model=model,
+                                         allow_argon=allow_argon, fallback_models=fallback_models)
+        else:
+            with _AgyTracer(heartbeat, brief_dir, note=heartbeat_note):
+                result = agy_models.execute(exe, build, runner, timeout=timeout, model=model,
+                                             allow_argon=allow_argon,
+                                             fallback_models=fallback_models)
         if result.attempts and not result.actual_model:
             _log(f"[agy] 실제 모델 미상 · 요청={result.requested_model}; canonical catalog만 확인")
         return result
@@ -263,7 +355,7 @@ def run_agy(prompt: str, *, timeout: int = TIMEOUT_SEC,
 
 def call_agy_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
                  workdir: str | None = None, model: str = "", allow_argon: bool = False,
-                 fallback_models=()) -> tuple:
+                 fallback_models=(), heartbeat=None, heartbeat_note: str = "") -> tuple:
     """`(출력, 사유)`. 사유는 실패했을 때만 채워진다.
 
     `workdir` — 에이전트가 직접 읽을 작업 디렉터리(`#825`). `--add-dir` 로 싣고 그곳에서 실행한다.
@@ -275,9 +367,11 @@ def call_agy_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
     [주의] 봉투가 아니면(플래그 미지원 등) **출력 전체를 종전처럼 본문으로** 쓰고
     `measured=False` 로 남긴다 — 토큰을 0 으로 지어내지 않는다.
     [주의] 실행파일 부재는 호출이 일어나지 않은 것이라 기록하지 않는다.
+    `heartbeat`·`heartbeat_note` (`#888`) — `run_agy` 로 그대로 넘긴다. 없으면 넘기지도 않는다.
     """
+    hb = {} if heartbeat is None else {"heartbeat": heartbeat, "heartbeat_note": heartbeat_note}
     result = run_agy(prompt, timeout=timeout, workdir=workdir, model=model,
-                     allow_argon=allow_argon, fallback_models=fallback_models)
+                     allow_argon=allow_argon, fallback_models=fallback_models, **hb)
     for attempt in result.attempts:
         if "rc" not in attempt:
             continue
