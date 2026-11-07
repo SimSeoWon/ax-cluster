@@ -126,7 +126,9 @@ def main() -> None:
     notice = cwd_notice(session_cwd, cwd)
     if notice:
         print(notice)
-    _editor_notice(data)
+    # 🔴 `#901` — 에디터 판정도 **루트 기준**이다. 원 payload 를 넘기면 `editor_mcp` 가 하위 폴더에서
+    #    `.mcp.json` 을 못 찾아 옵트인 꺼짐으로 침묵했다(드라이런 재현 2026-11-07, `#899`).
+    _editor_notice(dict(data, cwd=str(cwd)))
 
     try:
         client_mcp = _load_client(cwd)

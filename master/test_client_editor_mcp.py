@@ -317,12 +317,48 @@ def test_ps_time_parsing():
     check("쓰레기는 None", EM.parse_ps_time("Get-Process : ...") is None)
 
 
+# ── ⑩ 훅 배치에서 하위 폴더 세션 (`#901`) ─────────────────────────────
+def test_subfolder_session_via_hook_placement():
+    """🔴 위 검사들은 `notice()` 에 `cwd` 를 직접 넣는다 — **훅 배치 경로는 안 잰다.**
+
+    실제 훅은 `<체크아웃>/.claude/hooks/pending_works.py` 이고 루트는 그 자리가 안다
+    (`hook_paths.checkout_root`). 세션이 하위 폴더에서 열리면 payload `cwd` 는 루트가 아니다 —
+    그 값을 그대로 넘기면 `.mcp.json` 을 못 찾아 **옵트인 꺼짐으로 침묵**했다
+    (드라이런 재현 2026-11-07, `#899`). 그래서 이 검사는 진짜 배치에서 서브프로세스로 돈다.
+    """
+    import shutil
+    import subprocess
+    print("⑩ 훅 배치 — 하위 폴더에서 연 세션도 에디터를 판정한다 (#901)")
+    hooks = Path(__file__).resolve().parent / "client" / "workshop" / "hooks"
+    with tempfile.TemporaryDirectory() as d:
+        root = _proj(Path(d), 1)                          # 확실히 닫힌 포트 → 「꺼짐」
+        dst = root / ".claude" / "hooks"
+        dst.mkdir(parents=True)
+        for name in ("pending_works.py", "editor_mcp.py", "hook_paths.py"):
+            shutil.copy2(hooks / name, dst / name)
+        sub = root / "Source" / "Sub"
+        sub.mkdir(parents=True)
+        for label, cwd in (("루트", root), ("하위 폴더", sub)):
+            payload = json.dumps(_payload(cwd, "SessionStart", sid=f"s-{label}"))
+            p = subprocess.run([sys.executable, "-B", str(dst / "pending_works.py")],
+                               input=payload, capture_output=True, text=True,
+                               encoding="utf-8", cwd=str(cwd), timeout=60)
+            check(f"{label} 세션 — 「꺼짐」을 고지한다", "[에디터 MCP] 꺼짐" in p.stdout,
+                  p.stdout[-300:] + p.stderr[-300:])
+        rows = _log_rows(root)
+        check("🔴 두 세션 모두 **루트의** 실증 로그에 남는다",
+              sorted(r["session"] for r in rows) == ["s-루트", "s-하위 폴더"[:8]], str(rows))
+        check("하위 폴더에 `.ax/` 를 만들지 않는다 (스냅샷·로그는 루트 것이다)",
+              not (sub / ".ax").exists())
+
+
 def main() -> int:
     for fn in (test_optin_gate, test_port_comes_from_file, test_verdict_table,
                test_snapshot_and_noise, test_stale_is_the_trap,
                test_rebuild_cycle_recovers_by_itself, test_log_makes_the_live_run_checkable,
                test_never_blocks,
-               test_ps_time_parsing):
+               test_ps_time_parsing,
+               test_subfolder_session_via_hook_placement):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_editor_mcp: {PASS}/{total} 통과")
