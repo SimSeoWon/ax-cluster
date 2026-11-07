@@ -25,6 +25,18 @@ broker · index/ontology · integration · the cluster's own code in `~/ax-clust
 does not start a game-source task; it serves one.**
 → [`win-main-33.md`](win-main-33.md) § 요청자 콘솔
 
+## PC types and execution responsibility — user decision 2026-11-07
+
+| Type | PCs | Responsibility and working baseline |
+|---|---|---|
+| Infrastructure master | `.57` sim-desktop | Owns AX services, queue, indexing and automatic review; develops the cluster itself. The master owns automatic review execution. `~/ax-cluster` also supplies service code: inspect its actual branch and revision during development and finish. |
+| Supporting worker | `.2`, `.43` | Executes the master's assigned project and work. The project's `main` is the idle and post-task baseline; use the assigned task branch while implementing a dispatched piece. Do not independently select projects, revisions or review execution locations. |
+| User work PC | `.33` | The user develops projects and submits requests here. Do not move automatic review execution here or switch branches in the user's working tree. Only while AXCluster is mounted, its separate `C:\trunk\AXCluster` checkout may perform the authorized worker role. Keep that role and directory separate from game requester work. |
+
+- Verify PC type, per-project role, Git path and current branch separately. An inference endpoint is not thereby the review execution host.
+- Before Git operations, cross-check the mounted project against the target repository and registered checkout path. Independent clones do not share branch refs; linked worktrees do. Inspect actual paths and connections before attributing state to another PC or worktree.
+- Report hypothetical test conditions explicitly. Without confirming the same condition in production, do not present it as a production incident or inability to work. Ask the user when the execution owner or permitted operation is unclear.
+
 ## Orchestrator handoff — read before anything else
 
     AX-ENTRY-MARK: home
