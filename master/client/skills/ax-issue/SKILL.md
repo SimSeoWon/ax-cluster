@@ -121,9 +121,11 @@ PowerShell 기준 변수(체크아웃 루트에서):
    거절되면 멈추고 출력 원문을 보고한다. `--force` 는 쓰지 않는다. 로컬은 그대로라 잃을 것이 없다.
 
 4. `issue_finish($N, base=$base, end=$end, hashes=<$hashes 순서대로>, subjects=<같은 순서의 제목>)`.
-   - `ok: true` · `registered: true` · `lock_released: true` → 마감 등록 완료. 5 로 간다.
-   - `registered: false` → 잠금이 남아 있다. `why` 를 보고한다. 같은 인자로 다시 부르면 같은 범위는
-     `already` 로 처리된다. worktree 는 등록이 될 때까지 남겨 둔다.
+   - `ok: true` · `registered: true` · `lock_released: true` · `closed: true` → 마감 등록 완료이고 일감이
+     「완료」·100 으로 닫혔다(`#889` — main 적용 = 마감). 5 로 간다.
+   - `registered: false` → 잠금이 남아 있고 일감도 열린 채다. `why` 를 보고한다. 같은 인자로 다시 부르면
+     같은 범위는 `already` 로 처리된다. worktree 는 등록이 될 때까지 남겨 둔다.
+   - `registered: true` · `closed: false` → 닫기만 실패했다(`why` 에 `Redmine 닫기`). 노트는 남았다 — 보고하고 묻는다.
    - 그 밖의 `ok: false`(링크·노트 실패 등) → `done`·`why` 를 그대로 보고한다.
 
 5. 정리 — 브랜치가 `origin/main` 에서 도달 가능할 때만 지운다:
@@ -191,10 +193,12 @@ PowerShell 기준 변수(체크아웃 루트에서):
 
 ## 9. 일감을 「완료」로 닫을 때
 
-`redmine_note(status_name="완료")` 는 마스터의 관문을 지난다. 그 일감의 종합 리뷰가 끝나지 않았거나
-결정되지 않은 HIGH 지적이 있으면 `[주의] … 완료 거절` 로 아무것도 쓰이지 않는다. 사유 문장의 지적을
-실제 코드와 대조해 버그면 고친 뒤 `applied`, 오탐·의도면 `update_fix_status(dismissed, note=사유)` —
-어느 쪽인지는 사용자와 정한다. 태스크가 전부 완료돼도 일감을 닫는 것은 별도 판단이다.
+일감은 **`issue_finish` 가 닫는다**(§5 4 — main 적용 = 「완료」·100, `#889`). 따로 닫지 않는다.
+손으로 `redmine_note(status_name="완료")` 를 보내면 마스터 관문이 **일감 잠금만** 본다 — 아직 작업 중(잠금
+활성·보류)이면 `[주의] … 완료 거절` 로 아무것도 쓰이지 않는다. finish·보류·취소가 먼저다.
+리뷰(해시별·종합)는 닫힌 뒤에도 같은 일감에 노트로 붙는다 — 관문이 아니다. HIGH 지적은 실제 코드와
+대조해 버그면 고친 뒤 `applied`, 오탐·의도면 `update_fix_status(dismissed, note=사유)` — 어느 쪽인지는
+사용자와 정하고 별건으로 처리한다.
 
 ## 10. 이 스킬이 바꾸지 않는 것
 

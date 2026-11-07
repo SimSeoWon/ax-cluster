@@ -147,6 +147,8 @@ def t_finish(tmp):
     check("등록 실패 → ok False · 잠금 유지 · 노트에 실패·유지", not r["ok"] and not r["registered"]
           and (IL.current(lk) or {}).get("issue_id") == 7 and "등록 실패" in iss.notes[-1][0]
           and "유지" in iss.notes[-1][0], str(r)[:300])
+    check("#889 등록 실패 → 닫지 않는다(노트만 · 열어 둔다)", iss.notes[-1][1] == "" and r.get("closed") is False
+          and "일감 상태: 열어 둔다" in iss.notes[-1][0], str((iss.notes[-1][1], r.get("closed"))))
 
     r = INF.infra_finish(P, 7, base=R1.upper(), end=R3, hashes=[R2, R3], subjects=["첫 커밋", "둘째\n본문"],
                          noter=iss.note, lock_root=lk)
@@ -160,7 +162,21 @@ def t_finish(tmp):
           note.startswith(f"리뷰 요청: `{R1}..{R3}` (커밋 2건)") and "첫 커밋" in note and "둘째" in note
           and "본문" not in note and "마감 추적: 라운드 1 에 해시 2개 등록" in note
           and "일감 잠금: 해제(finish)" in note and INF.REMOTE_DELETED in note, note)
-    check("done 순서", r["done"] == ["register", "link", "release", "redmine"], str(r["done"]))
+    check("done 순서", r["done"] == ["register", "link", "release", "close", "redmine"], str(r["done"]))
+    check("#889 등록 성공 → 「완료」·100 · closed", iss.notes[-1][1] == "완료" and iss.ratios[-1] == 100
+          and r.get("closed") is True and "일감 상태: 「완료」·100" in note, str((iss.notes[-1][1], r.get("closed"))))
+
+    class Refuse(Issue):
+        def note(self, iid, *, notes, status_name="", done_ratio=None):
+            super().note(iid, notes=notes, status_name=status_name, done_ratio=done_ratio)
+            return "[주의] 레드마인 #7 완료 거절 — 대역" if status_name else "레드마인 #7 갱신 (notes)"
+    rf = Refuse(SPEC + PLAN)
+    lk2 = tmp / "twin2"
+    INF.infra_start(P, 7, branch="issue/7", start_rev=R1, getter=rf.get, noter=rf.note, lock_root=lk2)
+    r = INF.infra_finish(P, 7, base=R1, end=R3, hashes=[R2, R3], noter=rf.note, lock_root=lk2)
+    check("#889 닫기 거절 → 노트만 다시 · problems · closed False", not r["ok"] and r.get("closed") is False
+          and len(rf.notes) >= 2 and rf.notes[-1][1] == "" and "닫기 실패" in rf.notes[-1][0]
+          and "Redmine 닫기" in r["why"] and "redmine" in r["done"], str(r)[:400])
     r = INF.infra_finish(P, 7, base=R1, end=R3, hashes=[R2, R3], noter=iss.note, lock_root=lk)
     check("같은 범위 재호출 → already · 잠금 기록 없음 경고로 진행", r["registered"]
           and "이미 등록" in " ".join(r["log"]) and any("잠금 기록 없음" in x for x in r["log"]), str(r)[:300])

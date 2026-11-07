@@ -47,12 +47,14 @@ def sh(cwd, *args) -> str:
 class Issue:
     def __init__(self, body: str, status: str = "신규", answer: str = "레드마인 #1 갱신 (notes)"):
         self.body, self.status, self.answer, self.notes = body, status, answer, []
+        self.ratios: list = []
 
     def get(self, iid):
         return {"id": iid, "subject": "제목", "status": self.status, "description": self.body}
 
-    def note(self, iid, *, notes, status_name=""):
+    def note(self, iid, *, notes, status_name="", done_ratio=None):
         self.notes.append((notes, status_name))
+        self.ratios.append(done_ratio)
         return self.answer
 
 
@@ -240,17 +242,21 @@ def t_finish_confirm(tmp):
     note = iss.notes[-1][0]
     check("승인 → 리뷰 요청 노트(범위 전체 해시·커밋 목록)", f"`{base}..{end}`" in note
           and "add b.txt" in note and "add c.txt" in note and "삭제 실패" not in note, note)
-    check("승인 → 노트에 추적 등록·종합 리뷰·관문", "마감 추적: 라운드 1 에 해시 2개 등록" in note
-          and "종합 리뷰 1회" in note and "「완료」 관문은 그 종합 리뷰로 판정한다" in note
+    check("승인 → 노트에 추적 등록·종합 리뷰", "마감 추적: 라운드 1 에 해시 2개 등록" in note
+          and "종합 리뷰 1회" in note and "관문" not in note
           and "리뷰 큐 등재" not in note, note)
+    check("승인 → #889 같은 갱신에서 「완료」·100 으로 닫는다", iss.notes[-1][1] == "완료"
+          and iss.ratios[-1] == 100 and "일감 상태: 「완료」·100" in note
+          and r.get("closed") is True and "close" in r.get("done", []), str((iss.notes[-1][1], iss.ratios[-1], r)))
     check("승인 → 노트에 잠금(대역 = 미사용)", "일감 잠금: 미사용" in note, note)
     steps = [json.loads(x)["step"] for x in ev.read_text().splitlines()]
     core = []
     for x in steps:                     # 같은 단계의 여러 줄(link_round 자체 로그 + 요약)은 하나로
-        if x in ("push", "switch", "ff", "delete_branch", "register", "link", "release", "redmine",
+        if x in ("push", "switch", "ff", "delete_branch", "register", "link", "release", "close", "redmine",
                  "enqueue") and (not core or core[-1] != x):
             core.append(x)
-    check("단계 로그", core[-7:] == ["push", "switch", "ff", "delete_branch", "register", "link", "redmine"]
+    check("단계 로그", core[-8:] == ["push", "switch", "ff", "delete_branch", "register", "link", "close",
+                                    "redmine"]
           and "span" in steps and "track" in steps and "enqueue" not in steps, str(steps))
 
 
@@ -718,9 +724,9 @@ def t_new_branch_acquire_race_rolls_back(tmp):
     repo, lk, a, _ = two(tmp)
 
     class Racer(Issue):
-        def note(self, iid, *, notes, status_name=""):
+        def note(self, iid, *, notes, status_name="", done_ratio=None):
             IL.acquire(lk, 99, branch="issue/99", start_rev="r")      # 노트 사이에 다른 일감이 잡았다
-            return super().note(iid, notes=notes, status_name=status_name)
+            return super().note(iid, notes=notes, status_name=status_name, done_ratio=done_ratio)
     rr = Racer(SPEC + PLAN)
     r = IF.start(7, repo=repo, getter=rr.get, noter=rr.note, lock_root=lk)
     check("경합 — ok 아님 · step lock · holder 99", not r["ok"] and r["step"] == "lock" and r.get("holder") == 99, str(r)[:300])

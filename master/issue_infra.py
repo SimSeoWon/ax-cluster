@@ -42,10 +42,15 @@ CANCEL_NOTE = "취소: 잠금 해제 · 브랜치 `{branch}` {fate}\n{commits}"
 FINISH_NOTE = ("리뷰 요청: `{base}..{end}` (커밋 {n}건) · main 적용 `{end12}` · 브랜치 `{branch}` 삭제{deleted}\n"
                "{commits}\n"
                "마감 추적: {track}\n"
-               "일감 잠금: {lock}")
+               "일감 잠금: {lock}\n"
+               "일감 상태: {state}")
+# `#889` (사용자 결정 2026-11-06·11-07) — main 적용 = 「완료」. 마감 추적 등록이 성공해야 닫는다(잠금 해제와 같은 조건).
+CLOSE_STATUS, CLOSE_RATIO = "완료", 100
+STATE_CLOSE = "「완료」·100 — main 적용으로 마감(#889). 리뷰는 끝나는 대로 이 일감에 노트로만 붙는다"
+STATE_OPEN = "열어 둔다 — 마감 추적 등록이 실패해 닫지 않았다(리뷰가 이어지지 않은 채 닫히지 않게)"
+STATE_CLOSE_FAIL = "닫기 실패 — {why}. 사람이 확인한다(main 적용은 끝났다)"
 TRACK_OK = ("라운드 {round} 에 해시 {n}개 등록{already} — 해시별 커밋 리뷰가 끝날 때마다 이 일감에 진행 노트가 "
-            "남고, 모두 끝나면 `{base12}..{end12}` 종합 리뷰 1회의 결과가 노트로 남는다. "
-            "「완료」 관문은 그 종합 리뷰로 판정한다")
+            "남고, 모두 끝나면 `{base12}..{end12}` 종합 리뷰 1회의 결과가 노트로 남는다")
 TRACK_FAIL = "등록 실패 — {why}. 해시별·종합 리뷰가 이 일감에 이어지지 않는다"
 REMOTE_DELETED = " (요청자 작업 트리가 등록 뒤 정리)"   # 원격 finish — 브랜치 정리는 등록 뒤 요청자 몫
 
@@ -103,9 +108,9 @@ def default_getter(issue_id):
     return redmine.get_issue(issue_id)
 
 
-def default_noter(issue_id, *, notes: str, status_name: str = "") -> str:
+def default_noter(issue_id, *, notes: str, status_name: str = "", done_ratio=None) -> str:
     from master import redmine
-    return redmine.update_issue(issue_id, notes=notes, status_name=status_name)
+    return redmine.update_issue(issue_id, notes=notes, status_name=status_name, done_ratio=done_ratio)
 
 
 def call_redmine(fn, *a, **kw) -> str:
@@ -356,7 +361,11 @@ def default_link(root, issue_id, **kw) -> dict:
 def finish_record(issue_id, *, project: str, track_root_fn, lroot, lock_held: bool, base: str, end: str,
                   commits: list, branch: str, deleted: str, register, link, noter, log: Log,
                   done: list, problems: list, by: str) -> dict:
-    """종료의 기록 쪽 — 마감 추적 등록 → 리뷰 연결 → 잠금 해제(등록 성공 시만) → 「리뷰 요청」 노트.
+    """종료의 기록 쪽 — 마감 추적 등록 → 리뷰 연결 → 잠금 해제(등록 성공 시만) → 「리뷰 요청」 노트 + 닫기.
+
+    🔴 `#889` — 등록이 성공하면 같은 Redmine 갱신에서 「완료」·100 으로 닫는다(main 적용 = 마감). 등록이 실패하면
+    열어 둔다. 닫기가 거절·실패하면(예: 잠금 해제 실패로 관문이 막음) 노트만 다시 보내 기록을 남기고
+    `problems` 에 적는다 — push 는 되돌리지 않는다.
 
     `commits` 는 `"<40자리 sha> <제목>"` 줄 목록(순서대로). `track_root_fn()` 은 추적 루트를 돌려주거나
     예외를 던진다(등록 실패로 다룬다). `done`·`problems` 에 이어서 적는다.
@@ -431,9 +440,26 @@ def finish_record(issue_id, *, project: str, track_root_fn, lroot, lock_held: bo
             log("release", f"실패 — {rel.get('why')}")
 
     lines = "\n".join(f"- `{c[:12]}` {c[41:]}" for c in commits)
-    note = FINISH_NOTE.format(base=base, end=end, n=len(commits), end12=end[:12], branch=branch,
-                              deleted=deleted, commits=lines, track=track_text, lock=lock_text)
-    res = call_redmine(noter, issue_id, notes=note)
+
+    def _note(state: str) -> str:
+        return FINISH_NOTE.format(base=base, end=end, n=len(commits), end12=end[:12], branch=branch,
+                                  deleted=deleted, commits=lines, track=track_text, lock=lock_text, state=state)
+    closed = False
+    if registered:
+        res = call_redmine(noter, issue_id, notes=_note(STATE_CLOSE),
+                           status_name=CLOSE_STATUS, done_ratio=CLOSE_RATIO)
+        if res.startswith("[주의]"):
+            problems.append(f"Redmine 닫기: {res}")
+            log("close", f"[주의] 「{CLOSE_STATUS}」 실패 — {res}")
+            # 거절이면 노트도 안 붙었다 — 기록은 남긴다(노트만)
+            res = call_redmine(noter, issue_id, notes=_note(STATE_CLOSE_FAIL.format(why=res[:300])))
+        else:
+            closed = True
+            done.append("close")
+            log("close", f"「{CLOSE_STATUS}」·{CLOSE_RATIO} — main 적용으로 마감(#889)")
+    else:
+        res = call_redmine(noter, issue_id, notes=_note(STATE_OPEN))
+        log("close", "열어 둔다 — 마감 추적 등록 실패")
     if res.startswith("[주의]"):
         problems.append(f"Redmine: {res}")
         log("redmine", f"기록 실패 — {res}")
@@ -441,7 +467,7 @@ def finish_record(issue_id, *, project: str, track_root_fn, lroot, lock_held: bo
         done.append("redmine")
         log("redmine", "리뷰 요청 노트")
     return {"registered": registered, "round": track_round, "lock_released": "release" in done,
-            "redmine": res}
+            "closed": closed, "redmine": res}
 
 
 def infra_finish(project: str, issue_id, *, base: str, end: str, hashes, subjects=None, noter=None,

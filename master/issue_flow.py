@@ -12,7 +12,8 @@
 `#883` 일감 하나씩: 활성 일감이 있으면 다른 일감의 `start` 는 거절한다(`master/issue_lock.py`).
 보류된 일감은 `start` 를 다시 부르면 재개된다(브랜치로 옮기고 「재개」 노트). `#884` T5: 잠금은
 `finish` 가 **마감 추적 등록에 성공한 뒤** 푼다 — 세션은 곧바로 다음 일감으로 간다(사용자 결정
-2026-11-04). 리뷰·「완료」 관문은 그 뒤 추적 기록(`issue_track`)을 본다.
+2026-11-04). 🔴 `#889` — 등록이 성공하면 같은 갱신에서 일감을 「완료」로 닫는다(main 적용 = 마감). 리뷰는 그 뒤
+추적 기록(`issue_track`)을 따라 노트로만 붙는다.
 [중요] **잠금 위치(`lock_root`)** — 넘기면 그것을 쓴다. 안 넘기면 **아무것도 주입하지 않은 운영
 호출만** AXCluster 트윈(`issue_lock.default_root()`)을 쓴다. getter·noter·enqueue 를 주입한 호출
 (테스트 대역)이 `lock_root` 를 안 주면 **잠금을 쓰지 않는다**(`start`·`finish` 는 `[주의] 잠금 미사용`
@@ -406,7 +407,8 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
                         f"로컬 {MAIN} ff · {branch} 삭제 · 마감 추적 등록(해시 {len(commits)}개) · "
                         f"색인기 리뷰 연결 · "
                         + ("잠금 해제(등록 성공 시) · " if lock_held else "")
-                        + "Redmine 리뷰 요청 노트 — 해시별 리뷰와 종합 리뷰는 큐 소비자가 이 일감에 노트로 남긴다",
+                        + "Redmine 리뷰 요청 노트 + 「완료」·100(등록 성공 시 — #889) — 해시별 리뷰와 종합 리뷰는 "
+                          "큐 소비자가 끝나는 대로 이 일감에 노트로만 남긴다",
                 "log": log.lines}
 
     done: list[str] = []
@@ -453,7 +455,8 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
                             noter=noter, log=log, done=done, problems=problems, by="issue_flow.finish")
     return {"ok": not problems, "confirmed": True, **summary, "done": done,
             "registered": got["registered"], "round": got["round"],
-            "lock_released": got["lock_released"], "why": " · ".join(problems), "log": log.lines}
+            "lock_released": got["lock_released"], "closed": got.get("closed", False),
+            "why": " · ".join(problems), "log": log.lines}
 
 
 # ── `#883` 보류·취소 ──────────────────────────────────────────────────────────

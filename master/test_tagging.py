@@ -405,7 +405,7 @@ def test_issue_routes_live() -> None:
     def getter(iid):
         return {"id": iid, "subject": "s", "status": "신규", "description": bodies.get(int(iid), plan)}
 
-    def noter(iid, *, notes: str = "", status_name: str = ""):
+    def noter(iid, *, notes: str = "", status_name: str = "", done_ratio=None):
         globals_notes.append((iid, notes, status_name))
         return "레드마인 갱신"
 

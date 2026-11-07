@@ -1663,9 +1663,10 @@ TOOLS.extend([
     {"name": "issue_finish",
      "description": "일감 종료를 마스터에 기록한다 — issue/<N> 을 origin main 에 push 한 뒤에 부른다. 인프라는 "
                     "보고받은 base..end 와 해시 목록으로 마감 추적(issue_track)을 등록하고, 색인기 리뷰를 잇고, "
-                    "등록이 성공했을 때만 일감 잠금을 푼 뒤 Redmine 「리뷰 요청」 노트를 남긴다. 해시별 리뷰와 "
-                    "종합 리뷰 결과는 리뷰 큐가 같은 일감에 노트로 남긴다. 등록이 실패하면 잠금이 남고 why 에 "
-                    "사유가 온다. git 은 만지지 않는다.",
+                    "등록이 성공했을 때만 일감 잠금을 풀고 Redmine 「리뷰 요청」 노트와 함께 일감을 「완료」·100 으로 "
+                    "닫는다(#889 — main 적용 = 마감, closed 로 알린다). 해시별 리뷰와 종합 리뷰 결과는 리뷰 큐가 "
+                    "같은 일감에 노트로만 남긴다. 등록이 실패하면 잠금이 남고 일감은 열린 채 why 에 사유가 온다. "
+                    "git 은 만지지 않는다.",
      "inputSchema": {"type": "object", "required": ["issue_id", "base", "end", "hashes"], "properties": {
          "issue_id": {"type": "integer"},
          "base": {"type": "string", "description": _SHA_DESC + " — 시작 리비전(merge-base)"},

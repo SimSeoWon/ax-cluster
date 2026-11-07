@@ -9,7 +9,7 @@
         색인기가 끝내 안 넣은 해시(소스 변경 없음·리뷰 이미 있음)는
         워터마크가 지나가면 `skipped`
     T4  모든 해시가 종결(done/abandoned/skipped)이면 종합 범위 리뷰 1회 → all_hashes_terminal · set_summary
-    T5  issue_review_status · 완료 관문이 그 종합 리뷰로 판정          → current
+    T5  issue_review_status · 종합 리뷰 판정(#889 뒤 완료 관문은 안 읽는다) → current
 
     register(root, N, project=, base=, end=, hashes=)   새 라운드(해시 전부 `waiting`)
     current(root, N) / open_rounds(root) / issue_of_hash(root, sha)

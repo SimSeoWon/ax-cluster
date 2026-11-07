@@ -1,23 +1,22 @@
-"""레드마인 「완료」 관문 (`#883` T4) — `update_issue` 가 닫기 전에 잠금·범위 리뷰를 본다.
+"""레드마인 「완료」 관문 (`#883` T4 → `#889`) — `update_issue` 가 닫기 전에 일감 잠금을 본다.
+
+`#889` (사용자 결정 2026-11-06·11-07): 마감은 `issue_finish` 하나다 — finish 가 main 적용 때 닫고,
+리뷰는 노트로만 붙는다. 관문은 **리뷰를 보지 않고** 「작업 중(잠금 활성·보류)인 일감을 손으로 닫기」만 막는다.
 
 검증하는 것:
 
     ① 관문 해당 없음(apply=False) → PUT 진행 · 결과 문장 종전과 같다
     ② 관문이 막음 → PUT 0회(노트도 안 쓴다) · `[주의] … 완료 거절 — <why>`
-    ③ 관문 통과 → PUT 뒤 release 호출 · `· 잠금 해제` · 해제 실패는 거절이 아니라 `[주의]` 표시
+    ③ 관문 통과 → PUT · **잠금 해제 꼬리 없음**(닫기는 잠금을 풀지 않는다)
     ④ 관문 예외·형식 오류 → 막음(fail-closed) · PUT 0회
     ⑤ 닫기가 아닌 상태(해결)·노트만 → 관문을 부르지 않는다
     ⑥ 이름이 달라도 `is_closed` 상태면 닫기로 본다 · 상태 조회 실패면 닫기가 아니다
     ⑦ sender 주입 + 관문 미지정 → 관문 없음(테스트가 실 트윈을 읽지 않는다)
-    ⑧ 실배선: `make_completion_gate` + 임시 잠금 루트 + 임시 리뷰 큐
-         추적 밖 → 통과 · 추적+리뷰 없음 → 막힘 · 추적+HIGH open → 막힘
-         추적+리뷰 스킵 완료 → PUT 뒤 **실제 잠금 해제** · 깨진 잠금 파일 → 막힘(경로를 말한다)
-         루트 해석 실패 → 막힘
-    ⑩ (`#884` T5) 잠금이 풀렸어도 마감 추적 라운드가 있으면 관문 적용 — 해시 대기 → 막힘 ·
-         종합 리뷰 done(HIGH 0) → PUT · **해제 꼬리 없음**(풀 잠금이 없다) · 깨진 추적 파일 → 막힘(경로) ·
-         잠금+라운드 둘 다 → 통과 뒤 잠금 해제
-    ⑪ (`#884` T6) 기본 관문은 등록된 트윈을 훑는다 — 파일 있는 트윈만 · 빈 트윈에 파일을 안 만든다 ·
-         한 트윈 → 그 트윈 판정·해제 · 둘 이상 → 막음 · 어느 트윈이든 읽기 실패 → 막음 · 목록 실패 → 막음
+    ⑧ 실배선: `make_completion_gate` + 임시 잠금 루트
+         잠금 밖 → PUT · 활성 → 막음(finish 안내 · 잠금 그대로) · 보류 → 막음
+         **finish 뒤(잠금 해제) → 리뷰가 안 끝났어도 PUT** · 깨진 잠금 파일 → 막음(경로) · 루트 실패 → 막음
+    ⑪ (`#884` T6) 등록된 트윈 훑기 — 파일 있는 트윈만 · 빈 트윈에 파일을 안 만든다 ·
+         잠금 트윈 → 막음(트윈 이름) · 어디에도 없음 → 관문 밖 · 어느 트윈이든 읽기 실패 → 막음 · 목록 실패 → 막음
 
 [중요] 실 Redmine·실 트윈을 두드리지 않는다 — `sender` 와 임시 루트만 쓴다.
 
@@ -33,9 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master import issue_lock as IL                               # noqa: E402
 from master import redmine as RM                                  # noqa: E402
-from master.context_synth import fix_index as FX                  # noqa: E402
 from master.context_synth import issue_track as IT                # noqa: E402
-from master.context_synth import review_queue as RQ               # noqa: E402
 from master.test_redmine import Sender                            # noqa: E402
 
 PASS = FAIL = 0
@@ -107,53 +104,12 @@ def test_refused_no_put():
     check("② 해제를 부르지 않는다", not g.released, str(g.released))
 
 
-def test_passed_releases():
+def test_passed_no_release():
     s, g = Sender(), Gate({"apply": True, "ok": True, "why": "통과"}, release={"ok": True, "was": "active"})
     out = RM.update_issue(7, notes="닫음", status_name="완료", sender=s, completion_gate=g)
     check("③ PUT 1회", len(s.puts) == 1, str(s.calls))
-    check("③ PUT 뒤 해제", g.released == [7], str(g.released))
-    check("③ 결과에 잠금 해제", out.startswith("레드마인 #7 갱신") and out.endswith(" · 잠금 해제"), out)
-
-    s, g = Sender(), Gate({"apply": True, "ok": True, "why": "통과"},
-                          release={"ok": False, "why": "#7 는 활성·보류 어디에도 없다"})
-    out = RM.update_issue(7, status_name="완료", sender=s, completion_gate=g)
-    check("③ 해제 실패는 거절이 아니다(갱신 문장 유지)", out.startswith("레드마인 #7 갱신"), out)
-    check("③ 해제 실패를 [주의] 로 표시", "[주의] 잠금 해제 실패" in out and "이미 반영" in out, out)
-
-    s, g = Sender(), Gate({"apply": True, "ok": True, "why": "통과"}, release=OSError("디스크"))
-    out = RM.update_issue(7, status_name="완료", sender=s, completion_gate=g)
-    check("③ 해제 예외도 표시만", len(s.puts) == 1 and "[주의] 잠금 해제 실패 — OSError" in out, out)
-
-    s, g = Sender(), Gate({"apply": True, "ok": True, "why": "통과"})
-    out = RM.update_issue(7, status_name="완료", sender=s, completion_gate=g)
-    check("③ 해제 수단이 없으면 생략을 말한다", "잠금 해제 생략" in out, out)
-
-
-def test_put_failure_does_not_release():
-    s = Sender(boom=None)
-    g = Gate({"apply": True, "ok": True, "why": "통과"}, release={"ok": True})
-
-    class PutBoom(Sender):
-        def __call__(self, method, url, payload=None):
-            if method == "PUT":
-                self.calls.append((method, url, payload))
-                raise OSError("연결 끊김")
-            return super().__call__(method, url, payload)
-
-    s = PutBoom()
-    out = RM.update_issue(7, status_name="완료", sender=s, completion_gate=g)
-    check("③ PUT 실패면 해제하지 않는다", out.startswith("[주의]") and not g.released, out)
-
-    class Unapplied(Sender):
-        def __call__(self, method, url, payload=None):
-            if method == "GET" and "/issues/7.json?" in url:
-                self.calls.append((method, url, payload))
-                return {"issue": {"id": 7, "status": {"id": 2}}}
-            return super().__call__(method, url, payload)
-
-    g = Gate({"apply": True, "ok": True, "why": "통과"}, release={"ok": True})
-    out = RM.update_issue(7, status_name="완료", sender=Unapplied(), completion_gate=g)
-    check("③ 상태 미반영이면 해제하지 않는다", out.startswith("[주의]") and not g.released, out)
+    check("③ 닫기는 잠금을 풀지 않는다(관문이 해제 수단을 줘도)", not g.released, str(g.released))
+    check("③ 결과 문장에 잠금 꼬리 없음", out.startswith("레드마인 #7 갱신") and "잠금" not in out, out)
 
 
 def test_gate_errors_fail_closed():
@@ -213,8 +169,7 @@ def test_injected_sender_without_gate():
 # ── ⑧ 실배선 ──────────────────────────────────────────────────────────────
 
 def _roots():
-    root = Path(tempfile.mkdtemp(prefix="rm-gate-"))
-    return root
+    return Path(tempfile.mkdtemp(prefix="rm-gate-"))
 
 
 def _real_gate(root, logs):
@@ -228,61 +183,35 @@ def test_real_gate_wiring():
 
     s = Sender()
     out = RM.update_issue(901, status_name="완료", sender=s, completion_gate=gate)
-    check("⑧ 추적 밖 → PUT", len(s.puts) == 1 and "잠금" not in out, out)
-    check("⑧ 추적 밖 로그", any("추적 밖" in m for m in logs), str(logs))
+    check("⑧ 잠금 밖 → PUT", len(s.puts) == 1 and "잠금" not in out, out)
+    check("⑧ 잠금 밖 로그", any("잠금 밖" in m for m in logs), str(logs))
 
     IL.acquire(root, 883, branch="issue/883", start_rev="a" * 40)
     s = Sender()
     out = RM.update_issue(883, notes="닫음", status_name="완료", sender=s, completion_gate=gate)
-    check("⑧ 추적 + 리뷰 없음 → 막음", out.startswith("[주의] 레드마인 #883 완료 거절")
-          and "범위 리뷰가 큐에 없다" in out and not s.puts, out)
+    check("⑧ 활성 → 막음", out.startswith("[주의] 레드마인 #883 완료 거절")
+          and "작업 중" in out and "활성" in out and not s.puts, out)
+    check("⑧ 막는 사유가 finish·보류·취소를 안내한다",
+          "issue_finish" in out and "issue_pause" in out and "issue_cancel" in out, out)
     check("⑧ 막혀도 잠금은 그대로", IL.is_tracked(root, 883))
 
-    b, e = "1" * 40, "2" * 40
-    it = RQ.enqueue(root, kind="range", key=f"{b}..{e}",
-                    meta={"issue_id": 883, "base": b, "end": e}, requester="issue_flow#883")
+    IL.pause(root, 883)
     s = Sender()
     out = RM.update_issue(883, status_name="완료", sender=s, completion_gate=gate)
-    check("⑧ 리뷰 pending → 막음", "아직 끝나지 않았다" in out and not s.puts, out)
+    check("⑧ 보류 → 막음", out.startswith("[주의] 레드마인 #883 완료 거절") and "보류" in out
+          and not s.puts, out)
 
-    # HIGH open 리뷰 파일
-    d = root / "reviews" / "_range"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / f"2026-11-04_1000_issue883_{b[:8]}-{e[:8]}.md").write_text(
-        f"# 일감 범위 리뷰 — #883\n\n- 범위: `{b}..{e}`\n- 일감: #883\n- 작성자: Antigravity\n"
-        "- 파일: 1개\n- 생성: 2026-11-04 10:00\n\n### m\n\n## 1. 변경분 코딩 컨벤션\n"
-        "| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n|---|---|---|---|---|\n\n"
-        "## 2. 변경분 버그·안전성\n| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n"
-        "|---|---|---|---|---|\n| m/x.py | high | 9 | 위험 | 고친다 |\n", encoding="utf-8")
-    RQ.claim(root)
-    RQ.finish(root, it["id"], ok=True, note="ok")
+    # finish 가 잠금을 풀었다 — 마감 추적 라운드의 해시가 아직 대기여도 닫힌다(리뷰는 안 본다)
+    IL.acquire(root, 883, branch="issue/883", start_rev="a" * 40)
+    IT.register(root, 883, project="AXCluster", base="1" * 40, end="2" * 40, hashes=["2" * 40])
+    IL.release(root, 883, op="finish")
     s = Sender()
-    out = RM.update_issue(883, status_name="완료", sender=s, completion_gate=gate)
-    check("⑧ HIGH open → 막음", "HIGH 지적 1건" in out and not s.puts, out)
-    check("⑧ 여전히 추적", IL.is_tracked(root, 883))
-
-
-def test_real_gate_skip_releases():
-    logs: list = []
-    root = _roots()
-    gate = _real_gate(root, logs)
-    IL.acquire(root, 884, branch="issue/884", start_rev="a" * 40)
-    IL.pause(root, 884)
-    b, e = "3" * 40, "4" * 40
-    it = RQ.enqueue(root, kind="range", key=f"{b}..{e}",
-                    meta={"issue_id": 884, "base": b, "end": e}, requester="issue_flow#884")
-    RQ.claim(root)
-    RQ.finish(root, it["id"], ok=True, note="스킵 — 변경 파일 없음")
-    s = Sender()
-    out = RM.update_issue(884, notes="닫음", status_name="완료", done_ratio=100, sender=s,
+    out = RM.update_issue(883, notes="닫음", status_name="완료", done_ratio=100, sender=s,
                           completion_gate=gate)
-    check("⑧ 스킵 완료(보류 중) → PUT", len(s.puts) == 1, out)
-    check("⑧ 결과에 잠금 해제", out.endswith(" · 잠금 해제"), out)
-    check("⑧ 실제로 잠금이 풀렸다", not IL.is_tracked(root, 884))
+    check("⑧ finish 뒤 · 리뷰 대기 중 → PUT(리뷰를 보지 않는다)", len(s.puts) == 1
+          and out.startswith("레드마인 #883 갱신") and "잠금" not in out, out)
     hist = IL._load(root)["history"]
-    check("⑧ 이력에 complete · by=redmine.update_issue",
-          hist[-1]["op"] == "complete" and hist[-1]["by"] == "redmine.update_issue", str(hist[-1]))
-    check("⑧ 해제 로그", any("[issue_lock] #884 complete" in m for m in logs), str(logs))
+    check("⑧ 닫기가 잠금 이력을 더하지 않는다", hist[-1]["op"] == "finish", str(hist[-1]))
 
 
 def test_real_gate_broken_lock_and_root():
@@ -303,97 +232,14 @@ def test_real_gate_broken_lock_and_root():
     check("⑧ 루트 해석 실패 → 막음", out.startswith("[주의] 레드마인 #885 완료 거절")
           and "KeyError" in out and not s.puts, out)
 
-
-HA, HB = "a" * 40, "b" * 40
-
-
-def _tracked_round(root, n, b, e):
-    r = IT.register(root, n, project="AXCluster", base=b, end=e, hashes=[HA, HB])
-    assert r["ok"], r
-
-
-def _summary_done(root, n, b, e, rows):
-    """해시 둘 종결 → 종합 리뷰 문서 → summary done(serial)."""
-    IT.set_hash(root, n, HA, state="done", serial="R50", findings=0)
-    IT.set_hash(root, n, HB, state="skipped", why="소스 변경 없음")
-    d = root / "reviews" / "_range"
-    d.mkdir(parents=True, exist_ok=True)
-    safety = "\n".join(f"| m/x.py | {sev} | {ln} | 설명 | 고친다 |" for sev, ln in rows)
-    (d / f"2026-11-05_1000_issue{n}_{b[:8]}-{e[:8]}.md").write_text(
-        f"# 일감 범위 리뷰 — #{n}\n\n- 범위: `{b}..{e}`\n- 일감: #{n}\n- 작성자: Antigravity\n"
-        "- 파일: 1개\n- 생성: 2026-11-05 10:00\n\n### m\n\n## 1. 변경분 코딩 컨벤션\n"
-        "| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n|---|---|---|---|---|\n\n"
-        "## 2. 변경분 버그·안전성\n| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n"
-        "|---|---|---|---|---|\n" + safety + "\n", encoding="utf-8")
-    FX.sweep(root, logf=lambda m: None)
-    serial = FX.serial_for_range(root, b, e)
-    assert serial, "serial"
-    IT.set_summary(root, n, state="done", serial=serial, noted=True)
-    return serial
-
-
-def test_track_only_gate():
-    logs: list = []
-    root = _roots()
-    gate = _real_gate(root, logs)
-    b, e = "5" * 40, "6" * 40
-    _tracked_round(root, 886, b, e)
-    check("⑩ 잠금 없음(finish 가 풀었다)", not IL.is_tracked(root, 886))
-    s = Sender()
-    out = RM.update_issue(886, notes="닫음", status_name="완료", sender=s, completion_gate=gate)
-    check("⑩ 라운드만 있어도 관문 적용 → 해시 대기로 막힘", out.startswith("[주의] 레드마인 #886 완료 거절")
-          and "대기 해시 2개" in out and not s.puts, out)
-    check("⑩ 로그: 추적 근거(마감 라운드)", any("추적 중(마감 라운드 1)" in m for m in logs), str(logs))
-
-    _summary_done(root, 886, b, e, [("mid", 3)])
-    logs.clear()
-    s = Sender()
-    out = RM.update_issue(886, notes="닫음", status_name="완료", sender=s, completion_gate=gate)
-    check("⑩ 종합 리뷰 done · HIGH 0 → PUT", len(s.puts) == 1 and out.startswith("레드마인 #886 갱신"), out)
-    check("⑩ 해제 꼬리 없음(풀 잠금이 없다)", "잠금" not in out, out)
-    d = gate(886)
-    check("⑩ 결정: lock_tracked False · release 없음 · 라운드", d.get("lock_tracked") is False
-          and "release" not in d and d.get("track_round") == 1 and d["ok"], str(d))
-
-    # HIGH 가 있으면 막힌다
-    root2 = _roots()
-    _tracked_round(root2, 887, b, e)
-    _summary_done(root2, 887, b, e, [("high", 9)])
-    s = Sender()
-    out = RM.update_issue(887, status_name="완료", sender=s, completion_gate=_real_gate(root2, []))
-    check("⑩ 종합 리뷰 HIGH open → 막힘", "HIGH 지적 1건" in out and not s.puts, out)
-
-
-def test_track_and_lock_releases():
-    logs: list = []
-    root = _roots()
-    b, e = "7" * 40, "8" * 40
-    IL.acquire(root, 888, branch="issue/888", start_rev="a" * 40)
-    _tracked_round(root, 888, b, e)
-    _summary_done(root, 888, b, e, [("low", 2)])
-    s = Sender()
-    out = RM.update_issue(888, status_name="완료", sender=s, completion_gate=_real_gate(root, logs))
-    check("⑩ 잠금+라운드 → PUT · 잠금 해제", len(s.puts) == 1 and out.endswith(" · 잠금 해제")
-          and not IL.is_tracked(root, 888), out)
-    check("⑩ 로그: 추적 근거 둘", any("추적 중(잠금 · 마감 라운드 1)" in m for m in logs), str(logs))
-
-
-def test_track_corrupt_refuses():
     root = _roots()
     IT.state_path(root).write_text("{깨짐", encoding="utf-8")
     s = Sender()
-    out = RM.update_issue(889, status_name="완료", sender=s, completion_gate=_real_gate(root, []))
-    check("⑩ 깨진 추적 파일 → 막음", out.startswith("[주의] 레드마인 #889 완료 거절") and not s.puts, out)
-    check("⑩ 복구 경로(추적 파일)를 말한다", str(IT.state_path(root)) in out and "복구" in out, out)
-    check("⑩ 깨진 파일 덮어쓰지 않음", IT.state_path(root).read_text(encoding="utf-8") == "{깨짐")
-
-    root = _roots()
-    RM.update_issue(890, status_name="완료", sender=Sender(), completion_gate=_real_gate(root, []))
-    check("⑩ 추적 파일 없으면 잠금 파일도 안 만든다", not (root / IT.LOCK_NAME).exists()
-          and not IT.state_path(root).exists())
+    out = RM.update_issue(886, status_name="완료", sender=s, completion_gate=_real_gate(root, []))
+    check("⑧ 마감 추적 파일은 더 이상 보지 않는다(깨져도 닫힌다)", len(s.puts) == 1, out)
 
 
-# ── ⑪ (`#884` T6) 여러 트윈 훑기 — Redmine 번호는 전역, 잠금·추적은 트윈마다 ─────────────────
+# ── ⑪ (`#884` T6) 여러 트윈 훑기 — Redmine 번호는 전역, 잠금은 트윈마다 ─────────────────
 
 def _registry(names):
     from master.projects.config import Registry
@@ -416,30 +262,20 @@ def test_scan_roots():
           not any((base / "Empty").iterdir()), str(list((base / "Empty").iterdir())))
 
     logs: list = []
-    ok_review = lambda root, n, logf=None: {"ok_to_complete": True, "why": "통과", "review": "done"}  # noqa: E731
-    gate = RM.make_completion_gate(roots_fn=lambda: RM.tracking_roots(registry=reg), review=ok_review,
-                                   logf=logs.append)
+    gate = RM.make_completion_gate(roots_fn=lambda: RM.tracking_roots(registry=reg), logf=logs.append)
     d = gate(5)
-    check("⑪ 추적 트윈 하나(Game, 라운드만) → 적용 · 그 트윈 판정", d.get("apply") and d.get("ok")
-          and d.get("project") == "Game" and d.get("lock_tracked") is False and "release" not in d, str(d))
+    check("⑪ 마감 추적만 있는 트윈(Game) → 관문 밖", d.get("apply") is False and d.get("ok"), str(d))
     check("⑪ Game 쪽 훑기가 잠금 파일을 만들지 않았다", not (base / "Game" / "issue_lock.json").exists())
     d = gate(1)
-    check("⑪ 잠금 트윈(AXCluster) → 적용 · release 있음", d.get("apply") and d.get("project") == "AXCluster"
-          and callable(d.get("release")), str(d))
-    rel = d["release"]()
-    check("⑪ release 는 그 트윈의 잠금을 푼다", rel.get("ok") and not IL.is_tracked(base / "AXCluster", 1), str(rel))
+    check("⑪ 잠금 트윈(AXCluster) → 막음 · 트윈 이름", d.get("apply") and not d.get("ok")
+          and "AXCluster" in d.get("why", "") and "활성" in d["why"], str(d))
+    check("⑪ 관문은 잠금을 풀지 않는다", IL.is_tracked(base / "AXCluster", 1) and "release" not in d, str(d))
     d = gate(77)
     check("⑪ 어디에도 없음 → 관문 밖", d.get("apply") is False and d.get("ok"), str(d))
     check("⑪ 관문 밖 로그에 트윈 수", any("트윈 2개" in m for m in logs), str(logs[-3:]))
 
-    IL.acquire(base / "AXCluster", 5, branch="issue/5", start_rev="b" * 40)
-    d = gate(5)
-    check("⑪ 두 트윈이 같은 일감 추적 → 막음(fail-closed)", d.get("apply") and not d.get("ok")
-          and "여러 트윈" in d.get("why", "") and "AXCluster" in d["why"] and "Game" in d["why"], str(d))
-    IL.release(base / "AXCluster", 5, op="cancel")
-
     (base / "Game" / "issue_lock.json").write_text("{깨짐", encoding="utf-8")
-    d = gate(1)
+    d = gate(77)
     check("⑪ 다른 트윈의 잠금 파일이 깨졌으면 막음(fail-closed)", d.get("apply") and not d.get("ok")
           and "Game" in d.get("why", "") and "issue_lock.json" in d["why"], str(d))
 
@@ -469,12 +305,11 @@ def test_server_warn_field():
 
 
 def main() -> int:
-    for fn in (test_not_applicable_puts, test_refused_no_put, test_passed_releases,
-               test_put_failure_does_not_release, test_gate_errors_fail_closed,
+    for fn in (test_not_applicable_puts, test_refused_no_put, test_passed_no_release,
+               test_gate_errors_fail_closed,
                test_non_closing_untouched, test_closed_detection,
                test_injected_sender_without_gate, test_real_gate_wiring,
-               test_real_gate_skip_releases, test_real_gate_broken_lock_and_root,
-               test_track_only_gate, test_track_and_lock_releases, test_track_corrupt_refuses,
+               test_real_gate_broken_lock_and_root,
                test_scan_roots, test_server_warn_field):
         fn()
     total = PASS + FAIL

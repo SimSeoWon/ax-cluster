@@ -443,7 +443,7 @@ def set_status(root, item_id: str, state: str, *, note: str = "", by: str = "",
         return {"ok": False, "reason": f"항목 형식이 아니다: {item_id!r} (예: R12-3 · P3)"}
     if state not in STATES:
         return {"ok": False, "reason": f"모르는 상태: {state!r} (가능: {', '.join(STATES)})"}
-    # `#883` T3 — 기각은 사유를 남긴다. 완료 게이트(`issue_review`)가 기각된 HIGH 를 통과시키므로
+    # `#883` T3 — 기각은 사유를 남긴다. 리뷰 판정(`issue_review`)이 기각된 HIGH 를 결정된 것으로 세므로
     #    「왜 안 고쳤나」가 기록에 없으면 그 통과를 나중에 아무도 설명하지 못한다. 리뷰·플랜 공통.
     if state == "dismissed" and not (note or "").strip():
         log(f"[fix] 기각 거절 {item_id} — 사유(note) 없음")

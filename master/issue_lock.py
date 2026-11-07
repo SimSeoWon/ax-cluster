@@ -145,7 +145,7 @@ def paused(root) -> dict:
 
 
 def is_tracked(root, issue_id) -> bool:
-    """활성이거나 보류에 있으면 True — 완료 관문(T4)이 걸릴지 정하는 데 쓴다."""
+    """활성이거나 보류에 있으면 True — 「완료」 관문이 손 닫기를 막을지 정하는 데 쓴다(`#889` — 작업 중이면 막음)."""
     n = int(issue_id)
     with _locked(root):
         data = _load(root)
