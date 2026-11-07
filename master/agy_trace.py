@@ -202,14 +202,20 @@ class _Copy:
 
     def __enter__(self):
         self.td = tempfile.mkdtemp(prefix="ax-agytrace-")
-        dst = Path(self.td) / self.src.name
-        shutil.copyfile(self.src, dst)
-        wal = self.src.with_name(self.src.name + "-wal")
         try:
-            shutil.copyfile(wal, dst.with_name(dst.name + "-wal"))
-        except FileNotFoundError:
-            pass
-        self.conn = sqlite3.connect(str(dst), timeout=1)
+            dst = Path(self.td) / self.src.name
+            shutil.copyfile(self.src, dst)
+            wal = self.src.with_name(self.src.name + "-wal")
+            try:
+                shutil.copyfile(wal, dst.with_name(dst.name + "-wal"))
+            except FileNotFoundError:
+                pass
+            self.conn = sqlite3.connect(str(dst), timeout=1)
+        except BaseException:
+            # `#888` R241-2 — 여기서 던지면 `__exit__` 가 불리지 않는다. 임시 디렉터리를 직접 지운다.
+            shutil.rmtree(self.td, ignore_errors=True)
+            self.td = None
+            raise
         return self.conn
 
     def __exit__(self, *exc):

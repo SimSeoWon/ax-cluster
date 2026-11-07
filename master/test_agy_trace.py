@@ -201,6 +201,29 @@ def test_깨진_파일():
     shutil.rmtree(td)
 
 
+def test_사본_실패_누수없음():
+    """`#888` R241-2 — 복사 단계에서 던져도 임시 디렉터리가 남지 않는다."""
+    made = []
+    orig = T.tempfile.mkdtemp
+
+    def spy(*a, **kw):
+        d = orig(*a, **kw)
+        made.append(d)
+        return d
+    T.tempfile.mkdtemp = spy
+    raised = False
+    try:
+        with T._Copy("/nonexistent/ax-agytrace-none.db"):
+            pass
+    except FileNotFoundError:
+        raised = True
+    finally:
+        T.tempfile.mkdtemp = orig
+    check("⑦ 원본 없음 → 예외가 그대로 나간다", raised)
+    check("⑦ 임시 디렉터리 하나를 만들었다", len(made) == 1, str(made))
+    check("⑦ 그 임시 디렉터리는 지워졌다", made and not os.path.exists(made[0]), str(made))
+
+
 def test_찾기():
     td = Path(tempfile.mkdtemp())
     a, b, old = td / "aaaa.db", td / "bbbb.db", td / "oldd.db"
@@ -263,7 +286,8 @@ def test_실측_사본():
 
 
 if __name__ == "__main__":
-    for fn in (test_합성_궤적, test_WAL_미체크포인트, test_깨진_파일, test_찾기, test_실측_사본):
+    for fn in (test_합성_궤적, test_WAL_미체크포인트, test_깨진_파일, test_사본_실패_누수없음, test_찾기,
+               test_실측_사본):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)
