@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -109,6 +110,23 @@ def run_weekly_plans(paths, *, min_reviews: int = PLAN_MIN_REVIEWS,
 
         log(f"[플랜] {author_name}: 플랜 {plan_result['plans_generated']}건 생성 "
             f"(토큰 ~{plan_result['tokens_used']:,})")
+
+        # #900: 정상 플랜과 다른 형식으로 모든 시도(실패 원문 포함)를 보존한다.
+        # 실패한 주차에는 summary를 쓰지 않아 다음 배치가 원본 리뷰로 재시도한다.
+        # 정상 후보도 전체 성공 전에는 publish하지 않으므로 독립 fix_index 스캔에 잡히지 않는다.
+        failures = plan_result["failures"]
+        with (week_dir / "_generation_attempts.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "type": "weekly_plan_generation_attempt", "week": week_num,
+                "author": author_name, "at": datetime.now().isoformat(),
+                "complete": not failures, "plans_generated": plan_result["plans_generated"],
+                "validated_candidates": plan_result["validated_candidates"],
+                "tokens_used": plan_result["tokens_used"], "failures": failures,
+            }, ensure_ascii=False) + "\n")
+        if failures:
+            log(f"[플랜] {author_name}: 주차 생성 미완료({len(failures)}건 실패) — "
+                "요약·등록·아카이브 보류, 원본 리뷰를 보존해 다음 회차 재시도")
+            continue
 
         # Step 3.5: Redmine 이슈 등록/갱신
         # [DOC] #632: Redmine 대상은 요청 프로젝트 paths.name으로 결정한다.

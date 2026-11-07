@@ -5,7 +5,7 @@
 우리가 새로 세운 원칙과 같은 원칙이 원전에 이미 있었다).
 
 원전과의 차이 (전부 import·백엔드 대체, 로직 동일):
-    common._call_llm            → 상용 체인(agy→claude, `review_gen.commercial_chat`) —
+    common._call_llm            → 생성용 상용 체인(`review_gen.commercial_chat`) —
                                   원전 기본값도 Claude 였다(#205 에서 실측·확정한 그 근거)
     common.DOMAIN_DIR_NAME      → issue_classifier.DOMAIN_DIR_NAME
     context._extract_comments_section → issue_classifier 의 이식본
@@ -23,6 +23,57 @@ from .review_gen import commercial_chat
 
 # [중요] 상용(클라우드) 플랜 생성에는 토큰 예산을 두지 않는다 — 토큰 한도는 로컬 LLM 에만
 # 해당한다(사용자 2026-10-17, #823). tokens_used 는 기록용 추정치로만 남긴다.
+
+UNATTENDED_PLAN = (
+    "이 요청은 사용자와 대화하는 세션이 아니라 무인 주간 플랜 생성 배치다.\n"
+    "사용자 응답을 기다리거나 수행 방식·Gemini 위임 여부를 묻지 않는다. 추가 위임 없이 "
+    "제공된 자료로 완성된 개선안만 반환한다. 파일을 만들거나 수정하지 않는다.\n"
+    "아래 출력 형식의 각 절에 실제 내용을 작성하고, 제목·작성 지시문만 되풀이하지 않는다.\n\n"
+)
+FILE_SECTIONS = ("문제 분석", "수정 방안", "영향 범위", "우선순위 근거")
+PATTERN_SECTIONS = ("패턴 분석", "일괄 수정 가이드", "적용 대상 파일 목록", "우선순위 근거")
+
+
+def _plan_response_problem(raw, required: tuple) -> str:
+    """필수 절·본문 구조를 검사한다. 응답 의미 전체를 판정하지는 않는다.
+
+    코드 예시 안 제목은 문서의 절로 세지 않는다.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return "빈 응답 또는 문자열이 아닌 응답"
+    sections: dict[str, list[list[str]]] = {}
+    current = None
+    fence = ""
+    for line in raw.splitlines():
+        marker = re.match(r"^\s{0,3}(`{3,}|~{3,})", line)
+        if marker:
+            token = marker.group(1)
+            if not fence:
+                fence = token
+            elif token[0] == fence[0] and len(token) >= len(fence):
+                fence = ""
+            continue
+        heading = None if fence else re.fullmatch(r"\s{0,3}##\s+(.+?)\s*#*\s*", line)
+        if heading:
+            title = heading.group(1).strip()
+            current = []
+            sections.setdefault(title, []).append(current)
+        elif current is not None:
+            current.append(line)
+    if fence:
+        return "닫히지 않은 코드 블록"
+    placeholders = {
+        "(왜 이것이 문제인지)", "(Before/After 예시 포함)", "(다른 코드에 미치는 영향)",
+        "(지금 고쳐야 하는 이유)", "(공통 적용 방법)",
+    }
+    for title in required:
+        found = sections.get(title, [])
+        if len(found) != 1:
+            return f"필수 절 누락 또는 중복: {title}"
+        body = "\n".join(found[0]).strip()
+        if not body or body in placeholders or not re.search(r"[\w가-힣]", body):
+            return f"필수 절 본문 없음: {title}"
+    return ""
 
 
 def _find_matching_domain(context_dir: Path, file_paths: list) -> str:
@@ -129,7 +180,9 @@ def generate_improvement_plans(grouped: dict, context_dir: Path, plans_dir: Path
                                chat=None, logf=None) -> dict:
     """그룹핑된 이슈를 바탕으로 LLM 개선 플랜을 생성한다.
 
-    반환: {"plans_generated": int, "tokens_used": int, "source_reviews": set}
+    주차의 후보를 전부 검증한 뒤에만 정상 플랜 MD를 쓴다. 실패한 주차는 fix_index의
+    독립 스캔에도 공개되지 않으며, 원본을 보존한 채 다음 회차에 다시 생성할 수 있다.
+    반환: {plans_generated, tokens_used, source_reviews, validated_candidates, failures}.
     `chat(prompt) -> str` 주입은 테스트 자리 — 실전은 상용 체인이다.
     """
     log = logf or (lambda m: None)
@@ -140,6 +193,27 @@ def generate_improvement_plans(grouped: dict, context_dir: Path, plans_dir: Path
     plans_generated = 0
     tokens_used = 0
     source_reviews: set = set()
+    candidates = []
+    failures = []
+
+    def response(prompt: str, filename: str, issues: list, required: tuple):
+        nonlocal tokens_used
+        sr = sorted(set(i.source_review for i in issues if i.source_review))
+        tokens_used += len(prompt) // 4
+        try:
+            raw = ask(prompt)
+        except Exception as e:                               # noqa: BLE001
+            reason = f"LLM 예외 {type(e).__name__}: {e}"
+            raw = ""
+        else:
+            tokens_used += len(raw) // 4 if isinstance(raw, str) else 0
+            reason = _plan_response_problem(raw, required)
+        if reason:
+            log(f"[플랜] 생성 실패 ({filename}): {reason}")
+            failures.append({"file": filename, "reason": reason, "source_reviews": sr,
+                             "response": raw if isinstance(raw, str) else repr(raw)})
+            return None, sr
+        return raw.strip(), sr
 
     # ── A. 파일별 플랜 (고위험 또는 중위험 3건+) ──
     for file_path, issues in grouped["file_issues"].items():
@@ -170,7 +244,7 @@ def generate_improvement_plans(grouped: dict, context_dir: Path, plans_dir: Path
             for i in target
         )
 
-        prompt = (
+        prompt = UNATTENDED_PLAN + (
             f"아래는 코드 리뷰에서 발견된 이슈들이다.\n"
             f"각 이슈에 대해 구체적인 개선 방안을 작성해줘.\n\n"
             f"[대상 파일] {file_path}\n"
@@ -189,16 +263,9 @@ def generate_improvement_plans(grouped: dict, context_dir: Path, plans_dir: Path
             f"## 우선순위 근거\n(지금 고쳐야 하는 이유)\n"
         )
 
-        try:
-            raw = ask(prompt)
-        except Exception as e:                               # noqa: BLE001
-            log(f"[플랜] LLM 실패 ({plan_filename}): {e}")
+        raw, sr = response(prompt, plan_filename, target, FILE_SECTIONS)
+        if raw is None:
             continue
-        if not raw:
-            continue
-
-        sr = sorted(set(i.source_review for i in target if i.source_review))
-        source_reviews.update(sr)
 
         inherited_id = _inherit_redmine_issue_id(plans_dir, week_num, plan_filename,
                                                  file_path, logf=log)
@@ -206,12 +273,10 @@ def generate_improvement_plans(grouped: dict, context_dir: Path, plans_dir: Path
         plan_md = _build_plan_md(
             week=week_num, category="safety" if high else "convention",
             severity=sev_label, target_file=file_path,
-            source_reviews=sr, original_issues=target, plan_body=raw.strip(),
+            source_reviews=sr, original_issues=target, plan_body=raw,
             redmine_issue_id=inherited_id,
         )
-        (week_dir / plan_filename).write_text(plan_md, encoding='utf-8')
-        plans_generated += 1
-        tokens_used += len(prompt) // 4 + len(raw) // 4
+        candidates.append((plan_filename, plan_md, sr))
 
     # ── B. 반복 패턴 일괄 플랜 ──
     for pinfo in grouped["pattern_issues"]:
@@ -223,7 +288,7 @@ def generate_improvement_plans(grouped: dict, context_dir: Path, plans_dir: Path
             for e in pinfo["examples"]
         )
 
-        prompt = (
+        prompt = UNATTENDED_PLAN + (
             f"아래는 프로젝트 전체에서 반복적으로 발견되는 코드 패턴 이슈이다.\n"
             f"프로젝트 전체에 적용할 수 있는 일관된 수정 가이드를 작성해줘.\n\n"
             f"[반복 패턴] {pinfo['pattern']}\n"
@@ -239,16 +304,9 @@ def generate_improvement_plans(grouped: dict, context_dir: Path, plans_dir: Path
             f"## 우선순위 근거\n"
         )
 
-        try:
-            raw = ask(prompt)
-        except Exception as e:                               # noqa: BLE001
-            log(f"[플랜] LLM 실패 ({plan_filename}): {e}")
+        raw, sr = response(prompt, plan_filename, pinfo["examples"], PATTERN_SECTIONS)
+        if raw is None:
             continue
-        if not raw:
-            continue
-
-        sr = sorted(set(i.source_review for i in pinfo["examples"] if i.source_review))
-        source_reviews.update(sr)
 
         inherited_id = _inherit_redmine_issue_id(
             plans_dir, week_num, plan_filename,
@@ -259,17 +317,25 @@ def generate_improvement_plans(grouped: dict, context_dir: Path, plans_dir: Path
             week=week_num, category="convention", severity="pattern",
             target_file=", ".join(pinfo["files"][:5]),
             source_reviews=sr, original_issues=pinfo["examples"],
-            plan_body=raw.strip(),
+            plan_body=raw,
             redmine_issue_id=inherited_id,
         )
-        (week_dir / plan_filename).write_text(plan_md, encoding='utf-8')
-        plans_generated += 1
-        tokens_used += len(prompt) // 4 + len(raw) // 4
+        candidates.append((plan_filename, plan_md, sr))
+
+    # 하나라도 실패하면 정상 후보도 공개하지 않는다. 배치는 planner 반환과 무관하게
+    # fix_index를 스캔하므로, 단순히 등록·아카이브만 보류해서는 부분 플랜이 노출된다.
+    if not failures:
+        for filename, body, sr in candidates:
+            (week_dir / filename).write_text(body, encoding='utf-8')
+            source_reviews.update(sr)
+            plans_generated += 1
 
     return {
         "plans_generated": plans_generated,
         "tokens_used": tokens_used,
         "source_reviews": source_reviews,
+        "validated_candidates": len(candidates),
+        "failures": failures,
     }
 
 
@@ -432,7 +498,7 @@ def _update_global_plan_index(plans_dir: Path) -> None:
     for author_dir in author_dirs:
         week_dirs = sorted(
             [d for d in author_dir.iterdir()
-             if d.is_dir() and d.name.startswith("20")],
+             if d.is_dir() and d.name.startswith("20") and (d / "_summary.md").is_file()],
             reverse=True,
         )
         total_plans = 0
