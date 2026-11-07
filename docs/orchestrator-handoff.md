@@ -4,16 +4,18 @@
 > `2e54988`, #888(진단·처방 C·라운드 3)·#891 상세는 `0a9bef9` 의 이 파일과 리포트 135~137에 있다. 항목·진행의 정본은 Redmine이다.
 > HEAD·dirty·마운트·모드는 재조회한다.
 
-## Codex 교대 — Claude 토큰 소진 (11-08 00:1x KST)
+## #905 정정·#906 Claude 인계 — 2026-11-08
 
-- 사용자 지시: Claude 토큰이 없어 **Codex가 이어받는다.** 마스터 담당 기록은 아직 `claude`(11-07 22:44)다 —
-  Codex가 `ax-handoff`로 실제 인수를 마친 뒤 `record_master_conductor_tool(codex, …)`로 기록한다. 워커 모드 `codex` 그대로.
-- 교대 시점 상태: main = origin/main = 이 인계 커밋(아래 #903 마감 `821bace` 뒤), 작업 트리 깨끗, 일감 잠금 없음,
-  실행 중 작업·백그라운드 검사 없음. `ax-task-queue` 23:48:54 기동(#902 반영). 진행 중 work 0.
-- **#905 신규 등록(미착수)** — 일감 작업이 운영 체크아웃에서 돌아 oneshot 서비스 7개가 미커밋 코드를 실행한다.
-  구현 방식(① issue_start 격리 worktree ② 서비스 main 고정 배포본 ③ 경고·타이머 정지) 미정 — 사용자 결정 먼저.
-  **#905가 풀리기 전에는** 마스터 서비스 코드(특히 oneshot 대상 `master/work/followup.py`·`autodispatch`·
-  `events/consumer`·`context_synth/review_runner`·`batch`·`status`)를 고치는 일감에서 이 노출을 사용자에게 먼저 알린다.
+- 사용자 지시: #905 정정 진행, Codex 수행 문제를 Redmine 등록하여 Claude에서 수정. **#906 신규·높음** 등록·되읽기.
+- **검사·테스트 금지**. Git 드라이런 불가·실증만 가능 결정은 `/home/sim/.codex/AGENTS.md`에 저장. 실증 승인 없음.
+- 기준 `63a8ddf`. 운영 `/home/sim/ax-cluster` main 깨끗함. 미커밋 초안은 `/home/sim/ax-issues/905`의 `issue/905`에 보존.
+  이 경로는 앞선 잘못된 구현의 보관 위치일 뿐 새 작업 경로 계약이 아니다. #905 잠금 활성, 담당 claude·워커 codex 기록 유지.
+- T1~T3의 잘못된 완료 기록은 #905 정정 노트·T4로 보완. 새 helper·ax-issues 하드코딩·유닛 권한 확대 제거 완료.
+  현재 diff는 issue_flow 기본 repo를 기존 `resolve("AXCluster").repo`로 연결하고 repo 응답·MCP·스킬·기록을 맞춘다.
+- T4 미해결: config 저장소의 origin push DISABLED, 실제 pre-push는 gitea-write로도 main push 차단. 가드 우회 안 함.
+  기존 작업 저장소/색인 소비자/main 반영 계약을 Claude가 대조해야 한다. 해당 저장소의 기존 `?? graph.db`는 건드리지 않았다.
+- 미커밋 5파일, 테스트·실증·push·main 반영·서비스 설치·재기동 없음. 현재 MCP는 옛 코드. 옛 finish로 마감하지 않는다.
+- 리포트141 최신 정정·#905·#906이 인계 근거. #906 자동 착수·닫기, 작업본 삭제, 잠금 직접 변경 금지.
 
 ## 11-07~08 Claude 체크포인트 — #899·#901·#904·#902·#903 완료 (11-08 00:0x KST)
 

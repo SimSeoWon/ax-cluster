@@ -20,6 +20,10 @@
 로그만 남기고 이전처럼 돈다 · `pause`·`cancel` 은 잠금이 본체라 거절). `_resolve_events` 와 같은
 원칙 — 대역 실행이 운영 상태를 건드리지 않게.
 
+`#905`: 기본 작업 저장소는 기존 `AXCluster/config.yaml`의 `track.local_clone`을 해석한
+`master.context_search.paths.resolve("AXCluster").repo`다. 서비스 코드 경로와 분리하며,
+main 반영 후 운영 배포는 별도 절차다. 명시 `repo` 인자는 그대로 우선한다.
+
 사용자 결정(2026-11-03): *"작업을 위해 플랜 영역 생성을 강제하고, 작업 시작할 때 무조건 로컬
 리비전을 생성한 뒤 레드마인에 깃 해시를 등록해."*
 
@@ -50,7 +54,6 @@ from pathlib import Path
 
 from master import issue_infra as INF
 
-REPO = Path(__file__).resolve().parent.parent
 MAIN = "main"
 REMOTE = "origin"
 BRANCH_PREFIX = INF.BRANCH_PREFIX
@@ -60,6 +63,15 @@ START_NOTE = INF.START_NOTE
 
 class IssueFlowError(RuntimeError):
     """흐름이 계약에 어긋나 멈췄다 — 사유 문장을 담는다."""
+
+
+def default_repo() -> Path:
+    """#905: 기존 AXCluster config의 track.local_clone을 매 호출 해석한다.
+
+    운영 서비스 코드 위치로 돌아가지 않는다. 설정 해석 실패는 호출자에게 그대로 전달한다.
+    """
+    from master.context_search.paths import resolve
+    return resolve("AXCluster").repo
 
 
 branch_name = INF.branch_name
@@ -145,7 +157,7 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
     `issue/<N>` 으로 옮기고 잠금을 재개한 뒤 「재개」 노트를 남긴다(`resumed: True`).
     플랜·잠금·노트는 `issue_infra` 의 공용 함수다(`.33` 요청자 경로와 같은 규칙).
     """
-    repo = Path(repo or REPO)
+    repo = Path(repo) if repo is not None else default_repo()
     injected = getter is not None or noter is not None
     log = _Log("start", issue_id, events_path=_resolve_events(events_path, injected), logf=logf)
     getter = getter or _default_getter
@@ -191,7 +203,7 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
             kind = INF.lock_kind(got)
             log("branch", f"이미 {branch} 에 있다 — 시작 리비전 {rev[:12]} (새 기록 없음 · 잠금 {kind})")
             return {"ok": True, "issue_id": issue_id, "already": True, "branch": branch,
-                    "start_rev": rev, "lock": kind, "log": log.lines}
+                    "start_rev": rev, "repo": str(repo), "lock": kind, "log": log.lines}
         if not prec:
             return _refuse(log, "branch", f"{branch} 가 이미 있는데 지금 브랜치는 {cur} 다 — "
                                           "그 브랜치로 옮겨 이어 가거나 정리 여부를 사람이 정한다")
@@ -253,7 +265,7 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
                 "holder": got.get("holder"), "branch_rolled_back": undone, "redmine": res,
                 "log": log.lines}
     return {"ok": True, "issue_id": issue_id, "already": False, "branch": branch,
-            "start_rev": head, "redmine": res, "lock": INF.lock_kind(got), "log": log.lines}
+            "start_rev": head, "repo": str(repo), "redmine": res, "lock": INF.lock_kind(got), "log": log.lines}
 
 
 def _resume(issue_id, *, repo: Path, cur: str, branch: str, prec: dict, noter, lroot,
@@ -294,7 +306,7 @@ def _resume(issue_id, *, repo: Path, cur: str, branch: str, prec: dict, noter, l
     rev = got["start_rev"]
     log("redmine", f"재개 노트 · 시작 리비전 {str(rev)[:12]}")
     return {"ok": True, "issue_id": issue_id, "already": False, "resumed": True, "branch": branch,
-            "start_rev": rev, "redmine": got["res"], "lock": "resumed", "log": log.lines}
+            "start_rev": rev, "repo": str(repo), "redmine": got["res"], "lock": "resumed", "log": log.lines}
 
 
 REVIEW_PRIORITY = 10            # 사람이 요청한 리뷰 — 자동 등재(0)보다 먼저 (`#638` 규약) · 값은
@@ -345,7 +357,7 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
     (noter·register·link 중 하나라도)이 `review_root` 를 안 주면 운영 트윈을 건드리지 않으려고 등록을
     하지 않는다(등록 실패로 다룬다 — 잠금도 남는다).
     """
-    repo = Path(repo or REPO)
+    repo = Path(repo) if repo is not None else default_repo()
     injected = noter is not None or register is not None or link is not None
     log = _Log("finish", issue_id, events_path=_resolve_events(events_path, injected), logf=logf)
     noter = noter or _default_noter
@@ -412,7 +424,7 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
     except IssueFlowError as e:
         return _refuse(log, "span", str(e))
     summary = {"issue_id": issue_id, "branch": branch, "base": base, "end": end,
-               "commits": commits, "files": len(files)}
+               "commits": commits, "files": len(files), "repo": str(repo)}
     log("span", f"범위 {base[:12]}..{end[:12]} · 커밋 {len(commits)}건 · 파일 {len(files)}")
 
     if not confirm:
@@ -495,7 +507,7 @@ def pause(issue_id, *, repo=None, noter=None, lock_root=None, events_path=None, 
     유지하고(잠금이 정본) `ok: False` 로 알린다.
     """
     from master import issue_lock as IL
-    repo = Path(repo or REPO)
+    repo = Path(repo) if repo is not None else default_repo()
     injected = noter is not None
     log = _Log("pause", issue_id, events_path=_resolve_events(events_path, injected), logf=logf)
     noter = noter or _default_noter
@@ -559,7 +571,7 @@ def cancel(issue_id, *, confirm: bool = False, delete_branch: bool = False, repo
     → `delete_branch=True` **일 때만** `branch -D`. [중요] 노트가 실패하면 브랜치를 지우지 않는다 —
     지울 커밋 목록이 어디에도 안 남는다. 잠금에 없는 N 은 브랜치가 있을 때만 받는다(옛 브랜치 정리).
     """
-    repo = Path(repo or REPO)
+    repo = Path(repo) if repo is not None else default_repo()
     injected = noter is not None
     log = _Log("cancel", issue_id, events_path=_resolve_events(events_path, injected), logf=logf)
     noter = noter or _default_noter

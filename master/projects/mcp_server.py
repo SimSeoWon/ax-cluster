@@ -1108,9 +1108,10 @@ def plan_transition_tool(issue_id: int, task_id: str, to: str, note: str = "") -
 def issue_start_tool(issue_id: int) -> str:
     """일감 작업을 **시작**한다 (`#879`) — 구현에 손대기 전에 부른다.
 
-    `plan_start` 판정이 ok 가 아니면 거절한다(플랜 강제). 깨끗한 `main` = `origin/main` 에서 로컬
-    `issue/<N>` 브랜치를 만들고 시작 리비전(git 해시)을 Redmine 노트로 남긴다. 이미 그 브랜치에
-    서 있으면 새로 만들지 않고 시작 리비전을 돌려준다. 응답의 `log` 가 단계별 기록이다.
+    `plan_start` 판정이 ok가 아니면 거절한다(플랜 강제). 작업 repo는 기존 설정으로 결정한다.
+    AXCluster/config.yaml의 track.local_clone을 기존 ProjectPaths.repo를 통해 읽는다.
+    설정 repo의 깨끗한 main=origin/main을 기준으로 issue/<N>을 만들고 시작 리비전을 기록한다.
+    응답 repo가 편집·커밋 위치다. 운영 서비스의 소스 위치에서 작업 경로를 추정하지 않는다.
     """
     from .. import issue_flow
     try:
@@ -1124,7 +1125,8 @@ def issue_finish_tool(issue_id: int, confirm: bool = False) -> str:
     """일감 작업을 **마친다** (`#879`). [중요] `confirm=False`(기본)는 범위·커밋 목록만 보여 주고 아무것도
     바꾸지 않는다 — 사용자 승인을 받은 뒤에만 `confirm=True`.
 
-    승인 시: `push origin issue/<N>:main`(fast-forward 만) → 로컬 `main` 맞춤 → `issue/<N>` 삭제 →
+    설정된 작업 저장소의 로컬 `issue/<N>` 커밋을 승인 후 main에 반영하고 브랜치를 정리한다.
+    운영 서비스 배포·재기동은 별도 승인이다. 기존 remote·쓰기 가드는 우회하지 않는다.
     마감 추적 등록(`issue_track` · 범위의 해시 전부) → 색인기 리뷰 연결 → 일감 잠금 해제(**등록이 성공했을
     때만**) → Redmine 「리뷰 요청」 노트 + **「완료」·100 닫기**(등록 성공 시 — `#889`, main 적용 = 마감).
     범위 리뷰를 직접 등재하지 않는다 — 해시별 커밋 리뷰가 끝날 때마다 진행 노트가, 모두 끝나면 종합 리뷰
@@ -1143,8 +1145,8 @@ def issue_finish_tool(issue_id: int, confirm: bool = False) -> str:
 def issue_pause_tool(issue_id: int) -> str:
     """진행 중인 일감을 **보류**한다 (`#883`) — 일감 잠금을 풀고 `issue/<N>` 브랜치는 남긴다.
 
-    깨끗한 `issue/<N>` 에 서 있어야 한다(미커밋 변경은 거절). 잠금을 보류로 옮기고 `main` 으로
-    돌아간 뒤 Redmine 에 「보류」 노트를 남긴다. 재개는 `main` 에서 `issue_start_tool(N)` 이다.
+    설정된 작업 저장소의 `issue/<N>`이 깨끗해야 한다(미커밋 변경은 거절). 잠금을 보류로
+    옮기고 같은 저장소의 main으로 돌아간 뒤 노트를 남긴다. 재개는 `issue_start_tool(N)`이다.
     """
     from .. import issue_flow
     try:
@@ -1158,8 +1160,8 @@ def issue_cancel_tool(issue_id: int, confirm: bool = False, delete_branch: bool 
     """일감 작업을 **취소**한다 (`#883`). [중요] `confirm=False`(기본)는 잠금 상태·브랜치·
     로컬에만 있는 커밋 목록만 보여 주고 아무것도 바꾸지 않는다 — 사용자 승인 뒤에만 `confirm=True`.
 
-    승인 시: (그 브랜치에 서 있으면 `main` 으로) → 잠금 해제 → Redmine 「취소」 노트(커밋 목록).
-    🔴 브랜치는 기본으로 **남긴다**. `delete_branch=True` 일 때만 `git branch -D` — 로컬 전용 커밋은
+    설정된 작업 저장소에서 승인 시 main 복귀 → 잠금 해제 → Redmine 「취소」 노트(커밋 목록).
+    브랜치는 기본으로 남긴다. `delete_branch=True`일 때만 `git branch -D` — 로컬 전용 커밋은
     되살릴 수 없으므로 그 목록을 사용자에게 보여 주고 삭제 승인을 따로 받는다.
     """
     from .. import issue_flow
