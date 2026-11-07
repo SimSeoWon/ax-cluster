@@ -280,6 +280,57 @@ class CliWaitTests(unittest.TestCase):
         self.assertEqual(code, 4)
         self.assertIn("마지막 조회 오류: OSError: offline", text)
 
+    @staticmethod
+    def http_error(code):
+        """`client_mcp._call` 과 같은 모양 — 사람용 오류가 원래 `HTTPError` 를 `__cause__` 로 든다."""
+        import urllib.error
+        cause = urllib.error.HTTPError("http://q/api/v1/works/W", code, "x", {}, None)
+        try:
+            raise RuntimeError(f"[서버] GET … → {code}") from cause
+        except RuntimeError as exc:
+            return exc
+
+    def exits(self):
+        f = self.root / ".ax" / "work_completion.jsonl"
+        rows = [json.loads(x) for x in f.read_text(encoding="utf-8").splitlines()] \
+            if f.is_file() else []
+        return [r for r in rows if r.get("event") == "cli_wait_exit"]
+
+    def test_permanent_http_error_exits_two_at_once(self):
+        """`#904` — 401·403·404 는 1분 뒤에도 낫지 않는다. 24시간 기다린 뒤 rc 4 가 아니다."""
+        for code in (401, 403, 404):
+            with self.subTest(code=code):
+                self.now[0] = 0
+                (self.root / ".ax" / "work_completion.jsonl").unlink(missing_ok=True)
+                got, text, lines, calls = self.run_wait(
+                    [self.http_error(code), self.detail("ready_for_review", task_status="verified")],
+                    round_no=1)
+                self.assertEqual(got, 2)
+                self.assertEqual(len(calls), 1)              # 다시 묻지 않는다
+                self.assertEqual(self.sleep_calls, [])
+                self.assertIn(f"→ {code}", text)              # 사유를 싣는다
+                self.assertIn("완료로 처리하지 않았습니다", text)
+                self.assertEqual([r.get("outcome") for r in self.exits()], ["permanent_error"])
+
+    def test_permanent_error_after_progress_keeps_last_state(self):
+        got, text, _, calls = self.run_wait([self.detail(), self.http_error(403)], round_no=1)
+        self.assertEqual(got, 2)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("in_progress", text)                    # 마지막으로 본 상태도 함께
+
+    def test_transient_errors_are_still_retried(self):
+        import urllib.error
+        for transient in (self.http_error(500), self.http_error(503),
+                          urllib.error.URLError("refused"), OSError("offline")):
+            with self.subTest(error=repr(transient)):
+                self.now[0] = 0
+                got, _, lines, calls = self.run_wait(
+                    [transient, self.detail("ready_for_review", task_status="verified")],
+                    round_no=1)
+                self.assertEqual(got, 0)
+                self.assertEqual(len(calls), 2)
+                self.assertIn("조회 오류", lines[0])
+
     def test_current_round_lookup_when_round_omitted(self):
         code, text, lines, _ = self.run_wait(
             [self.detail(round_no=3), self.detail("ready_for_review", 3, "verified")])

@@ -59,7 +59,10 @@ Redmine `#395` 까지 냈는데 `.33` 은 몰랐다.
                 3  그 밖의 종결·신호 — merged · cancelled · rejected · 실패 조각 신호
                    (failed·needs_revision, 큐는 아직 in_progress 일 수 있다) · 라운드 불일치
                 4  타임아웃 — 완료로 처리하지 않는다. 마지막 상태와 조회 오류를 싣는다
-                2  사용법 오류 · 연결 준비 실패(`.ax/lib`·config·token 없음)
+                2  사용법 오류 · 연결 준비 실패(`.ax/lib`·config·token 없음) ·
+                   🔴 **영구 조회 거절**(HTTP 401·403·404, `#904`) — 첫 거절에서 바로 끝난다.
+                   기다려도 낫지 않는 오류를 24시간 재시도하던 것을 막는다. 연결 실패·5xx 같은
+                   일시 오류는 종전대로 재시도한다
 
     --skip-failures   실패 조각 신호로 끝내지 않는다(stderr 에만 찍는다). 실패 고지를 이미
                       받은 뒤 같은 라운드의 종결을 다시 기다릴 때 쓴다 — 없으면 같은 실패를
@@ -369,6 +372,25 @@ def _log_quiet(cwd, event, work_id, round_no, **fields):
         pass
 
 
+# `#904` — 기다려도 낫지 않는 HTTP 거절. 자격(401)·스코프(403)·없는 work(404).
+PERMANENT_HTTP = (401, 403, 404)
+
+
+def permanent_http_code(exc):
+    """조회 예외가 영구 거절이면 그 HTTP 코드, 아니면 `None`.
+
+    [중요] 문구를 파싱하지 않는다 — `client_mcp._call` 은 사람용 `ClientError` 를 던지되 원래
+    `HTTPError` 를 `__cause__` 로 남긴다. 그 코드로만 가른다(문구는 바뀌어도 코드는 안 바뀐다).
+    """
+    seen = 0
+    while exc is not None and seen < 5:
+        code = getattr(exc, "code", None)
+        if isinstance(code, int) and code in PERMANENT_HTTP:
+            return code
+        exc, seen = exc.__cause__, seen + 1
+    return None
+
+
 def cli_wait(cwd, work_id, get_work, *, round_no=None, timeout=CLI_TIMEOUT,
              interval=CLI_INTERVAL, skip_failures=False, clock=time.monotonic,
              sleep=time.sleep, err=None):
@@ -436,6 +458,20 @@ def cli_wait(cwd, work_id, get_work, *, round_no=None, timeout=CLI_TIMEOUT,
             last_error = f"{type(exc).__name__}: {exc}"[:300]
             say(f"[wait] {work_id} r{round_no if round_no is not None else '?'} · 조회 오류 "
                 f"{last_error} · 남은 {_mmss(remain)}")
+            code = permanent_http_code(exc)
+            if code is not None:
+                # 🔴 `#904` — 거절은 1분 뒤에도 거절이다. 재시도하면 24시간 뒤 rc 4 로만 드러났다
+                #    (드라이런 2026-11-07: 워커 토큰 403 을 5회 재시도 → 시간 초과).
+                lines = [f"[분산 작업 대기 종료] {work_id} · 라운드 "
+                         f"{round_no if round_no is not None else '?'} · 조회 {polls}회",
+                         f"큐가 조회를 거절했습니다(HTTP {code}). 기다려도 바뀌지 않는 오류라 "
+                         "재시도하지 않았습니다. 완료로 처리하지 않았습니다.",
+                         f"조회 오류: {last_error}"]
+                if last_work:
+                    lines.append(render_result(last_work, last_tasks, last_counts))
+                _log_quiet(cwd, "cli_wait_permanent_error", work_id, round_no, http=code,
+                           error=last_error)
+                return finish(EXIT_SETUP, "permanent_error", "\n".join(lines))
         left = deadline - clock()
         if left <= 0:
             break
