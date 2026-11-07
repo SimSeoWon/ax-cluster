@@ -185,19 +185,20 @@ _VERDICT_RULES = (
 
 
 def collected_section(findings: list, uncovered: list | None = None) -> str:
-    """종합 리뷰 프롬프트의 「해시별 리뷰 지적」 본문 (`#884` T4). 지적이 없으면 빈 문자열.
+    """종합 리뷰 프롬프트의 「해시별 리뷰 지적」 본문 (`#884` T4). 지적·미검토 커밋이 모두 없으면 빈 문자열.
 
     `findings` — `{id, commit, severity, file, line, description}` 목록(커밋 리뷰 `items_detail`).
     `uncovered` — 커밋 리뷰를 거치지 않은 해시 `{sha, state, why}`(포기·생략).
     [주의] 자르지 않는다 — 상용 LLM 경로에 크기 상한을 두지 않는다(사용자 결정 2026-11-03).
     """
-    if not findings:
+    if not findings and not uncovered:
         return ""
     sev = {"high": "높음", "mid": "중간", "low": "낮음"}
 
     def cell(v):
         return " ".join(str(v if v is not None else "").replace("|", "/").split())
-    lines = ["| 원 지적 | 커밋 | 심각도 | 파일:라인 | 내용 |", "|---|---|---|---|---|"]
+    lines = (["| 원 지적 | 커밋 | 심각도 | 파일:라인 | 내용 |", "|---|---|---|---|---|"]
+             if findings else [])
     for f in findings:
         lines.append(f"| {cell(f.get('id'))} | {cell(str(f.get('commit') or '')[:12])} | "
                      f"{cell(sev.get(f.get('severity'), f.get('severity')))} | "
@@ -205,7 +206,8 @@ def collected_section(findings: list, uncovered: list | None = None) -> str:
     out = "\n".join(lines)
     if uncovered:
         lab = {"abandoned": "포기", "skipped": "생략", "done": "완료(커밋 리뷰 지적을 못 읽음)"}
-        out += ("\n\n커밋 리뷰를 거치지 않은 커밋 (포기·생략 — 이 커밋들의 변경은 위 지적에 들어 있지 않다):\n"
+        out += ("\n\n" if out else "") + (
+                "커밋 리뷰를 거치지 않은 커밋 (포기·생략 — 이 커밋들의 변경은 위 지적에 들어 있지 않다):\n"
                 + "\n".join(f"- {str(u.get('sha') or '')[:12]} {lab.get(u.get('state'), u.get('state'))}"
                              f" — {cell(u.get('why')) or '사유 미기록'}" for u in uncovered))
     return out
