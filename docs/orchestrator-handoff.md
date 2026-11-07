@@ -4,47 +4,25 @@
 > `2e54988`, #888(진단·처방 C·라운드 3)·#891 상세는 `0a9bef9` 의 이 파일과 리포트 135~137에 있다. 항목·진행의 정본은 Redmine이다.
 > HEAD·dirty·마운트·모드는 재조회한다.
 
-## #902 완료 체크포인트 — Claude · 2026-11-07 23:5x KST
+## 11-07 Claude 체크포인트 — #899·#901·#904·#902 완료 (23:5x KST)
 
-- **#902 완료·100** (사용자 선택 A) — 조각 즉시 실패 통보(#780)의 `fail_notice_pending`을 세운 직후 `_save_task`로 선저장.
-  `recover_piece_fail_notices`가 `recover_stuck_works` 끝(라운드 전이 뒤)에서 돈다: work in_progress·이번 라운드면
-  재전송, 종결·지난 라운드면 생략 사유 기록. 전송 실패 무재전송(#780)·재시도는 기동 1회(#891과 같음) 유지.
-- 커밋 `e915275` = main = origin/main. 회귀 [6]~[10] 수정 전 6실패→35/35, 전수 213파일 11119/11119·실패0, pystatic 차단0,
-  드라이런2 재실행(디스크 표시 남음·재기동 1회 재전송·`[boot-renotice-piece]` 로그).
-- **`ax-task-queue` 재기동**(사용자 승인) 23:48:54 — in_progress work 0·표시 남은 조각 0 확인 뒤. 8101 200·Traceback 0.
-  주기 재시도(리포트140 §7-2)는 범위 밖·미결.
+> 일감별 상세는 이 파일의 Git `a713dae`, Redmine 각 일감 노트, 리포트 140에 있다.
 
-## #904 완료 체크포인트 — Claude · 2026-11-08 KST
-
-- **#904 완료·100** — `work_completion --wait`가 영구 조회 거절(HTTP 401·403·404, 사용자 결정으로 404 포함)에서
-  즉시 rc 2로 끝난다. 판정은 `ClientError.__cause__`의 HTTPError 코드(문구 파싱 안 함), 연결 실패·5xx는 재시도 유지.
-  사용자 승인으로 rc 2 설명 두 곳(ax-request `reference/wait-for-completion.md`·`client_mcp.WAIT_NOTE`)도 맞췄다.
-- 커밋 `38270c3` = main = origin/main. 회귀 3종 수정 전 4실패→통과, 전수 213파일 11103/11103·실패0,
-  pystatic 차단0. `.43` 실경로 403 → 즉시 rc2(종전 5회 재시도 rc4). **404 실경로는 미도달**(워커 토큰 403 선행, 단위만).
-- 배달: AXCluster `update` 3/3 OK·출처 HEAD(`client_mcp.py` 워커 3대 반영). 훅·참조문서는 `.33` unreal 마운트 전환 때.
-- 범위 밖 관찰(#904 노트): 훅 경로 `wait_for_work`는 반대로 일시 오류 한 번에 `watch_error`로 끝난다 — 일감화 미정.
-
-## #901 완료 체크포인트 — Claude · 2026-11-07 23:3x KST
-
-- **#901 완료·100** — `pending_works`가 `editor_mcp`에 루트 보정 payload를 넘긴다(하위 폴더 세션 침묵 해소).
-  커밋 `0cf37f7` = main = origin/main. 회귀 ⑩(훅 배치 서브프로세스) 수정 전 실패→후 통과,
-  전수 213파일 11100/11100·실패0, pystatic 차단0. finish 8단계 성공·잠금 해제. 리뷰 링크 「큐에 없음 1」.
-- 배달: AXCluster `update` 3/3 OK·출처 HEAD 동일(사용자 승인). 이 훅은 unreal 요청자 자산이라
-  `.33` 반영은 ModularStage·NS·MotionForge 마운트 전환 때. `.2` 홈 그림자 ax-work는 check [주의](FAIL 아님).
-- #899 드라이런 결함 후보를 등록: **#902**(조각 즉시 실패 표시 미저장) · **#903**(followup ⑦ 노트 무재시도) ·
-  **#904**(`--wait` 403 재시도→rc4). #902·#903은 「중복 쪽 vs 그대로」 설계 결정이 먼저다. 착수는 사용자 선택.
-
-## #899 완료 체크포인트 — Claude · 2026-11-07 23:0x KST
-
-- 마스터 담당 **claude**로 재인수(22:44, 사용자 지시). 직전 인계 커밋 `7bf0dcb` 사용자 승인 push.
-- **#899 완료·100** (분석 전용, 코드·설정·배달·서비스 변경 0). 로컬 서브 에이전트 3개(읽기 전용) 취합.
-  보고서 `reports/140-899-skill-hook-codex-path-analysis.md`, 커밋 `0942b19` = main = origin/main.
-  finish 8단계 성공·라운드1 해시1 등록·잠금 해제. 링크 단계 「큐에 없음 1」 — 해시별 리뷰 노트는 미도착.
-- 결론: 분모 26(마스터9·요청자/워커9·워크숍8)+훅5. 훅 직접 의존은 ax-request 하나. Codex는
-  4대 `hooks stable true`이나 AX 미배선(미실증). 전송/저장 창은 #891만 중복 쪽, 조각 즉시 실패
-  (`logic_cleanup.py:776` 미저장)·work_completion·followup 노트는 누락 쪽.
-- **보고서 §7 미결 선택지 9개는 사용자 결정 전 착수 금지.** 범위 밖: 마스터 `~/.claude.json`·
-  `~/.codex/config.toml`에 ax-projects 토큰 평문 — 처리 여부 미정, 값은 어디에도 옮기지 않았다.
+- 마스터 담당 **claude** 재인수(22:44, 사용자 지시). 일감은 전부 로컬 직접/서브 에이전트(사용자 선택),
+  issue_start→회귀 선추가(수정 전 실패 확인)→수정→전수→finish 미리보기→승인 순서. finish 리뷰 링크는 매번 「큐에 없음 1」.
+- **#899** 분석 전용(변경 0) — 리포트 140 `0942b19`. 분모 26 스킬+훅5, 훅 직접 의존은 ax-request 하나,
+  Codex `hooks stable true`이나 AX 미배선. **§7 미결 선택지는 사용자 결정 전 착수 금지.** 드라이런 1~4 → #901~#904 등록.
+- **#901** `0cf37f7` — `pending_works`가 `editor_mcp`에 루트 보정 payload 전달(하위 폴더 세션 침묵 해소).
+- **#904** `38270c3` — `--wait`가 영구 거절 401·403·404에서 즉시 rc 2(404 포함은 사용자 결정), 일시 오류는 재시도.
+  rc 2 설명 두 곳(ax-request 대기 참조·`client_mcp.WAIT_NOTE`) 맞춤. 404 실경로 미도달(단위만).
+- **#902** `e915275` (선택 A) — `fail_notice_pending` 선저장 + `recover_piece_fail_notices`(라운드 진행 중이면 재전송,
+  종결·지난 라운드면 생략 사유 기록). 전송 실패 무재전송·기동 1회 재시도 유지. 주기 재시도(§7-2)는 미결.
+- 검증: 매 일감 전수 213파일 실패0(최종 11119/11119), pystatic 차단0. 배달: AXCluster `update` 3/3 OK·출처 HEAD
+  (#901·#904 뒤). 훅·요청자 참조문서는 `.33` unreal 마운트 전환 때 반영. `.2` 홈 그림자 ax-work는 check [주의].
+- **`ax-task-queue` 재기동** 23:48:54(사용자 승인, in_progress 0·표시 0 확인 뒤) — 8101 200·Traceback 0.
+- 미결: **#903**(followup ⑦ 노트 무재시도 — 「중복 쪽 vs 그대로」 결정 먼저) · 훅 경로 `wait_for_work`가 일시 오류
+  한 번에 끝나는 비대칭(일감화 미정) · 마스터 `~/.claude.json`·`~/.codex/config.toml` ax-projects 토큰 평문(처리 미정).
+- 교훈: 인수인계 크기 검사 실패를 커밋 명령이 막지 않아 `a713dae`가 157줄로 커밋됐다 — 검사 rc로 커밋을 막는다.
 
 ## #896·#900 완료 체크포인트 — Codex · 2026-11-07 21:03 KST
 
