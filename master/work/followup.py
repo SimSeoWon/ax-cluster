@@ -59,6 +59,7 @@ import re as _re_mod
 import subprocess
 import sys
 import time
+import types
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -993,7 +994,11 @@ def render(facts: dict, *, origin: str = "", at: float | None = None) -> str:
         out.append(f"  Redmine #{f['redmine_issue_id']}")
     note = f.get("note") or {}
     if note:
-        out.append(f"  Redmine 노트: {'기재됨' if note.get('ok') else '기재 실패 — ' + str(note.get('error') or note.get('result') or '')[:200]}")
+        if note.get("pending"):                                    # `#903` — 아직 결과가 없다
+            out.append("  Redmine 노트: 기재 대기(다음 주기 재시도)")
+        else:
+            out.append(f"  Redmine 노트: {'기재됨' if note.get('ok') else '기재 실패 — ' + str(note.get('error') or note.get('result') or '')[:200]}"
+                       + (f" · 재시도 멈춤({note.get('attempts')}회)" if note.get("gave_up") else ""))
     src = ORIGIN_LABEL.get(origin or f.get("origin") or "", origin or f.get("origin") or "")
     when = at if at is not None else f.get("at")
     tail = [x for x in (f"준비 주체 {src}" if src else "",
@@ -1067,8 +1072,11 @@ def _with_facts(rec: dict) -> dict:
     return facts
 
 
-def _post_note_once(sdir, path: Path, rec: dict, fu, api, note, log) -> dict:
-    """기록 직후 한 번 — 결과를 기록에 남긴다. 기록이 있으면 다음 호출은 여기 오지 않는다(키당 1회)."""
+NOTE_MAX_ATTEMPTS = 5      # `#903` (사용자 결정 2026-11-07) — 타이머 1분 간격이니 약 5분
+
+
+def _post_note_once(sdir, path: Path, rec: dict, fu, api, note, log, *, attempts: int = 1) -> dict:
+    """노트 한 번 보내고 결과(`attempts` 포함)를 돌려준다. 재시도 판단은 `_retry_note` 가 한다."""
     wid, rnd = rec["work_id"], rec["round"]
     if not fu.redmine_issue_id:
         log("note", f"{wid} r{rnd} Redmine 이슈 번호가 work 에 없다 — 노트 없음")
@@ -1079,16 +1087,18 @@ def _post_note_once(sdir, path: Path, rec: dict, fu, api, note, log) -> dict:
         journal(sdir, "note_skipped", work_id=wid, round=rnd, reason="no_api",
                 issue=fu.redmine_issue_id)
         return {"ok": False, "skipped": "no_api"}
-    text = render(_with_facts(rec))
+    # `#903` — 본문은 **노트 상태를 빼고** 그린다. 대기 표시·지난 실패가 그 노트 자체에
+    #    「기재 실패」 줄로 실리면 안 된다(노트가 자기 결과를 미리 적는 꼴).
+    text = render(_with_facts({k: v for k, v in rec.items() if k != "note"}))
     try:
         got = (note or post_note)(api, issue_id=fu.redmine_issue_id, text=text,
                                   project=fu.project, work_id=wid) or {}
         ok = got.get("ok") is not False
         res = {"ok": ok, "at": time.time(), "issue": fu.redmine_issue_id,
-               "result": str(got.get("result") or "")[:300]}
+               "result": str(got.get("result") or "")[:300], "attempts": attempts}
     except Exception as e:                                         # noqa: BLE001
         res = {"ok": False, "at": time.time(), "issue": fu.redmine_issue_id,
-               "error": f"{type(e).__name__}: {e}"[:300]}
+               "error": f"{type(e).__name__}: {e}"[:300], "attempts": attempts}
     if res["ok"]:
         log("note", f"{wid} r{rnd} Redmine #{fu.redmine_issue_id} 노트 기재 ({len(text)}자)")
         journal(sdir, "note_posted", work_id=wid, round=rnd, issue=fu.redmine_issue_id,
@@ -1097,7 +1107,49 @@ def _post_note_once(sdir, path: Path, rec: dict, fu, api, note, log) -> dict:
         log("note", f"[중요] {wid} r{rnd} Redmine #{fu.redmine_issue_id} 노트 실패 — "
                     f"{res.get('error') or res.get('result')}")
         journal(sdir, "note_failed", work_id=wid, round=rnd, issue=fu.redmine_issue_id,
+                error=res.get("error") or res.get("result"), attempts=attempts)
+    return res
+
+
+def _note_due(n) -> bool:
+    """`#903` — 노트만 다시 보낼 기록인가. **새 표시가 있는 것만**이다.
+
+    대상: 대기 표시(`pending`, 보내기 전/후에 죽었다 — 어느 쪽인지 모른다 → 중복 쪽)와 실패(`ok=False`).
+    [중요] 노트 필드가 **없는** 기록(baseline·이 기능 전의 기록)은 대상이 아니다 — 운영 상태에
+    baseline 8건이 있고(2026-11-07 실측), 이것들에 노트가 한꺼번에 나가면 안 된다.
+    `skipped`(이슈·API 없음)는 다시 해도 같으니 대상이 아니고, `gave_up` 은 상한을 넘었다.
+    """
+    return (isinstance(n, dict) and not n.get("skipped") and not n.get("gave_up")
+            and (n.get("pending") is True or n.get("ok") is False))
+
+
+def _retry_note(sdir, path: Path, prev: dict, api, note, log) -> dict | None:
+    """기록이 있는 라운드에서 **노트만** 다시 보낸다(준비는 다시 안 한다). 갱신된 노트 결과 또는 None."""
+    n = prev.get("note")
+    if not _note_due(n):
+        return None
+    wid, rnd = prev.get("work_id"), prev.get("round")
+    done = int(n.get("attempts") or (0 if n.get("pending") else 1))
+    if done >= NOTE_MAX_ATTEMPTS:
+        res = dict(n, gave_up=True)
+    else:
+        facts = prev.get("facts") or {}
+        fu = types.SimpleNamespace(redmine_issue_id=facts.get("redmine_issue_id"),
+                                   project=facts.get("project") or "")
+        log("note", f"{wid} r{rnd} 노트 재시도 {done + 1}/{NOTE_MAX_ATTEMPTS} — "
+                    f"{'대기 표시(보냈는지 모름 · 중복 쪽)' if n.get('pending') else '지난 시도 실패'}")
+        journal(sdir, "note_retry", work_id=wid, round=rnd, attempt=done + 1,
+                reason="pending" if n.get("pending") else "failed")
+        res = _post_note_once(sdir, path, prev, fu, api, note, log, attempts=done + 1)
+        if not res.get("ok") and not res.get("skipped") and done + 1 >= NOTE_MAX_ATTEMPTS:
+            res["gave_up"] = True
+    if res.get("gave_up"):
+        log("note", f"[중요] {wid} r{rnd} Redmine 노트 {NOTE_MAX_ATTEMPTS}회 실패 — 재시도를 멈춘다 "
+                    f"(다시 하려면 `{wid} --force`)")
+        journal(sdir, "note_gave_up", work_id=wid, round=rnd, attempts=res.get("attempts"),
                 error=res.get("error") or res.get("result"))
+    prev["note"] = res
+    write_state(path, prev)
     return res
 
 
@@ -1112,8 +1164,10 @@ def prepare_once(repo, work_id: str, round_no: int | None = None, *, state=None,
     [중요] 기록하는 것은 at_gate·stopped·error 셋뿐이다. running·stale_round 는 기록하지 않는다 —
     다음 주기에 다시 본다. error 도 기록한다: 머지 충돌·검사 설정 결손은 1분 뒤에 저절로 낫지
     않고, 매분 트리를 다시 세우고 검사를 다시 돌리면 그 자체가 해다. 재시도는 `--force`.
-    [중요] 기록한 직후 **그 work 의 Redmine 이슈에 노트를 한 번** 남긴다(`#798` ⓐ). 기록이
-    잠금 안에서 먼저 생기므로 같은 키로 두 번 오지 않는다. 노트 실패는 기록에 남고 재시도하지 않는다.
+    [중요] 기록한 직후 **그 work 의 Redmine 이슈에 노트를** 남긴다(`#798` ⓐ). 기록이 잠금 안에서
+    먼저 생기므로 같은 키로 준비를 두 번 하지 않는다. 🔴 `#903`(사용자 결정 2026-11-07, 선택 A):
+    기록에 노트 대기 표시를 함께 남기고, 기록이 있는 다음 호출은 **노트만** 다시 보낸다 —
+    대기 표시(보냈는지 모름 → 중복 쪽)·실패가 대상이고 총 `NOTE_MAX_ATTEMPTS` 회 뒤 멈춘다(`--force`).
     `facts` 는 이번에 만든 결과든 기록이든 `render()` 가 읽는 같은 모양이다.
     """
     log = logf or C._noop_log
@@ -1156,6 +1210,10 @@ def prepare_once(repo, work_id: str, round_no: int | None = None, *, state=None,
                 prev = {}
         if prev and not force:
             ev = prev.get("event", "")
+            # `#903` — 준비는 다시 안 하지만, 대기 표시·실패가 남은 **노트만** 다시 보낸다(상한 5회)
+            retried = _retry_note(sdir, path, prev, api, note, log)
+            if retried is not None:
+                out["note_retry"] = retried
             out["skip"] = {"prepared": "already_prepared", "stopped": "already_stopped",
                            "error": "previous_error", "baseline": "baseline"}.get(ev, ev)
             out["recorded"] = prev
@@ -1180,8 +1238,12 @@ def prepare_once(repo, work_id: str, round_no: int | None = None, *, state=None,
                    "work_id": work_id, "round": int(round_no), "repo": str(repo),
                    "reason": fu.reason, "tree": fu.tree, "head": fu.head,
                    "build_passed": fu.build_passed, "origin": origin, "facts": fu.facts()}
+            # 🔴 `#903` — 기록과 **함께** 노트 대기 표시를 남긴다(#891·#902 와 같은 순서). 종전엔
+            #    기록만 먼저 써서, 노트 전/후에 죽으면 다음 주기가 `already_prepared` 로 노트 없이
+            #    지나갔고 어느 쪽이었는지도 기록이 구분하지 못했다(드라이런 재현 2026-11-07).
+            rec["note"] = {"pending": True, "attempts": 0}
             write_state(path, rec)
-            rec["note"] = _post_note_once(sdir, path, rec, fu, api, note, log)
+            rec["note"] = _post_note_once(sdir, path, rec, fu, api, note, log, attempts=1)
             write_state(path, rec)
             out["facts"]["note"] = rec["note"]
         journal(sdir, "prepare_done", work_id=work_id, round=round_no, state=fu.state,

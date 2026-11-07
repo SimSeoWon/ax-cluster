@@ -653,14 +653,16 @@ def test_note_once_per_round():
               and r2["facts"]["note"]["ok"] is True and r2["facts"]["origin"] == "timer", str(r2))
         F.prepare_once("/r", "w1", 2, state=sd, prepare=prep, note=note)
         check("라운드가 오르면 새 노트", len(note.calls) == 2)
-        # 실패 노트 — 기록되고 재시도하지 않는다
+        # 실패 노트 — 기록에 남고, `#903`(사용자 결정 A) 부터 다음 호출이 **노트만** 다시 보낸다
         bad = NoteSpy(raise_=OSError("queue down"))
-        F.prepare_once("/r", "w2", 1, state=sd, prepare=IssueSpy(state="error"), note=bad)
-        F.prepare_once("/r", "w2", 1, state=sd, prepare=IssueSpy(state="error"), note=bad)
+        err_prep = IssueSpy(state="error")
+        F.prepare_once("/r", "w2", 1, state=sd, prepare=err_prep, note=bad)
+        F.prepare_once("/r", "w2", 1, state=sd, prepare=err_prep, note=bad)
         rec = F.recorded_for("/r", "w2", 1, state=sd)
         check("노트 실패가 기록에 남는다", rec.get("note", {}).get("ok") is False
               and "queue down" in rec["note"].get("error", ""), str(rec))
-        check("실패 노트도 한 번만 시도", len(bad.calls) == 1)
+        check("#903 실패 노트는 다음 호출에 재시도된다(준비는 다시 안 한다)",
+              len(bad.calls) == 2 and len(err_prep.calls) == 1, f"{len(bad.calls)} {err_prep.calls}")
         # 이슈 없는 work → 노트 없음 + 사유
         F.prepare_once("/r", "w3", 1, state=sd, prepare=PrepareSpy(state="stopped"), note=note)
         check("이슈 없으면 노트 안 부름", len(note.calls) == 2)
@@ -670,6 +672,88 @@ def test_note_once_per_round():
         # running 은 기록이 없으니 노트도 없다
         F.prepare_once("/r", "w4", 1, state=sd, prepare=IssueSpy(state="running"), note=note)
         check("running 은 노트 없음", len(note.calls) == 2)
+    finally:
+        shutil.rmtree(sd, ignore_errors=True)
+
+
+class _Stop(BaseException):
+    """프로세스 중단 모사 — `_post_note_once` 의 `except Exception` 을 지나친다."""
+
+
+def test_note_retry_after_interruption_903():
+    """`#903` — 기록 뒤·노트 전/후에 프로세스가 죽어도 다음 주기가 노트를 보낸다(중복 쪽)."""
+    for label, sent_before_stop in (("전송 전 중단", False), ("전송 후 저장 전 중단", True)):
+        sd = Path(tempfile.mkdtemp(prefix="fu-note903-"))
+        try:
+            prep, calls = IssueSpy(), []
+
+            def dying(api, **kw):
+                if sent_before_stop:
+                    calls.append(kw)
+                raise _Stop()
+            try:
+                F.prepare_once("/r", "w", 1, state=sd, prepare=prep, note=dying)
+            except _Stop:
+                pass
+            rec = F.recorded_for("/r", "w", 1, state=sd)
+            check(f"{label}: 기록에 노트 대기 표시가 남는다",
+                  (rec.get("note") or {}).get("pending") is True, str(rec.get("note")))
+            ok = NoteSpy()
+            r = F.prepare_once("/r", "w", 1, state=sd, prepare=prep, note=ok)
+            check(f"{label}: 다음 호출이 노트를 1회 보낸다 · 준비는 다시 안 한다",
+                  len(ok.calls) == 1 and len(prep.calls) == 1 and r.get("skip") == "already_prepared",
+                  f"{len(ok.calls)} {prep.calls} {r.get('skip')}")
+            rec = F.recorded_for("/r", "w", 1, state=sd)
+            check(f"{label}: 기록이 성공으로 바뀐다", (rec.get("note") or {}).get("ok") is True
+                  and not (rec.get("note") or {}).get("pending"), str(rec.get("note")))
+            F.prepare_once("/r", "w", 1, state=sd, prepare=prep, note=ok)
+            check(f"{label}: 그다음 호출은 보내지 않는다", len(ok.calls) == 1)
+            text = ok.calls[0].get("text", "") if ok.calls else ""
+            check(f"{label}: 노트 본문에 대기·실패 줄이 없다",
+                  "기재 실패" not in text and "pending" not in text, text[-300:])
+        finally:
+            shutil.rmtree(sd, ignore_errors=True)
+
+
+def test_note_retry_limit_903():
+    """`#903` — 실패는 다음 호출마다 재시도, **총 5회** 뒤 멈추고 [중요] 를 한 번 남긴다."""
+    sd = Path(tempfile.mkdtemp(prefix="fu-note903-"))
+    try:
+        bad, prep, lines = NoteSpy(ok=False), IssueSpy(), []
+        logf = lambda s, m: lines.append(f"[{s}] {m}")
+        for _ in range(8):
+            F.prepare_once("/r", "w", 1, state=sd, prepare=prep, note=bad, logf=logf)
+        check("총 5회까지만 보낸다", len(bad.calls) == getattr(F, "NOTE_MAX_ATTEMPTS", None) == 5,
+              f"{len(bad.calls)} {getattr(F, 'NOTE_MAX_ATTEMPTS', None)}")
+        check("준비는 한 번", len(prep.calls) == 1, str(prep.calls))
+        rec = F.recorded_for("/r", "w", 1, state=sd)
+        n = rec.get("note") or {}
+        check("기록: 시도 5 · 멈춤 표시", n.get("attempts") == 5 and n.get("gave_up") is True, str(n))
+        gave = [x for x in lines if "[중요]" in x and "멈춘다" in x]
+        check("[중요] 멈춤 로그는 한 번", len(gave) == 1, str(gave))
+        jl = (sd / "followup.jsonl").read_text(encoding="utf-8")
+        check("jsonl 사건 note_retry · note_gave_up", '"note_retry"' in jl and '"note_gave_up"' in jl)
+        ok = NoteSpy()
+        F.prepare_once("/r", "w", 1, state=sd, prepare=prep, note=ok, force=True)
+        check("--force 는 다시 준비하고 노트를 보낸다", len(ok.calls) == 1 and len(prep.calls) == 2,
+              f"{len(ok.calls)} {prep.calls}")
+    finally:
+        shutil.rmtree(sd, ignore_errors=True)
+
+
+def test_note_retry_never_touches_old_records_903():
+    """`#903` — 운영의 baseline·옛 기록(노트 필드 없음)·이슈 없음(skipped)은 재시도 대상이 아니다."""
+    sd = Path(tempfile.mkdtemp(prefix="fu-note903-"))
+    try:
+        note = NoteSpy()
+        for wid, rec in (("base", {"event": "baseline", "state": "ready_for_review"}),
+                         ("old", {"event": "prepared", "state": "at_gate"})):
+            F.write_state(F.round_key_path(F.state_dir(sd), "/r", wid, 1),
+                          dict(rec, work_id=wid, round=1, repo="/r", at=0.0))
+            F.prepare_once("/r", wid, 1, state=sd, prepare=IssueSpy(), note=note)
+        F.prepare_once("/r", "noissue", 1, state=sd, prepare=PrepareSpy(state="stopped"), note=note)
+        F.prepare_once("/r", "noissue", 1, state=sd, prepare=PrepareSpy(state="stopped"), note=note)
+        check("🔴 baseline·옛 기록·이슈 없음은 노트를 보내지 않는다", note.calls == [], str(note.calls))
     finally:
         shutil.rmtree(sd, ignore_errors=True)
 
@@ -1427,6 +1511,9 @@ def main() -> int:
                test_scan_refuses_without_project_and_logs,
                test_render_facts_only,
                test_note_once_per_round,
+               test_note_retry_after_interruption_903,
+               test_note_retry_limit_903,
+               test_note_retry_never_touches_old_records_903,
                test_post_note_uses_queue_route,
                test_recorded_for_lookup,
                test_check_counts_and_capture,
