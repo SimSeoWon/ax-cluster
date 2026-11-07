@@ -259,11 +259,14 @@ def grounding_text(draft_body: str, decls: str) -> str:
 
 # `review_gen.commit_diff` 가 상한에서 자를 때 덧붙이는 꼬리의 앞부분 (`#888` — 요약에 싣는다)
 DIFF_TRUNCATED_MARK = "(diff 가 잘렸다"
+# 꼬리는 `"\n... " + MARK` 로 **제 줄의 머리**에 붙는다. diff 본문 줄은 ` `·`+`·`-`·`@`·`diff`·`index`
+# 로 시작하므로 같은 글이 코드·테스트에 들어 있어도(`68f1568` 이 그랬다 — 7회) 줄 머리에 `... ` 는 없다.
+_DIFF_TRUNCATED_LINE = re.compile(r"^\.\.\. " + re.escape(DIFF_TRUNCATED_MARK), re.M)
 
 
 def diff_truncation_note(prompt: str) -> str:
-    """agy 궤적 요약에 붙일 diff 잘림 표시 — 프롬프트에 잘림 꼬리가 있는지만 본다."""
-    return "diff 잘림" if DIFF_TRUNCATED_MARK in (prompt or "") else "diff 온전"
+    """agy 궤적 요약에 붙일 diff 잘림 표시 — 줄 머리에 붙은 잘림 꼬리가 있는지만 본다(`#888` T7)."""
+    return "diff 잘림" if _DIFF_TRUNCATED_LINE.search(prompt or "") else "diff 온전"
 
 
 def agy_only(prompt: str, *, timeout: int = rg.REVIEW_TIMEOUT, workdir=None, log=None) -> str:

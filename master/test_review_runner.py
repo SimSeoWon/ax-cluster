@@ -774,6 +774,15 @@ def test_agy_하트비트_배선():
     check("⑰ 하트비트는 큐 로그로 간다(접두 포함)",
           logs and logs[0] == "[리뷰큐] [agy 하트비트] 경과 20초 · 턴 1", str(logs))
     check("⑰ 잘림 판정은 review_gen 꼬리와 같은 글", R.DIFF_TRUNCATED_MARK in inspect.getsource(RG.commit_diff))
+    # `#888` T7 — diff 본문 줄에 같은 글이 들어 있어도 잘림이 아니다(68f1568 오표시)
+    body = ('+    check("x", "(diff 가 잘렸다" in capped)\n'
+            '         d = d[:max_chars] + "\\n... (diff 가 잘렸다 — 여기까지만 리뷰 대상이다)"\n'
+            '-    "(diff 가 잘렸다"\n')
+    check("⑰ 본문 줄의 꼬리 글은 잘림이 아니다", R.diff_truncation_note(body) == "diff 온전",
+          R.diff_truncation_note(body))
+    check("⑰ 줄 머리 꼬리 + 뒤 프롬프트 → 잘림",
+          R.diff_truncation_note(body + "... (diff 가 잘렸다 — 여기까지만 리뷰 대상이다)\n\n## 규칙\n")
+          == "diff 잘림")
 
     # 기본 커밋 리뷰 경로가 실제로 log 를 넘긴다
     root, head = make_repo()
