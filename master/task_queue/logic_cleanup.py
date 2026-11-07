@@ -774,6 +774,10 @@ def _notify_piece_failed(idx: TaskIndex, task_id: str) -> bool:
                     f"조각이라 라운드 공지가 같은 사유를 싣는다", idx.root)
             return False
         t["fail_notice_pending"] = True
+        # 🔴 `#902` — 표시를 **보내기 전에 디스크에** 남긴다(#891 의 `notice_pending` 과 같은 순서).
+        #    종전엔 메모리에만 세워, 노트 스레드가 큐와 함께 죽으면 흔적 없이 조기 경보가
+        #    사라졌다(드라이런 재현 2026-11-07). 기동 복구 `recover_piece_fail_notices` 가 읽는다.
+        _save_task(idx, task_id)
         issue_id = wmeta.get("redmine_issue_id")
         work_project = wmeta.get("project") or ""
         running_files = sorted({o.get("target_file") or o.get("task_id", "?") for o in running})
@@ -820,6 +824,59 @@ def _notify_piece_failed(idx: TaskIndex, task_id: str) -> bool:
 
     threading.Thread(target=_job, daemon=True).start()
     return True
+
+
+def recover_piece_fail_notices(idx: TaskIndex) -> dict:
+    """`#902` — 큐 기동 1회: 보내기 전에 끝난 조각 즉시 통보(#780)를 처리한다.
+
+    대상은 `fail_notice_pending` 이 디스크에 남고 `fail_notice_at` 이 없는 조각이다(스레드가
+    큐와 함께 죽었다). [중요] 전송 **실패**는 `fail_notice_at` 이 남으므로 대상이 아니다 —
+    「전송 실패는 재전송하지 않는다」(#780)는 그대로다.
+
+        라운드가 아직 돈다(work in_progress · 이번 라운드 조각)  → 표시를 풀고 즉시 통보를 다시 건다
+        라운드가 끝났거나 지난 라운드다                         → 보내지 않는다. 라운드 공지가 같은
+                                                                  사유를 실었다 — 생략 사유를 기록한다
+
+    호출자는 `recover_stuck_works` 이고, 라운드 전이(`_flip_if_all_terminal`)를 **먼저** 마친 뒤
+    부른다 — 그래야 「끝났나」 판정이 기동 시점의 사실과 맞는다. 반환 `{"resend": [...], "skip": [...]}`.
+    """
+    resend: list[str] = []
+    skip: list[tuple[str, str]] = []
+    with idx.lock:
+        for tid, t in list(idx.tasks.items()):
+            if not t.get("fail_notice_pending") or t.get("fail_notice_at"):
+                continue
+            wid = t.get("work_id")
+            wmeta = idx.works.get(wid) if wid else None
+            cur = int((wmeta or {}).get("round", 1) or 1)
+            t_round = int(t.get("round") or 0)
+            if not wmeta:
+                skip.append((tid, "work 없음"))
+            elif wmeta.get("merge_status") != "in_progress":
+                skip.append((tid, f"라운드 종결({wmeta.get('merge_status')}) — 라운드 공지가 사유를 실었다"))
+            elif t_round and t_round != cur:
+                skip.append((tid, f"지난 라운드(r{t_round} < r{cur})"))
+            else:
+                t.pop("fail_notice_pending", None)
+                _save_task(idx, tid)
+                resend.append(tid)
+    for tid, why in skip:
+        _record_piece_fail_notice(idx, tid, error=f"기동 복구 생략(#902): {why}")
+        _tq_log(f"[boot-renotice-piece] task={tid} 즉시 노트 생략 — {why}", idx.root)
+    for tid in resend:
+        started = _notify_piece_failed_async(idx, tid)
+        _tq_log(f"[boot-renotice-piece] task={tid} 즉시 노트 다시 건다 — "
+                f"{'시작' if started else '생략(통보 판정이 거절, 위 [piece-fail] 줄 참조)'}", idx.root)
+        if not started:
+            with idx.lock:
+                t = idx.tasks.get(tid) or {}
+                handled = t.get("fail_notice_at") or t.get("fail_notice_pending")
+            if not handled:
+                _record_piece_fail_notice(idx, tid, error="기동 복구 생략(#902): 통보 판정이 거절")
+    if resend or skip:
+        _tq_log(f"[boot-renotice-piece] 조각 즉시 통보 표시 {len(resend) + len(skip)}건 — "
+                f"재전송 {len(resend)} · 생략 {len(skip)} (#902)", idx.root)
+    return {"resend": resend, "skip": [tid for tid, _ in skip]}
 
 
 # [중요] **여기 있던 `_run_integration_build` 와 `_do_auto_cleanup` 을 지웠다**

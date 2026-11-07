@@ -588,6 +588,10 @@ def recover_stuck_works(idx: TaskIndex) -> list[str]:
     # 종결 통보는 lock 밖에서 비동기로 (중복은 공지 스레드의 멱등 검사가 막는다)
     for wid in recovered + renotice:
         _auto_cleanup_work_async(idx, wid)
+    # `#902` — 조각 즉시 실패 통보도 같은 자리에서. 라운드 전이를 **마친 뒤**라야 「라운드가
+    #    끝났나」를 기동 시점의 사실로 판정한다. 반환값(복구된 work 목록) 계약은 바꾸지 않는다.
+    from .logic_cleanup import recover_piece_fail_notices
+    recover_piece_fail_notices(idx)
     return recovered
 
 

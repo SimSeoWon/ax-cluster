@@ -180,11 +180,124 @@ def test_already_noticed_clears_marker() -> None:
     shutil.rmtree(root, ignore_errors=True)
 
 
+# ── `#902` 조각 즉시 실패 통보(#780) — 표시 선저장과 기동 재전송 ──────────────────
+def _piece_failed(thread_cls, note_fn):
+    """조각 2개 work 에서 하나를 실패시킨다(다른 하나는 진행 중). 즉시 통보 스레드는 `thread_cls`."""
+    root = Path(tempfile.mkdtemp(prefix="ax-piecefail-"))
+    idx = TaskIndex(root)
+    w = register_work(idx, title="조각실패", target_repo="/tmp/repo", project="NS",
+                      target_branch="task/W/base")
+    wid = w["work_id"]
+    LC.update_work_meta(idx, wid, redmine_issue_id=902)
+    for stem in ("a", "b"):
+        register_task(idx, work_id=wid, type="code", task_data={},
+                      target_file=f"Source/A/{stem}.cpp", stem=stem)
+    with patch.object(LC.threading, "Thread", thread_cls), \
+            patch.object(LC, "_read_redmine_config", _CFG), \
+            patch.object(LC, "_redmine_add_note", note_fn):
+        c1 = claim_task(idx, "192.168.0.2", capabilities=["ue5"], types=["code"])
+        c2 = claim_task(idx, "192.168.0.43", capabilities=[], types=["code"])
+        LL.submit_fail(idx, c1["task_id"], "층1", "dry", epoch=int(c1.get("epoch", 1)),
+                       worker_id="192.168.0.2")
+    return root, wid, c1["task_id"], c2
+
+
+def _disk_task(root: Path, tid: str) -> dict:
+    disk = TaskIndex(root)
+    disk.rebuild()
+    return disk.tasks[tid]
+
+
+def test_piece_fail_marker_is_on_disk() -> None:
+    print("\n[6] #902 즉시 통보 스레드가 노트 전에 죽어도 대기 표시가 디스크에 남는다")
+    root, _, tid, _ = _piece_failed(_DeadThread, lambda *a, **k: True)
+    t = _disk_task(root, tid)
+    check("실패는 저장됐다", t.get("status") == "failed", str(t.get("status")))
+    check("🔴 대기 표시가 디스크에 있다", t.get("fail_notice_pending") is True,
+          str(t.get("fail_notice_pending")))
+    check("아직 보낸 기록은 없다", not t.get("fail_notice_at"), str(t.get("fail_notice_at")))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def test_piece_fail_resent_while_round_runs() -> None:
+    print("\n[7] #902 라운드가 아직 돌면 재기동이 즉시 노트를 한 번 다시 보낸다")
+    root, wid, tid, _ = _piece_failed(_DeadThread, lambda *a, **k: True)
+    notes: list = []
+    idx, _ = _reboot(root, lambda *a, **k: notes.append(a[1]) or True)
+    t = idx.tasks[tid]
+    check("노트 1건(#902 이슈)", notes == [902], str(notes))
+    check("표시가 풀리고 보낸 기록이 남았다",
+          not t.get("fail_notice_pending") and bool(t.get("fail_notice_at")),
+          f"{t.get('fail_notice_pending')} {t.get('fail_notice_at')}")
+    t = _disk_task(root, tid)
+    check("디스크도 같다", not t.get("fail_notice_pending") and bool(t.get("fail_notice_at")),
+          f"{t.get('fail_notice_pending')} {t.get('fail_notice_at')}")
+    check("work 는 여전히 진행 중", idx.works[wid].get("merge_status") == "in_progress",
+          str(idx.works[wid].get("merge_status")))
+    _reboot(root, lambda *a, **k: notes.append(a[1]) or True)
+    check("한 번 더 재기동해도 다시 안 보낸다", notes == [902], str(notes))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def test_piece_fail_skipped_after_round_ends() -> None:
+    print("\n[8] #902 라운드가 이미 끝났으면 즉시 노트는 생략한다 — 라운드 공지가 사유를 실었다")
+    root, wid, tid, c2 = _piece_failed(_DeadThread, lambda *a, **k: True)
+    round_notes: list = []
+    idx = TaskIndex(root)
+    idx.rebuild()
+    with patch.object(LC.threading, "Thread", _ImmediateThread), \
+            patch.object(LC, "_read_redmine_config", _CFG), \
+            patch.object(LC, "_redmine_add_note", lambda *a, **k: round_notes.append(a[2]) or True):
+        LL.submit_result(idx, c2["task_id"], branch="b", head_commit="abc1234", self_check={},
+                         epoch=int(c2.get("epoch", 1)), worker_id="192.168.0.43")
+        LL.verify_task(idx, c2["task_id"], passed=True, result="pass")
+    check("라운드 공지가 나갔고 실패 사유를 실었다",
+          len(round_notes) == 1 and "Source/A/a.cpp" in round_notes[0], str(round_notes)[:200])
+    notes: list = []
+    idx, _ = _reboot(root, lambda *a, **k: notes.append(a[1]) or True)
+    t = idx.tasks[tid]
+    check("🔴 재기동은 즉시 노트를 보내지 않는다", notes == [], str(notes))
+    check("표시는 풀리고 생략 사유가 남는다",
+          not t.get("fail_notice_pending") and "라운드" in str(t.get("fail_notice_error") or ""),
+          f"{t.get('fail_notice_pending')} {t.get('fail_notice_error')!r}")
+    check("디스크에서도 풀렸다", not _disk_task(root, tid).get("fail_notice_pending"))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def test_piece_fail_send_failure_not_resent() -> None:
+    print("\n[9] #902 전송 실패는 종전대로 재전송하지 않는다(기록이 남는다)")
+    root, _, tid, _ = _piece_failed(_ImmediateThread, lambda *a, **k: False)
+    t = _disk_task(root, tid)
+    check("실패 기록 · 표시 없음",
+          bool(t.get("fail_notice_error")) and not t.get("fail_notice_pending"),
+          f"{t.get('fail_notice_error')!r} {t.get('fail_notice_pending')}")
+    notes: list = []
+    _reboot(root, lambda *a, **k: notes.append(a[1]) or True)
+    check("재기동이 다시 보내지 않는다", notes == [], str(notes))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def test_piece_fail_normal_path() -> None:
+    print("\n[10] #902 정상 경로 — 노트 1건, 표시 없음, 재기동은 아무것도 안 한다")
+    notes: list = []
+    root, _, tid, _ = _piece_failed(_ImmediateThread, lambda *a, **k: notes.append(a[1]) or True)
+    t = _disk_task(root, tid)
+    check("노트 1건 · 표시 없음 · 기록 있음",
+          notes == [902] and not t.get("fail_notice_pending") and bool(t.get("fail_notice_at")),
+          f"{notes} {t.get('fail_notice_pending')} {t.get('fail_notice_at')}")
+    _reboot(root, lambda *a, **k: notes.append(a[1]) or True)
+    check("재기동이 다시 보내지 않는다", notes == [902], str(notes))
+    shutil.rmtree(root, ignore_errors=True)
+
+
 if __name__ == "__main__":
     print("=== #891 라운드 완료 공지 — 공지 대기 표시와 기동 복구 재공지 ===")
     for fn in (test_killed_notice_is_resent, test_failed_note_retries_next_boot,
                test_normal_path_clears, test_stale_round_is_ignored,
-               test_already_noticed_clears_marker):
+               test_already_noticed_clears_marker,
+               test_piece_fail_marker_is_on_disk, test_piece_fail_resent_while_round_runs,
+               test_piece_fail_skipped_after_round_ends, test_piece_fail_send_failure_not_resent,
+               test_piece_fail_normal_path):
         fn()
     print(f"\n{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)
