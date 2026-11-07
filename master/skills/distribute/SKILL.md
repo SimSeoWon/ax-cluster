@@ -5,10 +5,32 @@ description: AX 마스터에서 인프라 변경을 RAG로 조사하고 사용�
 
 # distribute — 마스터의 RAG·위임 입구
 
+## 목차
+
+- 개요
+- 사용 예
+- 등록된 절차 우회 금지 — 사용자 결정 2026-10-04
+- 요청을 받으면
+- 타입과 역할을 먼저 확인한다
+- 단독 — 로컬 서브 에이전트
+- 분산 — 준비 검사
+- 분산 — 정본 7단계
+- 검증과 기록
+
+## 개요
+
 정본: `/home/sim/ax-cluster/master/skills/distribute/SKILL.md`.
 홈의 Claude/Codex 스킬은 정본을 가리키는 링크로 유지한다.
 공용 승인·실패·기록 규칙은 [orchestrator-rules](../../../docs/orchestrator-rules.md),
 진행 상태는 [handoff](../../../docs/orchestrator-handoff.md)를 읽는다.
+
+## 사용 예
+
+이런 요청에 이 스킬이 쓰인다(description 의 쓰임):
+
+    「분산 요청」 · 「작업 분해」 · 「.57 인프라 정비」 — 인프라 변경을 RAG 로 조사해 로컬 서브 에이전트 또는 AX 워커에 맡길 때
+
+구획은 위 목차의 제목으로 찾아 읽는다 — 절차는 「요청을 받으면」부터다.
 
 ## 등록된 절차 우회 금지 — 사용자 결정 2026-10-04
 
@@ -41,7 +63,7 @@ description: AX 마스터에서 인프라 변경을 RAG로 조사하고 사용�
 
 ## 타입과 역할을 먼저 확인한다
 
-`project_profile_tool(name)`의 등록 `kind`와 `blockers`를 읽는다. `.uproject` 유무,
+`ax-projects:project_profile_tool(name)`의 등록 `kind`와 `blockers`를 읽는다. `.uproject` 유무,
 사용자 문장의 “언리얼”, 테스트 설정 유무로 타입을 추정하지 않는다.
 
 | kind | 계약 |
@@ -84,7 +106,7 @@ Claude에서는 제공된 위임 도구와 실제 등록 에이전트 역할을 
 - 배달은 커밋된 깨끗한 트리에서 한다. 동기화 지시가 있으면
   `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.client update`(마운트된 프로젝트)를,
   등록 전체가 필요하면 `update --all`을 쓴다.
-- `check_workshops_clean_tool(name)`의 `dispatchable`과 사유를 확인한다. 소스 더티·SSH 실패를
+- `ax-projects:check_workshops_clean_tool(name)`의 `dispatchable`과 사유를 확인한다. 소스 더티·SSH 실패를
   무시하지 않는다. `git clean`, 강제 reset/push로 준비 상태를 만들지 않는다.
 - 큐·프로젝트 서비스와 `ax-dispatch.path`·`ax-dispatch.timer`를 확인한다.
   실제 따라잡기 타이머 이름은 `ax-dispatch.timer`이며 `ax-dispatch-catchup.service`를 깨운다.
@@ -119,7 +141,7 @@ Claude에서는 제공된 위임 도구와 실제 등록 에이전트 역할을 
 
 ### 실제 호출 표면
 
-- 마스터 현재 MCP: `register_work_tool(title, target_repo, specs_json, original_request,
+- 마스터 현재 MCP: `ax-projects:register_work_tool(title, target_repo, specs_json, original_request,
   target_branch, project)`. `specs_json`은 `TaskSpec` 배열이며 target/header 파일, 골조,
   동결 계약, 의존 관계, 필요한 능력을 명시한다. code에 `requires=["ue5"]`를 붙이지 않는다.
 - 등재 서비스는 Git 브랜치 생성·골조 커밋을 하지 않는다. 요청자 역할이 수행한다.
@@ -147,7 +169,7 @@ Claude에서는 제공된 위임 도구와 실제 등록 에이전트 역할을 
 push·전진·`main` 은 없다. 기록: `~/.cache/ax-followup/followup.jsonl` · journal.
 
 준비는 타이머가 하지만 **사용자에게 묻는 것은 세션의 몫**이다. 그래서 등재와 대기를 한 입구로
-묶는다(사용자 결정 2026-10-11): `register_work_tool` 성공 응답의 `wait` 필드에 담긴 명령을
+묶는다(사용자 결정 2026-10-11): `ax-projects:register_work_tool` 성공 응답의 `wait` 필드에 담긴 명령을
 **등재 직후 곧바로 백그라운드로** 돌려 둔다 — Claude 는 Bash `run_in_background`, Codex 는 그에
 해당하는 백그라운드 실행. 그 명령은 큐와 준비 기록을 **읽기만** 하며(준비·전진·기록 없음) 조회마다
 stderr 에 `[wait] <work_id> r<N> · 큐 … · 조각 …/… · 준비 … · 남은 mm:ss` 한 줄을 남기고,

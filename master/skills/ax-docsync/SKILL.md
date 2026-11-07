@@ -5,6 +5,18 @@ description: AX 마스터의 등록된 운영 문서(README·모듈 안내·온�
 
 # ax-docsync — 운영 문서 최신화
 
+## 목차
+
+- 개요
+- 0. 무엇을 하는가
+- 1. 목록 확인 (읽기 전용)
+- 2. 수정안 작성 (LLM 호출 · 원본 불변)
+- 3. 검토 — 사람 게이트
+- 4. 적용 (승인한 ID 만)
+- 5. 결과 보고와 하지 않는 것
+
+## 개요
+
 > 정본: `~/ax-cluster/master/skills/ax-docsync/SKILL.md` · 명령 정본 `master/doc_sync/__main__.py`
 > 근거: `#838` · 사용법·계약 `docs/document-sync.md` · 등록 목록 `docs/document-registry.json`
 

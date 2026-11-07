@@ -5,6 +5,18 @@ description: AX 워커 **지휘자 모드**를 보고 바꾼다 — 마스터가
 
 # ax-mode — 워커 지휘자 모드
 
+## 목차
+
+- 개요
+- 0. [중요] 무엇을 고르는 것인가 — 두 층을 섞지 않는다
+- 1. 부르는 것은 서버의 한 벌이다
+- 2. [중요] 이것은 기록이지 잠금이 아니다
+- 3. [주의] 바꾸기 전에
+- 3-1. 진행 중인 work 하나만 바꾸기 — 장애 대응 (`#392` ②)
+- 4. [주의] 계측을 0 으로 읽지 않는다
+
+## 개요
+
 > 마스터가 생성해 배달한다. **손으로 고치지 말 것.**
 > 정본: `~/ax-cluster/master/skills/ax-mode/SKILL.md` · 일감 `#385` · 설계 `docs/16-worker-orchestrator-mode.md`
 
@@ -25,14 +37,14 @@ description: AX 워커 **지휘자 모드**를 보고 바꾼다 — 마스터가
 
 **도구마다 로직을 따로 만들지 않는다** — Claude 세션이든 Codex 세션이든 **같은 MCP 도구**를 부른다:
 
-    조회   get_worker_mode_tool()
-    변경   set_worker_mode_tool(mode, why="왜 바꾸는지", by="누가")
+    조회   ax-projects:get_worker_mode_tool()
+    변경   ax-projects:set_worker_mode_tool(mode, why="왜 바꾸는지", by="누가")
 
 실행 전 스킬 경로와 실제 호출을 알린다. 작업 위치는 `/home/sim/ax-cluster`이며 Python은
 `.venv/bin/python`을 쓴다. MCP 가 안 붙어 있으면 같은 정본을 직접 부른다:
 
-    AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -c "import json; from master.work import conductor as c; print(json.dumps(c.snapshot(), ensure_ascii=False))"
-    AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -c "import json; from master.work import conductor as c; print(json.dumps(c.set_worker('codex', why='사용자가 선택한 변경 사유', by='현재 지휘자'), ensure_ascii=False))"
+    .venv/bin/python master/skills/ax-mode/scripts/conductor.py snapshot
+    .venv/bin/python master/skills/ax-mode/scripts/conductor.py set-worker codex --why "사용자가 선택한 변경 사유" --by "현재 지휘자"
 
 변경 명령의 모드·사유·기록자는 실제 사용자 선택에 맞춘다. **사용자가 모드를 선택했을 때만**
 변경하고, 기존 선택을 다시 묻지 않는다. 마스터 세션 교대만으로 워커 모드를 바꾸지 않는다.
@@ -64,10 +76,10 @@ description: AX 워커 **지휘자 모드**를 보고 바꾼다 — 마스터가
 
 전역 기본값이 아니라 **이미 등재된 work 하나**의 스탬프를 바꾼다. 워커 지휘자가 막혔을 때
 (예: 한 계정 한도 소진) 그 work만 다른 지휘자로 돌리는 경로다. 라운드 사이 지정은 종전대로
-개선요청 `improve_work(..., worker_mode=)`가 공식 경로다(사용자 결정 2026-10-05 ③).
+개선요청 `ax-client:improve_work(..., worker_mode=)`가 공식 경로다(사용자 결정 2026-10-05 ③).
 
-    변경   set_worker_mode_tool(mode, why="왜", by="누가", work_id="<work_id>")
-    직접   AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -c "import json; from master.work import conductor as c; print(json.dumps(c.set_work_worker_mode('<work_id>', 'claude', why='사유', by='현재 지휘자'), ensure_ascii=False))"
+    변경   ax-projects:set_worker_mode_tool(mode, why="왜", by="누가", work_id="<work_id>")
+    직접   .venv/bin/python master/skills/ax-mode/scripts/conductor.py set-work-mode <work_id> claude --why "사유" --by "현재 지휘자"
 
 - **다음 파견부터 적용된다** (사용자 결정 2026-10-11 A안). 파견은 시작할 때 스탬프를 한 번 읽어
   그 파견 전체에 고정한다(`#389`) — 도는 파견에 소급되지 않는다.
@@ -75,7 +87,7 @@ description: AX 워커 **지휘자 모드**를 보고 바꾼다 — 마스터가
 - 종결된 work(merged · rejected · cancelled)와 모르는 모드는 큐가 거절한다(`terminal_work` ·
   `invalid_worker_mode`). 전역과 같은 준비 검사를 거친다.
 - 성공하면 `[work-mode] <work_id> <이전>→<새> · … · 다음 파견부터 적용` 한 줄이 남는다.
-  `get_work` 로 스탬프를 다시 읽어 확인한다.
+  `ax-client:get_work` 로 스탬프를 다시 읽어 확인한다.
 
 마스터 담당 기록과 인수인계는 [`../ax-handoff/SKILL.md`](../ax-handoff/SKILL.md)에서 처리한다.
 

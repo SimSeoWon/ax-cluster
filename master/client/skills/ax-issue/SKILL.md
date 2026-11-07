@@ -1,12 +1,43 @@
 ---
 name: ax-issue
-description: Redmine 일감(`#N`) 하나를 이 기계에서 구현할 때 쓴다 — 플랜 영역을 확인·등록하고, 사람 작업 트리 옆 git worktree 의 `issue/<N>` 브랜치에서 작업하고, 승인 뒤 `origin main` 에 fast-forward 로 올린 다음 마스터에 마감을 등록한다. 시작·보류·재개·취소도 이 스킬이다. "#N 진행해", "#N 시작하자", "일감 이어서", "다음 태스크", "#N 마치자", "#N 보류", "#N 취소", "플랜 짜자", "/ax-issue" 같은 발화에 발동. Claude·Codex 공용. [중요] 분산 작업(워커에게 맡기는 work)은 이게 아니다 → `ax-request` · `ax-advance` · `ax-review`.
+description: Redmine 일감(`#N`) 하나를 이 기계에서 구현할 때 쓴다 — 플랜 영역을 확인·등록하고, 사람 작업 트리 옆 git worktree 의 `issue/N` 브랜치(N = 일감 번호)에서 작업하고, 승인 뒤 `origin main` 에 fast-forward 로 올린 다음 마스터에 마감을 등록한다. 시작·보류·재개·취소도 이 스킬이다. "#N 진행해", "#N 시작하자", "일감 이어서", "다음 태스크", "#N 마치자", "#N 보류", "#N 취소", "플랜 짜자", "/ax-issue" 같은 발화에 발동. Claude·Codex 공용. [중요] 분산 작업(워커에게 맡기는 work)은 이게 아니다 → `ax-request` · `ax-advance` · `ax-review`.
 ---
 
 # ax-issue — Redmine 일감 하나를 worktree 에서 하고 마감을 등록한다 (요청자 측)
 
+## 목차
+
+- 개요
+- 사용 예
+- 0. [중요] 먼저 — 이 스킬인지 가른다
+- 1. 도구 — `ax-client` MCP (마스터 8101 대행)
+- 2. [중요] 이 기계의 자리 — 사람 작업 트리는 건드리지 않는다
+- 3. 시작 — 플랜이 먼저다
+- 4. 진행 — 태스크마다 마킹한다
+- 5. 종료 — 승인 뒤 `main` 에 fast-forward, 그 다음 등록
+- 6. 보류·재개
+- 7. 취소 — 미리보기, 승인, 그리고 브랜치 삭제는 따로 승인
+- 8. 거절·실패 — 보고하고 묻는다
+- 9. 일감을 「완료」로 닫을 때
+- 10. 이 스킬이 바꾸지 않는 것
+
+## 개요
+
 > 마스터가 생성해 배달한다. **손으로 고치지 말 것** — 다음 배달에 덮인다.
 > 일감 `#884` T6 · 마스터 쪽 같은 규칙: `master/issue_infra.py` · 플랜 본체 `master/plan_tools.py`
+
+## 사용 예
+
+이런 발화로 이 스킬이 쓰인다(description 의 발동 예):
+
+    「#N 진행해」
+    「#N 시작하자」
+    「일감 이어서」
+    「다음 태스크」
+    「#N 마치자」
+    「#N 보류」
+
+구획은 위 목차의 제목으로 찾아 읽는다 — 절차는 「0. [중요] 먼저 — 이 스킬인지 가른다」부터다.
 
 ## 0. [중요] 먼저 — 이 스킬인지 가른다
 
@@ -19,18 +50,18 @@ description: Redmine 일감(`#N`) 하나를 이 기계에서 구현할 때 쓴�
 | `R12 검토` · `P3 수정` | 자동 리뷰·플랜 수정 항목 | `ax-fix` |
 
 [주의] **`#N` 이 분산 작업의 `[리뷰 요청]` 이슈인지, 사람이 구현할 일감인지 먼저 확인한다.** 분산 작업
-이슈는 `work_id` 가 붙어 있다(`redmine_get_issue` 로 본문을 본다). 애매하면 묻는다.
+이슈는 `work_id` 가 붙어 있다(`ax-client:redmine_get_issue` 로 본문을 본다). 애매하면 묻는다.
 
 ## 1. 도구 — `ax-client` MCP (마스터 8101 대행)
 
-    plan_start(issue_id)                                 시작 판정 + 7단계 표 (읽기)
-    plan_set(issue_id, tasks, why)                       플랜 등록·태스크 추가/편집
-    plan_transition(issue_id, task_id, to, note)         상태 전이 — 상태를 바꾸는 유일한 쓰기
-    issue_start(issue_id, check_only=true)               판정·잠금 점검만 (쓰기 0)
-    issue_start(issue_id, branch, start_rev)             시작 기록 — 잠금 · Redmine 시작 리비전 노트
-    issue_finish(issue_id, base, end, hashes, subjects)  마감 기록 — push **뒤에** 부른다
-    issue_pause(issue_id, end)                           보류 기록 — 잠금 보류 · 노트
-    issue_cancel(issue_id, confirm, delete_branch, …)    취소 — 기본은 미리보기
+    ax-client:plan_start(issue_id)                                 시작 판정 + 7단계 표 (읽기)
+    ax-client:plan_set(issue_id, tasks, why)                       플랜 등록·태스크 추가/편집
+    ax-client:plan_transition(issue_id, task_id, to, note)         상태 전이 — 상태를 바꾸는 유일한 쓰기
+    ax-client:issue_start(issue_id, check_only=true)               판정·잠금 점검만 (쓰기 0)
+    ax-client:issue_start(issue_id, branch, start_rev)             시작 기록 — 잠금 · Redmine 시작 리비전 노트
+    ax-client:issue_finish(issue_id, base, end, hashes, subjects)  마감 기록 — push **뒤에** 부른다
+    ax-client:issue_pause(issue_id, end)                           보류 기록 — 잠금 보류 · 노트
+    ax-client:issue_cancel(issue_id, confirm, delete_branch, …)    취소 — 기본은 미리보기
 
 [중요] **도구는 기록만 한다 — git 은 이 기계에서 아래 명령으로 한다.** 인프라는 이 기계의 저장소를
 만지지 않는다. 프로젝트 태그는 `ax-client` 가 `.ax/config.json` 에서 붙인다.
@@ -57,7 +88,7 @@ PowerShell 기준 변수(체크아웃 루트에서):
 
 ## 3. 시작 — 플랜이 먼저다
 
-1. `plan_start($N)`. `ok: false` 면 **구현하지 않는다.** 응답의 `next_action` 이 할 일이다.
+1. `ax-client:plan_start($N)`. `ok: false` 면 **구현하지 않는다.** 응답의 `next_action` 이 할 일이다.
 
         no_spec          스펙(무엇을·완료 조건)을 사용자와 먼저 쓴다
         plan_needed      ↓ 1-1 — 플랜을 짠다
@@ -67,11 +98,11 @@ PowerShell 기준 변수(체크아웃 루트에서):
         plan_done        태스크는 끝났다 — 일감 완료는 스펙·승인 규칙으로 따로 판단한다
         resume · next    3 으로 간다
 
-   1-1. 플랜 짜기: `search_context`(task_type=`user_command`, user_request=사용자 원문)로 기존 설계를
+   1-1. 플랜 짜기: `ax-client:search_context`(task_type=`user_command`, user_request=사용자 원문)로 기존 설계를
    찾고 **현재 소스와 대조한 뒤** 작은 태스크(목표·대상·선행·검증)를 **사용자와 대화로** 정한다.
-   합의된 목록을 `plan_set` 으로 등록한다(`why` = 사용자 결정). `state`·`evidence` 는 넣지 않는다.
+   합의된 목록을 `ax-client:plan_set` 으로 등록한다(`why` = 사용자 결정). `state`·`evidence` 는 넣지 않는다.
 
-2. `issue_start($N, check_only=true)`. `ok: false` 면 §8 대로 보고하고 멈춘다. `lock_state` 가
+2. `ax-client:issue_start($N, check_only=true)`. `ok: false` 면 §8 대로 보고하고 멈춘다. `lock_state` 가
    `paused` 면 §6-2(재개)로 간다.
 
 3. worktree 를 만든다 — 이미 있으면 만들지 않는다:
@@ -82,12 +113,12 @@ PowerShell 기준 변수(체크아웃 루트에서):
         git -C $repo worktree add $wt -b $br origin/main
         $rev = git -C $wt rev-parse HEAD
 
-4. `issue_start($N, branch="issue/$N", start_rev=$rev)`.
+4. `ax-client:issue_start($N, branch="issue/$N", start_rev=$rev)`.
    - `ok: true` → 잠금이 잡히고 Redmine 에 시작 리비전이 남았다.
    - `ok: false` → 사유를 보고한다. 방금 만든 worktree 는 `origin/main` 그대로라 잃을 것이 없다 —
      지울지 사용자에게 묻고, 승인되면 `git -C $repo worktree remove $wt` · `git -C $repo branch -d $br`.
 
-5. 첫 태스크를 `plan_transition($N, "T1", "작업중")` 으로 옮기고 `$wt` 안에서만 작업한다.
+5. 첫 태스크를 `ax-client:plan_transition($N, "T1", "작업중")` 으로 옮기고 `$wt` 안에서만 작업한다.
 
 ## 4. 진행 — 태스크마다 마킹한다
 
@@ -120,7 +151,7 @@ PowerShell 기준 변수(체크아웃 루트에서):
 
    거절되면 멈추고 출력 원문을 보고한다. `--force` 는 쓰지 않는다. 로컬은 그대로라 잃을 것이 없다.
 
-4. `issue_finish($N, base=$base, end=$end, hashes=<$hashes 순서대로>, subjects=<같은 순서의 제목>)`.
+4. `ax-client:issue_finish($N, base=$base, end=$end, hashes=<$hashes 순서대로>, subjects=<같은 순서의 제목>)`.
    - `ok: true` · `registered: true` · `lock_released: true` · `closed: true` → 마감 등록 완료이고 일감이
      「완료」·100 으로 닫혔다(`#889` — main 적용 = 마감). 5 로 간다.
    - `registered: false` → 잠금이 남아 있고 일감도 열린 채다. `why` 를 보고한다. 같은 인자로 다시 부르면
@@ -147,15 +178,15 @@ PowerShell 기준 변수(체크아웃 루트에서):
     git -C $wt status --porcelain        # 비어 있어야 한다 (미커밋 변경이 있으면 커밋할지 사용자에게 묻는다)
     $end = git -C $wt rev-parse HEAD
 
-`issue_pause($N, end=$end)`. 보류 중에는 다른 일감을 시작할 수 있다.
+`ax-client:issue_pause($N, end=$end)`. 보류 중에는 다른 일감을 시작할 수 있다.
 
 ### 6-2. 재개
 
-`issue_start($N, check_only=true)` 의 `lock_state` 가 `paused` 이고 `$wt` 가 있으면:
+`ax-client:issue_start($N, check_only=true)` 의 `lock_state` 가 `paused` 이고 `$wt` 가 있으면:
 
     $rev = git -C $wt merge-base origin/main $br
 
-`issue_start($N, branch="issue/$N", start_rev=$rev)` → `resumed: true`. 잠금 기록의 시작 리비전이
+`ax-client:issue_start($N, branch="issue/$N", start_rev=$rev)` → `resumed: true`. 잠금 기록의 시작 리비전이
 유지된다. `$wt` 가 없으면 멈추고 묻는다(`git -C $repo worktree add $wt $br` 로 다시 세울지).
 
 ## 7. 취소 — 미리보기, 승인, 그리고 브랜치 삭제는 따로 승인
@@ -165,9 +196,9 @@ PowerShell 기준 변수(체크아웃 루트에서):
         $commits = @(git -C $wt log --reverse --format="%H %s" "origin/main..$br")
         $local   = @(git -C $repo log --format=%H "origin/main..$br" --not --remotes)
 
-2. `issue_cancel($N, commits=$commits, local_only=$local)` — 미리보기(쓰기 0). `warning` 이 있으면
+2. `ax-client:issue_cancel($N, commits=$commits, local_only=$local)` — 미리보기(쓰기 0). `warning` 이 있으면
    **원격에 없는 커밋은 브랜치를 지우면 되살릴 수 없다** 는 사실과 그 목록을 사용자에게 보인다.
-3. 취소 승인을 받으면 `issue_cancel($N, confirm=true, commits=…, local_only=…)` — 잠금 해제·「취소」 노트.
+3. 취소 승인을 받으면 `ax-client:issue_cancel($N, confirm=true, commits=…, local_only=…)` — 잠금 해제·「취소」 노트.
    브랜치 삭제까지 **별도로** 승인받았으면 `delete_branch=true` 를 함께 싣는다.
 4. 응답의 `branch_delete_allowed` 가 `true` 일 때만 지운다:
 
@@ -193,11 +224,11 @@ PowerShell 기준 변수(체크아웃 루트에서):
 
 ## 9. 일감을 「완료」로 닫을 때
 
-일감은 **`issue_finish` 가 닫는다**(§5 4 — main 적용 = 「완료」·100, `#889`). 따로 닫지 않는다.
-손으로 `redmine_note(status_name="완료")` 를 보내면 마스터 관문이 **일감 잠금만** 본다 — 아직 작업 중(잠금
+일감은 **`ax-client:issue_finish` 가 닫는다**(§5 4 — main 적용 = 「완료」·100, `#889`). 따로 닫지 않는다.
+손으로 `ax-client:redmine_note(status_name="완료")` 를 보내면 마스터 관문이 **일감 잠금만** 본다 — 아직 작업 중(잠금
 활성·보류)이면 `[주의] … 완료 거절` 로 아무것도 쓰이지 않는다. finish·보류·취소가 먼저다.
 리뷰(해시별·종합)는 닫힌 뒤에도 같은 일감에 노트로 붙는다 — 관문이 아니다. HIGH 지적은 실제 코드와
-대조해 버그면 고친 뒤 `applied`, 오탐·의도면 `update_fix_status(dismissed, note=사유)` — 어느 쪽인지는
+대조해 버그면 고친 뒤 `applied`, 오탐·의도면 `ax-client:update_fix_status(dismissed, note=사유)` — 어느 쪽인지는
 사용자와 정하고 별건으로 처리한다.
 
 ## 10. 이 스킬이 바꾸지 않는 것

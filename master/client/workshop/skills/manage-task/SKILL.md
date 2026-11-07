@@ -5,10 +5,18 @@ description: 재사용 가능한 "작업 유형 템플릿"(태스크 온톨로�
 
 # Manage Task — 태스크 템플릿(작업 유형) 레지스트리
 
+## 목차
+
+- 목적
+- 환경 확인 (BLOCKING)
+- 호출 방법
+- 흐름
+- 안전 가드
+
 ## 목적
 재사용 작업 유형을 `.claude/ontology/tasks/<TaskType>/task.yaml` 에 등록한다(도메인 `domains/` 와 나란히).
 prescriptive — 사람이 "이 작업 유형 = 이런 구조·예제·규약·계약" 을 등록하면, **마스터의 분산 파이프라인**과 에이전트가
-신규 작업 시 `get_task_template` 로 읽어 grounding(환각 차단). **도메인 검색 채널과 별개** — 검색
+신규 작업 시 `ax-client:get_task_template` 로 읽어 grounding(환각 차단). **도메인 검색 채널과 별개** — 검색
 인덱싱 안 하는 구조 레지스트리(이름으로 get/list).
 
 ## 환경 확인 (BLOCKING)
@@ -19,7 +27,7 @@ prescriptive — 사람이 "이 작업 유형 = 이런 구조·예제·규약·�
 ## 호출 방법
 - `/manage-task list` — 등록된 템플릿 목록 (read-only)
 - `/manage-task create <TaskType>` — 신규 등록 (대화형)
-- `/manage-task show <TaskType>` — 단일 조회 (`get_task_template`)
+- `/manage-task show <TaskType>` — 단일 조회 (`ax-client:get_task_template`)
 - `/manage-task edit <TaskType>` — 필드 수정
 - `/manage-task remove <TaskType>` — 제거
 - 자연어 — "미션 태스크 추가 템플릿 만들자", "보스 레이드 같은 작업 유형 등록"
@@ -53,7 +61,7 @@ prescriptive — 사람이 "이 작업 유형 = 이런 구조·예제·규약·�
    example, conventions, contracts, tdd, test_spec)` 호출. 결과 보고(path, structure_roles).
 
 ### 조회/소비 (show)
-- `get_task_template(task_type)` → 구조 dict + raw YAML. **이게 소비 진입점** — 마스터의 분해·골조 단계나
+- `ax-client:get_task_template(task_type)` → 구조 dict + raw YAML. **이게 소비 진입점** — 마스터의 분해·골조 단계나
   code-writer 가 신규 작업(예 "보스 레이드 태스크") 시 매칭되는 템플릿을 읽어 구조·예제(참조 경로)·
   규약·계약대로 구현. (소비 자동 배선은 후속 — 현재는 사람/에이전트가 명시 조회.)
 

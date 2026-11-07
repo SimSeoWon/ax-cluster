@@ -238,6 +238,7 @@ from the master's own container DB. [중요] **Never write the key value into a 
 | [중요] **지금 열린 축 — 다중 프로젝트** | [`docs/12-multi-project.md`](docs/12-multi-project.md) — 갈린 축과 안 갈린 축 · 네 부모 일감의 지도. [완료] **마운트 강제는 2026-08-22 배선됐다**(3단계 전부) · [주의] §12.4 는 그 전의 「안 된 것을 됐다고 적은」 거짓 서술 네 곳을 정정한 기록이다 |
 | [중요] **요청 태그 계약** (기능 정본) | [`docs/13-request-tagging.md`](docs/13-request-tagging.md) — 네 정책 · 필수 표면 · 거절 사유 셋 · 발신자 · [주의] **발신자 배달이 서버 조임보다 먼저다**(§13.6) |
 | [중요] **신규 프로젝트 온보딩** (실행용) | [`docs/14-onboarding-runbook.md`](docs/14-onboarding-runbook.md) — 명령 단위 절차 + 단계별 **「안 됐으면 무엇이 안 보이나」** |
+| [중요] **스킬 작성 규약** — 만들거나 고칠 때마다 | [`docs/skill-authoring.md`](docs/skill-authoring.md) — 맨 앞 목차·구획·`서버:도구`·scripts·500줄·번들. `master/test_skill_conventions.py` 가 강제한다 (#890) |
 | Closed decisions, don't relitigate | [`docs/settled-decisions.md`](docs/settled-decisions.md) |
 | Still open | [`docs/3-open-items.md`](docs/3-open-items.md) |
 | Per-machine operating guide | [`machines/`](machines/README.md) |

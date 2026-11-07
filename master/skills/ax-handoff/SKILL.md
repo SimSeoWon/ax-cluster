@@ -5,6 +5,15 @@ description: AX 마스터 Claude/Codex 세션을 교대하거나 토큰 소진 �
 
 # ax-handoff — 인수인계와 지휘 상태
 
+## 목차
+
+- 개요
+- 작업 복원
+- 마스터 담당과 워커 지휘자
+- 다음 인계
+
+## 개요
+
 정본: `~/ax-cluster/master/skills/ax-handoff/SKILL.md`.
 근거: [`docs/15-orchestrator-handoff.md`](../../../docs/15-orchestrator-handoff.md) §15.4,
 [`docs/orchestrator-rules.md`](../../../docs/orchestrator-rules.md) §2,
@@ -35,20 +44,20 @@ description: AX 마스터 Claude/Codex 세션을 교대하거나 토큰 소진 �
 
 실행 전 사용할 스킬 경로와 호출을 알린다. 현재 노출된 `ax-projects` MCP를 우선한다:
 
-    조회       get_orchestration_tool()
-    담당 기록  record_master_conductor_tool(agent, why, by)
+    조회       ax-projects:get_orchestration_tool()
+    담당 기록  ax-projects:record_master_conductor_tool(agent, why, by)
 
 MCP가 현재 세션에 없으면 기존 정본 함수를 같은 작업 위치에서 호출한다:
 
 ```bash
-AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -c "import json; from master.work import conductor as c; print(json.dumps(c.snapshot(), ensure_ascii=False))"
+.venv/bin/python master/skills/ax-handoff/scripts/conductor.py snapshot
 ```
 
 사용자가 마스터 교대를 지시했고 실제 인수를 마친 경우에만 담당 기록을 남긴다. 아래 모드·
 사유·기록자는 실제 지시에 맞춘다. 단순 조회나 인수인계 읽기 요청은 기록 변경 승인이 아니다.
 
 ```bash
-AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -c "import json; from master.work import conductor as c; print(json.dumps(c.record_master('codex', why='사용자 지시로 실제 작업 인수 완료', by='codex'), ensure_ascii=False))"
+.venv/bin/python master/skills/ax-handoff/scripts/conductor.py record-master codex --why "사용자 지시로 실제 작업 인수 완료" --by codex
 ```
 
 워커 조회·변경은 [`ax-mode`](../ax-mode/SKILL.md)를 읽고 그 기존 호출을 따른다. 사용자가

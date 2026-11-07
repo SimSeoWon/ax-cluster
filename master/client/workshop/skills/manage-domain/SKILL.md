@@ -5,12 +5,37 @@ description: 도메인 온톨로지를 생성·제거·수정하는 통합 관�
 
 # Manage Domain — 도메인 CRUD 통합 관리
 
+## 목차
+
+- 개요
+- 사용 예
+- 목적
+- 환경 확인 (필수, BLOCKING)
+- 호출 방법
+- 흐름
+- 안전 가드
+
+## 개요
+
 > [주의] **온톨로지 조회·별칭 등록은 마스터 위임(`mcp__ax-client__*`)으로 바뀌었다** (2026-08-20).
 > 로컬 `mcp__context-search__*` 는 은퇴했다 — 그 인덱스는 낡았고 objects/actions 를 0/0 으로 답한다.
 >
 > [주의] **그래프 조회 3종은 아직 위임되지 않았다** — `find_ancestors` · `find_subclasses` ·
 > `dependency_search`. 이 절차들이 그것에 의존하므로, 부르기 전에 **응답이 오는지 먼저 확인**하고
 > 안 오면 마스터에 위임 추가를 요청한다. 조용히 추측으로 대체하지 말 것.
+
+## 사용 예
+
+이런 발화로 이 스킬이 쓰인다(description 의 발동 예):
+
+    「도메인 삭제/제거」
+    「X 도메인 지워줘」
+    「도메인에 클래스 추가」
+    「이 클래스를 MissionRuntime 에 넣자」
+    「도메인 협력관계 수정」
+    「서브도메인 만들어줘」
+
+구획은 위 목차의 제목으로 찾아 읽는다 — 절차는 「목적」부터다.
 
 ## 목적
 
@@ -111,16 +136,16 @@ description: 도메인 온톨로지를 생성·제거·수정하는 통합 관�
   그 키 전체를 다시 넘길 것. 결과에 `verified_by_user: true` 가 세팅됐고 다음 재합성에서도
   보존됨을 사용자에게 안내.
   - **응용 — RAG 시소러스 별칭 (Phase η.10/η.11)**: 클래스의 한국어·영문 별칭(몬스터/몹/
-    괴물/적/Enemy 등)을 등록하면, 다음 `search_context` 부터 그 표현이 쿼리에 등장할 때
+    괴물/적/Enemy 등)을 등록하면, 다음 `ax-client:search_context` 부터 그 표현이 쿼리에 등장할 때
     자동으로 클래스명이 덧붙어 BM25·벡터·도메인추론 세 채널이 동시에 혜택을 받는다.
     **등록은 반드시 전용 도구 `mcp__ax-client__add_object_alias(class_name, alias)` 로 할 것**
     (2026-08-20: **domain 인자 없음** — 서버가 찾는다. 범용어·짧은 표현은 마스터 가드가
     `rejected_…` 사유로 거부한다) —
     이 `edit-item`(patch={"aliases":[...]})으로 직접 덮어쓰면 top-level 얕은 덮어쓰기라
-    기존 별칭 전체가 사라지는 함정이 있다(Phase η.11 에서 발견). `add_object_alias` 는
+    기존 별칭 전체가 사라지는 함정이 있다(Phase η.11 에서 발견). `ax-client:add_object_alias` 는
     기존 목록을 내부에서 읽어 병합하므로 안전하게 누적된다. 사용자가 작업 요청에
     `<구절>[ClassName]` 형태로 직접 선언하면(예: "몹 스폰 로직[AMonster]") 그 자체가
-    등록 신호 — 메인 세션이 **자동으로** `add_object_alias` 를 호출한다(사람이 스킬을
+    등록 신호 — 메인 세션이 **자동으로** `ax-client:add_object_alias` 를 호출한다(사람이 스킬을
     별도 실행할 필요 없음, 이미 등록된 표현이면 조용히 스킵).
 - `/manage-domain remove-item <D> <layer_type> <item_name>` — 항목 내용을 표시하고 삭제
   확정(**되돌릴 수 없음** 명시) 후 `delete_ontology_item(domain, layer_type, item_name)` 호출.

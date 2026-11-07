@@ -5,7 +5,34 @@ description: 디지털 트윈의 어휘를 사람과 대화하며 등록한다 �
 
 # ax-ontology — 트윈의 어휘를 사람과 함께 정한다
 
+## 목차
+
+- 개요
+- 사용 예
+- 0. [중요] 온톨로지는 자동이 아니다
+- 1. 왜 이게 필요한가 — 실측된 공백
+- 2. 용어를 만나면 — 조회하고, 없으면 묻는다
+- 3. 확인받은 것만 등록한다
+- 4. 검색 입구는 하나다
+- 5. 개념을 만들고·고치고·지운다 (2026-08-09 열림)
+- 6. 판단 기준
+
+## 개요
+
 > 마스터가 생성해 배달한다. **손으로 고치지 말 것** — 다음 배달에 덮인다.
+
+## 사용 예
+
+이런 발화로 이 스킬이 쓰인다(description 의 발동 예):
+
+    「그건 클래스가 아니다」
+    「별칭 등록」
+    「이 용어 뭐야」
+    「시소러스」
+    「도메인 어휘」
+    「검색이 안 잡혀」
+
+구획은 위 목차의 제목으로 찾아 읽는다 — 절차는 「0. [중요] 온톨로지는 자동이 아니다」부터다.
 
 ## 0. [중요] 온톨로지는 자동이 아니다
 
@@ -32,7 +59,7 @@ BM25 토크나이저는 `[A-Za-z0-9_]+|[가-힣]+` 리터럴 매칭이라 **「�
 
 사용자가 `[미션 시스템]` 처럼 **대괄호로 개념을 감싸면** 그게 등록 신호다.
 
-    resolve_terms_tool(terms)     ← 시소러스에 있나? 없으면 **후보를 붙여** 돌려준다
+    ax-projects:resolve_terms_tool(terms)     ← 시소러스에 있나? 없으면 **후보를 붙여** 돌려준다
 
 돌아온 것을 그대로 넣지 않는다. **후보를 근거와 함께 사용자에게 보인다:**
 
@@ -44,15 +71,15 @@ BM25 토크나이저는 `[A-Za-z0-9_]+|[가-힣]+` 리터럴 매칭이라 **「�
 
 ## 3. 확인받은 것만 등록한다
 
-    add_alias_tool(class_name, term)      ← [중요] **기존 별칭에 합친다. 덮어쓰지 않는다**
-    mark_not_a_class_tool(term)           ← "그건 클래스가 아니다" → 다음부터 안 묻는다
+    ax-projects:add_alias_tool(class_name, term)      ← [중요] **기존 별칭에 합친다. 덮어쓰지 않는다**
+    ax-projects:mark_not_a_class_tool(term)           ← "그건 클래스가 아니다" → 다음부터 안 묻는다
 
-`mark_not_a_class_tool` 을 아끼지 말 것. 「빌드」·「배포」처럼 클래스가 아닌 말이 매번
+`ax-projects:mark_not_a_class_tool` 을 아끼지 말 것. 「빌드」·「배포」처럼 클래스가 아닌 말이 매번
 후보로 올라오면 사용자가 같은 질문에 계속 답해야 한다.
 
 ## 4. 검색 입구는 하나다
 
-    search_context_tool(query, limit)
+    ax-projects:search_context_tool(query, limit)
 
 [중요] **이것만 쓴다.** 대괄호 해석 → 시소러스 확장 → 검색을 한 번에 한다. 다른 경로로 돌면
 방금 등록한 별칭이 안 걸려 **등록 효과가 없는 것처럼 보인다.**
@@ -62,31 +89,31 @@ BM25 토크나이저는 `[A-Za-z0-9_]+|[가-힣]+` 리터럴 매칭이라 **「�
 
 ## 5. 개념을 만들고·고치고·지운다 (2026-08-09 열림)
 
-    create_domain_tool(name, tags, parent, summary)
+    ax-projects:create_domain_tool(name, tags, parent, summary)
         새 도메인의 **씨앗 MD**. [중요] 덮지 않는다 · 이름은 영문 PascalCase(한글은 tags·별칭으로)
         · `status: draft` 로 시작한다. 절을 채운 뒤 합성해야 패키지가 생긴다.
 
-    edit_ontology_item_tool(domain, kind, name, patch)
+    ax-projects:edit_ontology_item_tool(domain, kind, name, patch)
         [중요] **고치면 곧 검수 잠금이 걸린다** — 재합성이 그 항목을 덮지 않게 된다.
         `patch` 는 top-level 얕은 병합이라 중첩 값은 키 전체를 다시 넘긴다.
         `name`·`layer` 는 파일 경로의 근거라 못 바꾼다. 없는 항목은 **만들지 않고 실패**한다.
 
-    remove_ontology_item_tool(domain, kind, name, force=False)
+    ax-projects:remove_ontology_item_tool(domain, kind, name, force=False)
         [중요] **잠긴 것은 `force` 없이 안 지워진다.** 잠금은 *"사람이 검수했다"* 는 뜻이다 —
         재합성이 못 덮는 것을 삭제가 덮으면 안 된다. **`force` 를 쓰기 전에 사용자에게 한 번
         더 확인할 것.**
 
-    lock_ontology_item_tool(domain, kind, name, locked)   잠금 걸기/풀기
-    list_locked_tool(domain)                              무엇을 잠갔나 (안 보면 잊는다)
-    unassigned_classes_tool(sample)                       어디에도 없는 클래스 — [중요] 노출만
-    sync_ontology_tool(domain, apply=False)               경로·선언 맞추기 (기본 계획만)
+    ax-projects:lock_ontology_item_tool(domain, kind, name, locked)   잠금 걸기/풀기
+    ax-projects:list_locked_tool(domain)                              무엇을 잠갔나 (안 보면 잊는다)
+    ax-projects:unassigned_classes_tool(sample)                       어디에도 없는 클래스 — [중요] 노출만
+    ax-projects:sync_ontology_tool(domain, apply=False)               경로·선언 맞추기 (기본 계획만)
 
-[중요] **자동 편입은 없다.** `unassigned_classes_tool` 은 *보여주기만* 한다 — 자동 승급이 크게
+[중요] **자동 편입은 없다.** `ax-projects:unassigned_classes_tool` 은 *보여주기만* 한다 — 자동 승급이 크게
 데인 자리다(2026-06-01 영구 비활성). 무엇을 넣을지는 **사용자가 고른다.**
 
 [완료] **MD 태그는 이제 `domain.yaml` 로 전파된다**(합치되 덮지 않는다, 2026-08-10).
 [주의] 다만 **한글 태그 자체가 적다** — 전체 86개 중 4개뿐이다. 한글 검색의 실효 수단은 여전히
-**별칭**(`add_alias_tool`)이고, 그쪽은 색인의 tags 채널(가중치 3.0)로 올라가며 질의 확장에도
+**별칭**(`ax-projects:add_alias_tool`)이고, 그쪽은 색인의 tags 채널(가중치 3.0)로 올라가며 질의 확장에도
 쓰인다(실측: 「다이얼로그 매니저」가 엉뚱한 도메인 1위 → 정상화).
 
 ## 6. 판단 기준

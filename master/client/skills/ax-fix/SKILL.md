@@ -1,11 +1,35 @@
 ---
 name: ax-fix
-description: 자동 리뷰·주간 플랜을 **번호(R12 · P3)** 로 받아 와서, 지금 main 기준으로 아직 합당한지 분석하고, 사용자가 고른 항목만 RAG 를 쓰는 서브 에이전트가 `fix/<번호>` 브랜치에 고친다. "R12 검토해볼까", "P3 수정해볼까", "리뷰 목록 보여줘", "플랜 목록", "고칠 리뷰 있어?", "/ax-fix" 같은 발화에 발동. [중요] 분산 작업 검수(`#N 리뷰`·머지 검토)는 이게 아니다 → `ax-review`.
+description: 자동 리뷰·주간 플랜을 **번호(R12 · P3)** 로 받아 와서, 지금 main 기준으로 아직 합당한지 분석하고, 사용자가 고른 항목만 RAG 를 쓰는 서브 에이전트가 `fix/번호` 브랜치(예 fix/R12)에 고친다. "R12 검토해볼까", "P3 수정해볼까", "리뷰 목록 보여줘", "플랜 목록", "고칠 리뷰 있어?", "/ax-fix" 같은 발화에 발동. [중요] 분산 작업 검수(`#N 리뷰`·머지 검토)는 이게 아니다 → `ax-review`.
 ---
 
 # ax-fix — 리뷰·플랜의 수정 항목을 검토하고 적용한다 (요청자 측)
 
+## 목차
+
+- 개요
+- 사용 예
+- 0. [중요] 먼저 — 이 스킬인지 가른다
+- 1. 흐름
+- 2. 단계
+- 3. 멈추는 자리
+
+## 개요
+
 > 마스터가 생성해 배달한다. **손으로 고치지 말 것** — 다음 배달에 덮인다.
+
+## 사용 예
+
+이런 발화로 이 스킬이 쓰인다(description 의 발동 예):
+
+    「R12 검토해볼까」
+    「P3 수정해볼까」
+    「리뷰 목록 보여줘」
+    「플랜 목록」
+    「고칠 리뷰 있어?」
+    「/ax-fix」
+
+구획은 위 목차의 제목으로 찾아 읽는다 — 절차는 「0. [중요] 먼저 — 이 스킬인지 가른다」부터다.
 
 ## 0. [중요] 먼저 — 이 스킬인지 가른다
 
@@ -23,18 +47,18 @@ description: 자동 리뷰·주간 플랜을 **번호(R12 · P3)** 로 받아 �
 
 ## 1. 흐름
 
-    ① 번호 고르기   list_fixes → 표로 보여주고 사용자가 고른다 (스스로 고르지 않는다)
+    ① 번호 고르기   ax-client:list_fixes → 표로 보여주고 사용자가 고른다 (스스로 고르지 않는다)
     ② 내려받기      fix_flow.py fetch R12   → .ax/fixes/R12/doc.md · doc.json
     ③ 대조          fix_flow.py check R12   → .ax/fixes/R12/check.md  (지금 origin/main 기준 사실)
     ④ 판정·질의     항목마다 「합당 / 해당 없음 / 의도된 동작 의심」 + 근거 → 사용자에게 묻는다   ← 사람
     ⑤ 적용          fix_flow.py prepare R12  → **고칠 자리를 사람에게 먼저 말하고** 수락분만 고친다
                     → fix_flow.py diff R12 로 확인 → 커밋 여부 묻는다 ← 사람 → fix_flow.py commit
                     → worktree 모드였으면 fix_flow.py release R12 로 브랜치 점유를 푼다
-    ⑥ 기록          update_fix_status (항목마다) · 플랜이면 레드마인 노트
+    ⑥ 기록          ax-client:update_fix_status (항목마다) · 플랜이면 레드마인 노트
 
 도구:
 
-    MCP      mcp__ax-client__list_fixes · get_fix · update_fix_status
+    MCP      mcp__ax-client__list_fixes · ax-client:get_fix · ax-client:update_fix_status
     스크립트  <프로젝트 Python> .ax/lib/axmaster/clientside/fix_flow.py list|fetch|check|prepare|diff|commit|release|status
 
 [중요] **맨 `py`나 `python`을 쓰지 않는다.** 먼저 `.ax/config.json`의
@@ -48,7 +72,7 @@ description: 자동 리뷰·주간 플랜을 **번호(R12 · P3)** 로 받아 �
 
 ### ① 번호 고르기
 
-번호 없이 *"고칠 리뷰 있어?"* 로 오면 `list_fixes` 를 부르고 **미결 항목이 있는 것**을 표로 보여 준다
+번호 없이 *"고칠 리뷰 있어?"* 로 오면 `ax-client:list_fixes` 를 부르고 **미결 항목이 있는 것**을 표로 보여 준다
 (번호 · 날짜 · 작성자 · 항목 수 · high/mid/low · 결정 상태). 무엇부터 할지는 사용자가 고른다.
 웹에서도 같은 목록이 보인다: `http://192.168.0.57:8103/reviews`.
 
@@ -114,7 +138,7 @@ worktree. 이 체크아웃의 작업 트리는 사람이 고치던 중일 수 �
 
 - worktree 경로 — **그 안의 파일만** 고친다
 - 수락한 항목의 파일·라인·지적·권장 수정과 ④의 근거
-- 먼저 RAG: `search_context`(대상 클래스·도메인) · `find_recipes` · `get_anti_patterns` · `find_history`
+- 먼저 RAG: `ax-client:search_context`(대상 클래스·도메인) · `ax-client:find_recipes` · `ax-client:get_anti_patterns` · `ax-client:find_history`
 - 금지(원전): 클래스·함수·UPROPERTY 이름 바꾸기 · 상속 구조 변경 · 모듈 간 이동 · 수락하지 않은 항목 손대기
 
 서브 에이전트가 끝나면 **결과를 믿지 말고 확인한다**:
@@ -144,7 +168,7 @@ worktree. 이 체크아웃의 작업 트리는 사람이 고치던 중일 수 �
 
 ### ⑥ 기록
 
-항목마다 결정을 되돌린다(MCP `update_fix_status` 또는 스크립트 `status`):
+항목마다 결정을 되돌린다(MCP `ax-client:update_fix_status` 또는 스크립트 `status`):
 
     applied   --branch fix/R12 --commit <sha>   커밋까지 한 항목
     dismissed --note "<이유>"                    사용자가 기각
@@ -152,7 +176,7 @@ worktree. 이 체크아웃의 작업 트리는 사람이 고치던 중일 수 �
     failed    --note "<무엇이 막혔나>"            고치다 막힘
 
 플랜(`P3`)은 `applied`/`dismissed` 가 플랜 MD 의 status 를 `acted`/`dismissed` 로 맞춘다.
-플랜에 레드마인 번호가 있으면 `redmine_note` 로 결과(브랜치·커밋·항목)를 노트로 남긴다 —
+플랜에 레드마인 번호가 있으면 `ax-client:redmine_note` 로 결과(브랜치·커밋·항목)를 노트로 남긴다 —
 **상태 변경은 사용자에게 물은 뒤에만**, 원전처럼 「해결」까지다.
 
 ## 3. 멈추는 자리

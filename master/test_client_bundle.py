@@ -2840,8 +2840,53 @@ def test_service_entry_imports_bundle_at_start_869() -> None:
           (Path(__file__).resolve().parent / "projects" / "logic.py").read_text(encoding="utf-8"))
 
 
+def test_skill_bundle_files() -> None:
+    """`#890` T4 — 스킬 번들(`reference/`·`scripts/` 한 단계)을 배달·검사·계획이 같은 목록으로 돈다."""
+    import tempfile
+    tmp = Path(tempfile.mkdtemp(prefix="ax-skillbundle-"))
+    (tmp / "b" / "reference").mkdir(parents=True)
+    (tmp / "b" / "scripts").mkdir()
+    (tmp / "b" / "SKILL.md").write_text("---\nname: b\ndescription: d\n---\n# b\n", encoding="utf-8")
+    (tmp / "b" / "reference" / "a.md").write_text("# a\n", encoding="utf-8")
+    (tmp / "b" / "scripts" / "x.py").write_text("print(1)\n", encoding="utf-8")
+    (tmp / "b" / "reference" / ".hidden").write_text("x", encoding="utf-8")
+    (tmp / "plain").mkdir()
+    (tmp / "plain" / "SKILL.md").write_text("---\nname: plain\ndescription: d\n---\n", encoding="utf-8")
+    saved_src, saved_for = bundle.SKILLS_SRC, bundle.skills_for
+    bundle.SKILLS_SRC = tmp
+    try:
+        check("번들 파일 목록 — SKILL.md + reference·scripts (숨김 제외)",
+              bundle.skill_files("b") == ("SKILL.md", "reference/a.md", "scripts/x.py"), str(bundle.skill_files("b")))
+        check("번들 없는 스킬은 종전과 같다(SKILL.md 하나)", bundle.skill_files("plain") == ("SKILL.md",))
+        check("번들 파일 원문을 읽는다", bundle.skill_text("b", "scripts/x.py") == "print(1)\n")
+        check("번들 규약 위반 없음", bundle._skill_layout_problems("b") == [], str(bundle._skill_layout_problems("b")))
+        bundle.skills_for = lambda role, init=None: ("b",)
+        f = _facts(role="worker")
+        tg = bundle.delivery_targets("P", f, None)
+        for sf in ("SKILL.md", "reference/a.md", "scripts/x.py"):
+            check(f"미리 받을 해시 목록에 {sf} — 홈·체크아웃 모든 자리",
+                  all(bundle._write_target(f, r, "home") in tg for r in spec.skill_rels("b", sf))
+                  and bundle._write_target(f, spec.project_skill_rel("b", sf), "checkout") in tg, sf)
+        (tmp / "b" / "stray.md").write_text("x", encoding="utf-8")
+        (tmp / "b" / "reference" / "deep").mkdir()
+        (tmp / "b" / "other").mkdir()
+        probs = bundle._skill_layout_problems("b")
+        check("번들 밖 파일 · 두 단계 · 허용 밖 폴더를 이름으로 말한다",
+              any("stray.md" in p for p in probs) and any("deep" in p for p in probs)
+              and any("other/" in p for p in probs), str(probs))
+    finally:
+        bundle.SKILLS_SRC, bundle.skills_for = saved_src, saved_for
+    import inspect
+    from master.client import __main__ as cli
+    src = inspect.getsource(cli)
+    check("check 가 번들 파일마다 해시를 잰다", "bundle.skill_files(n)" in src and "skill_stale" in src)
+    check("실제 스킬 원본은 번들 규약을 지킨다(validate_spec)", not any("번들" in p or "폴더" in p
+          for p in bundle.validate_spec()), str(bundle.validate_spec()))
+
+
 def main() -> int:
     for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
+               test_skill_bundle_files,
                test_mcp_json_merge,
                test_role_skills, test_role_payload, test_payload_split, test_deliver_removes_deprecated_skills, test_retired_payload_removed_checked_and_planned, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,
                test_merge_never_replaces_existing,

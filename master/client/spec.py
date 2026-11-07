@@ -467,14 +467,21 @@ PROJECT_SKILL_HOME = ".agents"     # 체크아웃 로컬 Codex 정본 (`#699`)
 SKILL_SHADOW_HOMES = (".agents",)
 
 
-def skill_rel(name: str, home: str = ".claude") -> str:
-    """홈 기준 스킬 상대경로 하나."""
-    return f"{home}/skills/{name}/SKILL.md"
+# 🔴 `#890` T4 — 스킬은 **번들**일 수 있다: `SKILL.md` + 한 단계 아래 `reference/`·`scripts/` 의 파일.
+#    배달·검사·계획은 같은 목록(`bundle.skill_files`)을 돈다. 그 밖의 하위 폴더·두 단계 이상은
+#    `bundle.validate_spec` 이 거절한다(Agent Skills 모범 사례 — 참조는 SKILL.md 에서 한 단계).
+SKILL_FILE = "SKILL.md"
+SKILL_BUNDLE_DIRS = ("reference", "scripts")
 
 
-def skill_rels(name: str) -> tuple:
-    """이 스킬이 놓일 **모든** 자리 (도구별). 배달·검사·제거가 같은 목록을 쓴다."""
-    return tuple(skill_rel(name, h) for h in SKILL_HOMES)
+def skill_rel(name: str, home: str = ".claude", file: str = SKILL_FILE) -> str:
+    """홈 기준 스킬 상대경로 하나. `file` 은 스킬 디렉터리 안 상대경로(기본 `SKILL.md`)."""
+    return f"{home}/skills/{name}/{file}"
+
+
+def skill_rels(name: str, file: str = SKILL_FILE) -> tuple:
+    """이 스킬(의 파일 하나)이 놓일 **모든** 자리 (도구별). 배달·검사·제거가 같은 목록을 쓴다."""
+    return tuple(skill_rel(name, h, file) for h in SKILL_HOMES)
 
 
 def skill_dirs(name: str) -> tuple:
@@ -482,8 +489,8 @@ def skill_dirs(name: str) -> tuple:
     return tuple(f"{h}/skills/{name}" for h in SKILL_HOMES)
 
 
-def project_skill_rel(name: str) -> str:
-    return f"{PROJECT_SKILL_HOME}/skills/{name}/SKILL.md"
+def project_skill_rel(name: str, file: str = SKILL_FILE) -> str:
+    return f"{PROJECT_SKILL_HOME}/skills/{name}/{file}"
 
 
 def project_skill_dir(name: str) -> str:

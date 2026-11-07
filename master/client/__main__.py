@@ -136,11 +136,12 @@ def cmd_plan(project: str, *, only: str = "") -> int:
         for n in bundle.skills_for(f.role, init):
             # [주의] 도구별 자리를 **전부** 찍는다 — 선언은 `spec.SKILL_HOMES` 하나다(`#385`).
             #    계획에 안 보이면 사람이 배달 내용을 눈으로 확인할 수 없다.
-            for rel in spec.skill_rels(n):
-                print(f"   → {f.home}/{rel} "
-                      f"({len(bundle.skill_text(n))}자)  [role={f.role}]")
-            print(f"   → {f.path}/{spec.project_skill_rel(n)} "
-                  f"({len(bundle.skill_text(n))}자)  [프로젝트 로컬 정본 · #699]")
+            for sf in bundle.skill_files(n):          # `#890` T4 — 번들 파일도 찍는다
+                for rel in spec.skill_rels(n, sf):
+                    print(f"   → {f.home}/{rel} "
+                          f"({len(bundle.skill_text(n, sf))}자)  [role={f.role}]")
+                print(f"   → {f.path}/{spec.project_skill_rel(n, sf)} "
+                      f"({len(bundle.skill_text(n, sf))}자)  [프로젝트 로컬 정본 · #699]")
         # [중요] **MCP 엔트리를 계획에 찍는다** — 워커가 못 받는다는 판단이 조건문 한 줄에
         #    숨어 있으면 아무도 그것을 보지 못한다 (#261).
         mcp = spec.mcp_for(f.role, init)
@@ -384,22 +385,25 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
         #    ssh(Windows 는 PowerShell 기동)를 따로 열어 `.2` 한 대 검사에 13회·약 8초가 들었다.
         #    [주의] 받지 못한 경로는 빈 값이라 「불일치」로 판정된다 — 실패는 실패 쪽으로 닫힌다.
         _probe_targets = [bundle._write_target(f, r, "home")
-                          for n in names for r in spec.skill_rels(n)]
-        _probe_targets += [bundle._write_target(f, spec.project_skill_rel(n), "checkout")
-                           for n in names]
+                          for n in names for sf in bundle.skill_files(n) for r in spec.skill_rels(n, sf)]
+        _probe_targets += [bundle._write_target(f, spec.project_skill_rel(n, sf), "checkout")
+                           for n in names for sf in bundle.skill_files(n)]
         _probe_targets += [bundle._write_target(
             f, f"{bundle.AX_DIR}/lib/{bundle.PAYLOAD_PKG}/{rel}", "checkout")
             for rel, _src in bundle.payload_pairs(f.role)]
         _probe_targets.append(bundle._write_target(f, f"{bundle.AX_DIR}/token", "checkout"))
         known = bundle.remote_hashes(f, _probe_targets)
+        skill_stale: list = []
         for n in names:
-            want = hashlib.sha256(bundle.skill_text(n).encode("utf-8")).hexdigest()
-            # [중요] 도구별 자리를 **전부** 검사한다 — 한 곳만 보면 codex 쪽 누락이 안 보인다.
-            for rel in spec.skill_rels(n):
-                target = bundle._write_target(f, rel, "home")
-                ok_skill = ok_skill and known.get(target, "") == want
-            target = bundle._write_target(f, spec.project_skill_rel(n), "checkout")
-            ok_skill = ok_skill and known.get(target, "") == want
+            # `#890` T4 — 번들 파일마다 잰다. 하나라도 어긋나면 그 파일 이름을 말한다.
+            for sf in bundle.skill_files(n):
+                want = hashlib.sha256(bundle.skill_text(n, sf).encode("utf-8")).hexdigest()
+                # [중요] 도구별 자리를 **전부** 검사한다 — 한 곳만 보면 codex 쪽 누락이 안 보인다.
+                tgts = [bundle._write_target(f, rel, "home") for rel in spec.skill_rels(n, sf)]
+                tgts.append(bundle._write_target(f, spec.project_skill_rel(n, sf), "checkout"))
+                if any(known.get(t, "") != want for t in tgts):
+                    ok_skill = False
+                    skill_stale.append(f"{n}/{sf}")
         cfg_path = (f"{f.path}\\{bundle.CONFIG_REL.replace('/', chr(92))}" if f.windows
                     else f"{f.path}/{bundle.CONFIG_REL}")
         rc2, _ = bundle._ssh(f.host, f.user,
@@ -630,7 +634,9 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
                     else f" · [중요] payload 불일치/없음 {len(stale)}개: {', '.join(stale[:3])}"
                     if pay else "")
         print(f"  {mark} {f.host} [{f.role}]: 스킬 {len(names)}종 "
-              f"{'일치' if ok_skill else '불일치/없음'} · config {'있음' if ok_cfg else '없음'}"
+              f"{'일치' if ok_skill else '불일치/없음'}"
+              f"{(' (' + ', '.join(skill_stale[:3]) + ')') if skill_stale else ''}"
+              f" · config {'있음' if ok_cfg else '없음'}"
               f"{python_note}{pay_note}{ws_note}{client_note}{codex_note}{shadow_note}{res_note}{procs_note}{rm_note}{retired_note}"
               f"{prune_note}{agy_note}{tag_note}{ver_note}")
         bad += 0 if (ok_skill and ok_cfg and ok_python and ok_pay and ok_client and ok_ws

@@ -5,6 +5,17 @@ description: AX 워커(작업장) 한 대를 새로 놓거나 디스크·경로�
 
 # ax-worker-setup — 워커 설치·이전
 
+## 목차
+
+- 개요
+- 0. 무엇을 하는가
+- 1. 실행 전 — 사용자에게 받을 것
+- 2. 명령
+- 3. 결과 보고
+- 4. 하지 않는 것
+
+## 개요
+
 > 정본: `~/ax-cluster/master/skills/ax-worker-setup/SKILL.md` · 명령 정본 `master/client/setup_host.py`
 > 근거: 2026-10-30 `.2` 보드 교체(E: 제거) · 부품 `#254`(클론) · `#255`·`#401`(상주·지휘자) · `#655`(마운트만)
 > 세부: `docs/14-onboarding-runbook.md` §14.2

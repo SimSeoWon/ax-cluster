@@ -933,5 +933,10 @@
     "path": "master/test_candidate_cleanup.py",
     "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 300
+  },
+  {
+    "path": "master/test_skill_conventions.py",
+    "count_pattern": "(?m)^OK test_skill_conventions: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
   }
 ]

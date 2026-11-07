@@ -5,6 +5,13 @@ description: 태스크 템플릿의 contracts(pre/post/acceptance)를 검증하�
 
 # Generate Contract Test — 계약 검증 FAutomationTest 작성 (클라이언트측 Claude)
 
+## 목차
+
+- 본질 (WHY)
+- 환경 확인 (BLOCKING)
+- 흐름
+- 안전 가드
+
 ## 본질 (WHY)
 TDD 게이트의 목적은 **값싼 LLM 워커(무비용 로컬 Gemma + 토큰 넉넉한 Gemini) 출력의 안전망**이다.
 그 검증 테스트를 또 값싼 LLM 이 짜면 자기검증 모순이므로, **신뢰도 높은 Claude 가 테스트(명세)를
@@ -15,12 +22,12 @@ TDD 게이트의 목적은 **값싼 LLM 워커(무비용 로컬 Gemma + 토큰 �
 ## 환경 확인 (BLOCKING)
 1. **UE 소스 체크아웃 존재** — `*.uproject` + `Source/`. 본 스킬은 **클라이언트(개발자) PC** 에서 실행
    (서버 빌드 PC 아님). 없으면 즉시 종료 — "UE 프로젝트 루트에서 실행".
-2. **서버 RAG/온톨로지 접근** — `get_task_template` 호출 가능(server_mode 면 `<server_url>` HTTP,
+2. **서버 RAG/온톨로지 접근** — `ax-client:get_task_template` 호출 가능(server_mode 면 `<server_url>` HTTP,
    단독이면 `context_search` MCP). 실패 시 종료 + 서버 상태 안내(localhost fallback 금지).
 3. **TaskType 인자** — `/generate-contract-test <TaskType>`.
 
 ## 흐름
-1. **템플릿·계약 로드** — `get_task_template(<TaskType>)` → contracts(pre/post/acceptance) +
+1. **템플릿·계약 로드** — `ax-client:get_task_template(<TaskType>)` → contracts(pre/post/acceptance) +
    structure + example.refs + summary 수집.
    - **contracts 비어있으면 중단** — 검증할 명세가 없음. "`/manage-task edit <TaskType>` 로
      pre/post/acceptance 먼저 등록" 안내 후 종료.

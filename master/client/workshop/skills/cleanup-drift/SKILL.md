@@ -5,6 +5,26 @@ description: ontology DB 의 옛 데이터 잔재 (active MD 부재 도메인 + 
 
 # Cleanup Drift — 온톨로지 DB 잔재 대화형 정리
 
+## 목차
+
+- 사용 예
+- 목적
+- 호출 방법
+- 환경 확인 (필수)
+- 5단계 흐름
+- 안전 가드
+
+## 사용 예
+
+이런 발화로 이 스킬이 쓰인다(description 의 발동 예):
+
+    「ontology drift 정리」
+    「DB 잔재 정리」
+    「옛 도메인 데이터 삭제」
+    「MissionRuntime 정리」
+
+구획은 위 목차의 제목으로 찾아 읽는다 — 절차는 「목적」부터다.
+
 ## 목적
 
 Phase η.4 (Drift 자동 추적) 가 startup 카나리로 보고하는 DB 잔재를 사용자 결정으로 정리.

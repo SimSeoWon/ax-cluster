@@ -1,9 +1,30 @@
 ---
 name: audit-context
-description: `.claude/context/` 의 RAG 컨텍스트 MD 들을 일괄 진단·복구한다. σ.7 펜스 wrap·구 dir-단위 잔재·orphan stem 좀비 MD 등 누적된 손상을 8 카테고리로 분류 후 자동 복구 가능한 것 (pence_wrapped / natural_prefix) 만 즉시 strip 처리. 사용자 자연어 발화 "컨텍스트 손상 검사", "RAG MD 진단", "컨텍스트 일괄 복구" 등에 자동 발동. 빈 컨텍스트 MD 가 도메인 source 로 박혀 RAG 신뢰성을 흔드는 상황을 한 번에 정리하는 운영 도구.
+description: RAG 컨텍스트 MD 들(`.claude/context/`)을 일괄 진단·복구한다. σ.7 펜스 wrap·구 dir-단위 잔재·orphan stem 좀비 MD 등 누적된 손상을 8 카테고리로 분류 후 자동 복구 가능한 것 (pence_wrapped / natural_prefix) 만 즉시 strip 처리. 사용자 자연어 발화 "컨텍스트 손상 검사", "RAG MD 진단", "컨텍스트 일괄 복구" 등에 자동 발동. 빈 컨텍스트 MD 가 도메인 source 로 박혀 RAG 신뢰성을 흔드는 상황을 한 번에 정리하는 운영 도구.
 ---
 
 # Audit Context — RAG 컨텍스트 MD 일괄 진단·복구
+
+## 목차
+
+- 사용 예
+- 목적
+- 호출 방법
+- 진행 절차
+- BLOCKING — 호출 금지 사항
+- 운영 환경 권장
+- σ.9.0 분기 진단 (선택)
+- 관련 도구
+
+## 사용 예
+
+이런 발화로 이 스킬이 쓰인다(description 의 발동 예):
+
+    「컨텍스트 손상 검사」
+    「RAG MD 진단」
+    「컨텍스트 일괄 복구」
+
+구획은 위 목차의 제목으로 찾아 읽는다 — 절차는 「목적」부터다.
 
 ## 목적
 

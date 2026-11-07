@@ -1,11 +1,42 @@
 ---
 name: ax-review
-description: 워커들이 올린 분산 작업 결과를 검수해서 main 에 반영할지 판단한다. "#N 리뷰", "일감 검토", "work <ID> 리뷰", "머지 검토", "검수 요청 받았어", "/review-work" 같은 발화에 발동. 파일 하나 봐 달라는 국소 코드 리뷰는 이게 아니다.
+description: 워커들이 올린 분산 작업 결과를 검수해서 main 에 반영할지 판단한다. "#N 리뷰", "일감 검토", "work ID 리뷰", "머지 검토", "검수 요청 받았어", "/review-work" 같은 발화에 발동. 파일 하나 봐 달라는 국소 코드 리뷰는 이게 아니다.
 ---
 
 # ax-review — 올라온 작업을 검수한다 (요청자 측)
 
+## 목차
+
+- 개요
+- 사용 예
+- 0. [중요] 먼저 — 이 스킬인지 아닌지 가른다
+- 1. [중요] 이 자리가 무엇인가 — 원전의 「리더」다
+- 2. 도구는 배달돼 있다 — 두 층이다
+- 3. 검수 — [중요] 사람의 트리를 건드리지 않는다
+- 4. 빌드는 여기서 돈다
+- 5. 승인 — [중요] 사용자의 승인 발화가 있고 나서
+- 6. 반려
+- 6.1 취소 — 이 work 을 더 진행하지 않는다 (`#875`)
+- 7. Redmine 은 마스터를 거친다
+- 8. 정리는 명령만 준다
+- 9. [중요] 막히면 멈추고 묻는다
+
+## 개요
+
 > 마스터가 생성해 배달한다. **손으로 고치지 말 것** — 다음 배달에 덮인다.
+
+## 사용 예
+
+이런 발화로 이 스킬이 쓰인다(description 의 발동 예):
+
+    「#N 리뷰」
+    「일감 검토」
+    「work ID 리뷰」
+    「머지 검토」
+    「검수 요청 받았어」
+    「/review-work」
+
+구획은 위 목차의 제목으로 찾아 읽는다 — 절차는 「0. [중요] 먼저 — 이 스킬인지 아닌지 가른다」부터다.
 
 ## 0. [중요] 먼저 — 이 스킬인지 아닌지 가른다
 
@@ -27,8 +58,8 @@ description: 워커들이 올린 분산 작업 결과를 검수해서 main 에 �
 🔴 [중요] **부르는 것은 셋이고, 고르는 것은 너다** (사용자 결정 2026-09-05). 마스터는 추론하지
 않는다 — 갈래를 **입력으로** 받는다:
 
-    ① 등록      `register_work(title, specs)`                 새 분산 작업 · round = 1
-    ② 개선요청   `improve_work(work_id, round=현재+1, specs)`   ⑺ 전진 뒤 더 고칠 것이 있을 때
+    ① 등록      `ax-client:register_work(title, specs)`                 새 분산 작업 · round = 1
+    ② 개선요청   `ax-client:improve_work(work_id, round=현재+1, specs)`   ⑺ 전진 뒤 더 고칠 것이 있을 때
     ③ 마감      **이 스킬** → `finalize_work(confirm=True)`    `main` 머지 · 큐 `merged` ·
                                                               레드마인 이슈를 **「완료」로 닫는다**
 
@@ -49,9 +80,9 @@ description: 워커들이 올린 분산 작업 결과를 검수해서 main 에 �
 
 **MCP 도구 (ax-client — `.mcp.json` 에 등록돼 있다):**
 
-    list_works(status?)      큐의 work 목록 — 검수 대상은 보통 ready_for_review
-    get_work(work_id)        work 메타 + tasks 전체. 반환 그대로 review 인자에 넣는 모양
-    redmine_note(...)        레드마인 코멘트 (마스터 경유 — 키는 이 PC 에 없다)
+    ax-client:list_works(status?)      큐의 work 목록 — 검수 대상은 보통 ready_for_review
+    ax-client:get_work(work_id)        work 메타 + tasks 전체. 반환 그대로 review 인자에 넣는 모양
+    ax-client:redmine_note(...)        레드마인 코멘트 (마스터 경유 — 키는 이 PC 에 없다)
 
 [중요] **결정(반려·승인) 도구는 MCP 에 없다 — 일부러 없다.** 결정은 아래 review 모듈이
 검증된 절차(통째 중단·confirm 게이트)로만 한다. 절차는 한 벌뿐이어야 한다.
@@ -144,7 +175,7 @@ pop 실패 시 **로그 한 줄**로 끝난다. 바이너리는 되살릴 수 �
 
 ## 7. Redmine 은 마스터를 거친다
 
-MCP 도구 `redmine_note(issue_id, notes, status_name?, done_ratio?)` 를 쓴다.
+MCP 도구 `ax-client:redmine_note(issue_id, notes, status_name?, done_ratio?)` 를 쓴다.
 
 [중요] **API 키는 이 기계에 없다** — 마스터의 컨테이너 DB 에만 있다. 도구는 본문만 만들고
 마스터가 대신 쓴다(사용자 결정 2026-08-16). 역할 토큰이 이 경로를 연다.

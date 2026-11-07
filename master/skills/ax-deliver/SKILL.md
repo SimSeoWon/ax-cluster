@@ -5,6 +5,17 @@ description: AX 마스터의 현재 커밋을 워커(작업장)에 배포·검�
 
 # ax-deliver — 워커 배포(배달)
 
+## 목차
+
+- 개요
+- 0. 무엇을 하는가
+- 1. 실행 전
+- 2. 고르는 명령
+- 3. 결과 보고
+- 4. 하지 않는 것
+
+## 개요
+
 > 정본: `~/ax-cluster/master/skills/ax-deliver/SKILL.md` · 명령 정본 `master/client/__main__.py`
 > 근거: `#655`·`#745`(마운트만 기본) · `#737`(실행 중 HEAD·dirty 감지) · `#699`(체크아웃 로컬 Codex 자산)
 > 세부: `docs/8-git-authority.md` §8.4 · `docs/14-onboarding-runbook.md`

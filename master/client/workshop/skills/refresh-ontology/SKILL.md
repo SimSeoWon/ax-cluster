@@ -5,6 +5,25 @@ description: ontology 도메인 패키지 (manifest + objects/ + actions/) 를 �
 
 # Refresh Ontology — 명시 트리거 일괄 재합성
 
+## 목차
+
+- 사용 예
+- 목적
+- 호출 방법
+- 환경 확인 (BLOCKING)
+- 흐름
+- 안전 가드
+
+## 사용 예
+
+이런 발화로 이 스킬이 쓰인다(description 의 발동 예):
+
+    「ontology 갱신해줘」
+    「온톨로지 다시 만들어줘」
+    「MissionEditor ontology 재합성」
+
+구획은 위 목차의 제목으로 찾아 읽는다 — 절차는 「목적」부터다.
+
 ## 목적
 
 두 가지 용도를 겸한다:

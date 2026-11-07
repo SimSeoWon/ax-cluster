@@ -1698,11 +1698,59 @@ def merge_settings_json(prev_text: str, facts: HostFacts, init=None) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
 
-def skill_text(name: str = SKILL_NAME) -> str:
-    p = Path(__file__).with_name("skills") / name / "SKILL.md"
+# 스킬 원본 자리 — 테스트가 임시 폴더로 바꿀 수 있게 한 곳에 둔다(`#890` T4)
+SKILLS_SRC = Path(__file__).with_name("skills")
+
+
+def skill_text(name: str = SKILL_NAME, file: str = spec.SKILL_FILE) -> str:
+    p = SKILLS_SRC / name / file
     if not p.is_file():
         raise BundleError(f"스킬 원본이 없다: {p}")
     return p.read_text(encoding="utf-8")
+
+
+def skill_files(name: str = SKILL_NAME) -> tuple:
+    """이 스킬이 배달하는 파일 — `SKILL.md` + `reference/`·`scripts/` 바로 아래 파일 (`#890` T4).
+
+    배달(`_deliver`)·미리 받을 해시(`delivery_targets`)·검사(`check`)·계획(`plan`)이 **이 목록 하나**를
+    돈다 — 갈라지면 배달은 됐는데 검사가 안 보는 파일이 생긴다. 숨김 파일·`__pycache__` 는 뺀다.
+    [주의] 번들 밖 파일(하위 폴더 더 깊이·다른 폴더)은 여기서 조용히 빼지 않고 `validate_spec` 이 말한다.
+    """
+    root = SKILLS_SRC / name
+    out = [spec.SKILL_FILE]
+    for d in spec.SKILL_BUNDLE_DIRS:
+        p = root / d
+        if p.is_dir():
+            out += sorted(f"{d}/{x.name}" for x in p.iterdir()
+                          if x.is_file() and not x.name.startswith("."))
+    return tuple(out)
+
+
+def _skill_layout_problems(name: str) -> list:
+    """번들 규약 위반(`#890` T4) — 허용 폴더 밖 · 두 단계 이상 · 텍스트로 못 읽는 파일."""
+    root = SKILLS_SRC / name
+    bad = []
+    if not root.is_dir():
+        return bad
+    for x in root.iterdir():
+        if x.name.startswith(".") or x.name == "__pycache__":
+            continue
+        if x.is_file() and x.name != spec.SKILL_FILE:
+            bad.append(f"스킬 {name}: 번들 밖 파일 {x.name} — reference/ 나 scripts/ 에 둔다")
+        elif x.is_dir() and x.name not in spec.SKILL_BUNDLE_DIRS:
+            bad.append(f"스킬 {name}: 허용되지 않은 폴더 {x.name}/ — reference/·scripts/ 만 배달된다")
+        elif x.is_dir():
+            for y in x.iterdir():
+                if y.name.startswith(".") or y.name == "__pycache__":
+                    continue
+                if y.is_dir():
+                    bad.append(f"스킬 {name}: {x.name}/{y.name}/ — 번들은 한 단계 깊이만 배달된다")
+                else:
+                    try:
+                        y.read_text(encoding="utf-8")
+                    except (UnicodeDecodeError, OSError) as e:
+                        bad.append(f"스킬 {name}: {x.name}/{y.name} 를 UTF-8 텍스트로 못 읽는다 — {type(e).__name__}")
+    return bad
 
 
 def validate_spec(init=None) -> tuple:
@@ -1716,13 +1764,14 @@ def validate_spec(init=None) -> tuple:
     [주의] 남의 기계를 하나도 건드리기 **전에** 부른다 — 절반 배달이 가장 고치기 어렵다.
     """
     problems = []
-    root = Path(__file__).with_name("skills")
+    root = SKILLS_SRC
     for role in spec.SKILLS_BY_ROLE:
         for n in spec.skills_for(role, init):
             if not (root / n / "SKILL.md").is_file():
                 problems.append(f"[{role}] 선언한 스킬의 원본이 없다: {n} "
                                 f"({root / n / 'SKILL.md'})")
-    return tuple(problems)
+            problems += [f"[{role}] {p}" for p in _skill_layout_problems(n)]
+    return tuple(dict.fromkeys(problems))
 
 
 def payload_text(rel: str) -> str:
@@ -2052,8 +2101,9 @@ def delivery_targets(project: str, facts: HostFacts, pinit) -> list:
             (".mcp.json", "checkout"), (spec.SETTINGS_REL, "checkout"),
             (f"{AX_DIR}/token", "checkout")]
     for n in skills_for(facts.role, pinit):
-        rels += [(r, "home") for r in spec.skill_rels(n)]
-        rels.append((spec.project_skill_rel(n), "checkout"))
+        for sf in skill_files(n):
+            rels += [(r, "home") for r in spec.skill_rels(n, sf)]
+            rels.append((spec.project_skill_rel(n, sf), "checkout"))
     if payload_pairs(facts.role):
         rels += [(f"{AX_DIR}/lib/{PAYLOAD_PKG}/{d + '/' if d else ''}__init__.py", "checkout")
                  for d in payload_dirs(facts.role)]
@@ -2158,11 +2208,13 @@ def _deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
         #    (`#385`, 실측 2026-09-08: codex 는 `~/.claude/skills/` 를 안 본다. 읽기는 되지만
         #    스킬로 안 잡혀서 지시문의 *"Follow the ax-work skill"* 이 빈 참조가 됐고,
         #    계약 없이 진행해 `[PSEUDO]` 가 남아 층1 이 막았다). **내용은 한 벌이다.**
-        "skills": [_remote_write(facts, rel, skill_text(n))
-                   for n in skills_for(facts.role, pinit) for rel in spec.skill_rels(n)],
+        # `#890` T4 — 번들 파일(reference/·scripts/)도 같은 자리에 같은 한 벌로 간다
+        "skills": [_remote_write(facts, rel, skill_text(n, sf))
+                   for n in skills_for(facts.role, pinit) for sf in skill_files(n)
+                   for rel in spec.skill_rels(n, sf)],
         "project_skills": [
-            _remote_write(facts, spec.project_skill_rel(n), skill_text(n), base="checkout")
-            for n in skills_for(facts.role, pinit)],
+            _remote_write(facts, spec.project_skill_rel(n, sf), skill_text(n, sf), base="checkout")
+            for n in skills_for(facts.role, pinit) for sf in skill_files(n)],
         # [중요] **폐지분을 지운다** (`#232` 완결, 2026-09-02). 목록의 유일한 출처는
         #    `spec.removals_for` 다 — `plan`·`check` 가 부르는 그 함수여서 셋이 갈라지지 않는다.
         #    `keep_skills` 를 이미 존중하므로 프로젝트가 오버레이로 되살린 이름은 지우지 않는다.

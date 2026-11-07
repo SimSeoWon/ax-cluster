@@ -5,14 +5,26 @@ description: AX 마스터에서 레드마인 일감 조회·등록·노트·상�
 
 # ax-redmine — 마스터의 레드마인 조작
 
+## 목차
+
+- 개요
+- 1. 경로는 하나 — `ax-client` MCP
+- 2. 어느 프로젝트에 쓰나
+- 3. 상태 — 이름을 추측하지 않는다
+- 4. 누가 닫나 (사용자 결정 2026-09-06 · 2026-10-05)
+- 5. 쓰기 규칙
+- 6. 위키 — 기존 본문 보존과 되읽기
+
+## 개요
+
 정본: `~/ax-cluster/master/skills/ax-redmine/SKILL.md`. 세 CLI 가 같은 파일을 링크로 읽는다.
 
 ## 1. 경로는 하나 — `ax-client` MCP
 
-    조회   redmine_list_issues · redmine_get_issue · redmine_meta
-    쓰기   redmine_create_issue · redmine_note(상태·완료율·마일스톤·부모) · redmine_link_commit
-    버전   redmine_create_version · redmine_update_version · redmine_delete_version
-    위키   redmine_get_wiki_page · redmine_put_wiki_page
+    조회   ax-client:redmine_list_issues · ax-client:redmine_get_issue · ax-client:redmine_meta
+    쓰기   ax-client:redmine_create_issue · ax-client:redmine_note(상태·완료율·마일스톤·부모) · ax-client:redmine_link_commit
+    버전   ax-client:redmine_create_version · ax-client:redmine_update_version · ax-client:redmine_delete_version
+    위키   ax-client:redmine_get_wiki_page · ax-client:redmine_put_wiki_page
 
 - 모두 마스터 8101 `/api/v1/redmine/*` 를 requester 토큰으로 거친다. API 키는 세션에 없다.
 - MCP 가 안 보이거나 호출이 실패하면 **사유를 보고하고 사용자에게 묻는다.**
@@ -28,11 +40,11 @@ description: AX 마스터에서 레드마인 일감 조회·등록·노트·상�
 
 ## 3. 상태 — 이름을 추측하지 않는다
 
-- 쓰기 전에 `redmine_meta` 로 실재하는 상태 이름을 확인한다.
+- 쓰기 전에 `ax-client:redmine_meta` 로 실재하는 상태 이름을 확인한다.
 - 닫힌 상태는 **「완료」뿐**이다. 「해결」은 열린 상태다.
 - 닫을 때는 완료 근거(커밋 해시·라이브 결과)를 같은 노트에 싣고 `done_ratio=100`.
-- 우선순위·제목·본문도 `redmine_note` 로 바꾼다(`priority_name`·`subject`·`description`,
-  비우면 그대로). 우선순위 이름은 `redmine_meta` 로 확인하고, `description` 은 본문 전체 교체다.
+- 우선순위·제목·본문도 `ax-client:redmine_note` 로 바꾼다(`priority_name`·`subject`·`description`,
+  비우면 그대로). 우선순위 이름은 `ax-client:redmine_meta` 로 확인하고, `description` 은 본문 전체 교체다.
 
 ## 4. 누가 닫나 (사용자 결정 2026-09-06 · 2026-10-05)
 
@@ -43,7 +55,7 @@ description: AX 마스터에서 레드마인 일감 조회·등록·노트·상�
 ## 5. 쓰기 규칙
 
 - 노트·본문은 MCP 인자(JSON)로만 보낸다 — 셸 문자열을 거치면 백틱 구절이 조용히 사라진다.
-- 쓴 뒤에는 `redmine_get_issue` 로 되읽어 노트·상태가 실제로 반영됐는지 확인한다.
+- 쓴 뒤에는 `ax-client:redmine_get_issue` 로 되읽어 노트·상태가 실제로 반영됐는지 확인한다.
 - 일감 하나에 결과를 노트로 쌓는다 — 라운드마다 새 이슈를 만들지 않는다.
 - 마일스톤 삭제는 되돌릴 수 없다 — 사람 승인 뒤에만 `confirm=true`.
 - 「클러스터 작업 하자」는 열린 `[AX]` 일감 목록을 보여 주라는 뜻이다 — 고르는 것은 사용자다.
@@ -53,12 +65,12 @@ description: AX 마스터에서 레드마인 일감 조회·등록·노트·상�
 
 - 프로젝트는 체크아웃의 태그와 해당 프로젝트의 `redmine.project`가 정한다. 도구에 프로젝트를
   따로 지정하지 않는다. 제목은 페이지 이름 그대로 준다(예: `아이디어수집`).
-- 조회: `redmine_get_wiki_page({"title":"아이디어수집"})` — 전체 `wiki_page.text`와 `version`을 읽는다.
-- 추가: `redmine_put_wiki_page({"title":"아이디어수집","text":"h2. 새 아이디어\n\n설명"})`.
+- 조회: `ax-client:redmine_get_wiki_page({"title":"아이디어수집"})` — 전체 `wiki_page.text`와 `version`을 읽는다.
+- 추가: `ax-client:redmine_put_wiki_page({"title":"아이디어수집","text":"h2. 새 아이디어\n\n설명"})`.
   기본 `mode="append"`는 서버가 기존 본문을 읽고 보존하며 새 내용을 붙이고 현재 버전으로 쓴다.
   `text`는 추가할 내용만 준다. 없는 페이지는 생성한다.
 - 교체: 먼저 조회한 본문을 보존해 수정한 **전체 본문**과 그때의 버전을 준다.
-  `redmine_put_wiki_page({"title":"아이디어수집","text":"수정한 전체 본문","mode":"replace","version":3,"comments":"기록 정리"})`.
+  `ax-client:redmine_put_wiki_page({"title":"아이디어수집","text":"수정한 전체 본문","mode":"replace","version":3,"comments":"기록 정리"})`.
   기존 페이지의 교체에는 조회 버전이 필수다. 새 페이지 생성에는 `version`을 주지 않는다.
   append에도 조회 버전을 주면 현재 버전과 일치해야 한다.
 - 쓰기 후 서버가 자동으로 되읽어 전체 본문을 비교한다. 성공 응답의 본문·버전을 확인한다.
