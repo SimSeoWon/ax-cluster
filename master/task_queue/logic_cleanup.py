@@ -29,6 +29,10 @@ def _record_notification_outcome(idx: TaskIndex, work_id: str, round_no: int,
             "merged", "rejected", "cancelled")
         if not error:
             work["noticed_status"] = status
+            # `#891` — 성공 표시와 대기 표시 해제를 **한 번에** 저장한다. 따로 쓰면 그 사이에
+            #    끝났을 때 「보냈는데 대기」(중복) 또는 「대기 해제됐는데 멱등 표시 없음」이 남는다.
+            work["noticed_round"] = int(round_no)
+            work.pop("notice_pending", None)
         _save_work(idx, work_id)
 
 
@@ -325,6 +329,8 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                 merge_status = wmeta.get("merge_status") or "ready_for_review"
                 if (int(wmeta.get("noticed_round", 0) or 0) >= _r
                         and (wmeta.get("noticed_status") or "ready_for_review") == merge_status):
+                    if wmeta.pop("notice_pending", None) is not None:      # `#891`
+                        _save_work(idx, work_id)
                     return
                 title = wmeta.get("title", work_id)
                 target_branch = _work_branch(idx.root, work_id, wmeta)

@@ -41,6 +41,10 @@ def _flip_if_all_terminal(idx: TaskIndex, wid: str, *, why: str) -> bool:
     if wmeta.get("merge_status") == status:
         return False
     wmeta["merge_status"] = status
+    # `#891` — 공지 대기 표시를 **전이와 같은 저장**에 남긴다. 공지는 daemon 스레드라 큐가
+    #    그 사이에 끝나면 사라지고, 전이는 이미 저장돼 기동 복구가 다시 뒤집을 것이 없다.
+    #    공지가 성공하면 `_record_notification_outcome` 이 지우고, 남아 있으면 기동 복구가 다시 공지한다.
+    wmeta["notice_pending"] = int(wmeta.get("round", 1) or 1)
     if status in ("rejected", "cancelled"):
         wmeta["terminal_at"] = _now_iso()
         wmeta["terminal_reason"] = "조각 실행 실패" if status == "rejected" else "조각 취소"

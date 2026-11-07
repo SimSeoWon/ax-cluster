@@ -567,15 +567,26 @@ def recover_stuck_works(idx: TaskIndex) -> list[str]:
     반환: 복구된 work_id 목록.
     """
     recovered: list[str] = []
+    renotice: list[str] = []
     from .logic_lifecycle import _flip_if_all_terminal
     with idx.lock:
         for wid, wmeta in list(idx.works.items()):
-            if wmeta.get("merge_status") not in ("in_progress", "ready_for_review"):
-                continue
-            if _flip_if_all_terminal(idx, wid, why="boot-recover"):
+            if (wmeta.get("merge_status") in ("in_progress", "ready_for_review")
+                    and _flip_if_all_terminal(idx, wid, why="boot-recover")):
                 recovered.append(wid)
-    # 종결 통보는 lock 밖에서 비동기로
-    for wid in recovered:
+                continue
+            # `#891` — 전이는 저장됐는데 공지가 끝나지 못한 work (공지 스레드가 큐와 함께 죽었다).
+            #    지난 라운드의 표시는 무시한다 — 개선요청으로 라운드가 올라갔으면 그 공지는 늦었다.
+            pending = wmeta.get("notice_pending")
+            if (pending is not None
+                    and int(pending) == int(wmeta.get("round", 1) or 1)
+                    and wmeta.get("merge_status") in ("ready_for_review", "rejected", "cancelled")):
+                renotice.append(wid)
+    if renotice:
+        _tq_log(f"[boot-renotice] 공지 대기 표시가 남은 work {len(renotice)}개 다시 공지 (#891): "
+                f"{renotice}", idx.root)
+    # 종결 통보는 lock 밖에서 비동기로 (중복은 공지 스레드의 멱등 검사가 막는다)
+    for wid in recovered + renotice:
         _auto_cleanup_work_async(idx, wid)
     return recovered
 
