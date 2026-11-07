@@ -8,6 +8,7 @@ bare origin 으로 돈다 — 주입한 git 은 계약만 시험한다(CLAUDE.md
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -255,9 +256,135 @@ def t_finish_confirm(tmp):
         if x in ("push", "switch", "ff", "delete_branch", "register", "link", "release", "close", "redmine",
                  "enqueue") and (not core or core[-1] != x):
             core.append(x)
-    check("단계 로그", core[-8:] == ["push", "switch", "ff", "delete_branch", "register", "link", "close",
+    check("단계 로그", core[-7:] == ["push", "switch", "delete_branch", "register", "link", "close",
                                     "redmine"]
-          and "span" in steps and "track" in steps and "enqueue" not in steps, str(steps))
+          and "span" in steps and "track" in steps and "enqueue" not in steps and "ff" not in steps, str(steps))
+
+
+def changed_tree(tmp):
+    """옛 main과 수정·추가·삭제가 모두 다른 끝 커밋. mtime은 과거로 고정해 재쓰기를 잡는다."""
+    repo = make_repo(tmp)
+    (repo / "removed.txt").write_text("old\n")
+    sh(repo, "add", "removed.txt")
+    sh(repo, "commit", "-q", "-m", "base deletion fixture")
+    sh(repo, "push", "-q", "origin", "main")
+    iss = Issue(SPEC + PLAN)
+    IF.start(7, repo=repo, getter=iss.get, noter=iss.note)
+    (repo / "a.txt").write_text("new\n")
+    (repo / "added.txt").write_text("added\n")
+    (repo / "removed.txt").unlink()
+    sh(repo, "add", "-A")
+    sh(repo, "commit", "-q", "-m", "modify add delete")
+    for name in ("a.txt", "added.txt"):
+        os.utime(repo / name, ns=(1_000_000_000, 1_000_000_000))
+    return repo, iss, sh(repo, "rev-parse", "HEAD")
+
+
+def tree_snapshot(repo):
+    result = {}
+    for name in ("a.txt", "added.txt", "removed.txt"):
+        p = repo / name
+        result[name] = (p.read_bytes(), p.stat().st_mtime_ns) if p.exists() else None
+    return result
+
+
+def t_finish_tree_never_reverts(tmp):
+    """Git은 실제 실행하고 각 명령 직후 작업 트리를 관측한다 (#896)."""
+    repo, iss, end = changed_tree(tmp)
+    before = tree_snapshot(repo)
+    original, observations = IF._git, []
+
+    def observe(cwd, *args):
+        answer = original(cwd, *args)
+        observations.append((args, tree_snapshot(repo)))
+        return answer
+
+    IF._git = observe
+    try:
+        r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, review_root=twin(tmp))
+    finally:
+        IF._git = original
+    check("#896 finish 성공", r["ok"], str(r))
+    check("#896 모든 Git 단계 뒤 수정·추가·삭제 내용과 mtime 불변", bool(observations)
+          and all(tree == before for _, tree in observations), str(observations))
+    check("#896 main=origin/main=끝 · main 선택", head_of(repo) == "main"
+          and sh(repo, "rev-parse", "main") == sh(repo, "rev-parse", "origin/main") == end)
+
+
+def t_old_finish_sequence_rewrites_tree(tmp):
+    """옛 순서의 실물 대조: 중간에 옛 내용, 끝에는 내용 복원·mtime 변경."""
+    repo, _, end = changed_tree(tmp)
+    before = tree_snapshot(repo)
+    sh(repo, "switch", "main")
+    middle = tree_snapshot(repo)
+    check("#896 대조 — switch 직후 옛 main 내용", middle["a.txt"][0] == b"a\n"
+          and middle["added.txt"] is None and middle["removed.txt"][0] == b"old\n")
+    sh(repo, "merge", "--ff-only", end)
+    after = tree_snapshot(repo)
+    check("#896 대조 — ff 뒤 내용 복원", all((value[0] if value else None)
+          == (before[name][0] if before[name] else None) for name, value in after.items()))
+    check("#896 대조 — 재작성으로 mtime 변경", after["a.txt"][1] != before["a.txt"][1]
+          and after["added.txt"][1] != before["added.txt"][1])
+
+
+def t_finish_main_in_other_worktree(tmp):
+    """방어용 가상 조건: 다른 worktree의 main을 덮지 않는다. 운영 장애 재현은 아니다."""
+    repo, iss, end = changed_tree(tmp)
+    base = sh(repo, "rev-parse", "main")
+    other = tmp / "main-worktree"
+    sh(repo, "worktree", "add", "-q", str(other), "main")
+    before = tree_snapshot(repo)
+    other_before = tree_snapshot(other)
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, review_root=twin(tmp))
+    check("#896 main 점유 방어 — 명시적으로 거절", not r["ok"] and r["step"] == "worktree"
+          and str(other) in r["why"], str(r))
+    check("#896 main 점유 — main·issue 브랜치·두 트리 보존", head_of(repo) == "issue/7"
+          and sh(repo, "rev-parse", "main") == base and sh(repo, "rev-parse", "issue/7") == end
+          and tree_snapshot(repo) == before and sh(other, "rev-parse", "HEAD") == base
+          and tree_snapshot(other) == other_before)
+    check("#896 main 점유 — push·전환·삭제·등록 미실행", not r.get("done")
+          and sh(tmp / "origin.git", "rev-parse", "main") == base
+          and not IT.state_path(twin(tmp)).exists())
+
+
+def t_finish_worktree_query_failure(tmp):
+    repo, iss, base, end = started(tmp)
+    original = IF._git
+
+    def fail_list(cwd, *args):
+        return (1, "목록 조회 대역 거절") if args == ("worktree", "list", "--porcelain") else original(cwd, *args)
+
+    IF._git = fail_list
+    try:
+        r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, review_root=twin(tmp))
+    finally:
+        IF._git = original
+    check("#896 worktree 조회 실패 — 사유 보고", not r["ok"] and r["step"] == "worktree"
+          and "목록 조회 대역 거절" in r["why"], str(r))
+    check("#896 worktree 조회 실패 — 원격·로컬 참조 보존", head_of(repo) == "issue/7"
+          and sh(repo, "rev-parse", "main") == sh(tmp / "origin.git", "rev-parse", "main") == base
+          and sh(repo, "rev-parse", "issue/7") == end and not r.get("done"))
+
+
+def t_finish_switch_failure_preserves_branch(tmp):
+    repo, iss, end = changed_tree(tmp)
+    base = sh(repo, "rev-parse", "main")
+    before = tree_snapshot(repo)
+    original = IF._git
+
+    def fail_switch(cwd, *args):
+        return (1, "전환 대역 거절") if args == ("switch", "-C", "main", end) else original(cwd, *args)
+
+    IF._git = fail_switch
+    try:
+        r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, review_root=twin(tmp))
+    finally:
+        IF._git = original
+    check("#896 switch 실패 — 사유 보고", not r["ok"] and "switch: 전환 대역 거절" in r["why"], str(r))
+    check("#896 switch 실패 — main 참조·issue 브랜치·트리 보존", head_of(repo) == "issue/7"
+          and sh(repo, "rev-parse", "main") == base and sh(repo, "rev-parse", "issue/7") == end
+          and tree_snapshot(repo) == before and "switch" not in r["done"]
+          and "ff" not in r["done"] and "delete_branch" not in r["done"])
 
 
 def t_finish_refusals(tmp):
@@ -392,7 +519,7 @@ def t_finish_noter_exception_reports(tmp):
     check("finish noter 예외 → 결과 딕셔너리 · ok 아님", isinstance(r, dict) and not r["ok"]
           and "ConnectionError" in r["why"], str(r)[:300])
     check("finish noter 예외 → push·삭제·등록은 done", all(x in r["done"] for x in
-          ("push", "ff", "delete_branch", "register", "link")) and "redmine" not in r["done"], str(r.get("done")))
+          ("push", "switch", "delete_branch", "register", "link")) and "redmine" not in r["done"], str(r.get("done")))
 
 
 def t_start_already_merge_base_failure(tmp):
@@ -690,7 +817,7 @@ def t_finish_register_failure_keeps_lock(tmp):
     note = a.notes[-1][0]
     check("등록 거절 → 노트: 등록 실패 · 잠금 유지", "마감 추적: 등록 실패 — bad_sha" in note
           and "일감 잠금: 유지" in note, note)
-    check("등록 거절 → push·삭제는 됨", all(x in r["done"] for x in ("push", "ff", "delete_branch")))
+    check("등록 거절 → push·삭제는 됨", all(x in r["done"] for x in ("push", "switch", "delete_branch")))
 
 
 def t_finish_link_failure_still_releases(tmp):
@@ -763,6 +890,9 @@ def main() -> int:
                t_ahead_of_origin_refuses, t_existing_branch_elsewhere_refuses,
                t_redmine_failure_rolls_back, t_read_failure,
                t_finish_preview_writes_nothing, t_finish_confirm, t_finish_refusals,
+               t_finish_tree_never_reverts, t_old_finish_sequence_rewrites_tree,
+               t_finish_main_in_other_worktree, t_finish_worktree_query_failure,
+               t_finish_switch_failure_preserves_branch,
                t_finish_no_commits, t_finish_origin_moved, t_finish_push_rejected,
                t_finish_register_failure_reported, t_finish_injected_without_root,
                t_git_stderr_not_in_value,

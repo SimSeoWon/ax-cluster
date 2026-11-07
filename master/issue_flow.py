@@ -31,7 +31,7 @@
 잃는다. 되돌리는 브랜치는 `main` 과 같은 커밋이라 잃는 것이 없다.
 [중요] **종료는 승인이 트리거다** — `confirm=False`(기본)는 범위·커밋 목록만 돌려주고 아무것도 안
 바꾼다. 승인 시 순서: **원격 먼저**(`push origin issue/<N>:main`, fast-forward 만) → 성공해야 로컬
-`main` 을 `--ff-only` 로 맞춘다 → `branch -d`(병합 확인 삭제) → 마감 추적 등록 → 연결 → 잠금 해제
+`main` 을 끝 커밋으로 바로 전환한다(사전에 ff 가능 검사) → `branch -d`(병합 확인 삭제) → 마감 추적 등록 → 연결 → 잠금 해제
 → 노트. push 가 거절되면
 로컬은 그대로다(잃는 것 없음, 강제 push 없음). 사용자 결정(2026-11-03): main 적용 뒤 로컬 브랜치 삭제.
 [주의] push 뒤 단계(로컬 맞춤·삭제·등록·해제·노트)가 실패해도 **되돌리지 않는다** — 이미 원격 정본이
@@ -373,6 +373,21 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
     if rc != 0 or dirty:
         return _refuse(log, "tree", "작업 트리가 깨끗하지 않다 — 커밋·정리는 사람이 정한다",
                        dirty=(dirty or "").splitlines()[:20])
+    # #896 방어: Git 버전에 따라 switch -C가 다른 worktree의 main 점유도 덮는다.
+    # 같은 로컬 저장소의 등록 worktree만 확인하고 push 전에 거절한다.
+    rc, worktrees = _git(repo, "worktree", "list", "--porcelain")
+    if rc != 0:
+        return _refuse(log, "worktree", f"worktree 목록 조회 실패: {worktrees}")
+    for record in worktrees.split("\n\n"):
+        fields = record.splitlines()
+        if f"branch refs/heads/{MAIN}" not in fields:
+            continue
+        owner = next((line[len("worktree "):] for line in fields if line.startswith("worktree ")), "")
+        if not owner:
+            return _refuse(log, "worktree", f"{MAIN} 점유 worktree 경로를 읽지 못했다")
+        if Path(owner).resolve() != repo.resolve():
+            return _refuse(log, "worktree", f"다른 worktree가 {MAIN} 을 사용 중이다: {owner} — "
+                                           "push·참조 변경 없이 중단한다")
     if fetch:
         rc, out = _git(repo, "fetch", "--quiet", REMOTE, MAIN)
         if rc != 0:
@@ -404,7 +419,7 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
         log("preview", "confirm=False — 아무것도 바꾸지 않았다")
         return {"ok": True, "confirmed": False, **summary,
                 "next": f"승인하면 finish({issue_id}, confirm=True) — push {REMOTE} {branch}:{MAIN} · "
-                        f"로컬 {MAIN} ff · {branch} 삭제 · 마감 추적 등록(해시 {len(commits)}개) · "
+                        f"끝 커밋으로 로컬 {MAIN} 전환(성공 시 참조 전진) · {branch} 삭제 · 마감 추적 등록(해시 {len(commits)}개) · "
                         f"색인기 리뷰 연결 · "
                         + ("잠금 해제(등록 성공 시) · " if lock_held else "")
                         + "Redmine 리뷰 요청 노트 + 「완료」·100(등록 성공 시 — #889) — 해시별 리뷰와 종합 리뷰는 "
@@ -423,17 +438,17 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
     log("push", f"{REMOTE}/{MAIN} ← {end[:12]}")
 
     problems: list[str] = []
-    # ③ 로컬 main 맞추기 → 브랜치 삭제
+    # ③ 끝 커밋의 main으로 전환 → 브랜치 삭제 (#896).
+    # switch main → merge 는 잠깐 옛 main 파일을 깐다. -C는 끝 커밋으로 바로 전환하며,
+    # 전환에 실패하면 main 참조도 바꾸지 않는다. ff 가능성은 위에서 이미 확인했다.
     deleted = False
-    for args, label in ((("switch", MAIN), "switch"), (("merge", "--ff-only", end), "ff")):
-        rc, out = _git(repo, *args)
-        if rc != 0:
-            problems.append(f"{label}: {out[-200:]}")
-            log(label, f"실패 — {out[-200:]}")
-            break
-        done.append(label)
-        log(label, f"{' '.join(args)}")
+    rc, out = _git(repo, "switch", "-C", MAIN, end)
+    if rc != 0:
+        problems.append(f"switch: {out[-200:]}")
+        log("switch", f"실패 — {out[-200:]}")
     else:
+        done.append("switch")
+        log("switch", f"switch -C {MAIN} {end}")
         rc, out = _git(repo, "branch", "-d", branch)
         if rc == 0:
             deleted = True
