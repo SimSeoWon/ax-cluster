@@ -1,8 +1,8 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-08 17:00 Claude 체크포인트(#898 마감 후). 항목·진행의 정본은 Redmine이다.
+> 2026-11-08 18:00 Claude 체크포인트(#898·#886 마감 후). 항목·진행의 정본은 Redmine이다.
 > 이전 상세는 Git `d946ba7`(운영 체크포인트)·`54b5632`(#898 Codex→Claude 인계본)의 이 파일·리포트138~148·각 일감 노트에 있다.
-> 진행 중 일감·일감 잠금은 없다. #898 은 ax-task-queue 재기동(16:49:16)·배달 3/3 OK 까지 반영됐다.
+> 진행 중 일감·일감 잠금은 없다. #898 은 재기동·배달까지 반영. **#886(`86e1351`) 뒤 배달은 미실행**(아래).
 
 ## 🔴 오늘 오후 바뀐 규칙 (사용자 결정 2026-11-08)
 
@@ -59,6 +59,7 @@
 | #894 | 종합 리뷰 판정 칸 마크다운 꾸밈 인식 — 리포트 146 | `c47d5b2` |
 | #895 | 라운드 공지 검사의 멱등 저장 대기 — 리포트 147, 배달 3/3 OK | `dc778fe` |
 | #898 | 요청자 관리 도구 8101 대행 — 리포트 148 (위) | `54b5632` |
+| #886 | 마스터 로컬 잔재 정리(아래) + `cleanup machines` 가 task/·attempt/ 밖 로컬 브랜치도 열거 — 리포트 149 | `86e1351` |
 
 - 등록: **#908**·**#911** 아이디어(일감 아님).
 - [주의] systemd 249 는 `journalctl -n` 을 `--grep` 보다 먼저 적용한다 — 서비스 기동 기록 조회에 `-n` 을 붙이지 않는다.
@@ -67,14 +68,17 @@
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`048dc25`(+ 이 문서 커밋), 깨끗함 |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`86e1351`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 |
-| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `048dc25` 배달·검사 3/3 OK |
+| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `048dc25` 배달·검사 3/3 OK — **`86e1351` 미배달**(check 는 출처 뒤처짐으로 FAIL 날 수 있다) |
 
 - 상주 재기동: ax-task-queue 16:49:16(#898) · ax-broker·ax-projects 12:31(#897). #898 은 ax-projects 코드를 바꾸지 않았다.
 - `.2` 검사의 `[주의] 홈 중복 스킬 ~/.agents/skills/ax-work`(#661 부류)는 손대지 않았다.
-- 남은 worktree `ax-788-work`·`ax-896-local`·`ax-900-local`·advance 1개는 보존. 자동 정리하지 않는다.
+- #886 정리(사용자 승인 13건): fix/R* 8 · worktree ax-900-local·ax-advance-…4a7db0e4 삭제. 미병합 증거는
+  `refs/ax/pruned/worktree/ax-788-work`(b510d2f)·`refs/ax/pruned/task/<774·780 W>/base`(cfd986a·c7ede9e)로 보존 뒤 정리,
+  ax-896-local 초안은 `reports/research/2026-11-08-886-ax-896-local-draft.patch`. 복구 명령은 리포트 149.
+  범위 밖으로 남긴 것: `AXCluster/repo` 미러의 `/tmp/ax-pinned-*`·`ax-review-788`, 원격 `origin/issue/900`.
 
 ## Codex 가 알아야 할 것
 
@@ -90,17 +94,19 @@
 - 마스터 담당 기록 **claude(11-08 16:41)**, 워커 전역 codex(state, 10-18). Codex 가 실제 인수하면 `ax-handoff` 절차로 기록한다.
 - ax-projects·ax-broker active(12:31) · ax-task-queue active(16:49), ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
 - 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음.
-- #893~#898·#899~#907·#909·#910·#912 완료: 리포트138~148·Redmine. 중복 마감·산출물 재생성 금지.
+- #886·#893~#898·#899~#907·#909·#910·#912 완료: 리포트138~149·Redmine. 중복 마감·산출물 재생성 금지.
 - #885 는 사용자 보류 기록 유지 — 내용이 #897·#912·#907 로 해소됐을 가능성이 크나 닫을지는 사용자 결정(경우별 대조 후).
   #884 T7 의 닫는 방법은 미결.
 - #890 R251·R252 및 후속 리뷰 처분은 최신 목록·코드와 대조 후 사용자 결정.
-- 큐/스풀 #709·#211·#650, ax-788-work, ax-review-788 반려#821, MotionForge·NS 잔재는 보존한다.
+- 큐/스풀 #709·#211·#650, ax-review-788 반려#821, `refs/ax/pruned/*`(#886), MotionForge·NS 잔재는 보존한다.
 - 미결: doc_sync 의존 등록 보강, #883 중복 플랜 제목, 훅 wait 일시오류 비대칭, 마스터 MCP 토큰 평문
   (`~/.codex/config.toml` bearer 평문 — 외부 전송 없음).
 
 ## 바로 다음 작업
 
 1. `ax-handoff`로 이 문서와 실제 상태(운영 main·`.ax-issues` 비어 있음·잠금 없음)를 대조한다.
-2. #898 실사용 확인은 남아 있다 — 게임 프로젝트 마운트 전환 뒤 `.33` 요청자 세션에서 새 `ax-client` 관리 도구를 한 번 불러 본다(사용자 결정).
-3. 다음 일감은 사용자가 고른다 — 후보 #886(마스터 로컬 브랜치·worktree 잔재 정리, 삭제마다 승인). 시작은 `issue_start_tool`.
-4. 커밋·push·재기동·⑦ 전진·finalize는 기존 승인 규칙을 따른다. 다른 일감을 자동 시작하지 않는다.
+2. **배달 승인 대기**: `86e1351`(#886) 뒤 `master.client update` 미실행 — 승인 뒤 실행하고 이 문서를 결과로 맞춘다.
+   상주 서비스 재기동은 불필요(`cleanup` 은 CLI).
+3. #898 실사용 확인은 남아 있다 — 게임 프로젝트 마운트 전환 뒤 `.33` 요청자 세션에서 새 `ax-client` 관리 도구를 한 번 불러 본다(사용자 결정).
+4. 다음 일감은 사용자가 고른다. 시작은 `issue_start_tool`.
+5. 커밋·push·재기동·⑦ 전진·finalize는 기존 승인 규칙을 따른다. 다른 일감을 자동 시작하지 않는다.
