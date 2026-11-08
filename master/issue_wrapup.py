@@ -13,10 +13,10 @@
     ① 마감 확인     — 그 일감의 마감 추적 기록(끝 커밋)이 있고, 일감 잠금이 그 일감에 잡혀 있지 않다
     ② 저장소 확인   — 운영 저장소가 main · 깨끗 · origin/main 과 같다 · 끝 커밋이 main 에 들어 있다
     ③ 신선도 판정   — `service_freshness.check()`: [중요] 옛 코드·[주의] 의존 변경으로 **판정된** 상주만 대상
-    ④ 재기동        — oneshot(리뷰 큐·파견·색인기)이 끝나길 기다린 뒤 `service_restart.restart`(기동 시각·상태 검증),
+    ④ 재기동        — 그 상주를 실행 중에 쓰는 oneshot 만(`WAIT_FOR`, #922) 끝나길 기다린 뒤 `service_restart.restart`(기동 시각·상태 검증),
                       재기동 뒤 그 서비스를 다시 판정한다. 판정에 없는 서비스는 건드리지 않는다
     ⑤ 인수인계 확인 — 끝 커밋 **뒤에** 인수인계서 커밋이 main 에 있어야 한다. 없으면 **배달 전에 멈춘다(rc 2)** —
-                      인수인계 내용은 지휘자가 쓴다. 커밋·push 뒤 같은 명령을 다시 부르면 ③④는 할 일이 없어 지나간다
+                      인수인계 내용은 지휘자가 쓴다(이때도 그때까지의 재기동을 노트로 남긴다, #922). 커밋·push 뒤 같은 명령을 다시 부르면 ③④는 할 일이 없어 지나간다
     ⑥ 배달          — `master.client update`(마운트된 프로젝트) rc0
     ⑦ 기록          — 그 일감 Redmine 에 결과 노트
 
@@ -37,6 +37,15 @@ from typing import Callable
 REPO = Path(__file__).resolve().parent.parent
 HANDOFF = "docs/orchestrator-handoff.md"
 ONESHOTS = ("ax-review-queue", "ax-dispatch", "ax-indexer")
+# `#922` — 재기동할 상주가 **실행 중에 쓰이는** oneshot 만 기다린다(소스 대조 2026-11-08):
+#   리뷰 큐 → broker 8102(초고, review_runner) · 색인기 → broker(합성, synth) — 8101 은 시작 때 게이트 1회
+#   파견(autodispatch --drain) → task-queue 8101 · ax-projects(8103)를 실행 중 부르는 oneshot 은 없다.
+#   [주의] 종전에는 셋 다 기다려, 마감 push 가 깨운 색인(510초)을 ax-projects 재기동이 기다렸다(#921 실경로).
+WAIT_FOR: dict = {
+    "ax-broker": ("ax-review-queue", "ax-indexer"),
+    "ax-task-queue": ("ax-dispatch",),
+    "ax-projects": (),
+}
 RC_DONE, RC_FAIL, RC_HANDOFF = 0, 1, 2
 WAIT_MAX = 900                       # oneshot 대기 상한(초) — 넘기면 재기동하지 않고 멈춘다
 WAIT_STEP = 10
@@ -177,8 +186,10 @@ def run(issue_id: int, *, project: str = "AXCluster", repo: Path | None = None, 
         say("restart", f"(dry-run) 재기동 대상 {targets}")
     elif targets:
         waited = 0
+        watch = sorted({o for t in targets for o in WAIT_FOR.get(t, ONESHOTS)})   # 모르는 상주는 전부 기다린다
+        say("restart", f"기다릴 oneshot {watch or '없음'} (대상 {targets})")
         while True:
-            busy = [u for u in ONESHOTS if d.active_state(u) in ("active", "activating", "deactivating")]
+            busy = [u for u in watch if d.active_state(u) in ("active", "activating", "deactivating")]
             if not busy:
                 break
             if waited >= WAIT_MAX:
@@ -212,6 +223,18 @@ def run(issue_id: int, *, project: str = "AXCluster", repo: Path | None = None, 
                        "배달하지 않았다(배달 뒤 커밋하면 워커가 뒤처진다 #916). "
                        "인수인계서 커밋·push 뒤 같은 명령을 다시 실행하면 배달부터 이어진다")
         res.rc = RC_HANDOFF
+        # `#922` — rc 2 에서도 그때까지의 판정·재기동을 남긴다(재실행 노트는 그 회차 것만 적는다)
+        if not dry_run:
+            restarted = ", ".join(f"{u} {t}" for u, t in res.restarted) or "없음"
+            try:
+                got = d.note(issue_id, f"마감 뒤 단계(`master.issue_wrapup`) 1단계: main {head[:12]} · "
+                                       f"재기동 {restarted} · 인수인계서 대기(배달 전 정지, rc 2).")
+                if isinstance(got, str) and got.startswith("[주의]"):
+                    say("note", f"[주의] Redmine 노트 실패 — {got}")
+                else:
+                    say("note", "Redmine 노트 남김(인수인계 대기)")
+            except Exception as e:                                  # noqa: BLE001
+                say("note", f"[주의] Redmine 노트 실패 ({type(e).__name__}: {e})")
         return res
     say("handoff", f"인수인계서 커밋 {commits.split()[0]} (끝 커밋 뒤)")
 

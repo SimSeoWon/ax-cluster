@@ -150,11 +150,29 @@ def test_oneshot_wait() -> None:
           and "oneshot" in log2, log2)
 
 
+def test_wait_per_service_922() -> None:
+    """`#922` — 재기동할 상주가 실행 중에 쓰이는 oneshot 만 기다린다."""
+    w = World(verdicts=[V("ax-projects", dep=True)], after=[V("ax-projects")], busy=10 ** 6)
+    r, log = go(w)
+    check("🔴 ax-projects 만 재기동 → oneshot 대기 없음", r.rc == W.RC_DONE and not w.did("sleep")
+          and not w.did("active") and [c[1] for c in w.did("restart")] == ["ax-projects"], log)
+    w = World(verdicts=[V("ax-task-queue", stale=True)], after=[V("ax-task-queue")])
+    go(w)
+    check("ax-task-queue → 파견만 본다", [c[1] for c in w.did("active")] == ["ax-dispatch"], str(w.did("active")))
+    w = World(verdicts=[V("ax-broker", dep=True)], after=[V("ax-broker")])
+    go(w)
+    check("ax-broker → 리뷰 큐·색인기", sorted(c[1] for c in w.did("active")) == ["ax-indexer", "ax-review-queue"],
+          str(w.did("active")))
+    check("모르는 상주는 전부 기다린다", W.WAIT_FOR.get("ax-new", W.ONESHOTS) == W.ONESHOTS)
+
+
 def test_handoff_gate() -> None:
     w = World(verdicts=[V("ax-broker", dep=True)], after=[V("ax-broker")], handoff=False)
     r, log = go(w)
-    check("🔴 인수인계 없음 → rc2 · 배달 안 함", r.rc == W.RC_HANDOFF and not w.did("deliver")
-          and not w.did("note"), log)
+    check("🔴 인수인계 없음 → rc2 · 배달 안 함", r.rc == W.RC_HANDOFF and not w.did("deliver"), log)
+    notes = w.did("note")
+    check("#922 rc2 에서도 노트 1회 — 재기동·인수인계 대기", len(notes) == 1 and "ax-broker new" in notes[0][1]
+          and "rc 2" in notes[0][1], str(notes))
     check("재기동은 이미 했다(배달 전 단계)", [c[1] for c in w.did("restart")] == ["ax-broker"], str(w.calls))
     check("다시 부르라는 사실을 찍는다", "다시 실행" in log and "#916" in log, log)
     logs = [c for c in w.calls if c[0] == "git" and c[1] == "log"]
@@ -201,7 +219,8 @@ def test_dry_run() -> None:
 
 
 def main() -> int:
-    for fn in (test_clean_path, test_restart_only_judged, test_oneshot_wait, test_handoff_gate,
+    for fn in (test_clean_path, test_restart_only_judged, test_oneshot_wait, test_wait_per_service_922,
+               test_handoff_gate,
                test_stops, test_dry_run):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_issue_wrapup: {PASS}/{PASS + FAIL} 통과")
