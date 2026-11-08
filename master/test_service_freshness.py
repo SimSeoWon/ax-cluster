@@ -303,6 +303,71 @@ def test_entrypoint_order() -> None:
                   not records, str(events))
 
 
+def test_first_filter_912() -> None:
+    """#912 — journal 조회에 `-n` 없음 · mtime 1차 거름(기동 뒤 변경 흔적 없으면 journal 없이 최신)."""
+    old_repo = F.REPO
+    unit = "ax-task-queue"
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            F.REPO = root = Path(td)
+            pkg = root / "master/task_queue"
+            pkg.mkdir(parents=True)
+            source = pkg / "resident.py"
+            source.write_text("# resident\n", encoding="utf-8")
+            record, message = startup(unit)
+            # 기동 기록은 있는 상태에서 조회 명령 모양을 본다(내용 경로를 타게 mtime 은 지금)
+            runner = fake({unit: message})
+            F.check(unit, runner=runner)
+            jc = [cmd for cmd in runner.calls if cmd[0] == "journalctl"]
+            check("#912 journal 조회를 실제로 했다(내용 경로)", bool(jc), str(runner.calls))
+            check("#912 journal 조회에 -n 이 없다(systemd 249 는 -n 을 --grep 보다 먼저 적용)",
+                  all("-n" not in cmd for cmd in jc), str(jc))
+
+            def settle(t):
+                os.utime(source, (t, t))
+                os.utime(pkg, (t, t))
+            settle(50)                                 # 기동(epoch 100) 전에 모두 확정
+            cache = pkg / "__pycache__"
+            cache.mkdir()
+            os.utime(pkg, (50, 50))
+            os.utime(cache, (500, 500))                # 실행 중 pyc 쓰기 — 무시해야 한다
+            no_record = fake()                         # journal 에 기동 기록이 없다(보존 만료)
+            v = F.check(unit, runner=no_record)[0]
+            check("#912 기동 뒤 변경 흔적 없음 → journal 없이 최신", not v.stale and not v.why, v.line)
+            check("#912 1차 거름 통과 시 journal 을 부르지 않는다",
+                  not any(cmd[0] == "journalctl" for cmd in no_record.calls), str(no_record.calls))
+            added = pkg / "added.py"
+            added.write_text("# added\n", encoding="utf-8")
+            os.utime(added, (50, 50))                  # 파일 mtime 은 옛것이어도
+            os.utime(pkg, (300, 300))                  # 디렉터리 mtime 이 추가를 남긴다
+            v = F.check(unit, runner=fake())[0]
+            check("#912 파일 추가(디렉터리 mtime) → 1차 거름 불통과 · 기록 없으면 판정 불가",
+                  bool(v.why) and not v.stale, v.line)
+            v = F.check(unit, runner=fake({unit: message}))[0]
+            check("#912 파일 추가 → 기록이 있으면 내용 비교로 stale", v.stale and not v.why, v.line)
+            added.unlink()
+            settle(50)
+            os.utime(source, (300, 300))               # 같은 내용 재작성(mtime 만 새것)
+            v = F.check(unit, runner=fake({unit: message}))[0]
+            check("#912 mtime 만 새것 → 내용 비교로 최신(#897 목적 유지)", not v.stale and not v.why, v.line)
+        with tempfile.TemporaryDirectory() as td:
+            F.REPO = root = Path(td)
+            for rel in F.RESIDENT["ax-projects"]:
+                target = root / rel
+                if rel.endswith(".py"):
+                    continue                           # 단일 파일(register.py)을 일부러 빠뜨린다
+                target.mkdir(parents=True)
+                (target / "m.py").write_text("x = 1\n", encoding="utf-8")
+                os.utime(target / "m.py", (50, 50))
+                os.utime(target, (50, 50))
+            os.utime(root / "master", (50, 50))
+            v = F.check("ax-projects", runner=fake())[0]
+            check("#912 선언 경로 누락은 1차 거름을 통과하지 않는다(최신으로 접지 않음)",
+                  bool(v.why) and not v.stale, v.line)
+    finally:
+        F.REPO = old_repo
+
+
 def main() -> int:
     print("\n[1] 기동 내용·목록 비교와 판정 불가 처리 (#897)")
     test_content_and_errors()
@@ -316,6 +381,8 @@ def main() -> int:
         unit not in F.RESIDENT and F.check(unit, runner=fake()) == [] for unit in F.TRIGGERED))
     print("\n[4] 진입점이 서비스 모듈 import 전에 기록한다")
     test_entrypoint_order()
+    print("\n[5] #912 journal 조회 -n 없음 · mtime 1차 거름")
+    test_first_filter_912()
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 

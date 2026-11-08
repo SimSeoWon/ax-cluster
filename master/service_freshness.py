@@ -136,7 +136,10 @@ def _baseline(unit: str, paths: tuple, *, runner=None, invocation: str = "") -> 
             invocation, why = _invocation(unit, runner=runner)
             if why:
                 return "", why
-        result = run(["journalctl", "--no-pager", "--all", "-o", "json", "-n", "2",
+        # 🔴 #912 — `-n` 을 붙이지 않는다. systemd 249 는 `-n` 을 `--grep` 보다 먼저 적용해
+        #    마지막 N 줄만 잘라 온 뒤 거른다 — 기동 첫 줄인 기록을 로그 2줄 만에 놓쳤다(실측 2026-11-08).
+        #    범위는 이미 `_SYSTEMD_INVOCATION_ID` 가 이번 기동으로 좁힌다.
+        result = run(["journalctl", "--no-pager", "--all", "-o", "json",
                       f"_SYSTEMD_INVOCATION_ID={invocation}",
                       f"--grep=^{RECORD_PREFIX}"])
         if result.returncode:
@@ -233,6 +236,35 @@ def _newest(paths: tuple) -> tuple:
     return best, who
 
 
+def _untouched_since(paths: tuple, started: int) -> bool:
+    """#912 1차 거름 — 기동 뒤 감시 경로에 **아무 변경 흔적이 없는가**.
+
+    `.py` 파일 mtime 과 디렉터리 mtime(파일 추가·삭제·이름 변경이 남긴다)을 함께 본다.
+    `__pycache__` 는 실행 중 pyc 쓰기로 바뀌므로 뺀다. 선언 경로가 없거나 읽기에 실패하면
+    거짓 — 최종 판정(기동 기록·내용 해시)으로 넘긴다. **참일 때만** journal 없이 최신으로 본다:
+    journal 보존이 짧아(실측 ≈18시간) 오래 돈 서비스의 기동 기록은 사라진다.
+    """
+    try:
+        for rel in paths:
+            target = REPO / rel
+            if target.is_file():
+                if target.stat().st_mtime > started:
+                    return False
+                continue
+            if not target.is_dir():
+                return False
+            for base, dirs, names in os.walk(target):
+                dirs[:] = [d for d in dirs if d != "__pycache__"]
+                if Path(base).stat().st_mtime > started:
+                    return False
+                for name in names:
+                    if name.endswith(".py") and (Path(base) / name).stat().st_mtime > started:
+                        return False
+        return True
+    except OSError:
+        return False
+
+
 def check(unit: str = "", *, runner=None) -> list:
     """상주 서비스별 판정. `unit` 을 주면 그것만."""
     out: list = []
@@ -245,6 +277,9 @@ def check(unit: str = "", *, runner=None) -> list:
             v.newest, v.newest_file = _newest(paths)
         except (OSError, subprocess.SubprocessError):
             v.why = "기동 시각 또는 코드 시각을 읽지 못했다"
+        if not v.why and v.started and _untouched_since(paths, v.started):
+            out.append(v)                               # #912 1차 거름 — 기동 뒤 변경 흔적 없음
+            continue
         if not v.why:
             invocation, v.why = _invocation(name, runner=runner)
         if not v.why:
