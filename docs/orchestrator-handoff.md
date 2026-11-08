@@ -8,7 +8,10 @@
 
 - 🔴 **일감 「진행해」 = 끝까지 승인**(`docs/orchestrator-rules.md` §1.9 · `ax-plan` §3-1): 구현 → 검사+공식 통합 → 리포트 → 커밋 →
   `issue_finish(confirm=True)` → 신선도 판정된 서비스만 재기동(oneshot 확인) → **인수인계서 커밋·push → 마지막에 배달·check rc0**.
-  멈추는 자리(실패·대상 밖·설계 갈림길·파괴적 git·⑦/finalize·자동 로드 문서)는 그대로. Antigravity 는 `~/ax-cluster` 에서 시작(#920).
+  멈추는 자리(실패·대상 밖·설계 갈림길·파괴적 git·⑦/finalize·자동 로드 문서)는 그대로.
+- 🔴 **Antigravity 진입**(#920): 시작 폴더의 지침만 자동 로드하므로 홈 `~/GEMINI.md`(정본 `machines/sim-desktop-gemini.md`)가
+  「작업 저장소 루트(`issue_start` 의 `repo` 또는 `git rev-parse --show-toplevel`)의 `AGENTS.md` 를 먼저 읽고 AX-ENTRY-MARK 를 보고」를 지시한다
+  — 경로 고정 없음. 실측 2026-11-08: 홈 시작 세션이 「진입 지침: …/AGENTS.md · AX-ENTRY-MARK: repo」 보고.
 
 - **마감 뒤 기록 몫**(`ax-plan` 3-1 · `331b260`·`ed0b5d6`): 리포트=일감 커밋 시점까지(끝에 「최종 결과는 Redmine 마감 노트」) ·
   Redmine 마감 노트=결과 정본 · **이 문서=마감 직후 main 문서 커밋**(마감·배포 승인에 포함). 배포를 마감 뒤 **따로** 승인받아
