@@ -137,6 +137,23 @@ def _limited(text: str) -> bool:
     return bool(_LIMIT_RE.search(text))
 
 
+def cooldown_left(model: str, *, state_path=None, clock=time.time) -> float:
+    """모델의 남은 쿨다운 초(`#920`). 지난 429 의 기록일 뿐 잔여 한도를 재는 값이 아니다."""
+    path = Path(state_path) if state_path is not None else default_state_path()
+    with _state(path) as data:
+        until = float(data.setdefault("cooldowns", {}).get(model, 0))
+    return max(0.0, until - clock())
+
+
+def note_limit(model: str, evidence: str, *, state_path=None, clock=time.time) -> float:
+    """한도 응답을 쿨다운으로 남긴다(`#920`) — 다음 호출이 한도에 다시 부딪히지 않게."""
+    path = Path(state_path) if state_path is not None else default_state_path()
+    until = reset_deadline(evidence, clock())
+    with _state(path) as data:
+        data.setdefault("cooldowns", {})[model] = until
+    return until
+
+
 def execute(exe, build_command, runner, *, timeout, model="", allow_argon=False,
             fallback_models=(), state_path=None, catalog_runner=None,
             clock=time.time) -> AgyResult:

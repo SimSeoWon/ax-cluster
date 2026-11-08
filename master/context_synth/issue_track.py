@@ -266,10 +266,20 @@ def issue_of_hash(root, sha) -> int | None:
     return best["issue_id"] if best else None
 
 
+def authors_of_hash(root, sha) -> tuple | None:
+    """sha 를 담은 열린 라운드의 작성 계열(`#920`). 그런 라운드가 없으면 None — 빈 튜플과 구분한다."""
+    s = _norm_sha(sha)
+    best = None
+    for r in open_rounds(root):
+        if any(h["sha"] == s for h in r["hashes"]):
+            best = r
+    return tuple(best.get("authors") or ()) if best else None
+
+
 # ── 변경 ────────────────────────────────────────────────────────────────────
 
 def register(root, issue_id, *, project: str, base: str, end: str, hashes, by: str = "",
-             logf=None) -> dict:
+             logf=None, authors=()) -> dict:
     """마감 등록 — 새 라운드(해시 전부 `waiting`). 최신 라운드와 base..end·해시가 같으면 `already`.
 
     거절 사유: bad_issue · bad_project · bad_sha(base/end/hashes) · no_hashes · hashes_mismatch.
@@ -312,7 +322,7 @@ def register(root, issue_id, *, project: str, base: str, end: str, hashes, by: s
         now = _now()
         rnum = (last["round"] + 1) if last else 1
         rnd = {"issue_id": n, "round": rnum, "project": str(project), "base": b, "end": e,
-               "registered_at": now, "by": by,
+               "registered_at": now, "by": by, "authors": [str(x) for x in authors or ()],
                "hashes": [{"sha": s, "state": "waiting", "serial": "", "findings": None, "why": "",
                            "noted": False, "updated": now} for s in shas],
                "summary": {"state": "waiting", "item_id": "", "serial": "", "noted": False, "updated": now},

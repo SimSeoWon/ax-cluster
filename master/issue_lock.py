@@ -196,6 +196,28 @@ def acquire(root, issue_id, *, branch: str, start_rev: str, by: str = "", why: s
     return out
 
 
+def note_author(root, issue_id, family: str, *, client: str = "", logf=None) -> dict:
+    """활성 N 의 기록에 작성 계열을 더한다(`#920`) — 중복 없이 순서대로. 활성이 N 이 아니면 거절.
+
+    교대가 있으면 계열이 여럿 쌓인다. 보류 기록에도 그대로 남아 재개 뒤까지 이어진다.
+    """
+    n = int(issue_id)
+    with _locked(root):
+        data = _load(root)
+        a = data["active"]
+        if not a or a["issue_id"] != n:
+            return _refuse(logf, n, "author", "not_active", f"#{n} 는 활성 일감이 아니다")
+        authors = list(a.get("authors") or [])
+        if family not in authors:
+            authors.append(family)
+        a["authors"] = authors
+        a["updated"] = _now()
+        _record(data, "author", n, client or "unknown", f"작성 계열 {family}")
+        _save(root, data)
+        line = _emit(logf, n, "author", f"작성 계열 {family} (client={client or '없음'}) · 누적 {authors}")
+    return {"ok": True, "issue_id": n, "authors": authors, "log": [line]}
+
+
 def pause(root, issue_id, *, by: str = "", why: str = "", logf=None) -> dict:
     """활성 N 을 보류로 옮기고 활성 자리를 비운다 — 활성이 N 이 아니면 거절."""
     n = int(issue_id)

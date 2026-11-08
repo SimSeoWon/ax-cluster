@@ -102,6 +102,14 @@ class ModelPolicyTests(unittest.TestCase):
         self.assertFalse(result.why)
         self.assertEqual(result.actual_model, "gemini-4-argon-low")
 
+    def test_cooldown_note_and_read(self):
+        """`#920` — 한도 응답을 남기고 읽는다. 리셋 문구가 없으면 기본 쿨다운."""
+        self.assertEqual(A.cooldown_left("gemini-4-argon-medium", state_path=self.state, clock=lambda: self.now), 0)
+        A.note_limit("gemini-4-argon-medium", "429 quota exceeded", state_path=self.state, clock=lambda: self.now)
+        left = A.cooldown_left("gemini-4-argon-medium", state_path=self.state, clock=lambda: self.now)
+        self.assertGreater(left, 0)
+        self.assertEqual(A.cooldown_left(A.DEFAULT_MODEL, state_path=self.state, clock=lambda: self.now), 0)
+
     def test_catalog_argon_label_blocked_before_generation(self):
         self.labels[A.DEFAULT_MODEL] = "Gemini 4 Argon (Medium)"
         self.assertTrue(self.run_model().why)

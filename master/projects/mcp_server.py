@@ -28,6 +28,7 @@ import json
 from pathlib import Path
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 
 from .config import ConfigError
 from .logic import (
@@ -1105,7 +1106,7 @@ def plan_transition_tool(issue_id: int, task_id: str, to: str, note: str = "") -
 # ── 일감 작업 흐름 (`#879` T5) — 본체는 `master/issue_flow.py` ─────────────────────────────
 
 @mcp.tool()
-def issue_start_tool(issue_id: int) -> str:
+def issue_start_tool(issue_id: int, ctx: Context) -> str:
     """일감 작업을 **시작**한다 (`#879`) — 구현에 손대기 전에 부른다.
 
     `plan_start` 판정이 ok 가 아니면 거절한다(플랜 강제). 🔴 `#907` — **AXCluster(`requester: master`) 전용.**
@@ -1117,7 +1118,10 @@ def issue_start_tool(issue_id: int) -> str:
     """
     from .. import issue_flow
     try:
-        return json.dumps(issue_flow.start(issue_id), ensure_ascii=False)
+        # 🔴 `#920` — 연결의 clientInfo 가 작성 계열 신호다. 인자가 아니라 스키마에 안 보인다.
+        params = ctx.session.client_params
+        client = params.client_info.name if params else ""
+        return json.dumps(issue_flow.start(issue_id, client=client), ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
 

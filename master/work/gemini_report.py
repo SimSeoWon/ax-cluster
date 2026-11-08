@@ -37,7 +37,9 @@ agy 봉투 `status` 가 `SUCCESS` 가 아니다(사용자 결정 2026-10-09 (나
 `--model` 을 주면 그 값이다. 값이 없거나 정본 모양(`[a-z0-9][a-z0-9.-]*` · `gemini-` 로 시작 — 사용자 결정
 2026-10-18)이 아니거나 `argon` 이 들면
 **agy 를 부르지 않고 거절(종료 2)** 한다 — Argon 은 `--model` 과 `--allow-argon` 을 **함께** 준 때만.
-폴백·쿨다운·자동 Argon 은 없다. 실행 뒤 `--log-file` 로그(`usage.parse_agy_log`)로 **실제 모델**을
+자동 Argon 은 없다. 🔴 `#920` (사용자 결정 2026-11-08) — **명시한 Argon 호출만** 한도(429·쿨다운)에
+`ARGON_FALLBACK`(Flash High)로 넘어간다. 잔여 한도를 미리 읽는 수단은 없어 **지난 응답**으로 판정한다.
+그 밖의 모델은 폴백이 없다. 쿨다운 기록은 마스터 경로 전용이다(`--remote` 는 이번 응답만 본다). 실행 뒤 `--log-file` 로그(`usage.parse_agy_log`)로 **실제 모델**을
 읽어 요청과 다르거나 읽지 못하면 **출력을 버린다**(종료 1 · 보고서 없음 · 원본은 `.run/` 에 남는다).
 [주의] `agy_models` 는 `fcntl`(리눅스 전용)을 쓴다 — `--remote`(`.33` Windows) 경로에서는 임포트하지 않는다.
 """
@@ -65,6 +67,13 @@ SOURCE = "ax-gemini"
 _CITE = re.compile(r"(src/[^\s`:()\[\],]+):(\d+)(?:-(\d+))?")
 CITE_SHOW = 12          # 인용 하나당 citations.txt 에 싣는 최대 줄 수 (긴 범위는 앞부분만)
 SUMMARY_CHARS = 600     # 결과 JSON 에 싣는 요약 길이 — 세션이 본문을 안 열고 보고할 만큼만
+# `#920` — 명시한 Argon 호출의 한도 폴백. 패턴은 `agy_models._LIMIT_RE` 와 같다(그 모듈은 fcntl 이라
+#    `--remote` 에서 못 읽는다 — 같음은 `test_gemini_report` 가 지킨다).
+ARGON_FALLBACK = "gemini-3.8-flash-high"
+AGY_LIMIT_RE = re.compile(
+    r"RESOURCE_EXHAUSTED|\b(?:code|status|http)[\s:=]*429\b|\b429\s+too many requests"
+    r"|quota\s+(?:reached|exceeded|exhausted)|rate[\s_-]?limit(?:ed|\s+exceeded|\s+reached)"
+    r"|too many requests", re.I)
 # agy 정본 모델 id 모양 (`agy models` 의 첫 칸 · `agy_models.parse_catalog` 와 같은 식) — `#830`
 _MODEL_ID = re.compile(r"[a-z0-9][a-z0-9.-]*")
 
@@ -333,6 +342,7 @@ def main(argv=None, *, queue=None) -> int:
                     help="agy 정본 모델 id 를 직접 고른다 (기본: --remote 는 backends.agy_model, 마스터는 정본)")
     ap.add_argument("--allow-argon", action="store_true",
                     help="--model 로 Argon 을 고를 때만 — 사용자가 명시적으로 요청한 경우 (#830)")
+    ap.add_argument("--fallback-from", default="", help=argparse.SUPPRESS)   # `#920` 폴백 재호출 표시
     a = ap.parse_args(argv)
     # 🔴 `#832` — agy·모델 해석·요청자 설정보다 **먼저**. 실행 전 거절(종료 2)이라 사용량 행은 남기지 않는다
     #    (다른 종료 2 거절과 같은 계약 — agy 를 부르지 않았다).
@@ -393,6 +403,26 @@ def main(argv=None, *, queue=None) -> int:
         log(f"거절 — {bad_model} (출처 {want_from})")
         return 2
     log(f"요청 모델 {want} (출처 {want_from})")
+    is_argon = "argon" in want.casefold()
+
+    def to_flash(reason: str) -> int:
+        """`#920` — 명시한 Argon 호출의 한도 폴백. 같은 입력으로 Flash High 를 한 번 부른다."""
+        log(f"[주의] Argon 한도 — {reason} · {ARGON_FALLBACK} 로 넘어간다")
+        again = ["--brief-dir", a.brief_dir, "--out", a.out, "--timeout", str(a.timeout),
+                 "--model", ARGON_FALLBACK, "--fallback-from", want]
+        again += ["--project", a.project] if a.project else []
+        again += ["--remote"] if a.remote else []
+        again += ["--checkout", a.checkout] if a.checkout else []
+        return main(again, queue=queue)
+    if is_argon and not a.remote:
+        from master import agy_models                            # 마스터 전용 — fcntl
+        try:
+            left = agy_models.cooldown_left(want)
+        except Exception as e:                                   # noqa: BLE001 — 기록을 못 읽어도 호출은 된다
+            log(f"[주의] Argon 쿨다운 기록을 읽지 못했다 — {type(e).__name__}: {e}")
+            left = 0.0
+        if left > 0:
+            return to_flash(f"쿨다운 {left:.0f}초 남음")
     brief_dir = Path(a.brief_dir).resolve()
     out = Path(a.out).resolve()
     if not (brief_dir / BRIEF).is_file():
@@ -471,7 +501,22 @@ def main(argv=None, *, queue=None) -> int:
                  seconds=secs, source=SOURCE, model=actual or want, note=meta.get("note", ""))
     if rec.get("error"):
         log(f"[주의] 사용량 기록 실패 — {rec['error']}")
+    if is_argon and (why or bad_status) and not recovered:
+        evidence = "\n".join((why, err_text, stderr, stdout if not parsed else "",
+                              agy_log.read_text(encoding="utf-8", errors="replace") if agy_log.is_file() else ""))
+        if AGY_LIMIT_RE.search(evidence):
+            kept = run_dir.with_name(f"{run_dir.name}.argon-{int(time.time())}")
+            run_dir.rename(kept)                                 # 첫 시도의 근거는 지우지 않는다
+            log(f"Argon 시도 기록 보존 → {kept}")
+            if not a.remote:
+                from master import agy_models                    # 마스터 전용 — fcntl
+                try:
+                    agy_models.note_limit(want, evidence)
+                except Exception as e:                           # noqa: BLE001
+                    log(f"[주의] Argon 쿨다운 기록 실패 — {type(e).__name__}: {e}")
+            return to_flash(f"이번 호출이 한도에 걸렸다({why or status})"[:200])
     summary = {"ok": not why and not warn, "why": why or warn, "rc": rc, "seconds": round(secs, 1),
+               "fallback_from": a.fallback_from,
                "status": status, "error": err_text, "model": model,
                "requested_model": want, "requested_from": want_from,
                "actual_model": actual, "actual_from": actual_from, "model_ok": not model_why,

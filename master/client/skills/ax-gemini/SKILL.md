@@ -111,6 +111,8 @@ agy 봉투 `status` 가 `SUCCESS` 가 아니다(실측: `ERROR` + 503 용량 부
 `--remote` 는 `.ax/config.json` `backends.agy_model`). 값이 없거나 별칭·Argon 이면 **종료 2**(agy 안 부름),
 로그의 실제 모델이 요청과 다르거나 로그가 없어 모르면 **종료 1**(보고서 없음 · `.run/` 보존) — 둘 다
 사유를 그대로 보고한다. Argon 은 사용자가 명시적으로 요청할 때만 `--model <id> --allow-argon` 으로 준다.
+그 호출이 한도(429·쿨다운)에 걸리면 `gemini-3.8-flash-high` 로 한 번 넘어간다(`#920`) — 결과의
+`fallback_from` · `actual_model` 을 사용자에게 보고한다. 첫 시도 기록은 `.run.argon-<시각>/` 에 남는다.
 [주의] Codex 세션의 백그라운드 완료 통지는 확인되지 않았다 — 안 되면 포그라운드로 돌린다.
 
 [중요] 모듈이 **기록을 강제한다** — 성공·실패 모두 트윈 `usage_log.jsonl` 에 한 줄

@@ -41,7 +41,7 @@ does not start a game-source task; it serves one.**
 
     AX-ENTRY-MARK: home
 
-[중요] **Claude and Codex take turns here.** Before planning, use
+[중요] **Claude, Codex and Antigravity take turns here** (#920). Before planning, use
 [`ax-handoff`](../master/skills/ax-handoff/SKILL.md) to read the handoff and shared rules,
 cross-check actual state, and inspect master ownership and worker conductor mode separately.
 Change worker mode only when the user chooses it; a master handoff alone does not select a

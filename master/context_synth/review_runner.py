@@ -288,6 +288,49 @@ def agy_only(prompt: str, *, timeout: int = rg.REVIEW_TIMEOUT, workdir=None, log
     return out
 
 
+def codex_only(prompt: str, *, timeout: int = rg.REVIEW_TIMEOUT, workdir=None, log=None) -> str:
+    """Codex 단독 호출(`#920`) — Antigravity 작성분의 리뷰어. 실패해도 폴백하지 않는다(사용자 결정 2026-11-08)."""
+    from .. import layer2_verify as l2
+    kw = {} if workdir is None else {"workdir": str(workdir)}
+    out, _events, why = l2.call_codex_why(prompt, timeout=timeout, **kw)
+    if not (out or "").strip():
+        raise rg.ReviewChatError("Codex 실패 — " + (why or "사유 미기록"))
+    return out
+
+
+# 🔴 `#920` — 교차 계열: 작성 계열에 agy 가 있으면 Codex 가 본다. 그 밖(모름·손 커밋 포함)은 종전대로 agy.
+_REVIEWERS = {"agy": ("Antigravity", "agy_only"), "codex": ("Codex", "codex_only")}
+
+
+def reviewer_for(authors) -> str:
+    return "codex" if "agy" in (authors or ()) else "agy"
+
+
+def _ask(reviewer: str, *, workdir, log, timeout: int):
+    fn = globals()[_REVIEWERS[reviewer][1]]               # 이름으로 찾는다 — 시험 대역이 먹게
+    return lambda p, **kw: fn(p, workdir=workdir, log=log, **{"timeout": timeout, **kw})
+
+
+def commit_authors(root, commit: str, log) -> tuple:
+    """커밋의 작성 계열. 추적 라운드 → (마감 등록 전이면) 활성 잠금 순으로 본다.
+
+    [주의] 마감은 push → 등록 → 잠금 해제 순이라, 등록 전에 큐가 집어도 활성 잠금이 그 틈을 덮는다.
+    그 사이 들어온 손 커밋도 활성 잠금의 계열로 본다 — 자기 리뷰보다 안전한 쪽이다.
+    못 읽으면 종전 경로(agy)로 가되 로그를 남긴다.
+    """
+    from . import issue_track as it                                # noqa: PLC0415
+    from .. import issue_lock as il                                # noqa: PLC0415
+    try:
+        got = it.authors_of_hash(root, commit)
+        if got is not None:
+            return got
+        rec = il.current(root)
+        return tuple(rec.get("authors") or ()) if rec else ()
+    except Exception as e:                                         # noqa: BLE001
+        log(f"[리뷰큐] [주의] 작성 계열을 읽지 못했다 — {type(e).__name__}: {e} · agy 로 리뷰한다")
+        return ()
+
+
 # ── 한 회차 ─────────────────────────────────────────────────────────────────
 
 def write_draft(paths, commit: str, files: list, body: str, *, logf=None) -> str:
@@ -477,6 +520,10 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
     #    트리를 주면 지시(`_SCOPE_RULES`)에도 도구 호출 20–37회로 탐색하다 시간 초과했고, 빈
     #    디렉터리면 4–6회였다. 판단 근거는 프롬프트의 **자르지 않은 diff**·선언부·초고다.
     #    [중요] workdir 는 None 이 아니다 — 못 만들면 실패로 끝내고 라이브 트리로 가지 않는다.
+    authors = commit_authors(paths.root, commit, log)
+    reviewer = reviewer_for(authors)
+    label = _REVIEWERS[reviewer][0]
+    log(f"[리뷰큐] {commit[:8]} 리뷰어 {label} (작성 계열 {list(authors) or '미상'})")
     with ExitStack() as stack:
         ask = review_call
         if ask is None:
@@ -485,23 +532,22 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
                 empty = stack.enter_context(
                     tempfile.TemporaryDirectory(prefix="ax-review-agy-", ignore_cleanup_errors=True))
             except OSError as e:
-                why = f"agy 빈 작업 디렉터리 생성 실패 — {type(e).__name__}: {e}"
+                why = f"{label} 빈 작업 디렉터리 생성 실패 — {type(e).__name__}: {e}"
                 rq.finish(paths.root, item["id"], ok=False, why=why, logf=log)
                 res.state, res.why = "failed", why
                 return res
-            log(f"[리뷰큐] Antigravity 작업 디렉터리 {empty} (빈 디렉터리) @ {commit[:8]}"
+            log(f"[리뷰큐] {label} 작업 디렉터리 {empty} (빈 디렉터리) @ {commit[:8]}"
                 f" · 한도 {COMMIT_REVIEW_TIMEOUT}초")
-            ask = lambda p, **kw: agy_only(  # noqa: E731
-                p, workdir=empty, log=log, **{"timeout": COMMIT_REVIEW_TIMEOUT, **kw})
+            ask = _ask(reviewer, workdir=empty, log=log, timeout=COMMIT_REVIEW_TIMEOUT)
         # `#728` — 퇴고(agy)도 초고와 **같은 task_id** 로 트윈의 `usage_log.jsonl` 에 남긴다.
         #    초고는 `local:<모델>`, 퇴고는 `agy` 레인으로 갈린다(기록은 `layer2_verify.call_agy_why`).
         with usage_mod.sink(paths.usage_log, source="review", task_id=str(commit)[:12]):
             # `#888` — 퇴고 diff 는 자르지 않는다(상한은 위 초고의 로컬 모델 몫).
             reviewed = rg.review_commit(
                 paths, commit, src, chat=ask, grounding=grounding_text(body, decls),
-                provenance={"draft_model": model, "review_model": "Antigravity"},
+                provenance={"draft_model": model, "review_model": label},
                 diff_max_chars=None,
-                logf=lambda _kind, msg: log(f"[리뷰큐] Antigravity {msg}"))
+                logf=lambda _kind, msg: log(f"[리뷰큐] {label} {msg}"))
     if reviewed.error or not reviewed.written or not reviewed.format_ok:
         if reviewed.written and not reviewed.format_ok:
             # 파서가 일부 행만 읽는 일을 막되, 실패 산출물은 조사할 수 있게 보존한다.
@@ -865,6 +911,11 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
 
     from contextlib import ExitStack                              # noqa: PLC0415
     from ..work import usage as usage_mod                         # noqa: PLC0415
+    # 🔴 `#920` — 범위 끝 커밋이 속한 라운드의 작성 계열로 고른다(커밋 리뷰와 같은 판정)
+    authors = commit_authors(paths.root, end, log)
+    reviewer = reviewer_for(authors)
+    label = _REVIEWERS[reviewer][0]
+    log(f"[리뷰큐] 범위 {tag} 리뷰어 {label} (작성 계열 {list(authors) or '미상'})")
     with ExitStack() as stack:
         ask = review_call
         if ask is None:
@@ -876,15 +927,14 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
                 rq.finish(paths.root, item["id"], ok=False, why=why, logf=log)
                 res.state, res.why = "failed", why
                 return res
-            log(f"[리뷰큐] Antigravity 작업 디렉터리 {tree} @ {end[:8]} · 한도 {RANGE_REVIEW_TIMEOUT}초")
-            ask = lambda p, **kw: agy_only(p, workdir=tree, log=log,  # noqa: E731
-                                           **{"timeout": RANGE_REVIEW_TIMEOUT, **kw})
+            log(f"[리뷰큐] {label} 작업 디렉터리 {tree} @ {end[:8]} · 한도 {RANGE_REVIEW_TIMEOUT}초")
+            ask = _ask(reviewer, workdir=tree, log=log, timeout=RANGE_REVIEW_TIMEOUT)
         with usage_mod.sink(paths.usage_log, source="review", task_id=f"issue{issue}"):
             reviewed = rg.review_range(
                 paths, issue, base, end, src, chat=ask, grounding=grounding_text("", decls),
-                provenance={"review_model": "Antigravity"}, commits=len(commits),
+                provenance={"review_model": label}, commits=len(commits),
                 issue_round=rnum, findings=findings, uncovered=uncovered,
-                logf=lambda _kind, msg: log(f"[리뷰큐] Antigravity {msg}"))
+                logf=lambda _kind, msg: log(f"[리뷰큐] {label} {msg}"))
     if reviewed.error or not reviewed.written or not reviewed.format_ok:
         if reviewed.written and not reviewed.format_ok:
             bad = Path(paths.root) / rg.REVIEWS_DIRNAME / "_rejected"

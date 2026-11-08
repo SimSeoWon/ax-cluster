@@ -154,6 +154,15 @@ def lock_logf(log: Log):
     return lambda line: log("lock", line)
 
 
+# `#920` — MCP `clientInfo.name` → 작성 계열. 값은 실측(2026-11-08, 리포트 159). 계열 이름은 레인과 같다.
+CLIENT_FAMILY = {"claude-code": "claude", "codex-mcp-client": "codex", "antigravity-client": "agy"}
+
+
+def client_family(client: str) -> str:
+    """모르는 클라이언트는 `unknown` — 계열을 짐작하지 않는다."""
+    return CLIENT_FAMILY.get(str(client or "").strip(), "unknown")
+
+
 def acquire(lroot, n: int, *, branch: str, start_rev: str, why: str, by: str, log: Log) -> dict:
     """N 을 활성으로. `NO_LOCK` 이면 `skipped`. 예외는 `ok: False` 로 바꾼다."""
     from master import issue_lock as IL
@@ -378,8 +387,14 @@ def finish_record(issue_id, *, project: str, track_root_fn, lroot, lock_held: bo
     registered, track_round, track_text, root = False, None, "", None
     try:
         root = track_root_fn()
+        extra = {}
+        if lock_held and lroot is not NO_LOCK:          # `#920` — 잠금의 작성 계열을 라운드로 나른다
+            rec = IL.current(lroot)
+            if rec and rec.get("issue_id") == n and rec.get("authors"):
+                extra["authors"] = list(rec["authors"])
+                log("author", f"작성 계열 {extra['authors']}")
         reg = register(root, n, project=project, base=base, end=end, hashes=hashes,
-                       by=by, logf=lambda line: log("track", line))
+                       by=by, logf=lambda line: log("track", line), **extra)
         if not isinstance(reg, dict):
             raise RuntimeError(f"등록 반환 형식 오류: {reg!r}"[:200])
         if reg.get("ok"):

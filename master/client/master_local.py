@@ -63,6 +63,7 @@ READ_APPROVE = ("redmine_list_issues", "redmine_get_issue", "redmine_meta")
 CODEX_BEGIN = "# BEGIN AX MANAGED MCP (master-local)"
 CODEX_END = "# END AX MANAGED MCP (master-local)"
 LOG = "[master-local]"
+AGY_PROJECTS = "ax-projects"
 
 
 class MasterLocalError(RuntimeError):
@@ -81,6 +82,7 @@ class Paths:
     codex_toml: Path
     agy_json: Path
     legacy_root: Path
+    projects_token: Path | None = None  # `#920` agy ax-projects 헤더 토큰 — 비우면 그 단계를 건너뛴다(시험)
     agy_settings: Path | None = None    # agy 헤드리스 권한(`permissions.allow`) — 비우면 집 기준
 
     def __post_init__(self) -> None:
@@ -99,7 +101,8 @@ class Paths:
                    claude_json=h / ".claude.json",
                    codex_toml=h / ".codex" / "config.toml",
                    agy_json=h / ".gemini" / "config" / "mcp_config.json",
-                   legacy_root=h / ".codex" / SERVER)
+                   legacy_root=h / ".codex" / SERVER,
+                   projects_token=_auth.DEFAULT_TOKEN_FILE)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -314,19 +317,47 @@ def agy_text(existing: str, entry: dict, name: str = SERVER) -> str:
 
     [중요] 깨진 JSON 이면 **덮지 않고 멈춘다**. 0바이트(현재 상태)는 빈 설정으로 읽는다.
     """
-    txt = (existing or "").strip()
-    if txt:
-        try:
-            data = json.loads(txt)
-        except ValueError as e:
-            raise MasterLocalError(f"기존 mcp_config.json 이 깨진 JSON 이다 — 덮지 않는다 ({e})") from e
-        if not isinstance(data, dict):
-            raise MasterLocalError("기존 mcp_config.json 최상위가 객체가 아니다 — 덮지 않는다")
-    else:
-        data = {}
+    data = _agy_data(existing)
     data.setdefault("mcpServers", {})[name] = {"command": entry["command"],
                                                "args": list(entry["args"])}
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def _agy_data(existing: str) -> dict:
+    txt = (existing or "").strip()
+    if not txt:
+        return {}
+    try:
+        data = json.loads(txt)
+    except ValueError as e:
+        raise MasterLocalError(f"기존 mcp_config.json 이 깨진 JSON 이다 — 덮지 않는다 ({e})") from e
+    if not isinstance(data, dict):
+        raise MasterLocalError("기존 mcp_config.json 최상위가 객체가 아니다 — 덮지 않는다")
+    return data
+
+
+def projects_mcp_url() -> str:
+    return f"http://{bundle.MASTER_HOST}:{bundle.SERVICES['projects']}/mcp"
+
+
+def agy_projects_text(existing: str, url: str, token: str) -> str:
+    """🔴 `#920` — agy 에 `ax-projects`(HTTP)를 더한다. 일감 시작이 이 경로의 clientInfo 를 요구한다.
+
+    형식은 `agy mcp add -H … <이름> <url>` 의 산출(실측 2026-11-08). 토큰이 들어가므로 파일은 0600 이다.
+    """
+    data = _agy_data(existing)
+    data.setdefault("mcpServers", {})[AGY_PROJECTS] = {"serverUrl": url,
+                                                       "headers": {"Authorization": f"Bearer {token}"}}
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def agy_projects_matches(existing: str, url: str, token: str) -> bool:
+    """토큰 값을 드러내지 않고 항목이 맞는지만 답한다."""
+    try:
+        item = json.loads(existing or "{}").get("mcpServers", {}).get(AGY_PROJECTS) or {}
+    except (ValueError, AttributeError):
+        return False
+    return item.get("serverUrl") == url and item.get("headers") == {"Authorization": f"Bearer {token}"}
 
 
 def agy_grant(tool: str, name: str = SERVER) -> str:
@@ -590,6 +621,27 @@ def apply(p: Paths, project: str, *, facts=None) -> int:
         bad += 1
         print(f"{LOG} [실패] agy: {ex}")
 
+    # ── agy ax-projects (`#920`) — 토큰이 들어가므로 파일을 0600 으로 ─────
+    if p.projects_token is not None:
+        try:
+            url = projects_mcp_url()
+            token = p.projects_token.read_text(encoding="utf-8").strip()
+            prev = _read(p.agy_json)
+            new = agy_projects_text(prev, url, token)
+            if prev != new:
+                bk = _backup(p.agy_json, stamp)
+                _write_private(p.agy_json, new, 0o600)
+                print(f"{LOG} agy: {AGY_PROJECTS} 병합 기록 · 백업 {bk or '(원본 없음)'} · 권한 0600")
+            else:
+                os.chmod(p.agy_json, 0o600)
+                print(f"{LOG} agy: {AGY_PROJECTS} 이미 같다 — 권한만 0600 으로 확인")
+            ok = agy_projects_matches(_read(p.agy_json), url, token)
+            bad += 0 if ok else 1
+            print(f"{LOG} agy: {AGY_PROJECTS} 되읽기 {'대조 통과' if ok else '[실패] 항목이 없거나 다르다'}")
+        except (OSError, MasterLocalError) as ex:
+            bad += 1
+            print(f"{LOG} [실패] agy {AGY_PROJECTS}: {type(ex).__name__}")
+
     # ── agy 헤드리스 권한 (~/.gemini/antigravity-cli/settings.json) ──
     try:
         approve = tuple(t for t in READ_APPROVE if t in redmine_tools())
@@ -692,6 +744,15 @@ def check(p: Paths, project: str, *, smoke: bool = True) -> int:
     except Exception as ex:                                            # noqa: BLE001
         row("codex approvals", False, f"config.toml 파싱 실패 — {ex}")
     row("agy", stdio_matches(agy_get(_read(p.agy_json)), e), f"{p.agy_json} mcpServers.{SERVER}")
+    if p.projects_token is not None:                       # `#920`
+        try:
+            url = projects_mcp_url()
+            same = agy_projects_matches(_read(p.agy_json), url,
+                                        p.projects_token.read_text(encoding="utf-8").strip())
+            mode = p.agy_json.stat().st_mode & 0o777
+            row(f"agy {AGY_PROJECTS}", same and mode == 0o600, f"{url} · 권한 {oct(mode)}")
+        except OSError as ex:
+            row(f"agy {AGY_PROJECTS}", False, type(ex).__name__)
     appr = agy_approvals(_read(p.agy_settings))
     row("agy approvals", appr == tuple(sorted(READ_APPROVE)), f"allow={list(appr)}")
     rc, out = _run(["agy", "mcp", "list"], timeout=30)

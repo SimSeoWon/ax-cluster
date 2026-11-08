@@ -48,6 +48,9 @@ MCP 가 안 보이거나 실패하면 사유를 보고하고 묻는다. `ax-clie
 ## 2. 일감을 시작할 때 — 구현보다 `ax-projects:plan_start_tool` 이 먼저다
 
 판정이 `ok: false` 면 **구현하지 않는다.** 응답의 `next_action` 이 할 일이다.
+🔴 `#920` — 운영 시작은 `ax-projects:issue_start_tool` 로만 한다. 연결의 clientInfo 가 작성 계열 기록이 되어
+리뷰 큐가 교차 계열 리뷰어를 고르므로, `issue_flow.start` 파이썬 직접 호출은 거절된다. 지휘자를 교대했으면
+이어받은 세션도 이 도구를 한 번 불러 계열을 더한다(같은 worktree 면 `already`).
 
     no_spec          스펙(무엇을·완료 조건)을 사용자와 먼저 쓴다
     plan_needed      ↓ 3절 — 플랜을 짠다

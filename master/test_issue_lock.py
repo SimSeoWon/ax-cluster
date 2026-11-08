@@ -29,6 +29,20 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
+def t_note_author(tmp):
+    """`#920` — 작성 계열은 활성 기록에 중복 없이 쌓이고 보류·재개를 넘는다."""
+    acq(tmp, 7)
+    r = IL.note_author(tmp, 7, "agy", client="antigravity-client")
+    check("계열 기록", r["ok"] and r["authors"] == ["agy"], str(r))
+    IL.note_author(tmp, 7, "agy")
+    IL.note_author(tmp, 7, "claude")
+    check("중복 없이 순서대로", IL.current(tmp)["authors"] == ["agy", "claude"], str(IL.current(tmp)))
+    IL.pause(tmp, 7)
+    acq(tmp, 7)
+    check("보류·재개 뒤에도 유지", IL.current(tmp)["authors"] == ["agy", "claude"], str(IL.current(tmp)))
+    check("활성 아닌 일감은 거절", not IL.note_author(tmp, 8, "agy")["ok"])
+
+
 def run(fn):
     with tempfile.TemporaryDirectory() as d:
         try:
@@ -183,7 +197,7 @@ def t_history_cap(tmp):
 def main() -> int:
     for fn in (t_acquire_free, t_same_issue_already, t_busy_names_holder, t_pause_cycle,
                t_pause_refusals, t_release, t_corrupt_not_overwritten,
-               t_concurrent_processes, t_concurrent_threads, t_history_cap):
+               t_concurrent_processes, t_concurrent_threads, t_history_cap, t_note_author):
         run(fn)
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_issue_lock: {PASS}/{total} 통과")

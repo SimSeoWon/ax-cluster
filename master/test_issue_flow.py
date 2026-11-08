@@ -1016,6 +1016,41 @@ def _ws_project(tmp: Path, body: str, kind: str = "code") -> Path:
     return root
 
 
+def t_start_requires_mcp_client(tmp):
+    """🔴 `#920` — 운영 시작은 MCP 출처가 없으면 아무것도 하지 않고 거절한다."""
+    ev = tmp / "ev.jsonl"
+    r = IF.start(7, events_path=ev)
+    check("#920 출처 없는 운영 시작 거절", not r["ok"] and r["step"] == "client"
+          and "issue_start_tool" in r["why"], str(r)[:300])
+
+
+def t_authors_reach_track_round(tmp):
+    """시작의 clientInfo → 잠금 → 마감 라운드까지 계열이 이어진다. 교대하면 쌓인다."""
+    from master.context_synth import issue_track as IT
+    repo, lk, a, _ = two(tmp)
+    r = IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk, client="antigravity-client")
+    check("#920 시작 응답에 계열", r["ok"] and r["author"]["family"] == "agy", str(r)[:300])
+    check("#920 잠금에 계열", IL.current(lk)["authors"] == ["agy"], str(IL.current(lk)))
+    check("#920 로그에 계열 줄", any("작성 계열 agy" in x for x in r["log"]), str(r["log"]))
+    IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk, client="claude-code")
+    check("#920 재호출(교대)도 쌓인다", IL.current(lk)["authors"] == ["agy", "claude"], str(IL.current(lk)))
+    end = commit(repo, "w.txt")
+    root = twin(tmp)
+    f = IF.finish(7, confirm=True, repo=repo, noter=a.note, review_root=root, lock_root=lk,
+                  link=lambda *a_, **k: {"ok": True, "linked": 0, "not_in_queue": 0, "failed": 0})
+    check("#920 마감 ok", f.get("registered") is True, str(f)[:400])
+    check("#920 라운드에 계열", IT.authors_of_hash(root, end) == ("agy", "claude"),
+          str(IT.authors_of_hash(root, end)))
+    check("#920 라운드 밖 해시는 None", IT.authors_of_hash(root, "f" * 40) is None)
+
+
+def t_unknown_client_warns(tmp):
+    repo, lk, a, _ = two(tmp)
+    r = IF.start(7, repo=repo, getter=a.get, noter=a.note, lock_root=lk, client="other-tool")
+    check("#920 모르는 클라이언트 — 시작하되 경고", r["ok"] and r["author"]["family"] == "unknown"
+          and "other-tool" in r.get("author_warning", ""), str(r)[:300])
+
+
 def t_workspace_operational_refusals(tmp):
     """운영 호출(repo 미지정)은 config 의 master_workspace 가 정한다 — 추정 없이 거절."""
     saved = os.environ.get("AX_PROJECTS_ROOT")
@@ -1087,7 +1122,8 @@ def main() -> int:
                t_corrupt_lock_refuses, t_default_repo_is_operational_checkout,
                t_sealed_repo_start_refused, t_sealed_repo_finish_refused,
                t_wt_full_cycle, t_wt_refusals, t_wt_redmine_failure_undoes, t_wt_cancel_removes_worktree,
-               t_workspace_operational_refusals):
+               t_workspace_operational_refusals, t_start_requires_mcp_client,
+               t_authors_reach_track_round, t_unknown_client_warns):
         run(fn)
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_issue_flow: {PASS}/{total} 통과")

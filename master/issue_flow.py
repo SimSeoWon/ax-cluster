@@ -239,7 +239,50 @@ PAUSE_NOTE = INF.PAUSE_NOTE
 
 def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
           logf=None, fetch: bool = True, lock_root=None, worktree_root=None,
-          project: str = WORKSPACE_PROJECT) -> dict:
+          project: str = WORKSPACE_PROJECT, client: str = "") -> dict:
+    """일감 시작 입구 — 🔴 `#920` 운영 호출은 **MCP 출처(`client`)가 없으면 거절**한다.
+
+    `client` 는 MCP 연결의 `clientInfo.name` 이다. 시작이 성공하면 작성 계열을 잠금 기록에 남기고,
+    마감이 그것을 추적 라운드로 나른다 — 리뷰 큐가 교차 계열 리뷰어를 고르는 근거다. 파이썬 직접
+    호출은 출처를 증명하지 못하므로 운영 경로에서 받지 않는다(`ax-plan`: MCP 가 없으면 보고하고 묻는다).
+    주입 실행(`repo`·`worktree_root`·`getter`·`noter`)은 시험 자리라 출처 없이 돈다.
+    """
+    operating = repo is None and worktree_root is None and getter is None and noter is None
+    if operating and not str(client or "").strip():
+        log = _Log("start", issue_id, events_path=_resolve_events(events_path, False), logf=logf)
+        return _refuse(log, "client", "MCP 출처가 없다 — 운영 시작은 ax-projects:issue_start_tool 로만 한다(#920). "
+                                      "MCP 가 안 보이면 우회하지 말고 사유를 보고한다")
+    res = _start(issue_id, repo=repo, getter=getter, noter=noter, events_path=events_path, logf=logf,
+                 fetch=fetch, lock_root=lock_root, worktree_root=worktree_root, project=project)
+    if res.get("ok") and str(client or "").strip():
+        _note_author(res, issue_id, client, lock_root=lock_root,
+                     injected=getter is not None or noter is not None, logf=logf)
+    return res
+
+
+def _note_author(res: dict, issue_id, client: str, *, lock_root, injected: bool, logf) -> None:
+    """성공한 시작의 작성 계열을 잠금에 남긴다. 실패는 시작을 되돌리지 않고 응답·로그로 알린다."""
+    from master import issue_lock as IL
+    family = INF.client_family(client)
+    res["author"] = {"client": client, "family": family}
+    try:
+        got = IL.note_author(_resolve_lock(lock_root, injected), issue_id, family, client=client, logf=logf)
+        if got.get("ok"):
+            res.setdefault("log", []).extend(got.get("log") or [])
+            res["author"]["authors"] = got["authors"]
+            if family == "unknown":
+                res["author_warning"] = f"모르는 MCP 클라이언트 {client!r} — 리뷰는 기본 체인(agy)으로 간다"
+            return
+        why = got.get("why", "기록 실패")
+    except Exception as e:                               # noqa: BLE001 — 시작은 이미 끝났다
+        why = f"{type(e).__name__}: {e}"
+    res["author_warning"] = f"작성 계열을 기록하지 못했다({why}) — 리뷰는 기본 체인(agy)으로 간다"
+    res.setdefault("log", []).append(f"[issue_flow] #{issue_id} start.author: [주의] {res['author_warning']}")
+
+
+def _start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
+           logf=None, fetch: bool = True, lock_root=None, worktree_root=None,
+           project: str = WORKSPACE_PROJECT) -> dict:
     """일감 작업을 시작한다 — 플랜 강제 → 잠금 확인 → 로컬 브랜치 → 시작 리비전 Redmine 기록.
 
     이미 `issue/<N>` 에 서 있으면 새로 만들지 않고 그 시작점(`main` 과의 merge-base)을 돌려준다

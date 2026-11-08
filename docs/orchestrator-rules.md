@@ -1,4 +1,4 @@
-# 지휘자 공용 규칙 — Claude · Codex 공통
+# 지휘자 공용 규칙 — Claude · Codex · Antigravity 공통
 
 근거: `docs/15-orchestrator-handoff.md` §15.3 · 일감 [#384](http://192.168.0.57:8080/issues/384)
 조사: 리포트 `54`(Claude 쪽 목록화) · `55`(Codex 쪽 실측)
@@ -136,6 +136,17 @@
   재기동 뒤 `ExecMainStartTimestamp` 와 판정을 다시 확인한다. 판정에 없는 서비스는 재기동하지 않는다.
 - **그래도 멈추는 자리**: §1.1 의 관측 가능한 사건(실패 · 대상 밖 파일 · 재석 중 추측), 설계 갈림길, 파괴적 git
   연산(브랜치·파일 삭제 · force), ⑺ 전진·finalize, 자동 로드 문서·게임 소스 변경.
+
+### 1.10 지휘자 셋 · 위임 · 교차 계열 — 사용자 결정 2026-11-08 (#920)
+
+- **위임**: Claude 지휘는 Claude 서브에이전트 또는 `ax-gemini`, Codex 지휘는 Codex 서브에이전트, Antigravity 지휘는
+  코드 구현·복합 추론을 Argon(`gemini-4-argon-medium`) 서브에이전트에 맡긴다. 산출물 검증은 지휘 세션의 몫이다.
+- **Argon**: 대화형 지휘 세션에서 쓰고 한도(429·쿨다운)면 Flash High 로 바꿔 보고한다. `ax-gemini` 는 명시 호출에
+  한해 코드가 폴백한다(`gemini_report`). 내부 서브에이전트 호출은 코드가 강제하지 못하는 규칙이다. 잔여 한도를
+  미리 읽는 수단은 없다. 자동 경로(리뷰·합성·층2·작성 레인)의 Argon 금지는 그대로다.
+- **일감 시작**: 운영 시작은 `ax-projects:issue_start_tool` 로만 한다. MCP `clientInfo` 가 작성 계열 기록이 된다.
+- **리뷰 큐**: 작성 계열에 Antigravity 가 있으면 Codex 단독, 그 밖은 agy 단독이다. 둘 다 실패해도 폴백하지 않는다.
+  일감 밖 손 커밋과 모르는 클라이언트는 계열을 몰라 agy 가 본다. 층2(분산 작업)는 `exclude_author` 그대로다.
 
 ## 2. 교대 절차 (요약)
 

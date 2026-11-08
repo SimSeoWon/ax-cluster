@@ -37,6 +37,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from master import issue_lock as IL                                # noqa: E402
+from master.context_synth import issue_track as IT                # noqa: E402
 from master.context_synth import review_gen as RG                 # noqa: E402
 from master.context_synth import review_queue as Q                # noqa: E402
 from master.context_synth import review_runner as R               # noqa: E402
@@ -101,6 +103,79 @@ def _review_body():
 ## 3. 영향 분석
 런타임 오류 위험.
 """
+
+
+def _patched_reviewers(calls, *, codex=None):
+    """기본 경로(`review_call` 없음)를 타며 실제 CLI 대신 어느 리뷰어가 불렸는지만 적는다."""
+    orig = R.draft, R.agy_only, R.codex_only
+    R.draft = lambda *a, **kw: ("초안", "")
+    R.agy_only = lambda _p, **kw: calls.append(("agy", kw)) or _review_body()
+    R.codex_only = codex or (lambda _p, **kw: calls.append(("codex", kw)) or _review_body())
+    return orig
+
+
+def _restore_reviewers(orig):
+    R.draft, R.agy_only, R.codex_only = orig
+
+
+def test_antigravity_작성분은_codex가_본다():
+    root, head = make_repo()
+    IT.register(root, 5, project="P", base="a" * 40, end=head, hashes=[head], authors=["agy"])
+    Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
+    calls, lines = [], []
+    orig = _patched_reviewers(calls)
+    try:
+        r = R.run_once(Paths(root), logf=lines.append)
+    finally:
+        _restore_reviewers(orig)
+    check("#920 Antigravity 작성분 → Codex 한 번", [c[0] for c in calls] == ["codex"], str(calls))
+    check("#920 빈 작업 디렉터리·한도 전달", calls[0][1].get("workdir") and calls[0][1].get("timeout") == R.COMMIT_REVIEW_TIMEOUT,
+          str(calls[0][1]))
+    check("#920 로그에 리뷰어", any("리뷰어 Codex" in x and "agy" in x for x in lines), str(lines)[:400])
+    check("#920 리뷰 출처 Codex", r.written and "Codex" in Path(r.written).read_text(encoding="utf-8"), r.written)
+
+
+def test_마감_등록_전에도_잠금으로_가른다():
+    """push 뒤 등록 전에 큐가 집는 틈 — 활성 잠금의 계열이 덮는다."""
+    root, head = make_repo()
+    IL.acquire(root, 5, branch="issue/5", start_rev="a" * 40)
+    IL.note_author(root, 5, "agy")
+    check("#920 등록 전 — 잠금의 계열", R.commit_authors(root, head, lambda m: None) == ("agy",))
+    IL.release(root, 5, op="cancel")
+    check("#920 잠금도 없으면 미상", R.commit_authors(root, head, lambda m: None) == ())
+    check("#920 미상은 agy", R.reviewer_for(()) == "agy")
+
+
+def test_다른_계열은_agy_그대로():
+    for authors in (["claude"], ["codex"], ["unknown"], []):
+        root, head = make_repo()
+        IT.register(root, 5, project="P", base="a" * 40, end=head, hashes=[head], authors=authors)
+        Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
+        calls = []
+        orig = _patched_reviewers(calls)
+        try:
+            R.run_once(Paths(root))
+        finally:
+            _restore_reviewers(orig)
+        check(f"#920 작성 {authors or '없음'} → agy 그대로", [c[0] for c in calls] == ["agy"], str(calls))
+
+
+def test_codex_실패는_폴백하지_않는다():
+    root, head = make_repo()
+    IT.register(root, 5, project="P", base="a" * 40, end=head, hashes=[head], authors=["agy"])
+    Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
+    calls = []
+
+    def boom(_p, **_kw):
+        calls.append(("codex", {}))
+        raise RG.ReviewChatError("Codex 실패 — 한도")
+    orig = _patched_reviewers(calls, codex=boom)
+    try:
+        r = R.run_once(Paths(root))
+    finally:
+        _restore_reviewers(orig)
+    check("#920 Codex 실패 — 다른 리뷰어를 부르지 않는다", [c[0] for c in calls] == ["codex"], str(calls))
+    check("#920 Codex 실패 — 항목은 성공이 아니다", r.state != "done", r.state)
 
 
 def test_로컬뒤_antigravity가_퇴고한다():
@@ -807,7 +882,19 @@ def test_agy_하트비트_배선():
     shutil.rmtree(root)
     # 범위 리뷰 자리 — 기본 경로는 유닛이 타지 않으므로 배선 문장을 직접 본다
     src = inspect.getsource(R.run_range)
-    check("⑰ 범위 리뷰 경로도 log 를 넘긴다", "agy_only(p, workdir=tree, log=log" in src)
+    check("⑰ 범위 리뷰 경로가 _ask 에 log 를 넘긴다", "_ask(reviewer, workdir=tree, log=log" in src)
+    seen = {}
+    keep_agy, keep_codex = R.agy_only, R.codex_only
+    R.agy_only = lambda _p, **kw: seen.update(agy=kw.get("log")) or "x"
+    R.codex_only = lambda _p, **kw: seen.update(codex=kw.get("log")) or "x"
+    try:
+        marker = lambda m: None                                   # noqa: E731
+        R._ask("agy", workdir="/w", log=marker, timeout=1)("p")
+        R._ask("codex", workdir="/w", log=marker, timeout=1)("p")
+    finally:
+        R.agy_only, R.codex_only = keep_agy, keep_codex
+    check("⑰ _ask 가 두 리뷰어 모두에 그 log 를 넘긴다",
+          seen.get("agy") is marker and seen.get("codex") is marker, str(seen))
 
 
 if __name__ == "__main__":
@@ -824,7 +911,9 @@ if __name__ == "__main__":
                test_퇴고는_온전한_diff_초고는_잘린_diff, test_시간_예산은_유닛과_같다,
                test_쿨다운은_시도를_쓰지_않고_회차를_멈춘다,
                test_종합_리뷰_회차_기록이_없으면_실패다,
-               test_agy_하트비트_배선):
+               test_agy_하트비트_배선, test_antigravity_작성분은_codex가_본다,
+               test_마감_등록_전에도_잠금으로_가른다, test_다른_계열은_agy_그대로,
+               test_codex_실패는_폴백하지_않는다):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

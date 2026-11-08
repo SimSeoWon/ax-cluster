@@ -57,6 +57,13 @@ if sys.argv[1:] == ["--version"]:
     print("9.9.9"); sys.exit(0)
 open(os.environ["FAKE_AGY_ARGV"], "w").write(json.dumps(sys.argv[1:]))
 mode = os.environ.get("FAKE_AGY_MODE", "ok")
+if mode == "argonlimit":
+    with open(os.environ["FAKE_AGY_ARGV"] + ".calls", "a") as f:
+        f.write(sys.argv[sys.argv.index("--model") + 1] + "\\n")
+    if "argon" in sys.argv[sys.argv.index("--model") + 1]:
+        print("RESOURCE_EXHAUSTED: code 429", file=sys.stderr); sys.exit(3)
+    os.environ["FAKE_AGY_LABEL"] = "Gemini 3.8 Flash (High)"
+    mode = "ok"
 LABEL = ('I1009 model_config_manager.go:327] Propagating selected model override to backend: label="'
          + os.environ.get("FAKE_AGY_LABEL", "Gemini 3.8 Flash (Medium)") + '"')
 GEN = "I1009 http_helpers.go:315] URL: https://x/v1internal:streamGenerateContent?alt=sse"
@@ -287,6 +294,39 @@ def main() -> int:
         check("  [주의] 봉투 오류가 없던 [4b]·[4d] 의 사유 문구는 agy 오류 접두 없이 그대로",
               not why_statuserror.startswith("agy 오류:") and not why_mismatch.startswith("agy 오류:"),
               f"{why_statuserror!r} {why_mismatch!r}")
+
+        print("\n[4d-1] #920 명시 Argon 의 한도 폴백")
+        from master import agy_models as A
+        check("한도 패턴이 agy_models 와 같다", G.AGY_LIMIT_RE.pattern == A._LIMIT_RE.pattern)
+        state = tmp / "agy-state.json"
+        os.environ.update({"FAKE_AGY_MODE": "argonlimit", "AX_AGY_STATE_PATH": str(state)})
+        calls_file = Path(os.environ["FAKE_AGY_ARGV"] + ".calls")
+        calls_file.unlink(missing_ok=True)
+        o = research / "2026-11-08-argon-fallback.md"
+        rc = G.main(["--project", "AXCluster", "--model", "gemini-4-argon-medium", "--allow-argon",
+                     "--brief-dir", str(brief), "--out", str(o)])
+        res = json.loads((o.with_suffix(".run") / "run.json").read_text(encoding="utf-8"))
+        check("한도 → Flash High 로 재호출 · 보고서", rc == 0 and o.is_file()
+              and calls_file.read_text().split() == ["gemini-4-argon-medium", "gemini-3.8-flash-high"],
+              calls_file.read_text())
+        check("결과에 폴백 출처 · 실제 모델", res.get("fallback_from") == "gemini-4-argon-medium"
+              and res.get("actual_model") == "gemini-3.8-flash-high", str(res))
+        check("첫 시도 기록 보존", any(".argon-" in x.name for x in research.iterdir()),
+              str([x.name for x in research.iterdir()]))
+        check("쿨다운 기록", A.cooldown_left("gemini-4-argon-medium", state_path=state) > 0)
+        calls_file.unlink()
+        o = research / "2026-11-08-argon-cooldown.md"
+        rc = G.main(["--project", "AXCluster", "--model", "gemini-4-argon-medium", "--allow-argon",
+                     "--brief-dir", str(brief), "--out", str(o)])
+        check("쿨다운 중이면 Argon 을 부르지 않는다", rc == 0
+              and calls_file.read_text().split() == ["gemini-3.8-flash-high"], calls_file.read_text())
+        calls_file.unlink()
+        o = research / "2026-11-08-flash-limit.md"
+        rc = G.main(["--project", "AXCluster", "--model", "gemini-3.8-flash-medium",
+                     "--brief-dir", str(brief), "--out", str(o)])
+        os.environ.pop("AX_AGY_STATE_PATH", None)
+        check("Argon 이 아닌 호출은 폴백 없음", calls_file.read_text().split() == ["gemini-3.8-flash-medium"],
+              calls_file.read_text())
 
         print("\n[4e] Argon 은 --model + --allow-argon 일 때만")
         os.environ.update({"FAKE_AGY_MODE": "ok", "FAKE_AGY_LABEL": "Gemini 4 Argon"})

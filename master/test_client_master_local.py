@@ -277,6 +277,30 @@ def test_apply_writes_root_and_files() -> None:
         check("agy 권한 파일(임시 집)", str(p.agy_settings).startswith(str(tmp))
               and ml.agy_approvals(p.agy_settings.read_text()) == tuple(sorted(ml.READ_APPROVE)))
         check("옛 루트는 남긴다", p.legacy_root.exists() and "지우지 않았다" in out)
+        # `#920` — ax-projects 는 토큰이 들어가므로 0600, 다른 항목 보존, 값은 출력 안 함
+        pt = tmp / "projects-token"
+        pt.write_text("projects-secret-920\n")
+        p.projects_token = pt
+        buf = io.StringIO()
+        ml._run = lambda argv, timeout=60: (1, "stub")           # 대역 — 실제 CLI 설정을 건드리지 않는다
+        ml.shutil.which = lambda name: None
+        ml.codex_get_live = lambda name=ml.SERVER: {
+            "enabled": True, "enabled_tools": None,
+            "transport": {"type": "stdio", **ml.entry_for(p), "cwd": None}}
+        try:
+            with contextlib.redirect_stdout(buf):
+                ml.apply(p, "AXCluster", facts=f)
+        finally:
+            ml._run, ml.shutil.which, ml.codex_get_live = keep
+        out920, cfg920 = buf.getvalue(), json.loads(p.agy_json.read_text())
+        url = ml.projects_mcp_url()
+        check("#920 agy ax-projects 항목", ml.agy_projects_matches(p.agy_json.read_text(), url, "projects-secret-920")
+              and cfg920["mcpServers"]["ax-projects"]["serverUrl"] == url, str(list(cfg920["mcpServers"])))
+        check("#920 ax-client 보존", ml.stdio_matches(ml.agy_get(p.agy_json.read_text()), ml.entry_for(p)))
+        check("#920 파일 0600", (p.agy_json.stat().st_mode & 0o777) == 0o600)
+        check("#920 출력에 토큰 값 없음", "projects-secret-920" not in out920)
+        check("#920 다른 토큰이면 불일치", not ml.agy_projects_matches(p.agy_json.read_text(), url, "x"))
+        p.projects_token = None
         check("CLI 미호출(claude 부재)", not calls, str(calls))
         # 두 번째 apply — 파일 절은 「이미 같다」
         buf = io.StringIO()
