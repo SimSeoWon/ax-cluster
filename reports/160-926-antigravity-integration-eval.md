@@ -59,16 +59,17 @@ Antigravity 세션에서 `call_mcp_tool`을 통해 `ax-projects` 서버(`:8103`)
   2. Argon 서브에이전트가 독립 컨텍스트에서 산출물 초안 및 분석 수행 후 결과 반환
   3. 지휘 세션이 반환된 산출물을 직접 대조·검증하여 워크스페이스에 반영
 
-### 2.3 대화형 UX 및 권한 게이트 (태스크 단위 완결 원칙)
+### 2.3 대화형 UX 및 권한 게이트 실측 (수동 승인 반복 확인)
 
-작업 중 도구 호출마다 승인 창이 뜨거나 턴이 끊기는 문제를 방지하기 위해 설정한 실행 정책을 실증하였다.
+작업 중 도구 호출마다 승인 창이 뜨는지 실측하였다.
 
-- **적용 설정**:
-  - 실행 모드: `mode: "accept-edits"` (`--mode accept-edits`)
-  - 도구 실행 정책: `toolExecutionPolicy: "always-proceed"`
-- **실측 결과**:
-  - 파일 읽기/쓰기(`read_file`, `write_file`, `edit_file`), 셸 명령 실행(`run_command`), MCP 도구 호출(`call_mcp_tool`) 전 과정에서 **중간 승인 팝업 0건** 달성
-  - 사용자와의 상호작용이 **① 태스크 착수/플랜 승인 시점**과 **② 태스크 완료/결과 판단 보고 시점** 두 곳으로 엄격히 고정되어, 태스크 내부 구현·검증이 단일 호흡으로 완결됨을 확인하였다.
+- **적용 설정 및 한계**:
+  - 실행 모드: `mode: "accept-edits"` (`edit_file` 등 파일 편집 승인은 생략됨)
+  - 가상 설정 한계: 기존 인수인계서에 언급된 `toolExecutionPolicy: "always-proceed"`는 Antigravity 바이너리에 실재하지 않는 설정으로 효과가 없었다.
+- **실측 결과 및 결함 확인**:
+  - `ax-projects` MCP 도구(`issue_start_tool`, `plan_set_tool`, `plan_transition_tool`, `issue_finish_tool` 등)와 셸 명령(`run_command`)이 실행될 때마다 사용자의 UI에 **도구 실행 권한 요청 팝업이 반복 발생**하였다.
+  - 사용자가 승인할 때마다 `~/.gemini/antigravity-cli/settings.json`의 `permissions.allow`에 도구가 하나씩 사후 등록되는 구조였다.
+  - 이에 따라 도구 호출 시 중간 팝업 없이 태스크 단위로 완결하기 위한 후속 과제로 **#928(화이트리스트 일괄 사전 등록 및 마스터 생성기 연결)**을 즉시 발의하여 해결을 진행하였다.
 
 ### 2.4 이종 패밀리 교차 리뷰 라우팅 (`Codex` 단일 검증)
 
@@ -101,7 +102,7 @@ Antigravity 클라이언트가 `:8103` Streamable HTTP MCP 서버(`ax-projects`)
 | `issue_start_tool` 출처 기록 | `author.family == 'agy'`, `client == 'antigravity-client'` | `family: 'agy'`, `client: 'antigravity-client'`, `authors: ['agy']` | **통과** |
 | 일감 worktree 및 플랜 가드 | 미플랜 시 `step=plan` 거절, 승인 후 worktree 생성 | `.ax-issues/926` (`start_rev: e937622`) 생성 및 가드 작동 확인 | **통과** |
 | Argon 서브에이전트 위임 | 복합 추론·구현 Argon 위임 및 지휘 세션 검증 | `gemini-4-argon-medium` 위임 및 산출물 검증 완료 | **통과** |
-| 권한 게이트 및 대화형 UX | 중간 팝업 0건, 착수/완료 2회 상호작용 고정 | `accept-edits` + `always-proceed` 하에서 무중단 완결 확인 | **통과** |
+| 권한 게이트 및 대화형 UX | 중간 팝업 0건, 착수/완료 2회 상호작용 고정 | 툴마다 개별 승인 팝업 반복 발생 확인 (후속 #928로 이관) | **미흡 (후속 해결)** |
 | MCP Streamable HTTP 호출 | `:8103` `ax-projects` 도구 정상 호출 | `roots/list_changed` 400 무관하게 모든 POST 도구 호출 200 OK | **통과** |
 | 교차 리뷰 라우팅 | `author.family == 'agy'` 시 `Codex` 단독 배정 | `Codex` 단일 리뷰 모델 선택 (agy 폴백 없음) 확인 | **통과** |
 

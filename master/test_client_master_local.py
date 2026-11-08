@@ -343,6 +343,10 @@ def test_agy_permissions() -> None:
         except ml.MasterLocalError:
             check(f"agy 권한: 거절 {bad[:20]}", True)
     check("agy 권한: 깨진 파일 되읽기는 빈 값", ml.agy_approvals("{broken") == ())
+    # #928: 기본 CLI 명령 접두사 함께 추가 검증
+    with_cmds, added_cmds = ml.agy_permissions_text("", ml.READ_APPROVE, extra_commands=ml.AGY_BASE_COMMANDS)
+    check("agy 권한: 기본 CLI 명령 포함", all(cmd in json.loads(with_cmds)["permissions"]["allow"] for cmd in ml.AGY_BASE_COMMANDS))
+    check("agy 권한: READ_APPROVE 포함 확인", set(ml.READ_APPROVE).issubset(set(ml.agy_approvals(with_cmds))))
 
 
 def test_cli_wiring() -> None:

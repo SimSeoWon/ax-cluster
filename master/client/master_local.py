@@ -64,6 +64,28 @@ CODEX_BEGIN = "# BEGIN AX MANAGED MCP (master-local)"
 CODEX_END = "# END AX MANAGED MCP (master-local)"
 LOG = "[master-local]"
 AGY_PROJECTS = "ax-projects"
+AGY_BASE_COMMANDS = (
+    "command(git)",
+    "command(git -C)",
+    "command(python3)",
+    "command(.venv/bin/python)",
+    "command(/home/sim/ax-cluster/.venv/bin/python)",
+    "command(AX_PROJECTS_ROOT=)",
+    "command(cd /home/sim/ax-cluster)",
+    "command(systemctl)",
+    "command(journalctl)",
+    "command(agy)",
+    "command(rg)",
+    "command(ls)",
+    "command(cat)",
+    "command(sed)",
+    "command(head)",
+    "command(tail)",
+    "command(grep)",
+    "command(diff)",
+    "command(find)",
+    "command(which)",
+)
 
 
 class MasterLocalError(RuntimeError):
@@ -365,13 +387,13 @@ def agy_grant(tool: str, name: str = SERVER) -> str:
     return f"mcp({name}/{tool})"
 
 
-def agy_permissions_text(existing: str, approve: tuple, name: str = SERVER) -> tuple:
+def agy_permissions_text(existing: str, approve: tuple, name: str = SERVER,
+                         extra_commands: tuple = ()) -> tuple:
     """agy `settings.json` 의 새 본문과 더한 항목 → `(본문, added)`.
 
     [중요] 헤드리스(`agy -p`)는 권한을 물을 수 없어 MCP 호출을 **자동 거부**한다(실측
-    2026-10-05). 그래서 읽기 셋(`READ_APPROVE`)만 허용에 넣는다 — Codex 의 `approve` 와 같은 집합.
-    쓰기는 넣지 않는다(사람이 보는 세션에서 묻는다). 다른 키·다른 허용 항목은 보존하고,
-    깨진 JSON 이면 덮지 않고 멈춘다.
+    2026-10-05). 그래서 읽기 셋(`READ_APPROVE`)과 기본 클러스터 명령 접두사(`extra_commands`)를
+    허용에 넣는다. 다른 키·다른 허용 항목은 보존하고, 깨진 JSON 이면 덮지 않고 멈춘다.
     """
     txt = (existing or "").strip()
     if txt:
@@ -389,7 +411,8 @@ def agy_permissions_text(existing: str, approve: tuple, name: str = SERVER) -> t
     allow = perms.setdefault("allow", [])
     if not isinstance(allow, list):
         raise MasterLocalError("agy settings.json 의 permissions.allow 가 목록이 아니다 — 덮지 않는다")
-    added = [g for g in (agy_grant(t, name) for t in approve) if g not in allow]
+    to_add = [agy_grant(t, name) for t in approve] + [c for c in extra_commands if isinstance(c, str)]
+    added = [g for g in to_add if g not in allow]
     allow.extend(added)
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n", tuple(added)
 
@@ -508,7 +531,7 @@ def plan(p: Paths, project: str) -> list:
         out.append(f"{LOG} codex: [실패] {ex}")
     out.append(f"{LOG} agy: {p.agy_json} 에 병합 (백업 후)")
     try:
-        _, added = agy_permissions_text(_read(p.agy_settings), READ_APPROVE)
+        _, added = agy_permissions_text(_read(p.agy_settings), READ_APPROVE, extra_commands=AGY_BASE_COMMANDS)
         out.append(f"{LOG} agy 권한: " + ("이미 같다" if not added else
                    f"{p.agy_settings} permissions.allow 에 더한다 (백업 후) — {', '.join(added)}"))
     except MasterLocalError as ex:
@@ -646,15 +669,15 @@ def apply(p: Paths, project: str, *, facts=None) -> int:
     try:
         approve = tuple(t for t in READ_APPROVE if t in redmine_tools())
         prev = _read(p.agy_settings)
-        new, added = agy_permissions_text(prev, approve)
+        new, added = agy_permissions_text(prev, approve, extra_commands=AGY_BASE_COMMANDS)
         if not added:
-            print(f"{LOG} agy 권한: 읽기 {len(approve)}개 이미 허용 — 쓰지 않는다")
+            print(f"{LOG} agy 권한: 읽기 {len(approve)}개 및 기본 명령 이미 허용 — 쓰지 않는다")
         else:
             bk = _backup(p.agy_settings, stamp)
             mode = (p.agy_settings.stat().st_mode & 0o777) if p.agy_settings.exists() else 0o644
             _write_private(p.agy_settings, new, mode)
             print(f"{LOG} agy 권한: settings.json 백업 → {bk or '(원본 없음)'} · 더함 — {', '.join(added)}")
-        ok = agy_approvals(_read(p.agy_settings)) == tuple(sorted(approve))
+        ok = set(approve).issubset(set(agy_approvals(_read(p.agy_settings))))
         bad += 0 if ok else 1
         print(f"{LOG} agy 권한: 파일 되읽기 {'대조 통과' if ok else '[실패] 허용 목록이 다르다'}")
     except MasterLocalError as ex:
@@ -754,7 +777,7 @@ def check(p: Paths, project: str, *, smoke: bool = True) -> int:
         except OSError as ex:
             row(f"agy {AGY_PROJECTS}", False, type(ex).__name__)
     appr = agy_approvals(_read(p.agy_settings))
-    row("agy approvals", appr == tuple(sorted(READ_APPROVE)), f"allow={list(appr)}")
+    row("agy approvals", set(READ_APPROVE).issubset(set(appr)), f"allow={list(appr)}")
     rc, out = _run(["agy", "mcp", "list"], timeout=30)
     row("agy mcp list", rc == 0 and SERVER in out, f"rc={rc}")
     if smoke:
