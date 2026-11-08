@@ -1,8 +1,8 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-08 17:25 Claude 체크포인트(#898·#886·#917 마감 · #884·#885·#887·#915 종결 후). 항목·진행의 정본은 Redmine이다.
+> 2026-11-08 17:45 Claude 체크포인트(#898·#886·#917·#918 마감 · #884·#885·#887·#915 종결 후). 항목·진행의 정본은 Redmine이다.
 > 이전 상세는 Git `d946ba7`(운영 체크포인트)·`54b5632`(#898 Codex→Claude 인계본)의 이 파일·리포트138~148·각 일감 노트에 있다.
-> 진행 중 일감·일감 잠금은 없다. #917 까지 배달·재기동 반영(사용자 「배달하고 재기동까지 다 승인」).
+> 진행 중 일감·일감 잠금은 없다. #918 까지 배달 반영 · ax-broker 재기동(#898 `auth.py` 뒤 옛 코드였다).
 
 ## 🔴 오늘 오후 바뀐 규칙 (사용자 결정 2026-11-08)
 
@@ -61,6 +61,7 @@
 | #898 | 요청자 관리 도구 8101 대행 — 리포트 148 (위) | `54b5632` |
 | #886 | 마스터 로컬 잔재 정리(아래) + `cleanup machines` 가 task/·attempt/ 밖 로컬 브랜치도 열거 — 리포트 149 | `86e1351` |
 | #917 | R240 수용 4건(워터마크 검사 1회화 · 공개 이름 · 테스트 임시 루트) — 리포트 150 | `93d7688` |
+| #918 | 서비스 신선도 두 등급 — 직접 경로 [중요] stale · import 의존(정적 폐포) [주의] 「재기동 권장」(rc 미반영) — 리포트 151 | `bee9ddc` |
 | #884·#885·#887·#915 | 코드 변경 없이 종결 — #884 T7 마감(#889 로 게이트 대체·언리얼은 첫 실제 일감에서) · #885 는 #897·#912·#907 로 해소 · #887 은 #888(480초·전체 diff)로 해소 · #915 는 #887 중복 | — |
 
 - 등록: **#908**·**#911**·**#916** 아이디어(일감 아님 — #916 = 배달 뒤 인수인계 커밋이 워커를 1커밋 뒤처지게 하는 맞물림).
@@ -71,12 +72,13 @@
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`93d7688`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`bee9ddc`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 |
-| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `04a83b7` 배달·검사 3/3 OK — 이 문서 커밋 직후 한 번 더 배달해 출처를 맞춘다(#916) |
+| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `bee9ddc` 배달·검사 3/3 OK — 이 문서 커밋 직후 한 번 더 배달해 출처를 맞춘다(#916) |
 
-- 상주 재기동: ax-projects 17:20:28 · ax-task-queue 17:20:30(#917) · ax-broker 12:31:47(#897).
+- 상주 재기동: ax-projects 17:20:28 · ax-task-queue 17:20:30(#917) · ax-broker 17:39:08(#918 — 기동 기록에 의존 목록 있음).
+  ax-projects·ax-task-queue 는 #918 이전 기동이라 update 에 「의존 판정 불가 — 다음 재기동부터」 [주의] 가 뜬다(실패 아님).
 - `.2` 검사의 `[주의] 홈 중복 스킬 ~/.agents/skills/ax-work`(#661 부류)는 손대지 않았다.
 - #886 정리(사용자 승인 13건): fix/R* 8 · worktree ax-900-local·ax-advance-…4a7db0e4 삭제. 미병합 증거는
   `refs/ax/pruned/worktree/ax-788-work`(b510d2f)·`refs/ax/pruned/task/<774·780 W>/base`(cfd986a·c7ede9e)로 보존 뒤 정리,
@@ -95,9 +97,9 @@
 ## 유지할 운영 상태
 
 - 마스터 담당 기록 **claude(11-08 16:41)**, 워커 전역 codex(state, 10-18). Codex 가 실제 인수하면 `ax-handoff` 절차로 기록한다.
-- ax-projects·ax-task-queue active(17:20) · ax-broker active(12:31), ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
+- ax-projects·ax-task-queue active(17:20) · ax-broker active(17:39), ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
 - 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음.
-- #884~#887·#893~#907·#909·#910·#912·#915·#917 완료: 리포트138~150·Redmine. 중복 마감·산출물 재생성 금지.
+- #884~#887·#893~#907·#909·#910·#912·#915·#917·#918 완료: 리포트138~151·Redmine. 중복 마감·산출물 재생성 금지.
 - #890 R251·R252 및 후속 리뷰 처분은 최신 목록·코드와 대조 후 사용자 결정.
 - 큐/스풀 #709·#211·#650, ax-review-788 반려#821, `refs/ax/pruned/*`(#886), MotionForge·NS 잔재는 보존한다.
 - 미결: doc_sync 의존 등록 보강, #883 중복 플랜 제목, 훅 wait 일시오류 비대칭, 마스터 MCP 토큰 평문
@@ -106,8 +108,8 @@
 ## 바로 다음 작업
 
 1. `ax-handoff`로 이 문서와 실제 상태(운영 main·`.ax-issues` 비어 있음·잠금 없음)를 대조한다.
-2. [주의] 서비스 신선도 검사(`service_freshness`)의 감시 경로에 `master/context_synth` 가 없다 — ax-projects·ax-task-queue 가
-   `issue_infra` 를 거쳐 `issue_track` 등을 쓰는데 그 변경은 「최신」으로 보인다(#917 에서 확인, 재기동은 승인받아 함).
+2. 서비스 신선도는 #918 부터 두 등급이다 — update 의 「[주의] 마스터 서비스 의존 모듈 — 재기동 권장」은 표시만이고
+   재기동은 여전히 승인 사항이다. 감시 직접 경로(서비스 디렉터리) 변경만 [중요]·check FAIL 이다.
 3. #898 실사용 확인은 남아 있다 — 게임 프로젝트 마운트 전환 뒤 `.33` 요청자 세션에서 새 `ax-client` 관리 도구를 한 번 불러 본다(사용자 결정).
 4. 다음 일감은 사용자가 고른다. 시작은 `issue_start_tool`.
 5. 커밋·push·재기동·⑦ 전진·finalize는 기존 승인 규칙을 따른다. 다른 일감을 자동 시작하지 않는다.
