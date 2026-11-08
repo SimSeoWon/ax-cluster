@@ -89,6 +89,7 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   not to re-enter — read it once before starting a new area.
   [중요] **Do not pick the next task yourself** — M1 failed that way (I chose an order, dug into one
   piece, declared it "complete", repeated). The order is the user's call.
+- [중요] **요청·판단은 태스크 단위로 고정한다** (사용자 결정 2026-11-08) — 사용자와의 질의/승인 요청은 오직 **① 일 시작할 때(태스크 착수/승인)**와 **② 일 끝났을 때(태스크 완료/판단 보고)** 둘로 고정한다. 에러(실패·차단·rc≠0) 시에만 예외로 즉시 보고하고 멈춘다. 태스크 내부에서 코드 한 줄, 도구 호출마다 불필요하게 턴을 끊거나 중간 요청을 하지 않는다.
 - [중요] **애매하면 묻는다 — 임의 판단으로 좁히지 않는다** (사용자 2026-08-13, 세 번 반복된 실패 ·
   원전 3조). 애매함은 둘이다: **설계의 갈림길**, 그리고 **「작업 지시인지 단순 질문인지」**.
   [주의] **짧은 수긍(`응`·`그래`)이 가장 위험하다 — 앞에 물음이 없었으면 승인이 아니라 수긍일 수 있다**
