@@ -1,0 +1,77 @@
+{
+  "timestamp": "2026-11-08T18:02:12+0900",
+  "scenario1_review": {
+    "gemini-3.8-flash-medium": {
+      "ok": true,
+      "duration_seconds": 59.044220627,
+      "usage": {
+        "input_tokens": 30654,
+        "output_tokens": 6874,
+        "thinking_tokens": 5905,
+        "cache_read_tokens": 93587,
+        "total_tokens": 37528
+      },
+      "verdicts_count": 0,
+      "verdicts": {},
+      "has_verdict_section": false,
+      "mentioned_files": [],
+      "response_preview": "### master\n\n## 1. 변경분 코딩 컨벤션\n| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n|---|---|---|---|---|\n\n## 2. 변경분 버그·안전성\n| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n|---|---|---|---|---|\n\n## 3. 영향 분석\n- `default_repo()`가 색인기 미러(`track.local_clone`) 대신 모듈 상위의 운영 저장소(`REPO`)를 반환하도록 복귀하여, 일감 작업이 색인 미러가 아닌 운영 저장소에서 수행되도록 정상화됨.\n- `_sealed()` 가드를 추가하여 `origin`의 push URL이 `DISABLED`로 시작하는 봉인 저장소인 경우 `start`와 `finish` 실행 시 브랜치 생성 및 push 전에 거절(`step=\"repo\"`)하도록 안전장치가 적용됨.\n- `pause` 및 `cancel`에는 `_sealed()` 가드를 두지 않아 봉인된 저장소에 잘못 생성된 브랜치가 있",
+      "full_response": "### master\n\n## 1. 변경분 코딩 컨벤션\n| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n|---|---|---|---|---|\n\n## 2. 변경분 버그·안전성\n| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n|---|---|---|---|---|\n\n## 3. 영향 분석\n- `default_repo()`가 색인기 미러(`track.local_clone`) 대신 모듈 상위의 운영 저장소(`REPO`)를 반환하도록 복귀하여, 일감 작업이 색인 미러가 아닌 운영 저장소에서 수행되도록 정상화됨.\n- `_sealed()` 가드를 추가하여 `origin`의 push URL이 `DISABLED`로 시작하는 봉인 저장소인 경우 `start`와 `finish` 실행 시 브랜치 생성 및 push 전에 거절(`step=\"repo\"`)하도록 안전장치가 적용됨.\n- `pause` 및 `cancel`에는 `_sealed()` 가드를 두지 않아 봉인된 저장소에 잘못 생성된 브랜치가 있더라도 사용자가 취소하거나 빠져나올 수 있도록 유지됨.\n- `#905`에서 거론되었던 \"운영 체크아웃에서 작업할 때 서비스 코드가 미커밋 상태에 노출될 수 있는 점\"은 복귀로 인해 다시 열리며 후속 일감에서 다룰 과제로 명시됨.\n- `test_issue_flow.py`에 기본 저장소 반환 검증 및 봉인 저장소 대상 `start`/`finish` 거절 검증 테스트가 추가되어 회귀를 방지함.\n\n### master/projects\n\n## 1. 변경분 코딩 컨벤션\n| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n|---|---|---|---|---|\n\n## 2. 변경분 버그·안전성\n| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n|---|---|---|---|---|\n\n## 3. 영향 분석\n- `issue_start_tool`, `issue_finish_tool`, `issue_pause_tool`, `issue_cancel_tool`의 docstring이 `#906` 정책(운영 저장소 작업 기준, 색인 미러 봉인 및 거절 규칙)에 맞게 갱신됨.\n- 인터페이스 시그니처나 내부 로직 변경은 없으므로 기존 MCP 호출자 및 에이전트 도구 사용에 부정적 영향 없음.\n\n### master/skills/ax-plan\n\n## 1. 변경분 코딩 컨벤션\n| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n|---|---|---|---|---|\n\n## 2. 변경분 버그·안전성\n| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n|---|---|---|---|---|\n\n## 3. 영향 분석\n- `ax-plan` 스킬 문서의 작업 저장소 경로 안내가 운영 저장소(`/home/sim/ax-cluster`)로 정정되고, `track.local_clone`은 색인 추적 전용(push 봉인)임을 명시하여 에이전트가 색인 미러에 브랜치를 생성하지 않도록 가이드가 보강됨.\n"
+    },
+    "gemini-4-argon-medium": {
+      "ok": true,
+      "duration_seconds": 18.962173319,
+      "usage": {
+        "input_tokens": 17239,
+        "output_tokens": 1069,
+        "thinking_tokens": 636,
+        "cache_read_tokens": 0,
+        "total_tokens": 18308
+      },
+      "verdicts_count": 0,
+      "verdicts": {},
+      "has_verdict_section": false,
+      "mentioned_files": [],
+      "response_preview": "### master\n\n## 1. 변경분 코딩 컨벤션\n| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n|---|---|---|---|---|\n\n## 2. 변경분 버그·안전성\n| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n|---|---|---|---|---|\n\n## 3. 영향 분석\n`default_repo()`가 색인 미러(`track.local_clone`) 대신 모듈이 위치한 운영 저장소(`REPO`)를 반환하도록 복원되어, 기본 경로로 호출하는 `start`·`finish`·`pause`·`cancel` 흐름이 모두 운영 체크아웃을 대상으로 동작한다. 또한 `_sealed()` 검사가 추가되어 `origin`의 push URL이 `DISABLED`로 시작하는 읽기 전용 미러 저장소를 명시적으로 넘기더라도 `start`와 `finish` 단계에서 브랜치 생성 및 push 전에 안전하게 거절된다.\n\n### master/projects\n\n## 1. 변경분 코딩 컨벤션\n",
+      "full_response": "### master\n\n## 1. 변경분 코딩 컨벤션\n| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n|---|---|---|---|---|\n\n## 2. 변경분 버그·안전성\n| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n|---|---|---|---|---|\n\n## 3. 영향 분석\n`default_repo()`가 색인 미러(`track.local_clone`) 대신 모듈이 위치한 운영 저장소(`REPO`)를 반환하도록 복원되어, 기본 경로로 호출하는 `start`·`finish`·`pause`·`cancel` 흐름이 모두 운영 체크아웃을 대상으로 동작한다. 또한 `_sealed()` 검사가 추가되어 `origin`의 push URL이 `DISABLED`로 시작하는 읽기 전용 미러 저장소를 명시적으로 넘기더라도 `start`와 `finish` 단계에서 브랜치 생성 및 push 전에 안전하게 거절된다.\n\n### master/projects\n\n## 1. 변경분 코딩 컨벤션\n| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n|---|---|---|---|---|\n\n## 2. 변경분 버그·안전성\n| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n|---|---|---|---|---|\n\n## 3. 영향 분석\nMCP 도구(`issue_start_tool`, `issue_finish_tool`, `issue_pause_tool`, `issue_cancel_tool`)의 독스트링만 변경되었으며, 런타임 동작이나 호출부 계약에는 영향이 없다.\n\n### master/skills/ax-plan\n\n## 1. 변경분 코딩 컨벤션\n| 파일 | 항목 | 위반 내용 | 라인 | 심각도 |\n|---|---|---|---|---|\n\n## 2. 변경분 버그·안전성\n| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n|---|---|---|---|---|\n\n## 3. 영향 분석\n스킬 안내 문서(`SKILL.md`)의 작업 저장소 설명을 운영 저장소 기준 및 봉인 저장소 거절 정책에 맞게 갱신한 것으로 코드 실행에는 영향이 없다.\n"
+    }
+  },
+  "scenario2_code_gen": {
+    "gemini-3.8-flash-medium": {
+      "ok": true,
+      "duration_seconds": 6.410572434,
+      "usage": {
+        "input_tokens": 11724,
+        "output_tokens": 554,
+        "thinking_tokens": 506,
+        "cache_read_tokens": 0,
+        "total_tokens": 12278
+      },
+      "had_backticks": false,
+      "ast_ok": true,
+      "ast_err": "",
+      "func_ok": false,
+      "func_err": "extract_metadata function not found",
+      "response_preview": "",
+      "full_code": ""
+    },
+    "gemini-4-argon-medium": {
+      "ok": true,
+      "duration_seconds": 14.669956633,
+      "usage": {
+        "input_tokens": 11449,
+        "output_tokens": 829,
+        "thinking_tokens": 501,
+        "cache_read_tokens": 0,
+        "total_tokens": 12278
+      },
+      "had_backticks": false,
+      "ast_ok": true,
+      "ast_err": "",
+      "func_ok": true,
+      "func_err": "",
+      "response_preview": "import ast\nfrom typing import Any\n\n\ndef _get_decorator_name(node: ast.expr) -> str:\n    if isinstance(node, ast.Name):\n        return node.id\n    if isinstance(node, ast.Attribute):\n        return f\"{_get_decorator_name(node.value)}.{node.attr}\"\n    if isinstance(node, ast.Call):\n        return _get",
+      "full_code": "import ast\nfrom typing import Any\n\n\ndef _get_decorator_name(node: ast.expr) -> str:\n    if isinstance(node, ast.Name):\n        return node.id\n    if isinstance(node, ast.Attribute):\n        return f\"{_get_decorator_name(node.value)}.{node.attr}\"\n    if isinstance(node, ast.Call):\n        return _get_decorator_name(node.func)\n    return ast.unparse(node)\n\n\ndef extract_metadata(source: str) -> dict[str, dict[str, Any]]:\n    try:\n        tree = ast.parse(source)\n    except SyntaxError as exc:\n        raise ValueError(str(exc)) from exc\n\n    metadata: dict[str, dict[str, Any]] = {}\n    for node in tree.body:\n        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):\n            node_type = \"function\"\n        elif isinstance(node, ast.ClassDef):\n            node_type = \"class\"\n        else:\n            continue\n\n        metadata[node.name] = {\n            \"type\": node_type,\n            \"decorators\": [_get_decorator_name(dec) for dec in node.decorator_list],\n            \"has_docstring\": ast.get_docstring(node) is not None,\n            \"line_number\": node.lineno,\n        }\n\n    return metadata"
+    }
+  }
+}
