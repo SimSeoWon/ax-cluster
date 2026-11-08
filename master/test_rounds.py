@@ -215,9 +215,11 @@ def test_completion_is_a_note_not_a_new_issue() -> None:
         idx, wid = _work()
         idx.works[wid]["redmine_issue_id"] = 900          # 등재 때 만들어진 이슈
         _round(idx, wid, 1)
+        # `#895` — 노트 전송 뒤 멱등 표시가 저장된다. 저장 잠금이 풀릴 때까지 기다린다.
         for _ in range(200):
-            if notes:
-                break
+            with idx.lock:
+                if int(idx.works[wid].get("noticed_round", 0)) == 1:
+                    break
             time.sleep(0.01)
         check("🔴 새 이슈를 만들지 않는다", not made, str(made))
         check("  그 이슈에 노트가 붙는다", [i for i, _ in notes] == [900], str(notes))
