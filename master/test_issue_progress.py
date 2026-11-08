@@ -515,10 +515,18 @@ def test_종합_상태_전이():
     out = P.sync_issue_tracks(Paths(root), noter=Noter(), watermark=d, logf=logs.append)
     check("⑬ 큐 running → summary running", _summary(root)["state"] == "running" and out["range_running"] == 1,
           str(_summary(root)))
-    # 일시 실패로 pending 복귀 → queued
+    # 일시 실패로 pending 복귀 → queued 및 진행 노트 남김 (#882)
     Q.finish(root, _range(root)[0]["id"], ok=False, why="일시 오류 — 네트워크")
-    P.sync_issue_tracks(Paths(root), noter=Noter(), watermark=d, logf=logs.append)
+    retry_noter = Noter()
+    P.sync_issue_tracks(Paths(root), noter=retry_noter, watermark=d, logf=logs.append)
     check("⑬ 재시도 대기 → queued", _summary(root)["state"] == "queued", str(_summary(root)))
+    check("⑬ (#882) 재시도 대기 시 진행 노트 기록", len(retry_noter.calls) == 1
+          and "자동 범위 리뷰 재시도 대기" in retry_noter.calls[0][1]
+          and "일시 오류 — 네트워크" in retry_noter.calls[0][1], str(retry_noter.calls))
+    # 같은 attempts 재시도 대기 재동기화 시 중복 노트 없음
+    P.sync_issue_tracks(Paths(root), noter=retry_noter, watermark=d, logf=logs.append)
+    check("⑬ (#882) 같은 시도 재동기화 시 중복 재시도 노트 없음", len(retry_noter.calls) == 1,
+          str(retry_noter.calls))
     # 리뷰 done · 노트 실패 → summary 안 닫힘
     bad = Noter(fail=5)
     R.run_once(Paths(root), range_noter=bad, review_call=lambda p, **kw: _range_body(
@@ -544,7 +552,7 @@ def test_종합_상태_전이():
           and T.open_rounds(root) == [] and out["range_abandoned"] == 1, f"{sm} {out}")
     nt = noter.calls[-1][1] if noter.calls else ""
     check("⑬ 포기 노트 — 사유·해시 표·판정 없음", "자동 범위 리뷰 포기" in nt and "한도 초과 반복" in nt
-          and f"| `{c[:12]}` | 포기 | " in nt and "판정 없음" in nt, nt)
+          and "복구 안내:" in nt and f"| `{c[:12]}` | 포기 | " in nt and "판정 없음" in nt, nt)
     check("⑬ 포기 노트 meta.noted", (_range(root)[0].get("meta") or {}).get("noted") is True)
     shutil.rmtree(root)
 

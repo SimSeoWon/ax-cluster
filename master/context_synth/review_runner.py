@@ -693,12 +693,34 @@ def track_note_text(paths, item: dict, *, body: str = "", abandoned: bool = Fals
     return "\n".join(lines)
 
 
+def range_retry_note_text(paths, item: dict) -> str:
+    """범위 리뷰가 일시 실패·대기로 pending 에 돌아왔을 때의 진행 노트(`#882`). 사실만 적는다."""
+    meta = item.get("meta") or {}
+    base, end = meta.get("base", ""), meta.get("end", "")
+    rnum = meta.get("issue_round")
+    attempts = int(item.get("attempts") or 0)
+    kind = item.get("last_kind") or rq.classify(item.get("last_why") or "")
+    limit = rq.cap(kind)
+    why = _cell(item.get("last_why")) or "사유 미기록"
+    round_tag = f" (회차 {rnum})" if rnum else ""
+    return (f"자동 범위 리뷰 재시도 대기{round_tag}: `{base[:12]}..{end[:12]}` — "
+            f"갈래 `{kind}` · 시도 {attempts}/{limit}회 · {why} (다음 회차 재시도 예정)")
+
+
 def range_abandoned_note_text(paths, item: dict) -> str:
     """종합 리뷰 항목이 포기(abandoned)됐을 때의 노트 — 포기도 끝난 것으로 적는다(사용자 결정 2026-11-04)."""
     meta = item.get("meta") or {}
     base, end = meta.get("base", ""), meta.get("end", "")
     why = _cell(item.get("last_why")) or "사유 미기록"
-    return (f"자동 범위 리뷰 포기: `{base[:12]}..{end[:12]}` — 시도 {item.get('attempts', 0)}회 · {why}\n\n"
+    kind = item.get("last_kind") or rq.classify(item.get("last_why") or "")
+    iid = item.get("id") or f"range:{base}..{end}"
+    recovery = (
+        f"- 복구 안내: 원인 해소 후 큐 항목 `{iid}` 재등재 "
+        f"(`review_queue.enqueue` 또는 큐의 `state` 를 `pending` 으로 전환)"
+    )
+    return (f"자동 범위 리뷰 포기: `{base[:12]}..{end[:12]}` — 갈래 `{kind}` · "
+            f"시도 {item.get('attempts', 0)}/{rq.cap(kind)}회 · {why}\n"
+            f"{recovery}\n\n"
             + track_note_text(paths, item, abandoned=True))
 
 

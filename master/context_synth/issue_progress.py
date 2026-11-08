@@ -367,6 +367,24 @@ def _follow_summary(paths, rnd: dict, noter, counts: dict, log) -> None:
                 + (f" (재시도 대기 · 시도 {item.get('attempts')} · {_short(item.get('last_why'))})"
                    if st == "pending" and item.get("last_why") else ""))
         counts["range_running" if st == "running" else "unchanged"] += 1
+        if st == "pending" and item.get("attempts", 0) > 0:
+            if meta.get("retry_noted_attempt") != item.get("attempts"):
+                if noter is None:
+                    counts["note_skipped"] += 1
+                    log(f"[issue-progress] [주의] {tag} 종합 리뷰 재시도 노트 생략 — 등록된 트윈 루트가 아니다(대역 미주입)")
+                    return
+                try:
+                    out = str(noter(n, notes=rr.range_retry_note_text(paths, item)))
+                except Exception as e:                              # noqa: BLE001
+                    out = f"[주의] {type(e).__name__}: {e}"
+                if out.startswith("[주의]"):
+                    rq.set_meta(root, iid, note_error=out[:300])
+                    counts["range_note_failed"] += 1
+                    log(f"[issue-progress] [중요] {tag} 종합 리뷰 재시도 노트 실패 — 다음 회차 재시도: {out[:120]}")
+                    return
+                rq.set_meta(root, iid, retry_noted_attempt=item["attempts"], note_error="")
+                counts["range_noted"] += 1
+                log(f"[issue-progress] {tag} 종합 리뷰 재시도 대기 노트 (시도 {item.get('attempts')} · {out[:60]})")
         return
     if st == "done":
         if not meta.get("noted"):
