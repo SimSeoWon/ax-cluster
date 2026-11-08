@@ -1,8 +1,8 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-08 22:35 Antigravity 체크포인트(#923 마감 `ec30077` 배달 완료 · Antigravity accept-edits/always-proceed 설정 갱신 · 이하 오늘 마감분은 아래 표). 항목·진행의 정본은 Redmine이다.
-> 이전 상세는 Git `d946ba7`·`54b5632`·`93c93d0`·리포트138~156·각 일감 노트에 있다.
-> 진행 중 일감·일감 잠금은 없다. 배달(`master.client update`) rc0 완료.
+> 2026-11-08 23:00 Antigravity 체크포인트(#924 마감 `8bcaa6d` · 마스터 담당 기록 Antigravity 추가 · 이하 오늘 마감분은 아래 표). 항목·진행의 정본은 Redmine이다.
+> 이전 상세는 Git `d946ba7`·`54b5632`·`93c93d0`·`8bcaa6d`·리포트138~157·각 일감 노트에 있다.
+> 진행 중 일감·일감 잠금은 없다. 배달(`master.client update`) 진행 중.
 
 ## 🔴 오늘 오후 바뀐 규칙 (사용자 결정 2026-11-08)
 
@@ -69,6 +69,7 @@
 | #921 | 마감 뒤 단계를 명령 하나로(`master.issue_wrapup`) · 검사 파일 직접 실행 규약(`test_test_runnable`) · 통합 191 — 리포트 154 | `aea3f94` |
 | #922 | `issue_wrapup` 후속 — oneshot 대기를 재기동 서비스별로 · rc 2 노트 — 리포트 155 | `f9a9a91` |
 | #923 | R298 지적 6건 — issue_wrapup 하위 명령 실패/예외 방어 · next 명령 인자 — 리포트 156 | `ec30077` |
+| #924 | 마스터 담당 기록에 Antigravity 추가 및 Claude·Codex 호환 경로 정비 — 리포트 157 | `8bcaa6d` |
 | #884·#885·#887·#915 | 코드 변경 없이 종결 — #884 T7 마감 · #885 해소 · #887·#915 해소 | — |
 
 - 등록: **#908**·**#911**·**#916**·**#920** 아이디어(일감 아님). R240 지적 12 전부 처분.
@@ -77,12 +78,12 @@
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`93c93d0`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`8bcaa6d`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 |
-| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | 배달(`master.client update`) 3/3 OK 완료 (HEAD `93c93d0`) |
+| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | 배달(`master.client update`) 완료 예정 (HEAD `8bcaa6d`) |
 
-- 상주 재기동: ax-broker 17:39:08 · ax-task-queue 17:41:31 · ax-projects 22:08:19(#923 `issue_wrapup` 이 의존 변경 판정으로 재기동).
+- 상주 재기동: ax-broker 17:39:08 · ax-task-queue 17:41:31 · ax-projects 22:57:01(#924 `issue_wrapup` 이 변경 판정으로 재기동).
   재기동 뒤 `service_freshness.check()`: stale 0 · 판정 불가 0 · 의존 [주의] 0. 재기동 중 리뷰 큐·색인기 영향 없음.
 
 ## Codex 가 알아야 할 것
@@ -94,10 +95,10 @@
 
 ## 유지할 운영 상태
 
-- 마스터 담당 기록 **claude(11-08 16:41)**, 워커 전역 codex(state, 10-18).
-- ax-broker active(17:39) · ax-projects·ax-task-queue active(17:41), ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
+- 마스터 담당 기록 **claude(11-08 16:41)**(antigravity 식별자 지원 추가됨), 워커 전역 codex(state, 10-18).
+- ax-broker active(17:39) · ax-projects(22:57)·ax-task-queue active(17:41), ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
 - 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음.
-- #820·#882·#884~#887·#893~#907·#909·#910·#912·#913·#915·#917·#918·#921~#923 완료: 리포트138~156·Redmine. 중복 마감·산출물 재생성 금지.
+- #820·#882·#884~#887·#893~#907·#909·#910·#912·#913·#915·#917·#918·#921~#924 완료: 리포트138~157·Redmine. 중복 마감·산출물 재생성 금지.
 
 ## 바로 다음 작업
 
@@ -106,6 +107,6 @@
    Antigravity 는 홈 `GEMINI.md` 규칙대로 **작업 저장소 루트의 `AGENTS.md` 를 먼저 읽고 AX-ENTRY-MARK 를 보고**한다.
 3. **다음 일감 선택**: 사용자와 다음 진행할 일감 결정 (등록된 아이디어 #908·#911·#916·#920 또는 신규 일감).
 4. #898 실사용 확인: 게임 프로젝트 마운트 전환 뒤 `.33` 요청자 세션에서 새 `ax-client` 관리 도구를 한 번 불러 본다(사용자 결정).
-5. #920 남은 배선: 1번(지휘자 기록 claude/codex 만) · 3번(교차 계열 리뷰 조건 — Antigravity 가 쓰고 agy 가 리뷰하면 같은 계열). 결정은 사용자.
+5. #920 남은 배선: 3번(교차 계열 리뷰 조건 — Antigravity 가 쓰고 agy 가 리뷰하면 같은 계열). 결정은 사용자.
 6. 다른 일감을 자동 시작하지 않는다. ⑦ 전진·finalize·파괴적 git·자동 로드 문서 변경은 기존대로 멈춰 묻는다.
 
