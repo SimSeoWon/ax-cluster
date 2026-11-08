@@ -683,14 +683,23 @@ def cmd_check(project: str, *, only: str = "", stats: dict | None = None) -> int
     # `#737` — 줄은 `stale_lines()` 와 같은 규칙으로 만들되 판정(`check()`)을 직접 받는다:
     #    「기동 뒤 언제 바뀌었나」(mtime)가 있어야 update 가 「실행 중 변경 탓」을 가른다.
     fresh_changed_at = None
+    dep_lines: list = []
     try:
         from .. import service_freshness as _fresh
-        verdicts = [v for v in _fresh.check() if v.stale or v.why]
+        all_verdicts = _fresh.check()
+        verdicts = [v for v in all_verdicts if v.stale or v.why]
         lines = [v.line for v in verdicts]
+        dep_lines = _fresh.dep_lines(verdicts=all_verdicts)
         if verdicts and not any(v.why for v in verdicts):
             fresh_changed_at = min(v.newest for v in verdicts)
     except Exception as e:                                   # noqa: BLE001
         lines = [f"[주의] 서비스 신선도를 재지 못했다 — {type(e).__name__}: {e}"]
+    # `#918` — 의존 모듈 등급은 **표시만** 한다(재기동 권장). `bad`·rc 에 넣지 않는다:
+    #    의존 폐포가 커서(약 150 파일) 커밋 대부분이 건드린다 — rc 에 넣으면 check 가 늘 빨갛다.
+    if dep_lines:
+        print(f"\n  [주의] 마스터 서비스 의존 모듈 {len(dep_lines)}건 — 재기동 권장(판정 실패 아님)")
+        for ln in dep_lines:
+            print(f"        · {ln}")
     if lines:
         print(f"\n  [중요] 마스터 서비스 {len(lines)}개가 지금 코드가 아니다")
         for ln in lines:

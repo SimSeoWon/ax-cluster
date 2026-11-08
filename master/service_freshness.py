@@ -26,6 +26,7 @@
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -53,6 +54,93 @@ RESIDENT: dict = {
 # 「빠뜨린 것」과 「일부러 뺀 것」을 구분하기 위해서다.
 TRIGGERED = ("ax-indexer", "ax-status", "ax-batch")
 RECORD_PREFIX = "AX_SERVICE_CODE_V1 "
+
+# [DOC] #918: 「의존」 — 서비스가 실제로 import 하는 저장소 코드 중 `RESIDENT` 직접 경로 밖의 파일.
+#       실측 2026-11-08: #917 이 `context_synth/issue_track` 등을 바꿨는데 ax-projects·ax-task-queue 는
+#       `issue_infra` 를 거쳐 그것을 쓰면서도 「최신」이었다. 의존은 **진입 모듈에서 정적 import 를 따라가**
+#       구한다(함수 안 지연 import 포함 — 언젠가 불리면 그때 메모리에 남는다). 폐포가 크다(약 150 파일,
+#       11-01 이후 커밋의 3/4 이 건드린다) — 그래서 **두 등급**이다(사용자 결정 2026-11-08):
+#       직접 경로 = 종전 [중요] stale(check·update rc 에 반영), 의존 = [주의] 「재기동 권장」(표시만).
+ENTRY: dict = {                          # 서비스 → `ExecStart` 의 `python -m` 모듈
+    "ax-task-queue": "master.task_queue",
+    "ax-broker": "master.broker",
+    "ax-projects": "master.projects",
+}
+_DEP_PACKAGES = ("master", "client")     # 이 저장소의 최상위 패키지 — 그 밖(표준·서드파티)은 의존이 아니다
+
+
+def _module_file(name: str):
+    """모듈 이름 → 저장소 안 파일(`pkg/__init__.py` 또는 `mod.py`). 없으면 None."""
+    base = REPO.joinpath(*name.split("."))
+    if (base / "__init__.py").is_file():
+        return base / "__init__.py"
+    if base.with_suffix(".py").is_file():
+        return base.with_suffix(".py")
+    return None
+
+
+def _package_of(path: Path) -> str:
+    rel = path.relative_to(REPO).with_suffix("")
+    parts = list(rel.parts)
+    return ".".join(parts[:-1])          # `pkg/__init__` → pkg · `pkg/mod` → pkg
+
+
+def _imported(tree, package: str) -> list:
+    """AST 의 모든 import(함수 안 포함)가 가리킬 수 있는 모듈 이름들."""
+    names: list = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.extend(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                base = package.split(".") if package else []
+                if node.level > 1:
+                    base = base[:len(base) - (node.level - 1)]
+                mod = ".".join(base + ([node.module] if node.module else []))
+            else:
+                mod = node.module or ""
+            if mod:
+                names.append(mod)
+                names.extend(f"{mod}.{a.name}" for a in node.names if a.name != "*")
+    return names
+
+
+def _in_direct(rel: str, paths: tuple) -> bool:
+    return any(rel == p or rel.startswith(p.rstrip("/") + "/") for p in paths)
+
+
+def dependencies(unit: str) -> tuple:
+    """`(의존 파일들(정렬·저장소 상대), 사유)`. 진입 모듈의 정적 import 폐포에서 직접 경로를 뺀 것.
+
+    읽기만 한다. 실패(진입 모듈 없음·구문 오류·읽기 실패)는 사유로 돌려준다 — 「의존 없음」으로 접지 않는다.
+    """
+    entry = ENTRY.get(unit, "")
+    start = [f for f in (_module_file(entry),
+                         REPO.joinpath(*entry.split("."), "__main__.py") if entry else None)
+             if f is not None and f.is_file()]
+    if not start:
+        return (), f"진입 모듈 {entry or '?'} 을 찾지 못했다"
+    seen: set = set()
+    todo = list(start)
+    try:
+        while todo:
+            f = todo.pop()
+            if f in seen:
+                continue
+            seen.add(f)
+            tree = ast.parse(f.read_text(encoding="utf-8"), filename=str(f))
+            for name in _imported(tree, _package_of(f)):
+                if name.split(".")[0] not in _DEP_PACKAGES:
+                    continue
+                parts = name.split(".")
+                for i in range(1, len(parts) + 1):       # `a.b.c` 는 a·a.b 의 __init__ 도 돈다
+                    mf = _module_file(".".join(parts[:i]))
+                    if mf is not None and mf not in seen:
+                        todo.append(mf)
+    except (OSError, SyntaxError, ValueError) as exc:
+        return (), f"의존 import 를 읽지 못했다 ({type(exc).__name__})"
+    rels = sorted(p.relative_to(REPO).as_posix() for p in seen)
+    return tuple(r for r in rels if not _in_direct(r, RESIDENT.get(unit, ()))), ""
 
 
 def _snapshot(paths: tuple, *, require_files: bool = False) -> tuple:
@@ -110,6 +198,12 @@ def record_startup(unit: str) -> dict:
         why = "systemd INVOCATION_ID가 없다 — 수동 실행은 기준 기록으로 쓰지 않는다"
     record = dict(version=1, unit=unit, invocation_id=invocation,
                   paths=list(paths), digest=digest, why=why)
+    # #918 — 의존 목록·해시를 덧붙인다(옛 판독기와 호환되게 같은 version 의 선택 필드).
+    deps, deps_why = dependencies(unit)
+    deps_digest = ""
+    if not deps_why:
+        deps_digest, deps_why = _snapshot(deps)
+    record.update(deps=list(deps), deps_digest=deps_digest, deps_why=deps_why)
     print(RECORD_PREFIX + json.dumps(record, ensure_ascii=True), flush=True)
     return record
 
@@ -129,13 +223,26 @@ def _invocation(unit: str, *, runner=None) -> tuple:
 
 def _baseline(unit: str, paths: tuple, *, runner=None, invocation: str = "") -> tuple:
     """현재 systemd invocation의 기록만 읽는다. 로그 유실은 최신으로 보지 않는다."""
+    record, why = _record(unit, paths, runner=runner, invocation=invocation)
+    if why:
+        return "", why
+    if record.get("why"):
+        return "", f"기동 코드 기록은 판정 불가다: {record['why']}"
+    digest = record.get("digest", "")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        return "", "기동 코드 기록의 내용 해시가 올바르지 않다"
+    return digest, ""
+
+
+def _record(unit: str, paths: tuple, *, runner=None, invocation: str = "") -> tuple:
+    """`(기동 기록 사전, 사유)` — 현재 invocation 의 기록 하나를 형식·범위까지 검증해 돌려준다(#918 분리)."""
     run = runner or (lambda cmd: subprocess.run(cmd, capture_output=True, text=True,
                                                 timeout=10))
     try:
         if not invocation:
             invocation, why = _invocation(unit, runner=runner)
             if why:
-                return "", why
+                return {}, why
         # 🔴 #912 — `-n` 을 붙이지 않는다. systemd 249 는 `-n` 을 `--grep` 보다 먼저 적용해
         #    마지막 N 줄만 잘라 온 뒤 거른다 — 기동 첫 줄인 기록을 로그 2줄 만에 놓쳤다(실측 2026-11-08).
         #    범위는 이미 `_SYSTEMD_INVOCATION_ID` 가 이번 기동으로 좁힌다.
@@ -143,7 +250,7 @@ def _baseline(unit: str, paths: tuple, *, runner=None, invocation: str = "") -> 
                       f"_SYSTEMD_INVOCATION_ID={invocation}",
                       f"--grep=^{RECORD_PREFIX}"])
         if result.returncode:
-            return "", f"기동 코드 기록을 읽지 못했다 (journalctl rc={result.returncode})"
+            return {}, f"기동 코드 기록을 읽지 못했다 (journalctl rc={result.returncode})"
         records = []
         for line in (result.stdout or "").splitlines():
             entry = json.loads(line)
@@ -152,24 +259,19 @@ def _baseline(unit: str, paths: tuple, *, runner=None, invocation: str = "") -> 
                     or entry.get("_SYSTEMD_UNIT") != f"{unit}.service"
                     or not isinstance(message, str)
                     or not message.startswith(RECORD_PREFIX)):
-                return "", "기동 코드 기록의 서비스·invocation·형식이 일치하지 않는다"
+                return {}, "기동 코드 기록의 서비스·invocation·형식이 일치하지 않는다"
             records.append(json.loads(message[len(RECORD_PREFIX):]))
         if len(records) != 1:
-            return "", "현재 기동 코드 기록이 없거나 중복됐다 — 판정할 수 없다"
+            return {}, "현재 기동 코드 기록이 없거나 중복됐다 — 판정할 수 없다"
         record = records[0]
         if (not isinstance(record, dict) or record.get("version") != 1
                 or record.get("unit") != unit
                 or record.get("invocation_id") != invocation
                 or record.get("paths") != list(paths)):
-            return "", "기동 코드 기록의 서비스·버전·감시 범위가 일치하지 않는다"
-        if record.get("why"):
-            return "", f"기동 코드 기록은 판정 불가다: {record['why']}"
-        digest = record.get("digest", "")
-        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
-            return "", "기동 코드 기록의 내용 해시가 올바르지 않다"
-        return digest, ""
+            return {}, "기동 코드 기록의 서비스·버전·감시 범위가 일치하지 않는다"
+        return record, ""
     except (OSError, subprocess.SubprocessError, ValueError, TypeError, AttributeError):
-        return "", "기동 코드 기록 조회 또는 해석에 실패했다"
+        return {}, "기동 코드 기록 조회 또는 해석에 실패했다"
 
 
 @dataclass
@@ -181,6 +283,23 @@ class Verdict:
     stale: bool = False
     why: str = ""
     paths: tuple = field(default_factory=tuple)
+    # #918 의존 판정 — [주의] 등급(표시만). stale·why·stale_lines·update rc 와 섞지 않는다.
+    dep_changed: bool = False
+    dep_files: list = field(default_factory=list)
+    dep_why: str = ""
+
+    @property
+    def dep_line(self) -> str:
+        """의존 등급 줄 — 바뀌었거나 판정 불가일 때만. 조용하면 빈 문자열."""
+        if self.dep_changed:
+            shown = ", ".join(f"`{f}`" for f in self.dep_files[:3])
+            more = f" 외 {len(self.dep_files) - 3}개" if len(self.dep_files) > 3 else ""
+            return (f"{self.unit}: [주의] 기동 뒤 의존 모듈이 바뀌었다 — 재기동 권장"
+                    f"{(' (' + shown + more + ')') if shown else ''}"
+                    f" (`scripts/ax-service-restart {self.unit}`)")
+        if self.dep_why:
+            return f"{self.unit}: [주의] 의존 모듈 판정 불가 — {self.dep_why}"
+        return ""
 
     @property
     def line(self) -> str:
@@ -278,8 +397,10 @@ def check(unit: str = "", *, runner=None) -> list:
         except (OSError, subprocess.SubprocessError):
             v.why = "기동 시각 또는 코드 시각을 읽지 못했다"
         if not v.why and v.started and _untouched_since(paths, v.started):
-            out.append(v)                               # #912 1차 거름 — 기동 뒤 변경 흔적 없음
+            _judge_deps(v, name, paths, runner=runner)   # #912 1차 거름 — 직접 경로는 기동 뒤 변경 흔적 없음
+            out.append(v)
             continue
+        invocation = ""
         if not v.why:
             invocation, v.why = _invocation(name, runner=runner)
         if not v.why:
@@ -296,8 +417,62 @@ def check(unit: str = "", *, runner=None) -> list:
                     v.why = "검사 중 서비스가 다시 기동됐다 — 판정할 수 없다"
                 if v.why:
                     v.stale = False
+        if not v.why and not v.stale:
+            _judge_deps(v, name, paths, runner=runner, invocation=invocation)
         out.append(v)
     return out
+
+
+def _judge_deps(v: Verdict, unit: str, paths: tuple, *, runner=None, invocation: str = "") -> None:
+    """#918 — 의존 등급 판정을 `v.dep_*` 에 채운다. 직접 판정(stale·why)은 건드리지 않는다.
+
+    1차 거름: 지금 의존 파일들에 기동 뒤 변경 흔적이 없으면 조용하다(import 목록이 바뀌려면 이미 있는
+    파일이 바뀌어야 하므로 그것도 여기 걸린다). 흔적이 있으면 기동 기록의 의존 목록·해시와 대조한다.
+    """
+    deps, why = dependencies(unit)
+    if why:
+        v.dep_why = why
+        return
+    if v.started and _untouched_since(deps, v.started):
+        return
+    if not invocation:
+        invocation, why = _invocation(unit, runner=runner)
+        if why:
+            v.dep_why = why
+            return
+    record, why = _record(unit, paths, runner=runner, invocation=invocation)
+    if why:
+        v.dep_why = why
+        return
+    if "deps" not in record:
+        v.dep_why = "기동 기록에 의존 목록이 없다(#918 이전 기동) — 다음 재기동부터 판정한다"
+        return
+    if record.get("deps_why"):
+        v.dep_why = f"기동 때 의존을 읽지 못했다: {record['deps_why']}"
+        return
+    recorded = list(record.get("deps") or [])
+    current, why = _snapshot(deps)
+    if why:
+        v.dep_why = why
+        return
+    if recorded != list(deps) or current != record.get("deps_digest"):
+        v.dep_changed = True
+        added = sorted(set(deps) - set(recorded))
+        removed = sorted(set(recorded) - set(deps))
+        touched = []
+        for rel in deps:
+            try:
+                if (REPO / rel).stat().st_mtime > v.started:
+                    touched.append(rel)
+            except OSError:
+                continue
+        v.dep_files = added + [f"-{r}" for r in removed] + [t for t in touched if t not in added]
+
+
+def dep_lines(*, runner=None, verdicts=None) -> list:
+    """#918 의존 등급 줄 — [주의] 「재기동 권장」·판정 불가만. `stale_lines` 와 따로 둔다(rc 에 섞지 않는다)."""
+    vs = verdicts if verdicts is not None else check(runner=runner)
+    return [v.dep_line for v in vs if v.dep_line]
 
 
 def stale_lines(*, runner=None) -> list:

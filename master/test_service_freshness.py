@@ -368,6 +368,94 @@ def test_first_filter_912() -> None:
         F.REPO = old_repo
 
 
+def test_dependency_grade_918() -> None:
+    """#918 — 직접 경로 밖 import 의존은 [주의] 「재기동 권장」만 낸다(stale·stale_lines 와 분리)."""
+    old = (F.REPO, F.RESIDENT, F.ENTRY)
+    unit = "ax-task-queue"
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            files = {
+                "master/__init__.py": "",
+                "master/svc/__init__.py": "",
+                "master/svc/__main__.py": "import json\nfrom master.lib import b\n\ndef late():\n    from .. import dep_a\n    return dep_a\n",
+                "master/dep_a.py": "X = 1\n",
+                "master/lib/__init__.py": "",
+                "master/lib/b.py": "Y = 2\n",
+                "master/unused.py": "Z = 3\n",
+            }
+            for rel, text in files.items():
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text(text, encoding="utf-8")
+
+            def age_all():
+                for path in root.rglob("*"):
+                    os.utime(path, (50, 50))
+            F.REPO = root
+            F.RESIDENT = {unit: ("master/svc",)}
+            F.ENTRY = {unit: "master.svc"}
+            deps, why = F.dependencies(unit)
+            check("의존 = 지연 import 포함 폐포 − 직접 경로",
+                  not why and deps == ("master/__init__.py", "master/dep_a.py", "master/lib/__init__.py",
+                                       "master/lib/b.py"), f"{deps} {why}")
+            record, line = startup(unit)
+            check("기동 기록에 의존 목록·해시가 실린다", record.get("deps") == list(deps)
+                  and len(record.get("deps_digest", "")) == 64 and not record.get("deps_why"), str(record))
+            age_all()
+            records = {unit: line}
+            v = F.check(unit, runner=fake(records))[0]
+            check("변경 없음 → 조용하다", not v.stale and not v.why and not v.dep_line, repr(v))
+
+            (root / "master/dep_a.py").write_text("X = 2\n", encoding="utf-8")
+            os.utime(root / "master/dep_a.py", (200, 200))
+            run = fake(records)
+            v = F.check(unit, runner=run)[0]
+            check("🔴 의존 변경 → 재기동 권장([주의])", v.dep_changed and "master/dep_a.py" in v.dep_files
+                  and "[주의]" in v.dep_line and "재기동 권장" in v.dep_line, repr(v))
+            check("🔴 의존 변경은 stale 이 아니다 · stale_lines 비었다",
+                  not v.stale and not v.why and F.stale_lines(runner=fake(records)) == [], repr(v))
+            check("dep_lines 가 그 줄을 낸다", F.dep_lines(runner=fake(records)) == [v.dep_line])
+            check("자동 재기동을 하지 않는다", not any("restart" in c for c in run.calls), str(run.calls))
+
+            (root / "master/lib/b.py").write_text("import master.unused\nY = 2\n", encoding="utf-8")
+            os.utime(root / "master/lib/b.py", (200, 200))
+            v = F.check(unit, runner=fake(records))[0]
+            check("새 import 로 의존 목록이 늘면 바뀐 것으로 본다",
+                  v.dep_changed and "master/unused.py" in v.dep_files, repr(v))
+
+            (root / "master/svc/__main__.py").write_text("import json\n", encoding="utf-8")
+            os.utime(root / "master/svc/__main__.py", (200, 200))
+            v = F.check(unit, runner=fake(records))[0]
+            check("직접 경로 변경은 종전대로 [중요] stale · 의존 줄 없음",
+                  v.stale and not v.dep_line and "[중요]" in v.line, repr(v))
+
+            legacy = json.loads(line[len(F.RECORD_PREFIX):])
+            for k in ("deps", "deps_digest", "deps_why"):
+                legacy.pop(k)
+            (root / "master/svc/__main__.py").write_text(files["master/svc/__main__.py"], encoding="utf-8")
+            age_all()
+            os.utime(root / "master/dep_a.py", (200, 200))
+            v = F.check(unit, runner=fake({unit: F.RECORD_PREFIX + json.dumps(legacy)}))[0]
+            check("옛 기록(의존 목록 없음) → 의존 판정 불가 [주의] · 직접 판정은 그대로",
+                  not v.stale and not v.why and "판정 불가" in v.dep_line and "다음 재기동" in v.dep_line, repr(v))
+    finally:
+        F.REPO, F.RESIDENT, F.ENTRY = old
+
+
+def test_real_dependencies_918() -> None:
+    """#918 — 실제 저장소: 이 일감을 부른 의존(issue_infra·issue_track·auth)이 잡히고 직접 경로는 빠진다."""
+    for unit in ("ax-task-queue", "ax-projects"):
+        deps, why = F.dependencies(unit)
+        check(f"{unit} 의존에 issue_infra·issue_track·auth",
+              not why and {"master/issue_infra.py", "master/context_synth/issue_track.py",
+                           "master/auth.py"} <= set(deps), f"{why} {len(deps)}")
+        check(f"{unit} 의존에 직접 경로 파일이 없다",
+              not any(F._in_direct(d, F.RESIDENT[unit]) for d in deps))
+    deps, why = F.dependencies("ax-broker")
+    check("ax-broker 의존에 auth", not why and "master/auth.py" in deps, f"{why} {deps}")
+    check("진입 모듈이 없으면 사유(의존 없음으로 접지 않는다)", F.dependencies("ax-nope")[1] != "")
+
+
 def main() -> int:
     print("\n[1] 기동 내용·목록 비교와 판정 불가 처리 (#897)")
     test_content_and_errors()
@@ -383,6 +471,9 @@ def main() -> int:
     test_entrypoint_order()
     print("\n[5] #912 journal 조회 -n 없음 · mtime 1차 거름")
     test_first_filter_912()
+    print("\n[6] #918 의존 모듈 등급 — [주의] 재기동 권장(표시만)")
+    test_dependency_grade_918()
+    test_real_dependencies_918()
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 
