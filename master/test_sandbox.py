@@ -14,7 +14,7 @@
 
 [중요] **그래서 코드가 아니라 유닛을 읽는다.** 이 부류의 결함은 파이썬 어디에도 없다.
 
-`.venv/bin/python master/test_sandbox.py`
+`AX_PROJECTS_ROOT=<운영 루트> .venv/bin/python master/test_sandbox.py`
 """
 from __future__ import annotations
 
@@ -24,8 +24,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-ROOT = Path(__file__).resolve().parent.parent
-UNIT = ROOT / "master" / "systemd" / "ax-task-queue.service"
+from master.projects.config import projects_root
+
+# #910: 검사할 유닛 사본은 현재 소스(worktree), 트윈·서비스 경로는 명시된 운영 루트다.
+# 경로를 서로 바꿔 끼워 유닛의 잘못된 절대 경로를 통과시키지 않는다.
+SOURCE_ROOT = Path(__file__).resolve().parent.parent
+UNIT = SOURCE_ROOT / "master" / "systemd" / "ax-task-queue.service"
+ROOT = projects_root()
 
 # [중요] 큐가 트윈에 쓰는 곳 — **`<트윈>/` 아래 상대 경로**. 표면을 늘리면 여기에 넣는다.
 #    출처: `#206`(신호) · `#207`(작업 기록) · `#243`(시소러스 대행).
@@ -53,6 +58,18 @@ def _directives(text: str, key: str) -> list:
         v = s.split("=", 1)[1].strip()
         out.append(v.lstrip("-"))       # `-` 접두사 = 없으면 무시 (systemd 문법)
     return out
+
+
+def test_operational_root_matches_unit() -> None:
+    """운영 경로의 근거는 유닛 선언이다 — 셸의 데이터 루트와 어긋나면 실패한다."""
+    text = UNIT.read_text(encoding="utf-8")
+    working = _directives(text, "WorkingDirectory")
+    check("운영 루트가 유닛 WorkingDirectory 와 같다", working == [str(ROOT)],
+          f"AX_PROJECTS_ROOT={ROOT}, WorkingDirectory={working}")
+    declared = [v.split("=", 1)[1] for v in _directives(text, "Environment")
+                if v.startswith("AX_PROJECTS_ROOT=")]
+    check("트윈 루트가 유닛 AX_PROJECTS_ROOT 와 같다", declared == [str(ROOT)],
+          f"AX_PROJECTS_ROOT={ROOT}, 유닛 선언={declared}")
 
 
 def test_no_project_name_in_directives() -> None:
@@ -113,14 +130,18 @@ def test_every_non_twin_toplevel_is_covered() -> None:
     text = UNIT.read_text(encoding="utf-8")
     ro = {Path(v) for v in _directives(text, "ReadOnlyPaths")}
     uncovered = []
-    for e in sorted(ROOT.iterdir()):
-        if e.name.startswith(".") and e.name != ".git":
-            continue                                    # 숨김 항목은 별 축 (.venv 등)
-        if e.is_dir() and (e / "config.yaml").exists():
-            continue                                    # 트윈 — 쓰기가 정상이다
-        if e in ro:
-            continue
-        uncovered.append(e.name)
+    # 운영 트리의 기존 항목뿐 아니라 worktree 에서 추가한 항목도 배포 후 경로로 검사한다.
+    # 소스 항목에 단지 같은 이름의 운영 트윈이 있다고 해서 검사에서 빼지 않는다.
+    for base in dict.fromkeys((ROOT, SOURCE_ROOT)):
+        for e in sorted(base.iterdir()):
+            if e.name.startswith(".") and e.name != ".git":
+                continue                                # 숨김 항목은 별 축 (.venv 등)
+            if e.is_dir() and (e / "config.yaml").exists():
+                continue                                # 트윈 — 쓰기가 정상이다
+            if ROOT / e.name in ro:
+                continue
+            uncovered.append(e.name)
+    uncovered = sorted(set(uncovered))
     check("[주의] 트윈이 아닌 최상위 항목이 전부 읽기 전용 목록에 있다", not uncovered,
           f"{uncovered} — 트윈이면 무시, 아니면 ReadOnlyPaths 에 넣을 것")
 
@@ -143,7 +164,8 @@ def test_repo_copy_matches_live() -> None:
 
 
 if __name__ == "__main__":
-    for fn in (test_no_project_name_in_directives, test_twin_writes_are_allowed,
+    for fn in (test_operational_root_matches_unit,
+               test_no_project_name_in_directives, test_twin_writes_are_allowed,
                test_code_stays_read_only, test_every_non_twin_toplevel_is_covered,
                test_repo_copy_matches_live):
         fn()

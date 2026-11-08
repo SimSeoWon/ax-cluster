@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import tempfile
@@ -17,6 +18,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
 from master.context_search.paths import ProjectPaths   # noqa: E402
+from master.projects.config import projects_root   # noqa: E402
 from master.ontology import (collect as col, hierarchy as hx, layers as ly,  # noqa: E402
                              package as pkg, stale as st_mod,
                              verify_facts as vf, yaml_io as y)
@@ -98,9 +100,14 @@ def main() -> int:
     check("주석이 섞여도 값은 읽는다", y.load("# c\nname: A\n") == {"name": "A"})
 
     print("\n[6] [중요] 실제 온톨로지 파일을 읽는다 (받아온 247개)")
-    real = sorted((_ROOT / "ModularStage" / "ontology" / "domains").glob("*/domain.yaml"))
-    if not real:
-        check("도메인 manifest 발견", False, "없음 — 스킵")
+    # #910: 소스 worktree에는 미추적 운영 데이터가 없다. import 루트와 데이터 루트를 나눈다.
+    domains = (projects_root() / "ModularStage" / "ontology" / "domains"
+               if os.environ.get("AX_PROJECTS_ROOT", "").strip() else None)
+    real = sorted(domains.glob("*/domain.yaml")) if domains is not None else []
+    if domains is None:
+        print("  [건너뜀] 실제 온톨로지 검사 — AX_PROJECTS_ROOT 미설정 (데이터 경로를 추정하지 않는다)")
+    elif not real:
+        print(f"  [건너뜀] 실제 온톨로지 검사 — 도메인 manifest 없음: {domains}")
     else:
         # [중요] manifest 의 이름 키는 `name` 이 아니라 **`domain`** 이다 (object yaml 만 `name`).
         # 첫 판 테스트가 `name` 을 단언해 7개 전부 실패했다 — 코드가 아니라 단언이 틀렸다.
@@ -114,7 +121,7 @@ def main() -> int:
         s0 = d0.get("summary") or ""
         check("  따옴표 안의 백틱·한글 요약이 온전하다",
               "`" in s0 and any("가" <= c <= "힣" for c in s0) and len(s0) > 80, s0[:50])
-        objs = sorted((_ROOT / "ModularStage" / "ontology" / "domains").glob("*/L*/objects/*.yaml"))
+        objs = sorted(domains.glob("*/L*/objects/*.yaml"))
         got = [y.read(p) for p in objs[:40]]
         named = sum(1 for d in got if isinstance(d, dict) and d.get("name"))
         check(f"object yaml 40개 중 name 을 얻는다", named >= 38, f"{named}/40")

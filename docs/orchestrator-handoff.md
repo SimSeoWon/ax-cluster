@@ -1,8 +1,8 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-08 12:00 Claude → Codex 인계 체크포인트. 항목·진행의 정본은 Redmine이다.
+> 2026-11-08 Codex #910 체크포인트. 항목·진행의 정본은 Redmine이다.
 > 이전 상세는 Git `9f7248d`의 이 파일·리포트138~143·각 일감 노트에 있다.
-> 사용자 요청: 이 문서로 Codex 에서 이어서 진행해 본다. 열린 승인은 없다(아래 「바로 다음 작업」).
+> 사용자 요청: `910 진행해` · `로컬 서브 에이전트로 진행해줘.` 구현·검증 후 커밋 승인 대기.
 
 ## 🔴 먼저 — 일감 작업 위치가 바뀌었다 (#907, 오늘 배포·실증)
 
@@ -37,8 +37,8 @@
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`5de2c16`(+ 이 문서 커밋), 깨끗함 |
-| 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음(git-ignore) |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`5bc4c8b`, 깨끗함 |
+| #910 작업 위치 | `/home/sim/ax-cluster/.ax-issues/910` | `issue/910`, 시작 `5bc4c8b` · 4파일 미커밋 · 잠금 활성 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 정상 |
 | AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `5de2c16` 배달 3/3 |
 
@@ -47,19 +47,21 @@
 
 ## Codex 가 알아야 할 것
 
-- **검사 실행**: 일감 worktree 에서 `master/test_*.py` 전수를 돌리면 `test_ontology`·`test_sandbox` 2건이 **늘 실패한다**
-  (트윈 데이터 경로 가정) — #910. 그 2건만 실패면 회귀가 아니다. 운영 체크아웃에서는 통과한다.
+- **#910 수정안 검증**: 현재 일감 worktree에서 ontology144/144·sandbox44/44, 공식 통합188/188(rc0).
+  두 검사는 소스와 운영 데이터 경로를 분리했다. 아직 미커밋이므로 운영 main에는 종전 코드가 있다.
 - **샌드박스**: Codex 기본 샌드박스는 `sg gitea` 를 막아 `test_source_scope` 가 28/32 가 된다(리포트 86, `~/.codex/AGENTS.md`
   「Git 검증」 절). 원인 미확인으로 보고하지 말고, 그 명령만 좁혀 샌드박스 해제 승인을 요청한다.
 - **검사 금지 지시가 있던 이유**: 11-07 Codex 의 「드라이런 실패」는 위 샌드박스 제약이었다. Git 검증은 실제 일감 실증이
   사용자 결정이다. 검사·커밋·push·재기동은 각각 승인 규칙대로.
 - 테스트는 `AX_PROJECTS_ROOT=/home/sim/ax-cluster` 를 준다. 전수 스크립트는 `ax-cluster/CLAUDE.md` 「Tests」 절.
 
-## #910 — 다음 후보 (신규)
+## #910 — 커밋 승인 대기 (진행)
 
-- http://192.168.0.57:8080/issues/910 — `test_ontology`·`test_sandbox` 가 일감 worktree 에서 실패.
-  worktree 에는 미추적 트윈 데이터(`AXCluster/` 등)가 없다. 실패 원문은 본문에 있다. 원인은 **추정** 단계 — 코드로 확인부터.
-- 이 일감 자체가 worktree 흐름의 두 번째 실증이 된다.
+- http://192.168.0.57:8080/issues/910 — 로컬 구현 에이전트2·독립 검토1. T1·T2 검사 근거로 완료, 일감은 진행 유지.
+- 변경4파일: `master/test_ontology.py`·`master/test_sandbox.py`·`reports/144-910-worktree-test-paths.md`·이 문서.
+- ontology 실물 manifest7·object40 검사 실행(skip 없음), sandbox44/44, 정적 차단0, 공식 통합188/188.
+  기본 샌드박스 통합은 source_scope28/32에서 rc1; 승인된 동일 명령 재실행은32/32·전체rc0. 원문은 리포트144.
+- 커밋·push·마감·배달·재기동 미실행. `issue_finish_tool`의 `done`·`why` 응답도 아직 없다.
 
 ## 유지할 운영 상태
 
@@ -67,7 +69,7 @@
 - ax-projects active(11:43:18), ax-task-queue·ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
 - 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음. 분산 등재 뒤 wait 실행·⑦ 사람 게이트 전달 규칙 유지.
 - #893·#896·#899~#907·#909 완료: 리포트138~143·Redmine. 중복 마감·배포·산출물 재생성 금지.
-- #894·#895·#897·#898·#910 신규. #885는 기존 사용자 보류 기록 유지. #884 T7의 닫는 방법은 미결.
+- #910 진행, #894·#895·#897·#898 신규. #885는 기존 사용자 보류 기록 유지. #884 T7의 닫는 방법은 미결.
 - #890 R251·R252 및 후속 리뷰 처분은 최신 목록·코드와 대조 후 사용자 결정. 상태를 자동 변경하지 않는다.
 - 큐/스풀 #709·#211·#650, ax-788-work, ax-review-788 반려#821, MotionForge·NS 잔재는 보존한다.
 - 미결: doc_sync 의존 등록 보강, #883 중복 플랜 제목, 훅 wait 일시오류 비대칭, 마스터 MCP 토큰 평문
@@ -75,6 +77,6 @@
 
 ## 바로 다음 작업
 
-1. `ax-handoff` 로 이 문서와 실제 상태(운영 main·`.ax-issues` 비어 있음·잠금 없음)를 대조한다.
-2. 사용자가 고른 일감을 `ax-plan` 으로 진행한다 — 후보 #910. 시작은 `issue_start_tool`, 편집은 응답 `repo`(worktree).
-3. 커밋·push·재기동·⑦ 전진·finalize는 기존 승인 규칙을 따른다.
+1. `ax-handoff`로 운영 main=`5bc4c8b`·#910 worktree 변경4파일·잠금 활성·Redmine 플랜을 대조한다.
+2. #910 커밋 승인을 받은 뒤 응답 `repo`에서만 커밋한다. 다음 마감은 `issue_finish_tool(910, confirm=False)` 미리보기 후 별도 승인.
+3. push·운영main 반영·배달·재기동·⑦ 전진·finalize는 해당 승인 범위대로만 실행한다. 다른 일감을 자동 시작하지 않는다.
