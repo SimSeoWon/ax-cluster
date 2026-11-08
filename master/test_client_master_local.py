@@ -99,25 +99,84 @@ def test_redmine_tools() -> None:
 def test_codex_text_replaces_hand_made() -> None:
     p = _paths(Path("/t"))
     e = ml.entry_for(p)
-    new, removed = ml.codex_text(HAND_MADE, e, ml.READ_APPROVE)
+    new, removed = ml.codex_text(HAND_MADE, e, ml.all_client_tools())
     import tomli
     d = tomli.loads(new)
     ax = d["mcp_servers"]["ax-client"]
     check("command/args 가 공용 형태", ax["command"] == e["command"] and ax["args"] == e["args"])
     check("cwd 제거", "cwd" not in ax)
     check("enabled_tools 제거", "enabled_tools" not in ax)
-    check("읽기 셋만 approve", ml.codex_approvals(new) == tuple(sorted(ml.READ_APPROVE)),
+    check("실제 도구 전체 approve", ml.codex_approvals(new) == tuple(sorted(ml.all_client_tools())),
           str(ml.codex_approvals(new)))
+    check("AX MCP 기본 승인·노출", ml.codex_all_approved(new))
     check("다른 서버 보존", d["mcp_servers"]["ax-projects"]["url"].endswith("/mcp")
           and d["mcp_servers"]["ax-projects"]["tools"]["list_projects_tool"]["approval_mode"] == "approve")
     check("최상위·projects 보존", d["model"] == "gpt-5" and d["projects"]["/home/sim"]["trust_level"] == "trusted")
     check("옛 설명 주석 제거", "Existing ax-client stdio server" not in new)
     check("걷은 것 보고", any("손으로 만든" in r for r in removed), str(removed))
-    again, removed2 = ml.codex_text(new, e, ml.READ_APPROVE)
+    again, removed2 = ml.codex_text(new, e, ml.all_client_tools())
     check("멱등 — 두 번째는 같은 본문", again == new)
     check("두 번째는 관리 블록만 걷음", removed2 == ["관리 블록(이전 master-local 출력)"], str(removed2))
-    first, _ = ml.codex_text("", e, ml.READ_APPROVE)
+    first, _ = ml.codex_text("", e, ml.all_client_tools())
     check("빈 파일에서도 생성", ml.CODEX_BEGIN in first and tomli.loads(first)["mcp_servers"]["ax-client"])
+
+
+def test_codex_existing_approvals_and_restrictions() -> None:
+    """현재 17개 승인을 보존하며 AX MCP의 명시 제한은 전체 허용 정책으로 바꾼다."""
+    import tomli
+    current = (*ml.READ_APPROVE, "list_works", "redmine_note", "redmine_link_commit",
+               "redmine_create_issue", "register_work", "get_work", "list_fixes", "get_fix",
+               "update_fix_status", "find_recipes", "get_anti_patterns", "find_history",
+               "log_history", "issue_finish")
+    existing = HAND_MADE + "\n".join(
+        f'\n[mcp_servers.ax-client.tools.{name}]\napproval_mode = "approve"'
+        for name in (*current[3:], "future_tool"))
+    e = ml.entry_for(_paths(Path("/t")))
+    new, _ = ml.codex_text(existing, e, ml.all_client_tools())
+    check("기존 17개 승인 보존", set(current).issubset(set(ml.codex_approvals(new))))
+    check("생성기 미등재 기존 승인도 보존", "future_tool" in ml.codex_approvals(new))
+    again, _ = ml.codex_text(new, e, ml.all_client_tools())
+    check("추가 승인 보존도 멱등", new == again)
+
+    restricted = '''approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+[mcp_servers.ax-projects]
+url = "http://localhost:8103/mcp"
+enabled = false
+enabled_tools = [
+  "only_one",
+]
+disabled_tools = ["other"]
+omit_tools_from = ["codex"]
+default_tools_approval_mode = "prompt"
+[mcp_servers.ax-projects.http_headers]
+Authorization = "test-header-preserved"
+[mcp_servers.ax-projects.tools.issue_start_tool]
+approval_mode = "prompt"
+enabled = false
+[mcp_servers.other]
+command = "other-server"
+enabled = false
+'''
+    fixed, _ = ml.codex_text(restricted, e, ml.all_client_tools())
+    parsed = tomli.loads(fixed)
+    projects = parsed["mcp_servers"]["ax-projects"]
+    check("명시 거절·도구 노출 제한 해소", ml.codex_all_approved(fixed)
+          and all(k not in projects for k in ("enabled_tools", "disabled_tools", "omit_tools_from")))
+    check("기존 제한 설정은 검사 불통과", not ml.codex_all_approved(restricted))
+    check("연결·다른 서버·샌드박스 보존", projects["url"] == "http://localhost:8103/mcp"
+          and projects["http_headers"]["Authorization"] == "test-header-preserved"
+          and parsed["mcp_servers"]["other"]["enabled"] is False
+          and parsed["approval_policy"] == "on-request" and parsed["sandbox_mode"] == "workspace-write")
+    for extra in ('enabled = false', 'enabled_tools = []', 'disabled_tools = ["x"]',
+                  'omit_tools_from = ["codex"]'):
+        blocked = fixed.replace('[mcp_servers.ax-client]', '[mcp_servers.ax-client]\n' + extra)
+        if extra == 'enabled = false':
+            blocked = fixed.replace('enabled = true', 'enabled = false', 1)
+        check(f"노출 제한 검사 {extra}", not ml.codex_all_approved(blocked))
+    prompt = fixed.replace('[mcp_servers.ax-projects.tools.issue_start_tool]\napproval_mode = "approve"',
+                           '[mcp_servers.ax-projects.tools.issue_start_tool]\napproval_mode = "prompt"')
+    check("개별 승인 override 검사", not ml.codex_all_approved(prompt))
 
 
 def test_codex_text_refuses() -> None:
@@ -275,7 +334,10 @@ def test_apply_writes_root_and_files() -> None:
               and "cwd" not in p.codex_toml.read_text().split(ml.CODEX_BEGIN)[1])
         check("agy 항목", ml.stdio_matches(ml.agy_get(p.agy_json.read_text()), ml.entry_for(p)))
         check("agy 권한 파일(임시 집)", str(p.agy_settings).startswith(str(tmp))
-              and ml.agy_approvals(p.agy_settings.read_text()) == tuple(sorted(ml.READ_APPROVE)))
+              and ml.agy_approvals(p.agy_settings.read_text()) == tuple(sorted(ml.all_client_tools())))
+        check("Claude 전체 허용 파일(임시 집)", str(p.claude_settings).startswith(str(tmp))
+              and ml.claude_all_approved(p.claude_settings.read_text()))
+        check("Codex 전체 허용 파일", ml.codex_all_approved(p.codex_toml.read_text()))
         check("옛 루트는 남긴다", p.legacy_root.exists() and "지우지 않았다" in out)
         # `#920` — ax-projects 는 토큰이 들어가므로 0600, 다른 항목 보존, 값은 출력 안 함
         pt = tmp / "projects-token"
@@ -320,33 +382,53 @@ def test_apply_writes_root_and_files() -> None:
 
 
 def test_agy_permissions() -> None:
-    """agy 헤드리스 허용 — 읽기 셋만 더하고, 사람이 넣은 항목은 보존하고, 깨진 파일은 덮지 않는다."""
-    human = json.dumps({"model": "x", "permissions": {"allow": ["command(rg)"]}, "trustedWorkspaces": ["/a"]})
-    new, added = ml.agy_permissions_text(human, ml.READ_APPROVE)
+    """전체 도구를 더하되 Antigravity의 기존 전체 허용·모드·다른 설정은 보존한다."""
+    human = json.dumps({"model": "x", "mode": "accept-edits", "permissions": {
+        "allow": ["command(*)", "mcp(ax-projects/issue_start_tool)", "mcp(ax-client/future_tool)"]},
+        "trustedWorkspaces": ["/a"]})
+    approve = ml.all_client_tools()
+    new, added = ml.agy_permissions_text(human, approve)
     d = json.loads(new)
-    check("agy 권한: 사람 항목 보존", "command(rg)" in d["permissions"]["allow"]
+    check("agy 권한: 사람 항목 보존", set(json.loads(human)["permissions"]["allow"]).issubset(
+        set(d["permissions"]["allow"])) and d["mode"] == "accept-edits"
           and d["model"] == "x" and d["trustedWorkspaces"] == ["/a"], new)
-    check("agy 권한: 읽기 셋을 더한다", added == tuple(ml.agy_grant(t) for t in ml.READ_APPROVE), str(added))
-    check("agy 권한: 쓰기는 넣지 않는다", not any("redmine_note" in a or "create" in a
-                                                   for a in d["permissions"]["allow"]))
+    check("agy 권한: 전체 도구를 더한다", added == tuple(ml.agy_grant(t) for t in approve), str(added))
+    check("agy 권한: 쓰기도 포함", "mcp(ax-client/redmine_note)" in d["permissions"]["allow"])
     check("agy 권한: 문법 mcp(서버/도구)", ml.agy_grant("redmine_meta") == "mcp(ax-client/redmine_meta)")
-    again, added2 = ml.agy_permissions_text(new, ml.READ_APPROVE)
+    again, added2 = ml.agy_permissions_text(new, approve)
     check("agy 권한: 두 번째는 더할 것 없음", not added2 and again == new)
-    check("agy 권한: 되읽기", ml.agy_approvals(new) == tuple(sorted(ml.READ_APPROVE)))
-    _, added3 = ml.agy_permissions_text("", ml.READ_APPROVE)
-    check("agy 권한: 빈 파일은 새로", len(added3) == len(ml.READ_APPROVE))
+    check("agy 권한: 되읽기", set(approve).issubset(set(ml.agy_approvals(new))))
+    _, added3 = ml.agy_permissions_text("", approve)
+    check("agy 권한: 빈 파일은 새로", len(added3) == len(approve))
     for bad in ("{broken", "[]", json.dumps({"permissions": []}),
                 json.dumps({"permissions": {"allow": "x"}})):
         try:
-            ml.agy_permissions_text(bad, ml.READ_APPROVE)
+            ml.agy_permissions_text(bad, approve)
             check(f"agy 권한: 거절 {bad[:20]}", False)
         except ml.MasterLocalError:
             check(f"agy 권한: 거절 {bad[:20]}", True)
     check("agy 권한: 깨진 파일 되읽기는 빈 값", ml.agy_approvals("{broken") == ())
     # #928: 기본 CLI 명령 접두사 함께 추가 검증
-    with_cmds, added_cmds = ml.agy_permissions_text("", ml.READ_APPROVE, extra_commands=ml.AGY_BASE_COMMANDS)
+    with_cmds, added_cmds = ml.agy_permissions_text("", approve, extra_commands=ml.AGY_BASE_COMMANDS)
     check("agy 권한: 기본 CLI 명령 포함", all(cmd in json.loads(with_cmds)["permissions"]["allow"] for cmd in ml.AGY_BASE_COMMANDS))
-    check("agy 권한: READ_APPROVE 포함 확인", set(ml.READ_APPROVE).issubset(set(ml.agy_approvals(with_cmds))))
+    check("agy 권한: 전체 도구 포함 확인", set(approve).issubset(set(ml.agy_approvals(with_cmds))))
+
+
+def test_claude_permissions() -> None:
+    human = json.dumps({"hooks": {"Stop": []}, "permissions": {"allow": ["Bash(rg *)"]}})
+    new = ml.claude_permissions_text(human)
+    d = json.loads(new)
+    check("Claude 전체 허용 모드", ml.claude_all_approved(new))
+    check("Claude 다른 설정 보존", d["hooks"] == {"Stop": []}
+          and d["permissions"]["allow"] == ["Bash(rg *)"])
+    check("Claude 멱등", ml.claude_permissions_text(new) == new)
+    check("Claude 기본 모드는 전체 허용 아님", not ml.claude_all_approved("{}"))
+    for bad in ("{broken", "[]", '{"permissions": []}'):
+        try:
+            ml.claude_permissions_text(bad)
+            check("Claude 깨진 설정 거절", False)
+        except ml.MasterLocalError:
+            check("Claude 깨진 설정 거절", True)
 
 
 def test_cli_wiring() -> None:
@@ -360,6 +442,7 @@ def test_cli_wiring() -> None:
 
 def main() -> int:
     for fn in (test_entry_is_one_shape, test_redmine_tools, test_codex_text_replaces_hand_made,
+               test_codex_existing_approvals_and_restrictions, test_claude_permissions,
                test_codex_text_refuses, test_review_r54_edges, test_codex_get_matches, test_agy_text,
                test_claude_user_get, test_config_same_shape_as_delivery,
                test_token_never_printed, test_apply_writes_root_and_files, test_agy_permissions,
