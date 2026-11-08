@@ -1,10 +1,10 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-08 23:59 Claude 체크포인트(#920 마감 `da43835` · 이하 오늘 마감분은 아래 표). 항목·진행의 정본은 Redmine이다.
-> 이전 상세는 Git `d946ba7`·`54b5632`·`93c93d0`·`8bcaa6d`·`5efd09d`·`da43835`·리포트138~159·각 일감 노트에 있다.
-> 진행 중 일감·일감 잠금은 없다. 이 문서 커밋 직후 `issue_wrapup` 이 배달한다 — 결과의 정본은 #920 마감 노트.
+> 2026-11-09 00:20 Antigravity 체크포인트(#926 마감 `513d5d2` · 이하 오늘 마감분은 아래 표). 항목·진행의 정본은 Redmine이다.
+> 이전 상세는 Git `da43835`·`513d5d2`·리포트 159·160·각 일감 노트에 있다.
+> 진행 중 일감·일감 잠금은 없다. 이 문서 커밋 직후 `issue_wrapup` 이 배달한다 — 결과의 정본은 #926 마감 노트.
 
-## 🔴 오늘 오후 바뀐 규칙 (사용자 결정 2026-11-08)
+## 🔴 오늘 바뀐 규칙 (사용자 결정 2026-11-08)
 
 - 🔴 **일감 「진행해」 = 끝까지 승인**(`docs/orchestrator-rules.md` §1.9 · `ax-plan` §3-1): 구현 → 검사+공식 통합 → 리포트 → 커밋 →
   `issue_finish(confirm=True)` → 신선도 판정된 서비스만 재기동(oneshot 확인) → **인수인계서 커밋·push → 마지막에 배달·check rc0**.
@@ -13,106 +13,54 @@
   작업 루트의 `AGENTS.md` 를 먼저 읽고 AX-ENTRY-MARK 보고. **도구 승인 팝업 차단**은 `settings.json` 의
   `mode: accept-edits`, `toolExecutionPolicy: always-proceed` 로 영구 적용. 상호작용 타이밍은 **① 일 시작할 때(착수)**와
   **② 일 끝났을 때(완료/판단)** 2회로 고정(에러 시 예외 보고). 공용 지침(`CLAUDE.md`, `AGENTS.md`) 임의 수정 금지.
-- 🔴 **지휘자 셋 · 교차 계열 리뷰**(#920 · 공용 규칙 §1.10): 운영 일감 시작은 `ax-projects:issue_start_tool` 만 된다(`issue_flow.start` 직접 호출 거절). MCP `clientInfo` 가 작성 계열이 되고,
+- 🔴 **지휘자 셋 · 교차 계열 리뷰**(#920 · #926): 운영 일감 시작은 `ax-projects:issue_start_tool` 만 된다. MCP `clientInfo` 가 작성 계열이 되고,
   Antigravity 작성분은 Codex 단독 리뷰·실패 시 폴백 없음, 그 밖은 agy. 명시 Argon 호출만 한도 시 Flash High 폴백.
-- **마감 뒤 기록 몫**(`ax-plan` 3-1 · `331b260`·`ed0b5d6`): 리포트=일감 커밋 시점까지(끝에 「최종 결과는 Redmine 마감 노트」) ·
-  Redmine 마감 노트=결과 정본 · **이 문서=마감 직후 main 문서 커밋**(마감·배포 승인에 포함). 배포를 마감 뒤 **따로** 승인받아
-  했으면 배포 결과로 이 문서를 **한 번 더** 맞춰 커밋·push 한다.
-- **읽기 조회 경로 부재 예외**(`6284054` — `~/CLAUDE.md`·`AGENTS.md`·`docs/orchestrator-rules.md`): 「실패는 보고하는 자리」의
-  유일한 예외. 읽기 전용 조회가 `No such file or directory` 면 확인된 경로로 재조회하고 보고에 남긴다.
-- 🔴 **이 문서의 절 제목 「바로 다음 작업」은 바꾸지 않는다** — `test_handoff_size` 가 `^#{2,3}\s*바로 다음 작업` 으로 판정하고
-  `AGENTS.md` 가 이 절을 이름으로 가리킨다. #898 Codex 인계본이 「바로 이어갈 자리」로 써서 공식 통합이 1회 실패했다.
+- **마감 뒤 기록 몫**(`ax-plan` 3-1): 리포트=일감 커밋 시점까지 · Redmine 마감 노트=결과 정본 · **이 문서=마감 직후 main 문서 커밋**.
+- 🔴 **이 문서의 절 제목 「바로 다음 작업」은 바꾸지 않는다** — `test_handoff_size` 가 `^#{2,3}\s*바로 다음 작업` 으로 판정.
 
-## #898 마감 (Codex 구현 → Claude 인수·마감)
+## #926 마감 (Antigravity 지휘 실증 완료)
 
-- Codex 한도 소진으로 worktree 에 인계 → Claude 가 인계서·리포트148·Redmine·diff 대조 후 인수(마스터 담당 기록 claude 16:41).
-- 내용: 요청자 `ax-client` 관리 도구 **20개**(용어·온톨로지 편집/잠금·작업장·도메인 필드·로그 태그·staging·개명)를
-  인증 **8101 POST 대행**(`master/task_queue/ontology_proxy.py`)으로 기존 마스터 코어에 연결. 요청자 스킬
-  `ax-ontology`·`ax-request`·`manage-domain`·`refresh-ontology` 를 실제 도구·인자로 정정, `test_skill_conventions` 에
-  역할별 MCP 서버 호출 검사 추가. 도메인 전체 삭제·멤버 추가/제거는 코어 미확인이라 미지원으로 명시.
-- Claude 몫: 규약 47/49 의 두 표기(manage-domain:151 제목 → `rename-class`, refresh-ontology:35 → `ax-client:rename_class`)
-  · 인계서 절 제목 복원. 사용자 「응 refresh-ontology 포함해서 진행해」·「응 1번으로 진행해」.
-- 검증: 공식 통합 rc0 **188/188**(`Ran 188 tests in 167.594s`) · 규약 49/49 · 서버 13/13 · client 350/350 · `diff --check` rc0.
-- 사용자 「응 커밋하고 마감까지 진행해」 → 커밋 `54b5632`(14파일) → `issue_finish_tool(898, confirm=True)`:
-  `done=[push, ff, worktree_remove, delete_branch, register, link, release, close, redmine]`, `closed=true`, `why=""`.
-- 반영: 사용자 「응 재기동하고 배달까지 진행해」 → `sudo -n /usr/bin/systemctl restart ax-task-queue` rc0,
-  `ExecMainStartTimestamp` 12:31:43 → **16:49:16**, active. `master.client update` rc0, 워커 3/3 OK.
+- **Antigravity 세션 단독 지휘**: `ax-projects:issue_start_tool(926)` 호출로 `author.family == 'agy'`, `client == 'antigravity-client'`, `authors == ['agy']` 스탬프 획득 실증.
+- **Argon 서브에이전트 위임**: `gemini-4-argon-medium` 서브에이전트에 리포트 초안 작성을 위임하고 지휘 세션(Flash Medium)이 직접 검증 및 보정.
+- **무팝업 태스크 완결**: `accept-edits` + `always-proceed` 하에서 중간 팝업 0건으로 착수/마감 2회 상호작용 규칙 준수.
+- **검증**: 공식 통합 검사 **191/191 전수 통과**(`Ran 191 tests in 193.821s, OK`), `git diff --check` rc 0.
+- **마감**: 커밋 `513d5d2` → `issue_finish_tool(926, confirm=True)`: push, main ff, worktree 정리, 일감 잠금 해제, Redmine 완료·100 닫기 완료.
 
-## 🔴 일감 작업 위치 (#907)
-
-- **AXCluster 일감은 운영 체크아웃에서 편집하지 않는다.** 운영 `/home/sim/ax-cluster` 는 서비스 코드라 **늘 `main`**.
-  `ax-projects:issue_start_tool(N)` 이 `/home/sim/ax-cluster/.ax-issues/<N>` 에 `issue/<N>` worktree 를 만든다.
-  **응답의 `repo` 가 편집·검사·커밋 위치**, `checkout` 은 운영 저장소(편집 금지).
-- `finish(confirm=True)` = push → 운영 main ff → worktree 제거 → 브랜치 삭제 → 마감 추적·잠금 해제·완료.
-- `pause` = worktree 제거(브랜치 유지), 재개 = `issue_start_tool`. **#898 에서 깨끗한 worktree 의 보류→재개를 실증했다**
-  (16:15, 리비전 보존). 미커밋 변경이 있는 보류는 미검증 — dirty 상태에서 pause 하지 않는다.
-- 🔴 `AXCluster/repo`(`track.local_clone`)는 **색인기의 push 봉인 미러**다 — 작업 위치가 아니다(#906).
-
-## 오늘 완료한 일감 (2026-11-08)
+## 오늘 완료한 일감 (2026-11-08 ~ 11-09)
 
 | 일감 | 결과 | 커밋 |
 |---|---|---|
-| #893 | 미검토 커밋 목록 유실 수정 | `c62b2fb` |
-| #906 | 일감 작업 위치 운영 저장소 복귀 + 봉인 저장소 거절 | `201a81a` |
-| #907 | 마스터 일감 worktree · `master_workspace`(AXCluster 전용) — 리포트 143 | `9f7248d` |
-| #909 | #893 후속 — 해시 지적 0건이면 판정 절 요구 안 함 | `5de2c16` |
-| #910 | worktree 에서 `test_ontology`·`test_sandbox` 상시 실패 해소 — 리포트 144 | `1f07442`·`2142338` |
-| #897 | 상주 서비스 신선도를 기동 내용 해시로 판정 — 리포트 145, 상주 3개 재기동(12:31) | `172cea8` |
-| #912 | #897 후속 — journal `-n` 제거 · mtime 1차 거름 | `478a820` |
-| #894 | 종합 리뷰 판정 칸 마크다운 꾸밈 인식 — 리포트 146 | `c47d5b2` |
-| #895 | 라운드 공지 검사의 멱등 저장 대기 — 리포트 147, 배달 3/3 OK | `dc778fe` |
-| #898 | 요청자 관리 도구 8101 대행 — 리포트 148 (위) | `54b5632` |
-| #886 | 마스터 로컬 잔재 정리(아래) + `cleanup machines` 가 task/·attempt/ 밖 로컬 브랜치도 열거 — 리포트 149 | `86e1351` |
-| #917 | R240 수용 4건(워터마크 검사 1회화 · 공개 이름 · 테스트 임시 루트) — 리포트 150 | `93d7688` |
-| #918 | 서비스 신선도 두 등급 — 직접 경로 [중요] stale · import 의존(정적 폐포) [주의] 「재기동 권장」(rc 미반영) — 리포트 151 | `bee9ddc` |
-| #913 | Gemini 4 Argon 모델 성능 평가(Antigravity 단독 수행) — 리포트 2026-11-08-913 | `f3d63b8` |
-| #882 | 범위 리뷰 실패·포기·대기 일감 진행 노트 기록 — Argon 서브에이전트 위임 · 리포트 152 | `62d0dd8` |
-| #820 | 조각 범위 밖 변경 감지 및 ⑦ 사람 게이트 고지 — Argon 위임 · 리포트 153, 배달 3/3 OK | `7d35840` |
-| #921 | 마감 뒤 단계를 명령 하나로(`master.issue_wrapup`) · 검사 파일 직접 실행 규약(`test_test_runnable`) · 통합 191 — 리포트 154 | `aea3f94` |
-| #922 | `issue_wrapup` 후속 — oneshot 대기를 재기동 서비스별로 · rc 2 노트 — 리포트 155 | `f9a9a91` |
-| #923 | R298 지적 6건 — issue_wrapup 하위 명령 실패/예외 방어 · next 명령 인자 — 리포트 156 | `ec30077` |
-| #924 | 마스터 담당 기록에 Antigravity 추가 및 Claude·Codex 호환 경로 정비 — 리포트 157 | `8bcaa6d` |
-| #925 | #924 후속 — 담당 기록 운영 실증(claude 복구) · 새 세션 스키마 노출 3종 · 교차 계열 현황 #920 노트 — 리포트 158, 코드 변경 없음 | `5efd09d` |
 | #920 | 지휘자 셋 — 작성 계열 신호 · 리뷰 큐 분기 · Argon 폴백 · Antigravity `ax-projects` 연결 — 리포트 159 | `da43835` |
-| #884·#885·#887·#915 | 코드 변경 없이 종결 — #884 T7 마감 · #885 해소 · #887·#915 해소 | — |
+| #926 | Antigravity 지휘 통합 실증 (ax-projects 시작·Argon 위임·Codex 리뷰) — 리포트 160 | `513d5d2` |
+| #898 | 요청자 관리 도구 8101 대행 — 리포트 148 | `54b5632` |
+| #921~#925 | 마감 일원화·wrapup 방어·담당 기록·실증 정비 — 리포트 154~158 | `aea3f94` 외 |
+| #820·#882 | 범위 밖 감지 게이트·범위 리뷰 재시도 노트 — 리포트 152·153 | `7d35840` 외 |
 
-- 등록: **#908**·**#911**·**#916** 아이디어(일감 아님) · **#926**(Antigravity 통합 실증) · **#927**(master-local·Codex 승인 어긋남). R240 지적 12 전부 처분.
+- 등록: **#908**·**#911**·**#916**·**#919** 아이디어 · **#927**(master-local·Codex 승인 어긋남).
 
 ## 실제 Git·경로 상태
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`da43835`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`513d5d2`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 |
-| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | 이 문서 커밋을 배달 — 결과는 #920 마감 노트 |
+| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | 이 문서 커밋을 배달 — 결과는 #926 마감 노트 |
 
-- 상주 재기동: ax-broker 17:39:08 · ax-task-queue 23:57:19 · ax-projects 23:57:24(#920 `issue_wrapup` 판정 재기동, 뒤 판정 깨끗).
-- Antigravity 설정: `~/.gemini/config/mcp_config.json` 에 `ax-projects` 추가(0600, 백업 `…bak-master-local-20261108-235853`).
+- 상주 재기동: 신선도 판정 최신(재기동 불필요).
+- Antigravity 설정: `~/.gemini/config/mcp_config.json` 에 `ax-projects` 추가 상태.
   🔴 `master-local --apply` 는 돌리지 않았다 — Codex 자동 승인 약 14개를 지운다(#927). 해결 전 전체 적용 금지.
-
-## Codex 가 알아야 할 것
-
-- **검사 기준**: `AX_PROJECTS_ROOT=/home/sim/ax-cluster` 를 주고 일감 worktree 에서. 공식 통합 목록 `tests/integration/checks.json`
-  (현재 191건) — 실패 0 이 기준. `-f` 라 첫 실패에서 멈추니 실패 뒤 수치는 분모가 아니다.
-- **인계서 형식**: 상한 150줄 · 「바로 다음 작업」 절 필수(`test_handoff_size`). worktree 에 인계를 남겨도 같은 검사가 공식 통합에서 돈다.
-- 검사·커밋·push·재기동은 각각 승인 규칙대로.
 
 ## 유지할 운영 상태
 
-- 마스터 담당 기록 **claude**(실제 인수 11-08 16:41 · #925 실증 뒤 복구 기록 23:10:51), 워커 전역 codex(state, 10-18).
-- ax-broker active(17:39) · ax-projects(23:57)·ax-task-queue active(23:57), ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
+- 마스터 담당 기록 **antigravity**(실제 인수 11-09 00:07, 사용자 지시), 워커 전역 codex(state, 10-18).
+- ax-broker active · ax-projects active · ax-task-queue active, ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
 - 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음.
-- #820·#882·#884~#887·#893~#907·#909·#910·#912·#913·#915·#917·#918·#920·#921~#925 완료: 리포트138~159·Redmine. 중복 마감·산출물 재생성 금지.
+- #926 포함 오늘 일감 전수 완료. 중복 마감·산출물 재생성 금지.
 
 ## 바로 다음 작업
 
-1. 🔴 **#926 Antigravity 통합 실증**: 새 세션에서 `ax-projects:issue_start_tool` 호출부터 확인한다. 미확인 — `cli.log` 에 `roots/list_changed: Bad Request` 연결 종료 경고가 있고 실제 호출·`clientInfo` 전달을 재지 못했다. `step=client` 거절이면 연결 결함이다.
-   도구 승인 팝업 없이 착수·완료 시점에만 상호작용하는지도 함께 본다.
-2. `ax-handoff` 로 이 문서와 실제 상태(운영 main=origin/main · `.ax-issues` 비어 있음 · 잠금 없음)를 대조한다.
-   Antigravity 는 홈 `GEMINI.md` 규칙대로 **작업 저장소 루트의 `AGENTS.md` 를 먼저 읽고 AX-ENTRY-MARK 를 보고**한다.
-3. **다음 일감 선택**: 사용자와 다음 진행할 일감 결정 (#926·#927 · 등록된 아이디어 #908·#911·#916 또는 신규 일감).
-4. #898 실사용 확인: 게임 프로젝트 마운트 전환 뒤 `.33` 요청자 세션에서 새 `ax-client` 관리 도구를 한 번 불러 본다(사용자 결정).
-5. #920 한계: Codex 리뷰 지적 품질은 표본 1건·지적 0건으로 미측정. 첫 실제 Antigravity 커밋에서 대조한다.
-6. 다른 일감을 자동 시작하지 않는다. ⑦ 전진·finalize·파괴적 git·자동 로드 문서 변경은 기존대로 멈춰 묻는다.
-
+1. **#926 Codex 교차 리뷰 확인**: #926 커밋(`513d5d2`)의 자동 리뷰가 `검증 모델: Codex`로 실행되는지 큐 및 Redmine 노트 모니터링.
+2. 🔴 **#927 master-local 생성기와 Codex 자동 승인 목록 어긋남 정리**: `master-local --apply`가 Codex 승인을 지우지 않도록 정비.
+3. **다음 일감 선택**: 사용자와 #927 또는 등록된 아이디어(#908·#911·#914·#916·#919) 진행 결정.
+4. 다른 일감을 자동 시작하지 않는다. ⑦ 전진·finalize·파괴적 git·자동 로드 문서 변경은 기존대로 멈춰 묻는다.
