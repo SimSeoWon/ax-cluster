@@ -1,152 +1,68 @@
 # 현재 AX 작업 인수인계
 
-> 현재 체크포인트 한 벌이다. 11월 1일 상세 요약은 Git `c4d4fc1`, #840·#788 상세는 `013eedf`, #879~#881 상세는 `bd10209`, #883 상세는
-> `2e54988`, #888(진단·처방 C·라운드 3)·#891 상세는 `0a9bef9` 의 이 파일과 리포트 135~137에 있다. 항목·진행의 정본은 Redmine이다.
-> HEAD·dirty·마운트·모드는 재조회한다.
+> 2026-11-08 Claude 체크포인트. 항목·진행의 정본은 Redmine이다.
+> 이전 상세는 Git `6a0a201`의 이 파일·리포트138~142·각 일감 노트에 있다.
 
-## #905 정정·#906 Claude 인계 — 2026-11-08
+## #906 — 일감 작업 저장소 복귀 · 색인 미러 봉인 (Claude · 진행 중)
 
-- 사용자 지시: #905 정정 진행, Codex 수행 문제를 Redmine 등록하여 Claude에서 수정. **#906 신규·높음** 등록·되읽기.
-- **검사·테스트 금지**. Git 드라이런 불가·실증만 가능 결정은 `/home/sim/.codex/AGENTS.md`에 저장. 실증 승인 없음.
-- 기준 `63a8ddf`. 운영 `/home/sim/ax-cluster` main 깨끗함. 미커밋 초안은 `/home/sim/ax-issues/905`의 `issue/905`에 보존.
-  이 경로는 앞선 잘못된 구현의 보관 위치일 뿐 새 작업 경로 계약이 아니다. #905 잠금 활성, 담당 claude·워커 codex 기록 유지.
-- T1~T3의 잘못된 완료 기록은 #905 정정 노트·T4로 보완. 새 helper·ax-issues 하드코딩·유닛 권한 확대 제거 완료.
-  현재 diff는 issue_flow 기본 repo를 기존 `resolve("AXCluster").repo`로 연결하고 repo 응답·MCP·스킬·기록을 맞춘다.
-- T4 미해결: config 저장소의 origin push DISABLED, 실제 pre-push는 gitea-write로도 main push 차단. 가드 우회 안 함.
-  기존 작업 저장소/색인 소비자/main 반영 계약을 Claude가 대조해야 한다. 해당 저장소의 기존 `?? graph.db`는 건드리지 않았다.
-- 미커밋 5파일, 테스트·실증·push·main 반영·서비스 설치·재기동 없음. 현재 MCP는 옛 코드. 옛 finish로 마감하지 않는다.
-- 리포트141 최신 정정·#905·#906이 인계 근거. #906 자동 착수·닫기, 작업본 삭제, 잠금 직접 변경 금지.
+- http://192.168.0.57:8080/issues/906 · 플랜 T1~T3 완료, T4(이 문서·리포트) 진행. 잠금 활성.
+- 작업 위치: **운영 저장소 `/home/sim/ax-cluster` 의 `issue/906`** — `201a81a`(T1) + main merge `f321141`.
+- 결론: #905 정정 `6a0a201`이 일감 작업 위치를 **색인기의 ff 전용 미러**(`AXCluster/repo`, `track.local_clone`)로
+  바꾼 것이 문제였다. 그 미러는 `origin` push가 `DISABLED://…`(PLAN §2.1), pre-push가 main을 막는 **의도된 봉인**이다.
+  결과: #893 마감 push rc128 · 미러 main 추적 중단 · 미병합 커밋 색인. 근거: `reports/142-906-issue-repo-sealed-mirror.md`.
+- T1: `issue_flow.default_repo()` = 운영 저장소 `REPO`. `_sealed()` — `origin` push URL이 `DISABLED`면 `start`·`finish`가
+  브랜치·push 전에 거절. MCP `issue_*` 설명·`ax-plan` 스킬 정정. `test_issue_flow` 150/150, 전수 10726/10727(실패 1 =
+  이 문서 형식, 재작성으로 해소 대상).
+- 🔴 **배포 전 함정**: 실행 중인 `ax-projects`(MCP)는 아직 `6a0a201` 코드다 — `issue_*_tool` 을 부르면 **미러에 브랜치를
+  세운다.** #906이 main에 들어가고 `ax-projects`가 재기동되기 전까지 일감 흐름은
+  `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -c "from master import issue_flow as F; F.start(N, repo='/home/sim/ax-cluster')"`
+  처럼 **repo 를 명시해** 부른다(사용자 승인 2026-11-08, #906 한정).
 
-## 11-07~08 Claude 체크포인트 — #899·#901·#904·#902·#903 완료 (11-08 00:0x KST)
+## #893 — 완료 (이번 세션에 마감)
 
-> 일감별 상세는 이 파일의 Git `a713dae`, Redmine 각 일감 노트, 리포트 140에 있다.
+- `c62b2fb`를 미러에서 운영 저장소로 **같은 해시로** 옮겨 재개·`finish(confirm=True)`: origin/main=`c62b2fb`(ff),
+  마감 추적 r1(R267)·잠금 해제·완료100. 해시를 유지한 이유: 색인 커서가 `c62b2fb`였다(rebase하면 커서가 영영 조상이 못 됨).
+- 신호 수신 확인: push 2초 뒤 10:23:52 `ax-indexer` 이벤트 1건 `6a0a2013→c62b2fb1` · 미러 HEAD=origin/main · 커서 일치.
+- `master.client deliver AXCluster` rc0 · `.43`·`.2`·`.33` 3/3. 서비스 재기동은 #906 반영 때 함께.
 
-- 마스터 담당 **claude** 재인수(22:44, 사용자 지시). 일감은 전부 로컬 직접/서브 에이전트(사용자 선택),
-  issue_start→회귀 선추가(수정 전 실패 확인)→수정→전수→finish 미리보기→승인 순서. finish 리뷰 링크는 매번 「큐에 없음 1」.
-- **#899** 분석 전용(변경 0) — 리포트 140 `0942b19`. 분모 26 스킬+훅5, 훅 직접 의존은 ax-request 하나,
-  Codex `hooks stable true`이나 AX 미배선. **§7 미결 선택지는 사용자 결정 전 착수 금지.** 드라이런 1~4 → #901~#904 등록.
-- **#901** `0cf37f7` — `pending_works`가 `editor_mcp`에 루트 보정 payload 전달(하위 폴더 세션 침묵 해소).
-- **#904** `38270c3` — `--wait`가 영구 거절 401·403·404에서 즉시 rc 2(404 포함은 사용자 결정), 일시 오류는 재시도.
-  rc 2 설명 두 곳(ax-request 대기 참조·`client_mcp.WAIT_NOTE`) 맞춤. 404 실경로 미도달(단위만).
-- **#902** `e915275` (선택 A) — `fail_notice_pending` 선저장 + `recover_piece_fail_notices`(라운드 진행 중이면 재전송,
-  종결·지난 라운드면 생략 사유 기록). 전송 실패 무재전송·기동 1회 재시도 유지. 주기 재시도(§7-2)는 미결.
-- **#903** `821bace` (선택 A·상한 5회) — followup ⑦ 기록에 노트 대기 표시, 기록 있는 주기는 준비 없이 노트만 재시도
-  (대기·실패 대상, 5회 뒤 멈춤+[중요], `--force` 재개). baseline·옛 기록·이슈 없음은 대상 아님(운영 사본 27건 중 0건).
-  `ax-followup`은 oneshot이라 다음 발동부터 main 코드 — 재기동 불필요.
-- 검증: 매 일감 전수 213파일 실패0(최종 11136/11136), pystatic 차단0. 배달: AXCluster `update` 3/3 OK·출처 HEAD
-  (#901·#904 뒤). 훅·요청자 참조문서는 `.33` unreal 마운트 전환 때 반영. `.2` 홈 그림자 ax-work는 check [주의].
-- **`ax-task-queue` 재기동** 23:48:54(사용자 승인, in_progress 0·표시 0 확인 뒤) — 8101 200·Traceback 0.
-- 미결(일감화 미정): 훅 경로 `wait_for_work`가 일시 오류 한 번에 끝나는 비대칭 · 마스터 `~/.claude.json`·
-  `~/.codex/config.toml` ax-projects 토큰 평문. 절차 빈틈은 **#905**로 등록됐다(위 교대 절).
-- 교훈: 인수인계 크기 검사 실패를 커밋 명령이 막지 않아 `a713dae`가 157줄로 커밋됐다 — 검사 rc로 커밋을 막는다.
+## 실제 Git·경로 상태
 
-## #896·#900 완료 체크포인트 — Codex · 2026-11-07 21:03 KST
+| 역할 | 위치 | 상태 |
+|---|---|---|
+| 운영 저장소(일감 작업 위치) | `/home/sim/ax-cluster` | `issue/906` @ `f321141`, main=origin/main=`c62b2fb` |
+| 색인 미러(작업 위치 아님) | `/home/sim/ax-cluster/AXCluster/repo` | main=origin/main=`c62b2fb`, 깨끗함. 옛 `issue/893` 브랜치 잔존(main에서 도달 가능) |
+| 옛 #905 초안 보관 | `/home/sim/ax-issues/905` | `6a0a201` detached. 작업 위치가 아니다. 자동 삭제 안 함 |
+| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `c62b2fb` 배달 3/3 |
 
-- **#896 완료·100**. 사용자 커밋·배포·finish 별도 승인 후 `1ecf58b` main 반영·push 완료.
-  당시 `main=origin/main=1ecf58b`, `issue/896` 삭제·잠금 해제·마감 추적 라운드1 해시2개 등록.
-  이후 인수인계70332d1을 승인받아 commit/push했다. 현재 상태는 아래 #900 기록을 따른다.
-- **#900 완료·100**. T1~T4 완료, 사용자 승인 커밋 `e41b53e`를 main에 반영했다.
-  현재 `main=origin/main=e41b53e`. issue/900 로컬 브랜치 삭제·마감추적 라운드1 등록·잠금 해제 성공.
-  `/home/sim/ax-900-local`은 같은 커밋의 격리 작업본으로 보존. 자동 삭제·재적용하지 않는다.
-  이번 인수인계 갱신 전 트리는 깨끗했으며, 갱신 뒤 이 문서만 미커밋이다. 커밋 승인은 별도.
-- **배포 순서 오류와 정정**: main 반영 전에 issue/900 HEAD를 배달하고 완료라고 보고했다.
-  사용자 지적 뒤 승인받아 finish 미리보기→main 반영→main 기준 update→드라이런 순서로 다시 처리했다.
-  이전 작업 브랜치 배달을 정식 main 배포로 설명하지 않는다. 이후에도 main 반영을 먼저 대조한다.
-- **최종 배포**: e41b53e main 기준 AXCluster `.43`·`.2`·`.33` 배달·검사3/3, rc0.
-  `.2` 기존 홈 중복 스킬1 주의 유지. 배달은 관리 자산 일치이며 실제 파견 성공과 구분한다.
-- **배포 후 드라이런**: main에서 `master/test_planner.py` 67/67·rc0.
-  정상 생성·요약/인덱스/등록/아카이브, 질문 거절·실패 원문/리뷰 보존·재시도·중복스킵 검증.
-  임시 데이터·LLM/등록 대역 사용이며 실제 상용 생성 재실행은 아니다.
-  ax-batch는 oneshot으로 다음 발동이 새 코드다. 재기동하지 않았고 timer active/waiting 확인.
-  직전 service 21:01:54 KST·Result success. #900으로 다른 상주 서비스는 재기동하지 않았다.
-- **#896 검증**: 관련 회귀144/144·issue_infra69/69·정적 차단0·독립 검토 추가지적0.
-  공식 통합의 기존 `test_source_scope` 28/32 실패는 기준에서도 동일. 사용자 결정으로
-  이번 변경 밖 테스트 실패는 더 조사하거나 #896 차단 근거로 삼지 않았다.
-  임시 Git 테스트 조건을 실제 운영 플로우의 결함으로 설명하지 않는다.
-- **실제 마감에서 새 경로 확인**: `push → switch -C main 1ecf58b → delete_branch →
-  register → link → release → close → redmine`, ok·registered·lock_released·closed 모두 true.
-  옛 main을 거치지 않는다. 같은 로컬 repo의 다른 main worktree 점유·조회 실패는 push 전 거절.
-- **#896 당시 배포**: AXCluster `.43`·`.2`·`.33` 3/3 OK, 출처 `1ecf58b`. 기본 샌드박스 접근 실패 뒤
-  동일 기존 명령만 담은 승인 스크립트로 재실행해 rc0. `.2` 기존 홈 중복 스킬1 주의 유지.
-  `ax-projects` 재기동 **16:41:42 KST**, active/running 확인. 다른 서비스 재기동 없음.
-- **PC 타입 명세**: `9166654`도 함께 main 반영. 홈 CLAUDE/AGENTS의 정본
-  `machines/sim-desktop.md`·`machines/sim-desktop-agents.md`에 마스터/보조 워커/사용자 PC 명시.
-  `.33` 사용자 트리에서 자동 리뷰를 실행한다고 추측하지 않는다. AXCluster 전용 워커 역할은 별도.
-- 근거: Redmine #896 최신 노트·`reports/138-896-finish-checkout-verification.md`.
-  `/home/sim/ax-896-local`의 미커밋 사본은 보존했다. 재적용하거나 자동 정리하지 않는다.
-  아래 과거 상태보다 이 체크포인트와 Redmine 최신 기록을 우선한다.
+- 미러는 **늘 main 끝을 따라가는 거울**이다(`consumer.py` `fetch` → `merge --ff-only`). 그 위에 브랜치를 세우면
+  upstream 없는 브랜치라 `FETCH_HEAD`가 전부 not-for-merge가 되고 색인기가 조용히 main을 놓친다.
+- `/home/sim/ax-788-work`·`ax-896-local`·`ax-900-local`·기존 advance worktree는 보존. 자동 정리하지 않는다.
 
-## #900 — 질문 응답을 주간 플랜으로 저장한 결함
+## Codex 관련 — 사용자 결정 2026-11-08
 
-- 마일스톤 **7 - 버그/개선**, 완료·100. 사용자 「인수인계서 작성하고 900번 진행해」 뒤
-  제안 플랜·인수인계 commit/push·로컬 서브 에이전트 방식 승인. 한도 중단 뒤 초기화·재개 승인.
-  RAG request `21eda88ebd7f41c48d312558046178f8`로 plan_generator/planner/test_planner 및
-  layer2_verify 문서를 검색·본문 읽기·현재 소스 대조했다. 매 단계 새 근거가 필요하면 RAG를
-  쓰되 같은 검색을 매 명령마다 반복하지 않는다.
-- **P13~P15(2026-W44) 모두 실제 개선안 대신 Gemini 위임 여부를 묻는 문장을 저장**했다.
-  `ax-gemini` 대화형 지침이 응답에 인용돼 있으나 실제 유입 경로는 미확정.
-  생성기의 두 경로가 빈 응답만 제외하고 raw 본문을 저장·성공 집계하는 사실은 확인했다.
-- 실제 호출: `planner.run_weekly_plans → plan_generator.generate_improvement_plans →
-  review_gen.commercial_chat → layer2_verify.WHY_BACKENDS(codex→agy→claude)`.
-  생성 체인과 교차 계열 리뷰 체인을 혼동하지 않는다. 옛 합성 문서의 체인 설명만 믿지 않는다.
-- **P13 원본3건은 R218-1~3 applied(#881)**. 현재 성공 git stdout 분리·Redmine 예외 변환·
-  이벤트 직렬화 예외 처리가 남아 있다. **P14 Path import3건도 이미 제거**. P15는 타입 표기 권고.
-  이미 해소된 지적을 새 구현 작업으로 반복하지 않는다.
-- T1/T2 완료: 무인 응답 계약·필수구획/본문 구조 검사, 전체 주차 후보 검증 뒤에만 공개.
-  실패 시 JSONL 원문 진단만 남기고 정상 요약·등록·아카이브를 보류해 재시도 가능.
-  완료 주수도 summary 있는 주차만 집계. 수정 대상은 plan_generator/planner/test_planner3파일.
-  스킬·공용 LLM 체인 변경 없음. 구조 검사는 의미 전체 판정을 보장하지 않는다.
-- **검증**: planner67/67·batch59/59·정적차단0·독립검토 추가지적0. 실제 P15 원본5건으로
-  Codex가 질문 없이 가이드1건 생성, 별도 `/tmp/ax-900-live-p15-xbomtqen`에 보존·본문 확인.
-  사용량 issue900_validation/P15 기록. 통합은 아래 명시적 제외 범위로 통과. 운영 산출물 처리도 완료했다.
-- **T3 승인 처리 완료**: P13/P14 원문보존·dismissed·되읽기 확인. P15는 같은 번호·경로·
-  원본리뷰4개·pending/open 유지, 실제 가이드로 재생성했다. 타입 힌트 코드는 바꾸지 않았다.
-  기존 본문·요약·인덱스는 실제 W44의 _before_issue900.q9wSqU에 보존. 요약 유효1·무효2,
-  인덱스 W44=1 확인. 원본 리뷰는 삭제·이동하지 않았다. 상세 리포트139.
-- 통합은 기존 source_scope 1건을 사용자 결정으로 제외. 98개 통과 후 handoff_size가182줄로
-  실패해 중단. 승인 후 축약·형식7/7, 잔여88/88 통과. 합계187/187(기존1개 제외).
-  로그 /tmp/ax-900-integration.log 및 /tmp/ax-900-integration-resume.log.
-- 자동 리뷰 조회 시점: 최신 R251(해시)·R252(#890 종합), 각각 높음0·중간6·낮음10이며 실질 중복.
-  경로 지적은 resolve()·마스터 스킬 링크 계약을 고려해야 한다. 적용·기각 상태는 바꾸지 않았다.
-  #896 새 리뷰 결과는 당시 목록에 없었다. 재조회 대상이며 완료를 추정하지 않는다.
-- **#899**: 11-07 Claude가 분석 완료·마감(위 체크포인트·리포트140).
+- Codex의 「Git 드라이런 실패」 실체: 기본 샌드박스가 `sg gitea`를 막아(`Cannot open audit interface`)
+  `test_source_scope` 28/32. 리포트 86에 같은 수치로 이미 있었다. 샌드박스 밖(Claude)은 32/32.
+- `~/.codex/AGENTS.md` 「Git 검증」 절을 원인·실측으로 정정했다. 사용자 결정(Git 검증은 실제 작업 실증)은 유지.
+- #906 본문 1~7 대조는 리포트 142 §5. 1~3은 코드 강제(`_sealed`), 5는 `plan_transition` 근거 품질 관문 —
+  코드화 여부는 사용자 결정 대기.
 
-## 이어받을 운영 상태
+## 유지할 운영 상태
 
-- 마스터 담당 기록 claude(11-07 22:44), 워커 전역 codex. 마운트 AXCluster. 자동 변경하지 않는다.
-- #888·#889·#890·#891 완료. 상세 리포트135~137·Redmine·Git 0a9bef9 인계서.
-- #889 finish 등록 성공 시 완료100, 리뷰는 닫힌 일감에 노트만 추가. 자동 재개·새 일감 없음.
-  활성·보류 잠금은 손 닫기 거절. 실제 .33 세션 호출은 미실증, 서버 경로 드라이런은 통과.
-- #891 notice_pending·기동 복구 재공지의 SIGTERM 드라이런 통과. 실제 운영 종결1회 미확인.
-  수신 뒤 죽으면 중복 가능(유실보다 중복 선택). R248-1 비정수 메타 int() 오류 별건 여부 미결.
-- #890 스킬 규약은 docs/skill-authoring.md·master/test_skill_conventions.py.
-  ax-handoff/ax-mode 직접 호출은 scripts/conductor.py. .33 요청자 번들·reference 실사용은
-  게임 프로젝트 마운트 전환 때 확인. AXCluster 배달과 구분한다.
-- #893 리뷰 생략목록 유실·#894 판정서식 파서·#895 테스트 경합·#897 mtime 신선도 오판·
-  #898 요청자에 없는 MCP 호출: 등록, 처방·순서 미결. #896은 완료.
-- #884 T7은 #889로 의미가 바뀌어 닫는 방법 사용자 결정 필요. #885는 #884까지 보류.
-- 주말 기각 후보는 기준37b8fed에서 48기각·5해소·60보류, 상태 미변경. 최신 대조 전 일괄처리 금지.
-  Codex108호출·입력 약8.7M 기록은 Redmine. #892 기록·비용 분석은 아이디어 버킷.
-- #259 ServerTest는 등록만. 초기화·합성·배달·마운트 미실행.
-- #839②·#791D·#820·#372·#855·#826(자식858은856 선행)은 상태 재조회.
-- 큐/스풀 #709·#211·#650, ax-788-work, ax-review-788 반려#821, MotionForge·NS 잔재 보존.
-  정식 취소는 review.cancel_work. 직접 PATCH·자동 삭제 금지.
-- 서비스는 운영 체크아웃 코드로 돈다. 새 코드는 격리 worktree에서 검증한다.
-  ax-projects(8103)는 MCP 서버. 관련 변경 반영 후 재기동은 별도 승인.
-- 마스터 followup 수신자는 ax-followup.timer 하나, 마스터 훅 없음. 등재 wait 즉시 실행·게이트 전달.
-- 유닛 RUN_BUDGET 계약은 설치본 먼저. Monitor는 줄 버퍼링 유지. plan_set_tool은 전체 목록 덮어쓰기.
-- doc_sync 의존 등록 보강과 #883 중복 플랜 제목은 미처리. 변경은 사용자 결정에 따른다.
+- 마스터 담당 기록 claude(11-07 22:44), 워커 전역 codex(state, 10-18). 이번 세션에서 변경하지 않았다.
+- ax-projects active(11-08 00:56:09 기동, `6a0a201` 코드), ax-task-queue·ax-followup.timer·ax-indexer.path active.
+- 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음. 분산 등재 뒤 wait 실행·⑦ 사람 게이트 전달 규칙 유지.
+- #899·#901~#905·#896·#900 완료: 리포트138~141·Redmine. 중복 마감·배포·산출물 재생성 금지.
+- #894·#895·#897·#898 신규. #885는 기존 사용자 보류 기록 유지. #884 T7의 닫는 방법은 미결.
+- #890 R251·R252 및 후속 리뷰 처분은 최신 목록·코드와 대조 후 사용자 결정. 상태를 자동 변경하지 않는다.
+- 큐/스풀 #709·#211·#650, ax-788-work, ax-review-788 반려#821, MotionForge·NS 잔재는 보존한다.
+- 미결: doc_sync 의존 등록 보강, #883 중복 플랜 제목, 훅 wait 일시오류 비대칭, 마스터 MCP 토큰 평문
+  (`~/.codex/config.toml` 에 bearer 평문 — 11-08 조사 중 출력에 노출, 외부 전송 없음).
 
 ## 바로 다음 작업
 
-1. #900은 main 반영·배포·드라이런·마감 완료다. 중복 finish·재생성·배포하지 않는다.
-   Redmine 최신 노트가 최종 기록이다. 리포트139의 커밋 승인 대기 문구는 마감 전 기록이다.
-2. #899·#901~#904 완료, #905 등록만. 다음 일감·미결 2건 일감화·리포트140 §7 선택지는 사용자 선택. 커밋·push·배달·재기동은 매번 승인.
-   인수인계서 커밋은 `test_handoff_size` rc 0일 때만(11-07 `a713dae`가 157줄로 커밋된 전례).
-3. #890 R251·R252와 #896 새 자동 리뷰는 최신 목록·노트로 확인. 상태 변경·재개·별건 생성은 자동으로 하지 않는다.
-   #893~#898 중 #896은 끝났다. #884 닫는 방법·#885 보류·#891 낮음 별건 여부 등은 그대로 미결.
-   스킬을 만들거나 고치면 `master/test_skill_conventions.py`를 돌린다.
-4. 일감 작업은 `issue_start_tool` → 커밋 → `issue_finish_tool` 미리보기 → 승인 → `confirm=True`(이제 이것이 「완료」다). 커밋·운영 배달·
-   재기동·유닛 설치는 각각 승인을 확인한다. 실패 시 코드·설정을 자동 수정하지 않고 보고·중단한다.
-5. **문서 최신화 남은 몫**(11-04): doc_sync 등록 목록(`docs/document-registry.json`)에 issue_flow·review_runner·review_queue 등이 의존 파일로
-   없다 — 보강은 사용자가 정한다. #883 본문 `## 플랜` 제목 중복도 미처리.
+1. #906 T4 커밋 승인 → `finish(906)` 미리보기 → 승인 시 main 반영(운영 저장소, repo 명시 호출).
+2. `ax-projects` 재기동(`scripts/ax-service-restart ax-projects`, ExecMainStartTimestamp로 판정) → MCP `issue_*` 가
+   운영 저장소를 쓰는지 다음 실제 일감에서 확인. `deliver AXCluster`.
+3. 사용자 결정 대기: ① #905 원래 문제(운영 체크아웃 작업 중 oneshot이 미커밋 코드 실행) 별도 일감화
+   ② 미러의 옛 `issue/893` 브랜치 삭제 ③ `/home/sim/ax-issues/905` 정리 ④ 완료 근거 품질 관문.
+4. 다음 일감은 사용자 선택. 커밋·push·재기동·⑦ 전진·finalize는 기존 승인 규칙을 따른다.
