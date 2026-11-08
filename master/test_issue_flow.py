@@ -879,6 +879,45 @@ def t_corrupt_lock_refuses(tmp):
           and sh(repo, "branch", "--list", "issue/7") == "", str(r)[:300])
 
 
+def t_default_repo_is_operational_checkout(tmp):
+    """`#906` — 기본 작업 저장소는 이 모듈이 든 운영 저장소다. 색인 미러(`track.local_clone`)가 아니다."""
+    here = Path(IF.__file__).resolve().parent.parent
+    check("#906 기본 repo = 운영 저장소(REPO)", IF.default_repo() == here == IF.REPO, str(IF.default_repo()))
+    src = Path(IF.__file__).read_text(encoding="utf-8")
+    check("#906 기본 repo 가 track.local_clone 을 해석하지 않는다",
+          'resolve("AXCluster").repo' not in src.split("def default_repo", 1)[1].split("\ndef ", 1)[0])
+
+
+def _seal(repo: Path) -> None:
+    sh(repo, "remote", "set-url", "--push", "origin", "DISABLED://마스터는-소스저장소에-push하지-않는다")
+
+
+def t_sealed_repo_start_refused(tmp):
+    """`#906` — 색인 미러처럼 origin push 가 봉인된 저장소에는 일감 브랜치를 세우지 않는다."""
+    repo = make_repo(tmp)
+    _seal(repo)
+    iss = Issue(SPEC + PLAN)
+    r = IF.start(7, repo=repo, getter=iss.get, noter=iss.note)
+    check("#906 봉인 저장소 start → 거절(repo)", not r["ok"] and r["step"] == "repo"
+          and "봉인" in r["why"], str(r)[:300])
+    check("#906 봉인 저장소 start → 브랜치·노트 없음 · main 유지",
+          sh(repo, "branch", "--list", "issue/7") == "" and iss.notes == []
+          and sh(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main")
+
+
+def t_sealed_repo_finish_refused(tmp):
+    """`#906` — 봉인된 저장소에서 마감하면 push 를 시도하기 전에 멈춘다(브랜치·커밋 보존)."""
+    repo, iss, base, end = started(tmp)
+    _seal(repo)
+    n0 = len(iss.notes)
+    r = IF.finish(7, repo=repo, confirm=True, noter=iss.note, review_root=twin(tmp))
+    check("#906 봉인 저장소 finish → 거절(repo) · push 시도 없음", not r["ok"] and r["step"] == "repo"
+          and "봉인" in r["why"] and not r.get("done"), str(r)[:300])
+    check("#906 봉인 저장소 finish → 브랜치·원격·노트 그대로",
+          sh(repo, "rev-parse", "issue/7") == end and sh(repo, "rev-parse", "origin/main") == base
+          and len(iss.notes) == n0)
+
+
 def _no_real_twin(*a, **k):
     raise AssertionError("테스트가 운영 잠금 위치(default_root)를 불렀다")
 
@@ -907,7 +946,8 @@ def main() -> int:
                t_finish_register_failure_keeps_lock, t_finish_link_failure_still_releases,
                t_finish_link_picks_existing_items,
                t_new_branch_acquire_race_rolls_back, t_paused_without_branch_refused,
-               t_corrupt_lock_refuses):
+               t_corrupt_lock_refuses, t_default_repo_is_operational_checkout,
+               t_sealed_repo_start_refused, t_sealed_repo_finish_refused):
         run(fn)
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_issue_flow: {PASS}/{total} 통과")

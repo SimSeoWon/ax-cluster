@@ -20,9 +20,16 @@
 로그만 남기고 이전처럼 돈다 · `pause`·`cancel` 은 잠금이 본체라 거절). `_resolve_events` 와 같은
 원칙 — 대역 실행이 운영 상태를 건드리지 않게.
 
-`#905`: 기본 작업 저장소는 기존 `AXCluster/config.yaml`의 `track.local_clone`을 해석한
-`master.context_search.paths.resolve("AXCluster").repo`다. 서비스 코드 경로와 분리하며,
-main 반영 후 운영 배포는 별도 절차다. 명시 `repo` 인자는 그대로 우선한다.
+🔴 `#906`: 기본 작업 저장소는 **이 모듈이 든 운영 저장소**(`REPO`)다. `#905` 가 그것을
+`AXCluster/config.yaml` 의 `track.local_clone`(`AXCluster/repo`)으로 바꿨는데, 그 클론은 색인기의
+**ff 전용 미러**다 — `events/consumer.py` 가 *"마스터는 이 클론에 커밋하지 않는다"* 를 전제로 매 회차
+`merge --ff-only` 로 main 끝을 따라가고, `origin` push 는 `DISABLED://…`(PLAN §2.1)로, pre-push 훅은
+main 을 막는다. 거기에 일감 브랜치를 세우자 ① 마감 push 가 rc128 로 죽었고(`#893`) ② 미러가 main 을
+안 따라가며(현재 브랜치에 upstream 이 없어 `FETCH_HEAD` 가 전부 not-for-merge) ③ 미병합 커밋이
+색인됐다. [중요] **봉인된 저장소는 코드가 거절한다** — `origin` 의 push URL 이 `DISABLED` 면 `start`·
+`finish` 가 브랜치·push 전에 멈춘다(`_sealed`). 명시 `repo` 인자는 그대로 우선한다.
+[주의] `#905` 의 원래 문제(운영 체크아웃에서 작업하면 oneshot 서비스가 미커밋 코드를 실행한다)는
+이 복귀로 다시 열린다 — 별도 일감에서 사용자와 정한다.
 
 사용자 결정(2026-11-03): *"작업을 위해 플랜 영역 생성을 강제하고, 작업 시작할 때 무조건 로컬
 리비전을 생성한 뒤 레드마인에 깃 해시를 등록해."*
@@ -65,13 +72,28 @@ class IssueFlowError(RuntimeError):
     """흐름이 계약에 어긋나 멈췄다 — 사유 문장을 담는다."""
 
 
-def default_repo() -> Path:
-    """#905: 기존 AXCluster config의 track.local_clone을 매 호출 해석한다.
+REPO = Path(__file__).resolve().parent.parent
 
-    운영 서비스 코드 위치로 돌아가지 않는다. 설정 해석 실패는 호출자에게 그대로 전달한다.
+
+def default_repo() -> Path:
+    """`#906`: 운영 저장소(`REPO`). 색인 미러(`track.local_clone`)는 작업 위치가 아니다 — 모듈 머리말."""
+    return REPO
+
+
+SEALED_PREFIX = "DISABLED"
+
+
+def _sealed(repo: Path) -> str:
+    """`origin` push 가 봉인된 저장소면 사유 문장, 아니면 빈 문자열 (`#906`).
+
+    색인 미러는 `origin` push URL 을 `DISABLED://…` 로 봉인한다(PLAN §2.1). 그 위에 일감 브랜치를
+    세우면 마감이 push 에서 죽고 색인기가 main 을 놓친다 — 시작 전에 막는다.
     """
-    from master.context_search.paths import resolve
-    return resolve("AXCluster").repo
+    rc, url = _git(repo, "remote", "get-url", "--push", REMOTE)
+    if rc == 0 and url.startswith(SEALED_PREFIX):
+        return (f"{repo} 의 {REMOTE} push 가 봉인돼 있다({url[:60]}) — 색인 미러 같은 읽기 전용 "
+                "클론에서는 일감을 시작·마감하지 않는다(#906). 운영 저장소에서 한다")
+    return ""
 
 
 branch_name = INF.branch_name
@@ -187,6 +209,9 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
     rc, cur = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
     if rc != 0:
         return _refuse(log, "repo", f"저장소를 못 읽었다: {cur}")
+    sealed = _sealed(repo)                               # `#906` — 색인 미러에 브랜치를 세우지 않는다
+    if sealed:
+        return _refuse(log, "repo", sealed)
     exists = _branch_exists(repo, branch)
     if prec and not exists:
         return _refuse(log, "lock", f"#{n} 는 보류 기록이 있는데 {branch} 가 없다 — "
@@ -379,6 +404,9 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
     rc, cur = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
     if rc != 0:
         return _refuse(log, "repo", f"저장소를 못 읽었다: {cur}")
+    sealed = _sealed(repo)                               # `#906` — 봉인된 push 를 시도하지 않는다
+    if sealed:
+        return _refuse(log, "repo", sealed)
     if cur != branch:
         return _refuse(log, "branch", f"지금 브랜치가 {cur} 다 — {branch} 에서 마친다")
     rc, dirty = _git(repo, "status", "--porcelain")
