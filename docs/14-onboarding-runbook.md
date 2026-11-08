@@ -201,6 +201,9 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update --all   # 등록 
 `config.json`의 `checkout.branch`는 해당 프로젝트 레지스트리의 기본 브랜치를 따른다(`#260`).
 배달은 체크아웃 안의 `.agents/skills`와 `.codex/config.toml`도 구성·대조한다(`#699`).
 홈의 동명 스킬만 있는 상태를 정상 배달로 판단하지 않는다.
+스킬은 `SKILL.md`와 한 단계 아래 `reference/`·`scripts/` 파일을 포함하는 번들일 수 있다(`#890` T4).
+`plan`·`deliver`·`check`는 같은 파일 목록을 사용하며, `check`는 번들 파일마다 해시를 대조하고
+불일치한 파일 이름을 보고한다. 그 밖의 하위 폴더나 두 단계 이상의 구조는 사양 검증에서 거절한다.
 프로필이 색인 전용 또는 `kind: code`인 프로젝트는 루트 `CLAUDE.md`·`AGENTS.md`에 관리 블록을
 쓰지 않고 기존 사람 파일을 보존한다. Claude의 ax-client는 `.mcp.json` 대신 해당 체크아웃의
 로컬 스코프(`~/.claude.json`)에 등록하며, `check`도 그 등록을 대조한다.
