@@ -15,7 +15,8 @@ def section():
         # [중요] `exc` 를 찍지 않는다 — 위 머리말 참조. 갈래는 로그가 가진다.
         return '<section><h2>지휘 상태</h2><p>조회 실패 — 마스터 로그를 본다.</p></section>'
     master, worker = state["master"], state["worker"]
-    labels = {"claude": "Claude", "codex": "Codex", "lane": "lane", "unknown": "미등록"}
+    labels = {"claude": "Claude", "codex": "Codex", "antigravity": "Antigravity",
+              "agy": "Antigravity", "lane": "lane", "unknown": "미등록"}
     agent = labels.get(master.get("agent"), "미등록")
     selected = labels.get(worker.get("mode"), "미확인")
     at = escape(str(master.get("at") or "기록 없음"))

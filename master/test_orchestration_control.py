@@ -237,6 +237,27 @@ class ControlTests(unittest.TestCase):
         self.assertIn('&lt;script&gt;',html)
         self.assertNotIn('<script>',html)
 
+    def test_record_antigravity_and_alias(self):
+        # 1. antigravity 정본 기록
+        C.record_master('antigravity', '테스트 인수')
+        rec = C.master_record()
+        self.assertEqual(rec['agent'], 'antigravity')
+        self.assertEqual(rec['why'], '테스트 인수')
+        html = section()
+        self.assertIn('마스터 담당: Antigravity', html)
+
+        # 2. agy 별칭 전달 시 antigravity 정규화 저장
+        status, data = self.request('POST', '/control/master-conductor', {'agent': 'agy', 'why': '별칭 인수'})
+        self.assertEqual(status, 200)
+        self.assertEqual(data['master']['agent'], 'antigravity')
+        self.assertEqual(C.master_record()['agent'], 'antigravity')
+
+        # 3. 잘못된 agent 거절
+        with self.assertRaises(ValueError):
+            C.record_master('unknown_agent', '사유')
+        status, err = self.request('POST', '/control/master-conductor', {'agent': 'unknown_agent', 'why': '사유'})
+        self.assertEqual(status, 400)
+
     def test_client_routes_all_three_controls(self):
         calls=[]
         def api(*args): calls.append(args); return {'ok':True}

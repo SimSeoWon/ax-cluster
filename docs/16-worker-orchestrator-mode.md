@@ -226,7 +226,7 @@ MCP와 제어 API는 모두 `master.work.conductor.set_worker`를 거친다. NS 
 
 🔴 [중요] **두 상태를 섞지 않는다.**
 
-    마스터 담당    claude / codex      **마지막으로 기록된** 지휘자.
+    마스터 담당    claude / codex / antigravity  **마지막으로 기록된** 지휘자.
                                       프로세스 생존 판정도, 잠금도, 세션 실행·종료도 **아니다**
     워커 실행 모드  lane/claude/codex   다음 **조각**부터 적용되는 전역 설정.
                                       실행 중인 조각에 소급되지 않는다 ·
