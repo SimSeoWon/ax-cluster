@@ -67,6 +67,7 @@ from pathlib import Path
 from . import coordinator as C
 from . import pystatic as PS
 from . import review as R
+from . import scope_check as SC
 from . import workmodel as WM
 from .build_local import BuildSetupError, parse_unittest
 
@@ -531,6 +532,58 @@ def build_fn_for(kind: str, *, repo, project: str = "", base_ref: str = "",
                         f"({'/'.join(KINDS)}) 인자도 배달 설정 `kind` 도 없다. 추정하지 않는다")
 
 
+def collect_scope_report(tree: Path | str, before: str, head: str) -> dict:
+    """`before..head` 머지 diff 와 `before` 시점 코드를 대조해 [PSEUDO] 범위 밖 변경을 센다 (#820)."""
+    p = Path(tree)
+    if not p.is_dir() or not before or not head or before == head:
+        return {}
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(p), "diff", "--name-only", f"{before}..{head}"],
+            capture_output=True, text=True, check=True
+        )
+    except Exception:
+        return {}
+    files = [f.strip() for f in res.stdout.splitlines() if f.strip().endswith(".py")]
+    if not files:
+        return {}
+
+    total = SC.ScopeReport()
+    for rel_path in files:
+        try:
+            show_res = subprocess.run(
+                ["git", "-C", str(p), "show", f"{before}:{rel_path}"],
+                capture_output=True, text=True
+            )
+            base_source = show_res.stdout if show_res.returncode == 0 else ""
+        except Exception:
+            base_source = ""
+
+        try:
+            diff_res = subprocess.run(
+                ["git", "-C", str(p), "diff", "-U3", f"{before}..{head}", "--", rel_path],
+                capture_output=True, text=True, check=True
+            )
+            diff_text = diff_res.stdout
+        except Exception:
+            continue
+
+        rep = SC.check_scope(base_source, diff_text, filename=rel_path)
+        total.out_of_scope_count += rep.out_of_scope_count
+        for k, v in rep.by_kind.items():
+            total.by_kind[k] = total.by_kind.get(k, 0) + v
+        total.details.extend(rep.details)
+
+    if total.out_of_scope_count == 0:
+        return {}
+    return {
+        "out_of_scope_count": total.out_of_scope_count,
+        "by_kind": dict(total.by_kind),
+        "details": list(total.details),
+        "render_line": total.render_line(),
+    }
+
+
 # ─────────────────────────────────────────────────────────────
 # 입구
 # ─────────────────────────────────────────────────────────────
@@ -575,6 +628,7 @@ class Followup:
     commands: list = field(default_factory=list)
     pushed: bool = False
     log: list = field(default_factory=list)
+    scope_report: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -768,6 +822,11 @@ def prepare_round(repo, work_id: str, *, api=None, kind: str | None = None, proj
     fu.build_passed, fu.build_note = a.build_passed, a.build_note
     fu.checks = check_counts(_seen.get("res")) if "res" in _seen else {}
     fu.commands = list(a.commands)
+    if fu.tree and fu.before and fu.head:
+        try:
+            fu.scope_report = collect_scope_report(fu.tree, fu.before, fu.head)
+        except Exception as e:
+            log("scope", f"범위 검사 예외 — {e}")
     if fu.rework:
         fu.rework_evidence = list(getattr(a, "rework_evidence", []) or [])
         fu.missing_results = list(getattr(a, "missing_results", []) or [])
@@ -966,6 +1025,13 @@ def render(facts: dict, *, origin: str = "", at: float | None = None) -> str:
     if st == "at_gate" or f.get("merged"):
         out.append(f"  머지한 조각 {len(f.get('merged') or [])}건 · 충돌 "
                    f"{'있음' if f.get('conflicts') else '없음'}")
+        scope = f.get("scope_report") or {}
+        if scope.get("out_of_scope_count"):
+            line = scope.get("render_line") or ""
+            if not line:
+                parts = [f"{k} {v}" for k, v in (scope.get("by_kind") or {}).items() if v > 0]
+                line = f"범위 밖 변경 덩어리 {scope['out_of_scope_count']}건" + (f" ({' · '.join(parts)})" if parts else "")
+            out.append(f"  {line}")
     checks = f.get("checks") or {}
     bp = f.get("build_passed")
     verdict = "통과" if bp is True else "실패" if bp is False else "미측정"

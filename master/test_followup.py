@@ -1485,6 +1485,32 @@ def test_register_tool_carries_wait_command():
         pj.register_work, pj.resolve = orig
 
 
+def test_scope_report_rendered_at_gate():
+    facts = {
+        "work_id": "w820",
+        "round": 1,
+        "state": "at_gate",
+        "merged": ["task_a"],
+        "scope_report": {
+            "out_of_scope_count": 2,
+            "by_kind": {"other": 1, "import": 1, "comment": 0},
+            "render_line": "범위 밖 변경 덩어리 2건 (other 1 · import 1)",
+        },
+    }
+    txt = F.render(facts)
+    check("render: 범위 밖 변경 덩어리 고지 포함", "범위 밖 변경 덩어리 2건 (other 1 · import 1)" in txt, txt)
+
+    facts_clean = {
+        "work_id": "w820",
+        "round": 1,
+        "state": "at_gate",
+        "merged": ["task_a"],
+        "scope_report": {},
+    }
+    txt_clean = F.render(facts_clean)
+    check("render: 범위 이탈 없으면 줄 없음", "범위 밖 변경" not in txt_clean, txt_clean)
+
+
 def main() -> int:
     for fn in (test_running_has_no_side_effects,
                test_ready_calls_advance_with_confirm_false,
@@ -1532,7 +1558,8 @@ def main() -> int:
                test_rework_reopens_stopped_history_once_and_scan,
                test_wait_baseline_ends_first_poll,
                test_wait_cli_exit_codes,
-               test_register_tool_carries_wait_command):
+               test_register_tool_carries_wait_command,
+               test_scope_report_rendered_at_gate):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_followup: {PASS}/{total} 통과")
