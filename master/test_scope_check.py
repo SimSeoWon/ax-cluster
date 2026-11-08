@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import sys
 import unittest
+from pathlib import Path
 
-from master.work.scope_check import (
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # #921 — 직접 실행 규약
+
+from master.work.scope_check import (                              # noqa: E402
     ScopeReport,
     check_scope,
     classify_hunk,

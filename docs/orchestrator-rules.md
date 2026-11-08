@@ -129,6 +129,8 @@
   `issue_finish(confirm=True)` → 서비스 신선도 판정 → 재기동(아래) → **인수인계서 커밋·push → 마지막에
   `master.client update` → `check` rc0** → 종합 보고.
 - **인수인계서를 배달보다 먼저** 커밋한다 — 배달 뒤에 커밋하면 워커가 1커밋 뒤처져 `check` 가 실패한다(#916).
+- **집행은 명령 하나다**(`#921`): `issue_finish` 뒤 `.venv/bin/python -m master.issue_wrapup <N>` — 판정·재기동·
+  인수인계 확인(없으면 배달 전 rc 2)·배달·기록을 이 순서로 한다. 손으로 단계를 이어 붙이지 않는다.
 - **재기동**: `service_freshness.check()` 에서 [중요] 옛 코드 또는 [주의] 의존 모듈 변경으로 판정된 상주 서비스만
   재기동한다. 직전에 oneshot(리뷰 큐·파견·색인기)이 돌고 있는지 확인하고, 돌고 있으면 끝날 때까지 기다린다.
   재기동 뒤 `ExecMainStartTimestamp` 와 판정을 다시 확인한다. 판정에 없는 서비스는 재기동하지 않는다.

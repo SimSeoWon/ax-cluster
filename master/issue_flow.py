@@ -732,6 +732,8 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
     return {"ok": not problems, "confirmed": True, **summary, "done": done,
             "registered": got["registered"], "round": got["round"],
             "lock_released": got["lock_released"], "closed": got.get("closed", False),
+            # `#921` — 마감 뒤 단계(신선도 판정·재기동·인수인계 확인·배달·기록)는 이 명령이 집행한다(§1.9)
+            "next": f"AX_PROJECTS_ROOT={REPO} {REPO}/.venv/bin/python -m master.issue_wrapup {issue_id}",
             "why": " · ".join(problems), "log": log.lines}
 
 
