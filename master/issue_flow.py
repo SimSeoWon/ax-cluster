@@ -729,11 +729,13 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
                             lock_held=lock_held, base=base, end=end, commits=commits, branch=branch,
                             deleted="" if deleted else " 실패", register=register, link=link,
                             noter=noter, log=log, done=done, problems=problems, by="issue_flow.finish")
+    # `#921` — 마감 뒤 단계(신선도 판정·재기동·인수인계 확인·배달·기록)는 이 명령이 집행한다(§1.9)
+    wrap_repo = Path(repo).resolve() if repo is not None else REPO
+    next_cmd = f"AX_PROJECTS_ROOT={wrap_repo} {wrap_repo}/.venv/bin/python -m master.issue_wrapup {issue_id} --project {project}"
     return {"ok": not problems, "confirmed": True, **summary, "done": done,
             "registered": got["registered"], "round": got["round"],
             "lock_released": got["lock_released"], "closed": got.get("closed", False),
-            # `#921` — 마감 뒤 단계(신선도 판정·재기동·인수인계 확인·배달·기록)는 이 명령이 집행한다(§1.9)
-            "next": f"AX_PROJECTS_ROOT={REPO} {REPO}/.venv/bin/python -m master.issue_wrapup {issue_id}",
+            "next": next_cmd,
             "why": " · ".join(problems), "log": log.lines}
 
 

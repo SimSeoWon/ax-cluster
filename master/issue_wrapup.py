@@ -57,9 +57,17 @@ def _git(repo: Path, *args: str) -> tuple[int, str]:
 
 
 def _active_state(unit: str) -> str:
-    r = subprocess.run(["systemctl", "show", f"{unit}.service", "-p", "ActiveState", "--value"],
-                       capture_output=True, text=True, timeout=15)
-    return (r.stdout or "").strip() if r.returncode == 0 else "?"
+    try:
+        r = subprocess.run(["systemctl", "show", f"{unit}.service", "-p", "ActiveState", "--value"],
+                           capture_output=True, text=True, timeout=15)
+    except Exception as e:
+        raise RuntimeError(f"{unit} systemctl show 실패 ({type(e).__name__}: {e})") from e
+    if r.returncode != 0:
+        raise RuntimeError(f"{unit} systemctl show rc={r.returncode}: {(r.stderr or r.stdout or '').strip()}")
+    state = (r.stdout or "").strip()
+    if not state:
+        raise RuntimeError(f"{unit}: ActiveState 빈 응답")
+    return state
 
 
 def _deliver(repo: Path) -> tuple[int, str]:
@@ -145,12 +153,14 @@ def run(issue_id: int, *, project: str = "AXCluster", repo: Path | None = None, 
         lk = d.lock(project)
     except Exception as e:                                          # noqa: BLE001
         return fail("finish", f"일감 잠금을 읽지 못했다 ({type(e).__name__}: {e})")
-    if lk and int(lk.get("issue_id", -1)) == int(issue_id):
+    if lk and str(lk.get("issue_id")) == str(issue_id):
         return fail("finish", f"#{issue_id} 잠금이 아직 활성이다 — 마감(finish)이 끝나지 않았다")
     say("finish", f"마감 추적 회차 {track.get('round')} · 끝 커밋 {end[:12]}")
 
     # ② 저장소 확인
-    d.git(repo, "fetch", "-q", "origin")
+    rc, fetch_out = d.git(repo, "fetch", "-q", "origin")
+    if rc:
+        return fail("repo", f"origin fetch 실패 (rc={rc}): {fetch_out}")
     rc, branch = d.git(repo, "rev-parse", "--abbrev-ref", "HEAD")
     if rc or branch != "main":
         return fail("repo", f"운영 저장소가 main 이 아니다 ({branch})")
@@ -189,7 +199,10 @@ def run(issue_id: int, *, project: str = "AXCluster", repo: Path | None = None, 
         watch = sorted({o for t in targets for o in WAIT_FOR.get(t, ONESHOTS)})   # 모르는 상주는 전부 기다린다
         say("restart", f"기다릴 oneshot {watch or '없음'} (대상 {targets})")
         while True:
-            busy = [u for u in watch if d.active_state(u) in ("active", "activating", "deactivating")]
+            try:
+                busy = [u for u in watch if d.active_state(u) in ("active", "activating", "deactivating")]
+            except Exception as e:                          # noqa: BLE001
+                return fail("restart", f"oneshot 상태 조회 실패 ({type(e).__name__}: {e}) — 재기동하지 않았다")
             if not busy:
                 break
             if waited >= WAIT_MAX:
@@ -218,7 +231,9 @@ def run(issue_id: int, *, project: str = "AXCluster", repo: Path | None = None, 
 
     # ⑤ 인수인계 확인 — 배달 전에
     rc, commits = d.git(repo, "log", "--format=%h", f"{end}..HEAD", "--", HANDOFF)
-    if rc or not commits.strip():
+    if rc:
+        return fail("handoff", f"인수인계서 커밋 조회 실패 (rc={rc}): {commits}")
+    if not commits.strip():
         say("handoff", f"인수인계서 대기 — 끝 커밋 {end[:12]} 뒤 `{HANDOFF}` 커밋이 main 에 없다. "
                        "배달하지 않았다(배달 뒤 커밋하면 워커가 뒤처진다 #916). "
                        "인수인계서 커밋·push 뒤 같은 명령을 다시 실행하면 배달부터 이어진다")
@@ -243,7 +258,10 @@ def run(issue_id: int, *, project: str = "AXCluster", repo: Path | None = None, 
         say("deliver", "(dry-run) master.client update 생략")
         res.rc = RC_DONE
         return res
-    rc, text = d.deliver(repo)
+    try:
+        rc, text = d.deliver(repo)
+    except Exception as e:                                  # noqa: BLE001
+        return fail("deliver", f"master.client update 예외 ({type(e).__name__}: {e})")
     tail = " · ".join(ln.strip() for ln in text.splitlines()[-3:] if ln.strip())
     if rc:
         return fail("deliver", f"master.client update rc={rc} — {tail[-300:]}")

@@ -240,8 +240,10 @@ def t_finish_confirm(tmp):
           str(rnd and rnd["history"]))
     check("승인 → range 직접 등재 0", no_range_items(twin(tmp)))
     check("승인 → 반환 registered · round", r.get("registered") is True and r.get("round") == 1, str(r)[:300])
-    check("#921 승인 → 반환 next = 마감 뒤 명령", "-m master.issue_wrapup " in (r.get("next") or ""),
-          str(r.get("next")))
+    next_cmd = r.get("next") or ""
+    check("#921 승인 → 반환 next = 마감 뒤 명령", "-m master.issue_wrapup " in next_cmd, next_cmd)
+    check("R298-6 next 에 실제 repo 및 --project 반영", str(repo.resolve()) in next_cmd
+          and "--project AXCluster" in next_cmd, next_cmd)
     note = iss.notes[-1][0]
     check("승인 → 리뷰 요청 노트(범위 전체 해시·커밋 목록)", f"`{base}..{end}`" in note
           and "add b.txt" in note and "add c.txt" in note and "삭제 실패" not in note, note)

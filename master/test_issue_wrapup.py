@@ -35,18 +35,22 @@ class World:
     """대역 세계 — 호출을 기록한다."""
 
     def __init__(self, *, verdicts=None, after=None, handoff=True, dirty="", branch="main",
-                 origin=HEAD, track=True, lock=None, busy=0, deliver_rc=0, restart_err=None, note="ok"):
+                 origin=HEAD, track=True, lock=None, busy=0, deliver_rc=0, deliver_err=None,
+                 restart_err=None, active_err=None, fetch_rc=0, handoff_log_rc=0, note="ok"):
         self.calls: list = []
         self.verdicts = verdicts if verdicts is not None else [V("ax-projects"), V("ax-broker")]
         self.after = after
         self.handoff, self.dirty, self.branch, self.origin = handoff, dirty, branch, origin
         self.track_v = {"round": 1, "end": END} if track else None
         self.lock_v, self.busy, self.deliver_rc = lock, busy, deliver_rc
-        self.restart_err, self.note_v = restart_err, note
+        self.deliver_err, self.restart_err, self.active_err = deliver_err, restart_err, active_err
+        self.fetch_rc, self.handoff_log_rc, self.note_v = fetch_rc, handoff_log_rc, note
         self.fresh_n = 0
 
     def git(self, repo, *args):
         self.calls.append(("git",) + args)
+        if args[:2] == ("fetch", "-q"):
+            return self.fetch_rc, ("fatal: unable to access" if self.fetch_rc else "")
         if args[0] == "rev-parse" and args[1] == "--abbrev-ref":
             return 0, self.branch
         if args[0] == "status":
@@ -58,6 +62,8 @@ class World:
         if args[0] == "merge-base":
             return 0, ""
         if args[0] == "log":
+            if self.handoff_log_rc:
+                return self.handoff_log_rc, "fatal: bad revision"
             return 0, ("abc1234" if self.handoff else "")
         return 0, ""
 
@@ -83,6 +89,8 @@ class World:
 
         def active_state(unit):
             self.calls.append(("active", unit))
+            if self.active_err:
+                raise RuntimeError(self.active_err)
             if self.busy > 0 and unit == "ax-review-queue":
                 self.busy -= 1
                 return "activating"
@@ -90,6 +98,8 @@ class World:
 
         def deliver(repo):
             self.calls.append(("deliver",))
+            if self.deliver_err:
+                raise RuntimeError(self.deliver_err)
             return self.deliver_rc, "OK 192.168.0.43\n[완료] 배달·검사"
 
         def note(n, text):
@@ -218,10 +228,37 @@ def test_dry_run() -> None:
           and not w.did("deliver") and not w.did("note") and "(dry-run)" in log, log)
 
 
+def test_r298_regressions() -> None:
+    # R298-1: deliver 예외 발생 시 fail("deliver", ...) -> RC_FAIL
+    w = World(deliver_err="TimeoutExpired: 1800s")
+    r, log = go(w)
+    check("R298-1 deliver 예외 → rc1", r.rc == W.RC_FAIL and "update 예외" in log and "[중요] 멈춘다" in log, log)
+
+    # R298-2: origin fetch 실패 시 fail("repo", ...) -> RC_FAIL
+    w = World(fetch_rc=1)
+    r, log = go(w)
+    check("R298-2 fetch 실패 → rc1", r.rc == W.RC_FAIL and "origin fetch 실패" in log and "[중요] 멈춘다" in log, log)
+
+    # R298-3: oneshot active_state 조회 실패 시 fail("restart", ...) -> RC_FAIL (재기동 안 함)
+    w = World(verdicts=[V("ax-broker", dep=True)], after=[V("ax-broker")], active_err="systemctl timeout")
+    r, log = go(w)
+    check("R298-3 active_state 예외 → rc1", r.rc == W.RC_FAIL and "oneshot 상태 조회 실패" in log and not w.did("restart"), log)
+
+    # R298-4: lock의 issue_id가 None일 때 TypeError 없이 정상 통과
+    w = World(lock={"issue_id": None})
+    r, log = go(w)
+    check("R298-4 lock issue_id=None 안전 비교 → rc0", r.rc == W.RC_DONE, log)
+
+    # R298-5: 인수인계서 git log 실패(rc!=0) 시 rc2(대기)가 아닌 rc1(실패)
+    w = World(handoff_log_rc=1)
+    r, log = go(w)
+    check("R298-5 handoff git log 실패 → rc1 (rc2 아님)", r.rc == W.RC_FAIL and "인수인계서 커밋 조회 실패" in log, log)
+
+
 def main() -> int:
     for fn in (test_clean_path, test_restart_only_judged, test_oneshot_wait, test_wait_per_service_922,
                test_handoff_gate,
-               test_stops, test_dry_run):
+               test_stops, test_dry_run, test_r298_regressions):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_issue_wrapup: {PASS}/{PASS + FAIL} 통과")
     return 1 if FAIL else 0
