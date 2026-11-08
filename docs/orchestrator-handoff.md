@@ -1,8 +1,8 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-08 23:00 Antigravity 체크포인트(#924 마감 `8bcaa6d` · 마스터 담당 기록 Antigravity 추가 · 이하 오늘 마감분은 아래 표). 항목·진행의 정본은 Redmine이다.
-> 이전 상세는 Git `d946ba7`·`54b5632`·`93c93d0`·`8bcaa6d`·리포트138~157·각 일감 노트에 있다.
-> 진행 중 일감·일감 잠금은 없다. #924 체크포인트 `19e7582` 배달 3/3 OK(#925 `check` 대조).
+> 2026-11-08 23:25 Claude 체크포인트(#925 마감 `5efd09d` · 이하 오늘 마감분은 아래 표). 항목·진행의 정본은 Redmine이다.
+> 이전 상세는 Git `d946ba7`·`54b5632`·`93c93d0`·`8bcaa6d`·`5efd09d`·리포트138~158·각 일감 노트에 있다.
+> 진행 중 일감·일감 잠금은 없다. 이 문서 커밋 직후 `issue_wrapup` 이 배달한다 — 결과의 정본은 #925 마감 노트.
 
 ## 🔴 오늘 오후 바뀐 규칙 (사용자 결정 2026-11-08)
 
@@ -70,6 +70,7 @@
 | #922 | `issue_wrapup` 후속 — oneshot 대기를 재기동 서비스별로 · rc 2 노트 — 리포트 155 | `f9a9a91` |
 | #923 | R298 지적 6건 — issue_wrapup 하위 명령 실패/예외 방어 · next 명령 인자 — 리포트 156 | `ec30077` |
 | #924 | 마스터 담당 기록에 Antigravity 추가 및 Claude·Codex 호환 경로 정비 — 리포트 157 | `8bcaa6d` |
+| #925 | #924 후속 — 담당 기록 운영 실증(claude 복구) · 새 세션 스키마 노출 3종 · 교차 계열 현황 #920 노트 — 리포트 158, 코드 변경 없음 | `5efd09d` |
 | #884·#885·#887·#915 | 코드 변경 없이 종결 — #884 T7 마감 · #885 해소 · #887·#915 해소 | — |
 
 - 등록: **#908**·**#911**·**#916**·**#920** 아이디어(일감 아님). R240 지적 12 전부 처분.
@@ -78,13 +79,14 @@
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`8bcaa6d`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`5efd09d`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 |
-| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `19e7582` 배달 3/3 OK (#925 `check` 대조) |
+| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | 이 문서 커밋을 배달 — 결과는 #925 마감 노트 |
 
 - 상주 재기동: ax-broker 17:39:08 · ax-task-queue 17:41:31 · ax-projects 22:57:01(#924 `issue_wrapup` 이 변경 판정으로 재기동).
   재기동 뒤 `service_freshness.check()`: stale 0 · 판정 불가 0 · 의존 [주의] 0. 재기동 중 리뷰 큐·색인기 영향 없음.
+  #925 는 문서만 바꿔 `issue_wrapup` 판정 셋 다 최신 · 재기동 없음.
 
 ## Codex 가 알아야 할 것
 
@@ -98,7 +100,7 @@
 - 마스터 담당 기록 **claude**(실제 인수 11-08 16:41 · #925 실증 뒤 복구 기록 23:10:51), 워커 전역 codex(state, 10-18).
 - ax-broker active(17:39) · ax-projects(22:57)·ax-task-queue active(17:41), ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
 - 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음.
-- #820·#882·#884~#887·#893~#907·#909·#910·#912·#913·#915·#917·#918·#921~#924 완료: 리포트138~157·Redmine. 중복 마감·산출물 재생성 금지.
+- #820·#882·#884~#887·#893~#907·#909·#910·#912·#913·#915·#917·#918·#921~#925 완료: 리포트138~158·Redmine. 중복 마감·산출물 재생성 금지.
 
 ## 바로 다음 작업
 
