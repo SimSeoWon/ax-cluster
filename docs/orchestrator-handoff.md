@@ -1,7 +1,7 @@
 # 현재 AX 작업 인수인계
 
 > 2026-11-08 Codex 체크포인트(#895 마감 후). 항목·진행의 정본은 Redmine이다.
-> 이전 상세는 Git `9f7248d`의 이 파일·리포트138~147·각 일감 노트에 있다. 진행 중 일감은 없다. 최신 HEAD의 워커 배달은 미승인·미실행이다.
+> 이전 상세는 Git `9f7248d`의 이 파일·리포트138~147·각 일감 노트에 있다. 진행 중 일감은 없다. 워커 배달·검사는 `b91ede2` 기준 3/3 OK(Redmine #895 노트, Claude 대조 `.43` 확인).
 
 ## 이번 마감 — #895
 
@@ -12,7 +12,7 @@
 - `issue_finish_tool(895, confirm=True)` 원문 주요 결과: `repo=/home/sim/ax-cluster/.ax-issues/895`,
   `done=[push, ff, worktree_remove, delete_branch, register, link, release, close, redmine]`,
   `registered=true`, `lock_released=true`, `closed=true`, `why=""`. 종합 리뷰는 비동기이며 완료를 주장하지 않는다.
-- 워커 배달·서비스 재기동은 미실행. 세션 파일:
+- 배포: 사용자 「응 배포하고 검사해줘」 → `master.client update` rc0, `.43`·`.2`·`.33` 3/3 OK(출처 HEAD `b91ede2`). 서비스 재기동 없음. 세션 파일:
   `~/.codex/sessions/2026/11/08/rollout-2026-11-08T15-33-25-01a1b9dc-9c24-7cf2-b6b2-a378290954d0.jsonl`.
 
 ## 🔴 먼저 — 일감 작업 위치가 바뀌었다 (#907, 오늘 배포·실증)
@@ -63,7 +63,7 @@
 | 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`dc778fe`(+ 이 문서 커밋), 문서 커밋·push 후 깨끗함을 확인 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 정상 |
-| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | 직전 기록 `c47d5b2` 배달·검사3/3. 현재 HEAD는 배달 미실행·상태 미재조회 |
+| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `b91ede2` 배달·검사 3/3 OK |
 
 - 상주 서비스 재기동(#897, 사용자 요청): ax-task-queue 12:31:43 · ax-broker 12:31:47 · ax-projects 12:31:57 KST — 기동 기록 정상.
   #912 는 판정하는 쪽 코드라 재기동 불필요.

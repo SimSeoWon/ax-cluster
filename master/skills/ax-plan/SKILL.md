@@ -98,7 +98,8 @@ MCP 가 안 보이거나 실패하면 사유를 보고하고 묻는다. `ax-clie
   **Redmine** 마감 노트가 마감 결과의 정본이다(`ax-projects:issue_finish_tool` 이 남긴다 — 배포 결과는 노트로 덧붙인다).
   **인수인계서**(`docs/orchestrator-handoff.md`)는 마감 직후 main 에 문서 커밋 하나로 갱신한다 — 사용자의
   마감·배포 승인이 이 문서 커밋·push 까지 포함한다(따로 묻지 않는다). 운영 체크아웃에 미커밋으로 두면 다음
-  `ax-projects:issue_start_tool` 이 거절된다.
+  `ax-projects:issue_start_tool` 이 거절된다. 배포를 마감 뒤에 **따로** 승인받아 했으면, 배포 결과로 인수인계서를
+  **한 번 더** 맞춰 커밋·push 한다(그 배포 승인에 포함) — 「배달 미실행」 같은 낡은 줄을 남기지 않는다(#895).
 - 등록이 실패하면 잠금이 **남고 일감도 열린 채다**(`registered: false` · `closed: false` · `why`) — 리뷰가
   이어지지 않은 채 다음으로 가지 않게 하는 장치다. 사유를 보고하고 묻는다(같은 인자로 다시 부르면 같은
   범위는 `already`). 닫기만 실패하면(`closed: false` · `Redmine 닫기` in `why`) 노트는 남는다 — 보고하고 묻는다.
