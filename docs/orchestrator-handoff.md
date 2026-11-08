@@ -1,8 +1,8 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-08 17:45 Claude 체크포인트(#898·#886·#917·#918 마감 · #884·#885·#887·#915 종결 후). 항목·진행의 정본은 Redmine이다.
-> 이전 상세는 Git `d946ba7`(운영 체크포인트)·`54b5632`(#898 Codex→Claude 인계본)의 이 파일·리포트138~148·각 일감 노트에 있다.
-> 진행 중 일감·일감 잠금은 없다. #918 까지 배달 반영 · ax-broker 재기동(#898 `auth.py` 뒤 옛 코드였다).
+> 2026-11-08 17:50 Claude 체크포인트(#898·#886·#917·#918 마감 · #884·#885·#887·#915 종결 · 운영 문서 최신화 후). 항목·진행의 정본은 Redmine이다.
+> 이전 상세는 Git `d946ba7`(운영 체크포인트)·`54b5632`(#898 Codex→Claude 인계본)의 이 파일·리포트138~151·각 일감 노트에 있다.
+> 진행 중 일감·일감 잠금은 없다. 상주 3개 모두 #918 이후 기동(신선도 [중요]·[주의] 0) · `9dee96c` 까지 배달 3/3 OK.
 
 ## 🔴 오늘 오후 바뀐 규칙 (사용자 결정 2026-11-08)
 
@@ -72,13 +72,17 @@
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`bee9ddc`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`9dee96c`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 |
-| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `bee9ddc` 배달·검사 3/3 OK — 이 문서 커밋 직후 한 번 더 배달해 출처를 맞춘다(#916) |
+| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `9dee96c` 배달·검사 3/3 OK — 이 문서 커밋으로 1커밋 뒤처진다(#916): 다음 배달 때 맞춘다 |
 
-- 상주 재기동: ax-projects 17:20:28 · ax-task-queue 17:20:30(#917) · ax-broker 17:39:08(#918 — 기동 기록에 의존 목록 있음).
-  ax-projects·ax-task-queue 는 #918 이전 기동이라 update 에 「의존 판정 불가 — 다음 재기동부터」 [주의] 가 뜬다(실패 아님).
+- 상주 재기동: ax-broker 17:39:08 · ax-projects 17:41:29 · ax-task-queue 17:41:31 (모두 #918 이후 — 기동 기록에 의존 목록 있음).
+  재기동 뒤 `service_freshness.check()`: stale 0 · 판정 불가 0 · 의존 [주의] 0. 재기동 중 리뷰 큐(broker 초고는 이미 끝남)·
+  색인기(8101 게이트는 실행 시작 1회)가 돌았으나 영향 없음 — 다음엔 재기동 **전에** oneshot 실행 여부를 먼저 본다.
+- 운영 문서 최신화(`ax-docsync`, codex 레인, 사용자 승인): 수정안 8 중 update 6 · unchanged 2, 적용 4 —
+  README·온보딩 런북·AGENTS.md·`machines/sim-desktop-agents.md`(`9dee96c`). CLAUDE.md·`machines/sim-desktop.md` 수정안은
+  홈 지침·ax-mode 스킬과 중복이라 사용자 결정으로 제외. 이 문서는 근거 파일이 없어 unchanged 였다(손으로 갱신).
 - `.2` 검사의 `[주의] 홈 중복 스킬 ~/.agents/skills/ax-work`(#661 부류)는 손대지 않았다.
 - #886 정리(사용자 승인 13건): fix/R* 8 · worktree ax-900-local·ax-advance-…4a7db0e4 삭제. 미병합 증거는
   `refs/ax/pruned/worktree/ax-788-work`(b510d2f)·`refs/ax/pruned/task/<774·780 W>/base`(cfd986a·c7ede9e)로 보존 뒤 정리,
@@ -97,7 +101,7 @@
 ## 유지할 운영 상태
 
 - 마스터 담당 기록 **claude(11-08 16:41)**, 워커 전역 codex(state, 10-18). Codex 가 실제 인수하면 `ax-handoff` 절차로 기록한다.
-- ax-projects·ax-task-queue active(17:20) · ax-broker active(17:39), ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
+- ax-broker active(17:39) · ax-projects·ax-task-queue active(17:41), ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
 - 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음.
 - #884~#887·#893~#907·#909·#910·#912·#915·#917·#918 완료: 리포트138~151·Redmine. 중복 마감·산출물 재생성 금지.
 - #890 R251·R252 및 후속 리뷰 처분은 최신 목록·코드와 대조 후 사용자 결정.
