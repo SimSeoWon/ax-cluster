@@ -24,13 +24,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from master.projects.config import projects_root
+from master.projects.config import ConfigError, projects_root
 
 # #910: 검사할 유닛 사본은 현재 소스(worktree), 트윈·서비스 경로는 명시된 운영 루트다.
 # 경로를 서로 바꿔 끼워 유닛의 잘못된 절대 경로를 통과시키지 않는다.
 SOURCE_ROOT = Path(__file__).resolve().parent.parent
 UNIT = SOURCE_ROOT / "master" / "systemd" / "ax-task-queue.service"
-ROOT = projects_root()
+try:
+    ROOT = projects_root()
+except ConfigError as _e:
+    # 운영 루트를 추정하지 않는다(폴백 없음) — 다만 traceback 대신 사유와 집계 줄을 남겨
+    # 전수 스크립트가 「수치 못 읽음」이 아니라 실패 1건으로 센다.
+    print(f"  [실패] 운영 루트를 모른다 — AX_PROJECTS_ROOT=<운영 루트> 를 주고 다시 실행한다 ({_e})")
+    print("FAIL test_sandbox: 0/1 통과")
+    raise SystemExit(1)
 
 # [중요] 큐가 트윈에 쓰는 곳 — **`<트윈>/` 아래 상대 경로**. 표면을 늘리면 여기에 넣는다.
 #    출처: `#206`(신호) · `#207`(작업 기록) · `#243`(시소러스 대행).
