@@ -2,7 +2,7 @@
 
 > 2026-11-08 18:41 Antigravity 체크포인트(#882·#913 마감 · #898·#886·#917·#918 마감 · #884·#885·#887·#915 종결 · 운영 문서 최신화 후). 항목·진행의 정본은 Redmine이다.
 > 이전 상세는 Git `d946ba7`(운영 체크포인트)·`54b5632`(#898 Codex→Claude 인계본)의 이 파일·리포트138~151·각 일감 노트에 있다.
-> 진행 중 일감·일감 잠금은 없다. 상주 3개 모두 #918 이후 기동(신선도 [중요]·[주의] 0) · 워커 배달은 이 문서 커밋 직후 맞춘다(아래 표).
+> 진행 중 일감·일감 잠금은 없다. 상주 3개 모두 #918 이후 기동(신선도 [중요]·[주의] 0) · `a140933` 까지 배달 3/3 OK.
 
 ## 🔴 오늘 오후 바뀐 규칙 (사용자 결정 2026-11-08)
 
@@ -74,12 +74,12 @@
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`62d0dd8`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`a140933`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 |
-| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `3eff59c` 까지 배달됐고 #913(`f3d63b8`)·`54e6050` 뒤 2커밋 뒤처져 check rc=1 이었다 — 이 문서 커밋 뒤 재배달(Claude 18:2x) |
+| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `a140933` 배달·검사 3/3 OK — 이 문서 커밋으로 1커밋 뒤처진다(#916): 다음 배달 때 맞춘다 |
 
-- 상주 재기동: ax-broker 17:39:08 · ax-projects 17:41:29 · ax-task-queue 17:41:31 (모두 #918 이후 — 기동 기록에 의존 목록 있음).
+- 상주 재기동: ax-broker 17:39:08 · ax-task-queue 17:41:31 · ax-projects 18:45:17 (모두 #918 이후 — 기동 기록에 의존 목록 있음).
   재기동 뒤 `service_freshness.check()`: stale 0 · 판정 불가 0 · 의존 [주의] 0. 재기동 중 리뷰 큐(broker 초고는 이미 끝남)·
   색인기(8101 게이트는 실행 시작 1회)가 돌았으나 영향 없음 — 다음엔 재기동 **전에** oneshot 실행 여부를 먼저 본다.
 - 운영 문서 최신화(`ax-docsync`, codex 레인, 사용자 승인): 수정안 8 중 update 6 · unchanged 2, 적용 4 —
