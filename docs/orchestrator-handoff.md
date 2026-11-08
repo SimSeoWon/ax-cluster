@@ -1,9 +1,20 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-08 Codex 체크포인트(#895 마감 후). 항목·진행의 정본은 Redmine이다.
-> 이전 상세는 Git `9f7248d`의 이 파일·리포트138~147·각 일감 노트에 있다. 진행 중 일감은 없다. 워커 배달·검사는 `b91ede2` 기준 3/3 OK(Redmine #895 노트, Claude 대조 `.43` 확인).
+> 2026-11-08 16:00 Claude 체크포인트(#895 마감·규칙 변경 후). 항목·진행의 정본은 Redmine이다.
+> 이전 상세는 Git `9f7248d`의 이 파일·리포트138~147·각 일감 노트에 있다. 진행 중 일감·일감 잠금은 없다.
+> 워커 배달·검사는 `6284054` 기준 3/3 OK.
 
-## 이번 마감 — #895
+## 🔴 오늘 오후 바뀐 규칙 (사용자 결정 2026-11-08)
+
+- **마감 뒤 기록 몫**(`ax-plan` 3-1 · `331b260`·`ed0b5d6`): 리포트=일감 커밋 시점까지(끝에 「최종 결과는 Redmine 마감 노트」) ·
+  Redmine 마감 노트=결과 정본 · **이 문서=마감 직후 main 문서 커밋**(마감·배포 승인에 포함). 배포를 마감 뒤 **따로** 승인받아
+  했으면 배포 결과로 이 문서를 **한 번 더** 맞춰 커밋·push 한다.
+- **읽기 조회 경로 부재 예외**(`6284054` — `~/CLAUDE.md`·`AGENTS.md`·`docs/orchestrator-rules.md`): 「실패는 보고하는 자리」의
+  유일한 예외. 읽기 전용 조회(`rg`·`ls`·`cat`·`find`·`sed -n`·`head`·`git log/show/status`)가 `No such file or directory` 면
+  멈추지 않고 확인된 경로로 재조회, 보고에 남긴다. 검색 대상 경로는 존재를 확인한 것만 쓴다(같은 날 4회 중단 실측).
+- 두 규칙은 Codex 메모리(`~/.codex/AGENTS.md`)·Claude 메모리에도 있다. **이미 열린 Codex 세션은 바뀐 문서를 다시 읽혀야 한다.**
+
+## #895 마감 (Codex)
 
 - 커밋 `dc778fe696e3fe12c138bd3fb8e8420e2dddfba6`: `test_rounds`가 노트 존재 대신 같은 `idx.lock` 안에서
   `noticed_round==1`을 기다린다. 기존 단언·대기 한도 유지. 대상 검사 rc0·실패0, 정적 차단0,
@@ -60,10 +71,10 @@
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`dc778fe`(+ 이 문서 커밋), 문서 커밋·push 후 깨끗함을 확인 |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`6284054`(+ 이 문서 커밋), 깨끗함 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 정상 |
-| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `b91ede2` 배달·검사 3/3 OK |
+| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `6284054` 배달·검사 3/3 OK |
 
 - 상주 서비스 재기동(#897, 사용자 요청): ax-task-queue 12:31:43 · ax-broker 12:31:47 · ax-projects 12:31:57 KST — 기동 기록 정상.
   #912 는 판정하는 쪽 코드라 재기동 불필요.
@@ -89,7 +100,11 @@
 - ax-projects·ax-task-queue·ax-broker active(12:31 재기동), ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
 - 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음. 분산 등재 뒤 wait 실행·⑦ 사람 게이트 전달 규칙 유지.
 - #893·#894·#896·#897·#899~#907·#909·#910·#912 완료: 리포트138~146·Redmine. 중복 마감·배포·산출물 재생성 금지.
-- #895 완료(`dc778fe`, 리포트147·Redmine). #898은 인계서상 신규(이번 세션 미조회). #885는 기존 사용자 보류 기록 유지. #884 T7의 닫는 방법은 미결.
+- #895 완료(`dc778fe`, 리포트147·Redmine). #885는 기존 사용자 보류 기록 유지 — 내용이 #897·#912·#907 로 해소됐을 가능성이
+  크나 닫을지는 사용자 결정(경우별 대조 후). #884 T7의 닫는 방법은 미결.
+- **#898**(요청자 스킬이 요청자 세션에 없는 `ax-projects` 도구 13개를 부름) — 신규·`plan_needed`, 일감 시작 전.
+  Codex 가 준비 조회 중 짐작 경로(`master/runtime`) rc2 로 멈춰 사용자 재개 대기(잠금 없음). 플랜 단계에서 「대행 추가 /
+  스킬에서 제거」와 수행 방식을 사용자에게 묻고, worktree 보류·재개 실증을 플랜에 넣기로 했다.
 - #890 R251·R252 및 후속 리뷰 처분은 최신 목록·코드와 대조 후 사용자 결정. 상태를 자동 변경하지 않는다.
 - 큐/스풀 #709·#211·#650, ax-788-work, ax-review-788 반려#821, MotionForge·NS 잔재는 보존한다.
 - 미결: doc_sync 의존 등록 보강, #883 중복 플랜 제목, 훅 wait 일시오류 비대칭, 마스터 MCP 토큰 평문
@@ -98,5 +113,6 @@
 ## 바로 다음 작업
 
 1. `ax-handoff`로 이 문서와 실제 상태(운영 main·`.ax-issues` 비어 있음·잠금 없음)를 대조한다.
-2. 다음 일감은 사용자가 고른다 — 인계서상 열린 신규 #898은 Redmine부터 재조회. 시작은 `issue_start_tool`, 편집은 응답 `repo`.
+2. 다음 일감은 사용자가 고른다 — 진행 후보 #898(위). Redmine 열린 일감은 아이디어 제외 40건(11-08 조회) — 그 밖의 후보
+   #886(마스터 로컬 브랜치·worktree 잔재 정리, 삭제마다 승인). 시작은 `issue_start_tool`, 편집은 응답 `repo`.
 3. 커밋·push·재기동·⑦ 전진·finalize는 기존 승인 규칙을 따른다. 다른 일감을 자동 시작하지 않는다.
