@@ -2,7 +2,7 @@
 
 > 2026-11-08 17:00 Claude 체크포인트(#898 마감 후). 항목·진행의 정본은 Redmine이다.
 > 이전 상세는 Git `d946ba7`(운영 체크포인트)·`54b5632`(#898 Codex→Claude 인계본)의 이 파일·리포트138~148·각 일감 노트에 있다.
-> 진행 중 일감·일감 잠금은 없다. **#898 배달·상주 재기동은 미승인·미실행**(아래).
+> 진행 중 일감·일감 잠금은 없다. #898 은 ax-task-queue 재기동(16:49:16)·배달 3/3 OK 까지 반영됐다.
 
 ## 🔴 오늘 오후 바뀐 규칙 (사용자 결정 2026-11-08)
 
@@ -27,9 +27,11 @@
 - 사용자 「응 커밋하고 마감까지 진행해」 → 커밋 `54b5632`(14파일) → `issue_finish_tool(898, confirm=True)`:
   `done=[push, ff, worktree_remove, delete_branch, register, link, release, close, redmine]`, `closed=true`, `why=""`.
   종합 리뷰는 비동기이며 완료를 주장하지 않는다.
-- 🔴 **미실행 — 별도 승인 필요**: ① **ax-task-queue 재기동**(새 8101 라우트 20개는 재기동 전까지 서비스에 없다)
-  ② **`master.client update`** 배달·검사(새 client_mcp·스킬). 둘 다 끝나야 `.33` 요청자 세션에서 실제로 쓸 수 있다.
-  실제 `.33` 세션 호출은 재지 않았다.
+- 반영: 사용자 「응 재기동하고 배달까지 진행해」 → `sudo -n /usr/bin/systemctl restart ax-task-queue` rc0,
+  `ExecMainStartTimestamp` 12:31:43 → **16:49:16**, active. 무토큰 `POST /api/v1/workshops/list` 401(인증 관문).
+  `master.client update` rc0, 마운트된 AXCluster `.43`·`.2`·`.33` **3/3 OK**(출처 HEAD `048dc25`), 신선도 경고 없음.
+- [주의] **게임 프로젝트(요청자) 쪽은 아직 배달 전**이다 — `update` 는 마운트된 AXCluster 만 맞춘다. 게임 프로젝트는 마운트 전환 때
+  `set_active` 가 뒤처진 기계만 맞춘다. **실제 `.33` 요청자 세션에서의 새 도구 호출은 재지 않았다.**
 
 ## 🔴 일감 작업 위치 (#907)
 
@@ -65,12 +67,12 @@
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`54b5632`(+ 이 문서 커밋), 깨끗함 |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`048dc25`(+ 이 문서 커밋), 깨끗함 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 |
-| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | 마지막 배달·검사 `6284054` 3/3 OK — **`54b5632` 미배달** |
+| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `048dc25` 배달·검사 3/3 OK |
 
-- 상주 서비스 마지막 재기동 12:31(#897). #898 서버 코드는 그 뒤라 ax-task-queue 는 **구 코드**로 돌고 있다.
+- 상주 재기동: ax-task-queue 16:49:16(#898) · ax-broker·ax-projects 12:31(#897). #898 은 ax-projects 코드를 바꾸지 않았다.
 - `.2` 검사의 `[주의] 홈 중복 스킬 ~/.agents/skills/ax-work`(#661 부류)는 손대지 않았다.
 - 남은 worktree `ax-788-work`·`ax-896-local`·`ax-900-local`·advance 1개는 보존. 자동 정리하지 않는다.
 
@@ -86,7 +88,7 @@
 ## 유지할 운영 상태
 
 - 마스터 담당 기록 **claude(11-08 16:41)**, 워커 전역 codex(state, 10-18). Codex 가 실제 인수하면 `ax-handoff` 절차로 기록한다.
-- ax-projects·ax-task-queue·ax-broker active(12:31), ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
+- ax-projects·ax-broker active(12:31) · ax-task-queue active(16:49), ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
 - 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음.
 - #893~#898·#899~#907·#909·#910·#912 완료: 리포트138~148·Redmine. 중복 마감·산출물 재생성 금지.
 - #885 는 사용자 보류 기록 유지 — 내용이 #897·#912·#907 로 해소됐을 가능성이 크나 닫을지는 사용자 결정(경우별 대조 후).
@@ -99,7 +101,6 @@
 ## 바로 다음 작업
 
 1. `ax-handoff`로 이 문서와 실제 상태(운영 main·`.ax-issues` 비어 있음·잠금 없음)를 대조한다.
-2. **#898 반영 승인 대기**: ax-task-queue 재기동(`sudo -n /usr/bin/systemctl restart ax-task-queue`, 판정은
-   `ExecMainStartTimestamp`) → `master.client update` 배달·검사. 승인 뒤 이 문서를 결과로 한 번 더 맞춰 커밋·push 한다.
+2. #898 실사용 확인은 남아 있다 — 게임 프로젝트 마운트 전환 뒤 `.33` 요청자 세션에서 새 `ax-client` 관리 도구를 한 번 불러 본다(사용자 결정).
 3. 다음 일감은 사용자가 고른다 — 후보 #886(마스터 로컬 브랜치·worktree 잔재 정리, 삭제마다 승인). 시작은 `issue_start_tool`.
 4. 커밋·push·재기동·⑦ 전진·finalize는 기존 승인 규칙을 따른다. 다른 일감을 자동 시작하지 않는다.
