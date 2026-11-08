@@ -11,6 +11,11 @@ LAN 안의 브라우저가 악성 페이지에 속아 이 포트를 찌르는 �
 """
 from __future__ import annotations
 
+if __name__ == "__main__":
+    # #897: 상주 모듈을 읽기 전에 기동 내용의 기준을 journal에 남긴다.
+    from ..service_freshness import record_startup
+    record_startup("ax-projects")
+
 import os
 
 import uvicorn

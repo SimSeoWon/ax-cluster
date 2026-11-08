@@ -6,6 +6,11 @@
 """
 from __future__ import annotations
 
+if __name__ == "__main__":
+    # #897: broker는 디스크 쓰기 권한 없이 stdout→journal로 기록한다.
+    from ..service_freshness import record_startup
+    record_startup("ax-broker")
+
 import os
 
 import uvicorn

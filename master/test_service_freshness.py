@@ -4,7 +4,7 @@
 
 [중요] 지키는 불변식:
    1. 기동 뒤에 코드가 바뀌면 **stale 이라고 말한다** (실측: 하루 동안 옛 코드로 돌았다)
-   2. 판정 근거는 **`ExecMainStartTimestamp`** — `is-active` 도 종료코드도 아니다
+   2. 현재 systemd invocation의 기동 내용 해시를 비교한다 — mtime은 진단 정보다
    3. **못 읽었으면 「최신」으로 접지 않는다** (모르는 것을 괜찮다고 하지 않는다)
    4. **발동형(oneshot)은 판정 대상이 아니다** — 다음 발동이 곧 새 코드다
    5. 조용할 때는 **아무 줄도 내지 않는다** (늘 빨간 줄이 있으면 아무도 안 본다)
@@ -12,10 +12,15 @@
 """
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import os
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -34,23 +39,52 @@ def check(label: str, cond: bool, detail: str = "") -> None:
         print(f"  [실패] {label}" + (f" — {detail}" if detail else ""))
 
 
-def fake(started: str = "Sat 2026-08-23 02:19:20 KST", rc: int = 0, epoch: str = "1787418000"):
-    """가짜 systemctl·date. **실 서비스를 건드리지 않는다.**"""
+INVOCATION = "a" * 32
+
+
+def startup(unit: str) -> tuple:
+    output = io.StringIO()
+    with patch.dict(os.environ, {"INVOCATION_ID": INVOCATION}), contextlib.redirect_stdout(output):
+        record = F.record_startup(unit)
+    return record, output.getvalue().strip()
+
+
+def fake(records=None, *, rc=0, journal_rc=0, journal=None,
+         invocation=INVOCATION, started="Sat 2026-08-23 02:19:20 KST", epoch="100"):
+    """가짜 systemctl·date·journal. **실 서비스를 건드리지 않는다.**"""
+    records = records or {}
+    calls = []
+    current = ""
+
     class R:
         def __init__(self, code, out):
-            self.returncode, self.stdout = code, out
+            self.returncode, self.stdout, self.stderr = code, out, ""
 
     def run(cmd):
+        nonlocal current
+        calls.append(cmd)
         if cmd[0] == "systemctl":
+            current = cmd[2]
+            if "InvocationID" in cmd:
+                return R(rc, invocation)
             return R(rc, started)
         if cmd[0] == "date":
             return R(0, epoch)
+        if cmd[0] == "journalctl":
+            if journal is not None:
+                return R(journal_rc, journal)
+            message = records.get(current, "")
+            entry = {"MESSAGE": message, "_SYSTEMD_INVOCATION_ID": invocation,
+                     "_SYSTEMD_UNIT": f"{current}.service"}
+            return R(journal_rc, json.dumps(entry) if message else "")
         return R(1, "")
+    run.calls = calls
     return run
 
 
 # [DOC] #772: 운영 서비스·원격 파일을 건드리지 않는 회귀 검사다.
-# 임시 저장소, 결정적 mtime, 가짜 runner로 판정하고 바꾼 F.REPO 등은 반드시 복원한다.
+# 임시 일반 파일, 결정적 mtime, 가짜 runner로 판정하고 바꾼 F.REPO 등은 반드시 복원한다.
+# 이 회귀 검사는 운영 실증이나 Git 조건 검사를 대신하지 않는다.
 # 새 테스트는 실제 F.RESIDENT 선언을 사용하여 register.py 감시 누락 회귀를 잡아야 한다.
 # 정상/오류 판정과 디렉터리 감시는 기존 정책을 보존한다.
 def test_project_dependencies() -> None:
@@ -90,16 +124,21 @@ def test_project_dependencies() -> None:
             os.utime(note, (300, 300))
 
             register = root / "master/work/register.py"
+            _, message = startup("ax-projects")
+            runner = fake({"ax-projects": message})
+            register.write_text("# changed resident\n", encoding="utf-8")
             os.utime(register, (200, 200))
-            verdict = F.check("ax-projects", runner=fake(epoch="100"))[0]
-            check("register.py만 기동 뒤 바뀌어도 stale이다", verdict.stale, verdict.line)
-            check("newest_file이 register.py를 가리킨다",
-                  verdict.newest_file == "master/work/register.py", verdict.newest_file)
+            verdict = F.check("ax-projects", runner=runner)[0]
+            check("register.py 내용 변경을 감지한다", verdict.stale, verdict.line)
 
+            register.write_text("# resident\n", encoding="utf-8")
             os.utime(register, (10, 10))
-            verdict = F.check("ax-projects", runner=fake(epoch="100"))[0]
+            verdict = F.check("ax-projects", runner=runner)[0]
             check("워커 전용 파일과 문서 변경만으로는 조용하다",
                   not verdict.stale and not verdict.why, verdict.line)
+            register.unlink()
+            verdict = F.check("ax-projects", runner=runner)[0]
+            check("명시 단일 파일 삭제도 감지한다", verdict.stale and not verdict.why, verdict.line)
 
             single = root / "single.py"
             single.write_text("# single\n", encoding="utf-8")
@@ -121,55 +160,162 @@ def test_project_dependencies() -> None:
         F.REPO = old_repo
 
 
+def test_content_and_errors() -> None:
+    old_repo = F.REPO
+    unit = "ax-task-queue"
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            F.REPO = root = Path(td)
+            source = root / "master/task_queue/resident.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("# resident\n", encoding="utf-8")
+            os.utime(source, (10, 10))
+            record, message = startup(unit)
+            runner = fake({unit: message})
+            check("기동 기록에 버전·서비스·현재 invocation이 있다",
+                  record.get("version") == 1 and record.get("unit") == unit
+                  and record.get("invocation_id") == INVOCATION, str(record))
+            check("기동 기록에 내용 해시가 있다", len(record.get("digest", "")) == 64)
+            check("기동 기록은 stdout 한 줄이다",
+                  message.startswith(F.RECORD_PREFIX) and "\n" not in message)
+            verdict = F.check(unit, runner=runner)[0]
+            check("같은 내용이면 최신이다", not verdict.stale and not verdict.why, verdict.line)
+            source.write_text("# resident\n", encoding="utf-8")
+            os.utime(source, (300, 300))
+            verdict = F.check(unit, runner=runner)[0]
+            check("같은 내용 재작성·mtime만 기동 뒤 바뀌면 최신이다",
+                  not verdict.stale and not verdict.why, verdict.line)
+            source.write_text("# changed\n", encoding="utf-8")
+            os.utime(source, (10, 10))
+            verdict = F.check(unit, runner=runner)[0]
+            check("mtime이 기동 전이어도 내용이 다르면 stale이다",
+                  verdict.stale and not verdict.why, verdict.line)
+            check("재기동 명령을 안내한다", "scripts/ax-service-restart ax-task-queue" in verdict.line)
+            source.write_text("# resident\n", encoding="utf-8")
+            added = source.with_name("added.py")
+            added.write_text("# added\n", encoding="utf-8")
+            verdict = F.check(unit, runner=runner)[0]
+            check("Python 파일 추가를 감지한다", verdict.stale, verdict.line)
+            added.unlink()
+            source.unlink()
+            verdict = F.check(unit, runner=runner)[0]
+            check("마지막 Python 파일 삭제도 감지한다", verdict.stale and not verdict.why, verdict.line)
+            empty_record, empty_message = startup(unit)
+            verdict = F.check(unit, runner=fake({unit: empty_message}))[0]
+            check("기동 때 Python 파일이 없으면 최신으로 접지 않는다",
+                  bool(empty_record.get("why")) and bool(verdict.why) and not verdict.stale, verdict.line)
+            source.write_text("# resident\n", encoding="utf-8")
+            cases = [
+                ("기동 기록 없음", fake()),
+                ("systemctl 읽기 실패", fake({unit: message}, rc=1)),
+                ("기동 시각 없음", fake({unit: message}, started="")),
+                ("현재 invocation 없음", fake({unit: message}, invocation="")),
+                ("journal 읽기 실패", fake({unit: message}, journal_rc=1)),
+                ("journal JSON 손상", fake(journal="{broken")),
+                ("메시지 JSON 손상", fake({unit: F.RECORD_PREFIX + "{broken"})),
+            ]
+            for field, value in (("version", 2), ("unit", "ax-broker"),
+                                 ("invocation_id", "b" * 32), ("paths", ["other"]),
+                                 ("digest", "not-a-hash"), ("why", "기동 읽기 실패")):
+                changed = dict(record, **{field: value})
+                cases.append((f"기록 {field} 불일치", fake({unit: F.RECORD_PREFIX + json.dumps(changed)})))
+            old_entry = json.dumps({"MESSAGE": message, "_SYSTEMD_INVOCATION_ID": "b" * 32,
+                                    "_SYSTEMD_UNIT": f"{unit}.service"})
+            entry = json.dumps({"MESSAGE": message, "_SYSTEMD_INVOCATION_ID": INVOCATION,
+                                "_SYSTEMD_UNIT": f"{unit}.service"})
+            cases.extend((("이전 invocation 기록", fake(journal=old_entry)),
+                          ("중복 기동 기록", fake(journal=entry + "\n" + entry))))
+            for label, injected in cases:
+                verdict = F.check(unit, runner=injected)[0]
+                check(label + "는 판정 불가다", bool(verdict.why) and not verdict.stale, verdict.line)
+            invocations = 0
+            stable = fake({unit: message})
+
+            def restarted(cmd):
+                nonlocal invocations
+                result = stable(cmd)
+                if cmd[0] == "systemctl" and "InvocationID" in cmd:
+                    invocations += 1
+                    if invocations > 1:
+                        result.stdout = "b" * 32
+                return result
+
+            verdict = F.check(unit, runner=restarted)[0]
+            check("판정 중 서비스 재기동은 판정 불가다", bool(verdict.why) and not verdict.stale, verdict.line)
+            original_read = Path.read_bytes
+
+            def denied(path):
+                if path == source:
+                    raise PermissionError("test read denied")
+                return original_read(path)
+
+            with patch.object(Path, "read_bytes", denied):
+                verdict = F.check(unit, runner=runner)[0]
+            check("현재 내용 읽기 실패는 판정 불가다", bool(verdict.why) and not verdict.stale, verdict.line)
+            check("journal 조회가 현재 invocation으로 한정된다", any(
+                f"_SYSTEMD_INVOCATION_ID={INVOCATION}" in cmd for cmd in runner.calls))
+            check("검사 중 자동 재기동·쓰기 명령이 없다", all(
+                cmd[0] in ("systemctl", "date", "journalctl") and "restart" not in cmd
+                for cmd in runner.calls))
+    finally:
+        F.REPO = old_repo
+
+
+def test_entrypoint_order() -> None:
+    """진입점의 실제 top-level 실행을 관측하되 서버 import 직전에 멈춘다."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    class BeforeServiceImport(Exception):
+        pass
+
+    for package, argv, expected in (
+        ("projects", ["service"], "ax-projects"),
+        ("broker", ["service"], "ax-broker"),
+        ("task_queue", ["service", "--serve", "state"], "ax-task-queue"),
+        ("task_queue", ["service"], ""),
+    ):
+        events = []
+
+        def importing(name, globals=None, locals=None, fromlist=(), level=0):
+            if name in ("__future__", "sys"):
+                return original_import(name, globals, locals, fromlist, level)
+            if name == "service_freshness":
+                return SimpleNamespace(record_startup=lambda unit: events.append(("record", unit)))
+            events.append(("import", name))
+            raise BeforeServiceImport
+
+        source = (Path(__file__).resolve().parent / package / "__main__.py").read_text(encoding="utf-8")
+        namespace = {"__name__": "__main__", "__package__": f"master.{package}"}
+        with patch.object(builtins, "__import__", importing), patch.object(sys, "argv", argv):
+            try:
+                exec(compile(source, f"master/{package}/__main__.py", "exec"), namespace)
+            except BeforeServiceImport:
+                pass
+        records = [event for event in events if event[0] == "record"]
+        if expected:
+            check(f"{package} 서버 import 전에 기동 기록을 한 번 남긴다",
+                  events[:1] == [("record", expected)] and records == [("record", expected)]
+                  and any(event[0] == "import" for event in events), str(events))
+        else:
+            check("task_queue stdio 실행은 기동 기록으로 stdout을 오염시키지 않는다",
+                  not records, str(events))
+
+
 def main() -> int:
-    print("\n[1] 기동 뒤 코드가 바뀌면 stale 이라고 말한다")
-    # 기동 = 아주 옛날(epoch 0 근처) → 저장소 코드가 반드시 더 새롭다
-    v = F.check("ax-task-queue", runner=fake(epoch="1"))[0]
-    check("stale 로 판정한다", v.stale, f"{v.started} vs {v.newest}")
-    check("무엇이 바뀌었는지 파일로 말한다", v.newest_file.endswith(".py"), v.newest_file)
-    check("[중요] 재기동 명령을 그대로 준다",
-          "scripts/ax-service-restart ax-task-queue" in v.line, v.line)
-
-    print("\n[2] 기동이 코드보다 새로우면 조용하다")
-    v = F.check("ax-task-queue", runner=fake(epoch="99999999999"))[0]
-    check("stale 아니다", not v.stale, v.line)
-    check("「지금 코드다」라고 말한다", "지금 코드" in v.line, v.line)
-
-    print("\n[3] [중요] 못 읽었으면 「최신」으로 접지 않는다")
-    v = F.check("ax-task-queue", runner=fake(rc=1))[0]
-    check("사유를 남긴다", bool(v.why), v.line)
-    check("  stale 로도 단정하지 않는다 (모르는 것은 모른다)", not v.stale, v.line)
-    v2 = F.check("ax-task-queue", runner=fake(started="", epoch="x"))[0]
-    check("기동 시각이 비면 사유를 남긴다", bool(v2.why), v2.line)
-
-    print("\n[4] [중요] 발동형(oneshot)은 판정 대상이 아니다")
-    units = set(F.RESIDENT)
-    check("상주만 잰다", units == {"ax-task-queue", "ax-broker", "ax-projects"}, str(units))
-    check("[주의] 발동형을 이름으로 적어 둔다 (빠뜨린 것과 일부러 뺀 것을 가른다)",
-          "ax-indexer" in F.TRIGGERED and "ax-status" in F.TRIGGERED, str(F.TRIGGERED))
-    for t in F.TRIGGERED:
-        check(f"  `{t}` 는 상주 목록에 없다", t not in F.RESIDENT)
-
-    print("\n[5] 조용할 때는 아무 줄도 내지 않는다")
-    lines = F.stale_lines(runner=fake(epoch="99999999999"))
-    check("[중요] 빈 목록", lines == [], str(lines))
-
-    print("\n[6] [주의] 코드 경로를 넓게 잡지 않는다")
-    for unit, paths in F.RESIDENT.items():
-        check(f"  `{unit}` 의 경로가 선언돼 있다", bool(paths) and all(
-            (F.REPO / p).is_dir()
-            or ((F.REPO / p).is_file() and (F.REPO / p).suffix == ".py")
-            for p in paths), str(paths))
-
-    print("\n[7] [주의] 자동 재기동을 하지 않는다 (승인 사항)")
-    src = (Path(F.__file__)).read_text(encoding="utf-8")
-    check("[중요] 모듈에 restart 실행이 없다",
-          "systemctl\", \"restart" not in src and "'restart'" not in src,
-          "재기동을 스스로 하는 코드가 있다")
-    check("  그 이유를 문서로 적어 뒀다", "§11.5" in src)
-
-    print("\n[8] ax-projects 상주 의존 파일을 빠짐없이 판정한다")
+    print("\n[1] 기동 내용·목록 비교와 판정 불가 처리 (#897)")
+    test_content_and_errors()
+    print("\n[2] 상주 의존 파일·범위 보존 (#772)")
     test_project_dependencies()
+    print("\n[3] 최신일 때 조용하고 oneshot을 제외한다")
+    records = {unit: startup(unit)[1] for unit in F.RESIDENT}
+    check("모두 최신이면 경고 목록이 비어 있다", F.stale_lines(runner=fake(records)) == [])
+    check("상주 세 서비스만 판정한다", set(F.RESIDENT) == {"ax-task-queue", "ax-broker", "ax-projects"})
+    check("oneshot 서비스는 명시적으로 제외한다", all(
+        unit not in F.RESIDENT and F.check(unit, runner=fake()) == [] for unit in F.TRIGGERED))
+    print("\n[4] 진입점이 서비스 모듈 import 전에 기록한다")
+    test_entrypoint_order()
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 
