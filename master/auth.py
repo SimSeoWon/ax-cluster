@@ -200,6 +200,27 @@ REQUESTER_SCOPE: tuple = (
     #    [중요] 정확 일치다 — 접두어로 두면 이 아래 하위 경로가 조용히 열린다(`#769` 와 같은 이유).
     ("POST", "/api/v1/usage", "", "exact"),
     ("POST", "/api/v1/thesaurus/"),
+    # #898 요청자 온톨로지 관리·작업장 조회. 기존 마스터 코어를 8101에서 대행한다.
+    # 관리 경로는 정확히 열며 worker 스코프에는 추가하지 않는다.
+    ("POST", "/api/v1/ontology/create-domain", "", "exact"),
+    ("POST", "/api/v1/ontology/edit-item", "", "exact"),
+    ("POST", "/api/v1/ontology/remove-item", "", "exact"),
+    ("POST", "/api/v1/ontology/lock-item", "", "exact"),
+    ("POST", "/api/v1/ontology/list-locked", "", "exact"),
+    ("POST", "/api/v1/ontology/unassigned-classes", "", "exact"),
+    ("POST", "/api/v1/ontology/sync", "", "exact"),
+    ("POST", "/api/v1/ontology/edit-domain-field", "", "exact"),
+    ("POST", "/api/v1/ontology/list-log-tags", "", "exact"),
+    ("POST", "/api/v1/ontology/set-log-tag", "", "exact"),
+    ("POST", "/api/v1/ontology/remove-log-tag", "", "exact"),
+    ("POST", "/api/v1/ontology/staging-begin", "", "exact"),
+    ("POST", "/api/v1/ontology/staging-commit", "", "exact"),
+    ("POST", "/api/v1/ontology/staging-discard", "", "exact"),
+    ("POST", "/api/v1/ontology/staging-status", "", "exact"),
+    ("POST", "/api/v1/ontology/rename-domain", "", "exact"),
+    ("POST", "/api/v1/ontology/rename-class", "", "exact"),
+    ("POST", "/api/v1/workshops/list", "", "exact"),
+    ("POST", "/api/v1/workshops/check-clean", "", "exact"),
     # [중요] **등재** (`#336` ④, 사용자 결정 2026-08-30). 요청자가 분산 작업을 등재하는
     #    자리다 — `ax-request` §3 은 오래 등재를 지시했는데 **요청자에게 그 경로가 없었다**
     #    (실측 2026-08-29: 클라 로스터에 `register_work` 0건 · 이 스코프에 등재 경로 없음 →

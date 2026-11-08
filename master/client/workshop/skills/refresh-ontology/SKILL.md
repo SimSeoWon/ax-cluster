@@ -32,7 +32,7 @@ description: ontology 도메인 패키지 (manifest + objects/ + actions/) 를 �
 2. **정규 클린 재생성기** — 클래스 **개명·이동·멤버 편집** 이 끝난 뒤 도메인을 깨끗하게 다시
    합성하는 정식 경로. 멤버 추가는 per-edit partial(scope)이라 반복되면 중복·stale 이 누적된다.
    변경이 **정착된 뒤** 해당 도메인을 인자로 1회 돌려 full 재합성하면 partial 잔재가 정리된다.
-   (개명/이동은 `rename_class` 또는 `/manage-domain` 후 본 스킬로 마무리.)
+   (개명/이동은 `ax-client:rename_class` 또는 `/manage-domain` 후 본 스킬로 마무리.)
 
 ## 호출 방법
 

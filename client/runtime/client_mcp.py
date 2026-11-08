@@ -1699,10 +1699,164 @@ TOOLS.extend([
 ])
 
 
+# 요청자 온톨로지 관리(`#898`) — 판정·파일 쓰기는 인증된 큐의 기존 마스터 함수가 한다.
+# 프로젝트 인자는 노출하지 않는다. queue_api 가 체크아웃 태그를 싣고 서버가 마운트와 대조한다.
+MANAGEMENT_ROUTES = {
+    "resolve_terms": "/api/v1/thesaurus/resolve",
+    "create_domain": "/api/v1/ontology/create-domain",
+    "edit_ontology_item": "/api/v1/ontology/edit-item",
+    "remove_ontology_item": "/api/v1/ontology/remove-item",
+    "lock_ontology_item": "/api/v1/ontology/lock-item",
+    "list_locked": "/api/v1/ontology/list-locked",
+    "unassigned_classes": "/api/v1/ontology/unassigned-classes",
+    "sync_ontology": "/api/v1/ontology/sync",
+    "list_workshops": "/api/v1/workshops/list",
+    "check_workshops_clean": "/api/v1/workshops/check-clean",
+    "edit_domain_field": "/api/v1/ontology/edit-domain-field",
+    "list_log_tags": "/api/v1/ontology/list-log-tags",
+    "set_log_tag": "/api/v1/ontology/set-log-tag",
+    "remove_log_tag": "/api/v1/ontology/remove-log-tag",
+    "staging_begin": "/api/v1/ontology/staging-begin",
+    "staging_commit": "/api/v1/ontology/staging-commit",
+    "staging_discard": "/api/v1/ontology/staging-discard",
+    "staging_status": "/api/v1/ontology/staging-status",
+    "rename_domain": "/api/v1/ontology/rename-domain",
+    "rename_class": "/api/v1/ontology/rename-class",
+}
+TOOLS.extend([
+    {"name": "resolve_terms",
+     "description": "용어의 시소러스 등록 여부와 미등록 후보·질문을 마스터에서 조회한다. 반환된 후보를 근거와 함께 사용자에게 묻고, 확인 전에는 별칭을 등록하지 않는다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["terms"], "properties": {
+         "terms": {"type": "array", "items": {"type": "string"}}}}},
+    {"name": "create_domain",
+     "description": "사용자가 선택한 도메인의 씨앗 MD를 마스터에 만든다. 기존 도메인은 덮지 않는다. 이름은 한글도 허용하며 공백·경로 위험 문자는 거부한다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["name"], "properties": {
+         "name": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}, "default": []},
+         "parent": {"type": "string", "default": ""}, "summary": {"type": "string", "default": ""}}}},
+    {"name": "edit_ontology_item",
+     "description": "사용자가 확인한 온톨로지 항목을 마스터에서 얕은 병합으로 수정하고 검수 잠근다. 없는 항목은 생성하지 않는다.",
+     "inputSchema": {"type": "object", "additionalProperties": False,
+                     "required": ["domain", "kind", "name", "patch"], "properties": {
+         "domain": {"type": "string"}, "kind": {"type": "string"}, "name": {"type": "string"},
+         "patch": {"type": "object"}}}},
+    {"name": "remove_ontology_item",
+     "description": "선택한 온톨로지 항목을 마스터에서 삭제한다. 잠긴 항목은 force 없이 삭제하지 않는다. force=true는 사용자에게 추가 확인한 뒤에만 쓴다.",
+     "inputSchema": {"type": "object", "additionalProperties": False,
+                     "required": ["domain", "kind", "name"], "properties": {
+         "domain": {"type": "string"}, "kind": {"type": "string"}, "name": {"type": "string"},
+         "force": {"type": "boolean", "default": False}}}},
+    {"name": "lock_ontology_item",
+     "description": "사용자가 선택한 온톨로지 항목의 검수 잠금을 걸거나 푼다. 실제 처리는 마스터가 한다.",
+     "inputSchema": {"type": "object", "additionalProperties": False,
+                     "required": ["domain", "kind", "name", "locked"], "properties": {
+         "domain": {"type": "string"}, "kind": {"type": "string"}, "name": {"type": "string"},
+         "locked": {"type": "boolean"}}}},
+    {"name": "list_locked",
+     "description": "체크아웃 프로젝트의 검수 잠긴 온톨로지 항목을 인증된 마스터 입구에서 조회한다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+         "domain": {"type": "string", "default": ""}}}},
+    {"name": "unassigned_classes",
+     "description": "어느 도메인에도 배정되지 않은 클래스를 보여준다. 자동 편입·승급은 하지 않는다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+         "sample": {"type": "integer", "default": 20}}}},
+    {"name": "sync_ontology",
+     "description": "온톨로지 경로·선언의 정합성 계획을 조회한다. apply=false가 기본이며 실제 적용은 사용자가 선택한 뒤에만 한다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+         "domain": {"type": "string", "default": ""}, "apply": {"type": "boolean", "default": False}}}},
+    {"name": "list_workshops",
+     "description": "이 체크아웃 프로젝트에 등록된 작업장과 역할을 인증된 마스터 입구에서 조회한다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "properties": {}}},
+    {"name": "check_workshops_clean",
+     "description": "이 체크아웃 프로젝트 작업장의 현재 배달 가능 상태(dispatchable)와 차단 사유를 조회한다. 파일을 정리하거나 배달하지 않는다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "properties": {}}},
+    {"name": "edit_domain_field",
+     "description": "도메인 MD의 지정한 필드만 마스터에서 수정한다. 생략·null은 유지하며 빈 목록은 목록을 지운다. tags는 전체 치환이므로 기존 한국어 태그를 확인한 뒤 사용자 선택대로 보낸다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["domain"], "properties": {
+         "domain": {"type": "string"}, "parent_domain": {"type": ["string", "null"]},
+         "status": {"type": ["string", "null"]}, "summary": {"type": ["string", "null"]},
+         "tags": {"type": ["array", "null"], "items": {"type": "string"}},
+         "collaborates_with": {"type": ["array", "null"], "items": {"type": "string"}}}}},
+    {"name": "list_log_tags",
+     "description": "도메인의 실증 테스트용 로그 태그·CVar 매핑을 마스터에서 조회한다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["domain"], "properties": {
+         "domain": {"type": "string"}}}},
+    {"name": "set_log_tag",
+     "description": "실제 코드에 CVar와 태깅 로그를 구현한 뒤 사용자가 확인한 매핑만 등록·수정한다. related_invariants 생략·null은 기존 연결을 유지하고 빈 목록은 연결을 지운다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["domain", "tag", "cvar"], "properties": {
+         "domain": {"type": "string"}, "tag": {"type": "string"}, "cvar": {"type": "string"},
+         "related_invariants": {"type": ["array", "null"], "items": {"type": "string"}}}}},
+    {"name": "remove_log_tag",
+     "description": "사용자에게 삭제할 매핑을 확인받은 뒤 도메인의 로그 태그 한 건을 삭제한다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["domain", "tag"], "properties": {
+         "domain": {"type": "string"}, "tag": {"type": "string"}}}},
+    {"name": "staging_begin",
+     "description": "도메인 온톨로지의 편집 세션을 마스터에서 시작한다. Git 작업과 별개다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["domain"], "properties": {
+         "domain": {"type": "string"}}}},
+    {"name": "staging_commit",
+     "description": "사용자가 검토한 도메인 편집 세션을 마스터에서 확정한다. 세션 시작 뒤 라이브 변경 여부는 결과로 알리며 자동 차단하지 않는다. Git 커밋이 아니다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["domain"], "properties": {
+         "domain": {"type": "string"}}}},
+    {"name": "staging_discard",
+     "description": "사용자에게 확인받은 도메인 편집 세션을 폐기한다. 버리는 세션 변경을 먼저 사용자에게 알린다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["domain"], "properties": {
+         "domain": {"type": "string"}}}},
+    {"name": "staging_status",
+     "description": "도메인 편집 세션 상태를 마스터에서 조회한다. domain 생략·빈 문자열은 전체 도메인이다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+         "domain": {"type": "string", "default": ""}}}},
+    {"name": "rename_domain",
+     "description": "도메인 이름 변경 계획을 조회한다(apply=false 기본). 계획을 사용자에게 보여주고 승인받은 뒤에만 apply=true로 현재 계획을 다시 계산하여 적용한다. 계획 파일 경로를 입력받지 않는다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["old", "new"], "properties": {
+         "old": {"type": "string"}, "new": {"type": "string"},
+         "apply": {"type": "boolean", "default": False}}}},
+    {"name": "rename_class",
+     "description": "도메인 안 클래스 이름 변경 계획을 조회한다(apply=false 기본). 사용자 승인 뒤에만 apply=true로 현재 계획을 다시 계산하여 적용한다. 게임 소스를 바꾸는 기능이 아니다.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["domain", "old", "new"], "properties": {
+         "domain": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"},
+         "apply": {"type": "boolean", "default": False}}}},
+])
+
+
+def tool_manage_project(api, name: str, args: dict) -> dict:
+    """얇은 8101 대행. 쓰기·실시간 상태는 캐시나 실패 폴백을 거치지 않는다."""
+    schema = next(t["inputSchema"] for t in TOOLS if t["name"] == name)
+    props = schema["properties"]
+    if not isinstance(args, dict):
+        raise ClientError("관리 도구 인자는 객체여야 한다")
+    unknown = set(args) - set(props)
+    if unknown:
+        raise ClientError("관리 도구에 알 수 없는 인자: " + ", ".join(sorted(unknown)))
+    missing = set(schema.get("required", [])) - set(args)
+    if missing:
+        raise ClientError("관리 도구 필수 인자가 없다: " + ", ".join(sorted(missing)))
+    payload = {key: spec["default"] for key, spec in props.items() if "default" in spec}
+    payload.update(args)
+    types = {"string": str, "boolean": bool, "integer": int, "array": list, "object": dict}
+    for key, value in payload.items():
+        spec = props[key]
+        kind = spec["type"]
+        if isinstance(kind, list):
+            if value is None and "null" in kind:
+                continue
+            kind = next(t for t in kind if t != "null")
+        expected = types[kind]
+        if not isinstance(value, expected) or (expected is int and isinstance(value, bool)):
+            raise ClientError(f"{key} 인자는 {spec['type']} 형식이어야 한다")
+        if kind == "array" and not all(isinstance(v, str) for v in value):
+            raise ClientError(f"{key} 인자는 문자열 목록이어야 한다")
+        if (key in schema.get("required", []) and key != "cvar"
+                and isinstance(value, str) and not value.strip()):
+            raise ClientError(f"{key} 인자가 비었다")
+    return api("POST", MANAGEMENT_ROUTES[name], payload)
+
+
 def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                   root: Path | None = None) -> dict:
     """도구 실행. `api`/`papi`/`cache` 주입은 테스트 자리 — 실전은 config·token 에서 만든다."""
     args = args or {}
+    if name in MANAGEMENT_ROUTES:
+        return tool_manage_project(api or queue_api(root), name, args)
     controls = {"get_orchestration": ("GET", "/control/orchestration"),
                 "set_worker_mode": ("POST", "/control/worker-mode"),
                 "record_master_conductor": ("POST", "/control/master-conductor")}

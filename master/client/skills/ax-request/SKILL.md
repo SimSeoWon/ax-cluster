@@ -401,11 +401,14 @@ unreal-mcp 연결을 확인한다. 소스 코드 작성·빌드·로그 분석�
 
 ## 5. 어디로 갈 수 있나
 
-    ax-projects:list_workshops_tool(name)        · 등록된 작업장과 역할
-    ax-projects:check_workshops_clean_tool(name) · 지금 보낼 수 있는 곳 (dispatchable)
+    ax-client:list_workshops()        · 이 프로젝트에 등록된 작업장과 역할
+    ax-client:check_workshops_clean() · 지금 보낼 수 있는 곳 (dispatchable)
 
-[중요] `dispatchable` 이 비어 있으면 **워커의 워킹트리가 더럽다는 뜻**이다. 사람이 편집 중일 수
-있으니 **밀어붙이지 말고 알린다.** 자동화는 절대 `git clean` 을 부르지 않는다.
+두 조회는 요청자 토큰과 체크아웃의 프로젝트 태그로 8101을 거쳐 마스터에서 실행한다.
+[중요] `dispatchable`이 비어 있으면 **지금 보낼 수 있는 작업장이 없다는 뜻**이다.
+`results`의 `checked`·`reason`·`blocking`을 보고 소스 변경, SSH·경로 확인 실패,
+원격 제어 대상 아님, 프로젝트 타입에 따른 파견 제외를 구분해 알린다. 사람이 편집 중일 수도
+있으니 밀어붙이지 않는다. 자동화는 절대 `git clean`을 부르지 않는다.
 
 ## 6. [중요] 언제든 멈출 수 있다 — 그게 대화식의 전제다
 

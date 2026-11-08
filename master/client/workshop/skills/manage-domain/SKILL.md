@@ -1,6 +1,6 @@
 ---
 name: manage-domain
-description: 도메인 온톨로지를 생성·제거·수정하는 통합 관리 인터페이스. 도메인 1건을 모든 표면(MD + 패키지 yaml + class_graph DB + 도메인 검색 인덱스)에서 일괄 제거하거나, 멤버(클래스)·필드(요약·태그·상위도메인·협력도메인)를 수정하거나, 명시 스펙으로 새 도메인을 생성한다. L1/L2/L3 개별 항목(오탐 action/invariant 등)을 도메인 전체 재합성 없이 직접 수정·삭제하고, 대화형 편집 세션 중엔 스테이징 사본에서 작업해 라이브 서비스에 영향을 주지 않는다. 자연어 발화 "도메인 삭제/제거", "X 도메인 지워줘", "도메인에 클래스 추가", "이 클래스를 MissionRuntime 에 넣자", "도메인 협력관계 수정", "서브도메인 만들어줘", "새 도메인 생성", "이 액션/불변조건 내용 고쳐줘", "이 항목 삭제해줘" 등에 발동. 검색 동시출현 기반 자동승급(폐기)과 달리 사람이 결정한 구조를 모든 표면에 일관 반영. cleanup_inactive_domain(DB row·inactive 한정)의 상위 도구.
+description: 요청자에서 자기 프로젝트의 도메인 씨앗 생성·필드 편집·온톨로지 항목 수정과 삭제·로그 태그 관리·개명 계획을 마스터에 요청한다. "새 도메인 생성", "서브도메인 만들어줘", "도메인 협력관계 수정", "이 액션/불변조건 내용 고쳐줘", "이 항목 삭제해줘", "도메인 이름 바꿔줘", "로그 태그 등록"에 사용한다. 전체 도메인 삭제와 멤버 추가·제거는 현재 요청자 도구에서 지원하지 않는다.
 ---
 
 # Manage Domain — 도메인 CRUD 통합 관리
@@ -17,200 +17,159 @@ description: 도메인 온톨로지를 생성·제거·수정하는 통합 관�
 
 ## 개요
 
-> [주의] **온톨로지 조회·별칭 등록은 마스터 위임(`mcp__ax-client__*`)으로 바뀌었다** (2026-08-20).
-> 로컬 `mcp__context-search__*` 는 은퇴했다 — 그 인덱스는 낡았고 objects/actions 를 0/0 으로 답한다.
->
-> [주의] **그래프 조회 3종은 아직 위임되지 않았다** — `find_ancestors` · `find_subclasses` ·
-> `dependency_search`. 이 절차들이 그것에 의존하므로, 부르기 전에 **응답이 오는지 먼저 확인**하고
-> 안 오면 마스터에 위임 추가를 요청한다. 조용히 추측으로 대체하지 말 것.
+요청자는 프로젝트 체크아웃의 `ax-client`로 관리하고, 마스터가 실제 온톨로지를 처리한다.
+관리 요청은 체크아웃의 프로젝트 태그·요청자 토큰으로 인증된 8101을 거친다.
+프로젝트가 마운트와 다르거나 권한이 없으면 사유를 알리고 멈춘다. 다른 프로젝트나 로컬
+인덱스로 우회하지 않는다. 요청자 PC에 마스터의 온톨로지 DB·패키지가 있다고 가정하지 않는다.
 
 ## 사용 예
 
-이런 발화로 이 스킬이 쓰인다(description 의 발동 예):
-
-    「도메인 삭제/제거」
-    「X 도메인 지워줘」
-    「도메인에 클래스 추가」
-    「이 클래스를 MissionRuntime 에 넣자」
-    「도메인 협력관계 수정」
+    「새 도메인 생성」
     「서브도메인 만들어줘」
+    「도메인 협력관계 수정」
+    「이 액션 설명 틀렸어 고쳐줘」
+    「이 불변조건 지워줘」
+    「도메인 이름 바꿔줘」
+    「이 도메인 로그 태그 등록해줘」
 
 구획은 위 목차의 제목으로 찾아 읽는다 — 절차는 「목적」부터다.
 
 ## 목적
 
-도메인 생성/제거/수정 인터페이스. 기존엔 제거(`cleanup_inactive_domain`)가 DB row·inactive
-한정이고, 생성(`/api/v1/domains`)이 검색기반이라 불완전했음. 본 스킬은 **모든 표면**을
-일관 처리:
-
-1. `.claude/context/_domains/<D>.md` (사람 SSOT)
-2. `.claude/ontology/domains/<D>/` (기계 SSOT 패키지 — objects/actions/invariants/manifest)
-3. `class_graph.db` — `domains` row + `class_ontology`(ontology_domain=D) rows
-4. 도메인 검색 인덱스 — `ontology_domains`(ChromaDB) + `bm25_domains.db`
+마스터의 기존 기능과 실제 도구 인자에 맞춰 도메인·항목을 관리한다. 생성은 씨앗 MD,
+필드 편집은 MD와 해당 manifest 필드, 항목 편집·삭제는 기존 YAML을 대상으로 한다.
+한 번의 호출이 모든 DB·검색 인덱스·소스를 함께 갱신한다고 가정하지 않는다.
+반환된 변경 목록·잠금·노트·인덱스 결과를 확인해 실제 반영 범위를 보고한다.
 
 ## 환경 확인 (필수, BLOCKING)
 
-1. `.claude/vector_db/class_graph.db` 존재 확인 (배포 프로젝트/메타 저장소).
-2. server_mode 면 `<server_url>/api/v1/ontology/*` HTTP. 단독 모드면 `context_search` MCP
-   도구 직접 호출. 응답 실패 시 즉시 종료 + RAG 서버 상태 안내 (localhost fallback 금지).
-3. 서버 PC(=watch.exe 호스트)에서만 의미 — 비대상 PC 면 안내 후 종료.
+1. 현재 체크아웃의 `ax-client` 도구가 연결됐는지 확인한다.
+2. `ax-client:list_domains()`로 도메인 목록을 읽고, 대상은 `ax-client:get_domain(name)`이나
+   `ax-client:get_domain_layer(domain, layer=0)`로 확인한다.
+3. 응답의 프로젝트·거절 사유·`_stale`을 확인한다. 낡은 조회 결과로 변경 대상을 확정하지 않는다.
+   호출 실패는 사유와 함께 보고한다. 요청자 토큰이나 마스터 API 키를 출력하지 않는다.
 
 ## 호출 방법
 
-- `/manage-domain list` — 도메인 목록 + 상태 + 멤버 수 (read-only)
-- `/manage-domain remove <D>` — 완전 제거 (active 면 `--force` 요구)
-- `/manage-domain edit <D>` — 멤버 추가/제거·필드 수정 대화
-- `/manage-domain create <Name>` — 명시 스펙 신규 도메인
-- `/manage-domain rename <old> <new>` — 도메인 개명 (모든 표면 + 참조 일괄)
-- `/manage-domain rename-class <old> <new>` — **클래스** 개명·이동 cascade (force-full 재합성)
-- `/manage-domain edit-item <D> <layer_type> <item_name>` — L1/L2/L3 항목 1건 편집(patch) + 재합성 잠금
-- `/manage-domain remove-item <D> <layer_type> <item_name>` — L1/L2/L3 항목 1건 삭제
-- `/manage-domain edit-session start|commit|discard <D>` — 오래 걸리는 대화형 편집용 스테이징 세션
-- `/manage-domain log-tags <D> [list|set|remove]` — 실증 테스트용 로그 태그/CVar 사이드카 관리 (η.12.3)
-- 자연어 — "X 도메인 삭제", "이 클래스 MissionRuntime 에 넣자", "협력 도메인에 Y 추가", "X 도메인 이름을 Y 로 바꿔줘", "클래스 A 를 B 로 개명했어", "이 액션 설명 틀렸어 고쳐줘", "이 불변조건 지워줘", "이 도메인 로그 태그 등록해줘", "게임팀이 CVar 넣었대, 온톨로지에 기입해줘"
+- `/manage-domain list` — `ax-client:list_domains()`로 목록 확인.
+- `/manage-domain create <Name>` — `ax-client:create_domain(name, tags=[], parent="", summary="")`.
+- `/manage-domain edit <D>` — `ax-client:edit_domain_field(domain, parent_domain?, status?, tags?, collaborates_with?, summary?)`.
+- `/manage-domain edit-item <D> <kind> <name>` — `ax-client:edit_ontology_item(domain, kind, name, patch)`.
+- `/manage-domain remove-item <D> <kind> <name>` — `ax-client:remove_ontology_item(domain, kind, name, force=False)`.
+- `/manage-domain rename <old> <new>` — `ax-client:rename_domain(old, new, apply=False)`로 계획.
+- `/manage-domain rename-class <D> <old> <new>` — `ax-client:rename_class(domain, old, new, apply=False)`로 계획.
+- `/manage-domain edit-session start|commit|discard|status <D>` — 아래 편집 세션의 반영 범위를 먼저 설명한다.
+- `/manage-domain log-tags <D> list|set|remove` — 아래 로그 태그 도구를 사용한다.
+
+전체 도메인 삭제, 도메인 멤버 추가·제거는 현재 마스터에 대응하는 실행 코어·요청자 도구가 없다.
+해당 요청을 받으면 미지원 사실을 알리고 별도 구현 여부를 사용자에게 묻는다. 항목 삭제나
+필드 변경을 이 기능의 대체로 실행하지 않는다.
 
 ## 흐름
 
 ### 제거 (remove)
 
-1. `audit_ontology_drift` + `_domains/*.md` 로 대상 도메인 현황 파악 — status(active/draft),
-   멤버 수, 패키지 obj/act 수를 사용자에게 **표면별 영향 요약**으로 보고.
-2. AskUserQuestion 으로 삭제 확정. **active 도메인이면 별도 경고** + `--force`(allow_active)
-   명시 확인 — 사용자 SSOT 가 사라짐을 분명히 고지.
-3. `delete_domain(domain_name, allow_active=<bool>)` 호출. 4개 표면 일괄 정리.
-4. 결과 보고 — surfaces(md/package_files/db_domain_row/db_classifications) + reindex 카운트.
+전체 도메인 제거는 현재 지원하지 않는다. 도메인 MD·패키지·DB·색인을 일괄 지우는 것으로
+안내하거나 파일을 직접 삭제하지 않는다. 기존 항목 하나의 삭제는 아래 `remove-item`이다.
 
 ### 수정 (edit)
 
-- **멤버 추가** — 후보를 도메인에 편입. 후보 출처 = `.claude/context/_domains/_unassigned.md`
-  (미분류 워크리스트 — active 도메인 인접 후보 + 추천 도메인) 또는 사용자가 지정한 클래스.
-  **자동 점수·편입 X** — 아래를 대화로 진행하며 그 자리에서 신호를 끌어와 가이드·경고·옵션 제시:
+1. 현재 도메인과 바꿀 필드를 읽어 사용자에게 보여준다.
+2. 사용자가 확정한 필드만 `ax-client:edit_domain_field`에 보낸다. 생략하거나 null인 필드는 유지된다.
+   `parent_domain`, `status`, `tags`, `collaborates_with`, `summary`를 지원한다.
+3. `tags`와 `collaborates_with`는 전체 목록 치환이다. 기존 목록을 먼저 확인하고 최종 목록을
+   합의한다. `kr_tags_removed`·`warning`이 반환되면 그대로 알린다.
+4. `parent_domain`·`tags`·`collaborates_with`는 기존 manifest가 있으면 직접 패치하고 도메인
+   인덱스를 갱신한다. `summary`·`status`는 MD 반영이며 다음 합성까지 패키지와 다를 수 있다.
+   `manifest_patched`·`index_note`·`note`를 읽고 전 표면 반영 완료로 확대하지 않는다.
 
-  1. **적합성 가이드** — 후보별로 구조 신호를 조회해 **근거와 함께** 제시 (단정 금지):
-     - `find_ancestors` / `find_subclasses` — 후보의 조상·자손이 대상 도메인 멤버인가
-       (`mcp__ax-client__get_domain_layer(domain)` 로 멤버 확인 — 이름 목록·책임·layer_counts 가
-       한 응답에 온다). 같은 상속 계층이면 **강한 적합 신호**.
-     - `dependency_search(file, direction=both)` — 후보 파일이 도메인 멤버 파일과 #include 결합
-       (보조 신호 — basename 매칭이라 약하게 가중).
-     - `mcp__ax-client__get_object_spec(domain, class)` — 후보 kind/tier/parent/file
-       ([주의] domain 인자가 필요하다). _unassigned.md 의 SubDir 인접은
-       **약한 기본 신호**.
-     → "이 클래스는 <근거>로 적합해 보임 / 애매함 / 다른 도메인이 더 맞아 보임" 을 근거로 보고.
-  2. **크기 경고** — `mcp__ax-client__get_domain_layer(domain)` 의 `layer_counts` 합으로 규모 확인.
-     편입 후 과대(가이드 임계: 멤버 ~40+ 또는 L3 편중)면 경고하고 서브도메인 분리를 옵션으로 띄움.
-  3. **서브도메인 제안** — 후보가 특정 하위 경로/책임에 군집하거나 도메인이 비대하면
-     `create_domain(name, members=[...], parent_domain=<대상>)` 분리를 제안 (독립 패키지, 계층 링크).
-  4. **옵션 제시 / 의견 질의** — AskUserQuestion 으로: (a) 그대로 `add_domain_members`
-     (b) 서브도메인으로 분리(`create_domain` parent_domain=) (c) 보류·제외. 적합성이 약하면
-     그 점을 명시하고 사용자 의견을 물을 것.
-  5. **확정 후에만** `add_domain_members(domain, class_names)` 또는 `create_domain(...)`.
-     active 면 재합성 trigger 큐잉됨. **silently auto-add 절대 금지** — 가이드·경고·옵션
-     제시까지가 Claude 몫, 결정·편입은 유저.
-- **멤버 제거** — `remove_domain_members(domain, class_names)`.
-- **배치 편집 (per-edit refresh 누적 차단)** — 한 도메인에서 멤버를 **여러 번 연속 add/remove** 할
-  때는 매 호출 `defer_refresh=True` 로 재합성 트리거를 보류하고, 편집을 **모두 마친 뒤**
-  `/refresh-ontology <도메인>` 1회로 클린 full 재합성. per-edit partial(scope) 재합성이 반복되면
-  중복·stale 이 누적된다 (add 는 기본 partial). 단발 편집이면 그냥 호출(기본 즉시 partial).
-- **필드 수정** — `edit_domain_field(domain, parent_domain=/status=/tags=/collaborates_with=/summary=)`.
-  제공한 인자만 적용. `collaborates_with`/`parent_domain` 편집이 뷰어 연관/계층 링크를 갱신.
+멤버 추가·제거는 지원하지 않는다. 소스 선언·도메인 책임·현재 멤버를 근거로 편입 여부를
+사용자와 논의할 수는 있으나, 확정됐다는 이유로 없는 도구를 호출하거나 YAML을 임의 생성하지 않는다.
 
 ### 항목 편집 (edit-item / remove-item / edit-session)
 
-**왜 존재하는가 (방향성)** — 지금까지 L1(objects)/L2(actions)/L3(invariants) 는 LLM
-생성만 가능했다. 개별 항목 하나(오탐 action, 잘못 귀속된 invariant 등)를 고치려면
-도메인 전체를 `/refresh-ontology`(LLM 재합성, 비결정적)로 통째 재생성해야 했다 — 항목
-하나 고치자고 나머지 전부가 흔들리는 구조. 이 서브커맨드는 **항목 단위로 직접
-편집·삭제**하고 `verified_by_user: true` 로 잠가 다음 재합성이 그 항목을 덮어쓰지 않게
-한다. 서버가 상시 서비스 중이므로, 오래 걸리는 대화형 편집은 `edit-session` 으로
-스테이징 사본에서 진행 — 라이브는 세션을 `commit` 할 때만 한 번에 교체된다
-(`context_search` 의 `DoubleBufferedIndex` 와 동일한 Live/Work 철학). 짧은 1회 편집이면
-세션 없이 `edit-item`/`remove-item` 만 호출해도 즉시 라이브에 반영된다 — 세션은 "오래
-대화하며 여러 번 고칠 때" 를 위한 선택적 안전장치일 뿐, 매번 강제하지 않는다.
+`kind`는 `objects`·`actions`·`invariants` 중 하나다. 계층 번호와 구분한다.
 
-- `/manage-domain edit-session start <D>` — 스테이징 사본 생성(멱등 — 이미 있으면 이어서
-  사용). 이후 이 도메인의 `edit-item`/`remove-item` 호출은 자동으로 사본을 대상으로 삼는다.
-- `/manage-domain edit-item <D> <layer_type> <item_name>` — 현재 항목 내용을 조회해 보여준
-  뒤, AskUserQuestion 으로 고칠 필드:값을 확정 → `edit_ontology_item(domain, layer_type,
-  item_name, patch)` 호출. `layer_type` ∈ `objects`/`actions`/`invariants`. patch 는
-  top-level 키만 얕게 덮어씀 — `trigger`/`flow`/`implementation` 같은 중첩 필드를 고치려면
-  그 키 전체를 다시 넘길 것. 결과에 `verified_by_user: true` 가 세팅됐고 다음 재합성에서도
-  보존됨을 사용자에게 안내.
-  - **응용 — RAG 시소러스 별칭 (Phase η.10/η.11)**: 클래스의 한국어·영문 별칭(몬스터/몹/
-    괴물/적/Enemy 등)을 등록하면, 다음 `ax-client:search_context` 부터 그 표현이 쿼리에 등장할 때
-    자동으로 클래스명이 덧붙어 BM25·벡터·도메인추론 세 채널이 동시에 혜택을 받는다.
-    **등록은 반드시 전용 도구 `mcp__ax-client__add_object_alias(class_name, alias)` 로 할 것**
-    (2026-08-20: **domain 인자 없음** — 서버가 찾는다. 범용어·짧은 표현은 마스터 가드가
-    `rejected_…` 사유로 거부한다) —
-    이 `edit-item`(patch={"aliases":[...]})으로 직접 덮어쓰면 top-level 얕은 덮어쓰기라
-    기존 별칭 전체가 사라지는 함정이 있다(Phase η.11 에서 발견). `ax-client:add_object_alias` 는
-    기존 목록을 내부에서 읽어 병합하므로 안전하게 누적된다. 사용자가 작업 요청에
-    `<구절>[ClassName]` 형태로 직접 선언하면(예: "몹 스폰 로직[AMonster]") 그 자체가
-    등록 신호 — 메인 세션이 **자동으로** `ax-client:add_object_alias` 를 호출한다(사람이 스킬을
-    별도 실행할 필요 없음, 이미 등록된 표현이면 조용히 스킵).
-- `/manage-domain remove-item <D> <layer_type> <item_name>` — 항목 내용을 표시하고 삭제
-  확정(**되돌릴 수 없음** 명시) 후 `delete_ontology_item(domain, layer_type, item_name)` 호출.
-- `/manage-domain edit-session commit <D>` — 스테이징 사본 → 라이브 원자적 교체(rename swap)
-  + 도메인 인덱스 1회 재빌드. 세션 중 라이브가 바뀐 게 감지되면(백그라운드 재합성 등)
-  경고만 하고 그대로 진행 — 온톨로지 편집은 저빈도 이벤트라 새 락·머지 인프라 없이 로그
-  가시성으로 충분하다는 판단([[feedback_use_system_logs]]).
-- `/manage-domain edit-session discard <D>` — 스테이징 사본 폐기, 라이브 무영향.
+- 편집: 현재 항목과 변경할 값을 보여주고 확정 후 `ax-client:edit_ontology_item(domain, kind,
+  name, patch)`를 호출한다. top-level 얕은 병합이므로 중첩 값은 키 전체를 보낸다.
+  `name`·`layer`는 패치로 바꿀 수 없다. 편집은 `verified_by_user: true` 잠금을 건다.
+- 별칭: `ax-client:add_object_alias(class_name, term)`을 쓴다. 확인된 표현만 보내고 기존 별칭과
+  병합한다. 별칭만 붙이는 일을 전체 항목 검수로 처리하거나 `aliases` 전체를 패치하지 않는다.
+- 삭제: 내용을 먼저 보여주고 사용자 확정 후 `ax-client:remove_ontology_item(domain, kind,
+  name, force=False)`를 호출한다. 검수 잠금으로 거절되면 보존된 것이다. `force=True`는
+  잠긴 항목을 지운다는 점을 별도로 확인받은 뒤에만 쓴다.
+- 잠금 확인·변경: `ax-client:list_locked(domain)`와
+  `ax-client:lock_ontology_item(domain, kind, name, locked)`를 쓴다. 잠금 해제 후 다음 합성은
+  그 항목을 덮을 수 있음을 설명한다.
+
+편집 세션은 다음 도구를 제공한다.
+
+    ax-client:staging_begin(domain)     패키지 사본 생성, 기존 사본이면 재개
+    ax-client:staging_status(domain="") 세션 상태 조회, 빈 값이면 전체
+    ax-client:staging_commit(domain)    사본으로 라이브 교체, 기존 라이브는 1세대 백업
+    ax-client:staging_discard(domain)   사본 폐기
+
+[중요] 세션이 있으면 위 **항목 편집·삭제·잠금 변경은 staging 사본에 반영**된다.
+응답의 `domain`·`staging`을 확인한다. `ax-client:list_locked`도 작업 사본을 우선 조회하며
+항목별 `staging`을 반환한다. 일반 도메인 조회·검색과 로그 태그 조회·동기화 계획은 라이브를
+읽으므로 commit 전에는 사본 변경이 보이지 않는다. 편집 결과와 라이브 조회가 다르다고
+세션 밖에 같은 수정을 다시 실행하지 않는다.
+
+세션 중 해당 도메인의 필드 편집·로그 태그 등록/삭제·동기화 적용은 거절된다.
+프로젝트에 열린 세션이 하나라도 있으면 별칭 등록과 도메인·클래스 개명도 거절된다.
+상위 도메인에 세션이 열려 있으면 그 아래 씨앗 생성도 거절된다. 사유를 알리고 현재 사본의
+변경을 검토한 뒤 commit/discard를 사용자와 결정한다. 자동으로 세션을 만들거나 교체·폐기하지 않는다.
+
+commit은 사본으로 라이브를 교체하고 색인을 한 번 갱신한다. 결과의
+`live_changed_during_session`·`index`를 확인한다. 다른 경로에서 세션 중 라이브가 바뀌어도
+core는 경고만 반환하고 교체할 수 있으므로, 변경 감지가 교체를 자동 차단한다고 안내하지 않는다.
 
 ### 실증 테스트용 로그 태그/CVar 사이드카 (log-tags)
 
-**왜 존재하는가** — 기획팀이 `AgentWiki` 로 실제 플레이 로그를 대조해 체크리스트를 실증하려면,
-어떤 로그 태그(카테고리)를 켜야 하는지·그 태그를 켜는 콘솔변수(CVar)가 뭔지가 온톨로지에
-있어야 한다(`docs/rag-system.md` § η.12.3). **저작 방향은 (b) 개발자 선작성으로 확정** —
-게임팀이 실제 코드에 CVar+태깅 로그를 먼저 구현한 **뒤**, 이 서브커맨드로 사람이 실제
-이름을 확정 기입한다. 자동 생성·자동 편입 없음 — 배치가 만드는 것은 어디에 태깅하면
-좋을지 제안하는 리포트(`_domains/_log_tagging_candidates.md`)뿐, 사이드카 자체는 항상
-사람이 확정한다.
+게임 코드에 실제 태깅 로그·CVar가 구현된 뒤 사람이 확인한 이름을 등록한다.
 
-- `/manage-domain log-tags <D> list` — 현재 등록된 entries 조회 (`get_log_categories`).
-- `/manage-domain log-tags <D> set <tag> <cvar> [related_invariants...]` — entry 등록·갱신
-  (`set_log_category`, tag 기준 upsert). `related_invariants` 를 넘기면 그 invariant 들의
-  `list_invariants` 등 조회 응답에 `log_tags` 필드가 자동 첨부되어, 위키 세션이 "이 invariant
-  는 로그로 검증 가능하다"를 스스로 판단하게 된다 — 등록 전 `_log_tagging_candidates.md` 의
-  제안값(권장 tag/cvar 이름)을 기본값으로 보여주되, 실제 구현과 다르면 사용자 확인 후 수정.
-- `/manage-domain log-tags <D> remove <tag>` — entry 1건 삭제(**되돌릴 수 없음**, 삭제 전 내용
-  표시·확정).
-- 사용자가 "게임팀이 LogMissionAnnihilation 이랑 mission.LogAnnihilation.Enable 넣었대" 처럼
-  실제 구현 완료를 전해주면, 관련 invariant 를 함께 물어(또는 `_log_tagging_candidates.md`
-  에서 추정) `set` 을 호출 — 자동 추측으로 임의 기입하지 말 것.
+    ax-client:list_log_tags(domain)
+    ax-client:set_log_tag(domain, tag, cvar, related_invariants?)
+    ax-client:remove_log_tag(domain, tag)
+
+`set`은 tag 기준 등록·갱신이다. 실제 구현과 관련 불변식을 확인하고 값을 합의한다.
+`related_invariants`를 생략하거나 null로 보내면 기존 연결을 유지하고, 빈 목록은 연결을 지운다.
+삭제는 현재 내용을 보여주고 확정받는다. 제안 리포트나 추측을 실제 구현으로 간주해 자동 등록하지 않는다.
 
 ### 개명 (rename)
 
-- `rename_domain(old, new)` — 모든 표면(MD+category / 패키지 dir+manifest / class_graph 키 이전 /
-  타 도메인 parent_domain·협력 도메인 참조 / 인덱스) 일괄. **결정적(LLM 0)·분류 보존**.
-  `--rename-english`(비영문 자동변환)와 별개 — 임의 old→new (예: 참조 시스템에 `ProjectAlpha_` 접두사).
-- new 는 영문·무공백 강제(비ASCII 거부), 이미 존재하면 충돌 거부. 즉시 반영(트리거 비동기 아님).
+1. `ax-client:rename_domain(old, new, apply=False)`로 현재 파일 이동·참조 변경 계획을 받는다.
+2. 오류·충돌과 계획의 `moves`·`edits`·`notes`를 사용자에게 보여주고 백업 및 적용을 확인받는다.
+3. 승인 후 같은 인자로 `apply=True`를 보낸다. 서버가 현재 상태로 계획을 다시 만들어 적용한다.
+   예전 응답의 임의 파일 경로를 적용 인자로 보내지 않는다.
 
-### 클래스 개명·이동 (rename_class)
+현재 코어는 패키지 이동과 MD·manifest 등의 참조를 갱신한다. 잠금·보호 표식은 이동한
+파일에 남는다. 모든 DB·인덱스의 일괄 갱신을 보증하지 않는다. 반환 계획에 없는 변경을
+수행했다고 보고하지 않는다. 개명 코어는 새 이름을 정규화하고 비ASCII를 거절하므로 계획의
+실제 `new`를 확인받는다. 이는 아래 씨앗 생성의 한글 이름 허용과 다른 계약이다.
 
-- `rename_class(old, new[, new_path])` — **클래스**(도메인 아님) 개명/이동 cascade. 소스에서
-  클래스를 rename/move 했을 때 온톨로지를 1-step 으로 정착: 영향 도메인 related_classes old→new
-  치환 + old 분류 제거 + 영향 active 도메인 **force full 재합성**(partial 아님 → 새 클래스 합성).
-- **옛 object yaml 즉시 삭제** — `rename_domain` 이 옛 패키지를 `shutil.move` 로 옮기는 것과 동일
-  정신. 온톨로지 yaml 은 기계 산출물이라 자동 정리(`.claude/` 내부는 시스템 관리, 수동 삭제 X).
-  MD 본문(prose) old 언급은 사람 편집 영역이라 "수동 갱신 필요" 안내만.
-- **status=need_path 면** 새 클래스 경로를 class_graph 에서 확정 못 한 것(미인덱스·옛/새 공존).
-  **추측하지 말고 사용자에게 새 파일 경로를 물어** `new_path` 로 재호출.
-- 코드 작성 에이전트가 소스에서 클래스를 개명/이동한 직후 본 도구를 호출하면 매핑이 깨끗하게 정착됨.
+### 클래스 개명·이동 (rename-class)
+
+`ax-client:rename_class(domain, old, new, apply=False)`로 지정 도메인의 YAML 참조 치환·항목 파일
+개명 계획을 확인한다. 사용자 승인 후 `apply=True`로 적용한다. 현재 도구는 `new_path`를 받지
+않고 소스 클래스를 개명·이동하지 않는다. DB 전체 cascade나 force-full 재합성을 수행한다고
+안내하지 않는다. 계획의 변경 범위·정규화된 새 이름·충돌 사유를 먼저 확인한다.
 
 ### 생성 (create)
 
-- `create_domain(name, members=[...], parent_domain="", summary="", collaborates_with=[...], status="draft")`.
-- 이름은 **영문 PascalCase 강제** (비ASCII 거부). 멤버는 명시 클래스명 (검색 추측 X).
-- 서브도메인은 `parent_domain=<부모>` 지정 — 독립 패키지로 생성되고 뷰어 부모 페이지에
-  계층 링크로 노출 (오브젝트/액션은 병합 X).
-- draft 로 시작 → 검토 후 활성화 (`edit_domain_field(status="active")` 또는 기존 `/activate`).
+`ax-client:create_domain(name, tags=[], parent="", summary="")`는 **status=draft인 씨앗 MD**를 만든다.
+이미 있는 MD는 덮지 않는다. 이름은 한글도 허용하며 경로 위험문자·공백은 거절한다.
+상위는 `parent`로 지정하고 그 상위 MD가 먼저 있어야 한다. 패키지가 아직 없으면 계층 연결은
+보류될 수 있으므로 `linked`·`notes`를 읽는다.
+
+이 도구에는 `members`·`parent_domain`·`collaborates_with`·`status` 인자를 보내지 않는다.
+생성만으로 객체·행위 패키지나 멤버 분류가 생기지 않는다. 씨앗의 도메인 경계·책임을 합의해
+채우는 일과 이후 합성을 별도로 구분한다. 필드 수정은 위 `edit`의 지원 범위를 따른다.
 
 ## 안전 가드
 
-- **active 제거는 `--force`(allow_active=True) 명시 후만** — 기본 거부 (SSOT 보호).
-- **삭제는 되돌릴 수 없음** — Step 2 확정 전 표면별 영향(특히 멤버/분류 수) 반드시 보고.
-- **멤버 편입은 사용자 확정 후만** — 적합성·크기·서브도메인을 **근거와 옵션으로** 제시(자동
-  점수 레이어 없음, 대화 중 신호 조회)하되 결정·편입은 유저 명시. silently auto-add 절대 금지
-  ([[feedback_artifact_addition_default]]). 후보 진입점 = `_domains/_unassigned.md`.
-- **항목 삭제(remove-item)는 되돌릴 수 없음** — 삭제 전 항목 내용을 반드시 보여주고 확정받을
-  것. 편집(edit-item)은 `verified_by_user: true` 잠금이 걸려 이후 재합성에서 보존됨을 고지.
-- 합성(objects/actions yaml 재생성)은 watch.exe 가 trigger 신호로 비동기 처리 (최대 60초).
+- 생성·등록·편집·삭제·적용은 사용자가 확인한 대상과 값에 한정한다. 자동 편입·자동 승급은 없다.
+- 삭제·개명·staging 교체는 현재 내용과 실제 변경 계획을 먼저 보여주고 확정받는다.
+- 항목 삭제의 `force`·동기화의 적용은 기본 계획·거절을 건너뛰는 재시도 수단이 아니다.
+- 요청자 도구의 스키마에 없는 인자를 추측하지 않는다. 없는 기능은 미지원으로 알린다.
+- 결과의 거절·보존·경고·인덱스 실패를 성공으로 요약하지 않는다. 토큰·API 키는 출력하지 않는다.

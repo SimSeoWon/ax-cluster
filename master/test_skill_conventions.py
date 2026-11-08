@@ -10,18 +10,23 @@
     ⑤ 인라인 `python -c` 없음
     ⑥ MCP 도구 이름은 `서버:도구`
     ⑦ 규약을 어긴 표본(임시 스킬)이 항목별로 잡힌다 — 검사 자체의 검사
+    ⑧ 배달 스킬의 MCP 호출은 해당 역할에 배달되는 서버·실재 도구만 쓴다 (`#898`)
 
     .venv/bin/python master/test_skill_conventions.py
 """
 from __future__ import annotations
 
 import re
+import sys
 import tempfile
 from pathlib import Path
 
 import yaml
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
+from master.client import spec
+
 ROOTS = (REPO / "master/skills", REPO / "master/client/skills", REPO / "master/client/workshop/skills")
 BUNDLE_DIRS = ("reference", "scripts")
 FENCE = re.compile(r"\s*(```|~~~)")
@@ -43,6 +48,37 @@ def tool_names() -> dict:
     proj = re.findall(r"@mcp\.tool\(\)\s*\ndef (\w+)", (REPO / "master/projects/mcp_server.py").read_text(encoding="utf-8"))
     cli = re.findall(r'\{"name": "(\w+)",', (REPO / "client/runtime/client_mcp.py").read_text(encoding="utf-8"))
     return {**{n: "ax-projects" for n in proj}, **{n: "ax-client" for n in cli}}
+
+
+def role_servers(d: Path) -> tuple | None:
+    """마스터 스킬은 제한하지 않고 배달 스킬은 역할별 서버와 대조한다."""
+    if d.parent not in ROOTS[1:]:
+        return None
+    tables = (spec.SKILLS_BY_ROLE, spec.INDEX_ONLY_SKILLS, spec.CODE_SKILLS)
+    roles = {role for table in tables for role, names in table.items() if d.name in names}
+    # 작업장 스킬은 요청자 작업장 자산이다. 표에 아직 없는 새 배달 스킬도 열린
+    # 마스터 서버를 허용하지 않고 설치 가능한 클라이언트 서버만 허용한다.
+    if not roles:
+        roles = {"requester"}
+    # 같은 스킬이 여러 역할에 배달되면 어느 역할에서도 부를 수 있어야 한다.
+    available = [set(spec.MCP_BY_ROLE[role]) for role in roles]
+    return tuple(sorted(set.intersection(*available)))
+
+
+def role_tool_problems(text: str, tools: dict, servers: tuple) -> list:
+    """호출 안내의 서버·도구를 검사한다. 명시적으로 금지한 이름은 실행 안내가 아니다."""
+    bad = []
+    for m in re.finditer(r"(?<![\w-])(ax-[a-z0-9-]+):(\w+)", text):
+        server, name = m.groups()
+        # 예: 「`ax-projects:register_work_tool` 이 아니다」라는 교정 설명은 보존한다.
+        # 같은 줄의 다른 호출까지 제외하지 않고 이 참조 바로 뒤의 부정만 읽는다.
+        if re.match(r"[`*]*\s*(?:이|가)?\s*아니다", text[m.end():]):
+            continue
+        if server not in servers:
+            bad.append(f"역할에 없는 MCP 서버 {server}:{name}")
+        elif tools.get(name) != server:
+            bad.append(f"서버에 없는 MCP 도구 {server}:{name}")
+    return sorted(set(bad))
 
 
 def headings(lines: list) -> list:
@@ -149,6 +185,9 @@ def skill_problems(d: Path, tools: dict) -> list:
             hits = sorted(set(pat.findall(seg)))
             if hits:
                 bad.append(f"{rel}: 서버 없는 MCP 도구 이름 {hits[:4]}")
+            servers = role_servers(d)
+            if servers is not None:
+                bad += [f"{rel}: {problem}" for problem in role_tool_problems(seg, tools, servers)]
         if p != f and p.suffix == ".md" and len(t.split("\n")) > 100:
             rl = t.replace("\r\n", "\n").split("\n")
             bad += [f"{rel}: {x}" for x in toc_problems(rl)]
@@ -210,8 +249,28 @@ def test_violations_are_caught() -> None:
     check("펜스 안 # 줄은 제목으로 세지 않는다", skill_problems(d, tools) == [], str(skill_problems(d, tools)))
 
 
+def test_role_tool_calls() -> None:
+    print("\n[3] 역할별 MCP 서버·실재 도구 호출")
+    tools = tool_names()
+    check("요청자·워커 역할 서버는 배달 명세에서 읽는다",
+          role_servers(ROOTS[1] / "ax-request") == spec.MCP_BY_ROLE["requester"]
+          and role_servers(ROOTS[1] / "ax-work") == spec.MCP_BY_ROLE["worker"])
+    check("마스터 스킬은 요청자 서버 제한을 받지 않는다", role_servers(ROOTS[0] / "ax-plan") is None)
+    cases = [
+        ("기존 클라이언트 호출", "ax-client:search_context(query, n=5)", False),
+        ("잘못된 서버의 실행 안내", "    ax-projects:resolve_terms_tool(terms)", True),
+        ("잘못 붙인 서버 이름", "ax-client:resolve_terms_tool(terms)", True),
+        ("존재하지 않는 도구", "ax-client:missing_ontology_tool()", True),
+        ("금지 대상을 설명한 문장", "**`ax-projects:register_work_tool` 이 아니다.**", False),
+        ("부정 설명 뒤 다른 호출", "`ax-projects:register_work_tool` 이 아니다. ax-projects:resolve_terms_tool(terms)", True),
+    ]
+    for name, text, fails in cases:
+        got = role_tool_problems(text, tools, spec.MCP_BY_ROLE["requester"])
+        check(name, bool(got) == fails, str(got))
+
+
 def main() -> int:
-    for fn in (test_real_skills, test_violations_are_caught):
+    for fn in (test_real_skills, test_violations_are_caught, test_role_tool_calls):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_skill_conventions: {PASS}/{total} 통과")

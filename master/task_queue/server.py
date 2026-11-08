@@ -48,6 +48,12 @@ from ..auth import BearerAuthMiddleware, auth_headers, load_token
 from .reclaim import _verify_loop, _reclaim_loop
 
 from pydantic import BaseModel, ConfigDict
+from .ontology_proxy import (
+    ProjectReq, CreateDomainReq, EditItemReq, RemoveItemReq, LockItemReq,
+    DomainReq, UnassignedReq, SyncReq, ResolveTermsReq,
+    RequiredDomainReq, EditDomainFieldReq, RemoveLogTagReq, SetLogTagReq,
+    RenameDomainReq, RenameClassReq,
+)
 
 
 # ─────────────────────────────────────────
@@ -929,6 +935,110 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         from ..context_search.paths import resolve_mounted_only
         return resolve_mounted_only(project or "")
 
+    def _ontology_proxy(req, operation: str):
+        from .ontology_proxy import process
+        bad = _mount_gate(req.project, require=True)
+        if bad:
+            return bad
+        try:
+            return process(_mounted_paths(req.project), operation, req)
+        except Exception as e:                       # 코어의 거절 사유를 그대로 전달한다
+            _tq_log(f"[ontology] {operation} 거부: {e}", root)
+            return {"ok": False, "error": str(e), "project": req.project}
+
+    @app.post("/api/v1/ontology/create-domain")
+    def create_domain_ep(req: CreateDomainReq):
+        return _ontology_proxy(req, "create-domain")
+
+    @app.post("/api/v1/ontology/edit-item")
+    def edit_ontology_item_ep(req: EditItemReq):
+        return _ontology_proxy(req, "edit-item")
+
+    @app.post("/api/v1/ontology/remove-item")
+    def remove_ontology_item_ep(req: RemoveItemReq):
+        return _ontology_proxy(req, "remove-item")
+
+    @app.post("/api/v1/ontology/lock-item")
+    def lock_ontology_item_ep(req: LockItemReq):
+        return _ontology_proxy(req, "lock-item")
+
+    @app.post("/api/v1/ontology/list-locked")
+    def list_locked_ep(req: DomainReq):
+        return _ontology_proxy(req, "list-locked")
+
+    @app.post("/api/v1/ontology/unassigned-classes")
+    def unassigned_classes_ep(req: UnassignedReq):
+        return _ontology_proxy(req, "unassigned-classes")
+
+    @app.post("/api/v1/ontology/sync")
+    def sync_ontology_ep(req: SyncReq):
+        return _ontology_proxy(req, "sync")
+
+    def _workshops_proxy(req, *, check: bool):
+        bad = _mount_gate(req.project, require=True)
+        if bad:
+            return bad
+        try:
+            # 태그를 다시 해석해, 조회 도중 마운트가 바뀌어도 다른 프로젝트로 접히지 않는다.
+            paths = _mounted_paths(req.project)
+            from ..projects.logic import list_workshops
+            from ..projects.workshop_check import check_project_workshops
+            return check_project_workshops(paths.name) if check else list_workshops(paths.name)
+        except Exception as e:
+            return {"ok": False, "error": str(e), "project": req.project}
+
+    @app.post("/api/v1/workshops/list")
+    def list_workshops_ep(req: ProjectReq):
+        return _workshops_proxy(req, check=False)
+
+    @app.post("/api/v1/workshops/check-clean")
+    def check_workshops_clean_ep(req: ProjectReq):
+        return _workshops_proxy(req, check=True)
+
+    @app.post("/api/v1/thesaurus/resolve")
+    def resolve_terms_ep(req: ResolveTermsReq):
+        return _ontology_proxy(req, "resolve-terms")
+
+    @app.post("/api/v1/ontology/edit-domain-field")
+    def edit_domain_field_ep(req: EditDomainFieldReq):
+        return _ontology_proxy(req, "edit-domain-field")
+
+    @app.post("/api/v1/ontology/list-log-tags")
+    def list_log_tags_ep(req: RequiredDomainReq):
+        return _ontology_proxy(req, "list-log-tags")
+
+    @app.post("/api/v1/ontology/set-log-tag")
+    def set_log_tag_ep(req: SetLogTagReq):
+        return _ontology_proxy(req, "set-log-tag")
+
+    @app.post("/api/v1/ontology/remove-log-tag")
+    def remove_log_tag_ep(req: RemoveLogTagReq):
+        return _ontology_proxy(req, "remove-log-tag")
+
+    @app.post("/api/v1/ontology/staging-begin")
+    def staging_begin_ep(req: RequiredDomainReq):
+        return _ontology_proxy(req, "staging-begin")
+
+    @app.post("/api/v1/ontology/staging-commit")
+    def staging_commit_ep(req: RequiredDomainReq):
+        return _ontology_proxy(req, "staging-commit")
+
+    @app.post("/api/v1/ontology/staging-discard")
+    def staging_discard_ep(req: RequiredDomainReq):
+        return _ontology_proxy(req, "staging-discard")
+
+    @app.post("/api/v1/ontology/staging-status")
+    def staging_status_ep(req: DomainReq):
+        return _ontology_proxy(req, "staging-status")
+
+    @app.post("/api/v1/ontology/rename-domain")
+    def rename_domain_ep(req: RenameDomainReq):
+        return _ontology_proxy(req, "rename-domain")
+
+    @app.post("/api/v1/ontology/rename-class")
+    def rename_class_ep(req: RenameClassReq):
+        return _ontology_proxy(req, "rename-class")
+
     @app.post("/api/v1/thesaurus/alias")
     def thesaurus_alias_ep(req: AliasReq):
         """사용자가 확인해 준 별칭을 등록한다 — 요청자(`.33`) 대행 (2026-08-20).
@@ -950,6 +1060,17 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
             _tq_log(f"[thesaurus] 거부 — {e}", root)
             return {"ok": False, "status": "not_mounted", "reason": str(e),
                     "class": req.class_name, "term": req.term, "project": req.project}
+        # 별칭은 라이브 패키지를 직접 쓰므로 세션 교체로 유실되지 않게 먼저 거절한다.
+        from ..ontology import staging
+        try:
+            sessions = staging.status(paths).get("sessions")
+        except Exception as e:
+            return {"ok": False, "status": "session_check_failed", "reason": str(e),
+                    "project": paths.name}
+        if sessions:
+            return {"ok": False, "status": "editing_session_active",
+                    "reason": "편집 세션이 있다 — commit/discard 후 별칭을 등록할 것",
+                    "project": paths.name}
         status = th.register(paths, req.class_name, req.term)
         ok = status.startswith("added") or status == "noop"
         _tq_log(f"[thesaurus] alias {req.class_name} ← '{req.term}' "

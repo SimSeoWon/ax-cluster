@@ -944,6 +944,130 @@ def test_rework_improve_surface():
     check("서버도 문자열 재작업 플래그 거절", refused.get("reason") == "bad_rework")
 
 
+def test_requester_management_delegation():
+    """#898 — MCP JSON-RPC부터 인증 큐 호출·프로젝트 태그까지 실제 클라이언트 경로를 탄다."""
+    from unittest.mock import patch
+    cases = [
+        ("resolve_terms", {"terms": ["미션 시스템", "배포"]}, "/api/v1/thesaurus/resolve", None),
+        ("create_domain", {"name": "Combat"}, "/api/v1/ontology/create-domain",
+         {"name": "Combat", "tags": [], "parent": "", "summary": ""}),
+        ("edit_ontology_item", {"domain": "Combat", "kind": "object", "name": "AActor",
+                                "patch": {"summary": "설명"}}, "/api/v1/ontology/edit-item", None),
+        ("remove_ontology_item", {"domain": "Combat", "kind": "object", "name": "AActor"},
+         "/api/v1/ontology/remove-item", {"domain": "Combat", "kind": "object", "name": "AActor", "force": False}),
+        ("lock_ontology_item", {"domain": "Combat", "kind": "object", "name": "AActor", "locked": False},
+         "/api/v1/ontology/lock-item", None),
+        ("list_locked", {}, "/api/v1/ontology/list-locked", {"domain": ""}),
+        ("unassigned_classes", {}, "/api/v1/ontology/unassigned-classes", {"sample": 20}),
+        ("sync_ontology", {}, "/api/v1/ontology/sync", {"domain": "", "apply": False}),
+        ("list_workshops", {}, "/api/v1/workshops/list", {}),
+        ("check_workshops_clean", {}, "/api/v1/workshops/check-clean", {}),
+        ("edit_domain_field", {"domain": "Combat"}, "/api/v1/ontology/edit-domain-field", None),
+        ("edit_domain_field", {"domain": "Combat", "tags": [], "status": None,
+                               "summary": "", "parent_domain": None, "collaborates_with": []},
+         "/api/v1/ontology/edit-domain-field", None),
+        ("edit_domain_field", {"domain": "Combat", "tags": None, "collaborates_with": None},
+         "/api/v1/ontology/edit-domain-field", None),
+        ("list_log_tags", {"domain": "Combat"}, "/api/v1/ontology/list-log-tags", None),
+        ("set_log_tag", {"domain": "Combat", "tag": "event", "cvar": ""},
+         "/api/v1/ontology/set-log-tag", None),
+        ("set_log_tag", {"domain": "Combat", "tag": "event", "cvar": "ax.trace",
+                          "related_invariants": []}, "/api/v1/ontology/set-log-tag", None),
+        ("set_log_tag", {"domain": "Combat", "tag": "event", "cvar": "ax.trace",
+                          "related_invariants": None}, "/api/v1/ontology/set-log-tag", None),
+        ("remove_log_tag", {"domain": "Combat", "tag": "event"}, "/api/v1/ontology/remove-log-tag", None),
+        ("staging_begin", {"domain": "Combat"}, "/api/v1/ontology/staging-begin", None),
+        ("staging_commit", {"domain": "Combat"}, "/api/v1/ontology/staging-commit", None),
+        ("staging_discard", {"domain": "Combat"}, "/api/v1/ontology/staging-discard", None),
+        ("staging_status", {}, "/api/v1/ontology/staging-status", {"domain": ""}),
+        ("rename_domain", {"old": "Combat", "new": "Battle"}, "/api/v1/ontology/rename-domain",
+         {"old": "Combat", "new": "Battle", "apply": False}),
+        ("rename_class", {"domain": "Combat", "old": "AOld", "new": "ANew"},
+         "/api/v1/ontology/rename-class", {"domain": "Combat", "old": "AOld", "new": "ANew", "apply": False}),
+        ("rename_domain", {"old": "Combat", "new": "Battle", "apply": True},
+         "/api/v1/ontology/rename-domain", None),
+        ("rename_class", {"domain": "Combat", "old": "AOld", "new": "ANew", "apply": True},
+         "/api/v1/ontology/rename-class", None),
+    ]
+    schemas = {t["name"]: t["inputSchema"] for t in
+               M.handle_message({"id": 898, "method": "tools/list"})["result"]["tools"]}
+    class NoCache:
+        def get(self, *a):
+            raise AssertionError("관리 도구가 캐시를 읽었다")
+        def put(self, *a):
+            raise AssertionError("관리 도구가 캐시에 썼다")
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        ax = root / ".ax"
+        ax.mkdir()
+        (ax / "config.json").write_text(json.dumps({"project": "NS", "master": {
+            "host": "192.168.0.57", "services": {"task_queue": 8101}}}), "utf-8")
+        (ax / "token").write_text("tok-abcdefghijklmnopqrstuvwxyz012345\n", "utf-8")
+        calls = []
+        failure = {"ok": False, "status": "not_mounted", "reason": "프로젝트 불일치"}
+        def call(method, url, token, payload=None, **kw):
+            calls.append((method, url, token, payload))
+            return failure
+        with patch.object(M, "_call", side_effect=call):
+            for name, args, path, expected in cases:
+                schema = schemas.get(name, {})
+                check(f"{name} 스키마는 프로젝트 덮어쓰기를 노출하지 않는다",
+                      schema.get("additionalProperties") is False
+                      and "project" not in schema.get("properties", {}), str(schema))
+                before = len(calls)
+                result = M.handle_message({"id": 898, "method": "tools/call", "params": {
+                    "name": name, "arguments": args}}, root=root, cache=NoCache())
+                body = json.loads(result["result"]["content"][0]["text"])
+                expected = dict(args if expected is None else expected, project="NS")
+                check(f"{name} 인증 8101·체크아웃 프로젝트·기본값 전달",
+                      len(calls) == before + 1 and calls[-1] == (
+                          "POST", "http://192.168.0.57:8101" + path,
+                          "tok-abcdefghijklmnopqrstuvwxyz012345", expected), str(calls[-1]))
+                check(f"{name} 서버 거절을 성공으로 바꾸거나 재시도하지 않는다",
+                      body == failure and len(calls) == before + 1, str(body))
+            for name, args in [
+                ("resolve_terms", {}),
+                ("resolve_terms", {"terms": "미션 시스템"}),
+                ("resolve_terms", {"terms": [1]}),
+                ("list_workshops", {"project": "다른 프로젝트"}),
+                ("create_domain", {}),
+                ("create_domain", {"name": ""}),
+                ("create_domain", {"name": "Combat", "tags": [1]}),
+                ("remove_ontology_item", {"domain": "Combat", "kind": "object", "name": "A", "force": "false"}),
+                ("lock_ontology_item", {"domain": "Combat", "kind": "object", "name": "A", "locked": 1}),
+                ("sync_ontology", {"apply": "false"}),
+                ("unassigned_classes", {"sample": True}),
+                ("edit_ontology_item", {"domain": "Combat", "kind": "object", "name": "A", "patch": []}),
+                ("edit_domain_field", {"domain": "Combat", "tags": "tag"}),
+                ("edit_domain_field", {"domain": "Combat", "status": False}),
+                ("set_log_tag", {"domain": "Combat", "tag": "event", "cvar": None}),
+                ("set_log_tag", {"domain": "Combat", "tag": "event", "cvar": "ax.trace",
+                                 "related_invariants": [1]}),
+                ("staging_begin", {}),
+                ("staging_status", {"project": "Other"}),
+                ("rename_domain", {"old": "Combat", "new": "Battle", "apply": "false"}),
+                ("rename_class", {"domain": "Combat", "old": "AOld", "new": "ANew",
+                                  "plan": {"path": "/tmp/arbitrary"}}),
+            ]:
+                before = len(calls)
+                result = M.handle_message({"id": 898, "method": "tools/call", "params": {
+                    "name": name, "arguments": args}}, root=root)
+                check(f"관리 인자 오류를 HTTP 전 거절 {name} {args}",
+                      result["result"]["isError"] is True and len(calls) == before)
+        resolved = {"known": {"미션": ["UMission"]}, "unresolved": [{"term": "임무", "candidates": []}],
+                    "ask": ["임무는 어느 클래스입니까?"]}
+        result = M.handle_message({"id": 898, "method": "tools/call", "params": {
+            "name": "resolve_terms", "arguments": {"terms": ["미션", "임무"]}}},
+            api=lambda *a: resolved, cache=NoCache())
+        check("용어 조회는 검색 히트로 대체하지 않고 후보·질문을 그대로 보존",
+              json.loads(result["result"]["content"][0]["text"]) == resolved)
+        with patch.object(M, "_call", side_effect=M.ClientError("[미연결] 큐 연결 실패")) as broken:
+            result = M.handle_message({"id": 898, "method": "tools/call", "params": {
+                "name": "list_locked", "arguments": {}}}, root=root, cache=NoCache())
+            check("관리 조회 연결 실패는 낡은 캐시 대신 isError",
+                  result["result"]["isError"] is True and broken.call_count == 1)
+
+
 def main() -> int:
     for fn in (test_single_file_stdlib_only, test_protocol_roundtrip,
                test_nonascii_work_id_is_encoded, test_search_caches_and_falls_back,
@@ -963,7 +1087,7 @@ def main() -> int:
                test_redmine_delegation_goes_to_queue,
                test_redmine_wiki_tools, test_redmine_wiki_project_injection,
                test_task_templates_read_surface, test_rework_improve_surface,
-               test_issue_tools_queue_delegation):
+               test_issue_tools_queue_delegation, test_requester_management_delegation):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_mcp: {PASS}/{total} 통과")
