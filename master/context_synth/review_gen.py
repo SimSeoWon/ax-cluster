@@ -207,7 +207,8 @@ def collected_section(findings: list, uncovered: list | None = None) -> str:
     if uncovered:
         lab = {"abandoned": "포기", "skipped": "생략", "done": "완료(커밋 리뷰 지적을 못 읽음)"}
         out += ("\n\n" if out else "") + (
-                "커밋 리뷰를 거치지 않은 커밋 (포기·생략 — 이 커밋들의 변경은 위 지적에 들어 있지 않다):\n"
+                ("커밋 리뷰를 거치지 않은 커밋 (포기·생략 — 이 커밋들의 변경은 위 지적에 들어 있지 않다):\n"
+                 if findings else "커밋 리뷰를 거치지 않은 커밋 (포기·생략):\n")
                 + "\n".join(f"- {str(u.get('sha') or '')[:12]} {lab.get(u.get('state'), u.get('state'))}"
                              f" — {cell(u.get('why')) or '사유 미기록'}" for u in uncovered))
     return out
@@ -405,7 +406,8 @@ def domain_hint(paths, files: list) -> str:
 
 def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
                  grounding: str = "", kind: str = "unreal", intent: bool = False,
-                 subject: str = "", history: str = "", collected: str = "") -> str:
+                 subject: str = "", history: str = "", collected: str = "",
+                 verdict: bool | None = None) -> str:
     """리뷰 프롬프트. [중요] 표 형식은 소비자의 파싱 계약이다 — 열 순서를 바꾸지 말 것.
 
     `intent` (`#815` ④) — 지워진 `[PSEUDO]` 가 있을 때만 4절 규칙·예시를 싣는다.
@@ -414,10 +416,14 @@ def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
     바이트 단위로 같다.
     `history` (`#879`) — 범위 리뷰의 수정 기록(커밋 순서·제목·본문). 비우면 종전과 바이트 단위로 같다.
     `collected` (`#884` T4) — 종합 리뷰에 싣는 해시별 커밋 리뷰 지적(`collected_section`). 있으면 판정
-    규칙·마지막 판정 절 예시·지적 표를 싣는다. 비우면 종전과 바이트 단위로 같다."""
+    규칙·마지막 판정 절 예시·지적 표를 싣는다. 비우면 종전과 바이트 단위로 같다.
+    `verdict` (`#909`) — 판정 절을 요구할지. 생략하면 `bool(collected)`(종전). 🔴 해시 지적이 0건이고
+    리뷰 없는 해시만 있으면(`#893`) 호출자가 `False` 를 넘긴다 — 판정할 지적이 없는데 판정 절을 강제하면
+    모델이 그 절을 빼는 순간 형식 위반으로 종합 리뷰가 죽는다. 그때 `collected` 는 참고 절로만 싣는다."""
     python = kind == "code"
     role = "Python" if python else "Unreal Engine 5 C++"
-    example = format_example(kind, intent=intent, verdict=bool(collected))
+    verdict = bool(collected) if verdict is None else bool(verdict)
+    example = format_example(kind, intent=intent, verdict=verdict)
     return (
         f"당신은 {role} 코드 리뷰어다. 아래 "
         + ("범위(여러 커밋을 합친 diff)" if subject else "커밋")
@@ -441,7 +447,7 @@ def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
            "- 프로젝트 규약을 지어내거나 UE·Blueprint 규칙을 적용하지 않는다.\n" if python else
            "  (자유 서술 — 이 변경이 의존 파일·Blueprint 에 줄 수 있는 영향)\n")
         + (_INTENT_RULES if intent else "")
-        + (_VERDICT_RULES if collected else "")
+        + (_VERDICT_RULES if verdict else "")
         +
         "- [중요] 출력은 반드시 `### ` 로 시작한다. 표 밖의 산문은 ## 3 절에만 쓴다.\n"
         "- 출력 예시 (이 골격 그대로):\n"
@@ -457,7 +463,10 @@ def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
         + (f"\n\n## 해시별 리뷰 지적 — 최종 코드 기준으로 남음/해소 판정\n"
            "이 범위의 커밋을 하나씩 리뷰했을 때 나온 지적이다. 각 지적이 범위 끝의 최종 코드에 아직 "
            f"남았는지, 뒤 커밋에서 해소됐는지 판정해 마지막 `{VERDICT_SECTION}` 절에 적는다.\n\n"
-           f"{collected}" if collected else "")
+           f"{collected}" if collected and verdict else "")
+        + (f"\n\n## 리뷰 없이 지나간 커밋 (참고)\n"
+           "아래 커밋은 커밋 단위 리뷰를 거치지 않았다. 그 변경은 아래 DIFF 에서 직접 리뷰한다.\n\n"
+           f"{collected}" if collected and not verdict else "")
         + f"\n\n## DIFF (unified=3)\n```diff\n{diff}\n```\n"
     )
 
@@ -808,14 +817,16 @@ def review_range(paths, issue_id, base: str, end: str, files: list, *,
     log("review", f"{subject} — 수정 기록 {history.count(chr(10) + '### ') + (1 if history else 0)}건 · "
                   f"{len(history)}자")
     collected = collected_section(findings or [], uncovered)
-    verdict = bool(collected)
+    # `#909` — 판정 절은 **해시 지적이 있을 때만**(`review_runner` 의 재사용 판정 `bool(findings)` 과 같은 기준).
+    #    리뷰 없는 해시만 있으면 그 목록은 참고 절로 실린다(`#893`).
+    verdict = bool(findings)
     if issue_round:
         log("review", f"{subject} — 종합 리뷰 회차 {issue_round} · 해시 지적 {len(findings or [])}건 · "
                       f"리뷰 없는 해시 {len(uncovered or [])}건 · 판정 절 {'요청' if verdict else '미요청'}")
     prompt = build_prompt(diff=diff, files=src_files, commit=end,
                           domains=domain_hint(paths, src_files), grounding=grounding,
                           kind=review_kind(paths), intent=intent, subject=subject,
-                          history=history, collected=collected)
+                          history=history, collected=collected, verdict=verdict)
     _ask = chat if chat is not None else _recorded_chat(paths, end)
     try:
         body = _ask(prompt)

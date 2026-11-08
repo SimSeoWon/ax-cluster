@@ -314,8 +314,17 @@ def test_verdict_contract():
     """`#884` T4 — 종합 리뷰 프롬프트·형식·판정 파싱. 지적이 없으면 종전과 바이트 단위로 같다."""
     kw = dict(diff="d", files=["x"], commit="abc", subject="일감 #1 범위 a..b", history="h")
     check("T4 collected 비면 바이트 동일", RG.build_prompt(**kw) == RG.build_prompt(**kw, collected=""))
-    check("T4 collected_section — 지적 없으면 빈 문자열",
-          RG.collected_section([], [{"sha": "a" * 40, "state": "skipped", "why": "w"}]) == "")
+    check("T4 collected_section — 지적·미검토 둘 다 없으면 빈 문자열", RG.collected_section([], []) == "")
+    only_unc = RG.collected_section([], [{"sha": "a" * 40, "state": "skipped", "why": "w"}])
+    check("#893 지적 0 · 미검토 1 → 미검토 목록은 남는다(표 없음)",
+          "aaaaaaaaaaaa 생략 — w" in only_unc and "| 원 지적 |" not in only_unc, only_unc)
+    pr = RG.build_prompt(**kw, collected=only_unc, verdict=False)
+    check("#909 verdict=False → 판정 규칙·판정 절·해시 지적 절 없음",
+          "해시별 지적 판정" not in pr and "해시별 리뷰 지적" not in pr, pr[-600:])
+    check("#909 verdict=False → 미검토 목록은 참고 절로 실린다",
+          "## 리뷰 없이 지나간 커밋 (참고)" in pr and "aaaaaaaaaaaa 생략" in pr)
+    check("#909 verdict 생략 → 종전(bool(collected))과 같다",
+          RG.build_prompt(**kw, collected=only_unc) == RG.build_prompt(**kw, collected=only_unc, verdict=True))
     sec = RG.collected_section([{"id": "R3-1", "commit": "c" * 40, "severity": "high", "file": "A.cpp",
                                  "line": "3", "description": "a | b\n줄"}],
                                [{"sha": "d" * 40, "state": "abandoned", "why": ""}])
