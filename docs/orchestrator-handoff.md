@@ -2,7 +2,7 @@
 
 > 2026-11-08 18:00 Claude 체크포인트(#898·#886 마감 후). 항목·진행의 정본은 Redmine이다.
 > 이전 상세는 Git `d946ba7`(운영 체크포인트)·`54b5632`(#898 Codex→Claude 인계본)의 이 파일·리포트138~148·각 일감 노트에 있다.
-> 진행 중 일감·일감 잠금은 없다. #898 은 재기동·배달까지 반영. **#886(`86e1351`) 뒤 배달은 미실행**(아래).
+> 진행 중 일감·일감 잠금은 없다. #898·#886 모두 배달까지 반영(`f996fde` 3/3 OK).
 
 ## 🔴 오늘 오후 바뀐 규칙 (사용자 결정 2026-11-08)
 
@@ -68,10 +68,10 @@
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`86e1351`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`f996fde`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 |
-| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `048dc25` 배달·검사 3/3 OK — **`86e1351` 미배달**(check 는 출처 뒤처짐으로 FAIL 날 수 있다) |
+| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `f996fde` 배달·검사 3/3 OK(사용자 「응 배달 진행해」, `master.client update` rc0) |
 
 - 상주 재기동: ax-task-queue 16:49:16(#898) · ax-broker·ax-projects 12:31(#897). #898 은 ax-projects 코드를 바꾸지 않았다.
 - `.2` 검사의 `[주의] 홈 중복 스킬 ~/.agents/skills/ax-work`(#661 부류)는 손대지 않았다.
@@ -105,8 +105,6 @@
 ## 바로 다음 작업
 
 1. `ax-handoff`로 이 문서와 실제 상태(운영 main·`.ax-issues` 비어 있음·잠금 없음)를 대조한다.
-2. **배달 승인 대기**: `86e1351`(#886) 뒤 `master.client update` 미실행 — 승인 뒤 실행하고 이 문서를 결과로 맞춘다.
-   상주 서비스 재기동은 불필요(`cleanup` 은 CLI).
-3. #898 실사용 확인은 남아 있다 — 게임 프로젝트 마운트 전환 뒤 `.33` 요청자 세션에서 새 `ax-client` 관리 도구를 한 번 불러 본다(사용자 결정).
-4. 다음 일감은 사용자가 고른다. 시작은 `issue_start_tool`.
-5. 커밋·push·재기동·⑦ 전진·finalize는 기존 승인 규칙을 따른다. 다른 일감을 자동 시작하지 않는다.
+2. #898 실사용 확인은 남아 있다 — 게임 프로젝트 마운트 전환 뒤 `.33` 요청자 세션에서 새 `ax-client` 관리 도구를 한 번 불러 본다(사용자 결정).
+3. 다음 일감은 사용자가 고른다. 시작은 `issue_start_tool`.
+4. 커밋·push·재기동·⑦ 전진·finalize는 기존 승인 규칙을 따른다. 다른 일감을 자동 시작하지 않는다.
