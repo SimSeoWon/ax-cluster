@@ -1108,11 +1108,12 @@ def plan_transition_tool(issue_id: int, task_id: str, to: str, note: str = "") -
 def issue_start_tool(issue_id: int) -> str:
     """일감 작업을 **시작**한다 (`#879`) — 구현에 손대기 전에 부른다.
 
-    `plan_start` 판정이 ok 가 아니면 거절한다(플랜 강제). 운영 저장소(`/home/sim/ax-cluster`)의
-    깨끗한 `main` = `origin/main` 에서 로컬 `issue/<N>` 브랜치를 만들고 시작 리비전(git 해시)을
-    Redmine 노트로 남긴다. 이미 그 브랜치에 서 있으면 새로 만들지 않고 시작 리비전을 돌려준다.
-    응답의 `repo` 가 편집·커밋 위치, `log` 가 단계별 기록이다. 🔴 `#906` — 색인 미러
-    (`track.local_clone`, `origin` push `DISABLED`)는 작업 위치가 아니다: 봉인된 저장소면 거절한다.
+    `plan_start` 판정이 ok 가 아니면 거절한다(플랜 강제). 🔴 `#907` — **AXCluster(`requester: master`) 전용.**
+    운영 저장소(`/home/sim/ax-cluster`)는 깨끗한 `main` = `origin/main` 그대로 두고,
+    `config.yaml` `master_workspace.issue_worktree_root/<N>` 에 `issue/<N>` worktree 를 만들어 시작 리비전을
+    Redmine 노트로 남긴다. **응답의 `repo` 가 그 worktree(편집·커밋 위치)**, `checkout` 이 운영 저장소다.
+    이미 그 worktree 가 있으면 `already`. 값이 없거나 requester 가 master 가 아니면 거절한다(추정 없음) —
+    게임 프로젝트는 `.33` 의 `ax-client issue_*` 를 쓴다. `#906` — 색인 미러(push 봉인)는 거절한다.
     """
     from .. import issue_flow
     try:
@@ -1126,7 +1127,8 @@ def issue_finish_tool(issue_id: int, confirm: bool = False) -> str:
     """일감 작업을 **마친다** (`#879`). [중요] `confirm=False`(기본)는 범위·커밋 목록만 보여 주고 아무것도
     바꾸지 않는다 — 사용자 승인을 받은 뒤에만 `confirm=True`.
 
-    승인 시: `push origin issue/<N>:main`(fast-forward 만) → 로컬 `main` 맞춤 → `issue/<N>` 삭제 →
+    승인 시: `push origin issue/<N>:main`(fast-forward 만) → 운영 `main` fast-forward(`#907`, 서비스 코드
+    반영) → worktree 제거 → `issue/<N>` 삭제 →
     마감 추적 등록(`issue_track` · 범위의 해시 전부) → 색인기 리뷰 연결 → 일감 잠금 해제(**등록이 성공했을
     때만**) → Redmine 「리뷰 요청」 노트 + **「완료」·100 닫기**(등록 성공 시 — `#889`, main 적용 = 마감).
     운영 서비스 배포·재기동은 별도 승인이다. 기존 remote·쓰기 가드는 우회하지 않는다.
@@ -1146,8 +1148,8 @@ def issue_finish_tool(issue_id: int, confirm: bool = False) -> str:
 def issue_pause_tool(issue_id: int) -> str:
     """진행 중인 일감을 **보류**한다 (`#883`) — 일감 잠금을 풀고 `issue/<N>` 브랜치는 남긴다.
 
-    깨끗한 `issue/<N>` 에 서 있어야 한다(미커밋 변경은 거절). 잠금을 보류로 옮기고 `main` 으로
-    돌아간 뒤 Redmine 에 「보류」 노트를 남긴다. 재개는 `main` 에서 `issue_start_tool(N)` 이다.
+    `issue/<N>` worktree 가 깨끗해야 한다(미커밋 변경은 거절). 잠금을 보류로 옮기고 worktree 를 지운 뒤
+    (`#907`, 브랜치는 남는다) Redmine 에 「보류」 노트를 남긴다. 재개는 `issue_start_tool(N)` 이다.
     """
     from .. import issue_flow
     try:
@@ -1161,7 +1163,7 @@ def issue_cancel_tool(issue_id: int, confirm: bool = False, delete_branch: bool 
     """일감 작업을 **취소**한다 (`#883`). [중요] `confirm=False`(기본)는 잠금 상태·브랜치·
     로컬에만 있는 커밋 목록만 보여 주고 아무것도 바꾸지 않는다 — 사용자 승인 뒤에만 `confirm=True`.
 
-    승인 시: (그 브랜치에 서 있으면 `main` 으로) → 잠금 해제 → Redmine 「취소」 노트(커밋 목록).
+    승인 시: (worktree 가 있으면 제거 — `#907`) → 잠금 해제 → Redmine 「취소」 노트(커밋 목록).
     브랜치는 기본으로 남긴다. `delete_branch=True`일 때만 `git branch -D` — 로컬 전용 커밋은
     되살릴 수 없으므로 그 목록을 사용자에게 보여 주고 삭제 승인을 따로 받는다.
     """

@@ -918,6 +918,140 @@ def t_sealed_repo_finish_refused(tmp):
           and len(iss.notes) == n0)
 
 
+# ── `#907` worktree 방식 — 운영 저장소는 늘 main ─────────────────────────────────
+
+def _wt_setup(tmp: Path):
+    repo, lk, a, b = two(tmp)
+    sh(repo, "config", "core.excludesFile", "/dev/null")
+    return repo, lk, a, b, tmp / "wt"
+
+
+def t_wt_full_cycle(tmp):
+    """시작 → worktree 에서 커밋 → 보류(worktree 제거·브랜치 유지) → 재개 → 마감(운영 main ff·정리)."""
+    repo, lk, a, _, root = _wt_setup(tmp)
+    head = sh(repo, "rev-parse", "HEAD")
+    r = IF.start(7, repo=repo, worktree_root=root, getter=a.get, noter=a.note, lock_root=lk)
+    wt = root / "7"
+    check("#907 start → ok · 응답 repo = worktree · checkout = 운영", r["ok"] and r["repo"] == str(wt)
+          and r["checkout"] == str(repo) and r["start_rev"] == head, str(r)[:300])
+    check("#907 start → 운영 저장소는 main 그대로", head_of(repo) == "main")
+    check("#907 start → worktree 는 issue/7", head_of(wt) == "issue/7")
+    r2 = IF.start(7, repo=repo, worktree_root=root, getter=a.get, noter=a.note, lock_root=lk)
+    check("#907 재호출 → already · 같은 worktree", r2["ok"] and r2["already"] and r2["repo"] == str(wt), str(r2)[:300])
+    sh(wt, "config", "user.email", "t@t")
+    sh(wt, "config", "user.name", "t")
+    end = commit(wt, "w.txt")
+    check("#907 worktree 커밋이 운영 작업 트리에 안 나타난다", not (repo / "w.txt").exists())
+    (wt / "dirty.txt").write_text("x")
+    r = IF.pause(7, repo=repo, worktree_root=root, noter=a.note, lock_root=lk)
+    check("#907 dirty worktree 보류 → 거절(tree) · worktree 유지", not r["ok"] and r["step"] == "tree"
+          and wt.exists(), str(r)[:300])
+    (wt / "dirty.txt").unlink()
+    r = IF.pause(7, repo=repo, worktree_root=root, noter=a.note, lock_root=lk)
+    check("#907 보류 → worktree 제거 · 브랜치 유지 · 7 보류", r["ok"] and not wt.exists()
+          and sh(repo, "rev-parse", "issue/7") == end and 7 in IL.paused(lk), str(r)[:300])
+    r = IF.start(7, repo=repo, worktree_root=root, getter=a.get, noter=a.note, lock_root=lk)
+    check("#907 재개 → worktree 다시 · issue/7 끝 커밋", r["ok"] and r.get("resumed") and head_of(wt) == "issue/7"
+          and sh(wt, "rev-parse", "HEAD") == end, str(r)[:300])
+    pv = IF.finish(7, repo=repo, worktree_root=root, noter=a.note, review_root=twin(tmp), lock_root=lk)
+    check("#907 finish 미리보기 → repo=worktree · next 에 운영 main ff", pv["ok"] and pv["repo"] == str(wt)
+          and "운영 main fast-forward" in pv["next"], str(pv)[:400])
+    r = IF.finish(7, repo=repo, worktree_root=root, confirm=True, noter=a.note, review_root=twin(tmp), lock_root=lk)
+    check("#907 finish → push·ff·worktree 제거·브랜치 삭제", r["ok"] and r["done"][:4] == ["push", "ff",
+          "worktree_remove", "delete_branch"], str(r)[:400])
+    check("#907 finish → 운영 main = origin/main = 끝 커밋 · 파일 반영", head_of(repo) == "main"
+          and sh(repo, "rev-parse", "HEAD") == end == sh(repo, "rev-parse", "origin/main")
+          and (repo / "w.txt").exists())
+    check("#907 finish → worktree·브랜치 없음 · 잠금 해제", not wt.exists()
+          and sh(repo, "branch", "--list", "issue/7") == "" and IL.current(lk) is None)
+
+
+def t_wt_refusals(tmp):
+    repo, lk, a, _, root = _wt_setup(tmp)
+    sh(repo, "switch", "-q", "-c", "side")
+    r = IF.start(7, repo=repo, worktree_root=root, getter=a.get, noter=a.note, lock_root=lk)
+    check("#907 운영 저장소가 main 아님 → 거절(base) · worktree 없음", not r["ok"] and r["step"] == "base"
+          and not (root / "7").exists(), str(r)[:300])
+    sh(repo, "switch", "-q", "main")
+    (root / "7").mkdir(parents=True)
+    r = IF.start(7, repo=repo, worktree_root=root, getter=a.get, noter=a.note, lock_root=lk)
+    check("#907 같은 자리에 다른 폴더 → 거절(worktree) · 덮지 않음", not r["ok"] and r["step"] == "worktree",
+          str(r)[:300])
+    (root / "7").rmdir()
+    _seal(repo)
+    r = IF.start(7, repo=repo, worktree_root=root, getter=a.get, noter=a.note, lock_root=lk)
+    check("#907 봉인 저장소 → 거절(repo)", not r["ok"] and r["step"] == "repo", str(r)[:300])
+
+
+def t_wt_redmine_failure_undoes(tmp):
+    repo, lk, _, _, root = _wt_setup(tmp)
+    bad = Issue(SPEC + PLAN, answer="[주의] 레드마인 실패")
+    r = IF.start(7, repo=repo, worktree_root=root, getter=bad.get, noter=bad.note, lock_root=lk)
+    check("#907 기록 실패 → worktree·브랜치 되돌림", not r["ok"] and r["step"] == "redmine"
+          and r.get("branch_rolled_back") and not (root / "7").exists()
+          and sh(repo, "branch", "--list", "issue/7") == "", str(r)[:300])
+
+
+def t_wt_cancel_removes_worktree(tmp):
+    repo, lk, a, _, root = _wt_setup(tmp)
+    IF.start(7, repo=repo, worktree_root=root, getter=a.get, noter=a.note, lock_root=lk)
+    pv = IF.cancel(7, repo=repo, worktree_root=root, noter=a.note, lock_root=lk)
+    check("#907 취소 미리보기 → worktree 제거 예고 · 쓰기 0", pv["ok"] and pv["worktree"] == str(root / "7")
+          and "worktree" in pv["next"] and (root / "7").exists(), str(pv)[:300])
+    r = IF.cancel(7, repo=repo, worktree_root=root, confirm=True, delete_branch=True, noter=a.note, lock_root=lk)
+    check("#907 취소 → worktree 제거·브랜치 삭제·운영 main", r["ok"] and not (root / "7").exists()
+          and sh(repo, "branch", "--list", "issue/7") == "" and head_of(repo) == "main", str(r)[:300])
+
+
+def _ws_project(tmp: Path, body: str, kind: str = "code") -> Path:
+    """운영 호출 판정용 가짜 프로젝트 루트 — config.yaml·profile."""
+    root = tmp / "projroot"
+    (root / "P").mkdir(parents=True)
+    (root / "projects.yaml").write_text("version: 1\nactive: P\nprojects:\n- P\n", encoding="utf-8")
+    (root / "P" / "config.yaml").write_text("version: 1\nname: P\n" + body, encoding="utf-8")
+    return root
+
+
+def t_workspace_operational_refusals(tmp):
+    """운영 호출(repo 미지정)은 config 의 master_workspace 가 정한다 — 추정 없이 거절."""
+    saved = os.environ.get("AX_PROJECTS_ROOT")
+    try:
+        for body, want, label in (
+            ("requester: master\n", "issue_worktree_root 가 없다", "값 없음"),
+            ("", "requester: master", "요청자가 .33(게임 경로)"),
+        ):
+            sub = tmp / label.replace(" ", "_").replace("(", "").replace(")", "").replace(".", "")
+            sub.mkdir()
+            os.environ["AX_PROJECTS_ROOT"] = str(_ws_project(sub, body))
+            _, wt_root, why = IF._workspace(None, None, "P")
+            check(f"#907 운영 호출 {label} → 거절", wt_root is None and want in why, why)
+        sub = tmp / "mirror"
+        sub.mkdir()
+        root = _ws_project(sub, "")
+        mirror = root / "P" / "repo"
+        (root / "P" / "config.yaml").write_text(
+            f"version: 1\nname: P\nrequester: master\nmaster_workspace:\n  issue_worktree_root: {mirror}/x\n",
+            encoding="utf-8")
+        os.environ["AX_PROJECTS_ROOT"] = str(root)
+        _, wt_root, why = IF._workspace(None, None, "P")
+        check("#907 운영 호출 색인 미러 안 경로 → 거절", wt_root is None and "색인 미러" in why, why)
+        sub = tmp / "okws"
+        sub.mkdir()
+        os.environ["AX_PROJECTS_ROOT"] = str(_ws_project(
+            sub, "requester: master\nmaster_workspace:\n  issue_worktree_root: /srv/ws\n"))
+        repo, wt_root, why = IF._workspace(None, None, "P")
+        check("#907 운영 호출 master 프로젝트 → 운영 저장소 + 설정 경로", not why and wt_root == Path("/srv/ws")
+              and repo == IF.REPO, f"{repo} {wt_root} {why}")
+        r = IF.start(7, getter=Issue(SPEC + PLAN).get, noter=Issue(SPEC + PLAN).note, project="NOPE")
+        check("#907 운영 호출 설정 없음 → start 거절(workspace) · git 미접촉", not r["ok"] and r["step"] == "workspace",
+              str(r)[:300])
+    finally:
+        if saved is None:
+            os.environ.pop("AX_PROJECTS_ROOT", None)
+        else:
+            os.environ["AX_PROJECTS_ROOT"] = saved
+
+
 def _no_real_twin(*a, **k):
     raise AssertionError("테스트가 운영 잠금 위치(default_root)를 불렀다")
 
@@ -947,7 +1081,9 @@ def main() -> int:
                t_finish_link_picks_existing_items,
                t_new_branch_acquire_race_rolls_back, t_paused_without_branch_refused,
                t_corrupt_lock_refuses, t_default_repo_is_operational_checkout,
-               t_sealed_repo_start_refused, t_sealed_repo_finish_refused):
+               t_sealed_repo_start_refused, t_sealed_repo_finish_refused,
+               t_wt_full_cycle, t_wt_refusals, t_wt_redmine_failure_undoes, t_wt_cancel_removes_worktree,
+               t_workspace_operational_refusals):
         run(fn)
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_issue_flow: {PASS}/{total} 통과")

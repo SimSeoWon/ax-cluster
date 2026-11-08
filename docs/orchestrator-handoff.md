@@ -22,6 +22,17 @@
 - 정리: 색인 미러의 옛 `issue/893` 삭제(main 도달 확인 후 `branch -d`), `/home/sim/ax-issues/905` worktree 제거
   (detached `6a0a201`·변경 0 확인) — 둘 다 사용자 지시.
 
+## #907 — 마스터 일감 worktree (Claude · 진행 중)
+
+- http://192.168.0.57:8080/issues/907 · 플랜 T1~T3 완료, T4 진행. 근거: `reports/143-907-master-issue-worktree.md`.
+- 🔴 **AXCluster(`requester: master`) 전용.** 운영 체크아웃은 늘 `main`, 일감은 `AXCluster/config.yaml`
+  `master_workspace.issue_worktree_root`(`/home/sim/ax-cluster/.ax-issues`)`/<N>` worktree 에서 한다 —
+  **MCP `issue_start_tool` 응답의 `repo` 가 편집 위치**다. 게임·언리얼 프로젝트는 `.33` 경로(ax-issue)이고,
+  그 config 에 `master_workspace` 가 있으면 읽기 단계에서 거절된다.
+- 배포 순서(리포트 143 §4): config 값 기입 → finish → `ax-projects` 재기동 → deliver → 다음 실제 일감으로 실증.
+  **값 없이 재기동하면 MCP `issue_start_tool` 이 거절한다.**
+- #906 MCP 실증 완료: `issue_start_tool(907)` 응답 repo=`/home/sim/ax-cluster`, 색인 미러 브랜치 없음.
+
 ## 실제 Git·경로 상태
 
 | 역할 | 위치 | 상태 |
@@ -50,7 +61,7 @@
   ax-review-queue.timer active.
 - 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음. 분산 등재 뒤 wait 실행·⑦ 사람 게이트 전달 규칙 유지.
 - #893·#896·#899~#906 완료: 리포트138~142·Redmine. 중복 마감·배포·산출물 재생성 금지.
-- #894·#895·#897·#898·#907 신규. #885는 기존 사용자 보류 기록 유지. #884 T7의 닫는 방법은 미결.
+- #894·#895·#897·#898 신규. #885는 기존 사용자 보류 기록 유지. #884 T7의 닫는 방법은 미결.
 - #890 R251·R252 및 후속 리뷰 처분은 최신 목록·코드와 대조 후 사용자 결정. 상태를 자동 변경하지 않는다.
 - 큐/스풀 #709·#211·#650, ax-788-work, ax-review-788 반려#821, MotionForge·NS 잔재는 보존한다.
 - 관찰: 해시 지적 0이어도 미검토 해시가 있으면 종합 리뷰가 빈 「해시별 지적 판정」 절을 요구한다(#893 부수 효과).
@@ -60,7 +71,7 @@
 
 ## 바로 다음 작업
 
-1. 이 문서 갱신분의 커밋·push는 사용자 승인 대기.
-2. 다음 실제 일감에서 MCP `issue_start_tool` 응답 `repo`가 `/home/sim/ax-cluster`인지 확인(#906 실증).
-3. 사용자 결정 대기: #907 방식 선택. 그 전에는 운영 체크아웃 작업 중 서비스 실행 대상 파일 편집에 주의.
-4. 다음 일감은 사용자 선택. 커밋·push·재기동·⑦ 전진·finalize는 기존 승인 규칙을 따른다.
+1. #907 커밋·finish·배포(리포트 143 §4 순서) — 사용자 승인 대기.
+2. 배포 후 다음 실제 일감에서 `issue_start_tool` 응답 `repo`가 `/home/sim/ax-cluster/.ax-issues/<N>`이고
+   운영 체크아웃이 `main`인지 확인(#907 실증).
+3. 다음 일감은 사용자 선택. 커밋·push·재기동·⑦ 전진·finalize는 기존 승인 규칙을 따른다.

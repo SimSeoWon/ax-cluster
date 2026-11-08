@@ -75,15 +75,21 @@ MCP 가 안 보이거나 실패하면 사유를 보고하고 묻는다. `ax-clie
 
 - 첫 태스크에 손대기 **전에** `ax-projects:issue_start_tool` 을 부른다. 플랜이 없거나 판정이 ok 가 아니면
   거절된다. 깨끗한 `main` = `origin/main` 이어야 하고, 아니면 사유를 보고하고 멈춘다(고치지 않는다).
-  작업 저장소는 운영 저장소(`/home/sim/ax-cluster`)이고 응답의 `repo`가 그 경로다. 성공하면 그 저장소의
-  로컬 `issue/<N>`에서 일하고 시작 리비전이 Redmine에 남는다.
-  🔴 `#906` — `track.local_clone`(`AXCluster/repo`)은 색인기의 main 추적 미러다(push 봉인). 작업 위치로
-  쓰지 않으며, 봉인된 저장소에서는 시작·마감이 거절된다. 새 고정 경로를 만들지 않는다.
-- 커밋은 `issue/<N>`에 쌓는다. 커밋 승인 규칙은 그대로다.
+  🔴 `#907` — **이 절은 AXCluster(`requester: master`) 전용이다.** 운영 저장소(`/home/sim/ax-cluster`)는
+  서비스가 실행하는 코드라 **늘 `main` 에 둔다.** 시작은 `AXCluster/config.yaml` 의
+  `master_workspace.issue_worktree_root`(`/home/sim/ax-cluster/.ax-issues`) 아래 `<N>` 에 `issue/<N>` worktree 를
+  만든다. **응답의 `repo` 가 그 worktree 이고 편집·검사·커밋은 거기서 한다**(`checkout` = 운영 저장소 —
+  거기서 편집하지 않는다). 값이 없거나 `requester: master` 가 아니면 시작이 거절된다 — 경로를 추정하지 않는다.
+  🔴 `#906` — `track.local_clone`(`AXCluster/repo`)은 색인기의 main 추적 미러다(push 봉인). 작업 위치가
+  아니며, 봉인된 저장소·미러 안 경로는 거절된다.
+  [중요] 게임·언리얼 프로젝트는 이 절을 쓰지 않는다 — `.33` 요청자가 자기 worktree 에서 한다(아래 `.33` 줄).
+  `master_workspace` 를 그 프로젝트 config 에 두면 읽기 단계에서 설정 오류로 거절된다.
+- 커밋은 worktree 의 `issue/<N>`에 쌓는다. 커밋 승인 규칙은 그대로다.
 - 모든 태스크가 끝나면 `ax-projects:issue_finish_tool(N)`(기본 `confirm=False`)으로 범위·커밋 목록을 보여 주고
   **승인을 받은 뒤에만** `confirm=True` 로 부른다. 그 호출이 push·로컬 브랜치 삭제·**마감 추적 등록**
   (범위의 해시 전부)·색인기 리뷰 연결·**잠금 해제**·Redmine 「리뷰 요청」 노트와 **「완료」·100 닫기**를
-  이어서 한다(`#884`·`#889` — main 적용 = 마감). 운영 서비스 배포·재기동은 별도 승인이다. 기존 remote·쓰기 가드가 거절하면 우회하지 않고 보고한다.
+  이어서 한다(`#884`·`#889` — main 적용 = 마감). worktree 방식에서는 push 뒤 **운영 `main` 을 끝 커밋으로
+  fast-forward**(= oneshot 서비스가 그 코드를 쓰기 시작)하고 worktree 를 지운다. 상주 서비스 재기동은 별도 승인이다. 기존 remote·쓰기 가드가 거절하면 우회하지 않고 보고한다.
   범위 리뷰를 직접 등재하지 않는다 — **해시별 커밋 리뷰**가
   끝날 때마다 진행 노트가 붙고, 모두 끝나면 **종합 리뷰 1회**가 걸려 그 결과가 같은 일감에 노트로 붙는다
   (닫힌 일감에도 붙는다 · 다시 열거나 새 일감을 만들지 않는다). 기다리지 않고 다음 일감으로 간다.
@@ -102,7 +108,8 @@ MCP 가 안 보이거나 실패하면 사유를 보고하고 묻는다. `ax-clie
   (`#884` T5, 사용자 결정 2026-11-04) — 그 전(작업 중·등록 실패)에는
   다른 일감의 `ax-projects:issue_start_tool`·「작업중」 전이가 `#N 작업이 진행 중이다` 로 거절된다 — 그 문장을
   사용자에게 보여 주고 **완료·보류·취소 중 무엇을 할지 묻는다.** 잠금 파일을 손으로 고치지 않는다.
-- 보류는 깨끗한 `issue/<N>` 에서만 된다. 재개는 `main` 에서 `ax-projects:issue_start_tool(N)` 을 다시 부른다.
+- 보류는 깨끗한 `issue/<N>` worktree 에서만 된다 — worktree 를 지우고 브랜치는 남긴다. 재개는
+  `ax-projects:issue_start_tool(N)` 을 다시 부르면 worktree 가 다시 생긴다.
 - 취소는 `confirm=False` 미리보기의 **로컬 전용 커밋 목록**을 보여 주고 승인을 받은 뒤 `confirm=True`.
   브랜치 삭제(`delete_branch=True`)는 그 목록을 보여 준 **별도 승인**이 있을 때만이다.
 - 일감 마감은 **`ax-projects:issue_finish_tool` 하나**다 — main 에 적용하면 그 자리에서 「완료」·100 으로 닫힌다(`#889`,

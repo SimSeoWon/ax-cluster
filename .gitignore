@@ -19,6 +19,8 @@ venv/
 /KimodoMotion_WebUI/
 /MotionForge/
 /AXCluster/
+# #907 — 마스터(requester: master) 일감 worktree 부모 폴더 (AXCluster/config.yaml master_workspace)
+/.ax-issues/
 
 # ax-gemini 실행 원본(봉투·stderr) — 보고서만 커밋한다 (사용자 결정 2026-10-09)
 reports/research/*.run/

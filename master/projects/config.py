@@ -100,6 +100,7 @@ ROLES = (ROLE_WORKER, ROLE_REQUESTER)
 #    (`.57`)가 ⑦ 을 맡는 경우다. [주의] **인식하는 값은 이것 하나다** — 다른 값은 「미지정」으로
 #    읽고 호출자가 사유를 찍는다(오타가 조용히 마스터로 읽히면 공지가 남의 자리를 가리킨다).
 REQUESTER_MASTER = "master"
+MASTER_WORKSPACE_KEY = "master_workspace"   # `#907` — requester: master 전용 절
 
 # [중요] **파견 여부는 `role` 과 다른 축이다** (`#317` 미결 ④ · `#321`, 사용자 결정 2026-08-27).
 #    `role` 하나가 세 가지를 겸했다 — 파견 여부 · 배달 내용물(`bundle.PAYLOAD_BY_ROLE`) ·
@@ -266,6 +267,13 @@ class ProjectConfig:
     # 🔴 **요청자 명시** (`#814`) — `REQUESTER_MASTER` 만 의미가 있다. 비어 있으면 요청자는
     #    `role: requester` 작업장에서 읽는다. 모르는 값도 문자열 그대로 보존한다(`to_yaml` 왕복).
     requester: str = ""
+    # 🔴 **마스터 작업 공간** (`#907`) — `requester: master` **전용**. 마스터(.57)가 이 프로젝트의 일감을
+    #    `issue/<N>` worktree 로 작업할 **마스터 로컬** 부모 폴더(`<여기>/<N>`). AXCluster 처럼 마스터
+    #    서비스가 실행하는 코드가 곧 이 프로젝트의 소스일 때만 의미가 있다 — 운영 체크아웃에서 작업하면
+    #    oneshot 서비스가 미커밋 코드를 실행한다. [중요] 게임·언리얼 프로젝트는 `.33` 이 자기 worktree 에서
+    #    작업한다(`ax-issue`) — 이 값을 거기 두면 마스터 경로를 작업 위치로 오인하므로 **읽기 단계에서 거절**한다.
+    #    `track.local_clone`(색인 미러)과 다른 값이다.
+    master_issue_worktree_root: str = ""
     include: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
     workshops: dict[str, Workshop] = field(default_factory=dict)
@@ -290,6 +298,18 @@ class ProjectConfig:
         shops = data.get("workshops") or {}
         if not isinstance(shops, dict):
             raise ConfigError(f"workshops 는 매핑이어야 한다: {type(shops).__name__}")
+        requester = str(data.get("requester") or "").strip()
+        mws = data.get(MASTER_WORKSPACE_KEY)
+        if mws is not None and not isinstance(mws, dict):
+            raise ConfigError(f"{MASTER_WORKSPACE_KEY} 는 매핑이어야 한다: {type(mws).__name__}")
+        wt_root = str((mws or {}).get("issue_worktree_root") or "").strip()
+        if mws is not None and requester != REQUESTER_MASTER:
+            # 🔴 `#907` — 게임·언리얼 프로젝트(요청자 `.33`)가 마스터 경로를 작업 위치로 오인하지 않게.
+            raise ConfigError(f"{MASTER_WORKSPACE_KEY} 는 `requester: {REQUESTER_MASTER}` 프로젝트 전용이다 "
+                              f"(현재 requester={requester or '(없음)'}) — 이 프로젝트의 일감은 요청자 기계의 "
+                              "worktree 에서 한다(ax-issue). 이 절을 지운다")
+        if mws is not None and wt_root and not Path(wt_root).is_absolute():
+            raise ConfigError(f"{MASTER_WORKSPACE_KEY}.issue_worktree_root 는 마스터 로컬 절대 경로여야 한다: {wt_root}")
         return cls(
             workshops={h: Workshop.from_dict(h, v) for h, v in shops.items()},
             name=str(data.get("name") or ""),
@@ -304,7 +324,8 @@ class ProjectConfig:
             analyzed_commit=str(index.get("analyzed_commit") or ""),
             analyzed_at=str(index.get("analyzed_at") or ""),
             redmine_project=str((data.get("redmine") or {}).get("project") or ""),
-            requester=str(data.get("requester") or "").strip(),
+            requester=requester,
+            master_issue_worktree_root=wt_root,
             include=list(index.get("include") or []),
             exclude=list(index.get("exclude") or []),
             raw=data,
@@ -343,6 +364,10 @@ class ProjectConfig:
             data["requester"] = self.requester
         else:
             data.pop("requester", None)
+        # `#907` — 값이 있을 때만, `requester:` 바로 뒤에 둔다(사람이 읽는 파일이라 순서가 내용이다).
+        data.pop(MASTER_WORKSPACE_KEY, None)
+        if self.master_issue_worktree_root:
+            data[MASTER_WORKSPACE_KEY] = {"issue_worktree_root": self.master_issue_worktree_root}
         # [중요] **`init:`(초기화 사양 오버레이, #266)을 `engine:` 뒤로 보낸다.** `dict(self.raw)`
         #    로 시작하므로 그대로 두면 `version:` 보다 **앞에** 찍힌다 — 사람이 읽는 파일이라
         #    순서가 내용이다. 모르는 키의 통과는 그대로 두고(그것이 raw 의 값이다) **우리가 쓰는

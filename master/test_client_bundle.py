@@ -2823,6 +2823,35 @@ def test_code_drift_docs_only_868() -> None:
     check("#868 실 git: 없는 커밋은 None", bundle._diff_names("0" * 40, "a8d058c") is None)
 
 
+def test_master_workspace_not_delivered_907() -> None:
+    """`#907` — 마스터 로컬 작업 공간(`master_workspace`)은 배달물에 실리지 않는다.
+
+    `.33`·워커가 그 경로를 자기 작업 위치로 오인하면 오동작한다. `config_for` 는 화이트리스트라
+    지금은 실릴 길이 없다 — 누가 config 를 통째로 싣게 바꾸면 이 검사가 잡는다.
+    """
+    import json
+    import os
+    import tempfile
+    root = Path(tempfile.mkdtemp(prefix="ax-907-deliver-"))
+    (root / "P").mkdir()
+    (root / "projects.yaml").write_text("version: 1\nactive: P\nprojects:\n- P\n", encoding="utf-8")
+    (root / "P" / "config.yaml").write_text(
+        "version: 1\nname: P\nrequester: master\nmaster_workspace:\n"
+        "  issue_worktree_root: /srv/ws-907-marker\n", encoding="utf-8")
+    saved = os.environ.get("AX_PROJECTS_ROOT")
+    os.environ["AX_PROJECTS_ROOT"] = str(root)
+    try:
+        for role in ("worker", "requester"):
+            text = json.dumps(bundle.config_for("P", _facts(role=role)), ensure_ascii=False)
+            check(f"#907 {role} 배달물에 master_workspace·경로 없음",
+                  "master_workspace" not in text and "ws-907-marker" not in text, text[:200])
+    finally:
+        if saved is None:
+            os.environ.pop("AX_PROJECTS_ROOT", None)
+        else:
+            os.environ["AX_PROJECTS_ROOT"] = saved
+
+
 def test_service_entry_imports_bundle_at_start_869() -> None:
     """`#869` — 서비스 진입점이 bundle 을 **최상위에서** 불러와 기동 커밋을 기동 시점에 잡는다."""
     import ast
@@ -2885,7 +2914,7 @@ def test_skill_bundle_files() -> None:
 
 
 def main() -> int:
-    for fn in (test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
+    for fn in (test_master_workspace_not_delivered_907, test_role, test_config, test_managed_block, test_merge, test_skill_is_readable,
                test_skill_bundle_files,
                test_mcp_json_merge,
                test_role_skills, test_role_payload, test_payload_split, test_deliver_removes_deprecated_skills, test_retired_payload_removed_checked_and_planned, test_role_block, test_ue5_detection, test_init_wiring, test_scp_source_windows,

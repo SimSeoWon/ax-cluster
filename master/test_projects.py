@@ -296,6 +296,31 @@ def main() -> int:
     check("값도 그대로 읽힌다", reg4.raw_retention_days() == 45)
     check("전환은 반영됐다", reg4.active == "Other" and reg4.names == ["ModularStage", "Other"])
 
+    print("\n[#907] master_workspace — requester: master 전용, 그 외 프로젝트면 읽기 단계에서 거절")
+    d907 = _TMP / "c907"
+    d907.mkdir()
+
+    def _cfg(body: str) -> Path:
+        p = d907 / "config.yaml"
+        p.write_text("version: 1\nname: X\n" + body, encoding="utf-8")
+        return p
+    c = ProjectConfig.load(_cfg("requester: master\nmaster_workspace:\n  issue_worktree_root: /w/.ax-issues\n"))
+    check("#907 master 프로젝트 → 값을 읽는다", c.master_issue_worktree_root == "/w/.ax-issues",
+          c.master_issue_worktree_root)
+    again = ProjectConfig.load(_cfg(c.to_yaml()))
+    check("#907 to_yaml 왕복", again.master_issue_worktree_root == "/w/.ax-issues"
+          and again.requester_is_master)
+    raises("#907 requester 없음(.33 요청자 경로) + master_workspace → 거절",
+           ProjectConfig.load, _cfg("master_workspace:\n  issue_worktree_root: /w/.ax-issues\n"))
+    raises("#907 requester 가 master 가 아닌 값 + master_workspace → 거절",
+           ProjectConfig.load, _cfg("requester: 192.168.0.33\nmaster_workspace:\n  issue_worktree_root: /w\n"))
+    raises("#907 상대 경로 → 거절",
+           ProjectConfig.load, _cfg("requester: master\nmaster_workspace:\n  issue_worktree_root: rel/path\n"))
+    raises("#907 매핑이 아님 → 거절", ProjectConfig.load, _cfg("requester: master\nmaster_workspace: /w\n"))
+    plain = ProjectConfig.load(_cfg("requester: master\n"))
+    check("#907 절 없음 → 빈 값(추정 없음) · to_yaml 에 절을 만들지 않는다",
+          plain.master_issue_worktree_root == "" and "master_workspace" not in plain.to_yaml())
+
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 

@@ -166,22 +166,96 @@ def _branch_exists(repo: Path, branch: str) -> bool:
     return _git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}")[0] == 0
 
 
+# ── `#907` 마스터 작업 공간 — 일감 worktree ─────────────────────────────────────
+WORKSPACE_PROJECT = "AXCluster"
+
+
+def _workspace(repo, worktree_root, project: str = WORKSPACE_PROJECT) -> tuple:
+    """`(운영 저장소, worktree 부모 | None, 거절 사유)` (`#907`).
+
+    - `worktree_root` 를 넘기면 그것을 쓴다(테스트 대역 자리).
+    - `repo` 만 넘기면 **종전 인플레이스**(그 저장소에서 브랜치 전환) — 수동·테스트 호출.
+    - 둘 다 없으면 **운영 호출**: `<project>/config.yaml` 의 `master_workspace.issue_worktree_root`.
+      🔴 `requester: master` 가 아니거나 `kind: unreal` 이거나 값이 없거나 색인 미러 안이면 **거절**한다
+      — 게임·언리얼 프로젝트는 `.33` 이 자기 worktree 에서 작업하고(ax-issue), 값을 추정하면 마스터 경로를
+      작업 위치로 오인한다.
+    """
+    if worktree_root is not None:
+        return Path(repo) if repo is not None else default_repo(), Path(worktree_root), ""
+    if repo is not None:
+        return Path(repo), None, ""
+    try:
+        from master.context_search.paths import resolve
+        from master.projects.config import ProjectConfig
+        paths = resolve(project)
+        cfg = ProjectConfig.load(paths.config)
+    except Exception as e:                              # noqa: BLE001 — 설정 해석
+        return default_repo(), None, f"{project} 설정을 못 읽었다 — {type(e).__name__}: {e}"
+    if not cfg.requester_is_master:
+        return default_repo(), None, (f"{project} 는 `requester: master` 가 아니다 — 이 흐름은 마스터가 요청자인 "
+                                      "프로젝트(AXCluster) 전용이다. 게임 프로젝트 일감은 요청자 기계의 worktree 에서 "
+                                      "한다(ax-client issue_* · ax-issue)")
+    try:
+        from master.projects import profile as PF
+        kind = PF.kind_of(project)
+    except Exception:                                   # noqa: BLE001 — 프로필 없음은 아래 판정에 맡긴다
+        kind = ""
+    if kind == "unreal":
+        return default_repo(), None, f"{project} 는 kind=unreal 이다 — 언리얼 일감은 .33 에서 한다"
+    root = cfg.master_issue_worktree_root
+    if not root:
+        return default_repo(), None, (f"{project}/config.yaml 에 master_workspace.issue_worktree_root 가 없다 — "
+                                      "작업 위치를 추정하지 않는다(#907)")
+    root_p = Path(root).resolve()
+    mirror = Path(paths.repo).resolve()
+    if root_p == mirror or mirror in root_p.parents:
+        return default_repo(), None, f"issue_worktree_root {root} 가 색인 미러({mirror}) 안이다 — 작업 위치가 아니다"
+    return default_repo(), Path(root), ""
+
+
+def _wt_path(wt_root: Path, issue_id) -> Path:
+    return Path(wt_root) / str(int(issue_id))
+
+
+def _wt_branch(wt: Path) -> str:
+    """worktree `wt` 의 현재 브랜치 — 없거나 git 이 아니면 빈 문자열."""
+    if not (Path(wt) / ".git").exists():
+        return ""
+    rc, out = _git(wt, "rev-parse", "--abbrev-ref", "HEAD")
+    return out if rc == 0 else ""
+
+
+def _wt_remove(repo: Path, wt: Path) -> tuple[int, str]:
+    """깨끗한 worktree 제거(브랜치는 남는다). 강제하지 않는다 — 미커밋 변경이 있으면 git 이 거절한다."""
+    rc, out = _git(repo, "worktree", "remove", str(wt))
+    if rc == 0:
+        _git(repo, "worktree", "prune")
+    return rc, out
+
+
 RESUME_NOTE = INF.RESUME_NOTE
 PAUSE_NOTE = INF.PAUSE_NOTE
 
 
 def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
-          logf=None, fetch: bool = True, lock_root=None) -> dict:
+          logf=None, fetch: bool = True, lock_root=None, worktree_root=None,
+          project: str = WORKSPACE_PROJECT) -> dict:
     """일감 작업을 시작한다 — 플랜 강제 → 잠금 확인 → 로컬 브랜치 → 시작 리비전 Redmine 기록.
 
     이미 `issue/<N>` 에 서 있으면 새로 만들지 않고 그 시작점(`main` 과의 merge-base)을 돌려준다
     (잠금에 없던 옛 브랜치도 이때 잠금에 올린다). N 이 보류 중이고 깨끗한 `main` 에 서 있으면
     `issue/<N>` 으로 옮기고 잠금을 재개한 뒤 「재개」 노트를 남긴다(`resumed: True`).
     플랜·잠금·노트는 `issue_infra` 의 공용 함수다(`.33` 요청자 경로와 같은 규칙).
+
+    🔴 `#907` — 운영 호출(`repo`·`worktree_root` 미지정)은 운영 저장소를 **늘 main 으로 두고**
+    `master_workspace.issue_worktree_root/<N>` 에 `issue/<N>` worktree 를 만든다. 응답 `repo` 가 그 worktree
+    (편집·커밋 위치), `checkout` 이 운영 저장소다. 설정이 없거나 `requester: master` 가 아니면 거절한다.
     """
-    repo = Path(repo) if repo is not None else default_repo()
+    repo, wt_root, ws_why = _workspace(repo, worktree_root, project)
     injected = getter is not None or noter is not None
     log = _Log("start", issue_id, events_path=_resolve_events(events_path, injected), logf=logf)
+    if ws_why:
+        return _refuse(log, "workspace", ws_why)
     getter = getter or _default_getter
     noter = noter or _default_noter
     branch = branch_name(issue_id)
@@ -212,6 +286,9 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
     sealed = _sealed(repo)                               # `#906` — 색인 미러에 브랜치를 세우지 않는다
     if sealed:
         return _refuse(log, "repo", sealed)
+    if wt_root is not None:
+        return _start_wt(issue_id, repo=repo, wt=_wt_path(wt_root, issue_id), cur=cur, prec=prec,
+                         getter=getter, noter=noter, lroot=lroot, log=log, fetch=fetch, acquire=_acquire)
     exists = _branch_exists(repo, branch)
     if prec and not exists:
         return _refuse(log, "lock", f"#{n} 는 보류 기록이 있는데 {branch} 가 없다 — "
@@ -293,6 +370,104 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
             "start_rev": head, "repo": str(repo), "redmine": res, "lock": INF.lock_kind(got), "log": log.lines}
 
 
+def _base_ok(repo: Path, cur: str, log: _Log, fetch: bool):
+    """운영 저장소가 깨끗한 main = origin/main 인가 — `(head, 거절 dict | None)`."""
+    if cur != MAIN:
+        return "", _refuse(log, "base", f"운영 저장소가 {cur} 에 있다 — 운영 체크아웃은 늘 {MAIN} 이어야 한다(#907)")
+    ok, lines = _clean(repo)
+    if not ok:
+        return "", _refuse(log, "base", f"운영 저장소가 깨끗하지 않다({len(lines)}건) — 커밋·정리는 사람이 정한다",
+                           dirty=lines)
+    if fetch:
+        rc, out = _git(repo, "fetch", "--quiet", REMOTE, MAIN)
+        if rc != 0:
+            return "", _refuse(log, "fetch", f"{REMOTE} fetch 실패: {out}")
+        log("fetch", f"{REMOTE}/{MAIN} fetch")
+    rc, head = _git(repo, "rev-parse", "HEAD")
+    rc2, remote = _git(repo, "rev-parse", f"{REMOTE}/{MAIN}")
+    if rc != 0 or rc2 != 0:
+        return "", _refuse(log, "base", f"HEAD·{REMOTE}/{MAIN} 을 못 읽었다: {head} {remote}")
+    if head != remote:
+        return "", _refuse(log, "base", f"{MAIN} {head[:12]} 이 {REMOTE}/{MAIN} {remote[:12]} 과 다르다 — "
+                                        "동기화는 사람이 정한다", head=head, remote=remote)
+    log("base", f"{MAIN}={REMOTE}/{MAIN}={head[:12]} · 깨끗함")
+    return head, None
+
+
+def _start_wt(issue_id, *, repo: Path, wt: Path, cur: str, prec, getter, noter, lroot, log: _Log,
+              fetch: bool, acquire) -> dict:
+    """`#907` worktree 방식 start — 운영 저장소는 main 그대로, `wt` 에 `issue/<N>`."""
+    branch = branch_name(issue_id)
+    exists = _branch_exists(repo, branch)
+    out_base = {"issue_id": issue_id, "branch": branch, "repo": str(wt), "checkout": str(repo)}
+    if exists and _wt_branch(wt) == branch:
+        try:
+            rev = _git_ok(repo, "merge-base", MAIN, branch)
+        except IssueFlowError as e:
+            return _refuse(log, "branch", f"{branch} 의 시작 리비전을 못 구했다 — {e}")
+        got = acquire(rev, "이미 worktree 에 있음")
+        if not got.get("ok"):
+            return _refuse(log, "lock", got.get("why", "잠금 실패"), holder=got.get("holder"))
+        log("branch", f"이미 {wt} 에 {branch} — 시작 리비전 {rev[:12]} (새 기록 없음)")
+        return {"ok": True, **out_base, "already": True, "start_rev": rev, "lock": INF.lock_kind(got),
+                "log": log.lines}
+    if wt.exists():
+        return _refuse(log, "worktree", f"{wt} 가 이미 있는데 {branch} worktree 가 아니다 — 정리는 사람이 정한다")
+    if prec and not exists:
+        return _refuse(log, "lock", f"#{int(issue_id)} 는 보류 기록이 있는데 {branch} 가 없다 — "
+                                    "issue_cancel 로 정리할지 사람이 정한다")
+    if exists and not prec:
+        return _refuse(log, "branch", f"{branch} 가 이미 있다(worktree 없음·보류 기록 없음) — "
+                                      "이어 갈지 정리할지 사람이 정한다")
+    head, bad = _base_ok(repo, cur, log, fetch)
+    if bad:
+        return bad
+    wt.parent.mkdir(parents=True, exist_ok=True)
+    if exists:                                           # 보류 → 재개
+        rc, out = _git(repo, "worktree", "add", str(wt), branch)
+        if rc != 0:
+            return _refuse(log, "worktree", f"worktree 추가 실패: {out}")
+        log("worktree", f"{wt} ← {branch} (재개)")
+        got = INF.resume_record(issue_id, lroot=lroot, branch=branch, prec=prec, noter=noter, log=log,
+                                by="issue_flow.start")
+        if not got["ok"]:
+            rc2, _ = _wt_remove(repo, wt)
+            log(got["step"], f"재개 실패 — {got.get('why') or got.get('res')} · worktree 제거 "
+                             f"{'완료' if rc2 == 0 else '실패'}")
+            return {"ok": False, "issue_id": issue_id, "step": got["step"],
+                    "why": got.get("why") or f"Redmine 재개 노트 실패: {got.get('res')}",
+                    "worktree_removed": rc2 == 0, "log": log.lines}
+        log("redmine", f"재개 노트 · 시작 리비전 {str(got['start_rev'])[:12]}")
+        return {"ok": True, **out_base, "already": False, "resumed": True, "start_rev": got["start_rev"],
+                "redmine": got["res"], "lock": "resumed", "log": log.lines}
+
+    rc, out = _git(repo, "worktree", "add", "-b", branch, str(wt), head)
+    if rc != 0:
+        return _refuse(log, "worktree", f"worktree·브랜치 생성 실패: {out}")
+    log("worktree", f"{wt} ← {branch} 생성 @ {head[:12]} · 운영 저장소는 {MAIN} 유지")
+
+    def _undo() -> bool:
+        a, _ = _wt_remove(repo, wt)
+        b, _ = _git(repo, "branch", "-d", branch)
+        return a == 0 and b == 0
+    res, status = INF.start_note(issue_id, branch=branch, start_rev=head, getter=getter, noter=noter)
+    if res.startswith("[주의]"):
+        undone = _undo()
+        log("redmine", f"기록 실패 — {res} · worktree·브랜치 되돌림 {'완료' if undone else '실패'}")
+        return {"ok": False, "issue_id": issue_id, "step": "redmine", "why": f"Redmine 기록 실패: {res}",
+                "branch_rolled_back": undone, "log": log.lines}
+    log("redmine", f"시작 리비전 기록 {head[:12]}" + (f" · 상태 {status}" if status else ""))
+    got = acquire(head, "새 worktree")
+    if not got.get("ok"):
+        undone = _undo()
+        log("lock", f"잠금 실패 — {got.get('why')} · worktree·브랜치 되돌림 {'완료' if undone else '실패'}")
+        return {"ok": False, "issue_id": issue_id, "step": "lock",
+                "why": f"잠금 실패: {got.get('why')} — [주의] Redmine 시작 노트는 이미 기록됐다({head[:12]})",
+                "holder": got.get("holder"), "branch_rolled_back": undone, "redmine": res, "log": log.lines}
+    return {"ok": True, **out_base, "already": False, "start_rev": head, "redmine": res,
+            "lock": INF.lock_kind(got), "log": log.lines}
+
+
 def _resume(issue_id, *, repo: Path, cur: str, branch: str, prec: dict, noter, lroot,
             log: _Log) -> dict:
     """보류 중인 N 을 재개 — 깨끗한 main → `switch issue/N` → 잠금 재개 → 「재개」 노트.
@@ -360,7 +535,7 @@ def _span(repo: Path, branch: str) -> tuple[str, str, list]:
 
 def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=None, link=None,
            review_root=None, events_path=None, logf=None, fetch: bool = True,
-           lock_root=None, project: str = REVIEW_PROJECT) -> dict:
+           lock_root=None, project: str = REVIEW_PROJECT, worktree_root=None) -> dict:
     """일감 작업을 마친다. `confirm=False` 면 보고만 한다(쓰기 0).
 
     `#883`: N 이 보류 중이면(먼저 재개) · 다른 일감이 활성이면 거절한다. 잠금에 없는 N(`#883` 이전
@@ -381,10 +556,17 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
     주입: `register(root, N, **kw)`·`link(root, N, logf=)` 는 테스트 대역 자리다. 대역 주입 실행
     (noter·register·link 중 하나라도)이 `review_root` 를 안 주면 운영 트윈을 건드리지 않으려고 등록을
     하지 않는다(등록 실패로 다룬다 — 잠금도 남는다).
+
+    🔴 `#907` worktree 방식(운영 호출): 운영 저장소는 깨끗한 main, `<root>/<N>` worktree 는 깨끗한
+    `issue/<N>` 이어야 한다. push 뒤 운영 main 을 끝 커밋으로 fast-forward(= 서비스 코드 반영) →
+    worktree 제거 → `branch -d`.
     """
-    repo = Path(repo) if repo is not None else default_repo()
+    repo, wt_root, ws_why = _workspace(repo, worktree_root, project)
     injected = noter is not None or register is not None or link is not None
     log = _Log("finish", issue_id, events_path=_resolve_events(events_path, injected), logf=logf)
+    if ws_why:
+        return _refuse(log, "workspace", ws_why)
+    wt = _wt_path(wt_root, issue_id) if wt_root is not None else None
     noter = noter or _default_noter
     register = register or _default_register
     link = link or _default_link
@@ -407,12 +589,22 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
     sealed = _sealed(repo)                               # `#906` — 봉인된 push 를 시도하지 않는다
     if sealed:
         return _refuse(log, "repo", sealed)
-    if cur != branch:
-        return _refuse(log, "branch", f"지금 브랜치가 {cur} 다 — {branch} 에서 마친다")
-    rc, dirty = _git(repo, "status", "--porcelain")
-    if rc != 0 or dirty:
-        return _refuse(log, "tree", "작업 트리가 깨끗하지 않다 — 커밋·정리는 사람이 정한다",
-                       dirty=(dirty or "").splitlines()[:20])
+    if wt is not None:
+        if cur != MAIN:
+            return _refuse(log, "branch", f"운영 저장소가 {cur} 에 있다 — 운영 체크아웃은 늘 {MAIN} 이어야 한다(#907)")
+        if _wt_branch(wt) != branch:
+            return _refuse(log, "worktree", f"{wt} 에 {branch} worktree 가 없다 — issue_start 로 시작·재개한 뒤 마친다")
+        for where, label in ((repo, "운영 저장소"), (wt, "일감 worktree")):
+            ok, lines = _clean(where)
+            if not ok:
+                return _refuse(log, "tree", f"{label}가 깨끗하지 않다 — 커밋·정리는 사람이 정한다", dirty=lines)
+    else:
+        if cur != branch:
+            return _refuse(log, "branch", f"지금 브랜치가 {cur} 다 — {branch} 에서 마친다")
+        rc, dirty = _git(repo, "status", "--porcelain")
+        if rc != 0 or dirty:
+            return _refuse(log, "tree", "작업 트리가 깨끗하지 않다 — 커밋·정리는 사람이 정한다",
+                           dirty=(dirty or "").splitlines()[:20])
     # #896 방어: Git 버전에 따라 switch -C가 다른 worktree의 main 점유도 덮는다.
     # 같은 로컬 저장소의 등록 worktree만 확인하고 push 전에 거절한다.
     rc, worktrees = _git(repo, "worktree", "list", "--porcelain")
@@ -452,14 +644,18 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
     except IssueFlowError as e:
         return _refuse(log, "span", str(e))
     summary = {"issue_id": issue_id, "branch": branch, "base": base, "end": end,
-               "commits": commits, "files": len(files), "repo": str(repo)}
+               "commits": commits, "files": len(files), "repo": str(wt or repo)}
+    if wt is not None:
+        summary["checkout"] = str(repo)
     log("span", f"범위 {base[:12]}..{end[:12]} · 커밋 {len(commits)}건 · 파일 {len(files)}")
 
     if not confirm:
         log("preview", "confirm=False — 아무것도 바꾸지 않았다")
         return {"ok": True, "confirmed": False, **summary,
                 "next": f"승인하면 finish({issue_id}, confirm=True) — push {REMOTE} {branch}:{MAIN} · "
-                        f"끝 커밋으로 로컬 {MAIN} 전환(성공 시 참조 전진) · {branch} 삭제 · 마감 추적 등록(해시 {len(commits)}개) · "
+                        + (f"운영 {MAIN} fast-forward(서비스 코드 반영) · worktree {wt} 제거 · " if wt is not None
+                           else f"끝 커밋으로 로컬 {MAIN} 전환(성공 시 참조 전진) · ")
+                        + f"{branch} 삭제 · 마감 추적 등록(해시 {len(commits)}개) · "
                         f"색인기 리뷰 연결 · "
                         + ("잠금 해제(등록 성공 시) · " if lock_held else "")
                         + "Redmine 리뷰 요청 노트 + 「완료」·100(등록 성공 시 — #889) — 해시별 리뷰와 종합 리뷰는 "
@@ -482,21 +678,46 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
     # switch main → merge 는 잠깐 옛 main 파일을 깐다. -C는 끝 커밋으로 바로 전환하며,
     # 전환에 실패하면 main 참조도 바꾸지 않는다. ff 가능성은 위에서 이미 확인했다.
     deleted = False
-    rc, out = _git(repo, "switch", "-C", MAIN, end)
-    if rc != 0:
-        problems.append(f"switch: {out[-200:]}")
-        log("switch", f"실패 — {out[-200:]}")
-    else:
-        done.append("switch")
-        log("switch", f"switch -C {MAIN} {end}")
-        rc, out = _git(repo, "branch", "-d", branch)
-        if rc == 0:
-            deleted = True
-            done.append("delete_branch")
-            log("delete_branch", f"{branch} 삭제(main 에서 도달 가능)")
+    if wt is not None:
+        # `#907` — 운영 main 을 앞으로(fast-forward만) → worktree 제거 → 브랜치 삭제
+        rc, out = _git(repo, "merge", "--ff-only", end)
+        if rc != 0:
+            problems.append(f"운영 main ff: {out[-200:]}")
+            log("ff", f"실패 — {out[-200:]}")
         else:
-            problems.append(f"branch -d: {out[-200:]}")
-            log("delete_branch", f"실패 — {out[-200:]}")
+            done.append("ff")
+            log("ff", f"운영 {MAIN} ← {end[:12]} (서비스 코드 반영)")
+            rc, out = _wt_remove(repo, wt)
+            if rc != 0:
+                problems.append(f"worktree remove: {out[-200:]}")
+                log("worktree", f"제거 실패 — {out[-200:]}")
+            else:
+                done.append("worktree_remove")
+                log("worktree", f"{wt} 제거")
+                rc, out = _git(repo, "branch", "-d", branch)
+                if rc == 0:
+                    deleted = True
+                    done.append("delete_branch")
+                    log("delete_branch", f"{branch} 삭제(main 에서 도달 가능)")
+                else:
+                    problems.append(f"branch -d: {out[-200:]}")
+                    log("delete_branch", f"실패 — {out[-200:]}")
+    else:
+        rc, out = _git(repo, "switch", "-C", MAIN, end)
+        if rc != 0:
+            problems.append(f"switch: {out[-200:]}")
+            log("switch", f"실패 — {out[-200:]}")
+        else:
+            done.append("switch")
+            log("switch", f"switch -C {MAIN} {end}")
+            rc, out = _git(repo, "branch", "-d", branch)
+            if rc == 0:
+                deleted = True
+                done.append("delete_branch")
+                log("delete_branch", f"{branch} 삭제(main 에서 도달 가능)")
+            else:
+                problems.append(f"branch -d: {out[-200:]}")
+                log("delete_branch", f"실패 — {out[-200:]}")
 
     # ④~⑦ 마감 추적 등록 → 리뷰 연결 → 잠금 해제(등록 성공 시만) → 「리뷰 요청」 노트 — `issue_infra`
     def _track_root():
@@ -527,17 +748,24 @@ def _lock_required(lock_root, injected: bool, log: _Log):
     return root, None
 
 
-def pause(issue_id, *, repo=None, noter=None, lock_root=None, events_path=None, logf=None) -> dict:
+def pause(issue_id, *, repo=None, noter=None, lock_root=None, events_path=None, logf=None,
+          worktree_root=None, project: str = WORKSPACE_PROJECT) -> dict:
     """활성 일감을 보류한다 — `issue/<N>` 의 깨끗한 트리 → 잠금 보류 → `main` 으로 → 「보류」 노트.
 
     브랜치는 남는다. 재개는 `start(N)` 이다. [중요] dirty 면 거절한다 — 미커밋 변경이 `main` 으로
     따라간다. `main` 전환이 실패하면 잠금을 다시 활성으로 되돌린다. 노트만 실패하면 보류 상태는
     유지하고(잠금이 정본) `ok: False` 로 알린다.
+
+    `#907` worktree 방식: 깨끗한 `<root>/<N>` worktree 를 **제거**한다(브랜치 유지) — 운영 저장소는 손대지
+    않는다. 재개(`start`)가 worktree 를 다시 만든다.
     """
     from master import issue_lock as IL
-    repo = Path(repo) if repo is not None else default_repo()
+    repo, wt_root, ws_why = _workspace(repo, worktree_root, project)
     injected = noter is not None
     log = _Log("pause", issue_id, events_path=_resolve_events(events_path, injected), logf=logf)
+    if ws_why:
+        return _refuse(log, "workspace", ws_why)
+    wt = _wt_path(wt_root, issue_id) if wt_root is not None else None
     noter = noter or _default_noter
     branch = branch_name(issue_id)
     n = int(issue_id)
@@ -546,21 +774,26 @@ def pause(issue_id, *, repo=None, noter=None, lock_root=None, events_path=None, 
     if refused:
         return refused
 
-    rc, cur = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    work = wt if wt is not None else repo
+    rc, cur = _git(work, "rev-parse", "--abbrev-ref", "HEAD") if (wt is None or _wt_branch(wt)) else (1, "")
     if rc != 0:
+        if wt is not None:
+            return _refuse(log, "worktree", f"{wt} 에 {branch} worktree 가 없다 — 보류할 작업이 없다")
         return _refuse(log, "repo", f"저장소를 못 읽었다: {cur}")
     if cur != branch:
         return _refuse(log, "branch", f"지금 브랜치가 {cur} 다 — {branch} 에서 보류한다")
-    ok, lines = _clean(repo)
+    ok, lines = _clean(work)
     if not ok:
-        return _refuse(log, "tree", f"작업 트리가 깨끗하지 않다({len(lines)}건) — 미커밋 변경이 {MAIN} 으로 "
-                                    "따라간다, 커밋·정리는 사람이 정한다", dirty=lines)
-    end = _git(repo, "rev-parse", "HEAD")[1]
+        return _refuse(log, "tree", f"작업 트리가 깨끗하지 않다({len(lines)}건) — "
+                                    + ("worktree 를 지우면 미커밋 변경을 잃는다" if wt is not None
+                                       else f"미커밋 변경이 {MAIN} 으로 따라간다")
+                                    + ", 커밋·정리는 사람이 정한다", dirty=lines)
+    end = _git(work, "rev-parse", "HEAD")[1]
     bad, rec = INF.pause_lock(lroot, n, log=log, by="issue_flow.pause")
     if bad:
         return bad
 
-    rc, out = _git(repo, "switch", MAIN)
+    rc, out = _wt_remove(repo, wt) if wt is not None else _git(repo, "switch", MAIN)
     if rc != 0:
         try:
             back = IL.acquire(lroot, n, branch=branch, start_rev=rec.get("start_rev") or "",
@@ -574,7 +807,8 @@ def pause(issue_id, *, repo=None, noter=None, lock_root=None, events_path=None, 
                 "why": f"{MAIN} 으로 옮기지 못했다: {out[-300:]} — 보류를 되돌렸다"
                        f"(잠금 활성 복원 {'완료' if relocked else '실패'})",
                 "relocked": relocked, "log": log.lines}
-    log("switch", f"{branch} → {MAIN} · {branch} 유지 @ {end[:12]}")
+    log("switch", (f"worktree {wt} 제거" if wt is not None else f"{branch} → {MAIN}")
+        + f" · {branch} 유지 @ {end[:12]}")
 
     res = INF.pause_note(issue_id, branch=branch, end=end, noter=noter)
     base = {"issue_id": issue_id, "paused": True, "branch": branch, "end": end,
@@ -592,16 +826,22 @@ CANCEL_NOTE = INF.CANCEL_NOTE
 
 
 def cancel(issue_id, *, confirm: bool = False, delete_branch: bool = False, repo=None, noter=None,
-           lock_root=None, events_path=None, logf=None) -> dict:
+           lock_root=None, events_path=None, logf=None, worktree_root=None,
+           project: str = WORKSPACE_PROJECT) -> dict:
     """일감을 취소한다. `confirm=False`(기본)는 미리보기만 한다(쓰기 0).
 
     승인 시: `issue/<N>` 에 서 있으면 깨끗한지 보고 `main` 으로 → 잠금 해제(`op=cancel`) → 「취소」 노트
     → `delete_branch=True` **일 때만** `branch -D`. [중요] 노트가 실패하면 브랜치를 지우지 않는다 —
     지울 커밋 목록이 어디에도 안 남는다. 잠금에 없는 N 은 브랜치가 있을 때만 받는다(옛 브랜치 정리).
+    `#907` worktree 방식: `<root>/<N>` worktree 가 있으면 깨끗한지 보고 **제거**한다(운영 저장소는 그대로).
     """
-    repo = Path(repo) if repo is not None else default_repo()
+    repo, wt_root, ws_why = _workspace(repo, worktree_root, project)
     injected = noter is not None
     log = _Log("cancel", issue_id, events_path=_resolve_events(events_path, injected), logf=logf)
+    if ws_why:
+        return _refuse(log, "workspace", ws_why)
+    wt = _wt_path(wt_root, issue_id) if wt_root is not None else None
+    wt_on = wt is not None and _wt_branch(wt) == branch_name(issue_id)
     noter = noter or _default_noter
     branch = branch_name(issue_id)
     n = int(issue_id)
@@ -633,6 +873,8 @@ def cancel(issue_id, *, confirm: bool = False, delete_branch: bool = False, repo
     summary = {"issue_id": issue_id, "branch": branch, "lock_state": lock_state,
                "branch_exists": exists, "on_branch": cur == branch, "commits": commits,
                "local_only": local_only, "delete_branch": delete_branch}
+    if wt is not None:
+        summary["worktree"] = str(wt) if wt_on else ""
     warning = ""
     if local_only:
         warning = (f"[중요] {branch} 의 커밋 {len(local_only)}건은 이 저장소에만 있다(원격 없음) — "
@@ -644,12 +886,23 @@ def cancel(issue_id, *, confirm: bool = False, delete_branch: bool = False, repo
         return {"ok": True, "confirmed": False, **summary, "warning": warning,
                 "next": f"승인하면 cancel({n}, confirm=True{', delete_branch=True' if delete_branch else ''}) — "
                         + (f"{MAIN} 으로 전환 · " if cur == branch else "")
+                        + (f"worktree {wt} 제거 · " if wt_on else "")
                         + ("잠금 해제(cancel) · " if lock_state != "absent" else "")
                         + f"Redmine 취소 노트 · {fate}"
                         + ("" if delete_branch else " (삭제는 delete_branch=True 일 때만)"),
                 "log": log.lines}
 
     done: list[str] = []
+    if wt_on:
+        ok, lines = _clean(wt)
+        if not ok:
+            return _refuse(log, "tree", f"일감 worktree 가 깨끗하지 않다({len(lines)}건) — 커밋·정리는 사람이 정한다",
+                           dirty=lines, **summary)
+        rc, out = _wt_remove(repo, wt)
+        if rc != 0:
+            return _refuse(log, "worktree", f"worktree 제거 실패: {out[-300:]}", **summary)
+        done.append("worktree_remove")
+        log("worktree", f"{wt} 제거")
     if cur == branch:
         ok, lines = _clean(repo)
         if not ok:
