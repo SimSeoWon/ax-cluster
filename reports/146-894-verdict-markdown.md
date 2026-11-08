@@ -66,3 +66,15 @@ T1은 실제 함수 호출 결과를 근거로 완료 전이했고 커밋 전임
 
 세션 파일: `~/.codex/sessions/2026/11/08/rollout-2026-11-08T15-01-38-01a1b9bf-846b-7191-85f4-2227f69aeeb7.jsonl`.
 서브 에이전트 세션: `~/.codex/sessions/2026/11/08/rollout-2026-11-08T15-04-50-01a1b9c2-72ce-7063-b61b-c090669d5095.jsonl`.
+
+## 최종 상태 (2026-11-08 15:25, Claude 보완 — Redmine #894 마지막 노트와 실제 상태 대조)
+
+위 「현재 멈춘 지점」은 커밋 전 기록이다. 이후:
+
+- 사용자 「응 진행해」로 커밋 `c47d5b2`(파서·회귀·이 리포트 3파일), 「응 반영하고 배포해」로 `issue_finish_tool(894, confirm=True)`
+  → `done=[push, ff, worktree_remove, delete_branch, register, link, release, close, redmine]`, `closed: true`.
+- `master.client update` rc0 — `.43`·`.2`·`.33` 3/3 OK(출처 마스터 HEAD 일치). `.2` 홈 중복 스킬 경고는 종전과 같고 비차단.
+- 재기동 없음(리뷰 큐 oneshot 코드). 운영 main=origin/main=`c47d5b2`, 깨끗함, 일감 잠금 없음.
+- Claude 대조: `test_review_range` 75/75 재실행, `parse_verdicts` 꾸밈 6종 직접 호출(`` `남음` ``·`**해소**`·`_남음_`·
+  `` `**해소**` ``·`남음 — 이유`·미지 `애매`) 모두 기대대로, `.43` 배달 커밋 `c47d5b2` 확인.
+- 기록 누락(이 절·인수인계 미갱신)은 Codex 가 스스로 보고했다 — 최종 결과가 Redmine 에만 있었다.
