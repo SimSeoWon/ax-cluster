@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -343,6 +344,31 @@ def test_verdict_contract():
                                                               "R3-2": ("해소", "A.cpp:9")}, str(v))
     check("T4 판정 표는 소비자 행으로 안 센다", RG.parseable_rows(vb) == RG.parseable_rows(BODY) == 1)
     check("T4 parse_verdicts — 절 없으면 빈 사전", RG.parse_verdicts(BODY) == {})
+    for marker in ("`", "*", "**", "_", "__", "***`", "_ `"):
+        for verdict in ("남음", "해소"):
+            raw = f"{marker}{verdict}{marker[::-1]}"
+            decorated = f"### 해시별 지적 판정\n| R3-1 | {raw} | A.cpp:3 |\n"
+            got = RG.parse_verdicts(decorated)
+            check(f"#894 꾸밈 판정 {raw}", got == {"R3-1": (verdict, "A.cpp:3")}, str(got))
+    decorated = ("### 해시별 지적 판정\n"
+                 "| r3-1 | `남음` (최종 코드) | A.cpp:3 |\n"
+                 "| R3-2 | **해소** (뒤 커밋) | A.cpp:9 |\n"
+                 "| R3-3 | **판단 불가** | A.cpp:10 |\n"
+                 "| R3-4 | | A.cpp:11 |\n"
+                 "| R3-1 | 해소 | 중복 |\n"
+                 "### 다른 절\n| R3-5 | 남음 | 다른 절 |\n")
+    got = RG.parse_verdicts(decorated)
+    check("#894 꾸민 접두 설명·번호 정규화·첫 행 우선", got.get("R3-1") == ("남음", "A.cpp:3")
+          and got.get("R3-2") == ("해소", "A.cpp:9"), str(got))
+    check("#894 미지 판정 꾸밈 원문 보존", got.get("R3-3") == ("**판단 불가**", "A.cpp:10"), str(got))
+    check("#894 빈 판정 보존", got.get("R3-4") == ("", "A.cpp:11"), str(got))
+    check("#894 다음 절의 행 제외", "R3-5" not in got, str(got))
+    collected = [{"id": f"R3-{i}", "severity": "high", "file": "A.cpp", "line": str(i),
+                  "description": "지적"} for i in (1, 2)]
+    # 회차 조회만 대역으로 둔다. 실제 파서→노트 집계 경로를 쓰며 LLM·Redmine·Git 은 호출하지 않는다.
+    with patch.object(R, "track_round", return_value={"round": 1, "hashes": []}):
+        note = R.track_note_text(Paths("unused"), {"meta": {"collected": collected}}, body=decorated)
+    check("#894 꾸민 판정의 소비자 집계", "해시별 지적 판정 — 남음 1 · 해소 1 · 판정 없음 0" in note, note)
 
 
 def main() -> int:

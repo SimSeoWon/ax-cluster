@@ -217,7 +217,7 @@ def collected_section(findings: list, uncovered: list | None = None) -> str:
 def parse_verdicts(body: str) -> dict:
     """`### 해시별 지적 판정` 절의 행 → `{원 지적: (판정, 근거)}`. 판정은 `남음`·`해소` 또는 원문.
 
-    절이 없으면 빈 사전. 같은 번호가 두 번 나오면 첫 행을 쓴다.
+    판정의 선행 마크다운 꾸밈은 무시한다. 절이 없으면 빈 사전. 같은 번호가 두 번 나오면 첫 행을 쓴다.
     """
     m = _VERDICT_SECTION_RE.search(body or "")
     if not m:
@@ -229,7 +229,8 @@ def parse_verdicts(body: str) -> dict:
     for row in _VERDICT_ROW.finditer(block):
         rid = row.group(1).upper()
         raw = row.group(2).strip()
-        v = next((x for x in VERDICTS if raw.startswith(x)), raw)
+        plain = raw.lstrip("`*_ \t")
+        v = next((x for x in VERDICTS if plain.startswith(x)), raw)
         out.setdefault(rid, (v, row.group(3).strip()))
     return out
 
