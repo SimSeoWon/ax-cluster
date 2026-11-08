@@ -1,8 +1,8 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-08 21:30 Claude 체크포인트(#923 등록 — Antigravity 진행 예정 · #922·#921 마감 · 이하 오늘 마감분은 아래 표). 항목·진행의 정본은 Redmine이다.
-> 이전 상세는 Git `d946ba7`(운영 체크포인트)·`54b5632`(#898 Codex→Claude 인계본)의 이 파일·리포트138~155·각 일감 노트에 있다.
-> 진행 중 일감·일감 잠금은 없다. 마감 뒤 단계는 이제 `.venv/bin/python -m master.issue_wrapup <N>` 이 집행한다(#921) — 배달은 이 문서 커밋 뒤 그 명령이 한다.
+> 2026-11-08 22:15 Antigravity 체크포인트(#923 마감 `ec30077` · #922·#921 마감 · 이하 오늘 마감분은 아래 표). 항목·진행의 정본은 Redmine이다.
+> 이전 상세는 Git `d946ba7`·`54b5632`·리포트138~156·각 일감 노트에 있다.
+> 진행 중 일감·일감 잠금은 없다. 마감 뒤 단계는 `.venv/bin/python -m master.issue_wrapup <N>` 이 집행한다(#921) — 배달은 이 문서 커밋 뒤 그 명령이 한다.
 
 ## 🔴 오늘 오후 바뀐 규칙 (사용자 결정 2026-11-08)
 
@@ -74,6 +74,7 @@
 | #820 | 조각 범위 밖 변경 감지 및 ⑦ 사람 게이트 고지 — Argon 위임 · 리포트 153, 배달 3/3 OK. 후속 지적 5건은 #820 Claude 대조 노트 | `7d35840` |
 | #921 | 마감 뒤 단계를 명령 하나로(`master.issue_wrapup`) · 검사 파일 직접 실행 규약(`test_test_runnable`) · 통합 191 — 리포트 154 | `aea3f94` |
 | #922 | `issue_wrapup` 후속 — oneshot 대기를 재기동 서비스별로(broker←리뷰 큐·색인기 · task-queue←파견 · projects←없음) · rc 2 노트 — 리포트 155 | `f9a9a91` |
+| #923 | R298 지적 6건 — issue_wrapup 하위 명령 실패/예외 방어 · next 명령 인자 — 리포트 156 | `ec30077` |
 | #884·#885·#887·#915 | 코드 변경 없이 종결 — #884 T7 마감(#889 로 게이트 대체·언리얼은 첫 실제 일감에서) · #885 는 #897·#912·#907 로 해소 · #887 은 #888(480초·전체 diff)로 해소 · #915 는 #887 중복 | — |
 
 - 등록: **#908**·**#911**·**#916**·**#920** 아이디어(일감 아님 — #916 = 배달 뒤 인수인계 커밋이 워커를 1커밋 뒤처지게 하는 맞물림, #920 = Antigravity 지휘 시 서브에이전트 Argon 모델 위임 분업 체계 및 가용성 기반 스마트 라우팅).
@@ -84,15 +85,13 @@
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`f9a9a91`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`ec30077`(+ 이 문서 커밋), 깨끗함 · 로컬 브랜치 main 하나 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 |
-| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | 이 문서 커밋 직후 `master.issue_wrapup 922` 재실행이 배달·check 한다(결과는 #922 Redmine 노트) |
+| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | 이 문서 커밋 직후 `master.issue_wrapup 923` 재실행이 배달·check 한다(결과는 #923 Redmine 노트) |
 
-- 상주 재기동: ax-broker 17:39:08 · ax-task-queue 17:41:31 · ax-projects 21:03:05(#921 `issue_wrapup` 이 의존 변경 판정으로 재기동 —
-  색인기 실행 510초를 기다렸다 — #922 로 재기동 서비스별 대기로 좁혔다).
-  재기동 뒤 `service_freshness.check()`: stale 0 · 판정 불가 0 · 의존 [주의] 0. 재기동 중 리뷰 큐(broker 초고는 이미 끝남)·
-  색인기(8101 게이트는 실행 시작 1회)가 돌았으나 영향 없음 — 다음엔 재기동 **전에** oneshot 실행 여부를 먼저 본다.
+- 상주 재기동: ax-broker 17:39:08 · ax-task-queue 17:41:31 · ax-projects 22:08:19(#923 `issue_wrapup` 이 의존 변경 판정으로 재기동).
+  재기동 뒤 `service_freshness.check()`: stale 0 · 판정 불가 0 · 의존 [주의] 0. 재기동 중 리뷰 큐·색인기 영향 없음.
 - 운영 문서 최신화(`ax-docsync`, codex 레인, 사용자 승인): 수정안 8 중 update 6 · unchanged 2, 적용 4 —
   README·온보딩 런북·AGENTS.md·`machines/sim-desktop-agents.md`(`9dee96c`). CLAUDE.md·`machines/sim-desktop.md` 수정안은
   홈 지침·ax-mode 스킬과 중복이라 사용자 결정으로 제외. 이 문서는 근거 파일이 없어 unchanged 였다(손으로 갱신).
@@ -126,16 +125,9 @@
 
 1. `ax-handoff` 로 이 문서와 실제 상태(운영 main=origin/main · `.ax-issues` 비어 있음 · 잠금 없음)를 대조한다.
    Antigravity 는 홈 `GEMINI.md` 규칙대로 **작업 저장소 루트의 `AGENTS.md` 를 먼저 읽고 AX-ENTRY-MARK 를 보고**한다.
-2. 🔴 **다음 일감 = #923**(사용자 2026-11-08: 「안티그래비티에서 진행해볼게」) — R298 지적 6건, `master/issue_wrapup.py`·
-   `master/issue_flow.py`. 처방·완료 조건은 #923 본문 표가 정본이다. 요점:
-   - 1·2·3·5 는 「하위 명령 실패를 정상·대기로 보이게 하는」 부류 — 배달 예외·fetch rc·systemctl 조회 실패·git log rc 를 **rc 1(멈춤)** 로.
-   - 🔴 R298-3 은 리뷰 권고(`"?"` 반환)를 따르지 않는다 — 「oneshot 없음」으로 읽혀 실행 중 재기동이 된다. 조회 실패 = 판정 불가 → 멈춤.
-   - 지적마다 대역 회귀(하위 명령 실패·시간 초과·None 주입). 기존 `test_issue_wrapup` 34건 유지. R298-6 은 `test_issue_flow`.
-   - R298-1~6 은 이미 `accepted` — 마감 뒤 `update_fix_status(applied, commit)`.
-   - #922(`f9a9a91`) 커밋 리뷰·#921 종합 리뷰가 그 전에 나오면 같은 결이면 함께, 아니면 별건.
-3. 「진행해」면 공용 규칙 §1.9 흐름으로 끝까지 한다: 검사(관련 + 공식 통합 191) → 리포트 → 커밋 → `issue_finish(confirm=True)` →
-   응답 `next` 의 `master.issue_wrapup <N>` → (rc 2 면) 인수인계서 커밋·push → 같은 명령 재실행 → rc 0 · check rc0 → 종합 보고.
-   서비스 재기동은 그 명령이 판정된 것만 한다(손으로 하지 않는다).
-4. #898 실사용 확인은 남아 있다 — 게임 프로젝트 마운트 전환 뒤 `.33` 요청자 세션에서 새 `ax-client` 관리 도구를 한 번 불러 본다(사용자 결정).
+2. 🔴 **#923 마감 후속**: 이 인수인계서 커밋 직후 `master.issue_wrapup 923` 재실행으로 배달(`master.client update`) 및 check rc0 확인.
+   R298 지적 6건은 모두 `applied`로 처리 완료됨.
+3. **다음 일감 선택**: 사용자와 다음 진행할 일감 결정 (등록된 아이디어 #908·#911·#916·#920 또는 신규 일감).
+4. #898 실사용 확인: 게임 프로젝트 마운트 전환 뒤 `.33` 요청자 세션에서 새 `ax-client` 관리 도구를 한 번 불러 본다(사용자 결정).
 5. #920 남은 배선: 1번(지휘자 기록 claude/codex 만) · 3번(교차 계열 리뷰 조건 — Antigravity 가 쓰고 agy 가 리뷰하면 같은 계열). 결정은 사용자.
 6. 다른 일감을 자동 시작하지 않는다. ⑦ 전진·finalize·파괴적 git·자동 로드 문서 변경은 기존대로 멈춰 묻는다.
