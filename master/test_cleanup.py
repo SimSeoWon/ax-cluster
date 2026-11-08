@@ -519,6 +519,52 @@ def test_machine_scan_queue_and_local_branches_874() -> None:
           and C.work_id_of("/home/sim/ax-788-work", "") == "")
 
 
+def test_machine_scan_other_local_branches_886() -> None:
+    """`#886` — task/·attempt/ 밖 로컬 브랜치(fix/R* 등)도 열거 · issue/<N> 은 볼 것 · 기준 브랜치 제외. 쓰기 0."""
+    import os
+    import subprocess
+    import tempfile
+    from master.work import cleanup as C
+
+    def g(cwd, *a):
+        return subprocess.run(["git", "-C", str(cwd), *a], capture_output=True, text=True, check=True).stdout.strip()
+    with tempfile.TemporaryDirectory() as td:
+        bare, repo = os.path.join(td, "o.git"), os.path.join(td, "r")
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", bare], check=True)
+        subprocess.run(["git", "clone", "-q", bare, repo], check=True, capture_output=True)
+        g(repo, "config", "user.email", "t@t"); g(repo, "config", "user.name", "t")
+        open(os.path.join(repo, "a"), "w").write("a\n")
+        g(repo, "add", "a"); g(repo, "commit", "-q", "-m", "a"); g(repo, "push", "-q", "origin", "main")
+        g(repo, "branch", "fix/R1", "main")                                   # 병합 — 도달
+        g(repo, "checkout", "-q", "-b", "fix/R2", "main")                      # 미병합 커밋 1
+        open(os.path.join(repo, "b"), "w").write("b\n")
+        g(repo, "add", "b"); g(repo, "commit", "-q", "-m", "b"); g(repo, "checkout", "-q", "main")
+        g(repo, "branch", "issue/9", "main")                                  # 보류 일감 — 도달해도 볼 것
+        g(repo, "worktree", "add", "-q", os.path.join(td, "wt10"), "-b", "issue/10", "main")   # worktree 소유
+        calls = []
+
+        def run(path, args):
+            calls.append(args)
+            return C._local_run(path, args)
+        r = C.scan_repo(run, repo, machine="마스터", work_status=lambda w: None, local_branches=True)
+        cand = {w: why for w, why in r.candidates}
+        rev = {w: why for w, why in r.review}
+
+        def find(d, key):
+            return next((why for w, why in d.items() if f"로컬 브랜치 {key} @" in w), "")
+        check("#886 병합 fix/R1 → 후보(도달)", "도달" in find(cand, "fix/R1"), str(cand))
+        check("#886 미병합 fix/R2 → 볼 것 · 고유 1", "고유 커밋 1개" in find(rev, "fix/R2"), str(rev))
+        check("#886 issue/9(main 도달) → 후보가 아니라 볼 것", "issue_flow" in find(rev, "issue/9")
+              and not find(cand, "issue/9"), str(cand) + str(rev))
+        allw = [w for w, _ in r.candidates + r.review]
+        check("#886 기준 브랜치 main 은 로컬 브랜치 줄에 없다", not any("로컬 브랜치 main @" in w for w in allw), str(allw))
+        check("#886 worktree 소유 issue/10 은 worktree 줄에서만", not any("로컬 브랜치 issue/10 @" in w for w in allw)
+              and any("[issue/10]" in w for w in allw), str(allw))
+        bad = [a for a in calls if any(k in a for k in ("prune", "remove", "delete", " -d", " -D", "update-ref",
+                                                        "push", "reset", "checkout", "clean"))]
+        check("🔴 #886 쓰기 명령 0", bad == [], str(bad))
+
+
 def main() -> int:
     for fn in (test_only_merged_is_deleted, test_format_has_no_space, test_uncertain_is_kept, test_current_branch_kept,
                test_never_touches_remote, test_artifacts, test_path_traversal,
@@ -526,7 +572,8 @@ def main() -> int:
                test_remote_only_merged_is_deleted, test_remote_ls_failure_judges_nothing,
                test_remote_apply_follows_plan_only, test_machine_scan_real_git_333,
                test_machine_scan_failures_333, test_main_lag_sync_333,
-               test_main_lag_real_git_333, test_machine_scan_queue_and_local_branches_874):
+               test_main_lag_real_git_333, test_machine_scan_queue_and_local_branches_874,
+               test_machine_scan_other_local_branches_886):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_cleanup: {PASS}/{total} 통과")

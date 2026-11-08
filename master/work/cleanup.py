@@ -948,7 +948,8 @@ def scan_repo(run, repo: str, *, machine: str, label: str = "", base: str = "mai
     [DOC] #874: `work_status(work_id) -> merge_status | None` 를 주면 이름에서 뽑은 work_id 로 큐를 대조한다 —
           cancelled → 후보(#787 기준 · 이 저장소의 원격추적·refs/ax 밖 고유 커밋 수 — 다른 저장소(트윈 미러)의 보존은 모른다) · rejected → 볼 것(#821 보존) ·
           열린 work → 볼 것 · 조회 실패·id 없음 → 종전(도달 판정만). `local_branches=True`(마스터 저장소)면
-          worktree 에 붙지 않은 로컬 `task/*`·`attempt/*` 도 같은 판정으로 연다.
+          worktree 에 붙지 않은 로컬 브랜치도 연다 — `task/*`·`attempt/*` 는 같은 판정, `issue/*` 는 볼 것,
+          그 밖(`fix/*` 등)은 도달 판정만(#886).
     """
     r = RepoScan(machine=machine, repo=repo, label=label)
     rc, out = run(repo, f"rev-parse --verify -q origin/{base}")
@@ -1036,19 +1037,28 @@ def scan_repo(run, repo: str, *, machine: str, label: str = "", base: str = "mai
             r.candidates.append((name, f"미추적 0 · 수정 0 · HEAD 가 {r.base_ref} 에 도달"))
 
     if local_branches:
+        # [DOC] #886: 종전에는 refs/heads/task·attempt 만 열어 병합된 fix/R* 8개가 「0건」으로 보였다.
+        #       이제 refs/heads 전부를 연다 — 기준 브랜치·worktree 에 붙은 브랜치는 빼고, task/·attempt/ 는
+        #       종전 큐 대조, issue/<N> 은 일감 흐름(issue_flow)이 소유하므로 늘 「볼 것」(보류 중이면
+        #       main 에 도달해도 지우면 안 된다), 그 밖은 도달 판정만. 🔴 여전히 읽기 전용이다.
         held = {w["branch"] for w in wts if w["branch"]}
-        rc, out = run(repo, "for-each-ref --format=%(refname:short):%(objectname) refs/heads/task refs/heads/attempt")
+        rc, out = run(repo, "for-each-ref --format=%(refname:short):%(objectname) refs/heads")
         if rc != 0:
-            r.errors.append(f"로컬 task/attempt 목록 실패 ({out.strip()[:80]})")
+            r.errors.append(f"로컬 브랜치 목록 실패 ({out.strip()[:80]})")
         else:
             for ln in out.splitlines():
                 if ":" not in ln:
                     continue
                 br, sha = ln.strip().rsplit(":", 1)
-                if br in held:
-                    continue                                  # worktree 줄에서 이미 본다
+                if br in held or br == base:
+                    continue                                  # worktree 줄에서 이미 본다 · 기준 브랜치
                 what = f"로컬 브랜치 {br} @ {sha[:8]}"
-                verdict, qwhy = by_queue(work_id_of("", br), sha)
+                if br.startswith("issue/"):
+                    r.review.append((what, "일감 브랜치 — issue_flow 가 소유(보류 중일 수 있다) · "
+                                           "마감·취소로 정리한다"))
+                    continue
+                pipeline = br.startswith(("task/", "attempt/"))
+                verdict, qwhy = by_queue(work_id_of("", br), sha) if pipeline else ("", "")
                 if verdict == "candidate":
                     r.candidates.append((what, qwhy))
                 elif verdict == "review":
