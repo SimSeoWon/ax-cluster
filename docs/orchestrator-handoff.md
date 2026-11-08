@@ -1,7 +1,19 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-08 15:30 Claude 체크포인트(#894 마감 후). 항목·진행의 정본은 Redmine이다.
-> 이전 상세는 Git `9f7248d`의 이 파일·리포트138~146·각 일감 노트에 있다. 열린 승인·진행 중 일감은 없다.
+> 2026-11-08 Codex 체크포인트(#895 마감 후). 항목·진행의 정본은 Redmine이다.
+> 이전 상세는 Git `9f7248d`의 이 파일·리포트138~147·각 일감 노트에 있다. 진행 중 일감은 없다. 최신 HEAD의 워커 배달은 미승인·미실행이다.
+
+## 이번 마감 — #895
+
+- 커밋 `dc778fe696e3fe12c138bd3fb8e8420e2dddfba6`: `test_rounds`가 노트 존재 대신 같은 `idx.lock` 안에서
+  `noticed_round==1`을 기다린다. 기존 단언·대기 한도 유지. 대상 검사 rc0·실패0, 정적 차단0,
+  공식 통합 `Ran 188 tests in 186.623s`·`OK`(188/188). 리포트147, 최종 결과 정본은 Redmine 마감 노트.
+- 사용자 「응」으로 커밋 승인, 「진행해」로 미리 본 1커밋·2파일의 push·main 반영·마감 및 이 문서 커밋·push 승인.
+- `issue_finish_tool(895, confirm=True)` 원문 주요 결과: `repo=/home/sim/ax-cluster/.ax-issues/895`,
+  `done=[push, ff, worktree_remove, delete_branch, register, link, release, close, redmine]`,
+  `registered=true`, `lock_released=true`, `closed=true`, `why=""`. 종합 리뷰는 비동기이며 완료를 주장하지 않는다.
+- 워커 배달·서비스 재기동은 미실행. 세션 파일:
+  `~/.codex/sessions/2026/11/08/rollout-2026-11-08T15-33-25-01a1b9dc-9c24-7cf2-b6b2-a378290954d0.jsonl`.
 
 ## 🔴 먼저 — 일감 작업 위치가 바뀌었다 (#907, 오늘 배포·실증)
 
@@ -48,10 +60,10 @@
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`c47d5b2`(+ 이 문서 커밋), 깨끗함 |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`dc778fe`(+ 이 문서 커밋), 문서 커밋·push 후 깨끗함을 확인 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 정상 |
-| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | `c47d5b2` 배달·검사 3/3 OK |
+| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | 직전 기록 `c47d5b2` 배달·검사3/3. 현재 HEAD는 배달 미실행·상태 미재조회 |
 
 - 상주 서비스 재기동(#897, 사용자 요청): ax-task-queue 12:31:43 · ax-broker 12:31:47 · ax-projects 12:31:57 KST — 기동 기록 정상.
   #912 는 판정하는 쪽 코드라 재기동 불필요.
@@ -60,7 +72,8 @@
 
 ## Codex 가 알아야 할 것
 
-- **마감 뒤 기록**: finish 결과는 Redmine 뿐 아니라 그 일감 리포트(최종 상태 절)와 이 문서에도 맞춘다 — #894 에서 빠졌다.
+- **마감 뒤 기록**: 리포트는 일감 커밋 시점까지 쓰고 「최종 결과는 Redmine 마감 노트」로 끝낸다.
+  마감 결과 정본은 Redmine이며, 이 문서는 마감 직후 main 문서 커밋·push로 갱신한다(마감 승인에 포함).
 - **보류·재개 미실증**: worktree 방식의 `issue_pause_tool` → `issue_start_tool` 재개는 아직 실제로 돌려 보지 않았다.
 - **검사 기준**: `AX_PROJECTS_ROOT=/home/sim/ax-cluster` 를 주고 일감 worktree 에서 전수 — #910 이후 **실패 0 이 기준**
   (11-08 13시 #912 기준 10790/10790). 실패가 있으면 회귀로 본다. 공식 통합 목록은 `tests/integration/checks.json`.
@@ -76,7 +89,7 @@
 - ax-projects·ax-task-queue·ax-broker active(12:31 재기동), ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
 - 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음. 분산 등재 뒤 wait 실행·⑦ 사람 게이트 전달 규칙 유지.
 - #893·#894·#896·#897·#899~#907·#909·#910·#912 완료: 리포트138~146·Redmine. 중복 마감·배포·산출물 재생성 금지.
-- #895·#898 신규. #885는 기존 사용자 보류 기록 유지. #884 T7의 닫는 방법은 미결.
+- #895 완료(`dc778fe`, 리포트147·Redmine). #898은 인계서상 신규(이번 세션 미조회). #885는 기존 사용자 보류 기록 유지. #884 T7의 닫는 방법은 미결.
 - #890 R251·R252 및 후속 리뷰 처분은 최신 목록·코드와 대조 후 사용자 결정. 상태를 자동 변경하지 않는다.
 - 큐/스풀 #709·#211·#650, ax-788-work, ax-review-788 반려#821, MotionForge·NS 잔재는 보존한다.
 - 미결: doc_sync 의존 등록 보강, #883 중복 플랜 제목, 훅 wait 일시오류 비대칭, 마스터 MCP 토큰 평문
@@ -85,5 +98,5 @@
 ## 바로 다음 작업
 
 1. `ax-handoff`로 이 문서와 실제 상태(운영 main·`.ax-issues` 비어 있음·잠금 없음)를 대조한다.
-2. 다음 일감은 사용자가 고른다 — 열린 신규: #895·#898. 시작은 `issue_start_tool`, 편집은 응답 `repo`.
+2. 다음 일감은 사용자가 고른다 — 인계서상 열린 신규 #898은 Redmine부터 재조회. 시작은 `issue_start_tool`, 편집은 응답 `repo`.
 3. 커밋·push·재기동·⑦ 전진·finalize는 기존 승인 규칙을 따른다. 다른 일감을 자동 시작하지 않는다.
