@@ -110,7 +110,7 @@
   `.cache/ax-dispatch/claude-auth.json`, `#721`)이며, 실행 중 OAuth 실패는 재시도 없이 즉시
   보고된다. 재로그인은 사람 몫이다 → [`docs/14-onboarding-runbook.md`](docs/14-onboarding-runbook.md).
 - 배달은 커밋된 깨끗한 트리에서 한다. 문서만 미커밋이어도 `delivered_by.dirty=true` 로 기록된다.
-- **AX 인프라 일감은 레드마인 `ax-cluster`(id 3)에 둔다.** 게임·도구 일감은 각 프로젝트의
+- **AX 인프라 일감은 레드마인 `ax-cluster`(id 3)에 `[AX]` 제목 접두로 둔다.** 게임·도구 일감은 각 프로젝트의
   `redmine.project`를 따른다. 리뷰 상태는 `<twin>/fixes/index.json`이 정본이며, 오래된 골조
   리뷰를 처리할 때 현재 소스·후속 구현 커밋·회귀 검사를 대조한다.
 - **AXCluster 통합 검사는 `tests/integration/checks.json`이 명시 목록이다.** 실행은

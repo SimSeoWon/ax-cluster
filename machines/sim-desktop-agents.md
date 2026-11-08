@@ -17,7 +17,10 @@
 1. **[`ax-handoff`](../master/skills/ax-handoff/SKILL.md) 스킬**로 인수인계를 복원한다.
    `~/ax-cluster/docs/orchestrator-handoff.md`와 `~/ax-cluster/docs/orchestrator-rules.md`를 읽고
    실제 상태를 대조하며, 마스터 담당과 워커 지휘자 모드를 각각 확인한다.
-   모드 변경은 사용자 선택에 따른다.
+   모드 변경은 사용자 선택에 따른다. 선택이 없으면 현재 상태만 확인하며, 토큰 소진이나
+   마스터 담당 기록만으로 워커 모드를 자동 선택하지 않는다.
+   마스터 담당 기록은 사용자가 마스터 교대를 지시하고 실제 인수를 마친 경우에만 변경한다.
+   단순 조회나 인수인계 읽기 요청은 담당 기록 변경 승인이 아니다.
 2. `~/ax-cluster/docs/milestones/7-improvements.md` · `~/ax-cluster/docs/12-multi-project.md`.
    [주의] **항목·진행은 레드마인(`:8080`)만.**
 3. `~/ax-cluster/reports/` 를 **전문으로** 읽는다.
