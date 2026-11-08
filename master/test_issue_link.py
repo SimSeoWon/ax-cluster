@@ -39,8 +39,27 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
-def make_root(hashes=(A, B, C)) -> Path:
+# #917(R240-12): 만든 임시 루트를 모두 기억해 두고 검사 함수가 끝나면(단언 실패·예외 포함) 지운다.
+_TMP: list = []
+
+
+def new_root() -> Path:
     root = Path(tempfile.mkdtemp(prefix="ax-il-"))
+    _TMP.append(root)
+    return root
+
+
+def run_cleaning(fn) -> None:
+    """`fn()` 을 돌리고 성공·실패와 상관없이 그동안 만든 임시 루트를 지운다. 예외는 그대로 올린다."""
+    try:
+        fn()
+    finally:
+        while _TMP:
+            shutil.rmtree(_TMP.pop(), ignore_errors=True)
+
+
+def make_root(hashes=(A, B, C)) -> Path:
+    root = new_root()
     if hashes:
         res = T.register(root, 884, project="AXCluster", base=BASE, end=END, hashes=list(hashes))
         assert res["ok"], res
@@ -115,7 +134,7 @@ def test_on_skipped():
 
 
 def test_link_round():
-    root = Path(tempfile.mkdtemp(prefix="ax-il-"))
+    root = new_root()
     # 등록 **전에** 색인기가 넣은 항목들
     Q.enqueue(root, key=A)                       # pending
     Q.enqueue(root, key=B)
@@ -177,7 +196,7 @@ def test_corruption_tolerated():
 
 
 def test_no_state_file_no_lock():
-    root = Path(tempfile.mkdtemp(prefix="ax-il-"))
+    root = new_root()
     out = L.on_skipped(root, A, "x")
     check("⑦ 추적 파일 없으면 linked=False", out == {"ok": True, "linked": False}, str(out))
     check("⑦ 잠금 파일을 만들지 않는다", not (root / T.LOCK_NAME).exists(), str(list(root.iterdir())))
@@ -208,9 +227,26 @@ def test_public_apply():
     shutil.rmtree(root)
 
 
+def test_cleanup_on_failure():
+    """`#917`(R240-12) — 검사 함수가 중간에 실패해도 임시 루트가 남지 않는다."""
+    made = []
+
+    def boom():
+        made.append(make_root())
+        raise AssertionError("의도한 실패")
+    try:
+        run_cleaning(boom)
+        raised = False
+    except AssertionError:
+        raised = True
+    check("R240-12 예외는 그대로 올라온다", raised)
+    check("R240-12 실패해도 임시 루트를 지운다", made and not made[0].exists() and not _TMP, str(made))
+
+
 if __name__ == "__main__":
     for fn in (test_public_apply, test_on_enqueued, test_on_enqueued_done, test_on_skipped, test_link_round,
-               test_corruption_tolerated, test_no_state_file_no_lock, test_closed_round_not_linked):
-        fn()
+               test_corruption_tolerated, test_no_state_file_no_lock, test_closed_round_not_linked,
+               test_cleanup_on_failure):
+        run_cleaning(fn)
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

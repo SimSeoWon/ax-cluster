@@ -233,8 +233,13 @@ def _short(key: str) -> str:
     return f"{base[:8]}..{end[:8]}" if sep else (key or "")[:12]
 
 
-def _item_id(kind: str, key: str) -> str:
+def item_id(kind: str, key: str) -> str:
+    """큐 항목 id — `<kind>:<key>`."""
     return f"{kind}:{key}"
+
+
+# #917(R240-1·2): 다른 모듈이 부르는 공개 이름. 밑줄 이름은 모듈 안 호출부를 위한 별칭으로 남긴다.
+_item_id = item_id
 
 
 # ── 공개 API ────────────────────────────────────────────────────────────────

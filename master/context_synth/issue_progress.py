@@ -136,6 +136,10 @@ def _sync_round(paths, rnd: dict, by_key: dict, wm: str, counts: dict, log) -> N
     root = paths.root
     n, rnum = rnd["issue_id"], rnd["round"]
     tag = f"#{n} 회차 {rnum}"
+    repo = paths.repo
+    # [DOC] #917(R240-8): 워터마크가 미러에 있는지는 해시마다 같은 답이다 — 처음 필요할 때 한 번만
+    #       묻고(git 호출 1회) 없으면 [주의] 를 회차당 한 줄만 남긴다. 필요 없으면(대기 해시 0) 묻지 않는다.
+    wm_present = None
     for h in rnd["hashes"]:
         sha, cur = h["sha"], h["state"]
         if cur in it.HASH_TERMINAL:
@@ -176,14 +180,16 @@ def _sync_round(paths, rnd: dict, by_key: dict, wm: str, counts: dict, log) -> N
         if not wm:
             counts["unchanged"] += 1
             continue
-        repo = paths.repo
         if not _has_commit(repo, sha):
             counts["unchanged"] += 1
             log(f"[issue-progress] {tag} {sha[:12]} 미러에 아직 없다 — waiting 유지(미러 지연)")
             continue
-        if not _has_commit(repo, wm):
+        if wm_present is None:
+            wm_present = _has_commit(repo, wm)
+            if not wm_present:
+                log(f"[issue-progress] [주의] {tag} 워터마크 {wm[:12]} 가 미러에 없다 — 이 회차 판정 생략")
+        if not wm_present:
             counts["unchanged"] += 1
-            log(f"[issue-progress] [주의] {tag} 워터마크 {wm[:12]} 가 미러에 없다 — 판정 생략")
             continue
         if _git(repo, "merge-base", "--is-ancestor", sha, wm) == 0:
             res = it.set_hash(root, n, sha, state="skipped", why=WATERMARK_SKIP_WHY,
@@ -451,7 +457,7 @@ def sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None) -> dict:
         wm = (str(watermark).strip().lower() if watermark is not None else _watermark_of(paths, log))
         if noter is None:
             from . import review_runner as rr                       # noqa: PLC0415
-            noter = _default_noter if rr._is_registered_root(paths) else None
+            noter = _default_noter if rr.is_registered_root(paths) else None
     except it.IssueTrackError as e:
         log(f"[issue-progress] [중요] 일감 마감 추적 기록을 믿을 수 없다 — 동기화 건너뜀(소비자는 계속): {e}")
         return {"ok": False, "reason": "track_corrupt", "why": str(e), **counts}

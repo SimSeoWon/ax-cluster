@@ -702,7 +702,7 @@ def range_abandoned_note_text(paths, item: dict) -> str:
             + track_note_text(paths, item, abandoned=True))
 
 
-def _is_registered_root(paths) -> bool:
+def is_registered_root(paths) -> bool:
     """`paths.root` 가 레지스트리에 등록된 프로젝트의 트윈 루트인가 — 실 Redmine 기본 경로의 조건."""
     try:
         from ..context_search.paths import resolve                 # noqa: PLC0415
@@ -710,6 +710,10 @@ def _is_registered_root(paths) -> bool:
         return bool(name) and Path(resolve(name).root).resolve() == Path(paths.root).resolve()
     except Exception:                                              # noqa: BLE001
         return False
+
+
+# #917(R240-1·2): 다른 모듈이 부르는 공개 이름. 밑줄 이름은 모듈 안 호출부를 위한 별칭으로 남긴다.
+_is_registered_root = is_registered_root
 
 
 def notify_range(paths, item_id: str, *, noter=None, logf=None) -> bool:

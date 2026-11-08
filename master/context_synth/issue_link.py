@@ -67,10 +67,10 @@ def _owner(root, sha: str):
     (열린 라운드 중 가장 최근 등록)에 라운드 번호를 더한 것. 추적 파일이 없으면 바로 None."""
     if not sha or not it.state_path(root).exists():
         return None
-    s = it._norm_sha(sha)
+    s = it.norm_sha(sha)
     best = None
     for r in it.open_rounds(root):
-        h = it._find_hash(r, s)
+        h = it.find_hash(r, s)
         if h is not None:
             best = (r["issue_id"], r["round"], h["state"])
     return best
@@ -94,7 +94,7 @@ def apply(root, n: int, rnum: int, sha: str, item: dict, logf) -> dict:
     state = item.get("state")
     out = {"ok": True, "linked": True, "issue_id": n, "round": rnum, "item_state": state}
     if state in _QUEUED:
-        got = rq.set_priority(root, item.get("id") or rq._item_id("commit", sha), PRIORITY,
+        got = rq.set_priority(root, item.get("id") or rq.item_id("commit", sha), PRIORITY,
                               meta={"issue_id": n, "issue_round": rnum}, logf=log)
         out["priority"] = got.get("priority")
         res = it.set_hash(root, n, sha, state="queued", round=rnum, logf=log)
@@ -122,7 +122,7 @@ def on_enqueued(root, sha, item, *, logf=None) -> dict:
         if own is None:
             return {"ok": True, "linked": False}
         n, rnum, _ = own
-        return apply(root, n, rnum, it._norm_sha(sha), item or {}, logf)
+        return apply(root, n, rnum, it.norm_sha(sha), item or {}, logf)
     except Exception as e:                              # noqa: BLE001 — 색인을 깨지 않는다
         return _fail(logf, "on_enqueued", sha, e)
 
@@ -135,7 +135,7 @@ def on_skipped(root, sha, why, *, reviewed: bool = False, logf=None) -> dict:
         if own is None:
             return {"ok": True, "linked": False}
         n, rnum, _ = own
-        s = it._norm_sha(sha)
+        s = it.norm_sha(sha)
         log = _say(logf)
         if reviewed:
             res = it.set_hash(root, n, s, state="done", serial=_serial(root, s), why=str(why or ""),

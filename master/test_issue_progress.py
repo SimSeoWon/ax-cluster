@@ -245,6 +245,41 @@ def test_워터마크():
     shutil.rmtree(root); shutil.rmtree(root2)
 
 
+def test_워터마크_부재는_회차당_한_번():
+    """`#917`(R240-8) — 미러에 없는 워터마크는 대기 해시 수와 상관없이 git 확인 1회 · [주의] 1줄."""
+    root, shas = make_twin(3)
+    register(root, shas)
+    wm = "e" * 40                                    # 미러에 없는 워터마크
+    calls, logs = [], []
+    real = P._has_commit
+
+    def counting(repo, sha):
+        calls.append(sha)
+        return real(repo, sha)
+    P._has_commit = counting
+    try:
+        out = P.sync_issue_tracks(Paths(root), noter=Noter(), watermark=wm, logf=logs.append)
+    finally:
+        P._has_commit = real
+    warn = [m for m in logs if "워터마크" in m and "미러에 없다" in m]
+    check("🔴 R240-8 워터마크 git 확인 1회(대기 해시 3)", calls.count(wm) == 1, str(calls))
+    check("R240-8 [주의] 로그 1줄", len(warn) == 1, str(warn))
+    check("R240-8 해시는 waiting 그대로", all(hstate(root, s)["state"] == "waiting" for s in shas)
+          and out["skipped"] == 0, str(out))
+    # 대기 해시가 없으면 워터마크를 묻지 않는다
+    root2, shas2 = make_twin(1)
+    register(root2, shas2)
+    review_done(root2, shas2[0])
+    calls.clear()
+    P._has_commit = counting
+    try:
+        P.sync_issue_tracks(Paths(root2), noter=Noter(), watermark=wm, logf=logs.append)
+    finally:
+        P._has_commit = real
+    check("R240-8 큐에 있는 해시만이면 워터마크 확인 0", wm not in calls, str(calls))
+    shutil.rmtree(root); shutil.rmtree(root2)
+
+
 def test_추적_밖과_연결():
     root, shas = make_twin(3)
     a, b, c = shas
@@ -618,7 +653,7 @@ def test_공개_apply_를_쓴다():
 
 
 if __name__ == "__main__":
-    for fn in (test_공개_apply_를_쓴다, test_done_과_포기_한_노트, test_노트_실패는_다음_회차가_다시, test_워터마크,
+    for fn in (test_공개_apply_를_쓴다, test_done_과_포기_한_노트, test_노트_실패는_다음_회차가_다시, test_워터마크, test_워터마크_부재는_회차당_한_번,
                test_추적_밖과_연결, test_깨진_추적_파일, test_실_redmine_가드,
                test_main_이_drain_앞뒤로_부른다,
                test_종합_등재는_전부_종결_뒤, test_종합_리뷰_한_바퀴, test_종합_상태_전이,

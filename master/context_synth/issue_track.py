@@ -181,8 +181,13 @@ def _copy(rnd: dict) -> dict:
     return json.loads(json.dumps(rnd))
 
 
-def _norm_sha(s) -> str:
+def norm_sha(s) -> str:
+    """해시 정규화 — 앞뒤 공백 제거·소문자. 추적 기록의 해시는 늘 이 꼴이다."""
     return str(s or "").strip().lower()
+
+
+# #917(R240-1·2): 다른 모듈이 부르는 공개 이름. 밑줄 이름은 모듈 안 호출부를 위한 별칭으로 남긴다.
+_norm_sha = norm_sha
 
 
 def _pick_round(data: dict, n: int, rnum):
@@ -198,11 +203,15 @@ def _pick_round(data: dict, n: int, rnum):
     return None, ("no_round", f"#{n} 에 라운드 {rnum} 가 없다(남은 라운드 {[r['round'] for r in rounds]})")
 
 
-def _find_hash(rnd: dict, sha: str):
+def find_hash(rnd: dict, sha: str):
+    """라운드에서 해시 항목(정규화된 sha 로 찾는다) 또는 None."""
     for h in rnd["hashes"]:
         if h["sha"] == sha:
             return h
     return None
+
+
+_find_hash = find_hash   # #917 별칭
 
 
 # ── 순수 판정 ────────────────────────────────────────────────────────────────
