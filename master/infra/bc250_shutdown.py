@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -46,6 +47,17 @@ class PreflightCheckError(RuntimeError):
 class ShutdownError(RuntimeError):
     """전원 종료 명령 실행 실패 또는 단절 확인 실패 시 발생하는 예외."""
     pass
+
+
+def is_bc250_worker(worker: Optional[str]) -> bool:
+    """작업자 식별자가 .43 (BC-250)인지 검사.
+    worker-143 등의 부분 문자열 오탐을 방지하기 위해 192.168.0.43, bc250, 단어/비숫자 경계 43 매칭."""
+    if not worker:
+        return False
+    w = str(worker).strip().lower()
+    if "192.168.0.43" in w or "bc250" in w or "bc-250" in w:
+        return True
+    return bool(re.search(r"(?:^|\D)43(?:\D|$)", w))
 
 
 def validate_target(target: Optional[str]) -> str:
@@ -91,18 +103,22 @@ def check_queue(status_data: Optional[Dict[str, Any]] = None,
     if err:
         raise PreflightCheckError(f"큐 상태 오류 보고: {err}")
 
-    active_tasks: List[Dict[str, Any]] = []
     tasks = status_data.get("tasks")
-    if isinstance(tasks, list):
-        for t in tasks:
-            if not isinstance(t, dict):
-                continue
-            st = str(t.get("status") or "").lower()
-            if st in CLOSED_TASK_STATUSES:
-                continue
-            worker = str(t.get("worker_id") or t.get("assignee") or t.get("worker") or "")
-            if "192.168.0.43" in worker or "43" in worker or "bc250" in worker.lower():
-                active_tasks.append(t)
+    if tasks is None or not isinstance(tasks, list):
+        raise PreflightCheckError(
+            f"큐 상태 데이터 형식 오류: tasks 필드가 누락되었거나 목록이 아닙니다 ({type(tasks)})"
+        )
+
+    active_tasks: List[Dict[str, Any]] = []
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        st = str(t.get("status") or "").lower()
+        if st in CLOSED_TASK_STATUSES:
+            continue
+        worker = str(t.get("worker_id") or t.get("assignee") or t.get("worker") or "")
+        if is_bc250_worker(worker):
+            active_tasks.append(t)
 
     active_works: List[Dict[str, Any]] = []
     works = status_data.get("works")
@@ -143,10 +159,15 @@ def check_broker_inflight(status_data: Optional[Dict[str, Any]] = None,
     if not isinstance(status_data, dict):
         raise PreflightCheckError(f"브로커 상태 데이터 형식 오류: {type(status_data)}")
 
+    err = status_data.get("error")
+    if err:
+        raise PreflightCheckError(f"브로커 상태 오류 보고: {err}")
+
     endpoints = status_data.get("endpoints")
-    if not isinstance(endpoints, list):
-        # 엔드포인트 정보가 없으면 경고만 남김
-        return ["브로커 검사 통과: 엔드포인트 정보 없음 (비활성)"]
+    if endpoints is None or not isinstance(endpoints, list):
+        raise PreflightCheckError(
+            f"브로커 상태 데이터 형식 오류: endpoints 필드가 누락되었거나 목록이 아닙니다 ({type(endpoints)})"
+        )
 
     bc250_found = False
     for ep in endpoints:
@@ -177,23 +198,28 @@ def check_remote_processes(target: str = DEFAULT_TARGET,
     ))
 
     # [c]odex 패턴을 사용하여 grep 자체 매칭 방지, sim 사용자의 프로세스만 조회
+    # || true를 제거하여 pgrep의 비정상 종료(rc>1, stderr 등) 및 SSH 접속 실패(rc=255 등)를 그대로 수집
     ssh_cmd = [
         "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
         f"{user}@{target_ip}",
-        "pgrep -u sim -l -f '[c]odex|[c]laude|[p]ython|[n]ode' || true"
+        f"pgrep -u {user} -l -f '[c]odex|[c]laude|[p]ython|[n]ode'"
     ]
 
     try:
         proc = run_cmd(ssh_cmd, timeout=12)
     except Exception as e:
-        # SSH 접속 자체가 안 되면 이미 꺼져 있거나 단절된 상태
-        return [f"원격 프로세스 검사 스킵: SSH 접속 실패 ({type(e).__name__}: {e}) — 이미 전원 차단 상태 가능성"]
+        raise PreflightCheckError(f"원격 프로세스 검사 실패 (SSH 접속/실행 예외): {e}") from e
 
-    if proc.returncode != 0 and proc.returncode != 1:
-        # SSH 접속 실패 (255 등)
-        return [f"원격 프로세스 검사: SSH 접속 응답 코드 {proc.returncode} — 이미 오프라인 상태 가능성"]
+    stderr = proc.stderr.strip() if isinstance(getattr(proc, "stderr", None), str) else ""
+    if proc.returncode not in (0, 1) or stderr:
+        raise PreflightCheckError(
+            f"원격 프로세스 검사 실패 (SSH/pgrep 비정상 응답 rc={proc.returncode}, stderr='{stderr}')"
+        )
 
-    out = (proc.stdout or "").strip()
+    if proc.returncode == 1:
+        return ["원격 프로세스 검사 완료: 잔여 작업 프로세스 0건"]
+
+    out = proc.stdout.strip() if isinstance(getattr(proc, "stdout", None), str) else ""
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
 
     # bash, sh, pgrep 등 셸 래퍼를 제외한 실제 작업 프로세스 선별
@@ -298,36 +324,60 @@ def execute_shutdown(target: Optional[str] = DEFAULT_TARGET,
 
 
 def verify_shutdown(target: Optional[str] = DEFAULT_TARGET,
-                    *,
                     user: str = DEFAULT_USER,
                     timeout: int = 30,
                     interval: float = 2.0,
-                    runner: Optional[Callable[..., Any]] = None) -> bool:
-    """SSH 연결 단절(rc != 0)을 감지하여 전원 차단을 확인한다."""
+                    runner: Optional[Callable[..., Any]] = None,
+                    ping_runner: Optional[Callable[..., Any]] = None,
+                    consecutive_failures: int = 2) -> bool:
+    """SSH 연결 및 Ping 단절을 감지하여 전원 차단을 확인한다.
+    SSH 1회 실패로 즉시 전원 차단으로 오판하지 않도록 ping 확인 및 연속 실패(consecutive_failures)를 복합 판정."""
     target_ip = validate_target(target)
     run_cmd = runner or (lambda cmd, **kwargs: subprocess.run(
         cmd, capture_output=True, text=True, timeout=kwargs.get("timeout", 3), check=False
+    ))
+    run_ping = ping_runner or runner or (lambda cmd, **kwargs: subprocess.run(
+        cmd, capture_output=True, text=True, timeout=kwargs.get("timeout", 2), check=False
     ))
 
     probe_cmd = [
         "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=2",
         f"{user}@{target_ip}", "true"
     ]
+    ping_cmd = ["ping", "-c", "1", "-W", "1", target_ip]
 
+    failures = 0
     deadline = time.time() + timeout
     while time.time() < deadline:
+        # 1. SSH probe
+        ssh_dead = False
         try:
-            proc = run_cmd(probe_cmd, timeout=3)
-            if proc.returncode != 0:
-                # 연결 실패 = 시스템 전원 종료 확인
-                return True
+            ssh_proc = run_cmd(probe_cmd, timeout=3)
+            if ssh_proc.returncode != 0:
+                ssh_dead = True
         except Exception:
-            # 타임아웃 또는 네트워크 에러 = 단절 확인
-            return True
+            ssh_dead = True
+
+        # 2. Ping probe
+        ping_dead = False
+        try:
+            ping_proc = run_ping(ping_cmd, timeout=2)
+            if ping_proc.returncode != 0:
+                ping_dead = True
+        except Exception:
+            ping_dead = True
+
+        if ssh_dead and ping_dead:
+            failures += 1
+            if failures >= consecutive_failures:
+                return True
+        else:
+            failures = 0
+
         time.sleep(interval)
 
     raise ShutdownError(
-        f"전원 종료 확인 실패: {timeout}초 후에도 {target_ip} SSH 연결이 유지되고 있습니다."
+        f"전원 종료 확인 실패: {timeout}초 후에도 {target_ip} 연결이 유지되고 있습니다."
     )
 
 
@@ -338,8 +388,11 @@ def shutdown(target: Optional[str] = DEFAULT_TARGET,
              force: bool = False,
              check_only: bool = False,
              verify_timeout: int = 30,
+             verify_interval: float = 2.0,
+             verify_consecutive_failures: int = 2,
              status_fetcher: Optional[Callable[[], Dict[str, Any]]] = None,
-             runner: Optional[Callable[..., Any]] = None) -> Dict[str, Any]:
+             runner: Optional[Callable[..., Any]] = None,
+             ping_runner: Optional[Callable[..., Any]] = None) -> Dict[str, Any]:
     """BC-250 안전 종료 종합 엔트리포인트."""
     target_ip = validate_target(target)
 
@@ -376,7 +429,10 @@ def shutdown(target: Optional[str] = DEFAULT_TARGET,
             target_ip,
             user=user,
             timeout=verify_timeout,
+            interval=verify_interval,
             runner=runner,
+            ping_runner=ping_runner,
+            consecutive_failures=verify_consecutive_failures,
         )
 
     return {

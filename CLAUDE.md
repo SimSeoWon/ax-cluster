@@ -319,6 +319,7 @@ isolated tree (nothing is lost) and a human decides — the pipeline does not re
 
 AXCluster의 통합 검사 정본 목록은 `tests/integration/checks.json`이다. 각 검사를 별도
 프로세스·임시 프로젝트 루트에서 실행하고 종료코드·수치·완료 신호를 함께 확인한다.
+신규 단위 검사는 `checks.json` 등록 여부를 `master/test_integration_coverage.py`로, 마스터 스킬은 `~/.claude/skills` 링크 일치를 `master-local --check`로 확인한다 (`#929`).
 
 ```bash
 .venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v

@@ -953,5 +953,15 @@
     "path": "master/test_scope_check.py",
     "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
     "timeout": 180
+  },
+  {
+    "path": "master/test_bc250_shutdown.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_integration_coverage.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
   }
 ]

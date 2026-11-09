@@ -117,6 +117,7 @@
   리뷰를 처리할 때 현재 소스·후속 구현 커밋·회귀 검사를 대조한다.
 - **AXCluster 통합 검사는 `tests/integration/checks.json`이 명시 목록이다.** 실행은
   `.venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v`.
+  신규 검사는 `checks.json` 등록 여부를 `master/test_integration_coverage.py`로, 마스터 스킬 링크는 `master-local --check`로 확인한다 (`#929`).
   색인기 단위 검사는 가짜 합성기를 주입하며 실제 브로커 성공에 기대지 않는다.
 - **Windows Codex 원격 실행**: `workspace-write` + `windows.sandbox="unelevated"` +
   `sandbox_workspace_write.network_access=true`, `/IT /RL LIMITED` 런처로 **로그인 사용자 세션**에서

@@ -440,13 +440,64 @@ def test_cli_wiring() -> None:
     check("--apply·--check 동시는 거절", rc == 2)
 
 
+def test_claude_skills_sync_and_check() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        skills_dir = root / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "ax-test-skill").mkdir()
+        (skills_dir / "ax-test-skill" / "SKILL.md").write_text("---\nname: ax-test-skill\n---\n")
+        claude_skills = root / "claude_skills"
+        claude_skills.mkdir()
+
+        p = ml.Paths(
+            home=root,
+            root=root / ".local" / "share" / ml.SERVER,
+            token_src=root / "dummy_token",
+            python=Path(sys.executable),
+            script=root / "dummy_script.py",
+            claude_json=root / ".claude.json",
+            codex_toml=root / "config.toml",
+            agy_json=root / "mcp_config.json",
+            legacy_root=root / "legacy",
+            skills_dir=skills_dir,
+            claude_skills=claude_skills,
+        )
+
+        # 1. 초기 상태: claude_skills에 링크 없음 -> 누락 확인
+        master_skills = sorted(d.name for d in skills_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists())
+        claude_existing = set(d.name for d in claude_skills.iterdir())
+        missing = [s for s in master_skills if s not in claude_existing]
+        check("Claude 스킬 누락 감지", missing == ["ax-test-skill"])
+
+        # 2. apply() 시 심볼릭 링크 자동 생성
+        p.token_src.write_text("dummy-token-for-test")
+        (p.root / ".ax").mkdir(parents=True, exist_ok=True)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            # 필요한 최소 파일 준비
+            p.claude_json.write_text("{}")
+            p.codex_toml.write_text("")
+            p.agy_json.write_text("{}")
+            ml.apply(p, "test-proj")
+
+        link = claude_skills / "ax-test-skill"
+        check("apply 후 Claude 스킬 심볼릭 링크 생성됨", link.is_symlink())
+        check("심볼릭 링크 대상 일치", link.resolve() == (skills_dir / "ax-test-skill").resolve())
+
+        # 3. 링크 존재 시 누락 없음 확인
+        claude_existing_after = set(d.name for d in claude_skills.iterdir())
+        missing_after = [s for s in master_skills if s not in claude_existing_after]
+        check("심볼릭 링크 생성 후 누락 0건", missing_after == [])
+
+
 def main() -> int:
     for fn in (test_entry_is_one_shape, test_redmine_tools, test_codex_text_replaces_hand_made,
                test_codex_existing_approvals_and_restrictions, test_claude_permissions,
                test_codex_text_refuses, test_review_r54_edges, test_codex_get_matches, test_agy_text,
                test_claude_user_get, test_config_same_shape_as_delivery,
                test_token_never_printed, test_apply_writes_root_and_files, test_agy_permissions,
-               test_cli_wiring):
+               test_cli_wiring, test_claude_skills_sync_and_check):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_master_local: {PASS}/{total} 통과")

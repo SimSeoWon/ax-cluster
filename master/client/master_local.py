@@ -106,12 +106,18 @@ class Paths:
     projects_token: Path | None = None  # `#920` agy ax-projects 헤더 토큰 — 비우면 그 단계를 건너뛴다(시험)
     agy_settings: Path | None = None    # agy 헤드리스 권한(`permissions.allow`) — 비우면 집 기준
     claude_settings: Path | None = None
+    skills_dir: Path | None = None       # `#929` master/skills 정본 디렉터리
+    claude_skills: Path | None = None    # `#929` ~/.claude/skills 링크 디렉터리
 
     def __post_init__(self) -> None:
         if self.agy_settings is None:
             self.agy_settings = self.home / ".gemini" / "antigravity-cli" / "settings.json"
         if self.claude_settings is None:
             self.claude_settings = self.home / ".claude" / "settings.json"
+        if self.skills_dir is None:
+            self.skills_dir = REPO / "master" / "skills"
+        if self.claude_skills is None:
+            self.claude_skills = self.home / ".claude" / "skills"
 
     @classmethod
     def default(cls, home: Path | None = None) -> "Paths":
@@ -817,6 +823,20 @@ def apply(p: Paths, project: str, *, facts=None) -> int:
         bad += 1
         print(f"{LOG} [실패] agy 권한: {ex}")
 
+    # ── Claude skills 링크 동기화 (`#929`) ──────────────────────
+    if p.skills_dir and p.skills_dir.is_dir() and p.claude_skills is not None:
+        try:
+            p.claude_skills.mkdir(parents=True, exist_ok=True)
+            for d in sorted(p.skills_dir.iterdir()):
+                if d.is_dir() and (d / "SKILL.md").exists():
+                    link = p.claude_skills / d.name
+                    if not link.exists() and not link.is_symlink():
+                        link.symlink_to(d.resolve())
+                        print(f"{LOG} claude skills: 심볼릭 링크 생성 → {link} -> {d.resolve()}")
+        except OSError as ex:
+            bad += 1
+            print(f"{LOG} [실패] claude skills: {ex}")
+
     if p.legacy_root.exists():
         print(f"{LOG} [주의] 손으로 만든 옛 루트 {p.legacy_root} 가 남아 있다 — 지우지 않았다(사람이 정한다)")
     print(f"{LOG} {'완료' if not bad else f'[실패] {bad}건'} — 다음: --check")
@@ -915,6 +935,13 @@ def check(p: Paths, project: str, *, smoke: bool = True) -> int:
     row("agy approvals", set(all_client_tools()).issubset(set(appr)), f"allow={list(appr)}")
     rc, out = _run(["agy", "mcp", "list"], timeout=30)
     row("agy mcp list", rc == 0 and SERVER in out, f"rc={rc}")
+    # Claude 스킬 링크 대조 (`#929`)
+    if p.skills_dir and p.skills_dir.is_dir():
+        master_skills = sorted(d.name for d in p.skills_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists())
+        claude_existing = set(d.name for d in p.claude_skills.iterdir()) if p.claude_skills and p.claude_skills.is_dir() else set()
+        missing = [s for s in master_skills if s not in claude_existing]
+        row("claude skills", not missing,
+            f"누락 {len(missing)}종: {', '.join(missing)}" if missing else f"스킬 {len(master_skills)}종 일치")
     if smoke:
         ok, note = stdio_smoke(e)
         row("stdio 실측(redmine_meta)", ok, note)
