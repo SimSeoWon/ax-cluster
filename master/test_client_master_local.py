@@ -43,6 +43,11 @@ def _paths(tmp: Path) -> ml.Paths:
                     agy_json=h / ".gemini/config/mcp_config.json", legacy_root=h / ".codex/ax-client")
 
 
+def _facts(p: ml.Paths) -> bundle.HostFacts:
+    return bundle.HostFacts(host=bundle.MASTER_HOST, user="sim", path=str(p.root), driven="local",
+                            role="requester", os="linux")
+
+
 HAND_MADE = '''model = "gpt-5"
 
 [projects."/home/sim"]
@@ -474,12 +479,22 @@ def test_claude_skills_sync_and_check() -> None:
         p.token_src.write_text("dummy-token-for-test")
         (p.root / ".ax").mkdir(parents=True, exist_ok=True)
         buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            # 필요한 최소 파일 준비
-            p.claude_json.write_text("{}")
-            p.codex_toml.write_text("")
-            p.agy_json.write_text("{}")
-            ml.apply(p, "test-proj")
+        # `#930` — 대역이 없으면 apply 가 진짜 `claude mcp` 로 실제 ~/.claude.json 을 고쳤다
+        calls, f = [], _facts(p)
+        keep = (ml._run, ml.shutil.which, ml.codex_get_live)
+        ml._run = lambda argv, timeout=60: (calls.append(argv) or (1, "stub"))
+        ml.shutil.which = lambda name: None
+        ml.codex_get_live = lambda name=ml.SERVER: {}
+        try:
+            with contextlib.redirect_stdout(buf):
+                # 필요한 최소 파일 준비
+                p.claude_json.write_text("{}")
+                p.codex_toml.write_text("")
+                p.agy_json.write_text("{}")
+                ml.apply(p, "test-proj", facts=f)
+        finally:
+            ml._run, ml.shutil.which, ml.codex_get_live = keep
+        check("#930 스킬 시험이 CLI 를 부르지 않는다", not calls, str(calls))
 
         link = claude_skills / "ax-test-skill"
         check("apply 후 Claude 스킬 심볼릭 링크 생성됨", link.is_symlink())
@@ -491,14 +506,88 @@ def test_claude_skills_sync_and_check() -> None:
         check("심볼릭 링크 생성 후 누락 0건", missing_after == [])
 
 
+def _apply_with_cli_present(p: ml.Paths) -> tuple:
+    """`claude` 가 PATH 에 있는 것처럼 apply 를 돌린다 → `(rc, 출력, CLI 호출 목록)`."""
+    p.token_src.write_text("T0KEN-930\n")
+    p.codex_toml.parent.mkdir(parents=True)
+    p.codex_toml.write_text("")
+    p.agy_json.parent.mkdir(parents=True)
+    p.agy_json.write_text("{}")
+    calls, buf = [], io.StringIO()
+    keep = (ml._run, ml.shutil.which, ml.codex_get_live)
+    ml._run = lambda argv, timeout=60: (calls.append(argv) or (1, "stub"))
+    ml.shutil.which = lambda name: "/opt/bin/" + name
+    ml.codex_get_live = lambda name=ml.SERVER: {}
+    try:
+        with contextlib.redirect_stdout(buf):
+            rc = ml.apply(p, "AXCluster", facts=_facts(p))
+    finally:
+        ml._run, ml.shutil.which, ml.codex_get_live = keep
+    return rc, buf.getvalue(), calls
+
+
+def test_apply_refuses_cli_outside_real_config() -> None:
+    """`#930` — CLI 는 `Paths` 를 모른다. 실제 설정이 아닌 경로면 CLI 를 부르지 않는다."""
+    keep_env = {k: os.environ.get(k) for k in ("HOME", "CLAUDE_CONFIG_DIR")}
+    try:
+        os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        with tempfile.TemporaryDirectory() as td:
+            rc, out, calls = _apply_with_cli_present(_paths(Path(td)))
+            check("#930 임시 경로면 CLI 호출 0건", not calls, str(calls))
+            check("#930 임시 경로면 실패 rc=1", rc == 1, out)
+            check("#930 거절 사유 출력", "CLI 호출을 거절한다" in out, out)
+        # 운영 경로(CLI 가 실제로 쓰는 파일)는 그대로 CLI 를 부른다 — 방어가 설치를 막지 않는다
+        with tempfile.TemporaryDirectory() as td:
+            p = _paths(Path(td))
+            p.home.mkdir()
+            os.environ["HOME"] = str(p.home)
+            _rc, out, calls = _apply_with_cli_present(p)
+            check("#930 운영 경로면 add-json 호출", any("add-json" in c for c in calls), out)
+    finally:
+        for k, v in keep_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def _live_config() -> dict:
+    """실제 집의 세 CLI `ax-client` 설정. 읽기만 하고, 값은 비교에만 쓴다(`#930`)."""
+    h = Path.home()
+    codex = ml._read(h / ".codex" / "config.toml")
+    block = codex.partition(ml.CODEX_BEGIN)[2].partition(ml.CODEX_END)[0]
+    return {"claude": ml.claude_user_get(ml._read(h / ".claude.json")),
+            "codex": block,
+            "agy": ml.agy_get(ml._read(h / ".gemini" / "config" / "mcp_config.json"))}
+
+
+def _changed(before: dict, after: dict) -> list:
+    """달라진 CLI 이름만 — 설정 값(경로·토큰)은 출력에 싣지 않는다."""
+    return sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
+
+
+def test_live_config_guard_detects_change() -> None:
+    """`#930` T3 — 감시가 실제로 변경을 잡는가. 값은 사유에 실리지 않는다."""
+    a = {"claude": {"args": ["/home/x"]}, "codex": "b", "agy": {}}
+    check("#930 같으면 변경 없음", _changed(a, dict(a)) == [])
+    check("#930 바뀌면 이름을 짚는다", _changed(a, {**a, "claude": {"args": ["/tmp/y"]}}) == ["claude"])
+
+
 def main() -> int:
-    for fn in (test_entry_is_one_shape, test_redmine_tools, test_codex_text_replaces_hand_made,
-               test_codex_existing_approvals_and_restrictions, test_claude_permissions,
-               test_codex_text_refuses, test_review_r54_edges, test_codex_get_matches, test_agy_text,
-               test_claude_user_get, test_config_same_shape_as_delivery,
-               test_token_never_printed, test_apply_writes_root_and_files, test_agy_permissions,
-               test_cli_wiring, test_claude_skills_sync_and_check):
-        fn()
+    before = _live_config()
+    try:
+        for fn in (test_entry_is_one_shape, test_redmine_tools, test_codex_text_replaces_hand_made,
+                   test_codex_existing_approvals_and_restrictions, test_claude_permissions,
+                   test_codex_text_refuses, test_review_r54_edges, test_codex_get_matches, test_agy_text,
+                   test_claude_user_get, test_config_same_shape_as_delivery,
+                   test_token_never_printed, test_apply_writes_root_and_files, test_agy_permissions,
+                   test_cli_wiring, test_claude_skills_sync_and_check,
+                   test_apply_refuses_cli_outside_real_config, test_live_config_guard_detects_change):
+            fn()
+    finally:
+        # `#930` — 임시 경로만 보는 검사는 통과해도 실제 설정이 망가진 것을 못 본다
+        changed = _changed(before, _live_config())
+        check("#930 실제 CLI 설정 불변", not changed, f"달라진 설정: {changed}")
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_client_master_local: {PASS}/{total} 통과")
     return 1 if FAIL else 0

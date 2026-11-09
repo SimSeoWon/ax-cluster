@@ -591,6 +591,15 @@ def _run(argv: list, timeout: int = 60) -> tuple:
         return 127, f"{type(e).__name__}: {e}"
 
 
+def _claude_cli_writes(p: Paths) -> bool:
+    """`claude mcp -s user` 가 실제로 쓰는 파일이 `p.claude_json` 인가 (`#930`).
+
+    [중요] CLI 는 `Paths` 를 모른다 — 임시 경로로 `apply` 를 불러도 실제 설정을 고친다.
+    """
+    base = os.environ.get("CLAUDE_CONFIG_DIR") or str(Path.home())
+    return p.claude_json.resolve() == (Path(base) / ".claude.json").resolve()
+
+
 def codex_get_live(name: str = SERVER) -> dict:
     """codex 가 **실제로 보는** 항목. rc 가 아니라 JSON 파싱 성공이 판정이다(`bundle.codex_mcp_get`)."""
     rc, out = _run(["codex", "mcp", "get", name, "--json"])
@@ -708,6 +717,10 @@ def apply(p: Paths, project: str, *, facts=None) -> int:
     # ── Claude Code (user 스코프) ─────────────────────────────
     if stdio_matches(claude_user_get(_read(p.claude_json)), e):
         print(f"{LOG} claude: user 스코프 {SERVER} 이미 같다 — 건드리지 않는다")
+    elif not _claude_cli_writes(p):
+        bad += 1
+        print(f"{LOG} [실패] claude: {p.claude_json} 는 claude CLI 가 쓰는 파일이 아니다 — "
+              f"CLI 호출을 거절한다(실제 사용자 설정 보호, #930)")
     elif not shutil.which("claude"):
         bad += 1
         print(f"{LOG} [실패] claude: 실행 파일이 PATH 에 없다")
