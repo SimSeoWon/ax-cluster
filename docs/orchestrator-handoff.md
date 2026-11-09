@@ -1,8 +1,8 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-09 Codex 체크포인트(#927 마감 `2570af6` · 전체 도구 승인 생성기·실제 설정 적용). 항목·진행의 정본은 Redmine이다.
-> 이전 상세는 Git `da43835`·`513d5d2`·`1c65dcf`·`2570af6`·리포트 159~162·각 일감 노트에 있다.
-> #927 코드 마감·잠금 해제 완료. 이 문서 커밋 직후 `issue_wrapup` 이 배달한다 — 결과의 정본은 #927 마감 노트.
+> 2026-11-09 Antigravity 체크포인트(#702 마감 `c1b2537` · BC-250 전용 안전 전원 종료 스킬 및 모듈 추가). 항목·진행의 정본은 Redmine이다.
+> 이전 상세는 Git `da43835`·`513d5d2`·`1c65dcf`·`2570af6`·`c1b2537`·리포트 159~163·각 일감 노트에 있다.
+> #702 코드 마감·잠금 해제 완료. 이 문서 커밋 직후 워커 배달·대조를 수행한다.
 
 ## 🔴 오늘 바뀐 규칙 (사용자 결정 2026-11-08 ~ 11-09)
 
@@ -20,54 +20,46 @@
   Antigravity 기존 전체 allow 보존. 스킬은 사용하는 도구 권한을 따른다. Codex sandbox·OS 권한과 작업 범위·사람 게이트는 별도다.
 - 🔴 **이 문서의 절 제목 「바로 다음 작업」은 바꾸지 않는다** — `test_handoff_size` 가 `^#{2,3}\s*바로 다음 작업` 으로 판정.
 
-## #928 마감 (Antigravity 툴 권한 allowlist 일괄 등록)
+## #702 마감 (BC-250 전용 안전 전원 종료 스킬 및 모듈 추가)
 
-- **settings.json allowlist 사전 완비**: `ax-projects` 45종, `ax-client` 64종 전수 도구 및 필수 CLI 접두사 20종 등 92개 항목을 일괄 등록(누적 241개)하여 도구 호출 시 승인 팝업 반복 원인 해소.
-- **master-local 생성기 정비**: `AGY_BASE_COMMANDS`를 신설하고 `check()`의 agy 권한 대조를 `issubset` 검사로 완화하여 확장된 화이트리스트가 대조 실패를 유발하지 않도록 수정(`test_client_master_local` 88/88 통과).
-- **리포트 160 정정**: 가상 설정(`toolExecutionPolicy`) 및 팝업 0건 오류를 실측 사실(수동 승인 반복 및 #928 해결)로 정정하고 리포트 161 작성.
-- **검증 및 마감**: 공식 통합 검사 **191/191 전수 통과**(`Ran 191 tests in 183.246s, OK`), 커밋 `1c65dcf` → `issue_finish_tool(928, confirm=True)` 완료.
+- **.43 단독 대상 고정 및 비접촉 계약**: `.2`(Windows/UE5), `.33`(사용자 작업 PC), `.57`(마스터 sim-desktop) 접근 시 `TargetRefusalError`(rc=3) 즉시 거절 보장 (force 불문).
+- **사전 점검 3종 자동화**: `check_queue`(활성 태스크 진행 중 차단), `check_broker_inflight`(브로커 inflight>0 차단), `check_remote_processes`(SSH pgrep 작업 프로세스 검출 차단, 오프라인 시 통과).
+- **전원 종료 및 단절 확인**: NOPASSWD `sudo -n systemctl poweroff` 실행 및 SSH probe 단절(rc!=0) 감지 루프.
+- **스킬 및 CLI 완비**: `ax-bc250-shutdown` 스킬(`SKILL.md`), CLI 래퍼(`scripts/shutdown.py`), `~/.agents/skills/ax-bc250-shutdown` 심볼릭 링크 연결.
+- **검증 및 마감**: 계약/단위 테스트 15/15 통과, 공식 통합 검사 **191/191 전수 통과**(`Ran 191 tests in 192.852s, OK`), 커밋 `c1b2537` → `issue_finish` 완료.
 
 ## 오늘 완료한 일감 (2026-11-08 ~ 11-09)
 
 | 일감 | 결과 | 커밋 |
 |---|---|---|
-| #920 | 지휘자 셋 — 작성 계열 신호 · 리뷰 큐 분기 · Argon 폴백 · Antigravity `ax-projects` 연결 — 리포트 159 | `da43835` |
-| #926 | Antigravity 지휘 통합 실증 (ax-projects 시작·Argon 위임·Codex 리뷰) — 리포트 160 | `513d5d2` |
-| #928 | Antigravity 툴 권한 allowlist 일괄 등록 및 master-local 정비 — 리포트 161 | `1c65dcf` |
+| #702 | BC-250 안전 종료 스킬 — .43 대상 고정·사전 점검 3종·poweroff·단절 확인 — 리포트 163 | `c1b2537` |
 | #927 | 전체 도구 승인 정책·생성기 일치, 기존 승인 보존·실제 설정 적용 — 리포트 162 | `2570af6` |
+| #928 | Antigravity 툴 권한 allowlist 일괄 등록 및 master-local 정비 — 리포트 161 | `1c65dcf` |
+| #926 | Antigravity 지휘 통합 실증 (ax-projects 시작·Argon 위임·Codex 리뷰) — 리포트 160 | `513d5d2` |
+| #920 | 지휘자 셋 — 작성 계열 신호 · 리뷰 큐 분기 · Argon 폴백 · Antigravity `ax-projects` 연결 — 리포트 159 | `da43835` |
 | #898 | 요청자 관리 도구 8101 대행 — 리포트 148 | `54b5632` |
 | #921~#925 | 마감 일원화·wrapup 방어·담당 기록·실증 정비 — 리포트 154~158 | `aea3f94` 외 |
 | #820·#882 | 범위 밖 감지 게이트·범위 리뷰 재시도 노트 — 리포트 152·153 | `7d35840` 외 |
 
 - 등록: **#908**·**#911**·**#916**·**#919** 아이디어.
 
-## #927 검증·실제 적용
-
-- 로컬 서브 에이전트 구현·독립 읽기 검토. 회귀109/109, 정적 차단0(비차단 타입노트25), 공식 통합 **191/191**, `Ran 191 tests in 203.398s · OK`.
-- `issue_finish(confirm=True)`: `done=[push,ff,worktree_remove,delete_branch,register,link,release,close,redmine]`, `closed=true`, `why=""`.
-- main 반영 뒤 운영 경로에서 `master-local` 계획→`--apply`→`--check` **rc0 · 12/12**. Codex ax-client64개·두 AX MCP 기본approve, Claude 전체허용 적용.
-- Antigravity settings는 쓰지 않았고 전후 SHA256 `f85c631f36256e8368993d6787b02a859ed911a15c33e08bccf905efd0796a3a` 동일.
-- 백업 접미사 `bak-master-local-20261109-005651`(Claude settings·Codex config). 실제 MCP redmine_meta 조회 성공. 새 대화 세션의 팝업 여부는 별도 확인 대상.
-- wrapup 1차: 세 상주 최신·재기동 없음, 인수인계서 대기 rc2. 이 문서 커밋 뒤 같은 명령을 재실행해 배달·check한다.
-
 ## 실제 Git·경로 상태
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`2570af6`(+ 이 문서 커밋), 일감 worktree 제거 완료 |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`c1b2537`(+ 이 문서 커밋), 일감 worktree 제거 완료 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 |
-| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | 이 문서 커밋을 배달 — 결과는 #927 마감 노트 |
+| AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | 배달 및 check 대상 |
 
-- 상주 재기동: 신선도 판정 최신(재기동 불필요).
-- `master-local --apply` 전체 적용은 #927로 승인 손실 없이 실증했다. **운영 경로에서 실행**한다(worktree에서 하면 제거될 경로가 영구 등록될 수 있다).
+- 상주 재기동: 신선도 판정 최신(`stale=False`, 재기동 불필요).
 
 ## 유지할 운영 상태
 
 - 마스터 담당 기록 **antigravity**(실제 인수 11-09 00:07, 사용자 지시), 워커 전역 codex(state, 10-18).
 - ax-broker active · ax-projects active · ax-task-queue active, ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
 - 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음.
-- #927·#928 포함 표의 일감 코드 마감 완료. 중복 마감·산출물 재생성 금지.
+- #702 포함 표의 일감 코드 마감 완료. 중복 마감·산출물 재생성 금지.
 
 ## 바로 다음 작업
 
