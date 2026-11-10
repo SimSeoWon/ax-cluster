@@ -1,7 +1,7 @@
 """일감 흐름의 인프라 쪽(`#884` T6) — `.33` 요청자가 8101 로 부르는 `infra_*` 계약 테스트.
 
-[중요] git 이 없다 — 요청자가 보낸 값(브랜치·리비전·해시)만으로 플랜·잠금·마감 추적·노트가 마스터 로컬
-흐름과 같은 규칙으로 도는가. 잠금·추적은 **임시 트윈 루트**(lock_root)에, Redmine 은 대역(getter/noter)이다.
+[중요] 대부분은 git 이 없다 — 요청자가 보낸 값(브랜치·리비전·해시)만으로 플랜·잠금·마감 추적·노트가 마스터 로컬
+흐름과 같은 규칙으로 도는가. `t_verify`(`#933`)만 **임시 git 저장소**를 실제로 만들어 마감 범위 검증을 본다. 잠금·추적은 **임시 트윈 루트**(lock_root)에, Redmine 은 대역(getter/noter)이다.
 실 Redmine·실 트윈을 두드리지 않는다.
 
     .venv/bin/python master/test_issue_infra.py
@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -188,6 +189,114 @@ def t_finish(tmp):
           and r.get("holder") == 8, str(r)[:200])
 
 
+def _mkrepo(root: Path):
+    """임시 저장소 — main 에 c1·c2·c3, main 밖 가지에 side. `(git 실행기, c1, c2, c3, side)`."""
+    root.mkdir(parents=True)
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null",
+           "PATH": __import__("os").environ.get("PATH", "")}
+
+    def g(*a):
+        return subprocess.run(["git", "-C", str(root), *a], capture_output=True, text=True, env=env,
+                              check=True).stdout.strip()
+    g("init", "-q", "-b", "main")
+    out = []
+    for name in ("첫 커밋", "둘째 커밋", "셋째 커밋"):
+        (root / "f.txt").write_text(name, encoding="utf-8")
+        g("add", "f.txt")
+        g("commit", "-q", "-m", name)
+        out.append(g("rev-parse", "HEAD"))
+    g("checkout", "-q", "-b", "side", out[0])
+    (root / "s.txt").write_text("side", encoding="utf-8")
+    g("add", "s.txt")
+    g("commit", "-q", "-m", "가지 커밋")
+    side = g("rev-parse", "HEAD")
+    g("checkout", "-q", "main")
+    gd = root / ".git"
+    return (lambda *a: INF._run_git(gd, *a)), out[0], out[1], out[2], side
+
+
+def t_verify(tmp):
+    """`#933` — 마감 범위를 git 에서 확인·도출한다. 실제 임시 저장소."""
+    git, c1, c2, c3, side = _mkrepo(tmp / "repo")
+    got = INF.verify_span(git, base=c1, end=c3)
+    check("verify_span — 해시·제목을 git 에서 구한다(오래된 것부터)", got["hashes"] == [c2, c3]
+          and got["subjects"] == ["둘째 커밋", "셋째 커밋"], str(got))
+    check("verify_span — 보고 해시가 같으면 통과", INF.verify_span(git, base=c1, end=c3, hashes=[c2, c3])["hashes"] == [c2, c3])
+
+    def kind(**kw):
+        try:
+            INF.verify_span(kw.pop("g", git), **kw)
+        except INF.SpanError as x:
+            return x.kind, x.why
+        return "", ""
+    fake = c3[:7] + "f5ad081c7847c50a2718104d41fa9a5e8"        # `#929` — 앞 7자만 실제인 해시
+    k, why = kind(base=c1, end=fake)
+    check("🔴 #929 재현 — 앞 7자만 같은 없는 해시 → mismatch", k == "mismatch" and "없는 커밋" in why, why)
+    check("없는 base → mismatch", kind(base=R1, end=c3)[0] == "mismatch")
+    check("보고 해시 목록이 다르다 → mismatch", kind(base=c1, end=c3, hashes=[c3])[0] == "mismatch")
+    check("보고 해시 순서가 다르다 → mismatch", kind(base=c1, end=c3, hashes=[c3, c2])[0] == "mismatch")
+    check("base 가 end 의 조상이 아니다 → mismatch", kind(base=c3, end=c1)[0] == "mismatch")
+    k, why = kind(base=c1, end=side)
+    check("end 가 main 밖 → mismatch(push 전)", k == "mismatch" and "도달 가능하지 않다" in why, why)
+    check("base == end → mismatch(마칠 것 없음)", kind(base=c3, end=c3)[0] == "mismatch")
+    nogit = lambda *a: INF._run_git(tmp / "없는저장소", *a)                     # noqa: E731
+    check("저장소를 못 읽는다 → lookup", kind(g=nogit, base=c1, end=c3)[0] == "lookup")
+
+    lk = tmp / "twin"
+    iss = Issue(SPEC + PLAN)
+    INF.infra_start(P, 7, branch="issue/7", start_rev=c1, getter=iss.get, noter=iss.note, lock_root=lk)
+    n0 = len(iss.notes)
+    for label, kw, vk in (
+            ("없는 end", dict(base=c1, end=fake, hashes=[fake]), "mismatch"),
+            ("해시 목록 불일치", dict(base=c1, end=c3, hashes=[c3]), "mismatch"),
+            ("main 밖 end", dict(base=c1, end=side), "mismatch"),
+            ("조회 실패", dict(base=c1, end=c3, git=nogit), "lookup")):
+        r = INF.infra_finish(P, 7, noter=iss.note, lock_root=lk, **{"git": git, **kw})
+        check(f"finish {label} → 거절(verify · {vk})", not r["ok"] and r["step"] == "verify"
+              and r.get("verify") == vk, str(r)[:300])
+    check("🔴 verify 거절은 노트·추적·잠금 변화 0", len(iss.notes) == n0 and not IT.state_path(lk).exists()
+          and (IL.current(lk) or {}).get("issue_id") == 7)
+    r = INF.infra_finish(P, 7, base=c1, end=c3, git=nogit, noter=iss.note, lock_root=lk)
+    check("조회 실패 사유에 「등록하지 않는다」", "등록하지 않는다" in r.get("why", ""), r.get("why", ""))
+
+    r = INF.infra_finish(P, 7, end=c3, check_only=True, git=git, noter=iss.note, lock_root=lk)
+    check("check_only · base 생략 → 잠금의 시작 리비전 · git 도출 · 쓰기 0", r["ok"] and r["check_only"]
+          and r["base"] == c1 and [c[:40] for c in r["commits"]] == [c2, c3] and r["verified"]
+          and len(iss.notes) == n0 and not IT.state_path(lk).exists()
+          and (IL.current(lk) or {}).get("issue_id") == 7, str(r)[:400])
+    r = INF.infra_finish(P, 7, end=c3, git=git, noter=iss.note, lock_root=lk)
+    note = iss.notes[-1][0]
+    rnd = IT.current(lk, 7) or {}
+    check("end 만으로 마감 → 등록 · 해시는 git 것", r["ok"] and r["registered"] and r["base"] == c1
+          and [h["sha"] for h in rnd.get("hashes", [])] == [c2, c3] and IL.current(lk) is None, str(r)[:400])
+    check("노트의 커밋 제목은 git 것", "둘째 커밋" in note and "셋째 커밋" in note
+          and note.startswith(f"리뷰 요청: `{c1}..{c3}` (커밋 2건)"), note)
+    check("로그 — 검증 대상·결과가 남는다", any("verify" in x and "git 에서 확인한다" in x for x in r["log"])
+          and any("verify" in x and "git 에서 구함" in x for x in r["log"]), str(r["log"]))
+
+    lk2 = tmp / "twin2"
+    r = INF.infra_finish(P, 9, end=c3, git=git, noter=iss.note, lock_root=lk2)
+    check("base 생략인데 잠금이 없다 → 거절(span)", not r["ok"] and r["step"] == "span"
+          and "시작 리비전이 없다" in r["why"], str(r)[:300])
+    r = INF.infra_finish(P, 9, base=c1, end=c3, check_only=True, git=git, noter=iss.note, lock_root=lk2)
+    check("check_only · 잠금 없음 · base 명시 → 도출만", r["ok"] and r["check_only"] and not r["lock_held"]
+          and [c[:40] for c in r["commits"]] == [c2, c3] and not IT.state_path(lk2).exists(), str(r)[:300])
+    r = INF.infra_finish(P, 7, base=R1, end=R3, hashes=[R2, R3], noter=iss.note, lock_root=tmp / "twin3")
+    check("대역 주입 + git 없음 → 검증 건너뜀을 로그에 남긴다",
+          any("git 검증 미사용" in x for x in r["log"]), str(r["log"]))
+
+
+def t_span_source():
+    """운영 경로의 저장소 해석 — 못 풀면 lookup 으로 거절(fail-closed)."""
+    try:
+        INF.span_source("등록되지-않은-프로젝트-933")
+        ok = False
+    except INF.SpanError as x:
+        ok = x.kind == "lookup"
+    check("span_source — 미등록 프로젝트 → SpanError(lookup)", ok)
+
+
 def t_cancel(tmp):
     lk = tmp / "twin"
     iss = Issue(SPEC + PLAN)
@@ -246,8 +355,9 @@ def t_imperative_free():
 
 
 def main() -> int:
-    for fn in (t_project_and_input, t_start, t_pause_resume, t_finish, t_cancel):
+    for fn in (t_project_and_input, t_start, t_pause_resume, t_finish, t_verify, t_cancel):
         run(fn)
+    t_span_source()
     t_shared_with_local()
     t_imperative_free()
     print(f"{'OK' if not FAIL else 'FAIL'} test_issue_infra: {PASS}/{PASS + FAIL} 통과")

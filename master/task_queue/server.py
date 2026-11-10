@@ -77,10 +77,12 @@ class IssueStartReq(_IssueReq):
 
 
 class IssueFinishReq(_IssueReq):
-    base: str
+    # `#933` — end 만 필수. base 생략 = 잠금의 시작 리비전, hashes 생략 = 서버가 git 에서 구한다.
     end: str
-    hashes: list[str]
+    base: str = ""
+    hashes: list[str] = []
     subjects: list[str] = []
+    check_only: bool = False
 
 
 class IssuePauseReq(_IssueReq):
@@ -787,7 +789,8 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         """요청자 일감 종료 기록 — 마감 추적 등록 · 리뷰 연결 · 잠금 해제 · 「리뷰 요청」 노트."""
         from .. import issue_infra as INF
         return _issue_call("finish", req, lambda p: INF.infra_finish(
-            p, req.issue_id, base=req.base, end=req.end, hashes=req.hashes, subjects=req.subjects))
+            p, req.issue_id, base=req.base, end=req.end, hashes=req.hashes, subjects=req.subjects,
+            check_only=req.check_only))
 
     @app.post("/api/v1/issue/pause")
     def issue_pause_ep(req: IssuePauseReq):

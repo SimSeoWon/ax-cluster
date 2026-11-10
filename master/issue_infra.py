@@ -1,4 +1,4 @@
-"""일감 흐름의 인프라 쪽 — 플랜 판정·잠금·마감 추적·Redmine 노트 (`#884` T6). **git 은 만지지 않는다.**
+"""일감 흐름의 인프라 쪽 — 플랜 판정·잠금·마감 추적·Redmine 노트 (`#884` T6). **git 은 고치지 않는다.**
 
 같은 규칙을 두 표면이 쓴다 (사용자 결정 2026-11-04 — 마스터 세션과 `.33` 세션이 똑같이 동작한다):
 
@@ -6,11 +6,13 @@
                   git(브랜치·push·삭제)은 `issue_flow` 가 하고, 나머지는 이 모듈 함수를 부른다
     `.33` 요청자  `ax-client` → 8101 `POST /api/v1/issue/{start,finish,pause,cancel}` → `infra_*`
                   git 은 요청자가 자기 worktree 에서 하고(`ax-issue` 스킬), 인프라는 기록만 한다
+                  (마감 범위만 Gitea 저장소에서 **읽어** 검증한다 — `#933`)
 
     infra_start(project, N, branch=, start_rev=, check_only=False)
         플랜 판정 → 잠금 확인 → (check_only 면 여기서 끝 · 쓰기 0)
         → 이미 활성이면 기록 없음 · 보류면 재개(잠금 → 「재개」 노트) · 아니면 시작 노트 → 잠금
-    infra_finish(project, N, base=, end=, hashes=, subjects=)
+    infra_finish(project, N, end=, base=, hashes=, subjects=, check_only=False)
+        범위 검증·도출(`verify_span` — Gitea 저장소 읽기, `#933`) → (check_only 면 여기서 끝 · 쓰기 0) →
         잠금 보유 확인 → `issue_track.register` → `issue_link.link_round` →
         잠금 해제(op=finish, **등록 성공 시만**) → 「리뷰 요청」 노트(로컬 finish 와 같은 틀)
     infra_pause(project, N, end=)          잠금 보류 → 「보류」 노트
@@ -20,9 +22,15 @@
 흐름 로그(`issue_flow.jsonl`)가 `master.context_search.paths.resolve(project).root` 아래에 있다.
 원격 호출은 프로젝트를 반드시 싣는다(서버가 마운트 관문을 먼저 건다). 마스터 로컬 흐름의 기본은
 종전대로 AXCluster 다.
-[중요] **`base..end`·해시 목록·push 여부는 요청자의 보고다** — 인프라는 형식(40자리 해시)과
-일관성(`end` 가 마지막 해시 · `base` 가 목록 밖)만 검사하고, 받은 값을 노트·추적 기록에 그대로
-남긴다. 그 커밋이 실제로 `main` 에 있는지는 색인기·리뷰 큐가 미러에서 다시 본다.
+🔴 [중요] **마감 범위는 보고를 믿지 않고 git 에서 확인한다** (`#933`, 사용자 결정 2026-11-11).
+`#929` 에서 에이전트가 실재하지 않는 40자리 해시를 `end`·`hashes` 로 넘겼고, 형식만 보던 이 모듈이
+그대로 등록해 리뷰가 하루 넘게 멈췄다. 지금은 `infra_finish` 가 등록 전에 프로젝트의 Gitea 저장소
+(`config.yaml` `track.bare_path` — 같은 기계, 읽기 전용)에서 ① `end`·`base` 가 실제 커밋인지 ② `base` 가
+`end` 의 조상인지 ③ `end` 가 `track.branch`(main)에서 도달 가능한지를 보고, ④ `base..end` 해시·제목을
+**git 에서 직접 구한다.** 보고된 `hashes` 가 있으면 구한 것과 대조해 다르면 거절한다. `base` 를 안 주면
+잠금의 시작 리비전을 쓴다. **조회 자체가 실패하면 거절한다**(fail-closed — 잠금·일감은 그대로 남는다).
+[주의] 미러(`<트윈>/repo`)가 아니라 Gitea 저장소를 본다 — 미러는 push 직후 색인기 fetch 전일 수 있다.
+[주의] 대역 주입 실행(테스트)이 `git=` 를 안 주면 검증을 건너뛰고 종전의 형식·일관성 검사만 한다.
 [주의] 이 모듈의 노트 문장은 사실만 싣는다 — 자동 경로 글에 명령형을 쓰지 않는다(`CLAUDE.md`).
 """
 from __future__ import annotations
@@ -485,12 +493,99 @@ def finish_record(issue_id, *, project: str, track_root_fn, lroot, lock_held: bo
             "closed": closed, "redmine": res}
 
 
-def infra_finish(project: str, issue_id, *, base: str, end: str, hashes, subjects=None, noter=None,
+# ── 마감 범위 검증 (`#933`) ────────────────────────────────────────────────────
+
+GIT_TIMEOUT = 60
+SPAN_MAX = 2000             # 한 마감 범위의 커밋 수 상한 — 그보다 크면 base 가 틀린 것으로 본다
+
+
+class SpanError(Exception):
+    """마감 범위가 git 과 맞지 않거나(`kind="mismatch"`) 조회 자체가 실패했다(`kind="lookup"`)."""
+
+    def __init__(self, kind: str, why: str):
+        super().__init__(why)
+        self.kind, self.why = kind, why
+
+
+def _run_git(git_dir, *args) -> tuple[int, str]:
+    import subprocess
+    try:
+        cp = subprocess.run(["git", f"--git-dir={git_dir}", *args], capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT)
+    except (OSError, subprocess.SubprocessError) as e:
+        return 255, f"{type(e).__name__}: {e}"
+    return cp.returncode, (cp.stdout if cp.returncode == 0 else (cp.stderr or cp.stdout)).strip()
+
+
+def span_source(project: str) -> tuple[object, str, str]:
+    """`(git 실행기, 저장소 경로, 브랜치)` — 프로젝트의 Gitea 저장소(`track.bare_path`). 못 풀면 `SpanError(lookup)`."""
+    try:
+        from master.context_search.paths import resolve
+        from master.projects.config import ProjectConfig
+        cfg = ProjectConfig.load(resolve(project).config)
+        bare, branch = str(cfg.bare_path or "").strip(), str(getattr(cfg, "branch", "") or "main").strip()
+    except Exception as e:                              # noqa: BLE001 — 설정·경로 해석
+        raise SpanError("lookup", f"프로젝트 {project!r} 의 저장소 설정을 못 읽었다 — {type(e).__name__}: {e}")
+    if not bare:
+        raise SpanError("lookup", f"프로젝트 {project!r} 에 `track.bare_path` 가 없다")
+    return (lambda *a: _run_git(bare, *a)), bare, branch
+
+
+def verify_span(git, *, base: str, end: str, hashes=None, branch: str = "main") -> dict:
+    """`base..end` 를 git 에서 확인하고 해시·제목을 구한다. 맞지 않으면 `SpanError`.
+
+    `git(*args) -> (rc, 출력)` 은 대상 저장소에 묶인 읽기 실행기다. 돌려주는 값:
+    `{"hashes": [...], "subjects": [...]}`(오래된 것부터). `hashes` 를 주면 구한 목록과 대조한다.
+    """
+    rc, out = git("rev-parse", "--git-dir")
+    if rc != 0:
+        raise SpanError("lookup", f"저장소를 못 읽었다(rc={rc}) — {out[:200]}")
+    for name, v in (("end", end), ("base", base)):
+        rc, out = git("cat-file", "-t", v)
+        if rc != 0 or out.strip() != "commit":
+            raise SpanError("mismatch", f"{name} {v} 는 저장소에 없는 커밋이다 — push 됐는지, 해시를 git 에서 "
+                                        f"구했는지 확인한다")
+    rc, out = git("merge-base", "--is-ancestor", base, end)
+    if rc == 1:
+        raise SpanError("mismatch", f"base {base[:12]} 가 end {end[:12]} 의 조상이 아니다 — 범위가 성립하지 않는다")
+    if rc != 0:
+        raise SpanError("lookup", f"조상 판정 실패(rc={rc}) — {out[:200]}")
+    rc, out = git("merge-base", "--is-ancestor", end, f"refs/heads/{branch}")
+    if rc == 1:
+        raise SpanError("mismatch", f"end {end[:12]} 가 `{branch}` 에서 도달 가능하지 않다 — "
+                                    f"`{branch}` 에 push 한 뒤에 마감한다")
+    if rc != 0:
+        raise SpanError("lookup", f"`{branch}` 도달 판정 실패(rc={rc}) — {out[:200]}")
+    rc, out = git("log", "--reverse", f"--max-count={SPAN_MAX + 1}", "--format=%H%x09%s", f"{base}..{end}")
+    if rc != 0:
+        raise SpanError("lookup", f"범위 조회 실패(rc={rc}) — {out[:200]}")
+    rows = [ln.split("\t", 1) for ln in out.splitlines() if ln.strip()]
+    got = [r[0].strip().lower() for r in rows]
+    subs = [(r[1] if len(r) > 1 else "").strip() for r in rows]
+    if not got:
+        raise SpanError("mismatch", f"범위 {base[:12]}..{end[:12]} 에 커밋이 없다 — 마칠 것이 없다")
+    if len(got) > SPAN_MAX:
+        raise SpanError("mismatch", f"범위 {base[:12]}..{end[:12]} 의 커밋이 {SPAN_MAX}개를 넘는다 — base 를 확인한다")
+    if any(not _SHA.match(h) for h in got):
+        raise SpanError("lookup", f"범위 조회 출력이 해시가 아니다 — {out[:120]!r}")
+    want = list(hashes or [])
+    if want and want != got:
+        i = next((k for k, (a, c) in enumerate(zip(want, got)) if a != c), min(len(want), len(got)))
+        a = want[i][:12] if i < len(want) else "(없음)"
+        c = got[i][:12] if i < len(got) else "(없음)"
+        raise SpanError("mismatch", f"보고된 해시 목록이 git 과 다르다 — 보고 {len(want)}개 · git {len(got)}개 · "
+                                    f"{i + 1}번째 보고 {a} / git {c}")
+    return {"hashes": got, "subjects": subs}
+
+
+def infra_finish(project: str, issue_id, *, end: str, base: str = "", hashes=None, subjects=None,
+                 check_only: bool = False, git=None, branch_ref: str = "", noter=None,
                  register=None, link=None, lock_root=None, events_path=None, logf=None) -> dict:
     """요청자의 일감 종료 기록 — 요청자가 `push origin issue/<N>:main` 을 마친 **뒤에** 부른다.
 
-    `hashes` 는 `base..end` 의 커밋 해시(오래된 것부터), `subjects` 는 같은 순서의 제목(선택).
-    인프라는 git 을 보지 않는다 — 형식·일관성만 검사하고 보고를 기록한다(모듈 머리말).
+    `end` 만 필수다. `base` 를 비우면 잠금의 시작 리비전, `hashes`·`subjects` 를 비우면 git 에서 구한 값을
+    쓴다(`#933` — 모듈 머리말). 보고된 `hashes` 는 git 과 대조만 한다. `check_only` 는 검증·도출까지만 하고
+    잠금·추적·Redmine 을 바꾸지 않는다. `git` 은 검증용 읽기 실행기(시험 주입) — 운영은 `span_source` 다.
     """
     injected = any(x is not None for x in (noter, register, link))
     log, lroot, refused = _remote_setup("finish", project, issue_id, noter=noter, injected=injected,
@@ -500,29 +595,69 @@ def infra_finish(project: str, issue_id, *, base: str, end: str, hashes, subject
     n = int(issue_id)
     b, e = _sha(base), _sha(end)
     hs = [_sha(h) for h in (hashes or [])] if not isinstance(hashes, str) else []
-    for name, v in (("base", b), ("end", e)):
-        if not _SHA.match(v):
-            return refuse(log, "span", f"{name} 가 40자리 해시가 아니다 — {v!r}", project=project)
-    if not hs:
+    if not _SHA.match(e):
+        return refuse(log, "span", f"end 가 40자리 해시가 아니다 — {e!r}", project=project)
+    if b and not _SHA.match(b):
+        return refuse(log, "span", f"base 가 40자리 해시가 아니다 — {b!r}", project=project)
+    # 🔴 `#933` — 검증 실행기. 운영은 Gitea 저장소, 대역 주입 실행이 `git` 을 안 주면 검증 없음(종전 검사만).
+    src = ""
+    if git is None and not injected:
+        try:
+            git, src, cfg_branch = span_source(project)
+            branch_ref = branch_ref or cfg_branch
+        except SpanError as x:
+            return refuse(log, "verify", f"git 조회 실패 — {x.why}. 확인하지 못한 범위는 등록하지 않는다",
+                          project=project, verify=x.kind)
+    if git is None and not hs:
         return refuse(log, "span", "해시 목록이 비었다 — base..end 의 커밋 해시를 순서대로 싣는다", project=project)
     badh = [h for h in hs if not _SHA.match(h)]
     if badh:
         return refuse(log, "span", f"40자리가 아닌 해시 {len(badh)}개 — {badh[0]!r}", project=project)
-    if hs[-1] != e:
+    if hs and hs[-1] != e:
         return refuse(log, "span", f"마지막 해시 {hs[-1][:12]} 가 end {e[:12]} 와 다르다", project=project)
-    if b in hs:
+    if b and b in hs:
         return refuse(log, "span", f"base {b[:12]} 가 해시 목록 안에 있다 — 범위는 base 를 빼고 센다",
                       project=project)
     subs = list(subjects or [])
-    if subs and len(subs) != len(hs):
+    if subs and hs and len(subs) != len(hs):
         return refuse(log, "span", f"subjects {len(subs)}개가 해시 {len(hs)}개와 다르다", project=project)
-    commits = [f"{h} {str(subs[i]).splitlines()[0] if subs and str(subs[i]).strip() else ''}".rstrip()
-               if subs else h for i, h in enumerate(hs)]
     bad, held = finish_lock_check(lroot, n, log=log)
     if bad:
         return {**bad, "project": project}
+    if not b:                                             # base 생략 — 잠금의 시작 리비전
+        try:
+            active = None if lroot is NO_LOCK else lock_state(lroot, n)[0]
+        except Exception as x:                            # noqa: BLE001
+            return refuse(log, "lock", f"잠금 상태를 못 읽었다 — {type(x).__name__}: {x}", project=project)
+        b = _sha((active or {}).get("start_rev")) if (active or {}).get("issue_id") == n else ""
+        if not _SHA.match(b):
+            return refuse(log, "span", f"base 가 없고 #{n} 잠금에도 시작 리비전이 없다 — base 를 싣는다",
+                          project=project)
+        log("span", f"base 생략 — 잠금의 시작 리비전 {b[:12]} 을 쓴다")
+    if git is not None:
+        log("verify", f"범위 {b[:12]}..{e[:12]} 를 git 에서 확인한다 — {src or '주입 실행기'}"
+                      f" · 브랜치 {branch_ref or 'main'} · 보고 해시 {len(hs)}개")
+        try:
+            got = verify_span(git, base=b, end=e, hashes=hs, branch=branch_ref or "main")
+        except SpanError as x:
+            head = "git 조회 실패" if x.kind == "lookup" else "범위가 git 과 다르다"
+            tail = ". 확인하지 못한 범위는 등록하지 않는다" if x.kind == "lookup" else ""
+            return refuse(log, "verify", f"{head} — {x.why}{tail}", project=project, verify=x.kind)
+        derived = not hs
+        hs, subs = got["hashes"], got["subjects"]       # 제목도 git 것이 정본이다
+        log("verify", f"확인 — 커밋 {len(hs)}건 · 해시 목록 {'git 에서 구함' if derived else '보고와 일치'}")
+    else:
+        log("verify", "[주의] git 검증 미사용 — 대역 주입 실행에 git 실행기가 없다(형식·일관성만)")
+    commits = [f"{h} {str(subs[i]).splitlines()[0] if subs and str(subs[i]).strip() else ''}".rstrip()
+               if subs else h for i, h in enumerate(hs)]
     branch = branch_name(n)
-    log("span", f"요청자 보고 범위 {b[:12]}..{e[:12]} · 커밋 {len(hs)}건 (push 는 요청자가 했다고 보고)")
+    if check_only:
+        log("check", f"점검만 — 범위 {b[:12]}..{e[:12]} · 커밋 {len(hs)}건 · 쓰기 0")
+        return {"ok": True, "check_only": True, "issue_id": n, "project": project, "branch": branch,
+                "base": b, "end": e, "commits": commits, "verified": git is not None, "lock_held": held,
+                "log": log.lines}
+    log("span", f"범위 {b[:12]}..{e[:12]} · 커밋 {len(hs)}건"
+                + (" (git 확인)" if git is not None else " (요청자 보고 — git 미확인)"))
     done: list[str] = []
     problems: list[str] = []
     rootp = lroot if lroot is not NO_LOCK else None
