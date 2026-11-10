@@ -754,6 +754,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
     # [중요] 잠금·마감 추적은 **프로젝트 트윈**에 쓴다 → 정책 `MOUNT` + 태그 필수(`_mount_gate(require=True)`).
     #    거절은 200 + ok:false(`no_project_tag`·`not_mounted`) 이고, 흐름 거절(플랜·잠금)도 200 + ok:false 다.
     # [주의] 여기 오는 것은 기록뿐이다 — 요청자 저장소의 git 은 만지지 않는다(그쪽 worktree 몫).
+    #    `#933` — 마감만은 프로젝트의 Gitea 저장소(`track.bare_path`)를 **읽어** 범위를 확인한 뒤 등록한다.
     def _issue_gate(op: str, req):
         bad = _mount_gate(req.project, require=True)
         if bad:

@@ -59,12 +59,15 @@ description: Redmine 일감(`#N`) 하나를 이 기계에서 구현할 때 쓴�
     ax-client:plan_transition(issue_id, task_id, to, note)         상태 전이 — 상태를 바꾸는 유일한 쓰기
     ax-client:issue_start(issue_id, check_only=true)               판정·잠금 점검만 (쓰기 0)
     ax-client:issue_start(issue_id, branch, start_rev)             시작 기록 — 잠금 · Redmine 시작 리비전 노트
-    ax-client:issue_finish(issue_id, base, end, hashes, subjects)  마감 기록 — push **뒤에** 부른다
+    ax-client:issue_finish(issue_id)                               마감 기록 — push **뒤에**, 번호만 넘긴다
+    ax-client:issue_finish(issue_id, check_only=true)              push 뒤 범위 확인만 (쓰기 0)
     ax-client:issue_pause(issue_id, end)                           보류 기록 — 잠금 보류 · 노트
     ax-client:issue_cancel(issue_id, confirm, delete_branch, …)    취소 — 기본은 미리보기
 
 [중요] **도구는 기록만 한다 — git 은 이 기계에서 아래 명령으로 한다.** 인프라는 이 기계의 저장소를
 만지지 않는다. 프로젝트 태그는 `ax-client` 가 `.ax/config.json` 에서 붙인다.
+[중요] **커밋 해시를 도구 인자로 적어 넣지 않는다**(`#933`) — 마감의 끝 해시는 `ax-client:issue_finish` 가 git 에서
+읽고, 마스터가 Gitea 저장소에서 범위를 다시 확인한다. 본 적 없는 40자리를 채워 넣으면 등록이 거절된다.
 [중요] **잠금·추적 파일을 손으로 고치지 않는다** — 그 파일은 마스터 트윈에 있고, 거절은 고칠 자리가
 아니라 보고할 자리다(§8).
 
@@ -135,11 +138,12 @@ PowerShell 기준 변수(체크아웃 루트에서):
         git -C $wt merge-base --is-ancestor origin/main $br           # $LASTEXITCODE 0 이어야 한다
         $base   = git -C $wt merge-base origin/main $br
         $end    = git -C $wt rev-parse $br
-        $hashes = @(git -C $wt log --reverse --format=%H "$base..$end")
         git -C $wt log --reverse --format="%H %s" "$base..$end"       # 사용자에게 보일 목록
 
    `--is-ancestor` 가 실패하면 `origin/main` 이 앞서 나간 것이다 — **rebase·머지는 사람이 정한다.**
-   `$hashes` 가 비면 마칠 것이 없다.
+   목록이 비면 마칠 것이 없다.
+   🔴 `#933` — **이 값들은 사용자에게 보여 주는 용도다. 해시를 도구 인자로 옮겨 적지 않는다.** 4 의 도구가
+   끝 해시를 git 에서 직접 읽고, 범위의 해시 목록은 마스터가 저장소에서 구한다.
 
 2. [중요] **승인을 받는다.** 한 번에 보여 줄 것: 범위 `$base..$end` · 커밋 목록 · 바뀐 파일 수
    (`git -C $wt diff --stat $base $end`) · 이어서 할 일(아래 3~5: push · 마감 등록 · worktree 제거 ·
@@ -151,7 +155,16 @@ PowerShell 기준 변수(체크아웃 루트에서):
 
    거절되면 멈추고 출력 원문을 보고한다. `--force` 는 쓰지 않는다. 로컬은 그대로라 잃을 것이 없다.
 
-4. `ax-client:issue_finish($N, base=$base, end=$end, hashes=<$hashes 순서대로>, subjects=<같은 순서의 제목>)`.
+4. `ax-client:issue_finish($N)` — **일감 번호만 넘긴다**(`#933`). 도구가 이 체크아웃의 `issue/$N` 끝을 git 에서
+   읽고, 마스터가 잠금의 시작 리비전부터 그 끝까지의 해시·제목을 저장소에서 구해 실제 커밋이고 `main` 에
+   있는지 확인한 뒤에만 등록한다. 응답의 `base`·`commits` 가 2 에서 승인받은 범위·목록과 같은지 본다.
+   - `step: "verify"` 로 거절 → 범위가 git 과 다르거나(`verify: "mismatch"`) 마스터가 저장소를 못 읽었다
+     (`verify: "lookup"`). 아무것도 바뀌지 않았다. `why` 를 그대로 보고하고 멈춘다 — 해시를 손으로 고쳐 다시
+     부르지 않는다.
+   - `[git]` 으로 시작하는 오류 → 도구가 `issue/$N` 을 못 읽었다(브랜치를 이미 지웠거나 체크아웃 루트가
+     아니다). 서버로 가지 않았다. 원문을 보고한다.
+   - rebase·머지로 시작점이 잠금의 시작 리비전과 달라졌을 때만 `base=` 를 싣는다. 그 값은 1 의 `$base`
+     출력에서 그대로 가져오고, 등록 전에 `check_only=true` 로 불러 응답의 `commits` 를 사용자와 확인한다.
    - `ok: true` · `registered: true` · `lock_released: true` · `closed: true` → 마감 등록 완료이고 일감이
      「완료」·100 으로 닫혔다(`#889` — main 적용 = 마감). 5 로 간다.
    - `registered: false` → 잠금이 남아 있고 일감도 열린 채다. `why` 를 보고한다. 같은 인자로 다시 부르면

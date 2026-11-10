@@ -795,6 +795,8 @@ def tool_update_fix_status(api, args: dict) -> dict:
 # ── 일감 흐름·플랜 (`#884` T6) — 8101 `/api/v1/issue/*`·`/api/v1/plan/*` 대행 ─────────────────
 # [중요] **git 은 이 기계(요청자 worktree)가 하고 인프라는 기록만 한다** — 잠금·마감 추적·Redmine 노트.
 #    마스터 로컬 흐름(`issue_flow`)과 같은 함수(`master/issue_infra.py`)가 서버에서 돈다.
+#    🔴 `#933` — 마감(`issue_finish`)의 끝 해시만은 이 파일이 체크아웃 git 에서 **읽는다**(`issue_branch_end`).
+#    세션이 해시를 적어 넣는 자리를 없앤 것이다. 서버도 Gitea 저장소에서 범위를 다시 확인한다.
 #    프로젝트 태그는 `queue_api` 가 체크아웃 config 에서 붙인다(요청자가 고르는 값이 아니다).
 # [주의] 서버 거절은 200 + ok:false + 사유다 — 그대로 돌려준다(장애로 바꾸지 않는다).
 
