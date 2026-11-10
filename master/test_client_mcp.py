@@ -41,7 +41,8 @@ def test_single_file_stdlib_only():
     src = Path(M.__file__).read_text(encoding="utf-8")
     tree = ast.parse(src)
     STDLIB = {"json", "sys", "urllib", "urllib.error", "urllib.request", "pathlib",
-              "__future__", "os", "importlib", "importlib.util", "uuid"}
+              "__future__", "os", "importlib", "importlib.util", "uuid",
+              "re", "subprocess"}                             # `#933` — git 에서 끝 해시를 읽는다(둘 다 stdlib)
     bad = []
     for n in ast.walk(tree):
         if isinstance(n, ast.Import):
@@ -331,6 +332,33 @@ def test_redmine_wiki_project_injection():
               calls[1][0] == "PUT" and calls[1][2]["project"] == "AXCluster")
 
 
+def _issue_repo(n: int):
+    """임시 git 저장소 — main 한 커밋 위에 `issue/<n>` 한 커밋. `(루트, issue/<n> 끝 해시)`."""
+    import os
+    import subprocess
+    import tempfile
+    root = Path(tempfile.mkdtemp(prefix="test_client_mcp_git_")) / "checkout"
+    root.mkdir()
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull,
+           "PATH": os.environ.get("PATH", "")}
+
+    def g(*a):
+        return subprocess.run(["git", "-C", str(root), *a], capture_output=True, text=True, env=env,
+                              check=True).stdout.strip()
+    g("init", "-q", "-b", "main")
+    (root / "f.txt").write_text("1", encoding="utf-8")
+    g("add", "f.txt")
+    g("commit", "-q", "-m", "base")
+    g("checkout", "-q", "-b", f"issue/{n}")
+    (root / "f.txt").write_text("2", encoding="utf-8")
+    g("add", "f.txt")
+    g("commit", "-q", "-m", "work")
+    tip = g("rev-parse", "HEAD")
+    g("checkout", "-q", "main")
+    return root, tip
+
+
 def test_issue_tools_queue_delegation():
     """`#884` T6 — 일감·플랜 일곱 도구는 큐 대행이며 서버 판정을 그대로 보존한다."""
     required = {
@@ -338,7 +366,7 @@ def test_issue_tools_queue_delegation():
         "plan_set": {"issue_id", "tasks", "why"},
         "plan_transition": {"issue_id", "task_id", "to"},
         "issue_start": {"issue_id"},
-        "issue_finish": {"issue_id", "base", "end", "hashes"},
+        "issue_finish": {"issue_id"},
         "issue_pause": {"issue_id"},
         "issue_cancel": {"issue_id"},
     }
@@ -356,6 +384,7 @@ def test_issue_tools_queue_delegation():
         calls.append((method, path, payload))
         return response
     a, b = "a" * 40, "b" * 40
+    repo, tip = _issue_repo(7)
     cases = [
         ("plan_start", {"issue_id": 7}, "/api/v1/plan/start", {"issue_id": 7}),
         ("plan_set", {"issue_id": 7, "tasks": [{"id": "T1", "goal": "한글 목표"}], "why": "사용자 결정"},
@@ -366,8 +395,11 @@ def test_issue_tools_queue_delegation():
          {"issue_id": 7, "check_only": True}),
         ("issue_start", {"issue_id": 7, "branch": "issue/7", "start_rev": a}, "/api/v1/issue/start",
          {"issue_id": 7, "branch": "issue/7", "start_rev": a}),
-        ("issue_finish", {"issue_id": 7, "base": a, "end": b, "hashes": [b], "subjects": ["수정"]},
-         "/api/v1/issue/finish", {"issue_id": 7, "base": a, "end": b, "hashes": [b], "subjects": ["수정"]}),
+        ("issue_finish", {"issue_id": 7}, "/api/v1/issue/finish", {"issue_id": 7, "end": tip}),
+        ("issue_finish", {"issue_id": 7, "check_only": True, "base": a, "end": tip.upper(), "hashes": [tip],
+                          "subjects": ["수정"]},
+         "/api/v1/issue/finish", {"issue_id": 7, "end": tip, "base": a, "hashes": [tip], "subjects": ["수정"],
+                                 "check_only": True}),
         ("issue_pause", {"issue_id": 7, "end": b}, "/api/v1/issue/pause", {"issue_id": 7, "end": b}),
         ("issue_cancel", {"issue_id": 7}, "/api/v1/issue/cancel",
          {"issue_id": 7, "confirm": False, "delete_branch": False, "branch_exists": True,
@@ -379,9 +411,23 @@ def test_issue_tools_queue_delegation():
     ]
     for name, args, path, payload in cases:
         before = len(calls)
-        got = M.dispatch_tool(name, args, api=api)
+        got = M.dispatch_tool(name, args, api=api, root=repo)
         check(f"{name} 큐 POST 한 번·본문 보존", calls[before:] == [("POST", path, payload)], str(calls[before:]))
         check(f"{name} 서버 거절 응답 보존", got is response)
+    # 🔴 `#933` — 끝 해시는 도구가 git 에서 읽는다. 세션이 적은 값이 다르면 서버로 가기 전에 거절한다.
+    fake = tip[:7] + "f5ad081c7847c50a2718104d41fa9a5e8"          # `#929` 형태 — 앞 7자만 실제
+    for label, args, root in (
+            ("앞 7자만 같은 지어낸 end", {"issue_id": 7, "end": fake}, repo),
+            ("브랜치가 없는 일감", {"issue_id": 8}, repo),
+            ("git 저장소가 아닌 자리", {"issue_id": 7}, repo.parent)):
+        before = len(calls)
+        try:
+            M.dispatch_tool("issue_finish", args, api=api, root=root)
+            refused = ""
+        except M.ClientError as e:
+            refused = str(e)
+        check(f"🔴 issue_finish {label} → 왕복 전에 거절", refused.startswith("[git]") and len(calls) == before,
+              refused or "거절 안 됨")
     result = M.handle_message({"id": 884, "method": "tools/call",
                               "params": {"name": "issue_start", "arguments": {"issue_id": 7}}}, api=api)
     check("일감 거절은 MCP 통신 오류로 바꾸지 않는다", result["result"]["isError"] is False

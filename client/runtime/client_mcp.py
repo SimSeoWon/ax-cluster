@@ -827,14 +827,51 @@ def tool_issue_start(api, args: dict) -> dict:
     return api("POST", "/api/v1/issue/start", payload)
 
 
-def tool_issue_finish(api, args: dict) -> dict:
-    payload = {"issue_id": _issue_id(args.get("issue_id")),
-               "base": str(args.get("base") or "").strip(),
-               "end": str(args.get("end") or "").strip(),
-               "hashes": _str_list(args.get("hashes"), "hashes")}
+def issue_branch_end(issue_id: int, root: Path | None = None) -> str:
+    """체크아웃의 git 에서 `issue/<N>` 끝 커밋을 구한다 (`#933`).
+
+    🔴 마감 해시는 **세션이 적어 넣지 않는다** — `#929` 에서 에이전트가 짧은 해시만 보고 40자리를 지어내
+    넘겼고 리뷰가 하루 넘게 멈췄다. 이 함수가 git 에서 읽은 값만 서버로 간다(서버도 다시 확인한다).
+    """
+    import re
+    import subprocess
+    cwd = root or Path.cwd()
+    ref = f"refs/heads/issue/{issue_id}"
+    try:
+        cp = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--verify", "--quiet", ref + "^{commit}"],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise ClientError(f"[git] `issue/{issue_id}` 끝을 구하지 못했다 — git 실행 실패({cwd}): "
+                          f"{type(e).__name__}: {e}") from e
+    sha = (cp.stdout or "").strip().lower()
+    if cp.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ClientError(f"[git] 로컬 브랜치 `issue/{issue_id}` 가 {cwd} 에 없다(rc={cp.returncode}) — 마감 등록은 "
+                          "브랜치를 지우기 전에 부른다. 이 도구는 끝 해시를 git 에서만 읽는다")
+    return sha
+
+
+def tool_issue_finish(api, args: dict, root: Path | None = None) -> dict:
+    n = _issue_id(args.get("issue_id"))
+    hashes = _str_list(args.get("hashes"), "hashes")
     subs = _str_list(args.get("subjects"), "subjects")
+    end = issue_branch_end(n, root)
+    given = str(args.get("end") or "").strip().lower()
+    if given and given != end:
+        raise ClientError(f"[git] 인자 end {given} 가 git 의 `issue/{n}` 끝 {end} 와 다르다 — 서버로 보내지 않았다. "
+                          "해시 인자는 생략할 수 있다(도구가 git 에서 구한다)")
+    payload = {"issue_id": n, "end": end}
+    base = str(args.get("base") or "").strip()
+    if base:
+        payload["base"] = base
+    if hashes:
+        payload["hashes"] = hashes
     if subs:
         payload["subjects"] = subs
+    if args.get("check_only"):
+        payload["check_only"] = True
+    print(f"[ax-client] issue_finish #{n} — end {end[:12]} (git issue/{n})"
+          f" · base {'인자 ' + base[:12] if base else '서버 잠금'} · 보고 해시 {len(hashes)}개"
+          f"{' · check_only' if payload.get('check_only') else ''}", file=sys.stderr)
     return api("POST", "/api/v1/issue/finish", payload)
 
 
@@ -1662,20 +1699,26 @@ TOOLS.extend([
          "branch": {"type": "string", "description": "issue/<N>"},
          "start_rev": {"type": "string", "description": _SHA_DESC + " — worktree 를 만든 origin/main"}}}},
     {"name": "issue_finish",
-     "description": "일감 종료를 마스터에 기록한다 — issue/<N> 을 origin main 에 push 한 뒤에 부른다. 인프라는 "
-                    "보고받은 base..end 와 해시 목록으로 마감 추적(issue_track)을 등록하고, 색인기 리뷰를 잇고, "
-                    "등록이 성공했을 때만 일감 잠금을 풀고 Redmine 「리뷰 요청」 노트와 함께 일감을 「완료」·100 으로 "
-                    "닫는다(#889 — main 적용 = 마감, closed 로 알린다). 해시별 리뷰와 종합 리뷰 결과는 리뷰 큐가 "
-                    "같은 일감에 노트로만 남긴다. 등록이 실패하면 잠금이 남고 일감은 열린 채 why 에 사유가 온다. "
-                    "git 은 만지지 않는다.",
-     "inputSchema": {"type": "object", "required": ["issue_id", "base", "end", "hashes"], "properties": {
+     "description": "일감 종료를 마스터에 기록한다 — issue/<N> 을 origin main 에 push 한 뒤, 로컬 브랜치를 지우기 "
+                    "전에 부른다. 일감 번호만 넘긴다: 끝 해시는 이 도구가 체크아웃의 git(issue/<N>)에서 읽고, "
+                    "범위의 해시 목록·제목은 서버가 저장소에서 구한다(#933). 서버는 그 범위가 실제 커밋이고 main 에 "
+                    "있는지 확인한 뒤에만 마감 추적(issue_track)을 등록하고, 색인기 리뷰를 잇고, 등록이 성공했을 "
+                    "때만 일감 잠금을 풀고 Redmine 「리뷰 요청」 노트와 함께 일감을 「완료」·100 으로 닫는다"
+                    "(#889 — main 적용 = 마감, closed 로 알린다). 범위가 git 과 다르거나 조회가 실패하면 "
+                    "step=verify 로 거절되고 아무것도 바뀌지 않는다. check_only=true 는 쓰기 없이 서버가 구한 "
+                    "범위·커밋 목록만 돌려준다. 해시별 리뷰와 종합 리뷰 결과는 리뷰 큐가 같은 일감에 노트로만 "
+                    "남긴다. 등록이 실패하면 잠금이 남고 일감은 열린 채 why 에 사유가 온다. git 은 읽기만 한다.",
+     "inputSchema": {"type": "object", "required": ["issue_id"], "properties": {
          "issue_id": {"type": "integer"},
-         "base": {"type": "string", "description": _SHA_DESC + " — 시작 리비전(merge-base)"},
-         "end": {"type": "string", "description": _SHA_DESC + " — push 한 issue/<N> 끝"},
+         "check_only": {"type": "boolean", "description": "true 면 범위 확인·도출만(쓰기 0)"},
+         "base": {"type": "string", "description": _SHA_DESC + " — 시작 리비전. 생략하면 서버 잠금의 시작 리비전"
+                                                              "(rebase 등으로 달라졌을 때만 싣는다)"},
+         "end": {"type": "string", "description": _SHA_DESC + " — 생략한다. 실으면 git 의 issue/<N> 끝과 "
+                                                             "대조만 하고 다르면 거절한다"},
          "hashes": {"type": "array", "items": {"type": "string"},
-                    "description": "base..end 커밋 해시, 오래된 것부터(마지막 = end)"},
+                    "description": "생략한다. 실으면 서버가 git 에서 구한 목록과 대조만 하고 다르면 거절한다"},
          "subjects": {"type": "array", "items": {"type": "string"},
-                      "description": "같은 순서의 커밋 제목(선택 — 노트의 커밋 목록)"}}}},
+                      "description": "생략한다 — 제목은 서버가 git 에서 구한다"}}}},
     {"name": "issue_pause",
      "description": "진행 중인 일감을 보류로 기록한다 — 프로젝트 트윈의 잠금을 보류로 옮기고 Redmine 「보류」 "
                     "노트를 남긴다. 브랜치·worktree 는 그대로 남는다. 재개는 issue_start 다.",
@@ -1870,6 +1913,8 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
         return tool_register_work(None, args, root=root)
     if name == "improve_work":
         return tool_improve_work(None, args, root=root)
+    if name == "issue_finish":                      # `#933` — 끝 해시는 체크아웃의 git 에서 구한다
+        return tool_issue_finish(api or queue_api(root), args, root=root)
     if name in ISSUE_TOOLS:                         # 일감 흐름·플랜 (`#884` T6) — 큐(8101) 대행
         return ISSUE_TOOLS[name](api or queue_api(root), args)
     if name in ("list_works", "get_work", "redmine_note", "log_writer_signal", "log_history",
