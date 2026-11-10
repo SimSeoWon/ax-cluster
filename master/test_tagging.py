@@ -422,6 +422,12 @@ def test_issue_routes_live() -> None:
             "version: 1\nactive: AXCluster\nprojects:\n- AXCluster\n- NS\n", encoding="utf-8")
         os.environ["AX_PROJECTS_ROOT"] = str(proots)
         twin = proots / "AXCluster"
+        # `#933` — 마감은 프로젝트의 Gitea 저장소(`track.bare_path`)에서 범위를 확인한다. 실제 임시 저장소를 둔다.
+        from master.test_issue_infra import _mkrepo
+        _git, c1, c2, c3, side = _mkrepo(tmp / "bare")
+        (twin / "config.yaml").write_text(
+            f"version: 1\nname: AXCluster\ntrack:\n  bare_path: {tmp / 'bare' / '.git'}\n  branch: main\n",
+            encoding="utf-8")
         with patch.object(INF, "default_getter", getter), patch.object(INF, "default_noter", noter), \
                 patch.object(PT, "_default_getter", getter), patch.object(PT, "_default_updater", updater):
             c, _m, req_t, wrk_t = _live_queue(tmp)
@@ -479,15 +485,29 @@ def test_issue_routes_live() -> None:
             j = c.post("/api/v1/issue/start", json={**body, "branch": "issue/7", "start_rev": "a" * 40},
                        headers=H).json()
             check("issue/start(보류) → resumed", j.get("ok") and j.get("resumed"), str(j)[:200])
+            n_notes = len(notes)
             j = c.post("/api/v1/issue/finish", json={**body, "base": "a" * 40, "end": "c" * 40,
                                                      "hashes": ["b" * 40, "c" * 40], "subjects": ["하나", "둘"]},
                        headers=H).json()
-            check("[중요] issue/finish → 등록 · 잠금 해제 · 리뷰 요청 노트", j.get("ok") and j.get("registered")
-                  and j.get("lock_released") and IL.current(twin) is None
-                  and (IT.current(twin, 7) or {}).get("end") == "c" * 40
-                  and notes[-1][1].startswith("리뷰 요청:"), str(j)[:300])
-            j = c.post("/api/v1/issue/finish", json={**body, "base": "a" * 40, "end": "c" * 40,
-                                                     "hashes": ["c" * 40, "b" * 40]}, headers=H).json()
+            check("🔴 #933 issue/finish 없는 해시 → 200 + ok:false(verify) · 잠금·추적·노트 무변경",
+                  j.get("ok") is False and j.get("step") == "verify" and j.get("verify") == "mismatch"
+                  and IL.current(twin)["issue_id"] == 7 and IT.current(twin, 7) is None and len(notes) == n_notes,
+                  str(j)[:300])
+            j = c.post("/api/v1/issue/finish", json={**body, "base": c1, "end": side}, headers=H).json()
+            check("#933 issue/finish main 밖 end → verify 거절", j.get("ok") is False and j.get("step") == "verify",
+                  str(j)[:200])
+            j = c.post("/api/v1/issue/finish", json={**body, "base": c1, "end": c3, "check_only": True},
+                       headers=H).json()
+            check("#933 issue/finish check_only → git 도출 · 쓰기 0", j.get("ok") and j.get("check_only")
+                  and [x[:40] for x in j.get("commits", [])] == [c2, c3] and IL.current(twin)["issue_id"] == 7
+                  and IT.current(twin, 7) is None and len(notes) == n_notes, str(j)[:300])
+            j = c.post("/api/v1/issue/finish", json={**body, "base": c1, "end": c3}, headers=H).json()
+            check("[중요] issue/finish(end 만 · 해시 생략) → 등록 · 잠금 해제 · 리뷰 요청 노트", j.get("ok")
+                  and j.get("registered") and j.get("lock_released") and IL.current(twin) is None
+                  and [h["sha"] for h in (IT.current(twin, 7) or {}).get("hashes", [])] == [c2, c3]
+                  and notes[-1][1].startswith("리뷰 요청:") and "셋째 커밋" in notes[-1][1], str(j)[:300])
+            j = c.post("/api/v1/issue/finish", json={**body, "base": c1, "end": c3,
+                                                     "hashes": [c3, c2]}, headers=H).json()
             check("issue/finish 범위 어긋남 → 200 + ok:false(span)", j.get("ok") is False and j.get("step") == "span",
                   str(j)[:200])
             j = c.post("/api/v1/issue/start", json={**body, "branch": "issue/7", "start_rev": "a" * 40},
