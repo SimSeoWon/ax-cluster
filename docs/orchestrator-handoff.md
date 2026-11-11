@@ -1,8 +1,8 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-11 23:25 Antigravity 체크포인트(#934 마감 `40b5fd9` — #933 리뷰 R318~R322 지적 정리: `verify_span` 입력 정규화 · `infra_finish` 복원 `base` 검사 · `test_client_mcp` 임시 git 저장소 정리 · `test_tagging` 안전 조회). · 23:40 Claude 정리(Antigravity 자체 설정 문구 제거 — 사용자 지시). 항목·진행의 정본은 Redmine이다.
+> 2026-11-11 23:45 Claude 체크포인트(사용자 판단: Antigravity 를 오케스트레이션 주체에서 제외하는 방향 — #829 노트. 규칙·문서·코드는 아직 미변경) · 앞선 체크포인트 23:25 Antigravity(#934 마감 `40b5fd9`). 항목·진행의 정본은 Redmine이다.
 > 이전 상세는 Git `da43835`·`513d5d2`·`1c65dcf`·`2570af6`·`c1b2537`·`eb78e03`·`14b3273`·`d1f5ae0`·`c22af56`·`40b5fd9`·리포트 159~168·각 일감 노트에 있다.
-> 진행 중인 일감·잠금 없음. **배달 예정**: 이 문서 커밋 직후 `master.issue_wrapup 934` 로 세 대(`.2`·`.33`·`.43`)에 배달·검사한다.
+> 진행 중인 일감·잠금 없음. 배달: 23:42 `master.client update` rc 0 — 세 대(`.2`·`.33`·`.43`)가 `e2b1586` 기준 통과. 이 문서 커밋(문서만 변경)으로 세 대의 배달 출처가 한 커밋 뒤처진다 — 다음 커밋 뒤 `update` 때 맞춰진다.
 > 마스터(.57)는 11-11 21:57:03 에 부팅됐다 — 꺼진 시각은 확인하지 않았다.
 
 ## 🔴 오늘 바뀐 규칙 (사용자 결정 2026-11-08 ~ 11-10)
@@ -13,6 +13,7 @@
 - 🔴 **Antigravity 진입 및 상호작용 규칙**(#920 · #928 · 사용자 결정 2026-11-10): 시작 폴더 지침만 자동 로드하므로 홈 `~/GEMINI.md` 가
   작업 루트의 `AGENTS.md` 를 먼저 읽고 AX-ENTRY-MARK 보고. **도구 승인 팝업 방지**는 `accept-edits` 모드로 자동 수락하여 한 호흡에 완결.
   상호작용 타이밍은 **① 일 시작할 때(착수)**, **② 일 끝났을 때(완료/판단)**, **③ 에러/예외 발생 시(고지 및 답변 요구)** 3회로 고정.
+- 🔴 **Antigravity 지휘 제외 방향**(사용자 판단 2026-11-11, 근거·미결정 항목은 [#829](http://192.168.0.57:8080/issues/829) 노트): 「오케스트레이션 주체는 하면 안될것 같아. 서브 에이전트로 제미나이 아르곤으로 작은 작업을 전달」·「그냥 제외하는게 맞아보여」. 지휘는 Claude·Codex, Gemini Argon 은 작은 구현을 받는 서브 역할로 간다. **아직 실행 전이다** — 아래 「지휘자 셋」 항목과 `CLAUDE.md`·`AGENTS.md`·공용 규칙 §1.10·리뷰 큐 분기·`issue_start_tool` 은 그대로이고, 위임 통로·Argon 제한·차단 수준이 미결정이다.
 - 🔴 **지휘자 셋 · 교차 계열 리뷰**(#920 · #926): 운영 일감 시작은 `ax-projects:issue_start_tool` 만 된다. MCP `clientInfo` 가 작성 계열이 되고,
   Antigravity 작성분은 Codex 단독 리뷰·실패 시 폴백 없음, 그 밖은 agy. 명시 Argon 호출만 한도 시 Flash High 폴백.
 - **마감 뒤 기록 몫**(`ax-plan` 3-1): 리포트=일감 커밋 시점까지 · Redmine 마감 노트=결과 정본 · **이 문서=마감 직후 main 문서 커밋**.
@@ -95,7 +96,7 @@
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`40b5fd9`(+ 이 문서 커밋), 일감 worktree 제거 완료 |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`e2b1586`(+ 이 문서 커밋), 일감 worktree 제거 완료 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 |
 | AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | 배달 및 check 대상 (완료) |
@@ -104,10 +105,11 @@
 
 ## 유지할 운영 상태
 
-- 마스터 담당 기록 **antigravity**(실제 인수 11-09 00:07, 사용자 지시), 워커 전역 **codex**(state, 10-18 — 11-11 02:47 재조회 일치, 변경 없음). #930·#933 은 Claude 가 작성했으나 교대 지시가 없어 담당 기록은 그대로다.
+- 마스터 담당 기록 **antigravity**(실제 인수 11-09 00:07, 사용자 지시), 워커 전역 **codex**(state, 10-18 — 11-11 02:47 재조회 일치, 변경 없음). #930·#933 은 Claude 가 작성했으나 교대 지시가 없어 담당 기록은 그대로다. 제외 방향이 정해졌지만 담당 기록 변경 지시는 없어 그대로 두었다(#931·23:45 정리는 Claude 가 했다).
 - 🔴 Redmine 은 M7 이 닫히고 **마일스톤 8** 이 열려 있다. `CLAUDE.md`·공용 문서의 「M7 open」 서술과 M8 문서 부재는 미정리다(자동 로드 문서라 동의 필요).
 - #929 회차 2 는 닫혔다(11-11 02:01): 해시 R314(지적 5) 연결 → Codex 종합 리뷰 **R317**(중간 2 · 낮음 3, R314 지적 4건 남음·1건 해소). 지적은 미처리다 — 리뷰 판정이며 코드와 대조하지 않았다.
-- #933 리뷰(`R318`~`R322`)는 #934(`40b5fd9`)로 모두 정리·반영(`applied` 10 · `dismissed` 10)했다. #931 리뷰는 해시 2개 `queued`·종합 `waiting`(작성 계열 `claude` → agy), #934 리뷰는 작성 계열 `agy` → Codex 대상이다.
+- #933 리뷰(`R318`~`R322`)는 #934(`40b5fd9`)로 정리·반영됐다(`applied` 10 · `dismissed` 10 — Antigravity 가 반영, 내용 미대조). #931 리뷰는 끝났다: 해시 R323(0건)·R324(0건), 종합 **R325**(본문 미확인). #934 리뷰는 해시 R326(1건)·`40b5fd9` 는 `skipped`, 종합 `queued`(작성 계열 `agy` → Codex, 23:44 조회).
+- Antigravity 전용 설정(11-11, 사용자 전달 요청으로 Claude 처리): `~/.gemini/antigravity-cli/settings.json` 에 `"toolPermission": "accept-edits"` 추가(백업 `settings.json.bak-20261111-233739-toolPermission`). 효과는 미확인 — 다음 기동 로그의 `toolPermission=` 값으로 본다. 전용 지침은 `machines/sim-desktop-gemini.md`(`e2b1586`).
 - 실제 BC-250 poweroff 는 아직 실행한 적이 없다. 종료 중 SSH rc=255 면 꺼졌어도 `SHUTDOWN FAILED` 로 끝날 수 있다(가설·미측정).
 - ax-broker active · ax-projects active · ax-task-queue active, ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
 - 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음.
@@ -119,4 +121,5 @@
 2. **다음 일감 선택**: 사용자가 정한다. 후보는 **#932** · 아이디어(#908·#911·#914·#919) · 세션 토큰 보강(#741). 「#N 진행해」 발화 전에는 시작하지 않는다.
 3. #929 R317(Codex — `bc250_shutdown.py` 중간 2: SSH stderr 안내를 점검 실패로 처리 · Ping 실행 오류를 단절로 계산, `master_local.py` 스킬 링크 대상 미검증)과 #930 R315·R316, #931·#934 리뷰(나오는 대로) 지적을 코드와 대조하고 처리를 사용자와 정한다.
 4. 배달은 끝났다(위). 남은 것은 `.33` 요청자 세션의 첫 마감에서 `ax-client:issue_finish(N)` 이 `issue/<N>` 끝을 git 에서 읽는지(`[git]` 오류 여부) 본다 — #933 의 미확인 항목.
-5. 다른 일감을 자동 시작하지 않는다. ⑦ 전진·finalize·파괴적 git·자동 로드 문서 변경은 기존대로 멈춰 묻는다.
+5. **Antigravity 지휘 제외 실행**: 사용자와 정할 것 — ① Claude·Codex 가 Argon 에 작은 구현을 넘기는 통로(`ax-gemini` 는 리서치용) ② 기존 Argon 제한(자동 경로·측정 금지)과의 관계 ③ 문서 규칙만 고칠지 `issue_start_tool` 이 거절하게 할지 ④ 일감 등록. 자동 로드 문서(`CLAUDE.md`·`AGENTS.md`)는 문구 동의 뒤에 고친다.
+6. 다른 일감을 자동 시작하지 않는다. ⑦ 전진·finalize·파괴적 git·자동 로드 문서 변경은 기존대로 멈춰 묻는다.
