@@ -1,6 +1,6 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-11 23:25 Antigravity 체크포인트(#934 마감 `40b5fd9` — #933 리뷰 R318~R322 지적 정리: `verify_span` 입력 정규화 · `infra_finish` 복원 `base` 검사 · `test_client_mcp` 임시 git 저장소 정리 · `test_tagging` 안전 조회). 항목·진행의 정본은 Redmine이다.
+> 2026-11-11 23:25 Antigravity 체크포인트(#934 마감 `40b5fd9` — #933 리뷰 R318~R322 지적 정리: `verify_span` 입력 정규화 · `infra_finish` 복원 `base` 검사 · `test_client_mcp` 임시 git 저장소 정리 · `test_tagging` 안전 조회). · 23:40 Claude 정리(Antigravity 자체 설정 문구 제거 — 사용자 지시). 항목·진행의 정본은 Redmine이다.
 > 이전 상세는 Git `da43835`·`513d5d2`·`1c65dcf`·`2570af6`·`c1b2537`·`eb78e03`·`14b3273`·`d1f5ae0`·`c22af56`·`40b5fd9`·리포트 159~168·각 일감 노트에 있다.
 > 진행 중인 일감·잠금 없음. **배달 예정**: 이 문서 커밋 직후 `master.issue_wrapup 934` 로 세 대(`.2`·`.33`·`.43`)에 배달·검사한다.
 > 마스터(.57)는 11-11 21:57:03 에 부팅됐다 — 꺼진 시각은 확인하지 않았다.
@@ -24,7 +24,6 @@
 
 - **동작**: `verify_span` 이 `base`·`end`·`hashes` 를 `_sha()` 로 소문자·공백 정규화하고 `branch` 의 `refs/heads/` 접두사를 제거한다(`R322-6`·`R322-8`). `infra_finish` 는 잠금에서 복원한 `base` 도 `hs` 에 포함되면 `step: span` 으로 즉시 거절한다(`R322-7`). `test_client_mcp._issue_repo` 임시 디렉터리를 `finally` 로 정리하고 잔류 5개를 삭제했으며(`R322-9`), `test_tagging` 의 `IL.current(twin)` 조회를 안전 조회로 바꿨다(`R322-10`).
 - **리뷰 보드·검증**: `R322-6`~`R322-10` 및 대응 항목 10건을 `applied`(`73a41c09ec17`), 지연 임포트 관례 등 10건을 `dismissed` 로 반영했다. `test_issue_infra` 120 · `test_client_mcp` 357 · `test_tagging` 242 · 공식 통합 193/193 통과. 리포트 168(`40b5fd99d2a0`).
-- **발견 사항(범위 밖)**: Antigravity `~/.gemini/antigravity-cli/settings.json` 에 `"mode": "accept-edits"` 만 있고 실제 바이너리가 언마샬링하는 `"toolPermission": "accept-edits"` 키가 빠져 `toolPermission=request-review` 기본값으로 동작하며 서브에이전트 `edit_file` 마다 승인 팝업이 뜬다(`master/client/master_local.py` 정비 대상).
 
 ## #931 마감 (2026-11-11) — `requester: master` 프로젝트의 `ax-client` 일감 호출 거절
 
@@ -116,7 +115,7 @@
 
 ## 바로 다음 작업
 
-1. 새 Claude·Codex 세션에서 전체 도구 승인 정책 반영을 확인한다. Antigravity 서브에이전트 `edit_file` 승인 팝업 원인(`settings.json` 의 `"toolPermission": "accept-edits"` 누락)을 `master_local.py` 에 반영할지 사용자와 정한다.
+1. 새 Claude·Codex 세션에서 전체 도구 승인 정책 반영을 확인한다. 설정 파일 대조와 이미 실행 중인 세션의 유효 권한은 구분한다. 새 대화형 Claude 세션에서 `ax-client` 연결도 확인한다(#930 은 `claude mcp list` 까지만 확인).
 2. **다음 일감 선택**: 사용자가 정한다. 후보는 **#932** · 아이디어(#908·#911·#914·#919) · 세션 토큰 보강(#741). 「#N 진행해」 발화 전에는 시작하지 않는다.
 3. #929 R317(Codex — `bc250_shutdown.py` 중간 2: SSH stderr 안내를 점검 실패로 처리 · Ping 실행 오류를 단절로 계산, `master_local.py` 스킬 링크 대상 미검증)과 #930 R315·R316, #931·#934 리뷰(나오는 대로) 지적을 코드와 대조하고 처리를 사용자와 정한다.
 4. 배달은 끝났다(위). 남은 것은 `.33` 요청자 세션의 첫 마감에서 `ax-client:issue_finish(N)` 이 `issue/<N>` 끝을 git 에서 읽는지(`[git]` 오류 여부) 본다 — #933 의 미확인 항목.
