@@ -6,7 +6,7 @@
 적는다) 그 일감에 **짧은 진행 노트**를 남긴다. 회차의 해시가 모두 종결되면 **종합 리뷰(T4)를
 등재**하고 그 진행을 회차의 summary 에 옮긴다 — 리뷰 자체는 리뷰 큐 소비자(`review_runner.run_range`)가 한다.
 
-    sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None) -> dict
+    sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None, clock=None) -> dict
 
 `review_runner.main` 이 소비자 잠금 안에서 **drain 앞**(`retry_range_notes` 바로 뒤)과 **drain 뒤**에
 한 번씩 부른다 — 이번 회차에 끝난 리뷰의 노트가 같은 회차에 나간다. LLM 0.
@@ -20,6 +20,8 @@
     ② 워터마크    waiting 이고 큐 항목이 없는 해시가 색인 워터마크(`index.last_indexed_commit`)의
                    조상이면 → skipped("색인 워터마크 통과 · 리뷰 미등재").
                    미러(`paths.repo`)에 그 커밋이 아직 없으면 그대로 waiting(미러 지연, `#880`)
+                   #932: 등록 후30분에도 없으면 별도 사유·알림 표시에 기록, 일감 노트1회. 상태는 대기 유지.
+                   워터마크 없음도 부재를 검사하며 Git조회 오류는 부재와 구분한다. 도착하면 기존 흐름으로 복구.
     ③ 노트        종결됐는데 noted=False 인 해시를 **라운드당 노트 하나**로 묶어 남긴다.
                    성공하면 각 해시 noted=True · 실패(`[주의]` 로 시작하는 결과 또는 예외)면 그대로 둬서
                    다음 회차가 다시 한다
@@ -58,7 +60,11 @@ notify_range` 와 같은 가드(2026-11-03 임시 디렉토리 테스트가 실�
 """
 from __future__ import annotations
 
+import math
+import re
 import subprocess
+import time
+from datetime import datetime
 from pathlib import Path
 
 from . import issue_link as il
@@ -66,6 +72,8 @@ from . import issue_track as it
 from . import review_queue as rq
 
 WATERMARK_SKIP_WHY = "색인 워터마크 통과 · 리뷰 미등재"
+MISSING_COMMIT_GRACE_SECONDS = 30 * 60
+MISSING_COMMIT_WHY = "등록 후 30분 이상 미러에 커밋이 없음 · 리뷰 대기 유지"
 SUMMARY_PRIORITY = il.PRIORITY          # 종합 리뷰도 일감 마감 해시와 같은 10 (사용자 결정 2026-11-04)
 STALE_RANGE_WHY = ("같은 범위의 옛 범위 리뷰 항목이 이미 {state} — 해시 지적 판정이 없는 리뷰라 종합 리뷰로 "
                    "받지 않는다 · 큐는 done 항목을 재등재하지 않는다")
@@ -86,8 +94,51 @@ def _git(repo, *args) -> int:
         return -1
 
 
+class CommitLookupError(RuntimeError):
+    """미러 조회 자체가 실패했다. 커밋 부재로 판정하지 않는다."""
+
+
 def _has_commit(repo, sha: str) -> bool:
-    return bool(sha) and _git(repo, "cat-file", "-e", f"{sha}^{{commit}}") == 0
+    """정상 Git 응답의 명시적 missing만 False. 저장소·권한·프로세스 오류는 예외다.
+
+    cat-file -e는 부재와 저장소 실패가 모두 rc128이어서 알림 근거로 쓰지 않는다.
+    batch-check는 정상 저장소의 부재를 rc0의 '<입력> missing'으로 구분한다.
+    """
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+        raise CommitLookupError("미러 커밋 조회 실패 — 40자리 해시가 아니다")
+    expr = f"{sha}^{{commit}}"
+    try:
+        out = subprocess.run(["git", "-C", str(repo), "cat-file", "--batch-check=%(objecttype)"],
+                             input=expr + "\n", capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise CommitLookupError(f"미러 커밋 조회 실패 — {type(e).__name__}: {e}") from e
+    if out.returncode != 0 or out.stderr.strip():
+        why = out.stderr.strip() or "출력 없음"
+        raise CommitLookupError(f"미러 커밋 조회 실패 (rc={out.returncode}) — {why[:200]}")
+    answer = out.stdout.strip()
+    if answer == "commit":
+        return True
+    if answer == f"{expr} missing":
+        return False
+    raise CommitLookupError(f"미러 커밋 조회 실패 — 예상하지 않은 응답 {answer[:160]!r}")
+
+
+def _missing_expired(rnd: dict, now: float, log) -> bool:
+    """등록 시각에서 30분. 없거나 잘못된·미래 시각은 부재 기한의 증거가 아니다."""
+    try:
+        registered = datetime.fromisoformat(str(rnd.get("registered_at") or ""))
+        if registered.tzinfo is None or not math.isfinite(now):
+            raise ValueError("시간대 또는 현재 시각이 없다")
+        age = now - registered.timestamp()
+        if age < 0:
+            raise ValueError("등록 시각이 현재보다 미래다")
+    except (TypeError, ValueError, OverflowError) as e:
+        log(f"[issue-progress] [주의] #{rnd['issue_id']} 회차 {rnd['round']} "
+            f"부재 기한 판정 불가 — registered_at 오류({e}) · 대기 유지")
+        return False
+    log(f"[issue-progress] #{rnd['issue_id']} 회차 {rnd['round']} 부재 기한 판정 "
+        f"등록 후 {age:.0f}초 / {MISSING_COMMIT_GRACE_SECONDS}초")
+    return age >= MISSING_COMMIT_GRACE_SECONDS
 
 
 def _watermark_of(paths, logf) -> str:
@@ -131,7 +182,7 @@ def _review_facts(root, sha: str) -> tuple:
     return serial, len(doc.get("items_detail") or []), dict(doc.get("severity") or {})
 
 
-def _sync_round(paths, rnd: dict, by_key: dict, wm: str, counts: dict, log) -> None:
+def _sync_round(paths, rnd: dict, by_key: dict, wm: str, counts: dict, log, now: float) -> set:
     """①② — 한 라운드의 해시를 큐·워터마크에 맞춘다. 예외는 호출부가 잡는다."""
     root = paths.root
     n, rnum = rnd["issue_id"], rnd["round"]
@@ -140,12 +191,21 @@ def _sync_round(paths, rnd: dict, by_key: dict, wm: str, counts: dict, log) -> N
     # [DOC] #917(R240-8): 워터마크가 미러에 있는지는 해시마다 같은 답이다 — 처음 필요할 때 한 번만
     #       묻고(git 호출 1회) 없으면 [주의] 를 회차당 한 줄만 남긴다. 필요 없으면(대기 해시 0) 묻지 않는다.
     wm_present = None
+    missing = set()
     for h in rnd["hashes"]:
         sha, cur = h["sha"], h["state"]
         if cur in it.HASH_TERMINAL:
             continue
         item = by_key.get(sha)
         if item is not None:
+            if h.get("mirror_missing") and not h["mirror_missing"].get("recovered_at"):
+                try:
+                    if _has_commit(repo, sha):
+                        got = it.clear_hash_missing(root, n, sha, round=rnum, logf=log)
+                        counts["missing_recovered" if got.get("ok") else "errors"] += 1
+                except CommitLookupError as e:
+                    counts["errors"] += 1
+                    log(f"[issue-progress] [주의] {tag} {sha[:12]} {e} · 부재 알림 판정 생략")
             st = item.get("state")
             if st == "done":
                 serial, findings, _ = _review_facts(root, sha)
@@ -173,16 +233,32 @@ def _sync_round(paths, rnd: dict, by_key: dict, wm: str, counts: dict, log) -> N
                 counts["unchanged"] += 1      # queued + 큐 진행 중 — 할 일 없다
             continue
         # ② 큐 항목 없음
+        try:
+            present = _has_commit(repo, sha)
+        except CommitLookupError as e:
+            counts["errors"] += 1
+            log(f"[issue-progress] [주의] {tag} {sha[:12]} {e} · 부재 알림 판정 생략")
+            continue
+        if not present:
+            counts["unchanged"] += 1
+            log(f"[issue-progress] {tag} {sha[:12]} 미러에 아직 없다 — {cur} 유지(미러 지연)")
+            if _missing_expired(rnd, now, log):
+                got = it.set_hash_missing(root, n, sha, MISSING_COMMIT_WHY, round=rnum, logf=log)
+                if got.get("ok"):
+                    missing.add(sha)
+                    counts["missing"] += 1
+                else:
+                    counts["errors"] += 1
+            continue
+        if h.get("mirror_missing") and not h["mirror_missing"].get("recovered_at"):
+            got = it.clear_hash_missing(root, n, sha, round=rnum, logf=log)
+            counts["missing_recovered" if got.get("ok") else "errors"] += 1
         if cur == "queued":
             counts["unchanged"] += 1
             log(f"[issue-progress] [주의] {tag} {sha[:12]} queued 인데 큐에 항목이 없다 — 그대로 둔다")
             continue
         if not wm:
             counts["unchanged"] += 1
-            continue
-        if not _has_commit(repo, sha):
-            counts["unchanged"] += 1
-            log(f"[issue-progress] {tag} {sha[:12]} 미러에 아직 없다 — waiting 유지(미러 지연)")
             continue
         if wm_present is None:
             wm_present = _has_commit(repo, wm)
@@ -199,6 +275,40 @@ def _sync_round(paths, rnd: dict, by_key: dict, wm: str, counts: dict, log) -> N
                 + ("" if res.get("ok") else f" — 거절 {res.get('reason')}: {res.get('why')}"))
         else:
             counts["unchanged"] += 1
+    return missing
+
+
+def _note_missing_round(paths, rnd: dict, verified: set, noter, counts: dict, log) -> None:
+    """#932 이번 조회에서도 없는 해시 중 미알림 항목만 한 노트로. 종결 노트와 표시는 별개다."""
+    fresh = [h for h in rnd["hashes"] if h["sha"] in verified
+             and h["state"] not in it.HASH_TERMINAL and h.get("mirror_missing")
+             and not h["mirror_missing"].get("noted") and not h["mirror_missing"].get("recovered_at")]
+    if not fresh:
+        return
+    n, rnum = rnd["issue_id"], rnd["round"]
+    if noter is None:
+        counts["note_skipped"] += 1
+        log(f"[issue-progress] [주의] #{n} 회차 {rnum} 미러 부재 노트 생략 — 등록된 트윈 루트가 아니다")
+        return
+    text = (f"해시 리뷰 대기 알림 (회차 {rnum}) — 등록 후 30분 이상 미러에 커밋이 없음\n"
+            + "\n".join(f"- `{h['sha']}` — {h['mirror_missing']['why']}" for h in fresh)
+            + "\n해시 상태는 대기 중이며 종합 리뷰는 아직 진행되지 않았다. 미러 도착 뒤 기존 추적이 이어진다.")
+    try:
+        out = str(noter(n, notes=text))
+    except Exception as e:                                          # noqa: BLE001
+        out = f"[주의] {type(e).__name__}: {e}"
+    if out.startswith("[주의]"):
+        counts["note_failed"] += 1
+        log(f"[issue-progress] [중요] #{n} 회차 {rnum} 미러 부재 노트 실패 — 다음 회차 재시도: {out[:160]}")
+        return
+    counts["missing_notes"] += 1
+    for h in fresh:
+        got = it.set_hash_missing(paths.root, n, h["sha"], h["mirror_missing"]["why"],
+                                  noted=True, round=rnum, logf=log)
+        if not got.get("ok"):
+            counts["errors"] += 1
+            log(f"[issue-progress] [중요] #{n} 회차 {rnum} 부재 노트 게시 뒤 표시 실패 — 중복 가능: {got}")
+    log(f"[issue-progress] #{n} 회차 {rnum} 미러 부재 노트 게시 · 해시 {len(fresh)}건 · {out[:60]}")
 
 
 def note_text(root, rnd: dict, fresh: list) -> str:
@@ -448,11 +558,12 @@ def _summary_round(paths, rnd: dict, noter, counts: dict, log) -> None:
     _follow_summary(paths, rnd, noter, counts, log)
 
 
-def sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None) -> dict:
+def sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None, clock=None) -> dict:
     """열린 마감 라운드를 리뷰 큐·색인 워터마크에 맞추고 진행 노트를 남긴다. 예외를 올리지 않는다.
 
     `noter(issue_id, notes=...) -> str` — 생략하면 실 Redmine(등록된 트윈 루트에서만).
     `watermark` — 생략하면 트윈 `config.yaml` 의 `index.last_indexed_commit`.
+    `clock` — 생략하면 time.time. 단위 회귀에서 등록30분 경계를 주입한다.
     반환: 건수 사전(`rounds`·`done`·`abandoned`·`skipped`·`queued`·`unchanged`·`noted_notes`·
     `noted_hashes`·`note_failed`·`note_skipped`·`errors`) + `ok`.
     """
@@ -460,7 +571,8 @@ def sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None) -> dict:
     counts = {k: 0 for k in ("rounds", "done", "abandoned", "skipped", "queued", "unchanged",
                              "noted_notes", "noted_hashes", "note_failed", "note_skipped", "errors",
                              "range_queued", "range_running", "range_done", "range_abandoned",
-                             "range_noted", "range_note_failed", "range_stale")}
+                             "range_noted", "range_note_failed", "range_stale", "missing", "missing_notes",
+                             "missing_recovered")}
     root = paths.root
     try:
         if not it.state_path(root).exists():
@@ -473,6 +585,7 @@ def sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None) -> dict:
             if x.get("kind") == "commit":
                 by_key[str(x.get("key") or "").lower()] = x
         wm = (str(watermark).strip().lower() if watermark is not None else _watermark_of(paths, log))
+        now = float((clock or time.time)())
         if noter is None:
             from . import review_runner as rr                       # noqa: PLC0415
             noter = _default_noter if rr.is_registered_root(paths) else None
@@ -487,10 +600,11 @@ def sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None) -> dict:
         counts["rounds"] += 1
         n, rnum = rnd.get("issue_id"), rnd.get("round")
         try:
-            _sync_round(paths, rnd, by_key, wm, counts, log)
+            missing = _sync_round(paths, rnd, by_key, wm, counts, log, now)
             fresh = it.rounds(root, n)
             cur = next((r for r in fresh if r["round"] == rnum), None)
             if cur is not None:
+                _note_missing_round(paths, cur, missing, noter, counts, log)
                 _note_round(paths, cur, noter, counts, log)
                 # `#884` T4 — 해시가 다 끝났으면 종합 리뷰 등재·추적
                 cur = next((r for r in it.rounds(root, n) if r["round"] == rnum), None)
@@ -506,6 +620,7 @@ def sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None) -> dict:
         f"노트 {counts['noted_notes']}(해시 {counts['noted_hashes']}) · 노트 실패 {counts['note_failed']} · "
         f"종합 등재 {counts['range_queued']} · 종합 done {counts['range_done']} · "
         f"종합 포기 {counts['range_abandoned']} · 종합 노트 실패 {counts['range_note_failed']} · "
-        f"종합 보류 {counts['range_stale']} · 오류 {counts['errors']}")
+        f"종합 보류 {counts['range_stale']} · 미러 부재 {counts['missing']} · 부재 노트 {counts['missing_notes']} · "
+        f"부재 복구 {counts['missing_recovered']} · 오류 {counts['errors']}")
     return {"ok": counts["errors"] == 0 and counts["note_failed"] == 0
             and counts["range_note_failed"] == 0, **counts}

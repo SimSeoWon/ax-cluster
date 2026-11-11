@@ -216,6 +216,42 @@ def t_summary(tmp):
     check("미등록", not r["ok"] and r["reason"] == "not_registered", str(r))
 
 
+def t_missing_notice(tmp):
+    reg(tmp, hashes=(1, 2))
+    logs = []
+    r = IT.set_hash_missing(tmp, 7, sha(1), "기한 초과 · 미러 부재", logf=logs.append)
+    h = r.get("hash") or {}
+    check("#932 미러 사유 저장 · 상태와 종결 노트 불변", r["ok"] and h["state"] == "waiting"
+          and not h["noted"] and h["mirror_missing"]["why"] == "기한 초과 · 미러 부재"
+          and not h["mirror_missing"]["noted"], str(r))
+    before = IT.state_path(tmp).read_bytes()
+    r = IT.set_hash_missing(tmp, 7, sha(1), "기한 초과 · 미러 부재")
+    check("#932 같은 사유는 파일 쓰기 없음", r.get("already") and IT.state_path(tmp).read_bytes() == before)
+    r = IT.set_hash_missing(tmp, 7, sha(1), "기한 초과 · 미러 부재", noted=True)
+    check("#932 부재 알림 표시는 waiting에도 별도로 저장", r["ok"] and r["hash"]["mirror_missing"]["noted"]
+          and r["hash"]["mirror_missing"]["noted_at"] and not r["hash"]["noted"], str(r))
+    r = IT.clear_hash_missing(tmp, 7, sha(1), logf=logs.append)
+    check("#932 복구도 상태·옛 알림 보존", r["ok"] and r["hash"]["state"] == "waiting"
+          and r["hash"]["mirror_missing"]["recovered_at"] and r["hash"]["mirror_missing"]["noted"], str(r))
+    r = IT.set_hash_missing(tmp, 7, sha(1), "기한 초과 · 미러 부재")
+    check("#932 재부재도 성공한 알림은 보존", r["ok"] and r["hash"]["mirror_missing"]["noted"]
+          and not r["hash"]["mirror_missing"].get("recovered_at"), str(r))
+    r = IT.clear_hash_missing(tmp, 7, sha(2))
+    check("#932 부재기록 없으면 복구는 무변경", r["ok"] and r.get("already"), str(r))
+    r = IT.set_hash_missing(tmp, 7, sha(1), "")
+    check("#932 빈 사유 거절", not r["ok"] and r["reason"] == "bad_notice", str(r))
+    r = IT.set_hash_missing(tmp, 7, sha(1), "사유", noted="yes")
+    check("#932 잘못된 알림형식 거절", not r["ok"] and r["reason"] == "bad_notice", str(r))
+    r = IT.set_hash_missing(tmp, 7, sha(99), "사유")
+    check("#932 모르는 해시 거절", not r["ok"] and r["reason"] == "unknown_sha", str(r))
+    IT.set_hash(tmp, 7, sha(1), state="done")
+    r = IT.set_hash_missing(tmp, 7, sha(1), "사유")
+    check("#932 종결 해시 부재 표시 거절", not r["ok"] and r["reason"] == "terminal", str(r))
+    check("#932 결정 로그·이력", any("미러 부재" in x for x in logs)
+          and any("도착 확인" in x for x in logs)
+          and any(x["op"] == "missing_clear" for x in IT.current(tmp, 7)["history"]), str(logs))
+
+
 def t_corrupt_not_overwritten(tmp):
     p = tmp / IT.STATE_NAME
     cases = [b"{not json", json.dumps({"schema": 99, "records": {}}).encode(),
@@ -273,7 +309,7 @@ def t_history_cap(tmp):
 
 def main() -> int:
     for fn in (t_register_validation, t_idempotent, t_new_round_and_cap, t_transitions, t_terminal_pure,
-               t_issue_of_hash, t_noted, t_summary, t_corrupt_not_overwritten,
+               t_issue_of_hash, t_noted, t_summary, t_missing_notice, t_corrupt_not_overwritten,
                t_concurrent_processes, t_history_cap):
         run(fn)
     total = PASS + FAIL

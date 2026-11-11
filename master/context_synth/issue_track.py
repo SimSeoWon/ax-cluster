@@ -14,6 +14,7 @@
     register(root, N, project=, base=, end=, hashes=)   새 라운드(해시 전부 `waiting`)
     current(root, N) / open_rounds(root) / issue_of_hash(root, sha)
     set_hash(root, N, sha, state=…) / mark_hash_noted(root, N, sha)
+    set_hash_missing(root, N, sha, why=…) / clear_hash_missing(root, N, sha)
     set_summary(root, N, state=…)
     all_hashes_terminal(round) / pending_hashes(round)   순수 함수
 
@@ -111,6 +112,12 @@ def _check_round(p: Path, key: str, rnd) -> None:
     for h in hs:
         if not isinstance(h, dict) or not isinstance(h.get("sha"), str) or h.get("state") not in HASH_STATES:
             raise _bad(p, f"{where} 해시 기록 형식이 아니다")
+        missing = h.get("mirror_missing")
+        if missing is not None and (not isinstance(missing, dict)
+                                    or not isinstance(missing.get("why"), str)
+                                    or type(missing.get("noted")) is not bool
+                                    or not isinstance(missing.get("detected_at"), str)):
+            raise _bad(p, f"{where} 미러 부재 기록 형식이 아니다")
     s = rnd.get("summary")
     if not isinstance(s, dict) or s.get("state") not in SUMMARY_STATES:
         raise _bad(p, f"{where} summary 형식이 아니다")
@@ -412,6 +419,69 @@ def mark_hash_noted(root, issue_id, sha, noted: bool = True, *, round=None, logf
         _hist(rnd, "noted", f"{s[:12]} noted={bool(noted)}")
         _save(root, data)
         line = _emit(logf, n, "noted", f"{s[:12]} noted={bool(noted)}")
+    return {"ok": True, "issue_id": n, "round": rnd["round"], "hash": dict(h), "log": [line]}
+
+
+def set_hash_missing(root, issue_id, sha, why: str, *, noted=None, round=None, logf=None) -> dict:  # noqa: A002
+    """#932 미러 부재 사유와 별도 알림 표시. 해시 상태·종결 노트 표시는 바꾸지 않는다.
+
+    같은 사유를 다시 기록해도 이미 성공한 알림 표시는 보존한다. Git/기한 판정과 노트 전송은
+    호출부 몫이며, 노트 성공 뒤 noted=True를 남기는 사이의 프로세스 종료는 원자적이지 않다.
+    """
+    n, s = int(issue_id), _norm_sha(sha)
+    if not isinstance(why, str) or not why.strip() or (noted is not None and type(noted) is not bool):
+        return _refuse(logf, n, "missing", "bad_notice", "부재 사유와 올바른 알림 표시가 필요하다")
+    with _locked(root):
+        data = _load(root)
+        rnd, err = _pick_round(data, n, round)
+        if err:
+            return _refuse(logf, n, "missing", *err)
+        h = _find_hash(rnd, s)
+        if h is None:
+            return _refuse(logf, n, "missing", "unknown_sha", f"라운드 {rnd['round']} 에 {s[:12]} 가 없다")
+        if h["state"] in HASH_TERMINAL:
+            return _refuse(logf, n, "missing", "terminal", f"{s[:12]} 는 이미 종결({h['state']})")
+        old = h.get("mirror_missing") or {}
+        notice = dict(old) if old else {"detected_at": _now(), "noted": False}
+        notice.pop("recovered_at", None)
+        notice["why"] = why.strip()
+        if noted is not None:
+            notice["noted"] = noted
+            if noted:
+                notice.setdefault("noted_at", _now())
+            else:
+                notice.pop("noted_at", None)
+        if notice == old:
+            return {"ok": True, "issue_id": n, "round": rnd["round"], "already": True,
+                    "hash": dict(h), "log": []}
+        h["mirror_missing"] = notice
+        msg = f"{s[:12]} 미러 부재 · noted={notice['noted']} · {notice['why']}"
+        _hist(rnd, "missing", msg)
+        _save(root, data)
+        line = _emit(logf, n, "missing", msg)
+    return {"ok": True, "issue_id": n, "round": rnd["round"], "hash": dict(h), "log": [line]}
+
+
+def clear_hash_missing(root, issue_id, sha, *, round=None, logf=None) -> dict:  # noqa: A002
+    """#932 실제 미러 도착을 복구로 기록한다. 이전 부재·알림 이력과 해시 상태는 보존한다."""
+    n, s = int(issue_id), _norm_sha(sha)
+    with _locked(root):
+        data = _load(root)
+        rnd, err = _pick_round(data, n, round)
+        if err:
+            return _refuse(logf, n, "missing_clear", *err)
+        h = _find_hash(rnd, s)
+        if h is None:
+            return _refuse(logf, n, "missing_clear", "unknown_sha", f"라운드 {rnd['round']} 에 {s[:12]} 가 없다")
+        notice = h.get("mirror_missing")
+        if not notice or notice.get("recovered_at"):
+            return {"ok": True, "issue_id": n, "round": rnd["round"], "already": True,
+                    "hash": dict(h), "log": []}
+        notice["recovered_at"] = _now()
+        msg = f"{s[:12]} 미러 도착 확인 · 부재 대기 복구(상태 {h['state']} 유지)"
+        _hist(rnd, "missing_clear", msg)
+        _save(root, data)
+        line = _emit(logf, n, "missing_clear", msg)
     return {"ok": True, "issue_id": n, "round": rnd["round"], "hash": dict(h), "log": [line]}
 
 

@@ -28,7 +28,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -278,6 +280,116 @@ def test_워터마크_부재는_회차당_한_번():
         P._has_commit = real
     check("R240-8 큐에 있는 해시만이면 워터마크 확인 0", wm not in calls, str(calls))
     shutil.rmtree(root); shutil.rmtree(root2)
+
+
+def _registered_epoch(root):
+    return datetime.fromisoformat(T.current(root, N)["registered_at"]).timestamp()
+
+
+def test_미러_부재_기한과_한번_알림():
+    root, _ = make_twin(1)
+    other = "d" * 40
+    register(root, [GHOST, other])
+    epoch, noter, logs = _registered_epoch(root), Noter(), []
+    out = P.sync_issue_tracks(Paths(root), noter=noter, watermark="", logf=logs.append,
+                              clock=lambda: epoch + P.MISSING_COMMIT_GRACE_SECONDS - 0.01)
+    check("#932 30분 직전은 기존 대기 · 알림 없음", out["ok"] and not noter.calls
+          and all(not h.get("mirror_missing") for h in T.current(root, N)["hashes"]), str(out))
+    out = P.sync_issue_tracks(Paths(root), noter=noter, watermark="", logf=logs.append,
+                              clock=lambda: epoch + P.MISSING_COMMIT_GRACE_SECONDS)
+    hs = T.current(root, N)["hashes"]
+    check("#932 정확히30분 · 워터마크 없어도 두 해시 1노트", out["missing"] == 2
+          and out["missing_notes"] == 1 and len(noter.calls) == 1
+          and GHOST in noter.calls[0][1] and other in noter.calls[0][1], str(noter.calls))
+    check("#932 waiting·종결 noted 유지, 부재사유/알림은 영속", all(h["state"] == "waiting"
+          and not h["noted"] and h["mirror_missing"]["why"] == P.MISSING_COMMIT_WHY
+          and h["mirror_missing"]["noted"] for h in hs), str(hs))
+    check("#932 미종결 해시로 종합리뷰를 넘기지 않는다", not _range(root)
+          and T.current(root, N)["summary"]["state"] == "waiting")
+    P.sync_issue_tracks(Paths(root), noter=noter, watermark="", logf=logs.append,
+                        clock=lambda: epoch + P.MISSING_COMMIT_GRACE_SECONDS + 3600)
+    check("#932 재동기화·재읽기 뒤 같은 사유 노트 중복0", len(noter.calls) == 1, str(noter.calls))
+    check("#932 기한 판정·사유 저장·노트 게시 로그", any("부재 기한 판정" in x for x in logs)
+          and any("미러 부재" in x for x in logs) and any("부재 노트 게시" in x for x in logs), str(logs))
+    shutil.rmtree(root)
+
+
+def test_미러_부재_노트_실패와_조회실패():
+    root, _ = make_twin(1)
+    register(root, [GHOST])
+    epoch, noter, logs = _registered_epoch(root), Noter(fail=1), []
+    clock = lambda: epoch + P.MISSING_COMMIT_GRACE_SECONDS
+    out = P.sync_issue_tracks(Paths(root), noter=noter, watermark="", logf=logs.append, clock=clock)
+    check("#932 노트 실패는 별도 표시 미완료·다음동기화 대상", not out["ok"] and out["note_failed"] == 1
+          and not hstate(root, GHOST)["mirror_missing"]["noted"], str(out))
+    with patch.object(P, "_has_commit", side_effect=P.CommitLookupError("권한 거절")):
+        out = P.sync_issue_tracks(Paths(root), noter=noter, watermark="", logf=logs.append, clock=clock)
+    check("#932 조회오류는 부재로 오인하거나 옛 알림을 보내지 않음", not out["ok"] and out["errors"] == 1
+          and out["missing"] == 0 and len(noter.calls) == 1, str(out))
+    out = P.sync_issue_tracks(Paths(root), noter=noter, watermark="", logf=logs.append, clock=clock)
+    check("#932 정상조회 복귀·노트 재시도 성공", out["ok"] and len(noter.calls) == 2
+          and hstate(root, GHOST)["mirror_missing"]["noted"], str(out))
+    P.sync_issue_tracks(Paths(root), noter=noter, watermark="", logf=logs.append, clock=clock)
+    check("#932 성공뒤 중복없음", len(noter.calls) == 2, str(noter.calls))
+    check("#932 조회실패 별도 로그", any("권한 거절" in x and "판정 생략" in x for x in logs), str(logs))
+    shutil.rmtree(root)
+
+
+def test_미러_도착_뒤_기존_리뷰로_복구():
+    root, shas = make_twin(1)
+    real_sha = shas[0]
+    register(root, [real_sha])
+    noter, logs = Noter(), []
+    clock = lambda: _registered_epoch(root) + P.MISSING_COMMIT_GRACE_SECONDS
+    # 조회 대역으로 아직 fetch되지 않은 조건을 만든다. 운영 실증과 구분하는 단위 회귀다.
+    with patch.object(P, "_has_commit", return_value=False):
+        P.sync_issue_tracks(Paths(root), noter=noter, watermark="", logf=logs.append, clock=clock)
+    out = P.sync_issue_tracks(Paths(root), noter=noter, watermark="", logf=logs.append, clock=clock)
+    h = hstate(root, real_sha)
+    check("#932 실제커밋 조회 복귀 · 복구표시·waiting 유지", out["missing_recovered"] == 1
+          and h["state"] == "waiting" and h["mirror_missing"]["recovered_at"], str(h))
+    Q.enqueue(root, key=real_sha, files=["Source/M/A.cpp"])
+    out = P.sync_issue_tracks(Paths(root), noter=noter, watermark="", logf=logs.append, clock=clock)
+    check("#932 늦게 온 정상 큐항목은 기존 연결 queued", hstate(root, real_sha)["state"] == "queued"
+          and out["queued"] == 1 and len(noter.calls) == 1, str(out))
+    check("#932 복구 로그", any("도착 확인" in x for x in logs), str(logs))
+    shutil.rmtree(root)
+
+
+def test_미러_부재_등록시각_판정불가():
+    for stamp in ("", "not-a-date", "2026-11-12T00:00:00", "2999-01-01T00:00:00+00:00"):
+        root, _ = make_twin(1)
+        with patch.object(T, "_now", return_value=stamp):
+            register(root, [GHOST])
+        noter, logs = Noter(), []
+        out = P.sync_issue_tracks(Paths(root), noter=noter, watermark="", logf=logs.append,
+                                  clock=lambda: 1800000000.0)
+        check(f"#932 잘못된/미래 등록시각은 부재 기한 단정안함 {stamp!r}", not noter.calls
+              and not hstate(root, GHOST).get("mirror_missing")
+              and any("기한 판정 불가" in x for x in logs), str(out))
+        shutil.rmtree(root)
+
+
+def test_미러_커밋_조회오류와_부재_구분():
+    expr = f"{GHOST}^{{commit}}"
+    for stdout, stderr, rc, want in (("commit\n", "", 0, True),
+                                     (expr + " missing\n", "", 0, False),
+                                     ("", "fatal: not a git repository", 128, None),
+                                     ("", "Permission denied", 1, None),
+                                     (expr + " missing\n", "warning: failure", 0, None),
+                                     ("garbage\n", "", 0, None)):
+        with patch.object(P.subprocess, "run", return_value=subprocess.CompletedProcess([], rc, stdout, stderr)):
+            try:
+                got = P._has_commit("unused", GHOST)
+                check(f"#932 Git 조회 판정 {rc}/{stdout.strip()[:20]}", want is not None and got is want)
+            except P.CommitLookupError:
+                check(f"#932 Git 오류를 부재와 구분 {rc}/{stderr[:20]}", want is None)
+    with patch.object(P.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 30)):
+        try:
+            P._has_commit("unused", GHOST)
+            check("#932 조회 타임아웃은 오류", False)
+        except P.CommitLookupError:
+            check("#932 조회 타임아웃은 오류", True)
 
 
 def test_추적_밖과_연결():
@@ -662,6 +774,9 @@ def test_공개_apply_를_쓴다():
 
 if __name__ == "__main__":
     for fn in (test_공개_apply_를_쓴다, test_done_과_포기_한_노트, test_노트_실패는_다음_회차가_다시, test_워터마크, test_워터마크_부재는_회차당_한_번,
+               test_미러_부재_기한과_한번_알림, test_미러_부재_노트_실패와_조회실패,
+               test_미러_도착_뒤_기존_리뷰로_복구, test_미러_부재_등록시각_판정불가,
+               test_미러_커밋_조회오류와_부재_구분,
                test_추적_밖과_연결, test_깨진_추적_파일, test_실_redmine_가드,
                test_main_이_drain_앞뒤로_부른다,
                test_종합_등재는_전부_종결_뒤, test_종합_리뷰_한_바퀴, test_종합_상태_전이,

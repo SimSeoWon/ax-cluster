@@ -888,7 +888,16 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
     #    finish 가 직접 등재하지 않는다). 미러(`paths.repo`)는 색인기가 push 이벤트 뒤에 fetch 한다. 그 사이에
     #    타이머가 집으면
     #    결정적 실패(「커밋을 찾지 못했다」)로 1회에 포기됐을 것이다. 문구에 결정적 마커를 넣지 않는다.
-    if rg._git(repo, "cat-file", "-e", f"{end}^{{commit}}")[0] != 0:
+    # #932: 파일/권한/Git 조회 오류는 커밋 부재와 다르다. 해시 추적과 같은 probe를 쓴다.
+    from . import issue_progress as progress                       # noqa: PLC0415
+    try:
+        present = progress._has_commit(repo, end)
+    except progress.CommitLookupError as e:
+        why = f"범위 끝 {end[:12]} 의 미러 조회 실패 — {e}"
+        rq.finish(paths.root, item["id"], ok=False, why=why, logf=log)
+        res.state, res.why = "failed", why
+        return res
+    if not present:
         why = f"범위 끝 {end[:12]} 이 미러에 아직 없다 — 색인기 fetch 를 기다린다"
         rq.finish(paths.root, item["id"], ok=False, why=why, logf=log)
         res.state, res.why = "failed", why

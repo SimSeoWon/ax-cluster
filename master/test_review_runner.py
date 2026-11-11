@@ -34,11 +34,13 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from master import issue_lock as IL                                # noqa: E402
 from master.context_synth import issue_track as IT                # noqa: E402
+from master.context_synth import issue_progress as IP             # noqa: E402
 from master.context_synth import review_gen as RG                 # noqa: E402
 from master.context_synth import review_queue as Q                # noqa: E402
 from master.context_synth import review_runner as R               # noqa: E402
@@ -817,6 +819,50 @@ def test_종합_리뷰_회차_기록이_없으면_실패다():
     shutil.rmtree(root)
 
 
+def test_범위_미러부재와_조회오류를_구분하고_도착하면_이어간다():
+    """#932: 범위는 기존 WAIT 상한을 유지하고 조회 오류를 부재로 알리지 않는다."""
+    for lookup_error in (False, True):
+        root, end = make_repo()
+        repo = Path(root) / "repo"
+        base = git(repo, "rev-parse", "HEAD~1").stdout.strip()
+        paths, calls, notes = Paths(root), [], []
+        Q.enqueue(root, kind="range", key=f"{base}..{end}", files=["Source/M/A.cpp"],
+                  meta={"issue_id": 932, "base": base, "end": end})
+
+        def review(prompt):
+            calls.append(prompt)
+            return _review_body()
+
+        def note(issue, *, notes):
+            return "노트"
+
+        try:
+            probe = ({"side_effect": IP.CommitLookupError("권한 확인 실패")}
+                     if lookup_error else {"return_value": False})
+            with patch.object(IP, "_has_commit", **probe):
+                r = R.run_once(paths, review_call=review, range_noter=note)
+            item = Q.items(root)[0]
+            expected = Q.TRANSIENT if lookup_error else Q.WAIT
+            check(f"#932 범위 {'조회오류' if lookup_error else '부재'}는 별도 갈래로 재큐",
+                  r.state == "failed" and item["state"] == "pending"
+                  and item["last_kind"] == expected and item["attempts"] == 1,
+                  f"{r.state} {item}")
+            check("#932 부재/조회오류 회차는 모델을 부르지 않는다", not calls, str(calls))
+            if lookup_error:
+                check("#932 조회오류에 미러 지연 문구를 넣지 않는다",
+                      "미러 조회 실패" in r.why and "미러에 아직 없다" not in r.why, r.why)
+            else:
+                check("#932 범위 미러 부재의 WAIT 상한12 유지", Q.cap(item["last_kind"]) == 12)
+            # 다음 회차에는 실제 커밋을 읽는다. 지연이 해소되면 기존 리뷰·노트 경로로 이어진다.
+            r = R.run_once(paths, review_call=review,
+                           range_noter=lambda issue, **kw: notes.append((issue, kw["notes"])) or "노트")
+            check("#932 범위 입력 회복 뒤 리뷰 완료", r.state == "done" and bool(calls)
+                  and Q.items(root)[0]["state"] == "done", f"{r.state} {r.why}")
+            check("#932 범위 완료 노트는 한 번", len(notes) == 1, str(notes))
+        finally:
+            shutil.rmtree(root)
+
+
 def test_agy_하트비트_배선():
     """⑰ `#888` — `agy_only(log=)` 는 하트비트·요약을 켜고 diff 잘림 여부를 요약에 싣는다.
 
@@ -911,6 +957,7 @@ if __name__ == "__main__":
                test_퇴고는_온전한_diff_초고는_잘린_diff, test_시간_예산은_유닛과_같다,
                test_쿨다운은_시도를_쓰지_않고_회차를_멈춘다,
                test_종합_리뷰_회차_기록이_없으면_실패다,
+               test_범위_미러부재와_조회오류를_구분하고_도착하면_이어간다,
                test_agy_하트비트_배선, test_antigravity_작성분은_codex가_본다,
                test_마감_등록_전에도_잠금으로_가른다, test_다른_계열은_agy_그대로,
                test_codex_실패는_폴백하지_않는다):
