@@ -1,8 +1,8 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-11 22:45 Claude 체크포인트(#931 마감 `c22af56` — `requester: master` 프로젝트의 `ax-client` 일감 호출을 서버가 거절) · 22:55 보강(#933 리뷰 대조·#934 등록). 항목·진행의 정본은 Redmine이다.
-> 이전 상세는 Git `da43835`·`513d5d2`·`1c65dcf`·`2570af6`·`c1b2537`·`eb78e03`·`14b3273`·`d1f5ae0`·`c22af56`·리포트 159~167·각 일감 노트에 있다.
-> 진행 중인 일감·잠금 없음. **배달 예정**: 이 문서 커밋 직후 `master.client update` 로 세 대(`.2`·`.33`·`.43`)에 배달·검사한다(사용자 지시 11-11). #931 마감 배달(`5253951` 기준, 22:42)은 세 대 모두 통과했다(`issue_wrapup` rc 0).
+> 2026-11-11 23:25 Antigravity 체크포인트(#934 마감 `40b5fd9` — #933 리뷰 R318~R322 지적 정리: `verify_span` 입력 정규화 · `infra_finish` 복원 `base` 검사 · `test_client_mcp` 임시 git 저장소 정리 · `test_tagging` 안전 조회). 항목·진행의 정본은 Redmine이다.
+> 이전 상세는 Git `da43835`·`513d5d2`·`1c65dcf`·`2570af6`·`c1b2537`·`eb78e03`·`14b3273`·`d1f5ae0`·`c22af56`·`40b5fd9`·리포트 159~168·각 일감 노트에 있다.
+> 진행 중인 일감·잠금 없음. **배달 예정**: 이 문서 커밋 직후 `master.issue_wrapup 934` 로 세 대(`.2`·`.33`·`.43`)에 배달·검사한다.
 > 마스터(.57)는 11-11 21:57:03 에 부팅됐다 — 꺼진 시각은 확인하지 않았다.
 
 ## 🔴 오늘 바뀐 규칙 (사용자 결정 2026-11-08 ~ 11-10)
@@ -19,6 +19,12 @@
 - **세 CLI 전체 도구 허용**(#927 사용자 결정): Claude `permissions.defaultMode=bypassPermissions`, Codex 두 AX MCP 기본 approve 및 실제 도구 전수 승인.
   Antigravity 기존 전체 allow 보존. 스킬은 사용하는 도구 권한을 따른다. Codex sandbox·OS 권한과 작업 범위·사람 게이트는 별도다.
 - 🔴 **이 문서의 절 제목 「바로 다음 작업」은 바꾸지 않는다** — `test_handoff_size` 가 `^#{2,3}\s*바로 다음 작업` 으로 판정.
+
+## #934 마감 (2026-11-11) — #933 리뷰(R318~R322) 지적 정리
+
+- **동작**: `verify_span` 이 `base`·`end`·`hashes` 를 `_sha()` 로 소문자·공백 정규화하고 `branch` 의 `refs/heads/` 접두사를 제거한다(`R322-6`·`R322-8`). `infra_finish` 는 잠금에서 복원한 `base` 도 `hs` 에 포함되면 `step: span` 으로 즉시 거절한다(`R322-7`). `test_client_mcp._issue_repo` 임시 디렉터리를 `finally` 로 정리하고 잔류 5개를 삭제했으며(`R322-9`), `test_tagging` 의 `IL.current(twin)` 조회를 안전 조회로 바꿨다(`R322-10`).
+- **리뷰 보드·검증**: `R322-6`~`R322-10` 및 대응 항목 10건을 `applied`(`73a41c09ec17`), 지연 임포트 관례 등 10건을 `dismissed` 로 반영했다. `test_issue_infra` 120 · `test_client_mcp` 357 · `test_tagging` 242 · 공식 통합 193/193 통과. 리포트 168(`40b5fd99d2a0`).
+- **발견 사항(범위 밖)**: Antigravity `~/.gemini/antigravity-cli/settings.json` 에 `"mode": "accept-edits"` 만 있고 실제 바이너리가 언마샬링하는 `"toolPermission": "accept-edits"` 키가 빠져 `toolPermission=request-review` 기본값으로 동작하며 서브에이전트 `edit_file` 마다 승인 팝업이 뜬다(`master/client/master_local.py` 정비 대상).
 
 ## #931 마감 (2026-11-11) — `requester: master` 프로젝트의 `ax-client` 일감 호출 거절
 
@@ -70,6 +76,7 @@
 
 | 일감 | 결과 | 커밋 |
 |---|---|---|
+| #934 | #933 리뷰(R318~R322) 지적 정리 — `verify_span` 정규화·복원 `base` 검사·임시 git 정리 — 리포트 168 | `40b5fd9` |
 | #931 | `requester: master` 프로젝트의 `ax-client` 일감 호출을 서버가 거절 — 리포트 167 | `c22af56` |
 | #933 | 마감 해시를 도구가 git 에서 구하고 서버가 Gitea 로 검증 — 리포트 166 | `d1f5ae0` |
 | #930 | #929 테스트의 실제 Claude 설정 오염 차단 — 리포트 165 | `14b3273` |
@@ -83,34 +90,34 @@
 | #921~#925 | 마감 일원화·wrapup 방어·담당 기록·실증 정비 — 리포트 154~158 | `aea3f94` 외 |
 | #820·#882 | 범위 밖 감지 게이트·범위 리뷰 재시도 노트 — 리포트 152·153 | `7d35840` 외 |
 
-- 등록: **#908**·**#911**·**#919** 아이디어 · **#932**·**#934**(M8 버그/개선, 미착수). #916 은 「완료」.
+- 등록: **#908**·**#911**·**#919** 아이디어 · **#932**(M8 버그/개선, 미착수). #916·#934 는 「완료」.
 
 ## 실제 Git·경로 상태
 
 | 역할 | 위치 | 상태 |
 |---|---|---|
-| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`c22af56`(+ 이 문서 커밋), 일감 worktree 제거 완료 |
+| 운영 저장소 | `/home/sim/ax-cluster` | main=origin/main=`40b5fd9`(+ 이 문서 커밋), 일감 worktree 제거 완료 |
 | 일감 worktree 부모 | `/home/sim/ax-cluster/.ax-issues/` | 비어 있음 · 일감 잠금 없음 |
 | 색인 미러 | `/home/sim/ax-cluster/AXCluster/repo` | main 하나 · origin/main 추적 |
 | AXCluster 워커 | `.43 /home/sim/trunk/AXCluster`, `.2`·`.33 C:\trunk\AXCluster` | 배달 및 check 대상 (완료) |
 
-- 상주 재기동: `master.issue_wrapup 931` 이 `ax-task-queue`(22:39:30)·`ax-projects`(22:39:35)를 재기동했다(재판정 깨끗). `ax-broker` 는 최신(21:57 부팅 기동).
+- 상주 재기동: `master.issue_wrapup 934` 가 `ax-task-queue`(23:24:43)·`ax-projects`(23:24:48)를 재기동했다(재판정 깨끗). `ax-broker` 는 최신(21:57 부팅 기동).
 
 ## 유지할 운영 상태
 
 - 마스터 담당 기록 **antigravity**(실제 인수 11-09 00:07, 사용자 지시), 워커 전역 **codex**(state, 10-18 — 11-11 02:47 재조회 일치, 변경 없음). #930·#933 은 Claude 가 작성했으나 교대 지시가 없어 담당 기록은 그대로다.
 - 🔴 Redmine 은 M7 이 닫히고 **마일스톤 8** 이 열려 있다. `CLAUDE.md`·공용 문서의 「M7 open」 서술과 M8 문서 부재는 미정리다(자동 로드 문서라 동의 필요).
 - #929 회차 2 는 닫혔다(11-11 02:01): 해시 R314(지적 5) 연결 → Codex 종합 리뷰 **R317**(중간 2 · 낮음 3, R314 지적 4건 남음·1건 해소). 지적은 미처리다 — 리뷰 판정이며 코드와 대조하지 않았다.
-- #933 리뷰가 끝났다(22:45): 해시 R318(6)·R319(1)·R320(3)·R321(0), 종합 **R322**(10건 모두 「남음」, 새 지적 없음). Claude 가 10건을 코드와 대조했다(읽기만): 실제 결함 1건(R320-3 `test_client_mcp` 임시 git 저장소 미정리 — `/tmp/test_client_mcp_git_*` 5개 잔류), 운영 영향 없음 3건(R318-4·5·6), 영향 작음 1건(R319-1), 컨벤션 5건. 처리는 [#934](http://192.168.0.57:8080/issues/934)(신규, 미착수 — 컨벤션 5건은 범위 밖으로 적음). #931 리뷰는 해시 2개 `queued`·종합 `waiting`(22:54 조회, 작성 계열 `claude` → agy).
+- #933 리뷰(`R318`~`R322`)는 #934(`40b5fd9`)로 모두 정리·반영(`applied` 10 · `dismissed` 10)했다. #931 리뷰는 해시 2개 `queued`·종합 `waiting`(작성 계열 `claude` → agy), #934 리뷰는 작성 계열 `agy` → Codex 대상이다.
 - 실제 BC-250 poweroff 는 아직 실행한 적이 없다. 종료 중 SSH rc=255 면 꺼졌어도 `SHUTDOWN FAILED` 로 끝날 수 있다(가설·미측정).
 - ax-broker active · ax-projects active · ax-task-queue active, ax-followup.timer·ax-indexer.path·ax-review-queue.timer active.
 - 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음.
-- #931 포함 표의 일감 코드 마감 완료. 중복 마감·산출물 재생성 금지.
+- #934 포함 표의 일감 코드 마감 완료. 중복 마감·산출물 재생성 금지.
 
 ## 바로 다음 작업
 
-1. 새 Claude·Codex 세션에서 전체 도구 승인 정책 반영을 확인한다. 설정 파일 대조와 이미 실행 중인 세션의 유효 권한은 구분한다. 새 대화형 Claude 세션에서 `ax-client` 연결도 확인한다(#930 은 `claude mcp list` 까지만 확인).
-2. **다음 일감 선택**: 사용자가 정한다. 후보는 **#932**·**#934** · 아이디어(#908·#911·#914·#919) · 세션 토큰 보강(#741). 「#N 진행해」 발화 전에는 시작하지 않는다.
-3. #929 R317(Codex — `bc250_shutdown.py` 중간 2: SSH stderr 안내를 점검 실패로 처리 · Ping 실행 오류를 단절로 계산, `master_local.py` 스킬 링크 대상 미검증)과 #930 R315·R316, #931 리뷰(나오는 대로) 지적을 코드와 대조하고 처리를 사용자와 정한다. #933 지적은 대조를 마쳐 #934 로 옮겼다.
+1. 새 Claude·Codex 세션에서 전체 도구 승인 정책 반영을 확인한다. Antigravity 서브에이전트 `edit_file` 승인 팝업 원인(`settings.json` 의 `"toolPermission": "accept-edits"` 누락)을 `master_local.py` 에 반영할지 사용자와 정한다.
+2. **다음 일감 선택**: 사용자가 정한다. 후보는 **#932** · 아이디어(#908·#911·#914·#919) · 세션 토큰 보강(#741). 「#N 진행해」 발화 전에는 시작하지 않는다.
+3. #929 R317(Codex — `bc250_shutdown.py` 중간 2: SSH stderr 안내를 점검 실패로 처리 · Ping 실행 오류를 단절로 계산, `master_local.py` 스킬 링크 대상 미검증)과 #930 R315·R316, #931·#934 리뷰(나오는 대로) 지적을 코드와 대조하고 처리를 사용자와 정한다.
 4. 배달은 끝났다(위). 남은 것은 `.33` 요청자 세션의 첫 마감에서 `ax-client:issue_finish(N)` 이 `issue/<N>` 끝을 git 에서 읽는지(`[git]` 오류 여부) 본다 — #933 의 미확인 항목.
 5. 다른 일감을 자동 시작하지 않는다. ⑦ 전진·finalize·파괴적 git·자동 로드 문서 변경은 기존대로 멈춰 묻는다.
