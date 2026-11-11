@@ -89,6 +89,9 @@ if mode == "nousage":
 if mode == "authfail":
     print(json.dumps({"response": "", "status": "ERROR",
                       "error": "authentication failed or timed out"})); sys.exit(0)
+if "subordinate implementation assistant" in sys.argv[-1]:
+    print(json.dumps({"response": "## 요약\\n작은 구현 제안\\n\\n```diff\\n--- a/a.py\\n+++ b/a.py\\n@@ -1 +1 @@\\n-x = 1\\n+x = 2\\n```", "status": "SUCCESS",
+                      "usage": {"input_tokens": 12, "output_tokens": 8}})); sys.exit(0)
 print(json.dumps({"response": "# 보고서\\n\\n## 요약\\n요약 한 줄\\n\\n## 1\\n본문 `src/a.py:1` 재인용 `src/a.py:1` 범위밖 `src/a.py:9` 없음 (`src/b.py:2`)", "status": "SUCCESS",
                   "usage": {"input_tokens": 120, "output_tokens": 45, "cache_read_tokens": 7}}))
 """
@@ -163,6 +166,25 @@ def main() -> int:
         check("원본 보관 — out.json·err.log·BRIEF.md·run.json",
               all((run / n).is_file() for n in ("out.json", "err.log", "BRIEF.md", "run.json")),
               str(list(run.iterdir()) if run.is_dir() else run))
+
+        print("\n[1a] #829 작은 구현은 패치 제안으로만 회수")
+        implementation_out = research / "2026-11-11-implementation.md"
+        before = (brief / "src" / "a.py").read_bytes()
+        n0 = len(rows(log))
+        rc = G.main(["--project", "AXCluster", "--task", "implementation",
+                     "--brief-dir", str(brief), "--out", str(implementation_out)])
+        argv = json.loads(argv_file.read_text())
+        proposal = implementation_out.read_text(encoding="utf-8")
+        result = json.loads((implementation_out.with_suffix(".run") / "run.json").read_text())
+        check("구현 diff 응답을 보고서로 회수 · 자료 사본 불변", rc == 0 and "--- a/a.py" in proposal
+              and (brief / "src" / "a.py").read_bytes() == before, proposal)
+        check("구현 모드는 승인 우회 없이 sandbox·plan · 스킬 확장 끔",
+              "--dangerously-skip-permissions" not in argv and "--sandbox" in argv
+              and "--disable-slash-commands" in argv and argv[argv.index("--mode") + 1] == "plan", str(argv))
+        check("구현 전용 프롬프트 · MCP/git/운영 금지 지시", argv[-2:] == ["-p", G.IMPLEMENTATION_PROMPT]
+              and "use MCP" in argv[-1] and "use git" in argv[-1] and argv[-1].isascii(), str(argv))
+        check("결과에 implementation · 사용량 한 줄", result.get("task") == "implementation"
+              and len(rows(log)) == n0 + 1, str(result))
 
         print("\n[1b] 인용 파일 읽기 실패 — 보고서와 뒤 정상 인용 보존")
         unreadable = brief / "src" / "a.py"
@@ -303,7 +325,8 @@ def main() -> int:
         calls_file = Path(os.environ["FAKE_AGY_ARGV"] + ".calls")
         calls_file.unlink(missing_ok=True)
         o = research / "2026-11-08-argon-fallback.md"
-        rc = G.main(["--project", "AXCluster", "--model", "gemini-4-argon-medium", "--allow-argon",
+        rc = G.main(["--project", "AXCluster", "--task", "implementation",
+                     "--model", "gemini-4-argon-medium", "--allow-argon",
                      "--brief-dir", str(brief), "--out", str(o)])
         res = json.loads((o.with_suffix(".run") / "run.json").read_text(encoding="utf-8"))
         check("한도 → Flash High 로 재호출 · 보고서", rc == 0 and o.is_file()
@@ -311,6 +334,10 @@ def main() -> int:
               calls_file.read_text())
         check("결과에 폴백 출처 · 실제 모델", res.get("fallback_from") == "gemini-4-argon-medium"
               and res.get("actual_model") == "gemini-3.8-flash-high", str(res))
+        fallback_argv = json.loads(argv_file.read_text())
+        check("구현 모드가 Flash 폴백에도 유지", res.get("task") == "implementation"
+              and fallback_argv[-1] == G.IMPLEMENTATION_PROMPT
+              and "--dangerously-skip-permissions" not in fallback_argv, str(fallback_argv))
         check("첫 시도 기록 보존", any(".argon-" in x.name for x in research.iterdir()),
               str([x.name for x in research.iterdir()]))
         check("쿨다운 기록", A.cooldown_left("gemini-4-argon-medium", state_path=state) > 0)

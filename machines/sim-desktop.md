@@ -41,7 +41,10 @@ does not start a game-source task; it serves one.**
 
     AX-ENTRY-MARK: home
 
-[중요] **Claude, Codex and Antigravity take turns here** (#920). Before planning, use
+[중요] **Only Claude and Codex orchestrate AX master work** (user 2026-11-11, #829).
+Gemini 4 Argon/Antigravity may perform scoped subagent work assigned and verified by the
+conductor. It must not independently change global settings/shared instructions or operate MCP,
+start/finish issues, or deploy. Before planning, use
 [`ax-handoff`](../master/skills/ax-handoff/SKILL.md) to read the handoff and shared rules,
 cross-check actual state, and inspect master ownership and worker conductor mode separately.
 Change worker mode only when the user chooses it; a master handoff alone does not select a

@@ -151,10 +151,10 @@ def master_record():
         if not isinstance(data, dict):
             raise ValueError("담당 기록 형식 오류")
         agent = data.get("agent")
-        if agent == "agy":
-            agent = "antigravity"
-            data["agent"] = agent
-        if agent not in ("claude", "codex", "antigravity"):
+        if agent in ("agy", "antigravity"):
+            return {"agent": "unknown", "retired_agent": agent,
+                    "note": "Antigravity 마스터 지휘는 폐기됐다(#829). 기존 기록은 보존하며 새 담당 인수가 필요하다"}
+        if agent not in ("claude", "codex"):
             raise ValueError("담당 기록 형식 오류")
         return data
     except FileNotFoundError:
@@ -163,10 +163,8 @@ def master_record():
         return {"agent": "unknown", "note": str(exc)}
 
 def record_master(agent, why, by=""):
-    if agent == "agy":
-        agent = "antigravity"
-    if agent not in ("claude", "codex", "antigravity"):
-        raise ValueError("마스터 담당은 claude, codex 또는 antigravity")
+    if agent not in ("claude", "codex"):
+        raise ValueError("마스터 담당은 claude 또는 codex만 허용한다(#829). Argon은 서브에이전트 전용이다")
     if not isinstance(why, str) or not why.strip():
         raise ValueError("담당 기록 사유가 필요하다")
     if not isinstance(by, str):

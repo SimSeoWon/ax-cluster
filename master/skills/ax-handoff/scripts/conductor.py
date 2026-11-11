@@ -23,7 +23,7 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("snapshot", help="마스터 담당·워커 모드 조회 (읽기)")
     rec = sub.add_parser("record-master", help="마스터 담당 기록 — 사용자 지시로 실제 인수한 뒤에만")
-    rec.add_argument("agent", choices=("claude", "codex", "antigravity", "agy"))
+    rec.add_argument("agent", choices=("claude", "codex"))
     rec.add_argument("--why", required=True)
     rec.add_argument("--by", default="")
     a = ap.parse_args(argv)

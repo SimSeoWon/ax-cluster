@@ -28,7 +28,9 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   Select skeletons, source boundaries and checks from registered `kind` (`unreal`/`code`/`index_only`).
   Details: [`master/skills/distribute/SKILL.md`](master/skills/distribute/SKILL.md).
 
-- 🔴 [중요] **지휘자는 셋이다 — Claude · Codex · Antigravity 가 교대한다** (사용자 2026-09-07 · Antigravity 2026-11-08 #920, 한도가 정한다).
+- 🔴 [중요] **AX 마스터 지휘는 Claude·Codex만 맡는다** (사용자 2026-11-11, #829).
+  Gemini 4 Argon/Antigravity는 지휘자가 범위를 지정한 서브 작업만 수행한다. 전역 설정·공용 지침·
+  MCP 운영·일감 시작·마감·배포를 독자적으로 변경하거나 실행하지 않는다(공용 규칙 §1.10).
   세션 시작에 **[`ax-handoff`](master/skills/ax-handoff/SKILL.md) 스킬**을 읽고 실행한다.
   인수인계·공용 규칙과 실제 상태를 대조하고, 마스터 담당과 워커 지휘자 모드를 각각 확인한다.
   모드 변경은 사용자 선택에 따른다. 마스터의 세션 시작 훅은 없으므로 이 지침이 진입점이다.

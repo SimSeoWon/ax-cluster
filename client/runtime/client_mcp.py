@@ -1176,9 +1176,9 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["mode", "why"], "properties": {
          "mode": {"type": "string", "enum": ["lane", "claude", "codex"]},
          "why": {"type": "string"}, "by": {"type": "string"}}}},
-    {"name": "record_master_conductor", "description": "마스터 인수 확인 후 담당을 기록한다. 세션을 실행·종료하거나 잠그지 않는다. 예정된 교대를 완료로 기록하지 않는다.",
+    {"name": "record_master_conductor", "description": "마스터 인수 확인 후 Claude/Codex 담당을 기록한다. Argon은 서브 전용이다(#829). 세션을 실행·종료하거나 잠그지 않는다. 예정된 교대를 완료로 기록하지 않는다.",
      "inputSchema": {"type": "object", "required": ["agent", "why"], "properties": {
-         "agent": {"type": "string", "enum": ["claude", "codex", "antigravity", "agy"]},
+         "agent": {"type": "string", "enum": ["claude", "codex"]},
          "why": {"type": "string"}, "by": {"type": "string"}}}},
     {"name": "register_work",
      "description": (

@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -1022,6 +1023,15 @@ def t_start_requires_mcp_client(tmp):
     r = IF.start(7, events_path=ev)
     check("#920 출처 없는 운영 시작 거절", not r["ok"] and r["step"] == "client"
           and "issue_start_tool" in r["why"], str(r)[:300])
+    with patch.object(IF, "_start", return_value={"ok": False, "step": "sentinel"}) as start:
+        r = IF.start(7, events_path=ev, client="antigravity-client")
+        check("#829 Antigravity 운영 시작 거절", not r["ok"] and r["step"] == "client"
+              and "서브 작업" in r["why"], str(r)[:300])
+        check("#829 거절은 준비·git·잠금·Redmine 앞", start.call_count == 0)
+        for client in ("claude-code", "codex-mcp-client"):
+            r = IF.start(7, events_path=ev, client=client)
+            check(f"#829 {client} 운영 시작은 기존 절차 유지", r["step"] == "sentinel")
+        check("#829 허용 계열만 준비 호출", start.call_count == 2)
 
 
 def t_authors_reach_track_round(tmp):

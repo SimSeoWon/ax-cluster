@@ -123,6 +123,9 @@ def test_protocol_roundtrip():
         check(f"도구 목록에 {must} 이 있다", must in names, str(names))
     check("이름이 중복되지 않는다", len(names) == len(set(names)), str(names))
     check("모든 도구에 inputSchema", all("inputSchema" in t for t in r["result"]["tools"]))
+    master_tool = next(t for t in r["result"]["tools"] if t["name"] == "record_master_conductor")
+    check("#829 마스터 담당 타입은 claude/codex만",
+          master_tool["inputSchema"]["properties"]["agent"]["enum"] == ["claude", "codex"])
     r = M.handle_message({"jsonrpc": "2.0", "id": 3, "method": "없는것"})
     check("모르는 요청은 -32601", r["error"]["code"] == -32601, str(r))
     check("ping", M.handle_message({"jsonrpc": "2.0", "id": 4, "method": "ping"})["result"] == {})

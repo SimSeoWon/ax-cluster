@@ -37,7 +37,9 @@
 
 ## 마스터 실행 환경 · 지휘자 교대
 
-지휘자는 셋이다 — Claude · Codex · Antigravity (#920). 지휘자별 위임은 `docs/orchestrator-rules.md` §1.10.
+AX 마스터 지휘는 Claude·Codex만 맡는다(#829). Gemini 4 Argon/Antigravity는 지휘자가 범위를 지정한
+서브 작업만 수행하며, 전역 설정·공용 지침·MCP 운영·일감 시작·마감·배포를 독자적으로 변경하거나
+실행하지 않는다. 위임·검증 범위는 `docs/orchestrator-rules.md` §1.10을 따른다.
 
 ### 등록된 스킬 우회 금지 — 사용자 결정 2026-10-04
 

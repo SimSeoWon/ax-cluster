@@ -15,14 +15,15 @@ def section():
         # [중요] `exc` 를 찍지 않는다 — 위 머리말 참조. 갈래는 로그가 가진다.
         return '<section><h2>지휘 상태</h2><p>조회 실패 — 마스터 로그를 본다.</p></section>'
     master, worker = state["master"], state["worker"]
-    labels = {"claude": "Claude", "codex": "Codex", "antigravity": "Antigravity",
-              "agy": "Antigravity", "lane": "lane", "unknown": "미등록"}
+    labels = {"claude": "Claude", "codex": "Codex", "lane": "lane", "unknown": "미등록"}
     agent = labels.get(master.get("agent"), "미등록")
     selected = labels.get(worker.get("mode"), "미확인")
     at = escape(str(master.get("at") or "기록 없음"))
     # [중요] `note` 는 예외 문자열이 들어올 수 있는 자리다 — 화면에 올리지 않는다.
     why = escape(str(master.get("why") or ""))
-    if not why and master.get("agent") == "unknown":
+    if master.get("retired_agent") in ("agy", "antigravity"):
+        why = "Antigravity 마스터 지휘는 폐기됐습니다(#829). Claude 또는 Codex의 실제 인수 후 기록이 필요합니다."
+    elif not why and master.get("agent") == "unknown":
         why = "담당 기록이 없거나 읽지 못했습니다."
     source = escape(str(worker.get("source") or ""))
     return (f'<section class="card"><h2>지휘 상태</h2>'

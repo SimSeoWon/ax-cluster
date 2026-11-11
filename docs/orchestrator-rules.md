@@ -1,4 +1,4 @@
-# 지휘자 공용 규칙 — Claude · Codex · Antigravity 공통
+# 지휘자 공용 규칙 — Claude · Codex 공통
 
 근거: `docs/15-orchestrator-handoff.md` §15.3 · 일감 [#384](http://192.168.0.57:8080/issues/384)
 조사: 리포트 `54`(Claude 쪽 목록화) · `55`(Codex 쪽 실측)
@@ -137,17 +137,26 @@
 - **그래도 멈추는 자리**: §1.1 의 관측 가능한 사건(실패 · 대상 밖 파일 · 재석 중 추측), 설계 갈림길, 파괴적 git
   연산(브랜치·파일 삭제 · force), ⑺ 전진·finalize, 자동 로드 문서·게임 소스 변경.
 
-### 1.10 지휘자 셋 · 위임 · 교차 계열 — 사용자 결정 2026-11-08 (#920)
+### 1.10 지휘자 둘 · Argon 서브 위임 · 교차 계열 — 사용자 결정 2026-11-11 (#829)
 
-- **위임**: Claude 지휘는 Claude 서브에이전트 또는 `ax-gemini`, Codex 지휘는 Codex 서브에이전트, Antigravity 지휘는
-  코드 구현·복합 추론을 Argon(`gemini-4-argon-medium`) 서브에이전트에 맡긴다. 산출물 검증은 지휘 세션의 몫이다.
-- **Argon**: 대화형 지휘 세션에서 쓰고 한도(429·쿨다운)면 Flash High 로 바꿔 보고한다. `ax-gemini` 는 명시 호출에
-  한해 코드가 폴백한다(`gemini_report`). 내부 서브에이전트 호출은 코드가 강제하지 못하는 규칙이다. 잔여 한도를
-  미리 읽는 수단은 없다. 자동 경로(리뷰·합성·층2·작성 레인)의 Argon 금지는 그대로다.
+- **지휘 타입**: AX 마스터 지휘는 Claude·Codex만 맡는다. #920에서 추가했던 `antigravity`/`agy` 마스터
+  타입은 폐기한다. Antigravity는 독립 일감 지휘·전역 설정·공용 지침 변경·MCP 운영·일감 시작·마감·배포를
+  수행하지 않는다. 과거 담당·작성 계열 기록을 지우거나 다른 계열로 바꾸지 않는다.
+- **위임**: Claude·Codex는 각자의 로컬 서브에이전트를 사용하며, Gemini 4 Argon에도 작은 구현·추론을 명시적으로
+  맡길 수 있다. 지휘자가 자료 사본·대상 범위·완료 조건을 지정하고 결과를 회수해 실제 소스·검사로 검증한다.
+  Argon은 운영 저장소·전역 설정·공용 MCP를 직접 조작하는 주체가 아니다. 작은 구현은
+  [`ax-gemini` §4-1](../master/client/skills/ax-gemini/SKILL.md)의 `--task implementation`으로 패치 제안만
+  회수한다. 리서치·보고서는 기존 모드를 따른다. CLI 격리는 미실증이며 MCP 금지는 지침 수준이다.
+- **Argon**: 서브 작업에서 정본 모델 id를 명시할 때만 허용한다. 한도(429·쿨다운)면 기존 명시 위임 경로의
+  Flash High 폴백 여부와 실제 모델을 보고한다. 잔여 한도를 미리 읽는 수단은 없다.
+  자동 경로(리뷰·합성·층2·작성 레인)의 Argon 금지는 유지하며 기존 자동 Flash 경로도 유지한다.
 - **일감 시작**: 운영 시작은 `ax-projects:issue_start_tool` 로만 한다. MCP `clientInfo` 가 작성 계열 기록이 된다.
   `requester: master` 프로젝트(AXCluster)에 대한 `ax-client:issue_start`·`issue_finish`·`issue_pause`·`issue_cancel` 은
   서버가 거절한다(`step: requester`, `#931` — 코드가 강제). `ax-client:plan_*` 은 그대로 된다.
-- **리뷰 큐**: 작성 계열에 Antigravity 가 있으면 Codex 단독, 그 밖은 agy 단독이다. 둘 다 실패해도 폴백하지 않는다.
+- **리뷰 큐**: 추적 기록의 작성 계열에 Antigravity(`agy`)가 있으면 Codex 단독, 그 밖은 agy 단독이다.
+  이는 지휘 타입 허용과 별개다. 둘 다 실패해도 폴백하지 않는다.
+  서브 패치 회수는 작성 계열을 자동 등록하지 않는다. 반영하는 지휘자는 Argon 작성 사실을 기록하고
+  같은 계열의 자동 리뷰만으로 검증됐다고 판단하지 않는다.
   일감 밖 손 커밋과 모르는 클라이언트는 계열을 몰라 agy 가 본다. 층2(분산 작업)는 `exclude_author` 그대로다.
 
 ## 2. 교대 절차 (요약)

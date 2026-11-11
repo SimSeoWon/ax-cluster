@@ -82,6 +82,10 @@ from master.projects import mcp_server as pj  # noqa: E402
 check("모듈 import", True)
 check("MCPServer 인스턴스", type(pj.mcp).__name__ == "MCPServer", type(pj.mcp).__name__)
 _pj = tool_names(pj.mcp)
+_master_schema = next(t.input_schema for t in asyncio.run(pj.mcp.list_tools())
+                      if t.name == "record_master_conductor_tool")
+check("#829 마스터 담당 MCP 타입은 claude/codex만",
+      _master_schema["properties"]["agent"]["enum"] == ["claude", "codex"], str(_master_schema))
 # [주의] **이 숫자는 도구를 더할 때 같이 고친다.** 실측 2026-09-10: `54a0669` 가 지휘 상태
 #   2종(`get_orchestration_tool`·`record_master_conductor_tool`)을 더하고 이 값을 안 고쳐
 #   **회귀가 이틀 내내 빨간 채로 있었다.** 상시 빨간 회귀는 진짜 실패를 묻는다.

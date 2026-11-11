@@ -61,6 +61,13 @@ from . import usage as U          # [중요] 상대 임포트 — 요청자 배�
 BRIEF = "BRIEF.md"
 PROMPT = ("Read BRIEF.md in the added directory and follow it exactly. "
           "Return the full report as your response. Do not create or modify files.")
+IMPLEMENTATION_PROMPT = (
+    "Read BRIEF.md and the source copies under src in the added directory only. "
+    "You are a subordinate implementation assistant, not an orchestrator. "
+    "Return a short explanation and a unified diff as text for the specified files only. "
+    "Do not create or modify files, run commands, use MCP, delegate tasks, or change settings. "
+    "Do not use git or start, finish, deploy, or manage AX work. "
+    "The supervising Claude or Codex session will review, apply, and test your proposal.")
 HEARTBEAT = 30
 SOURCE = "ax-gemini"
 # 보고서 인용 `src/경로:줄` 또는 `src/경로:시작-끝`. 경로에는 공백·백틱·괄호·쉼표가 없다
@@ -126,20 +133,23 @@ def master_model() -> str:
 
 
 def run_agy(exe: str, brief_dir: Path, *, timeout: int, log_file: Path | None = None,
-            model: str = "") -> tuple:
+            model: str = "", task: str = "research") -> tuple:
     """agy 를 돌린다 → `(rc, stdout, stderr, seconds)`. 도는 동안 하트비트를 찍는다.
 
     [중요] **`-p` 는 프롬프트 바로 앞이다** (실측 2026-08-08). 프롬프트는 ASCII 한 문장 —
     내용은 `BRIEF.md` 파일이 나른다(백틱·CP949 회피).
     🔴 `model` 은 **정본 id 로만** — 부르는 쪽이 `model_refusal` 로 거른 값이다(`#830`).
     """
-    cmd = [exe, "--dangerously-skip-permissions", "--output-format", "json",
-           "--add-dir", str(brief_dir)]
+    # #829: implementation returns a proposal; never grant edit auto-approval here.
+    # CLI sandbox/plan flags are additional restrictions, not a guarantee of MCP isolation.
+    flags = (["--sandbox", "--disable-slash-commands", "--mode", "plan"]
+             if task == "implementation" else ["--dangerously-skip-permissions"])
+    cmd = [exe, *flags, "--output-format", "json", "--add-dir", str(brief_dir)]
     if model:
         cmd += ["--model", model]
     if log_file is not None:
         cmd += ["--log-file", str(log_file)]
-    cmd += ["-p", PROMPT]
+    cmd += ["-p", IMPLEMENTATION_PROMPT if task == "implementation" else PROMPT]
     t0 = time.monotonic()
     done = threading.Event()
 
@@ -334,6 +344,8 @@ def main(argv=None, *, queue=None) -> int:
     ap.add_argument("--brief-dir", required=True, help="BRIEF.md 와 자료 사본이 든 스크래치 폴더")
     ap.add_argument("--out", required=True, help="보고서 경로 — reports/research/ 아래 .md")
     ap.add_argument("--timeout", type=int, default=U.TIMEOUT)
+    ap.add_argument("--task", choices=("research", "implementation"), default="research",
+                    help="implementation 은 자료 사본으로 작은 구현의 diff 제안만 회수한다 (#829)")
     ap.add_argument("--remote", action="store_true",
                     help="요청자(.33) — 사용량을 큐로 보내 마스터 트윈에 남긴다 (#763)")
     ap.add_argument("--checkout", default="",
@@ -409,7 +421,7 @@ def main(argv=None, *, queue=None) -> int:
         """`#920` — 명시한 Argon 호출의 한도 폴백. 같은 입력으로 Flash High 를 한 번 부른다."""
         log(f"[주의] Argon 한도 — {reason} · {ARGON_FALLBACK} 로 넘어간다")
         again = ["--brief-dir", a.brief_dir, "--out", a.out, "--timeout", str(a.timeout),
-                 "--model", ARGON_FALLBACK, "--fallback-from", want]
+                 "--model", ARGON_FALLBACK, "--fallback-from", want, "--task", a.task]
         again += ["--project", a.project] if a.project else []
         again += ["--remote"] if a.remote else []
         again += ["--checkout", a.checkout] if a.checkout else []
@@ -452,7 +464,7 @@ def main(argv=None, *, queue=None) -> int:
     log(f"시작 — agy {version} · 모델 {want} · 자료 {len(mats)}개 · 지시서 {brief_dir / BRIEF} · "
         f"agy 로그 {agy_log}")
     rc, stdout, stderr, secs = run_agy(exe, brief_dir, timeout=a.timeout, log_file=agy_log,
-                                       model=want)
+                                       model=want, task=a.task)
 
     (run_dir / "out.json").write_text(stdout, encoding="utf-8")
     (run_dir / "err.log").write_text(stderr, encoding="utf-8")
@@ -516,6 +528,7 @@ def main(argv=None, *, queue=None) -> int:
                     log(f"[주의] Argon 쿨다운 기록 실패 — {type(e).__name__}: {e}")
             return to_flash(f"이번 호출이 한도에 걸렸다({why or status})"[:200])
     summary = {"ok": not why and not warn, "why": why or warn, "rc": rc, "seconds": round(secs, 1),
+               "task": a.task,
                "fallback_from": a.fallback_from,
                "status": status, "error": err_text, "model": model,
                "requested_model": want, "requested_from": want_from,

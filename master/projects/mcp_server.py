@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
@@ -1047,8 +1048,8 @@ def get_orchestration_tool() -> str:
 
 
 @mcp.tool()
-def record_master_conductor_tool(agent: str, why: str, by: str = "") -> str:
-    """실제 인수 후 claude/codex/antigravity 담당을 기록한다. 세션 실행·종료·잠금이 아니다."""
+def record_master_conductor_tool(agent: Literal["claude", "codex"], why: str, by: str = "") -> str:
+    """실제 인수 후 claude/codex 담당을 기록한다. Argon은 서브 전용이다(#829). 세션 실행·종료·잠금이 아니다."""
     from ..work import conductor
     try:
         return json.dumps(conductor.record_master(agent, why, by), ensure_ascii=False)
@@ -1115,6 +1116,7 @@ def issue_start_tool(issue_id: int, ctx: Context) -> str:
     Redmine 노트로 남긴다. **응답의 `repo` 가 그 worktree(편집·커밋 위치)**, `checkout` 이 운영 저장소다.
     이미 그 worktree 가 있으면 `already`. 값이 없거나 requester 가 master 가 아니면 거절한다(추정 없음) —
     게임 프로젝트는 `.33` 의 `ax-client issue_*` 를 쓴다. `#906` — 색인 미러(push 봉인)는 거절한다.
+    `#829` — Antigravity 연결은 마스터 지휘에서 제외되어 운영 시작을 거절한다. Argon은 서브 작업 전용이다.
     """
     from .. import issue_flow
     try:

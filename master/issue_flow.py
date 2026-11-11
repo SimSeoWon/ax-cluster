@@ -252,6 +252,10 @@ def start(issue_id, *, repo=None, getter=None, noter=None, events_path=None,
         log = _Log("start", issue_id, events_path=_resolve_events(events_path, False), logf=logf)
         return _refuse(log, "client", "MCP 출처가 없다 — 운영 시작은 ax-projects:issue_start_tool 로만 한다(#920). "
                                       "MCP 가 안 보이면 우회하지 말고 사유를 보고한다")
+    if operating and INF.client_family(client) == "agy":
+        log = _Log("start", issue_id, events_path=_resolve_events(events_path, False), logf=logf)
+        return _refuse(log, "client", "Antigravity 마스터 지휘는 폐기됐다(#829). "
+                                      "Claude 또는 Codex에서 시작한다. Argon은 범위를 지정한 서브 작업만 허용한다")
     res = _start(issue_id, repo=repo, getter=getter, noter=noter, events_path=events_path, logf=logf,
                  fetch=fetch, lock_root=lock_root, worktree_root=worktree_root, project=project)
     if res.get("ok") and str(client or "").strip():
