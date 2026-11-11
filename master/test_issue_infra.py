@@ -297,6 +297,100 @@ def t_span_source():
     check("span_source — 미등록 프로젝트 → SpanError(lookup)", ok)
 
 
+def t_requester(tmp):
+    """🔴 `#931` — `requester: master` 프로젝트는 네 호출 모두 거절 · 잠금·추적·노트 무변경 · 설정 못 읽으면 거절."""
+    import os
+    iss = Issue(SPEC + PLAN)
+    lk = tmp / "twin"
+    yes, no = (lambda p: True), (lambda p: False)
+
+    def boom(p):
+        raise OSError("설정 없음")
+    tools = {"start": "issue_start_tool", "finish": "issue_finish_tool", "pause": "issue_pause_tool",
+             "cancel": "issue_cancel_tool"}
+
+    def calls(chk, root):
+        return {
+            "start": INF.infra_start(P, 7, branch="issue/7", start_rev=R1, getter=iss.get, noter=iss.note,
+                                     lock_root=root, requester_check=chk),
+            "start(check_only)": INF.infra_start(P, 7, check_only=True, getter=iss.get, noter=iss.note,
+                                                 lock_root=root, requester_check=chk),
+            "finish": INF.infra_finish(P, 7, base=R1, end=R3, hashes=[R2, R3], noter=iss.note, lock_root=root,
+                                       requester_check=chk),
+            "finish(check_only)": INF.infra_finish(P, 7, base=R1, end=R3, check_only=True, noter=iss.note,
+                                                   lock_root=root, requester_check=chk),
+            "pause": INF.infra_pause(P, 7, end=R2, noter=iss.note, lock_root=root, requester_check=chk),
+            "cancel": INF.infra_cancel(P, 7, confirm=True, noter=iss.note, lock_root=root, requester_check=chk),
+        }
+    for name, r in calls(yes, lk).items():
+        op = name.split("(")[0]
+        check(f"🔴 #931 master 요청자 {name} → 거절(requester) · ax-projects 도구 안내",
+              r["ok"] is False and r["step"] == "requester" and f"ax-projects:{tools[op]}" in r["why"]
+              and r.get("requester") == "master", str(r)[:300])
+    check("🔴 #931 거절은 노트 0 · 잠금 파일 없음 · 추적 없음", iss.notes == [] and not IL.state_path(lk).exists()
+          and IT.current(lk, 7) is None, f"{iss.notes} {IL.state_path(lk).exists()}")
+    for name, r in calls(boom, lk).items():
+        check(f"#931 설정 못 읽음 {name} → 거절(requester · fail-closed)",
+              r["ok"] is False and r["step"] == "requester" and "못 읽었다" in r["why"], str(r)[:300])
+    check("#931 설정 못 읽음도 노트 0 · 잠금 없음", iss.notes == [] and not IL.state_path(lk).exists())
+    # 이미 잡힌 잠금(마스터 정규 경로가 잡은 것과 같은 모양)도 이 표면으로는 못 건드린다
+    lk2 = tmp / "twin2"
+    r = INF.infra_start(P, 7, branch="issue/7", start_rev=R1, getter=iss.get, noter=iss.note, lock_root=lk2,
+                        requester_check=no)
+    check("#931 요청자가 master 아님 → 종전대로 시작(잠금·노트)", r["ok"] and IL.current(lk2)["issue_id"] == 7
+          and any("requester.통과" in x.replace(": 요청자 판정", ".통과") or "requester:" in x for x in r["log"]),
+          str(r)[:300])
+    before, n_notes = IL.state_path(lk2).read_text(encoding="utf-8"), len(iss.notes)
+    got = calls(yes, lk2)
+    check("🔴 #931 활성 잠금이 있어도 네 호출 거절 · 잠금 파일 바이트 동일 · 노트 무변경",
+          all(r["ok"] is False and r["step"] == "requester" for r in got.values())
+          and IL.state_path(lk2).read_text(encoding="utf-8") == before and len(iss.notes) == n_notes
+          and IT.current(lk2, 7) is None)
+    r = INF.infra_start(P, 7, check_only=True, getter=iss.get, noter=iss.note, lock_root=lk2)
+    check("대역 주입 실행이 requester_check 를 안 주면 판정을 건너뛴다(운영 설정을 읽지 않는다)",
+          r["ok"] and not any("requester" in x for x in r["log"]), str(r)[:200])
+    # 운영 판정 — 실제 config.yaml 을 읽는다
+    proots = tmp / "projects"
+    for n in ("Mine", "Game", "Broken"):
+        (proots / n).mkdir(parents=True)
+    (proots / "projects.yaml").write_text("version: 1\nactive: Mine\nprojects:\n- Mine\n- Game\n- Broken\n",
+                                          encoding="utf-8")
+    (proots / "Mine" / "config.yaml").write_text("version: 1\nname: Mine\nrequester: master\n", encoding="utf-8")
+    (proots / "Game" / "config.yaml").write_text("version: 1\nname: Game\n", encoding="utf-8")
+    old = os.environ.get("AX_PROJECTS_ROOT")
+    os.environ["AX_PROJECTS_ROOT"] = str(proots)
+    try:
+        check("#931 requester_is_master — `requester: master` → 참", INF.requester_is_master("Mine") is True)
+        check("#931 requester_is_master — requester 없음 → 거짓", INF.requester_is_master("Game") is False)
+        try:
+            INF.requester_is_master("Broken")
+            raised = False
+        except Exception:                               # noqa: BLE001
+            raised = True
+        check("#931 requester_is_master — config 없음 → 예외(호출자가 거절)", raised)
+        r = INF.infra_start("Mine", 7, check_only=True, getter=iss.get, noter=iss.note,
+                            lock_root=tmp / "twin3", requester_check=INF.requester_is_master)
+        check("🔴 #931 실제 설정으로 거절 — Mine(requester: master)", r["ok"] is False and r["step"] == "requester",
+              str(r)[:200])
+        r = INF.infra_start("Broken", 7, check_only=True, getter=iss.get, noter=iss.note,
+                            lock_root=tmp / "twin3", requester_check=INF.requester_is_master)
+        check("#931 실제 설정 못 읽음 → 거절", r["ok"] is False and r["step"] == "requester", str(r)[:200])
+        r = INF.infra_start("Game", 7, check_only=True, getter=iss.get, noter=iss.note,
+                            lock_root=tmp / "twin3", requester_check=INF.requester_is_master)
+        check("#931 실제 설정 — Game(요청자 작업장) → 통과", r["ok"] is True, str(r)[:200])
+    finally:
+        if old is None:
+            os.environ.pop("AX_PROJECTS_ROOT", None)
+        else:
+            os.environ["AX_PROJECTS_ROOT"] = old
+    src = Path(INF.__file__).read_text(encoding="utf-8")
+    i = src.index("def _remote_setup(")
+    body = src[i:src.index("\ndef ", i + 10) if "\ndef " in src[i + 10:] else len(src)]
+    check("🔴 #931 운영 실행(대역 아님)의 기본 판정은 requester_is_master 다",
+          "(None if injected else requester_is_master)" in body)
+    check("🔴 #931 판정이 잠금 위치를 풀기 전에 온다", body.index("requester_gate(") < body.index("resolve_lock("))
+
+
 def t_cancel(tmp):
     lk = tmp / "twin"
     iss = Issue(SPEC + PLAN)
@@ -355,7 +449,7 @@ def t_imperative_free():
 
 
 def main() -> int:
-    for fn in (t_project_and_input, t_start, t_pause_resume, t_finish, t_verify, t_cancel):
+    for fn in (t_project_and_input, t_start, t_pause_resume, t_finish, t_verify, t_requester, t_cancel):
         run(fn)
     t_span_source()
     t_shared_with_local()

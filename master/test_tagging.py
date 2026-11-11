@@ -520,6 +520,39 @@ def test_issue_routes_live() -> None:
             check("issue/cancel 승인 → 해제 · 삭제 허용", j.get("ok") and j.get("branch_delete_allowed")
                   and IL.current(twin) is None, str(j)[:200])
             check("NS 트윈은 그대로", not (proots / "NS" / "issue_lock.json").exists())
+            # 🔴 `#931` — `requester: master` 프로젝트는 일감 넷이 거절되고 플랜 대행은 그대로다 (실물 앱)
+            j = c.post("/api/v1/issue/start", json={**body, "branch": "issue/7", "start_rev": "a" * 40},
+                       headers=H).json()
+            check("#931 준비 — 요청자 프로젝트일 때 잡은 잠금", j.get("ok") and IL.current(twin)["issue_id"] == 7,
+                  str(j)[:200])
+            cfg_text = (twin / "config.yaml").read_text(encoding="utf-8")
+            (twin / "config.yaml").write_text(cfg_text + "requester: master\n", encoding="utf-8")
+            lock_before, n_notes = IL.state_path(twin).read_text(encoding="utf-8"), len(notes)
+            track_before = (twin / "issue_track.json").read_text(encoding="utf-8")
+            for r, extra, tool in (
+                    ("/api/v1/issue/start", {"branch": "issue/7", "start_rev": "a" * 40}, "issue_start_tool"),
+                    ("/api/v1/issue/start", {"check_only": True}, "issue_start_tool"),
+                    ("/api/v1/issue/finish", {"base": c1, "end": c3}, "issue_finish_tool"),
+                    ("/api/v1/issue/finish", {"base": c1, "end": c3, "check_only": True}, "issue_finish_tool"),
+                    ("/api/v1/issue/pause", {"end": "b" * 40}, "issue_pause_tool"),
+                    ("/api/v1/issue/cancel", {"confirm": True}, "issue_cancel_tool")):
+                resp = c.post(r, json={**body, **extra}, headers=H)
+                j = resp.json()
+                check(f"🔴 #931 requester: master {r} {sorted(extra)} → 200 + ok:false(requester) · {tool} 안내",
+                      resp.status_code == 200 and j.get("ok") is False and j.get("step") == "requester"
+                      and f"ax-projects:{tool}" in j.get("why", ""), str(j)[:300])
+            check("🔴 #931 거절 뒤 잠금·추적·노트 무변경",
+                  IL.state_path(twin).read_text(encoding="utf-8") == lock_before and len(notes) == n_notes
+                  and (twin / "issue_track.json").read_text(encoding="utf-8") == track_before)
+            j = c.post("/api/v1/plan/start", json=body, headers=H).json()
+            check("#931 requester: master 여도 plan/start 는 통과", j.get("ok") is not False
+                  and j.get("project") == "AXCluster" and j.get("step") != "requester", str(j)[:200])
+            # [주의] 깨진 config 는 여기까지 오지 않는다 — 마운트 관문(`_mount_gate` → `paths.resolve`)이 먼저
+            #    읽다가 예외를 낸다(기존 동작). 판정 실패의 거절(fail-closed)은 `test_issue_infra.t_requester` 가 본다.
+            (twin / "config.yaml").write_text(cfg_text, encoding="utf-8")
+            j = c.post("/api/v1/issue/start", json={**body, "check_only": True}, headers=H).json()
+            check("#931 설정을 되돌리면 다시 통과(요청자 프로젝트)", j.get("ok") and j.get("lock_state") == "active",
+                  str(j)[:200])
     finally:
         if old_root is None:
             os.environ.pop("AX_PROJECTS_ROOT", None)

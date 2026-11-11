@@ -31,6 +31,13 @@
 잠금의 시작 리비전을 쓴다. **조회 자체가 실패하면 거절한다**(fail-closed — 잠금·일감은 그대로 남는다).
 [주의] 미러(`<트윈>/repo`)가 아니라 Gitea 저장소를 본다 — 미러는 push 직후 색인기 fetch 전일 수 있다.
 [주의] 대역 주입 실행(테스트)이 `git=` 를 안 주면 검증을 건너뛰고 종전의 형식·일관성 검사만 한다.
+🔴 [중요] **`requester: master` 프로젝트는 이 표면을 못 쓴다** (`#931`, 사용자 결정 2026-11-11).
+AXCluster 처럼 마스터가 요청자인 프로젝트의 일감은 `ax-projects` MCP(`issue_flow`)로만 시작·마감·보류·
+취소한다 — 작성 계열(`authors`)은 그 도구의 clientInfo 에서만 오고, 이 표면으로 들어오면 계열이 비어
+리뷰 큐가 같은 계열 리뷰어를 고른다(`#702`·`#929`). 그래서 `infra_*` 넷은 공통 준비(`_remote_setup`)에서
+프로젝트 `config.yaml` 의 `requester` 를 읽어 `master` 면 **잠금·추적·Redmine 을 건드리기 전에 거절**한다
+(`step: requester` · `check_only` 도 같다). 설정을 못 읽으면 거절한다(fail-closed). 플랜 대행(`plan_*`)은
+이 모듈을 거치지 않아 그대로 통과한다. 대역 주입 실행이 `requester_check=` 를 안 주면 판정을 건너뛴다.
 [주의] 이 모듈의 노트 문장은 사실만 싣는다 — 자동 경로 글에 명령형을 쓰지 않는다(`CLAUDE.md`).
 """
 from __future__ import annotations
@@ -267,14 +274,16 @@ def _sha(v) -> str:
 
 
 def infra_start(project: str, issue_id, *, branch: str = "", start_rev: str = "", check_only: bool = False,
-                getter=None, noter=None, lock_root=None, events_path=None, logf=None) -> dict:
+                getter=None, noter=None, lock_root=None, events_path=None, logf=None,
+                requester_check=None) -> dict:
     """요청자(`.33`)의 일감 시작 기록 — 브랜치·worktree 는 요청자가 이미 만들었다(또는 만들 참이다).
 
     `check_only=True` 는 플랜 판정과 잠금 상태만 돌려준다(쓰기 0) — 요청자는 이것이 ok 일 때
     worktree 를 만든다. 실제 기록 호출은 `branch == issue/<N>` 과 40자리 `start_rev` 를 싣는다.
     """
     log, lroot, refused = _remote_setup("start", project, issue_id, getter=getter, noter=noter,
-                                        lock_root=lock_root, events_path=events_path, logf=logf)
+                                        lock_root=lock_root, events_path=events_path, logf=logf,
+                                        requester_check=requester_check)
     if refused:
         return refused
     getter = getter or default_getter
@@ -580,7 +589,8 @@ def verify_span(git, *, base: str, end: str, hashes=None, branch: str = "main") 
 
 def infra_finish(project: str, issue_id, *, end: str, base: str = "", hashes=None, subjects=None,
                  check_only: bool = False, git=None, branch_ref: str = "", noter=None,
-                 register=None, link=None, lock_root=None, events_path=None, logf=None) -> dict:
+                 register=None, link=None, lock_root=None, events_path=None, logf=None,
+                 requester_check=None) -> dict:
     """요청자의 일감 종료 기록 — 요청자가 `push origin issue/<N>:main` 을 마친 **뒤에** 부른다.
 
     `end` 만 필수다. `base` 를 비우면 잠금의 시작 리비전, `hashes`·`subjects` 를 비우면 git 에서 구한 값을
@@ -589,7 +599,8 @@ def infra_finish(project: str, issue_id, *, end: str, base: str = "", hashes=Non
     """
     injected = any(x is not None for x in (noter, register, link))
     log, lroot, refused = _remote_setup("finish", project, issue_id, noter=noter, injected=injected,
-                                        lock_root=lock_root, events_path=events_path, logf=logf)
+                                        lock_root=lock_root, events_path=events_path, logf=logf,
+                                        requester_check=requester_check)
     if refused:
         return refused
     n = int(issue_id)
@@ -695,13 +706,14 @@ def pause_note(issue_id, *, branch: str, end: str, noter) -> str:
 
 
 def infra_pause(project: str, issue_id, *, end: str = "", noter=None, lock_root=None,
-                events_path=None, logf=None) -> dict:
+                events_path=None, logf=None, requester_check=None) -> dict:
     """요청자의 보류 기록 — 잠금 보류 → 「보류」 노트. 브랜치·worktree 는 요청자 쪽에 그대로 남는다.
 
     노트만 실패하면 보류(잠금)는 유지하고 `ok: False` 로 알린다(잠금이 정본).
     """
     log, lroot, refused = _remote_setup("pause", project, issue_id, noter=noter, lock_root=lock_root,
-                                        events_path=events_path, logf=logf, need_lock=True)
+                                        events_path=events_path, logf=logf, need_lock=True,
+                                        requester_check=requester_check)
     if refused:
         return refused
     n = int(issue_id)
@@ -766,7 +778,7 @@ def cancel_record(issue_id, *, lroot, lock_state_: str, branch: str, commits: li
 
 def infra_cancel(project: str, issue_id, *, confirm: bool = False, delete_branch: bool = False,
                  branch_exists: bool = True, commits=None, local_only=None, noter=None, lock_root=None,
-                 events_path=None, logf=None) -> dict:
+                 events_path=None, logf=None, requester_check=None) -> dict:
     """요청자의 취소 기록. `confirm=False`(기본)는 잠금 상태와 요청자가 보낸 커밋 목록으로 미리보기만 한다.
 
     승인 시 잠금 해제 → 「취소」 노트. 브랜치·worktree 삭제는 요청자가 노트 성공(`ok`)을 본 뒤
@@ -774,7 +786,8 @@ def infra_cancel(project: str, issue_id, *, confirm: bool = False, delete_branch
     `commits` 는 `"<sha> <제목>"` 줄(main 밖 커밋), `local_only` 는 원격에 없는 sha 목록.
     """
     log, lroot, refused = _remote_setup("cancel", project, issue_id, noter=noter, lock_root=lock_root,
-                                        events_path=events_path, logf=logf, need_lock=True)
+                                        events_path=events_path, logf=logf, need_lock=True,
+                                        requester_check=requester_check)
     if refused:
         return refused
     n = int(issue_id)
@@ -817,13 +830,45 @@ def infra_cancel(project: str, issue_id, *, confirm: bool = False, delete_branch
 
 # ── 원격 공통 ─────────────────────────────────────────────────────────────────
 
+MASTER_ONLY_WHY = ("{project} 는 `requester: master` 프로젝트다 — 이 프로젝트의 일감 {op} 은 `ax-client` 경로로 "
+                   "받지 않는다. 해당 도구는 `ax-projects:{tool}` 이다(작성 계열이 그 도구의 연결에서 기록된다 — #931)")
+MASTER_TOOLS = {"start": "issue_start_tool", "finish": "issue_finish_tool",
+                "pause": "issue_pause_tool", "cancel": "issue_cancel_tool"}
+OP_KO = {"start": "시작", "finish": "마감", "pause": "보류", "cancel": "취소"}
+
+
+def requester_is_master(project: str) -> bool:
+    """프로젝트 `config.yaml` 의 `requester` 가 `master` 인가 (`#931`). 못 읽으면 예외 — 호출자가 거절한다."""
+    from master.context_search.paths import resolve
+    from master.projects.config import ProjectConfig
+    return bool(ProjectConfig.load(resolve(project).config).requester_is_master)
+
+
+def requester_gate(op: str, project: str, *, check, log: Log) -> dict | None:
+    """`requester: master` 프로젝트면 거절(dict), 아니면 None. 판정 실패도 거절이다(fail-closed)."""
+    try:
+        is_master = bool(check(project))
+    except Exception as e:                              # noqa: BLE001 — 설정·경로 해석
+        return refuse(log, "requester", f"프로젝트 {project} 의 요청자 설정을 못 읽었다 — {type(e).__name__}: {e} "
+                                        f"· 판정할 수 없어 기록하지 않는다", project=project)
+    if is_master:
+        return refuse(log, "requester", MASTER_ONLY_WHY.format(
+            project=project, op=OP_KO.get(op, op), tool=MASTER_TOOLS.get(op, "issue_*_tool")),
+            project=project, requester="master")
+    log("requester", f"요청자 판정 — {project} 는 requester: master 가 아니다 · 통과")
+    return None
+
+
 def _remote_setup(op: str, project: str, issue_id, *, getter=None, noter=None, injected=None,
-                  lock_root=None, events_path=None, logf=None, need_lock: bool = False):
+                  lock_root=None, events_path=None, logf=None, need_lock: bool = False,
+                  requester_check=None):
     """원격 호출의 공통 준비 — `(Log, 잠금 루트, 거절 | None)`.
 
     [중요] 프로젝트가 비면 거절한다 — 원격 호출이 AXCluster 로 「가정」되면 남의 잠금을 건드린다.
     대역 주입 실행(getter·noter 등)이 `lock_root` 를 안 주면 잠금·추적을 쓰지 않는다(`NO_LOCK`) —
     pause·cancel 은 잠금이 본체라 거절한다. 흐름 로그는 `<프로젝트 트윈>/issue_flow.jsonl`.
+    🔴 `#931` — `requester: master` 프로젝트는 잠금 위치를 풀기 **전에** 거절한다(`requester_gate`).
+    운영 실행의 판정은 `requester_is_master`(설정 읽기), 대역 주입 실행은 `requester_check=` 를 줄 때만 본다.
     """
     if injected is None:
         injected = getter is not None or noter is not None
@@ -844,6 +889,11 @@ def _remote_setup(op: str, project: str, issue_id, *, getter=None, noter=None, i
     log = Log(op, n, events_path=ev, logf=logf, tag="issue_infra")
     if not proj:
         return log, None, refuse(log, "project", "project 가 비었다 — 원격 일감 흐름은 프로젝트를 싣는다")
+    chk = requester_check if requester_check is not None else (None if injected else requester_is_master)
+    if chk is not None:
+        bad = requester_gate(op, proj, check=chk, log=log)
+        if bad:
+            return log, None, bad
     try:
         lroot = resolve_lock(lock_root, injected, proj)
     except Exception as e:                              # noqa: BLE001
