@@ -145,6 +145,8 @@
   한해 코드가 폴백한다(`gemini_report`). 내부 서브에이전트 호출은 코드가 강제하지 못하는 규칙이다. 잔여 한도를
   미리 읽는 수단은 없다. 자동 경로(리뷰·합성·층2·작성 레인)의 Argon 금지는 그대로다.
 - **일감 시작**: 운영 시작은 `ax-projects:issue_start_tool` 로만 한다. MCP `clientInfo` 가 작성 계열 기록이 된다.
+  `requester: master` 프로젝트(AXCluster)에 대한 `ax-client:issue_start`·`issue_finish`·`issue_pause`·`issue_cancel` 은
+  서버가 거절한다(`step: requester`, `#931` — 코드가 강제). `ax-client:plan_*` 은 그대로 된다.
 - **리뷰 큐**: 작성 계열에 Antigravity 가 있으면 Codex 단독, 그 밖은 agy 단독이다. 둘 다 실패해도 폴백하지 않는다.
   일감 밖 손 커밋과 모르는 클라이언트는 계열을 몰라 agy 가 본다. 층2(분산 작업)는 `exclude_author` 그대로다.
 

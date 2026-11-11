@@ -115,6 +115,10 @@ MCP 가 안 보이거나 실패하면 사유를 보고하고 묻는다. `ax-clie
 - `.33` 요청자는 같은 규칙을 `ax-client` 도구(`plan_*`·`issue_*`, 8101 대행)와 `ax-issue` 스킬로 쓴다 —
   git 은 그 기계의 worktree 에서 하고 인프라는 기록만 한다(본체 `master/issue_infra.py`). 마감 범위만은
   마스터가 Gitea 저장소에서 읽어 확인하고, 해시는 도구가 git 에서 구한다 — 세션이 적어 넣지 않는다(`#933`).
+  🔴 `#931` — 그 `ax-client:issue_start`·`ax-client:issue_finish`·`ax-client:issue_pause`·`ax-client:issue_cancel` 은
+  게임 프로젝트용이다.
+  AXCluster(`requester: master`)를 대상으로 부르면 서버가 `step: requester` 로 거절한다(잠금·추적·Redmine
+  무변경) — 이 절의 `ax-projects` 도구를 쓴다. `ax-client:plan_*` 은 AXCluster 에도 그대로 된다.
 
 ## 3-2. 한 번에 한 일감 — 잠금·보류·취소·완료 관문 (`#883`·`#889`)
 

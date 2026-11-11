@@ -755,6 +755,8 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
     #    거절은 200 + ok:false(`no_project_tag`·`not_mounted`) 이고, 흐름 거절(플랜·잠금)도 200 + ok:false 다.
     # [주의] 여기 오는 것은 기록뿐이다 — 요청자 저장소의 git 은 만지지 않는다(그쪽 worktree 몫).
     #    `#933` — 마감만은 프로젝트의 Gitea 저장소(`track.bare_path`)를 **읽어** 범위를 확인한 뒤 등록한다.
+    # 🔴 `#931` — `requester: master` 프로젝트(AXCluster)의 issue 넷은 `issue_infra._remote_setup` 이 거절한다
+    #    (200 + ok:false · `step: requester`). 작성 계열은 `ax-projects` 도구에서만 기록된다. plan 셋은 그대로다.
     def _issue_gate(op: str, req):
         bad = _mount_gate(req.project, require=True)
         if bad:

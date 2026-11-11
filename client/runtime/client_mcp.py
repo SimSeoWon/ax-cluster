@@ -1694,7 +1694,9 @@ TOOLS.extend([
                     "check_only=true 는 판정과 잠금 상태만 돌려주고 아무것도 쓰지 않는다. 기록 호출은 "
                     "branch=issue/<N> 과 그 브랜치의 시작 리비전(start_rev, origin/main 해시)을 싣는다. "
                     "같은 일감이 보류 중이면 잠금을 재개하고 「재개」 노트를 남긴다(resumed). "
-                    "git(worktree·브랜치)은 이 도구가 만지지 않는다.",
+                    "git(worktree·브랜치)은 이 도구가 만지지 않는다. "
+                    "마스터가 요청자인 프로젝트(requester: master)는 issue_start·issue_finish·issue_pause·"
+                    "issue_cancel 이 step=requester 로 거절된다(#931).",
      "inputSchema": {"type": "object", "required": ["issue_id"], "properties": {
          "issue_id": {"type": "integer"},
          "check_only": {"type": "boolean", "default": False},
