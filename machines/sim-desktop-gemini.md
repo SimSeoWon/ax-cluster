@@ -30,4 +30,11 @@ Antigravity 는 **시작한 폴더의 지침 파일만** 자동 로드한다(#92
 - **상호작용 타이밍 고정**: 사용자와의 질의/승인 요청은 오직 **① 일 시작할 때(태스크 착수/플랜 승인)**와 **② 일 끝났을 때(태스크 완료/결과 판단 보고)** 둘로 고정한다.
 - **에러 시 예외 보고**: 작업 중 rc≠0, 차단, 예외 등 실패가 발생했을 때만 예외적으로 즉시 멈추고 사유를 보고한다.
 - **도구 호출 단위 중간 요청 절대 금지**: 태스크를 수행하는 도중 코드 한 줄, 파일 편집(`edit_file`, `write_file`), 도구 호출마다 턴을 끊거나 사용자에게 중간 승인을 요청하지 않는다. 태스크 내부 구현·검증은 에이전트가 자율적으로 한 호흡에 완결한다.
-- **환경 설정**: Antigravity 실행 모드는 `mode: "accept-edits"`(또는 `--mode accept-edits`)를 유지하여 워크스페이스 내 파일 편집마다 승인 팝업이 뜨지 않게 한다.
+- **환경 설정**: 파일 편집 자동 승인은 `~/.gemini/antigravity-cli/settings.json` 의 `"toolPermission": "accept-edits"` 다 (CLI 플래그는 `--mode accept-edits`). 설정 파일의 `"mode"` 키만으로는 적용되지 않는다 — 기동 로그의 `CLI settings initialized: … toolPermission=` 값으로 확인한다(2026-11-11 실측: 키가 없어 `request-review` 로 떴다).
+
+## 공용 문서·다른 도구 설정을 건드리지 않는다 (사용자 지시 2026-11-11)
+
+- Antigravity 자체의 도구 권한·설정·승인 팝업·CLI 특성은 `~/.gemini/antigravity-cli/` 와 이 파일 안에서만 다룬다.
+- Claude·Codex·Antigravity 가 함께 읽는 `CLAUDE.md`·`AGENTS.md`·`docs/orchestrator-handoff.md`·`docs/orchestrator-rules.md` 와 공용 코드(`master/client/master_local.py` 등)에 Antigravity 설정 문제를 적거나 반영을 제안하지 않는다.
+- 인수인계서에는 AX 작업 상태만 적는다. 다른 지휘자가 적은 항목을 지우지 않는다.
+- Claude·Codex 의 설정 파일(`~/.claude*`·`~/.codex`)은 건드리지 않는다.
