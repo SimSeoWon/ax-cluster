@@ -463,7 +463,7 @@ def test_issue_routes_live() -> None:
                   and not notes, str(j)[:200])
             j = c.post("/api/v1/issue/start", json={**body, "branch": "issue/7", "start_rev": "a" * 40},
                        headers=H).json()
-            check("[중요] issue/start → 마운트 트윈 잠금 · 시작 노트", j.get("ok") and IL.current(twin)["issue_id"] == 7
+            check("[중요] issue/start → 마운트 트윈 잠금 · 시작 노트", j.get("ok") and (IL.current(twin) or {}).get("issue_id") == 7
                   and any("a" * 40 in n[1] for n in notes), str(j)[:300])
             check("흐름 로그가 그 트윈의 issue_flow.jsonl 에", (twin / "issue_flow.jsonl").is_file())
             j = c.post("/api/v1/plan/transition", json={"project": "AXCluster", "issue_id": 8, "task_id": "T1",
@@ -491,7 +491,7 @@ def test_issue_routes_live() -> None:
                        headers=H).json()
             check("🔴 #933 issue/finish 없는 해시 → 200 + ok:false(verify) · 잠금·추적·노트 무변경",
                   j.get("ok") is False and j.get("step") == "verify" and j.get("verify") == "mismatch"
-                  and IL.current(twin)["issue_id"] == 7 and IT.current(twin, 7) is None and len(notes) == n_notes,
+                  and (IL.current(twin) or {}).get("issue_id") == 7 and IT.current(twin, 7) is None and len(notes) == n_notes,
                   str(j)[:300])
             j = c.post("/api/v1/issue/finish", json={**body, "base": c1, "end": side}, headers=H).json()
             check("#933 issue/finish main 밖 end → verify 거절", j.get("ok") is False and j.get("step") == "verify",
@@ -499,7 +499,7 @@ def test_issue_routes_live() -> None:
             j = c.post("/api/v1/issue/finish", json={**body, "base": c1, "end": c3, "check_only": True},
                        headers=H).json()
             check("#933 issue/finish check_only → git 도출 · 쓰기 0", j.get("ok") and j.get("check_only")
-                  and [x[:40] for x in j.get("commits", [])] == [c2, c3] and IL.current(twin)["issue_id"] == 7
+                  and [x[:40] for x in j.get("commits", [])] == [c2, c3] and (IL.current(twin) or {}).get("issue_id") == 7
                   and IT.current(twin, 7) is None and len(notes) == n_notes, str(j)[:300])
             j = c.post("/api/v1/issue/finish", json={**body, "base": c1, "end": c3}, headers=H).json()
             check("[중요] issue/finish(end 만 · 해시 생략) → 등록 · 잠금 해제 · 리뷰 요청 노트", j.get("ok")
@@ -514,7 +514,7 @@ def test_issue_routes_live() -> None:
                        headers=H).json()
             j = c.post("/api/v1/issue/cancel", json=body, headers=H).json()
             check("issue/cancel 미리보기 → 쓰기 0", j.get("ok") and j.get("confirmed") is False
-                  and IL.current(twin)["issue_id"] == 7, str(j)[:200])
+                  and (IL.current(twin) or {}).get("issue_id") == 7, str(j)[:200])
             j = c.post("/api/v1/issue/cancel", json={**body, "confirm": True, "delete_branch": True,
                                                      "commits": ["d" * 40 + " 하나"]}, headers=H).json()
             check("issue/cancel 승인 → 해제 · 삭제 허용", j.get("ok") and j.get("branch_delete_allowed")
@@ -523,7 +523,7 @@ def test_issue_routes_live() -> None:
             # 🔴 `#931` — `requester: master` 프로젝트는 일감 넷이 거절되고 플랜 대행은 그대로다 (실물 앱)
             j = c.post("/api/v1/issue/start", json={**body, "branch": "issue/7", "start_rev": "a" * 40},
                        headers=H).json()
-            check("#931 준비 — 요청자 프로젝트일 때 잡은 잠금", j.get("ok") and IL.current(twin)["issue_id"] == 7,
+            check("#931 준비 — 요청자 프로젝트일 때 잡은 잠금", j.get("ok") and (IL.current(twin) or {}).get("issue_id") == 7,
                   str(j)[:200])
             cfg_text = (twin / "config.yaml").read_text(encoding="utf-8")
             (twin / "config.yaml").write_text(cfg_text + "requester: master\n", encoding="utf-8")

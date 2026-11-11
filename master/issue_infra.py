@@ -546,6 +546,8 @@ def verify_span(git, *, base: str, end: str, hashes=None, branch: str = "main") 
     `git(*args) -> (rc, 출력)` 은 대상 저장소에 묶인 읽기 실행기다. 돌려주는 값:
     `{"hashes": [...], "subjects": [...]}`(오래된 것부터). `hashes` 를 주면 구한 목록과 대조한다.
     """
+    base, end = _sha(base), _sha(end)
+    bname = (branch or "main").strip().removeprefix("refs/heads/") or "main"
     rc, out = git("rev-parse", "--git-dir")
     if rc != 0:
         raise SpanError("lookup", f"저장소를 못 읽었다(rc={rc}) — {out[:200]}")
@@ -559,12 +561,12 @@ def verify_span(git, *, base: str, end: str, hashes=None, branch: str = "main") 
         raise SpanError("mismatch", f"base {base[:12]} 가 end {end[:12]} 의 조상이 아니다 — 범위가 성립하지 않는다")
     if rc != 0:
         raise SpanError("lookup", f"조상 판정 실패(rc={rc}) — {out[:200]}")
-    rc, out = git("merge-base", "--is-ancestor", end, f"refs/heads/{branch}")
+    rc, out = git("merge-base", "--is-ancestor", end, f"refs/heads/{bname}")
     if rc == 1:
-        raise SpanError("mismatch", f"end {end[:12]} 가 `{branch}` 에서 도달 가능하지 않다 — "
-                                    f"`{branch}` 에 push 한 뒤에 마감한다")
+        raise SpanError("mismatch", f"end {end[:12]} 가 `{bname}` 에서 도달 가능하지 않다 — "
+                                    f"`{bname}` 에 push 한 뒤에 마감한다")
     if rc != 0:
-        raise SpanError("lookup", f"`{branch}` 도달 판정 실패(rc={rc}) — {out[:200]}")
+        raise SpanError("lookup", f"`{bname}` 도달 판정 실패(rc={rc}) — {out[:200]}")
     rc, out = git("log", "--reverse", f"--max-count={SPAN_MAX + 1}", "--format=%H%x09%s", f"{base}..{end}")
     if rc != 0:
         raise SpanError("lookup", f"범위 조회 실패(rc={rc}) — {out[:200]}")
@@ -577,7 +579,7 @@ def verify_span(git, *, base: str, end: str, hashes=None, branch: str = "main") 
         raise SpanError("mismatch", f"범위 {base[:12]}..{end[:12]} 의 커밋이 {SPAN_MAX}개를 넘는다 — base 를 확인한다")
     if any(not _SHA.match(h) for h in got):
         raise SpanError("lookup", f"범위 조회 출력이 해시가 아니다 — {out[:120]!r}")
-    want = list(hashes or [])
+    want = [_sha(h) for h in (hashes or [])]
     if want and want != got:
         i = next((k for k, (a, c) in enumerate(zip(want, got)) if a != c), min(len(want), len(got)))
         a = want[i][:12] if i < len(want) else "(없음)"
@@ -643,6 +645,9 @@ def infra_finish(project: str, issue_id, *, end: str, base: str = "", hashes=Non
         b = _sha((active or {}).get("start_rev")) if (active or {}).get("issue_id") == n else ""
         if not _SHA.match(b):
             return refuse(log, "span", f"base 가 없고 #{n} 잠금에도 시작 리비전이 없다 — base 를 싣는다",
+                          project=project)
+        if b in hs:
+            return refuse(log, "span", f"base {b[:12]} 가 해시 목록 안에 있다 — 범위는 base 를 빼고 센다",
                           project=project)
         log("span", f"base 생략 — 잠금의 시작 리비전 {b[:12]} 을 쓴다")
     if git is not None:

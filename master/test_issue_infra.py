@@ -223,6 +223,9 @@ def t_verify(tmp):
     check("verify_span — 해시·제목을 git 에서 구한다(오래된 것부터)", got["hashes"] == [c2, c3]
           and got["subjects"] == ["둘째 커밋", "셋째 커밋"], str(got))
     check("verify_span — 보고 해시가 같으면 통과", INF.verify_span(git, base=c1, end=c3, hashes=[c2, c3])["hashes"] == [c2, c3])
+    check("verify_span — refs/heads/ 접두 브랜치·대문자 해시도 정규화해 통과",
+          INF.verify_span(git, base=c1.upper(), end=c3.upper(),
+                          hashes=[c2.upper(), c3.upper()], branch="refs/heads/main")["hashes"] == [c2, c3])
 
     def kind(**kw):
         try:
@@ -259,6 +262,11 @@ def t_verify(tmp):
           and (IL.current(lk) or {}).get("issue_id") == 7)
     r = INF.infra_finish(P, 7, base=c1, end=c3, git=nogit, noter=iss.note, lock_root=lk)
     check("조회 실패 사유에 「등록하지 않는다」", "등록하지 않는다" in r.get("why", ""), r.get("why", ""))
+    r = INF.infra_finish(P, 7, end=c3, hashes=[c1, c2, c3], noter=iss.note, lock_root=lk)
+    check("base 생략 + 잠금 시작 리비전이 해시 목록 안 → 거절(span) · 노트·추적·잠금 무변경",
+          not r["ok"] and r["step"] == "span" and "해시 목록 안에 있다" in r.get("why", "")
+          and len(iss.notes) == n0 and not IT.state_path(lk).exists()
+          and (IL.current(lk) or {}).get("issue_id") == 7, str(r)[:300])
 
     r = INF.infra_finish(P, 7, end=c3, check_only=True, git=git, noter=iss.note, lock_root=lk)
     check("check_only · base 생략 → 잠금의 시작 리비전 · git 도출 · 쓰기 0", r["ok"] and r["check_only"]
