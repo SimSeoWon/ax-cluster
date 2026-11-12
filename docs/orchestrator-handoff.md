@@ -1,14 +1,26 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-12 22:42 Claude 체크포인트 — #639 마감(범위 플랜 `kind=scope`). 같은 세션에서 앞서 #932 마감·#633 종결.
-> 항목·진행과 최종 배달 결과의 정본은 Redmine이다. #639 구현 `8331dac`, 리포트 171 `2464f71`.
-> 진행 중 일감 잠금·worktree 없음(#639 finish 응답). 이 문서 커밋 직후 같은 `master.issue_wrapup 639`로 배달·check 예정.
-> 이전 상세는 Git `efa0264`·리포트 159~171·각 일감 노트를 따른다. 마스터는 11-12 21:33:14 부팅.
+> 2026-11-12 23:02 Claude 체크포인트 — #815 마감(/fixes 카드의 4절 건수). 같은 세션에서 앞서 #932·#639 마감·#633 종결.
+> 항목·진행과 최종 배달 결과의 정본은 Redmine이다. #815 `9c7d78b`(리포트 172 포함), #639 구현 `8331dac`·리포트 171 `2464f71`.
+> 진행 중 일감 잠금·worktree 없음(#815 finish 응답). 이 문서 커밋 직후 같은 `master.issue_wrapup 815`로 배달·check 예정.
+> 이전 상세는 Git `24b7485`·리포트 159~172·각 일감 노트를 따른다. 마스터는 11-12 21:33:14 부팅.
 
 ## 지휘 상태 (실조회)
 
 - 마스터 담당 `claude` — `record_master_conductor` 2026-11-12 21:40:27(사용자 지시로 실제 인수). 기록일 뿐 생존 판정·잠금이 아니다.
 - 워커 전역 `codex`(`source=state`, 2026-10-18 선택) 변경 없음. 마스터 지휘 타입은 Claude·Codex만(#829).
+
+## #815 실제 완료 근거 — /fixes 카드의 4절 건수
+
+- 사용자: 「2번만 진행하자」 — 남은 세 항목 중 `/fixes` 모듈 카드가 4절(골조 지시 이행) 표를 안 세던 것만. 지휘 세션이 직접 수정.
+- `fixes_page._table_counts` 가 머리 칸 `지시([PSEUDO])` 를 알아보고 카드 머리에 「지시 이행 N」을 붙인다. 4절 없는 카드는 출력 불변.
+- test_fixes_surface 144/144, 공식 통합 `Ran 194 tests in 192.463s OK`. 실물 리뷰 렌더링 「컨벤션 0 · 안전성 0 · 지시 이행 0」.
+  운영 트윈의 4절 표는 전부 0행이라 **행이 있는 실물은 보지 못했다**(주입 검사 근거).
+- 남은 두 항목(① 조각 동작 정합 — 테스트 작성 여부 · ④ `verdict.py:61` 문구)은 **#935 로 분리**(사용자 결정 · 결정 대기 · 미착수).
+- `issue_finish_tool(815, confirm=True)`: `ok=true, closed=true, registered=true, round=1, why=""`,
+  `done=["push","ff","worktree_remove","delete_branch","register","link","release","close","redmine"]`. 범위 `24b7485..9c7d78b` 커밋 1·파일 3.
+- `master.issue_wrapup 815` 1회차 rc2(예정된 인수인계 대기): `ax-projects` [중요] 옛 코드 → 재기동(22:38:29 → 22:59:04), 재판정 깨끗.
+  `ax-task-queue`·`ax-broker` 최신. 배달은 아직 안 했다.
 
 ## #639 실제 완료 근거 — 범위 플랜
 
@@ -28,8 +40,7 @@
   `repo=/home/sim/ax-cluster/.ax-issues/639`,
   `done=["push","ff","worktree_remove","delete_branch","register","link","release","close","redmine"]`.
   범위 `efa0264..2464f71` 커밋 2·파일 10. 작성 계열 `claude` — 해시별·종합 리뷰는 큐 결과로 남는다.
-- `master.issue_wrapup 639` 1회차 rc2(예정된 인수인계 대기): `ax-task-queue` [주의] 의존 변경·`ax-projects` [중요] 옛 코드 →
-  oneshot `ax-dispatch` 대기 뒤 재기동(21:51:04 → 22:38:24 / 21:51:09 → 22:38:29), 재판정 깨끗. `ax-broker` 최신. 배달은 아직 안 했다.
+- `master.issue_wrapup 639`: `ax-task-queue`·`ax-projects` 재기동(22:38) 뒤 인수인계 `24b7485` push → 배달·check rc0. 재실행 금지.
 - 한계·열린 것은 리포트 171 §8(대기 상한 · done 대상 재요청 불가 · 마지막 커밋 리뷰만 원료 · 큰 커밋 · 게시판 미노출 등).
   MCP 도구는 재기동 뒤 노출됐으나 실제 호출은 하지 않았다. 타이머가 배포 코드로 scope 항목을 도는 것도 보지 않았다.
 
@@ -54,8 +65,8 @@
 
 ## 바로 다음 작업
 
-1. 이 문서 커밋·push 뒤 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 639 --project AXCluster`로
-   배달·check 를 끝내고 T4 완료 근거를 Redmine 에 남긴다. 최종 결과는 Redmine 노트가 정본이다.
+1. 이 문서 커밋·push 뒤 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 815 --project AXCluster`로
+   배달·check 를 끝낸다. 최종 결과는 Redmine 노트가 정본이다.
 2. 다음 일감은 사용자가 선택한다. 자동 시작하지 않는다.
-3. `--limit 0` 동작, 범위 플랜의 열린 것(리포트 171 §8), 누적된 리뷰 지적(#929~#934·#829·#932·#639) 처리 범위는 사용자와 정한다.
+3. `--limit 0` 동작, 범위 플랜의 열린 것(리포트 171 §8), #935 의 두 결정, 누적된 리뷰 지적(#929~#934·#829·#932·#639·#815) 처리 범위는 사용자와 정한다.
 4. ⑦ 전진·finalize·파괴적 git·자동 로드 문서 변경은 기존 사람 게이트를 따른다.
