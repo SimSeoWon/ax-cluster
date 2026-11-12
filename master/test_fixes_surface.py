@@ -272,6 +272,19 @@ def test_review_module_cards():
           and ".doc .mod h4.sub{font-size:.84rem" in FP._EXTRA)
     check("③ 개수 — 컨벤션 1 · 안전성 0", "컨벤션 <b>1</b> · 안전성 <b>0</b>" in cards[0], cards[0][:300])
     check("③ 개수 — 빈 표 둘은 0 · 0", "컨벤션 <b>0</b> · 안전성 <b>0</b>" in cards[1], cards[1][:300])
+    # `#815` ④ — 4절(골조 지시 이행) 표도 센다. 표가 없는 카드는 종전 출력 그대로다.
+    from master.context_synth import review_gen as RG
+    check("③ 4절 표지 칸이 review_gen 계약과 같다", FP._INTENT_CELL in RG._INTENT_HEADER, RG._INTENT_HEADER)
+    intent = "## 4. 골조 지시 이행\n" + RG._INTENT_HEADER + "\n|---|---|---|---|---|\n"
+    with_intent = FP.render_review(
+        "### master/work\n" + conv + safe + "## 3. 영향 분석\n없음.\n" + intent
+        + "| master/work/a.py | 목록을 정렬 | 정렬 없음 | 12 | 불이행 |\n"
+        + "| master/work/a.py | dict 반환 | 골조와 동결이 다르다 | 30 | 골조 모순 |\n", "R10")
+    check("③ 4절 행 수 — 지시 이행 2", "컨벤션 <b>0</b> · 안전성 <b>0</b> · 지시 이행 <b>2</b>" in with_intent,
+          with_intent[:300])
+    empty_intent = FP.render_review("### m\n" + conv + safe + intent, "R11")
+    check("③ 4절 빈 표 — 지시 이행 0", "지시 이행 <b>0</b>" in empty_intent, empty_intent[:300])
+    check("③ 4절이 없는 카드에는 지시 이행을 싣지 않는다", "지시 이행" not in cards[0] and "지시 이행" not in cards[1])
     bare = FP.render_review("### only\n자유 서술\n", "R8")
     check("③ 표가 없으면 개수를 싣지 않는다", "mod-count" not in bare, bare)
     evil = FP.render_review("### <script>alert(1)</script>\n" + conv, "R9")

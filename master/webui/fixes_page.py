@@ -372,11 +372,15 @@ def render_markdown(text: str, *, sub_heads: bool = False) -> str:
 _MOD = re.compile(r"^###\s+(.*)$")
 
 
-def _table_counts(lines: list) -> dict:
-    """모듈 절 안의 컨벤션·안전성 표 데이터 행 수 — 머리 행·구분 행은 빼고 센다.
+_INTENT_CELL = "지시([PSEUDO])"      # `review_gen._INTENT_HEADER` 의 칸 — 4절 표를 알아보는 표지
 
-    표를 헤더 칸으로 알아본다(`review_gen` 계약: 컨벤션은 `위반 내용`, 안전성은 `위험도`).
-    알아본 표만 키가 생긴다 — 둘 다 없으면 빈 dict 이고 머리에 개수를 싣지 않는다."""
+
+def _table_counts(lines: list) -> dict:
+    """모듈 절 안의 컨벤션·안전성·지시 이행 표 데이터 행 수 — 머리 행·구분 행은 빼고 센다.
+
+    표를 헤더 칸으로 알아본다(`review_gen` 계약: 컨벤션은 `위반 내용`, 안전성은 `위험도`,
+    4절 골조 지시 이행은 `지시([PSEUDO])` — `#815` ④). 알아본 표만 키가 생긴다 — 하나도 없으면
+    빈 dict 이고 머리에 개수를 싣지 않는다. 4절은 워커 조각 리뷰에만 있어 그때만 키가 생긴다."""
     counts, kind, i = {}, None, 0
     while i < len(lines):
         s = lines[i].strip()
@@ -386,7 +390,8 @@ def _table_counts(lines: list) -> dict:
             continue
         cells = [c.strip() for c in s.strip("|").split("|")]
         if kind is None:
-            kind = ("conv" if "위반 내용" in cells else "safety" if "위험도" in cells else "other")
+            kind = ("conv" if "위반 내용" in cells else "safety" if "위험도" in cells
+                    else "intent" if _INTENT_CELL in cells else "other")
             if kind != "other":
                 counts.setdefault(kind, 0)
         elif kind != "other" and not all(set(c) <= set("-: ") for c in cells):
@@ -396,7 +401,7 @@ def _table_counts(lines: list) -> dict:
 
 
 def _mod_count_html(counts: dict) -> str:
-    bits = [f"{label} <b>{counts[k]}</b>" for k, label in (("conv", "컨벤션"), ("safety", "안전성"))
+    bits = [f"{label} <b>{counts[k]}</b>" for k, label in (("conv", "컨벤션"), ("safety", "안전성"), ("intent", "지시 이행"))
             if k in counts]
     return f'<span class="mod-count">{" · ".join(bits)}</span>' if bits else ""
 
