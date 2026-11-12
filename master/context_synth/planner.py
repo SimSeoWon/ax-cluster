@@ -20,6 +20,7 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from ..work import usage
 from .issue_classifier import group_issues
 from .plan_archive import archive_reviews
 from .plan_generator import (_build_weekly_summary,
@@ -103,10 +104,12 @@ def run_weekly_plans(paths, *, min_reviews: int = PLAN_MIN_REVIEWS,
             continue
 
         # Step 3-4: 플랜 생성
-        plan_result = generate_improvement_plans(
-            grouped, context_dir, author_plans_dir, repo_dir,
-            week_num, chat=chat, logf=log,
-        )
+        with usage.sink(paths.usage_log, source="weekly_plan",
+                        task_id=f"{week_num}:{author_name}"):
+            plan_result = generate_improvement_plans(
+                grouped, context_dir, author_plans_dir, repo_dir,
+                week_num, chat=chat, logf=log,
+            )
 
         log(f"[플랜] {author_name}: 플랜 {plan_result['plans_generated']}건 생성 "
             f"(토큰 ~{plan_result['tokens_used']:,})")

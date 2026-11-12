@@ -28,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 from contextlib import redirect_stderr
+from datetime import datetime
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -35,7 +36,11 @@ sys.path.insert(0, str(_ROOT))
 
 from master import layer2_verify as L2                                # noqa: E402
 from master.context_search.paths import ProjectPaths                  # noqa: E402
+from master.context_synth import plan_generator as PG                 # noqa: E402
+from master.context_synth import planner as PL                        # noqa: E402
+from master.context_synth import recipes_synthesizer as RS            # noqa: E402
 from master.context_synth import review_gen as RG                     # noqa: E402
+from master.context_synth import signals as SG                        # noqa: E402
 from master.work import lanes as LN                                   # noqa: E402
 from master.work import usage                                         # noqa: E402
 from master.work import usage_dashboard as UD                         # noqa: E402
@@ -316,6 +321,103 @@ def main() -> int:
         rows = lines(rp.usage_log)[n:]
         check("리뷰 큐 모양(바깥 sink + 주입 chat) → 호출마다 한 줄 (agy 2회 · 형식 재시도)",
               [r["lane"] for r in rows] == ["agy", "agy"], str(rows))
+
+        print("⑥-2 주간 플랜·범위 플랜·레시피 합성 — usage.sink 경로")
+        wp = ProjectPaths(name="W", root=tmp / "W")
+        (wp.context / "_domains").mkdir(parents=True)
+        (wp.repo / "Source" / "M").mkdir(parents=True)
+        (wp.repo / "Source" / "M" / "B.cpp").write_text("int line0;\n", encoding="utf-8")
+        w_rdir = wp.root / "reviews" / "사람"
+        w_rdir.mkdir(parents=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        week = datetime.now().strftime("%Y-W%W")
+        for i in range(3):
+            h = f"{'ab' * 16}{i:02d}"[:40]
+            (w_rdir / f"{today}_09{i:02d}_{h[:8]}.md").write_text(
+                f"# 자동 코드 리뷰 — {h[:12]}\n\n- 커밋: `{h}`\n\n### Source/M\n\n"
+                "## 2. 변경분 버그·안전성\n| 파일 | 위험도 | 라인 | 설명 | 권장 수정 |\n"
+                f"|---|---|---|---|---|\n| Source/M/B.cpp | 높음 | {10 + i * 30} | null 체크 누락 | IsValid 가드 |\n",
+                encoding="utf-8")
+        w_grouped = PL.group_issues(PL.parse_review_reports(w_rdir, "0000-00-00"), wp.context)
+        valid_plan = (
+            "## 문제 분석\n널 참조가 전달되면 역참조에서 실패한다.\n\n"
+            "## 수정 방안\nBefore: ptr->Run(); After: if (ptr) ptr->Run();\n\n"
+            "## 영향 범위\n호출자의 기존 정상 입력 동작은 유지한다.\n\n"
+            "## 우선순위 근거\n사용자 입력으로 발생하는 실패를 막는다.\n"
+        )
+        _env(CLAUDE_FAKE="json", FAKE_RESULT="OK")
+        with usage.sink(outer, source="ontology", task_id="outer-weekly"):
+            ok_fail = PL.run_weekly_plans(
+                wp, redmine=False,
+                chat=lambda pr: (L2.call_claude_why(pr, timeout=20),
+                                 (_ for _ in ()).throw(RuntimeError("cli boom")))[1])
+            restored_weekly = usage._SINK.get()
+        rows = lines(wp.usage_log)
+        check("주간 플랜 예외 실패 — 호출 1줄 기록 · 바깥 sink 미오염·복원",
+              ok_fail is False and len(rows) == 1
+              and (rows[0]["source"], rows[0]["task_id"], rows[0]["lane"]) == ("weekly_plan", f"{week}:사람", "claude")
+              and not outer.exists() and bool(restored_weekly)
+              and restored_weekly["task_id"] == "outer-weekly", str(rows))
+        _env(CODEX_FAKE="ok", FAKE_RESULT=valid_plan)
+        ok_retry = PL.run_weekly_plans(wp, redmine=False)
+        rows = lines(wp.usage_log)
+        check("[중요] 주간 플랜 재시도(기본 상용 체인) — 재시도도 1줄 추가 · source=weekly_plan",
+              ok_retry is True and len(rows) == 2
+              and [r["lane"] for r in rows] == ["claude", "codex"]
+              and all((r["source"], r["task_id"]) == ("weekly_plan", f"{week}:사람") for r in rows),
+              str(rows))
+
+        sp_log = tmp / "scope_usage.jsonl"
+        with usage.sink(sp_log, source="scope_plan", task_id="scope:combat"):
+            sp_res = PG.generate_improvement_plans(
+                w_grouped, wp.context, tmp / "scope_plans", wp.repo, "2026-11-12_1200")
+        sp_rows = lines(sp_log)
+        check("[중요] 범위 플랜은 plan_generator 호출 시 기존 source=scope_plan 유지",
+              sp_res["plans_generated"] == 1 and len(sp_rows) == 1
+              and (sp_rows[0]["source"], sp_rows[0]["task_id"], sp_rows[0]["lane"])
+              == ("scope_plan", "scope:combat", "codex"), str(sp_rows))
+
+        rcp = ProjectPaths(name="R2", root=tmp / "R2")
+        (rcp.repo / "Source" / "M").mkdir(parents=True)
+        for i in range(2):
+            SG.append_signal(
+                rcp, SG.make_record(
+                    intent=f"히트박스[UHitBox] 판정 추가 {i}",
+                    files_read=[], files_modified=[], source="pipeline",
+                    rejected_approaches=[{"approach": "틱마다 검사", "reason": "성능"}] if i == 0 else [],
+                    error_recoveries=[{"error": "linker error", "fix": "매크로 추가"}] if i == 0 else []))
+        _env(CODEX_FAKE="ok", FAKE_RESULT=(
+            '[{"recipe_name": "HitBox", "intent": "add hitbox", '
+            '"signal_indices": [0, 1], "tags": ["Combat"]}]\n'
+            "Avoid: 틱마다 검사 — 성능\nWatch for: linker error — Recovery: 매크로 추가"))
+        with usage.sink(outer, source="ontology", task_id="outer-recipe"):
+            made = RS.run_recipe_synthesis(rcp, min_signals=2)
+            restored_recipe = usage._SINK.get()
+        r_rows = lines(rcp.usage_log)
+        check("[중요] 레시피 합성(클러스터+합성+안티패턴) — 호출마다 1줄(총 3줄) · 바깥 sink 복원",
+              made == 1 and len(r_rows) == 3
+              and [r["lane"] for r in r_rows] == ["codex", "codex", "codex"]
+              and all((r["source"], r["task_id"]) == ("recipe_synthesis", "R2") for r in r_rows)
+              and not outer.exists() and bool(restored_recipe)
+              and restored_recipe["task_id"] == "outer-recipe", str(r_rows))
+        empty_made = RS.run_recipe_synthesis(rcp, min_signals=2)
+        r_rows = lines(rcp.usage_log)
+        check("레시피 활성 신호 없는 분기(아카이브 안티패턴)도 source=recipe_synthesis 1줄 기록",
+              empty_made == 0 and len(r_rows) == 4
+              and (r_rows[-1]["source"], r_rows[-1]["task_id"], r_rows[-1]["lane"])
+              == ("recipe_synthesis", "R2", "codex"), str(r_rows))
+        _env(CLAUDE_FAKE="json", FAKE_RESULT="OK")
+        with usage.sink(outer, source="ontology", task_id="outer-recipe-err"):
+            RS.run_recipe_synthesis(
+                rcp, min_signals=2,
+                chat=lambda pr: (L2.call_claude_why(pr, timeout=20),
+                                 (_ for _ in ()).throw(RuntimeError("recipe boom")))[1])
+            restored_err = usage._SINK.get()
+        r_rows = lines(rcp.usage_log)
+        check("레시피 합성 예외 시에도 호출 1줄 기록 · 바깥 sink 복원",
+              len(r_rows) == 5 and (r_rows[-1]["source"], r_rows[-1]["lane"]) == ("recipe_synthesis", "claude")
+              and not outer.exists() and bool(restored_err)
+              and restored_err["task_id"] == "outer-recipe-err", str(r_rows))
 
         print("⑧ 🔴 큰 프롬프트 — 명령줄에 싣지 않는다 (리눅스 인자 하나 128KB · E2BIG)")
         _env(CLAUDE_FAKE="json", FAKE_RESULT="OK")

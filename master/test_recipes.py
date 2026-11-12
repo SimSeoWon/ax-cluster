@@ -36,8 +36,10 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 
 class P:
     def __init__(self, root: Path):
+        self.name = "NS"
         self.root = root
         self.repo = root / "repo"
+        self.usage_log = root / "usage_log.jsonl"
 
 
 def fixture(n=5, with_negatives=False):

@@ -23,6 +23,7 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from ..work import usage
 from .review_gen import commercial_chat
 from .signals import read_signals, signals_path
 
@@ -569,54 +570,56 @@ def run_recipe_synthesis(paths, *, min_signals: int = RECIPE_MIN_SIGNALS,
     합성 후 _aggregate_anti_patterns 도 호출되어 _anti_patterns.md 카탈로그를 갱신한다.
     """
     log = logf or (lambda m: None)
-    signals = read_signals(paths)
-    if not signals:
-        log("[레시피] 누적된 신호 없음 — 스킵")
-        # 신호 없어도 아카이브에 rejected_approaches 가 있을 수 있으니 한 번 시도
+    task_id = getattr(paths, "name", "") or Path(paths.root).name
+    with usage.sink(paths.usage_log, source="recipe_synthesis", task_id=task_id):
+        signals = read_signals(paths)
+        if not signals:
+            log("[레시피] 누적된 신호 없음 — 스킵")
+            # 신호 없어도 아카이브에 rejected_approaches 가 있을 수 있으니 한 번 시도
+            try:
+                _aggregate_anti_patterns(paths, chat=chat, logf=log)
+            except Exception as e:                               # noqa: BLE001
+                log(f"[anti-pattern] 집계 오류: {e}")
+            return 0
+
+        min_signals = max(2, int(min_signals))
+        log(f"[레시피] 신호 {len(signals)}건 분석 시작 (min={min_signals})")
+
+        clusters = _cluster_signals(signals, chat=chat, logf=log)
+        if not clusters:
+            log("[레시피] 클러스터 결과 없음 — 스킵")
+            try:
+                _aggregate_anti_patterns(paths, chat=chat, logf=log)
+            except Exception as e:                               # noqa: BLE001
+                log(f"[anti-pattern] 집계 오류: {e}")
+            return 0
+
+        eligible = [c for c in clusters if len(c["signal_indices"]) >= min_signals]
+        log(f"[레시피] 클러스터 {len(clusters)}개, 합성 대상 {len(eligible)}개 "
+            f"(임계치 미만 {len(clusters) - len(eligible)}개는 다음 사이클까지 대기)")
+
+        created = 0
+        processed_indices: set = set()
+        for c in eligible:
+            ok = _synthesize_one(paths, c, signals, chat=chat, logf=log)
+            if ok:
+                created += 1
+                for i in c["signal_indices"]:
+                    processed_indices.add(i)
+
+        if processed_indices:
+            _archive_signals(paths, processed_indices, signals)
+            log(f"[레시피] 처리된 신호 {len(processed_indices)}건 아카이브 이동")
+        else:
+            log("[레시피] 임계치 도달 클러스터 없음 — 신호 유지")
+
+        # 안티패턴 카탈로그 집계 (레시피 합성과 별개로 rejected_approaches 만 모아 갱신)
         try:
             _aggregate_anti_patterns(paths, chat=chat, logf=log)
-        except Exception as e:                               # noqa: BLE001
+        except Exception as e:                                   # noqa: BLE001
             log(f"[anti-pattern] 집계 오류: {e}")
-        return 0
 
-    min_signals = max(2, int(min_signals))
-    log(f"[레시피] 신호 {len(signals)}건 분석 시작 (min={min_signals})")
-
-    clusters = _cluster_signals(signals, chat=chat, logf=log)
-    if not clusters:
-        log("[레시피] 클러스터 결과 없음 — 스킵")
-        try:
-            _aggregate_anti_patterns(paths, chat=chat, logf=log)
-        except Exception as e:                               # noqa: BLE001
-            log(f"[anti-pattern] 집계 오류: {e}")
-        return 0
-
-    eligible = [c for c in clusters if len(c["signal_indices"]) >= min_signals]
-    log(f"[레시피] 클러스터 {len(clusters)}개, 합성 대상 {len(eligible)}개 "
-        f"(임계치 미만 {len(clusters) - len(eligible)}개는 다음 사이클까지 대기)")
-
-    created = 0
-    processed_indices: set = set()
-    for c in eligible:
-        ok = _synthesize_one(paths, c, signals, chat=chat, logf=log)
-        if ok:
-            created += 1
-            for i in c["signal_indices"]:
-                processed_indices.add(i)
-
-    if processed_indices:
-        _archive_signals(paths, processed_indices, signals)
-        log(f"[레시피] 처리된 신호 {len(processed_indices)}건 아카이브 이동")
-    else:
-        log("[레시피] 임계치 도달 클러스터 없음 — 신호 유지")
-
-    # 안티패턴 카탈로그 집계 (레시피 합성과 별개로 rejected_approaches 만 모아 갱신)
-    try:
-        _aggregate_anti_patterns(paths, chat=chat, logf=log)
-    except Exception as e:                                   # noqa: BLE001
-        log(f"[anti-pattern] 집계 오류: {e}")
-
-    return created
+        return created
 
 
 def main(argv=None) -> int:

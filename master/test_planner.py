@@ -74,6 +74,7 @@ class P:
         self.root = root
         self.context = root / "context"
         self.repo = root / "repo"
+        self.usage_log = root / "usage_log.jsonl"
 
 
 REVIEW_TPL = """# 자동 코드 리뷰 — {h12}
