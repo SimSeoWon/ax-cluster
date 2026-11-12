@@ -27,7 +27,7 @@ Cluster-wide rules live in [`sim-desktop.md`](sim-desktop.md); repo rules in
 | **SSH** | `ssh user@192.168.0.33` — passwordless since 2026-08-08. Master's key is in `C:\ProgramData\ssh\administrators_authorized_keys` (admin path, same as `.2`) |
 | **GPU** | **NVIDIA GeForce RTX 3080 (10 GB)**, driver 610.47 |
 | **UE5** | **5.8.1** at `C:\Program Files\Epic Games\UE_5.8` — same version as `.2` |
-| **AX checkouts** | `C:\Users\USER\Documents\{ModularStage,NS,KimodoMotion_WebUI}` · `C:\trunk\MotionForge` (requester) · `C:\trunk\AXCluster` (**worker**) — see § Unreal projects |
+| **AX checkouts** | `C:\Users\USER\Documents\{ModularStage,NS,KimodoMotion_WebUI}` · `C:\trunk\AXCluster` (**worker**) — see § Unreal projects |
 | **git** | 2.53.0.windows.1 |
 
 ## 요청자 콘솔 — [중요] **여기가 언리얼 작업의 창구다** (사용자 2026-08-20)
@@ -137,7 +137,6 @@ AX-registered checkouts (registry, 2026-10-06) plus `.uproject` files found unde
 | **ModularStage** | `C:\Users\USER\Documents\ModularStage` | AX game project (requester) — see below. [주의] Not the mounted project: the mount moves (2026-10-06: AXCluster); query `list_projects_tool` |
 | **NS** | `C:\Users\USER\Documents\NS` | AX game project (requester) |
 | **KimodoMotion_WebUI** | `C:\Users\USER\Documents\KimodoMotion_WebUI` | AX project (requester, index only) |
-| **MotionForge** | `C:\trunk\MotionForge` | AX project (requester) — short path for MAX_PATH (moved 2026-10-03) |
 | **AXCluster** | `C:\trunk\AXCluster` | AX infra repo — this PC is a **worker** here; requester is the master |
 | Project_Alpha | `C:\Users\USER\Documents\Project_Alpha` | The predecessor; its docs survive as `_archive/project_alpha_md/` in the twin's context |
 | ServerTest | `C:\Users\USER\Documents\ServerTest` | |

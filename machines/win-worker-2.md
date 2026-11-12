@@ -58,7 +58,7 @@
 | **Account** | **`janus`** — a local **Administrator**. *Not* `sim`; `ssh sim@…` fails |
 | **SSH** | `ssh janus@192.168.0.2` — passwordless. Master's key is in `C:\ProgramData\ssh\administrators_authorized_keys` (admin path, not `~/.ssh/`) |
 | **GPU** | **NVIDIA GeForce RTX 3060 (12GB)** |
-| **Checkouts** | `E:\trunk\` — ModularStage · NS · MotionForge (UE5) · KimodoMotion_WebUI · AXCluster (code) — see § Unreal projects |
+| **Checkouts** | `E:\trunk\` — ModularStage · NS · KimodoMotion_WebUI · AXCluster (code) — see § Unreal projects |
 
 This box is **two things at once**, which is the thing to keep straight:
 
@@ -132,7 +132,6 @@ Convention on this box — **already established, don't invent a new one:**
 ```
 E:\trunk\  ├─ ModularStage\    ← AX project. origin = Gitea Sim/ModularStage, branch main
            ├─ NS\              ← AX project (worker)
-           ├─ MotionForge\     ← AX project (worker, UE5 plugin)
            ├─ KimodoMotion_WebUI\  ← AX project (worker, kind code)
            ├─ AXCluster\       ← AX project (worker, kind code) — pipeline-owned checkout
            ├─ Monster\
