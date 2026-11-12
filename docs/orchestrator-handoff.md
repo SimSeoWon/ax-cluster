@@ -1,67 +1,61 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-12 00:07 Codex 체크포인트 — #829 마감·Antigravity 마스터 지휘 타입 폐기.
-> 항목·진행과 최종 배달 결과의 정본은 Redmine이다. 구현 `6c30a9d`, 리포트 169 `30819dd`.
-> 진행 중 일감 잠금·worktree 없음(#829 finish 응답). 이 문서 커밋 직후 같은 `master.issue_wrapup 829`로 배달·check 예정.
-> 이전 상세는 Git `9967957`·리포트 159~169·각 일감 노트를 따른다. 마스터는 11-11 21:57:03 부팅(이전 기록).
+> 2026-11-12 21:58 Claude 체크포인트 — #932 마감. Codex 00:30 중단 체크포인트를 사용자 지시(「인수인계서 확인해」→「응」)로 인계해 끝냈다.
+> 항목·진행과 최종 배달 결과의 정본은 Redmine이다. 구현 `c4a31e2`, 리포트 170 `52992a7`.
+> 진행 중 일감 잠금·worktree 없음(#932 finish 응답). 이 문서 커밋 직후 같은 `master.issue_wrapup 932`로 배달·check 예정.
+> 이전 상세는 Git `ba9f435`·리포트 159~170·각 일감 노트를 따른다. 마스터는 11-12 21:33:14 부팅.
 
-## 현재 지휘 계약 — #829 사용자 결정
+## 지휘 상태 (실조회)
 
-- **마스터 지휘 LLM 타입은 Claude·Codex만.** `antigravity`/`agy` 마스터 타입을 코어·MCP enum·CLI·WebUI에서 제거했다.
-  Antigravity 연결의 운영 `issue_start`는 worktree·잠금·Git·Redmine 준비 전에 거절한다. MCP clientInfo를 신뢰하는 기존 계약이며 인증 경계는 아니다.
-- **Gemini 4 Argon은 범위를 지정한 서브 작업에만 허용.** 자료 사본·허용 파일·완료 조건을 전달하고 결과를 지휘자가 검증한다.
-  전역 설정·공용 지침·MCP 운영·일감 시작/마감·배포를 독자적으로 실행하지 않는다.
-- 기존 `ax-gemini` §4-1의 `master.work.gemini_report --task implementation --model gemini-4-argon-medium --allow-argon`으로
-  패치 제안을 회수한다. 기본 research·한도 시 Flash High 폴백·자동 Argon 금지는 유지한다.
-- 구현 모드는 승인 우회 대신 `--sandbox --disable-slash-commands --mode plan`. **실제 Argon 호출과 CLI 완전 격리는 미실증**이다.
-  MCP·명령 금지는 지침 수준이다. 서브 패치 회수는 `authors`를 자동 등록하지 않으므로 반영 시 작성 사실·타 계열 검증을 남긴다.
-- 과거 `agy` 작성 계열·리뷰·세션 수집·기존 자동 Flash는 보존했다. 지휘 타입과 하위 작성/리뷰 모델은 다르다.
-- 기존 담당 파일은 보존했다. 재기동 뒤 MCP 실조회: `master.agent=unknown, retired_agent=antigravity`.
-  **새 담당을 자동 기록하지 않았다.** 워커 전역 `codex`(`source=state`, 2026-10-18 선택)는 변경하지 않았다.
+- 마스터 담당 `claude` — `record_master_conductor` 2026-11-12 21:40:27(사용자 지시로 실제 인수). 기록일 뿐 생존 판정·잠금이 아니다.
+- 워커 전역 `codex`(`source=state`, 2026-10-18 선택) 변경 없음. 마스터 지휘 타입은 Claude·Codex만(#829).
+- #932 작성 계열은 `codex`+`claude`(인계 때 `issue_start_tool` 이 더했다).
 
-## #829 실제 완료 근거와 후속
+## #932 실제 완료 근거
 
-- 사용자: 「829번 진행해」 → 로컬 서브에이전트 방식 → Antigravity LLM 타입 제거·Argon 서브 활용 허용.
-  자동 로드 문구는 사전 제시 후 진행 승인 범위에서 반영했다.
-- 시작 응답 `repo=/home/sim/ax-cluster/.ax-issues/829`, `checkout=/home/sim/ax-cluster`,
-  `start_rev=996795757a9129ea07a2c437738713b437b5b1e6`, author `codex`.
-- 핵심 회귀 **633건**(30+189+56+358), 공식 통합 **193/193 (193.440s)**, 정적 검사 12파일 차단0.
-  `test_gemini_report` 122/122 포함. 명령·rc·세션 파일·미확인은 리포트 169.
-- 구현 `6c30a9dfc7acdc47174cb7b4458552d8e91cad5f`, 리포트 `30819dd439b3c63eb2dbca251d2cdc11e03002ef`.
-- `issue_finish_tool(829, confirm=True)`: `ok=true, closed=true, registered=true, round=1, why=""`,
-  `repo=/home/sim/ax-cluster/.ax-issues/829`,
+- 내용: 마감 추적 해시가 등록 30분 뒤에도 미러에 없으면 사유(`mirror_missing`)와 Redmine 노트 1회로 드러낸다.
+  해시는 `waiting` 유지, 늦게 도착하면 복구, Git 조회 오류는 부재와 구분. 상세는 리포트 170.
+- 검사(Claude 가 11-12 21:48 재실행 — Codex 원본 로그는 재부팅으로 `/tmp` 에서 사라졌다):
+  issue_track 106/106 · issue_progress 123/123 · review_runner 133/133, 공식 통합 `Ran 193 tests in 196.344s OK`.
+  정적 검사는 다시 돌리지 않았다(Codex 기록: 차단 0).
+- 실물 검증(worktree 의 새 코드, 운영 트윈·미러·Redmine, `review_runner --project AXCluster --limit 0`):
+  기한 전(00:27, Codex) 알림 0 → 기한 후 21:40:44 「등록 후 77211초 / 1800초」 부재 노트 1건 게시 →
+  별도 프로세스 재실행 21:44:03 부재 노트 0. 저장 기록 `waiting`·`mirror_missing.noted=true`, Redmine 알림 노트 1건.
+- 검증 회차 1(부재 검증용 식별자 `9320…9320`, 실제 커밋 아님)은 공개 함수로 정식 종결:
+  `set_hash(skipped)` → `mark_hash_noted` → `set_summary(abandoned, noted)`. 21:47:13.
+- `issue_finish_tool(932, confirm=True)`: `ok=true, closed=true, registered=true, round=2, why=""`,
+  `repo=/home/sim/ax-cluster/.ax-issues/932`,
   `done=["push","ff","worktree_remove","delete_branch","register","link","release","close","redmine"]`.
-  main 반영·worktree/브랜치 제거·잠금 해제·Redmine 완료100. 해시별/종합 리뷰는 이후 큐 결과로 남는다.
-- `master.issue_wrapup 829` 1회차: `ax-projects`만 옛 코드로 판정, 기다릴 oneshot 없음.
-  **11-11 23:24:48 → 11-12 00:06:11 KST**, active·재판정 깨끗. broker·task-queue는 최신으로 재기동하지 않았다.
-  **rc2는 예정된 인수인계 커밋 대기**이며 배달하지 않았다. 이 문서 커밋·push 뒤 같은 명령으로 배달한다.
-- 재기동 뒤 `get_orchestration_tool` 실조회에서 폐기된 담당 표시와 워커 codex 유지 확인.
-- `/tmp` 전체 로그 경로 조회 rc2(Permission denied)로 중단했으나, 사용자 「응!」으로 기록·재개 승인.
-  코드 검사 실패와 구분했다. 초기 회귀 합계 673 표기는 산술 오기로 633으로 정정했다.
-- 지연의 「기하급수」 증가·내부 원인은 재측정하지 않았다. 이번 작업에서 속도 개선을 주장하지 않는다.
-- 세션: `~/.codex/sessions/2026/11/11/rollout-2026-11-11T23-49-01-01a1cb15-6c15-73b0-895f-c9ad856cd447.jsonl`.
+  범위 `ba9f435..52992a7` 커밋 2·파일 7. 실제 마감은 회차 2이고 해시별·종합 리뷰는 큐 결과로 남는다.
+- `master.issue_wrapup 932` 1회차 rc2(예정된 인수인계 대기): `ax-task-queue`·`ax-projects` [주의] 의존 변경 →
+  oneshot `ax-dispatch` 대기 뒤 재기동(21:33:25 → 21:51:04 / 21:51:09), 재판정 깨끗. `ax-broker` 최신. 배달은 아직 안 했다.
+  2회차도 rc2 — 이 문서 쓰기가 거절된 채(읽은 뒤 fast-forward 로 파일이 바뀜) 호출해 「인수인계 대기」 노트가 한 번 더 붙었다.
+- **한계**: systemd 타이머가 main 에 반영된 새 코드로 부재 알림을 내는 것은 따로 실증하지 않았다(같은 진입점을 worktree 에서 실행).
+  Redmine 전송 성공과 표시 저장 사이 crash 는 중복 가능(리포트 170).
+
+## 이번에 확인한 사실 — 기록과 달랐던 것
+
+- `--limit 0` 은 「LLM 호출 0」이 아니다. `drain` 이 `max(1, limit)` 이라 대기 항목이 있으면 1건 처리한다(기존 동작, #932 변경 아님).
+  이번 두 실행이 #829 의 해시 리뷰 `6c30a9d`(R328, 지적 0)와 종합 리뷰(R329)를 1건씩 처리했다. 타이머가 처리할 항목이었고
+  21:43 타이머 회차는 소비자 잠금으로 건너뛰었다. 고칠지는 사용자 결정 — 일감 미등록.
+- Codex 가 준비한 `/tmp/ax-932-*` 스크립트·로그는 21:33 재부팅으로 없어져 쓰지 않았다. 명령은 문서에 적힌 원문과 공개 함수로 대신했다.
+- Codex 체크포인트 문서는 마감의 깨끗한 main 조건 때문에 커밋하지 않고 이 문서로 대체했다(내용은 위에 반영).
 
 ## 기존 마감·미확인 보존
 
-- #934 `40b5fd9`: #933 R318~R322 정리, 리포트168. applied10/dismissed10은 이전 기록이며 이번에 내용 재대조하지 않았다.
-- #931 `c22af56`: requester=master의 ax-client 시작/마감/보류/취소 거절. plan_* 유지.
-  .33 실제 요청자 통과와 MCP 경유 1회는 이전 미확인으로 남는다. 리포트167.
-- #933 `d1f5ae0`: 마감 해시를 git에서 도출·Gitea로 대조. .33 첫 마감 `[git]` 여부 미확인. 리포트166.
-- #930 `14b3273`: 테스트의 실제 Claude 설정 오염 차단·복구. 통합 HOME 격리는 합의로 제외, 다른 테스트 홈 쓰기는 여전히 한계.
-  실행 중인 Claude 세션은 필요 시 /mcp 재연결. 리포트165.
-- #929 `eb78e03`·#702 `c1b2537`: BC-250 종료 안전성 보강. 실제 poweroff는 아직 실행하지 않았다는 이전 기록을 유지한다.
-  SSH rc255 종료 판정은 가설·미측정이다. 리포트163~164.
-- #929 회차2: R314 → Codex R317(중간2·낮음3). 이전 기록상 지적 미처리.
-  #930 R315·R316, #931 R325, #934 R326/종합 리뷰는 최신 상태·본문을 이번에 재조회하지 않았다.
-- 마일스톤8 open·M7 closed. 자동 로드 문서의 오래된 「M7 open」와 M8 문서 부재는 이번 범위 밖.
-- #927 전체 도구 승인 정책과 새 Claude 대화형 세션 연결 확인은 별도 미확인으로 남는다.
-- 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음. #934 이전 완료 작업 중복 마감 금지.
+- #829 완료·배달까지 끝남(구현 `6c30a9d`·리포트 `30819dd`). wrapup 829 재실행·중복 마감 금지.
+  실제 Argon 호출·CLI 완전 격리·서브 authors 자동 등록은 미실증/미구현. R328·R329 본문은 읽지 않았다.
+- #934 리포트 168, #931 리포트 167, #933 리포트 166, #930 리포트 165 완료. `.33` 첫 실제 요청자 마감·연결은 미확인.
+- #929 추적 기록(실재하지 않는 끝 해시 `eb78e03f5ad0…`)은 복구하지 않았다 — 사용자 결정 대기. 새 코드가 main 에 올라갔으므로
+  다음 리뷰 큐 회차에서 #929 에 부재 알림 노트가 1회 붙을 수 있다(설계된 동작, 이번에 관측하지 않았다).
+- #929 R317·#930 R315/R316·#931 R325·#934 R326/종합 리뷰는 재검토하지 않았다.
+- 실제 BC-250 poweroff 미실행. M8 open/M7 closed, 자동 로드 문서의 「M7 open」 서술 미정리, #927 새 세션 권한 확인은 범위 밖.
+- 마스터 완료 수신자는 ax-followup.timer 하나, 세션 훅 없음.
 
 ## 바로 다음 작업
 
-1. 이 문서 커밋·push 뒤 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 829 --project AXCluster`로 배달·check를 끝내고 T3 완료 근거와 Redmine 배포 노트를 남긴다. 최종 결과는 Redmine 노트가 정본이다.
-2. 다음 일감은 사용자가 선택한다. 후보 #932·아이디어 #908/#911/#914/#919·세션 보강 #741. 자동 시작하지 않는다.
-3. #929/#930/#931/#934 및 #829 리뷰 결과를 실제 코드와 대조하고 처리 범위는 사용자와 정한다.
-4. 실제 Argon 서브 위임을 쓸 때 CLI 격리·패치 응답·작성 계열 기록 한계를 확인한다. 완전 격리가 입증된 것으로 다루지 않는다.
-5. .33 첫 요청자 마감과 새 Claude 연결·권한 정책의 미확인을 유지한다.
-6. ⑦ 전진·finalize·파괴적 git·자동 로드 문서 추가 변경은 기존 사람 게이트를 따른다.
+1. 이 문서 커밋·push 뒤 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 932 --project AXCluster`로
+   배달·check 를 끝내고 T3 완료 근거와 배포 결과를 Redmine 에 남긴다. 최종 결과는 Redmine 노트가 정본이다.
+2. 다음 일감은 사용자가 선택한다. 자동 시작하지 않는다.
+3. #929 추적 기록 복구 여부, `--limit 0` 동작, 누적된 리뷰 지적(#929~#934·#829·#932) 처리 범위는 사용자와 정한다.
+4. ⑦ 전진·finalize·파괴적 git·자동 로드 문서 변경은 기존 사람 게이트를 따른다.
