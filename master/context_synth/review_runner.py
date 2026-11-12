@@ -402,10 +402,11 @@ def find_final_review(paths, commit: str) -> Path | None:
 
 def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
              write=None, review_call=None, range_noter=None,
-             exclude=()) -> RunnerResult | None:
+             exclude=(), scope_chat=None) -> RunnerResult | None:
     """큐에서 하나를 꺼내 로컬 초안 → Antigravity 최종 리뷰까지 만든다.
 
-    `exclude` — 꺼내지 않을 항목 id(`#880`, `drain` 이 이번 회차에 꺼낸 것을 넘긴다)."""
+    `exclude` — 꺼내지 않을 항목 id(`#880`, `drain` 이 이번 회차에 꺼낸 것을 넘긴다).
+    `scope_chat` — 범위 플랜(`kind=scope`, `#639`)의 플랜 생성 호출 대역(테스트 자리)."""
     log = logf or (lambda m: None)
     res = RunnerResult()
     item = rq.claim(paths.root, exclude=exclude, logf=log)
@@ -417,10 +418,13 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
     if item.get("kind") == "range":
         return run_range(paths, item, res, logf=log, review_call=review_call,
                          range_noter=range_noter)
+    if item.get("kind") == "scope":
+        # `#639` — 범위 플랜. 산출물은 리뷰가 아니라 플랜이다(`plans/_scope/`). 본체는 `scope_plan`.
+        from . import scope_plan                                   # noqa: PLC0415
+        return scope_plan.run_scope(paths, item, res, chat=scope_chat, logf=log)
     if item.get("kind") != "commit":
-        # `kind=scope` 는 온디맨드 플랜의 몫이다 (`#639`) — 여기서 처리하지 않는다.
         rq.finish(paths.root, item["id"], ok=False,
-                  why=f"이 소비자는 kind=commit 만 처리한다 (받은 것: {item.get('kind')})",
+                  why=f"이 소비자가 모르는 kind 다 (받은 것: {item.get('kind')})",
                   logf=log)
         res.state, res.why = "failed", "kind 불일치"
         return res

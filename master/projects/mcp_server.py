@@ -1057,6 +1057,30 @@ def record_master_conductor_tool(agent: Literal["claude", "codex"], why: str, by
         return _fail(exc)
 
 
+# ── 범위 플랜 (`#639`) — 본체는 `master/context_synth/scope_plan.py` ─────────────────────
+
+@mcp.tool()
+def request_scope_plan_tool(target: str, project: str = "") -> str:
+    """한 **범위**(디렉토리·경로 또는 도메인)의 개선 플랜을 리뷰 큐에 요청한다 (`#639`, LLM 0).
+
+    `target` 은 저장소 기준 상대 경로(색인 경계 안 — 예: `master/context_synth`) 또는
+    `domain:<도메인>` 이다. 등재만 하고 바로 돌아온다 — 큐 소비자가 범위 안 파일의 마지막 커밋 중
+    리뷰가 없는 것을 커밋 리뷰로 채운 뒤 플랜을 `plans/_scope/<slug>/<회차>/` 에 쓴다.
+    산출물은 리뷰가 아니라 플랜이고, Redmine 에 등록하지 않는다. 이미 대기·진행·완료인 대상이면
+    `already: true`. [중요] **마운트된 프로젝트만** 받는다 — `project` 를 비우면 마운트된 프로젝트.
+    """
+    try:
+        import sys
+        from ..context_search.paths import resolve_mounted_only
+        from ..context_synth import scope_plan
+        # 로그는 stderr 로 — stdout 은 stdio 전송이 쓰는 자리다(서비스에서는 둘 다 저널로 간다).
+        return json.dumps(scope_plan.request(resolve_mounted_only(project), target, requester="mcp",
+                                             logf=lambda m: print(m, file=sys.stderr, flush=True)),
+                          ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
 # ── 플랜 영역 (`#826` T5) — 본체는 `master/plan_tools.py`. 상태는 plan_transition_tool 로만 바뀐다 ──
 
 @mcp.tool()

@@ -9,7 +9,7 @@
     ⑤ 초고 호출 실패는 큐에 남아 재시도된다
     ⑥ diff 를 못 읽으면 **결정적**으로 갈려 1회에 멈춘다
     ⑦ trivial·소스 없음은 유실이 아니라 설계된 스킵 — done 으로 종결
-    ⑧ `kind=scope` 는 이 소비자가 처리하지 않는다 (`#639` 의 몫)
+    ⑧ `kind=scope` 는 범위 플랜 경로로 넘긴다 (`#639` — 상세는 `test_scope_plan.py`)
     ⑨ 선언부는 커밋에 `.h` 가 없어도 짝 헤더에서 긁는다
     ⑩ grounding 머리말이 「미검증·버려라」를 먼저 말한다 (Antigravity 검증용)
     ⑫ 기존 초안을 재사용하고 성공 시 제거한다. 실패 시에는 보존한다
@@ -275,8 +275,19 @@ def test_설계된_스킵():
     root, head = make_repo()
     Q.enqueue(root, kind="scope", key="Source/M")
     r = R.run_once(Paths(root), draft_call=lambda p: "안 불린다")
-    check("⑧ kind=scope 는 처리하지 않는다 (#639 의 몫)",
-          r.state == "failed" and "kind" in (r.why or ""), r.why)
+    it = [x for x in Q.items(root) if x["kind"] == "scope"][0]
+    check("⑧ kind=scope 는 범위 플랜 경로로 넘긴다 (#639) — 커밋 리뷰 등재 뒤 대기",
+          r.state == "failed" and it["state"] == "pending" and it["last_kind"] == Q.WAIT
+          and Q.counts(root)["pending"] >= 2, f"{r.why} {it['state']} {it['last_kind']}")
+    Q.enqueue(root, kind="range", key="a..b", meta={"issue_id": 1, "base": "a", "end": "b"})
+    data = Q._read(root)
+    for x in data["items"]:
+        if x["kind"] == "range":
+            x["kind"] = "모름"
+            x["priority"] = 99
+    Q._write(root, data)
+    r = R.run_once(Paths(root), draft_call=lambda p: "안 불린다")
+    check("⑧ 모르는 kind 는 실패로 남긴다", r.state == "failed" and "kind" in (r.why or ""), r.why)
     shutil.rmtree(root)
 
 

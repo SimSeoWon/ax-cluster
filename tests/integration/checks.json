@@ -630,6 +630,11 @@
     "timeout": 180
   },
   {
+    "path": "master/test_scope_plan.py",
+    "count_pattern": "(?m)^OK test_scope_plan: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
     "path": "master/test_runbook.py",
     "count_pattern": "(?m)^OK test_runbook: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180

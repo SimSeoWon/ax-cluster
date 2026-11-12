@@ -20,6 +20,7 @@
     일시적(응답 없음·타임아웃)     3            원전 `verifier.py:55` _DEFAULT_MAX_ATTEMPTS
     형식 위반(format_ok=False)    3            원전의 revise 정책
     대기(미러 미도착, `#880`)      12           회차당 1번(`drain` exclude) — 색인기 fetch 를 기다린다
+    대기(범위 플랜, `#639`)        12           같은 갈래 — 범위 안 커밋 리뷰가 끝나기를 기다린다
 
 🔴 실측이 이 배분을 받친다 — 카나리 `review-lost` 31행 중 **27건이 ENV, 3건이 결정적**이었다.
 갈래 구분이 없어 결정적 실패를 계속 재시도한 결과다. 이 설계면 4행으로 줄었다.
@@ -84,11 +85,13 @@ DETERMINISTIC_MARKERS = (
     "커밋을 찾지 못했다",
     "unknown revision",
     "bad object",
+    "범위 대상을 해석하지 못했다",   # scope_plan.run_scope (`#639`) — 잘못된 대상·범위에 소스 없음
 )
 
 
 WAIT_MARKERS = (
     "미러에 아직 없다",       # review_runner.run_range — 범위 끝 커밋이 색인기 fetch 전
+    "커밋 리뷰를 기다린다",   # scope_plan.run_scope (`#639`) — 범위 안 커밋 리뷰가 아직 안 끝났다
 )
 
 
