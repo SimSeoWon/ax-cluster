@@ -1,16 +1,46 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-13 Codex 체크포인트 — #936 MotionForge 폐기. 진행 중 일감·잠금·worktree **없음**.
-> main `b1f0cc4`(문서·리포트174). 이 인수인계 커밋 직후 정본 wrapup으로 배달한다. 최종 배달 결과는 Redmine #936 마감 노트.
-> 항목·진행의 정본은 Redmine. 이전 상세는 Git `7e09726`·리포트 170~174·각 일감 노트.
+> 2026-11-13 체크포인트 — #919 작업 중 Codex 5h 한도 소진으로 중단(04:17 AM 리셋). 다음 지휘자(Claude)가 `.ax-issues/919` worktree를 이어받아 검증·커밋·마감·배달한다.
+> 운영 저장소(`/home/sim/ax-cluster`) `main` = `bb71407` (#936 MotionForge 폐기·배달 완료).
+> 항목·진행의 정본은 Redmine. 이전 상세는 Git `bb71407`·리포트 170~174·각 일감 노트.
 
-## 이번 #936 결과
+## 진행 중 일감 — #919 웹UX 작업 리포트(`reports/`) 뷰어 (다음 세션 즉시 인수 대상)
+
+- **상태·잠금**: Redmine #919 `진행`(마일스톤 8 — 개선·확장), `AXCluster/issue_lock.json` 활성(`issue_id=919`, `branch=issue/919`, `start_rev=bb714072b856ba682233a8bb52e04cceb5d0271c`, `authors=["codex"]`). 플랜 `T1 작업중`, `T2 대기`.
+- **승인 범위**: 사용자 「919번 진행하자」 및 「서브 에이전트로 작업 진행해줘」로 플랜 합의 및 커밋·마감·재기동·배달까지 일괄 승인(공용 규칙 §1.9).
+- **작업 위치**: 격리 worktree `/home/sim/ax-cluster/.ax-issues/919` (`issue/919`, 미커밋).
+- **구현 완료 내역** (Codex 로컬 서브에이전트 `/root/report_viewer` 완료 직후 한도 도달):
+  - `master/webui/reports_page.py` (신규): `reports/*.md` 및 `reports/research/*.md` 최신 커밋순 목록(미추적은 파일명순 뒤), 검색(`q`)·분류(`kind=work|research`), 안전한 마크다운 상세 렌더링(코드 펜스·표·목록·인용·HTML escape), 본문 작성 표기와 Git 커밋 작성자 분리 표기, Redmine `#N` 및 Gitea(`http://192.168.0.57:3000`) 실재 커밋 해시 링크, 경로 탈출/이중 인코딩/심볼릭 링크 차단(400).
+  - `master/webui/nav.py` · `master/webui/app.py`: 공용 사이드바 메뉴(`ITEMS`) 및 상위 라우팅(`PREFIXES`, GET 전용 `/reports`) 연결.
+  - `master/test_reports_page.py` (신규, 15건) · `master/test_usage_nav.py` (메뉴 9개 반영) · `tests/integration/checks.json` (`master/test_reports_page.py` 등록).
+  - `reports/175-919-report-viewer.md` (초안 38줄 작성됨 — 검증·마감 결과 채우기 남음).
+- **확인된 검사**:
+  - worktree에서 `unittest` 실행: `test_reports_page.py`(15), `test_usage_nav.py`(2), `test_webui_side_nav.py`(8), `test_integration_coverage.py`(2), `test_rag_routes.py`(5) 총 32건 OK, `git diff --check` rc0, ASGI 직접 호출(`list_status=200`, `work_status=200`, `research_status=200`) 확인.
+- **다음 지휘자(Claude)가 이어서 할 순서**:
+  1. 운영 `main`에 커밋된 이 `docs/orchestrator-handoff.md` 및 `reports/research/2026-11-13-*.md` 4건(사용자 승인 로컬 커밋 1건, 미푸시)을 확인한다. `issue_finish`는 `local_main == origin/main` 및 `origin/main`이 `issue/919`의 조상일 것을 요구하므로, 사용자 승인 하에 먼저 `git push origin main` 후 `git -C .ax-issues/919 rebase main`을 수행하거나, 마감 뒤 인수인계 커밋으로 합친다.
+  2. `ax-projects:issue_start_tool(919)` 호출로 교대 작성 계열(`claude`)을 잠금에 추가(`already=True` 확인).
+  3. `.ax-issues/919`에서 정적 검사(`pystatic`) 및 공식 통합 검사(`.venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v`) 실행.
+  4. `reports/175-919-report-viewer.md`에 검증 결과를 채우고 `issue/919`에 커밋.
+  5. `plan_transition_tool`로 T1 완료 → T2 작업중 → `issue_finish_tool(919, confirm=True)`.
+  6. `.venv/bin/python -m master.issue_wrapup 919` 실행(`ax-projects` 재기동 및 실제 HTTP `/reports` 확인) → 인수인계서 및 `reports/research/2026-11-13-*.md` 4건 커밋·push → `issue_wrapup 919` 재실행으로 워커 배달(`check` rc0) 및 T2 완료·Redmine 마감 노트 확인.
+
+## 신규 등록 아이디어 및 선행 분석 기록 (착수 아님)
+
+- **#939**: `[AX] 아이디어 — addyosmani/agent-skills 분석: 작업 시작 전 인터뷰 로직 등 클러스터 이식 요소 발굴` (`아이디어 — 추후 검토 수집` 마일스톤 등록 및 `interview-me`·`doubt-driven`·`Floor Guard` 선행 분석 코멘트 기록 완료).
+- **#911 · #731 코멘트**: `#911`(`cursor/plugins` `pstack` 선행 분석 코멘트), `#731`(Google NotebookLM 웹 연동 제약 및 로컬 대안 코멘트) 기록 완료.
+- **CTO 아키텍처 진단 및 #911·#938·#939 리서치 리포트 4건 저장**:
+  - `reports/research/2026-11-13-ax-cluster-cto-review.md` (CTO 비판적 진단 + 기업 AX 이식 가이드 + #911·#939·#938 통합 개발 플랜)
+  - `reports/research/2026-11-13-911-pstack-playbook-analysis.md` (#911 `pstack` 정밀 분석 및 6대 스펙 아젠다)
+  - `reports/research/2026-11-13-938-cognitive-debt-prevention.md` (#938 작업자 3단계 정의 및 인지적 부채·판단 포기 예방 설계)
+  - `reports/research/2026-11-13-939-agent-skills-interview-analysis.md` (#939 `addyosmani/agent-skills` 사전 인터뷰 및 5대 가드레일 분석)
+
+## 이전 #936 결과
 
 - 사용자: Gitea 저장소 직접 삭제 보고, 남은 클론·트윈 전체 제거·백업 불필요 승인. .33 미커밋 DefaultEditor.ini·미추적 Content/MotionForge 포함 목록 재확인 후 삭제했다.
 - .2/.33 C:\trunk\MotionForge, .43 /home/sim/trunk/MotionForge, .2 AxConductor_MotionForge, 마스터 MotionForge 전체 삭제·부재 확인 rc0. Registry/MCP 재조회에서 MotionForge 없음·active=AXCluster·problems=[]. 백업 생성 없음.
 - #694·#697·#703·#704·#707·#755·#758·#761은 각각 폐기로 닫고 되읽기 확인. #759/#760은 AX 공통 문제로 열린 상태 보존. Redmine motionforge 프로젝트는 이슈·이력 보존을 위해 유지(삭제·보관전환·이동 안 함).
 - 승인된 machines3문서에서 MotionForge 현재형 체크아웃 표기만 제거. 커밋 b1f0cc4, 공식 통합194건209.308초OK·diff 검사rc0. finish done=[push,ff,worktree_remove,delete_branch,register,link,release,close,redmine], why="", closed=true.
-- wrapup: 상주3종 최신·재기동 없음. 인수인계 대기rc2 뒤 이 커밋·push 후 같은 명령으로 배달 예정. 자동 리뷰 결과는 미확인.
+- wrapup: 상주3종 최신·재기동 없음. 인수인계 `bb71407` push 후 배달·`check AXCluster` 3대 OK(rc0) 및 Redmine #936 마감 노트 확인. 자동 리뷰 결과는 미확인.
 
 ## 이전 #733 결과
 
