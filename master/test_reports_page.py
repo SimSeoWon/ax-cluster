@@ -73,9 +73,19 @@ class ReportsTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertLess(text.index("Recent research"), text.index("Earlier report"))
         self.assertLess(text.index("Earlier report"), text.index("No metadata"))
-        self.assertIn("커밋 시각·작성자 미상 · 파일명순", text)
+        self.assertIn("커밋 시각·작성자 미상 · 파일명 역순", text)
         self.assertIn("Git Account", text)
         self.assertIn("3개 리포트", text)
+
+    def test_untracked_reports_follow_reverse_filename_order(self):
+        # R340-3 (#940): 정렬은 통째로 역순이다 — 안내문이 그 순서를 말해야 한다
+        (self.reports / "998-untracked-earlier.md").write_text("# Lower number\n\nplain\n", encoding="utf-8")
+        status, text = request()
+        self.assertEqual(status, 200)
+        self.assertLess(text.index("Earlier report"), text.index("No metadata"))
+        self.assertLess(text.index("No metadata"), text.index("Lower number"))
+        self.assertIn("Git 정보가 없는 문서는 파일명 역순으로 뒤에 표시합니다.", text)
+        self.assertNotIn("파일명순", text)
 
     def test_detail_writer_and_git_author_are_separate(self):
         status, text = request(query=b"file=001-old.md")

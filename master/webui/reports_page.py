@@ -270,7 +270,7 @@ def _record(name, path, history):
 def _metadata(record, commit_base):
     meta = record.get("git")
     if not meta:
-        return "커밋 시각·작성자 미상 · 파일명순"
+        return "커밋 시각·작성자 미상 · 파일명 역순"
     at = datetime.fromtimestamp(meta["stamp"], timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     commit = _link(meta["sha"][:12], commit_base+"/commit/"+meta["sha"] if commit_base else "")
     return _e(at) + " · " + _e(meta["author"]) + " · " + commit
@@ -292,7 +292,7 @@ def page(relative="", *, query="", kind=""):
             body += '<p class="report-meta">'+_e(name)+"<br>"+_metadata(record, commit_base)+"<br>본문 작성 표기: "+_e(record["writer"])+"</p>"
             body += '<article class="report-body">'+render_markdown(record["text"], name, commits, commit_base)+"</article>"
         else:
-            body += '<p class="note">저장소에 남긴 작업·연구 기록입니다. 최신 커밋 순이며, Git 정보가 없는 문서는 파일명순으로 뒤에 표시합니다. 리포트 이후 마감·배달 결과는 연결된 Redmine 노트에서 확인하세요.</p>'
+            body += '<p class="note">저장소에 남긴 작업·연구 기록입니다. 최신 커밋 순이며, Git 정보가 없는 문서는 파일명 역순으로 뒤에 표시합니다. 리포트 이후 마감·배달 결과는 연결된 Redmine 노트에서 확인하세요.</p>'
             body += '<form><input name="q" aria-label="제목·본문 검색" placeholder="제목·본문·일감 번호" value="'+_e(query)+'"><select name="kind" aria-label="리포트 종류">'+"".join('<option value="'+v+'"'+(' selected' if kind==v else '')+'>'+label+'</option>' for v,label in (("","전체"),("work","작업"),("research","연구")))+'</select><button>조회</button></form>'
             records = []
             for candidate in (REPO/"reports").glob("*.md"):
@@ -312,7 +312,7 @@ def page(relative="", *, query="", kind=""):
             records = [r for r in records if (not query or query.casefold() in (r["name"]+" "+r["text"]).casefold()) and (not kind or (kind=="research")==r["name"].startswith("research/"))]
             records.sort(key=lambda r: (bool(r["git"]), r["git"]["stamp"] if r["git"] else 0, r["name"]), reverse=True)
             if not available:
-                body += '<p class="note">Git 이력 조회 불가: 확인된 정보만 표시하며 나머지는 파일명순입니다.</p>'
+                body += '<p class="note">Git 이력 조회 불가: 확인된 정보만 표시하며 나머지는 파일명 역순입니다.</p>'
             body += '<p class="report-meta">'+str(len(records))+'개 리포트</p><div class="wrap"><table class="report-list"><thead><tr><th>리포트</th><th>본문 작성 표기</th><th>최종 커밋</th><th>관련 일감</th></tr></thead><tbody>'
             for record in records:
                 body += '<tr><td><a href="'+_href(record["name"])+'">'+_e(record["title"])+'</a><small>'+_e(record["name"])+"</small></td><td>"+_e(record["writer"])+"</td><td>"+_metadata(record, commit_base)+"</td><td>"+" · ".join(_link("#"+n, _issue_href(n)) for n in record["issues"])+"</td></tr>"
