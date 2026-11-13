@@ -1,13 +1,23 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-13 체크포인트 — #344(워커 지시 `abort` 이행 및 리눅스 SSH 실행 중단)를 Claude가 직접 구현·검사·리포트 177(`48733bb`)·`issue_finish` 완료 후 `issue_wrapup 344` 1차(`ax-task-queue` 재기동, `rc=2` 인수인계 대기) 직후 토큰 소진으로 중단했다. 진행 중인 일감 잠금 없음(`lock=None`).
-> 운영 저장소(`/home/sim/ax-cluster`) 구현 끝 커밋 `48733bb` + 이 인수인계 커밋。 사용자 「마감후 절차 진행해줘」로 Codex가 후속 절차를 인수했다. 이 문서를 커밋·push 후 `issue_wrapup 344 --project AXCluster`를 재실행한다. **최종 배달 결과는 Redmine #344 마감 노트가 정본이다.**
-> 항목·진행의 정본은 Redmine. 이전 상세는 Git 이력·리포트 170~177·각 일감 노트.
+> 2026-11-14 체크포인트 — Codex가 #344의 마감 뒤 절차를 끝내고, 사용자 선택으로 #750을 로컬 서브에이전트와 구현·검증·마감했다. 진행 중인 일감 잠금 없음(`lock_released=true`).
+> 운영 main 구현 끝 `a817484` + 이 인수인계 커밋. **#750 서비스 판정·재기동·배달의 최종 결과는 Redmine #750 마감 노트가 정본이다.** 인수인계 커밋·push 뒤 정본 `master.issue_wrapup 750 --project AXCluster`로 집행한다.
+> 항목·진행의 정본은 Redmine. 이전 상세는 Git 이력·리포트 170~178·각 일감 노트.
 
-## 이번에 끝낸 것 (배달 대기) — #344 워커 지시(abort)를 읽고 따르게 했다
+## 이번에 끝낸 것 — #750 related 근거 검증·YAML 미상 문자열 인용
+
+- 사용자 「750 진행하자」「응 단독으로 진행해줘!」, 추가 결정 「YAML에서 기존 ?표도 모두 정리하고 앞으로도 따옴표로 묶는게 맞아」. 코드 `01307dc` · 리포트 178 `a817484`. 모델 체인은 변경하지 않았다(현행 로컬 gemma4:e4b).
+- related 이름을 프로젝트 심볼·실측 선언·실제 소스 참조와 정확 대조. 정상 외부·엔진 참조 및 qualified Python 이름 허용. 예시 클래스·태그 목록을 프롬프트에서 제거하고 명백한 placeholder 태그 거부. related 정규화를 사실 검사 앞으로 옮김.
+- 미상 경로 정본 `"?"`. 과거 bare `?`는 생성 결과 형식 검사 전에 인용, 소비자는 기존 값 `?`로 읽음. graph의 정확 이름→실제 경로 보정 유지. 정본 `related --quote-unknown-only`로 기존 문서 인용만 교정(재합성·경로 변경 없음): AXCluster 92파일180줄, NS 56파일85줄, ModularStage 101파일231줄, ServerTest 0. 총249파일496줄. 적용 뒤 네 프로젝트 계획 재조회 모두 bare 잔여0(rc0).
+- 검사: related33/33·합성251/251·검색96/96·사실게이트41/41 모두 rc0. 정적 10파일 차단0(6모듈 import), 공식 통합195건206.265초OK, diff 검사rc0. 통합 1차는 기존 테스트의 LogNS 근거 누락3건으로 실패했고, 사용자 승인 후 실제 NS_H/NS_CPP 심볼을 known으로 전달하여 통과(근거 없으면 거부되는 대조군 유지).
+- finish 원문: `repo="/home/sim/ax-cluster/.ax-issues/750"`, `done=["push","ff","worktree_remove","delete_branch","register","link","release","close","redmine"]`, `why=""`, `registered=true`, `round=1`, `lock_released=true`, `closed=true`. 해시2개 등록. 마감 뒤 결과는 Redmine 노트.
+- 한계: related 이름 실재 근거를 확인하며 경로 정확성·협력 강도까지 증명하지 않는다. 정상 개념 태그의 의미 적합성은 자동 판정하지 않는다. LLM 주입 합성 경로로 검증했고 운영 상용 LLM 품질 측정은 하지 않았다. 자동 리뷰 결과 미확인.
+
+## 이전에 끝낸 것 — #344 워커 지시(abort)를 읽고 따르게 했다
 
 - 경과: Claude가 직접 구현(사용자 선택, 작성 계열 `["claude"]`). T1~T4 커밋·검사·리포트 177 작성 후 `issue_finish` 9단계 완료(`why=""`, `.ax-issues/344` 및 브랜치 제거 완료, 마감 추적 회차 1: `ea57860aadd5..48733bb09607` 해시 6개 등록).
 - `issue_wrapup 344` 1차 실행 중 `ax-task-queue` 옛 코드 판정 후 ⑤ 인수인계 확인 단계(`rc=2`, 끝 커밋 `48733bb` 뒤 `docs/orchestrator-handoff.md` 커밋 대기)에서 정지한 직후 토큰 소진으로 중단됨.
+- Codex 후속 완료: 인수인계 `a229011` push 후 wrapup rc0, 상주3종 최신·추가 재기동 없음, 배달·검사rc0, Redmine 결과 노트·T6완료 되읽기 확인.
 - 커밋 6건 (`5782dd2` · `c66e58b` · `c7a9835` · `a16e67c` · `02bdad4` · `48733bb` · 리포트 177):
   - `5782dd2`: 큐(`logic_claim`·`models`) — 허용 지시를 `abort` 하나로 제한(`pause`·`resume`·`drain`은 400, 도는 조각 없는 워커의 `abort`는 409 거절), 대상 태스크(`targets`/`abort_targets`) 반환·기록.
   - `c66e58b`: 파견 루프(`runner`) — `heartbeat` 응답 지시를 `follow_directives`로 이행(큐 취소 종결), `stop_requested`로 10초마다 지시·취소 조회.
@@ -88,8 +98,8 @@
 
 ## 남은 열린 일감 (마일스톤 8, 수는 Redmine) — 다음 세션이 물을 것
 
-- 바로 고칠 수 있는 결함: #750(지어낸 related·예시 태그가 사실 게이트 통과) · #738(스킬 홈 배달 → 「홈 중복 스킬」 경고) · #372(종결 work 차단 게이트).
-  #733·#344는 이번에 마감했다(#344는 인수인계 커밋·push 후 `issue_wrapup 344` 배달만 남음). 나머지는 **제안만 했고 사용자 답을 받지 못했다**. 자동 시작하지 않는다.
+- 바로 고칠 수 있는 결함 후보: #738(스킬 홈 배달 → 「홈 중복 스킬」 경고) · #372(종결 work 차단 게이트).
+  #733·#344·#750은 마감했다. 나머지는 **제안만 했고 사용자 답을 받지 못했다**. 자동 시작하지 않는다.
 - 결정 대기: #326(트윈 4개 원격 없음·미커밋 누적 — Gitea 보관 여부) · #791(후속 라운드 실패를 라운드 실패로 둘지) · #710(`win-main-33.md` 의 KimodoMotion_WebUI 두 줄) · #935 · #839 · #741 · #383.
 - 다른 조건 대기: #272·#650(ModularStage 마운트) · #649(NS 마운트) · #211·#855 · #826·#858(#856) · #370.
 
@@ -101,6 +111,6 @@
 
 ## 바로 다음 작업
 
-1. **#344 마감 뒤 단계 완결**: 이 `docs/orchestrator-handoff.md` 변경을 커밋·push 한 뒤 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 344 --project AXCluster`를 실행해 신선도 재확인·배달(`master.client update`)·Redmine #344 노트를 완료한다.
+1. #750의 최종 서비스·배달 결과와 T2 완료는 Redmine #750 마지막 노트로 확인한다. 실패가 기록됐으면 그 지점부터 사용자 승인 범위에서 재개한다.
 2. 다음 일감은 사용자가 고른다. 위 「바로 고칠 수 있는 결함」 제안에 대한 답부터 받는다.
 3. ⑦ 전진·finalize·파괴적 git·자동 로드 문서 변경은 기존 사람 게이트를 따른다.
