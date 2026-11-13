@@ -277,6 +277,16 @@ def _running_on(idx: TaskIndex, worker_id: str) -> list[str]:
                   or (t.get("verifier_id") == worker_id and t.get("status") == "submitted"))
 
 
+def _with_abort_targets(idx: TaskIndex, worker_id: str, resp: dict) -> dict:
+    """`abort` 를 내줄 때 **그 워커가 지금 리스를 쥔 태스크 전부**를 함께 싣는다 (lock 보유 가정).
+
+    지시는 워커 단위인데 가져가는 것은 태스크 하나의 루프다(fire-once) — 대상을 안 실으면
+    그 루프가 자기 조각만 멈추고 같은 워커의 다른 조각은 계속 돈다 (`#344`)."""
+    if "abort" in (resp.get("directives") or []):
+        resp["abort_targets"] = _running_on(idx, worker_id)
+    return resp
+
+
 def push_worker_directive(idx: TaskIndex, worker_id: str, directive: str) -> dict:
     """관리자 → 워커 directive 큐에 추가. 파견 루프가 다음 조회(약 10초)·하트비트에 가져가 따른다.
 
@@ -336,7 +346,7 @@ def heartbeat(idx: TaskIndex, task_id: str, worker_id: str, note: str = "") -> d
         directives = _take_worker_directives(idx, worker_id)
         if directives:
             _tq_log(f"[directive] take {worker_id} → {directives} (via heartbeat task={task_id})", idx.root)
-        return {"ok": True, "directives": directives}
+        return _with_abort_targets(idx, worker_id, {"ok": True, "directives": directives})
 
 
 def poll_worker(idx: TaskIndex, worker_id: str) -> dict:
@@ -348,7 +358,7 @@ def poll_worker(idx: TaskIndex, worker_id: str) -> dict:
         directives = _take_worker_directives(idx, worker_id)
         if directives:
             _tq_log(f"[directive] take {worker_id} → {directives} (via poll)", idx.root)
-        return {"ok": True, "directives": directives}
+        return _with_abort_targets(idx, worker_id, {"ok": True, "directives": directives})
 
 
 # ─────────────────────────────────────────

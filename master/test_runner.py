@@ -970,6 +970,99 @@ def test_session1_cancellation() -> None:
               and "대기 중단" in writes[-1][1])
 
 
+def test_directives_followed() -> None:
+    """🔴 `#344` — 파견 루프가 워커 지시를 **읽고 따른다**. 종전에는 하트비트가 큐에서 빼기만 했다."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from master.client import bundle as B
+
+    calls, logs = [], []
+
+    def api_with(heartbeat=None, poll=None, status="claimed", cancel_error=None):
+        def api(method, path, payload=None, **kw):
+            calls.append((method, path, payload))
+            if path.endswith("/heartbeat"):
+                return heartbeat
+            if path.endswith("/poll"):
+                return poll
+            if path.endswith("/cancel"):
+                if cancel_error:
+                    raise cancel_error
+                return {"ok": True}
+            return {"status": status}
+        return api
+
+    def cancels():
+        return [c[1] for c in calls if c[1].endswith("/cancel")]
+
+    abort = {"ok": True, "directives": ["abort"], "abort_targets": ["t1", "t2"]}
+    got = R.follow_directives("t1", "w", abort, api=api_with(), logf=logs.append)
+    check("[중요] abort 를 따르면 True", got is True)
+    check("[중요] 그 워커가 쥔 조각을 전부 큐 취소한다",
+          cancels() == ["/api/v1/tasks/t1/cancel", "/api/v1/tasks/t2/cancel"], str(cancels()))
+    check("  취소 사유에 지시와 워커를 적는다",
+          all("abort directive" in c[2]["reason"] and "w" in c[2]["reason"]
+              for c in calls if c[1].endswith("/cancel")))
+    check("  수신과 취소를 로그에 남긴다",
+          any("abort 수신" in m for m in logs) and sum("큐 취소 완료" in m for m in logs) == 2, str(logs))
+
+    calls.clear(); logs.clear()
+    got = R.follow_directives("t9", "w", {"ok": True, "directives": ["abort"]}, api=api_with(), logf=logs.append)
+    check("대상 목록이 없으면 자기 조각을 취소한다", got and cancels() == ["/api/v1/tasks/t9/cancel"], str(cancels()))
+
+    calls.clear(); logs.clear()
+    for empty in (None, {}, {"ok": True, "directives": []}, "text"):
+        check(f"지시가 없으면 아무것도 안 한다 ({empty!r})",
+              R.follow_directives("t1", "w", empty, api=api_with(), logf=logs.append) is False and not calls)
+    got = R.follow_directives("t1", "w", {"directives": ["drain"]}, api=api_with(), logf=logs.append)
+    check("[중요] 따를 줄 모르는 지시는 조용히 버리지 않고 로그에 남긴다",
+          got is False and not cancels() and any("따를 줄 모르는 지시" in m for m in logs), str(logs))
+
+    calls.clear(); logs.clear()
+    got = R.follow_directives("t1", "w", {"directives": ["abort"]},
+                              api=api_with(cancel_error=R.QueueError("down")), logf=logs.append)
+    check("[중요] 큐 취소가 실패해도 이 루프는 멈춘다(지시는 이미 큐에서 빠졌다)", got is True)
+    check("  취소 실패를 로그에 남긴다", any("큐 취소 실패" in m for m in logs), str(logs))
+
+    calls.clear()
+    with patch.object(R, "_directive_log", logs.append):
+        r = R.heartbeat("t1", "w", api=api_with(heartbeat=abort))
+    check("[중요] 하트비트가 응답의 지시를 읽고 따른다", r == abort and len(cancels()) == 2, str(calls))
+    calls.clear()
+    r = R.heartbeat("t1", "w", api=api_with(heartbeat={"ok": True, "directives": []}))
+    check("지시 없는 하트비트는 종전 그대로", r == {"ok": True, "directives": []} and not cancels())
+
+    calls.clear()
+    check("[중요] 실행 중 조회가 abort 를 읽으면 멈춘다",
+          R.stop_requested("t1", "w", api=api_with(poll=abort), logf=logs.append) is True
+          and calls[0][1] == "/api/v1/workers/w/poll" and len(cancels()) == 2, str(calls))
+    calls.clear()
+    check("큐에서 취소된 조각이면 멈춘다",
+          R.stop_requested("t1", "w", api=api_with(poll={"ok": True, "directives": []}, status="cancelled")) is True
+          and not cancels())
+    check("도는 조각이면 멈추지 않는다",
+          R.stop_requested("t1", "w", api=api_with(poll={"ok": True, "directives": []})) is False)
+    check("워커를 모르면 지시는 묻지 않고 상태만 본다",
+          R.stop_requested("t1", "", api=api_with(status="cancelled")) is True)
+
+    def broken(*a, **k):
+        raise R.QueueError("unavailable")
+    check("[중요] 조회 실패는 중단의 증거가 아니다", R.stop_requested("t1", "w", api=broken) is False)
+
+    # 세션 1 실행 루프가 같은 판정을 쓴다 — abort 가 cancel.flag 로 이어진다
+    facts = SimpleNamespace(host="fake", user="fake", windows=True, path="C:\\AXCluster", os="windows")
+    writes = []
+    calls.clear()
+    with patch.object(B, "_remote_write", lambda f, rel, content, **kw: writes.append((rel, content))), \
+            patch.object(B, "_ssh", lambda *a, **k: (0, "WAIT")), \
+            patch.object(R, "_api", api_with(poll=abort)), patch.object(R, "_directive_log", logs.append):
+        rc, out = R.run_worker_session1(facts, "t1", logf=lambda _: None, cleanup_timeout=0)
+    check("[중요] 세션 1 실행이 abort 로 cancel.flag 를 보낸다",
+          rc == 1 and "취소" in out and writes[-1][0].endswith("cancel.flag"), out)
+    check("  세션 1 은 그 워커(host)의 지시를 묻는다",
+          any(c[1] == "/api/v1/workers/fake/poll" for c in calls), str(calls[:3]))
+
+
 def test_delegation_calls() -> None:
     """🔴 `#764` 3a — 지휘자의 위임을 **명령 실행 이벤트로만** 센다. claude 출력은 「미상」이다."""
     def ev(cmd, status="completed", code=0, kind="item.completed"):
@@ -1751,6 +1844,7 @@ def main() -> int:
                test_session1_launcher_logs,
                test_session1_attempt_isolation,
                test_session1_cancellation,
+               test_directives_followed,
                test_worker_does_not_build, test_claude_auth_runtime,
                test_delegation_calls, test_instruction_asks_delegation,
                test_delegation_failure_blocks,

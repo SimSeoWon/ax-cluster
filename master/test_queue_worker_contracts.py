@@ -189,10 +189,14 @@ def test_directive_only_when_it_can_be_followed() -> None:
           again.get("already_queued") is True and idx.worker_directives.get(W) == ["abort"], str(again))
     r = heartbeat(idx, tid, W)
     check("[중요] 하트비트 응답이 지시를 싣는다", r.get("directives") == ["abort"], str(r))
+    check("  abort 는 그 워커가 쥔 태스크를 함께 싣는다", r.get("abort_targets") == [tid], str(r))
     check("  한 번 가져가면 비워진다(fire-once)", not idx.worker_directives.get(W))
     push_worker_directive(idx, W, "abort")
     r = poll_worker(idx, W)
     check("[중요] 조회(poll) 응답도 지시를 싣는다", r.get("directives") == ["abort"], str(r))
+    check("  조회 응답도 대상을 싣는다", r.get("abort_targets") == [tid], str(r))
+    r = poll_worker(idx, W)
+    check("지시가 없으면 대상 필드도 없다", r.get("directives") == [] and "abort_targets" not in r, str(r))
 
 
 if __name__ == "__main__":

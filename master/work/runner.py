@@ -941,11 +941,9 @@ def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT
     def is_cancelled():
         if cancelled is not None:
             return cancelled()
-        try:
-            return _api("GET", f"/api/v1/tasks/{task_id}", timeout=HTTP_TIMEOUT).get("status") == "cancelled"
-        except Exception:
-            # A missed query is not evidence of cancellation, like a missed heartbeat.
-            return False
+        # `#344` — 큐 취소뿐 아니라 워커 지시(abort)도 이 주기로 읽고 따른다.
+        # A missed query is not evidence of cancellation, like a missed heartbeat.
+        return stop_requested(task_id, facts.host)
     if mode not in SESSION1_MODES:
         # 런처도 거절하지만, 모르는 이름을 워커까지 보낼 이유가 없다
         log(f"{who} 🔴 세션 1 모드 거절 — {mode!r} (허용 {list(SESSION1_MODES)})")
@@ -1209,8 +1207,74 @@ def waiting_summary(project: str = "", *, api=_api) -> dict:
     return out
 
 
+def _directive_log(msg: str) -> None:
+    """워커 지시 로그 — `[dispatch]` 줄기에 싣는다(journalctl 에서 파견과 한 흐름으로 읽힌다)."""
+    print(f"[dispatch] [directive] {msg}", flush=True)
+
+
+def follow_directives(task_id: str, worker_id: str, resp, *, api=None, logf=None) -> bool:
+    """큐가 내준 워커 지시를 **따른다** (`#344`, 사용자 결정 2026-10-05 ⓐ · 2026-11-13). `abort` 를 따랐으면 True.
+
+    🔴 종전에는 하트비트가 지시를 큐에서 빼기만 하고 응답을 버렸다 — 보낸 사람은 「멈추라고 했다」고
+    믿고 워커는 계속 돌았다. `abort` 는 **그 워커가 쥔 조각을 큐 취소로 종결**하는 것이고, 원격 실행을
+    끊는 것은 기존 취소 판정이다(세션 1 `cancel.flag` `#796` · 리눅스 직접 SSH `_ssh_stoppable`).
+    새 중단 장치를 만들지 않는다.
+    [주의] 취소 호출이 실패해도 True 다 — 지시는 fire-once 로 이미 큐에서 빠졌다. 여기서 놓으면
+    그 지시는 사라지므로, 이 루프의 원격 실행만큼은 멈춘다(실패는 로그에 남는다).
+    """
+    api = api or _api
+    log = logf or _directive_log
+    resp = resp if isinstance(resp, dict) else {}
+    names = [str(d) for d in (resp.get("directives") or [])]
+    if not names:
+        return False
+    for other in [d for d in names if d != "abort"]:
+        log(f"{task_id} @{worker_id} [주의] 따를 줄 모르는 지시 {other!r} — 버린다 "
+            f"(큐가 보낼 때 걸렀어야 한다)")
+    if "abort" not in names:
+        return False
+    targets = [str(t) for t in (resp.get("abort_targets") or []) if t]
+    if task_id not in targets:
+        targets.insert(0, task_id)
+    log(f"{task_id} @{worker_id} abort 수신 — 그 워커의 조각 {len(targets)}건을 큐 취소로 종결한다 "
+        f"{targets}")
+    for tid in targets:
+        try:
+            api("POST", f"/api/v1/tasks/{tid}/cancel",
+                {"reason": f"abort directive — worker {worker_id} (#344)"})
+            log(f"{tid} @{worker_id} 큐 취소 완료 — 원격 실행은 취소 판정이 끊는다")
+        except Exception as e:                               # noqa: BLE001
+            log(f"{tid} @{worker_id} 🔴 abort 를 받았지만 큐 취소 실패 — {type(e).__name__}: {e}")
+    return True
+
+
+def stop_requested(task_id: str, worker_id: str = "", *, api=None, logf=None) -> bool:
+    """원격 실행 중 **이 조각을 멈춰야 하나** — 실행 루프가 약 10초마다 묻는다 (`#344`).
+
+    ① 워커 지시 조회(`abort` 면 따르고 True) ② 큐의 태스크 상태가 `cancelled`.
+    하트비트(240초)만 읽으면 `abort` 가 최대 4분 뒤에 먹는다 — 그래서 실행 루프의 주기로도 읽는다
+    (사용자 결정 2026-11-13).
+    [중요] **조회 실패는 중단의 증거가 아니다** — 하트비트 한 번 놓친 것과 같다(`#796`).
+    """
+    api = api or _api
+    if worker_id:
+        try:
+            got = api("POST", f"/api/v1/workers/{worker_id}/poll", {"worker_id": worker_id})
+            if follow_directives(task_id, worker_id, got, api=api, logf=logf):
+                return True
+        except Exception:                                    # noqa: BLE001
+            pass
+    try:
+        return (api("GET", f"/api/v1/tasks/{task_id}", None) or {}).get("status") == "cancelled"
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
 def heartbeat(task_id: str, worker_id: str, *, api=_api):
-    return api("POST", f"/api/v1/tasks/{task_id}/heartbeat", {"worker_id": worker_id})
+    """리스를 연장한다. 🔴 `#344` — **응답의 워커 지시를 읽고 따른다**(종전에는 버렸다)."""
+    got = api("POST", f"/api/v1/tasks/{task_id}/heartbeat", {"worker_id": worker_id})
+    follow_directives(task_id, worker_id, got, api=api)
+    return got
 
 
 def submit(task_id: str, out: Outcome, *, epoch=None, worker_id: str = "", api=_api):
