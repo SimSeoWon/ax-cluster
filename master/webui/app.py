@@ -32,7 +32,7 @@ from . import routes
 #    매번 하나를 빠뜨려 401/404 가 났다. **목록을 하나로 모으면 그 부류가 사라진다** —
 #    `viewer.Router` 와 `projects/__main__` 이 이 상수를 import 해서 쓴다.
 PREFIXES = ("/ontology", "/ontology-static", "/api/v1", "/cluster", "/onboarding",
-            "/commit-flow", "/reviews", "/usage", "/rag-logs")
+            "/commit-flow", "/reviews", "/reports", "/usage", "/rag-logs")
 # 정확히 이 경로만(접두어가 아니라 완전 일치) 이 앱이 가져간다
 EXACT = ("/", "", "/cluster.html")
 
@@ -161,6 +161,15 @@ class WebUI:
             return await _send(send, 400, b'{"error":"http only"}')
         method = scope.get("method", "GET").upper()
         path = scope.get("path", "")
+
+        if path in ("/reports", "/reports/"):
+            if method != "GET":
+                return await _send(send, 405, _j({"error": "read-only method"}))
+            from . import reports_page
+            query = parse_qs((scope.get("query_string") or b"").decode("utf-8", "replace"))
+            st, body = reports_page.page((query.get("file") or [""])[0],
+                query=(query.get("q") or [""])[0], kind=(query.get("kind") or [""])[0])
+            return await _send(send, st, body, HTML)
 
         if path in ("/rag-logs", "/rag-logs/", "/api/v1/rag-logs"):
             if method != "GET":

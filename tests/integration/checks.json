@@ -1,5 +1,10 @@
 [
   {
+    "path": "master/test_reports_page.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 180
+  },
+  {
     "path": "master/test_broker_routing.py",
     "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
