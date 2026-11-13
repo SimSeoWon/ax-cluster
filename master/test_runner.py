@@ -1109,8 +1109,7 @@ def test_linux_ssh_is_stoppable() -> None:
     cmd = 'cd "/home/sim/trunk/X" && codex exec "do it" < /dev/null'
     wrapped = R.stoppable_command(cmd, "abc")
     check("[중요] 지휘자 명령은 한 글자도 바꾸지 않고 앞뒤만 감싼다",
-          f"; {cmd}; " in wrapped and wrapped.startswith("echo $$ > /tmp/ax-run-abc.sid; ")
-          and wrapped.endswith("rm -f /tmp/ax-run-abc.sid; exit $ax_rc"), wrapped)
+          wrapped == "echo $$ > /tmp/ax-run-abc.sid; trap 'rm -f /tmp/ax-run-abc.sid' EXIT; " + cmd, wrapped)
     stop_cmd = R.stop_command("abc")
     check("종료 명령은 그 실행의 세션만 겨눈다(TERM 뒤 KILL)",
           'pkill -TERM -s "$s"' in stop_cmd and 'pkill -KILL -s "$s"' in stop_cmd
@@ -1125,7 +1124,7 @@ def test_linux_ssh_is_stoppable() -> None:
     check("  기다리는 동안 주기마다 중단 여부를 묻는다", len(asked) == 2, str(asked))
     check("  멈출 일이 없으면 원격 종료 명령을 보내지 않는다", not sent and not proc.killed)
     check("  ssh 로 감싼 명령을 보낸다",
-          made[-1][0] == "ssh" and made[-1][-2] == "u@h" and f"; {cmd}; " in made[-1][-1], str(made[-1][-2:]))
+          made[-1][0] == "ssh" and made[-1][-2] == "u@h" and made[-1][-1].endswith("EXIT; " + cmd), str(made[-1][-2:]))
 
     for word, rc_kill, want in (("GONE", 0, "원격 종료 확인"), ("ALIVE", 0, "원격 종료 미확인"),
                                 ("NOSID", 0, "원격 실행 흔적 없음"), ("", 255, "원격 종료 미확인")):

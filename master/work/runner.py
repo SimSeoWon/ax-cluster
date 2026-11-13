@@ -827,9 +827,13 @@ def _sid_file(run_id: str) -> str:
 
 
 def stoppable_command(cmd: str, run_id: str) -> str:
-    """원격에서 도는 한 줄. 지휘자 명령(`cmd`)은 **그대로** 두고 앞뒤에 세션 기록·정리만 붙인다."""
+    """원격에서 도는 한 줄. 지휘자 명령(`cmd`)은 **그대로** 두고 앞에 세션 기록·정리 예약만 붙인다.
+
+    [주의] 정리는 뒤에 붙이지 않고 `trap … EXIT` 로 건다 — 명령이 스스로 `exit` 하면 뒤에 붙인
+    `rm` 은 돌지 않는다(실측 2026-11-13: sid 파일이 남았다). 종료 코드도 명령 것이 그대로 나간다.
+    """
     f = _sid_file(run_id)
-    return f"echo $$ > {f}; {cmd}; ax_rc=$?; rm -f {f}; exit $ax_rc"
+    return f"echo $$ > {f}; trap 'rm -f {f}' EXIT; {cmd}"
 
 
 def stop_command(run_id: str) -> str:
