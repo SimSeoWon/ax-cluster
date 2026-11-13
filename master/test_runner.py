@@ -18,6 +18,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from master.client.bundle import HostFacts          # noqa: E402
 from master.work import runner as R                     # noqa: E402
 
+
+def _no_real_process(argv, *a, **k):
+    """🔴 `#344` — 단위 검사는 실제 프로세스(ssh)를 띄우지 않는다. `bundle._ssh` 만 가리면
+    `_ssh_stoppable` 이 워커에 진짜 지휘자를 띄운다(2026-11-13 실측) — 그래서 생성 자리를 막는다."""
+    raise AssertionError(f"단위 검사가 실제 프로세스를 띄우려 했다 — {list(argv)[:4]}")
+
+
+R._POPEN = _no_real_process
+
 PASS = FAIL = 0
 SHA = "bc4b38f43c23d0e898573b0a5fd89c12fee7f813"
 
@@ -1063,6 +1072,116 @@ def test_directives_followed() -> None:
           any(c[1] == "/api/v1/workers/fake/poll" for c in calls), str(calls[:3]))
 
 
+def test_linux_ssh_is_stoppable() -> None:
+    """🔴 `#344` — 리눅스 직접 SSH 실행을 큐 취소·abort 로 끊는다. 종전에는 끝날 때까지 막혀 있었다."""
+    import subprocess
+    from unittest.mock import patch
+
+    class Proc:
+        def __init__(self, waits, out="  hello\n", rc=0):
+            self.waits, self.out, self.returncode, self.killed = waits, out, rc, False
+
+        def communicate(self, timeout=None):
+            if self.killed:
+                return self.out, ""
+            if self.waits > 0:
+                self.waits -= 1
+                raise subprocess.TimeoutExpired("ssh", timeout)
+            return self.out, ""
+
+        def kill(self):
+            self.killed = True
+
+    made, sent, logs = [], [], []
+
+    def popen_for(proc):
+        def popen(argv, **kw):
+            made.append(argv)
+            return proc
+        return popen
+
+    def ssh_answer(word, rc=0):
+        def ssh(host, user, cmd, timeout=None, **kw):
+            sent.append((host, user, cmd))
+            return rc, word
+        return ssh
+
+    cmd = 'cd "/home/sim/trunk/X" && codex exec "do it" < /dev/null'
+    wrapped = R.stoppable_command(cmd, "abc")
+    check("[중요] 지휘자 명령은 한 글자도 바꾸지 않고 앞뒤만 감싼다",
+          f"; {cmd}; " in wrapped and wrapped.startswith("echo $$ > /tmp/ax-run-abc.sid; ")
+          and wrapped.endswith("rm -f /tmp/ax-run-abc.sid; exit $ax_rc"), wrapped)
+    stop_cmd = R.stop_command("abc")
+    check("종료 명령은 그 실행의 세션만 겨눈다(TERM 뒤 KILL)",
+          'pkill -TERM -s "$s"' in stop_cmd and 'pkill -KILL -s "$s"' in stop_cmd
+          and "/tmp/ax-run-abc.sid" in stop_cmd and "pkill -f" not in stop_cmd, stop_cmd)
+
+    proc = Proc(waits=2, out="  line\nRESULT: DONE\n", rc=0)
+    asked = []
+    with patch.object(R.bundle, "_ssh", ssh_answer("GONE")):
+        got = R._ssh_stoppable("h", "u", cmd, timeout=60, task_id="t1", poll=0.01, popen=popen_for(proc),
+                               stop=lambda: asked.append(1) and False, logf=logs.append)
+    check("정상 완료는 종전 계약 그대로 — (rc, 다듬은 stdout)", got == (0, "line\nRESULT: DONE"), str(got))
+    check("  기다리는 동안 주기마다 중단 여부를 묻는다", len(asked) == 2, str(asked))
+    check("  멈출 일이 없으면 원격 종료 명령을 보내지 않는다", not sent and not proc.killed)
+    check("  ssh 로 감싼 명령을 보낸다",
+          made[-1][0] == "ssh" and made[-1][-2] == "u@h" and f"; {cmd}; " in made[-1][-1], str(made[-1][-2:]))
+
+    for word, rc_kill, want in (("GONE", 0, "원격 종료 확인"), ("ALIVE", 0, "원격 종료 미확인"),
+                                ("NOSID", 0, "원격 실행 흔적 없음"), ("", 255, "원격 종료 미확인")):
+        proc = Proc(waits=99)
+        sent.clear(); logs.clear()
+        with patch.object(R.bundle, "_ssh", ssh_answer(word, rc_kill)):
+            rc, out = R._ssh_stoppable("h", "u", cmd, timeout=60, task_id="t1", poll=0.01,
+                                       popen=popen_for(proc), stop=lambda: True, logf=logs.append)
+        check(f"[중요] 취소되면 원격 세션을 죽이고 결과를 구분해 보고한다 ({word or '무응답'})",
+              rc == 1 and want in out and "RESULT: BLOCKED" in out, out)
+        check(f"  로컬 ssh 도 거둔다 ({word or '무응답'})", proc.killed and len(sent) == 1
+              and "pkill -TERM -s" in sent[0][2])
+        check(f"  확인/미확인을 로그에 남긴다 ({word or '무응답'})", any(want[:8] in m for m in logs), str(logs))
+
+    proc = Proc(waits=99)
+    sent.clear()
+    with patch.object(R.bundle, "_ssh", ssh_answer("GONE")):
+        rc, out = R._ssh_stoppable("h", "u", cmd, timeout=0, task_id="t1", poll=0.01,
+                                   popen=popen_for(proc), stop=lambda: False, logf=logs.append)
+    check("[중요] 시간 초과도 원격을 죽인다 — 종전에는 원격 지휘자가 남았다",
+          rc == 255 and out.startswith("TimeoutExpired") and "원격 종료 확인" in out and len(sent) == 1, out)
+
+    def refuse(argv, **kw):
+        raise OSError("no ssh")
+    got = R._ssh_stoppable("h", "u", cmd, timeout=5, task_id="t1", popen=refuse, logf=logs.append)
+    check("ssh 를 못 띄우면 예외 없이 255", got[0] == 255 and "OSError" in got[1], str(got))
+
+    proc = Proc(waits=99)
+    sent.clear()
+
+    def boom():
+        raise RuntimeError("requester interrupted")
+    with patch.object(R.bundle, "_ssh", ssh_answer("GONE")):
+        try:
+            R._ssh_stoppable("h", "u", cmd, timeout=60, task_id="t1", poll=0.01,
+                             popen=popen_for(proc), stop=boom, logf=logs.append)
+            raised = False
+        except RuntimeError:
+            raised = True
+    check("요청자가 중단돼도 원격을 남기지 않는다", raised and len(sent) == 1 and proc.killed)
+
+    polled = []
+    proc = Proc(waits=1)
+    with patch.object(R, "stop_requested", lambda tid, wid: polled.append((tid, wid)) or False), \
+            patch.object(R.bundle, "_ssh", ssh_answer("GONE")):
+        R._ssh_stoppable("192.168.0.43", "sim", cmd, timeout=60, task_id="t7", poll=0.01,
+                         popen=popen_for(proc), logf=logs.append)
+    check("[중요] 기본 판정은 그 워커(host)의 지시와 큐 취소다", polled == [("t7", "192.168.0.43")], str(polled))
+    try:
+        R._POPEN(["ssh", "x"])
+        guarded = False
+    except AssertionError:
+        guarded = True
+    check("🔴 단위 검사는 실제 ssh 프로세스를 띄울 수 없다", guarded)
+
+
 def test_delegation_calls() -> None:
     """🔴 `#764` 3a — 지휘자의 위임을 **명령 실행 이벤트로만** 센다. claude 출력은 「미상」이다."""
     def ev(cmd, status="completed", code=0, kind="item.completed"):
@@ -1468,14 +1587,14 @@ def test_claude_auth_runtime() -> None:
                                (0, '{"is_error":true,"result":"' + raw + '"}')):
         with patch("master.work.conductor_auth.check_claude_auth", return_value={"ok": True}), \
              patch("master.work.conductor_auth.invalidate_claude_auth", return_value={"ok": False}) as invalidate, \
-             patch.object(R.bundle, "_ssh", return_value=(process_rc, output)) as ssh:
+             patch.object(R, "_ssh_stoppable", return_value=(process_rc, output)) as ssh:
             rc, out = R.run_worker(_facts(), "t1")
             check("실제 OAuth 실패는 정상 캐시를 무효화", rc == 1 and invalidate.call_count == 1)
             check("stderr 회수와 마지막300자 인증 표식 보존",
                   ssh.call_args.args[2].endswith(" 2>&1") and "AX_CLAUDE_AUTH_FAILED" in out[-300:])
     with patch("master.work.conductor_auth.check_claude_auth", return_value={"ok": True}), \
          patch("master.work.conductor_auth.invalidate_claude_auth") as invalidate, \
-         patch.object(R.bundle, "_ssh", return_value=(0, "authenticate 기능 구현\nRESULT: DONE")):
+         patch.object(R, "_ssh_stoppable", return_value=(0, "authenticate 기능 구현\nRESULT: DONE")):
         rc, out = R.run_worker(_facts(), "t1")
         check("일반 인증 코드 설명은 오탐 없음", rc == 0 and not invalidate.called)
     with patch("master.work.conductor_auth.check_claude_auth") as check_auth:
@@ -1537,7 +1656,7 @@ def test_linux_commands_pinned() -> None:
          patch.object(R, "self_repo_mounted", lambda active=None: False), \
          patch.object(R, "run_worker_session1", side_effect=AssertionError("세션 1")) as s1, \
          patch("master.work.conductor_auth.check_claude_auth", return_value={"ok": True}), \
-         patch.object(R.bundle, "_ssh", return_value=(0, "RESULT: DONE")) as ssh:
+         patch.object(R, "_ssh_stoppable", return_value=(0, "RESULT: DONE")) as ssh:
         for mode in ("claude", "codex"):
             ssh.reset_mock()
             rc, out = R.run_worker(lf, "t1", files=files, mode=mode)
@@ -1546,6 +1665,8 @@ def test_linux_commands_pinned() -> None:
             check(f"🔴 리눅스 run_worker {mode} — SSH 로 같은 명령", rc == 0 and sent == want, sent[-60:])
             check(f"  리눅스 {mode} 는 세션 1 을 부르지 않는다", not s1.called)
             check(f"  리눅스 {mode} SSH 대상 그대로", ssh.call_args.args[:2] == ("192.168.0.43", "sim"))
+            check(f"  리눅스 {mode} 는 끊을 수 있는 실행에 태스크를 싣는다 (#344)",
+                  ssh.call_args.kwargs.get("task_id") == "t1", str(ssh.call_args.kwargs))
 
 
 def _win_facts():
@@ -1819,7 +1940,12 @@ def test_master_windows_direct_refused() -> None:
                             runner=lambda f, c, t: (0, "INJECTED"))
         check("주입 러너는 SSH 가 아니라 가드 대상 밖", seam == (0, "INJECTED"), str(seam))
         lin = _facts()
-        rc3, out3 = R.run_worker(lin, "t832", files=["a.py"], mode="codex", timeout=5)
+        keep_stoppable = R._ssh_stoppable
+        R._ssh_stoppable = lambda host, user, cmd, **kw: (calls.append((host, cmd)) or (0, "RAN"))
+        try:
+            rc3, out3 = R.run_worker(lin, "t832", files=["a.py"], mode="codex", timeout=5)
+        finally:
+            R._ssh_stoppable = keep_stoppable
         check("리눅스는 종전대로 SSH", (rc3, out3) == (0, "RAN") and len(calls) == 1, str(calls))
         check("  보낸 명령은 리눅스 worker_command 그대로",
               calls and calls[0][1] == R.worker_command(lin, "t832", ["a.py"], mode="codex"))
@@ -1845,6 +1971,7 @@ def main() -> int:
                test_session1_attempt_isolation,
                test_session1_cancellation,
                test_directives_followed,
+               test_linux_ssh_is_stoppable,
                test_worker_does_not_build, test_claude_auth_runtime,
                test_delegation_calls, test_instruction_asks_delegation,
                test_delegation_failure_blocks,

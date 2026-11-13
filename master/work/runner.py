@@ -47,6 +47,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import threading
 import urllib.error
 import urllib.request
@@ -772,8 +773,9 @@ def run_worker(facts, task_id: str, *, files=(), runner=None, mode: str = "claud
         if s1:
             rc, out = run_worker_session1(facts, task_id, files=files, timeout=timeout, mode=mode)
         else:
-            # bundle._ssh 회수 대상은 stdout뿐이다. Claude의 인증 stderr도 회수한다.
-            rc, out = bundle._ssh(facts.host, facts.user, cmd + " 2>&1", timeout=timeout)
+            # 회수 대상은 stdout뿐이다. Claude의 인증 stderr도 회수한다.
+            rc, out = _ssh_stoppable(facts.host, facts.user, cmd + " 2>&1", timeout=timeout,
+                                     task_id=task_id)
         json_failed = False
         try:
             payload = json.loads(out)
@@ -789,10 +791,124 @@ def run_worker(facts, task_id: str, *, files=(), runner=None, mode: str = "claud
             # wcommit은 rc 실패의 마지막 300자를 보관하므로 원문 길이와 무관하게 남긴다.
             return rc or 1, f"AX_CLAUDE_AUTH_FAILED: {detail}\nRESULT: BLOCKED"
         return rc, out
-    return bundle._ssh(facts.host, facts.user, cmd, timeout=timeout)
+    return _ssh_stoppable(facts.host, facts.user, cmd, timeout=timeout, task_id=task_id)
 
 
 SESSION1_POLL_SEC = 10
+
+
+# ── 리눅스 직접 SSH — 실행 중에 끊을 수 있어야 한다 (`#344`) ─────────────────────
+#
+# 🔴 종전에는 `bundle._ssh`(= `subprocess.run`) 한 번이 지휘자가 끝날 때까지 막고 있었다. 그동안
+#    큐 취소도 워커 지시(abort)도 **읽을 자리가 없어서** `.43` 의 조각은 끝까지 돌았다 — 세션 1
+#    경로만 `#796` 으로 끊을 수 있었다. 여기서 같은 주기(`SSH_STOP_POLL_SEC`)로 `stop_requested`
+#    를 묻고, 멈춰야 하면 **원격 세션의 프로세스를 죽인 뒤 확인까지** 한다.
+#
+# [중요] 로컬 ssh 를 죽이는 것만으로는 원격이 안 죽는다 — tty 가 없어 SIGHUP 이 가지 않는다.
+#    sshd 는 tty 없는 exec 의 셸을 **세션 리더**로 띄운다(실측 2026-11-13 `.43`: pid=pgid=sid,
+#    자식도 같은 sid). 그래서 셸이 자기 pid 를 파일에 적게 하고 그 **세션 전체**를 죽인다.
+SSH_STOP_POLL_SEC = 10
+SSH_STOP_CLEANUP_SEC = 20
+_SSH_KILL_GRACE = 5            # TERM 뒤 KILL 까지 기다리는 초
+
+
+# [중요] 검사가 이 자리를 막는다 — 2026-11-13 에 `bundle._ssh` 만 가린 기존 검사가 이 함수로
+#    `.43` 에 **실제** codex·claude 를 띄웠다(변경 0 · 수 초). 프로세스 생성은 이 한 줄로만 한다.
+_POPEN = subprocess.Popen
+
+
+def _ssh_log(msg: str) -> None:
+    """직접 SSH 경로 로그 — 세션 1 과 같은 `[dispatch]` 줄기."""
+    print(f"[dispatch] [ssh] {msg}", flush=True)
+
+
+def _sid_file(run_id: str) -> str:
+    return f"/tmp/ax-run-{run_id}.sid"
+
+
+def stoppable_command(cmd: str, run_id: str) -> str:
+    """원격에서 도는 한 줄. 지휘자 명령(`cmd`)은 **그대로** 두고 앞뒤에 세션 기록·정리만 붙인다."""
+    f = _sid_file(run_id)
+    return f"echo $$ > {f}; {cmd}; ax_rc=$?; rm -f {f}; exit $ax_rc"
+
+
+def stop_command(run_id: str) -> str:
+    """그 실행의 원격 세션을 죽이고 결과를 한 단어로 답하는 한 줄 — `GONE`·`ALIVE`·`NOSID`."""
+    f = _sid_file(run_id)
+    return (f's=$(cat {f} 2>/dev/null); [ -n "$s" ] || {{ echo NOSID; exit 0; }}; '
+            f'pkill -TERM -s "$s"; i=0; '
+            f'while pgrep -s "$s" >/dev/null 2>&1 && [ $i -lt {_SSH_KILL_GRACE} ]; do sleep 1; i=$((i+1)); done; '
+            f'pkill -KILL -s "$s"; sleep 1; rm -f {f}; '
+            f'pgrep -s "$s" >/dev/null 2>&1 && echo ALIVE || echo GONE')
+
+
+def _ssh_stoppable(host: str, user: str, cmd: str, *, timeout: int = DEFAULT_TIMEOUT,
+                   task_id: str = "", stop=None, poll: int = SSH_STOP_POLL_SEC,
+                   popen=None, logf=None, cleanup_timeout: int = SSH_STOP_CLEANUP_SEC) -> tuple:
+    """리눅스 워커에서 지휘자를 SSH 로 돌리되 **실행 중에 끊을 수 있게** 한다. `(rc, stdout)`.
+
+    `bundle._ssh` 와 같은 계약이다 — **예외를 던지지 않고**, 정상 종료면 원격 rc 와 stdout,
+    시간 초과면 `(255, "TimeoutExpired: …")`. 다른 점은 둘이다:
+    ① `poll` 초마다 `stop()`(기본 `stop_requested` — 큐 취소·워커 지시)을 묻고, 참이면 원격 세션을
+      죽이고 `(1, "[ssh] 큐 작업이 취소되었다 — …")` 로 돌아온다(종료 확인/미확인을 구분해 적는다).
+    ② 시간 초과 때도 원격을 죽인다 — 종전에는 로컬 ssh 만 죽어 원격 지휘자가 남았다.
+    """
+    import time as _t
+    import uuid as _uuid
+    log = logf or _ssh_log
+    who = f"{task_id or '?'} @{host}"
+    run_id = _uuid.uuid4().hex
+    ask = stop if stop is not None else (lambda: stop_requested(task_id, host) if task_id else False)
+    argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", *bundle._mux_opts(),
+            f"{user}@{host}", stoppable_command(cmd, run_id)]
+    try:
+        p = (popen or _POPEN)(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        text=True, encoding="utf-8", errors="replace")
+    except (subprocess.SubprocessError, OSError) as e:
+        return 255, f"{type(e).__name__}: {e}"
+
+    def kill_remote(reason: str) -> str:
+        """원격 세션 종료를 시도하고 결과 문구를 돌려준다. 로컬 ssh 도 거둔다."""
+        log(f"{who} 원격 종료 시도 — {reason}")
+        try:
+            rc, got = bundle._ssh(host, user, stop_command(run_id), timeout=cleanup_timeout)
+            word = (got or "").strip().splitlines()[-1].strip() if (got or "").strip() else ""
+        except Exception as e:                               # noqa: BLE001
+            rc, word = 255, f"{type(e).__name__}: {e}"
+        try:
+            p.kill()
+            p.communicate(timeout=5)
+        except Exception:                                    # noqa: BLE001
+            pass
+        if rc == 0 and word == "GONE":
+            log(f"{who} 원격 종료 확인 — 그 실행의 세션에 남은 프로세스 없음")
+            return "원격 종료 확인"
+        if rc == 0 and word == "NOSID":
+            log(f"{who} 원격 실행 흔적 없음 — 이미 끝났거나 시작 전이다")
+            return "원격 실행 흔적 없음(이미 끝났거나 시작 전)"
+        log(f"{who} 🔴 원격 종료 미확인 — rc={rc} · {word[:120] or '응답 없음'}")
+        return "원격 종료 미확인"
+
+    deadline = _t.monotonic() + timeout
+    try:
+        while True:
+            remaining = deadline - _t.monotonic()
+            try:
+                out, _err = p.communicate(timeout=max(0.1, min(poll, remaining)))
+                return p.returncode, (out or "").strip()
+            except subprocess.TimeoutExpired:
+                pass
+            if _t.monotonic() >= deadline:
+                log(f"{who} 🔴 {timeout}초 시간 초과")
+                state = kill_remote("요청자 시간 초과")
+                return 255, f"TimeoutExpired: {timeout}초 안에 끝나지 않았다 — {state}"
+            if ask():
+                state = kill_remote("큐 작업 취소")
+                return 1, f"[ssh] 큐 작업이 취소되었다 — {state}\nRESULT: BLOCKED"
+    except BaseException:
+        kill_remote("요청자 실행 중단")
+        raise
+
 # 🔴 **기다리는 동안에도 찍는다** (실측 2026-09-13). 끝나야 찍히는 로그는 멈춤을 못 보여 준다 —
 #    실증 7분(18:54~19:02) 동안 저널이 비어 있었고, 그사이 워커에서 UnrealBuildTool 이 두 번
 #    죽어 오류 창이 떴다는 것을 사람이 SSH 로 들어가서야 찾았다.
