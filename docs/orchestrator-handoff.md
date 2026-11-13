@@ -1,28 +1,17 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-13 체크포인트 — #919 작업 중 Codex 5h 한도 소진으로 중단(04:17 AM 리셋). 다음 지휘자(Claude)가 `.ax-issues/919` worktree를 이어받아 검증·커밋·마감·배달한다.
-> 운영 저장소(`/home/sim/ax-cluster`) `main` = `bb71407` (#936 MotionForge 폐기·배달 완료).
-> 항목·진행의 정본은 Redmine. 이전 상세는 Git `bb71407`·리포트 170~174·각 일감 노트.
+> 2026-11-13 체크포인트 — #919(웹 작업 리포트 뷰어)를 Claude가 Codex 중단분에서 이어받아 마감했다. 진행 중인 일감·잠금 없음.
+> 운영 저장소(`/home/sim/ax-cluster`) `main` = `98b37b8` + 이 인수인계 커밋. 이 커밋 직후 배달(`issue_wrapup 919` 재실행) 예정 — 배달 결과는 Redmine #919 노트.
+> 항목·진행의 정본은 Redmine. 이전 상세는 Git 이력·리포트 170~175·각 일감 노트.
 
-## 진행 중 일감 — #919 웹UX 작업 리포트(`reports/`) 뷰어 (다음 세션 즉시 인수 대상)
+## 이번에 끝낸 것 — #919 웹 작업 리포트 뷰어
 
-- **상태·잠금**: Redmine #919 `진행`(마일스톤 8 — 개선·확장), `AXCluster/issue_lock.json` 활성(`issue_id=919`, `branch=issue/919`, `start_rev=bb714072b856ba682233a8bb52e04cceb5d0271c`, `authors=["codex"]`). 플랜 `T1 작업중`, `T2 대기`.
-- **승인 범위**: 사용자 「919번 진행하자」 및 「서브 에이전트로 작업 진행해줘」로 플랜 합의 및 커밋·마감·재기동·배달까지 일괄 승인(공용 규칙 §1.9).
-- **작업 위치**: 격리 worktree `/home/sim/ax-cluster/.ax-issues/919` (`issue/919`, 미커밋).
-- **구현 완료 내역** (Codex 로컬 서브에이전트 `/root/report_viewer` 완료 직후 한도 도달):
-  - `master/webui/reports_page.py` (신규): `reports/*.md` 및 `reports/research/*.md` 최신 커밋순 목록(미추적은 파일명순 뒤), 검색(`q`)·분류(`kind=work|research`), 안전한 마크다운 상세 렌더링(코드 펜스·표·목록·인용·HTML escape), 본문 작성 표기와 Git 커밋 작성자 분리 표기, Redmine `#N` 및 Gitea(`http://192.168.0.57:3000`) 실재 커밋 해시 링크, 경로 탈출/이중 인코딩/심볼릭 링크 차단(400).
-  - `master/webui/nav.py` · `master/webui/app.py`: 공용 사이드바 메뉴(`ITEMS`) 및 상위 라우팅(`PREFIXES`, GET 전용 `/reports`) 연결.
-  - `master/test_reports_page.py` (신규, 15건) · `master/test_usage_nav.py` (메뉴 9개 반영) · `tests/integration/checks.json` (`master/test_reports_page.py` 등록).
-  - `reports/175-919-report-viewer.md` (초안 38줄 작성됨 — 검증·마감 결과 채우기 남음).
-- **확인된 검사**:
-  - worktree에서 `unittest` 실행: `test_reports_page.py`(15), `test_usage_nav.py`(2), `test_webui_side_nav.py`(8), `test_integration_coverage.py`(2), `test_rag_routes.py`(5) 총 32건 OK, `git diff --check` rc0, ASGI 직접 호출(`list_status=200`, `work_status=200`, `research_status=200`) 확인.
-- **다음 지휘자(Claude)가 이어서 할 순서**:
-  1. 운영 `main`에 커밋된 이 `docs/orchestrator-handoff.md` 및 `reports/research/2026-11-13-*.md` 4건(사용자 승인 로컬 커밋 1건, 미푸시)을 확인한다. `issue_finish`는 `local_main == origin/main` 및 `origin/main`이 `issue/919`의 조상일 것을 요구하므로, 사용자 승인 하에 먼저 `git push origin main` 후 `git -C .ax-issues/919 rebase main`을 수행하거나, 마감 뒤 인수인계 커밋으로 합친다.
-  2. `ax-projects:issue_start_tool(919)` 호출로 교대 작성 계열(`claude`)을 잠금에 추가(`already=True` 확인).
-  3. `.ax-issues/919`에서 정적 검사(`pystatic`) 및 공식 통합 검사(`.venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v`) 실행.
-  4. `reports/175-919-report-viewer.md`에 검증 결과를 채우고 `issue/919`에 커밋.
-  5. `plan_transition_tool`로 T1 완료 → T2 작업중 → `issue_finish_tool(919, confirm=True)`.
-  6. `.venv/bin/python -m master.issue_wrapup 919` 실행(`ax-projects` 재기동 및 실제 HTTP `/reports` 확인) → 인수인계서 및 `reports/research/2026-11-13-*.md` 4건 커밋·push → `issue_wrapup 919` 재실행으로 워커 배달(`check` rc0) 및 T2 완료·Redmine 마감 노트 확인.
+- 경과: Codex가 로컬 서브에이전트 구현을 회수한 직후 5h 한도로 중단(미커밋). 사용자 「919 이어서 진행해, rebase도 승인」으로 Claude 인수. 작성 계열 `["codex","claude"]`.
+- 인수 때 기록과 달랐던 점: 인수인계 커밋 `318519d`가 이미 push돼 있어 `issue/919`를 `main` 위로 rebase했다(커밋 없는 브랜치, 미커밋 변경 그대로).
+- 커밋 `98b37b8` · 리포트 175. `http://192.168.0.57:8103/reports` — `reports/*.md`·`reports/research/*.md` 목록·검색·분류·상세, `#N` Redmine 링크, 실재 해시의 Gitea 커밋 링크.
+- 검사: 관련 32건 OK · 정적 차단0 · 공식 통합 195건 202.579초 OK. finish `done=[push,ff,worktree_remove,delete_branch,register,link,release,close,redmine]`, `why=""`, closed=true.
+- wrapup 1차: `ax-projects`만 옛 코드 판정 → 22:37:10 재기동·active·재판정 깨끗. 실제 HTTP: 목록 200(193개)·연구 24개·상세 200·경로 탈출 400·없는 파일 404·POST 405·다른 화면 메뉴에 링크 있음.
+- 한계: 8103은 로그인이 없어 리포트 본문(사용자 발화 인용·절대 경로)이 LAN 안에서 읽힌다 — `api_history`와 다른 선택, 사용자 판단 대기. 목록은 캐시 없이 매번 전체를 읽는다(실측 약 0.5초). 해시별·종합 자동 리뷰는 미확인.
 
 ## 신규 등록 아이디어 및 선행 분석 기록 (착수 아님)
 
@@ -52,8 +41,8 @@
 
 ## 지휘 상태
 
-- 마스터 담당 `claude`(2026-11-12 21:40:27 기록). 워커 전역 `codex`(state, 2026-10-18) 변경 없음.
-- 마스터 11-12 21:33:14 부팅. `ax-projects` 22:59:04 · `ax-task-queue` 23:52:39 재기동(판정 깨끗).
+- 마스터 담당 `claude`(2026-11-12 21:40:27 기록 — 11-13 재조회 동일). 워커 전역 `codex`(state, 2026-10-18) 변경 없음.
+- `ax-projects` 11-13 22:37:10 재기동(#919, 판정 깨끗). `ax-task-queue`·`ax-broker` 는 최신 판정으로 재기동 없음.
 
 ## 이전 세션에서 끝낸 것 (전부 마감·배달 rc0)
 
