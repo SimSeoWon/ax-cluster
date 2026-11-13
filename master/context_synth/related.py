@@ -41,7 +41,38 @@ import re
 
 _FM = re.compile(r"^(---\s*\n)(.*?)(\n---\s*\n)", re.DOTALL)
 _BLOCK = re.compile(r"(^related_classes:[ \t]*\n)((?:[ \t]+-[ \t]+.+\n?)*)", re.MULTILINE)
-_MAPPED = re.compile(r"^[ \t]*-[ \t]+([A-Za-z_]\w*):[ \t]+\S")
+_MAPPED = re.compile(r"^[ \t]*-[ \t]+([A-Za-z_][\w.]*):[ \t]+\S")
+
+
+def quote_unknown(text: str) -> tuple[str, int]:
+    """related_classes 매핑의 bare `?` 만 YAML 문자열로 바꾼다 (#750).
+
+    그래프 조회·YAML 재직렬화를 하지 않는다. 주석·줄바꿈·필드 순서·본문을 보존한다.
+    """
+    fm = _FM.match(text or "")
+    if not fm:
+        return text, 0
+    in_related = False
+    fixed = 0
+    lines = []
+    for line in fm.group(2).splitlines(keepends=True):
+        if re.match(r"^related_classes:[ \t]*\r?(?:\n|$)", line):
+            in_related = True
+        elif line.strip() and not line[0].isspace():
+            in_related = False
+        if in_related:
+            original = line
+            # 기존 데이터의 path-key·이름 미상 key·standalone 항목도 의미를 바꾸지 않고 인용한다.
+            line = re.sub(r"^([ \t]+-[ \t]+)\?([ \t]*:)", r'\1"?"\2', line)
+            line = re.sub(
+                r"^([ \t]+-[ \t]+.+:[ \t]+)\?([ \t]*(?:#.*)?\r?(?:\n|$))$",
+                r'\1"?"\2', line)
+            line = re.sub(r"^([ \t]+-[ \t]+)\?([ \t]*(?:#.*)?\r?(?:\n|$))$", r'\1"?"\2', line)
+            fixed += line != original
+        lines.append(line)
+    if not fixed:
+        return text, 0
+    return fm.group(1) + "".join(lines) + fm.group(3) + text[fm.end():], fixed
 
 
 def file_to_class(paths) -> dict:
@@ -75,7 +106,7 @@ def class_to_file(paths) -> dict:
         conn.close()
 
 
-_UNKNOWN = re.compile(r"^([ \t]*-[ \t]+)<?([A-Za-z_][\w.]*)>?:[ \t]+\?[ \t]*$")
+_UNKNOWN = re.compile(r'''^([ \t]*-[ \t]+)<?([A-Za-z_][\w.]*)>?:[ \t]+(?:\?|"\?"|'\?')[ \t]*$''')
 
 
 def normalize(text: str, mapping: dict, names: dict | None = None) -> tuple:
@@ -107,7 +138,7 @@ def normalize(text: str, mapping: dict, names: dict | None = None) -> tuple:
             #    형식만 고치는 것이라 지어내는 것이 아니다 (실측: 모델이 이 변형을 낸다).
             am = re.match(r"^([ \t]*-[ \t]+)<([A-Za-z_]\w*)>:[ \t]+(\S+)[ \t]*$", ln)
             if am:
-                if am.group(3) in ("?", "-"):        # 경로가 없다 — 내용 문제다
+                if am.group(3) in ("?", '"?"', "'?'", "-"):  # 경로가 없다 — 내용 문제다
                     unresolved.append(f"<{am.group(2)}>: {am.group(3)}")
                     lines_out.append(ln)
                     continue
@@ -130,9 +161,9 @@ def normalize(text: str, mapping: dict, names: dict | None = None) -> tuple:
         return m.group(1) + "\n".join(lines_out) + ("\n" if m.group(2).endswith("\n") else "")
 
     new_body = _BLOCK.sub(one_block, body)
-    if not fixed:
-        return text, 0, unresolved
-    return head + new_body + tail + text[fm.end():], fixed, unresolved
+    out = head + new_body + tail + text[fm.end():] if fixed else text
+    out, quoted = quote_unknown(out)
+    return out, fixed + quoted, unresolved
 
 
 def normalize_doc(text: str, paths) -> tuple:
@@ -141,7 +172,7 @@ def normalize_doc(text: str, paths) -> tuple:
 
 
 # ── 기존 문서 보수 (`#382` 완료 조건 3) ─────────────────────────────────
-def repair(paths, *, confirm: bool = False) -> dict:
+def repair(paths, *, confirm: bool = False, quote_unknown_only: bool = False) -> dict:
     """이미 쓰인 문서들을 훑어 경로형을 매핑형으로 고친다.
 
     [중요] **기본은 계획이다** — 이 저장소 관례대로 `--confirm` 이 트리거다.
@@ -149,25 +180,38 @@ def repair(paths, *, confirm: bool = False) -> dict:
     다시 만들 계기가 없다. 그래서 보수 경로가 따로 필요하다.
     """
     from ..context_search import documents
-    mapping, names = file_to_class(paths), class_to_file(paths)       # `#712` — `이름: ?` 도 채운다
+    mapping, names = ({}, {}) if quote_unknown_only else (file_to_class(paths), class_to_file(paths))
     plan, unresolved_all = [], []
+    scanned = 0
     for md in sorted(paths.context.rglob("*.md")):
         rel = md.relative_to(paths.context).as_posix()
-        if documents.is_excluded(rel):
+        if not quote_unknown_only and documents.is_excluded(rel):
             continue
         try:
-            text = md.read_text(encoding="utf-8", errors="replace")
+            with md.open(encoding="utf-8", errors="strict" if quote_unknown_only else "replace", newline="") as stream:
+                text = stream.read()
         except OSError:
+            if quote_unknown_only:
+                raise                     # 전수 인용 교정에서 읽지 못한 파일을 숨기지 않는다.
             continue
-        new, fixed, unresolved = normalize(text, mapping, names)
+        scanned += 1
+        if quote_unknown_only:
+            new, fixed = quote_unknown(text)
+            unresolved = []
+        else:
+            new, fixed, unresolved = normalize(text, mapping, names)
         unresolved_all += [f"{rel}: {u}" for u in unresolved]
         if fixed:
             plan.append((rel, fixed))
             if confirm:
-                md.write_text(new, encoding="utf-8")
+                with md.open("w", encoding="utf-8", newline="") as stream:
+                    stream.write(new)
     return {"files": len(plan), "fixed": sum(n for _r, n in plan),
             "unresolved": unresolved_all, "detail": plan[:20],
             "applied": bool(confirm),
+            "quote_unknown_only": bool(quote_unknown_only),
+            "scanned": scanned,
+            "bare_remaining": (0 if confirm else sum(n for _r, n in plan)) if quote_unknown_only else None,
             "note": "" if confirm else "계획만 — `--confirm` 이 쓴다"}
 
 
@@ -176,13 +220,16 @@ def main(argv=None) -> int:
     from ..context_search.paths import resolve
     args = list(argv if argv is not None else sys.argv[1:])
     confirm = "--confirm" in args
+    quote_only = "--quote-unknown-only" in args
     names = [a for a in args if not a.startswith("-")]
     if not names:
-        print("사용: python -m master.context_synth.related <프로젝트> [--confirm]")
+        print("사용: python -m master.context_synth.related <프로젝트> [--quote-unknown-only] [--confirm]")
         return 2
-    got = repair(resolve(names[0]), confirm=confirm)
+    got = repair(resolve(names[0]), confirm=confirm, quote_unknown_only=quote_only)
     print(f"{names[0]}: 파일 {got['files']}개 · 줄 {got['fixed']}개 "
           f"{'수정함' if got['applied'] else '(계획만 — --confirm 이 쓴다)'}")
+    if quote_only:
+        print(f"  전수 조회 {got['scanned']}파일 · bare ? 잔여 {got['bare_remaining']}줄")
     for rel, n in got["detail"]:
         print(f"   {rel} — {n}줄")
     if got["unresolved"]:

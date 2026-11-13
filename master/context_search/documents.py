@@ -38,9 +38,12 @@ def parse_frontmatter(content: str) -> dict:
     m = re.search(r"category:\s*(.+)", fm)
     if m:
         result["category"] = m.group(1).strip()
-    classes = re.findall(r"-\s+(\w+):\s+(.+)", fm)
+    classes = re.findall(r"^[ \t]*-[ \t]+([A-Za-z_][\w.]*):[ \t]+(.+)", fm, re.MULTILINE)
     if classes:
-        result["related_classes"] = {c: p.strip() for c, p in classes}
+        # `#750` — 미상 경로의 정본 출력은 YAML 문자열 `"?"` 이다.
+        # 소비자에게는 종전과 같은 `?` 를 전달한다. 다른 경로 값은 그대로 둔다.
+        result["related_classes"] = {c: "?" if p.strip() in ('"?"', "'?'") else p.strip()
+                                     for c, p in classes}
     for key in ("status", "type"):
         m = re.search(rf"{key}:\s*(\w+)", fm)
         if m:

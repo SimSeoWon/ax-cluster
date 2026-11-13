@@ -174,6 +174,23 @@ def check(md: str) -> Check:
                      s[:80].replace("\n", " "))
     if not _FRONTMATTER_RE.match(s):
         return Check(False, "frontmatter 가 닫히지 않았다", s[:80].replace("\n", " "))
+    import yaml
+    try:
+        fields = yaml.safe_load(_FRONTMATTER_RE.match(s).group(2))
+    except yaml.YAMLError as error:
+        return Check(False, f"frontmatter YAML 파싱 실패: {error.problem}", s[:80])
+    tags = fields.get("tags", []) if isinstance(fields, dict) else []
+    if isinstance(tags, str):
+        tags = [tags]
+    if isinstance(tags, list):
+        for tag in tags:
+            token = str(tag).strip()
+            if isinstance(tag, dict):
+                token = str(next(iter(tag), ""))
+            if (re.fullmatch(r"(?:영문태그|한글개념태그|한글태그)\d*:?", token)
+                    or token in {"...", "…"}
+                    or re.match(r"^(?:영문태그|한글개념태그|한글태그):", token)):
+                return Check(False, f"tags 에 형식 예시·지시문 잔재가 있다: {token}", str(tags))
     return Check(True)
 
 
@@ -246,12 +263,14 @@ def merge_comments(new_md: str, existing_md: str) -> str:
 def finalize(raw: str, *, existing: str = "", commit: str = "") -> tuple[str, Check]:
     """LLM 원문 → 저장할 문서. **한 곳에서 순서를 고정한다.**
 
-        벗기기(σ.7) → 게이트(σ.7-B) → 코멘트 이월 → 스탬프
+        벗기기(σ.7) → 미상 경로 YAML 인용(#750) → 게이트(σ.7-B) → 코멘트 이월 → 스탬프
 
     게이트가 스탬프보다 **앞**인 것이 요점이다. 원본의 사고가 정확히 "스탬프 함수가
     frontmatter 매치에 실패하고도 그대로 통과시킨" 것이었다.
     """
     stripped = strip_wrapper(raw)
+    from .related import quote_unknown
+    stripped, _quoted = quote_unknown(stripped)
     verdict = check(stripped)
     if not verdict.ok:
         return "", verdict

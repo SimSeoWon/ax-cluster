@@ -72,7 +72,8 @@ def test_angle_brackets_are_a_format_problem() -> None:
 
     t2 = doc("  - <AAIController>: ?\n")
     new2, fixed2, unres2 = RL.normalize(t2, MAP)
-    check("[주의] 경로가 `?` 면 고치지 않는다 — 내용 문제다", fixed2 == 0 and new2 == t2)
+    check("[주의] 경로 미상은 따옴표만 보완하고 이름은 고치지 않는다",
+          fixed2 == 1 and new2 == t2.replace(": ?", ': "?"'))
     check("  사유에 실린다", unres2 and "?" in unres2[0], str(unres2))
 
 
@@ -97,7 +98,7 @@ def test_junk_is_reported_not_invented() -> None:
     print("⑤ 못 푸는 부류를 사유로 낸다")
     t = doc("  - ?\n  - Source/NS/NS.h: NS (이 파일 자체가 정의하는 것)\n")
     _new, fixed, unres = RL.normalize(t, MAP)
-    check("`?` 도 `경로: 설명문` 도 안 고친다", fixed == 0, str(fixed))
+    check("`?` 는 인용만 하고 `경로: 설명문` 은 안 고친다", fixed == 1, str(fixed))
     check("  둘 다 사유에 실린다", len(unres) == 2, str(unres))
 
 
@@ -136,17 +137,76 @@ def test_unknown_filled_only_by_exact_name() -> None:
     out, fixed, unres = RL.normalize(src, {}, names)
     check("정확히 있는 이름은 경로로", "- TaskIndex: master/task_queue/logic.py" in out, out)
     check("꺾쇠 변형도 같은 규칙", out.count("TaskIndex: master/task_queue/logic.py") == 2, out)
-    check("[중요] 겹쳐서 모듈명이 붙은 짧은 이름은 **고르지 않는다**", "- Verdict: ?" in out, out)
-    check("그래프에 없는 이름(함수)은 그대로", "- _tq_log: ?" in out, out)
-    check("고친 줄 수", fixed == 2, str(fixed))
+    check("[중요] 겹쳐서 모듈명이 붙은 짧은 이름은 **고르지 않는다**", '- Verdict: "?"' in out, out)
+    check("그래프에 없는 이름(함수)은 인용만", '- _tq_log: "?"' in out, out)
+    check("고친 줄 수(경로 2·인용 2)", fixed == 4, str(fixed))
     out2, fixed2, _ = RL.normalize(src, {})
-    check("names 를 안 주면 종전 그대로 (호환)", fixed2 == 0 and "- TaskIndex: ?" in out2, str(fixed2))
+    check("names 를 안 주면 경로를 지어내지 않고 인용만", fixed2 == 4 and '- TaskIndex: "?"' in out2, str(fixed2))
+    quoted = doc('  - TaskIndex: "?"\n  - master.verdict.Verdict: \'?\'\n')
+    filled, nfilled, _ = RL.normalize(quoted, {}, names)
+    check("양쪽 따옴표와 qualified 이름도 정확한 graph 경로로 채운다",
+          nfilled == 2 and "TaskIndex: master/task_queue/logic.py" in filled
+          and "master.verdict.Verdict: master/verdict.py" in filled)
+
+
+def test_quote_unknown_only() -> None:
+    print("⑧ #750 YAML 미상 문자열 인용은 의미·레이아웃을 보존한다")
+    raw = doc("  # 관계 주석\n  - UExternal: ? # 출처 미상\n  - master/work/foo.py: ?\n"
+              "  - <AActor>: ?\n  - ?\n  - ? : ?\n  - Already: \"?\"\n",
+              body="본문 - AActor: ?\n")
+    expected = raw.replace("UExternal: ? #", 'UExternal: "?" #').replace(
+        "master/work/foo.py: ?", 'master/work/foo.py: "?"').replace(
+        "<AActor>: ?", '<AActor>: "?"').replace("  - ?\n", '  - "?"\n').replace(
+        "  - ? : ?", '  - "?" : "?"')
+    quoted, count = RL.quote_unknown(raw)
+    check("이름·경로형 key·꺾쇠·단독·미상 key의 물음표를 인용", quoted == expected and count == 5, quoted)
+    check("정본 인용은 멱등", RL.quote_unknown(quoted) == (quoted, 0))
+    check("CRLF도 그대로 보존", RL.quote_unknown(raw.replace("\n", "\r\n"))[0]
+          == expected.replace("\n", "\r\n"))
+    tmp = Path(tempfile.mkdtemp(prefix="ax-related-quotes-"))
+    try:
+        class P:
+            name = "T"
+            context = tmp
+        nested = tmp / "_domains"
+        nested.mkdir()
+        file = nested / "protected.md"
+        file.write_bytes(raw.replace("\n", "\r\n").encode())
+        old_file_to_class, old_class_to_file = RL.file_to_class, RL.class_to_file
+        def no_graph(_paths):
+            raise AssertionError("quote-only 는 graph 를 조회하면 안 된다")
+        RL.file_to_class = RL.class_to_file = no_graph
+        try:
+            plan = RL.repair(P(), quote_unknown_only=True)
+            check("quote-only 계획은 graph·파일 쓰기 없이 제외 문서까지 포함",
+                  plan["files"] == 1 and plan["fixed"] == 5 and not plan["applied"]
+                  and file.read_bytes() == raw.replace("\n", "\r\n").encode(), str(plan))
+            done = RL.repair(P(), quote_unknown_only=True, confirm=True)
+            check("quote-only 확인 실행은 인용만 바꾸고 CRLF 보존",
+                  done["fixed"] == 5 and file.read_bytes() == expected.replace("\n", "\r\n").encode(), str(done))
+            check("quote-only 두 번째 적용은 변경0",
+                  RL.repair(P(), quote_unknown_only=True, confirm=True)["fixed"] == 0)
+            check("quote-only 전수 조회·잔여 수치를 보고",
+                  done["scanned"] == 1 and done["bare_remaining"] == 0
+                  and plan["bare_remaining"] == 5)
+            file.write_bytes(b'---\nrelated_classes:\n  - A: ?\n---\n\xff')
+            try:
+                RL.repair(P(), quote_unknown_only=True, confirm=True)
+            except UnicodeDecodeError:
+                check("quote-only 잘못된 UTF8은 손상 대체·무시 없이 중단", file.read_bytes().endswith(b'\xff'))
+            else:
+                check("quote-only 잘못된 UTF8은 손상 대체·무시 없이 중단", False)
+        finally:
+            RL.file_to_class, RL.class_to_file = old_file_to_class, old_class_to_file
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def main() -> int:
     for fn in (test_names_come_from_the_graph_only, test_angle_brackets_are_a_format_problem,
                test_untouched_surfaces, test_junk_is_reported_not_invented,
-               test_repair_plans_before_writing, test_unknown_filled_only_by_exact_name):
+               test_repair_plans_before_writing, test_unknown_filled_only_by_exact_name,
+               test_quote_unknown_only):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_related: {PASS}/{total} 통과")

@@ -466,7 +466,9 @@ def main() -> int:
     check("역방향 근사 경고를 붙인다", "근사" in r)
     check("[중요] 도메인 규범이 없다고 명시한다", "_없음 — 마일스톤 2 의 중 1.3" in r)
     p_txt = prompt.build(files=FILES, bodies={f: "code" for f in FILES}, grounding=gr)
-    check("프롬프트에 형식 지시가 있다", "tags: [영문태그1" in p_txt)
+    check("프롬프트가 복사할 가짜 이름·태그 없이 빈 형식을 준다",
+          "tags: []" in p_txt and "related_classes: []" in p_txt
+          and "UExampleComponent" not in p_txt and "예: 미션, 스폰" not in p_txt)
     check("[중요] 한글 태그 병기를 지시한다 (사용자 지시 2026-08-17)",
           "한글 개념 태그 2~4개를 병기" in p_txt)
     check("범용어 태그 금지를 지시한다", "범용어는 태그가 아니다" in p_txt)
@@ -911,6 +913,8 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
 
     print("\n[원문기록] 실제 프롬프트·모델 응답·게이트 결과")
     test_attempt_records(tmp)
+    print("\n[#750] related 근거 검증과 예시 잔재 거부")
+    test_related_grounding(tmp)
     print("\n[#840] cloud 순서·quota 전용 로컬 대체·재검증 경계")
     test_gemini_primary(tmp)
     print("\n[#782] 레인별 프롬프트 — 상용 무제한 · 로컬 종전 상한")
@@ -922,6 +926,87 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
 
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
+
+
+def test_related_grounding(tmp):
+    import json
+
+    source = {"X.h": "// UCommentOnly 는 사용하지 않는다\nclass UActual : public UExternal {};"}
+    base = "---\ntags: [runtime, 실제개념]\ncategory: A/B\nrelated_classes: []\n---\n\n## 요약\nUActual 은 런타임 작업을 담당한다.\n"
+    def document(entries):
+        entries = entries.replace(": ?", ': "?"')
+        return base.replace("related_classes: []", "related_classes: " + entries)
+
+    for label, entries in (
+            ("매핑", "\n  - UReviewGen: X.h\n  - AReviewIssue: ?"),
+            ("인라인 목록", "[UReviewGen, AReviewIssue]"),
+            ("블록 목록", "\n  - UReviewGen\n  - AReviewIssue"),
+            ("인라인 매핑", "[{UReviewGen: X.h}, {AReviewIssue: '?'}]")):
+        report = verify.verify(document(entries), sources=source, declared=["UActual"], known={"UActual"})
+        check(f"#750 {label}: 코드에도 없는 related 이름을 거부",
+              not report.ok and report.unknown_related == ["AReviewIssue", "UReviewGen"], report.reason)
+    for label, name, extra, known in (
+            ("실제 엔진 참조", "UExternal", "", set()),
+            ("프로젝트 다른 파일 심볼", "UOther", "", {"UOther"}),
+            ("소문자 선언", "mat", "\nstruct mat {};", set()),
+            ("Python qualified 참조", "pkg.module.Type", "\nusing_type = pkg.module.Type", set()),
+            ("Python graph qualified 이름", "pkg.graph.Type", "", {"pkg.graph.Type"})):
+        report = verify.verify(document(f"\n  - {name}: ?"),
+                               sources={"X.h": source["X.h"] + extra}, declared=["UActual"], known=known)
+        check(f"#750 {label}: 그래프 부재만으로 거부하지 않는다", report.ok, report.reason)
+    for name in ("UCommentOnly", "Actual", "UExterna", "pkg.other.Type"):
+        report = verify.verify(document(f"\n  - {name}: ?"), sources=source, declared=["UActual"])
+        check(f"#750 주석·부분 이름·다른 qualified 이름은 근거가 아니다: {name}",
+              not report.ok and name in report.unknown_related, report.reason)
+    check("#750 본문 엔진 서술의 기존 계약 유지",
+          verify.verify(base.replace("런타임", "AActor 와 런타임"), sources=source, declared=["UActual"]).ok)
+    check("#750 깨진 YAML 관계 목록은 형식 거부",
+          not md.finalize(document("[UReviewGen"))[1].ok)
+    bare = base.replace("related_classes: []", "related_classes:\n  - UExternal: ?")
+    quoted_doc, quoted_verdict = md.finalize(bare)
+    check("#750 legacy bare 미상 경로는 YAML 검사 전에 정본 문자열로 인용",
+          quoted_verdict.ok and '- UExternal: "?"' in quoted_doc)
+    for tag in ("영문태그1", "한글개념태그2", "한글태그", "...", "영문태그: runtime"):
+        raw = base.replace("[runtime, 실제개념]", f"['{tag}']")
+        check(f"#750 명백한 태그 지시문 잔재 거부: {tag}", not md.finalize(raw)[1].ok)
+    raw = base.replace("[runtime, 실제개념]", "\n  - 영문태그1\n  - 실제개념")
+    check("#750 블록 태그도 예시 검사를 통과할 수 없다", not md.finalize(raw)[1].ok)
+    check("#750 정당할 수 있는 한글 태그는 금지하지 않는다",
+          md.finalize(base.replace("[runtime, 실제개념]", "[미션, 스폰, 대화창, 상태동기화]"))[1].ok)
+
+    paths = make_project(tmp / "related-grounding")
+    key = "Source/Game/Monster"
+    files = ["Source/Game/Monster.h", "Source/Game/Monster.cpp"]
+    old_file = paths.context / "Source/Game/Monster.md"
+    old_file.parent.mkdir(parents=True, exist_ok=True)
+    old_file.write_text(GOOD, encoding="utf-8")
+    fake = GOOD.replace("AMonster: Source/Game/Monster.h", "UReviewGen: ?")
+    result = injected_group(paths, key, files, caller=llm(fake))
+    check("#750 실제 합성 진입점이 가짜 related 저장을 막는다",
+          not result.written and result.verify.unknown_related == ["UReviewGen"], result.reason)
+    check("#750 거부하면 기존 문서를 그대로 보존한다", old_file.read_text(encoding="utf-8") == GOOD)
+    cg.build_full(paths, git=lambda repo, *args: (0, "\n".join(files)))
+    raw_path = GOOD.replace("AMonster: Source/Game/Monster.h", "Source/Game/Monster.h")
+    result = injected_group(paths, key, files, caller=llm(raw_path))
+    saved = old_file.read_text(encoding="utf-8")
+    rows = [json.loads(f.read_text(encoding="utf-8")) for f in (paths.root / "synth_attempts").glob("*.json")]
+    passed = [row for row in rows if row.get("facts", {}).get("ok")]
+    check("#750 graph 경로 정규화 후 실측 이름을 검사·저장한다",
+          result.written and result.related_fixed == 1 and "AMonster: Source/Game/Monster.h" in saved, result.reason)
+    check("#750 사실 검사가 본 문서를 원문 기록에도 남긴다",
+          len(passed) == 1 and "AMonster: Source/Game/Monster.h" in passed[0]["normalized_doc"])
+
+    answers = {"agy": fake, "codex": GOOD}
+    calls = []
+    def cli(lane, text, timeout):
+        calls.append(lane)
+        return answers[lane]
+    result = synth.synthesize_group(paths, key, files, caller=llm(fake),
+                                    chain=["agy", "codex"], cli=cli)
+    check("#750 사실 거부 뒤 다음 모델의 정상 related 문서를 쓴다",
+          result.written and result.model == "codex" and calls == ["agy", "codex"], result.reason)
+    check("#750 결과 정규화 수치는 마지막 통과 후보에 대응한다",
+          result.related_fixed == 0 and result.related_unresolved == [])
 
 
 def test_cloud_lanes_run_in_pinned_tree():

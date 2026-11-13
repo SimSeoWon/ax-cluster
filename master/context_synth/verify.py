@@ -18,7 +18,8 @@
 
 엔진 클래스(`AActor`·`UAnimMontage`)에 오탐이 나지 않는 이유: 그것들은 **소스 본문에
 아예 없거나 살아 있는 코드에 있다.** "주석에만 있는 것" 이라는 조건이 그 둘을 자동으로
-가른다 — 클래스 그래프에 없다는 이유로 거부하면 엔진 클래스가 전부 걸린다.
+가른다. `related_classes` 는 별도로 프로젝트 심볼·실제 소스 참조와 정확 일치 대조한다
+(`#750`). 그래프에 없는 엔진 클래스도 소스에서 실제로 참조하면 관계 근거가 된다.
 
 [중요] **중 1.3 에서 재사용한다.** 인수인계 문서가 `methods` 테이블의 존재 이유를 *"온톨로지
 추출의 오탐 교차검증"* 이라고 적어 뒀다 — 온톨로지 합성도 같은 환각 위험을 갖는다.
@@ -412,6 +413,40 @@ _SUMMARY_RE = re.compile(r"^##\s*요약\s*$(.*?)(?=^##\s|\Z)", re.MULTILINE | re
 _RELATED_RE = re.compile(r"^related_classes:\s*$(.*?)(?=^\w|\n---)", re.MULTILINE | re.DOTALL)
 
 
+def related_names(doc: str) -> set[str]:
+    """frontmatter 에서 주장하는 이름. 경로만 있는 항목은 정규화가 먼저 푼다.
+
+    매핑·인라인 목록을 함께 읽어 형식 차이로 사실 검사를 우회하지 못하게 한다.
+    Python 의 qualified 이름도 한 이름으로 대조한다.
+    """
+    import yaml
+    fm = re.match(r"^---\s*\n(.*?)\n---(?:\s*\n|$)", doc or "", re.DOTALL)
+    if not fm:
+        return set()
+    try:
+        fields = yaml.safe_load(fm.group(1))
+    except yaml.YAMLError:
+        return set()                    # 파싱 불가 문서의 형식은 기존 형식 게이트 몫
+    if not isinstance(fields, dict):
+        return set()
+    entries = fields.get("related_classes") or []
+    if isinstance(entries, dict):
+        entries = [entries]
+    elif isinstance(entries, str):
+        entries = [entries]
+    if not isinstance(entries, list):
+        return set()
+    names = set()
+    for entry in entries:
+        keys = entry.keys() if isinstance(entry, dict) else [entry]
+        for name in keys:
+            if isinstance(name, str) and name.startswith("<") and name.endswith(">"):
+                name = name[1:-1]
+            if isinstance(name, str) and re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", name):
+                names.add(name)
+    return names
+
+
 def claimed(doc: str) -> set[str]:
     """문서가 **사실로 주장한** 식별자 — 요약 본문 + `related_classes` 키."""
     out: set[str] = set()
@@ -435,10 +470,14 @@ class Report:
     ghosts: list[str] = field(default_factory=list)     # 주석에만 있는데 주장한 것
     declared: list[str] = field(default_factory=list)   # 실측 선언 클래스
     mentioned_declared: bool = True                     # 실측 클래스를 하나라도 언급했나
+    unknown_related: list[str] = field(default_factory=list)  # 실측 근거가 없는 관계 이름
 
     @property
     def reason(self) -> str:
         parts = []
+        if self.unknown_related:
+            parts.append("[중요] 실측 근거가 없는 related_classes: "
+                         + ", ".join(self.unknown_related[:6]))
         if self.ghosts:
             parts.append("[중요] 주석에만 있는 식별자를 살아 있는 것처럼 서술: "
                          + ", ".join(self.ghosts[:6]))
@@ -470,11 +509,16 @@ def verify(doc: str, *, sources: dict[str, str], declared: list[str] | None = No
     #    다른 파일·다른 그룹의 코드는 여전히 근거가 아니고, 주석에만 있는 것은 그대로 잡힌다.
     ghost_pool: set[str] = set()
     live_pool: set[str] = set()
+    related_evidence = set(declared or []) | set(known or [])
     # 🔴 **주석 규칙은 경로의 확장자로 고른다** (`#732`) — 모르는 형식은 유령 0 · 원문 전체 live.
     for path, src in sources.items():
         lang = lang_for(path)
         ghost_pool |= comment_only(src, lang=lang)
-        live_pool |= identifiers(strip_comments(src, lang=lang)[0])
+        live = strip_comments(src, lang=lang)[0]
+        live_pool |= identifiers(live)
+        # 소문자·짧은 이름도 실제 코드에 있으면 근거다. 부분 일치는 허용하지 않는다.
+        related_evidence.update(re.findall(r"(?<![A-Za-z0-9_])[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", live))
+        related_evidence.update(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", live))
     ghost_pool -= live_pool
     said = claimed(doc)
     # [중요] **살아 있는 식별자의 부분열은 유령이 아니다** (`#270`). UE 규약 때문에 문서가
@@ -490,10 +534,11 @@ def verify(doc: str, *, sources: dict[str, str], declared: list[str] | None = No
     # 🔴 **프로젝트에 실재하는 심볼은 유령이 아니다** (`#367`, 2026-09-06).
     #    파일 경계를 넘는 정상 참조를 잡던 자리다 — 실측: `NSPropsBase` 주석의
     #    *"서브클래스(예: ANSLootableChest)"* 가 거부됐는데 그 클래스는 `NSLootableChest.h:27`
-    #    에 실재한다. [주의] 지어낸 이름은 그래프에도 없으므로 **그대로 잡힌다.**
+    #    에 실재한다. `#750` 의 related 이름 검사는 아래에서 별도로 수행한다.
     if known:
         ghost_pool -= set(known)
     ghosts = sorted(said & ghost_pool)
+    unknown_related = sorted(related_names(doc) - related_evidence)
 
     # [중요] **언급 판정은 필터 전 집합으로 한다** (`#286`, 실측 2026-08-23). 위 `#270` 완화가
     #    *유령* 판정을 위해 「live 의 부분열」을 뺐는데, 같은 집합을 언급 판정이 쓰면서
@@ -531,5 +576,6 @@ def verify(doc: str, *, sources: dict[str, str], declared: list[str] | None = No
         if not mentioned and live_counts:
             mentioned = bool(said_all & live_pool)
 
-    return Report(ok=(not ghosts and mentioned), ghosts=ghosts,
-                  declared=list(declared or []), mentioned_declared=mentioned)
+    return Report(ok=(not ghosts and not unknown_related and mentioned), ghosts=ghosts,
+                  declared=list(declared or []), mentioned_declared=mentioned,
+                  unknown_related=unknown_related)

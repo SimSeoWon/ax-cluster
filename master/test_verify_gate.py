@@ -190,33 +190,40 @@ def test_mention_uses_unfiltered_set() -> None:
            "  void BeginPlay();\n};\n")
     srcs = {"PlatformingGameMode.h": SRC}
     decl = ["APlatformingGameMode"]
+    # #750: _doc 의 기본 related=LogNS 는 실제 NS.h/NS.cpp 에 있는 다른 파일 심볼이다.
+    known = V.identifiers(V.strip_comments(NS_H)[0]) | V.identifiers(V.strip_comments(NS_CPP)[0])
 
     r_pre = V.verify(_doc("APlatformingGameMode 는 AGameModeBase 를 상속한다."),
-                     sources=srcs, declared=decl)
+                     sources=srcs, declared=decl, known=known)
     check("접두를 붙여 쓰면 통과 (종전에도 통과)", r_pre.ok, r_pre.reason)
 
     r_bare = V.verify(_doc("PlatformingGameMode 는 GameModeBase 를 상속한다."),
-                      sources=srcs, declared=decl)
+                      sources=srcs, declared=decl, known=known)
     check("[중요] 접두를 떼도 통과한다 (UE 규약 — #270 이 자연스럽다고 적어 둔 표기)",
           r_bare.ok and r_bare.mentioned_declared, r_bare.reason)
 
     # [중요] **게이트를 무디게 만들지 않았다** — 아래 둘은 여전히 막힌다
     r_other = V.verify(_doc("ACombatEnemy 는 적 AI 를 담당한다."),
-                       sources=srcs, declared=decl)
+                       sources=srcs, declared=decl, known=known)
     check("[중요] 다른 파일을 서술하면 여전히 막는다",
           not r_other.ok and not r_other.mentioned_declared, r_other.reason)
 
     r_made = V.verify(_doc("APlatformingHoverBoard 가 부양을 처리한다."),
-                      sources=srcs, declared=decl)
+                      sources=srcs, declared=decl, known=known)
     check("[중요] 지어낸 이름도 여전히 막는다 (부분열이 아니다)",
           not r_made.ok, r_made.reason)
 
     # [주의] 역방향은 언급이 **아니다** — 선언이 문서 낱말의 부분열인 경우
     #    (`Mode` 만 쓰고 `APlatformingGameMode` 를 가리킨다고 볼 수 없다)
     r_rev = V.verify(_doc("APlatformingGameModeExtendedHelper 를 쓴다."),
-                     sources=srcs, declared=decl)
+                     sources=srcs, declared=decl, known=known)
     check("선언이 문서 낱말의 부분열인 것은 언급으로 세지 않는다",
           not r_rev.mentioned_declared, r_rev.reason)
+    no_known = V.verify(_doc("APlatformingGameMode 는 AGameModeBase 를 상속한다."),
+                        sources=srcs, declared=decl)
+    check("#750 다른 파일의 LogNS 근거를 전달하지 않으면 related 이름은 거부한다",
+          not no_known.ok and no_known.unknown_related == ["LogNS"] and no_known.mentioned_declared,
+          no_known.reason)
 
 
 def test_korean_particles_do_not_hide_identifiers() -> None:
@@ -245,8 +252,9 @@ def test_korean_particles_do_not_hide_identifiers() -> None:
 
     # 실전 형태 — 조사 붙은 선언 클래스가 언급으로 세어진다
     SRC = "class APlatformingGameMode : public AGameModeBase {\n  void BeginPlay();\n};\n"
+    known = V.identifiers(V.strip_comments(NS_H)[0]) | V.identifiers(V.strip_comments(NS_CPP)[0])
     r = V.verify(_doc("APlatformingGameMode는 AGameModeBase를 상속한다."),
-                 sources={"G.h": SRC}, declared=["APlatformingGameMode"])
+                 sources={"G.h": SRC}, declared=["APlatformingGameMode"], known=known)
     check("[중요] 조사 붙은 선언 클래스를 언급으로 센다 (NS 3그룹이 여기서 막혔다)",
           r.ok and r.mentioned_declared, r.reason)
 

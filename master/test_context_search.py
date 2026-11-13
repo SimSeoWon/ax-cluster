@@ -147,6 +147,14 @@ def main() -> int:
     check("related_classes", fm["related_classes"] == {"UManagerBase": "Source/Manager/ManagerBase.h"})
     check("본문 분리", extract_body(FULL).startswith("타일 위젯"))
     check("프론트매터 없으면 빈 dict", parse_frontmatter("본문뿐") == {})
+    unknown = STUB.replace("UManagerBase: Source/Manager/ManagerBase.h", 'UManagerBase: "?"')
+    check("#750 인용된 미상 경로는 소비자에게 물음표 문자열로 전달",
+          parse_frontmatter(unknown)["related_classes"] == {"UManagerBase": "?"})
+    check("#750 작은따옴표도 같은 값으로 전달",
+          parse_frontmatter(unknown.replace('"?"', "'?'") )["related_classes"] == {"UManagerBase": "?"})
+    check("#750 qualified Python 이름을 잘라 다른 이름으로 만들지 않는다",
+          parse_frontmatter(unknown.replace("UManagerBase:", "pkg.module.Type:"))["related_classes"]
+          == {"pkg.module.Type": "?"})
 
     print("\n[6] `_domains/` 만 제외한다")
     check("_domains/ 제외", is_excluded("_domains/UI.md"))

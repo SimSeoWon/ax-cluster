@@ -809,6 +809,11 @@ def _synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
             attempt.update(finished_at=time.time())
         if verdict.ok:
             res.attempts.append(f"{m} 형식 통과")
+            # 정규화로 새로 드러난 이름까지 검증한다. 저장할 문서와 검사한 문서가 같다.
+            from . import related as related_mod
+            doc, fixed, unresolved = related_mod.normalize_doc(doc, paths)
+            res.related_fixed, res.related_unresolved = fixed, list(unresolved)
+            attempt.update(normalized_doc=doc)
             report = verify_mod.verify(doc, sources=bodies,
                                        declared=grounding.declared_classes,
                                        known=project_symbols(paths),
@@ -816,6 +821,7 @@ def _synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
             res.verify = report
             attempt.update(facts={"ok": report.ok, "reason": report.reason,
                                   "ghosts": report.ghosts, "declared": report.declared,
+                                  "unknown_related": report.unknown_related,
                                   "mentioned_declared": report.mentioned_declared},
                            status="facts_passed" if report.ok else "facts_rejected")
             if report.ok:
@@ -845,13 +851,6 @@ def _synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
             res.reason += f" · 사슬: {' → '.join(res.attempts)}"
         return _remember(paths, key, files, res, commit, dry_run)
 
-    # [중요] **쓰기 직전에 `related_classes` 를 스키마 형태로 맞춘다** (`#382`). 합성이 경로만
-    #    내거나 `<이름>: 경로` 로 감싸면 파서가 **조용히 버린다** — 문서는 멀쩡하고 필드만 빈다
-    #    (실측 NS 27%). [주의] 이름을 **지어내지 않는다** — 클래스 그래프가 못 풀면 그 줄을 그대로
-    #    두고 세어서 사유에 싣는다. 게이트가 아니라 **정규화**다: 거부하면 문서를 통째로 잃는다.
-    from . import related as related_mod
-    doc, _fixed, _unres = related_mod.normalize_doc(doc, paths)
-    res.related_fixed, res.related_unresolved = _fixed, list(_unres)
     import hashlib
     res.source_fingerprint = hashlib.sha256(json.dumps(
         bodies, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
