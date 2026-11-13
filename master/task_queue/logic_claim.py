@@ -3,7 +3,7 @@
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from .models import (
-    _VALID_DIRECTIVES, _VERIFY_BACKPRESSURE_SEC, normalize_capabilities
+    _RETIRED_DIRECTIVES, _VALID_DIRECTIVES, _VERIFY_BACKPRESSURE_SEC, normalize_capabilities
 )
 from .persistence import (
     TaskIndex, _tq_log, _now_iso, _git_commit_tasks
@@ -270,18 +270,45 @@ def _take_worker_directives(idx: TaskIndex, worker_id: str) -> list[str]:
     return list(queue)
 
 
+def _running_on(idx: TaskIndex, worker_id: str) -> list[str]:
+    """그 워커가 **지금 리스를 쥔** 태스크 (lock 보유 가정) — 하트비트가 받아들이는 둘과 같다."""
+    return sorted(tid for tid, t in idx.tasks.items()
+                  if (t.get("worker_id") == worker_id and t.get("status") == "claimed")
+                  or (t.get("verifier_id") == worker_id and t.get("status") == "submitted"))
+
+
 def push_worker_directive(idx: TaskIndex, worker_id: str, directive: str) -> dict:
-    """관리자 → 워커 directive 큐에 추가. 대상 워커가 미존재여도 큐만 만들어둠
-    (워커가 다음 heartbeat/poll 에 자연스럽게 take)."""
+    """관리자 → 워커 directive 큐에 추가. 파견 루프가 다음 조회(약 10초)·하트비트에 가져가 따른다.
+
+    🔴 `#344` (사용자 결정 2026-11-13) — **보낸 사람이 결과를 오해하지 않게** 여기서 거절한다:
+    따르는 코드가 없는 지시(`pause`·`resume`·`drain`)와, **그 워커에 도는 조각이 없을 때**의 지시.
+    뒤엣것을 받아 두면 fire-once 큐에 남아 **다음에 그 워커로 가는 조각**을 죽인다.
+    받으면 대상 태스크를 응답과 로그에 남긴다.
+    """
+    if directive in _RETIRED_DIRECTIVES:
+        _tq_log(f"[directive] refuse {worker_id} ← {directive} (따르는 코드 없음)", idx.root)
+        return {"ok": False, "reason": "unsupported_directive",
+                "error": f"unsupported directive: {directive} — 따르는 코드가 없어 받지 않는다 "
+                         f"(allowed: {','.join(_VALID_DIRECTIVES)}, #344)"}
     if directive not in _VALID_DIRECTIVES:
         return {"ok": False, "error": f"invalid directive: {directive} (allowed: {','.join(_VALID_DIRECTIVES)})"}
     if not worker_id:
         return {"ok": False, "error": "worker_id required"}
     with idx.lock:
+        running = _running_on(idx, worker_id)
+        if not running:
+            _tq_log(f"[directive] refuse {worker_id} ← {directive} (도는 조각 없음)", idx.root)
+            return {"ok": False, "reason": "no_running_task", "worker_id": worker_id,
+                    "error": f"no running task on {worker_id} — 멈출 조각이 없어 {directive} 를 "
+                             f"받지 않는다 (남겨 두면 다음 조각을 죽인다, #344)"}
         q = idx.worker_directives.setdefault(worker_id, [])
-        q.append(directive)
-        _tq_log(f"[directive] push {worker_id} ← {directive} (queue={q})", idx.root)
-        return {"ok": True, "worker_id": worker_id, "directive": directive, "queue_len": len(q)}
+        already = directive in q
+        if not already:
+            q.append(directive)
+        _tq_log(f"[directive] push {worker_id} ← {directive} (queue={q} · 대상 {running}"
+                f"{' · 이미 대기 중' if already else ''})", idx.root)
+        return {"ok": True, "worker_id": worker_id, "directive": directive, "queue_len": len(q),
+                "targets": running, "already_queued": already}
 
 
 def heartbeat(idx: TaskIndex, task_id: str, worker_id: str, note: str = "") -> dict:

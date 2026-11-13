@@ -10,7 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 _VERIFY_BACKPRESSURE_SEC = 180
 
 # 허용되는 directive (관리자가 push 가능한 명령어 화이트리스트)
-_VALID_DIRECTIVES = ("abort", "pause", "resume", "drain")
+# 🔴 `#344` — **따르는 코드가 있는 것만** 둔다. `pause`·`resume`·`drain` 은 원전 상주 데몬이
+#    따르던 지시인데 상주가 없어진 뒤(`#860`) 읽는 주체가 없었다 — 받아 놓고 버리면 보낸 사람이
+#    「먹혔다」고 믿는다. 다시 넣으려면 파견 루프(`work/runner.follow_directives`)에 먼저 배선한다.
+_VALID_DIRECTIVES = ("abort",)
+_RETIRED_DIRECTIVES = ("pause", "resume", "drain")
 
 # PLAN §5.2-C — 능력 기반 라우팅. task 의 `requires` 와 워커가 claim 시 신고하는
 # `capabilities` 를 **부분집합 매칭**한다 (requires ⊆ capabilities 여야 claim 가능).

@@ -552,7 +552,9 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
     def push_directive_ep(worker_id: str, req: DirectiveReq):
         r = push_worker_directive(idx, worker_id, req.directive)
         if not r.get("ok"):
-            raise HTTPException(400, r.get("error", "directive failed"))
+            # `#344` — 도는 조각이 없는 것은 형식 오류(400)가 아니라 상태 충돌(409)이다
+            raise HTTPException(409 if r.get("reason") == "no_running_task" else 400,
+                                r.get("error", "directive failed"))
         return r
 
     @app.post("/api/v1/redmine/note")
@@ -1396,7 +1398,8 @@ def _cli_send_directive(worker_id: str, directive: str, port: int = 8101):
             print(json.dumps(result, ensure_ascii=False, indent=2))
     except Exception as e:
         print(f"daemon not responding on :{port} or push failed: {e}")
-        print("note: directive 큐는 in-memory 라 데몬 떠있어야 동작함")
+        print("note: directive 큐는 in-memory 라 데몬 떠있어야 동작함 · "
+              "그 워커에 도는 조각이 없으면 409 로 거절된다(#344)")
         sys.exit(1)
 
 

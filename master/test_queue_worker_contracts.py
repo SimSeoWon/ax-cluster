@@ -9,6 +9,7 @@
        (`auth.WORKER_SCOPE` 를 **실제 미들웨어**에 꽂아 잰다 — 규칙을 다시 짜지 않는다)
     ③ 제출 신원 — worker_id 없는 submit/submit-fail, 남의 태스크 고지는 거부 (`#318`)
     ④ heartbeat note — 서버가 저장·보존·절단한다 (`#220`)
+    ⑤ 워커 지시 — 따르는 코드가 있는 것만, 도는 조각이 있을 때만 받는다 (`#344`)
 
 [주의] 데몬 안에서만 지켜지던 것(빌드 실패를 submit 으로 보고·싱글턴 잠금·로그 회전·
 config 의 능력 읽기 등)은 여기 옮기지 않는다 — 서버가 강제한 적이 없는 계약이다.
@@ -27,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master.auth import BearerAuthMiddleware, WORKER_SCOPE, generate_token  # noqa: E402
 from master.task_queue.logic import claim_task, register_task, register_work  # noqa: E402
-from master.task_queue.logic_claim import heartbeat  # noqa: E402
+from master.task_queue.logic_claim import heartbeat, poll_worker, push_worker_directive  # noqa: E402
 from master.task_queue.logic_lifecycle import submit_fail, submit_result  # noqa: E402
 from master.task_queue.persistence import TaskIndex  # noqa: E402
 
@@ -165,12 +166,42 @@ def test_heartbeat_note_stored_and_preserved() -> None:
     check("  거부된 심박은 note 를 바꾸지 않는다", idx.tasks[tid].get("note") == "x" * 200)
 
 
+# ── ⑤ 워커 지시 (`#344`) ─────────────────────────────────────────
+
+def test_directive_only_when_it_can_be_followed() -> None:
+    idx, tid, _ep = _claimed()
+    for name in ("pause", "resume", "drain"):
+        r = push_worker_directive(idx, W, name)
+        check(f"[중요] 따르는 코드가 없는 {name} 은 보낼 때 거절",
+              not r.get("ok") and r.get("reason") == "unsupported_directive", str(r))
+    check("  거절된 지시는 큐에 남지 않는다", not idx.worker_directives.get(W))
+    r = push_worker_directive(idx, W, "nonsense")
+    check("모르는 지시는 거절", not r.get("ok"), str(r))
+    r = push_worker_directive(idx, OTHER, "abort")
+    check("[중요] 도는 조각이 없는 워커의 abort 는 거절",
+          not r.get("ok") and r.get("reason") == "no_running_task", str(r))
+    check("  묵은 지시가 남지 않는다 — 다음 조각을 죽이지 않게", not idx.worker_directives.get(OTHER))
+    r = push_worker_directive(idx, W, "abort")
+    check("도는 조각이 있는 워커의 abort 는 받는다", r.get("ok") is True, str(r))
+    check("  대상 태스크를 응답에 싣는다", r.get("targets") == [tid], str(r))
+    again = push_worker_directive(idx, W, "abort")
+    check("  같은 지시를 두 번 쌓지 않는다",
+          again.get("already_queued") is True and idx.worker_directives.get(W) == ["abort"], str(again))
+    r = heartbeat(idx, tid, W)
+    check("[중요] 하트비트 응답이 지시를 싣는다", r.get("directives") == ["abort"], str(r))
+    check("  한 번 가져가면 비워진다(fire-once)", not idx.worker_directives.get(W))
+    push_worker_directive(idx, W, "abort")
+    r = poll_worker(idx, W)
+    check("[중요] 조회(poll) 응답도 지시를 싣는다", r.get("directives") == ["abort"], str(r))
+
+
 if __name__ == "__main__":
     for fn in (test_types_filter_isolates,
                test_requires_blocks_missing_capability,
                test_worker_scope_via_middleware,
                test_submit_identity_is_server_enforced,
-               test_heartbeat_note_stored_and_preserved):
+               test_heartbeat_note_stored_and_preserved,
+               test_directive_only_when_it_can_be_followed):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_queue_worker_contracts: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)
