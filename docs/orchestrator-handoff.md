@@ -1,16 +1,48 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-14 체크포인트 — Codex가 #344 후속·#750 마감과 배달을 완료하고, 사용자 승인으로 #710 자동 로드 문서 두 곳을 정리·검사·마감했다. 진행 중인 일감 잠금 없음(`lock_released=true`).
-> 운영 main 끝 `3a28f81` + 이 인수인계 커밋. .33 홈 안내서는 반영·해시 일치 rc0. **#710 서비스 판정·프로젝트 배달의 최종 결과는 Redmine #710 마감 노트가 정본이다.** 인수인계 커밋·push 뒤 정본 `master.issue_wrapup 710 --project AXCluster`로 집행한다.
-> 항목·진행의 정본은 Redmine. 이전 상세는 Git 이력·리포트 170~179·각 일감 노트.
+> 2026-11-14 체크포인트(낮) — Claude 가 #942 를 T6 까지 끝내고 T7(검사·마감) 도중 토큰 소진으로 멈췄다. **사용자 결정: Codex 가 이어서 마감한다.**
+> 🔴 **#942 일감 잠금이 활성이다**(`issue/942`, worktree `/home/sim/ax-cluster/.ax-issues/942`). 이 인수인계서는 그 **worktree 의 `issue/942` 에 커밋**돼 있다 — 운영 `main`(`1aed470`)의 같은 파일은 아직 #710 체크포인트다. main 에 따로 커밋하면 브랜치가 갈라져 rebase 가 필요해지므로 그렇게 하지 않았다.
+> 항목·진행의 정본은 Redmine. 이전 상세는 Git 이력·리포트 170~180·각 일감 노트.
 
-## 이번에 끝낸 것 — #710 삭제된 Kimodo 체크아웃 안내 정리
+## 진행 중 — #942 세 CLI 대화 중계 상위 레이어 (`master/relay/`) · T7 에서 중단
+
+**사용자 승인**: 「응 942 진행해」(공용 규칙 §1.9 — 커밋·finish·판정된 재기동·인수인계 push·배달까지 포함). 그 전에 운영 저장소 미추적 파일 때문에 시작이 거절돼 「커밋해서 넣고 진행해」로 `1aed470`(#730 리서치 보고서) 을 main 에 올렸다. 작성 계열 `['claude']` — **Codex 가 이어받으면 `ax-projects:issue_start_tool(942)` 를 한 번 불러 계열을 더한다**(같은 worktree 면 `already`).
+
+**사용자와 정한 것**(리포트 180 첫 절 · Redmine #942 본문·노트): 터미널 창 3개·agy 자동 라우팅·agy Handoff Brief 는 뺐다. 일감 선택 → 에이전트 객관식 선택(작업 중 교체 가능) → 대화 중계. 세션 로그 하나가 미러링 대상이자 공유 메모리. 마무리 = 일감 「완료」 + 보고서. 1차는 `.57` AX 일감, 코드 위치는 `master/` 아래(동작이 정립되면 이동), 도구 권한 전부 자동 허용. 오동작 지점마다 로그를 파일로 남긴다. 웹 UI·토큰량·로그인 점검·`.33`·`#941` 은 추후.
+
+**끝난 것** (플랜 T1~T6 「완료」, `issue/942` 커밋 6건 + 이 인수인계 커밋):
+
+| 커밋 | 내용 |
+|---|---|
+| `9dd1e85` | 리포트 180 — 결정·T1 세 CLI 실측 |
+| `1dcc6a1` | `relay/store.py` 세션 로그 저장소 + `master/test_relay.py` + `checks.json` 등록 |
+| `083e39c` | `relay/agents.py` 세 CLI 호출부 |
+| `fa39222` | `relay/boundary.py` 작업 경계 판정 |
+| `d2363ac` | `relay/console.py`·`__main__.py` 콘솔 |
+| `ba9dbc2` | `master/README.md` 행 추가 · 리포트 180 구현·T6 실증·한계 |
+
+- 검사: `master/test_relay.py` 113/113 rc0 · 정적(pyflakes·imports·mypy) 차단 0·노트 26 · `test_integration_coverage` OK.
+- T6 실증(실제 세 CLI, 일감 #942, 저장 위치는 저장소 밖 임시 디렉터리): claude → codex → agy → claude 교체, 네 차례 rc0, 교체된 에이전트가 전달문의 사실 문장만 보고 세션 기록을 읽어 이어받음. 해석 실패 0.
+- `log_history` 기록 완료(`AXCluster/history/2026-11-14_1204_#942_…`).
+
+**남은 것 — T7 (「작업중」)**:
+
+1. **공식 통합 검사 결과 확인.** Claude 가 `d2363ac` 시점 코드로 백그라운드 실행했고 중단 시점에 33번째 검사를 지나고 있었다(그 뒤 커밋은 문서뿐). 로그 `/tmp/claude-1000/-home-sim/0910090d-a3ae-48b1-ab07-9db26f1114a0/scratchpad/integration.log` 의 마지막 줄 `rc=`. 없거나 rc≠0 이면 worktree 에서 다시 돌린다: `AX_PROJECTS_ROOT=/home/sim/ax-cluster /home/sim/ax-cluster/.venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v`. 실패하면 고치지 말고 보고한다.
+2. **`master/test_*.py` 전수**(커밋 전 전수 규칙) — 아직 안 돌렸다.
+3. 리포트 180 에 통합·전수 결과를 적고 커밋 → T7 「완료」 → `ax-projects:issue_finish_tool(942)` 미리보기 확인 뒤 `confirm=True` → `.venv/bin/python -m master.issue_wrapup 942 --project AXCluster`(인수인계서 갱신 커밋·push 뒤 재실행) → Redmine 결과 노트.
+4. 새 모듈은 상주 서비스가 import 하지 않는다 — 재기동 판정은 wrapup 이 한다(추정하지 않는다).
+
+**미확인·한계**(리포트 180 「한계」): 긴 작업·한도 소진·중단 뒤 이어가기 미실증 · 레이어 안에서 일감 시작·마감 도구를 부르는 경로 미실증(비대화 세션의 `issue_start_tool` 작성 계열 기록 포함) · 한 줄 입력만 · `fcntl`·프로세스 그룹은 리눅스 기준 · 실행 래퍼 없음(저장소 밖에서는 `PYTHONPATH` 필요).
+
+**사용자가 직접 써 볼 수 있다**: 마감 전 `cd /home/sim/ax-cluster/.ax-issues/942 && AX_PROJECTS_ROOT=/home/sim/ax-cluster /home/sim/ax-cluster/.venv/bin/python -m master.relay`, 마감 뒤 `cd ~/ax-cluster && .venv/bin/python -m master.relay`. 사용자가 실행했다면 `~/ax-state/relay/sessions/942/` 에 실제 세션이 남아 있을 수 있다(지우지 않는다 — 일감 완료 뒤 `/close` 가 보관한다).
+
+## 이전에 끝낸 것 — #710 삭제된 Kimodo 체크아웃 안내 정리
 
 - 사용자 「710 진행하자」 후 두 곳 삭제·다른 경로 유지·로컬 서브에이전트 수행 구체안에 「응!」 승인. `win-main-33.md` 체크아웃 목록과 프로젝트 표의 KimodoMotion_WebUI만 제거. 현재 등록과 일치하는 ModularStage·NS Documents 경로는 유지하고 sim-desktop·온보딩 예시는 수정하지 않았다.
 - 문서 `2c557a8` · 리포트179 `3a28f81`. diff 검사rc0, 공식 통합195건210.233초OK(rc0). 실행 코드·검사 코드 변경 없음.
 - finish `repo="/home/sim/ax-cluster/.ax-issues/710"`, `done=["push","ff","worktree_remove","delete_branch","register","link","release","close","redmine"]`, `why=""`, `registered=true`, `round=1`, `closed=true`, `lock_released=true` (해시2개 등록).
 - 정본 `master.client home-guides --host=192.168.0.33 --apply` rc0. `C:\Users\USER\CLAUDE.md.bak-20261114-004431` 백업 후 정본 SHA256 `92c97d62310d` 일치, AGENTS.md 없음(정상·생성 안 함). 게임 트리·브랜치·등록 경로 변경 없음.
-- 마감 후 서비스·프로젝트 배달 결과와 T2 완료는 Redmine 노트. 자동 리뷰 결과 미확인.
+- 마감 뒤 단계 rc0(main `ef8386a`, 재기동 없음, 배달 rc0), T2 완료. 자동 리뷰는 소스 변경 없음으로 생략·지적 0건(2026-11-14 Claude 가 Redmine 에서 확인).
 
 ## 이번에 끝낸 것 — #750 related 근거 검증·YAML 미상 문자열 인용
 
@@ -80,8 +112,7 @@
 
 ## 지휘 상태
 
-- 마스터 담당 `claude`(2026-11-12 21:40:27 기록 — #344 `issue_wrapup` 1차 직후 토큰 소진으로 중단, 사용자가 Codex로 이어받기로 결정). 워커 전역 `codex`(state, 2026-10-18) 변경 없음.
-- #344 Redmine 1차 wrapup 노트 확인: `ax-task-queue` 11-13 23:43:35, `ax-projects` 23:43:40 재기동. 인수인계서 대기로 배달 전 정지(rc2). 재실행에서 신선도를 다시 판정한다.
+- 마스터 담당 기록 `claude`(2026-11-12 21:40:27) — 2026-11-14 조회에서 그대로였고 이번 세션은 기록을 바꾸지 않았다. Codex 가 실제로 인수하면 사용자 지시에 따라 기록한다. 워커 전역 `codex`(state, 2026-10-18) 변경 없음.
 
 ## 이전 세션에서 끝낸 것 (전부 마감·배달 rc0)
 
@@ -120,6 +151,6 @@
 
 ## 바로 다음 작업
 
-1. #710의 최종 서비스·배달 결과와 T2 완료는 Redmine #710 마지막 노트로 확인한다. 실패가 기록됐으면 그 지점부터 사용자 승인 범위에서 재개한다.
-2. 다음 일감은 사용자가 고른다. 위 「바로 고칠 수 있는 결함」 제안에 대한 답부터 받는다.
+1. #942 T7 을 위 「남은 것」 순서로 끝낸다(사용자 「942 진행해」 승인 범위 안). 실패는 고치지 않고 보고한다.
+2. 마감 뒤 다음 일감은 사용자가 고른다. 「바로 고칠 수 있는 결함」(#738·#372) 제안은 아직 답을 받지 못했다.
 3. ⑦ 전진·finalize·파괴적 git·자동 로드 문서 변경은 기존 사람 게이트를 따른다.
