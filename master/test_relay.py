@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master.relay import agents as A   # noqa: E402
+from master.relay import boundary as B  # noqa: E402
 from master.relay import store as S    # noqa: E402
 
 PASS = FAIL = 0
@@ -297,9 +298,70 @@ def t_agents_failures(tmp):
           and tr["data"]["full_chars"] == len(big) and tr["data"]["is_error"] is True)
 
 
+# ── 작업 경계 (T4) ───────────────────────────────────────────────────────────
+
+def mk_boundary(tmp, *, issues=None, active=None, lock_error=None, list_error=""):
+    issues = issues or {}
+    logs = []
+    def lister():
+        return {"error": list_error} if list_error else {"issues": [{"id": k, **v} for k, v in issues.items()]}
+    def getter(n):
+        return dict(issues[int(n)], id=int(n)) if int(n) in issues else {"error": f"#{n} 없음 (404)"}
+    def lock_current():
+        if lock_error:
+            raise RuntimeError(lock_error)
+        return {"issue_id": active, "state": "active"} if active else None
+    (tmp / "reports").mkdir(exist_ok=True)
+    b = B.AxIssueBoundary(lister=lister, getter=getter, lock_current=lock_current, reports_dir=tmp / "reports",
+                          dbg=lambda w, m: logs.append(f"[{w}] {m}"))
+    return b, logs
+
+
+def t_boundary_open(tmp):
+    iss = {7: {"subject": "일곱", "status": "신규"}, 8: {"subject": "여덟", "status": "진행"},
+           9: {"subject": "아홉", "status": "완료"}}
+    b, logs = mk_boundary(tmp, issues=iss, active=8)
+    c = b.candidates()
+    check("후보 목록 + 활성 표시", c["ok"] and [(x["id"], x["active"]) for x in c["issues"]] == [(7, False), (8, True), (9, False)], str(c))
+    r = b.may_open(7)
+    check("다른 일감이 작업 중이면 거절", not r["ok"] and "#8 작업이 진행 중" in r["why"], str(r))
+    check("작업 중인 그 일감은 연다", b.may_open(8)["ok"])
+    b2, _ = mk_boundary(tmp, issues=iss)
+    check("잠금이 비었으면 연다", b2.may_open(7)["ok"] and b2.may_open(7)["subject"] == "일곱")
+    check("완료된 일감은 열지 않는다", not b2.may_open(9)["ok"] and "이미" in b2.may_open(9)["why"])
+    check("없는 일감 거절", not b2.may_open(99)["ok"] and "조회 실패" in b2.may_open(99)["why"])
+    b3, logs3 = mk_boundary(tmp, issues=iss, lock_error="파일 깨짐")
+    r = b3.may_open(7)
+    check("잠금 조회 실패는 거절 + 사유", not r["ok"] and "일감 잠금 조회 실패" in r["why"] and "파일 깨짐" in r["why"], str(r))
+    check("판정이 디버그에 남는다", any("boundary.may_open" in x and "거절" in x for x in logs3))
+    b4, _ = mk_boundary(tmp, list_error="HTTP 500")
+    check("목록 조회 실패", not b4.candidates()["ok"] and "HTTP 500" in b4.candidates()["why"])
+
+
+def t_boundary_closable(tmp):
+    iss = {7: {"subject": "일곱", "status": "완료"}, 8: {"subject": "여덟", "status": "진행"}}
+    b, logs = mk_boundary(tmp, issues=iss)
+    r = b.closable(7)
+    check("보고서 없으면 거절", not r["ok"] and "작업 보고서가 없다" in r["why"], str(r))
+    (tmp / "reports" / "180-7-something.md").write_text("x", encoding="utf-8")
+    (tmp / "reports" / "181-77-other.md").write_text("x", encoding="utf-8")
+    r = b.closable(7)
+    check("완료 + 보고서 + 잠금 해제 → 마무리 가능", r["ok"] and len(r["reports"]) == 1 and r["reports"][0].endswith("180-7-something.md"), str(r))
+    (tmp / "reports" / "182-8-x.md").write_text("x", encoding="utf-8")
+    r = b.closable(8)
+    check("완료가 아니면 거절", not r["ok"] and "「진행」" in r["why"], str(r))
+    b2, _ = mk_boundary(tmp, issues=iss, active=7)
+    r = b2.closable(7)
+    check("잠금이 활성이면 거절", not r["ok"] and "잠금이 아직 활성" in r["why"], str(r))
+    b3, _ = mk_boundary(tmp, issues=iss, lock_error="읽기 실패")
+    check("잠금 조회 실패면 거절", not b3.closable(7)["ok"] and "읽기 실패" in b3.closable(7)["why"])
+    check("없는 일감 거절", not b.closable(99)["ok"])
+    check("판정이 디버그에 남는다", any("boundary.closable" in x and "마무리 가능" in x for x in logs))
+
 TESTS = [t_store_open_and_seq, t_store_concurrent_append, t_store_agent_state,
          t_store_corrupt_not_overwritten, t_store_archive,
-         t_agents_build_cmd, t_agents_claude, t_agents_codex, t_agents_agy, t_agents_failures]
+         t_agents_build_cmd, t_agents_claude, t_agents_codex, t_agents_agy, t_agents_failures,
+         t_boundary_open, t_boundary_closable]
 
 
 def main() -> int:
