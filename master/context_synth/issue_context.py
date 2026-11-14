@@ -72,8 +72,10 @@ class IssueContext:
 
 
 def _default_track(root, sha):
+    # `#950` — 닫힌 회차까지 본다(열린 회차 우선). 회차가 닫힌 뒤 늦게 리뷰된 해시도 일감을 찾는다.
     from master.context_synth import issue_track
-    return issue_track.issue_of_hash(root, sha)
+    rnd = issue_track.round_of_hash_any(root, sha)
+    return rnd["issue_id"] if rnd else None
 
 
 def _default_get_issue(issue_id):

@@ -273,6 +273,30 @@ def issue_of_hash(root, sha) -> int | None:
     return best["issue_id"] if best else None
 
 
+def round_of_hash_any(root, sha) -> dict | None:
+    """sha 를 담은 라운드(사본) — **열린 라운드가 우선**, 없으면 닫힌 라운드까지 본다. 각 집합 안에서는
+    가장 최근 등록. 없으면 None.
+
+    `#950` — 리뷰 쪽(작성 계열·일감 컨텍스트) 전용이다. 회차가 먼저 닫힌 뒤 늦게 리뷰된 해시가
+    일감·작성 계열을 잃었다(실측 2026-11-14 #368 `902f4e99` — 작성 계열 「미상」). 우선순위·연결
+    (`issue_of_hash`)은 열린 라운드만 보는 종전 계약을 그대로 둔다 — 닫힌 회차에 연결하면 안 된다.
+    """
+    s = _norm_sha(sha)
+    with _locked(root):
+        data = _load(root)
+    rounds = [r for rs in data["records"].values() for r in rs]
+    rounds.sort(key=lambda r: (r.get("registered_at", ""), r["issue_id"], r["round"]))
+    open_hit = closed_hit = None
+    for r in rounds:
+        if any(h["sha"] == s for h in r["hashes"]):
+            if r["summary"]["state"] in SUMMARY_CLOSED:
+                closed_hit = r
+            else:
+                open_hit = r
+    best = open_hit or closed_hit
+    return _copy(best) if best else None
+
+
 def authors_of_hash(root, sha) -> tuple | None:
     """sha 를 담은 열린 라운드의 작성 계열(`#920`). 그런 라운드가 없으면 None — 빈 튜플과 구분한다."""
     s = _norm_sha(sha)

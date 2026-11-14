@@ -172,6 +172,23 @@ def t_issue_of_hash(tmp):
     check("빈 루트 open_rounds", IT.open_rounds(tmp / "none") == [] and IT.issue_of_hash(tmp / "none", sha(1)) is None)
 
 
+def t_round_of_hash_any_950(tmp):
+    """`#950` — 리뷰 쪽 조회는 닫힌 라운드까지 본다(열린 라운드 우선) · issue_of_hash 는 그대로."""
+    reg(tmp, n=7, hashes=(1, 2), authors=["codex"])
+    for s in (1, 2):
+        IT.set_hash(tmp, 7, sha(s), state="skipped")
+    IT.set_summary(tmp, 7, state="done", item_id="range:7", serial="R1")
+    check("#950 닫힌 라운드 — issue_of_hash 는 None(연결 계약 유지)", IT.issue_of_hash(tmp, sha(1)) is None)
+    r = IT.round_of_hash_any(tmp, sha(1).upper())
+    check("#950 닫힌 라운드도 찾는다(일감·계열)", r is not None and r["issue_id"] == 7
+          and r.get("authors") == ["codex"], str(r))
+    reg(tmp, n=9, hashes=(2,), base=sha(70), end=sha(71), authors=["claude"])
+    r = IT.round_of_hash_any(tmp, sha(2))
+    check("#950 열린 라운드가 닫힌 것보다 우선", r is not None and r["issue_id"] == 9, str(r))
+    check("#950 없는 해시 → None", IT.round_of_hash_any(tmp, sha(88)) is None)
+    check("#950 빈 루트 → None", IT.round_of_hash_any(tmp / "none", sha(1)) is None)
+
+
 def t_noted(tmp):
     reg(tmp, hashes=(1, 2))
     r = IT.mark_hash_noted(tmp, 7, sha(1))
@@ -309,7 +326,7 @@ def t_history_cap(tmp):
 
 def main() -> int:
     for fn in (t_register_validation, t_idempotent, t_new_round_and_cap, t_transitions, t_terminal_pure,
-               t_issue_of_hash, t_noted, t_summary, t_missing_notice, t_corrupt_not_overwritten,
+               t_issue_of_hash, t_round_of_hash_any_950, t_noted, t_summary, t_missing_notice, t_corrupt_not_overwritten,
                t_concurrent_processes, t_history_cap):
         run(fn)
     total = PASS + FAIL

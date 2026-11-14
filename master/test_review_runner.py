@@ -146,6 +146,17 @@ def test_마감_등록_전에도_잠금으로_가른다():
     check("#920 등록 전 — 잠금의 계열", R.commit_authors(root, head, lambda m: None) == ("agy",))
     IL.release(root, 5, op="cancel")
     check("#920 잠금도 없으면 미상", R.commit_authors(root, head, lambda m: None) == ())
+    # `#950` — 회차가 먼저 닫힌 뒤 늦게 온 해시: 닫힌 회차의 계열을 쓰고, 다른 일감의 활성 잠금보다 앞선다
+    IT.register(root, 5, project="P", base="a" * 40, end=head, hashes=[head], authors=["codex"])
+    IT.set_hash(root, 5, head, state="skipped")
+    IT.set_summary(root, 5, state="done", item_id="range:5", serial="R9")
+    IL.acquire(root, 6, branch="issue/6", start_rev="a" * 40)
+    IL.note_author(root, 6, "claude")
+    lines = []
+    check("🔴 #950 닫힌 회차의 계열(다른 일감 잠금보다 우선)",
+          R.commit_authors(root, head, lines.append) == ("codex",), str(lines))
+    check("#950 닫힌 회차에서 찾았다는 로그", any("닫힌 회차 #5" in x for x in lines), str(lines))
+    IL.release(root, 6, op="cancel")
     check("#920 미상은 agy", R.reviewer_for(()) == "agy")
 
 

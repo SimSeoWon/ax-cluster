@@ -328,6 +328,12 @@ def commit_authors(root, commit: str, log) -> tuple:
         got = it.authors_of_hash(root, commit)
         if got is not None:
             return got
+        # `#950` — 회차가 먼저 닫힌 뒤 늦게 온 해시는 닫힌 회차의 계열을 쓴다. 활성 잠금은 **다른 일감**
+        #    일 수 있으므로 그보다 앞에 본다(실측 2026-11-14 #368 `902f4e99` 가 「미상」으로 리뷰됐다).
+        rnd = it.round_of_hash_any(root, commit)
+        if rnd is not None:
+            log(f"[리뷰큐] {commit[:8]} 작성 계열 — 닫힌 회차 #{rnd['issue_id']} 회차 {rnd['round']} 에서 찾았다")
+            return tuple(rnd.get("authors") or ())
         rec = il.current(root)
         return tuple(rec.get("authors") or ()) if rec else ()
     except Exception as e:                                         # noqa: BLE001
