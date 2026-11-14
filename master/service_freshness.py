@@ -68,6 +68,32 @@ ENTRY: dict = {                          # 서비스 → `ExecStart` 의 `python
 }
 _DEP_PACKAGES = ("master", "client")     # 이 저장소의 최상위 패키지 — 그 밖(표준·서드파티)은 의존이 아니다
 
+# [DOC] #947: 기동 기록을 **파일에도** 남긴다. 저널은 상한(4G)에 차면 오래된 줄부터 지운다 — 실측
+#       2026-11-14 에 audit 폭주로 보존이 약 9시간이 되자, 부팅 직후 기동한 ax-projects 의 기록이
+#       사라져 의존 판정이 「불가」로 남았다. 판정은 현재 invocation 과 일치하는 파일을 먼저 읽고,
+#       없거나 맞지 않으면 종전대로 저널을 읽는다. 파일 쓰기 실패는 기동을 막지 않는다(저널이 남는다).
+RECORD_DIR_ENV = "AX_SERVICE_CODE_DIR"
+
+
+def record_dir() -> Path:
+    """기동 기록 파일 디렉터리 — `AX_SERVICE_CODE_DIR`, 없으면 `~/ax-state/service-code`."""
+    env = os.environ.get(RECORD_DIR_ENV, "")
+    return Path(env) if env else Path.home() / "ax-state" / "service-code"
+
+
+def _write_record_file(record: dict) -> str:
+    """`<record_dir>/<unit>.json` 에 원자적으로 쓴다. 반환은 실패 사유(성공이면 빈 문자열)."""
+    try:
+        d = record_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        target = d / f"{record['unit']}.json"
+        tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(record, ensure_ascii=True), encoding="utf-8")
+        os.replace(tmp, target)
+        return ""
+    except OSError as exc:
+        return f"{type(exc).__name__}: {exc}"
+
 
 def _module_file(name: str):
     """모듈 이름 → 저장소 안 파일(`pkg/__init__.py` 또는 `mod.py`). 없으면 None."""
@@ -205,6 +231,11 @@ def record_startup(unit: str) -> dict:
         deps_digest, deps_why = _snapshot(deps)
     record.update(deps=list(deps), deps_digest=deps_digest, deps_why=deps_why)
     print(RECORD_PREFIX + json.dumps(record, ensure_ascii=True), flush=True)
+    # #947 — 저널 회전에 견디는 사본. 실패는 한 줄 남기고 기동을 계속한다(판정은 저널로 폴백).
+    file_why = _write_record_file(record)
+    print(f"[service-code] {unit} 기동 기록 파일 "
+          + (f"{record_dir() / (unit + '.json')}" if not file_why else f"쓰기 실패 — {file_why}"),
+          flush=True)
     return record
 
 
@@ -234,8 +265,70 @@ def _baseline(unit: str, paths: tuple, *, runner=None, invocation: str = "") -> 
     return digest, ""
 
 
+def _valid(record, unit: str, invocation: str, paths: tuple) -> bool:
+    return (isinstance(record, dict) and record.get("version") == 1
+            and record.get("unit") == unit
+            and record.get("invocation_id") == invocation
+            and record.get("paths") == list(paths))
+
+
+def _file_record(unit: str, paths: tuple, invocation: str) -> tuple:
+    """#947 — `(기록 또는 None, 쓰지 못한 사유)`. 현재 invocation·범위와 맞을 때만 기록을 돌려준다."""
+    path = record_dir() / f"{unit}.json"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None, "기록 파일 없음"
+    except OSError as exc:
+        return None, f"기록 파일 읽기 실패({type(exc).__name__})"
+    try:
+        record = json.loads(text)
+    except ValueError:
+        return None, "기록 파일 손상"
+    if isinstance(record, dict) and record.get("invocation_id") != invocation:
+        return None, "기록 파일은 다른 기동의 것"
+    if not _valid(record, unit, invocation, paths):
+        return None, "기록 파일의 서비스·버전·감시 범위가 일치하지 않는다"
+    return record, ""
+
+
+def _journal_head(runner=None) -> int:
+    """#947 — 저널에 남은 가장 오래된 줄의 epoch(못 읽으면 0). 첫 줄만 읽고 끊는다(실측 0.05초)."""
+    cmd = ["journalctl", "--no-pager", "-q", "-o", "short-unix", "--output-fields=MESSAGE"]
+    try:
+        if runner is not None:
+            first = ((runner(cmd).stdout or "").splitlines() or [""])[0]
+        else:
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            try:
+                first = p.stdout.readline() if p.stdout else ""
+            finally:
+                p.kill()
+                p.wait(timeout=5)
+        return int(float(first.split()[0])) if first.split() else 0
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return 0
+
+
+def _absent_why(unit: str, *, runner=None) -> str:
+    """#947 — 저널에 현재 기동의 기록 줄이 없을 때의 사유. 회전 가능성을 시각으로 밝힌다."""
+    started = 0
+    try:
+        started, _ = _started(unit, runner=runner)
+    except (OSError, subprocess.SubprocessError):
+        started = 0
+    head = _journal_head(runner)
+    if started and head and head > started:
+        return (f"기동 코드 기록이 저널에 없다 — 저널 회전으로 지워졌을 수 있다 "
+                f"(가장 오래된 저널 {head} > 기동 {started}, epoch)")
+    return "기동 코드 기록이 저널에 없다(기동 때 기록하지 않았거나 다른 이유)"
+
+
 def _record(unit: str, paths: tuple, *, runner=None, invocation: str = "") -> tuple:
-    """`(기동 기록 사전, 사유)` — 현재 invocation 의 기록 하나를 형식·범위까지 검증해 돌려준다(#918 분리)."""
+    """`(기동 기록 사전, 사유)` — 현재 invocation 의 기록 하나를 형식·범위까지 검증해 돌려준다(#918 분리).
+
+    #947 — 파일 사본(`record_dir()`)을 먼저 읽고, 없거나 맞지 않으면 저널로 폴백한다. 저널에서
+    `--grep` 이 맞는 줄 0개(rc=1·빈 출력)이면 「조회 실패」가 아니라 「기록 없음」으로 구분한다."""
     run = runner or (lambda cmd: subprocess.run(cmd, capture_output=True, text=True,
                                                 timeout=10))
     try:
@@ -243,14 +336,35 @@ def _record(unit: str, paths: tuple, *, runner=None, invocation: str = "") -> tu
             invocation, why = _invocation(unit, runner=runner)
             if why:
                 return {}, why
+        record, file_why = _file_record(unit, paths, invocation)
+        if record is not None:
+            return record, ""
+        jrecord, why = _journal_record(unit, paths, run, invocation, runner=runner)
+        if why:
+            return {}, f"{why} · 파일: {file_why}"
+        return jrecord, ""
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, AttributeError):
+        return {}, "기동 코드 기록 조회 또는 해석에 실패했다"
+
+
+def _journal_record(unit: str, paths: tuple, run, invocation: str, *, runner=None) -> tuple:
+    """종전 저널 판독 — `(기록, 사유)`."""
+    try:
         # 🔴 #912 — `-n` 을 붙이지 않는다. systemd 249 는 `-n` 을 `--grep` 보다 먼저 적용해
         #    마지막 N 줄만 잘라 온 뒤 거른다 — 기동 첫 줄인 기록을 로그 2줄 만에 놓쳤다(실측 2026-11-08).
         #    범위는 이미 `_SYSTEMD_INVOCATION_ID` 가 이번 기동으로 좁힌다.
         result = run(["journalctl", "--no-pager", "--all", "-o", "json",
                       f"_SYSTEMD_INVOCATION_ID={invocation}",
                       f"--grep=^{RECORD_PREFIX}"])
+        # #947 — `--grep` 은 맞는 줄이 0개여도 rc=1 이다. 출력·오류가 모두 비면 「조회 실패」가 아니라
+        #    「기록 없음」이다(저널 회전 가능성은 `_absent_why` 가 시각으로 밝힌다).
+        if (result.returncode == 1 and not (result.stdout or "").strip()
+                and not (getattr(result, "stderr", "") or "").strip()):
+            return {}, _absent_why(unit, runner=runner)
         if result.returncode:
-            return {}, f"기동 코드 기록을 읽지 못했다 (journalctl rc={result.returncode})"
+            err = (getattr(result, "stderr", "") or "").strip().splitlines()
+            return {}, (f"기동 코드 기록을 읽지 못했다 (journalctl rc={result.returncode})"
+                        + (f" — {err[-1][:120]}" if err else ""))
         records = []
         for line in (result.stdout or "").splitlines():
             entry = json.loads(line)
@@ -261,13 +375,12 @@ def _record(unit: str, paths: tuple, *, runner=None, invocation: str = "") -> tu
                     or not message.startswith(RECORD_PREFIX)):
                 return {}, "기동 코드 기록의 서비스·invocation·형식이 일치하지 않는다"
             records.append(json.loads(message[len(RECORD_PREFIX):]))
+        if not records:
+            return {}, _absent_why(unit, runner=runner)
         if len(records) != 1:
-            return {}, "현재 기동 코드 기록이 없거나 중복됐다 — 판정할 수 없다"
+            return {}, "현재 기동 코드 기록이 중복됐다 — 판정할 수 없다"
         record = records[0]
-        if (not isinstance(record, dict) or record.get("version") != 1
-                or record.get("unit") != unit
-                or record.get("invocation_id") != invocation
-                or record.get("paths") != list(paths)):
+        if not _valid(record, unit, invocation, paths):
             return {}, "기동 코드 기록의 서비스·버전·감시 범위가 일치하지 않는다"
         return record, ""
     except (OSError, subprocess.SubprocessError, ValueError, TypeError, AttributeError):

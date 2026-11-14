@@ -12,10 +12,12 @@
 """
 from __future__ import annotations
 
+import atexit
 import contextlib
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -42,11 +44,25 @@ def check(label: str, cond: bool, detail: str = "") -> None:
 INVOCATION = "a" * 32
 
 
-def startup(unit: str) -> tuple:
+# #947 — 판정이 읽는 기록 파일 디렉터리는 비어 있는 임시 디렉터리로 고정한다(실 `~/ax-state` 를 건드리지
+#    않는다). `startup()` 은 기본으로 **버리는** 디렉터리에 써서, 종전 검사가 저널 경로를 그대로 검증한다.
+_CHECK_DIR = tempfile.mkdtemp(prefix="ax-svc-code-check-")
+os.environ[F.RECORD_DIR_ENV] = _CHECK_DIR
+_TEMP_DIRS = [_CHECK_DIR]
+atexit.register(lambda: [shutil.rmtree(d, ignore_errors=True) for d in _TEMP_DIRS])
+
+
+def startup(unit: str, record_dir: str = "") -> tuple:
+    """`(기록, 저널 메시지 한 줄)`. `record_dir` 를 주면 그 디렉터리에 파일 사본을 쓴다."""
     output = io.StringIO()
-    with patch.dict(os.environ, {"INVOCATION_ID": INVOCATION}), contextlib.redirect_stdout(output):
+    target = record_dir or tempfile.mkdtemp(prefix="ax-svc-code-discard-")
+    if not record_dir:
+        _TEMP_DIRS.append(target)
+    with patch.dict(os.environ, {"INVOCATION_ID": INVOCATION, F.RECORD_DIR_ENV: target}), \
+            contextlib.redirect_stdout(output):
         record = F.record_startup(unit)
-    return record, output.getvalue().strip()
+    lines = [x for x in output.getvalue().splitlines() if x.startswith(F.RECORD_PREFIX)]
+    return record, (lines[0] if lines else "")
 
 
 def fake(records=None, *, rc=0, journal_rc=0, journal=None,
@@ -456,6 +472,102 @@ def test_real_dependencies_918() -> None:
     check("진입 모듈이 없으면 사유(의존 없음으로 접지 않는다)", F.dependencies("ax-nope")[1] != "")
 
 
+class _R:
+    def __init__(self, code, out="", err=""):
+        self.returncode, self.stdout, self.stderr = code, out, err
+
+
+def _runner(*, grep=(1, "", ""), head="", started_epoch="100"):
+    """#947 전용 가짜 — `--grep` 조회 결과와 저널 첫 줄을 따로 준다."""
+    calls = []
+
+    def run(cmd):
+        calls.append(cmd)
+        if cmd[0] == "systemctl":
+            return _R(0, INVOCATION if "InvocationID" in cmd else "Sat 2026-08-23 02:19:20 KST")
+        if cmd[0] == "date":
+            return _R(0, started_epoch)
+        if cmd[0] == "journalctl" and any(c.startswith("--grep=") for c in cmd):
+            return _R(*grep)
+        if cmd[0] == "journalctl":
+            return _R(0, head)
+        return _R(1)
+    run.calls = calls
+    return run
+
+
+def test_record_file_947() -> None:
+    """#947 — 기동 기록 파일 사본(저널 회전에 견딤) · 판정 불가 사유 구분."""
+    old_repo = F.REPO
+    unit = "ax-task-queue"
+    try:
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as rd:
+            F.REPO = root = Path(td)
+            source = root / "master/task_queue/resident.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("# resident\n", encoding="utf-8")
+            os.utime(source, (300, 300))               # 기동(100) 뒤 흔적 → 내용 경로를 탄다
+            os.utime(source.parent, (300, 300))
+            out = io.StringIO()
+            with patch.dict(os.environ, {"INVOCATION_ID": INVOCATION, F.RECORD_DIR_ENV: rd}), \
+                    contextlib.redirect_stdout(out):
+                record = F.record_startup(unit)
+            saved = Path(rd) / f"{unit}.json"
+            check("#947 기동 기록 파일을 쓴다", saved.is_file()
+                  and json.loads(saved.read_text(encoding="utf-8")) == record, str(list(Path(rd).iterdir())))
+            check("#947 파일 기록 줄을 stdout 에 남긴다", f"[service-code] {unit} 기동 기록 파일" in out.getvalue())
+            check("#947 파일 쓰기에 임시 파일이 남지 않는다",
+                  [p.name for p in Path(rd).iterdir()] == [saved.name])
+            with patch.dict(os.environ, {F.RECORD_DIR_ENV: rd}):
+                runner = _runner()                         # 저널엔 기록이 없다(회전)
+                v = F.check(unit, runner=runner)[0]
+                check("#947 저널에 없어도 파일로 최신 판정", not v.stale and not v.why, v.line)
+                check("#947 파일이 맞으면 저널 조회를 하지 않는다",
+                      not any(c[0] == "journalctl" for c in runner.calls), str(runner.calls))
+                source.write_text("# changed\n", encoding="utf-8")
+                v = F.check(unit, runner=_runner())[0]
+                check("#947 파일 기준으로 내용 변경은 stale", v.stale and not v.why, v.line)
+                source.write_text("# resident\n", encoding="utf-8")
+                saved.write_text(json.dumps(dict(record, invocation_id="b" * 32)), encoding="utf-8")
+                v = F.check(unit, runner=_runner())[0]
+                check("#947 다른 기동의 파일은 쓰지 않는다(판정 불가 · 사유에 파일 사정)",
+                      bool(v.why) and not v.stale and "다른 기동" in v.why, v.line)
+                _, message = startup(unit)
+                entry = json.dumps({"MESSAGE": message, "_SYSTEMD_INVOCATION_ID": INVOCATION,
+                                    "_SYSTEMD_UNIT": f"{unit}.service"})
+                v = F.check(unit, runner=_runner(grep=(0, entry, "")))[0]
+                check("#947 파일이 맞지 않으면 저널로 폴백해 최신", not v.stale and not v.why, v.line)
+                saved.write_text("{broken", encoding="utf-8")
+                v = F.check(unit, runner=_runner())[0]
+                check("#947 손상된 파일은 판정 불가로(최신으로 접지 않는다)",
+                      bool(v.why) and not v.stale and "손상" in v.why, v.line)
+                saved.write_text(json.dumps(dict(record, paths=["other"])), encoding="utf-8")
+                v = F.check(unit, runner=_runner())[0]
+                check("#947 감시 범위가 다른 파일은 쓰지 않는다", bool(v.why) and not v.stale, v.line)
+                saved.unlink()
+                v = F.check(unit, runner=_runner(head="200.5 host svc[1]: x"))[0]
+                check("#947 기록 없음 + 가장 오래된 저널이 기동보다 늦으면 회전 가능성을 말한다",
+                      bool(v.why) and "저널 회전" in v.why and "200 > 기동 100" in v.why, v.why)
+                v = F.check(unit, runner=_runner(head="50.0 host svc[1]: x"))[0]
+                check("#947 저널이 기동 전부터 있으면 회전으로 말하지 않는다",
+                      bool(v.why) and "저널 회전" not in v.why and "저널에 없다" in v.why, v.why)
+                v = F.check(unit, runner=_runner(grep=(1, "", "Failed to open journal: Permission denied")))[0]
+                check("#947 진짜 조회 실패는 「읽지 못했다」로 따로 말한다",
+                      bool(v.why) and "읽지 못했다" in v.why and "Permission denied" in v.why
+                      and "저널에 없다" not in v.why, v.why)
+            blocker = Path(rd) / "not-a-dir"
+            blocker.write_text("x", encoding="utf-8")
+            out = io.StringIO()
+            with patch.dict(os.environ, {"INVOCATION_ID": INVOCATION, F.RECORD_DIR_ENV: str(blocker)}), \
+                    contextlib.redirect_stdout(out):
+                record2 = F.record_startup(unit)
+            check("#947 파일 쓰기 실패는 기동을 막지 않고 한 줄 남긴다",
+                  record2.get("unit") == unit and "쓰기 실패" in out.getvalue()
+                  and out.getvalue().startswith(F.RECORD_PREFIX), out.getvalue()[-200:])
+    finally:
+        F.REPO = old_repo
+
+
 def main() -> int:
     print("\n[1] 기동 내용·목록 비교와 판정 불가 처리 (#897)")
     test_content_and_errors()
@@ -474,6 +586,8 @@ def main() -> int:
     print("\n[6] #918 의존 모듈 등급 — [주의] 재기동 권장(표시만)")
     test_dependency_grade_918()
     test_real_dependencies_918()
+    print("\n[7] #947 기동 기록 파일 사본 · 판정 불가 사유 구분")
+    test_record_file_947()
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 
