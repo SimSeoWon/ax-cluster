@@ -15,7 +15,10 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import time
+from datetime import datetime
 
 from master.relay import agents, store
 
@@ -23,6 +26,68 @@ AGENTS = store.AGENTS
 MIRROR_CAP = 600            # 화면에 내는 도구 결과 최대 글자 수 — 로그에는 전부 남는다
 LOGGED = ("system", "agent_text", "tool_call", "tool_result", "result", "error", "raw")
 CONVERSATION = ("user", "agent_text", "tool_call", "tool_result", "result", "error")
+QUOTA_MAX_AGE = 15 * 60
+QUOTA_DEFAULT_THRESHOLD = 20.0
+_QUOTA_LABELS = {"five_hour": "5시간", "seven_day": "7일"}
+
+
+def _finite(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        return float(value) if math.isfinite(value) else None
+    except OverflowError:
+        return None
+
+
+def parse_quota_threshold(value) -> float:
+    """환경변수·CLI의 잔여율 임계값. 범위를 벗어나면 거절한다."""
+    try:
+        threshold = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("한도 임계값은 0~100 사이 유한 숫자여야 한다") from None
+    if isinstance(value, bool) or not math.isfinite(threshold) or not 0 <= threshold <= 100:
+        raise ValueError("한도 임계값은 0~100 사이 유한 숫자여야 한다")
+    return threshold
+
+
+def quota_windows(snapshot, now=None) -> dict:
+    """관측 15분 이내·리셋 전인 유효 창만 돌려준다. 미래 관측은 믿지 않는다."""
+    if not isinstance(snapshot, dict):
+        return {}
+    current = _finite(time.time() if now is None else now)
+    observed = _finite(snapshot.get("observed_at"))
+    if (current is None or observed is None or observed <= 0
+            or not 0 <= current - observed <= QUOTA_MAX_AGE):
+        return {}
+    windows = snapshot.get("windows")
+    if not isinstance(windows, dict):
+        return {}
+    valid = {}
+    for key in _QUOTA_LABELS:
+        raw = windows.get(key)
+        if not isinstance(raw, dict):
+            continue
+        remaining, reset = _finite(raw.get("remaining_pct")), _finite(raw.get("resets_at"))
+        if remaining is None or not 0 <= remaining <= 100 or reset is None or reset <= current:
+            continue
+        try:
+            datetime.fromtimestamp(reset)
+        except (ValueError, OverflowError, OSError):
+            continue
+        valid[key] = {"remaining_pct": remaining, "resets_at": reset}
+    return valid
+
+
+def quota_line(agent: str, snapshot, now=None) -> str:
+    windows = quota_windows(snapshot, now=now) if agent in ("claude", "codex") else {}
+    if not windows:
+        return f"[relay] {agent} 잔여 한도 미확인"
+    parts = []
+    for key, value in windows.items():
+        reset = datetime.fromtimestamp(value["resets_at"]).astimezone().strftime("%m-%d %H:%M %Z")
+        parts.append(f"{_QUOTA_LABELS[key]} {value['remaining_pct']:g}% (리셋 {reset})")
+    return f"[relay] {agent} 잔여 한도 · " + " · ".join(parts)
 
 
 def _short(s: str, cap: int) -> str:
@@ -48,13 +113,34 @@ def header(issue: int, subject: str, log: str, seen: int, last: int, first_time:
 
 
 class Relay:
-    def __init__(self, *, root, cwd, boundary, out=print, inp=input, runner=agents.run):
+    def __init__(self, *, root, cwd, boundary, out=print, inp=input, runner=agents.run,
+                 quota_threshold=None):
         self.root, self.cwd, self.boundary = root, str(cwd), boundary
         self.out, self.inp, self.runner = out, inp, runner
         self.issue = 0
         self.subject = ""
         self.agent = ""
+        setting = os.environ.get("AX_RELAY_QUOTA_THRESHOLD", str(QUOTA_DEFAULT_THRESHOLD)) if quota_threshold is None else quota_threshold
+        try:
+            self.quota_threshold = parse_quota_threshold(setting)
+        except ValueError:
+            self.quota_threshold = QUOTA_DEFAULT_THRESHOLD
+            self.out("[relay] 한도 임계값이 유효하지 않아 기본 20%를 사용한다")
         boundary.dbg = self.dbg         # 경계 판정도 같은 디버그 로그에 남긴다
+
+    def _quota_notice(self, agent: str, snapshot, previous, now=None) -> dict:
+        self.out(quota_line(agent, snapshot, now=now))
+        warnings = dict(previous) if isinstance(previous, dict) else {}
+        windows = quota_windows(snapshot, now=now) if agent in ("claude", "codex") else {}
+        for key, value in windows.items():
+            reset, remaining = value["resets_at"], value["remaining_pct"]
+            if remaining > self.quota_threshold:
+                warnings.pop(key, None)
+            elif warnings.get(key) != reset:
+                warnings[key] = reset
+                self.out(f"[relay] {agent} {_QUOTA_LABELS[key]} 잔여 {remaining:g}% "
+                         f"(임계 {self.quota_threshold:g}% 이하). 인수인계서 갱신과 /agent 교대를 고려하세요")
+        return warnings
 
     # ── 로그 ──
     def dbg(self, where: str, msg: str) -> None:
@@ -191,7 +277,9 @@ class Relay:
         else:
             self.out(f"[relay] {agent} 끝 ({res.seconds:.1f}초)")
         # 세션 ID 는 실패해도 남긴다(다음 입력이 이어 갈 수 있다). 본 순번은 성공했을 때만 올린다.
-        fields = {"turns": st["turns"] + 1}
+        snapshot = res.quota if isinstance(res.quota, dict) and res.quota.get("source") == agent else {}
+        warnings = self._quota_notice(agent, snapshot, st.get("quota_warning"))
+        fields = {"turns": st["turns"] + 1, "quota": snapshot, "quota_warning": warnings}
         if res.session:
             fields["session"] = res.session
         if res.ok:
@@ -222,6 +310,7 @@ class Relay:
         for a in AGENTS:
             i = st["agents"][a]
             self.out(f"  {a:<6} {i['turns']}회 · 본 순번 {i['seen']} · 세션 {i['session'] or '(없음)'}")
+            self.out(quota_line(a, i.get("quota")))
         self.out(f"[relay] 기록 {store.log_path(self.root, self.issue)}")
         self.out(f"[relay] 디버그 {store.debug_path(self.root, self.issue)}")
 
@@ -286,10 +375,12 @@ def main(argv=None) -> int:
     ap.add_argument("--agent", choices=AGENTS, default="", help="바로 고를 에이전트")
     ap.add_argument("--cwd", default="", help="에이전트 작업 디렉터리(기본: 지금 디렉터리)")
     ap.add_argument("--root", default="", help="세션 저장 위치(기본: ~/ax-state/relay 또는 AX_RELAY_ROOT)")
+    ap.add_argument("--quota-threshold", type=parse_quota_threshold, default=None,
+                    help="잔여 한도 경고 임계값 0~100 (기본: AX_RELAY_QUOTA_THRESHOLD 또는 20)")
     a = ap.parse_args(argv)
     root = a.root or store.default_root()
     cwd = os.path.abspath(a.cwd or os.getcwd())
-    relay = Relay(root=root, cwd=cwd, boundary=AxIssueBoundary())
+    relay = Relay(root=root, cwd=cwd, boundary=AxIssueBoundary(), quota_threshold=a.quota_threshold)
     store.debug(root, None, "console.main", f"시작 — cwd={cwd} root={root} issue={a.issue} agent={a.agent}")
     print(f"[relay] 작업 디렉터리 {cwd}")
     if a.issue and not relay.open_issue(a.issue):
