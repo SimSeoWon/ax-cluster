@@ -32,6 +32,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from master.context_synth import fix_index as FX                  # noqa: E402
+from master.context_synth import issue_context as IC              # noqa: E402
 from master.context_synth import planner as PL                    # noqa: E402
 from master.context_synth import review_gen as RG                 # noqa: E402
 from master.context_synth import review_queue as Q                # noqa: E402
@@ -371,11 +372,114 @@ def test_verdict_contract():
     check("#894 꾸민 판정의 소비자 집계", "해시별 지적 판정 — 남음 1 · 해소 1 · 판정 없음 0" in note, note)
 
 
+_PLAN = """\
+<!-- ax:plan:begin v=2 -->
+| ID | 상태 | 목표 | 대상 | 단계 | 선행 | 검증 | 근거 |
+|---|---|---|---|---|---|---|---|
+| T1 | 완료 | 첫 조각 | Source/M/A.cpp | — | — | 빌드 | |
+| T2 | 작업중 | 둘째 조각 | Source/M/B.cpp | — | T1 | 빌드 | |
+<!-- ax:plan:end -->"""
+
+
+def make_scoped_repo(msgs=("feat(#879 T1): 첫 조각", "wip 정리", "fix(#879 T2): 둘째 조각")):
+    """init → 커밋 셋(기본: `feat(#879 T1)` → 범위 없는 커밋 → `fix(#879 T2)`). 범위 = init..끝."""
+    root = Path(tempfile.mkdtemp(prefix="ax-range-ctx-"))
+    repo = root / "repo"
+    (repo / "Source" / "M").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    git(repo, "config", "user.email", "t@e.st")
+    git(repo, "config", "user.name", "테스터")
+    (repo / "Source" / "M" / "A.cpp").write_text("void F() {}\n")
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "init")
+    base = git(repo, "rev-parse", "HEAD").stdout.strip()
+    for i, msg in enumerate(msgs):
+        (repo / "Source" / "M" / f"F{i}.cpp").write_text(f"int G{i}() {{ return {i} / 0; }}\n")
+        git(repo, "add", "-A"); git(repo, "commit", "-qm", msg)
+    end = git(repo, "rev-parse", "HEAD").stdout.strip()
+    return root, base, end
+
+
+def _range_ctx(collect, *, issue=879, msgs=None):
+    root, base, end = make_scoped_repo(*(() if msgs is None else (msgs,)))
+    enqueue_range(root, base, end, issue=issue)
+    prompts, logs = [], []
+    r = R.run_once(Paths(root), range_noter=noter, logf=logs.append, context_collect=collect,
+                   review_call=lambda p, **kw: prompts.append(p) or BODY)
+    shutil.rmtree(root)
+    return r, prompts, logs
+
+
+def _norm(prompt):
+    """임시 저장소마다 달라지는 커밋 해시를 지운다(같은 초에 만들지 않으면 해시가 다르다)."""
+    import re
+    return re.sub(r"\b[0-9a-f]{7,40}\b", "<h>", prompt)
+
+
+def test_range_issue_context():
+    """`#946` T4 — 범위 리뷰에 스펙 · 플랜 표 · 커밋별 T# 대응. 가짜 Redmine(네트워크 0)."""
+    gets = []
+
+    def fake_get(n):
+        gets.append(n)
+        return {"id": n, "subject": "범위 일감", "description": "## 배경\n범위 스펙 표지.\n\n## 플랜\n\n" + _PLAN}
+
+    def collect(**kw):
+        return IC.collect(get_issue=fake_get, track=lambda r, s: None, **kw)
+    r, p, logs = _range_ctx(collect)
+    check("🔴 #946 T4 범위 리뷰 완료", r.state == "done" and len(p) == 1, f"{r.state} {r.why}")
+    check("#946 T4 일감은 큐 meta 의 번호(given)", gets == [879], str(gets))
+    check("#946 T4 스펙 · 플랜 표 전체",
+          "범위 스펙 표지" in p[0] and "- T1 [완료] 목표: 첫 조각" in p[0]
+          and "- T2 [작업중] 목표: 둘째 조각" in p[0])
+    check("#946 T4 커밋별 T# 대응(범위 없는 커밋은 —)",
+          "[T1] feat(#879 T1): 첫 조각" in p[0] and "[—] wip 정리" in p[0]
+          and "[T2] fix(#879 T2): 둘째 조각" in p[0], p[0][-1500:])
+    check("#946 T4 범위 변형 대조 규칙(일반 + 태스크 두 줄)", "- 일감 대조:" in p[0]
+          and "이 범위의 커밋들이(커밋별 T#) 밝힌 태스크" in p[0]
+          and "다른 태스크(다른 T#)에 배정된 작업이" in p[0])
+    check("#946 T4 수정 기록 절은 그대로", "## 수정 기록 (참고" in p[0])
+    check("#946 T4 로그 한 줄", any("범위 #879 리뷰 컨텍스트 ok — 일감 절" in x and "커밋 3건" in x
+                                  for x in logs), str(logs))
+
+    # 범위 안 어느 커밋도 그 일감의 T# 를 밝히지 않았다(옛 꼴 · 다른 일감의 T#) — 태스크 두 줄 없음
+    rn, pn, logsn = _range_ctx(collect, msgs=("feat: 옛 꼴 (#879)", "wip 정리", "fix(#12 T1): 다른 일감"))
+    check("🔴 #946 T4 T# 없는 범위 — 일감 절·플랜 표는 싣고 일반 한 줄만",
+          rn.state == "done" and "범위 스펙 표지" in pn[0] and "- 일감 대조:" in pn[0]
+          and "밝힌 태스크(T#)" not in pn[0] and "다른 태스크(다른 T#)" not in pn[0])
+    check("#946 T4 T# 없는 범위 — 커밋별 대응은 모두 —", "[—] feat: 옛 꼴 (#879)" in pn[0]
+          and "[—] fix(#12 T1): 다른 일감" in pn[0], pn[0][-800:])
+    check("#946 T4 T# 없는 범위 로그", any("태스크 규칙 없음" in x for x in logsn), str(logsn))
+
+    # 기준 — 수집기 없음(기본)
+    r0, p0, logs0 = _range_ctx(None)
+    check("#946 T4 기본은 종전 — 일감 절·규칙 없음",
+          r0.state == "done" and "일감·태스크" not in p0[0] and "다른 T#" not in p0[0]
+          and not any("리뷰 컨텍스트" in x for x in logs0))
+
+    # Redmine 오류 — 리뷰는 그대로, 프롬프트는 기본과 같다
+    def err_collect(**kw):
+        return IC.collect(get_issue=lambda n: {"error": "HTTP 503"}, track=lambda r, s: None, **kw)
+    r1, p1, logs1 = _range_ctx(err_collect)
+    check("🔴 #946 T4 Redmine 오류 — 리뷰 완료 · 프롬프트는 기본과 같다",
+          r1.state == "done" and len(p1) == 1 and _norm(p1[0]) == _norm(p0[0]), f"{r1.state} {r1.why}")
+    check("#946 T4 Redmine 오류 로그", any("리뷰 컨텍스트 redmine_error — 일감 절 없음" in x for x in logs1),
+          str(logs1))
+
+    # 수집기 예외 — 호출 자리에서 삼킨다
+    def raising(**kw):
+        raise RuntimeError("범위 수집기 폭발")
+    r2, p2, logs2 = _range_ctx(raising)
+    check("🔴 #946 T4 수집기 예외 — 리뷰 완료 · 프롬프트는 기본과 같다",
+          r2.state == "done" and p2 and _norm(p2[0]) == _norm(p0[0]), f"{r2.state} {r2.why}")
+    check("#946 T4 예외 로그", any("수집 예외 RuntimeError: 범위 수집기 폭발" in x for x in logs2), str(logs2))
+
+
 def main() -> int:
     for fn in (test_enqueue_contract, test_run_range, test_bad_range_is_deterministic,
                test_end_not_yet_in_mirror_is_transient, test_notify_issue,
                test_drain_waits_across_runs,
-               test_commit_prompt_unchanged, test_verdict_contract):
+               test_commit_prompt_unchanged, test_verdict_contract,
+               test_range_issue_context):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_review_range: {PASS}/{total} 통과")

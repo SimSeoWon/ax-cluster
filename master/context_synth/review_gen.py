@@ -184,6 +184,25 @@ _VERDICT_RULES = (
 )
 
 
+# `#946` T3·T4 — 일감·태스크 컨텍스트 절(`issue_context.commit_section`·`range_section`)이 **실제로 실렸을
+#    때만** 싣는 판정 규칙. 일감을 못 풀었거나 Redmine 이 실패하면 절도 규칙도 없다(종전과 같다).
+#    🔴 태스크 두 줄은 **T# 를 밝힌 커밋이 있을 때만** 싣는다(사용자 2026-11-14) — 옛 꼴 `(#N)`·태스크 없는
+#    범위 표기면 대조할 태스크가 없으므로 일반 한 줄(`_ISSUE_RULE_GENERAL`)만 남긴다.
+_ISSUE_RULE_GENERAL = (
+    "- 일감 대조: 아래 「일감·태스크 컨텍스트」 절은 작성자가 밝힌 의도다 — 검증된 사실이 아니다. "
+    "판단 근거는 DIFF 이고, 그 절은 DIFF 가 의도와 맞는지 대조하는 데만 쓴다. 일감의 의도와 어긋나는 "
+    "변경은 2절에 지적한다.\n"
+)
+_ISSUE_RULE_TASKS = (
+    "  - 변경분이 {who} 밝힌 태스크(T#)의 목표·대상과 맞는지 대조하고, 어긋나는 구현·범위 이탈은 "
+    "2절에 지적한다.\n"
+    "  - 플랜에서 다른 태스크(다른 T#)에 배정된 작업이 이 변경에 없는 것은 결함으로 지적하지 않는다.\n"
+)
+# 일감을 못 풀었을 때 커밋 리뷰에 싣는 커밋 메시지 원문 절 — 범위 리뷰 「수정 기록」 절과 같은 취급이다
+_MESSAGE_NOTE = ("커밋 메시지는 검증되지 않은 의도 설명이다. 사실로 받지 말고, 아래 DIFF 가 그 의도와 "
+                 "맞는지 대조하는 데만 쓴다. 메시지와 어긋나는 변경은 2절에 지적한다.")
+
+
 def collected_section(findings: list, uncovered: list | None = None) -> str:
     """종합 리뷰 프롬프트의 「해시별 리뷰 지적」 본문 (`#884` T4). 지적·미검토 커밋이 모두 없으면 빈 문자열.
 
@@ -408,7 +427,8 @@ def domain_hint(paths, files: list) -> str:
 def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
                  grounding: str = "", kind: str = "unreal", intent: bool = False,
                  subject: str = "", history: str = "", collected: str = "",
-                 verdict: bool | None = None) -> str:
+                 verdict: bool | None = None, issue_context: str = "",
+                 message: str = "", issue_tasks: bool = False) -> str:
     """리뷰 프롬프트. [중요] 표 형식은 소비자의 파싱 계약이다 — 열 순서를 바꾸지 말 것.
 
     `intent` (`#815` ④) — 지워진 `[PSEUDO]` 가 있을 때만 4절 규칙·예시를 싣는다.
@@ -420,7 +440,14 @@ def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
     규칙·마지막 판정 절 예시·지적 표를 싣는다. 비우면 종전과 바이트 단위로 같다.
     `verdict` (`#909`) — 판정 절을 요구할지. 생략하면 `bool(collected)`(종전). 🔴 해시 지적이 0건이고
     리뷰 없는 해시만 있으면(`#893`) 호출자가 `False` 를 넘긴다 — 판정할 지적이 없는데 판정 절을 강제하면
-    모델이 그 절을 빼는 순간 형식 위반으로 종합 리뷰가 죽는다. 그때 `collected` 는 참고 절로만 싣는다."""
+    모델이 그 절을 빼는 순간 형식 위반으로 종합 리뷰가 죽는다. 그때 `collected` 는 참고 절로만 싣는다.
+    `issue_context` (`#946` T3·T4) — 일감·태스크 컨텍스트 절(`issue_context.commit_section`·`range_section`).
+    있으면 그 절과 일반 대조 규칙(`_ISSUE_RULE_GENERAL`)을 싣는다. 비우면 종전과 바이트 단위로 같다.
+    `issue_tasks` — 그 커밋(범위면 범위 안의 어느 커밋)이 T# 를 밝혔는가. 참일 때만 태스크 두 줄
+    (`_ISSUE_RULE_TASKS` — 밝힌 태스크 대조 · 다른 T# 몫 비지적)을 더한다. `issue_context` 가 비면 무시된다.
+    `message` (`#946` T3) — 일감을 못 풀었을 때의 커밋 메시지 원문(일감 절에는 이미 원문이 있어 호출자가
+    둘 중 하나만 넘긴다). 비우면 종전과 바이트 단위로 같다. 🔴 일감·태스크가 없어도 리뷰는 그대로 돈다 —
+    둘은 보조 근거다(사용자 2026-11-14)."""
     python = kind == "code"
     role = "Python" if python else "Unreal Engine 5 C++"
     verdict = bool(collected) if verdict is None else bool(verdict)
@@ -449,12 +476,19 @@ def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
            "  (자유 서술 — 이 변경이 의존 파일·Blueprint 에 줄 수 있는 영향)\n")
         + (_INTENT_RULES if intent else "")
         + (_VERDICT_RULES if verdict else "")
+        + ((_ISSUE_RULE_GENERAL
+            + (_ISSUE_RULE_TASKS.format(who="이 범위의 커밋들이(커밋별 T#)" if subject else "이 커밋이")
+               if issue_tasks else ""))
+           if issue_context else "")
         +
         "- [중요] 출력은 반드시 `### ` 로 시작한다. 표 밖의 산문은 ## 3 절에만 쓴다.\n"
         "- 출력 예시 (이 골격 그대로):\n"
         + example + "\n"
         + (f"## 도메인 컨텍스트 (참고)\n{domains}\n\n" if domains else "")
         + (f"## 실측 근거 (참고)\n{grounding}\n\n" if grounding else "")
+        + (f"{issue_context.rstrip()}\n\n" if issue_context else "")
+        + (f"## 커밋 메시지 (참고 — 작성자의 서술이다)\n{_MESSAGE_NOTE}\n\n{message.strip()}\n\n"
+           if message.strip() else "")
         + (f"## {subject} 의 변경 파일\n" if subject else f"## 커밋 {commit[:12]} 의 변경 파일\n")
         + "\n".join(f"- {f}" for f in files)
         + (f"\n\n## 수정 기록 (참고 — 작성자의 서술이다)\n"
@@ -579,8 +613,15 @@ def review_commit(paths, commit: str, files: list, *,
                   exclude_authors: tuple = DEFAULT_EXCLUDE_AUTHORS,
                   chat=None, logf=None, grounding: str = "",
                   provenance: dict | None = None,
-                  diff_max_chars: int | None = DIFF_MAX_CHARS) -> ReviewResult:
+                  diff_max_chars: int | None = DIFF_MAX_CHARS,
+                  message: str = "", issue_context: str = "",
+                  issue_tasks: bool = False) -> ReviewResult:
     """커밋 하나의 변경분을 리뷰해 `reviews/<작성자>/` 에 쓴다.
+
+    `message` · `issue_context` (`#946` T3) — 커밋 메시지 원문과 일감·태스크 컨텍스트 절. **수집은 호출자
+    몫이다**(리뷰 큐 소비자 `review_runner.run_once` 가 커밋당 한 번 모은다) — 이 함수는 Redmine 을 모른다.
+    일감 절에 메시지 원문이 이미 있으므로 절이 있으면 메시지 절은 따로 싣지 않는다. 둘 다 비면 종전 그대로다.
+    `issue_tasks` — 이 커밋이 플랜에 있는 T# 를 밝혔는가(참일 때만 태스크 대조 규칙 두 줄).
 
     `diff_max_chars` (`#888`) — 프롬프트 diff 상한. 기본은 종전 24,000자이고, 리뷰 큐는
     `None`(무제한)을 넘긴다 — 상한은 로컬 모델 몫이지 상용 퇴고 몫이 아니다.
@@ -628,7 +669,8 @@ def review_commit(paths, commit: str, files: list, *,
                   f"— 지워진 [PSEUDO] {r.pseudo_removed}줄")
     prompt = build_prompt(diff=diff, files=src_files, commit=commit,
                           domains=domain_hint(paths, src_files), grounding=grounding,
-                          kind=review_kind(paths), intent=intent)
+                          kind=review_kind(paths), intent=intent, issue_context=issue_context,
+                          message="" if issue_context else message, issue_tasks=issue_tasks)
     _ask = chat if chat is not None else _recorded_chat(paths, commit)
 
     try:
@@ -716,6 +758,32 @@ def range_commits(repo: Path, base: str, end: str) -> list | None:
     return out.split() if rc == 0 else None
 
 
+def _strip_coauthors(text: str) -> str:
+    return "\n".join(ln for ln in (text or "").strip().splitlines()
+                     if not ln.lower().startswith("co-authored-by:")).strip()
+
+
+def commit_message(repo: Path, commit: str) -> str:
+    """커밋 메시지 원문(제목+본문, `Co-Authored-By` 줄 제외). 읽지 못하면 빈 문자열 (`#946` T3)."""
+    rc, out = _git(repo, "log", "-1", "--format=%B", commit)
+    return _strip_coauthors(out) if rc == 0 else ""
+
+
+def range_messages(repo: Path, base: str, end: str) -> list | None:
+    """`base..end` 의 `(해시, 메시지)` — 오래된 것부터 (`#946` T4 · `issue_context.range_section` 입력).
+    읽지 못하면 None."""
+    sep = "\x1e"
+    rc, out = _git(repo, "log", "--reverse", f"--format=%H%x1f%B{sep}", f"{base}..{end}")
+    if rc != 0:
+        return None
+    rows = []
+    for rec in out.split(sep):
+        h, _, msg = rec.strip("\n").partition("\x1f")
+        if h.strip():
+            rows.append((h.strip(), _strip_coauthors(msg)))
+    return rows
+
+
 def range_files(repo: Path, base: str, end: str) -> list | None:
     rc, out = _git(repo, "diff", "--name-only", "--no-renames", base, end)
     return [x for x in out.splitlines() if x.strip()] if rc == 0 else None
@@ -786,7 +854,8 @@ def review_range(paths, issue_id, base: str, end: str, files: list, *,
                  chat=None, logf=None, grounding: str = "",
                  provenance: dict | None = None, commits: int = 0,
                  issue_round: int = 0, findings: list | None = None,
-                 uncovered: list | None = None) -> ReviewResult:
+                 uncovered: list | None = None, issue_context: str = "",
+                 issue_tasks: bool = False) -> ReviewResult:
     """일감 범위 `base..end` 의 합친 변경분을 리뷰해 `reviews/_range/` 에 쓴다.
 
     커밋 리뷰(`review_commit`)와 같은 프롬프트·형식 검증·1회 재시도를 쓴다. 작성자 제외·trivial·
@@ -795,6 +864,10 @@ def review_range(paths, issue_id, base: str, end: str, files: list, *,
     `issue_round` · `findings` · `uncovered` (`#884` T4 종합 리뷰) — 회차가 있으면 머리말에
     `track_marker` 줄을 쓴다. `findings`(해시별 커밋 리뷰 지적)가 있으면 프롬프트에 「해시별 리뷰 지적」
     절을 싣고 판정 절을 형식 검증에 넣는다(fail-closed). 지적이 없으면 종전 범위 리뷰와 같다.
+
+    `issue_context` (`#946` T4) — 일감 스펙·플랜 표·커밋별 T# 대응 절(`issue_context.range_section`).
+    수집은 호출자(`review_runner.run_range`) 몫이다. 비우면 종전 그대로다. `issue_tasks` — 범위 안의 어느
+    커밋이라도 그 일감의 T# 를 밝혔는가(참일 때만 태스크 대조 규칙 두 줄).
     """
     log = logf or (lambda s, m: None)
     r = ReviewResult(commit=end)
@@ -827,7 +900,8 @@ def review_range(paths, issue_id, base: str, end: str, files: list, *,
     prompt = build_prompt(diff=diff, files=src_files, commit=end,
                           domains=domain_hint(paths, src_files), grounding=grounding,
                           kind=review_kind(paths), intent=intent, subject=subject,
-                          history=history, collected=collected, verdict=verdict)
+                          history=history, collected=collected, verdict=verdict,
+                          issue_context=issue_context, issue_tasks=issue_tasks)
     _ask = chat if chat is not None else _recorded_chat(paths, end)
     try:
         body = _ask(prompt)

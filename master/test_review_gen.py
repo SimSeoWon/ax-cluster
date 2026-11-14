@@ -563,6 +563,85 @@ def test_diff_cap_is_opt_out():
     shutil.rmtree(root)
 
 
+# ── `#946` T3·T4 — 일감·태스크 컨텍스트 주입 ───────────────────────────────
+
+_ISSUE_SEC = ("## 일감·태스크 컨텍스트 (참고 — 작성자가 밝힌 의도다)\n의도 문장\n\n"
+              "### 일감 #946 제목\n### 이 커밋이 밝힌 태스크\n- T3 [대기] 목표: 주입\n")
+
+
+def test_issue_context_injection():
+    base = dict(diff="+x", files=["Source/M/A.cpp"], commit="c" * 40, grounding="근거")
+    plain = RG.build_prompt(**base)
+    check("#946 빈 두 인자는 종전과 같다", RG.build_prompt(**base, issue_context="", message="") == plain)
+    with_ctx = RG.build_prompt(**base, issue_context=_ISSUE_SEC, issue_tasks=True)
+    check("#946 일감 절이 실린다", _ISSUE_SEC.rstrip() in with_ctx)
+    check("#946 일감 절은 실측 근거 뒤 · 변경 파일 앞",
+          with_ctx.index("## 실측 근거") < with_ctx.index("## 일감·태스크 컨텍스트")
+          < with_ctx.index("## 커밋 cccccccccccc 의 변경 파일"))
+    check("#946 대조 규칙(이 커밋이 밝힌 태스크 · 다른 T# 몫 지적 금지)이 실린다",
+          "변경분이 이 커밋이 밝힌 태스크(T#)" in with_ctx
+          and "다른 태스크(다른 T#)에 배정된 작업이 이 변경에 없는 것은 결함으로 지적하지 않는다" in with_ctx
+          and "검증된 사실이 아니다" in with_ctx)
+    check("#946 일감 절 없으면 규칙도 없다", "다른 T#" not in plain and "일감·태스크" not in plain
+          and "일감 대조" not in plain)
+    check("#946 issue_context 없으면 issue_tasks 는 무시된다",
+          RG.build_prompt(**base, issue_tasks=True) == plain)
+    general = RG.build_prompt(**base, issue_context=_ISSUE_SEC)
+    check("🔴 #946 T# 없음(기본 issue_tasks=False) — 일반 한 줄만, 태스크 두 줄 없음",
+          "- 일감 대조:" in general and "일감의 의도와 어긋나는 변경은 2절에 지적한다" in general
+          and "밝힌 태스크(T#)" not in general and "다른 T#" not in general)
+    check("#946 T# 있음 — 일반 한 줄 + 태스크 두 줄",
+          "- 일감 대조:" in with_ctx and with_ctx.count("다른 태스크(다른 T#)") == 1)
+    msg_only = RG.build_prompt(**base, message="feat: 제목\n\n본문 줄")
+    check("#946 메시지만 — 메시지 원문 절 + 검증되지 않은 의도 문구",
+          "## 커밋 메시지 (참고 — 작성자의 서술이다)" in msg_only and "본문 줄" in msg_only
+          and "검증되지 않은 의도 설명이다" in msg_only)
+    check("🔴 #946 메시지만이면 일감 대조 규칙이 없다(일감을 못 찾았다)",
+          "다른 T#" not in msg_only and "일감·태스크" not in msg_only and "일감 대조" not in msg_only)
+    check("#946 메시지 절도 변경 파일 앞", msg_only.index("## 커밋 메시지") < msg_only.index("의 변경 파일"))
+    check("#946 공백 메시지는 절이 없다", RG.build_prompt(**base, message="  \n") == plain)
+    rng = RG.build_prompt(**base, subject="일감 #946 범위 a..b", history="### h c1",
+                          issue_context=_ISSUE_SEC, issue_tasks=True)
+    check("#946 범위 변형 규칙은 커밋별 T# 를 말한다", "이 범위의 커밋들이(커밋별 T#) 밝힌 태스크" in rng)
+    check("#946 범위 — 기존 수정 기록 절은 그대로", "## 수정 기록 (참고" in rng)
+
+
+def test_review_commit_passes_context():
+    root, p = fixture()
+    c = commit_change(p, "int F() { return 5; }\n", msg="feat(#946 T3): 주입")
+    seen = []
+    RG.review_commit(p, c, ["Source/M/A.cpp"], chat=lambda pr: seen.append(pr) or CANNED)
+    check("#946 review_commit 기본은 메시지·일감 절 없음(종전)",
+          seen and "## 커밋 메시지" not in seen[0] and "일감·태스크" not in seen[0])
+    seen.clear()
+    RG.review_commit(p, c, ["Source/M/A.cpp"], chat=lambda pr: seen.append(pr) or CANNED,
+                     message="feat(#946 T3): 주입", issue_context=_ISSUE_SEC, issue_tasks=True)
+    check("#946 일감 절이 있으면 메시지 절은 따로 안 싣는다(절 안에 원문이 있다)",
+          seen and _ISSUE_SEC.rstrip() in seen[0] and "## 커밋 메시지 (참고" not in seen[0])
+    check("#946 review_commit 이 issue_tasks 를 넘긴다", seen and "다른 태스크(다른 T#)" in seen[0])
+    seen.clear()
+    RG.review_commit(p, c, ["Source/M/A.cpp"], chat=lambda pr: seen.append(pr) or CANNED,
+                     message="feat: 옛 꼴 (#946)", issue_context=_ISSUE_SEC)
+    check("#946 review_commit issue_tasks 기본은 일반 한 줄만",
+          seen and "- 일감 대조:" in seen[0] and "다른 T#" not in seen[0])
+    seen.clear()
+    RG.review_commit(p, c, ["Source/M/A.cpp"], chat=lambda pr: seen.append(pr) or CANNED,
+                     message="feat(#946 T3): 주입")
+    check("#946 일감 절이 없으면 메시지 원문 절", seen and "## 커밋 메시지 (참고" in seen[0]
+          and "feat(#946 T3): 주입" in seen[0] and "다른 T#" not in seen[0])
+    # 메시지 읽기 도우미 — Co-Authored-By 는 뺀다
+    c2 = commit_change(p, "int F() { return 6; }\n",
+                       msg="fix(#946 T4): 범위\n\n본문\n\nCo-Authored-By: X <x@x>")
+    check("#946 commit_message 는 제목+본문, 서명 제외",
+          RG.commit_message(p.repo, c2) == "fix(#946 T4): 범위\n\n본문", repr(RG.commit_message(p.repo, c2)))
+    check("#946 commit_message 실패는 빈 문자열", RG.commit_message(p.repo, "없는커밋") == "")
+    rows = RG.range_messages(p.repo, c, c2)
+    check("#946 range_messages 는 (해시, 메시지) 오래된 것부터",
+          rows == [(c2, "fix(#946 T4): 범위\n\n본문")], str(rows))
+    check("#946 range_messages 실패는 None", RG.range_messages(p.repo, "없는", c2) is None)
+    shutil.rmtree(root)
+
+
 def main() -> int:
     for fn in (test_serial_travels_to_journal,
                test_trivial_detection, test_author_exclusion_skips_before_llm,
@@ -572,7 +651,8 @@ def main() -> int:
                test_failure_reasons_are_never_silent, test_synth_paths_log_their_gaps,
                test_generation_chain_is_codex_first_but_verification_is_not,
                test_intent_section_only_when_pseudo_removed, test_intent_format_is_fail_closed,
-               test_scope_rules, test_diff_cap_is_opt_out):
+               test_scope_rules, test_diff_cap_is_opt_out,
+               test_issue_context_injection, test_review_commit_passes_context):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_review_gen: {PASS}/{total} 통과")

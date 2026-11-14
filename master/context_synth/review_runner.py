@@ -208,10 +208,12 @@ def declarations(repo: Path, files: list, commit: str, *,
 
 def draft(diff: str, decls: str = "", *, model: str = DRAFT_MODEL,
           call=None, timeout: int = DRAFT_TIMEOUT, logf=None, kind: str = "unreal",
-          intent: bool = False) -> tuple:
+          intent: bool = False, context: str = "") -> tuple:
     """로컬 모델에 초고를 청한다. 반환 `(초고, 사유)` — 실패해도 예외를 올리지 않는다.
 
     `intent` (`#815` ④) — 지워진 `[PSEUDO]` 가 있으면 `DRAFT_INTENT` 를 덧붙인다. False 면 종전과 같다.
+    `context` (`#946` T3) — 짧은 의도 절(`issue_context.draft_section` — 제목 줄과 밝힌 태스크 행만).
+    선언부 앞에 싣는다. 비우면 종전과 같다(일감·태스크가 없는 커밋이 그렇다).
 
     🔴 [중요] **실패가 리뷰를 막지 않는다.** 호출자는 빈 초고로 ④ 를 계속한다.
     """
@@ -222,6 +224,8 @@ def draft(diff: str, decls: str = "", *, model: str = DRAFT_MODEL,
         def fn(p):                                               # noqa: E306
             return call_broker(p, model=model, timeout=timeout, num_ctx=DRAFT_NUM_CTX)
     head = f"## 선언부 (참고)\n{decls}\n\n" if decls else ""
+    if context.strip():
+        head = context.rstrip() + "\n\n" + head
     import time
     t0 = time.monotonic()
     try:
@@ -400,10 +404,71 @@ def find_final_review(paths, commit: str) -> Path | None:
     return None
 
 
+def commit_context(paths, commit: str, collect, *, logf=None) -> tuple:
+    """커밋 하나의 `(메시지 원문, 상용 절, 초고 절, T# 있음)` (`#946` T3). 커밋당 한 번 부른다.
+
+    `collect` — `issue_context.collect` 꼴의 수집기. None 이면 수집하지 않는다(메시지도 안 읽는다 —
+    종전 그대로). 🔴 [중요] **일감·태스크는 보조 근거다 — 없거나 실패해도 리뷰는 그대로 돈다**
+    (사용자 2026-11-14). 수집기는 예외를 올리지 않게 만들어졌지만 여기서도 한 번 더 감싼다 —
+    주입된 수집기·렌더러의 예외가 리뷰를 막으면 안 된다. 어느 갈래든 로그 한 줄을 남긴다.
+    상용 절이 비면(일감 못 풂·Redmine 실패) 호출자는 메시지 원문만 싣는다.
+    `T# 있음` — 메시지가 밝힌 태스크가 플랜에서 하나라도 풀렸는가. 거짓이면 퇴고 프롬프트가 태스크
+    대조 규칙 두 줄을 빼고 일반 한 줄만 싣는다(옛 꼴 `(#N)` · 태스크 없는 범위 표기).
+    """
+    log = logf or (lambda m: None)
+    if collect is None:
+        return "", "", "", False
+    from . import issue_context as ic                                # noqa: PLC0415
+    msg = rg.commit_message(Path(paths.repo), commit)
+    try:
+        ctx = collect(sha=commit, message=msg, root=paths.root, logf=log)
+        section, short, status = ic.commit_section(ctx, msg), ic.draft_section(ctx, msg), ctx.status
+        tasks = bool(section) and bool(ctx.tasks)
+    except Exception as e:                                         # noqa: BLE001 — 리뷰를 막지 않는다
+        section, short, status, tasks = "", "", f"수집 예외 {type(e).__name__}: {e}", False
+    log(f"[리뷰큐] {commit[:8]} 리뷰 컨텍스트 {status} — 상용 "
+        + (f"일감 절 {len(section)}자 · 태스크 규칙 {'있음' if tasks else '없음'}" if section
+           else (f"메시지만 {len(msg)}자" if msg else "없음"))
+        + f" · 초고 절 {len(short)}자")
+    return msg, section, short, tasks
+
+
+def range_context(paths, issue, base: str, end: str, collect, *, logf=None) -> str:
+    """범위 리뷰의 `(일감 절, T# 있음)` (`#946` T4) — 스펙 · 플랜 표 · 커밋별 T# 대응. 못 만들면
+    `("", False)`(종전 그대로).
+
+    `T# 있음` — 범위 안의 어느 커밋이라도 제목 범위에 **그 일감의** T# 를 밝혔는가. 거짓이면 퇴고
+    프롬프트가 태스크 대조 규칙 두 줄을 빼고 일반 한 줄만 싣는다.
+    `collect` 가 None 이면 수집하지 않는다. 예외는 삼키고 로그 한 줄을 남긴다(커밋 경로와 같은 규약).
+    """
+    log = logf or (lambda m: None)
+    if collect is None:
+        return "", False
+    from master import commit_scope                                 # noqa: PLC0415
+    from . import issue_context as ic                                # noqa: PLC0415
+    try:
+        commits = rg.range_messages(Path(paths.repo), base, end) or []
+        ctx = collect(issue_id=int(issue), root=paths.root, logf=log)
+        section, status = ic.range_section(ctx, commits), ctx.status
+        tasks = bool(section) and any(
+            s.issue_id == ctx.issue_id and s.tasks
+            for _h, m in commits for s in commit_scope.parse(commit_scope.subject_of(m)))
+    except Exception as e:                                         # noqa: BLE001 — 리뷰를 막지 않는다
+        commits, section, status, tasks = [], "", f"수집 예외 {type(e).__name__}: {e}", False
+    log(f"[리뷰큐] 범위 #{issue} 리뷰 컨텍스트 {status} — "
+        + (f"일감 절 {len(section)}자 · 커밋 {len(commits)}건 · 태스크 규칙 {'있음' if tasks else '없음'}"
+           if section else "일감 절 없음"))
+    return section, tasks
+
+
 def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
              write=None, review_call=None, range_noter=None,
-             exclude=(), scope_chat=None) -> RunnerResult | None:
+             exclude=(), scope_chat=None, context_collect=None) -> RunnerResult | None:
     """큐에서 하나를 꺼내 로컬 초안 → Antigravity 최종 리뷰까지 만든다.
+
+    `context_collect` (`#946`) — 일감·태스크 컨텍스트 수집기(`issue_context.collect`). **기본 None = 수집 안 함**
+    (종전 그대로 · Redmine 을 부르지 않는다). 운영 진입점 `main()` 만 실물 수집기를 넘긴다 — 단위 검사가
+    추적 기록(issue_track)이 있는 트윈에서 이 함수를 불러도 실 Redmine 에 닿지 않게 하려는 것이다.
 
     `exclude` — 꺼내지 않을 항목 id(`#880`, `drain` 이 이번 회차에 꺼낸 것을 넘긴다).
     `scope_chat` — 범위 플랜(`kind=scope`, `#639`)의 플랜 생성 호출 대역(테스트 자리)."""
@@ -417,7 +482,7 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
 
     if item.get("kind") == "range":
         return run_range(paths, item, res, logf=log, review_call=review_call,
-                         range_noter=range_noter)
+                         range_noter=range_noter, context_collect=context_collect)
     if item.get("kind") == "scope":
         # `#639` — 범위 플랜. 산출물은 리뷰가 아니라 플랜이다(`plans/_scope/`). 본체는 `scope_plan`.
         from . import scope_plan                                   # noqa: PLC0415
@@ -486,6 +551,9 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
         res.state = "done"
         return res
 
+    # `#946` T3 — 커밋당 한 번 모은다. 초고에는 짧은 절만, 퇴고에는 일감 절(없으면 메시지 원문)을 싣는다.
+    message, issue_section, draft_ctx, issue_tasks = commit_context(paths, commit, context_collect, logf=log)
+
     if existing:
         try:
             body = draft_body(existing)
@@ -504,7 +572,7 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
             # 4절 요청 여부는 퇴고(`review_commit`)와 같은 결정적 판정이다 — 로그 한 줄은 그쪽이 남긴다
             body, why = draft(diff, decls, model=model, call=draft_call, logf=log,
                               kind=rg.review_kind(paths),
-                              intent=rg.removed_pseudo_lines(diff) > 0)
+                              intent=rg.removed_pseudo_lines(diff) > 0, context=draft_ctx)
         res.drafted, res.draft_why = bool(body), why
         fn = write or write_draft
         try:
@@ -550,7 +618,8 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
             reviewed = rg.review_commit(
                 paths, commit, src, chat=ask, grounding=grounding_text(body, decls),
                 provenance={"draft_model": model, "review_model": label},
-                diff_max_chars=None,
+                diff_max_chars=None, message=message, issue_context=issue_section,
+                issue_tasks=issue_tasks,
                 logf=lambda _kind, msg: log(f"[리뷰큐] {label} {msg}"))
     if reviewed.error or not reviewed.written or not reviewed.format_ok:
         if reviewed.written and not reviewed.format_ok:
@@ -830,7 +899,7 @@ def retry_range_notes(paths, *, noter=None, logf=None) -> int:
 
 
 def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
-              review_call=None, range_noter=None) -> RunnerResult:
+              review_call=None, range_noter=None, context_collect=None) -> RunnerResult:
     """일감 범위 항목(`kind=range`, `#879`) — 합친 diff 를 Antigravity 로 한 번 리뷰한다.
 
     커밋 경로와 다른 점: 로컬 초고를 만들지 않는다(근거는 결정적 선언부만 — 초고는 사실 게이트를
@@ -921,6 +990,8 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
         notify_range(paths, item["id"], noter=range_noter, logf=log)
         return res
     decls = declarations(repo, src, end)
+    # `#946` T4 — 일감 스펙·플랜·커밋별 T# 대응. 수집기가 없거나 실패하면 빈 절(종전 그대로)
+    issue_section, issue_tasks = range_context(paths, issue, base, end, context_collect, logf=log)
 
     from contextlib import ExitStack                              # noqa: PLC0415
     from ..work import usage as usage_mod                         # noqa: PLC0415
@@ -947,6 +1018,7 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
                 paths, issue, base, end, src, chat=ask, grounding=grounding_text("", decls),
                 provenance={"review_model": label}, commits=len(commits),
                 issue_round=rnum, findings=findings, uncovered=uncovered,
+                issue_context=issue_section, issue_tasks=issue_tasks,
                 logf=lambda _kind, msg: log(f"[리뷰큐] {label} {msg}"))
     if reviewed.error or not reviewed.written or not reviewed.format_ok:
         if reviewed.written and not reviewed.format_ok:
@@ -1014,7 +1086,7 @@ def main(argv=None) -> int:
 
     from ..context_search.paths import resolve
     from ..projects.config import ConfigError, Registry
-    from . import issue_progress
+    from . import issue_context, issue_progress
 
     ap = argparse.ArgumentParser(description="리뷰 큐 소비자 (#636)")
     ap.add_argument("--project", default="", help="하나만 처리 (기본: 등록된 전부)")
@@ -1064,7 +1136,9 @@ def main(argv=None) -> int:
             if not before.get("pending"):
                 continue
             log(f"[리뷰큐] {name} 대기 {before['pending']}건 — 최대 {a.limit}건 처리")
-            for r in drain(paths, limit=a.limit, logf=log, model=a.model, deadline=deadline):
+            # `#946` — 운영 진입점만 일감·태스크 컨텍스트를 모은다(실 Redmine 읽기 · 실패는 리뷰를 막지 않는다)
+            for r in drain(paths, limit=a.limit, logf=log, model=a.model, deadline=deadline,
+                           context_collect=issue_context.collect):
                 total += 1
                 done += 1 if r.state == "done" else 0
                 failed += 1 if r.state == "failed" else 0

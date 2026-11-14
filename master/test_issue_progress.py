@@ -34,6 +34,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from master.context_synth import issue_context as IC              # noqa: E402
 from master.context_synth import issue_progress as P              # noqa: E402
 from master.context_synth import issue_track as T                 # noqa: E402
 from master.context_synth import review_queue as Q                # noqa: E402
@@ -484,13 +485,18 @@ def test_main_이_drain_앞뒤로_부른다():
     P._default_noter = lambda n, *, notes: calls.append((n, notes)) or "기록"
     R.draft = lambda *a, **kw: ("없음", "")
     R.agy_only = lambda _p, **_kw: _review_body()
+    # `#946` — main() 은 일감 컨텍스트를 모은다. 실 Redmine 대신 대역(추적 기록이 #884 를 푼다)
+    gets, orig_get = [], IC._default_get_issue
+    IC._default_get_issue = lambda n: gets.append(n) or {"error": "테스트 대역"}
     try:
         rc = R.main(["--limit", "1"])
         h = next(x for x in T.current(twin, N)["hashes"] if x["sha"] == shas[0])
         check("⑨ 같은 회차에 done · 노트", rc == 0 and h["state"] == "done" and h["noted"]
               and len(calls) == 1 and f"`{shas[0][:12]}` R" in calls[0][1], f"{h} {calls}")
+        check("#946 ⑨ main 의 일감 조회는 대역이 받았다(실 Redmine 0)", gets == [N], str(gets))
     finally:
         P._default_noter, R.draft, R.agy_only = orig_noter, orig_draft, orig_agy
+        IC._default_get_issue = orig_get
         if old_env is None:
             os.environ.pop("AX_PROJECTS_ROOT", None)
         else:

@@ -39,6 +39,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from master import issue_lock as IL                                # noqa: E402
+from master.context_synth import issue_context as IC              # noqa: E402
 from master.context_synth import issue_track as IT                # noqa: E402
 from master.context_synth import issue_progress as IP             # noqa: E402
 from master.context_synth import review_gen as RG                 # noqa: E402
@@ -954,6 +955,150 @@ def test_agy_하트비트_배선():
           seen.get("agy") is marker and seen.get("codex") is marker, str(seen))
 
 
+# ── `#946` T3 — 일감·태스크 컨텍스트 (가짜 Redmine — 네트워크 0) ──────────────
+
+_PLAN946 = """\
+<!-- ax:plan:begin v=2 -->
+| ID | 상태 | 목표 | 대상 | 단계 | 선행 | 검증 | 근거 |
+|---|---|---|---|---|---|---|---|
+| T1 | 완료 | 제목 범위 파서 | master/commit_scope.py | — | — | test_commit_scope 통과 | abc1234 |
+| T3 | 작업중 | 커밋 리뷰 주입 | master/context_synth/review_gen.py | — | T1 | 리뷰 로그 | |
+<!-- ax:plan:end -->"""
+_DESC946 = "## 배경\n스펙 본문 표지 — 일감 본문.\n\n## 플랜\n\n" + _PLAN946
+
+
+def _repo_with_msg(msg):
+    root, _ = make_repo()
+    repo = Path(root) / "repo"
+    (repo / "Source" / "M" / "A.cpp").write_text(
+        "void AFoo::Bar() {\n  int y = 2;\n  y = y / 0;\n}\n", encoding="utf-8")
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", msg)
+    return root, git(repo, "rev-parse", "HEAD").stdout.strip()
+
+
+def _run_ctx(msg, *, get_issue=None, collect="fake", track=None):
+    """한 커밋을 돌려 (결과, 초고 프롬프트, 퇴고 프롬프트들, 로그, Redmine 호출) 을 돌려준다."""
+    root, head = _repo_with_msg(msg)
+    Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
+    gets, drafts, reviews, logs = [], [], [], []
+
+    def fake_get(n):
+        gets.append(n)
+        return get_issue(n) if get_issue else {"id": n, "subject": "리뷰 일감", "description": _DESC946}
+    if collect == "fake":
+        collect = lambda **kw: IC.collect(get_issue=fake_get, track=track or (lambda r, s: None), **kw)  # noqa: E731
+    r = R.run_once(Paths(root), draft_call=lambda p: drafts.append(p) or "없음",
+                   review_call=lambda p, **kw: reviews.append(p) or _review_body(),
+                   logf=logs.append, context_collect=collect)
+    shutil.rmtree(root)
+    return r, drafts, reviews, logs, gets
+
+
+def test_일감_컨텍스트_주입():
+    # 기준 — 수집기 없음(기본): 종전 그대로, 메시지·일감 절 없음
+    r0, d0, v0, l0, _ = _run_ctx("feat(#946 T3): 주입", collect=None)
+    check("#946 기본(수집기 없음)은 종전 — 절 없음",
+          r0.state == "done" and "## 커밋 메시지" not in v0[0] and "일감·태스크" not in v0[0]
+          and not any("리뷰 컨텍스트" in x for x in l0), str(l0[-3:]))
+    check("#946 기본 초고에도 절 없음", d0 and "이 커밋의 의도" not in d0[0])
+
+    # ① 범위 + 태스크 — 퇴고엔 일감 절·규칙, 초고엔 짧은 절만
+    r, d, v, logs, gets = _run_ctx("feat(#946 T3): 주입\n\n본문 설명")
+    check("🔴 #946 ① 리뷰 완료", r.state == "done" and len(v) == 1, f"{r.state} {r.why}")
+    check("#946 ① 퇴고에 일감 절 · 스펙 · 해당 태스크 · 메시지 원문",
+          "## 일감·태스크 컨텍스트" in v[0] and "스펙 본문 표지" in v[0] and "- T3 [작업중]" in v[0]
+          and "본문 설명" in v[0])
+    check("#946 ① 퇴고에 대조 규칙(일반 + 태스크 두 줄)", "- 일감 대조:" in v[0]
+          and "변경분이 이 커밋이 밝힌 태스크(T#)" in v[0] and "다른 태스크(다른 T#)에 배정된 작업이" in v[0])
+    check("#946 ① 메시지 원문 절은 따로 없다(일감 절 안에 있다)", "## 커밋 메시지 (참고" not in v[0])
+    check("#946 ① 초고엔 짧은 절(태스크 행)만 — 스펙·나머지 태스크 없음",
+          "## 이 커밋의 의도" in d[0] and "- T3 [작업중]" in d[0]
+          and "스펙 본문 표지" not in d[0] and "제목 범위 파서" not in d[0])
+    check("#946 ① 초고 절은 DIFF 앞", d[0].index("## 이 커밋의 의도") < d[0].index("## DIFF"))
+    check("#946 ① Redmine 은 한 번", gets == [946], str(gets))
+    check("#946 ① 로그 — 수집 한 줄 + 주입 요약 한 줄",
+          any(x.startswith("[리뷰 컨텍스트] #946 T3 — ok") for x in logs)
+          and any("리뷰 컨텍스트 ok — 상용 일감 절" in x for x in logs), str(logs))
+
+    # 초고에 넣지 않는 경우의 기준 프롬프트(수집기 없음)와 비교하기 위해 같은 메시지로 다시 잰다
+    def same_draft(msg, **kw):
+        _, base, _, _, _ = _run_ctx(msg, collect=None)
+        out = _run_ctx(msg, **kw)
+        return out, base[0] == out[1][0]
+
+    # ② 범위 전혀 없음 — Redmine 안 부름, 메시지 절만, 규칙 없음, 초고 종전
+    (r, d, v, logs, gets), same = same_draft("change 그냥 고침")
+    check("🔴 #946 ② 범위 없음 — 리뷰 완료 · 재시도 없음", r.state == "done" and len(v) == 1, f"{r.state} {r.why}")
+    check("#946 ② Redmine 을 부르지 않는다", gets == [], str(gets))
+    check("#946 ② 메시지 원문 절만 · 일감 절·규칙 없음",
+          "## 커밋 메시지 (참고" in v[0] and "change 그냥 고침" in v[0]
+          and "일감·태스크" not in v[0] and "다른 T#" not in v[0])
+    check("#946 ② 초고는 종전과 바이트 단위로 같다", same)
+    check("#946 ② 로그 한 줄", any("리뷰 컨텍스트 no_issue — 상용 메시지만" in x for x in logs), str(logs))
+
+    # ③ 옛 꼴 (#N) · 태스크 없음 — 일감 절은 실리고(메시지에 T# 없음 표기) 초고는 종전
+    (r, d, v, logs, gets), same = same_draft("feat: 옛 꼴 제목 (#946)")
+    check("#946 ③ 옛 꼴 — 리뷰 완료", r.state == "done", f"{r.state} {r.why}")
+    check("#946 ③ 일감 절 + (메시지에 T# 가 없다)",
+          "## 일감·태스크 컨텍스트" in v[0] and "(메시지에 T# 가 없다)" in v[0], v[0][:200])
+    check("#946 ③ 초고는 종전 그대로(밝힌 태스크가 없다)", same)
+    check("🔴 #946 ③ T# 없음 — 일반 대조 한 줄만, 태스크 두 줄 없음",
+          "- 일감 대조:" in v[0] and "밝힌 태스크(T#)" not in v[0] and "다른 태스크(다른 T#)" not in v[0])
+    check("#946 ③ 로그에 태스크 규칙 없음", any("태스크 규칙 없음" in x for x in logs), str(logs))
+
+    # ③' 범위 표기 있으나 T# 가 플랜에 없다(task_missing) — 태스크 규칙 없음
+    r, d, v, logs, gets = _run_ctx("feat(#946 T9): 없는 태스크")
+    check("#946 ③' 플랜에 없는 T# — 일감 절은 실리고 태스크 두 줄 없음",
+          r.state == "done" and "## 일감·태스크 컨텍스트" in v[0] and "다른 태스크(다른 T#)" not in v[0]
+          and "- 일감 대조:" in v[0])
+
+    # ④ Redmine 오류 — 리뷰는 그대로, 메시지 절만, 규칙 없음
+    (r, d, v, logs, gets), same = same_draft("feat(#946 T3): 주입",
+                                             get_issue=lambda n: {"error": "HTTP 500"})
+    check("🔴 #946 ④ Redmine 오류 — 리뷰 완료 · 퇴고 1회", r.state == "done" and len(v) == 1,
+          f"{r.state} {r.why} {len(v)}")
+    check("#946 ④ 메시지 절만 · 일감 절·규칙 없음",
+          "## 커밋 메시지 (참고" in v[0] and "일감·태스크" not in v[0] and "다른 T#" not in v[0]
+          and "일감 대조" not in v[0])
+    check("#946 ④ 초고 종전", same)
+    check("#946 ④ 로그에 redmine_error", any("리뷰 컨텍스트 redmine_error" in x for x in logs), str(logs))
+
+    # ④' Redmine 예외
+    def boom_get(n):
+        raise ConnectionError("연결 거부")
+    r, d, v, logs, gets = _run_ctx("feat(#946 T3): 주입", get_issue=boom_get)
+    check("#946 ④' Redmine 예외 — 리뷰 완료 · 메시지 절만",
+          r.state == "done" and "## 커밋 메시지 (참고" in v[0] and "일감·태스크" not in v[0])
+
+    # ⑤ 수집기 자체가 예외 — 호출 자리에서 한 번 더 감싼다(방어 2중)
+    def raising(**kw):
+        raise RuntimeError("수집기 폭발")
+    (r, d, v, logs, gets), same = same_draft("feat(#946 T3): 주입", collect=raising)
+    check("🔴 #946 ⑤ 수집기 예외 — 리뷰 완료 · 실패 아님", r.state == "done" and len(v) == 1,
+          f"{r.state} {r.why}")
+    check("#946 ⑤ 메시지 절은 남고 일감 절·규칙 없음",
+          "## 커밋 메시지 (참고" in v[0] and "일감·태스크" not in v[0] and "다른 T#" not in v[0])
+    check("#946 ⑤ 초고 종전", same)
+    check("#946 ⑤ 로그 한 줄에 예외", any("수집 예외 RuntimeError: 수집기 폭발" in x for x in logs), str(logs))
+
+    # ⑥ 추적 기록(마감 등록)이 메시지보다 먼저 — 일감은 추적, 태스크는 메시지
+    r, d, v, logs, gets = _run_ctx("wip", track=lambda root, sha: 946)
+    check("#946 ⑥ 추적 기록으로 일감을 푼다", gets == [946] and "## 일감·태스크 컨텍스트" in v[0], str(gets))
+    check("#946 ⑥ 메시지에 T# 없음 — 태스크 두 줄 없음", "다른 태스크(다른 T#)" not in v[0])
+
+
+def test_main_은_실물_수집기를_넘긴다():
+    """운영 진입점만 수집기를 넘긴다 — drain 기본(run_once 기본)은 None 이다."""
+    import inspect
+    src = inspect.getsource(R.main)
+    check("#946 main 이 issue_context.collect 를 drain 에 넘긴다",
+          "context_collect=issue_context.collect" in src)
+    check("#946 run_once 기본은 수집 안 함",
+          inspect.signature(R.run_once).parameters["context_collect"].default is None)
+    check("#946 run_range 기본은 수집 안 함",
+          inspect.signature(R.run_range).parameters["context_collect"].default is None)
+
+
 if __name__ == "__main__":
     for fn in (test_로컬뒤_antigravity가_퇴고한다,
                test_로컬_없음이어도_antigravity가_본다,
@@ -971,7 +1116,8 @@ if __name__ == "__main__":
                test_범위_미러부재와_조회오류를_구분하고_도착하면_이어간다,
                test_agy_하트비트_배선, test_antigravity_작성분은_codex가_본다,
                test_마감_등록_전에도_잠금으로_가른다, test_다른_계열은_agy_그대로,
-               test_codex_실패는_폴백하지_않는다):
+               test_codex_실패는_폴백하지_않는다,
+               test_일감_컨텍스트_주입, test_main_은_실물_수집기를_넘긴다):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)
