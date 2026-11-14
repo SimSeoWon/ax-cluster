@@ -27,7 +27,7 @@
 
 **남은 것 — T7 (「작업중」)**:
 
-1. **공식 통합 검사 결과 확인.** Claude 가 `d2363ac` 시점 코드로 백그라운드 실행했고 중단 시점에 33번째 검사를 지나고 있었다(그 뒤 커밋은 문서뿐). 로그 `/tmp/claude-1000/-home-sim/0910090d-a3ae-48b1-ab07-9db26f1114a0/scratchpad/integration.log` 의 마지막 줄 `rc=`. 없거나 rc≠0 이면 worktree 에서 다시 돌린다: `AX_PROJECTS_ROOT=/home/sim/ax-cluster /home/sim/ax-cluster/.venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v`. 실패하면 고치지 말고 보고한다.
+1. **공식 통합 검사는 통과했다** — `d2363ac` 시점 코드(그 뒤 커밋은 문서뿐), **196건 · 195.908초 · OK · rc0**, `test_relay` 113건 포함. 로그 `/tmp/claude-1000/-home-sim/0910090d-a3ae-48b1-ab07-9db26f1114a0/scratchpad/integration.log`. 리포트 180 에는 아직 적지 않았다.
 2. **`master/test_*.py` 전수**(커밋 전 전수 규칙) — 아직 안 돌렸다.
 3. 리포트 180 에 통합·전수 결과를 적고 커밋 → T7 「완료」 → `ax-projects:issue_finish_tool(942)` 미리보기 확인 뒤 `confirm=True` → `.venv/bin/python -m master.issue_wrapup 942 --project AXCluster`(인수인계서 갱신 커밋·push 뒤 재실행) → Redmine 결과 노트.
 4. 새 모듈은 상주 서비스가 import 하지 않는다 — 재기동 판정은 wrapup 이 한다(추정하지 않는다).
