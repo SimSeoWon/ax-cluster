@@ -1,7 +1,15 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-14 — #950(마감 추적 조기 skipped — 워터마크 ≠ 걷기 커서 · 닫힌 회차 조회) 마감 완료(main `ee90bef`, Claude). 직전 #947은 2회차까지 마감·배달 완료.
+> 2026-11-14 — #949(/usage 대시보드 Gemini 과소 집계 — 캐시 읽기·모두 보기) 마감 완료(main `aadb77b`, Claude). 직전 #950·#947 마감·배달 완료.
 > 다음 일감은 사용자 선택을 기다린다. 항목·진행은 Redmine, 지난 상세는 Git 이력·리포트로 확인한다.
+
+## 직전 마감 — #949 완료
+
+- 승인: 「949번 진행하자」 → 본문 주장 셋을 실데이터로 대조(모두 맞음) → 플랜·「이 세션이 직접」. 🔴 구현 중 #728·#748 계약(agy 합계 캐시 제외 · 모두 보기 gemini=파견만, #748 은 같은 변경을 사용자가 반려한 이력) 충돌 발견 → 보고 후 사용자 「계약을 바꾼다(플랜 그대로)」(Redmine #949 노트). 작성 계열 `['claude']`.
+- 커밋 `8c86c29`(T1: gemini 합계 = 입력+출력+캐시 읽기·생성) · `034a13c`(T2: `source=all` gemini = 세션 + 짝 없는 파견, 짝 = 입출력 합 동일·구간 −5s/+300s, 짝 세션은 파견의 프로젝트·일감 상속) · `aadb77b`(리포트 `reports/188-949-usage-gemini-accounting.md`).
+- 실데이터 11-13 모두 보기: gemini 1.7%(1.41M) → 16.3%(15.4M) · AXCluster 귀속 1.41M→4.50M · 파견 28 전부 짝(이중 0). 「호출」 단위가 세션 턴으로 바뀐다(Claude·Codex 와 같은 단위).
+- 검사: `test_usage_dashboard` 13 · 사용량 검사 6종 rc0 · 공식 통합 OK. wrapup: `ax-projects` 의존 변경 재기동(20:29:00) · 판정 깨끗. 이 커밋 직후 배달.
+- 안 함: 짝 없는 대화형 agy(파견 밖·run_command 없음)의 프로젝트 귀속 — 근거 없음, 전체 보기에만 든다.
 
 ## 직전 마감 — #950 완료
 
@@ -11,19 +19,6 @@
 - 검사: `test_issue_progress` 133 · `test_issue_track` 111 · `test_review_runner` 171 · `test_issue_link` 40 · `test_issue_context` OK · 공식 통합 `Ran 199 tests / OK`. 실물: `902f4e99` → 일감 368 · 계열 `('codex',)`.
 - `issue_finish` 전 단계 완료 · 「완료」·100. wrapup: `ax-task-queue`(20:10:02)·`ax-projects`(20:10:07) 의존 변경 재기동, 판정 깨끗 · broker 최신. 이 커밋 직후 배달.
 - 안 잰 것: 걷기가 멈춘 새 회차가 waiting 으로 버티다 이어지는 운영 실물(확인: `색인 걷기가 아직 안 지났다` 로그). 이미 닫힌 #368 회차 기록은 소급하지 않았다.
-
-## 직전 마감 — #947 완료
-
-- 발단: #946 wrapup 의 `ax-projects` 「의존 판정 불가(journalctl rc=1)」 → rc=1 은 `--grep` 무매치(기록 부재). 저널 4.0G 상한·가장 오래된 줄 10:10:02 > 기동 10:09:42. 원인은 snap `nordvpnd` AppArmor DENIED audit(10분 91,535건). 🔴 **사용자 결정: 마스터에서 NordVPN 제거**(`snap remove --purge nordvpn`, 크롬 확장도 사용자가 제거) · `ax-projects` 재기동(19:35:55, 승인).
-- 승인: 「ax-projects 재기동하고 일감도 등록해줘」 → #947 등록 · 「947번 진행해줘」 · 작업 방식 「이 세션이 직접」. 작성 계열 `['claude']`.
-- 커밋 `b9ec8e8`(T1·T2: `record_startup` 이 `~/ax-state/service-code/<unit>.json` 에도 원자적 기록(`AX_SERVICE_CODE_DIR`), 실패해도 기동 계속 · `_record` 파일 우선·저널 폴백 · 사유 「기록 없음」/「저널 회전 가능(시각)」/「읽지 못했다 rc+stderr」) · `24c65a5`(리포트 `reports/186-947-service-code-record-file.md`).
-- 검사: `test_service_freshness` 통과 81 · `test_client_bundle` 661/661 · `test_issue_wrapup` 39/39 · `test_service_restart` 75 · 공식 통합 `Ran 199 tests / OK` · pyflakes 0.
-- `issue_finish(confirm=True)` 전 단계 완료 · 「완료」·100. 리뷰 연결 「이음 0 · 큐에 없음 2」.
-- wrapup(1회차): `ax-task-queue`(19:48:17)·`ax-projects`(19:48:22) 의존 변경 재기동 → 기록 파일 생성 · 저널 grep 없이 파일로 판정 확인.
-- 2회차(T4): `ax-broker` 를 사용자 승인으로 재기동(19:50:09)했더니 `ProtectHome=read-only` 로 파일 쓰기 실패(EROFS — fail-soft 로 저널 폴백). 사용자 「ⓐ로 진행해줘」 → `master/systemd/ax-broker.service` 에 `ReadWritePaths=-/home/sim/ax-state/service-code` 한 줄 · 유닛 샌드박스 회귀 검사(`test_units_can_write_record_947`, 수정 전 유닛이면 실패) · `test_service_freshness` 84 · 공식 통합 OK. 커밋 `3e46d78`.
-- 마감 뒤 설치: pkexec 로 `/etc/systemd/system/ax-broker.service` 반영(저장소와 동일 확인) · daemon-reload · broker 재기동 19:56:39 → `ax-broker.json` 생성. **세 서비스 모두 파일로 판정, 저널 grep 0회, 판정 깨끗.**
-- [주의] 실측: `ax-projects` 는 `ProtectSystem=strict` + `ProtectHome=false` 에서 `ax-state` 쓰기 허용 없이도 파일을 썼다 — strict 가 왜 막지 않았는지는 설명 못 했다(검사 기준은 실측대로 ProtectHome 기준).
-- 리뷰 연결 「큐에 없음」(1회차 2 · 2회차 1). 이 커밋 직후 배달.
 
 ## #383 에서 실제로 안 잰 것
 
@@ -46,7 +41,7 @@
 
 - 마스터 마지막 담당 기록은 claude(2026-11-14 15:48:34, 사용자 지시 — #383을 수행한 Claude 세션)다. #368 인계 때 이미 claude라 재기록하지 않았다. 워커 전역 codex(state, 2026-10-18). 모드 변경 없음.
 - 인계서는 한 벌로 덮어쓰며 이전 완료 내역을 누적하지 않는다(#842).
-- 미처리 리뷰: #929 R314/R317 · #930 R315/R316 · #931 R325 · #934 R326 · #829 R328/R329 · #942 R351~R355 · #383·#943·#944·#368·#946·#947·#950(도착 미확인). 최신은 각 Redmine 노트로 확인한다.
+- 미처리 리뷰: #929 R314/R317 · #930 R315/R316 · #931 R325 · #934 R326 · #829 R328/R329 · #942 R351~R355 · #383·#943·#944·#368·#946·#947·#950·#949(도착 미확인). 최신은 각 Redmine 노트로 확인한다.
 - 결정·구현 대기: #326 · #935 · #839 · #741 · #738 · #941.
 - 조건 대기: #272(ModularStage 마운트), #211·#855(KR 정답 30건·RAG 실사용 검증), #858(#856 선행).
 - `.33` 첫 실제 요청자 마감·연결, 실제 BC-250 poweroff 미확인. 자동 로드 문서의 M7 open 서술 미정리(M8 열림).
