@@ -568,6 +568,35 @@ def test_record_file_947() -> None:
         F.REPO = old_repo
 
 
+def test_units_can_write_record_947() -> None:
+    """#947 — 상주 유닛이 홈을 읽기 전용으로 묶으면 기록 디렉터리를 쓰기 허용에 넣어야 한다.
+
+    실측 2026-11-14: ax-broker 는 `ProtectHome=read-only` 라 `[Errno 30] Read-only file system` 으로
+    기록 파일을 못 썼다. 단위 검사는 임시 디렉터리라 그 경로를 못 봤다 — 유닛 파일을 직접 읽는다."""
+    default = Path.home() / "ax-state" / "service-code"
+    for unit in F.RESIDENT:
+        path = Path(__file__).resolve().parent / "systemd" / f"{unit}.service"
+        text = path.read_text(encoding="utf-8")
+        values = {}
+        for line in text.splitlines():
+            line = line.strip()
+            if "=" in line and not line.startswith("#"):
+                key, _, value = line.partition("=")
+                values.setdefault(key.strip(), []).append(value.strip())
+        home = (values.get("ProtectHome") or ["false"])[-1]
+        system = (values.get("ProtectSystem") or ["false"])[-1]
+        # [주의] 기준은 **실측**이다(2026-11-14): `ProtectSystem=strict` + `ProtectHome=false` 인 ax-projects 는
+        #    `ax-state` 쓰기 허용 없이도 기록 파일을 썼고(19:48:25), 막힌 것은 `ProtectHome=read-only` 인
+        #    ax-broker 뿐이었다. strict 가 왜 막지 않았는지는 설명하지 못했다 — 실물 쓰기 결과를 따른다.
+        if home in ("false", "no"):
+            check(f"#947 {unit} 는 홈 쓰기를 막지 않는다(ProtectHome={home}, ProtectSystem={system})", True)
+            continue
+        rw = [Path(v.lstrip("-")) for vs in values.get("ReadWritePaths", []) for v in vs.split()]
+        ok = any(default == r or r in default.parents for r in rw)
+        check(f"#947 {unit} 유닛이 기록 디렉터리를 쓰기 허용한다", ok,
+              f"ProtectHome={home} ProtectSystem={system} ReadWritePaths={rw}")
+
+
 def main() -> int:
     print("\n[1] 기동 내용·목록 비교와 판정 불가 처리 (#897)")
     test_content_and_errors()
@@ -588,6 +617,7 @@ def main() -> int:
     test_real_dependencies_918()
     print("\n[7] #947 기동 기록 파일 사본 · 판정 불가 사유 구분")
     test_record_file_947()
+    test_units_can_write_record_947()
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 

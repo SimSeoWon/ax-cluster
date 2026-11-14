@@ -29,12 +29,15 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=ax-broker
 
-# 최소 권한. 브로커는 **아무 파일도 쓰지 않는다** — 상태를 갖지 않기 때문이다.
-# task_queue 와 달리 ReadWritePaths 가 아예 없다.
+# 최소 권한. 브로커는 **상태를 갖지 않는다** — 쓰기 허용은 아래 한 곳뿐이다.
+# #947 — 신선도 판정용 기동 기록 사본(`service_freshness.record_dir()`)만 쓴다. 저널은 상한에 차면
+#   오래된 줄부터 지워져, 부팅 직후 뜬 브로커의 기록이 사라져 판정 불가가 됐다(2026-11-14 실측).
+#   앞의 `-` 는 디렉터리가 없어도 기동을 막지 않게 한다(없으면 쓰기 실패 한 줄 · 저널로 폴백).
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
+ReadWritePaths=-/home/sim/ax-state/service-code
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true

@@ -50,4 +50,20 @@ RAG request_id `74598656d3874d82baa5b6c14454e56a`. `service_freshness`·`issue_w
 
 미대조: #944 `[history]` 조회 rc1은 당시 저널이 이미 지워져 같은 원인인지 확인할 수 없다.
 
+## 2회차 (T4) — 브로커 샌드박스
+
+1회차 마감 뒤 실물에서 문제가 나왔다.
+- `ax-task-queue`·`ax-projects`는 재기동하자 파일이 생겼다. 저널 grep 없이 파일로 판정되는 것도 확인했다.
+- `ax-broker`(사용자 승인 재기동 19:50:09)는 `[Errno 30] Read-only file system`으로 파일을 쓰지 못했다. 유닛이 `ProtectHome=read-only` + `ProtectSystem=strict`이고 쓰기 허용 경로가 없었다.
+- 실패 처리는 설계대로 동작했다. 기동은 계속됐고 로그 한 줄을 남긴 뒤 저널로 폴백했다. 그래도 브로커만 저널 보존에 기대는 상태가 남았다.
+- 설계 때 유닛 샌드박스를 확인하지 않은 것은 내 누락이다. 검사는 임시 디렉터리라 이 경로를 볼 수 없었다.
+
+사용자 「ⓐ로 진행해줘」에 따라 다음을 바꿨다.
+- `master/systemd/ax-broker.service`에 `ReadWritePaths=-/home/sim/ax-state/service-code` 한 줄을 넣었다. 쓰기 허용은 그 디렉터리 하나뿐이다. `-`는 디렉터리가 없어도 기동을 막지 않게 한다.
+- `test_units_can_write_record_947`을 추가했다. 상주 유닛 파일을 직접 읽어, 홈을 읽기 전용으로 묶은 유닛이 기록 디렉터리를 쓰기 허용하는지 본다.
+  - 수정 전 유닛으로 돌리면 broker를 실패로 잡는다(되돌려 확인).
+  - [주의] 처음에는 `ProtectSystem=strict`도 막는다고 가정했다. 그런데 `ax-projects`(strict + `ProtectHome=false`, `ax-state` 쓰기 허용 없음)가 실제로 파일을 썼다(19:48:25). 그래서 기준을 실측대로 `ProtectHome` 읽기 전용일 때로 좁혔다. strict가 왜 막지 않았는지는 설명하지 못했다.
+- `test_service_freshness` 통과 84 · 실패 0 · pyflakes 0.
+- 설치(`/etc/systemd/system` 복사 · daemon-reload · broker 재기동)와 파일 생성 확인은 마감 뒤에 하고 Redmine 노트로 남긴다.
+
 최종 결과는 Redmine #947 마감 노트에 있다.
