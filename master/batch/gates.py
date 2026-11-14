@@ -33,10 +33,10 @@
 [중요] **원전 자신이 같은 이유로 `attempt_branch(ts=…)` 를 인자로 뒀다**(*"테스트에서 시간을
 고정할 수 있어야 한다"*). 시간이 박히면 이 게이트는 검증할 수 없다.
 
-[주의] **이식한 게이트는 `rag_analysis` · `weekly_plan` 둘이다.** `recipe_synthesis` 는 그
-배치(`#157`)가 아직 없다 — 게이트만 옮기면 **입력 없는 배치**를 만드는 것과 같은 실수다(소 3.4.5
-에서 같은 함정을 한 번 피했다). `weekly_plan` 은 `#628`(2026-09-16)에서 배치와 함께 왔고,
-**원전 게이트가 위 조건 다섯과 모양이 달라** `Schedule` 로 접지 않고 따로 뒀다(`should_run_weekly_plan`).
+[주의] `weekly_plan` 은 `#628`(2026-09-16)에서 배치와 함께 왔고, **원전 게이트가 위 조건
+다섯과 모양이 달라** `Schedule` 로 접지 않고 따로 뒀다(`should_run_weekly_plan`).
+`recipe_synthesis` 는 `#383`(2026-11-14)에서 배치(`#157` 합성기)와 함께 등록했다 — 그 전까지는
+합성기만 있고 구동 주체가 없어 신호가 쌓여도 레시피가 한 건도 나오지 않았다.
 """
 from __future__ import annotations
 
@@ -167,6 +167,13 @@ def should_run(sched: Schedule, cfg: dict, root: Path, *, input_count: int,
 # (hour 23 · weekly · sunday · min_entries 10).
 RAG_ANALYSIS = Schedule(key="rag_analysis", hour=23, schedule="weekly", day="sunday",
                         min_entries=10)
+
+# 레시피 합성 (`#383`, 2026-11-14) — 원전 `_should_run_recipe_synthesis` 의 조건 다섯 그대로이고
+# 값만 다르다: 원전 기본은 daily·22시·신호 1건 이상인데, **주 1회 토요일**로 뒀다(사용자 결정
+# 2026-11-14 — 합성이 상용 체인을 쓰고, 문턱 미달 신호가 남아 있으면 도는 날마다 클러스터링
+# 호출이 나가기 때문이다). `batch.recipe_synthesis_schedule: daily` 로 되돌릴 수 있다.
+RECIPE_SYNTHESIS = Schedule(key="recipe_synthesis", hour=22, schedule="weekly",
+                            day="saturday", min_entries=1)
 
 # 기존 유휴 타이머와 daily 최소 간격을 재사용한다. 표시 대상이 있을 때만 돈다.
 CLOUD_REVALIDATION = Schedule(key="cloud_revalidation", hour=0, schedule="daily",

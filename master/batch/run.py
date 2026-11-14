@@ -23,12 +23,12 @@
 색인기 유닛이 이미 이 규약을 쓴다(*"늘 빨간 유닛은 유닛이 아니다"*). 같은 뜻에 다른 숫자를
 쓰면 운영자가 매번 되짚어야 한다.
 
-## [주의] 배치는 하나뿐이다 (지금)
+## 배치 목록은 `BATCHES` 가 정본이다
 
-`rag_analysis`(소 3.4.2 `#161`) 하나다. [중요] **자리만 만들지 않기 위해 그 배치와 같은 커밋에
-넣었다** — 리포트 13 §19.3 의 *"가드를 두고 타이머를 안 두면 갱신 주체가 아무도 없다"* 의
-역방향(구동 주체를 두고 돌 것을 안 두면 그것도 빈 유닛이다). `planner`(`#155`)·
-`recipes_synthesizer`(`#157`)·`history_harvest`(`#158`)가 오면 `BATCHES` 에 한 줄씩 늘어난다.
+첫 배치 `rag_analysis`(소 3.4.2 `#161`)는 [중요] **자리만 만들지 않기 위해 구동 주체와 같은
+커밋에 넣었다** — 리포트 13 §19.3 의 *"가드를 두고 타이머를 안 두면 갱신 주체가 아무도 없다"* 의
+역방향(구동 주체를 두고 돌 것을 안 두면 그것도 빈 유닛이다). 그 뒤 배치는 `BATCHES` 에 한 줄씩
+늘었다 — 여기에 목록을 다시 적지 않는다(`recipes_synthesizer` 는 `#383` 에서 왔다).
 """
 from __future__ import annotations
 
@@ -132,6 +132,30 @@ def _candidate_run(paths) -> dict:
     return result
 
 
+def _recipe_count(paths) -> int:
+    """입력 = 아직 합성되지 않은 신호 줄 수 (`recipes/_signals.jsonl`, 깨진 줄은 세지 않는다)."""
+    from ..context_synth import signals
+    return len(signals.read_signals(paths))
+
+
+def _recipe_run(paths) -> dict:
+    """신호 → 레시피·안티패턴 합성 (`#383` · 합성기는 `#157`).
+
+    [주의] 합성기는 상용 체인 실패를 「클러스터 없음」으로 접어 0 을 돌려준다 — 그 경우에도
+    마커가 써져 다음 주에 다시 온다. 그래서 합성기의 줄을 **전부 그대로 찍는다**: 왜 0 건인지는
+    그 줄에만 있다.
+    """
+    from ..context_synth import recipes_synthesizer as RS
+    say = lambda m: print(f"    {m}", flush=True)                    # noqa: E731
+    before = _recipe_count(paths)
+    say(f"[레시피] 배치 시작 — 프로젝트 {getattr(paths, 'name', '?')} · 대기 신호 {before}건")
+    created = RS.run_recipe_synthesis(paths, logf=say)
+    after = _recipe_count(paths)
+    say(f"[레시피] 배치 끝 — 레시피 {created}건 · 신호 {before}→{after}건 "
+        f"(아카이브 이동 {before - after}건)")
+    return {"ok": True, "entries": before, "created": created, "remaining": after}
+
+
 def _revalidation_count(paths) -> int:
     """입력 = 표시된 문서 + 표시된 조각 기록 **전부** (후보 유무 무관).
 
@@ -205,6 +229,9 @@ BATCHES = [
              label="기각 후보 수집 (상태 변경 없음)",
              count_input=_candidate_count, execute=_candidate_run,
              gate=gates.should_run_dismissal_candidates),
+    BatchDef(schedule=gates.RECIPE_SYNTHESIS,
+             label="레시피·안티패턴 합성 (상용 LLM · 신호 → 작업 절차서)",
+             count_input=_recipe_count, execute=_recipe_run),
     BatchDef(schedule=gates.CLOUD_REVALIDATION,
              label="로컬 산출물 클라우드 재검증 — 문서 재합성 · 조각 정산·후보 "
                    "(표시된 대상만, 각 회당 최대 2호출 · 정산 LLM 0)",

@@ -428,8 +428,60 @@ def test_cloud_revalidation_counts_tasks_and_runs_both_halves():
               str(calls))
 
 
+def test_recipe_synthesis_batch_is_wired():
+    """#383 — 합성기(#157)는 있었는데 구동 주체가 없었다. 게이트·입력 세기·실행 배선. LLM 0."""
+    b = next((x for x in R.BATCHES if x.schedule.key == "recipe_synthesis"), None)
+    check("⑪ [중요] 레시피 합성이 BATCHES 에 있다", b is not None)
+    if b is None:
+        return
+    S = gates.RECIPE_SYNTHESIS
+    sat22 = datetime(2026, 11, 14, 22, 5)                 # 토요일 22시
+    from master.context_synth import recipes_synthesizer as RS, signals as SG
+    with tempfile.TemporaryDirectory() as tmp:
+        p = _paths(tmp)
+        check("⑪ 신호 파일 없음 → 입력 0", b.count_input(p) == 0)
+        v = gates.should_run(S, {}, p.root, input_count=0, now=sat22)
+        check("⑪ 신호 0건이면 안 돈다", not v.run and "입력 부족" in v.reason, v.reason)
+        for i in range(3):
+            SG.append_signal(p, SG.make_record(intent=f"작업 {i}", source="pipeline"))
+        with SG.signals_path(p).open("a", encoding="utf-8") as f:
+            f.write("{깨진 줄\n")
+        check("⑪ 입력 = 신호 줄 수 (깨진 줄 제외)", b.count_input(p) == 3, str(b.count_input(p)))
+
+        v = gates.should_run(S, {}, p.root, input_count=3, now=sat22)
+        check("⑪ 토요일 22시 · 신호 1건 이상이면 돈다", v.run, v.reason)
+        v = gates.should_run(S, {}, p.root, input_count=3, now=sat22 - timedelta(days=1))
+        check("⑪ 평일에는 안 돈다 (주 1회 — 사용자 결정)", not v.run and "요일" in v.reason, v.reason)
+        v = gates.should_run(S, {}, p.root, input_count=3, now=sat22.replace(hour=21))
+        check("⑪ 22시 전에는 안 돈다", not v.run and "시각" in v.reason, v.reason)
+        v = gates.should_run(S, {"batch": {"recipe_synthesis_schedule": "daily"}}, p.root,
+                             input_count=3, now=sat22 - timedelta(days=1))
+        check("⑪ config 로 원전 기본(daily)으로 되돌릴 수 있다", v.run, v.reason)
+
+        seen = {}
+        orig = RS.run_recipe_synthesis
+
+        def fake(paths, **kw):
+            seen["paths"] = paths
+            seen["logf"] = callable(kw.get("logf"))
+            seen["chat"] = kw.get("chat")
+            SG.signals_path(paths).write_text("", encoding="utf-8")   # 전부 아카이브된 셈
+            return 1
+
+        RS.run_recipe_synthesis = fake
+        try:
+            res = b.execute(p)
+        finally:
+            RS.run_recipe_synthesis = orig
+        check("⑪ 합성기를 그 프로젝트 경로·로그 함수와 함께 부른다 (chat 은 주입하지 않는다 = 운영 체인)",
+              seen.get("paths") is p and seen.get("logf") and seen.get("chat") is None, str(seen))
+        check("⑪ 결과에 생성 수·입력·잔여가 남는다",
+              res == {"ok": True, "entries": 3, "created": 1, "remaining": 0}, str(res))
+
+
 def main() -> int:
-    for fn in (test_cloud_revalidation_counts_tasks_and_runs_both_halves,
+    for fn in (test_recipe_synthesis_batch_is_wired,
+               test_cloud_revalidation_counts_tasks_and_runs_both_halves,
                test_weekly_plan_gate_is_origin_shape,
                test_weekly_plan_batch_is_wired_without_redmine,
                test_each_condition_blocks_alone, test_config_overrides_use_origin_key_names,
