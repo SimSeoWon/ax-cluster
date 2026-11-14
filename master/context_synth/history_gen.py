@@ -110,8 +110,15 @@ def classes_from_files(files) -> list:
     return out
 
 
-def record_work_terminal(paths, work: dict, tasks: list, merge_status: str) -> str:
+def record_work_terminal(paths, work: dict, tasks: list, merge_status: str, *,
+                         round_no: int = 0, failures=()) -> str:
     """파이프라인 자동 기록 — work 종결(merged/rejected) 시 큐가 부른다.
+
+    `round_no`·`failures`(`#943`) — 큐가 스스로 라운드를 rejected 로 끝낸 자리에서 싣는다:
+    몇 번째 라운드였고 어느 조각이 왜 실패했나(`(파일, 사유)` 쌍). 재작업으로 다시 열려 나중에
+    merged 로 끝나도 이 기록은 「그 라운드는 이래서 실패했다」로 남는다(사용자 결정 2026-11-14).
+    [주의] 파일명은 `분 단위 시각 + 제목` 이라 같은 제목이 같은 분에 오면 덮어쓴다. 라운드 기록은
+    파일명에 `r<N> <종결>` 을 붙여 같은 work 의 다른 라운드·종결과 갈라 둔다.
 
     사실만 적는다: 제목·결정·태스크 수·파일. user_quote 는 요청자의 검수 노트
     (review_decision.notes — 사람의 발화라 WHY 신호다). 실패해도 종결을 막지 않는 것은
@@ -133,10 +140,14 @@ def record_work_terminal(paths, work: dict, tasks: list, merge_status: str) -> s
         + (f" · 판정자 {decision.get('decided_by')}" if decision.get("decided_by") else "")
         + (f" · {decision.get('decided_at')}" if decision.get("decided_at") else ""),
         f"- 태스크 {len(tasks or ())}건",
+        *([f"- 라운드 {int(round_no)}"] if round_no else []),
         "",
         "## 수정된 파일 목록",
         *([f"- `{f}`" for f in files] or ["- (기록된 파일 없음)"]),
     ]
+    if failures:
+        body_lines += ["", "## 실패 조각",
+                       *[f"- `{name or '?'}` — {why or '사유 없음'}" for name, why in failures]]
     return write(paths, render(
         title=title,
         decision_type="feature",
@@ -145,4 +156,4 @@ def record_work_terminal(paths, work: dict, tasks: list, merge_status: str) -> s
         tags=["pipeline", merge_status],
         user_quote=str(decision.get("notes") or ""),
         body="\n".join(body_lines),
-    ), title=title)
+    ), title=(f"{title} r{int(round_no)} {merge_status}" if round_no else title))

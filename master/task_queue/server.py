@@ -264,6 +264,10 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
                     _paths_for(r.get("work")), r.get("work") or {}, tasks, req.merge_status)
                 _tq_log(f"[history] {work_id} {req.merge_status} → "
                         f"{r['history_written']}", root)
+                if req.merge_status == "rejected":
+                    # `#943` — 큐 내부 종결 기록과 같은 표시를 남겨 같은 라운드에 두 번 쓰지 않는다
+                    from .logic_cleanup import mark_history_recorded
+                    mark_history_recorded(idx, work_id, int((r.get("work") or {}).get("round") or 1))
             except Exception as e:                           # noqa: BLE001
                 r["history_error"] = f"작업 기록 실패: {e}"
                 _tq_log(f"[history] [주의] {work_id} 기록 실패: {e}", root)

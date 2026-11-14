@@ -892,12 +892,85 @@ def recover_piece_fail_notices(idx: TaskIndex) -> dict:
 #
 # 남긴 것은 **공지 하나**다 — 조각이 전부 terminal 이면 `.33` 에 알린다. 그게 마스터의 끝이다.
 
+def _history_paths(idx: TaskIndex, work: dict):
+    """rejected 기록이 갈 트윈. 🔴 **라이브 큐 루트에서만** 실트윈을 푼다 — 임시 루트의 테스트가
+    등록된 프로젝트의 `history/` 에 쓰지 않게(`is_live_queue_root` 의 세 번째 자리). 아니면 `None`."""
+    if not is_live_queue_root(idx.root):
+        return None
+    from ..context_search.paths import resolve
+    return resolve((work or {}).get("project") or "")
+
+
+def mark_history_recorded(idx: TaskIndex, work_id: str, round_no: int) -> None:
+    """이 라운드의 종결 기록을 남겼다는 표시 — 같은 라운드에 두 번 쓰지 않게 한다 (`#943`)."""
+    with idx.lock:
+        work = idx.works.get(work_id)
+        if not work:
+            return
+        work["history_round"] = int(round_no)
+        _save_work(idx, work_id)
+
+
+def _record_rejected_history(idx: TaskIndex, work_id: str) -> str:
+    """큐가 **스스로** 라운드를 `rejected` 로 끝냈을 때의 히스토리 기록 (`#943`).
+
+    종결 기록(`history_gen.record_work_terminal`)의 호출부는 PATCH 훅 하나였는데, 조각 실패로 큐가
+    뒤집는 전이(`_flip_if_all_terminal` — post-fail·post-verify·post-cancel·boot-recover)는 그
+    라우트를 지나지 않아 기록이 한 건도 없었다(실측 2026-11-14: rejected work 8 · 기록 0).
+    네 경로가 모두 지나는 `_auto_cleanup_work_async` 에서 부른다.
+
+    사용자 결정 2026-11-14: `rejected` 만(취소는 안 적는다) · 재작업으로 다시 열려도 라운드별로
+    남긴다 · 과거 work 소급 없음. 같은 라운드의 중복(기동 복구의 재공지)은 `history_round` 가 막는다.
+    [중요] fail-soft — 기록이 죽어도 공지는 간다. 조용히 넘기지 않고 로그로 말한다.
+    반환: 쓴 경로(안 썼으면 빈 문자열).
+    """
+    try:
+        with idx.lock:
+            work = idx.works.get(work_id)
+            if not work or work.get("merge_status") != "rejected":
+                return ""
+            round_no = int(work.get("round") or 1)
+            if int(work.get("history_round") or 0) == round_no:
+                _tq_log(f"[history] {work_id} 라운드 {round_no} rejected 기록은 이미 있다 — 생략",
+                        idx.root)
+                return ""
+            snapshot = dict(work)
+            tasks = [dict(t) for t in idx.tasks.values() if t.get("work_id") == work_id
+                     and int(t.get("round") or 0) in (0, round_no)]
+        failures = []
+        for t in tasks:
+            if t.get("status") != "failed":
+                continue
+            why = (t.get("fail_detail") or t.get("last_feedback") or
+                   t.get("verdict_feedback") or t.get("fail_reason") or "")
+            if t.get("infra_undecided"):
+                why = f"(인프라 판단 불가 #821) {why}".strip()
+            failures.append((t.get("target_file") or t.get("task_id") or "?", str(why)[:200]))
+        paths = _history_paths(idx, snapshot)
+        if paths is None:
+            _tq_log(f"[history] {work_id} 라운드 {round_no} rejected 기록 생략 — 라이브 큐 루트가 아니다",
+                    idx.root)
+            return ""
+        from ..context_synth import history_gen as HG
+        stored = HG.record_work_terminal(paths, snapshot, tasks, "rejected",
+                                         round_no=round_no, failures=failures)
+        mark_history_recorded(idx, work_id, round_no)
+        _tq_log(f"[history] {work_id} 라운드 {round_no} rejected(큐 내부 종결) → {stored} "
+                f"(조각 {len(tasks)} · 실패 {len(failures)})", idx.root)
+        return stored
+    except Exception as e:                                   # noqa: BLE001
+        _tq_log(f"[history] [주의] {work_id} rejected 기록 실패: {e}", idx.root)
+        return ""
+
+
 def _auto_cleanup_work_async(idx: TaskIndex, work_id: str):
-    """조각이 전부 끝났다 — **요청자(`.33`)에 완료를 공지한다.** 그게 전부다.
+    """조각이 전부 끝났다 — **요청자(`.33`)에 완료를 공지한다.** 그리고 라운드가 `rejected` 면
+    그 사실을 히스토리에 한 번 적는다(`#943`).
 
     [중요] 이름은 호출부(`logic_lifecycle`·`logic`) 계약을 지키려고 남겼다. 하는 일은
     **공지 하나**다: git 도 안 만지고 빌드도 안 한다. 통합은 `.33` 이 `ax-review` 로 한다.
     """
+    _record_rejected_history(idx, work_id)       # `#943` — rejected 일 때만 쓴다 · fail-soft
     _tq_log(f"[notify] {work_id} 조각 전부 종결 — 요청자에 완료 공지", idx.root)
     _try_create_review_issue_async(idx, work_id)
     # [중요] **요청자에게 미는 채널을 여기서 만들지 않는다** (사용자 2026-09-05: *"훅이

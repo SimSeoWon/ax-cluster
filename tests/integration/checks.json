@@ -425,6 +425,11 @@
     "timeout": 180
   },
   {
+    "path": "master/test_history_terminal.py",
+    "count_pattern": "(?m)^OK test_history_terminal: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
     "path": "master/test_history_harvest.py",
     "count_pattern": "(?m)^OK test_history_harvest: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
