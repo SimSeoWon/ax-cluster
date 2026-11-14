@@ -129,6 +129,7 @@ def set_plan(issue_id, tasks: list, why: str, *, getter=None, updater=None,
     각 항목: `id`·`goal` 필수, `target`·`deps`(목록 또는 「T1·T2」)·`check`·`steps`(조건부 단계 선언,
     목록 또는 「2·6」 — v2) 선택.
     `state`·`evidence` 를 실으면 거절한다 — 상태는 `transition` 으로만 바뀐다.
+    응답의 `spec_missing`(`#939`)은 본문 스펙의 누락 항목이다 — **경고만**, 등록을 막지 않는다.
     """
     ids = [str(t.get("id", "")) if isinstance(t, dict) else "?" for t in tasks] \
         if isinstance(tasks, list) else []
@@ -171,9 +172,10 @@ def set_plan(issue_id, tasks: list, why: str, *, getter=None, updater=None,
         summary = (f"플랜 {'갱신' if current else '등록'} — 추가 {', '.join(added) or '없음'}"
                    f" · 제거 {', '.join(t.id for t in dropped) or '없음'}\n사유: {why.strip()}")
         result = _write(issue_id, new_body, summary, updater or _default_updater)
+        # #939 — 스펙 템플릿(docs/issue-spec.md) 누락 항목. 경고일 뿐 등록은 이미 끝났다.
         return {"ok": True, "issue_id": issue_id, "created": current is None, "added": added,
                 "removed": [t.id for t in dropped], "tasks": [t.id for t in plan.tasks],
-                "redmine": result}
+                "redmine": result, "spec_missing": ST.spec_missing(new_body)}
 
 
 def _lock_gate(issue_id, lock_root, project: str = "") -> str:

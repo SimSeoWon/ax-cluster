@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master import plan_block as PB    # noqa: E402
 from master import plan_tools as PT    # noqa: E402
+from master import plan_start as ST    # noqa: E402
 from master import issue_lock as IL    # noqa: E402
 
 PASS = FAIL = 0
@@ -72,6 +73,22 @@ def test_set_creates_plan():
     check("스펙은 그대로 앞에 남는다", iss.body.startswith(SPEC.replace("\n", "\r\n").rstrip("\r\n")))
     check("노트에 사유가 남는다", "파일럿 플랜" in iss.writes[-1][1], iss.writes[-1][1])
     check("CRLF 본문에 LF 단독 줄을 섞지 않는다", "\n" not in iss.body.replace("\r\n", ""))
+
+
+def test_set_reports_spec_missing():
+    """#939 — 플랜 등록 응답에 스펙 누락 경고를 싣는다. 등록은 막지 않는다."""
+    keys = [k for k, _ in ST.SPEC_SECTIONS]
+    iss = FakeIssue(SPEC)
+    out = PT.set_plan(939, _tasks(), "등록", getter=iss.get, updater=iss.update)
+    check("스펙 항목이 없어도 등록은 된다", out["ok"] and PB.parse(iss.body) is not None, str(out))
+    check("빠진 항목 전부를 경고로 싣는다", out.get("spec_missing") == keys, str(out.get("spec_missing")))
+    full = "".join(f"## {h}\n내용\n" for h in ("문제·맥락", "초반 분류", "관측 결과", "범위·비범위",
+                                                  "완료 조건", "열린 결정"))
+    iss = FakeIssue(full)
+    out = PT.set_plan(939, _tasks(), "등록", getter=iss.get, updater=iss.update)
+    check("6항목 본문 → 빈 목록", out.get("spec_missing") == [], str(out.get("spec_missing")))
+    out = PT.set_plan(939, _tasks() + [{"id": "T3", "goal": "더"}], "갱신", getter=iss.get, updater=iss.update)
+    check("갱신(플랜 영역 있음)에서도 플랜 안은 세지 않는다", out.get("spec_missing") == [], str(out))
 
 
 def test_set_keeps_states_and_evidence():
@@ -232,7 +249,8 @@ def test_transition_lock_gate():
 
 
 def main() -> int:
-    for fn in (test_set_creates_plan,
+    for fn in (test_set_reports_spec_missing,
+               test_set_creates_plan,
                test_set_keeps_states_and_evidence,
                test_set_steps_v2,
                test_set_refuses_state_and_bad_input,
