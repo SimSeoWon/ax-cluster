@@ -85,14 +85,24 @@ def render(*, title: str, decision_type: str = "feature", date: datetime | None 
 
 
 def write(paths, content: str, *, title: str, date: datetime | None = None) -> str:
-    """`history/YYYY-MM-DD_HHMM_<작업요약>.md` 로 저장 (원전 파일명 규약 그대로)."""
+    """원전 파일명으로 배타적 생성하며, 충돌 시 `_2`, `_3` 접미사로 기존 기록을 보존한다."""
     ts = date or datetime.now()
     slug = _SAFE.sub("_", title.strip()).strip("_")[:48] or "record"
     d = history_dir(paths)
     d.mkdir(parents=True, exist_ok=True)
-    p = d / f"{ts.strftime('%Y-%m-%d_%H%M')}_{slug}.md"
-    p.write_text(content, encoding="utf-8")
-    return str(p)
+    stem = f"{ts.strftime('%Y-%m-%d_%H%M')}_{slug}"
+    number = 1
+    while True:
+        suffix = "" if number == 1 else f"_{number}"
+        p = d / f"{stem}{suffix}.md"
+        try:
+            stream = p.open("x", encoding="utf-8")
+        except FileExistsError:
+            number += 1
+            continue
+        with stream:
+            stream.write(content)
+        return str(p)
 
 
 def classes_from_files(files) -> list:
@@ -117,8 +127,8 @@ def record_work_terminal(paths, work: dict, tasks: list, merge_status: str, *,
     `round_no`·`failures`(`#943`) — 큐가 스스로 라운드를 rejected 로 끝낸 자리에서 싣는다:
     몇 번째 라운드였고 어느 조각이 왜 실패했나(`(파일, 사유)` 쌍). 재작업으로 다시 열려 나중에
     merged 로 끝나도 이 기록은 「그 라운드는 이래서 실패했다」로 남는다(사용자 결정 2026-11-14).
-    [주의] 파일명은 `분 단위 시각 + 제목` 이라 같은 제목이 같은 분에 오면 덮어쓴다. 라운드 기록은
-    파일명에 `r<N> <종결>` 을 붙여 같은 work 의 다른 라운드·종결과 갈라 둔다.
+    라운드 기록은 파일명에 `r<N> <종결>` 을 붙여 같은 work 의 다른 라운드·종결을 표시한다.
+    제목 절단 등을 포함한 파일명 충돌은 write()의 배타적 생성·접미사로 처리한다(`#944`).
 
     사실만 적는다: 제목·결정·태스크 수·파일. user_quote 는 요청자의 검수 노트
     (review_decision.notes — 사람의 발화라 WHY 신호다). 실패해도 종결을 막지 않는 것은
