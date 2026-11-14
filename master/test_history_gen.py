@@ -12,9 +12,12 @@
 from __future__ import annotations
 
 import re
+import multiprocessing
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -164,6 +167,91 @@ def test_validation_and_filename():
                                  "Source/M/UHitBox.h"]) == ["UHitBox"])
 
 
+def test_filename_collisions():
+    from master.context_synth import history_harvest as HH
+    from master.webui.routes import api_history
+
+    ts = datetime(2026, 11, 14, 16, 30)
+    with tempfile.TemporaryDirectory(prefix="ax-hg-collision-") as root:
+        p = P(Path(root))
+        title = "동일 제목"
+        contents = [HG.render(title=title, date=ts, work_id=f"w-{i}",
+                              affected_classes=["ABeacon"], body=f"기록 {i}")
+                    for i in range(3)]
+        paths = [Path(HG.write(p, content, title=title, date=ts)) for content in contents]
+        check("동일 분·제목은 기본명과 _2, _3 순서로 보존",
+              [f.name for f in paths] == ["2026-11-14_1630_동일_제목.md",
+                                         "2026-11-14_1630_동일_제목_2.md",
+                                         "2026-11-14_1630_동일_제목_3.md"])
+        check("후속 기록 뒤에도 기존 내용 전부 불변",
+              [f.read_text(encoding="utf-8") for f in paths] == contents)
+        found = HH.search(p, classes=["ABeacon"], limit=10)
+        check("find_history 소비자가 접미사 기록을 모두 읽는다",
+              found["count"] == 3
+              and {r["work_id"] for r in found["records"]} == {"w-0", "w-1", "w-2"})
+        viewed = api_history(p, "ABeacon", limit=10)
+        check("웹 UI 소비자가 접미사 기록을 모두 읽는다",
+              viewed["count"] == 3
+              and {r["path"] for r in viewed["records"]} == {f.name for f in paths})
+
+        for label, titles in (("48자 절단", ("가" * 48 + "첫째", "가" * 48 + "둘째")),
+                              ("금지문자 정규화", ("서로:다른", "서로?다른"))):
+            saved = [Path(HG.write(p, f"{label}-{i}", title=t, date=ts))
+                     for i, t in enumerate(titles)]
+            check(f"{label} 충돌도 두 내용을 보존",
+                  saved[0] != saved[1]
+                  and saved[1].stem == saved[0].stem + "_2"
+                  and [f.read_text(encoding="utf-8") for f in saved]
+                  == [f"{label}-0", f"{label}-1"])
+
+
+def _concurrent_history_writer(root, barrier, number):
+    ts = datetime(2026, 11, 14, 16, 30)
+    barrier.wait(timeout=20)
+    HG.write(P(Path(root)), f"writer-{number}", title="동시 기록", date=ts)
+
+
+def test_concurrent_filename_collisions():
+    ctx = multiprocessing.get_context("spawn")
+    count = 6
+    with tempfile.TemporaryDirectory(prefix="ax-hg-concurrent-") as root:
+        barrier = ctx.Barrier(count)
+        processes = [ctx.Process(target=_concurrent_history_writer, args=(root, barrier, i))
+                     for i in range(count)]
+        try:
+            for process in processes:
+                process.start()
+            for process in processes:
+                process.join(timeout=30)
+            check("동시 시작한 실제 쓰기 프로세스 전부 성공",
+                  all(process.exitcode == 0 for process in processes),
+                  str([process.exitcode for process in processes]))
+            files = list((Path(root) / "history").glob("*.md"))
+            check("동시 프로세스 쓰기 수와 파일 수·내용 집합 일치",
+                  len(files) == count
+                  and {f.read_text(encoding="utf-8") for f in files}
+                  == {f"writer-{i}" for i in range(count)})
+        finally:
+            for process in processes:
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=5)
+
+
+def test_write_error_propagation():
+    with tempfile.TemporaryDirectory(prefix="ax-hg-errors-") as root:
+        p = P(Path(root))
+        error = PermissionError("쓰기 거절")
+        with patch.object(Path, "open", side_effect=error) as opened:
+            try:
+                HG.write(p, "content", title="오류")
+            except PermissionError as caught:
+                check("FileExistsError 이외 생성 오류는 원문 그대로 전파", caught is error)
+            else:
+                check("FileExistsError 이외 생성 오류는 원문 그대로 전파", False)
+            check("권한 오류는 접미사 재시도하지 않는다", opened.call_count == 1)
+
+
 # ── ② 종결 자동 기록 ──────────────────────────────────────────
 
 def test_record_work_terminal():
@@ -240,7 +328,8 @@ def test_client_tool():
 
 def main() -> int:
     for fn in (test_frontmatter_parseable_by_origin, test_validation_and_filename,
-               test_record_work_terminal, test_client_tool):
+               test_filename_collisions, test_concurrent_filename_collisions,
+               test_write_error_propagation, test_record_work_terminal, test_client_tool):
         fn()
     print(f"{'OK' if not FAIL else '[실패]'} test_history_gen: {PASS}/{PASS + FAIL} 통과")
     return 1 if FAIL else 0
