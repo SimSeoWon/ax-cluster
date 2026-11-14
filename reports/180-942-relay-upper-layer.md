@@ -1,6 +1,6 @@
 # 180 — #942 세 CLI 대화 중계 상위 레이어 (relay)
 
-2026-11-14 · 지휘 Claude · 직접 구현(작성 계열 `['claude']`).
+2026-11-14 · 지휘 Claude 직접 구현 → Codex T7 인수·검사·마감(작성 계열 `['claude', 'codex']`).
 
 ## 사용자 결정 (대화로 확정, 2026-11-14)
 
@@ -121,4 +121,28 @@ agy 모델은 `gemini-3.8-flash-medium` 지정. 입력은 표준 입력으로 �
 - 저장소 밖 디렉터리에서 실행하려면 `PYTHONPATH` 에 저장소를 넣어야 한다. 실행 래퍼는 만들지 않았다.
 - `fcntl` 파일 잠금과 프로세스 그룹 종료는 리눅스 기준이다 — `.33` 으로 옮길 때 바꾼다(이번 범위 밖, 사용자 결정).
 
-최종 결과(마감·재기동·배달)는 Redmine #942 마감 노트가 정본이다.
+## T7 — Codex 인수와 최종 검사
+
+- 사용자 「942번 이어하라는건데?」로 대상 정정 후 `plan_start_tool(942)` 원문: `verdict="resume", ok=true, tasks=["T7"]`.
+  운영 main의 #710 인계만 읽었던 초기 판단을 정정했다. 최신 인계는 일감 worktree의 `9f78581`이다.
+- `issue_start_tool(942)` 원문: `repo="/home/sim/ax-cluster/.ax-issues/942"`, `checkout="/home/sim/ax-cluster"`,
+  `already=true`, `start_rev="1aed4703c9741755118d4e8072b14ad81643ac09"`, `lock="already"`,
+  `author.family="codex"`, `authors=["claude","codex"]`. 인수 때 issue/942 HEAD `9f78581`·미커밋 없음.
+- 공식 통합: 기존 로그 `/tmp/claude-1000/-home-sim/0910090d-a3ae-48b1-ab07-9db26f1114a0/scratchpad/integration.log`를
+  되읽어 `Ran 196 tests in 195.908s`, `OK`, `rc=0`, relay 113건 포함을 확인. 실행 코드 변경 없이 결과를 승계했다.
+- 전수 명령: worktree에서 `AX_PROJECTS_ROOT=/home/sim/ax-cluster /home/sim/ax-cluster/.venv/bin/python -B master/test_*.py`를
+  glob의 각 파일마다 별도 프로세스로 실행하고 rc를 확인(실제 셸 for 루프, 실패 즉시 종료). Git 그룹 권한 때문에 샌드박스 해제 승인으로 실행.
+  파일별 원문 로그 `/tmp/ax-942-full-checks/<파일명>.log`.
+- 최초 실패: `master/test_handoff_size.py` rc1, `FAIL test_handoff_size: 6/7 통과`.
+  원문 「156줄 > 상한 150 — 덮어써서 줄이고 지난 내용은 reports/·Redmine 노트로」.
+  사용자 「응」으로 이전 완료 상세 축약·검사 재개 승인. #919·#940 완료 상세를 정본 링크로 줄이고 7/7 rc0 확인 후 중단 지점부터 재개.
+- 별도 조회 실패: `/tmp` 전체 파일 검색이 systemd-private 등 권한 거부로 rc2. 보고·중단 후 사용자 「응」으로
+  `/tmp` 전체 검색을 제외하고 확인된 검사 절차를 계속했다. 코드·운영 설정 변경 없음.
+- Codex 세션: `~/.codex/sessions/2026/11/14/rollout-2026-11-14T12-07-35-01a1d806-5154-77b1-8e1b-6bebd5ed3b74.jsonl`.
+- 전수 최종 결과: `master/test_*.py` **222파일 모두 rc0**. 최초 실패 전 59파일 rc0 + 중단 지점부터 163파일 rc0.
+  222개 로그 존재를 대조했고, 기존 `integration_checks.load_checks`·`_evidence`로 명시 목록 196파일의
+  건수 요약 **10,578건**을 읽음(건수 미검출 0). relay 113/113 포함. 명시 목록 밖 26파일은 파일별 rc0로만 보고한다.
+- README 안내·checks.json 등록은 기존 구현에 포함돼 있어 추가 변경 없음. Python 소스 변경 없이 기존 정적 차단0 결과를 승계.
+  이번 변경은 인계 상세 축약·리포트 기록뿐이며 `git diff --check` rc0.
+
+최종 결과는 Redmine 마감 노트.
