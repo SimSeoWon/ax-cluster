@@ -144,13 +144,13 @@ def state(root, issue_id) -> dict:
 
 
 def update_agent(root, issue_id, agent: str, **fields) -> dict:
-    """에이전트 한 칸을 고친다 — `session`·`seen`·`turns`. `current=True` 면 현재 에이전트로 둔다."""
+    """에이전트 상태·한도 관측을 고친다. `current=True` 면 현재 에이전트로 둔다."""
     if agent not in AGENTS:
         raise StoreError(f"모르는 에이전트: {agent!r}")
     n = _iid(issue_id)
     d = session_dir(root, n)
     make_current = bool(fields.pop("current", False))
-    bad = set(fields) - {"session", "seen", "turns"}
+    bad = set(fields) - {"session", "seen", "turns", "quota", "quota_warning"}
     if bad:
         raise StoreError(f"모르는 필드: {sorted(bad)}")
     with _locked(d):
@@ -158,6 +158,8 @@ def update_agent(root, issue_id, agent: str, **fields) -> dict:
             raise StoreError(f"작업 세션 #{n} 이 없다 ({d})")
         st = _load_state(d, n)
         before = dict(st["agents"][agent])
+        if fields.get("session") == "":
+            fields.update(quota={}, quota_warning={})
         st["agents"][agent].update(fields)
         if make_current:
             st["current"] = agent

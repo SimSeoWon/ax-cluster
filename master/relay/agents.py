@@ -36,6 +36,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+from master.relay import quota
+
 AGENTS = ("claude", "codex", "agy")
 RESULT_CAP = 20000          # 도구 결과 한 건을 로그에 싣는 최대 글자 수 — 넘으면 잘랐다고 표시한다
 STDERR_CAP = 4000           # 디버그 로그에 싣는 오류 출력 최대 글자 수
@@ -53,6 +55,7 @@ class Result:
     interrupted: bool = False
     events: int = 0
     unparsed: int = 0
+    quota: dict = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -129,6 +132,7 @@ class Parser:
         self.session = ""
         self.text = ""
         self.usage: dict = {}
+        self.quota: dict = quota.unknown(agent, "이번 실행의 한도 관측이 없다")
         self.error = ""
         self._agy_buf: dict = {}
 
@@ -178,6 +182,7 @@ class Parser:
                 return [_ev("error", self.error, {"subtype": e.get("subtype")})]
             return [_ev("result", self.text, {"usage": self.usage, "turns": e.get("num_turns")})]
         if t == "rate_limit_event":
+            self.quota = quota.claude_snapshot(e)
             return [_ev("meta", "rate_limit_event", e)]
         return [_ev("raw", f"claude.{t}", e)]
 
@@ -348,6 +353,9 @@ def run(agent: str, prompt: str, *, cwd: str, session: str = "", on_event=None, 
     res.rc = proc.returncode if proc.returncode is not None else -1
     res.session = parser.session or res.session
     res.text, res.usage, res.seconds = parser.text, parser.usage, time.time() - t0
+    res.quota = quota.codex_snapshot(res.session) if agent == "codex" else parser.quota
+    if res.quota.get("reason"):
+        dbg("agents.quota", f"{agent} 한도 미확인 — {res.quota['reason']}")
     res.error = parser.error
     if res.rc != 0 and not res.error and not res.interrupted:
         res.error = f"{agent} 종료 코드 {res.rc}: {stderr.strip()[-500:] or '(오류 출력 없음)'}"
