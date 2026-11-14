@@ -1,6 +1,6 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-14 — #947(서비스 신선도 기동 기록 파일 사본 · 판정 불가 사유 구분) 마감 완료(main `24c65a5`, Claude). 직전 #946은 main `851f60e`로 마감·배달 완료.
+> 2026-11-14 — #947(서비스 신선도 기동 기록 파일 사본 · 판정 불가 사유 구분) 마감 완료(1회차 main `24c65a5` · 2회차 `3e46d78`, Claude). 직전 #946은 main `851f60e`로 마감·배달 완료.
 > 다음 일감은 사용자 선택을 기다린다. 항목·진행은 Redmine, 지난 상세는 Git 이력·리포트로 확인한다.
 
 ## 직전 마감 — #947 완료
@@ -10,7 +10,11 @@
 - 커밋 `b9ec8e8`(T1·T2: `record_startup` 이 `~/ax-state/service-code/<unit>.json` 에도 원자적 기록(`AX_SERVICE_CODE_DIR`), 실패해도 기동 계속 · `_record` 파일 우선·저널 폴백 · 사유 「기록 없음」/「저널 회전 가능(시각)」/「읽지 못했다 rc+stderr」) · `24c65a5`(리포트 `reports/186-947-service-code-record-file.md`).
 - 검사: `test_service_freshness` 통과 81 · `test_client_bundle` 661/661 · `test_issue_wrapup` 39/39 · `test_service_restart` 75 · 공식 통합 `Ran 199 tests / OK` · pyflakes 0.
 - `issue_finish(confirm=True)` 전 단계 완료 · 「완료」·100. 리뷰 연결 「이음 0 · 큐에 없음 2」.
-- wrapup: `ax-task-queue`(19:48:17)·`ax-projects`(19:48:22) 의존 변경 재기동 → `~/ax-state/service-code/` 에 두 파일 생성 · 실물 판정이 **저널 grep 없이 파일로** 깨끗(확인). 🔴 **`ax-broker` 는 재기동하지 않았다** — 의존 판정 불가(새 사유 그대로: 「저널 회전으로 지워졌을 수 있다 (1794618602 > 기동 1794618582) · 파일: 기록 파일 없음」). 판정 불가는 §1.9 재기동 대상이 아니라 사용자 승인 대기. 이 커밋 직후 배달.
+- wrapup(1회차): `ax-task-queue`(19:48:17)·`ax-projects`(19:48:22) 의존 변경 재기동 → 기록 파일 생성 · 저널 grep 없이 파일로 판정 확인.
+- 2회차(T4): `ax-broker` 를 사용자 승인으로 재기동(19:50:09)했더니 `ProtectHome=read-only` 로 파일 쓰기 실패(EROFS — fail-soft 로 저널 폴백). 사용자 「ⓐ로 진행해줘」 → `master/systemd/ax-broker.service` 에 `ReadWritePaths=-/home/sim/ax-state/service-code` 한 줄 · 유닛 샌드박스 회귀 검사(`test_units_can_write_record_947`, 수정 전 유닛이면 실패) · `test_service_freshness` 84 · 공식 통합 OK. 커밋 `3e46d78`.
+- 마감 뒤 설치: pkexec 로 `/etc/systemd/system/ax-broker.service` 반영(저장소와 동일 확인) · daemon-reload · broker 재기동 19:56:39 → `ax-broker.json` 생성. **세 서비스 모두 파일로 판정, 저널 grep 0회, 판정 깨끗.**
+- [주의] 실측: `ax-projects` 는 `ProtectSystem=strict` + `ProtectHome=false` 에서 `ax-state` 쓰기 허용 없이도 파일을 썼다 — strict 가 왜 막지 않았는지는 설명 못 했다(검사 기준은 실측대로 ProtectHome 기준).
+- 리뷰 연결 「큐에 없음」(1회차 2 · 2회차 1). 이 커밋 직후 배달.
 
 ## 직전 마감 — #946 완료
 
@@ -54,4 +58,4 @@
 ## 바로 다음 작업
 
 1. 다음 일감은 사용자 선택을 기다린다. 자동 시작하지 않는다.
-2. 확인해 둘 실물: 토요일 22시 이후 `ax-batch` 로그의 `recipe_synthesis` 줄(#383) · 다음 rejected 라운드의 큐 로그 `[history] … rejected(큐 내부 종결)` 줄(#943) · 운영 relay에서 한도 20% 이하 제안 배너(#368) · 리뷰 큐 로그의 `리뷰 컨텍스트` 줄과 #946 해시별 리뷰(#946) · `ax-broker` 재기동 여부(사용자 결정 대기 — 재기동하면 기록 파일이 생긴다, #947).
+2. 확인해 둘 실물: 토요일 22시 이후 `ax-batch` 로그의 `recipe_synthesis` 줄(#383) · 다음 rejected 라운드의 큐 로그 `[history] … rejected(큐 내부 종결)` 줄(#943) · 운영 relay에서 한도 20% 이하 제안 배너(#368) · 리뷰 큐 로그의 `리뷰 컨텍스트` 줄과 #946 해시별 리뷰(#946)
