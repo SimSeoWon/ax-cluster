@@ -16,6 +16,9 @@
 아니라 호출자(스킬·세션)가 `ok` 가 아닌 판정에서 멈추는 것이 계약이다 — 그래서 판정마다
 `ok` 와 다음 행동 문장을 함께 돌려준다.
 [주의] `resume` 은 플랜 기록만 본 것이다. 재개 전에 실제 코드·리비전과 대조하는 것은 호출자 몫이다.
+
+`spec_missing` (`#911`) — 스펙 템플릿(`docs/issue-spec.md`)의 여섯 항목 중 본문 제목 줄에 없는 것의
+키 목록. [중요] **경고만 한다** — 판정(`verdict`·`ok`)을 바꾸지 않는다(사용자 결정 2026-11-14).
 """
 from __future__ import annotations
 
@@ -36,6 +39,16 @@ NEXT_ACTION = {
 }
 OK_VERDICTS = ("resume", "next")
 
+# 스펙 템플릿 여섯 항목(docs/issue-spec.md §2) — (키, 제목 열쇠말). 제목 줄에 열쇠말 하나가 들어 있으면 있다고 본다.
+SPEC_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("problem", ("문제", "배경", "맥락")),
+    ("triage", ("분류", "트리아지")),
+    ("observe", ("관측", "you see", "사용 예")),
+    ("scope", ("범위", "파급")),
+    ("done", ("완료 조건", "완료 기준", "증명")),
+    ("open", ("열린 결정", "열린 질문", "미정")),
+)
+
 
 @dataclass
 class StartVerdict:
@@ -54,6 +67,14 @@ class StartVerdict:
     def as_dict(self) -> dict:
         return {"verdict": self.verdict, "ok": self.ok, "tasks": self.tasks,
                 "detail": self.detail, "next_action": self.next_action}
+
+
+def spec_missing(body: str) -> list[str]:
+    """스펙 템플릿 항목 중 본문(플랜 영역 밖) 제목 줄에 없는 것의 키 — 경고용, 판정과 무관."""
+    heads = [ln.lstrip().lstrip("#").strip().lower()
+             for ln in _outside_plan(body or "").splitlines() if ln.lstrip().startswith("#")]
+    return [key for key, words in SPEC_SECTIONS
+            if not any(w in h for h in heads for w in words)]
 
 
 def _outside_plan(body: str) -> str:
@@ -112,6 +133,8 @@ def start_issue(issue_id, *, getter=None) -> dict:
     if not isinstance(got, dict) or got.get("error"):
         return {"error": (got or {}).get("error", "이슈를 읽지 못했다") if isinstance(got, dict)
                 else "이슈를 읽지 못했다", "issue_id": issue_id}
-    out = assess(got.get("description") or "").as_dict()
+    body = got.get("description") or ""
+    out = assess(body).as_dict()
+    out["spec_missing"] = spec_missing(body)
     out.update({"issue_id": got.get("id", issue_id), "subject": got.get("subject", "")})
     return out

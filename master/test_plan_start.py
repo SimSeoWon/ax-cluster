@@ -108,6 +108,59 @@ def test_assess_never_writes():
     check("판정은 본문을 바꾸지 않는다", body == before)
 
 
+ALL_KEYS = [k for k, _ in ST.SPEC_SECTIONS]
+SPEC_DOC = Path(__file__).resolve().parent.parent / "docs" / "issue-spec.md"
+
+
+def _doc_example() -> str:
+    text = SPEC_DOC.read_text(encoding="utf-8")
+    a = text.index("<!-- issue-spec-example:begin -->")
+    b = text.index("<!-- issue-spec-example:end -->")
+    return text[a:b]
+
+
+def test_spec_missing_template_example():
+    """#911 — 템플릿 문서의 예시 본문은 누락 0 이어야 한다(문서와 검출 규칙이 한 쌍)."""
+    ex = _doc_example()
+    check("템플릿 예시 본문 → 누락 없음", ST.spec_missing(ex) == [], str(ST.spec_missing(ex)))
+    for key, _ in ST.SPEC_SECTIONS:
+        check(f"템플릿 문서 §2 표에 `{key}` 가 있다", f"`{key}`" in SPEC_DOC.read_text(encoding="utf-8"))
+
+
+def test_spec_missing_reports_absent_sections():
+    check("빈 본문 → 전부 누락", ST.spec_missing("") == ALL_KEYS, str(ST.spec_missing("")))
+    check("종전 최소 스펙 → 전부 누락", ST.spec_missing(SPEC) == ALL_KEYS, str(ST.spec_missing(SPEC)))
+    body = "## 배경\r\n설명\r\n### 범위와 비범위\r\n- a\r\n## 완료 조건\r\nrc 0\r\n"
+    check("일부만 있으면 빠진 키만 (CRLF·제목 수준 무관)",
+          ST.spec_missing(body) == ["triage", "observe", "open"], str(ST.spec_missing(body)))
+    check("본문 줄의 열쇠말은 세지 않는다 — 제목 줄만",
+          ST.spec_missing("문제 분류 관측 범위 완료 조건 열린 결정\n") == ALL_KEYS)
+    check("영문 열쇠말은 대소문자 무관", "observe" not in ST.spec_missing("## You See\nx\n"))
+
+
+def test_spec_missing_ignores_plan_area():
+    plan = PB.append(SPEC, [PB.Task("T1", "대기", "목표")])
+    fake = plan.replace("<!-- ax:plan:end -->", "## 문제 분류 관측 범위 완료 조건 열린 결정\n<!-- ax:plan:end -->")
+    check("플랜 영역 안의 제목은 세지 않는다", ST.spec_missing(fake) == ALL_KEYS, str(ST.spec_missing(fake)))
+
+
+def test_spec_missing_is_warning_only():
+    """[중요] 경고만 — 판정은 스펙 항목 유무와 무관하다(사용자 결정 2026-11-14)."""
+    full = _doc_example()
+    for body in (SPEC, full):
+        check(f"판정 불변 — plan_needed ({len(ST.spec_missing(body))}개 누락)",
+              ST.assess(body).verdict == "plan_needed")
+    rows = (("T1", "대기", (), ""),)
+    check("누락이 있어도 next 는 ok", ST.assess(_body(*rows)).ok)
+    got = {"id": 1, "subject": "s", "description": _body(*rows)}
+    out = ST.start_issue(1, getter=lambda iid: got)
+    check("start_issue 응답에 spec_missing 이 실린다",
+          out.get("spec_missing") == ALL_KEYS and out["ok"], str(out))
+    check("as_dict 키는 그대로 + spec_missing 하나만 더한다",
+          set(out) == {"verdict", "ok", "tasks", "detail", "next_action", "issue_id", "subject", "spec_missing"},
+          str(sorted(out)))
+
+
 def main() -> int:
     for fn in (test_no_plan_is_not_ok,
                test_no_spec,
@@ -118,7 +171,11 @@ def main() -> int:
                test_blocked,
                test_plan_done,
                test_start_issue_reads_and_reports,
-               test_assess_never_writes):
+               test_assess_never_writes,
+               test_spec_missing_template_example,
+               test_spec_missing_reports_absent_sections,
+               test_spec_missing_ignores_plan_area,
+               test_spec_missing_is_warning_only):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_plan_start: {PASS}/{total} 통과")
