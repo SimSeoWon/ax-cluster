@@ -1,7 +1,17 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-14 — #368(잔여 한도 표시와 임계치 기반 인수인계 제안) 마감 완료(main `05f8f48`). Codex가 구현·검증·리포트까지 하고 한도 소진으로 멈춘 것을 Claude가 인계서 대조 후 rebase·마감·정리했다.
+> 2026-11-14 — #946(자동 리뷰에 커밋 메시지·일감·플랜 컨텍스트 주입) 마감 완료(main `851f60e`, Claude). 직전 #368은 main `05f8f48`로 마감·배달 완료.
 > 다음 일감은 사용자 선택을 기다린다. 항목·진행은 Redmine, 지난 상세는 Git 이력·리포트로 확인한다.
+
+## 직전 마감 — #946 완료
+
+- 승인: 「946번 진행해줘」 → 플랜 질문에 커밋 양식 `종류(#N T#): 제목` · 강제는 규약 기록 + 리뷰 로그만 · 로컬 서브에이전트. 진행 중 결정: 🔴 **일감·태스크가 없어도 리뷰는 종전대로 동작, 컨텍스트는 보조** · `test_issue_progress` 대역 추가 · T# 없으면 태스크 규칙 두 줄 생략. 「응 끝나면 마감까지 진행해」. 작성 계열 `['claude']`.
+- 커밋 `e100c12`(T1·T2: `master/commit_scope.py` 파서 = `plan_metrics.WORK_SCOPE_RE` 같은 객체 · `master/context_synth/issue_context.py` 수집 · `docs/orchestrator-rules.md` §1.9 규약) · `32e45f5`(T3·T4: `build_prompt` 주입 · `review_runner.commit_context`/`range_context` 이중 fail-soft · 수집은 `main()`만) · `851f60e`(리포트 `reports/185-946-review-issue-context.md`).
+- 검사: 관련 10파일 rc0 · 공식 통합 `Ran 199 tests / OK` · 전수 225파일 중 rc≠0 은 `test_sandbox.py` 하나(`AX_PROJECTS_ROOT` 미설정 — main 도 동일, 설정 시 38/38). 실물 드라이런(LLM 0)으로 갈래 넷 확인.
+- `issue_finish(confirm=True)` 전 단계 완료 · 「완료」·100. 리뷰 연결 「이음 0 · 큐에 없음 3」 — 리뷰 도착 미확인.
+- `issue_wrapup`: `ax-task-queue` 의존 변경 판정 → 16:18:31→19:26:33 재기동, 재판정 깨끗 · broker 최신 · 🔴 **`ax-projects` 는 「의존 판정 불가(journalctl rc=1)」로 재기동하지 않았다** — 미확인으로 둔다. 이 커밋 직후 배달.
+- 안 잰 것: 운영 리뷰 큐가 이 컨텍스트로 실제 리뷰한 결과(첫 회차 = 이 일감의 해시별 리뷰 · 확인은 리뷰 큐 로그 `[리뷰큐] <sha8> 리뷰 컨텍스트 …`) · 오탐·미탐 감소 A/B · `.33` 게임 트윈 실물.
+- 이 일감부터 커밋 제목은 `종류(#N T#): 제목` 이다(§1.9).
 
 ## 직전 마감 — #368 완료 (Codex 한도 소진 → Claude 인계)
 
@@ -12,17 +22,6 @@
 - `issue_wrapup`: main=origin/main=05f8f48 깨끗 · 서비스 셋 최신(재기동 없음 — relay는 상주 서비스가 아니다) → 인계서 커밋 대기로 rc2 → 이 문서 커밋·push 뒤 재실행해 배달·검사.
 - 안 잰 것: 실제 한도가 20% 아래로 내려간 운영 relay 세션에서 제안 배너가 뜨는 실물(검사·PONG 관측까지). 자동 교대는 범위 밖(아이디어 본문 2번) — 착수 결정 없음.
 - Codex 세션 로그 `~/.codex/sessions/2026/11/14/rollout-2026-11-14T16-06-09-01a1d8e0-bb1a-7242-a57e-ed979a9f3a45.jsonl`.
-
-## 직전 마감 — #944 완료
-
-- 사용자 「944 진행하자」·「응 로컬 서브 에이전트로 진행해」 승인. Codex가 `history_fix`에 구현·검사 패치 위임 후 diff·실행 결과를 직접 검증했다. 작성 계열 `['codex']`.
-- `issue_start_tool`: repo `/home/sim/ax-cluster/.ax-issues/944`, checkout `/home/sim/ax-cluster`, start_rev `15cda680f1a213931815614480d48379a20135ad`. 운영 main은 편집하지 않았다(마감 후 승인된 이 문서 갱신만).
-- 커밋 `c1ba57f`: `history_gen.write` 배타적 생성, 충돌 시 `_2`·`_3` 접미사. `c4ef271`: 회귀 검사. `7a40fe1`: 리포트 `reports/183-944-history-filename-collisions.md`.
-- 검사: 생성·충돌34/34 · 종결29/29 · 파서47/47 · 정적 차단0(mypy 비차단4) · 공식 통합 `Ran 197 tests in 206.893s / OK` rc0. 6프로세스 동시 파일 쓰기와 검색·웹 UI 왕복 확인. 전수 검사는 별도 실행하지 않았다.
-- `issue_finish(confirm=True)`: `done=[push,ff,worktree_remove,delete_branch,register,link,release,close,redmine]`, `registered=true`, `closed=true`, `why=""`. 리뷰 연결 「이음 0 · 큐에 없음 3」 — 리뷰 도착 미확인.
-- `issue_wrapup`: main=origin/main=7a40fe1 깨끗 · ax-task-queue 의존 변경 판정 → 16:02:16에서 16:18:31로 재기동(active), 재판정 깨끗. broker·projects 최신. 인수인계 커밋(`174d178`) 후 배달·검사 완료.
-- 운영 과거 유실 건수는 미확인. journalctl의 오늘 `[history]` 조회가 출력 없이 rc1이라 중단했고, 사용자 「응」으로 미확인 유지·T2 재개 승인. 운영 트윈에 검사용 기록은 쓰지 않았다.
-- 세션 `~/.codex/sessions/2026/11/14/rollout-2026-11-14T16-06-09-01a1d8e0-bb1a-7242-a57e-ed979a9f3a45.jsonl`.
 
 ## #383 에서 실제로 안 잰 것
 
@@ -45,7 +44,7 @@
 
 - 마스터 마지막 담당 기록은 claude(2026-11-14 15:48:34, 사용자 지시 — #383을 수행한 Claude 세션)다. #368 인계 때 이미 claude라 재기록하지 않았다. 워커 전역 codex(state, 2026-10-18). 모드 변경 없음.
 - 인계서는 한 벌로 덮어쓰며 이전 완료 내역을 누적하지 않는다(#842).
-- 미처리 리뷰: #929 R314/R317 · #930 R315/R316 · #931 R325 · #934 R326 · #829 R328/R329 · #942 R351~R355 · #383·#943·#944·#368(도착 미확인). 최신은 각 Redmine 노트로 확인한다.
+- 미처리 리뷰: #929 R314/R317 · #930 R315/R316 · #931 R325 · #934 R326 · #829 R328/R329 · #942 R351~R355 · #383·#943·#944·#368·#946(도착 미확인). 최신은 각 Redmine 노트로 확인한다.
 - 결정·구현 대기: #326 · #935 · #839 · #741 · #738 · #941.
 - 조건 대기: #272(ModularStage 마운트), #211·#855(KR 정답 30건·RAG 실사용 검증), #858(#856 선행).
 - `.33` 첫 실제 요청자 마감·연결, 실제 BC-250 poweroff 미확인. 자동 로드 문서의 M7 open 서술 미정리(M8 열림).
@@ -56,4 +55,4 @@
 ## 바로 다음 작업
 
 1. 다음 일감은 사용자 선택을 기다린다. 자동 시작하지 않는다.
-2. 확인해 둘 실물: 토요일 22시 이후 `ax-batch` 로그의 `recipe_synthesis` 줄(#383) · 다음 rejected 라운드의 큐 로그 `[history] … rejected(큐 내부 종결)` 줄(#943) · 운영 relay에서 한도 20% 이하 제안 배너(#368).
+2. 확인해 둘 실물: 토요일 22시 이후 `ax-batch` 로그의 `recipe_synthesis` 줄(#383) · 다음 rejected 라운드의 큐 로그 `[history] … rejected(큐 내부 종결)` 줄(#943) · 운영 relay에서 한도 20% 이하 제안 배너(#368) · 리뷰 큐 로그의 `리뷰 컨텍스트` 줄과 #946 해시별 리뷰(#946) · `ax-projects` 의존 판정 불가 원인(#946 wrapup).
