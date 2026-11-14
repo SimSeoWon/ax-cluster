@@ -980,6 +980,16 @@
     "timeout": 180
   },
   {
+    "path": "master/test_commit_scope.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 60
+  },
+  {
+    "path": "master/test_issue_context.py",
+    "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
+    "timeout": 60
+  },
+  {
     "path": "master/test_integration_coverage.py",
     "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
     "timeout": 180

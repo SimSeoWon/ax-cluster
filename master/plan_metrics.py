@@ -35,6 +35,8 @@ from fnmatch import fnmatch
 from pathlib import Path
 from urllib.request import urlopen
 
+from master.commit_scope import SCOPE_RE
+
 REPO = Path(__file__).resolve().parent.parent
 PLAN_PREFIX = "플랜 "
 TRANS_RE = re.compile(r"^플랜 (\S+): (\S*) → (\S+)(?: — (.*))?\Z", re.S)
@@ -48,7 +50,8 @@ TEST_RE = re.compile(r"\d+/\d+|\d+\s*건|통과|(?<![A-Za-z])OK(?![A-Za-z])|\d+\
 PATH_RE = re.compile(r"[\w./*-]+\.(?:py|md|json|toml|yaml|yml|sh)\b")
 # `#865` T2 — 작업 커밋: 제목이 `종류(… #N …)` 모양(`fix(#862 T1)` · `fix(#861 T2, #857 T7)`).
 #   「후속 #N」·「(#826 · #852)」처럼 제목에 지나가며 단 언급은 범위 밖이다.
-WORK_SCOPE_RE = re.compile(r"^[a-z]+(?:-[a-z]+)*\(([^)]*)\)")
+#   `#946` T1 — 정규식은 `commit_scope.SCOPE_RE` 하나를 같이 쓴다(리뷰 컨텍스트와 갈라지지 않게).
+WORK_SCOPE_RE = SCOPE_RE
 DIR_RE = re.compile(r"(?<![\w/:])[A-Za-z_][\w.-]*(?:/[\w.-]+)*/(?![\w*])")
 WORKING, DONE, BLOCKED, WAITING = "작업중", "완료", "차단", "대기"
 POST_WORK_NAMES = ("해결", "검토")
