@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master.relay import agents as A   # noqa: E402
 from master.relay import boundary as B  # noqa: E402
+from master.relay import console as C   # noqa: E402
 from master.relay import store as S    # noqa: E402
 
 PASS = FAIL = 0
@@ -358,10 +359,124 @@ def t_boundary_closable(tmp):
     check("없는 일감 거절", not b.closable(99)["ok"])
     check("판정이 디버그에 남는다", any("boundary.closable" in x and "마무리 가능" in x for x in logs))
 
+# ── 콘솔 (T5) ────────────────────────────────────────────────────────────────
+
+def mk_relay(tmp, script, *, issues, active=None):
+    """`script` = 사용자가 칠 줄들. 다 쓰면 EOF 로 루프가 끝난다."""
+    root = tmp / "root"
+    work = tmp / "work"
+    work.mkdir(exist_ok=True)
+    b, _ = mk_boundary(tmp, issues=issues, active=active)
+    lines, shown = list(script), []
+    def inp(prompt=""):
+        if not lines:
+            raise EOFError
+        return lines.pop(0)
+    r = C.Relay(root=root, cwd=work, boundary=b, out=lambda *a: shown.append(" ".join(str(x) for x in a)), inp=inp)
+    return r, root, shown, issues
+
+
+def t_console_round_trip(tmp):
+    """일감 선택 → claude 와 대화 → codex 로 교체해 이어받기 → codex 두 번째 → claude 복귀 → 마무리."""
+    fake_bins(tmp, claude=CLAUDE_LINES, codex=CODEX_LINES, agy=AGY_LINES)
+    iss = {7: {"subject": "일곱 번째", "status": "진행"}}
+    r, root, shown, issues = mk_relay(tmp, ["7", "1", "첫 지시", "/agent", "codex", "이어서 해줘", "한 번 더",
+                                           "/agent", "1", "돌아왔다", "/status", "/close"], issues=iss, active=7)
+    check("루프 종료 코드", r.loop() == 0)
+    recs = S.read(root, 7)
+    users = [x for x in recs if x["kind"] == "user"]
+    check("사용자 입력 넷이 고른 에이전트 이름으로 기록", [(x["agent"], x["text"]) for x in users] ==
+          [("claude", "첫 지시"), ("codex", "이어서 해줘"), ("codex", "한 번 더"), ("claude", "돌아왔다")], str(users))
+    check("교체가 기록에 남는다", [x["text"] for x in recs if x["kind"] == "switch"] ==
+          ["에이전트 (없음) → claude", "에이전트 claude → codex", "에이전트 codex → claude"])
+    check("순번이 빈틈없다", [x["seq"] for x in recs] == list(range(1, len(recs) + 1)))
+    check("delta·meta 는 기록하지 않는다", not [x for x in recs if x["kind"] in ("delta", "meta")])
+    check("모르는 이벤트는 기록한다", any(x["kind"] == "raw" for x in recs))
+    ca, xa = argv_of(tmp, "claude"), argv_of(tmp, "codex")
+    log = str(S.log_path(root, 7))
+    p1 = ca[0][-1]
+    check("첫 에이전트 전달문 — 일감 사실만, 기록 안내 없음(앞선 대화가 없다)",
+          p1.startswith("[relay] 작업 세션: Redmine 일감 #7 «일곱 번째».") and p1.endswith("\n\n첫 지시") and log not in p1, p1[:200])
+    check("claude 첫 호출은 새 세션", "--session-id" in ca[0])
+    p2 = xa[0][-1]
+    check("교체된 에이전트 전달문 — 기록 파일 위치와 처음 참여 사실", log in p2 and "처음 참여한다" in p2
+          and p2.endswith("\n\n이어서 해줘") and xa[0][:2] == ["exec", "--json"], p2[:300])
+    p3 = xa[1][-1]
+    check("같은 에이전트 연속 — 이어가기 + 기록 안내 없음", xa[1][:2] == ["exec", "resume"] and xa[1][-2] == "x-1"
+          and log not in p3 and p3.endswith("\n\n한 번 더"), str(xa[1])[:300])
+    p4 = ca[1][-1]
+    seen_claude = [x["seq"] for x in recs if x["kind"] == "result" and x["agent"] == "claude"][0]
+    check("돌아온 에이전트 전달문 — 본 순번과 그 뒤 범위", f"마지막으로 본 순번은 {seen_claude}번" in p4
+          and f"{seen_claude + 1}~" in p4 and "거치지 않은 대화" in p4 and ca[1][-3:-1] == ["--resume", "c-1"], p4[:300])
+    check("전달문에 명령형을 싣지 않는다", not any(w in (p2 + p4).split("\n\n")[0] for w in ("읽어라", "하세요", "하라", "하십시오")))
+    st = S.state(root, 7)
+    check("세션 ID 가 에이전트별로 남는다", st["agents"]["claude"]["session"] == "c-1" and st["agents"]["codex"]["session"] == "x-1"
+          and st["agents"]["agy"]["session"] == "" and st["current"] == "claude", str(st["agents"]))
+    check("횟수", (st["agents"]["claude"]["turns"], st["agents"]["codex"]["turns"]) == (2, 2))
+    check("미러링 — 말·도구·결과가 화면에", any(x.startswith("[claude] 끝났습니다") for x in shown)
+          and any(x.startswith("[codex] -> 도구 /bin/bash") for x in shown)
+          and any(x.startswith("[codex] <- 결과 relay-ok") for x in shown), "\n".join(shown[-30:]))
+    check("마무리 거절 — 완료가 아니다", any("아직 마무리할 수 없다" in x and "「진행」" in x for x in shown))
+    check("거절하면 세션이 남는다", S.sessions(root) == [7])
+    check("받은 줄 원문 파일", (S.session_dir(root, 7) / "raw-claude.jsonl").exists() and (S.session_dir(root, 7) / "raw-codex.jsonl").exists())
+    dbg = S.debug_path(root, 7).read_text(encoding="utf-8")
+    for needle in ("console.issue", "console.agent", "console.send", "agents.run", "boundary.closable", "console.close"):
+        check(f"디버그 로그에 {needle}", needle in dbg)
+    # 일감이 완료되고 보고서가 생기고 잠금이 풀리면 마무리된다
+    issues[7]["status"] = "완료"
+    (tmp / "reports" / "200-7-done.md").write_text("x", encoding="utf-8")
+    r2, root, shown2, _ = mk_relay(tmp, ["/close"], issues=issues)
+    r2.issue, r2.subject, r2.agent = 7, "일곱 번째", "claude"
+    r2.close()
+    check("마무리 — 보관하고 세션을 비운다", S.sessions(root) == [] and r2.issue == 0
+          and any("보관했고 세 에이전트 세션을 비웠다" in x for x in shown2), "\n".join(shown2))
+    arch = list((root / "archive").iterdir())
+    check("보관소에 기록·상태·원문이 있다", len(arch) == 1 and (arch[0] / S.LOG_NAME).exists()
+          and (arch[0] / S.STATE_NAME).exists() and (arch[0] / "raw-claude.jsonl").exists())
+
+
+def t_console_failure_and_reset(tmp):
+    fake_bins(tmp, claude=CLAUDE_LINES[:1])
+    os.environ["RELAY_FAKE_RC"] = "1"
+    os.environ["RELAY_FAKE_STDERR"] = "auth expired\n"
+    iss = {7: {"subject": "일곱", "status": "진행"}}
+    r, root, shown, _ = mk_relay(tmp, ["7", "claude", "지시", "/reset", "/nope", "/quit"], issues=iss)
+    r.loop()
+    os.environ.pop("RELAY_FAKE_RC")
+    os.environ.pop("RELAY_FAKE_STDERR")
+    recs = S.read(root, 7)
+    check("실패가 기록에 남는다", any(x["kind"] == "error" and "종료 코드 1" in x["text"] and "auth expired" in x["text"] for x in recs))
+    check("실패를 화면에 알리고 디버그 위치를 준다", any("claude 실패" in x for x in shown) and any("debug.log" in x for x in shown))
+    check("다시 시도하지 않는다", len(argv_of(tmp, "claude")) == 1)
+    st = S.state(root, 7)["agents"]["claude"]
+    check("/reset 으로 세션을 비운다", st["session"] == "" and st["seen"] == 0, str(st))
+    check("모르는 명령 안내", any("모르는 명령: /nope" in x for x in shown))
+    check("오류 출력이 디버그 로그에", "auth expired" in S.debug_path(root, 7).read_text(encoding="utf-8"))
+
+
+def t_console_open_refused(tmp):
+    fake_bins(tmp)
+    iss = {7: {"subject": "일곱", "status": "진행"}, 8: {"subject": "여덟", "status": "진행"}}
+    r, root, shown, _ = mk_relay(tmp, ["8", "/quit"], issues=iss, active=7)
+    r.loop()
+    check("다른 일감이 작업 중이면 세션을 열지 않는다", S.sessions(root) == [] and any("#7 작업이 진행 중" in x for x in shown), "\n".join(shown))
+    check("목록에 작업 중 표시", any("작업 중" in x and "#7" in x for x in shown))
+    check("거절이 루트 디버그 로그에", "열기 거절" in S.debug_path(root).read_text(encoding="utf-8"))
+
+
+def t_header(tmp):
+    h = C.header(7, "제목", "/x/log.jsonl", seen=0, last=0, first_time=True)
+    check("앞선 기록이 없으면 일감 사실 한 줄", h == "[relay] 작업 세션: Redmine 일감 #7 «제목».", h)
+    h = C.header(7, "", "/x/log.jsonl", seen=5, last=5, first_time=False)
+    check("다 본 상태면 기록 안내 없음", "/x/log.jsonl" not in h)
+    h = C.header(7, "", "/x/log.jsonl", seen=5, last=9, first_time=False)
+    check("안 본 범위", "/x/log.jsonl" in h and "6~9번" in h, h)
+
 TESTS = [t_store_open_and_seq, t_store_concurrent_append, t_store_agent_state,
          t_store_corrupt_not_overwritten, t_store_archive,
          t_agents_build_cmd, t_agents_claude, t_agents_codex, t_agents_agy, t_agents_failures,
-         t_boundary_open, t_boundary_closable]
+         t_boundary_open, t_boundary_closable,
+         t_console_round_trip, t_console_failure_and_reset, t_console_open_refused, t_header]
 
 
 def main() -> int:
