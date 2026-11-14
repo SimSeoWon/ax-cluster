@@ -267,6 +267,22 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
             except Exception as e:                           # noqa: BLE001
                 r["history_error"] = f"작업 기록 실패: {e}"
                 _tq_log(f"[history] [주의] {work_id} 기록 실패: {e}", root)
+        # 생산자② 파이프라인 쪽 (#383) — merged 종결 work 당 신호 1건. 통합자 삭제 뒤 호출부가
+        # 0곳이라 분산 작업은 레시피 재료를 한 건도 남기지 않았다. [중요] 히스토리와 같은
+        # fail-soft: 적재가 죽어도 종결은 성립하고, 응답과 로그로 말한다. rejected 는 적재하지 않는다.
+        if req.merge_status == "merged" and \
+                any(c.startswith("merge_status=") for c in r.get("changed", ())):
+            try:
+                from ..context_synth import signals as SG
+                tasks = [t for t in idx.tasks.values() if t.get("work_id") == work_id]
+                r["signal_written"] = SG.record_work_merged(
+                    _paths_for(r.get("work")), r.get("work") or {}, tasks)
+                _tq_log(f"[signal] {work_id} merged → pipeline 신호 1건 "
+                        f"(파일 {len(SG.work_files(tasks))}개 · 라운드 "
+                        f"{(r.get('work') or {}).get('round', 1)}) → {r['signal_written']}", root)
+            except Exception as e:                           # noqa: BLE001
+                r["signal_error"] = f"신호 적재 실패: {e}"
+                _tq_log(f"[signal] [주의] {work_id} pipeline 신호 적재 실패: {e}", root)
         return r
 
     @app.post("/api/v1/history")
@@ -855,7 +871,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
 
         신호 파일은 마스터의 트윈 디렉토리(`recipes/_signals.jsonl`)에 있으므로 마스터가
         대행한다 (`redmine/note` 와 같은 구조·같은 requester 스코프). 파이프라인 쪽 신호는
-        통합자가 직접 적재하므로 이 자리를 지나지 않는다.
+        work 의 merged 종결 훅(`patch_work_ep`, `#383`)이 직접 적재하므로 이 자리를 지나지 않는다.
         """
         from ..context_synth import signals as SG
         bad = _stamp_gate(req.project, work_id=req.work_id)

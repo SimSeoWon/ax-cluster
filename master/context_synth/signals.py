@@ -9,7 +9,9 @@
 다음 작업이 시작할 때 find_recipes 로 그 절차서를 받는다 — 경험이 트윈으로 돌아오는 루프다.
 
 우리 적재 지점 둘 (둘 다 트윈을 먼저 받고 작업하는 경로다):
-    파이프라인   통합자가 게이트 통과분을 커밋할 때 자동 적재 — intent 는 큐의 task 제목
+    파이프라인   work 가 `merged` 로 종결될 때 큐가 **work 당 1건** 자동 적재 (`#383`) —
+                intent 는 work 제목 · `record_work_merged` (종전 「통합자가 커밋할 때」 배선은
+                통합자 삭제(2026-09-03)와 함께 사라졌고 그 뒤 호출부가 0곳이었다)
     요청자(.33)  클라 MCP `log_writer_signal` → 8101 `POST /api/v1/signals` (requester 스코프,
                 redmine/note 와 같은 마스터 대행 자리 — 8103 `/api/v1` 은 공개 읽기 표면이라 안 된다)
 
@@ -93,3 +95,37 @@ def read_signals(paths) -> list:
         except ValueError:
             continue
     return out
+
+
+def work_files(tasks) -> list:
+    """work 의 조각들이 맡은 파일 — `target_file`·`header_file`(단수)과 `target_files`(`#719`) 전부.
+    첫 등장 순서 유지 · 중복 제거."""
+    out: list = []
+    for t in tasks or ():
+        for f in (t.get("target_file"), t.get("header_file"), *(t.get("target_files") or ())):
+            f = str(f or "").strip()
+            if f and f not in out:
+                out.append(f)
+    return out
+
+
+def record_work_merged(paths, work: dict, tasks: list) -> str:
+    """파이프라인 신호 — work 가 `merged` 로 종결될 때 큐가 부른다 (`#383`, work 당 1건).
+
+    큐가 아는 사실만 싣는다: intent = work 제목, files_modified = 조각 파일, iterations = 라운드 수.
+    queries·files_read·error_recoveries 는 비운다 — 큐에 그 대응물이 없다(위 설명).
+    [중요] `rejected` 는 부르지 않는다 — 불합격은 실패 카탈로그의 몫이다. 실패해도 종결을 막지
+    않는 것은 호출자(fail-soft)의 몫이고, 여기는 정직하게 예외를 낸다(`record_work_terminal` 과 같다).
+    """
+    work = work or {}
+    work_id = str(work.get("work_id") or "")
+    try:
+        rounds = int(work.get("round") or 1)
+    except (TypeError, ValueError):
+        rounds = 1
+    notes = str((work.get("review_decision") or {}).get("notes") or "")
+    record = make_record(
+        intent=(work.get("title") or work_id or "").strip(),
+        files_modified=[{"path": f, "summary": ""} for f in work_files(tasks)],
+        iterations=rounds, feedback_notes=notes, work_id=work_id, source="pipeline")
+    return append_signal(paths, record)

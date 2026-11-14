@@ -4,7 +4,7 @@
     ① 레코드 스키마    원전 log_writer_signal 글자대로 — intent 필수, 선택 필드는 값 있을 때만
     ② 왕복 계약       쓴 줄을 소비자(원전 _read_signals)의 눈으로 다시 읽는가 · 깨진 줄 스킵
     ③ 클라 자리       .33 MCP 도구가 마스터 대행 POST 를 올바른 본문으로 부르는가
-    ④ 통합자 배선     통과분만 적재 · intent=큐 제목(조회 실패 시 task_id) · 실패는 note
+    ④ 파이프라인 배선  work merged 종결당 1건 · rejected 는 0건 · 적재 실패는 응답·로그 (#383)
 
 실행: .venv/bin/python master/test_signals.py   (LLM 0 · 네트워크 0 — 전부 주입)
 """
@@ -125,17 +125,129 @@ def test_client_tool_posts_master_mediated():
           ("POST", "/api/v1/signals") in REQUESTER_SCOPE, str(REQUESTER_SCOPE))
 
 
-# ── ④ 통합자 배선 ─────────────────────────────────────────────
+# ── ④ 파이프라인 배선 (#383) ──────────────────────────────────
 
-# [중요] **여기 있던 `test_integrator_lays_signals_for_passed_only` 를 지웠다**
-# (2026-09-03, 통합자 삭제). 신호 적재를 「통합자가 커밋할 때」 하던 배선이 사라졌다.
-# [주의] **그래서 지금 자동으로 신호를 놓는 주체가 없다** — 큐의 엔드포인트
-# (`task_queue/server.py:508`)는 남아 있으니 호출만 하면 되지만, 그 호출자를
-# 아직 안 만들었다. 미결로 보고했다.
+# [주의] 통합자가 커밋할 때 적재하던 배선은 통합자 삭제(2026-09-03)와 함께 사라졌고, 그 뒤
+# `source="pipeline"` 호출부가 0곳이었다. `#383` 이 work 의 merged 종결 훅으로 다시 이었다.
+
+def test_pipeline_signal_on_work_merged():
+    p = fixture()
+    work = {"work_id": "w-383", "title": "히트박스[UHitBox] 판정 추가", "round": 3,
+            "review_decision": {"notes": "판정 반경이 좁다 — 다음에 보정"}}
+    tasks = [{"task_id": "t1", "target_file": "Source/M/UHitBox.cpp",
+              "header_file": "Source/M/UHitBox.h"},
+             {"task_id": "t2", "target_file": "Source/M/UHitBox.cpp",          # 중복 — 한 번만
+              "target_files": ["Source/M/UHitBox.cpp", "Source/M/Extra.cpp", " "]}]
+    stored = SG.record_work_merged(p, work, tasks)
+    got = SG.read_signals(p)
+    check("[중요] work 당 1건 · 저장 경로를 돌려준다",
+          len(got) == 1 and stored.endswith("recipes/_signals.jsonl"), f"{len(got)} {stored}")
+    r = got[0]
+    check("[중요] source=pipeline · work_id · intent=work 제목",
+          r.get("source") == "pipeline" and r.get("work_id") == "w-383"
+          and r["intent"] == "히트박스[UHitBox] 판정 추가", str(r))
+    check("iterations = 라운드 수", r["iterations"] == 3, str(r["iterations"]))
+    check("files_modified = 조각 파일 전부(단수·복수 필드) · 중복 제거 · 요청자 신호와 같은 모양",
+          r["files_modified"] == [{"path": "Source/M/UHitBox.cpp", "summary": ""},
+                                  {"path": "Source/M/UHitBox.h", "summary": ""},
+                                  {"path": "Source/M/Extra.cpp", "summary": ""}],
+          str(r["files_modified"]))
+    check("검수 노트가 feedback_notes 로 간다", r["feedback_notes"] == "판정 반경이 좁다 — 다음에 보정")
+    check("큐가 모르는 과정 필드는 비운다",
+          r["queries"] == [] and r["files_read"] == [] and r["error_recoveries"] == [])
+
+    p2 = fixture()
+    SG.record_work_merged(p2, {"work_id": "w-x", "round": "쓰레기"}, [])
+    r2 = SG.read_signals(p2)[0]
+    check("제목 없는 work 는 work_id 가 intent · 라운드 쓰레기값은 1",
+          r2["intent"] == "w-x" and r2["iterations"] == 1 and r2["files_modified"] == [], str(r2))
+    try:
+        SG.record_work_merged(fixture(), {}, [])
+        check("[중요] 제목도 work_id 도 없으면 정직하게 예외 (호출자가 fail-soft)", False)
+    except ValueError:
+        check("[중요] 제목도 work_id 도 없으면 정직하게 예외 (호출자가 fail-soft)", True)
+
+
+def _queue_client(root: Path):
+    """실제 8101 앱 + **실제 임시 큐**(`test_ontology_proxy` 의 하니스 · 소켓은 열지 않는다)."""
+    from unittest.mock import patch
+    from fastapi.testclient import TestClient
+    from master.task_queue import server as SV
+    from master.task_queue.persistence import TaskIndex
+    idx = TaskIndex(root)
+    with patch.object(SV, "TaskIndex", return_value=idx), \
+            patch.object(SV, "_bootstrap_log_rotation"), \
+            patch.object(SV, "recover_stuck_works", return_value=[]), \
+            patch.object(SV, "load_token", return_value=_TOKEN), \
+            patch("master.auth.load_role_token", return_value=""), \
+            patch("threading.Thread.start"), patch("uvicorn.run") as run:
+        SV._run_http_server(root, 0, "127.0.0.1")
+    return TestClient(run.call_args.args[0]), idx
+
+
+_TOKEN = "master-" + "m" * 40
+
+
+def test_server_hook_lays_signal_only_on_merged():
+    """실제 PATCH 라우트 — merged 1건 · rejected 0건 · 적재가 죽어도 종결은 성립한다."""
+    from unittest.mock import patch
+    from master.task_queue import server as SV
+    from master.task_queue.logic import register_work
+
+    root = Path(tempfile.mkdtemp(prefix="ax-sg-queue-"))
+    twin = fixture()
+    client, idx = _queue_client(root)
+    hdr = {"Authorization": "Bearer " + _TOKEN}
+    logs = []
+
+    def new_work(title):
+        # 등재 라우트는 마운트 관문을 지난다 — 여기서 재는 것은 종결 훅이라 코어로 직접 등재한다
+        return register_work(idx, title=title, target_repo="R", project="T").get("work_id", "")
+
+    with patch("master.context_search.paths.resolve", lambda name="": twin), \
+            patch("master.context_synth.history_gen.record_work_terminal",
+                  lambda *a, **k: "history.md"), \
+            patch.object(SV, "_tq_log", lambda m, *_a, **_k: logs.append(m)):
+        w1 = new_work("신호 배선 검사 — merged")
+        check("(준비) work 등재", bool(w1), w1)
+        r = client.patch(f"/api/v1/works/{w1}", headers=hdr,
+                         json={"project": "T", "merge_status": "merged"}).json()
+        got = SG.read_signals(twin)
+        check("[중요] merged 전이 → pipeline 신호 1건", r.get("ok") and len(got) == 1
+              and got[0].get("source") == "pipeline" and got[0].get("work_id") == w1,
+              f"{r} / {got}")
+        check("응답에 저장 경로가 실린다",
+              str(r.get("signal_written", "")).endswith("recipes/_signals.jsonl"), str(r))
+        check("[중요] 로그 한 줄이 남는다 (볼 사건 = 적재)",
+              any("[signal]" in m and w1 in m and "pipeline" in m for m in logs), str(logs))
+
+        w2 = new_work("신호 배선 검사 — rejected")
+        r = client.patch(f"/api/v1/works/{w2}", headers=hdr,
+                         json={"project": "T", "merge_status": "rejected"}).json()
+        check("[중요] rejected 는 적재하지 않는다 (실패 카탈로그의 몫)",
+              r.get("ok") and "signal_written" not in r and len(SG.read_signals(twin)) == 1,
+              f"{r} / {len(SG.read_signals(twin))}")
+
+        w3 = new_work("신호 배선 검사 — 적재 실패")
+        logs.clear()
+
+        def boom(*a, **k):
+            raise OSError("디스크가 찼다")
+
+        with patch.object(SG, "record_work_merged", boom):
+            r = client.patch(f"/api/v1/works/{w3}", headers=hdr,
+                             json={"project": "T", "merge_status": "merged"}).json()
+        check("[중요] 적재가 죽어도 종결은 성립하고 응답·로그로 말한다",
+              r.get("ok") and "신호 적재 실패" in r.get("signal_error", "")
+              and any("[signal]" in m and "실패" in m for m in logs), f"{r} / {logs}")
+    client.close()
+
 
 def main() -> int:
     for fn in (test_record_schema, test_roundtrip_and_broken_lines,
-               test_client_tool_posts_master_mediated):
+               test_client_tool_posts_master_mediated,
+               test_pipeline_signal_on_work_merged,
+               test_server_hook_lays_signal_only_on_merged):
         fn()
     print(f"{'OK' if not FAIL else '[실패]'} test_signals: {PASS}/{PASS + FAIL} 통과")
     return 1 if FAIL else 0
