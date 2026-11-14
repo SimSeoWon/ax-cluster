@@ -391,6 +391,8 @@ def _read_sessions(root: Path, warnings: list[str], errors: dict):
                         else:
                             errors["duplicate_conflicts"] += 1
                             _warn(warnings, "같은 응답 id 인데 값이 다른 세션 기록이 있습니다(둘 다 셉니다).")
+                    if tool == "agy":
+                        record["_snapshot"] = str(path)   # `#949` — all 에서 파견 기록과 짝을 맞추는 단위
                     yield owner, record
                 except (ValueError, TypeError) as exc:
                     _error("세션 레코드", exc)
@@ -401,13 +403,69 @@ def _read_sessions(root: Path, warnings: list[str], errors: dict):
             errors["invalid_records" if isinstance(exc, (ValueError, TypeError)) else "read_errors"] += 1
             _warn(warnings, "세션 스냅샷을 읽지 못했습니다.")
 
+# `#949` — 파견 기록 하나가 세션 사본 하나와 같은 호출인지. 헤드리스 `agy -p` 는 양쪽에 남는다
+#    (실측 2026-11-13: 파견 28건 중 26건이 마스터 세션과 시각·입력·출력이 정확히 같았다).
+#    파견 시각은 호출이 끝난 뒤 적힌다 — 세션 구간 [첫 턴 − 앞여유, 마지막 턴 + 뒤여유] 안이면 같은 때다.
+_MATCH_BEFORE = timedelta(seconds=5)
+_MATCH_AFTER = timedelta(seconds=300)
+
+
+def _gemini_match(sessions: dict, dispatch: list) -> dict:
+    """`{스냅샷: (파견 출처, 파견 레코드)}` — 입력·출력 합이 같고 시각이 구간 안인 첫 짝. 서로 한 번씩만 쓴다."""
+    spans = []
+    for key, rows in sessions.items():
+        measured = [rec for _, rec in rows if rec["measured"]]
+        if not measured:
+            continue
+        spans.append((key, min(r["at"] for r in measured), max(r["at"] for r in measured),
+                      sum(r["amounts"]["input_tokens"] for r in measured),
+                      sum(r["amounts"]["output_tokens"] for r in measured)))
+    spans.sort(key=lambda x: x[1])
+    pairs: dict = {}
+    for origin, rec in dispatch:
+        if not rec["measured"]:
+            continue
+        amounts = rec["amounts"]
+        for key, first, last, inp, out in spans:
+            if key in pairs:
+                continue
+            if (inp == amounts["input_tokens"] and out == amounts["output_tokens"]
+                    and first - _MATCH_BEFORE <= rec["at"] <= last + _MATCH_AFTER):
+                pairs[key] = (origin, rec)
+                break
+    return pairs
+
+
 def _read_all(root: Path, names: list[str], store: Path, warnings: list[str], errors: dict):
-    """source=all — 계열별로 출처 하나. claude·codex 는 세션, 그 밖은 작업 실행 기록."""
+    """source=all — 계열별 출처. claude·codex 는 세션, gemini 는 세션 + 짝 없는 파견(`#949`), 그 밖은 파견.
+
+    🔴 `#949`(사용자 결정 2026-11-14 — #748 의 「gemini 는 파견만」 계약을 바꿨다): 세션 사본이 대화형·
+    리뷰 등 파견 밖 agy 호출까지 담는 상위집합이라 그쪽을 기준으로 삼는다. 같은 호출이 파견에도 있으면
+    (`_gemini_match`) 파견 쪽은 빼고, 세션에 프로젝트가 없으면 **파견의 프로젝트·일감을 이어받는다**
+    (헤드리스 agy 는 임시 디렉터리에서 돌아 세션에 귀속 근거가 없다). 짝이 없는 파견은 그대로 센다."""
+    gemini: dict = {}
     for origin, rec in _read_sessions(store, warnings, errors):
         if rec["family"] in _SESSION_FAMILIES:
             yield origin, rec
+        elif rec["family"] == "gemini" and rec.get("_snapshot"):
+            gemini.setdefault(rec["_snapshot"], []).append((origin, rec))
+    dispatch_gemini = []
     for origin, rec in _read_dispatch(root, names, warnings, errors):
-        if rec["family"] not in _SESSION_FAMILIES:
+        if rec["family"] == "gemini":
+            dispatch_gemini.append((origin, rec))
+        elif rec["family"] not in _SESSION_FAMILIES:
+            yield origin, rec
+    pairs = _gemini_match(gemini, dispatch_gemini)
+    used = {id(rec) for _, rec in pairs.values()}
+    for key, rows in gemini.items():
+        pair = pairs.get(key)
+        for origin, rec in rows:
+            if pair and not origin:
+                rec = {**rec, "work_id": pair[1]["work_id"]}
+                origin = pair[0]
+            yield origin, rec
+    for origin, rec in dispatch_gemini:
+        if id(rec) not in used:
             yield origin, rec
 
 

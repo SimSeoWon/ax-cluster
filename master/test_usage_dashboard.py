@@ -318,7 +318,8 @@ class UsageDashboardTests(unittest.TestCase):
 
     def test_agy_session_is_gemini_and_all_keeps_dispatch(self):
         # #748: agy 세션 스냅샷은 gemini · 합계는 #949 계약(입력+출력+캐시 읽기)
-        #       모두 보기에서 gemini 는 여전히 작업 실행 기록이 맡는다(헤드리스 agy 는 양쪽에 남는다)
+        # 🔴 #949: 모두 보기의 gemini 는 세션 + 짝 없는 파견(종전 #748 은 파견만). 여기 파견 30 은
+        #       세션과 입력·출력이 달라 짝이 없으므로 둘 다 센다
         agy = {"ts": "2026-10-10T01:00:00Z", "model": "Gemini 3.6 Flash (High)",
                "input": 5083, "output": 194, "cache_read": 16284}
         self.add_session("local", "agy", [agy, {**agy, "model": ""}], project="Alpha", name="g")
@@ -331,7 +332,42 @@ class UsageDashboardTests(unittest.TestCase):
                                      ("gemini", "Antigravity(모델 미상)")})
         self.assertEqual(session["totals"]["tokens"], 2 * (5083 + 194 + 16284))
         every = self.report(source="all", start="2026-10-10", end="2026-10-10")
-        self.assertEqual((every["totals"]["calls"], every["totals"]["tokens"]), (1, 30))
+        self.assertEqual((every["totals"]["calls"], every["totals"]["tokens"]),
+                         (3, 2 * (5083 + 194 + 16284) + 30))
+
+    def test_all_gemini_pairs_dispatch_with_session_949(self):
+        # #949: 헤드리스 agy 는 파견·세션 양쪽에 남는다 — 짝이면 한 번만 세고, 프로젝트 없는 세션은
+        #       파견의 프로젝트·일감을 이어받는다. 짝 없는 대화형 세션은 전체 보기에만 든다.
+        self.add_work("w-agy", "Alpha", 949, "사용량")
+        turn1 = {"ts": "2026-10-10T01:00:00Z", "model": "Gemini 3.8 Flash (Medium)",
+                 "input": 100, "output": 10, "cache_read": 900}
+        turn2 = {**turn1, "ts": "2026-10-10T01:00:20Z", "input": 50, "output": 5, "cache_read": 1000}
+        self.add_session("local", "agy", [turn1, turn2], project=None, name="headless")
+        # 파견 시각은 KST naive, 호출이 끝난 뒤(마지막 턴 +30초) · 입력·출력은 세션 합과 같다
+        self.add_call("Alpha", "2026-10-10 10:00:50", work_id="w-agy", model="", lane="agy",
+                      input_tokens=150, output_tokens=15, cache_read=1900)
+        chat = {"ts": "2026-10-10T02:00:00Z", "model": "Gemini 3.8 Flash (Medium)",
+                "input": 7, "output": 3, "cache_read": 0}
+        self.add_session("192.168.0.33", "agy", [chat], project=None, name="chat")
+        every = self.report(source="all", start="2026-10-10", end="2026-10-10")
+        self.assertEqual(every["totals"]["calls"], 3)               # 세션 턴 2 + 대화 1 · 파견은 짝이라 빠짐
+        self.assertEqual(every["totals"]["tokens"], (100 + 10 + 900) + (50 + 5 + 1000) + 10)
+        alpha = self.report(source="all", project="Alpha", start="2026-10-10", end="2026-10-10")
+        self.assertEqual((alpha["totals"]["calls"], alpha["totals"]["tokens"]),
+                         (2, (100 + 10 + 900) + (50 + 5 + 1000)))    # 파견의 프로젝트를 이어받았다
+        # 입력이 다르면 짝이 아니다 — 둘 다 센다(과소보다 과다를 택하지 않고 근거 있는 것만 합친다)
+        self.add_call("Alpha", "2026-10-10 10:00:51", model="", lane="agy",
+                      input_tokens=151, output_tokens=15)
+        every = self.report(source="all", start="2026-10-10", end="2026-10-10")
+        self.assertEqual(every["totals"]["calls"], 4)
+        # 시각이 구간 밖이면 짝이 아니다
+        self.add_call("Alpha", "2026-10-10 12:00:00", model="", lane="agy",
+                      input_tokens=7, output_tokens=3)
+        every = self.report(source="all", start="2026-10-10", end="2026-10-10")
+        self.assertEqual(every["totals"]["calls"], 5)
+        # 파견 소스는 종전 그대로(세션과 무관)
+        dispatch = self.report(source="dispatch", start="2026-10-10", end="2026-10-10")
+        self.assertEqual(dispatch["totals"]["calls"], 3)
 
     def test_request_read_errors_and_invalid_records_are_separate(self):
         self.add_work("work-1", "Alpha", 716, "사용량 검사")
