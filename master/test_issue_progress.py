@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import subprocess
 import sys
@@ -264,7 +265,7 @@ def test_워터마크_부재는_회차당_한_번():
         out = P.sync_issue_tracks(Paths(root), noter=Noter(), watermark=wm, logf=logs.append)
     finally:
         P._has_commit = real
-    warn = [m for m in logs if "워터마크" in m and "미러에 없다" in m]
+    warn = [m for m in logs if "색인 커서" in m and "미러에 없다" in m]
     check("🔴 R240-8 워터마크 git 확인 1회(대기 해시 3)", calls.count(wm) == 1, str(calls))
     check("R240-8 [주의] 로그 1줄", len(warn) == 1, str(warn))
     check("R240-8 해시는 waiting 그대로", all(hstate(root, s)["state"] == "waiting" for s in shas)
@@ -771,6 +772,59 @@ def test_지적_없으면_종전_범위_리뷰():
     shutil.rmtree(root)
 
 
+def test_걷기_커서_기준_950():
+    """`#950` — 규칙 ②는 워터마크가 아니라 색인 **걷기 커서**(+커서 밖 완료 목록)를 본다.
+
+    실측 2026-11-14 #368: 걷기가 `5805b748` 에서 멈춘 사이 워터마크(`last_indexed_commit`)가 끝으로 앞서
+    `902f4e99` 를 조기 skipped 로 닫았고, 4분 뒤 색인기가 그 커밋을 등재하자 `set_hash` 가 거절됐다."""
+    from master.events import consumer as C
+    check("#950 커서 밖 목록 파일명이 색인기와 같다", P.BEYOND_FILE == C.BEYOND_FILE,
+          f"{P.BEYOND_FILE} != {C.BEYOND_FILE}")
+    root, shas = make_twin(4)
+    a, b, c, d = shas
+    register(root, [b, c, d])
+    cfg = Path(root) / "config.yaml"
+
+    def write_cfg(cursor, wm):
+        cfg.write_text(f"name: T\nindex:\n  last_indexed_commit: {wm}\n  analyzed_commit: {cursor}\n",
+                       encoding="utf-8")
+    # 걷기 커서는 a(=b 이전), 워터마크는 끝 d — 종전 기준이면 b·c 가 skipped 됐을 자리
+    write_cfg(a, d)
+    logs = []
+    P.sync_issue_tracks(Paths(root), noter=Noter(), logf=logs.append)
+    check("🔴 #950 워터마크가 앞서도 걷기가 안 지난 해시는 waiting",
+          all(hstate(root, x)["state"] == "waiting" for x in (b, c, d)),
+          str([hstate(root, x)["state"] for x in (b, c, d)]))
+    check("#950 아직 안 지났다는 로그", any("색인 걷기가 아직 안 지났다" in m for m in logs), str(logs[-5:]))
+    # 커서가 b 로 전진 → b 만 skipped
+    write_cfg(b, d)
+    P.sync_issue_tracks(Paths(root), noter=Noter(), logf=logs.append)
+    check("#950 커서의 조상(자신 포함)은 skipped", hstate(root, b)["state"] == "skipped"
+          and hstate(root, b)["why"] == P.WATERMARK_SKIP_WHY, str(hstate(root, b)))
+    check("#950 커서 뒤는 waiting", hstate(root, c)["state"] == "waiting", str(hstate(root, c)))
+    # 커서 밖 완료 목록: 같은 커서에 묶인 것만 쓴다
+    (Path(root) / P.BEYOND_FILE).write_text(json.dumps({"cursor": a, "walked": [c]}), encoding="utf-8")
+    P.sync_issue_tracks(Paths(root), noter=Noter(), logf=logs.append)
+    check("#950 다른 커서에 묶인 목록은 버린다", hstate(root, c)["state"] == "waiting", str(hstate(root, c)))
+    (Path(root) / P.BEYOND_FILE).write_text(json.dumps({"cursor": b, "walked": [c]}), encoding="utf-8")
+    P.sync_issue_tracks(Paths(root), noter=Noter(), logf=logs.append)
+    check("#950 커서 밖 완료 목록의 해시는 skipped", hstate(root, c)["state"] == "skipped", str(hstate(root, c)))
+    check("#950 목록 밖 커서 뒤 해시는 waiting", hstate(root, d)["state"] == "waiting", str(hstate(root, d)))
+    shutil.rmtree(root)
+    # 커서가 비면 색인기와 같은 폴백 — 워터마크를 기준으로
+    root, shas = make_twin(2)
+    register(root, shas)
+    cfg = Path(root) / "config.yaml"
+    cfg.write_text(f"name: T\nindex:\n  last_indexed_commit: {shas[0]}\n  analyzed_commit: ''\n",
+                   encoding="utf-8")
+    logs = []
+    P.sync_issue_tracks(Paths(root), noter=Noter(), logf=logs.append)
+    check("#950 커서가 비면 워터마크 폴백(로그 남김)", hstate(root, shas[0])["state"] == "skipped"
+          and hstate(root, shas[1])["state"] == "waiting"
+          and any("워터마크" in m and "폴백" in m for m in logs), str(logs[-3:]))
+    shutil.rmtree(root)
+
+
 def test_공개_apply_를_쓴다():
     """`#884` T5 — 동기화는 `issue_link.apply`(공개 이름)를 부른다."""
     import inspect
@@ -779,7 +833,7 @@ def test_공개_apply_를_쓴다():
 
 
 if __name__ == "__main__":
-    for fn in (test_공개_apply_를_쓴다, test_done_과_포기_한_노트, test_노트_실패는_다음_회차가_다시, test_워터마크, test_워터마크_부재는_회차당_한_번,
+    for fn in (test_걷기_커서_기준_950, test_공개_apply_를_쓴다, test_done_과_포기_한_노트, test_노트_실패는_다음_회차가_다시, test_워터마크, test_워터마크_부재는_회차당_한_번,
                test_미러_부재_기한과_한번_알림, test_미러_부재_노트_실패와_조회실패,
                test_미러_도착_뒤_기존_리뷰로_복구, test_미러_부재_등록시각_판정불가,
                test_미러_커밋_조회오류와_부재_구분,

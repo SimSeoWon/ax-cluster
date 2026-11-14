@@ -17,8 +17,13 @@
                      done        → done (R 번호 · 지적 수 — fix_index)
                      abandoned   → abandoned (why = last_why)
                      pending·running·failed 이고 해시가 waiting → `issue_link.apply`(우선순위 10 · queued)
-    ② 워터마크    waiting 이고 큐 항목이 없는 해시가 색인 워터마크(`index.last_indexed_commit`)의
-                   조상이면 → skipped("색인 워터마크 통과 · 리뷰 미등재").
+    ② 걷기 커서   waiting 이고 큐 항목이 없는 해시를 색인기의 **커밋 걷기**가 이미 지나갔으면
+                   (`index.analyzed_commit` 의 조상이거나 커서 밖 완료 목록 `analyzed_beyond.json` 에 있으면)
+                   → skipped("색인 커서 통과 · 리뷰 미등재"). 🔴 #950 — 종전 기준은 워터마크
+                   (`index.last_indexed_commit`)였는데, 그것은 「전 그룹 합성 완료」 표시라 이벤트 끝으로
+                   한 번에 찍히고 걷기(리뷰 등재가 일어나는 곳)가 멈춰 있어도 앞설 수 있다 — 실측 2026-11-14
+                   #368: 걷기가 `5805b748` 에서 멈춘 사이 워터마크가 `fc700c28` 로 앞서 `902f4e99` 를 조기 종결했다.
+                   커서가 비면 색인기와 같은 규칙으로 워터마크를 출발점으로 쓴다(`consumer` 이행 폴백).
                    미러(`paths.repo`)에 그 커밋이 아직 없으면 그대로 waiting(미러 지연, `#880`)
                    #932: 등록 후30분에도 없으면 별도 사유·알림 표시에 기록, 일감 노트1회. 상태는 대기 유지.
                    워터마크 없음도 부재를 검사하며 Git조회 오류는 부재와 구분한다. 도착하면 기존 흐름으로 복구.
@@ -71,7 +76,9 @@ from . import issue_link as il
 from . import issue_track as it
 from . import review_queue as rq
 
-WATERMARK_SKIP_WHY = "색인 워터마크 통과 · 리뷰 미등재"
+WATERMARK_SKIP_WHY = "색인 커서 통과 · 리뷰 미등재"      # 이름은 호환용(#950 — 기준은 걷기 커서)
+# `master.events.consumer.BEYOND_FILE` 과 같은 이름 — 무거운 import 를 피하려 여기 적고 검사가 대조한다
+BEYOND_FILE = "analyzed_beyond.json"
 MISSING_COMMIT_GRACE_SECONDS = 30 * 60
 MISSING_COMMIT_WHY = "등록 후 30분 이상 미러에 커밋이 없음 · 리뷰 대기 유지"
 SUMMARY_PRIORITY = il.PRIORITY          # 종합 리뷰도 일감 마감 해시와 같은 10 (사용자 결정 2026-11-04)
@@ -141,18 +148,38 @@ def _missing_expired(rnd: dict, now: float, log) -> bool:
     return age >= MISSING_COMMIT_GRACE_SECONDS
 
 
-def _watermark_of(paths, logf) -> str:
-    """트윈 `config.yaml` 의 `index.last_indexed_commit` — 못 읽으면 빈 값(건너뜀 판정 안 함)."""
+def _cursor_of(paths, logf) -> tuple:
+    """#950 — `(걷기 커서, 커서 밖 완료 집합)`. 못 읽으면 `("", set())`(건너뜀 판정 안 함).
+
+    커서는 트윈 `config.yaml` 의 `index.analyzed_commit`. 비어 있으면 색인기와 같은 이행 폴백으로
+    `index.last_indexed_commit` 을 쓴다(그 값을 출발점 삼아 색인기가 걷는다). 커서 밖 목록은 **적힌 커서가
+    지금 커서와 같을 때만** 쓴다(`consumer._read_beyond` 와 같은 규칙 — 다르면 버린다)."""
     try:
         from ..projects.config import ProjectConfig                # noqa: PLC0415
         cfg = getattr(paths, "config", None) or Path(paths.root) / "config.yaml"
         if not Path(cfg).is_file():
-            return ""
-        return (ProjectConfig.load(Path(cfg)).last_indexed_commit or "").strip().lower()
+            return "", set()
+        c = ProjectConfig.load(Path(cfg))
+        cursor = (c.analyzed_commit or "").strip().lower()
+        if not cursor and (c.last_indexed_commit or "").strip():
+            cursor = c.last_indexed_commit.strip().lower()
+            logf(f"[issue-progress] 걷기 커서가 비어 워터마크 {cursor[:12]} 를 기준으로 쓴다(색인기와 같은 폴백)")
     except Exception as e:                                          # noqa: BLE001
-        logf(f"[issue-progress] [주의] 색인 워터마크를 읽지 못했다 — 워터마크 판정 생략: "
+        logf(f"[issue-progress] [주의] 색인 걷기 커서를 읽지 못했다 — 건너뜀 판정 생략: "
              f"{type(e).__name__}: {e}")
-        return ""
+        return "", set()
+    walked: set = set()
+    p = Path(paths.root) / BEYOND_FILE
+    if cursor and p.is_file():
+        try:
+            import json                                             # noqa: PLC0415
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if str(data.get("cursor") or "").strip().lower() == cursor:
+                walked = {str(x).strip().lower() for x in data.get("walked") or []}
+        except Exception as e:                                      # noqa: BLE001
+            logf(f"[issue-progress] [주의] {BEYOND_FILE} 를 읽지 못했다 — 커서 조상만 본다: "
+                 f"{type(e).__name__}: {e}")
+    return cursor, walked
 
 
 def _short(text, limit: int = _WHY_MAX) -> str:
@@ -182,8 +209,11 @@ def _review_facts(root, sha: str) -> tuple:
     return serial, len(doc.get("items_detail") or []), dict(doc.get("severity") or {})
 
 
-def _sync_round(paths, rnd: dict, by_key: dict, wm: str, counts: dict, log, now: float) -> set:
-    """①② — 한 라운드의 해시를 큐·워터마크에 맞춘다. 예외는 호출부가 잡는다."""
+def _sync_round(paths, rnd: dict, by_key: dict, wm: str, counts: dict, log, now: float,
+                walked: frozenset = frozenset()) -> set:
+    """①② — 한 라운드의 해시를 큐·걷기 커서에 맞춘다. 예외는 호출부가 잡는다.
+
+    `wm` 은 색인 걷기 커서(#950 — 이름은 종전 그대로), `walked` 는 커서 밖 완료 집합."""
     root = paths.root
     n, rnum = rnd["issue_id"], rnd["round"]
     tag = f"#{n} 회차 {rnum}"
@@ -257,13 +287,20 @@ def _sync_round(paths, rnd: dict, by_key: dict, wm: str, counts: dict, log, now:
             counts["unchanged"] += 1
             log(f"[issue-progress] [주의] {tag} {sha[:12]} queued 인데 큐에 항목이 없다 — 그대로 둔다")
             continue
+        if sha in walked:
+            res = it.set_hash(root, n, sha, state="skipped", why=WATERMARK_SKIP_WHY,
+                              round=rnum, logf=log)
+            counts["skipped" if res.get("ok") else "errors"] += 1
+            log(f"[issue-progress] {tag} {sha[:12]} 커서 밖 완료 목록에 있다 · 큐 항목 없음 → skipped"
+                + ("" if res.get("ok") else f" — 거절 {res.get('reason')}: {res.get('why')}"))
+            continue
         if not wm:
             counts["unchanged"] += 1
             continue
         if wm_present is None:
             wm_present = _has_commit(repo, wm)
             if not wm_present:
-                log(f"[issue-progress] [주의] {tag} 워터마크 {wm[:12]} 가 미러에 없다 — 이 회차 판정 생략")
+                log(f"[issue-progress] [주의] {tag} 색인 커서 {wm[:12]} 가 미러에 없다 — 이 회차 판정 생략")
         if not wm_present:
             counts["unchanged"] += 1
             continue
@@ -271,10 +308,11 @@ def _sync_round(paths, rnd: dict, by_key: dict, wm: str, counts: dict, log, now:
             res = it.set_hash(root, n, sha, state="skipped", why=WATERMARK_SKIP_WHY,
                               round=rnum, logf=log)
             counts["skipped" if res.get("ok") else "errors"] += 1
-            log(f"[issue-progress] {tag} {sha[:12]} 워터마크 {wm[:12]} 통과 · 큐 항목 없음 → skipped"
+            log(f"[issue-progress] {tag} {sha[:12]} 색인 커서 {wm[:12]} 통과 · 큐 항목 없음 → skipped"
                 + ("" if res.get("ok") else f" — 거절 {res.get('reason')}: {res.get('why')}"))
         else:
             counts["unchanged"] += 1
+            log(f"[issue-progress] {tag} {sha[:12]} 색인 걷기가 아직 안 지났다(커서 {wm[:12]}) — {cur} 유지")
     return missing
 
 
@@ -558,11 +596,14 @@ def _summary_round(paths, rnd: dict, noter, counts: dict, log) -> None:
     _follow_summary(paths, rnd, noter, counts, log)
 
 
-def sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None, clock=None) -> dict:
-    """열린 마감 라운드를 리뷰 큐·색인 워터마크에 맞추고 진행 노트를 남긴다. 예외를 올리지 않는다.
+def sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None, clock=None,
+                      walked=None) -> dict:
+    """열린 마감 라운드를 리뷰 큐·색인 걷기 커서에 맞추고 진행 노트를 남긴다. 예외를 올리지 않는다.
 
     `noter(issue_id, notes=...) -> str` — 생략하면 실 Redmine(등록된 트윈 루트에서만).
-    `watermark` — 생략하면 트윈 `config.yaml` 의 `index.last_indexed_commit`.
+    `watermark` — 색인 **걷기 커서**(#950 — 인자 이름은 호환용). 생략하면 트윈 `config.yaml` 의
+    `index.analyzed_commit`(비면 `last_indexed_commit` 폴백)과 커서 밖 완료 목록을 읽는다.
+    `walked` — 커서 밖 완료 집합 주입(검사용). `watermark` 를 주고 이것을 생략하면 빈 집합.
     `clock` — 생략하면 time.time. 단위 회귀에서 등록30분 경계를 주입한다.
     반환: 건수 사전(`rounds`·`done`·`abandoned`·`skipped`·`queued`·`unchanged`·`noted_notes`·
     `noted_hashes`·`note_failed`·`note_skipped`·`errors`) + `ok`.
@@ -584,7 +625,10 @@ def sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None, clock=Non
         for x in rq.items(root):
             if x.get("kind") == "commit":
                 by_key[str(x.get("key") or "").lower()] = x
-        wm = (str(watermark).strip().lower() if watermark is not None else _watermark_of(paths, log))
+        if watermark is not None:
+            wm, beyond = str(watermark).strip().lower(), {str(x).lower() for x in (walked or ())}
+        else:
+            wm, beyond = _cursor_of(paths, log)
         now = float((clock or time.time)())
         if noter is None:
             from . import review_runner as rr                       # noqa: PLC0415
@@ -600,7 +644,7 @@ def sync_issue_tracks(paths, *, noter=None, watermark=None, logf=None, clock=Non
         counts["rounds"] += 1
         n, rnum = rnd.get("issue_id"), rnd.get("round")
         try:
-            missing = _sync_round(paths, rnd, by_key, wm, counts, log, now)
+            missing = _sync_round(paths, rnd, by_key, wm, counts, log, now, frozenset(beyond))
             fresh = it.rounds(root, n)
             cur = next((r for r in fresh if r["round"] == rnum), None)
             if cur is not None:
