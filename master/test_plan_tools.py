@@ -161,6 +161,64 @@ def test_transition_writes_and_reports_next():
     check("다음 판정은 next T2", out["next"]["verdict"] == "next" and out["next"]["tasks"] == ["T2"])
 
 
+# #905 의 실제 완료 근거(2026-11-08 Redmine 원문) — #908 의 계기
+EV905 = {
+    "T1": "구현 편집 완료: /home/sim/ax-issues/905의 master/issue_flow.py 및 신규 master/issue_worktree.py. "
+          "start·재개·보류·취소가 운영 main을 유지하고 영속 /home/sim/ax-issues/N 경로를 사용하도록 변경. "
+          "사용자 지시로 검사·테스트·코드 실행 미실시, 미커밋·미배포.",
+    "T2": "master/issue_flow.py finish 편집 완료. 운영 main과 일감 worktree 분리, push→운영 main FF→일감 경로 "
+          "detach 보존→branch -d→기존 마감 기록 순서. 사용자 지시로 검사·테스트 미실시, 미커밋·미배포.",
+    "T3": "구현·안내·기록 편집 완료. 격리 작업본의 변경 7파일: issue_flow.py, 인수인계서, 리포트141. "
+          "검사·테스트·실증 미실행, 미커밋·미배포·미설치·미재기동.",
+    "T4": "커밋 6a0a2013f39e1cdfff806906026b59a450a381af를 main에 push·운영 main FF 반영. 드라이런·검사·테스트 미실행.",
+}
+
+
+def test_evidence_warning_judgement():
+    """#908 — 판정 함수. 경고만 하므로 오탐보다 놓침이 문제다: #905 넷은 전부 걸려야 한다."""
+    for tid, ev in EV905.items():
+        check(f"#905 {tid} 원문 → 경고", PT.evidence_warning(ev).startswith("[주의]"), ev[:40])
+    check("미실시 어휘는 그 구절을 사유에 싣는다", "미실시" in PT.evidence_warning(EV905["T1"]))
+    for ev in ("커밋 abc1234 · test 3/3 rc0 · 커밋·push·마감 미실행(승인 대기)",
+               "test 12/12 · 재기동 미승인·미실행",
+               "test 5/5 · 언리얼 드라이런은 미실행",
+               "test 19/19 · 임시 Git 조건은 운영 실증으로 주장하지 않는다"):
+        check(f"검사가 아닌 것의 미실행은 경고 안 함 ({ev[-14:]})", PT.evidence_warning(ev) == "",
+              PT.evidence_warning(ev))
+    for ev in ("커밋 6e46635 — test_plan_start 44/44 rc0",
+               "abc1234 push",
+               "test_x 12/12 통과",
+               "공식 통합 Ran 199 OK",
+               "reports/189 작성 · 실물 확인",
+               "드라이런 쓰기 0 · 응답 확인"):
+        check(f"표지 있는 근거 → 경고 없음 ({ev[:20]})", PT.evidence_warning(ev) == "", PT.evidence_warning(ev))
+    check("「검사를 실행하지 않았다」도 잡는다", PT.evidence_warning("abc1234 · 검사는 실행하지 않았다").startswith("[주의]"))
+    for ev in ("T1 완료: 인터페이스 설계 확정", "구현 완료", ""):
+        check(f"표지 없음 → 경고 ({ev or '빈 문자열'})",
+              "표지가 없다" in PT.evidence_warning(ev), PT.evidence_warning(ev))
+
+
+def test_transition_evidence_warning_is_warning_only():
+    """#908 — [중요] 경고만: 전이·본문은 경고 유무와 무관하고, 노트와 응답에만 실린다."""
+    iss = FakeIssue(SPEC)
+    PT.set_plan(1, _tasks(), "등록", getter=iss.get, updater=iss.update)
+    PT.transition(1, "T1", "작업중", getter=iss.get, updater=iss.update)
+    out = PT.transition(1, "T1", "완료", EV905["T1"], getter=iss.get, updater=iss.update)
+    t1 = PB.parse(iss.body).task("T1")
+    check("빈약한 근거도 완료로 전이된다", out["ok"] and t1.state == "완료", str(out))
+    check("근거 칸은 원문 그대로(경고를 섞지 않는다)", t1.evidence == EV905["T1"].strip(), t1.evidence)
+    check("응답에 evidence_warning", out.get("evidence_warning", "").startswith("[주의]"), str(out))
+    check("Redmine 노트 끝에 경고 줄", iss.writes[-1][1].rstrip().endswith("(#908)"), iss.writes[-1][1])
+    PT.transition(1, "T2", "작업중", getter=iss.get, updater=iss.update)
+    out = PT.transition(1, "T2", "완료", "커밋 6e46635 · test 3/3 rc0", getter=iss.get, updater=iss.update)
+    check("좋은 근거 → 응답에 키 없음", "evidence_warning" not in out, str(out))
+    check("좋은 근거 → 노트에 경고 없음", "#908" not in iss.writes[-1][1], iss.writes[-1][1])
+    iss = FakeIssue(SPEC)
+    PT.set_plan(2, _tasks(), "등록", getter=iss.get, updater=iss.update)
+    out = PT.transition(2, "T1", "해당없음", "범위 밖", getter=iss.get, updater=iss.update)
+    check("완료가 아닌 전이는 판정하지 않는다", "evidence_warning" not in out, str(out))
+
+
 def test_transition_refusals_do_not_write():
     iss = FakeIssue(SPEC)
     check("플랜 없는 일감 거절", "plan_set" in _err(lambda: PT.transition(1, "T1", "작업중",
@@ -249,7 +307,9 @@ def test_transition_lock_gate():
 
 
 def main() -> int:
-    for fn in (test_set_reports_spec_missing,
+    for fn in (test_evidence_warning_judgement,
+               test_transition_evidence_warning_is_warning_only,
+               test_set_reports_spec_missing,
                test_set_creates_plan,
                test_set_keeps_states_and_evidence,
                test_set_steps_v2,

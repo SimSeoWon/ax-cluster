@@ -27,10 +27,12 @@ AXCluster 일감만 고르지 못한다 — **모든 일감의 「작업중」 �
 """
 from __future__ import annotations
 
+import re
 from contextlib import contextmanager
 
 from master import plan_block as PB
 from master import plan_events as PE
+from master import plan_metrics as PM
 from master import plan_start as ST
 from master import plan_state as PS
 from master import plan_steps as STEPS
@@ -206,6 +208,28 @@ def _lock_gate(issue_id, lock_root, project: str = "") -> str:
     return ""
 
 
+# `#908` — 「완료」 근거 품질 경고. 해시·검사 결과는 plan_metrics 의 정규식(#865)을 그대로 쓴다.
+OBSERVED_RE = re.compile(r"실측|관측|확인|되읽|라이브|실물|드라이런|reports/|리포트|로그")
+# 「미실행」 단독은 「커밋·push·마감 미실행」 같은 정직한 상태 표기로 흔하다(실측 18건 중 13건이 그 꼴) —
+# 검사·테스트·실증·코드 실행을 **안 했다**는 표현만 잡는다.
+NOT_RUN_RE = re.compile(r"(?:검사|테스트|실증|코드 실행)[^.,;\n]{0,12}?(?:미실시|미실행|안 했|(?:실시|실행|수행)하지 않|돌리지 않)")
+
+
+def evidence_warning(note: str) -> str:
+    """「완료」 근거가 빈약하면 경고 문장, 아니면 "". **경고만** — 전이를 막지 않는다(사용자 결정 2026-11-14).
+
+    ① 검사·테스트·실증을 안 했다는 표현이 있으면 해시가 있어도 경고한다(#905 T3·T4 가 그 모양이었다).
+    ② 커밋 해시·검사 결과·관측 표지가 하나도 없으면 경고한다(실측 2026-11-14: 완료 328건 중 9건).
+    """
+    text = note or ""
+    m = NOT_RUN_RE.search(text)
+    if m:
+        return f"[주의] 완료 근거에 「{m.group(0)}」 — 검사·실행 없이 완료로 기록된 것으로 읽힌다(#908)"
+    if not (PM.has_hash(text) or PM.has_test(text) or OBSERVED_RE.search(text)):
+        return "[주의] 완료 근거에 커밋 해시·검사 결과·관측 표지가 없다(#908)"
+    return ""
+
+
 def transition(issue_id, task_id: str, to: str, note: str = "", *, getter=None,
                updater=None, events_path=None, caller: str = "", lock_root=None,
                project: str = "") -> dict:
@@ -230,10 +254,15 @@ def transition(issue_id, task_id: str, to: str, note: str = "", *, getter=None,
         plan = PS.transition(plan, task_id, to, note=note)
         new_body = PB.replace(body, plan.tasks)
         line = f"플랜 {task_id}: {before} → {to}" + (f" — {note.strip()}" if (note or "").strip() else "")
+        warn = evidence_warning(note) if to == PS.DONE else ""
+        if warn:
+            line += "\n" + warn
         result = _write(issue_id, new_body, line, updater or _default_updater)
     nxt = ST.assess(new_body)
     out = {"ok": True, "issue_id": issue_id, "task": task_id, "from": before, "to": to,
            "next": nxt.as_dict(), "redmine": result}
     if lock_note:
         out["lock_note"] = lock_note
+    if warn:
+        out["evidence_warning"] = warn
     return out
