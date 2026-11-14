@@ -357,6 +357,11 @@ def _archive_signals(paths, processed_indices: set, signals: list,
                      archive_keep_days: int = ARCHIVE_KEEP_DAYS) -> None:
     """처리된 신호는 _signals.archive.jsonl 로 이동, 미처리는 _signals.jsonl 에 남긴다.
     archive 는 archive_keep_days 초과 항목을 정리한다.
+
+    [중요] 보관 기한은 **아카이브로 옮긴 시각**(`archived_at`)부터 센다 (`#383`, 사용자 결정
+    2026-11-14). 원전은 신호의 적재 시각(`timestamp`)으로 셌는데, 합성이 늦게 돌면 — 실측: NS 신호
+    12건이 50일 묵었다 — 옮기는 그 호출에서 바로 지워져 다음 안티패턴 재집계의 재료가 사라진다.
+    `archived_at` 이 없는 옛 줄은 종전대로 `timestamp` 로 센다.
     """
     rdir = recipes_dir(paths)
     sig_path = signals_path(paths)
@@ -365,8 +370,10 @@ def _archive_signals(paths, processed_indices: set, signals: list,
     if processed_indices:
         rdir.mkdir(parents=True, exist_ok=True)
         with arc_path.open("a", encoding="utf-8") as f:
+            stamp = datetime.now().isoformat(timespec="seconds")
             for i in sorted(processed_indices):
-                f.write(json.dumps(signals[i], ensure_ascii=False) + "\n")
+                f.write(json.dumps({**signals[i], "archived_at": stamp},
+                                   ensure_ascii=False) + "\n")
 
     with sig_path.open("w", encoding="utf-8") as f:
         for i, s in enumerate(signals):
@@ -382,7 +389,7 @@ def _archive_signals(paths, processed_indices: set, signals: list,
                 continue
             try:
                 rec = json.loads(line)
-                ts = rec.get("timestamp", "")
+                ts = rec.get("archived_at") or rec.get("timestamp", "")
                 dt = datetime.fromisoformat(ts) if ts else datetime.now()
                 if dt >= cutoff:
                     kept_lines.append(line)

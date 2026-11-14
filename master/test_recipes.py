@@ -4,7 +4,7 @@
     ① 생산자 왕복    signals.append_signal 이 쌓은 실물 파일에서 합성까지
     ② 클러스터 방어  JSON 밖 산문 · 범위 밖 인덱스 · 비정형 응답에서 안 죽는다
     ③ 임계치        min_signals 미만 클러스터는 합성하지 않고 신호를 남긴다
-    ④ 아카이브      처리분은 archive 로 이동·잔여는 유지 · 28일 초과 정리
+    ④ 아카이브      처리분은 archive 로 이동·잔여는 유지 · 옮긴 시각부터 28일 초과 정리 (#383)
     ⑤ 안티패턴      rejected+error 를 4섹션 카탈로그로 · 없으면 스킵(-1)
 
 실행: .venv/bin/python master/test_recipes.py
@@ -169,6 +169,36 @@ def test_archive_retention():
           "최근" in kept and "옛날" not in kept, kept[:100])
 
 
+def test_archive_retention_counts_from_archive_time():
+    """#383 — 오래 묵은 신호가 처음 합성될 때 옮기자마자 지워지지 않는다."""
+    p = fixture(0)
+    RS.recipes_dir(p).mkdir(parents=True, exist_ok=True)
+    stale = {"timestamp": (datetime.now() - timedelta(days=50)).isoformat(timespec="seconds"),
+             "intent": "50일 묵은 신호", "rejected_approaches": []}
+    waiting = {"timestamp": datetime.now().isoformat(timespec="seconds"), "intent": "대기"}
+    RS._archive_signals(p, {0}, [stale, waiting])
+    lines = [json.loads(x) for x in
+             RS.archive_path(p).read_text(encoding="utf-8").splitlines() if x.strip()]
+    check("[중요] 50일 묵은 신호도 방금 옮겼으면 아카이브에 남는다",
+          len(lines) == 1 and lines[0]["intent"] == "50일 묵은 신호", str(lines))
+    check("옮긴 시각이 찍히고 원래 적재 시각은 그대로다",
+          bool(lines and lines[0].get("archived_at"))
+          and lines[0]["timestamp"] == stale["timestamp"], str(lines))
+    check("미처리 신호는 활성 파일에 남고 archived_at 이 붙지 않는다",
+          [x.get("intent") for x in SG.read_signals(p)] == ["대기"]
+          and "archived_at" not in SG.read_signals(p)[0])
+
+    # 옮긴 지 28일이 넘으면 정리된다 — 기준이 archived_at 이다 (timestamp 가 최근이어도)
+    expired = {"timestamp": datetime.now().isoformat(timespec="seconds"), "intent": "만료",
+               "archived_at": (datetime.now() - timedelta(days=29)).isoformat(timespec="seconds")}
+    with RS.archive_path(p).open("a", encoding="utf-8") as f:
+        f.write(json.dumps(expired, ensure_ascii=False) + "\n")
+    RS._archive_signals(p, set(), [waiting])
+    kept = RS.archive_path(p).read_text(encoding="utf-8")
+    check("[중요] 옮긴 지 28일 넘은 줄은 정리 · 방금 옮긴 줄은 유지",
+          "만료" not in kept and "50일 묵은 신호" in kept, kept[:200])
+
+
 # ── ⑤ 안티패턴 스킵 ──────────────────────────────────────────
 
 def test_anti_patterns_skip():
@@ -182,7 +212,8 @@ def test_anti_patterns_skip():
 
 def main() -> int:
     for fn in (test_synthesis_roundtrip, test_threshold_keeps_signals,
-               test_cluster_defenses, test_archive_retention, test_anti_patterns_skip):
+               test_cluster_defenses, test_archive_retention,
+               test_archive_retention_counts_from_archive_time, test_anti_patterns_skip):
         fn()
     print(f"{'OK' if not FAIL else '[실패]'} test_recipes: {PASS}/{PASS + FAIL} 통과")
     return 1 if FAIL else 0
