@@ -63,6 +63,13 @@ MCP 가 안 보이거나 실패하면 사유를 보고하고 묻는다. `ax-clie
 
 `steps` 는 프로젝트 kind 별 7단계 표다 — `해당없음` 단계는 하지 않고, `조건부` 는 태스크가 정한다.
 
+`spec_missing` (`#911`) 은 스펙 템플릿 [`docs/issue-spec.md`](../../../docs/issue-spec.md) 의 여섯 항목
+(문제·맥락 · 초반 분류 · 관측 결과 · 범위·비범위 · 완료 조건 · 열린 결정) 중 본문 제목 줄에 없는 것의 키다.
+**경고일 뿐 판정을 바꾸지 않는다.** `no_spec` 이거나 목록이 비어 있지 않으면 빠진 항목을 사용자에게 보이고
+대화로 채울지 묻는다 — 추측으로 채우지 않는다. 채우기로 하면 방금 `ax-client:redmine_get_issue` 로 읽은
+본문에서 **플랜 영역(`ax:plan` 태그 사이)은 글자 그대로 두고** 스펙 부분만 고쳐 `ax-client:redmine_note` 의
+`description` 으로 보낸다(플랜 자체를 고치는 길은 여전히 `ax-projects:plan_set_tool` 뿐이다).
+
 ## 3. 플랜을 짤 때 (`plan_needed`)
 
 1. `ax-projects:search_context_tool`(task_type=`user_command`, user_request=사용자 원문 그대로)로 기존 설계·기능을 찾는다
