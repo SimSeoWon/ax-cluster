@@ -193,6 +193,13 @@ def test_evidence_warning_judgement():
                "드라이런 쓰기 0 · 응답 확인"):
         check(f"표지 있는 근거 → 경고 없음 ({ev[:20]})", PT.evidence_warning(ev) == "", PT.evidence_warning(ev))
     check("「검사를 실행하지 않았다」도 잡는다", PT.evidence_warning("abc1234 · 검사는 실행하지 않았다").startswith("[주의]"))
+    # #961 — 해시·검사 수치가 있어도 명시된 「검사 실행 안 함」을 놓치지 않는다.
+    for ev in ("검사 실행 안 함", "커밋 abc1234 · 검사 실행 안 함",
+               "test 3/3 rc0 · 검사 실행 안 함"):
+        check(f"검사 실행 안 함 → 미실행 경고 ({ev})",
+              "검사 실행 안 함」" in PT.evidence_warning(ev), PT.evidence_warning(ev))
+    check("검사 결과 뒤 커밋 안 함은 미실행으로 보지 않는다",
+          PT.evidence_warning("검사 3/3 rc0 · 커밋 안 함") == "")
     for ev in ("T1 완료: 인터페이스 설계 확정", "구현 완료", ""):
         check(f"표지 없음 → 경고 ({ev or '빈 문자열'})",
               "표지가 없다" in PT.evidence_warning(ev), PT.evidence_warning(ev))
@@ -217,6 +224,21 @@ def test_transition_evidence_warning_is_warning_only():
     PT.set_plan(2, _tasks(), "등록", getter=iss.get, updater=iss.update)
     out = PT.transition(2, "T1", "해당없음", "범위 밖", getter=iss.get, updater=iss.update)
     check("완료가 아닌 전이는 판정하지 않는다", "evidence_warning" not in out, str(out))
+
+
+def test_transition_not_run_phrase():
+    """#961 — 재현 입력이 기존 경고 응답·노트로 연결되고 근거 원문은 보존된다."""
+    iss = FakeIssue(SPEC)
+    PT.set_plan(1, _tasks(), "등록", getter=iss.get, updater=iss.update)
+    PT.transition(1, "T1", "작업중", getter=iss.get, updater=iss.update)
+    note = "커밋 abc1234 · 검사 실행 안 함"
+    out = PT.transition(1, "T1", "완료", note, getter=iss.get, updater=iss.update)
+    task = PB.parse(iss.body).task("T1")
+    warning = out.get("evidence_warning", "")
+    check("재현 입력 → 기존 미실행 경고 응답", "검사 실행 안 함」" in warning, str(out))
+    check("재현 입력 → 노트에 동일 경고", bool(warning) and iss.writes[-1][1].endswith(warning))
+    check("재현 입력 → 완료 유지", out["ok"] and task.state == "완료")
+    check("재현 입력 → 근거 원문 보존", task.evidence == note, task.evidence)
 
 
 def test_transition_refusals_do_not_write():
@@ -309,6 +331,7 @@ def test_transition_lock_gate():
 def main() -> int:
     for fn in (test_evidence_warning_judgement,
                test_transition_evidence_warning_is_warning_only,
+               test_transition_not_run_phrase,
                test_set_reports_spec_missing,
                test_set_creates_plan,
                test_set_keeps_states_and_evidence,

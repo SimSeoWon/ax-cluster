@@ -212,7 +212,7 @@ def _lock_gate(issue_id, lock_root, project: str = "") -> str:
 OBSERVED_RE = re.compile(r"실측|관측|확인|되읽|라이브|실물|드라이런|reports/|리포트|로그")
 # 「미실행」 단독은 「커밋·push·마감 미실행」 같은 정직한 상태 표기로 흔하다(실측 18건 중 13건이 그 꼴) —
 # 검사·테스트·실증·코드 실행을 **안 했다**는 표현만 잡는다.
-NOT_RUN_RE = re.compile(r"(?:검사|테스트|실증|코드 실행)[^.,;\n]{0,12}?(?:미실시|미실행|안 했|(?:실시|실행|수행)하지 않|돌리지 않)")
+NOT_RUN_RE = re.compile(r"(?:검사|테스트|실증|코드 실행)[^.,;\n]{0,12}?(?:미실시|미실행|실행 안 함|안 했|(?:실시|실행|수행)하지 않|돌리지 않)")
 
 
 def evidence_warning(note: str) -> str:
