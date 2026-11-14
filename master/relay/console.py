@@ -120,7 +120,8 @@ class Relay:
         self.issue = 0
         self.subject = ""
         self.agent = ""
-        setting = os.environ.get("AX_RELAY_QUOTA_THRESHOLD", str(QUOTA_DEFAULT_THRESHOLD)) if quota_threshold is None else quota_threshold
+        setting = (os.environ.get("AX_RELAY_QUOTA_THRESHOLD", str(QUOTA_DEFAULT_THRESHOLD))
+                   if quota_threshold is None else quota_threshold)
         try:
             self.quota_threshold = parse_quota_threshold(setting)
         except ValueError:

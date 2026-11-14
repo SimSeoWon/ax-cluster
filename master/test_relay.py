@@ -11,7 +11,9 @@ import stat
 import sys
 import tempfile
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -19,6 +21,7 @@ from master.relay import agents as A   # noqa: E402
 from master.relay import boundary as B  # noqa: E402
 from master.relay import console as C   # noqa: E402
 from master.relay import store as S    # noqa: E402
+from master.relay import quota as Q    # noqa: E402
 
 PASS = FAIL = 0
 
@@ -472,11 +475,168 @@ def t_header(tmp):
     h = C.header(7, "", "/x/log.jsonl", seen=5, last=9, first_time=False)
     check("안 본 범위", "/x/log.jsonl" in h and "6~9번" in h, h)
 
+QUOTA_NOW = 2000000000
+QUOTA_SESSION = "01234567-89ab-cdef-0123-456789abcdef"
+
+
+def quota_event(five_used=0.8, week_used=0.1):
+    return {"type": "rate_limit_event", "rate_limit_info": {"unifiedWindows": {
+        "five_hour": {"utilization": five_used, "resetsAt": QUOTA_NOW + 3600},
+        "seven_day": {"utilization": week_used, "resetsAt": QUOTA_NOW + 86400}}}}
+
+
+def rollout_event(limits=None):
+    return {"type": "event_msg", "timestamp": datetime.fromtimestamp(QUOTA_NOW, timezone.utc).isoformat(),
+            "payload": {"type": "token_count", "rate_limits": limits}}
+
+
+def quota_limits():
+    return {"limit_id": "codex", "primary": {"used_percent": 80, "window_minutes": 300,
+                                           "resets_at": QUOTA_NOW + 3600},
+            "secondary": {"used_percent": 10, "window_minutes": 10080,
+                          "resets_at": QUOTA_NOW + 86400}}
+
+
+def write_rollout(home, events, *, meta_session=QUOTA_SESSION):
+    d = home / "sessions" / "2033" / "05" / "18"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / f"rollout-2033-05-18T03-33-20-{QUOTA_SESSION}.jsonl"
+    rows = [{"type": "session_meta", "payload": {"id": meta_session}}, *events]
+    p.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    return p
+
+
+def t_quota_collection(tmp):
+    snapshot = Q.claude_snapshot(quota_event(), now=QUOTA_NOW)
+    check("Claude 양쪽 한도를 실제 잔여율로 변환",
+          snapshot["windows"] == {"five_hour": {"remaining_pct": 20, "resets_at": QUOTA_NOW + 3600},
+                                  "seven_day": {"remaining_pct": 90, "resets_at": QUOTA_NOW + 86400}})
+    for bad in (True, float("nan"), -0.1, 1.1, "0.8"):
+        got = Q.claude_snapshot(quota_event(bad), now=QUOTA_NOW)
+        check(f"Claude 비정상 사용률 {bad!r}은 해당 창만 미확인",
+              "five_hour" not in got["windows"] and "seven_day" in got["windows"])
+    check("Claude 누락 한도는 사용량으로 추정하지 않는다",
+          Q.claude_snapshot({"usage": {"input_tokens": 10}}, now=QUOTA_NOW)["windows"] == {})
+    home = tmp / "codex-home"
+    p = write_rollout(home, [rollout_event(quota_limits())])
+    got = Q.codex_snapshot(QUOTA_SESSION, codex_home=home)
+    check("Codex UUID 세션의 5시간·주간 한도와 관측시각 수집",
+          got["windows"] == snapshot["windows"] and got["observed_at"] == QUOTA_NOW)
+    with p.open("a", encoding="utf-8") as fh:
+        fh.write('{"쓰는중":')
+    check("아직 쓰는 마지막 부분 줄은 이전 완성 관측을 훼손하지 않는다",
+          Q.codex_snapshot(QUOTA_SESSION, codex_home=home)["windows"] == snapshot["windows"])
+    write_rollout(home, [rollout_event(quota_limits()), rollout_event()])
+    check("최신 token_count null은 오래된 정상 한도로 폴백하지 않는다",
+          Q.codex_snapshot(QUOTA_SESSION, codex_home=home)["windows"] == {})
+    write_rollout(home, [rollout_event(quota_limits())], meta_session="다른 세션")
+    check("파일명이 맞아도 메타데이터의 다른 세션은 읽지 않는다",
+          Q.codex_snapshot(QUOTA_SESSION, codex_home=home)["windows"] == {})
+    check("잘못된 세션 ID로 다른 세션을 검색하지 않는다",
+          Q.codex_snapshot("../다른세션", codex_home=home)["windows"] == {})
+    limits = quota_limits()
+    limits["primary"]["window_minutes"] = 60
+    write_rollout(home, [rollout_event(limits)])
+    check("다른 시간창을 5시간으로 표시하지 않는다",
+          set(Q.codex_snapshot(QUOTA_SESSION, codex_home=home)["windows"]) == {"seven_day"})
+
+
+def t_quota_console_validity(tmp):
+    snapshot = Q.claude_snapshot(quota_event(), now=QUOTA_NOW)
+    check("15분 경계까지 관측 유효", len(C.quota_windows(snapshot, now=QUOTA_NOW + 900)) == 2)
+    check("15분 경과와 미래 관측은 미확인",
+          C.quota_windows(snapshot, now=QUOTA_NOW + 901) == {}
+          and C.quota_windows(snapshot, now=QUOTA_NOW - 1) == {})
+    expired = Q.claude_snapshot(quota_event(), now=QUOTA_NOW)
+    expired["windows"]["five_hour"]["resets_at"] = QUOTA_NOW
+    check("리셋 시각이 지난 창만 미확인",
+          set(C.quota_windows(expired, now=QUOTA_NOW)) == {"seven_day"})
+    check("상태줄은 사용 토큰이 아니라 잔여율과 리셋 표시",
+          "5시간 20%" in C.quota_line("claude", snapshot, now=QUOTA_NOW)
+          and "7일 90%" in C.quota_line("claude", snapshot, now=QUOTA_NOW)
+          and "리셋" in C.quota_line("claude", snapshot, now=QUOTA_NOW))
+    check("누락·비지원 에이전트 한도를 100%로 추측하지 않는다",
+          "미확인" in C.quota_line("codex", {}, now=QUOTA_NOW)
+          and "미확인" in C.quota_line("agy", snapshot, now=QUOTA_NOW))
+    for bad in (True, "nan", "inf", -1, 101, "숫자아님"):
+        try:
+            C.parse_quota_threshold(bad)
+        except ValueError:
+            check(f"잘못된 임계값 {bad!r} 거절", True)
+        else:
+            check(f"잘못된 임계값 {bad!r} 거절", False)
+    with patch.dict(os.environ, {"AX_RELAY_QUOTA_THRESHOLD": "30"}):
+        b, _ = mk_boundary(tmp, issues={7: {"subject": "한도", "status": "진행"}})
+        relay = C.Relay(root=tmp / "root", cwd=tmp, boundary=b, out=lambda s: None)
+        check("환경변수 임계값과 명시 설정 우선순위", relay.quota_threshold == 30
+              and C.Relay(root=tmp / "root", cwd=tmp, boundary=b, out=lambda s: None,
+                          quota_threshold=10).quota_threshold == 10)
+
+
+def t_quota_run_store_warn_reset(tmp):
+    with patch.dict(os.environ, {"AX_RELAY_QUOTA_THRESHOLD": "20"}), patch("time.time", return_value=QUOTA_NOW):
+        lines = [CLAUDE_LINES[0], quota_event(), CLAUDE_LINES[-1]]
+        fake_bins(tmp, claude=lines)
+        iss = {7: {"subject": "한도", "status": "진행"}}
+        relay, root, shown, _ = mk_relay(tmp, [], issues=iss)
+        relay.open_issue(7)
+        relay.set_agent("claude")
+        result = relay.send("첫 입력")
+        state = S.state(root, 7)["agents"]["claude"]
+        check("실제 subprocess 파서→Result→state 한도 저장",
+              result.ok and state["quota"] == result.quota
+              and result.usage == {"input_tokens": 5, "output_tokens": 7})
+        check("임계값 20% 정확 경계에서 인수인계 제안 한 번",
+              sum("인수인계서 갱신" in line for line in shown) == 1)
+        relay.send("둘째 입력")
+        check("같은 창·리셋은 반복 경고하지 않는다",
+              sum("인수인계서 갱신" in line for line in shown) == 1)
+        reopened, _, shown2, _ = mk_relay(tmp, [], issues=iss)
+        reopened.open_issue(7)
+        reopened.send("이어감")
+        reopened.status()
+        check("콘솔 재개 뒤 경고 억제·status 한도 유지",
+              not any("인수인계서 갱신" in line for line in shown2)
+              and any("5시간 20%" in line for line in shown2))
+        check("경고는 교대·추가 실행을 하지 않는다",
+              S.state(root, 7)["current"] == "claude" and reopened.agent == "claude"
+              and len(argv_of(tmp, "claude")) == 3 and not (tmp / "codex.argv").exists())
+        changed = Q.claude_snapshot(quota_event(), now=QUOTA_NOW)
+        changed["windows"]["five_hour"]["resets_at"] += 3600
+        previous = S.state(root, 7)["agents"]["claude"]["quota_warning"]
+        reopened._quota_notice("claude", changed, previous, now=QUOTA_NOW)
+        check("새 리셋 창에서는 다시 제안한다",
+              sum("인수인계서 갱신" in line for line in shown2) == 1)
+        healthy = Q.claude_snapshot(quota_event(0.79), now=QUOTA_NOW)
+        recovered = reopened._quota_notice("claude", healthy, previous, now=QUOTA_NOW)
+        check("21% 회복은 경고 없이 해당 창의 중복 표시를 해제",
+              "five_hour" not in recovered
+              and sum("인수인계서 갱신" in line for line in shown2) == 1)
+        reopened.reset_agent()
+        cleared = S.state(root, 7)["agents"]["claude"]
+        check("reset은 세션·한도·경고를 함께 비운다",
+              cleared["session"] == "" and cleared["quota"] == {} and cleared["quota_warning"] == {})
+
+
+def t_quota_codex_run(tmp):
+    with patch.dict(os.environ, {}):
+        home = tmp / "codex-home"
+        write_rollout(home, [rollout_event(quota_limits())])
+        os.environ["CODEX_HOME"] = str(home)
+        lines = [{"type": "thread.started", "thread_id": QUOTA_SESSION}, CODEX_LINES[-1]]
+        fake_bins(tmp, codex=lines)
+        result, _, _, _ = _run(tmp, "codex")
+        check("Codex 실행의 thread ID로 CODEX_HOME 한도를 수집한다",
+              result.ok and result.quota["observed_at"] == QUOTA_NOW
+              and result.quota["windows"]["five_hour"]["remaining_pct"] == 20)
+
+
 TESTS = [t_store_open_and_seq, t_store_concurrent_append, t_store_agent_state,
          t_store_corrupt_not_overwritten, t_store_archive,
          t_agents_build_cmd, t_agents_claude, t_agents_codex, t_agents_agy, t_agents_failures,
          t_boundary_open, t_boundary_closable,
-         t_console_round_trip, t_console_failure_and_reset, t_console_open_refused, t_header]
+         t_console_round_trip, t_console_failure_and_reset, t_console_open_refused, t_header,
+         t_quota_collection, t_quota_console_validity, t_quota_run_store_warn_reset, t_quota_codex_run]
 
 
 def main() -> int:
