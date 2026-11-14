@@ -186,14 +186,14 @@ class UsageDashboardTests(unittest.TestCase):
                                start="2026-10-10", end="2026-10-10")
         self.assertEqual((dispatch["totals"]["calls"], dispatch["totals"]["tokens"],
                           dispatch["totals"]["failed_calls"], dispatch["totals"]["unlinked_calls"]),
-                         (2, 39, 1, 0))
+                         (2, 139, 1, 0))   # #949 — agy 10+2+캐시100 · claude 20+3+4
         issue = dispatch["issues"][0]
         self.assertEqual((issue["issue_id"], issue["project"], issue["calls"], issue["tokens"]),
-                         (696, "Alpha", 2, 39))
+                         (696, "Alpha", 2, 139))
         self.assertEqual(issue["families"], ["claude", "gemini"])
         every = self.report(source="all", project="Alpha",
                             start="2026-10-10", end="2026-10-10")
-        self.assertEqual((every["totals"]["calls"], every["totals"]["tokens"]), (1, 12))
+        self.assertEqual((every["totals"]["calls"], every["totals"]["tokens"]), (1, 112))
         self.assertEqual(every["issues"], [])
 
     def test_agy_lane_is_gemini(self):
@@ -208,10 +208,11 @@ class UsageDashboardTests(unittest.TestCase):
         rows = {(r["family"], r["model"]): r for r in data["models"]}
         self.assertEqual(set(rows), {("gemini", "Antigravity(모델 미상)"),
                                      ("gemini", "gemini-2.5-pro"), ("local", "gemma4:e4b")})
-        # agy 의 total_tokens 는 input+output(캐시 제외) — 실측 4869+26=4895
-        self.assertEqual(rows[("gemini", "Antigravity(모델 미상)")]["tokens"], 4895)
+        # 🔴 #949(사용자 결정 2026-11-14) — #728 계약(입력+출력, 캐시 제외)을 바꿨다. agy 입력은 캐시를 뺀
+        #    값이라(usage.input_split) Claude 처럼 캐시 읽기를 더한다: 4869+26+8136=13031
+        self.assertEqual(rows[("gemini", "Antigravity(모델 미상)")]["tokens"], 13031)
         only = self.report(family="gemini", start="2026-10-10", end="2026-10-10")
-        self.assertEqual((only["totals"]["calls"], only["totals"]["tokens"]), (2, 4910))
+        self.assertEqual((only["totals"]["calls"], only["totals"]["tokens"]), (2, 13046))
 
     def test_conductor_mode_fills_family_when_model_and_lane_empty(self):
         # 2026-10-04 실측: claude 지휘자 레코드는 model·lane 이 비어 unknown 으로 샜다.
@@ -316,7 +317,7 @@ class UsageDashboardTests(unittest.TestCase):
         self.assertEqual(only["totals"]["tokens"], 15)
 
     def test_agy_session_is_gemini_and_all_keeps_dispatch(self):
-        # #748: agy 세션 스냅샷은 gemini · 합계는 #728 계약대로 입력+출력(캐시 제외)
+        # #748: agy 세션 스냅샷은 gemini · 합계는 #949 계약(입력+출력+캐시 읽기)
         #       모두 보기에서 gemini 는 여전히 작업 실행 기록이 맡는다(헤드리스 agy 는 양쪽에 남는다)
         agy = {"ts": "2026-10-10T01:00:00Z", "model": "Gemini 3.6 Flash (High)",
                "input": 5083, "output": 194, "cache_read": 16284}
@@ -328,7 +329,7 @@ class UsageDashboardTests(unittest.TestCase):
         rows = {(r["family"], r["model"]): r for r in session["models"]}
         self.assertEqual(set(rows), {("gemini", "Gemini 3.6 Flash (High)"),
                                      ("gemini", "Antigravity(모델 미상)")})
-        self.assertEqual(session["totals"]["tokens"], 2 * (5083 + 194))
+        self.assertEqual(session["totals"]["tokens"], 2 * (5083 + 194 + 16284))
         every = self.report(source="all", start="2026-10-10", end="2026-10-10")
         self.assertEqual((every["totals"]["calls"], every["totals"]["tokens"]), (1, 30))
 

@@ -34,6 +34,8 @@ UI 조각 master/webui/usage_page.py, 라우트 조각 master/webui/app.py가 �
 - measured=False는 미계측이며 토큰 0으로 표현하지 않는다. tokens는 측정된 호출만 합산,
   측정 호출 0건이면 None. 측정된 0은 0. 실패 rc!=0 호출도 사용량에 포함한다.
 - Claude input은 cache_read/cache_create 제외 값이므로 총 토큰에 캐시를 더한다.
+  Gemini(agy) input도 캐시를 뺀 값이라(`usage.input_split` 과 같은 정의 — 실측 cache_read > input)
+  캐시를 더한다(`#949` — 종전엔 빠져 멀티턴의 대부분인 캐시 읽기가 합계에서 사라졌다).
   Codex input은 cached input을 포함하므로 다시 더하지 않는다. reasoning은 output의
   부분집합이며 다시 더하지 않는다. 합계 정의를 warnings/화면에 명시한다.
 - 깨진 JSON/잘못된 레코드/읽기 실패는 건수·고정 경고로 표시한다. 실제 예외는 stderr,
@@ -101,7 +103,7 @@ _SOURCES = ("dispatch", "session", "all")
 _SESSION_FAMILIES = ("claude", "codex")     # all 에서 세션 기록이 맡는 계열 — 나머지는 작업 실행 기록
 _TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read", "cache_create",
                  "reasoning_tokens")
-_ACCOUNTING = ("토큰 합계: Claude 입력+출력+캐시 읽기+캐시 생성, "
+_ACCOUNTING = ("토큰 합계: Claude·Gemini 입력+출력+캐시 읽기+캐시 생성, "
                "Codex 입력(캐시 포함)+출력. 추론은 출력에 포함됩니다. "
                "측정된 호출만 합산합니다.")
 _CONDUCTOR_LIMIT = 50               # `#726` — 화면에 붙일 지휘 세션 최근 건수(사본을 읽는 비용 상한)
@@ -236,7 +238,7 @@ def _normal_record(raw: dict, *, session: bool, tool: str = "") -> dict:
             raise ValueError("일감 ID 형식")
     if not measured:
         tokens = None
-    elif "claude" == family:
+    elif family in ("claude", "gemini"):     # `#949` — 두 계열 모두 input 이 캐시를 뺀 값이다
         tokens = (amounts["input_tokens"] + amounts["output_tokens"] +
                   amounts["cache_read"] + amounts["cache_create"])
     else:
