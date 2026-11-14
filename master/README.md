@@ -100,6 +100,7 @@ MCP가 없으면 같은 정본 `work.conductor.snapshot()`·`set_worker()`를 �
 | `work/handover.py` | 마운트 전환 인계 조사 (`#253`) — 남은 것을 다섯 부류 전부 이름으로 낸다 |
 | `work/conductor_auth.py` | **워커 Claude 인증 24시간 보관** (`#721`) — `claude auth status` 결과를 워커 홈 `.cache/ax-dispatch/claude-auth.json` 에. 자격 정보는 읽거나 저장하지 않는다. 재로그인 뒤 `force=True` (절차: `docs/14-onboarding-runbook.md` §14.2-4) |
 | `work/session_usage.py` · `work/usage.py` · `work/usage_dashboard.py` | 사용량 계측 — 대화 세션 수집(`#713`·`#748`) · 레인 토큰 실측(어느 모델이 얼마를 썼나) · 모델별·기간별 대시보드 집계 |
+| `relay/` | **세 CLI 대화 중계 상위 레이어** (`#942`) — 일감을 고르고(`/issue`) 에이전트를 고르면(`/agent`, 작업 중 교체 가능) 그 에이전트(`claude`·`codex`·`agy`)와의 대화를 비대화 실행으로 중계하고 한 로그에 미러링한다. 그 로그가 에이전트 간 공유 메모리다 — 바뀐 에이전트의 전달문에는 기록 파일 위치와 「몇 번부터가 안 본 대화인가」 **사실만** 싣는다. 일감이 「완료」이고 보고서가 있을 때만 `/close` 가 로그를 보관하고 세 세션을 비운다(일감을 닫지는 않는다). 실행 `python -m master.relay [--issue N] [--agent 이름] [--cwd 경로]` · 저장 `~/ax-state/relay`(`AX_RELAY_ROOT`) · 디버그 `sessions/<N>/debug.log`·`raw-<에이전트>.jsonl`. [주의] 도구 권한은 전부 자동 허용이다 · `agy` 모델은 `AX_RELAY_AGY_MODEL`(없으면 CLI 기본값) · 파일 잠금이 `fcntl` 이라 Windows 로 옮길 때 바꿔야 한다 |
 | `work/build_local.py` | 요청자(`.33`)의 검수 빌드 — `review_work(build_fn=…)` 에 꽂는 어댑터(`layer3_verify` 사슬) |
 | `work/branch_names.py` · `work/twin_base.py` | 브랜치 이름 규약 · 작업의 **기준**(작업 브랜치 tip) (`#319`) |
 | `work/batching.py` · `work/generate.py` · `work/logs.py` | 태스크 묶기(파일 불가분, `#65`) · 코드 생성 + 층2 통과 · 파견 기록(`#323` — 화면이 읽는다) |
