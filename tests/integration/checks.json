@@ -125,6 +125,11 @@
     "timeout": 180
   },
   {
+    "path": "master/test_relay.py",
+    "count_pattern": "(?m)^OK test_relay: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
     "path": "master/test_runner.py",
     "count_pattern": "(?m)^OK test_runner: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
