@@ -1,10 +1,21 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-14 — #383(분산 작업 신호 적재·레시피 합성 배치, main `2a4b859`)과 #943(큐 내부 rejected 종결의 히스토리 기록, main `ce2aa48`)을 마감했다. 둘 다 Redmine 완료·100%.
-> 두 건 모두 배달까지 끝났다(`master.issue_wrapup` rc0 — `ax-task-queue` 재기동 · `master.client update` 배달·검사). 배달 결과의 정본은 각 Redmine 마감 노트다.
+> 2026-11-14 — #944(히스토리 파일명 충돌 시 기록 보존)을 main `7a40fe1`로 마감했다. Redmine 완료·100%.
+> `issue_wrapup`이 의존 변경으로 판정한 `ax-task-queue`를 16:18:31 재기동했고 판정 깨끗. 이 인수인계 커밋 직후 같은 명령으로 배달·검사 예정. 최종 배달 결과는 Redmine #944 마감 노트가 정본이다.
 > 항목·진행은 Redmine, 지난 상세는 Git 이력·리포트로 확인한다.
 
-## 현재 결과 — #943 완료
+## 현재 결과 — #944 완료
+
+- 사용자 「944 진행하자」·「응 로컬 서브 에이전트로 진행해」 승인. Codex가 `history_fix`에 구현·검사 패치 위임 후 diff·실행 결과를 직접 검증했다. 작성 계열 `['codex']`.
+- `issue_start_tool`: repo `/home/sim/ax-cluster/.ax-issues/944`, checkout `/home/sim/ax-cluster`, start_rev `15cda680f1a213931815614480d48379a20135ad`. 운영 main은 편집하지 않았다(마감 후 승인된 이 문서 갱신만).
+- 커밋 `c1ba57f`: `history_gen.write` 배타적 생성, 충돌 시 `_2`·`_3` 접미사. `c4ef271`: 회귀 검사. `7a40fe1`: 리포트 `reports/183-944-history-filename-collisions.md`.
+- 검사: 생성·충돌34/34 · 종결29/29 · 파서47/47 · 정적 차단0(mypy 비차단4) · 공식 통합 `Ran 197 tests in 206.893s / OK` rc0. 6프로세스 동시 파일 쓰기와 검색·웹 UI 왕복 확인. 전수 검사는 별도 실행하지 않았다.
+- `issue_finish(confirm=True)`: `done=[push,ff,worktree_remove,delete_branch,register,link,release,close,redmine]`, `registered=true`, `closed=true`, `why=""`. 리뷰 연결 「이음 0 · 큐에 없음 3」 — 리뷰 도착 미확인.
+- `issue_wrapup` 1차: main=origin/main=7a40fe1 깨끗 · ax-task-queue 의존 변경 판정 → 16:02:16에서 16:18:31로 재기동(active), 재판정 깨끗. broker·projects 최신. 인수인계 대기 rc2, 배달 전. 이 커밋·push 뒤 `sh /tmp/ax-944-wrapup.sh` 재실행.
+- 운영 과거 유실 건수는 미확인. journalctl의 오늘 `[history]` 조회가 출력 없이 rc1이라 중단했고, 사용자 「응」으로 미확인 유지·T2 재개 승인. 운영 트윈에 검사용 기록은 쓰지 않았다.
+- 세션 `~/.codex/sessions/2026/11/14/rollout-2026-11-14T16-06-09-01a1d8e0-bb1a-7242-a57e-ed979a9f3a45.jsonl`.
+
+## 직전 마감 — #943 완료
 
 - 사용자 「943번 진행해」로 구현부터 마감·배달까지 승인. 구현·마감 Claude(`['claude']`). 보고서 `reports/182-943-internal-rejected-history.md`.
 - 사용자 결정 셋(2026-11-14 대화): ① rejected 만 기록(cancelled 제외) ② 재작업으로 다시 열려도 라운드별로 둘 다 남긴다 ③ 과거 work 소급 없음.
@@ -13,18 +24,11 @@
 - `issue_finish(confirm=True)` 전 단계 완료(해시 2개 등록 · 완료 100). 리뷰 연결 「이음 0 · 큐에 없음 2」 — 리뷰 도착 미확인.
 - wrapup: `ax-task-queue` 옛 코드 판정으로 재기동(16:02:16, 판정 깨끗) · 2차 실행에서 배달·검사 rc0.
 - 안 잰 것: 라이브 큐에서 실제 work가 rejected로 끝나 기록이 생기는 실물(임시 큐까지만). 확인은 큐 로그의 `[history] … rejected(큐 내부 종결)` 줄.
-- 범위 밖으로 남긴 것: 히스토리 파일명이 「분 단위 시각 + 제목」이라 일반 경로는 같은 분·같은 제목이면 덮어쓴다(라운드 기록만 파일명에 `r<N>`을 붙여 갈랐다). 사용자 지시로 **#944** 등록(신규, 낮음 · 운영 유실 건수 미실측).
-
-## 직전 마감 — #383 완료
-
-- 사용자 「383번 진행해!」로 구현부터 마감·배달까지 승인. 구현·마감 Claude(작성 계열 `['claude']`). 보고서 `reports/181-383-pipeline-signals-recipe-batch.md`.
-- 사용자 결정 넷(2026-11-14 대화): ① 신호는 work 종결(merged)당 1건 ② 합성 배치는 주 1회 토요일 22시 ③ 아카이브 만료는 옮긴 시각 기준 ④ 큐 내부 rejected 전이의 히스토리 누락은 범위 밖.
-- 커밋: `5e10121`(배치 `recipe_synthesis` 등록) · `d24f45a`(merged 훅에서 `signals.record_work_merged`, fail-soft) · `e31da00`(`archived_at` 기준 28일) · `2a4b859`(README·리포트).
-- 검사: 정적 차단 0 · 공식 통합 196건 OK · `master/test_*.py` 222파일 rc≠0 0개 · NS 신호 복사본 격리 드라이런(입력 13 → 레시피 1 · 아카이브 6건, 운영 파일 무변경).
-- `issue_finish(confirm=True)`: push·ff·worktree 제거·브랜치 삭제·마감 추적 등록(해시 4개)·잠금 해제·완료 100 모두 끝남. 리뷰 연결은 「이음 0 · 큐에 없음 4」였다 — 해시별·종합 리뷰 도착 여부는 미확인.
-- wrapup: `ax-task-queue`만 옛 코드 판정으로 재기동(15:46:33, 판정 깨끗) · broker·projects 최신 · 2차 실행에서 배달·검사 rc0.
+- 일반 경로 파일명 충돌은 #944로 처리했다(위). 운영 과거 유실 건수는 미실측이다.
 
 ## #383 에서 실제로 안 잰 것
+
+완료·배달 완료(main `2a4b859`). 상세는 `reports/181-383-pipeline-signals-recipe-batch.md`와 Redmine 마감 노트.
 
 - 상용 체인으로 합성이 도는 실물. 첫 회차는 마운트된 프로젝트에 신호가 1건 이상 있는 토요일 22시 이후 `ax-batch.timer`다.
 - 배치는 마운트된 프로젝트만 돈다. 신호가 있는 곳은 NS(12)·ModularStage(1)이고 마운트는 AXCluster라, NS 12건은 NS가 토요일 밤에 마운트돼 있어야 합성된다.
@@ -43,8 +47,8 @@
 
 - 마스터 마지막 담당 기록은 claude(2026-11-14 15:48:34, 사용자 지시 — #383을 수행한 Claude 세션)다. 워커 전역 codex(state, 2026-10-18). 모드 변경 없음.
 - 인계서는 한 벌로 덮어쓰며 이전 완료 내역을 누적하지 않는다(#842).
-- 미처리 리뷰: #929 R314/R317 · #930 R315/R316 · #931 R325 · #934 R326 · #829 R328/R329 · #942 R351~R355 · #383·#943(도착 미확인). 최신은 각 Redmine 노트로 확인한다.
-- 결정·구현 대기: #326 · #935 · #839 · #741 · #738 · #941 · #368 · #944.
+- 미처리 리뷰: #929 R314/R317 · #930 R315/R316 · #931 R325 · #934 R326 · #829 R328/R329 · #942 R351~R355 · #383·#943·#944(도착 미확인). 최신은 각 Redmine 노트로 확인한다.
+- 결정·구현 대기: #326 · #935 · #839 · #741 · #738 · #941 · #368.
 - 조건 대기: #272(ModularStage 마운트), #211·#855(KR 정답 30건·RAG 실사용 검증), #858(#856 선행).
 - `.33` 첫 실제 요청자 마감·연결, 실제 BC-250 poweroff 미확인. 자동 로드 문서의 M7 open 서술 미정리(M8 열림).
 - `.2` 홈 중복 스킬 경고는 #738 축. 8103 LAN 리포트 공개는 사용자 2026-11-13 결정으로 유지.
