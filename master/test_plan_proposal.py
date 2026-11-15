@@ -121,6 +121,20 @@ def test_broken_latest_proposal():
     check("깨진 최신 제안 거절", "JSON 이 깨졌다" in _err(lambda: _set(iss)))
 
 
+def test_proposal_missing_keys_is_broken():
+    """`#969` ③ (R398-3) — JSON 은 객체인데 필수 키가 빠진 제안은 깨진 제안이다(종전: KeyError)."""
+    import json
+    for missing in ("tasks", "checklist", "autonomy"):
+        data = {"tasks": [], "checklist": [], "autonomy": 0.5}
+        del data[missing]
+        iss = TK.FakeIssue(TK.spec_body(), notes=[PP.MARK + "\n키 빠진 제안\n```json\n" + json.dumps(data) + "\n```"])
+        try:
+            msg = _err(lambda: _set(iss))
+        except Exception as e:                               # noqa: BLE001
+            msg = f"예외 {type(e).__name__}: {e}"
+        check(f"③ {missing} 누락 → 깨진 제안으로 거절", "깨졌다" in msg, msg)
+
+
 def test_change_autonomy_replans_waiting_only():
     """#963 T5 — 값 변경 이력 노트 + 대기 태스크만 재제안 · 시작된 태스크·체크리스트 보존 · 등록은 동의 뒤."""
     three = TASKS + [{"id": "T3", "goal": "마무리", "deps": ["T2"]}]
@@ -158,7 +172,7 @@ def test_change_autonomy_replans_waiting_only():
 def main() -> int:
     for fn in (test_propose_records_note, test_propose_refusals, test_set_requires_proposal_and_consent,
                test_latest_proposal_wins, test_edit_after_flow_needs_new_proposal_and_keeps_states,
-               test_legacy_plan_edit_unchanged, test_broken_latest_proposal,
+               test_legacy_plan_edit_unchanged, test_broken_latest_proposal, test_proposal_missing_keys_is_broken,
                test_change_autonomy_replans_waiting_only):
         fn()
     total = PASS + FAIL

@@ -128,7 +128,10 @@ def proposals(journals) -> list[dict]:
             data = json.loads(m.group(1)) if m else None
         except json.JSONDecodeError:
             data = None
-        out.append(data if isinstance(data, dict) else {"broken": True})
+        # `#969` ③ — 객체여도 필수 키가 빠지면 깨진 제안이다(종전: 대조 자리에서 KeyError)
+        ok = isinstance(data, dict) and isinstance(data.get("tasks"), list) \
+            and isinstance(data.get("checklist"), list) and "autonomy" in data
+        out.append(data if ok else {"broken": True})
     return out
 
 

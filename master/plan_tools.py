@@ -128,9 +128,13 @@ def start(issue_id, *, project: str = "", getter=None, kind_of=None, active=None
         except Exception as e:                       # noqa: BLE001 — 분류 문서 거절·읽기 실패는 그대로 보인다
             out["interview"] = {"error": f"{type(e).__name__}: {e}"}
         if materials is not False:
-            got = (getter or _default_getter)(issue_id)
-            from master import redmine
-            out["materials"] = (materials or IM.collect)(got, project=redmine.project_of(project))
+            # `#969` ② — 재료는 판정을 돕는 덧붙임이다. 수집이 실패해도 판정·단계 표는 그대로 내고 실패를 싣는다
+            try:
+                got = (getter or _default_getter)(issue_id)
+                from master import redmine
+                out["materials"] = (materials or IM.collect)(got, project=redmine.project_of(project))
+            except Exception as e:                   # noqa: BLE001 — 재료 실패로 시작 판정을 막지 않는다
+                out["materials"] = {"error": f"{type(e).__name__}: {e}"}
     try:
         out["steps"] = [s.__dict__ for s in STEPS.steps_for_project(project, kind_of=kind_of)]
     except STEPS.StepError as e:

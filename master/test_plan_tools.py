@@ -295,6 +295,21 @@ def test_start_interview_hands_materials():
     check("스펙 영역이 있으면 재료를 안 모은다", "materials" not in out and out["verdict"] == "plan_needed", str(out))
 
 
+def test_start_materials_failure_is_reported():
+    """`#969` ② (R393-2 · R397-11) — 재료 수집이 실패해도 판정은 그대로 내고 실패를 싣는다(종전: start 전체가 예외)."""
+    iss = FakeIssue(BARE)
+    try:
+        out = PT.start(1, getter=iss.get, kind_of=lambda p: "code", active=lambda: "AXCluster",
+                       materials=lambda got, project: (_ for _ in ()).throw(RuntimeError("수집 실패")))
+    except Exception as e:                                   # noqa: BLE001
+        out = {"raised": f"{type(e).__name__}: {e}"}
+    check("② 예외로 끝나지 않는다", "raised" not in out, str(out.get("raised")))
+    check("② 판정은 그대로 interview_needed", out.get("verdict") == "interview_needed", str(out))
+    check("② 실패가 materials.error 에 실린다",
+          "수집 실패" in str((out.get("materials") or {}).get("error", "")), str(out.get("materials")))
+    check("② 단계 표도 그대로 싣는다", bool(out.get("steps")), str(out.get("steps")))
+
+
 def test_checklist_transitions():
     """#963 T3 — 체크리스트 C* 는 transition 으로: 충족=근거 · 제외=사유+사용자 답 · 되돌림=사유."""
     iss = TK.issue_with_plan(_tasks(), checklist=["제안 없는 등록 거절", "두 마감 경로 멈춤"])
@@ -377,6 +392,7 @@ def test_transition_lock_gate():
 
 def main() -> int:
     for fn in (test_checklist_transitions, test_set_requires_spec_area, test_start_interview_hands_materials,
+               test_start_materials_failure_is_reported,
                test_evidence_warning_judgement,
                test_transition_evidence_warning_is_warning_only,
                test_transition_not_run_phrase,
