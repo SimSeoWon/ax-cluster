@@ -116,6 +116,22 @@ def test_unittest_ok_variants_and_timeout_bytes_970() -> None:
     check("D13 시간 초과의 bytes 출력이 꼬리에 남는다", "boom" in r["tail"] and "통과" in r["tail"], r["tail"])
 
 
+def test_child_tmpdir_is_isolated_and_removed_970() -> None:
+    """`#970` T10 — 검사 파일마다 전용 TMPDIR 을 주고 끝나면 지운다. 남긴 항목 수는 결과·로그에 남는다."""
+    root = _fixture({"test_leak.py": "import tempfile, os\n"
+                                     "d = tempfile.mkdtemp(prefix='ax-leak-')\n"
+                                     "print('TMP', d)\n"
+                                     "print('1/1 통과')\n"})
+    logs = []
+    s = S.sweep(root, jobs=1, python=sys.executable, timeout=60, log=logs.append)
+    r = s["results"][0]
+    made = next((ln.split(" ", 1)[1] for ln in r["tail"].splitlines() if ln.startswith("TMP ")), "")
+    check("T10 자식의 임시 디렉터리는 시스템 /tmp 가 아니다", made and not made.startswith("/tmp/ax-leak-"), made)
+    check("T10 끝나면 지워진다", made and not Path(made).exists(), made)
+    check("T10 남긴 항목 수가 결과에 실린다", r.get("tmp_left") == 1, str(r.get("tmp_left")))
+    check("T10 요약 로그에 정리 건수", any("임시 정리" in m for m in logs), "\n".join(logs[-3:]))
+
+
 def test_cli_setting_source() -> None:
     """CLI 는 실제 저장소 설정을 읽는다 — `--only` 로 이 파일 하나(재귀 방지: 가벼운 대상)만."""
     repo = Path(__file__).resolve().parents[1]
@@ -137,7 +153,8 @@ def test_cli_setting_source() -> None:
 
 def main() -> int:
     for t in (test_parse_counts, test_sweep_real_children, test_parallel_is_actually_parallel,
-              test_timeout_and_child_env, test_unittest_ok_variants_and_timeout_bytes_970, test_cli_setting_source):
+              test_timeout_and_child_env, test_unittest_ok_variants_and_timeout_bytes_970, test_child_tmpdir_is_isolated_and_removed_970,
+              test_cli_setting_source):
         t()
     print(f"\n{PASS}/{PASS + FAIL} 통과")
     return 0 if FAIL == 0 else 1

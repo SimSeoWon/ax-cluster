@@ -161,6 +161,16 @@ class IntegrationChecksTests(unittest.TestCase):
             self.assertEqual(os.environ["AX_PROJECTS_ROOT"], "production-projects")
         self.assertEqual(list(self.root.rglob("__pycache__")), [])
 
+    def test_child_tmpdir_is_isolated_970(self):
+        """`#970` T10 — 검사 프로세스의 임시 디렉터리는 격리 루트 안이고, 검사가 끝나면 함께 지워진다."""
+        code = ("import tempfile\nd = tempfile.mkdtemp(prefix='ax-leak-')\n"
+                "print('TMP', d)\nprint('CHECKS 1')\n")
+        result = run_check(self.root, self.entry(code))
+        self.assertTrue(result["ok"], result)
+        made = next(ln.split(" ", 1)[1] for ln in result["stdout"].splitlines() if ln.startswith("TMP "))
+        self.assertIn("ax-integration-check-", made)
+        self.assertFalse(Path(made).exists(), made)
+
     def test_parallel_jobs_config_env_and_bad_values(self):
         """`#965` — 파일 값 · 환경변수 덮어쓰기 · 1=순차 · 잘못된 값은 사유와 함께 1."""
         cfg = self.root / "tests/test-parallel.json"

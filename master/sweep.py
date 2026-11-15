@@ -20,6 +20,8 @@ import argparse
 import os
 from pathlib import Path
 import re
+import shutil
+import tempfile
 import subprocess
 import sys
 import time
@@ -78,7 +80,9 @@ def run_file(path: Path, root: Path, *, python: str, timeout: float, runner=None
     run = runner or subprocess.run
     rel = str(path.relative_to(root))
     t0 = time.monotonic()
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    # `#970` T10 — 파일마다 전용 TMPDIR. 검사가 지우지 않은 임시 디렉터리가 /tmp 에 쌓이지 않게 끝나면 지운다
+    tmp = tempfile.mkdtemp(prefix="ax-sweep-tmp-")
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", TMPDIR=tmp)
     try:
         proc = run([python, "-B", str(path)], cwd=str(root), capture_output=True, text=True,
                    encoding="utf-8", errors="replace", timeout=timeout, env=env)
@@ -89,8 +93,14 @@ def run_file(path: Path, root: Path, *, python: str, timeout: float, runner=None
         rc, reason = None, f"타임아웃 {timeout:g}초"
     except OSError as e:
         out, rc, reason = "", None, f"실행 실패: {type(e).__name__}"
+    finally:
+        try:
+            left = len(os.listdir(tmp))
+        except OSError:
+            left = 0
+        shutil.rmtree(tmp, ignore_errors=True)
     counts = parse_counts(out)
-    return {"path": rel, "rc": rc, "ok": rc == 0, "reason": reason,
+    return {"path": rel, "rc": rc, "ok": rc == 0, "reason": reason, "tmp_left": left,
             "seconds": time.monotonic() - t0, "tail": out[-3000:], **counts}
 
 
@@ -130,6 +140,10 @@ def sweep(root: Path = ROOT, *, jobs: int = 1, python: str = "", timeout: float 
                "results": results}
     if unread:
         log(f"[sweep] [주의] 수치 못 읽음 {len(unread)}파일: {', '.join(unread)}")
+    leaky = [(r["path"], r.get("tmp_left", 0)) for r in results if r.get("tmp_left")]
+    summary["tmp_left"] = sum(n for _, n in leaky)
+    log(f"[sweep] 임시 정리 — 검사가 남긴 임시 항목 {summary['tmp_left']}개를 지웠다"
+        + (f" (많은 순: {', '.join(f'{p} {n}' for p, n in sorted(leaky, key=lambda x: -x[1])[:5])})" if leaky else ""))
     log("[sweep] 가장 느린 파일: " + " · ".join(f"{p} {s}초" for p, s in summary["slowest"]))
     log(f"SWEEP {len(results)}파일 · {ab_pass}/{ab_total} 통과(형식 A·B) · unittest {by_fmt['C'][0]}/"
         f"{by_fmt['C'][1]} · 실패 파일 {len(failed)}개 · {summary['seconds']:.1f}초")

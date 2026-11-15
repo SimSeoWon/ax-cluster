@@ -169,9 +169,13 @@ def run_check(root: Path, entry: dict, python: str = sys.executable, runner=None
             isolated = Path(temporary)
             (isolated / "projects").mkdir()
             (isolated / "gitea").mkdir()
+            (isolated / "tmp").mkdir()
+            # `#970` T10 — 검사의 임시 디렉터리도 격리 루트 안에 둔다(검사가 끝나면 함께 지워진다).
+            #    종전에는 검사들이 지우지 않은 mkdtemp 가 /tmp 에 쌓였다(실측 4412개).
             env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1",
                        AX_PROJECTS_ROOT=str(isolated / "projects"),
-                       AX_GITEA_REPO_ROOT=str(isolated / "gitea"))
+                       AX_GITEA_REPO_ROOT=str(isolated / "gitea"),
+                       TMPDIR=str(isolated / "tmp"))
             proc = run([python, "-B", str((root / check["path"]).resolve())], cwd=str(root),
                        shell=False, capture_output=True, text=True, encoding="utf-8", errors="replace",
                        timeout=check["timeout"], env=env)
