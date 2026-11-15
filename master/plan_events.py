@@ -31,8 +31,8 @@ LOCK_NAME = ".plan-events.lock"
 # 같은 프로세스 안 동시 append 는 이 락, CLI·서비스 사이는 형제 락 파일의 flock (search_log 와 같은 방식).
 _lock = threading.Lock()
 
-# 사유 문장 → 종류. 문장은 plan_state·plan_tools·plan_block 의 것이다 — 바뀌면 `other` 로 떨어진다
-# (기록은 남고 종류만 잃는다). 순서가 의미다: 앞의 것이 먼저 잡힌다.
+# 사유 문장 → 종류. 문장은 plan_state·plan_tools·plan_block 의 것이다. 모르는 문장은 `format`(plan_block 의
+# 형식 오류 묶음)으로, 빈 사유만 `other` 로 떨어진다(`#970` D8 — 종전 주석이 코드와 달랐다). 순서가 의미다: 앞의 것이 먼저 잡힌다.
 KINDS = (
     ("lock_busy", re.compile(r"작업이 진행 중이다")),          # `#883` — 다른 일감이 잠금을 쥐었다
     ("no_plan", re.compile(r"플랜 영역이 없다")),

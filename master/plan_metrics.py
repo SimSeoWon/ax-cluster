@@ -521,7 +521,7 @@ def _render_changes(pc: dict) -> str:
                    + (f" -{','.join(t['removed'])}" if t["removed"] else "") for t in d["targets"]] \
                 + [f"{f}:{','.join(ids)}" for f, ids in d["fields"].items() if f != "target"]
             what = " · ".join(bits) or "태스크 정의 변화 없음"
-        rows.append(f"\n    {at} {what}" + (f" — 사유: {e['why'][:80]}" if e["why"] else ""))
+        rows.append(f"\n    {at} {what}" + (f" — 사유: {' '.join(e['why'].split())[:80]}" if e["why"] else ""))
     return head + "".join(rows)
 
 

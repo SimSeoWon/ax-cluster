@@ -82,6 +82,20 @@ class CandidatesTest(unittest.TestCase):
         F.set_status(self.root, "P1", "dismissed", note="중복 플랜", by="human")
         self.assertEqual(D.read_results(self.root)["count"], 1)
 
+    def test_completed_at_is_the_end_time_970(self):
+        """`#970` D3 (R408-2·R414-2) — completed_at 은 끝난 시각이다(종전: 시작 시각을 그대로 썼다)."""
+        ticks = iter([datetime(2026, 10, 17, 10, m) for m in range(0, 60)])
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return next(ticks)
+        with patch.object(D, "datetime", Clock):
+            D.collect(self.paths, chat=self.chat)
+        data = D._load(self.root)
+        self.assertTrue(data.get("complete"))
+        self.assertGreater(data["completed_at"], data["started_at"], data)
+
     def test_main_change_stale_and_new_collection(self):
         self.collect()
         (self.repo / "a.py").write_text("def f():\n    return 2\n")

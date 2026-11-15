@@ -306,9 +306,11 @@ def summary_md(scope: Scope, *, label: str, commits: dict, covered: list, gaps: 
                plan_names: list, severities: str = "") -> str:
     failures = (result or {}).get("failures") or []
     made = (result or {}).get("plans_generated", 0)
+    # `#970` D5 — 큐 노트(run_scope)와 같은 기준: 정리 뒤 지적 수(grouped.total)가 0이면 「지적 0건」
+    remaining = grouped.get("total", issues) if grouped else issues
     if failures:
         status = "생성 미완료"
-    elif not issues:
+    elif not remaining:
         status = "지적 0건 — 플랜 없음"
     elif not made:
         status = BELOW_GATE          # 지적은 있으나 플랜 생성기의 기준에 못 미쳤다 — 조용히 0건이 되지 않게

@@ -267,7 +267,8 @@ def collect(paths, *, chat=None, now=None) -> dict:
                 errors.append(key)
             data["entries"][key] = {**base, **result}
             _save(paths.root, data)
-        data.update(complete=True, completed_at=stamp)
+        # `#970` D3 — 끝난 시각을 적는다(종전: 시작 시각 stamp 를 그대로 썼다)
+        data.update(complete=True, completed_at=(now or datetime.now()).isoformat(timespec="seconds"))
         _save(paths.root, data)
     return {"ok": True, "complete": True, "unjudged": errors, "week": week}
 

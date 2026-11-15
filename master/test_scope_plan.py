@@ -337,6 +337,15 @@ def test_zero_issues():
     shutil.rmtree(root)
 
 
+def test_summary_zero_after_grouping_970():
+    """`#970` D5 (R335-4·R334-4) — 정리 뒤 지적이 0건이면 요약도 「지적 0건」이다(종전: 플랜 기준 미달)."""
+    sc = SP.Scope(key="master/x", kind="path", slug="master-x")
+    grouped = {"total": 0, "excluded_count": 3, "file_issues": [], "pattern_issues": []}
+    summ = SP.summary_md(sc, label="t", commits={}, covered=[], gaps=[], orphan=[], issues=3,
+                         grouped=grouped, result={"plans_generated": 0}, plan_names=[])
+    check("D5 요약 상태 = 지적 0건", "status: 지적 0건 — 플랜 없음" in summ, summ[:300])
+
+
 def test_below_gate():
     """지적은 있는데 플랜 생성기 기준(고위험 1+ · 중위험 3+)에 못 미친다 — 조용한 0건이 아니라 사유를 낸다.
 
@@ -492,7 +501,7 @@ def test_entrances():
 
 
 def main() -> int:
-    for fn in (test_resolve, test_classify, test_rounds, test_zero_issues, test_below_gate, test_gap,
+    for fn in (test_resolve, test_classify, test_rounds, test_zero_issues, test_summary_zero_after_grouping_970, test_below_gate, test_gap,
                test_plan_failure_retries, test_bad_target_at_consumer, test_entrances):
         fn()
     total = PASS + FAIL

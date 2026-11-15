@@ -439,7 +439,7 @@ def commit_context(paths, commit: str, collect, *, logf=None) -> tuple:
     return msg, section, short, tasks
 
 
-def range_context(paths, issue, base: str, end: str, collect, *, logf=None) -> str:
+def range_context(paths, issue, base: str, end: str, collect, *, logf=None) -> tuple:
     """범위 리뷰의 `(일감 절, T# 있음)` (`#946` T4) — 스펙 · 플랜 표 · 커밋별 T# 대응. 못 만들면
     `("", False)`(종전 그대로).
 

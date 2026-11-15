@@ -135,6 +135,12 @@ def test_proposal_missing_keys_is_broken():
         check(f"③ {missing} 누락 → 깨진 제안으로 거절", "깨졌다" in msg, msg)
 
 
+def test_blank_checklist_id_falls_back_970():
+    """`#970` D10 (R407-5·R398-4) — 공백 id 의 체크리스트 항목은 기본 id(C<n>)를 받는다(종전: 빈 id)."""
+    got = PP.normalize_checklist([{"id": "   ", "item": "검사"}, {"item": "둘째"}])
+    check("D10 공백 id → C1", got[0]["id"] == "C1" and got[1]["id"] == "C2", str(got))
+
+
 def test_change_autonomy_replans_waiting_only():
     """#963 T5 — 값 변경 이력 노트 + 대기 태스크만 재제안 · 시작된 태스크·체크리스트 보존 · 등록은 동의 뒤."""
     three = TASKS + [{"id": "T3", "goal": "마무리", "deps": ["T2"]}]
@@ -172,7 +178,7 @@ def test_change_autonomy_replans_waiting_only():
 def main() -> int:
     for fn in (test_propose_records_note, test_propose_refusals, test_set_requires_proposal_and_consent,
                test_latest_proposal_wins, test_edit_after_flow_needs_new_proposal_and_keeps_states,
-               test_legacy_plan_edit_unchanged, test_broken_latest_proposal, test_proposal_missing_keys_is_broken,
+               test_legacy_plan_edit_unchanged, test_broken_latest_proposal, test_proposal_missing_keys_is_broken, test_blank_checklist_id_falls_back_970,
                test_change_autonomy_replans_waiting_only):
         fn()
     total = PASS + FAIL

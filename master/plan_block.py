@@ -127,7 +127,7 @@ def _attrs(text: str, version: int) -> dict:
 
 
 def _region(body: str) -> tuple[int, int, int, int] | None:
-    """(시작 태그 시작, 영역 안 시작, 영역 안 끝, 형식 버전). 태그가 없으면 None. 속성은 `_begin_attrs`."""
+    """(시작 태그 시작, 영역 안 시작, 영역 안 끝, 형식 버전). 태그가 없으면 None. 속성은 `_attrs`."""
     begins = list(BEGIN_RE.finditer(body))
     ends = [m.start() for m in re.finditer(re.escape(END_TAG), body)]
     if not begins and not ends:

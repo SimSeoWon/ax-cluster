@@ -70,7 +70,7 @@ def normalize_checklist(items) -> list[dict]:
         if isinstance(raw, str):
             cid, item = f"C{i}", raw.strip()
         elif isinstance(raw, dict):
-            cid, item = str(raw.get("id") or f"C{i}").strip(), str(raw.get("item") or "").strip()
+            cid, item = str(raw.get("id") or "").strip() or f"C{i}", str(raw.get("item") or "").strip()   # #970 D10
         else:
             raise ProposalError(f"체크리스트 항목이 문자열·객체가 아니다: {raw!r}")
         if not item:

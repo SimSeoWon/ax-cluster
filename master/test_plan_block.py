@@ -232,8 +232,15 @@ def test_v3_checklist_and_autonomy():
     check("태스크 ID 에 C<숫자> 거절", _raises(lambda: PB.append(spec, [PB.Task("C1", "대기", "x")]), "체크리스트 ID"))
 
 
+def test_region_doc_names_real_helper_970():
+    """`#970` D7 (R407-1·R396-1) — `_region` 독스트링이 가리키는 속성 함수가 실제로 있다."""
+    import re as _re
+    names = _re.findall(r"`(_\w+)`", PB._region.__doc__ or "")
+    check("D7 독스트링이 가리키는 함수가 모두 있다", names and all(hasattr(PB, n) for n in names), str(names))
+
+
 def main() -> int:
-    for fn in (test_parse_reads_tasks,
+    for fn in (test_parse_reads_tasks, test_region_doc_names_real_helper_970,
                test_no_region_is_none,
                test_roundtrip_is_byte_identical,
                test_replace_keeps_outside_bytes,

@@ -287,6 +287,16 @@ def test_unreadable_old_body_969() -> None:
           str(pc))
 
 
+def test_render_reason_one_line_970() -> None:
+    """`#970` D9 (R198-3) — 사유에 줄바꿈이 있어도 렌더는 한 줄이다(종전: 들여쓰기 형식이 깨졌다)."""
+    v1 = PB.append("## 스펙\n", [PB.Task("T1", "대기", "고침")])
+    v2 = PB.append("## 스펙\n", [PB.Task("T1", "대기", "고침"), PB.Task("T2", "대기", "더함")])
+    js = [{"created_on": "2026-11-01T09:00:00Z", "notes": "플랜 갱신 — 추가 T2\n사유: 첫 줄\n둘째 줄",
+           "details": [{"property": "attr", "name": "description", "old_value": v1, "new_value": v2}]}]
+    line = M._render_changes(M.plan_changes(js))
+    check("D9 사유가 한 줄로 이어진다", "사유: 첫 줄 둘째 줄" in line, line)
+
+
 def test_start_lead_865() -> None:
     """`#865` T4 — 착수 기준 리드: 진행 전이 · 플랜 등록 · 플랜 작업중 중 가장 이른 것 → 종결."""
     base = {"id": 1, "subject": "s", "status": {"id": 4}, "created_on": "2026-10-31T00:00:00Z",
@@ -312,6 +322,7 @@ if __name__ == "__main__":
     test_work_commits_865()
     test_plan_changes_865()
     test_unreadable_old_body_969()
+    test_render_reason_one_line_970()
     test_start_lead_865()
     total = PASS + FAIL
     if FAIL:

@@ -192,6 +192,10 @@ def run() -> None:
 
     # ⑬ 분류·읽기
     check("⑬ 모르는 사유", PE.classify("이상한 사유") == "format" and PE.classify("") == "other")
+    import inspect as _inspect
+    src = _inspect.getsource(PE)
+    check("#970 D8 KINDS 주석이 코드와 같다(모르는 문장은 format, 빈 사유만 other)",
+          "바뀌면 `other` 로 떨어진다" not in src and "모르는 문장은 `format`" in src)
     check("⑬ 잠금 거절(#883)", PE.classify("#879 작업이 진행 중이다(issue/879) — #883 의 태스크를 "
                                           "작업중으로 옮기지 않는다") == "lock_busy")
     check("⑬ 이슈 필터", len(PE.read(log, issue_id=864)) == 5 and PE.read(log, issue_id=1) == [])

@@ -225,6 +225,13 @@ def test_커밋_리뷰도_범위밖_파일을_싣는다_970():
     shutil.rmtree(root)
 
 
+def test_range_context_annotation_970():
+    """`#970` D4 (R372-1·R370-1) — range_context 는 (일감 절, T# 있음) 튜플을 돌려준다고 표기한다."""
+    import inspect as _inspect
+    ann = _inspect.signature(R.range_context).return_annotation
+    check("D4 반환 표기가 tuple", ann in (tuple, "tuple") or "tuple" in str(ann), str(ann))
+
+
 def test_로컬_없음이어도_antigravity가_본다():
     root, head = make_repo()
     Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
@@ -1123,7 +1130,7 @@ def test_main_은_실물_수집기를_넘긴다():
 
 
 if __name__ == "__main__":
-    for fn in (test_로컬뒤_antigravity가_퇴고한다, test_커밋_리뷰도_범위밖_파일을_싣는다_970,
+    for fn in (test_로컬뒤_antigravity가_퇴고한다, test_커밋_리뷰도_범위밖_파일을_싣는다_970, test_range_context_annotation_970,
                test_로컬_없음이어도_antigravity가_본다,
                test_초안_실패여도_antigravity가_마무리한다,
                test_기존_초안_재사용과_실패_보존,
