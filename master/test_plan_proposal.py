@@ -121,10 +121,45 @@ def test_broken_latest_proposal():
     check("깨진 최신 제안 거절", "JSON 이 깨졌다" in _err(lambda: _set(iss)))
 
 
+def test_change_autonomy_replans_waiting_only():
+    """#963 T5 — 값 변경 이력 노트 + 대기 태스크만 재제안 · 시작된 태스크·체크리스트 보존 · 등록은 동의 뒤."""
+    three = TASKS + [{"id": "T3", "goal": "마무리", "deps": ["T2"]}]
+    iss = TK.issue_with_plan(three, checklist=["c1"])
+    PT.transition(1, "T1", "작업중", getter=iss.get, updater=iss.update)
+    PT.transition(1, "T1", "완료", "커밋 abc1234", getter=iss.get, updater=iss.update)
+    PT.transition(1, "C1", "충족", "검사 rc 0 통과", getter=iss.get, updater=iss.update)
+    chg = lambda v, tasks=None, why="더 큰 단위로": PP.change_autonomy(  # noqa: E731
+        1, v, why, tasks=tasks, getter=iss.get, noter=iss.note)
+    regroup = [{"id": "T4", "goal": "쓰기와 마무리를 한 번에", "deps": ["T1"], "check": "왕복"}]
+    out = chg(0.8, regroup)
+    check("응답", out["ok"] and out["autonomy"] == {"from": 0.5, "to": 0.8} and out["kept"] == ["T1"]
+          and out["replanned"] == ["T4"], str(out))
+    check("이력 노트", iss.notes[-2].startswith(PP.AUTONOMY_MARK) and "0.5 → 0.8" in iss.notes[-2], iss.notes[-2][:120])
+    prop = PP.latest(iss.journals)
+    check("재제안 = 시작된 T1 + 새 대기 T4 · 체크리스트 그대로 · 0.8", [t["id"] for t in prop["tasks"]] == ["T1", "T4"]
+          and prop["checklist"] == [{"id": "C1", "item": "c1"}] and prop["autonomy"] == 0.8, str(prop))
+    plan = PB.parse(iss.body)
+    check("등록 전 본문은 그대로(0.5 · T2·T3 대기)", plan.autonomy == 0.5 and [t.id for t in plan.tasks] == ["T1", "T2", "T3"])
+    check("동의 없이 등록 거절", "사용자 답이 비었다" in _err(lambda: _set(iss, tasks=prop["tasks"], answer="")))
+    _set(iss, tasks=prop["tasks"])
+    plan = PB.parse(iss.body)
+    check("동의 뒤 등록 — 0.8 · T1 완료·근거 보존 · C1 충족 보존", plan.autonomy == 0.8
+          and [(t.id, t.state) for t in plan.tasks] == [("T1", "완료"), ("T4", "대기")]
+          and plan.task("T1").evidence == "커밋 abc1234" and plan.check("C1").state == "충족", str(plan))
+    out = chg(0.3)
+    check("tasks 생략 → 지금 대기 태스크 그대로 재제안", out["replanned"] == ["T4"] and PP.latest(iss.journals)["autonomy"] == 0.3)
+    check("범위 밖 값 거절", "autonomy" in _err(lambda: chg(1.2)))
+    check("시작된 ID 재사용 거절", "시작된 태스크 ID" in _err(lambda: chg(0.5, [{"id": "T1", "goal": "x"}])))
+    check("why 빈칸 거절", "why" in _err(lambda: chg(0.5, why=" ")))
+    check("플랜 없는 일감 거절", "플랜 영역이 없다" in _err(lambda: PP.change_autonomy(
+        1, 0.5, "x", getter=TK.FakeIssue(TK.spec_body()).get, noter=iss.note)))
+
+
 def main() -> int:
     for fn in (test_propose_records_note, test_propose_refusals, test_set_requires_proposal_and_consent,
                test_latest_proposal_wins, test_edit_after_flow_needs_new_proposal_and_keeps_states,
-               test_legacy_plan_edit_unchanged, test_broken_latest_proposal):
+               test_legacy_plan_edit_unchanged, test_broken_latest_proposal,
+               test_change_autonomy_replans_waiting_only):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_plan_proposal: {PASS}/{total} 통과")

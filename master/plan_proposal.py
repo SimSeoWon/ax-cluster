@@ -207,3 +207,61 @@ def gate(journals, body: str, tasks, user_answer: str) -> dict | None:
         raise ProposalError(f"최신 제안과 다른 목록이다 — 제안 {want} · 받은 것 {got_ids}"
                             + (f" · 처음 다른 태스크 {diff}" if diff else "") + " — 바꾸려면 다시 제안한다")
     return prop
+
+
+# ── 자율성 변경과 재플랜 (`#963` T5) ─────────────────────────────────────────────────────────────
+
+AUTONOMY_MARK = f"[ax:plan-autonomy v={VERSION}]"
+
+
+def _task_dict(t: PB.Task) -> dict:
+    return {"id": t.id, "goal": t.goal, "target": t.target, "deps": list(t.deps), "check": t.check,
+            "steps": list(t.steps)}
+
+
+def change_autonomy(issue_id, value, why: str, *, tasks=None, getter=None, noter=None) -> dict:
+    """자율성 값을 바꾸고 **대기 태스크만** 다시 짠 플랜 제안을 남긴다 — 등록은 동의 뒤 `set_plan`.
+
+    `tasks` 는 세션이 사용자와 다시 짠 **대기 태스크 목록**이다(비우면 지금 대기 태스크 그대로 재제안). 시작된
+    태스크(작업중·완료·차단·해당없음)와 근거, 개발 완료 체크리스트는 그대로 제안에 옮긴다. 값↔세밀도 대응은
+    `#948` 의 몫이라 이 함수는 태스크를 스스로 쪼개거나 묶지 않는다.
+    """
+    from master import plan_state as PS
+    getter, noter = getter or _default_getter, noter or _default_noter
+    if not (why or "").strip():
+        raise ProposalError("why 가 비었다 — 자율성을 왜 바꾸는지 노트로 남긴다")
+    new_value = PB.autonomy_value(value)
+    got = _read(issue_id, getter)
+    body = got.get("description") or ""
+    plan = PB.parse(body)
+    if plan is None:
+        raise ProposalError("플랜 영역이 없다 — 자율성은 플랜 제안(plan_propose)의 autonomy 로 정한다")
+    started = [t for t in plan.tasks if t.state != PS.WAITING]
+    kept = [_task_dict(t) for t in started]
+    if tasks is None:
+        waiting = [_task_dict(t) for t in plan.tasks if t.state == PS.WAITING]
+    else:
+        waiting = normalize_tasks(tasks) if tasks else []
+        clash = sorted({t["id"] for t in waiting} & {t.id for t in started})
+        if clash:
+            raise ProposalError(f"시작된 태스크 ID 를 대기 목록에 쓸 수 없다: {', '.join(clash)} — 시작된 태스크는 그대로 둔다")
+    full = kept + waiting
+    if not full:
+        raise ProposalError("태스크가 하나도 없다 — 대기 태스크 목록을 준다")
+    cl = [{"id": c.id, "item": c.item} for c in plan.checklist]
+    _draft(body, full, cl, new_value)                 # 선행·ID 규칙 판정(시작된 태스크 상태 보존 포함)
+    old_value = plan.autonomy
+    hist = (f"{AUTONOMY_MARK}\n자율성 {old_value:g} → {new_value:g}\n\n사유: {why.strip()}\n"
+            f"보존: 시작된 태스크 {', '.join(t.id for t in started) or '없음'} · 체크리스트 {len(cl)}개\n"
+            f"재제안: 대기 태스크 {', '.join(t['id'] for t in waiting) or '없음'}")
+    out = str(noter(issue_id, hist))
+    if out.startswith("[주의]"):
+        raise PB.PlanError(out)
+    prop = {"tasks": full, "checklist": cl, "autonomy": new_value}
+    out = str(noter(issue_id, render_note(prop, f"자율성 {old_value:g} → {new_value:g} 재플랜 — {why.strip()}")))
+    if out.startswith("[주의]"):
+        raise PB.PlanError(out)
+    return {"ok": True, "issue_id": issue_id, "autonomy": {"from": old_value, "to": new_value},
+            "kept": [t["id"] for t in kept], "replanned": [t["id"] for t in waiting], "tasks": [t["id"] for t in full],
+            "next": "제안 표를 보이고 동의를 받아 plan_set(tasks=제안 목록, user_answer=…)",
+            "log": [f"[plan_proposal] #{issue_id} 자율성 {old_value:g} → {new_value:g} · 보존 {len(kept)} · 재제안 {len(waiting)}"]}
