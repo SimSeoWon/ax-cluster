@@ -187,6 +187,51 @@ def test_render_refuses_unknown_state():
           bool(_err(lambda: PB.render([PB.Task("T1", "진행", "x")]))))
 
 
+def _raises(fn, needle: str) -> bool:
+    try:
+        fn()
+    except PB.PlanError as e:
+        return needle in str(e)
+    return False
+
+
+def test_v3_checklist_and_autonomy():
+    """#963 T1 — 표지 autonomy 속성 · 체크리스트 표 · v2 호환."""
+    spec = "## 스펙\r\n\r\n본문\r\n"
+    tasks = [PB.Task("T1", "대기", "목표")]
+    v2 = PB.append(spec, tasks)
+    p2 = PB.parse(v2)
+    check("v2 는 autonomy 기본 0.5 · 체크리스트 없음", p2.version == 2 and p2.autonomy == 0.5
+          and p2.autonomy_raw is None and p2.checklist == [])
+    check("v2 갱신은 v2 그대로(바이트)", PB.replace(v2, p2.tasks) == v2)
+    cl = [PB.Check("C1", "미확인", "제안 없는 plan_set 거절"), PB.Check("C2", "충족", "회귀", "검사 rc 0")]
+    v3 = PB.replace(v2, tasks, checklist=cl, autonomy=0.5)
+    p3 = PB.parse(v3)
+    check("체크리스트가 실리면 v3", p3.version == 3 and "<!-- ax:plan:begin v=3 autonomy=0.5 -->" in v3, v3)
+    check("체크리스트 왕복", [(c.id, c.state, c.item, c.evidence) for c in p3.checklist]
+          == [("C1", "미확인", "제안 없는 plan_set 거절", ""), ("C2", "충족", "회귀", "검사 rc 0")])
+    check("CRLF 유지", "\n" not in v3.replace("\r\n", ""))
+    check("v3 왕복 바이트", PB.replace(v3, p3.tasks) == v3)
+    check("태스크만 바꿔도 체크리스트·자율성 유지", PB.parse(PB.replace(v3, [PB.Task("T1", "작업중", "목표")])).checklist == p3.checklist)
+    v3b = PB.replace(v3, p3.tasks, autonomy=0.8)
+    check("자율성만 바꾸면 표지만 바뀐다", PB.parse(v3b).autonomy == 0.8 and "autonomy=0.8" in v3b
+          and v3b.split("-->", 1)[1] == v3.split("-->", 1)[1])
+    fresh = PB.append(spec, tasks, checklist=cl[:1], autonomy=0.25)
+    check("append 로 v3 생성", PB.parse(fresh).version == 3 and PB.parse(fresh).autonomy == 0.25)
+    check("체크리스트 없이 autonomy 만 있어도 v3", PB.parse(PB.append(spec, tasks, autonomy=0.5)).version == 3)
+    check("플랜 시작 위치 판정은 속성이 있어도 그대로", PB.BEGIN_RE.search(v3).group(1) == "3")
+    for label, val in (("1 초과", 1.5), ("음수", -0.1), ("문자", "high")):
+        check(f"autonomy {label} 거절", _raises(lambda v=val: PB.replace(v3, tasks, autonomy=v), "autonomy"))
+    bad = v3.replace("autonomy=0.5", "speed=1")
+    check("모르는 표지 속성 거절", _raises(lambda: PB.parse(bad), "모르는 플랜 표지 속성"))
+    check("v2 에 속성 거절", _raises(lambda: PB.parse(v2.replace("v=2 -->", "v=2 autonomy=0.5 -->")), "v3 부터"))
+    check("체크리스트 상태 오류 거절", _raises(lambda: PB.parse(v3.replace("| C1 | 미확인 |", "| C1 | 끝 |")), "체크리스트 상태"))
+    check("체크리스트 ID 형식 거절", _raises(lambda: PB.parse(v3.replace("| C2 |", "| X2 |")), "C<숫자>"))
+    check("체크리스트 ID 중복 거절", _raises(lambda: PB.parse(v3.replace("| C2 |", "| C1 |")), "겹친다"))
+    check("빈 항목 거절", _raises(lambda: PB.replace(v3, tasks, checklist=[PB.Check("C1", "미확인", " ")]), "항목이 비었다"))
+    check("태스크 ID 에 C<숫자> 거절", _raises(lambda: PB.append(spec, [PB.Task("C1", "대기", "x")]), "체크리스트 ID"))
+
+
 def main() -> int:
     for fn in (test_parse_reads_tasks,
                test_no_region_is_none,
@@ -200,7 +245,8 @@ def main() -> int:
                test_v2_reads_steps,
                test_v2_roundtrip_and_v1_untouched,
                test_render_v1_refuses_steps,
-               test_render_refuses_unknown_state):
+               test_render_refuses_unknown_state,
+               test_v3_checklist_and_autonomy):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_plan_block: {PASS}/{total} 통과")
