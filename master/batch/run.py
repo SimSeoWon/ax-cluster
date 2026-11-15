@@ -312,9 +312,11 @@ def run(paths, cfg: dict, *, now: datetime | None = None, force: bool = False) -
 
         o.ran = True
         if o.result.get("complete") is False:
-            # 예산으로 끊겨도 주간 마커는 쓴다 — 안 쓰면 시간 타이머가 같은 주말 내내 매시
-            # 다시 돈다(#823). 남은 항목은 캐시를 이어 **다음 주말**에 계속한다.
-            o.verdict = f"{o.verdict} · 예산으로 끊김 — 남은 항목은 다음 주말에 이어간다"
+            if b.schedule.key == gates.DISMISSAL_CANDIDATES.key:
+                # #964: 이 배치는 산출물의 주차·완료 상태로 다음 회차 재개를 판단한다.
+                o.verdict = f"{o.verdict} · 미완료 — 남은 항목은 다음 회차에 이어간다"
+            else:
+                o.verdict = f"{o.verdict} · 예산으로 끊김 — 남은 항목은 다음 주말에 이어간다"
         m = gates.write_marker(paths.root, b.schedule.key, now=now)
         if not m.get("ok"):
             # 마커를 못 쓰면 **다음 회차에 또 돈다** — 그건 알아야 할 사실이다.

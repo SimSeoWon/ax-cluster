@@ -194,7 +194,12 @@ DISMISSAL_CANDIDATES = Schedule(key="dismissal_candidates", hour=0, schedule="we
 
 
 def should_run_dismissal_candidates(sched, cfg, root, *, input_count, now=None):
-    """기존 플랜 생성 여부와 독립: 토·일, 완료 마커는 주차별 한 번."""
+    """기존 플랜 생성 여부와 독립: 토·일, **주차별 한 번 완료**.
+
+    `#964` T2 — 「이번 주에 했나」는 별도 `_last_` 마커가 아니라 **산출물**(`fixes/dismissal_candidates.json`
+    의 `week`·`complete`)이 말한다. 마커는 끝까지 돌아야만 써져서, 900초 timeout 에 죽으면 같은 주말에
+    매시간 처음부터 다시 돌았다. 지금은 시작할 때 주차가 먼저 기록되고, 못 끝냈으면 남은 항목만 이어 간다.
+    """
     now = now or datetime.now()
     s = sched.from_config(cfg)
     if not enabled(cfg, s.key):
@@ -203,9 +208,15 @@ def should_run_dismissal_candidates(sched, cfg, root, *, input_count, now=None):
         return Verdict(False, "미결 항목 없음", s.key)
     if now.weekday() not in (5, 6) or now.hour < s.hour:
         return Verdict(False, "주말 수집 시간 아님", s.key)
-    last = read_marker(root, s.key)
-    if last and last.strftime("%Y-W%W") == now.strftime("%Y-W%W"):
+    from ..context_synth import dismissal_candidates as DC
+    try:
+        state = DC.week_state(root, now)
+    except (OSError, ValueError) as e:
+        return Verdict(False, f"기각 후보 산출물을 읽지 못했다 — {e}", s.key)
+    if state == "done":
         return Verdict(False, "이번 주 기각 후보 수집 완료", s.key)
+    if state == "resume":
+        return Verdict(True, "이번 주 기각 후보 수집 이어서 — 지난 회차가 끝나지 않았다", s.key)
     return Verdict(True, "주말 미결 기각 후보 수집", s.key)
 
 

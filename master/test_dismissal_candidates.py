@@ -192,26 +192,47 @@ class CandidatesTest(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertEqual(pw.call_count, 1, "같은 수집에서 재시도하지 않는다")
 
-    def test_incomplete_run_resumes_next_weekend_not_same_weekend(self):
+    def test_incomplete_run_resumes_same_weekend_from_saved_entries(self):
         runs = []
+        now = datetime(2026, 10, 17, 10)
+
+        def interrupted_chat(prompt):
+            if len(self.calls) == 1:
+                raise KeyboardInterrupt("수집 중단")
+            return self.chat(prompt)
 
         def execute(_):
             runs.append(1)
-            return {"ok": True, "complete": False}
+            try:
+                return D.collect(self.paths, chat=interrupted_chat if len(runs) == 1 else self.chat,
+                                 now=now)
+            except KeyboardInterrupt:
+                return {"ok": True, "complete": False}
 
         fake = B.BatchDef(gates.DISMISSAL_CANDIDATES, "test", lambda _: 1,
                           execute, gates.should_run_dismissal_candidates)
         with patch.object(B, "BATCHES", [fake]):
-            first_run = B.run(self.paths, {}, now=datetime(2026, 10, 17, 10))
-            # 미완료여도 주간 마커는 남는다 — 같은 주말에 매시 재실행하지 않는다(#823).
+            first_run = B.run(self.paths, {}, now=now)
+            # #964: 마커가 남아도 산출물이 미완료면 같은 주말에 저장된 항목부터 이어 간다.
             self.assertIsNotNone(gates.read_marker(self.root, "dismissal_candidates"))
             self.assertTrue(first_run[0].ran)
-            self.assertIn("다음 주말", first_run[0].verdict)
-            B.run(self.paths, {}, now=datetime(2026, 10, 17, 11))
-            B.run(self.paths, {}, now=datetime(2026, 10, 18, 10))
+            self.assertEqual(D.week_state(self.root, now), "resume")
             self.assertEqual(len(runs), 1)
-            B.run(self.paths, {}, now=datetime(2026, 10, 24, 10))
+            self.assertEqual(len(self.calls), 1)
+            now = datetime(2026, 10, 17, 11)
+            resumed = B.run(self.paths, {}, now=now)
+            self.assertTrue(resumed[0].ran)
+            self.assertIn("이어서", resumed[0].verdict)
             self.assertEqual(len(runs), 2)
+            self.assertEqual(len(self.calls), 2, "저장된 첫 항목은 다시 판정하지 않는다")
+            self.assertEqual(D.week_state(self.root, now), "done")
+            self.assertFalse(B.run(self.paths, {}, now=datetime(2026, 10, 17, 12))[0].ran)
+            self.assertFalse(B.run(self.paths, {}, now=datetime(2026, 10, 18, 10))[0].ran)
+            self.assertEqual(len(runs), 2)
+            now = datetime(2026, 10, 24, 10)
+            self.assertEqual(D.week_state(self.root, now), "new")
+            self.assertTrue(B.run(self.paths, {}, now=now)[0].ran)
+            self.assertEqual(len(runs), 3)
 
     def test_public_list_only_displays_summary(self):
         from master.webui import fixes_page
@@ -231,6 +252,8 @@ class CandidatesTest(unittest.TestCase):
         self.assertFalse(gates.should_run_dismissal_candidates(s, {}, self.root, input_count=2,
                                                             now=datetime(2026, 10, 16, 10)).run)
         gates.write_marker(self.root, s.key, now=sat)
+        self.assertTrue(gates.should_run_dismissal_candidates(s, {}, self.root, input_count=2, now=sat).run)
+        self.collect()
         self.assertFalse(gates.should_run_dismissal_candidates(s, {}, self.root, input_count=2, now=sat).run)
         self.assertTrue(any(b.schedule.key == s.key for b in B.BATCHES))
         D._path(self.root).write_text("broken")

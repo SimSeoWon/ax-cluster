@@ -100,6 +100,26 @@ def _inputs(root):
             yield {**item, "input_hash": digest}
 
 
+def week_of(now) -> str:
+    """주차 문자열 — `gates` 의 주간 비교와 같은 형식(`%Y-W%W`)."""
+    return now.strftime("%Y-W%W")
+
+
+def week_state(root, now=None) -> str:
+    """이번 주차 수집 상태 — `#964` T2. 게이트가 이 값을 본다(산출물이 곧 「이번 주에 했나」의 증거).
+
+        new     이번 주차 기록이 없다 → 새로 시작
+        resume  이번 주차에 시작했고 끝나지 않았다(예: 900초 timeout) → 남은 항목만 이어서
+        done    이번 주차에 끝까지 돌았다 → 건너뜀
+
+    [주의] 파일이 깨졌으면 `ValueError` 가 그대로 올라간다 — 게이트가 사유로 보인다.
+    """
+    data = _load(root)
+    if data.get("week") != week_of(now or datetime.now()):
+        return "new"
+    return "done" if data.get("complete") else "resume"
+
+
 def count_open(paths) -> int:
     return sum(1 for _ in _inputs(paths.root))
 
@@ -176,6 +196,14 @@ def collect(paths, *, chat=None, now=None) -> dict:
         data = _load(paths.root)
         sha = main_sha(paths.repo)
         data.update(repo=str(Path(paths.repo).resolve()), main_sha=sha, collected_at=stamp)
+        # #964 T2 — 시작 시점에 이번 주차를 먼저 기록한다. 끝까지 못 가도(900초 timeout) 같은 주차는
+        #   「이어서」가 되고, 처음부터 다시 판정하지 않는다. 끝나야 complete:true.
+        week = week_of(now or datetime.now())
+        if data.get("week") != week:
+            data.update(week=week, started_at=stamp, complete=False, completed_at=None)
+        else:
+            data["complete"] = False
+        _save(paths.root, data)
         errors = []
         for item in _inputs(paths.root):
             key = item["id"]
@@ -202,9 +230,9 @@ def collect(paths, *, chat=None, now=None) -> dict:
                 errors.append(key)
             data["entries"][key] = {**base, **result}
             _save(paths.root, data)
-        data["complete"] = True
+        data.update(complete=True, completed_at=stamp)
         _save(paths.root, data)
-    return {"ok": True, "complete": True, "unjudged": errors}
+    return {"ok": True, "complete": True, "unjudged": errors, "week": week}
 
 
 def read_results(root, *, details=False) -> dict:
