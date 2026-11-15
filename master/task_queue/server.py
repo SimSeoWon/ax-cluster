@@ -30,7 +30,7 @@ from .models import (
     RedmineIssueReq, RedmineLinkCommitReq, RedmineVersionReq, RedmineWikiReq,
     RedmineVersionPatchReq, RedmineVersionDeleteReq,
     WriterSignalReq, HistoryReq, AliasReq, NotAClassReq, RecipeSearchReq, \
-    HistorySearchReq, FixStatusReq, UsageReq
+    HistorySearchReq, FixStatusReq, FixCandidatesDismissReq, UsageReq
 )
 from . import tagging                      # 라우트별 태그 정책 (#257)
 from .persistence import (
@@ -1305,6 +1305,29 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         _tq_log(f"[fix] 내려받기 {serial} → "
                 f"{'항목 ' + str(out.get('items')) + '건' if out.get('ok') else out.get('reason')} "
                 f"({paths.name})", root)
+        return {**out, "project": paths.name}
+
+    @app.post("/fixes/candidates/dismiss")
+    def fixes_candidates_dismiss_ep(req: FixCandidatesDismissReq):
+        """기각 후보 일괄 기각 (`#967`) — 사람이 고른 뒤에만 온다. 태그 없음도 거절(쓰기 대행 공통).
+
+        [주의] `/fixes/{item}/status` 보다 **먼저** 선언한다 — 경로 모양이 달라 겹치지는 않지만
+        고정 경로를 앞에 두는 것이 이 파일의 관례다.
+        """
+        from ..context_synth import dismissal_candidates as DC
+        from ..context_synth import fix_index as FX
+        bad = _mount_gate(req.project, require=True)
+        if bad:
+            _tq_log(f"[fix] 일괄 기각 거부 — {bad.get('reason')}", root)
+            return bad
+        paths = _mounted_paths(req.project)
+        _tq_log(f"[fix] 일괄 기각 요청 {len(req.items)}건 by={req.by or '-'} ({paths.name})", root)
+        try:
+            out = DC.dismiss_candidates(paths.root, req.items, by=req.by,
+                                        logf=lambda m: _tq_log(f"{m} ({paths.name})", root))
+        except FX.FixIndexError as e:
+            _tq_log(f"[fix] [중요] 일괄 기각 실패 — {e} ({paths.name})", root)
+            return {"ok": False, "status": "index_error", "reason": str(e), "project": paths.name}
         return {**out, "project": paths.name}
 
     @app.post("/fixes/{item}/status")

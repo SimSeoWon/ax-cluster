@@ -150,6 +150,7 @@ POLICY = {
     "GET /fixes":                                   MOUNT,
     "GET /fixes/{serial}":                          MOUNT,
     "POST /fixes/{item}/status":                    MOUNT,
+    "POST /fixes/candidates/dismiss":               MOUNT,      # 기각 후보 일괄 기각 (#967)
 
     # 🔴 일감 흐름·플랜 대행 (`#884` T6) — `.33` 요청자 세션이 마스터와 같은 흐름을 쓴다. 잠금·마감 추적은
     #    **프로젝트 트윈**에 쓰므로 `MOUNT` 이고 태그가 필수다(태그 없이 가정하면 남의 잠금을 건드린다).
@@ -209,6 +210,7 @@ REQUIRE_TAG = (
     "POST /api/v1/workshops/list",
     "POST /api/v1/workshops/check-clean",
     "POST /fixes/{item}/status",                # 수정 항목 결정 — 트윈의 fixes/index.json 에 쓴다 (#629)
+    "POST /fixes/candidates/dismiss",           # 기각 후보 일괄 기각 — 같은 색인에 쓴다 (#967)
     # 일감 흐름·플랜 (`#884` T6) — 트윈 잠금·마감 추적에 쓴다
     "POST /api/v1/issue/start",
     "POST /api/v1/issue/finish",

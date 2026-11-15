@@ -472,6 +472,17 @@ class FixStatusReq(BaseModel):
     commit: str = ""
 
 
+class FixCandidatesDismissReq(BaseModel):
+    """기각 후보 일괄 기각 (`#967`) — 사람이 표에서 고른 번호만 온다.
+
+    [중요] 서버가 항목마다 **지금** 후보 목록과 대조한다 — open 인 `candidate` 이고 stale 이 아닌 것만
+    기각하고, 사유는 후보 수집의 판정 사유를 그대로 쓴다. 요청은 사유를 싣지 않는다.
+    """
+    project: str = ""
+    items: list[str]
+    by: str = ""
+
+
 class AntiPatternNotifyReq(BaseModel):
     """리더가 머지한 새 안티패턴 엔트리 알림.
 

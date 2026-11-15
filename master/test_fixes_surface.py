@@ -76,6 +76,11 @@ def test_scope():
     check("① 요청자 GET /fixes/R12 200", _status("GET", "/fixes/R12", rq) == 200)
     check("① 요청자 POST /fixes/R12-3/status 200", _status("POST", "/fixes/R12-3/status", rq) == 200)
     check("① 요청자라도 다른 쓰기 경로는 403", _status("POST", "/fixes/R12-3/delete", rq) == 403)
+    check("① #967 요청자 POST /fixes/candidates/dismiss 200",
+          _status("POST", "/fixes/candidates/dismiss", rq) == 200)
+    check("① #967 [중요] 일괄 기각 하위 경로는 403 (정확 일치)",
+          _status("POST", "/fixes/candidates/dismiss/x", rq) == 403)
+    check("① #967 [중요] 워커는 일괄 기각 403", _status("POST", "/fixes/candidates/dismiss", wk) == 403)
     check("① [중요] 워커는 403", _status("GET", "/fixes", wk) == 403)
     check("① [중요] 토큰 없으면 401", _status("GET", "/fixes", None) == 401)
     check("① [중요] `/api/v1` 아래가 아니다 (8103 무인증 접두 회피)",
@@ -89,12 +94,13 @@ def test_public_prefix_and_policy():
     from master.task_queue import tagging
     check("② /reviews 는 8103 공개 화면이다", "/reviews" in PREFIXES, str(PREFIXES))
     check("② [중요] /fixes 는 8103 공개 접두에 없다", not any(p.startswith("/fixes") for p in PREFIXES))
-    for key in ("GET /fixes", "GET /fixes/{serial}", "POST /fixes/{item}/status"):
+    for key in ("GET /fixes", "GET /fixes/{serial}", "POST /fixes/{item}/status",
+                "POST /fixes/candidates/dismiss"):
         check(f"② 태그 정책 선언: {key}", tagging.POLICY.get(key) == tagging.MOUNT,
               str(tagging.POLICY.get(key)))
     src = (Path(__file__).parent / "task_queue" / "server.py").read_text(encoding="utf-8")
     for deco in ('@app.get("/fixes")', '@app.get("/fixes/{serial}")',
-                 '@app.post("/fixes/{item}/status")'):
+                 '@app.post("/fixes/{item}/status")', '@app.post("/fixes/candidates/dismiss")'):
         check(f"② 서버 라우트가 정책 키와 같은 글자다: {deco}", deco in src)
 
 
@@ -341,11 +347,24 @@ def test_client_tools():
         check("④ 빈 번호 거절", False)
     except M.ClientError:
         check("④ 빈 번호 거절", True)
+    M.dispatch_tool("dismiss_fix_candidates", {"items": ["R12-3", " P3 ", ""], "by": "사람"}, api=api)
+    check("④ #967 dismiss_fix_candidates → POST /fixes/candidates/dismiss (빈 번호는 뺀다)",
+          calls[-1] == ("POST", "/fixes/candidates/dismiss", {"items": ["R12-3", "P3"], "by": "사람"}),
+          str(calls[-1]))
+    M.dispatch_tool("dismiss_fix_candidates", {"items": "R1-1, R2-2"}, api=api)
+    check("④ #967 문자열 목록도 받는다 · 사유는 싣지 않는다(서버가 판정 사유로 채운다)",
+          calls[-1] == ("POST", "/fixes/candidates/dismiss", {"items": ["R1-1", "R2-2"]}), str(calls[-1]))
+    try:
+        M.dispatch_tool("dismiss_fix_candidates", {"items": []}, api=api)
+        check("④ #967 빈 목록 거절", False)
+    except M.ClientError:
+        check("④ #967 빈 목록 거절", True)
     names = {t["name"] for t in M.TOOLS}
-    check("④ 도구 셋이 등록돼 있다", {"list_fixes", "get_fix", "update_fix_status"} <= names)
+    fix_tools = ("list_fixes", "get_fix", "update_fix_status", "dismiss_fix_candidates")
+    check("④ 도구 셋이 등록돼 있다", set(fix_tools) <= names)
     for banned in ("decide", "patch", "merge", "reject", "finalize", "approve"):
         check(f"④ 결정 도구 금지어에 걸리지 않는다: {banned}",
-              not any(banned in n for n in ("list_fixes", "get_fix", "update_fix_status")))
+              not any(banned in n for n in fix_tools))
 
 
 # ── ⑤⑥ fix_flow — 실제 git ──────────────────────────────────────────────────
@@ -644,6 +663,43 @@ def test_delivery():
           mods <= allowed, str(mods - allowed))
 
 
+def test_dismiss_endpoint_live():
+    """#967 — 실물 앱(인증 미들웨어 포함)에서 일괄 기각 엔드포인트의 거절 경로와 항목별 응답을 본다."""
+    import os
+    import tempfile
+    from master.test_tagging import _live_queue
+    tmp = Path(tempfile.mkdtemp(prefix="ax-967-"))
+    old = os.environ.get("AX_PROJECTS_ROOT")
+    try:
+        proots = tmp / "projects"
+        for n in ("AXCluster", "NS"):
+            (proots / n).mkdir(parents=True)
+        (proots / "projects.yaml").write_text(
+            "version: 1\nactive: AXCluster\nprojects:\n- AXCluster\n- NS\n", encoding="utf-8")
+        os.environ["AX_PROJECTS_ROOT"] = str(proots)
+        c, _m, req_t, wrk_t = _live_queue(tmp)
+        H = {"Authorization": f"Bearer {req_t}"}
+        r = "/fixes/candidates/dismiss"
+        body = {"project": "AXCluster", "items": ["R1-1"]}
+        check("⑧ #967 [중요] 워커 토큰 → 403",
+              c.post(r, json=body, headers={"Authorization": f"Bearer {wrk_t}"}).status_code == 403)
+        check("⑧ #967 무토큰 → 401", c.post(r, json=body).status_code == 401)
+        j = c.post(r, json={"items": ["R1-1"]}, headers=H).json()
+        check("⑧ #967 [중요] 태그 없음 → no_project_tag", j.get("status") == "no_project_tag", str(j)[:160])
+        j = c.post(r, json={**body, "project": "NS"}, headers=H).json()
+        check("⑧ #967 [중요] 비마운트 → not_mounted", j.get("status") == "not_mounted", str(j)[:160])
+        j = c.post(r, json=body, headers=H).json()
+        check("⑧ #967 후보 없는 트윈 — 항목별 거절(목록에 없음) · 합계",
+              j.get("ok") is True and j.get("dismissed") == 0 and j.get("rejected") == 1
+              and "목록에 없다" in j["results"][0]["reason"], str(j)[:200])
+    finally:
+        if old is None:
+            os.environ.pop("AX_PROJECTS_ROOT", None)
+        else:
+            os.environ["AX_PROJECTS_ROOT"] = old
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     for fn in (test_scope, test_public_prefix_and_policy, test_nav_links_everywhere,
                test_public_page_has_no_body, test_detail_page_and_copy,
@@ -652,7 +708,7 @@ if __name__ == "__main__":
                test_flow_prepare_inplace_is_the_default,
                test_flow_worktree_leaves_checkout_alone, test_flow_diff_and_commit,
                test_flow_fetch_and_status_with_fake_api,
-               test_delivery):
+               test_delivery, test_dismiss_endpoint_live):
         fn()
     print(f"{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

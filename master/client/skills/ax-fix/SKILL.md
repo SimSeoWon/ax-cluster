@@ -176,6 +176,11 @@ worktree. 이 체크아웃의 작업 트리는 사람이 고치던 중일 수 �
     failed    --note "<무엇이 막혔나>"            고치다 막힘
 
 플랜(`P3`)은 `applied`/`dismissed` 가 플랜 MD 의 status 를 `acted`/`dismissed` 로 맞춘다.
+
+**기각 후보 일괄 기각** (`#967`) — 「기각 후보 보여줘」·「오탐 정리」로 오면 `ax-client:list_fixes` 응답의
+`dismissal_candidates.candidates` 중 `verdict=candidate`·`stale=false` 를 표(번호·판정 사유·근거 파일:줄·원문)로
+보인다. 사용자가 고르고(전부 · 일부 제외) **승인한 뒤에만** `ax-client:dismiss_fix_candidates(items=[…])` 를
+한 번 부른다. 사유는 서버가 판정 사유로 채운다. 응답의 항목별 거절(목록에 없음 · resolved · stale)을 그대로 보고한다.
 플랜에 레드마인 번호가 있으면 `ax-client:redmine_note` 로 결과(브랜치·커밋·항목)를 노트로 남긴다 —
 **상태 변경은 사용자에게 물은 뒤에만**, 원전처럼 「해결」까지다.
 

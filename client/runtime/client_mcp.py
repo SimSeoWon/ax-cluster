@@ -792,6 +792,21 @@ def tool_update_fix_status(api, args: dict) -> dict:
     return api("POST", "/fixes/" + urllib.parse.quote(item, safe="") + "/status", payload)
 
 
+def tool_dismiss_fix_candidates(api, args: dict) -> dict:
+    """기각 후보 일괄 기각 (`#967`) — **사용자가 표에서 고른 뒤에만** 부른다. 사유는 서버가 판정 사유로 채운다."""
+    raw = args.get("items")
+    if isinstance(raw, str):
+        raw = raw.replace(",", " ").split()
+    items = [str(i).strip() for i in (raw or []) if str(i or "").strip()]
+    if not items:
+        raise ClientError("items 가 비었다 — list_fixes 의 기각 후보 번호(R12-3 · P3)를 고른다")
+    payload = {"items": items}
+    by = str(args.get("by") or "").strip()
+    if by:
+        payload["by"] = by
+    return api("POST", "/fixes/candidates/dismiss", payload)
+
+
 # ── 일감 흐름·플랜 (`#884` T6) — 8101 `/api/v1/issue/*`·`/api/v1/plan/*` 대행 ─────────────────
 # [중요] **git 은 이 기계(요청자 worktree)가 하고 인프라는 기록만 한다** — 잠금·마감 추적·Redmine 노트.
 #    마스터 로컬 흐름(`issue_flow`)과 같은 함수(`master/issue_infra.py`)가 서버에서 돈다.
@@ -1594,6 +1609,16 @@ TOOLS = [
          "by": {"type": "string"},
          "branch": {"type": "string", "description": "적용했으면 fix/R12"},
          "commit": {"type": "string"}}}},
+    {"name": "dismiss_fix_candidates",
+     "description": "주말 기각 후보(list_fixes 응답의 dismissal_candidates · verdict=candidate)를 **한 번에** "
+                    "기각(dismissed)으로 기록한다 (`#967`). [중요] **사용자가 후보 표에서 고르고 승인한 뒤에만** "
+                    "부른다 — 후보는 조언이다. 서버가 항목마다 지금도 open 인 후보인지·stale 이 아닌지 대조하고 "
+                    "통과한 것만 **판정 사유를 그대로 기각 사유로** 남긴다. 응답은 항목별 결과(ok·reason)와 합계. "
+                    "이미 해소 후보(resolved)는 거절된다. 코드·브랜치는 건드리지 않는다.",
+     "inputSchema": {"type": "object", "required": ["items"], "properties": {
+         "items": {"type": "array", "items": {"type": "string"},
+                   "description": "고른 후보 번호 — 리뷰는 행까지 R12-3 · 플랜은 P3"},
+         "by": {"type": "string", "description": "누가 골랐나"}}}},
     {"name": "find_history",
      "description": "이 프로젝트의 **과거 결정 기록**을 찾는다 (원전 α′ history — 온톨로지 시드의 "
                     "1순위 원천). 작업 시작 직후에 `find_recipes`·`get_anti_patterns` 와 함께 "
@@ -2040,7 +2065,7 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                 # history 읽기 (`#306`) — 쓰기(`log_history`)와 같은 대행 자리
                 "find_history",
                 # 수정 항목 (`#630`) — 8101 `/fixes` 대행
-                "list_fixes", "get_fix", "update_fix_status"):
+                "list_fixes", "get_fix", "update_fix_status", "dismiss_fix_candidates"):
         a = api or queue_api(root)
         if name in ("add_object_alias", "mark_not_a_class"):
             # 프로젝트는 배달된 config 가 안다 — #210(활성 스위치)에 흔들리지 않게 실어 보낸다
@@ -2073,6 +2098,8 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
             return tool_get_fix(a, str(args.get("serial") or ""))
         if name == "update_fix_status":
             return tool_update_fix_status(a, args)
+        if name == "dismiss_fix_candidates":
+            return tool_dismiss_fix_candidates(a, args)
         if name == "redmine_list_issues":
             return tool_redmine_list_issues(a, status=str(args.get("status") or "open"),
                                             tracker=str(args.get("tracker") or ""),
