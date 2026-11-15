@@ -272,6 +272,57 @@ def collect(paths, *, chat=None, now=None) -> dict:
     return {"ok": True, "complete": True, "unjudged": errors, "week": week}
 
 
+def dismiss_candidates(root, items, *, by: str = "", logf=None) -> dict:
+    """사람이 고른 기각 후보를 한 번에 `dismissed` 로 기록한다 (`#967`). LLM 을 부르지 않는다.
+
+    [중요] **후보는 조언이고 상태 변경은 사람이 한다**(사용자 2026-10-17) — 이 함수는 사람이 고른 목록을
+    받을 때만 불린다. 항목마다 **지금** 목록(`read_results`)과 대조해 open 인 `candidate` 이고 대상 파일·입력이
+    그대로(stale 아님)인 것만 기각한다. 사유는 후보 수집의 판정 사유를 그대로 쓴다(사용자 2026-11-15).
+    기록은 기존 `fix_index.set_status` 하나로 한다 — 사유 필수·번호 형식·행 범위 거절이 그대로 걸린다.
+    거절은 예외가 아니라 항목별 `ok:false` + 사유다. 한 항목의 거절이 나머지를 막지 않는다.
+    """
+    log = logf or (lambda m: None)
+    ids = []
+    for i in items or []:
+        s = str(i or "").strip()
+        if s and s not in ids:
+            ids.append(s)
+    if not ids:
+        log("[fix] 일괄 기각 거절 — 고른 항목이 없다")
+        return {"ok": False, "reason": "고른 항목이 없다 — 기각 후보 번호(R12-3 · P3)를 준다"}
+    listed = read_results(root, details=True)
+    if listed.get("error"):
+        log(f"[fix] [중요] 일괄 기각 거절 — {listed['error']}")
+        return {"ok": False, "reason": listed["error"]}
+    rows = {r["id"]: r for r in listed["candidates"]}
+    results = []
+    for key in ids:
+        row = rows.get(key)
+        if row is None:
+            why = "지금 기각 후보 목록에 없다 — open 이 아니거나 판정되지 않은 항목"
+        elif row["verdict"] != "candidate":
+            why = f"기각 후보가 아니다(판정 {row['verdict']}) — 이미 해소 후보는 기각 대상이 아니다"
+        elif row["stale"]:
+            why = "대상 파일 또는 지적 입력이 판정 뒤 바뀌었다(stale) — 다시 판정한 뒤 고른다"
+        else:
+            why = ""
+        if why:
+            log(f"[fix] 일괄 기각 건너뜀 {key} — {why}")
+            results.append({"id": key, "ok": False, "reason": why})
+            continue
+        out = FX.set_status(root, key, "dismissed", note=row["reason"], by=by, logf=log)
+        if out.get("ok"):
+            log(f"[fix] 일괄 기각 {key}")
+            results.append({"id": key, "ok": True})
+        else:
+            log(f"[fix] 일괄 기각 거절 {key} — {out.get('reason')}")
+            results.append({"id": key, "ok": False, "reason": out.get("reason", "")})
+    done = sum(r["ok"] for r in results)
+    log(f"[fix] 일괄 기각 끝 — 요청 {len(ids)} · 기각 {done} · 거절 {len(ids) - done}")
+    return {"ok": True, "requested": len(ids), "dismissed": done,
+            "rejected": len(ids) - done, "results": results}
+
+
 def read_results(root, *, details=False) -> dict:
     """LLM 호출 없이 현재 미결 항목에 해당하는 후보만 전달한다."""
     try:

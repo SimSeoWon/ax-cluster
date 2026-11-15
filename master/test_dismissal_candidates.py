@@ -299,6 +299,42 @@ class CandidatesTest(unittest.TestCase):
         self.assertNotIn("타입 표기 권고", body)
         self.assertNotIn("a.py", body)
 
+    def test_dismiss_candidates_uses_reason_and_rejects_per_item(self):
+        """#967 — 고른 후보만 판정 사유로 기각 · 항목별 거절 · 한 항목의 거절이 나머지를 막지 않는다."""
+        logs = []
+        self.assertFalse(D.dismiss_candidates(self.root, [])["ok"])
+        self.collect()
+        ids = sorted(r["id"] for r in D.read_results(self.root)["candidates"])
+        self.assertEqual(len(ids), 2)
+        got = D.dismiss_candidates(self.root, [ids[0], "R999-1", ids[0]], by="tester",
+                                   logf=logs.append)
+        self.assertEqual((got["requested"], got["dismissed"], got["rejected"]), (2, 1, 1))
+        by_id = {r["id"]: r for r in got["results"]}
+        self.assertTrue(by_id[ids[0]]["ok"])
+        self.assertIn("목록에 없다", by_id["R999-1"]["reason"])
+        st = F.load(self.root)["status"][ids[0]]
+        self.assertEqual((st["state"], st["note"], st["by"]), ("dismissed", "타입 표기 권고", "tester"))
+        self.assertEqual(D.read_results(self.root)["count"], 1)
+        self.assertTrue(any("일괄 기각 끝" in m for m in logs))
+        again = D.dismiss_candidates(self.root, [ids[0]])
+        self.assertEqual(again["dismissed"], 0)            # 이미 기각 = open 아님
+        (self.repo / "a.py").write_text("def f():\n    return 2\n")
+        self.git("commit", "-am", "change")
+        stale = D.dismiss_candidates(self.root, [ids[1]])
+        self.assertEqual(stale["dismissed"], 0)
+        self.assertIn("stale", stale["results"][0]["reason"])
+        self.assertNotIn(ids[1], F.load(self.root)["status"])
+
+    def test_dismiss_candidates_refuses_resolved(self):
+        good = {"verdict": "resolved", "reason": "이미 수정됨",
+                "evidence": [{"file": "a.py", "line": 2, "text": "    return 1"}]}
+        D.collect(self.paths, chat=lambda _: json.dumps(good))
+        ids = [r["id"] for r in D.read_results(self.root)["candidates"]]
+        got = D.dismiss_candidates(self.root, ids)
+        self.assertEqual(got["dismissed"], 0)
+        self.assertTrue(all("판정 resolved" in r["reason"] for r in got["results"]))
+        self.assertEqual(F.load(self.root)["status"], {})
+
     def test_weekend_gate_independent_and_failure_preserves_list(self):
         s = gates.DISMISSAL_CANDIDATES
         sat = datetime(2026, 10, 17, 10)
