@@ -1,18 +1,18 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-15 16:14 — **#964 main `e531c917c177` 반영·마감 완료**, 잠금 해제·worktree 제거. `ax-task-queue` 16:13:59 · `ax-projects` 16:14:04 재시작, 재판정 깨끗. 이 문서 커밋·push 직후 같은 wrapup으로 배달 예정. T4의 배달·설정 복귀·실제 배치 관측은 진행 중이다.
+> 2026-11-15 16:22 — **#964 main `e531c917c177` 반영·마감 완료**, 잠금 해제·worktree 제거. `ax-task-queue` 16:13:59 · `ax-projects` 16:14:04 재시작、재판정 깨끗. `.2`·`.33` 배달 검사 2/2 OK, `.43`은 사용자 확인한 전원 꺼짐으로 보류. 설정 복귀 완료, 실제 배치 관측 진행 중. 이 문서 커밋 직후 켜진 두 기계만 기존 CLI로 재배달·검사한다.
 
 ## #964 마감 · 배포 후 관측 진행 중 — 주말 배치 매시 재실행·codex 소모
 
 - 인터뷰 완료(분류 버그 → 조사 → 명세 → 재현 → 파급 → `ax:spec`) · 플랜 v3 등록(제안→동의, 자율성 0.5, T1~T4 · 체크리스트 C1~C6). 결정 원문은 Redmine #964 노트.
-- 운영 `AXCluster/config.yaml` `batch.dismissal_candidates:false` 유지 중. 배포 뒤 오늘 다시 켠다는 기존 사용자 결정 유지. 복귀 결과는 Redmine #964 노트에서 확인한다.
+- 운영 `AXCluster/config.yaml` `batch.dismissal_candidates:true`로 복귀 완료(2026-11-15 16:20, 사용자 기존 승인). 배포 전 캐시 146건은 `/tmp/ax-964-live-before.json`에 읽기 대조용으로 보존했다. 복귀 결과는 Redmine #964 노트에 기록했다.
 - T1 `70c82b1`: 기계 공용 파일 쿨다운(한도 1시간·그 밖 600초·성공 해제) + commercial_chat 연결. codex 우선 순서는 유지.
 - T2 `f8c1002`: 시작 시 week·started_at·complete:false 저장, 완료 시 complete:true·completed_at. 게이트는 new/resume/done. 옛 계약 테스트 2건 변경은 사용자 「응」 승인으로 수행.
 - T3 `855f823`: 캐시·stale를 대상 파일 blob + input_hash 기준으로 변경. 옛 항목은 기록된 main_sha에서 blob을 읽어 재사용. 운영 읽기 대조: 146건 중 재사용111·변경13·파일없음3·미결목록밖19(LLM 0·쓰기 0).
 - 검사: 전수 233/233파일 rc0, 공식 통합 `Ran 207 tests in 256.369s` OK rc0, dismissal_candidates16/16·batch69/69. 리포트 `reports/193-964-weekly-candidates-resume.md`(`5853d9a`).
 - 승인: 「커밋하고 배포해 재부팅해야 되는건가?」 및 「응 진행해」. 사용자는 ‘재부팅’이 서비스 재시작을 뜻했다고 정정했다. C5는 배포 후 관측이라 마감 전 게이트에서만 제외(사용자 동의), 실제 관측 요구 유지. C1~C4·C6 충족. T4는 배포·실물까지 끝내기 전 완료로 표시하지 않는다.
 - main의 이전 미커밋 인계서는 `da63a90`로 보존·push 후 일감에 병합(`e531c917`)해 fast-forward 가능하게 했다. 마감 응답: repo `/home/sim/ax-cluster/.ax-issues/964`, done `[push,ff,worktree_remove,delete_branch,register,link,release,close,redmine]`, registered:true·closed:true·lock_released:true·why:"". 작성 계열 `['claude','codex']`.
-- wrapup 1차 rc2는 인수인계 커밋 대기. ax-task-queue·ax-projects만 의존 변경 판정으로 재시작, ax-broker는 최신. 남은 순서: 이 문서 커밋·push → `.venv/bin/python -m master.issue_wrapup 964 --project AXCluster` → 설정 복귀 → 실제 배치 회차·다음 회차 관측·Redmine 노트.
+- wrapup 1차 rc2는 인수인계 커밋 대기. `ecfb43e` 커밋·push 뒤 2차는 재시작 대상 없음, master.client update rc1(AXCluster:deliver). 사용자 「컴퓨터 하나 꺼져있어!」를 반영해 `.43` 배달은 보류한다. 기존 CLI `check AXCluster --host=192.168.0.2` 및 `.33`은 각각 rc0: payload10·스킬1종·태그AXCluster·출처 마스터 HEAD 일치. 전체 3/3 완료라고 하지 않는다. 남은 순서: 이 문서 커밋·push → 켜진 두 기계 기존 deliver/check → 실제 배치 회차·다음 회차 관측·Redmine 노트.
 - 앞선 인수인계 패치 1회는 잘못된 문맥 문자로 적용 실패(파일 변경 없음). 실패를 보고하고 멈췄으며 사용자 「응!」으로 재시도 승인.
 - 세션 `~/.codex/sessions/2026/11/15/rollout-2026-11-15T15-55-28-01a1ddfd-52b8-7b93-b84d-f828e5c08d9d.jsonl`. 최종 마감·배달·실물 결과의 정본은 Redmine #964 노트.
 
@@ -101,6 +101,6 @@
 
 ## 바로 다음 작업
 
-1. #964 배달·설정 복귀·실제 배치 관측을 이어간다. 위 T4·C5의 남은 순서와 Redmine 최신 노트를 대조한다. 이미 받은 커밋·배포·C5 처리 승인을 다시 묻지 않는다.
-2. `.43` 배달이 실패하면 실패 원문을 보고하고 멈춘다. 다른 일감은 사용자 선택을 기다린다.
+1. #964의 실제 배치 관측을 이어간다. 위 T4·C5의 남은 순서와 Redmine 최신 노트를 대조한다. 이미 받은 커밋·배포·C5 처리 승인을 다시 묻지 않는다.
+2. `.43`은 켜진 뒤 기존 `master.issue_wrapup 964 --project AXCluster`로 전체 배달을 다시 확인한다. 꺼진 동안에는 기존 CLI `deliver/check AXCluster --host=<켜진 기계>`를 사용한다. 다른 일감은 사용자 선택을 기다린다.
 3. 확인해 둘 실물: 토요일 22시 이후 `ax-batch` 로그의 `recipe_synthesis` 줄(#383) · 다음 rejected 라운드의 큐 로그 `[history] … rejected(큐 내부 종결)` 줄(#943) · 운영 relay에서 한도 20% 이하 제안 배너(#368) · 리뷰 큐 로그의 `리뷰 컨텍스트` 줄(#946, 첫 실물 확인됨 19:28~19:53) · 합성이 멈춘 회차의 `색인 걷기가 아직 안 지났다` 줄(#950)
