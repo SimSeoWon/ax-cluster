@@ -18,6 +18,8 @@ Python 이 거쳤는지 체크한다.** 질문 내용은 고정하지 않는다 
 - 진행 상태는 **노트에서만** 복원한다 — 중단돼도 노트를 읽어 이어 간다(사용자: 「중간에 중단되어도
   해당 내용을 보고 추적할 수 있을 것 같네」).
 - 사용자 답이 진짜인지는 판정하지 않는다(비범위) — 과정이 있었는지만 본다.
+- 모든 단계를 거치면 `write_spec` 으로 스펙 영역(`master/spec_block.py`)을 쓴다 — 파급 측정 뒤에만 열린다.
+  스펙 영역이 생기면 단계 기록은 닫힌다(인터뷰가 끝났다). 스펙을 고칠 때는 `write_spec` 을 다시 부른다.
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ from dataclasses import dataclass, field
 
 from master import interview_categories as IC
 from master import plan_block as PB
+from master import spec_block as SB
 
 CLASSIFY = "classify"
 ORDER: tuple[str, ...] = (CLASSIFY,) + IC.STEPS
@@ -134,9 +137,21 @@ def _plan_exists(body: str) -> bool:
         return True
 
 
+def _spec_exists(body: str) -> bool:
+    try:
+        return SB.exists(body or "")
+    except SB.SpecError:
+        return True
+
+
 def _default_getter(issue_id):
     from master import redmine
     return redmine.get_issue(issue_id)
+
+
+def _default_updater(issue_id, *, description: str, notes: str) -> str:
+    from master import redmine
+    return redmine.update_issue(issue_id, description=description, notes=notes)
 
 
 def _default_noter(issue_id, notes: str) -> str:
@@ -164,7 +179,8 @@ def status(issue_id, *, getter=None, cats=None) -> dict:
     got = _read(issue_id, getter or _default_getter)
     cats = cats if cats is not None else IC.load()
     st = state_of(got.get("journals") or [], cats)
-    out = {"issue_id": issue_id, **st.as_dict(), "plan_exists": _plan_exists(got.get("description") or ""),
+    body = got.get("description") or ""
+    out = {"issue_id": issue_id, **st.as_dict(), "plan_exists": _plan_exists(body), "spec_exists": _spec_exists(body),
            "categories": [c.as_dict() for c in cats.values()]}
     if st.category:
         out["category_doc"] = cats[st.category].as_dict()["doc"]
@@ -189,6 +205,8 @@ def record(issue_id, step: str, result: str, user_answer: str, *, category: str 
     got = _read(issue_id, getter)
     if _plan_exists(got.get("description") or ""):
         raise InterviewError(f"#{issue_id} 에 플랜 영역이 이미 있다 — 인터뷰가 아니라 플랜대로 진행한다")
+    if _spec_exists(got.get("description") or ""):
+        raise InterviewError(f"#{issue_id} 에 스펙 영역이 이미 있다 — 인터뷰는 끝났다. 스펙을 고치려면 write_spec")
     st = state_of(got.get("journals") or [], cats)
     if step == CLASSIFY:
         if category not in cats:
@@ -230,3 +248,38 @@ def record(issue_id, step: str, result: str, user_answer: str, *, category: str 
     return {"ok": True, "issue_id": issue_id, "step": step, "category": cat, "written": written,
             "next": nxt, "next_label": LABELS.get(nxt, "스펙 영역"),
             "category_doc": cats[cat].as_dict()["doc"], "log": log}
+
+
+def write_spec(issue_id, content: str, user_answer: str, *, getter=None, updater=None, cats=None) -> dict:
+    """인터뷰 마지막 — 확정 스펙(여섯 항목)을 스펙 영역에 쓴다. 본문의 영역 밖 글자는 그대로 둔다.
+
+    파급 측정까지 모든 단계(또는 건너뜀)가 노트로 있어야 열린다. `user_answer` 는 요약을 보인 뒤 받은
+    사용자 승인이다 — 비면 거절한다(진위는 판정하지 않는다).
+    """
+    getter, updater = getter or _default_getter, updater or _default_updater
+    cats = cats if cats is not None else IC.load()
+    if not (user_answer or "").strip():
+        raise InterviewError("스펙 영역: 사용자 답이 비었다 — 요약을 보이고 승인받은 뒤 기록한다")
+    got = _read(issue_id, getter)
+    body = got.get("description") or ""
+    if _plan_exists(body):
+        raise InterviewError(f"#{issue_id} 에 플랜 영역이 이미 있다 — 스펙 영역은 플랜 전에 쓴다")
+    st = state_of(got.get("journals") or [], cats)
+    if st.next != SPEC:
+        raise InterviewError(f"스펙 영역은 모든 단계 뒤에 쓴다 — 다음 단계는 "
+                             f"{LABELS.get(st.next, st.next)}({st.next})")
+    lack = SB.missing(content)
+    if lack:
+        raise InterviewError(f"스펙 여섯 항목 중 빠진 것 {lack} — docs/issue-spec.md §2 제목으로 쓴다")
+    try:
+        new_body = SB.put(body, content)
+    except SB.SpecError as e:
+        raise InterviewError(str(e)) from e
+    replaced = SB.exists(body)
+    note = (f"[ax:interview-spec v={SB.FORMAT_VERSION}]\n착수 전 인터뷰 — 스펙 영역 "
+            f"{'갱신' if replaced else '기록'} (분류 {st.category})\n\n## 사용자 답\n\n{user_answer.strip()}")
+    out = str(updater(issue_id, description=new_body, notes=note))
+    if out.startswith("[주의]"):
+        raise InterviewTransportError(out)
+    return {"ok": True, "issue_id": issue_id, "category": st.category, "replaced": replaced,
+            "next": "plan", "log": [f"[interview] #{issue_id} 스펙 영역 {'갱신' if replaced else '기록'}"]}
