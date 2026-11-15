@@ -92,6 +92,60 @@ class CandidatesTest(unittest.TestCase):
         self.assertFalse(any(r["stale"] for r in D.read_results(self.root)["candidates"]))
         self.assertEqual(len(self.calls), 4)
 
+    def test_unrelated_commit_reuses_current_and_legacy_entries(self):
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy):
+                D._path(self.root).unlink(missing_ok=True)
+                self.calls.clear()
+                self.collect()
+                data = D._load(self.root)
+                original_sha = data["main_sha"]
+                if legacy:
+                    for entry in data["entries"].values():
+                        entry.pop("source_blob")
+                        entry.pop("file")
+                    D._save(self.root, data)
+                (self.repo / "other.txt").write_text(str(legacy))
+                self.git("add", "other.txt")
+                self.git("commit", "-m", "unrelated")
+                self.assertFalse(any(r["stale"] for r in D.read_results(self.root)["candidates"]))
+                self.collect()
+                self.assertEqual(len(self.calls), 2, "무관한 커밋 뒤 추가 판정 0건")
+                self.assertTrue(all(e["main_sha"] == original_sha
+                                    for e in D._load(self.root)["entries"].values()))
+
+    def test_changed_input_invalidates_only_its_entry(self):
+        self.collect()
+        self.plan.write_text(self.plan_before.decode() + "추가 근거\n")
+        rows = {r["id"]: r for r in D.read_results(self.root)["candidates"]}
+        self.assertTrue(rows["P1"]["stale"])
+        self.assertEqual(sum(bool(r["stale"]) for r in rows.values()), 1)
+        self.collect()
+        self.assertEqual(len(self.calls), 3)
+
+    def test_missing_target_is_stale_without_llm_call(self):
+        self.collect()
+        self.git("rm", "a.py")
+        self.git("commit", "-m", "remove target")
+        self.assertTrue(all(r["stale"] for r in D.read_results(self.root)["candidates"]))
+        got = self.collect()
+        self.assertEqual(len(got["unjudged"]), 2)
+        self.assertEqual(len(self.calls), 2)
+
+    def test_missing_legacy_revision_does_not_reuse_or_hide_rows(self):
+        self.collect()
+        data = D._load(self.root)
+        for entry in data["entries"].values():
+            entry.pop("source_blob")
+            entry.pop("file")
+            entry["main_sha"] = "f" * 40
+        D._save(self.root, data)
+        rows = D.read_results(self.root)
+        self.assertEqual(rows["count"], 2)
+        self.assertTrue(all(r["stale"] for r in rows["candidates"]))
+        self.collect()
+        self.assertEqual(len(self.calls), 4)
+
     def test_invalid_evidence_is_unjudged(self):
         def bad(_):
             return json.dumps({"verdict": "candidate", "reason": "wrong",

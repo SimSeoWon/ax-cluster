@@ -1,6 +1,6 @@
 """주말 기각 후보 수집 (#823). 결정 색인과 코드는 변경하지 않는다.
 
-저장된 후보는 조언이다. 목록 조회는 LLM을 부르지 않으며 main 변경을 stale로 알린다.
+저장된 후보는 조언이다. 목록 조회는 LLM을 부르지 않으며 대상 파일·입력 변경을 stale로 알린다.
 """
 from __future__ import annotations
 
@@ -124,12 +124,45 @@ def count_open(paths) -> int:
     return sum(1 for _ in _inputs(paths.root))
 
 
-def _source(repo, sha, file):
+def _file_path(file):
     if not isinstance(file, str) or not file or "\\" in file:
         raise ValueError("대상 파일 경로 미확인")
     p = PurePosixPath(file)
     if p.is_absolute() or ".." in p.parts or ":" in file:
         raise ValueError("대상 파일 경로 미확인")
+
+
+def _blob(repo, sha, file, cache):
+    """대상 blob. 옛 캐시도 판정한 main에서 읽으며, 없는 파일·리비전은 재사용하지 않는다."""
+    key = (sha, file)
+    if key not in cache:
+        try:
+            _file_path(file)
+            if not isinstance(sha, str) or len(sha) not in (40, 64) or any(
+                    c not in "0123456789abcdef" for c in sha):
+                raise ValueError("판정 기준 리비전 미확인")
+            records = _git(repo, "ls-tree", "--full-tree", "-z", sha, "--", file).split("\0")
+            cache[key] = ""
+            for record in records:
+                if not record:
+                    continue
+                meta, path = record.split("\t", 1)
+                _, kind, digest = meta.split()
+                if kind == "blob" and path == file:
+                    cache[key] = digest
+        except (ValueError, RuntimeError, OSError, subprocess.SubprocessError):
+            cache[key] = ""
+    return cache[key]
+
+
+def _entry_blob(repo, entry, file, cache):
+    if entry.get("file", file) != file:
+        return ""
+    return entry.get("source_blob") or _blob(repo, entry.get("main_sha"), file, cache)
+
+
+def _source(repo, sha, file):
+    _file_path(file)
     return _git(repo, "show", f"{sha}:{file}").splitlines()
 
 
@@ -177,7 +210,7 @@ def _validate(raw, item, lines):
 
 
 def collect(paths, *, chat=None, now=None) -> dict:
-    """고정 main의 미결 항목을 수집한다. 같은 main·입력의 판정은 캐시에서 건너뛴다."""
+    """고정 main의 미결 항목을 수집한다. 같은 대상 blob·입력의 판정은 재사용한다."""
     stamp = (now or datetime.now()).isoformat(timespec="seconds")
     with _locked(paths.root), ExitStack() as stack:
         tree = []          # 실 체인일 때 한 번만 만들어 모든 항목이 같이 쓴다(`#825`)
@@ -205,14 +238,18 @@ def collect(paths, *, chat=None, now=None) -> dict:
             data["complete"] = False
         _save(paths.root, data)
         errors = []
+        blobs = {}
         for item in _inputs(paths.root):
             key = item["id"]
             previous = data["entries"].get(key, {})
-            if (previous.get("main_sha") == sha and previous.get("input_hash") == item["input_hash"]
+            blob = _blob(paths.repo, sha, item["file"], blobs)
+            if (blob and _entry_blob(paths.repo, previous, item["file"], blobs) == blob
+                    and previous.get("input_hash") == item["input_hash"]
                     and (not previous.get("error")
                          or str(previous.get("at", ""))[:10] == stamp[:10])):
                 continue
-            base = {"id": key, "main_sha": sha, "input_hash": item["input_hash"], "at": stamp}
+            base = {"id": key, "main_sha": sha, "file": item["file"], "source_blob": blob,
+                    "input_hash": item["input_hash"], "at": stamp}
             try:
                 lines = _source(paths.repo, sha, item["file"])
                 prompt = _prompt(item, sha)
@@ -242,14 +279,18 @@ def read_results(root, *, details=False) -> dict:
         if not data["entries"]:
             return {"count": 0, "resolved_count": 0, "candidates": []}
         sha = main_sha(data["repo"])
-        active = {i["id"]: i["input_hash"] for i in _inputs(root)}
+        active = {i["id"]: i for i in _inputs(root)}
         rows = []
+        blobs = {}
         for key, entry in data["entries"].items():
             if key not in active or entry.get("verdict") not in LISTED:
                 continue
+            item = active[key]
+            blob = _blob(data["repo"], sha, item["file"], blobs)
             row = {"id": key, "verdict": entry["verdict"],
                    "main_sha": entry["main_sha"], "at": entry["at"],
-                   "stale": entry["main_sha"] != sha or entry["input_hash"] != active[key]}
+                   "stale": not blob or _entry_blob(data["repo"], entry, item["file"], blobs) != blob
+                   or entry["input_hash"] != item["input_hash"]}
             if details:
                 row.update(reason=entry["reason"], evidence=entry["evidence"])
             rows.append(row)
