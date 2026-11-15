@@ -993,5 +993,25 @@
     "path": "master/test_integration_coverage.py",
     "count_pattern": "(?ms)^Ran (?P<count>\\d+) tests? in [^\\n]+\\n\\nOK(?: \\(skipped=(?P<skipped>\\d+)\\))?\\s*$",
     "timeout": 180
+  },
+  {
+    "path": "master/test_interview_categories.py",
+    "count_pattern": "(?m)^OK test_interview_categories: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_interview.py",
+    "count_pattern": "(?m)^OK test_interview: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_spec_block.py",
+    "count_pattern": "(?m)^OK test_spec_block: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
+    "path": "master/test_interview_materials.py",
+    "count_pattern": "(?m)^OK test_interview_materials: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
   }
 ]

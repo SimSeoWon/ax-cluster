@@ -184,6 +184,7 @@ def status(issue_id, *, getter=None, cats=None) -> dict:
            "categories": [c.as_dict() for c in cats.values()]}
     if st.category:
         out["category_doc"] = cats[st.category].as_dict()["doc"]
+        out["guide"] = cats[st.category].body      # 분류 문서 본문 — 파일을 못 읽는 표면(.33)도 같은 안내를 받는다
     return out
 
 
@@ -247,7 +248,7 @@ def record(issue_id, step: str, result: str, user_answer: str, *, category: str 
     nxt = _next(cat, records, cats)
     return {"ok": True, "issue_id": issue_id, "step": step, "category": cat, "written": written,
             "next": nxt, "next_label": LABELS.get(nxt, "스펙 영역"),
-            "category_doc": cats[cat].as_dict()["doc"], "log": log}
+            "category_doc": cats[cat].as_dict()["doc"], "guide": cats[cat].body, "log": log}
 
 
 def write_spec(issue_id, content: str, user_answer: str, *, getter=None, updater=None, cats=None) -> dict:

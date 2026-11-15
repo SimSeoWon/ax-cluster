@@ -127,6 +127,9 @@ def test_resume_after_interrupt():
     st = IV.status(1, getter=fresh.get, cats=CATS)
     check("중단 뒤 다음 단계 명세", st["next"] == "specify" and st["category"] == "modify", str(st))
     check("분류 문서 경로를 돌려준다", st.get("category_doc", "").endswith("category-modify.md"))
+    check("분류 문서 본문(guide)을 싣는다", "## 조사 (investigate)" in st.get("guide", ""))
+    out = _rec(fresh, "specify")
+    check("기록 응답에도 guide", "기존 기능 수정" in out.get("guide", ""))
 
 
 def test_write_failure_is_transport_error():

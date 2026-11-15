@@ -9,7 +9,7 @@ description: AX 마스터에서 Redmine 일감을 **시작·재개·진행 마�
 
 - 개요
 - 사용 예
-- 1. 도구는 다섯 — `ax-projects` MCP
+- 1. 도구 — `ax-projects` MCP
 - 2. 일감을 시작할 때 — 구현보다 `ax-projects:plan_start_tool` 이 먼저다
 - 3. 플랜을 짤 때 (`plan_needed`)
 - 3-1. 일감 작업 시작·종료 — 브랜치와 리뷰 (`#879`, 마스터 AXCluster 저장소)
@@ -32,12 +32,14 @@ description: AX 마스터에서 Redmine 일감을 **시작·재개·진행 마�
     「T3 완료로」
     「플랜 짜자」
 
-구획은 위 목차의 제목으로 찾아 읽는다 — 절차는 「1. 도구는 다섯 — `ax-projects` MCP」부터다.
+구획은 위 목차의 제목으로 찾아 읽는다 — 절차는 「1. 도구 — `ax-projects` MCP」부터다.
 
-## 1. 도구는 다섯 — `ax-projects` MCP
+## 1. 도구 — `ax-projects` MCP
 
     ax-projects:plan_start_tool(issue_id)                       시작 판정 + 7단계 표 (읽기)
-    ax-projects:plan_set_tool(issue_id, tasks, why)             플랜 등록·태스크 추가/편집
+    ax-projects:interview_step_tool(issue_id, step, result, user_answer, category)   착수 전 인터뷰 단계 노트 (#960)
+    ax-projects:interview_spec_tool(issue_id, content, user_answer)   인터뷰 끝 — 스펙 영역(ax:spec) 기록 (#960)
+    ax-projects:plan_set_tool(issue_id, tasks, why)             플랜 등록·태스크 추가/편집 — 새 플랜은 스펙 영역이 있어야 한다
     ax-projects:plan_transition_tool(issue_id, task_id, to, note)   상태 전이 — 상태를 바꾸는 유일한 쓰기
     ax-projects:issue_start_tool(issue_id)                      작업 시작 — 로컬 issue/<N> · 시작 리비전 기록 (#879)
     ax-projects:issue_finish_tool(issue_id, confirm=False)      작업 종료 — main 적용 · 마감 추적 등록 · 잠금 해제 (#879·#884)
@@ -52,8 +54,10 @@ MCP 가 안 보이거나 실패하면 사유를 보고하고 묻는다. `ax-clie
 리뷰 큐가 교차 계열 리뷰어를 고르므로, `issue_flow.start` 파이썬 직접 호출은 거절된다. 지휘자를 교대했으면
 이어받은 세션도 이 도구를 한 번 불러 계열을 더한다(같은 worktree 면 `already`).
 
-    no_spec          스펙(무엇을·완료 조건)을 사용자와 먼저 쓴다
-    plan_needed      ↓ 3절 — 플랜을 짠다
+    interview_needed ↓ 아래 「착수 전 인터뷰」 — 플랜·스펙 영역이 둘 다 없다 (#960)
+    spec_invalid     스펙 영역 태그 오류를 보여 주고 본문을 함께 고친다
+    plan_needed      ↓ 3절 — 스펙 영역은 있고 플랜이 없다. 플랜을 짠다
+    no_spec          플랜만 있고 본문에 글이 없는 옛 일감 — 스펙을 사용자와 먼저 쓴다
     plan_invalid     형식 오류를 보여 주고 본문을 함께 고친다
     plan_violations  규칙 위반을 보여 주고 함께 고친다
     blocked          차단 사유·대기 선행을 보고하고 멈춘다
@@ -63,22 +67,36 @@ MCP 가 안 보이거나 실패하면 사유를 보고하고 묻는다. `ax-clie
 
 `steps` 는 프로젝트 kind 별 7단계 표다 — `해당없음` 단계는 하지 않고, `조건부` 는 태스크가 정한다.
 
-`spec_missing` (`#911`) 은 스펙 템플릿 [`docs/issue-spec.md`](../../../docs/issue-spec.md) 의 여섯 항목
-(문제·맥락 · 초반 분류 · 관측 결과 · 범위·비범위 · 완료 조건 · 열린 결정) 중 본문 제목 줄에 없는 것의 키다.
-**경고일 뿐 판정을 바꾸지 않는다.** `no_spec` 이거나 목록이 비어 있지 않으면 빠진 항목을 사용자에게 보이고
-채울지 묻는다 — 추측으로 채우지 않는다. 채울 때는 아래 「착수 전 인터뷰」로 묻는다. 채우기로 하면 방금 `ax-client:redmine_get_issue` 로 읽은
-본문에서 **플랜 영역(`ax:plan` 태그 사이)은 글자 그대로 두고** 스펙 부분만 고쳐 `ax-client:redmine_note` 의
-`description` 으로 보낸다(플랜 자체를 고치는 길은 여전히 `ax-projects:plan_set_tool` 뿐이다).
+`spec_missing` (`#911`) 은 스펙 템플릿 [`docs/issue-spec.md`](../../../docs/issue-spec.md) 의 여섯 항목 중 제목 줄에
+없는 것의 키다 — **경고일 뿐 판정을 바꾸지 않는다.** 새 스펙은 아래 인터뷰의 스펙 영역으로 쓴다.
 
-**착수 전 인터뷰** (`#939`, 절차 정본 [`docs/issue-spec.md`](../../../docs/issue-spec.md) §4) — 사람이 대화창에
-있을 때만 한다. 워커·자동 리뷰·훅 경로에서는 묻지 않는다.
+**착수 전 인터뷰** (`#960`, 절차 정본 [`docs/issue-spec.md`](../../../docs/issue-spec.md) §4) — 판정이 `interview_needed`
+이면 한다. 사람이 대화창에 있을 때만 한다 — 워커·자동 리뷰·훅 경로에서는 묻지 않는다.
+**순서는 도구가 강제한다** — 앞 단계 노트가 없으면 다음 단계 기록이 거절되고, 스펙 영역이 없으면 플랜 등록이
+거절된다. 판정 응답의 `interview`(다음 단계·분류 목록)와 `materials`(Python 이 모은 일감 본문·코멘트·마일스톤·
+RAG·온톨로지·보고서·최근 완료 일감)가 재료다 — 같은 조회를 세션이 다시 하지 않는다.
 
-    ① 선조회   RAG·소스·Redmine 으로 알 수 있는 것은 묻지 않는다
-    ② 가설     「가설: …」 / 「확신도: 높음·중간·낮음 — 빈 것: …」 를 질문보다 먼저 보인다
-    ③ 질문     한 턴에 하나 · 「질문: …」 / 「추정 답: … (근거: 파일:줄)」
-    ④ 요약     스펙 6항목으로 요약 — 비범위는 비워 둘 수 없다
-    ⑤ 승인     명시적 「예」 · 「알아서 해」는 A/B 둘로 좁혀 다시 묻는다
-    ⑥ 멈춤     승인한 턴은 본문에 스펙을 쓰는 데까지 — 플랜 등록·구현은 다음 턴
+    분류       첫 질문. 마일스톤·제목·사용자 발화로 예측하고 되묻는다 — 분류 목록은 `interview.categories`
+    조사       분류 문서 본문(`guide`)이 무엇을 찾고 물을지 말한다
+    명세       사용자 언어로 목표를 되말하고 고친다 — 완료 조건·비범위를 정한다
+    재현       분류 문서 `steps` 에 있을 때만(버그). 없으면 도구가 건너뜀 노트를 남긴다
+    파급 측정   고칠 자리의 호출자·인접 모듈·상주 서비스·배달 대상
+    스펙 영역   여섯 항목 요약을 보이고 명시 승인을 받은 뒤 `ax-projects:interview_spec_tool`
+
+- 단계마다 **결과 제시 → 사용자 확인 → `ax-projects:interview_step_tool`** 로 끝낸다. `result` 는 보인 결과,
+  `user_answer` 는 사용자의 확인·답이다(둘 다 필수). `category` 는 분류 단계에서만 준다.
+- 사용자가 「다르다」고 하면 그 단계를 다시 기록한다 — 최신 노트가 기준이고 뒤 단계는 다시 한다.
+- 응답의 `next` 가 다음 단계다. 단계를 고르는 것은 그 값이지 내 짐작이 아니다.
+- 분류 문서: [`reference/category-bug.md`](reference/category-bug.md) ·
+  [`reference/category-modify.md`](reference/category-modify.md) ·
+  [`reference/category-feature.md`](reference/category-feature.md) — 분류를 더할 때는 문서 하나를 더한다(머리말 `name`·`label`·`steps`).
+
+질문하는 방식(#939)은 그대로다:
+
+    가설     「가설: …」 / 「확신도: 높음·중간·낮음 — 빈 것: …」 를 질문보다 먼저 보인다
+    질문     한 턴에 하나 · 「질문: …」 / 「추정 답: … (근거: 파일:줄)」
+    승인     명시적 「예」 · 「알아서 해」는 A/B 둘로 좁혀 다시 묻는다
+    멈춤     스펙 영역을 쓴 턴은 거기까지 — 플랜 등록·구현은 다음 턴
 
 `AskUserQuestion` 같은 선택지 도구로 물을 때도 같다 — 질문 문장에 가설과 추정 답을 싣고, 추천 선택지를 맨 앞에 둔다.
 
@@ -89,9 +107,9 @@ MCP 가 안 보이거나 실패하면 사유를 보고하고 묻는다. `ax-clie
 3. 요청에 따로 검증할 기능이 둘 이상이면 태스크 전에 **기능 분해 표**(10줄 이내 · 기능·책임·선행·검증,
    `docs/issue-spec.md` §5)를 먼저 보이고 승인받는다 — 승인된 행이 태스크나 자식 일감의 단위가 된다
 4. 근거와 함께 작은 태스크(목표·대상·선행·검증)를 **사용자와 대화로** 정한다 — 추측으로 채우지 않는다.
-   남은 갈림길은 위 「착수 전 인터뷰」 ②③ 형식으로 묻는다
-5. 합의된 목록을 `ax-projects:plan_set_tool` 로 등록한다. `why` 에 사용자 결정을 적는다. 응답의
-   `spec_missing`(`#939`)이 비어 있지 않으면 등록은 됐지만 스펙이 덜 찼다는 뜻이다 — 사용자에게 보이고 묻는다
+   남은 갈림길은 위 「착수 전 인터뷰」의 가설·질문 형식으로 묻는다
+5. 합의된 목록을 `ax-projects:plan_set_tool` 로 등록한다. `why` 에 사용자 결정을 적는다. 새 플랜은 스펙
+   영역이 없으면 거절된다(`#960`) — 그때는 착수 전 인터뷰부터다
 
 `tasks` 항목: `id`·`goal` 필수, `target`·`deps`(목록)·`check`·`steps` 선택. `state`·`evidence` 는
 넣지 않는다 — 새 태스크는 「대기」로 들어간다. `steps` 는 그 태스크가 하는 **조건부 단계 번호**
