@@ -123,6 +123,23 @@ def default_getter(issue_id):
     return redmine.get_issue(issue_id)
 
 
+def checklist_gate(issue_id, *, getter, injected: bool, log: Log, **extra) -> dict | None:
+    """`#963` T4 — 개발 완료 체크리스트에 「미확인」이 남았으면 거절(사람에게 묻는다). 두 마감 경로 공용.
+
+    대역 주입 실행이 `getter` 를 안 주면 운영 Redmine 을 읽지 않으려고 판정을 건너뛴다(로그로 남긴다).
+    """
+    from master import plan_checklist as PC
+    if getter is None and injected:
+        log("checklist", "대역 실행 — getter 없음, 체크리스트 판정 생략")
+        return None
+    v = PC.check(issue_id, getter or PC.default_getter)
+    if not v.ok:
+        return refuse(log, "checklist", v.why, checklist=v.as_dict(), **extra)
+    log("checklist", "통과 — " + (" · ".join(f"{k} {n}" for k, n in v.counts.items()) if v.counts
+                                  else "체크리스트 없음(옛 플랜)"))
+    return None
+
+
 def default_noter(issue_id, *, notes: str, status_name: str = "", done_ratio=None) -> str:
     from master import redmine
     return redmine.update_issue(issue_id, notes=notes, status_name=status_name, done_ratio=done_ratio)
@@ -590,7 +607,7 @@ def verify_span(git, *, base: str, end: str, hashes=None, branch: str = "main") 
 
 
 def infra_finish(project: str, issue_id, *, end: str, base: str = "", hashes=None, subjects=None,
-                 check_only: bool = False, git=None, branch_ref: str = "", noter=None,
+                 check_only: bool = False, git=None, branch_ref: str = "", noter=None, getter=None,
                  register=None, link=None, lock_root=None, events_path=None, logf=None,
                  requester_check=None) -> dict:
     """요청자의 일감 종료 기록 — 요청자가 `push origin issue/<N>:main` 을 마친 **뒤에** 부른다.
@@ -637,6 +654,9 @@ def infra_finish(project: str, issue_id, *, end: str, base: str = "", hashes=Non
     bad, held = finish_lock_check(lroot, n, log=log)
     if bad:
         return {**bad, "project": project}
+    bad = checklist_gate(n, getter=getter, injected=injected, log=log, project=project)   # #963 T4
+    if bad:
+        return bad
     if not b:                                             # base 생략 — 잠금의 시작 리비전
         try:
             active = None if lroot is NO_LOCK else lock_state(lroot, n)[0]

@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master import issue_flow as IF    # noqa: E402
 from master import issue_lock as IL    # noqa: E402
+from master import plan_tools as PT    # noqa: E402
+from master import testkit_issue as TK    # noqa: E402
 from master.context_synth import issue_track as IT    # noqa: E402
 from master.context_synth import review_queue as RQ   # noqa: E402
 
@@ -219,6 +221,40 @@ def t_finish_preview_writes_nothing(tmp):
           and len(iss.notes) == n0 and not IT.state_path(twin(tmp)).exists())
     check("미리보기 → next 에 마감 추적 등록", "마감 추적 등록(해시 2개)" in r["next"]
           and "범위 리뷰 등재" not in r["next"], r["next"])
+
+
+def checklist_issue(items=("제안 없는 등록 거절", "두 마감 경로 멈춤")):
+    """#963 T4 — 체크리스트가 있는 일감(공용 픽스처가 제안 → 동의 → 등록으로 만든다)."""
+    return TK.issue_with_plan([{"id": "T1", "goal": "구현"}], checklist=list(items))
+
+
+def t_finish_checklist(tmp):
+    """#963 T4 — 미확인 항목이 남으면 쓰기 전에 멈추고, 표시하면 진행한다(마스터 경로)."""
+    repo, iss, base, end = started(tmp)
+    ck = checklist_issue()
+    n0 = len(iss.notes)
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, getter=ck.get, review_root=twin(tmp))
+    check("체크리스트 미확인 → 거절(checklist)", not r["ok"] and r["step"] == "checklist"
+          and [x["id"] for x in r["checklist"]["pending"]] == ["C1", "C2"] and "사용자에게 항목별로 묻는다" in r["why"],
+          str(r)[:300])
+    check("checklist 거절 → push·브랜치·노트·추적 0", sh(repo, "rev-parse", "origin/main") == base
+          and sh(repo, "rev-parse", "--abbrev-ref", "HEAD") == "issue/7" and len(iss.notes) == n0
+          and not IT.state_path(twin(tmp)).exists())
+    r = IF.finish(7, repo=repo, noter=iss.note, getter=ck.get, review_root=twin(tmp))
+    check("미리보기도 멈춘다", not r["ok"] and r["step"] == "checklist", str(r)[:200])
+    PT.transition(1, "C1", "충족", "커밋 abc1234 · test_plan_proposal 25/25 통과", getter=ck.get, updater=ck.update)
+    r = IF.finish(7, repo=repo, noter=iss.note, getter=ck.get, review_root=twin(tmp))
+    check("하나 남으면 그 하나만", not r["ok"] and [x["id"] for x in r["checklist"]["pending"]] == ["C2"], str(r)[:200])
+    PT.transition(1, "C2", "제외", "이번 범위 밖", user_answer="다음 일감으로", getter=ck.get, updater=ck.update)
+    r = IF.finish(7, repo=repo, noter=iss.note, getter=ck.get, review_root=twin(tmp))
+    check("모두 표시 → 미리보기 ok", r["ok"] and r["confirmed"] is False
+          and any("checklist" in x and "충족 1" in x and "제외 1" in x for x in r["log"]), str(r)[:300])
+    legacy = Issue(SPEC + PLAN)
+    r = IF.finish(7, repo=repo, noter=iss.note, getter=legacy.get, review_root=twin(tmp))
+    check("체크리스트 없는 옛 플랜 → 지금처럼", r["ok"] and any("체크리스트 없음" in x for x in r["log"]), str(r)[:300])
+    r = IF.finish(7, repo=repo, noter=iss.note, getter=lambda i: {"error": "HTTP 500"}, review_root=twin(tmp))
+    check("일감 읽기 실패 → 확인 못 한 채 마감 안 함", not r["ok"] and r["step"] == "checklist"
+          and "읽지 못해" in r["why"], str(r)[:200])
 
 
 def t_finish_confirm(tmp):
@@ -1111,7 +1147,7 @@ def main() -> int:
                t_status_kept_when_not_new, t_dirty_refuses, t_not_on_main_refuses,
                t_ahead_of_origin_refuses, t_existing_branch_elsewhere_refuses,
                t_redmine_failure_rolls_back, t_read_failure,
-               t_finish_preview_writes_nothing, t_finish_confirm, t_finish_refusals,
+               t_finish_preview_writes_nothing, t_finish_checklist, t_finish_confirm, t_finish_refusals,
                t_finish_tree_never_reverts, t_old_finish_sequence_rewrites_tree,
                t_finish_main_in_other_worktree, t_finish_worktree_query_failure,
                t_finish_switch_failure_preserves_branch,

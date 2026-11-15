@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from master import issue_infra as INF                  # noqa: E402
 from master import issue_lock as IL                    # noqa: E402
 from master.context_synth import issue_track as IT     # noqa: E402
-from master.test_issue_flow import Issue, PLAN, SPEC   # noqa: E402
+from master.test_issue_flow import Issue, PLAN, SPEC, checklist_issue   # noqa: E402
+from master import plan_tools as PT                    # noqa: E402
 
 PASS = FAIL = 0
 P = "Game"
@@ -214,6 +215,24 @@ def _mkrepo(root: Path):
     g("checkout", "-q", "main")
     gd = root / ".git"
     return (lambda *a: INF._run_git(gd, *a)), out[0], out[1], out[2], side
+
+
+def t_finish_checklist(tmp):
+    """#963 T4 — .33 경로(infra_finish)도 미확인이면 멈춘다 · 잠금·추적·노트 무변경."""
+    lk = tmp / "twin"
+    iss = Issue(SPEC + PLAN)
+    INF.infra_start(P, 7, branch="issue/7", start_rev=R1, getter=iss.get, noter=iss.note, lock_root=lk)
+    ck = checklist_issue(("마감 경로 멈춤",))
+    n0 = len(iss.notes)
+    r = INF.infra_finish(P, 7, base=R1, end=R2, hashes=[R2], noter=iss.note, getter=ck.get, lock_root=lk)
+    check(".33 미확인 → 거절(checklist)", not r["ok"] and r["step"] == "checklist" and r.get("project") == P
+          and r["checklist"]["pending"] == [{"id": "C1", "item": "마감 경로 멈춤"}], str(r)[:300])
+    check(".33 거절 → 잠금 유지 · 추적·노트 0", (IL.current(lk) or {}).get("issue_id") == 7
+          and not IT.state_path(lk).exists() and len(iss.notes) == n0)
+    PT.transition(1, "C1", "충족", "관측: 두 경로 멈춤 확인", getter=ck.get, updater=ck.update)
+    r = INF.infra_finish(P, 7, base=R1, end=R2, hashes=[R2], noter=iss.note, getter=ck.get, lock_root=lk,
+                         check_only=True)
+    check(".33 표시 뒤 → 진행(check_only ok)", r["ok"], str(r)[:300])
 
 
 def t_verify(tmp):
@@ -457,7 +476,7 @@ def t_imperative_free():
 
 
 def main() -> int:
-    for fn in (t_project_and_input, t_start, t_pause_resume, t_finish, t_verify, t_requester, t_cancel):
+    for fn in (t_project_and_input, t_start, t_pause_resume, t_finish, t_finish_checklist, t_verify, t_requester, t_cancel):
         run(fn)
     t_span_source()
     t_shared_with_local()

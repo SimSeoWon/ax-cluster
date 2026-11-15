@@ -580,7 +580,7 @@ def _span(repo: Path, branch: str) -> tuple[str, str, list]:
     return base, end, [ln for ln in out.splitlines() if ln.strip()]
 
 
-def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=None, link=None,
+def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, getter=None, register=None, link=None,
            review_root=None, events_path=None, logf=None, fetch: bool = True,
            lock_root=None, project: str = REVIEW_PROJECT, worktree_root=None) -> dict:
     """일감 작업을 마친다. `confirm=False` 면 보고만 한다(쓰기 0).
@@ -626,6 +626,10 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, register=N
     except Exception as e:                              # noqa: BLE001
         return _refuse(log, "lock", f"잠금 상태를 못 읽었다 — {type(e).__name__}: {e}")
     bad, lock_held = INF.finish_lock_check(lroot, n, log=log)
+    if bad:
+        return bad
+    # ⓪-1 개발 완료 체크리스트(#963 T4) — 미확인이 남았으면 쓰기 전에 멈춰 사람에게 묻는다
+    bad = INF.checklist_gate(n, getter=getter, injected=injected, log=log)
     if bad:
         return bad
 
