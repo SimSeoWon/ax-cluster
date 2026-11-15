@@ -112,6 +112,18 @@ class PlanTransitionReq(_IssueReq):
     note: str = ""
 
 
+class InterviewStepReq(_IssueReq):
+    step: str
+    result: str
+    user_answer: str
+    category: str = ""
+
+
+class InterviewSpecReq(_IssueReq):
+    content: str
+    user_answer: str
+
+
 
 
 # ─────────────────────────────────────────
@@ -833,6 +845,8 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
 
     def _plan_call(op: str, req, fn):
         """플랜 도구 — 규칙 거절(`PlanError`)은 200 + ok:false + 사유(`plan_refused`)."""
+        from .. import interview as IV
+        from .. import interview_categories as IC
         from .. import plan_block as PB
         bad = _issue_gate(f"plan.{op}", req)
         if bad:
@@ -841,6 +855,8 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
             got = fn(getattr(_mount_gate, "last", "") or req.project.strip())
         except PB.PlanError as e:
             got = {"ok": False, "issue_id": req.issue_id, "status": "plan_refused", "why": str(e)}
+        except (IV.InterviewError, IC.CategoryError) as e:     # #960 — 인터뷰 규칙 거절도 같은 모양
+            got = {"ok": False, "issue_id": req.issue_id, "status": "interview_refused", "why": str(e)}
         except Exception as e:                               # noqa: BLE001
             got = {"ok": False, "issue_id": req.issue_id, "status": "error",
                    "why": f"{type(e).__name__}: {e}"}
@@ -868,6 +884,20 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         from .. import plan_tools
         return _plan_call("transition", req, lambda p: plan_tools.transition(
             req.issue_id, req.task_id, req.to, req.note, caller=f"8101:{p}", project=p))
+
+    @app.post("/api/v1/interview/step")
+    def interview_step_ep(req: InterviewStepReq):
+        """착수 전 인터뷰 단계 기록(`#960`) — 순서·빈칸 규칙은 `interview.record`."""
+        from .. import interview
+        return _plan_call("interview_step", req, lambda p: interview.record(
+            req.issue_id, req.step, req.result, req.user_answer, category=req.category))
+
+    @app.post("/api/v1/interview/spec")
+    def interview_spec_ep(req: InterviewSpecReq):
+        """착수 전 인터뷰의 스펙 영역 기록(`#960`) — 모든 단계 뒤에만."""
+        from .. import interview
+        return _plan_call("interview_spec", req, lambda p: interview.write_spec(
+            req.issue_id, req.content, req.user_answer))
 
     @app.post("/api/v1/signals")
     def writer_signal_ep(req: WriterSignalReq):

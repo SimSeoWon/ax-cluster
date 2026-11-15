@@ -267,6 +267,9 @@ REQUESTER_SCOPE: tuple = (
     ("POST", "/api/v1/plan/start", "", "exact"),
     ("POST", "/api/v1/plan/set", "", "exact"),
     ("POST", "/api/v1/plan/transition", "", "exact"),
+    # `#960` — 착수 전 인터뷰 단계 기록·스펙 영역. 플랜과 같은 일감 본문·노트에 쓴다.
+    ("POST", "/api/v1/interview/step", "", "exact"),
+    ("POST", "/api/v1/interview/spec", "", "exact"),
 )
 
 # worker (작업장 claimer, #204 — κ.0 CI 러너 패턴): 집고(claim) · 살아 있다 알리고(heartbeat) ·

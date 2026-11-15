@@ -92,10 +92,11 @@ check("#829 마스터 담당 MCP 타입은 claude/codex만",
 # [DOC] #734: `get_code` 가 골조에서 걷혀 도구는 38종이었다. #826 T5 가 플랜 도구 3종을, #879 T5 가 일감 흐름 2종을, #883 T5 가 보류·취소 2종을 더했다.
 check("도구 46종 등록 (get_manifest 철거 2026-09-02 · 지휘자 모드 2종 09-08 · "
       "지휘 상태 2종 09-08 · **프로필 2종 09-20 `#650`** · "
-      "get_code 철거 2026-10-11 #734 · 플랜 3종 2026-10-31 #826 · 일감 흐름 2종 2026-11-03 #879 · 보류·취소 2종 2026-11-04 #883 · 범위 플랜 1종 2026-11-12 #639)",
-      len(_pj) == 46, f"실제 {len(_pj)}종: {_pj}")
+      "get_code 철거 2026-10-11 #734 · 플랜 3종 2026-10-31 #826 · 일감 흐름 2종 2026-11-03 #879 · 보류·취소 2종 2026-11-04 #883 · 범위 플랜 1종 2026-11-12 #639 · 인터뷰 2종 2026-11-15 #960)",
+      len(_pj) == 48, f"실제 {len(_pj)}종: {_pj}")
 for _t in ("plan_start_tool", "plan_set_tool", "plan_transition_tool",
-           "issue_start_tool", "issue_finish_tool", "issue_pause_tool", "issue_cancel_tool"):
+           "issue_start_tool", "issue_finish_tool", "issue_pause_tool", "issue_cancel_tool",
+           "interview_step_tool", "interview_spec_tool"):
     check(f"  플랜 도구: {_t}", _t in _pj, str(_pj))
 check("  범위 플랜 요청: request_scope_plan_tool (#639)", "request_scope_plan_tool" in _pj, str(_pj))
 # [중요] **워커 지휘자 모드 창구 둘** (`#385`, 2026-09-08) — 모드를 고르는 표면은 **서버의

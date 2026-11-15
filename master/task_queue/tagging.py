@@ -161,6 +161,8 @@ POLICY = {
     "POST /api/v1/plan/start":                      MOUNT,
     "POST /api/v1/plan/set":                        MOUNT,
     "POST /api/v1/plan/transition":                 MOUNT,
+    "POST /api/v1/interview/step":                  MOUNT,     # #960 — 플랜과 같은 축
+    "POST /api/v1/interview/spec":                  MOUNT,
 }
 
 # [중요] 태그를 **받아야** 하는 정책 — `OPEN` 만 예외다.
@@ -213,6 +215,8 @@ REQUIRE_TAG = (
     "POST /api/v1/plan/start",
     "POST /api/v1/plan/set",
     "POST /api/v1/plan/transition",
+    "POST /api/v1/interview/step",              # 착수 전 인터뷰 (#960)
+    "POST /api/v1/interview/spec",
 )
 
 

@@ -922,10 +922,36 @@ def tool_plan_transition(api, args: dict) -> dict:
     return api("POST", "/api/v1/plan/transition", payload)
 
 
+def tool_interview_step(api, args: dict) -> dict:
+    step = str(args.get("step") or "").strip()
+    result = str(args.get("result") or "")
+    answer = str(args.get("user_answer") or "")
+    if not step:
+        raise ClientError("step 은 필수다")
+    if not result.strip() or not answer.strip():
+        raise ClientError("result 와 user_answer 는 비울 수 없다 — 결과를 보이고 확인받은 뒤 기록한다")
+    payload = {"issue_id": _issue_id(args.get("issue_id")), "step": step, "result": result,
+               "user_answer": answer}
+    category = str(args.get("category") or "").strip()
+    if category:
+        payload["category"] = category
+    return api("POST", "/api/v1/interview/step", payload)
+
+
+def tool_interview_spec(api, args: dict) -> dict:
+    content = str(args.get("content") or "")
+    answer = str(args.get("user_answer") or "")
+    if not content.strip() or not answer.strip():
+        raise ClientError("content 와 user_answer 는 비울 수 없다")
+    return api("POST", "/api/v1/interview/spec", {"issue_id": _issue_id(args.get("issue_id")),
+                                                 "content": content, "user_answer": answer})
+
+
 ISSUE_TOOLS = {"issue_start": tool_issue_start, "issue_finish": tool_issue_finish,
                "issue_pause": tool_issue_pause, "issue_cancel": tool_issue_cancel,
                "plan_start": tool_plan_start, "plan_set": tool_plan_set,
-               "plan_transition": tool_plan_transition}
+               "plan_transition": tool_plan_transition,
+               "interview_step": tool_interview_step, "interview_spec": tool_interview_spec}
 
 
 def _bare(name: str) -> str:
@@ -1658,9 +1684,11 @@ TOOLS.append(
 _SHA_DESC = "40자리 커밋 해시"
 TOOLS.extend([
     {"name": "plan_start",
-     "description": "일감의 시작 판정과 이 프로젝트의 7단계 표를 돌려준다(읽기). 판정: no_spec · plan_needed · "
-                    "plan_invalid · plan_violations · resume · next · blocked · plan_done. ok 는 resume·next "
-                    "일 때만 참이다. 응답의 next_action 이 그 판정의 다음 행동 문장이다.",
+     "description": "일감의 시작 판정과 이 프로젝트의 7단계 표를 돌려준다(읽기). 판정: interview_needed · "
+                    "spec_invalid · no_spec · plan_needed · plan_invalid · plan_violations · resume · next · blocked · "
+                    "plan_done. ok 는 resume·next 일 때만 참이다. 응답의 next_action 이 그 판정의 다음 행동 "
+                    "문장이다. interview_needed 면 interview(다음 단계·분류 목록)와 materials(마스터가 모은 일감·RAG·"
+                    "온톨로지·보고서·최근 완료 일감)가 함께 실린다.",
      "inputSchema": {"type": "object", "required": ["issue_id"], "properties": {
          "issue_id": {"type": "integer", "description": "Redmine 일감 번호"}}}},
     {"name": "plan_set",
@@ -1678,6 +1706,26 @@ TOOLS.extend([
              "steps": {"type": "array", "items": {"type": "integer"},
                        "description": "이 태스크가 하는 조건부 단계 번호(plan_start 의 steps 표)"}}}},
          "why": {"type": "string", "description": "플랜을 바꾸는 이유 — 사용자 결정"}}}},
+    {"name": "interview_step",
+     "description": "착수 전 인터뷰 단계 하나를 일감 노트로 기록한다. step: classify · investigate · specify · "
+                    "reproduce · impact — 순서 고정. result 는 사용자에게 보인 결과, user_answer 는 사용자 확인·답(둘 "
+                    "다 필수). category 는 classify 에서만 준다(분류 문서 이름). 순서 건너뜀·분류 문서가 적용하지 않는 "
+                    "단계는 거절되고, 적용하지 않는 단계의 건너뜀 노트는 서버가 남긴다. 응답의 next 가 다음 단계다"
+                    "(spec 이면 interview_spec).",
+     "inputSchema": {"type": "object", "required": ["issue_id", "step", "result", "user_answer"], "properties": {
+         "issue_id": {"type": "integer"},
+         "step": {"type": "string", "enum": ["classify", "investigate", "specify", "reproduce", "impact"]},
+         "result": {"type": "string"},
+         "user_answer": {"type": "string"},
+         "category": {"type": "string", "description": "classify 에서만 — bug · modify · feature …"}}}},
+    {"name": "interview_spec",
+     "description": "착수 전 인터뷰의 마지막 — 확정 스펙(여섯 항목 제목)을 일감 본문의 스펙 영역(ax:spec)에 쓴다. "
+                    "모든 단계가 기록돼 있어야 열린다. 영역 밖 본문은 그대로 둔다. user_answer 는 요약에 대한 사용자 "
+                    "승인이다(필수).",
+     "inputSchema": {"type": "object", "required": ["issue_id", "content", "user_answer"], "properties": {
+         "issue_id": {"type": "integer"},
+         "content": {"type": "string"},
+         "user_answer": {"type": "string"}}}},
     {"name": "plan_transition",
      "description": "플랜 태스크 하나의 상태를 바꾼다 — 상태를 바꾸는 유일한 쓰기. to: 작업중 · 완료 · 차단 · "
                     "해당없음 · 대기. 완료는 근거(커밋 해시·검사 결과), 차단·해당없음은 사유가 note 에 필수다. "

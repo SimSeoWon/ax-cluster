@@ -1089,6 +1089,8 @@ def plan_start_tool(issue_id: int, project: str = "") -> str:
 
     판정이 `ok: false` 면 구현으로 넘어가지 않는다. 특히 `plan_needed` 는 RAG·현재 소스 대조 뒤
     사용자와 플랜을 쓰고 `plan_set_tool` 로 등록하라는 뜻이다. `project` 를 비우면 마운트된 프로젝트.
+    `interview_needed`(`#960`)면 응답의 `interview`(다음 단계·분류 목록)와 `materials`(Python 이 모은
+    일감·RAG·온톨로지·보고서·최근 완료 일감)로 착수 전 인터뷰를 진행한다 — 단계 기록은 `interview_step_tool`.
     """
     from .. import plan_tools
     try:
@@ -1124,6 +1126,38 @@ def plan_transition_tool(issue_id: int, task_id: str, to: str, note: str = "") -
     from .. import plan_tools
     try:
         return json.dumps(plan_tools.transition(issue_id, task_id, to, note), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def interview_step_tool(issue_id: int, step: str, result: str, user_answer: str, category: str = "") -> str:
+    """착수 전 인터뷰 단계 하나를 일감 노트로 기록한다 (`#960`).
+
+    `step`: classify(분류) · investigate(조사) · specify(명세) · reproduce(재현) · impact(파급 측정) — 순서 고정.
+    `result` 는 사용자에게 보인 그 단계의 결과, `user_answer` 는 그 결과에 대한 사용자 확인·답이다(둘 다 필수).
+    `category` 는 분류 단계에서만 준다(분류 문서 이름: bug · modify · feature …). 순서를 건너뛰거나 분류 문서가
+    적용하지 않는 단계는 거절되고, 적용하지 않는 단계의 건너뜀 노트는 이 도구가 남긴다. 응답의 `next` 가 다음 단계다
+    (`spec` 이면 `interview_spec_tool`).
+    """
+    from .. import interview
+    try:
+        return json.dumps(interview.record(issue_id, step, result, user_answer, category=category),
+                          ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def interview_spec_tool(issue_id: int, content: str, user_answer: str) -> str:
+    """착수 전 인터뷰의 마지막 — 확정 스펙(여섯 항목 제목)을 일감 본문의 스펙 영역(ax:spec)에 쓴다 (`#960`).
+
+    파급 측정까지 모든 단계가 기록돼 있어야 열린다. 본문의 영역 밖 글자는 그대로 둔다. `user_answer` 는 요약을
+    보인 뒤 받은 사용자 승인이다(필수). 스펙 영역이 생기면 `plan_start_tool` 판정이 `plan_needed` 가 된다.
+    """
+    from .. import interview
+    try:
+        return json.dumps(interview.write_spec(issue_id, content, user_answer), ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
 
