@@ -295,6 +295,36 @@ def test_start_interview_hands_materials():
     check("스펙 영역이 있으면 재료를 안 모은다", "materials" not in out and out["verdict"] == "plan_needed", str(out))
 
 
+def test_checklist_transitions():
+    """#963 T3 — 체크리스트 C* 는 transition 으로: 충족=근거 · 제외=사유+사용자 답 · 되돌림=사유."""
+    iss = TK.issue_with_plan(_tasks(), checklist=["제안 없는 등록 거절", "두 마감 경로 멈춤"])
+    tr = lambda cid, to, note="", ans="": PT.transition(1, cid, to, note, user_answer=ans,  # noqa: E731
+                                                       getter=iss.get, updater=iss.update)
+    check("근거 없는 충족 거절", "근거" in _err(lambda: tr("C1", "충족")))
+    check("사용자 답 없는 제외 거절", "사용자 답" in _err(lambda: tr("C2", "제외", "범위 밖")))
+    check("모르는 상태 거절", "모르는 체크리스트 상태" in _err(lambda: tr("C1", "완료", "x")))
+    check("없는 항목 거절", "없는 체크리스트" in _err(lambda: tr("C9", "충족", "x")))
+    before = len(iss.writes)
+    check("거절은 안 쓴다", len(iss.writes) == before)
+    out = tr("C1", "충족", "커밋 abc1234 · 검사 test_plan_proposal 25/25 통과")
+    plan = PB.parse(iss.body)
+    check("충족 기록", out["ok"] and out["from"] == "미확인" and plan.check("C1").state == "충족"
+          and "abc1234" in plan.check("C1").evidence and "evidence_warning" not in out, str(out))
+    check("노트 줄", iss.writes[-1][1].startswith("체크리스트 C1: 미확인 → 충족"), iss.writes[-1][1])
+    out = tr("C2", "제외", "이번 범위 밖", "사용자: 다음 일감으로")
+    plan = PB.parse(iss.body)
+    check("제외는 사유·사용자 답이 근거 칸에", plan.check("C2").state == "제외"
+          and "사용자: 사용자: 다음 일감으로" in plan.check("C2").evidence, plan.check("C2").evidence)
+    check("제외 노트에 사용자 답", "사용자 답: 사용자: 다음 일감으로" in iss.writes[-1][1])
+    weak = tr("C2", "미확인", "다시 본다")
+    check("되돌림 허용 · 근거 칸 비움", weak["ok"] and PB.parse(iss.body).check("C2").evidence == "")
+    out = tr("C2", "충족", "됐음")
+    check("빈약한 충족 근거는 경고만", out["ok"] and "evidence_warning" in out, str(out))
+    plan = PB.parse(iss.body)
+    check("태스크는 그대로", [t.state for t in plan.tasks] == ["대기", "대기"] and plan.autonomy == 0.5)
+    check("충족→제외 직행 거절", "허용되지 않는다" in _err(lambda: tr("C1", "제외", "x", "y")))
+
+
 def test_transition_lock_gate():
     """`#883` — 다른 일감이 활성이면 작업중 전이를 거절한다(lock_root 는 늘 임시)."""
     with tempfile.TemporaryDirectory() as d:
@@ -346,7 +376,7 @@ def test_transition_lock_gate():
 
 
 def main() -> int:
-    for fn in (test_set_requires_spec_area, test_start_interview_hands_materials,
+    for fn in (test_checklist_transitions, test_set_requires_spec_area, test_start_interview_hands_materials,
                test_evidence_warning_judgement,
                test_transition_evidence_warning_is_warning_only,
                test_transition_not_run_phrase,

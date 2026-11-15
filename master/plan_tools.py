@@ -269,10 +269,13 @@ def evidence_warning(note: str) -> str:
     return ""
 
 
-def transition(issue_id, task_id: str, to: str, note: str = "", *, getter=None,
+def transition(issue_id, task_id: str, to: str, note: str = "", *, user_answer: str = "", getter=None,
                updater=None, events_path=None, caller: str = "", lock_root=None,
                project: str = "") -> dict:
     """태스크 하나의 상태를 바꾸고 같은 갱신에 노트를 남긴다.
+
+    `#963` — `task_id` 가 `C<n>` 이면 개발 완료 체크리스트 항목이다(`plan_state.check_transition`):
+    충족은 근거, 제외는 사유와 `user_answer`(사용자 답)가 필요하다. 충족 근거가 빈약하면 경고만 한다.
 
     「작업중」 으로 갈 때는 일감 잠금을 본다(`#883` — 모듈 설명). `project` 는 잠금 트윈을 고른다
     (`#884` T6 · 비면 AXCluster).
@@ -288,12 +291,21 @@ def transition(issue_id, task_id: str, to: str, note: str = "", *, getter=None,
         plan = PB.parse(body)
         if plan is None:
             raise PlanToolError(f"#{issue_id} 에 플랜 영역이 없다 — 먼저 plan_set 으로 등록한다")
-        before = plan.task(task_id).state if plan.task(task_id) else ""
-        ctx["from"] = before
-        plan = PS.transition(plan, task_id, to, note=note)
-        new_body = PB.replace(body, plan.tasks)
-        line = f"플랜 {task_id}: {before} → {to}" + (f" — {note.strip()}" if (note or "").strip() else "")
-        warn = evidence_warning(note) if to == PS.DONE else ""
+        if PS.is_check_id(task_id):
+            before = plan.check(task_id).state if plan.check(task_id) else ""
+            ctx["from"] = before
+            plan = PS.check_transition(plan, task_id, to, note=note, user_answer=user_answer)
+            new_body = PB.replace(body, plan.tasks, checklist=plan.checklist)
+            line = (f"체크리스트 {task_id}: {before} → {to} — {note.strip()}"
+                    + (f"\n사용자 답: {user_answer.strip()}" if (user_answer or "").strip() else ""))
+            warn = evidence_warning(note) if to == PS.MET else ""
+        else:
+            before = plan.task(task_id).state if plan.task(task_id) else ""
+            ctx["from"] = before
+            plan = PS.transition(plan, task_id, to, note=note)
+            new_body = PB.replace(body, plan.tasks)
+            line = f"플랜 {task_id}: {before} → {to}" + (f" — {note.strip()}" if (note or "").strip() else "")
+            warn = evidence_warning(note) if to == PS.DONE else ""
         if warn:
             line += "\n" + warn
         result = _write(issue_id, new_body, line, updater or _default_updater)
