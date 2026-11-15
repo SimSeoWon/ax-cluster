@@ -1,36 +1,23 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-15 — 사용자 「응 맞아 근데 너 토큰 없어. 인수인계서나 작성하고 멈춰」로 중단. **main=origin/main `6a750f692213005d518319e8066ddadee2746b56`**, 작성 전 트리 깨끗. 이번 인수인계 수정만 미커밋으로 남긴다. **#966 명세 확인 답을 받았지만 단계 기록 전**, 구현·플랜·worktree 없음. #964는 마감·서비스 재시작·켜진 두 기계 배달 완료, 실제 다음 회차 관측은 미완료다.
+> 2026-11-15 16:58 — **#966 마감 완료**(main `9e31a2a`, 완료·100). `ax-task-queue` 16:57:54 · `ax-projects` 16:57:59 재기동, 재판정 깨끗. 이 문서 커밋·push 뒤 wrapup 재실행으로 배달한다(`.43` 꺼짐 — 켜진 `.2`·`.33`만). #964·#966 의 배포 후 관측(C6)이 남았다.
 
-## 바로 이어받을 #966 — 생성 체인 LLM 사용 순위만 변경
+## #966 마감 — 생성 체인 agy 1순위 · 배포 후 관측 남음
 
-- Redmine #966 「[AX] 생성 체인을 Antigravity 우선으로 전환 — 플랜·기각 후보·레시피·직접 리뷰 생성」, 마일스톤 8 — 개선·확장, 상태 신규. `ax-redmine` 기존 MCP로 등록·되읽기 완료.
-- 사용자 의도 원문: 「플랜과 리뷰에서는 코덱스을 우선으로 할 필요 없을것 같아」 → 생성 체인 전체 적용 여부에 「응」 → 「응 맞아. 단순히 LLM 사용 순위만 변경하면 좋겠어」 → 「응 코드 리뷰와 플랜 작성은 중요도가 떨어지니까 이들은 안티그래비티를 우선적으로 사용하는게 내가 원하는거야 다른 것은 없어」.
-- 합의: **기존 생성 체인 순서만 codex → agy → claude 에서 agy → codex → claude로**. 새 설정·분기·정책·구조 추가 없음. 기존 파일 쿨다운·실패 폴백·자동 리뷰 큐 교차 계열 규칙·층2 검증·워커 모드 유지. 앞서 생성 체인 전체(기각 후보 포함) 적용을 승인받았다.
-- 코드 정본: `master/layer2_verify.py:702` `WHY_BACKENDS`. 소비자 `master/context_synth/review_gen.py:562` `commercial_chat`의 순회. 현재 코드는 여전히 codex 우선이며 **#966 코드 편집·검사·커밋·배포는 실행하지 않았다**.
-- 관련 검사: `master/test_review_gen.py:385` 부근에 codex 1순위·그다음 agy/claude를 고정한 검사 2건 및 설명이 있다. 새 순서에 맞출 대상이다. `test_llm_cooldown`의 가짜 체인 주입은 실제 기본 순서와 구분한다. 자동 리뷰 큐는 commercial_chat을 쓰지 않고 `review_runner.agy_only/codex_only` 교차 계열 선택을 쓴다.
-- RAG request `c4c984a63b9f40e3bfc35c319703f2bb`, search `db850fed204d4966b471b8d5dd489c1d`. 트윈 `context/master/context_synth/plan_generator.md`·`dismissal_candidates.md` 전문과 실제 소스 대조. 후자는 #964 이전 캐시 설명이라 현재 계약으로 믿지 않았다.
-- `plan_start_tool(966, project=AXCluster)` → `verdict:interview_needed`, `ok:false`, next classify. **기존 기능 수정(modify)** 분류 기록 완료 → 조사(investigate) 기록 완료. 마지막 도구 응답 `next:specify`, `next_label:명세`. 범위·분류를 처음부터 다시 묻지 않는다.
-- **받은 명세 확인 답(아직 도구에 기록하지 않음)**: 지휘자 「합의한 생성 체인의 순위만 Antigravity → Codex → Claude로 변경하고, 나머지 동작은 유지. 이 문장으로 확정할까요?」에 사용자 「응 맞아 근데 너 토큰 없어. 인수인계서나 작성하고 멈춰」. 다음 세션은 이 답으로 `interview_step_tool(966, step=specify, result=위 명세, user_answer=사용자 원문)`을 기록하고 응답의 다음 단계(파급 측정)를 따른다. 이번 세션은 사용자 중단 지시에 따라 쓰지 않았다.
-- 이후 파급 측정 → 스펙 영역 승인·기록 → 플랜 제안·동의·등록 → `issue_start_tool` 응답 repo에서 구현. 기능은 순위 변경 한 가지이며 요구를 늘리지 않는다. 수행 방식은 #966에서 아직 선택·파견하지 않았다(#964는 이 세션 직접 수행). 기존 스킬의 단계·승인 절차를 따른다.
-- 이 문서가 미커밋이면 새 issue_start가 깨끗한 main 조건으로 거절될 수 있다. 커밋·push는 사용자 승인 범위를 확인한다. 운영 main 소스는 편집하지 않는다.
+- 사용자 의도: 「코드 리뷰와 플랜 작성은 중요도가 떨어지니까 … 안티그래비티를 우선적으로 … 다른 것은 없어」. `WHY_BACKENDS` 를 **agy → codex → claude** 로 바꾼 것뿐이다(쿨다운·폴백·리뷰 큐 교차 계열·층2 `BACKENDS`·본문 레인·워커 모드 불변).
+- 인터뷰 분류 modify → 조사 → 명세 → 재현 건너뜀 → 파급 → `ax:spec`. 플랜 v3 T1·T2 · C1~C6 · 자율성 0.5. 수행은 이 Claude 세션 직접(작성 계열 `['claude']`).
+- 커밋: `58808bb`(앞 세션 인계서 보존 — issue_start 깨끗한 main 조건) · `9655bc5` T1 · `9e31a2a` 리포트 `reports/194-966-generation-chain-agy-first.md`.
+- 파급 측정을 틀렸다: 기본 순서를 기대값으로 고정한 검사 6건(`test_llm_cooldown:107` · `test_usage_cli_paths` 5건)을 놓쳤고 실행이 잡았다. 사용자 승인(A안)으로 기대값을 agy 로 맞췄다. 정정 노트 Redmine #966.
+- 검사: 전수 233파일 rc0 12107/12107 · 공식 통합 `Ran 207` OK.
+- 체크리스트: C1~C4 충족 · **C5·C6 마감 전 게이트에서만 제외**(사용자 「응 제외로 기록하고 마감까지 진행해」, 요구는 유지).
+- 마감: done `[push,ff,worktree_remove,delete_branch,register,link,release,close,redmine]` · closed · lock_released.
+- **C6 관측(#964 C5 겸함, 결과는 #964·#966 양쪽 노트)**: ① 16:23:33 시작 `ax-batch` 회차(2026-W45 · 그 프로세스는 옛 codex 우선 코드로 끝까지 돈다)가 `complete:true` 로 끝나는지 ② 다음 회차가 완료 주차를 재생성하지 않는지(게이트 done·LLM 0) ③ 새 생성 호출이 있으면 `[agy]` 가 먼저 시도되는지. C5 근거(재기동 판정·배달)는 wrapup 결과 노트로.
 
 ## #964 마감 · 배포 후 관측 진행 중 — 주말 배치 매시 재실행·codex 소모
 
-- 인터뷰 완료(분류 버그 → 조사 → 명세 → 재현 → 파급 → `ax:spec`) · 플랜 v3 등록(제안→동의, 자율성 0.5, T1~T4 · 체크리스트 C1~C6). 결정 원문은 Redmine #964 노트.
-- 운영 `AXCluster/config.yaml` `batch.dismissal_candidates:true`로 복귀 완료(2026-11-15 16:20, 사용자 기존 승인). 배포 전 캐시 146건은 `/tmp/ax-964-live-before.json`에 읽기 대조용으로 보존했다. 복귀 결과는 Redmine #964 노트에 기록했다.
-- T1 `70c82b1`: 기계 공용 파일 쿨다운(한도 1시간·그 밖 600초·성공 해제) + commercial_chat 연결. codex 우선 순서는 유지.
-- T2 `f8c1002`: 시작 시 week·started_at·complete:false 저장, 완료 시 complete:true·completed_at. 게이트는 new/resume/done. 옛 계약 테스트 2건 변경은 사용자 「응」 승인으로 수행.
-- T3 `855f823`: 캐시·stale를 대상 파일 blob + input_hash 기준으로 변경. 옛 항목은 기록된 main_sha에서 blob을 읽어 재사용. 운영 읽기 대조: 146건 중 재사용111·변경13·파일없음3·미결목록밖19(LLM 0·쓰기 0).
-- 검사: 전수 233/233파일 rc0, 공식 통합 `Ran 207 tests in 256.369s` OK rc0, dismissal_candidates16/16·batch69/69. 리포트 `reports/193-964-weekly-candidates-resume.md`(`5853d9a`).
-- 승인: 「커밋하고 배포해 재부팅해야 되는건가?」 및 「응 진행해」. 사용자는 ‘재부팅’이 서비스 재시작을 뜻했다고 정정했다. C5는 배포 후 관측이라 마감 전 게이트에서만 제외(사용자 동의), 실제 관측 요구 유지. C1~C4·C6 충족. T4는 배포·실물까지 끝내기 전 완료로 표시하지 않는다.
-- main의 이전 미커밋 인계서는 `da63a90`로 보존·push 후 일감에 병합(`e531c917`)해 fast-forward 가능하게 했다. 마감 응답: repo `/home/sim/ax-cluster/.ax-issues/964`, done `[push,ff,worktree_remove,delete_branch,register,link,release,close,redmine]`, registered:true·closed:true·lock_released:true·why:"". 작성 계열 `['claude','codex']`.
-- wrapup 1차 rc2는 인수인계 커밋 대기. `ecfb43e` 커밋·push 뒤 2차는 재시작 대상 없음, master.client update rc1(AXCluster:deliver). 사용자 「컴퓨터 하나 꺼져있어!」를 반영해 `.43` 배달은 보류. 인수인계 갱신 `6a750f6` 커밋·push 뒤 **기존 CLI deliver/check AXCluster --host=192.168.0.2 및 .33 모두 rc0(2/2)**: payload10·스킬1종·태그AXCluster·출처 마스터 HEAD 일치. 이 도장은 `6a750f6` 기준이며 이번 미커밋 인수인계 수정은 포함하지 않는다. 전체 3/3 완료라고 하지 않는다.
-- 실제 첫 개선 후 회차: `ax-batch.timer`가 **16:23:33**에 기동(수동 강제 실행 아님), 산출물 `week=2026-W45`, `started_at=2026-11-15T16:23:33`, `complete:false`, `completed_at:null`, `main_sha=6a750f692213005d518319e8066ddadee2746b56`. 인계 직전 읽기 조회 **entries179**. 앞선 중간 대조는 새 항목/갱신43건(entries172)이었고, 현재 main에서 재사용 가능한 옛 항목110건은 그대로 유지(기존 bc566f0 기준111건과 구분). 모든 항목에 도달했거나 다음 실제 회차를 관측했다는 뜻은 아니다. T4·C5 실제 다음 회차 이어받기 미확인, 완료로 올리지 않았다.
-- 첫 회차는 **기존 codex 우선 순서**로 돌고 있다. #966 승인만으로 실행 중 프로세스의 순서가 바뀌지 않는다. 자동 배치·타이머를 사용자 중단 요청만으로 끄거나 프로세스를 종료하지 않았다. 다음 세션은 실제 상태를 재조회한다.
-- 관측 도구: `/tmp/ax-964-batch-status.sh`는 systemctl show 타이머·서비스와 journalctl 조회만 한다. 배달은 `/tmp/ax-964-online-deliver.sh`(기존 CLI .2·.33 deliver 후 check), 관련 로그·결과는 Redmine #964 노트. 임시 파일은 정본이 아니며 없어졌으면 기존 모듈·명령 계약을 먼저 확인한다.
-- 앞선 인수인계 패치 1회는 잘못된 문맥 문자로 적용 실패(파일 변경 없음). 실패를 보고하고 멈췄으며 사용자 「응!」으로 재시도 승인.
-- 세션 `~/.codex/sessions/2026/11/15/rollout-2026-11-15T15-55-28-01a1ddfd-52b8-7b93-b84d-f828e5c08d9d.jsonl`. 최종 마감·배달·실물 결과의 정본은 Redmine #964 노트.
+- 마감·배포 완료(main `e531c917` 이후), 상세는 리포트 `reports/193-964-weekly-candidates-resume.md` 와 Redmine #964 노트. 운영 `batch.dismissal_candidates:true` 복귀 완료.
+- 남은 것은 T4·C5 실제 다음 회차 관측뿐 — 위 #966 C6 로 함께 본다. 이미 받은 커밋·배포·C5 처리 승인을 다시 묻지 않는다.
+- 16:38 기준 `ax-batch.service` activating(16:23:33 시작), 로그에 `[layer2] [codex]` 호출이 이어졌다. 관측 도구 `/tmp/ax-964-batch-status.sh`(조회만) · 배포 전 캐시 `/tmp/ax-964-live-before.json` — 임시 파일이며 정본이 아니다.
 
 ## 그 밖에 남은 것
 
@@ -105,9 +92,9 @@
 
 ## 지휘·승인·미확인
 
-- 마스터 마지막 담당 기록은 claude(2026-11-14 15:48:34, 사용자 지시 — #383을 수행한 Claude 세션)다. #368 인계 때 이미 claude라 재기록하지 않았다. 워커 전역 codex(state, 2026-10-18). 모드 변경 없음.
+- 마스터 마지막 담당 기록은 claude(2026-11-14 15:48:34)다. 2026-11-15 #966 을 Claude 세션이 이어받아 마감했고, 기록이 이미 claude 라 재기록하지 않았다. 워커 전역 codex(state, 2026-10-18). 모드 변경 없음.
 - 인계서는 한 벌로 덮어쓰며 이전 완료 내역을 누적하지 않는다(#842).
-- 미처리 리뷰: #929 R314/R317 · #930 R315/R316 · #931 R325 · #934 R326 · #829 R328/R329 · #942 R351~R355 · #383·#943·#944·#368·#946·#947·#950·#949·#911·#939·#908(도착 미확인). 최신은 각 Redmine 노트로 확인한다.
+- 미처리 리뷰: #929 R314/R317 · #930 R315/R316 · #931 R325 · #934 R326 · #829 R328/R329 · #942 R351~R355 · #383·#943·#944·#368·#946·#947·#950·#949·#911·#939·#908·#964·#966(도착 미확인). 최신은 각 Redmine 노트로 확인한다.
 - 결정·구현 대기: #326 · #935 · #839 · #741 · #738 · #941.
 - 조건 대기: #272(ModularStage 마운트), #211·#855(KR 정답 30건·RAG 실사용 검증), #858(#856 선행).
 - `.33` 첫 실제 요청자 마감·연결, 실제 BC-250 poweroff 미확인. 자동 로드 문서의 M7 open 서술 미정리(M8 열림).
@@ -117,7 +104,7 @@
 
 ## 바로 다음 작업
 
-1. 사용자 중단 지시로 이번 세션은 인수인계 작성만 하고 멈춘다. 다음 세션은 **#966 specify 확인 답 기록부터** 이어간다. 목적·범위·분류·명세를 다시 묻지 말고 위 승인 원문과 Redmine 단계 기록을 대조한다.
-2. #964 실제 배치·다음 회차 관측도 미완료다. 위 T4·C5와 Redmine 최신 노트를 대조하며 #966 구현·배포와 구분한다. 이미 받은 #964 커밋·배포·C5 처리 승인을 다시 묻지 않는다.
-3. `.43`은 켜진 뒤 기존 `master.issue_wrapup 964 --project AXCluster`로 전체 배달을 다시 확인한다. 꺼진 동안에는 기존 CLI `deliver/check AXCluster --host=<켜진 기계>`를 사용한다. 다른 일감은 사용자 선택을 기다린다.
-4. 확인해 둘 실물: 토요일 22시 이후 `ax-batch` 로그의 `recipe_synthesis` 줄(#383) · 다음 rejected 라운드의 큐 로그 `[history] … rejected(큐 내부 종결)` 줄(#943) · 운영 relay에서 한도 20% 이하 제안 배너(#368) · 리뷰 큐 로그의 `리뷰 컨텍스트` 줄(#946, 첫 실물 확인됨 19:28~19:53) · 합성이 멈춘 회차의 `색인 걷기가 아직 안 지났다` 줄(#950)
+1. 이 문서 커밋·push 뒤 `master.issue_wrapup 966 --project AXCluster` 재실행 → 배달. `.43` 꺼져 있으면 rc1 이 정상이고, 켜진 기계는 기존 CLI `deliver/check AXCluster --host=<켜진 기계>` 로 맞춘다. 결과를 #966 노트(C5 근거)로 남긴다.
+2. #964·#966 배포 후 관측(위 C6 ①②③). 자동 배치·타이머를 끄지 않는다.
+3. `.43` 이 켜지면 `master.issue_wrapup 960`·`963`·`964`·`966 --project AXCluster` 재실행(배달·노트).
+4. 확인해 둘 실물: 토요일 22시 이후 `ax-batch` 로그의 `recipe_synthesis` 줄(#383) · 다음 rejected 라운드의 큐 로그 `[history] … rejected(큐 내부 종결)` 줄(#943) · 운영 relay에서 한도 20% 이하 제안 배너(#368) · 합성이 멈춘 회차의 `색인 걷기가 아직 안 지났다` 줄(#950). 다른 일감은 사용자 선택을 기다린다.
