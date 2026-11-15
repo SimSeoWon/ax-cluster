@@ -17,6 +17,7 @@ from master import plan_tools as PT    # noqa: E402
 from master import plan_start as ST    # noqa: E402
 from master import spec_block as SB    # noqa: E402
 from master import issue_lock as IL    # noqa: E402
+from master import testkit_issue as TK    # noqa: E402
 
 PASS = FAIL = 0
 
@@ -30,28 +31,10 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
-class FakeIssue:
-    """Redmine 이슈 하나 — 본문을 CRLF 로 저장한다(실측과 같다)."""
-
-    def __init__(self, body: str, answer: str = ""):
-        self.body = body.replace("\n", "\r\n")
-        self.writes: list = []
-        self.answer = answer
-
-    def get(self, iid):
-        return {"id": iid, "subject": "제목", "description": self.body}
-
-    def update(self, iid, *, description, notes):
-        self.writes.append((description, notes))
-        if self.answer:
-            return self.answer
-        self.body = description
-        return f"레드마인 #{iid} 갱신 (notes, description)"
-
-
-# #960 — 새 플랜은 스펙 영역(착수 전 인터뷰 결과)이 있는 일감에만 등록된다
-BARE = "## 스펙\n\n요구와 완료 조건\n"
-SPEC = SB.put(BARE, "### 문제\n\n확정 스펙")
+# #963 T9 — 일감 상태는 공용 픽스처가 실제 흐름(스펙 영역 → 제안 → 동의 → 등록)으로 만든다.
+FakeIssue = TK.FakeIssue
+BARE = TK.BARE
+SPEC = TK.spec_body()
 
 
 def _err(fn) -> str:
@@ -69,7 +52,7 @@ def _tasks():
 
 def test_set_creates_plan():
     iss = FakeIssue(SPEC)
-    out = PT.set_plan(852, _tasks(), "파일럿 플랜", getter=iss.get, updater=iss.update)
+    out = TK.register(iss, 852, _tasks(), "파일럿 플랜")
     check("등록 성공", out["ok"] and out["created"] and out["added"] == ["T1", "T2"], str(out))
     plan = PB.parse(iss.body)
     check("새 태스크는 대기", all(t.state == "대기" for t in plan.tasks))
@@ -82,15 +65,15 @@ def test_set_reports_spec_missing():
     """#939 — 플랜 등록 응답에 스펙 누락 경고를 싣는다. 등록은 막지 않는다."""
     keys = [k for k, _ in ST.SPEC_SECTIONS]
     iss = FakeIssue(SPEC)
-    out = PT.set_plan(939, _tasks(), "등록", getter=iss.get, updater=iss.update)
+    out = TK.register(iss, 939, _tasks(), "등록")
     check("스펙 항목이 없어도 등록은 된다", out["ok"] and PB.parse(iss.body) is not None, str(out))
     check("빠진 항목 전부를 경고로 싣는다", out.get("spec_missing") == keys[1:], str(out.get("spec_missing")))
     full = "".join(f"## {h}\n내용\n" for h in ("문제·맥락", "초반 분류", "관측 결과", "범위·비범위",
                                                   "완료 조건", "열린 결정"))
     iss = FakeIssue(SB.put(full, "### 문제\n\n확정"))
-    out = PT.set_plan(939, _tasks(), "등록", getter=iss.get, updater=iss.update)
+    out = TK.register(iss, 939, _tasks(), "등록")
     check("6항목 본문 → 빈 목록", out.get("spec_missing") == [], str(out.get("spec_missing")))
-    out = PT.set_plan(939, _tasks() + [{"id": "T3", "goal": "더"}], "갱신", getter=iss.get, updater=iss.update)
+    out = TK.register(iss, 939, _tasks() + [{"id": "T3", "goal": "더"}], "갱신")
     check("갱신(플랜 영역 있음)에서도 플랜 안은 세지 않는다", out.get("spec_missing") == [], str(out))
 
 
@@ -104,18 +87,18 @@ def test_set_requires_spec_area():
     check("스펙 태그 깨짐 → 거절", "스펙 영역이 깨졌다" in _err(lambda: PT.set_plan(
         960, _tasks(), "등록", getter=broken.get, updater=broken.update)))
     legacy = FakeIssue(PB.append(BARE, [PB.Task("T1", "대기", "옛 목표")]))
-    out = PT.set_plan(960, _tasks(), "옛 일감 편집", getter=legacy.get, updater=legacy.update)
+    out = TK.register(legacy, 960, _tasks(), "옛 일감 편집")
     check("플랜이 이미 있는 옛 일감은 스펙 없이도 편집", out["ok"] and not out["created"], str(out))
 
 
 def test_set_keeps_states_and_evidence():
     iss = FakeIssue(SPEC)
-    PT.set_plan(1, _tasks(), "등록", getter=iss.get, updater=iss.update)
+    TK.register(iss, 1, _tasks(), "등록")
     PT.transition(1, "T1", "작업중", getter=iss.get, updater=iss.update)
     PT.transition(1, "T1", "완료", "abc123", getter=iss.get, updater=iss.update)
     edited = _tasks() + [{"id": "T3", "goal": "새 일", "deps": "T1·T2"}]
     edited[0]["goal"] = "읽기(고친 목표)"
-    out = PT.set_plan(1, edited, "T3 추가", getter=iss.get, updater=iss.update)
+    out = TK.register(iss, 1, edited, "T3 추가")
     plan = PB.parse(iss.body)
     check("추가만 보고한다", out["added"] == ["T3"] and not out["removed"], str(out))
     check("완료 상태·근거를 유지한다",
@@ -128,9 +111,10 @@ def test_set_steps_v2():
     iss = FakeIssue(SPEC)
     tasks = [{"id": "T1", "goal": "클래스 추가", "steps": [4]},
              {"id": "T2", "goal": "어셋", "steps": "6·2", "deps": ["T1"]}]
-    PT.set_plan(1, tasks, "단계 선언", getter=iss.get, updater=iss.update)
+    TK.register(iss, 1, tasks, "단계 선언")
     plan = PB.parse(iss.body)
-    check("단계 선언이 v2 로 들어간다", plan.version == 2 and plan.task("T1").steps == [4]
+    # #963 — 제안 흐름의 플랜은 자율성 값을 표지에 실어 v3 다. 이 검사의 뜻은 「단계 선언이 v1 에 남지 않는다」.
+    check("단계 선언이 v2 이상으로 들어간다", plan.version >= 2 and plan.task("T1").steps == [4]
           and plan.task("T2").steps == [2, 6], str(plan))
     check("범위 밖 단계 거절", bool(_err(lambda: PT.set_plan(
         1, [{"id": "T1", "goal": "x", "steps": [8]}], "x", getter=iss.get, updater=iss.update))))
@@ -156,19 +140,19 @@ def test_set_refuses_state_and_bad_input():
 
 def test_set_cannot_drop_started_task():
     iss = FakeIssue(SPEC)
-    PT.set_plan(1, _tasks(), "등록", getter=iss.get, updater=iss.update)
+    TK.register(iss, 1, _tasks(), "등록")
     PT.transition(1, "T1", "작업중", getter=iss.get, updater=iss.update)
     n = len(iss.writes)
     check("작업중 태스크 제거 거절", "T1" in _err(lambda: PT.set_plan(
         1, [_tasks()[1] | {"deps": []}], "정리", getter=iss.get, updater=iss.update)))
     check("거절 뒤 쓰기 없음", len(iss.writes) == n)
-    out = PT.set_plan(1, [_tasks()[0]], "T2 빼기", getter=iss.get, updater=iss.update)
+    out = TK.register(iss, 1, [_tasks()[0]], "T2 빼기")
     check("대기 태스크는 뺄 수 있다", out["removed"] == ["T2"], str(out))
 
 
 def test_transition_writes_and_reports_next():
     iss = FakeIssue(SPEC)
-    PT.set_plan(1, _tasks(), "등록", getter=iss.get, updater=iss.update)
+    TK.register(iss, 1, _tasks(), "등록")
     out = PT.transition(1, "T1", "작업중", getter=iss.get, updater=iss.update)
     check("전이 결과", out["from"] == "대기" and out["to"] == "작업중", str(out))
     check("다음 판정은 resume T1", out["next"]["verdict"] == "resume" and out["next"]["tasks"] == ["T1"])
@@ -225,7 +209,7 @@ def test_evidence_warning_judgement():
 def test_transition_evidence_warning_is_warning_only():
     """#908 — [중요] 경고만: 전이·본문은 경고 유무와 무관하고, 노트와 응답에만 실린다."""
     iss = FakeIssue(SPEC)
-    PT.set_plan(1, _tasks(), "등록", getter=iss.get, updater=iss.update)
+    TK.register(iss, 1, _tasks(), "등록")
     PT.transition(1, "T1", "작업중", getter=iss.get, updater=iss.update)
     out = PT.transition(1, "T1", "완료", EV905["T1"], getter=iss.get, updater=iss.update)
     t1 = PB.parse(iss.body).task("T1")
@@ -238,7 +222,7 @@ def test_transition_evidence_warning_is_warning_only():
     check("좋은 근거 → 응답에 키 없음", "evidence_warning" not in out, str(out))
     check("좋은 근거 → 노트에 경고 없음", "#908" not in iss.writes[-1][1], iss.writes[-1][1])
     iss = FakeIssue(SPEC)
-    PT.set_plan(2, _tasks(), "등록", getter=iss.get, updater=iss.update)
+    TK.register(iss, 2, _tasks(), "등록")
     out = PT.transition(2, "T1", "해당없음", "범위 밖", getter=iss.get, updater=iss.update)
     check("완료가 아닌 전이는 판정하지 않는다", "evidence_warning" not in out, str(out))
 
@@ -246,7 +230,7 @@ def test_transition_evidence_warning_is_warning_only():
 def test_transition_not_run_phrase():
     """#961 — 재현 입력이 기존 경고 응답·노트로 연결되고 근거 원문은 보존된다."""
     iss = FakeIssue(SPEC)
-    PT.set_plan(1, _tasks(), "등록", getter=iss.get, updater=iss.update)
+    TK.register(iss, 1, _tasks(), "등록")
     PT.transition(1, "T1", "작업중", getter=iss.get, updater=iss.update)
     note = "커밋 abc1234 · 검사 실행 안 함"
     out = PT.transition(1, "T1", "완료", note, getter=iss.get, updater=iss.update)
@@ -262,7 +246,7 @@ def test_transition_refusals_do_not_write():
     iss = FakeIssue(SPEC)
     check("플랜 없는 일감 거절", "plan_set" in _err(lambda: PT.transition(1, "T1", "작업중",
                                                                      getter=iss.get, updater=iss.update)))
-    PT.set_plan(1, _tasks(), "등록", getter=iss.get, updater=iss.update)
+    TK.register(iss, 1, _tasks(), "등록")
     n = len(iss.writes)
     check("근거 없는 완료 거절(T2 규칙 그대로)", bool(_err(lambda: PT.transition(
         1, "T1", "완료", getter=iss.get, updater=iss.update))))
@@ -272,8 +256,10 @@ def test_transition_refusals_do_not_write():
 
 
 def test_write_failure_is_not_success():
-    iss = FakeIssue(SPEC, answer="[주의] 레드마인 #1 갱신 실패 — HTTP 422")
-    msg = _err(lambda: PT.set_plan(1, _tasks(), "등록", getter=iss.get, updater=iss.update))
+    iss = FakeIssue(SPEC)
+    TK.propose(iss, 1, _tasks())                       # 제안은 정상으로 남기고, 등록 쓰기만 실패시킨다
+    iss.answer = "[주의] 레드마인 #1 갱신 실패 — HTTP 422"
+    msg = _err(lambda: PT.set_plan(1, _tasks(), "등록", user_answer="동의", getter=iss.get, updater=iss.update))
     check("[주의] 응답은 실패로 올린다", "HTTP 422" in msg, msg)
 
 
@@ -314,7 +300,7 @@ def test_transition_lock_gate():
     with tempfile.TemporaryDirectory() as d:
         lk = Path(d)
         iss = FakeIssue(SPEC)
-        PT.set_plan(5, _tasks(), "등록", getter=iss.get, updater=iss.update)
+        TK.register(iss, 5, _tasks(), "등록")
         IL.acquire(lk, 9, branch="issue/9", start_rev="r")
         n = len(iss.writes)
         msg = _err(lambda: PT.transition(5, "T1", "작업중", getter=iss.get, updater=iss.update, lock_root=lk))
@@ -324,14 +310,14 @@ def test_transition_lock_gate():
             5, "T2", "해당없음", "안 함", getter=iss.get, updater=iss.update, lock_root=lk)["ok"])
         # 보유자 자신은 된다
         own = FakeIssue(SPEC)
-        PT.set_plan(9, _tasks(), "등록", getter=own.get, updater=own.update)
+        TK.register(own, 9, _tasks(), "등록")
         out = PT.transition(9, "T1", "작업중", getter=own.get, updater=own.update, lock_root=lk)
         check("잠금 — 보유 일감은 허용 · 알림 없음", out["ok"] and "lock_note" not in out, str(out))
         # 보류 중 일감: 누가 활성이면 거절, 비어 있으면 허용 + 알림
         IL.pause(lk, 9)
         IL.acquire(lk, 5, branch="issue/5", start_rev="r")
         p9 = FakeIssue(SPEC)
-        PT.set_plan(9, _tasks(), "등록", getter=p9.get, updater=p9.update)
+        TK.register(p9, 9, _tasks(), "등록")
         msg = _err(lambda: PT.transition(9, "T1", "작업중", getter=p9.get, updater=p9.update, lock_root=lk))
         check("잠금 — 보류 일감도 다른 활성 있으면 거절", "#5" in msg and "보류 중인" in msg, msg)
         IL.release(lk, 5, op="cancel")
@@ -344,7 +330,7 @@ def test_transition_lock_gate():
         IL.default_root = lambda *a, **k: (_ for _ in ()).throw(AssertionError("운영 잠금을 읽었다"))
         try:
             f = FakeIssue(SPEC)
-            PT.set_plan(6, _tasks(), "등록", getter=f.get, updater=f.update)
+            TK.register(f, 6, _tasks(), "등록")
             out = PT.transition(6, "T1", "작업중", getter=f.get, updater=f.update)
         finally:
             IL.default_root = orig

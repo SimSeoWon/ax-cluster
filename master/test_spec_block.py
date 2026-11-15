@@ -32,10 +32,7 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
-class FakeSpecIssue(FakeIssue):
-    def update(self, issue_id, *, description, notes):
-        self.body = description
-        return self.note(issue_id, notes)
+FakeSpecIssue = FakeIssue                          # #963 T9 — 공용 픽스처가 update 를 갖는다
 
 
 def _raises(fn, needle: str, exc=IV.InterviewError) -> bool:

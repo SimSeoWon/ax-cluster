@@ -20,6 +20,7 @@ from master import plan_block as PB     # noqa: E402
 from master import plan_events as PE    # noqa: E402
 from master import plan_state as PS     # noqa: E402
 from master import plan_tools as PT     # noqa: E402
+from master import testkit_issue as TK    # noqa: E402
 
 PASS = FAIL = 0
 
@@ -33,19 +34,9 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
-class FakeIssue:
-    def __init__(self, body: str, answer: str = ""):
-        self.body, self.answer, self.writes = body, answer, []
-
-    def get(self, iid):
-        return {"id": iid, "description": self.body}
-
-    def update(self, iid, *, description, notes):
-        self.writes.append(notes)
-        if self.answer:
-            return self.answer
-        self.body = description
-        return "ok"
+def FakeIssue(body: str, answer: str = ""):
+    """#963 T9 — 공용 픽스처. 제안 노트가 없는 옛 플랜을 손으로 만든 본문으로 준다(의도된 레거시 경로)."""
+    return TK.FakeIssue(body, crlf=False, answer=answer)
 
 
 def _plan_body(states=("대기", "대기")) -> str:

@@ -38,6 +38,7 @@ from master import plan_state as PS
 from master import plan_steps as STEPS
 from master import spec_block as SB
 from master import interview as IV
+from master import plan_proposal as PP
 from master import interview_materials as IM
 
 
@@ -137,7 +138,7 @@ def start(issue_id, *, project: str = "", getter=None, kind_of=None, active=None
     return out
 
 
-def set_plan(issue_id, tasks: list, why: str, *, getter=None, updater=None,
+def set_plan(issue_id, tasks: list, why: str, *, user_answer: str = "", getter=None, updater=None,
              events_path=None, caller: str = "") -> dict:
     """플랜을 만들거나 태스크를 추가·편집한다. `tasks` 는 **원하는 전체 목록**(표 순서)이다.
 
@@ -145,6 +146,8 @@ def set_plan(issue_id, tasks: list, why: str, *, getter=None, updater=None,
     목록 또는 「2·6」 — v2) 선택.
     `state`·`evidence` 를 실으면 거절한다 — 상태는 `transition` 으로만 바뀐다.
     응답의 `spec_missing`(`#939`)은 본문 스펙의 누락 항목이다 — **경고만**, 등록을 막지 않는다.
+    `#963` — 새 플랜이거나 제안 노트가 있는 일감은 **최신 플랜 제안과 같은 목록**이고 `user_answer`(사용자 동의)가
+    있어야 등록된다. 체크리스트·자율성 값은 그 제안에서 온다(`master/plan_proposal.py`).
     """
     ids = [str(t.get("id", "")) if isinstance(t, dict) else "?" for t in tasks] \
         if isinstance(tasks, list) else []
@@ -154,7 +157,11 @@ def set_plan(issue_id, tasks: list, why: str, *, getter=None, updater=None,
             raise PlanToolError("why 가 비었다 — 플랜을 왜 바꾸는지 노트로 남긴다")
         if not isinstance(tasks, list) or not tasks:
             raise PlanToolError("tasks 가 비었다")
-        body = _read(issue_id, getter or _default_getter)
+        got = (getter or _default_getter)(issue_id)
+        if not isinstance(got, dict) or got.get("error"):
+            reason = got.get("error") if isinstance(got, dict) else "응답 형식이 아니다"
+            raise PlanTransportError(f"#{issue_id} 를 읽지 못했다 — {reason}")
+        body = got.get("description") or ""
         current = PB.parse(body)
         if current is None:
             # #960 — 새 플랜은 착수 전 인터뷰가 끝난(스펙 영역이 있는) 일감에만. 플랜이 이미 있는 일감은 그대로.
@@ -192,9 +199,19 @@ def set_plan(issue_id, tasks: list, why: str, *, getter=None, updater=None,
         bad = PS.violations(plan)
         if bad:
             raise PlanToolError("규칙 위반이 생긴다 — " + " · ".join(bad))
+        # #963 — 구조 검사를 다 통과한 뒤, 쓰기 직전에 최신 제안과 대조한다(옛 플랜 편집은 None).
+        #   앞에 두면 「state 금지」·「없는 선행」 같은 사유가 「제안 없음」에 가려진다.
+        prop = PP.gate(got.get("journals") or [], body, tasks, user_answer)
+        if prop is not None:
+            cl = PP.to_checklist(prop["checklist"], current.checklist if current else [])
+            new_body = (PB.replace(body, new_tasks, checklist=cl, autonomy=prop["autonomy"]) if current
+                        else PB.append(body, new_tasks, checklist=cl, autonomy=prop["autonomy"]))
+            plan = PB.parse(new_body)
         added = [t.id for t in new_tasks if t.id not in old]
         summary = (f"플랜 {'갱신' if current else '등록'} — 추가 {', '.join(added) or '없음'}"
-                   f" · 제거 {', '.join(t.id for t in dropped) or '없음'}\n사유: {why.strip()}")
+                   f" · 제거 {', '.join(t.id for t in dropped) or '없음'}\n사유: {why.strip()}"
+                   + (f"\n최신 제안 대조 통과 — 체크리스트 {len(prop['checklist'])} · 자율성 {prop['autonomy']:g}"
+                      f"\n사용자 동의: {user_answer.strip()}" if prop is not None else ""))
         result = _write(issue_id, new_body, summary, updater or _default_updater)
         # #939 — 스펙 템플릿(docs/issue-spec.md) 누락 항목. 경고일 뿐 등록은 이미 끝났다.
         return {"ok": True, "issue_id": issue_id, "created": current is None, "added": added,

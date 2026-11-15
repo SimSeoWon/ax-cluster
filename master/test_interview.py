@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from master import interview as IV               # noqa: E402
 from master import interview_categories as IC    # noqa: E402
 from master import plan_block as PB              # noqa: E402
+from master import testkit_issue as TK           # noqa: E402
 
 PASS = FAIL = 0
 
@@ -25,22 +26,9 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
-class FakeIssue:
-    """Redmine 한 건 — 노트는 시간순으로 쌓인다."""
-
-    def __init__(self, body: str = "## 문제\n\n본문\n", notes: list | None = None):
-        self.body = body
-        self.journals = [{"notes": n, "created_on": f"t{i}"} for i, n in enumerate(notes or [])]
-        self.fail_write = False
-
-    def get(self, issue_id):
-        return {"id": issue_id, "description": self.body, "journals": list(self.journals)}
-
-    def note(self, issue_id, notes):
-        if self.fail_write:
-            return "[주의] 레드마인 갱신 실패"
-        self.journals.append({"notes": notes, "created_on": f"t{len(self.journals)}"})
-        return "레드마인 갱신"
+def FakeIssue(body: str = "## 문제\n\n본문\n", notes=None):
+    """#963 T9 — 공용 픽스처(LF 본문). 쓰기 실패 흉내는 `answer`."""
+    return TK.FakeIssue(body, crlf=False, notes=notes or ())
 
 
 CATS = IC.load()
@@ -134,7 +122,7 @@ def test_resume_after_interrupt():
 
 def test_write_failure_is_transport_error():
     fi = FakeIssue()
-    fi.fail_write = True
+    fi.answer = "[주의] 레드마인 갱신 실패"
     try:
         _rec(fi, "classify", "bug")
         ok = False
