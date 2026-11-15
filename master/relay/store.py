@@ -186,14 +186,21 @@ def append(root, issue_id, *, kind: str, agent: str = "", text: str = "", data=N
         with open(d / LOG_NAME, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
             fh.flush()
-        sp.write_text(str(seq + 1))
+        # `#969` 8 — 순번은 임시 파일 + 교체로 쓴다(잘린 0바이트 파일이 다음 append 를 영구히 막지 않게)
+        tmp = d / (_SEQ + ".tmp")
+        tmp.write_text(str(seq + 1))
+        os.replace(tmp, sp)
     return rec
 
 
 def last_seq(root, issue_id) -> int:
-    sp = session_dir(root, issue_id) / _SEQ
+    d = session_dir(root, issue_id)
+    sp = d / _SEQ
+    if not d.is_dir():
+        return 0                                     # 세션이 없다 — 잠금 파일을 만들러 디렉터리를 세우지 않는다
     try:
-        return int(sp.read_text()) if sp.exists() else 0
+        with _locked(d):                             # `#969` 8 — append 와 같은 잠금 안에서 읽는다
+            return int(sp.read_text()) if sp.exists() else 0
     except (OSError, ValueError) as e:
         raise StoreError(f"순번 파일을 읽지 못했다 ({sp}: {e})") from None
 
@@ -212,6 +219,8 @@ def read(root, issue_id, *, after: int = 0) -> list:
             try:
                 rec = json.loads(ln)
             except ValueError:
+                rec = None
+            if not isinstance(rec, dict):            # `#969` 8 — 객체가 아닌 줄도 버리지 않고 못 읽음으로
                 rec = {"seq": 0, "kind": "unreadable", "text": ln, "line": i}
             if rec.get("seq", 0) > after or rec.get("kind") == "unreadable":
                 out.append(rec)
@@ -241,6 +250,14 @@ def archive(root, issue_id, *, why: str = "") -> dict:
         k += 1
         dest = Path(root) / "archive" / f"{n}-{stamp}-{k}"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    os.replace(d, dest)
+    try:
+        # `#969` 8 — append 와 같은 잠금 안에서 옮긴다(쓰는 중인 로그를 반쯤 옮기지 않게). 그 사이 다른
+        #    보관이 먼저 옮겼으면 FileNotFoundError — 도메인 예외로 알린다.
+        with _locked(d):
+            if not (d / STATE_NAME).exists():
+                raise StoreError(f"작업 세션 #{n} 이 보관 직전에 사라졌다 ({d})")
+            os.replace(d, dest)
+    except OSError as e:
+        raise StoreError(f"작업 세션 #{n} 을 보관소로 옮기지 못했다 ({type(e).__name__}: {e})") from None
     debug(root, None, "store.archive", f"#{n} → {dest}")
     return {"issue": n, "dest": str(dest)}

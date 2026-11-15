@@ -588,7 +588,7 @@ def _generate(prompt: str, model: str, *, broker: str, caller, cli, usage: dict,
         elif lane == "agy":
             out, why = l2.call_agy_why(prompt, timeout=SYNTH_TIMEOUT, **wd)
         else:
-            out, why = l2.call_claude_why(prompt, timeout=SYNTH_TIMEOUT)
+            out, why = l2.call_claude_why(prompt, timeout=SYNTH_TIMEOUT, **wd)   # `#969` 고정 트리
     if why or not out or not str(out).strip():
         raise GenerateError(f"{lane} CLI 가 응답하지 않았다 — {why or '빈 출력'}")
     return out
@@ -660,7 +660,7 @@ class _LazyTree:
                 try:
                     self.path = self.stack.enter_context(
                         pinned_worktree(self.repo, self.commit, logf=lambda m: _log(f"[synth] {m}")))
-                except RuntimeError as e:
+                except (RuntimeError, OSError) as e:          # `#969` — 디스크·권한 실패도 이 레인만 실패
                     self.error = str(e)
             if self.error:
                 raise GenerateError(f"고정 트리를 만들지 못했다 — {self.error}")

@@ -863,6 +863,9 @@ def is_registered_root(paths) -> bool:
 _is_registered_root = is_registered_root
 
 
+RANGE_NOTE_TRIES = 5      # `#969` (R222-2) — 범위 노트 시도 상한. 넘으면 포기 표시를 남기고 다시 걸지 않는다
+
+
 def notify_range(paths, item_id: str, *, noter=None, logf=None) -> bool:
     """끝난 범위 리뷰를 그 일감에 노트로 남긴다. 성공하면 `meta.noted`. 실패는 다음 회차가 다시 한다.
 
@@ -887,8 +890,15 @@ def notify_range(paths, item_id: str, *, noter=None, logf=None) -> bool:
     except Exception as e:                                         # noqa: BLE001
         out = f"[주의] {type(e).__name__}: {e}"
     if out.startswith("[주의]"):
-        rq.set_meta(paths.root, item_id, noted=False, note_error=out[:300])
-        log(f"[리뷰큐] [중요] 범위 리뷰 일감 #{issue} 노트 실패 — 다음 회차 재시도: {out[:120]}")
+        tries = int(meta.get("note_attempts") or 0) + 1
+        gave_up = tries >= RANGE_NOTE_TRIES
+        rq.set_meta(paths.root, item_id, noted=False, note_error=out[:300], note_attempts=tries,
+                    note_gave_up=gave_up)
+        if gave_up:
+            log(f"[리뷰큐] [중요] 범위 리뷰 일감 #{issue} 노트 {tries}회 실패 — 포기(다시 걸지 않는다): {out[:120]}")
+        else:
+            log(f"[리뷰큐] [중요] 범위 리뷰 일감 #{issue} 노트 실패 {tries}/{RANGE_NOTE_TRIES} — 다음 회차 재시도: "
+                f"{out[:120]}")
         return False
     rq.set_meta(paths.root, item_id, noted=True, note_error="", noted_at=rq._now())
     log(f"[리뷰큐] 범위 리뷰 → 일감 #{issue} 노트 ({out[:60]})")
@@ -899,7 +909,8 @@ def retry_range_notes(paths, *, noter=None, logf=None) -> int:
     """끝났는데 일감 노트가 안 남은 범위 리뷰를 다시 남긴다(LLM 0). 남긴 건수."""
     n = 0
     for it in rq.items(paths.root, state="done"):
-        if it.get("kind") == "range" and not (it.get("meta") or {}).get("noted"):
+        meta = it.get("meta") or {}
+        if it.get("kind") == "range" and not meta.get("noted") and not meta.get("note_gave_up"):
             n += notify_range(paths, it["id"], noter=noter, logf=logf)
     return n
 

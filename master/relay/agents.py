@@ -348,7 +348,19 @@ def run(agent: str, prompt: str, *, cwd: str, session: str = "", on_event=None, 
         res.interrupted = True
         dbg("agents.run", f"{agent} 중단 요청(Ctrl-C) — 프로세스 그룹 {proc.pid} 종료")
         _kill(proc)
-    th.join(timeout=5)
+    except BaseException as e:
+        # `#969` 9 — 이벤트 처리(on_event·raw_sink) 예외도 자식 프로세스 그룹을 남기지 않는다
+        dbg("agents.run", f"{agent} 처리 중 예외 {type(e).__name__}: {e} — 프로세스 그룹 {proc.pid} 종료")
+        _kill(proc)
+        raise
+    finally:
+        th.join(timeout=5)
+        for pipe in (proc.stdout, proc.stderr):   # `#969` 9 — GC 에 맡기지 않고 닫는다
+            try:
+                if pipe is not None:
+                    pipe.close()
+            except OSError:
+                pass
     stderr = "".join(c for c in err_chunks if c)
     res.rc = proc.returncode if proc.returncode is not None else -1
     res.session = parser.session or res.session

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -197,6 +198,45 @@ def kinds(evs) -> list:
     return [e["kind"] for e in evs if e["kind"] not in ("meta", "delta")]
 
 
+def t_store_969(tmp):
+    """`#969` 8 (R355-3·4·5 · R351-1·2·3) — 순번 원자 쓰기 · dict 아닌 줄 · 보관 중 사라진 세션."""
+    S.open_session(tmp, 11)
+    S.append(tmp, 11, kind="user", agent="claude", text="하나")
+    sp = S.session_dir(tmp, 11) / S._SEQ
+    check("8 순번 임시 파일이 남지 않는다", not list(S.session_dir(tmp, 11).glob(S._SEQ + ".tmp*")),
+          str(list(S.session_dir(tmp, 11).iterdir())))
+    check("8 순번 값", sp.read_text() == "2" and S.last_seq(tmp, 11) == 2, sp.read_text())
+    check("8 없는 세션의 last_seq 는 0 이고 디렉터리를 만들지 않는다",
+          S.last_seq(tmp, 12) == 0 and not S.session_dir(tmp, 12).exists())
+    with open(S.log_path(tmp, 11), "a", encoding="utf-8") as fh:
+        fh.write("[1, 2]\n42\n")
+    try:
+        recs = S.read(tmp, 11)
+        got = [r["kind"] for r in recs[-2:]]
+    except Exception as e:                                   # noqa: BLE001
+        got = f"{type(e).__name__}: {e}"
+    check("8 dict 아닌 줄도 unreadable 로 돌려준다", got == ["unreadable", "unreadable"], str(got))
+    import os as _os
+    real = _os.replace
+
+    def gone(src, dst):
+        if Path(src).is_dir():                               # 디렉터리 이동만 실패(다른 세션이 먼저 옮김)
+            raise FileNotFoundError(src)
+        return real(src, dst)
+    S.os.replace = gone
+    try:
+        try:
+            S.archive(tmp, 11)
+            got = "예외 없음"
+        except S.StoreError as e:
+            got = f"StoreError: {e}"
+        except Exception as e:                               # noqa: BLE001
+            got = f"{type(e).__name__}: {e}"
+    finally:
+        S.os.replace = real
+    check("8 보관 이동 실패는 StoreError", got.startswith("StoreError"), got)
+
+
 def t_agents_build_cmd(tmp):
     fake_bins(tmp)
     c, sid = A.build_cmd("claude", "안녕")
@@ -249,6 +289,28 @@ def t_agents_claude(tmp):
     _run(tmp, "claude", session="c-1")
     a2 = argv_of(tmp, "claude")[1]
     check("이어가기 인자", a2[-3:] == ["--resume", "c-1", "입력"], str(a2))
+
+
+def t_agents_969_cleanup_on_error(tmp):
+    """`#969` 9 (R355-6 · R352-2) — 이벤트 처리 중 예외가 나도 자식 프로세스를 끝내고 파이프를 닫는다."""
+    fake_bins(tmp, claude=CLAUDE_LINES)
+    procs = []
+
+    def popen(*a, **k):
+        procs.append(subprocess.Popen(*a, **k))
+        return procs[-1]
+
+    def boom(ev):
+        raise RuntimeError("화면 갱신 실패")
+    try:
+        A.run("claude", "입력", cwd=str(tmp), on_event=boom, dbg=lambda w, m: None, popen=popen)
+        got = "예외 없음"
+    except RuntimeError as e:
+        got = str(e)
+    p = procs[0] if procs else None
+    check("9 예외는 호출자에게 그대로 간다", got == "화면 갱신 실패", got)
+    check("9 자식 프로세스가 끝났다", p is not None and p.poll() is not None, str(p and p.poll()))
+    check("9 파이프가 닫혔다", p is not None and p.stdout.closed and p.stderr.closed)
 
 
 def t_agents_codex(tmp):
@@ -632,8 +694,8 @@ def t_quota_codex_run(tmp):
 
 
 TESTS = [t_store_open_and_seq, t_store_concurrent_append, t_store_agent_state,
-         t_store_corrupt_not_overwritten, t_store_archive,
-         t_agents_build_cmd, t_agents_claude, t_agents_codex, t_agents_agy, t_agents_failures,
+         t_store_corrupt_not_overwritten, t_store_archive, t_store_969,
+         t_agents_build_cmd, t_agents_claude, t_agents_969_cleanup_on_error, t_agents_codex, t_agents_agy, t_agents_failures,
          t_boundary_open, t_boundary_closable,
          t_console_round_trip, t_console_failure_and_reset, t_console_open_refused, t_header,
          t_quota_collection, t_quota_console_validity, t_quota_run_store_warn_reset, t_quota_codex_run]

@@ -474,12 +474,30 @@ def test_range_issue_context():
     check("#946 T4 예외 로그", any("수집 예외 RuntimeError: 범위 수집기 폭발" in x for x in logs2), str(logs2))
 
 
+def test_range_note_retry_cap():
+    """`#969` 7 (R222-2) — 영구 실패하는 범위 노트는 상한까지만 다시 남긴다(종전: 회차마다 무한 재시도)."""
+    root, base, end = make_repo()
+    enqueue_range(root, base, end, issue=4249)
+    calls = []
+    bad = lambda issue_id, *, notes: calls.append(issue_id) or "[주의] 레드마인 #4249 갱신 실패: 404"   # noqa: E731
+    R.run_once(Paths(root), range_noter=bad, review_call=lambda p, **kw: BODY)
+    logs = []
+    for _ in range(R.RANGE_NOTE_TRIES + 3):
+        R.retry_range_notes(Paths(root), noter=bad, logf=logs.append)
+    it = [x for x in Q.items(root) if x["kind"] == "range"][0]
+    check("7 시도 횟수는 상한에서 멈춘다", len(calls) == R.RANGE_NOTE_TRIES, f"{len(calls)} {it['meta']}")
+    check("7 포기 표시와 사유가 남는다", it["meta"].get("note_gave_up") is True
+          and "404" in it["meta"].get("note_error", ""), str(it["meta"]))
+    check("7 포기 로그는 한 번", sum("포기" in m for m in logs) == 1, str(logs))
+    shutil.rmtree(root)
+
+
 def main() -> int:
     for fn in (test_enqueue_contract, test_run_range, test_bad_range_is_deterministic,
                test_end_not_yet_in_mirror_is_transient, test_notify_issue,
                test_drain_waits_across_runs,
                test_commit_prompt_unchanged, test_verdict_contract,
-               test_range_issue_context):
+               test_range_issue_context, test_range_note_retry_cap):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_review_range: {PASS}/{total} 통과")

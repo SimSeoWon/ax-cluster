@@ -396,9 +396,18 @@ def codex_text(existing: str, entry: dict, approve: tuple, name: str = SERVER) -
     return new, removed
 
 
+def _toml_loads(text: str) -> dict:
+    """`#969` 10 — 손상된 config.toml 은 도메인 예외(`MasterLocalError`)다. apply 가 그 예외만 잡는다."""
+    tomli = _toml()
+    try:
+        return tomli.loads(text or "")
+    except tomli.TOMLDecodeError as e:
+        raise MasterLocalError(f"config.toml 파싱 실패 — {e}") from e
+
+
 def codex_approvals(toml_text: str, name: str = SERVER) -> tuple:
     """config.toml 에서 `approval_mode = "approve"` 인 도구 이름들 (정렬)."""
-    d = _toml().loads(toml_text or "")
+    d = _toml_loads(toml_text)
     tools = (((d.get("mcp_servers") or {}).get(name) or {}).get("tools") or {})
     return tuple(sorted(t for t, v in tools.items()
                         if isinstance(v, dict) and v.get("approval_mode") == "approve"))
@@ -406,7 +415,10 @@ def codex_approvals(toml_text: str, name: str = SERVER) -> tuple:
 
 def codex_all_approved(text: str) -> bool:
     """두 AX MCP의 기본 허용과 개별 거절/질문 재정의 부재를 대조한다."""
-    servers = _toml().loads(text or "").get("mcp_servers") or {}
+    try:
+        servers = _toml_loads(text).get("mcp_servers") or {}
+    except MasterLocalError:
+        return False                                   # `#969` 10 — 판정 실패이지 예외가 아니다
     for name in (SERVER, AGY_PROJECTS):
         item = servers.get(name)
         if name == AGY_PROJECTS and item is None:
@@ -537,6 +549,19 @@ def agy_approvals(text: str, name: str = SERVER) -> tuple:
     pre, post = f"mcp({name}/", ")"
     return tuple(sorted(a[len(pre):-1] for a in allow
                         if isinstance(a, str) and a.startswith(pre) and a.endswith(post)))
+
+
+def agy_permissions_ok(text: str) -> tuple:
+    """`#969` 10 — agy 헤드리스 권한 대조. `(통과, 빠진 허용 항목)` — 전체 도구 **와** 기본 명령
+    (`AGY_BASE_COMMANDS`). 종전 대조는 도구만 봐서 기본 명령이 전부 빠져도 통과로 판정했다."""
+    try:
+        d = json.loads(text or "{}")
+    except ValueError:
+        d = {}
+    allow = ((d.get("permissions") or {}).get("allow") or []) if isinstance(d, dict) else []
+    want = [agy_grant(t) for t in all_client_tools()] + list(AGY_BASE_COMMANDS)
+    missing = tuple(w for w in want if w not in allow)
+    return (not missing, missing)
 
 
 def agy_get(text: str, name: str = SERVER) -> dict:
@@ -829,9 +854,10 @@ def apply(p: Paths, project: str, *, facts=None) -> int:
             mode = (p.agy_settings.stat().st_mode & 0o777) if p.agy_settings.exists() else 0o644
             _write_private(p.agy_settings, new, mode)
             print(f"{LOG} agy 권한: settings.json 백업 → {bk or '(원본 없음)'} · 더함 — {', '.join(added)}")
-        ok = set(approve).issubset(set(agy_approvals(_read(p.agy_settings))))
+        ok, missing = agy_permissions_ok(_read(p.agy_settings))
         bad += 0 if ok else 1
-        print(f"{LOG} agy 권한: 파일 되읽기 {'대조 통과' if ok else '[실패] 허용 목록이 다르다'}")
+        print(f"{LOG} agy 권한: 파일 되읽기 "
+              + ("대조 통과" if ok else f"[실패] 빠진 허용 {len(missing)}개 — {', '.join(missing[:8])}"))
     except MasterLocalError as ex:
         bad += 1
         print(f"{LOG} [실패] agy 권한: {ex}")
@@ -945,7 +971,8 @@ def check(p: Paths, project: str, *, smoke: bool = True) -> int:
         except OSError as ex:
             row(f"agy {AGY_PROJECTS}", False, type(ex).__name__)
     appr = agy_approvals(_read(p.agy_settings))
-    row("agy approvals", set(all_client_tools()).issubset(set(appr)), f"allow={list(appr)}")
+    ok, missing = agy_permissions_ok(_read(p.agy_settings))
+    row("agy approvals", ok, f"allow={list(appr)}" if ok else f"빠진 허용 {len(missing)}개: {', '.join(missing[:8])}")
     rc, out = _run(["agy", "mcp", "list"], timeout=30)
     row("agy mcp list", rc == 0 and SERVER in out, f"rc={rc}")
     # Claude 스킬 링크 대조 (`#929`)

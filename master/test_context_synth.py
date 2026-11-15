@@ -922,6 +922,7 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
     shutil.rmtree(tmp, ignore_errors=True)
     print("\n[#848] 상용 CLI 는 고정 트리에서 · 작업 범위 규칙은 상용에만")
     test_cloud_lanes_run_in_pinned_tree()
+    test_969_claude_lane_and_tree_errors()
     test_cloud_scope_rules_only_for_cloud()
 
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
@@ -1073,6 +1074,43 @@ def test_cloud_lanes_run_in_pinned_tree():
             _os.environ.pop("AX_AGY_STATE_PATH", None)
         else:
             _os.environ["AX_AGY_STATE_PATH"] = old_state
+
+
+def test_969_claude_lane_and_tree_errors():
+    """`#969` 6 (R181-1·2) — claude 레인도 고정 트리에서 돈다 · 트리 생성의 OSError 도 GenerateError 다."""
+    from master import layer2_verify as _l2
+    seen = {}
+    saved = _l2.call_claude_why
+    try:
+        _l2.call_claude_why = lambda prompt, **kw: (seen.update(kw) or "본문", "")
+        synth._generate("p", "claude", broker="", caller=None, cli=None, usage={},
+                        tree=lambda: Path("/tmp/ax-pinned-969"))
+    finally:
+        _l2.call_claude_why = saved
+    check("#969 claude 레인에 workdir 를 넘긴다", seen.get("workdir") == "/tmp/ax-pinned-969", str(seen))
+
+    import contextlib
+    import master.context_synth.pinned_tree as _pt
+    saved_pw = _pt.pinned_worktree
+
+    @contextlib.contextmanager
+    def boom(*a, **k):
+        raise OSError("디스크 가득")
+        yield
+    try:
+        _pt.pinned_worktree = boom
+        with contextlib.ExitStack() as st:
+            lazy = synth._LazyTree(Path("/tmp/r"), "HEAD", st)
+            try:
+                lazy()
+                got = "예외 없음"
+            except synth.GenerateError as e:
+                got = f"GenerateError: {e}"
+            except Exception as e:                           # noqa: BLE001
+                got = f"{type(e).__name__}: {e}"
+    finally:
+        _pt.pinned_worktree = saved_pw
+    check("#969 트리 OSError 는 GenerateError", got.startswith("GenerateError") and "디스크 가득" in got, got)
 
 
 def test_cloud_scope_rules_only_for_cloud():

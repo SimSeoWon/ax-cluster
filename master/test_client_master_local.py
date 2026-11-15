@@ -419,6 +419,33 @@ def test_agy_permissions() -> None:
     check("agy 권한: 전체 도구 포함 확인", set(approve).issubset(set(ml.agy_approvals(with_cmds))))
 
 
+def test_969_master_local_checks() -> None:
+    """`#969` 10 (R308-1 · R309-1 · R310-2 · R311-2) — 기본 명령 권한도 대조 · 손상 TOML 은 판정 실패지 예외가 아니다."""
+    approve = ml.all_client_tools()
+    tools_only, _ = ml.agy_permissions_text("", approve)
+    ok, missing = ml.agy_permissions_ok(tools_only)
+    check("10 도구만 있고 기본 명령이 없으면 실패", ok is False and set(missing) == set(ml.AGY_BASE_COMMANDS), str(missing))
+    full, _ = ml.agy_permissions_text("", approve, extra_commands=ml.AGY_BASE_COMMANDS)
+    check("10 도구 + 기본 명령이면 통과", ml.agy_permissions_ok(full) == (True, ()), str(ml.agy_permissions_ok(full)))
+    no_tool = json.dumps({"permissions": {"allow": list(ml.AGY_BASE_COMMANDS)}})
+    ok, missing = ml.agy_permissions_ok(no_tool)
+    check("10 도구가 빠져도 실패", ok is False and "mcp(ax-client/redmine_note)" in missing, str(missing)[:200])
+    broken = "[mcp_servers.ax-client\nx = "
+    try:
+        got = ml.codex_all_approved(broken)
+    except Exception as e:                                   # noqa: BLE001
+        got = f"{type(e).__name__}"
+    check("10 손상 TOML → codex_all_approved False", got is False, str(got))
+    try:
+        ml.codex_approvals(broken)
+        got = "예외 없음"
+    except ml.MasterLocalError:
+        got = "MasterLocalError"
+    except Exception as e:                                   # noqa: BLE001
+        got = type(e).__name__
+    check("10 손상 TOML → codex_approvals 는 MasterLocalError", got == "MasterLocalError", got)
+
+
 def test_claude_permissions() -> None:
     human = json.dumps({"hooks": {"Stop": []}, "permissions": {"allow": ["Bash(rg *)"]}})
     new = ml.claude_permissions_text(human)
@@ -580,7 +607,7 @@ def main() -> int:
                    test_codex_existing_approvals_and_restrictions, test_claude_permissions,
                    test_codex_text_refuses, test_review_r54_edges, test_codex_get_matches, test_agy_text,
                    test_claude_user_get, test_config_same_shape_as_delivery,
-                   test_token_never_printed, test_apply_writes_root_and_files, test_agy_permissions,
+                   test_token_never_printed, test_apply_writes_root_and_files, test_agy_permissions, test_969_master_local_checks,
                    test_cli_wiring, test_claude_skills_sync_and_check,
                    test_apply_refuses_cli_outside_real_config, test_live_config_guard_detects_change):
             fn()
