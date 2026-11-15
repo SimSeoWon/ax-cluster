@@ -36,6 +36,9 @@ from master import plan_metrics as PM
 from master import plan_start as ST
 from master import plan_state as PS
 from master import plan_steps as STEPS
+from master import spec_block as SB
+from master import interview as IV
+from master import interview_materials as IM
 
 
 class PlanToolError(PB.PlanError):
@@ -106,7 +109,7 @@ def _write(issue_id, body: str, notes: str, updater) -> str:
     return str(out)
 
 
-def start(issue_id, *, project: str = "", getter=None, kind_of=None, active=None) -> dict:
+def start(issue_id, *, project: str = "", getter=None, kind_of=None, active=None, materials=None) -> dict:
     """시작 판정과 그 프로젝트의 7단계 표. `project` 를 비우면 마운트된 프로젝트다."""
     out = ST.start_issue(issue_id, getter=getter or _default_getter)
     if "error" in out:
@@ -117,6 +120,16 @@ def start(issue_id, *, project: str = "", getter=None, kind_of=None, active=None
             active = lambda: Registry.load().active          # noqa: E731
         project = active() or ""
     out["project"] = project
+    if out.get("verdict") == "interview_needed":
+        # #960 — 인터뷰 진행 상태와 Python 이 모은 재료를 함께 건넨다
+        try:
+            out["interview"] = IV.status(issue_id, getter=getter or _default_getter)
+        except Exception as e:                       # noqa: BLE001 — 분류 문서 거절·읽기 실패는 그대로 보인다
+            out["interview"] = {"error": f"{type(e).__name__}: {e}"}
+        if materials is not False:
+            got = (getter or _default_getter)(issue_id)
+            from master import redmine
+            out["materials"] = (materials or IM.collect)(got, project=redmine.project_of(project))
     try:
         out["steps"] = [s.__dict__ for s in STEPS.steps_for_project(project, kind_of=kind_of)]
     except STEPS.StepError as e:
@@ -143,6 +156,15 @@ def set_plan(issue_id, tasks: list, why: str, *, getter=None, updater=None,
             raise PlanToolError("tasks 가 비었다")
         body = _read(issue_id, getter or _default_getter)
         current = PB.parse(body)
+        if current is None:
+            # #960 — 새 플랜은 착수 전 인터뷰가 끝난(스펙 영역이 있는) 일감에만. 플랜이 이미 있는 일감은 그대로.
+            try:
+                has_spec = SB.exists(body)
+            except SB.SpecError as e:
+                raise PlanToolError(f"스펙 영역이 깨졌다 — {e}") from e
+            if not has_spec:
+                raise PlanToolError("스펙 영역이 없다 — 착수 전 인터뷰(분류→조사→명세→재현→파급 측정)를 마치고 "
+                                    "스펙 영역을 쓴 뒤에 플랜을 등록한다 (#960)")
         old = {t.id: t for t in (current.tasks if current else [])}
         new_tasks: list[PB.Task] = []
         for raw in tasks:

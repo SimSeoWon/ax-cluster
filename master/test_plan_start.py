@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master import plan_block as PB    # noqa: E402
 from master import plan_start as ST    # noqa: E402
+from master import spec_block as SB    # noqa: E402
 
 PASS = FAIL = 0
 
@@ -38,15 +39,24 @@ def _v(body: str) -> ST.StartVerdict:
 
 def test_no_plan_is_not_ok():
     v = _v(SPEC)
-    check("플랜 없음 → plan_needed", v.verdict == "plan_needed", v.verdict)
+    check("플랜·스펙 영역 없음 → interview_needed (#960)", v.verdict == "interview_needed", v.verdict)
+    check("[중요] interview_needed 는 ok 가 아니다", not v.ok)
+    check("다음 행동이 「구현·플랜 작성을 하지 않는다」", "구현·플랜 작성을 하지 않는다" in v.next_action)
+    v = _v(SB.put(SPEC, "### 문제\n\n확정"))
+    check("스펙 영역 있고 플랜 없음 → plan_needed", v.verdict == "plan_needed", v.verdict)
     check("[중요] plan_needed 는 ok 가 아니다", not v.ok)
     check("다음 행동이 「구현하지 않는다」", "구현하지 않는다" in v.next_action)
+    v = _v(SPEC + "<!-- ax:spec:begin v=1 -->\n")
+    check("스펙 태그 깨짐 → spec_invalid", v.verdict == "spec_invalid" and v.detail and not v.ok, v.verdict)
 
 
 def test_no_spec():
-    for body in ("", "   \n", _body(("T1", "대기", (), ""), spec="")):
+    for body in ("", "   \n"):
         v = _v(body)
-        check(f"스펙 없음 → no_spec ({body[:20]!r})", v.verdict == "no_spec" and not v.ok, v.verdict)
+        check(f"빈 본문 → interview_needed ({body!r}) — 인터뷰가 제목·코멘트로 시작한다",
+              v.verdict == "interview_needed" and not v.ok, v.verdict)
+    v = _v(_body(("T1", "대기", (), ""), spec=""))
+    check("플랜만 있고 글 없음(옛 형식) → no_spec", v.verdict == "no_spec" and not v.ok, v.verdict)
 
 
 def test_invalid_plan():
@@ -148,16 +158,17 @@ def test_spec_missing_is_warning_only():
     """[중요] 경고만 — 판정은 스펙 항목 유무와 무관하다(사용자 결정 2026-11-14)."""
     full = _doc_example()
     for body in (SPEC, full):
-        check(f"판정 불변 — plan_needed ({len(ST.spec_missing(body))}개 누락)",
-              ST.assess(body).verdict == "plan_needed")
+        check(f"판정 불변 — interview_needed ({len(ST.spec_missing(body))}개 누락)",
+              ST.assess(body).verdict == "interview_needed")
     rows = (("T1", "대기", (), ""),)
     check("누락이 있어도 next 는 ok", ST.assess(_body(*rows)).ok)
     got = {"id": 1, "subject": "s", "description": _body(*rows)}
     out = ST.start_issue(1, getter=lambda iid: got)
     check("start_issue 응답에 spec_missing 이 실린다",
           out.get("spec_missing") == ALL_KEYS and out["ok"], str(out))
-    check("as_dict 키는 그대로 + spec_missing 하나만 더한다",
-          set(out) == {"verdict", "ok", "tasks", "detail", "next_action", "issue_id", "subject", "spec_missing"},
+    check("as_dict 키는 그대로 + spec_missing·spec_exists 만 더한다",
+          set(out) == {"verdict", "ok", "tasks", "detail", "next_action", "issue_id", "subject", "spec_missing",
+                       "spec_exists"},
           str(sorted(out)))
 
 

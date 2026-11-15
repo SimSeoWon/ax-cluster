@@ -3,8 +3,10 @@
 일감을 시작하라는 요청을 받으면 **구현보다 먼저** 이 판정을 부른다. 판정만 하고 아무것도
 쓰지 않는다 — 상태를 바꾸는 것은 `plan_state.transition` 의 몫이다.
 
-    no_spec         본문에 스펙이 없다                       → 스펙부터 사람과 쓴다
-    plan_needed     플랜 영역이 없다                         → RAG·현재 소스 대조 뒤 사용자와 플랜을 쓴다
+    interview_needed 플랜·스펙 영역이 둘 다 없다              → 착수 전 인터뷰(분류부터, `#960`)
+    spec_invalid    스펙 영역 태그가 깨졌다                   → 본문을 사람과 고친다
+    no_spec         플랜은 있는데 본문에 글이 없다(옛 형식)      → 스펙부터 사람과 쓴다
+    plan_needed     스펙 영역은 있고 플랜 영역이 없다           → RAG·현재 소스 대조 뒤 사용자와 플랜을 쓴다
     plan_invalid    플랜 형식이 어긋났다(PlanError)           → 본문을 사람과 고친다
     plan_violations 형식은 맞지만 상태 규칙을 어겼다           → 위반을 사람과 고친다
     resume          작업중 태스크가 있다                     → 그 태스크부터 재개(실제 상태 재대조)
@@ -17,6 +19,10 @@
 `ok` 와 다음 행동 문장을 함께 돌려준다.
 [주의] `resume` 은 플랜 기록만 본 것이다. 재개 전에 실제 코드·리비전과 대조하는 것은 호출자 몫이다.
 
+`#960` — 플랜이 없으면 **스펙 영역(`master/spec_block.py`) 유무**로 인터뷰/플랜을 가른다. 스펙 영역은 인터뷰의
+모든 단계를 거친 뒤에만 쓰이므로(`master/interview.py`) 영역이 있으면 인터뷰가 끝났다는 뜻이다. 열린 일감을
+한꺼번에 분류하지 않는다 — 작업을 시작할 때 그 일감 하나만 본다(사용자 2026-11-15).
+
 `spec_missing` (`#911`) — 스펙 템플릿(`docs/issue-spec.md`)의 여섯 항목 중 본문 제목 줄에 없는 것의
 키 목록. [중요] **경고만 한다** — 판정(`verdict`·`ok`)을 바꾸지 않는다(사용자 결정 2026-11-14).
 """
@@ -26,8 +32,11 @@ from dataclasses import dataclass, field
 
 from master import plan_block as PB
 from master import plan_state as PS
+from master import spec_block as SB
 
 NEXT_ACTION = {
+    "interview_needed": "구현·플랜 작성을 하지 않는다 — 착수 전 인터뷰를 분류부터 진행한다(단계 기록은 interview 도구로만)",
+    "spec_invalid": "스펙 영역 태그 오류를 사용자에게 보이고 본문을 함께 고친다",
     "no_spec": "스펙(무엇을 개발할지·완료 조건)을 사용자와 먼저 쓴다",
     "plan_needed": "구현하지 않는다 — RAG 와 현재 소스를 대조한 뒤 사용자와 플랜을 작성해 이 일감의 플랜 영역에 등록한다",
     "plan_invalid": "플랜 형식 오류를 사용자에게 보이고 본문을 함께 고친다",
@@ -92,12 +101,17 @@ def assess(body: str) -> StartVerdict:
         plan = PB.parse(body)
     except PB.PlanError as e:
         return StartVerdict("plan_invalid", [str(e)])
-    # 제목 줄만 있는 본문(`## 플랜` 등)은 스펙이 아니다
+    if plan is None:
+        # #960 — 플랜이 없으면 스펙 영역이 인터뷰를 거쳤는지를 말한다
+        try:
+            spec = SB.parse(body)
+        except SB.SpecError as e:
+            return StartVerdict("spec_invalid", [str(e)])
+        return StartVerdict("interview_needed" if spec is None else "plan_needed")
+    # 제목 줄만 있는 본문(`## 플랜` 등)은 스펙이 아니다 — 플랜이 이미 있는 옛 일감에만 남은 판정
     if not any(ln.strip() and not ln.lstrip().startswith("#")
                for ln in _outside_plan(body).splitlines()):
         return StartVerdict("no_spec")
-    if plan is None:
-        return StartVerdict("plan_needed")
     bad = PS.violations(plan)
     if bad:
         return StartVerdict("plan_violations", bad)
@@ -136,5 +150,9 @@ def start_issue(issue_id, *, getter=None) -> dict:
     body = got.get("description") or ""
     out = assess(body).as_dict()
     out["spec_missing"] = spec_missing(body)
+    try:
+        out["spec_exists"] = SB.exists(body)
+    except SB.SpecError:
+        out["spec_exists"] = False
     out.update({"issue_id": got.get("id", issue_id), "subject": got.get("subject", "")})
     return out

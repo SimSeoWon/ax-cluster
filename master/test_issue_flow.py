@@ -93,7 +93,7 @@ def t_no_spec_refuses(tmp):
     repo = make_repo(tmp)
     iss = Issue("## 플랜\n")
     r = IF.start(7, repo=repo, getter=iss.get, noter=iss.note)
-    check("스펙 없음 → 거절", not r["ok"] and r.get("verdict") == "no_spec", str(r))
+    check("스펙 없음 → 인터뷰 필요로 거절 (#960)", not r["ok"] and r.get("verdict") == "interview_needed", str(r))
 
 
 def t_happy_path(tmp):

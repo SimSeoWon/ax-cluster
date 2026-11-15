@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from master import plan_block as PB    # noqa: E402
 from master import plan_tools as PT    # noqa: E402
 from master import plan_start as ST    # noqa: E402
+from master import spec_block as SB    # noqa: E402
 from master import issue_lock as IL    # noqa: E402
 
 PASS = FAIL = 0
@@ -48,7 +49,9 @@ class FakeIssue:
         return f"레드마인 #{iid} 갱신 (notes, description)"
 
 
-SPEC = "## 스펙\n\n요구와 완료 조건\n"
+# #960 — 새 플랜은 스펙 영역(착수 전 인터뷰 결과)이 있는 일감에만 등록된다
+BARE = "## 스펙\n\n요구와 완료 조건\n"
+SPEC = SB.put(BARE, "### 문제\n\n확정 스펙")
 
 
 def _err(fn) -> str:
@@ -81,14 +84,28 @@ def test_set_reports_spec_missing():
     iss = FakeIssue(SPEC)
     out = PT.set_plan(939, _tasks(), "등록", getter=iss.get, updater=iss.update)
     check("스펙 항목이 없어도 등록은 된다", out["ok"] and PB.parse(iss.body) is not None, str(out))
-    check("빠진 항목 전부를 경고로 싣는다", out.get("spec_missing") == keys, str(out.get("spec_missing")))
+    check("빠진 항목 전부를 경고로 싣는다", out.get("spec_missing") == keys[1:], str(out.get("spec_missing")))
     full = "".join(f"## {h}\n내용\n" for h in ("문제·맥락", "초반 분류", "관측 결과", "범위·비범위",
                                                   "완료 조건", "열린 결정"))
-    iss = FakeIssue(full)
+    iss = FakeIssue(SB.put(full, "### 문제\n\n확정"))
     out = PT.set_plan(939, _tasks(), "등록", getter=iss.get, updater=iss.update)
     check("6항목 본문 → 빈 목록", out.get("spec_missing") == [], str(out.get("spec_missing")))
     out = PT.set_plan(939, _tasks() + [{"id": "T3", "goal": "더"}], "갱신", getter=iss.get, updater=iss.update)
     check("갱신(플랜 영역 있음)에서도 플랜 안은 세지 않는다", out.get("spec_missing") == [], str(out))
+
+
+def test_set_requires_spec_area():
+    """#960 — 새 플랜은 스펙 영역이 있어야 등록된다. 플랜이 이미 있는 일감의 편집은 그대로."""
+    iss = FakeIssue(BARE)
+    msg = _err(lambda: PT.set_plan(960, _tasks(), "등록", getter=iss.get, updater=iss.update))
+    check("스펙 영역 없음 → 거절", "스펙 영역이 없다" in msg, msg)
+    check("거절은 본문을 안 바꾼다", iss.writes == [])
+    broken = FakeIssue(BARE + "<!-- ax:spec:begin v=1 -->\n")
+    check("스펙 태그 깨짐 → 거절", "스펙 영역이 깨졌다" in _err(lambda: PT.set_plan(
+        960, _tasks(), "등록", getter=broken.get, updater=broken.update)))
+    legacy = FakeIssue(PB.append(BARE, [PB.Task("T1", "대기", "옛 목표")]))
+    out = PT.set_plan(960, _tasks(), "옛 일감 편집", getter=legacy.get, updater=legacy.update)
+    check("플랜이 이미 있는 옛 일감은 스펙 없이도 편집", out["ok"] and not out["created"], str(out))
 
 
 def test_set_keeps_states_and_evidence():
@@ -278,6 +295,20 @@ def test_start_adds_steps():
     check("읽기 실패는 ok false", out["ok"] is False and "error" in out, str(out))
 
 
+def test_start_interview_hands_materials():
+    """#960 — 인터뷰 필요 판정이면 진행 상태와 Python 이 모은 재료를 함께 싣는다."""
+    iss = FakeIssue(BARE)
+    seen = []
+    out = PT.start(1, getter=iss.get, kind_of=lambda p: "code", active=lambda: "AXCluster",
+                   materials=lambda got, project: seen.append((got["id"], project)) or {"rag": "가짜"})
+    check("판정 interview_needed", out["verdict"] == "interview_needed" and not out["ok"], str(out))
+    check("인터뷰 상태(다음 = 분류)", out["interview"].get("next") == "classify", str(out.get("interview")))
+    check("재료를 싣는다", out["materials"] == {"rag": "가짜"} and seen and seen[0][0] == 1, str(seen))
+    out = PT.start(1, getter=FakeIssue(SPEC).get, kind_of=lambda p: "code", active=lambda: "AXCluster",
+                   materials=lambda got, project: (_ for _ in ()).throw(AssertionError("부르면 안 된다")))
+    check("스펙 영역이 있으면 재료를 안 모은다", "materials" not in out and out["verdict"] == "plan_needed", str(out))
+
+
 def test_transition_lock_gate():
     """`#883` — 다른 일감이 활성이면 작업중 전이를 거절한다(lock_root 는 늘 임시)."""
     with tempfile.TemporaryDirectory() as d:
@@ -329,7 +360,8 @@ def test_transition_lock_gate():
 
 
 def main() -> int:
-    for fn in (test_evidence_warning_judgement,
+    for fn in (test_set_requires_spec_area, test_start_interview_hands_materials,
+               test_evidence_warning_judgement,
                test_transition_evidence_warning_is_warning_only,
                test_transition_not_run_phrase,
                test_set_reports_spec_missing,
