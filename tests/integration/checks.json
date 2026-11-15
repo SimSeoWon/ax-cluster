@@ -1033,5 +1033,10 @@
     "path": "master/test_llm_cooldown.py",
     "count_pattern": "(?m)^OK test_llm_cooldown: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
+  },
+  {
+    "path": "master/test_sweep.py",
+    "count_pattern": "(?m)^(?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
   }
 ]
