@@ -1,5 +1,15 @@
 # 현재 AX 작업 인수인계
 
+> 2026-11-15 — **#970 마감 직전 — Claude 토큰 소진으로 Codex 가 이어받는다(사용자 「토큰없다 인수인계서 써 코덱스에서 진행할게」).** T1~T10·T5 완료, 체크리스트 C1~C4 충족. `issue_finish_tool(970)` 미리보기가 `step: checklist` 로 멈췄다 — **C5(재기동·배달은 마감 wrapup 판정) 미확인.** 사용자에게 「C5 제외로 기록하고 마감까지 진행할까」를 물었고 **답은 아직 없다** — 승인 없이 C5 제외·마감하지 않는다.
+
+## #970 진행 중 — 자동 리뷰 「낮음」 지적 대조·수정 (worktree `.ax-issues/970`, 잠금 활성)
+
+- 브랜치 `issue/970`(미push): `4f6754e` T1 리뷰 프롬프트에 범위 밖 파일 절·러너가 거르기 전 목록 전달 · `6569345` T6 · `1cad28f` T7 · `4e3fa21` T8(`master/testkit_tmp.py` 신규) · `2a01d32`·`7a23fb3` T9(D11 사용자 A안: 한도 초과=0%) · `ed60bd9` T10(sweep·run_check 파일별 TMPDIR) · `ab75a16` 리포트 `reports/198-970-review-defects-low.md`. 이 인계서 커밋도 같은 브랜치.
+- 검사(`ed60bd9`): 전수 236파일 12240/12240 · unittest 542 · 통합 Ran 210 OK · `/tmp ax-*` 증가 0.
+- 리뷰 상태: 대조 246건 중 열림은 R193-1 하나(사용자 결정으로 열어 둠) · 전체 open 5 · dismissed 358 · applied 166.
+- 다음(사용자 승인 뒤): ① `plan_transition_tool(970, C5, 제외, 사유, user_answer=사용자 원문)` ② `issue_finish_tool(970, confirm=True)` ③ 운영 저장소에서 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 970 --project AXCluster` → rc2 면 인계서 갱신 커밋·push 뒤 재실행(배달 `.2`·`.33`·`.43`) ④ `master-local --check`. `client_mcp.py` 변경 없음.
+- 그 뒤 사용자 순서상 남은 것: #968(기각 후보 웹 UI) · agy 우선 관측 · R193-1 판단.
+
 > 2026-11-15 21:50 — **#969 마감 완료**(main `76f25c3`, 완료·100). `ax-task-queue`·`ax-broker` 21:47:50 · `ax-projects` 21:47:55 재기동, 재판정 깨끗. 이 문서 커밋·push 직후 `master.issue_wrapup 969` 재실행으로 세 워커(`.2`·`.33`·`.43`)에 배달하고 `master-local --check` 를 확인한다(`client_mcp.py` 변경 — C5 는 게이트에서만 제외). #965 는 같은 날 19:45 마감·배달 완료.
 
 ## #969 마감 — 자동 리뷰 「중간」 지적 중 실제 결함 22묶음(53건)
