@@ -388,4 +388,8 @@ def main(argv=None) -> int:
         return 2
     if a.agent and relay.issue:
         relay.set_agent(a.agent)
+    elif a.agent:
+        # `#970` D16 — 일감 없이 준 --agent 를 조용히 버리지 않는다(에이전트 선택은 일감 세션에 속한다)
+        print(f"[relay] --agent {a.agent} 는 --issue 와 함께 써야 적용된다 — 일감을 고른 뒤 에이전트를 다시 고른다")
+        store.debug(root, None, "console.main", f"--agent {a.agent} 무시 — 일감 없음")
     return relay.loop()

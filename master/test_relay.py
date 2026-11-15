@@ -237,6 +237,29 @@ def t_store_969(tmp):
     check("8 보관 이동 실패는 StoreError", got.startswith("StoreError"), got)
 
 
+def t_console_agent_without_issue_970(tmp):
+    """`#970` D16 (R355-11·R354-1) — 일감 없이 --agent 만 주면 조용히 무시하지 않고 알린다."""
+    import contextlib
+    import io
+
+    class FakeRelay:
+        def __init__(self, **kw):
+            self.issue = 0
+
+        def loop(self):
+            return 0
+    saved = C.Relay
+    C.Relay = FakeRelay
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            rc = C.main(["--agent", "codex", "--root", str(tmp / "relay-root"), "--cwd", str(tmp)])
+    finally:
+        C.Relay = saved
+    text = out.getvalue()
+    check("D16 --agent 만 주면 알린다", rc == 0 and "--agent" in text and "일감" in text, text)
+
+
 def t_agents_build_cmd(tmp):
     fake_bins(tmp)
     c, sid = A.build_cmd("claude", "안녕")
@@ -694,7 +717,7 @@ def t_quota_codex_run(tmp):
 
 
 TESTS = [t_store_open_and_seq, t_store_concurrent_append, t_store_agent_state,
-         t_store_corrupt_not_overwritten, t_store_archive, t_store_969,
+         t_store_corrupt_not_overwritten, t_store_archive, t_store_969, t_console_agent_without_issue_970,
          t_agents_build_cmd, t_agents_claude, t_agents_969_cleanup_on_error, t_agents_codex, t_agents_agy, t_agents_failures,
          t_boundary_open, t_boundary_closable,
          t_console_round_trip, t_console_failure_and_reset, t_console_open_refused, t_header,
