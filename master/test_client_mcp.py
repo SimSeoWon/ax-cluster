@@ -1040,11 +1040,11 @@ def test_requester_management_delegation():
         ("resolve_terms", {"terms": ["미션 시스템", "배포"]}, "/api/v1/thesaurus/resolve", None),
         ("create_domain", {"name": "Combat"}, "/api/v1/ontology/create-domain",
          {"name": "Combat", "tags": [], "parent": "", "summary": ""}),
-        ("edit_ontology_item", {"domain": "Combat", "kind": "object", "name": "AActor",
+        ("edit_ontology_item", {"domain": "Combat", "kind": "objects", "name": "AActor",
                                 "patch": {"summary": "설명"}}, "/api/v1/ontology/edit-item", None),
-        ("remove_ontology_item", {"domain": "Combat", "kind": "object", "name": "AActor"},
-         "/api/v1/ontology/remove-item", {"domain": "Combat", "kind": "object", "name": "AActor", "force": False}),
-        ("lock_ontology_item", {"domain": "Combat", "kind": "object", "name": "AActor", "locked": False},
+        ("remove_ontology_item", {"domain": "Combat", "kind": "objects", "name": "AActor"},
+         "/api/v1/ontology/remove-item", {"domain": "Combat", "kind": "objects", "name": "AActor", "force": False}),
+        ("lock_ontology_item", {"domain": "Combat", "kind": "objects", "name": "AActor", "locked": False},
          "/api/v1/ontology/lock-item", None),
         ("list_locked", {}, "/api/v1/ontology/list-locked", {"domain": ""}),
         ("unassigned_classes", {}, "/api/v1/ontology/unassigned-classes", {"sample": 20}),
@@ -1122,11 +1122,11 @@ def test_requester_management_delegation():
                 ("create_domain", {}),
                 ("create_domain", {"name": ""}),
                 ("create_domain", {"name": "Combat", "tags": [1]}),
-                ("remove_ontology_item", {"domain": "Combat", "kind": "object", "name": "A", "force": "false"}),
-                ("lock_ontology_item", {"domain": "Combat", "kind": "object", "name": "A", "locked": 1}),
+                ("remove_ontology_item", {"domain": "Combat", "kind": "objects", "name": "A", "force": "false"}),
+                ("lock_ontology_item", {"domain": "Combat", "kind": "objects", "name": "A", "locked": 1}),
                 ("sync_ontology", {"apply": "false"}),
                 ("unassigned_classes", {"sample": True}),
-                ("edit_ontology_item", {"domain": "Combat", "kind": "object", "name": "A", "patch": []}),
+                ("edit_ontology_item", {"domain": "Combat", "kind": "objects", "name": "A", "patch": []}),
                 ("edit_domain_field", {"domain": "Combat", "tags": "tag"}),
                 ("edit_domain_field", {"domain": "Combat", "status": False}),
                 ("set_log_tag", {"domain": "Combat", "tag": "event", "cvar": None}),
@@ -1157,8 +1157,16 @@ def test_requester_management_delegation():
                   result["result"]["isError"] is True and broken.call_count == 1)
 
 
+def test_ontology_kind_schema_969():
+    """`#969` 15 (R288-1·3·4) — 항목 종류는 복수형만 — 스키마가 enum 으로 못박는다(단수형은 서버 422)."""
+    tools = {t["name"]: t for t in M.TOOLS}
+    for name in ("edit_ontology_item", "remove_ontology_item", "lock_ontology_item"):
+        kind = tools[name]["inputSchema"]["properties"]["kind"]
+        check(f"15 {name} kind enum", kind.get("enum") == ["objects", "actions", "invariants"], str(kind))
+
+
 def main() -> int:
-    for fn in (test_single_file_stdlib_only, test_protocol_roundtrip,
+    for fn in (test_single_file_stdlib_only, test_protocol_roundtrip, test_ontology_kind_schema_969,
                test_nonascii_work_id_is_encoded, test_search_caches_and_falls_back,
                test_domain_tools_cache_and_encode, test_live_state_is_never_cached,
                test_cache_loader_is_file_relative,

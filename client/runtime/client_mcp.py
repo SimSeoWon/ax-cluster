@@ -1178,6 +1178,10 @@ def tool_get_domain(papi, name: str, *, cache=None) -> dict:
 MARKERS = ("_stale", "_cached_at", "_note")
 
 
+# `#969` 15 (R288-1·3·4) — 온톨로지 항목 종류는 복수형이다(서버 `ItemReq.kind`). 스키마에 못박아 단수형 422 를 막는다.
+ONTOLOGY_KINDS = ("objects", "actions", "invariants")
+
+
 def _ontology_item(papi, kind: str, domain: str, name: str, *, cache=None) -> dict:
     d, n = (domain or "").strip(), (name or "").strip()
     if not d:
@@ -1917,19 +1921,19 @@ TOOLS.extend([
      "description": "사용자가 확인한 온톨로지 항목을 마스터에서 얕은 병합으로 수정하고 검수 잠근다. 없는 항목은 생성하지 않는다.",
      "inputSchema": {"type": "object", "additionalProperties": False,
                      "required": ["domain", "kind", "name", "patch"], "properties": {
-         "domain": {"type": "string"}, "kind": {"type": "string"}, "name": {"type": "string"},
+         "domain": {"type": "string"}, "kind": {"type": "string", "enum": list(ONTOLOGY_KINDS), "description": "복수형 — objects · actions · invariants (`#969`)"}, "name": {"type": "string"},
          "patch": {"type": "object"}}}},
     {"name": "remove_ontology_item",
      "description": "선택한 온톨로지 항목을 마스터에서 삭제한다. 잠긴 항목은 force 없이 삭제하지 않는다. force=true는 사용자에게 추가 확인한 뒤에만 쓴다.",
      "inputSchema": {"type": "object", "additionalProperties": False,
                      "required": ["domain", "kind", "name"], "properties": {
-         "domain": {"type": "string"}, "kind": {"type": "string"}, "name": {"type": "string"},
+         "domain": {"type": "string"}, "kind": {"type": "string", "enum": list(ONTOLOGY_KINDS), "description": "복수형 — objects · actions · invariants (`#969`)"}, "name": {"type": "string"},
          "force": {"type": "boolean", "default": False}}}},
     {"name": "lock_ontology_item",
      "description": "사용자가 선택한 온톨로지 항목의 검수 잠금을 걸거나 푼다. 실제 처리는 마스터가 한다.",
      "inputSchema": {"type": "object", "additionalProperties": False,
                      "required": ["domain", "kind", "name", "locked"], "properties": {
-         "domain": {"type": "string"}, "kind": {"type": "string"}, "name": {"type": "string"},
+         "domain": {"type": "string"}, "kind": {"type": "string", "enum": list(ONTOLOGY_KINDS), "description": "복수형 — objects · actions · invariants (`#969`)"}, "name": {"type": "string"},
          "locked": {"type": "boolean"}}}},
     {"name": "list_locked",
      "description": "체크아웃 프로젝트의 검수 잠긴 온톨로지 항목을 인증된 마스터 입구에서 조회한다.",

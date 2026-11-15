@@ -276,6 +276,17 @@ def test_plan_changes_865() -> None:
     check("출력에 확장·사유", "T1 대상 확장 +master/test_b.py" in line and "사유: 대상 밖 실패" in line, line)
 
 
+def test_unreadable_old_body_969() -> None:
+    """`#969` 11 (R198-2) — 갱신인데 이전 본문을 못 읽으면 diff 를 만들지 않는다(전부 「추가」로 세지 않는다)."""
+    v = PB.append("## 스펙\n", [PB.Task("T1", "대기", "고침")])
+    broken = "## 스펙\n<!-- ax:plan:begin v=2 -->\n깨진 표\n"
+    js = [{"created_on": "2026-11-01T08:00:00Z", "notes": "플랜 갱신 — 추가 없음\n사유: 이전 본문 손상",
+           "details": [{"property": "attr", "name": "description", "old_value": broken, "new_value": v}]}]
+    pc = M.plan_changes(js)
+    check("11 diff 없음 · 추가 집계 0", pc["events"][0]["diff"] is None and pc["tasks_added_after_register"] == 0,
+          str(pc))
+
+
 def test_start_lead_865() -> None:
     """`#865` T4 — 착수 기준 리드: 진행 전이 · 플랜 등록 · 플랜 작업중 중 가장 이른 것 → 종결."""
     base = {"id": 1, "subject": "s", "status": {"id": 4}, "created_on": "2026-10-31T00:00:00Z",
@@ -300,6 +311,7 @@ if __name__ == "__main__":
     test_has_test_865()
     test_work_commits_865()
     test_plan_changes_865()
+    test_unreadable_old_body_969()
     test_start_lead_865()
     total = PASS + FAIL
     if FAIL:

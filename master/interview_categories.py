@@ -94,7 +94,8 @@ def _parse(path: Path) -> tuple[Category | None, list[str]]:
     extra = sorted(set(fm) - {"name", "label", "steps"})
     if extra:
         bad.append(f"{rel}: 모르는 머리말 키 {extra}")
-    body = text[text.index("\n", end + 1) + 1:].strip()
+    nl = text.find("\n", end + 1)                  # `#969` 14 — 닫는 `---` 뒤 개행이 없으면 본문이 비었다
+    body = text[nl + 1:].strip() if nl != -1 else ""
     if not body:
         bad.append(f"{rel}: 본문(단계 안내)이 비었다")
     if bad:

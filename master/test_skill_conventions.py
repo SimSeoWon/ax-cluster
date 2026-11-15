@@ -144,7 +144,8 @@ def skill_problems(d: Path, tools: dict) -> list:
         bad.append(f"description 길이 {len(desc)}")
     if re.search(r"<[^>]+>", desc):
         bad.append("description 에 꺾쇠 자리표시")
-    body = text[text.index("\n", end + 1) + 1:]
+    nl = text.find("\n", end + 1)                  # `#969` 14 — 닫는 `---` 뒤 개행 없음도 판정으로 끝낸다
+    body = text[nl + 1:] if nl != -1 else ""
     lines = body.split("\n")
     total = len(text.split("\n"))
     bad += toc_problems(lines)
@@ -269,8 +270,23 @@ def test_role_tool_calls() -> None:
         check(name, bool(got) == fails, str(got))
 
 
+def test_no_newline_after_frontmatter_969():
+    """`#969` 14 (R251-11 · R252-11) — 닫는 `---` 뒤 개행이 없는 SKILL.md 도 위반 목록으로 끝난다(ValueError 아님)."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as t:
+        d = Path(t) / "ax-nonl"
+        d.mkdir()
+        (d / "SKILL.md").write_text("---\nname: ax-nonl\ndescription: 짧은 설명\n---", encoding="utf-8")
+        try:
+            got = skill_problems(d, tool_names())
+        except Exception as e:                               # noqa: BLE001
+            got = f"{type(e).__name__}: {e}"
+        check("14 개행 없음 → 위반 목록", isinstance(got, list) and got, str(got))
+
+
 def main() -> int:
-    for fn in (test_real_skills, test_violations_are_caught, test_role_tool_calls):
+    for fn in (test_real_skills, test_violations_are_caught, test_role_tool_calls,
+               test_no_newline_after_frontmatter_969):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_skill_conventions: {PASS}/{total} 통과")

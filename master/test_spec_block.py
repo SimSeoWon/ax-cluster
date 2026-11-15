@@ -99,8 +99,17 @@ def test_write_only_after_impact():
     check("플랜 있으면 거절", _raises(lambda: _write(planned), "플랜 영역이 이미"))
 
 
+def test_plan_heading_first_line_969():
+    """`#969` 12 (R397-9 · R392-2) — 본문 첫 줄이 플랜 제목이어도 스펙은 제목 앞에 들어간다."""
+    planned = PB.append("", [PB.Task("T1", "대기", "목표")]).lstrip("\n")
+    check("12 픽스처: 본문이 플랜 제목으로 시작", planned.startswith("## 플랜"), planned[:40])
+    b = SB.put(planned, SIX)
+    check("12 스펙이 플랜 제목 앞", b.index("ax:spec:begin") < b.index("## 플랜") < b.index("ax:plan:begin"), b[:200])
+    check("12 플랜은 그대로 파싱", PB.parse(b).tasks[0].id == "T1")
+
+
 def main() -> int:
-    for fn in (test_block_format, test_write_only_after_impact):
+    for fn in (test_block_format, test_write_only_after_impact, test_plan_heading_first_line_969):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_spec_block: {PASS}/{total} 통과")

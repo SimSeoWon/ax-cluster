@@ -97,9 +97,24 @@ def test_get_unknown():
     check("모르는 분류 거절", ok)
 
 
+def test_no_newline_after_frontmatter_969():
+    """`#969` 14 (R397-5 · R389-1) — 닫는 `---` 뒤에 개행이 없어도 CategoryError(본문 빔)로 끝난다."""
+    with tempfile.TemporaryDirectory() as t:
+        r = Path(t)
+        (r / "category-nonl.md").write_text("---\nname: nonl\nlabel: 엑스\nsteps: [specify]\n---", encoding="utf-8")
+        try:
+            IC.load(r)
+            got = "예외 없음"
+        except IC.CategoryError as e:
+            got = f"CategoryError: {e}"
+        except Exception as e:                               # noqa: BLE001
+            got = f"{type(e).__name__}: {e}"
+        check("14 개행 없음 → CategoryError(본문)", got.startswith("CategoryError") and "본문" in got, got)
+
+
 def main() -> int:
     for fn in (test_real_docs, test_order_is_fixed_not_doc_order, test_adding_a_doc_adds_a_category,
-               test_broken_rejects_all, test_get_unknown):
+               test_broken_rejects_all, test_get_unknown, test_no_newline_after_frontmatter_969):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_interview_categories: {PASS}/{total} 통과")

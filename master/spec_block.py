@@ -84,7 +84,9 @@ def put(body: str, content: str) -> str:
     # 플랜 제목 줄(태그 바로 앞의 `#` 줄)이 있으면 그 앞에 끼운다
     cut = plan[0]
     head = body.rfind(nl + "#", 0, cut)
-    if head != -1 and body[head + len(nl):cut].strip().startswith("#") and \
-            "\n" not in body[head + len(nl):cut].strip():
-        cut = head + len(nl)
+    # `#969` 12 (R397-9 · R392-2) — 플랜 제목 줄이 본문 첫 줄(오프셋 0)이어도 그 앞에 끼운다
+    start = head + len(nl) if head != -1 else 0
+    seg = body[start:cut].strip()
+    if seg.startswith("#") and "\n" not in seg:
+        cut = start
     return body[:cut] + block + nl + nl + body[cut:]

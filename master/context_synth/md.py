@@ -178,7 +178,8 @@ def check(md: str) -> Check:
     try:
         fields = yaml.safe_load(_FRONTMATTER_RE.match(s).group(2))
     except yaml.YAMLError as error:
-        return Check(False, f"frontmatter YAML 파싱 실패: {error.problem}", s[:80])
+        why = getattr(error, "problem", None) or str(error)      # `#969` 13 — ReaderError 엔 problem 이 없다
+        return Check(False, f"frontmatter YAML 파싱 실패: {why}", s[:80])
     tags = fields.get("tags", []) if isinstance(fields, dict) else []
     if isinstance(tags, str):
         tags = [tags]

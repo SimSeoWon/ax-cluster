@@ -363,6 +363,20 @@ def main() -> int:
 
     print("\n[3] [중요] σ.7-B — 저장 전 게이트. 거부는 실패가 아니라 보류다")
     check("너무 짧으면 거부", not md.check("---\ntags: []\n---\n").ok)
+    # `#969` 13 (R349-4 · R350-4) — problem 속성이 없는 YAMLError(ReaderError 등)도 판정으로 끝난다
+    import yaml as _yaml
+    _real = _yaml.safe_load
+    _yaml.safe_load = lambda *_a, **_k: (_ for _ in ()).throw(_yaml.YAMLError("읽기 오류"))
+    try:
+        try:
+            _c = md.check("---\ntags: [a]\ncategory: x/y\n---\n" + "본문 " * 40)
+            _got = (_c.ok, _c.reason)
+        except Exception as _e:                              # noqa: BLE001
+            _got = f"{type(_e).__name__}: {_e}"
+    finally:
+        _yaml.safe_load = _real
+    check("#969 13 problem 없는 YAMLError → 실패 판정·사유", isinstance(_got, tuple) and _got[0] is False
+          and "읽기 오류" in _got[1], str(_got))
     check("  사유가 남는다", "짧다" in md.check("---\n").reason)
     c = md.check("설명만 있고 frontmatter 가 없다. " * 5)
     check("frontmatter 없으면 거부", not c.ok and "frontmatter" in c.reason, c.reason)

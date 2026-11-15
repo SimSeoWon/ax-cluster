@@ -307,7 +307,8 @@ def plan_changes(journals: list[dict]) -> dict:
         old_p = new_p = None
         if ch is not None:
             old_p, new_p = _parse_or_none(ch[0]), _parse_or_none(ch[1])
-        if ch is not None and new_p is not None:
+        # `#969` 11 (R198-2) — 갱신인데 이전 본문을 못 읽으면 diff 를 만들지 않는다(전부 「추가」로 세지 않는다)
+        if ch is not None and new_p is not None and (kind == "등록" or old_p is not None):
             old_t = {t.id: t for t in (old_p.tasks if old_p else [])}
             new_t = {t.id: t for t in new_p.tasks}
             fields: dict[str, list[str]] = {}

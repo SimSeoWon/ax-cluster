@@ -28,7 +28,10 @@ def main(argv=None) -> int:
     rec.add_argument("--by", default="")
     a = ap.parse_args(argv)
     from master.work import conductor as c
-    out = c.snapshot() if a.cmd == "snapshot" else c.record_master(a.agent, why=a.why, by=a.by)
+    try:
+        out = c.snapshot() if a.cmd == "snapshot" else c.record_master(a.agent, why=a.why, by=a.by)
+    except Exception as e:                       # noqa: BLE001 — `#969` 16: 결과는 언제나 JSON 한 줄
+        out = {"ok": False, "error": f"{type(e).__name__}: {e}"}
     print(json.dumps(out, ensure_ascii=False))
     return 0 if not (isinstance(out, dict) and out.get("ok") is False) else 1
 

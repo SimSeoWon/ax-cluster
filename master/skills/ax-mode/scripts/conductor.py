@@ -36,12 +36,15 @@ def main(argv=None) -> int:
     sm.add_argument("--by", default="")
     a = ap.parse_args(argv)
     from master.work import conductor as c
-    if a.cmd == "snapshot":
-        out = c.snapshot()
-    elif a.cmd == "set-worker":
-        out = c.set_worker(a.mode, why=a.why, by=a.by)
-    else:
-        out = c.set_work_worker_mode(a.work_id, a.mode, why=a.why, by=a.by)
+    try:
+        if a.cmd == "snapshot":
+            out = c.snapshot()
+        elif a.cmd == "set-worker":
+            out = c.set_worker(a.mode, why=a.why, by=a.by)
+        else:
+            out = c.set_work_worker_mode(a.work_id, a.mode, why=a.why, by=a.by)
+    except Exception as e:                       # noqa: BLE001 — `#969` 16: 결과는 언제나 JSON 한 줄
+        out = {"ok": False, "error": f"{type(e).__name__}: {e}"}
     print(json.dumps(out, ensure_ascii=False))
     return 0 if not (isinstance(out, dict) and out.get("ok") is False) else 1
 
