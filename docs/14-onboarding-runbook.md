@@ -162,6 +162,9 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client setup-host --host=<ip> -
 
 ### 3 · 배달 → 대조
 
+[중요] **`probe` → `plan` → `deliver` 순서로 진행한다.** 다른 기계에 쓰기 전에 계획에서
+무엇을 어디에 쓸지 확인한다. 배달 뒤에는 `check`로 대조한다.
+
 ```bash
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client probe   <프로젝트>   # 읽기 전용 실측
 AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client plan    <프로젝트>   # 쓰지 않는다
@@ -207,6 +210,12 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update --all   # 등록 
 프로필이 색인 전용 또는 `kind: code`인 프로젝트는 루트 `CLAUDE.md`·`AGENTS.md`에 관리 블록을
 쓰지 않고 기존 사람 파일을 보존한다. Claude의 ax-client는 `.mcp.json` 대신 해당 체크아웃의
 로컬 스코프(`~/.claude.json`)에 등록하며, `check`도 그 등록을 대조한다.
+요청자의 관리 훅은 파일 배달과 등록을 따로 확인한다. `plan`은
+`.claude/settings.json`의 훅 등록 항목을 보여 주며, 관리 항목만 교체하고 사용자 훅은 보존한다.
+`.claude/settings.local.json`은 사람 파일이므로 건드리지 않는다.
+`check`는 선언된 관리 훅 항목이 실제 등록됐는지 대조하며, 등록 누락이나 깨진 JSON은 실패다.
+파일 해시가 같다는 사실만으로 훅이 실행된다고 판단하지 않는다.
+
 `check`는 그 밖에도 네 가지를 대조한다.
 - Windows에서는 Python 절대경로를 확인한다. 경로를 못 찾았으면 Codex 로컬 도구를 실행할 수 없으므로 실패다.
 - 워커 클론이 원격에서 지운 브랜치의 원격추적 ref를 남기지 않는지 본다(`fetch_prune`, `#787`).

@@ -1,6 +1,31 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-15 23:45 — **#970 마감 완료**(main `1b16b0c`, 완료·100). Codex가 T5를 실증 재확인하고 마감했다. `ax-task-queue`·`ax-broker`·`ax-projects` 23:45:17 재기동·재판정 깨끗. 이 문서 커밋·push 직후 같은 `master.issue_wrapup 970 --project AXCluster`로 세 워커 배달·대조를 이어간다. 최종 결과는 Redmine #970 마감 노트.
+> 2026-11-16 — **#971 스펙 기입까지만 완료**(Redmine 신규·0%, `ax:spec` 있음·`ax:plan` 없음). 사용자 「응 스펙만 기입해줘」에 따라 플랜·구현·issue_start는 하지 않았다. 이후 요청으로 인수인계서 작성과 일반 문서4개 ax-docsync 검토를 완료했다. 승인한 readme·onboarding 2개 적용rc0, modules·handoff는 추가 변경 없음. 작업 시작 기준 main=origin/main=`14fb770ef2a19ce7a057665153b9073e8b419abd`, 깨끗함. 사용자 「응」으로 문서3개 커밋·push 승인, 이 문서 커밋에 포함해 실행한다. 배달은 이번 승인 범위에 포함하지 않는다.
+
+## #971 — 동명 클래스 리뷰 고지·합성 검증 폴백·클래스명 변경 (스펙만 확정)
+
+- 정본: Redmine #971 본문 `ax:spec`과 인터뷰 노트. 분류 bug → 조사 → 명세 → 재현 → 파급 → 스펙 기록, 응답 `ok:true, replaced:false, next:plan`. 되읽기에서 기록 원문 일치·플랜 없음 확인. 작성 수행 방식(로컬 서브/AX 워커)·태스크별 파일 목록·실물 관측 명령은 미결정. worktree 없음(이번 조회에 운영 main 하나만 존재). 다른 일감을 시작하지 않는다.
+- **사용자 결정·순서**: 「2개를 971번에서 처리하자. 예방법과 폴백처리를 하는거지」 → 먼저 동명 상태에서 경로 구분과 리뷰 고지를 개발·테스트 → 클래스명만 변경하고 모든 사용처를 안전하게 수정·재검증. 파일명 유지. 리뷰는 동명 이름·각 선언 파일·혼동 가능성을 알려 사용자가 이름 개선 일감을 할당한다. 자동 개명·자동 일감 생성·새 차단 없음.
+- **1단계**: 생성 문서의 클래스명+선언 파일로 그래프의 전체 클래스 이름과 연결하는 폴백. 없는 클래스·잘못된 파일·다른 전체 이름·경로 미상 동명 후보는 근거 없이 통과시키지 않는다. 기존 검증을 우회하지 않는다. 이름 변경 전에 두 저장 실패 산출물과 반례·커밋/범위 리뷰 경유를 검증한다.
+- **2단계 이름 확정(사용자 「응!」)**: `master/plan_block.py` Plan→IssuePlan·Task→IssuePlanTask·Check→IssuePlanCheck; `master/projects/onboard.py` Plan→OnboardingPlan; `master/work/decompose.py` Plan→DecompositionPlan; `master/work/workmodel.py` Task→WorkTask; `master/context_synth/md.py` Check→ContextDocCheck. 선언/import/타입힌트/생성/별칭 속성/실행 문자열/테스트 등 실제 참조를 모두 확인한다. 다른 동명 클래스 일괄 치환·과거 리뷰/리포트/노트 개작은 금지. 직렬화 필드·외부 응답·플랜 본문 계약 유지.
+- **원인 실측**: graph DB에 `master.plan_block.Plan/Task/Check`가 정상 존재(동명은 pyparse.disambiguate가 모듈명을 붙임), project_symbols의 짧은 Plan/Task/Check는 False·PlanError는 True. verify의 이름 모양 필터가 짧은 이름을 빼고, related_classes 정확 일치 검증은 문서에 있는 선언 파일을 이름 연결에 쓰지 않는다. 저장 산출물 `AXCluster/synth_attempts/f2ef224172d242d6925dec3beaaafc13.json`(plan_metrics)·`eea55bdcbbb94fa096c51c2c6b35c84f.json`(test_plan_block)을 실제 등록 repo `/home/sim/ax-cluster/AXCluster/repo`에서 읽어 현재 verify로 재검증: 각각 `ok:false, unknown_related:[Plan,Task]` / `[Plan]`, 둘 다 ghosts=[]·declared=[]·mentioned_declared=true. LLM·문서쓰기 없음. 미러는 읽기만 했다.
+- **정정**: 중간에 「C++ 확장자만 받아 Python을 건너뜀」이라고 말했으나 오판. `SourceScope.contains`는 등록 source.exts(.py)를 우선하며 실측 contains_py=True. Python도 읽고 이름 필터가 제외한다. Plan 버전1과 append 결과 전체 비교 False도 결함이 아니라 기본버전2 승격이다. 태스크 동일·parse/replace 바이트 왕복 True를 별도 출력으로 확인했다.
+- **파급 실측**: service_freshness.dependencies에서 ax-task-queue·ax-projects와 교집합, ax-broker는 없음. onboard는 ax-projects 직접 경로. 재기동은 최종 wrapup 판정. requester/worker payload 목록과 조사 대상 교집합 없음, client_mcp 미변경. 온보딩/분해 직렬화 키·workmodel task_id·md.Check summary 기준값 직접 확인. 전체 전수/통합은 #971에서 아직 실행하지 않았다. 구현·검사·커밋은 issue_start 응답 repo에서만.
+- **현재 중단점**: 스펙 기입 요청 완료. 플랜 제안/등록·개발·7개 개명·합성 재실행 모두 미실행. 다음 구현은 별도 사용자 지시와 플랜 동의 후 진행한다.
+- 세션: `~/.codex/sessions/2026/11/15/rollout-2026-11-15T22-54-21-01a1df7c-d169-76b1-a69b-5b3745b6372e.jsonl`. 이번 홈 진입은 사용자 제공 AGENTS(home 표식)으로 시작했다.
+
+## 문서 최신화 — 현재 요청
+
+- ax-docsync 정본 `/home/sim/ax-cluster/master/skills/ax-docsync/SKILL.md`。plan rc0 → 사용자 일반4개(readme/modules/onboarding/handoff)·codex 레인 승인 → `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -B -u -m master.doc_sync draft --project AXCluster --lane codex --id readme --id modules --id onboarding --id handoff --out /tmp/ax-doc-sync-20261116-4docs-codex.json` rc0. 4개 상용 호출, 원본 불변. 수정안은 임시 산출물이며 정본이 아니다.
+- 결과 decision/reason/diff 원문 제시·인용 소스 대조·apply 미리보기rc0 뒤 사용자 「응」으로 readme·onboarding 적용 승인. `.venv/bin/python -B -m master.doc_sync apply --artifact /tmp/ax-doc-sync-20261116-4docs-codex.json --confirm --approve readme --approve onboarding` rc0, changed2·skipped2. README는 /reports 안내1줄, onboarding은 probe→plan→deliver 및 관리훅 등록/검사9줄. modules·handoff는 도구상unchanged(인계서는 별도 ax-handoff 지시로 갱신). 보호문서4개는 미선택·미변경. git diff --check rc0. README·onboarding·이 인계서3파일만 변경.
+- 중간 조회 실패: /tmp에서 수정안 이름을 찾는 rg가 무관한 비공개 디렉터리 Permission denied로rc2. 보고·중단 뒤 사용자 「응」 재개 승인, 이미 확인한 수정안 경로와 소스만 검토해 이어갔다. docsync 자체의 생성/미리보기/적용은 모두rc0. 커밋·push·배달은 이번 문서 적용 승인에 포함해 실행하지 않았다.
+
+## 현재 운영 관측
+
+- 2026-11-16 조회: ax-task-queue·ax-broker·ax-projects active, 기동 시각 2026-11-15 23:45:17. ax-indexer 00:29:22 종료·inactive, ax-review-queue 00:30:18 종료·inactive. 이것은 합성 완료 판정이 아니다.
+- 최신 색인 로그(00:29:22): plan_metrics에서 related_classes Plan·Task 거부, 집계508/510·커서6569345에서 해당1그룹 스탬프 미달로 전진 안 함. 이 회차의 실패목록은 plan_metrics1건이며, 이전 test_plan_block2건 실패와 현재 집계를 섞어 두 그룹 모두 같은 시각 실패했다고 단정하지 않는다. #970 해시6569345는 이미done 로그. 이후 전체 리뷰/합성 상태는 재조회 필요. 타이머/코드/컨텍스트를 손으로 바꾸지 않았다.
+
+> #970은 마감·배달 완료. main `1b16b0c` 마감 뒤 인계 `14fb770` push, wrapup rc0·배달/대조 완료, C5 충족. 최종 정본은 Redmine #970 마감 노트.
 
 ## #970 마감 — 자동 리뷰 「낮음」 지적 대조·수정
 
@@ -8,8 +33,8 @@
 - 검사(`ed60bd9`): 전수 236파일 12240/12240 · unittest 542 · 통합 Ran 210 OK · `/tmp ax-*` 증가 0.
 - 리뷰 상태: 대조 246건 중 열림은 R193-1 하나(사용자 결정으로 열어 둠) · 전체 open 5 · dismissed 358 · applied 166.
 - 사용자 「970 마감 진행해」·「응 T5 처리 진짜 모두 했는지 확인먼저 하고 진행해」: T5 재확인은 실제 worktree에서 전수 rc0(236파일 12240/12240·unittest542/542·43.0초), 공식 통합 rc0(210건 실패0·37.5초). 색인 dismissed197(규약72·오탐118·이미수정7)·applied48·보류R193-1로 246건 일치. 리포트 ab75a16 실재 확인. `master-local --check` rc0·13/13.
-- C5는 마감 전 게이트에서만 제외(요구 유지). `issue_finish_tool(970, confirm=True)` repo `/home/sim/ax-cluster/.ax-issues/970`, done `[push,ff,worktree_remove,delete_branch,register,link,release,close,redmine]`, registered/closed/lock_released true, why `""`. 해시9·라운드1·작성계열 `['claude']`. worktree·issue/970 삭제 완료.
-- wrapup 1차 rc1: oneshot `ax-indexer`·`ax-review-queue` 900초 초과, 재기동·배달 미실행. 주기 조회 뒤 사용자 「좋아 시도하자」로 재시도: 세 서비스 23:45:17 재기동·재판정 깨끗, 인계서 대기 rc2. 이 문서 커밋·push 직후 같은 명령으로 배달·기록을 이어간다(`client_mcp.py` 변경 없음).
+- C5는 마감 전 게이트에서만 제외했다가 실제 수행 뒤 **충족**으로 정리했다. 직접 제외→충족은 거절되어 보고 후 사용자 승인으로 제외→미확인→충족 전이 성공. `issue_finish_tool(970, confirm=True)` repo `/home/sim/ax-cluster/.ax-issues/970`, done `[push,ff,worktree_remove,delete_branch,register,link,release,close,redmine]`, registered/closed/lock_released true, why `""`. 해시9·라운드1·작성계열 `['claude']`. worktree·issue/970 삭제 완료.
+- wrapup 1차 rc1: oneshot `ax-indexer`·`ax-review-queue` 900초 초과로 중단. 사용자 「좋아 시도하자」로 재시도: 세 서비스23:45:17 재기동·재판정 깨끗, 인계서 대기rc2 → 인계서14fb770 커밋·push → 같은 wrapup 재실행 **rc0**, 마운트 AXCluster 배달/대조 완료·출처 HEAD일치·Redmine 결과 노트. master-local --check rc0·13/13. 배달 완료 뒤 이번 미커밋 인계 변경은 아직 배달 대상이 아니다.
 - **컨텍스트 생성은 미완**: 23:43:36 회차 종료 시 508/510그룹. `master/plan_metrics`(related_classes Plan·Task)·`master/test_plan_block`(Plan) 사실 게이트 거부로 커서 `6569345` 처리에서 멈춤·다음 회차 재시도. 두 서비스의 종료는 합성 성공이 아니다. 코드·설정·타이머 변경 안 함. #970 남은 리뷰도 색인 진행 대기.
 - Codex 세션 `~/.codex/sessions/2026/11/15/rollout-2026-11-15T22-54-21-01a1df7c-d169-76b1-a69b-5b3745b6372e.jsonl`. 조회 중 worktree `.agents`·운영 `.codex` 경로 부재는 실제 목록 파일 재조회로 처리.
 - 그 뒤 사용자 순서상 남은 것: #968(기각 후보 웹 UI) · agy 우선 관측 · R193-1 판단.
@@ -139,7 +164,7 @@
 
 ## 바로 다음 작업
 
-1. 이 문서 커밋·push 직후 `master.issue_wrapup 970 --project AXCluster` 재실행 → 배달(세 워커)·대조. 결과는 #970 노트(`master-local --check` 13/13은 확인 완료).
-2. #970 합성 미완 2그룹 사실 게이트 거부와 후속 리뷰 진행 확인(위 근거). #968 웹 UI는 사용자 착수 지시를 기다린다. R193-1은 열어 둠.
+1. 문서 최신화 적용 완료. 사용자 승인으로 README·onboarding·이 인계서3파일을 이 문서 커밋에 함께 남기고 push한다. 다음 세션은 HEAD·origin/main·dirty를 실제 대조한다. 배달은 미실행이며 별도 승인 때 기존 master.client update로 맞춘다.
+2. #971은 스펙만 기록 완료. 사용자 지시 뒤 수행 방식·기능 분해/플랜 제안→동의→등록→issue_start 응답 worktree에서 구현. 1단계 경로 검증·리뷰고지 테스트를 2단계 개명보다 먼저 한다. #968은 자동 시작하지 않는다. R193-1 보류 유지.
 3. #964·#966 배포 후 관측(위 C6 ①②) · agy 우선 뒤 처리량 감소(56→10)는 사용자에게 올릴 발견이다. 자동 배치·타이머를 끄지 않는다.
 4. 확인해 둘 실물: 토요일 22시 이후 `ax-batch` 로그의 `recipe_synthesis` 줄(#383) · 다음 rejected 라운드의 큐 로그 `[history] … rejected(큐 내부 종결)` 줄(#943) · 운영 relay에서 한도 20% 이하 제안 배너(#368) · 합성이 멈춘 회차의 `색인 걷기가 아직 안 지났다` 줄(#950). 다른 일감은 사용자 선택을 기다린다.

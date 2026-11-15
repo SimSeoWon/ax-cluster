@@ -309,6 +309,7 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update              # �
 #   [중요] 다른 머신에서 보기: http://192.168.0.57:8103  ← 인증 없음 (원전 웹 UI)
 #      / = Context Server · /ontology = 도메인 뷰어+그래프 · /cluster = 클러스터 상태
 #      /reviews = 리뷰·플랜 · /usage = LLM 사용량(기간별 작업·토큰) · /onboarding = 분산 작업 흐름
+#      좌측 목록의 /reports = 작업 리포트(작업 기록·실증·연구 보고서)
 #      화면마다 같은 좌측 목록으로 이동한다(목록 정본: master/webui/nav.py)
 #      [중요] /cluster 상단 「지휘 상태」 = 마스터 담당(claude/codex) + 워커 실행 모드
 #         마스터 담당은 **마지막으로 기록된** 지휘자다 — 생존 판정도 잠금도 아니다
