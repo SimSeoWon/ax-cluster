@@ -705,10 +705,10 @@ def _record_piece_fail_notice(idx: TaskIndex, task_id: str, *, error: str = "",
         _save_task(idx, task_id)
 
 
-def _notify_piece_failed_async(idx: TaskIndex, task_id: str) -> bool:
+def _notify_piece_failed_async(idx: TaskIndex, task_id: str, *, resend: bool = False) -> bool:
     """비치명 래퍼 — 통보 준비 단계의 예외도 실패 전이를 깨지 않는다(`#780`)."""
     try:
-        return _notify_piece_failed(idx, task_id)
+        return _notify_piece_failed(idx, task_id, resend=resend)
     except Exception as e:                                   # noqa: BLE001
         try:
             _tq_log(f"[piece-fail] task={task_id} 즉시 통보 준비 예외: {e}", idx.root)
@@ -717,7 +717,7 @@ def _notify_piece_failed_async(idx: TaskIndex, task_id: str) -> bool:
         return False
 
 
-def _notify_piece_failed(idx: TaskIndex, task_id: str) -> bool:
+def _notify_piece_failed(idx: TaskIndex, task_id: str, *, resend: bool = False) -> bool:
     """조각 하나가 terminal `failed` 가 된 **그 순간** 통보한다 (`#780`, 사용자 설계
     「즉시 통보, 나머지 계속」). 돌려주는 값은 *"통보를 걸었다"* 이다.
 
@@ -749,7 +749,10 @@ def _notify_piece_failed(idx: TaskIndex, task_id: str) -> bool:
             _tq_log(f"[piece-fail] {t.get('work_id')} task={task_id} 즉시 노트 생략 — "
                     f"인프라 판단 불가(#821), 라운드 공지에 싣는다", idx.root)
             return False
-        if t.get("fail_notice_at") or t.get("fail_notice_pending"):
+        # `#969` ⑤ — 기동 복구(`resend=True`)는 디스크에 남은 대기 표시를 **지우지 않고** 다시 건다.
+        #    종전에는 복구가 표시를 먼저 지우고 저장한 뒤 여기를 불러, 그 사이 죽으면 표시도 보낸 기록도
+        #    없는 조각이 남았다(재현 2026-11-15). 보낸 기록(`fail_notice_at`)이 있으면 언제나 건너뛴다.
+        if t.get("fail_notice_at") or (t.get("fail_notice_pending") and not resend):
             return False
         work_id = t.get("work_id")
         wmeta = idx.works.get(work_id) if work_id else None
@@ -857,22 +860,25 @@ def recover_piece_fail_notices(idx: TaskIndex) -> dict:
             elif t_round and t_round != cur:
                 skip.append((tid, f"지난 라운드(r{t_round} < r{cur})"))
             else:
-                t.pop("fail_notice_pending", None)
-                _save_task(idx, tid)
-                resend.append(tid)
+                resend.append(tid)                    # `#969` ⑤ 표시는 그대로 둔다 — 통보가 지운다
     for tid, why in skip:
         _record_piece_fail_notice(idx, tid, error=f"기동 복구 생략(#902): {why}")
         _tq_log(f"[boot-renotice-piece] task={tid} 즉시 노트 생략 — {why}", idx.root)
+    refused = []
     for tid in resend:
-        started = _notify_piece_failed_async(idx, tid)
+        started = _notify_piece_failed_async(idx, tid, resend=True)
         _tq_log(f"[boot-renotice-piece] task={tid} 즉시 노트 다시 건다 — "
                 f"{'시작' if started else '생략(통보 판정이 거절, 위 [piece-fail] 줄 참조)'}", idx.root)
         if not started:
+            refused.append(tid)
             with idx.lock:
                 t = idx.tasks.get(tid) or {}
-                handled = t.get("fail_notice_at") or t.get("fail_notice_pending")
-            if not handled:
+                sent = t.get("fail_notice_at")
+            if not sent:
                 _record_piece_fail_notice(idx, tid, error="기동 복구 생략(#902): 통보 판정이 거절")
+    # `#969` ⑤ (R262-3) — 거절된 건은 재전송이 아니라 생략이다(요약·반환이 실제와 맞게)
+    resend = [tid for tid in resend if tid not in refused]
+    skip += [(tid, "통보 판정이 거절") for tid in refused]
     if resend or skip:
         _tq_log(f"[boot-renotice-piece] 조각 즉시 통보 표시 {len(resend) + len(skip)}건 — "
                 f"재전송 {len(resend)} · 생략 {len(skip)} (#902)", idx.root)

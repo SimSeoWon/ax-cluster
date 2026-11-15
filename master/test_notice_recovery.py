@@ -290,6 +290,46 @@ def test_piece_fail_normal_path() -> None:
     shutil.rmtree(root, ignore_errors=True)
 
 
+def test_piece_fail_marker_survives_death_during_recovery() -> None:
+    print("\n[11] #969 ⑤ 기동 복구가 재통보를 걸기 전에 죽어도 표시가 디스크에 남는다 (R262-2)")
+    root, _, tid, _ = _piece_failed(_DeadThread, lambda *a, **k: True)
+    idx = TaskIndex(root)
+    idx.rebuild()
+
+    class _Died(BaseException):
+        pass
+
+    def die(*a, **k):
+        raise _Died()
+    try:
+        with patch.object(LC, "_notify_piece_failed_async", die):
+            LC.recover_piece_fail_notices(idx)
+    except _Died:
+        pass
+    t = _disk_task(root, tid)
+    check("⑤ 표시가 디스크에 남는다(다음 기동이 다시 본다)", t.get("fail_notice_pending") is True
+          and not t.get("fail_notice_at"), f"{t.get('fail_notice_pending')} {t.get('fail_notice_at')}")
+    notes: list = []
+    idx2, _ = _reboot(root, lambda *a, **k: notes.append(a[1]) or True)
+    check("⑤ 다음 기동이 한 번 보낸다", notes == [902], str(notes))
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def test_piece_fail_refused_resend_counts_as_skip() -> None:
+    print("\n[12] #969 ⑤ 통보 판정이 거절한 재전송은 생략으로 센다 (R262-3)")
+    root, _, tid, _ = _piece_failed(_DeadThread, lambda *a, **k: True)
+    idx = TaskIndex(root)
+    idx.rebuild()
+    with patch.object(LC, "_notify_piece_failed_async", lambda *a, **k: False):
+        rec = LC.recover_piece_fail_notices(idx)
+    check("⑤ 재전송 목록에 없다", tid not in rec["resend"], str(rec))
+    check("⑤ 생략 목록에 있다", tid in rec["skip"], str(rec))
+    t = _disk_task(root, tid)
+    check("⑤ 표시가 풀리고 생략 사유가 남는다", not t.get("fail_notice_pending")
+          and "거절" in str(t.get("fail_notice_error") or ""), f"{t.get('fail_notice_pending')} {t.get('fail_notice_error')!r}")
+    shutil.rmtree(root, ignore_errors=True)
+
+
 if __name__ == "__main__":
     print("=== #891 라운드 완료 공지 — 공지 대기 표시와 기동 복구 재공지 ===")
     for fn in (test_killed_notice_is_resent, test_failed_note_retries_next_boot,
@@ -297,7 +337,8 @@ if __name__ == "__main__":
                test_already_noticed_clears_marker,
                test_piece_fail_marker_is_on_disk, test_piece_fail_resent_while_round_runs,
                test_piece_fail_skipped_after_round_ends, test_piece_fail_send_failure_not_resent,
-               test_piece_fail_normal_path):
+               test_piece_fail_normal_path, test_piece_fail_marker_survives_death_during_recovery,
+               test_piece_fail_refused_resend_counts_as_skip):
         fn()
     print(f"\n{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)
