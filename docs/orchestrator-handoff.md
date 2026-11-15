@@ -1,16 +1,20 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-15 오후 — 사용자 「토큰이 없다 인수인계서만 써줘」로 중단. **main `bc566f0`(운영) · #964 진행 중(worktree `.ax-issues/964`, 브랜치 `issue/964`, 잠금 활성)**. 이 문서는 커밋하지 않았다(운영 체크아웃 미커밋 — 다음 `issue_start` 전에 커밋·push 필요, 사용자 승인).
+> 2026-11-15 16:14 — **#964 main `e531c917c177` 반영·마감 완료**, 잠금 해제·worktree 제거. `ax-task-queue` 16:13:59 · `ax-projects` 16:14:04 재시작, 재판정 깨끗. 이 문서 커밋·push 직후 같은 wrapup으로 배달 예정. T4의 배달·설정 복귀·실제 배치 관측은 진행 중이다.
 
-## 🔴 진행 중 — #964 주말 배치 매시 재실행 · codex 소모 (버그, 마일스톤 8 - 버그/개선)
+## #964 마감 · 배포 후 관측 진행 중 — 주말 배치 매시 재실행·codex 소모
 
 - 인터뷰 완료(분류 버그 → 조사 → 명세 → 재현 → 파급 → `ax:spec`) · 플랜 v3 등록(제안→동의, 자율성 0.5, T1~T4 · 체크리스트 C1~C6). 결정 원문은 Redmine #964 노트.
-- 운영 조치: `AXCluster/config.yaml` 끝에 `batch.dismissal_candidates: false`(사용자 「기각 후보 수집은 일단 꺼줘」). **수정 배포 직후 오늘 다시 켠다**(사용자 결정) — 그 블록을 지우거나 true 로.
-- T1 완료 `70c82b1`(worktree 커밋, 미push): `master/llm_cooldown.py` 파일 쿨다운(한도 1시간·그 밖 600초·성공 해제) + `commercial_chat` 연결(진짜 백엔드만 기계 파일 `~/.cache/ax-llm/cooldown.json`). C3 충족.
-- **T2 작업중 — 미커밋 변경이 worktree 에 있다**: `dismissal_candidates.py`(`week_of`·`week_state` · collect 시작 시 week·started_at·complete:false 먼저 저장 · 끝에 complete:true·completed_at) · `gates.py`(게이트가 마커 대신 `week_state` — new/resume/done).
-- **멈춘 지점**: `test_dismissal_candidates` 12건 중 2건 실패 — 옛 계약(미완료면 다음 주말 · `_last_` 마커 기준)을 기대하는 `test_incomplete_run_resumes_next_weekend_not_same_weekend`·`test_weekend_gate_independent_and_failure_preserves_list`. 새 계약대로 고치자고 제안했고 **사용자 답 전**에 중단됐다 — 이어받으면 이 질문부터 다시 묻는다(답 없이 고치지 않는다).
-- 남은 태스크: T3 캐시·stale 을 대상 파일 blob + input_hash 기준(옛 항목은 기록된 main_sha 로 blob 구해 재사용 — 운영 실측 146건 중 111건) · T4 전수·통합 → 커밋 → 마감 → ax-projects 재기동 → 배달 → 설정 복귀 → 실제 배치 회차 관측(C5).
-- 재현 스크립트: `/tmp/claude-1000/-home-sim/56d6e50d-d351-4023-91b1-a20dc44dbdbb/scratchpad/repro964/repro.py`(LLM 0, 휘발성 — 사라졌으면 Redmine 재현 노트대로 다시 만든다).
+- 운영 `AXCluster/config.yaml` `batch.dismissal_candidates:false` 유지 중. 배포 뒤 오늘 다시 켠다는 기존 사용자 결정 유지. 복귀 결과는 Redmine #964 노트에서 확인한다.
+- T1 `70c82b1`: 기계 공용 파일 쿨다운(한도 1시간·그 밖 600초·성공 해제) + commercial_chat 연결. codex 우선 순서는 유지.
+- T2 `f8c1002`: 시작 시 week·started_at·complete:false 저장, 완료 시 complete:true·completed_at. 게이트는 new/resume/done. 옛 계약 테스트 2건 변경은 사용자 「응」 승인으로 수행.
+- T3 `855f823`: 캐시·stale를 대상 파일 blob + input_hash 기준으로 변경. 옛 항목은 기록된 main_sha에서 blob을 읽어 재사용. 운영 읽기 대조: 146건 중 재사용111·변경13·파일없음3·미결목록밖19(LLM 0·쓰기 0).
+- 검사: 전수 233/233파일 rc0, 공식 통합 `Ran 207 tests in 256.369s` OK rc0, dismissal_candidates16/16·batch69/69. 리포트 `reports/193-964-weekly-candidates-resume.md`(`5853d9a`).
+- 승인: 「커밋하고 배포해 재부팅해야 되는건가?」 및 「응 진행해」. 사용자는 ‘재부팅’이 서비스 재시작을 뜻했다고 정정했다. C5는 배포 후 관측이라 마감 전 게이트에서만 제외(사용자 동의), 실제 관측 요구 유지. C1~C4·C6 충족. T4는 배포·실물까지 끝내기 전 완료로 표시하지 않는다.
+- main의 이전 미커밋 인계서는 `da63a90`로 보존·push 후 일감에 병합(`e531c917`)해 fast-forward 가능하게 했다. 마감 응답: repo `/home/sim/ax-cluster/.ax-issues/964`, done `[push,ff,worktree_remove,delete_branch,register,link,release,close,redmine]`, registered:true·closed:true·lock_released:true·why:"". 작성 계열 `['claude','codex']`.
+- wrapup 1차 rc2는 인수인계 커밋 대기. ax-task-queue·ax-projects만 의존 변경 판정으로 재시작, ax-broker는 최신. 남은 순서: 이 문서 커밋·push → `.venv/bin/python -m master.issue_wrapup 964 --project AXCluster` → 설정 복귀 → 실제 배치 회차·다음 회차 관측·Redmine 노트.
+- 앞선 인수인계 패치 1회는 잘못된 문맥 문자로 적용 실패(파일 변경 없음). 실패를 보고하고 멈췄으며 사용자 「응!」으로 재시도 승인.
+- 세션 `~/.codex/sessions/2026/11/15/rollout-2026-11-15T15-55-28-01a1ddfd-52b8-7b93-b84d-f828e5c08d9d.jsonl`. 최종 마감·배달·실물 결과의 정본은 Redmine #964 노트.
 
 ## 그 밖에 남은 것
 
@@ -97,6 +101,6 @@
 
 ## 바로 다음 작업
 
-1. 사용자 「토큰 없으니 인수인계서만 작성해줘」로 중단한다. 다음 세션은 #960의 위 의도·첫 과정 결과를 이어받아 나머지를 대화로 정한다. 목적을 처음부터 다시 묻거나 미합의 구현안·태스크를 등록하지 않는다. 다른 일감은 사용자 선택을 기다린다.
-2. 사용자 「커밋하고 푸시해줘」 승인으로 이 문서를 main에 커밋·push한다. 다음 세션은 실제 HEAD·dirty를 대조한다. #961의 배달 기준은 `cc3cdb0`이며 이 추가 문서 커밋의 배달은 이번 요청 범위에 포함하지 않는다. 세션 파일은 #961 절에 기록했다.
+1. #964 배달·설정 복귀·실제 배치 관측을 이어간다. 위 T4·C5의 남은 순서와 Redmine 최신 노트를 대조한다. 이미 받은 커밋·배포·C5 처리 승인을 다시 묻지 않는다.
+2. `.43` 배달이 실패하면 실패 원문을 보고하고 멈춘다. 다른 일감은 사용자 선택을 기다린다.
 3. 확인해 둘 실물: 토요일 22시 이후 `ax-batch` 로그의 `recipe_synthesis` 줄(#383) · 다음 rejected 라운드의 큐 로그 `[history] … rejected(큐 내부 종결)` 줄(#943) · 운영 relay에서 한도 20% 이하 제안 배너(#368) · 리뷰 큐 로그의 `리뷰 컨텍스트` 줄(#946, 첫 실물 확인됨 19:28~19:53) · 합성이 멈춘 회차의 `색인 걷기가 아직 안 지났다` 줄(#950)
