@@ -139,10 +139,30 @@ def test_foreign_marks_ignored():
     check("모르는 표지·다른 분류는 무시", st.next == "investigate" and len(st.problems) == 2, str(st.as_dict()))
 
 
+def test_missing_skip_note_does_not_deadlock():
+    """`#969` ① (R390-3·4 · R397-6·7) — 본 노트는 남고 건너뜀 노트만 빠져도(두 번째 쓰기 실패) 교착이 없다.
+
+    종전: `_next` 가 분류를 보지 않아 `reproduce` 를 다음으로 내놓고, 그 단계는 분류 문서가 적용하지
+    않아 거절·`impact` 는 순서 건너뜀으로 거절 — 인터뷰가 어느 쪽으로도 못 나갔다(재현 2026-11-15).
+    """
+    notes = [IV.render("classify", "modify", result="r", user_answer="a"),
+             IV.render("investigate", "modify", result="r", user_answer="a"),
+             IV.render("specify", "modify", result="r", user_answer="a")]          # reproduce 건너뜀 노트 없음
+    st = IV.state_of([{"notes": n} for n in notes], CATS)
+    check("① 다음 단계는 적용되는 파급 측정", st.next == "impact", str(st.as_dict()))
+    check("① 빠진 건너뜀 노트는 문제 한 줄로 보인다",
+          any("reproduce" in p and "건너뜀 노트" in p for p in st.problems), str(st.problems))
+    fi = FakeIssue(notes=notes)
+    out = _rec(fi, "impact")
+    check("① 파급 측정이 기록된다", out["step"] == "impact" and out["next"] == "spec", str(out))
+    check("① 미적용 단계는 여전히 거절", _raises(lambda: _rec(fi, "reproduce"), "적용하지 않는다"))
+
+
 def main() -> int:
     for fn in (test_feature_full_flow_with_skip, test_bug_has_reproduce, test_rejections,
                test_redo_latest_wins_and_invalidates_later, test_resume_after_interrupt,
-               test_write_failure_is_transport_error, test_foreign_marks_ignored):
+               test_write_failure_is_transport_error, test_foreign_marks_ignored,
+               test_missing_skip_note_does_not_deadlock):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_interview: {PASS}/{total} 통과")

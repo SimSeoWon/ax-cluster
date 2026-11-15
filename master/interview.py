@@ -90,13 +90,26 @@ def _invalidate_after(records: dict[str, Record], step: str) -> None:
         records.pop(s, None)
 
 
+def _applies(category: str, step: str, cats: dict) -> bool:
+    cat = cats.get(category)
+    return cat is None or cat.applies(step)
+
+
 def _next(category: str, records: dict[str, Record], cats: dict) -> str:
+    # `#969` ① — 분류 문서가 적용하지 않는 단계는 노트가 없어도 다음 단계가 아니다. 종전에는 건너뜀 노트
+    #    (본 노트 뒤 두 번째 쓰기)만 빠져도 그 단계를 내놓아 기록이 양쪽으로 거절됐다(교착).
     if CLASSIFY not in records:
         return CLASSIFY
     for s in IC.STEPS:
-        if s not in records:
+        if s not in records and _applies(category, s, cats):
             return s
     return SPEC
+
+
+def _missing_skips(category: str, records: dict[str, Record], cats: dict, nxt: str) -> list[str]:
+    """다음 단계 앞인데 건너뜀 노트가 없는 미적용 단계 — 고장은 아니지만 기록이 빠졌음을 알린다."""
+    before = IC.STEPS[:IC.STEPS.index(nxt)] if nxt in IC.STEPS else IC.STEPS
+    return [s for s in before if s not in records and not _applies(category, s, cats)]
 
 
 def state_of(journals: list, cats: dict | None = None) -> State:
@@ -127,6 +140,10 @@ def state_of(journals: list, cats: dict | None = None) -> State:
         st.records[step] = Record(step, cat, a.get("skipped") == "1", text, (j or {}).get("created_on", "")
                                   if isinstance(j, dict) else "")
     st.next = _next(st.category, st.records, cats)
+    if st.category:
+        for s in _missing_skips(st.category, st.records, cats, st.next):
+            st.problems.append(f"{s}: 분류 {st.category!r} 가 적용하지 않는 단계인데 건너뜀 노트가 없다 "
+                               "— 다음 단계 판정에는 영향이 없다(#969)")
     return st
 
 
