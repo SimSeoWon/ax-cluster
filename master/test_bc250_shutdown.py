@@ -371,6 +371,47 @@ class TestExecutionAndVerify(unittest.TestCase):
             )
 
 
+class TestIssue969(unittest.TestCase):
+    """`#969` ④ (R317-3·5 · R314-3) — #929 의 fail-closed 계약을 지키면서 생긴 두 오판."""
+
+    def test_ssh_commands_silence_informational_warnings(self):
+        """ssh 정보성 경고(known_hosts 추가 등)가 stderr 로 나오지 않게 — 「stderr 있으면 비정상」 계약은 그대로."""
+        seen = []
+
+        def runner(cmd, **kw):
+            seen.append(cmd)
+            p = MagicMock()
+            p.returncode, p.stdout, p.stderr = (1, "", "") if "pgrep" in " ".join(cmd) else (255, "", "")
+            return p
+        check_remote_processes("192.168.0.43", runner=runner)
+        seen.append(execute_shutdown("192.168.0.43", dry_run=True)["command"].split())
+        verify_shutdown("192.168.0.43", timeout=1, interval=0.01, runner=runner)
+        ssh = [c for c in seen if c and c[0] == "ssh"]
+        self.assertTrue(ssh, seen)
+        for c in ssh:
+            self.assertIn("LogLevel=ERROR", c, c)
+
+    def test_ping_that_cannot_run_is_not_a_disconnect(self):
+        """ping 실행 자체가 실패하면 「꺼짐」이 아니라 확인 불가 — 종전에는 ssh 실패와 합쳐 꺼짐=True."""
+        ssh = MagicMock(return_value=MagicMock(returncode=255))
+
+        def ping_missing(cmd, **kw):
+            raise FileNotFoundError("ping")
+        with self.assertRaises(ShutdownError) as cm:
+            verify_shutdown("192.168.0.43", timeout=1, interval=0.01, runner=ssh, ping_runner=ping_missing)
+        self.assertIn("ping", str(cm.exception))
+
+    def test_ping_timeout_still_counts_as_no_reply(self):
+        """ping 이 제한 시간에 끝나지 않은 것은 무응답이다 — 단절 판정은 그대로."""
+        import subprocess as sp
+        ssh = MagicMock(return_value=MagicMock(returncode=255))
+
+        def ping_hang(cmd, **kw):
+            raise sp.TimeoutExpired(cmd, 2)
+        self.assertTrue(verify_shutdown("192.168.0.43", timeout=1, interval=0.01, runner=ssh,
+                                        ping_runner=ping_hang))
+
+
 class TestShutdownWorkflow(unittest.TestCase):
     """shutdown() 종합 워크플로우: 사전 점검 실패 차단 및 --force 동작 검증."""
 

@@ -197,10 +197,12 @@ def check_remote_processes(target: str = DEFAULT_TARGET,
         cmd, capture_output=True, text=True, timeout=kwargs.get("timeout", 10), check=False
     ))
 
+    # `#969` ④ — `LogLevel=ERROR`: known_hosts 추가 같은 정보성 경고가 stderr 로 나와 아래 「stderr 있으면
+    #    비정상」(#929 fail-closed)에 걸려 정상 종료를 막았다. 계약은 그대로 두고 경고만 끈다.
     # [c]odex 패턴을 사용하여 grep 자체 매칭 방지, sim 사용자의 프로세스만 조회
     # || true를 제거하여 pgrep의 비정상 종료(rc>1, stderr 등) 및 SSH 접속 실패(rc=255 등)를 그대로 수집
     ssh_cmd = [
-        "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+        "ssh", "-o", "BatchMode=yes", "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=5",
         f"{user}@{target_ip}",
         f"pgrep -u {user} -l -f '[c]odex|[c]laude|[p]ython|[n]ode'"
     ]
@@ -285,7 +287,7 @@ def execute_shutdown(target: Optional[str] = DEFAULT_TARGET,
     """sudo -n systemctl poweroff 명령을 실행한다."""
     target_ip = validate_target(target)
     poweroff_cmd = [
-        "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+        "ssh", "-o", "BatchMode=yes", "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=10",
         f"{user}@{target_ip}",
         "sudo -n systemctl poweroff"
     ]
@@ -341,7 +343,7 @@ def verify_shutdown(target: Optional[str] = DEFAULT_TARGET,
     ))
 
     probe_cmd = [
-        "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=2",
+        "ssh", "-o", "BatchMode=yes", "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=2",
         f"{user}@{target_ip}", "true"
     ]
     ping_cmd = ["ping", "-c", "1", "-W", "1", target_ip]
@@ -364,8 +366,13 @@ def verify_shutdown(target: Optional[str] = DEFAULT_TARGET,
             ping_proc = run_ping(ping_cmd, timeout=2)
             if ping_proc.returncode != 0:
                 ping_dead = True
-        except Exception:
-            ping_dead = True
+        except subprocess.TimeoutExpired:
+            ping_dead = True                          # 제한 시간 안에 응답 없음 — 무응답이다
+        except Exception as e:
+            # `#969` ④ — ping 을 **실행하지 못한** 것은 무응답이 아니다. 종전에는 단절로 세어 ssh 실패와
+            #    합쳐 「꺼짐」으로 판정했다 — 확인하지 못한 종료를 확인했다고 말하지 않는다(#929).
+            raise ShutdownError(f"전원 종료 확인 불가: ping 을 실행하지 못했다 ({type(e).__name__}: {e}) "
+                                "— 단절로 세지 않는다") from e
 
         if ssh_dead and ping_dead:
             failures += 1
