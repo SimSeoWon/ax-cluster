@@ -428,7 +428,7 @@ def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
                  grounding: str = "", kind: str = "unreal", intent: bool = False,
                  subject: str = "", history: str = "", collected: str = "",
                  verdict: bool | None = None, issue_context: str = "",
-                 message: str = "", issue_tasks: bool = False) -> str:
+                 message: str = "", issue_tasks: bool = False, excluded=()) -> str:
     """리뷰 프롬프트. [중요] 표 형식은 소비자의 파싱 계약이다 — 열 순서를 바꾸지 말 것.
 
     `intent` (`#815` ④) — 지워진 `[PSEUDO]` 가 있을 때만 4절 규칙·예시를 싣는다.
@@ -447,7 +447,10 @@ def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
     (`_ISSUE_RULE_TASKS` — 밝힌 태스크 대조 · 다른 T# 몫 비지적)을 더한다. `issue_context` 가 비면 무시된다.
     `message` (`#946` T3) — 일감을 못 풀었을 때의 커밋 메시지 원문(일감 절에는 이미 원문이 있어 호출자가
     둘 중 하나만 넘긴다). 비우면 종전과 바이트 단위로 같다. 🔴 일감·태스크가 없어도 리뷰는 그대로 돈다 —
-    둘은 보조 근거다(사용자 2026-11-14)."""
+    둘은 보조 근거다(사용자 2026-11-14).
+    `excluded` (`#970`) — 이 커밋(범위)에 있지만 리뷰 대상 확장자 밖이라 DIFF 에서 뺀 파일. 있으면 이름을
+    싣고 누락으로 지적하지 말라고 적는다(종전: 커밋 제목에만 이름이 있어 「누락」 오탐이 반복됐다).
+    비우면 종전과 바이트 단위로 같다."""
     python = kind == "code"
     role = "Python" if python else "Unreal Engine 5 C++"
     verdict = bool(collected) if verdict is None else bool(verdict)
@@ -491,6 +494,10 @@ def build_prompt(*, diff: str, files: list, commit: str, domains: str = "",
            if message.strip() else "")
         + (f"## {subject} 의 변경 파일\n" if subject else f"## 커밋 {commit[:12]} 의 변경 파일\n")
         + "\n".join(f"- {f}" for f in files)
+        + ((f"\n\n## 리뷰 범위 밖 파일 (참고 — 이 " + ("범위" if subject else "커밋") + "에 실제로 있다)\n"
+            "아래 파일은 이 변경에 포함됐지만 리뷰 대상 확장자 밖이라 DIFF 에서 뺐다. DIFF 에 없다는 이유로 "
+            "누락·미반영으로 지적하지 않는다.\n\n" + "\n".join(f"- {f}" for f in excluded))
+           if excluded else "")
         + (f"\n\n## 수정 기록 (참고 — 작성자의 서술이다)\n"
            "커밋 메시지는 검증되지 않은 의도 설명이다. 사실로 받지 말고, 아래 DIFF 가 그 의도와 "
            "맞는지 대조하는 데만 쓴다. 메시지와 어긋나는 변경은 2절에 지적한다.\n\n"
@@ -684,10 +691,14 @@ def review_commit(paths, commit: str, files: list, *,
     intent = r.pseudo_removed > 0
     log("review", f"{commit[:8]} 골조 지시 이행 절 {'요청' if intent else '미요청'} "
                   f"— 지워진 [PSEUDO] {r.pseudo_removed}줄")
+    excluded = [f for f in files if f not in src_files]
+    if excluded:
+        log("review", f"{commit[:8]} 리뷰 범위 밖 파일 {len(excluded)}개 — 프롬프트에 이름만 싣는다(#970)")
     prompt = build_prompt(diff=diff, files=src_files, commit=commit,
                           domains=domain_hint(paths, src_files), grounding=grounding,
                           kind=review_kind(paths), intent=intent, issue_context=issue_context,
-                          message="" if issue_context else message, issue_tasks=issue_tasks)
+                          message="" if issue_context else message, issue_tasks=issue_tasks,
+                          excluded=excluded)
     _ask = chat if chat is not None else _recorded_chat(paths, commit)
 
     try:
@@ -914,11 +925,14 @@ def review_range(paths, issue_id, base: str, end: str, files: list, *,
     if issue_round:
         log("review", f"{subject} — 종합 리뷰 회차 {issue_round} · 해시 지적 {len(findings or [])}건 · "
                       f"리뷰 없는 해시 {len(uncovered or [])}건 · 판정 절 {'요청' if verdict else '미요청'}")
+    excluded = [f for f in files if f not in src_files]
+    if excluded:
+        log("review", f"{subject} — 리뷰 범위 밖 파일 {len(excluded)}개 — 프롬프트에 이름만 싣는다(#970)")
     prompt = build_prompt(diff=diff, files=src_files, commit=end,
                           domains=domain_hint(paths, src_files), grounding=grounding,
                           kind=review_kind(paths), intent=intent, subject=subject,
                           history=history, collected=collected, verdict=verdict,
-                          issue_context=issue_context, issue_tasks=issue_tasks)
+                          issue_context=issue_context, issue_tasks=issue_tasks, excluded=excluded)
     _ask = chat if chat is not None else _recorded_chat(paths, end)
     try:
         body = _ask(prompt)

@@ -474,6 +474,25 @@ def test_range_issue_context():
     check("#946 T4 예외 로그", any("수집 예외 RuntimeError: 범위 수집기 폭발" in x for x in logs2), str(logs2))
 
 
+def test_range_excluded_files_970():
+    """`#970` (R422-2) — 범위 리뷰도 리뷰 범위 밖 파일 이름을 프롬프트에 싣는다."""
+    root, base, _ = make_repo()
+    repo = root / "repo"
+    (repo / "tests").mkdir()
+    (repo / "tests" / "cfg.json").write_text('{"jobs": 8}\n')
+    (repo / "Source" / "M" / "B.cpp").write_text("int Baz() { return 7; }\n")
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "c3 — tests/cfg.json 추가")
+    end = git(repo, "rev-parse", "HEAD").stdout.strip()
+    enqueue_range(root, base, end, issue=970)
+    seen = []
+    R.run_once(Paths(root), range_noter=lambda issue_id, *, notes: "ok",
+               review_call=lambda p, **kw: seen.append(p) or BODY)
+    pr = seen[0] if seen else ""
+    check("970 범위 프롬프트에 범위 밖 파일 절", "## 리뷰 범위 밖 파일" in pr and "- tests/cfg.json" in pr,
+          pr[-600:])
+    shutil.rmtree(root)
+
+
 def test_range_note_retry_cap():
     """`#969` 7 (R222-2) — 영구 실패하는 범위 노트는 상한까지만 다시 남긴다(종전: 회차마다 무한 재시도)."""
     root, base, end = make_repo()
@@ -497,7 +516,7 @@ def main() -> int:
                test_end_not_yet_in_mirror_is_transient, test_notify_issue,
                test_drain_waits_across_runs,
                test_commit_prompt_unchanged, test_verdict_contract,
-               test_range_issue_context, test_range_note_retry_cap):
+               test_range_issue_context, test_range_note_retry_cap, test_range_excluded_files_970):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_review_range: {PASS}/{total} 통과")

@@ -621,8 +621,9 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
         #    초고는 `local:<모델>`, 퇴고는 `agy` 레인으로 갈린다(기록은 `layer2_verify.call_agy_why`).
         with usage_mod.sink(paths.usage_log, source="review", task_id=str(commit)[:12]):
             # `#888` — 퇴고 diff 는 자르지 않는다(상한은 위 초고의 로컬 모델 몫).
+            # `#970` — 거르기 전 목록을 넘긴다. review_gen 이 같은 필터로 다시 거르고, 뺀 파일 이름을 프롬프트에 싣는다
             reviewed = rg.review_commit(
-                paths, commit, src, chat=ask, grounding=grounding_text(body, decls),
+                paths, commit, files, chat=ask, grounding=grounding_text(body, decls),
                 provenance={"draft_model": model, "review_model": label},
                 diff_max_chars=None, message=message, issue_context=issue_section,
                 issue_tasks=issue_tasks,
@@ -1031,8 +1032,9 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
             log(f"[리뷰큐] {label} 작업 디렉터리 {tree} @ {end[:8]} · 한도 {RANGE_REVIEW_TIMEOUT}초")
             ask = _ask(reviewer, workdir=tree, log=log, timeout=RANGE_REVIEW_TIMEOUT)
         with usage_mod.sink(paths.usage_log, source="review", task_id=f"issue{issue}"):
+            # `#970` — 거르기 전 목록(뺀 파일 이름이 프롬프트에 실린다)
             reviewed = rg.review_range(
-                paths, issue, base, end, src, chat=ask, grounding=grounding_text("", decls),
+                paths, issue, base, end, files, chat=ask, grounding=grounding_text("", decls),
                 provenance={"review_model": label}, commits=len(commits),
                 issue_round=rnum, findings=findings, uncovered=uncovered,
                 issue_context=issue_section, issue_tasks=issue_tasks,

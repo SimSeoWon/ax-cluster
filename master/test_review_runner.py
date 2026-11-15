@@ -213,6 +213,18 @@ def test_로컬뒤_antigravity가_퇴고한다():
     shutil.rmtree(root)
 
 
+def test_커밋_리뷰도_범위밖_파일을_싣는다_970():
+    """`#970` (R413-1) — 러너가 거르기 전 목록을 넘겨, 커밋 리뷰 프롬프트에 범위 밖 파일 이름이 실린다."""
+    root, head = make_repo()
+    Q.enqueue(root, key=head, files=["Source/M/A.cpp", "tests/cfg.json"])
+    calls = []
+    R.run_once(Paths(root), draft_call=lambda p: "없음", review_call=lambda p: calls.append(p) or _review_body())
+    pr = calls[0] if calls else ""
+    check("970 커밋 프롬프트에 범위 밖 파일 절", "## 리뷰 범위 밖 파일" in pr and "- tests/cfg.json" in pr, pr[-500:])
+    check("970 소스는 그대로 리뷰된다", "x = x / 0" in pr)
+    shutil.rmtree(root)
+
+
 def test_로컬_없음이어도_antigravity가_본다():
     root, head = make_repo()
     Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
@@ -1111,7 +1123,7 @@ def test_main_은_실물_수집기를_넘긴다():
 
 
 if __name__ == "__main__":
-    for fn in (test_로컬뒤_antigravity가_퇴고한다,
+    for fn in (test_로컬뒤_antigravity가_퇴고한다, test_커밋_리뷰도_범위밖_파일을_싣는다_970,
                test_로컬_없음이어도_antigravity가_본다,
                test_초안_실패여도_antigravity가_마무리한다,
                test_기존_초안_재사용과_실패_보존,

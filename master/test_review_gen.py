@@ -644,8 +644,28 @@ def test_review_commit_passes_context():
     shutil.rmtree(root)
 
 
+def test_excluded_files_are_named_in_prompt_970():
+    """`#970` (R413-1·R422-2) — 리뷰 범위(확장자) 밖이라 diff 에서 뺀 파일은 프롬프트에 이름을 싣는다.
+
+    종전: `tests/test-parallel.json` 이 diff 에서 빠졌는데 커밋 제목에 그 이름이 있어 리뷰어가 「누락」으로
+    판정했다(같은 오탐 2회). 빼는 것은 그대로 — 뺐다는 사실만 알린다.
+    """
+    root, p = fixture()
+    c = commit_change(p, "int F() { return 7; }\n", msg="설정 파일과 함께")
+    seen = []
+    RG.review_commit(p, c, ["Source/M/A.cpp", "Content/맵.uasset", "tests/x.json"],
+                     chat=lambda pr: seen.append(pr) or CANNED)
+    pr = seen[0] if seen else ""
+    check("970 제외 파일 절이 있다", "## 리뷰 범위 밖 파일" in pr, pr[-800:])
+    check("970 제외 파일 이름이 실린다", "- Content/맵.uasset" in pr and "- tests/x.json" in pr, pr[-800:])
+    check("970 소스 파일은 변경 파일 목록에만", pr.count("Source/M/A.cpp") >= 1
+          and "- Source/M/A.cpp" not in pr.split("## 리뷰 범위 밖 파일")[-1][:200])
+    base = RG.build_prompt(diff="d", files=["x"], commit="abc")
+    check("970 제외 목록이 비면 종전과 바이트 동일", RG.build_prompt(diff="d", files=["x"], commit="abc", excluded=[]) == base)
+
+
 def main() -> int:
-    for fn in (test_serial_travels_to_journal,
+    for fn in (test_serial_travels_to_journal, test_excluded_files_are_named_in_prompt_970,
                test_trivial_detection, test_author_exclusion_skips_before_llm,
                test_format_validation_and_retry, test_consumer_canaries_format_invalid,
                test_report_is_parseable_by_origin_collector, test_prompt_carries_the_contract,
