@@ -597,7 +597,29 @@ def test_units_can_write_record_947() -> None:
               f"ProtectHome={home} ProtectSystem={system} ReadWritePaths={rw}")
 
 
+def _memo_real_dependencies():
+    """`#965` — **실 저장소**의 의존 폐포는 이 프로세스 안에서 한 번만 계산한다.
+
+    `dependencies()` 는 진입 모듈부터 약 150파일을 매번 `ast.parse` 한다(유닛당 약 0.8초). 실 저장소는
+    검사 중에 바뀌지 않으므로 같은 (유닛·진입·직접 경로) 결과는 같다. 임시 저장소(`F.REPO` 교체)는
+    파일을 바꿔 가며 재므로 캐시하지 않고 매번 계산한다.
+    """
+    real_repo, real = F.REPO, F.dependencies
+    memo: dict = {}
+
+    def deps(unit: str) -> tuple:
+        if F.REPO != real_repo:
+            return real(unit)
+        key = (unit, F.ENTRY.get(unit, ""), tuple(F.RESIDENT.get(unit, ())))
+        if key not in memo:
+            memo[key] = real(unit)
+        return memo[key]
+    F.dependencies = deps
+    return lambda: setattr(F, "dependencies", real)
+
+
 def main() -> int:
+    _restore_deps = _memo_real_dependencies()
     print("\n[1] 기동 내용·목록 비교와 판정 불가 처리 (#897)")
     test_content_and_errors()
     print("\n[2] 상주 의존 파일·범위 보존 (#772)")
@@ -618,6 +640,7 @@ def main() -> int:
     print("\n[7] #947 기동 기록 파일 사본 · 판정 불가 사유 구분")
     test_record_file_947()
     test_units_can_write_record_947()
+    _restore_deps()
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
 

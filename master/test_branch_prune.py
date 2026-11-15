@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -77,9 +78,33 @@ class Paths:
         return self.root / "repo"
 
 
+_TPL: dict = {}      # `#965` — "base"·"terminal" → (템플릿 디렉터리, main 팁, 브랜치 팁 dict)
+
+
+def _template(kind: str):
+    """픽스처 상태를 한 번만 git 으로 만든다. 이후 Fx 는 복사본 + 원격 URL 갱신이다."""
+    if kind not in _TPL:
+        tpl = Path(tempfile.mkdtemp(prefix="ax-prune-tpl-"))
+        fx = Fx(tpl, _build=True)
+        tips = _build_terminal(fx) if kind == "terminal" else {}
+        _TPL[kind] = (tpl, fx.main, tips)
+    return _TPL[kind]
+
+
+def _cleanup_templates() -> None:
+    for tpl, _m, _t in _TPL.values():
+        shutil.rmtree(tpl, ignore_errors=True)
+
+
 class Fx:
-    def __init__(self, tmp: Path):
+    def __init__(self, tmp: Path, *, _build: bool = False):
         self.origin = tmp / "origin.git"
+        self.paths = Paths(root=tmp / "proj")
+        self.repo = self.paths.repo
+        self._fresh = not _build
+        if not _build:
+            self._copy_from("base", tmp)
+            return
         self.paths = Paths(root=tmp / "proj")
         self.paths.root.mkdir(parents=True)
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], check=True)
@@ -92,10 +117,21 @@ class Fx:
         self.main = self.head()
         A.install_hook(self.paths)
 
+    def _copy_from(self, kind: str, tmp: Path) -> dict:
+        tpl, main, tips = _template(kind)
+        for name in ("origin.git", "proj"):
+            shutil.rmtree(tmp / name, ignore_errors=True)
+            shutil.copytree(tpl / name, tmp / name, symlinks=True)
+        _run(self.repo, "remote", "set-url", "origin", str(self.origin))
+        _run(self.repo, "remote", "set-url", REMOTE, str(self.origin))
+        self.main = main
+        return dict(tips)
+
     def head(self) -> str:
         return _run(self.repo, "rev-parse", "HEAD")[1]
 
     def commit(self, rel: str, text: str, msg: str) -> str:
+        self._fresh = False
         p = self.repo / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text, encoding="utf-8")
@@ -137,6 +173,14 @@ class FakeQueue:
 
 
 def _setup_terminal(fx: Fx) -> dict:
+    """WA·WB·WC·WX·WR 의 base + r1/p1 을 원격에 올린다. 갓 만든 Fx 면 템플릿 복사로 같은 상태를 얻는다."""
+    if getattr(fx, "_fresh", False):
+        fx._fresh = False
+        return fx._copy_from("terminal", fx.origin.parent)
+    return _build_terminal(fx)
+
+
+def _build_terminal(fx: Fx) -> dict:
     t = {}
     for w in (WA, WB, WC, WX, WR):
         t[f"task/{w}/base"] = fx.branch_at(f"task/{w}/base", fx.main, f"Source/{w}.h", "// skel\n")
@@ -647,5 +691,6 @@ if __name__ == "__main__":
             import traceback
             traceback.print_exc()
             check(f"{fn.__name__} 예외 없이", False, f"{type(e).__name__}: {e}")
+    _cleanup_templates()
     print(f"\n{PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

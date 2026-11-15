@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -62,7 +63,20 @@ class Issue:
         return self.answer
 
 
+_TPL: list = []      # `#965` — 한 번 만든 bare+클론을 복사해 쓴다(git 8회 → 복사 + set-url 1회)
+
+
 def make_repo(tmp: Path) -> Path:
+    if not _TPL:
+        _TPL.append(Path(tempfile.mkdtemp(prefix="ax-issueflow-tpl-")))
+        _build_repo(_TPL[0])
+    for name in ("origin.git", "work"):
+        shutil.copytree(_TPL[0] / name, tmp / name, symlinks=True)
+    sh(tmp / "work", "remote", "set-url", "origin", str(tmp / "origin.git"))
+    return tmp / "work"
+
+
+def _build_repo(tmp: Path) -> Path:
     bare, work = tmp / "origin.git", tmp / "work"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
     subprocess.run(["git", "clone", "-q", str(bare), str(work)], check=True,
@@ -1171,6 +1185,8 @@ def main() -> int:
                t_workspace_operational_refusals, t_start_requires_mcp_client,
                t_authors_reach_track_round, t_unknown_client_warns):
         run(fn)
+    for tpl in _TPL:
+        shutil.rmtree(tpl, ignore_errors=True)
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_issue_flow: {PASS}/{total} 통과")
     return 1 if FAIL else 0

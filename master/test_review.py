@@ -9,11 +9,13 @@ pop 실패는 **로그만** 남긴다. 우리에게 그 자리는 사람이 편�
 """
 from __future__ import annotations
 
+import copy
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -55,9 +57,33 @@ def write(p: Path, text: str) -> None:
     p.write_text(text, encoding="utf-8")
 
 
+_TEMPLATES: dict = {}
+
+
 def fixture(*, conflict: bool = False, missing_durable: bool = False):
-    """bare 원격 + 사람의 클론. feature 하나 + durable 둘."""
+    """bare 원격 + 사람의 클론. feature 하나 + durable 둘.
+
+    `#965` — 변형마다 템플릿을 한 번만 git 으로 만들고(약 20회 git), 호출마다 디렉터리를 복사한 뒤
+    클론의 `origin` URL 만 새 bare 로 바꾼다. 내용·브랜치·원격추적·미커밋 파일은 템플릿 그대로다.
+    """
+    key = (conflict, missing_durable)
+    if key not in _TEMPLATES:
+        _TEMPLATES[key] = _build_fixture(conflict=conflict, missing_durable=missing_durable)
+    template, work, tasks = _TEMPLATES[key]
     root = Path(tempfile.mkdtemp(prefix="ax-review-t-"))
+    shutil.rmtree(root)
+    shutil.copytree(template, root, symlinks=True)
+    g(root / "repo", "remote", "set-url", "origin", str(root / "origin.git"))
+    return root, root / "repo", copy.deepcopy(work), copy.deepcopy(tasks)
+
+
+def _cleanup_templates() -> None:
+    for template, _w, _t in _TEMPLATES.values():
+        shutil.rmtree(template, ignore_errors=True)
+
+
+def _build_fixture(*, conflict: bool, missing_durable: bool):
+    root = Path(tempfile.mkdtemp(prefix="ax-review-tpl-"))
     bare = root / "origin.git"
     g(root, "init", "--bare", "-b", "main", str(bare))
     repo = root / "repo"
@@ -93,7 +119,7 @@ def fixture(*, conflict: bool = False, missing_durable: bool = False):
               "hierarchy_level": 0, "priority": 0, "created": "2"},
              {"task_id": "t3", "distribution_mode": "push", "status": "failed"}]
     work = {"target_branch": "feature/w1", "distribution_mode": "push", "title": "테스트 work"}
-    return root, repo, work, tasks
+    return root, work, tasks
 
 
 # ── [중요] 사람의 트리 미접촉 ─────────────────────────────────────
@@ -653,6 +679,9 @@ def test_finalize_confirm_pushes_and_then_cleanup_is_possible():
         shutil.rmtree(root, ignore_errors=True)
 
 
+# `#965` — ③ 이 Redmine 기재 실패 경로라 재시도 대기(`REDMINE_RETRY_SEC` 3초 × 2)가 실제로 잤다.
+#    대기 계약 자체는 `_post_redmine(sleep=…)` 주입 검사가 따로 잰다 — 여기서는 머지·정리만 본다.
+@patch("time.sleep", lambda _s: None)
 def test_finalize_six_step_edges():
     """원전 6단계 동등의 **가장자리** (사용자 결정 2026-08-21).
 
@@ -1337,6 +1366,7 @@ def main() -> int:
                test_rework_skips_revise_feedback_commits,
                test_rework_missing_verified_still_fails_and_default_skips_failed):
         fn()
+    _cleanup_templates()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_review: {PASS}/{total} 통과")
     return 1 if FAIL else 0
