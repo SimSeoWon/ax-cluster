@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from master.integration_checks import CheckConfigError, load_checks, run_check
+from master.integration_checks import CheckConfigError, load_checks, parallel_jobs, run_check
 
 
 class IntegrationChecksTests(unittest.TestCase):
@@ -160,6 +160,48 @@ class IntegrationChecksTests(unittest.TestCase):
                 self.assertEqual(os.environ["AX_CHECK_LEAK"], "parent")
             self.assertEqual(os.environ["AX_PROJECTS_ROOT"], "production-projects")
         self.assertEqual(list(self.root.rglob("__pycache__")), [])
+
+    def test_parallel_jobs_config_env_and_bad_values(self):
+        """`#965` — 파일 값 · 환경변수 덮어쓰기 · 1=순차 · 잘못된 값은 사유와 함께 1."""
+        cfg = self.root / "tests/test-parallel.json"
+        got = parallel_jobs("integration_jobs", self.root, env={})
+        self.assertEqual((got["jobs"], got["source"]), (1, "설정 없음"))
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text(json.dumps({"integration_jobs": 6, "sweep_jobs": 1}), encoding="utf-8")
+        got = parallel_jobs("integration_jobs", self.root, env={})
+        self.assertEqual((got["jobs"], got["source"], got["reason"]), (6, "tests/test-parallel.json", ""))
+        self.assertEqual(parallel_jobs("sweep_jobs", self.root, env={})["jobs"], 1)
+        got = parallel_jobs("sweep_jobs", self.root, env={"AX_TEST_JOBS": "3"})
+        self.assertEqual((got["jobs"], got["source"]), (3, "env AX_TEST_JOBS"))
+        self.assertEqual(parallel_jobs("sweep_jobs", self.root, env={"AX_TEST_JOBS": " "})["jobs"], 1)
+        for bad in ("0", "-2", "x", "1.5"):
+            got = parallel_jobs("integration_jobs", self.root, env={"AX_TEST_JOBS": bad})
+            self.assertEqual(got["jobs"], 1, bad)
+            self.assertIn("양의 정수가 아니다", got["reason"])
+        for bad in (0, True, 2.5, "4", None):
+            cfg.write_text(json.dumps({"integration_jobs": bad}), encoding="utf-8")
+            got = parallel_jobs("integration_jobs", self.root, env={})
+            if bad == "4":
+                self.assertEqual(got["jobs"], 4)
+                continue
+            self.assertEqual(got["jobs"], 1, bad)
+            self.assertIn("[주의]", got["reason"])
+        cfg.write_text("{broken", encoding="utf-8")
+        got = parallel_jobs("integration_jobs", self.root, env={})
+        self.assertEqual(got["jobs"], 1)
+        self.assertIn("읽기 실패", got["reason"])
+        cfg.write_text(json.dumps({"sweep_jobs": 2}), encoding="utf-8")
+        self.assertIn("integration_jobs 가 없다", parallel_jobs("integration_jobs", self.root, env={})["reason"])
+        with self.assertRaises(ValueError):
+            parallel_jobs("nope", self.root, env={})
+
+    def test_repo_parallel_config_is_valid(self):
+        """저장소의 실제 설정은 두 값 모두 사유 없이 읽힌다."""
+        repo = Path(__file__).resolve().parents[1]
+        for kind in ("integration_jobs", "sweep_jobs"):
+            got = parallel_jobs(kind, repo, env={})
+            self.assertEqual(got["reason"], "", got)
+            self.assertGreaterEqual(got["jobs"], 1)
 
     def test_runner_contract_and_revalidation(self):
         calls = []

@@ -55,6 +55,60 @@ def _validate(entry: dict, root: Path) -> dict:
     return dict(entry, path=str(rel), timeout=timeout)
 
 
+PARALLEL_CONFIG = "tests/test-parallel.json"
+PARALLEL_KINDS = ("integration_jobs", "sweep_jobs")
+PARALLEL_ENV = "AX_TEST_JOBS"
+
+
+def _jobs_value(raw) -> int | None:
+    """양의 정수만 받는다. bool·실수·문자열 숫자가 아닌 값은 None."""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, str):
+        raw = raw.strip()
+        if not re.fullmatch(r"[0-9]+", raw):
+            return None
+        raw = int(raw)
+    if not isinstance(raw, int) or raw < 1:
+        return None
+    return raw
+
+
+def parallel_jobs(kind: str, root: Path, *, env=None) -> dict:
+    """검사 병렬 개수 (`#965`) — `{jobs, source, reason}`. 1 이면 순차다.
+
+    순서: 환경변수 `AX_TEST_JOBS`(두 kind 공통, 급할 때 커밋 없이 덮어쓴다) → 저장소의
+    `tests/test-parallel.json` 의 `kind` 값 → 없으면 1(설정 없는 저장소는 종전 순차 그대로).
+    잘못된 값은 조용히 넘기지 않는다 — 1 로 돌리고 `reason` 에 무엇이 왜 잘못됐는지 남긴다.
+    """
+    if kind not in PARALLEL_KINDS:
+        raise ValueError(f"모르는 병렬 설정 이름: {kind}")
+    env = os.environ if env is None else env
+    raw_env = env.get(PARALLEL_ENV)
+    if raw_env is not None and str(raw_env).strip() != "":
+        value = _jobs_value(str(raw_env))
+        if value is None:
+            return {"jobs": 1, "source": f"env {PARALLEL_ENV}",
+                    "reason": f"[주의] {PARALLEL_ENV}={raw_env!r} 는 양의 정수가 아니다 — 순차(1)로 돈다"}
+        return {"jobs": value, "source": f"env {PARALLEL_ENV}", "reason": ""}
+    path = Path(root) / PARALLEL_CONFIG
+    if not path.is_file():
+        return {"jobs": 1, "source": "설정 없음", "reason": f"{PARALLEL_CONFIG} 없음 — 순차(1)"}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return {"jobs": 1, "source": PARALLEL_CONFIG,
+                "reason": f"[주의] {PARALLEL_CONFIG} 읽기 실패({type(e).__name__}) — 순차(1)로 돈다"}
+    if not isinstance(data, dict) or kind not in data:
+        return {"jobs": 1, "source": PARALLEL_CONFIG,
+                "reason": f"[주의] {PARALLEL_CONFIG} 에 {kind} 가 없다 — 순차(1)로 돈다"}
+    value = _jobs_value(data[kind])
+    if value is None:
+        return {"jobs": 1, "source": PARALLEL_CONFIG,
+                "reason": f"[주의] {PARALLEL_CONFIG} {kind}={data[kind]!r} 는 양의 정수가 아니다 — 순차(1)로 돈다"}
+    return {"jobs": value, "source": PARALLEL_CONFIG, "reason": ""}
+
+
 def load_checks(manifest: Path, root: Path) -> list[dict]:
     """JSON 배열을 검증해 읽는다. 빈 목록·중복·잘못된 경계는 예외다."""
     root = Path(root).resolve()
