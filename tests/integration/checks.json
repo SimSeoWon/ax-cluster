@@ -1018,5 +1018,10 @@
     "path": "master/test_testkit_issue.py",
     "count_pattern": "(?m)^OK test_testkit_issue: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
+  },
+  {
+    "path": "master/test_plan_proposal.py",
+    "count_pattern": "(?m)^OK test_plan_proposal: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
   }
 ]
