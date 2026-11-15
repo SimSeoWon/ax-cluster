@@ -551,6 +551,30 @@ def agy_approvals(text: str, name: str = SERVER) -> tuple:
                         if isinstance(a, str) and a.startswith(pre) and a.endswith(post)))
 
 
+def skill_link_problems(skills_dir, claude_skills) -> list:
+    """`#970` D1 — 정본 스킬마다 `~/.claude/skills/<이름>` 링크 상태. 문제만 `[(이름, 상태)]` 로 돌려준다.
+
+    상태: `missing`(없음) · `broken`(깨진 링크) · `elsewhere`(다른 대상을 가리킴) · `not_link`(링크가 아닌
+    같은 이름 — 사람이 만든 것일 수 있어 지우지 않는다). 종전 대조는 이름만 봐서 셋 다 통과로 판정했다.
+    """
+    out = []
+    if not skills_dir or not Path(skills_dir).is_dir():
+        return out
+    for d in sorted(Path(skills_dir).iterdir()):
+        if not (d.is_dir() and (d / "SKILL.md").exists()):
+            continue
+        link = Path(claude_skills) / d.name if claude_skills else None
+        if link is None or (not link.exists() and not link.is_symlink()):
+            out.append((d.name, "missing"))
+        elif not link.is_symlink():
+            out.append((d.name, "not_link"))
+        elif not link.exists():
+            out.append((d.name, "broken"))
+        elif link.resolve() != d.resolve():
+            out.append((d.name, "elsewhere"))
+    return out
+
+
 def agy_permissions_ok(text: str) -> tuple:
     """`#969` 10 — agy 헤드리스 권한 대조. `(통과, 빠진 허용 항목)` — 전체 도구 **와** 기본 명령
     (`AGY_BASE_COMMANDS`). 종전 대조는 도구만 봐서 기본 명령이 전부 빠져도 통과로 판정했다."""
@@ -866,12 +890,21 @@ def apply(p: Paths, project: str, *, facts=None) -> int:
     if p.skills_dir and p.skills_dir.is_dir() and p.claude_skills is not None:
         try:
             p.claude_skills.mkdir(parents=True, exist_ok=True)
-            for d in sorted(p.skills_dir.iterdir()):
-                if d.is_dir() and (d / "SKILL.md").exists():
-                    link = p.claude_skills / d.name
-                    if not link.exists() and not link.is_symlink():
-                        link.symlink_to(d.resolve())
-                        print(f"{LOG} claude skills: 심볼릭 링크 생성 → {link} -> {d.resolve()}")
+            for name, state in skill_link_problems(p.skills_dir, p.claude_skills):
+                d, link = p.skills_dir / name, p.claude_skills / name
+                if state in ("not_link", "elsewhere"):
+                    # `#970` D1 — 다른 대상 링크는 바꾸지 않는다: 작업 사본(.ax-issues/N)에서 돌리면 정본이
+                    #    곧 지워질 worktree 를 가리키게 된다. 사람이 보고 정한다(check 도 실패로 보인다).
+                    bad += 1
+                    print(f"{LOG} [실패] claude skills: {link} 가 "
+                          + ("링크가 아니다" if state == "not_link" else f"다른 대상({link.resolve()})을 가리킨다")
+                          + f" — 정본 {d.resolve()} · 바꾸지 않았다(사람이 정한다)")
+                    continue
+                if state == "broken":
+                    link.unlink()                    # `#970` D1 — 깨진 링크만 다시 만든다
+                link.symlink_to(d.resolve())
+                print(f"{LOG} claude skills: 링크 {'생성' if state == 'missing' else '교체(' + state + ')'} → "
+                      f"{link} -> {d.resolve()}")
         except OSError as ex:
             bad += 1
             print(f"{LOG} [실패] claude skills: {ex}")
@@ -978,10 +1011,10 @@ def check(p: Paths, project: str, *, smoke: bool = True) -> int:
     # Claude 스킬 링크 대조 (`#929`)
     if p.skills_dir and p.skills_dir.is_dir():
         master_skills = sorted(d.name for d in p.skills_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists())
-        claude_existing = set(d.name for d in p.claude_skills.iterdir()) if p.claude_skills and p.claude_skills.is_dir() else set()
-        missing = [s for s in master_skills if s not in claude_existing]
-        row("claude skills", not missing,
-            f"누락 {len(missing)}종: {', '.join(missing)}" if missing else f"스킬 {len(master_skills)}종 일치")
+        probs = skill_link_problems(p.skills_dir, p.claude_skills)     # `#970` D1 — 대상까지 대조
+        row("claude skills", not probs,
+            f"문제 {len(probs)}종: {', '.join(f'{n}({s})' for n, s in probs)}" if probs
+            else f"스킬 {len(master_skills)}종 일치")
     if smoke:
         ok, note = stdio_smoke(e)
         row("stdio 실측(redmine_meta)", ok, note)

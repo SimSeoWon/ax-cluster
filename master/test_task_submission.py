@@ -157,9 +157,35 @@ def test_reads_under_queue_lock_969():
     check("20 본문 읽기는 큐 잠금 안", seen == [True] and r["submitted"] is True, f"{seen} {r}")
 
 
+def test_server_task_snapshot_locks_970():
+    """`#970` D15 (R358-6) — 서버의 태스크 목록 사본은 큐 잠금 안에서 만든다(동시 변경 중 순회 예외 방지)."""
+    import threading
+    from master.task_queue import server as SV
+    idx, tid, _ = _claimed()
+    held = []
+
+    class Probe(dict):
+        def values(self):
+            got = []
+
+            def other():
+                ok = idx.lock.acquire(timeout=0.05)
+                got.append(ok)
+                if ok:
+                    idx.lock.release()
+            t = threading.Thread(target=other)
+            t.start()
+            t.join()
+            held.append(not got[0])
+            return super().values()
+    idx.tasks = Probe(idx.tasks)
+    rows = SV._tasks_snapshot(idx, work_id=idx.tasks[tid]["work_id"])
+    check("D15 잠금 안에서 사본을 만든다", held == [True] and [r["task_id"] for r in rows] == [tid], f"{held} {rows}")
+
+
 def main() -> int:
     for fn in (test_reads_submitted_facts, test_unknown_task, test_last_submission_wins,
-               test_broken_json_is_not_success, test_route_live, test_reads_under_queue_lock_969):
+               test_broken_json_is_not_success, test_route_live, test_reads_under_queue_lock_969, test_server_task_snapshot_locks_970):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_task_submission: {PASS}/{total} 통과")

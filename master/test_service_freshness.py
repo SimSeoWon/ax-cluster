@@ -568,6 +568,17 @@ def test_record_file_947() -> None:
         F.REPO = old_repo
 
 
+def test_startup_keeps_snapshot_reason_970() -> None:
+    """`#970` D12 (R280-7·R278-7) — 스냅샷 실패 사유가 INVOCATION_ID 사유에 덮이지 않는다."""
+    import os as _os
+    from unittest.mock import patch as _patch
+    with _patch.object(F, "_snapshot", lambda paths, require_files=False: ("", "기동 파일을 못 읽었다")), \
+            _patch.dict(_os.environ, {"INVOCATION_ID": "", F.RECORD_DIR_ENV: tempfile.mkdtemp(prefix="ax-970-sf-")}):
+        rec = F.record_startup("ax-broker")
+    why = rec.get("why") or ""
+    check("D12 두 사유가 함께 남는다", "기동 파일을 못 읽었다" in why and "INVOCATION_ID" in why, why)
+
+
 def _home_of(user: str) -> Path:
     import pwd
     try:
@@ -661,6 +672,7 @@ def main() -> int:
     test_record_file_947()
     test_units_can_write_record_947()
     test_units_can_write_record_947_other_home()
+    test_startup_keeps_snapshot_reason_970()
     _restore_deps()
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0

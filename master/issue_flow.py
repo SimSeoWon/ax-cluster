@@ -857,9 +857,12 @@ def pause(issue_id, *, repo=None, noter=None, lock_root=None, events_path=None, 
         except Exception as e:                          # noqa: BLE001
             relocked = False
             log("lock", f"활성 되돌림 예외 — {type(e).__name__}: {e}")
-        log("switch", f"실패 — {out[-200:]} · 잠금 활성 복원 {'완료' if relocked else '실패'}")
-        return {"ok": False, "issue_id": issue_id, "step": "switch",
-                "why": f"{MAIN} 으로 옮기지 못했다: {out[-300:]} — 보류를 되돌렸다"
+        # `#970` D6 — worktree 방식이면 실패한 것은 worktree 제거다(main 전환이 아니다)
+        step = "worktree" if wt is not None else "switch"
+        what = f"worktree {wt} 를 지우지 못했다" if wt is not None else f"{MAIN} 으로 옮기지 못했다"
+        log(step, f"실패 — {out[-200:]} · 잠금 활성 복원 {'완료' if relocked else '실패'}")
+        return {"ok": False, "issue_id": issue_id, "step": step,
+                "why": f"{what}: {out[-300:]} — 보류를 되돌렸다"
                        f"(잠금 활성 복원 {'완료' if relocked else '실패'})",
                 "relocked": relocked, "log": log.lines}
     log("switch", (f"worktree {wt} 제거" if wt is not None else f"{branch} → {MAIN}")

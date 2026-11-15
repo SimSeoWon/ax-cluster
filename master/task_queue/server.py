@@ -238,7 +238,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         w = idx.works.get(work_id)
         if not w:
             raise HTTPException(404, "work not found")
-        tasks = [t for t in idx.tasks.values() if t.get("work_id") == work_id]
+        tasks = _tasks_snapshot(idx, work_id)
         return {"work": w, "tasks": tasks}
 
     def _paths_for(work_meta=None, work_id: str = ""):
@@ -286,7 +286,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
                 any(c.startswith("merge_status=") for c in r.get("changed", ())):
             try:
                 from ..context_synth import history_gen as HG
-                tasks = [t for t in idx.tasks.values() if t.get("work_id") == work_id]
+                tasks = _tasks_snapshot(idx, work_id)
                 r["history_written"] = HG.record_work_terminal(
                     _paths_for(r.get("work")), r.get("work") or {}, tasks, req.merge_status)
                 _tq_log(f"[history] {work_id} {req.merge_status} → "
@@ -305,7 +305,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
                 any(c.startswith("merge_status=") for c in r.get("changed", ())):
             try:
                 from ..context_synth import signals as SG
-                tasks = [t for t in idx.tasks.values() if t.get("work_id") == work_id]
+                tasks = _tasks_snapshot(idx, work_id)
                 r["signal_written"] = SG.record_work_merged(
                     _paths_for(r.get("work")), r.get("work") or {}, tasks)
                 _tq_log(f"[signal] {work_id} merged → pipeline 신호 1건 "
@@ -515,7 +515,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
     @app.get("/api/v1/tasks")
     def list_tasks_ep(status: str = "", work_id: str = "", limit: int = 200,
                       project: str = ""):
-        tasks = list(idx.tasks.values())
+        tasks = _tasks_snapshot(idx)
         # [중요] 프로젝트 필터 (`#257` · 정책 `TAG`) — task 는 스탬프를 갖지 않으므로
         #    **그 task 가 속한 work 의 스탬프**로 판정한다. 스탬프 없는 옛 work 는 남긴다.
         want = (project or "").strip()
@@ -533,7 +533,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
     @app.get("/api/v1/status")
     def status_ep():
         out: dict[str, int] = {}
-        for t in idx.tasks.values():
+        for t in _tasks_snapshot(idx):
             s = t.get("status", "unknown")
             out[s] = out.get(s, 0) + 1
         body = {"tasks_by_status": out, "works": len(idx.works), "tasks": len(idx.tasks)}
@@ -1427,6 +1427,13 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
 # ─────────────────────────────────────────
 # CLI
 # ─────────────────────────────────────────
+
+def _tasks_snapshot(idx, work_id: str | None = None) -> list:
+    """`#970` D15 — 큐 잠금 안에서 만든 태스크 목록 사본. 요청 스레드가 잠금 없이 `idx.tasks.values()` 를
+    돌면 다른 요청의 변경과 겹쳐 「dictionary changed size during iteration」 이 날 수 있다."""
+    with idx.lock:
+        return [t for t in idx.tasks.values() if work_id is None or t.get("work_id") == work_id]
+
 
 def _cli_status(root: Path):
     idx = TaskIndex(root)

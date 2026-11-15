@@ -1058,6 +1058,21 @@ def t_wt_cancel_removes_worktree(tmp):
           and sh(repo, "branch", "--list", "issue/7") == "" and head_of(repo) == "main", str(r)[:300])
 
 
+def t_wt_pause_remove_failure_reports_worktree_970(tmp):
+    """`#970` D6 (R271-3·R273-3) — worktree 방식 보류에서 worktree 제거가 실패하면 그 사실을 보고한다
+    (종전: step=switch · 「main 으로 옮기지 못했다」)."""
+    repo, lk, a, _, root = _wt_setup(tmp)
+    IF.start(7, repo=repo, worktree_root=root, getter=a.get, noter=a.note, lock_root=lk)
+    real = IF._wt_remove
+    IF._wt_remove = lambda repo, wt: (1, "fatal: worktree 가 잠겨 있다")
+    try:
+        r = IF.pause(7, repo=repo, worktree_root=root, noter=a.note, lock_root=lk)
+    finally:
+        IF._wt_remove = real
+    check("D6 step=worktree · 사유에 worktree", not r["ok"] and r.get("step") == "worktree"
+          and "worktree" in r.get("why", "") and "옮기지 못했다" not in r.get("why", ""), str(r)[:300])
+
+
 def t_wt_cancel_detached_refuses(tmp):
     """`#969` 17 (R271-4 · R273-4) — worktree 가 issue/N 이 아니면(분리 HEAD 등) 정리 없이 브랜치만 지우지 않는다."""
     repo, lk, a, _, root = _wt_setup(tmp)
@@ -1191,7 +1206,7 @@ def main() -> int:
                t_new_branch_acquire_race_rolls_back, t_paused_without_branch_refused,
                t_corrupt_lock_refuses, t_default_repo_is_operational_checkout,
                t_sealed_repo_start_refused, t_sealed_repo_finish_refused,
-               t_wt_full_cycle, t_wt_refusals, t_wt_redmine_failure_undoes, t_wt_cancel_removes_worktree, t_wt_cancel_detached_refuses,
+               t_wt_full_cycle, t_wt_refusals, t_wt_redmine_failure_undoes, t_wt_cancel_removes_worktree, t_wt_cancel_detached_refuses, t_wt_pause_remove_failure_reports_worktree_970,
                t_workspace_operational_refusals, t_start_requires_mcp_client,
                t_authors_reach_track_round, t_unknown_client_warns):
         run(fn)

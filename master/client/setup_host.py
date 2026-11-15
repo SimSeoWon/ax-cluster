@@ -92,8 +92,11 @@ def stale_task_names(project: str, windows: bool) -> list:
 
 
 def points_at(out: str, old: str) -> bool:
-    """과제 정의가 옛 경로를 가리키는가. 대소문자 무시 — 윈도우 경로다."""
-    return bool(old) and old.lower() in (out or "").lower()
+    """과제 정의가 옛 경로를 가리키는가. 대소문자 무시 — 윈도우 경로다.
+    `#970` D2 — 레지스트리의 `/` 와 schtasks 출력의 `\\` 를 같게 본다."""
+    def norm(s: str) -> str:
+        return (s or "").replace("/", "\\").lower()
+    return bool(old) and norm(old) in norm(out)
 
 
 def render(host: str, root: str, moves: list) -> list:

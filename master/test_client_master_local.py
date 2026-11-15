@@ -532,6 +532,36 @@ def test_claude_skills_sync_and_check() -> None:
         missing_after = [s for s in master_skills if s not in claude_existing_after]
         check("심볼릭 링크 생성 후 누락 0건", missing_after == [])
 
+        # `#970` D1 (R314-1·2 · R317-1·2) — 깨진 링크·다른 대상 링크는 고치고, 대조도 대상까지 본다
+        (skills_dir / "ax-second").mkdir()
+        (skills_dir / "ax-second" / "SKILL.md").write_text("---\nname: ax-second\n---\n")
+        link.unlink()
+        link.symlink_to(root / "사라진-대상")                       # 깨진 링크
+        (claude_skills / "ax-second").symlink_to(root)               # 다른 대상
+        bad = dict(ml.skill_link_problems(skills_dir, claude_skills))
+        check("D1 대조가 깨진·다른 대상 링크를 잡는다",
+              bad.get("ax-test-skill") == "broken" and bad.get("ax-second") == "elsewhere", str(bad))
+        keep = (ml._run, ml.shutil.which, ml.codex_get_live)
+        ml._run = lambda argv, timeout=60: (1, "stub")
+        ml.shutil.which = lambda name: None
+        ml.codex_get_live = lambda name=ml.SERVER: {}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                ml.apply(p, "test-proj", facts=f)
+        finally:
+            ml._run, ml.shutil.which, ml.codex_get_live = keep
+        after = dict(ml.skill_link_problems(skills_dir, claude_skills))
+        check("D1 apply 가 깨진 링크는 다시 만들고, 다른 대상 링크는 건드리지 않고 남긴다",
+              "ax-test-skill" not in after and after.get("ax-second") == "elsewhere"
+              and (claude_skills / "ax-second").resolve() == root.resolve(), str(after))
+        (claude_skills / "ax-second").unlink()
+        (claude_skills / "ax-second").symlink_to((skills_dir / "ax-second").resolve())
+        (claude_skills / "ax-third").mkdir()
+        (skills_dir / "ax-third").mkdir()
+        (skills_dir / "ax-third" / "SKILL.md").write_text("---\nname: ax-third\n---\n")
+        check("D1 링크가 아닌 같은 이름 디렉터리는 문제로 보고(지우지 않는다)",
+              dict(ml.skill_link_problems(skills_dir, claude_skills)).get("ax-third") == "not_link")
+
 
 def _apply_with_cli_present(p: ml.Paths) -> tuple:
     """`claude` 가 PATH 에 있는 것처럼 apply 를 돌린다 → `(rc, 출력, CLI 호출 목록)`."""

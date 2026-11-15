@@ -221,7 +221,8 @@ def record_startup(unit: str) -> dict:
     invocation = os.environ.get("INVOCATION_ID", "")
     digest, why = _snapshot(paths, require_files=True)
     if not re.fullmatch(r"[0-9a-f]{32}", invocation):
-        why = "systemd INVOCATION_ID가 없다 — 수동 실행은 기준 기록으로 쓰지 않는다"
+        # `#970` D12 — 스냅샷 실패 사유가 있으면 덮지 않고 함께 남긴다
+        why = "systemd INVOCATION_ID가 없다 — 수동 실행은 기준 기록으로 쓰지 않는다" + (f" · {why}" if why else "")
     record = dict(version=1, unit=unit, invocation_id=invocation,
                   paths=list(paths), digest=digest, why=why)
     # #918 — 의존 목록·해시를 덧붙인다(옛 판독기와 호환되게 같은 version 의 선택 필드).

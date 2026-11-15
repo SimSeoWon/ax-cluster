@@ -145,6 +145,14 @@ def test_stops_on_failure() -> None:
     check("배달 실패면 check 안 함", not any(e[0] == "check" for e in log))
 
 
+def test_points_at_separators_970() -> None:
+    """`#970` D2 (R176-1) — 레지스트리 경로의 / 와 schtasks 출력의 \\ 를 같게 본다."""
+    out = r'<Command>C:\trunk\AXCluster\.ax\run.cmd</Command>'
+    check("D2 / 로 적힌 옛 경로도 잡는다", S.points_at(out, "C:/trunk/AXCluster"))
+    check("D2 대소문자 무시는 그대로", S.points_at(out, "c:\\TRUNK\\axcluster"))
+    check("D2 다른 경로는 아니다", not S.points_at(out, "D:/trunk/AXCluster"))
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
