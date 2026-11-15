@@ -560,7 +560,7 @@ class ReviewResult:
 
 
 def commercial_chat(prompt: str, *, timeout: int = REVIEW_TIMEOUT,
-                    workdir=None) -> str:
+                    workdir=None, cooldown_path=None) -> str:
     """직접 호출 하위 호환용 상용 체인. 리뷰 큐는 이 함수를 쓰지 않는다.
 
     `workdir` (`#825`) — 상용 CLI 는 파일을 읽는 에이전트다. 소스를 프롬프트에 싣는 대신 그
@@ -574,16 +574,33 @@ def commercial_chat(prompt: str, *, timeout: int = REVIEW_TIMEOUT,
     *"둘 다 응답 없음"* 이었는데, 실측된 진짜 원인은 **systemd 유닛에 PATH 가 없어 `which` 가
     실패**한 것이었다(NS 리뷰 26건). 「응답 없음」은 서비스 장애로 읽히므로 **엉뚱한 곳을
     파게 만든다** — 없는 로그보다 틀린 로그가 비싸다. 원전 `call_agy` 는 처음부터 갈라 놨다.
+
+    `#964` — **파일 쿨다운**(`master/llm_cooldown.py`): 실패한 백엔드는 「언제까지 건너뛴다」가 파일에 남고 다음
+    호출(다른 프로세스 포함)이 지금 시각과 비교해 건너뛴다 — 한도·쿼터 1시간 · 그 밖 600초 · 성공하면 해제.
+    순서는 그대로다. [중요] 기본 파일은 **진짜 백엔드 함수일 때만** 읽고 쓴다 — 가짜를 끼운 검사가 기계의 쿨다운을
+    오염시키지 않게. `cooldown_path` 를 주면 어떤 함수든 그 파일로 건다(검사용).
     """
     from .. import layer2_verify as l2
+    from .. import llm_cooldown as CD
+    real = {"codex": l2.call_codex_text_why, "agy": l2.call_agy_why, "claude": l2.call_claude_why}
     whys = []
     for name, fn in l2.WHY_BACKENDS:
+        path = cooldown_path if cooldown_path is not None else (CD.default_path() if real.get(name) is fn else None)
+        if path is not None:
+            left = CD.remaining(name, path=path)
+            if left > 0:
+                whys.append(f"{name}: 쿨다운 {int(left)}초 남음 — 건너뜀")
+                continue
         kw = {} if workdir is None else {"workdir": str(workdir)}
         out, why = fn(prompt, timeout=timeout, **kw)
         if out and out.strip():
+            if path is not None:
+                CD.clear(name, path=path)
             return out
+        if path is not None:
+            CD.mark(name, why or "", path=path)
         whys.append(f"{name}: {why or '사유 미기록'}")
-    raise ReviewChatError("상용 체인(agy → claude) 실패 — " + " · ".join(whys))
+    raise ReviewChatError("상용 체인 실패 — " + " · ".join(whys))
 
 
 class ReviewChatError(RuntimeError):

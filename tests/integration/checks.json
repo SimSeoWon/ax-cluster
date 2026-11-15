@@ -1028,5 +1028,10 @@
     "path": "master/test_plan_checklist.py",
     "count_pattern": "(?m)^OK test_plan_checklist: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
+  },
+  {
+    "path": "master/test_llm_cooldown.py",
+    "count_pattern": "(?m)^OK test_llm_cooldown: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
   }
 ]

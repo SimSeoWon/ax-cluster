@@ -163,6 +163,9 @@ def main() -> int:
     os.environ["FAKE_CWD"] = str(tmp / "cwd.jsonl")
     old_agy_state = os.environ.get("AX_AGY_STATE_PATH")
     os.environ["AX_AGY_STATE_PATH"] = str(tmp / "agy-state.json")
+    # #964 — 진짜 백엔드 함수를 가짜 CLI 로 부르므로 생성 체인 파일 쿨다운도 임시 자리로 돌린다(기계 파일 오염 방지)
+    old_cooldown = os.environ.get("AX_LLM_COOLDOWN_FILE")
+    os.environ["AX_LLM_COOLDOWN_FILE"] = str(tmp / "llm-cooldown.json")
     err = io.StringIO()
     try:
         check("가짜가 먼저 잡힌다 (실제 CLI 를 부르지 않는다)",
@@ -571,6 +574,10 @@ def main() -> int:
             os.environ.pop("AX_AGY_STATE_PATH", None)
         else:
             os.environ["AX_AGY_STATE_PATH"] = old_agy_state
+        if old_cooldown is None:
+            os.environ.pop("AX_LLM_COOLDOWN_FILE", None)
+        else:
+            os.environ["AX_LLM_COOLDOWN_FILE"] = old_cooldown
         _env()
         os.environ.pop("FAKE_ARGV", None)
         os.environ.pop("FAKE_CWD", None)
