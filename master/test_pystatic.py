@@ -439,7 +439,24 @@ def test_mypy_real():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def _share_mypy_cache():
+    """`#965` — 이 프로세스의 mypy 호출이 캐시 디렉터리를 공유한다(운영 `mypy_check` 는 호출마다 새 임시).
+
+    캐시가 비면 표준 라이브러리 타입 정의를 매번 다시 읽어 1회 약 1.8초, 채워지면 약 0.4초다(실측).
+    mypy 는 오류가 난 모듈을 캐시에 쓰지 않으므로 차단 판정은 매번 다시 계산된다 — 단정은 그대로다.
+    head·base 캐시는 운영처럼 따로 둔다. 끝나면 지운다.
+    """
+    shared = Path(tempfile.mkdtemp(prefix="ax-mypy-shared-"))
+    real = PS._mypy
+
+    def _mypy(root, files, *, python, target, cache, run):
+        return real(root, files, python=python, target=target, cache=shared / Path(cache).name, run=run)
+    PS._mypy = _mypy
+    return lambda: (setattr(PS, "_mypy", real), shutil.rmtree(shared, ignore_errors=True))
+
+
 def main() -> int:
+    _restore_mypy = _share_mypy_cache()
     for fn in (test_pyflakes_blocking_and_baseline,
                test_pyflakes_clean_and_deleted,
                test_pyflakes_unavailable_is_loud_failure,
@@ -451,6 +468,7 @@ def main() -> int:
                test_mypy_parse,
                test_mypy_real):
         fn()
+    _restore_mypy()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_pystatic: {PASS}/{total} 통과")
     return 1 if FAIL else 0

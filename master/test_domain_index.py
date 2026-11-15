@@ -224,7 +224,17 @@ def test_norm_search_uses_expansion() -> None:
     check("[중요] BM25 **전에** 확장한다", 0 < i_expand < i_bm25, f"{i_expand} vs {i_bm25}")
 
 
+def _no_vector_build(paths, payloads, stats) -> int:
+    stats.notes.append("벡터 채널 대역(#965) — 0건")
+    return 0
+
+
 def main() -> int:
+    # `#965` — 머리말 계약 그대로 **무거운 임베딩을 부르지 않는다.** 실제로는 `sync`·`search_norms` 가
+    #    chromadb + 다국어 임베딩 모델을 매번 로드했다(파일 9~15초). 벡터 채널이 없을 때의 동작(0건)이
+    #    이 파일이 재는 계약이다 — BM25 가드·지문·별칭은 그대로 실물로 돈다.
+    di._build_vector = _no_vector_build
+    di._vector_hits = lambda paths, query, limit: []
     for fn in (test_payload, test_fingerprint_and_sync, test_empty_is_an_error, test_noise_gate,
                test_alias_lifts_to_tags, test_fingerprint_sees_aliases,
                test_norm_search_uses_expansion):

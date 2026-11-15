@@ -917,8 +917,10 @@ def test_claude_md_body_has_a_project_axis() -> None:
     #    병합이 건드리지 않으므로 거기 적으면 첫 배달 때 굳어 늙는다. 블록은 배달마다 갈린다.
     check("본문은 실측을 적지 않고 블록을 가리킨다",
           "AX 관리 블록에 있다" in ns and "NS.uproject" not in ns, ns[:400])
-    f = bundle.probe("192.168.0.33", "user", r"C:\Users\USER\Documents\NS",
-                     "ssh", "requester")
+    # `#965` — 실물 `.33` probe(SSH 8회)를 부르지 않는다. 단정은 블록이 **트윈 픽스처**에서 읽은
+    #    사실이고 probe 결과가 아니다 — 그날 `.33` 응답에 따라 3~48초로 흔들렸다.
+    f = _facts(host="192.168.0.33", user="user", path=r"C:\Users\USER\Documents\NS",
+               role="requester", os="windows", home=r"C:\Users\USER", commit="")
     # [주의] 실측 절은 **자기 픽스처 트윈**에서 잰다 — 실제 레지스트리(`NS/` 는 git 밖)를 읽으면
     #    격리 worktree(⑦ 검사 트리)에서 트윈이 없어 실패한다(`#815` ⑤). 단정은 같다.
     import tempfile

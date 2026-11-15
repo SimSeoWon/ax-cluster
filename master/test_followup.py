@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from master.work import followup as F       # noqa: E402
 from master.work import review as R         # noqa: E402
+from master.work import pystatic as PS     # noqa: E402
 
 PASS = FAIL = 0
 
@@ -1511,7 +1512,24 @@ def test_scope_report_rendered_at_gate():
     check("render: 범위 이탈 없으면 줄 없음", "범위 밖 변경" not in txt_clean, txt_clean)
 
 
+def _share_mypy_cache():
+    """`#965` — 이 프로세스의 mypy 호출이 캐시 디렉터리를 공유한다(운영 `mypy_check` 는 호출마다 새 임시).
+
+    캐시가 비면 표준 라이브러리 타입 정의를 매번 다시 읽어 1회 약 1.8초, 채워지면 약 0.4초다(실측).
+    mypy 는 오류가 난 모듈을 캐시에 쓰지 않으므로 차단 판정은 매번 다시 계산된다 — 단정은 그대로다.
+    head·base 캐시는 운영처럼 따로 둔다. 끝나면 지운다.
+    """
+    shared = Path(tempfile.mkdtemp(prefix="ax-mypy-shared-"))
+    real = PS._mypy
+
+    def _mypy(root, files, *, python, target, cache, run):
+        return real(root, files, python=python, target=target, cache=shared / Path(cache).name, run=run)
+    PS._mypy = _mypy
+    return lambda: (setattr(PS, "_mypy", real), shutil.rmtree(shared, ignore_errors=True))
+
+
 def main() -> int:
+    _restore_mypy = _share_mypy_cache()
     for fn in (test_running_has_no_side_effects,
                test_ready_calls_advance_with_confirm_false,
                test_rejected_and_cancelled_stop,
@@ -1561,6 +1579,7 @@ def main() -> int:
                test_register_tool_carries_wait_command,
                test_scope_report_rendered_at_gate):
         fn()
+    _restore_mypy()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_followup: {PASS}/{total} 통과")
     return 1 if FAIL else 0

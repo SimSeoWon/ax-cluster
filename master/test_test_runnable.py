@@ -36,7 +36,13 @@ def _imports_master(node) -> bool:
     return False
 
 
-def _inserts_path(node, src: str) -> bool:
+def _inserts_path(node, src: str, lines=None) -> bool:
+    # `#965` — `get_source_segment` 는 부를 때마다 파일 전체를 줄로 나눈다. 노드가 차지한 줄에
+    #    `sys.path` 가 없으면 그 조각에도 없으므로 먼저 거른다(판정은 같고 호출만 줄인다).
+    if lines is not None:
+        span = lines[node.lineno - 1:(getattr(node, "end_lineno", None) or node.lineno)]
+        if not any("sys.path" in line for line in span):
+            return False
     seg = ast.get_source_segment(src, node) or ""
     return "sys.path.insert" in seg or "sys.path[:0]" in seg
 
@@ -47,8 +53,9 @@ def violation(src: str) -> str:
         tree = ast.parse(src)
     except SyntaxError as e:
         return f"구문 오류 {e.lineno}행"
+    lines = src.splitlines()
     for node in tree.body:
-        if _inserts_path(node, src):
+        if _inserts_path(node, src, lines):
             return ""
         if _imports_master(node):
             return f"{node.lineno}행 master import 앞에 sys.path.insert 가 없다"

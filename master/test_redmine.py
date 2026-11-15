@@ -725,7 +725,22 @@ def test_delete_version_empty_422_still_says_something():
     check("[중요] 빈 본문에도 사유를 만든다", "이슈가 붙었다" in out.get("error", ""), str(out))
 
 
+_REAL_API_KEY = RM.api_key
+
+
+def _test_api_key(*, reader=None) -> str:
+    """`#965` — 기본 조회(컨테이너 DB `docker exec psql`, 회당 ~100ms × 약 70회)를 가짜 키로 막는다.
+
+    `sender` 대역을 준 호출도 `key or api_key()` 가 먼저 돌아 실 컨테이너를 두드렸다. 리더를 주입한
+    호출(`test_api_key_never_returned_from_logs`)은 실제 함수 그대로 간다 — 그 계약을 재는 자리다.
+    """
+    if reader is not None:
+        return _REAL_API_KEY(reader=reader)
+    return "test-key"
+
+
 def main() -> int:
+    RM.api_key = _test_api_key
     for fn in (test_updates_notes_only, test_status_name_resolved_dynamically,
                test_unknown_status_keeps_notes_and_says_so, test_default_status_names_are_ours,
                test_nothing_to_change, test_bad_issue_id,
