@@ -191,6 +191,16 @@ def test_server_node_cap_env_853():
     assert S.NODE_CAP == 4 == S.DEFAULT_NODE_CAP      # 사용자 결정 2026-11-01(②)
 
 
+def test_prefer_latest_alias_969():
+    """`#969` 19 (R333-1) — prefer 비교도 `:latest` 생략·명시를 같게 본다(보유·상주 판정과 같은 규칙)."""
+    other = _bc250(models=["llama3:latest"], prefer=[])
+    home = _rtx(models=["llama3:latest"], prefer=["llama3"])
+    ep, why = choose([other, home], "llama3:latest")
+    assert ep.name == "rtx3060" and "prefer" in why, (ep.name, why)
+    ep, why = choose([other, _rtx(models=["llama3"], prefer=["llama3:latest"])], "llama3")
+    assert ep.name == "rtx3060" and "prefer" in why, (ep.name, why)
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = 0

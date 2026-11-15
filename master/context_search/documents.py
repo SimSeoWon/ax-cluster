@@ -42,7 +42,10 @@ def parse_frontmatter(content: str) -> dict:
     if classes:
         # `#750` — 미상 경로의 정본 출력은 YAML 문자열 `"?"` 이다.
         # 소비자에게는 종전과 같은 `?` 를 전달한다. 다른 경로 값은 그대로 둔다.
-        result["related_classes"] = {c: "?" if p.strip() in ('"?"', "'?'") else p.strip()
+        # `#969` 22 (R349-1·R350-1) — YAML 인라인 주석(공백 뒤 `#`)은 값이 아니다. 경로 안의 `#` 는 그대로 둔다
+        def _val(p: str) -> str:
+            return re.sub(r"\s+#.*$", "", p).strip()
+        result["related_classes"] = {c: "?" if _val(p) in ('"?"', "'?'") else _val(p)
                                      for c, p in classes}
     for key in ("status", "type"):
         m = re.search(rf"{key}:\s*(\w+)", fm)

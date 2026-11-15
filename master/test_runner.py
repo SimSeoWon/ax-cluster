@@ -1147,6 +1147,18 @@ def test_linux_ssh_is_stoppable() -> None:
     check("[중요] 시간 초과도 원격을 죽인다 — 종전에는 원격 지휘자가 남았다",
           rc == 255 and out.startswith("TimeoutExpired") and "원격 종료 확인" in out and len(sent) == 1, out)
 
+    # `#969` 18 (R346-3 · R348-3) — ssh 가 실패(rc≠0)하면 stderr 를 버리지 않고 로그에 남긴다(반환 계약은 그대로)
+    class ErrProc(Proc):
+        def communicate(self, timeout=None):
+            return "", "Host key verification failed."
+    eproc = ErrProc(waits=0, out="", rc=255)
+    eproc.returncode = 255
+    logs.clear()
+    got = R._ssh_stoppable("h", "u", cmd, timeout=60, task_id="t1", poll=0.01, popen=popen_for(eproc),
+                           stop=lambda: False, logf=logs.append)
+    check("18 반환은 종전 계약 그대로 (rc, stdout)", got == (255, ""), str(got))
+    check("18 실패 stderr 가 로그에 남는다", any("Host key verification failed" in m for m in logs), str(logs))
+
     def refuse(argv, **kw):
         raise OSError("no ssh")
     got = R._ssh_stoppable("h", "u", cmd, timeout=5, task_id="t1", popen=refuse, logf=logs.append)

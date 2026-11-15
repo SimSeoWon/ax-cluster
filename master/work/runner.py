@@ -898,7 +898,11 @@ def _ssh_stoppable(host: str, user: str, cmd: str, *, timeout: int = DEFAULT_TIM
         while True:
             remaining = deadline - _t.monotonic()
             try:
-                out, _err = p.communicate(timeout=max(0.1, min(poll, remaining)))
+                out, err = p.communicate(timeout=max(0.1, min(poll, remaining)))
+                if p.returncode != 0 and (err or "").strip():
+                    # `#969` 18 (R346-3·R348-3) — 접속 실패(호스트 키·인증·거부)의 원인은 stderr 에만 있다.
+                    #    반환 계약((rc, stdout))은 그대로 두고 로그에 남긴다.
+                    log(f"{who} rc={p.returncode} stderr: {(err or '').strip()[-500:]}")
                 return p.returncode, (out or "").strip()
             except subprocess.TimeoutExpired:
                 pass

@@ -1058,6 +1058,16 @@ def t_wt_cancel_removes_worktree(tmp):
           and sh(repo, "branch", "--list", "issue/7") == "" and head_of(repo) == "main", str(r)[:300])
 
 
+def t_wt_cancel_detached_refuses(tmp):
+    """`#969` 17 (R271-4 · R273-4) — worktree 가 issue/N 이 아니면(분리 HEAD 등) 정리 없이 브랜치만 지우지 않는다."""
+    repo, lk, a, _, root = _wt_setup(tmp)
+    IF.start(7, repo=repo, worktree_root=root, getter=a.get, noter=a.note, lock_root=lk)
+    sh(root / "7", "switch", "-q", "--detach")
+    r = IF.cancel(7, repo=repo, worktree_root=root, confirm=True, delete_branch=True, noter=a.note, lock_root=lk)
+    check("17 분리된 worktree → 거절 · 브랜치·worktree 그대로", not r["ok"] and r.get("step") == "worktree"
+          and (root / "7").exists() and sh(repo, "branch", "--list", "issue/7") != "", str(r)[:300])
+
+
 def _ws_project(tmp: Path, body: str, kind: str = "code") -> Path:
     """운영 호출 판정용 가짜 프로젝트 루트 — config.yaml·profile."""
     root = tmp / "projroot"
@@ -1181,7 +1191,7 @@ def main() -> int:
                t_new_branch_acquire_race_rolls_back, t_paused_without_branch_refused,
                t_corrupt_lock_refuses, t_default_repo_is_operational_checkout,
                t_sealed_repo_start_refused, t_sealed_repo_finish_refused,
-               t_wt_full_cycle, t_wt_refusals, t_wt_redmine_failure_undoes, t_wt_cancel_removes_worktree,
+               t_wt_full_cycle, t_wt_refusals, t_wt_redmine_failure_undoes, t_wt_cancel_removes_worktree, t_wt_cancel_detached_refuses,
                t_workspace_operational_refusals, t_start_requires_mcp_client,
                t_authors_reach_track_round, t_unknown_client_warns):
         run(fn)

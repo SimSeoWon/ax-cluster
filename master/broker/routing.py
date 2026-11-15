@@ -88,7 +88,8 @@ def choose(endpoints: list[Endpoint], model: str,
     if not room:
         return None, (f"포화 — '{model}' 을 가진 노드 {len(owners)}곳이 모두 처리 중 상한 {cap}건이다 (#853)")
     for e in room:
-        if model in e.prefer:
+        # `#969` 19 (R333-1) — prefer 도 보유 판정과 같은 `:latest` 규칙으로 맞춘다
+        if _has_model(Endpoint(e.name, e.host, models=list(e.prefer)), model):
             return e, f"{e.name}: prefer 지정 (재적재 필요)"
     e = room[0]
     return e, f"{e.name}: 폴백 — prefer 노드가 죽었거나 미지정 (재적재 필요)"

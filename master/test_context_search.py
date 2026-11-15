@@ -155,6 +155,12 @@ def main() -> int:
     check("#750 qualified Python 이름을 잘라 다른 이름으로 만들지 않는다",
           parse_frontmatter(unknown.replace("UManagerBase:", "pkg.module.Type:"))["related_classes"]
           == {"pkg.module.Type": "?"})
+    check("#969 22 인라인 주석이 붙은 미상 경로도 물음표로(R349-1·R350-1)",
+          parse_frontmatter(unknown.replace('"?"', '"?"  # 아직 모름'))["related_classes"] == {"UManagerBase": "?"},
+          str(parse_frontmatter(unknown.replace('"?"', '"?"  # 아직 모름'))["related_classes"]))
+    check("#969 22 경로 안의 # 는 주석이 아니다",
+          parse_frontmatter(STUB.replace("Source/Manager/ManagerBase.h", "Source/C#/ManagerBase.h"))["related_classes"]
+          == {"UManagerBase": "Source/C#/ManagerBase.h"})
 
     print("\n[6] `_domains/` 만 제외한다")
     check("_domains/ 제외", is_excluded("_domains/UI.md"))

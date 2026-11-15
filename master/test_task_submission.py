@@ -127,9 +127,39 @@ def test_route_live():
     check("워커 토큰도 읽을 수 있다(GET /api/v1/tasks 스코프)", r.status_code == 200, str(r.status_code))
 
 
+def test_reads_under_queue_lock_969():
+    """`#969` 20 (R191-3) — 제출 본문은 큐 잠금 안에서 읽는다(동시 저장·재색인과 부분 읽기 경쟁 방지)."""
+    import threading
+    from master.task_queue import logic_lifecycle as LL
+    idx, tid, ep = _claimed()
+    submit_result(idx, tid, branch="", head_commit="4cd229f3fcb9", self_check=BUILD, epoch=ep, worker_id=W)
+    seen = []
+    real = LL._read_md
+
+    def probe(path):
+        got = []
+
+        def other():
+            ok = idx.lock.acquire(timeout=0.05)
+            got.append(ok)
+            if ok:
+                idx.lock.release()
+        t = threading.Thread(target=other)
+        t.start()
+        t.join()
+        seen.append(not got[0])                       # 다른 스레드가 못 잡으면 = 잠금 안에서 읽는다
+        return real(path)
+    LL._read_md = probe
+    try:
+        r = submission(idx, tid)
+    finally:
+        LL._read_md = real
+    check("20 본문 읽기는 큐 잠금 안", seen == [True] and r["submitted"] is True, f"{seen} {r}")
+
+
 def main() -> int:
     for fn in (test_reads_submitted_facts, test_unknown_task, test_last_submission_wins,
-               test_broken_json_is_not_success, test_route_live):
+               test_broken_json_is_not_success, test_route_live, test_reads_under_queue_lock_969):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_task_submission: {PASS}/{total} 통과")

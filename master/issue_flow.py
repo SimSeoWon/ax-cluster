@@ -900,6 +900,11 @@ def cancel(issue_id, *, confirm: bool = False, delete_branch: bool = False, repo
     noter = noter or _default_noter
     branch = branch_name(issue_id)
     n = int(issue_id)
+    if wt is not None and wt.exists() and not wt_on:
+        # `#969` 17 (R271-4·R273-4) — 그 자리의 worktree 가 issue/N 이 아니다(분리 HEAD 등). 정리 없이
+        #    브랜치만 지우면 디렉터리가 남아 다음 start 가 막힌다 — 사람이 상태를 보고 정한다.
+        return _refuse(log, "worktree", f"{wt} 가 {branch} 가 아니다({_wt_branch(wt) or '분리 HEAD'}) — "
+                                        "worktree 를 확인·정리한 뒤 취소한다")
     lroot, refused = _lock_required(lock_root, injected, log)
     if refused:
         return refused

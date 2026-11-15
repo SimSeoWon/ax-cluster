@@ -568,12 +568,29 @@ def test_record_file_947() -> None:
         F.REPO = old_repo
 
 
+def _home_of(user: str) -> Path:
+    import pwd
+    try:
+        return Path(pwd.getpwnam(user).pw_dir)
+    except KeyError:
+        return Path("/home") / user
+
+
+def test_units_can_write_record_947_other_home() -> None:
+    """`#969` 21 — 다른 계정·HOME 으로 돌려도 같은 판정이다."""
+    import os as _os
+    from unittest.mock import patch as _patch
+    before = FAIL
+    with _patch.dict(_os.environ, {"HOME": "/nonexistent-969"}):
+        test_units_can_write_record_947()
+    check("21 HOME 이 달라도 판정이 같다", FAIL == before, f"실패 {FAIL - before}건")
+
+
 def test_units_can_write_record_947() -> None:
     """#947 — 상주 유닛이 홈을 읽기 전용으로 묶으면 기록 디렉터리를 쓰기 허용에 넣어야 한다.
 
     실측 2026-11-14: ax-broker 는 `ProtectHome=read-only` 라 `[Errno 30] Read-only file system` 으로
     기록 파일을 못 썼다. 단위 검사는 임시 디렉터리라 그 경로를 못 봤다 — 유닛 파일을 직접 읽는다."""
-    default = Path.home() / "ax-state" / "service-code"
     for unit in F.RESIDENT:
         path = Path(__file__).resolve().parent / "systemd" / f"{unit}.service"
         text = path.read_text(encoding="utf-8")
@@ -583,6 +600,9 @@ def test_units_can_write_record_947() -> None:
             if "=" in line and not line.startswith("#"):
                 key, _, value = line.partition("=")
                 values.setdefault(key.strip(), []).append(value.strip())
+        # `#969` 21 (R373-1 · R380-2) — 기준은 **유닛이 도는 계정**의 홈이다(검사를 돌린 계정의 `Path.home()` 아님)
+        user = (values.get("User") or [""])[-1]
+        default = (_home_of(user) if user else Path.home()) / "ax-state" / "service-code"
         home = (values.get("ProtectHome") or ["false"])[-1]
         system = (values.get("ProtectSystem") or ["false"])[-1]
         # [주의] 기준은 **실측**이다(2026-11-14): `ProtectSystem=strict` + `ProtectHome=false` 인 ax-projects 는
@@ -640,6 +660,7 @@ def main() -> int:
     print("\n[7] #947 기동 기록 파일 사본 · 판정 불가 사유 구분")
     test_record_file_947()
     test_units_can_write_record_947()
+    test_units_can_write_record_947_other_home()
     _restore_deps()
     print(f"\n{'='*46}\n통과 {PASS} · 실패 {FAIL}\n{'='*46}")
     return 1 if FAIL else 0
