@@ -323,6 +323,8 @@ AXCluster의 통합 검사 정본 목록은 `tests/integration/checks.json`이�
 프로세스·임시 프로젝트 루트에서 실행하고 종료코드·수치·완료 신호를 함께 확인한다.
 신규 단위 검사는 `checks.json` 등록 여부를 `master/test_integration_coverage.py`로, 마스터 스킬은 `~/.claude/skills` 링크 일치를 `master-local --check`로 확인한다 (`#929`).
 
+병렬 개수는 같은 파일의 `integration_jobs`(덮어쓰기 `AX_TEST_JOBS`)다.
+
 ```bash
 .venv/bin/python -B -m unittest discover -s tests/integration -p test_axcluster.py -f -v
 ```
@@ -335,23 +337,11 @@ AXCluster의 통합 검사 정본 목록은 `tests/integration/checks.json`이�
 아래 전수 집계는 조사용이다. 작업의 필수 검사는 위 명시 목록과 변경 대상의 회귀 검사로 고른다.
 
 ```bash
-# 전부 돌리고 합계를 센다 — **판정은 종료코드로, 수치는 두 형식 모두 읽는다**
-# (옛 `| tail -1` 은 틀렸다: ① 마지막 줄이 구분선인 파일 13개를 못 셌고 ② 크래시한 파일은
-#  수치를 안 찍어 **합계가 그대로 보였다** — 2026-08-14 에 import 실수로 3개가 죽었는데
-#  합계가 안 변해서 못 봤다. 실패는 rc 로, 수치는 두 형식으로.)
-fail=0; pass=0; total=0
-for f in master/test_*.py; do
-  out=$(.venv/bin/python "$f" 2>&1); rc=$?
-  n=$(echo "$out" | grep -oE '[0-9]+/[0-9]+ 통과' | tail -1 | grep -oE '[0-9]+/[0-9]+')   # 형식 A
-  if [ -n "$n" ]; then pass=$((pass+${n%%/*})); total=$((total+${n##*/}))
-  else                                                                                    # 형식 B
-    a=$(echo "$out" | grep -oE '통과 [0-9]+' | tail -1 | grep -oE '[0-9]+')
-    b=$(echo "$out" | grep -oE '실패 [0-9]+' | tail -1 | grep -oE '[0-9]+')
-    [ -n "$a" ] && { pass=$((pass+a)); total=$((total+a+${b:-0})); } || echo "수치 못 읽음: $f"
-  fi
-  [ $rc -ne 0 ] && { echo "[중요] rc=$rc $f"; fail=$((fail+1)); }
-done
-echo "$pass/$total 통과 · 실패 파일 $fail개"
+# 전부 돌리고 합계를 센다 — `#965` 병렬 실행기. **판정은 종료코드로, 수치는 두 형식 모두 읽는다**
+# (옛 `| tail -1` 집계는 크래시한 파일을 못 봤다 — 2026-08-14 import 실수 3건. 실패는 rc 로 본다.)
+# 병렬 개수: tests/test-parallel.json `sweep_jobs` · 덮어쓰기 AX_TEST_JOBS=N 또는 --jobs N (1 = 순차)
+# 합계 줄은 형식 A·B(종전 집계와 같은 기준)와 unittest(형식 C)를 나눠 찍고, 못 읽은 파일은 이름을 남긴다.
+.venv/bin/python -m master.sweep
 
 # 한 건만
 .venv/bin/python master/test_runner.py       # 워커 파견 — fail-closed 마커·계측
