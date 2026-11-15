@@ -55,7 +55,9 @@ description: Redmine 일감(`#N`) 하나를 이 기계에서 구현할 때 쓴�
 ## 1. 도구 — `ax-client` MCP (마스터 8101 대행)
 
     ax-client:plan_start(issue_id)                                 시작 판정 + 7단계 표 (읽기)
-    ax-client:plan_set(issue_id, tasks, why)                       플랜 등록·태스크 추가/편집
+    ax-client:interview_step(issue_id, step, result, user_answer, category)   착수 전 인터뷰 단계 노트 (#960)
+    ax-client:interview_spec(issue_id, content, user_answer)       인터뷰 끝 — 스펙 영역(ax:spec) 기록 (#960)
+    ax-client:plan_set(issue_id, tasks, why)                       플랜 등록·태스크 추가/편집 — 새 플랜은 스펙 영역이 있어야 한다
     ax-client:plan_transition(issue_id, task_id, to, note)         상태 전이 — 상태를 바꾸는 유일한 쓰기
     ax-client:issue_start(issue_id, check_only=true)               판정·잠금 점검만 (쓰기 0)
     ax-client:issue_start(issue_id, branch, start_rev)             시작 기록 — 잠금 · Redmine 시작 리비전 노트
@@ -93,17 +95,35 @@ PowerShell 기준 변수(체크아웃 루트에서):
 
 1. `ax-client:plan_start($N)`. `ok: false` 면 **구현하지 않는다.** 응답의 `next_action` 이 할 일이다.
 
-        no_spec          스펙(무엇을·완료 조건)을 사용자와 먼저 쓴다
-        plan_needed      ↓ 1-1 — 플랜을 짠다
+        interview_needed ↓ 1-0 — 착수 전 인터뷰(플랜·스펙 영역이 둘 다 없다, #960)
+        spec_invalid     스펙 영역 태그 오류를 보여 주고 본문을 함께 고친다
+        plan_needed      ↓ 1-1 — 스펙 영역은 있고 플랜이 없다. 플랜을 짠다
+        no_spec          플랜만 있고 본문에 글이 없는 옛 일감 — 스펙을 사용자와 먼저 쓴다
         plan_invalid     형식 오류를 보여 주고 본문을 함께 고친다
         plan_violations  규칙 위반을 보여 주고 함께 고친다
         blocked          차단 사유·대기 선행을 보고하고 멈춘다
         plan_done        태스크는 끝났다 — 일감 완료는 스펙·승인 규칙으로 따로 판단한다
         resume · next    3 으로 간다
 
+   1-0. 착수 전 인터뷰(`#960`): **순서는 도구가 강제한다** — 앞 단계 노트가 없으면 다음 단계가, 스펙 영역이
+   없으면 플랜 등록이 거절된다. 판정 응답의 `interview`(다음 단계·분류 목록)와 `materials`(마스터가 모은 일감
+   본문·코멘트·마일스톤·RAG·온톨로지·보고서·최근 완료 일감)가 재료다 — 같은 조회를 다시 하지 않는다.
+
+        분류       첫 질문. 마일스톤·제목·사용자 발화로 예측하고 되묻는다(`interview.categories` 의 label)
+        조사       기록 응답의 `guide`(분류 문서 본문)가 무엇을 찾고 물을지 말한다
+        명세       사용자 언어로 목표를 되말하고 고친다 — 완료 조건·비범위를 정한다
+        재현       분류 문서 steps 에 있을 때만(버그). 없으면 마스터가 건너뜀 노트를 남긴다
+        파급 측정   고칠 자리의 호출자·인접 모듈·배달 대상
+        스펙 영역   여섯 항목 요약을 보이고 명시 승인을 받은 뒤 `ax-client:interview_spec`
+
+   단계마다 결과를 보이고 사용자 확인을 받은 뒤 `ax-client:interview_step` 으로 기록한다(`result`·`user_answer`
+   필수, `category` 는 분류 단계에서만). 「다르다」면 그 단계를 다시 기록한다 — 최신 노트가 기준이다. 응답의
+   `next` 가 다음 단계다. 질문은 한 턴에 하나, 가설·추정 답을 먼저 보인다. 스펙 영역을 쓴 턴은 거기서 멈춘다.
+
    1-1. 플랜 짜기: `ax-client:search_context`(task_type=`user_command`, user_request=사용자 원문)로 기존 설계를
    찾고 **현재 소스와 대조한 뒤** 작은 태스크(목표·대상·선행·검증)를 **사용자와 대화로** 정한다.
    합의된 목록을 `ax-client:plan_set` 으로 등록한다(`why` = 사용자 결정). `state`·`evidence` 는 넣지 않는다.
+   새 플랜은 스펙 영역이 없으면 거절된다 — 그때는 1-0 부터다.
 
 2. `ax-client:issue_start($N, check_only=true)`. `ok: false` 면 §8 대로 보고하고 멈춘다. `lock_state` 가
    `paused` 면 §6-2(재개)로 간다.
