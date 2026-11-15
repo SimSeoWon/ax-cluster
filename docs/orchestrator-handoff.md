@@ -1,14 +1,22 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-15 오후 — **작성 기준 main `0b4969c` · #963 마감·재기동(14:14) 완료, 이 문서 커밋 직후 배달 예정 · 다음 착수 일감에서 #963 실물 확인(T8 남은 부분)**. 사용자 「다음 착수할 일감으로 실물 확인하고 963 마감 진행해」.
-> 이 세션은 크래시한 세션 `3c6bcc1c` 의 #960 인터뷰를 트랜스크립트로 복원해 이어 갔다(크래시 세션의 쓰기 호출 0건 확인).
-> 🔴 `.43`(BC-250) 이 `No route to host` 로 꺼져 있어 #960 배달이 남았다(사용자 「1번으로 하고 963 진행하자」). 켜지면 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 960 --project AXCluster` 와 같은 명령의 `963` 을 다시 부른다.
+> 2026-11-15 오후 — 사용자 「토큰이 없다 인수인계서만 써줘」로 중단. **main `bc566f0`(운영) · #964 진행 중(worktree `.ax-issues/964`, 브랜치 `issue/964`, 잠금 활성)**. 이 문서는 커밋하지 않았다(운영 체크아웃 미커밋 — 다음 `issue_start` 전에 커밋·push 필요, 사용자 승인).
 
-## 다음 — 다음 착수 일감에서 #963 실물 확인 (#963 T8 은 「작업중」으로 남아 있다)
+## 🔴 진행 중 — #964 주말 배치 매시 재실행 · codex 소모 (버그, 마일스톤 8 - 버그/개선)
 
-- 사용자 선택: 확인용 일감을 따로 만들지 않고 **다음에 착수하는 일감**으로 본다. 착수 일감은 사용자가 고른다.
-- 관측할 것: 인터뷰(#960) → `plan_propose`(제안 노트 `[ax:plan-proposal v=1]`) → 사용자 동의 → `plan_set(user_answer=…)` 로 v3 플랜(표지 `autonomy=` · 체크리스트 표) 등록 → 체크리스트 「미확인」 상태에서 `issue_finish` **미리보기**(`confirm=False`, 쓰기 0)가 `step: checklist` 로 멈추는 것.
-- 확인되면 `ax-projects:plan_transition_tool(963, "T8", "완료", 근거)` 로 닫는다. #960 T7 은 이미 완료(#963 인터뷰로 관측).
+- 인터뷰 완료(분류 버그 → 조사 → 명세 → 재현 → 파급 → `ax:spec`) · 플랜 v3 등록(제안→동의, 자율성 0.5, T1~T4 · 체크리스트 C1~C6). 결정 원문은 Redmine #964 노트.
+- 운영 조치: `AXCluster/config.yaml` 끝에 `batch.dismissal_candidates: false`(사용자 「기각 후보 수집은 일단 꺼줘」). **수정 배포 직후 오늘 다시 켠다**(사용자 결정) — 그 블록을 지우거나 true 로.
+- T1 완료 `70c82b1`(worktree 커밋, 미push): `master/llm_cooldown.py` 파일 쿨다운(한도 1시간·그 밖 600초·성공 해제) + `commercial_chat` 연결(진짜 백엔드만 기계 파일 `~/.cache/ax-llm/cooldown.json`). C3 충족.
+- **T2 작업중 — 미커밋 변경이 worktree 에 있다**: `dismissal_candidates.py`(`week_of`·`week_state` · collect 시작 시 week·started_at·complete:false 먼저 저장 · 끝에 complete:true·completed_at) · `gates.py`(게이트가 마커 대신 `week_state` — new/resume/done).
+- **멈춘 지점**: `test_dismissal_candidates` 12건 중 2건 실패 — 옛 계약(미완료면 다음 주말 · `_last_` 마커 기준)을 기대하는 `test_incomplete_run_resumes_next_weekend_not_same_weekend`·`test_weekend_gate_independent_and_failure_preserves_list`. 새 계약대로 고치자고 제안했고 **사용자 답 전**에 중단됐다 — 이어받으면 이 질문부터 다시 묻는다(답 없이 고치지 않는다).
+- 남은 태스크: T3 캐시·stale 을 대상 파일 blob + input_hash 기준(옛 항목은 기록된 main_sha 로 blob 구해 재사용 — 운영 실측 146건 중 111건) · T4 전수·통합 → 커밋 → 마감 → ax-projects 재기동 → 배달 → 설정 복귀 → 실제 배치 회차 관측(C5).
+- 재현 스크립트: `/tmp/claude-1000/-home-sim/56d6e50d-d351-4023-91b1-a20dc44dbdbb/scratchpad/repro964/repro.py`(LLM 0, 휘발성 — 사라졌으면 Redmine 재현 노트대로 다시 만든다).
+
+## 그 밖에 남은 것
+
+- `.43` 꺼짐(No route to host) — 켜지면 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 960 --project AXCluster` 와 `963` 을 다시 실행(배달·노트).
+- #965 전수 테스트 속도 개선(신규, 기준선 232파일 281초) — 착수 때 인터뷰.
+- #963 T8 은 #964 에서 실물 관측으로 완료(제안→동의→v3 등록→마감 미리보기 `step: checklist` 멈춤).
 
 ## 직전 마감 — #963 완료 (스펙 확정과 플랜 확정 분리)
 
