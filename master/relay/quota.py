@@ -33,8 +33,11 @@ def _number(value):
 
 def _window(used, reset, *, scale: float) -> dict | None:
     amount, epoch = _number(used), _number(reset)
-    if amount is None or not 0 <= amount <= scale or epoch is None or epoch <= 0:
+    if amount is None or amount < 0 or epoch is None or epoch <= 0:
         return None
+    # `#970` D11 (사용자 결정 A) — 한도를 넘겨 쓴 값(>scale)은 비정상이 아니라 소진이다. 남은 0% 로 보인다
+    #    (종전: 창을 버려 「미확인」 — 다 썼을 때 경고가 나가지 않았다). 음수·숫자 아님은 그대로 미확인.
+    amount = min(amount, scale)
     return {"remaining_pct": round(100 - amount * 100 / scale, 6), "resets_at": epoch}
 
 

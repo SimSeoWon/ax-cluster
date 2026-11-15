@@ -596,7 +596,11 @@ def t_quota_collection(tmp):
     check("Claude 양쪽 한도를 실제 잔여율로 변환",
           snapshot["windows"] == {"five_hour": {"remaining_pct": 20, "resets_at": QUOTA_NOW + 3600},
                                   "seven_day": {"remaining_pct": 90, "resets_at": QUOTA_NOW + 86400}})
-    for bad in (True, float("nan"), -0.1, 1.1, "0.8"):
+    # `#970` D11 (R367-3, 사용자 A 결정) — 한도 초과(1.1)는 비정상이 아니라 소진(0%)이다 — 아래 검사로 옮김
+    over = Q.claude_snapshot(quota_event(1.1), now=QUOTA_NOW)
+    check("D11 Claude 사용률 1.1 → 5시간 창 소진(남은 0%)",
+          over["windows"].get("five_hour", {}).get("remaining_pct") == 0, str(over["windows"]))
+    for bad in (True, float("nan"), -0.1, "0.8"):
         got = Q.claude_snapshot(quota_event(bad), now=QUOTA_NOW)
         check(f"Claude 비정상 사용률 {bad!r}은 해당 창만 미확인",
               "five_hour" not in got["windows"] and "seven_day" in got["windows"])
@@ -703,6 +707,16 @@ def t_quota_run_store_warn_reset(tmp):
               cleared["session"] == "" and cleared["quota"] == {} and cleared["quota_warning"] == {})
 
 
+def t_quota_codex_over_limit_970(tmp):
+    """`#970` D11 — Codex used_percent 가 100 을 넘어도 소진(0%)으로 보인다(종전: 창이 빠져 「미확인」)."""
+    home = tmp / "codex-home-970"
+    limits = quota_limits()
+    limits["primary"]["used_percent"] = 104
+    write_rollout(home, [rollout_event(limits)])
+    got = Q.codex_snapshot(QUOTA_SESSION, codex_home=home)["windows"]
+    check("D11 Codex 104% → 5시간 창 남은 0%", got.get("five_hour", {}).get("remaining_pct") == 0, str(got))
+
+
 def t_quota_codex_run(tmp):
     with patch.dict(os.environ, {}):
         home = tmp / "codex-home"
@@ -721,7 +735,7 @@ TESTS = [t_store_open_and_seq, t_store_concurrent_append, t_store_agent_state,
          t_agents_build_cmd, t_agents_claude, t_agents_969_cleanup_on_error, t_agents_codex, t_agents_agy, t_agents_failures,
          t_boundary_open, t_boundary_closable,
          t_console_round_trip, t_console_failure_and_reset, t_console_open_refused, t_header,
-         t_quota_collection, t_quota_console_validity, t_quota_run_store_warn_reset, t_quota_codex_run]
+         t_quota_collection, t_quota_console_validity, t_quota_run_store_warn_reset, t_quota_codex_over_limit_970, t_quota_codex_run]
 
 
 def main() -> int:
