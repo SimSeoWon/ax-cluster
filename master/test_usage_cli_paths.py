@@ -312,7 +312,7 @@ def main() -> int:
         rows = lines(rp.usage_log)
         check("[중요] 트윈에 review 줄 · task_id=commit[:12]", bool(rows) and
               all((r["source"], r["task_id"]) == ("review", commit[:12]) for r in rows), str(rows))
-        check("형식 재시도까지 호출마다 한 줄 (codex 2회)", [r["lane"] for r in rows] == ["codex", "codex"],
+        check("형식 재시도까지 호출마다 한 줄 (agy 2회 · #966 agy 1순위)", [r["lane"] for r in rows] == ["agy", "agy"],
               str(rows))
         check("[중요] 바깥 sink 에는 안 남는다 (한 호출 = 한 줄)", not outer.exists())
         n = len(lines(rp.usage_log))
@@ -366,7 +366,7 @@ def main() -> int:
         rows = lines(wp.usage_log)
         check("[중요] 주간 플랜 재시도(기본 상용 체인) — 재시도도 1줄 추가 · source=weekly_plan",
               ok_retry is True and len(rows) == 2
-              and [r["lane"] for r in rows] == ["claude", "codex"]
+              and [r["lane"] for r in rows] == ["claude", "agy"]
               and all((r["source"], r["task_id"]) == ("weekly_plan", f"{week}:사람") for r in rows),
               str(rows))
 
@@ -378,7 +378,7 @@ def main() -> int:
         check("[중요] 범위 플랜은 plan_generator 호출 시 기존 source=scope_plan 유지",
               sp_res["plans_generated"] == 1 and len(sp_rows) == 1
               and (sp_rows[0]["source"], sp_rows[0]["task_id"], sp_rows[0]["lane"])
-              == ("scope_plan", "scope:combat", "codex"), str(sp_rows))
+              == ("scope_plan", "scope:combat", "agy"), str(sp_rows))
 
         rcp = ProjectPaths(name="R2", root=tmp / "R2")
         (rcp.repo / "Source" / "M").mkdir(parents=True)
@@ -399,7 +399,7 @@ def main() -> int:
         r_rows = lines(rcp.usage_log)
         check("[중요] 레시피 합성(클러스터+합성+안티패턴) — 호출마다 1줄(총 3줄) · 바깥 sink 복원",
               made == 1 and len(r_rows) == 3
-              and [r["lane"] for r in r_rows] == ["codex", "codex", "codex"]
+              and [r["lane"] for r in r_rows] == ["agy", "agy", "agy"]
               and all((r["source"], r["task_id"]) == ("recipe_synthesis", "R2") for r in r_rows)
               and not outer.exists() and bool(restored_recipe)
               and restored_recipe["task_id"] == "outer-recipe", str(r_rows))
@@ -408,7 +408,7 @@ def main() -> int:
         check("레시피 활성 신호 없는 분기(아카이브 안티패턴)도 source=recipe_synthesis 1줄 기록",
               empty_made == 0 and len(r_rows) == 4
               and (r_rows[-1]["source"], r_rows[-1]["task_id"], r_rows[-1]["lane"])
-              == ("recipe_synthesis", "R2", "codex"), str(r_rows))
+              == ("recipe_synthesis", "R2", "agy"), str(r_rows))
         _env(CLAUDE_FAKE="json", FAKE_RESULT="OK")
         with usage.sink(outer, source="ontology", task_id="outer-recipe-err"):
             RS.run_recipe_synthesis(

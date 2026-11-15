@@ -104,7 +104,7 @@ def test_fakes_never_touch_machine_file():
                                ("agy", lambda p, timeout=0, **k: ("ok", ""))]
             RG.commercial_chat("x")
             check("가짜 실패가 기계 파일을 만들지 않는다", not f.exists())
-            check("진짜 함수 판별 — 기본 체인은 진짜", saved[0][1] is L2.call_codex_text_why)
+            check("진짜 함수 판별 — 기본 체인은 진짜 (#966 agy 1순위)", saved[0][1] is L2.call_agy_why)
         finally:
             L2.WHY_BACKENDS = saved
             os.environ.pop("AX_LLM_COOLDOWN_FILE", None)

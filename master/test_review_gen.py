@@ -373,18 +373,20 @@ def test_synth_paths_log_their_gaps() -> None:
 
 
 def test_generation_chain_is_codex_first_but_verification_is_not() -> None:
-    """🔴 **쓰는 일은 코덱스, 보는 일은 아니다** (사용자 결정 2026-09-06).
+    # [주의] 함수 이름은 `main()` 등록 목록과 맞추려고 옛 이름 그대로 둔다 — 내용은 #966 의 agy 1순위다.
+    """🔴 **생성 체인은 agy 1순위, 검증에는 codex 가 없다** (`#966`, 사용자 2026-11-15).
 
-    생성(리뷰 응답·계획·레시피)에는 교차 계열 조건이 없어 codex 가 1순위다.
-    [중요] **검증(`BACKENDS`)에는 codex 를 넣지 않는다** — 작성 레인이 codex 이므로 넣는 순간
+    생성(리뷰 응답·계획·기각 후보·레시피)에는 교차 계열 조건이 없다. 중요도가 낮은 생성이라
+    agy → codex → claude 순서다(종전 2026-09-06 codex 1순위에서 순위만 바꿨다).
+    [중요] **검증(`BACKENDS`)에는 codex 를 넣지 않는다** — 작성 레인에 codex 가 있으므로 넣는 순간
     자기가 쓴 것을 자기가 통과시킨다.
     """
-    print("\n[체인] 생성은 codex 1순위 · 검증은 codex 없음 (2026-09-06)")
+    print("\n[체인] 생성은 agy 1순위 (#966) · 검증은 codex 없음")
     from master import layer2_verify as l2
     from master.work import lanes as LN
     names = [n for n, _ in l2.WHY_BACKENDS]
-    check("🔴 생성 체인 1순위가 codex", names[0] == "codex", str(names))
-    check("  그다음 agy, 마지막 claude", names[1:] == ["agy", "claude"], str(names))
+    check("🔴 생성 체인 1순위가 agy (#966)", names[0] == "agy", str(names))
+    check("  그다음 codex, 마지막 claude", names[1:] == ["codex", "claude"], str(names))
     vnames = [n for n, _ in l2.BACKENDS]
     check("🔴 [중요] 검증 체인에는 codex 가 없다 (교차 계열)", "codex" not in vnames, str(vnames))
     # 본문 작성 체인은 이 생성 체인과 별개다 — #788 결정(2026-10-10)으로 agy 가 1순위가 됐다.

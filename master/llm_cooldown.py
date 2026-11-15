@@ -12,7 +12,8 @@
 - 기계 하나에 파일 하나다(`~/.cache/ax-llm/cooldown.json`, `AX_LLM_COOLDOWN_FILE` 로 바꾼다) — 쿼터는 기계 전체에
   걸리고 `ax-batch`·`ax-review-queue`·`ax-projects` 가 같은 체인을 쓴다.
 - 쓰기는 잠금(`fcntl`) 아래 임시 파일 → 교체로 한다. 파일이 깨졌으면 빈 상태로 읽는다(쿨다운이 없을 뿐 막지 않는다).
-- [중요] **순서는 바꾸지 않는다**(codex → agy → claude, 2026-09-06 결정) — 쿨다운 중인 것만 건너뛴다.
+- [중요] **쿨다운은 순서를 바꾸지 않는다** — 순서는 `layer2_verify.WHY_BACKENDS`(agy → codex → claude, `#966`)가
+  정하고, 여기서는 쿨다운 중인 것만 건너뛴다.
 - 걸고 풀 때 `[cooldown]` 로그 줄을 남긴다(stderr — 배치는 저널로 간다).
 """
 from __future__ import annotations

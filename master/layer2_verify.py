@@ -694,12 +694,14 @@ def call_codex_text_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
 
 # 🔴 [중요] **이 목록은 「생성」용이다 — 검증용 `BACKENDS` 와 다르다** (사용자 결정 2026-09-06).
 #    소비자는 `review_gen.commercial_chat`(리뷰 응답·계획·레시피)이고, 거기엔
-#    **교차 계열 조건이 없다**(작성물을 검사하는 자리가 아니라 새로 쓰는 자리다). 그래서
-#    codex 를 1순위로 둔다 — 클로드의 한도는 마스터 작업에 남긴다.
+#    **교차 계열 조건이 없다**(작성물을 검사하는 자리가 아니라 새로 쓰는 자리다).
+#    순서는 **agy → codex → claude** (`#966`, 사용자 2026-11-15: *"코드 리뷰와 플랜 작성은
+#    중요도가 떨어지니까 … 안티그래비티를 우선적으로"*). 종전 codex 1순위(2026-09-06)를 바꾼 것은
+#    순위뿐이다 — 쿨다운·폴백은 그대로고, 클로드는 여전히 마지막(한도는 마스터 작업에 남긴다).
 #    [주의] **검증(`BACKENDS`)에는 codex 를 넣지 않는다.** 작성 레인이 codex 가 된 지금
 #    거기 codex 를 넣으면 **자기가 쓴 것을 자기가 통과시킨다**. 그 자리를 제대로 푸는 것은
 #    「작성 레인을 검증에 알려 주고 같은 계열을 배제」이고 별도 일감이다.
-WHY_BACKENDS = [("codex", call_codex_text_why), ("agy", call_agy_why),
+WHY_BACKENDS = [("agy", call_agy_why), ("codex", call_codex_text_why),
                 ("claude", call_claude_why)]
 
 
