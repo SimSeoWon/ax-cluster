@@ -1,6 +1,14 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-15 16:58 — **#966 마감 완료**(main `9e31a2a`, 완료·100). `ax-task-queue` 16:57:54 · `ax-projects` 16:57:59 재기동, 재판정 깨끗. 이 문서 커밋·push 뒤 wrapup 재실행으로 배달한다(`.43` 꺼짐 — 켜진 `.2`·`.33`만). #964·#966 의 배포 후 관측(C6)이 남았다.
+> 2026-11-15 18:55 — **#967 마감 완료**(main `ed6352b`, 완료). 첫 wrapup 은 `ax-indexer` 가 900초를 넘겨 재기동 없이 멈췄고(rc1), 색인이 끝난 뒤 다시 돌렸다: `ax-task-queue`·`ax-broker` 18:51:43 · `ax-projects` 18:51:49 재기동, 재판정 깨끗. 이 문서 커밋·push 뒤 같은 wrapup 재실행으로 배달한다(`.43` 꺼짐 — 켜진 `.2`·`.33`만).
+
+## #967 — 쌓인 리뷰 정리 · 일괄 기각 1차 적용
+
+- 사용자 의도: 주말 기각 후보(오탐) 먼저 제외. 사유는 기획서 없이 「판정 사유 그대로」. `dismissal_candidates.dismiss_candidates` + `POST /fixes/candidates/dismiss`(태그 MOUNT·요청자 범위 exact) + 클라이언트 도구 `dismiss_fix_candidates` + `ax-fix` 스킬 문단. 리포트 `reports/195-967-bulk-dismiss-candidates.md`.
+- 커밋 `f21a55c` T1 · `79515ca` T2 · `ed6352b` T3 리포트. 전수 233파일 12122/12122 · 통합 `Ran 207` OK. C5·C6 는 마감 전 게이트에서만 제외(사용자 「응 C5·C6 제외로 기록하고 마감해」).
+- 1차 적용(사용자 「R193-1 빼고 전부 기각해」, 18:52): 후보 82건 중 **81건 dismissed · 거절 0**. 사유가 판정 사유 그대로 노트에 남았다(`by: claude`). 적용 뒤 전체 상태 open 281 · dismissed 133 · applied 65. 남은 후보는 R193-1 하나(판정 사유가 일본어로 저장됨 — 사용자 판단 대기).
+- 남은 것: 남은 open 리뷰 정리(#967 범위), 배달 뒤 `master-local --check`. 웹 UI 목록·기각 버튼은 **#968**(#967 배포 뒤 착수, 자동 시작 안 함).
+- 관측(17:24 `ax-batch`, #964·#966 노트): 이어 가기 정상(187→196) · 생성 agy 10회·codex 0회 · 15분 제한에 또 걸림(`complete:false`) · LLM 호출 56→10/15분으로 감소. 같은 시각 `ax-indexer` 합성도 agy 사용 — 원인 미분리, 조치 미결정.
 
 ## #966 마감 — 생성 체인 agy 1순위 · 배포 후 관측 남음
 
@@ -104,7 +112,7 @@
 
 ## 바로 다음 작업
 
-1. 이 문서 커밋·push 뒤 `master.issue_wrapup 966 --project AXCluster` 재실행 → 배달. `.43` 꺼져 있으면 rc1 이 정상이고, 켜진 기계는 기존 CLI `deliver/check AXCluster --host=<켜진 기계>` 로 맞춘다. 결과를 #966 노트(C5 근거)로 남긴다.
-2. #964·#966 배포 후 관측(위 C6 ①②③). 자동 배치·타이머를 끄지 않는다.
-3. `.43` 이 켜지면 `master.issue_wrapup 960`·`963`·`964`·`966 --project AXCluster` 재실행(배달·노트).
+1. 이 문서 커밋·push 뒤 `master.issue_wrapup 967 --project AXCluster` 재실행 → 배달. `.43` 꺼져 있으면 rc1 이 정상이고, 켜진 기계는 기존 CLI `deliver/check AXCluster --host=<켜진 기계>` 로 맞춘다. 결과를 #967 노트로 남긴다.
+2. #964·#966 배포 후 관측(위 C6 ①②) · agy 우선 뒤 처리량 감소(56→10)는 사용자에게 올릴 발견이다. 자동 배치·타이머를 끄지 않는다.
+3. `.43` 이 켜지면 `master.issue_wrapup 960`·`963`·`964`·`966`·`967 --project AXCluster` 재실행(배달·노트).
 4. 확인해 둘 실물: 토요일 22시 이후 `ax-batch` 로그의 `recipe_synthesis` 줄(#383) · 다음 rejected 라운드의 큐 로그 `[history] … rejected(큐 내부 종결)` 줄(#943) · 운영 relay에서 한도 20% 이하 제안 배너(#368) · 합성이 멈춘 회차의 `색인 걷기가 아직 안 지났다` 줄(#950). 다른 일감은 사용자 선택을 기다린다.
