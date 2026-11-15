@@ -39,7 +39,9 @@ description: AX 마스터에서 Redmine 일감을 **시작·재개·진행 마�
     ax-projects:plan_start_tool(issue_id)                       시작 판정 + 7단계 표 (읽기)
     ax-projects:interview_step_tool(issue_id, step, result, user_answer, category)   착수 전 인터뷰 단계 노트 (#960)
     ax-projects:interview_spec_tool(issue_id, content, user_answer)   인터뷰 끝 — 스펙 영역(ax:spec) 기록 (#960)
-    ax-projects:plan_set_tool(issue_id, tasks, why)             플랜 등록·태스크 추가/편집 — 새 플랜은 스펙 영역이 있어야 한다
+    ax-projects:plan_propose_tool(issue_id, tasks, checklist, why, autonomy)   플랜 제안 노트 — 태스크·완료 체크리스트·자율성 (#963)
+    ax-projects:plan_set_tool(issue_id, tasks, why, user_answer)   등록 — 최신 제안과 같은 목록 + 사용자 동의 (#963)
+    ax-projects:plan_autonomy_tool(issue_id, value, why, tasks)    자율성 변경 → 대기 태스크만 재제안(스킬 ax-autonomy)
     ax-projects:plan_transition_tool(issue_id, task_id, to, note)   상태 전이 — 상태를 바꾸는 유일한 쓰기
     ax-projects:issue_start_tool(issue_id)                      작업 시작 — 로컬 issue/<N> · 시작 리비전 기록 (#879)
     ax-projects:issue_finish_tool(issue_id, confirm=False)      작업 종료 — main 적용 · 마감 추적 등록 · 잠금 해제 (#879·#884)
@@ -106,10 +108,14 @@ RAG·온톨로지·보고서·최근 완료 일감)가 재료다 — 같은 조�
 2. 결과를 **현재 소스와 대조한다** — 합성 문서는 어느 파일을 볼지 찾는 데까지다
 3. 요청에 따로 검증할 기능이 둘 이상이면 태스크 전에 **기능 분해 표**(10줄 이내 · 기능·책임·선행·검증,
    `docs/issue-spec.md` §5)를 먼저 보이고 승인받는다 — 승인된 행이 태스크나 자식 일감의 단위가 된다
-4. 근거와 함께 작은 태스크(목표·대상·선행·검증)를 **사용자와 대화로** 정한다 — 추측으로 채우지 않는다.
+4. 근거와 함께 작은 태스크(목표·대상·선행·검증)와 **개발 완료 체크리스트**(스펙 영역의 완료 조건에서)를
+   **사용자와 대화로** 정한다 — 모호하거나 정보가 없으면 묻는다, 인터뷰가 끝났어도 추측으로 채우지 않는다.
    남은 갈림길은 위 「착수 전 인터뷰」의 가설·질문 형식으로 묻는다
-5. 합의된 목록을 `ax-projects:plan_set_tool` 로 등록한다. `why` 에 사용자 결정을 적는다. 새 플랜은 스펙
-   영역이 없으면 거절된다(`#960`) — 그때는 착수 전 인터뷰부터다
+5. **제안** — `ax-projects:plan_propose_tool(issue_id, tasks, checklist, why, autonomy)` 로 제안 노트를 남기고 표를
+   보인다(`#963`). 자율성은 비우면 지금 값(없으면 0.5). 사용자가 고치면 다시 제안한다 — 최신 제안이 기준이다.
+6. **동의 → 등록** — 동의를 받으면 그 목록 그대로 `ax-projects:plan_set_tool(…, user_answer=사용자 동의 원문)`.
+   제안과 다른 목록·빈 동의는 거절된다. 체크리스트·자율성은 제안에서 온다. 새 플랜은 스펙 영역이 없으면
+   거절된다(`#960`) — 그때는 착수 전 인터뷰부터다. 제안 노트가 없는 옛 플랜의 편집은 지금처럼 된다
 
 `tasks` 항목: `id`·`goal` 필수, `target`·`deps`(목록)·`check`·`steps` 선택. `state`·`evidence` 는
 넣지 않는다 — 새 태스크는 「대기」로 들어간다. `steps` 는 그 태스크가 하는 **조건부 단계 번호**
@@ -189,6 +195,10 @@ RAG·온톨로지·보고서·최근 완료 일감)가 재료다 — 같은 조�
   전이는 이미 됐다(경고만) — 사용자에게 그대로 보이고, 실제로 검사를 안 했으면 그 사실을 보고에 남긴다
 - 막히면 `차단` + 사유, 이번 범위가 아니면 `해당없음` + 사유
 - 응답의 `next` 가 다음 판정이다 — 다음 태스크를 고르는 것은 그 판정이지 내 짐작이 아니다
+- **개발 완료 체크리스트**(`C<n>`, `#963`)도 같은 도구로 **작업 중에** 표시한다 — `충족` + 근거(빈약하면 경고만) ·
+  `제외` + 사유 + `user_answer`(사용자 답, 없으면 거절) · 다시 볼 때 `미확인` + 사유
+- 마감(`ax-projects:issue_finish_tool`)은 「미확인」 항목이 남으면 목록을 보이고 멈춘다(`step: checklist`) —
+  **사용자에게 항목별로 묻고**(근거 보강 · 이번 범위 제외 · 작업 계속) 답을 기록한 뒤 마감을 다시 부른다
 
 [주의] 완료는 되돌리지 못한다. 잘못 마킹했으면 사용자에게 알리고 본문을 함께 고친다.
 [주의] 같은 일감을 두 세션이 동시에 마킹하지 않는다 — 나중 쓰기가 앞의 수정을 덮는다.

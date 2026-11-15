@@ -57,7 +57,8 @@ description: Redmine 일감(`#N`) 하나를 이 기계에서 구현할 때 쓴�
     ax-client:plan_start(issue_id)                                 시작 판정 + 7단계 표 (읽기)
     ax-client:interview_step(issue_id, step, result, user_answer, category)   착수 전 인터뷰 단계 노트 (#960)
     ax-client:interview_spec(issue_id, content, user_answer)       인터뷰 끝 — 스펙 영역(ax:spec) 기록 (#960)
-    ax-client:plan_set(issue_id, tasks, why)                       플랜 등록·태스크 추가/편집 — 새 플랜은 스펙 영역이 있어야 한다
+    ax-client:plan_propose(issue_id, tasks, checklist, why, autonomy)   플랜 제안 노트 — 태스크·완료 체크리스트·자율성 (#963)
+    ax-client:plan_set(issue_id, tasks, why, user_answer)          등록 — 최신 제안과 같은 목록 + 사용자 동의 (#963)
     ax-client:plan_transition(issue_id, task_id, to, note)         상태 전이 — 상태를 바꾸는 유일한 쓰기
     ax-client:issue_start(issue_id, check_only=true)               판정·잠금 점검만 (쓰기 0)
     ax-client:issue_start(issue_id, branch, start_rev)             시작 기록 — 잠금 · Redmine 시작 리비전 노트
@@ -122,8 +123,11 @@ PowerShell 기준 변수(체크아웃 루트에서):
 
    1-1. 플랜 짜기: `ax-client:search_context`(task_type=`user_command`, user_request=사용자 원문)로 기존 설계를
    찾고 **현재 소스와 대조한 뒤** 작은 태스크(목표·대상·선행·검증)를 **사용자와 대화로** 정한다.
-   합의된 목록을 `ax-client:plan_set` 으로 등록한다(`why` = 사용자 결정). `state`·`evidence` 는 넣지 않는다.
-   새 플랜은 스펙 영역이 없으면 거절된다 — 그때는 1-0 부터다.
+   태스크와 함께 **개발 완료 체크리스트**(스펙 영역의 완료 조건에서)를 사용자와 정한다 — 모호하면 묻는다.
+   **제안**: `ax-client:plan_propose(issue_id, tasks, checklist, why, autonomy)` 로 제안 노트를 남기고 표를 보인다
+   (자율성은 비우면 지금 값·없으면 0.5 · 바꾸는 것은 `ax-autonomy` 스킬). 고치면 다시 제안한다 — 최신 제안이 기준이다.
+   **등록**: 동의를 받으면 그 목록 그대로 `ax-client:plan_set(…, user_answer=동의 원문)`. `state`·`evidence` 는
+   넣지 않는다. 제안과 다른 목록·빈 동의는 거절된다. 새 플랜은 스펙 영역이 없으면 거절된다 — 그때는 1-0 부터다.
 
 2. `ax-client:issue_start($N, check_only=true)`. `ok: false` 면 §8 대로 보고하고 멈춘다. `lock_state` 가
    `paused` 면 §6-2(재개)로 간다.
@@ -147,6 +151,9 @@ PowerShell 기준 변수(체크아웃 루트에서):
 
 - 손대기 **전에** `작업중`, 끝나면 `완료` + `note` 에 근거(커밋 해시·검사 결과). 근거 없는 완료는 거절된다.
 - 막히면 `차단` + 사유, 범위 밖이면 `해당없음` + 사유. 응답의 `next` 가 다음 판정이다.
+- 개발 완료 체크리스트(`C<n>`)도 `ax-client:plan_transition` 으로 작업 중에 표시한다 — `충족` + 근거 ·
+  `제외` + 사유 + `user_answer`(사용자 답 필수). `ax-client:issue_finish` 는 「미확인」이 남으면 `step: checklist` 로
+  멈춘다 — 사용자에게 항목별로 묻고 답을 기록한 뒤 다시 부른다.
 - 커밋은 `$wt` 의 `$br` 에 쌓는다(`git -C $wt add …` · `git -C $wt commit …` — 사용자에게 묻고).
 
 ## 5. 종료 — 승인 뒤 `main` 에 fast-forward, 그 다음 등록

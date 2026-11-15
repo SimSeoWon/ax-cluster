@@ -179,8 +179,10 @@ SKILLS_BY_ROLE = {
     #   worktree** 의 `issue/<N>` 에서 하고 `main` 에 ff 로 올린 뒤 마감 추적에 등록한다(플랜 강제·
     #   일감 잠금은 마스터와 같은 규칙, 8101 대행). [주의] 분산 작업(`ax-request`·`ax-advance`)과
     #   발화가 겹친다(「작업 시작」) — SKILL.md §0 이 「Redmine `#N` 일감 vs 분산 work」로 가른다.
+    # `ax-autonomy` (`#963`, 사용자 결정 2026-11-15) — 플랜 자율성 값을 바꾸고 대기 태스크만 재제안한다.
+    #   마스터와 대칭(플랜 도구가 세 표면에 있다). 등록은 동의 뒤 plan_set 이다.
     "requester": ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-fix", "ax-gemini",
-                  "ax-issue"),
+                  "ax-issue", "ax-autonomy"),
 }
 
 # 🔴 [중요] **색인 전용 프로젝트의 배달** (`#693`, 사용자 확정 2026-09-28). 분산 작업이 없으니
@@ -200,7 +202,7 @@ INDEX_ONLY_WORKSHOP = (".claude/hooks/domain_hint.py", ".claude/hooks/hook_paths
 #    (요청자 저장소에서 일감을 구현하는 흐름이 아니다).
 CODE_SKILLS = {"worker": ("ax-work",),
                "requester": ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-gemini",
-                             "ax-issue")}
+                             "ax-issue", "ax-autonomy")}
 # 훅은 **스크립트 전부** — 완료 알림(`work_completion`)·대기 고지(`pending_works`)가 분산 작업의
 #    배선이다. `editor_mcp` 는 `pending_works` 가 import 하고, 옵트인이 없으면 조용하다(`notice`
 #    가 `endpoint()` None 에서 빠진다). 에이전트·룰은 UE 전제라 여전히 안 보낸다.

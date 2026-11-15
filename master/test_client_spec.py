@@ -86,7 +86,8 @@ def test_unchanged() -> None:
     # 🔴 2026-11-05 — `ax-issue` 추가 (`#884` T6 · Redmine 일감을 worktree 에서 · 마스터와 같은 흐름)
     check("요청자 스킬 불변",
           bundle.skills_for("requester")
-          == ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-fix", "ax-gemini", "ax-issue"),
+          == ("ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-fix", "ax-gemini", "ax-issue",
+              "ax-autonomy"),                                   # #963 — 사용자 결정 「.33에도 배달하자」
           str(bundle.skills_for("requester")))
     check("오버레이 없음 == 종전",
           bundle.skills_for("requester") == bundle.skills_for("requester", spec.EMPTY_INIT))
@@ -1057,8 +1058,9 @@ def test_code_kind_delivery():
           spec.skills_for("worker", code) == ("ax-work",) and spec.skills_for("worker", idx) == (),
           str(spec.skills_for("worker", code)))
     req = spec.skills_for("requester", code)
-    check("요청자는 등재·전진·검수·온톨로지·리서치·일감(#884 T6)",
-          set(req) == {"ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-gemini", "ax-issue"},
+    check("요청자는 등재·전진·검수·온톨로지·리서치·일감(#884 T6)·자율성(#963)",
+          set(req) == {"ax-request", "ax-ontology", "ax-advance", "ax-review", "ax-gemini", "ax-issue",
+                       "ax-autonomy"},
           str(req))
     check("  색인 전용 요청자는 ax-issue 를 받지 않는다 (#884 T6)",
           "ax-issue" not in spec.skills_for("requester", idx), str(spec.skills_for("requester", idx)))
