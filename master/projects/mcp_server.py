@@ -1100,32 +1100,67 @@ def plan_start_tool(issue_id: int, project: str = "") -> str:
 
 
 @mcp.tool()
-def plan_set_tool(issue_id: int, tasks: list[dict], why: str) -> str:
+def plan_propose_tool(issue_id: int, tasks: list[dict], checklist: list, why: str,
+                      autonomy: float | None = None) -> str:
+    """플랜 확정의 첫 칸 — 태스크 목록 + 개발 완료 체크리스트 + 자율성 값을 **제안 노트**로 남긴다 (`#963`).
+
+    `tasks` 는 plan_set 과 같은 항목(id·goal 필수 · target·deps·check·steps). `checklist` 는 항목 문자열 목록
+    (또는 {id, item}). `autonomy` 0~1, 비우면 지금 플랜 값(없으면 0.5). 제안을 표로 보이고 사용자 동의를 받은 뒤
+    같은 목록으로 `plan_set_tool(…, user_answer=동의)` 를 부른다. 고치면 다시 제안한다 — 최신 제안이 기준이다.
+    """
+    from .. import plan_proposal
+    try:
+        return json.dumps(plan_proposal.propose(issue_id, tasks, checklist, why, autonomy=autonomy),
+                          ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def plan_autonomy_tool(issue_id: int, value: float, why: str, tasks: list[dict] | None = None) -> str:
+    """자율성 값을 바꾸고 **대기 태스크만** 다시 짠 플랜 제안을 남긴다 (`#963`).
+
+    `tasks` 는 사용자와 다시 정한 대기 태스크 목록(비우면 지금 대기 태스크 그대로). 시작된 태스크·근거·개발 완료
+    체크리스트는 그대로 옮긴다. 본문은 바뀌지 않는다 — 제안을 보이고 동의를 받아 `plan_set_tool` 로 등록한다.
+    """
+    from .. import plan_proposal
+    try:
+        return json.dumps(plan_proposal.change_autonomy(issue_id, value, why, tasks=tasks), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def plan_set_tool(issue_id: int, tasks: list[dict], why: str, user_answer: str = "") -> str:
     """이슈 본문의 플랜 영역을 등록하거나 태스크를 추가·편집한다 (`#826`).
 
     `tasks` 는 원하는 **전체 목록**(표 순서): 항목마다 `id`·`goal` 필수, `target`·`deps`·`check`·
     `steps`(이 태스크가 하는 조건부 단계 번호, 예 `[2, 6]` — 형식 v2) 선택.
     [중요] `state`·`evidence` 는 받지 않는다 — 새 태스크는 「대기」, 기존 태스크는 본문 값 유지.
     시작된 태스크는 뺄 수 없다. `why` 는 노트로 남는다(필수).
+    `#963` — 새 플랜·제안 흐름 일감은 **최신 플랜 제안과 같은 목록**이고 `user_answer`(사용자 동의 원문)가 있어야
+    등록된다. 체크리스트·자율성은 그 제안에서 온다.
     """
     from .. import plan_tools
     try:
-        return json.dumps(plan_tools.set_plan(issue_id, tasks, why), ensure_ascii=False)
+        return json.dumps(plan_tools.set_plan(issue_id, tasks, why, user_answer=user_answer), ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
 
 
 @mcp.tool()
-def plan_transition_tool(issue_id: int, task_id: str, to: str, note: str = "") -> str:
+def plan_transition_tool(issue_id: int, task_id: str, to: str, note: str = "", user_answer: str = "") -> str:
     """플랜 태스크 하나의 상태를 바꾼다 (`#826`) — 상태를 바꾸는 **유일한** 쓰기.
 
     `to`: 작업중 · 완료 · 차단 · 해당없음 · 대기. 완료는 근거(커밋 해시·검사 결과), 차단·해당없음은
     사유가 `note` 에 필수다. 선행이 안 끝났거나 허용되지 않는 전이는 거절된다. 응답의 `next` 가
     다음 판정이다.
+    `#963` — `task_id` 가 `C<n>` 이면 개발 완료 체크리스트: `to` 충족(근거) · 제외(사유 + `user_answer`) · 미확인.
     """
     from .. import plan_tools
     try:
-        return json.dumps(plan_tools.transition(issue_id, task_id, to, note), ensure_ascii=False)
+        return json.dumps(plan_tools.transition(issue_id, task_id, to, note, user_answer=user_answer),
+                          ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
 

@@ -906,8 +906,41 @@ def tool_plan_set(api, args: dict) -> dict:
     why = str(args.get("why") or "").strip()
     if not why:
         raise ClientError("why 가 비었다 — 플랜을 왜 바꾸는지가 노트로 남는다")
-    return api("POST", "/api/v1/plan/set", {"issue_id": _issue_id(args.get("issue_id")),
-                                           "tasks": tasks, "why": why})
+    payload = {"issue_id": _issue_id(args.get("issue_id")), "tasks": tasks, "why": why}
+    answer = str(args.get("user_answer") or "")
+    if answer.strip():
+        payload["user_answer"] = answer
+    return api("POST", "/api/v1/plan/set", payload)
+
+
+def tool_plan_propose(api, args: dict) -> dict:
+    tasks = args.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        raise ClientError("tasks 는 비지 않은 배열이다 — 제안할 전체 목록")
+    checklist = args.get("checklist") or []
+    if not isinstance(checklist, list):
+        raise ClientError("checklist 는 배열이다 — 개발 완료 체크리스트 항목")
+    why = str(args.get("why") or "").strip()
+    if not why:
+        raise ClientError("why 가 비었다 — 무엇을 근거로 제안하는지 노트로 남는다")
+    payload = {"issue_id": _issue_id(args.get("issue_id")), "tasks": tasks, "checklist": checklist, "why": why}
+    if args.get("autonomy") is not None:
+        payload["autonomy"] = args["autonomy"]
+    return api("POST", "/api/v1/plan/propose", payload)
+
+
+def tool_plan_autonomy(api, args: dict) -> dict:
+    why = str(args.get("why") or "").strip()
+    if not why:
+        raise ClientError("why 가 비었다 — 자율성을 왜 바꾸는지 노트로 남는다")
+    if args.get("value") is None:
+        raise ClientError("value 는 필수다 — 0~1")
+    payload = {"issue_id": _issue_id(args.get("issue_id")), "value": args["value"], "why": why}
+    if args.get("tasks") is not None:
+        if not isinstance(args["tasks"], list):
+            raise ClientError("tasks 는 배열이다 — 다시 짠 대기 태스크 목록")
+        payload["tasks"] = args["tasks"]
+    return api("POST", "/api/v1/plan/autonomy", payload)
 
 
 def tool_plan_transition(api, args: dict) -> dict:
@@ -919,6 +952,9 @@ def tool_plan_transition(api, args: dict) -> dict:
     note = str(args.get("note") or "")
     if note.strip():
         payload["note"] = note
+    answer = str(args.get("user_answer") or "")
+    if answer.strip():
+        payload["user_answer"] = answer
     return api("POST", "/api/v1/plan/transition", payload)
 
 
@@ -951,7 +987,8 @@ ISSUE_TOOLS = {"issue_start": tool_issue_start, "issue_finish": tool_issue_finis
                "issue_pause": tool_issue_pause, "issue_cancel": tool_issue_cancel,
                "plan_start": tool_plan_start, "plan_set": tool_plan_set,
                "plan_transition": tool_plan_transition,
-               "interview_step": tool_interview_step, "interview_spec": tool_interview_spec}
+               "interview_step": tool_interview_step, "interview_spec": tool_interview_spec,
+               "plan_propose": tool_plan_propose, "plan_autonomy": tool_plan_autonomy}
 
 
 def _bare(name: str) -> str:
@@ -1705,7 +1742,29 @@ TOOLS.extend([
              "check": {"type": "string", "description": "검증 방법"},
              "steps": {"type": "array", "items": {"type": "integer"},
                        "description": "이 태스크가 하는 조건부 단계 번호(plan_start 의 steps 표)"}}}},
-         "why": {"type": "string", "description": "플랜을 바꾸는 이유 — 사용자 결정"}}}},
+         "why": {"type": "string", "description": "플랜을 바꾸는 이유 — 사용자 결정"},
+         "user_answer": {"type": "string",
+                         "description": "최신 플랜 제안에 대한 사용자 동의 원문 — 새 플랜·제안 흐름 일감은 필수"}}}},
+    {"name": "plan_propose",
+     "description": "플랜 확정의 첫 칸 — 태스크 목록·개발 완료 체크리스트·자율성 값(0~1, 비우면 지금 값 또는 0.5)을 "
+                    "일감에 제안 노트로 남긴다. 본문은 바뀌지 않는다. 사용자가 동의하면 같은 목록과 user_answer 로 "
+                    "plan_set 을 부른다. 고치면 다시 제안하고 최신 제안이 기준이다.",
+     "inputSchema": {"type": "object", "required": ["issue_id", "tasks", "checklist", "why"], "properties": {
+         "issue_id": {"type": "integer"},
+         "tasks": {"type": "array", "items": {"type": "object", "required": ["id", "goal"]}},
+         "checklist": {"type": "array", "description": "개발 완료 체크리스트 항목 — 문자열 또는 {id, item}"},
+         "why": {"type": "string"},
+         "autonomy": {"type": "number", "minimum": 0, "maximum": 1}}}},
+    {"name": "plan_autonomy",
+     "description": "자율성 값(0~1)을 바꾸고 대기 태스크만 다시 짠 플랜 제안을 남긴다. 시작된 태스크·근거·개발 완료 "
+                    "체크리스트는 그대로다. 본문은 동의 뒤 plan_set 이 바꾼다. tasks 를 비우면 지금 대기 태스크를 그대로 "
+                    "다시 제안한다.",
+     "inputSchema": {"type": "object", "required": ["issue_id", "value", "why"], "properties": {
+         "issue_id": {"type": "integer"},
+         "value": {"type": "number", "minimum": 0, "maximum": 1},
+         "why": {"type": "string"},
+         "tasks": {"type": "array", "items": {"type": "object", "required": ["id", "goal"]},
+                   "description": "사용자와 다시 정한 대기 태스크 목록"}}}},
     {"name": "interview_step",
      "description": "착수 전 인터뷰 단계 하나를 일감 노트로 기록한다. step: classify · investigate · specify · "
                     "reproduce · impact — 순서 고정. result 는 사용자에게 보인 결과, user_answer 는 사용자 확인·답(둘 "
@@ -1734,8 +1793,9 @@ TOOLS.extend([
      "inputSchema": {"type": "object", "required": ["issue_id", "task_id", "to"], "properties": {
          "issue_id": {"type": "integer"},
          "task_id": {"type": "string"},
-         "to": {"type": "string", "enum": ["작업중", "완료", "차단", "해당없음", "대기"]},
-         "note": {"type": "string"}}}},
+         "to": {"type": "string", "enum": ["작업중", "완료", "차단", "해당없음", "대기", "충족", "제외", "미확인"]},
+         "note": {"type": "string"},
+         "user_answer": {"type": "string", "description": "체크리스트 「제외」의 사용자 답(필수)"}}}},
     {"name": "issue_start",
      "description": "일감 작업 시작을 마스터에 기록한다 — 플랜 판정(ok 가 아니면 거절) · 프로젝트 트윈의 일감 "
                     "잠금(다른 일감이 활성이면 거절) · Redmine 시작 리비전 노트(신규 일감은 「진행」으로). "

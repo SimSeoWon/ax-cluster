@@ -374,13 +374,15 @@ def test_issue_routes_declared() -> None:
     for fn in ("issue_start_ep", "issue_finish_ep", "issue_pause_ep", "issue_cancel_ep"):
         i = src.index(f"def {fn}(")
         check(f"{fn} 가 관문을 지난다(_issue_call)", "_issue_call(" in src[i:i + 600])
-    for fn in ("plan_start_ep", "plan_set_ep", "plan_transition_ep", "interview_step_ep", "interview_spec_ep"):
+    for fn in ("plan_start_ep", "plan_set_ep", "plan_transition_ep", "interview_step_ep", "interview_spec_ep",
+               "plan_propose_ep", "plan_autonomy_ep"):
         i = src.index(f"def {fn}(")
         check(f"{fn} 가 관문을 지난다(_plan_call)", "_plan_call(" in src[i:i + 600])
     check("일감 대행은 _tq_log 한 줄을 남긴다", '_tq_log(f"[issue] {op}' in src)
     from master.task_queue import server as S
     for n in ("IssueStartReq", "IssueFinishReq", "IssuePauseReq", "IssueCancelReq", "PlanStartReq",
-              "PlanSetReq", "PlanTransitionReq", "InterviewStepReq", "InterviewSpecReq"):
+              "PlanSetReq", "PlanTransitionReq", "InterviewStepReq", "InterviewSpecReq", "PlanProposeReq",
+              "PlanAutonomyReq"):
         check(f"{n} 가 project 를 받는다", "project" in getattr(S, n).model_fields)
 
 

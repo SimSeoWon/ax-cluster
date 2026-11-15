@@ -104,12 +104,27 @@ class PlanStartReq(_IssueReq):
 class PlanSetReq(_IssueReq):
     tasks: list[dict]
     why: str
+    user_answer: str = ""
 
 
 class PlanTransitionReq(_IssueReq):
     task_id: str
     to: str
     note: str = ""
+    user_answer: str = ""
+
+
+class PlanProposeReq(_IssueReq):
+    tasks: list[dict]
+    checklist: list = []
+    why: str
+    autonomy: float | None = None
+
+
+class PlanAutonomyReq(_IssueReq):
+    value: float
+    why: str
+    tasks: list[dict] | None = None
 
 
 class InterviewStepReq(_IssueReq):
@@ -876,14 +891,29 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         """플랜 등록·태스크 추가/편집 — 상태·근거는 못 바꾼다(`plan_tools.set_plan`)."""
         from .. import plan_tools
         return _plan_call("set", req, lambda p: plan_tools.set_plan(
-            req.issue_id, req.tasks, req.why, caller=f"8101:{p}"))
+            req.issue_id, req.tasks, req.why, user_answer=req.user_answer, caller=f"8101:{p}"))
+
+    @app.post("/api/v1/plan/propose")
+    def plan_propose_ep(req: PlanProposeReq):
+        """플랜 제안 노트(`#963`) — 등록은 동의 뒤 plan/set."""
+        from .. import plan_proposal
+        return _plan_call("propose", req, lambda p: plan_proposal.propose(
+            req.issue_id, req.tasks, req.checklist, req.why, autonomy=req.autonomy))
+
+    @app.post("/api/v1/plan/autonomy")
+    def plan_autonomy_ep(req: PlanAutonomyReq):
+        """자율성 변경 + 대기 태스크 재제안(`#963`) — 본문은 동의 뒤 plan/set 이 바꾼다."""
+        from .. import plan_proposal
+        return _plan_call("autonomy", req, lambda p: plan_proposal.change_autonomy(
+            req.issue_id, req.value, req.why, tasks=req.tasks))
 
     @app.post("/api/v1/plan/transition")
     def plan_transition_ep(req: PlanTransitionReq):
         """태스크 상태 전이 — 「작업중」은 그 프로젝트 트윈의 일감 잠금을 본다."""
         from .. import plan_tools
         return _plan_call("transition", req, lambda p: plan_tools.transition(
-            req.issue_id, req.task_id, req.to, req.note, caller=f"8101:{p}", project=p))
+            req.issue_id, req.task_id, req.to, req.note, user_answer=req.user_answer, caller=f"8101:{p}",
+            project=p))
 
     @app.post("/api/v1/interview/step")
     def interview_step_ep(req: InterviewStepReq):
